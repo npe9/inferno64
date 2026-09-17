@@ -259,6 +259,10 @@ main(void)
 		extern int teardrop;
 		char *p;
 
+		if((p = getconf("*cflag")) != nil){
+			extern int cflag;
+			cflag = strtol(p, nil, 0);
+		}
 		if((p = getconf("*fddefer")) != nil){
 			extern int fddefer;
 			fddefer = strtol(p, nil, 0);

@@ -16,6 +16,70 @@ static int gce, gct = 1;
 
 ulong	rootfreedext;	/* INSTRUMENTATION - temporary */
 ulong	chainwalks, chainshort;	/* likewise; see rootset() */
+ulong	chainagain, chainboth;	/* second read: intact, or short again */
+ulong	shortstate[8], shortctx, shortfpge, shortfplow, shortnil;
+ulong	shortnotowned, shortunknownext;
+
+/*
+ * INSTRUMENTATION - temporary.  Who owns each live stack extent.
+ * A Prog whose EX names an extent that now belongs to another Prog is
+ * reading somebody else's stack, which the freed-extent ring cannot see
+ * once the address has been handed out again.  Open addressing, no
+ * deletion beyond clearing the slot; a miss is reported as a miss.
+ */
+enum { NEXTOWN = 2048 };
+typedef struct Extown Extown;
+struct Extown
+{
+	void	*ex;
+	int	pid;
+};
+static Extown extowns[NEXTOWN];
+
+static Extown*
+extslot(void *ex)
+{
+	uintptr h;
+	int i;
+
+	h = ((uintptr)ex >> 5) % NEXTOWN;
+	for(i = 0; i < 64; i++){
+		if(extowns[h].ex == ex || extowns[h].ex == nil)
+			return &extowns[h];
+		h = (h + 1) % NEXTOWN;
+	}
+	return nil;
+}
+
+void
+extown(void *ex, int pid)
+{
+	Extown *e;
+
+	if((e = extslot(ex)) != nil){
+		e->ex = ex;
+		e->pid = pid;
+	}
+}
+
+void
+extdisown(void *ex)
+{
+	Extown *e;
+
+	if((e = extslot(ex)) != nil && e->ex == ex)
+		e->ex = nil;
+}
+
+int
+extowner(void *ex)
+{
+	Extown *e;
+
+	if((e = extslot(ex)) != nil && e->ex == ex)
+		return e->pid;
+	return -1;
+}
 
 /*
  * Record a stack extent as freed, and look one up.  A ring: the answer
@@ -612,6 +676,56 @@ rootset(Prog *root)
 					break;
 			}
 			if(cf != cx->reg.tos.fu){
+				uchar *cf2, *ex2, *sp2, *fp2;
+
+				root->chainok0 = 2;	/* INSTRUMENTATION: seen short */
+				if((uint)root->state < 8)
+					shortstate[root->state]++;
+				if(rr != &root->reg)
+					shortctx++;
+				if(rr->FP >= rr->SP)
+					shortfpge++;
+				if(rr->FP < cx->reg.tos.fu)
+					shortfplow++;
+				if(cf == nil)
+					shortnil++;
+				{
+					int own;
+
+					own = extowner(ex0);
+					if(own == -1)
+						shortunknownext++;
+					else if(own != root->pid)
+						shortnotowned++;
+				}
+				int cn2;
+
+				/*
+				 * Read it again.  Everything else that can see
+				 * this Prog -- addrun(), the quantum entry and
+				 * exit checks in vmachine() -- says the chain
+				 * is intact, so the question is whether the
+				 * state is broken or this read raced somebody
+				 * writing it.  A second walk that succeeds
+				 * says the first one raced.
+				 */
+				ex2 = rr->EX;
+				sp2 = rr->SP;
+				fp2 = rr->FP;
+				for(cf2 = fp2, cn2 = 0;
+				    cn2 < 4096 && ex2 != nil
+				    && cf2 >= ((Stkext*)ex2)->reg.tos.fu
+				    && cf2 < sp2; cn2++){
+					if(cf2 == ((Stkext*)ex2)->reg.tos.fu)
+						break;
+					cf2 = ((Frame*)cf2)->fp;
+					if(cf2 == nil)
+						break;
+				}
+				if(ex2 != nil && cf2 == ((Stkext*)ex2)->reg.tos.fu)
+					chainagain++;
+				else
+					chainboth++;
 				chainshort++;
 				if(chainshort < 6){
 					int ci, onctx;
@@ -620,6 +734,64 @@ rootset(Prog *root)
 					for(ci = 0; ci < npctx; ci++)
 						if(pctxs[ci]->curprog == root)
 							onctx = ci;
+					{
+						int qctx = -1, qw;
+
+						qw = progqueued != nil ?
+							progqueued(root, &qctx) : -1;
+						{
+						uchar *lf;
+						int ln;
+
+						/* the frame the chain stops on */
+						lf = rr->FP;
+						for(ln = 0; ln < 4096; ln++){
+							uchar *nx;
+
+							nx = ((Frame*)lf)->fp;
+							if(nx == nil || nx < cx->reg.tos.fu
+							|| nx >= rr->SP)
+								break;
+							lf = nx;
+						}
+						print("rootset: short-chain pid %d"
+							" inst %ld; stops on frame"
+							" %#p (t %#p lr %#p mr %#p),"
+							" R.s %#p -> %#p, R.d %#p,"
+							" tos.fu %#p FP %#p SP %#p\n",
+							root->pid,
+							(rr->M != H && rr->M != nil
+							 && rr->M->m != nil
+							 && rr->M->m->prog != nil)
+							  ? (long)(rr->PC - rr->M->m->prog)
+							  : -1L,
+							lf, ((Frame*)lf)->t,
+							((Frame*)lf)->lr,
+							((Frame*)lf)->mr,
+							rr->s,
+							(rr->s != nil && rr->s != H)
+							  ? *(void**)rr->s : nil,
+							rr->d,
+							cx->reg.tos.fu, rr->FP, rr->SP);
+						print("rootset: chain:");
+						{
+							uchar *c3;
+							int n3;
+
+							for(c3 = rr->FP, n3 = 0; n3 < 8; n3++){
+								print(" %#p(fp %#p t %#p)",
+									c3, ((Frame*)c3)->fp,
+									((Frame*)c3)->t);
+								c3 = ((Frame*)c3)->fp;
+								if(c3 == nil || c3 == (uchar*)H
+								|| c3 < cx->reg.tos.fu
+								|| c3 >= rr->SP)
+									break;
+							}
+							print("\n");
+						}
+					}
+					}
 					print("rootset: chain from FP %#p stops at"
 						" %#p, not tos.fu %#p (SP %#p, %d"
 						" frames), pid %d state %d torn %d"

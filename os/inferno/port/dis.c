@@ -1979,9 +1979,27 @@ ownctx(void)
 	return up != nil && up->pctx != nil && (Pctx*)up->pctx == curP;
 }
 
+ulong addrunbroken;	/* MULTICORE INSTRUMENTATION - temporary */
+ulong quantumbroke;	/* likewise */
+ulong shortran;		/* progs the collector saw short that ran again */
+static int chainok(Prog*);
+
 void
 addrun(Prog *p)
 {
+	/*
+	 * MULTICORE INSTRUMENTATION - temporary.  A Prog made runnable
+	 * with a broken frame chain was broken while it sat blocked, by
+	 * whoever is readying it now -- the caller pc says which path.
+	 * Quanta are already checked on the way in and out and never
+	 * fail, so this is the remaining place the damage can be done.
+	 */
+	p->chainok0 = 1;	/* INSTRUMENTATION: watch it from here */
+	if(p != (Prog*)up->prog && !chainok(p))
+		if(addrunbroken++ < 4)
+			print("addrun: prog %d state %d has a broken chain,"
+				" from %#p\n", p->pid, p->state,
+				getcallerpc(&p));
 	if(p->addrun != 0) {
 		p->addrun(p);
 		return;
@@ -2048,6 +2066,70 @@ unlinkctx(Pctx *c, Prog *p)
 
 int delrunqother;	/* MULTICORE INSTRUMENTATION - temporary */
 int twoctx;		/* progs picked while another context runs them */
+ulong chainin, chainout;	/* quanta entered/left with a broken chain */
+
+/*
+ * MULTICORE INSTRUMENTATION - temporary.  Does this Prog's frame chain
+ * still reach the bottom of its newest extent?  rootset() asks the same
+ * question of every Prog it walks; asking it on the way into a quantum
+ * and again on the way out says whether a stack was already broken when
+ * a context picked it up, or was broken by the quantum just run.
+ */
+/*
+ * MULTICORE INSTRUMENTATION - temporary.  Which queue is this Prog on?
+ * A Prog that is Pready and on no queue is one nothing will ever run
+ * again, which is a different fault from a corrupt stack and has to be
+ * told apart from it.
+ */
+int
+progqueue(Prog *p, int *ctxp)
+{
+	Prog *q;
+	int i;
+
+	for(i = 0; i < npctx; i++)
+		for(q = pctxs[i]->runhd; q != nil; q = q->link)
+			if(q == p){
+				*ctxp = i;
+				return 1;	/* a context's local queue */
+			}
+	for(q = isched.ghead; q != nil; q = q->link)
+		if(q == p)
+			return 2;		/* the global queue */
+	for(i = 0; i < npctx; i++)
+		if(pctxs[i]->curprog == p){
+			*ctxp = i;
+			return 3;		/* running */
+		}
+	return 0;
+}
+
+int
+progchainokfn(Prog *r)
+{
+	return chainok(r);
+}
+
+static int
+chainok(Prog *r)
+{
+	Stkext *cx;
+	uchar *cf;
+	int n;
+
+	if(r->reg.EX == nil || r->reg.FP == nil)
+		return 1;
+	cx = (Stkext*)r->reg.EX;
+	for(cf = r->reg.FP, n = 0;
+	    n < 4096 && cf >= cx->reg.tos.fu && cf < r->reg.SP; n++){
+		if(cf == cx->reg.tos.fu)
+			return 1;
+		cf = ((Frame*)cf)->fp;
+		if(cf == nil)
+			return 1;
+	}
+	return cf == cx->reg.tos.fu;
+}
 
 /*
  * Take p off whatever queue it is on.
@@ -2401,6 +2483,16 @@ vmachine(void*)
 		 * path that carries on executing.
 		 */
 		curP->curprog = nil;
+		/*
+		 * A Dis exception leaves xec() by longjmp, so the clear after
+		 * r->xec(r) never runs: without this, onctx stays set on the
+		 * Prog that raised and the next legitimate pick reports a
+		 * double-run that did not happen -- and real overlaps after
+		 * it are masked.  chantest raises constantly, so the counter
+		 * was polluted both ways from the first exception on.
+		 */
+		if(currun() != nil)
+			currun()->onctx = 0;
 		curP->inxec = 0;	/* the quantum did not finish; see xec.c */
 		coherence();
 		safepoint();
@@ -2695,8 +2787,25 @@ vmachine(void*)
 						m->machno);
 			}
 			{	/* MULTICORE INSTRUMENTATION - temporary */
-				int was;
+				int was, okin;
 
+				okin = chainok(r);
+				if(r->chainok0 == 2){
+					r->chainok0 = 1;
+					if(shortran++ < 4)
+						print("vmachine: a prog the"
+							" collector saw short (pid"
+							" %d) is running again,"
+							" chain %s\n", r->pid,
+							okin ? "intact" : "broken");
+				}
+				if(!okin)
+					if(chainin++ < 3)
+						print("vmachine: prog %d entered a"
+							" quantum with a broken chain,"
+							" state %d, ctx %d\n",
+							r->pid, r->state, curP->idx);
+				r->chainwasok = okin;
 				was = r->onctx;
 				if(was != 0 && was != curP->idx + 1){
 					if(twoctx++ < 4)
@@ -2712,6 +2821,50 @@ vmachine(void*)
 			r->xec(r);
 			up->env->fpuostate = fpusave();
 			r->onctx = 0;
+			if(r->chainwasok && !chainok(r))
+				if(chainout++ < 3)
+					print("vmachine: prog %d left a quantum"
+						" with a broken chain, state %d,"
+						" ctx %d\n",
+						r->pid, r->state, curP->idx);
+			{	/* MULTICORE INSTRUMENTATION - temporary */
+				Prog *q;
+				int n;
+
+				/*
+				 * Every other Prog on this context's queue,
+				 * after every quantum: the damage is done to a
+				 * Prog that is not running, by something, and
+				 * this narrows "something" to one quantum and
+				 * names what was running when it happened.
+				 */
+				for(q = curP->runhd, n = 0; q != nil && n < 64;
+				    q = q->link, n++){
+					if(q == r || q->chainok0 == 0)
+						continue;
+					if(chainok(q))
+						continue;
+					q->chainok0 = 0;
+					if(quantumbroke++ < 4)
+						print("vmachine: prog %d broken"
+							" during a quantum of pid"
+							" %d (%s inst %ld), state"
+							" %d, ctx %d\n",
+							q->pid, r->pid,
+							(r->reg.M != H
+							 && r->reg.M != nil
+							 && r->reg.M->m != nil)
+							  ? r->reg.M->m->name : "?",
+							(r->reg.M != H
+							 && r->reg.M != nil
+							 && r->reg.M->m != nil
+							 && r->reg.M->m->prog != nil)
+							  ? (long)(r->reg.PC
+							     - r->reg.M->m->prog)
+							  : -1L,
+							q->state, curP->idx);
+				}
+			}
 
 			if(curP->runhd != nil)
 			if(r == curP->runhd)
@@ -2764,6 +2917,8 @@ disinit(void *a)
 	chandefer = chandeferfn;
 	kproc("fdclose", fdcloseproc, nil, KPDUP);	/* see deferfdclose() */
 	atsafepoint = safepoint;	/* see stoptheworld() */
+	progqueued = progqueue;		/* INSTRUMENTATION - temporary */
+	progchainok = progchainokfn;	/* INSTRUMENTATION - temporary */
 	if(gcwalkms > 0)
 		gcwalkdelay = gcwalkdelayfn;
 
@@ -2978,11 +3133,28 @@ stalldump(void)
 			gcnruns, stwwaits, gcidlepass, gcpartial, stwgaveup,
 			gcidlegaveup);
 	{
-		extern ulong chainwalks, chainshort;
+		extern ulong chainwalks, chainshort, chainagain, chainboth;
+		extern ulong shortstate[8], shortctx, shortfpge, shortfplow, shortnil;
+		extern ulong shortnotowned, shortunknownext;
+		int si;
 
 		print("stall: stacks walked %lud, chain short of tos.fu %lud,"
-			" progs picked while running %d\n",
-			chainwalks, chainshort, twoctx);
+			" progs picked while running %d, quanta entered broken"
+			" %lud, left broken %lud, readied broken %lud;"
+			" second read intact %lud, short again %lud,"
+			" broken during a quantum %lud, short ones that ran"
+			" again %lud\n",
+			chainwalks, chainshort, twoctx, chainin, chainout,
+			addrunbroken, chainagain, chainboth, quantumbroke,
+			shortran);
+		print("stall: short by state:");
+		for(si = 0; si < 8; si++)
+			print(" %lud", shortstate[si]);
+		print("; from a context's reg %lud, FP>=SP %lud, FP below"
+			" tos.fu %lud, chain hit nil %lud, extent owned by"
+			" another prog %lud, owner unknown %lud\n",
+			shortctx, shortfpge, shortfplow, shortnil,
+			shortnotowned, shortunknownext);
 	}
 		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud,"
 			" fddefer %d, interpreters spawned %lud\n",

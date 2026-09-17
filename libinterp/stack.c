@@ -81,6 +81,7 @@ newstack(Prog *p)
 	if(ns == nil)
 		error(exNomem);
 	clearfreedext(ns);	/* INSTRUMENTATION - temporary */
+	extown(ns, p->pid);	/* INSTRUMENTATION - temporary */
 
 	ns->reg.TR = t;
 	ns->reg.SP = nil;
@@ -122,6 +123,8 @@ extend(void)
 		error(exNomem);
 	clearfreedext(ns);	/* INSTRUMENTATION - temporary */
 
+	clearfreedext(ns);	/* INSTRUMENTATION - temporary */
+	extown(ns, currun() != nil ? currun()->pid : -1);
 	ns->reg.TR = t;
 	ns->reg.SP = R.SP;
 	ns->reg.TS = R.TS;
@@ -171,6 +174,7 @@ unextend(Frame *f)
 	R.SP = sx->reg.SP;
 	R.TS = sx->reg.TS;
 	markfreedext(sx, "unextend");
+	extdisown(sx);
 	R.EX = sx->reg.EX;
 	t = sx->reg.TR;
 	if (t->np)
@@ -199,6 +203,7 @@ unframe(void)
 		trackclear(R.EX, (uchar*)R.TS - (uchar*)R.EX);
 		R.TS = sx->reg.TS;
 		markfreedext(sx, "unframe");
+		extdisown(sx);
 		R.EX = sx->reg.EX;
 		free(sx);
 	}

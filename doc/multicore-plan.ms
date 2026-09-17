@@ -5927,3 +5927,78 @@ That is a real second bug and is far too rare to be the whole of this
 one (15 to 20 short chains a boot against one double-run in six).  The
 next question is whether a Prog can sit on two queues, which would
 produce both.
+.NH 2
+What the short chain is not
+.PP
+Eight instruments, each ruling something out.  None of them fired, and
+that is the result: the state the collector sees is one nothing else in
+the kernel ever sees.
+.TS
+center;
+l l.
+instrument	what it said
+_
+chain at addrun()	never broken when a Prog is made runnable
+chain at quantum entry	never broken when a context picks one up
+chain at quantum exit	never broken when a quantum ends
+every queued Prog after each quantum	never broken by another Prog's quantum
+either side of channel delivery	never broken by isendx/irecvx/altdone
+a Prog picked while another runs it	0, once the exception path's clear was fixed
+the collector reading twice	short again, every time: not a torn read
+*cflag=0, the JIT off	still 10 to 22 a boot: not compiled code
+.TE
+.PP
+The
+.CW onctx
+check deserves its own line.  It fired once in six boots and was quoted
+as a rate; it was not one.
+.CW "r->onctx = 0"
+after
+.CW r->xec(r)
+does not run when a Dis exception leaves
+.CW xec()
+by longjmp, so from the first exception on \(em and chantest raises
+constantly \(em the mark stayed set, the next legitimate pick reported a
+double-run that had not happened, and real overlaps after it were
+masked.  Cleared in
+.CW vmachine() 's
+handler, the count is 0.  That is the fifth instrument this session
+that had to be corrected before its zero or its one meant anything.
+.NH 2
+What it is
+.PP
+The Progs are all Pready, all read from their own register file, all at
+.CW "Sh inst 2524"
+\(em the
+.CW fprint
+in
+.CW diagnostic() .
+Their extent is still owned by them (a per-extent owner stamp says so, 0
+of every batch owned by another Prog).  And every one of them runs again
+afterwards with an intact chain: 11 of 11, 14 of 14.
+.PP
+The chain is three frames, and the lowest has
+.CW "fp == H" ,
+0x408 above
+.CW tos.fu ,
+with a valid type and return address and a nil
+.CW mr .
+The range walk from
+.CW tos.fu
+gets seven frames, and the seventh is 16 bytes larger than the frame
+that is really there \(em a stale
+.CW f->t
+in reused stack memory, which is exactly what the range walk cannot
+detect and the chain cannot be fooled by.
+.PP
+So the two readings disagree because the range walk is reading a dead
+call sequence as live frames.  That is the bad frame, and the collector
+stopping there loses every root above it, which is the part that can
+sweep a live object.  The chain is self-consistent in every capture and
+terminates properly; it is what the root set should be built from, and
+.CW fpchain
+was put in for that.  What is still unexplained is the
+.CW H
+on the lowest live frame, and no change to the walk should be made while
+that is open: a frame that claims no caller is either a state the
+interpreter can legitimately be in, or the corruption itself.

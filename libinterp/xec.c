@@ -1724,13 +1724,20 @@ isendx(Channel *c)
 		print("non-empty buffer in isend\n");
 
 	cqdel(&c->recv);
-	if(p->state == Palt)
-		altdone(p->reg.s, p, c, 1);
+	{	/* INSTRUMENTATION - temporary; see chanbrokecheck() */
+		int wasok;
 
-	R.m = &c->mid;
-	R.d = p->ptr;
-	p->ptr = nil;
-	c->mover();
+		wasok = progchainok == nil || progchainok(p);
+		if(p->state == Palt)
+			altdone(p->reg.s, p, c, 1);
+		chanbrokecheck(p, "isendx altdone", wasok);
+
+		R.m = &c->mid;
+		R.d = p->ptr;
+		p->ptr = nil;
+		c->mover();
+		chanbrokecheck(p, "isendx mover", wasok);
+	}
 	addrun(p);
 	R.t = 0;
 }
@@ -1755,8 +1762,14 @@ irecvx(Channel *c)
 		print("non-full buffer in irecv\n");
 
 	cqdel(&c->send);
-	if(p->state == Palt)
-		altdone(p->reg.s, p, c, 0);
+	{	/* INSTRUMENTATION - temporary */
+		int wasok;
+
+		wasok = progchainok == nil || progchainok(p);
+		if(p->state == Palt)
+			altdone(p->reg.s, p, c, 0);
+		chanbrokecheck(p, "irecvx altdone", wasok);
+	}
 
 	if(c->buf != H){
 		cgetb(c, R.d);
@@ -1769,6 +1782,7 @@ irecvx(Channel *c)
 		p->ptr = nil;
 		c->mover();
 	}
+	chanbrokecheck(p, "irecvx delivery", 1);
 	addrun(p);
 	R.t = 0;
 }
@@ -2456,6 +2470,7 @@ destroystack(REG *reg)
 		} while(f != fp);
 		ex = sx->reg.EX;
 		markfreedext(sx, "destroystack");
+		extdisown(sx);
 		free(sx);
 	}
 	destroy(reg->M);

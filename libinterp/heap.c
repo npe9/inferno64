@@ -64,6 +64,28 @@ int	(*gcstopped)(void);
 int	(*chandefer)(void*);	/* set by the kernel; see chanlock() in dis.c */
 void	(*atsafepoint)(void);	/* likewise; see stoptheworld() in dis.c */
 void	(*gcwalkdelay)(void);	/* INSTRUMENTATION - temporary; see rootset() */
+int	(*progqueued)(Prog*, int*);	/* likewise; set by the kernel */
+int	(*progchainok)(Prog*);		/* likewise; see chanbroke() */
+ulong	chanbroke;			/* deliveries that broke a chain */
+
+/*
+ * INSTRUMENTATION - temporary.  A Prog's frame chain is intact when it
+ * is made runnable and when it runs, and broken when the collector
+ * walks it, so the write that breaks it lands on memory the chain does
+ * not yet cover.  These are the three places one Prog writes into
+ * another's stack: a message delivered at p->ptr, and altdone()'s two
+ * writes.  Checked either side of each.
+ */
+void
+chanbrokecheck(Prog *p, char *where, int wasok)
+{
+	if(!wasok || progchainok == nil || progchainok(p))
+		return;
+	if(chanbroke++ < 6)
+		print("%s: delivery to pid %d broke its frame chain"
+			" (state %d, ptr %#p)\n", where, p->pid, p->state,
+			p->ptr);
+}
 static int statictype(Type*);		/* named below; used by destroy() */
 /*
  * Names for what statictype() returns, which is a 1-based index into

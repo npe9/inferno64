@@ -295,6 +295,8 @@ struct Prog
 	int		regsrc;		/* INSTRUMENTATION: who last wrote reg */
 	int		torn;		/* INSTRUMENTATION: teardown began; see rootset() */
 	int		onctx;		/* INSTRUMENTATION: context running it, -1 idle */
+	int		chainwasok;	/* INSTRUMENTATION: chain intact at quantum entry */
+	int		chainok0;	/* INSTRUMENTATION: watch this one's chain */
 	int		spsrc;		/* INSTRUMENTATION: propex's SP path */
 	Prog*		link;		/* Run queue */
 	Channel*		chan;	/* Channel pointer */
@@ -642,6 +644,13 @@ extern	void		chanunlock(void);
 extern	int		(*chandefer)(void*);	/* see heap.c, dis.c */
 extern	void		(*atsafepoint)(void);	/* see stoptheworld() in dis.c */
 extern	void		(*gcwalkdelay)(void);	/* INSTRUMENTATION - temporary */
+extern	int		(*progqueued)(Prog*, int*);	/* INSTRUMENTATION */
+extern	int		(*progchainok)(Prog*);		/* INSTRUMENTATION */
+extern	void		chanbrokecheck(Prog*, char*, int);
+extern	ulong		chanbroke;
+extern	void		extown(void*, int);
+extern	void		extdisown(void*);
+extern	int		extowner(void*);
 extern	void		markfreedext(void*, char*);
 extern	void		clearfreedext(void*);
 extern	Freedext*	freedext(void*);
