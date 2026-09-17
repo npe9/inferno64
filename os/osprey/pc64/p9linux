@@ -158,7 +158,25 @@ port
 	int openmode(ulong a)			{ USED(a); panic("microkernel: openmode"); return 0; }
 	Mount *newmount(Chan *a, int b, char *c){ USED(a,b,c); panic("microkernel: newmount"); return nil; }
 	void mountfree(Mount *a)		{ USED(a); panic("microkernel: mountfree"); }
-	int donotify(Ureg *a)			{ USED(a); panic("microkernel: donotify"); return 0; }
+	/*
+	 * A note, on a configuration that has nowhere to deliver one: this
+	 * is a buddy and its legacy program, and a Linux process's only
+	 * signal is the SIGSEGV the fault path delivers itself.  So a note
+	 * here is a fault in something that should not have faulted, and
+	 * the machine stops.  Say which note and in which process before it
+	 * does: an unconditional panic("donotify") says neither, and what
+	 * that costs is a reproduction cycle per guess.
+	 */
+	int donotify(Ureg *a)
+	{
+		extern uintptr uregpc(void*);
+
+		panic("microkernel: donotify in %s (pid %lud) at user pc %#p, fs base %#p: %s",
+			up->text != nil ? up->text : "a task with no name", up->pid, (void*)uregpc(a),
+			(void*)up->linuxfsbase,
+			up->nnote > 0 ? up->note[up->nnote-1]->msg : "a note with no message");
+		return 0;
+	}
 
 	/*
 	 * The microkernel's system-call interface: two calls, no more.
@@ -247,6 +265,14 @@ port
 		for(i = 0; i < (int)sizeof kn - 1 && name[i] != 0; i++)
 			kn[i] = name[i];
 		kn[i] = 0;
+		/*
+		 * "code": not a named segment of the container's but a region
+		 * the caller may write a program into and then run - what a
+		 * library operating system needs when it loads a program
+		 * itself.  The address-space service keeps its one call.
+		 */
+		if(strcmp(kn, "code") == 0)
+			return ospreysegcode(va, len);
 		if(len == 0)
 			len = ospreyslicesize();	/* the whole slice */
 		{

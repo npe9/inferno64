@@ -485,7 +485,7 @@ userinit(void)
 	kstrdup(&p->text, "interp");
 	p->fpstate = FPINIT;
 	p->sched.pc = (uintptr)init0entry;
-	p->sched.sp = (uintptr)p->kstack+KSTACK-16;
+	p->sched.sp = ((uintptr)p->kstack+KSTACK-16) & ~(uintptr)15;	/* SP must be 16-aligned (SCTLR_EL1.SA); malloc gives 8 */
 	ready(p);
 }
 
@@ -517,7 +517,7 @@ void
 kprocchild(Proc *p, void (*func)(void*), void *arg)
 {
 	p->sched.pc = (uintptr)linkproc;
-	p->sched.sp = (uintptr)p->kstack+KSTACK-16;
+	p->sched.sp = ((uintptr)p->kstack+KSTACK-16) & ~(uintptr)15;	/* SP must be 16-aligned (SCTLR_EL1.SA); malloc gives 8 */
 	p->kpfun = func;
 	p->kparg = arg;
 }

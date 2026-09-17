@@ -56,6 +56,7 @@ int		ospreyexit(Ospreyproc*);
 void		ospreymicroboot(void);
 int		ospreyuserprep(void);
 int		ospreyframebuffer(void);
+int		ospreypointerexpose(void);
 void		ospreykbdenable(Ospreyproc*, int);
 void		ospreymouseenable(Ospreyproc*, int);
 void		ospreyservicecaller(void);

@@ -24308,3 +24308,885 @@ arm asserts all four lines.
 None of this was reaching a failure on QEMU and it would have on
 hardware.  An Ampere Altra's memory map is not one clean run, and
 claiming its holes is a fault rather than a survivable overwrite.
+Raspberry Pi 3B setup recheck, 13 September 2026
+.PP
+The physical-board handoff was audited before preparing a new Pi 3B.  A clean
+build from
+.CW os/inferno/raspi3b
+with
+.CW "mk INIT=raspi3binit boot"
+produced both the AArch64 ELF
+.CW os/inferno/raspi3b/iraspi3b
+and the firmware-loadable flat image
+.CW os/inferno/raspi3b/kernel8.img .
+The mkfile's boot recipe incorrectly used make-style silent-command prefixes,
+so Plan 9 mk tried to execute a program named
+.CW @echo
+after successfully making the image; the prefixes are removed.  The hardware
+README now sets ROOT at the tree root before changing directory, rather than
+leaving a fresh builder vulnerable to pointing ROOT at the board directory.
+.PP
+Both newly built artifacts were booted independently with QEMU's raspi3b
+machine.  The ELF path and the firmware-equivalent raw-loader path (placing
+kernel8.img at 0x80000) each reported MBOX-OK, DRAW-OK, USB-OK and
+RASPI3B-SH-OK.  This verifies the current build and flat-image layout; it is
+not a physical-board boot, which remains to be captured from the Pi's PL011
+serial console.
+.PP
+The default
+.CW os/inferno/init/raspi3binit.b
+also no longer runs its historical SD write/multiblock test on every boot.
+That test overwrote raw sectors 3 and 8 through 11: outside the first partition
+on the QEMU test images, but not a safe assumption for somebody's firmware
+card.  Normal init now opens
+.CW /dev/sdM0/data
+read-only, reads sector zero and reports SD-READ-OK.  The earlier QEMU write and
+multiblock results remain valid historical driver tests, not startup policy.
+The raw-image boot was repeated with a 64MB SD image whose sector zero began
+with RPI3: init printed 52504933 and SD-READ-OK, reached RASPI3B-SH-OK, and the
+image's SHA-256 remained
+.CW 6e66723adefbfdf555c1d32f0ad95ceebb83d02b5fb586c4cbb21c57b9656d1c
+before and after the boot.
+.PP
+The first physical Pi 3B boot printed exactly
+.CW "Inferno/arm64 raspi3b"
+and no later line.  That places execution in
+.CW os/inferno/raspi3b/main.c
+between its direct early serial banner and xinit's first report; the first
+operation there was uartconsole(), which disabled and re-enabled UART0 through
+.CW os/inferno/raspi3b/uartvirtarm64.c .
+That file was still the QEMU-virt copy: it claimed a 24MHz clock, never
+programmed IBRD/FBRD, and wrote DR followed by an arbitrary delay instead of
+obeying PL011's TXFF flow control.  The firmware-inherited state sufficed for
+the first banner but was not a kernel-owned UART setup.  The Pi driver now
+programs its real 48MHz PL011 for 115200 baud (IBRD 26, FBRD 3), clears stale
+interrupts, and waits with a bounded poll for FIFO space before every byte.
+main prints PL011-OK immediately after that transition, making the hardware
+boundary observable.  This repair is QEMU-verified below; a second physical
+boot is still required to establish how far the board proceeds.
+.PP
+The second physical boot printed PL011-OK and stopped before xinit's first
+line.  This exposed an ordering bug that QEMU's memory model concealed:
+.CW os/inferno/raspi3b/main.c
+called xinit() before mmuinit(), and xinit() immediately ilocks the global
+xlists allocator through _tas()'s LDXR/STXR loop.  On the real Cortex-A53,
+exclusive locking is not sound until RAM has Normal-memory translation
+attributes; with the MMU off the architecture does not promise the exclusive
+store will succeed.  QEMU accepted it and let every emulated boot pass.
+mmuinit() uses statically reserved page tables and needs no allocator or lock,
+so it now establishes the identity mapping before xinit() takes the first
+kernel lock.  An MMU-OK serial marker makes that hardware transition explicit.
+This is the required hardware ordering, not an emulator workaround.
+.PP
+With that ordering on the physical board, boot passed MMU-OK, the complete
+allocator and pool setup, BCM I2C/SPI/GPIO probes, a real firmware mailbox
+reply (revision 1779362517 and 0x3b400000 bytes ARM RAM), and procinit.  It
+then stopped while printing the version line, after "Inferno Fourth".  This
+is the first boot to run enough cached code on silicon to expose the remaining
+hardware debt already named in
+.CW os/inferno/raspi3b/l.s :
+SCTLR.C was enabled while the Cortex-A53's reset-state data-cache contents were
+architecturally UNKNOWN.  QEMU models no cache and cannot reproduce it.
+.PP
+The gap is now closed rather than worked around.  cacheinit() in
+.CW os/inferno/raspi3b/cachebcm.c
+walks every data or unified cache level reported by CLIDR_EL1, selects it with
+CSSELR_EL1, derives line size, sets and ways from CCSIDR_EL1, and issues DC ISW
+for every set/way before mmuenable() sets SCTLR.C.  The system-register and DC
+helpers are in
+.CW os/inferno/raspi3b/l.s ;
+the algorithm uses the architectural geometry rather than hard-coding the
+Pi's L1/L2 sizes.  QEMU boots the rebuilt image through MMU-OK to
+RASPI3B-SH-OK, proving the instructions and loop do not regress the emulated
+board; only the next physical boot can verify the cache behavior silicon adds.
+.PP
+The cache-initialized physical boot stopped at the identical character, which
+falsifies cache state as the cause of this particular stop (the architectural
+cache initialization remains required).  The cutoff itself supplies the
+answer: "Inferno Fourth" is sixteen bytes including its leading newline,
+exactly one PL011 transmit FIFO.  chandevreset() had switched console output
+from early polled serialputs() to devuart's queued path.  The Pi copy of the
+virt PL011 driver filled the hardware FIFO and returned without enabling TX
+interrupts; it also registered QEMU virt's GIC IRQ 33 rather than BCM2837 GPU
+IRQ 57, while the board trap code inspected pending bank 1 only.  QEMU's
+PL011 drained quickly enough that kick() never encountered a full FIFO.
+.PP
+The hardware path is fixed end to end in
+.CW os/inferno/raspi3b/uartvirtarm64.c
+and
+.CW os/inferno/raspi3b/trap.c :
+kick arms TXIM while staged or queued bytes remain, the interrupt handler
+acknowledges MIS and calls uartkick() to refill the FIFO, UART0 registers IRQ
+57, and trap() dispatches both BCM pending banks (IRQs 0 through 63).  MMIO
+register accesses are volatile.  The rebuilt kernel again reaches
+RASPI3B-SH-OK under QEMU; the physical boot is the test of real FIFO backpressure.
+.PP
+That physical test drained the formerly stranded "Inferno Fourth" first and
+then printed the complete fresh boot through the version, configuration,
+firmware MAC, Initial Dis, raspi3b init, RASPI3B-OK and DRAW-OK.  Thus the BCM
+UART transmit interrupt path is verified on silicon.  The next stop occurs as
+the init program enters its USB check after DRAW-OK.  The DWC2 initializer had
+four infinite hardware waits (AHB idle, core soft reset, RX FIFO flush and TX
+FIFO flush), any one of which made a failed power/reset transition
+indistinguishable from a dead kernel.
+.PP
+.CW os/inferno/raspi3b/usbdwc.c
+now bounds each wait at 100ms, reports the relevant GRSTCTL/GUSBCFG/GAHBCFG
+state on timeout and raises a device error so a missing USB controller cannot
+hold the entire boot forever.  It also emits DWC-PROBE, DWC-POWER, DWC-AHBIDLE,
+DWC-CORE-RESET and DWC-FIFO milestones.  QEMU reports every milestone OK,
+enumerates its root hub, and reaches RASPI3B-SH-OK.  The next physical run will
+identify the exact real-controller transition rather than merely stopping
+after DRAW-OK.
+.PP
+The first run with DWC diagnostics reached the LAN9514 itself: hub and
+ethernet descriptors were read, the SMSC ID_REV was 0xec000002, and both
+512-byte bulk endpoints opened.  It then stopped in the first SMSC vendor
+control write (the LAN9514 lite-reset request).  chanwait() had the same
+unbounded completion wait as the early DWC reset path, so a missing channel
+completion looked like a whole-machine hang.  It now has a 20-second bound and
+returns a transaction error with the endpoint/channel printed.  QEMU's USB
+root hub still enumerates and reaches the shell after this change; the next
+Pi boot will report whether the failing operation is a real DWC channel,
+LAN9514 reset timing, or a cache/DMA visibility problem.
+.PP
+.B "The console moves to the mini UART, 14 September 2026"
+.PP
+Every later physical boot reached the shell prompt and none of them took
+a typed character.  The last register captures from the Pi, taken at the
+prompt after a key was pressed, read PL011 FR 0x91: receive FIFO empty,
+no receive interrupt pending, and the handler never entered.  The byte was
+not reaching the PL011 at all, so no interrupt-routing change could have
+made it arrive, and the several attempts that followed (polling from the
+idle loop, a polling kernel process, reprogramming the UART at the console
+handoff, arming its receive interrupt earlier, pinning init_uart_clock) all
+changed code downstream of an empty FIFO.  Some of those boots also ran a
+stale kernel8.img, which invalidated them.  The attempts are preserved,
+uncommitted, at
+.CW refs/wip/codex-pl011-rx-2026-09-14
+and are not part of the tree.
+.PP
+One of those boots still recorded something true about a different
+fault.  The polling process printed its start marker and then never the
+register line it was to print after its first 10ms
+.CW tsleep ,
+so on silicon a timed sleep never returned: the scheduler tick was not
+waking sleepers.  QEMU ticks normally.  Two hardware-only gaps fit it and
+are now closed.  The Pi's armstub8 drops to EL2 without setting
+CNTHCTL_EL2, whose EL1PCTEN and EL1PCEN bits reset UNKNOWN; Linux and
+Circle both set them on the same EL2-to-EL1 drop, and l.s now does too
+(with CNTVOFF_EL2 zeroed), encodings checked against GNU as.  And the
+BCM2836 GPU interrupt route register at 0x4000000c, which a Pi capture had
+shown non-zero, is now written to route GPU IRQ and FIQ to core 0, the only
+core running.
+.PP
+The console is now the AUX mini UART
+.CW os/inferno/raspi3b/uartmini.c ), (
+ported from 9front's
+.CW sys/src/9/bcm/uartmini.c .
+That is the Pi 3B's own default: with
+.CW enable_uart=1
+and no uart overlay the mini UART owns GPIO 14/15 and the PL011 stays on
+Bluetooth, which is where a later Bluetooth driver needs it.  The plan
+left uncommitted for this work had it backwards:
+.CW miniuart-bt ,
+like
+.CW disable-bt ,
+moves the PL011
+.I onto
+GPIO 14/15 (the firmware's own
+.CW overlays/README
+says so), and its register offsets were relative to 0x3f215040, not to the
+AUX block.  The PL011 remains compiled in as eia1 with its own interrupt.
+.PP
+What the driver adds to the donor: AUX_ENABLES is the first write, since
+until it is set every mini UART register reads zero; LCR is 3 for eight
+data bits; receive interrupts set IER bits 3:2 as well as bit 0, per the
+BCM2835 erratum; GPIO 14/15 are put in alt5 with the pulls the donor uses
+(a new
+.CW gpiopull()
+in
+.CW gpiobcm.c ,
+now volatile throughout); and a divisor the firmware has already
+programmed is kept if it gives 115200 within 2%, since the firmware knows
+its core clock and the driver only assumes 250MHz.  Receive is interrupt
+driven through BCM IRQ 29 and also polled from clockpoll(), with
+interrupts masked around each status-and-read.  Transmit paces itself on
+LSR with a bound and uses the transmit interrupt only when that bound
+runs out, because devuart calls kick() under ilock and the kernel prints
+most of its boot before init0 first enables interrupts.
+.PP
+Each boot now answers its own questions.  The first line is
+.CW "Inferno/arm64 raspi3b build N" ,
+matching the later
+.CW "conf raspi3b (N)" ,
+so a stale card image is visible.  Before the MMU is on, the kernel polls
+the mini UART for three seconds and prints MINI-RX-EARLY-OK with the key
+typed, or MINI-RX-EARLY-NONE with LSR, CNTL and the divisor: a key seen
+there and not at the shell is the kernel's fault, not the wiring's.  The
+console setup prints the AUX register state and GPFSEL1.  After chandevinit
+with interrupts on, TICK-OK or TICK-FAIL counts ticks across a 250ms busy
+wait and on failure prints DAIF, CNTP_CTL, the deadline against the counter
+and the BCM2836 route and pending registers; a kernel process then reports
+SLEEP-OK when a 100ms tsleep returns.  At the shell,
+.CW "cat '#t/eia0status'"
+gives interrupt and polled receive counts.
+.PP
+Verified under QEMU 10.1.3 with the mini UART as the only console
+.CW "-serial null -serial stdio" ): (
+through both the ELF and the firmware-equivalent raw kernel8.img load, the
+early probe read an injected key (MINI-RX-EARLY-OK 0x6b), GPFSEL1 read
+0x12000 (pins 14 and 15 in alt5), TICK-OK, SLEEP-OK, and
+.CW "echo MINI_UART_OK"
+typed at the shell echoed back; eia0status showed every received byte
+arriving by interrupt (rxintr 66, rxpoll 0).  What QEMU cannot show: its
+bcm2835_aux model ignores LCR, MCR, CNTL and BAUD (they read back zero, as
+the divisor line shows) and pull-up registers, so baud rate, framing and
+pulls are only testable on the Pi, and whether the tick fixes are the
+right ones is equally a physical result.  None of this has run on the Pi
+yet.
+.PP
+.B "Back to the PL011, and one image for QEMU and the board"
+.PP
+The mini UART image (build 1789434335, config.txt without disable-bt)
+printed nothing at all on the Pi, not even the first banner, which is
+written before the kernel touches the UART.  That is unexplained, and it
+adds new unknowns exactly where the PL011 transmit path is proven, so the
+console is the PL011 again and config.txt has disable-bt back.
+.CW uartmini.c
+stays in the tree, unlinked: its enable takes GPIO 14/15, so it must not
+share a boot with the PL011 console.
+.PP
+The history also narrows the PL011 fault.  Commit
+.CW 3b7706ac
+drained console output through the PL011 transmit interrupt, GPU IRQ 57,
+on silicon, so interrupt delivery from the PL011 works there; what never
+happens is a byte arriving in its receive FIFO.  A polled probe early in
+boot had seen input.  The image now bisects that in one boot:
+.CW uartrxprobe()
+runs at nine stages (firmware state, after the UART setup, the MMU, the
+clock, the I2C/SPI/GPIO probes, the mailbox, screen and device tree, device
+reset, and init0), asks for a key, polls the FIFO for four seconds with
+interrupts masked, and prints the character or none with CR, LCRH,
+IBRD/FBRD, IMSC, FR, RIS, GPFSEL1, GPFSEL3 and the live levels of GPIO 14,
+15, 32 and 33 \(em 32/33 being the Bluetooth UART pins, which can also
+carry PL011 RX.  The first stage reporting none locates the loss.
+.PP
+Until now this port was tested under QEMU with
+.CW "-kernel iraspi3b" ,
+which QEMU loads as an ELF at EL3 with all four cores running \(em a
+start no Pi ever makes, and the reason l.s parks cores itself.  QEMU's
+raspi3b loader treats a raw arm64 image as a Linux kernel instead: it
+loads
+.CW kernel8.img
+at 0x80000, enters core 0 at non-secure EL2 (the monitor reports PSTATE
+EL2h) with the other cores in a spin table at 0xd8, and passes the device
+tree in x0, which is what the Pi firmware and armstub8 do.  Testing is now
+done that way, with the firmware's own
+.CW bcm2710-rpi-3-b.dtb
+from the card, so the emulator runs the file that goes on the card through
+the entry path the card uses;
+.CW os/inferno/raspi3b/qemu.sh
+does it.
+.PP
+The board also shed the rest of its QEMU virt inheritance, each piece a
+hardware defect QEMU hid.
+.CW archvirtarm64.c ,
+.CW uartvirtarm64.c
+and
+.CW randomvirtarm64.c
+are now
+.CW archbcm.c ,
+.CW uartpl011.c
+and
+.CW randombcm.c .
+archreboot() and archshutdown() made PSCI calls through HVC, and a Pi's
+EL2 has no PSCI handler; they now use the BCM2835 power-manager watchdog
+(RSTC full reset with a short WDOG count, and partition 63 in RSTS for
+halt), the mechanism Linux uses on the Pi, and
+.CW "echo reboot > /dev/sysctl"
+under QEMU resets the machine and boots again.  microdelay() spun
+cpuhz/1000 empty iterations per millisecond, a count that took about as long as
+asked under QEMU and a small fraction of it on a real Cortex-A53; it is
+now timed on the generic timer's counter like delay().
+.PP
+Verified under QEMU 10.1.3 booting kernel8.img with the card's DTB: all
+nine RXPROBE stages received the injected key, TICK-OK, SLEEP-OK, a typed
+.CW "echo PL011_RX_OK"
+echoed at the shell, and the watchdog reboot.  QEMU keeps every pin at
+level 0 and GPFSEL at 0 regardless, so the pin columns mean something
+only on the Pi.  Not yet run on the Pi.
+.PP
+.B "The silent boots were a lock, not the UARTs"
+.PP
+Build 1789464598 on the PL011 printed nothing either, and so the common
+factor of both silent boots was not the mini UART.  It was the line added
+to name the build: an
+.CW snprint
+of
+.CW kerndate
+before
+.CW mmuinit() .
+The first use of a format verb runs
+.CW fmtinstall() ,
+which takes
+.CW lock(&fmtl) ,
+and an LDXR/STXR lock before the MMU has made RAM Normal memory hangs the
+Pi's Cortex-A53 \(em the failure found earlier with
+.CW xinit()
+\(em while QEMU lets it through.  The banner is now written with
+.CW serialputdec() ,
+which uses neither fmt nor a lock.  The mini UART result above is void:
+that image hung before it ever wrote to the UART, and says nothing about
+the mini UART.
+.PP
+So that QEMU catches this class of bug rather than only the board,
+.CW _tas
+in l.s now reads SCTLR_EL1 and, with the MMU off, branches to
+.CW tasbeforemmu() ,
+which prints
+.CW "PANIC: spinlock taken before mmuinit()"
+and stops.  Falsified: with the
+.CW snprint
+put back, the same kernel8.img under QEMU prints the banner and that
+panic line and goes no further; without it, it boots to the shell, all
+nine RXPROBE stages answer, TICK-OK, SLEEP-OK, and typed input echoes.
+.PP
+.B "Receive reaches init0 on silicon; interrupts are the fault"
+.PP
+Build 1789465024 on the Pi answered all nine RXPROBE stages with the
+key the harness sent through the serial adapter, from the firmware's
+state through device reset and init0, with the PL011 at CR 0x301, LCRH
+0x70, IBRD 26/FBRD 3, the receive interrupt armed from device reset on,
+GPFSEL1 0x24000 (GPIO 14 and 15 in alt0) and GPFSEL3 0 (GPIO 32 and 33
+inputs), all four pins idle high.  So bytes reach the receive FIFO all the
+way to init0, and the pins, the baud rate and the firmware routing are
+correct.  After init0 enabled interrupts the board printed nothing more:
+not TICK-OK, not any queued output, including the fault report a trap
+would give.  Console output after chandevreset drains only on the
+PL011 transmit interrupt, so silence there means interrupts are not being
+taken, or the first one never comes back.
+.PP
+One hardware-only cause is in
+.CW vectorbuild() :
+it writes the exception vector instructions into
+.CW rawvectab
+after the MMU and caches are on, and set VBAR_EL1 without cleaning those
+data-cache lines or invalidating the instruction cache.  The Cortex-A53
+fetches through its own L1 instruction cache from memory that may still
+hold what was there before, so the first exception can execute stale
+bytes, fault into the same stale table, and loop without a word; QEMU
+models no cache.  vectorbuild now calls
+.CW cacheflush()
+over the table and
+.CW cacheiinv()
+before
+.CW vectorinit() .
+The next boot also prints IRQCHECK straight to the data register half a
+second after interrupts are enabled: interrupt entries, ticks and PL011
+interrupts in that time, CurrentEL, DAIF, VBAR_EL1, CNTP_CTL, whether the
+timer deadline is still ahead, the BCM2836 timer route, pending and GPU
+route registers, and the BCM2835 pending and enable registers.  Under
+QEMU with the same kernel8.img it reads 40 interrupts and 40 ticks, EL 1,
+DAIF 0x340 (IRQ unmasked), and the board goes on to the shell.
+.PP
+.B "Interrupts work on silicon; the console mask did not"
+.PP
+With the caches flushed over the vectors, build 1789465363 on the Pi
+printed
+.CW "IRQCHECK 500ms: irqs 50 ticks 50"
+\(em the 100Hz tick exactly \(em at EL 1 with DAIF 0x340, VBAR at the built
+table, CNTP_CTL enabled with its deadline ahead, the BCM2836 timer route
+0x02 and GPU route 0; IRQ 57 enabled in the bank-2 enable register.  So
+the missing cache maintenance in vectorbuild() was what had silenced every
+interrupt on the board.  It still showed nothing queued: PL011 interrupts
+0 in that window, IRQ 57 not pending, and IMSC 0x010, receive only.
+.CW uartconsolesetup()
+wrote IMSC = RX after chandevreset had queued console output and
+.CW kick()
+had armed the transmit interrupt to drain it, clearing that bit; qio kicks
+a queue only when it goes from empty to non-empty, so nothing armed it
+again and every later line, including TICK-OK and the shell, waited
+forever.  QEMU's PL011 empties its FIFO instantly, so kick() never left
+output behind there.  The setup now ORs the receive bit into the mask and
+kicks the queue once.
+.PP
+Build 1789465747 on the Pi drained the output queued at device reset
+once init0 enabled interrupts (the banner, conf and DWC lines appeared)
+and again showed 50 ticks in IRQCHECK, but the TICK-OK line queued right
+after it never appeared, IMSC read 0x010 at the next probe and no PL011
+interrupt came in that half second.  The PL011 raises its transmit
+interrupt as the FIFO level falls through the trigger, which QEMU, draining
+instantly, does not reproduce, and output left to it stalled.  kick() now
+sends everything staged or queued itself, waiting with a bound on TXFF
+for room, as the last image that reached the shell on this Pi did; TXIM
+stays armed only if the wait runs out.
+.PP
+.B "Output flows on silicon; timed sleeps do not return"
+.PP
+Build 1789466004, with kick() sending synchronously, reached the shell
+prompt on the Pi: IRQCHECK 50 interrupts and 50 ticks, TICK-OK 25 ticks in
+250ms, then init, RASPI3B-OK, DRAW-OK, USB-OK, RASPI3B-SH-OK and the
+prompt.  Two things still failed there and passed under QEMU.  A typed
+.CW "echo PL011_RX_OK"
+got no response, and no timed sleep ever returned: SLEEP-OK (a kproc's
+100ms tsleep) never printed, and neither did DWC-FIFO-OK, which follows the
+DWC driver's 25ms tsleep after DWC-CORE-RESET-OK \(em the same place
+Codex's polling process stopped.  The tick itself runs.  Giving QEMU the
+Pi's 19.2MHz CNTFRQ
+.CW -global "" ( cortex-a53-arm-cpu.cntfrq=19200000 )
+did not reproduce it.
+.PP
+The next image makes init0 do the 100ms sleep itself, and
+.CW sleepwatch() ,
+called from clockintr after timercheck(), writes a SLEEPSTUCK line
+straight to the UART one and five seconds past the deadline if it is still
+pending: the sleeper's Proc state, whether its timer is still queued,
+whether its deadline is still ahead, whether it still has a Rendez, and
+the process, pc and SPSR the tick interrupted.  Falsified under QEMU with
+a 7-second sleep watched against the 100ms deadline: SLEEPSTUCK state 08
+(Wakeme) queued 1 ahead 1, up nil at the idle loop's pc with SPSR 0x345,
+then SLEEP-OK after 589 ticks.  With timercheck() disabled QEMU stops
+after DWC-CORE-RESET-OK, the Pi's own stopping point.
+.PP
+Build 1789466616 on the Pi: SLEEPTEST's 100ms tsleep in init0 returned
+(SLEEP-OK after 11 ticks), and DWC-FIFO-OK then appeared as well.  Timers
+and wakeup work on silicon; the sleeps that never returned were in other
+processes, which got the CPU only once init0 itself blocked.  The shell
+prompt was reached again and typed input again got no answer.  The next
+image adds a heartbeat from clockintr every five seconds, written straight
+to the UART: ticks, PL011 interrupts, received bytes, idle-loop entries,
+and the interrupted pc, SPSR and process.  Under QEMU at the prompt it
+reads ticks 500, 17 interrupts for 17 received bytes, 440 idle entries,
+interrupted in the idle loop with no process.
+.PP
+Build 1789466839 on the Pi returned from SLEEPTEST again and reached the
+prompt, but printed no heartbeat at all in 45 seconds at the shell, with
+input typed twice: after the prompt the clock interrupt stopped being
+taken.  Something holds IRQs masked.  splhi() masks only IRQ, so the next
+image adds a FIQ watchdog: the BCM2835 system timer's compare channel 1
+(0 and 2 belong to the VideoCore) is routed to FIQ at 1Hz, F is unmasked
+in init0, and when the tick has not advanced since the last FIQ the stuck
+pc, link register, sp, SPSR,
+.CW m->splpc
+(the caller of the last splhi) and the process go straight to the UART.
+Falsified under QEMU with
+.CW "splhi(); for(;;);"
+after arming: "FIQWATCH ticks stalled at 73 pc 000f6f94 ... spsr 385 splpc
+000f6f94 up interp".
+.PP
+Build 1789467529 on the Pi armed the FIQ watchdog, which duly reported the
+init0 RXPROBE's own four-second IRQ-masked poll (pc and splpc in
+uartrxprobe), and then at the shell prompt reported nothing, with no
+heartbeat either: FIQ as well as IRQ had stopped.  F had been unmasked
+only on the CPU, in init0, so any exception taken before then carried a
+saved SPSR with F set, and returning through it after a context switch
+masks FIQ again.  trap() now clears F in the saved SPSR on every exception
+once the watchdog is armed, and the watchdog arms after the init0 probe.
+Under QEMU the heartbeat at the prompt now shows the FIQ count climbing and
+the interrupted SPSR 0x305.
+.PP
+Build 1789467772 on the Pi armed the watchdog after the init0 probe and
+then, at the prompt, reported nothing again.  Exception entry masks FIQ as
+well as IRQ, so a handler that never returns would silence the tick, the
+heartbeat and the watchdog together.  trap() now unmasks FIQ at the start
+of IRQ handling once the watchdog is armed, and the report adds ESR and the
+first ten kernel-text addresses on the stack above the stuck frame.
+Falsified under QEMU with an endless loop in clockintr after 400 ticks:
+the report named clockintr, with trap, vectrap, idle, idlehands, runproc
+and sched on the stack.
+.PP
+Build 1789468146 on the Pi hung at the prompt with the watchdog able to
+preempt IRQ handlers, and still reported nothing; no heartbeat has ever
+printed on the board, including between init0 and the prompt, where QEMU
+prints them.  Two blind spots remained.  A synchronous fault reports through
+iprint(), which also draws on the framebuffer console and can wait on locks,
+with FIQ masked by the exception entry: trap() now unmasks FIQ for every
+exception type except FIQ itself, and writes TRAP type, ESR, pc, lr, FAR
+and sp straight to the UART before iprint (falsified under QEMU by reading
+0x7fff00000000 after arming: "TRAP type 0 esr 96000004 pc 000f70b4").  And
+anything EL1 does that traps to EL2 hangs silently, because armstub8 installs
+no EL2 vectors: the EL2 drop now also does the rest of Linux's el2_setup,
+CPTR_EL2 = 0x33ff (no FP/SIMD or trace traps), MDCR_EL2.HPMN = PMCR_EL0.N
+with no PMU or debug traps, and VPIDR_EL2/VMPIDR_EL2 from MIDR/MPIDR,
+encodings checked against GNU as.  The heartbeat runs every second for the
+first two minutes.
+.PP
+Build 1789469751, with the fuller EL2 setup, printed the first heartbeat
+seen on the board, at tick 100 during init0, and no other: none at the
+prompt in 45 seconds, and no watchdog report, while process-level output
+carried on to the prompt.  Both the generic-timer IRQ and the system-timer
+FIQ reach the core through the BCM2836 local controller, and both stopped
+somewhere between the init0 probe (about tick 140) and tick 200.  The
+next image prints a TK marker straight to the UART before and after the
+init0 probe, after arming the watchdog, and before disinit: each busy-waits
+50ms and reports the ticks and FIQs that arrived, DAIF, CNTP_CTL, whether
+the deadline is ahead, the local timer route, pending and GPU route
+registers, and the BCM2835 FIQ control.  Under QEMU every marker sees 4
+ticks in its 50ms.
+.PP
+Build 1789469929 on the Pi: every TK marker saw 5 ticks in its 50ms, the
+last at tick 167 just before disinit, and no heartbeat followed.  The
+probe, the watchdog arming and the mailbox MAC query are cleared; delivery
+stops inside the Dis init program.  raspi3binit now prints STEP before its
+SD, draw and USB checks, before loading the shell and before starting it,
+each followed by a 100ms sleep and a "slept" line: a sleep needs the tick,
+so the last "slept" line marks the step that stopped it.  QEMU prints them
+all.
+.PP
+.B "The shell works on silicon; a timing-dependent death remains"
+.PP
+Build 1789470271 (raspi3binit's STEP lines each followed by a 100ms sleep)
+booted the Pi to a working shell: every step slept and returned, the
+heartbeat ran for over a minute at the prompt, and typed input was answered
+\(em
+.CW "echo PL011_RX_OK"
+printed PL011_RX_OK and
+.CW ls
+listed the root.  Input shorter than the PL011's 8-byte receive trigger
+arrives through the idle loop's clockpoll(); longer lines raise IRQ 57 (two
+interrupts for 16 bytes of a 21-byte line).
+.CW "echo reboot > /dev/sysctl"
+at that shell reset the board through the PM watchdog, and the second boot
+of the same image worked the same way.  The only difference from build
+1789469929, which lost every interrupt shortly after disinit, is those
+sleeps, so the death is real and depends on timing.  Ruled out on the way:
+SP alignment (every SP adjustment in the linked kernel is a multiple of 16),
+the DWC init racing init (it finishes before init0 ends), HVC/SMC (none in
+the kernel).
+.PP
+The failure silences everything that needs the CPU to take an exception, so
+the next instrument survives it.
+.CW crumbentry
+in l.s runs first on every exception, before the stack is touched, and
+writes ESR, ELR, FAR, SPSR, SP and a count to 0x20000000, RAM above the
+256MB the kernel uses; clockintr adds the tick and interrupted pc.  The PM
+watchdog is armed after init0 and petted each second, but only if WDOG is
+seen counting down \(em QEMU's bcm2835_powermgt has no countdown and resets
+the moment RSTC is written, so there it stays unarmed.  The next boot prints
+CRUMB before anything else.  Falsified under QEMU: a deliberate recursive
+fault from a bad SP, then a monitor system_reset, and the next boot printed
+"CRUMB boots 2 last exception: count 6867485 type 0 esr 96000050 ... sp
+00000000623d6ad0".  The STEP sleeps are removed again so the failure can be
+caught.
+.PP
+Build 1789471048 on the Pi reproduced the failure without the STEP sleeps:
+the prompt appeared, a typed echo got no answer, and the last heartbeat
+was tick 100.  But its watchdog had stayed unarmed \(em "WATCHDOG not
+counting (wdog 655360 then 655360)": the SoC's WDOG does not count down
+until RSTC is armed, so the countdown test could not tell it from QEMU, and
+a power cycle then clears the crumb RAM (the cold boot read the power-up
+fill, boots 0x55555556).  wdarm() now leaves a marker in the crumb RAM,
+arms RSTC, and clears the marker once it has survived; a boot that finds
+the marker set was reset by arming itself (QEMU) and leaves the watchdog
+alone.  Under QEMU: the first boot resets at arming, the second prints
+"WATCHDOG reset the board when armed: left unarmed" and the first boot's
+crumb, and reaches the shell.
+.PP
+Build 1789508388 armed the watchdog on the Pi ("WATCHDOG armed, 10s") and
+then died and was reset by it ten times running, each boot printing the
+previous boot's crumb \(em RAM at 0x20000000 survives the watchdog reset
+(boots 1431655766, 67, 68, ... increment).  Every death has the same
+shape: 173 to 177 exceptions in the whole boot, the last tick at 175, and
+the last exception an IRQ that was not the tick (the tick crumb did not
+advance), after which no exception of any kind was taken again, including
+the watchdog FIQ.  The interrupted pc varies (memmove, checktracked in the
+draw code, and most often 0xf58dc, the instruction after
+.CW "MSR DAIFClr"
+in splx): an interrupt left pending while IRQs were masked, delivered the
+moment they were unmasked.  So one peripheral IRQ, taken during the SD,
+draw and USB checks, stops all delivery.  The next image records the IRQ
+number and a handler-running flag around every dispatch, per-IRQ counts,
+and a ring of the last 16 exceptions (type, IRQ, pc), all printed by the
+next boot.
+.PP
+Build 1789509388's report after its first reset on the Pi overturned the
+last reading: no peripheral IRQ was dispatched at all (in-handler none,
+no IRQ counts, the ring of non-tick IRQs and FIQs empty).  The last
+exception, number 176, was a timer tick taken at 0xf58dc (right after
+splx's DAIFClr), the same pc as tick 175, and the tick count never reached
+176: the CPU died between taking that tick and
+.CW m->ticks++ .
+Both ticks landing on splx's return means the interrupted code is a loop
+of splhi/splx.  Its SP, 0x38fe870, sits about 1.2KB below the top of
+pid 1's kernel stack as QEMU lays it out (0x38f6d50 to 0x38fed50), so not
+an overflow if the layouts match.  The next image records how far each
+trap got (trap entry, clockintr's steps through now(), hwtimerset(), the
+tick, the watchdog pet, alarms, timers, the rearm and the clock links),
+the Ureg address, the process's kernel stack base and pid, and
+.CW m->splpc ,
+the caller of the last splhi/splx, which names the loop.
+.PP
+Build 1789509779's report after its reset on the Pi: the last exception,
+tick 175, reached step 13 \(em trap() returned \(em on pid 1's kernel
+stack (Ureg 0x38fe4c0, stack base 0x38f6d50, the same layout as QEMU),
+interrupting splx as called from
+.CW ainc() ,
+the atomic reference-count increment the Dis interpreter calls constantly.
+So pid 1 was running Dis, took the tick, returned cleanly, and never took
+another exception: not tick 176 and not the FIQ due within the second.
+Nothing in the kernel masks F, and nothing traps to EL2 (no HVC, the EL2
+traps are off).  An exception path that stops working between two ticks
+fits a vector table overwritten after tick 175's return.  main() now
+copies the previous boot's table (still in RAM after a watchdog reset,
+until BSS is cleared) to crumb RAM before clearing BSS, and vectorbuild()
+compares it with the new one: VECCHECK prints how many of its 512 words
+differ and the first.  Under QEMU the boot after a reset reports 0.
+.PP
+The vector-table reading was wrong, and so was the earlier inference from
+the silent FIQ.  VECCHECK could not have settled it anyway: the dying
+kernel wrote RAM through the cache, and the watchdog reset throws away
+whatever sits in cache lines.  So the crumb block is now mapped as Device
+memory, which is uncached, and each tick stores, once it has set its next
+deadline, CNTP_CTL and the distance to the deadline, the BCM2836 local
+route and pending words, the BCM2835 pending, enable and FIQ words, VBAR,
+a fold of the vector table and the page tables, TTBR0, SCTLR, what
+.CW "AT S1E1R"
+makes of the vector and crumb addresses, and the longest gap between
+ticks.  The FIQ watchdog moved from one second to 50ms.
+.PP
+Build 1789510655 reached the shell on the Pi without the init sleeps and
+died a moment later.  After the watchdog reset, every tick-time word from
+tick 187 was sound (timer enabled with its deadline ahead, still routed,
+VBAR and both folds unchanged).  The exception record was not: 45,161,042
+exceptions in about ten seconds, the last with ESR 0x9a000000 \(em class
+0x26, SP alignment \(em at the first frame store in crumbentry, SPSR 0x3c5
+(taken from an exception, everything masked).  An endless loop of
+exceptions, each on an SP that was not a multiple of 16.
+.PP
+The cause is in main.c.
+.CW kprocchild()
+and
+.CW userinit()
+set a new process's
+.CW sched.sp
+to
+.CW "kstack+KSTACK-16" ,
+and the kstack comes from malloc, which only promises 8-byte alignment.
+SCTLR_EL1.SA is set, so the Cortex-A53 faults on any stack access through
+an SP that is not a multiple of 16.  The exception entry opens its frame
+on that same SP and faults again, forever.  Whether a boot died depended
+on where the allocator put a process's stack, which is why sleeps in init
+changed the outcome.  QEMU does not check SP alignment, so it booted every
+time.  The initial SP is now rounded down to 16 bytes.
+.PP
+Two guards stay.
+.CW gotolabel
+refuses a label whose sp is unaligned or outside the kernel's 256MB, and
+panics with the label while the stack is still good (BADLABEL).  Under
+QEMU, before the fix, it caught this bug on pid 4 (sp 0x3b400e8, kstack
+0x3b380f8), so the emulator now sees what it does not enforce.
+.CW crumbentry
+checks the SP before opening the frame.  An exception taken on a wild SP
+moves onto a 16KB wildstack, is recorded in crumb words 144 to 149, and
+trap() reports it (WILDSP) instead of looping.  Both guards were exercised
+under QEMU with a deliberately bad stack.  serialputreg printed only 32
+bits (its argument was a ulong); it now prints all 64.  With the fix,
+QEMU passes three boots with a reset between each, with no guard firing.
+.PP
+On the Pi with the fix: build 1789511401, still instrumented, booted to
+the shell without the init sleeps and was still answering at tick 1100,
+where every earlier build without the sleeps had died by tick 187.  It
+then went through two reboots from the shell, each answering 30 seconds
+into the boot.  The instruments then came out (the RXPROBE stages,
+IRQCHECK, the TK markers, the heartbeat, the per-tick snapshot, the IRQ
+ring, VECCHECK, the FIQ and PM watchdog arming, init's STEP lines).  What
+stays is the build banner, the direct TRAP report, _tas's before-MMU
+panic, the one-line crumb record of the previous boot's last exception,
+and the WILDSP and BADLABEL guards.  The PL011 also takes its
+receive-timeout interrupt now, so input shorter than the FIFO trigger
+level need not wait for more.  That is shown only in QEMU so far: at an
+idle shell prompt the idle loop's clockpoll() drains the receive FIFO by
+polling, so the Pi runs below do not exercise the interrupt.  The cleaned build, 1789512030,
+passed seven boots out of seven on the Pi: one power-on and six
+.CW "echo reboot > /dev/sysctl"
+cycles.  Each printed TICK-OK and SLEEP-OK, reached the shell, and 30
+seconds later answered a typed
+.CW "cat /dev/time; echo"
+(kernel uptime 32 to 34 seconds, 109 seconds on the first), with no
+guard firing.
+.SH
+Raspberry Pi SD storage
+.PP
+With the board booting reliably, the next fault was that the Pi never
+found the card it had just booted from: init printed SD-NONE and no
+/dev/sdM0 appeared.  The SDHOST driver had been written against QEMU,
+whose model completes a command inside the register write, so it wrote
+SDCMD and read the response back immediately, and nothing reset or
+clocked the controller.  Real identification needs the controller powered
+down and back up with its FIFO thresholds, timeout and divisor set, the
+400kHz identification clock, and a command that waits for NEW_FLAG to
+clear and then checks FAIL_FLAG and the SDHSTS error bits (the CRC7 error
+on the R3 responses excepted, which the card does not compute).  The
+divisor comes from the firmware's VPU core clock, asked for through a new
+mailbox GET_CLOCK_RATE.  With that the Pi reported its card: rca 0x1234,
+block addressed, 30228480 sectors, core clock 250MHz \(em a sector count
+the Mac confirms exactly for the same card.
+.PP
+Then only the first read after each identification worked and every read
+after it failed.  Three faults, each found from the board and none of
+them visible in QEMU, were in the way.  The first: the controller keeps
+NEW_FLAG set through the data phase and cannot finish until the FIFO is
+drained, so waiting for the command to complete before moving the words
+deadlocked (sdcmd 0x8051, FIFO full, FSM in READDATA).  A data command is
+now started, the words are moved, the FSM is let out of its data states,
+and only then is completion checked.  The second: SDHSTS bit 0, the data
+flag, is sticky and was missing from the clear mask.  The third, which
+the first two exposed: a read issued straight after another read timed
+out with no response (sdhsts 0x40) while the card answered CMD13 from the
+transfer state at that same moment, and a read issued after that CMD13
+worked \(em the card is still finishing the previous block.  Each
+transfer now polls CMD13 for the transfer state and READY_FOR_DATA first.
+.PP
+Every one of those was found by driving the controller from a shell on
+the Pi through /dev/sdM0/ctl, which reads the card and the live registers
+and can re-identify the card, set the clock, issue a raw command with its
+response, or read one block and dump bytes from it.  Before it existed
+each hypothesis cost a card swap (the card cannot be in the Mac's reader
+and in the Pi at once, and only the Pi has the silicon that misbehaves);
+after it, the last three faults were found in one boot.  Reads now work
+on the Pi at blocks 0, 1, 2, 1024, 2048, 4096, 8192, 8193 and the last
+sector, 30228479.  Writing to the card is implemented but deliberately
+untested on hardware: the only card here is the one the board boots from.
+.PP
+SDHOST never did hand over whole words on silicon.  Its FIFO fill level
+reads 0 throughout a transfer, its data flag is set from the first byte
+in, a read returns the same word again with one more byte shifted into
+it, pausing between reads freezes it (the controller stalling once its
+FIFO fills), and reading it a byte per read ends in a FIFO error.  None
+of that is visible under QEMU, whose model completes a transfer inside
+the register access, so the two would have needed different transfer
+loops \(em which is exactly what this port refuses to do.
+.PP
+The card can be wired to the other controller instead.  GPIO 48-53 in
+alt3 hand it to the Arasan SDHCI at 0x3f300000, an ordinary SD host
+controller that QEMU's raspi3b models as well, so one loop is right on
+both.  sdemmcbcm.c drives it: the firmware's SD power domain on, a host
+reset, the SDHCI 10-bit divided clock at 400kHz to identify and 25MHz
+after, commands through CMDTM with the response in RESP0..3, and the
+data through the buffer register paced by the READ_RDY/WRITE_RDY status
+bits, polled throughout.  One trap in it: a 136-bit response comes back
+without its CRC and low byte, so RESP3 holds CSD bits 127:104 and not
+the first four bytes; reading it a word at a time reported 30GB for a
+64MB card.
+.PP
+On the Pi it reads the card the board booted from.  Sector 0 comes back
+as its real master boot record \(em fa b8 00 10 8e d0 bc 00 ... ending in
+55 aa, with a partition table naming a FAT32 partition at sector 16384
+and a Linux one after it \(em and sector 16384 is that filesystem's boot
+sector, "mkfs.fat", volume "bootfs", "FAT32", which is the volume the
+host mounts when the card is in its reader.  The card reports 30228480
+sectors, exactly what the host says.  Single reads of 64KB and 512KB
+(128 and 1024 sectors) return without an error.  Writing works too, tested
+without a spare card: ctl's wtest reads a sector, refuses it unless it
+is empty, writes a pattern, reads it back, restores the original bytes
+and checks the restore, so it can be aimed at the unused gap between the
+master boot record and the first partition.  On the Pi, sectors 4096 and
+8192 report 0 of 512 bytes wrong after the write and 0 after the
+restore, sector 0 is refused ("byte 0 is fa"), and the card's master
+boot record, its partition table and the FAT32 boot sector at 16384 are
+unchanged afterwards.  Under QEMU the same test leaves the image file
+byte-identical on the host.
+.SH
+The Pi on the network, and what the emulator had hidden
+.PP
+The board now boots, takes an address and answers for itself.  From a
+cold start with nothing typed: usbd enumerates the onboard LAN9514 hub
+and the ethernet behind it, etherusb starts, the PHY reports the link up,
+the styx server mounts at /net.alt/ether with the board's own MAC, devip
+binds it, DHCP returns 192.168.0.61 with gateway 192.168.0.1, and a ping
+reaches the gateway.  From this host, the Pi answers pings (four of five,
+its MAC in the host's ARP table), and the board's own counters read
+pktin 633, errin 0.
+.PP
+Two things had to be true first, and neither was the one the plan
+expected.  The mount that etherusb needed had been disabled in the
+source, because the board wedged entering the syscall; that was the
+SP-alignment fault, and with it fixed the mount works.  And enumeration
+stopped at the hub not because of the host controller but because usbd
+allocated its Hub with a bare
+.CW "ref Hub" ,
+leaving every field as allocation residue: the failed flag came up
+non-zero, so enumhub abandoned the hub on its first line, silently, and
+the one run that worked was the one where the residue happened to be
+zero.  The same bare allocation in opendev left isusb3 as residue in both
+usbd and etherusb.
+.PP
+Three bounds were added to usbdwc.c while the fault was still thought to
+be there.  They were the wrong layer but they stand: a bulk IN may wait
+for ever, because waiting is the read, while a NAK'd control transfer and
+the retry loop itself are bounded and say so.  A driver written where
+every transfer completes will otherwise wait for ever on silicon, saying
+nothing.
+.PP
+SD transfers are multi-block now, up to 64 blocks a command with the
+controller sending the stop, and the board checks it at boot: 64 sectors
+ending at the first partition's boot sector, with the last 512 bytes
+compared against the same block read alone (SD-MULTI-OK, eb 58 90 ...).
+The console's backspace works too \(em the line editor took ^H but not
+the delete a terminal actually sends, and the echo now backs up, blanks
+and backs up again.
+.PP
+One caution for anyone testing this board by hand: another session's
+libinterp watchdog prints
+.CW track:
+reports to the console, and on a board whose only console is the serial
+line they interleave with the input echo and corrupt typed commands
+mid-word.  Two apparent hangs here were that, not the driver under test.
+Check the board from its init program instead.
+.PP
+The kfs create deadlock is gone, on both.  It was this board's oldest
+open bug \(em a file created over a mounted kfs hung, pid 1's Twalk
+taking its Rerror and the error unwinding past mntwalk's own waserror
+handler, so the Tcreate was never sent \(em and it was blamed on an arm64
+multi-kproc error-stack fault.  It was the SP-alignment fault: the same
+one that stopped the board a few seconds into boot and that had the
+etherusb mount disabled in the source.  With kernel stacks aligned, kfs
+reams, the pipe mounts and the create succeeds, under QEMU and on the Pi
+(SD-FS-CREATE-OK).  The test reams a partition carved from the card's
+unallocated gap, sectors 2048 to 16000, never the whole device: kfs -r
+reams what it is given, and this card holds the firmware and the kernel
+that booted it.
+.PP
+The board reads and writes the partition it boots from.  init finds the
+FAT partition in the master boot record rather than assuming where it is,
+tells the SD device about it, and dossrv serves it at /n/dos: on the Pi,
+FAT-OK reports kernel8.img's size \(em the kernel that machine booted
+\(em and FAT-WRITE-OK creates a file beside it.  That took FAT32 support
+in dossrv, which had handled FAT12 and FAT16 and said "TO DO: FAT32"
+while the Pi's own boot partition is FAT32: its boot-sector fields were
+never parsed, the FAT width never set to 32, and the root directory
+always read as the fixed area that only FAT12/16 have, so the volume
+mounted and looked empty.  Verified under QEMU against a FAT32
+filesystem the host made, with the host's own FAT driver then reading
+back the file Inferno wrote.
+.PP
+The board's ethernet is not finished, and the fault is probably not in
+the USB driver.  Enumeration, the link and the first exchanges work every
+boot: the LAN9514 comes up, etherusb serves it, and DHCP usually returns
+a lease.  Within seconds the receive stream stops: the interface's pktin
+freezes, nothing answers a ping, and the board neither transmits nor
+receives again.  Three changes to the host controller each fixed half the
+symptom \(em waiting indefinitely for a bulk IN turned a missed
+completion into a permanent stall; delivering what had moved instead
+handed up half frames, which the IP layer dropped, so pktin climbed while
+nothing was ever answered; asking for a retry stalled again \(em and the
+instrument written to settle it never fired, because the stalled channel
+is still enabled and the reader is not in that wait at all.
+.PP
+What the board shows at the stall is a pipeline wedged above the driver:
+all four etherusb processes alive, one with minutes of processor time,
+another blocked sending a received packet into a channel nothing is
+draining.  Alongside it the interpreter's own watchdog reports pointer
+slots in live Dis objects changing from H to 0 \(em not a legal pointer
+value, reported right after a "new", which is what an allocation
+overlapping a live object looks like.  That watchdog is another session's
+work in libinterp, hunting exactly this; dossrv and the network now
+allocate enough to reach it.  Until that is settled, more changes to
+usbdwc.c are guesses: the next step is the heap, not the host controller.
+.PP
+One practical note for anyone working on this board: those watchdog
+reports print to the console, and on a board whose only console is the
+serial line they interleave with the input echo and corrupt typed
+commands mid-word.  Two apparent driver hangs here were that.  Drive the
+board from its init program, or gate the reports.

@@ -722,12 +722,29 @@ Inst	*trackPC;
  */
 char	*trackpoint = "instr";
 
+/*
+ * The tracker is a debugging instrument and an expensive one: every Dis
+ * instruction checks all NTRACK slots and every initmem() registers its
+ * pointer words into them, so a board whose work is done in Limbo pays
+ * for it in throughput.  On the Pi, whose ethernet driver and its file
+ * server are Limbo programs, it cost a factor of seven on the receive
+ * path: the kernel came back for the next frame every 60ms with the
+ * tracker on and every 8ms with it compiled out, and under the same
+ * load the server handed 7 frames straight to a waiting reader rather
+ * than 1222.  A board that needs the machine more than the instrument
+ * clears this; it stays on everywhere else, which is where the bug it
+ * is watching for was found.
+ */
+int	distrack = 1;
+
 void
 trackclear(void *base, long size)
 {
 	int i;
 	uintptr lo, hi;
 
+	if(!distrack)
+		return;
 	lo = (uintptr)base;
 	hi = lo + size;
 	for(i = 0; i < NTRACK; i++){
@@ -744,6 +761,8 @@ trackreg(uintptr *addr, Type *t, void *obj, Type **typetagp)
 	int i, start, pid;
 	Prog *pr;
 
+	if(!distrack)
+		return;
 	pr = currun();
 	pid = pr != nil ? pr->pid : -1;
 	start = (int)(((uintptr)addr >> 3) % NTRACK);
@@ -776,6 +795,8 @@ checktracked(void)
 	uintptr v;
 	Type *t;
 
+	if(!distrack)
+		return;
 	for(i = 0; i < NTRACK; i++){
 		if(track[i].addr == nil)
 			continue;

@@ -1,4 +1,14 @@
+/*
+ * The kernel's draw device, reused whole.  It is compiled two ways: as
+ * part of the user-level draw server, where kshim.h stands in for the
+ * kernel types it uses, and as a device of the p9 personality, where
+ * those types are the personality's own - the same sources the name
+ * space is built from - and the wrapper that includes this file has
+ * already supplied them (os/osprey/cmd/p9/devdrawp9.c).
+ */
+#ifndef Drawinpersonality
 #include	"kshim.h"
+#endif
 
 #define	Image	IMAGE
 #include	<draw.h>
@@ -1461,8 +1471,19 @@ drawmesg(Client *client, void *av, int n)
 					error("unknown refresh method");
 				}
 				l = memlalloc(scrn, r, reffn, 0, value);
-				if(l == 0)
+				if(l == 0){
+					/*
+					 * Say so.  A window that cannot be allocated is
+					 * refused with an Rerror the client usually throws
+					 * away - rio's allocwindow returns nil and rio
+					 * quietly abandons the sweep - so without this the
+					 * only evidence is a rectangle that never becomes
+					 * a window.
+					 */
+					print("draw: no image memory for a %dx%d window, refresh %d\n",
+						Dx(r), Dy(r), refresh);
 					error(Edrawmem);
+				}
 				addflush(l->layer->screenr);
 				l->clipr = clipr;
 				rectclip(&l->clipr, r);

@@ -790,8 +790,17 @@ struct Proc
 	void	*kparg;
 
 	Sargs	s;		/* syscall arguments */
+	uintptr	aoutentry;	/* where touserv enters this task's a.out: its text base plus the header, since not every image is at UTZERO */
+	uintptr	p9syscallup;	/* a personality in this task's own address space that serves its legacy program's system calls, or 0 */
+	int	p9insyscallup;	/* one is up there now: route no more until it answers */
+	uintptr	p9faultup;	/* and where a fault in that program goes, so the personality catches it rather than the machine stopping */
+	uintptr	p9progbase;	/* and the text the legacy program occupies: a call from anywhere else is the personality's own */
+	uintptr	p9progend;
+	int	p9haveprognote;	/* a note for that program arrived while the personality was running: held until the program runs again */
+	char	p9prognote[ERRMAX];
 	int	oslinux;	/* a Linux legacy process: Linux syscall ABI */
 	int	buddyimage;	/* its image is the buddy's: page faults go there first */
+	int	buddyredir;	/* a bit per standard descriptor a legacy program has dup'd something else onto: those writes go to the buddy, not the console */
 	int	linuxheap;	/* the segment slot brk grows, or -1 */
 	uintptr	linuxbrk;	/* the break as the process last set it */
 	uintptr	linuxmmapnext;	/* where the next anonymous mmap goes */
@@ -802,6 +811,7 @@ struct Proc
 		int	fd;
 		vlong	off;
 	} linuxmap[4];
+	uintptr	linuxfsbase;	/* what arch_prctl(ARCH_SET_FS) set: a Linux libc's thread pointer */
 	uintptr	linuxsighandler;	/* SIGSEGV's handler, 0 for none */
 	uintptr	linuxsigrestorer;	/* what the handler returns to: it calls rt_sigreturn */
 	int	linuxinsig;		/* in the handler: a fault there kills */

@@ -16,23 +16,43 @@
 enum { Qroot = 0, Msize = 8192 };
 
 /*
- * The served tree: a root directory and a handful of files, each a name
- * and a string literal (which lives in the text the flat loader maps).
- * A file's qid path is its index+1 into this table; Qroot is 0.
+ * The served tree: a root directory, a handful of files, and a directory
+ * with a file in it.  Each entry is a name, a string literal (which
+ * lives in the text the flat loader maps) and the qid path of the
+ * directory holding it; a file's own qid path is its index+1, and Qroot
+ * is 0.
+ *
+ * The subdirectory is not decoration.  Until it was here every name this
+ * server held was one walk from the root, so a Twalk of more than one
+ * name had never crossed the ring, and neither had a directory read of
+ * anything but the root.  Both are ordinary 9P and neither was tested.
  */
 static char *filename[] = {
 	"hello",
 	"motd",
 	"readme",
 	"scratch",		/* the one writable file; its bytes live in Srvstate */
+	"sub",			/* a directory */
+	"deep",			/* in it */
 };
 static char *filedata[] = {
 	"hello from the 9P server, a container across the ring\n",
 	"the microkernel routes 9P; the file server is a container of its own\n",
 	"three files, listed by a program over a file descriptor\n",
 	"",			/* scratch starts empty */
+	nil,			/* a directory has no bytes */
+	"one level down, reached by a walk of two names over the ring\n",
 };
-enum { Nfile = 4, Qscratch = 4 };	/* scratch is qid path Nfile (index 3 + 1) */
+/* the qid path of the directory each is in: 0 is the root */
+static int fileparent[] = { 0, 0, 0, 0, 0, 5 };
+enum { Nfile = 6, Qscratch = 4, Qsub = 5 };
+
+/* is this qid path a directory? */
+static int
+isdir(int which)
+{
+	return which == Qroot || (which > 0 && which <= Nfile && filedata[which-1] == nil);
+}
 
 static int
 findfid(Fidtab *ft, ulong fid)
@@ -66,16 +86,16 @@ setqid(Qid *q, int which)
 {
 	q->path = which;
 	q->vers = 0;
-	q->type = which == Qroot ? QTDIR : QTFILE;
+	q->type = isdir(which) ? QTDIR : QTFILE;
 }
 
-/* index of a name in the root directory, or -1 */
+/* the qid path of a name in the directory whose path is `in`, or -1 */
 static int
-lookup(char *name)
+lookup(int in, char *name)
 {
 	int i;
 	for(i = 0; i < Nfile; i++)
-		if(strcmp(name, filename[i]) == 0)
+		if(fileparent[i] == in && strcmp(name, filename[i]) == 0)
 			return i+1;		/* qid path = index+1 */
 	return -1;
 }
@@ -91,8 +111,13 @@ mkdir(Dir *d, int which)
 		d->length = 0;
 	} else {
 		d->name = filename[which-1];
-		d->mode = which == Qscratch ? 0666 : 0444;
-		d->length = which == Qscratch ? 0 : (vlong)strlen(filedata[which-1]);
+		if(isdir(which)){
+			d->mode = DMDIR|0555;
+			d->length = 0;
+		} else {
+			d->mode = which == Qscratch ? 0666 : 0444;
+			d->length = which == Qscratch ? 0 : (vlong)strlen(filedata[which-1]);
+		}
 	}
 	d->uid = d->gid = d->muid = "none";
 	d->type = 'L';
@@ -136,7 +161,20 @@ srv9p(Srvstate *st, uchar *msg, long n, uchar *rbuf, long rmax)
 		break;
 
 	case Tversion:
+		/*
+		 * Advertise what can actually be returned.  The reply is
+		 * marshalled into rbuf, which is rmax bytes of the client's
+		 * data area, so a message size larger than that is a promise
+		 * this server cannot keep: the client would ask for a read
+		 * that fits its msize and the answer would run off the end of
+		 * the region.  Msize is the ceiling this server would like;
+		 * rmax is the one it has.  IOHDRSZ is 9P's own allowance for
+		 * the header of a read or write, so the data a client may ask
+		 * for is msize less that.
+		 */
 		r.msize = t.msize < Msize ? t.msize : Msize;
+		if(rmax > 0 && r.msize > (ulong)rmax)
+			r.msize = (ulong)rmax;
 		r.version = "9P2000";
 		break;
 
@@ -157,7 +195,11 @@ srv9p(Srvstate *st, uchar *msg, long n, uchar *rbuf, long rmax)
 		nf = st->fids.f[f].qid;
 		for(i = 0; i < t.nwname; i++){
 			int q;
-			if(nf == Qroot && (q = lookup(t.wname[i])) > 0)
+			if(!isdir(nf))
+				break;			/* only a directory has names under it */
+			if(strcmp(t.wname[i], "..") == 0)
+				nf = nf == Qroot ? Qroot : fileparent[nf-1];
+			else if((q = lookup(nf, t.wname[i])) > 0)
 				nf = q;
 			else
 				break;
@@ -185,7 +227,17 @@ srv9p(Srvstate *st, uchar *msg, long n, uchar *rbuf, long rmax)
 		f = findfid(&st->fids, t.fid);
 		if(f < 0){ r.type = Rerror; r.ename = "unknown fid"; break; }
 		cnt = t.count;
-		if(st->fids.f[f].qid != Qroot){
+		/*
+		 * And clamp here too, because a client that never sent a
+		 * Tversion, or one that asks for more than it agreed, must
+		 * still get an answer that fits the region rather than one
+		 * that overruns it.  The clamp is the region less the
+		 * R-message's own header (9 bytes: size, type, tag, count),
+		 * with a little room rather than exactly that.
+		 */
+		if(rmax > IOHDRSZ && cnt > (long)(rmax - IOHDRSZ))
+			cnt = rmax - IOHDRSZ;
+		if(!isdir(st->fids.f[f].qid)){
 			int q = st->fids.f[f].qid;
 			char *content; long len, off = t.offset;
 			if(q == Qscratch){ content = st->scratch; len = st->scratchlen; }
@@ -195,17 +247,45 @@ srv9p(Srvstate *st, uchar *msg, long n, uchar *rbuf, long rmax)
 			r.data = content + off;
 			r.count = cnt;
 		} else {
-			/* directory: marshal every entry, return the slice at offset */
-			long total = 0, off = t.offset;
-			int k;
+			/*
+			 * A directory: marshal every entry, then return whole
+			 * entries only.  This used to return the byte slice at
+			 * the offset, which is wrong and only looked right
+			 * because every reader here asked for more bytes than
+			 * the whole directory: a smaller count cut the last
+			 * entry in half, devmnt raised "invalid directory
+			 * entry received from server" when the entries did not
+			 * add up to the count, and unionread - which runs each
+			 * member under waserror and moves on - dropped this
+			 * whole member from the listing without a word.  9P
+			 * has directory offsets land on entry boundaries, so
+			 * an offset that does not is the error it is, and a
+			 * count too small for one entry returns nothing, which
+			 * is what the kernel's own devdirread does.
+			 */
+			long total = 0, off = t.offset, at, end, dl;
+			int k, in = st->fids.f[f].qid;
 			for(k = 0; k < Nfile; k++){
+				if(fileparent[k] != in)
+					continue;	/* in another directory */
 				mkdir(&d, k+1);
 				total += convD2M(&d, dirbuf + total, sizeof dirbuf - total);
 			}
-			if(off > total) off = total;
-			if(cnt > total - off) cnt = total - off;
+			at = 0;
+			while(at < off && at < total)
+				at += BIT16SZ + GBIT16(dirbuf + at);
+			if(at != off){
+				r.type = Rerror; r.ename = "bad offset in directory read"; break;
+			}
+			end = off;
+			while(end < total){
+				dl = BIT16SZ + GBIT16(dirbuf + end);
+				if(end + dl > off + (long)cnt)
+					break;
+				end += dl;
+			}
 			r.data = (char*)(dirbuf + off);
-			r.count = cnt;
+			r.count = end - off;
 		}
 		break;
 

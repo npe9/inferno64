@@ -35,15 +35,27 @@ enum {
 	Odbuddyarglen	= 192,
 	Odbuddyname	= 256,		/* a path the call names */
 	Odbuddynamelen	= 768,
-	Odbuddydata	= 1024,		/* the call's data, a page */
-	Odbuddydatalen	= 4096,
+	Odbuddydata	= 1024,		/* the call's data */
+	/*
+	 * Eight kilobytes, and it was four.  A page was the size a page
+	 * fault needs and the number every other caller inherited, and
+	 * nothing asserted it against what comes after it in this area: the
+	 * block ended at 5120, exactly where the migration staging begins,
+	 * so any call carrying more than a page wrote past it.  rio's
+	 * largest draw message is 4270 bytes, measured, so rio had been
+	 * doing that every boot.  The assertion below is the other half of
+	 * this fix: the block is now checked against what follows it.
+	 */
+	Odbuddydatalen	= 8192,
 
 	/* a server carrying or taking a process over the wire */
 	Odmig		= 1024,		/* the migration header (segments, register frame) */
 	Odmiglen	= 2048,
 	Odmighdrwords	= 4,		/* words of the migration header before its segment array: the segment count, the flags, the heap segment's index and the break in it */
-	Odmigrx		= 5120,		/* the receiver's staging, clear of the sender's and the block ring */
+	Odmigrx		= 9216,		/* the receiver's staging, clear of the sender's, the block ring and the buddy's data block */
 	Odmigrxlen	= 2048,
+	Odnote		= 11264,	/* a note a personality asks its kernel to post, past the migration staging */
+	Odnotelen	= 128,
 
 	/* pi-p tickets, in a server's or a client's data area */
 	Odticket	= 3072,		/* a ticket the wire server gives its kernel to check */
@@ -87,9 +99,16 @@ enum {
 		+ 1/(Ospreyblkoff + 128 <= Ospreynetoff)
 		+ 1/(Ospreynetoff + 128 <= Ospreyblkring)
 		+ 1/(Ospreyblkring + 1024 <= Odmigrx)
-		/* a legacy container's data area */
+		+ 1/(Odmigrx + Odmigrxlen <= Odnote)
+		/*
+		 * A legacy container's data area.  The last of these three is
+		 * the one that was missing: the data block was never checked
+		 * against the migration staging that follows it, and it ended
+		 * exactly where that begins.
+		 */
 		+ 1/(Odbuddyarg + Odbuddyarglen <= Odbuddyname)
 		+ 1/(Odbuddyname + Odbuddynamelen <= Odbuddydata)
+		+ 1/(Odbuddydata + Odbuddydatalen <= Odmigrx)
 		/* a client's data area */
 		+ 1/(Odt9 + Odt9len <= Odr9)
 		+ 1/(Odr9 + Odr9len <= Odexecname)

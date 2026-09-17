@@ -58,6 +58,14 @@ struct Lrec {				/* the header sector of a record */
 	uvlong	vers;			/* which version of the file it is */
 	uvlong	len;			/* bytes of data in the sectors after it */
 	char	name[Lnamelen];
+	/*
+	 * A tombstone: this record says the file is gone rather than
+	 * carrying a version of it.  It is after the name and not before
+	 * it so that a disk written before tombstones existed still reads:
+	 * a header sector is written from a zeroed buffer, so an old
+	 * record has a zero here and is a version, which is what it is.
+	 */
+	uvlong	dead;
 };
 
 typedef struct Lfile Lfile;
@@ -75,6 +83,13 @@ struct Lopen {				/* an open file: its bytes, and whether they changed */
 	ulong	len;
 	int	dirty;
 	Lfile	*f;
+	/*
+	 * The name it was opened by.  A file removed while it is open
+	 * leaves its entry free for the next file made, and committing on
+	 * the close of the first would then write the second's name; so
+	 * the close commits only if the entry is still this file's.
+	 */
+	char	name[Lnamelen];
 };
 
 extern int blkready(void);
@@ -235,11 +250,25 @@ lfsscan(void)
 			break;
 		}
 		f = lfslookup(r.name);
-		if(f == nil)
-			f = lfsnew(r.name);
-		f->lba = pos;
-		f->len = r.len;
-		f->vers = r.vers;
+		if(r.dead){
+			/*
+			 * The file was removed after every version before
+			 * this record, so it is not in the store - and a
+			 * record after this one with the same name is a file
+			 * made again, which the lookup will not find and
+			 * will make anew.  This is the whole of what a
+			 * tombstone is for: without it a mount is a
+			 * resurrection.
+			 */
+			if(f != nil)
+				f->used = 0;
+		} else {
+			if(f == nil)
+				f = lfsnew(r.name);
+			f->lba = pos;
+			f->len = r.len;
+			f->vers = r.vers;
+		}
 		if(r.seq > seq)
 			seq = r.seq;
 		n++;
@@ -283,7 +312,7 @@ static int lfsreclaimstep(int force);
  * room reclaims until there is some, or the log is full of live data.
  */
 static void
-lfsput(Lfile *f, uchar *buf, ulong len, ulong vers)
+lfsput(Lfile *f, uchar *buf, ulong len, ulong vers, int dead)
 {
 	Lrec *r;
 	uvlong lba, n;
@@ -299,6 +328,7 @@ lfsput(Lfile *f, uchar *buf, ulong len, ulong vers)
 	r->seq = ++seq;
 	r->vers = vers;
 	r->len = len;
+	r->dead = dead;
 	strcpy(r->name, f->name);
 	if(blkxfer(1, lba, sector) < 0)
 		error(Eio);
@@ -321,7 +351,7 @@ lfsput(Lfile *f, uchar *buf, ulong len, ulong vers)
 static void
 lfsappend(Lfile *f, uchar *buf, ulong len)
 {
-	lfsput(f, buf, len, f->vers + 1);
+	lfsput(f, buf, len, f->vers + 1, 0);
 	print("lfs: committed %s version %lud, %lud bytes, at sector %llud, %llud sectors free\n",
 		f->name, f->vers, f->len, f->lba, lfsfree());
 }
@@ -363,7 +393,7 @@ lfsreclaimstep(int force)
 		start += n;
 		if(start >= limit)
 			start = Lfirst;
-		lfsput(f, movebuf, r.len, r.vers);
+		lfsput(f, movebuf, r.len, r.vers, 0);
 		nreclaimed++;
 		print("lfs: reclaim %s: moved %s version %llud forward to sector %llud, start now %llud, %llud sectors free\n",
 			force ? "for a writer" : "on the tick", r.name, r.vers, f->lba, start, lfsfree());
@@ -505,6 +535,7 @@ lfsopenfile(Lfile *f, int trunc)
 	o = smalloc(sizeof(Lopen));
 	o->buf = smalloc(Lmaxdata);
 	o->f = f;
+	strcpy(o->name, f->name);
 	if(trunc){
 		o->len = 0;
 		o->dirty = 1;
@@ -566,7 +597,12 @@ lfsclose(Chan *c)
 	if((c->flag & COPEN) == 0 || (c->qid.type & QTDIR) || (o = c->aux) == nil)
 		return;
 	c->aux = nil;
-	if(o->dirty && !waserror()){
+	/*
+	 * A file removed while it was open does not come back on its
+	 * close: the entry is free, or is another file's by now.
+	 */
+	if(o->dirty && o->f->used && strcmp(o->f->name, o->name) == 0
+	&& !waserror()){
 		lfsappend(o->f, o->buf, o->len);
 		poperror();
 	}
@@ -609,10 +645,115 @@ lfswrite(Chan *c, void *a, long n, vlong off)
 	return n;
 }
 
+/*
+ * Remove is a record like any other: a tombstone at the head of the log
+ * saying this file is gone.  Nothing is written in place and no version
+ * is changed, which is what makes a version immutable; what a remove
+ * adds is the last record the file will have.
+ *
+ * The entry goes from the table at once, so the file is out of the
+ * directory now, and it stays out across a mount because the scan reads
+ * the tombstone.  A file made again with the same name is a new file:
+ * a new entry, its versions starting over, the tombstone between it and
+ * the old one.
+ */
 static void
-lfsremove(Chan*)
+lfsremove(Chan *c)
 {
-	error(Eperm);			/* versions are immutable; a tombstone is not written yet */
+	Lfile *f;
+	ulong was;
+
+	if(c->qid.type & QTDIR)
+		error(Eperm);
+	if(c->qid.path < 1 || c->qid.path > Nlfs)
+		error(Enonexist);
+	f = &files[c->qid.path - 1];
+	if(!f->used)
+		error(Enonexist);
+	was = f->vers;
+	lfsput(f, nil, 0, f->vers + 1, 1);
+	print("lfs: removed %s after version %lud: a tombstone at sector %llud, %llud sectors free\n",
+		f->name, was, f->lba, lfsfree());
+	f->used = 0;
+}
+
+/*
+ * wstat, which this store answered with "permission denied" because
+ * devwstat is what it had.  A rename is the one thing a log can express
+ * without reading like a lie: a version of the file under the new name,
+ * and a tombstone for the old, which is what every other change here is
+ * too.  The bytes are carried over because that is where they live - the
+ * record holds them - so a rename costs a copy, which for this store's
+ * files is one sector.
+ *
+ * Everything else a wstat can ask for is refused by name rather than
+ * accepted and dropped: there are no owners here (the whole store is the
+ * personality's), the mode is what the device says it is, and a length
+ * change is a write's business.  A caller told its wstat succeeded when
+ * nothing happened is worse off than one told it cannot be done.
+ */
+static int
+lfswstat(Chan *c, uchar *dp, int n)
+{
+	Lfile *f, *nf;
+	Dir d;
+	char strs[512];
+	uchar *buf;
+	ulong len, i;
+	int was;
+
+	if(c->qid.type & QTDIR)
+		error(Eperm);
+	if(c->qid.path < 1 || c->qid.path > Nlfs)
+		error(Enonexist);
+	f = &files[c->qid.path - 1];
+	if(!f->used)
+		error(Enonexist);
+	if(convM2D(dp, n, &d, strs) != n)
+		error(Eshortstat);
+	if(d.mode != (ulong)~0 && d.mode != (DMDIR|0666) && d.mode != 0666)
+		error("lfs: the mode here is the device's, not a file's");
+	if(d.length != (vlong)~0 && d.length != (vlong)f->len)
+		error("lfs: a length is changed by writing, not by wstat");
+	if(d.name == nil || d.name[0] == 0)
+		return n;			/* nothing asked for */
+	if(strcmp(d.name, f->name) == 0)
+		return n;			/* the name it has */
+	if(strlen(d.name) >= Lnamelen)
+		error("lfs: that name is too long for a record");
+	for(i = 0; i < Nlfs; i++)
+		if(files[i].used && strcmp(files[i].name, d.name) == 0)
+			error(Eexist);
+	nf = nil;
+	for(i = 0; i < Nlfs; i++)
+		if(!files[i].used){
+			nf = &files[i];
+			break;
+		}
+	if(nf == nil)
+		error("lfs: no room for another file");
+
+	buf = smalloc(Lmaxdata);
+	if(waserror()){
+		free(buf);
+		nexterror();
+	}
+	lfsload(f, buf);
+	len = f->len;
+	was = f->vers;
+	memset(nf, 0, sizeof *nf);
+	nf->used = 1;
+	strcpy(nf->name, d.name);
+	lfsput(nf, buf, len, 1, 0);
+	poperror();
+	free(buf);
+
+	lfsput(f, nil, 0, f->vers + 1, 1);
+	print("lfs: renamed %s to %s after version %d: %lud bytes carried over, "
+		"a tombstone at sector %llud, %llud sectors free\n",
+		f->name, nf->name, was, len, f->lba, lfsfree());
+	f->used = 0;
+	return n;
 }
 
 Dev lfsdevtab = {
@@ -633,5 +774,5 @@ Dev lfsdevtab = {
 	lfswrite,
 	devbwrite,
 	lfsremove,
-	devwstat,
+	lfswstat,
 };

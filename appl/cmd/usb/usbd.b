@@ -149,6 +149,9 @@ work()
 		again := 0;
 		for(l := hubs; l != nil && !again; l = tl l){
 			h := hd l;
+			if(debug)
+				sys->print("usbd: walk %s: %d ports, failed %d\n",
+					h.dev.name, h.nport, h.failed);
 			for(p := 1; p <= h.nport; p++)
 				if(enumhub(h, p) < 0){
 					again = 1;	# the hub list changed
@@ -171,6 +174,9 @@ enumhub(h: ref Hub, p: int): int
 	}
 	pp := h.port[p];
 	onhubs := len hubs;
+	if(debug)
+		sys->print("usbd: %s: poll port %d status %#ux was %#ux (%d hubs)\n",
+			h.dev.name, p, sts, pp.sts, len hubs);
 	if(!h.dev.isusb3 && (sts & PSsuspend) != 0){
 		portfeature(h, p, Fportsuspend, 0);
 		sys->sleep(Enabledelay);
@@ -200,6 +206,7 @@ portattach(h: ref Hub, p: int): ref Dev
 	d := h.dev;
 	pp := h.port[p];
 	sp: string;
+	step(h, p, "enable delay");
 	sys->sleep(Enabledelay);
 	if(d.isusb3){
 		sts := portstatus(h, p);
@@ -207,6 +214,7 @@ portattach(h: ref Hub, p: int): ref Dev
 			return portfail(h, p, nil, "not enabled");
 		sp = "super";
 	} else {
+		step(h, p, "port reset");
 		if(portfeature(h, p, Fportreset, 1) < 0)
 			return portfail(h, p, nil, "reset");
 		sys->sleep(Resetdelay);
@@ -223,6 +231,7 @@ portattach(h: ref Hub, p: int): ref Dev
 		if(sts & PShigh)
 			sp = "high";
 	}
+	step(h, p, "newdev");
 	if(devctl(d, sys->sprint("newdev %s %d", sp, p)) < 0)
 		return portfail(h, p, nil, "newdev");
 	# the next read of the hub's ctl names the new endpoint
@@ -238,6 +247,7 @@ portattach(h: ref Hub, p: int): ref Dev
 	nd.isusb3 = d.isusb3;
 	if(opendevdata(nd) < 0)
 		return portfail(h, p, nd, "open data");
+	step(h, p, "set address");
 	if(usbcmd(nd, Rh2d|Rstd|Rdev, Rsetaddress, nd.id, 0, nil, 0) < 0)
 		return portfail(h, p, nd, "set address");
 	if(devctl(nd, "address") < 0)
@@ -246,6 +256,7 @@ portattach(h: ref Hub, p: int): ref Dev
 	# this kernel only takes "maxpkt" while the data file is closed
 	mp := 512;
 	if(!nd.isusb3){
+		step(h, p, "device descriptor");
 		(r, dd) := usbin(nd, Rd2h|Rstd|Rdev, Rgetdesc, Ddev<<8, 0, 8);
 		if(r < 8)
 			return portfail(h, p, nd, "device descriptor");
@@ -255,18 +266,27 @@ portattach(h: ref Hub, p: int): ref Dev
 	devctl(nd, sys->sprint("maxpkt %d", mp));
 	if(opendevdata(nd) < 0)
 		return portfail(h, p, nd, "reopen data");
+	step(h, p, "full descriptor");
 	(r, dd) := usbin(nd, Rd2h|Rstd|Rdev, Rgetdesc, Ddev<<8, 0, 18);
 	if(r < 18)
 		return portfail(h, p, nd, "full device descriptor");
 	nd.class = int dd[4];
 	nd.vid = int dd[8] | int dd[9]<<8;
 	nd.did = int dd[10] | int dd[11]<<8;
+	step(h, p, "set configuration");
 	if(usbcmd(nd, Rh2d|Rstd|Rdev, Rsetconf, 1, 0, nil, 0) < 0)
 		return portfail(h, p, nd, "set configuration");
 	sys->print("usbd: %s: port %d: %s %s vid %4.4ux did %4.4ux class %d\n",
 		d.name, p, sp, nd.name, nd.vid, nd.did, nd.class);
 	pp.dev = nd;
 	return nd;
+}
+
+# with -d, name each step of an attach: the one that hangs is the last printed
+step(h: ref Hub, p: int, what: string)
+{
+	if(debug)
+		sys->print("usbd: %s: port %d: %s\n", h.dev.name, p, what);
 }
 
 portfail(h: ref Hub, p: int, nd: ref Dev, why: string): ref Dev
@@ -1261,10 +1281,22 @@ newhub(name: string, d: ref Dev): ref Hub
 		h.port[i] = ref Port(0, nil, nil);
 	if(!h.isroot){
 		for(i = 1; i <= h.nport; i++)
-			portfeature(h, i, Fportpower, 1);
+			if(portfeature(h, i, Fportpower, 1) < 0)
+				sys->fprint(sys->fildes(2),
+					"usbd: %s: port %d: power: %r\n", h.dev.name, i);
 		sys->sleep(h.pwrms);
+		# Say what each port reports once it is powered.  A device that
+		# was already attached when usbd started is found by the first
+		# scan seeing it present, so a hub that reports nothing present
+		# is the whole of the failure and worth showing.
+		if(debug)
+			for(i = 1; i <= h.nport; i++)
+				sys->print("usbd: %s: port %d status %#ux\n",
+					h.dev.name, i, portstatus(h, i));
 	}
 	hubs = h :: hubs;
+	if(debug)
+		sys->print("usbd: %s: added to the hub list, %d now\n", h.dev.name, len hubs);
 	kind := "";
 	if(h.isroot)
 		kind = " (root)";
@@ -1344,7 +1376,7 @@ portstatus(h: ref Hub, p: int): int
 #
 opendev(name: string): ref Dev
 {
-	d := ref Dev;
+	d := ref Dev("", 0, nil, nil, 0, 0, 0, 0);
 	d.name = name;
 	d.id = int name[2:];	# "epN.M"
 	d.cfd = sys->open("/dev/usb/" + name + "/ctl", Sys->ORDWR);

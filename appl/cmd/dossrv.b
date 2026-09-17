@@ -1092,6 +1092,8 @@ Dosboot: adt {
 	nheads:	array of byte;
 	nhidden:	array of byte;
 	bigvolsize:	array of byte;
+	fatsize32:	array of byte;
+	rootclust:	array of byte;
 	driveno:	byte;
 	bootsig:	byte;
 	volid:	array of byte;
@@ -1108,7 +1110,9 @@ Dosbpb: adt {
 	mediadesc: int;
 	fatsize: int;	# in sectors 
 	fatclusters: int;
-	fatbits: int;	# 12 or 16 
+	fatbits: int;	# 12, 16 or 32
+	rootclust: int;	# FAT32: the root directory's first cluster
+	isfat32: int;
 	fataddr: int; #big;	# sector number 
 	rootaddr: int; #big;
 	dataaddr: int; #big;
@@ -1304,8 +1308,22 @@ Dmddo:
 	i = bp.rootsize*DOSDIRSIZE + bp.sectsize-1;
 	i /= bp.sectsize;
 	bp.dataaddr = bp.rootaddr + i;
+	bp.isfat32 = 0;
+	bp.rootclust = 0;
+	if(bp.fatsize == 0 && bp.rootsize == 0){
+		# FAT32: the FAT size is 32 bits, and the root directory is a
+		# cluster chain like any other directory rather than a fixed
+		# area between the FATs and the data.
+		bp.isfat32 = 1;
+		bp.fatsize = bytes2int(b.fatsize32);
+		bp.rootclust = bytes2int(b.rootclust);
+		bp.rootaddr = bp.fataddr + bp.nfats*bp.fatsize;
+		bp.dataaddr = bp.rootaddr;
+	}
 	bp.fatclusters = FATRESRV+(bp.volsize - bp.dataaddr)/bp.clustsize;
-	if(bp.fatclusters < 4087)
+	if(bp.isfat32)
+		bp.fatbits = 32;
+	else if(bp.fatclusters < 4087)
 		bp.fatbits = 12;
 	else
 		bp.fatbits = 16;
@@ -1370,22 +1388,24 @@ putfile(f: ref Xfile)
 	dp.d = nil;
 }
 
-getstart(nil: ref Xfs, d: ref Dosdir): int
+getstart(xf: ref Xfs, d: ref Dosdir): int
 {
 	start := bytes2short(d.start);
-#	if(xf.isfat32)
-#		start |= bytes2short(d.hstart)<<16;
+	# on FAT32 the top half of the cluster number sits in the entry's
+	# reserved area, at offset 20 of the directory entry
+	if(xf != nil && xf.ptr != nil && xf.ptr.isfat32)
+		start |= (int d.reserved[8] | (int d.reserved[9]<<8)) << 16;
 	return start;
 }
 
-putstart(nil: ref Xfs, d: ref Dosdir, start: int)
+putstart(xf: ref Xfs, d: ref Dosdir, start: int)
 {
 	d.start[0] = byte start;
 	d.start[1] = byte (start>>8);
-#	if(xf.isfat32){
-#		d.hstart[0] = start>>16;
-#		d.hstart[1] = start>>24;
-#	}
+	if(xf != nil && xf.ptr != nil && xf.ptr.isfat32){
+		d.reserved[8] = byte (start>>16);
+		d.reserved[9] = byte (start>>24);
+	}
 }
 
 #
@@ -1463,15 +1483,40 @@ fileclust(f: ref Xfile, iclust: int, cflag: int): int
 # return the disk sector for the isect disk sector in f,
 # allocating space if necessary and cflag is set
 #
-fileaddr(f: ref Xfile, isect: int, cflag: int): int
+#
+# the disk sector holding the isect'th sector of the root directory.
+# FAT12 and FAT16 keep the root in a fixed area of known size; FAT32
+# keeps it in a cluster chain like any other directory, so it has to be
+# walked, and a volume whose root is read as if it were the old fixed
+# area simply looks empty - which is how the Pi's own FAT32 boot
+# partition appeared before this.
+#
+rootsect(xf: ref Xfs, isect: int): int
 {
-	bp := f.xf.ptr;
-	dp := f.ptr;
-	if(isroot(dp.addr)) {
+	bp := xf.ptr;
+
+	if(!bp.isfat32){
 		if(isect*bp.sectsize >= bp.rootsize*DOSDIRSIZE)
 			return -1;
 		return bp.rootaddr + isect;
 	}
+	clust := bp.rootclust;
+	for(n := isect/bp.clustsize; n > 0; n--){
+		clust = getfat(xf, clust);
+		if(clust < FATRESRV || clust >= 16r0ffffff8)
+			return -1;
+	}
+	if(clust < FATRESRV)
+		return -1;
+	return clust2sect(bp, clust) + isect%bp.clustsize;
+}
+
+fileaddr(f: ref Xfile, isect: int, cflag: int): int
+{
+	bp := f.xf.ptr;
+	dp := f.ptr;
+	if(isroot(dp.addr))
+		return rootsect(f.xf, isect);
 	clust := fileclust(f, isect/bp.clustsize, cflag);
 	if(clust < 0)
 		return -1;
@@ -1880,11 +1925,10 @@ walkup(f: ref Xfile): (int, ref Dosptr)
 	# need this to find parent's parent's addr and offset
 	#
 	ppclust := ppstart;
-	# TO DO: FAT32
 	if(ppclust != 0)
 		k := clust2sect(bp, ppclust);
 	else
-		k = bp.rootaddr;
+		k = rootsect(f.xf, 0);
 	p = getsect(f.xf, k);
 	if(p == nil) {
 		if(debug)
@@ -1945,12 +1989,12 @@ walkup(f: ref Xfile): (int, ref Dosptr)
 				so%bp.clustsize;
 		}
 		else {
-			if(so*bp.sectsize >= bp.rootsize*DOSDIRSIZE) { 
+			k = rootsect(f.xf, so);
+			if(k < 0) { 
  				if(p != nil) 
 					putsect(p);
 				return (-1,nil);
 			}
-			k = bp.rootaddr + so;
 		}
 		putsect(p);
 		p = getsect(f.xf, k);
@@ -2717,6 +2761,12 @@ Dosboot.arr2Db(arr: array of byte): ref Dosboot
 	db.nheads = arr[26:28];
 	db.nhidden = arr[28:32];
 	db.bigvolsize = arr[32:36];
+	# FAT32 puts its own fields where FAT12/16 keep the drive number and
+	# label: a 32-bit FAT size at 36 and the root directory's first
+	# cluster at 44.  They are only meaningful when the 16-bit FAT size
+	# and the root entry count are both zero, which is how FAT32 says so.
+	db.fatsize32 = arr[36:40];
+	db.rootclust = arr[44:48];
 	db.driveno = arr[36];
 	db.bootsig = arr[38];
 	db.volid = arr[39:43];

@@ -137,7 +137,21 @@ kexit(Ureg*)
 	tos = (Tos*)(USTKTOP-sizeof(Tos));
 	tos->kcycles += t - up->kentry;
 	tos->pcycles = t + up->pcycles;
-	tos->pid = up->pid;
+	/*
+	 * getpid(2) is a read of this word, and for a legacy program the
+	 * buddy loaded it must be the container's identity: that is the
+	 * number rfork gave the parent and the number /proc/<n>/note
+	 * takes.
+	 *
+	 * Only for those.  A native process bound into a container for
+	 * scheduling (bindproc) was started by this kernel with this
+	 * kernel's pid, and its libc has already keyed state to it -
+	 * malloc's plock stores _tos->pid in the pool and punlock aborts
+	 * if it has changed, and abort() on Plan 9 is a read of address
+	 * zero.  Changing the number under such a process killed rc in
+	 * the middle of a malloc, three runs in six, at a fixed pc.
+	 */
+	tos->pid = up->buddyimage && up->osprey != nil ? ospreyprocid(up) : up->pid;
 }
 
 static void

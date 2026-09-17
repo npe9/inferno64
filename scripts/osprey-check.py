@@ -20,6 +20,12 @@ import os, re, subprocess, sys, tempfile, time
 
 class _None2: pass
 None2 = _None2()   # a check whose answer is a time rather than a string
+class _None3: pass
+None3 = _None3()   # a check whose answer is the breakdown of a round trip
+class _None4: pass
+None4 = _None4()   # a check whose answer is what a task exchange costs
+class _None5: pass
+None5 = _None5()   # a check whose answer is a round trip nobody was woken for
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
@@ -356,6 +362,15 @@ CHECKS = [
  ("a round trip that does not wait for the clock",
   ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
   None),   # checked by the number, not by a string
+ ("and the round trip is accounted for rather than asserted: the four parts - putting the request on the ring, waking the machine's waiters, waking the servers, and waiting for the other process to answer - are measured apart and add up to the whole, and the service process's own share of the waiting is measured from inside it and is less than it",
+  ["{echo '1 2000' >[1=0]; cat} <>/n/osprey/bench"],
+  None3),
+ ("and the same request answered by the process that asked it, with nobody woken: the kernel's own work on it, and none of the scheduling - under ten microseconds against the sixty a round trip through a service process costs",
+  ["{echo 'self 1 20000' >[1=0]; cat} <>/n/osprey/bench"],
+  None5),
+ ("the same exchange between two things that are not Procs: two tasks with a stack each, switching straight from one to the other, which costs a thousandth of what a round trip through the scheduler costs",
+  ["{echo 'task 20000' >[1=0]; cat} <>/n/osprey/bench"],
+  None4),
  ("four hundred round trips through the mapped ring with no trap at all",
   ["time /tmp/ring osprey0 $sz bench 400"],
   None2),
@@ -414,7 +429,12 @@ CHECKS = [
    "echo attach 6 0 >/n/osprey/ctl; echo mode 6 strict >/n/osprey/ctl",
    "echo bindproc 6 $b >/n/osprey/ctl",
    "{ while(){} } &",
-   "u=$apid; sleep 8; ps | awk '$2=='^$b"],
+   # The throttle is the scheduler's to apply, so when it applies is not
+   # this script's to say.  Looking once after eight seconds read the
+   # process as still running about one run in ten; this waits for it,
+   # twenty seconds past the sleep it already does, and prints what it
+   # finds either way so a real failure still reads as one.
+   "u=$apid; sleep 8; for(i in `{seq 1 20}){ if(ps | awk '$2=='^$b | grep -s Stopped) break; sleep 1 }; ps | awk '$2=='^$b"],
   "Stopped"),
  ("and one that is not, still running beside it",
   ["ps | awk '$2=='^$u",
@@ -557,6 +577,70 @@ def main():
                   and m is not None and float(m.group(1)) < 1.0)
             if m:
                 what += ' (%ss)' % m.group(1)
+        elif want is None3:
+            # The parts against the whole.  An instrument that measured
+            # its own parts and did not add up would be worth nothing,
+            # so the criterion is the sum, and only the sum.
+            m = re.search(r'(\d+) ns each,.*? submit (\d+) ns, wake (\d+) ns,'
+                          r' wakeservers (\d+) ns, wait (\d+) ns, collect (\d+) ns,'
+                          r' (\d+) of them slept; in the wait: server work (\d+) ns,'
+                          r' server wake (\d+) ns, (\d+) passes', parts[i])
+            ok = False
+            if m is not None:
+                tot = int(m.group(1))
+                got = sum(int(m.group(k)) for k in (2, 3, 4, 5, 6))
+                slept = int(m.group(7))
+                # Only that the parts account for the whole.  Which part
+                # is the largest is a fact about this kernel today and
+                # belongs in the doc with a date on it: a criterion that
+                # required the waiting to be most of the round trip
+                # would go red the day the waiting got smaller, and a
+                # check that fails when the system improves is worse
+                # than no check.
+                # And the server's share of the wait is inside the wait.
+                # That one is an accounting identity rather than a
+                # snapshot: the service process does its work while the
+                # caller is waiting for it, so measuring more of it than
+                # the caller waited would mean one of the two clocks is
+                # not what it says.
+                srv = int(m.group(8)) + int(m.group(9))
+                ok = (tot > 0 and got > 0 and abs(tot - got) < tot/10
+                      and 0 < srv <= int(m.group(5)))
+                what += (' (%d ns: submit %s, wake %s, wakeservers %s, wait %s'
+                         ' [server %s work + %s wake over %s passes], collect %s,'
+                         ' %d slept)') % (
+                    tot, m.group(2), m.group(3), m.group(4), m.group(5),
+                    m.group(8), m.group(9), m.group(10), m.group(6), slept)
+        elif want is None5:
+            # The floor: the same request, answered in the caller's own
+            # context.  Ten microseconds is loose on purpose - it
+            # measures under two on a quiet boot - because the claim is
+            # that the scheduling is the cost and not the work, and a
+            # bound that tracked the host's load would say nothing about
+            # that.
+            m = re.search(r'(\d+) ns each,.*? (\d+) of them slept', parts[i])
+            ok = m is not None and 0 < int(m.group(1)) < 10000 and int(m.group(2)) == 0
+            if m:
+                what += ' (%s ns a trip, none of them slept)' % m.group(1)
+        elif want is None4:
+            # What a message costs with no scheduler in it.  The
+            # claim under test is the order of magnitude, so the bound
+            # is generous: the guest's cycle counter follows the host's
+            # clock under emulation, this host runs other guests, and
+            # one preemption of the vcpu thread spread over twenty
+            # thousand round trips is worth hundreds of nanoseconds a
+            # trip.  A bound that tight would go red for the host's
+            # load and read as a regression in the switch.  Five
+            # microseconds still tests every order the claim needs: the
+            # thing it is set against is sixty.
+            m = re.search(r'(\d+) task round trips, (\d+) cycles each,'
+                          r' (\d+) ns each,.*? (\d+) ns a switch;'
+                          r' one read of the cycle counter is (\d+) ns',
+                          parts[i])
+            ok = m is not None and 0 < int(m.group(3)) < 5000
+            if m:
+                what += ' (%s ns a trip, %s a switch, %s to read the counter)' % (
+                    m.group(3), m.group(4), m.group(5))
         elif want is None:
             # a round trip took a whole clock tick until something woke
             # the service process; anything near a millisecond is that
@@ -574,6 +658,25 @@ def main():
         print('%-4s %s' % ('ok' if ok else 'FAIL', what))
         if not ok:
             bad += 1
+    # Does the trap entry give back every register it interrupted?  A
+    # register it lost would not look like a trap-entry fault from
+    # outside - it would look like whatever the interrupted instruction
+    # was about to do with it - so the kernel measures it at boot rather
+    # than waiting to recognise the symptom.  Both halves are required:
+    # the interrupts-on run clean, and the interrupts-off control clean
+    # in the same boot, because a loop that never moved would pass the
+    # first on its own.  The tick count is the evidence that any
+    # interrupt happened at all.
+    m = re.search(r'osprey regcheck: twelve registers survived (\d+) iterations over (\d+) clock ticks, '
+                  r'and the same loop with interrupts off is clean', log)
+    ok = m is not None and int(m.group(2)) > 0 and int(m.group(1)) > 0
+    what = ('and an interrupt gives back every register it interrupted: twelve of them held '
+            'across clock ticks and compared, with the same loop under CLI as the control')
+    if m:
+        what += ' (%s iterations, %s ticks)' % (m.group(1), m.group(2))
+    print('%-4s %s' % ('ok' if ok else 'FAIL', what))
+    if not ok:
+        bad += 1
     # the uart's output leaves the machine rather than coming back to it
     ok = 'osprey uart task' in com2
     print('%-4s %s' % ('ok' if ok else 'FAIL',

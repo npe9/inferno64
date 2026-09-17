@@ -30,7 +30,14 @@ def main():
 	ap.add_argument('-m', '--memory', default='1024')
 	ap.add_argument('-p', '--cpus', default='1')
 	ap.add_argument('-e', '--expect', action='append', default=[])
-	ap.add_argument('-u', '--until', default=None)
+	# Repeatable.  Two things a machine does can finish in either order -
+	# the personality's migration exchange and its pi-p over the cable are
+	# in different kprocs - so a run that stops at the first marker to
+	# arrive loses whatever the other was still doing.  Given more than
+	# once, every one of them must be seen before the run ends, in any
+	# order; they are matched against the whole of the output so far, so
+	# giving the same marker twice is the same as giving it once.
+	ap.add_argument('-u', '--until', action='append', default=None)
 	ap.add_argument('-c', '--command', action='append', default=[])
 	ap.add_argument('-q', '--quiet', action='store_true')
 	ap.add_argument('-S', '--snapshot', action='store_true',
@@ -53,7 +60,17 @@ def main():
 		help='before the shot, run a sequence over QMP/serial; comma-'
 		     'separated ops m:DX:DY (relative move), d:BUTTON / u:BUTTON '
 		     '(button down/up), s:SECONDS (pause), k:TEXT (type TEXT then '
-		     'Enter on the serial line); needs --shot')
+		     'Enter on the serial line), K:QCODE (press a key on the '
+		     'emulated keyboard), S:FILE (screendump there and then, so '
+		     'one boot can be looked at after each gesture); needs --shot')
+	ap.add_argument('--shot-at', action='append', default=[],
+		help='PATTERN=FILE: screendump to FILE the moment PATTERN appears '
+		     'on the console, and carry on.  Repeatable.  For a run whose '
+		     'screen is painted more than once - a program that draws, and '
+		     'then a library that takes the whole screen for a window of '
+		     'its own and clears it, which is what an ordinary Plan 9 '
+		     'graphics program does - where one shot at the end can only '
+		     'show the last of them')
 	ap.add_argument('--shot-on', default=None,
 		help='take the shot when this pattern appears rather than when '
 		     'the commands run out; lets a foreground program (rio) own '
@@ -86,8 +103,8 @@ def main():
 		'-serial', 'stdio',
 	]
 	qmpsock = None
-	if a.shot:
-		qmpsock = a.shot + '.qmp'
+	if a.shot or a.shot_at:
+		qmpsock = (a.shot or a.shot_at[0].partition('=')[2]) + '.qmp'
 		try: os.unlink(qmpsock)
 		except OSError: pass
 		qemu += ['-qmp', 'unix:%s,server,nowait' % qmpsock]
@@ -114,8 +131,35 @@ def main():
 	for e in a.expect:
 		pat, sep, reply = e.partition('=')
 		steps.append((re.compile(pat.encode(), re.M), reply if sep else None))
-	until = re.compile(a.until.encode(), re.M) if a.until else None
+	untilall = [re.compile(u.encode(), re.M) for u in a.until] if a.until else None
+	until = list(untilall) if untilall is not None else None
 	shot_on = re.compile(a.shot_on.encode(), re.M) if a.shot_on else None
+	shot_at = []
+	for e in a.shot_at:
+		pat, sep, path = e.partition('=')
+		if not sep:
+			print('--shot-at wants PATTERN=FILE, not %r' % e, file=sys.stderr)
+			return 2
+		shot_at.append((re.compile(pat.encode(), re.M), path))
+
+	def snapshot(path):
+		"""One screendump, over a QMP connection of its own.
+
+		Its own, because the socket takes one client at a time and the
+		shot at the end of the run wants it afterwards.  A failure here
+		is left to the caller to notice by the file not being there:
+		this runs in the middle of a boot and must not end it."""
+		try:
+			qs = socket.socket(socket.AF_UNIX); qs.connect(qmpsock)
+			qf = qs.makefile('rw'); qf.readline()
+			qf.write(json.dumps({"execute":"qmp_capabilities"})+chr(10))
+			qf.flush(); qf.readline()
+			qf.write(json.dumps({"execute":"screendump",
+				"arguments":{"filename":os.path.abspath(path)}})+chr(10))
+			qf.flush(); qf.readline()
+			qf.close(); qs.close()
+		except OSError:
+			pass
 	cmds = list(a.command)
 
 	log = open(a.log, 'wb')
@@ -129,6 +173,7 @@ def main():
 
 	esc = re.compile(rb'\x1b\[[0-9;=?]*[a-zA-Z]')
 	seen = b''
+	seenall = b''
 	deadline = time.time() + a.timeout
 	status = 1
 	lastout = time.time()
@@ -152,6 +197,15 @@ def main():
 				sys.stdout.write(b.decode('utf-8', 'replace'))
 				sys.stdout.flush()
 			seen = esc.sub(b'', seen + b)[-65536:]
+			seenall = esc.sub(b'', seenall + b)[-65536:]
+
+			# a screendump the moment a line appears, the boot carrying
+			# on: matched against everything said so far, not against
+			# the window the expectation machinery keeps clearing.
+			for i in range(len(shot_at)-1, -1, -1):
+				if shot_at[i][0].search(seenall):
+					snapshot(shot_at[i][1])
+					del shot_at[i]
 
 			lastout = time.time()
 
@@ -167,9 +221,12 @@ def main():
 						send(reply)
 					continue
 
-			if not steps and until is not None and until.search(seen):
+			if not steps and until is not None:
+				until = [u for u in until if not u.search(seen)]
+			if not steps and until is not None and not until:
 				if cmds:
 					seen = b''
+					until = list(untilall)	# the next command waits for them again
 					deadline = time.time() + a.timeout
 					send(cmds.pop(0))
 					continue
@@ -191,6 +248,27 @@ def main():
 				def qmp(cmd, args):
 					qf.write(json.dumps({"execute":cmd,"arguments":args})+chr(10))
 					qf.flush(); qf.readline()
+				def drain():
+					"""Keep the serial line going into the log while the
+					input sequence runs.  The read loop above has stopped
+					by now, so without this everything the machine says
+					about what it was driven to do - the driver's own
+					account of the packets - is dropped on the floor,
+					and a screendump is all the evidence there is."""
+					while True:
+						b = p.stdout.read(4096)
+						if not b:
+							return
+						log.write(b); log.flush()
+						if not a.quiet:
+							sys.stdout.write(b.decode('utf-8', 'replace'))
+				def pause(secs):
+					"""sleep, draining as it goes"""
+					end = time.time() + secs
+					while time.time() < end:
+						drain()
+						time.sleep(min(0.05, max(0.0, end - time.time())))
+					drain()
 				def mrel(dx, dy):
 					# PS/2 deltas are one signed byte; send in small steps
 					while dx or dy:
@@ -199,18 +277,18 @@ def main():
 						qmp("input-send-event", {"events":[
 							{"type":"rel","data":{"axis":"x","value":sx}},
 							{"type":"rel","data":{"axis":"y","value":sy}}]})
-						time.sleep(0.03)
+						pause(0.03)
 				def mbtn(button, down):
 					qmp("input-send-event", {"events":[
 						{"type":"btn","data":{"button":button,"down":down}}]})
-					time.sleep(0.1)
+					pause(0.1)
 				# optionally drive the mouse before the shot: move a little,
 				# then hold a button down so a menu that opens on press shows.
 				if a.click:
 					mrel(240, 160)
 					if a.click != 'move':
 						mbtn(a.click, True)
-						time.sleep(0.4)
+						pause(0.4)
 				# a general mouse sequence for multi-step interactions
 				if a.input:
 					for op in a.input.split(','):
@@ -218,12 +296,18 @@ def main():
 						if f[0] == 'm':   mrel(int(f[1]), int(f[2]))
 						elif f[0] == 'd': mbtn(f[1], True)
 						elif f[0] == 'u': mbtn(f[1], False)
-						elif f[0] == 's': time.sleep(float(f[1]))
+						elif f[0] == 's': pause(float(f[1]))
 						elif f[0] == 'k': send(':'.join(f[1:]))
 						elif f[0] == 'K':
 							qmp("send-key", {"keys":[
 								{"type":"qcode","data":f[1]}]})
-							time.sleep(0.08)
+							pause(0.08)
+						elif f[0] == 'S':
+							# a screendump part way through the sequence,
+							# so one boot can be looked at after each
+							# gesture rather than only at the end
+							qmp("screendump",
+								{"filename":':'.join(f[1:])})
 				qf.write(json.dumps({"execute":"screendump","arguments":{"filename":a.shot}})+chr(10)); qf.flush(); qf.readline()
 				qs.close()
 			except Exception as e:
@@ -246,7 +330,8 @@ def main():
 		log.close()
 	if status != 0:
 		sys.stderr.write('\nosprey-console: timed out waiting for %r\n' %
-			(a.until or 'end of output'))
+			([u.pattern.decode() for u in until] if until else (a.until or 'end of output')))
+	# (the markers still waited for are the ones left in until)
 	return status
 
 sys.exit(main())

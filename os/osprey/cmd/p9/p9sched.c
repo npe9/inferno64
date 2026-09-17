@@ -70,6 +70,88 @@ ready(Proc *p)
 }
 
 /*
+ * The private words of whichever proc is running.
+ *
+ * privalloc(2) is "one word of storage that is this process's own", and
+ * a program gets the address of one once and then reads and writes it
+ * from every flow of control it has.  In a kernel that word is on the
+ * process's own page; here every flow of control is a kproc of one
+ * address space, so the word is at one address and its contents are
+ * swapped at the switch (sched, below).  A program that never calls
+ * privalloc costs two memmoves of an empty array per switch.
+ */
+void *privblock[Nprivwords];
+static int nprivalloc;
+
+/*
+ * Hand out the next one, or nil when they are gone - which is what
+ * privalloc(2) answers, and what libc's callers do not check, so the
+ * number has to be enough rather than nearly enough.
+ */
+void**
+p9privalloc(void)
+{
+	if(nprivalloc >= Nprivwords)
+		return nil;
+	return &privblock[nprivalloc++];
+}
+
+extern vlong p9nsec(void);	/* devtime.c: the microkernel's clock, by xcall */
+void sched_tick(void);		/* below: one 10ms tick of the cooperative clock */
+
+/*
+ * Nothing is runnable.  Whether that is a deadlock depends on why: if
+ * every proc is asleep on a rendezvous, nothing but another proc could
+ * ready it and there is no other proc, so it is one.  If some proc is
+ * asleep on a deadline, it is not - it is an idle machine, and the way
+ * out is time passing.
+ *
+ * The personality's event loops advance the cooperative clock from the
+ * microkernel's tick semaphore, and while one of them is running there
+ * is always something runnable.  But a program can sleep with no loop
+ * under it: main.c runs its programs one after another on the server's
+ * own flow of control, and a program that calls sleep(2) there put the
+ * only proc there was to sleep.  That was a panic until now, and it is
+ * the "no idle" this scheduler was written down as lacking.
+ *
+ * What it does about it is ask the kernel what time it is and turn the
+ * answer into the ticks the sleepers are counting.  It is a busy wait
+ * and it says so: blocking would mean downing a semaphore the kernel
+ * has granted this container, and the tick reservation belongs to
+ * whichever loop asked for it, not to the scheduler.  An idle machine
+ * spending its own time in a syscall is the honest cost of that.
+ *
+ * Returns 1 if it advanced the clock and something may now be ready, 0
+ * if there is nothing to wait for - which is the real deadlock.
+ */
+static int
+idle(void)
+{
+	static vlong last;
+	vlong now;
+	int i, waiting;
+
+	waiting = 0;
+	for(i = 0; i < nallproc; i++)
+		if(allproc[i]->state == Wakeme && allproc[i]->twhen != 0){
+			waiting = 1;
+			break;
+		}
+	if(!waiting)
+		return 0;
+	now = p9nsec();
+	if(now == 0)
+		return 0;		/* no clock to wait on: a deadlock after all */
+	if(last == 0 || now < last)
+		last = now;
+	while(now - last >= 10*1000000LL){	/* a 10ms tick, this clock's unit */
+		last += 10*1000000LL;
+		sched_tick();
+	}
+	return 1;
+}
+
+/*
  * Give up the processor.  A Running caller is put back on the run queue; a
  * caller that has set itself Wakeme (in ksleep) is not.  Returns here when
  * another proc gotolabels back in.
@@ -82,7 +164,8 @@ sched(void)
 	me = up;
 	if(me->state == Running)
 		enqueue(me);
-	p = dequeue();
+	while((p = dequeue()) == nil && idle())
+		;
 	if(p == nil){
 		int i;
 		for(i = 0; i < nallproc; i++)
@@ -90,10 +173,20 @@ sched(void)
 				allproc[i]->pid, allproc[i]->text, allproc[i]->state, allproc[i]->twhen);
 		panic("p9sched: no runnable proc (deadlock), tick %lud", p9ticks);
 	}
+	/*
+	 * The private words go with the proc.  Saved before the switch and
+	 * loaded by whoever does the switching, so that the proc being
+	 * resumed finds its own: doing it the other way round - restoring
+	 * after setlabel returns 1 - would leave a brand-new kproc, which
+	 * arrives through launch and not through a setlabel, running on
+	 * whatever the last proc left behind.
+	 */
+	memmove(me->priv, privblock, sizeof privblock);
 	if(setlabel(&me->sched))
-		return;			/* resumed later */
+		return;			/* resumed later, with my words already loaded */
 	up = p;
 	p->state = Running;
+	memmove(privblock, p->priv, sizeof privblock);
 	gotolabel(&p->sched);
 }
 
@@ -213,6 +306,86 @@ kfastticks(uvlong *hz)
 }
 
 /*
+ * rendezvous(2).
+ *
+ * Two flows of control name the same tag and meet there: the first to
+ * arrive sleeps, the second wakes it, and each is handed the other's
+ * value.  It is symmetric on purpose - neither side is the waker by
+ * construction - and that is what makes it safe to use as libthread
+ * does, where a proc with no ready thread sets a flag, drops a lock and
+ * only then rendezvouses, so the waker can get there first.
+ *
+ * libthread is the caller.  runthread puts a proc with nothing to run to
+ * sleep on the address of its ready queue, and _threadready wakes it on
+ * the same address when it puts a thread there (sched.c).  Without this,
+ * a program's second proc would be started and never woken.
+ *
+ * No locks: this personality's scheduler is cooperative and switches
+ * only where it is asked to, so the scan and the claim below are one
+ * indivisible step already.
+ */
+/*
+ * How many tags can be waited on at once.  A flow of control is inside
+ * at most one call at a time, so it can be blocked in at most one
+ * rendezvous, and the flows that can reach this are a loaded program's:
+ * the one p9exec entered on, and the ones proccreate made, which come
+ * out of p9proc.c's sixteen slots.  Seventeen is the most there can be,
+ * so this is enough with room to spare and running out is not a
+ * program's doing but a bookkeeping mistake in the personality.
+ */
+enum { Nrend = 24 };
+
+typedef struct Rend Rend;
+struct Rend {
+	int	inuse;
+	void	*tag;
+	void	*val;		/* going in, the sleeper's; coming out, the waker's */
+	int	done;
+	Rendez	r;
+};
+static Rend rends[Nrend];
+
+static int
+rendone(void *a)
+{
+	return ((Rend*)a)->done;
+}
+
+void*
+p9rendezvous(void *tag, void *val)
+{
+	Rend *e;
+	void *other;
+	int i;
+
+	for(i = 0; i < Nrend; i++)
+		if(rends[i].inuse && !rends[i].done && rends[i].tag == tag){
+			/* the other side is already here: take its value, leave ours */
+			e = &rends[i];
+			other = e->val;
+			e->val = val;
+			e->done = 1;
+			wakeup(&e->r);
+			return other;
+		}
+	for(i = 0; i < Nrend; i++)
+		if(!rends[i].inuse)
+			break;
+	if(i == Nrend)
+		panic("p9 rendezvous: all %d slots taken, which is more flows of control than there can be", Nrend);
+	e = &rends[i];
+	e->inuse = 1;
+	e->tag = tag;
+	e->val = val;
+	e->done = 0;
+	ksleep(&e->r, rendone, e);
+	other = e->val;
+	e->inuse = 0;
+	e->done = 0;
+	return other;
+}
+
+/*
  * Run every kproc that is ready, then return to the caller (the server
  * loop).  The caller is Running, so sched() requeues it; it is handed back
  * the processor once the ready kprocs have each run until they sleep.
@@ -272,11 +445,25 @@ pexit(char *msg, int freemem)
 
 	USED(msg); USED(freemem);
 	up->state = Dead;			/* our stack is leaked: we are on it */
-	p = dequeue();
+	/*
+	 * The same idle sched has, and for the same reason: an empty run
+	 * queue is not the end of the machine if some proc is waiting on a
+	 * deadline.  A program's second flow of control ending while the
+	 * flow that is waiting for it sleeps is exactly that, and it used to
+	 * panic here.
+	 *
+	 * Nothing is saved of this proc's private words - it is dead and
+	 * will not be resumed - but the next one's are loaded, as they are
+	 * in sched: without that it would run on whatever this proc left in
+	 * the block.
+	 */
+	while((p = dequeue()) == nil && idle())
+		;
 	if(p == nil)
 		panic("p9sched: last proc exited");
 	up = p;
 	p->state = Running;
+	memmove(privblock, p->priv, sizeof privblock);
 	gotolabel(&p->sched);
 	for(;;)					/* gotolabel does not return */
 		;

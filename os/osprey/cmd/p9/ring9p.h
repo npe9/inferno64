@@ -11,3 +11,4 @@ long	ring9p_frame(uchar *frame, long n, uchar *unused, long unused2);	/* a frame
 uchar*	ring9p_taken(long *len);		/* a frame the server put in our packet buffer, just taken off our output queue */
 int	ring9p_taketick(int sem);		/* ask the kernel for the clock on a semaphore of ours */
 int	ring9p_wait(int sem);			/* wait by select: 0 the tick, 1 a frame from the server, -1 neither */
+long	ring9p_replyroom(void);	/* how many bytes of a container's data area an R-message may fill */

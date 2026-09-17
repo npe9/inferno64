@@ -67,10 +67,18 @@ Etherusb: module {
 # "ether <mnt>/<ifname>", where <ifname> is "ether" unless -i names
 # another.  conversation n occupies three consecutive paths
 # from Cbase + n*3 (dir, ctl, data).
-Qroot, Qether, Qclone, Qaddr: con big iota;
+Qroot, Qether, Qclone, Qaddr, Qstats: con big iota;
 Cbase: con big 16;
 
-Nqueue: con 64;		# frames held per conversation when nobody is reading
+# Frames held per conversation when nobody is reading.  This is a
+# staleness bound, not a buffer size: the reader here drains at tens of
+# frames a second, so sixty-four frames is seconds of queueing delay,
+# and a reply delivered seconds late is indistinguishable from one that
+# never came - the Pi answered every echo request it was sent and was
+# still reported unreachable.  Eight frames is a fifth of a second at
+# the measured drain rate, and what does not fit is dropped oldest
+# first.
+Nqueue: con 8;
 Ntx: con 32;		# frames queued for the transmit process
 
 Conn: adt {
@@ -79,7 +87,14 @@ Conn: adt {
 	promisc: int;
 	reads:	list of ref Tmsg.Read;	# deferred data reads
 	frames:	list of array of byte;	# queued frames, newest first
+	ready:	list of array of byte;	# reversed: oldest first, taken from here
 	nframes: int;
+	nin:	int;			# frames matched to this conversation
+	tlast:	int;			# when this conversation was last replied to
+	tgap:	int;			# summed millisecond gaps between reads
+	ngap:	int;			# how many gaps that is
+	nout:	int;			# frames handed to a reader
+	ndrop:	int;			# frames dropped, queue full and no reader
 };
 
 conns: array of ref Conn;
@@ -91,6 +106,35 @@ debug := 0;		# raised by -d
 txc: chan of array of byte;
 promisc := 0;
 ndrop := 0;
+
+# Where a frame that never reached the wire was lost.  The kernel counts
+# what it hands the medium (ipifc pktout); these count what this server
+# did with it, so a packet that leaves the IP stack and is never seen by
+# the other end can be placed on one side of the bulk endpoint or the
+# other.
+ntx := 0;		# frames handed to transmit()
+nqueued := 0;		# frames accepted onto the transmit channel
+nwrit := 0;		# bulk writes that wrote the whole frame
+nwerr := 0;		# bulk writes that did not
+nrx := 0;		# frames delivered from the device
+lasterr := "";		# what the last failed write said
+ndump4 := 0;		# IPv4 frames dumped on the way out
+ndump6 := 0;		# ARP frames dumped, for comparison
+
+# The head of a frame as it is handed to the endpoint: destination and
+# source mac, ethertype, and the start of what follows.  A frame the
+# other end never sees is either not written or written wrong, and the
+# second of those is only visible here.
+txdump(what: string, f: array of byte)
+{
+	s := "";
+	n := len f;
+	if(n > 50)
+		n = 50;
+	for(i := 0; i < n; i++)
+		s += sys->sprint("%02x", int f[i]);
+	sys->print("TXDUMP %s %d %s\n", what, len f, s);
+}
 
 # USB request type bits, standard requests and descriptor types
 Rh2d: con 0;
@@ -221,15 +265,23 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	}
 	tchan: chan of ref Tmsg;
-	(tchan, srv) = Styxserver.new(p[0], nav, Qroot);
+	# Inferno pipes are directional by endpoint: p[0] reads data written
+	# through p[1].  The Styx server therefore owns p[1], while mount()
+	# uses p[0] as its client endpoint.
+	(tchan, srv) = Styxserver.new(p[1], nav, Qroot);
 
 	tree.create(Qroot, dir(".", Sys->DMDIR|8r555, Qroot));
 	tree.create(Qroot, dir(ifname, Sys->DMDIR|8r555, Qether));
 	tree.create(Qether, dir("clone", 8r666, Qclone));
 	tree.create(Qether, dir("addr", 8r444, Qaddr));
+	tree.create(Qether, dir("stats", 8r444, Qstats));
 
 	rxc := chan of array of byte;
 	txc = chan[Ntx] of array of byte;
+	# Start the 9P server before workers that can block in the HCD or
+	# on the receive channel; the mount handshake must have a responder
+	# even if the device presents receive data immediately.
+	spawn server(tchan, rxc);
 	if(dev != nil){
 		spawn rxproc(rxc);
 		spawn txproc();
@@ -238,23 +290,33 @@ init(nil: ref Draw->Context, argv: list of string)
 	# spawn the server loop BEFORE mounting: mount performs the 9P
 	# handshake against our styx server, so the loop that answers it must
 	# already be running or mount deadlocks.
-	spawn server(tchan, rxc);
-
-	# MAFTER, not MREPL.  MREPL was right while one adapter was the
-	# most a board could have; with two, the second instance's mount
-	# replaced the first and the first became unreachable while its
-	# procs went on running.  A union keeps both directories visible,
-	# which is only useful because they now have different names.
-	if(sys->mount(p[1], nil, mnt, Sys->MAFTER|Sys->MCREATE, "") < 0){
-		sys->print("etherusb: mount %s: %r\n", mnt);
-		return;
-	}
+	#
+	# This mount was disabled on the Pi because the board wedged entering
+	# the syscall.  That was before the kernel's SP-alignment fault was
+	# found (a process whose kernel stack came back 8-byte aligned from
+	# malloc faulted endlessly the first time it used it), which is the
+	# shape of fault that stops a process dead in a syscall, so it is
+	# tried again rather than assumed.  mountproc does it in its own
+	# process: if it does wedge, the server and the board keep running.
+	spawn mountproc(p[0], mnt);
+	p[0] = nil;
 	p[1] = nil;
 	sys->print("ETHERUSB serving %s/%s mac %s %s\n", mnt, ifname, macstr(), kindname());
 
 	# keep the process alive so the server and transfer procs keep running
 	c := chan of int;
 	<-c;
+}
+
+mountproc(fd: ref Sys->FD, mnt: string)
+{
+	# MAFTER, not MREPL.  MREPL was right while one adapter was the
+	# most a board could have; with two, the second instance's mount
+	# replaced the first and the first became unreachable while its
+	# procs went on running.  A union keeps both directories visible,
+	# which is only useful because they now have different names.
+	if(sys->mount(fd, nil, mnt, Sys->MAFTER|Sys->MCREATE, nil) < 0)
+		sys->print("etherusb: mount %s: %r\n", mnt);
 }
 
 kindname(): string
@@ -520,6 +582,7 @@ E2pbusytime: con 1000;
 # PHY (MII) registers
 Bmcr: con 0;
 Bmsr: con 1;
+Bmsrlink: con 1<<2;			# link is up (latching low)
 Anar: con 4;
 Bmcrreset: con 1<<15;
 Bmcranenable: con 1<<12;
@@ -614,6 +677,21 @@ phyinit()
 	miird(Phyintsrc);			# clear pending
 	miiwr(Phyintmask, Anegcomp|Linkdown);
 	miiwr(Bmcr, miird(Bmcr)|Bmcranenable|Bmcrrestart);
+	# Say whether the cable is in.  A receive on a link that is down
+	# never completes, and the only symptom otherwise is the host
+	# controller's wait expiring twenty seconds later, which reads like
+	# a driver fault rather than an unplugged socket.
+	for(i = 0; i < Resettime/10; i++){
+		if(miird(Bmsr) & Bmsrlink)
+			break;
+		sys->sleep(10);
+	}
+	status := miird(Bmsr);
+	if(status & Bmsrlink)
+		sys->print("etherusb: link up (bmsr %#4.4ux)\n", status);
+	else
+		sys->print("etherusb: LINK DOWN (bmsr %#4.4ux): nothing will be received\n",
+			status);
 }
 
 # the MAC: the chip's EEPROM if there is one and it is programmed,
@@ -828,6 +906,7 @@ txproc()
 	zlp := array[0] of byte;
 	for(;;){
 		f := <-txc;
+		frame0 := f;
 		n := len f;
 		if(kind == Ksmsc){
 			t := array[8+n] of byte;
@@ -842,12 +921,22 @@ txproc()
 			t[0:] = f;
 			f = t;
 		}
+		t := 0;
+		if(len frame0 >= 14)
+			t = (int frame0[12] << 8) | int frame0[13];
+		if(t == 16r800 && ndump4++ < 4)
+			txdump("ip", f);
+		else if(t == 16r806 && ndump6++ < 2)
+			txdump("arp", f);
 		if(debug)
 			sys->print("etherusb: tx write %d\n", len f);
 		if(sys->write(bout.dfd, f, len f) != len f){
+			nwerr++;
+			lasterr = sys->sprint("%r");
 			sys->print("etherusb: %s: transmit: %r\n", dev.name);
 			continue;
 		}
+		nwrit++;
 		if(debug)
 			sys->print("etherusb: tx done %d\n", len f);
 		if(len f % outmaxpkt == 0)
@@ -899,7 +988,7 @@ handle(gm: ref Tmsg): string
 				nc[0:] = conns;
 				conns = nc;
 			}
-			conns[n] = ref Conn(n, 0, 0, nil, nil, 0);
+			conns[n] = ref Conn(n, 0, 0, nil, nil, nil, 0, 0, 0, 0, 0, 0, 0);
 			cdir := Cbase + big(n*3);
 			tree.create(Qether, dir(string n, Sys->DMDIR|8r555, cdir));
 			tree.create(cdir, dir("ctl", 8r666, cdir+big 1));
@@ -920,13 +1009,44 @@ handle(gm: ref Tmsg): string
 			srv.reply(styxservers->readstr(m, macstr()));
 			return nil;
 		}
+		if(fid.path == Qstats){
+			rg := 0;
+			if(rxn > 0)
+				rg = rxgap / rxn;
+			ss := sys->sprint(
+				"ntx %d\nnqueued %d\nnwrit %d\nnwerr %d\nndrop %d\nnrx %d rxgap %d\nlasterr %s\n",
+				ntx, nqueued, nwrit, nwerr, ndrop, nrx, rg, lasterr);
+			for(i := 0; i < nconn; i++){
+				c := conns[i];
+				np := 0;
+				for(rl := c.reads; rl != nil; rl = tl rl)
+					np++;
+				g := 0;
+				if(c.ngap > 0)
+					g = c.tgap / c.ngap;
+				ss += sys->sprint("conv %d etype %#x in %d out %d drop %d held %d waiting %d gap %d\n",
+					i, c.etype, c.nin, c.nout, c.ndrop, c.nframes, np, g);
+			}
+			srv.reply(styxservers->readstr(m, ss));
+			return nil;
+		}
 		if(fk == 1){			# ctl read -> conversation number
 			srv.reply(styxservers->readstr(m, string cn + "\n"));
 			return nil;
 		}
 		if(fk == 2){			# data read: a queued frame, else wait
 			c := conns[cn];
-			if(c.frames != nil){
+			# how long the kernel took to come back for the next
+			# frame: the receive ceiling is either this gap or the
+			# work this server does between frames, and the two are
+			# told apart by measuring one of them
+			t := sys->millisec();
+			if(c.tlast != 0){
+				c.tgap += t - c.tlast;
+				c.ngap++;
+			}
+			c.tlast = t;
+			if(c.nframes > 0){
 				f := oldest(c);
 				srv.reply(ref Rmsg.Read(m.tag, f[0:min(m.count, len f)]));
 			} else
@@ -985,16 +1105,22 @@ min(a, b: int): int
 	return b;
 }
 
-# frames are kept newest-first; take the oldest
+# Frames arrive newest-first on one list and are taken oldest-first from
+# another, which is filled by reversing the first when it runs out: each
+# frame is moved once, so a read costs the same whatever the queue holds.
+# Reversing the whole queue on every read cost O(n) per frame, and since
+# that work is on the path that drains the queue, a queue that grew made
+# the server slower and so grew further: at sixty-four deep the kernel
+# came back for a frame every 177ms, at eight deep every 62ms.
 oldest(c: ref Conn): array of byte
 {
-	l: list of array of byte;
-	for(; tl c.frames != nil; c.frames = tl c.frames)
-		l = hd c.frames :: l;
-	f := hd c.frames;
-	c.frames = nil;
-	for(; l != nil; l = tl l)
-		c.frames = hd l :: c.frames;
+	if(c.ready == nil){
+		for(l := c.frames; l != nil; l = tl l)
+			c.ready = hd l :: c.ready;
+		c.frames = nil;
+	}
+	f := hd c.ready;
+	c.ready = tl c.ready;
 	c.nframes--;
 	return f;
 }
@@ -1074,11 +1200,12 @@ transmit(cn: int, frame: array of byte)
 		sys->print("ETHERTX conn %d %d bytes type %#4.4x\n", cn, len frame, t);
 		return;
 	}
+	ntx++;
 	f := array[len frame] of byte;
 	f[0:] = frame;
 	alt {
 	txc <-= f =>
-		;
+		nqueued++;
 	* =>
 		ndrop++;		# transmit queue full: drop, as a NIC would
 	}
@@ -1086,9 +1213,29 @@ transmit(cn: int, frame: array of byte)
 
 # a received frame goes to every conversation whose type matches (or
 # that asked for all), answering a waiting read or queueing it
+nrxdump := 0;
+rxgap := 0;		# summed milliseconds between frames leaving the endpoint
+rxn := 0;
+rxlast := 0;
+
 deliver(f: array of byte)
 {
+	nrx++;
+	# how long the frame before this one took to come off the endpoint:
+	# the receive ceiling is either here, in the driver and the device,
+	# or above, in the kernel coming back for the next frame
+	now := sys->millisec();
+	if(rxlast != 0){
+		rxgap += now - rxlast;
+		rxn++;
+	}
+	rxlast = now;
 	t := (int f[12] << 8) | int f[13];
+	# every ARP frame that reaches this server, so a reply the other end
+	# swears it sent can be placed on one side of the endpoint or the
+	# other
+	if(t == 16r806 && nrxdump++ < 8)
+		txdump("rxarp", f);
 	if(debug)
 		sys->print("etherusb: rx %d bytes type %#4.4x\n", len f, t);
 	for(i := 0; i < nconn; i++){
@@ -1097,6 +1244,7 @@ deliver(f: array of byte)
 		# negative type receives everything
 		if(c.etype != t && c.etype >= 0)
 			continue;
+		c.nin++;
 		if(c.reads != nil){
 			# oldest read first
 			l: list of ref Tmsg.Read;
@@ -1106,12 +1254,24 @@ deliver(f: array of byte)
 			c.reads = nil;
 			for(; l != nil; l = tl l)
 				c.reads = hd l :: c.reads;
+			c.nout++;
 			srv.reply(ref Rmsg.Read(m.tag, f[0:min(m.count, len f)]));
 		} else if(c.nframes < Nqueue){
 			c.frames = f :: c.frames;
 			c.nframes++;
-		} else
+		} else {
+			# The queue is full because the reader is behind, and the
+			# frame that matters most is the newest: an ARP reply
+			# thrown away behind a queue of stale broadcasts leaves
+			# the interface unable to resolve anything, which is how
+			# the Pi came to answer ARP and reach nothing.  Drop the
+			# oldest instead and keep what just arrived.
+			oldest(c);
+			c.frames = f :: c.frames;
+			c.nframes++;
+			c.ndrop++;
 			ndrop++;
+		}
 	}
 }
 
@@ -1120,7 +1280,7 @@ deliver(f: array of byte)
 #
 opendev(name: string): ref Dev
 {
-	d := ref Dev;
+	d := ref Dev("", 0, nil, nil, 0, 0);	# every field: a bare ref keeps residue
 	d.name = name;
 	d.id = int name[2:];	# "epN.M"
 	d.cfd = sys->open("/dev/usb/" + name + "/ctl", Sys->ORDWR);

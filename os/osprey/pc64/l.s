@@ -624,6 +624,28 @@ TEXT setlabel(SB), 1, $-4
 	MOVL	$0, AX				/* return 0 */
 	RET
 
+/*
+ * Leave this task and enter that one: setlabel and gotolabel in one
+ * instruction stream.  Two of them would not do, because the code
+ * between them would run on a stack that is about to be left.
+ *
+ * A label is a stack pointer and a program counter and that is the
+ * whole of a context here: the Plan 9 compilers keep nothing in a
+ * register across a call, which is why this kernel's own setlabel, and
+ * the tree's setjmp for amd64, save those two and no registers at all.
+ *
+ * The second argument is read before SP moves, since FP is SP.
+ */
+TEXT taskswitch(SB), 1, $-4
+	MOVQ	to+8(FP), BX			/* where we are going, first */
+	MOVQ	SP, 0(RARG)			/* store this task's SP */
+	MOVQ	0(SP), AX			/* and the PC it resumes at */
+	MOVQ	AX, 8(RARG)
+	MOVQ	0(BX), SP			/* the other task's SP */
+	MOVQ	8(BX), AX			/* its PC, onto its own stack */
+	MOVQ	AX, 0(SP)
+	RET
+
 TEXT halt(SB), 1, $-4
 	CLI
 	CMPL	nrdy(SB), $0
@@ -939,16 +961,61 @@ _vmout2:
 	RET
 
 /*
+ * Enter user mode at an image's entry, with RARG naming the stack.
+ *
+ * The entry is an argument rather than the UTZERO+0x28 that was written
+ * here, because the images this kernel enters are no longer all at one
+ * address: the p964 personality is linked high so that an ordinary Plan
+ * 9 binary can have UTZERO.  init0 reads it from the task; initcode,
+ * which no loader laid out, still gets UTZERO+0x28.
  */
 TEXT touser(SB), 1, $-4
+	MOVQ	entry+8(FP), CX			/* ip, before SP moves */
 	SWAPGS
 
 	MOVL	$0, RMACH
 	MOVL	$0, RUSER
 
-	MOVQ	$(UTZERO+0x28), CX		/* ip */
 	MOVL	$0x200, R11			/* flags */
 	MOVQ	RARG, SP			/* sp */
+
+	BYTE $0x48; SYSRET			/* SYSRETQ */
+
+/*
+ * As touser, but the stack pointer and the argument register are set
+ * apart: RARG names the argument vector, and SP is given separately,
+ * below it.
+ *
+ * They cannot be the same word.  6c on amd64 passes a function's first
+ * argument in RARG and gives it a home in the caller's frame at 8(SP),
+ * and a function that still wants the argument after a call spills it
+ * there - the entries in os/osprey/pc/init9*.c do, because they hand
+ * the vector to init9tos and then use it again.  If SP named the vector
+ * itself, that spill would land on the vector's second word: argv[1]
+ * for a program given an argument, and for a program given none the nil
+ * that ends the vector, after which the walk to the end runs off into
+ * whatever is above and the word past the nil - the address of the Tos -
+ * is read from the wrong place.  Two words of room below the vector is
+ * all it takes, and the caller leaves them.
+ *
+ * The entry is the third argument and not a constant, because the images
+ * this kernel enters are not all at one address: the personality library
+ * is linked high so that ordinary Plan 9 binaries can have UTZERO, and a
+ * flat microkernel task is still at UTZERO.  The caller reads it from
+ * the task (up->aoutentry, set by whichever loader laid the image out);
+ * a kernel-wide word for it was wrong, because the second load in a boot
+ * overwrote the first task's entry before it had been used.
+ */
+TEXT touserv(SB), 1, $-4
+	MOVQ	sp+8(FP), DX			/* the stack, before SP moves */
+	MOVQ	entry+16(FP), CX		/* ip, before SP moves too */
+	SWAPGS
+
+	MOVL	$0, RMACH
+	MOVL	$0, RUSER
+
+	MOVL	$0x200, R11			/* flags */
+	MOVQ	DX, SP				/* sp, and RARG still holds argv */
 
 	BYTE $0x48; SYSRET			/* SYSRETQ */
 

@@ -307,6 +307,7 @@ typedef struct Pipconn Pipconn;
 struct Pipconn {
 	int	dfd, lfd, conn;
 	int	closed;
+	int	cable;			/* it came over the cable, not from the client container */
 	uchar	group[2048];		/* the reader leaves one group here */
 	long	grouplen;
 	int	groupready;
@@ -360,7 +361,15 @@ pipconn(void *a)
 		tsleep(&up->sleep, return0, nil, 10);
 	}
 	pipfs_connclosed(c->dfd);		/* its streams stop; the sessions live on */
-	print("p9 ip: pi-p wire: connection %d closed; the sessions it carried live on\n", c->conn);
+	/*
+	 * Which side the connection came from, said here as well as when it
+	 * was accepted.  A run is over when the far machine's pi-p over the
+	 * cable is done, and this line is how that is known from outside:
+	 * without the origin the close of the cable's connection reads the
+	 * same as the close of the client container's.
+	 */
+	print("p9 ip: pi-p wire: connection %d from %s closed; the sessions it carried live on\n",
+		c->conn, c->cable ? "the cable" : "the client container");
 	p9close(c->dfd);
 	p9close(c->lfd);
 	free(c);
@@ -398,6 +407,7 @@ pipwire(void *a)
 		c = malloc(sizeof *c);
 		if(c == nil){ p9close(dfd); p9close(lfd); continue; }
 		memset(c, 0, sizeof *c);
+		c->cable = a != nil;
 		c->dfd = dfd; c->lfd = lfd; c->conn = conns;
 		kproc("pipconn", pipconn, c);	/* each connection served on its own kproc, so one does not block another */
 	}
@@ -559,6 +569,37 @@ wiresrv(void *)
  * the session has a name and reads the file.
  */
 int pipwire_connectto(char *addr, int *dfdp);
+
+/*
+ * Connect to the other machine's pi-p wire, trying for a while.  The two
+ * machines boot independently and neither waits for the other, so the
+ * first connect can arrive before the far end is listening; a single try
+ * made both ticket checks fail together, now and then, for a reason that
+ * had nothing to do with tickets.  This is the same wait the migration
+ * path already makes for the same reason.
+ */
+static int
+pipconnecttries(int *dfdp)
+{
+	char a[48];
+	int wfd, try;
+
+	snprint(a, sizeof a, "connect %s!%d", netpeer, netpipport);
+	for(try = 0;; try++){
+		if(!waserror()){
+			wfd = pipwire_connectto(a, dfdp);
+			poperror();
+			if(try > 0)
+				print("p9 ip: pi-p across the cable: connected on try %d\n", try + 1);
+			return wfd;
+		}
+		if(try >= 20)
+			error("the other machine's pi-p wire did not answer in twenty tries");
+		if(*dfdp >= 0){ p9close(*dfdp); *dfdp = -1; }
+		tsleep(&up->sleep, return0, nil, 500);
+	}
+}
+
 static void
 pipacrosscable(void)
 {
@@ -574,12 +615,23 @@ pipacrosscable(void)
 	long tn, rn, off, blen;
 	int type, tag, dfd, wfd, refused, opened;
 
+	dfd = wfd = -1;
 	if(waserror()){
 		print("p9 ip: pi-p across the cable failed: %s\n", up->errstr);
+		/*
+		 * The connection is dropped and the end is said on this path
+		 * too.  The other machine is waiting for its side of this
+		 * connection to close before it stops, and a failure that
+		 * left it open would leave that machine waiting for a line
+		 * that cannot come.
+		 */
+		if(wfd >= 0) p9close(wfd);
+		if(dfd >= 0) p9close(dfd);
+		print("p9 ip: pi-p across the cable: the connection is closed; this machine is done with the cable's pi-p\n");
 		return;
 	}
 	/* as nobody */
-	{ char a[48]; snprint(a, sizeof a, "connect %s!%d", netpeer, netpipport); wfd = pipwire_connectto(a, &dfd); }
+	wfd = pipconnecttries(&dfd);
 	tn = 0;
 	tn += pip_tsession(tg+tn, 1, 0);
 	tn += pip_topen(tg+tn, 2, 0, 1, 0, "/n/hello");
@@ -603,7 +655,8 @@ pipacrosscable(void)
 	if((ticket = pip_ticket()) == nil)
 		error("my kernel would not sign a ticket (no key set?)");
 	print("p9 ip: pi-p across the cable: my kernel signed a ticket for \"%s\": \"%s\"\n", eve, ticket);
-	{ char a[48]; snprint(a, sizeof a, "connect %s!%d", netpeer, netpipport); wfd = pipwire_connectto(a, &dfd); }
+	dfd = -1;
+	wfd = pipconnecttries(&dfd);
 	tn = 0;
 	tn += pip_tsession(tg+tn, 4, 0);
 	tn += pip_tauth(tg+tn, 5, ticket);
@@ -630,6 +683,16 @@ pipacrosscable(void)
 	if(!opened)
 		print("p9 ip: pi-p across the cable: the ticketed session did not get /n/hello\n");
 	p9close(wfd); p9close(dfd);
+	wfd = dfd = -1;
+	/*
+	 * Said whether the exchange above worked or not: this is the end of
+	 * everything this machine does over the cable's pi-p, and the check
+	 * waits for it.  It has to, because this runs in the wire client's
+	 * kproc while the migration exchange runs in others, and the two
+	 * finish in either order; a run stopped at the migration's own last
+	 * line caught this phase about one time in four.
+	 */
+	print("p9 ip: pi-p across the cable: the connection is closed; this machine is done with the cable's pi-p\n");
 	poperror();
 }
 
@@ -1497,6 +1560,37 @@ create9p(char *name, char *text)
 	cclose(hc);
 }
 
+/* remove a file on the server over 9P, the path that is not the cache */
+static void
+remove9p(char *name)
+{
+	Chan *tc, *rc, *hc;
+	char *names[2];
+
+	tc = namec("#L", Aopen, ORDWR, 0);
+	rc = mntattach(tc, nil, "", 0);
+	cclose(tc);
+	names[0] = "n";
+	names[1] = name;
+	hc = cclone(rc);
+	cclose(rc);
+	if(walk(&hc, names, 2, 1, nil) < 0)
+		error("no such file on the server");
+	/*
+	 * Remove clunks the fid, so the Chan is freed without the device's
+	 * close being called on it - the shape sysremove and p9remove use.
+	 */
+	if(waserror()){
+		hc->type = 0;
+		cclose(hc);
+		nexterror();
+	}
+	devtab[hc->type]->remove(hc);
+	hc->type = 0;
+	poperror();
+	cclose(hc);
+}
+
 /*
  * The caching file system (devcache.c) through the name space: #K bound
  * over /n, so /n/hello here is the server's file, held in this
@@ -1605,6 +1699,33 @@ cachetest(void)
 		cachestats(&hits, &misses, &refetches, &nf);
 		print("p9 ip: cache: 3500 ms later /n/cachef8 is still held - %s; the stream's frames renewed its lease on the server\n",
 			strcmp(buf, "file 8, made on the server for the cache to hold") == 0 ? "read from the copy" : "not what was written");
+		/*
+		 * And a file the cache holds, removed on the server by the
+		 * other path.  The stream is watching that name; the server
+		 * answers the next frame with an error rather than a version,
+		 * the cache lets the copy go, and the open after it asks the
+		 * server and is refused - so the cache does not serve a file
+		 * that is not there.  Before the store took a remove at all
+		 * this could not be asked.
+		 */
+		remove9p("cachef7");
+		print("p9 ip: cache: /n/cachef7 removed on the server by the other path, 9P over the ring\n");
+		tsleep(&up->sleep, return0, nil, 400);	/* four periods of the stream */
+		{
+			char why[ERRMAX];
+
+			why[0] = 0;
+			if(!waserror()){
+				fd = p9open("/n/cachef7", OREAD);
+				n = p9read(fd, buf, sizeof buf - 1); if(n < 0) n = 0; buf[n] = 0;
+				p9close(fd);
+				poperror();
+				print("p9 ip: cache: BUG: /n/cachef7 still read through the cache after it was removed: \"%s\"\n", buf);
+			} else {
+				kstrcpy(why, up->errstr, sizeof why);
+				print("p9 ip: cache: an open of /n/cachef7 through the cache is refused now: %s\n", why);
+			}
+		}
 		{
 			extern void cachestopall(void);
 

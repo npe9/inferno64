@@ -38,7 +38,16 @@ OFILES=\
 	executable.$O\
 	vcodas.$O\
 
-HFILES=../include/mach.h ../include/a.out.h bootexec.h elf.h ureg4.h ureg6.h ureg8.h uregk.h uregv.h ureg5.h uregj.h
+# The compilers' object-format headers are here because the *obj.c
+# readers take the opcode numbers from them: when 8.out.h grew four
+# opcodes in the middle of its enum, ASIGNAME and everything after it
+# moved, and a libmach built before that could no longer find the
+# symbols in a new .8 - so iar wrote an archive with nothing in its
+# symbol table, and 8l reported every function in it undefined.
+OUTH=../5c/5.out.h ../6c/6.out.h ../7c/7.out.h ../8c/8.out.h ../9c/9.out.h\
+	../jc/i.out.h ../kc/k.out.h ../qc/q.out.h ../vc/v.out.h
+
+HFILES=../include/mach.h ../include/a.out.h bootexec.h elf.h ureg4.h ureg6.h ureg8.h uregk.h uregv.h ureg5.h uregj.h $OUTH
 
 <$ROOT/mkfiles/mksyslib-$SHELLTYPE
 CFLAGS= $CFLAGS -I../include -I..

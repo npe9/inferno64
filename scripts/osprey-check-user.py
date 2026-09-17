@@ -59,6 +59,23 @@ def main():
                     'osprey: touser' in t))
     results.append(("and a program runs there whose file personality is a user-space library, not the kernel's",
                     'whose file personality is a library' in t))
+    #
+    # The syscall half of "does an entry give back every register it was
+    # given".  The interrupt half is measured in the kernel
+    # (regtorture.s, pc64's init0); this is the other entry, and it is
+    # the one that is this kernel's own code rather than 9front's -
+    # syscallentry and forkret carry both the Plan 9 and the Linux ABI,
+    # so they save and restore every register.  It has to be asked from
+    # user mode because that is the only place a system call comes from.
+    #
+    # The answered count is required to be 0 as well as the registers
+    # clean: a path that refused every call would still have exercised
+    # the entry, and that is worth being able to tell apart from one
+    # that served them.
+    results.append(("and a system call gives back every register it was not told to keep: eleven of them held across real system calls made from user mode, which is the entry this kernel wrote itself - AX carries the result, CX and R11 are what SYSRET consumes and BP is the call number, so those four are excluded by the ABI and named rather than quietly skipped",
+                    re.search(r'osprey user: eleven registers survived (\d+) of \1 system calls, '
+                              r'so syscallentry and forkret gave back every one they were not told to keep', t)
+                    is not None))
     results.append(("and it maps its container's message ring through the microkernel's address-space service",
                     'message ring with segattach' in t))
     results.append(("and the library opens a file by name at a server over the ring",

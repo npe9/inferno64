@@ -179,10 +179,24 @@ p9close(int fd)
  * union mount point (several things bound or mounted at one name), a
  * directory read walks the members in turn and returns each one's
  * entries, so a listing of "/" spans the root device, the environment
- * and a 9P mount together.  The rock fixup - rewriting an entry that is
- * itself a mount point - is stubbed here (mountfix returns the entries
- * unchanged, mountrockread finds no rock), which is correct as long as
- * the union's own entries are not themselves mount points.
+ * and a 9P mount together.
+ *
+ * The rock fixup comes with it, which it did not before.  A directory
+ * entry that is itself a mount point has to be answered with what is
+ * mounted there and not with what the underlying device says is there:
+ * a bind of one file over another leaves the name alone and changes
+ * everything else about it, and a listing that showed the covered file
+ * would be describing something the name no longer reaches.  The entry
+ * that comes back can be longer than the one it replaces, so what does
+ * not fit is kept in the channel's rock and handed out at the next
+ * read; that is what the rock is for, and why a directory's offset is
+ * the channel's and not a pread's to choose.
+ *
+ * This is os/osprey/port/sysfile.c's, which is 9front's, brought over
+ * whole rather than written again: dirfixed, dirname, dirsetname,
+ * mountrock, mountrockread, mountrewind and mountfix, resting on the
+ * findmount and eqchantdqid this personality already links from
+ * chan.c.
  */
 void
 unionrewind(Chan *c)
@@ -196,23 +210,272 @@ unionrewind(Chan *c)
 	qunlock(&c->umqlock);
 }
 
+static int
+dirfixed(uchar *p, uchar *e, Dir *d)
+{
+	int len;
+
+	len = GBIT16(p)+BIT16SZ;
+	if(p + len > e)
+		return -1;
+
+	p += BIT16SZ;	/* ignore size */
+	d->type = devno(GBIT16(p), 1);
+	p += BIT16SZ;
+	d->dev = GBIT32(p);
+	p += BIT32SZ;
+	d->qid.type = GBIT8(p);
+	p += BIT8SZ;
+	d->qid.vers = GBIT32(p);
+	p += BIT32SZ;
+	d->qid.path = GBIT64(p);
+	p += BIT64SZ;
+	d->mode = GBIT32(p);
+	p += BIT32SZ;
+	d->atime = GBIT32(p);
+	p += BIT32SZ;
+	d->mtime = GBIT32(p);
+	p += BIT32SZ;
+	d->length = GBIT64(p);
+
+	return len;
+}
+
+static char*
+dirname(uchar *p, int *n)
+{
+	p += BIT16SZ+BIT16SZ+BIT32SZ+BIT8SZ+BIT32SZ+BIT64SZ
+		+ BIT32SZ+BIT32SZ+BIT32SZ+BIT64SZ;
+	*n = GBIT16(p);
+	return (char*)p+BIT16SZ;
+}
+
+static long
+dirsetname(char *name, int len, uchar *p, long n, long maxn)
+{
+	char *oname;
+	int olen;
+	long nn;
+
+	if(n == BIT16SZ)
+		return BIT16SZ;
+
+	oname = dirname(p, &olen);
+
+	nn = n+len-olen;
+	PBIT16(p, nn-BIT16SZ);
+	if(nn > maxn)
+		return BIT16SZ;
+
+	if(len != olen)
+		memmove(oname+len, oname+olen, p+n-(uchar*)(oname+olen));
+	PBIT16((uchar*)(oname-2), len);
+	memmove(oname, name, len);
+	return nn;
+}
+
+/*
+ * Mountfix might have caused the fixed results of the directory read
+ * to overflow the buffer.  Catch the overflow in c->dirrock.
+ */
+static long nrocked;		/* entries put in a rock, so a demonstration can say the path ran */
+
+long
+p9rockcount(void)
+{
+	return nrocked;
+}
+
+static void
+mountrock(Chan *c, uchar *p, uchar **pe)
+{
+	uchar *e, *r;
+	int len, n;
+
+	e = *pe;
+	nrocked++;
+
+	/* find last directory entry */
+	for(;;){
+		len = BIT16SZ+GBIT16(p);
+		if(p+len >= e)
+			break;
+		p += len;
+	}
+
+	/* save it away */
+	qlock(&c->rockqlock);
+	if(c->nrock+len > c->mrock){
+		n = ROUND(c->nrock+len, 1024);
+		r = smalloc(n);
+		memmove(r, c->dirrock, c->nrock);
+		free(c->dirrock);
+		c->dirrock = r;
+		c->mrock = n;
+	}
+	memmove(c->dirrock+c->nrock, p, len);
+	c->nrock += len;
+	qunlock(&c->rockqlock);
+
+	/* drop it */
+	*pe = p;
+}
+
+/*
+ * Satisfy a directory read with the results saved in c->dirrock.
+ */
+int
+mountrockread(Chan *c, uchar *op, long n, long *nn)
+{
+	long dirlen;
+	uchar *rp, *erp, *ep, *p;
+
+	/* common case */
+	if(c->nrock == 0)
+		return 0;
+
+	/* copy out what we can */
+	qlock(&c->rockqlock);
+	rp = c->dirrock;
+	erp = rp+c->nrock;
+	p = op;
+	ep = p+n;
+	while(rp+BIT16SZ <= erp){
+		dirlen = BIT16SZ+GBIT16(rp);
+		if(p+dirlen > ep)
+			break;
+		memmove(p, rp, dirlen);
+		p += dirlen;
+		rp += dirlen;
+	}
+
+	if(p == op){
+		qunlock(&c->rockqlock);
+		return 0;
+	}
+
+	/* shift the rest */
+	if(rp != erp)
+		memmove(c->dirrock, rp, erp-rp);
+	c->nrock = erp - rp;
+
+	*nn = p - op;
+	qunlock(&c->rockqlock);
+	return 1;
+}
+
 void
 mountrewind(Chan *c)
 {
 	c->nrock = 0;
 }
 
-int
-mountrockread(Chan *c, uchar*, long, long*)
+/*
+ * Rewrite the results of a directory read to reflect current 
+ * name space bindings and mounts.  Specifically, replace
+ * directory entries for bind and mount points with the results
+ * of statting what is mounted there.  Except leave the old names.
+ */
+long
+mountfix(Chan *c, uchar *op, long n, long maxn)
 {
-	return c->nrock != 0 ? 0 : 0;	/* no rock is kept here */
+	char *name;
+	int nbuf, nname;
+	Chan *nc;
+	Mhead *mh;
+	Mount *m;
+	uchar *p;
+	int dirlen, rest;
+	long l;
+	uchar *buf, *e;
+	Dir d;
+
+	p = op;
+	buf = nil;
+	nbuf = 0;
+	for(e=&p[n]; p+BIT16SZ<e; p+=dirlen){
+		dirlen = dirfixed(p, e, &d);
+		if(dirlen < 0)
+			break;
+		nc = nil;
+		mh = nil;
+		if(findmount(&nc, &mh, d.type, d.dev, d.qid)){
+			/*
+			 * If it's a union directory and the original is
+			 * in the union, don't rewrite anything.
+			 */
+			rlock(&mh->lock);
+			for(m = mh->mount; m != nil; m = m->next){
+				if(eqchantdqid(m->to, d.type, d.dev, d.qid, 1)){
+					runlock(&mh->lock);
+					goto Norewrite;
+				}
+			}
+			runlock(&mh->lock);
+
+			if(waserror())
+				goto Norewrite;
+			name = dirname(p, &nname);
+			if(buf == nil){
+				nbuf = 4096;
+				buf = smalloc(nbuf);
+			}
+			l = devtab[nc->type]->stat(nc, buf, nbuf);
+			if(l < BIT16SZ)
+				error(Eshortstat);
+			rest = BIT16SZ + GBIT16(buf) + nname;
+			if(rest > nbuf){
+				free(buf);
+				nbuf = rest;
+				buf = smalloc(nbuf);
+				l = devtab[nc->type]->stat(nc, buf, nbuf);
+			}
+			l = dirsetname(name, nname, buf, l, nbuf);
+			if(l <= BIT16SZ)
+				error(Eshortstat);
+			poperror();
+
+			/*
+			 * Shift data in buffer to accomodate new entry,
+			 * possibly overflowing into rock.
+			 */
+			rest = e - (p+dirlen);
+			if(l > dirlen){
+				while(p+l+rest > op+maxn){
+					mountrock(c, p, &e);
+					if(e == p){
+						dirlen = 0;
+						goto Norewrite;
+					}
+					rest = e - (p+dirlen);
+				}
+			}
+			if(l != dirlen){
+				memmove(p+l, p+dirlen, rest);
+				dirlen = l;
+				e = p+dirlen+rest;
+			}
+
+			/*
+			 * Rewrite directory entry.
+			 */
+			memmove(p, buf, l);
+
+		    Norewrite:
+			cclose(nc);
+			putmhead(mh);
+		}
+	}
+	if(buf != nil)
+		free(buf);
+
+	if(p != e)
+		error("oops in rockfix");
+
+	return e-op;
 }
 
-long
-mountfix(Chan*, uchar*, long nn, long)
-{
-	return nn;			/* entries returned unchanged */
-}
+
 
 long
 unionread(Chan *c, void *va, long n)
@@ -255,12 +518,24 @@ unionread(Chan *c, void *va, long n)
 }
 
 /*
- * Read by descriptor.  For a plain file, read at the channel's offset.
- * For a directory, rewind at offset 0 and, if the channel is a union,
- * read across its members; otherwise read the one device's directory.
+ * Read by descriptor.  offp nil is read(2) - read at the channel's own
+ * offset and advance it; offp is pread(2) - read at the offset given
+ * and leave the channel's own alone.  The two are one function here for
+ * the reason they are one function in 9front's sysfile.c: the whole
+ * difference between them is where the offset comes from and whether it
+ * is written back, and splitting the body is how the two drift apart.
+ *
+ * A directory is the exception at both ends: its offset is passed
+ * through and maintained either way, because the rock and the union
+ * cursor are the channel's and a pread cannot be allowed to leave them
+ * disagreeing with it.
+ *
+ * For a plain file, read at the offset.  For a directory, rewind at
+ * offset 0 and, if the channel is a union, read across its members;
+ * otherwise read the one device's directory.
  */
-long
-p9read(int fd, void *buf, long n)
+static long
+readfd(int fd, void *buf, long n, vlong *offp)
 {
 	Chan *c;
 	long nn, nnn;
@@ -271,12 +546,17 @@ p9read(int fd, void *buf, long n)
 		cclose(c);
 		nexterror();
 	}
-	off = c->offset;
+	if(offp == nil)
+		off = c->offset;
+	else
+		off = *offp;
 	if(off < 0)
 		error(Enegoff);
 	if(off == 0){
-		c->offset = 0;
-		c->devoffset = 0;
+		if(offp == nil || (c->qid.type & QTDIR)){
+			c->offset = 0;
+			c->devoffset = 0;
+		}
 		mountrewind(c);
 		unionrewind(c);
 	}
@@ -294,33 +574,131 @@ p9read(int fd, void *buf, long n)
 	} else
 		nnn = nn = devtab[c->type]->read(c, buf, n, off);
 
-	lock(c);
-	c->devoffset += nn;
-	c->offset += nnn;
-	unlock(c);
+	if(offp == nil || (c->qid.type & QTDIR)){
+		lock(c);
+		c->devoffset += nn;
+		c->offset += nnn;
+		unlock(c);
+	}
 	poperror();
 	cclose(c);
 	return nnn;
 }
 
 long
-p9write(int fd, void *buf, long n)
+p9read(int fd, void *buf, long n)
+{
+	return readfd(fd, buf, n, nil);
+}
+
+/*
+ * pread(2).  A program that reads a file at an offset without moving
+ * the descriptor is not an unusual program: libdraw's namedimage reads
+ * the draw device's control file at 0 between two writes of the data
+ * file, and would get whatever the last read left the offset at if this
+ * did not exist.
+ */
+long
+p9pread(int fd, void *buf, long n, vlong off)
+{
+	return readfd(fd, buf, n, &off);
+}
+
+/*
+ * Write by descriptor, the same pair.  The channel's offset is advanced
+ * before the device is called and wound back by what the device did not
+ * take, which is 9front's order and not the older one: a second writer
+ * on the same channel must not be handed an offset the first is about
+ * to use.
+ */
+static long
+writefd(int fd, void *buf, long len, vlong *offp)
 {
 	Chan *c;
-	long nw;
+	long m, n;
+	vlong off;
 
+	n = 0;
 	c = fdtochan(fd, OWRITE, 1, 1);
 	if(waserror()){
+		if(offp == nil){
+			lock(c);
+			c->offset -= n;
+			unlock(c);
+		}
 		cclose(c);
 		nexterror();
 	}
-	nw = devtab[c->type]->write(c, buf, n, c->offset);
-	lock(c);
-	c->offset += nw;
-	unlock(c);
+	if(c->qid.type & QTDIR)
+		error(Eisdir);
+	n = len;
+	if(offp == nil){
+		lock(c);
+		off = c->offset;
+		c->offset += n;
+		unlock(c);
+	} else
+		off = *offp;
+	if(off < 0)
+		error(Enegoff);
+	m = devtab[c->type]->write(c, buf, n, off);
+	if(offp == nil && m < n){
+		lock(c);
+		c->offset -= n - m;
+		unlock(c);
+	}
 	poperror();
 	cclose(c);
-	return nw;
+	return m;
+}
+
+long
+p9write(int fd, void *buf, long n)
+{
+	return writefd(fd, buf, n, nil);
+}
+
+long
+p9pwrite(int fd, void *buf, long n, vlong off)
+{
+	return writefd(fd, buf, n, &off);
+}
+
+/*
+ * getpid(2): the number of the flow of control this call is on, which is
+ * the personality's own kproc number.  libc's getpid reads _tos->pid,
+ * and a program's Tos is in its image and shared by every flow it has,
+ * so that number would be the same for all of them; libthread stamps it
+ * on each of its procs and would have stamped one number on all.
+ */
+int
+libpid(void)
+{
+	return up->pid;
+}
+
+/*
+ * The offset a descriptor's channel stands at.
+ *
+ * Nothing in the name space needs this; the personality's own check
+ * does.  writefd advances the channel's offset before it calls the
+ * device and winds it back by what the device did not take, so a write
+ * that fails outright has to leave the offset where it found it - and a
+ * drift there would show up only on some later write to the same
+ * channel, which is the kind of thing nobody notices.  Seek cannot be
+ * used to look: a pipe is a stream and refuses one, and a pipe with no
+ * reader is the write that fails.
+ */
+vlong
+p9fdoffset(int fd)
+{
+	Chan *c;
+	vlong off;
+
+	c = fdtochan(fd, -1, 0, 1);
+	off = c->offset;
+	cclose(c);
+	return off;
 }
 
 /* seek: move the descriptor's offset (0 set, 1 current, 2 from end) */
@@ -464,6 +842,29 @@ p9statraw(char *name, uchar *buf, int nbuf)
 }
 
 /*
+ * wstat by name: the raw message the caller marshalled, handed to the
+ * device the name resolves to.  The name is opened for access and not
+ * for reading, the way stat's is, because a wstat is not a read of the
+ * file and a file may be wstat-ed by someone who could not open it.
+ */
+long
+p9wstatraw(char *name, uchar *buf, int nbuf)
+{
+	Chan *c;
+	long n;
+
+	c = namec(name, Aaccess, 0, 0);
+	if(waserror()){
+		cclose(c);
+		nexterror();
+	}
+	n = devtab[c->type]->wstat(c, buf, nbuf);
+	poperror();
+	cclose(c);
+	return n;
+}
+
+/*
  * A pipe: two descriptors on the two ends of a #| channel, the same as
  * the kernel's syspipe but returning fd-layer descriptors.  fd[0] is the
  * read/write end, fd[1] the other; a write on one is read on the other.
@@ -553,6 +954,54 @@ p9bind(char *name, char *old, int flag)
 	return 0;
 }
 
+/*
+ * chdir(2) and unmount(2), the two name-space calls the file layer did
+ * not have.  chdir yields the channel the name resolves to rather than
+ * setting up->dot: the caller here is a buddy worker serving one
+ * container's call, and up is the worker, whose dot is the buddy's own -
+ * a container's working directory has to be the container's, kept beside
+ * its Pgrp and swapped in around its calls the same way.  A caller that
+ * wants the plain effect closes the old channel and keeps this one.
+ */
+Chan*
+p9chdirchan(char *name)
+{
+	Chan *c;
+
+	c = namec(name, Atodir, 0, 0);
+	return c;
+}
+
+/*
+ * unmount(name, old): take one thing off a mount point, or clear it.
+ * An empty name is Plan 9's "everything mounted on old".  The body is
+ * sysunmount's, which this configuration cuts: the mount point is named
+ * with Amount and what is being taken off with Aunmount, and cunmount
+ * takes the mount point first - the other order dereferences a nil.
+ */
+int
+p9unmount(char *name, char *old)
+{
+	Chan *cmounted, *cmount;
+
+	cmounted = nil;
+	cmount = namec(old, Amount, 0, 0);
+	if(waserror()){
+		cclose(cmount);
+		if(cmounted != nil)
+			cclose(cmounted);
+		nexterror();
+	}
+	if(name != nil && *name != 0)
+		cmounted = namec(name, Aunmount, OREAD, 0);
+	cunmount(cmount, cmounted);
+	poperror();
+	cclose(cmount);
+	if(cmounted != nil)
+		cclose(cmounted);
+	return 0;
+}
+
 /* duplicate a descriptor: a new fd on the same channel (shared offset) */
 int
 /*
@@ -596,4 +1045,344 @@ p9dup(int oldfd)
 		error(Enofd);
 	poperror();
 	return fd;
+}
+
+extern int	p9spawn(char*, char**, int*);	/* p9proc.c */
+extern int	p9waitpid(int, char*, int);
+
+/*
+ * The table's entry points, each under an error label of its own.
+ *
+ * The name space raises: p9open calls namec, and a name that is not
+ * there, or a device that refuses the open, unwinds rather than
+ * returning -1.  That is right for the personality, whose own callers
+ * are written around waserror, and wrong for the table, because the
+ * table is a program's libc and libc does not raise - a program tests
+ * the return and reads errstr.  Handing the raw entry points out meant
+ * that the first open a loaded program made of a file that was not
+ * there unwound off the top of the program's frames and into whatever
+ * label the personality had up, which is not where the program's stack
+ * was: it faulted, jumping to nothing.
+ *
+ * libdraw is what found it.  iounit(2) opens /fd/<n>ctl, expects the
+ * open to fail on a system that has no such file, and carries on with a
+ * default buffer size - an ordinary, correct thing for a program to do,
+ * and the first thing in this personality that ever did it.
+ *
+ * So each entry point catches and answers the way libc answers.  errstr
+ * is up->errstr either way, which is what the program's %r reads.
+ */
+int
+libopen(char *name, int mode)
+{
+	int fd;
+
+	if(waserror())
+		return -1;
+	fd = p9open(name, mode);
+	poperror();
+	return fd;
+}
+
+int
+libcreate(char *name, int mode, ulong perm)
+{
+	int fd;
+
+	if(waserror())
+		return -1;
+	fd = p9create(name, mode, perm);
+	poperror();
+	return fd;
+}
+
+long
+libread(int fd, void *buf, long n)
+{
+	long r;
+
+	if(waserror())
+		return -1;
+	r = p9read(fd, buf, n);
+	poperror();
+	return r;
+}
+
+long
+libwrite(int fd, void *buf, long n)
+{
+	long r;
+
+	if(waserror())
+		return -1;
+	r = p9write(fd, buf, n);
+	poperror();
+	return r;
+}
+
+long
+libpread(int fd, void *buf, long n, vlong off)
+{
+	long r;
+
+	if(waserror())
+		return -1;
+	r = p9pread(fd, buf, n, off);
+	poperror();
+	return r;
+}
+
+long
+libpwrite(int fd, void *buf, long n, vlong off)
+{
+	long r;
+
+	if(waserror())
+		return -1;
+	r = p9pwrite(fd, buf, n, off);
+	poperror();
+	return r;
+}
+
+/*
+ * stat(2) and fstat(2): the raw stat message, which is what libc's
+ * dirstat and dirfstat parse.  A program that asks how long a file is -
+ * libdraw's openfont, reading a font file it has to allocate for - asks
+ * this way, and without it the call was libc's stub and a trap.
+ */
+int
+libstat(char *name, uchar *edir, int nedir)
+{
+	long r;
+
+	if(waserror())
+		return -1;
+	r = p9statraw(name, edir, nedir);
+	poperror();
+	return (int)r;
+}
+
+int
+libfstat(int fd, uchar *edir, int nedir)
+{
+	long r;
+
+	if(waserror())
+		return -1;
+	r = p9fstatraw(fd, edir, nedir);
+	poperror();
+	return (int)r;
+}
+
+/*
+ * The four name-space calls, which the personality had for its own use
+ * and a loaded program could not reach.  A library operating system
+ * whose caller cannot bind is not offering a name space, it is offering
+ * a fixed set of names, and rio is the program that showed it: linking
+ * rio against this library and reading the undefined symbols named
+ * bind, mount, unmount and chdir among the eight things it wants.
+ *
+ * They change the name space the personality itself is using, because
+ * there is one of it - the program and the library share an address
+ * space and a Pgrp both.  That is what a library operating system is
+ * and it is not hidden here: a program that binds over /dev has bound
+ * over the personality's /dev.  Plan 9's answer is rfork(RFNAMEG),
+ * which is a thing this personality does not have yet and is written
+ * down as owed rather than pretended.
+ */
+int
+libbind(char *name, char *old, int flag)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9bind(name, old, flag);
+	poperror();
+	return r;
+}
+
+int
+libmount(int fd, char *old, int flag, char *spec)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9mount(fd, old, flag, spec);
+	poperror();
+	return r;
+}
+
+int
+libunmount(char *name, char *old)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9unmount(name, old);
+	poperror();
+	return r;
+}
+
+/*
+ * chdir(2).  p9chdirchan yields the channel rather than setting
+ * up->dot, because its other caller is a buddy worker serving somebody
+ * else's call.  Here the caller is the program itself, running on this
+ * task, so the plain effect is what is wanted: the new channel becomes
+ * up->dot and the old one is closed.
+ */
+int
+libchdir(char *name)
+{
+	Chan *c;
+
+	if(waserror())
+		return -1;
+	c = p9chdirchan(name);
+	poperror();
+	/*
+	 * The old one is not closed, and finding out why cost a crash.
+	 * kproc here hands its child up->dot by pointer and increments no
+	 * count, so every flow of control on this personality is holding
+	 * the same Chan.  Closing it because this flow chdir'd took the
+	 * personality's working directory away from the shell and from the
+	 * personality itself, and what came back was a fault reading
+	 * address 0 in incref, a long way from the chdir - the same
+	 * reasoning that says a program's rfork must not close the Pgrp it
+	 * was given, which was already written down two functions up and
+	 * which I did not apply here.
+	 *
+	 * p9exec puts the flow's dot back when the program returns, which
+	 * is what keeps a program from leaving the library somewhere else.
+	 */
+	up->dot = c;
+	return 0;
+}
+
+/*
+ * sleep(2).  Milliseconds on the personality's own clock, which is the
+ * microkernel's tick arriving on the server loop; 0 is a yield, which is
+ * what libc's lock does while it spins.  A cooperative scheduler has to
+ * be given the chance or the spinning process is the only one that ever
+ * runs.
+ */
+int
+libsleep(long ms)
+{
+	if(ms <= 0){
+		sched();
+		return 0;
+	}
+	tsleep(&up->sleep, return0, nil, ms);
+	return 0;
+}
+
+void
+libclose(int fd)
+{
+	if(waserror())
+		return;
+	p9close(fd);
+	poperror();
+}
+
+vlong
+libseek(int fd, vlong off, int type)
+{
+	vlong r;
+
+	if(waserror())
+		return -1;
+	r = p9seek(fd, off, type);
+	poperror();
+	return r;
+}
+
+int
+libdup(int fd)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9dup(fd);
+	poperror();
+	return r;
+}
+
+int
+libfd2path(int fd, char *buf, int nbuf)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9fd2path(fd, buf, nbuf);
+	poperror();
+	return r;
+}
+
+int
+libpipe(int fd[2])
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9pipe(fd);
+	poperror();
+	return r;
+}
+
+int
+libspawn(char *name, char **argv, int *std)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9spawn(name, argv, std);
+	poperror();
+	return r;
+}
+
+/*
+ * errstr(2) for a loaded program: the name space's own up->errstr, which
+ * is where every refusal above leaves its reason.  Plan 9's errstr
+ * exchanges the buffers - it writes the caller's string back into the
+ * process's - and so does this, because that is what a program that
+ * saves and restores an error message expects.
+ */
+int
+liberrstr(char *buf, uint nbuf)
+{
+	char tmp[ERRMAX];
+
+	if(nbuf == 0)
+		return -1;
+	kstrcpy(tmp, buf, sizeof tmp);
+	kstrcpy(buf, up->errstr, nbuf);
+	/*
+	 * ERRMAX, not sizeof up->errstr: that field is a char* and the
+	 * sizeof was 8, so a message a program installed came back seven
+	 * characters long.  Nothing wrote an errstr from a program until
+	 * notify's refusal did, which is why a truncation this severe went
+	 * unseen - the read half of the exchange was always right.
+	 */
+	kstrcpy(up->errstr, tmp, ERRMAX);
+	return 0;
+}
+
+int
+libwait(int pid, char *status, int nstatus)
+{
+	int r;
+
+	if(waserror())
+		return -1;
+	r = p9waitpid(pid, status, nstatus);
+	poperror();
+	return r;
 }

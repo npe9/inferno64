@@ -25,6 +25,49 @@
 #include "io.h"
 
 /*
+ * Invalidate every data or unified cache before SCTLR.C is first enabled.
+ * CLIDR describes up to seven levels; selecting a level in CSSELR makes
+ * CCSIDR report its line, set and way geometry.  DC ISW's operand uses the
+ * same line shift, level in bits 3:1, and a way field aligned at the top of
+ * the 32-bit operand.  This is architectural ARMv8 code, not A53 geometry
+ * hard-coded for QEMU.
+ */
+void
+cacheinit(void)
+{
+	u32 clidr, ccsidr, sw;
+	int level, loc, type, lineshift, ways, sets, waybits, wayshift;
+	int way, set, n;
+
+	coherence();
+	clidr = getclidr();
+	loc = (clidr >> 24) & 7;
+	for(level = 0; level < loc; level++){
+		type = (clidr >> (level*3)) & 7;
+		if(type < 2 || type > 4)
+			continue;	/* no data/unified cache at this level */
+		setcsselr(level << 1);	/* data/unified cache */
+		ccsidr = getccsidr();
+		lineshift = (ccsidr & 7) + 4;
+		ways = ((ccsidr >> 3) & 0x3ff) + 1;
+		sets = ((ccsidr >> 13) & 0x7fff) + 1;
+		waybits = 0;
+		for(n = ways-1; n != 0; n >>= 1)
+			waybits++;
+		wayshift = 32 - waybits;
+		for(way = ways-1; way >= 0; way--)
+			for(set = sets-1; set >= 0; set--){
+				sw = (level << 1) | (set << lineshift);
+				if(waybits != 0)
+					sw |= (u32)way << wayshift;
+				dcisw(sw);
+			}
+	}
+	setcsselr(0);
+	coherence();
+}
+
+/*
  * Smallest data-cache line in bytes, from CTR_EL0.DminLine (bits 19:16,
  * log2 of the line size in 4-byte words).  DC operations by VA must
  * stride by the minimum line present so no line in the range is skipped.

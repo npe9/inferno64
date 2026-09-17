@@ -14,10 +14,15 @@ uvlong	fastticks(uvlong*);
 ulong	tk2ms(ulong);
 void	coherence(void);
 u32	getctr(void);			/* CTR_EL0, for the cache line sizes */
+u32	getclidr(void);			/* CLIDR_EL1 */
+u32	getccsidr(void);		/* CCSIDR_EL1 selected by CSSELR_EL1 */
+void	setcsselr(u32);
+void	dcisw(u32);			/* invalidate D-cache line by set/way */
 void	dccvac(uintptr);		/* clean one D-line to PoC */
 void	dcivac(uintptr);		/* invalidate one D-line */
 void	dccivac(uintptr);		/* clean+invalidate one D-line */
 void	cacheiinv(void);		/* invalidate the whole I-cache */
+void	cacheinit(void);		/* invalidate reset-state data caches */
 void	cacheflush(void*, usize);	/* clean a D-cache range to PoC */
 void	cacheflushinv(void*, usize);	/* clean+invalidate a D-cache range */
 void	cacheinval(void*, usize);	/* invalidate a D-cache range */
@@ -50,6 +55,9 @@ void	gicinit(void);
 void	timerie(void);
 void	uartconsole(void);
 void	uartconsolesetup(void);
+void	serialputdec(ulong);
+void	serialputreg(char*, uvlong, int);
+void	clockcheckboot(void);
 void	serialputc(int);
 void	serialputs(char*, int);
 void	(*screenputs)(char*, int);
@@ -83,4 +91,3 @@ void	cycles(uvlong*);		/* also in io.h; proc.c includes fns.h, not io.h */
 extern int	(*pcicfgrw8)(int, int, int, int);
 extern int	(*pcicfgrw16)(int, int, int, int);
 extern int	(*pcicfgrw32)(int, int, int, int);
-uvlong	psci(uvlong, uvlong, uvlong, uvlong);

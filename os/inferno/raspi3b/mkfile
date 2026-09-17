@@ -79,8 +79,8 @@ kernel8.img: i$CONF mkrawimg.py
 	python3 mkrawimg.py i$CONF kernel8.img $KTZERO
 
 boot:V: kernel8.img
-	@echo 'kernel8.img + config.txt are ready for the Pi FAT boot partition'
-	@echo '(also needs the Pi firmware: bootcode.bin start.elf fixup.dat)'
+	echo 'kernel8.img + config.txt are ready for the Pi FAT boot partition'
+	echo '(also needs the Pi firmware: bootcode.bin start.elf fixup.dat)'
 
 <../port/portmkfile
 

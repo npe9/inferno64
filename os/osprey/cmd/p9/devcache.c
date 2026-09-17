@@ -118,7 +118,59 @@ cachestream(void*)
 			off = 0;
 			while(pip_next(rg, rn, &off, &type, &tag, &body, &blen)){
 				i = tag - Streamtag;
-				if(type != PipRread || i < 0 || i >= Ncache || !cache[i].used)
+				if(i < 0 || i >= Ncache || !cache[i].used)
+					continue;
+				if(type == PipRerror){
+					/*
+					 * The server cannot say what this file's
+					 * latest version is, which is what a
+					 * removed file looks like from here: the
+					 * stream was watching a name and the name
+					 * has gone (fileversion walks to it, and
+					 * the walk is what failed).  So the copy
+					 * goes: a cache that went on answering
+					 * from it would be serving a file that is
+					 * not there.  The next open of the name
+					 * asks the server, which refuses it, so
+					 * the reason a reader gets is the
+					 * server's own and not this cache's guess
+					 * at it.
+					 *
+					 * Nothing is said on the wire from here.
+					 * This is the kproc that takes replies off
+					 * the wire, so a close sent here would be
+					 * waiting for itself; the fid's lease
+					 * lapses on the server in three seconds
+					 * and stops the stream there.
+					 */
+					print("cache: /n/%s: the stream says \"%.*s\": the copy is let go\n",
+						cache[i].name, (int)pip_num(body, 2), (char*)body+2);
+					/*
+					 * Only what nobody is holding.  An entry
+					 * with a chan open on it is read straight
+					 * out of e->data, which is why eviction
+					 * waits for nopen to reach zero; freeing
+					 * it here would be freeing it under a
+					 * reader.  With nobody holding it the
+					 * entry goes altogether, so the name is
+					 * out of the cache's directory and the
+					 * next walk makes it afresh; with a
+					 * reader holding it, the copy stays and
+					 * the entry is made to read as stale, so
+					 * that reader keeps what it has and the
+					 * next open refetches - which is the call
+					 * that fails.
+					 */
+					cache[i].fid = 0;
+					if(cache[i].nopen == 0 && !cache[i].dirty){
+						free(cache[i].data);
+						free(cache[i].draft);
+						memset(&cache[i], 0, sizeof cache[i]);
+					} else
+						cache[i].latest = cache[i].vers + 1;
+					continue;
+				}
+				if(type != PipRread)
 					continue;
 				frames++;
 				snprint(show, sizeof show, "%.*s", (int)pip_num(body+8, 2), (char*)body+10);

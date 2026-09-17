@@ -107,13 +107,14 @@ insn_b(u32 *at, void *target)
 	return 0x14000000 | (imm26 & 0x3FFFFFF);
 }
 
+extern void crumbentry(void);
+
 static void
 buildslot(u32 *slot, int class)
 {
-	slot[0] = insn_sub_sp_sp(UrSize);
-	slot[1] = insn_str_x_sp(9, Off_R9);
-	slot[2] = insn_movz(9, class);
-	slot[3] = insn_b(&slot[3], (void*)vectrap);
+	slot[0] = 0xd518d089;			/* MSR TPIDR_EL1, X9 */
+	slot[1] = insn_movz(9, class);
+	slot[2] = insn_b(&slot[2], (void*)crumbentry);
 }
 
 static void
@@ -137,6 +138,16 @@ vectorbuild(void)
 		else
 			slot[0] = insn_b(&slot[0], slot);	/* "b ." */
 	}
+	/*
+	 * These instructions were just written through the data cache,
+	 * with the MMU and caches already on.  The Cortex-A53's separate
+	 * L1 instruction cache fetches from memory, which may still hold
+	 * what was there before, so clean the written lines out to memory
+	 * and drop any instruction-cache state before the vectors can be
+	 * taken (as Linux's flush_icache_range does).  QEMU has no caches.
+	 */
+	cacheflush(v, NSlot*SlotSize);
+	cacheiinv();
 	vectorinit(v);
 }
 
@@ -207,6 +218,16 @@ gicenable(int irq)
 void
 gicinit(void)
 {
+	/*
+	 * BCM2836 local controller GPU_INT_ROUTING: bits 1:0 pick the core
+	 * that takes the BCM2835 (GPU) peripheral IRQs, bits 3:2 the core
+	 * for their FIQ.  Only core 0 runs this kernel -- the others sit at
+	 * WFE -- so route both there rather than trusting the reset or
+	 * firmware value; a peripheral IRQ routed to a parked core is
+	 * simply never seen.
+	 */
+	*(volatile u32*)0x4000000c = 0;
+	coherence();
 }
 
 void
@@ -216,13 +237,85 @@ trapinit(void)
 	gicinit();
 }
 
+/*
+ * Crumb record (l.s crumbentry): words 0-7 are the last exception taken,
+ * 144-149 the first taken on a wild SP, 152-155 a label gotolabel refused.
+ * The block is mapped Device (mmu.c), uncached, so a record survives a
+ * reset that is not a power cycle.
+ */
+enum { Crumbbase = 0x20000000 };
+
+/*
+ * l.s gotolabel found a label whose sp cannot be a kernel stack.
+ * Crumb words 152-155: the label, its sp and pc, gotolabel's caller.
+ */
+void
+badlabel(Label *l)
+{
+	volatile uvlong *c = (volatile uvlong*)Crumbbase;
+
+	splhi();
+	serialputs("BADLABEL", -1);
+	serialputreg("label", c[152], 8);
+	serialputreg("sp", c[153], 16);
+	serialputreg("pc", c[154], 8);
+	serialputreg("caller", c[155], 8);
+	if(up != nil){
+		serialputreg("pid", up->pid, 4);
+		serialputreg("up", (uintptr)up, 8);
+		serialputreg("kstack", (uintptr)up->kstack, 8);
+		serialputreg("errlab0", (uintptr)up->errlab, 8);
+		serialputreg("nerrlab", up->nerrlab, 4);
+		serialputreg("sched", (uintptr)&up->sched, 8);
+	}
+	serialputs("\n", -1);
+	USED(l);
+	panic("gotolabel: bad sp %#llux pc %#llux from %#llux", c[153], c[154], c[155]);
+}
+
+/*
+ * l.s crumbentry moved an exception taken on a wild SP onto wildstack;
+ * crumb words 144-149 hold the first such exception's ELR, SPSR, ESR,
+ * SP, X30 and X29.
+ */
+static void
+wildspreport(Ureg *ur)
+{
+	volatile uvlong *c = (volatile uvlong*)Crumbbase;
+
+	serialputs("WILDSP type ", -1);
+	serialputdec(ur->type);
+	serialputreg("elr", c[144], 8);
+	serialputreg("spsr", c[145], 3);
+	serialputreg("esr", c[146], 8);
+	serialputreg("sp", c[147], 16);
+	serialputreg("lr", c[148], 8);
+	serialputreg("fp", c[149], 16);
+	if(up != nil){
+		serialputreg("pid", up->pid, 4);
+		serialputreg("kstack", (uintptr)up->kstack, 8);
+	}
+	serialputs("\n", -1);
+	panic("exception on a wild sp %#llux at pc %#llux lr %#llux", c[147], c[144], c[148]);
+}
+
 void
 trap(Ureg *ur)
 {
-	u32 pend, *ic;
+	u32 pend;
+	volatile u32 *ic;
 	int irq, bank, v;
 	void (*f)(Ureg*, void*);
 
+	{
+		extern char wildstack[];
+		static int wildseen;
+		if(!wildseen && (uchar*)ur >= (uchar*)wildstack && (uchar*)ur < (uchar*)wildstack + 16*1024){
+			wildseen = 1;
+			splhi();
+			wildspreport(ur);
+		}
+	}
 	switch(ur->type){
 	case TIrq:
 		if(getcntpctl() & CntpIStatus){
@@ -240,7 +333,7 @@ trap(Ureg *ur)
 		 * silent, and why console output had to be drained from
 		 * process context alone.
 		 */
-		ic = (u32*)IRQBASE;
+		ic = (volatile u32*)IRQBASE;
 		for(bank = 0; bank < Ngpubank; bank++){
 			pend = ic[IrqPending1/4 + bank];
 			for(irq = 0; irq < 32; irq++){
@@ -279,6 +372,19 @@ trap(Ureg *ur)
 		 * mid-panic is still not something to invite.
 		 */
 		splhi();
+		/*
+		 * Straight to the UART first: iprint() also draws on the
+		 * framebuffer console and can wait on locks the faulting code
+		 * holds, and a report that never appears looks like a hang.
+		 */
+		serialputs("TRAP type ", -1);
+		serialputdec(ur->type);
+		serialputreg("esr", ur->cause, 8);
+		serialputreg("pc", ur->pc, 8);
+		serialputreg("lr", ur->r30, 8);
+		serialputreg("far", ur->tval, 16);
+		serialputreg("sp", ur->sp, 8);
+		serialputs("\n", -1);
 		/*
 		 * iprint(), not print(): print() takes kmesg.lk, and a fault
 		 * inside code holding it (poolfree() under the print lock, seen

@@ -10,99 +10,8 @@ include "dhcpclient.m";
 Init: module { init: fn(); };
 Shell: module { init: fn(nil: ref Draw->Context, argv: list of string); };
 Command: module { init: fn(ctxt: ref Draw->Context, argv: list of string); };
-# Read/write the SD card exposed by devsd (#S) as /dev/sdM0/data - the
-# BCM2835 SDHOST native-SD path.  Boot with -sd <image>.
-# Phase 5: the Arasan SDHCI (the "EMMC" block), the controller the
-# BCM43430 Wi-Fi hangs off over SDIO.  The SoC wires the one SD card to
-# either SDHOST or Arasan depending on the GPIO 48-53 alt function, and
-# each driver routes the pins in its own online(), so opening
-# /dev/sdH0 first hands the card to the Arasan.  Doing that before
-# sdcheck() exercises this controller's register interface, command
-# engine and PIO data path against a real card, and sdcheck() then
-# takes the card back to SDHOST -- so one boot proves both controllers
-# and that the routing works in both directions.  Boot with -sd <img>.
-sdhcicheck()
-{
-	fd := sys->open("/dev/sdH0/data", Sys->ORDWR);
-	if(fd == nil){
-		sys->print("SDHCI-NONE (no /dev/sdH0/data: %r)\n");
-		return;
-	}
-	buf := array[512] of byte;
-	if(sys->pread(fd, buf, len buf, big 0) != len buf){
-		sys->print("SDHCI-FAIL read: %r\n");
-		return;
-	}
-	sys->print("SDHCI block0 %02x%02x%02x%02x sig %02x%02x\n",
-		int buf[0], int buf[1], int buf[2], int buf[3],
-		int buf[510], int buf[511]);
-	wbuf := array[512] of byte;
-	for(i := 0; i < len wbuf; i++)
-		wbuf[i] = byte (16rA0 + (i & 16rf));
-	if(sys->pwrite(fd, wbuf, len wbuf, big (5*512)) != len wbuf){
-		sys->print("SDHCI-WFAIL write: %r\n");
-		return;
-	}
-	rbuf := array[512] of byte;
-	if(sys->pread(fd, rbuf, len rbuf, big (5*512)) != len rbuf){
-		sys->print("SDHCI-WFAIL readback: %r\n");
-		return;
-	}
-	for(i = 0; i < len rbuf; i++)
-		if(rbuf[i] != wbuf[i]){
-			sys->print("SDHCI-WRITE-MISMATCH at %d\n", i);
-			return;
-		}
-	sys->print("SDHCI block5 wrote %02x%02x readback %02x%02x (SDHCI-WRITE-OK)\n",
-		int wbuf[0], int wbuf[1], int rbuf[0], int rbuf[1]);
 
-	# Four blocks in one request, which the driver now sends as a
-	# single CMD25/CMD18 with auto-CMD12 rather than four CMD24/CMD17
-	# pairs.  Each block is stamped with its own index, so a
-	# multi-block transfer that streams the right bytes to the wrong
-	# offsets -- the characteristic way a block count or an
-	# auto-stop gets it wrong -- shows up as a misalignment rather
-	# than as correct-looking data.  Blocks 12-15, clear of block 5
-	# above and of the SD path's 8-11.
-	mb := array[4*512] of byte;
-	for(i = 0; i < len mb; i++)
-		mb[i] = byte (16rC0 + (i & 16rf));
-	for(k := 0; k < 4; k++)
-		mb[k*512+1] = byte k;
-	if(sys->pwrite(fd, mb, len mb, big (12*512)) != len mb){
-		sys->print("SDHCI-MB write: %r\n");
-		return;
-	}
-	mbr := array[4*512] of byte;
-	if(sys->pread(fd, mbr, len mbr, big (12*512)) != len mbr){
-		sys->print("SDHCI-MB read: %r\n");
-		return;
-	}
-	mbtag := "(SDHCI-MULTIBLOCK-OK)";
-	for(k = 0; k < 4; k++)
-		if(int mbr[k*512] != 16rC0 || int mbr[k*512+1] != k)
-			mbtag = "(SDHCI-MB-MISALIGN)";
-	sys->print("SDHCI 4-block RW %s\n", mbtag);
-	# the geometry devsd derived from the CSD -- if the 136-bit
-	# response were unpacked wrongly this is where it shows
-	cfd := sys->open("/dev/sdH0/ctl", Sys->OREAD);
-	cbuf := array[512] of byte;
-	cn := 0;
-	if(cfd != nil)
-		cn = sys->read(cfd, cbuf, len cbuf);
-	if(cn <= 0){
-		sys->print("SDHCI-CAP-NONE cannot read /dev/sdH0/ctl: %r\n");
-		return;
-	}
-	sys->print("SDHCI ctl: %s", string cbuf[0:cn]);
-	# not reaching SDHCI-OK is the point: an unconfirmed capacity
-	# must not be hidden inside a pass two lines later
-	if(capcheck("SDHCI", fd, string cbuf[0:cn]) == 0)
-		return;
-	sys->print("SDHCI-OK\n");
-}
-
-# The geometry above is a number the card reported about itself, and
+# The card's geometry is a number the card reported about itself, and
 # printing it is not the same as testing it.  A CSD unpacked wrongly,
 # or a model whose CSD disagrees with the image behind it, gives a
 # capacity that looks entirely plausible until something writes near
@@ -113,12 +22,7 @@ sdhcicheck()
 # not.  Both halves matter.  A capacity that is too large passes the
 # first only if the backing store is really that big; a capacity that
 # is too small, or a devsd that does not range-check at all, fails the
-# second.
-#
-# Both controllers get this, and that is the other half of its value.
-# sdhostbcm.c and sdhcibcm.c unpack the same card's 136-bit CSD
-# independently, so if the two report different capacities for one
-# card, one of them is unpacking it wrongly and the boot says so.
+# second.  Both are reads; nothing is written to the card.
 capcheck(tag: string, fd: ref Sys->FD, ctl: string): int
 {
 	nsec := big 0;
@@ -176,9 +80,11 @@ rngcheck()
 	sys->print("RANDOM-OK %s\n", s);
 }
 
+# Read the SD card exposed by devsd (#S) as /dev/sdM0/data - the Arasan
+# SDHCI (sdemmcbcm.c), which is the path that works on the board.  Normal boot must not modify the firmware card.
 sdcheck()
 {
-	fd := sys->open("/dev/sdM0/data", Sys->ORDWR);
+	fd := sys->open("/dev/sdM0/data", Sys->OREAD);
 	if(fd == nil){
 		sys->print("SD-NONE (no /dev/sdM0/data: %r)\n");
 		return;
@@ -190,45 +96,40 @@ sdcheck()
 	}
 	sys->print("SD block0 %02x%02x%02x%02x\n",
 		int buf[0], int buf[1], int buf[2], int buf[3]);
-	wbuf := array[512] of byte;
-	for(i := 0; i < len wbuf; i++)
-		wbuf[i] = byte (16r70 + (i & 16rf));
-	if(sys->pwrite(fd, wbuf, len wbuf, big (3*512)) != len wbuf){
-		sys->print("SD-WFAIL write: %r\n");
-		return;
-	}
-	rbuf := array[512] of byte;
-	if(sys->pread(fd, rbuf, len rbuf, big (3*512)) != len rbuf){
-		sys->print("SD-WFAIL readback: %r\n");
-		return;
-	}
-	tag := "(SD-WRITE-OK)";
-	for(i = 0; i < len rbuf; i++)
-		if(rbuf[i] != wbuf[i])
-			tag = "(SD-WRITE-MISMATCH)";
-	sys->print("SD block3 wrote %02x%02x readback %02x%02x %s\n",
-		int wbuf[0], int wbuf[1], int rbuf[0], int rbuf[1], tag);
+	sys->print("SD-READ-OK\n");
 
-	# multi-block: write 4 blocks (2KB) in ONE pwrite, read back in ONE
-	# pread, per-block tagged.  This is what kfs exercises (nb>1).
-	mb := array[4*512] of byte;
-	for(k := 0; k < 4; k++){
-		mb[k*512] = byte 16rE0; mb[k*512+1] = byte k;
+	# A multi-block transfer, checked by its last block.  Read 64 sectors
+	# ending at the FAT boot sector of the first partition (16384 on this
+	# card) in one call: if the run arrives in order, the last 512 bytes
+	# are that boot sector, which names itself.  Typing this at the shell
+	# is not an option while another session's libinterp debug output
+	# interleaves with the console echo and corrupts the command line.
+	nblk := 64;
+	big1 := array[nblk*512] of byte;
+	off := big (16385 - nblk) * big 512;
+	n := sys->pread(fd, big1, len big1, off);
+	if(n != len big1){
+		sys->print("SD-MULTI-FAIL %d of %d: %r\n", n, len big1);
+		return;
 	}
-	if(sys->pwrite(fd, mb, len mb, big (8*512)) != len mb){
-		sys->print("SD-MB write: %r\n"); return;
+	# the same block on its own: the run is in order if its tail matches
+	one := array[512] of byte;
+	if(sys->pread(fd, one, len one, big 16384 * big 512) != len one){
+		sys->print("SD-MULTI-FAIL single read of the last block: %r\n");
+		return;
 	}
-	mbr := array[4*512] of byte;
-	if(sys->pread(fd, mbr, len mbr, big (8*512)) != len mbr){
-		sys->print("SD-MB read: %r\n"); return;
-	}
-	mbtag := "(SD-MULTIBLOCK-OK)";
-	for(k = 0; k < 4; k++)
-		if(int mbr[k*512] != 16rE0 || int mbr[k*512+1] != k)
-			mbtag = "(SD-MB-MISALIGN)";
-	sys->print("SD 4-block RW %s\n", mbtag);
-	# the geometry this controller derived from the same card's CSD;
-	# it has to agree with the one SDHCI reported above
+	last := big1[(nblk-1)*512:];
+	for(i := 0; i < 512; i++)
+		if(last[i] != one[i]){
+			sys->print("SD-MULTI-FAIL byte %d of the last block: %02x not %02x\n",
+				i, int last[i], int one[i]);
+			return;
+		}
+	sys->print("SD-MULTI-OK %d bytes, last block matches it read alone (%02x%02x%02x%02x)\n",
+		n, int one[0], int one[1], int one[2], int one[3]);
+
+	# the geometry the driver derived from the card's CSD, checked at
+	# its only observable edge; both reads, nothing written
 	cfd := sys->open("/dev/sdM0/ctl", Sys->OREAD);
 	cbuf := array[512] of byte;
 	cn := 0;
@@ -238,7 +139,6 @@ sdcheck()
 		sys->print("SD-CAP-NONE cannot read /dev/sdM0/ctl: %r\n");
 		return;
 	}
-	sys->print("SD ctl: %s", string cbuf[0:cn]);
 	if(capcheck("SD", fd, string cbuf[0:cn]) == 0)
 		return;
 	sys->print("SD-OK\n");
@@ -254,39 +154,551 @@ kfsproc(pfd: ref Sys->FD)
 		sys->print("SD-FS load kfs: %r\n");
 		return;
 	}
-	kfs->init(nil, "kfs" :: "-r" :: "/dev/sdM0/fs" :: nil);
+	# Never the whole device: "-r" reams what it is given, and this card
+	# holds the firmware and the kernel that booted it.  KFSPART covers
+	# the gap between the master boot record and the first partition,
+	# which is unallocated and reads as zeros on this card.
+	kfs->init(nil, "kfs" :: "-r" :: KFSPART :: nil);
 }
 
-# Where the kfs test filesystem goes.  Sector 256 is clear of every
-# block the controller checks above touch (0, 5, 8-11, 12-15), and
-# 8192 sectors is 4MB, which is plenty to ream and create a file in.
-Fsstart: con 256;
-Fssecs: con 8192;
+KFSPART: con "/dev/sdM0/kfstest";
+
+# the IP interface's control fd, held so the interface outlives the
+# function that made it
+ipctl: ref Sys->FD;
+
+# The first FAT partition in the master boot record: (start, sectors),
+# or (0, 0).  Everything that carves up this card starts here, because
+# the card holds the firmware and the kernel that booted it.
+fatpart(): (int, int)
+{
+	fd := sys->open("/dev/sdM0/data", Sys->OREAD);
+	if(fd == nil)
+		return (0, 0);
+	mbr := array[512] of byte;
+	if(sys->pread(fd, mbr, len mbr, big 0) != len mbr)
+		return (0, 0);
+	if(int mbr[510] != 16r55 || int mbr[511] != 16raa)
+		return (0, 0);
+	for(i := 0; i < 4; i++){
+		e := 446 + i*16;
+		t := int mbr[e+4];
+		if(t != 16r01 && t != 16r04 && t != 16r06 && t != 16r0b
+		&& t != 16r0c && t != 16r0e)
+			continue;
+		start := int mbr[e+8] | (int mbr[e+9]<<8) | (int mbr[e+10]<<16) |
+			(int mbr[e+11]<<24);
+		nsec := int mbr[e+12] | (int mbr[e+13]<<8) | (int mbr[e+14]<<16) |
+			(int mbr[e+15]<<24);
+		return (start, nsec);
+	}
+	return (0, 0);
+}
+
+# When DHCP gets no answer, take the address from the card instead:
+# /n/dos/ipconfig.txt holds "ip mask gw".  A board that cannot be reached
+# cannot be worked on, and a router that will not answer DHCP should not
+# be the end of it.
+staticip(cfd: ref Sys->FD)
+{
+	fd := sys->open("/n/dos/ipconfig.txt", Sys->OREAD);
+	if(fd == nil)
+		return;
+	b := array[128] of byte;
+	n := sys->read(fd, b, len b);
+	fd = nil;
+	if(n <= 0)
+		return;
+	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
+	if(nf < 2){
+		sys->print("STATIC-FAIL want \"ip mask [gw]\" in ipconfig.txt\n");
+		return;
+	}
+	ip := hd f;
+	mask := hd tl f;
+	if(sys->fprint(cfd, "add %s %s", ip, mask) < 0){
+		sys->print("STATIC-FAIL add %s %s: %r\n", ip, mask);
+		return;
+	}
+	if(nf >= 3){
+		gw := hd tl tl f;
+		rfd := sys->open("/net/iproute", Sys->ORDWR);
+		if(rfd != nil && sys->fprint(rfd, "add 0.0.0.0 0.0.0.0 %s", gw) < 0)
+			sys->print("STATIC route %s: %r\n", gw);
+	}
+	sys->print("STATIC-OK %s %s\n", ip, mask);
+}
+
+# What the IP stack sees, printed to the console: with the router
+# changed, the question is whether the board's packets leave and whether
+# anything comes back, which the driver's own counters cannot answer.
+# devip's log carries ip, icmp, udp and tcp; the interface's pktin and
+# pktout say whether frames reach it at all.  Bounded, because this is a
+# diagnostic and the console is also the shell.
+netdebug()
+{
+	# Opt in: /n/dos/netdebug on the card turns this on.  It prints
+	# every few seconds for an hour, which buries the boot's own
+	# lines on a console whose scrollback is a hundred lines.
+	on := 0;
+	for(w := 0; w < 300 && !on; w++){
+		if(sys->open("/n/dos/netdebug", Sys->OREAD) != nil)
+			on = 1;
+		else
+			sys->sleep(100);
+	}
+	if(!on)
+		return;
+
+	# as soon as the stack exists, not once it has an address: the
+	# interesting case is a DHCP exchange that gets no answer, and
+	# waiting for the address it would have brought means logging
+	# nothing at all, which is what happened on the first router change.
+	# /net/log is one file, not a directory: reading it drains the log
+	# and writing it is the control channel.  Asking for /net/log/ctl,
+	# which is what a Plan 9 network device would have, got "file does
+	# not exist" on every one of 600 tries and logged nothing at all.
+	cfd: ref Sys->FD;
+	for(i := 0; i < 600; i++){
+		cfd = sys->open("/net/log", Sys->ORDWR);
+		if(cfd != nil)
+			break;
+		sys->sleep(100);
+	}
+	if(cfd == nil){
+		sys->print("NETLOG-NONE /net/log: %r\n");
+		return;
+	}
+	# icmp and tcp only.  With udp and ipmsg on, other hosts' broadcast
+	# chatter filled the log faster than it could be printed and the
+	# reader hit its own limit within seconds of boot, so the one thing
+	# being looked for - a ping arriving - never appeared.
+	if(sys->fprint(cfd, "set icmp tcp") < 0){
+		sys->print("NETLOG-FAIL set: %r\n");
+		return;
+	}
+	spawn netcounters();
+	fd := sys->open("/net/log", Sys->OREAD);
+	if(fd == nil){
+		sys->print("NETLOG-NONE read /net/log: %r\n");
+		return;
+	}
+	buf := array[2048] of byte;
+	for(i = 0; i < 20000; i++){
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			break;
+		sys->print("NETLOG %s", string buf[0:n]);
+	}
+	cfd = nil;
+	sys->print("NETLOG-END\n");
+}
+
+# Reachability, asked for continuously rather than typed at the console:
+# /n/dos/pingtest.txt names an address, and this says every twenty
+# seconds whether the board can resolve it and get an answer.  A board
+# whose ARP entry for the other end never leaves WAIT looks exactly like
+# a board with no network at all, and the difference matters.
+pingtest()
+{
+	# the FAT partition is mounted by another process a moment later
+	fd: ref Sys->FD;
+	for(i := 0; i < 300; i++){
+		fd = sys->open("/n/dos/pingtest.txt", Sys->OREAD);
+		if(fd != nil)
+			break;
+		sys->sleep(100);
+	}
+	if(fd == nil)
+		return;
+	b := array[64] of byte;
+	n := sys->read(fd, b, len b);
+	fd = nil;
+	if(n <= 0)
+		return;
+	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
+	if(nf < 1)
+		return;
+	addr := hd f;
+	for(i = 0; i < 300; i++){
+		if(hasaddr())
+			break;
+		sys->sleep(100);
+	}
+	ping := load Command "/dis/ip/ping.dis";
+	if(ping == nil){
+		sys->print("PINGTEST-FAIL load ping: %r\n");
+		return;
+	}
+	for(i = 0; i < 200; i++){
+		sys->print("PINGTEST %s\n", addr);
+		ping->init(nil, "ping" :: "-n" :: "2" :: addr :: nil);
+		arp := sys->open("/net/arp", Sys->OREAD);
+		if(arp != nil){
+			ab := array[1024] of byte;
+			an := sys->read(arp, ab, len ab);
+			arp = nil;
+			if(an > 0){
+				(nil, al) := sys->tokenize(string ab[0:an], "\n");
+				for(; al != nil; al = tl al)
+					if(len hd al > 0 && stringinstr(hd al, addr))
+						sys->print("PINGTEST-ARP %s\n", hd al);
+			}
+		}
+		sys->sleep(20000);
+	}
+}
+
+# is needle anywhere in s?
+stringinstr(s: string, needle: string): int
+{
+	if(len needle == 0)
+		return 1;
+	for(i := 0; i + len needle <= len s; i++)
+		if(s[i:i+len needle] == needle)
+			return 1;
+	return 0;
+}
+
+# the interface's own counters, which say whether frames arrive at all
+netcounters()
+{
+	last := "";
+	lastarp := "";
+	lasticmp := "";
+	lasttx := "";
+	for(i := 0; i < 1200; i++){
+		fd := sys->open("/net/ipifc/0/status", Sys->OREAD);
+		if(fd == nil)
+			return;
+		b := array[512] of byte;
+		n := sys->read(fd, b, len b);
+		fd = nil;
+		if(n <= 0)
+			return;
+		(nil, f) := sys->tokenize(string b[0:n], " \t\r\n");
+		in := ""; out := "";
+		for(l := f; l != nil; l = tl l){
+			if(hd l == "pktin" && tl l != nil)
+				in = hd tl l;
+			if(hd l == "pktout" && tl l != nil)
+				out = hd tl l;
+		}
+		now := "pktin " + in + " pktout " + out;
+		if(now != last)
+			sys->print("NETCOUNT %s\n", now);
+		last = now;
+		# and what the ethernet server did with the frames the kernel
+		# handed it: the two counts either side of the bulk endpoint
+		tx := sys->open("/net.alt/ether/stats", Sys->OREAD);
+		if(tx != nil){
+			tb := array[2048] of byte;
+			tn := sys->read(tx, tb, len tb);
+			tx = nil;
+			ts := "";
+			if(tn > 0)
+				ts = string tb[0:tn];
+			if(ts != lasttx && ts != ""){
+				(nil, tls) := sys->tokenize(ts, "\n");
+				for(tl2 := tls; tl2 != nil; tl2 = tl tl2)
+					sys->print("NETTX %s\n", hd tl2);
+			}
+			lasttx = ts;
+		}
+		# What ICMP itself saw: InMsgs counts echo requests that reached
+		# the protocol, OutMsgs the replies it handed back to IP.  A ping
+		# that is answered in the ARP table but not in ICMP is either not
+		# reaching icmpiput or not leaving after it does, and these two
+		# numbers say which.
+		st := sys->open("/net/icmp/stats", Sys->OREAD);
+		if(st != nil){
+			sb := array[1024] of byte;
+			sn := sys->read(st, sb, len sb);
+			st = nil;
+			ss := "";
+			if(sn > 0){
+				(nil, sf) := sys->tokenize(string sb[0:sn], " \t\r\n");
+				for(sl := sf; sl != nil && tl sl != nil; sl = tl tl sl)
+					if(hd sl == "InMsgs:" || hd sl == "OutMsgs:"
+					|| hd sl == "InErrors:" || hd sl == "CsumErrs:"
+					|| hd sl == "LenErrs:" || hd sl == "HlenErrs:")
+						ss += " " + hd sl + hd tl sl;
+			}
+			if(ss != lasticmp && ss != "")
+				sys->print("NETICMP%s\n", ss);
+			lasticmp = ss;
+		}
+		# Who the board thinks it can reach: an ARP table that stays
+		# empty says nothing on this wire ever answered, which is a
+		# different failure from packets that leave and are dropped.
+		arp := sys->open("/net/arp", Sys->OREAD);
+		if(arp != nil){
+			ab := array[2048] of byte;
+			an := sys->read(arp, ab, len ab);
+			arp = nil;
+			s := "";
+			if(an > 0)
+				s = string ab[0:an];
+			if(s != lastarp){
+				if(s == "")
+					sys->print("NETARP empty\n");
+				else
+					sys->print("NETARP %s", s);
+			}
+			lastarp = s;
+		}
+		sys->sleep(3000);
+	}
+}
+
+# Fetch a kernel over the network and install it on the partition the
+# firmware reads, so a new build reaches the board without its card being
+# carried to another machine.  /n/dos/kupdate.txt on that same partition
+# says where from: "net!addr!port /path/to/kernel8.img".  The far end is
+# a Styx server - this system's own file protocol, so the remote tree is
+# simply mounted and the file read, with no second protocol to speak and
+# no client to write: on the other machine,
+#	styxlisten -A 'tcp!*!6666' export /
+# The current kernel is kept as kernel8.bak before the new one takes its
+# name, so a bad build costs one card swap rather than the board.
+kupdate()
+{
+	cfg := sys->open("/n/dos/kupdate.txt", Sys->OREAD);
+	if(cfg == nil)
+		return;			# nothing asked for; say nothing
+	b := array[256] of byte;
+	n := sys->read(cfg, b, len b);
+	cfg = nil;
+	if(n <= 0){
+		sys->print("KUPDATE-FAIL empty kupdate.txt\n");
+		return;
+	}
+	# "net!addr!port [net!addr!port ...] /path": every field but the last
+	# is somewhere to try.  A router changed under this board once and the
+	# single address it had been given stopped existing, which cost a card
+	# swap to correct - the one thing this whole mechanism exists to avoid.
+	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
+	if(nf < 2){
+		sys->print("KUPDATE-FAIL want \"net!addr!port /path\" in kupdate.txt\n");
+		return;
+	}
+	# built back to front and then reversed, so they are tried in the
+	# order they are written: the first address in the file is the one
+	# the board should be talking to now.
+	rev: list of string;
+	path := "";
+	for(l := f; l != nil; l = tl l){
+		if(tl l == nil)
+			path = hd l;
+		else
+			rev = hd l :: rev;
+	}
+	addrs: list of string;
+	for(l = rev; l != nil; l = tl l)
+		addrs = hd l :: addrs;
+	# Wait for the IP stack to exist and to have an address.  This runs
+	# from a process spawned while the network is still coming up, and
+	# dialling before /net is bound fails with "file does not exist",
+	# which reads like a missing server rather than a missing namespace.
+	for(i := 0; i < 300; i++){
+		if(hasaddr())
+			break;
+		sys->sleep(100);
+	}
+	ok := -1;
+	c: Sys->Connection;
+	addr := "";
+	for(l = addrs; l != nil; l = tl l){
+		addr = hd l;
+		(ok, c) = sys->dial(addr, nil);
+		if(ok >= 0)
+			break;
+		sys->print("KUPDATE dial %s: %r\n", addr);
+	}
+	if(ok < 0){
+		sys->print("KUPDATE-FAIL nowhere to fetch from\n");
+		return;
+	}
+	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL, "") < 0){
+		sys->print("KUPDATE-FAIL mount %s: %r\n", addr);
+		return;
+	}
+	src := sys->open("/n/remote" + path, Sys->OREAD);
+	if(src == nil){
+		sys->print("KUPDATE-FAIL open %s: %r\n", path);
+		return;
+	}
+	dst := sys->create("/n/dos/kernel8.new", Sys->OWRITE, 8r666);
+	if(dst == nil){
+		sys->print("KUPDATE-FAIL create kernel8.new: %r\n");
+		return;
+	}
+	buf := array[8192] of byte;
+	total := 0;
+	for(;;){
+		n = sys->read(src, buf, len buf);
+		if(n < 0){
+			sys->print("KUPDATE-FAIL read %s: %r\n", path);
+			return;
+		}
+		if(n == 0)
+			break;
+		if(sys->write(dst, buf[0:n], n) != n){
+			sys->print("KUPDATE-FAIL write kernel8.new: %r\n");
+			return;
+		}
+		total += n;
+	}
+	src = nil;
+	dst = nil;
+	if(total == 0){
+		sys->print("KUPDATE-FAIL %s is empty\n", path);
+		return;
+	}
+	sys->print("KUPDATE fetched %d bytes\n", total);
+	sys->remove("/n/dos/kernel8.bak");
+	if(rename("/n/dos/kernel8.img", "kernel8.bak") < 0){
+		sys->print("KUPDATE-FAIL keep the old kernel: %r\n");
+		return;
+	}
+	if(rename("/n/dos/kernel8.new", "kernel8.img") < 0){
+		sys->print("KUPDATE-FAIL install the new kernel: %r\n");
+		return;
+	}
+	sys->print("KUPDATE-OK %d bytes installed; the old kernel is kernel8.bak\n",
+		total);
+}
+
+# does the IP stack have an address yet?
+hasaddr(): int
+{
+	fd := sys->open("/net/ipifc/0/status", Sys->OREAD);
+	if(fd == nil)
+		return 0;
+	b := array[512] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0)
+		return 0;
+	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
+	for(; f != nil; f = tl f){
+		s := hd f;
+		# an address line starts with a dotted quad that is not 0.0.0.0
+		if(len s >= 7 && s[0] >= '1' && s[0] <= '9')
+			for(i := 0; i < len s; i++)
+				if(s[i] == '.')
+					return 1;
+	}
+	nf = nf;
+	return 0;
+}
+
+rename(path: string, newname: string): int
+{
+	(ok, d) := sys->stat(path);
+	if(ok < 0)
+		return -1;
+	d.name = newname;
+	return sys->wstat(path, d);
+}
+
+# Write to the partition the firmware reads, which is the point of
+# mounting it: a board that can write here can replace its own kernel.
+# A new small file only - never a write over kernel8.img, which is what
+# the machine boots from.
+fatwrite()
+{
+	name := "/n/dos/inferno.txt";
+	msg := "written by inferno on the pi\n";
+	fd := sys->create(name, Sys->ORDWR, 8r666);
+	if(fd == nil){
+		sys->print("FAT-WRITE-FAIL create: %r\n");
+		return;
+	}
+	b := array of byte msg;
+	if(sys->write(fd, b, len b) != len b){
+		sys->print("FAT-WRITE-FAIL write: %r\n");
+		return;
+	}
+	fd = nil;
+	fd = sys->open(name, Sys->OREAD);
+	if(fd == nil){
+		sys->print("FAT-WRITE-FAIL reopen: %r\n");
+		return;
+	}
+	rb := array[len b] of byte;
+	n := sys->read(fd, rb, len rb);
+	if(n != len b || string rb != msg){
+		sys->print("FAT-WRITE-FAIL read back %d of %d\n", n, len b);
+		return;
+	}
+	sys->print("FAT-WRITE-OK %s holds %d bytes\n", name, n);
+}
+
+# The FAT partition the firmware boots from, found in the master boot
+# record rather than assumed: its start and length decide what the SD
+# device's ctl file is told, and dossrv then serves it.  Reaching it
+# matters beyond curiosity - kernel8.img lives there, so a board that can
+# write this partition can replace its own kernel instead of having its
+# card carried to another machine.
+fatcheck()
+{
+	(start, nsec) := fatpart();
+	if(nsec == 0){
+		sys->print("FAT-NONE (no FAT partition in the table)\n");
+		return;
+	}
+	sys->print("FAT partition at %d, %d sectors\n", start, nsec);
+	cfd := sys->open("/dev/sdM0/ctl", Sys->ORDWR);
+	if(cfd == nil || sys->fprint(cfd, "part dos %d %d", start, start+nsec) < 0){
+		sys->print("FAT-FAIL part: %r\n");
+		return;
+	}
+	cfd = nil;
+	# init() has already started mntgen on /n.
+	dos := load Command "/dis/dossrv.dis";
+	if(dos == nil){
+		sys->print("FAT-FAIL load dossrv: %r\n");
+		return;
+	}
+	spawn dos->init(nil, "dossrv" :: "-f" :: "/dev/sdM0/dos" :: "-m" :: "/n/dos" :: nil);
+	for(i := 0; i < 100; i++){
+		(ok, d) := sys->stat("/n/dos/kernel8.img");
+		if(ok == 0){
+			sys->print("FAT-OK /n/dos/kernel8.img is %bd bytes\n", d.length);
+			fatwrite();
+			kupdate();
+			return;
+		}
+		sys->sleep(100);
+	}
+	sys->print("FAT-FAIL no /n/dos/kernel8.img: %r\n");
+}
 
 sdfs()
 {
-	# Ream a bounded partition rather than the whole card.
-	#
-	# "kfs -r" writes every block of whatever it is given, and it was
-	# given /dev/sdM0/data -- the whole card.  So the cost of this
-	# check was proportional to the card: a second on the 16MB test
-	# image, seven minutes on the 4GB one used to reach CSD v2, and
-	# on a real Pi with a real card, longer than anyone would wait.
-	# It also destroyed the entire card at every boot rather than a
-	# corner of it, which is a great deal to ask of a machine whose
-	# card might have something on it.
-	#
-	# A fixed 4MB partition costs the same whatever card is fitted.
-	cfd := sys->open("/dev/sdM0/ctl", Sys->ORDWR);
-	if(cfd == nil){
-		sys->print("SD-FS ctl: %r\n");
+	p := array[2] of ref Sys->FD;
+
+	# The scratch partition is the gap between the master boot record and
+	# the first real partition, whose start comes from the table rather
+	# than from memory of this particular card: on an image whose
+	# filesystem begins at 2048 a hardcoded gap would ream the filesystem
+	# itself, which is exactly what it did once here.
+	(fstart, nsec) := fatpart();
+	if(nsec == 0){
+		sys->print("SD-FS skipped: no partition table to find a gap in\n");
 		return;
 	}
-	if(sys->fprint(cfd, "part fs %d %d", Fsstart, Fsstart+Fssecs) < 0){
+	if(fstart < 2048+2048){
+		sys->print("SD-FS skipped: no room below the first partition at %d\n",
+			fstart);
+		return;
+	}
+	cfd := sys->open("/dev/sdM0/ctl", Sys->ORDWR);
+	if(cfd == nil || sys->fprint(cfd, "part kfstest 2048 %d", fstart-1) < 0){
 		sys->print("SD-FS part: %r\n");
 		return;
 	}
-	p := array[2] of ref Sys->FD;
+	cfd = nil;
 	if(sys->pipe(p) < 0){
 		sys->print("SD-FS pipe: %r\n");
 		return;
@@ -353,33 +765,124 @@ usbcheck()
 		return;
 	}
 	sys->print("USB root hub:\n%s", readctl("/dev/usb/ctl"));
+	# usbd enumerates whatever is attached and starts a driver for it: on
+	# this board the onboard hub and, behind it, the LAN9514 ethernet,
+	# which etherusb then serves at /net.alt/ether.  It runs in its own
+	# process and shares this namespace, so the mount it makes is the one
+	# ethercheck below looks for.
 	usbd := load Command "/dis/usb/usbd.dis";
 	if(usbd == nil){
-		sys->print("USB-FAIL load usbd: %r\n");
+		sys->print("USB-NONE load usbd: %r\n");
 		return;
 	}
 	spawn usbd->init(nil, "usbd" :: nil);
-	sys->sleep(2000);
-	sys->print("USB after usbd:\n%s", readctl("/dev/usb/ctl"));
-	# A USB boot keyboard, once usbd finds it, delivers UTF-8 keystrokes
-	# to /dev/keyboard (the graphics console queue).  Report what arrives
-	# so an injected "hello" from the QEMU monitor shows the whole path --
-	# split interrupt transfers, HID translation, cons -- end to end.
-	spawn kbdcheck();
 	sys->print("USB-OK\n");
-	# Spawned, not called: the check waits a bounded time for events
-	# that only arrive if a mouse is attached, and a boot with none
-	# should not stall for that window.  The marker appears when the
-	# check resolves, which may be after later ones.
+	# A USB boot keyboard delivers UTF-8 keystrokes to /dev/keyboard.
+	# Both checks are spawned: each waits a bounded time for input that
+	# only comes if the device is attached, and the boot should not
+	# stall for that.
+	spawn kbdcheck();
 	spawn mousecheck();
-	diskcheck();
-	ethercheck();
+	spawn diskcheck();
+}
+
+ethercheck()
+{
+	etherone("ether", "ETHER", 100, nil, nil, nil);
+
+	# A second adapter, if there is one.  usbd names the first netif
+	# directory "ether" and the rest "ether1", "ether2", so a board
+	# with two USB ethernets has two directories to bind.  The wait is
+	# short because the first call already waited out enumeration.
+	# Nothing is printed when there is no second one.
+	if(sys->open("/net.alt/ether1/addr", Sys->OREAD) != nil)
+		etherone("ether1", "ETHER2", 20, "10.0.3.15", "255.255.255.0", "10.0.3.2");
+}
+
+# the IP interfaces' control fds, held so each interface outlives the
+# function that made it
+ipctls: list of ref Sys->FD;
+
+etherone(ifname, tag: string, tries: int, ip, mask, gw: string)
+{
+	dir := "/net.alt/" + ifname;
+	addr := dir + "/addr";
+	for(i := 0; i < tries; i++){
+		if(sys->open(addr, Sys->OREAD) != nil)
+			break;
+		sys->sleep(100);
+	}
+	if(sys->open(addr, Sys->OREAD) == nil){
+		sys->print("%s-NONE (no USB ethernet served at %s)\n", tag, addr);
+		return;
+	}
+	sys->bind("#I", "/net", Sys->MAFTER);
+	# The fd returned by opening the clone file IS the interface: when the
+	# last reference to it goes, devip unbinds the ether and the address
+	# with it.  Holding it in a module variable keeps the interface for
+	# the life of init - without that the board answered pings while this
+	# function ran and went silent the moment it returned, and anything
+	# dialling later got "file does not exist".
+	cfd := sys->open("/net/ipifc/clone", Sys->ORDWR);
+	if(cfd == nil || sys->fprint(cfd, "bind ether %s", dir) < 0){
+		sys->print("%s-FAIL bind ether: %r\n", tag);
+		return;
+	}
+	ipctls = cfd :: ipctls;
+	if(ipctl == nil)
+		ipctl = cfd;
+	sys->print("%sBIND-OK\n", tag);
+	if(ip != nil){
+		if(sys->fprint(cfd, "add %s %s", ip, mask) < 0){
+			sys->print("%s-ADDR-FAIL add %s: %r\n", tag, ip);
+			return;
+		}
+		sys->print("%s-ADDR-OK ip=%s gw=%s\n", tag, ip, gw);
+		pingcheck(tag, gw);
+		return;
+	}
+	# Load and initialise once, not once per interface.  Limbo's load
+	# of a path already loaded gives back the same instance, module
+	# data and all, so a second init() on behalf of a second adapter
+	# resets globals the first interface's state still points into.
+	if(dhcpclient == nil){
+		dhcpclient = load Dhcpclient Dhcpclient->PATH;
+		if(dhcpclient == nil){
+			sys->print("%s-FAIL load dhcpclient: %r\n", tag);
+			return;
+		}
+		dhcpclient->init();
+	}
+	cfg := Bootconf.new();
+	lease: ref Lease;
+	err: string;
+	(cfg, lease, err) = dhcpclient->dhcp("/net", cfd, addr, cfg, nil);
+	if(err != nil || cfg == nil || cfg.ip == nil){
+		sys->print("%s-DHCP-FAIL %s\n", tag, err);
+		if(ifname == "ether")
+			staticip(cfd);
+		return;
+	}
+	sys->print("%s-DHCP-OK ip=%s gw=%s\n", tag, cfg.ip, cfg.ipgw);
+	pingcheck(tag, cfg.ipgw);
+	lease = nil;
+}
+
+pingcheck(tag, gw: string)
+{
+	ping := load Command "/dis/ip/ping.dis";
+	if(ping == nil){
+		sys->print("%s-PING-NONE load: %r\n", tag);
+		return;
+	}
+	ping->init(nil, "ping" :: "-n" :: "3" :: gw :: nil);
+	sys->print("%s-PING-DONE\n", tag);
 }
 
 # Phase 4: USB mass storage.  usbd's Bulk-Only Transport driver serves
 # the stick as a flat file at /chan/usbdisk0, turning byte-range reads
 # and writes into SCSI READ(10)/WRITE(10) over the bulk endpoints;
-# dossrv mounts the FAT filesystem on that file at /n/dos.  Listing the
+# dossrv mounts the FAT filesystem on that file at /n/usb.  Listing the
 # directory proves the read path end to end, and creating a file and
 # reading it back proves the write path.  Boot with
 # -drive if=none,id=d0,file=<img>,format=raw -device usb-storage,drive=d0
@@ -416,16 +919,16 @@ diskcheck()
 		sys->print("DISK-FAIL load dossrv: %r\n");
 		return;
 	}
-	spawn dossrv->init(nil, "dossrv" :: "-f" :: disk :: "-m" :: "/n/dos" :: nil);
+	spawn dossrv->init(nil, "dossrv" :: "-f" :: disk :: "-m" :: "/n/usb" :: nil);
 
-	# /n/dos exists in the root either way, so an open proves nothing;
+	# /n/usb is made by mntgen as soon as it is named, so an open proves nothing;
 	# wait for the mount by waiting for entries to appear under it
 	names := "";
 	first := "";
 	for(i = 0; i < 50; i++){
 		names = "";
 		first = "";
-		dfd := sys->open("/n/dos", Sys->OREAD);
+		dfd := sys->open("/n/usb", Sys->OREAD);
 		if(dfd != nil){
 			for(;;){
 				(n, dirs) := sys->dirread(dfd);
@@ -443,13 +946,13 @@ diskcheck()
 		sys->sleep(100);
 	}
 	if(names == nil){
-		sys->print("DISK-DOS-FAIL nothing under /n/dos: %r\n");
+		sys->print("DISK-DOS-FAIL nothing under /n/usb: %r\n");
 		return;
 	}
-	sys->print("DISK-DOS-OK /n/dos:%s\n", names);
+	sys->print("DISK-DOS-OK /n/usb:%s\n", names);
 
 	if(first != nil){
-		fd := sys->open("/n/dos/" + first, Sys->OREAD);
+		fd := sys->open("/n/usb/" + first, Sys->OREAD);
 		buf := array[512] of byte;
 		n := -1;
 		if(fd != nil)
@@ -463,7 +966,7 @@ diskcheck()
 	# the write path: create, write, close, reopen, read back.  This is
 	# a read-modify-write of a 512-byte block through SCSI WRITE(10).
 	msg := array of byte "written by inferno on the pi\n";
-	wfd := sys->create("/n/dos/pi.txt", Sys->OWRITE, 8r666);
+	wfd := sys->create("/n/usb/pi.txt", Sys->OWRITE, 8r666);
 	if(wfd == nil){
 		sys->print("DISK-WRITE-FAIL create: %r\n");
 		return;
@@ -473,7 +976,7 @@ diskcheck()
 		return;
 	}
 	wfd = nil;
-	rfd := sys->open("/n/dos/pi.txt", Sys->OREAD);
+	rfd := sys->open("/n/usb/pi.txt", Sys->OREAD);
 	if(rfd == nil){
 		sys->print("DISK-WRITE-FAIL reopen: %r\n");
 		return;
@@ -485,114 +988,6 @@ diskcheck()
 		return;
 	}
 	sys->print("DISK-WRITE-OK pi.txt %d bytes read back\n", rn);
-}
-
-# Phase 3: USB ethernet.  usbd starts etherusb for a CDC ECM or SMSC
-# LAN95xx device; etherusb serves the netif file interface at
-# /net.alt/ether over the device's bulk endpoints.  Bind it as devip's
-# ethernet and get an address by DHCP -- discover/offer/request/ack
-# cross the USB link in both directions, so ETHER-DHCP-OK proves the
-# whole path: styx server, bulk in and out, the DWC2 driver -- then
-# ping the gateway.  Boot with -device usb-net,netdev=n0 -netdev
-# user,id=n0 (SLIRP answers DHCP at 10.0.2.2).
-ethercheck()
-{
-	etherone("ether", "ETHER", 100, nil, nil, nil);
-
-	# A second adapter, if there is one.  usbd names the first netif
-	# directory "ether" and the rest "ether1", "ether2", so a board
-	# with two USB ethernets now has two directories to bind rather
-	# than two instances fighting over one name.  The wait is short
-	# because the first call already waited out enumeration: either
-	# the second etherusb is up by now or there is no second adapter.
-	#
-	# Nothing is printed when there is no second one.  A -NONE here
-	# would appear on every board in the suite that has one adapter or
-	# none, which is five of them, and would say only that a device
-	# nobody plugged in is not present.
-	if(sys->open("/net.alt/ether1/addr", Sys->OREAD) != nil)
-		etherone("ether1", "ETHER2", 20, "10.0.3.15", "255.255.255.0", "10.0.3.2");
-}
-
-# One USB ethernet: wait for etherusb to serve it, bind it into devip
-# as its own interface, take an address by DHCP and ping the gateway.
-# The DHCP exchange crosses the USB link in both directions, so the
-# -DHCP-OK marker proves the whole path -- styx server, bulk in and
-# out, the DWC2 driver.  tag names the marker family so a second
-# adapter reports separately from the first.
-# ip nil means take an address by DHCP; an ip means configure it
-# statically.  The second interface has to be static: devip here is one
-# stack, the first interface's DHCP proc holds udp!*!68 for the life of
-# its lease so it can renew, and a second announce on the same stack
-# comes back "address in use".  One stack, one DHCP client.  A static
-# address on its own subnet still puts every packet through the second
-# adapter's bulk endpoints, which is what there is to prove.
-etherone(ifname, tag: string, tries: int, ip, mask, gw: string)
-{
-	dir := "/net.alt/" + ifname;
-	addr := dir + "/addr";
-	for(i := 0; i < tries; i++){
-		if(sys->open(addr, Sys->OREAD) != nil)
-			break;
-		sys->sleep(100);
-	}
-	if(sys->open(addr, Sys->OREAD) == nil){
-		sys->print("%s-NONE (no USB ethernet served at %s)\n", tag, addr);
-		return;
-	}
-	sys->bind("#I", "/net", Sys->MAFTER);
-	cfd := sys->open("/net/ipifc/clone", Sys->ORDWR);
-	if(cfd == nil || sys->fprint(cfd, "bind ether %s", dir) < 0){
-		sys->print("%s-FAIL bind ether: %r\n", tag);
-		return;
-	}
-	sys->print("%sBIND-OK\n", tag);
-	if(ip != nil){
-		if(sys->fprint(cfd, "add %s %s", ip, mask) < 0){
-			sys->print("%s-ADDR-FAIL add %s: %r\n", tag, ip);
-			return;
-		}
-		sys->print("%s-ADDR-OK ip=%s gw=%s\n", tag, ip, gw);
-		pingcheck(tag, gw);
-		return;
-	}
-	# Load and initialise once, not once per interface.  Limbo's load
-	# of a path already loaded gives back the same instance, module
-	# data and all, so a second init() on behalf of a second adapter
-	# resets globals the first interface's state still points into.
-	# That is what faulted here: with two adapters bound, the second
-	# call panicked the interpreter at OP(movp) reading a nil slot,
-	# "module Dhcpclient PC 0x3d051d8 inst 927".
-	if(dhcpclient == nil){
-		dhcpclient = load Dhcpclient Dhcpclient->PATH;
-		if(dhcpclient == nil){
-			sys->print("%s-FAIL load dhcpclient: %r\n", tag);
-			return;
-		}
-		dhcpclient->init();
-	}
-	cfg := Bootconf.new();
-	lease: ref Lease;
-	err: string;
-	(cfg, lease, err) = dhcpclient->dhcp("/net", cfd, addr, cfg, nil);
-	if(err != nil || cfg == nil || cfg.ip == nil){
-		sys->print("%s-DHCP-FAIL %s\n", tag, err);
-		return;
-	}
-	sys->print("%s-DHCP-OK ip=%s gw=%s\n", tag, cfg.ip, cfg.ipgw);
-	pingcheck(tag, cfg.ipgw);
-	lease = nil;
-}
-
-pingcheck(tag, gw: string)
-{
-	ping := load Command "/dis/ip/ping.dis";
-	if(ping == nil){
-		sys->print("%s-PING-NONE load: %r\n", tag);
-		return;
-	}
-	ping->init(nil, "ping" :: "-n" :: "3" :: gw :: nil);
-	sys->print("%s-PING-DONE\n", tag);
 }
 
 # Phase 2's other half: a boot-protocol USB mouse, through usbd's HID
@@ -867,32 +1262,56 @@ init()
 	sys->bind("#p", "/prog", sys->MREPL);
 	sys->bind("#d", "/fd", sys->MREPL);
 	sys->bind("#c", "/dev", sys->MAFTER);
-	# #m is the pointer device.  Without this bind /dev/pointer does
-	# not exist, and usbd's mouse reader -- which is already written
-	# and already finds the mouse -- dies on its first open with
-	# "usbd: /dev/pointer: file does not exist".  That is the whole
-	# of what was missing: the enumeration, the HID decode and the
-	# devpointer end were all in place and unreachable.
+	# #m is the pointer device; without it usbd's mouse reader dies on
+	# its first open of /dev/pointer.
 	sys->bind("#m", "/dev", sys->MAFTER);
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 	sys->print("RASPI3B-OK\n");
 
+	# /n is in the kernel's read-only root, so mntgen serves it and makes
+	# each name appear as it is used.  Started once, before anything is
+	# mounted under /n: a mntgen started later covers mounts already
+	# made on the root's own /n entries.
+	mg := load Command "/dis/mntgen.dis";
+	if(mg == nil)
+		sys->print("init: load mntgen: %r\n");
+	else{
+		spawn mg->init(nil, "mntgen" :: "/n" :: nil);
+		sys->sleep(200);
+	}
+
 	rngcheck();
 	sys->bind("#S", "/dev", sys->MAFTER);
-	sdhcicheck();
 	sdcheck();
 	drawtest();
 	usbcheck();
-	# sdfs() reams a kfs onto the SD card, mounts it over a pipe, and
-	# creates a file through the mount.  It works, and it was always
-	# working: what used to look like a hang here was the console
-	# output queue never being drained, so SD-FS-CREATE-OK was written
-	# and never emitted.  See the uart fix in os/inferno/port/devuart.c
-	# and doc/raspi3b-completion-plan.ms.
-	sdfs();
+	# in its own process: the shell must not wait behind a DHCP lease and
+	# three pings, which take seconds and can be answered by nothing at all
+	spawn ethercheck();
+	spawn netdebug();
+	spawn pingtest();
+	# A kfs in the card's unallocated gap, mounted over a pipe, with a
+	# file created in it.  The create used to hang here - pid 1's Twalk
+	# got its Rerror and the error unwound past mntwalk's own waserror
+	# handler, so the Tcreate was never sent - and that was blamed on an
+	# arm64 multi-kproc error-stack bug.  The mount it needs works now
+	# that kernel stacks are aligned, so the create is worth trying
+	# again; it runs in its own process either way, so a hang there
+	# leaves the board usable.
+	spawn sdfs();
+	spawn fatcheck();
 
 	shell = load Shell "/dis/sh.dis";
 	if(shell == nil){ sys->print("init: load sh: %r\n"); exit; }
-	shell->init(nil, "sh" :: "-n" :: "-c" :: "echo RASPI3B-SH-OK" :: nil);
-	shell->init(nil, "sh" :: "-n" :: nil);
+	# osinit's inherited descriptors are not guaranteed to be the serial
+	# console on the Pi firmware path.  Give the interactive shell an
+	# explicit console on all three standard descriptors.
+	cons := sys->open("/dev/cons", Sys->ORDWR);
+	if(cons != nil){
+		sys->dup(cons.fd, 0);
+		sys->dup(cons.fd, 1);
+		sys->dup(cons.fd, 2);
+	}
+	sys->print("RASPI3B-SH-OK\n");
+	shell->init(nil, "sh" :: "-i" :: "-n" :: nil);
 }

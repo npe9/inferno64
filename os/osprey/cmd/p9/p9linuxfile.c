@@ -18,8 +18,51 @@
  */
 #include	"linuxprog.i"
 #include	"legacyprog.i"
+#include	"faultprog.i"
 #include	"catprog.i"
 #include	"execprog.i"
+#include	"shprog.i"
+#include	"kbdsrvprog.i"
+#include	"drawsrvprog.i"
+#include	"rioprog.i"
+
+/*
+ * Two, for a personality that is not the buddy: /boot/legacy and
+ * /boot/cat, both ordinary Plan 9 binaries linked against libc and
+ * against no personality.  The rest are the buddy's to lay out for
+ * containers.
+ */
+void
+p9legacyfile(void)
+{
+	extern void p9marklegacy(char*);
+
+	addbootfile("legacy", legacyprog, sizeof legacyprog);
+	/*
+	 * And cat, which is the point of the exercise put plainly: the same
+	 * source is /boot/libcat, linked against p9crt.c and calling this
+	 * personality as a library, and /boot/cat, linked against libc and
+	 * trapping.  One program, two arrangements, one personality serving
+	 * both - and the second is the one an ordinary Plan 9 program is.
+	 */
+	addbootfile("cat", catprog, sizeof catprog);
+	/*
+	 * And the control for the fault path: an ordinary Plan 9 program
+	 * with no note handler of its own, which the personality has to end
+	 * itself because there is nobody in the program to give the note to.
+	 */
+	addbootfile("faulty", faultprog, sizeof faultprog);
+	/*
+	 * And which of them are the ordinary binaries.  Nothing in the file
+	 * says so - both kinds are a.outs of the same shape - and the
+	 * difference is what they were linked against, so it is recorded
+	 * here, where they are added, rather than guessed from the bytes.
+	 * p9spawn asks, so a shell can start one of these as a command.
+	 */
+	p9marklegacy("/boot/legacy");
+	p9marklegacy("/boot/cat");
+	p9marklegacy("/boot/faulty");
+}
 
 void
 p9linuxfile(void)
@@ -28,4 +71,16 @@ p9linuxfile(void)
 	addbootfile("legacy", legacyprog, sizeof legacyprog);
 	addbootfile("cat", catprog, sizeof catprog);
 	addbootfile("exec", execprog, sizeof execprog);
+	addbootfile("sh", shprog, sizeof shprog);
+	/* the same bytes under the name rio execs in a window: see main.c */
+	addbootfile("rc", shprog, sizeof shprog);
+	/*
+	 * And one the tree did not write: the keyboard server of
+	 * os/osprey/cmd/draw, linked against the 9front libraries built
+	 * from source in 9front/src.  It is here to be exec'd like any
+	 * other binary the buddy lays out.
+	 */
+	addbootfile("kbdsrv", kbdsrvprog, sizeof kbdsrvprog);
+	addbootfile("drawsrv", drawsrvprog, sizeof drawsrvprog);
+	addbootfile("rio", rioprog, sizeof rioprog);
 }

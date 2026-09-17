@@ -36,60 +36,72 @@ Proc	*up = &theproc;
 char	*eve = "osprey";	/* the personality has a name: its files are somebody's, and a session on its wire must say who it is to open them */
 extern void exits(char*);
 
-char Enoerror[] = "Enoerror";
-char Emount[] = "Emount";
-char Eunmount[] = "Eunmount";
-char Eismtpt[] = "Eismtpt";
-char Eunion[] = "Eunion";
-char Emountrpc[] = "Emountrpc";
-char Eshutdown[] = "Eshutdown";
-char Enocreate[] = "Enocreate";
-char Enonexist[] = "Enonexist";
-char Eexist[] = "Eexist";
-char Ebadsharp[] = "Ebadsharp";
-char Enotdir[] = "Enotdir";
-char Eisdir[] = "Eisdir";
-char Ebadchar[] = "Ebadchar";
-char Efilename[] = "Efilename";
-char Eperm[] = "Eperm";
-char Ebadusefd[] = "Ebadusefd";
-char Ebadarg[] = "Ebadarg";
-char Einuse[] = "Einuse";
-char Eio[] = "Eio";
-char Etoobig[] = "Etoobig";
-char Etoosmall[] = "Etoosmall";
-char Enoport[] = "Enoport";
-char Ehungup[] = "Ehungup";
-char Ebadctl[] = "Ebadctl";
-char Enodev[] = "Enodev";
-char Eprocdied[] = "Eprocdied";
-char Enochild[] = "Enochild";
-char Eioload[] = "Eioload";
-char Enovmem[] = "Enovmem";
-char Ebadfd[] = "Ebadfd";
-char Enofd[] = "Enofd";
-char Eisstream[] = "Eisstream";
-char Ebadexec[] = "Ebadexec";
-char Etimedout[] = "Etimedout";
-char Econrefused[] = "Econrefused";
-char Econinuse[] = "Econinuse";
-char Eintr[] = "Eintr";
-char Enomem[] = "Enomem";
-char Esoverlap[] = "Esoverlap";
-char Emouseset[] = "Emouseset";
-char Eshort[] = "Eshort";
-char Egreg[] = "Egreg";
-char Ebadspec[] = "Ebadspec";
-char Enoreg[] = "Enoreg";
-char Enoattach[] = "Enoattach";
-char Eshortstat[] = "Eshortstat";
-char Ebadstat[] = "Ebadstat";
-char Enegoff[] = "Enegoff";
-char Ecmdargs[] = "Ecmdargs";
-char Ebadip[] = "Ebadip";
-char Edirseek[] = "Edirseek";
-char Etoolong[] = "Etoolong";
-char Echange[] = "Echange";
+/*
+ * The reasons, not their names.  Every one of these used to be its own
+ * C identifier as a string - Eperm was "Eperm" - so a program that
+ * asked why a call failed, or a 9P client reading an Rerror, was handed
+ * a symbol out of this kernel's source instead of something a person
+ * could read.  It showed up in the log as
+ * "remove refused, errstr from the buddy: \"Eperm\"" and in rio's own
+ * window as "can't create file system server: Enonexist: '/mnt/temp'".
+ * They are the strings the kernel beside this personality already uses
+ * (os/osprey/pc64/errstr.h), which is where these were copied from, so
+ * a reason reads the same whichever side of the ring produced it.
+ */
+char Enoerror[] = "no error";
+char Emount[] = "inconsistent mount";
+char Eunmount[] = "not mounted";
+char Eismtpt[] = "is a mount point";
+char Eunion[] = "not in union";
+char Emountrpc[] = "mount rpc error";
+char Eshutdown[] = "device shut down";
+char Enocreate[] = "mounted directory forbids creation";
+char Enonexist[] = "file does not exist";
+char Eexist[] = "file already exists";
+char Ebadsharp[] = "unknown device in # filename";
+char Enotdir[] = "not a directory";
+char Eisdir[] = "file is a directory";
+char Ebadchar[] = "bad character in file name";
+char Efilename[] = "file name syntax";
+char Eperm[] = "permission denied";
+char Ebadusefd[] = "inappropriate use of fd";
+char Ebadarg[] = "bad arg in system call";
+char Einuse[] = "device or object already in use";
+char Eio[] = "i/o error";
+char Etoobig[] = "read or write too large";
+char Etoosmall[] = "read or write too small";
+char Enoport[] = "network port not available";
+char Ehungup[] = "i/o on hungup channel";
+char Ebadctl[] = "bad process or channel control request";
+char Enodev[] = "no free devices";
+char Eprocdied[] = "process exited";
+char Enochild[] = "no living children";
+char Eioload[] = "i/o error in demand load";
+char Enovmem[] = "virtual memory allocation failed";
+char Ebadfd[] = "fd out of range or not open";
+char Enofd[] = "no free file descriptors";
+char Eisstream[] = "seek on a stream";
+char Ebadexec[] = "exec header invalid";
+char Etimedout[] = "connection timed out";
+char Econrefused[] = "connection refused";
+char Econinuse[] = "connection in use";
+char Eintr[] = "interrupted";
+char Enomem[] = "kernel allocate failed";
+char Esoverlap[] = "segments overlap";
+char Emouseset[] = "mouse type already set";
+char Eshort[] = "i/o count too small";
+char Egreg[] = "the front fell off";
+char Ebadspec[] = "bad attach specifier";
+char Enoreg[] = "process has no saved registers";
+char Enoattach[] = "mount/attach disallowed";
+char Eshortstat[] = "stat buffer too small";
+char Ebadstat[] = "malformed stat buffer";
+char Enegoff[] = "negative i/o offset";
+char Ecmdargs[] = "wrong #args in control message";
+char Ebadip[] = "bad ip address syntax";
+char Edirseek[] = "seek in directory";
+char Etoolong[] = "name too long";
+char Echange[] = "media or partition has changed";
 
 void
 p9init(void)
@@ -97,7 +109,16 @@ p9init(void)
 	up->user = eve;
 	up->errstr = errbuf0;
 	up->syserrstr = errbuf1;
-	up->nerrlab = 0;
+	/*
+	 * And not up->nerrlab = 0.  The Proc here is static and so starts
+	 * zeroed; clearing the count again is not initialisation, it is
+	 * throwing away whatever handler is already on the stack.  p9main
+	 * installs one - the handler that names an error and exits - and
+	 * then calls p9setup, which calls this, so from here the whole
+	 * personality ran with nothing to catch anything: an error raised
+	 * anywhere longjmped to errlab[-1], whatever lay in memory before
+	 * the array.  That is what "fault at user pc 0xffffffff" was.
+	 */
 }
 
 _Noreturn void
@@ -110,6 +131,19 @@ error(char *s)
 _Noreturn void
 nexterror(void)
 {
+	/*
+	 * An error with no handler in scope used to read errlab[-1] -
+	 * whatever lies in memory before the array - and longjmp to it,
+	 * which is a jump to an address nobody chose.  What that looks
+	 * like from the outside is "fault at user pc 0xffffffff", with
+	 * nothing to say which error it was or where it came from.  Say
+	 * it plainly and stop instead: a personality that cannot unwind
+	 * has nowhere to go, but it can name the error on its way out.
+	 */
+	if(up->nerrlab <= 0){
+		print("p9: an error with no handler to catch it: %s\n", up->errstr);
+		exits("no error handler");
+	}
 	longjmp(up->errlab[--up->nerrlab], 1);
 }
 
@@ -212,11 +246,21 @@ freeb(Block *b)
 	}
 }
 
+/*
+ * A panic used to print its format string and throw the arguments away,
+ * so every panic in this personality read as literal %lud and said
+ * nothing about why.
+ */
 _Noreturn void
 panic(char *fmt, ...)
 {
-	USED(fmt);
-	print("p9: panic: %s\n", fmt);
+	char buf[256];
+	va_list a;
+
+	va_start(a, fmt);
+	vseprint(buf, buf+sizeof buf, fmt, a);
+	va_end(a);
+	print("p9: panic: %s\n", buf);
 	exits("panic");
 }
 
@@ -235,7 +279,32 @@ extern Dev srvdevtab;
 extern Dev lfsdevtab;
 extern Dev ipdevtab;
 extern Dev cachedevtab;
-Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, &srvdevtab, &lfsdevtab, &ipdevtab, &cachedevtab, nil };
+extern Dev timedevtab;
+extern Dev notedevtab;
+extern Dev dupdevtab;
+extern Dev inputdevtab;
+/*
+ * The kernel's interrupt-time print.  Nothing here runs at interrupt
+ * time - this personality is a program - so it is the ordinary print,
+ * under the name the device sources call it by.
+ */
+int
+iprint(char *fmt, ...)
+{
+	va_list v;
+	char buf[512];
+	int n;
+
+	va_start(v, fmt);
+	n = vseprint(buf, buf + sizeof buf, fmt, v) - buf;
+	va_end(v);
+	print("%.*s", n, buf);
+	return n;
+}
+
+extern Dev drawdevtab;		/* devdrawp9.c: the kernel's draw device, in this personality */
+
+Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, &srvdevtab, &lfsdevtab, &ipdevtab, &cachedevtab, &timedevtab, &notedevtab, &inputdevtab, &dupdevtab, &drawdevtab, nil };
 
 long	kerndate = 0;
 
@@ -268,10 +337,19 @@ openmode(ulong o)
  * allocb/freeb below (allocb re-zeroes, so a reused Block is as good as
  * fresh), so sustained traffic no longer grows the arena.  The old 1MB with
  * no reclaim overran once two IP stacks ran (their packet Blocks piling up),
- * malloc returned nil, and the unchecked nil corrupted memory; 4MB now, with
- * the churn reclaimed, is comfortable headroom for the persistent structures.
+ * malloc returned nil, and the unchecked nil corrupted memory.
+ *
+ * 4MB was comfortable while the persistent structures were the name space
+ * and the conversations.  What ate the rest of it was kprocs: every one
+ * costs a 32K stack out of here and none is ever given back - a kproc per
+ * pi-p connection, and four more for the workers that serve a forwarded
+ * system call.  The two-machine wire run, the longest of the checks, ended
+ * at 4183184 of 4194304 used and then panicked in kproc for want of a
+ * stack.  12MB now.  It costs no memory until it is touched: the arena is
+ * bss, and the kernel fills a bss page only when the personality first
+ * writes it.
  */
-static char	arena[4*1024*1024];
+static char	arena[12*1024*1024];
 static ulong	arenap;
 enum { AHDR = 16 };
 void*

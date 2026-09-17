@@ -178,7 +178,18 @@ port
 			print("osprey: legacy process %s killed by note: %s\n", up->text, msg);
 			ospreyexits(1);
 		}
-		panic("microkernel: donotify");
+		/*
+		 * Not the legacy program's: a personality process faulted, and
+		 * there is nobody to give the note to.  Say which and where
+		 * before the machine stops.
+		 */
+		{
+			extern uintptr uregpc(void*);
+
+			panic("microkernel: donotify in %s (pid %lud) at user pc %#p: %s",
+				up->text != nil ? up->text : "a task with no name", up->pid, (void*)uregpc(a),
+				up->nnote > 0 ? up->note[up->nnote-1]->msg : "a note with no message");
+		}
 		return 0;
 	}
 
@@ -211,8 +222,10 @@ port
 		buf = va_arg(list, char*);
 		len = va_arg(list, long);
 		off = va_arg(list, vlong);
-		if(fd >= 3 && ospreybuddyhas())	/* a file descriptor: the buddy holds the file, not the console */
+		if(fd >= 3 && ospreybuddyhas()){	/* a file descriptor: the buddy holds the file, not the console */
+			up->errstr[0] = 0;		/* forwarded: the buddy owns the error from here */
 			return ospreybuddyforward(51, (uintptr*)up->s.args);	/* PWRITE */
+		}
 		USED(fd, off);
 		if(len <= 0)
 			return 0;
@@ -225,6 +238,27 @@ port
 	}
 	uintptr xsleep(va_list list)
 	{
+		/*
+		 * A legacy process - one whose text is a buddy's image, which
+		 * on this configuration is the program itself - gets Plan 9's
+		 * sleep(2): the milliseconds it asked for.  p9pair had this
+		 * and this did not, and what the difference costs is not
+		 * visible in a sleep's own return: the program asked for 20
+		 * milliseconds forty times while waiting for an alarm it had
+		 * set 150 milliseconds out, each sleep returned in about two,
+		 * and it gave up before the alarm was due and called the
+		 * kernel's alarm broken.  A sleep that returns early is a
+		 * clock that lies to every program that waits on one.
+		 */
+		if(up->buddyimage){
+			long ms = va_arg(list, long);
+
+			if(ms <= 0)
+				yield();
+			else
+				tsleep(&up->sleep, return0, 0, ms);
+			return 0;
+		}
 		USED(list);
 		/*
 		 * The program's yield-and-service call.  It puts a request in
@@ -244,10 +278,39 @@ port
 		ospreyawaitreply(2);
 		return 0;
 	}
+	/*
+	 * exits(2).  The status is a string: nil, or the empty string, is
+	 * success and anything else is a failure whose text is the reason.
+	 * This threw the string away and always exited 0, so a program that
+	 * died in sysfatal was reaped by its parent as having succeeded -
+	 * every "exited with status 0" in a log said nothing at all.  The
+	 * string is copied out and printed, and a non-empty one is a
+	 * non-zero status.
+	 */
 	uintptr xexits(va_list list)
 	{
-		USED(list);
-		ospreyexits(0);	/* the boot program idles; one exec started ends */
+		char *status;
+		char ks[ERRMAX];
+		int i;
+
+		status = va_arg(list, char*);
+		ks[0] = 0;
+		if(status != nil){
+			if(waserror())
+				strcpy(ks, "exits: unreadable status");	/* not a success */
+			else{
+				validaddr((uintptr)status, 1, 0);
+				for(i = 0; i < (int)sizeof ks - 1 && status[i] != 0; i++)
+					ks[i] = status[i];
+				ks[i] = 0;
+				poperror();
+			}
+		}
+		if(ks[0] != 0){
+			print("osprey exec: the program exited with the status \"%s\"\n", ks);
+			ospreyexits(1);
+		} else
+			ospreyexits(0);	/* the boot program idles; one exec started ends */
 		return 0;
 	}
 	/*
@@ -273,6 +336,14 @@ port
 		for(i = 0; i < (int)sizeof kn - 1 && name[i] != 0; i++)
 			kn[i] = name[i];
 		kn[i] = 0;
+		/*
+		 * "code": not a named segment of the container's but a region
+		 * the caller may write a program into and then run - what a
+		 * library operating system needs when it loads a program
+		 * itself.  The address-space service keeps its one call.
+		 */
+		if(strcmp(kn, "code") == 0)
+			return ospreysegcode(va, len);
 		if(len == 0)
 			len = ospreyslicesize();	/* the whole slice */
 		{
@@ -372,17 +443,123 @@ port
 		return 0;
 	}
 
+	/*
+	 * The four brought over from p9pair, which had them and this did
+	 * not.  They are the calls beyond the files: heap growth, a note on
+	 * the clock, two processes of one address space meeting, and the
+	 * time.  A buddy answers what a program asks of its file system;
+	 * these are asked of the machine, and the machine here is this
+	 * kernel.  EXEC is deliberately not among them: on this
+	 * configuration the buddy is the loader and the pager, and
+	 * p9buddy.c answers EXEC itself, so claiming 7 here would take exec
+	 * away from the container that performs it.
+	 */
+	uintptr xbrk(va_list list)
+	{
+		extern long ospreybuddybrk(uintptr);
+		uintptr addr = va_arg(list, uintptr);
+
+		if(up->buddyimage)
+			return (uintptr)ospreybuddybrk(addr);
+		return ibrk(addr, BSEG);
+	}
+
+	uintptr xalarm(va_list list)
+	{
+		return (uintptr)procalarm(va_arg(list, ulong));
+	}
+
+	uintptr xnsec(va_list list)
+	{
+		USED(list);
+		return (uintptr)todget(nil, nil);
+	}
+
+	uintptr xrendezvous(va_list list)
+	{
+		uintptr tag, val, new;
+		Proc *p, **l;
+
+		tag = va_arg(list, uintptr);
+		new = va_arg(list, uintptr);
+		if(up->rgrp == nil)
+			up->rgrp = newrgrp();
+		l = &REND(up->rgrp, tag);
+
+		lock(up->rgrp);
+		for(p = *l; p != nil; p = p->rendhash){
+			if(p->rendtag == tag){
+				*l = p->rendhash;
+				val = p->rendval;
+				p->rendval = new;
+				unlock(up->rgrp);
+				ready(p);
+				return val;
+			}
+			l = &p->rendhash;
+		}
+
+		/* nobody there yet: sleep on the tag until the other one comes */
+		up->rendtag = tag;
+		up->rendval = new;
+		up->rendhash = *l;
+		*l = up;
+		up->state = Rendezvous;
+		unlock(up->rgrp);
+
+		sched();
+
+		return up->rendval;
+	}
+
 	Xsyscall *systab[] = {
 		[5]	xselect,	/* DUP number reused: select over arms */
 		[8]	xexits,		/* EXITS */
 		[28]	xnotify,	/* NOTIFY: register a note handler */
 		[29]	xnoted,		/* NOTED: the handler returns; NCONT resumes */
 		[17]	xsleep,		/* SLEEP: yield and service the ring */
+		[24]	xbrk,		/* BRK_: heap growth, the address-space service */
+		[6]	xalarm,		/* ALARM: a note this many milliseconds from now */
+		[34]	xrendezvous,	/* RENDEZVOUS: two processes of one address space meet */
+		[53]	xnsec,		/* _NSEC: nanoseconds, the machine's clock */
 		[30]	xsegattach,	/* SEGATTACH */
 		[51]	xpwrite,	/* PWRITE */
 		[60]	ospreyxcall,	/* above the Plan 9 table, which a legacy binary uses whole: a request of the task's own, answered now */
 	};
 	int nsyscall = nelem(systab);
+
+	/*
+	 * A call the buddy answers, and the one exception: errstr(2).  The
+	 * buddy answers it out of the error string it keeps per container,
+	 * which is right for the calls the buddy served and empty for the
+	 * ones this kernel served itself, which the buddy never saw fail.
+	 * up->errstr is both the message and the flag - a call sent out
+	 * clears it, a kernel-served failure leaves its message there
+	 * through error() - and this is the same arrangement as p9pair's,
+	 * which is where it is explained at length.
+	 */
+	uintptr ospreysyscallout(ulong scallnr)
+	{
+		enum { ERRSTR = 41 };
+		uintptr *a;
+		char *buf;
+		long n, m;
+
+		a = (uintptr*)up->s.args;
+		if(scallnr == ERRSTR && up->errstr[0] != 0){
+			buf = (char*)a[0];
+			n = (long)a[1];
+			if(n <= 0)
+				return (uintptr)-1;
+			validaddr((uintptr)buf, n, 1);
+			for(m = 0; m < n - 1 && up->errstr[m] != 0; m++)
+				buf[m] = up->errstr[m];
+			buf[m] = 0;
+			return (uintptr)(m + 1);
+		}
+		up->errstr[0] = 0;
+		return (uintptr)ospreybuddyforward(scallnr, a);
+	}
 
 	int dosyscall(ulong scallnr, Sargs *args, uintptr *retp)
 	{
@@ -396,7 +573,7 @@ port
 			if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)
 				*retp = systab[scallnr]((va_list)up->s.args);
 			else if(ospreybuddyhas())	/* a container with a server: its buddy answers */
-				*retp = (uintptr)ospreybuddyforward(scallnr, (uintptr*)up->s.args);
+				*retp = (uintptr)ospreysyscallout(scallnr);
 			else {
 				print("osprey user: unimplemented syscall %uld\n", scallnr);
 				*retp = (uintptr)-1;

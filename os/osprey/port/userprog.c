@@ -20,6 +20,7 @@
 #include <u.h>
 #include <libc.h>
 #include "srv9p.h"
+#include "ospreydata.h"		/* the one layout for a container's data area */
 
 enum {
 	Ospreymagic	= 0x4f53505259ULL,
@@ -72,6 +73,101 @@ static int
 oselect(int armoff, int narms)
 {
 	return dup(narms, armoff);
+}
+
+/*
+ * Does a system call give back every register?
+ *
+ * The interrupt half of that question is measured in the kernel
+ * (os/osprey/pc64/regtorture.s, called from init0).  This is the other
+ * half, and it has to be asked from here because a system call can only
+ * be made from user mode.  It matters more than the interrupt half does:
+ * the interrupt path in l.s is byte for byte 9front's, while
+ * syscallentry and forkret are this kernel's own, written to carry both
+ * the Plan 9 and the Linux ABI, so they save and restore every register
+ * rather than the few upstream needs.
+ *
+ * userregtorture.s does the work and says what it found; this prints it.
+ * The value a lost register came back with is written through a pointer
+ * to a local, because this program is flat-loaded with no data segment
+ * of its own and a writable global would not survive the load.
+ */
+/*
+ * How many calls, and why so few next to the four million the interrupt
+ * half runs.  The two are not the same kind of question.  Whether an
+ * interrupt lands in the window that matters is chance, so that test
+ * buys confidence with repetition; a system call goes through the same
+ * save and restore every single time, so a register lost there is lost
+ * on the first call and on all of them.  A hundred is not a compromise
+ * on coverage, it is what the path needs - and it is also what it costs,
+ * since a write to the console is about four milliseconds on this guest
+ * and a thousand of them made the boot sit for four seconds.
+ */
+enum { Nsyscall = 100 };
+
+extern long userregtorture(long n, uvlong *badp);
+
+/* the number, in decimal, into the end of buf; answers where it starts */
+static char*
+putdec(char *buf, int nbuf, uvlong v)
+{
+	char *p;
+
+	p = buf + nbuf - 1;
+	*p = 0;
+	do {
+		*--p = '0' + (int)(v % 10);
+		v /= 10;
+	} while(v != 0 && p > buf);
+	return p;
+}
+
+/* and in hexadecimal, for a value that is a selector or a fragment */
+static char*
+puthex(char *buf, int nbuf, uvlong v)
+{
+	static char hex[] = "0123456789abcdef";
+	char *p;
+
+	p = buf + nbuf - 1;
+	*p = 0;
+	do {
+		*--p = hex[v & 0xf];
+		v >>= 4;
+	} while(v != 0 && p > buf);
+	return p;
+}
+
+static void
+regcheck(void)
+{
+	char nbuf[32], vbuf[32];
+	uvlong bad;
+	long r;
+
+	bad = 0;
+	r = userregtorture(Nsyscall, &bad);
+	if(r == 0){
+		/*
+		 * The number printed is the one the loop counted, not the
+		 * one it was asked for.  They are required to agree, and
+		 * that is deliberate: a loop that misread its argument
+		 * still finishes and still finds every register intact, so
+		 * "the registers survived" on its own says nothing about
+		 * how many calls were made.
+		 */
+		puts("osprey user: eleven registers survived ");
+		puts(putdec(nbuf, sizeof nbuf, bad));
+		puts(" of ");
+		puts(putdec(vbuf, sizeof vbuf, Nsyscall));
+		puts(" system calls, so syscallentry and forkret gave back every one they were not told to keep\n");
+		return;
+	}
+	puts("osprey user: register ");
+	puts(putdec(nbuf, sizeof nbuf, (uvlong)r));
+	puts(" came back as 0x");
+	puts(puthex(vbuf, sizeof vbuf, bad));
+	puts(" across a system call\n");
 }
 
 /*
@@ -323,7 +419,20 @@ ospreyserver(char *arg0)
 		for(z = 0; z < (long)sizeof st; z++)
 			((uchar*)&st)[z] = 0;
 		USED(rq); USED(reqm);
-		for(iters = 0; iters < 150; iters++){	/* up to ~30s of waiting, then finish */
+		/*
+		 * Serve until the client has been quiet for a long while, not
+		 * until a fixed number of passes have gone by.  This counted
+		 * every pass, answered or not, and stopped at 150: enough for
+		 * the demonstration it was written for, and not enough for a
+		 * client that reads a directory a few hundred times.  When it
+		 * stopped, the client's mount did not fail - unionread runs
+		 * each member under waserror and moves on - so a listing came
+		 * back two entries short with nothing said, and the next 9P
+		 * request the personality sent was answered by nobody.  A
+		 * server stops when it is idle; the count is of idle passes
+		 * and a request resets it.
+		 */
+		for(iters = 0; iters < 150; iters++){
 			Msg req, rep;
 			uvlong off, len, fd, dest, most;
 			char *content;
@@ -338,6 +447,7 @@ ospreyserver(char *arg0)
 			if(a != 0)			/* nothing ready this time; look again */
 				continue;
 			req = *reqp;			/* the request select took into our data area */
+			iters = -1;			/* a request; the idle count starts again */
 
 			for(i = 0; i < (long)sizeof rep; i++)
 				((uchar*)&rep)[i] = 0;
@@ -392,7 +502,38 @@ ospreyserver(char *arg0)
 				uvlong toff = req.arg[2], tlen = req.arg[3], roff = req.arg[4];
 				long rn;
 
-				rn = srv9p(&st, cdata + toff, (long)tlen, cdata + roff, 8192);
+				/*
+				 * The reply goes at roff in the client's data
+				 * area, and what fits there is Odr9len - not
+				 * the 8192 this used to say, which is four
+				 * times the region and would have run the
+				 * R-message into the ticket window past it.
+				 * Nothing could produce a message that long
+				 * (the one writable file here is 512 bytes and
+				 * the directory is 266), so nothing had gone
+				 * wrong; the bound was wrong, and the first
+				 * file bigger than two kilobytes would have
+				 * found it.  srv9p clamps what it advertises
+				 * and what it returns to this number, so the
+				 * client never asks for more than can come
+				 * back.
+				 *
+				 * And it is the smaller of the two regions,
+				 * not the reply's alone.  9P's message size
+				 * bounds a T-message as well as an R-message,
+				 * and the T region here is Odt9len, 768 bytes
+				 * - smaller than the reply's 2048.  A client
+				 * told it may send 2024 would chop a long
+				 * write into 2024-byte messages, and the
+				 * transport, which checks that a T-message
+				 * fits its region, would refuse each one:
+				 * "9P transport: no reply from the file
+				 * server" for a write that is merely too big.
+				 * The ring carries what its smaller half
+				 * carries.
+				 */
+				rn = srv9p(&st, cdata + toff, (long)tlen, cdata + roff,
+					Odt9len < Odr9len ? Odt9len : Odr9len);
 				rep.arg[0] = (uvlong)rn;
 			} else
 				rep.arg[0] = 2;				/* an op we do not answer */
@@ -419,6 +560,8 @@ startboot(char *arg0, char**)
 	}
 
 	puts("osprey user: a program on the microkernel, whose file personality is a library\n");
+
+	regcheck();
 
 	r.base = (uchar*)segattach(0, "osprey0", 0, 0);
 	if(r.base == (uchar*)-1){

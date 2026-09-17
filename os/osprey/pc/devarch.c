@@ -472,6 +472,32 @@ simplecycles(uvlong*x)
 	*x = m->ticks;
 }
 
+/*
+ * A clock for the ilock spin bound in taslock.c, and the one thing it
+ * must not do is take a lock.  fastticks goes through arch->fastclock,
+ * which can be i8253read, and i8253read takes an ilock: a processor
+ * spinning for that very lock would then call the thing it is waiting
+ * for and spin inside its own spin.  The cycle counter is a plain
+ * read of a register.  A zero return means there is no cycle counter
+ * to read yet - simplecycles counts clock interrupts, which do not
+ * arrive while a processor spins with them masked - and the caller
+ * counts turns instead, which is what the kernel has always done.
+ */
+uvlong
+spinticks(uvlong *hz)
+{
+	uvlong t;
+
+	if(cycles != _cycles || m->cpuhz == 0){
+		*hz = 0;
+		return 0;
+	}
+	*hz = m->cpuhz;
+	t = 0;
+	cycles(&t);
+	return t;
+}
+
 void
 cpuidprint(void)
 {

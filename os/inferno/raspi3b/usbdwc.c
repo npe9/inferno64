@@ -62,6 +62,9 @@ enum
 	 * Reading bulk input packets one at a time avoids it.
 	 */
 	Slowbulkin	= 1,
+	Maxnak		= 2000,		/* ~2s of 1ms retries: not for bulk IN */
+	Maxiters	= 4000,		/* attempts at one transfer, likewise */
+	Rearmsecs	= 2,		/* a bulk IN waits this long, then its channel restarts */
 };
 
 typedef struct Ctlr Ctlr;
@@ -78,6 +81,7 @@ struct Ctlr {
 	uint	sofchan;		/* bitmap of channels waiting for sof */
 	Rendez	*chanintr;		/* per-channel wait, sleep till interrupt */
 	uint	hcintr[Maxchans];	/* hcint the handler read-and-cleared, per channel */
+	uint	rearm[Maxchans];	/* bulk IN channels restarted after a silent NAK */
 };
 
 struct Epio {
@@ -247,6 +251,21 @@ chanhalt(Ep *ep, Hostchan *hc)
 	USED(ctlr);
 }
 
+/* Chdis is asynchronous on the BCM2837 DWC2.  Never spin forever if a
+ * channel remains enabled after a reset or a failed transaction. */
+static int
+chanhaltwait(Hostchan *hc)
+{
+	int i;
+
+	for(i = 0; i < 100000; i++){
+		if((hc->hcchar & Chen) == 0)
+			return 0;
+		microdelay(1);
+	}
+	return -1;
+}
+
 static int
 sofdone(void *a)
 {
@@ -269,12 +288,105 @@ chandone(void *a)
 static int
 chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 {
-	int chan;
+	int chan, i, pending;
 
-	USED(ep, mask);
+	USED(mask);
 	chan = hc - ctlr->regs->hchan;
-	while((ctlr->hcintr[chan] & Chhltd) == 0)
+	/*
+	 * A bulk IN is allowed to take as long as it likes: it is a read
+	 * from a device that has nothing to say until it does.  On the Pi
+	 * the first receive from the onboard NIC ran into the twenty-second
+	 * limit this used to impose, and the synthesised transaction error
+	 * stopped the ethernet driver for good -- an idle or unplugged
+	 * socket reported as a hardware fault.  In DMA mode the core
+	 * retries the device's NAKs itself and halts the channel when the
+	 * data finally arrives, so waiting is the whole of the work.  Every
+	 * other transfer keeps a bound: they are answers to something the
+	 * host asked for, and silence there is a fault.
+	 */
+	pending = ep->ttype == Tbulk && (hc->hcchar & Epdir) == Epin;
+	for(i = 0; (ctlr->hcintr[chan] & Chhltd) == 0; i++){
 		tsleep(&ctlr->chanintr[chan], chandone, &ctlr->hcintr[chan], 1000);
+		if(pending){
+			/*
+			 * A bulk IN may wait for ever for data, but not for a
+			 * completion that has already been and gone: if the
+			 * channel is no longer enabled, the transfer ended
+			 * without its interrupt reaching this slot, and waiting
+			 * on it is waiting for nothing.  Report it halted and
+			 * let the caller look at what moved - on the Pi this is
+			 * the difference between a NIC that keeps receiving and
+			 * one that goes deaf after its first few packets, with
+			 * its reader asleep in here for ever.
+			 */
+			if(i >= 5 && (hc->hcchar & Chen) == 0){
+				/*
+				 * Whatever moved is half a frame at best, and
+				 * handing a short read up delivers a damaged
+				 * packet: the Pi received steadily and replied
+				 * to nothing, its IP layer dropping what
+				 * arrived.  Ask for a retry instead, which
+				 * re-arms the channel and keeps the data whole.
+				 */
+				print("usbdwc: ep%d.%d completion missed: hcchar %8.8ux "
+					"hcint %8.8ux hcintmsk %8.8ux hctsiz %8.8ux "
+					"haint %8.8ux gintsts %8.8ux\n",
+					ep->dev->nb, ep->nb, hc->hcchar, hc->hcint,
+					hc->hcintmsk, hc->hctsiz,
+					ctlr->regs->haint, ctlr->regs->gintsts);
+				return Chhltd|Nak;
+			}
+			/*
+			 * A read that waits for ever is not a read that is
+			 * waiting, it is a channel that has stopped.  The Pi
+			 * went permanently deaf here: the onboard NIC's bulk
+			 * IN sat with Chen set and NAK latched, no completion
+			 * ever arrived, and the interface received nothing for
+			 * as long as it was left alone.  Halt the channel and
+			 * report a NAK, which is what the caller retries: an
+			 * idle NIC costs a re-arm every couple of seconds, and
+			 * a stopped one starts again instead of staying dead.
+			 */
+			if(i >= Rearmsecs && (hc->hcchar & Chen) != 0){
+				hc->hcchar |= Chdis;
+				chanhaltwait(hc);
+				if((ctlr->rearm[chan]++ % 64) == 0)
+					print("usbdwc: ep%d.%d re-armed after %d s "
+						"(%d times): hcchar %8.8ux hcint %8.8ux\n",
+						ep->dev->nb, ep->nb, i,
+						ctlr->rearm[chan], hc->hcchar, hc->hcint);
+				return Chhltd|Nak;
+			}
+			/*
+			 * A read that waits is normal; a read that waits while
+			 * the device has data is not.  Report the controller
+			 * every ten seconds so the two can be told apart: if
+			 * gintsts still shows Hcintr and haint still names this
+			 * channel, the interrupt was raised and never reached
+			 * the handler, which is a different fault from the core
+			 * never completing the transfer at all.
+			 */
+			if(i > 0 && i % 10 == 0)
+				print("usbdwc: ep%d.%d waiting %d s: hcchar %8.8ux "
+					"hcint %8.8ux hctsiz %8.8ux haint %8.8ux "
+					"haintmsk %8.8ux gintsts %8.8ux gintmsk %8.8ux\n",
+					ep->dev->nb, ep->nb, i, hc->hcchar, hc->hcint,
+					hc->hctsiz, ctlr->regs->haint,
+					ctlr->regs->haintmsk, ctlr->regs->gintsts,
+					ctlr->regs->gintmsk);
+			continue;
+		}
+		if(i >= 20)
+			break;
+	}
+	if((ctlr->hcintr[chan] & Chhltd) == 0){
+		/* A missing completion must not strand Limbo in a forever wait.
+		 * Return a normal transaction error; the caller unwinds the
+		 * endpoint operation and the diagnostic identifies the channel. */
+		print("usbdwc: ep%d.%d completion timeout channel %d\n",
+			ep->dev->nb, ep->nb, chan);
+		return Chhltd|Xacterr;
+	}
 	return ctlr->hcintr[chan];
 }
 
@@ -316,7 +428,7 @@ static int
 chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 {
 	Ctlr *ctlr;
-	int nleft, n, nt, i, imask, maxpkt, npkt, chan, split;
+	int nleft, n, nt, i, imask, maxpkt, npkt, chan, split, naks, iters;
 	uint hcdma, hctsiz;
 	Dwcregs *r;
 
@@ -353,9 +465,30 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		imask = Chhltd|Nak;
 
 	nleft = len;
+	naks = 0;
+	iters = 0;
+	i = 0;
 	chan = hc - r->hchan;
 	hcdma = hctsiz = 0;
 	for(;;){
+		/*
+		 * Every way out of this loop is a condition the device has to
+		 * produce, and several of the continues above have no bound of
+		 * their own: a Nyet or a frame overrun that repeats, or a
+		 * completion that moves no bytes and leaves Pktcnt alone, will
+		 * go round for ever with nothing said.  That is how enumerating
+		 * the device behind the Pi's onboard hub stopped: no error, no
+		 * NAK report, usbd asleep in the kernel.  A bulk IN is the one
+		 * transfer allowed to take unbounded time, and it waits in
+		 * chanwait rather than spinning here.
+		 */
+		if(++iters > Maxiters && !(ep->ttype == Tbulk && dir == Epin)){
+			print("usbdwc: ep%d.%d type %d dir %s: %d attempts, last intr %8.8ux "
+				"hcchar %8.8ux hctsiz %8.8ux hcsplt %8.8ux\n",
+				ep->dev->nb, ep->nb, ep->ttype, dir == Epin? "in": "out",
+				iters, i, hc->hcchar, hc->hctsiz, hc->hcsplt);
+			error(Eio);
+		}
 		/*
 		 * Emulator gap.  QEMU keeps retrying a NAK'd bulk packet
 		 * after the channel was halted (Chdis does not cancel its
@@ -378,8 +511,12 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		hc->hctsiz = hctsiz & ~Dopng;
 		if(hc->hcchar&Chen){
 			hc->hcchar |= Chen | Chdis;
-			while(hc->hcchar&Chen)
-				;
+			if(chanhaltwait(hc) < 0){
+				print("usbdwc: ep%d.%d channel halt timeout hcchar %8.8ux\n",
+					ep->dev->nb, ep->nb, hc->hcchar);
+				iunlock(ctlr);
+				error(Eio);
+			}
 			hc->hcint = Chhltd;
 		}
 		if((i = hc->hcint) != 0)
@@ -420,8 +557,13 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		 */
 		if(hc->hcchar & Chen){
 			hc->hcchar |= Chdis;
-			while(hc->hcchar & Chen)
-				;
+			if(chanhaltwait(hc) < 0){
+				print("usbdwc: ep%d.%d pre-start halt timeout hcchar %8.8ux\n",
+					ep->dev->nb, ep->nb, hc->hcchar);
+				ctlr->hcintr[chan] = Chhltd|Xacterr;
+				iunlock(ctlr);
+				goto started;
+			}
 		}
 		/*
 		 * Arm both interrupt masks BEFORE enabling the channel.  On
@@ -438,6 +580,7 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		hc->hcchar = (hc->hcchar &~ Chdis) | Chen;
 		iunlock(ctlr);
 
+	started:
 		i = chanwait(ep, ctlr, hc, imask);
 		hc->hcintmsk = 0;
 		/* hc->hcint was already read-and-cleared by the interrupt handler */
@@ -455,6 +598,24 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 			if(i & (Nyet|Frmovrun))
 				continue;
 			if(i & Nak){
+				/*
+				 * A device with nothing to send NAKs, and the
+				 * retry is the transfer.  That is fair for a
+				 * bulk IN, which is a read of whatever arrives
+				 * whenever it arrives, and wrong for everything
+				 * else: on the Pi, enumerating the device behind
+				 * the onboard hub stopped here and never came
+				 * back, because a control transfer that is NAK'd
+				 * for ever was retried for ever with nothing
+				 * said.  Bound the others and report.
+				 */
+				if(ep->ttype != Tbulk || dir != Epin)
+					if(++naks > Maxnak){
+						print("usbdwc: ep%d.%d type %d dir %s: %d NAKs, giving up\n",
+							ep->dev->nb, ep->nb, ep->ttype,
+							dir == Epin? "in": "out", naks);
+						error(Eio);
+					}
 				if(ep->ttype == Tintr)
 					tsleep(&up->sleep, return0, 0, ep->pollival);
 				else
@@ -644,13 +805,21 @@ ctldata(Ep *ep, void *a, long n)
 	return n;
 }
 
-static void
+static int
 greset(Dwcregs *r, int bits)
 {
+	int i;
+
 	r->grstctl |= bits;
-	while(r->grstctl & bits)
-		;
+	for(i = 0; i < 100000; i++){
+		if((r->grstctl & bits) == 0)
+			break;
+		microdelay(1);
+	}
+	if(r->grstctl & bits)
+		return -1;
 	microdelay(10);
+	return 0;
 }
 
 static void
@@ -731,6 +900,7 @@ init(Hci *hp)
 	Ctlr *ctlr;
 	Dwcregs *r;
 	uint n, rx, tx, ptx;
+	int i;
 
 	ctlr = hp->aux;
 	r = ctlr->regs;
@@ -748,11 +918,26 @@ init(Hci *hp)
 	 * since the emulator returns before the domain matters.
 	 */
 	if(mboxsetpower(PowerUsb, 1) < 0)
-		print("usbdwc: mailbox SET_POWER_STATE(usb) failed (ignored)\n");
+		print("DWC-POWER-FAIL\n");
+	else
+		print("DWC-POWER-OK\n");
 
-	while((r->grstctl & Ahbidle) == 0)
-		;
-	greset(r, Csftrst);
+	for(i = 0; i < 100000; i++){
+		if(r->grstctl & Ahbidle)
+			break;
+		microdelay(1);
+	}
+	if((r->grstctl & Ahbidle) == 0){
+		print("DWC-AHBIDLE-TIMEOUT grstctl %#ux gusbcfg %#ux gahbcfg %#ux\n",
+			r->grstctl, r->gusbcfg, r->gahbcfg);
+		error("DWC2 AHB did not become idle");
+	}
+	print("DWC-AHBIDLE-OK\n");
+	if(greset(r, Csftrst) < 0){
+		print("DWC-CORE-RESET-TIMEOUT grstctl %#ux\n", r->grstctl);
+		error("DWC2 core reset timed out");
+	}
+	print("DWC-CORE-RESET-OK\n");
 
 	r->gusbcfg |= Force_host_mode;
 	tsleep(&up->sleep, return0, 0, 25);
@@ -778,9 +963,16 @@ init(Hci *hp)
 	r->gnptxfsiz = rx | tx<<ODepth;
 	tsleep(&up->sleep, return0, 0, 1);
 	r->hptxfsiz = (rx + tx) | ptx << ODepth;
-	greset(r, Rxfflsh);
+	if(greset(r, Rxfflsh) < 0){
+		print("DWC-RX-FLUSH-TIMEOUT grstctl %#ux\n", r->grstctl);
+		error("DWC2 RX FIFO flush timed out");
+	}
 	r->grstctl = TXF_ALL;
-	greset(r, Txfflsh);
+	if(greset(r, Txfflsh) < 0){
+		print("DWC-TX-FLUSH-TIMEOUT grstctl %#ux\n", r->grstctl);
+		error("DWC2 TX FIFO flush timed out");
+	}
+	print("DWC-FIFO-OK\n");
 
 	r->hport0 = Prtpwr|Prtconndet|Prtenchng|Prtovrcurrchng;
 	r->gintsts = ~0;
@@ -1052,6 +1244,7 @@ reset(Hci *hp)
 		ctlr->regs = nil;
 		return -1;			/* not a DWC OTG core */
 	}
+	print("DWC-PROBE-OK id %#ux\n", id);
 	dprint("usbdwc: DWC OTG rev %d.%3.3x at %#p\n",
 		(id>>12)&0xF, id&0xFFF, (void*)USBREGS);
 

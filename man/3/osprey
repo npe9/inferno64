@@ -1154,6 +1154,61 @@ dd -if /n/osprey/arena -bs 1 -iseek 2304 -count 4
 .B /os/osprey/cmd/draw/kbd.c
 .SH CHECKING
 .PP
+Two of the things checked are about the kernel's own entries rather
+than about the Osprey device, and both print a line at boot that a
+reader of the console will meet before anything else.
+.PP
+.B osprey regcheck:
+comes from
+.B os/osprey/pc64/regtorture.s
+by way of
+.I init0
+and says whether an interrupt gives back every register it interrupted.
+Twelve registers are loaded with distinct values and compared in a spin
+with interrupts on; the same loop under
+.B CLI
+runs in the same boot as the control, and the number of clock ticks the
+spin covered is printed and required to be non-zero, because "the
+registers survived" and "nothing was tested" would otherwise be the same
+line.  It runs on
+.B pc64
+only, since
+.I init0
+is the full personality's, but the entry it measures is
+.BR l.$O ,
+one object linked into all seven configurations.
+.PP
+.B "osprey user: eleven registers survived"
+is the same question asked of the other entry, from
+.B os/osprey/pc64/userregtorture.s
+in the xup64 task.  It matters more, because the interrupt path is
+9front's unchanged while
+.I syscallentry
+and
+.I forkret
+are this kernel's own and save every register to carry two ABIs.  A
+hundred real system calls, since a call goes through the same save and
+restore every time and a register lost there is lost on the first one.
+Four registers are excluded and named: AX is the result, CX and R11 are
+what SYSRET consumes, BP carries the call number.  The count printed is
+the count the loop made, and the check requires it to equal the count
+asked for \- a loop that misread its argument still finishes with every
+register intact.
+.PP
+.B "linux: twelve registers survived"
+is the same again for the other ABI, from the unmodified Linux binary
+the
+.B p9linux
+configuration runs.  Twelve rather than eleven, because Linux promises
+back everything but rax, rcx and r11 \- argument registers included, so
+rdi, rsi and rdx are checked against the values they were given.  It is
+the only test that reaches the Linux branch of
+.IR syscall (),
+which takes the number from rax and copies rdi, rsi, rdx, r10, r8 and r9
+into the argument block.  The same program separately keeps rbx across
+every call it makes, of every kind, which is a wider scope and a
+narrower question.
+.PP
 .B /scripts/osprey-check.py
 boots one kernel on four cores and asks it for everything a single
 machine can be made to show: a request submitted and collected through
@@ -1216,6 +1271,975 @@ where twelve hundred give
 .BR "direct 953 copied 257" .
 .PP
 .PP
+.B /scripts/osprey-check-userland.sh
+boots nothing either.  It builds the ten 9front libraries out of the
+source carried in
+.B /9front/src
+with this tree's own
+.IR 6c ,
+links
+.I rio
+and the draw, mouse and keyboard servers against them, and asserts of
+each of the four binaries that it is a Plan 9 amd64
+.B a.out
+entered at
+.BR UTZERO+0x28 ,
+where the loader enters one.  It is a build check and nothing more; two
+of the four are also run, by
+.BR /scripts/osprey-check-p9pair.py .
+What has been run all along is the C library underneath them.
+.B libc9.a
+is what
+.BR /boot/cat ,
+.BR /boot/exec ,
+.BR /boot/sh
+and
+.B /boot/legacy
+link, ahead of the prebuilt
+.B libc.a
+which stays behind it for the generated system-call stubs, so every
+criterion of
+.B /scripts/osprey-check-p9pair.py
+is a line that a program built against that library printed.  Of the 34
+members of the prebuilt archive this linker cannot read, those four
+programs need three \-
+.IR vfprint ,
+.IR dofmt ,
+.I vsnprint
+\- so what the criteria exercise of it is the formatting path.
+.I pool
+and
+.I malloc
+are reached now, by the draw server; the Dir conversions still are not.
+Two of the four have been run.  The pair check execs
+.B /boot/kbdsrv
+in a container, where the buddy lays it out and the kernel enters it
+through
+.BR /os/osprey/pc/init9main.c ,
+and it fails on the keyboard ring this machine does not have, which is
+the answer it should give.  It then execs
+.BR /boot/drawsrv ,
+which maps the frame buffer the microkernel exposed, runs the kernel's
+own
+.I devdraw.c
+in user space,
+.I postmountsrv 's
+its 9P server into a container of its own and mounts it at
+.BR /dev ;
+a client in the mounting process then draws through
+.B /dev/draw
+and reads the pixels back out of the frame buffer.  The frame buffer
+was never what stood in the way: the EFI loader writes
+.B *bootscreen
+into
+.B plan9.ini
+and the microkernel boot exposes the screen as the
+.B framebuffer
+segment on this personality as on any other.  What the pair personality
+does not expose is the polled keyboard and mouse rings, which
+.B ospreymouseexpose
+gives only to the full personality; it hands the i8042 to the
+personality's own container as two interrupt notifications instead, and
+.B /os/osprey/cmd/p9/p9kbd.c
+drives it there.  Its runes and mouse packets are the two files
+.B /dev/kbd
+and
+.B /dev/mouse
+of
+.BR #m ,
+.BR /os/osprey/cmd/p9/devinput.c ,
+which the pair check reads from a container that started none of them.
+.I rio
+runs: the pair check starts it through
+.B /boot/drawsrv
+.BR -x ,
+which mounts
+.B /srv/draw
+at
+.B /dev
+and execs
+.B /boot/rio
+in place, and rio takes the screen, paints it with its own background
+and is still running when the machine idles.  rio hears the mouse:
+.B /scripts/osprey-check-rio.py
+boots the machine twice, moves the mouse the same way in both and holds
+button 3 down in one, and the two screens QEMU dumps differ by a block
+of libdraw's menu colours where the pointer is.  A window is made and
+swept: New is chosen from that menu, a rectangle is swept with the
+button down, rio forks the process for the window, and that process
+mounts rio's file server for it on
+.B /mnt/wsys
+and opens
+.B /dev/cons
+there.  The window does not stay, because what rio execs in it is
+.BR /bin/rc ,
+which this personality does not have.
+.PP
+.B /boot
+is bound onto
+.B /bin
+and the personality's small shell is registered as
+.B rc
+as well, because rio execs
+.B /bin/rc
+in a window and that name is written into rio.  It is not rc: one
+command a line, words at blanks, stages at
+.BR | ,
+no quoting and no variables.  It reads a line at a time from descriptor
+0 and writes to descriptor 1 when no script is named, which is what a
+window needs.  It runs: the buddy lays it out for the window's container, and what it
+writes is drawn in the window rather than on the machine's console.
+.PP
+.B #d
+is the dup device:
+.B /fd/<n>
+is descriptor n of the container that opens it, resolved through the
+buddy, which is where a container's descriptors live.  A process with no
+container to answer for gets nothing there.  libthread's
+.I procexec
+opens
+.B /fd/<n>
+before it execs anything, which is why a window's command needs it.
+.PP
+It opens it
+.BR OCEXEC ,
+and that means something: a descriptor opened close-on-exec is closed by
+the buddy when a container execs, and only there \- rebuilding an
+arrived container's image from a migration record runs the same layout
+and is not an exec.
+.IR dup (2)
+clears the flag on the new descriptor, as
+.I sysdup
+does.  This is what
+.I procexec
+uses to learn whether an exec worked: it holds the read end of a pipe
+whose write end is close-on-exec, and the read ends when the exec closes
+it.  With the flag ignored the read never ended, rio's
+.I new ()
+never returned, and one window was all a machine could ever make.
+.PP
+The table is sixteen descriptors a container, and running out of it
+says so on the console rather than returning \-1 with no reason.
+.PP
+.IR open (2)
+returns the lowest-numbered free descriptor, 0, 1 and 2 included, and a
+close of one of those frees it rather than putting the console back.
+That is how a program replaces its own standard input or output, and it
+is what rio's
+.I winshell
+does to put a window's
+.B /dev/cons
+on 0 and 1.  A write to a standard descriptor that has been closed or
+dup'd onto goes to the file server rather than out of the console.
+.PP
+The library-OS personality has a screen of its own.  The kernel's draw
+device is compiled into it
+.RB ( devdrawp9.c ,
+which includes
+.B os/osprey/cmd/draw/devdraw.c
+with the personality's headers under it rather than the draw server's
+shim), bound onto
+.BR /dev ,
+and drawing on a Memdata whose pixels are the frame buffer the kernel
+exposed as the segment
+.B framebuffer
+.RB ( drawscreen.c ).
+So a program the personality loads writes the draw protocol into a file
+whose device is code in its own address space:
+.B /boot/libdraw
+does exactly that.  Image pixels come from a Pool over the personality's
+arena
+.RB ( drawpool.c ),
+because memdraw allocates and frees images and the arena's free is a
+no-op.
+.PP
+The table a loaded program is handed answers the way a libc answers.
+Its entry points are under error labels of their own, so a name that is
+not there is \-1 and a reason rather than an unwind through the
+program's frames, and it carries an
+.I errstr
+so the program can read that reason.
+.I p9crt.c
+also gives a loaded program a Tos, because libc's allocator keys its
+pool on
+.B _tos->pid
+and a program entered at
+.I p9start
+never ran libc's
+.IR _main ,
+and a
+.IR privalloc (2)
+block for the same reason:
+.IR nsec (2)
+keeps its descriptor in one and stores through whatever
+.I privalloc
+returned, which was nil.
+.PP
+A program can also be loaded at an address it was not linked for.
+.B /boot/reloc
+is built with
+.B "6l -u"
+\- Plan 9's dynamically-loadable-module link, which places the image at 0
+and appends a table of every absolute address in it \- and
+.I p9loadreloc
+lays it at a base the caller names, contiguously (text, data and bss with
+no page between, because one base is added to every address in it and
+they must keep the distance the linker gave them), then adds that base
+to a
+.B uintptr
+at each recorded offset, which is what
+.B libdynld/dynld-amd64.c
+does.  Its entry is offset 0, which is
+.IR p9start ;
+the header's entry is not a code entry at all, since
+.B -u
+points it at the export table.
+.PP
+This is the one thing the fixed bases cannot do, and it is allocated
+rather than assigned:
+.B p9lib.h
+names a range and a slot size instead of an address per program,
+.I p9spawn
+tells a module from an ordinary program by its magic and takes a free
+slot for it, and
+.I procdone
+gives the slot back when the program ends.  So two copies of one module
+run at the same time, in two slots, and a slot is used again by the next
+program after its own has finished.  A program with a fixed base still
+cannot be run twice, and the same boot shows both: the shell is refused
+a second copy of one image, and two copies of a module run side by
+side.
+.PP
+.B /boot/libcat
+is a module too, and it is one the shell already ran.  It is linked with
+.B "6l -u"
+by
+.BR buildlibcat.sh ,
+.I p9exec
+takes a slot for it and frees it, and the script's
+.B "/boot/libcat /hello | /boot/libcat"
+is two copies of that one image at two addresses the loader chose,
+reading and writing the two ends of one pipe.  The line after it asks
+for two of
+.BR /boot/libgen ,
+which is linked at one address, and that is the copy refused by name.
+Both builds share
+.BR scripts/checkmodule.py ,
+which requires a module's magic,
+.I p9start
+at offset 0 as the symbol table gives it, no imports, mode 0 on every
+relocation, and a value inside the image at every offset named.  A build
+failing any of those emits nothing, which is how a stale linker was
+caught.
+.B /boot/libwc
+is one as well, so both programs a pipeline is made of are without
+addresses, and
+.B "/boot/libcat /hello | /boot/libcat | /boot/libwc"
+is three modules alive at once in three slots.  What the far end counts
+is 645 bytes rather than the 454 of the two-stage line, because
+.I print
+here writes descriptor 1: a stage whose descriptor 1 is a pipe says what
+it says into that pipe, and the count at the end of two of them holds
+the file and both cats' words.
+.PP
+.B /boot/libsh
+is a module too, which is the other path into the loader: the shell is
+what the personality
+.I execs
+rather than what the shell spawns, so
+.I p9exec
+takes its slot and not
+.IR p9spawn .
+It holds that slot for as long as its script runs, so a five-stage
+pipeline beside it is six modules at once, which is every slot there is.
+A module loaded through
+.I p9exec
+after the shell has ended gets the slot the shell held, which is what
+shows that path frees as well as takes.
+.I p9execreloc
+is told which slot to use rather than asking, and claims it from the
+allocator all the same
+.RI ( p9relocclaim ,
+.IR p9relocslotof ):
+a slot laid in without being claimed is one the allocator would hand out
+again.
+There are six because five stages plus the shell reaches six; a count
+nothing reaches would say nothing.
+.B /boot/libgen
+keeps an address of its own on purpose \- it is what shows that a program
+which is its address cannot be two \- and it is the only one of the
+shell's programs that does.
+.PP
+A region of address space is asked of the kernel once and used again
+afterwards, and the loader remembers its size as well as its address.
+The size matters only for a slot: a base holds one program for the life
+of the boot, but a slot holds one module and then another, which may be
+the larger.  A slot is therefore asked for at
+.B P9relocslot
+rather than at the size of the module first laid in it, a module larger
+than a slot is refused before it is laid anywhere, and a program that
+does not fit the region already attached at its address is refused by
+name rather than writing past it.  That last refusal cannot fire against
+the programs this tree has \- every slot is attached at the full size, a
+module too large for one is refused before the region is reached, and a
+fixed base holds one program of one size for a whole boot \- so it is a
+guard against what a slot may hold in principle rather than a hazard
+being averted now.  It was made to fire on purpose once, to see that it
+would.  There are sixteen attachment records;
+a boot takes eight, which is what the previous eight would have held
+exactly, and running out is refused out loud.  Each attachment is
+reported as it is taken.
+.PP
+Finding it out cost a bug in
+.BR 6l .
+.I asmins
+records a relocation while assembling an instruction and then inserts
+the rex prefix in front of it afterwards, moving every later byte up by
+one and leaving the recorded offset behind, so every rex-prefixed
+instruction with an absolute operand named the byte before its field.
+Of one module's 287 relocations, 45 were wrong that way and every one of
+them was rex-prefixed.
+.PP
+The table is version 9.  Version 9 added
+.I waitany
+\- the personality's half of
+.IR await (2),
+which libc's
+.I wait
+is written on.  It waits for a program the calling flow started, rather
+than for a pid, and a caller with none of its own is told
+.B "no living processes"
+rather than left asleep.  What a flow started is recorded when it is
+spawned; without that, a wait would take any program at all, including
+one another flow was waiting for.  One
+.B Rendez
+serves every waiter, so the sleep condition does the looking rather than
+merely saying something happened.
+.I errstr (2)
+here is an exchange, as on Plan 9: it hands back what was there and
+installs what it was given, so a program writes a reason with the entry
+it reads one with.
+.I p9crt.c
+formats the line
+.IR await (2)
+answers with: the pid, three times and the quoted exit status, which
+.I tokenize
+splits into the five fields libc's
+.I wait
+expects.  The times are zero \- nothing here accounts processor time to a
+loaded program, since every flow of control is a kproc of one
+cooperative scheduler.
+.PP
+Version 8 added
+.I forkns
+\- the name-space half of
+.IR rfork (2).
+Three groups: a name space
+.RB ( RFNAMEG ,
+.BR RFCNAMEG ),
+an environment
+.RB ( RFENVG ,
+.BR RFCENVG )
+and a descriptor table
+.RB ( RFFDG ,
+.BR RFCFDG ).
+.B RFNAMEG
+is a new
+.B Pgrp
+with
+.I pgrpcpy
+of the current one and
+.B RFCNAMEG
+an empty one, and the copy carries
+.B notallowed
+across;
+.B RFENVG
+is
+.I newegrp
+and
+.IR envcpy ;
+.B RFFDG
+is
+.I dupfgrp
+of the current table and
+.B RFCFDG
+of nil.  The
+.B Pgrp
+it had is not closed, since that one is the personality's and every flow
+of control holds it by pointer.  Every other bit is refused by name:
+.B RFPROC
+would split the caller's own C stack, which
+.I spawn
+and
+.I proccreate
+are what there is for,
+.B RFMEM
+and
+.B RFNOWAIT
+are about that same split;
+.B RFREND
+wants an
+.B Rgrp
+on the
+.BR Proc ,
+which the Proc this configuration carries has not got;
+.B RFNOTEG
+wants
+.IR setnoteid ,
+which looks the process up in the port's pid table that this scheduler's
+kprocs are never entered in; and
+.B RFNOMNT
+wants
+.I devmask
+and
+.BR nomntdevs ,
+which this configuration does not carry.  The message names the bits it
+cannot mean.  A group a program made for itself is closed when it ends.
+.PP
+Version 7 added the name space itself \-
+.IR bind ,
+.IR mount ,
+.I unmount
+and
+.I chdir
+\- which were the personality's own calls that a program it loaded could
+not reach.  A program that binds binds the personality's own name space,
+since the two share an address space and a
+.B Pgrp
+both; Plan 9 separates them with
+.BR rfork(RFNAMEG) ,
+which this personality does not have.
+.B /boot/libns
+reaches one file three ways \- by its whole name, by
+.I chdir
+and no slash, and through a bind of its own \- and is refused the fourth
+time, after unmounting the binding.
+.I mount
+is in the table and nothing here calls it.
+.PP
+What named those four was rio: linked against this library with the
+prebuilt archive of system-call stubs left off the line, its undefined
+symbols were
+.IR bind ,
+.IR mount ,
+.IR unmount ,
+.IR chdir ,
+.IR rfork ,
+.IR notify ,
+.I exec
+and
+.IR await .
+None is undefined when it is linked the way the real build links it.
+.I exec
+appeared to be until the enumeration was corrected: it was linking
+9front's own
+.B libthread/main.c
+rather than this tree's
+.BR threadmain9.c ,
+whose
+.I _schedexec
+refuses and never calls exec.
+.IR rfork ,
+.I await
+and
+.I notify
+resolve, and rio's
+.I winshell
+asks
+.B RFNAMEG|RFFDG|RFENVG
+which is answered; its
+.I main
+asks
+.B RFENVG|RFFDG|RFNOTEG|RFNAMEG
+which is not, because of
+.BR RFNOTEG .
+Granting a bit that does nothing is the one thing this must not do.
+.I notify
+answers
+.B nil
+\- which is what
+.I winshell
+asks, and is true here, since nothing posts a note to a loaded program \-
+and refuses a handler, because a handler recorded would never be called.
+.B /boot/rio
+is the real 9front rio built as a
+.B "6l -u"
+module, and it runs: laid in a slot, entered at
+.IR p9start ,
+taking flows of control of its own through
+.IR proccreate ,
+and making its own file system server.  It stopped on
+.B /mnt/temp
+at first \- the root device keeps that and
+.B /mnt/wsys
+for rio's
+.IR cexecpipe ,
+and the personality's own demonstration of bind had been leaving the
+environment device over
+.B /mnt
+with
+.BR MREPL ,
+which hid them; a name space a library operating system rearranges is
+the one every program it loads is given.  It makes a window and runs a shell in it.  With
+.B -k
+rio allocates a window over the bottom third of the screen and hands it
+to
+.IR winshell ,
+which rforks a name space, an environment and a descriptor table of its
+own, mounts its own wsys, opens the window's
+.B /dev/cons
+for input and again for output, renames itself through
+.BR /proc/<n>/args ,
+and execs
+.B /bin/rc
+\- which is spawn here.  The shell is given the window's own descriptors
+rather than the machine's console, which is what says it worked.
+.PP
+Two things in
+.I p9crt.c
+had to change for that.  The descriptor table is per-flow now, held
+through a
+.IR privalloc (2)
+word, because that numbering is the program's and one array for the
+whole program meant a close in one flow freed the number in every flow -
+which is what winshell does first, and it took rio's own file server
+down.  And
+.I fdnew
+allocates the lowest free number rather than starting at 3, which is
+what
+.IR open (2)
+answers and what winshell depends on.  The console survives
+.BR RFCFDG :
+it is not a descriptor here but the one trap a loaded program makes, so
+a program that empties its table can still say so, which on Plan 9 it
+could not.
+.PP
+It paints the screen: the display QEMU scans out while rio idles is
+1280x800 and every pixel is
+.BR 0x777777 ,
+which is the colour rio allocates its background with on line 190 of
+.BR 9front/src/cmd/rio/data.c ,
+and the screendump taken before rio ran has none of that colour and all
+of libdraw's.  A command the window's shell runs writes into the window: the shell's
+own 0 and 1 are the window and a command with no redirection of its own
+is given them.  The window is on the screen with that output drawn in
+it - a white text area with black glyphs, rio's border colour around it
+and its scrollbar beside it, in the bottom third where
+.B -k
+puts a window.
+.PP
+rio flushes when it has handled an event, and this configuration has no
+driver running behind
+.B /dev/kbd
+and
+.BR /dev/mouse ,
+so no event arrives: the background appears because rio flushes once
+itself after painting it, and the window appears because the program in
+it writes more than libdraw's buffer holds and the buffer flushes
+itself.  rio hears the mouse.
+.B p9input.c
+is a loop that services this container's interrupt notifications: it
+selects over the keyboard's and the mouse's semaphores, hands each to
+.I p9kbd.c
+- the user-space i8042 driver, which takes the controller's ports at
+CPL3 and reads port 0x60 with its own
+.I inb
+- and lets the cooperative scheduler run.  The driver is started at the
+top of it, because it must be blocked waiting before the kernel unmasks
+the line; starting it during setup breaks the configurations where it
+already works.
+.PP
+The arms go in this container's own data area, so the slice must be
+mapped, so the container must know which slot is its own.  The server is
+told its slot at startup and a container that was not told cannot find
+out, so
+.B ReqWhoami
+was added: one xcall that answers the caller's own slot and nothing
+else.
+.PP
+Keys pressed over QMP come back as scancodes read in user space and
+runes queued on
+.BR /dev/kbd ,
+a mouse move as a decoded packet and a position on
+.BR /dev/mouse ,
+and a button held down in rio's screen opens rio's menu - libdraw's
+.B DPalegreen
+in the shot with the button and none of it in the shot without.
+.PP
+A window rio sweeps runs
+.BR "/bin/rc -i" ,
+and this personality answers that name with a shell of its own.  It is
+not rc: the 9front source vendored here is rio and its libraries, not
+the command set, and real rc forks without execing - for subshells, for
+pipeline stages that are builtins, for functions - which a library
+operating system has no fork to give it.  The boot says so and the
+window's first line says so.
+.PP
+Every program here is linked against
+.I p9crt.c
+and reaches the personality through the
+.B P9lib
+table, which is a library per program rather than a personality that
+runs executables.  The other arrangement - the personality answering the
+ordinary system calls of an ordinary a.out in its own address space, the
+way
+.I p9buddy
+answers them for a container it serves - is written up as the next phase
+in
+.BR doc/osprey-progress.ms .
+.PP
+.B scripts/osprey-play.sh
+boots the same kernel with a display, for a machine to use rather than
+to check.  It wants an image whose
+.I p9inputloop
+argument is long - the committed source is fifteen seconds, which is
+what the check reads - and the script says how to build one.  The shell
+a window gets with no arguments is interactive: it reads a line at a
+time from the window's own
+.BR /dev/cons ,
+and does not echo, because rio has drawn what was typed.  rio is spawned rather than run to completion, and the
+personality gives it three seconds and says so, which is both how the
+boot ends and where the screendump is taken.  The personality
+asks the name space what rio is about to ask it and logs the answers
+first:
+.BR /dev/draw ,
+.BR /dev/mouse ,
+.BR /dev/kbd ,
+.B /dev/cons
+and
+.B /dev/winname
+open, and
+.B /dev/snarf
+does not exist, which rio opens with
+.B OCEXEC
+and carries on without.  Two things that probe found:
+.I procdone
+freed a program's
+.B Pgrp
+and
+.B Egrp
+while
+.B up->
+still pointed at them, and
+.I p9open
+raises rather than answering \-1, so a caller asking about names that may
+not be there needs a
+.I waserror
+of its own.  Two things were found by adding it: the boot
+files are byte arrays in the personality's data, so rio's size pushed
+the personality's bss past
+.B P9progbase
+and the machine died at
+.I touser
+with nothing printed
+.RB ( P9progbase
+moved, and
+.I p9setup
+now prints the distance at every boot); and
+.I libchdir
+had been closing the
+.B Chan
+it replaced, which every flow of control holds by pointer, so a chdir
+took the working directory away from the shell and the personality both.
+.I p9saveflow
+and
+.I p9restoreflow
+put a p9exec'd program's groups and directory back when it returns,
+closing what it made and leaving what it was given.
+.PP
+.B /proc/<n>/args
+is served, read and written: a read is the argument vector spawn copied
+into the program's slot, blank-separated, and a second flow of control
+made by
+.I proccreate
+carries the same one; a write renames the flow, which is what a program
+does to that file on Plan 9 and what rio does to name a window.  rio's
+.B -k
+reaches it \- and then still has no window, because
+.I winshell
+ends by execing
+.BR /bin/rc ,
+which
+.IR threadmain9.c 's
+.I _schedexec
+refuses.  A window costs an exec, and exec here is spawn:
+.IR _schedexec ,
+which on Plan 9 rforks and execs in the child and answers the parent
+with the child's pid, spawns instead, and procexec cannot tell.
+.B /boot/libthread
+runs
+.I procexec
+on
+.B /boot/libcat
+and gets a pid back.  Two things had to be fixed for that and neither
+was about exec: procexec opens
+.B /fd/<n>
+for a close-on-exec copy of its pipe and a loaded program's descriptor
+numbers are its own, so
+.I p9crt.c
+translates the number in the path; and
+.B #d
+answered only for the buddy's containers, so it answers
+.B up->fgrp
+when no container is asking.
+.PP
+Version 5 added
+.IR pread ,
+.IR pwrite ,
+.IR stat ,
+.I fstat
+and
+.I sleep ;
+version 6 added what libthread needs, below.  Those five were libc's
+system-call stubs before, and a stub
+on this personality is a trap into a microkernel that does not answer
+the Plan 9 table \- so a program that reached one faulted rather than
+failing.  Unmodified
+.I libdraw
+reaches three of them:
+.I namedimage
+.IR pread s
+the draw device's control file,
+.I openfont
+.IR fstat s
+a font, and libc's own
+.I lock
+sleeps while it spins.  With them,
+.B /boot/libdraw
+runs the real
+.I libdraw
+\-
+.IR initdraw ,
+.IR allocimage ,
+.I draw
+and
+.I string
+\- built from the source in
+.B 9front/src
+and linked against
+.I p9crt.c
+without a line changed.
+.PP
+Descriptors 0, 1 and 2 of a loaded program are the machine's console,
+which the personality does not hold, and the one trap in such a program
+is the write that reaches it:
+.I p9conswrite
+in
+.BR p9cons.s ,
+the microkernel's
+.I pwrite
+under a name of its own so that
+.I p9crt.c
+can define
+.I pwrite
+for the personality's own files.
+.IR noted (2)
+is linked because something names it, not because anything calls it:
+libthread's
+.I note.c
+holds the two functions its scheduler calls as well as its note handler,
+and a file is linked whole.  No note is ever raised on a program the
+personality loaded, so no handler runs and nothing returns from one.  It
+used to resolve to the prebuilt archive's stub, which is a trap this
+microkernel does not answer, so reaching it faulted with nothing to say
+why; it now resolves to
+.I p9crt.c ,
+which says so and ends the program rather than answering.
+.PP
+The personality runs a threaded program.
+.B /boot/libthread
+is an ordinary Plan 9 libthread program on the real
+.I libthread
+built from
+.BR 9front/src ;
+what this tree supplies is
+.BR threadmain9.c ,
+the four functions 9front keeps in
+.B libthread/main.c
+because they are the system a port has to supply \-
+.IR main ,
+.IR _schedexec ,
+.I _schedfork
+and
+.IR _schedexit .
+Its link leaves out the prebuilt archive of system-call stubs
+altogether and resolves, so the one system call a threaded program makes
+here is the console write.
+.I procexec
+refuses by name, because a library operating system has no exec: a
+program is at the address it was linked for and there is nothing to
+replace an address space with.
+.I proccreate
+works.  It is a kproc of the personality's cooperative scheduler, and
+where Plan 9 answers
+.I _schedfork
+with
+.RI rfork( RFPROC | RFMEM ) \-
+whose child gets a copy of the stack at the same addresses and longjmps
+onto it \- this personality starts the new flow at a function, because
+two stacks cannot be at one address in one address space.
+.PP
+Three calls exist for that.
+.IR privalloc (2)
+is one word of storage that is a flow's own: libc's hands out a word of
+.BR _privates ,
+which is one array in the program's image and so is shared by every flow
+it has, while the personality's is a word at a fixed address whose
+contents its scheduler swaps at the switch \- which is what per-process
+means when every process is a kproc of one address space, and what
+libthread needs, since
+.I _threadgetproc
+is a dereference of one pointer captured in
+.IR main .
+.IR getpid (2)
+is the flow's own number for the same reason:
+.B _tos->pid
+is in the image and shared.  And
+.IR rendezvous (2)
+is two flows meeting on a tag \- a tag table over the personality's
+.I ksleep
+and
+.IR wakeup ,
+symmetric the way Plan 9's is, because libthread's sleeper drops its
+lock before it rendezvouses and the waker can arrive first.  libthread's
+scheduler is the caller:
+.I runthread
+puts a proc with no ready thread to sleep on the address of its ready
+queue and
+.I _threadready
+wakes it there.
+.PP
+When the flow the personality entered a program on returns, the
+personality waits for the flows that program made for itself: the
+program's own stack is done with, but a proc it made may still be
+running in its image.  The wait is a timed sleep and not a yield.  A
+yield would sit on the run queue, the queue would never be empty, the
+cooperative scheduler advances its clock only when it is, and a proc
+still in a timed sleep of its own would never see its deadline pass.
+.PP
+The personality's cooperative scheduler has an idle.  An empty run
+queue is a deadlock only if every proc is asleep on a rendezvous; if
+one is asleep on a deadline it is an idle machine, and
+.I sched
+asks the microkernel for the time and turns the answer into the ticks
+the sleepers are counting rather than panicking.  It is a busy wait:
+blocking would mean downing the tick semaphore, whose reservation
+belongs to whichever event loop asked for it.
+.PP
+The kernel also publishes a page as the physical segment
+.BR pointerpos ,
+x then y at offset zero, wherever a frame buffer is exposed.  It is how
+the container that owns the PS/2 controller tells the container that
+owns the frame buffer where the pointer is: the draw server's software
+cursor reads the
+.B mousering
+page where there is one and this page where there is not, and composites
+the arrow at what it finds.  Two containers of one kernel cannot name
+each other's memory; this is the page the kernel gives them to share.
+.PP
+.B /scripts/osprey-check-riowin.py
+drives the rest of the window system on one booted machine: a second
+window beside the first, then Move, Resize and Delete on it, chosen out
+of the menu by arithmetic \- libdraw pops the menu with the last item
+hit under the pointer and spaces the items
+.B font->height+Vspacing
+apart, and the check measures that spacing off a photograph of the menu
+rather than assuming it.  It also checks the arrow, as a matrix: the
+sprite's black pixels at the point each of its five shots left the
+pointer at and nothing at the other four points.
+.PP
+.B /scripts/osprey-check-rio.py
+types at the window: the word
+.B nosuchthing
+one key at a time through the emulated keyboard, and the shell in the
+window asks the buddy for a program of that name.  The word is one the
+shell cannot run on purpose; what is being checked is the path from the
+i8042 to the shell and back out to the screen, not the program.  Then
+.B /bin/cat
+is typed, and a line for it to echo: the shell forks, the fork keeps the
+window's descriptors, and cat reads its standard input and writes it
+out, both of which are the window.
+.PP
+The identity a program reads for itself is the container's only for a
+program the buddy loaded.  A native process of this kernel that is bound
+into a container while it runs
+.RB ( bindproc )
+keeps the kernel's pid: it was started with that number and its library
+has already keyed state to it, including the allocator, whose
+.I punlock
+calls
+.IR abort ()
+when
+.B _tos->pid
+has changed under it.
+.PP
+A process forked
+.B RFNOWAIT
+keeps no wait record: the kernel's table of who started whom frees its
+entry when it exits rather than holding a status nobody will collect.
+The table is what says a container may note what it started, so the
+entry lives as long as the child does and no longer.  A fork refused for
+want of that table says so on the console, as does a draw server that
+cannot allocate a window: both used to fail silently, and a caller that
+retries a silent failure for ever looks exactly like a caller that has
+stopped.
+.PP
+A process in a container reads its container's identity for its own pid
+\- in the
+.I Tos
+that
+.IR getpid (2)
+reads, and in
+.BR #c/pid .
+That is the number
+.IR rfork (2)
+gives the parent, the number
+.IR await (2)
+reports, and the number
+.B /proc/<n>/note
+takes, so a program that notes a pid it read for itself notes the right
+thing; a threaded program does exactly that when it exits, which is what
+rio does at the end.
+.B #c/ppid
+answers the parent container while the child table still holds it and 0
+after the parent has reaped, where Plan 9's persists.  A process the
+buddy did not load reads the kernel's pid, whether it is a container's
+or not.
+The draw server's mount is
+reachable from another container:
+.I postmountsrv
+posts its pipe in
+.BR /srv ,
+which is
+.B #s
+bound into the name space containers share, and the pair check execs
+.B /boot/drawsrv
+a second time with
+.B -c
+in a container of its own, where it opens
+.BR /srv/draw ,
+mounts it at
+.B /dev
+for itself and draws on the same screen the first client drew on, then
+reads
+.B /dev/mouse
+and opens
+.B /dev/kbd
+beside it: one container holding the three files
+.I rio
+reads.
+.PP
+.B /scripts/osprey-check-rio.py
+boots
+.B p9pair
+twice with
+.B *riodemo=1
+in
+.BR plan9.ini ,
+which is what makes the pair client exec rio and leave it running; a
+kernel booted without it runs no window system, which is why the checks
+that are not about rio are unaffected by one.
+.PP
 .B /scripts/osprey-check-portable.sh
 boots nothing.  It compiles every source in
 .B /os/osprey/policy
@@ -1243,14 +2267,21 @@ a
 .B ulong
 compiles on both.
 .PP
-The three above are sixty-six lines.  Each says
+Each of the five above says
 .B ok
 or
 .B FAIL
-a line at a time and keeps its logs when anything failed.  All three want
+a line at a time and keeps its logs when anything failed.  The three
+that boot a machine \-
+.BR osprey-check.py ,
+.B osprey-check-wire.py
+and
+.B osprey-check-net.py
+\- want
 .B .qemu/9front-root.qcow2
 and an ISO built by
-.BR /scripts/mkosprey-efi-iso.sh .
+.BR /scripts/mkosprey-efi-iso.sh ;
+the two that boot nothing want neither.
 .SH WHAT IT COSTS
 .PP
 Writing

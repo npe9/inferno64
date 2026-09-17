@@ -2893,3 +2893,291 @@ and USB storage, over a firmware-loaded kernel8.img on real hardware.
 Phases 5-7 add Wi-Fi and the small peripherals.  Left out on purpose,
 until the machine is otherwise complete: Bluetooth, the CSI camera, DSI
 display, and anything GPU/OpenGL/VideoCore-accelerated.
+.NH 1
+Where the port stands on real silicon, 16 September 2026
+.PP
+Everything below was measured on the board this week, not inferred from
+QEMU.  The plan above was written when only the emulator had run the
+code; two of its assumptions are now wrong, and they are marked.
+.NH 2
+Working on the Pi
+.PP
+Boot and console: the firmware loads kernel8.img, the kernel drops to
+EL1, maps memory, enables caches, runs a 100Hz preemptive tick and
+reaches an interactive Dis shell over the PL011.  Seven boots out of
+seven, one power-on and six reboots through
+.CW /dev/sysctl ,
+each answering a typed command 30 seconds in.  The fault that made this
+unreliable was an SP-alignment one (doc/inferno-ports.ms).
+.PP
+SD storage: through the Arasan SDHCI, not SDHOST.  The card the board
+boots from reads as its real master boot record ending in 55 aa, with
+the FAT32 "bootfs" boot sector at sector 16384, and reports 30228480
+sectors, exactly what the host says of the same card.  Single reads of
+64KB and 512KB return clean.  Writes are verified too, by a ctl command
+that restores the sector it wrote and checks the restore.
+.PP
+Also verified on the board: the VideoCore mailbox (firmware revision,
+ARM memory, board MAC, power domains, clock rates, framebuffer
+allocation), GPIO, the DWC2 controller's probe, core init and root hub,
+and USB control transfers -- usbd enumerates the onboard LAN9514 hub and
+its ethernet function by vendor and device id.  Reboot through the PM
+watchdog works.
+.NH 2
+Corrections to the two paragraphs below, 16 September 2026
+.PP
+Both were written from the board and both were wrong, in ways worth
+keeping as a caution.  The console was never wedged by a failing driver:
+usbd had been started in the foreground, so the shell was waiting for it,
+which looks identical to a hang.  And USB bulk transfers were not the
+blocker.  What stopped enumeration was in usbd itself: newhub allocated
+its Hub with a bare
+.CW "ref Hub" ,
+whose fields hold whatever the allocator had there, and on this board the
+failed flag came up non-zero (the walk printed -1793850332), so enumhub
+abandoned the hub on its first line, silently, for ever.  It worked the
+one time the residue happened to be zero, which is what made it look like
+a hardware race.  Naming every field fixed it, and opendev in both usbd
+and etherusb had the same bug (isusb3 as residue, enough to send
+enumeration down the USB3 path).
+.PP
+With that fixed the Pi enumerates its onboard hub and the LAN9514 behind
+it, etherusb starts, the PHY reports the link up, and the mount that this
+plan called impossible on the board succeeds: /net.alt/ether with the
+board's own MAC.  That mount had been disabled in the source because the
+Pi wedged entering the syscall; it was a casualty of the SP-alignment
+fault (doc/inferno-ports.ms), not a separate fault.  init now starts usbd
+at boot and runs the DHCP and ping check.
+.PP
+Three bounds were added to usbdwc.c along the way - a bulk IN may wait
+for ever because the wait is the read, while a NAK'd control transfer and
+the retry loop itself are bounded and report.  They were fixing the wrong
+layer, but they stand on their own: a driver written where every transfer
+completes will otherwise wait for ever on silicon, saying nothing.
+.NH 2
+The gap that blocks the most: USB bulk transfers
+.PP
+Control transfers work on silicon; bulk does not.  Starting usbd by hand
+enumerates the hub and NIC, etherusb finds its bulk endpoints and starts,
+and then the first bulk IN fails:
+.CW "usbdwc: ep3.1 completion timeout channel 0" ,
+.CW "usbdwc: ep3.1 error intr 00000082" ,
+.CW "etherusb: ep3.0: receive stopped: i/o error" .
+So Phase 3 (ethernet) and Phase 4 (USB mass storage) are blocked on the
+board although both pass under QEMU, and Phase 2's keyboard, which rides
+interrupt transfers, is likewise unproven on silicon.
+.PP
+Worse than the failure is its blast radius: after etherusb stops, the
+console stops responding.  Characters still echo, so the kernel lives,
+but no process reads them.  A driver whose transfers fail should not
+take the shell with it; containing that is worth doing before chasing
+the transfer bug itself, because every future hardware experiment on
+this board depends on the shell surviving.
+.NH 2
+Wi-Fi and the SD card now want the same controller
+.PP
+The plan above says SDHOST drives the card and deliberately leaves the
+Arasan SDHCI free for the Wi-Fi SDIO.  That is no longer true and cannot
+easily be made true again.  SDHOST does not hand over whole words to a
+polled driver on this silicon: its FIFO fill level reads 0 throughout a
+transfer, its data flag is set from the first byte, each read returns the
+same word with one more byte shifted in, pausing between reads freezes
+it, and reading it a byte per read ends in a FIFO error.  The card
+therefore now goes through the Arasan, which is also where the BCM43430
+Wi-Fi hangs.  Before Phase 6 the board has to choose: make SDHOST work
+(interrupt- or DMA-driven, as Linux drives it), or keep the card on the
+Arasan and have no Wi-Fi.  Nothing in the emulator can settle it: QEMU's
+SDHOST model completes a transfer inside the register access and hides
+the whole difficulty.
+.NH 2
+Smaller gaps, roughly in the order they matter
+.IP 1.
+SD transfers are polled and hold the CPU; DMA is not implemented.
+Multi-block (CMD18/CMD25) is, and is checked at every boot against the
+same block read alone (SD-MULTI-OK), so what is left here is DMA and
+the CPU a transfer costs, not correctness.
+.IP 2.
+I2C and SPI have drivers and their buses come up, but nothing is
+attached to this board to talk to: the I2C probe reports a DS1338
+mismatch and SPI reports no flash.  They are unverified against real
+peripherals.
+.IP 3.
+The framebuffer is allocated and the draw device renders into it
+(DRAW-OK 640x480), but nothing here has ever been seen on a monitor.
+Mode setting beyond the firmware's default, and hotplug, are absent.
+.IP 4.
+No wall-clock time: the Pi has no battery-backed clock, and nothing yet
+asks the firmware or a network for the time.
+.IP 5.
+The kernel is uniprocessor.  MAXMACH is 1 and cores 1-3 sit at WFE;
+arm64 SMP lives on another worktree.
+.IP 6.
+Bluetooth is absent and conflicts with the console: it needs the PL011,
+which the console uses.  uartmini.c exists for the mini UART but is
+unlinked and has never been shown to work on silicon.
+.IP 7.
+No audio (PWM or HDMI), no CSI camera, no DSI display, nothing
+GPU-accelerated.  These were out of scope in the plan above and remain
+so.
+.IP 8.
+The DMA controller is unused by any driver.
+.IP 9.
+Nothing here turns the card into the board's own filesystem yet.  The
+kfs create deadlock that used to block it was the SP-alignment fault,
+and kfs now reams and serves a partition carved from the card's
+unallocated gap; what is missing is a boot that mounts it as the root
+rather than as a test.
+.NH 2
+Ethernet on silicon: what was wrong and what fixed it
+.PP
+.B "The board is on the network."
+Twenty pings from another machine, twenty replies, no loss, eighteen
+milliseconds average; a connection to a closed port refused rather than
+ignored, so its TCP answers; DHCP takes an address from the router; and
+its own ping to the gateway is answered.  Two things had to change, and
+neither of them was the ethernet driver.
+.PP
+.B "The Dis heap watchdog was most of it."
+Every Dis instruction calls
+.CW checktracked() ,
+which reads all 1024 tracked slots, and every
+.CW initmem()
+registers its pointer words into them.  On a board whose ethernet driver
+and its file server are Limbo programs, that is charged to every frame
+that arrives.  The kernel was coming back for the next frame every 337
+milliseconds while frames arrived every 24, so both conversations sat
+permanently full, two thirds of everything was dropped, and what was
+delivered was seconds stale: the board answered every echo request it
+was sent and was still reported unreachable.  With the watchdog off that
+gap is 4 milliseconds.  It is not removed - heap.c has
+.CW distrack ,
+default 1, and only this board clears it.
+.PP
+.B "Then the receive channel stopped, for ever."
+With the interpreter fast, the onboard NIC's bulk IN sat with
+.CW Chen
+set and
+.CW NAK
+latched and no completion ever came: 130 seconds later not one further
+frame had been received.  A bulk IN was deliberately allowed to wait
+without limit, because an idle NIC NAKs and must not be called a fault;
+that is right about the waiting and wrong about the for ever.  After two
+seconds the channel is now halted and a NAK reported, which the caller
+already retries, so the transfer is re-armed.  An idle NIC costs a few
+register writes every couple of seconds.
+.PP
+The measurements that led there are below, and the shape of the failure
+is worth keeping: everything pointed at the driver, and the driver was
+writing every frame it was given.
+.NH 2
+How the ethernet failure was measured
+.PP
+The Pi enumerates its LAN9514, serves
+.CW /net.alt/ether ,
+binds it as ipifc 0 and receives: unicast ICMP echo requests reach the
+protocol (91 in,
+.CW InErrors
+0,
+.CW CsumErrs
+0) and are answered (91
+.CW EchoReply
+out).  Nothing the board sends in reply is ever seen by the machine at
+the other end of the cable.
+.PP
+Where the frames are
+.I not
+lost: on the way out.
+.CW /net.alt/ether/stats
+counts what the ethernet server does with each frame the kernel hands
+it, and every frame is written \-
+.CW "ntx 30, nqueued 30, nwrit 30, nwerr 0" .
+The bytes are right too: the dump taken as a frame reaches the bulk
+endpoint shows the SMSC transmit header's two length fields agreeing
+with each other and with the frame, the board's own mac as source, and
+.CW 0x0800
+over a well-formed IP header.  The other end also demonstrably hears
+some of them: the Mac's ARP entry for the board went from ten seconds
+short of expiry to a fresh 1199 immediately after a ping, so ARP
+traffic from the board crosses the cable.
+.PP
+What is broken is resolution.
+.CW /net/arp
+holds the machine the board is trying to reach in
+.CW WAIT
+with an all-zero mac, and stays there.  With no mac, every unicast IP
+packet is queued against that entry and abandoned, which is exactly the
+shape of the failure: ARP answered, ping never, TCP dial never.
+.PP
+Alongside it, and possibly the cause, the receive side is dropping
+most of what arrives: 45942 frames received, 30860 dropped for want of
+a reader.  Each conversation holds at most
+.CW Nqueue
+frames when nobody is reading, and a conversation that is never drained
+discards everything that arrives after the sixty-fourth \- including,
+if it is the
+.CW 0x806
+conversation, the ARP reply the board is waiting for.  The three
+conversations (IPv4, IPv6, ARP) each now count what was matched to
+them, handed to a reader and dropped, and every ARP frame that reaches
+the server is dumped as it arrives; that says whether the reply is
+absent from the wire or discarded after it lands.
+.PP
+QEMU says the ceiling is real, and low.  Forwarding a host UDP port
+into the guest and filling it puts a measurable load on the same path:
+at thirty frames a second nothing is dropped, and at a hundred the
+IPv4 conversation sits permanently at its sixty-four-frame limit and
+discards two thirds of what arrives.  The two halves of the path were
+then timed from inside the ethernet server: frames leave the bulk
+endpoint one every forty milliseconds, and the kernel comes back for
+the next one every hundred and twenty-five, so the reader is the
+binding constraint under load \- though in this test each received
+packet also provokes an ICMP reply, which the ambient broadcast
+traffic on a real LAN does not.  What QEMU cannot show is the failure
+itself: with
+.CW "-netdev user"
+the guest resolves ARP and pings normally.
+.PP
+One earlier reading here was wrong and is worth recording as a trap:
+.CW "usbdwc: ep3.2 waiting 60 s"
+under QEMU is not a wedged transmit.  QEMU's usb-net presents its bulk
+in and out on the same endpoint number, which this driver opens as one
+read-write endpoint, so the message is the idle receive read waiting
+for traffic that is not coming \- exactly what it is meant to say.
+.NH 2
+The receive readers, on the board, 17 September 2026
+.PP
+The kernel carrying the
+.CW ethermedium.c
+change (a failed read no longer ends the IPv4, IPv6 or ARP reader) was
+booted on the Pi from a card holding exactly that build.  DHCP gave it
+192.168.8.105, on a different network from the earlier runs.  From a
+Mac on the same segment, 600 pings at one a second over ten minutes:
+600 answered, none lost, 13 milliseconds average.  A connection to a
+closed TCP port was refused.  At the end the server's counters read 651
+IPv4 frames in and 651 handed to a reader, 74 ARP in and 74 out, and 0
+dropped on any conversation.  The console showed no
+.CW "ipv4 read:"
+or
+.CW "giving up"
+line.  So no reader failed during this run.  The fix was in the kernel,
+but the run does not show an error being survived; it shows the
+network staying up for ten minutes.  The bulk IN re-arm fired once in
+the visible log
+.CW "usbdwc: ep3.1 re-armed after 2 s (1 times)" ), (
+and receive carried on after it.
+.PP
+The board still prints its
+.CW NETTX ,
+.CW NETICMP
+and
+.CW TXDUMP
+diagnostics every few seconds.  The console scrollback holds about 125
+lines, so those lines push the boot markers out of it within a minute.
+They should come out of the next build.
+.NH 2
+Suggested order
+.PP
+Contain a failing driver so it cannot wedge the console; fix DWC2 bulk
+transfers on silicon, which unblocks ethernet, USB storage and input;
+then decide the SD/Wi-Fi controller question; then multi-block and DMA
+for SD; then the peripherals nothing is currently attached to.

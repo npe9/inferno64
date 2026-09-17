@@ -133,6 +133,41 @@ clockcheck(void)
 	clockpoll();
 }
 
+/*
+ * Boot assertions, with interrupts on: the scheduler tick counts during
+ * a 250ms busy wait (delay() waits on the counter, not on ticks), and a
+ * timed sleep in this process wakes.  A dead tick prints TICK-FAIL with
+ * the core's interrupt mask, the timer's enable/ISTATUS and deadline, and
+ * the BCM2836 per-core route and pending registers.
+ */
+void
+clockcheckboot(void)
+{
+	ulong t0, n;
+	uvlong now, cval;
+	extern ulong getcntpctl(void);
+	extern ulong getdaif(void);
+	extern void getcntpcval(uvlong*);
+
+	t0 = m->ticks;
+	delay(250);
+	n = m->ticks - t0;
+	if(n >= HZ/8)
+		print("TICK-OK %lud ticks in 250ms\n", n);
+	else{
+		cycles(&now);
+		getcntpcval(&cval);
+		print("TICK-FAIL %lud ticks in 250ms: daif %#lux cntp_ctl %#lux "
+			"cval-now %lld local route %#ux pending %#ux gpu route %#ux\n",
+			n, getdaif(), getcntpctl(), (vlong)(cval - now),
+			*(volatile u32*)0x40000040, *(volatile u32*)0x40000060,
+			*(volatile u32*)0x4000000c);
+	}
+	t0 = m->ticks;
+	tsleep(&up->sleep, return0, nil, 100);
+	print("SLEEP-OK tsleep 100ms returned after %lud ticks\n", m->ticks - t0);
+}
+
 uvlong
 fastticks(uvlong *hz)
 {

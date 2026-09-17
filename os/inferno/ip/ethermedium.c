@@ -26,6 +26,10 @@ static uchar ipbroadcast[IPaddrlen] = {
 
 static uchar etherbroadcast[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 
+enum {
+	Nreaderr = 100,		/* consecutive failed reads before a reader gives up */
+};
+
 static void	etherread4(void *a);
 static void	etherread6(void *a);
 static void	etherbind(Ipifc *ifc, int argc, char **argv);
@@ -327,15 +331,40 @@ etherread4(void *a)
 	Ipifc *ifc;
 	Block *bp;
 	Etherrock *er;
+	int nerr;
 
 	ifc = a;
 	er = ifc->arg;
 	er->read4p = up;	/* hide identity under a rock for unbind */
-	if(!waserror())
+	nerr = 0;
 	for(;;){
+		/*
+		 * One failed read used to end the interface: the error left
+		 * this loop, the process exited, and nothing ever asked the
+		 * medium for an IPv4 frame again - silently, with the medium
+		 * still bound and everything else still working.  On the Pi
+		 * that looked like a network that answered ARP and nothing
+		 * else.  Say what happened and carry on; only "unbind", which
+		 * is how this process is asked to stop, ends it.
+		 */
+		if(waserror()){
+			if(strcmp(up->errstr, "unbind") == 0)
+				break;
+			print("%s: ipv4 read: %s\n", ifc->dev, up->errstr);
+			if(++nerr > Nreaderr){
+				print("%s: ipv4 reader giving up after %d errors\n",
+					ifc->dev, nerr);
+				break;
+			}
+			tsleep(&up->sleep, return0, 0, 100);
+			continue;
+		}
 		bp = devtab[er->mchan4->type]->bread(er->mchan4, ifc->maxtu, 0);
-		if(bp == nil)
+		if(bp == nil){
+			poperror();
 			break;
+		}
+		nerr = 0;
 		rlock(ifc);
 		if(waserror()){
 			runlock(ifc);
@@ -349,6 +378,7 @@ etherread4(void *a)
 			ipiput4(er->f, ifc, bp);
 		}
 		runlock(ifc);
+		poperror();
 		poperror();
 	}
 	er->read4p = nil;
@@ -365,15 +395,32 @@ etherread6(void *a)
 	Ipifc *ifc;
 	Block *bp;
 	Etherrock *er;
+	int nerr;
 
 	ifc = a;
 	er = ifc->arg;
 	er->read6p = up;	/* hide identity under a rock for unbind */
-	if(!waserror())
+	nerr = 0;
 	for(;;){
+		/* as etherread4: a failed read must not end the interface */
+		if(waserror()){
+			if(strcmp(up->errstr, "unbind") == 0)
+				break;
+			print("%s: ipv6 read: %s\n", ifc->dev, up->errstr);
+			if(++nerr > Nreaderr){
+				print("%s: ipv6 reader giving up after %d errors\n",
+					ifc->dev, nerr);
+				break;
+			}
+			tsleep(&up->sleep, return0, 0, 100);
+			continue;
+		}
 		bp = devtab[er->mchan6->type]->bread(er->mchan6, ifc->maxtu, 0);
-		if(bp == nil)
+		if(bp == nil){
+			poperror();
 			break;
+		}
+		nerr = 0;
 		rlock(ifc);
 		if(waserror()){
 			runlock(ifc);
@@ -387,6 +434,7 @@ etherread6(void *a)
 			ipiput6(er->f, ifc, bp);
 		}
 		runlock(ifc);
+		poperror();
 		poperror();
 	}
 	er->read6p = nil;
@@ -668,14 +716,30 @@ recvarpproc(void *v)
 {
 	Ipifc *ifc = v;
 	Etherrock *er = ifc->arg;
+	int nerr;
 
 	er->arpp = up;
-	if(waserror()){
-		er->arpp = nil;
-		pexit("hangup", 1);
-	}
-	for(;;)
+	nerr = 0;
+	for(;;){
+		/* as etherread4: a failed read must not end ARP for good */
+		if(waserror()){
+			if(strcmp(up->errstr, "unbind") == 0)
+				break;
+			print("%s: arp read: %s\n", ifc->dev, up->errstr);
+			if(++nerr > Nreaderr){
+				print("%s: arp reader giving up after %d errors\n",
+					ifc->dev, nerr);
+				break;
+			}
+			tsleep(&up->sleep, return0, 0, 100);
+			continue;
+		}
 		recvarp(ifc);
+		nerr = 0;
+		poperror();
+	}
+	er->arpp = nil;
+	pexit("hangup", 1);
 }
 
 static int

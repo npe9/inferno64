@@ -222,6 +222,20 @@ iprint(char *fmt, ...)
 	locked = iprintcanlock(&iprintlock);
 	if(screenputs != nil && iprintscreenputs)
 		screenputs(buf, n);
+	/*
+	 * The port, itself, always: an iprint is a line that must be seen,
+	 * and a queue is a promise that somebody will drain it.  This was
+	 * routed through the console task for one commit, to order it
+	 * against the ordinary prints that queue there, and xup64 said why
+	 * that is wrong - its console task is a user program that stops,
+	 * and the three lines it had not taken when it stopped were the
+	 * last three of the boot, with three criteria on them.
+	 *
+	 * That leaves the interleaving this was meant to fix, which is
+	 * written up where it was measured: with a console task the port
+	 * has two writers, this one and the task's own user-space uart
+	 * driver, and no lock in this kernel reaches the second of them.
+	 */
 	uartputs(buf, n);
 	if(locked)
 		unlock(&iprintlock);
@@ -525,10 +539,14 @@ consread(Chan *c, void *buf, long n, vlong off)
 		return qread(kprintoq, buf, n);
 
 	case Qpid:
-		return readnum((ulong)offset, buf, n, up->pid, NUMSIZE);
+		/* a container's process reads the identity its parent was
+		 * given and its notes are addressed by; see ospreyprocid */
+		return readnum((ulong)offset, buf, n,
+			up->osprey != nil ? ospreyprocid(up) : up->pid, NUMSIZE);
 
 	case Qppid:
-		return readnum((ulong)offset, buf, n, up->parentpid, NUMSIZE);
+		return readnum((ulong)offset, buf, n,
+			up->osprey != nil ? ospreyprocparentid(up) : up->parentpid, NUMSIZE);
 
 	case Qtime:
 		return readtime((ulong)offset, buf, n);

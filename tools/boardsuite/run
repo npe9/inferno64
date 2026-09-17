@@ -242,9 +242,9 @@ config_qemu() {
 config_args() {
 	case $1 in
 	raspi3b)
-		echo "-M raspi3b -m 1G -drive file=$work/sd16.img,if=sd,format=raw";;
+		echo "-M raspi3b -m 1G -drive file=$work/sd16p.img,if=sd,format=raw";;
 	raspi3b-4g)
-		echo "-M raspi3b -m 1G -drive file=$work/sd4g.img,if=sd,format=raw";;
+		echo "-M raspi3b -m 1G -drive file=$work/sd4gp.img,if=sd,format=raw";;
 	raspi4-2eth)
 		# The same two adapters on the Pi 4's xHCI rather than the
 		# Pi 3B's DWC2, so the pair is exercised on both of this
@@ -267,7 +267,7 @@ config_args() {
 		# second interface is configured statically for the reason
 		# the init gives: one devip stack holds udp!*!68 once, and
 		# the first interface's DHCP proc has it for its lease.
-		echo "-M raspi3b -m 1G -drive file=$work/sd16f.img,if=sd,format=raw -netdev user,id=n0 -device usb-lan9514,netdev=n0,mac=52:54:00:12:34:56 -netdev user,id=n1,net=10.0.3.0/24 -device usb-net,netdev=n1,mac=52:54:00:12:34:58";;
+		echo "-M raspi3b -m 1G -drive file=$work/sd16fp.img,if=sd,format=raw -netdev user,id=n0 -device usb-lan9514,netdev=n0,mac=52:54:00:12:34:56 -netdev user,id=n1,net=10.0.3.0/24 -device usb-net,netdev=n1,mac=52:54:00:12:34:58";;
 	raspi3b-usb)
 		# The richer run: a USB stick and the Pi's own network
 		# adapter.  doc/raspi3b-completion-plan.ms has described
@@ -280,7 +280,7 @@ config_args() {
 		# SMSC half of appl/cmd/usb/etherusb.b -- a thousand
 		# lines of vendor requests, command words and receive
 		# status -- has no other way to execute.
-		echo "-M raspi3b -m 1G -drive file=$work/sd16d.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse -device usb-kbd -device usb-tablet";;
+		echo "-M raspi3b -m 1G -drive file=$work/sd16dp.img,if=sd,format=raw -drive if=none,id=d0,file=$work/usb16.img,format=raw -device usb-storage,drive=d0 -netdev user,id=n0 -device usb-lan9514,netdev=n0 -device usb-mouse -device usb-kbd -device usb-tablet";;
 	raspi4)
 		echo "-M raspi4b -m 2G -drive file=$work/sd16b.img,if=sd,format=raw";;
 	raspi4-hot)
@@ -673,7 +673,7 @@ config_last() {
 	# has what it wants rather than waiting out its timeout, so the
 	# marker that made it last on every other Pi configuration is
 	# not last here.  The shell's is.
-	raspi3b-usb)		echo 'RASPI3B-SH-OK';;
+	raspi3b-usb)		echo 'RASPI3B-SH-OK'; echo 'ETHER-PING-DONE'; echo 'DISK-WRITE'; echo 'USB-KBD';;
 	# Two markers, both required, because on these two neither one is
 	# reliably last.  The pointer check reports when its own timeout
 	# runs out and the shell marker comes after the kfs ream, and the
@@ -685,7 +685,7 @@ config_last() {
 	# row on a loaded machine, while the identical qemu command line
 	# by hand reached both in about a minute.  This is the same race
 	# the comment above describes, on the other side of it.
-	raspi3b-2eth)		echo 'USB-MOUSE'; echo 'RASPI3B-SH-OK';;
+	raspi3b-2eth)		echo 'USB-MOUSE'; echo 'RASPI3B-SH-OK'; echo 'ETHER-PING-DONE'; echo 'ETHER2-PING-DONE';;
 	raspi4-2eth)		echo 'USB-MOUSE'; echo 'RASPI4-SH-OK';;
 	raspi4|raspi4-hot)	echo 'USB-MOUSE';;
 	raspi4-usb)		echo 'RASPI4-SH-OK';;
@@ -702,11 +702,18 @@ config_last() {
 config_evidence() {
 	case $1 in
 	raspi3b)
-		echo 'from firmware clock 1'
-		echo 'csd v1';;
+		# Byte addressing is a CSD v1 (standard-capacity) card and
+		# block addressing a v2 one; the clock is the firmware's
+		# EMMC clock, asked for through the mailbox.
+		echo 'emmc: card rca 0x[0-9a-f]+ byte 32768 sectors, clock 50000000 Hz'
+		echo 'FAT-OK /n/dos/kernel8\.img is 39 bytes'
+		echo 'SD-MULTI-OK 32768 bytes, last block matches it read alone \(eb3c90'
+		;;
 	raspi3b-4g)
-		echo 'from firmware clock 1'
-		echo 'csd v2';;
+		echo 'emmc: card rca 0x[0-9a-f]+ block 8388608 sectors, clock 50000000 Hz'
+		echo 'FAT-OK /n/dos/kernel8\.img is 39 bytes'
+		echo 'SD-MULTI-OK 32768 bytes, last block matches it read alone \(eb58'
+		;;
 	raspi4-2eth)
 		# The same two lines as raspi3b-2eth: what this arm adds
 		# is the controller underneath them.
@@ -714,7 +721,7 @@ config_evidence() {
 		echo 'ETHERUSB serving /net\.alt/ether1 mac 525400123458 \(CDC ECM'
 		echo 'ETHER2-ADDR-OK ip=10\.0\.3\.15 gw=10\.0\.3\.2';;
 	raspi3b-2eth)
-		echo 'from firmware clock 1'
+		echo 'emmc: card rca 0x[0-9a-f]+ byte 32768 sectors, clock 50000000 Hz'
 		# Both adapters, named apart, and the second one carrying
 		# traffic.  The MACs distinguish them, and the invocation
 		# names both rather than letting QEMU derive them from
@@ -728,7 +735,7 @@ config_evidence() {
 		# first one has no route to.
 		echo 'ETHER2-ADDR-OK ip=10\.0\.3\.15 gw=10\.0\.3\.2';;
 	raspi3b-usb)
-		echo 'from firmware clock 1'
+		echo 'emmc: card rca 0x[0-9a-f]+ byte 32768 sectors, clock 50000000 Hz'
 		# The markers alone cannot tell this configuration apart
 		# from a board that decided it had no disk and no
 		# network: DISK-READ-OK and ETHER-DHCP-OK are the same
@@ -744,7 +751,7 @@ config_evidence() {
 		# console ends its lines with CR LF -- a $ anchored
 		# straight after the name matches nothing, which cost a
 		# run to work out.
-		echo 'DISK-DOS-OK /n/dos: usb\.txt[^ ]*$'
+		echo 'DISK-DOS-OK /n/usb: usb\.txt[^ ]*$'
 		echo 'DISK-READ-OK usb\.txt'
 		# 6 is right (4) and middle (2) together.  A mouse that
 		# enumerated and moved but whose buttons landed on the
@@ -774,7 +781,7 @@ config_evidence() {
 		echo 'from capabilities'
 		echo 'ETHER-DHCP-OK ip=10\.0\.2\.15 gw=10\.0\.2\.2'
 		echo 'DISK-WRITE-OK pi\.txt [0-9]+ bytes read back'
-		echo 'DISK-DOS-OK /n/dos: usb\.txt[^ ]*$'
+		echo 'DISK-DOS-OK /n/usb: usb\.txt[^ ]*$'
 		echo 'DISK-READ-OK usb\.txt'
 		echo 'HID report pointer on [^ ]*: 48-bit report, x absolute at 8\+16'
 		echo 'USB-TABLET-OK absolute 479 119 on 640x480';;
@@ -1500,16 +1507,18 @@ config_evidence() {
 	esac
 }
 
-# The card each configuration wants.  Blank is fine: the kfs check
-# reams what it is given, and the capacity checks read the card's own
-# CSD rather than anything written here.  Separate files per
+# The card each configuration wants.  The Pi 3B cards are laid out like
+# the card the board boots from (see pipart); the others are blank,
+# which is fine: their kfs check reams what it is given, and the
+# capacity checks read the card's own CSD rather than anything written
+# here.  Separate files per
 # configuration so two runs cannot race on one image.
 config_card() {
 	case $1 in
-	raspi3b)	echo "sd16.img 16m";;
-	raspi3b-4g)	echo "sd4g.img 4g";;
-	raspi3b-usb)	echo "sd16d.img 16m";;
-	raspi3b-2eth)	echo "sd16f.img 16m";;
+	raspi3b)	echo "sd16p.img 16m pi";;
+	raspi3b-4g)	echo "sd4gp.img 4g pi";;
+	raspi3b-usb)	echo "sd16dp.img 16m pi";;
+	raspi3b-2eth)	echo "sd16fp.img 16m pi";;
 	raspi4-2eth)	echo "sd16g.img 16m";;
 	raspi4)		echo "sd16b.img 16m";;
 	raspi4-hot)	echo "sd16c.img 16m";;
@@ -1593,6 +1602,80 @@ makecard() {
 	fi
 	rm -f "$f"
 	dd if=/dev/zero of="$f" bs=1 count=0 seek=$bytes 2>/dev/null
+	if [ "$3" = pi ] && ! pipart "$f" $2; then
+		rm -f "$f"
+		echo "boardsuite: could not lay out a Pi card in $f" >&2
+		exit 2
+	fi
+}
+
+# A Pi card, laid out the way Raspberry Pi Imager lays one out: a master
+# boot record, nothing until sector 16384, and a FAT partition there
+# holding the firmware's files.
+#
+# The Pi's init treats the card as the one it booted from, because on
+# the board it is.  It reads the partition table to find the FAT
+# partition, mounts it with dossrv, and reams its kfs only in the gap
+# below it -- never the whole card, which holds the firmware.  A blank
+# card has no table, so all of that reported "skipped" or -NONE and
+# nothing was tested.  So the card gets a table.
+#
+# The 16MB card carries an 8MB FAT partition, which is what fits; the
+# 4GB card carries a 64MB FAT32 one, because a real Pi's boot partition
+# is FAT32 and dossrv's FAT32 path is otherwise only ever run on the
+# board.  kernel8.img on it is a placeholder with known contents, not a
+# kernel: the init only asks how big it is.
+PIKERNEL='boardsuite placeholder for kernel8.img'
+pipart() {
+	case $2 in
+	16m)	fatmb=8; fs16='MS-DOS'; fs32=; ptype=0e;;
+	4g)	fatmb=64; fs16=; fs32='MS-DOS FAT32'; ptype=0c;;
+	esac
+	img="$work/pifat.img"
+	rm -f "$img" "$img.dmg"
+	if command -v hdiutil >/dev/null 2>&1; then
+		hdiutil create -size ${fatmb}m -fs "${fs32:-$fs16}" -volname BOOTFS \
+			-layout NONE -ov "$img" >/dev/null 2>&1 || return 1
+		mv "$img.dmg" "$img" || return 1
+		mnt=`hdiutil attach -nobrowse "$img" 2>/dev/null |
+			sed -n 's;.*\(/Volumes/[^ 	]*\).*;\1;p' | head -1`
+		[ -z "$mnt" ] && return 1
+		printf '%s\n' "$PIKERNEL" > "$mnt/kernel8.img" || {
+			hdiutil detach "$mnt" >/dev/null 2>&1
+			return 1
+		}
+		hdiutil detach "$mnt" >/dev/null 2>&1 || return 1
+	else
+		dd if=/dev/zero of="$img" bs=1048576 count=0 seek=$fatmb 2>/dev/null
+		mk=`command -v mkfs.vfat || command -v mkfs.fat` || return 1
+		command -v mcopy >/dev/null 2>&1 || return 1
+		if [ -n "$fs32" ]; then
+			$mk -F 32 "$img" >/dev/null 2>&1 || return 1
+		else
+			$mk "$img" >/dev/null 2>&1 || return 1
+		fi
+		printf '%s\n' "$PIKERNEL" > "$work/kernel8.img"
+		mcopy -i "$img" "$work/kernel8.img" ::kernel8.img >/dev/null 2>&1 || return 1
+	fi
+	python3 - "$1" "$img" $ptype <<'PIPART' || return 1
+import struct, sys
+card, fat, ptype = sys.argv[1], sys.argv[2], int(sys.argv[3], 16)
+start = 16384
+data = bytearray(open(fat, 'rb').read())
+nsec = len(data) // 512
+# the boot sector's hidden-sector count is where the partition starts
+struct.pack_into('<I', data, 28, start)
+mbr = bytearray(512)
+entry = struct.pack('<B3sB3sII', 0, b'\xfe\xff\xff', ptype, b'\xfe\xff\xff',
+    start, nsec)
+mbr[446:462] = entry
+mbr[510:512] = b'\x55\xaa'
+with open(card, 'r+b') as f:
+    f.write(mbr)
+    f.seek(start * 512)
+    f.write(data)
+PIPART
+	rm -f "$img"
 }
 
 # A FAT16 image, for the two checks that want a filesystem rather than a

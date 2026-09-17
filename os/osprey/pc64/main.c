@@ -144,10 +144,65 @@ mach0init(void)
 	active.exiting = 0;
 }
 
+extern long regtorture(long);		/* regtorture.s */
+extern long regtorturecli(long);
+extern uvlong regtorturebad;
+
+/*
+ * A fixed number of iterations, with the clock read before and after so
+ * that the run says how many ticks it actually spanned.
+ *
+ * Fixed rather than bounded by the clock, and that is a correction: a
+ * loop that spins until the tick count has moved cannot spin, it can
+ * only wait, and on a guest whose clock advances in bursts rather than
+ * with instructions retired it waits for a very long time.  The other
+ * session on this machine measured four ticks costing thirty seconds of
+ * boot on its guest, for coverage a fixed count gave free.  This one
+ * behaves itself - a tick here is about a million iterations - but the
+ * shape is wrong either way, because it pays most exactly where it
+ * proves least.
+ *
+ * What the tick count is for is unchanged: it is the evidence that any
+ * interrupt happened at all, so a run that spanned none says so and
+ * claims nothing.  Four million iterations spans a few ticks here, and
+ * a few is enough for what this catches: an entry that loses a register
+ * loses it on every interrupt, not on a rare one.
+ *
+ * The interrupts-off run is the control.  If both are clean the
+ * registers survive; if only the interrupts-on one is dirty the trap
+ * entry is where they go; if both are dirty the loop itself is wrong
+ * and the answer means nothing.  Running the control in the same boot
+ * is what makes the pair a measurement rather than an observation.
+ */
+static void
+regcheck(void)
+{
+	enum { Niter = 4*1000*1000 };
+	ulong t0, ticks;
+	long bad, clibad;
+
+	clibad = regtorturecli(100*1000);
+	t0 = MACHP(0)->ticks;
+	bad = regtorture(Niter);
+	ticks = MACHP(0)->ticks - t0;
+	if(bad != 0)
+		print("osprey regcheck: register %ld came back as %#llux across an interrupt, after %lud ticks\n",
+			bad, regtorturebad, ticks);
+	else if(clibad != 0)
+		print("osprey regcheck: the loop is wrong: a register moved with interrupts off\n");
+	else if(ticks == 0)
+		print("osprey regcheck: inconclusive, no clock tick passed while it ran\n");
+	else
+		print("osprey regcheck: twelve registers survived %d iterations over %lud clock ticks, and the same loop with interrupts off is clean\n",
+			Niter, ticks);
+}
+
 void
 init0(void)
 {
 	char buf[2*KNAMELEN], **sp;
+	int argc;
+
 	chandevinit();
 
 	if(!waserror()){
@@ -162,14 +217,80 @@ init0(void)
 		poperror();
 	}
 	kproc("alarm", alarmkproc, 0);
-	sp = (char**)(USTKTOP - sizeof(Tos) - 8 - sizeof(sp[0])*4);
-	sp[3] = sp[2] = nil;
-	strcpy(sp[1] = (char*)&sp[4], "boot");
-	sp[0] = nil;
+	regcheck();
+	/*
+	 * The stack initcode is entered on.  The user entry (init9.c's
+	 * _main) is handed the argument vector itself - the first argument
+	 * register, which touser leaves holding the stack pointer, is the
+	 * nil-terminated array of argument strings - so the stack pointer
+	 * is that array: argv[0] and a nil, with the name's bytes above
+	 * them where the program's own frame cannot reach.
+	 *
+	 * It used to be the other shape, the one 9front has: the vector
+	 * made out of the parameter slot itself, argv0 at sp[1] and the nil
+	 * that ends it at sp[2].  When exec grew an argument vector
+	 * (phase 2.1) _main was changed to take the array and every
+	 * microkernel path was given it, and this one - the full
+	 * personality's, the only caller of init0 - was not.  argv[0] was
+	 * then the nil at sp[0], and initcode's exec of /boot/boot was
+	 * refused with "bad arg in system call" before any of the boot file
+	 * system was reached.  Both entries lay the vector out the one way
+	 * now (ospreyenteruservec in userinit.c is the other).
+	 *
+	 * sp[0] was the nil that touser leaves where a return address would
+	 * be, and is argv[0] now.  Nothing returns through it: startboot
+	 * ends by _exits, as it does on the microkernel entry, which has
+	 * had this same shape since 2.1.
+	 */
+	/*
+	 * A second word when the machine was configured for it.  A
+	 * demonstration that ends the task - an ordinary Plan 9 binary,
+	 * whose exits is a real system call and ends the container it runs
+	 * in - cannot be in the boot every other check is written against,
+	 * for the same reason the window system is behind *riodemo: it is
+	 * a thing that happens to the machine rather than a thing the
+	 * machine does.  So it is asked for, in plan9.ini, and the
+	 * personality is told by its argument vector.
+	 */
+	sp = (char**)(USTKTOP - sizeof(Tos) - 8 - sizeof(sp[0])*8);
+	strcpy((char*)&sp[4], "boot");
+	/*
+	 * "legacy" runs the unmodified binary with the personality serving
+	 * its system calls; "legacycontrol" runs the same binary with the
+	 * service not asked for, which is the control that says what the
+	 * service is doing.  Thirteen bytes, so two words.
+	 */
+	strcpy((char*)&sp[6], getconf("*legacycontrol") != nil ? "legacycontrol" : "legacy");
+	argc = 0;
+	sp[argc++] = (char*)&sp[4];	/* argv[0] */
+	if(getconf("*legacydemo") != nil || getconf("*legacycontrol") != nil)
+		sp[argc++] = (char*)&sp[6];
+	sp[argc] = nil;			/* and the vector ends */
+	sp[argc+1] = (char*)(USTKTOP - sizeof(Tos));	/* the word past it, which init9prog reads */
 
 	splhi();
 	fpukexit(nil);
-	touser(sp);
+	/*
+	 * Where the image this task was given actually starts.  init0 used
+	 * to enter UTZERO+0x28 outright, which is initcode's entry and was
+	 * every image's entry while nothing else was loaded; the p964
+	 * personality is linked high now so that an ordinary Plan 9 binary
+	 * can have UTZERO, and it comes in through this same init0.  A task
+	 * whose loader named no entry - initcode, which proc0 lays down by
+	 * hand rather than through a loader - keeps the old address.
+	 */
+	/*
+	 * touserv and not touser: the argument register names the vector
+	 * and the stack starts two words below it.  They cannot be the same
+	 * word.  The entry spills its argument into the caller's frame at
+	 * 8(SP), and with SP on the vector that spill lands on argv[1] -
+	 * which was nil and unread while the personality took no arguments,
+	 * and is a real argument now.  The *legacydemo word went in and
+	 * never came out, because the entry had overwritten it with a
+	 * pointer before startboot looked.  ospreyenteruservec leaves the
+	 * same two words for the same reason (pc64/l.s says it at length).
+	 */
+	touserv((char*)sp, (char*)(sp - 2), up->aoutentry != 0 ? up->aoutentry : (uintptr)(UTZERO+0x28));
 }
 
 static void
@@ -352,6 +473,18 @@ procfork(Proc *p)
 void
 procrestore(Proc *p)
 {
+	/*
+	 * A Linux process's thread pointer.  FS is the register a Linux
+	 * libc keeps it in - every access to a thread-local, and musl's and
+	 * glibc's own bookkeeping, is fs-relative - and this kernel uses FS
+	 * for nothing (mmuinit sets its base to zero and leaves it), so the
+	 * whole of what arch_prctl(ARCH_SET_FS) has to do is put the base
+	 * in the register and keep it across a switch.  GS is not free the
+	 * same way: it carries the Mach pointer.
+	 */
+	if(p->linuxfsbase != 0)
+		wrmsr(FSbase, (uvlong)p->linuxfsbase);
+
 	if(p->dr[7] != 0){
 		m->dr7 = p->dr[7];
 		putdr(p->dr);
@@ -366,6 +499,14 @@ procrestore(Proc *p)
 void
 procsave(Proc *p)
 {
+	/*
+	 * And back to zero on the way out, so that a process which never
+	 * set one does not inherit the last one's thread pointer from the
+	 * processor.
+	 */
+	if(p->linuxfsbase != 0)
+		wrmsr(FSbase, 0ull);
+
 	if(m->dr7 != 0){
 		m->dr7 = 0;
 		putdr7(0);

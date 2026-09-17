@@ -5,6 +5,7 @@
 #include	"fns.h"
 #include	"tos.h"
 #include	"../port/error.h"
+#include	"ureg.h"		/* the frame a system call arrives on, for the upcall below */
 
 /*
  * The initcode array contains the binary text of the first
@@ -18,7 +19,13 @@
  */
 #include	"initcode.i"
 #include	"userprog.i"
-#include	"p9prog.i"
+/*
+ * The Plan 9 personality's image is an object of its own (p9progimg.c),
+ * linked into the four configurations that run it and replaced by a stub
+ * in the others; p9progimg.c says why at length.
+ */
+extern uchar	p9prog[];
+extern int	p9proghere;
 
 extern int ospreymicro;
 extern void ospreymicroboot(void);
@@ -29,7 +36,9 @@ extern int ospreyp9buddy;
 extern int ospreyp9linux;
 extern void touserat(char*);
 extern int ospreyuserprep(void);
+extern int uregok(void*);		/* trap.c: a frame wholly in user memory */
 extern int ospreyframebuffer(void);
+extern int ospreypointerexpose(void);
 
 static void
 smark(char *s)
@@ -60,6 +69,7 @@ ospreyloadprog(void)
 	ulong npg, i, off, cnt;
 
 	npg = (sizeof(userprog) + BY2PG - 1) / BY2PG;
+	up->aoutentry = UTZERO+0x28;	/* flat, at the usual place; said rather than assumed */
 	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE / BY2PG);
 	up->seg[TSEG] = newseg(SG_TEXT | SG_RONLY, UTZERO, npg);
 	up->seg[TSEG]->flushme = 1;
@@ -83,8 +93,10 @@ ospreyloadprog(void)
  * into text, data and bss segments.  Unlike ospreyloadprog's flat load,
  * this parses the exec header and lays out the segments the way the
  * linker and sysproc's exec do, eager-mapping every page (xup64 has no
- * demand paging).  The entry is init9's _main at UTZERO+0x28, which
- * touser jumps to.
+ * demand paging).  The entry is init9's _main, one header above the text
+ * base, which touser jumps to - it reads the address out of
+ * ospreyaoutentry rather than assuming UTZERO, because the personality
+ * is no longer linked there.
  */
 static void
 ospreyfillseg(Segment *s, uvlong va, ulong npg, uchar *src, ulong srclen)
@@ -114,7 +126,7 @@ ospreyloadaout(uchar *prog)
 {
 	struct Exec { long magic, text, data, bss, syms, entry, spsz, pcsz; } *h;
 	ulong magic, hdrsz, textsz, datasz, bsssz, tseg;
-	uvlong textend, adata, abss, ebss;
+	uvlong textend, adata, abss, ebss, utext;
 
 	h = (struct Exec*)prog;
 	magic = beswal(h->magic);
@@ -122,17 +134,58 @@ ospreyloadaout(uchar *prog)
 	datasz = beswal(h->data);
 	bsssz = beswal(h->bss);
 	hdrsz = (magic & 0x8000) ? sizeof(struct Exec)+8 : sizeof(struct Exec);
+	/*
+	 * Where the program says it is, rather than where a program usually
+	 * is.  This laid every image at UTZERO, which is right for a program
+	 * linked there and is the only thing a program could be while the
+	 * personality was the only program.  A library operating system that
+	 * is to run an ordinary Plan 9 binary cannot be at UTZERO itself -
+	 * that is where an ordinary binary is linked - so it is linked
+	 * elsewhere and this follows it.
+	 *
+	 * The address comes out of the entry, which is the first
+	 * instruction and so the text base plus the header: the same
+	 * arithmetic p9exec.c does to recover a loaded program's base, and
+	 * for the same reason.  An entry below UTZERO is not a program this
+	 * kernel can lay out, and it falls back rather than mapping at zero.
+	 */
+	utext = (uvlong)(ulong)beswal(h->entry);
+	if(magic & 0x8000)
+		utext = ((uvlong)(ulong)beswal(((long*)prog)[8]) << 32)
+			| (uvlong)(ulong)beswal(((long*)prog)[9]);
+	utext = utext > hdrsz ? utext - hdrsz : UTZERO;
+	if(utext < UTZERO)
+		utext = UTZERO;
 	tseg = hdrsz + textsz;
-	textend = UTZERO + tseg;
+	textend = utext + tseg;
 	adata = (textend + BY2PG-1) & ~(uvlong)(BY2PG-1);
 	abss = (adata + datasz + BY2PG-1) & ~(uvlong)(BY2PG-1);
 	ebss = (adata + datasz + bsssz + BY2PG-1) & ~(uvlong)(BY2PG-1);
 
+	/*
+	 * Where touserv will enter this task.  It was written into the
+	 * entry itself as UTZERO+0x28, which was true of every image while
+	 * the only a.out this kernel loaded was linked at UTZERO; the
+	 * personality is linked high now and the constant sent it to an
+	 * address with nothing mapped (fault read addr=0x200028, with the
+	 * text correctly laid at 0x40000000).
+	 *
+	 * It belongs to the task and not to the kernel.  A kernel-wide word
+	 * was the first attempt and it is wrong for a plain reason: this
+	 * machine loads more than one kind of image in a boot - the
+	 * personality high, the flat microkernel tasks at UTZERO - and the
+	 * second load overwrote the first task's entry before that task had
+	 * used it.  What that looked like was osprey-fs, a flat task, dying
+	 * at 0x40000028, which is the personality's entry and no address of
+	 * its own.
+	 */
+	up->aoutentry = utext + hdrsz;
+
 	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE/BY2PG);
 
-	up->seg[TSEG] = newseg(SG_TEXT | SG_RONLY, UTZERO, PGROUND(tseg)>>PGSHIFT);
+	up->seg[TSEG] = newseg(SG_TEXT | SG_RONLY, utext, PGROUND(tseg)>>PGSHIFT);
 	up->seg[TSEG]->flushme = 1;
-	ospreyfillseg(up->seg[TSEG], UTZERO, PGROUND(tseg)>>PGSHIFT, prog, tseg);
+	ospreyfillseg(up->seg[TSEG], utext, PGROUND(tseg)>>PGSHIFT, prog, tseg);
 
 	up->seg[DSEG] = newseg(SG_DATA, adata, PGROUND(datasz)>>PGSHIFT);
 	ospreyfillseg(up->seg[DSEG], adata, PGROUND(datasz)>>PGSHIFT, prog+tseg, datasz);
@@ -144,6 +197,8 @@ ospreyloadaout(uchar *prog)
 void
 ospreyloadp9(void)
 {
+	if(!p9proghere)
+		panic("osprey: this kernel carries no Plan 9 personality (it links p9progstub.c); it cannot load one");
 	ospreyloadaout(p9prog);		/* the Plan 9 personality library */
 }
 
@@ -159,6 +214,11 @@ uintptr	ospreyuserentry;
 enum {
 	Lenomem		= 12,
 	Leinval		= 22,
+	Leio		= 5,
+	Lenosys		= 38,
+	Lenotty		= 25,
+	Archsetfs	= 0x1002,
+	Archgetfs	= 0x1003,
 	Mapanon		= 0x20,
 	Mapfixed	= 0x10,
 	Lebadf		= 9,
@@ -232,6 +292,8 @@ ospreyexecbuddy1(char *name, int replace)
 	}
 	up->oslinux = kind == 0;	/* an ELF is a Linux process; an a.out a Plan 9 one */
 	up->buddyimage = 1;		/* either way its pages are the buddy's */
+	if(!replace)
+		up->buddyredir = 0;	/* a program the exec request started: 0, 1 and 2 are the console the buddy gives it.  An exec in place keeps them, as it keeps the descriptors */
 	ospreyuserentry = entry;
 	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE/BY2PG);
 	seg = TSEG;
@@ -330,6 +392,49 @@ ospreybuddybrk(uintptr addr)
 	poperror();
 	up->linuxbrk = addr;
 	return 0;
+}
+
+/*
+ * A region of the caller's address space it may write a program into and
+ * then run: the one thing a library operating system has to ask a kernel
+ * for when it loads a program itself.  Demand-zero, so nothing is
+ * carried until it is touched; writable, because the loader writes the
+ * program in; and executable, because the program then runs there -
+ * which is what flushme means to fault(), the same mark exec puts on a
+ * text segment.  A real text segment would not do: SG_TEXT is mapped
+ * read-only and pages from an image, and this memory has no file behind
+ * it, only the loader's copy.
+ *
+ * Reached by segattach with the name "code", so the microkernel's
+ * address-space service keeps the one call it had rather than growing
+ * another number.
+ */
+uintptr
+ospreysegcode(uintptr va, ulong len)
+{
+	Segment *s;
+	int sno;
+
+	if(va == 0 || (va & (BY2PG-1)) != 0 || len == 0)
+		return (uintptr)-1;
+	len = PGROUND(len);
+	if(va + len >= USTKTOP-USTKSIZE || isoverlap(va, len) != nil)
+		return (uintptr)-1;
+	for(sno = 0; sno < NSEG; sno++)
+		if(up->seg[sno] == nil && sno != ESEG)
+			break;
+	if(sno == NSEG)
+		return (uintptr)-1;
+	if(waserror())
+		return (uintptr)-1;
+	s = newseg(SG_BSS, va, len/BY2PG);
+	poperror();
+	if(s == nil)
+		return (uintptr)-1;
+	s->flushme = 1;			/* code is fetched from it: fault() maps it executable */
+	up->seg[sno] = s;
+	print("osprey user: %lud bytes of address space at %#llux for a program the caller loads itself\n", (ulong)len, (uvlong)va);
+	return va;
 }
 
 uintptr
@@ -439,6 +544,91 @@ ospreylinuxsyscall(ulong scallnr, uintptr *retp)
 			return 0;
 		}
 		break;
+	case 20:			/* writev(fd, iov, iovcnt) */
+		{
+			/*
+			 * The call a libc's stdout actually makes: printf
+			 * gathers its pieces and writes them in one call, so
+			 * without this a real binary prints nothing at all.
+			 * Each piece is written the way write(2) writes one -
+			 * the console through the console task, anything else
+			 * forwarded to the buddy - and the count returned is
+			 * what went, which is how a caller knows to go on.
+			 * A short piece stops it, the way a short write does.
+			 */
+			uvlong *iov = (uvlong*)la[1];
+			long cnt = (long)la[2], k, tot = 0;
+			uintptr wa[3];
+
+			if(cnt < 0 || cnt > 1024){
+				*retp = (uintptr)-Leinval;
+				return 0;
+			}
+			if(!waserror()){
+				validaddr((uintptr)iov, cnt*2*sizeof(uvlong), 0);
+				poperror();
+			} else {
+				*retp = (uintptr)-Leinval;
+				return 0;
+			}
+			for(k = 0; k < cnt; k++){
+				uintptr base = (uintptr)iov[2*k];
+				long ln = (long)iov[2*k+1];
+				uintptr r;
+
+				if(ln <= 0)
+					continue;
+				wa[0] = la[0]; wa[1] = base; wa[2] = ln;
+				{
+					uvlong save[3];
+					uvlong *sa = (uvlong*)up->s.args;
+					long w;
+
+					save[0] = sa[0]; save[1] = sa[1]; save[2] = sa[2];
+					sa[0] = wa[0]; sa[1] = wa[1]; sa[2] = wa[2];
+					ospreylinuxsyscall(1, &r);
+					w = (long)r;
+					sa[0] = save[0]; sa[1] = save[1]; sa[2] = save[2];
+					if(w < 0){
+						if(tot == 0)
+							*retp = r;
+						else
+							*retp = (uintptr)tot;
+						return 0;
+					}
+					tot += w;
+					if(w < ln)
+						break;		/* short: the caller goes on from here */
+				}
+			}
+			*retp = (uintptr)tot;
+			return 0;
+		}
+	case 16:			/* ioctl(fd, request, ...) */
+		/*
+		 * ENOTTY, and nothing else.  A libc asks this of its output
+		 * at startup to decide whether to buffer a line at a time,
+		 * and the answer here is the honest one: there are no
+		 * terminal ioctls on this kernel, so nothing it has is a
+		 * terminal.  Answering 0 would tell it there was a terminal
+		 * it could then ask about.
+		 */
+		*retp = (uintptr)-Lenotty;
+		return 0;
+	case 39:			/* getpid */
+		*retp = (uintptr)up->pid;
+		return 0;
+	case 218:			/* set_tid_address(addr) */
+		/*
+		 * A libc calls this before anything else and keeps what it
+		 * returns as its thread id.  The address is where the kernel
+		 * would clear a word when the thread exits, which matters to
+		 * a thread that is joined; nothing here joins one, so the
+		 * address is not kept, and the honest part of the call - the
+		 * id - is answered.
+		 */
+		*retp = (uintptr)up->pid;
+		return 0;
 	case 60: case 231:		/* exit, exit_group */
 		ospreyexits((long)la[0]);
 		*retp = 0;
@@ -478,6 +668,37 @@ ospreylinuxsyscall(ulong scallnr, uintptr *retp)
 		}
 		*retp = 0;
 		return 0;
+	case 158:			/* arch_prctl(code, addr) */
+		/*
+		 * ARCH_SET_FS, and only that.  It is what stands between a
+		 * program that makes its own raw system calls and one built
+		 * against a libc: musl and glibc both set the thread pointer
+		 * here before anything else, and every thread-local access
+		 * afterwards is fs-relative, so a binary from a toolchain
+		 * faults on its first one without this.  The base is kept in
+		 * the process and restored on a switch (procrestore).
+		 * ARCH_GET_FS answers from the same place.  The other two
+		 * codes are for GS, which is this kernel's own register.
+		 */
+		switch(la[0]){
+		case Archsetfs:
+			up->linuxfsbase = (uintptr)la[1];
+			wrmsr(FSbase, (uvlong)la[1]);
+			*retp = 0;
+			return 0;
+		case Archgetfs:
+			if(!waserror()){
+				validaddr((uintptr)la[1], sizeof(uvlong), 1);
+				*(uvlong*)la[1] = (uvlong)up->linuxfsbase;
+				poperror();
+				*retp = 0;
+				return 0;
+			}
+			*retp = (uintptr)-Leinval;
+			return 0;
+		}
+		*retp = (uintptr)-Leinval;
+		return 0;
 	case 14:			/* rt_sigprocmask: no mask is kept */
 		*retp = 0;
 		return 0;
@@ -485,7 +706,56 @@ ospreylinuxsyscall(ulong scallnr, uintptr *retp)
 		ospreylinuxsigreturn();
 		return 0;		/* ax is whatever the frame had */
 	}
-	*retp = (uintptr)ospreybuddyforward(scallnr, (uintptr*)up->s.args);
+	{
+		/*
+		 * A failed call has to come back as Linux says one does: a
+		 * small negative number in rax, which a libc tests for with
+		 * "(unsigned long)r >= -4095" and turns into -1 and errno.
+		 * This was `*retp = (uintptr)ospreybuddyforward(...)`, and
+		 * `long` here is 32 bits, so a -1 from the buddy arrived in
+		 * the program's rax as 0x00000000ffffffff - 4294967295, a
+		 * large positive number that is not an error by any reading.
+		 * A program could not tell a failed open from a descriptor,
+		 * and the test program that listed a directory with a call
+		 * this kernel did not map walked 4294967295 bytes of its own
+		 * stale buffer and faulted.  What found it was running the
+		 * check against the kernel from before the mapping, to see
+		 * the criterion fail.
+		 *
+		 * The buddy has no errno to give, so there are two answers
+		 * here and not a table of them: ENOSYS for a number this
+		 * kernel does not map, which is the one a program actually
+		 * tests for, and EIO for a call that was made and failed.
+		 */
+		long r = ospreybuddyforward(scallnr, (uintptr*)up->s.args);
+
+		/*
+		 * A negative result is already the errno to report, negated:
+		 * ENOSYS for a number this kernel does not map, and for a
+		 * call that was made and failed whatever the buddy's own
+		 * message says it was (ospreylinuxerrno).  It must be sign
+		 * extended on the way to rax, which is the whole of the bug
+		 * this replaced: `long` is 32 bits here, so -1 arrived as
+		 * 0x00000000ffffffff.
+		 */
+		if(r >= 0)
+			*retp = (uintptr)r;
+		else {
+			/*
+			 * Sign-extended by hand, and not with a cast.  `long`
+			 * is 32 bits here and `(uintptr)(vlong)r` of a
+			 * negative long leaves 0x00000000fffffffe: this
+			 * toolchain emits no sign extension for the widening,
+			 * the same way it emits no truncation for a narrowing
+			 * cast to an unsigned type.  The program reads rax as
+			 * 64 bits, so a half-extended -2 is 4294967294 and not
+			 * an error at all.
+			 */
+			uvlong u = (uvlong)(ulong)r;
+
+			*retp = (uintptr)(u | 0xffffffff00000000ULL);
+		}
+	}
 	return 0;
 }
 
@@ -588,19 +858,56 @@ ospreyenteruservec(char **argv, int argc)
 			memmove((void*)sp, argv[i], n);
 			straddr[i] = sp;
 		}
-		/* the pointer array, 16-aligned, below the strings */
+		/*
+		 * The pointer array, 16-aligned, below the strings:
+		 * argv[0]..argv[argc-1], the nil that ends the vector, and
+		 * one word past the nil holding the address of the Tos.
+		 *
+		 * That last word is this kernel's own, and it is here because
+		 * a program entered this way never runs libc's _main.  On
+		 * Plan 9 the kernel leaves the Tos in AX and main9.s stores
+		 * it in _tos; here AX carries the argument vector instead, so
+		 * the pointer has to travel somewhere, and the end of the
+		 * vector is the one place the entry can find it without a
+		 * second convention.  init9.c reads it.  Without a Tos, libc
+		 * faults the first time a program asks the time: nsec(2)
+		 * reads /dev/bintime and keeps its descriptor in a private,
+		 * and the private it keeps is indexed by _tos->pid.
+		 */
 		sp &= ~(uintptr)15;
-		sp -= (uintptr)(argc + 1) * sizeof(uintptr);
+		sp -= (uintptr)(argc + 2) * sizeof(uintptr);
 		sp &= ~(uintptr)15;
 		uargv = (uintptr*)sp;
 		for(i = 0; i < argc; i++)
 			uargv[i] = straddr[i];
 		uargv[argc] = 0;
+		uargv[argc+1] = USTKTOP - sizeof(Tos);
+	}
+
+	/*
+	 * And fill it.  Only what a program actually reads is set: the pid,
+	 * which libc's getpid(2) and its per-process privates use, and the
+	 * cycle frequency, which is 0 when the machine has no counter and
+	 * is read as "do not use cycles" rather than as a rate.
+	 */
+	{
+		Tos *tos = (Tos*)(USTKTOP - sizeof(Tos));
+
+		memset(tos, 0, sizeof *tos);
+		tos->pid = up->buddyimage && up->osprey != nil ? ospreyprocid(up) : up->pid;
+		tos->cyclefreq = m->cyclefreq;
 	}
 
 	splhi();
 	fpukexit(nil);
-	touser((char*)sp);		/* the first argument register holds argv */
+	/*
+	 * The argument register holds the vector; the stack starts two
+	 * words below it, which is where the entry spills that register
+	 * (see touserv in pc64/l.s).  Without the gap the spill lands on
+	 * argv[1].
+	 */
+	touserv((char*)sp, (char*)(sp - 2*sizeof(uintptr)),
+		up->aoutentry != 0 ? up->aoutentry : (uintptr)(UTZERO+0x28));
 }
 
 void
@@ -686,8 +993,13 @@ ospreyexecself(char *uname, char **uargv)
 	}
 	packed[np] = 0;			/* the double nul ospreyenteruserargs ends on */
 
-	if(ospreyexecbuddy1(name, 1) < 0)
+	if(ospreyexecbuddy1(name, 1) < 0){
+		/* named, because the caller returns -1 to a library that
+		 * usually turns it into "exec failed" and nothing else */
+		print("osprey exec: container %lud could not exec %s\n",
+			ospreyprocid(up), name);
 		return -1;
+	}
 	kstrdup(&up->text, name);
 	/*
 	 * The system call's own bookkeeping, which the entry below walks out
@@ -726,8 +1038,19 @@ proc0(void*)
 		 * calls for it reaches through the syscall interface, not
 		 * through a name space the kernel set up.
 		 */
+		/*
+		 * The alarm kproc, which the full personality starts in
+		 * init0 and this path never did.  alarm(2) posts a note when
+		 * a process's time comes, and the posting is this kproc's:
+		 * without it procalarm records the deadline and nothing ever
+		 * reads it, so a legacy program that sets an alarm waits for
+		 * a note that cannot arrive.  checkalarms, on the clock tick,
+		 * is what wakes it.
+		 */
+		kproc("alarm", alarmkproc, 0);
 		ospreyuserprep();
 		ospreyframebuffer();
+		ospreypointerexpose();	/* where the personality with the mouse puts the pointer for the one with the screen */
 		if(ospreyp9linux){
 			/*
 			 * An unmodified Linux binary the buddy serves: mark this
@@ -760,8 +1083,19 @@ proc0(void*)
 			 * The paired personality: this task is the client, its
 			 * buddy the server it delegates to.  Enter as the pair
 			 * client, which mounts the buddy over the ring.
+			 *
+			 * A machine starts a window system because it was
+			 * configured to, and this one is no different: with
+			 * *riodemo= in plan9.ini the client also execs rio and
+			 * leaves it running, and without it the machine is the
+			 * machine every check that is not about rio was written
+			 * against.  A window system is a standing load - three
+			 * readers blocked on files, a draw server answering
+			 * them - and the two-machine checks, which run two of
+			 * these at once and carry processes between them, are
+			 * not the place to put one.
 			 */
-			ospreyenteruser("c");
+			ospreyenteruser(getconf("*riodemo") != nil ? "c rio" : "c");
 			panic("ospreyenteruser returned");
 		}
 		up->kp = 0;
@@ -859,4 +1193,211 @@ userinit(void)
 	 */
 	kstrdup(&eve, "");
 	kproc("*init*", proc0, nil);
+}
+
+/*
+ * A system call the task serves for itself.
+ *
+ * The p964 personality is a library operating system: the programs it
+ * loads call it as a library, through the P9lib table, because they are
+ * linked against p9crt.c and have no system calls of their own.  An
+ * ordinary Plan 9 binary is not built that way and cannot be - it is
+ * built against libc, whose file calls are the generated system-call
+ * stubs, and the whole point of the arrangement is that such a binary
+ * should run unchanged.  Its traps land here, in a microkernel that
+ * answers five calls and no name space at all.
+ *
+ * So the trap is handed up to the personality, in the address space it
+ * already shares with the program.  This is notify(2)'s mechanism with a
+ * different payload: the frame the call arrived on is copied to the
+ * user stack, and the task is resumed at a handler it registered, with
+ * the call's number, its arguments where the caller left them, and the
+ * saved frame.  The handler does the work with the name space it has -
+ * the same libopen and libpread that serve a program linked against the
+ * table - and then asks the kernel to put the frame back with a value
+ * in it, which is noted(NCONT) with a return substituted.
+ *
+ * One flag for a Proc that has many flows means one legacy program at a
+ * time: while a call is up, routing is off, so the personality's own
+ * flows reach the kernel normally and a second legacy program's calls
+ * would too.  That is a real limit of this step and not an oversight.
+ */
+/*
+ * Whether the system call now being made was made by the legacy program
+ * rather than by the personality that is serving it.  Where it was made
+ * is the whole of the test: the program's image is one range of
+ * addresses, named when the personality asked for the service, and the
+ * personality's own text is elsewhere (it is linked at P9selfbase, well
+ * above every program).
+ */
+int
+ospreyfromprog(void)
+{
+	Ureg *ureg;
+
+	ureg = up->dbgreg;
+	if(ureg == nil || up->p9progend == 0)
+		return 0;
+	return ureg->pc >= up->p9progbase && ureg->pc < up->p9progend;
+}
+
+/*
+ * And the other thing that happens to a program: it faults.
+ *
+ * On a kernel with processes the fault is the process's and the kernel
+ * kills it.  Here the program is code in the personality's own address
+ * space, so a fault in it is a fault in the task and this configuration
+ * has nowhere to send it - donotify panics and the machine stops, which
+ * is right for a fault in the personality and wrong for one in a program
+ * it loaded.  The personality can do what a kernel does: take the flow
+ * of control back and say what happened.  So the frame is bent to a
+ * handler of its own, exactly as a system call is, with the note's text
+ * for it to print; that handler does not return - it jumps back to the
+ * frame p9execlegacy left, and the personality goes on running.
+ *
+ * Only for a fault inside the program's own image.  A fault in the
+ * personality, or in the handler serving the program, is the panic it
+ * always was.
+ */
+int
+ospreyfaultup(char *msg)
+{
+	Ureg *ureg;
+	uintptr sp, *f;
+	char *m;
+
+	ureg = up->dbgreg;
+	if(ureg == nil || up->p9faultup == 0 || up->p9progend == 0)
+		return 0;
+	if(ureg->pc < up->p9progbase || ureg->pc >= up->p9progend)
+		return 0;
+	sp = ureg->sp - 256;
+	sp -= ERRMAX;
+	if(!okaddr(sp - 4*BY2WD, ERRMAX + 4*BY2WD, 1))
+		return 0;
+	m = (char*)sp;
+	strecpy(m, m+ERRMAX, msg);
+	sp -= 2*BY2WD;
+	f = (uintptr*)sp;
+	f[0] = 0;			/* nothing returns through it */
+	f[1] = (uintptr)m;		/* arg0, which RARG also carries */
+	ureg->sp = sp;
+	ureg->pc = up->p9faultup;
+	ureg->bp = (uintptr)m;
+	ureg->cs = UESEL;
+	ureg->ss = UDSEL;
+	up->p9insyscallup = 0;
+	return 1;
+}
+
+int
+ospreysyscallup(ulong scallnr)
+{
+	Ureg *ureg, *nureg;
+	uintptr sp, osp, *f;
+
+	ureg = up->dbgreg;
+	if(ureg == nil || up->p9syscallup == 0)
+		return 0;
+	osp = ureg->sp;
+	sp = osp - 256;			/* as notify leaves: the context that caused it */
+	sp -= sizeof(Ureg);
+	/*
+	 * The stack this lands on is a flow's, not a process's: the legacy
+	 * program was entered by a call from one of the personality's
+	 * cooperative flows and is running on that flow's stack.  So say so
+	 * rather than faulting somewhere unrelated if it will not fit.
+	 */
+	if(!okaddr(sp - 8*BY2WD, sizeof(Ureg) + 8*BY2WD, 1)){
+		print("osprey user: no room at %#p to hand system call %uld up to the personality\n",
+			sp, scallnr);
+		return 0;
+	}
+	nureg = (Ureg*)sp;
+	memmove(nureg, ureg, sizeof(Ureg));
+	sp -= 4*BY2WD;
+	f = (uintptr*)sp;
+	f[0] = 0;			/* the pc a return would use; nothing returns through it */
+	f[1] = scallnr;			/* arg0, which RARG also carries */
+	f[2] = osp + BY2WD;		/* arg1: the arguments, where the caller left them */
+	f[3] = (uintptr)nureg;		/* arg2: the frame, to be handed back */
+	ureg->sp = sp;
+	ureg->pc = up->p9syscallup;
+	ureg->bp = scallnr;		/* RARG */
+	ureg->cs = UESEL;
+	ureg->ss = UDSEL;
+	up->p9insyscallup = 1;
+	return 1;
+}
+
+/*
+ * And the answer: put the frame back, with the value the personality
+ * worked out where the call's return belongs.  The frame is the one
+ * handed up, which is on the user stack and is checked as noted(2)'s is.
+ */
+int
+ospreysyscallret(uintptr frame, uintptr val)
+{
+	Ureg *ureg, *nureg;
+
+	ureg = up->dbgreg;
+	nureg = (Ureg*)frame;
+	if(ureg == nil || !uregok(nureg)){
+		print("osprey user: the personality answered a system call with a frame at %#p that is not its own\n", frame);
+		return 0;
+	}
+	setregisters(ureg, (char*)ureg, (char*)nureg, sizeof(Ureg));
+	ureg->ax = val;
+	up->p9insyscallup = 0;
+	/*
+	 * And a note that arrived for the program while the personality was
+	 * running it is delivered here, on the way back in, which is the
+	 * first moment the program's own registers are the ones being
+	 * returned to.  That is what a kernel does - a note is delivered at
+	 * a safe point and not at the instant it is posted - and here the
+	 * unsafe points are most of the time, because the program's flow
+	 * spends it inside the personality serving its last call.
+	 *
+	 * notify() saves the frame just restored, so noted(NCONT) resumes
+	 * the program with this call's return value still in it.
+	 */
+	if(up->p9haveprognote && up->notify != nil){
+		Ureg *n2 = notify(ureg, up->p9prognote);
+
+		if(n2 != nil){
+			if(up->nnote > 0)
+				up->nnote--;
+			up->notified = 1;
+			*(Ureg**)((uintptr)n2 - BY2WD) = up->noteureg;
+			up->noteureg = n2;
+			up->p9haveprognote = 0;
+			print("osprey user: the note held for %s's program is delivered to its handler now that the program is running again: %s\n",
+				up->text, up->p9prognote);
+		}
+	}
+	return 1;
+}
+
+/*
+ * A note for the program that arrived while the personality was running.
+ * Hold it rather than delivering it: the frame this would bend is the
+ * personality's, and the program's handler running on it would return
+ * into the middle of the library serving its last call.
+ *
+ * Only a note that is not a fault.  A fault is about the instruction
+ * that made it, so a fault outside the program's image is the
+ * personality's own and is the panic it always was; a posted note -
+ * alarm(2)'s, or one a peer sends - is about the process, and the
+ * process a legacy program's notes belong to is that program.
+ */
+int
+ospreyholdnote(char *msg)
+{
+	if(up->p9progend == 0 || up->notify == nil)
+		return 0;
+	if(strncmp(msg, "sys:", 4) == 0)
+		return 0;
+	strecpy(up->p9prognote, up->p9prognote+ERRMAX, msg);
+	up->p9haveprognote = 1;
+	return 1;
 }

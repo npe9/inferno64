@@ -7,6 +7,8 @@
 #include "io.h"
 #include "version.h"
 
+extern int distrack;		/* libinterp/heap.c: the Dis heap watchdog */
+
 extern Mach mach0;
 Mach *m;
 Proc *up;
@@ -94,6 +96,52 @@ machinit(void)
 	active.machs[0] = 1;
 }
 
+/*
+ * What the last boot left in the crumb record at 0x20000000 (l.s
+ * crumbentry, trap.c): the last exception taken, and any exception on
+ * a wild SP or label gotolabel refused.  RAM there survives a reset
+ * that is not a power cycle, so after a hang and a reset this says
+ * where the kernel was.  Printed before anything can overwrite it.
+ */
+static void
+crumbdump(void)
+{
+	volatile uvlong *c = (volatile uvlong*)0x20000000;
+	int i;
+
+	if(c[0] != 0x43524d42ULL)	/* power-on contents, not a record */
+		goto clear;
+	serialputs("CRUMB previous boot: exceptions ", -1);
+	serialputdec(c[1]);
+	serialputs(", last type ", -1);
+	serialputdec(c[7]);
+	serialputreg("esr", c[2], 8);
+	serialputreg("elr", c[3], 16);
+	serialputreg("spsr", c[5], 3);
+	serialputreg("sp", c[6], 16);
+	serialputs("\n", -1);
+	if(c[147] != 0){
+		serialputs("CRUMB wildsp elr", -1);
+		serialputreg("", c[144], 16);
+		serialputreg("spsr", c[145], 3);
+		serialputreg("esr", c[146], 8);
+		serialputreg("sp", c[147], 16);
+		serialputreg("lr", c[148], 16);
+		serialputs("\n", -1);
+	}
+	if(c[153] != 0){
+		serialputs("CRUMB badlabel", -1);
+		serialputreg("", c[152], 16);
+		serialputreg("sp", c[153], 16);
+		serialputreg("pc", c[154], 16);
+		serialputreg("caller", c[155], 16);
+		serialputs("\n", -1);
+	}
+clear:
+	for(i = 0; i < 160; i++)
+		c[i] = 0;
+}
+
 void
 main(void)
 {
@@ -109,16 +157,33 @@ main(void)
 	confinit();
 	fpinit();
 
-	serialputs("Inferno/arm64 raspi3b\n", -1);
+	/*
+	 * The build's date stamp on the first line, so a serial log says
+	 * which image the Pi actually booted -- a stale kernel8.img on the
+	 * card looks exactly like a failed fix.  Not snprint: the first use
+	 * of a format verb runs fmtinstall(), which takes a spinlock, and an
+	 * LDXR/STXR lock before mmuinit() hangs a real Cortex-A53 (QEMU lets
+	 * it through).  Doing that here silenced two boots entirely.
+	 */
+	serialputs("Inferno/arm64 raspi3b build ", -1);
+	serialputdec(kerndate);
+	serialputs("\n", -1);
+	crumbdump();
 
 	uartconsole();
 	archconsole();
 
+	/*
+	 * xinit() takes xlists with _tas().  On real A53 hardware an
+	 * LDXR/STXR lock is not sound while the MMU is off and RAM has no
+	 * Normal-memory translation attributes; QEMU happens to accept it.
+	 * Establish the identity map before the first kernel lock.
+	 */
+	mmuinit();
 	xinit();
 	poolinit();
 	poolsizeinit();
 	trapinit();
-	mmuinit();
 	clockinit();
 	{	/* seed wall-clock from the PL031 RTC (calendar time) */
 		extern vlong rtctime(void);
@@ -240,6 +305,8 @@ init0(void)
 	chandevinit();
 	poperror();
 
+	clockcheckboot();
+
 	/*
 	 * Publish the board MAC the firmware knows (mailbox.c) as
 	 * /env/ethaddr so the Limbo USB ethernet driver (etherusb) can
@@ -276,8 +343,22 @@ init0(void)
 		extern void uartputccheck(void);
 		uartputccheck();
 	}
+	/*
+	 * This board's ethernet driver, its file server and everything
+	 * above them are Limbo, so the Dis interpreter's per-instruction
+	 * heap watchdog is charged to every frame that arrives.  Measured
+	 * under a hundred frames a second: with it on, the kernel came
+	 * back for the next frame every 60ms and the server handed 7
+	 * frames straight to a waiting reader; with it off, every 8ms and
+	 * 1222.  The Pi needs the machine more than it needs the
+	 * instrument, which stays on by default everywhere else.  Set it
+	 * back to 1 here to watch a heap corruption on this board.
+	 */
+	distrack = 0;
 	disinit("/osinit.dis");
 }
+
+static uintptr	kstacktop(Proc*);
 
 void
 userinit(void)
@@ -308,7 +389,7 @@ userinit(void)
 	kstrdup(&p->text, "interp");
 	p->fpstate = FPINIT;
 	p->sched.pc = (uintptr)init0entry;
-	p->sched.sp = (uintptr)p->kstack+KSTACK-16;
+	p->sched.sp = kstacktop(p);
 	ready(p);
 }
 
@@ -323,6 +404,22 @@ exit(int inpanic)
 			clockpoll();
 	}
 	archreboot();
+}
+
+/*
+ * The initial kernel SP of a process, rounded down to 16 bytes.  malloc
+ * only promises 8-byte alignment, and SCTLR_EL1.SA makes the A53 take an
+ * SP-alignment fault on any stack access through an SP that is not a
+ * multiple of 16 -- after which the exception entry, on the same SP,
+ * faults again, forever, with every exception masked.  A process whose
+ * kstack happened to come back from malloc at ...8 silenced the Pi a
+ * few seconds into boot, depending on allocation order; QEMU does not
+ * check SP alignment, so it booted every time there.
+ */
+static uintptr
+kstacktop(Proc *p)
+{
+	return ((uintptr)p->kstack+KSTACK-16) & ~(uintptr)15;
 }
 
 static void
@@ -340,7 +437,7 @@ void
 kprocchild(Proc *p, void (*func)(void*), void *arg)
 {
 	p->sched.pc = (uintptr)linkproc;
-	p->sched.sp = (uintptr)p->kstack+KSTACK-16;
+	p->sched.sp = kstacktop(p);
 	p->kpfun = func;
 	p->kparg = arg;
 }

@@ -396,7 +396,6 @@ mntwalk(Chan *c, Chan *nc, char **name, int nname)
 	alloc = 0;
 	wq = smalloc(sizeof(Walkqid)+(nname-1)*sizeof(Qid));
 	if(waserror()){
-print("mntwalk waserror() for mntralloc pid %ud %r\n", up->pid);
 		if(alloc && wq->clone!=nil)
 			cclose(wq->clone);
 		free(wq);
@@ -419,7 +418,6 @@ print("mntwalk waserror() for mntralloc pid %ud %r\n", up->pid);
 	wq->clone = nc;
 
 	if(waserror()) {
-print("mntwalk waserror() for mountrpc pid %ud %r\n", up->pid);
 		mntfree(r);
 		nexterror();
 	}
@@ -1005,16 +1003,9 @@ mountrpc(Mnt *m, Mntrpc *r)
 	t = r->reply.type;
 	switch(t) {
 	case Rerror:
-		print("mountrpc: Rerror %s proc %s pid %ud: mismatch from %s %s rep %#p tag %d fid %d T%d R%d rp %d\n",
-			r->reply.ename, up->text, up->pid, chanpath(m->c), chanpath(r->c),
-			r, r->request.tag, r->request.fid, r->request.type,
-			r->reply.type, r->reply.tag);
+		/* an ordinary answer: a walk to a name that is not there */
 		error(r->reply.ename);
 	case Rflush:
-		print("mountrpc: Rflush proc %s pid %ud: mismatch from %s %s rep %#p tag %d fid %d T%d R%d rp %d\n",
-			up->text, up->pid, chanpath(m->c), chanpath(r->c),
-			r, r->request.tag, r->request.fid, r->request.type,
-			r->reply.type, r->reply.tag);
 		error(Eintr);
 	default:
 		if(t == r->request.type+1)

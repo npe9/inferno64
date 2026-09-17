@@ -31,7 +31,7 @@ enum {
 	 * exactly where /dev/mouse says the pointer is - one source, so the
 	 * cursor and the click point cannot drift apart.
 	 */
-	Posoff	= 512,		/* int mx, my */
+	Posoff	= 512,		/* int mx, my, valid */
 };
 
 static uchar	*ring;		/* the exposed page: [8]=count, then bytes */
@@ -111,6 +111,7 @@ fsread(Req *r)
 	first = 0;
 	((int*)(ring + Posoff))[0] = mx;	/* publish for the cursor */
 	((int*)(ring + Posoff))[1] = my;
+	((int*)(ring + Posoff))[2] = 1;		/* and that there is a pointer to draw */
 	n = snprint(buf, sizeof buf, "m%11d %11d %11d %11d ",
 		mx, my, mb, (int)(nsec()/1000000));
 	/* a mouse is a stream: return the whole record, ignore the offset */
@@ -152,12 +153,17 @@ main(int argc, char **argv)
 	rp = *(uvlong*)ring;		/* start from the current tail */
 	((int*)(ring + Posoff))[0] = mx;	/* seed the published position */
 	((int*)(ring + Posoff))[1] = my;
+	((int*)(ring + Posoff))[2] = 1;
 
 	mousesrv.tree = alloctree("glenda", "glenda", DMDIR|0555, nil);
 	if(mousesrv.tree == nil)
 		sysfatal("alloctree: %r");
 	if(createfile(mousesrv.tree->root, "mouse", "glenda", 0666, nil) == nil)
 		sysfatal("createfile: %r");
-	postmountsrv(&mousesrv, nil, mtpt, MBEFORE);
+	/*
+	 * Posted under a name, so that the name outlives this process and
+	 * a container that never had the mount - rio's - can find it.
+	 */
+	postmountsrv(&mousesrv, "mouse", mtpt, MBEFORE);
 	exits(nil);
 }

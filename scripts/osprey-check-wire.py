@@ -59,7 +59,12 @@ def pair(port, a, b, amac='52:54:00:00:c1:01', bmac='52:54:00:00:c1:02'):
 SERVER = [
  CD,
  "bind '#O' /n/osprey; echo pair ether0 listen >/n/osprey/ctl",
- "sleep 14; grep '^key ' /n/osprey/status",
+ # The key is agreed over the wire, so when it appears is not this
+ # machine's to say.  A fixed sleep read "key none" on one machine and
+ # the key on the other about one run in eight; this waits for the
+ # agreement instead, up to forty seconds, and prints what it finds
+ # either way so a real failure still reads as one.
+ "sleep 14; for(i in `{seq 1 40}){ k=`{grep '^key ' /n/osprey/status}; if(! ~ $\"k 'key none') break; sleep 1 }; grep '^key ' /n/osprey/status",
  "echo create 7 100000000 200000000 200000000 >/n/osprey/ctl",
  "echo grant 7 fred >/n/osprey/ctl; echo pipether ether0 on >/n/osprey/ctl",
  "sleep 50; echo server done",
@@ -67,7 +72,7 @@ SERVER = [
 CLIENT = [
  CD + "; rm -f /tmp/pip; cp /n/cd/bin/pip /tmp/pip; chmod +x /tmp/pip",
  "bind '#O' /n/osprey; sleep 6; echo pair ether0 offer >/n/osprey/ctl",
- "sleep 10; grep '^key ' /n/osprey/status",
+ "sleep 10; for(i in `{seq 1 40}){ k=`{grep '^key ' /n/osprey/status}; if(! ~ $\"k 'key none') break; sleep 1 }; grep '^key ' /n/osprey/status",
  "echo create 7 100000000 200000000 200000000 >/n/osprey/ctl",
  "echo grant 7 fred >/n/osprey/ctl",
  "t=`{{echo '7 fred 0' >[1=0]; cat} <>/n/osprey/ticket}; echo ticket $t",

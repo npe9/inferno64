@@ -368,23 +368,23 @@ Create and remove over 9P: the log store answers
 and refuses
 .CW remove
 because it is immutable, both over 9P
-.CW ( osprey-check-p9pair ).
+.CW osprey-check-p9pair ). (
 .IP \(bu
 A wire of its own for \[*p]p: the personality's \[*p]p is served on a
 TCP wire (stack B over the ring, stack A over the cable), one connection
 per kproc
-.CW ( pipconn ),
+.CW pipconn ), (
 and it authenticates \- a session proves who it is with a ticket the
 kernel signs and checks, and an open of a file that is somebody's is
 refused to a session that is nobody's
-.CW ( osprey-check-p9wire ,
+.CW osprey-check-p9wire , (
 .CW osprey-check-p9pair ).
 .IP \(bu
 A second machine: two kernels on a socket cable, each driving a
 user-space virtio-net device, run tcp.c to tcp.c, carry a megabyte, and
 migrate a process \- its pages, its descriptor table and its private
 name space \- from one to the other
-.CW ( osprey-check-p9wire ,
+.CW osprey-check-p9wire , (
 twenty criteria).  It is two amd64 machines under QEMU; a non-amd64 one
 is the part that still wants a board.
 .IP \(bu
@@ -400,7 +400,7 @@ The caching file system is a file system: write-through commits a
 version on the server, its directory lists what the cache holds, a
 ninth file evicts the least recently used, and a stream is the lease's
 heartbeat
-.CW ( osprey-check-p9pair ).
+.CW osprey-check-p9pair ). (
 .IP \(bu
 Configuration read, not derived: each machine reads
 .CW /n/net
@@ -409,23 +409,54 @@ disk and read from then on.
 .IP \(bu
 The i8042 driver owns the whole controller: the one-time command-byte
 enable is the driver's now, at CPL3, not the kernel's
-.CW ( osprey-check-kbd ) ;
+.CW osprey-check-kbd ); (
 the interrupt-path bug that had kept it in the kernel was run down with a
 trap-return checksum and fifty-two reproduction boots and did not
 reproduce.
 .PP
 What is genuinely left is what this analysis's own last section and the
-progress doc's latency section name, and it is of two kinds.  Structural:
-rio runs unmodified on
+progress doc's latency section name, and it is of two kinds.
+.PP
+Structural, and one of the two named here on 5 September is closed.  rio
+runs unmodified on
 .CW pc64 ,
 the full personality, with a user-level draw service and user-level
 mouse and keyboard drivers above the microkernel-exposed frame buffer
-and interrupt rings; what it does not yet do is run on the microkernel
-itself \- the 9front personality as a library
-.CW ( p964
-has the name space, not exec and the full syscall set over the ring) \-
-and the talk's 270-nanosecond round trip needs a task that is not a Plan
-9 process, which this kernel's is.  Board-bound: the raw-flash storage
-tier, a non-amd64 second machine, and the hardware latency figure each
-want a board this tree has no Osprey target for.  Everything else the
-paper and the talk describe is built and checked.
+and interrupt rings; and it runs on the microkernel itself as well now,
+on the
+.CW p964
+library personality \- which has exec, a name space, processes, a window
+and input (phase 3.2 of the progress doc), and which serves the Plan 9
+system calls of an ordinary binary that was not built for it at all
+(phase 3.3): an unmodified a.out is laid at
+.CW UTZERO ,
+its traps are handed up to the personality in the address space it
+shares with it, and its
+.CW open ,
+.CW read ,
+.CW pipe ,
+.CW bind ,
+.CW rfork(RFNAMEG) ,
+.CW brk ,
+.CW notify ,
+.CW alarm
+and
+.CW exits
+are answered by the library.  A shell on that personality runs one as a
+command.
+.PP
+The honest remainder of that is what a library cannot do for a program
+in its own address space:
+.CW rfork(RFPROC)
+splits the caller's flow of control, which is not a thing a library can
+do for its caller, so it is refused by name \- and that, not the name
+space or the system calls, is why rio on
+.CW p964
+is rio relinked against the library rather than rio unmodified.  The
+other structural item stands: the talk's 270-nanosecond round trip needs
+a task that is not a Plan 9 process, which this kernel's is.
+.PP
+Board-bound: the raw-flash storage tier, a non-amd64 second machine, and
+the hardware latency figure each want a board this tree has no Osprey
+target for.  Everything else the paper and the talk describe is built
+and checked.

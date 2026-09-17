@@ -287,6 +287,52 @@ struct Pairarg {
 };
 
 /*
+ * The offer, said again until it is answered.
+ *
+ * It used to be said once: the offering machine wrote its frame and
+ * then blocked reading for the reply.  If the other machine was not
+ * listening yet - and which of two machines is ready first is not
+ * either one's to arrange - the frame went into the wire and nothing
+ * ever came back, so both sides waited for good and both said
+ * .CW "key none" .
+ * That is what the two-machine check's transient was: the check gives
+ * the listener a head start of a few seconds, and a loaded host is
+ * enough to spend it.
+ *
+ * So a second process says it again every half second, up to a minute,
+ * until the reply arrives.  A repeated offer costs the listener
+ * nothing: it answers whichever one it sees and the rest are frames
+ * with nobody waiting for them.
+ */
+typedef struct Pairretry Pairretry;
+struct Pairretry {
+	Chan	*dc;
+	uchar	*frame;
+	long	n;
+	int	stop;		/* the answer came: say it no more */
+	int	done;		/* and the saying has stopped */
+};
+
+static void
+pairretryproc(void *a)
+{
+	Pairretry *r = a;
+	int i;
+
+	if(!waserror()){
+		for(i = 0; i < 120 && !r->stop; i++){
+			tsleep(&up->sleep, return0, nil, 500);
+			if(r->stop)
+				break;
+			devtab[r->dc->type]->write(r->dc, r->frame, r->n, 0);
+		}
+		poperror();
+	}
+	r->done = 1;
+	pexit("osprey pair offer", 1);
+}
+
+/*
  * Agree a key with whoever is on the other end of an interface.  One
  * machine listens and one offers; both end up holding the same key and
  * saying the same fingerprint, and neither of them has been told what
@@ -298,14 +344,16 @@ pairproc(void *a)
 	Pairarg *pa;
 	Chan *dc, *cc;
 	mpint *x, *p;
+	Pairretry *retry;
 	uchar *in, *out;
 	long n;
-	int k;
+	int k, i;
 
 	pa = a;
 	in = out = nil;
 	dc = cc = nil;
 	x = p = nil;
+	retry = nil;
 	if(waserror())
 		goto done;
 	in = smalloc(Pipframe);
@@ -324,8 +372,14 @@ pairproc(void *a)
 	while(n < Minframe)
 		out[n++] = 0;
 
-	if(pa->offer)
+	if(pa->offer){
 		devtab[dc->type]->write(dc, out, n, 0);
+		retry = smalloc(sizeof(Pairretry));
+		retry->dc = dc;
+		retry->frame = out;
+		retry->n = n;
+		kproc("ospreypairoffer", pairretryproc, retry);
+	}
 	for(;;){
 		k = devtab[dc->type]->read(dc, in, Pipframe, 0);
 		if(k <= Etherhdr + 3)
@@ -343,6 +397,29 @@ pairproc(void *a)
 		pairfinish(x, p, in+Etherhdr+3, k);
 	poperror();
 done:
+	/*
+	 * The frame and the channel the retransmitter is using are freed
+	 * below, so it has to have stopped first.  It looks at stop every
+	 * half second; a second and a half of waiting is three of its
+	 * turns, and if it is somehow still there after that the memory is
+	 * left rather than taken out from under it.
+	 */
+	if(retry != nil){
+		retry->stop = 1;
+		for(i = 0; i < 30 && !retry->done; i++)
+			tsleep(&up->sleep, return0, nil, 50);
+		if(!retry->done){
+			/*
+			 * Still writing.  The frame and the channel are its
+			 * now: three allocations left behind is better than
+			 * freeing memory a running process is in the middle
+			 * of using, and it stops within the minute.
+			 */
+			out = nil;
+			dc = nil;
+			retry = nil;
+		}
+	}
 	if(x != nil)
 		mpfree(x);
 	if(p != nil)
@@ -353,6 +430,7 @@ done:
 		cclose(cc);
 	free(in);
 	free(out);
+	free(retry);
 	free(pa);
 	pexit("osprey pair", 1);
 }
@@ -635,6 +713,19 @@ static int ospreynseg;
 static Chan *ospreyfd[16][Nfd];		/* per container, indexed as procs are */
 static Proc *ospreyprocs[16];		/* the process bound to each container */
 static Rendez ospreyservrend[16];	/* wakes a container's service process */
+
+/*
+ * What the service process does with the time a caller spends waiting
+ * for it.  The caller measures its wait as one number, and that number
+ * holds three things: the scheduler getting to this process, the work
+ * it does, and the scheduler getting back to the caller.  Only the
+ * middle one would survive a task that answered without being
+ * scheduled, so the two are worth telling apart before anything is
+ * built on the difference.  #O/bench zeroes these and reads them after.
+ */
+static uvlong ospreysrvwork;	/* answering requests and routing replies */
+static uvlong ospreysrvwake;	/* and its own sweep of the rendezvouses */
+static long ospreysrvpass;
 static Rendez ospreyselrend[16];	/* wakes a container's select */
 static int ospreyserving[16];		/* a service process is running for it */
 static uvlong ospreyservingid[16];	/* and which container it was started for */
@@ -1265,8 +1356,11 @@ ospreyserver(void *a)
 	if(waserror())
 		goto done;
 	for(;;){
+		uvlong s0, s1, s2;
+
 		if((x = ospreyindex(p)) < 0)
 			break;
+		cycles(&s0);
 		qlock(&ospreylock);
 		if(waserror()){
 			qunlock(&ospreylock);
@@ -1277,9 +1371,14 @@ ospreyserver(void *a)
 		ospreyroute(p);
 		poperror();
 		qunlock(&ospreylock);
+		cycles(&s1);
 		ospreywakeup();
 		/* a request routed to somebody else's ring is theirs to answer */
 		ospreywakeservers(x);
+		cycles(&s2);
+		ospreysrvwork += s1 - s0;
+		ospreysrvwake += s2 - s1;
+		ospreysrvpass++;
 		if(ospreyindex(p) < 0)
 			break;
 		sleep(&ospreyservrend[x], ospreyhaswork, p);
@@ -1867,6 +1966,7 @@ ospreyselectcaller(uvlong armoff, int narms)
 static Physseg ospreyfbseg;
 static Physseg ospreymouseseg;
 static Physseg ospreykbdseg;
+static Physseg ospreyptrseg;
 int ospreyfbw, ospreyfbh, ospreyfbd;
 extern int ospreyuser;		/* 0 = full personality (pc64), 1 = xup64 user path */
 
@@ -2183,6 +2283,51 @@ ospreymouseexpose(void)
 	return 0;
 }
 
+/*
+ * A page for the pointer's position, published as the physical segment
+ * "pointerpos": two ints, x then y, at offset 0.
+ *
+ * The draw server draws the arrow, because it owns the frame buffer, and
+ * to draw it it must know where the pointer is.  On the full personality
+ * it reads that out of the "mousering" page, which the aux interrupt
+ * fills with raw bytes and the user-level mouse driver decodes into a
+ * position in the same page.  On the microkernel personalities there is
+ * no such page: the PS/2 controller is granted whole to one container,
+ * whose driver reads port 0x60 itself, and the position lives in that
+ * personality's own /dev/mouse.  Arming the kernel's handler as well
+ * would drain the byte the driver's handshake waits for, so the two
+ * arrangements cannot both run - but a page holding two numbers is not
+ * an arrangement for reading the hardware, only a place for the
+ * personality that has the position to put it where the personality
+ * that has the frame buffer can see it.  Both are containers of this
+ * kernel and neither can name the other's memory; a physical segment is
+ * the memory they may share.
+ */
+static Physseg *ospreyptrpub;
+
+int
+ospreypointerexpose(void)
+{
+	uchar *pp;
+
+	if(ospreyptrpub != nil)		/* once, however many callers */
+		return 0;
+	if((pp = xspanalloc(BY2PG, BY2PG, 0)) == nil)
+		return -1;
+	memset(pp, 0, BY2PG);
+	memset(&ospreyptrseg, 0, sizeof ospreyptrseg);
+	ospreyptrseg.attr = SG_PHYSICAL;
+	ospreyptrseg.name = "pointerpos";
+	ospreyptrseg.pa = PADDR(pp);
+	ospreyptrseg.size = BY2PG;
+	if(addphysseg(&ospreyptrseg) == nil)
+		return -1;
+	ospreyptrpub = &ospreyptrseg;
+	print("osprey input: exposed a pointer position page at pa %#llux as \"pointerpos\"\n",
+		(uvlong)PADDR(pp));
+	return 0;
+}
+
 int
 ospreyframebuffer(void)
 {
@@ -2470,6 +2615,7 @@ enum {
 	Bwrite = 20, Bpwrite = 51, Bseek = 39, Boseek = 16,
 	Bcreate = 22, Bremove = 25, Bfstat = 43, Bstat = 42, Berrstr = 41, Bpipe = 21,
 	Brfork = 19, Bbind = 2, Bmount = 46, Bawait = 47, Bfd2path = 23,
+	Bchdir = 3, Bunmount = 35, Bwstat = 44,
 	/*
 	 * Not system calls: what the kernel asks the buddy on a legacy
 	 * process's behalf beyond its traps.  exec has the buddy lay a
@@ -2480,6 +2626,20 @@ enum {
 	 */
 	Bexec = 100, Bpage = 101, Bmappage = 102, Bforkfds = 103, Bdupfd = 104,
 	Bdup = 5,
+	/*
+	 * The wait for a forwarded call is not bounded by a count.  It was
+	 * fifteen thousand two-millisecond sleeps - thirty seconds - and a
+	 * call that had not been answered by then returned -1 with no
+	 * reason.  A read of a keyboard is answered when a key is pressed
+	 * and not before, and a window system's is not pressed for as long
+	 * as nobody is at the machine: rio's keyboard reader took the -1
+	 * thirty seconds in, ended its loop and shut rio down, and its
+	 * mouse reader did the same.  A call that blocks is not a call that
+	 * failed.  What ends the wait instead is the two things that mean
+	 * no answer is coming: the server is gone, or a note is pending for
+	 * this process - which is how Plan 9 interrupts a blocked call.
+	 */
+	Bsyscalltries = 0,	/* no count: see ospreybuddycall */
 	Bargoff = Odbuddyarg, Bnameoff = Odbuddyname, Bdataoff = Odbuddydata,
 	Reqsyscall = 15,	/* above every request in policy/syscall.h; the same number in cmd/p9 */
 };
@@ -2488,25 +2648,61 @@ enum {
  * Put one request to the buddy and wait for its answer: submit on the
  * legacy container's ring so the delegation carries it to the buddy,
  * service and sleep until the buddy's task has replied, and hand back
- * the reply's value.  tries bounds the wait, in 2 ms sleeps.
+ * the reply's value.  A positive tries bounds the wait in 2 ms sleeps,
+ * for a call the kernel makes on its own account and must not hang on;
+ * zero waits for as long as there is a server to answer and no note to
+ * interrupt it, which is what a blocking read needs.
  */
 static long
 ospreybuddycall(Ospreyproc *p, int tries)
 {
 	uvlong sarg[Ospreynarg], rop, rarg[Ospreynarg];
 	long status;
-	int i;
+	int i, nogone;
 
 	memset(sarg, 0, sizeof sarg);
 	sarg[0] = ospreyindex(p);	/* which slot this container's slice is: the server maps that one */
 	if(ospreysubmit(p, Reqsyscall, sarg) < 0)
 		return -1;
 	status = -1;
-	for(i = 0; i < tries; i++){
+	nogone = 0;
+	for(i = 0; tries <= 0 || i < tries; i++){
 		ospreyservicecaller();
 		if(ospreycollect(p, &rop, &status, rarg) == 0)
 			return status;
-		tsleep(&up->sleep, return0, nil, 2);
+		if(tries > 0){
+			tsleep(&up->sleep, return0, nil, 2);
+			continue;
+		}
+		/*
+		 * An unbounded wait sleeps on the container's own reply
+		 * rendezvous, which the server's routing wakes when a reply
+		 * for this container lands, and not on a two-millisecond
+		 * timer.  The timer is what the first cut used, and a caller
+		 * that blocks for as long as rio's keyboard reader does then
+		 * wakes five hundred times a second for ever: three of those
+		 * drove the server loop through a hundred and ninety thousand
+		 * requests in one boot and ended in "ilock ... key 0xdeaddead"
+		 * with timerdel waiting on the timer list that timerintr was
+		 * holding.  Twenty milliseconds is only the backstop for a
+		 * reply that arrives by some path that does not wake it.
+		 *
+		 * The only thing that ends the wait is that there is nobody
+		 * left to answer it, and even that is not decided on one
+		 * look: a container carried over the wire has its delegation
+		 * taken down and put up again, and a call in flight then sees
+		 * no server for a moment.  A note does not end it either -
+		 * interrupting a blocked call on up->notepending is what Plan
+		 * 9 does and is wrong here, because migration posts a note to
+		 * park a process and the call it is making must still finish
+		 * on the way out.
+		 */
+		if(ospreyserverof(p) == nil){
+			if(++nogone > 50)
+				return -1;
+		} else
+			nogone = 0;
+		ospreyawaitreply(20);
 	}
 	return -1;
 }
@@ -2522,6 +2718,8 @@ ospreybuddycall(Ospreyproc *p, int tries)
  */
 static long ospreymovekern(Ospreyproc*, uvlong*, int);
 static long ospreymigcall(int op, uvlong *arg, uvlong *ubuf);
+static int ospreystartedby(Ospreyproc*, Ospreyproc*);
+static int ospreynotecontainer(Ospreyproc*, char*, int);
 uintptr
 #define ReqIoport 20	/* xcall op: grant I/O ports (above ReqPip 18) */
 #define ReqKbdnotify 21	/* xcall op: route IRQ1 to the caller as a notification */
@@ -2539,6 +2737,12 @@ uintptr
 #define ReqKick 33	/* xcall op: a server has put work on a container's output queue in memory; wake that container's select */
 #define ReqCheckticket 34	/* xcall op: a ticket in the caller's data area at arg[0]; the kernel says whom it names, or no */
 #define ReqTicket 35	/* xcall op: a ticket for the name at arg[0] in the caller's data area, for the caller's container, good arg[1] seconds */
+#define ReqNsec 36	/* xcall op: the kernel's clock in nanoseconds, which the personality serves as /dev/bintime */
+#define ReqPostnote 37	/* xcall op: post a note to a container the caller serves, on behalf of one it also serves */
+#define ReqWhoami 38	/* xcall op: which slot the caller's own slice is, so it can map it */
+#define ReqSyscallup 39	/* xcall op: the caller serves its own legacy program's system calls, at the address in arg[0] */
+#define ReqFaultup 41	/* xcall op: and where a fault in that program goes, since a request carries only three words */
+#define ReqSyscallret 40	/* xcall op: that service is done - put the frame in arg[0] back, with arg[1] as the call's value.  Answered in dosyscall, not here, because its own return value must not land on the one it is substituting */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2651,6 +2855,81 @@ ospreyxcall(va_list list)
 		ubuf[3] = ospreyhz;
 		return 0;
 	}
+	if(op == ReqPostnote){
+		/*
+		 * postnote(2), which is not a system call: libc writes
+		 * /proc/n/note or /proc/n/notepg, and it is the personality
+		 * that holds a program's name space, so the write arrives at
+		 * the personality and the personality asks here.  The note
+		 * itself is the kernel's to post - it is the kernel that holds
+		 * the processes - so this is where the two meet.
+		 *
+		 * arg[0] is the container to post to, arg[1] the container
+		 * asking (which is not the caller: the caller is the
+		 * personality, speaking for one of the containers it serves),
+		 * and arg[2] is non-zero for the group form.  The note's text
+		 * is at Odnote in the caller's data area, a fixed place both
+		 * sides read out of ospreydata.h: a request carries three
+		 * words and no more (Ospreynarg), so an offset would have cost
+		 * the slot the group flag needs.
+		 *
+		 * Authority is two questions and both are asked.  May this
+		 * personality speak for the asking container - is it one this
+		 * caller serves?  And may that container post to the target -
+		 * is the target itself, or a container it started?  A
+		 * container may interrupt what it started and nothing else,
+		 * which is the least that lets a window system stop the
+		 * command in a window, and is not "any container may note any
+		 * other".
+		 */
+		Ospreyproc *target, *asking;
+		char note[Odnotelen];
+		uchar *nd;
+		int i;
+
+		if((target = ospreylookup(arg[0])) == nil){
+			print("osprey: a note was asked for container %llud, which is not a container\n", arg[0]);
+			return -1;
+		}
+		if((asking = ospreylookup(arg[1])) == nil || ospreyserverof(asking) != up->osprey){
+			print("osprey: container %llud asked to note on behalf of %llud, which it does not serve\n",
+				up->osprey != nil ? ospreyid(up->osprey) : 0, arg[1]);
+			return -1;		/* the caller does not serve the container it speaks for */
+		}
+		if(target != asking && !ospreystartedby(asking, target)){
+			print("osprey: container %llud asked to note container %llud and was refused: it did not start it\n",
+				ospreyid(asking), ospreyid(target));
+			return -1;
+		}
+		if((nd = ospreydata(up->osprey, Odnote, Odnotelen)) == nil){
+			print("osprey: the note window is outside container %llud's data area\n",
+				up->osprey != nil ? ospreyid(up->osprey) : 0);
+			return -1;
+		}
+		for(i = 0; i < Odnotelen - 1 && nd[i] != 0; i++)
+			note[i] = nd[i];
+		note[i] = 0;
+		i = ospreynotecontainer(target, note, arg[2] != 0);
+		if(i <= 0){
+			print("osprey: container %llud has no process to give the note \"%s\" to\n", ospreyid(target), note);
+			return -1;
+		}
+		ubuf[0] = i;
+		return 0;
+	}
+	if(op == ReqNsec){
+		/*
+		 * The clock, read.  ReqSettime is how a task sets it; this is
+		 * how one reads it, and it is here rather than left to the
+		 * personality because the personality has no clock of its own
+		 * - p9shim.c's seconds() answers 0.  What a program actually
+		 * calls is nsec(2), and 9front's nsec(2) is not a system call
+		 * at all: it reads /dev/bintime.  So the personality serves
+		 * that file (devtime.c) out of this.
+		 */
+		ubuf[0] = (uvlong)todget(nil, nil);
+		return 0;
+	}
 	if(op == ReqNote){
 		/*
 		 * A note by request: delivered on the way back to user mode
@@ -2689,6 +2968,89 @@ ospreyxcall(va_list list)
 		ubuf[0] = 0;
 		return 0;
 	}
+	if(op == ReqSyscallup){
+		/*
+		 * The caller will serve the system calls its own address
+		 * space's legacy program makes.  This is the library
+		 * operating system asking for the traps of a binary it did
+		 * not compile - the one thing a program built against libc
+		 * rather than against the P9lib table needs from it.
+		 *
+		 * The address is the caller's own text and is checked as
+		 * such; 0 takes the service back, which is what the
+		 * personality does the moment its legacy program returns.
+		 *
+		 * arg[1] and arg[2] are the image the legacy program was laid
+		 * in, and they are what tells one caller from the other.  A
+		 * task here has many flows and they all trap: the
+		 * personality's own flows ask this kernel for select and for
+		 * the console while the program runs, and those are not calls
+		 * to hand to a Plan 9 name space.  The program's traps come
+		 * from its own text and nothing else does.
+		 */
+		if(arg[0] != 0 && !okaddr((uintptr)arg[0], 1, 0)){
+			print("osprey: container %llud offered to serve its own system calls at %#llux, which is not its memory\n",
+				ospreyid(up->osprey), arg[0]);
+			return -1;
+		}
+		up->p9syscallup = (uintptr)arg[0];
+		up->p9progbase = (uintptr)arg[1];
+		up->p9progend = (uintptr)arg[2];
+		up->p9insyscallup = 0;
+		/*
+		 * And the note handler is the program's, so it goes with the
+		 * program.  Leaving it set was a loop rather than a mistake
+		 * one could miss: the next program, laid over the last one's
+		 * image, faulted, and the kernel handed the note to an
+		 * address in the image that no longer held a handler - which
+		 * faulted again, at the same pc, for ever.
+		 */
+		up->notify = nil;
+		up->notified = 0;
+		up->noteureg = nil;
+		up->p9haveprognote = 0;
+		if(up->p9syscallup == 0)
+			print("osprey user: %s serves no program's system calls any more; they are this kernel's again\n",
+				up->text);
+		else
+			print("osprey user: %s serves the system calls made from %#p to %#p - its legacy program's image - at %#p\n",
+				up->text, up->p9progbase, up->p9progend, up->p9syscallup);
+		ubuf[0] = 0;
+		return 0;
+	}
+	if(op == ReqFaultup){
+		/*
+		 * And where a fault in that program is to be handed, which is
+		 * a request of its own only because a request carries three
+		 * words and the one above uses them.
+		 */
+		if(arg[0] != 0 && !okaddr((uintptr)arg[0], 1, 0))
+			return -1;
+		up->p9faultup = (uintptr)arg[0];
+		ubuf[0] = 0;
+		return 0;
+	}
+	if(op == ReqWhoami){
+		/*
+		 * Which slot this container's slice is.
+		 *
+		 * A container that wants to select has to write its arms into
+		 * its own data area, and to write there it has to map the
+		 * slice - by the name the slot gives it.  The server knows its
+		 * own slot because it was told at startup, in the argument the
+		 * kernel exec'd it with; a container that was not told has no
+		 * way to find out, and mapping every slot it is allowed and
+		 * guessing which is its own is not finding out.
+		 *
+		 * The kernel knows: it is the container of the calling
+		 * process.  Answering costs nothing and tells the caller only
+		 * about itself.
+		 */
+		if(up->osprey == nil)
+			return -1;
+		ubuf[0] = (uvlong)ospreyindex(up->osprey);
+		return 0;
+	}
 	if(op == ReqMousenotify){
 		ospreymouseproc = up->osprey;	/* whose semaphore the aux interrupt gives */
 		ospreymousesem = (int)arg[0];	/* its OWN semaphore, distinct from the keyboard's */
@@ -2722,12 +3084,25 @@ ospreybuddydup(int oldfd, int newfd)
 {
 	extern long ospreybuddyforward(ulong, uintptr*);
 	uintptr a[2];
+	long r;
 
 	if(!ospreybuddyhas())
 		return -1;
 	a[0] = (uintptr)oldfd;
 	a[1] = (uintptr)newfd;
-	return (long)ospreybuddyforward(Bdup, a);
+	r = (long)ospreybuddyforward(Bdup, a);
+	/*
+	 * A dup onto 0, 1 or 2 is a shell redirecting: that descriptor is no
+	 * longer this personality's console but a file or a pipe the buddy
+	 * holds, so writes to it must go to the buddy from now on.  The
+	 * kernel sees every dup a legacy program makes (the config routes
+	 * them here), which is what lets it keep the console fast path for
+	 * every program that has not redirected - a legacy program's print
+	 * stays one call and does not become a ring round trip.
+	 */
+	if(r >= 0 && r < 3)
+		up->buddyredir |= 1 << r;
+	return r;
 }
 
 int
@@ -2736,12 +3111,107 @@ ospreybuddyhas(void)
 	return up->osprey != nil && ospreyserverof(up->osprey) != nil;
 }
 
+/*
+ * Touch every page of a user range, so that the faults it needs are
+ * taken before a forwarded call is built rather than in the middle of
+ * building one.  A page fault taken while a call is half built makes
+ * the kernel forward a page request of its own, and that request uses
+ * the same argument block in the same container's slice; the call that
+ * was being built is then submitted carrying the page request's op and
+ * arguments.  What that looked like from inside a container was its
+ * very first open(2) failing, whatever it named, with no error string
+ * set anywhere and the buddy having been asked for page 0.
+ */
+static void
+ospreytouch(uintptr va, ulong max)
+{
+	uintptr a, e;
+
+	if(max == 0)
+		return;
+	e = va + max;
+	for(a = va; a < e; a = (a + BY2PG) & ~(uintptr)(BY2PG-1))
+		if(okaddr(a, 1, 0))
+			USED(*(volatile uchar*)a);
+		else
+			return;
+}
+
 static long ospreyforkkern(Ospreyproc*, ulong);
 static long ospreylegacyawait(Ospreyproc*, uintptr, int);
 
 long
+/*
+ * Which Linux errno a failed call should carry.  9P has no errno: the
+ * buddy answers a failure with a message, and errstr(2) is how a Plan 9
+ * program asks for it.  A Linux program has no such call - it reads the
+ * small negative number the kernel returned - so the message has to
+ * become a number here, and the only place it can be got is from the
+ * buddy, by the same errstr the Plan 9 side uses.  One extra round trip,
+ * on the failure path only.
+ *
+ * Two names are worth telling apart, because a program acts on them: a
+ * file that is not there (ENOENT, which is what "create it if missing"
+ * tests for) and one it may not have (EACCES).  Everything else is EIO,
+ * which says no more than the message did.  Matching text is what the
+ * information allows; inventing a number from nothing would be worse.
+ */
+static int
+ospreylinuxerrno(Ospreyproc *p)
+{
+	enum { Lenoent = 2, Leacces = 13, Leio = 5, Leinval = 22 };
+	uvlong *ab;
+	uchar *dd;
+	char buf[ERRMAX];
+	long n, i;
+
+	ab = (uvlong*)ospreydata(p, Bargoff, 4*sizeof(uvlong));
+	if(ab == nil)
+		return Leio;
+	ab[1] = 0; ab[2] = sizeof buf - 1; ab[3] = 0;
+	ab[0] = Berrstr;
+	n = ospreybuddycall(p, Bsyscalltries);
+	if(n <= 0)
+		return Leio;
+	if(n > (long)sizeof buf - 1)
+		n = sizeof buf - 1;
+	dd = ospreydata(p, Bdataoff, n);
+	if(dd == nil)
+		return Leio;
+	for(i = 0; i < n; i++)
+		buf[i] = dd[i];
+	buf[n] = 0;
+	/*
+	 * A buffer too small for what was asked for.  Plan 9 says so in
+	 * words ("i/o count too small", "read or write too small", "stat
+	 * buffer too small"); Linux says EINVAL, and a program that reads a
+	 * directory into a buffer too small for one entry is expected to
+	 * see that and try a bigger one.  EIO would tell it the disk is
+	 * broken, and it would stop.
+	 */
+	if(strstr(buf, "too small") != nil)
+		return Leinval;
+	if(strstr(buf, "does not exist") != nil || strstr(buf, "not found") != nil)
+		return Lenoent;
+	if(strstr(buf, "permission denied") != nil)
+		return Leacces;
+	return Leio;
+}
+
 ospreybuddyforward(ulong scallnr, uintptr *a)
 {
+	int linuxstat = 0;	/* the answer is a 9P stat to be handed back as a Linux one */
+	int linuxdents = 0;	/* ... or 9P stats to be handed back as Linux directory entries */
+	int linuxrename = 0;	/* ... or two paths to be sent as a wstat naming the second */
+	enum {
+		Atfdcwd = -100,		/* openat's "relative to the working directory" */
+		Lexdev = 18,		/* a rename that would cross directories */
+		Lcreat = 0100,		/* O_CREAT */
+		Ltrunc = 01000,		/* O_TRUNC */
+		Lenosys = 38,
+		Lbadio = 5,		/* EIO, when a message this builds will not marshal */
+		Lstatroom = 512,	/* room asked of the buddy for a 9P stat message */
+	};
 	Ospreyproc *p;
 	uvlong *ab;
 	uchar *nd, *dd;
@@ -2786,22 +3256,151 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		return ospreylegacyawait(p, a[0], (int)a[1]);
 
 	if(up->oslinux){
-		/* Linux system-call numbers to their Plan 9 equivalents; the
-		 * argument positions (descriptor, buffer, count) already line up. */
+		/* Linux system-call numbers to their Plan 9 equivalents; for
+		 * these five the argument positions (descriptor, buffer,
+		 * count) already line up. */
 		switch(scallnr){
 		case 0:  scallnr = Bread;  break;	/* read */
 		case 2:  scallnr = Bopen;  break;	/* open */
 		case 3:  scallnr = Bclose; break;	/* close */
 		case 8:  scallnr = Boseek; break;	/* lseek(fd, off, whence): the argument shape Plan 9's oseek has, not seek's, whose answer goes through a pointer Linux does not pass */
 		case 1:  scallnr = Bwrite; break;	/* write */
-		default: return -1;
+		/*
+		 * And three whose arguments do not line up.  These are the
+		 * calls a Linux binary built against a libc actually makes:
+		 * open(2) compiles to openat(AT_FDCWD, ...) in both glibc and
+		 * musl, and a program finds its way about a file with stat.
+		 */
+		case 257:			/* openat(dirfd, path, flags, mode) */
+			/*
+			 * Only the two forms that mean what Plan 9's open
+			 * means: relative to the working directory, which is
+			 * what AT_FDCWD says, or an absolute path, for which
+			 * the descriptor is not consulted.  A path relative to
+			 * some other open directory is a name this buddy has
+			 * no way to resolve, and is refused rather than
+			 * answered as though the descriptor were not there.
+			 */
+			if((long)a[0] != Atfdcwd && ((char*)a[1])[0] != '/')
+				return -Lenosys;
+			a[0] = a[1];		/* path where Plan 9's open wants it */
+			a[1] = a[2];		/* and the flags after it */
+			a[2] = a[3];		/* and the mode a create would want */
+			/*
+			 * Linux's flags are not Plan 9's, and passing them
+			 * through worked only because the two agree on the
+			 * bottom two bits: O_RDONLY, O_WRONLY and O_RDWR are
+			 * 0, 1 and 2, which is OREAD, OWRITE and ORDWR.
+			 * Nothing above those two bits agrees.  O_TRUNC is
+			 * 0x200 and OTRUNC is 16, so a program opening a file
+			 * to overwrite it handed Plan 9 a mode bit that means
+			 * nothing, and the open was refused.  And O_CREAT,
+			 * which is how a Linux program makes a file at all,
+			 * has no counterpart: Plan 9 creates with a call of
+			 * its own, so a create has to become one.
+			 */
+			{
+				ulong lf = (ulong)a[1];
+				ulong pm = lf & 3;		/* the two bits that agree */
+
+				if(lf & Ltrunc)
+					pm |= OTRUNC;
+				if(lf & Lcreat){
+					a[1] = pm & ~(ulong)OTRUNC;	/* create truncates by making */
+					a[2] = a[2] & 0777;
+					scallnr = Bcreate;
+					break;
+				}
+				a[1] = pm;
+			}
+			scallnr = Bopen;
+			break;
+		case 4:				/* stat(path, statbuf) */
+			linuxstat = 1;
+			a[2] = Lstatroom;	/* room for the 9P message the buddy answers with */
+			scallnr = Bstat;
+			break;
+		case 5:				/* fstat(fd, statbuf) */
+			linuxstat = 1;
+			a[2] = Lstatroom;
+			scallnr = Bfstat;
+			break;
+		case 87:			/* unlink(path) */
+		case 263:			/* unlinkat(dirfd, path, flags) */
+			/*
+			 * A program that can make a file and cannot remove one
+			 * is an odd thing, and that is what this was: create
+			 * and rename were mapped and remove was not.  Plan 9's
+			 * remove takes down a directory as readily as a file,
+			 * so AT_REMOVEDIR asks for nothing extra and is not
+			 * examined.
+			 */
+			if(scallnr == 263){
+				if((long)a[0] != Atfdcwd && ((char*)a[1])[0] != '/')
+					return -Lenosys;
+				a[0] = a[1];
+			}
+			scallnr = Bremove;
+			break;
+		case 82:			/* rename(oldpath, newpath) */
+		case 264:			/* renameat(olddirfd, old, newdirfd, new) */
+			/*
+			 * A rename is a wstat in Plan 9: the file named, and a
+			 * Dir whose every field is left alone but the name.
+			 * The message is built below rather than copied from
+			 * the program, because the program has no Dir to
+			 * build - it passed two paths.
+			 *
+			 * Only within one directory.  Linux's rename moves a
+			 * file between directories and a wstat does not, so a
+			 * new path naming another directory is refused with
+			 * EXDEV, which is the errno for exactly this - a
+			 * rename that would have to be a copy - and is what a
+			 * caller already knows how to handle.
+			 */
+			if(scallnr == 264){
+				if((long)a[0] != Atfdcwd || (long)a[2] != Atfdcwd)
+					return -Lexdev;
+				a[0] = a[1];	/* the two paths where rename has them */
+				a[1] = a[3];
+			}
+			linuxrename = 1;
+			scallnr = Bwstat;
+			break;
+		case 217:			/* getdents64(fd, buf, count) */
+			/*
+			 * A directory read.  The arguments line up with
+			 * read(2)'s, and what comes back does not: the buddy
+			 * answers a directory read with 9P stat messages and
+			 * Linux wants dirent64 records.  The program was
+			 * getting the 9P ones through read(2) and could make
+			 * nothing of them; anything from a toolchain calls
+			 * this number instead.
+			 */
+			linuxdents = 1;
+			scallnr = Bread;
+			break;
+		default:
+			/*
+			 * A number this kernel does not map.  -38 rather than
+			 * -1 so the caller can answer the program with ENOSYS,
+			 * which is what a program tests for, and tell it from
+			 * a call that was made and failed.
+			 */
+			return -38;
 		}
 	}
 
 	ab = (uvlong*)ospreydata(p, Bargoff, 4*sizeof(uvlong));
 	if(ab == nil)
 		return -1;
-	ab[0] = scallnr;
+	/*
+	 * The call's own number goes in below, after everything that can
+	 * fault has faulted, and not here: a page fault taken while the
+	 * call is being built forwards a page request through this same
+	 * argument block, and a number written before that would be gone
+	 * by the time the call was submitted.  See ospreytouch above.
+	 */
 
 	/*
 	 * A Plan 9 system call's arguments arrive one to an eight-byte slot,
@@ -2831,6 +3430,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -2839,13 +3439,76 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		break;
 	case Bclose:				/* close(fd) */
 		ab[1] = Aint(a[0]); ab[2] = 0; ab[3] = 0;
+		/*
+		 * A closed 0, 1 or 2 is not the console any more.  It used to
+		 * be: the buddy put the console sentinel back, so clearing the
+		 * mark was right.  It does not now - a close frees the slot,
+		 * because open(2) must be able to return the lowest free
+		 * descriptor, which is how a program replaces its own standard
+		 * input or output.  So the mark goes ON: from the close
+		 * onwards that descriptor is whatever the buddy has for it,
+		 * which is nothing until something is opened onto it, and a
+		 * write to it is the buddy's to answer or to refuse.  rio's
+		 * winshell closes 0 and 1 and opens the window's /dev/cons on
+		 * them; with the mark cleared its shell wrote to the machine's
+		 * console instead of to the window.
+		 */
+		if((long)a[0] >= 0 && (long)a[0] < 3)
+			up->buddyredir |= 1 << (int)a[0];
 		break;
-	case Bread: case Bpread:		/* read(fd,buf,n) / pread(fd,buf,n,off): n is a long, its slot whole */
+	case Bread: case Bpread:		/* read(fd,buf,n) / pread(fd,buf,n,off) */
+		/*
+		 * The count is a 32-bit long in a 64-bit slot, and the top
+		 * half is whatever the caller's stack held there.  This said
+		 * "n is a long, its slot whole" and passed all eight bytes
+		 * on, which worked only because the buddy casts to (long) and
+		 * throws the top half away: a read of 512 arrives here as
+		 * 0x7fff00000200.  It is taken from the low half now, as a
+		 * signed 32-bit long, so a negative one stays negative.
+		 *
+		 * It is not clamped to the buddy's data block, and the reason
+		 * is written down in doc/osprey-progress.ms: a short read is
+		 * right for a file and wrong for a message, and the 9P a
+		 * window's container reads from rio's file server is a
+		 * message.  Clamping it took rio apart.  A read or write
+		 * larger than the data area is still an overrun, and the fix
+		 * is to make the area hold what a program asks for rather
+		 * than to cut what it asked.
+		 */
 		ab[1] = Aint(a[0]);
-		ab[2] = a[2];
+		ab[2] = (uvlong)(long)(int)(a[2] & 0xffffffffULL);
 		ab[3] = scallnr == Bpread ? a[3] : (uvlong)-1;
 		break;
 	case Bwrite: case Bpwrite:		/* the data must already be at Bdataoff */
+		/*
+		 * Fault the caller's buffer in before the slice is filled,
+		 * and only as much of it as can go: ospreydata below refuses
+		 * a count past the data block, and walking a quarter of a
+		 * million pages of a segment first, to be told no, is not
+		 * work worth doing.
+		 */
+		/*
+		 * The count, taken from the low half of its slot for the
+		 * reason the read above gives, and clamped to the block the
+		 * data goes in.  Clamping it to a block of four kilobytes cut
+		 * rio's draw messages and took the window system apart; the
+		 * block is eight now, which is twice rio's largest write, so
+		 * the clamp is a bound and not a cut.  A write larger than
+		 * the block cannot be carried whole by this transport, and a
+		 * short write - which a caller loops on - is the honest
+		 * answer to it.  Without the clamp the buddy reads the count
+		 * it was given out of a block that does not hold it, which is
+		 * a read past the data area and bytes from somewhere else
+		 * written to the file.
+		 */
+		{
+			long n = (long)(int)(a[2] & 0xffffffffULL);
+
+			if(n > Odbuddydatalen)
+				n = Odbuddydatalen;
+			a[2] = (uvlong)n;
+		}
+		ospreytouch(a[1], (ulong)a[2]);
 		dd = ospreydata(p, Bdataoff, a[2]);
 		if(dd != nil)
 			for(i = 0; i < (long)a[2]; i++)
@@ -2874,6 +3537,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -2886,6 +3550,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -2898,12 +3563,80 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	case Bfd2path:				/* fd2path(fd, buf, nbuf): the path back at Bdataoff */
 		ab[1] = Aint(a[0]); ab[2] = Aint(a[2]); ab[3] = 0;
 		break;
+	case Bwstat:				/* wstat(name, edir, nedir): name at Bnameoff, the message the caller built at Bdataoff */
+		nd = ospreydata(p, Bnameoff, 256);
+		if(nd == nil)
+			return -1;
+		{
+			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
+			for(i = 0; i < 255 && name[i] != 0; i++)
+				nd[i] = name[i];
+			nd[i] = 0;
+		}
+		if(linuxrename){
+			/*
+			 * A Linux rename: the program passed two paths, so the
+			 * Dir is built here.  The new path's last element is
+			 * the name; anything before it would be a move between
+			 * directories, which a wstat is not.
+			 */
+			char *np = (char*)a[1], *base;
+			Dir d;
+			long dn;
+
+			ospreytouch(a[1], 256);
+			for(i = 0, base = np; i < 255 && np[i] != 0; i++)
+				if(np[i] == '/')
+					base = np + i + 1;
+			if(base != np && (base - np) > 0){
+				/*
+				 * A directory was named.  It is the same
+				 * directory only if the old path names it too;
+				 * comparing the two prefixes is what says so.
+				 */
+				char *op = (char*)nd;
+				long k = base - np - 1;
+				long ol = 0;
+
+				while(ol < 255 && op[ol] != 0)
+					ol++;
+				while(ol > 0 && op[ol-1] != '/')
+					ol--;
+				if(ol == 0 || ol - 1 != k || memcmp(op, np, k) != 0)
+					return -Lexdev;
+			}
+			dd = ospreydata(p, Bdataoff, Odbuddydatalen);
+			if(dd == nil)
+				return -1;
+			memset(&d, ~0, sizeof d);	/* every field: leave it alone */
+			d.name = base;
+			d.uid = d.gid = d.muid = "";
+			dn = convD2M(&d, dd, 512);
+			if(dn <= BIT16SZ)
+				return -Lbadio;
+			ab[1] = 0; ab[2] = Aint(dn); ab[3] = 0;
+			break;
+		}
+		/*
+		 * And the message itself goes out with the call, the way a
+		 * write's data does: this is the one call whose argument is a
+		 * marshalled Dir the program made.
+		 */
+		ospreytouch(a[1], a[2] > Odbuddydatalen ? Odbuddydatalen : (ulong)a[2]);
+		dd = ospreydata(p, Bdataoff, a[2]);
+		if(dd != nil)
+			for(i = 0; i < (long)a[2]; i++)
+				dd[i] = ((uchar*)a[1])[i];
+		ab[1] = 0; ab[2] = Aint(a[2]); ab[3] = 0;
+		break;
 	case Bstat:				/* stat(name, edir, nedir): name at Bnameoff, message back at Bdataoff */
 		nd = ospreydata(p, Bnameoff, 256);
 		if(nd == nil)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -2925,6 +3658,8 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0], *old = (char*)a[1];
+			ospreytouch(a[0], 256);
+			ospreytouch(a[1], 256);
 			for(i = 0; i < 127 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -2940,6 +3675,8 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *old = (char*)a[2], *spec = (char*)a[4];
+			ospreytouch(a[2], 256);
+			ospreytouch(a[4], 256);
 			for(i = 0; i < 127 && old[i] != 0; i++)
 				nd[i] = old[i];
 			nd[i] = 0;
@@ -2949,15 +3686,160 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		}
 		ab[1] = Aint(a[0]); ab[2] = Aint(a[3]); ab[3] = 0;	/* fd, flag */
 		break;
+	case Bchdir:				/* chdir(name): name at Bnameoff */
+		nd = ospreydata(p, Bnameoff, 256);
+		if(nd == nil)
+			return -1;
+		{
+			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
+			for(i = 0; i < 255 && name[i] != 0; i++)
+				nd[i] = name[i];
+			nd[i] = 0;
+		}
+		ab[1] = 0; ab[2] = 0; ab[3] = 0;
+		break;
+	case Bunmount:				/* unmount(name, old): name at Bnameoff, old just past it */
+		nd = ospreydata(p, Bnameoff, 512);
+		if(nd == nil)
+			return -1;
+		{
+			/*
+			 * name may be nil, which is Plan 9's "everything mounted
+			 * on old": it crosses as an empty string, since what the
+			 * buddy reads is a byte at a fixed offset and there is no
+			 * nil to send.
+			 */
+			char *name = (char*)a[0], *old = (char*)a[1];
+			ospreytouch(a[0], 256);
+			ospreytouch(a[1], 256);
+			if(name == nil)
+				nd[0] = 0;
+			else {
+				for(i = 0; i < 127 && name[i] != 0; i++)
+					nd[i] = name[i];
+				nd[i] = 0;
+			}
+			for(i = 0; i < 127 && old[i] != 0; i++)
+				nd[128+i] = old[i];
+			nd[128+i] = 0;
+		}
+		ab[1] = 0; ab[2] = 0; ab[3] = 0;
+		break;
 	default:
 		return -1;			/* a trap the buddy does not emulate */
 	}
 #undef Aint
 
-	status = ospreybuddycall(p, 400);
+	/*
+	 * A forwarded system call may legitimately take a long time - a read
+	 * of a pipe waits for whoever writes it, which is another process
+	 * entirely and may not have run yet - so it is given far longer than
+	 * the kernel's own asks of the buddy (a page, a descriptor clone),
+	 * which either answer at once or have gone wrong.  Thirty seconds:
+	 * past it the call is -1 to the program, which for a read is an
+	 * error and not an end of file, so a pipeline that outran it would
+	 * say so rather than quietly read short.
+	 */
+	ab[0] = scallnr;		/* last, for the reason above */
+	status = ospreybuddycall(p, Bsyscalltries);
 	if(status < 0)
-		return -1;
+		return up->oslinux ? -ospreylinuxerrno(p) : -1;
 
+	if(linuxrename && status >= 0)
+		return 0;		/* Plan 9's wstat yields the message's length; Linux's rename yields 0 */
+	if(linuxdents && status > 0){
+		/*
+		 * A Linux directory read.  The buddy answered with 9P stat
+		 * messages, one after another; Linux wants dirent64 records:
+		 * inode[8] offset[8] reclen[2] type[1] name[], each record
+		 * rounded up to eight bytes.  A 9P stat is the longer of the
+		 * two (it carries three owner strings this does not), so the
+		 * translation only ever shrinks and cannot overrun the
+		 * program's buffer.
+		 *
+		 * The 9P stat's fixed part is 41 bytes - size[2] type[2]
+		 * dev[4] qid[13] mode[4] atime[4] mtime[4] length[8] - and
+		 * the name's own count follows it.  There are no inode
+		 * numbers here, so the qid path is what stands for one: it is
+		 * what 9P has that names a file uniquely, which is what an
+		 * inode number is for.
+		 */
+		enum { Ldtdir = 4, Ldtreg = 8, P9statfix = 41 };
+		uchar *dst = (uchar*)a[1];
+		long in, out, nl, rec;
+
+		validaddr((uintptr)dst, status, 1);
+		dd = ospreydata(p, Bdataoff, status);
+		if(dd == nil)
+			return -1;
+		out = 0;
+		for(in = 0; in + P9statfix + BIT16SZ <= status; ){
+			long m = BIT16SZ + GBIT16(dd+in);
+
+			if(m < P9statfix + BIT16SZ || in + m > status)
+				break;
+			nl = GBIT16(dd+in+P9statfix);
+			if(nl < 0 || in + P9statfix + BIT16SZ + nl > status)
+				break;
+			rec = 19 + nl + 1;
+			rec = (rec + 7) & ~7L;
+			if(out + rec > status)
+				break;		/* what does not fit waits for the next read */
+			PBIT64(dst+out, GBIT64(dd+in+13));	/* the qid path, for an inode number */
+			PBIT64(dst+out+8, (uvlong)(out + rec));	/* the offset of the next record */
+			PBIT16(dst+out+16, (ushort)rec);
+			dst[out+18] = (GBIT8(dd+in+8) & QTDIR) != 0 ? Ldtdir : Ldtreg;
+			for(i = 0; i < nl; i++)
+				dst[out+19+i] = dd[in+P9statfix+BIT16SZ+i];
+			for(i = 19+nl; i < rec; i++)
+				dst[out+i] = 0;
+			out += rec;
+			in += m;
+		}
+		return out;
+	}
+	if(linuxstat && status > 0){
+		/*
+		 * A Linux stat.  The buddy answers with a 9P stat message,
+		 * which is not what the program's buffer is: x86-64 Linux
+		 * wants a 144-byte struct stat, and the two agree on almost
+		 * nothing.  Translate what a program actually reads - the
+		 * kind of the file, its permissions, its length - and leave
+		 * the rest zero rather than inventing it: this file system
+		 * has no inode numbers, no link counts and no device numbers
+		 * to report, and a made-up one would be worse than a zero.
+		 *
+		 * The 9P stat's fixed part: size[2] type[2] dev[4] qid[13]
+		 * mode[4] atime[4] mtime[4] length[8], so the mode is at 21
+		 * and the length at 33.
+		 */
+		enum {
+			Lstsize = 144,		/* sizeof(struct stat) on x86-64 */
+			Lstnlink = 16, Lstmode = 24, Lstsizeoff = 48,
+			Lstblksize = 56, Lstblocks = 64,
+			Lifdir = 040000, Lifreg = 0100000,
+		};
+		uchar *dst = (uchar*)a[1];
+		ulong p9mode, lmode;
+		vlong len;
+
+		validaddr((uintptr)dst, Lstsize, 1);
+		dd = ospreydata(p, Bdataoff, status);
+		if(dd == nil || status < 41)
+			return -1;
+		p9mode = GBIT32(dd+21);
+		len = (vlong)GBIT64(dd+33);
+		lmode = (p9mode & 0777) | ((p9mode & DMDIR) != 0 ? Lifdir : Lifreg);
+		for(i = 0; i < Lstsize; i++)
+			dst[i] = 0;
+		PBIT64(dst+Lstnlink, (uvlong)1);
+		PBIT32(dst+Lstmode, (ulong)lmode);
+		PBIT64(dst+Lstsizeoff, (uvlong)len);
+		PBIT64(dst+Lstblksize, (uvlong)4096);
+		PBIT64(dst+Lstblocks, (uvlong)((len + 511) / 512));
+		return 0;			/* Linux stat yields 0, not a byte count */
+	}
 	if((scallnr == Bread || scallnr == Bpread || scallnr == Bfstat || scallnr == Bstat || scallnr == Berrstr || scallnr == Bfd2path) && status > 0){
 		/* read/fstat/stat/fd2path return their bytes in a[1]; errstr in a[0] */
 		uchar *dst = (uchar*)(scallnr == Berrstr ? a[0] : a[1]);
@@ -3211,7 +4093,18 @@ uvlong kdebugputsbytes;		/* main.c counts what went out through the bare console
  * queue cannot yet.  Only the FIFO itself overflowing - the task sixteen
  * kilobytes behind - or a panic goes to the port.
  */
-enum { Consfifo = 16*1024 };
+/*
+ * The FIFO the console task drains.  When it fills, the caller writes
+ * the port itself instead of queueing - which is right for a panic and
+ * wrong for everything else: the task is pushing queued bytes at the
+ * same moment, so the two writers cross and a line comes out cut in
+ * half.  That is what the check transients were, every one of them: a
+ * criterion matching a whole sentence, and the sentence split by a
+ * kernel print that went round the queue.  128K rather than 16K, so a
+ * burst is queued rather than overtaking; the count of what still went
+ * direct is printed at the end of a run, and it is the number to watch.
+ */
+enum { Consfifo = 128*1024 };
 static char consfifo[Consfifo];
 static ulong consin, consout;		/* under ospreyconslock; consin - consout is what waits */
 static ulong consslotsum[Nconsslot];	/* a checksum of each slot as filled, checked when the task starts to push it */
@@ -3335,6 +4228,20 @@ ospreyconsdrained(Ospreyproc *p)
 	iunlock(&ospreyconslock);
 	if(consout != consin && (x = ospreyindex(p)) >= 0 && x < nelem(ospreyselrend))
 		wakeup(&ospreyselrend[x]);
+}
+
+/*
+ * Is the running process the console task's own?  A fault it takes must
+ * not be printed into the queue it is itself supposed to drain: those
+ * bytes would sit there until it ran again, which is exactly what a
+ * faulting task may not do.  trap.c asks this and writes the port
+ * directly for that one process, and goes through the queue - in order
+ * with everything else - for every other.
+ */
+int
+ospreyisconsoleproc(void)
+{
+	return up != nil && up->osprey != nil && up->osprey == ospreyconsproc;
 }
 
 /* a task's write to the console: through the console task, or the port when there is none */
@@ -3483,13 +4390,86 @@ struct Ospreychild {
 	long	status;
 	int	waiting;	/* the parent has asked and is owed a reply */
 	uvlong	waitseq;	/* the sequence of that wait request */
+	int	nowait;		/* forked RFNOWAIT: no status is kept for it */
 };
-static Ospreychild ospreychildren[8];
+/*
+ * What this table holds is who started whom.  Two things read it: wait,
+ * which needs the entry to survive the child's exit until the parent
+ * asks; and the note rule, which needs it to say that a container may
+ * note what it started.  A child forked RFNOWAIT is one the parent has
+ * said it will never wait for - libthread forks every one of its procs
+ * that way - so its entry is freed the moment it exits rather than kept
+ * for a reap that will not come.  Without that the table fills with the
+ * dead: rio's four startup procs and every window's, and then a fork
+ * returns -1, libthread retries it silently for ever, and no window is
+ * ever made.  Sixty-four rather than eight because eight is the number
+ * that ran out, and this is one entry per live child on the machine.
+ */
+static Ospreychild ospreychildren[64];
+static int nchildfull;
 enum {
 	Xreqwait = 4,		/* ReqWait and ReplyDone in policy/syscall.h, which the */
 	Xreplydone = 1,		/* device does not include; the adapter checks the same values */
 };
 static uvlong ospreynextid = 100;	/* container identities for programs exec starts */
+
+/*
+ * Did this container start that one?  The child table is what records
+ * it: exec puts an entry there and so does the kernel's own fork, and
+ * the entry is what a wait is answered from.  Authority to post a note
+ * is asked of the same table, so a container may interrupt exactly what
+ * it started.
+ */
+static int
+ospreystartedby(Ospreyproc *parent, Ospreyproc *child)
+{
+	Ospreychild *e;
+	int yes = 0;
+
+	qlock(&ospreylock);
+	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
+		if(e->used && e->parent == parent && e->child == child){
+			yes = 1;
+			break;
+		}
+	qunlock(&ospreylock);
+	return yes;
+}
+
+/*
+ * Post a note to a container's process, and for the group form to every
+ * container it started as well - which is what a process group is here:
+ * a container and what came out of it.  Returns how many processes were
+ * given the note, so that a personality can tell "nobody" from "one".
+ */
+static int
+ospreynotecontainer(Ospreyproc *c, char *note, int group)
+{
+	Ospreychild *e;
+	Proc *q;
+	int x, n;
+
+	n = 0;
+	if(group){
+		qlock(&ospreylock);
+		for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++){
+			if(!e->used || e->parent != c || e->done)
+				continue;
+			x = ospreyindex(e->child);
+			if(x >= 0 && x < nelem(ospreyprocs) && (q = ospreyprocs[x]) != nil){
+				postnote(q, 1, note, NUser);
+				n++;
+			}
+		}
+		qunlock(&ospreylock);
+	}
+	x = ospreyindex(c);
+	if(x >= 0 && x < nelem(ospreyprocs) && (q = ospreyprocs[x]) != nil){
+		postnote(q, 1, note, NUser);
+		n++;
+	}
+	return n;
+}
 
 static void
 ospreyexecproc(void *a)
@@ -3573,12 +4553,17 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	uintptr va;
 	int i, x, share;
 
-	if(parent == nil || (sv = ospreyserverof(parent)) == nil)
+	if(parent == nil || (sv = ospreyserverof(parent)) == nil){
+		print("osprey fork: refused, the caller's container has no server\n");
 		return -1;			/* nobody to serve the child's image */
+	}
 	if((flag & RFPROC) == 0)
 		return -1;			/* the namespace-only forms go to the buddy */
-	if(up->dbgreg == nil)
+	if(up->dbgreg == nil){
+		print("osprey fork: refused, container %llud has no user register frame to copy\n",
+			ospreyid(parent));
 		return -1;			/* no user register frame to copy */
+	}
 
 	/*
 	 * Bring the whole image resident on the parent, so the child - whose
@@ -3605,12 +4590,27 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
 		if(!e->used)
 			break;
-	if(e == &ospreychildren[nelem(ospreychildren)])
+	if(e == &ospreychildren[nelem(ospreychildren)]){
+		/*
+		 * Say so.  A fork that fails here returns -1 to a caller that
+		 * usually cannot report it: libthread's scheduler retries the
+		 * same fork on every pass and says nothing, so a window system
+		 * that cannot make a window looks like a window system that
+		 * has stopped.  It took an afternoon to find that once.
+		 */
+		if(nchildfull < 8){
+			nchildfull++;
+			print("osprey fork: refused, the child table is full (%d entries)\n",
+				(int)nelem(ospreychildren));
+		}
 		return -1;			/* the child table is full */
+	}
 
 	c = ospreycreate(ospreynextid++, 40000000ULL, 800000000ULL, 200000000ULL);
-	if(c == nil)
+	if(c == nil){
+		print("osprey fork: refused, no container could be made\n");
 		return -1;
+	}
 	ospreydelegate(c, sv);
 
 	if((p = newproc()) == nil){
@@ -3646,6 +4646,24 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	p->pgrp = up->pgrp;		/* share the namespace, like a thread fork */
 	if(p->pgrp != nil)
 		incref(p->pgrp);
+	/*
+	 * The rendezvous group.  Two processes that share an address space
+	 * (RFMEM) are what rendezvous(2) is for - it is how libthread's
+	 * proccreate hands a new proc its argument and how the two then
+	 * synchronise - so they must be in one group, and a plain fork's
+	 * child must not be, or an unrelated program's tag could meet this
+	 * one's.  The group is made here on the parent when it has none,
+	 * because it has to exist before there is anyone to share it with;
+	 * pgrp.c, which is where a full kernel makes it, is cut from every
+	 * configuration this path serves.
+	 */
+	if(flag & RFMEM){
+		if(up->rgrp == nil)
+			up->rgrp = newrgrp();
+		p->rgrp = up->rgrp;
+		incref(p->rgrp);
+	} else
+		p->rgrp = nil;
 	/*
 	 * Craft the child's return frame: it pops out of the scheduler in
 	 * user mode at the parent's fork point, with the return register 0.
@@ -3706,6 +4724,7 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	/* the child runs the buddy's image the same way the parent does */
 	p->osprey = c;
 	p->buddyimage = up->buddyimage;
+	p->buddyredir = up->buddyredir;	/* its descriptors are cloned from this one's, redirections and all */
 	p->oslinux = up->oslinux;
 	p->linuxheap = up->linuxheap;
 	p->linuxbrk = up->linuxbrk;
@@ -3719,6 +4738,7 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	}
 	memset(e, 0, sizeof *e);		/* a reused slot carries no stale wait or status */
 	e->used = 1;
+	e->nowait = (flag & RFNOWAIT) != 0;
 	e->child = c;
 	e->parent = parent;
 	strncpy(e->name, up->text, sizeof e->name - 1);
@@ -3788,8 +4808,8 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
  * nothing has moved for ten seconds.
  */
 enum {
-	Migoff		= 1024,		/* the sender's staging area in its data area: a header */
-	Migrxoff	= 5120,		/* the receiver's, clear of the sender's and the block device's ring */
+	Migoff		= Odmig,	/* the sender's staging area in its data area: a header */
+	Migrxoff	= Odmigrx,	/* the receiver's, clear of the sender's, the block ring and the buddy's data block */
 	Mighalf		= 2048,		/* the room a header has there */
 	Mighdrwords	= Odmighdrwords,	/* words before the segment array: count, flags, heap index, break; ospreydata.h holds the layout */
 	Nmigin		= 3,		/* arrivals being filled at once */
@@ -4083,6 +5103,7 @@ ospreymigcall(int op, uvlong *arg, uvlong *ubuf)
 		p->kp = 0;
 		p->oslinux = 0;
 		p->buddyimage = (flags & Migimage) != 0;
+		p->buddyredir = 0;		/* the far buddy reopens its descriptors; 0, 1 and 2 are the console there */
 		/*
 		 * The heap comes with the header: the segment it grows is one
 		 * of the carried ones, named by the index the sender wrote, so
@@ -4332,6 +5353,7 @@ ospreymoveproc(Proc *q, Ospreyproc *c, Segment **shared, Proc *sharer)
 
 	p->osprey = c;
 	p->buddyimage = q->buddyimage;
+	p->buddyredir = q->buddyredir;
 	p->oslinux = q->oslinux;
 	p->linuxheap = q->linuxheap;
 	p->linuxbrk = q->linuxbrk;
@@ -4639,7 +5661,9 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 			if(me->waiting){
 				ospreyreplylater(me->parent, me->waitseq, Xreqwait, Xreplydone, 0);
 				me->used = 0;
-			} else {
+			} else if(me->nowait)
+				me->used = 0;
+			else {
 				me->done = 1;
 				me->status = 0;
 			}
@@ -4718,6 +5742,7 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 
 	p->osprey = c;
 	p->buddyimage = up->buddyimage;
+	p->buddyredir = up->buddyredir;	/* its descriptors are cloned from this one's, redirections and all */
 	p->oslinux = up->oslinux;
 	p->linuxheap = up->linuxheap;
 	p->linuxbrk = up->linuxbrk;
@@ -4966,6 +5991,52 @@ ospreydumptasks(void)
 	}
 }
 
+/*
+ * The identity a process in a container has, and its parent's.
+ * Everything a legacy program is told about a process is a container
+ * identity: rfork returns one, await reports one, /proc/<n>/note names
+ * one.  So the number a program reads for its own pid has to be the
+ * same kind of number, or a program that notes a pid it read is noting
+ * something else - which is what rio does when it shuts down, and why
+ * this kernel used to print that a note was asked for a container that
+ * is not one.  Zero means the process is not a container's, and the
+ * caller reports the kernel's pid, which is what the native side wants.
+ */
+ulong
+ospreyprocid(Proc *p)
+{
+	if(p == nil || p->osprey == nil)
+		return 0;
+	return (ulong)ospreyid((Ospreyproc*)p->osprey);
+}
+
+/*
+ * The parent is read out of the child table, which is where the fork
+ * recorded it.  After the parent reaps, the entry is gone and this
+ * answers 0: the parent it had is not there to name.  Plan 9's ppid
+ * persists; this one does not, and saying 0 is better than keeping a
+ * fourth table in step with container lifetime.
+ */
+ulong
+ospreyprocparentid(Proc *p)
+{
+	Ospreychild *e;
+	Ospreyproc *c;
+	ulong id;
+
+	if(p == nil || (c = (Ospreyproc*)p->osprey) == nil)
+		return 0;
+	id = 0;
+	qlock(&ospreylock);
+	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
+		if(e->used && e->child == c){
+			id = (ulong)ospreyid(e->parent);
+			break;
+		}
+	qunlock(&ospreylock);
+	return id;
+}
+
 static int
 ospreywaitkern(Ospreyproc *parent, uvlong seq, long *status, uvlong *value)
 {
@@ -4973,8 +6044,8 @@ ospreywaitkern(Ospreyproc *parent, uvlong seq, long *status, uvlong *value)
 
 	live = nil;
 	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++){
-		if(!e->used || e->parent != parent)
-			continue;
+		if(!e->used || e->parent != parent || e->nowait)
+			continue;		/* RFNOWAIT: not a child wait can report */
 		if(e->done){
 			*status = Xreplydone;
 			*value = (uvlong)e->status;
@@ -5012,8 +6083,8 @@ ospreylegacyawait(Ospreyproc *parent, uintptr ubuf, int nbuf)
 		haslive = 0;
 		qlock(&ospreylock);
 		for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++){
-			if(!e->used || e->parent != parent)
-				continue;
+			if(!e->used || e->parent != parent || e->nowait)
+				continue;		/* RFNOWAIT: not a child await can report */
 			if(e->done){
 				n = snprint(msg, sizeof msg, "%llud 0 0 0 ''", ospreyid(e->child));
 				e->used = 0;
@@ -5087,7 +6158,9 @@ ospreyexits(long status)
 	if(e->waiting){
 		ospreyreplylater(e->parent, e->waitseq, Xreqwait, Xreplydone, (uvlong)status);
 		e->used = 0;
-	} else {
+	} else if(e->nowait)
+		e->used = 0;		/* nobody will ask: keep no status, free the entry */
+	else {
 		e->done = 1;
 		e->status = status;
 	}
@@ -5434,9 +6507,17 @@ ospreyinit(void)
 	 * configuration can be asked to exec one, so all of them get it.
 	 */
 	if(ospreyp9)
-		ospreysetsize("data", 2*BY2PG, 0);
-		ospreysetsize("pktbuf", 32, 0);	/* the user-space network driver's receive ring of 16, and room for more */
-		ospreysetsize("txbuf", 16, 0);	/* and its transmit ring */
+		ospreysetsize("data", 4*BY2PG, 0);	/* the buddy's data block is eight kilobytes of it, and the migration staging and note window come after: ospreydata.h has the layout and asserts it */
+	/*
+	 * These two are every configuration's and not the personality's.
+	 * They were written under the branch above and indented as if they
+	 * belonged to it, which they never did - the if has no braces - and
+	 * the network checks depend on their being unconditional, so they
+	 * are set out here rather than left reading as a branch they are
+	 * not part of.
+	 */
+	ospreysetsize("pktbuf", 32, 0);	/* the user-space network driver's receive ring of 16, and room for more */
+	ospreysetsize("txbuf", 16, 0);	/* and its transmit ring */
 	for(i = 0; i < nelem(ospreysizeconf); i++){
 		if((cf = getconf(ospreysizeconf[i].conf)) == nil)
 			continue;
@@ -5489,8 +6570,18 @@ ospreyinit(void)
 	 * mouse driver (rio needs /dev/mouse).  Not on xup64, whose proc0
 	 * arms the same interrupt into a container instead.
 	 */
-	if(ospreyframebuffer() == 0 && !ospreyuser)
-		ospreymouseexpose();
+	if(ospreyframebuffer() == 0){
+		if(!ospreyuser)
+			ospreymouseexpose();
+		/*
+		 * And a page for the pointer's position on either path: on the
+		 * full personality the mouse driver has one already inside the
+		 * mouse ring, and on the microkernel personalities this is the
+		 * only place the container that owns the PS/2 controller and
+		 * the container that owns the frame buffer can both reach.
+		 */
+		ospreypointerexpose();
+	}
 }
 
 /*
@@ -7400,6 +8491,171 @@ ospreyuartbind(Ospreyproc *p, char *name, int sem, int takeconsole)
 	}
 }
 
+/*
+ * A task that is not a Proc.
+ *
+ * Item 10 of the plan is the talk's 270 nanoseconds, and what stands in
+ * the way of it is named there: this microkernel's tasks are Procs, so
+ * a message between two of them is a sleep and a wakeup through the
+ * Plan 9 scheduler.  The section on latency measures what that costs -
+ * 48.5 microseconds of a round trip's 66 - and a cost is only half of a
+ * comparison.  The other half is what the same exchange costs between
+ * two things that are not Procs, and that is what this is: two tasks
+ * with a stack each, passing a message by switching straight from one
+ * to the other, nothing scheduled and nothing woken.
+ *
+ * The switch keeps a stack pointer and a program counter and nothing
+ * else, which is the whole of a context in this ABI: the tree's own
+ * setjmp for amd64 (9front/src/libc/amd64/setjmp.s) saves those two and
+ * no registers at all, because the Plan 9 compilers hold nothing in a
+ * register across a call.  taskswitch is setlabel and gotolabel in one
+ * instruction stream, and the reason to write it rather than to call
+ * those two is that a switch must save and restore in one place: with
+ * setlabel and gotolabel the code between them runs on a stack that is
+ * about to be left.
+ *
+ * What these tasks are not: they are not preemptible, they run in the
+ * kernel context of whatever Proc entered them, they share its address
+ * space, and nothing schedules them but each other.  A microkernel's
+ * task is preemptible and can be picked up by any processor.  So this
+ * measures a lower bound - what a message costs when no scheduler is
+ * in it - and not the talk's task reproduced.  Nothing else in this
+ * kernel uses it: the containers' service path still wakes a kproc,
+ * and converting that path is the rest of item 10.
+ */
+typedef struct Osprtask Osprtask;
+struct Osprtask {
+	Label	l;		/* where it is when it is not running */
+	uchar	*stack;
+	Osprtask *peer;
+	uvlong	msg;		/* the one message slot */
+	int	full;
+	int	stop;
+};
+
+enum {
+	Taskstack	= 8*1024,	/* the talk dumps an 8 KB task */
+};
+
+/*
+ * The machine layer's, since a context is machine-shaped.  amd64 has
+ * it; the 386 layer in os/osprey/pc has none, because nothing in this
+ * tree assembles that file - 8a rejects the FXSAVE, FXRSTOR and
+ * LDMXCSR in it - so putting one there would be a line nobody could
+ * prove.  Osprey builds for amd64.
+ */
+extern void taskswitch(Label*, Label*);
+
+/*
+ * Two of them, because the exchange the talk measures is between two.
+ * They are static because the task that is entered on a new stack is
+ * entered with no argument: a label restores a stack pointer and a
+ * program counter, and there is nowhere for an argument to be.
+ */
+static Osprtask osprtask[2];
+
+static void
+tasksend(Osprtask *t, uvlong v)
+{
+	Osprtask *o = t->peer;
+
+	o->msg = v;
+	o->full = 1;
+	taskswitch(&t->l, &o->l);
+}
+
+static uvlong
+taskrecv(Osprtask *t)
+{
+	while(!t->full)
+		taskswitch(&t->l, &t->peer->l);
+	t->full = 0;
+	return t->msg;
+}
+
+/*
+ * The far end of the exchange: take a message, give it back with one
+ * added, until the near end says to stop.  Its last act is a switch
+ * home that it never returns from, which is what lets the near end free
+ * its stack.
+ */
+static void
+taskecho(void)
+{
+	Osprtask *t = &osprtask[1];
+	uvlong v;
+
+	for(;;){
+		v = taskrecv(t);
+		if(t->stop)
+			break;
+		tasksend(t, v + 1);
+	}
+	taskswitch(&t->l, &t->peer->l);
+}
+
+/*
+ * count round trips between the two, and beside it the same loop with
+ * the switch replaced by a read of the cycle counter - not a correction
+ * to the first number, which reads the counter twice for the whole loop
+ * and not once a trip, but the scale it is read against: a switch worth
+ * a handful of counter reads is a different claim from one worth a
+ * hundred, and under an emulator neither is obvious.
+ */
+static void
+taskbench(long count, uvlong *pertrip, uvlong *perread)
+{
+	Osprtask *me = &osprtask[0], *far = &osprtask[1];
+	uvlong t0, t1, v;
+	uintptr sp;
+	long i;
+	int s;
+
+	memset(osprtask, 0, sizeof osprtask);
+	me->peer = far;
+	far->peer = me;
+	far->stack = smalloc(Taskstack);
+	if(waserror()){
+		free(far->stack);
+		far->stack = nil;
+		nexterror();
+	}
+	sp = ((uintptr)far->stack + Taskstack) & ~(uintptr)15;
+	far->l.sp = sp - BY2WD;		/* a word for the switch's return pc */
+	far->l.pc = (uintptr)taskecho;
+
+	/*
+	 * Interrupts off for the measurement.  A trap taken while the
+	 * stack pointer is on a task's stack and up still names the Proc
+	 * is a thing to think about rather than a thing to allow in a
+	 * bench, and it keeps the clock out of the numbers besides.
+	 */
+	s = splhi();
+	cycles(&t0);
+	for(i = 0; i < count; i++){
+		tasksend(me, (uvlong)i);
+		v = taskrecv(me);
+		USED(v);
+	}
+	cycles(&t1);
+	*pertrip = (t1 - t0)/count;
+
+	cycles(&t0);
+	for(i = 0; i < count; i++){
+		cycles(&v);
+		USED(v);
+	}
+	cycles(&t1);
+	*perread = (t1 - t0)/count;
+	splx(s);
+
+	far->stop = 1;
+	tasksend(me, 0);		/* it takes this one and comes home */
+	poperror();
+	free(far->stack);
+	far->stack = nil;
+}
+
 static long
 ospreywrite(Chan *c, void *a, long n, vlong offset)
 {
@@ -7431,6 +8687,25 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 		 * ctl serve -- or there would be nothing to switch to.
 		 */
 		uvlong t0, t1, arg[Ospreynarg], op;
+		/*
+		 * And where the time goes, which the total on its own does
+		 * not say.  A round trip is four things: putting the request
+		 * on the ring, waking whoever serves the container, waiting
+		 * for the answer, and taking it off the ring.  Only the third
+		 * is the other process's; the rest is this kernel's work on
+		 * this process.  Saying "a round trip wakes a Plan 9 process"
+		 * is a claim about which of the four is the cost, and until
+		 * they are measured apart it is an assertion.
+		 *
+		 * ta is the submit, tb the wake, te the wake of the servers,
+		 * tc the wait and td the collect; nsleep counts the round
+		 * trips that actually slept, because a reply that is already
+		 * there when it is looked for costs nothing at all and
+		 * averages the rest away.
+		 */
+		uvlong ta, tb, tc, td, te, u0, u1, u2;
+		long nsleep;
+		int benchself = 0;
 		long i, count, status;
 		char *r;
 
@@ -7439,11 +8714,83 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			free(cb);
 			nexterror();
 		}
+		/*
+		 * "self <container> <n>" is the third arrangement, and it is
+		 * here to put a number on the one the latency section leaves
+		 * as an inference.  A round trip through a service process
+		 * costs about sixty microseconds, of which the work is four
+		 * and the scheduler's two legs are thirty; the question that
+		 * leaves is what the same request costs with nobody woken at
+		 * all - the caller putting it on the ring and then answering
+		 * it in its own context, which is what "ctl service" already
+		 * does by hand.  That is not a proposal to answer every
+		 * request this way: a request the kernel forwards is answered
+		 * in another container's name space by a program that is not
+		 * this one, and no arrangement of this kernel makes that free.
+		 * It is the floor the rest is measured against.
+		 */
+		if(cb->nf == 3 && strcmp(cb->f[0], "self") == 0){
+			cb->f[0] = cb->f[1];
+			cb->f[1] = cb->f[2];
+			cb->nf = 2;
+			benchself = 1;
+		}
 		if(cb->nf != 2)
 			error(Ebadarg);
 		count = (long)strtoul(cb->f[1], nil, 0);
 		if(count <= 0 || count > 100000)
 			error(Ebadarg);
+		/*
+		 * "task n" is the other end of the comparison: the same
+		 * exchange between two things that are not Procs.  No
+		 * container is named because none is involved.
+		 */
+		if(strcmp(cb->f[0], "task") == 0){
+			uvlong pertrip, perread, hz;
+
+			/*
+			 * The one lock, and a bound of its own.  Two of
+			 * these at once would each memset the other's
+			 * labels and free a stack the other was running
+			 * on; and the count above is the container path's,
+			 * where a round trip is sixty microseconds - here
+			 * it is sixty nanoseconds with interrupts off, and
+			 * a hundred thousand of them is a long time to
+			 * hold them off for a measurement.
+			 */
+			if(count > 20000)
+				error(Ebadarg);
+			qlock(&ospreylock);
+			if(waserror()){
+				qunlock(&ospreylock);
+				nexterror();
+			}
+			taskbench(count, &pertrip, &perread);
+			poperror();
+			qunlock(&ospreylock);
+			r = smalloc(256);
+			if(waserror()){
+				free(r);
+				nexterror();
+			}
+			hz = m->cpuhz == 0 ? 1 : m->cpuhz;
+			snprint(r, 256, "%ld task round trips, %llud cycles"
+				" each, %llud ns each, at %llud hz;"
+				" two switches a trip, so %llud ns a switch;"
+				" one read of the cycle counter is %llud ns\n",
+				count, pertrip,
+				m->cpuhz == 0 ? 0 : pertrip*1000000000ULL/hz,
+				m->cpuhz,
+				m->cpuhz == 0 ? 0 : pertrip*1000000000ULL/hz/2,
+				m->cpuhz == 0 ? 0 : perread*1000000000ULL/hz);
+			poperror();
+			if(c->aux != nil)
+				free(c->aux);
+			c->aux = r;
+			poperror();
+			free(cb);
+			return n;
+		}
 		qlock(&ospreylock);
 		if(waserror()){
 			qunlock(&ospreylock);
@@ -7454,18 +8801,51 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 			error(Eperm);
 		if((x = ospreyindex(p)) < 0)
 			error(Enonexist);
-		if(ospreyserving[x] == 0)
+		if(ospreyserving[x] == 0 && !benchself)
 			error("the container has no service process");
 		while(ospreyreplyready(p))	/* start from a quiet ring */
 			ospreycollect(p, &op, &status, arg);
 
+		ta = tb = tc = td = te = 0;
+		nsleep = 0;
+		ospreysrvwork = ospreysrvwake = 0;
+		ospreysrvpass = 0;
 		cycles(&t0);
 		for(i = 0; i < count; i++){
 			memset(arg, 0, sizeof arg);
+			cycles(&u0);
 			if(ospreysubmit(p, ospreyop("poll"), arg) < 0)
 				break;
-			ospreywakeup();
-			ospreywakeservers(-1);
+			cycles(&u1);
+			ta += u1 - u0;
+			if(benchself){
+				/*
+				 * Answered here, in the process that asked:
+				 * one call, no wakeup, no sleep, no second
+				 * process.  This runs with ospreylock held,
+				 * which is the lock the service kproc takes
+				 * around the same call rather than one taken
+				 * inside it, so the two do not nest.  The
+				 * request is a poll, which the dispatcher
+				 * answers out of the container's own counts
+				 * and forwards nowhere, so nothing reached
+				 * from here asks for the lock either.
+				 */
+				ospreyservicep(p, ospreynow());
+				ospreyroute(p);
+				cycles(&u2);
+				tb += u2 - u1;
+				u0 = u2;
+			} else {
+				ospreywakeup();
+				cycles(&u2);
+				tb += u2 - u1;
+				ospreywakeservers(-1);
+				cycles(&u0);
+				te += u0 - u2;
+			}
+			if(!ospreyreplyready(p))
+				nsleep++;
 			while(!ospreyreplyready(p)){
 				if((x = ospreyindex(p)) < 0)
 					error(Enonexist);
@@ -7483,23 +8863,36 @@ ospreywrite(Chan *c, void *a, long n, vlong offset)
 				ospreyawake(x, waitid);
 				p = ospreyproc(cb->f[0]);
 			}
+			cycles(&u1);
+			tc += u1 - u0;
 			ospreycollect(p, &op, &status, arg);
+			cycles(&u0);
+			td += u0 - u1;
 		}
 		cycles(&t1);
 
-		r = smalloc(256);
+		r = smalloc(384);
 		if(waserror()){
 			free(r);
 			nexterror();
 		}
 		if(i <= 0)
 			error("nothing was measured");
-		snprint(r, 256, "%ld round trips, %llud cycles each,"
-			" %llud ns each, at %llud hz\n",
-			i, (t1 - t0)/i,
-			m->cpuhz == 0 ? 0 :
-				((t1 - t0)/i)*1000000000ULL/m->cpuhz,
-			m->cpuhz);
+		{
+			uvlong hz = m->cpuhz == 0 ? 1 : m->cpuhz;
+#define NS(c)	((c)/i*1000000000ULL/hz)
+			snprint(r, 384, "%ld round trips, %llud cycles each,"
+				" %llud ns each, at %llud hz;"
+				" submit %llud ns, wake %llud ns, wakeservers %llud ns,"
+				" wait %llud ns, collect %llud ns, %ld of them slept;"
+				" in the wait: server work %llud ns, server wake %llud ns,"
+				" %ld passes\n",
+				i, (t1 - t0)/i,
+				m->cpuhz == 0 ? 0 : NS(t1 - t0), m->cpuhz,
+				NS(ta), NS(tb), NS(te), NS(tc), NS(td), nsleep,
+				NS(ospreysrvwork), NS(ospreysrvwake), ospreysrvpass);
+#undef NS
+		}
 		poperror();
 		if(c->aux != nil)
 			free(c->aux);

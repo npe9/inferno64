@@ -22,12 +22,26 @@
 #define	D_SCTLR_EL1	SYSARG5(3,0,1,0,0)
 #define	D_MPIDR_EL1	SYSARG5(3,0,0,0,5)
 #define	D_CTR_EL0	SYSARG5(3,3,0,0,1)
+#define	D_CCSIDR_EL1	SYSARG5(3,1,0,0,0)
+#define	D_CLIDR_EL1	SYSARG5(3,1,0,0,1)
+#define	D_CSSELR_EL1	SYSARG5(3,2,0,0,0)
 #define	D_HCR_EL2	SYSARG5(3,4,1,1,0)
 #define	D_SCR_EL3	SYSARG5(3,6,1,1,0)
 #define	D_SPSR_EL3	SYSARG5(3,6,4,0,0)
 #define	D_ELR_EL3	SYSARG5(3,6,4,0,1)
 #define	D_SPSR_EL2	SYSARG5(3,4,4,0,0)
 #define	D_ELR_EL2	SYSARG5(3,4,4,0,1)
+#define	D_CNTHCTL_EL2	SYSARG5(3,4,14,1,0)
+#define	D_CPTR_EL2	SYSARG5(3,4,1,1,2)
+#define	D_MDCR_EL2	SYSARG5(3,4,1,1,1)
+#define	D_PMCR_EL0	SYSARG5(3,3,9,12,0)
+#define	D_VPIDR_EL2	SYSARG5(3,4,0,0,0)
+#define	D_VMPIDR_EL2	SYSARG5(3,4,0,0,5)
+#define	D_MIDR_EL1	SYSARG5(3,0,0,0,0)
+#define	D_TPIDR_EL1	SYSARG5(3,0,13,0,4)
+#define	D_TPIDRRO_EL0	SYSARG5(3,3,13,0,3)
+#define	CRUMB		0x20000000
+#define	D_CNTVOFF_EL2	SYSARG5(3,4,14,0,3)
 #define	D_ICC_SRE_EL1	SYSARG5(3,0,12,12,5)
 #define	D_ICC_PMR_EL1	SYSARG5(3,0,4,6,0)
 #define	D_ICC_BPR1_EL1	SYSARG5(3,0,12,12,3)
@@ -120,6 +134,8 @@
  * pseudo-op.
  */
 TEXT	_main(SB), 1, $-4
+	/* Preserve firmware's DTB pointer (x0) across early EL/core setup. */
+	MOV	R0, R19
 	/*
 	 * QEMU raspi3b is a quad-core Pi 3 and starts ALL FOUR cores at
 	 * 0x80000.  This kernel is MAXMACH 1, so the three secondaries must
@@ -154,6 +170,36 @@ TEXT	_main(SB), 1, $-4
 	MSR	R0, SPR(D_ELR_EL3)
 	ERET
 atel2:
+	/*
+	 * EL1 reads the physical counter and drives the physical timer, so
+	 * EL2 must not trap them: CNTHCTL_EL2.EL1PCTEN|EL1PCEN, which reset
+	 * UNKNOWN and which the Pi's armstub8 never sets (Linux and Circle
+	 * both set them on this same drop).  Zero the virtual offset too.
+	 */
+	MRS	SPR(D_CNTHCTL_EL2), R0
+	ORR	$3, R0, R0
+	MSR	R0, SPR(D_CNTHCTL_EL2)
+	MOV	$0, R0
+	MSR	R0, SPR(D_CNTVOFF_EL2)
+	/*
+	 * The rest of what Linux's el2_setup does before the same drop, so
+	 * nothing EL1 does can trap to an EL2 that has no vectors (armstub8
+	 * installs none, and such a trap hangs silently with every
+	 * exception masked): no FP/SIMD or trace traps (CPTR_EL2 RES1 bits
+	 * only), no PMU or debug traps with every counter left to EL1
+	 * (MDCR_EL2.HPMN = PMCR_EL0.N), and the real MIDR/MPIDR for EL1 to
+	 * read instead of the UNKNOWN reset values of their virtual copies.
+	 */
+	MOV	$0x33ff, R0
+	MSR	R0, SPR(D_CPTR_EL2)
+	MRS	SPR(D_PMCR_EL0), R0
+	LSR	$11, R0, R0
+	AND	$0x1f, R0, R0
+	MSR	R0, SPR(D_MDCR_EL2)
+	MRS	SPR(D_MIDR_EL1), R0
+	MSR	R0, SPR(D_VPIDR_EL2)
+	MRS	SPR(D_MPIDR_EL1), R0
+	MSR	R0, SPR(D_VMPIDR_EL2)
 	MOV	$(1<<31), R0		/* EL2 (real hardware): drop EL2 -> EL1 */
 	MSR	R0, SPR(D_HCR_EL2)
 	MOV	$0x3c5, R0		/* EL1h, DAIF masked */
@@ -173,7 +219,7 @@ TEXT	boot1(SB), 1, $-4
 	MOV	$stack+KSTACK(SB), R2
 	MOV	R2, RSP
 	MOV	$setSB(SB), R28
-	MOV	$0, R0
+	MOV	R19, R0
 	MOV	R0, dtbptr(SB)
 	BL	main(SB)
 deadb:
@@ -186,9 +232,19 @@ TEXT	getcntpctl(SB), 1, $-4
 	MRS	SPR(D_CNTP_CTL_EL0), R0
 	RET	R30
 
+TEXT	getcntpcval(SB), 1, $-4
+	MRS	SPR(D_CNTP_CVAL_EL0), R1
+	MOV	R1, 0(R0)
+	RET	R30
+
+TEXT	getdaif(SB), 1, $-4
+	MRS	DAIF, R0
+	RET	R30
+
 GLOBL	dtbptr(SB), $8
 GLOBL	stack(SB), $KSTACK
 GLOBL	mach0(SB), $(4*1024)
+GLOBL	wildstack(SB), $(16*1024)
 
 TEXT	getcallerpc(SB), 1, $-4
 	MOV	0(RSP), R0
@@ -227,15 +283,6 @@ TEXT	getcallerpc(SB), 1, $-4
  * Fixed by giving the status result its own scratch register (R4) and
  * storing the real new value (R2, "1") instead of the stale R1.
  */
-/*
- * psci(fn, a1, a2, a3): a PSCI call through HVC, QEMU virt's conduit.
- * The four args are already in R0-R3 (x0-x3) where SMCCC wants them;
- * HVC #0 uses them and returns the result in x0.
- */
-TEXT	psci(SB), 1, $-4
-	HVC	$0
-	RET	R30
-
 /*
  * GICv3 CPU-interface accessors.  On a GICv3 the per-CPU interface is
  * a set of ICC_*_EL1 system registers, not the MMIO GICC page a GICv2
@@ -291,7 +338,16 @@ TEXT	seticceoir(SB), 1, $-4
 	MSR	R0, SPR(D_ICC_EOIR1_EL1)
 	RET	R30
 
+/*
+ * An LDXR/STXR pair on memory the MMU has not yet made Normal is
+ * UNPREDICTABLE, and on the Pi's Cortex-A53 it hangs; QEMU carries on.
+ * So refuse, loudly, any lock taken while SCTLR_EL1.M is clear: that
+ * turns a silent hang on the board into a message under QEMU too.
+ */
 TEXT	_tas(SB), 1, $-4
+	MRS	SPR(D_SCTLR_EL1), R1
+	AND	$1, R1, R1
+	CBZ	R1, tasnommu
 	MOV	R0, R3
 tas1:
 	LDXRW	(R3), R1
@@ -301,6 +357,8 @@ tas1:
 	DSB	$15
 	MOV	R1, R0
 	RET	R30
+tasnommu:
+	B	tasbeforemmu(SB)
 
 TEXT	setlabel(SB), 1, $-4
 	MOV	R0, R2
@@ -321,11 +379,32 @@ TEXT	setlabel(SB), 1, $-4
 TEXT	gotolabel(SB), 1, $-4
 	MOV	0(R0), R1
 	MOV	8(R0), R2
+	/*
+	 * A label whose sp is not an aligned address in the kernel's 256MB
+	 * would put the next exception into an endless SP-alignment fault
+	 * in the vector path (seen on the Pi: 45 million of them, every
+	 * exception masked, until the watchdog).  Stop here instead, while
+	 * the stack is still good, with the label in crumb words 152-155.
+	 */
+	CMP	$0x80000, R1
+	BLO	badlabelsp
+	LSR	$28, R1, R3
+	CBNZ	R3, badlabelsp
+	AND	$15, R1, R3
+	CBNZ	R3, badlabelsp
 	MOV	R1, RSP
 	MOV	$setSB(SB), R28
 	MOV	$1, R0
 	MOV	R2, R30
 	RET	R30
+
+badlabelsp:
+	MOV	$CRUMB, R3
+	MOV	R0, 1216(R3)
+	MOV	R1, 1224(R3)
+	MOV	R2, 1232(R3)
+	MOV	R30, 1240(R3)
+	B	badlabel(SB)
 
 /*
  * First process entry trampoline -- keeps SB set on the new stack,
@@ -415,6 +494,23 @@ TEXT	getctr(SB), 1, $-4
 	MRS	SPR(D_CTR_EL0), R0
 	RET	R30
 
+TEXT	getclidr(SB), 1, $-4
+	MRS	SPR(D_CLIDR_EL1), R0
+	RET	R30
+
+TEXT	getccsidr(SB), 1, $-4
+	MRS	SPR(D_CCSIDR_EL1), R0
+	RET	R30
+
+TEXT	setcsselr(SB), 1, $-4
+	MSR	R0, SPR(D_CSSELR_EL1)
+	ISB	$15
+	RET	R30
+
+TEXT	dcisw(SB), 1, $-4
+	SYS	R0, $SYSARG5(0,0,7,6,2)	/* DC ISW, R0 */
+	RET	R30
+
 TEXT	dccvac(SB), 1, $-4		/* clean D-line at R0 to PoC */
 	SYS	R0, $SYSARG5(0,3,7,10,1)
 	RET	R30
@@ -488,19 +584,6 @@ TEXT	mmuenable(SB), 1, $-4
 	SYS	$SYSARG5(0,0,7,5,0)	/* IC IALLU: invalidate I-cache */
 	DSB	$15
 	ISB	$15
-	/*
-	 * HARDWARE GAP (emulator is more forgiving; see AGENTS.md): on a real
-	 * Cortex-A53 the cache contents at reset are architecturally UNKNOWN.
-	 * The instruction cache is invalidated just above (IC IALLU); what
-	 * remains before turning the D-cache on below is a set/way invalidate
-	 * of the L1 data cache -- a CLIDR/CCSIDR level walk -- or the CPU may
-	 * hit stale/garbage D-lines once C is set.  That walk is loop logic
-	 * QEMU cannot validate (it models no cache), so it is deliberately
-	 * left out here rather than shipped unexercised; do NOT enable the
-	 * D-cache on real hardware without adding it first.  The page tables
-	 * were built with the caches off, so they are already in RAM and
-	 * need no clean.
-	 */
 	MRS	SPR(D_SCTLR_EL1), R1
 	MOV	$0x1005, R2		/* M(0) | C(2) | I(12) */
 	ORR	R2, R1, R1
@@ -562,6 +645,78 @@ TEXT	vectorinit(SB), 1, $-4
  * get a free pointer at all) -- SUB SP,SP,#UR_SIZE by itself, before
  * touching any GPR, is enough to make the frame safe to write into.
  */
+/*
+ * crumbentry: every vector slot branches here first (with the
+ * interrupted X9 in TPIDR_EL1 and the class in X9).  Before touching
+ * the stack it records ESR, ELR, FAR, SPSR, SP and a running count at
+ * CRUMB (0x20000000, RAM above the 256MB the kernel uses), which
+ * survives a watchdog reset: an exception that faults again inside the
+ * vector path -- silent, with every exception masked -- leaves its
+ * cause there for the next boot to print.  Then it does what the slot
+ * used to: open the Ureg frame, save X9 into it, and go to vectrap with
+ * the class in X9.
+ */
+TEXT	crumbentry(SB), 1, $-4
+	MSR	R10, SPR(D_TPIDRRO_EL0)
+	MOV	$CRUMB, R10
+	MOV	R9, 56(R10)
+	MRS	SPR(D_ESR_EL1), R9
+	MOV	R9, 16(R10)
+	MRS	ELR_EL1, R9
+	MOV	R9, 24(R10)
+	MRS	SPR(D_FAR_EL1), R9
+	MOV	R9, 32(R10)
+	MRS	SPSR_EL1, R9
+	MOV	R9, 40(R10)
+	MOV	RSP, R9
+	MOV	R9, 48(R10)
+	MOV	8(R10), R9
+	ADD	$1, R9
+	MOV	R9, 8(R10)
+	MOV	$0x43524d42, R9
+	MOV	R9, 0(R10)
+	/*
+	 * An exception on a wild SP (unaligned, or outside the kernel's
+	 * 256MB) faults again on the frame store below, and again on that
+	 * exception's, forever, with every exception masked.  Record the
+	 * first one in crumb words 144-149 and continue on wildstack, where
+	 * trap() sees the frame there and reports it.
+	 */
+	MOV	RSP, R9
+	CMP	$0x80000, R9
+	BLO	wildsp
+	LSR	$28, R9, R9
+	CBNZ	R9, wildsp
+	MOV	RSP, R9
+	AND	$15, R9, R9
+	CBNZ	R9, wildsp
+crumbframe:
+	MRS	SPR(D_TPIDRRO_EL0), R10
+	SUB	$UR_SIZE, RSP
+	MRS	SPR(D_TPIDR_EL1), R9
+	MOV	R9, UR_R9(RSP)
+	MOV	$CRUMB, R9
+	MOV	56(R9), R9
+	B	vectrap(SB)
+
+wildsp:
+	MOV	1176(R10), R9		/* c[147]: keep the first */
+	CBNZ	R9, wildsp1
+	MRS	ELR_EL1, R9
+	MOV	R9, 1152(R10)
+	MRS	SPSR_EL1, R9
+	MOV	R9, 1160(R10)
+	MRS	SPR(D_ESR_EL1), R9
+	MOV	R9, 1168(R10)
+	MOV	RSP, R9
+	MOV	R9, 1176(R10)
+	MOV	R30, 1184(R10)
+	MOV	R29, 1192(R10)
+wildsp1:
+	MOV	$wildstack(SB), R9
+	ADD	$(16*1024), R9
+	MOV	R9, RSP
+	B	crumbframe
 TEXT	vectrap(SB), 1, $-4
 	CLREX				/* an exception clears the exclusive monitor,
 					 * so an interrupted _tas STXR fails and
