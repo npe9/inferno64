@@ -469,7 +469,7 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	uchar blk[Secsize];
 	int i, k;
 	long n;
-	char buf[3*32+1], *q;
+	char buf[3*32+1], buf2[3*16+1], *q;
 
 	if(strcmp(cb->f[0], "reinit") == 0){
 		qlock(c);
@@ -495,6 +495,41 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 		*q = 0;
 		print("emmc: readblk %llud+%d -> %ld %s (510,511 %.2ux%.2ux)\n",
 			bno, off, n, buf, blk[510], blk[511]);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "readn") == 0 && (cb->nf == 3 || cb->nf == 4)){
+		/*
+		 * Read several blocks in one call and show the first bytes of
+		 * the last one: that is a multi-block transfer, and the last
+		 * block proves the whole run landed in order.  Binary through
+		 * a pipe into grep is not a test - it wedges the shell.
+		 */
+		uvlong bno = strtoull(cb->f[1], nil, 0);
+		long nblk = strtol(cb->f[2], nil, 0);
+		int off = cb->nf == 4? atoi(cb->f[3]): 0;
+		uchar *buf, *last;
+
+		if(nblk < 1 || nblk > 128)
+			nblk = 1;
+		if(off < 0 || off > Secsize-16)
+			off = 0;
+		if((buf = malloc(nblk*Secsize)) == nil)
+			error(Enomem);
+		if(waserror()){
+			free(buf);
+			nexterror();
+		}
+		memset(buf, 0, nblk*Secsize);
+		n = emmcbio(u, 0, 0, buf, nblk, bno);
+		last = buf + (nblk-1)*Secsize;
+		q = buf2;
+		for(k = off; k < off+16; k++)
+			q += sprint(q, "%.2ux", last[k]);
+		*q = 0;
+		print("emmc: readn %llud+%ld -> %ld last block %llud at %d: %s\n",
+			bno, nblk, n, bno+nblk-1, off, buf2);
+		free(buf);
+		poperror();
 		return 0;
 	}
 	if(strcmp(cb->f[0], "wtest") == 0 && (cb->nf == 2 || cb->nf == 3)){
