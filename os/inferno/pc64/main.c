@@ -247,16 +247,6 @@ main(void)
 		if((p = getconf("*chanlock")) != nil)
 			chanlockon = strtol(p, nil, 0);
 	}
-	{	/* BISECTION, temporary: *tearlock=0 keeps rootset's guard but
-		 * drops the exclusion, so one kernel measures the incidence
-		 * of a Prog being walked mid-teardown and whether the
-		 * exclusion is what stops it.  See entertear() in dis.c. */
-		extern int tearlock;
-		char *p;
-
-		if((p = getconf("*tearlock")) != nil)
-			tearlock = strtol(p, nil, 0);
-	}
 	{	/* INSTRUMENTATION, temporary: positive control for rootset's
 		 * rootraced counter.  See gcwalkdelayfn() in dis.c. */
 		extern int gcwalkms;

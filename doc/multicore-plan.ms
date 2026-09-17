@@ -5436,6 +5436,10 @@ and
 .CW chandefer
 already use, nil in emu.
 .PP
+Superseded by the section after this one: the window is real but
+.CW inxec
+already closes it, so the exclusion was deleted rather than made cheaper.
+.PP
 Not built.  It is written down now because the batch that decides whether
 the window is real is running, and if it is not real the right change is
 to delete the exclusion rather than to make it cheaper.  Designing the
@@ -5579,3 +5583,60 @@ then waits for the collector, and the two wait on each other until the
 quarter second runs out.  That is where its cost came from: boots that
 abandoned a collection were 16 of 20 with it and 10 of 20 without in the
 production-shaped batch, and 6 of 8 against 3 of 8 above.
+.NH 3
+The exclusion deleted
+.PP
+Sixteen boots each of the production shape, before deleting it:
+.TS
+center;
+l r r r r.
+	walks counted	bad frame	gave up	panics
+*tearlock=1	0	0	15 of 16	0
+*tearlock=0	0	0	5 of 16	0
+*tearlock=0 *gcwalkdelay=20	0	0	3 of 16	0
+.TE
+.PP
+So
+.CW intear ,
+the wait in
+.CW entertear() ,
+and
+.CW *tearlock
+are gone;
+.CW othersrunning()
+counts
+.CW inxec
+alone again.  What stays is the instrumentation and the control, both
+temporary.  The kernel without the exclusion:
+.TS
+center;
+l l r r r r.
+arm	options	walks counted	bad frame	gave up	panics
+A	*parallelvm=1	0 in 16	0	6 of 16	0
+B	\&... *gcwalkdelay=20	0 in 8	0	3 of 8	0
+C	\&... *teardrop=5 *gcwalkdelay=20	3 in 8	3 in 8	2 of 8	0
+D	*parallelvm=0	0 in 8	0	0 of 8	0
+.TE
+.PP
+Arm C is the control, and it still fires: the counter and the bad-frame
+tripwire agree boot for boot again, eight of eight, so the zeros in A, B
+and D are zeros from an instrument that can see the case.  Teardowns
+without a quantum: 0 of 10566.  chantest: no FAIL line in any boot.
+.PP
+The guard in
+.CW rootset()
+still fires, 2 of 16 in arm A, and it should: that is the
+.CW delprog()
+window, which a quantum does not cover because
+.CW delprog()
+releases the interpreter before it unlinks the Prog.
+.PP
+Two lessons worth keeping from how this went.  The exclusion was right
+for the code it was written against and was left guarding nothing by a
+later fix to the same path, which nothing re-checked; a guard should
+carry the invariant it relies on as a counter, the way
+.CW tearnoquantum
+now does.  And the first two versions of the walk counter were blind, one
+to a whole call site, and neither would have been found without a
+control that made the event happen \(em a zero from them would have been
+reported as evidence.

@@ -208,7 +208,7 @@ othersrunning(void)
 
 	n = 0;
 	for(i = 0; i < npctx; i++)
-		if(pctxs[i] != curP && (pctxs[i]->inxec || pctxs[i]->intear))
+		if(pctxs[i] != curP && pctxs[i]->inxec)
 			n++;
 	return n;
 }
@@ -229,72 +229,42 @@ gcstwothers(void)
 void	safepoint(void);	/* defined below, with the rest of the handshake */
 
 /*
- * Keep the collector out while a Prog's stack is dismantled.
+ * What keeps the collector out while a Prog's stack is dismantled.
  *
  * destroystack() nils reg->EX as its second statement, frees every
  * extent, and sets reg->M = H last.  rootset() reads M, then SP, then
- * EX, then walks.  So a collector that reads M before the teardown
- * starts passes the guard there, reads EX before the nil, and then walks
- * Stkexts that free() is handing back underneath it.  That is a
- * use-after-free, and "bad frame type", "frames do not tile" and a jump
- * into the Dis heap through t->mark are what it looks like from the
- * other end.
+ * EX, then walks.  So a collector that read EX before the nil would walk
+ * Stkexts that free() is handing back underneath it -- a use-after-free
+ * that looks like "bad frame type", "frames do not tile" and a jump into
+ * the Dis heap through t->mark from the other end.  That is not
+ * hypothetical: *teardrop below opens it on demand.
  *
- * gclock() does not prevent it: it sets gchalt, which rungc() tests when
- * it starts, and cannot stop a collection already running.  Nor does
- * inxec, because vmachine()'s handler clears it before reaching the
- * teardown -- so stoptheworld() counts the context as stopped while it
- * is doing this.
+ * inxec closes it, and nothing more is needed.  Both teardowns run with
+ * a quantum open: killprog() under progwrite()'s acquire(), and
+ * progexit() after vmachine()'s handler has called enterquantum().  A
+ * collector cannot walk while a quantum is open -- stoptheworld() waits
+ * for it, and if it gives up it returns without calling rungc() at all.
  *
- * A separate flag rather than reusing inxec, so that it composes with
- * whatever claim the caller already holds, and the same
- * publish-then-recheck as enterquantum() so the two orderings cannot
- * both miss.  sched() rather than tsleep() because this sits inside
- * vmachine()'s error handler, where a note interrupting a sleep would
- * longjmp out of a path that is delicate enough already; a Prog dying is
- * rare and collections are short.
+ * There used to be an exclusion here as well, an intear flag that
+ * othersrunning() counted and a wait for gcstw to clear.  It was written
+ * when the handler still cleared inxec before the teardown, and by the
+ * time it was measured it was guarding nothing: 0 walks over freed
+ * extents in 16 boots with it and 0 in 16 without, 0 teardowns without a
+ * quantum in either.  Its cost was real, because a teardown that met a
+ * pending collection held a quantum the collector was waiting for and
+ * then waited for the collector -- 15 of 16 boots abandoned a
+ * collection with it, 5 of 16 without.  See doc/multicore-plan.ms.
  *
- * It covers destroystack() only.  delprog() releases and reacquires the
- * interpreter, so waiting for that would make every concurrent
- * collection give up; destroystack() itself does not block.
- *
- * Both callers wait here BEFORE taking gclock(), not after.  gclock()
- * sets gchalt, and rungc() declines to run when gchalt is set -- but
- * stoptheworld() sets gcstw and stops everybody first, and only then
- * does rungc() test gchalt.  Waiting with gchalt already raised
- * therefore waits for a collection that has been made unable to do
- * anything: the collector stops the world, declines, and starts it
- * again, one wasted stop-the-world per dying Prog.  It terminates, so it
- * is a throughput bug and not a hang, which is the kind that survives a
- * batch.
+ * What is left is instrumentation, all temporary: counters for
+ * teardowns, for those that met a collection and for any that arrive
+ * without a quantum -- that last is the invariant the above rests on --
+ * and the positive control.
  */
-/*
- * *tearlock=0 on the boot line turns the exclusion off, leaving the
- * rootset guard in place.
- *
- * Its first rationale was wrong and is corrected here rather than
- * deleted.  It said that with the exclusion on, rootset() would never
- * meet a Prog mid-teardown and the guard would fall silent, so a silent
- * guard would prove the exclusion was what prevented the case.  Measured:
- * the guard fires in three boots of twenty with the exclusion on.  It
- * has to.  The two cover different windows -- the exclusion covers
- * extents being freed under rootset()'s walk, while a Prog left on
- * isched.head with M == H between destroystack() returning and delprog()
- * unlinking it is the guard's alone, because delprog() blocks.
- *
- * What this flag does isolate is whether the exclusion's window is real:
- * with it off, nothing stops rootset() walking Stkexts that free() is
- * handing back, and that shows up as a fault or as the frame tripwires,
- * not as a guard firing.  If turning it off changes nothing, the
- * exclusion is pure cost -- it quadrupled abandoned collections -- and
- * should go.  Temporary, like *parallelvm and *chanlock.
- */
-int tearlock = 1;
 
 /*
  * *gcwalkdelay=N: rootset() waits N ms between reading a Prog's EX and
  * walking it.  The positive control for its rootraced counter; see
- * there.  Temporary.
+ * there.
  */
 int gcwalkms;
 
@@ -304,17 +274,6 @@ gcwalkdelayfn(void)
 	delay(gcwalkms);
 }
 
-/*
- * MULTICORE INSTRUMENTATION - temporary.  The mechanism, not the
- * symptom: teardowns that began while another context's collection was
- * pending or running.  A collector reads EX only after gcstw is set, and
- * destroystack() nils EX as its second statement, so a teardown that
- * begins with gcstw clear cannot hand a collector freed extents.  Every
- * teardown that can is counted here, whichever way *tearlock is set --
- * with the exclusion on, entertear() then waits it out; with it off,
- * this is the number of exposures.  An upper bound: a collection already
- * past this Prog in its root walk is counted and is harmless.
- */
 ulong tears;
 ulong tearoverlap;
 ulong tearnoquantum;	/* teardowns entered without inxec */
@@ -329,58 +288,25 @@ entertear(Prog *p)
 	if(curP->inxec == 0)
 		if(tearnoquantum++ == 0)
 			print("entertear: teardown without a quantum\n");
-	if(gcstwothers()){
-		if(tearoverlap++ == 0)
-			print("entertear: first teardown during a collection"
-				" (tearlock %d)\n", tearlock);
-	}
+	if(gcstwothers())
+		tearoverlap++;
 	/*
 	 * *teardrop=N gives the quantum up for the length of the teardown,
-	 * which is what vmachine()'s handler used to do before it took
-	 * enterquantum() ahead of handler().  With *tearlock=0 and
-	 * *gcwalkdelay it is the case rootset()'s rootraced counter exists
-	 * to see, and a counter that cannot be made to fire proves nothing
-	 * by reading zero.
+	 * which is what vmachine()'s handler did before it took
+	 * enterquantum() ahead of handler(), and waits N ms so that a
+	 * pending collector can start and reach this Prog before
+	 * destroystack() nils EX.  With *gcwalkdelay it is the case
+	 * rootset()'s rootraced counter exists to see: measured, the counter
+	 * and the bad-frame tripwire agreed boot for boot.
 	 */
 	if(teardrop){
 		curP->inxec = 0;
 		coherence();
 		safepoint();
-		/*
-		 * A teardown that starts with the quantum held starts with no
-		 * collection running, and destroystack() nils EX at once, so
-		 * dropping the quantum alone leaves a collector no time to
-		 * read EX first.  Waiting N ms lets a pending one start and
-		 * reach the Prog; *gcwalkdelay then holds it inside the walk
-		 * while the extents go.
-		 */
 		delay(teardrop);
 	}
-	/*
-	 * torn is published where the teardown really proceeds, not on
-	 * entry: set before the wait below, a collector finishing its walk
-	 * while this context waited for it was counted by rootset() as a
-	 * walk over freed extents, twenty-two times in six boots, with
-	 * nothing yet freed.
-	 */
-	if(tearlock == 0){
-		p->torn = 1;
-		coherence();
-		return;
-	}
-	for(;;){
-		curP->intear = 1;
-		coherence();
-		if(gcstw == 0){
-			p->torn = 1;
-			coherence();
-			return;
-		}
-		curP->intear = 0;
-		coherence();
-		safepoint();
-		sched();
-	}
+	p->torn = 1;	/* see rootset() */
+	coherence();
 }
 
 static void
@@ -388,11 +314,6 @@ leavetear(void)
 {
 	if(teardrop)
 		enterquantum();		/* take back what entertear() gave up */
-	if(tearlock == 0)
-		return;
-	curP->intear = 0;
-	coherence();
-	safepoint();
 }
 
 int stwgaveup;		/* MULTICORE INSTRUMENTATION - temporary */
@@ -2816,8 +2737,8 @@ disdump(void)
 		extern ulong rootraced;
 
 		print("dis: teardowns %lud, during a collection %lud,"
-			" freed under the walk %lud, tearlock %d\n",
-			tears, tearoverlap, rootraced, tearlock);
+			" freed under the walk %lud\n",
+			tears, tearoverlap, rootraced);
 		print("dis: teardowns without a quantum %lud, teardrop %d,"
 			" gcwalkdelay %d\n", tearnoquantum, teardrop, gcwalkms);
 	}

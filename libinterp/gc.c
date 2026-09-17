@@ -485,9 +485,11 @@ rootset(Prog *root)
 		 * progress across that window, and gclock() covered the rest
 		 * by making rungc() decline to start.  gclock() only sets
 		 * gchalt, which rungc() tests on entry; it does not stop a
-		 * collection already running.  And vmachine()'s handler
-		 * clears inxec before it gets here, so stoptheworld() counts
-		 * that context as stopped and does not wait for it.
+		 * collection already running.  The teardown itself runs with
+		 * a quantum open, so no collection walks during it (see
+		 * entertear() in dis.c) -- but delprog() releases the
+		 * interpreter before it unlinks the Prog, and a collection
+		 * that runs then finds this one still on the list.
 		 *
 		 * So at parallelvm=1 this walk reaches a Prog whose register
 		 * file has M == H, takes D2H of it -- H is (void*)-1 and Heap
