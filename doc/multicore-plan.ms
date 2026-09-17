@@ -4860,3 +4860,39 @@ only continuous if it gets time to run, and chantest eats the window
 first.  Throughput comparisons need a timeout long enough for the loop
 to be the thing being measured, and the per-boot distribution has to be
 printed rather than the total.
+.NH 2
+Re-checking the conclusions that were kept
+.PP
+A retraction is worth little if the same test is not then run on
+everything else the document claims.  The two surviving comparisons were
+re-read as per-boot distributions rather than totals.
+.PP
+The lock A/B at
+.CW parallelvm=1
+.CW "-smp 2" ,
+chantest lines per boot, out of 24:
+.QP
+.CW "lock on:  24 23 23 18 24 19 16 24 24 21 21 24 0 24 23 24"
+.br
+.CW "lock off: 24 23 24 0 23 23 22 22 18 23 22 24 24 24 24 0"
+.PP
+Fifteen of sixteen boots on each side clear 16, the distributions sit on
+top of each other, and no single boot carries the total.  "No difference
+detected" is what this says, and it is not the artefact the parking
+number was.
+.PP
+The
+.CW parallelvm=0
+comparison, shell iterations per boot over thirty boots each, ran 66 to
+89 before the change and 60 to 81 after \(em both continuous, both far
+from the 300 ceiling, so the bimodality that wrecked the
+.CW parallelvm=1
+numbers never applied here.  The distributions are tight and offset by
+about seven percent, consistently rather than through outliers, which is
+the three concurrent chantest runs the new kernel carries and the old one
+does not.  That was the reading given at the time and it survives the
+re-check.
+.PP
+So of the four numeric claims this document has made about the channel
+and stop-the-world work, two stand on distributions that support them
+and two were withdrawn.  The two that stand are both negative results.
