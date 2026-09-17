@@ -13,6 +13,17 @@
 #include "../port/error.h"
 
 extern PhysUart pl011physuart;
+extern void gpiofsel(int, int);		/* gpiobcm.c */
+
+extern Uart miniuart;			/* uartmini.c */
+extern int gpiofselget(int);		/* gpiobcm.c */
+
+enum {
+	Altpl011 = 4,		/* GPFSEL code for alt0: PL011 on GPIO 14/15 */
+	Altmini	= 2,		/* GPFSEL code for alt5: mini UART there */
+};
+
+static char *consfrom = "pl011";
 
 static int pl011_baud(Uart*, int);
 
@@ -192,7 +203,7 @@ uarttxpoll(void)
 	Ctlr *c;
 
 	uart = consuart;
-	if(uart == nil || uart->oq == nil)
+	if(uart == nil || uart->oq == nil || uart != &pl011uart)
 		return;
 	c = uart->regs;
 	if((csr32r(c, UartFR) & UartFRTXFE) == 0)
@@ -377,7 +388,9 @@ PhysUart pl011physuart = {
 void
 serialputc(int c)
 {
-	pl011_putc(&pl011uart, c);
+	Uart *uart = consuart != nil? consuart: &pl011uart;
+
+	(*uart->phys->putc)(uart, c);
 }
 
 void
@@ -454,7 +467,36 @@ uartconsole(void)
 {
 	Uart *uart;
 
-	uart = &pl011uart;
+	/*
+	 * Use the UART the firmware put on the header, and do not move it.
+	 *
+	 * On a Pi 3 the PL011 is Bluetooth's and the mini UART is the
+	 * header's; config.txt's dtoverlay=disable-bt swaps them, and that
+	 * overlay is a file on the card.  When this board's own file
+	 * server damaged the FAT and the overlays directory lost its
+	 * contents, the firmware silently fell back to the default: every
+	 * kernel print went out the Bluetooth pins and the board looked
+	 * dead, while the mini UART's one line came through perfectly.
+	 *
+	 * GPIO 14's function says which arrangement is in force -- alt0 is
+	 * the PL011, alt5 the mini UART -- so the console follows the
+	 * firmware rather than assuming, and a missing overlay costs
+	 * nothing.  With no firmware at all (QEMU -kernel, where the pin
+	 * is still an input) the PL011 is the one that is wired, and the
+	 * kernel takes its pins.
+	 *
+	 * Leaving the PL011 alone when the firmware kept it for Bluetooth
+	 * is also what makes Bluetooth possible later: it is that UART.
+	 */
+	if(gpiofselget(14) == Altmini){
+		uart = &miniuart;
+		consfrom = "mini uart, the firmware's choice";
+	} else {
+		uart = &pl011uart;
+		consfrom = "pl011";
+		gpiofsel(14, Altpl011);
+		gpiofsel(15, Altpl011);
+	}
 	(*uart->phys->enable)(uart, 0);
 	consuart = uart;
 	uart->console = 1;
@@ -468,6 +510,16 @@ uartconsolesetup(void)
 	if(consuart == nil)
 		return;
 	consuart->putc = consolerx;
+	print("console: %s\n", consfrom);
+	if(consuart != &pl011uart){
+		/*
+		 * The mini UART arms its own interrupt (AUX IRQ 29) from
+		 * its enable, and drains from the clock poll like this one.
+		 */
+		(*consuart->phys->enable)(consuart, 1);
+		addclock0link(uarttxpoll, 0);
+		return;
+	}
 	/* BCM2837 PL011 is VideoCore/GPU interrupt 57 (pending bank 2). */
 	intrenable(57, uartintr, consuart, 0, "uart0");
 	c = consuart->regs;

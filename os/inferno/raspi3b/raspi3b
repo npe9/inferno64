@@ -82,6 +82,7 @@ port
 
 misc
 	uartpl011
+	uartmini
 	screenbcm
 	randombcm
 	sdemmcbcm

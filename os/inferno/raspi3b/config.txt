@@ -5,12 +5,21 @@
 arm_64bit=1
 kernel=kernel8.img
 
-# Console: this kernel drives the PL011 (UART0) at 0x3f201000.  On a Pi 3
-# the PL011 is wired to Bluetooth by default and the GPIO header gets the
-# mini-UART; disable-bt frees the PL011 back onto GPIO 14/15 (pins 8/10)
-# so the kernel's console reaches the serial header.  115200 8N1.
+# Console, 115200 8N1 on GPIO 14/15 (header pins 8/10).
+#
+# On a Pi 3 the PL011 belongs to Bluetooth and the header gets the mini
+# UART.  The kernel takes whichever the firmware wired -- it reads GPIO
+# 14's function at boot -- so this file chooses, and choosing the
+# default leaves the PL011 free for Bluetooth later, which is the only
+# UART the BCM43438 is on.
+#
+# dtoverlay=disable-bt swaps them, giving the console the PL011 and
+# giving up Bluetooth.  It is left out on purpose, and not only for
+# Bluetooth's sake: an overlay is a file on this card, and when the
+# board's own file server damaged the FAT the overlay vanished, the
+# firmware fell back to the default, and every kernel print went out
+# the Bluetooth pins.  A console that depends on a file can disappear.
 enable_uart=1
-dtoverlay=disable-bt
 
 # Pin the core clock so the UART baud is stable (and don't let the firmware
 # downclock when idle, which would move the baud divisor under us).

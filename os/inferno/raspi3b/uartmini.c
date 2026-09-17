@@ -133,7 +133,7 @@ static Ctlr minictlr = {
 	.reg	= (volatile u32*)AUX0,
 };
 
-static Uart miniuart = {
+Uart miniuart = {
 	.regs	= &minictlr,
 	.name	= "eia0",
 	.freq	= Coreclk,

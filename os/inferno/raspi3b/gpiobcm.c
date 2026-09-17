@@ -31,6 +31,19 @@ gpio(void)
 	return (volatile u32*)GPIO0;
 }
 
+/*
+ * Which function a pin is in.  The firmware sets these before the
+ * kernel runs, and on this board that is how it says which UART it put
+ * on the header; see uartconsole().
+ */
+int
+gpiofselget(int pin)
+{
+	volatile u32 *r = gpio();
+
+	return (r[Gpfsel0 + pin/10] >> ((pin%10)*3)) & 7;
+}
+
 /* Set pin's function (Fin/Fout/altN). */
 void
 gpiofsel(int pin, int fn)
