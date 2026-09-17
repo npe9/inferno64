@@ -564,7 +564,7 @@ that turns the mechanism from working into paying, and the Cortex-M
 section above is why: today
 .CW utils/data2s/data2s.c
 emits
-.CW DATA / GLOBL ,
+.CW "DATA / GLOBL" ,
 the root lands in the data segment, and on a board that executes out of
 flash it is copied into RAM before anything runs \- so
 .CW rootxip()
