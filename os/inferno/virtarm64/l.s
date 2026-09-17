@@ -15,6 +15,9 @@
 #define	D_CNTFRQ_EL0	SYSARG5(3,3,14,0,0)
 #define	D_CNTPCT_EL0	SYSARG5(3,3,14,0,1)
 #define	D_CNTP_CTL_EL0	SYSARG5(3,3,14,2,1)
+#define	D_CNTVCT_EL0	SYSARG5(3,3,14,0,2)
+#define	D_CNTV_CTL_EL0	SYSARG5(3,3,14,3,1)
+#define	D_CNTV_CVAL_EL0	SYSARG5(3,3,14,3,2)
 #define	D_ICC_SRE_EL1	SYSARG5(3,0,12,12,5)
 #define	D_ICC_PMR_EL1	SYSARG5(3,0,4,6,0)
 #define	D_ICC_BPR1_EL1	SYSARG5(3,0,12,12,3)
@@ -741,24 +744,37 @@ TEXT	coherence(SB), 1, $-4
 	RET	R30
 
 /*
+ * The clock is the EL1 VIRTUAL timer -- CNTVCT, CNTV_CVAL, CNTV_CTL --
+ * and not the physical one this board first used.  A kernel at EL1 is
+ * a guest, and the virtual timer is the one a hypervisor is required
+ * to give a guest; the physical timer is the hypervisor's to trap and
+ * emulate, or not.  Linux uses the virtual timer in a guest for that
+ * reason.  This is not the repair of an observed failure: the
+ * physical timer works under QEMU and on a Compute Engine t2a, where
+ * both were watched ticking with a counter printed from clockintr.
+ * It is the one a guest is entitled to.  The virtual counter is the
+ * physical one less a fixed offset, so everything built on cycles()
+ * is unchanged, and both GIC versions were booted under QEMU and on
+ * a rented t2a after the change.
+ *
  * cycles(uvlong*): genuinely 64-bit here (real X registers), unlike
  * armv7's mrrc-into-two-32-bit-halves.  Still an out-param, matching
  * fns.h/io.h's shared declaration across every board -- nothing in
  * this tree has needed to risk a bare uvlong return yet.
  */
 TEXT	cycles(SB), 1, $-4
-	MRS	SPR(D_CNTPCT_EL0), R1
+	MRS	SPR(D_CNTVCT_EL0), R1
 	MOV	R1, 0(R0)
 	RET	R30
 
 /*
- * hwtimerset(uvlong *whenp): CNTP_CVAL_EL0 = *whenp, matching the
+ * hwtimerset(uvlong *whenp): CNTV_CVAL_EL0 = *whenp, matching the
  * absolute "when" semantics os/inferno/virt's clock.c already
  * assumes from riscv64's mtimecmp and armv7's CNTP_CVAL.
  */
 TEXT	hwtimerset(SB), 1, $-4
 	MOV	0(R0), R1
-	MSR	R1, SPR(D_CNTP_CVAL_EL0)
+	MSR	R1, SPR(D_CNTV_CVAL_EL0)
 	RET	R30
 
 TEXT	cntfrq(SB), 1, $-4
@@ -766,9 +782,17 @@ TEXT	cntfrq(SB), 1, $-4
 	MOV	R1, 0(R0)
 	RET	R30
 
+/*
+ * timerie(): enable the virtual timer, and make sure the physical one
+ * the firmware may have left running is off -- its PPI is not enabled
+ * at the GIC, but nothing should be counting down behind the clock's
+ * back.
+ */
 TEXT	timerie(SB), 1, $-4
-	MOV	$1, R0
+	MOV	$0, R0
 	MSR	R0, SPR(D_CNTP_CTL_EL0)
+	MOV	$1, R0
+	MSR	R0, SPR(D_CNTV_CTL_EL0)
 	RET	R30
 
 /*

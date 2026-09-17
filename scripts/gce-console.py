@@ -17,7 +17,7 @@
 #   -t  give up waiting for the prompt after this many seconds (default 300)
 #
 # Each CMD is typed as one line.  Everything the console printed is
-# written to stdout, carriage returns removed.  Exit status 1 if the
+# written to stdout as it arrives, carriage returns removed.  Exit status 1 if the
 # prompt never appeared -- that is a boot that did not finish, and it is
 # reported as such rather than as a command that printed nothing.
 import getopt, os, pty, select, signal, subprocess, sys, time
@@ -56,14 +56,19 @@ def pump(secs, until=None):
         if not b:
             return False
         out.extend(b)
+        # written as it arrives, so a caller's timeout loses nothing
+        sys.stdout.write(b.decode("utf-8", "replace").replace("\r", ""))
+        sys.stdout.flush()
         last = time.time()
         if until is not None and until.encode() in out[start:]:
             return True
     return until is None
 
-# The proxy prints its banner and then nothing: an Inferno shell has
-# already printed its prompt before anyone connected.  So press return
-# until a prompt comes back, for as long as the boot may take.
+# The proxy replays what the console printed before this connection, so
+# first let that backlog run out; anything after the quiet is this
+# session's.  Then press return until a prompt comes back, for as long
+# as the boot may take.
+pump(3)
 ok = False
 deadline = time.time() + limit
 while time.time() < deadline:
@@ -76,5 +81,4 @@ if ok:
         os.write(fd, c.encode() + b"\r")
         pump(quiet)
 os.kill(pid, signal.SIGTERM)
-sys.stdout.write(out.decode("utf-8", "replace").replace("\r", ""))
 sys.exit(0 if ok else 1)

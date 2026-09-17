@@ -48,12 +48,14 @@ Dev* devtab[24]={
 
 extern void ethervirtiommiolink(void);
 extern void ethervirtio10link(void);
+extern void ethergvelink(void);
 extern void usbxhcipcilink(void);
 extern void ethermediumlink(void);
 extern void loopbackmediumlink(void);
 void links(void){
 	ethervirtiommiolink();
 	ethervirtio10link();
+	ethergvelink();
 	usbxhcipcilink();
 	ethermediumlink();
 	loopbackmediumlink();

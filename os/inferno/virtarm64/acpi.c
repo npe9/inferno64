@@ -69,16 +69,16 @@ int acpicpushort;		/* GICC entries too short to carry an MPIDR */
 
 /*
  * The architected timer, from the GTDT.  The GSIVs are interrupt
- * numbers in the GIC's own numbering, so a non-secure EL1 physical
- * timer at PPI 14 reads as 30 here, which is what io.h's GicPPITimer
- * has been all along.
+ * numbers in the GIC's own numbering, so the virtual timer at PPI 11
+ * reads as 27 here and the non-secure EL1 physical one at PPI 14 as
+ * 30.  The clock is the virtual timer; see cycles() in l.s.
  */
 uvlong acpicntctl;		/* CntControlBase */
 uvlong acpicntread;		/* CntReadBase */
 int acpitimersec;		/* secure EL1 physical */
-int acpitimernsec;		/* non-secure EL1 physical -- the one used */
+int acpitimernsec;		/* non-secure EL1 physical */
 int acpitimernsecflags;
-int acpitimervirt;		/* virtual EL1 */
+int acpitimervirt;		/* virtual EL1 -- the one used */
 int acpitimerel2;		/* EL2 physical */
 int acpinplattimer;		/* platform timer structures, not read */
 
@@ -478,16 +478,17 @@ acpiinit(void)
 	 * being right or wrong is the difference between a kernel that
 	 * has a clock and one that does not.
 	 */
-	print("acpi: timer ns-el1 %d (io.h %d) flags %#ux sec %d virt %d el2 %d\n",
-		acpitimernsec, GicPPITimer, acpitimernsecflags,
-		acpitimersec, acpitimervirt, acpitimerel2);
+	print("acpi: timer virt %d (io.h %d) ns-el1 %d flags %#ux sec %d el2 %d\n",
+		acpitimervirt, GicPPITimer, acpitimernsec, acpitimernsecflags,
+		acpitimersec, acpitimerel2);
 	if(acpicntctl != 0 || acpicntread != 0 || acpinplattimer != 0)
 		print("acpi: cntctl %#llux cntread %#llux %d platform timers\n",
 			acpicntctl, acpicntread, acpinplattimer);
-	if(acpitimernsec != 0 && acpitimernsec != timerirq){
+	/* the virtual timer's, because that is the one the clock uses */
+	if(acpitimervirt != 0 && acpitimervirt != timerirq){
 		print("timer: irq %d from the firmware, io.h says %d\n",
-			acpitimernsec, timerirq);
-		timerirq = acpitimernsec;
+			acpitimervirt, timerirq);
+		timerirq = acpitimervirt;
 		gicenable(timerirq);
 	}
 

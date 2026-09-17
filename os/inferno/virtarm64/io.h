@@ -96,7 +96,7 @@ enum {
 	 */
 	GicIRQMax	= 224,
 	GicSpiBase	= 32,
-	GicPPITimer	= 30,		/* non-secure physical timer, from the DTB */
+	GicPPITimer	= 27,		/* virtual timer (PPI 11); see cycles() in l.s */
 };
 
 /* virtio-mmio SPI n is GIC IRQ 32+16+n == 48+n (see mem.h VIRTIO0) */

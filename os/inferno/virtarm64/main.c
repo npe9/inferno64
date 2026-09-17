@@ -295,8 +295,17 @@ fpurestore(int x)
 	USED(x);
 }
 
-ulong
+/*
+ * uintptr, not ulong: ulong is 32 bits under 7c, and this used to
+ * truncate every address above 4 GiB (the build said "conversion of
+ * pointer to shorter integer" here).  Memory starts at 1 GiB on this
+ * board, so a machine with more than 3 GiB has RAM above 4 GiB, and a
+ * DMA address for it came out 4 GiB too low -- the device then wrote
+ * into whatever kernel memory was there.  A Compute Engine t2a has
+ * 4 GiB; every QEMU run here had 1 or 2.
+ */
+uintptr
 va2pa(void *v)
 {
-	return (ulong)v;
+	return (uintptr)v;
 }

@@ -51,6 +51,7 @@ lib
 link
 	ethervirtiommio
 	ethervirtio10	pci
+	ethergve	pci
 	usbxhcipci	usbxhci
 	ethermedium
 	loopbackmedium
