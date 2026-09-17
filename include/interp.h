@@ -261,6 +261,7 @@ struct Pctx
 	Inst*	syncpc;		/* the PC p->reg carries; see REGSYNCED() */
 	int	inxec;		/* a quantum is open on this context */
 	void*	owner;		/* the Proc that claimed it; Proc*, diagnosis */
+	int	idx;		/* its slot in dis.c's pctxs[]; see enterquantum() */
 	int	inchan;		/* inside a channel region; see chanlock() */
 	Progq*	qpool;		/* spare queue cells, so cqadd() cannot error */
 	int	nchpend;	/* channels whose free chanlock() deferred */

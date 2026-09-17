@@ -121,6 +121,7 @@ claimctx(void)
 	}
 	c = &pctxpool[npctxused - 1];
 	c->owner = up;
+	c->idx = npctx;		/* its own Rendez; see enterquantum() */
 	pctxs[npctx++] = c;
 	npctxused++;
 	unlock(&isched.l);
@@ -240,6 +241,44 @@ ulong stwwakes;		/* MULTICORE INSTRUMENTATION - temporary */
  */
 static Rendez stwr;
 
+/*
+ * And one per context for the other side of the handshake.  A context
+ * that wants to enter a quantum while a collection is running used to
+ * sched() round enterquantum()'s withdraw-and-retry loop until the
+ * collection finished -- so parking the collector moved the spin rather
+ * than removing it, and the two were measured apart: with the collector
+ * parked and the give-up bound reading a per-CPU clock (so that it fired
+ * on the first migration and the world was almost never actually
+ * stopped) the shell loop ran 442 iterations in sixteen boots; with the
+ * clock honest, so that the collector waits its quarter second and every
+ * other context spins through it, the same sixteen boots ran 0.
+ *
+ * A Rendez holds exactly one sleeper, so this cannot be a single one.
+ * One per context works because claimctx() hands each interpreter its
+ * own; the exception is pool exhaustion, where contexts are shared, and
+ * that path already prints that it is unsafe under parallelvm.
+ */
+static Rendez ctxr[MAXPCTX];
+
+static int
+worldrunning(void *a)
+{
+	USED(a);
+	return gcstw == 0;
+}
+
+/* let the world run again, and wake everyone waiting to enter a quantum */
+static void
+releaseworld(void)
+{
+	int i;
+
+	gcstw = 0;
+	coherence();
+	for(i = 0; i < npctx; i++)
+		wakeup(&ctxr[i]);
+}
+
 static int
 allstopped(void *a)
 {
@@ -330,8 +369,7 @@ stoptheworld(void)
 	for(tries = 0; othersrunning() > 0; tries++){
 		stwwaits++;
 		if((ulong)(MACHP(0)->ticks - start) > HZ/4){
-			gcstw = 0;	/* let them run; collect next time */
-			coherence();
+			releaseworld();	/* let them run; collect next time */
 			if(stwgaveup++ == 0)
 				print("stw: gave up after %d tries, %lud ticks,"
 					" cpu%d %s\n", tries,
@@ -406,7 +444,14 @@ enterquantum(void)
 		curP->inxec = 0;
 		coherence();
 		safepoint();	/* the collector may be waiting for this */
-		sched();
+		/*
+		 * Park rather than spin, for the same reason the collector
+		 * does.  This context is already at a safepoint -- inxec is
+		 * clear -- so sleeping here delays nothing the collector is
+		 * waiting for.  The 5ms timeout means a wake that does not
+		 * arrive costs that, not the collection.
+		 */
+		tsleep(&ctxr[curP->idx], worldrunning, nil, 5);
 	}
 }
 
@@ -483,8 +528,7 @@ starttheworld(void)
 {
 	if(parallelvm == 0)
 		return;
-	gcstw = 0;
-	coherence();
+	releaseworld();
 }
 
 enum { Gqevery = 61 };	/* Go's schedule() uses 61 for the same reason */
