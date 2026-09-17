@@ -301,6 +301,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkcontrast();
 	checkmenu();
 	checkhover();
+	checkfocusall();
 	checkcolourwidth();
 	checkcanvastag();
 	checkplaintitle();
@@ -919,6 +920,95 @@ checkcolourwidth()
 
 
 
+
+# Every widget a person can tab to has to SHOW that it has the keyboard.
+#
+# The button check below tests one widget, and it exists because that one
+# was broken: the two lines that draw its ring were commented out while
+# the identical lines ran in label.c.  One widget was tested and one
+# widget was wrong, which is not a coincidence - it is what happens when
+# a property is checked on an example instead of on the set.
+#
+# So this asks the same question of every type that sets Tktakefocus:
+# button, checkbutton, radiobutton, entry, listbox, text and scale.
+checkfocusall()
+{
+	kinds := array[] of {
+		("button",	"button %s -text {Cancel}"),
+		("checkbutton",	"checkbutton %s -text {Wrap} -variable fv1"),
+		("radiobutton",	"radiobutton %s -text {Third} -variable fv2 -value 1"),
+		("entry",	"entry %s -width 120"),
+		("listbox",	"listbox %s -width 120 -height 50"),
+		("text",	"text %s -width 120 -height 50"),
+		("scale",	"scale %s -orient horizontal -from 0 -to 10 -length 120"),
+	};
+	bad := "";
+	for(i := 0; i < len kinds; i++){
+		(nm, spec) := kinds[i];
+		blank();
+		top := offscreen();
+		if(top == nil)
+			return;
+		# two of the same thing, so the only difference between the
+		# two readings is which one holds the keyboard
+		if(!mk2(top, spec))
+			continue;
+		map(top);
+		# tkhaskeyfocus() is false unless the toplevel itself has the
+		# keyboard, which an offscreen window never gets by itself
+		tk->cmd(top, "focus -global 1");
+		r := tk->rect(top, ".a", Tk->Border);
+		tk->cmd(top, "focus .b");
+		tk->cmd(top, "update");
+		away := grab(r);
+		tk->cmd(top, "focus .a");
+		tk->cmd(top, "update");
+		held := grab(r);
+		# ANY difference is not enough.  A text widget answered this
+		# check with its blinking CARET - ten pixels, in the middle,
+		# gone for half of every second - and the check said OK.  What
+		# is wanted is an indication at the widget's EDGE, so only the
+		# outer band is counted, and it has to be a substantial part of
+		# a perimeter rather than a stray pixel or two.
+		n := banddiff(away, held, r, Band);
+		want := (r.dx() + r.dy())/2;
+		if(n < want)
+			bad += sys->sprint(" %s(%d<%d)", nm, n, want);
+		else if(verbosefocus)
+			sys->print("     %-12s %d of its edge changes with the keyboard (wanted %d)\n",
+				nm, n, want);
+	}
+	report(bad == nil, sys->sprint(
+		"every widget that takes the keyboard shows it%s", badly(bad)));
+}
+
+verbosefocus := 1;
+Band: con 4;		# the outer band a focus ring is expected to land in
+
+mk2(top: ref Tk->Toplevel, spec: string): int
+{
+	for(l := list of {".a", ".b"}; l != nil; l = tl l){
+		w := hd l;
+		e := tk->cmd(top, subst2(spec, w));
+		if(e != nil && len e > 0 && e[0] == '!'){
+			sys->print("     %s: %s\n", w, e);
+			return 0;
+		}
+		tk->cmd(top, "pack " + w + " -padx 6 -pady 6");
+	}
+	return 1;
+}
+
+# Limbo wants a format string to be a compile-time constant, so a widget
+# spec cannot go through sprint: put the path in by hand.
+subst2(spec, w: string): string
+{
+	for(i := 0; i < len spec - 1; i++)
+		if(spec[i] == '%' && spec[i+1] == 's')
+			return spec[0:i] + w + spec[i+2:];
+	return spec;
+}
+
 # A widget under the pointer has to LOOK different, and how different is
 # a number rather than an opinion.
 #
@@ -1216,7 +1306,12 @@ checkscene()
 	tk->cmd(top, "frame .f -width 90 -height 46 -borderwidth 2 " +
 		"-relief raised -bg white");
 	tk->cmd(top, "button .b -text {Cancel}");
+	# An entry with TEXT in it, and holding the keyboard.  Empty and
+	# unfocused it exercises only the fill and the border, which the
+	# frame already covers; the glyph run, the caret and the focus ring
+	# are the parts of an entry that have nodes of their own.
 	tk->cmd(top, "entry .e -width 150");
+	tk->cmd(top, ".e insert 0 {Handgloves}");
 	# A label, because a button draws its own text in buton.c and the
 	# text NODE is only on label.c's path - without one here the text
 	# node is never reached, and a control that perturbs it passes for
@@ -1227,18 +1322,32 @@ checkscene()
 	tk->cmd(top, "pack .b -padx 6 -pady 6");
 	tk->cmd(top, "pack .e -padx 6 -pady 6");
 	map(top);
+	tk->cmd(top, "focus -global 1");
+	tk->cmd(top, "focus .e");
 
 	# Prove each path was actually SELECTED before comparing.  Without
 	# this the check passed with 0 of 1890000 bytes differing while the
 	# render command did not exist at all - both snapshots were the same
 	# path, so of course they matched.  A comparison of a thing with
 	# itself is the easiest way for a test like this to be worthless.
+	# A caret BLINKS, on a 500ms repeater that runs whether or not there
+	# is a window manager, so a caret that toggled between the two
+	# snapshots would report a difference that is the clock's rather than
+	# the renderer's.  Re-focusing resets the phase and turns the caret
+	# on, so each snapshot is taken a few milliseconds into a fresh
+	# half-second of it being lit.  It goes AWAY and back, because
+	# focusing what already has the focus is not a focus change and
+	# fires no binding.
 	tk->cmd(top, "render direct");
 	sel1 := tk->cmd(top, "render");
+	tk->cmd(top, "focus .b");
+	tk->cmd(top, "focus .e");
 	tk->cmd(top, "update");
 	a := snap();
 	tk->cmd(top, "render scene");
 	sel2 := tk->cmd(top, "render");
+	tk->cmd(top, "focus .b");
+	tk->cmd(top, "focus .e");
 	tk->cmd(top, "update");
 	b := snap();
 	tk->cmd(top, "render direct");
@@ -1294,6 +1403,31 @@ at(i: int): string
 }
 
 # the whole offscreen pane, as bytes
+# the outer band, w pixels wide, of two readings of the same rectangle:
+# how many pixels differ.  A focus ring lands there; a caret does not.
+banddiff(a, b: array of byte, r: Rect, w: int): int
+{
+	n := 0;
+	dx := r.dx();
+	for(y := 0; y < r.dy(); y++)
+		for(x := 0; x < dx; x++){
+			if(x >= w && x < dx - w && y >= w && y < r.dy() - w)
+				continue;
+			i := (y*dx + x)*3;
+			if(a[i] != b[i] || a[i+1] != b[i+1] || a[i+2] != b[i+2])
+				n++;
+		}
+	return n;
+}
+
+grab(r: Rect): array of byte
+{
+	b := array[r.dx()*r.dy()*3] of byte;
+	if(off.readpixels(r, b) != len b)
+		return array[r.dx()*r.dy()*3] of {* => byte 0};
+	return b;
+}
+
 snap(): array of byte
 {
 	b := array[W*H*3] of byte;

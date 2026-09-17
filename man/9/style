@@ -104,6 +104,30 @@ Under
 .B classic
 the border is the literal number it always was, because every existing
 layout has measured itself against that.
+.PP
+Under
+.B flat
+every widget that can take the keyboard draws a ring inside its border
+while it holds it.
+.IR Button (9),
+.IR checkbutton (9),
+.IR radiobutton (9)
+and
+.IR entry (9)
+always did;
+.IR listbox (9),
+.IR scale (9)
+and
+.IR text (9)
+did not, and now do.
+A
+.I text
+widget in particular showed the keyboard with its blinking caret alone,
+which is ten pixels in the middle of the widget and gone for half of
+every second.
+.IR Tkofftest (1)
+asks each of the seven in turn and requires the change to be at the
+widget's edge.
 .SH EXAMPLE
 .EX
 style flat
@@ -151,9 +175,21 @@ a scale is a thin track filled to the knob in the accent with a round
 knob above it; a scrollbar is a capsule in the trough with solid arrow
 glyphs; a checkbutton is an empty box when off and a filled one with a
 light tick when on; a radiobutton is a ring, filled when chosen.
-Their GEOMETRY is unchanged in every case \- an arrow occupies the same
-triangle, a thumb the same rectangle \- so the regions a click lands in
-are exactly what they were, and only the paint differs.
+Their GEOMETRY is unchanged but for one pixel \- an arrow occupies the
+same triangle, a thumb the same rectangle \- so the regions a click lands
+in are what they were, and only the paint differs.
+The exception is that a
+.I scale
+reserves a highlight pixel under
+.B flat
+so that it can show the keyboard, which it could not before: the ring
+code was there and drew nothing, because a
+.B -highlightwidth
+of zero draws a box of zero width.
+A scale is therefore two pixels larger in each direction under
+.B flat
+than under
+.BR classic .
 .PP
 A
 .I frame
@@ -161,5 +197,14 @@ used purely as a divider, with a relief and no fill of its own, says
 less in the flat style than in the classic one, because there the chisel
 was the whole of what it drew.
 .PP
-There is no way to set it for a session, only per toplevel, so a program
-that wants it must say so itself.
+A toplevel built by something other than
+.IR tkclient (2)
+gets the default and has no session-wide override:
+.B $tkstyle
+is read by
+.IR tkclient (2),
+not by
+.IR tk (2),
+so a program that builds a bare toplevel must say
+.B "style classic"
+for itself if that is what it wants.

@@ -117,6 +117,7 @@ static TkEbind tktbinds[] = {
 	{TkKey|Pgup,	"%W yview scroll -0.75 page"},
 	{TkButton4P,	"%W yview scroll -0.2 page"},
 	{TkButton5P,	"%W yview scroll 0.2 page"},
+	{TkFocusin,             "%W tkTextCursor insert"},
 	{TkFocusout,            "%W tkTextCursor delete"},
 	{TkKey|APP|'\t',	""},
 	{TkKey|BackTab,		""},
@@ -175,6 +176,16 @@ tktext(TkTop *t, char* arg, char **ret)
 	tk->ipad.x = tkspace(tk)->textpadx * 2;
 	tk->ipad.y = tkspace(tk)->textpady * 2;
 	tk->flag |= Tktakefocus;
+	/*
+	 * A text widget showed the keyboard with its CARET and nothing else
+	 * - eleven pixels' difference, and a caret blinks, so for half of
+	 * every second there was no indication at all that the widget had
+	 * the keyboard.  Under flat it gets a ring like every other
+	 * focusable widget.  Flat only: highlightwidth enters this widget's
+	 * geometry, and classic is kept as it was.
+	 */
+	if(tkstyleflat(tk))
+		tk->highlightwidth = 1;
 	tkt->sborderwidth = 0;
 	tkt->inswidth = 2;
 	tkt->cur_flag = 0;	/* text cursor doesn't show up initially */
@@ -446,6 +457,12 @@ tkdrawtext(Tk *tk, Point orig)
 	if(!reldone) {
 		p.x = orig.x + tk->act.x;
 		p.y = orig.y + tk->act.y;
+		if(tkhaskeyfocus(tk) && tk->highlightwidth > 0)
+			tkbox(dst, insetrect(Rect(p.x, p.y,
+				p.x + tk->act.width + 2*tk->borderwidth,
+				p.y + tk->act.height + 2*tk->borderwidth),
+				tk->borderwidth), tk->highlightwidth,
+				tkgc(tk->env, TkChighlightfgnd));
 		tkdrawrelief(dst, tk, p, TkCbackgnd, tk->relief);
 	}
 	tkt->tflag &= ~TkTdlocked;
@@ -741,6 +758,18 @@ tktextcursor(Tk *tk, char* arg, char **ret)
 		tkblink(nil, nil);
 
 	showcaret(tk, on);
+
+	/*
+	 * The border is repainted only on a Tkrefresh, and nothing set one
+	 * when the keyboard arrived or left - so a focus ring drawn beside
+	 * the relief would never appear and, worse, never be erased.  Ask
+	 * for the whole widget back.
+	 */
+	if(tk->highlightwidth > 0) {
+		tk->flag |= Tkrefresh;
+		tk->dirty = tkrect(tk, 1);
+		tkdirty(tk);
+	}
 	return nil;
 }
 

@@ -204,6 +204,18 @@ tkscale(TkTop *t, char *arg, char **ret)
 		return TkNomem;
 
 	tk->flag |= Tktakefocus;
+	/*
+	 * A scale HAS the code to draw a focus ring and has never drawn one,
+	 * because highlightwidth was left at zero and tkbox() of width zero
+	 * draws nothing.  Every other focusable widget sets it to 1.
+	 *
+	 * Under flat only: unlike the listbox, a scale's geometry adds
+	 * 2*highlightwidth to its requested size, so setting it changes the
+	 * widget's dimensions - and classic is kept as the look this
+	 * toolkit has always had, asserted unchanged elsewhere.
+	 */
+	if(tkstyleflat(tk))
+		tk->highlightwidth = 1;
 	tks = TKobj(TkScale, tk);
 	tks->res = TKI2F(1);
 	tks->to = TKI2F(100);

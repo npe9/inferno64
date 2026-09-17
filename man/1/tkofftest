@@ -29,7 +29,7 @@ The image must be handed over
 .I after
 the widgets exist: Tk paints what it has when the image arrives.
 .PP
-Six things are checked.
+These are checked.
 .TP
 .B "a blank pane reads back blank"
 An untouched pane must read back as one value and no ink.
@@ -127,6 +127,37 @@ Without it, a checker that simply always complains would pass.
 .B "no titlebar widget is short of room"
 The chrome every window has, at both fonts, through
 .IR tklayout (2).
+.TP
+.B "every widget that takes the keyboard shows it"
+Each of the seven widget types carrying
+.B Tktakefocus
+is built twice on one pane, the keyboard is given to one of the pair and
+then the other, and the widget's outer four pixels are compared between
+the two readings.
+.PP
+Counting ink over the WHOLE widget was not enough, and the difference is
+the point of the check.
+A
+.B text
+widget answered that version with its blinking caret \(em ten pixels, in
+the middle of the widget, absent for half of every second \(em and the
+check said it was fine.
+Requiring the change to be at the edge, and to amount to a fair part of a
+perimeter, is what turns "something moved" into "the widget is visibly
+the one with the keyboard".
+.PP
+It found three widgets showing nothing at all:
+.IR listbox (9)
+used the keyboard only to pick out its active
+.IR item ,
+.IR scale (9)
+had ring-drawing code that could never draw because it never reserved a
+highlight pixel, and
+.IR text (9)
+had only the caret.
+The same metric then caught the first repair of the last of those putting
+its ring one border-width too far in, where it covered half the perimeter
+rather than all of it.
 .TP
 .B "Tk antialiases a TrueType face"
 Draws through the first face

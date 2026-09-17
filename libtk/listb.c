@@ -214,6 +214,20 @@ tkdrawlistb(Tk *tk, Point orig)
 		p.y += lh;
 	}
 
+	/*
+	 * Which control has the keyboard, shown - a listbox had no ring at
+	 * all.  tkhaskeyfocus() appears above, but only to decide whether
+	 * the ACTIVE ITEM is highlighted; the widget itself said nothing.
+	 *
+	 * Nothing is paid for it: highlightwidth is already 1 here and every
+	 * coordinate below already insets by it, so the pixel has been
+	 * reserved and left blank all along - the same thing that was true
+	 * of a button before its two commented-out lines were restored.
+	 */
+	if(tkhaskeyfocus(tk))
+		tkbox(i, insetrect(Rect(0, 0, tk->act.width + 2*tk->borderwidth,
+			tk->act.height + 2*tk->borderwidth), tk->borderwidth),
+			tk->highlightwidth, tkgc(tk->env, TkChighlightfgnd));
 	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
 
 	p.x = tk->act.x + orig.x;
