@@ -575,6 +575,37 @@ in and out on the same endpoint number, which this driver opens as one
 read-write endpoint, so the message is the idle receive read waiting
 for traffic that is not coming \- exactly what it is meant to say.
 .NH 2
+The receive readers, on the board, 17 September 2026
+.PP
+The kernel carrying the
+.CW ethermedium.c
+change (a failed read no longer ends the IPv4, IPv6 or ARP reader) was
+booted on the Pi from a card holding exactly that build.  DHCP gave it
+192.168.8.105, on a different network from the earlier runs.  From a
+Mac on the same segment, 600 pings at one a second over ten minutes:
+600 answered, none lost, 13 milliseconds average.  A connection to a
+closed TCP port was refused.  At the end the server's counters read 651
+IPv4 frames in and 651 handed to a reader, 74 ARP in and 74 out, and 0
+dropped on any conversation.  The console showed no
+.CW "ipv4 read:"
+or
+.CW "giving up"
+line.  So no reader failed during this run.  The fix was in the kernel,
+but the run does not show an error being survived; it shows the
+network staying up for ten minutes.  The bulk IN re-arm fired once in
+the visible log
+.CW "usbdwc: ep3.1 re-armed after 2 s (1 times)" ), (
+and receive carried on after it.
+.PP
+The board still prints its
+.CW NETTX ,
+.CW NETICMP
+and
+.CW TXDUMP
+diagnostics every few seconds.  The console scrollback holds about 125
+lines, so those lines push the boot markers out of it within a minute.
+They should come out of the next build.
+.NH 2
 Suggested order
 .PP
 Contain a failing driver so it cannot wedge the console; fix DWC2 bulk
