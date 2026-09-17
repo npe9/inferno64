@@ -1,0 +1,162 @@
+.TH HIDREPORT 2
+.SH NAME
+hidreport \- HID report descriptors
+.SH SYNOPSIS
+.EX
+include "hidreport.m";
+hidreport := load Hidreport Hidreport->PATH;
+
+Pgeneric, Pkeyboard, Pbutton: con ...;
+Upointer, Umouse, Ukeyboard, Ux, Uy, Uwheel: con ...;
+Input, Output, Feature: con iota;
+Fconst, Fvar, Frel: con ...;
+
+Field: adt {
+    page:   int;
+    usage:  int;
+    umin:   int;
+    umax:   int;
+    lmin:   int;
+    lmax:   int;
+    off:    int;
+    size:   int;
+    count:  int;
+    flags:  int;
+    val:    fn(f: self ref Field, rep: array of byte, n: int): int;
+};
+
+Report: adt {
+    id:     int;
+    kind:   int;
+    bits:   int;
+    app:    int;
+    fields: list of ref Field;
+    find:   fn(r: self ref Report, page, usage: int): ref Field;
+};
+
+init:    fn();
+parse:   fn(d: array of byte): (list of ref Report, string);
+report:  fn(rl: list of ref Report, id, kind: int): ref Report;
+kbd:     fn(r: ref Report): int;
+keys:    fn(r: ref Report, rep: array of byte): (int, array of int);
+ptr:     fn(r: ref Report): int;
+mouse:   fn(r: ref Report, rep: array of byte): (int, int, int, int);
+.EE
+.SH DESCRIPTION
+.B Hidreport
+walks a HID report descriptor \- what a device sends when it will not
+do the boot protocol \- and says where in each of its reports every
+field is.
+.PP
+.B Init
+must be called before anything else.
+.PP
+.BI parse( d )
+walks the descriptor
+.IR d .
+It returns the reports in the order the descriptor declared them, and
+a string, which is an error; when it is not nil the list is what was
+understood before the error, which is usually still usable.
+.PP
+A
+.B Report
+is everything the descriptor put in the report with that
+.B id
+and of that
+.B kind
+\-
+.BR Input ,
+.B Output
+or
+.BR Feature .
+An
+.B id
+of 0 means the device uses no report ids.
+.B Bits
+is how long the report's data is;
+.B app
+is the usage of the application collection it was declared in, with
+the usage page in the top sixteen bits, or 0.
+.PP
+A
+.B Field
+is a run of
+.B count
+items, each
+.B size
+bits wide, starting
+.B off
+bits into the report's data.  The offset does not count a report id:
+over GATT the id is in the Report Reference descriptor and not in the
+value, and over USB the caller strips it, so what is left is the data
+either way.  A variable field whose usages were named one by one
+becomes one
+.B Field
+per item with
+.B usage
+set; a field given as a usage range \- the eight keyboard modifier
+bits, a row of buttons \- stays one
+.B Field
+with
+.B umin
+and
+.BR umax .
+An array field, where the value selects a usage out of the range
+rather than each item having one, has
+.B usage
+0 and
+.B Fvar
+clear.  Constant fields are padding: they take up room in the report
+and are not in the list.
+.PP
+.IB f .val( rep ,\  n )
+is the
+.IR n th
+item of
+.IR f ,
+read out of
+.IR rep .
+It is sign extended when the descriptor said the logical minimum goes
+below zero.
+.PP
+.IB r .find( page ,\  usage )
+is the field carrying that usage, matching either a field's own usage
+or a range that covers it.
+.PP
+.BI report( rl ,\  id ,\  kind )
+picks one report out of a parsed list.
+.PP
+.BI kbd( r )
+says whether
+.I r
+looks like a keyboard, which means an array of key codes on the
+keyboard page; a device with only modifier bits and no array is a set
+of modifiers and not a keyboard.
+.BI keys( r ,\  rep )
+reads one: the modifier byte in the order the boot protocol puts it \-
+bit 0 is Left Control \- and the key codes that are down, with the
+empty slots and the rollover code left out.
+.PP
+.BI ptr( r )
+says whether
+.I r
+has X and Y on the generic desktop page.
+.BI mouse( r ,\  rep )
+reads one: the movement, then the buttons in the order
+.B /dev/pointer
+wants them, then the wheel, which is 0 on a device that has none.  The
+first three are what
+.IR hidboot 's
+.B mouse
+returns and in the same order, so a caller that already handles the
+boot protocol handles this.
+.SH SOURCE
+.B /appl/lib/hidreport.b
+.SH SEE ALSO
+.IR hidboot (2),
+.IR btfs (4),
+.IR usbd (1)
+.SH BUGS
+Nothing here understands what a device is for beyond keyboards and
+pointers, and nothing writes an output or a feature report; they are
+parsed and then left.

@@ -1364,6 +1364,11 @@ init()
 	# #m is the pointer device; without it usbd's mouse reader dies on
 	# its first open of /dev/pointer.
 	sys->bind("#m", "/dev", sys->MAFTER);
+	# #t is the uarts.  The console has one of them; the other is the
+	# board's Bluetooth radio, which is an H4 controller on a serial
+	# line and reachable only as a file: btfs wants /dev/eia0 and its
+	# ctl file beside it.
+	sys->bind("#t", "/dev", sys->MAFTER);
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 	sys->print("RASPI3B-OK\n");
 

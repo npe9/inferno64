@@ -1,0 +1,39 @@
+<../../../mkconfig
+
+TARG=\
+	bt.dis\
+	h4.dis\
+	h5.dis\
+	btusb.dis\
+	hci.dis\
+	l2cap.dis\
+	att.dis\
+	gatt.dis\
+	gattsrv.dis\
+	smp.dis\
+	sdp.dis\
+	rfcomm.dis\
+	bnep.dis\
+	avdtp.dis\
+	hfp.dis\
+
+#
+#	mkdis makes every .dis depend on the modules named here.  bt.m is
+#	the one that matters: it is this stack's own interface, and while it
+#	was left out an edit to it rebuilt only the .b files that had also
+#	changed.  The rest kept their old link signatures and the loader
+#	refused them at run time -- "link typecheck Bttransport->init()" --
+#	which reads like a bug in the stack rather than a stale build.
+#
+SYSMODULES=\
+	bt.m\
+	crypt.m\
+	dial.m\
+	ipints.m\
+	keyring.m\
+	sys.m\
+
+
+DISBIN=$ROOT/$DISROOT/lib/bt
+
+<$ROOT/mkfiles/mkdis

@@ -4,6 +4,7 @@ DIRS=\
 	auth\
 	auxi\
 	avr\
+	bt\
 	disk\
 	fs\
 	games\

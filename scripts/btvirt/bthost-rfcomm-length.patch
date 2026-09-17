@@ -1,0 +1,32 @@
+Fix the RFCOMM length indicator in bthost's data frames.
+
+TS 07.10 section 5.2.1.4 defines the length indicator as the length of
+the information field.  bthost_send_rfcomm_data() writes sizeof(struct
+rfcomm_hdr) + len into it, which is three too many: the address, the
+control and the length octet are the header, not information.
+
+The frame is otherwise right -- uih_len is len + 4 and the FCS lands
+in the last octet -- so only the field is wrong, and only on data
+frames that bthost sends.  A receiver that believes the field reads
+past the end of the frame.  Wireshark's RFCOMM dissector calls such a
+frame malformed, and the Inferno stack this image exists to test
+refuses it, which is how it was found.
+
+This is emulator/bthost.c, BlueZ's host stack for its own tests, and
+not the RFCOMM in the Linux kernel.
+
+--- a/emulator/bthost.c
++++ b/emulator/bthost.c
+@@ -3723,10 +3723,10 @@
+ 	hdr = (struct rfcomm_hdr *) uih_frame;
+ 	hdr->address = RFCOMM_ADDR(1, channel * 2);
+ 	hdr->control = RFCOMM_CTRL(RFCOMM_UIH, 0);
+ 	if (len > 127) {
+-		hdr->length  = RFCOMM_LEN16(cpu_to_le16(sizeof(*hdr) + len));
++		hdr->length  = RFCOMM_LEN16(cpu_to_le16(len));
+ 		memcpy(uih_frame + sizeof(*hdr) + 1, data, len);
+ 	} else {
+-		hdr->length  = RFCOMM_LEN8(sizeof(*hdr) + len);
++		hdr->length  = RFCOMM_LEN8(len);
+ 		memcpy(uih_frame + sizeof(*hdr), data, len);
+ 	}

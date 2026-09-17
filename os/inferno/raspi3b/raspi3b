@@ -158,6 +158,19 @@ root
 	/dis/dossrv.dis
 	/dis/ip/ping.dis
 	/dis/lib/dhcpclient.dis
+	/dis/bt/btfs.dis
+	/dis/lib/bt/bt.dis
+	/dis/lib/bt/hci.dis
+	/dis/lib/bt/h4.dis
+	/dis/lib/bt/l2cap.dis
+	/dis/lib/bt/att.dis
+	/dis/lib/bt/gatt.dis
+	/dis/lib/bt/gattsrv.dis
+	/dis/lib/bt/smp.dis
+	/dis/lib/bt/sdp.dis
+	/dis/lib/bt/rfcomm.dis
+	/dis/lib/cmac.dis
+	/dis/lib/p256.dis
 	/dis/lib/dial.dis
 	/dis/lib/ip.dis
 	/dis/lib/rand.dis

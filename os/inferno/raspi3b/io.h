@@ -41,6 +41,8 @@ enum {
 	UartCRUARTEN	= 1<<0,
 	UartCRTXE	= 1<<8,
 	UartCRRXE	= 1<<9,
+	UartCRRTSEN	= 1<<14,	/* hardware flow control: RTS */
+	UartCRCTSEN	= 1<<15,	/* and CTS */
 
 	UartIMSCRX	= 1<<4,
 	UartIMSCTX	= 1<<5,

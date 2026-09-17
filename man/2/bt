@@ -1,0 +1,112 @@
+.TH BT 2
+.SH NAME
+bt, h4, btusb, hci, l2cap, att, gatt, smp \- Bluetooth Low Energy protocol modules
+.SH SYNOPSIS
+.EX
+include "bt.m";
+bt   := load Bt Bt->PATH;
+t    := load Bttransport Bttransport->H4PATH;
+hci  := load Hci Hci->PATH;
+l2   := load L2cap L2cap->PATH;
+att  := load Att Att->PATH;
+gatt := load Gatt Gatt->PATH;
+smp  := load Smp Smp->PATH;
+.EE
+.SH DESCRIPTION
+These are the layers of the Bluetooth Low Energy stack that
+.IR btfs (4)
+serves as a name space.  A program that wants the name space should
+use
+.I btfs
+and never these; they are described because
+.I btfs
+is one way to arrange them and not the only one, and because the
+division between them is the part worth keeping.
+.PP
+Each is loaded and then given the layer below it, so a stack is built
+from the bottom up: a transport, then
+.BR Hci ,
+then
+.B L2cap
+on a connection,
+.B Att
+on a channel of that, and
+.B Gatt
+or
+.B Smp
+above.  Everything is little endian on the wire and
+.B Bt
+holds the accessors and the spellings \- addresses and UUIDs written
+most significant byte first, controller error codes as text.
+.TF Bttransport
+.PD
+.TP
+.B Bt
+The shared accessors: the HCI packet indicators, byte order,
+addresses, hexadecimal, UUIDs, opcodes and error strings.
+.TP
+.B Bttransport
+One whole HCI packet in each direction, and nothing else.  Two
+implementations are built and they are interchangeable:
+.B H4PATH
+frames packets on a byte stream, which is what a UART-attached
+controller speaks and what a
+.IR dial (2)
+string reaches; and
+.B USBPATH
+carries them on the endpoints of a USB Bluetooth controller (written,
+never demonstrated \- see
+.IR btfs (4)).
+Nothing above this interface knows which it has.
+.TP
+.B Hci
+The controller.  Commands are serialised, because a controller answers
+one at a time; events are parsed and dispatched; ACL data is
+fragmented going down and reassembled coming up; and the controller's
+ACL buffers are accounted, so a write waits rather than overruns.  It
+also does LE scanning, connection setup and teardown, and the
+commands SMP needs.
+.TP
+.B L2cap
+Length and CID framing over an ACL connection, a queue per CID, and
+the LE signalling channel.  On an LE link the channels are fixed:
+.B Cattr
+for the attribute protocol,
+.B Cle
+for signalling,
+.B Csmp
+for security management.  There are no connection-oriented channels.
+.TP
+.B Att
+The attribute protocol: one outstanding request at a time, answered or
+refused with an error naming the handle, and notifications and
+indications arriving in between on their own queue.
+.TP
+.B Gatt
+Services, characteristics and descriptors, discovered by three
+loops over
+.BR Att ,
+and reading, writing and subscribing to a characteristic.
+.TP
+.B Smp
+LE legacy pairing as the initiator.  Its key functions
+.B c1
+and
+.B s1
+are built out of AES-128, so it needs only
+.IR crypt (2)
+and never asks the controller to do arithmetic.
+.PD
+.SH SOURCE
+.B /appl/lib/bt
+.br
+.B /module/bt.m
+.SH SEE ALSO
+.IR btfs (4),
+.IR crypt (2),
+.IR dial (2)
+.SH BUGS
+.PP
+LE only, initiator only, and pairing is Just Works.  What that means,
+and what is therefore not protected, is set out in
+.IR btfs (4).

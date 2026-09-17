@@ -1,0 +1,1644 @@
+implement Hci;
+
+#
+# HCI: the controller.  This is the layer that has to be careful,
+# because a controller is a device with rules -- one command at a
+# time, a fixed number of ACL buffers, events that arrive whether or
+# not anyone asked for them -- and everything above it is parsing.
+#
+# One process reads the transport and does nothing else: it hands a
+# command's answer to whoever is waiting for it, reassembles ACL
+# fragments into whole L2CAP frames, gives back ACL buffer credits,
+# and drops advertising reports on the floor when nobody is
+# listening rather than stopping the world.  Sending a command takes
+# a lock, so only one is ever outstanding.  Sending ACL data takes a
+# credit, so a write waits for the controller instead of overrunning
+# it.
+#
+# On 9front this is one C file: a proc reading the transport, a
+# QLock for the command, and a Rendez for the credits.
+#
+
+include "sys.m";
+	sys: Sys;
+include "bt.m";
+	bt: Bt;
+
+Cmdtimeout:	con 10000;	# ms a controller has to answer a command
+Conntimeout:	con 20000;	# ms to establish an LE connection
+Cancelwait:	con 3000;	# ms for the completion a cancel is promised
+
+# opcode groups
+Oglink:		con 16r01;
+Ogctl:		con 16r03;
+Oginfo:		con 16r04;
+Ogle:		con 16r08;
+
+# events
+Einqcomplete:	con 16r01;
+Einqresult:	con 16r02;
+Econncomplete:	con 16r03;
+Econnrequest:	con 16r04;
+Eauthcomplete:	con 16r06;
+Epincode:	con 16r16;
+Elinkkeyreq:	con 16r17;
+Elinkkeynote:	con 16r18;
+Eiocapreq:	con 16r31;
+Euserconf:	con 16r33;
+Esspdone:	con 16r36;
+Edisconn:	con 16r05;
+Eremotename:	con 16r07;
+Einqresultrssi:	con 16r22;
+Eextinqresult:	con 16r2f;
+Eencchange:	con 16r08;
+Ecmdcomplete:	con 16r0e;
+Ecmdstatus:	con 16r0f;
+Enumpkts:	con 16r13;
+Elemeta:	con 16r3e;
+
+# LE meta subevents
+Sconn:		con 16r01;
+Sadv:		con 16r02;
+Supdate:	con 16r03;
+Sltkreq:	con 16r05;
+
+#
+# Nothing here is module state any more.  A controller is a ref Ctlr
+# and every function takes one, or takes a Conn and reaches the
+# controller through it: two radios in one program are then two
+# objects rather than two programs.
+#
+init(b: Bt): string
+{
+	sys = load Sys Sys->PATH;
+	bt = b;
+	return nil;
+}
+
+#
+# reset a controller, then ask it what it is and how much it can
+# hold.  Nothing above here works until this has run.
+#
+start(tr: Bttransport): (ref Ctlr, string)
+{
+	x := ref Ctlr;
+	x.t = tr;
+	x.cmdlock = chan[1] of int;
+	#
+	# A controller will have one LE Create Connection outstanding
+	# and no more, so two callers starting a connection at once is
+	# not something to serialise inside the controller -- the second
+	# command is simply refused.  It is something to serialise here,
+	# because both callers then wait on connc and either can take
+	# the other's answer.  The command path has had this since it
+	# was written; this is the same thing for the one other request
+	# whose answer comes back as an event.
+	#
+	x.connlock = chan[1] of int;
+	x.replyc = chan of ref Reply;
+	# buffered: a report is dropped only when nothing has read the
+	# queue for a while, not merely because the reader of it
+	# happened to be busy when the last one arrived
+	x.advc = chan[16] of ref Adv;
+	#
+	# Buffered by one.  The event process offers the completion with
+	# a default arm and drops it if nobody is waiting, and there is a
+	# window between the Command Status coming back and the caller
+	# reaching its alt where nobody is.  Losing it there costs the
+	# whole connection timeout and leaves a live link on the
+	# controller that nothing here owns.
+	#
+	x.connc = chan[1] of (ref Conn, string);
+	#
+	# Buffered, because a peer connects when it feels like it and
+	# not when something here is reading.  A link that does not fit
+	# is closed rather than dropped: nothing above would own it, and
+	# a link nothing owns stays up on the controller for ever.
+	#
+	x.inc = chan[4] of ref Conn;
+	#
+	# Buffered like the advertisement channel and for the same
+	# reason: an inquiry answers in a burst, several devices in one
+	# event, and a reader that was busy for that moment should not
+	# lose them.
+	#
+	x.inqc = chan[16] of ref Inq;
+	#
+	# A remote name request answers with a Command Status and then,
+	# much later, an event -- the same shape as a connection, and
+	# handled the same way: its own lock so there is only ever one
+	# outstanding, and a channel buffered by one so the answer is
+	# not lost in the window between the status and the wait.
+	#
+	x.namec = chan[1] of (string, string);
+	x.namelock = chan[1] of int;
+	x.bconnc = chan[1] of (ref Conn, string);
+	x.bconnlock = chan[1] of int;
+	x.bconnaddr = nil;
+	#
+	# Buffered: the controller asks these while a link is being
+	# secured and will wait for an answer, but whoever answers is
+	# above here and may be busy.  Four is one round of pairing.
+	#
+	x.secc = chan[4] of ref Sec;
+	x.statelock = chan[1] of int;
+	x.statelock <-= 1;
+	x.aclsize = 27;
+	x.aclbufs = 1;
+	x.credits = chan[1] of int;
+	#
+	# Every scalar, and not only the ones with an interesting
+	# value.  A ref adt's integer fields are whatever was in the
+	# heap -- the allocator sets the pointer words and leaves the
+	# rest -- so a counter that was a module variable, which Limbo
+	# does zero, becomes a counter that starts at anything when it
+	# moves into an adt.  scodrop did exactly that: it began at 128
+	# on this heap, one SCO packet made it 129, and the bench read
+	# a hundred and twenty nine drops from one dropped packet.
+	#
+	x.scodrop = 0;
+	x.adv = 0;
+	x.inq = 0;
+	x.running = 1;
+	spawn reader(x);
+
+	(st, nil, e) := cmd(x, bt->opcode(Ogctl, 16r0003), nil);	# Reset
+	if(e != nil)
+		return (nil, "reset: " + e);
+	if(st != 0)
+		return (nil, "reset: " + bt->hcierr(st));
+
+	p: array of byte;
+	(st, p, e) = cmd(x, bt->opcode(Oginfo, 16r0001), nil);	# Read Local Version
+	if(e == nil && st == 0 && len p >= 8)
+		x.lver = sys->sprint("hci %d rev %#4.4ux lmp %d subver %#4.4ux manufacturer %#4.4ux",
+			int p[0], bt->get16(p, 1), int p[3], bt->get16(p, 6), bt->get16(p, 4));
+
+	(st, p, e) = cmd(x, bt->opcode(Oginfo, 16r0009), nil);	# Read BD_ADDR
+	if(e != nil)
+		return (nil, "read BD_ADDR: " + e);
+	if(st != 0)
+		return (nil, "read BD_ADDR: " + bt->hcierr(st));
+	if(len p < Bt->Baddrlen)
+		return (nil, "read BD_ADDR: short answer");
+	x.laddr = array[Bt->Baddrlen] of byte;
+	x.laddr[0:] = p[0:Bt->Baddrlen];
+
+	# the event mask a controller powers up with hides the LE meta
+	# event, so ask for everything
+	mask := array[8] of byte;
+	for(i := 0; i < 8; i++)
+		mask[i] = byte 16rff;
+	cmd(x, bt->opcode(Ogctl, 16r0001), mask);		# Set Event Mask
+	lemask := array[8] of byte;
+	for(i = 0; i < 8; i++)
+		lemask[i] = byte 0;
+	lemask[0] = byte 16r1f;		# connection complete .. long term key request
+	cmd(x, bt->opcode(Ogle, 16r0001), lemask);		# LE Set Event Mask
+
+	#
+	# Write Simple Pairing Mode.  A controller powers up with it off
+	# and refuses every secure simple pairing command until it is
+	# on; a controller too old to have it says so and nothing is
+	# lost, because such a controller has no simple pairing to do.
+	#
+	ssp := array[1] of byte;
+	ssp[0] = byte 1;
+	cmd(x, bt->opcode(Ogctl, 16r0056), ssp);
+
+	(st, p, e) = cmd(x, bt->opcode(Ogle, 16r0002), nil);	# LE Read Buffer Size
+	if(e == nil && st == 0 && len p >= 3){
+		x.aclsize = bt->get16(p, 0);
+		x.aclbufs = int p[2];
+	}
+	if(x.aclsize == 0 || x.aclbufs == 0){
+		# a controller with no separate LE buffers shares the
+		# BR/EDR ones, which is what Read Buffer Size reports
+		(st, p, e) = cmd(x, bt->opcode(Oginfo, 16r0005), nil);
+		if(e == nil && st == 0 && len p >= 7){
+			x.aclsize = bt->get16(p, 0);
+			x.aclbufs = bt->get16(p, 3);
+		}
+	}
+	if(x.aclsize < 27)
+		x.aclsize = 27;
+	if(x.aclbufs < 1)
+		x.aclbufs = 1;
+	x.credits = chan[x.aclbufs] of int;
+	for(i = 0; i < x.aclbufs; i++)
+		x.credits <-= 1;
+	return (x, nil);
+}
+
+stop(x: ref Ctlr)
+{
+	if(x == nil)
+		return;
+	x.running = 0;
+	if(x.t != nil)
+		x.t->close();
+}
+
+localaddr(x: ref Ctlr): array of byte
+{
+	return x.laddr;
+}
+
+localver(x: ref Ctlr): string
+{
+	return x.lver;
+}
+
+#
+# The ranges a controller will take, from the specification, and the
+# one rule between them that matters: a link whose supervision timeout
+# is shorter than the longest the peripheral may stay silent drops
+# every time the peripheral exercises its latency.
+#
+paramsok(min, max, latency, timeout: int): string
+{
+	if(min < 6 || min > 3200 || max < 6 || max > 3200)
+		return "connection interval out of range";
+	if(min > max)
+		return "the smallest connection interval is larger than the largest";
+	if(latency < 0 || latency > 499)
+		return "peripheral latency out of range";
+	if(timeout < 10 || timeout > 3200)
+		return "supervision timeout out of range";
+	#
+	# both sides in milliseconds: the interval is 1.25ms and the
+	# timeout 10ms, so the specification's "the timeout shall be
+	# greater than (1 + latency) * interval * 2" becomes
+	# timeout * 4 > (1 + latency) * max.  Greater, not at least:
+	# equality is refused, which matters because a peripheral
+	# minding its battery asks for exactly the boundary.
+	#
+	if((1 + latency) * max >= timeout * 4)
+		return "the supervision timeout is too short for that latency";
+	return nil;
+}
+
+#
+# Ask the controller to run the link at different parameters.  A
+# central does this itself; a peripheral asks for it over L2CAP and
+# the central does it on the peripheral's behalf, which is what makes
+# accepting an L2CAP request an obligation rather than a courtesy.
+#
+# This returns when the controller has taken the request.  The link
+# changes later, and the Connection Update Complete event is what
+# writes the new values into the Conn.
+#
+leconnupdate(c: ref Conn, min, max, latency, timeout: int): string
+{
+	if(c == nil)
+		return "not connected";
+	if((e := paramsok(min, max, latency, timeout)) != nil)
+		return e;
+	p := array[14] of byte;
+	bt->put16(p, 0, c.handle);
+	bt->put16(p, 2, min);
+	bt->put16(p, 4, max);
+	bt->put16(p, 6, latency);
+	bt->put16(p, 8, timeout);
+	bt->put16(p, 10, 0);	# minimum connection length
+	bt->put16(p, 12, 0);	# maximum
+	(st, nil, ce) := cmd(c.x, bt->opcode(Ogle, 16r0013), p);
+	if(ce != nil)
+		return ce;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+scodropped(x: ref Ctlr): int
+{
+	return x.scodrop;
+}
+
+aclmtu(x: ref Ctlr): (int, int)
+{
+	return (x.aclsize, x.aclbufs);
+}
+
+advs(x: ref Ctlr): chan of ref Adv
+{
+	return x.advc;
+}
+
+incoming(x: ref Ctlr): chan of ref Conn
+{
+	return x.inc;
+}
+
+advertising(x: ref Ctlr): int
+{
+	return x.adv;
+}
+
+#
+# Advertising.  A hundred to a hundred and fifty milliseconds on all
+# three advertising channels, from this controller's own address,
+# accepting a connection from anyone.  Connectable undirected is the
+# only kind worth having here: the point of advertising at all is to
+# be connected to.
+#
+Advmin:	con 16r00a0;	# 100 ms in 0.625 ms units
+Advmax:	con 16r00f0;	# 150 ms
+
+leadvparams(x: ref Ctlr, connectable: int): string
+{
+	p := array[15] of byte;
+	bt->put16(p, 0, Advmin);
+	bt->put16(p, 2, Advmax);
+	if(connectable)
+		p[4] = byte 16r00;	# ADV_IND
+	else
+		p[4] = byte 16r03;	# ADV_NONCONN_IND
+	p[5] = byte Bt->Apublic;	# our own address
+	p[6] = byte 0;			# no directed peer, so the
+	for(i := 0; i < Bt->Baddrlen; i++)	# address below is unused
+		p[7+i] = byte 0;
+	p[13] = byte 16r07;		# all three advertising channels
+	p[14] = byte 0;			# accept anyone
+	(st, nil, e) := cmd(x, bt->opcode(Ogle, 16r0006), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+#
+# Both data commands take a fixed 32 byte block: a length and 31 bytes
+# of which only that many are significant.  Sending fewer is a common
+# way to have a controller refuse the command.
+#
+advblock(x: ref Ctlr, ocf: int, ad: array of byte): string
+{
+	if(len ad > 31)
+		return sys->sprint("%d bytes of advertising data: the most is 31", len ad);
+	p := array[32] of byte;
+	p[0] = byte len ad;
+	for(i := 0; i < 31; i++)
+		p[1+i] = byte 0;
+	p[1:] = ad;
+	(st, nil, e) := cmd(x, bt->opcode(Ogle, ocf), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+leadvdata(x: ref Ctlr, ad: array of byte): string
+{
+	return advblock(x, 16r0008, ad);
+}
+
+leadvresp(x: ref Ctlr, ad: array of byte): string
+{
+	return advblock(x, 16r0009, ad);
+}
+
+leadvertise(x: ref Ctlr, on: int): string
+{
+	p := array[1] of byte;
+	p[0] = byte on;
+	(st, nil, e) := cmd(x, bt->opcode(Ogle, 16r000a), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	x.adv = on;
+	return nil;
+}
+
+conns(x: ref Ctlr): list of ref Conn
+{
+	<-x.statelock;
+	l: list of ref Conn;
+	for(s := x.states; s != nil; s = tl s)
+		l = (hd s).c :: l;
+	x.statelock <-= 1;
+	return l;
+}
+
+#
+# one command at a time: take the lock, send it, wait for the
+# controller's answer or for the clock to run out
+#
+cmd(x: ref Ctlr, op: int, p: array of byte): (int, array of byte, string)
+{
+	x.cmdlock <-= 1;
+	r := docmd(x, op, p);
+	<-x.cmdlock;
+	return (r.status, r.p, r.err);
+}
+
+docmd(x: ref Ctlr, op: int, p: array of byte): ref Reply
+{
+	if(len p > 255)
+		return ref Reply(op, 0, nil, "command parameters too long");
+	w := array[3 + len p] of byte;
+	bt->put16(w, 0, op);
+	w[2] = byte len p;
+	if(p != nil)
+		w[3:] = p;
+	if((e := x.t->write(Bt->Hcicmd, w)) != nil)
+		return ref Reply(op, 0, nil, e);
+	# buffered, so the timer process can put its tick down and
+	# leave; an unbuffered one would block for ever on a command
+	# that answered in time, leaking a process per command
+	tick := chan[1] of int;
+	spawn timer(Cmdtimeout, tick);
+	for(;;){
+		alt {
+		r := <-x.replyc =>
+			if(r.op != op)
+				continue;	# an answer to something already given up on
+			return r;
+		<-tick =>
+			return ref Reply(op, 0, nil, sys->sprint("no answer to command %#4.4ux", op));
+		}
+	}
+}
+
+timer(ms: int, c: chan of int)
+{
+	sys->sleep(ms);
+	c <-= 1;
+}
+
+lescan(x: ref Ctlr, on: int): string
+{
+	if(on){
+		# passive scan, a 60 ms window in a 60 ms interval, our
+		# own public address, accept everything
+		p := array[7] of byte;
+		p[0] = byte 0;			# passive
+		bt->put16(p, 1, 16r0060);	# interval, 0.625 ms units
+		bt->put16(p, 3, 16r0060);	# window
+		p[5] = byte 0;			# own address: public
+		p[6] = byte 0;			# accept all advertisements
+		(st, nil, e) := cmd(x, bt->opcode(Ogle, 16r000b), p);
+		if(e != nil)
+			return e;
+		if(st != 0)
+			return bt->hcierr(st);
+	}
+	q := array[2] of byte;
+	q[0] = byte on;
+	q[1] = byte 0;		# report duplicates: btfs wants the rssi to move
+	(st, nil, e) := cmd(x, bt->opcode(Ogle, 16r000c), q);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+#
+# Inquiry.  Unlike a scan this is not a switch: the controller is told
+# how long to inquire for and says when it is done, so "on" starts one
+# and Inquiry Complete ends it.  The length is in 1.28 second units
+# and 8 of them -- about ten seconds -- is what every stack uses,
+# because a device only answers an inquiry in the windows its own
+# inquiry scan opens and a shorter one misses devices rather than
+# finding them faster.
+#
+Inqlen:		con 8;
+Inqmax:		con 0;		# responses: 0 is "as many as arrive"
+
+inquiry(x: ref Ctlr, on: int): string
+{
+	if(!on){
+		if(!x.inq)
+			return nil;
+		(st, nil, e) := cmd(x, bt->opcode(Oglink, 16r0002), nil);
+		if(e != nil)
+			return e;
+		if(st != 0)
+			return bt->hcierr(st);
+		#
+		# Inquiry Cancel answers with a Command Complete and no
+		# Inquiry Complete follows it, so the end has to be said
+		# here or a reader waits for ever.
+		#
+		x.inq = 0;
+		alt {
+		x.inqc <-= nil =>	;
+		* =>	;
+		}
+		return nil;
+	}
+	if(x.inq)
+		return nil;
+	p := array[5] of byte;
+	bt->put24(p, 0, Giac);
+	p[3] = byte Inqlen;
+	p[4] = byte Inqmax;
+	x.inq = 1;
+	#
+	# Inquiry answers with a command status and not a command
+	# complete: the results and the completion are events.
+	#
+	(st, nil, e) := cmd(x, bt->opcode(Oglink, 16r0001), p);
+	if(e != nil || st != 0){
+		x.inq = 0;
+		if(e != nil)
+			return e;
+		return bt->hcierr(st);
+	}
+	return nil;
+}
+
+inquiring(x: ref Ctlr): int
+{
+	return x.inq;
+}
+
+inqs(x: ref Ctlr): chan of ref Inq
+{
+	return x.inqc;
+}
+
+#
+# Inquiry Result and Inquiry Result with RSSI are not the same event
+# with one field added: the plain one has two reserved bytes after the
+# page scan repetition mode and the other has one, so everything after
+# them sits a byte apart.  Both carry a count and then that many
+# fixed-size records, which is why the fields are strided rather than
+# read in order.
+#
+#	0x02	addr 0..5  psrm 6  rsvd 7  rsvd 8  class 9..11  clock 12..13
+#	0x22	addr 0..5  psrm 6  rsvd 7  class 8..10  clock 11..12  rssi 13
+#
+inqresult(x: ref Ctlr, b: array of byte, rssi: int)
+{
+	if(len b < 1)
+		return;
+	n := int b[0];
+	sz := 14;			# the same length either way
+	if(len b < 1 + n * sz)
+		return;
+	for(i := 0; i < n; i++){
+		o := 1 + i * sz;
+		q := ref Inq;
+		q.addr = array[Bt->Baddrlen] of byte;
+		q.addr[0:] = b[o:o+Bt->Baddrlen];
+		q.psrm = int b[o+6];
+		q.eir = nil;
+		if(rssi){
+			q.class = bt->get24(b, o+8);
+			q.clock = bt->get16(b, o+11);
+			q.rssi = sext8(int b[o+13]);
+		} else {
+			q.class = bt->get24(b, o+9);
+			q.clock = bt->get16(b, o+12);
+			q.rssi = 127;	# the controller did not say
+		}
+		offer(x, q);
+	}
+}
+
+# an RSSI is a signed byte in dBm
+sext8(v: int): int
+{
+	if(v & 16r80)
+		return v - 256;
+	return v;
+}
+
+#
+# The extended form is one device per event with 240 bytes of
+# advertising-shaped data after it, which is where a device that sends
+# one puts its name -- so an inquiry can find a name without a page.
+#
+extinqresult(x: ref Ctlr, b: array of byte)
+{
+	if(len b < 15)
+		return;
+	q := ref Inq;
+	q.addr = array[Bt->Baddrlen] of byte;
+	q.addr[0:] = b[1:1+Bt->Baddrlen];
+	q.psrm = int b[7];
+	q.class = bt->get24(b, 9);
+	q.clock = bt->get16(b, 12);
+	q.rssi = sext8(int b[14]);
+	q.eir = nil;
+	if(len b > 15)
+		q.eir = b[15:];
+	offer(x, q);
+}
+
+offer(x: ref Ctlr, q: ref Inq)
+{
+	alt {
+	x.inqc <-= q =>	;
+	* =>	;	# nobody is inquiring: the results are nobody's
+	}
+}
+
+#
+# The name of a Classic device.  It is not in what the device answered
+# an inquiry with unless the device sent an extended inquiry response,
+# so it is asked for: a page that does not become a connection.
+#
+# It answers with a Command Status and then an event, so it cannot go
+# through cmd() alone -- cmd() returns on the status, which says only
+# that the page has started.  It takes a lock of its own for the same
+# reason a connection does: nothing filters which answer a waiter
+# takes, and with the lock held there is only one to take.
+#
+Nametimeout:	con 10000;	# ms; a page that finds nothing takes about five
+
+remotename(x: ref Ctlr, addr: array of byte, psrm, clock: int): (string, string)
+{
+	if(len addr != Bt->Baddrlen)
+		return (nil, "not an address");
+	p := array[10] of byte;
+	p[0:] = addr;
+	p[6] = byte psrm;
+	p[7] = byte 0;			# reserved
+	bt->put16(p, 8, clock);
+
+	x.namelock <-= 1;
+	r := doname(x, p);
+	<-x.namelock;
+	return r;
+}
+
+doname(x: ref Ctlr, p: array of byte): (string, string)
+{
+	# an answer an attempt that gave up left behind is not this
+	# one's, for the same reason as doleconnect's
+	alt {
+	<-x.namec =>	;
+	* =>		;
+	}
+	(st, nil, e) := cmd(x, bt->opcode(Oglink, 16r0019), p);
+	if(e != nil)
+		return (nil, e);
+	if(st != 0)
+		return (nil, bt->hcierr(st));
+	tick := chan[1] of int;
+	spawn timer(Nametimeout, tick);
+	alt {
+	(nm, err) := <-x.namec =>
+		return (nm, err);
+	<-tick =>
+		return (nil, "no answer to a remote name request");
+	}
+}
+
+offername(x: ref Ctlr, nm, err: string)
+{
+	alt {
+	x.namec <-= (nm, err) =>	;
+	* =>	;	# nobody asked, or whoever did has given up
+	}
+}
+
+#
+# A BR/EDR connection.  Create Connection answers with a Command
+# Status and the link arrives later as a Connection Complete event,
+# which is the same shape as the LE one and is built the same way: a
+# lock so there is only one attempt outstanding, a channel buffered by
+# one, and a stale answer drained before asking.
+#
+# Packet types: every ACL packet a controller may use on the link, DM1
+# through DH5.  Asking for fewer is how a link is made slower on
+# purpose and there is no reason to here.
+#
+Bpackets:	con 16rcc18;
+Bconntimeout:	con 20000;	# ms; a page that finds nothing takes about five
+
+connect(x: ref Ctlr, addr: array of byte, psrm, clock: int): (ref Conn, string)
+{
+	if(len addr != Bt->Baddrlen)
+		return (nil, "not an address");
+	p := array[13] of byte;
+	p[0:] = addr;
+	bt->put16(p, 6, Bpackets);
+	p[8] = byte psrm;
+	p[9] = byte 0;			# reserved
+	#
+	# The top bit says the clock offset is one this side actually
+	# heard, rather than a zero meaning "no idea"; without it a
+	# controller pages blind and takes as long as it takes.
+	#
+	co := 0;
+	if(clock != 0)
+		co = clock | 16r8000;
+	bt->put16(p, 10, co);
+	p[12] = byte 1;			# allow the peer to become central
+
+	x.bconnlock <-= 1;
+	x.bconnaddr = addr;
+	r := doconnect(x, p);
+	x.bconnaddr = nil;
+	<-x.bconnlock;
+	return r;
+}
+
+doconnect(x: ref Ctlr, p: array of byte): (ref Conn, string)
+{
+	alt {
+	(c, err) := <-x.bconnc =>
+		# a link left behind by an attempt that gave up is a
+		# link nothing owns, so it is closed rather than dropped
+		if(err == nil && c != nil)
+			disconnect(c);
+	* =>
+		;
+	}
+	(st, nil, e) := cmd(x, bt->opcode(Oglink, 16r0005), p);
+	if(e != nil)
+		return (nil, e);
+	if(st != 0)
+		return (nil, bt->hcierr(st));
+	tick := chan[1] of int;
+	spawn timer(Bconntimeout, tick);
+	alt {
+	(c, err) := <-x.bconnc =>
+		return (c, err);
+	<-tick =>
+		return (nil, "connection timed out");
+	}
+}
+
+#
+# A peer paged this side.  Accepting is a command whose answer is the
+# same Connection Complete event an outgoing attempt gets, so there is
+# nothing to wait for here beyond the command being taken.
+#
+# Role 1: stay the peripheral.  A controller that has just been paged
+# is the peripheral of that link already, and asking to swap is asking
+# for a role switch this stack has no use for.
+#
+accept(x: ref Ctlr, addr: array of byte)
+{
+	p := array[7] of byte;
+	p[0:] = addr;
+	p[6] = byte 1;
+	cmd(x, bt->opcode(Oglink, 16r0009), p);
+}
+
+bconncomplete(x: ref Ctlr, b: array of byte)
+{
+	if(len b < 1)
+		return;
+	st := int b[0];
+	if(st != 0){
+		alt {
+		x.bconnc <-= (nil, bt->hcierr(st)) =>	;
+		* =>	;
+		}
+		return;
+	}
+	if(len b < 11)
+		return;
+	#
+	# link type 1 is ACL; 0 is SCO, which arrives on this same event
+	# and is not a link anything here can carry L2CAP over
+	#
+	if(int b[9] != 1)
+		return;
+	c := ref Conn;
+	c.x = x;
+	c.handle = bt->get16(b, 1);
+	c.classic = 1;
+	c.atype = Bt->Apublic;		# a BD_ADDR has no type
+	c.addr = array[Bt->Baddrlen] of byte;
+	c.addr[0:] = b[3:3+Bt->Baddrlen];
+	c.encrypted = int b[10] != 0;
+	c.interval = 0;
+	c.latency = 0;
+	c.timeout = 0;
+	c.up = chan of array of byte;
+	c.closed = chan[1] of string;
+	c.ltkreq = chan[1] of (array of byte, int);
+	<-x.statelock;
+	x.states = ref Cstate(c, nil, 0) :: x.states;
+	x.statelock <-= 1;
+	#
+	# Which side opened it is not in this event, unlike the LE one,
+	# and the channel is buffered, so offering it and seeing whether
+	# the offer is taken says nothing.  What says it is the address:
+	# a link to the device this side is paging is the answer to that
+	# page, and any other link is one a peer opened.
+	#
+	if(x.bconnaddr != nil && sameaddr(x.bconnaddr, c.addr)){
+		c.role = Rcentral;
+		alt {
+		x.bconnc <-= (c, nil) =>	;
+		* =>	spawn dropconn(c);	# the attempt gave up
+		}
+		return;
+	}
+	c.role = Rperipheral;
+	alt {
+	x.inc <-= c =>	;
+	* =>	spawn dropconn(c);	# nothing above would own it
+	}
+}
+
+sameaddr(a, b: array of byte): int
+{
+	if(len a != len b)
+		return 0;
+	for(i := 0; i < len a; i++)
+		if(a[i] != b[i])
+			return 0;
+	return 1;
+}
+
+#
+# Secure simple pairing.  Everything here is one command with one
+# answer, so none of it needs the machinery a connection needs: what
+# is hard about pairing on Classic is not the commands but that the
+# controller asks the questions and will wait for an answer.
+#
+secs(x: ref Ctlr): chan of ref Sec
+{
+	return x.secc;
+}
+
+offersec(x: ref Ctlr, s: ref Sec)
+{
+	alt {
+	x.secc <-= s =>	;
+	* =>
+		#
+		# Nobody is answering.  Saying so is the least that can
+		# be done: the controller is waiting, the link will fail
+		# on a timeout, and the reason would otherwise be
+		# nowhere.
+		#
+		sys->fprint(sys->fildes(2),
+			"hci: nothing is answering the controller's security questions\n");
+	}
+}
+
+addrof(b: array of byte, o: int): array of byte
+{
+	a := array[Bt->Baddrlen] of byte;
+	a[0:] = b[o:o+Bt->Baddrlen];
+	return a;
+}
+
+linkkeyreply(x: ref Ctlr, addr, key: array of byte): string
+{
+	if(len addr != Bt->Baddrlen || len key != 16)
+		return "a link key is sixteen bytes";
+	p := array[Bt->Baddrlen + 16] of byte;
+	p[0:] = addr;
+	p[Bt->Baddrlen:] = key;
+	return simple(x, bt->opcode(Oglink, 16r000b), p);
+}
+
+linkkeynegreply(x: ref Ctlr, addr: array of byte): string
+{
+	return simple(x, bt->opcode(Oglink, 16r000c), addr);
+}
+
+#
+# What this side can do about a passkey, and what it wants of the
+# pairing.  No display and no keyboard means Just Works, which gives
+# an encrypted link and no protection against a man in the middle --
+# the same bargain as LE legacy pairing here, and said as plainly.
+#
+iocapreply(x: ref Ctlr, addr: array of byte, iocap, auth: int): string
+{
+	p := array[Bt->Baddrlen + 3] of byte;
+	p[0:] = addr;
+	p[Bt->Baddrlen] = byte iocap;
+	p[Bt->Baddrlen+1] = byte 0;		# no out of band data
+	p[Bt->Baddrlen+2] = byte auth;
+	return simple(x, bt->opcode(Oglink, 16r002b), p);
+}
+
+confirmreply(x: ref Ctlr, addr: array of byte, yes: int): string
+{
+	op := 16r002c;				# User Confirmation Request Reply
+	if(!yes)
+		op = 16r002d;			# and the negative one
+	return simple(x, bt->opcode(Oglink, op), addr);
+}
+
+pinnegreply(x: ref Ctlr, addr: array of byte): string
+{
+	return simple(x, bt->opcode(Oglink, 16r000e), addr);
+}
+
+#
+# a command whose whole answer is a status and the address it was
+# about, which is every reply above
+#
+simple(x: ref Ctlr, op: int, p: array of byte): string
+{
+	(st, nil, e) := cmd(x, op, p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+#
+# Ask the controller to authenticate the link.  It answers with a
+# command status and then, after however many questions it has to ask,
+# an Authentication Complete -- so this waits on the security channel
+# for that rather than on the command.
+#
+authenticate(c: ref Conn): string
+{
+	x := c.x;
+	p := array[2] of byte;
+	bt->put16(p, 0, c.handle);
+	(st, nil, e) := cmd(x, bt->opcode(Oglink, 16r0011), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+#
+# and then to encrypt it.  A link that is authenticated and not
+# encrypted is one where the key was agreed and never used, which is
+# not what any profile means by a secure link.
+#
+encrypt(c: ref Conn, on: int): string
+{
+	p := array[3] of byte;
+	bt->put16(p, 0, c.handle);
+	p[2] = byte on;
+	(st, nil, e) := cmd(c.x, bt->opcode(Oglink, 16r0013), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+#
+# LE Create Connection answers with a command status; the connection
+# itself arrives later as an LE Connection Complete event
+#
+leconnect(x: ref Ctlr, atype: int, addr: array of byte): (ref Conn, string)
+{
+	if(len addr != Bt->Baddrlen)
+		return (nil, "not an address");
+	p := array[25] of byte;
+	bt->put16(p, 0, 16r0060);	# scan interval
+	bt->put16(p, 2, 16r0030);	# scan window
+	p[4] = byte 0;			# no white list: use the address below
+	p[5] = byte atype;
+	p[6:] = addr;
+	p[12] = byte Bt->Apublic;	# our own address type
+	bt->put16(p, 13, 16r0018);	# connection interval min, 1.25 ms units
+	bt->put16(p, 15, 16r0028);	# max
+	bt->put16(p, 17, 0);		# peripheral latency
+	bt->put16(p, 19, 16r002a);	# supervision timeout, 10 ms units
+	bt->put16(p, 21, 0);		# minimum connection length
+	bt->put16(p, 23, 0);		# maximum
+
+	x.connlock <-= 1;
+	r := doleconnect(x, p);
+	<-x.connlock;
+	return r;
+}
+
+doleconnect(x: ref Ctlr, p: array of byte): (ref Conn, string)
+{
+	#
+	# Load bearing, not tidiness.  Nothing filters which completion
+	# a waiter accepts -- with connlock held there is only one
+	# attempt, so nothing needs to -- which means an answer left in
+	# the channel by an attempt that gave up would be handed to this
+	# one as its own.  The wait after a cancel below is what should
+	# stop one ever being left, and this is what stops a controller
+	# that does not answer even that from poisoning every connection
+	# afterwards.
+	#
+	# What is discarded here may be a connection.  The event that
+	# carried it has already put a Cstate in states, and nothing
+	# will ever take it out again: closeconn runs on a Disconnection
+	# Complete, and no such event is coming for a handle nobody
+	# above knows about.  So a discarded connection is closed rather
+	# than merely dropped -- otherwise the leak this whole thing is
+	# about survives in the one place that throws a link away on
+	# purpose.
+	#
+	alt {
+	(c, err) := <-x.connc =>
+		if(err == nil && c != nil)
+			disconnect(c);
+	* =>
+		;
+	}
+
+	(st, nil, e) := cmd(x, bt->opcode(Ogle, 16r000d), p);
+	if(e != nil)
+		return (nil, e);
+	if(st != 0)
+		return (nil, bt->hcierr(st));
+
+	#
+	# No filter on which completion this is.  With connlock held
+	# there is one attempt outstanding, so a completion that arrives
+	# is necessarily this one's -- including on a controller that
+	# does address resolution itself and reports the peer's identity
+	# address rather than the address we dialled, where matching the
+	# two would throw a live connection away.
+	#
+	tick := chan[1] of int;
+	spawn timer(Conntimeout, tick);
+	alt {
+	(c, err) := <-x.connc =>
+		if(err != nil)
+			return (nil, err);
+		return (c, nil);
+	<-tick =>
+		return cancelled(x);
+	}
+}
+
+#
+# The attempt has run out of time.  Cancelling it does not make the
+# completion go away: the specification says a successful cancel is
+# followed by an LE Connection Complete carrying Unknown Connection
+# Identifier, and that a cancel which arrives after the connection is
+# up is refused with Command Disallowed and the real completion stands.
+# So there is always one more event to take, and taking it is the
+# difference between a tidy failure and a connection left up on the
+# controller that nothing here knows about.
+#
+# A connection that arrives this way is returned rather than torn down.
+# It is the connection the caller asked for; it was only late.
+#
+cancelled(x: ref Ctlr): (ref Conn, string)
+{
+	cmd(x, bt->opcode(Ogle, 16r000e), nil);	# LE Create Connection Cancel
+	tick := chan[1] of int;
+	spawn timer(Cancelwait, tick);
+	alt {
+	(c, err) := <-x.connc =>
+		#
+		# what the controller said, not what this side assumed.
+		# A cancelled attempt comes back Unknown Connection
+		# Identifier and reads as a timeout; anything else is a
+		# real failure and the reason is the useful part of it,
+		# which is exactly the case that matters on hardware.
+		#
+		if(err != nil)
+			return (nil, "connection timed out: " + err);
+		return (c, nil);
+	<-tick =>
+		#
+		# a controller that owes an event and does not send it.
+		# The next attempt drains the channel before it starts,
+		# so a late one cannot be mistaken for that attempt's.
+		#
+		return (nil, "connection timed out, and the cancel was not answered either");
+	}
+}
+
+disconnect(c: ref Conn): string
+{
+	p := array[3] of byte;
+	bt->put16(p, 0, c.handle);
+	p[2] = byte 16r13;		# remote user terminated the connection
+	(st, nil, e) := cmd(c.x, bt->opcode(Oglink, 16r0006), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+#
+# a whole L2CAP frame down the link, cut into the controller's ACL
+# packet size, one credit per packet
+#
+acl(c: ref Conn, p: array of byte): string
+{
+	off := 0;
+	first := 1;
+	while(off < len p){
+		n := len p - off;
+		if(n > c.x.aclsize)
+			n = c.x.aclsize;
+		pb := 16r01;		# a continuing fragment
+		if(first)
+			pb = 16r02;	# the first packet of a message
+		w := array[4 + n] of byte;
+		bt->put16(w, 0, (c.handle & 16r0fff) | (pb << 12));
+		bt->put16(w, 2, n);
+		w[4:] = p[off:off+n];
+		<-c.x.credits;
+		if((e := c.x.t->write(Bt->Hciacl, w)) != nil){
+			c.x.credits <-= 1;
+			return e;
+		}
+		off += n;
+		first = 0;
+	}
+	return nil;
+}
+
+lerand(x: ref Ctlr): (array of byte, string)
+{
+	(st, p, e) := cmd(x, bt->opcode(Ogle, 16r0018), nil);
+	if(e != nil)
+		return (nil, e);
+	if(st != 0)
+		return (nil, bt->hcierr(st));
+	if(len p < 8)
+		return (nil, "short LE Rand");
+	r := array[8] of byte;
+	r[0:] = p[0:8];
+	return (r, nil);
+}
+
+#
+# LE Encrypt: the parameters go to the controller exactly as given.
+# SMP's own e() wants its arguments most significant byte first, so
+# whoever calls this reverses them; smp here uses crypt(2) and does
+# not need the controller at all.
+#
+leencrypt(x: ref Ctlr, key, plain: array of byte): (array of byte, string)
+{
+	if(len key != 16 || len plain != 16)
+		return (nil, "LE Encrypt takes two 16 byte arguments");
+	p := array[32] of byte;
+	p[0:] = key;
+	p[16:] = plain;
+	(st, r, e) := cmd(x, bt->opcode(Ogle, 16r0017), p);
+	if(e != nil)
+		return (nil, e);
+	if(st != 0)
+		return (nil, bt->hcierr(st));
+	if(len r < 16)
+		return (nil, "short LE Encrypt");
+	o := array[16] of byte;
+	o[0:] = r[0:16];
+	return (o, nil);
+}
+
+lestartencrypt(c: ref Conn, rand: array of byte, ediv: int, ltk: array of byte): string
+{
+	if(len rand != 8 || len ltk != 16)
+		return "LE Start Encryption takes an 8 byte random number and a 16 byte key";
+	p := array[28] of byte;
+	bt->put16(p, 0, c.handle);
+	p[2:] = rand;
+	bt->put16(p, 10, ediv);
+	p[12:] = ltk;
+	(st, nil, e) := cmd(c.x, bt->opcode(Ogle, 16r0019), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+#
+# the one process that reads the transport
+#
+reader(x: ref Ctlr)
+{
+	while(x.running){
+		(ptype, p, e) := x.t->read();
+		if(e != nil){
+			if(x.running)
+				sys->fprint(sys->fildes(2), "hci: %s\n", e);
+			x.running = 0;
+			return;
+		}
+		case ptype {
+		Bt->Hcievt =>	event(x, p);
+		Bt->Hciacl =>	acldata(x, p);
+		Bt->Hcisco =>
+			#
+			# The transport frames these and nothing above
+			# wants them: there is no audio here, and a voice
+			# channel needs a great deal more than a reader
+			# case.  They are counted and the first is said
+			# out loud rather than vanishing -- a controller
+			# sending SCO to a host that asked for none is
+			# worth knowing about, and a silent drop is
+			# indistinguishable from a transport losing them.
+			#
+			if(x.scodrop == 0)
+				sys->fprint(sys->fildes(2),
+					"hci: a SCO packet arrived and there is nothing to do with it; counting the rest\n");
+			x.scodrop++;
+		}
+	}
+}
+
+event(x: ref Ctlr, p: array of byte)
+{
+	if(len p < 2)
+		return;
+	code := int p[0];
+	plen := int p[1];
+	if(len p < 2 + plen)
+		return;
+	b := p[2:2+plen];
+	case code {
+	Ecmdcomplete =>
+		if(len b < 3)
+			return;
+		op := bt->get16(b, 1);
+		r := b[3:];
+		st := 0;
+		if(len r > 0){
+			st = int r[0];
+			r = r[1:];
+		}
+		post(x, ref Reply(op, st, r, nil));
+	Ecmdstatus =>
+		if(len b < 4)
+			return;
+		post(x, ref Reply(bt->get16(b, 2), int b[0], nil, nil));
+	Enumpkts =>
+		if(len b < 1)
+			return;
+		nh := int b[0];
+		for(i := 0; i < nh; i++){
+			o := 1 + 4*i;
+			if(o + 4 > len b)
+				break;
+			n := bt->get16(b, o+2);
+			for(j := 0; j < n; j++)
+				alt {
+				x.credits <-= 1 =>	;
+				* =>	;	# the controller gave back more than it took
+				}
+		}
+	Einqcomplete =>
+		#
+		# an inquiry ends by itself, at the length the
+		# controller was given.  A nil on the channel is what
+		# says so, and it is what stops a reader waiting for a
+		# result that is not coming.
+		#
+		x.inq = 0;
+		alt {
+		x.inqc <-= nil =>	;
+		* =>	;	# nobody is listening
+		}
+	Econncomplete =>
+		bconncomplete(x, b);
+	Elinkkeyreq =>
+		if(len b < Bt->Baddrlen)
+			return;
+		offersec(x, ref Sec(Slinkkey, addrof(b, 0), nil, 0, 0, nil));
+	Elinkkeynote =>
+		#
+		# the key the pairing produced, and the only time the
+		# controller will ever say it: a key not written down
+		# here is a device that has to pair again.
+		#
+		if(len b < Bt->Baddrlen + 17)
+			return;
+		k := array[16] of byte;
+		k[0:] = b[Bt->Baddrlen:Bt->Baddrlen+16];
+		offersec(x, ref Sec(Skeynote, addrof(b, 0), k,
+			int b[Bt->Baddrlen+16], 0, nil));
+	Eiocapreq =>
+		if(len b < Bt->Baddrlen)
+			return;
+		offersec(x, ref Sec(Siocap, addrof(b, 0), nil, 0, 0, nil));
+	Euserconf =>
+		if(len b < Bt->Baddrlen + 4)
+			return;
+		offersec(x, ref Sec(Sconfirm, addrof(b, 0), nil, 0,
+			bt->get32(b, Bt->Baddrlen), nil));
+	Epincode =>
+		if(len b < Bt->Baddrlen)
+			return;
+		offersec(x, ref Sec(Spin, addrof(b, 0), nil, 0, 0, nil));
+	Esspdone =>
+		#
+		# said for its own sake: the authentication complete
+		# below is what anything waits on, and this only says
+		# whether the pairing part of it worked
+		#
+		;
+	Eauthcomplete =>
+		if(len b < 3)
+			return;
+		st := int b[0];
+		e := "";
+		if(st != 0)
+			e = bt->hcierr(st);
+		s := findstate(x, bt->get16(b, 1));
+		a: array of byte;
+		if(s != nil)
+			a = s.c.addr;
+		offersec(x, ref Sec(Sdone, a, nil, 0, 0, e));
+	Econnrequest =>
+		#
+		# A peer paging this side.  Answering takes a command
+		# and the controller is waiting for it, so it is
+		# answered rather than queued behind whatever else is
+		# using the command lock: its own process.
+		#
+		if(len b < 10)
+			return;
+		spawn accept(x, b[0:Bt->Baddrlen]);
+	Einqresult =>
+		inqresult(x, b, 0);
+	Einqresultrssi =>
+		inqresult(x, b, 1);
+	Eextinqresult =>
+		extinqresult(x, b);
+	Eremotename =>
+		if(len b < 7)
+			return;
+		if(int b[0] != 0){
+			offername(x, nil, bt->hcierr(int b[0]));
+			return;
+		}
+		#
+		# up to 248 bytes padded with zeroes, which is not a
+		# string until the padding comes off
+		#
+		nm := b[7:];
+		for(i := 0; i < len nm; i++)
+			if(nm[i] == byte 0){
+				nm = nm[0:i];
+				break;
+			}
+		offername(x, string nm, nil);
+	Edisconn =>
+		if(len b < 4)
+			return;
+		closeconn(x, bt->get16(b, 1), bt->hcierr(int b[3]));
+	Eencchange =>
+		if(len b < 4)
+			return;
+		s := findstate(x, bt->get16(b, 1));
+		if(s != nil && int b[0] == 0)
+			s.c.encrypted = int b[3] != 0;
+	Elemeta =>
+		if(len b < 1)
+			return;
+		lemeta(x, int b[0], b[1:]);
+	}
+}
+
+post(x: ref Ctlr, r: ref Reply)
+{
+	alt {
+	x.replyc <-= r =>	;
+	* =>	;	# nobody is waiting: the command already gave up
+	}
+}
+
+lemeta(x: ref Ctlr, sub: int, b: array of byte)
+{
+	case sub {
+	Sconn =>
+		if(len b < 1)
+			return;
+		st := int b[0];
+		if(st != 0){
+			alt {
+			x.connc <-= (nil, bt->hcierr(st)) =>	;
+			* =>	;
+			}
+			return;
+		}
+		if(len b < 18)
+			return;
+		c := ref Conn;
+		c.x = x;
+		c.handle = bt->get16(b, 1);
+		c.role = int b[3];
+		c.classic = 0;
+		c.atype = int b[4];
+		c.addr = array[Bt->Baddrlen] of byte;
+		c.addr[0:] = b[5:5+Bt->Baddrlen];
+		c.encrypted = 0;
+		c.interval = bt->get16(b, 11);
+		c.latency = bt->get16(b, 13);
+		c.timeout = bt->get16(b, 15);
+		c.up = chan of array of byte;
+		c.closed = chan[1] of string;
+		c.ltkreq = chan[1] of (array of byte, int);
+		<-x.statelock;
+		x.states = ref Cstate(c, nil, 0) :: x.states;
+		x.statelock <-= 1;
+		if(c.role == Rperipheral){
+			#
+			# A peer opened this one.  It must not go to
+			# connc: with connlock held there is one attempt
+			# outstanding and nothing filters what it
+			# accepts, so a link nobody asked for would be
+			# handed to a leconnect as its own answer -- the
+			# right shape of thing, the wrong device.
+			#
+			alt {
+			x.inc <-= c =>	;
+			* =>
+				# nothing above is listening, so nothing
+				# would own it
+				spawn dropconn(c);
+			}
+			return;
+		}
+		alt {
+		x.connc <-= (c, nil) =>	;
+		* =>	;	# nobody asked for it
+		}
+	Supdate =>
+		#
+		# the link is now running at something else, either
+		# because this side asked or because the peripheral did
+		# and this side agreed.  A failure says so and leaves the
+		# parameters as they were, which is what the controller
+		# does.
+		#
+		if(len b < 9)
+			return;
+		if(int b[0] != 0){
+			sys->fprint(sys->fildes(2),
+				"hci: connection update refused: %s\n", bt->hcierr(int b[0]));
+			return;
+		}
+		s := findstate(x, bt->get16(b, 1));
+		if(s == nil)
+			return;
+		s.c.interval = bt->get16(b, 3);
+		s.c.latency = bt->get16(b, 5);
+		s.c.timeout = bt->get16(b, 7);
+	Sltkreq =>
+		#
+		# The central has started encryption and the controller
+		# wants the key.  A peripheral that does not answer this
+		# leaves the link unencrypted and the central waiting,
+		# so it goes to the process pairing on that link rather
+		# than being dropped as an event nobody asked for.
+		#
+		if(len b < 12)
+			return;
+		s := findstate(x, bt->get16(b, 0));
+		if(s == nil)
+			return;
+		rand := array[8] of byte;
+		rand[0:] = b[2:10];
+		alt {
+		s.c.ltkreq <-= (rand, bt->get16(b, 10)) =>	;
+		* =>
+			sys->fprint(sys->fildes(2),
+				"hci: nothing is pairing on handle %d; refusing the key request\n",
+				s.c.handle);
+			spawn negltk(s.c);
+		}
+	Sadv =>
+		if(len b < 1)
+			return;
+		n := int b[0];
+		o := 1;
+		for(i := 0; i < n; i++){
+			if(o + 9 > len b)
+				return;
+			evtype := int b[o];
+			atype := int b[o+1];
+			addr := array[Bt->Baddrlen] of byte;
+			addr[0:] = b[o+2:o+2+Bt->Baddrlen];
+			dlen := int b[o+8];
+			if(o + 10 + dlen > len b)
+				return;
+			data := array[dlen] of byte;
+			data[0:] = b[o+9:o+9+dlen];
+			rssi := int b[o+9+dlen];
+			if(rssi > 127)
+				rssi -= 256;
+			o += 10 + dlen;
+			alt {
+			x.advc <-= ref Adv(evtype, atype, addr, rssi, data) =>	;
+			* =>	;	# nobody is scanning: drop it
+			}
+		}
+	}
+}
+
+#
+# ACL up: fragments of one L2CAP frame, in order, on a handle.  The
+# frame's own length header says how much is coming.
+#
+acldata(x: ref Ctlr, p: array of byte)
+{
+	if(len p < 4)
+		return;
+	h := bt->get16(p, 0);
+	handle := h & 16r0fff;
+	pb := (h >> 12) & 3;
+	dlen := bt->get16(p, 2);
+	if(len p < 4 + dlen)
+		return;
+	d := p[4:4+dlen];
+	s := findstate(x, handle);
+	if(s == nil)
+		return;
+	case pb {
+	16r02 =>			# the first packet of a frame
+		s.acc = d;
+		s.want = 0;
+		if(len d >= 2)
+			s.want = 4 + bt->get16(d, 0);
+	16r01 =>			# a continuation
+		if(s.acc == nil)
+			return;
+		a := array[len s.acc + len d] of byte;
+		a[0:] = s.acc;
+		a[len s.acc:] = d;
+		s.acc = a;
+	* =>
+		return;
+	}
+	if(s.want > 0 && len s.acc >= s.want){
+		f := s.acc[0:s.want];
+		s.acc = nil;
+		s.want = 0;
+		s.c.up <-= f;
+	}
+}
+
+findstate(x: ref Ctlr, handle: int): ref Cstate
+{
+	<-x.statelock;
+	r: ref Cstate;
+	for(l := x.states; l != nil; l = tl l)
+		if((hd l).c.handle == handle){
+			r = hd l;
+			break;
+		}
+	x.statelock <-= 1;
+	return r;
+}
+
+closeconn(x: ref Ctlr, handle: int, why: string)
+{
+	<-x.statelock;
+	nl: list of ref Cstate;
+	s: ref Cstate;
+	for(l := x.states; l != nil; l = tl l)
+		if((hd l).c.handle == handle)
+			s = hd l;
+		else
+			nl = hd l :: nl;
+	x.states = nl;
+	x.statelock <-= 1;
+	if(s == nil)
+		return;
+	if(why == nil)
+		why = "disconnected";
+	alt {
+	s.c.closed <-= why =>	;
+	* =>	;
+	}
+}
+
+dropconn(c: ref Conn)
+{
+	disconnect(c);
+}
+
+negltk(c: ref Conn)
+{
+	leltknegreply(c);
+}
+
+leltkreply(c: ref Conn, ltk: array of byte): string
+{
+	if(len ltk != 16)
+		return "a long term key is sixteen bytes";
+	p := array[18] of byte;
+	bt->put16(p, 0, c.handle);
+	p[2:] = ltk;
+	(st, nil, e) := cmd(c.x, bt->opcode(Ogle, 16r001a), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}
+
+leltknegreply(c: ref Conn): string
+{
+	p := array[2] of byte;
+	bt->put16(p, 0, c.handle);
+	(st, nil, e) := cmd(c.x, bt->opcode(Ogle, 16r001b), p);
+	if(e != nil)
+		return e;
+	if(st != 0)
+		return bt->hcierr(st);
+	return nil;
+}

@@ -1,0 +1,999 @@
+.TH BTFS 4
+.SH NAME
+btfs, btbench, bthid, btpan, bta2dp, bthfp \- Bluetooth as a file system
+.SH SYNOPSIS
+.B bt/btfs
+[
+.B -u5
+] [
+.BI -m " mountpoint"
+] [
+.BI -k " keyfile"
+] [
+.BI -K " keydir"
+] [
+.BI -a " seconds"
+] [
+.I controller ...
+]
+.PP
+.B bt/btbench
+[
+.I controller
+[
+.I mountpoint
+[
+.I keyfile
+[
+.I mode
+[
+.I controller2
+]
+]
+]
+]
+]
+.PP
+.B bt/bthid
+[
+.B -v
+] [
+.BI -m " mountpoint"
+] [
+.BI -k " keyfile"
+] [
+.BI -p " pointerfile"
+] [
+.I device
+]
+.SH DESCRIPTION
+.I Btfs
+is a Bluetooth Low Energy stack.  All of it above the controller is
+an ordinary user program: the kernel carries HCI packets and does
+nothing else, which it already knows how to do \- a byte stream
+through
+.IR devuart (3)
+for a UART-attached controller, endpoints through
+.IR devusb (3)
+for a USB one.
+.PP
+Bluetooth's own structure is a hierarchy \- a controller, the devices
+it can hear, the services each device has, the characteristics inside
+a service \- so
+.I btfs
+serves it as one, and that name space is the whole interface.  There
+are no other calls: a program uses Bluetooth here by opening, reading
+and writing files.
+.PP
+.I Controller
+names the transport.  For the default H4 transport it is a byte
+stream and, optionally, its speed and whether to use RTS/CTS flow
+control:
+.IP
+.EX
+bt/btfs /dev/eia1!115200!fc
+.EE
+.PP
+It may instead be a
+.IR dial (2)
+string, which is how a machine whose only serial port is its console
+reaches a controller elsewhere; the framing is the same either way.
+.PP
+Several may be named, and each becomes one numbered directory:
+.IP
+.EX
+bt/btfs /dev/eia1!115200!fc /dev/eia2!115200!fc
+.EE
+.PP
+gives
+.B /net/bt/0
+and
+.BR /net/bt/1 .
+They are two radios in one program and not two programs, so the node
+table, the mount point and the key file are shared while the devices,
+the links, the scanning and the bonds are not.
+With
+.B -u
+the transport is USB instead, and
+.I controller
+is the device directory under
+.B /dev/usb
+.RB ( ep3.0 ,
+say), or empty to take the first Bluetooth controller found there.
+.PP
+.B -5
+selects the H5 transport, the three-wire one, instead of H4.  H4 puts
+a type byte in front of a packet and trusts the wire; H5 adds SLIP
+framing, a header with sequence and acknowledgement numbers, and
+retransmission, which is what a module speaks when it has no hardware
+flow control to spare.  Nothing above the transport changes.
+.B -m
+gives the mount point, default
+.BR /net/bt .
+.B -k
+names a file the bonding keys are read from at start and written back
+to as they are made; without it they last only as long as
+.I btfs
+does.
+.SS The name space
+.TF /net/bt/0/remote/ADDR/gatt
+.PD
+.TP
+.B /net/bt/\fIN\fP/addr
+The controller's own address.  There is one numbered directory per
+controller, in the order the devices were given on the command line,
+and nothing is shared between them: a device heard on one radio, a
+link, a scan and a bond all belong to the radio they happened on.
+.TP
+.B /net/bt/\fIN\fP/version
+What the controller says it is.
+.TP
+.B /net/bt/\fIN\fP/state
+One line: the address, whether it is scanning, whether an inquiry is
+running, whether it is advertising, how many devices have been heard,
+how many connections are open, and the controller's ACL packet size
+and buffer count.  A
+.B scodropped
+count is added when the controller has sent any SCO packets: there is
+no audio here, nothing above the transport has a use for them, and
+they are counted rather than dropped in silence, where they could not
+be told from a transport losing them.
+.TP
+.B /net/bt/\fIN\fP/scan
+.B on
+or
+.BR off .
+.TP
+.B /net/bt/\fIN\fP/bonds
+One line per bond: the peer, its address type, the keys, and
+.BI on " addr" ,
+the controller the bond was made on.  A long term key is agreed
+between one peripheral and one radio, and the peripheral stores this
+side's identity address alongside it, so a bond made on one radio is
+not a bond on another and is not offered to it.
+.IP
+There are two places the bonds can be kept, and
+.B -k
+and
+.B -K
+are exclusive.  The key file named by
+.B -k
+is written by
+.I btfs
+itself and holds every controller's bonds together.
+.B -K
+instead names a mounted
+.IR btkeyfs (4):
+.I btfs
+then holds no key file at all, reads the bonds from the service at
+startup and sends each new one to it as it is made.  That is the
+better of the two \- the store outlives this
+.IR btfs ,
+two of them on two sets of radios share it, and the keys are not
+readable by everything that can read a radio \- and the file is kept
+because a machine with no key service mounted still has to be able to
+pair.  Both hold the same text.
+.IP
+Either way each line says which controller its bond was made on; a
+line that does not say, from a store written when there was only one
+controller to make a bond on, is offered to every controller and
+.I btfs
+says so once.
+.TP
+.B /net/bt/\fIN\fP/ctl
+Writing
+.B "scan on"
+or
+.B "scan off"
+starts and stops scanning, which is the LE half of finding devices.
+.B "inquiry on"
+is the Classic half, and is not a switch: a scan runs until it is
+stopped and hears whatever advertises, while an inquiry runs for a
+length the controller is told \- about ten seconds \- and then says it
+is over, which is when
+.B state
+says
+.B "inquiry off"
+again.
+.B "inquiry off"
+cancels one early.  What answers appears under
+.B remote
+like anything else, with
+.B type
+saying
+.BR classic .
+A device that sent an extended inquiry response has its name already;
+one that did not is asked, over a page that does not become a
+connection, so its name turns up a moment after it does.
+.B connect
+on such a device's own
+.B ctl
+opens a BR/EDR link to it and
+.B disconnect
+takes it down, and a peer that pages this side is accepted the same
+way an LE peer that connects is.
+.B state
+says
+.B br/edr
+where an LE link would give its connection parameters, because it has
+none.  What runs over such a link is L2CAP and nothing above it: ATT
+is LE only, so there is no
+.B gatt
+tree on a Classic device.
+.B "connect \fIaddr\fP [public|random]",
+.BI "disconnect " addr
+and
+.BI "pair " addr
+act on one device.
+.B pair
+means two different things on the two kinds of link.  On LE it is SMP,
+run here, over the link.  On BR/EDR the controller runs it and asks
+this side questions on the way \- have you a key for this device, what
+can you display and type, do you agree to this number \- and the
+answers come from the bonds, from
+.B -k
+or
+.BR -K .
+On BR/EDR it is Just Works: nothing here answers the controller's
+confirmation but yes, and what that gives is an encrypted link with no
+protection against a man in the middle.  A BR/EDR link is encrypted
+after it is authenticated, because a link where the key was agreed and
+never used is not what any profile means by a secure link.
+.IP
+.B "pair confirm"
+on LE asks for numeric comparison instead.  The device's
+.B confirm
+file then holds the question \-
+.B "numeric 504437"
+\- and the pairing waits until
+.B yes
+or
+.B no
+is written back to it.  Writing
+.B no
+ends the pairing and makes no bond, which is the point of asking.
+.IP
+.B "pair passkey"
+asks for passkey entry instead: the
+.B confirm
+file then holds
+.B passkey
+rather than a number, and what is written back is the six digits the
+other device is showing.  It is twenty rounds, one per bit, so a wrong
+passkey is refused in the round of the first bit that differs rather
+than at the end.
+.IP
+.BI "confirm " on
+on the controller's own
+.B ctl
+does the same for pairings this side answers rather than starts: a
+peer that asks for protection against a man in the middle then gets
+numeric comparison, and its
+.B confirm
+file holds the question.  It is off by default, because a peripheral
+that blocks every pairing on a question nobody is there to answer is
+worse than one that pairs Just Works and says so.
+.IP
+The six digits are never sent: both sides compute them from the two
+public keys and the two nonces, and a person compares them.  That is
+the whole of the protection, and it is why plain
+.B pair
+does not claim it \- the bit that says protection against a man in the
+middle is set only when there is somewhere to ask.
+.IP
+The old kind of Classic pairing, where a controller asks for a PIN, is
+refused and said out loud.  A device that will do nothing else cannot
+be paired with here.
+.BI "params " "min max latency timeout"
+on a device's own
+.B ctl
+asks the controller to run the link at those parameters: the
+connection interval in units of 1.25ms, how many connection events the
+peripheral may skip, and the supervision timeout in units of 10ms.
+Values a controller would refuse are refused here instead of being
+sent.  A peripheral cannot change them itself and asks over L2CAP; a
+request that is accepted is carried out, which is why one that cannot
+be is refused rather than accepted and forgotten.
+.BI "service " uuid
+adds a primary service to the database this side serves, and
+.BI "characteristic " "service uuid props"
+adds a characteristic to it \-
+.I props
+being the letters
+.BR r ,
+.B w
+(write with a response),
+.B W
+(write without one),
+.B n
+and
+.BR i .
+The service is named again on each characteristic rather than being
+remembered between writes, so two programs writing
+.B ctl
+cannot put a characteristic in each other's service.  Handles are
+given out as attributes are added and never given out again, so what a
+connected peer already holds stays right; what it has not seen it is
+told about, by the Service Changed indication every database carries.
+The database may therefore grow while a peer is connected, and a peer
+that subscribed walks it again.
+.BI "serial " channel
+offers a serial port over RFCOMM on that server channel to any Classic
+peer, and publishes the service record that says where it is.  The two
+go together and are one verb: a port nobody can find is no use, and a
+record for a port that does not answer is worse than none.  What is on
+the end of the port is an echo, because
+.I btfs
+serves the port and something else would have to be what is behind it.
+A channel already offered is refused rather than taken over.
+.PP
+A peer that pages this side is answered: it may open an L2CAP channel
+to the service discovery PSM and search, and what it gets back is the
+records above; and it may open one to the RFCOMM PSM and ask for a
+channel this side offered.  One that asks for a channel that was not
+offered is refused.
+.PP
+.B "advertise on"
+and
+.B "advertise off"
+start and stop advertising, and
+.BI "advname " name
+sets the name the advertisement carries; it can be changed while
+advertising is running and the peer sees the new one on the next
+advertisement.  Advertising is connectable: a peer that finds this
+side can open a link to it, and that link appears under
+.B remote
+like any other, with
+.B state
+saying
+.B peripheral
+because the peer opened it rather than this side.  .BI "l2cap " psm
+on a device's own
+.B ctl
+opens an LE credit-based channel to that PSM, written as four
+hexadecimal digits, and
+.BI "unl2cap " psm
+closes it.  A channel that the peer refuses fails with the peer's own
+reason \(em
+.B "PSM not supported"
+and the rest \(em rather than with a word of this program's choosing.
+.B connect
+waits for the controller to establish the link and fails with
+.B "connection timed out"
+followed by what the controller said, if it said anything; a
+connection that completes just as the wait runs out is returned rather
+than thrown away, and one that completes after that is closed when it
+is found.
+.TP
+.B /net/bt/\fIN\fP/remote/\fIADDR\fP/
+A device that has been heard from, named by its address written most
+significant byte first \- or, once a bond gives it one, by its
+identity address, so a device that rotates a resolvable private
+address keeps one directory rather than gaining one every few minutes.
+It holds
+.BR addr ,
+which is the address it is answering on now and changes under a
+rotating device,
+.B identity
+(the identity address behind it and the address it was resolved from,
+or
+.B none
+for a device that has not distributed an identity key),
+.B type
+(public or random, or
+.B classic
+followed by
+.BI class " hhhhhh"
+for a device heard on an inquiry, whose address is a BD_ADDR and has
+no LE type, and whose class of device is the only thing an inquiry
+says about what it is),
+.B rssi
+and
+.B name
+from its advertisement,
+.B adv
+(the whole advertisement in hexadecimal),
+.BR state ,
+and a
+.B ctl
+that takes
+.BR connect ,
+.B disconnect
+and
+.B pair
+without an address.
+.B state
+says how long ago the device was last heard from when it is not
+connected, and what the link is running at when it is, and which side
+opened it \-
+.B central
+for a link this side opened,
+.B peripheral
+for one a peer opened to it.
+.PP
+A device that stops answering is forgotten after the time given by
+.B -a
+(five minutes by default; 0 keeps everything), so a scan in a busy
+room does not fill this directory for ever.  Three things are never
+forgotten: a connected device, because it is plainly there and an
+advertisement is not how it is being talked to; a device with an
+identity from a bond, because a bond exists in order to find that
+device again; and every device while scanning is off, because then
+nothing is arriving and age says nothing about what is there.
+.TP
+.B /net/bt/\fIN\fP/remote/\fIADDR\fP/gatt/
+Appears when an LE device is connected: a directory per service,
+named by its UUID, holding a file per characteristic, named by its
+UUID.  A Classic device has no
+.B gatt
+tree \- ATT is LE only \- and has
+.B sdp
+instead, described below.
+A service may hold the same UUID twice \- HID over GATT gives every
+report the same one \- and then every characteristic with that UUID is
+named
+.BI uuid . hhhh
+instead, where
+.I hhhh
+is its value handle in four hexadecimal digits; a UUID that occurs
+once keeps its bare name.  A characteristic's descriptors, other than
+the client configuration, are files beside it named
+.IB name . uuid \fR;
+the client configuration is not one of them, since it is not a value
+to read but the subscription, and the
+.B .notify
+file is how that is offered.
+If the device has a Service Changed characteristic it is subscribed
+to, and an indication on it rebuilds this whole directory on the same
+link \- so a device that rearranges its database is followed rather
+than believed on the copy walked first.  Files open across that are
+gone, including
+.B .notify
+streams, whose subscriptions stood against handles that may no longer
+mean the same thing; a client that wants one reopens it.  The
+subscription to Service Changed itself is not rewritten unless its own
+descriptor moved, since it belongs to the link rather than to a walk
+of the database.
+A service that includes others has an
+.B included
+file listing them, one per line as UUID, first handle and last, and
+each is a directory here too \- including a secondary service, which
+primary discovery does not report and which would otherwise be
+unreachable.
+.PP
+A value longer than the link's ATT MTU is read in pieces with Read
+Blob and written in pieces with Prepare Write, committed with one
+Execute Write, so neither direction is limited by the MTU.
+Reading one reads the characteristic off the device; writing one
+writes it.
+.PD
+.TP
+.B /net/bt/\fIN\fP/gatt/
+The database this side serves, which is
+.B remote/\fIADDR\fP/gatt
+read the other way round: a directory per service, named by its UUID,
+holding a file per characteristic, named by its UUID.  Reading one
+reads what a peer reading that characteristic would get; writing one
+sets what a peer will read next.  These files are always writable
+whatever the characteristic's properties say \- the properties are
+what a
+.I peer
+may do, and this is how the owner of the database sets the value at
+all.
+.PP
+A peer that connects to this side reads and writes them.  Discovery,
+reads, reads of values longer than the link's MTU, and writes are
+answered; anything else is answered with
+.B "Request Not Supported" ,
+which is what a server says and what a client can act on.  A write
+from a peer to a characteristic whose properties do not allow one is
+refused with
+.BR "Write Not Permitted" .
+.PP
+A characteristic whose properties include
+.B n
+or
+.B i
+carries the descriptor a peer writes to ask for notifications, and
+writing the file here is what sends them: every peer that asked gets
+one.  A peer that asked for indications is waited for, since only one
+indication may be outstanding at a time.  The subscription belongs to
+the link and not to the database, so two peers reading the same
+characteristic may differ on whether they want to be told about it.
+.PP
+Every database carries a Generic Attribute service holding Service
+Changed, at handles one to four, so a peer has something to subscribe
+to before anything else exists.  It is not shown here \- it is not
+part of what is being published, it is how a change to what is
+published is announced.
+.PP
+A peer that connects may also pair.  This side answers as the
+responder, hands the controller the key when the peer starts
+encryption, and distributes a long term key; what comes of it is a
+bond like any other, in
+.B bonds
+and in the store, naming the peer and the controller it was made
+on.  It is Just Works, so it gives no protection against a man in the
+middle, exactly as pairing in the other direction does not.
+.PP
+A peer that has paired before does not pair again: it starts
+encryption naming the key it was given, and that key is found in the
+bond and handed to the controller.  A key that is named and not held
+is answered with the negative reply, which is what tells the peer to
+pair afresh rather than leaving it waiting.
+.TP
+.B /net/bt/\fIN\fP/remote/\fIADDR\fP/sdp/
+Appears when a Classic device is connected and answered a service
+discovery search: one file per service record, named by the record's
+handle in eight hexadecimal digits.  It is what a Classic device has
+in place of a
+.B gatt
+tree, and it is not the same kind of thing: a GATT database is walked
+and can be walked again, while SDP is asked once and answers with
+whole records, so these files are what the device said at the moment
+the link came up.
+.PP
+Each file holds the record as lines.
+.BI class " uuid"
+for each service class it claims, with a name after the UUID when
+there is one to give;
+.BI name " text"
+if it named itself;
+.BI proto " name parameters"
+for each protocol it is reached over, lowest first \- which is where
+an RFCOMM channel number comes from and the reason to read a record at
+all;
+.BI hiddesc " hex"
+when the record carries a HID report descriptor, which is a value that
+is not text and so is given in hexadecimal rather than left in the
+attribute below to be mangled; and then
+.BI attr " id value"
+for every attribute the device gave, whether or not anything here
+knows what it means, because a record holds whatever the device put in
+it.
+.PP
+The search is for the public browse group, which is where a service
+that wants to be found puts itself.  A device with services outside it
+has them and does not advertise them, and a device with nothing in it
+has no
+.B sdp
+directory rather than an empty one.
+.TP
+.B /net/bt/\fIN\fP/remote/\fIADDR\fP/rfcomm/\fIN\fP/data
+A serial port on server channel
+.IR N ,
+opened by writing
+.BI "rfcomm " N
+to the device's own
+.B ctl
+and closed with
+.BI "unrfcomm " N .
+The channel number is what an
+.B sdp
+record's
+.B proto
+line gives, so a device is found with service discovery and reached
+with this.
+.PP
+It is a stream and not a record: what is written is bytes and what is
+read is bytes, and a write longer than the frame size the peer agreed
+to is cut into frames here, so a read may return less than the write
+that produced it.  A write may wait, because RFCOMM has its own
+credits underneath, negotiated rather than granted.  The multiplexer
+under all this \- an L2CAP channel to PSM 3 and a session on it \- is
+started by the first port and shared by the rest: thirty ports on one
+channel is what a session is.
+.TP
+.B /net/bt/\fIN\fP/remote/\fIADDR\fP/l2cap/
+One file per open L2CAP channel, named by its PSM in four hexadecimal
+digits, and by the PSM and a number for a second channel to the same
+PSM \- which AVDTP needs, signalling and media both being there.  This is not part of the GATT tree and does not go
+away when the device says its database has moved: a channel is not an
+attribute and a Service Changed indication says nothing about it.  It
+does go away with the link, along with everything else the link was
+carrying.
+.PP
+The channel on a BR/EDR link is a basic mode one and the file is the
+same file: one write is one SDU, one read is the next SDU whole, and
+the difference is underneath.  A basic mode channel is opened with a
+connection request and then configured in both directions, and is not
+open until both have been answered; it has no credits, so a write
+that fits goes out at once, and the size it must fit in is the MTU the
+peer asked for in its configuration.  Nothing here serves a PSM, so a
+peer that asks for a channel on a link this side is on is answered
+.B "PSM not supported" .
+.PP
+One write is one SDU and one read is the next SDU whole.  A write may
+wait: credits are how the peer says it is ready, and a peer that has
+granted none has said it is not, so the bytes wait rather than being
+thrown away.  A read that offers a smaller buffer than the SDU fails
+saying how big the SDU was, because there is nowhere to put the
+remainder and a short read would lose it silently; the most this side
+will accept is 512 bytes, so a reader that offers that much never sees
+it.  The device's
+.B state
+has a line per open channel giving the PSM, both channel identifiers,
+and the SDU and PDU sizes the two sides settled on.
+.PP
+The flow control is real in both directions.  Going out, an SDU is cut
+into PDUs at the peer's maximum and a credit is spent on each.  Coming
+in, credits are granted for as many PDUs as there is room for and
+given back when a reader takes the SDU they carried, so nothing is
+ever dropped for want of somewhere to put it \(em unlike the fixed
+channels above, where a consumer that falls behind loses frames
+because the alternative is stopping the controller.  A peer that sends
+a segment it has no credit for, or announces an SDU longer than the
+MTU, has broken the only rule that bounds this side's memory, and the
+channel is closed with that reason rather than the segment absorbed.
+.PP
+So an echo service on PSM 0x0080 is
+.IP
+.EX
+echo l2cap 0080 > /net/bt/0/remote/345678ABCDEF/ctl
+echo hello > /net/bt/0/remote/345678ABCDEF/l2cap/0080
+cat /net/bt/0/remote/345678ABCDEF/l2cap/0080
+.EE
+.PP
+A characteristic that notifies or indicates also has a
+.IB uuid .notify
+beside it.  Opening that file subscribes to the characteristic, each
+read returns the next notification whole, and closing it
+unsubscribes.
+.PP
+So a battery level is
+.IP
+.EX
+cat /net/bt/0/remote/345678ABCDEF/gatt/180f/2a19
+.EE
+.PP
+and watching it change is
+.IP
+.EX
+cat /net/bt/0/remote/345678ABCDEF/gatt/180f/2a19.notify
+.EE
+.SS Bthid
+.I Bthid
+turns a Bluetooth keyboard or mouse into keystrokes on
+.B /dev/keyboard
+and motion on
+.BR /dev/pointer .
+It takes the first connected device with a
+.B 1812
+service, or the device directory named on its command line, and looks
+for the boot keyboard and boot mouse input reports.  If either is
+there it writes 0 to the Protocol Mode characteristic to ask for the
+boot protocol and reads the reports off their
+.B .notify
+files.  The reports are what is looked at first and the write only
+follows finding one: whether a device has a boot protocol is a
+question about its boot reports, and writing 0 to a device that has
+none would put it in a mode it cannot report in.
+.PP
+There is no Bluetooth in it: the device is a directory, a
+subscription is an open, and a report is a read.  The translation of
+reports to keys and motion is
+.IR hidboot (2)
+and
+.IR hidreport (2),
+both shared with
+.IR usbd (1),
+because above the transport the reports are identical.
+.PP
+A boot report is the state of the keyboard and not an event \- the
+keys that are down, in no order \- so a key that is held appears in
+every report until it is let go, and only keys that were not down
+before are typed.
+.PP
+A Bluetooth Classic device is the same keyboard down a different
+pipe.  There is no GATT: it is found by an inquiry, its report
+descriptor is in its
+.B 1124
+service record rather than in a characteristic \- the
+.B hiddesc
+line \- and its reports arrive on an L2CAP channel to the interrupt
+PSM with one byte of HIDP header in front of them.
+.I Bthid
+opens the control channel too, because HIDP is two and a device is
+entitled to expect both.  Everything above that is the same code.
+.PP
+A device with no Protocol Mode characteristic, or with no boot report
+behind it, speaks only the report protocol, and then the layout is
+read off the device.  The
+.B 2a4b
+Report Map characteristic is a HID report descriptor; each
+.B 2a4d
+Report characteristic has a
+.B 2908
+Report Reference descriptor beside it saying which report id it
+carries and whether it is an input.  Putting the two together is what
+says which report is the keyboard and which the pointer, and where in
+each report the modifiers, the key codes, the buttons and the axes
+are.  It is not an optimisation: every Report characteristic has the
+same UUID, so nothing else distinguishes them, and a device is free to
+give the mouse the lower id.  A report that is neither a keyboard nor
+a pointer is left alone.
+.PP
+.B -k
+and
+.B -p
+name files to write to instead of the real devices, which is what the
+bench uses;
+.B -v
+says what each report became.
+.SS Btpan
+.I Btpan
+turns a Bluetooth link into an ethernet.  It takes a connected Classic
+device offering a network access point or an ad hoc group in its
+service records, or the device directory named on its command line,
+opens the BNEP channel, agrees the setup, and serves the
+.BR clone ,
+.B addr
+and numbered conversation interface
+.IR ip (3)'s
+ether medium binds to \- so
+.B "bind ether /n/btpan/ether"
+on an
+.B ipifc
+makes the link another
+.BR /net/ether .
+.PP
+The interface's address is not invented: a BNEP link's ethernet
+addresses are the two BD_ADDRs, so this side's is the controller's own
+and the peer's is the device's, which is why a BNEP packet may leave
+both out and still be a frame.
+.B -m
+gives the mount point, default
+.BR /n/btpan ,
+and
+.B -b
+where
+.I btfs
+is mounted.
+.PP
+There is no Bluetooth in it beyond the name of a directory: it opens
+the L2CAP channel file
+.I btfs
+made and speaks BNEP over that.
+.SS Bta2dp
+.I Bta2dp
+sends an audio stream to a Bluetooth sink.  It finds a device offering
+the
+.B 110b
+service, opens the AVDTP signalling channel, asks what its stream
+endpoints can do, picks an SBC configuration out of what the sink says
+it will take, configures it, opens the media channel and starts the
+stream; then it reads the file named on its command line and sends it
+down the media channel a packet at a time.
+.PP
+It does not encode.  A2DP is AVDTP plus SBC and there is no SBC here,
+so the file must already hold SBC frames in the configuration that was
+agreed; anything else is sent faithfully and is noise.  That is said
+on the way past rather than left to be discovered by listening.
+.PP
+.BI -s " packets"
+sends that many packets of silence instead of a file.  The frames are
+real SBC in whatever configuration was just agreed \- the header, the
+length, and the CRC that configuration calls for, with every scale
+factor and sample bit zero \- built by
+.B Avdtp->sbcsilence
+in
+.BR /appl/lib/bt/avdtp.b .
+It is still not an encoder; it is the frame an encoder would emit for
+a block of nothing, and it exists because a stream whose configuration
+says SBC and whose payload is not SBC is wrong on the wire whatever
+the intent.
+.PP
+.B -d
+names the device,
+.B -b
+where
+.I btfs
+is mounted, and
+.B -v
+says what each packet was.
+.SS Bthfp
+.I Bthfp
+turns a telephone into files.  It finds a connected device offering a
+hands free audio gateway \- which is what a telephone offers \- opens
+the RFCOMM channel its service record names, does the service level
+connection, and serves
+.B status
+(the indicators the gateway keeps, one per line, with the features it
+claimed),
+.B event
+(each read is the next thing that changed, and a read with nothing to
+read waits), and
+.B ctl
+taking
+.BI "dial " number ,
+.BR answer ,
+.B hangup
+or
+.BI "at " command
+for anything else.
+.PP
+So a program places a call by writing to a file and learns that it was
+answered by reading another.  What it cannot do is hear: a call's
+audio goes over a synchronous connection, which nothing in this tree
+carries, and
+.I bthfp
+says so when it starts rather than leaving it to be found out by
+holding a silent telephone.
+.PP
+The indicators are read in the order the gateway names them, which is
+not a fixed order: an indication says which one by number, so a unit
+that assumed an order would report the wrong thing changing.
+.SS Btbench
+.I Btbench
+starts
+.I btfs
+on the transport it is given and then drives the whole stack through
+its files, printing what happens at each step: the controller, a
+scan, what answered, a connection, the remote device's whole GATT
+database, a characteristic read, three notifications, pairing, and a
+disconnection.  It is the test program, and it runs unchanged under
+.IR emu (1)
+and inside the native kernels.
+.SH SOURCE
+.B /appl/cmd/bt
+.br
+.B /appl/lib/bt
+.br
+.B /module/bt.m
+.SH SEE ALSO
+.IR bt (2),
+.IR btkeyfs (4),
+.IR hidboot (2),
+.IR hidreport (2),
+.IR dial (2),
+.IR devuart (3),
+.IR devusb (3),
+.IR usbd (8)
+.SH BUGS
+.PP
+This is Bluetooth Low Energy only.  There is no Bluetooth Classic:
+no inquiry, no SDP, no RFCOMM, no HID, no PAN, and no audio.  L2CAP
+here is the fixed channels an LE link uses \- ATT, LE signalling and
+security management \- and the length and CID framing under them;
+there are no connection-oriented channels.
+.PP
+Pairing is LE legacy pairing with a zero temporary key, which is Just
+Works: it establishes an encrypted link and a bond, and it gives no
+protection at all against a man in the middle.  There is no passkey
+entry and no numeric comparison.  LE Secure Connections is not
+implemented \- it needs P-256 elliptic curve Diffie-Hellman, which is
+not here \- so a device that insists on it will not pair, and says so.
+.PP
+The USB transport
+.RB ( -u )
+is written and compiles but has never moved a packet.  There is no
+USB Bluetooth controller on the bench and no emulated one, so nothing
+about it is demonstrated; only the H4 transport is.
+.PP
+On
+.B pc64
+the H4 transport over the second serial port makes the kernel fault:
+sustained traffic on that uart ends in a general protection violation
+at the
+.B IRETQ
+in
+.B _intrr
+.RB ( os/inferno/pc64/l.s ),
+with a corrupt interrupt frame.  That is a fault in the kernel's own
+interrupt return, not in this stack: the same Dis code over a
+.IR dial (2)
+transport completes on the same
+.B pc64
+kernel and on
+.BR riscv64 .
+See
+.B doc/inferno-ports.ms.
+.PP
+Only the initiating (central) side is implemented.  This stack does
+not advertise and cannot be connected to.
+.PP
+A resolvable private address is resolved against every stored bond's
+identity resolving key, so a device that rotates its address \- which
+most modern peripherals do \- stays one device under one directory,
+named by its identity, and the bond made with it remains reachable.
+Resolution is done here rather than by handing the keys to the
+controller's resolving list.
+.PP
+The name a directory is given when the device is first heard from is
+kept.  So a device first seen from a private address, and paired only
+afterwards, keeps the directory named by that first private address
+even though its later addresses resolve to it: the name is settled
+before there is a key to resolve it with, and a directory a client may
+be holding open is not renamed underneath it.  Its
+.B identity
+file says what it really is.
+.PP
+A bond read from the
+.B -k
+key file at startup resolves addresses just as one made in the session
+does, so a device bonded with earlier is recognised again without
+pairing.
+.PP
+Pairing is still LE legacy Just Works, so the identity key is
+distributed without protection against a man in the middle, and
+resolution is only as trustworthy as the pairing that produced the
+key.
+.PP
+.B scripts/btbench.sh
+runs
+.I btbench
+under
+.I emu
+against the controller model in
+.B scripts/bthci.py ,
+in two phases -- pairing, then meeting the bond again from a key file
+\- and exits non-zero if either fails.
+.PP
+Each phase is also captured.
+.B bthci.py --snoop
+writes every HCI packet, both directions, as
+.BR btsnoop ,
+and the bench runs
+.I tshark
+over the capture and fails the phase on an expert warning or error it
+did not declare.  A phase that injects a fault a controller may not
+commit \- 
+.B params
+sends a connection parameter request that cannot be honoured \- names
+the one complaint it is allowed to draw, by its text, so any other
+still fails it.  A capture holding no packets fails too, since that is
+what a capture that was never written looks like.
+Every other check in the bench is this stack talking to a model
+written from the same specifications by the same reader, so a
+misreading agrees with itself and passes; Wireshark's dissectors were
+written by other people, and are the one check here that does not
+share that reading.  They found three faults that the bench had been
+passing: a Command Complete answering
+.BR HCI_Inquiry ,
+which is defined to answer with a Command Status; a frame whose
+ethertype said ARP carrying a byte pattern; and a media stream that
+had agreed to SBC carrying bytes that were not SBC.  Notes are not
+failures \-
+.B "Reached ATT_MTU"
+is what a dissector says about a value longer than one packet, which
+the bench sends on purpose.  Without
+.I tshark
+the captures are still written and nothing reads them, and the bench
+says so as it starts.
+.PP
+.B scripts/btvirt/run.sh
+runs one phase against BlueZ instead of against the model.  It builds
+a container holding
+.IR btvirt ,
+BlueZ's controller emulator, with a peer built out of BlueZ's own host
+stack and GATT server on a second controller, and points
+.I btbench
+at it over the same
+.B tcp!
+transport the model uses \(em so the controller, the link layer, the
+host, the SMP and the GATT server are all code this tree did not
+write.  The
+.B btvirt
+phase is the one written for that peer, and it covers both halves:
+scanning, connecting, discovery, a read, notifications, a long write,
+pairing and a credit-based channel on LE, then an inquiry, a page, an
+L2CAP channel, a serial port over RFCOMM and secure simple pairing on
+BR/EDR.  Each of the last two answers in
+upper case rather than echoing, so the reply has to have been read by
+the far end.
+.B full
+fails against it, because it ends by watching a device rotate a
+resolvable private address and this peer does not rotate one.
+.PP
+The image carries one patch,
+.BR scripts/btvirt/bthost-rfcomm-length.patch .
+BlueZ's test host stack writes the RFCOMM header's length into the
+length indicator, which TS 07.10 defines as the information field's
+length alone; its own receiver reads the field the defined way and so
+refuses frames its own sender builds.  It
+needs Docker, which is why it is not part of
+.BR btbench.sh .
+.PP
+.B doc/bluetooth-plan.ms
+lists what is missing in the order the pieces block each other, and
+plans the 9front implementation.

@@ -265,9 +265,37 @@ pl011_parity(Uart *uart, int parity)
 	return 0;
 }
 
+/*
+ * Hardware flow control, which on this board is not optional.
+ *
+ * The BCM43438's Bluetooth side is an H4 controller on this same
+ * PL011, and it drops bytes without RTS/CTS -- the radio has no other
+ * way to say "stop".  The lines are GPIO 16 and 17 in alt3.  A console
+ * does not need them and nothing asked for them before, so this was a
+ * stub; asking for it is "m1" on the uart's ctl file (devuart(3)).
+ */
 static void
-pl011_modemctl(Uart*, int)
+pl011_modemctl(Uart *uart, int on)
 {
+	Ctlr *c = uart->regs;
+	u32 cr;
+
+	cr = csr32r(c, UartCR);
+	if(on){
+		gpiofsel(16, Altpl011);		/* CTS */
+		gpiofsel(17, Altpl011);		/* RTS */
+		cr |= UartCRRTSEN|UartCRCTSEN;
+	} else
+		cr &= ~(UartCRRTSEN|UartCRCTSEN);
+	/*
+	 * CR may only be changed with the UART disabled, and LCR_H must
+	 * be rewritten afterwards to latch the line settings.
+	 */
+	csr32w(c, UartCR, cr & ~UartCRUARTEN);
+	csr32w(c, UartLCRH, csr32r(c, UartLCRH));
+	csr32w(c, UartCR, cr);
+	uart->modem = on;
+	uart->cts = 1;
 }
 
 static void

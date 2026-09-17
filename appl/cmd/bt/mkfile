@@ -1,0 +1,32 @@
+<../../../mkconfig
+
+TARG=\
+	bthid.dis\
+	btfs.dis\
+	btkeyfs.dis\
+	btpan.dis\
+	bta2dp.dis\
+	bthfp.dis\
+	btbench.dis\
+
+#
+#	mkdis makes every .dis depend on the modules named here.  bt.m is
+#	the one that matters: it is this stack's own interface, and while it
+#	was left out an edit to it rebuilt only the .b files that had also
+#	changed.  The rest kept their old link signatures and the loader
+#	refused them at run time -- "link typecheck Bttransport->init()" --
+#	which reads like a bug in the stack rather than a stale build.
+#
+SYSMODULES=\
+	arg.m\
+	bt.m\
+	draw.m\
+	sh.m\
+	styx.m\
+	styxservers.m\
+	sys.m\
+
+
+DISBIN=$ROOT/$DISROOT/bt
+
+<$ROOT/mkfiles/mkdis
