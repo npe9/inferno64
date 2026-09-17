@@ -455,6 +455,65 @@ The DMA controller is unused by any driver.
 The kfs create deadlock (the arm64 multi-kproc error-stack bug) still
 blocks a native writable filesystem on the card.
 .NH 2
+Ethernet on silicon: the board answers ARP and resolves nothing
+.PP
+The Pi enumerates its LAN9514, serves
+.CW /net.alt/ether ,
+binds it as ipifc 0 and receives: unicast ICMP echo requests reach the
+protocol (91 in,
+.CW InErrors
+0,
+.CW CsumErrs
+0) and are answered (91
+.CW EchoReply
+out).  Nothing the board sends in reply is ever seen by the machine at
+the other end of the cable.
+.PP
+Where the frames are
+.I not
+lost: on the way out.
+.CW /net.alt/ether/stats
+counts what the ethernet server does with each frame the kernel hands
+it, and every frame is written \-
+.CW "ntx 30, nqueued 30, nwrit 30, nwerr 0" .
+The bytes are right too: the dump taken as a frame reaches the bulk
+endpoint shows the SMSC transmit header's two length fields agreeing
+with each other and with the frame, the board's own mac as source, and
+.CW 0x0800
+over a well-formed IP header.  The other end also demonstrably hears
+some of them: the Mac's ARP entry for the board went from ten seconds
+short of expiry to a fresh 1199 immediately after a ping, so ARP
+traffic from the board crosses the cable.
+.PP
+What is broken is resolution.
+.CW /net/arp
+holds the machine the board is trying to reach in
+.CW WAIT
+with an all-zero mac, and stays there.  With no mac, every unicast IP
+packet is queued against that entry and abandoned, which is exactly the
+shape of the failure: ARP answered, ping never, TCP dial never.
+.PP
+Alongside it, and possibly the cause, the receive side is dropping
+most of what arrives: 45942 frames received, 30860 dropped for want of
+a reader.  Each conversation holds at most
+.CW Nqueue
+frames when nobody is reading, and a conversation that is never drained
+discards everything that arrives after the sixty-fourth \- including,
+if it is the
+.CW 0x806
+conversation, the ARP reply the board is waiting for.  The three
+conversations (IPv4, IPv6, ARP) each now count what was matched to
+them, handed to a reader and dropped, and every ARP frame that reaches
+the server is dumped as it arrives; that says whether the reply is
+absent from the wire or discarded after it lands.
+.PP
+QEMU cannot settle this.  With
+.CW "-netdev user"
+the guest resolves ARP and pings normally, and the socket backend
+needed to inject traffic wedges the DWC2 bulk-out channel on a NAK
+before any of it can be tried.  The measurements above are all from
+silicon.
+.NH 2
 Suggested order
 .PP
 Contain a failing driver so it cannot wedge the console; fix DWC2 bulk
