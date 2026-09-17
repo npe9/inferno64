@@ -2092,9 +2092,8 @@ adds what only real machines can: two of them, two processor families,
 a real network between them, and the cloud's own cost for the mount.
 .PP
 .B "Three things found doing it."
-TLS fails on these instances while plain HTTP works:
 .CW gcs
-dies with
+over TLS fails on these instances while plain HTTP works: it dies with
 .CW "tls: record write: wrote -1/6: Hangup" ,
 the first write of the handshake, with or without
 .CW -A ,
@@ -2103,7 +2102,14 @@ while
 over
 .CW http
 to the same host returns a 404 from Google's own server \(em so DNS,
-routing and TCP are all fine and this is TLS alone.  On the arm64
+routing and TCP are all fine.  It is not TLS in general:
+.CW scripts/check-tls.sh
+boots the same pc64 kernel under QEMU and fetches the same URL twice,
+once each way, and both succeed \(em the https one takes minutes, which
+is bignum arithmetic under TCG and is why a shorter hold first looked
+like a hang.  The control that would narrow this further is a plain
+.CW "hget https"
+on an instance, which was not run.  On the arm64
 instance the same
 .CW gcs
 run took the kernel down in
