@@ -30,6 +30,10 @@ enum {
 	Nreaderr = 100,		/* consecutive failed reads before a reader gives up */
 };
 
+static void	etherqueue(Ipifc*, Queue*, Block*);
+static void	etherwrite4(void *a);
+static void	etherwrite6(void *a);
+static void	etherwritearp(void *a);
 static void	etherread4(void *a);
 static void	etherread6(void *a);
 static void	etherbind(Ipifc *ifc, int argc, char **argv);
@@ -89,6 +93,33 @@ struct Etherrock
 	Chan	*cchan4;	/* Control channel for v4 */
 	Chan	*mchan6;	/* Data channel for v6 */
 	Chan	*cchan6;	/* Control channel for v6 */
+
+	/*
+	 * Transmit queues, one per conversation, each drained by its own
+	 * process.  A frame is handed to a queue and the caller returns,
+	 * which is what a kernel ethernet driver does.
+	 *
+	 * It matters here more than it does on a board with a real
+	 * ethernet card.  This medium's "device" is a file, and on the Pi
+	 * that file is served by a Limbo program, so a write is a 9P round
+	 * trip that can block.  tcpkick() writes with the conversation
+	 * qlock held, and on the board a write that stopped there held
+	 * that lock for good: the IPv4 reader could not take it to deliver
+	 * what was arriving (in 120, handed on 15, 8 frames held), TCP's
+	 * timer could not take it to retransmit, and the network was gone
+	 * while ARP -- which does not use that lock -- went on answering.
+	 * A protocol lock must not be held across a file server's reply.
+	 */
+	Queue	*oq4;
+	Queue	*oq6;
+	Queue	*oqa;
+	Proc	*write4p;
+	Proc	*write6p;
+	Proc	*writeap;
+};
+
+enum {
+	Noqueue	= 64*1514,	/* frames held per conversation when the far end is slow */
 };
 
 /*
@@ -207,8 +238,18 @@ etherbind(Ipifc *ifc, int argc, char **argv)
 	er->achan = chandial(addr, nil, nil, nil);
 	poperror();
 
+	er->oq4 = qopen(Noqueue, Qmsg, nil, nil);
+	er->oq6 = qopen(Noqueue, Qmsg, nil, nil);
+	er->oqa = qopen(Noqueue, Qmsg, nil, nil);
+	if(er->oq4 == nil || er->oq6 == nil || er->oqa == nil)
+		error(Enomem);
+	er->write4p = er->write6p = er->writeap = (void*)-1;
+
 	ifc->arg = er;
 
+	kproc("etherwrite4", etherwrite4, ifc, 0);
+	kproc("etherwrite6", etherwrite6, ifc, 0);
+	kproc("etherwritearp", etherwritearp, ifc, 0);
 	kproc("etherread4", etherread4, ifc, 0);
 	kproc("etherread6", etherread6, ifc, 0);
 	kproc("recvarpproc", recvarpproc, ifc, 0);
@@ -225,10 +266,27 @@ etherunbind(Ipifc *ifc)
 	while(waserror())
 		;
 
-	/* wait for readers to start */
-	while(er->arpp == (void*)-1 || er->read4p == (void*)-1 || er->read6p == (void*)-1)
+	/* wait for readers and writers to start */
+	while(er->arpp == (void*)-1 || er->read4p == (void*)-1 || er->read6p == (void*)-1
+	|| er->write4p == (void*)-1 || er->write6p == (void*)-1 || er->writeap == (void*)-1)
 		tsleep(&up->sleep, return0, 0, 300);
 
+	/*
+	 * A writer sleeps in qbread, where a note does not reach it;
+	 * hanging its queue up is what ends that read.
+	 */
+	if(er->oq4 != nil)
+		qhangup(er->oq4, nil);
+	if(er->oq6 != nil)
+		qhangup(er->oq6, nil);
+	if(er->oqa != nil)
+		qhangup(er->oqa, nil);
+	if(er->write4p != nil)
+		postnote(er->write4p, 1, "unbind", 0);
+	if(er->write6p != nil)
+		postnote(er->write6p, 1, "unbind", 0);
+	if(er->writeap != nil)
+		postnote(er->writeap, 1, "unbind", 0);
 	if(er->read4p != nil)
 		postnote(er->read4p, 1, "unbind", 0);
 	if(er->read6p != nil)
@@ -242,8 +300,9 @@ etherunbind(Ipifc *ifc)
 	while(waserror())
 		;
 
-	/* wait for readers to die */
-	while(er->arpp != nil || er->read4p != nil || er->read6p != nil)
+	/* wait for readers and writers to die */
+	while(er->arpp != nil || er->read4p != nil || er->read6p != nil
+	|| er->write4p != nil || er->write6p != nil || er->writeap != nil)
 		tsleep(&up->sleep, return0, 0, 300);
 
 	poperror();
@@ -259,6 +318,12 @@ etherunbind(Ipifc *ifc)
 		cclose(er->cchan6);
 	if(er->achan != nil)
 		cclose(er->achan);
+	if(er->oq4 != nil)
+		qfree(er->oq4);
+	if(er->oq6 != nil)
+		qfree(er->oq6);
+	if(er->oqa != nil)
+		qfree(er->oqa);
 
 	free(er);
 }
@@ -308,12 +373,12 @@ etherbwrite(Ipifc *ifc, Block *bp, int version, uchar *ip)
 	case V4:
 		eh->t[0] = 0x08;
 		eh->t[1] = 0x00;
-		devtab[er->mchan4->type]->bwrite(er->mchan4, bp, 0);
+		etherqueue(ifc, er->oq4, bp);
 		break;
 	case V6:
 		eh->t[0] = 0x86;
 		eh->t[1] = 0xDD;
-		devtab[er->mchan6->type]->bwrite(er->mchan6, bp, 0);
+		etherqueue(ifc, er->oq6, bp);
 		break;
 	default:
 		panic("etherbwrite2: version %d", version);
@@ -321,6 +386,86 @@ etherbwrite(Ipifc *ifc, Block *bp, int version, uchar *ip)
 	ifc->out++;
 }
 
+
+/*
+ *  Hand a frame to a transmit queue.  Dropped when the queue is full:
+ *  an ethernet driver drops a frame it cannot send, it does not stop
+ *  the protocol that offered it.
+ */
+static void
+etherqueue(Ipifc *ifc, Queue *q, Block *bp)
+{
+	if(q == nil){
+		freeb(bp);
+		return;
+	}
+	if(qpass(q, bp) < 0)
+		ifc->outerr++;
+}
+
+/*
+ *  one of these per conversation, draining its queue into the device
+ */
+static void
+etherwriteproc(Ipifc *ifc, Queue *q, Chan *c, Proc **pp, char *what)
+{
+	Block *bp;
+	int nerr;
+
+	*pp = up;
+	nerr = 0;
+	for(;;){
+		if(waserror()){
+			if(strcmp(up->errstr, "unbind") == 0)
+				break;
+			print("%s: %s write: %s\n", ifc->dev, what, up->errstr);
+			if(++nerr > Nreaderr){
+				print("%s: %s writer giving up after %d errors\n",
+					ifc->dev, what, nerr);
+				break;
+			}
+			tsleep(&up->sleep, return0, 0, 100);
+			continue;
+		}
+		bp = qbread(q, ifc->maxtu);
+		if(bp == nil){
+			poperror();
+			break;
+		}
+		nerr = 0;
+		devtab[c->type]->bwrite(c, bp, 0);
+		poperror();
+	}
+	*pp = nil;
+	pexit("hangup", 1);
+}
+
+static void
+etherwrite4(void *a)
+{
+	Ipifc *ifc = a;
+	Etherrock *er = ifc->arg;
+
+	etherwriteproc(ifc, er->oq4, er->mchan4, &er->write4p, "ipv4");
+}
+
+static void
+etherwrite6(void *a)
+{
+	Ipifc *ifc = a;
+	Etherrock *er = ifc->arg;
+
+	etherwriteproc(ifc, er->oq6, er->mchan6, &er->write6p, "ipv6");
+}
+
+static void
+etherwritearp(void *a)
+{
+	Ipifc *ifc = a;
+	Etherrock *er = ifc->arg;
+
+	etherwriteproc(ifc, er->oqa, er->achan, &er->writeap, "arp");
+}
 
 /*
  *  process to read from the ethernet
@@ -541,7 +686,7 @@ sendarp(Ipifc *ifc, Arpent *a)
 	hnputs(e->op, ARPREQUEST);
 	bp->wp += n;
 
-	devtab[er->achan->type]->bwrite(er->achan, bp, 0);
+	etherqueue(ifc, er->oqa, bp);
 }
 
 static void
@@ -598,7 +743,7 @@ sendgarp(Ipifc *ifc, uchar *ip)
 	hnputs(e->op, ARPREQUEST);
 	bp->wp += n;
 
-	devtab[er->achan->type]->bwrite(er->achan, bp, 0);
+	etherqueue(ifc, er->oqa, bp);
 }
 
 static void
@@ -703,7 +848,7 @@ recvarp(Ipifc *ifc)
 		runlock(ifc);
 		freeb(ebp);
 
-		devtab[er->achan->type]->bwrite(er->achan, rbp, 0);
+		etherqueue(ifc, er->oqa, rbp);
 		return;
 	}
 
