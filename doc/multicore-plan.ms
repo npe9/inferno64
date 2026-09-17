@@ -4347,3 +4347,61 @@ The kernel before the change carries no
 .CW chantest.dis
 at all, so its chantest column is zero by absence and not by failure.
 Reading it as eight failing cases would be wrong.
+.NH 2
+A comparison that measured the wrong thing
+.PP
+The commit that landed the region said of one stalled
+.CW parallelvm=1
+.CW "-smp 4"
+boot that "the per-context queue dump says it is not this", on the
+strength of
+.CW "chan regions 156, contended 0" ,
+.CW inchan
+zero on all seven contexts, three procs queued at
+.CW collect+0x13
+and
+.CW "stw waits 5400" .
+That reasoning is fine and the counters are real, but it was one boot
+with no baseline arm, which is not enough to attribute anything.
+.PP
+The baseline arm, twelve boots each interleaved, said the opposite:
+.TS
+center;
+l r r.
+	reached shell	iterations
+before	4 of 12	6
+after	0 of 12	0
+.TE
+.PP
+Read at face value that is a regression.  It is not, and the reason is a
+confound this document should have caught before the batch ran rather
+than after: the kernel after the change runs three concurrent
+.CW chantest
+instances
+.I before
+the shell loop, and the kernel before it runs none.  Checking what those
+runs actually did settles it \(em across twelve boots exactly one case,
+.I two-senders-one-channel ,
+ever completed, four times.  The new kernel never reached the shell loop
+at
+.CW parallelvm=1
+.CW "-smp 4"
+because it was still inside the extra work, not because it stalled.
+"Reached the shell" measures the workload here, not the kernel.
+.PP
+Two lessons, both already written down elsewhere in this document and
+both ignored anyway.  A metric has to be checked against the thing it is
+standing in for before a batch is run on it, not after the numbers look
+wrong.  And an arm that carries extra work is not a control for an arm
+that does not.
+.PP
+The comparison that does isolate the lock is one kernel against itself:
+.CW *chanlock=1
+against
+.CW *chanlock=0 ,
+same binary, same workload, the switch put there for exactly this.  The
+metric is how far the three chantests get \(em
+.CW ok
+lines completed out of twenty-four \(em because at this configuration
+neither side finishes them inside the timeout, so progress is the
+measurement and completion is not.
