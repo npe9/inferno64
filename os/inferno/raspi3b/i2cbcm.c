@@ -41,8 +41,38 @@ enum {
 
 	Sta	= 1<<0,		/* transfer active */
 	Sdone	= 1<<1,		/* transfer done */
+	Stxd	= 1<<4,		/* FIFO has room for a byte */
+	Srxd	= 1<<5,		/* FIFO holds a received byte */
 	Serr	= 1<<8,		/* slave failed to ack address */
+	Sclkt	= 1<<9,		/* slave stretched the clock too long */
+
+	/*
+	 * How long to wait for the bus, in microseconds.  A byte at
+	 * 100kHz is 90us and this driver never moves more than a few, so
+	 * 100ms is a bus that is not coming back.
+	 */
+	Busywait = 100000,
 };
+
+/*
+ * Wait for a status bit, giving up on an error or a timeout.  The
+ * controller reports a missing slave as Serr and a slave that holds
+ * the clock down as Sclkt, and both end the transfer.
+ */
+static int
+waitbit(u32 *r, u32 bit)
+{
+	int i;
+
+	for(i = 0; i < Busywait/10; i++){
+		if(r[BscS] & (Serr|Sclkt))
+			return -1;
+		if(r[BscS] & bit)
+			return 0;
+		microdelay(10);
+	}
+	return -1;
+}
 
 /*
  * Write n bytes to slave addr.  Returns 0, or -1 if the slave did not
@@ -54,12 +84,27 @@ bcmi2cwrite(u32 *r, int addr, uchar *buf, int n)
 	int i;
 
 	r[BscA] = addr;
-	r[BscS] = Serr|Sdone;		/* clear sticky status */
+	r[BscS] = Serr|Sdone|Sclkt;	/* clear sticky status */
 	r[BscDlen] = n;
-	r[BscC] = Ci2cen|Cst;		/* start: Sta and Stxd now set */
-	for(i = 0; i < n; i++)
+	r[BscC] = Ci2cen|Cclear|Cst;	/* start: Sta and Stxd now set */
+	/*
+	 * Wait for room before each byte, and for the transfer to finish
+	 * before believing the status.  This used to write the FIFO
+	 * straight through and read Serr the instant after, which is
+	 * true only where a transfer completes inside the register write:
+	 * on the board a write to an address nothing answers returned
+	 * success, because the controller had not yet got as far as the
+	 * address when Serr was read.  A bus with nothing on it now says
+	 * so.
+	 */
+	for(i = 0; i < n; i++){
+		if(waitbit(r, Stxd) < 0)
+			return -1;
 		r[BscFifo] = buf[i];	/* each write sends one byte */
-	return (r[BscS] & Serr)? -1: 0;
+	}
+	if(waitbit(r, Sdone) < 0)
+		return -1;
+	return (r[BscS] & (Serr|Sclkt))? -1: 0;
 }
 
 /*
@@ -71,12 +116,18 @@ bcmi2cread(u32 *r, int addr, uchar *buf, int n)
 	int i;
 
 	r[BscA] = addr;
-	r[BscS] = Serr|Sdone;
+	r[BscS] = Serr|Sdone|Sclkt;
 	r[BscDlen] = n;
-	r[BscC] = Ci2cen|Cst|Cread;	/* start read: Srxd now set */
-	for(i = 0; i < n; i++)
+	r[BscC] = Ci2cen|Cclear|Cst|Cread;	/* start read: Srxd now set */
+	/* as bcmi2cwrite: wait for each byte, and for the end */
+	for(i = 0; i < n; i++){
+		if(waitbit(r, Srxd) < 0)
+			return -1;
 		buf[i] = r[BscFifo];	/* each read receives one byte */
-	return (r[BscS] & Serr)? -1: n;
+	}
+	if(waitbit(r, Sdone) < 0)
+		return -1;
+	return (r[BscS] & (Serr|Sclkt))? -1: n;
 }
 
 /*

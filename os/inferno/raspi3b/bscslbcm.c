@@ -186,7 +186,16 @@ bscslinit(void)
 	for(i = 0; i < 4; i++)
 		out[i] = 0xa0 + i;
 	if(bcmi2cwrite(m, Slvaddr, out, 4) < 0){
-		print("BSCSL-FAIL the slave did not acknowledge its address\n");
+		/*
+		 * Not a fault on a bare board.  The master is BSC0 on GPIO
+		 * 2 and 3 and this slave is on GPIO 18 and 19: the two are
+		 * different pins, and on a Pi they are joined only by two
+		 * wires on the header.  QEMU's model wires them inside the
+		 * machine, which is why this arm passes there and can only
+		 * ever pass here with the jumpers in.
+		 */
+		print("BSCSL-NOWIRE the slave did not answer BSC0; a board needs "
+			"GPIO2-GPIO18 and GPIO3-GPIO19 joined for this\n");
 		return;
 	}
 	if(((r[Fr] >> Frxlvlshift) & Flvlmask) != 4){
