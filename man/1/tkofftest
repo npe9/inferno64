@@ -230,3 +230,9 @@ That is the configuration
 exists for, but it is not the configuration a program runs in under
 .IR wm (1),
 and no check here covers the difference.
+.PP
+The render-node comparison never presses anything.
+A scrollbar arrow or slider held down with the mouse is drawn in the
+accent colour, the same shape as the unpressed one, and that colour is
+not compared between the two paths: pressing starts the scrollbar's
+autorepeat and runs its command, which this test does not set up.

@@ -176,8 +176,41 @@ flatenv(TkEnv *e)
 	return e != nil && e->top != nil && e->top->style == TkSflat;
 }
 
+/*
+ * The flat scrollbar draws filled triangles, filled rectangles and
+ * filled circles and nothing else, so each of those gets a
+ * scene-or-image form and the drawing below says what it draws once.
+ * The scene is nil on the direct path and in the classic style.
+ */
 static void
-drawarrow(TkScroll *tks, Image *i, Point p[3], TkEnv *e, int activef, int buttonf)
+sfillpoly(Image *i, TkScene *sc, TkEnv *e, Point *p, int np, int col)
+{
+	if(sc != nil)
+		tkscenepolyfill(sc, p, np, e->colors[col]);
+	else
+		fillpoly(i, p, np, ~0, tkgc(e, col), p[0]);
+}
+
+static void
+sdraw(Image *i, TkScene *sc, TkEnv *e, Rectangle r, int col)
+{
+	if(sc != nil)
+		tkscenecolour(sc, r, e->colors[col]);
+	else
+		draw(i, r, tkgc(e, col), nil, ZP);
+}
+
+static void
+sfillellipse(Image *i, TkScene *sc, TkEnv *e, Point c, int rad, int col)
+{
+	if(sc != nil)
+		tksceneellipsefill(sc, c, Pt(rad, rad), e->colors[col]);
+	else
+		fillellipse(i, c, rad, rad, tkgc(e, col), ZP);
+}
+
+static void
+drawarrow(TkScroll *tks, Image *i, TkScene *sc, Point p[3], TkEnv *e, int activef, int buttonf)
 {
 	Image *l, *d, *t;
 	int bgnd;
@@ -185,7 +218,7 @@ drawarrow(TkScroll *tks, Image *i, Point p[3], TkEnv *e, int activef, int button
 	bgnd = TkCbackgnd;
 	if(tks->flag & (activef|buttonf)) {
 		bgnd = TkCactivebgnd;
-		fillpoly(i, p, 3, ~0, tkgc(e, bgnd), p[0]);
+		sfillpoly(i, sc, e, p, 3, bgnd);
 	}
 
 	/*
@@ -194,9 +227,8 @@ drawarrow(TkScroll *tks, Image *i, Point p[3], TkEnv *e, int activef, int button
 	 * region a click lands in is the same; only the paint changes.
 	 */
 	if(flatenv(e)) {
-		fillpoly(i, p, 3, ~0,
-			tkgc(e, (tks->flag & buttonf) ? TkChighlightfgnd : TkCdisablefgnd),
-			p[0]);
+		sfillpoly(i, sc, e, p, 3,
+			(tks->flag & buttonf) ? TkChighlightfgnd : TkCdisablefgnd);
 		return;
 	}
 
@@ -213,7 +245,7 @@ drawarrow(TkScroll *tks, Image *i, Point p[3], TkEnv *e, int activef, int button
 }
 
 static void
-drawslider(TkScroll *tks, Image *i, Point o, int w, int h, TkEnv *e)
+drawslider(TkScroll *tks, Image *i, TkScene *sc, Point o, int w, int h, TkEnv *e)
 {
 	Image *l, *d;
 	Rectangle r;
@@ -225,7 +257,7 @@ drawslider(TkScroll *tks, Image *i, Point o, int w, int h, TkEnv *e)
 		r.max.x = o.x + w + Elembw*2;
 		r.max.y = o.y + h + Elembw*2;
 		bgnd = TkCactivebgnd;
-		draw(i, r, tkgc(e, bgnd), nil, ZP);
+		sdraw(i, sc, e, r, bgnd);
 	}
 
 	/*
@@ -237,11 +269,10 @@ drawslider(TkScroll *tks, Image *i, Point o, int w, int h, TkEnv *e)
 	 */
 	if(flatenv(e)) {
 		Rectangle b;
-		Image *th;
-		int fw, fh, rad;
+		int th, fw, fh, rad;
 
-		th = tkgc(e, (tks->flag & (ActiveB1|ButtonB1))
-			? TkChighlightfgnd : TkCbackgnddark);
+		th = (tks->flag & (ActiveB1|ButtonB1))
+			? TkChighlightfgnd : TkCbackgnddark;
 		fw = w + 2*Scrollbw;
 		fh = h + 2*Scrollbw;
 		b = Rect(o.x+2, o.y+2, o.x+fw-2, o.y+fh-2);
@@ -251,18 +282,18 @@ drawslider(TkScroll *tks, Image *i, Point o, int w, int h, TkEnv *e)
 			rad = Dx(b)/2;
 			if(rad < 1)
 				rad = 1;
-			draw(i, Rect(b.min.x, b.min.y+rad, b.max.x, b.max.y-rad),
-				th, nil, ZP);
-			fillellipse(i, Pt(b.min.x+rad, b.min.y+rad), rad, rad, th, ZP);
-			fillellipse(i, Pt(b.min.x+rad, b.max.y-rad), rad, rad, th, ZP);
+			sdraw(i, sc, e,
+				Rect(b.min.x, b.min.y+rad, b.max.x, b.max.y-rad), th);
+			sfillellipse(i, sc, e, Pt(b.min.x+rad, b.min.y+rad), rad, th);
+			sfillellipse(i, sc, e, Pt(b.min.x+rad, b.max.y-rad), rad, th);
 		} else {
 			rad = Dy(b)/2;
 			if(rad < 1)
 				rad = 1;
-			draw(i, Rect(b.min.x+rad, b.min.y, b.max.x-rad, b.max.y),
-				th, nil, ZP);
-			fillellipse(i, Pt(b.min.x+rad, b.min.y+rad), rad, rad, th, ZP);
-			fillellipse(i, Pt(b.max.x-rad, b.min.y+rad), rad, rad, th, ZP);
+			sdraw(i, sc, e,
+				Rect(b.min.x+rad, b.min.y, b.max.x-rad, b.max.y), th);
+			sfillellipse(i, sc, e, Pt(b.min.x+rad, b.min.y+rad), rad, th);
+			sfillellipse(i, sc, e, Pt(b.max.x-rad, b.min.y+rad), rad, th);
 		}
 		return;
 	}
@@ -276,7 +307,7 @@ drawslider(TkScroll *tks, Image *i, Point o, int w, int h, TkEnv *e)
 }
 
 static void
-tkvscroll(Tk *tk, TkScroll *tks, Image *i, Point size)
+tkvscroll(Tk *tk, TkScroll *tks, Image *i, TkScene *sc, Point size)
 {
 	TkEnv *e;
 	Point p[3], o;
@@ -293,7 +324,7 @@ tkvscroll(Tk *tk, TkScroll *tks, Image *i, Point size)
 	p[1].y = p[0].y + triangle;
 	p[2].x = p[0].x + triangle/2;
 	p[2].y = p[0].y + triangle;
-	drawarrow(tks, i, p, e, ActiveA1, ButtonA1);
+	drawarrow(tks, i, sc, p, e, ActiveA1, ButtonA1);
 
 	tks->a1 = p[2].y;
 	h = p[2].y + Elembw;
@@ -301,7 +332,7 @@ tkvscroll(Tk *tk, TkScroll *tks, Image *i, Point size)
 	p[0].y = size.y - bo - 1;
 	p[1].y = p[0].y - triangle;
 	p[2].y = p[0].y - triangle;
-	drawarrow(tks, i, p, e, ActiveA2, ButtonA2);
+	drawarrow(tks, i, sc, p, e, ActiveA2, ButtonA2);
 
 	tks->a2 = p[2].y;
 
@@ -317,11 +348,11 @@ tkvscroll(Tk *tk, TkScroll *tks, Image *i, Point size)
 	tks->t1 = o.y - Elembw;
 	tks->t2 = o.y + h + Elembw;
 
-	drawslider(tks, i, o, w, h, e);
+	drawslider(tks, i, sc, o, w, h, e);
 }
 
 static void
-tkhscroll(Tk *tk, TkScroll *tks, Image *i, Point size)
+tkhscroll(Tk *tk, TkScroll *tks, Image *i, TkScene *sc, Point size)
 {
 	TkEnv *e;
 	Point p[3], o;
@@ -338,7 +369,7 @@ tkhscroll(Tk *tk, TkScroll *tks, Image *i, Point size)
 	p[1].y = p[0].y - triangle/2 + 1;
 	p[2].x = p[0].x + triangle;
 	p[2].y = p[0].y + triangle/2 - 2;
-	drawarrow(tks, i, p, e, ActiveA1, ButtonA1);
+	drawarrow(tks, i, sc, p, e, ActiveA1, ButtonA1);
 
 	tks->a1 = p[2].x;
 	w = p[2].x + Elembw;
@@ -346,7 +377,7 @@ tkhscroll(Tk *tk, TkScroll *tks, Image *i, Point size)
 	p[0].x = size.x - bo - 1;
 	p[1].x = p[0].x - triangle;
 	p[2].x = p[0].x - triangle;
-	drawarrow(tks, i, p, e, ActiveA2, ButtonA2);
+	drawarrow(tks, i, sc, p, e, ActiveA2, ButtonA2);
 
 	tks->a2 = p[2].x;
 
@@ -362,7 +393,7 @@ tkhscroll(Tk *tk, TkScroll *tks, Image *i, Point size)
 	tks->t1 = o.x - Elembw;
 	tks->t2 = o.x + w + Elembw;
 
-	drawslider(tks, i, o, w, h, e);
+	drawslider(tks, i, sc, o, w, h, e);
 }
 
 char*
@@ -372,6 +403,7 @@ tkdrawscrlb(Tk *tk, Point orig)
 	TkEnv *e;
 	Rectangle r;
 	Image *i, *dst;
+	TkScene *sc;
 	TkScroll *tks = TKobj(TkScroll, tk);
 
 	e = tk->env;
@@ -384,19 +416,43 @@ tkdrawscrlb(Tk *tk, Point orig)
 	r.max.x = tk->act.width + 2*tk->borderwidth;
 	r.max.y = tk->act.height + 2*tk->borderwidth;
 
-	i = tkitmp(e, r.max, TkCbackgnd);
-	if(i == nil)
-		return nil;
+	p.x = tk->act.x + orig.x;
+	p.y = tk->act.y + orig.y;
+
+	/*
+	 * The whole widget as one layer of nodes.  A flat scrollbar is two
+	 * solid triangles and a capsule on a trough; the outlined arrows and
+	 * the bevelled slider belong to the classic look, which this never
+	 * takes.
+	 */
+	sc = nil;
+	if(tkviascene && flatenv(e))
+		sc = tkscenenew();
+	if(sc != nil){
+		tkscenelayer(sc, r.max, e->colors[TkCbackgnd],
+			rectaddpt(r, p), ZP);
+		i = nil;
+	}else{
+		i = tkitmp(e, r.max, TkCbackgnd);
+		if(i == nil)
+			return nil;
+	}
 
 	if(tks->orient == Tkvertical)
-		tkvscroll(tk, tks, i, r.max);
+		tkvscroll(tk, tks, i, sc, r.max);
 	else
-		tkhscroll(tk, tks, i, r.max);
+		tkhscroll(tk, tks, i, sc, r.max);
+
+	if(sc != nil){
+		tkreliefnodes(sc, tk, ZP, TkCbackgnd, tk->relief);
+		tkscenelayerend(sc);
+		tkscenerender(sc, e->top->ctxt, dst);
+		tkscenefree(sc);
+		return nil;
+	}
 
 	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
 
-	p.x = tk->act.x + orig.x;
-	p.y = tk->act.y + orig.y;
 	r = rectaddpt(r, p);
 	draw(dst, r, i, nil, ZP);
 

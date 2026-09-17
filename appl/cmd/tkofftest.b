@@ -1362,10 +1362,22 @@ checkscene()
 	must(top, "scale .v -orient vertical -from 0 -to 100 " +
 		"-length 90 -label {Gain} -showvalue 1 -tickinterval 50");
 	must(top, ".v set 70");
+	# A scrollbar in both orientations, each with a different part under
+	# the pointer, so that between them both arrow colours, both slider
+	# colours and both active bands are drawn.  A scrollbar's relief is
+	# flat by default, which draws no border at all, so one is sunken.
+	must(top, "scrollbar .hb -orient horizontal -width 12");
+	must(top, ".hb set 0.2 0.6");
+	must(top, ".hb activate arrow1");
+	must(top, "scrollbar .vb -orient vertical -width 12 -relief sunken");
+	must(top, ".vb set 0.5 0.8");
+	must(top, ".vb activate slider");
 	tk->cmd(top, "pack .r0 -padx 6 -pady 6");
 	tk->cmd(top, "pack .r1 -padx 6 -pady 6");
 	tk->cmd(top, "pack .s -padx 6 -pady 6");
 	tk->cmd(top, "pack .v -padx 6 -pady 6");
+	tk->cmd(top, "pack .hb -fill x -padx 6 -pady 6");
+	tk->cmd(top, "pack .vb -side right -fill y -padx 6 -pady 6");
 	map(top);
 	tk->cmd(top, "focus -global 1");
 	tk->cmd(top, "focus .e");

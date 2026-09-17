@@ -72,9 +72,12 @@ tkscenefree(TkScene *s)
 
 	if(s == nil)
 		return;
-	for(n = s->head; n != nil; n = n->next)
+	for(n = s->head; n != nil; n = n->next){
 		if(n->text != nil)
 			free(n->text);
+		if(n->pts != nil)
+			free(n->pts);
+	}
 	for(b = s->blk; b != nil; b = nb){
 		nb = b->next;
 		free(b);
@@ -273,6 +276,34 @@ tksceneellipsefill(TkScene *s, Point c, Point rad, ulong rgba)
 	n->r.max = c;
 	n->sp = rad;
 	n->rgba = rgba;
+}
+
+/*
+ * A filled polygon of np points, by the nonzero winding rule.
+ *
+ * The flat scrollbar's arrows are solid triangles, which is the reason
+ * this exists.  The points are copied for the reason a glyph node's text
+ * is: the node is meant to be a value that can outlive the caller's
+ * array.  A polygon that cannot be copied becomes a node that draws
+ * nothing, as a run of text does.
+ */
+void
+tkscenepolyfill(TkScene *s, Point *p, int np, ulong rgba)
+{
+	TkNode *n;
+
+	if(p == nil || np < 3)
+		return;
+	if((n = newnode(s, TkNpolyfill)) == nil)
+		return;
+	n->rgba = rgba;
+	n->pts = malloc(np*sizeof(Point));
+	if(n->pts == nil){
+		n->type = TkNgroup;
+		return;
+	}
+	memmove(n->pts, p, np*sizeof(Point));
+	n->npts = np;
 }
 
 /*
@@ -508,6 +539,12 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 			if(col != nil)
 				fillellipse(target, n->r.min, n->sp.x, n->sp.y,
 					col, ZP);
+			break;
+		case TkNpolyfill:
+			col = tkcolor(c, n->rgba);
+			if(col != nil)
+				fillpoly(target, n->pts, n->npts, ~0, col,
+					n->pts[0]);
 			break;
 		default:
 			/*

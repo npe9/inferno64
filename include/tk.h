@@ -527,7 +527,17 @@ enum {
 	 * thickness, in ellipse()'s sense where 0 is one pixel.
 	 */
 	TkNellipse,
-	TkNellipsefill
+	TkNellipsefill,
+
+	/*
+	 * A filled polygon.  The flat scrollbar's arrows are solid
+	 * triangles, the one shape left in the flat style that is neither a
+	 * rectangle nor an ellipse.  The points are copied into the scene,
+	 * as a glyph node's string is, and the fill rule is always
+	 * fillpoly()'s nonzero winding (~0), which is what every caller
+	 * uses.
+	 */
+	TkNpolyfill
 };
 
 struct TkNode
@@ -542,6 +552,8 @@ struct TkNode
 	ulong		rgba;
 	Font*		font;		/* TkNglyphs */
 	char*		text;		/* TkNglyphs, owned by the scene */
+	Point*		pts;		/* TkNpolyfill, owned by the scene */
+	int		npts;
 	TkNode*		next;
 };
 
@@ -779,6 +791,7 @@ extern	void		tksceneborderon(TkScene*, Rectangle, int, int, ulong, ulong);
 extern	void		tkscenetext(TkScene*, Point, char*, Font*, ulong);
 extern	void		tksceneellipse(TkScene*, Point, Point, int, ulong);
 extern	void		tksceneellipsefill(TkScene*, Point, Point, ulong);
+extern	void		tkscenepolyfill(TkScene*, Point*, int, ulong);
 extern	void		tkscenelayer(TkScene*, Point, ulong, Rectangle, Point);
 extern	void		tkscenelayerend(TkScene*);
 extern	void		tkreliefnodes(TkScene*, Tk*, Point, int, int);

@@ -950,12 +950,35 @@ there was never speed on the table here anyway.
    interval was 0.25 on a range of 100 as well, which is 400 marks in 160
    pixels drawn onto the same few columns; it is now 25.
 
-   **What is left is the rest of the widgets and then the walk.** Each
-   `tkitmp` user converts the same way, against the same byte check;
-   `scrollbar` is the remaining one. A `checkbutton`'s
-   indicator is a filled box with a tick drawn by `bezspline`, and a
-   spline has no node yet. Only when
-   a repaint produces one tree instead of one per widget is there
+   **The sixth is a `scrollbar`, and it needed one more node.** Its flat
+   arrows are solid triangles, the last shape in the flat style that is
+   neither a rectangle nor an ellipse, so `TkNpolyfill` came first: a
+   filled polygon whose points are copied into the scene as a glyph
+   node's string is, always filled by the nonzero rule because every
+   caller uses it. The check adds a horizontal scrollbar with its first
+   arrow under the pointer and a vertical one with its slider under it,
+   so that between them both arrow colours, both capsule colours and
+   both active bands are drawn. One of them is sunken, because a
+   scrollbar's relief is flat by default and a flat relief draws no
+   border at all: with both left alone, perturbing the border node
+   changed nothing, which says the control never reached the code.
+
+   Six scene-only controls then fail: arrow band 84 bytes of 7560000
+   (small because the arrow glyph is painted over the same triangle, so
+   only a sliver of the shifted band shows), arrow glyph 840, slider
+   band 420, capsule body 3948, capsule ends 540, border 5184. A
+   *pressed* part is the same shape in the accent colour and is not
+   compared, because pressing starts autorepeat and runs the
+   scrollbar's command.
+
+   **What is left is the exceptions, the label, and then the walk.**
+   Six widgets have a node path for their ordinary flat case. Still
+   drawn through a scratch image: a `label` (only its text is a node,
+   rendered into the scratch); a `checkbutton` (its tick is a
+   `bezspline`, which has no node); a button or radiobutton with an
+   image, a bitmap, several lines, an underline or text that is not
+   left-justified; and an `entry` showing a selection or `-show`. Only
+   when a repaint produces one tree instead of one per widget is there
    anything for a backend to batch.
 4. **A Metal backend.** Last, and only after 3: the measured hazard is
    94% command-buffer overhead for small work, so a backend that issues a
