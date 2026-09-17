@@ -323,6 +323,7 @@ static struct {
 	int	depth;		/* 0: no walk open */
 	int	runs;		/* trees rendered, for the test */
 	int	widgets;	/* widgets that joined one */
+	int	nodes;		/* nodes in them: what sizes a submission */
 } walk;
 
 void
@@ -358,6 +359,7 @@ tkwalkflush(void)
 	w->scene = nil;			/* before rendering: a layer's
 					 * scratch must not join the tree
 					 * it is rendering */
+	walk.nodes += s->n;
 	tkscenerender(s, w->ctxt, w->dst);
 	tkscenefree(s);
 	walk.runs++;
@@ -410,18 +412,22 @@ tkscenefinish(TkScene *s, TkCtxt *c, Image *dst)
 }
 
 /*
- * How many trees the last repaint rendered and how many widgets went
- * into them.  Only tkofftest(1) reads these: a walk that batches
+ * How many trees the last repaint rendered, how many widgets went into
+ * them, and how many nodes those held - the last being what sizes a
+ * submission, since a backend that submits per tree pays for the
+ * submission whatever the tree holds.  Only tkofftest(1) reads these: a walk that batches
  * nothing and a walk that batches everything draw the same pixels, so
  * the identity check cannot tell them apart and something else has to.
  */
 void
-tkwalkcount(int *runs, int *widgets)
+tkwalkcount(int *runs, int *widgets, int *nodes)
 {
 	if(runs != nil)
 		*runs = walk.runs;
 	if(widgets != nil)
 		*widgets = walk.widgets;
+	if(nodes != nil)
+		*nodes = walk.nodes;
 }
 
 void
@@ -429,6 +435,7 @@ tkwalkreset(void)
 {
 	walk.runs = 0;
 	walk.widgets = 0;
+	walk.nodes = 0;
 }
 
 /*

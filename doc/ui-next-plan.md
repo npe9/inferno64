@@ -1000,7 +1000,16 @@ there was never speed on the table here anyway.
    after a canvas built its own tree again. The pane holds a canvas with
    a scale inside a window item for exactly that reason.
 
-   The test pane is 15 widgets in 6 trees. Batching is invisible in the
+   The test pane is 15 widgets and 106 nodes in 6 trees — **17 nodes a
+   tree**, which is the number item 4 has to answer to. Against the
+   measured 94% command-buffer overhead for small work, a backend that
+   submitted once per tree would be paying a submission for seventeen
+   rectangles. So the unit of submission cannot be the tree; it has to
+   be the repaint, which means the flush points have to become
+   *boundaries within* one submission rather than separate renders — and
+   that is a harder change than the walk was, because a direct painter
+   in the middle of a repaint writes pixels a GPU submission would have
+   to be ordered against. Batching is invisible in the
    pixels, which is the point of it, so `render count` answers the two
    numbers and the check asks that the trees be fewer than the widgets.
    Four controls: batching off, and the check fails; the `tkitmp` flush

@@ -797,7 +797,7 @@ extern	void		tkwalkflush(void);
 extern	void		tkwalkclose(void);
 extern	TkScene*	tkwalkjoin(TkCtxt*, Image*);
 extern	void		tkscenefinish(TkScene*, TkCtxt*, Image*);
-extern	void		tkwalkcount(int*, int*);
+extern	void		tkwalkcount(int*, int*, int*);
 extern	void		tkwalkreset(void);
 extern	void		tkscenelayer(TkScene*, Point, ulong, Rectangle, Point);
 extern	void		tkscenelayerend(TkScene*);

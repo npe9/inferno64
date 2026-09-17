@@ -1194,18 +1194,20 @@ tkrendercmd(TkTop *t, char *arg, char **ret)
 	}
 	/*
 	 * `render count' answers how many trees the repaints since the last
-	 * `render count' rendered, and how many widgets went into them, and
-	 * then starts counting again.  Two repaints that batch differently
+	 * `render count' rendered, how many widgets went into them and how
+	 * many nodes those held, and then starts counting again.  The last
+	 * is what sizes a GPU backend: a submission per tree is worth
+	 * having only if a tree carries enough nodes to pay for one.  Two repaints that batch differently
 	 * draw the same pixels, so the identity check cannot see batching
 	 * at all and this is what a test asks instead.
 	 */
 	if(strcmp(buf, "count") == 0){
-		int runs, widgets;
+		int runs, widgets, nodes;
 
-		tkwalkcount(&runs, &widgets);
+		tkwalkcount(&runs, &widgets, &nodes);
 		tkwalkreset();
 		if(ret != nil)
-			return tkvalue(ret, "%d %d", runs, widgets);
+			return tkvalue(ret, "%d %d %d", runs, widgets, nodes);
 		return nil;
 	}
 	if(strcmp(buf, "scene") == 0)

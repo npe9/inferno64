@@ -23,6 +23,11 @@ Answers two numbers: how many trees the repaints since the last
 Counting then starts again.
 Batching cannot be seen in the pixels \(em that is the point of it \(em
 so this is what a test reads instead.
+The node count is what sizes a backend: a submission per tree is worth
+making only if a tree carries enough nodes to pay for one, and the
+pane in
+.IR tkofftest (1)
+averages seventeen.
 .PP
 It exists to be compared against itself.
 A node tree is the first piece of a renderer shaped like GTK4's GSK \(em

@@ -1468,28 +1468,28 @@ checkscene()
 	# which is the whole point - so the toolkit is asked instead.
 	tk->cmd(top, "render count");		# start counting here
 	tk->cmd(top, "render direct");
-	(dr, dw) := counts(tk->cmd(top, "render count"));
-	report(dr == 0 && dw == 0, sys->sprint(
-		"drawing directly builds no trees at all (%d trees, %d widgets)",
-		dr, dw));
+	(dr, dw, dn) := counts(tk->cmd(top, "render count"));
+	report(dr == 0 && dw == 0 && dn == 0, sys->sprint(
+		"drawing directly builds no trees at all (%d trees, %d widgets, %d nodes)",
+		dr, dw, dn));
 	tk->cmd(top, "render scene");
-	(nr, nw) := counts(tk->cmd(top, "render count"));
+	(nr, nw, nn) := counts(tk->cmd(top, "render count"));
 	tk->cmd(top, "render direct");
 	# More widgets than trees is the claim.  If every widget rendered
 	# its own, the two numbers would be equal - which is what this said
 	# before the walk existed, and is the control for it.
 	report(nr > 0 && nw > nr, sys->sprint(
-		"a repaint batches widgets into fewer trees (%d widgets in %d trees)",
-		nw, nr));
+		"a repaint batches widgets into fewer trees (%d widgets and %d nodes in %d trees, %d nodes a tree)",
+		nw, nn, nr, nn/nr));
 }
 
 # `render count' answers two numbers in one string.
-counts(s: string): (int, int)
+counts(s: string): (int, int, int)
 {
 	(n, f) := sys->tokenize(s, " ");
-	if(n != 2)
-		return (-1, -1);
-	return (int hd f, int hd tl f);
+	if(n != 3)
+		return (-1, -1, -1);
+	return (int hd f, int hd tl f, int hd tl tl f);
 }
 
 # One direct/scene comparison of the whole pane, with `who' holding the
