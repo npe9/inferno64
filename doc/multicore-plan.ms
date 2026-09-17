@@ -5269,3 +5269,88 @@ It also means the measured fault rates are rates
 not rates in general, and that raising the kill count would raise them.
 Left alone deliberately: changing the workload now would make every
 batch in this document incomparable with every other.
+.NH 2
+The guard fires with the exclusion on, and that is correct
+.PP
+Twenty boots each,
+.CW parallelvm=1
+.CW "-smp 2" :
+.TS
+center;
+l r r r r.
+	panics	guard fired	boots that gave up	chantest lines
+without	0 of 20	\(em	3	436 of 480
+with	0 of 20	3 of 20	13	445 of 480
+.TE
+.PP
+Three things, and the second is a correction.
+.PP
+.B "The guard is doing work."
+It fired in three of twenty boots, and the print says which case:
+.CW "(M H)"
+all three times, never nil.  Every one of those is a
+.CW D2H(H)
+that would have been a page fault, so this is three prevented faults in
+twenty boots \(em fifteen percent, against the twelve percent the old
+kernel faulted at across fifty-eight boots.  That is far better evidence
+than a panic count, and it is why the control was worth adding: the
+panic columns are zero on both sides and say nothing at all.
+.PP
+.B "The prediction attached to *tearlock was wrong."
+It said that with the exclusion on the guard should never fire, so a
+silent guard would prove the exclusion was what prevented the case.  The
+guard fired anyway, and the reason is that the two cover different
+windows, which the commit that introduced them should have separated:
+.IP \(bu
+.CW destroystack()
+freeing extents while
+.CW rootset()
+walks them.  The exclusion covers this.
+.IP \(bu
+The Prog sitting on
+.CW isched.head
+with
+.CW "M == H"
+after
+.CW destroystack()
+returns and before
+.CW delprog()
+unlinks it.  The exclusion deliberately does
+.I not
+cover this \(em
+.CW delprog()
+blocks, and waiting for it would make every concurrent collection give
+up.  Only the guard covers it, and it is unavoidable without holding the
+collector across a blocking call.
+.PP
+So a firing guard is the expected steady state, not a sign the exclusion
+failed.  The reasoning that produced the prediction conflated the two.
+.PP
+.B "The exclusion costs collections."
+Boots that abandoned a collection went from 3 of 20 to 13 of 20, one
+give-up each.
+.CW intear
+makes
+.CW othersrunning()
+non-zero for the length of a
+.CW destroystack() ,
+and a long stack takes long enough for the collector's quarter second to
+run out.  chantest throughput did not move \(em 445 lines against 436 \(em
+so nothing was measurably lost, but four times as many abandoned
+collections is a real cost for a window whose benefit this batch did not
+measure.  It is kept because the use-after-free it closes is read
+directly off the orders in the two functions, and it is flagged here
+because "reasoned from the code, cost measured, benefit not" is the
+honest description and not "verified".
+.NH 2
+A rate that moved without the code moving
+.PP
+The kernel without the guard faulted in 3 of 10 boots in one batch and 0
+of 20 in this one, same binary.  Pooled with the rest that is 7 of 78.
+Either the earlier ten were unlucky or this twenty were, and with
+.CW p
+around 0.05 between them the honest statement is that the fault rate is
+not stable enough at this sample size to compare batches run at different
+times on a shared machine.  The guard's own count does not have that
+problem, which is the argument for instrumenting the mechanism rather
+than counting the symptom.
