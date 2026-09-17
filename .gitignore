@@ -414,6 +414,20 @@ os/osprey/pc64/p964.c
 os/osprey/pc64/p9pair.c
 os/osprey/pc64/p9buddy.c
 os/osprey/pc64/p9linux.c
+# and the 386 microkernel's, built in the directory the drivers live in:
+# the machine layer is that directory, so its objects and generated
+# files land beside the sources rather than in a build directory of
+# their own.
+os/osprey/pc/9*
+os/osprey/pc/8.*
+os/osprey/pc/*.8
+os/osprey/pc/*.i
+os/osprey/pc/*.out
+os/osprey/pc/*.root.s
+os/osprey/pc/*.root.h
+os/osprey/pc/*.rootc.c
+os/osprey/pc/errstr.h
+os/osprey/pc/u386.c
 # command binaries built beside their sources
 os/osprey/cmd/fb
 os/osprey/cmd/fpbits
