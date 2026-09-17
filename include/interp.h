@@ -628,6 +628,7 @@ extern	int		altcells(Alt*);
 extern	void		chanlock(void);
 extern	void		chanunlock(void);
 extern	int		(*chandefer)(void*);	/* see heap.c, dis.c */
+extern	void		(*atsafepoint)(void);	/* see stoptheworld() in dis.c */
 extern	void		cqadd(Progq**, Prog*);
 extern	void		cqdel(Progq**);
 extern	void		cqdelp(Progq**, Prog*);

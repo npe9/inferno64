@@ -191,7 +191,13 @@ flushlocal(void)
  */
 int parallelvm = 0;	/* MULTICORE: 1 = no VM lock, stop-the-world GC */
 int gcstw;		/* a collection wants every other context stopped */
-int stwwaits;		/* MULTICORE INSTRUMENTATION - temporary */
+int stwwaits;		/* MULTICORE INSTRUMENTATION - temporary: turns round
+			 * the wait loop.  It used to count sched() spins and
+			 * ran to five figures in a boot; since the collector
+			 * parks it counts 20ms naps, so the same number here
+			 * means something very different.  stwparks/stwwakes
+			 * below separate "how often did it have to wait" from
+			 * "how often did a closing quantum wake it". */
 
 /* how many contexts other than this one have a quantum open */
 static int
@@ -220,6 +226,42 @@ gcstwothers(void)
 }
 
 int stwgaveup;		/* MULTICORE INSTRUMENTATION - temporary */
+ulong stwparks;		/* MULTICORE INSTRUMENTATION - temporary */
+ulong stwwakes;		/* MULTICORE INSTRUMENTATION - temporary */
+
+/*
+ * Where the collector waits for the last quantum to close.
+ *
+ * The wait used to be "while somebody has a quantum open, sched()",
+ * which spends a context switch per turn and measured up to 56500 of
+ * them in a single parallelvm=1 -smp 4 boot -- the wait was costing more
+ * than the collection it was waiting for.  A context that closes a
+ * quantum while gcstw is set wakes this instead.
+ */
+static Rendez stwr;
+
+static int
+allstopped(void *a)
+{
+	USED(a);
+	return othersrunning() == 0;
+}
+
+/*
+ * Called by a context that has just cleared inxec.  Both halves of the
+ * handshake read the other's write after their own: the closer clears
+ * inxec and then tests gcstw, stoptheworld() sets gcstw and then reads
+ * inxec, so a wake cannot be lost between them.  The timeout below
+ * covers the cases this is not called from at all -- the error paths.
+ */
+void
+safepoint(void)
+{
+	if(gcstw){
+		stwwakes++;
+		wakeup(&stwr);
+	}
+}
 int gcidlegaveup;	/* idle collections abandoned; see execatidle() */
 
 /*
@@ -277,7 +319,16 @@ stoptheworld(void)
 					m->machno, up->text);
 			return 0;
 		}
-		sched();
+		/*
+		 * Park, do not spin.  tsleep() re-tests the condition before
+		 * sleeping, so a context that clears inxec between the test
+		 * above and this call is not a lost wakeup.  The timeout is
+		 * what makes safepoint() an optimisation rather than a
+		 * correctness requirement: a quantum closed on a path that
+		 * does not call it costs 20ms here, not the boot.
+		 */
+		stwparks++;
+		tsleep(&stwr, allstopped, nil, 20);
 	}
 	return 1;
 }
@@ -315,6 +366,7 @@ enterquantum(void)
 			return;
 		curP->inxec = 0;
 		coherence();
+		safepoint();	/* the collector may be waiting for this */
 		sched();
 	}
 }
@@ -363,9 +415,25 @@ collect(Prog *head)
 	int stopped;
 
 	qlock(&gcsema);
+	/*
+	 * stoptheworld() now sleeps, and tsleep() raises the note that
+	 * interrupts it -- so this function acquired a way to leave by
+	 * longjmp that it did not have when it spun.  Without this handler
+	 * that leaves gcsema held forever and the world stopped, which is
+	 * every future collection deadlocked and every other interpreter
+	 * parked in enterquantum().  This is the waserror()/nexterror()
+	 * idiom in its usual form: the allocation cannot be hoisted out of
+	 * the region here, because the sleep is the region.
+	 */
+	if(waserror()){
+		starttheworld();
+		qunlock(&gcsema);
+		nexterror();
+	}
 	stopped = stoptheworld();
 	if(stopped)
 		rungc(head);
+	poperror();
 	starttheworld();
 	qunlock(&gcsema);
 	return stopped;
@@ -923,6 +991,8 @@ delprog(Prog *p, char *msg)
 		 * owner pid 9 dis state Queueing vmheld 0".
 		 */
 		curP->inxec = 0;
+		coherence();
+		safepoint();
 	}
 	p->state = 0xdeadbeef;
 	free(o->user);
@@ -1991,6 +2061,8 @@ vmachine(void*)
 		 */
 		curP->curprog = nil;
 		curP->inxec = 0;	/* the quantum did not finish; see xec.c */
+		coherence();
+		safepoint();
 		DBG("vmachine waserror() loop up->env->errstr %s\n",  up->env->errstr);
 		if(up->type != Interp)
 			panic("vmachine: non-interp kproc");
@@ -2050,6 +2122,7 @@ vmachine(void*)
 		}
 		curP->inxec = 0;	/* the claim taken before handler() */
 		coherence();
+		safepoint();
 		up->env = &up->defenv;
 	}
 
@@ -2296,6 +2369,7 @@ vmachine(void*)
 		}
 		curP->inxec = 0;	/* claim withdrawn; xec() clears it too */
 		coherence();
+		safepoint();
 		/*
 		 * BusyGC like emu (throttled).  Never pushrun when addrun is
 		 * set — that panics "pushrun addrun" (seen on virt at
@@ -2332,6 +2406,7 @@ disinit(void *a)
 	 * killcomm() -> chanlock() is a Lock taken twice by its own holder.
 	 */
 	chandefer = chandeferfn;
+	atsafepoint = safepoint;	/* see stoptheworld() */
 
 	if(waserror()){
 		/*
@@ -2453,6 +2528,8 @@ disdump(void)
 		gqput, gqget, isched.ngq, Runqmax);
 	print("dis: %d contexts claimed of %d, curP %#p, parallelvm %d, stw waits %d\n",
 		npctx, MAXPCTX, curP, parallelvm, stwwaits);
+	print("dis: stw waits %d, parks %lud, wakes %lud, gave up %d\n",
+		stwwaits, stwparks, stwwakes, stwgaveup);
 	print("dis: chan regions %lud, contended %lud, frees deferred %lud,"
 		" pending overflow %lud, lock %s\n",
 		chanregions, chancontend, chandeferred, chanpendfull,

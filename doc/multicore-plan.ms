@@ -4405,3 +4405,165 @@ metric is how far the three chantests get \(em
 lines completed out of twenty-four \(em because at this configuration
 neither side finishes them inside the timeout, so progress is the
 measurement and completion is not.
+.NH 1
+The collector parks instead of spinning
+.PP
+.CW "stw waits"
+reached 56500 in a single
+.CW parallelvm=1
+.CW "-smp 4"
+boot, and the counter is turns round
+.CW stoptheworld() 's
+wait loop, each of which is a
+.CW sched()
+\(em a context switch.  The wait was costing more than the collection it
+was waiting for, and the same configuration runs the shell loop at
+roughly one seventieth of
+.CW parallelvm=0 .
+.PP
+The comment on that loop already named the answer and deferred it:
+"parking rather than spinning, as Go does with an M, is the better
+answer and a larger change".  It is not that much larger.  The collector
+parks on a
+.CW Rendez
+with a 20ms timeout, and a context that closes a quantum while
+.CW gcstw
+is set wakes it.
+.PP
+The handshake is the same publish-then-recheck that
+.CW enterquantum()
+already uses, in the other direction: the closer clears
+.CW inxec ,
+fences, then tests
+.CW gcstw ;
+.CW stoptheworld()
+sets
+.CW gcstw ,
+fences, then reads
+.CW inxec .
+Neither order lets both miss.  The timeout is what keeps the wake an
+optimisation rather than a requirement \(em a quantum closed on a path
+that does not call
+.CW safepoint()
+costs 20ms, not the boot \(em and the
+.CW HZ/4
+give-up is unchanged.
+.PP
+.CW inxec
+is cleared in seven places: five in
+.CW dis.c ,
+which call
+.CW safepoint()
+directly, and two in
+.CW libinterp/xec.c
+\(em
+.CW isave() ,
+which is entersyscall, and
+.CW xec() 's
+exit \(em which reach it through a hook, because
+.CW gcstw
+lives in the kernel and
+.CW libinterp
+is shared with emu.  The hook is nil in emu, which has no
+stop-the-world.  None of the seven holds
+.CW isched.l
+or any other spin lock, which
+.CW wakeup()
+requires.
+.NH 2
+The longjmp this one could not hoist
+.PP
+.CW collect()
+holds
+.CW gcsema
+across
+.CW stoptheworld() ,
+and
+.CW tsleep()
+raises the note that interrupts a sleep \(em its own body is a
+.CW waserror() /\c
+.CW nexterror()
+pair for exactly that.  So this change hands
+.CW collect()
+a way to leave by longjmp that it did not have when it spun, and without
+a handler that leaves
+.CW gcsema
+held forever and the world stopped: every future collection deadlocked
+and every other interpreter parked in
+.CW enterquantum() .
+.PP
+Here the allocation cannot be hoisted out of the region, because the
+sleep
+.I is
+the region.  So this is the other idiom, the ordinary one:
+.CW "if(waserror()){ starttheworld(); qunlock(&gcsema); nexterror(); }"
+before the sleep and
+.CW poperror()
+after it.  The two halves of the channel work and this one are the same
+question answered both ways, which is the point:
+.I remove
+the longjmp where the thing that raises it can be moved out, and
+.I handle
+it where it cannot.
+.PP
+.CW rungc()
+itself was checked for the same hazard and has none \(em
+.CW libinterp/gc.c
+has two
+.CW error()
+calls, one in a comment and one in
+.CW ptradd() ,
+which only
+.CW keyring.c
+calls.  The handler guards the sleep and nothing else, which is worth
+saying rather than claiming a pre-existing bug it does not fix.
+.PP
+One thing this does not touch: a context waiting in
+.CW enterquantum()
+for
+.CW gcstw
+to clear still spins on
+.CW sched() .
+A Plan 9
+.CW Rendez
+holds exactly one sleeper, so parking those needs one per context, and
+that is a second change with its own measurement.  What is measured here
+is the collector's own wait, which is what
+.CW stwwaits
+counts.
+.NH 2
+The lock, isolated
+.PP
+One kernel against itself at
+.CW parallelvm=1
+.CW "-smp 4" ,
+sixteen boots each, interleaved,
+.CW *chanlock=1
+against
+.CW *chanlock=0 :
+.TS
+center;
+l r r r r r.
+	chantest lines	panics	tripwires	stall dumps	contention
+lock on	0 of 384	0	0	5	3
+lock off	0 of 384	0	0	6	0
+.TE
+.PP
+No difference, and the reason the table is worth printing anyway is that
+it says so in a form that cannot be mistaken for a result: the metric is
+on the floor on both sides.  This configuration makes no progress
+whether the lock is there or not, so the lock is not what stops it \(em
+which is the question the batch was run to answer, and it is answered in
+the negative.  It says nothing about whether the lock is
+.I right ,
+only that it is not what is costing this configuration its throughput.
+.PP
+The contention column is the control behaving as it should: with the
+lock off nothing ever reads the lock word, so zero there is the absence
+of the instrument rather than the absence of the race.
+.PP
+The arm where the metric has room is
+.CW "-smp 2" ,
+where all three chantests complete inside the timeout.  That one is what
+decides whether the lock costs anything when the system is actually
+running.

@@ -2481,6 +2481,14 @@ isave(void)
 	 * P back, and irestore() below is exitsyscall taking it again.
 	 */
 	curP->inxec = 0;
+	/*
+	 * And tell the kernel, which is where gcstw lives: a collector
+	 * waiting for the last quantum to close parks rather than spins,
+	 * and this is the wake.  An indirect call once per blocking Dis
+	 * system call; nil in emu, which has no stop-the-world.
+	 */
+	if(atsafepoint != nil)
+		atsafepoint();
 	return p;
 }
 
@@ -2684,6 +2692,8 @@ xec(Prog *p)
 	p->xecby = nil;		/* INSTRUMENTATION - temporary */
 	curP->curprog = nil;
 	curP->inxec = 0;
+	if(atsafepoint != nil)	/* see isave() */
+		atsafepoint();
 }
 
 /*
