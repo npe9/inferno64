@@ -27,7 +27,7 @@ cd "$ROOT"
 # Fast, and each asserts something specific.
 QUICK="check-man-pages check-config-portlines check-cloudauth check-discovery-retry"
 # Boot a kernel; minutes each.
-BOOT="check-pc64-timers check-pc64-tcp check-pc64-disk check-pc64-redeploy check-arm64-smp check-pc64-smp"
+BOOT="check-pc64-timers check-pc64-tcp check-pc64-disk check-pc64-redeploy check-arm64-smp check-crossarch check-pc64-smp"
 # Bisect or sweep; tens of minutes.  Measurements rather than pass/fail
 # -- check-pc64-parallelvm FAILS on purpose, because the parallel VM is
 # broken and the check says so; it is here to detect the day that changes.
@@ -54,7 +54,8 @@ fi
 # Built kernels are a precondition, not something to discover halfway
 # through a half-hour run.
 missing=
-for k in os/inferno/pc64/ipc64 os/inferno/pc64/ipc64dev os/inferno/virtarm64/ivirtarm64; do
+for k in os/inferno/pc64/ipc64 os/inferno/pc64/ipc64dev \
+	 os/inferno/virtarm64/ivirtarm64 os/inferno/virtarm64/ivirtarm64cloud; do
 	[ -f "$k" ] || missing="$missing $k"
 done
 if [ -n "$missing" ]; then
