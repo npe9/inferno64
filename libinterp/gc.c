@@ -23,6 +23,7 @@ struct Ptrhash
 
 	int	nprop;
 	int	gchalt;
+	ulong	rootnomod;	/* Progs skipped for having no module */
 	int	gcdepth;	/* this context's destroy recursion depth */
 	int	gcdepthmax;	/* high-water mark of it, for #%/memgc */
 	ulong	gcdeferred;	/* frees the depth guard handed to the collector */
@@ -501,6 +502,18 @@ rootset(Prog *root)
 		 * filled with H.
 		 */
 		if(ml == H || ml == nil) {
+			/*
+			 * The positive control, and it is the point.  A run
+			 * with no panics says nothing about whether this
+			 * guard did anything unless something says the arm
+			 * was taken -- "no faults" and "the case never
+			 * arose" look identical from outside.  Same reason
+			 * chanlock() prints its first contention.
+			 */
+			if(rootnomod++ == 0)
+				print("rootset: first Prog with no module"
+					" (M %s), skipped\n",
+					ml == H ? "H" : "nil");
 			root = root->next;
 			continue;
 		}

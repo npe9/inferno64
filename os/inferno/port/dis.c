@@ -257,6 +257,16 @@ void	safepoint(void);	/* defined below, with the rest of the handshake */
  * It covers destroystack() only.  delprog() releases and reacquires the
  * interpreter, so waiting for that would make every concurrent
  * collection give up; destroystack() itself does not block.
+ *
+ * Both callers wait here BEFORE taking gclock(), not after.  gclock()
+ * sets gchalt, and rungc() declines to run when gchalt is set -- but
+ * stoptheworld() sets gcstw and stops everybody first, and only then
+ * does rungc() test gchalt.  Waiting with gchalt already raised
+ * therefore waits for a collection that has been made unable to do
+ * anything: the collector stops the world, declines, and starts it
+ * again, one wasted stop-the-world per dying Prog.  It terminates, so it
+ * is a throughput bug and not a hang, which is the kind that survives a
+ * batch.
  */
 static void
 entertear(void)
@@ -1374,8 +1384,8 @@ killprog(Prog *p, char *cause)
 	}
 
 	p->state = Pexiting;
-	gclock();
 	entertear();
+	gclock();
 	destroystack(&p->reg);
 	leavetear();
 	delprog(p, msg);
@@ -2150,8 +2160,8 @@ progexit(void)
 		r->state = Pbroken;
 		return;
 	}
-	gclock();
 	entertear();
+	gclock();
 	destroystack(&R);
 	leavetear();
 	delprog(r, msg);
