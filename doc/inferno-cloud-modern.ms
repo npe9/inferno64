@@ -1602,3 +1602,48 @@ track an empty one \(em and nothing in the build applied it: 61 of the
 .CW scripts/mkemptydirs.sh
 applies it now.  A missing mount point reads as a broken service, which
 is how this one presented.
+.NH 2
+The merge verified across every board
+.PP
+The multicore merge replaced
+.CW os/inferno/port
+wholesale, which every board links.  Sixteen kernels build from it \(em
+.CW pc64 ,
+.CW pc64dev ,
+.CW virtarm64
+and the thirteen others \(em and the boards with a test to run pass it.
+.PP
+.B "One near-miss worth recording, because it would have read as a regression."
+Booted with
+.CW -kernel ,
+virtarm64 reaches a shell on any
+.CW -smp
+and starts
+.I no
+secondary processors.  That is not the merge.
+.CW startcpus()
+enumerates processors from the ACPI MADT, and
+.CW -kernel
+hands the kernel no ACPI at all; the boot says so, as
+.CW "ARM64-ACPI-NONE no loader configuration" ,
+which is easy to read past.  Booted from the UEFI disk, where the
+firmware provides ACPI, the same kernel gives
+.PP
+.EX
+cpu: 3 started, 3 answered in 1ms, 3 mpidrs match, 3 own machnos
+cpu: machnos 1 2 3
+cpu: ticks in 300ms: cpu0 25 cpu1 25 cpu2 25 cpu3 25
+.EE
+.PP
+and at
+.CW "-smp 17" ,
+.CW "9 more processors than MAXMACH (8); the rest are left alone"
+with seven secondaries started and all eight ticking \(em matching what
+this board did before the merge, line for line.
+.PP
+.CW scripts/check-arm64-smp.sh
+does it the right way and says in its own header why the obvious way is
+wrong.  A test that silently measures the wrong configuration is worse
+than no test, and this one had every opportunity to: it would have
+reported an SMP regression immediately after a merge that touched the
+shared scheduler, which is the worst possible moment to be misled.
