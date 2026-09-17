@@ -98,6 +98,15 @@ y.debug
 /Nt/*/bin/srclist.exe
 /Nt/*/bin/styxtest.exe
 
+# emu binaries, and the linked output the mkfile copies into bin from.
+# These are build products like every other binary here: `mk CONF=emu-g
+# install' in emu/MacOSX rewrites them, so a tracked copy is dirty after
+# any build of the hosted VM.  The CONFIG files - emu/*/emu-g and
+# emu/*/emu-cocoa without the o. prefix - are source and stay tracked.
+/MacOSX/*/bin/emu-cocoa
+/MacOSX/*/bin/emu-g
+/emu/*/o.emu-*
+
 # ignore 9front, OpenBSD and Inferno native binaries
 /9front/*/bin/*
 /OpenBSD/*/bin/*
