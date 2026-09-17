@@ -559,6 +559,31 @@ They are link-time sizes plus a pool measurement taken on
 .NH 1
 What is left
 .IP 1.
+Emit the built-in root read-only, so it stays in flash.  This is the one
+that turns the mechanism from working into paying, and the Cortex-M
+section above is why: today
+.CW utils/data2s/data2s.c
+emits
+.CW DATA / GLOBL ,
+the root lands in the data segment, and on a board that executes out of
+flash it is copied into RAM before anything runs \- so
+.CW rootxip()
+hands back a RAM address and the file occupies RAM whether or not it is
+ever loaded.  Emitting it into the text or a read-only section instead
+makes
+.CW rootxip()
+return a flash address and takes the file out of RAM entirely: 140404
+bytes on
+.CW teensy41 ,
+447361 on
+.CW mps2 .
+It touches
+.CW data2s ,
+.CW os/inferno/port/mkroot
+and the linkers' segment handling, none of which this branch changed,
+and it wants checking on every board that bundles a root, not just the
+ARMv7-M ones.
+.IP 2.
 A filesystem device over a memory-mapped flash or ROM window,
 implementing
 .CW Dev.xip
@@ -571,10 +596,10 @@ has none, so it cannot be tested here.  QEMU's
 does model pflash, and
 .CW os/inferno/virtarm64
 is the board that could carry it.
-.IP 2.
-Pre-decoded modules in that window, per the section above \- gated on
-item 1, and worth it only there.
 .IP 3.
+Pre-decoded modules in that window, per the section above \- gated on
+item 2, and worth it only there.
+.IP 4.
 .CW Dev.xip
 on the flash and NAND filesystem devices already in
 .CW os/inferno/port
