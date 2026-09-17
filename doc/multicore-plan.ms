@@ -5640,3 +5640,129 @@ now does.  And the first two versions of the walk counter were blind, one
 to a whole call site, and neither would have been found without a
 control that made the event happen \(em a zero from them would have been
 reported as evidence.
+.NH 1
+The collector was dying, and the clean batches were measuring that
+.PP
+.CW parallelvm=1
+at
+.CW "-smp 4"
+has never made progress in this document; the last table on it read 0 of
+384 chantest lines.  On the kernel after the teardown work, 13 of 16
+boots printed no chantest line at all, with no panic.
+.NH 2
+Where it stops
+.PP
+Two instruments found it.  A dump at 60 and 70 seconds printed, besides
+each CPU's clock, who set
+.CW gcstw
+and how far
+.CW collect()
+had got, and it said the same thing in every stalled boot: every clock
+advancing,
+.CW gcsema
+held,
+.CW gcstw
+set, the collector past
+.CW stoptheworld()
+and inside
+.CW rungc() ,
+and
+.CW gcnruns
+identical at 60 and at 70 seconds.  The collector proc was
+.CW Running
+and moving between CPUs, so it was looping on something that
+reschedules.
+.PP
+Then the QEMU monitor, one connection held open, stopping the guest to
+read every CPU's registers and 64 words at its stack pointer eight times
+over, the stack words resolved against the kernel's symbol table:
+.QP
+.CW "execatidle \(-> collect \(-> rungc \(-> freeFD \(-> acquire \(-> vmacquire \(-> sched"
+.PP
+.CW freeFD()
+is the finaliser of a Limbo
+.CW FD
+and does
+.CW release() ,
+close,
+.CW acquire() .
+.CW vmacquire()
+at
+.CW parallelvm=1
+is
+.CW "while(gcstw) sched()"
+\(em it waits for the collection that the same process is in the middle
+of.  Nothing clears
+.CW gcstw
+but that process, so it never ends, and every other interpreter queues on
+.CW gcsema .
+.NH 2
+The fix, and why exempting the collector was not it
+.PP
+Letting the collector through its own wait would end the self-deadlock
+and leave a second one: the close can block on a Styx server that is a
+Dis program, which this collection has stopped.  So the close is not
+made inside the stopped world at all.
+.CW freeFD()
+asks
+.CW gcworldheld() ,
+and if this process holds the stopped world it queues the descriptor and
+its
+.CW Fgrp
+with
+.CW deferfdclose() ;
+.CW collect()
+makes the queued closes after
+.CW qunlock(&gcsema) ,
+with the world running, under the same
+.CW release() /\c
+.CW acquire()
+.CW freeFD()
+used \(em which is the arrangement the VM-lock kernel had, every other
+interpreter free while the close blocks.
+.CW *fddefer=0
+restores the inline close, temporarily, to measure against.
+.NH 2
+What that exposed about every batch before it
+.PP
+Counting
+.CW freeFD()
+calls made inside the stopped world, four boots each at
+.CW "-smp 2" :
+.TS
+center;
+l r r r.
+	in the stopped world	collector passes by 70s	gcsema at 70s
+*fddefer=0	1 per boot	1265 to 6586, frozen	held, phase 2
+deferred	1101 to 1748	731780 to 1074488	moving
+.TE
+.PP
+With the inline close, the first sweep that reached a garbage
+.CW FD
+\(em typically just after chantest finished \(em wedged the collector
+for the rest of the boot.  At
+.CW "-smp 2"
+chantest usually finished first, so the boot read as clean.  Every
+.CW "-smp 2"
+batch in this document since the collector began to stop the world was
+measuring a kernel whose collector stopped partway through the
+workload, and the zero panic counts of the teardown chapter are partly
+that.  The instrument that would have shown it \(em is the collector
+still running at the end? \(em was not in the table.
+.PP
+With the collector alive, twelve boots each, 90 seconds:
+.TS
+center;
+l r r r r r.
+	all 27 chantest cases	panics	bad frame	gave up	stalled at 70s
+-smp 4, parallelvm=1	3 of 12	5	7	4	1
+-smp 2, parallelvm=1	7 of 12	3	11	10	0
+-smp 4, parallelvm=0	11 of 12	0	0	0	0
+.TE
+.PP
+The stall is gone but for one boot, and the faults this uncovers are the
+collector's own: bad frames whose type pointer is a heap address,
+.CW "alloc:D2B:destroy-entry" ,
+general protection violations.  They are what a collector that runs a
+million passes a boot meets and one that died after a few thousand did
+not, and they are the next work.

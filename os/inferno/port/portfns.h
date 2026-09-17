@@ -31,6 +31,8 @@ void		cclose(Chan*);
 void		ccloseq(Chan*);
 void		closeegrp(Egrp*);
 void		closefgrp(Fgrp*);
+int		deferfdclose(Fgrp*, int);
+int		gcworldheld(void);
 void		closergrp(Rgrp*);
 void		closemount(Mount*);
 void		closepgrp(Pgrp*);

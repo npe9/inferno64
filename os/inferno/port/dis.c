@@ -592,6 +592,97 @@ int		stoptheworld(void);
  * iterations from 18 to 2 across eight boots.  The print had been
  * throttling it.
  */
+int gcphase;	/* MULTICORE INSTRUMENTATION - temporary; see stalldump() */
+
+/*
+ * Closes the collector must not make while it holds the world stopped.
+ *
+ * freeFD() is TFD's finaliser and does release(); close; acquire().
+ * Reached from rungc() with gcstw set, that was a self-deadlock, found
+ * by sampling every CPU of a stalled parallelvm=1 -smp 4 boot through
+ * the QEMU monitor: execatidle -> collect -> rungc -> freeFD ->
+ * acquire -> vmacquire, whose "while(gcstw) sched()" waited for the
+ * collection the same process was in the middle of.  13 boots of 16
+ * stalled that way, with gcsema held and every other interpreter queued
+ * on it.
+ *
+ * Exempting the collector from that wait would not be enough.  The
+ * close can block -- on a Styx server that is itself a Dis program,
+ * one this collection has stopped -- and then the collector waits for a
+ * program that waits for the collector.  So the close is not made
+ * inside the stopped world at all: freeFD() queues it here and
+ * collect() makes it once the world is running again, which is where
+ * the VM-lock kernel made it too -- with every other interpreter free
+ * to run.
+ */
+typedef struct Fdclose Fdclose;
+struct Fdclose
+{
+	Fgrp*	grp;
+	int	fd;
+	Fdclose*	next;
+};
+static Lock fdclosel;
+static Fdclose *fdcloseq;
+ulong fdclosedeferred;	/* MULTICORE INSTRUMENTATION - temporary */
+ulong freefds, freefdstw;	/* likewise; counted in freeFD() */
+int fddefer = 1;	/* *fddefer=0: close inline, as before; temporary */
+
+/* this process is the collector and the world is stopped for it */
+int
+gcworldheld(void)
+{
+	return gcstw != 0 && up == gcstwproc;
+}
+
+/*
+ * Returns 0 if the close could not be queued, and then the caller must
+ * make it itself.  Only when malloc fails, and it says so.
+ */
+int
+deferfdclose(Fgrp *grp, int fd)
+{
+	Fdclose *c;
+
+	c = malloc(sizeof *c);
+	if(c == nil){
+		print("deferfdclose: no memory, closing fd %d in the stopped world\n", fd);
+		return 0;
+	}
+	c->grp = grp;
+	c->fd = fd;
+	lock(&fdclosel);
+	c->next = fdcloseq;
+	fdcloseq = c;
+	fdclosedeferred++;
+	unlock(&fdclosel);
+	return 1;
+}
+
+static void
+drainfdclose(void)
+{
+	Fdclose *c, *next;
+
+	if(fdcloseq == nil)	/* unlocked peek; a miss waits for the next collection */
+		return;
+	lock(&fdclosel);
+	c = fdcloseq;
+	fdcloseq = nil;
+	unlock(&fdclosel);
+	if(c == nil)
+		return;
+	release();
+	for(; c != nil; c = next){
+		next = c->next;
+		if(c->fd >= 0)
+			kfgrpclose(c->grp, c->fd);
+		closefgrp(c->grp);
+		free(c);
+	}
+	acquire();
+}
+
 int
 collect(Prog *head)
 {
@@ -613,12 +704,18 @@ collect(Prog *head)
 		qunlock(&gcsema);
 		nexterror();
 	}
+	gcphase = 1;
 	stopped = stoptheworld();
+	gcphase = 2;
 	if(stopped)
 		rungc(head);
+	gcphase = 3;
 	poperror();
 	starttheworld();
+	gcphase = 4;
 	qunlock(&gcsema);
+	gcphase = 5;
+	drainfdclose();
 	return stopped;
 }
 
@@ -2780,5 +2877,61 @@ disdump(void)
 		print("dis: proc %d %s %s type %d vmheld %d iprog %#p r %#p sleeppc %#p qpc %#p\n",
 			q->pid, q->text, statename[q->state], q->type,
 			q->vmheld, q->iprog, q->r, q->sleeppc, q->qpc);
+	}
+}
+
+/*
+ * MULTICORE INSTRUMENTATION - temporary.  A second look, twenty seconds
+ * after disdump(), at why a parallelvm=1 -smp 4 boot sits idle with
+ * interpreters queued on gcsema and a proc Ready while CPUs halt: what
+ * each CPU's clock says, who holds gcsema, and for every proc which CPU
+ * it is on, which it last ran on, and whether a timer is pending for it.
+ */
+void
+stalldump(void)
+{
+	extern int nrdy;
+	Proc *q;
+	Mach *mm;
+	int i;
+
+	print("stall: fastticks %lld nrdy %d\n", (vlong)fastticks(nil), nrdy);
+	for(i = 0; i < conf.nmach; i++){
+		mm = MACHP(i);
+		if(mm == nil)
+			continue;
+		print("stall: cpu%d ticks %lud proc %d\n", i, (ulong)mm->ticks,
+			mm->proc != nil ? mm->proc->pid : -1);
+	}
+	print("stall: gcsema locked %d head %d gcstw %d by %d npctx %d"
+		" phase %d\n",
+		gcsema.locked, gcsema.head != nil ? gcsema.head->pid : -1,
+		gcstw, gcstwproc != nil ? gcstwproc->pid : -1, npctx, gcphase);
+	{
+		extern ulong gcnruns;
+
+		print("stall: gcnruns %lud stwwaits %d gcidlepass %llud"
+			" gcpartial %llud gaveup %d idlegaveup %d\n",
+			gcnruns, stwwaits, gcidlepass, gcpartial, stwgaveup,
+			gcidlegaveup);
+		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud, fddefer %d\n",
+			freefds, freefdstw, fdclosedeferred, fddefer);
+	}
+	for(i = 0; i < npctx; i++)
+		print("stall: ctx %d owner %d inxec %d inchan %d nlocal %d\n",
+			i, pctxs[i]->owner != nil ? ((Proc*)pctxs[i]->owner)->pid : -1,
+			pctxs[i]->inxec, pctxs[i]->inchan, pctxs[i]->nlocal);
+	for(i = 0; i < conf.nproc; i++){
+		q = proctab(i);
+		if(q->state == Dead)
+			continue;
+		print("stall: proc %d %s %s type %d mach %d mp %d wired %d"
+			" tt %d twhen %lld tf %#p pc %#p qpc %#p\n",
+			q->pid, q->text, statename[q->state], q->type,
+			q->mach != nil ? q->mach->machno : -1,
+			q->mp != nil ? q->mp->machno : -1,
+			q->wired != nil ? q->wired->machno : -1,
+			q->tt != nil, (vlong)q->twhen, q->tf,
+			q->sleeppc, q->qpc);
 	}
 }

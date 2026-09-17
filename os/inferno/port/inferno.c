@@ -63,6 +63,25 @@ freeFD(Heap *h, int swept)
 
 	handle = H2D(FD*, h);
 
+	/*
+	 * Not from inside a stopped world: see deferfdclose() in dis.c.
+	 * The Fgrp reference moves to the queued close.
+	 */
+	{	/* MULTICORE INSTRUMENTATION - temporary */
+		extern ulong freefds, freefdstw;
+		extern int fddefer;
+		static int told;
+
+		freefds++;
+		if(gcworldheld()){
+			freefdstw++;
+			if(told++ < 3)
+				print("freeFD: in the stopped world, fd %d swept %d from %#p\n",
+					handle->fd.fd, swept, getcallerpc(&h));
+			if(fddefer && deferfdclose(handle->grp, handle->fd.fd))
+				return;
+		}
+	}
 	release();
 	if(handle->fd.fd >= 0)
 		kfgrpclose(handle->grp, handle->fd.fd);

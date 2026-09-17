@@ -181,6 +181,11 @@ hzclock(Ureg *ur)
 			kstackmin, KSTACK, kstackminproc);
 		disdump();
 	}
+	if(m->machno == 0 && (m->ticks == 60*HZ || m->ticks == 70*HZ)){
+		extern void stalldump(void);
+
+		stalldump();	/* MULTICORE INSTRUMENTATION - temporary */
+	}
 
 	if(up && up->state == Running){
 		/* user profiling clock */
