@@ -4024,6 +4024,37 @@ panics on an empty pool.  The two are kept adjacent for that reason, and
 .CW cqadd()
 panics rather than erroring because an empty pool there is a caller bug,
 not a runtime condition.
+.PP
+.CW altcells()
+counts before the lock and
+.CW altrdy()
+spends after it, so the panic is only sound if neither number can change
+in between.  Both were checked rather than assumed.
+.CW ac->c
+is a frame-local copy: the compiled code builds the
+.CW Alt
+structure on the prog's own frame, from the prog's own operands, before
+the alt instruction runs, and no executor writes another prog's frame.
+.CW Array->len
+is immutable for a given Array object \(em every
+.CW "a->len ="
+in
+.CW libinterp
+is at creation, and
+.CW OP(slicea)
+builds a
+.I new
+Array header rather than shortening the one it slices.  Had either been
+mutable, the panic would have turned a rare race into a crash where the
+old code merely called
+.CW malloc() .
+The
+.CW +1
+for
+.CW altcomm()
+is slack rather than necessity \(em it only sends or receives on a
+channel it has just found ready under the lock, so it takes the handoff
+or the buffer path and never queues \(em and is kept anyway.
 .NH 2
 Why a recursive lock would have been wrong
 .PP
