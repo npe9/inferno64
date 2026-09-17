@@ -7,6 +7,8 @@
 #include "io.h"
 #include "version.h"
 
+extern int distrack;		/* libinterp/heap.c: the Dis heap watchdog */
+
 extern Mach mach0;
 Mach *m;
 Proc *up;
@@ -280,6 +282,18 @@ init0(void)
 			print("MBOX no board mac\n");
 		poperror();
 	}
+	/*
+	 * This board's ethernet driver, its file server and everything
+	 * above them are Limbo, so the Dis interpreter's per-instruction
+	 * heap watchdog is charged to every frame that arrives.  Measured
+	 * under a hundred frames a second: with it on, the kernel came
+	 * back for the next frame every 60ms and the server handed 7
+	 * frames straight to a waiting reader; with it off, every 8ms and
+	 * 1222.  The Pi needs the machine more than it needs the
+	 * instrument, which stays on by default everywhere else.  Set it
+	 * back to 1 here to watch a heap corruption on this board.
+	 */
+	distrack = 0;
 	disinit("/osinit.dis");
 }
 
