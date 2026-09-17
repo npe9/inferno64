@@ -200,13 +200,23 @@ kupdate()
 		sys->print("KUPDATE-FAIL empty kupdate.txt\n");
 		return;
 	}
+	# "net!addr!port [net!addr!port ...] /path": every field but the last
+	# is somewhere to try.  A router changed under this board once and the
+	# single address it had been given stopped existing, which cost a card
+	# swap to correct - the one thing this whole mechanism exists to avoid.
 	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
 	if(nf < 2){
 		sys->print("KUPDATE-FAIL want \"net!addr!port /path\" in kupdate.txt\n");
 		return;
 	}
-	addr := hd f;
-	path := hd tl f;
+	addrs: list of string;
+	path := "";
+	for(l := f; l != nil; l = tl l){
+		if(tl l == nil)
+			path = hd l;
+		else
+			addrs = hd l :: addrs;
+	}
 	# Wait for the IP stack to exist and to have an address.  This runs
 	# from a process spawned while the network is still coming up, and
 	# dialling before /net is bound fails with "file does not exist",
@@ -216,9 +226,18 @@ kupdate()
 			break;
 		sys->sleep(100);
 	}
-	(ok, c) := sys->dial(addr, nil);
+	ok := -1;
+	c: Sys->Connection;
+	addr := "";
+	for(l = addrs; l != nil; l = tl l){
+		addr = hd l;
+		(ok, c) = sys->dial(addr, nil);
+		if(ok >= 0)
+			break;
+		sys->print("KUPDATE dial %s: %r\n", addr);
+	}
 	if(ok < 0){
-		sys->print("KUPDATE-FAIL dial %s: %r\n", addr);
+		sys->print("KUPDATE-FAIL nowhere to fetch from\n");
 		return;
 	}
 	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL, "") < 0){
