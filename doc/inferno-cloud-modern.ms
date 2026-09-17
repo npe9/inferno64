@@ -1519,3 +1519,86 @@ and the rule earned by now is: when the predicate can appear in the
 input, it must be
 .CW "grep -x" ,
 and when it cannot be, say why.
+.NH 2
+The third falsification criterion: what the namespace actually needs
+.PP
+The third thing that would sink this: "if a namespace mounted across two
+machines turns out to need a supervisor, a retry policy and a naming
+service to be usable in practice, then the four layers have been
+reinvented rather than removed, and the honest conclusion is that they
+were load-bearing all along."
+.PP
+.CW scripts/check-discovery-retry.sh
+tests two of the three.  The answers are not the same answer.
+.PP
+.B "Retry: the criterion is right, and this had to be measured to admit it."
+A mount does not survive its server.  With the server killed the read
+fails
+.CW "mount rpc error" ,
+and \(em this is the part worth knowing \(em when the server comes back
+on the same port
+.B "the mount does not recover on its own" .
+Something has to notice and mount again.  There is a retry policy in any
+honest version of this design, and saying otherwise would have been
+wrong.
+.PP
+.B "What the criterion gets wrong is the weight."
+The whole policy is
+.IP
+.EX
+fn get {
+	if { ! cat /n/client/file } {
+		mount -A $addr /n/client
+		cat /n/client/file
+	}
+}
+.EE
+.PP
+because re-establishing is the same operation as establishing.  There is
+no session to rebuild, no connection pool to drain, no client object to
+reconstruct, no backoff state machine: the thing that failed is a mount,
+and the repair is the mount.  Four lines, and they are in the check.
+.PP
+.B "Naming: not a new layer."
+The client in that check is told one thing, where a registry is.  It
+finds the file server by attribute \(em
+.CW "proto styx"
+\(em and mounts whatever address comes back.
+.CW registry (4)
+is itself a file server: a service registers by writing a line to
+.CW /mnt/registry/new
+and a client searches by writing a filter to
+.CW find
+and reading the matches.  Discovery is the same mechanism pointed at the
+problem of locating things, not a fifth thing bolted on.
+.PP
+.B "Supervision: needed, but not by the namespace."
+Nothing about a mount needs supervising.  Services need supervising, and
+that is true of every system ever built;
+.CW supervise (1)
+is that, and it is 200 lines reading
+.CW /prog/<pid>/wait .
+.PP
+.B "The verdict, stated as narrowly as the evidence allows."
+The criterion is not met: the four layers have not been reinvented.  But
+it is not simply refuted either, and the retry clause is a real cost
+that this document should not have been able to describe as free.  The
+defensible claim is narrower than the original one and is this: what a
+mounted namespace needs beyond the mount is four lines of retry, and
+discovery and supervision are had from mechanisms the system already
+has for other reasons.
+.PP
+.B "A directory that did not exist."
+.CW registry (4)'s
+manual page gives exactly one example,
+.CW "mount {ndb/registry} /mnt/registry" ,
+and it fails:
+.CW /mnt/registry
+is not there.
+.CW lib/emptydirs
+is a manifest of the directories the system expects \(em git cannot
+track an empty one \(em and nothing in the build applied it: 61 of the
+303 listed were absent.
+.CW scripts/mkemptydirs.sh
+applies it now.  A missing mount point reads as a broken service, which
+is how this one presented.
