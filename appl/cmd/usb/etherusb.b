@@ -75,6 +75,9 @@ Conn: adt {
 	frames:	list of array of byte;	# queued frames, newest first
 	nframes: int;
 	nin:	int;			# frames matched to this conversation
+	tlast:	int;			# when this conversation was last replied to
+	tgap:	int;			# summed millisecond gaps between reads
+	ngap:	int;			# how many gaps that is
 	nout:	int;			# frames handed to a reader
 	ndrop:	int;			# frames dropped, queue full and no reader
 };
@@ -949,7 +952,7 @@ handle(gm: ref Tmsg): string
 				nc[0:] = conns;
 				conns = nc;
 			}
-			conns[n] = ref Conn(n, 0, 0, nil, nil, 0, 0, 0, 0);
+			conns[n] = ref Conn(n, 0, 0, nil, nil, 0, 0, 0, 0, 0, 0, 0);
 			cdir := Cbase + big(n*3);
 			tree.create(Qether, dir(string n, Sys->DMDIR|8r555, cdir));
 			tree.create(cdir, dir("ctl", 8r666, cdir+big 1));
@@ -971,16 +974,22 @@ handle(gm: ref Tmsg): string
 			return nil;
 		}
 		if(fid.path == Qstats){
+			rg := 0;
+			if(rxn > 0)
+				rg = rxgap / rxn;
 			ss := sys->sprint(
-				"ntx %d\nnqueued %d\nnwrit %d\nnwerr %d\nndrop %d\nnrx %d\nlasterr %s\n",
-				ntx, nqueued, nwrit, nwerr, ndrop, nrx, lasterr);
+				"ntx %d\nnqueued %d\nnwrit %d\nnwerr %d\nndrop %d\nnrx %d rxgap %d\nlasterr %s\n",
+				ntx, nqueued, nwrit, nwerr, ndrop, nrx, rg, lasterr);
 			for(i := 0; i < nconn; i++){
 				c := conns[i];
 				np := 0;
 				for(rl := c.reads; rl != nil; rl = tl rl)
 					np++;
-				ss += sys->sprint("conv %d etype %#x in %d out %d drop %d held %d waiting %d\n",
-					i, c.etype, c.nin, c.nout, c.ndrop, c.nframes, np);
+				g := 0;
+				if(c.ngap > 0)
+					g = c.tgap / c.ngap;
+				ss += sys->sprint("conv %d etype %#x in %d out %d drop %d held %d waiting %d gap %d\n",
+					i, c.etype, c.nin, c.nout, c.ndrop, c.nframes, np, g);
 			}
 			srv.reply(styxservers->readstr(m, ss));
 			return nil;
@@ -991,6 +1000,16 @@ handle(gm: ref Tmsg): string
 		}
 		if(fk == 2){			# data read: a queued frame, else wait
 			c := conns[cn];
+			# how long the kernel took to come back for the next
+			# frame: the receive ceiling is either this gap or the
+			# work this server does between frames, and the two are
+			# told apart by measuring one of them
+			t := sys->millisec();
+			if(c.tlast != 0){
+				c.tgap += t - c.tlast;
+				c.ngap++;
+			}
+			c.tlast = t;
 			if(c.frames != nil){
 				f := oldest(c);
 				srv.reply(ref Rmsg.Read(m.tag, f[0:min(m.count, len f)]));
@@ -1153,10 +1172,22 @@ transmit(cn: int, frame: array of byte)
 # a received frame goes to every conversation whose type matches (or
 # that asked for all), answering a waiting read or queueing it
 nrxdump := 0;
+rxgap := 0;		# summed milliseconds between frames leaving the endpoint
+rxn := 0;
+rxlast := 0;
 
 deliver(f: array of byte)
 {
 	nrx++;
+	# how long the frame before this one took to come off the endpoint:
+	# the receive ceiling is either here, in the driver and the device,
+	# or above, in the kernel coming back for the next frame
+	now := sys->millisec();
+	if(rxlast != 0){
+		rxgap += now - rxlast;
+		rxn++;
+	}
+	rxlast = now;
 	t := (int f[12] << 8) | int f[13];
 	# every ARP frame that reaches this server, so a reply the other end
 	# swears it sent can be placed on one side of the endpoint or the
@@ -1187,6 +1218,15 @@ deliver(f: array of byte)
 			c.frames = f :: c.frames;
 			c.nframes++;
 		} else {
+			# The queue is full because the reader is behind, and the
+			# frame that matters most is the newest: an ARP reply
+			# thrown away behind sixty-four stale broadcasts leaves
+			# the interface unable to resolve anything, which is how
+			# the Pi came to answer ARP and reach nothing.  Drop the
+			# oldest instead and keep what just arrived.
+			oldest(c);
+			c.frames = f :: c.frames;
+			c.nframes++;
 			c.ndrop++;
 			ndrop++;
 		}

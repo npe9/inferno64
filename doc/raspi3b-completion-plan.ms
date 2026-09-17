@@ -511,12 +511,27 @@ them, handed to a reader and dropped, and every ARP frame that reaches
 the server is dumped as it arrives; that says whether the reply is
 absent from the wire or discarded after it lands.
 .PP
-QEMU cannot settle this.  With
+QEMU says the ceiling is real, and low.  Forwarding a host UDP port
+into the guest and filling it puts a measurable load on the same path:
+at thirty frames a second nothing is dropped, and at a hundred the
+IPv4 conversation sits permanently at its sixty-four-frame limit and
+discards two thirds of what arrives.  The two halves of the path were
+then timed from inside the ethernet server: frames leave the bulk
+endpoint one every forty milliseconds, and the kernel comes back for
+the next one every hundred and twenty-five, so the reader is the
+binding constraint under load \- though in this test each received
+packet also provokes an ICMP reply, which the ambient broadcast
+traffic on a real LAN does not.  What QEMU cannot show is the failure
+itself: with
 .CW "-netdev user"
-the guest resolves ARP and pings normally, and the socket backend
-needed to inject traffic wedges the DWC2 bulk-out channel on a NAK
-before any of it can be tried.  The measurements above are all from
-silicon.
+the guest resolves ARP and pings normally.
+.PP
+One earlier reading here was wrong and is worth recording as a trap:
+.CW "usbdwc: ep3.2 waiting 60 s"
+under QEMU is not a wedged transmit.  QEMU's usb-net presents its bulk
+in and out on the same endpoint number, which this driver opens as one
+read-write endpoint, so the message is the idle receive read waiting
+for traffic that is not coming \- exactly what it is meant to say.
 .NH 2
 Suggested order
 .PP

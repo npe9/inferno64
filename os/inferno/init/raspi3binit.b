@@ -196,6 +196,72 @@ netdebug()
 	sys->print("NETLOG-END\n");
 }
 
+# Reachability, asked for continuously rather than typed at the console:
+# /n/dos/pingtest.txt names an address, and this says every twenty
+# seconds whether the board can resolve it and get an answer.  A board
+# whose ARP entry for the other end never leaves WAIT looks exactly like
+# a board with no network at all, and the difference matters.
+pingtest()
+{
+	# the FAT partition is mounted by another process a moment later
+	fd: ref Sys->FD;
+	for(i := 0; i < 300; i++){
+		fd = sys->open("/n/dos/pingtest.txt", Sys->OREAD);
+		if(fd != nil)
+			break;
+		sys->sleep(100);
+	}
+	if(fd == nil)
+		return;
+	b := array[64] of byte;
+	n := sys->read(fd, b, len b);
+	fd = nil;
+	if(n <= 0)
+		return;
+	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
+	if(nf < 1)
+		return;
+	addr := hd f;
+	for(i = 0; i < 300; i++){
+		if(hasaddr())
+			break;
+		sys->sleep(100);
+	}
+	ping := load Command "/dis/ip/ping.dis";
+	if(ping == nil){
+		sys->print("PINGTEST-FAIL load ping: %r\n");
+		return;
+	}
+	for(i = 0; i < 200; i++){
+		sys->print("PINGTEST %s\n", addr);
+		ping->init(nil, "ping" :: "-n" :: "2" :: addr :: nil);
+		arp := sys->open("/net/arp", Sys->OREAD);
+		if(arp != nil){
+			ab := array[1024] of byte;
+			an := sys->read(arp, ab, len ab);
+			arp = nil;
+			if(an > 0){
+				(nil, al) := sys->tokenize(string ab[0:an], "\n");
+				for(; al != nil; al = tl al)
+					if(len hd al > 0 && stringinstr(hd al, addr))
+						sys->print("PINGTEST-ARP %s\n", hd al);
+			}
+		}
+		sys->sleep(20000);
+	}
+}
+
+# is needle anywhere in s?
+stringinstr(s: string, needle: string): int
+{
+	if(len needle == 0)
+		return 1;
+	for(i := 0; i + len needle <= len s; i++)
+		if(s[i:i+len needle] == needle)
+			return 1;
+	return 0;
+}
+
 # the interface's own counters, which say whether frames arrive at all
 netcounters()
 {
@@ -718,6 +784,7 @@ init()
 	# three pings, which take seconds and can be answered by nothing at all
 	spawn ethercheck();
 	spawn netdebug();
+	spawn pingtest();
 	# A kfs in the card's unallocated gap, mounted over a pipe, with a
 	# file created in it.  The create used to hang here - pid 1's Twalk
 	# got its Rerror and the error unwound past mntwalk's own waserror
