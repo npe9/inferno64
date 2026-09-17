@@ -63,6 +63,7 @@ void	(*heapmonitor)(int, void*, ulong);
 int	(*gcstopped)(void);
 int	(*chandefer)(void*);	/* set by the kernel; see chanlock() in dis.c */
 void	(*atsafepoint)(void);	/* likewise; see stoptheworld() in dis.c */
+void	(*gcwalkdelay)(void);	/* INSTRUMENTATION - temporary; see rootset() */
 static int statictype(Type*);		/* named below; used by destroy() */
 /*
  * Names for what statictype() returns, which is a 1-based index into

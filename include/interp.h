@@ -285,6 +285,7 @@ struct Prog
 	REG		reg;		/* Register set */
 	void*		xecby;		/* INSTRUMENTATION: context inside xec() */
 	int		regsrc;		/* INSTRUMENTATION: who last wrote reg */
+	int		torn;		/* INSTRUMENTATION: teardown began; see rootset() */
 	int		spsrc;		/* INSTRUMENTATION: propex's SP path */
 	Prog*		link;		/* Run queue */
 	Channel*		chan;	/* Channel pointer */
@@ -631,6 +632,7 @@ extern	void		chanlock(void);
 extern	void		chanunlock(void);
 extern	int		(*chandefer)(void*);	/* see heap.c, dis.c */
 extern	void		(*atsafepoint)(void);	/* see stoptheworld() in dis.c */
+extern	void		(*gcwalkdelay)(void);	/* INSTRUMENTATION - temporary */
 extern	void		cqadd(Progq**, Prog*);
 extern	void		cqdel(Progq**);
 extern	void		cqdelp(Progq**, Prog*);

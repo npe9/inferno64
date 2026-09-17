@@ -5441,3 +5441,141 @@ the window is real is running, and if it is not real the right change is
 to delete the exclusion rather than to make it cheaper.  Designing the
 replacement before knowing which of those is true would be the same
 mistake as the prediction two sections up.
+.NH 2
+The teardown window, measured by its mechanism
+.PP
+The batch the previous section waited for was lost with the machine it
+ran on, and a panic count would not have settled the question anyway \(em
+both arms had panicked at zero.  So it was rebuilt around counters on the
+mechanism itself.
+.IP \(bu
+.CW entertear()
+counts teardowns, teardowns that began while another context's
+collection was pending or running, and teardowns entered
+.I without
+a quantum open.
+.IP \(bu
+.CW rootset()
+counts walks that read a non-nil
+.CW EX
+and, by the end of the walk, find it nil or find the Prog marked
+.CW torn .
+The mark is on the Prog and never cleared.  A first version checked only
+.CW rr->EX ,
+and was blind to one of the two sites:
+.CW progexit()
+tears down
+.CW R ,
+the context's register file, after
+.CW vmachine() 's
+handler has cleared
+.CW curprog ,
+so
+.CW progreg()
+hands the walk
+.CW root->reg ,
+whose
+.CW EX
+nothing nils.  A second version marked the context, and missed because a
+teardown takes microseconds and its context's mark was gone long before a
+slowed walk finished.  A third published the mark before
+.CW entertear()
+waited, and counted twenty-two walks that finished during that wait with
+nothing yet freed.  Each of those was found by the control below, not by
+reading.
+.PP
+It is an upper bound, not a detection: a walk that reads
+.CW EX
+and finishes before the first
+.CW free()
+still counts.  What makes it credible is the tripwire next to it.
+.NH 3
+The positive control
+.PP
+Two temporary boot options make the case happen.
+.CW *gcwalkdelay=N
+holds
+.CW rootset()
+N ms between reading a Prog's
+.CW EX
+and walking it.
+.CW *teardrop=N
+makes
+.CW entertear()
+give its quantum up for the length of the teardown and wait N ms first
+\(em which is the shape
+.CW vmachine() 's
+handler had before it took
+.CW enterquantum()
+ahead of
+.CW handler() .
+Eight boots each,
+.CW parallelvm=1
+.CW "-smp 2" ,
+.CW *gcwalkdelay=20 :
+.TS
+center;
+l l r r r r.
+arm	options	walks counted	boots	bad frame	panics
+A	*tearlock=0 *teardrop=5	5	3 of 8	3 of 8	0
+B	*tearlock=1 *teardrop=5	0	0 of 8	0 of 8	0
+C	*tearlock=0	0	0 of 8	0 of 8	0
+.TE
+.PP
+In arm A the counter and the
+.CW "rootset: bad frame type"
+tripwire agree boot for boot, three present and five absent, and every
+one of the bad frames is
+.CW "t 0x0 mark 0xf000ff54f000ff53"
+\(em a frame whose type pointer is nil read through to low memory, where
+the real-mode interrupt vector table is.  That is the signature this
+document has chased for chapters, produced on demand by extents freed
+under the walk, and arm B shows the exclusion suppressing it.
+.PP
+So the window is real.  It is also already closed, and not by the
+exclusion.
+.NH 3
+What closes it
+.PP
+Across every boot of every arm above, and of the forty-boot batch before
+them, the count of teardowns entered without a quantum is zero.  Both
+sites run with
+.CW inxec
+set:
+.CW killprog()
+is reached from
+.CW progwrite() ,
+which
+.CW acquire() s,
+and
+.CW vmachine() 's
+handler now calls
+.CW enterquantum()
+before
+.CW handler()
+and so before
+.CW progexit() .
+The statement earlier in this chapter that the handler "clears
+.CW inxec
+before it reaches the teardown" was true of the code it described and is
+not true of this tree.
+.PP
+With
+.CW inxec
+set, a collector cannot walk:
+.CW stoptheworld()
+waits for it, and when it gives up it returns without calling
+.CW rungc()
+at all \(em an abandoned collection walks nothing.  The only thing
+.CW *teardrop
+does to arm A is remove that, and arm C, which slows the walk by the same
+twenty milliseconds with the quantum held and the exclusion off, never
+sees the window.
+.PP
+The exclusion is then worse than redundant.  A teardown that arrives with
+gcstw set holds a quantum, so the collector is waiting for it;
+.CW entertear()
+then waits for the collector, and the two wait on each other until the
+quarter second runs out.  That is where its cost came from: boots that
+abandoned a collection were 16 of 20 with it and 10 of 20 without in the
+production-shaped batch, and 6 of 8 against 3 of 8 above.

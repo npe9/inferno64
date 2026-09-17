@@ -24,6 +24,7 @@ struct Ptrhash
 	int	nprop;
 	int	gchalt;
 	ulong	rootnomod;	/* Progs skipped for having no module */
+	ulong	rootraced;	/* INSTRUMENTATION - temporary: see rootset() */
 	int	gcdepth;	/* this context's destroy recursion depth */
 	int	gcdepthmax;	/* high-water mark of it, for #%/memgc */
 	ulong	gcdeferred;	/* frees the depth guard handed to the collector */
@@ -427,7 +428,7 @@ rootset(Prog *root)
 	Stkext *sx;
 	Modlink *ml;
 	REG *rr;
-	uchar *fp, *sp, *sp0, *ex, *mp;
+	uchar *fp, *sp, *sp0, *ex, *ex0, *mp;
 
 	mutator = gccolor % 3;
 	marker = (gccolor-1)%3;
@@ -528,6 +529,17 @@ rootset(Prog *root)
 		sp = rr->SP;
 		sp0 = sp;	/* INSTRUMENTATION: rr->SP as first read */
 		ex = rr->EX;
+		ex0 = ex;
+		/*
+		 * INSTRUMENTATION - temporary.  The positive control for
+		 * rootraced below: widen the gap between reading EX and
+		 * walking it, so that a teardown which is not excluded lands
+		 * inside it.  A counter that has never been made to fire says
+		 * nothing when it reads zero.  nil unless the kernel was
+		 * booted with *gcwalkdelay set.
+		 */
+		if(ex != nil && gcwalkdelay != nil)
+			gcwalkdelay();
 		while(ex != nil) {
 			sx = (Stkext*)ex;
 			fp = sx->reg.tos.fu;
@@ -1023,6 +1035,28 @@ rootset(Prog *root)
 			ex = sx->reg.EX;
 			sp = sx->reg.SP;
 		}
+		/*
+		 * INSTRUMENTATION - temporary.  The walk above read EX and
+		 * then walked extents; if EX is nil now, destroystack() ran
+		 * during the walk and freed what was being walked.  Nothing
+		 * else writes EX while the world is stopped.
+		 *
+		 * EX alone was blind to one of the two sites: progexit()
+		 * tears down R, the context's register file, after
+		 * vmachine()'s handler has cleared curprog, so progreg()
+		 * hands this walk root->reg, whose EX nobody nils.  So a
+		 * Prog marked torn counts too.  The mark is on the Prog and
+		 * never cleared, not on the context: a teardown takes
+		 * microseconds and was over, its context's mark gone, long
+		 * before a walk held by *gcwalkdelay reached this line.  The
+		 * Prog cannot be freed under the walk, because delprog()
+		 * reacquires, and so waits for the collection, first.
+		 * The kernel's entertear() counts the upper bound.
+		 */
+		if(ex0 != nil && (rr->EX == nil || root->torn))
+			if(rootraced++ == 0)
+				print("rootset: extents freed during the walk,"
+					" pid %d\n", root->pid);
 
 		root = root->next;
 	}

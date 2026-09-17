@@ -257,6 +257,21 @@ main(void)
 		if((p = getconf("*tearlock")) != nil)
 			tearlock = strtol(p, nil, 0);
 	}
+	{	/* INSTRUMENTATION, temporary: positive control for rootset's
+		 * rootraced counter.  See gcwalkdelayfn() in dis.c. */
+		extern int gcwalkms;
+		char *p;
+
+		if((p = getconf("*gcwalkdelay")) != nil)
+			gcwalkms = strtol(p, nil, 0);
+	}
+	{
+		extern int teardrop;
+		char *p;
+
+		if((p = getconf("*teardrop")) != nil)
+			teardrop = strtol(p, nil, 0);
+	}
 	doc("procinit");
 	procinit();
 	doc("links");

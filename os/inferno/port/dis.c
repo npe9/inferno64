@@ -291,16 +291,91 @@ void	safepoint(void);	/* defined below, with the rest of the handshake */
  */
 int tearlock = 1;
 
+/*
+ * *gcwalkdelay=N: rootset() waits N ms between reading a Prog's EX and
+ * walking it.  The positive control for its rootraced counter; see
+ * there.  Temporary.
+ */
+int gcwalkms;
+
 static void
-entertear(void)
+gcwalkdelayfn(void)
 {
-	if(tearlock == 0)
+	delay(gcwalkms);
+}
+
+/*
+ * MULTICORE INSTRUMENTATION - temporary.  The mechanism, not the
+ * symptom: teardowns that began while another context's collection was
+ * pending or running.  A collector reads EX only after gcstw is set, and
+ * destroystack() nils EX as its second statement, so a teardown that
+ * begins with gcstw clear cannot hand a collector freed extents.  Every
+ * teardown that can is counted here, whichever way *tearlock is set --
+ * with the exclusion on, entertear() then waits it out; with it off,
+ * this is the number of exposures.  An upper bound: a collection already
+ * past this Prog in its root walk is counted and is harmless.
+ */
+ulong tears;
+ulong tearoverlap;
+ulong tearnoquantum;	/* teardowns entered without inxec */
+int teardrop;		/* *teardrop=N: the positive control; see below */
+
+static void enterquantum(void);
+
+static void
+entertear(Prog *p)
+{
+	tears++;
+	if(curP->inxec == 0)
+		if(tearnoquantum++ == 0)
+			print("entertear: teardown without a quantum\n");
+	if(gcstwothers()){
+		if(tearoverlap++ == 0)
+			print("entertear: first teardown during a collection"
+				" (tearlock %d)\n", tearlock);
+	}
+	/*
+	 * *teardrop=N gives the quantum up for the length of the teardown,
+	 * which is what vmachine()'s handler used to do before it took
+	 * enterquantum() ahead of handler().  With *tearlock=0 and
+	 * *gcwalkdelay it is the case rootset()'s rootraced counter exists
+	 * to see, and a counter that cannot be made to fire proves nothing
+	 * by reading zero.
+	 */
+	if(teardrop){
+		curP->inxec = 0;
+		coherence();
+		safepoint();
+		/*
+		 * A teardown that starts with the quantum held starts with no
+		 * collection running, and destroystack() nils EX at once, so
+		 * dropping the quantum alone leaves a collector no time to
+		 * read EX first.  Waiting N ms lets a pending one start and
+		 * reach the Prog; *gcwalkdelay then holds it inside the walk
+		 * while the extents go.
+		 */
+		delay(teardrop);
+	}
+	/*
+	 * torn is published where the teardown really proceeds, not on
+	 * entry: set before the wait below, a collector finishing its walk
+	 * while this context waited for it was counted by rootset() as a
+	 * walk over freed extents, twenty-two times in six boots, with
+	 * nothing yet freed.
+	 */
+	if(tearlock == 0){
+		p->torn = 1;
+		coherence();
 		return;
+	}
 	for(;;){
 		curP->intear = 1;
 		coherence();
-		if(gcstw == 0)
+		if(gcstw == 0){
+			p->torn = 1;
+			coherence();
 			return;
+		}
 		curP->intear = 0;
 		coherence();
 		safepoint();
@@ -311,6 +386,8 @@ entertear(void)
 static void
 leavetear(void)
 {
+	if(teardrop)
+		enterquantum();		/* take back what entertear() gave up */
 	if(tearlock == 0)
 		return;
 	curP->intear = 0;
@@ -1420,7 +1497,7 @@ killprog(Prog *p, char *cause)
 	}
 
 	p->state = Pexiting;
-	entertear();
+	entertear(p);
 	gclock();
 	destroystack(&p->reg);
 	leavetear();
@@ -2196,7 +2273,7 @@ progexit(void)
 		r->state = Pbroken;
 		return;
 	}
-	entertear();
+	entertear(r);
 	gclock();
 	destroystack(&R);
 	leavetear();
@@ -2606,6 +2683,8 @@ disinit(void *a)
 	 */
 	chandefer = chandeferfn;
 	atsafepoint = safepoint;	/* see stoptheworld() */
+	if(gcwalkms > 0)
+		gcwalkdelay = gcwalkdelayfn;
 
 	if(waserror()){
 		/*
@@ -2733,6 +2812,15 @@ disdump(void)
 		" pending overflow %lud, lock %s\n",
 		chanregions, chancontend, chandeferred, chanpendfull,
 		chanlockon ? "on" : "off");
+	{
+		extern ulong rootraced;
+
+		print("dis: teardowns %lud, during a collection %lud,"
+			" freed under the walk %lud, tearlock %d\n",
+			tears, tearoverlap, rootraced, tearlock);
+		print("dis: teardowns without a quantum %lud, teardrop %d,"
+			" gcwalkdelay %d\n", tearnoquantum, teardrop, gcwalkms);
+	}
 
 	/*
 	 * Every context's queue, not just this one's.  A stall where a Prog
