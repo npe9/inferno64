@@ -66,11 +66,15 @@ void links(void){
 extern void sysmodinit(void);
 extern void keyringmodinit(void);
 extern void cryptmodinit(void);
+extern void mathmodinit(void);
+extern void ipintsmodinit(void);
 extern void drawmodinit(void);
 void modinit(void){
 	sysmodinit();
 	keyringmodinit();
 	cryptmodinit();
+	mathmodinit();
+	ipintsmodinit();
 	drawmodinit();
 }
 
