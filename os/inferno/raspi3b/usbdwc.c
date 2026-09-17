@@ -334,9 +334,23 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 					ctlr->regs->haint, ctlr->regs->gintsts);
 				return Chhltd|Nak;
 			}
-			if(i > 0 && i % 60 == 0)
-				dprint("usbdwc: ep%d.%d still waiting for data, %d s\n",
-					ep->dev->nb, ep->nb, i);
+			/*
+			 * A read that waits is normal; a read that waits while
+			 * the device has data is not.  Report the controller
+			 * every ten seconds so the two can be told apart: if
+			 * gintsts still shows Hcintr and haint still names this
+			 * channel, the interrupt was raised and never reached
+			 * the handler, which is a different fault from the core
+			 * never completing the transfer at all.
+			 */
+			if(i > 0 && i % 10 == 0)
+				print("usbdwc: ep%d.%d waiting %d s: hcchar %8.8ux "
+					"hcint %8.8ux hctsiz %8.8ux haint %8.8ux "
+					"haintmsk %8.8ux gintsts %8.8ux gintmsk %8.8ux\n",
+					ep->dev->nb, ep->nb, i, hc->hcchar, hc->hcint,
+					hc->hctsiz, ctlr->regs->haint,
+					ctlr->regs->haintmsk, ctlr->regs->gintsts,
+					ctlr->regs->gintmsk);
 			continue;
 		}
 		if(i >= 20)
