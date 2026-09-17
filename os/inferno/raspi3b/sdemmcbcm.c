@@ -87,6 +87,7 @@ enum {
 	Cmdresp48busy	= 3<<16,
 
 	Maxblocks	= 64,		/* blocks in one multi-block command */
+	Waitms		= 3000,		/* how long a card may take over one transfer */
 	Idclock		= 400000,
 	Datclock	= 25000000,
 	Secsize		= 512,
@@ -116,22 +117,40 @@ static int
 awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 {
 	u32 sts;
-	int i;
+	int i, ms;
 
-	for(i = 0; i < 1000000; i++){
+	/*
+	 * Spin first, because the common case answers within a few reads,
+	 * and then wait on the clock rather than on a loop count.  A card
+	 * writing is allowed to take its time: it may be programming, or
+	 * doing its own housekeeping, and how long a fixed number of MMIO
+	 * reads takes is a property of the CPU, not of the card.  A FAT
+	 * write on this board hit exactly that - the status said the data
+	 * transfer was still running and no interrupt bit had been raised,
+	 * the loop ran out, and dossrv took it as a hardware failure and
+	 * panicked.
+	 */
+	for(i = 0; i < 100000; i++){
 		sts = r[Rinterrupt];
-		if((sts & (want|Ierr)) != 0){
-			r[Rinterrupt] = sts & (want|Ierr|0xffff0000);
-			if(stsp != nil)
-				*stsp = sts;
-			if((sts & Ierr) != 0)
-				return -1;
-			return 0;
-		}
+		if((sts & (want|Ierr)) != 0)
+			goto done;
+	}
+	for(ms = 0; ms < Waitms; ms++){
+		delay(1);
+		sts = r[Rinterrupt];
+		if((sts & (want|Ierr)) != 0)
+			goto done;
 	}
 	if(stsp != nil)
 		*stsp = r[Rinterrupt];
 	return -1;
+done:
+	r[Rinterrupt] = sts & (want|Ierr|0xffff0000);
+	if(stsp != nil)
+		*stsp = sts;
+	if((sts & Ierr) != 0)
+		return -1;
+	return 0;
 }
 
 static int
@@ -368,10 +387,29 @@ emmconline(SDunit *u)
 static void
 bioerror(Ctlr *c, int write, uvlong bno, u32 sts)
 {
-	if(c->errors++ > 5)
-		return;
-	print("emmc: %s block %llud failed: interrupt %#lux status %#lux\n",
-		write? "write": "read", bno, (ulong)sts, (ulong)c->r[Rstatus]);
+	volatile u32 *r = c->r;
+	int i;
+
+	if(c->errors++ <= 5)
+		print("emmc: %s block %llud failed: interrupt %#lux status %#lux\n",
+			write? "write": "read", bno, (ulong)sts, (ulong)r[Rstatus]);
+	/*
+	 * Leave the controller usable.  A transfer that ends this way ends
+	 * with the data line still claimed - the status after the failed
+	 * FAT write read back with the transfer active and the line
+	 * inhibited - and every later command would then wait for a line
+	 * that is never released.  Reset the data circuit and clear what
+	 * is pending, so the failure costs one request rather than the
+	 * card.
+	 */
+	r[Rinterrupt] = r[Rinterrupt];
+	r[Rcontrol1] |= C1srstdata;
+	for(i = 0; i < 100000; i++)
+		if((r[Rcontrol1] & C1srstdata) == 0)
+			break;
+	if(r[Rcontrol1] & C1srstdata)
+		print("emmc: data line will not reset (control1 %#lux)\n",
+			(ulong)r[Rcontrol1]);
 }
 
 static long
