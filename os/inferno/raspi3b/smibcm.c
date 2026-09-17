@@ -151,6 +151,9 @@ smi(void)
 	return (u32*)SMI0;
 }
 
+/* run the checks that need the SMI clock; see smiinit() */
+int smideep = 0;
+
 static u32*
 cm(void)
 {
@@ -294,6 +297,19 @@ smiinit(void)
 	}
 	r[Dsr0] = 0;
 
+	/*
+	 * As in i2sbcm.c: the SMI clock is one of the VideoCore's, and
+	 * the ARM reprogramming CPRMAN behind the firmware is what hung
+	 * this board's boot when the PCM clock was taken that way.  The
+	 * register-level checks below need no clock; the rest do, and do
+	 * not take it.  Set smideep on a board where nothing else needs
+	 * the firmware.
+	 */
+	if(!smideep){
+		print("SMI-NOCLOCK the block answers; its timing checks want "
+			"the VideoCore's SMI clock and do not take it\n");
+		return;
+	}
 	smihz = smiclock(Divi);
 	if(smihz == 0){
 		print("SMI-FAIL clock never started (ctl %#ux div %#ux)\n",
