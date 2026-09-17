@@ -874,11 +874,31 @@ there was never speed on the table here anyway.
    building its own scene needs its border in the *same* tree, not a
    second tree rendered into an image halfway through its own drawing.
 
+   **`entry` is the second, and it went the same way.** Fill, glyph run,
+   caret and focus ring inside one `TkNlayer`, with the scratch-and-blit
+   kept for the two cases that have no nodes yet: a visible selection
+   (two more runs and a band behind them) and `-show`, which builds a
+   throwaway Rune buffer. The glyph node carries a *string*, so the
+   visible slice of the entry's Runes is converted to UTF-8 and the node
+   takes its own copy — a `Rune*` into a widget's buffer is not a value
+   and the node outlives the call.
+
+   **Each of the three new paths was proved reached before it was
+   believed.** The identity check passing says nothing on its own: shift
+   the node text one pixel and it must fail (768 bytes), widen the node
+   ring by one and it must fail (1032), widen the node caret by three and
+   it must fail (126). All three did. That last one also established that
+   the caret is *lit* during the comparison — which is why the check now
+   drops focus and takes it back before each snapshot: the caret blinks on
+   a 500ms repeater that runs with or without a window manager, and a
+   toggle landing between the two snapshots would report the clock's
+   difference as the renderer's.
+
    **What is left is the rest of the widgets and then the walk.** Each
    `tkitmp` user converts the same way, against the same byte check;
-   `entry`, `listbox`, `scale` and `scrollbar` are the remaining ones, and
-   the indicator a `checkbutton` draws needs an ellipse node first. Only
-   when a repaint produces one tree instead of one per widget is there
+   `listbox`, `scale` and `scrollbar` are the remaining ones, and the
+   indicator a `checkbutton` draws needs an ellipse node first. Only when
+   a repaint produces one tree instead of one per widget is there
    anything for a backend to batch.
 4. **A Metal backend.** Last, and only after 3: the measured hazard is
    94% command-buffer overhead for small work, so a backend that issues a

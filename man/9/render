@@ -44,14 +44,26 @@ to agree byte for byte.
 .IR tkofftest (1),
 .IR tkbench (1)
 .SH BUGS
-Only a flat border goes through it.
-Everything else \(em text, images, the classic two-tone bevel, and the
-chrome that
+Three things go through it: a flat border, a plain
+.IR button (9)
+with text, and an
+.IR entry (9)
+that is not showing a selection and not substituting for its text with
+.BR -show .
+Each of those draws its whole interior as nodes \(em fill, glyphs, caret,
+focus ring, border \(em inside one
+.BR TkNlayer .
+.PP
+Everything else \(em images, the classic two-tone bevel, a
+.IR listbox (9),
+a
+.IR text (9),
+and the chrome that
 .IR scale (9)
 and
 .IR scrollbar (9)
 draw for themselves \(em still draws directly, so a scene is at present a
-description of a small part of a frame rather than of a frame.
+description of part of a frame rather than of a frame.
 .PP
 The tree is built and thrown away on every repaint, so none of the
 benefit of a RETAINED tree is realised: nothing is diffed, nothing is
@@ -101,9 +113,16 @@ shows as a difference rather than as a widget that looks fine.  Every
 widget that genuinely needs a layer draws with something other than
 nodes, so none of them could have told us whether it worked.
 .PP
-Six node types are declared and not implemented: texture,
+Six node types are declared and not implemented:
+.BR TkNtexture ,
+.BR TkNlinear ,
+.BR TkNshadow ,
+.BR TkNclip ,
+.B TkNtransform
+and
+.BR TkNopacity .
 They are written down so the numbering does not change later, and
 .I tkscenerender
-ignores them.
+counts them and ignores them.
 The last three are the ones that make an animation cost nothing to
 rasterise, which is the whole point of the exercise and is not done.

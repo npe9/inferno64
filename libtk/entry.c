@@ -353,23 +353,66 @@ tkentrytext(Image *i, Rectangle s, Tk *tk, TkEnv *env)
 		free(text);
 }
 
+/*
+ * The visible run of the text, as UTF-8.
+ *
+ * The scene's glyph node carries a string, because a string is a value
+ * and a Rune* into a widget's own buffer is not: the node outlives the
+ * call that made it.  An entry holds Runes and draws a SLICE of them, so
+ * the slice is converted here and the node takes its own copy.
+ */
+static char*
+entryutf(TkEntry *tke)
+{
+	char *b, *q;
+	Rune *t;
+	int n, j;
+
+	n = tke->v1 - tke->v0;
+	if(n <= 0)
+		return nil;
+	b = mallocz(n*UTFmax + 1, 0);
+	if(b == nil)
+		return nil;
+	t = tke->text + tke->v0;
+	q = b;
+	for(j = 0; j < n; j++)
+		q += runetochar(q, &t[j]);
+	*q = 0;
+	return b;
+}
+
 char*
 tkdrawentry(Tk *tk, Point orig)
 {
-	Point p;
+	Point p, dp;
 	TkEnv *env;
 	Rectangle r, s;
 	Image *i;
+	TkScene *sc;
+	TkEntry *tke;
+	char *txt;
 	int xp, yp;
 
 	env = tk->env;
+	tke = TKobj(TkEntry, tk);
 
 	r.min = ZP;
 	r.max.x = tk->act.width + 2*tk->borderwidth;
 	r.max.y = tk->act.height + 2*tk->borderwidth;
-	i = tkitmp(env, r.max, tkstyleflat(tk) ? TkCfield : TkCbackgnd);
-	if(i == nil)
-		return nil;
+
+	/*
+	 * The simple case as one layer of nodes: flat, no selection showing,
+	 * and no -show substitution.  A selection is two more runs and a
+	 * band behind them, and -show builds a throwaway Rune buffer; both
+	 * keep the scratch-and-blit until there are nodes that describe
+	 * them.  The CARET is here, because it is a filled rectangle and so
+	 * is a TkNcolour.
+	 */
+	sc = nil;
+	if(tkviascene && tkstyleflat(tk) && tke->show == 0
+	&& !(tke->sel0 < tke->v1 && tke->sel1 > tke->v0))
+		sc = tkscenenew();
 
 	xp = tk->borderwidth + xinset(tk);
 	yp = tk->borderwidth + yinset(tk);
@@ -378,6 +421,41 @@ tkdrawentry(Tk *tk, Point orig)
 	s.max.x -= xp;
 	s.min.y += yp;
 	s.max.y -= yp;
+
+	if(sc != nil){
+		Rectangle dr;
+
+		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
+		tkscenelayer(sc, r.max, env->colors[TkCfield], dr, ZP);
+		txt = entryutf(tke);
+		if(txt != nil){
+			dp = Pt(s.min.x - (tke->x0 - tke->xv0), s.min.y);
+			tkscenetext(sc, dp, txt, env->font,
+				env->colors[TkCforegnd]);
+			free(txt);
+		}
+		if((tke->flag&Ecursoron) && tke->icursor >= tke->v0
+		&& tke->icursor <= tke->v1)
+			tkscenecolour(sc, rectaddpt(Rect(
+				tke->xicursor - tke->x0, 0,
+				tke->xicursor - tke->x0 + Inswidth,
+				env->font->height), s.min),
+				env->colors[TkCforegnd]);
+		tkreliefnodes(sc, tk, ZP, TkCbackgnd, tk->relief);
+		if(tkhaskeyfocus(tk))
+			tksceneborder(sc, insetrect(r, tk->borderwidth), 0,
+				tk->highlightwidth,
+				env->colors[TkChighlightfgnd]);
+		tkscenelayerend(sc);
+		tkscenerender(sc, env->top->ctxt, tkimageof(tk));
+		tkscenefree(sc);
+		return nil;
+	}
+
+	i = tkitmp(env, r.max, tkstyleflat(tk) ? TkCfield : TkCbackgnd);
+	if(i == nil)
+		return nil;
+
 	tkentrytext(i, s, tk, env);
 
 	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
