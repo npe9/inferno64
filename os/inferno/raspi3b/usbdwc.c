@@ -317,8 +317,19 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 			 * one that goes deaf after its first few packets, with
 			 * its reader asleep in here for ever.
 			 */
-			if(i >= 5 && (hc->hcchar & Chen) == 0)
-				return Chhltd;
+			if(i >= 5 && (hc->hcchar & Chen) == 0){
+				/*
+				 * Whatever moved is half a frame at best, and
+				 * handing a short read up delivers a damaged
+				 * packet: the Pi received steadily and replied
+				 * to nothing, its IP layer dropping what
+				 * arrived.  Ask for a retry instead, which
+				 * re-arms the channel and keeps the data whole.
+				 */
+				dprint("usbdwc: ep%d.%d completion missed, retrying\n",
+					ep->dev->nb, ep->nb);
+				return Chhltd|Nak;
+			}
 			if(i > 0 && i % 60 == 0)
 				dprint("usbdwc: ep%d.%d still waiting for data, %d s\n",
 					ep->dev->nb, ep->nb, i);
