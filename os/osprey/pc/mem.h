@@ -45,6 +45,7 @@
 #define	VMAPSIZE	(0x10000000-VPTSIZE-KMAPSIZE)
 #define	UZERO		0			/* base of user address space */
 #define	UTZERO		(UZERO+BY2PG)		/* first address in user text */
+#define	UTENTRY		(UTZERO+0x20)		/* a flat image's entry: past the 32-byte 386 a.out header */
 #define	USTKTOP		(VMAP-BY2PG)		/* byte just beyond user stack */
 #define	USTKSIZE	(16*1024*1024)		/* size of user stack */
 

@@ -43,6 +43,7 @@
  *  Address spaces. User:
  */
 #define UTZERO		(0x0000000000200000ull)		/* first address in user text */
+#define UTENTRY		(UTZERO+0x28)		/* a flat image's entry: past the 40-byte amd64 a.out header */
 #define UADDRMASK	(0x00007fffffffffffull)		/* canonical address mask */
 #define USTKTOP		(0x00007ffffffff000ull)
 #define USTKSIZE	(16*MiB)			/* size of user stack */

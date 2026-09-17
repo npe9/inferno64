@@ -69,7 +69,7 @@ ospreyloadprog(void)
 	ulong npg, i, off, cnt;
 
 	npg = (sizeof(userprog) + BY2PG - 1) / BY2PG;
-	up->aoutentry = UTZERO+0x28;	/* flat, at the usual place; said rather than assumed */
+	up->aoutentry = UTENTRY;	/* flat, past the header, which is 40 bytes on amd64 and 32 on 386: said rather than assumed */
 	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE / BY2PG);
 	up->seg[TSEG] = newseg(SG_TEXT | SG_RONLY, UTZERO, npg);
 	up->seg[TSEG]->flushme = 1;
@@ -907,7 +907,7 @@ ospreyenteruservec(char **argv, int argc)
 	 * argv[1].
 	 */
 	touserv((char*)sp, (char*)(sp - 2*sizeof(uintptr)),
-		up->aoutentry != 0 ? up->aoutentry : (uintptr)(UTZERO+0x28));
+		up->aoutentry != 0 ? up->aoutentry : (uintptr)UTENTRY);
 }
 
 void

@@ -105,6 +105,7 @@ void
 init0(void)
 {
 	char buf[2*KNAMELEN], **sp;
+	int argc;
 
 	chandevinit();
 
@@ -121,11 +122,31 @@ init0(void)
 	}
 	kproc("alarm", alarmkproc, 0);
 
-	sp = (char**)(USTKTOP - sizeof(Tos) - 8 - sizeof(sp[0])*4);
-	sp[3] = sp[2] = nil;
-	strcpy(sp[1] = (char*)&sp[4], "boot");
-	sp[0] = nil;
-	touser(sp);
+	/*
+	 * The stack and argument vector the entry is given, as pc64's init0
+	 * lays them out (its comments say why at length): the entry, init9.c's
+	 * _main, takes the vector, not 9front's argv0 in the parameter slot.
+	 * The 9front shape that was here handed it a pointer to the bytes
+	 * "boot", which it read as the vector, and the first thing it did
+	 * faulted reading address 0x746f6f62 - "boot".
+	 *
+	 * The words are 4 bytes here, so "legacycontrol" wants four of them
+	 * where amd64 needs two, and the block is ten words, not eight.
+	 */
+	sp = (char**)(USTKTOP - sizeof(Tos) - 8 - sizeof(sp[0])*10);
+	strcpy((char*)&sp[4], "boot");
+	strcpy((char*)&sp[6], getconf("*legacycontrol") != nil ? "legacycontrol" : "legacy");
+	argc = 0;
+	sp[argc++] = (char*)&sp[4];	/* argv[0] */
+	if(getconf("*legacydemo") != nil || getconf("*legacycontrol") != nil)
+		sp[argc++] = (char*)&sp[6];
+	sp[argc] = nil;			/* and the vector ends */
+	sp[argc+1] = (char*)(USTKTOP - sizeof(Tos));	/* the word past it, which init9prog reads */
+
+	splhi();
+	fpukexit(nil);
+	/* two words below the vector, as pc64 and ospreyenteruservec leave them */
+	touserv((char*)sp, (char*)(sp - 2), up->aoutentry != 0 ? up->aoutentry : (uintptr)UTENTRY);
 }
 
 void

@@ -6309,6 +6309,91 @@ as interrupt returns: the first writes the argument vector where an 8c
 function reads its first argument, since on 386 there is no register it
 arrives in.
 .PP
+Then user mode.
+.CW xu386
+is xup64's configuration for 386, as u386 is upc64's, and
+.CW scripts/osprey-check-user386.py
+boots it the same way and applies xup64's user criteria: user mode
+entered, the library personality, the register check, the ring mapped
+with segattach, a file opened and read back over the ring from a
+user-mode server that selected on its arm, and a clean exit.  Ten pass,
+counting the 386 image.  Two of xup64's are not there: the graphics and
+input drivers want the frame buffer xup64's EFI firmware provides, and
+qemu's multiboot loader sets no video mode, so the program is told there
+is none and exits before them.  The register criterion was checked the
+other way as well: with
+.CW syscall()
+made to write BX on the way out, it failed, and the program said
+"register 1 came back as 0x5a5a".
+.PP
+Four things stood between the link and that, and each was invisible
+until the one before it was gone:
+.IP \(bu
+.CW "JMP name(SB)"
+is, to 8a, a jump through the word at
+.CW name ,
+not to it \- 8l emits
+.CW "FF 25" .
+The new
+.CW touserv
+jumped that way to its shared tail, and so, since the commit that made
+.CW l.s
+assemble, did
+.CW _syscallintr
+to
+.CW syscall :
+every system call a 386 program made would have gone to whatever the
+first four bytes of
+.CW syscall()
+said.  The micro boot makes none, which is why it passed.  The tail is a
+label now, reached as
+.CW _strayintr
+reaches
+.CW intrcommon ,
+and the syscall entry loads the address into AX and jumps through that.
+Both were read back out of the image with a disassembler.
+.IP \(bu
+A flat image was entered at
+.CW UTZERO+0x28 ,
+past amd64's 40-byte a.out header; 386's is 32 bytes, so the program
+began eight bytes into
+.CW _main .
+Each
+.CW mem.h
+names the entry now,
+.CW UTENTRY ,
+and the port code uses it.
+.IP \(bu
+The 386
+.CW init0
+was still 9front's, handing the entry a pointer to the bytes "boot" in
+the parameter slot; the entry takes a vector, read "boot" as one, and
+faulted at address 0x746f6f62, which is those four bytes.  It lays out
+the vector as pc64's does now and enters through
+.CW touserv .
+.IP \(bu
+The flat image is loaded read-only, which amd64's program never
+noticed, because it writes no global.  On 386 8c turns a uvlong
+assignment operator into a call to
+.CW _vasop ,
+which stores the value it discards in
+.CW .rathole ,
+a word of bss, and the first number the program printed faulted there.
+.CW putdec
+and
+.CW puthex
+write the division and the shift out in full.  The only other caller in
+the image is
+.CW lib9 's
+.CW _ifmt ,
+which this program does not reach; if it ever does, the fault will say
+so.
+.PP
+The "double sleep" the amd64 user check showed when the program made two
+more console writes shows up on 386 too, in the same place \- just
+after the server begins to select \- and there it does not stop
+anything.  It is the same race, seen from a second machine.
+.PP
 The library closure that said three more symbols were missing \-
 .CW _genrandomqlock ,
 .CW nsec ,

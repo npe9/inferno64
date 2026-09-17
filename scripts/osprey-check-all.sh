@@ -73,6 +73,7 @@ run riowin  scripts/osprey-check-riowin.py
 run micro   scripts/osprey-check-micro.py
 run micro386 scripts/osprey-check-micro386.py
 run user    scripts/osprey-check-user.py
+run user386 scripts/osprey-check-user386.py
 run net     scripts/osprey-check-net.py
 run wire    scripts/osprey-check-wire.py
 run pair    scripts/osprey-check-pair.py

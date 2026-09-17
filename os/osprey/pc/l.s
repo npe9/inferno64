@@ -1027,23 +1027,14 @@ TEXT touserv(SB), $0
 	MOVL	sp+4(FP), BX
 	MOVL	entry+8(FP), CX
 	MOVL	AX, 4(BX)			/* the entry's argument */
-	JMP	_touserret(SB)
 
 /*
- *	touserat(sp)
- *
- * enters at the loaded program's own entry, which the loader left in
- * ospreyuserentry (an ELF binary enters at e_entry), with the stack at
- * sp and nothing written into it: that program's start reads argc and
- * the vectors from the stack as the kernel laid them.
+ * The return itself: BX the user stack, CX the entry.  A label and not
+ * a TEXT, and reached from touserat by JMP to the label, as _strayintr
+ * reaches intrcommon: to 8a, JMP name(SB) is a jump through the word
+ * at name, not to it.
  */
-TEXT touserat(SB), $0
-	MOVL	sp+0(FP), BX
-	MOVL	ospreyuserentry(SB), CX
-	JMP	_touserret(SB)
-
-/* the return itself: BX the user stack, CX the entry */
-TEXT _touserret(SB), $0
+_touserret:
 	PUSHL	$(UDSEL)			/* old ss */
 	PUSHL	BX				/* old sp */
 	PUSHL	$0x200				/* old flags: interrupts on */
@@ -1062,6 +1053,19 @@ TEXT _touserret(SB), $0
 	XORL	DI, DI
 	XORL	BP, BP
 	IRETL
+
+/*
+ *	touserat(sp)
+ *
+ * enters at the loaded program's own entry, which the loader left in
+ * ospreyuserentry (an ELF binary enters at e_entry), with the stack at
+ * sp and nothing written into it: that program's start reads argc and
+ * the vectors from the stack as the kernel laid them.
+ */
+TEXT touserat(SB), $0
+	MOVL	sp+0(FP), BX
+	MOVL	ospreyuserentry(SB), CX
+	JMP	_touserret
 
 /*
  *	taskswitch(from, to)
@@ -1162,8 +1166,15 @@ TEXT _syscallintr(SB), $0
 	 * is a jump to syscall which returns to forkret, inside the
 	 * kernel's own code segment: CS is not being changed, and an
 	 * inter-segment jump is not what the sequence wants.
+	 *
+	 * And not JMP syscall(SB): to 8a that is a jump through the word
+	 * at syscall, not to it - 8l emits FF 25, and the first system
+	 * call went to whatever syscall's first four bytes said.  The
+	 * address is loaded instead, into AX, which PUSHAL has saved and
+	 * nothing below reads.
 	 */
-	JMP	syscall(SB)
+	MOVL	$syscall(SB), AX
+	JMP*	AX
 
 TEXT vectortable(SB), $0
 	CALL _strayintr(SB); BYTE $0x00		/* divide error */

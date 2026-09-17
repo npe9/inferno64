@@ -290,7 +290,7 @@ init0(void)
 	 * pointer before startboot looked.  ospreyenteruservec leaves the
 	 * same two words for the same reason (pc64/l.s says it at length).
 	 */
-	touserv((char*)sp, (char*)(sp - 2), up->aoutentry != 0 ? up->aoutentry : (uintptr)(UTZERO+0x28));
+	touserv((char*)sp, (char*)(sp - 2), up->aoutentry != 0 ? up->aoutentry : (uintptr)UTENTRY);
 }
 
 static void

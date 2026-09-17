@@ -1,0 +1,395 @@
+# xu386 - xup64 on 386: the cut microkernel that enters user mode and
+# runs userprog through its minimal system calls, built for the other
+# object type.  It is to xup64 what u386 is to upc64, and differs from
+# it in the same one line, pcibios and bios32 beside pcipc as 9front's
+# pc configuration has them.
+#
+# The device list is cut toward the paper's kernel.  Gone are the file
+# and name-space personality devices: root, pnp, pipe, proc, mnt, srv,
+# shr, dup, cap, kprof, fs, and the sd and audio stacks.  What is kept is
+# the message passing (osprey), address spaces (segment), the console
+# (cons, uart), the machine's interrupt and scheduling bring-up (arch and
+# the misc entries), rtc because the AP start path writes the warm-reset
+# vector through it, and env because the always-linked port code
+# once called into it.  swap and env are gone now: the microkernel does not page, and the
+# port section stubs the five swap symbols as their real no-swap no-ops.  The ether and ip stack is gone now that the
+# osprey device names an interface through the ospreyetherlookup hook
+# rather than calling etherlookup directly.  mnt, srv and shr leave a few
+# symbols behind that the port core references but the microkernel boot
+# never reaches; the port section below stubs them with a panic, so a
+# stub that ever fires is a loud bug and not silent breakage.
+dev
+	cons
+	arch
+	rtc
+	osprey
+
+	uart
+	segment
+
+misc
+	headless
+	pci		pcipc pcibios bios32
+# archgeneric first: the fallback the others inherit unset entries from.
+	archgeneric	i8259 i8253
+	archacpi	mp apic squidboy ec
+	archmp		mp apic squidboy
+	mp		apic squidboy hpet
+	mtrr
+
+	uarti8250
+	uartisa
+	uartpci		pci
+
+
+port
+	int cpuserver = 0;
+	int ospreymicro = 0;
+	int ospreyuser = 1;
+	int ospreyp9 = 0;
+	int ospreyp9pair = 0;
+	int ospreyp9buddy = 0;
+	int ospreyp9linux = 0;
+
+	extern void ospreyservicecaller(void);
+	extern void ospreyawaitreply(int);	/* declared, as the other configurations declare it: without this kencc assumes a function returning int and says so */
+	extern int ospreyselectcaller(uvlong, int);
+	extern uvlong ospreyslicesize(void);
+
+	/*
+	 * Stubs for the symbols the always-linked port core references
+	 * from the mnt, srv and shr devices this microkernel does not
+	 * carry.  The microkernel boot mounts nothing, reads no cached
+	 * file, and renames no host owner, so none of these is reached; a
+	 * panic marks it loudly if the assumption ever fails.
+	 */
+	Chan* mntattach(Chan *a, Chan *b, char *c, int d)
+	{ USED(a,b,c,d); panic("microkernel: mntattach"); return 0; }
+	Chan* mntauth(Chan *a, char *b)
+	{ USED(a,b); panic("microkernel: mntauth"); return 0; }
+	int mntversion(Chan *a, char *b, int c, int d)
+	{ USED(a,b,c,d); panic("microkernel: mntversion"); return 0; }
+	void muxclose(Mnt *a)
+	{ USED(a); panic("microkernel: muxclose"); }
+	void mntrahinit(Mntrah *a)
+	{ USED(a); panic("microkernel: mntrahinit"); }
+	long mntrahread(Mntrah *a, Chan *b, uchar *c, long d, vlong e)
+	{ USED(a,b,c,d,e); panic("microkernel: mntrahread"); return 0; }
+	void srvrenameuser(char *a, char *b)
+	{ USED(a,b); panic("microkernel: srvrenameuser"); }
+	void shrrenameuser(char *a, char *b)
+	{ USED(a,b); panic("microkernel: shrrenameuser"); }
+
+	/*
+	 * proctrace is the scheduler's tracing hook, a pointer devproc
+	 * set; with no devproc it is nil and tracing is simply off.
+	 * addbootfile is how devroot took the embedded boot files, which
+	 * a microkernel has no name space to mount, so it ignores them.
+	 */
+	void (*proctrace)(Proc*, int, vlong) = nil;
+	void addbootfile(char *a, uchar *b, ulong c)
+	{ USED(a,b,c); }
+
+	/*
+	 * The microkernel does not swap.  With no swap device no page is
+	 * ever paged out, so releasing or duplicating a swap reference
+	 * does nothing and there are no pages to reclaim; these are the
+	 * real no-swap behaviour, not a pretence.
+	 */
+	int needpages(void *a)		{ USED(a); return 0; }
+	void kickpager(void)		{ }
+	void putswap(Page *a)		{ USED(a); }
+	int swapcount(uintptr a)	{ USED(a); return 0; }
+	void dupswap(Page *a)		{ USED(a); }
+	Image *swapimage = nil;		/* nil: no page is ever the swap image */
+
+	/*
+	 * The microkernel has no environment.  An environment is a name
+	 * space thing, kept in a library operating system, not the kernel.
+	 * ksetenv, newegrp, closeegrp and envcpy are reached only from
+	 * init0, rfork and reboot, none of which this boot runs; they are
+	 * defensive no-ops so that a kernel process exiting with a nil
+	 * egrp, or any stray call, does nothing rather than fault.
+	 */
+	void ksetenv(char *a, char *b, int c)	{ USED(a,b,c); }
+	Egrp *newegrp(void)			{ return nil; }
+	void closeegrp(Egrp *a)			{ USED(a); }
+	void envcpy(Egrp *a, Egrp *b)		{ USED(a,b); }
+	char *getconfenv(void)			{ return nil; }
+
+	/*
+	 * The name space, the file syscalls and the process syscalls are
+	 * cut from this kernel: pgrp.c, sysfile.c and sysproc.c are not
+	 * linked.  A kernel process holds no file group, opens no file
+	 * descriptor, mounts nothing and takes no user system call, so the
+	 * name-space and syscall entry points below are never reached; a
+	 * panic marks it if the assumption ever fails.  The process,
+	 * rendezvous and resource-group lifecycle those files used to also
+	 * hold now lives in proc.c and is linked.
+	 */
+	void closefgrp(Fgrp *a)			{ USED(a); panic("microkernel: closefgrp"); }
+	Fgrp *dupfgrp(Fgrp *a)			{ USED(a); panic("microkernel: dupfgrp"); return nil; }
+	void forceclosefgrp(void)		{ panic("microkernel: forceclosefgrp"); }
+	int newfd(Chan *a, int b)		{ USED(a,b); panic("microkernel: newfd"); return -1; }
+	Chan *fdtochan(int a, int b, int c, int d){ USED(a,b,c,d); panic("microkernel: fdtochan"); return nil; }
+	int openmode(ulong a)			{ USED(a); panic("microkernel: openmode"); return 0; }
+	Mount *newmount(Chan *a, int b, char *c){ USED(a,b,c); panic("microkernel: newmount"); return nil; }
+	void mountfree(Mount *a)		{ USED(a); panic("microkernel: mountfree"); }
+	/*
+	 * A note with nowhere to go, and the machine stops.  Say which
+	 * process, where it was, and which note before it does: a bare
+	 * panic("donotify") names none of the three, and what that costs is
+	 * a reproduction cycle per guess - measured, on p9linux, at three
+	 * boots and a bisection to learn what one line would have said.
+	 */
+	int donotify(Ureg *a)
+	{
+		extern uintptr uregpc(void*);
+
+		panic("microkernel: donotify in %s (pid %lud) at user pc %#p: %s",
+			up->text != nil ? up->text : "a task with no name", up->pid, (void*)uregpc(a),
+			up->nnote > 0 ? up->note[up->nnote-1]->msg : "a note with no message");
+		return 0;
+	}
+
+	/*
+	 * The microkernel's system-call interface: two calls, no more.
+	 * A user program may write to the console and it may exit.  This is
+	 * not the Plan 9 personality - there is no open, no bind, no name
+	 * to resolve; those are a library operating system's, above the
+	 * kernel.  These two are the least a program needs to run and be
+	 * seen to run.  write ignores the descriptor and puts the bytes on
+	 * the console through the bare 8250 path; exit does not tear the
+	 * boot process down (that would panic) but idles the machine.
+	 */
+	typedef uintptr Xsyscall(va_list);
+
+	uintptr xpwrite(va_list list)
+	{
+		int fd;
+		char *buf;
+		long len;
+		vlong off;
+		char kb[256];
+
+		fd = va_arg(list, int);
+		buf = va_arg(list, char*);
+		len = va_arg(list, long);
+		off = va_arg(list, vlong);
+		USED(fd, off);
+		if(len <= 0)
+			return 0;
+		if(len > (long)sizeof kb)
+			len = sizeof kb;
+		validaddr((uintptr)buf, len, 0);
+		memmove(kb, buf, len);
+		ospreyconsolewrite(kb, len);	/* the console task, or the port */
+		return len;
+	}
+	uintptr xsleep(va_list list)
+	{
+		USED(list);
+		/*
+		 * The program's yield-and-service call.  It puts a request in
+		 * its ring, calls this, and the kernel carries the request and
+		 * leaves the reply in the ring.  Reusing SLEEP's number keeps
+		 * the interface to what a program's libc already has a stub
+		 * for; a yield that services the ring is what it means here.
+		 */
+		ospreyservicecaller();
+		/*
+		 * Yield after servicing, so a server task the request was
+		 * forwarded to gets the processor to answer it.  Without this
+		 * the program's retry loop is a tight spin that starves the
+		 * server and no reply ever lands.  The yield ends when the
+		 * reply lands, or after two milliseconds.
+		 */
+		ospreyawaitreply(2);
+		return 0;
+	}
+	uintptr xexits(va_list list)
+	{
+		USED(list);
+		print("osprey user: the program exited; the microkernel idles\n");
+		for(;;)
+			tsleep(&up->sleep, return0, nil, 1000);
+		return 0;
+	}
+	/*
+	 * segattach maps a named segment into the program's address space.
+	 * A library-OS program maps its container's ring this way and then
+	 * works it in memory; this is the address-space service, one of the
+	 * microkernel's four, offered as a call.  The name is validated and
+	 * copied; validnamedup is the name space's and this kernel has none.
+	 */
+	uintptr xsegattach(va_list list)
+	{
+		int attr, i;
+		char *name;
+		uintptr va;
+		ulong len;
+		char kn[64];
+
+		attr = va_arg(list, int);
+		name = va_arg(list, char*);
+		va = va_arg(list, uintptr);
+		len = va_arg(list, ulong);
+		validaddr((uintptr)name, 1, 0);
+		for(i = 0; i < (int)sizeof kn - 1 && name[i] != 0; i++)
+			kn[i] = name[i];
+		kn[i] = 0;
+		/*
+		 * "code": not a named segment of the container's but a region
+		 * the caller may write a program into and then run - what a
+		 * library operating system needs when it loads a program
+		 * itself.  The address-space service keeps its one call.
+		 */
+		if(strcmp(kn, "code") == 0)
+			return ospreysegcode(va, len);
+		if(len == 0)
+			len = ospreyslicesize();	/* the whole slice */
+		{
+			uintptr r;
+			if(waserror()){
+				print("osprey user: segattach(%s) failed: %s\n", kn, up->errstr);
+				return (uintptr)-1;
+			}
+			r = segattach(attr, kn, va, len);
+			poperror();
+			return r;
+		}
+	}
+
+	/*
+	 * select: the talk's central call, offered to a user task.  The task
+	 * names arms in its own data area - a get on a ring, a down on an
+	 * interrupt's semaphore - and this returns which one was ready,
+	 * having performed it.  It reuses the DUP number the way SLEEP is
+	 * reused for service: the program's libc already has a dup stub, and
+	 * the minimal interface spends spare numbers rather than inventing an
+	 * ABI.  The two words a dup carries are the arm count and the offset
+	 * of the arms in the caller's data area.
+	 */
+	uintptr xselect(va_list list)
+	{
+		int narms, armoff;
+
+		narms = va_arg(list, int);
+		armoff = va_arg(list, int);
+		return (uintptr)ospreyselectcaller((uvlong)(ulong)armoff, narms);
+	}
+
+	Xsyscall *systab[] = {
+		[5]	xselect,	/* DUP number reused: select over arms */
+		[8]	xexits,		/* EXITS */
+		[17]	xsleep,		/* SLEEP: yield and service the ring */
+		[30]	xsegattach,	/* SEGATTACH */
+		[51]	xpwrite,	/* PWRITE */
+	};
+	int nsyscall = nelem(systab);
+
+	int dosyscall(ulong scallnr, Sargs *args, uintptr *retp)
+	{
+		int s;
+
+		up->insyscall = 1;
+		s = spllo();
+		if(!waserror()){
+			validaddr((uintptr)args, sizeof(Sargs), 0);
+			up->s = *args;
+			if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)
+				*retp = systab[scallnr]((va_list)up->s.args);
+			else {
+				print("osprey user: unimplemented syscall %uld\n", scallnr);
+				*retp = (uintptr)-1;
+			}
+			poperror();
+		} else
+			*retp = (uintptr)-1;
+		splx(s);
+		up->insyscall = 0;
+		return 0;
+	}
+
+	/*
+	 * chan.c and cache.c, the name resolution and the file cache, are
+	 * cut too.  Most of chan.c is name space and is stubbed below as
+	 * panics: this kernel resolves no name, clones or closes no
+	 * channel, walks no path.  The kernel infrastructure chan.c also
+	 * held that is not name space - the reference counting, the string
+	 * helpers, the device bring-up main() calls at boot - moved to
+	 * kerncore.c and is linked into every configuration.  Only
+	 * chandevinit is reproduced here, to drop its one name-space line:
+	 * the kproc that drains the channel-close queue, which a kernel
+	 * with no channels never fills.
+	 */
+	void chandevinit(void)
+	{
+		Dev **d;
+
+		/*
+		 * The one line dropped from the shared chandevinit in
+		 * kerncore.c: no kproc to drain the channel-close queue,
+		 * which a kernel with no channels never fills.  Iterated by
+		 * pointer, not devtab[i], so no line begins with "devtab":
+		 * see scripts/check-config-portlines.sh.
+		 */
+		for(d = devtab; *d != nil; d++)
+			(*d)->init();
+	}
+
+	/*
+	 * The name space proper: unreachable in a kernel that resolves no
+	 * name, so each is a loud panic.
+	 */
+	Chan *namec(char *a, int b, int c, ulong d)
+	{ USED(a,b,c,d); panic("microkernel: namec"); return nil; }
+	Chan *cclone(Chan *a)		{ USED(a); panic("microkernel: cclone"); return nil; }
+	void cclose(Chan *a)		{ USED(a); panic("microkernel: cclose"); }
+	void ccloseq(Chan *a)		{ USED(a); panic("microkernel: ccloseq"); }
+	char *chanpath(Chan *a)		{ USED(a); panic("microkernel: chanpath"); return nil; }
+	int eqchantdqid(Chan *a, int b, int c, Qid d, int e)
+	{ USED(a,b,c,d,e); panic("microkernel: eqchantdqid"); return 0; }
+	void isdir(Chan *a)		{ USED(a); panic("microkernel: isdir"); }
+	Chan *newchan(void)		{ panic("microkernel: newchan"); return nil; }
+	Path *newpath(char *a)		{ USED(a); panic("microkernel: newpath"); return nil; }
+	void pathclose(Path *a)		{ USED(a); panic("microkernel: pathclose"); }
+	void putmhead(Mhead *a)		{ USED(a); panic("microkernel: putmhead"); }
+	char *validnamedup(char *a, int b){ USED(a,b); panic("microkernel: validnamedup"); return nil; }
+
+	/*
+	 * werrstr formatted an error into a user process's error string,
+	 * which a kernel process does not have, so it does nothing.  beswal
+	 * (the reboot byte swap) and return0 (the sleep predicate) are not
+	 * here: they are real in kerncore.c, linked into every config.
+	 */
+	void werrstr(char *a, ...)		{ USED(a); }
+
+	/*
+	 * auth.c and rdb.c are cut: Plan 9 authentication and the remote
+	 * kernel debugger.  iseve asked whether the caller is the host
+	 * owner; a microkernel has one trust domain, managed by the library
+	 * operating system above it, so everyone is, and it returns true.
+	 * The host-owner and host-domain writes are console file handlers
+	 * this kernel has no name space to reach, so they panic.
+	 */
+	int iseve(void)				{ return 1; }
+	long userwrite(char *a, int n)		{ USED(a,n); panic("microkernel: userwrite"); return 0; }
+	long hostownerwrite(char *a, int n)	{ USED(a,n); panic("microkernel: hostownerwrite"); return 0; }
+	long hostdomainwrite(char *a, int n)	{ USED(a,n); panic("microkernel: hostdomainwrite"); return 0; }
+
+	/*
+	 * The host owner and host domain that auth.c defined, and the
+	 * debugger entry that rdb.c did.  eve is nil until userinit sets it
+	 * with kstrdup, exactly as auth.c left it: kstrdup frees the old
+	 * value, so eve must never point at a string literal.  rdb was the
+	 * console's ^T debugger, which devcons still names when it arms
+	 * consdebug, so it is a quiet no-op rather than a debugger this
+	 * kernel does not carry.
+	 */
+	char *eve;
+	char hostdomain[48];	/* DOMLEN in authsrv.h, not included here */
+	void rdb(void)				{ }
+
+bootdir
+	boot

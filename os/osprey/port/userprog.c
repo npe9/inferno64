@@ -108,7 +108,16 @@ enum { Nsyscall = 100 };
 extern long userregtorture(long n, uvlong *badp);
 extern long userregcount(void);		/* how many it compares */
 
-/* the number, in decimal, into the end of buf; answers where it starts */
+/*
+ * The number, in decimal, into the end of buf; answers where it starts.
+ *
+ * v = v / 10 and not v /= 10: on 386 8c makes a uvlong assignment
+ * operator a call to _vasop, which stores the result it discards in
+ * .rathole, a word of bss - and this program's image is loaded
+ * read-only, so the first number printed faulted writing it.  Written
+ * out, the division goes through a temporary on the stack.  On amd64 the
+ * two are the same instructions.
+ */
 static char*
 putdec(char *buf, int nbuf, uvlong v)
 {
@@ -118,7 +127,7 @@ putdec(char *buf, int nbuf, uvlong v)
 	*p = 0;
 	do {
 		*--p = '0' + (int)(v % 10);
-		v /= 10;
+		v = v / 10;
 	} while(v != 0 && p > buf);
 	return p;
 }
@@ -134,7 +143,7 @@ puthex(char *buf, int nbuf, uvlong v)
 	*p = 0;
 	do {
 		*--p = hex[v & 0xf];
-		v >>= 4;
+		v = v >> 4;	/* as putdec, for the same reason */
 	} while(v != 0 && p > buf);
 	return p;
 }
