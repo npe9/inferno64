@@ -264,6 +264,8 @@ struct Pctx
 	int	idx;		/* its slot in dis.c's pctxs[]; see enterquantum() */
 	int	inchan;		/* inside a channel region; see chanlock() */
 	Progq*	qpool;		/* spare queue cells, so cqadd() cannot error */
+	int	gcheld;		/* gclock()s this context holds; see gcunwind() */
+	int	gcdepth;	/* its destroy() recursion depth; see gclock() */
 	int	nchpend;	/* channels whose free chanlock() deferred */
 	void*	chpend[64];	/* 64 = destroy()'s own gcdepth recursion bound */
 };
@@ -451,8 +453,35 @@ struct Handler
  * would make another believe it was 64 destroys deep and stop freeing.
  * See doc/dis-parallel-plan.ms.
  */
-#define gclock()	do{ gchalt++; if(++gcdepth > gcdepthmax) gcdepthmax = gcdepth; }while(0)
-#define gcunlock()	do{ gchalt--; gcdepth--; }while(0)
+/*
+ * gchalt is a global, so a longjmp out of a gclock() region leaks it and
+ * gcruns() is false for the rest of the boot -- the collector simply
+ * stops.  Measured: boots that leaked sat at a few thousand collections
+ * where the others ran hundreds of thousands, with gchalt still set ten
+ * seconds later.  So each context counts what it holds, and the
+ * interpreter's recovery path calls gcunwind() to give back exactly
+ * that, the same way it calls vmrelease() for the VM lock.
+ */
+/*
+ * gchalt is atomic because it is a global that every executor writes.
+ * A plain gchalt++/-- loses updates exactly as a plain ->ref++ does,
+ * and the loss is not benign in either direction: gcruns() is
+ * "gchalt == 0", so a lost decrement leaves the collector off for the
+ * rest of the boot and a lost increment leaves it running through a
+ * region that asked it not to.  Measured before this was atomic: boots
+ * sitting at a few thousand collections against hundreds of thousands,
+ * with gchalt reading 1 -- and in one boot -1 -- while no context held
+ * a single gclock.
+ *
+ * gcdepth is the opposite: the comment above says it is one thread's C
+ * stack depth, so it belongs to the context, not to the heap.  It was a
+ * global too, which made every executor's recursion add to every
+ * other's.
+ */
+#define gclock()	do{ if(gcatomic) AINC(&gchalt); else gchalt++; if(curP != nil){ curP->gcheld++; if(++curP->gcdepth > gcdepthmax) gcdepthmax = curP->gcdepth; } else if(++gcdepth > gcdepthmax) gcdepthmax = gcdepth; }while(0)
+#define gcunlock()	do{ if(gcatomic) ADEC(&gchalt); else gchalt--; if(curP != nil){ curP->gcheld--; curP->gcdepth--; } else gcdepth--; }while(0)
+#define GCDEPTH		(curP != nil ? curP->gcdepth : gcdepth)
+#define gcunwind()	do{ while(gcunwindon && curP != nil && curP->gcheld > 0) gcunlock(); }while(0)
 #define gcruns()	(gchalt == 0)
 
 /* Atomic refcount inc/dec: the scheduler genuinely runs multiple native
@@ -621,6 +650,9 @@ extern	void	(*dec[])(void);
 extern	Module*	modules;
 extern	int	mutator;
 extern	int	nprop;
+extern	int	gcatomic;	/* *gcatomic=0 for the plain ++/--; temporary */
+extern	int	gcunwindon;	/* *gcunwind=0 turns gcunwind() off; temporary */
+extern	char*	gclocksite;	/* INSTRUMENTATION - temporary */
 extern	int	gchalt;
 extern	int	gcdepth;
 extern	int	gcdepthmax;

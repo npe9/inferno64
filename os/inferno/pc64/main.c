@@ -259,6 +259,14 @@ main(void)
 		extern int teardrop;
 		char *p;
 
+		if((p = getconf("*gcatomic")) != nil){
+			extern int gcatomic;
+			gcatomic = strtol(p, nil, 0);
+		}
+		if((p = getconf("*gcunwind")) != nil){
+			extern int gcunwindon;
+			gcunwindon = strtol(p, nil, 0);
+		}
 		if((p = getconf("*idlesingle")) != nil){
 			extern int idlesingle;
 			idlesingle = strtol(p, nil, 0);

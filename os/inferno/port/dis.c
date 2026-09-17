@@ -701,7 +701,7 @@ fdcloseproc(void *a)
 		up->pctx = claimctx();
 	for(;;){
 		while(waserror())
-			;
+			gcunwind();	/* a close can destroy under gclock() */
 		sleep(&fdcloser, fdclosepending, nil);
 		poperror();
 		lock(&fdclosel);
@@ -1591,11 +1591,13 @@ killprog(Prog *p, char *cause)
 
 	p->state = Pexiting;
 	entertear(p);
+	gclocksite = "killprog";
 	gclock();
 	destroystack(&p->reg);
 	leavetear();
 	delprog(p, msg);
 	gcunlock();
+	gclocksite = nil;
 
 	return 1;
 }
@@ -2030,6 +2032,7 @@ ulong shortran;		/* progs the collector saw short that ran again */
 ulong regmoved;		/* saved registers changed between quanta */
 ulong regmovedsrc[8], spregress, regmovedtold;
 ulong unsynced, unsyncedtold, unsyncedran, unsyncedrantold;
+ulong gcleaks, gcleaktold;
 /*
  * *syncfix=0 turns the sync above off, so one kernel measures both
  * arms of it in one batch.  Temporary, like *tearlock and *chanlock.
@@ -2447,11 +2450,13 @@ progexit(void)
 		return;
 	}
 	entertear(r);
+	gclocksite = "progexit";
 	gclock();
 	destroystack(&R);
 	leavetear();
 	delprog(r, msg);
 	gcunlock();
+	gclocksite = nil;
 }
 
 void
@@ -2508,6 +2513,24 @@ vmachine(void*)
 		 * one: exception.c has already synced p->reg from R on the
 		 * path that carries on executing.
 		 */
+		gcunwind();	/* see gclock() in interp.h */
+		if(gchalt != 0){
+			/*
+			 * A longjmp out of a gclock() region leaks the count,
+			 * and gchalt is a global: the collector is then off
+			 * for the rest of the boot.  gcruns() is gchalt == 0,
+			 * and boots that sit at a few thousand collections
+			 * instead of hundreds of thousands are boots where
+			 * this happened.
+			 */
+			if(gcleaktold++ < 6)
+				print("vmachine: gchalt %d gcdepth %d at the"
+					" handler, site %s, err \"%s\"\n",
+					gchalt, GCDEPTH,
+					gclocksite != nil ? gclocksite : "none",
+					up->env->errstr);
+			gcleaks++;
+		}
 		{	/* MULTICORE INSTRUMENTATION - temporary */
 			Prog *was;
 
@@ -3267,11 +3290,14 @@ stalldump(void)
 		gcstw, gcstwproc != nil ? gcstwproc->pid : -1, npctx, gcphase);
 	{
 		extern ulong gcnruns;
+		extern int gchalt, gcdepth;
 
 		print("stall: gcnruns %lud stwwaits %d gcidlepass %llud"
-			" gcpartial %llud gaveup %d idlegaveup %d idlebusy %d\n",
+			" gcpartial %llud gaveup %d idlegaveup %d idlebusy %d,"
+			" gchalt %d gcdepth %d, leaks seen %lud, site %s\n",
 			gcnruns, stwwaits, gcidlepass, gcpartial, stwgaveup,
-			gcidlegaveup, gcidlebusy);
+			gcidlegaveup, gcidlebusy, gchalt, GCDEPTH, gcleaks,
+			gclocksite != nil ? gclocksite : "none");
 	}
 	{
 		extern ulong regstale, handlerbroke, regstalesrc[8];
@@ -3319,9 +3345,21 @@ stalldump(void)
 			vmspawnsby[3], vmspawnsby[4]);
 	}
 	for(i = 0; i < npctx; i++)
-		print("stall: ctx %d owner %d inxec %d inchan %d nlocal %d\n",
-			i, pctxs[i]->owner != nil ? ((Proc*)pctxs[i]->owner)->pid : -1,
-			pctxs[i]->inxec, pctxs[i]->inchan, pctxs[i]->nlocal);
+		if(pctxs[i]->gcheld != 0 || pctxs[i]->inxec || pctxs[i]->nlocal)
+			print("stall: ctx %d owner %d (%s) inxec %d inchan %d"
+				" nlocal %d gcheld %d\n",
+				i, pctxs[i]->owner != nil ? ((Proc*)pctxs[i]->owner)->pid : -1,
+				pctxs[i]->owner != nil ? ((Proc*)pctxs[i]->owner)->text : "?",
+				pctxs[i]->inxec, pctxs[i]->inchan,
+				pctxs[i]->nlocal, pctxs[i]->gcheld);
+	{
+		int held = 0;
+
+		for(i = 0; i < npctx; i++)
+			held += pctxs[i]->gcheld;
+		print("stall: gchalt %d, held by contexts %d, defpctx %d\n",
+			gchalt, held, defpctx->gcheld);
+	}
 	for(i = 0; i < conf.nproc; i++){
 		q = proctab(i);
 		if(q->state == Dead)

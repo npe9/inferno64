@@ -65,6 +65,9 @@ int	(*chandefer)(void*);	/* set by the kernel; see chanlock() in dis.c */
 void	(*atsafepoint)(void);	/* likewise; see stoptheworld() in dis.c */
 void	(*gcwalkdelay)(void);	/* INSTRUMENTATION - temporary; see rootset() */
 int	(*progchainok)(Prog*);		/* likewise; see chanbroke() */
+char*	gclocksite;			/* which gclock() region, if any */
+int	gcunwindon = 1;			/* see gcunwind() in interp.h */
+int	gcatomic = 1;			/* see gclock() in interp.h */
 ulong	chanbroke;			/* deliveries that broke a chain */
 
 /*
@@ -607,7 +610,7 @@ destroy(void *v)
 			 * unreachable and sweep it.
 			 */
 			return;
-		if(gcdepth > 64){
+		if(GCDEPTH > 64){
 			/*
 			 * Too deep to keep recursing; protect the C stack and
 			 * leave this object for the collector, which will find
@@ -649,9 +652,11 @@ destroy(void *v)
 		heapmonitor(1, h, 0);
 	t = h->t;
 	if(t != nil) {
+		gclocksite = "destroy";	/* INSTRUMENTATION - temporary */
 		gclock();
 		t->free(h, 0);
 		gcunlock();
+		gclocksite = nil;
 		freetype(t);
 	}
 	/*

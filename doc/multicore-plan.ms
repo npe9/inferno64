@@ -6475,3 +6475,90 @@ parked", which is the change working.  Split: four boots give
 9123, so about a hundred are the real thing and nine thousand are the
 new path.  Sixth counter this session to need its name checked against
 what it counts.
+.NH 1
+The collector was switching itself off
+.PP
+The section above left an open question: boots doing identical work \(em
+the shell loop runs exactly 300 times in every one \(em ran either a few
+thousand collections or nearly a million, with nothing to separate them.
+That is now answered, and the answer is one word: atomics.
+.NH 2
+gchalt reads 1 when nobody holds it
+.PP
+.CW gcruns() ,
+which is what
+.CW execatidle() 's
+loop tests, is
+.CW "gchalt == 0" .
+So a boot whose
+.CW gchalt
+is not zero runs no idle collections at all for the rest of its life.
+Printing it says exactly that: the low boots read
+.CW "gchalt 1"
+at 60 seconds and
+.CW "gchalt 1"
+again at 70, and the high boots read 0.
+.PP
+The first guess was a leaked
+.CW gclock() :
+the two teardown sites and the two
+.CW t->free()
+sites all sit between a
+.CW gclock()
+and a
+.CW gcunlock()
+that a longjmp can skip.  A per-context count of held locks, unwound at
+the interpreter's recovery point the way
+.CW vmrelease()
+unwinds the VM lock, made it better and did not fix it.  Then the same
+count said what was actually wrong:
+.QP
+.CW "stall: gchalt 1, held by contexts 0, defpctx 0"
+.PP
+and in another boot,
+.CW "gchalt -1" .
+Nobody holds it, and it is not zero \(em in both directions.
+.CW gchalt
+is a plain global that every executor increments and decrements, so
+.CW gchalt++
+loses updates exactly as a plain
+.CW ->ref++
+does.  The header's own comment on
+.CW AINC
+says so, about refcounts, a few lines above the macro this code did not
+use.
+.PP
+Neither direction is benign.  A lost decrement leaves the collector off
+for the rest of the boot; a lost increment lets it run through a region
+that asked it not to.
+.NH 2
+Measured
+.PP
+.CW gchalt
+now goes through
+.CW AINC /\c
+.CW ADEC ,
+and
+.CW gcdepth
+\(em which the comment beside it says is "this context's destroy
+recursion depth", a property of one thread's C stack \(em moves into the
+context, where it was already documented to belong.
+.CW *gcatomic=0
+restores the plain counter so one kernel measures both.  Ten boots per
+arm, interleaved:
+.TS
+center;
+l r r r.
+	boots with the collector off	collections	chantest lines
+-smp 4, plain	5 of 10	3163 to 827100	259 of 270
+-smp 4, atomic	0 of 10	708514 to 833761	257 of 270
+-smp 2, plain	4 of 10	707 to 707000	266 of 270
+-smp 2, atomic	0 of 10	531135 to 581856	266 of 270
+.TE
+.PP
+Nine boots of twenty ran with the collector switched off, and none do
+now.  The collection counts stop being bimodal and sit in a band.
+chantest does the same amount of work either way, which is the thing to
+notice: a boot with no collector looks fine from outside until it runs
+out of memory, and every batch in this document that counted panics was
+counting some boots whose collector had stopped in the first seconds.
