@@ -56,20 +56,54 @@ then two
 .CW Adr
 words), against a variable-length packed encoding in the file.
 .PP
-Measured across the 47 files the
+Measured across the 45 Dis modules the
 .CW raspi3b
 configuration bundles, by reading
 .CW isize
 out of each Dis header and multiplying:
 .DS
-.CW "decoded Inst arrays   1448568 bytes"
-.CW "packed .dis files      475093 bytes"
-.CW "ratio                    3.05"
+.CW "decoded Inst arrays   1449912 bytes"
+.CW "packed .dis files      467362 bytes"
+.CW "ratio                    3.10"
 .DE
 The largest single module is
 .CW /dis/disk/kfs64.dis :
 65595 bytes on disk, 8820 instructions, 211680 bytes of
 .CW Inst .
+.PP
+An earlier version of this document said 47 files, 475093 packed bytes
+and a ratio of 3.05.  That was wrong, and the way it was wrong is worth
+recording because it is a trap for anyone repeating the measurement.
+The board's
+.CW root
+section bundles 47 regular files, but two of them \-
+.CW /dis/init
+and
+.CW /dis/shutdown
+\- are
+.CW #!/dis/sh
+shell scripts, not Dis modules.  The script reading the headers parsed
+them anyway: the first byte of
+.CW #
+is 35, which
+.CW operand()
+happily accepts, and the
+.CW isize
+it then read out of ASCII text came back sign-extended and negative, so
+the two files subtracted from the decoded total while adding their 7731
+bytes to the packed one \- pushing the ratio down in both directions at
+once.  The script now checks for
+.CW XMAGIC
+or
+.CW SMAGIC
+and skips anything else, which is what it should have done first.  The
+figures above are from that version over the 45 files that really are
+modules.
+.PP
+Nothing measured on the booted kernel is affected: those numbers come
+from
+.CW #c/memory ,
+not from this script.
 .NH 1
 The read path: done, and verified
 .PP
@@ -308,7 +342,7 @@ the kernel image at build time, and have
 return a
 .CW Module
 pointing at const data with only the per-instance data segment allocated.
-That is where a loaded module's memory actually is: 3.05 times the packed
+That is where a loaded module's memory actually is: 3.10 times the packed
 file, permanent rather than transient.
 .PP
 It should not be done on this board, and the reason is arithmetic rather
@@ -319,15 +353,15 @@ byte-for-byte into RAM at
 the SD card is not addressable, and there is no memory-mapped NOR flash
 on a Pi 3B.  So the kernel image
 .I is
-RAM here.  Pre-decoding would cost image bytes for all 47 bundled modules
+RAM here.  Pre-decoding would cost image bytes for all 45 bundled modules
 whether or not they are ever loaded, while saving heap only for the ones
 that are \- and a boot to a shell loads ten.  It is a net loss on this
-board, and the 3.05 ratio is what makes it one rather than a wash.
+board, and the 3.10 ratio is what makes it one rather than a wash.
 .PP
 That is a finding, not a gap.  The work pays where the image is not RAM:
 a board whose filesystem lives in memory-mapped ROM or NOR flash, where
 the pre-decoded structures sit in flash and never occupy RAM at all.
-There the same change removes the whole 3.05x from the heap and costs
+There the same change removes the whole 3.10x from the heap and costs
 nothing that was RAM to begin with.  The
 .CW xip
 method added here is the interface it would be built on, and

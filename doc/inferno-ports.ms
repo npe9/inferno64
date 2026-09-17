@@ -25190,3 +25190,84 @@ reports print to the console, and on a board whose only console is the
 serial line they interleave with the input echo and corrupt typed
 commands mid-word.  Two apparent driver hangs here were that.  Drive the
 board from its init program, or gate the reports.
+.NH 1
+Execute in place: the xip device method
+.PP
+Done on the
+.CW xip
+branch, off
+.CW raspi3b-port ,
+and recorded in full in
+.CW doc/xip.ms ;
+this is the pointer, not the account.
+.PP
+.CW Dev
+(in
+.CW os/inferno/port/portdat.h )
+has an optional
+.CW xip
+method, documented in
+.IR dev (10.2): it returns a pointer to the whole of an open file's
+contents in directly addressable memory, or nil to decline, and the
+memory it returns must outlive the channel because
+.CW readmod()
+closes the file and keeps reading through the pointer.  nil is the
+normal case and the slot is left unset by every driver that would have
+to read, map or copy anything to answer, so the mechanism is a device
+table entry and a runtime test rather than a configuration switch.
+.CW os/inferno/port/devroot.c
+is the one driver that implements it \(em every file in the built-in
+root is one contiguous run of bytes in the kernel image \(em and
+.CW kxip()
+in
+.CW os/inferno/port/sysfile.c
+reaches it through a descriptor for
+.CW libinterp/readmod.c ,
+which then parses a Dis module where it lies instead of copying it into
+the heap first.  Emu's
+.CW kxip()
+declines: its files are the host's.
+.PP
+Verified live on two boards, which matters because the change touches
+code every board links.
+.CW raspi3b
+under
+.CW "qemu-system-aarch64 -M raspi3b" :
+ten fewer main-pool allocations and frees at a shell, one per module
+loaded from the built-in root, and 11392 bytes less peak once the
+largest bundled module is forced to load.
+.CW virt
+(riscv64) under
+.CW "qemu-system-riscv64 -M virt" ,
+chosen because it goes through
+.CW jc / jl
+where this document already catalogues a run of "long is 32 bits"
+wide-constant bugs and a new
+.CW "u32 *"
+out-parameter is that shape: it links and reaches an interactive shell
+with its own
+.CW DIS-STRESS-OK
+passing.  The nil-\c
+.CW xip
+fallback was proved separately, by loading a module that is
+.I not
+in the board's
+.CW root
+section from a FAT card through
+.CW dossrv ,
+which reaches
+.CW devmnt
+and takes the copying path.
+.PP
+What is deliberately not done, with the arithmetic in
+.CW doc/xip.ms :
+pre-decoding the
+.CW Inst
+array into the kernel image.  It is 3.10 times the packed file across
+the 45 modules
+.CW raspi3b
+bundles, but on a board whose firmware loads the whole image into RAM it
+would cost image bytes for every bundled module while saving heap only
+for the ones actually loaded.  A net loss here; it pays on a board whose
+filesystem is in memory-mapped ROM or NOR flash, which is also what a
+real XIP filesystem device would need and what no board here has.
