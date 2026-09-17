@@ -1696,7 +1696,7 @@ _
 8;done;Styx costs about what a framed RPC costs
 9;part;local profile done; the comparison needs an instance
 10;done;66 MiB to boot, 68 to work, ~78 KiB a service
-11;part;both images boot on rented instances; a t2a has only gVNIC
+11;done;two rented instances, one namespace, one binary on both
 12;done;supervise(1), out of /prog/<pid>/wait
 13;done;metricfs(4), read across a mount
 14;done;check-pc64-redeploy.sh, with a no-server control
@@ -2027,3 +2027,107 @@ A t2a-standard-2 is what item 11 needs anyway, so this is recorded
 rather than worked around: the driver is not at fault for it as far as
 the bisect can see, and the next step is instrumenting the context
 switch into a new kernel process on that machine.
+.NH 2
+Item 11 on two rented machines
+.PP
+.CW item11-amd
+is an
+.CW e2-small
+running the amd64 kernel on virtio;
+.CW item11-arm
+is a
+.CW t2a-standard-2
+running the arm64 kernel on gVNIC.  Both take their own DHCP lease.  The
+amd64 one serves its
+.CW /dis
+over a real network:
+.IP
+.EX
+; styxlisten -A 'tcp!*!17010' export /dis
+.EE
+.PP
+and the arm64 one mounts it and runs a program out of it.  The program
+is
+.CW ip/ping ,
+which is in the amd64 image and
+.I not
+in the arm64 one \(em the control is run first and says so:
+.IP
+.EX
+; ls /dis/ip
+ls: /dis/ip: file does not exist
+; mount -A tcp!10.128.0.58!17010 /mnt
+; ls -l /mnt/ip/ping.dis
+\-\-r--r--r-- M 2 inferno inferno 4889 Sep 17 16:00 /mnt/ip/ping.dis
+; bind -a /mnt /dis
+; ip/ping -n 3 10.128.0.58
+sending 3 64 byte messages 1000 ms apart
+0: rtt 0 \(mgs, avg rtt 0 \(mgs, ttl = 255
+1: rtt 0 \(mgs, avg rtt 0 \(mgs, ttl = 255
+2: rtt 0 \(mgs, avg rtt 0 \(mgs, ttl = 255
+; 9660srv
+usage: 9660srv [-rabc] [-9JR] [-s] cd_device dir
+.EE
+.PP
+An amd64 Dis binary, unmodified, doing real work on an arm64 machine:
+it pings the machine it came from.  The same file runs natively on the
+amd64 instance, and
+.CW 9660srv ,
+also absent from the arm64 image, prints its own usage from the same
+mount.  Nothing was recompiled and nothing was re-qualified.
+.PP
+.B "Where this is weaker than the local check, and why."
+.CW scripts/check-crossarch.sh
+compiles a program that is in
+.I neither
+kernel image and has both guests mount it from a third place.  On the
+rented pair the program is in one of the two images, because putting a
+freshly compiled file on an instance wants either a storage fetch \(em
+which needs TLS, and TLS does not work on these instances, see below \(em
+or a server of my own inside the network, which was not built.  So the
+local check keeps the stricter claim about the bytes and the rented pair
+adds what only real machines can: two of them, two processor families,
+a real network between them, and the cloud's own cost for the mount.
+.PP
+.B "Three things found doing it."
+TLS fails on these instances while plain HTTP works:
+.CW gcs
+dies with
+.CW "tls: record write: wrote -1/6: Hangup" ,
+the first write of the handshake, with or without
+.CW -A ,
+while
+.CW hget
+over
+.CW http
+to the same host returns a 404 from Google's own server \(em so DNS,
+routing and TCP are all fine and this is TLS alone.  On the arm64
+instance the same
+.CW gcs
+run took the kernel down in
+.CW movp
+with a data abort at address
+.CW 0xffffffffffffffff ,
+which is
+.CW H ,
+the Dis nil \(em the shape
+.CW libinterp/xec.c 's
+own
+.CW movp
+probes and
+.CW doc/inferno-ports.ms
+have been chasing on arm64 all along.  And the serial console drops
+input sent as a burst: a port typed as
+.CW 17010
+arrived as
+.CW 17 ,
+so
+.CW scripts/gce-console.py
+types a character at a time.
+.PP
+.B "One number that is not a measurement."
+.CW ping
+reports
+.CW "rtt 0"
+on both kernels, in both directions.  That is its own timing on a
+native kernel, not the network.

@@ -76,9 +76,17 @@ while time.time() < deadline:
     if pump(5, prompt):
         ok = True
         break
+def typeline(line):
+    # A character at a time: the guest's console loses input sent as
+    # one burst -- a port number typed as "17010" arrived as "17" --
+    # and nothing in the path offers flow control.
+    for ch in line.encode() + b"\r":
+        os.write(fd, bytes([ch]))
+        time.sleep(0.03)
+
 if ok:
     for c in cmds:
-        os.write(fd, c.encode() + b"\r")
+        typeline(c)
         pump(quiet)
 os.kill(pid, signal.SIGTERM)
 sys.exit(0 if ok else 1)
