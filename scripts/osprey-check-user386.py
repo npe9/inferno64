@@ -42,7 +42,7 @@ def main():
         return 1
 
     log = tempfile.mktemp(prefix='osprey-user386-', suffix='.log')
-    q = subprocess.Popen(['qemu-system-i386', '-m', '256', '-smp', '1',
+    q = subprocess.Popen(['qemu-system-i386', '-m', '256', '-smp', '2',
                           '-display', 'none', '-monitor', 'none', '-no-reboot',
                           '-serial', 'file:' + log,
                           '-kernel', KERNEL, '-append', 'console=0'],
@@ -73,6 +73,15 @@ def main():
     results = []
     results.append(("the kernel built is a 386 image (Plan 9 a.out magic 0x1eb)",
                     magic == 0x1eb))
+    #
+    # Two processors, as the amd64 checks run: the second is started by
+    # mpstartap through the warm-reset vector and the real-mode
+    # apbootstrap, and it says so itself in cpuidprint.  Until the
+    # header-stripping rule was fixed the AP began eight bytes into that
+    # bootstrap and took the machine down two seconds into the boot.
+    #
+    results.append(("and its second processor starts and identifies itself",
+                    re.search(r'cpu1: \d+MHz', t) is not None))
     results.append(("xu386 enters user mode on the microkernel",
                     'osprey: touser' in t))
     results.append(("and a program runs there whose file personality is a user-space library, not the kernel's",

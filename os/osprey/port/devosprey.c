@@ -6056,7 +6056,7 @@ ospreydumptasks(void)
 		extern uvlong uartputsbytes, uartputslate, kdebugputsbytes;
 		extern char uartputssample[];
 
-		print("osprey console: %d slots found changed between fill and push, %d refilled while in flight\n", consslotbad, consreuse);
+		print("osprey console: %d slots found changed between fill and push, %d refilled while in flight, %d flushes that waited for a slot to come back\n", consslotbad, consreuse, consstall);
 		print("osprey console: %llud bytes went to the port through uartputs, %llud of them after the task took over (the first: \"%s\"), and %llud through kdebugputs\n",
 			uartputsbytes, uartputslate, uartputssample, kdebugputsbytes);
 	}

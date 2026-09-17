@@ -428,13 +428,19 @@ userprog.out:		init9.$O userprog.$O $TARGETLIB/libc.a
 
 $O.rebootcode:		rebootcode.$O
 	$LD -l -R1 -s -o $target -T$REBOOTADDR $prereq
+# +33 and not pc64's +41: this strips the a.out header to leave the raw
+# code the kernel copies and jumps to, and a 386 header is 32 bytes
+# where an amd64 one is 40.  With +41 the first eight bytes went too -
+# for apbootstrap that is the far jump it starts with, so the AP began
+# eight bytes into the file and took the machine down with it: qemu -smp
+# 2 died two seconds in, before cpu1 said anything.
 rebootcode.out:		$O.rebootcode
-	tail -c +41 < $prereq > $target
+	tail -c +33 < $prereq > $target
 
 $O.apbootstrap:		apbootstrap.$O
 	$LD -l -R1 -s -o $target -T$APBOOTSTRAP $prereq
 apbootstrap.out:	$O.apbootstrap
-	tail -c +41 < $prereq > $target
+	tail -c +33 < $prereq > $target
 
 sd53c8xx.i:	sd53c8xx.n
 	aux/na $prereq > $target

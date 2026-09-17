@@ -6485,6 +6485,38 @@ direction \- a constant three hundred at every size was read as the
 interrupts-off loop polluting the window, the two calls were swapped to
 fix it, and the numbers did not move; the swap was undone.
 .PP
+And the second processor, which the 386 had never been asked for: the
+checks booted it with one where the amd64 checks use two.  Asked, it
+died two seconds into the boot, before
+.CW cpu1
+had said anything.
+.PP
+The cause was in the mkfile, and it is the same shape as the entry
+offset was.
+.CW apbootstrap.out
+is the real-mode code an application processor starts in, made by
+stripping the a.out header off the linked file so that what is left is
+what the kernel copies to
+.CW APBOOTSTRAP
+and jumps to.  The rule was
+.CW "tail -c +41" ,
+copied from pc64, where the header is 40 bytes; a 386 header is 32, so
+the first eight bytes went with it \- for this file the far jump it
+begins with.  The AP started eight bytes in and took the machine with
+it.  It is
+.CW "+33"
+now, and
+.CW cpu1
+identifies itself.  The same rule makes
+.CW rebootcode.out ,
+which was cut the same way and is the code
+.CW reboot()
+jumps to; that one is fixed here but nothing on 386 exercises it yet.
+.PP
+Both 386 checks run two processors now, as the amd64 ones do, and each
+has a criterion that the second started.  micro386 is nine and user386
+thirteen.
+.PP
 The library closure that said three more symbols were missing \-
 .CW _genrandomqlock ,
 .CW nsec ,
