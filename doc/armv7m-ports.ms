@@ -111,6 +111,62 @@ with the
 .CW mps2-an500
 run as the oracle for the answers.
 .PP
+.B "Double precision is emulated there, and not yet finished."
+.CW os/inferno/armv7m/fpiarmv7m.c
+takes the UsageFault, decodes the instruction, does the arithmetic with
+.CW os/inferno/port/fpi.c
+and returns past it, so one binary runs on either core.  The operands
+are reached with
+.CW fpregsave
+and
+.CW fpregrestore ,
+which move all 32 S registers with single-precision transfers the part
+does have; nothing in the handler uses floating point, which it must
+not, since
+.CW fpu.c
+turns
+.CW FPCCR.ASPEN
+and
+.CW FPCCR.LSPEN
+off and an exception therefore never stacks the file.
+.PP
+The instruction classes were found by scanning the image for cp11
+encodings rather than guessed, and anything undecoded prints its
+encoding and pc and falls through to the ordinary fault report.
+.I fptest (1)
+on
+.CW mps2-an386
+now gets 21 of its 25 lines right, where before it faulted on the first
+double-precision instruction and printed nothing.  Add, subtract,
+multiply, divide, negate, compare, round, sqrt, floor, log, exp and all
+five pow and exp cases are correct, so libmath runs.  Four fail:
+.DS
+.CW "array        want 3.25 got 0.25 FAIL"
+.CW "int->real    want 1234567 got 7.52690581e-308 FAIL"
+.CW "real->int    want 1234568 got 1 FAIL"
+.CW "modf int     want 3 got 2874996 FAIL"
+.DE
+Every one of them is the integer-to-real conversion path and nothing
+else is.  The conversion primitives are not the problem: traced live,
+the emulator turns 2 into 2.0, 1 into 1.0, 5 into 5.0 and 1.5 into 1, so
+it is how the operand reaches them that is wrong.  Not root-caused.  One
+clue for whoever takes it: the same run prints
+.CW "neg want -3 got 0.75 ok" ,
+passing its own check while printing the previous test's value, so the
+checking path and the printing path disagree about a register.
+.PP
+A second thing, found and not explained: none of this works from
+.CW fpinit() .
+A double-precision fault there escalates to a hard fault \-
+.CW hfsr
+0x40000000, FORCED, with
+.CW cfsr
+still reading UNDEFINSTR \- although
+.CW trapinit()
+enables UsageFault two lines earlier in
+.CW os/inferno/armv7m/main.c .
+From a process later in boot it works.
+.PP
 .B teensy41
 does not.  There is no emulator for an i.MX RT1062, and this was written
 without one of the boards.  What can be said is that it builds, that the
