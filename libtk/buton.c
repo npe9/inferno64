@@ -316,7 +316,8 @@ tkdrawbutton(Tk *tk, Point orig)
 	bsc = nil;
 	if(tkviascene && tkstyleflat(tk)
 	&& (tk->type == TKbutton
-		|| (tk->type == TKradiobutton && tkl->indicator != BoolF))
+		|| ((tk->type == TKradiobutton || tk->type == TKcheckbutton)
+			&& tkl->indicator != BoolF))
 	&& tkl->img == nil && tkl->bitmap == nil && tkl->text != nil
 	&& tkl->justify == Tkleft && tkl->ul < 0
 	&& strchr(tkl->text, '\n') == nil)
@@ -375,7 +376,15 @@ tkdrawbutton(Tk *tk, Point orig)
 			Rectangle cb;
 
 			cb = Rect(u.x, u.y, u.x+CheckButton, u.y+CheckButton);
-			if(tkl->check)
+			if(bsc != nil){
+				/* the box: filled when on, a stroke when off */
+				if(tkl->check)
+					tkscenecolour(bsc, cb,
+						e->colors[TkChighlightfgnd]);
+				else
+					tksceneborder(bsc, cb, 0, CheckButtonBW,
+						e->colors[TkCdisablefgnd]);
+			}else if(tkl->check)
 				draw(i, cb, tkgc(e, TkChighlightfgnd), nil, ZP);
 			else
 				tkbox(i, cb, CheckButtonBW, tkgc(e, TkCdisablefgnd));
@@ -401,8 +410,13 @@ tkdrawbutton(Tk *tk, Point orig)
 			 * the accent, which is the one combination a filled
 			 * checkbox must not use.
 			 */
-			bezspline(i, pp, 4, Enddisc, Enddisc, 1,
-				tkgc(e, tkstyleflat(tk) ? TkCbackgnd : TkCforegnd), ZP);
+			if(bsc != nil)
+				tkscenespline(bsc, pp, 4, Enddisc, 1,
+					e->colors[tkstyleflat(tk) ?
+						TkCbackgnd : TkCforegnd]);
+			else
+				bezspline(i, pp, 4, Enddisc, Enddisc, 1,
+					tkgc(e, tkstyleflat(tk) ? TkCbackgnd : TkCforegnd), ZP);
 		}
 		break;
 	case TKradiobutton:

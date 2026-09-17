@@ -57,7 +57,7 @@ to agree byte for byte.
 .IR tkofftest (1),
 .IR tkbench (1)
 .SH BUGS
-Eight things go through it: a flat border, a plain
+Nine things go through it: a flat border, a plain
 .IR button (9)
 with text, a
 .IR radiobutton (9)
@@ -78,7 +78,9 @@ which is the widget there are most of and which brings
 .IR menubutton (9)
 and
 .IR choicebutton (9)
-with it, since one draw method serves all three.
+with it, since one draw method serves all three, and a
+.IR checkbutton (9)
+in either state.
 Each of those draws its whole interior as nodes \(em fill, glyphs, caret,
 selection band, focus ring, border \(em inside one
 .BR TkNlayer .
@@ -173,6 +175,21 @@ neither a rectangle nor an ellipse, and
 exists for them.
 Its points are copied into the scene, as a glyph node's string is, and
 it always fills by the nonzero winding rule.
+.PP
+A
+.IR checkbutton (9)'s
+tick is a stroked B-spline, which is the last thing in the flat style
+that no other node could describe, and
+.B TkNspline
+exists for it.
+It owns a copy of its points as
+.B TkNpolyfill
+does;
+.B width
+is the thickness and
+.B radius
+carries the end style, the same one at both ends, which is what every
+caller asks for.
 .PP
 A repaint builds one tree for each RUN of consecutive widgets that can
 describe themselves as nodes, not one per widget and not one for the

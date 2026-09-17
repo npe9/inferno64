@@ -58,7 +58,15 @@ Tkofftest: module
 };
 
 W: con 900;			# room for the widest widget at the largest font,
-H: con 700;			# so that packing is never what clamps a measurement
+H: con 1000;			# so that packing is never what clamps a measurement
+				#
+				# H was 700 until the render-node pane grew: a
+				# widget packed past the bottom is never drawn,
+				# and a widget that is never drawn is compared
+				# by neither path, so both scrollbars fell
+				# silently out of the identity check while it
+				# went on passing.  checkscene() asserts the
+				# pane fits now, and this is the room it needs.
 
 off: ref Image;
 win: ref Image;
@@ -1376,6 +1384,16 @@ checkscene()
 	tk->cmd(top, "pack .r1 -padx 6 -pady 6");
 	tk->cmd(top, "pack .s -padx 6 -pady 6");
 	tk->cmd(top, "pack .v -padx 6 -pady 6");
+	# A checkbutton in both states, because the box is drawn either way
+	# and the tick only when it is on: a checked one alone could not
+	# show that an unchecked box is right, and an unchecked one alone
+	# never draws the tick at all.
+	must(top, "checkbutton .k0 -text {Off} -variable kv0");
+	must(top, "checkbutton .k1 -text {On} -variable kv1");
+	must(top, "variable kv1 1");
+	tk->cmd(top, "pack .k0 -padx 6 -pady 6");
+	tk->cmd(top, "pack .k1 -padx 6 -pady 6");
+
 	# A menubutton, which is drawn by the label's draw method: it is
 	# filled like the control it is, it takes the keyboard, and it is
 	# given a relief, so between it and the plain label above every
@@ -1438,6 +1456,37 @@ checkscene()
 			w[sw], tk->cmd(top, w[sw] + " coords")));
 	}
 	tk->cmd(top, "update");
+
+	# Every widget in the pane is INSIDE the pane.
+	#
+	# A widget packed past the bottom edge is never drawn - tkdrawslaves
+	# skips it, both paths skip it alike - so it drops out of the
+	# comparison while the comparison goes on passing.  That is exactly
+	# what happened when this pane grew: both scrollbars went off the
+	# bottom and their node path was compared by nothing for a while.
+	# The pane is a fixed size, so this is answerable by asking each
+	# widget where it is.
+	out := "";
+	for(w := tk->cmd(top, "winfo children ."); w != nil;){
+		(nil, ws) := sys->tokenize(w, " ");
+		w = nil;
+		for(; ws != nil; ws = tl ws){
+			p := hd ws;
+			x := int tk->cmd(top, p + " cget -actx");
+			y := int tk->cmd(top, p + " cget -acty");
+			wd := int tk->cmd(top, p + " cget -actwidth");
+			ht := int tk->cmd(top, p + " cget -actheight");
+			# A widget that does not fit is not pushed outside:
+			# the packer hands it a NEGATIVE size and leaves it at
+			# the edge, so a check that only compared x+width
+			# against the pane passed while both scrollbars were
+			# 886 by -14.  Size first, then position.
+			if(wd <= 0 || ht <= 0
+			|| x < 0 || y < 0 || x+wd > W || y+ht > H)
+				out += sys->sprint(" %s(%d,%d %dx%d)", p, x, y, wd, ht);
+		}
+	}
+	report(out == nil, "every widget in the pane is inside it" + out);
 
 	# Prove each path was actually SELECTED before comparing.  Without
 	# this the check passed with 0 of 1890000 bytes differing while the

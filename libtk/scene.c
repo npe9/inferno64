@@ -279,6 +279,34 @@ tksceneellipsefill(TkScene *s, Point c, Point rad, ulong rgba)
 }
 
 /*
+ * A stroked B-spline through np points, with the same end style at both
+ * ends.
+ *
+ * A checkbutton's tick is the one of these in the flat style.  The
+ * points are copied for the reason a polygon's are: a node is a value.
+ */
+void
+tkscenespline(TkScene *s, Point *p, int np, int end, int width, ulong rgba)
+{
+	TkNode *n;
+
+	if(p == nil || np < 2)
+		return;
+	if((n = newnode(s, TkNspline)) == nil)
+		return;
+	n->rgba = rgba;
+	n->width = width;
+	n->radius = end;
+	n->pts = malloc(np*sizeof(Point));
+	if(n->pts == nil){
+		n->type = TkNgroup;
+		return;
+	}
+	memmove(n->pts, p, np*sizeof(Point));
+	n->npts = np;
+}
+
+/*
  * THE WALK.  One tree for a run of widgets rather than one per widget.
  *
  * A repaint descends the widget tree and calls each widget's draw
@@ -705,6 +733,12 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 			if(col != nil)
 				fillpoly(target, n->pts, n->npts, ~0, col,
 					n->pts[0]);
+			break;
+		case TkNspline:
+			col = tkcolor(c, n->rgba);
+			if(col != nil)
+				bezspline(target, n->pts, n->npts, n->radius,
+					n->radius, n->width, col, ZP);
 			break;
 		default:
 			/*

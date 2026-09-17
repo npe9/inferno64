@@ -537,7 +537,17 @@ enum {
 	 * fillpoly()'s nonzero winding (~0), which is what every caller
 	 * uses.
 	 */
-	TkNpolyfill
+	TkNpolyfill,
+
+	/*
+	 * A B-spline through its points, stroked.  A checkbutton's tick is
+	 * one, and it is the last thing in the flat style that no other
+	 * node can describe.  Like TkNpolyfill it owns a copy of the
+	 * points; width is bezspline()'s thickness and radius carries the
+	 * end style, the SAME one at both ends, which is what every caller
+	 * asks for and is written down here rather than pretended about.
+	 */
+	TkNspline
 };
 
 struct TkNode
@@ -792,6 +802,7 @@ extern	void		tkscenetext(TkScene*, Point, char*, Font*, ulong);
 extern	void		tksceneellipse(TkScene*, Point, Point, int, ulong);
 extern	void		tksceneellipsefill(TkScene*, Point, Point, ulong);
 extern	void		tkscenepolyfill(TkScene*, Point*, int, ulong);
+extern	void		tkscenespline(TkScene*, Point*, int, int, int, ulong);
 extern	void		tkwalkopen(TkCtxt*, Image*);
 extern	void		tkwalkflush(void);
 extern	void		tkwalkclose(void);

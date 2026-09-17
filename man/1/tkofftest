@@ -231,6 +231,17 @@ exists for, but it is not the configuration a program runs in under
 .IR wm (1),
 and no check here covers the difference.
 .PP
+A widget that does not fit the offscreen pane is not drawn, by either
+path, so it leaves the render-node comparison without failing it \(em
+which is how both scrollbars came to be compared by nothing while the
+check went on passing.
+The pane now asserts that every widget in it has a positive size and
+lies inside it.
+A widget that does not fit is not pushed outside, though: the packer
+hands it a NEGATIVE size and leaves it at the edge, so the first
+version of that assertion, which compared only x plus width against the
+pane, passed while the scrollbars were 886 by \-14.
+.PP
 The batching check reads
 .B "render count"
 and asks only that a repaint built fewer trees than the widgets that

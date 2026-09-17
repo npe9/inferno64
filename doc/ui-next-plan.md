@@ -993,11 +993,32 @@ there was never speed on the table here anyway.
    `-state active`, because the fill is drawn only for a widget the
    pointer is on and there is no pointer here.
 
-   Still drawn through a scratch image: a `checkbutton` (its tick is a
-   `bezspline`, which has no node); a `cascade`, whose arrow is
-   `tktriangle()`; a button, radiobutton or label with an image, a
-   bitmap, several lines, an underline or text that is not
-   left-justified; and an `entry` showing a selection or `-show`.
+   **The eighth is a `checkbutton`, and it needed the last node.** Its
+   tick is a stroked B-spline, so `TkNspline` came first — points owned
+   by the scene as `TkNpolyfill`'s are, `width` the thickness, `radius`
+   the end style, the same at both ends because that is what every
+   caller asks. Its box is a filled rectangle when on and a stroke when
+   off, so both states are in the pane. Three controls, all failing:
+   filled box 240 bytes of 13500000, empty box 420, tick 195.
+
+   **A lesson that cost real coverage.** Adding those widgets pushed
+   both scrollbars off the bottom of the 900×700 pane — and a widget
+   that does not fit is not drawn by *either* path, so it leaves the
+   comparison without failing it. The identity check went on passing
+   while the scrollbar node path was compared by nothing. The pane is
+   900×1000 now, the test asserts that every widget in it has a positive
+   size and lies inside it, and a scrollbar control was re-run to show
+   the coverage is back (1050 bytes). The assertion itself needed a
+   second try: a widget that does not fit is not pushed *outside*, the
+   packer hands it a negative size, so comparing only x plus width
+   against the pane passed while the scrollbars were 886 by −14.
+
+   Still drawn through a scratch image: a `cascade`, whose arrow is
+   `tktriangle()`; a button, radiobutton, checkbutton or label with an
+   image, a bitmap, several lines, an underline or text that is not
+   left-justified; an `entry` showing a selection or `-show`; and a
+   `text`, a `canvas`, a `panel` and a `menu`, which paint into the
+   window directly.
 
    **The walk is done, and it is one tree per *run*, not per repaint.**
    `tkdrawslaves` opens a walk around its descent, `tkwalkjoin` hands a
