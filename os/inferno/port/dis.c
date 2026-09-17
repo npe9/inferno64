@@ -330,6 +330,25 @@ stoptheworld(void)
 		stwparks++;
 		tsleep(&stwr, allstopped, nil, 20);
 	}
+	/*
+	 * MULTICORE INSTRUMENTATION - temporary.  A watermark, at 1, 10,
+	 * 100 parks and so on, so a boot log carries how much the
+	 * collector had to wait without a print in the loop itself.  That
+	 * distinction is not pedantry here: a print inside this loop once
+	 * throttled the spin enough to change the result it was measuring,
+	 * and removing it cut shell iterations from 18 to 2.  Six lines a
+	 * boot does not.
+	 */
+	{
+		static ulong said;
+
+		if(stwparks >= said){
+			said = said != 0 ? said*10 : 1;
+			print("stw: %lud parks, %lud wakes, %d waits,"
+				" %d gave up\n",
+				stwparks, stwwakes, stwwaits, stwgaveup);
+		}
+	}
 	return 1;
 }
 

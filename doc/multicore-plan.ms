@@ -4417,9 +4417,22 @@ boot, and the counter is turns round
 wait loop, each of which is a
 .CW sched()
 \(em a context switch.  The wait was costing more than the collection it
-was waiting for, and the same configuration runs the shell loop at
-roughly one seventieth of
-.CW parallelvm=0 .
+was waiting for.
+.PP
+How much more is not a single number and should not be written as one.
+The shell loop runs at 73 iterations a boot at
+.CW parallelvm=0
+.CW "-smp 2" ,
+at about 2.5 a boot at
+.CW parallelvm=1
+.CW "-smp 2"
+across a sixty-boot run, and at 0.5 a boot at
+.CW parallelvm=1
+.CW "-smp 4"
+across twelve \(em between one thirtieth and one hundred and fiftieth,
+depending which pair is compared, and those were not all measured on the
+same kernel or the same machine load.  What is solid is the order of
+magnitude and the direction.
 .PP
 The comment on that loop already named the answer and deferred it:
 "parking rather than spinning, as Go does with an M, is the better
