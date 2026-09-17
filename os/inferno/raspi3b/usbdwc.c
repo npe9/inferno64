@@ -64,6 +64,7 @@ enum
 	Slowbulkin	= 1,
 	Maxnak		= 2000,		/* ~2s of 1ms retries: not for bulk IN */
 	Maxiters	= 4000,		/* attempts at one transfer, likewise */
+	Rearmsecs	= 2,		/* a bulk IN waits this long, then its channel restarts */
 };
 
 typedef struct Ctlr Ctlr;
@@ -80,6 +81,7 @@ struct Ctlr {
 	uint	sofchan;		/* bitmap of channels waiting for sof */
 	Rendez	*chanintr;		/* per-channel wait, sleep till interrupt */
 	uint	hcintr[Maxchans];	/* hcint the handler read-and-cleared, per channel */
+	uint	rearm[Maxchans];	/* bulk IN channels restarted after a silent NAK */
 };
 
 struct Epio {
@@ -332,6 +334,27 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 					ep->dev->nb, ep->nb, hc->hcchar, hc->hcint,
 					hc->hcintmsk, hc->hctsiz,
 					ctlr->regs->haint, ctlr->regs->gintsts);
+				return Chhltd|Nak;
+			}
+			/*
+			 * A read that waits for ever is not a read that is
+			 * waiting, it is a channel that has stopped.  The Pi
+			 * went permanently deaf here: the onboard NIC's bulk
+			 * IN sat with Chen set and NAK latched, no completion
+			 * ever arrived, and the interface received nothing for
+			 * as long as it was left alone.  Halt the channel and
+			 * report a NAK, which is what the caller retries: an
+			 * idle NIC costs a re-arm every couple of seconds, and
+			 * a stopped one starts again instead of staying dead.
+			 */
+			if(i >= Rearmsecs && (hc->hcchar & Chen) != 0){
+				hc->hcchar |= Chdis;
+				chanhaltwait(hc);
+				if((ctlr->rearm[chan]++ % 64) == 0)
+					print("usbdwc: ep%d.%d re-armed after %d s "
+						"(%d times): hcchar %8.8ux hcint %8.8ux\n",
+						ep->dev->nb, ep->nb, i,
+						ctlr->rearm[chan], hc->hcchar, hc->hcint);
 				return Chhltd|Nak;
 			}
 			/*
