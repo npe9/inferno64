@@ -4896,3 +4896,60 @@ re-check.
 So of the four numeric claims this document has made about the channel
 and stop-the-world work, two stand on distributions that support them
 and two were withdrawn.  The two that stand are both negative results.
+.NH 2
+Parking, measured on a metric that discriminates
+.PP
+Ten boots each, interleaved, at
+.CW parallelvm=1
+.CW "-smp 2" ,
+with the timeout raised to 120 seconds so the shell loop would have room.
+It did not help: seven of ten boots produced zero iterations on
+.I both
+sides, and the full/partial/none split was 1/2/7 on both.  Raising the
+timeout does not make that metric continuous, because the three chantest
+runs still consume the window first.  The fix for the metric was
+insufficient and the shell loop still says nothing here.
+.PP
+The metric that does discriminate was already in the table.  chantest
+lines per boot, out of 24 for the three concurrent runs:
+.QP
+.CW "before: 0 24 0 2 23 24 23 23 24 24"
+.br
+.CW "after: 24 24 24 24 24 24 20 24 24 21"
+.PP
+229 of 240 against 167 of 240, and the shape is the point rather than the
+sum: every boot after the change clears 20, while three boots before it
+failed to run the stress at all.  This is not one boot carrying a total.
+.PP
+It is also near its ceiling, so it says the stress now completes
+reliably and cannot say how much faster anything is.  That is the honest
+limit of it.
+.NH 2
+The panic count, which is the part that needs more boots
+.PP
+Three of ten boots after the change panicked; none of ten before it did.
+Read alone that is alarming, so: the faulting PC is
+.CW rootset+0x87 ,
+the same offset, in the same function, as every one of the panics the
+kernel before the change produced in earlier batches.  Not a new failure
+mode \(em the residual root-set fault this document already names as the
+largest remaining one.
+.PP
+Pooled across every batch it appears in, the kernel before the change
+faults in 7 boots of 58, about twelve percent.  Three of ten is thirty.
+At these sample sizes the two are not separable \(em Fisher puts it
+around
+.CW p=0.15
+\(em and the kernel after the change completes half again as much
+chantest per boot, so it runs more collections and has more exposure to a
+fault that lives in the collector.  That is a reason the rate could rise
+without anything being more broken, and it is not evidence that it did
+not rise.  The question needs boots, not argument, and it is recorded
+here as open.
+.PP
+One thing that is settled: no boot printed
+.CW "double sleep" .
+The one-Rendez-per-context design depends on
+.CW claimctx()
+handing each interpreter its own context, and nothing in these ten boots
+violated it.
