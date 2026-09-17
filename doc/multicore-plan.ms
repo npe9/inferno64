@@ -4687,3 +4687,76 @@ migration, and a context wanting to enter a quantum still spins in
 for that whole time.  If the clock fix does not help, or hurts, that is
 the first place to look, and it is an argument for parking the mutator
 side too rather than against fixing the clock.
+.NH 2
+What parking measured
+.PP
+Sixteen boots each, interleaved with the order alternating, at
+.CW parallelvm=1
+.CW "-smp 2" :
+.TS
+center;
+l r r r r r r.
+	shell iters	chantest lines	completed	FAIL	panics	parks
+spins	11	373 of 384	40 of 48	0	2	0
+parks	442	358 of 384	42 of 48	0	1	65395
+.TE
+.PP
+Shell loop iterations went from 11 to 442 across the same sixteen boots.
+That is the whole result and it is not subtle: the collector's spin was
+the cost.  Per boot it is 0.7 against 27.6, against about 73 at
+.CW parallelvm=0
+\(em so this configuration went from running at roughly one percent of
+the single-interpreter kernel to roughly forty percent of it.
+.PP
+The chantest columns barely move, and that is consistent rather than
+puzzling: the three chantest instances run first, finish early, and are
+channel-bound rather than collector-bound.  The shell loop is what comes
+after them, spawns modules, allocates, and therefore collects.  It is
+the workload the collector's wait was strangling, and it is the one that
+moved.
+.PP
+.CW parks
+is a lower bound, being the last watermark each boot printed rather than
+the true count.  It is there to confirm the path was taken rather than
+to be compared with anything.
+.PP
+The print that
+.CW b17
+carries and
+.CW b15
+does not was flagged beforehand as the first confound to rule out if the
+result came back ambiguous.  It did not: a print can only slow a kernel
+down, so it cannot manufacture a forty-fold gain, and the mechanism \(em
+not calling
+.CW sched()
+tens of thousands of times \(em accounts for the direction and the size
+directly.
+.NH 2
+A column that was measuring the opposite of its name
+.PP
+The batch scripts carried a
+.CW stalldump
+column, counting boots whose log contained the scheduler dump, read as
+"boots that stalled".  It is not that.
+.CW portclock.c
+calls
+.CW disdump()
+unconditionally at
+.CW "m->ticks == 40*HZ" ,
+which is forty seconds of uptime and nothing else.  The column counts
+boots that
+.I survived
+to forty seconds.
+.PP
+So the parking kernel's 14 against the spinning kernel's 9 is the good
+direction, not the bad one, and reading it the other way would have been
+reading a health check as a fault count.  Renamed to
+.CW alive40s
+in every script that had it.
+.PP
+This is the third metric this session that had to be checked against the
+thing it was standing in for \(em after "reached the shell" at
+.CW parallelvm=1
+and the iteration counts across kernels with different workloads.  The
+pattern is consistent enough to state as a rule: before a column is put
+in a table, read the code that produces the line it counts.
