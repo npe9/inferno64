@@ -330,6 +330,46 @@ mboxgetclock(int clkid, u32 *rate)
 }
 
 /*
+ * Ask the firmware to set a clock's rate (tag 0x00038002), and report
+ * what it actually set.
+ *
+ * This is the interface to use for a clock the firmware owns, which on
+ * this SoC is most of them: the clock manager is behind CPRMAN and the
+ * ARM writing it is writing over whatever the firmware is doing with
+ * the same PLL.  Taking the PCM clock that way hung the board (see
+ * i2sbcm.c); PWM drives the analogue audio jack and is no safer.
+ *
+ * Returns 0 and the rate the firmware settled on, or -1.  A rate of
+ * zero back is a failure: it is what the firmware says for a clock it
+ * does not have.
+ */
+int
+mboxsetclock(int clkid, u32 hz, u32 *rate)
+{
+	static u32 raw[10+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 9 * 4;
+	buf[1] = 0;
+	buf[2] = 0x00038002;		/* tag: set clock rate */
+	buf[3] = 12;			/* value buffer: id, rate, turbo */
+	buf[4] = 12;			/* request length */
+	buf[5] = clkid;
+	buf[6] = hz;
+	buf[7] = 0;			/* do not skip setting turbo */
+	buf[8] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	if(buf[6] == 0)
+		return -1;
+	*rate = buf[6];
+	return 0;
+}
+
+/*
  * Ask which DMA channels the ARM side may use (tag 0x00060001).  The
  * answer is a bitmap, one bit per channel.
  *

@@ -626,12 +626,30 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	return 0;
 }
 
+/*
+ * Shutdown calls this for every controller, and complains on the
+ * console about one that has none -- a reboot printed "#S/sdM: no
+ * disable function" on its way out.  There is nothing this controller
+ * needs told: the card keeps its state, and the firmware reinitialises
+ * the Arasan on the next boot.  Stopping the clock is what "disable"
+ * means here, and it leaves the block quiet rather than mid-transfer.
+ */
+static int
+emmcdisable(SDev *sdev)
+{
+	Ctlr *c = sdev->ctlr;
+
+	if(c != nil && c->r != nil)
+		c->r[Rcontrol1] &= ~(C1clkintlen|C1clken);
+	return 0;
+}
+
 SDifc sdemmcbcmifc = {
 	"emmc",				/* name */
 
 	emmcpnp,			/* pnp */
 	nil,				/* enable */
-	nil,				/* disable */
+	emmcdisable,			/* disable */
 
 	emmcverify,			/* verify */
 	emmconline,			/* online */

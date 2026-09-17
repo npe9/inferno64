@@ -50,7 +50,8 @@
 #include "dat.h"
 #include "fns.h"
 
-extern void gpiofsel(int, int);		/* gpiobcm.c */
+extern void gpiofsel(int, int);
+extern int mboxsetclock(int, u32, u32*);	/* mailbox.c */		/* gpiobcm.c */
 
 enum {
 	/* PWM registers, word offsets */
@@ -86,6 +87,8 @@ enum {
 	Staw1c	= Werr1|Rerr1|Berr|(0xf<<4),	/* write one to clear */
 
 	Fifodepth = 16,
+
+	Pwmclkid = 10,		/* the firmware's id for the PWM clock */
 
 	/* Clock manager, word offsets from CPRMAN */
 	Pwmctl	= 0x0a0/4,
@@ -234,6 +237,8 @@ pwmoff(void)
 void
 pwminit(void)
 {
+	u32 fwhz;
+	char *pwmfrom;
 	u32 *r = pwm();
 	ulong hz;
 	int i, bad;
@@ -249,7 +254,24 @@ pwminit(void)
 		return;
 	}
 
-	hz = pwmclock(96);			/* 19.2MHz / 96 = 200kHz */
+	/*
+	 * Ask the firmware for the clock first.  CPRMAN is the firmware's
+	 * on this board -- the PWM clock feeds the analogue audio jack --
+	 * and the ARM writing it writes over whatever the firmware is
+	 * doing with the same PLL.  Taking the PCM clock that way hung
+	 * the board in screeninit(); this one has never been shown to,
+	 * but asking is both safer and the documented interface.
+	 * pwmclock() stays for a firmware that will not answer, which is
+	 * what QEMU's mailbox does for this clock id.
+	 */
+	hz = 0;
+	pwmfrom = "the firmware";
+	if(mboxsetclock(Pwmclkid, 200000, &fwhz) == 0)
+		hz = fwhz;
+	if(hz == 0){
+		pwmfrom = "cprman";
+		hz = pwmclock(96);		/* 19.2MHz / 96 = 200kHz */
+	}
 	if(hz == 0){
 		print("PWM-FAIL clock never started (ctl %#ux div %#ux)\n",
 			cm()[Pwmctl], cm()[Pwmdiv]);
@@ -264,7 +286,9 @@ pwminit(void)
 		return;
 	}
 	if((r[Sta] & Sta1) == 0){
-		print("PWM-FAIL channel 1 not transmitting when enabled\n");
+		print("PWM-FAIL channel 1 not transmitting when enabled "
+			"(clock %lud Hz from %s, sta %#ux ctl %#ux)\n",
+			hz, pwmfrom, r[Sta], r[Ctl]);
 		return;
 	}
 

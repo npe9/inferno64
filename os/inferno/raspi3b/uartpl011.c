@@ -127,6 +127,7 @@ static void
 pl011_kick(Uart *uart)
 {
 	Ctlr *c;
+	int i, lo;
 
 	c = uart->regs;
 	/*
@@ -147,9 +148,26 @@ pl011_kick(Uart *uart)
 	 * uarttxpoll() below kicks again from the clock if an edge is
 	 * ever missed, so a stall costs at most a tick.
 	 */
+	/*
+	 * With interrupts off, waiting for the transmit interrupt is
+	 * waiting for something that cannot come: nothing will run the
+	 * handler and nothing will run the clock poll either.  That is
+	 * the shutdown path -- a reboot printed "#S/sd" and stopped
+	 * there, mid-line, because the rest of the line sat in the queue
+	 * with no way out -- and it is panic()'s path too.  So when
+	 * interrupts are off, drain by polling, bounded per byte.
+	 */
+	lo = islo();
 	for(;;){
-		if(csr32r(c, UartFR) & UartFRTXFF)
-			break;
+		if(csr32r(c, UartFR) & UartFRTXFF){
+			if(lo)
+				break;
+			for(i = 0; i < Putcspin; i++)
+				if((csr32r(c, UartFR) & UartFRTXFF) == 0)
+					break;
+			if(csr32r(c, UartFR) & UartFRTXFF)
+				break;
+		}
 		if(uart->op >= uart->oe && uartstageoutput(uart) == 0)
 			break;
 		csr32w(c, UartDR, *uart->op++);
