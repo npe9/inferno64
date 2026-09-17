@@ -1484,6 +1484,132 @@ does not fit.  So this is a research direction and not a substitution,
 and the ordering is: software double precision, then the cheap cuts and
 the read-only move, then a board that has actually been booted.
 .NH 1
+PyCubed in Limbo: what it would take
+.PP
+Read the sources rather than the paper:
+.CW github.com/pycubed/firmware
+for the board definition and
+.CW github.com/pycubed/software
+for the flight code, mainboard-v05.
+.NH 2
+The hardware, from its own board file
+.PP
+.CW pycubedv05_build/mpconfigboard.mk
+names the part:
+.CW SAMD51J19A .
+A Cortex-M4F at 120MHz with 512K of internal flash and 192K of SRAM,
+and
+.CW mpconfigboard.h
+adds 8192 bytes of internal NVM, a W25Q80DV \- one megabyte of external
+QSPI NOR \- carrying the filesystem, a crystal, I2C on PB13/PB12, SPI on
+PA13/PA12/PA14, UART on PB02/PB03, and the board's own lines: SD_CS,
+RELAY_A, BURN1, BURN2, EN_RF, BATTERY and L1PROG on the ADC, VBUS_RST,
+NEOPIXEL.  On the buses hang an RFM9x LoRa radio, a BMX160 IMU, a
+bq25883 charger, an adm1176 power monitor, a GPS on the UART and an SD
+card.
+.PP
+The part that matters for this document: the SAMD51's QSPI supports
+execute in place, mapping that external NOR into the address space.
+That is the best hardware match for
+.CW Dev.xip
+of anything assessed here, and the architecture falls straight out of
+it \- kernel text in the 512K of internal flash, against the 245192 this
+tree's nearest Cortex-M4 kernel
+.CW ( os/inferno/nucleof303 ,
+its own configuration) actually measures; the pre-decoded Dis modules
+and the root in the megabyte of QSPI window; and the 192K of SRAM for
+data, bss, pools and the mutable module state.  Nothing about that is
+contrived.  It is what the part is built for.
+.NH 2
+The budget, which is tighter than the 256K section
+.PP
+181460 measured, less the 24856 string-literal move, is 156604 against
+192K: about 35K left for the flight software's own data.  That is real
+but it is not comfortable, and the risk is named elsewhere in this
+document \- the 78208 pool floor was measured on
+.CW mps2 's
+device set, and this board wants SPI, I2C, ADC, SD and QSPI on top of
+it.  The 62K of that floor nobody has looked inside is, for this board
+specifically, the difference between fitting and not.  It stops being a
+general loose end and becomes the gating measurement.
+.NH 2
+What porting the software actually involves
+.PP
+The flight code is about 3200 lines of Python, and it divides in a way
+that favours the port more than a line count suggests.
+.IP \(bu
+.B "The scheduler disappears."
+.CW lib/tasko
+is some five hundred lines of cooperative event loop, managed resources
+and a managed SPI wrapper, and it exists because CircuitPython is
+single-threaded.  Inferno has processes and channels.  That code is
+deleted, not ported.
+.IP \(bu
+.B "The drivers become Limbo programs."
+RFM9x 1078 lines, BMX160 729, bq25883 172, adm1176 111 \- about 2090
+lines, all of it register poking over SPI and I2C.  In Inferno those
+belong in Limbo over the SPI and I2C device files, not in kernel C, so
+they keep the memory safety CircuitPython gives them while becoming
+separate processes with their own namespaces.  A rewrite, but into the
+same shape and with something gained.
+.IP \(bu
+.B "The board layer is the real work."
+.CW lib/pycubed.py
+is 447 lines of Python standing on CircuitPython's
+.CW digitalio ,
+.CW analogio ,
+.CW busio ,
+.CW sdcardio ,
+.CW pwmio ,
+.CW storage
+and
+.CW microcontroller.nvm .
+Each of those is a kernel driver that has to exist first.
+.PP
+The kernel side is less than it sounds, because the core is done:
+.CW os/inferno/armv7m
+already has the vectors, exception path, spl, SysTick and the exclusive
+monitor, and
+.CW os/inferno/nucleof303
+is already a Cortex-M4 board beside it.  What is genuinely new is the
+SAMD51 itself \- its clock tree, the SERCOM instances that become the
+UART, SPI and I2C, the QSPI controller and its XIP window, the ADC, the
+timers behind PWM, the watchdog and the internal NVM.  Models for every
+one of those exist in the tree
+.CW ( uartstm32.c ,
+.CW i2cbcm.c ,
+.CW spibcm.c ,
+.CW gpiobcm.c ,
+.CW pwmbcm.c ,
+.CW pmbcm.c ,
+and
+.CW devsd.c
+with
+.CW sdmmc.c
+and
+.CW pmmc.c
+for the card), and
+.CW os/inferno/riscv/spisifive.c
+already knows a memory-mapped flash XIP path exists and deliberately
+declines it, which is the nearest thing to precedent for wiring one up.
+.NH 2
+The precondition
+.PP
+Software double precision, and here it is not an ordering preference but
+the thing the port stands on.  On a console board the FPv4-SP gap is a
+footnote because a shell is integer and string work.  This board's
+software is floating point throughout \- battery voltages, charge
+current, IMU rates, attitude \- so there is no useful subset of PyCubed
+that avoids it.
+.PP
+And the emulator cannot help with precisely this.  The ARMv7-M core is
+proven under QEMU through
+.CW os/inferno/mps2 ,
+but that is a Cortex-M7, which has double precision; the Cortex-M4F
+difference from it is the FPU.  So the one thing that blocks this board
+is the one thing the emulated board cannot test.  That, and not the
+driver count, is why nothing is started here.
+.NH 1
 Unrelated breakage found on the way
 .PP
 Two things in the tree are broken independently of this work, found while
