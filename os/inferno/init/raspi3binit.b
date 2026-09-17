@@ -69,12 +69,27 @@ kfsproc(pfd: ref Sys->FD)
 		sys->print("SD-FS load kfs: %r\n");
 		return;
 	}
-	kfs->init(nil, "kfs" :: "-r" :: "/dev/sdM0/data" :: nil);
+	# Never the whole device: "-r" reams what it is given, and this card
+	# holds the firmware and the kernel that booted it.  KFSPART covers
+	# the gap between the master boot record and the first partition,
+	# which is unallocated and reads as zeros on this card.
+	kfs->init(nil, "kfs" :: "-r" :: KFSPART :: nil);
 }
+
+KFSPART: con "/dev/sdM0/kfstest";
 
 sdfs()
 {
 	p := array[2] of ref Sys->FD;
+
+	# carve the test partition out of the unallocated gap: sector 2048
+	# to 16000, below the first real partition at 16384
+	cfd := sys->open("/dev/sdM0/ctl", Sys->ORDWR);
+	if(cfd == nil || sys->fprint(cfd, "part kfstest 2048 16000") < 0){
+		sys->print("SD-FS part: %r\n");
+		return;
+	}
+	cfd = nil;
 	if(sys->pipe(p) < 0){
 		sys->print("SD-FS pipe: %r\n");
 		return;
@@ -241,14 +256,15 @@ init()
 	# in its own process: the shell must not wait behind a DHCP lease and
 	# three pings, which take seconds and can be answered by nothing at all
 	spawn ethercheck();
-	# sdfs() reams a kfs onto the SD card, mounts it over a pipe, and
-	# creates a file.  The ream and every SD write succeed, but the
-	# create-over-mount hangs: pid 1's Twalk gets its Rerror and then the
-	# error unwinds past mntwalk's own waserror handler instead of into
-	# it, so pid 1 never issues the Tcreate.  It is the open arm64
-	# multi-kproc error-stack bug (doc/inferno-driver-plan.ms); left
-	# uncalled so the board boots clean.  Uncomment to reproduce.
-	# sdfs();
+	# A kfs in the card's unallocated gap, mounted over a pipe, with a
+	# file created in it.  The create used to hang here - pid 1's Twalk
+	# got its Rerror and the error unwound past mntwalk's own waserror
+	# handler, so the Tcreate was never sent - and that was blamed on an
+	# arm64 multi-kproc error-stack bug.  The mount it needs works now
+	# that kernel stacks are aligned, so the create is worth trying
+	# again; it runs in its own process either way, so a hang there
+	# leaves the board usable.
+	spawn sdfs();
 
 	shell = load Shell "/dis/sh.dis";
 	if(shell == nil){ sys->print("init: load sh: %r\n"); exit; }
