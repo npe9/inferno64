@@ -7,7 +7,31 @@
 extern void tkannouncechange(Tk*);	/* ebind.c, for voice(3) */
 
 /* declared here because the drawing code above its definition uses it */
-static void tkflatslider(Image*, TkEnv*, Point, Rectangle, int, int);
+static void tkflatslider(Image*, TkScene*, TkEnv*, Point, Rectangle, int, int);
+
+/*
+ * A scale draws a handful of shapes over and over in two orientations,
+ * so rather than branch at each of them the two primitives it uses get a
+ * scene-or-image pair.  Everything else a flat scale draws is one of
+ * these two or an ellipse.
+ */
+static void
+sdraw(Image *i, TkScene *sc, TkEnv *e, Rectangle r, int col)
+{
+	if(sc != nil)
+		tkscenecolour(sc, r, e->colors[col]);
+	else
+		draw(i, r, tkgc(e, col), nil, ZP);
+}
+
+static void
+sstring(Image *i, TkScene *sc, TkEnv *e, Point p, int col, char *str)
+{
+	if(sc != nil)
+		tkscenetext(sc, p, str, e->font, e->colors[col]);
+	else
+		string(i, p, tkgc(e, col), ZP, e->font, str);
+}
 
 #define	O(t, e)		((long)(&((t*)0)->e))
 
@@ -288,7 +312,7 @@ tkfreescale(Tk *tk)
 }
 
 static void
-tkscalehoriz(Tk *tk, Image *i)
+tkscalehoriz(Tk *tk, Image *i, TkScene *sc)
 {
 	TkEnv *e;
 	char sv[32];
@@ -314,7 +338,7 @@ tkscalehoriz(Tk *tk, Image *i)
 	r = insetrect(r, ScalePad);
 
 	if(tks->label != nil) {
-		string(i, r.min, tkgc(e, fgnd), ZP, e->font, tks->label);
+		sstring(i, sc, e, r.min, fgnd, tks->label);
 		r.min.y += fh + ScalePad;
 	}
 	if(tks->sv == BoolT)
@@ -354,7 +378,7 @@ tkscalehoriz(Tk *tk, Image *i)
 		for(j = 0; j <= l; j += t){
 			r2.min.x = p.x+((vlong)j*w)/l+sl/2;
 			r2.max.x = r2.min.x+1;
-			draw(i, r2, tkgc(e, fgnd), nil, ZP);
+			sdraw(i, sc, e, r2, fgnd);
 		}
 	}
 	v = tks->value-tks->from;
@@ -373,7 +397,7 @@ tkscalehoriz(Tk *tk, Image *i)
 		r2.min = p;
 		r2.max.x = p.x+sl;
 		r2.max.y = sr.max.y;
-		draw(i, r2, tkgc(e, TkCactivebgnd), nil, ZP);
+		sdraw(i, sc, e, r2, TkCactivebgnd);
 	}
 	if(tkstyleflat(tk)){
 		int th, cy, rad;
@@ -387,7 +411,7 @@ tkscalehoriz(Tk *tk, Image *i)
 			rad = 9;
 		if(rad < 4)
 			rad = 4;
-		tkflatslider(i, e, Pt(p.x + tks->sl/2, cy),
+		tkflatslider(i, sc, e, Pt(p.x + tks->sl/2, cy),
 			Rect(sr.min.x, cy - th/2, sr.max.x, cy - th/2 + th), 1, rad);
 	}else
 	switch(tks->relief) {
@@ -419,11 +443,11 @@ tkscalehoriz(Tk *tk, Image *i)
 	if(p.x+w > tks->pixmax)
 		p.x = tks->pixmax - w;
 	
-	string(i, p, tkgc(e, fgnd), ZP, e->font, sv);
+	sstring(i, sc, e, p, fgnd, sv);
 }
 
 static void
-tkscalevert(Tk *tk, Image *i)
+tkscalevert(Tk *tk, Image *i, TkScene *sc)
 {
 	TkEnv *e;
 	TkScale *tks;
@@ -453,7 +477,7 @@ tkscalevert(Tk *tk, Image *i)
 	if(tks->label != nil) {
 		p =  stringsize(e->font, tks->label);
 		r.max.x -= p.x;
-		string(i, Pt(r.max.x, r.min.y), tkgc(e, fgnd), ZP, e->font, tks->label);
+		sstring(i, sc, e, Pt(r.max.x, r.min.y), fgnd, tks->label);
 		r.max.x -= ScalePad;
 	}
 
@@ -491,7 +515,7 @@ tkscalevert(Tk *tk, Image *i)
 		for(j = 0; j <= l; j += t){
 			r2.min.y = p.y+((vlong)j*h)/l+sl/2;
 			r2.max.y = r2.min.y+1;
-			draw(i, r2, tkgc(e, fgnd), nil, ZP);
+			sdraw(i, sc, e, r2, fgnd);
 		}
 	}
 
@@ -511,7 +535,7 @@ tkscalevert(Tk *tk, Image *i)
 		r2.min = p;
 		r2.max.x = sr.max.x;
 		r2.max.y = p.y+sl;
-		draw(i, r2, tkgc(e, TkCactivebgnd), nil, ZP);
+		sdraw(i, sc, e, r2, TkCactivebgnd);
 	}
 	if(tkstyleflat(tk)){
 		int tw, cx, rad;
@@ -525,7 +549,7 @@ tkscalevert(Tk *tk, Image *i)
 			rad = 9;
 		if(rad < 4)
 			rad = 4;
-		tkflatslider(i, e, Pt(cx, p.y + tks->sl/2),
+		tkflatslider(i, sc, e, Pt(cx, p.y + tks->sl/2),
 			Rect(cx - tw/2, sr.min.y, cx - tw/2 + tw, sr.max.y), 1, rad);
 	}else
 	switch(tks->relief) {
@@ -555,7 +579,7 @@ tkscalevert(Tk *tk, Image *i)
 		p.y = tks->pixmin;
 	if (p.y + fh > tks->pixmax)
 		p.y = tks->pixmax - fh;
-	string(i, p, tkgc(e, fgnd), ZP, e->font, sv);
+	sstring(i, sc, e, p, fgnd, sv);
 }
 
 /*
@@ -575,23 +599,29 @@ tkscalevert(Tk *tk, Image *i)
  * more fillellipse.
  */
 static void
-tkflatslider(Image *i, TkEnv *e, Point c, Rectangle track, int filled, int rad)
+tkflatslider(Image *i, TkScene *sc, TkEnv *e, Point c, Rectangle track, int filled, int rad)
 {
 	Rectangle t;
 
-	draw(i, track, tkgc(e, TkCbackgnddark), nil, ZP);
+	sdraw(i, sc, e, track, TkCbackgnddark);
 	t = track;
 	if(filled){
 		/* horizontal: fill to the knob; vertical: fill from the knob down */
 		if(Dx(track) > Dy(track)){
 			t.max.x = c.x;
 			if(t.max.x > t.min.x)
-				draw(i, t, tkgc(e, TkChighlightfgnd), nil, ZP);
+				sdraw(i, sc, e, t, TkChighlightfgnd);
 		}else{
 			t.min.y = c.y;
 			if(t.max.y > t.min.y)
-				draw(i, t, tkgc(e, TkChighlightfgnd), nil, ZP);
+				sdraw(i, sc, e, t, TkChighlightfgnd);
 		}
+	}
+	if(sc != nil){
+		tksceneellipsefill(sc, c, Pt(rad, rad), e->colors[TkCbackgnd]);
+		tksceneellipsefill(sc, c, Pt(rad-2, rad-2),
+			e->colors[TkChighlightfgnd]);
+		return;
 	}
 	fillellipse(i, c, rad, rad, tkgc(e, TkCbackgnd), ZP);
 	fillellipse(i, c, rad-2, rad-2, tkgc(e, TkChighlightfgnd), ZP);
@@ -606,6 +636,7 @@ tkdrawscale(Tk *tk, Point orig)
 	TkScale *tks;
 	Rectangle r, fr;
 	Image *i;
+	TkScene *sc;
 
 	tks = TKobj(TkScale, tk);
 	env = tk->env;
@@ -613,14 +644,44 @@ tkdrawscale(Tk *tk, Point orig)
 	r.min = ZP;
 	r.max.x = tk->act.width + 2*tk->borderwidth;
 	r.max.y = tk->act.height + 2*tk->borderwidth;
-	i = tkitmp(env, r.max, TkCbackgnd);
-	if(i == nil)
-		return nil;
+
+	/*
+	 * The whole widget as one layer of nodes.  A flat scale draws only
+	 * filled rectangles, two runs of text, two circles and a stroked
+	 * box; the two-tone bevels below belong to the classic look, which
+	 * this never takes.
+	 */
+	sc = nil;
+	if(tkviascene && tkstyleflat(tk))
+		sc = tkscenenew();
+	if(sc != nil){
+		Rectangle dr;
+
+		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
+		tkscenelayer(sc, r.max, env->colors[TkCbackgnd], dr, ZP);
+		i = nil;
+	}else{
+		i = tkitmp(env, r.max, TkCbackgnd);
+		if(i == nil)
+			return nil;
+	}
 
 	if(tks->orient == Tkvertical)
-		tkscalevert(tk, i);
+		tkscalevert(tk, i, sc);
 	else
-		tkscalehoriz(tk, i);
+		tkscalehoriz(tk, i, sc);
+
+	if(sc != nil){
+		tkreliefnodes(sc, tk, ZP, TkCbackgnd, tk->relief);
+		if(tkhaskeyfocus(tk))
+			tksceneborder(sc, insetrect(r, tk->borderwidth), 0,
+				tk->highlightwidth,
+				env->colors[TkChighlightfgnd]);
+		tkscenelayerend(sc);
+		tkscenerender(sc, env->top->ctxt, tkimageof(tk));
+		tkscenefree(sc);
+		return nil;
+	}
 
 	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
 	if (tkhaskeyfocus(tk)) {

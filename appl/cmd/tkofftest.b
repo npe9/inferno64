@@ -1353,8 +1353,19 @@ checkscene()
 	tk->cmd(top, "variable rv 1");
 	tk->cmd(top, "pack .e -padx 6 -pady 6");
 	tk->cmd(top, "pack .l -padx 6 -pady 6");
+	# A scale in both orientations, with every annotation it can draw:
+	# a label, the value, and tick marks.  Each of those is a separate
+	# node and the widget draws none of them by default.
+	must(top, "scale .s -orient horizontal -from 0 -to 100 " +
+		"-length 160 -label {Speed} -showvalue 1 -tickinterval 25");
+	must(top, ".s set 40");
+	must(top, "scale .v -orient vertical -from 0 -to 100 " +
+		"-length 90 -label {Gain} -showvalue 1 -tickinterval 50");
+	must(top, ".v set 70");
 	tk->cmd(top, "pack .r0 -padx 6 -pady 6");
 	tk->cmd(top, "pack .r1 -padx 6 -pady 6");
+	tk->cmd(top, "pack .s -padx 6 -pady 6");
+	tk->cmd(top, "pack .v -padx 6 -pady 6");
 	map(top);
 	tk->cmd(top, "focus -global 1");
 	tk->cmd(top, "focus .e");
@@ -1374,25 +1385,28 @@ checkscene()
 	if(sel1 != "direct" || sel2 != "scene")
 		return;		# comparing identical runs would say nothing
 
-	# TWO pairs, because only one widget can hold the keyboard and both
-	# of the widgets that have one want theirs compared.  With the entry
-	# focused the listbox draws neither its ring nor its active item's
-	# box - both are guarded by tkhaskeyfocus() - so a perturbation of
-	# either passes, which by the usual rule means the check never
-	# reached the code rather than that the code is right.
-	(d1, f1) := scenepair(top, ".e");
-	(d2, f2) := scenepair(top, ".l");
-	diff := d1 + d2;
-	first := f1;
-	if(first < 0)
-		first = f2;
-	if(d1 < 0 || d2 < 0){
-		report(0, "the offscreen pane reads back");
-		return;
+	# One pair PER FOCUSABLE WIDGET, because only one widget can hold the
+	# keyboard and each of them has nodes that depend on having it.  With
+	# the entry focused the listbox draws neither its ring nor its active
+	# item's box - both are guarded by tkhaskeyfocus() - so a
+	# perturbation of either passes, which by the usual rule means the
+	# check never reached the code rather than that the code is right.
+	who := array[] of {".e", ".l", ".s"};
+	diff := 0;
+	first := -1;
+	for(k := 0; k < len who; k++){
+		(d, f) := scenepair(top, who[k]);
+		if(d < 0){
+			report(0, "the offscreen pane reads back");
+			return;
+		}
+		diff += d;
+		if(first < 0)
+			first = f;
 	}
 	report(diff == 0, sys->sprint(
 		"a render-node tree draws a flat border identically to draw() (%d of %d bytes differ%s)",
-		diff, 2*W*H*3, at(first)));
+		diff, len who*W*H*3, at(first)));
 }
 
 # One direct/scene comparison of the whole pane, with `who' holding the
@@ -1442,6 +1456,20 @@ scenepair(top: ref Tk->Toplevel, who: string): (int, int)
 			}
 	}
 	return (diff, first);
+}
+
+# A command whose failure would otherwise go unnoticed.
+#
+# Setting a widget up is not what these checks test, so most of this file
+# throws the result away.  A scale given an option it does not know is
+# never built, and every comparison of it passes; anything that builds the
+# subject of a check goes through here, so a failure is at least printed.
+must(top: ref Tk->Toplevel, cmd: string): string
+{
+	e := tk->cmd(top, cmd);
+	if(e != nil && len e > 0 && e[0] == '!')
+		sys->print("     %s: %s\n", cmd, e);
+	return e;
 }
 
 # a toplevel to ask cheap questions of, made once

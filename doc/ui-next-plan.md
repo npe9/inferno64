@@ -929,9 +929,26 @@ there was never speed on the table here anyway.
    it is, so a clean control there would have meant the variable never
    took rather than that the node matched.
 
+   **The fifth is a `scale`, in both orientations.** A flat scale is
+   filled rectangles, two runs of text and the two circles of its knob, so
+   it went the way the radiobutton did. Its label, value and tick marks
+   are drawn only when asked for, so the check asks for all three, and
+   the scale joins the entry and the listbox in taking its own snapshot
+   pair with the keyboard. Eight controls, each a perturbation of the
+   scene path alone, fail as they must: label 1998 bytes, value 972, tick
+   marks 324, track 2124, fill 1476, knob rim 72, knob centre 396, focus
+   ring 1314. The first run of those controls came back clean for five
+   of the eight, and the fault was the controls: they shifted an
+   *argument*, and so moved the direct drawing as well as the nodes. A
+   perturbation has to be on the side being tested. The tick interval
+   was 0.25 on a range of 100 as well, which is 400 marks in 160 pixels
+   drawn onto the same few columns; it is now 25. The active band behind
+   the slider is drawn only while the pointer is over it, and no check
+   reaches it.
+
    **What is left is the rest of the widgets and then the walk.** Each
    `tkitmp` user converts the same way, against the same byte check;
-   `scale` and `scrollbar` are the remaining ones. A `checkbutton`'s
+   `scrollbar` is the remaining one. A `checkbutton`'s
    indicator is a filled box with a tick drawn by `bezspline`, and a
    spline has no node yet. Only when
    a repaint produces one tree instead of one per widget is there
