@@ -298,7 +298,14 @@ individual widgets. The default bindings do a grab set when button 1 is pressed
 and a grab release when button 1 is released. Care must be taken when overriding
 either or both of these defaults to ensure that grabbing is consistent.
 .SH BUGS
-At least one entry is required for the widget to indicate that it has keyboard focus.
+Under
+.IR style (9)'s
+classic look, at least one entry is required for the widget to indicate
+that it has keyboard focus: the only indication was a box around the
+ACTIVE ITEM, and an empty listbox has none.
+Under
+.B flat
+the widget draws a ring of its own whether or not it holds anything.
 .SH SEE ALSO
 .IR options (9),
 .IR types (9)

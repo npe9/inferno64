@@ -1179,6 +1179,15 @@ take place.
 The behaviour of texts can be changed by defining new bindings for
 individual widgets.
 .SH BUGS
+Under
+.IR style (9)'s
+classic look a text widget shows that it holds the keyboard with its
+caret and nothing else \(em ten pixels, in the middle of the widget, and
+absent for half of every second while the caret is blinking off.
+Under
+.B flat
+it draws a ring as well.
+.PP
 Tab alignment doesn't work correctly.
 .PP
 The \f5-stretch\fR option on embedded windows is not implemented.

@@ -195,4 +195,22 @@ The behaviour of scales can be changed by defining new bindings for
 individual widgets.
 .SH SEE ALSO
 .IR options (9),
+.IR style (9),
 .IR types (9)
+.SH BUGS
+A scale is two pixels wider and two taller under
+.IR style (9)'s
+.B flat
+look than under
+.BR classic ,
+because that is where it reserves the pixel it draws its focus ring in.
+It had the code to draw one all along and never drew it: the ring is a
+box of
+.B -highlightwidth
+pixels and the width was left at zero.
+.PP
+Under
+.B classic
+it still shows nothing when it holds the keyboard, since changing the
+size of a widget under the look every existing layout was measured
+against is the one thing the style rule does not allow.
