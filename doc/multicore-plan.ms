@@ -6182,3 +6182,26 @@ pre-existing and is now the nearest wall at
 .CW "-smp 4" ,
 and closing it means giving an interpreter an identity that survives
 losing its context, not moving the claim.
+.NH 2
+Where this leaves parallelvm=1
+.PP
+Twenty-four boots of the kernel as it stands, 90 seconds each:
+.TS
+center;
+l r r r r r.
+	panics	bad frame	chain short	all 27 cases	pool exhausted
+-smp 2, parallelvm=1	0 of 12	0	0 of 24 dumps	11 of 12	1 of 12
+-smp 4, parallelvm=1	5 of 8	0	0 of 17 dumps	1 of 8	6 of 8
+-smp 4, parallelvm=0	0 of 4	0	0	4 of 4	0
+.TE
+.PP
+Zero short chains and no bad frame anywhere, which is the register sync
+holding.  At
+.CW "-smp 2"
+the configuration is clean and does the whole workload.  At
+.CW "-smp 4"
+six boots of eight exhaust the context pool and five panic, and the two
+columns move together \(em that is the capacity limit of the section
+above, and it is now the only thing between this kernel and a
+.CW parallelvm=1
+that behaves the same at four processors as at two.
