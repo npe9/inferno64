@@ -1065,10 +1065,143 @@ there was never speed on the table here anyway.
    gridded, because the frame grew to fit it and the clip cut nothing.
    It fails only with `grid propagate .g 0` and a 207-pixel scale in a
    60-pixel frame, which is the arrangement where a clip is real.
-4. **A Metal backend.** Last, and only after 3: the measured hazard is
-   94% command-buffer overhead for small work, so a backend that issues a
-   draw call per node would be *slower* than the CPU, decisively. The
-   whole reason the real systems work is that they batch a frame into one
-   or two submissions.
+4. **A backend — but not on faith.** See the section below: the
+   measurement that was supposed to justify one says the opposite, so
+   this is now gated rather than scheduled.
 5. **`clip`, `transform`, `opacity`** — the three that make animation
    free, and the actual prize.
+
+## The next bit, and why it is not the GPU
+
+Written after the walk landed, against the numbers rather than the
+intention. Items 1 and 2 above are still open, item 3 is done.
+
+### What the measurement says
+
+`tkbench(1)` puts a thirty-widget window at **400µs of drawing and 250µs
+of present** — 4% of a frame. `gpu(3)` and `doc/hpc-plan.md:366` put
+command-buffer commit-and-wait at **94% of a small GPU call**, and say it
+barely moves with the size of the problem. Those two numbers together say
+a Metal backend for `libtk` cannot win a repaint it is given: there is
+0.4ms of work to take, the submission alone costs a comparable amount,
+and the CPU path is already at 4% of a frame.
+
+So **the reason to finish this is not speed, and pretending otherwise
+would be the third time this tree talked itself into a GPU path that
+measurement did not support** — `math(2)`'s BLAS builtins invalidated the
+`matvec` offload case outright, and the draw3d readback case cost a
+session before the numbers were believed. The reasons that survive
+contact with the numbers are:
+
+- **A tree that is a description, not a reproduction.** Today it
+  reproduces what `draw()` did, corner-repainting and all. That is what
+  items 1 and 2 are about, and neither needs a GPU.
+- **Animation.** `clip`, `transform` and `opacity` make a moving thing
+  cost nothing to *re-describe*. That pays on the CPU renderer too: the
+  tree is rebuilt from scratch every repaint today, so nothing that
+  moves is cheap, whoever rasterises it.
+- **Not having to answer the question again.** A node vocabulary that
+  can express a frame is worth having even if nothing but `memdraw`
+  consumes it, because every later decision — damage tracking, a
+  backend, a remote display — needs a description of the frame and there
+  is currently none.
+
+### The order, and the evidence each step owes
+
+**A. Widget fills become `TkNroundfill`** (plan item 1, unchanged and
+still first) — **and the fill is not where the plan said it was.** Every
+converted widget takes its fill from the *layer*: `tkscenelayer()` fills
+the scratch with a flat colour before anything is drawn into it
+(`libtk/buton.c:329`, `entry.c:429`, `label.c:318`, `listb.c:195`,
+`scale.c:661`, `scrol.c:432`, and the renderer at `scene.c:681`, which
+hands the fill straight to `tkitmppix`). The corner then arrives wrong
+and `tkreliefnodes()` → `tksceneborderon()` paints it back with a
+`TkNcorners`. Only `frame` fills with a real `TkNroundfill`
+(`libtk/frame.c:152`), and it is the one widget that opens its layer
+with the *parent's* colour rather than its own.
+
+   So the work is in `TkNlayer`, not in six call sites: either the layer
+   node carries a corner radius, or it is filled with nothing and every
+   widget emits a `TkNroundfill` as its first node. The second is the
+   honest one — a layer is a scope, and a fill colour on a scope is the
+   same shortcut that put the corner wrong in the first place — but it
+   costs a clear of the scratch, so measure both.
+
+   *Done when* no widget emits a `TkNcorners`, the identity check still
+   reads 0 bytes, and the pane's node count *falls* — that last is the
+   measurement which says the corner nodes went away rather than being
+   joined by fills. *Control:* perturb the fill's radius on the scene
+   side only; a clean control means a rounded fill is being emitted with
+   radius 0, which is a square fill wearing the right name.
+
+**B. `TkNglyphs` carries an atlas reference, not a `Font*`** (plan item
+2). This is the one node that still holds a resource, and `scene.c` says
+so in place. It blocks two separate things: a retained tree cannot
+outlive the caller while it points at a `Font`, and no backend can draw
+text from a node that hands it a display-side font object. The pieces
+are here — `chardrawaa()` in `libmemdraw/draw.c:2535` already blends
+coverage masks — and the Metal sprite cache is explicitly *not* an atlas
+(`emu/MacOSX/win-cocoa.m:4058`, "one Metal texture per distinct
+(img,mask) pair"). *Done when* a glyph node holds an atlas id and a list
+of positioned glyphs, the software renderer draws from the atlas, and
+the identity check still reads 0 bytes at three font sizes including a
+TrueType face. *Control:* shift one glyph's position in the atlas path;
+and separately, free the `Font` after building the tree and before
+rendering it — which must still draw correctly, since that is the whole
+property being bought.
+
+**C. A retained tree, and damage.** Only after B, because a tree that
+holds a `Font*` cannot be kept. Today `tkdrawslaves1()` decides what to
+repaint from `tk->dirty` rectangles and every surviving widget rebuilds
+its nodes from scratch. The question worth answering is whether keeping
+last frame's tree and re-emitting only the dirty subtrees is measurably
+cheaper on the CPU path — `tkbench(1)` already measures the thing that
+would move. *Done when* a repaint that changes one widget rebuilds one
+widget's nodes and `tkbench` shows the difference. *Control:* the
+obvious one is a tree that is never invalidated, which must produce a
+stale window; if it does not, the damage is not being used.
+
+**D. `clip`, `transform`, `opacity`.** The prize, and the first thing
+that makes a *moving* interface cheaper rather than merely described.
+Testable exactly as everything else here has been: a transform node
+against the same widget drawn at the transformed position, byte for
+byte.
+
+**E. A backend, if and only if a measurement asks for one.** The gate,
+written down now so it is not argued later: a GPU path is worth building
+when a repaint's drawing cost exceeds roughly **2ms** — five times the
+present cost, well past the submission overhead — for a window somebody
+actually uses. The way to find out is to run `tkbench(1)` at the sizes
+that might get there: a full-screen window at HiDPI, a 200-widget form,
+a text widget scrolling. If none of them gets there, the honest
+conclusion is that `libtk` should stay on `memdraw`, and the node tree's
+value is B, C and D rather than a rasteriser.
+
+The infrastructure is not the obstacle if the gate is passed:
+`emu/MacOSX/win-cocoa.m` already has a `CAMetalLayer`, a command queue,
+pipelines for the softscreen blit, geometry, GPU-side T&L and textured
+quads with blending, and — the part that is usually the hard one — a
+readback path (`metal_blit_tex`, `metal_overlay_soft`) that makes GPU
+output observable by `readpixels`, because `draw(3)` reads must be
+ordered after writes. A node backend would register the way
+`gpudrawfillpoly3d` does (`emu/port/devdraw.c:198`): a nullable hook,
+software when it is nil, and the software renderer as the oracle.
+
+### The unfinished widget conversions, sized
+
+Not on the critical path, but this is where they stand, so nobody has to
+re-derive it:
+
+- **`cascade`** — its arrow is `tktriangle()`, which `TkNpolyfill`
+  already covers. The obstacle is the *test*: a cascade lives in a
+  posted menu, which is a separate window, and the offscreen pane has no
+  way to post one. Converting it without a way to compare it would be
+  the thing this whole exercise exists to avoid.
+- **`entry` with a selection or `-show`** — a band and two runs, no new
+  vocabulary; `-show` builds a throwaway Rune buffer, which a glyph node
+  carrying positions (B) makes moot.
+- **Images and bitmaps** — need `TkNtexture`, which is declared and not
+  implemented. This is the same problem as B and should follow it.
+- **`text`, `canvas`, `panel`, `menu`** — paint into the window
+  directly. Each is a flush point in the walk and each is a much larger
+  conversion than any widget so far.
