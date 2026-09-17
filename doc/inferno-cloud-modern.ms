@@ -2107,9 +2107,28 @@ routing and TCP are all fine.  It is not TLS in general:
 boots the same pc64 kernel under QEMU and fetches the same URL twice,
 once each way, and both succeed \(em the https one takes minutes, which
 is bignum arithmetic under TCG and is why a shorter hold first looked
-like a hang.  The control that would narrow this further is a plain
-.CW "hget https"
-on an instance, which was not run.  On the arm64
+like a hang.
+.PP
+The control was then run on an instance:
+.CW "hget https://example.com/"
+hangs there too, with no error, while
+.CW http
+to the same host returns the page.  So it is not
+.CW gcs
+and not the credential; it is https on an instance.  Two guesses were
+tested and neither holds.  Compute Engine's network MTU is 1460 and
+this stack advertises from 1514, which would drop a full-sized segment
+and could stall a handshake carrying a certificate chain \(em but
+.CW "echo mtu 1460 > /net/ipifc/0/ctl"
+changes nothing.  And
+.CW /dev/random
+blocks until 64 bytes of timer jitter have accumulated, which would
+stall anything needing a key \(em but the same read returns at once on
+the same kernel under QEMU with one processor and with two, and the
+instance-side test that looked like a block was
+.CW "cat /dev/random" ,
+which never ends by design and had merely wedged the shell.  So this
+one is still open, with those two off the list.  On the arm64
 instance the same
 .CW gcs
 run took the kernel down in
