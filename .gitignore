@@ -98,13 +98,18 @@ y.debug
 /Nt/*/bin/srclist.exe
 /Nt/*/bin/styxtest.exe
 
-# emu binaries, and the linked output the mkfile copies into bin from.
-# These are build products like every other binary here: `mk CONF=emu-g
-# install' in emu/MacOSX rewrites them, so a tracked copy is dirty after
-# any build of the hosted VM.  The CONFIG files - emu/*/emu-g and
-# emu/*/emu-cocoa without the o. prefix - are source and stay tracked.
-/MacOSX/*/bin/emu-cocoa
-/MacOSX/*/bin/emu-g
+# MacOSX host binaries, the same way every other platform above and
+# below is treated.  Everything under these directories is a build
+# product - the kencc toolchain, the mk that builds it, and the two emu
+# binaries - and a tracked copy is dirty after any build.  makemk.sh,
+# which INSTALL step 2 names as the bootstrap, begins by deleting the
+# whole directory and then copies the mk it built into it, so nothing
+# here needs to survive in the repository for a clone to build.
+/MacOSX/*/bin/*
+
+# the linked emu output the mkfile copies into bin from.  The CONFIG
+# files - emu/*/emu-g and emu/*/emu-cocoa without the o. prefix - are
+# text, are source, and stay tracked.
 /emu/*/o.emu-*
 
 # ignore 9front, OpenBSD and Inferno native binaries
