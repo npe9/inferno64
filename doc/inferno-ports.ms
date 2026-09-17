@@ -19744,3 +19744,16 @@ reams, the pipe mounts and the create succeeds, under QEMU and on the Pi
 unallocated gap, sectors 2048 to 16000, never the whole device: kfs -r
 reams what it is given, and this card holds the firmware and the kernel
 that booted it.
+.PP
+The board reads and writes the partition it boots from.  init finds the
+FAT partition in the master boot record rather than assuming where it is,
+tells the SD device about it, and dossrv serves it at /n/dos: on the Pi,
+FAT-OK reports kernel8.img's size \(em the kernel that machine booted
+\(em and FAT-WRITE-OK creates a file beside it.  That took FAT32 support
+in dossrv, which had handled FAT12 and FAT16 and said "TO DO: FAT32"
+while the Pi's own boot partition is FAT32: its boot-sector fields were
+never parsed, the FAT width never set to 32, and the root directory
+always read as the fixed area that only FAT12/16 have, so the volume
+mounted and looked empty.  Verified under QEMU against a FAT32
+filesystem the host made, with the host's own FAT driver then reading
+back the file Inferno wrote.
