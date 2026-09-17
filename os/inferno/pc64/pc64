@@ -233,6 +233,8 @@ root
 	/fd	/
 	/forth
 	/n	/
+	/mnt	/
+	/mnt/registry	/
 	/usr	/
 	/usr/inferno	/
 	/usr/inferno/keyring	/
@@ -315,6 +317,8 @@ root
 	/dis/ndb/dns.dis
 	/dis/ndb/dnsquery.dis
 	/dis/ndb/csquery.dis
+	/dis/ndb/registry.dis
+	/dis/ndb/regquery.dis
 	/dis/lib/attrdb.dis
 	/dis/lib/ipattr.dis
 	/lib/ndb	/

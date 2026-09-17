@@ -1647,3 +1647,36 @@ wrong.  A test that silently measures the wrong configuration is worse
 than no test, and this one had every opportunity to: it would have
 reported an SMP regression immediately after a merge that touched the
 shared scheduler, which is the worst possible moment to be misled.
+.PP
+.B "Two mount-point gaps, one real and one not."
+The note that
+.CW /cloud
+was missing from the kernel root turns out to be stale:
+.CW /dis/init
+mounts
+.CW mntgen
+on
+.CW /n ,
+so
+.CW /n/cloud
+and every other name under
+.CW /n
+appears on demand.  Verified on the booted kernel \(em
+.CW "mount {metricfs} /n/cloud"
+works and reads back.
+.PP
+The real gap was
+.CW /mnt .
+It was not in the root at all, and neither was
+.CW ndb/registry ,
+so the discovery this section leans on could be demonstrated under
+.CW emu
+and not on the thing that actually ships.  Both are in the pc64 root
+now \(em every library
+.CW registry
+needs was already there \(em and the kernel grew by 12 KB, to 8.81 MB.
+Verified on the booted kernel: the registry mounts at
+.CW /mnt/registry ,
+a service registers, and
+.CW index
+lists it.
