@@ -6283,3 +6283,52 @@ correction had one general protection violation in sixteen at
 .CW "-smp 4" ;
 with it, none in twelve.  That is not enough boots to call the
 difference, and it is recorded that way.
+.NH 2
+Forty-six boots, and a heap that is bounded but not equal
+.PP
+The kernel with both fixes and the context recycling, 90 seconds a boot:
+.TS
+center;
+l r r r r.
+	panics	all 27 cases	pool exhausted	contexts held
+-smp 4, parallelvm=1	1 of 20	17 of 20	0	11 to 39
+-smp 2, parallelvm=1	0 of 20	14 of 20	0	13 to 35
+-smp 4, parallelvm=0	0 of 6	6 of 6	0	40 to 44
+.TE
+.PP
+One page fault in forty
+.CW parallelvm=1
+boots, against 5 in 8 before the context work and 2 in 96 in the batch
+this document opened with.  No bad frame and no short chain anywhere.
+.PP
+.B "A column that does not measure its name, again."
+Two
+.CW "-smp 4"
+boots were counted as "stuck at 70s" because
+.CW gcsema
+was held when the dump ran.  Both completed every chantest case: the
+column was counting a collection in progress, not a stall.  It is the
+third such column in this document, and the rule stands \(em read the
+code that produces the line before putting the count in a table.
+.NH 2
+Is the collector keeping up?
+.PP
+Nothing here had measured that, so the dump now prints the pool sizes.
+Six boots each at
+.CW "-smp 2" ,
+read at 60 seconds:
+.TS
+center;
+l r r.
+	Dis heap in use	main pool in use
+parallelvm=0	402 to 419 KB	3.1 to 3.9 MB
+parallelvm=1	426 KB to 3.7 MB	3.9 to 5.3 MB
+.TE
+.PP
+So the stop-the-world collector does keep the heap bounded \(em nothing
+runs away over an eighty-second boot \(em but it does not hold it where
+the VM-locked collector does: one boot of six sat at nine times the
+.CW parallelvm=0
+figure.  That is the honest state of it, and it is a throughput
+question about how often collections are abandoned, not a correctness
+one.

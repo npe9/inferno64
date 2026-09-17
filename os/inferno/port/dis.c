@@ -3278,6 +3278,21 @@ stalldump(void)
 	}
 	print("stall: contexts reused %lud, released %lud, queued with none"
 		" %lud\n", ctxreused, ctxreleased, ctxnone);
+	/*
+	 * Is the collector keeping up?  A stop-the-world collector that
+	 * runs less often than the one the VM lock allowed would show here
+	 * as a Dis heap that keeps growing, and nothing else in this
+	 * document measures that.
+	 */
+	{	/* pool sizes; Pool is opaque outside alloc.c, so use its own reader */
+		char pbuf[400];
+		int pn;
+
+		pn = poolread(pbuf, sizeof pbuf - 1, 0);
+		pbuf[pn] = 0;
+		print("stall: pools (cursize maxsize hw nalloc nfree nbrk max name)\n%s\n",
+			pbuf);
+	}
 	print("stall: gcsema locked %d head %d gcstw %d by %d npctx %d"
 		" phase %d\n",
 		gcsema.locked, gcsema.head != nil ? gcsema.head->pid : -1,
