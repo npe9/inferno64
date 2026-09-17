@@ -74,6 +74,9 @@ Conn: adt {
 	reads:	list of ref Tmsg.Read;	# deferred data reads
 	frames:	list of array of byte;	# queued frames, newest first
 	nframes: int;
+	nin:	int;			# frames matched to this conversation
+	nout:	int;			# frames handed to a reader
+	ndrop:	int;			# frames dropped, queue full and no reader
 };
 
 conns: array of ref Conn;
@@ -97,6 +100,23 @@ nwrit := 0;		# bulk writes that wrote the whole frame
 nwerr := 0;		# bulk writes that did not
 nrx := 0;		# frames delivered from the device
 lasterr := "";		# what the last failed write said
+ndump4 := 0;		# IPv4 frames dumped on the way out
+ndump6 := 0;		# ARP frames dumped, for comparison
+
+# The head of a frame as it is handed to the endpoint: destination and
+# source mac, ethertype, and the start of what follows.  A frame the
+# other end never sees is either not written or written wrong, and the
+# second of those is only visible here.
+txdump(what: string, f: array of byte)
+{
+	s := "";
+	n := len f;
+	if(n > 50)
+		n = 50;
+	for(i := 0; i < n; i++)
+		s += sys->sprint("%02x", int f[i]);
+	sys->print("TXDUMP %s %d %s\n", what, len f, s);
+}
 
 # USB request type bits, standard requests and descriptor types
 Rh2d: con 0;
@@ -847,6 +867,7 @@ txproc()
 	zlp := array[0] of byte;
 	for(;;){
 		f := <-txc;
+		frame0 := f;
 		n := len f;
 		if(kind == Ksmsc){
 			t := array[8+n] of byte;
@@ -861,6 +882,13 @@ txproc()
 			t[0:] = f;
 			f = t;
 		}
+		t := 0;
+		if(len frame0 >= 14)
+			t = (int frame0[12] << 8) | int frame0[13];
+		if(t == 16r800 && ndump4++ < 4)
+			txdump("ip", f);
+		else if(t == 16r806 && ndump6++ < 2)
+			txdump("arp", f);
 		if(debug)
 			sys->print("etherusb: tx write %d\n", len f);
 		if(sys->write(bout.dfd, f, len f) != len f){
@@ -921,7 +949,7 @@ handle(gm: ref Tmsg): string
 				nc[0:] = conns;
 				conns = nc;
 			}
-			conns[n] = ref Conn(n, 0, 0, nil, nil, 0);
+			conns[n] = ref Conn(n, 0, 0, nil, nil, 0, 0, 0, 0);
 			cdir := Cbase + big(n*3);
 			tree.create(Qether, dir(string n, Sys->DMDIR|8r555, cdir));
 			tree.create(cdir, dir("ctl", 8r666, cdir+big 1));
@@ -943,9 +971,18 @@ handle(gm: ref Tmsg): string
 			return nil;
 		}
 		if(fid.path == Qstats){
-			srv.reply(styxservers->readstr(m, sys->sprint(
+			ss := sys->sprint(
 				"ntx %d\nnqueued %d\nnwrit %d\nnwerr %d\nndrop %d\nnrx %d\nlasterr %s\n",
-				ntx, nqueued, nwrit, nwerr, ndrop, nrx, lasterr)));
+				ntx, nqueued, nwrit, nwerr, ndrop, nrx, lasterr);
+			for(i := 0; i < nconn; i++){
+				c := conns[i];
+				np := 0;
+				for(rl := c.reads; rl != nil; rl = tl rl)
+					np++;
+				ss += sys->sprint("conv %d etype %#x in %d out %d drop %d held %d waiting %d\n",
+					i, c.etype, c.nin, c.nout, c.ndrop, c.nframes, np);
+			}
+			srv.reply(styxservers->readstr(m, ss));
 			return nil;
 		}
 		if(fk == 1){			# ctl read -> conversation number
@@ -1115,10 +1152,17 @@ transmit(cn: int, frame: array of byte)
 
 # a received frame goes to every conversation whose type matches (or
 # that asked for all), answering a waiting read or queueing it
+nrxdump := 0;
+
 deliver(f: array of byte)
 {
 	nrx++;
 	t := (int f[12] << 8) | int f[13];
+	# every ARP frame that reaches this server, so a reply the other end
+	# swears it sent can be placed on one side of the endpoint or the
+	# other
+	if(t == 16r806 && nrxdump++ < 8)
+		txdump("rxarp", f);
 	if(debug)
 		sys->print("etherusb: rx %d bytes type %#4.4x\n", len f, t);
 	for(i := 0; i < nconn; i++){
@@ -1127,6 +1171,7 @@ deliver(f: array of byte)
 		# negative type receives everything
 		if(c.etype != t && c.etype >= 0)
 			continue;
+		c.nin++;
 		if(c.reads != nil){
 			# oldest read first
 			l: list of ref Tmsg.Read;
@@ -1136,12 +1181,15 @@ deliver(f: array of byte)
 			c.reads = nil;
 			for(; l != nil; l = tl l)
 				c.reads = hd l :: c.reads;
+			c.nout++;
 			srv.reply(ref Rmsg.Read(m.tag, f[0:min(m.count, len f)]));
 		} else if(c.nframes < Nqueue){
 			c.frames = f :: c.frames;
 			c.nframes++;
-		} else
+		} else {
+			c.ndrop++;
 			ndrop++;
+		}
 	}
 }
 

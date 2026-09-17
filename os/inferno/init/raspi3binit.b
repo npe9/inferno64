@@ -228,17 +228,17 @@ netcounters()
 		# handed it: the two counts either side of the bulk endpoint
 		tx := sys->open("/net.alt/ether/stats", Sys->OREAD);
 		if(tx != nil){
-			tb := array[512] of byte;
+			tb := array[2048] of byte;
 			tn := sys->read(tx, tb, len tb);
 			tx = nil;
 			ts := "";
-			if(tn > 0){
-				(nil, tf) := sys->tokenize(string tb[0:tn], " \t\r\n");
-				for(tl2 := tf; tl2 != nil && tl tl2 != nil; tl2 = tl tl tl2)
-					ts += " " + hd tl2 + " " + hd tl tl2;
+			if(tn > 0)
+				ts = string tb[0:tn];
+			if(ts != lasttx && ts != ""){
+				(nil, tls) := sys->tokenize(ts, "\n");
+				for(tl2 := tls; tl2 != nil; tl2 = tl tl2)
+					sys->print("NETTX %s\n", hd tl2);
 			}
-			if(ts != lasttx && ts != "")
-				sys->print("NETTX%s\n", ts);
 			lasttx = ts;
 		}
 		# What ICMP itself saw: InMsgs counts echo requests that reached
