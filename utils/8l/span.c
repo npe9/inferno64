@@ -744,12 +744,18 @@ uchar	ymovtab[] =
 	AMOVL,	Yml,	Ycr3,	4,	0x0f,0x22,3,0,
 	AMOVL,	Yml,	Ycr4,	4,	0x0f,0x22,4,0,
 
-/* mov dr */
+/* mov dr; 1 to 3 as 6l has them, for putdr in the 386 machine layer */
 	AMOVL,	Ydr0,	Yml,	3,	0x0f,0x21,0,0,
+	AMOVL,	Ydr1,	Yml,	3,	0x0f,0x21,1,0,
+	AMOVL,	Ydr2,	Yml,	3,	0x0f,0x21,2,0,
+	AMOVL,	Ydr3,	Yml,	3,	0x0f,0x21,3,0,
 	AMOVL,	Ydr6,	Yml,	3,	0x0f,0x21,6,0,
 	AMOVL,	Ydr7,	Yml,	3,	0x0f,0x21,7,0,
 
 	AMOVL,	Yml,	Ydr0,	4,	0x0f,0x23,0,0,
+	AMOVL,	Yml,	Ydr1,	4,	0x0f,0x23,1,0,
+	AMOVL,	Yml,	Ydr2,	4,	0x0f,0x23,2,0,
+	AMOVL,	Yml,	Ydr3,	4,	0x0f,0x23,3,0,
 	AMOVL,	Yml,	Ydr6,	4,	0x0f,0x23,6,0,
 	AMOVL,	Yml,	Ydr7,	4,	0x0f,0x23,7,0,
 
