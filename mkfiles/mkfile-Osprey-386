@@ -5,7 +5,7 @@ CPUS=		386
 O=		8
 OS=		v851ok0q26
 
-AR=		ar
+AR=		iar		# the tree's own archiver: the host ar does not take these flags and does not write a Plan 9 archive
 ARFLAGS=	vu
 
 AS=		8a

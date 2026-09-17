@@ -115,6 +115,39 @@ LIB=\
 	$ROOT/Inferno/$OBJTYPE/lib/libfis.a\
 	$ROOT/Inferno/$OBJTYPE/lib/libkern.a\
 
+# The libc the two embedded boot programs link against, and nothing
+# else: this is not 9front's libc for the object type.  9front's libc
+# here carries 9sys, amd64, fmt and port and no 386 machine directory,
+# so the whole archive cannot be built for 386 at all; what these two
+# programs want was measured instead, by linking them with no libc and
+# reading what was undefined.  initcode wants five symbols: bind, open,
+# exec and _exits, which are the syscall stubs, and rerrstr - which
+# wants errstr, another stub, and utfecpy, which wants memccpy.  Three
+# portable files and the stubs.
+#
+# The amd64 side takes these out of a real libc.a of 263 members; this
+# archive holds what is used and says so in its name being the same.  A
+# program that needs more will say which symbol, which is how this list
+# was arrived at and how it should grow.
+LIBCBOOT=bootsys.$O rerrstr.$O utfecpy.$O memccpy.$O
+LIBCSRC=$ROOT/9front/src/libc
+LIBCINC=-I$ROOT/9front/src/include -I$ROOT/9front/386/include
+
+# The source is named rather than taken from $prereq: every $O in this
+# directory also depends on the kernel's headers, so $prereq is the
+# source and a dozen .h files, and 8c would be asked to compile those
+# too.  These three are compiled with 9front's includes and none of the
+# kernel's, the way buildserver.sh compiles the amd64 side.
+rerrstr.$O:	$LIBCSRC/9sys/rerrstr.c
+	$CC $LIBCINC -o $target $LIBCSRC/9sys/rerrstr.c
+utfecpy.$O:	$LIBCSRC/port/utfecpy.c
+	$CC $LIBCINC -o $target $LIBCSRC/port/utfecpy.c
+memccpy.$O:	$LIBCSRC/port/memccpy.c
+	$CC $LIBCINC -o $target $LIBCSRC/port/memccpy.c
+
+$TARGETLIB/libc.a:	$LIBCBOOT
+	$AR $ARFLAGS $target $LIBCBOOT
+
 $TARGETLIB/libospreykern.a:V:
 	{ cd $PORTLIB; mk install; }
 

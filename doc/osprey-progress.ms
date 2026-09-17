@@ -6128,11 +6128,75 @@ here carries
 and
 .CW port
 and no 386 machine directory, so the archive cannot simply be built for
-the other object type; what it needs instead is the few machine-dependent
-files written, or an archive holding only what these two programs use.
-That is the next piece and it is named rather than estimated.  Where the paragraph above says "before it needs
-anything else", the measurement says the kernel builds first and wants
-those two things last.
+the other object type.  It holds only what these two programs use
+instead: three portable sources compiled with 9front's own includes and
+none of the kernel's, beside the stubs.
+.CW initcode
+links against it \- 840 bytes of program \- which is what says the list
+is right.
+.PP
+Building it found the repair the doc above records for
+.CW mkfiles/mkfile-Inferno-386 ,
+unmade in the file beside it:
+.CW mkfile-Osprey-386
+named the host
+.CW ar ,
+which does not take these flags and does not write a Plan 9 archive.  It
+names
+.CW iar
+now, as the Inferno file does.
+.PP
+The kernel's own
+.CW libkern
+was the next thing
+.CW 8l
+refused: "opcode out of range 3077, probably not a .8 file" for
+.CW strcat .
+It was not one cause but two.  The archive's members were compiled before
+.CW 8.out.h
+grew the four
+.CW FXSAVE
+opcodes, and those went into the middle of the enum; mk judges an archive
+member by its own date and knows nothing of the compiler, so it did not
+recompile them, and removing the archive is what makes it.  Rebuilt, the
+archive linked to "undefined: strcat" instead, with
+.CW strcat
+plainly in it: the host
+.CW libmach ,
+which
+.CW iar
+reads object files with, was built before the same change, and
+.CW 8obj.c
+takes
+.CW ASIGNAME
+from that header \- one of the numbers that moved.  So
+.CW iar
+could not find a symbol in any new
+.CW .8
+and wrote an archive with an empty symbol table.  The header is now among
+.CW libmach 's
+dependencies, all nine of the object-format headers, so the next opcode
+added rebuilds the reader with it; the assemblers, compilers and loaders
+already listed theirs, and
+.CW libmach
+was the one that did not.  After that the
+.CW boot
+program links, a 386 executable of 3051 bytes.
+.PP
+The build now stops at the next thing, and it is the same shape as the
+others: a thing built for one object type that has not been built for
+the other.
+.CW buildserver.sh ,
+which makes the file server's image, is written for amd64 and writes
+into
+.CW os/osprey/pc64 ,
+so a 386 build that runs it embeds an amd64 program, in the wrong
+directory, and
+.CW userinit.c
+does not find it.  That is where the build stops, which says it is next,
+not that it is last: nothing after it has been attempted.  Where the
+paragraph above says "before it needs anything else", the measurement
+says the kernel builds first and wants its embedded programs after.
 .PP
 One thing about the mkfile is worth writing down.  pc64 keeps its own
 machine sources and borrows the drivers from
