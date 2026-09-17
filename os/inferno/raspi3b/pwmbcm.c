@@ -51,7 +51,10 @@
 #include "fns.h"
 
 extern void gpiofsel(int, int);
-extern int mboxsetclock(int, u32, u32*);	/* mailbox.c */		/* gpiobcm.c */
+extern int mboxgetclock(int, u32*);	/* mailbox.c */
+
+/* take CPRMAN's PWM clock; see pwminit() */
+int pwmdeep = 0;		/* gpiobcm.c */
 
 enum {
 	/* PWM registers, word offsets */
@@ -255,22 +258,34 @@ pwminit(void)
 	}
 
 	/*
-	 * Ask the firmware for the clock first.  CPRMAN is the firmware's
-	 * on this board -- the PWM clock feeds the analogue audio jack --
-	 * and the ARM writing it writes over whatever the firmware is
-	 * doing with the same PLL.  Taking the PCM clock that way hung
-	 * the board in screeninit(); this one has never been shown to,
-	 * but asking is both safer and the documented interface.
-	 * pwmclock() stays for a firmware that will not answer, which is
-	 * what QEMU's mailbox does for this clock id.
+	 * Ask the firmware what the PWM clock is; do not ask it to change
+	 * one, and do not take CPRMAN.
+	 *
+	 * Setting it through the mailbox looked like the safe way to do
+	 * this and is not.  With SET_CLOCK_RATE in the boot the board's
+	 * console came back garbled -- the PL011's own output unreadable
+	 * while the mini UART's line, clocked separately, was clean --
+	 * which is the console's clock moving under it.  The firmware
+	 * owns the clock tree and relates the clocks to each other; a
+	 * boot-time check has no business rearranging it.  Taking CPRMAN
+	 * directly is worse: that is what hung the boot in i2sbcm.c.
+	 *
+	 * So: use the rate the firmware already has, and if it will not
+	 * say, do the checks that need no clock and stop.  pwmdeep takes
+	 * CPRMAN on a board where nothing else needs the firmware.
 	 */
 	hz = 0;
 	pwmfrom = "the firmware";
-	if(mboxsetclock(Pwmclkid, 200000, &fwhz) == 0)
+	if(mboxgetclock(Pwmclkid, &fwhz) == 0)
 		hz = fwhz;
-	if(hz == 0){
+	if(hz == 0 && pwmdeep){
 		pwmfrom = "cprman";
 		hz = pwmclock(96);		/* 19.2MHz / 96 = 200kHz */
+	}
+	if(hz == 0){
+		print("PWM-NOCLOCK the block answers; the firmware reports no PWM "
+			"clock and this does not set one\n");
+		return;
 	}
 	if(hz == 0){
 		print("PWM-FAIL clock never started (ctl %#ux div %#ux)\n",
