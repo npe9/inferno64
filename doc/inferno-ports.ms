@@ -19757,3 +19757,33 @@ always read as the fixed area that only FAT12/16 have, so the volume
 mounted and looked empty.  Verified under QEMU against a FAT32
 filesystem the host made, with the host's own FAT driver then reading
 back the file Inferno wrote.
+.PP
+The board's ethernet is not finished, and the fault is probably not in
+the USB driver.  Enumeration, the link and the first exchanges work every
+boot: the LAN9514 comes up, etherusb serves it, and DHCP usually returns
+a lease.  Within seconds the receive stream stops: the interface's pktin
+freezes, nothing answers a ping, and the board neither transmits nor
+receives again.  Three changes to the host controller each fixed half the
+symptom \(em waiting indefinitely for a bulk IN turned a missed
+completion into a permanent stall; delivering what had moved instead
+handed up half frames, which the IP layer dropped, so pktin climbed while
+nothing was ever answered; asking for a retry stalled again \(em and the
+instrument written to settle it never fired, because the stalled channel
+is still enabled and the reader is not in that wait at all.
+.PP
+What the board shows at the stall is a pipeline wedged above the driver:
+all four etherusb processes alive, one with minutes of processor time,
+another blocked sending a received packet into a channel nothing is
+draining.  Alongside it the interpreter's own watchdog reports pointer
+slots in live Dis objects changing from H to 0 \(em not a legal pointer
+value, reported right after a "new", which is what an allocation
+overlapping a live object looks like.  That watchdog is another session's
+work in libinterp, hunting exactly this; dossrv and the network now
+allocate enough to reach it.  Until that is settled, more changes to
+usbdwc.c are guesses: the next step is the heap, not the host controller.
+.PP
+One practical note for anyone working on this board: those watchdog
+reports print to the console, and on a board whose only console is the
+serial line they interleave with the input echo and corrupt typed
+commands mid-word.  Two apparent driver hangs here were that.  Drive the
+board from its init program, or gate the reports.
