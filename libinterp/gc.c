@@ -1159,13 +1159,12 @@ rootset(Prog *root)
 							" tile %#p..%#p,"
 							" stopped %#p, pid %d,"
 							" state %d, gchalt %d,"
-							" spsrc %#x,"
 							" regs from"
 							" %s%d (1 xec 2 isave"
 							" 3 propex 4 dbg)\n",
 							sx->reg.tos.fu, sp, fp,
 							root->pid, root->state,
-							gchalt, root->spsrc,
+							gchalt,
 							rr == &root->reg
 							  ? "p->reg" : "ctx ",
 							rr == &root->reg

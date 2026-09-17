@@ -181,33 +181,13 @@ found:
 	 */
 	f = (Frame*)R.FP;
 	t = FRTYPE(f);
-	/*
-	 * INSTRUMENTATION - temporary.  Which of these sets R.SP?
-	 *
-	 * The first passes setsp as 0 and leaves R.SP alone; the second
-	 * passes 1.  If neither runs, and the unwind loop below does not
-	 * run either because R.FP is already the handler frame, then
-	 * nothing here touches R.SP and the snapshot taken at the end
-	 * carries whatever it had.  rootset() then walks tos.fu..SP over
-	 * range that is not frames, which is the fault this is chasing.
-	 *
-	 * 1 = first branch (no setsp), 2 = second (setsp), 3 = neither.
-	 * 0x10 is or'd in when the unwind loop ran, which also sets SP.
-	 */
-	if(R.FP < R.EX || R.FP >= R.TS){
-		p->spsrc = 1;
+	if(R.FP < R.EX || R.FP >= R.TS)
 		freeframe(R.EX+OA(Stkext, reg.tos.fr), 0);
-	}
-	else if(R.FP+t->size < R.SP){
-		p->spsrc = 2;
+	else if(R.FP+t->size < R.SP)
 		freeframe(R.FP+t->size, 1);
-	}
-	else
-		p->spsrc = 3;
 
 	m = R.M;
 	while(R.FP != fp){
-		p->spsrc |= 0x10;	/* INSTRUMENTATION: the loop set SP */
 		f = (Frame*)R.FP;
 		R.PC = f->lr;
 		R.FP = f->fp;
@@ -280,8 +260,8 @@ found:
 			if(handlerbroketold++ < 6)
 				print("handler: prog %d leaves FP %#p SP %#p"
 					" EX %#p with a chain that stops short,"
-					" spsrc %#x\n",
-					p->pid, R.FP, R.SP, R.EX, p->spsrc);
+					"\n",
+					p->pid, R.FP, R.SP, R.EX);
 		}
 	}
 	memmove(&p->reg, &R, sizeof(R));

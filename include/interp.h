@@ -291,7 +291,6 @@ struct Prog
 	uchar*		lastfp;		/* INSTRUMENTATION: reg at the last quantum exit */
 	uchar*		lastsp;
 	uchar*		lastex;
-	int		spsrc;		/* INSTRUMENTATION: propex's SP path */
 	Prog*		link;		/* Run queue */
 	Channel*		chan;	/* Channel pointer */
 	void*		ptr;		/* Channel data pointer */

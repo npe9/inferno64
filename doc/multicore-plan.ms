@@ -6079,6 +6079,21 @@ syncs again when it rewinds and
 destroys the Prog, so this only makes the snapshot consistent for the
 window in between.
 .PP
+The collector is not the only thing that could read that snapshot.
+.CW xec()
+loads
+.CW "R = p->reg"
+at entry, so a Prog that resumed while still stale would re-execute the
+instructions it had already run.  That was not observed: of the Progs
+that left
+.CW xec()
+unsynced and ran again \(em 180 to 300 a boot \(em every one was back in
+step by the time it ran, because
+.CW handler() 's
+own sync had happened first.  So the window was only ever seen by the
+collector on this workload, which is a statement about what was
+measured and not about the mutator path being safe by construction.
+.PP
 .CW *syncfix=0
 turns the sync off, so one kernel measures both arms in one interleaved
 batch \(em the form the rest of this document uses, and the one the
@@ -6179,9 +6194,17 @@ carries a sleeper's wake with it.
 .PP
 Recorded rather than kept: the change is reverted.  The pool limit is
 pre-existing and is now the nearest wall at
-.CW "-smp 4" ,
-and closing it means giving an interpreter an identity that survives
-losing its context, not moving the claim.
+.CW "-smp 4" .
+Of the two obstacles the Rendez is the smaller one and should not be
+described as a redesign: it is indexed by context only because
+.CW enterquantum()
+happens to park on
+.CW ctxr[c->idx] ,
+and moving that wait to a per-process Rendez removes it without any
+change to what an interpreter owns.  What is left after that is the
+placeholder Prog and
+.CW defpctx ,
+which is where the identity question really is.
 .NH 2
 Where this leaves parallelvm=1
 .PP
