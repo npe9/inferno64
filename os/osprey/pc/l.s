@@ -1073,7 +1073,18 @@ TEXT _syscallintr(SB), $0
 
 	PUSHL	SP			/* Ureg* argument to syscall */
 	PUSHL	$forkret(SB)		/* return pc */
-	JMPF	syscall(SB)
+	/*
+	 * JMP where 9front writes JMPF.  This assembler has no JMPF and
+	 * the pristine copy in os/9front/pc/l.s keeps it; what the two
+	 * lines have to do is the same thing, and it is written here in
+	 * the words this assembler knows rather than by adding a mnemonic
+	 * whose meaning could not be checked.  The frame above is a call
+	 * frame built by hand - the Ureg* and then the return pc - so this
+	 * is a jump to syscall which returns to forkret, inside the
+	 * kernel's own code segment: CS is not being changed, and an
+	 * inter-segment jump is not what the sequence wants.
+	 */
+	JMP	syscall(SB)
 
 TEXT vectortable(SB), $0
 	CALL _strayintr(SB); BYTE $0x00		/* divide error */

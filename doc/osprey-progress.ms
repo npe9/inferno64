@@ -5940,6 +5940,80 @@ and
 .CW libaml
 all build for 386.
 .PP
+One thing that stopped it before anything else is gone: the 386 machine
+layer now assembles.
+.CW os/osprey/pc/l.s
+uses four instructions this tree's
+.CW 8a
+did not have \-
+.CW FXSAVE ,
+.CW FXRSTOR ,
+.CW LDMXCSR
+and
+.CW STMXCSR ,
+which are how a 486 and after save the floating-point and SSE state \-
+so nothing in the tree could assemble the file at all, and a 386 kernel
+was blocked at its first source.  All four are
+.CW "0F AE"
+with the register field of the modrm byte choosing between them, and
+they are in the assembler's table, the linker's, and the enum and name
+list the two share.  The bytes were not taken from a manual: this host
+carries the
+.CW x86_64-linux-gnu
+binutils, so the same four were assembled there and the encodings
+compared \-
+.CW "0f ae 00" ,
+.CW "0f ae 08" ,
+.CW "0f ae 54 24 04" ,
+.CW "0f ae 5c 24 08"
+\- and what
+.CW 8l
+emits is those bytes.
+.PP
+Two things about the tables are worth writing down because neither is
+guessable.  The linker's
+.CW optab
+is a dense array indexed by opcode \-
+.CW obj.c
+checks
+.CW optab[i].as == i
+for every entry \- and it stops well short of the end of the enum, so an
+opcode added where the header says to add new operations assembles and
+will not link ("phase error in optab").  The four go immediately after
+.CW AFYL2XP1 ,
+which is where that table ends.  And
+.CW 8a
+crashes on any source file whose path is longer than 99 characters:
+.CW assemble()
+copies it into a
+.CW char
+.CW ofile[100]
+with
+.CW strcpy ,
+and a fortified libc traps the overflow.  That is why it looked, for an
+afternoon, as though the assembler could not assemble anything at all.
+.PP
+The fourth thing
+.CW 8a
+could not read is
+.CW "JMPF syscall(SB)" ,
+and it is not an instruction this adds.  What the sequence around it
+does is unambiguous \- it pushes a
+.CW Ureg*
+and a return pc, a call frame built by hand, and jumps to
+.CW syscall
+so that it returns to
+.CW forkret ,
+inside the kernel's own code segment \- so the port's copy says
+.CW JMP ,
+which this assembler has and which does that.  The pristine copy in
+.CW os/9front/pc/l.s
+keeps
+.CW JMPF .
+Adding a mnemonic whose meaning could not be checked against anything,
+in the syscall entry path of a kernel that cannot yet be booted to
+check it, is the kind of guess that is discovered later and not sooner.
+.PP
 What stops the kernel itself is not the kernel.  The boot filesystem a
 configuration names embeds prebuilt
 .CW paqfs

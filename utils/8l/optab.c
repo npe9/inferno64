@@ -649,6 +649,25 @@ Optab optab[] =
 	{ AFXTRACT,	ynone,	Px, 0xd9, 0xf4 },
 	{ AFYL2X,	ynone,	Px, 0xd9, 0xf1 },
 	{ AFYL2XP1,	ynone,	Px, 0xd9, 0xf9 },
+
+	/*
+	 * 0F AE, the register field of the modrm byte choosing which: 0
+	 * saves the whole floating-point and SSE state, 1 restores it, 2
+	 * loads MXCSR and 3 stores it.  ysvrs is the shape FSAVE and
+	 * FRSTOR use - one memory operand, either way round - which is
+	 * what these are.  The bytes were taken from the host assembler
+	 * rather than from a manual: 0f ae 00, 0f ae 08, 0f ae 54 24 04,
+	 * 0f ae 5c 24 08 for the four with a simple address.
+	 *
+	 * They go at the end because this table is read in opcode order
+	 * and its opcodes are at the end of the enum: putting them beside
+	 * FLDCW, where they belong by subject, is "phase error in optab".
+	 */
+	{ AFXSAVE,	ysvrs,	Pm, 0xae,(00),0xae,(00) },
+	{ AFXRSTOR,	ysvrs,	Pm, 0xae,(01),0xae,(01) },
+	{ ALDMXCSR,	ysvrs,	Pm, 0xae,(02),0xae,(02) },
+	{ ASTMXCSR,	ysvrs,	Pm, 0xae,(03),0xae,(03) },
+
 	{ AEND },
 	0
 };

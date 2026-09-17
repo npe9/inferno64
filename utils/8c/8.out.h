@@ -347,6 +347,24 @@ enum	as
 	AFYL2X,
 	AFYL2XP1,
 
+	/*
+	 * The four the 386 machine layer needs and this assembler did not
+	 * have: the FXSAVE family, which is how a 486 and after save the
+	 * whole floating-point and SSE state, and the MXCSR pair beside
+	 * them.  All four are 0F AE with the register field of the modrm
+	 * byte choosing between them.
+	 *
+	 * They go here and not at the end where the comment below says to
+	 * put new operations, because the linker's optab is a dense array
+	 * indexed by opcode - obj.c checks optab[i].as == i for every
+	 * entry - and it stops at this one.  An opcode past the end of
+	 * that table can be assembled and cannot be linked.
+	 */
+	AFXSAVE,
+	AFXRSTOR,
+	ALDMXCSR,
+	ASTMXCSR,
+
 	AEND,
 
 	ADYNT,
