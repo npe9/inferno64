@@ -40,6 +40,7 @@ TARG=\
 	cal.dis\
 	calc.dis\
 	cat.dis\
+	cvtchk.dis\
 	cd.dis\
 	cddb.dis\
 	chgrp.dis\

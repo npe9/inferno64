@@ -64,6 +64,21 @@ fpregcheck(void)
 		return;
 	}
 	print("FPREG-OK all 32 single-precision registers round-tripped\n");
+
+	/*
+	 * The round trip above is self-consistent: it would pass even if
+	 * the transfers addressed the wrong registers, since the same pair
+	 * writes and reads.  Check one low register independently, with a
+	 * hardcoded VMOV that names S2 and nothing else.
+	 */
+	fpregrestore(in);
+	if(s2get() != in[2]){
+		print("FPREG-S2-FAIL VLDMIA left S2 ");
+		print("%.8lux", s2get());
+		print(" want %.8lux\n", in[2]);
+	}
+	else
+		print("FPREG-S2-OK VLDMIA reaches S2\n");
 }
 
 void

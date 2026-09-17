@@ -296,6 +296,11 @@ TEXT	fpregrestore(SB), 1, $-4
 	VLDMIA32(0)
 	RET
 
+/* TEMPORARY: read S2 with a hardcoded VMOV, to check VLDMIA reaches it */
+TEXT	s2get(SB), 1, $-4
+	T2(0xee11, 0x0a10)
+	RET
+
 TEXT	fpscrget(SB), 1, $-4
 	VMRSFPSCR(0)
 	RET

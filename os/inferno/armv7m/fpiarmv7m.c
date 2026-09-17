@@ -55,7 +55,7 @@ enum {
 	Fpv	= 1<<28,
 };
 
-int fpitrace = 0;	/* TEMPORARY: set from the console to trace conversions */
+int fpitrace = 1;	/* TEMPORARY: set from the console to trace conversions */
 
 static void
 getd(Internal *x, ulong *s, int d)
@@ -90,6 +90,8 @@ expandimm(ulong *s, int d, int imm8)
 	s[2*d+1] = hi;
 }
 
+extern int fpitrace;
+
 static void
 compare(ulong *s, int dd, int dm, int withzero)
 {
@@ -118,6 +120,17 @@ compare(ulong *s, int dd, int dm, int withzero)
 			fpscr |= Fpc;
 	}
 	fpscrset(fpscr);
+	if(fpitrace){
+		print("cmp D%d=", dd); print("%.8lux", s[2*dd+1]);
+		print(":%.8lux", s[2*dd]);
+		if(withzero)
+			print(" vs 0");
+		else{
+			print(" vs D%d=", dm); print("%.8lux", s[2*dm+1]);
+			print(":%.8lux", s[2*dm]);
+		}
+		print(" fpscr=%.8lux\n", fpscr);
+	}
 }
 
 int
@@ -182,6 +195,11 @@ fpiemu(Ureg *ur)
 		 */
 		(x.s == y.s? fpiadd: fpisub)(&x, &y, &r);
 		putd(s, dd, &r);
+		if(fpitrace){
+			print("%s ", (hw2 & 0x0040)? "sub": "add");
+			print("D%d=", dd); print("%.8lux", s[2*dd+1]);
+			print(":%.8lux\n", s[2*dd]);
+		}
 		break;
 
 	case 0x0080:				/* VDIV.F64 */
@@ -315,7 +333,28 @@ fpiemu(Ureg *ur)
 		goto unhandled;
 	}
 
+	if(fpitrace){
+		print("emu %.4ux ", hw1); print("%.4ux", hw2);
+		print(" d%d", dd); print(" n%d", dn); print(" m%d", dm);
+		print(" -> ");
+		if(dd < Ndreg){
+			print("%.8lux", s[2*dd+1]); print(":%.8lux", s[2*dd]);
+		}
+		print("\n");
+	}
 	fpregrestore(s);
+	if(fpitrace){
+		ulong chk[Nsreg];
+		int k;
+
+		fpregsave(chk);
+		for(k = 0; k < Nsreg; k++)
+			if(chk[k] != s[k]){
+				print("RESTORE-LOST S%d wrote ", k);
+				print("%.8lux", s[k]);
+				print(" read %.8lux\n", chk[k]);
+			}
+	}
 	ur->pc += 4;
 	return 1;
 
