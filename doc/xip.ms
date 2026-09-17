@@ -371,6 +371,192 @@ in
 \- already meaning "executing in place from this part, do not put it in
 query mode" \- is the vocabulary the device side would use.
 .NH 1
+On a microcontroller: what it costs, and why the root file system is in
+the wrong memory
+.PP
+This is the case the mechanism was built for, so it is worth the
+numbers.  There are three ARMv7-M boards in the tree already
+.CW ( os/inferno/mps2 ,
+.CW os/inferno/teensy41 ,
+.CW os/inferno/nucleof303 ;
+see
+.CW doc/armv7m-ports.ms )
+and two of them are the interesting ones:
+.CW teensy41
+is a genuine execute-in-place board, an i.MX RT1062 whose text is linked
+into FlexSPI NOR at
+.CW 0x60002000
+and read from there, and
+.CW mps2
+is the only one with an emulator, which makes it the only one that can
+be measured running.
+.CW mps2
+has no flash at all \- it is 8M of SRAM and its text lives in RAM too \-
+so it is the bench, not the model.
+.PP
+Sizes are from the linker, relinking each kernel with
+.CW "tl -H2"
+to get a header to read
+.CW "text / data / bss"
+out of; the
+.CW -H4
+image these boards actually flash is headerless.  All three built with
+.CW DISWORD=4
+against a
+.CW dis32
+tree:
+.DS
+.CW "                   nucleof303   teensy41       mps2"
+.CW "bundled modules             0         32         61"
+.CW "text (flash)           245192     392176     391184"
+.CW "data                    50000     271480     581912"
+.CW "bss                    128840     145736     144968"
+.CW "RAM at boot          178840     417216     726880"
+.CW "part RAM                81920    1048576    8388608"
+.DE
+.PP
+And running, which only
+.CW mps2
+can do \- booted under
+.CW "qemu-system-arm -M mps2-an500" ,
+at an interactive shell, from
+.CW #c/memory :
+.DS
+.CW "main pool in use   399104   (high water 399872)"
+.CW "heap pool in use    71808"
+.CW "image pool in use       0"
+.DE
+So a Cortex-M7 running a Limbo shell wants about 471K of pool on top of
+its
+.CW "data + bss" .
+On
+.CW mps2
+that totals about 1.14M of RAM.
+.NH 2
+The root file system is in the data segment
+.PP
+Here is the part that matters for execute in place, and it is a gap in
+what this branch has done rather than a success of it.
+.CW utils/data2s/data2s.c
+emits each bundled file as
+.CW DATA
+and
+.CW GLOBL
+\- initialised data \- so the root file system lands in the data
+segment.  On these boards the data segment is not where it is stored:
+.CW os/inferno/armv7m/l.s:/^_datacopy
+copies it out of the image at
+.CW etext
+into
+.CW bdata..edata
+before anything reads a variable.  The root file system therefore costs
+flash for the initialiser
+.I and
+an equal amount of RAM for the live copy, which is exactly backwards for
+a part whose whole point is that flash is directly readable.
+.PP
+How much:
+.CW mps2
+bundles 447361 bytes of root and
+.CW teensy41
+140404, against data segments of 581912 and 271480.  Subtract and the
+non-root data is 134551 and 131076 \- the same kernel either side of a
+3475-byte configuration difference, which is the arithmetic confirming
+that the root file system is all of the rest of it.  So the root is 62%
+of
+.CW mps2 's
+RAM at boot and 34% of
+.CW teensy41 's.
+.PP
+The consequence for this branch is blunt:
+.CW rootxip()
+on one of these boards hands back a pointer into the RAM copy.  The
+loader change is doing what it claims \- no second copy into the heap \-
+but on a microcontroller the file is already in RAM by then, and the
+saving that matters has not been taken.  The missing piece is emitting
+the root into the text or a read-only section so it stays in flash and
+.CW _datacopy
+never touches it; then
+.CW rootxip()
+returns a flash address and the file never occupies RAM at all.  That is
+a change to
+.CW data2s ,
+.CW mkroot
+and the linkers, not to anything this branch touched, and it is item 1
+below.
+.NH 2
+Two walls that are not the file system
+.PP
+.B "A 64K debug ring."
+.CW os/inferno/port/alloc.c
+holds
+.CW "static struct {...} freehist[4096]" ,
+whose comment reads "4096 entries is 64KiB, trivial next to this port's
+pool sizes" \- true of pc64, where it was added, and not of a
+microcontroller.  Measured by rebuilding
+.CW nucleof303
+with
+.CW NFREEHIST
+set to 1: bss falls from 128840 to 63304, exactly 65536 bytes.  On an
+80K part that ring is the whole of the SRAM.  It is marked pc64-only and
+temporary in the source, and it is in every board's bss.
+.PP
+It also means
+.CW os/inferno/nucleof303/NOTE
+is out of date.  It records text 259416, data 50368, bss 38560 and so
+88928 of RAM; the same configuration built now is text 245192, data
+50000, bss 128840 and 178840 of RAM.  Text and data barely moved, bss
+more than trebled, and 65536 of that is this ring.  The NOTE's
+conclusion is unchanged \- the board does not fit \- but it now misses by
+twice as much.
+.PP
+.B "Cortex-M4 has no double precision."
+FPv4-SP is single precision only and
+.CW utils/tl/thumb.c
+gives every
+.CW F
+register a
+.CW D
+register, so
+.CW "tl -M -F"
+names every function that would fault: the Dis interpreter's real
+arithmetic and all of libmath.  This is not a memory problem and more
+RAM does not fix it; it wants software double precision.  Cortex-M7 is
+fine \-
+.CW doc/armv7m-ports.ms
+records every line of
+.I fptest (1)
+passing there.  For "small microcontroller" in the M0/M3/M4 sense this
+is the harder of the two walls.
+.NH 2
+The budget
+.PP
+Taking
+.CW teensy41
+as the model, since it is the one that really executes in place, and the
+.CW mps2
+pool measurement for what running costs:
+.DS
+.CW "flash   text 392176 + root 140404      ~ 533K of 8M"
+.CW "RAM     data+bss 417216                  today"
+.CW "        less root in flash    276812"
+.CW "        less the freehist ring ~211K"
+.CW "        plus pools at a shell  ~471K"
+.DE
+About 890K of RAM as the tree stands, against the megabyte the part has;
+about 680K with the root file system in flash and the debug ring out.
+So a megabyte of RAM and a Cortex-M7 is the realistic floor for a Limbo
+userland, half a megabyte would need work beyond this, and the 64K to
+80K class is out of reach for reasons that start with the interpreter
+and not with the file system.
+.PP
+None of the
+.CW teensy41
+figures are from a running board: there is no emulator for an i.MX
+RT1062 and none of this tree's Cortex-M work has been on real silicon.
+They are link-time sizes plus a pool measurement taken on
+.CW mps2 .
+.NH 1
 What is left
 .IP 1.
 A filesystem device over a memory-mapped flash or ROM window,
