@@ -3313,6 +3313,60 @@ A file
 wrote on the board carries a date in 2097.  The Pi has no clock, and
 nothing yet gives it the time.
 .NH 2
+The peripheral checks, on the board, 17 September 2026
+.PP
+The merged kernel booted on the Pi and ran this branch's peripheral
+checks on silicon for the first time.  They had only ever run against
+QEMU's models, several of them against models in
+.CW tools/qemu-patches ,
+so this is the first time any of them is
+.B hardware
+rather than
+.B qemu+patch .
+.PP
+Passing on the board: the hardware RNG
+.CW ( RNG-OK ,
+two different words), the power-management watchdog
+.CW ( WDOG-PRESENT ,
+loaded and holding while disarmed), the 1MHz system timer
+.CW ( SYSTMR-OK ,
+50001 microseconds measured across a 50ms delay and agreeing with the
+ARM generic timer), the board identity and customer OTP
+.CW ( OTP-OK ,
+revision 0x00a02082, serial 6289a97b, no fuses set), and the DMA
+controller
+.CW ( DMA-OK ,
+256 bytes copied by a control block on channel 0, which the firmware's
+channel mask 0x7ff5 grants).  DMA had never moved a byte outside the
+emulator before.
+.PP
+Not passing, and each one is the board rather than the driver.
+.CW PWM-FAIL :
+channel 1 does not transmit when enabled.
+.CW THERM-NONE :
+no valid reading at 0x3f212000.
+.CW "gpio ... pin21 high=1 low=1 (FAIL)" :
+the pin reads 1 whichever level is driven, which is what an unloaded
+pin with a pull-up does.  The I2C probe reports its DS1338 mismatch,
+which is correct for a bus with no clock chip on it.  Those four want a
+scope and a part on the header, not a rewrite.
+.PP
+.B "And one that was not the board: the check stole the console."
+After
+.CW DMA-OK
+the console stopped and the serial line carried
+.CW AUXUART-HELLO
+in the wrong shape.  Not a crash:
+.CW auxuartinit()
+routed GPIO 14 and 15 to the mini UART, and on a Pi 3 with
+.CW dtoverlay=disable-bt
+those are the PL011's pins \(em the console's.  The emulator cannot show
+this, because a QEMU console is not attached to pins at all.  Routing
+is a separate call now, which the check does not make.  The general
+form is worth keeping: a peripheral check that configures pins is
+configuring a board, and the board it is configuring here has a console
+on two of them.
+.NH 2
 Suggested order
 .PP
 Find where the IPv4 reader stops after a TCP connection, since the
