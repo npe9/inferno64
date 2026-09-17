@@ -654,7 +654,6 @@ fatcheck()
 		return;
 	}
 	cfd = nil;
-	# init() has already started mntgen on /n.
 	dos := load Command "/dis/dossrv.dis";
 	if(dos == nil){
 		sys->print("FAT-FAIL load dossrv: %r\n");
@@ -921,7 +920,7 @@ diskcheck()
 	}
 	spawn dossrv->init(nil, "dossrv" :: "-f" :: disk :: "-m" :: "/n/usb" :: nil);
 
-	# /n/usb is made by mntgen as soon as it is named, so an open proves nothing;
+	# /n/usb exists in the root either way, so an open proves nothing;
 	# wait for the mount by waiting for entries to appear under it
 	names := "";
 	first := "";
@@ -1268,18 +1267,15 @@ init()
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 	sys->print("RASPI3B-OK\n");
 
-	# /n is in the kernel's read-only root, so mntgen serves it and makes
-	# each name appear as it is used.  Started once, before anything is
-	# mounted under /n: a mntgen started later covers mounts already
-	# made on the root's own /n entries.
-	mg := load Command "/dis/mntgen.dis";
-	if(mg == nil)
-		sys->print("init: load mntgen: %r\n");
-	else{
-		spawn mg->init(nil, "mntgen" :: "/n" :: nil);
-		sys->sleep(200);
-	}
-
+	# No mntgen.  /n/dos, /n/usb and /n/remote are directories in the
+	# kernel's root, so there is nothing for it to make.  It was started
+	# here, and in fatcheck() before that, as mg->init(): but mntgen
+	# serves Styx on its standard input and is meant to be run as
+	# "mount {mntgen} /n".  Called directly, it mounted nothing and read
+	# the console as Styx: the first line typed at the shell lost its
+	# first word to it, mntgen exited on the malformed message, and the
+	# shell ran the rest -- "echo hi > /tmp/x" became "sh: hi: file does
+	# not exist" and an empty /tmp/x.
 	rngcheck();
 	sys->bind("#S", "/dev", sys->MAFTER);
 	sdcheck();

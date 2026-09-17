@@ -3282,21 +3282,31 @@ microseconds a byte, so a burst of output holds off the receive
 interrupt for long enough to overrun a 16-byte receive FIFO.  Typing a
 character every 50 milliseconds gets through.
 .IP \(bu
-The first redirected command after boot fails:
+The first line typed at the shell lost its first word:
 .CW "echo x > file"
-reports
-.CW "sh: x: file does not exist" ,
-and the same command a second time works.  It happens under QEMU too,
-it coincides every time with
-.CW "delprog: pid 2 opening window while pid 4's was still open" ,
-and the symptom is the shell's builtin table returning the
-.CW builtin
-builtin for
+reported
+.CW "sh: x: file does not exist"
+and left
+.CW file
+empty, and the same command a second time worked.  It was not a race.
+The init started
+.CW mntgen
+as
+.CW "mg->init(nil, \(dqmntgen\(dq :: \(dq/n\(dq :: nil)" ,
+but
+.CW mntgen
+serves Styx on its standard input and is meant to be run as
+.CW "mount {mntgen} /n" .
+Called that way it mounted nothing and read the console: it took the
+start of the first line as a Styx message, exited on it, and the shell
+ran what was left.  Found by printing every exiting process with its
+module under QEMU, which showed
+.CW mntgen
+dying at the moment the line was typed and
 .CW echo
-in the process forked for the redirection.
-.CW delprog()
-releases the Dis lock while it closes a process's groups; two of those
-windows overlapping is the lead.
+never loaded.  The directories it was meant to make are in the
+kernel's root already, so the init no longer starts it.  Osprey's init
+had the same call, so the board had the same fault.
 .IP \(bu
 A file
 .CW dossrv
