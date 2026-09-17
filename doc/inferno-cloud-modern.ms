@@ -1680,3 +1680,56 @@ Verified on the booted kernel: the registry mounts at
 a service registers, and
 .CW index
 lists it.
+.NH 1
+Where this stands
+.PP
+.TS
+center box tab(;);
+c | c | l
+n | l | l .
+item;state;note
+_
+1\-4;done;credentials and reach; Phase 1
+5;done;styxlisten in the root, a service exporting a namespace
+6;done;two instances, one mounting the other
+7;done;cloudauth(1); check-cloudauth.sh, with a wrong-signer control
+8;done;Styx costs about what a framed RPC costs
+9;part;local profile done; the comparison needs an instance
+10;done;66 MiB to boot, 68 to work, ~78 KiB a service
+11;blocked;needs an amd64 and an arm64 instance
+12;done;supervise(1), out of /prog/<pid>/wait
+13;done;metricfs(4), read across a mount
+14;done;check-pc64-redeploy.sh, with a no-server control
+.TE
+.PP
+.B "The three things that would have sunk it."
+Styx round trips do not cost several times a conventional RPC; they cost
+about the same, and on the kernel slightly less.  The kernel holds a
+useful working set in the smallest rentable instance with room to spare:
+about 78 KiB a service against a 68 MiB floor.  And the four layers have
+not been reinvented \(em though a retry is genuinely needed, it is four
+lines, because re-establishing a mount is the same operation as
+establishing one.
+.PP
+.B "What is left needs a rented machine."
+Item 9's comparison wants a minimal Linux image on the same instance
+shape.  Item 11 wants one amd64 and one arm64 instance sharing a
+namespace; the build gap is closed \(em
+.CW scripts/mkinferno-efi-disk-arm64.sh
+emits a Compute Engine tarball and the disk it makes boots to a shell
+under AAVMF \(em so what remains is renting the two machines.
+.PP
+.B "And one thing that is known broken."
+The parallel Dis VM does not work on pc64:
+.CW "*parallelvm=1"
+engages, and
+.CW dis.c 's
+own consistency check reports disagreeing run-queue counts on every boot
+including the ones that complete.
+.CW parallelvm
+stays 0.
+.CW scripts/check-pc64-parallelvm.sh
+is in
+.CW check-all.sh 's
+slow tier and is expected to fail; it is there to notice the day it
+stops failing.
