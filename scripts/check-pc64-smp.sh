@@ -33,6 +33,18 @@ WORK=`mktemp -d`
 # lose it.  See the fuller note in check-pc64-tcp.sh.
 trap 'st=$?; rm -rf "$WORK" || true; exit $st' 0
 
+# What counts as a fault.  The first two patterns are the ilockdepth
+# panic this script was written for.  The third and fourth are the other
+# SMP fault this branch has seen -- "cpu1: registers for #I0tcpack" with
+# "currun() nil", caught once in six boots on a rented instance after a
+# fetch -- which dumpregs() prints and which the original pattern did
+# not match at all.  Fifty clean boots were nearly reported as evidence
+# about that fault by a check that could not have seen it.
+#
+# Neither string occurs in a clean boot: checked against three full boot
+# logs from other work in this tree.
+FAULT='ilockdepth -\|ilockdepth [0-9]\|panic:\|registers for\|currun() nil'
+
 INFERNO_KERNEL=$KERN sh "$ROOT/scripts/mkinferno-efi-iso.sh" "$WORK/smp.iso" >/dev/null 2>&1
 INFERNO_KERNEL=$KERN INFERNO_INI='*ncpu=1' \
 	sh "$ROOT/scripts/mkinferno-efi-iso.sh" "$WORK/one.iso" >/dev/null 2>&1
@@ -42,11 +54,11 @@ one=0
 i=1
 while [ $i -le $RUNS ]; do
 	sh "$ROOT/scripts/qemu-inferno-efi.sh" "$WORK/smp.iso" "$WORK/smp$i.log" 45 -smp 2 >/dev/null 2>&1
-	if grep -q 'ilockdepth -\|ilockdepth [0-9]\|panic:' "$WORK/smp$i.log"; then
+	if grep -q "$FAULT" "$WORK/smp$i.log"; then
 		bad=`expr $bad + 1`
 	fi
 	sh "$ROOT/scripts/qemu-inferno-efi.sh" "$WORK/one.iso" "$WORK/one$i.log" 45 -smp 2 >/dev/null 2>&1
-	if grep -q 'ilockdepth -\|ilockdepth [0-9]\|panic:' "$WORK/one$i.log"; then
+	if grep -q "$FAULT" "$WORK/one$i.log"; then
 		one=`expr $one + 1`
 	fi
 	i=`expr $i + 1`
@@ -61,8 +73,14 @@ if [ $one -gt 0 ]; then
 fi
 if [ $bad -eq 0 ]; then
 	echo "check-pc64-smp: no fault seen in $RUNS two-processor runs."
-	echo "  It is intermittent -- roughly half of runs at the time this"
-	echo "  was written -- so a clean sweep is weak evidence, not a pass."
+	echo "  The ilockdepth fault this was written for used to take about"
+	echo "  half of all runs; it is 0 of 50 since 0ac57381 fixed the"
+	echo "  interrupt return.  That one can be called gone."
+	echo "  The other SMP fault this branch has seen -- \"registers for"
+	echo "  #I0tcpack\", once in six boots on a rented instance -- appeared"
+	echo "  AFTER A FETCH, and these boots idle.  A clean sweep here is"
+	echo "  weak evidence about it however many runs it is, because this"
+	echo "  check never puts the machine under network load."
 	exit 0
 fi
 echo "check-pc64-smp: reproduced (this is the open bug, not a regression)"

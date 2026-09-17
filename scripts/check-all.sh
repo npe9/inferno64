@@ -1,0 +1,93 @@
+#!/bin/sh
+# Run this branch's checks and say which ones failed.
+#
+# There are thirteen of them now and nothing ran them together, so a
+# change to the shared port code -- which every board links -- was
+# verified by whichever checks came to mind.  This runs them all.
+#
+# Two tiers, because the honest runtimes differ by an order of
+# magnitude.  The default tier is the one worth running after any
+# change; -a adds the measurements, which bisect or sweep and take
+# tens of minutes each.
+#
+#   scripts/check-all.sh        the regression tier (~30 min)
+#   scripts/check-all.sh -a     everything, measurements included
+#   scripts/check-all.sh -l     list what would run, run nothing
+#
+# Each check is expected to exit 0 on success.  Three of them did not,
+# once: check-pc64-tcp printed "ok" and exited 1 for a year because its
+# EXIT trap ran pkill under set -e.  If a check here reports FAIL while
+# printing success, suspect its exit status before its subject.
+set -e
+ROOT=`cd \`dirname "$0"\`/.. && pwd`
+PATH=$ROOT/MacOSX/arm64/bin:$PATH
+export PATH ROOT
+cd "$ROOT"
+
+# Fast, and each asserts something specific.
+QUICK="check-man-pages check-config-portlines check-cloudauth check-discovery-retry"
+# Boot a kernel; minutes each.
+BOOT="check-pc64-timers check-pc64-tcp check-pc64-disk check-pc64-redeploy check-arm64-smp check-pc64-smp"
+# Bisect or sweep; tens of minutes.  Measurements rather than pass/fail
+# -- check-pc64-parallelvm FAILS on purpose, because the parallel VM is
+# broken and the check says so; it is here to detect the day that changes.
+SLOW="check-pc64-memfloor check-pc64-parallelvm"
+
+list=; all=
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-a) all=1;;
+	-l) list=1;;
+	*) echo "usage: check-all.sh [-a] [-l]" >&2; exit 2;;
+	esac
+	shift
+done
+
+set -- $QUICK $BOOT
+[ -n "$all" ] && set -- $QUICK $BOOT $SLOW
+
+if [ -n "$list" ]; then
+	for c in "$@"; do echo "$c"; done
+	exit 0
+fi
+
+# Built kernels are a precondition, not something to discover halfway
+# through a half-hour run.
+missing=
+for k in os/inferno/pc64/ipc64 os/inferno/pc64/ipc64dev os/inferno/virtarm64/ivirtarm64; do
+	[ -f "$k" ] || missing="$missing $k"
+done
+if [ -n "$missing" ]; then
+	echo "check-all: build these first:$missing" >&2
+	exit 1
+fi
+
+log=`mktemp -d`
+trap 'st=$?; rm -rf "$log" || true; exit $st' 0
+
+pass=0; fail=0; failed=
+for c in "$@"; do
+	printf '%-26s ' "$c"
+	start=`date +%s`
+	# Run it, not "sh it": the checks do not all share an
+	# interpreter -- check-man-pages.sh and check-launcher-layout.sh
+	# are bash and use mapfile and process substitution, which a
+	# POSIX sh rejects with "syntax error near unexpected token".
+	# Forcing sh made this runner report a failure that belonged to
+	# the runner, on the first end-to-end run.
+	if "$ROOT/scripts/$c.sh" >"$log/$c.out" 2>&1; then
+		printf 'ok    %4ds\n' `expr \`date +%s\` - $start`
+		pass=`expr $pass + 1`
+	else
+		printf 'FAIL  %4ds\n' `expr \`date +%s\` - $start`
+		fail=`expr $fail + 1`
+		failed="$failed $c"
+		sed 's/^/    | /' "$log/$c.out" | tail -6
+	fi
+done
+
+echo
+echo "check-all: $pass passed, $fail failed"
+[ $fail -eq 0 ] && exit 0
+echo "failed:$failed" >&2
+exit 1
