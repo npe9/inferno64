@@ -239,6 +239,7 @@ tkdrawlabel(Tk *tk, Point orig)
 	int dx, dy, h;
 	Point p, u, v;
 	Image *i, *dst, *ct, *img;
+	TkScene *lsc;
 	int relief, bgnd, fgnd;
 
 	e = tk->env;
@@ -292,12 +293,40 @@ tkdrawlabel(Tk *tk, Point orig)
 		}
 	}
 
-	i = tkitmp(e, r.max, bgnd);
-	if(i == nil)
-		return nil;
+	/*
+	 * The whole widget as one layer, in the simple case - and a label
+	 * is the widget there are most of: every dialog is mostly labels,
+	 * and until now each one ended the walk's run, because asking
+	 * tkitmp() for the scratch is what says a widget is about to paint
+	 * into the window itself.
+	 *
+	 * The exclusions are the ones that have no nodes: an image or a
+	 * bitmap, a run that does not reduce to one string(), and a cascade,
+	 * whose arrow tktriangle() draws.  This draw is shared with
+	 * menubutton and choicebutton, so those come with it.
+	 */
+	lsc = nil;
+	if(tkviascene && tkstyleflat(tk) && tk->type != TKcascade
+	&& tkl->img == nil && tkl->bitmap == nil && tkl->text != nil
+	&& tkl->justify == Tkleft && tkl->ul < 0
+	&& strchr(tkl->text, '\n') == nil)
+		lsc = tkwalkjoin(e->top->ctxt, dst);
+	if(lsc != nil){
+		Rectangle dr;
 
-	if(tk->flag & Tkactive)
-		draw(i, r, tkgc(e, bgnd), nil, ZP);
+		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
+		tkscenelayer(lsc, r.max, e->colors[bgnd], dr, ZP);
+		if(tk->flag & Tkactive)
+			tkscenecolour(lsc, r, e->colors[bgnd]);
+		i = nil;
+	}else{
+		i = tkitmp(e, r.max, bgnd);
+		if(i == nil)
+			return nil;
+
+		if(tk->flag & Tkactive)
+			draw(i, r, tkgc(e, bgnd), nil, ZP);
+	}
 
 	p = mainr.min;
 	h = tkl->h - 2 * tk->highlightwidth;
@@ -357,7 +386,10 @@ tkdrawlabel(Tk *tk, Point orig)
 		 * So a scene is still not a complete description of a label.
 		 * It is a complete description of the common one.
 		 */
-		if(tkviascene && tkl->justify == Tkleft && tkl->ul < 0
+		if(lsc != nil)
+			tkscenetext(lsc, addpt(u, p), tkl->text, e->font,
+				e->colors[fgnd]);
+		else if(tkviascene && tkl->justify == Tkleft && tkl->ul < 0
 		&& strchr(tkl->text, '\n') == nil){
 			TkScene *ts;
 
@@ -373,6 +405,16 @@ tkdrawlabel(Tk *tk, Point orig)
 		}else
 			tkdrawstring(tk, i, addpt(u, p), tkl->text, tkl->ul, ct,
 				tkl->justify);
+	}
+
+	if(lsc != nil){
+		if(tkhaskeyfocus(tk))
+			tksceneborder(lsc, focusr, 0, tk->highlightwidth,
+				e->colors[TkChighlightfgnd]);
+		tkreliefnodes(lsc, tk, ZP, bgnd, relief);
+		tkscenelayerend(lsc);
+		tkscenefinish(lsc, e->top->ctxt, dst);
+		return nil;
 	}
 
 	if(tkhaskeyfocus(tk))

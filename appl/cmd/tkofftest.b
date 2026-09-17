@@ -1376,6 +1376,20 @@ checkscene()
 	tk->cmd(top, "pack .r1 -padx 6 -pady 6");
 	tk->cmd(top, "pack .s -padx 6 -pady 6");
 	tk->cmd(top, "pack .v -padx 6 -pady 6");
+	# A menubutton, which is drawn by the label's draw method: it is
+	# filled like the control it is, it takes the keyboard, and it is
+	# given a relief, so between it and the plain label above every
+	# branch of that method's node path is drawn.  It is justified LEFT
+	# because a menubutton defaults to centre and the node path is only
+	# taken by the run that reduces to one string() - left, one line, no
+	# underline - so a centred one is drawn the old way and its controls
+	# come back clean.  Active because the fill is drawn only for a
+	# widget the pointer is on, and there is no pointer here.
+	must(top, "menubutton .mb -text {File} -relief sunken " +
+		"-justify left -state active");
+	tk->cmd(top, "pack .mb -padx 6 -pady 6");
+
+
 	# A canvas holding a window item, because that is the one arrangement
 	# where a descent happens INSIDE another descent: the canvas's draw
 	# method calls tkdrawslaves for the embedded widget, which opens a
@@ -1446,7 +1460,7 @@ checkscene()
 	# item's box - both are guarded by tkhaskeyfocus() - so a
 	# perturbation of either passes, which by the usual rule means the
 	# check never reached the code rather than that the code is right.
-	who := array[] of {".e", ".l", ".s", ".v"};
+	who := array[] of {".e", ".l", ".s", ".v", ".mb"};
 	diff := 0;
 	first := -1;
 	for(k := 0; k < len who; k++){

@@ -57,7 +57,7 @@ to agree byte for byte.
 .IR tkofftest (1),
 .IR tkbench (1)
 .SH BUGS
-Seven things go through it: a flat border, a plain
+Eight things go through it: a flat border, a plain
 .IR button (9)
 with text, a
 .IR radiobutton (9)
@@ -70,8 +70,15 @@ a
 which needs no exception at all \(em everything it draws is a filled
 rectangle, a run of text or a stroked box \(em a
 .IR scale (9)
-in either orientation, and a
-.IR scrollbar (9).
+in either orientation, a
+.IR scrollbar (9),
+and a
+.IR label (9),
+which is the widget there are most of and which brings
+.IR menubutton (9)
+and
+.IR choicebutton (9)
+with it, since one draw method serves all three.
 Each of those draws its whole interior as nodes \(em fill, glyphs, caret,
 selection band, focus ring, border \(em inside one
 .BR TkNlayer .

@@ -971,12 +971,32 @@ there was never speed on the table here anyway.
    compared, because pressing starts autorepeat and runs the
    scrollbar's command.
 
-   **What is left is the exceptions, the label, and then the walk.**
-   Six widgets have a node path for their ordinary flat case. Still
-   drawn through a scratch image: a `label` (only its text is a node,
-   rendered into the scratch); a `checkbutton` (its tick is a
-   `bezspline`, which has no node); a button or radiobutton with an
-   image, a bitmap, several lines, an underline or text that is not
+   **What is left is the exceptions.** Seven widgets have a node path
+   for their ordinary flat case, the seventh being the `label` — the
+   widget there are most of, and the one that brings `menubutton` and
+   `choicebutton` with it, since one draw method serves all three. It
+   had only its *text* as a node before, rendered into a scratch, which
+   under the walk meant every label ended a run: asking `tkitmp` for the
+   scratch is exactly what says a widget is about to paint into the
+   window. Converting it took the test pane from 15 widgets and 106
+   nodes in 6 trees to 17 and 110 in 5 — 22 nodes a tree.
+
+   Four controls on its node path, all failing: text 5910 bytes of
+   9450000, focus ring 480, relief 1740, fill 23535. The fill is the
+   interesting one. Shifting it *passes*, because that node paints the
+   same colour the layer is already filled with — it mirrors a
+   redundant draw the direct path has always done — so the control that
+   says it is reached has to change its colour instead of its position.
+   Reaching those three at all needed the pane's menubutton to be
+   `-justify left`, because a menubutton defaults to centre and the node
+   path is only taken by the run that reduces to one `string()`, and
+   `-state active`, because the fill is drawn only for a widget the
+   pointer is on and there is no pointer here.
+
+   Still drawn through a scratch image: a `checkbutton` (its tick is a
+   `bezspline`, which has no node); a `cascade`, whose arrow is
+   `tktriangle()`; a button, radiobutton or label with an image, a
+   bitmap, several lines, an underline or text that is not
    left-justified; and an `entry` showing a selection or `-show`.
 
    **The walk is done, and it is one tree per *run*, not per repaint.**
