@@ -4657,3 +4657,33 @@ Worth saying plainly: this was visible in every batch run this session
 and went unread until a give-up line was looked at directly rather than
 counted.  A diagnostic that prints a number nobody reads is not much
 better than one that does not print it.
+.NH 2
+One boot is an existence check, not a result
+.PP
+Before spending half an hour of machine on the clock fix, one boot each
+at
+.CW parallelvm=1
+.CW "-smp 2" :
+.TS
+center;
+l l l l.
+	give-ups	elapsed printed	chantest
+before	0	\(em	18 lines, 1 of 3
+after	1	26 ticks	23 lines, 3 of 3
+.TE
+.PP
+The column that means anything is the middle one.  It says the give-up
+that did happen was an honest quarter second and not a migration \(em
+which is the fix working, confirmed by the only evidence that can
+confirm it, the value the print carries.  The chantest column is one
+boot against one boot and is recorded here so that nobody, including
+whoever writes the next section, mistakes it for a measurement.
+.PP
+A prediction worth writing down before the batch rather than after it,
+so that it can be wrong: with the clock fixed the collector will now
+actually wait its full quarter second rather than bailing on the first
+migration, and a context wanting to enter a quantum still spins in
+.CW enterquantum()
+for that whole time.  If the clock fix does not help, or hurts, that is
+the first place to look, and it is an argument for parking the mutator
+side too rather than against fixing the clock.
