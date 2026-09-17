@@ -360,6 +360,65 @@ stringinstr(s: string, needle: string): int
 	return 0;
 }
 
+# The one check that runs whether or not the diagnostics are asked for.
+#
+# On the board the IPv4 conversation stopped: frames kept arriving and
+# the kernel stopped taking them, which the ethernet server's own
+# counters show as "in" climbing while "out" stands still and no read
+# outstanding.  When that lasts, say so and make the kernel dump every
+# process and the kernel-text addresses on its stack, because the
+# process that stopped reading is a kproc and nothing in /prog shows
+# it.  Once per boot: the dump is long, and a second one says nothing
+# the first did not.
+readerwatch()
+{
+	lastin := -1;
+	lastout := -1;
+	stuck := 0;
+	for(i := 0; i < 20000; i++){
+		sys->sleep(5000);
+		fd := sys->open("/net.alt/ether/stats", Sys->OREAD);
+		if(fd == nil)
+			continue;
+		b := array[2048] of byte;
+		n := sys->read(fd, b, len b);
+		fd = nil;
+		if(n <= 0)
+			continue;
+		(nil, lines) := sys->tokenize(string b[0:n], "\n");
+		for(; lines != nil; lines = tl lines){
+			(nf, f) := sys->tokenize(hd lines, " \t");
+			if(nf < 4 || hd f != "conv" || hd tl f != "0")
+				continue;
+			in := -1; out := -1; waiting := -1;
+			for(l := f; l != nil && tl l != nil; l = tl l){
+				case hd l {
+				"in" =>		in = int hd tl l;
+				"out" =>	out = int hd tl l;
+				"waiting" =>	waiting = int hd tl l;
+				}
+			}
+			if(in < 0 || out < 0)
+				break;
+			if(in > lastin && out == lastout && waiting == 0)
+				stuck++;
+			else
+				stuck = 0;
+			lastin = in;
+			lastout = out;
+			if(stuck == 3){
+				sys->print("READER-STALL ipv4 in %d out %d, no read outstanding; kernel processes follow\n",
+					in, out);
+				cfd := sys->open("/dev/sysctl", Sys->OWRITE);
+				if(cfd == nil || sys->fprint(cfd, "procdump") < 0)
+					sys->print("READER-STALL cannot procdump: %r\n");
+				return;
+			}
+			break;
+		}
+	}
+}
+
 # the interface's own counters, which say whether frames arrive at all
 netcounters()
 {
@@ -1284,6 +1343,7 @@ init()
 	# in its own process: the shell must not wait behind a DHCP lease and
 	# three pings, which take seconds and can be answered by nothing at all
 	spawn ethercheck();
+	spawn readerwatch();
 	spawn netdebug();
 	spawn pingtest();
 	# A kfs in the card's unallocated gap, mounted over a pipe, with a
