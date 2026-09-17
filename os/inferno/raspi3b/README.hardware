@@ -86,8 +86,9 @@ of 16 (SCTLR_EL1.SA), which a malloc'd kstack is not, so a process whose
 stack landed on an 8-byte boundary faulted endlessly a few seconds into
 boot.  gotolabel now refuses an unaligned stack, so QEMU catches that one
 too.  Reboot goes through the PM watchdog, since a Pi has no PSCI.  The
-LAN9514/SMSC half of the USB Ethernet driver is implemented but
-hardware-unverified, and usbd is not started by the default init.
+usbd starts at boot, enumerates the onboard LAN9514 hub and its ethernet,
+and etherusb serves it at /net.alt/ether; init binds it, takes a DHCP
+lease and pings the gateway, all verified on the board.
 The card is read through the Arasan SDHCI (sdemmcbcm.c), which GPIO
 48-53 in alt3 select; QEMU models the same controller, so one driver
 serves both.  On the Pi it reports 30228480 sectors, the count the host
