@@ -404,6 +404,8 @@ safepoint(void)
 	}
 }
 int gcidlegaveup;	/* idle collections abandoned; see execatidle() */
+int gcidlebusy;		/* idle collections skipped: one already running */
+int gcsemaheld;		/* set when collectq() could not take gcsema */
 
 /*
  * Stop every other context, or give up trying.
@@ -745,8 +747,11 @@ collectq(Prog *head, int try)
 	int stopped;
 
 	if(try){
-		if(!canqlock(&gcsema))
+		if(!canqlock(&gcsema)){
+			gcsemaheld = 1;
 			return 0;
+		}
+		gcsemaheld = 0;
 	}else
 		qlock(&gcsema);
 	/*
@@ -1091,6 +1096,15 @@ execatidle(void)
 			break;
 		}
 		if(!collectq(isched.head, idlesingle)){
+			/*
+			 * Two different events, and they were one counter
+			 * until this split them: a collection already
+			 * running (this interpreter parks, which is the
+			 * point of *idlesingle) and stoptheworld() giving
+			 * up, which is a collection that did not happen.
+			 */
+			if(idlesingle && gcsemaheld)
+				gcidlebusy++;
 			/*
 			 * The world would not stop, so gccolor has not moved
 			 * and this loop's condition is exactly as true as it
@@ -3255,9 +3269,9 @@ stalldump(void)
 		extern ulong gcnruns;
 
 		print("stall: gcnruns %lud stwwaits %d gcidlepass %llud"
-			" gcpartial %llud gaveup %d idlegaveup %d\n",
+			" gcpartial %llud gaveup %d idlegaveup %d idlebusy %d\n",
 			gcnruns, stwwaits, gcidlepass, gcpartial, stwgaveup,
-			gcidlegaveup);
+			gcidlegaveup, gcidlebusy);
 	}
 	{
 		extern ulong regstale, handlerbroke, regstalesrc[8];

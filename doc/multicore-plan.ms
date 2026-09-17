@@ -6407,11 +6407,9 @@ interpreter is asleep on a QLock, so
 test "work is ready and no interpreter is idle" is true, and it spawns
 another interpreter.  That one finds no work, calls
 .CW execatidle() ,
-and queues too.  Each new interpreter claims a context and adds another
-full stop-the-world collection to the queue: 6000 collections a boot in
-the boots that stay out of the loop, 800000 in the boots that fall into
-it, on identical work (the shell loop runs exactly 300 times either
-way).
+and queues too.  Each new interpreter claims a context, which is how a
+boot ends up holding four times as many as it needs, on identical work
+\(em the shell loop runs exactly 300 times either way.
 .PP
 So an idle interpreter tries rather than queues \(em
 .CW canqlock() ,
@@ -6434,8 +6432,46 @@ l r r r r.
 Contexts held stops varying with the boot and sits at 19 to 26 at both
 processor counts, against a spread that reached 97 \(em above the old
 pool of 64 on its own.  chantest gets no less done; it gets slightly
-more.  The heap is unchanged by this: the boots near 5MB appear in both
-arms and are boots that were collecting mid-chantest when the dump ran.
+more.  The heap shows no difference this batch can resolve: the boots
+near 5MB appear in both arms at
+.CW "-smp 4" ,
+and at
+.CW "-smp 2"
+it is 0 of 12 against 1 of 12, which is nothing either way.
+.PP
+.B "What this does not explain."
+The collection count does not move with it.  Counting
+.CW gcnruns
+in the same 48 boots: at
+.CW "-smp 2" ,
+about 1.0 to 1.2 million queueing against 0.56 to 0.73 million one at a
+time, which is a halving; but at
+.CW "-smp 4"
+both arms are bimodal in the same way, a few thousand in some boots and
+around 900000 in others, with the fix on and off alike.  So the 6000-
+against-800000 split between boots doing identical work is not the
+queueing, is not explained here, and survives this change.  It was
+written into the commit that made this change as though it were the
+mechanism; it is not, and the mechanism is the spawn cascade above,
+which the context numbers do show.
 .PP
 The raised pool stays, because it is cheap and because nothing here
 bounds the spawning itself \(em only the loop that was driving it.
+.PP
+And a counter that started meaning two things the moment that change
+landed.
+.CW execatidle()
+counted every 0 from
+.CW collectq()
+as
+.CW gcidlegaveup ,
+"a collection that did not happen" \(em but with
+.CW *idlesingle
+on, most of them are "one was already running and this interpreter
+parked", which is the change working.  Split: four boots give
+.CW idlegaveup
+9225 with
+.CW idlebusy
+9123, so about a hundred are the real thing and nine thousand are the
+new path.  Sixth counter this session to need its name checked against
+what it counts.
