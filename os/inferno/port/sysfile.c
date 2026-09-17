@@ -1097,6 +1097,47 @@ rread(int fd, void *p, s32 n, s64 *offp)
 	return nnn;
 }
 
+/*
+ * Execute in place.  Ask the device behind fd for a pointer to the whole
+ * of the open file's contents instead of a copy of them; nil means it
+ * cannot, which is every device that does not keep its file data in
+ * directly addressable memory.  See Dev.xip in os/inferno/port/portdat.h
+ * for what the pointer promises -- notably that it outlives this channel,
+ * so the caller may close fd and go on reading through it.
+ *
+ * A mount point is not it: c->type here is the device the channel names,
+ * and for a file reached over 9P that is devmnt, which leaves the slot
+ * unset.  Only a channel straight onto an addressable-memory device
+ * answers.
+ */
+void*
+kxip(int fd, u32 *lenp)
+{
+	Chan *c;
+	void *a;
+	void* (*xip)(Chan*, u32*);
+
+	if(waserror())
+		return nil;
+
+	c = fdtochan(up->fgrp, fd, OREAD, 1, 1);
+
+	if(waserror()){
+		cclose(c);
+		nexterror();
+	}
+
+	a = nil;
+	xip = devtab[c->type]->xip;
+	if(xip != nil)
+		a = (*xip)(c, lenp);
+
+	poperror();
+	cclose(c);
+	poperror();	/* before fdtochan */
+	return a;
+}
+
 s32
 kread(int fd, void *va, s32 n)
 {

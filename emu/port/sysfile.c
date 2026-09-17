@@ -664,6 +664,22 @@ kread(int fd, void *va, s32 n)
 	return rread(fd, va, n, nil);
 }
 
+/*
+ * Execute in place: never, here.  Emu's files are the host's, reached
+ * through read(2) on a descriptor, so there is no address at which their
+ * contents already sit that this process could hand out -- and Dev.xip's
+ * promise (os/inferno/port/portdat.h) is precisely about addressable,
+ * unchanging memory.  Declining is the honest answer and costs nothing:
+ * libinterp/readmod.c copies the file, exactly as it always has.
+ */
+void*
+kxip(int fd, u32 *lenp)
+{
+	USED(fd);
+	USED(lenp);
+	return nil;
+}
+
 s32
 kpread(int fd, void *va, s32 n, s64 off)
 {

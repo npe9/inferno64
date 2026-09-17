@@ -277,6 +277,25 @@ struct Dev
 	s32	(*wstat)(Chan*, uchar*, s32);
 	void	(*power)(s32);	/* power mgt: power(1) → on, power (0) → off */
 	s32	(*config)(s32, char*, DevConf*);
+
+	/*
+	 * Execute in place.  Hand back a pointer to the whole of an open
+	 * file's contents, in memory the processor can address directly,
+	 * and set *lenp to its length; return nil to decline.  A device
+	 * that would have to read, map or copy anything to answer leaves
+	 * this slot unset, which is all but the few that keep their file
+	 * data in addressable memory -- so nil is the normal case and
+	 * every caller tests before calling.
+	 *
+	 * The memory must stay valid, and its contents unchanged, for the
+	 * life of the kernel rather than the life of the channel: a caller
+	 * may close the channel and go on reading through the pointer, and
+	 * libinterp's readmod() does exactly that.  That holds for a
+	 * filesystem linked into the kernel image and for one in
+	 * memory-mapped ROM or NOR flash, and it is the reason a device
+	 * that cannot promise it declines instead.
+	 */
+	void*	(*xip)(Chan*, u32*);
 };
 
 struct Dirtab

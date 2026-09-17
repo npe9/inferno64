@@ -12,10 +12,10 @@ Module*
 readmod(char *path, Module *m, int sync)
 {
 	Dir *d;
-	int fd, n, dynld;
-	uchar *code;
+	int fd, n, dynld, xip;
+	uchar *code, *xipcode;
 	Module *ans;
-	u32 length;
+	u32 length, xiplen;
 
 	if(path[0] == '$') {
 		if(m == nil)
@@ -27,6 +27,7 @@ readmod(char *path, Module *m, int sync)
 	code = nil;
 	length = 0;
 	dynld = 0;
+	xip = 0;
 
 	/*
 	 * Narrowing the landmark write further: readmod:before-parsemod
@@ -77,6 +78,41 @@ readmod(char *path, Module *m, int sync)
 		dynld = 1;
 		goto done1;
 	}
+
+	/*
+	 * Execute in place.  When the file's bytes already sit at an
+	 * address this kernel can read -- the root filesystem linked into
+	 * the kernel image (os/inferno/port/devroot.c), or a filesystem in
+	 * memory-mapped ROM or NOR flash -- take the pointer and skip both
+	 * the buffer and the copy into it.  kxip() returns nil otherwise,
+	 * which is the ordinary case, and the read below runs unchanged.
+	 *
+	 * parsemod() only reads this buffer, and nothing it builds points
+	 * into it: that is exactly what the free(code) at the end of this
+	 * function has always asserted, and it is what makes the same call
+	 * correct on memory that must not be freed.  The signature path it
+	 * takes first reads only too -- verifysigner() copies out of the
+	 * bytes (os/inferno/port/devsign.c:/^vs) and mustbesigned()
+	 * ignores them.  So the only difference here is who owns the
+	 * memory, and xip records that so the free is skipped.
+	 *
+	 * The length comes back from the device beside the pointer and must
+	 * agree with the one stat reported, both of which devroot sets from
+	 * the single generated symbol per file.  parsemod() derives every
+	 * bound it enforces from that length, so a disagreement is the
+	 * "data segment string out of range" class of fault whose cost is
+	 * recorded in libinterp/load.c; on a disagreement, fall back to
+	 * reading the file rather than trust either number.
+	 */
+	xiplen = 0;
+	xipcode = kxip(fd, &xiplen);
+	if(xipcode != nil && xiplen == d->length){
+		code = xipcode;
+		length = xiplen;
+		xip = 1;
+		goto done;
+	}
+
 	length = d->length;
 	code = mallocz(length, 0);
 	if(code == nil)
@@ -132,7 +168,8 @@ done1:
 		ans = parsemod(path, code, length, d);
 		trackpoint = "readmod:after-parsemod";
 		checktracked();
-		free(code);
+		if(!xip)
+			free(code);
 	}
 	else if(dynld){
 		kseek(fd, 0, 0);

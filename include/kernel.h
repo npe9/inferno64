@@ -33,6 +33,12 @@ extern	int	kopen(char*, int);
 extern	int	kpipe(int[2]);
 extern	s32	kpread(int, void*, s32, s64);
 extern	s32	kread(int, void*, s32);
+/*
+ * Execute in place: a pointer to the whole of an open file's contents in
+ * directly addressable memory, or nil if the device behind the descriptor
+ * cannot offer one.  See Dev.xip in os/inferno/port/portdat.h.
+ */
+extern	void*	kxip(int, u32*);
 extern	int	kremove(char*);
 extern	vlong	kseek(int, vlong, int);
 extern	int	kstat(char*, uchar*, int);

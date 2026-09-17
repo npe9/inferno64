@@ -236,6 +236,7 @@ int		kmount(int, int, char*, int, char*);
 int		kunmount(char*, char*);
 int		kopen(char*, int);
 s32		kread(int, void*, s32);
+void*		kxip(int, u32*);
 int		kremove(char*);
 vlong	kseek(int, vlong, int);
 int		kstat(char*, uchar*, int);

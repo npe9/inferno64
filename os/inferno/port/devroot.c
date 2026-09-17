@@ -131,6 +131,36 @@ rootwrite(Chan*, void*, s32, s64)
 	return 0;
 }
 
+/*
+ * Execute in place.  Every file here is one contiguous run of bytes in
+ * the kernel image: os/inferno/port/mkroot walks the `root' section of
+ * the board's configuration file and emits each file through
+ * utils/data2s/data2s.c as an initialised array, and rootattach() above
+ * takes the length from the same generated symbol that rootdata[].size
+ * and roottab[].length are both set from.  So the data never moves, is
+ * never rewritten (rootwrite() is Eperm), and outlives any channel onto
+ * it -- the promise Dev.xip makes in os/inferno/port/portdat.h.
+ * rootread() is a memmove() out of exactly the pointer returned here.
+ *
+ * Only files.  For a directory, rootdata[].ptr is a Dirtab array of its
+ * children and .size is how many there are, not bytes.
+ */
+static void*
+rootxip(Chan *c, u32 *lenp)
+{
+	u32 p;
+
+	if(c->qid.type & QTDIR)
+		return nil;
+	p = c->qid.path;
+	if(p >= (u32)rootmaxq)
+		return nil;
+	if(rootdata[p].ptr == nil)
+		return nil;
+	*lenp = rootdata[p].size;
+	return rootdata[p].ptr;
+}
+
 Dev rootdevtab = {
 	'/',
 	"root",
@@ -150,4 +180,7 @@ Dev rootdevtab = {
 	devbwrite,
 	devremove,
 	devwstat,
+	nil,		/* power */
+	nil,		/* config */
+	rootxip,
 };
