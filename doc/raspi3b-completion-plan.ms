@@ -3367,11 +3367,77 @@ form is worth keeping: a peripheral check that configures pins is
 configuring a board, and the board it is configuring here has a console
 on two of them.
 .NH 2
+What the wedge was: a protocol lock held across a file server
+.PP
+The board's network stopped a few seconds into every boot that talked to
+a live host.  It is fixed, and the way it was found is worth as much as
+the fix.
+.PP
+The first instrument was
+.CW "echo procdump >/dev/sysctl" :
+every process on one line, and the kernel-text words on each sleeping
+one's stack, which a
+.CW "7l -a"
+listing of the same build turns into names.  That named three waiters
+\(em the IPv4 reader queueing inside
+.CW tcpiput ,
+TCP's timer inside
+.CW tcptimeout ,
+and a writer inside
+.CW tcpkick
+\(em all on a TCP conversation's
+.CW qlock ,
+and none of them said who held it: a waiting process records where
+.I it
+called
+.CW qlock ,
+which is a different question.  So
+.CW QLock
+gained an owner and the dump learned to print it.  The next boot said
+.CW "qlock 0x3d2da18 held by 18 acquired at 0x0" ,
+and process 18 was asleep in a queue wait.
+.PP
+The holder was in the transmit path.
+.CW ethermedium.c
+wrote each frame to its device file inline, and
+.CW tcpkick()
+makes that call with the conversation's
+.CW qlock
+held.  On a board whose ethernet is a kernel driver that is a queue
+insertion; here the device is a file served by a Limbo program, so it is
+a 9P round trip, and a round trip that does not come back holds a
+protocol lock for good.  Everything behind that lock stopped: 120 frames
+arrived, 15 were handed on, 8 sat held, and ARP \(em which does not take
+that lock \(em answered throughout, which is exactly why the board looked
+half alive and why the earlier reading blamed the driver.
+.PP
+Each conversation now has an output queue and a process that drains it
+into the device, so the protocol hands a frame over and returns.  A full
+queue drops the frame and counts it, which is what an ethernet driver
+does with a frame it cannot send.  The blocking write still exists \(em it
+is just that a driver process waits in it now, not TCP.
+.PP
+Two things about the board made this take as long as it did, and both
+are fixed.  Its console dropped typed characters while it printed,
+because the transmit kick waited for FIFO room with interrupts off; and
+the console's 125-line scrollback lost every dump.  Copying
+.CW /dev/kmesg
+to the card's FAT partition and reading it back in 700-byte pieces is
+what finally produced a whole process dump.
+.PP
+One trap to record:
+.CW ps
+prints Dis process numbers and the kernel's dump prints kernel process
+numbers, and they are not the same numbering.  A kill aimed at "18" from
+the shell killed the FAT server instead of the lock holder.
+.NH 2
 Suggested order
 .PP
-Find where the IPv4 reader stops after a TCP connection, since the
-board's network, its kernel updates and any use of it as a terminal
-depend on it.  Then the console's lost input and the first-redirect
-race; then USB storage and the keyboard on the board; then the
+Confirm the transmit-queue fix on the board, and with the network up,
+take the kernel updates over it rather than by carrying the card.  Then
+the peripheral checks that fail on silicon and pass on the models \(em
+AUX, I2S, AUXSPI, SMI and the BSC slave \(em each of which is a model
+this tree wrote and a part it has now met; then USB storage and the
+keyboard on the board; then the
 SD/Wi-Fi controller question; then DMA for SD; then the peripherals
 nothing is currently attached to.
