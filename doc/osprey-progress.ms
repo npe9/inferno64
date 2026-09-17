@@ -13492,19 +13492,23 @@ failure, so this is a probable cause rather than a demonstrated one \-
 but it is the same check, the same shape, and a race the file's own
 comment had already recorded one earlier instance of.
 The tally as this is written, every configuration building and every
-check clean, the two-machine check run twice in the sweep:
+check clean:
 .CW pc64
-62,
+65,
 .CW p9pair
-97,
+101,
 .CW p9buddy
-5,
+15,
 .CW p9linux
-13,
+22,
 .CW p964
-44, keyboard 8, rio 14, the window gestures 10, micro 7, user 11, net
-13, wire 14, two-machine 20 twice over, the
-six criteria of the userland the tree builds itself, and two portable
-builds.  A criterion is a sentence a booted kernel printed
-in answer to a command typed at its prompt, so a clean check is also
-the prompt having been reached.
+74,
+.CW p9legacy
+16, keyboard 8, rio 14, the window gestures 10, micro 7, micro on 386 8,
+user 12, user on 386 11, net 13, wire 14, pair 1, two-machine 20, the six
+criteria of the userland the tree builds itself, and two portable builds.
+The two 386 checks are the second object type's, and they are the new
+ones: the microkernel boots there and a user program runs on it.  A
+criterion is a sentence a booted kernel printed in answer to a command
+typed at its prompt, so a clean check is also the prompt having been
+reached.
