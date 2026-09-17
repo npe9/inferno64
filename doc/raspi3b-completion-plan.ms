@@ -3431,6 +3431,57 @@ prints Dis process numbers and the kernel's dump prints kernel process
 numbers, and they are not the same numbering.  A kill aimed at "18" from
 the shell killed the FAT server instead of the lock holder.
 .NH 2
+Three of the peripheral checks were wrong about the part
+.PP
+Of the five checks that failed on the board, three were the check and
+not the silicon, and each failed the same way: it asserted something
+QEMU's model does and the part does not.
+.IP \(bu
+.CW AUX .
+.CW auxuartputc()
+spun a fixed iteration count for transmit-FIFO room and
+.CW auxinit()
+read the transmitter's state the instant after its last byte.  A byte
+is 87 microseconds at 115200 and the FIFO is eight deep; QEMU's mini
+UART empties inside the register write.  The waits are in microseconds
+now, and the final one waits for the transmitter to go idle.
+.IP \(bu
+.CW I2S .
+The check asserted
+.CW CS_A
+reads zero at reset.  Its top half is status \(em TX FIFO empty, has
+room, needs writing, and the two sync bits \(em and an idle block on the
+board reports all five (0x2a6000).  It masks to the writable bits now.
+.IP \(bu
+.CW AUXSPI .
+The check asserted
+.CW STAT 's
+bit count equals the shift length written to
+.CW CNTL0 .
+The datasheet calls that field the number of bits still to be
+processed, so an idle controller reports 0; QEMU's model mirrors
+.CW CNTL0 .
+It is printed now rather than asserted.
+.PP
+Two remain, and they are not yet understood well enough to say which
+side is wrong:
+.CW SMI
+probes a FIFO depth and gets 256 with
+.CW cs
+0x54000001, and the BSC slave check finds that a disabled slave
+acknowledges its address.  Both want the datasheet open beside the
+part, not another guess.
+.PP
+The pattern is the one this document has met before, and it is the cost
+of a model written alongside the driver that uses it: the emulator
+agrees with the code because both came from the same reading.  A check
+that passes on
+.B qemu+patch
+and fails on
+.B hardware
+is worth more than one that passes on both, because it is the only
+place the two readings can be told apart.
+.NH 2
 Suggested order
 .PP
 Confirm the transmit-queue fix on the board, and with the network up,
