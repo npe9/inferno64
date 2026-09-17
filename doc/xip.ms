@@ -1281,6 +1281,119 @@ bucket this whole document is about.  Every number above is arithmetic
 on top of it, so it is the next thing to measure rather than the next
 thing to optimise.
 .NH 1
+A candidate board: Olimex ESP32-P4-PC
+.PP
+Raised as a target, so assessed rather than started.  An Espressif
+ESP32-P4NRW32: dual-core 32-bit RISC-V at 400MHz, 768K of on-chip SRAM,
+32M of in-package PSRAM, 16M of external SPI flash, with Ethernet
+10/100 MAC and PHY, USB, MIPI CSI and DSI, HDMI, microSD and audio, and
+no Wi-Fi or Bluetooth on the part.
+.NH 2
+What it does to the premise
+.PP
+It ends the capacity argument.  This document's measured figures are
+about 890K of RAM as the tree stands and roughly 580K after the cheap
+cuts, against 768K of on-chip SRAM: so the trimmed configuration fits in
+SRAM and the untrimmed one does not, and 32M of PSRAM makes either of
+them trivially comfortable.  Nothing above about fitting in 256K applies
+to this board.
+.PP
+What execute in place becomes here is a locality argument instead.  The
+ESP32 parts map external SPI flash into the address space through a
+cache, which is exactly the directly-addressable window
+.CW Dev.xip
+was written for, and the mutable working set this document measures is
+small \- 8400 bytes of module data segments and stacks for a shell's
+three modules.  Code behind the flash instruction cache and that working
+set in fast on-chip SRAM, with PSRAM not holding code it need not hold,
+is a better use of the hierarchy than decoding everything into PSRAM.
+That is reasoning from the memory hierarchy; the SRAM-against-PSRAM
+latency difference has not been measured here.
+.PP
+The architecture is the best fit in the tree.
+.CW os/inferno/virt32
+is a working RV32 port \- an interactive shell under
+.CW qemu-system-riscv32 ,
+per
+.CW doc/inferno-ports.ms
+\- on the zc/za/zl toolchain, with
+.CW os/inferno/riscv
+as the shared family directory beside it.
+.CW DISWORD
+is 4, so the 1.76 decoded-to-packed ratio measured above is the relevant
+one and the
+.CW dis32
+tree is the right one.
+.NH 2
+Two walls, both verified here
+.PP
+.B "No double precision."
+The HP cores are RV32IMAFC: single-precision FPU, no D extension.  And
+.CW zc
+emits D instructions \- checked directly, compiling
+.CW "double add(double a, double b) { return a*b + a/b; }"
+with
+.CW "zc -S"
+gives
+.CW MOVD ,
+.CW MULD ,
+.CW DIVD ,
+.CW ADDD .
+The gradation matters more than the headline: an unexecuted illegal
+instruction does not fault, so a console shell would plausibly boot,
+.CW libinterp 's
+real arithmetic and libmath would fault when called, and
+.CW canontod()
+in
+.CW libinterp/load.c
+would break at load on any module carrying a real constant, because even
+moving a double is a D-extension load.
+.PP
+Two routes.  Trap and emulate, on the software floating point already in
+.CW os/inferno/port/fpi.c
+and
+.CW fpimem.c ,
+modelled on
+.CW os/inferno/pc/fpi387.c ,
+which is their only consumer in this tree \- there is no
+.CW fpiarm.c
+here despite
+.CW os/inferno/nucleof303/NOTE
+referring to one.  Or a soft-double mode in
+.CW zc ,
+emitting calls where it now emits D.
+.CW AGENTS.md 's
+"fix the tool, not the caller" favours the compiler, and the choice
+turns on whether real arithmetic has to be fast.
+.PP
+.B "No emulator."
+Espressif's QEMU fork models ESP32, ESP32-S3, ESP32-C3 and ESP32-C6, not
+the P4.  So this would be bring-up against real hardware with no test
+bench, which is the
+.CW os/inferno/teensy41
+situation and the reason that board has never been run.  Writing it
+blind would produce another directory of unverified code, so it wants
+the board in hand first.
+.NH 2
+What the work would be
+.PP
+Not the peripherals.  The gating work is the boot path: the ESP32 boot
+ROM hand-off, the image format its second stage expects, and setting up
+the flash cache and its MMU so that text executes from flash at all \-
+which is also what makes
+.CW Dev.xip
+over a flash window meaningful on this part rather than decorative.
+Then the interrupt controller and a timer.  The interrupt path is worth
+naming as an unknown: these parts use an Espressif interrupt matrix
+rather than a standard RISC-V PLIC and CLINT, which is recollection here
+and not something checked against the technical reference manual.
+.PP
+The asset is that none of the processor work is new:
+.CW virt32
+already boots RV32 Inferno to a shell through zc/za/zl, and
+.CW os/inferno/riscv
+already holds the shared RISC-V code a second board would read.
+.NH 1
 Unrelated breakage found on the way
 .PP
 Two things in the tree are broken independently of this work, found while
