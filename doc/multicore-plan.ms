@@ -5354,3 +5354,71 @@ not stable enough at this sample size to compare batches run at different
 times on a shared machine.  The guard's own count does not have that
 problem, which is the argument for instrumenting the mechanism rather
 than counting the symptom.
+.NH 2
+A cheaper shape for the same exclusion
+.PP
+If the window turns out to be real, the current exclusion is not the way
+to close it.  It holds the collector out for the whole of a
+.CW destroystack() ,
+which is why abandoned collections quadrupled: a long stack outlasts the
+quarter second the collector is willing to wait.
+.PP
+The exposure is narrower than that.
+.CW destroystack()
+nils
+.CW reg->EX
+as its
+.I second
+statement and only then frees anything, so a collector that starts after
+that nil sees no extents at all and is never at risk.  The only collector
+that can be hurt is one that already read
+.CW EX
+\(em and a collector that has read
+.CW EX
+is inside
+.CW rootset() ,
+which is inside
+.CW rungc() ,
+which runs only with
+.CW gcstw
+set.
+.PP
+So the wait can be one-shot and go inside
+.CW destroystack() ,
+between the nil and the first
+.CW free() :
+.QP
+.CW "ex = reg->EX;"
+.br
+.CW "reg->EX = nil;"
+.br
+.CW coherence();
+.br
+.CW "wait while gcstw != 0;	/* only for a collector already reading */"
+.br
+.CW "... free the extents ..."
+.PP
+A collector arriving afterwards sees
+.CW "EX == nil" ;
+one already running is waited for exactly once.  Neither needs
+.CW othersrunning()
+to count anything new, so no collection is ever abandoned on account of a
+teardown, and the give-up cost goes away entirely.
+.PP
+The cost is a hook, because
+.CW destroystack()
+is in
+.CW libinterp
+and
+.CW gcstw
+is the kernel's \(em the same arrangement
+.CW atsafepoint
+and
+.CW chandefer
+already use, nil in emu.
+.PP
+Not built.  It is written down now because the batch that decides whether
+the window is real is running, and if it is not real the right change is
+to delete the exclusion rather than to make it cheaper.  Designing the
+replacement before knowing which of those is true would be the same
+mistake as the prediction two sections up.
