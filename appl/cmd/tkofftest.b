@@ -1320,7 +1320,33 @@ checkscene()
 	tk->cmd(top, "pack .t -padx 6 -pady 6");
 	tk->cmd(top, "pack .f -padx 6 -pady 6");
 	tk->cmd(top, "pack .b -padx 6 -pady 6");
+	# A listbox with items in it, one SELECTED and one ACTIVE.  Empty it
+	# draws a fill and a border and nothing else; the item band, the
+	# per-item text in two colours and the active item's box are the
+	# parts that have nodes of their own.
+	tk->cmd(top, "listbox .l -width 150 -height 54");
+	tk->cmd(top, ".l insert end {alpha}");
+	# WIDER than the widget and MORE than fit, then scrolled in both
+	# directions, because every place the two paths could diverge in a
+	# listbox is a clipping question: a scrolled item starts at a
+	# negative x and the active item's box is as wide as the widest
+	# entry, so both run past the edges.  Unscrolled, with three short
+	# items, none of that is exercised and the layer's extent is never
+	# actually put to the question.
+	tk->cmd(top, ".l insert end {beta beta beta beta beta beta beta}");
+	tk->cmd(top, ".l insert end {gamma}");
+	tk->cmd(top, ".l insert end {delta}");
+	tk->cmd(top, ".l insert end {epsilon}");
+	tk->cmd(top, ".l insert end {zeta}");
+	tk->cmd(top, ".l xview scroll 2 units");
+	tk->cmd(top, ".l yview scroll 1 units");
+	# 1 and 2 selected with 2 active, so the active item's box is drawn
+	# in the SELECT foreground and an unselected item's text in the
+	# ordinary one - the two colours that reach the same nodes.
+	tk->cmd(top, ".l selection set 1 2");
+	tk->cmd(top, ".l activate 2");
 	tk->cmd(top, "pack .e -padx 6 -pady 6");
+	tk->cmd(top, "pack .l -padx 6 -pady 6");
 	map(top);
 	tk->cmd(top, "focus -global 1");
 	tk->cmd(top, "focus .e");
@@ -1330,36 +1356,63 @@ checkscene()
 	# render command did not exist at all - both snapshots were the same
 	# path, so of course they matched.  A comparison of a thing with
 	# itself is the easiest way for a test like this to be worthless.
-	# A caret BLINKS, on a 500ms repeater that runs whether or not there
-	# is a window manager, so a caret that toggled between the two
-	# snapshots would report a difference that is the clock's rather than
-	# the renderer's.  Re-focusing resets the phase and turns the caret
-	# on, so each snapshot is taken a few milliseconds into a fresh
-	# half-second of it being lit.  It goes AWAY and back, because
-	# focusing what already has the focus is not a focus change and
-	# fires no binding.
 	tk->cmd(top, "render direct");
 	sel1 := tk->cmd(top, "render");
-	tk->cmd(top, "focus .b");
-	tk->cmd(top, "focus .e");
-	tk->cmd(top, "update");
-	a := snap();
 	tk->cmd(top, "render scene");
 	sel2 := tk->cmd(top, "render");
-	tk->cmd(top, "focus .b");
-	tk->cmd(top, "focus .e");
-	tk->cmd(top, "update");
-	b := snap();
 	tk->cmd(top, "render direct");
 	report(sel1 == "direct" && sel2 == "scene", sys->sprint(
 		"both drawing paths can be selected (%#q then %#q)", sel1, sel2));
 	if(sel1 != "direct" || sel2 != "scene")
 		return;		# comparing identical runs would say nothing
 
-	if(a == nil || b == nil){
+	# TWO pairs, because only one widget can hold the keyboard and both
+	# of the widgets that have one want theirs compared.  With the entry
+	# focused the listbox draws neither its ring nor its active item's
+	# box - both are guarded by tkhaskeyfocus() - so a perturbation of
+	# either passes, which by the usual rule means the check never
+	# reached the code rather than that the code is right.
+	(d1, f1) := scenepair(top, ".e");
+	(d2, f2) := scenepair(top, ".l");
+	diff := d1 + d2;
+	first := f1;
+	if(first < 0)
+		first = f2;
+	if(d1 < 0 || d2 < 0){
 		report(0, "the offscreen pane reads back");
 		return;
 	}
+	report(diff == 0, sys->sprint(
+		"a render-node tree draws a flat border identically to draw() (%d of %d bytes differ%s)",
+		diff, 2*W*H*3, at(first)));
+}
+
+# One direct/scene comparison of the whole pane, with `who' holding the
+# keyboard.  Returns the bytes that differ and the first of them, or
+# (-1, -1) if the pane could not be read.
+#
+# A caret BLINKS, on a 500ms repeater that runs whether or not there is a
+# window manager, so a caret that toggled between the two snapshots would
+# report a difference that is the clock's rather than the renderer's.
+# Re-focusing resets the phase and turns the caret on, so each snapshot
+# is taken a few milliseconds into a fresh half-second of it being lit.
+# It goes AWAY and back, because focusing what already has the focus is
+# not a focus change and fires no binding.
+scenepair(top: ref Tk->Toplevel, who: string): (int, int)
+{
+	tk->cmd(top, "render direct");
+	tk->cmd(top, "focus .b");
+	tk->cmd(top, "focus " + who);
+	tk->cmd(top, "update");
+	a := snap();
+	tk->cmd(top, "render scene");
+	tk->cmd(top, "focus .b");
+	tk->cmd(top, "focus " + who);
+	tk->cmd(top, "update");
+	b := snap();
+	tk->cmd(top, "render direct");
+	if(a == nil || b == nil)
+		return (-1, -1);
 	diff := 0;
 	first := -1;
 	for(i := 0; i < len a; i++)
@@ -1369,6 +1422,7 @@ checkscene()
 				first = i;
 		}
 	if(diff != 0){
+		sys->print("     with %s holding the keyboard:\n", who);
 		shown := 0;
 		for(j := 0; j < len a && shown < 6; j += 3)
 			if(a[j] != b[j] || a[j+1] != b[j+1] || a[j+2] != b[j+2]){
@@ -1379,9 +1433,7 @@ checkscene()
 				shown++;
 			}
 	}
-	report(diff == 0, sys->sprint(
-		"a render-node tree draws a flat border identically to draw() (%d of %d bytes differ%s)",
-		diff, len a, at(first)));
+	return (diff, first);
 }
 
 # a toplevel to ask cheap questions of, made once

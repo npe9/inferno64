@@ -165,9 +165,10 @@ tkdrawlistb(Tk *tk, Point orig)
 	Point p;
 	TkEnv *env;
 	TkLentry *e;
-	int lh, w, n, ly;
+	int lh, w, n, ly, fgc;
 	Rectangle r, a;
 	Image *i, *fg;
+	TkScene *sc;
 	TkListbox *l = TKobj(TkListbox, tk);
 
 	env = tk->env;
@@ -175,9 +176,29 @@ tkdrawlistb(Tk *tk, Point orig)
 	r.min = ZP;
 	r.max.x = tk->act.width + 2*tk->borderwidth;
 	r.max.y = tk->act.height + 2*tk->borderwidth;
-	i = tkitmp(env, r.max, tkstyleflat(tk) ? TkCfield : TkCbackgnd);
-	if(i == nil)
-		return nil;
+
+	/*
+	 * The whole widget as one layer of nodes.  A listbox needs no
+	 * exception the way a button and an entry do - everything it draws
+	 * is a filled rectangle, a run of text or a stroked box, and each of
+	 * those is a node already.  The layer is the same size as the
+	 * scratch it replaces, so a line that ran off the end is clipped by
+	 * the same edge.
+	 */
+	sc = nil;
+	if(tkviascene && tkstyleflat(tk))
+		sc = tkscenenew();
+	if(sc != nil){
+		Rectangle dr;
+
+		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
+		tkscenelayer(sc, r.max, env->colors[TkCfield], dr, ZP);
+		i = nil;
+	}else{
+		i = tkitmp(env, r.max, tkstyleflat(tk) ? TkCfield : TkCbackgnd);
+		if(i == nil)
+			return nil;
+	}
 
 	w = tk->act.width;
 	if (w < l->nwidth)
@@ -196,19 +217,33 @@ tkdrawlistb(Tk *tk, Point orig)
 		a.max.x = a.min.x + tk->act.width;
 		a.max.y = a.min.y + lh;
 		if(e->flag & Tkactivated) {
-			draw(i, a, tkgc(env, TkCselectbgnd), nil, ZP);
+			if(sc != nil)
+				tkscenecolour(sc, a, env->colors[TkCselectbgnd]);
+			else
+				draw(i, a, tkgc(env, TkCselectbgnd), nil, ZP);
 		}
 
 		if(e->flag & Tkactivated)
-			fg = tkgc(env, TkCselectfgnd);
+			fgc = TkCselectfgnd;
 		else
-			fg = tkgc(env, TkCforegnd);
-		string(i, p, fg, p, env->font, e->text);
+			fgc = TkCforegnd;
+		fg = nil;
+		if(sc != nil)
+			tkscenetext(sc, p, e->text, env->font, env->colors[fgc]);
+		else {
+			fg = tkgc(env, fgc);
+			string(i, p, fg, p, env->font, e->text);
+		}
 		if((e->flag & Tkactive) && tkhaskeyfocus(tk)) {
 			a.min.x = tk->borderwidth-l->xdelta;
 			a.max.x = a.min.x+w;
 			a = insetrect(a, l->sborderwidth);
-			tkbox(i, a, tk->highlightwidth, fg);
+			/* a square stroke is a border node of radius 0 */
+			if(sc != nil)
+				tksceneborder(sc, a, 0, tk->highlightwidth,
+					env->colors[fgc]);
+			else
+				tkbox(i, a, tk->highlightwidth, fg);
 		}
 		ly += lh;
 		p.y += lh;
@@ -224,6 +259,18 @@ tkdrawlistb(Tk *tk, Point orig)
 	 * reserved and left blank all along - the same thing that was true
 	 * of a button before its two commented-out lines were restored.
 	 */
+	if(sc != nil){
+		if(tkhaskeyfocus(tk))
+			tksceneborder(sc, insetrect(r, tk->borderwidth), 0,
+				tk->highlightwidth,
+				env->colors[TkChighlightfgnd]);
+		tkreliefnodes(sc, tk, ZP, TkCbackgnd, tk->relief);
+		tkscenelayerend(sc);
+		tkscenerender(sc, env->top->ctxt, tkimageof(tk));
+		tkscenefree(sc);
+		return nil;
+	}
+
 	if(tkhaskeyfocus(tk))
 		tkbox(i, insetrect(Rect(0, 0, tk->act.width + 2*tk->borderwidth,
 			tk->act.height + 2*tk->borderwidth), tk->borderwidth),

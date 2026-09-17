@@ -44,19 +44,21 @@ to agree byte for byte.
 .IR tkofftest (1),
 .IR tkbench (1)
 .SH BUGS
-Three things go through it: a flat border, a plain
+Four things go through it: a flat border, a plain
 .IR button (9)
-with text, and an
+with text, an
 .IR entry (9)
 that is not showing a selection and not substituting for its text with
-.BR -show .
+.BR -show ,
+and a
+.IR listbox (9),
+which needs no exception at all \(em everything it draws is a filled
+rectangle, a run of text or a stroked box.
 Each of those draws its whole interior as nodes \(em fill, glyphs, caret,
-focus ring, border \(em inside one
+selection band, focus ring, border \(em inside one
 .BR TkNlayer .
 .PP
 Everything else \(em images, the classic two-tone bevel, a
-.IR listbox (9),
-a
 .IR text (9),
 and the chrome that
 .IR scale (9)

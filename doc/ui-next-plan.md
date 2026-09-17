@@ -894,10 +894,28 @@ there was never speed on the table here anyway.
    toggle landing between the two snapshots would report the clock's
    difference as the renderer's.
 
+   **`listbox` is the third, and the first with no exception.** Everything
+   it draws is a filled rectangle, a run of text or a stroked box, so the
+   guard is just `tkviascene && tkstyleflat(tk)`.
+
+   That made the *test* the hard part, and the identity check was wrong in
+   two ways that a passing run could not show. It focused the entry, so
+   `tkhaskeyfocus(.l)` was false and both of the listbox's focus-guarded
+   nodes — the active item's box and the widget's ring — were never
+   emitted: the control for the active box came back **clean**, which by
+   the merged rule means the check never reached the code. It now takes
+   **two** snapshot pairs, one with the entry focused and one with the
+   listbox, because only one widget can hold the keyboard and both have
+   nodes that depend on having it. And the listbox was three short
+   unscrolled items, where every way the two paths could diverge — all of
+   them clipping questions — is absent; it is now scrolled in both
+   directions with an item wider than the widget, so a line starts at a
+   negative x and the active box runs past both edges.
+
    **What is left is the rest of the widgets and then the walk.** Each
    `tkitmp` user converts the same way, against the same byte check;
-   `listbox`, `scale` and `scrollbar` are the remaining ones, and the
-   indicator a `checkbutton` draws needs an ellipse node first. Only when
+   `scale` and `scrollbar` are the remaining ones, and the indicator a
+   `checkbutton` draws needs an ellipse node first. Only when
    a repaint produces one tree instead of one per widget is there
    anything for a backend to batch.
 4. **A Metal backend.** Last, and only after 3: the measured hazard is
