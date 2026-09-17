@@ -259,6 +259,10 @@ main(void)
 		extern int teardrop;
 		char *p;
 
+		if((p = getconf("*idlesingle")) != nil){
+			extern int idlesingle;
+			idlesingle = strtol(p, nil, 0);
+		}
 		if((p = getconf("*ctxcap")) != nil){
 			extern int ctxcap;
 			ctxcap = strtol(p, nil, 0);	/* claimctx() clamps it */

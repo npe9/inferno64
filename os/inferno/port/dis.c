@@ -628,6 +628,7 @@ static Fdclose *fdcloseq;
 ulong fdclosedeferred;	/* MULTICORE INSTRUMENTATION - temporary */
 ulong freefds, freefdstw;	/* likewise; counted in freeFD() */
 ulong vmspawns;		/* interpreters made by release(); temporary */
+ulong vmspawnsby[8];	/* and by the type of process that made them */
 int fddefer = 1;	/* *fddefer=0: close inline, as before; temporary */
 
 /* this process is the collector and the world is stopped for it */
@@ -716,11 +717,38 @@ fdcloseproc(void *a)
 }
 
 int
+/*
+ * *idlesingle=0 lets every idle interpreter queue for its own
+ * collection, as before, so one kernel measures both.  Temporary.
+ */
+int idlesingle = 1;
+
+static int collectq(Prog*, int);
+
+int
 collect(Prog *head)
+{
+	return collectq(head, 0);
+}
+
+/*
+ * try: do not queue on gcsema, give up if a collection is already
+ * running.  execatidle() uses it, because an idle interpreter has
+ * nothing to gain by waiting to run a collection somebody else is
+ * already running -- and with tens of interpreters idling, queueing is
+ * how 6000 collections a boot became 800000, each one a full
+ * stop-the-world.
+ */
+static int
+collectq(Prog *head, int try)
 {
 	int stopped;
 
-	qlock(&gcsema);
+	if(try){
+		if(!canqlock(&gcsema))
+			return 0;
+	}else
+		qlock(&gcsema);
 	/*
 	 * stoptheworld() now sleeps, and tsleep() raises the note that
 	 * interrupts it -- so this function acquired a way to leave by
@@ -1062,7 +1090,7 @@ execatidle(void)
 			gcpartial++;
 			break;
 		}
-		if(!collect(isched.head)){
+		if(!collectq(isched.head, idlesingle)){
 			/*
 			 * The world would not stop, so gccolor has not moved
 			 * and this loop's condition is exactly as true as it
@@ -2308,6 +2336,8 @@ release(void)
 		isched.creating = 1;
 		spawn = 1;
 		vmspawns++;	/* MULTICORE INSTRUMENTATION - temporary */
+		if((uint)up->type < 8)
+			vmspawnsby[up->type]++;
 	}
 	unlock(&isched.l);
 
@@ -3268,8 +3298,11 @@ stalldump(void)
 	}
 	{
 		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud,"
-			" fddefer %d, interpreters spawned %lud\n",
-			freefds, freefdstw, fdclosedeferred, fddefer, vmspawns);
+			" fddefer %d, interpreters spawned %lud"
+			" (by type %lud %lud %lud %lud %lud)\n",
+			freefds, freefdstw, fdclosedeferred, fddefer, vmspawns,
+			vmspawnsby[0], vmspawnsby[1], vmspawnsby[2],
+			vmspawnsby[3], vmspawnsby[4]);
 	}
 	for(i = 0; i < npctx; i++)
 		print("stall: ctx %d owner %d inxec %d inchan %d nlocal %d\n",

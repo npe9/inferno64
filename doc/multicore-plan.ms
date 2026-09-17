@@ -6386,3 +6386,56 @@ arm.  The lines that are missing are boots that had not finished all
 three chantest instances when the 90-second timeout cut them off, not
 failures: no boot printed a
 .CW FAIL .
+.NH 2
+What actually bounds the pool: one idle collector, not many
+.PP
+The section above left the pool a mitigation with no ceiling, and said
+the number of contexts a boot needs is set by how much the collector
+ran.  That is the thing to fix, and the mechanism is a feedback loop.
+.PP
+.CW execatidle()
+runs in every interpreter that finds no work, and calls
+.CW collect() ,
+which
+.CW qlock() s
+.CW gcsema .
+So an idle interpreter does not park \(em it
+.I queues ,
+behind whichever interpreter is already collecting.  A queued
+interpreter is asleep on a QLock, so
+.CW release() 's
+test "work is ready and no interpreter is idle" is true, and it spawns
+another interpreter.  That one finds no work, calls
+.CW execatidle() ,
+and queues too.  Each new interpreter claims a context and adds another
+full stop-the-world collection to the queue: 6000 collections a boot in
+the boots that stay out of the loop, 800000 in the boots that fall into
+it, on identical work (the shell loop runs exactly 300 times either
+way).
+.PP
+So an idle interpreter tries rather than queues \(em
+.CW canqlock() ,
+and if a collection is already running it gives up and parks.  It has
+nothing to gain by waiting: the collection it would have run is the one
+already running.
+.CW *idlesingle=0
+restores the queueing, so one kernel measures both.  Twelve boots per
+arm, 90 seconds:
+.TS
+center;
+l r r r r.
+	contexts held	chantest lines	panics	Dis heap
+-smp 4, queueing	22 to 97	304 of 324	0	405KB to 5.4MB
+-smp 4, one at a time	19 to 26	310 of 324	0	362KB to 5.2MB
+-smp 2, queueing	40 to 60	318 of 324	0	405 to 462KB
+-smp 2, one at a time	19 to 26	322 of 324	0	301KB to 5.0MB
+.TE
+.PP
+Contexts held stops varying with the boot and sits at 19 to 26 at both
+processor counts, against a spread that reached 97 \(em above the old
+pool of 64 on its own.  chantest gets no less done; it gets slightly
+more.  The heap is unchanged by this: the boots near 5MB appear in both
+arms and are boots that were collecting mid-chantest when the dump ran.
+.PP
+The raised pool stays, because it is cheap and because nothing here
+bounds the spawning itself \(em only the loop that was driving it.
