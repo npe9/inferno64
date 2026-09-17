@@ -196,8 +196,18 @@ chandevreset(void)
 	int i;
 
 	todinit();	/* avoid later reentry causing infinite recursion */
-	for(i=0; devtab[i] != nil; i++)
+	/*
+	 * Name each device as it is reset.  A board that stops here stops
+	 * with no clue at all otherwise: the Pi hung between procinit and
+	 * the first driver's own print, which is a dozen resets wide.
+	 * iprint, not print, because a reset that hangs never comes back
+	 * to drain a queue.
+	 */
+	for(i=0; devtab[i] != nil; i++){
+		iprint("reset #%C\n", devtab[i]->dc);
 		devtab[i]->reset();
+	}
+	iprint("reset done\n");
 }
 
 /*

@@ -259,8 +259,11 @@ main(void)
 	}
 
 	procinit();
+	iprint("links\n");
 	links();
+	iprint("screeninit\n");
 	screeninit();
+	iprint("fdtinit\n");
 	{
 		/* QEMU passes no DTB in x0 to a bare ELF via -kernel, so this
 		 * is inert here; correct if a future Image-header kernel gets
@@ -269,6 +272,7 @@ main(void)
 		extern void fdtinit(void*);
 		fdtinit(dtbptr);
 	}
+	iprint("chandevreset\n");
 	chandevreset();
 	uartconsolesetup();
 
