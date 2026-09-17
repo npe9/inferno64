@@ -18,8 +18,9 @@ This is the default.
 By building a render-node tree and rendering that.
 .TP
 \f5count\fP
-Answers two numbers: how many trees the repaints since the last
-\f5render count\fP rendered, and how many widgets went into them.
+Answers three numbers: how many trees the repaints since the last
+\f5render count\fP rendered, how many widgets went into them, and how
+many nodes those trees held.
 Counting then starts again.
 Batching cannot be seen in the pixels \(em that is the point of it \(em
 so this is what a test reads instead.
