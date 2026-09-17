@@ -4314,3 +4314,36 @@ split operations, the deferral \(em and drops only the lock, so the two
 halves of the change can be measured apart from one kernel.  Temporary,
 like
 .CW *parallelvm .
+.NH 2
+What the region measured
+.PP
+Interleaved, order alternating, thirty boots each of the kernel before
+the region and the kernel after it, at
+.CW parallelvm=0
+on
+.CW -smp 2 :
+.TS
+center;
+l r r r r r.
+	reached shell	iterations	panics	tripwires	chantest
+before	30 of 30	2386	0	0	\(em
+after	30 of 30	2190	0	0	90 of 90
+.TE
+.PP
+The iteration counts are not comparable and are printed only so nobody
+later reads their absence as concealment: the kernel after the change
+runs three concurrent
+.CW chantest
+instances on every boot that the kernel before it does not, so it is
+doing strictly more work for a slightly lower count of the thing being
+counted.  The columns that compare are the other three, and they are
+equal.
+.PP
+The deferral fired on all thirty boots after the change, which is what
+makes the chantest column mean something: the path being tested was
+reached every time, not merely present.
+.PP
+The kernel before the change carries no
+.CW chantest.dis
+at all, so its chantest column is zero by absence and not by failure.
+Reading it as eight failing cases would be wrong.
