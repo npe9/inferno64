@@ -1677,6 +1677,75 @@ side, which on none of these three boards is it.
 N only for speed, never for space, and not before someone wants Limbo
 fast on a Cortex-M more than they want it portable.
 .NH 2
+The pool floor, measured rather than guessed
+.PP
+With the instruction arrays out of RAM, what is left was read from
+.CW #c/poolhist
+rather than estimated, after a shell and an
+.I ls (1):
+264704 bytes live in 1327 blocks, and the histogram is the finding.
+.DS
+.CW "  <=128   1258 blocks   161024 bytes"
+.CW "  <=8192    12 blocks    73600 bytes"
+.DE
+1258 blocks charged exactly 128 bytes each, to the byte.  The pools
+round every request up to
+.CW quanta+1
+.CW ( poolalloc ),
+and
+.CW quanta
+was 127 on every target.  The largest single caller was
+.CW dtype ,
+at 70016 bytes for 547 Dis type descriptors of about forty bytes apiece.
+.PP
+127 is the right answer for a 64-bit target and twice what a 32-bit one
+needs.  The quantum is also the smallest block a pool hands out, and the
+smallest block has to be one that still works once it is freed:
+.CW Bhdr 's
+fixed fields, the five-pointer union it uses on the free lists, and a
+.CW Btail .
+Asked of the compiler rather than counted by hand \-
+.CW BHDRSIZE
+is 20,
+.CW sizeof(Bhdr)
+36 and
+.CW sizeof(Btail)
+4 \- that is 40 bytes on this target, so 64 is the power of two above
+it and the quantum is 63.  On a 64-bit target the same three come to 80
+and the answer stays 128.  The quantum now follows
+.CW sizeof(void*) ,
+and the invariant is checked at compile time by dividing by it, so a
+target that breaks it does not build; that was confirmed by breaking it
+on purpose, which gives
+.CW "alloc.c:61 divide check" .
+.PP
+On
+.CW mps2 ,
+from
+.CW #c/memory :
+.DS
+.CW "                      before     after"
+.CW "main, at a prompt     248832    170688"
+.CW "main, after ls        265216    204544"
+.CW "heap, at a prompt      71808     56512"
+.CW "dtype                  70016     35072"
+.DE
+Nothing else changed, and nothing else had to: this is the same
+allocation pattern charged what it costs.  Fifteen rounds of
+.I ls
+over three directories \- 11341 allocations and 10011 frees \- leave
+the pool at 186304 live in 1332 blocks with no fault and no corruption,
+and
+.I fptest (1)
+and
+.I cvtchk (1)
+are clean on the M7 and the M4 bench.
+.PP
+Against where this document started, the main pool after an
+.I ls
+has gone 367104, then 265216 with the instruction arrays in flash, then
+204544 with the quantum corrected.
+.NH 2
 What gates any of it
 .PP
 The kernel pool floor: 78208 bytes in 343 allocations with the minimal

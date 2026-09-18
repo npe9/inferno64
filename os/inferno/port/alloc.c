@@ -35,14 +35,30 @@ struct Pool
 	void	(*move)(void*, void*);
 };
 
-/* keep the quanta above the size of 5 pointers and 2 longs else the next block
-	will be getting overwritten by the header -- starts a corruption hunt
-	when pointer size = 8 bytes, then 63 = 2^q -1
-		for 4 bytes, 31
-	TODO make this a macro?
-	for allocpc and reallocpc, 2 * 8 = 16 bytes get added
-	so, minimum size = 2*4 + 2*8 + 5*8 = 64, using 127 to satisfy 2^q -1
+/*
+ * Every request is rounded up to a multiple of quanta+1
+ * (poolalloc:/^\tsize = ), so the quantum is also the smallest block a
+ * pool will hand out, and the smallest block has to be one that still
+ * works once it is freed: Bhdr's fixed fields, the five-pointer union
+ * it uses on the free lists, and a Btail.
+ *
+ *	32-bit	16 + 20 + 4 = 40, so 64 and a quantum of 63
+ *	64-bit	32 + 40 + 8 = 80, so 128 and a quantum of 127
+ *
+ * 127 everywhere is the 64-bit answer applied to both, and on a part
+ * with kilobytes of SRAM it is expensive: it charged 128 bytes for each
+ * of the 547 Dis type descriptors a shell loads, which are about 40
+ * bytes each.  See doc/xip.ms.
  */
+#define	POOLQUANTA	(sizeof(void*) == 8 ? 127 : 63)
+
+/*
+ * Checked here rather than trusted: a quantum too small for a freed
+ * block to hold its own free-list links corrupts the pool, and it would
+ * do so quietly.  Dividing by a false condition is a compile-time zero
+ * divide, so a target that breaks the invariant does not build.
+ */
+enum { Poolquantaok = 1/(sizeof(Bhdr)+sizeof(Btail) <= POOLQUANTA+1) };
 static
 struct
 {
@@ -55,9 +71,9 @@ struct
 		/* cursize must start 0: poolsize() may set maxsize below the old
 		 * 31MB placeholder; poolmax() then underflows and /dev/memory
 		 * lines exceed the 12-byte fields wm/memory parses. */
-		{ "main",  0, 	32*1024*1024, 127,  512*1024, 0, 0 },
-		{ "heap",  1, 	32*1024*1024, 127,  512*1024, 0, 0 },
-		{ "image", 2,   64*1024*1024+256, 127, 4*1024*1024, 1, 0 },
+		{ "main",  0, 	32*1024*1024, POOLQUANTA,  512*1024, 0, 0 },
+		{ "heap",  1, 	32*1024*1024, POOLQUANTA,  512*1024, 0, 0 },
+		{ "image", 2,   64*1024*1024+256, POOLQUANTA, 4*1024*1024, 1, 0 },
 	}
 };
 
