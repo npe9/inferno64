@@ -826,7 +826,7 @@ OP(newa)
 	acheck(t->size, sz);
 	h = nheap(sizeof(Array) + (t->size*sz));
 	h->t = &Tarray;
-	AINC(&Tarray.ref);
+	typeinc(&Tarray);
 	a = H2D(Array*, h);
 	a->t = t;
 	a->len = sz;
@@ -852,7 +852,7 @@ OP(newaz)
 	acheck(t->size, sz);
 	h = nheap(sizeof(Array) + (t->size*sz));
 	h->t = &Tarray;
-	AINC(&Tarray.ref);
+	typeinc(&Tarray);
 	a = H2D(Array*, h);
 	a->t = t;
 	a->len = sz;
@@ -891,7 +891,7 @@ cnewc(Type *t, void (*mover)(void), int len)
 	c->size = 0;
 	if(mover == movtmp){
 		c->mid.t = t;
-		AINC(&t->ref);
+		typeinc(t);
 	}
 	return c;
 }
@@ -1786,7 +1786,7 @@ OP(consmp)
 	incmem(R.s, t);
 	memmove(l->data, R.s, t->size);
 	l->t = t;
-	AINC(&t->ref);
+	typeinc(t);
 }
 OP(headb)
 {
@@ -1873,7 +1873,7 @@ OP(slicea)
 	ss->len = n;
 	ss->data = ds->data + start*t->size;
 	ss->t = t;
-	AINC(&t->ref);
+	typeinc(t);
 
 	if(ds->root != H) {			/* slicing a slice */
 		ds = ds->root;

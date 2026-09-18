@@ -422,7 +422,7 @@ frametype(int size, uchar *map, int np)
 	for(i = 0; i < nframes; i++){
 		t = frames[i];
 		if(t->size == size && t->np == np && memcmp(t->map, map, np) == 0){
-			AINC(&t->ref);
+			typeinc(t);
 			return t;
 		}
 	}
@@ -502,7 +502,7 @@ mem2array(void *va, int n)
 		n = 0;
 	h = nheap(sizeof(Array)+n);
 	h->t = &Tarray;
-	AINC(&h->t->ref);
+	typeinc(h->t);
 	a = H2D(Array*, h);
 	a->t = &Tbyte;
 	AINC(&Tbyte.ref);

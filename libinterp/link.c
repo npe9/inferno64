@@ -129,7 +129,7 @@ linkmod(Module *m, Import *ldt, int mkmp)
 			t = m->type[0];
 			h = nheap(t->size);
 			h->t = t;
-			AINC(&t->ref);
+			typeinc(t);
 			ml->MP = H2D(uchar*, h);
 			if(ml->MP != H && (uintptr)ml->MP < 0x1000)
 				print("linkmod: bad ml->MP %#p right after H2D, h %#p ml %#p\n",

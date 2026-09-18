@@ -215,7 +215,7 @@ freearray(Heap *h, int swept)
 			}
 		}
 	}
-	if(ADEC(&t->ref) == 0) {
+	if(typedec(t) == 0) {
 		freejitcode(t->initialize);
 		free(t);
 	}
@@ -234,7 +234,7 @@ freelist(Heap *h, int swept)
 	if(t != nil) {
 		if(!swept && t->np)
 			freeptrs(l->data, t);
-		if(ADEC(&t->ref) == 0) {
+		if(typedec(t) == 0) {
 			freejitcode(t->initialize);
 			free(t);
 		}
@@ -247,11 +247,11 @@ freelist(Heap *h, int swept)
 		th = D2H(l);
 		if(ADEC(&th->ref) != 0)
 			break;
-		ADEC(&th->t->ref);	/* should be &Tlist and ref shouldn't go to 0 here nor be 0 already */
+		typedec(th->t);	/* should be &Tlist and ref shouldn't go to 0 here nor be 0 already */
 		if(t != nil) {
 			if (t->np)
 				freeptrs(l->data, t);
-			if(ADEC(&t->ref) == 0) {
+			if(typedec(t) == 0) {
 				freejitcode(t->initialize);
 				free(t);
 			}
@@ -533,6 +533,35 @@ destroy(void *v)
 	poolfree(heapmem, h);
 }
 
+/*
+ * A Type whose ref is Timmortal is one the kernel does not own: it was
+ * laid out in the image at build time (utils/dis2s) and lives in memory
+ * that cannot be written.  It is never counted and never freed, so
+ * every reference to it must go through typeinc()/typedec() rather than
+ * touch ref directly -- on a part that runs its text from flash, an
+ * AINC on one of these is a write that is dropped or faults.
+ *
+ * typedec() answers what a decrement would have left, so a caller can
+ * keep asking "is this the last reference"; for an immortal Type the
+ * answer is always no.
+ */
+void
+typeinc(Type *t)
+{
+	if(t != nil && t->ref != Timmortal)
+		AINC(&t->ref);
+}
+
+int
+typedec(Type *t)
+{
+	if(t == nil)
+		return 0;
+	if(t->ref == Timmortal)
+		return Timmortal;
+	return ADEC(&t->ref);
+}
+
 Type*
 dtype(void (*destroy)(Heap*, int), int size, uchar *map, int mapsize)
 {
@@ -570,7 +599,7 @@ checktype(void *v, Type *t, char *name, int newref)
 void
 freetype(Type *t)
 {
-	if(t == nil || ADEC(&t->ref) > 0)
+	if(t == nil || typedec(t) > 0)
 		return;
 
 	freejitcode(t->initialize);
@@ -1018,7 +1047,7 @@ heapz(Type *t)
 		error(exHeap);
 
 	h->t = t;
-	AINC(&t->ref);
+	typeinc(t);
 	h->ref = 1;
 	h->color = mutator;
 	memset(H2D(void*, h), 0, t->size);
@@ -1038,7 +1067,7 @@ heap(Type *t)
 		error(exHeap);
 
 	h->t = t;
-	AINC(&t->ref);
+	typeinc(t);
 	h->ref = 1;
 	h->color = mutator;
 	initmemtt(t, H2D(void*, h), &h->t);
@@ -1055,7 +1084,7 @@ heaparray(Type *t, int sz)
 
 	h = nheap(sizeof(Array) + (t->size*sz));
 	h->t = &Tarray;
-	AINC(&Tarray.ref);
+	typeinc(&Tarray);
 	a = H2D(Array*, h);
 	a->t = t;
 	a->len = sz;
@@ -1077,7 +1106,7 @@ initarray(Type *t, Array *a)
 	int i;
 	uchar *p;
 
-	AINC(&t->ref);
+	typeinc(t);
 	if(t->np == 0){
 		trackclear(a->data, (long)t->size*a->len);
 		return;
@@ -1104,10 +1133,10 @@ arraycpy(Array *sa)
 
 	dh = nheap(sizeof(Array) + sa->t->size*sa->len);
 	dh->t = &Tarray;
-	AINC(&Tarray.ref);
+	typeinc(&Tarray);
 	da = H2D(Array*, dh);
 	da->t = sa->t;
-	AINC(&da->t->ref);
+	typeinc(da->t);
 	da->len = sa->len;
 	da->root = H;
 	da->data = (uchar*)da + sizeof(Array);

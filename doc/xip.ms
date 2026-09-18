@@ -1661,11 +1661,109 @@ for
 could not have settled, since the dump does not care how a write would
 have arrived.
 .PP
-What is not done: the type descriptors, the link tables and the
-exception handlers still parse into RAM.
+The type descriptors go the same way.  A
 .CW Type
-carries a reference count, so it cannot simply be laid in flash \- that
-is the immortal-object item below, and it is separate on purpose.
+is a size, a pointer count and a pointer map, none of which depends on
+the instance, plus two function pointers that
+.CW parsemod
+always fills with the same values \-
+.CW freeheap
+and
+.CW markheap ,
+which the linker resolves in the emitted assembler, with the Thumb bit,
+which is what a function pointer wants on this target \- and two more
+that
+.CW dtype
+leaves nil.  What stops it being laid in flash outright is the
+reference count, which is the one mutable field.
+.PP
+So a
+.CW Type
+whose count is
+.CW Timmortal
+is one the kernel does not own: never counted, never freed.  Every
+reference to a count now goes through
+.CW typeinc()
+and
+.CW typedec()
+rather than touching
+.CW ref
+directly \- 23 sites across seven files in
+.CW libinterp ,
+because an
+.CW AINC
+on one of these is a write to flash that is dropped or faults.
+.CW typedec()
+answers what a decrement would have left, so a caller can go on asking
+whether it holds the last reference; for an immortal
+.CW Type
+the answer is always no.
+.PP
+.CW parsemod
+takes the array from the image when the module matches, and checks
+every descriptor against the file as it walks the stream: size, pointer
+count and map.  That is not a separate test, it is the load path, and it
+was confirmed to work by changing one byte of one map in one of the 214
+descriptors
+.CW mps2
+carries, which gives
+.DS
+.CW "panic: loading \(fm/osinit.dis\(fm: built-in type"
+.CW "	descriptor mismatch"
+.DE
+From
+.CW #c/memory
+and
+.CW #c/poolhist :
+.DS
+.CW "                      before     after"
+.CW "main, at a prompt     109184     97152"
+.CW "main, after ls        128704    114688"
+.CW "dtype                  16448      4544"
+.CW "live blocks              1041       849"
+.CW "block headers           20820     16980"
+.CW "teensy41 text          682368    690720"
+.DE
+8352 bytes of flash for 14016 of RAM.  Eight rounds of
+.I ls (1),
+4201 allocations and 3352 frees, then
+.I fptest (1)
+and
+.I cvtchk (1):
+clean on the M7 and the M4 bench.
+.PP
+One bug is worth recording because of how it presented.  Routing the 23
+sites was done by substitution, and the substitution rewrote the body of
+.CW typeinc()
+itself into a call to
+.CW typeinc() .
+The result was unbounded recursion, which ran off the end of the kernel
+stack and into whatever followed it, and what reached the console was
+.DS
+.CW "qemu: fatal: Lockup: can't escalate 3 to HardFault"
+.DE
+with a program counter in the middle of the emitted data and a link
+register inside
+.CW print .
+Neither was the fault: the first exception was an undefined instruction,
+which
+.CW "qemu -d int"
+shows as exception 6, and the second was
+.CW print
+being called from the fault handler to report the first.  The register
+dump belongs to the second fault and says nothing about the first.  What
+found it was
+.CW "-d int,cpu" ,
+whose program counter for the first exception landed two bytes before
+.CW dtype ,
+with
+.CW 0x40000000
+in a register \- inside
+.CW typedec ,
+which is where the recursion was.
+.PP
+What is not done: the link tables and the exception handlers still parse
+into RAM.
 .IP 4.
 The immortal-object change, which is what is left of the heap.
 .IP 5.

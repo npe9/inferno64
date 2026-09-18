@@ -326,6 +326,7 @@ struct Module
 	uintptr*	pctab;	/* dis pc to code pc when compiled */
 	void*	dlm;		/* dynamic C module */
 	int	xip;		/* prog is built into the image: see Xipmod */
+	int	xiptype;	/* and so is type[], and neither is freed */
 };
 
 /*
@@ -348,6 +349,8 @@ struct Xipmod
 	u32	length;		/* length of the .dis it was built from */
 	int	nprog;		/* instructions, and so the size of prog */
 	Inst*	prog;
+	int	ntype;		/* type descriptors, and so the size of type */
+	Type**	type;
 };
 
 extern Xipmod*	xipmods;
@@ -535,6 +538,16 @@ extern	void		initmemtt(Type*, void*, Type**);
 extern	void		checktracked(void);
 extern	void		trackclear(void*, long);	/* pc64-only tracker -- see heap.c */
 extern	int		distrack;		/* nonzero: the tracker above runs */
+
+/*
+ * Type.ref for a Type that lives in the image rather than in memory the
+ * kernel owns: never counted, never freed.  See libinterp/heap.c and
+ * doc/xip.ms.  Chosen so that no live Type's count can reach it.
+ */
+enum { Timmortal = 0x40000000 };
+
+extern	void		typeinc(Type*);
+extern	int		typedec(Type*);
 extern	Modlink*	trackM;	/* set by xec()'s dispatch loop -- see heap.c */
 extern	Inst*		trackPC;
 extern	char*		trackpoint;	/* finer-grained checkpoint name -- see heap.c */

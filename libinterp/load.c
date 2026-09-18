@@ -175,8 +175,8 @@ brpatch(Inst *ip, Module *m)
  * the file it was built from, so that a root file system rebuilt with a
  * different module under the same name is not mistaken for this one.
  */
-static Inst*
-xipprog(char *path, int isize, u32 length)
+static Xipmod*
+xipfind(char *path, int isize, u32 length)
 {
 	Xipmod *x;
 
@@ -184,7 +184,7 @@ xipprog(char *path, int isize, u32 length)
 		return nil;
 	for(x = xipmods; x->path != nil; x++)
 		if(x->nprog == isize && x->length == length && strcmp(x->path, path) == 0)
-			return x->prog;
+			return x;
 	return nil;
 }
 
@@ -239,6 +239,8 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 	 */
 	intptr addrlim, limstack[DADEPTH];
 	Inst scratch;
+	Xipmod *xm;
+	Type tscratch;
 	uchar *mod, sm, *istream, **isp, *si, *addr, *dastack[DADEPTH], *e, *b;
 	Link *l;
 	intptr i, n, v, pc, entry, entryt;
@@ -301,7 +303,8 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 		" lsize %d entry 0x%zx entryt 0x%zx sizeof(Inst) %d\n",
 		isize, dsize, hsize, lsize, entry, entryt, sizeof(Inst));
 	m->nprog = isize;
-	m->prog = xipprog(path, isize, length);
+	xm = xipfind(path, isize, length);
+	m->prog = xm != nil? xm->prog: nil;
 	if(m->prog != nil)
 		m->xip = 1;
 	else {
@@ -373,10 +376,23 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 
 	DNP("\tentry\t0,%d\n",hsize);
 	m->ntype = hsize;
-	m->type = malloc(hsize*sizeof(Type*));
-	if(m->type == nil) {
-		kwerrstr(exNomem);
-		goto bad;
+	/*
+	 * The type descriptors, like the instruction array, can come from
+	 * the image.  They are immutable once built -- a size, a pointer
+	 * count and a pointer map -- and the reference count that is the
+	 * only mutable field is Timmortal there, which typeinc()/typedec()
+	 * leave alone.  The stream still has to be walked, so the decode
+	 * below runs into a scratch Type and its result is checked away.
+	 */
+	if(m->xip && xm->ntype == hsize && xm->type != nil) {
+		m->type = xm->type;
+		m->xiptype = 1;
+	} else {
+		m->type = malloc(hsize*sizeof(Type*));
+		if(m->type == nil) {
+			kwerrstr(exNomem);
+			goto bad;
+		}
 	}
 	for(i = 0; i < hsize; i++) {
 		id = operand(isp);
@@ -403,6 +419,16 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 		if(tsz < 0 || tnp < 0 || tnp > 128*1024){
 			kwerrstr("implausible Dis file");
 			goto bad;
+		}
+		if(m->xiptype) {
+			pt = m->type[id];
+			if(pt->size != tsz || pt->np != tnp
+			|| memcmp(pt->map, istream, tnp) != 0) {
+				kwerrstr("built-in type descriptor mismatch");
+				goto bad;
+			}
+			istream += tnp;
+			continue;
 		}
 		pt = dtype(freeheap, tsz, istream, tnp);
 		if(pt == nil) {
@@ -593,7 +619,7 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			DNP(",%d", v);
 			h = nheap(sizeof(Array)+(pt->size*v));
 			h->t = &Tarray;
-			AINC(&h->t->ref);
+			typeinc(h->t);
 			ary = H2D(Array*, h);
 			ary->t = pt;
 			ary->len = v;
@@ -891,7 +917,7 @@ freemod(Module *m)
 	Except *e;
 	Import *i1, **i2;
 
-	if(m->type != nil) {
+	if(m->type != nil && !m->xiptype) {
 		for(i = 0; i < m->ntype; i++)
 			freetype(m->type[i]);
 		free(m->type);

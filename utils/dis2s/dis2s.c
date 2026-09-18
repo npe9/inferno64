@@ -2,6 +2,9 @@
 #include <bio.h>
 #include <isa.h>
 
+/* interp.h's Timmortal, which this cannot include: it needs a kernel dat.h */
+#define	TIMMORTAL	0x40000000
+
 /*
  * Turn a Dis module into the decoded instruction array the interpreter
  * would otherwise build in RAM at load time, as assembler that puts it
@@ -142,12 +145,13 @@ symof(char *path)
 }
 
 /*
- * Lay out one module, returning its instruction count.
+ * Lay out one module, returning its instruction count and, through
+ * ntypep, the number of type descriptors.
  */
 static int
-emit(Biobuf *bs, char *sym, char *file)
+emit(Biobuf *bs, char *sym, char *file, int *ntypep)
 {
-	int fd, i, op, add, reg, isize;
+	int fd, i, op, add, reg, isize, hsize, tid, tsz, tnp, j;
 	long s, d, br;
 	Dir *dir;
 
@@ -174,7 +178,7 @@ emit(Biobuf *bs, char *sym, char *file)
 	operand();		/* ss */
 	isize = operand();
 	operand();		/* dsize */
-	operand();		/* hsize */
+	hsize = operand();
 	operand();		/* lsize */
 	operand();		/* entry */
 	operand();		/* entryt */
@@ -240,14 +244,62 @@ emit(Biobuf *bs, char *sym, char *file)
 			Bprint(bs, "DATA\t%s+%d(SB)/4, $%#lux\n", sym, i*12+8, (ulong)d);
 	}
 
-	/*
-	 * What follows the instruction stream is the module data segment,
-	 * the type descriptors, the links and the handlers.  None of that
-	 * is laid out here: it is either per-instance or it holds pointers
-	 * into memory the kernel owns.  Only running off the end is wrong.
-	 */
 	if(pos > length)
 		sysfatal("%s: instruction stream runs off the end", file);
+
+	/*
+	 * The type descriptors come next, and they are laid out too: a
+	 * Type is a size, a pointer count and a pointer map, none of which
+	 * depends on the instance, plus a reference count and two function
+	 * pointers that parsemod always gives the same values.  The count
+	 * is Timmortal, which says the kernel does not own this one; free
+	 * is freeheap and mark is markheap, both of which the linker
+	 * resolves here, and destroy and initialize are nil, which is what
+	 * dtype() leaves them (kernel malloc zeroes).
+	 *
+	 * Laid out as
+	 *	ref, free, mark, size, np, destroy, initialize, map[]
+	 * which is struct Type in include/interp.h, padded to a multiple
+	 * of four so the next descriptor is aligned.
+	 */
+	*ntypep = hsize;
+	for(j = 0; j < hsize; j++) {
+		tid = operand();
+		if(tid < 0 || tid >= hsize)
+			sysfatal("%s: type id %d of %d", file, tid, hsize);
+		tsz = operand();
+		tnp = operand();
+		if(tsz < 0 || tnp < 0)
+			sysfatal("%s: implausible type descriptor", file);
+		if(pos+tnp > length)
+			sysfatal("%s: type map runs off the end", file);
+		Bprint(bs, "\nGLOBL\t%st%d(SB), RODATA, $%d\n", sym, tid,
+			(28+tnp+3) & ~3);
+		Bprint(bs, "DATA\t%st%d+0(SB)/4, $%#lux\n", sym, tid, (ulong)TIMMORTAL);
+		Bprint(bs, "DATA\t%st%d+4(SB)/4, $freeheap(SB)\n", sym, tid);
+		Bprint(bs, "DATA\t%st%d+8(SB)/4, $markheap(SB)\n", sym, tid);
+		Bprint(bs, "DATA\t%st%d+12(SB)/4, $%#lux\n", sym, tid, (ulong)tsz);
+		Bprint(bs, "DATA\t%st%d+16(SB)/4, $%#lux\n", sym, tid, (ulong)tnp);
+		Bprint(bs, "DATA\t%st%d+20(SB)/4, $0\n", sym, tid);
+		Bprint(bs, "DATA\t%st%d+24(SB)/4, $0\n", sym, tid);
+		for(i = 0; i < tnp; i++)
+			Bprint(bs, "DATA\t%st%d+%d(SB)/1, $%#ux\n", sym, tid,
+				28+i, code[pos+i]);
+		pos += tnp;
+	}
+	if(pos > length)
+		sysfatal("%s: type descriptors run off the end", file);
+
+	/* and the array of pointers to them, which is what Module.type is */
+	Bprint(bs, "\nGLOBL\t%stype(SB), RODATA, $%d\n", sym, hsize*4);
+	for(j = 0; j < hsize; j++)
+		Bprint(bs, "DATA\t%stype+%d(SB)/4, $%st%d(SB)\n", sym, j*4, sym, j);
+
+	/*
+	 * What follows is the module data segment, the links and the
+	 * handlers.  None of that is laid out here: it is either
+	 * per-instance or it holds pointers into memory the kernel owns.
+	 */
 	free(code);
 	code = nil;
 	return isize;
@@ -259,7 +311,7 @@ main(int argc, char *argv[])
 	Biobuf *bs, *bc;
 	char *stem, *cstem, *dir, *prefix, *sym, buf[512];
 	char **dispaths, **files, **syms;
-	int i, isize, *isizes;
+	int i, isize, *isizes, *ntypes;
 	long *lengths;
 
 	stem = nil;
@@ -289,9 +341,10 @@ main(int argc, char *argv[])
 	dispaths = malloc(argc*sizeof(char*));
 	files = malloc(argc*sizeof(char*));
 	isizes = malloc(argc*sizeof(int));
+	ntypes = malloc(argc*sizeof(int));
 	lengths = malloc(argc*sizeof(long));
 	if(syms == nil || dispaths == nil || files == nil
-	|| isizes == nil || lengths == nil)
+	|| isizes == nil || ntypes == nil || lengths == nil)
 		sysfatal("malloc: %r");
 
 	for(i = 0; i < argc; i++) {
@@ -318,7 +371,7 @@ main(int argc, char *argv[])
 	for(i = 0; i < argc; i++) {
 		sym = symof(dispaths[i]);
 		Bprint(bs, "\n/* %s, from %s */\n", dispaths[i], files[i]);
-		isize = emit(bs, sym, files[i]);
+		isize = emit(bs, sym, files[i], &ntypes[i]);
 		syms[i] = sym;
 		isizes[i] = isize;
 		lengths[i] = length;
@@ -336,13 +389,16 @@ main(int argc, char *argv[])
 	Bprint(bc, "#include \"dat.h\"\n");
 	Bprint(bc, "#include \"fns.h\"\n");
 	Bprint(bc, "#include \"interp.h\"\n\n");
-	for(i = 0; i < argc; i++)
+	for(i = 0; i < argc; i++) {
 		Bprint(bc, "extern Inst %s[];\n", syms[i]);
+		Bprint(bc, "extern Type* %stype[];\n", syms[i]);
+	}
 	Bprint(bc, "\nstatic Xipmod tab[] = {\n");
 	for(i = 0; i < argc; i++)
-		Bprint(bc, "\t{ \"%s\", %ld, %d, %s },\n",
-			dispaths[i], lengths[i], isizes[i], syms[i]);
-	Bprint(bc, "\t{ nil, 0, 0, nil },\n");
+		Bprint(bc, "\t{ \"%s\", %ld, %d, %s, %d, %stype },\n",
+			dispaths[i], lengths[i], isizes[i], syms[i],
+			ntypes[i], syms[i]);
+	Bprint(bc, "\t{ nil, 0, 0, nil, 0, nil },\n");
 	Bprint(bc, "};\n\n");
 	Bprint(bc, "Xipmod *xipmods = tab;\n");
 	if(Bterm(bc) < 0)
