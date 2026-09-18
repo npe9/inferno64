@@ -45,6 +45,7 @@ static int putcdrop;		/* writes that gave up and wrote anyway */
 typedef struct Ctlr Ctlr;
 struct Ctlr {
 	u32	*base;
+	int	armed;		/* its interrupt is wired up */
 };
 
 static Ctlr pl011ctlr = {
@@ -100,6 +101,9 @@ static void
 pl011_enable(Uart *uart, int ie)
 {
 	Ctlr *c;
+	int i, junk;
+
+	junk = 0;
 
 	c = uart->regs;
 	USED(ie);
@@ -124,6 +128,45 @@ pl011_enable(Uart *uart, int ie)
 	pl011_baud(uart, Consbaud);
 	csr32w(c, UartLCRH, UartLCRHWLEN8|UartLCRHFEN);
 	csr32w(c, UartCR, UartCRUARTEN|UartCRTXE|UartCRRXE);
+
+	/*
+	 * And its interrupt, when asked for one.
+	 *
+	 * This used to be USED(ie): the only interrupt this UART ever had
+	 * was the one uartconsolesetup() wires up, so a PL011 that is not
+	 * the console received nothing at all.  Nothing noticed while the
+	 * console was the only thing using it.  On a Pi 3 wired the
+	 * firmware's way the console is the mini UART and this one is the
+	 * Bluetooth radio's, and btfs got "no answer to command 0x0c03"
+	 * from a controller that had answered the kernel's own probe a
+	 * minute earlier -- the bytes arrived, the FIFO filled, and no
+	 * handler ever ran to take them.
+	 *
+	 * Once: the console arms it directly, and devuart may open the
+	 * same uart afterwards.
+	 */
+	/*
+	 * Anything the FIFO is holding belongs to whoever had this UART
+	 * before, and handing it to the next reader is handing them bytes
+	 * from the middle of somebody else's conversation.  The kernel's
+	 * own Bluetooth probe leaves the radio's line like that, and the
+	 * stack that opened it afterwards read the tail of that exchange
+	 * as the front of its own: "bad H4 packet indicator 0x0e", and
+	 * then no answer to a command that had in fact been answered.
+	 */
+	for(i = 0; i < 64; i++){
+		if(csr32r(c, UartFR) & UartFRRXFE)
+			break;
+		junk = csr32r(c, UartDR);
+	}
+	USED(junk);
+
+	if(ie && !c->armed){
+		intrenable(57, uartintr, uart, 0, "uart0");
+		c->armed = 1;
+	}
+	if(c->armed)
+		csr32w(c, UartIMSC, csr32r(c, UartIMSC) | UartIMSCRX | UartIMSCRT);
 }
 
 static void
@@ -586,8 +629,11 @@ uartconsolesetup(void)
 		return;
 	}
 	/* BCM2837 PL011 is VideoCore/GPU interrupt 57 (pending bank 2). */
-	intrenable(57, uartintr, consuart, 0, "uart0");
 	c = consuart->regs;
+	if(!c->armed){
+		intrenable(57, uartintr, consuart, 0, "uart0");
+		c->armed = 1;
+	}
 	/*
 	 * Add the receive interrupt; do not replace the mask.  The kernel
 	 * has already queued console output during chandevreset, and kick()

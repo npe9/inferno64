@@ -126,6 +126,7 @@ struct Ctlr {
 	ulong	rxpoll;
 	ulong	overruns;
 	int	fwdivisor;	/* divisor the firmware left, 0 if none */
+	int	armed;		/* its interrupt is wired up */
 };
 
 extern PhysUart miniphysuart;
@@ -264,7 +265,11 @@ minienable(Uart *uart, int ie)
 	ap[MuCntl] = TxEn|RxEn;
 
 	if(ie){
-		intrenable(IRQaux, miniintr, uart, BUSUNKNOWN, uart->name);
+		/* once: the console arms it, and devuart may open it too */
+		if(!c->armed){
+			intrenable(IRQaux, miniintr, uart, BUSUNKNOWN, uart->name);
+			c->armed = 1;
+		}
 		setier(c, RxIenx);
 	}
 }

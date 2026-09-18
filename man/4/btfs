@@ -882,13 +882,42 @@ the radio is powered and the bit says nothing useful.  Refusing to go
 on because of it was the only thing in the way.  The kernel now asks,
 prints what the firmware said, and lets the controller be the judge.
 .PP
-It does not load the controller's patch firmware
-.RB ( BCM4345C0.hcd ,
-a file on the card).  A cold BCM43438 answers HCI Reset and the vendor
-commands that download the patch and refuses much else until it has
-one, so a board that prints
-.B BT-OK
-has a controller talking and not yet a usable radio.
+It does not load the controller's patch firmware.  That is
+.IR bcmfw ,
+below, and until it has run the board has a controller talking and not
+yet a usable radio: cold, this one answers HCI Reset and the vendor
+commands that download a patch, reports its real ACL buffer sizes, and
+has no address at all.
+.SS Bcmfw
+.B "bt/bcmfw [-a addr] [-v] uartspec [hcdfile]"
+loads a Broadcom controller's patch firmware over HCI, and must run
+before
+.I btfs
+takes the line.
+.PP
+The patch file's format is the commands themselves: a stream of
+records, each a little endian HCI opcode, a length byte, and that many
+bytes of parameters.  Loading it is sending each record as a command
+and waiting for its Command Complete, with two vendor commands around
+the outside \- Download Minidriver first, which puts the controller in
+the state that accepts RAM writes, and Launch RAM last, which starts
+what was written.  Nothing in it is Raspberry Pi specific but the
+default file name,
+.BR /n/dos/BCM4345C0.hcd .
+.PP
+.B -a
+gives the controller an address afterwards, twelve hex digits.
+Without it the controller keeps whatever the patch left, which for
+this part is a Broadcom default that every such board would share.
+.PP
+Two things about it are worth knowing because both were learned the
+hard way.  Launch RAM restarts the controller, and a restarting
+controller puts zero bytes on the wire before it says anything, so a
+framing error there is not a lost stream: the read walks forward a byte
+at a time until the stream makes sense again.  And every command has a
+deadline.  A controller that says nothing used to block this program
+in a read for as long as the board was up, holding the board's only
+shell with it \- the console still echoed and nothing consumed a line.
 .SH SOURCE
 .B /appl/cmd/bt
 .br

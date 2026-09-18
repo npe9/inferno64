@@ -160,6 +160,7 @@ root
 	/dis/ip/ping.dis
 	/dis/lib/dhcpclient.dis
 	/dis/bt/btfs.dis
+	/dis/bt/bcmfw.dis
 	/dis/lib/bt/bt.dis
 	/dis/lib/bt/hci.dis
 	/dis/lib/bt/h4.dis
