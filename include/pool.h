@@ -73,6 +73,7 @@ extern	void	poolinit(void);
 extern	void*	poolalloc(Pool*, uintptr);
 extern	void	poolfree(Pool*, void*);
 extern	Bhdr*	poolchain(Pool*);
+extern	void	poolhist(void);
 extern	int	poolcompact(Pool*);
 extern	void	poolimmutable(void*);
 extern	uintptr	poolmsize(Pool*, void*);

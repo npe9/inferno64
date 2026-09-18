@@ -474,6 +474,7 @@ enum{
 	Qkmesg,
 	Qkprint,	/* tail of kprint's and cons. Why not just a tail of klog? Why is this needed? */
 	Qmemory,
+	Qpoolhist,
 	Qnull,
 	Qosversion,
 	Qpid,
@@ -513,6 +514,7 @@ static Dirtab consdir[]=
 	"kmesg",	{Qkmesg},	0,		0440,
 	"kprint",		{Qkprint},	0,		0444,
 	"memory",	{Qmemory},	0,		0444,			/* not in 9front */
+	"poolhist",	{Qpoolhist},	0,		0444,			/* not in 9front */
 	"null",		{Qnull},	0,		0666,
 	"osversion",	{Qosversion},	0,		0444,
 	"pid",		{Qpid},		NUMSIZE,	0444,
@@ -958,6 +960,17 @@ consread(Chan *c, void *buf, s32 n, s64 offset)
 
 	case Qmemory:
 		return poolread(buf, n, offset);
+
+	/*
+	 * Where the pools' live bytes are, by block size and by the pc that
+	 * asked.  The report goes to the console rather than into buf: it
+	 * is long, and a board small enough to care about the answer is too
+	 * small to want a buffer this size reserved for asking.
+	 */
+	case Qpoolhist:
+		if(offset == 0)
+			poolhist();
+		return 0;
 
 	case Qmordor:
 		error("one does not simply read from mordor");

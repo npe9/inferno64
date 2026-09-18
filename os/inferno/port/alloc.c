@@ -790,6 +790,109 @@ poolfmt11(char *d, int nd, uintptr v)
 	return n;
 }
 
+/*
+ * Where a pool's live bytes actually are, by block size and by the pc
+ * that asked for them.  doc/pycubed-plan.ms wants this: the kernel pool
+ * floor is the largest single term in that budget and nobody had looked
+ * inside it.
+ *
+ * Walks the chunks rather than sampling: each chunk in p->chain is a
+ * MAGIC_E leader followed by blocks, ending at the next MAGIC_E, and
+ * every block carries the allocpc that D2BPC recorded.  Prints rather
+ * than filling a buffer, so it costs no memory on a board that has
+ * little -- which is the whole point of measuring it.
+ */
+enum {
+	Nbucket	= 13,
+	Npc	= 20,
+};
+
+static void
+histone(Pool *p)
+{
+	Bhdr *c, *b;
+	uintptr nalloc[Nbucket], balloc[Nbucket];
+	uintptr pcb[Npc];
+	intptr pcv[Npc];
+	uintptr live, freeb, hdrs, sz;
+	int i, j, k, n, nlive, nfree;
+
+	for(i = 0; i < Nbucket; i++)
+		nalloc[i] = balloc[i] = 0;
+	for(i = 0; i < Npc; i++){
+		pcv[i] = 0;
+		pcb[i] = 0;
+	}
+	live = freeb = hdrs = 0;
+	nlive = nfree = 0;
+
+	for(c = poolchain(p); c != nil; c = c->clink)
+		for(b = B2NB(c); b != nil && b->magic != MAGIC_E; b = B2NB(b)){
+			sz = b->size;
+			if(sz == 0)
+				break;			/* corrupt: do not spin */
+			if(b->magic == MAGIC_F){
+				freeb += sz;
+				nfree++;
+				continue;
+			}
+			if(b->magic != MAGIC_A && b->magic != MAGIC_I)
+				break;			/* not ours: stop this chunk */
+			live += sz;
+			hdrs += BHDRSIZE;
+			nlive++;
+			for(i = 0, n = 32; i < Nbucket-1; i++, n <<= 1)
+				if(sz <= n)
+					break;
+			nalloc[i]++;
+			balloc[i] += sz;
+
+			for(j = 0; j < Npc; j++)
+				if(pcv[j] == b->allocpc || pcb[j] == 0)
+					break;
+			if(j < Npc){
+				pcv[j] = b->allocpc;
+				pcb[j] += sz;
+			}
+		}
+
+	print("pool %s: ", p->name);
+	print("live %zud in %d blocks, ", live, nlive);
+	print("free %zud in %d, ", freeb, nfree);
+	print("block headers %zud\n", hdrs);
+	for(i = 0, n = 32; i < Nbucket; i++, n <<= 1){
+		if(nalloc[i] == 0)
+			continue;
+		if(i == Nbucket-1)
+			print("  >%d", n>>1);
+		else
+			print("  <=%d", n);
+		print("\t%zud blocks", nalloc[i]);
+		print("\t%zud bytes\n", balloc[i]);
+	}
+	/* the callers holding the most, biggest first */
+	for(k = 0; k < 8; k++){
+		j = -1;
+		for(i = 0; i < Npc; i++)
+			if(pcb[i] != 0 && (j < 0 || pcb[i] > pcb[j]))
+				j = i;
+		if(j < 0)
+			break;
+		print("  pc %#p", (void*)pcv[j]);
+		print("\t%zud bytes\n", pcb[j]);
+		pcb[j] = 0;
+	}
+}
+
+void
+poolhist(void)
+{
+	int i;
+
+	for(i = 0; i < table.n; i++)
+		histone(&table.pool[i]);
+}
+
 int
 poolread(char *va, int count, uintptr offset)
 {
