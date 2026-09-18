@@ -1,0 +1,95 @@
+#!/bin/sh
+#
+# ksym - name the kernel function an address is in.
+#
+# A native kernel panics with numbers: "panic: gotolabel: bad sp
+# 0x33946780 pc 0x160bf4 from 0x155988", and every stack dump the
+# console prints -- procdump's, ^\'s, dumpstack's -- is a column of
+# them.  The kernel itself is stripped, so the way back to names is a
+# 7l -a listing of the same build, which this makes and reads.
+#
+# usage:  tools/ksym [-d boarddir] addr...
+#
+# The board directory defaults to os/inferno/raspi3b; -d takes another
+# (os/inferno/raspi4, os/inferno/virtarm64).  Addresses may be bare hex
+# or 0x-prefixed, and everything that is not one is ignored, so a whole
+# dumpstack can be pasted in:
+#
+#	tools/ksym `pbpaste`
+#
+# The listing is remade only when the kernel is newer than it, because
+# it takes a few seconds and a stack dump usually wants twenty lookups.
+#
+# It is the same build or it is nothing.  The addresses in a panic are
+# from whatever kernel the board was running: decode them against a
+# tree that has moved on and the names are near misses, which is worse
+# than numbers.  That is why this rebuilds from the objects in the
+# board directory rather than keeping a listing around.
+#
+set -e
+root=`cd \`dirname $0\`/.. && pwd`
+dir=$root/os/inferno/raspi3b
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-d)	dir=$2; shift 2;;
+	*)	break;;
+	esac
+done
+[ $# -gt 0 ] || { echo "usage: ksym [-d boarddir] addr..." >&2; exit 2; }
+conf=`basename $dir`
+kern=$dir/i$conf
+listing=$dir/i$conf.listing
+
+[ -f "$kern" ] || { echo "ksym: no $kern; mk the kernel first" >&2; exit 2; }
+PATH=$root/MacOSX/`uname -m`/bin:$PATH
+export PATH
+
+if [ ! -f "$listing" ] || [ "$kern" -nt "$listing" ]; then
+	# the link line for this kernel, from mk itself, with -a added and
+	# the output thrown away: 7l -a writes the listing to stdout and
+	# the binary to -o, and the binary here would be a second copy of
+	# one that already exists
+	line=`cd $dir && mk -n -a "CONF=$conf" i$conf 2>/dev/null |
+		grep '^7l ' | head -1`
+	[ -n "$line" ] || { echo "ksym: cannot find the link line for $conf" >&2; exit 2; }
+	( cd $dir && eval "`echo \"$line\" | sed \"s|^7l |7l -a |; s| -o i$conf | -o /dev/null |\"`" ) \
+		> "$listing" 2>/dev/null
+fi
+
+python3 - "$listing" "$@" <<'PY'
+import re, sys
+
+listing = sys.argv[1]
+syms = []
+for line in open(listing, errors='replace'):
+	m = re.match(r'\s*([0-9a-f]{8}):\s+\(\d+\)\s+TEXT\s+([A-Za-z0-9_.<>$]+)', line)
+	if m:
+		syms.append((int(m.group(1), 16), m.group(2)))
+syms.sort()
+if not syms:
+	print('ksym: no symbols in %s' % listing, file=sys.stderr)
+	raise SystemExit(2)
+
+def name(a):
+	lo, hi = 0, len(syms)
+	while lo < hi:
+		mid = (lo + hi) // 2
+		if syms[mid][0] <= a:
+			lo = mid + 1
+		else:
+			hi = mid
+	if lo == 0:
+		return None
+	return syms[lo-1]
+
+for arg in sys.argv[2:]:
+	t = arg.strip().strip(',').lstrip('0x').lstrip('0X')
+	if not t or not re.fullmatch(r'[0-9a-fA-F]+', t):
+		continue
+	a = int(t, 16)
+	b = name(a)
+	if b is None or a - b[0] > 0x10000:
+		print('%08x  ?' % a)
+	else:
+		print('%08x  %s+%#x' % (a, b[1], a - b[0]))
+PY
