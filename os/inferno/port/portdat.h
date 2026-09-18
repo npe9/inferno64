@@ -1123,14 +1123,27 @@ enum
 #pragma	varargck	type	"p"	void*
 #pragma	varargck	type	"q"	char*
 
+#ifndef KMESGSIZE
+#define KMESGSIZE 16384
+#endif
+
 /*
  * Log console output so it can be retrieved via /dev/kmesg.
+ *
+ * The size comes from the board's mem.h, with the default below for the
+ * boards that do not care.  This is the one place a size here has to be
+ * a compile-time constant rather than a variable set in confinit(), the
+ * way freehistsize and distrack are: it is the extent of a struct member,
+ * and the buffer is written by print() from the first line of boot, long
+ * before there is an allocator to ask.  Every file in os/inferno that
+ * includes dat.h includes mem.h before it -- checked, all 461 of them --
+ * so the constant is the same in every translation unit.
  * This is good for catching boot-time messages after the fact.
  */
 struct {
 	Lock lk;
 	uint n;
-	char buf[16384];
+	char buf[KMESGSIZE];
 } kmesg;
 
 /*

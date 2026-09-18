@@ -29,6 +29,12 @@
 #define	MIN(a, b)	((a) < (b)? (a): (b))
 #define	MAX(a, b)	((a) > (b)? (a): (b))
 
+/*
+ * The console log.  16K is the default in os/inferno/port/portdat.h and
+ * is a lot of a part with a couple of hundred kilobytes of SRAM; 2K
+ * still holds the last of the boot.
+ */
+#define	KMESGSIZE	2048
 #define	MAXMACH		1
 #define	HZ		100
 #define	KSTACK		(16*1024)
