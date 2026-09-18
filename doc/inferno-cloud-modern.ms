@@ -2449,3 +2449,48 @@ This is not a Compute Engine quirk.  Any machine whose firmware leaves
 a device enabled \(em which is every machine that boots from one \(em
 has been getting undefined behaviour out of this code, and getting away
 with it because the devices in question tolerated it.
+.NH 2
+A faster curve that was slower: Jacobian coordinates
+.PP
+.CW p256 (2)
+works in affine coordinates and takes a modular inverse per point
+operation, which its own comment calls the obvious-correctness choice
+over the fast one.  A scalar multiplication is a few hundred of those
+inversions, and certificate verification is what a handshake spends its
+time on, so the textbook improvement \(em Jacobian coordinates, which
+carry the denominator along and invert once at the end \(em looked like
+the next thing to do.
+.PP
+It was written, it was correct against every OpenSSL vector and every
+control in
+.CW p256test (1),
+and it was
+.B slower :
+169 ms a verification against 97, and 84 ms an ECDH against 49.  It was
+reverted.
+.PP
+The reason is where the work actually is.  A field operation here is
+not an instruction, it is a call out of interpreted Dis into
+.CW libmp :
+.CW fmul ()
+is
+.CW mul ()
+then
+.CW mod () ,
+two crossings, and there is no modular multiply in
+.CW keyring (2)
+to make it one.  An inversion, by contrast, is a single crossing into a
+C routine that does the whole extended Euclid.  Counting crossings
+rather than multiplications, affine doubling costs about ten field
+operations and one inversion; the Jacobian formulas cost twice that and
+save the inversion, which was never the expensive part.
+.PP
+The asymptotics are right and the arithmetic is right and it is still
+the wrong change, which is worth leaving written down: the cost model
+that makes Jacobian coordinates faster assumes field multiplications
+are cheap relative to inversion, and in interpreted Dis over
+.CW IPint
+they are not.  What would change the answer is a
+.CW mulmod
+builtin, which would halve the crossings for both shapes and is the
+thing to try before any curve algebra.
