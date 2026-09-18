@@ -1714,6 +1714,11 @@ checkscene()
 	# would otherwise pass straight through.  Raise the number when a
 	# widget is added to the pane and say why; do not raise it to make
 	# a change to the walk go quiet.
+	#
+	# It is 6 rather than 8 because the grid carries a clip NODE now
+	# instead of flushing on each side of itself.  If that ever goes
+	# back to a flush this fires, and it will read as fragmentation -
+	# which it is, but the cause would be the clip.
 	Trees: con 6;
 	report(nr <= Trees, sys->sprint(
 		"and the walk has not fragmented (%d trees, at most %d)", nr, Trees));

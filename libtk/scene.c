@@ -674,9 +674,20 @@ tkscenelayerend(TkScene *s)
  * the clip has to reach the raster.
  *
  * In WINDOW coordinates, which is what replclipr() wants and what the
- * widget already computed.  Inside a layer the target is a scratch and
- * the coordinates would be wrong, so a clip and a layer do not mix;
- * nothing asks for both, and the renderer says so rather than trying.
+ * widget already computed.  A clip OPENED inside a layer would be in
+ * the wrong coordinates - the target is a scratch - so the renderer
+ * refuses that, as it refuses a nested clip.
+ *
+ * A layer inside a clip is the ordinary case and needs nothing: the
+ * nodes go into the scratch unclipped, and the composite is drawn into
+ * the window, which is where the narrowed clipping rectangle is.  So
+ * the clip reaches a layered child through the blit rather than
+ * through the drawing, which is exactly how the direct path works -
+ * every widget that asks tkitmp() for a scratch is clipped the same
+ * way.  Measured rather than assumed: the pane's grid holds a scale,
+ * which takes a layer and is three times wider than the frame it is
+ * gridded into, and a clip node that does not narrow lets it out to
+ * (622,1834) from a frame that ends at 474.
  */
 void
 tksceneclip(TkScene *s, Rectangle r)
