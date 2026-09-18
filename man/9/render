@@ -176,14 +176,25 @@ hands out one cached scratch per context, reused and blitted out between
 widgets, so two live layers would be the same image.
 One saved target is therefore sufficient.
 .PP
-It is proved on a
+It was proved on a
 .IR frame (9),
 which does not need one \(em it draws straight into its parent's image.
-That is the point: the result must be identical to rendering the same
+That was the point: the result had to be identical to rendering the same
 nodes in place, so an error in the scratch's extent or the blit's offset
-shows as a difference rather than as a widget that looks fine.  Every
+showed as a difference rather than as a widget that looked fine.  Every
 widget that genuinely needs a layer draws with something other than
 nodes, so none of them could have told us whether it worked.
+.PP
+A frame does not have one now, and the reason is a measurement.
+A layer is a scratch the size of the widget, allocated, filled and
+blitted every repaint, and a frame is usually the size of the window:
+.IR tkbench (1)
+put an empty toplevel \(em two frames \(em at 1.41ms on the node path
+against 59us direct, and taking the layer off the frame put it back to
+114us.
+With that gone, each widget's node path costs what its direct path
+costs, to within the noise of the measurement.
+The six widgets that genuinely need a layer keep the node exercised.
 .PP
 The one shape in the flat style that is not a rectangle is a
 .IR radiobutton (9)'s

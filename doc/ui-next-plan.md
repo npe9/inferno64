@@ -1199,6 +1199,29 @@ and separately, free the `Font` after building the tree and before
 rendering it — which must still draw correctly, since that is the whole
 property being bought.
 
+**B′. What the node path costs, measured — and one layer that cost
+   everything.** `tkbench(1)` grew a `-n` flag that selects the node
+   path before the timed repaints, and the first run was alarming: an
+   empty toplevel — two frames — repainted in **1.41ms** against
+   **59µs** on the direct path, twenty-four times the fixed cost, with
+   every widget 1.4× dearer.
+
+   It was one decision, and the code had said so all along. A `frame`
+   was given a `TkNlayer` *because it does not need one*: it draws
+   straight into its parent's image, so it was the one widget that could
+   prove a layer was rendered identically to drawing in place. A layer
+   is a scratch the size of the widget, allocated, filled and blitted
+   every repaint, and a frame is usually the size of the window. With
+   the layer taken off the frame the empty toplevel is **114µs**, and
+   each widget's node cost lands within the noise of its direct cost —
+   label 8.90µs against 8.73, button 13.18 against 13.35, listbox 33.19
+   against 34.56, entry 16.15 against 19.79. The proof stands; six
+   widgets that genuinely need a layer keep the node exercised.
+
+   The lesson is the one this plan keeps relearning: the thing that
+   makes a renderer slow is not the vocabulary, it is one allocation in
+   the wrong place, and nothing but a measurement finds it.
+
 **C. A retained tree, and damage.** Only after B, because a tree that
 holds a `Font*` cannot be kept. Today `tkdrawslaves1()` decides what to
 repaint from `tk->dirty` rectangles and every surviving widget rebuilds

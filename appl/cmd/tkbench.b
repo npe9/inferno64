@@ -54,6 +54,7 @@ win: ref Image;
 verbose := 0;
 onscreen := 0;
 idle := 0;
+nodes := 0;
 vsync := 0;
 
 init(nil: ref Draw->Context, argv: list of string)
@@ -64,12 +65,13 @@ init(nil: ref Draw->Context, argv: list of string)
 	arg := load Arg Arg->PATH;
 	if(arg != nil){
 		arg->init(argv);
-		arg->setusage("tkbench [-isvy]");
+		arg->setusage("tkbench [-insvy]");
 		while((c := arg->opt()) != 0)
 			case c {
 			'v' =>	verbose = 1;
 			's' =>	onscreen = 1;
 			'i' =>	idle = 1;
+			'n' =>	nodes = 1;
 			'y' =>	vsync = 1;
 			* =>	arg->usage();
 			}
@@ -244,6 +246,12 @@ repaint(style, spec: string, n: int): int
 		return 0;
 	top.screenr = off.r;
 	tk->cmd(top, "style " + style);
+	# -n measures the RENDER-NODE path, which only the flat style takes:
+	# every widget that can describe itself as nodes is guarded on the
+	# style as well as the mode, so `tkbench -n classic' would measure
+	# the direct path under another name.
+	if(nodes)
+		tk->cmd(top, "render scene");
 
 	# two columns, so eight of anything still fits and is drawn
 	tk->cmd(top, "frame .a");

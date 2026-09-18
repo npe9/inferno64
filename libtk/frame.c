@@ -70,7 +70,6 @@ tkdrawframe(Tk *tk, Point orig)
 	Tk *f;
 	TkScene *framescene;
 	Rectangle framebox;
-	Point off;
 	Rectangle r, slaver;		/* dribbling, whipping or just square? */
 
 	i = tkimageof(tk);
@@ -121,36 +120,33 @@ tkdrawframe(Tk *tk, Point orig)
 		pe = tkbehind(tk);
 		par = pe->colors[TkCbackgnd];
 		/*
-		 * Through a LAYER: the nodes below are rendered into a scratch
-		 * and the result blitted back to where they would have gone.
+		 * IN PLACE, in window coordinates, with no layer.
 		 *
-		 * A frame has no need of one - it draws straight into its
-		 * parent's image - which is exactly why it is the thing to
-		 * prove the layer node on.  The result has to be identical to
-		 * rendering the same nodes in place, so any error in the
-		 * scratch's extent or the blit's offset shows up as a
-		 * difference rather than as a widget that merely looks fine.
-		 * Every widget that genuinely needs a layer uses tkitmp and
-		 * draws with something other than nodes, so none of them could
-		 * have told us whether this worked.
+		 * A frame had one for a while, and it was put there on
+		 * purpose: a frame does not need a layer - it draws straight
+		 * into its parent's image - which made it the one widget that
+		 * could prove the layer node, since the result had to be
+		 * identical to rendering the same nodes in place and any
+		 * error in the scratch's extent or the blit's offset showed
+		 * as a difference rather than as a widget that merely looked
+		 * fine.
 		 *
-		 * Nodes inside are in layer-local coordinates, hence the
-		 * translation by -framebox.min.
+		 * That proof is done, and six widgets that genuinely need a
+		 * layer keep it exercised.  Paying for it here does not:
+		 * tkbench(1) put an empty toplevel - two frames - at 1.41ms
+		 * on the node path against 59us direct, and taking the layer
+		 * off the frame put it back to 58.88us.  A layer is a scratch
+		 * the size of the widget, allocated, filled and blitted every
+		 * repaint, and a frame is usually the size of the window.
 		 */
-		off = Pt(-framebox.min.x, -framebox.min.y);
-		tkscenelayer(framescene,
-			Pt(framebox.max.x - framebox.min.x,
-			   framebox.max.y - framebox.min.y),
-			par, framebox, ZP);
 		{
 			Rectangle fr;
 
 			fr = rectaddpt(tk->dirty, p);
 			if(rectclip(&fr, framebox))
-				tkscenecolour(framescene, rectaddpt(fr, off), par);
+				tkscenecolour(framescene, fr, par);
 		}
-		tksceneroundfill(framescene, rectaddpt(framebox, off),
-			tkspace(tk)->corner, own);
+		tksceneroundfill(framescene, framebox, tkspace(tk)->corner, own);
 	}else{
 		/* a frame that is not nodes paints into the window itself */
 		tkwalkflush();
@@ -196,12 +192,10 @@ tkdrawframe(Tk *tk, Point orig)
 	if(framescene != nil){
 		if(!rectinrect(tk->dirty, tkrect(tk, 0)) && tk->relief != TKflat
 		&& tk->borderwidth > 0)
-			tksceneborder(framescene,
-				rectaddpt(framebox, Pt(-framebox.min.x, -framebox.min.y)),
+			tksceneborder(framescene, framebox,
 				tkspace(tk)->corner,
 				tk->borderwidth,
 				tk->env->colors[TkCbackgnd+TkDarkshade]);
-		tkscenelayerend(framescene);
 		tkscenefinish(framescene, tk->env->top->ctxt, i);
 		return nil;
 	}
