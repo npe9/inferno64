@@ -1584,7 +1584,7 @@ checkscene()
 	# repeating image from the fill colour and the stipple's own mask,
 	# and both halves of that have names - the colour is a value and
 	# the mask came from a file the path registry knows.
-	must(top, "canvas .cv -width 260 -height 120 -buffer none");
+	must(top, "canvas .cv -width 340 -height 120 -buffer none");
 	must(top, ".cv create rectangle 4 4 60 40 -fill #C0D8F0 -outline black");
 	must(top, ".cv create rectangle 66 4 120 40 -fill #F0C0C0 -stipple dis.bit");
 	must(top, ".cv create oval 126 4 180 40 -fill #C0F0C0 -outline black");
@@ -1594,6 +1594,10 @@ checkscene()
 	must(top, ".cv create polygon 8 92 60 92 34 116 -fill #A0A0F0");
 	must(top, ".cv create text 70 100 -text {canvas text} -anchor w");
 	must(top, ".cv create bitmap 200 100 -bitmap caution.bit");
+	# A SMOOTH polygon, which is the only thing that reaches the spline
+	# node on this path: an ordinary polygon's outline is a stroked
+	# polyline and no node says that.
+	must(top, ".cv create polygon 266 92 330 92 298 116 -smooth true -fill #F0A0C0 -outline black -width 2");
 	tk->cmd(top, "pack .cv -padx 6 -pady 6");
 
 	# A TEXT widget, which narrows the window's clip around its own

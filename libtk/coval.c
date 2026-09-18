@@ -164,7 +164,6 @@ tkcvsovalfree(TkCitem *i)
 void
 tkcvsovaldraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
-	Image *img = tkcvsdirect(cd);
 	Point c;
 	TkEnv *e;
 	Image *pen;
@@ -180,10 +179,6 @@ tkcvsovaldraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 	e = i->env;
 	o = TKobj(TkCoval, i);
 
-	pen = o->pen;
-	if(pen == nil && (e->set & (1<<TkCfill)))
-		pen = tkgc(e, TkCfill);
-
 	w = TKF2I(o->width)/2;
 	if(w < 0)
 		return;
@@ -193,9 +188,30 @@ tkcvsovaldraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 	dy = Dy(d)/2;
 	c.x = d.min.x + dx;
 	c.y = d.min.y + dy;
-	if(pen != nil)
-		fillellipse(img, c, dx, dy, pen, c);
-	ellipse(img, c, dx, dy, w, tkgc(e, TkCforegnd), c);
+
+	/*
+	 * A STIPPLED fill is a repeating image with the centre as its
+	 * source point, and the ellipse nodes pass ZP - which is the same
+	 * thing only for the replicated single pixel a colour is.  So a
+	 * stipple draws and says so; the outline after it is still nodes.
+	 */
+	if(o->pen != nil)
+		fillellipse(tkcvsdirect(cd), c, dx, dy, o->pen, c);
+	else if(e->set & (1<<TkCfill)) {
+		if(cd->sc != nil)
+			tksceneellipsefill(cd->sc, c, Pt(dx, dy),
+				e->colors[TkCfill]);
+		else {
+			pen = tkgc(e, TkCfill);
+			if(pen != nil)
+				fillellipse(cd->img, c, dx, dy, pen, c);
+		}
+	}
+	if(cd->sc != nil)
+		tksceneellipse(cd->sc, c, Pt(dx, dy), w,
+			e->colors[TkCforegnd]);
+	else
+		ellipse(cd->img, c, dx, dy, w, tkgc(e, TkCforegnd), c);
 }
 
 char*
