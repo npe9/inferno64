@@ -1255,8 +1255,63 @@ The cheap cuts.  Measured, no risk, and they are the difference between
 890K and roughly 580K on
 .CW teensy41 .
 .IP 2.
-A, the read-only move.  One mechanism, two payoffs, no interpreter, and
-it is already item 1 of the work list for its own reasons.
+A, the read-only move.
+.B "Half done" :
+the built-in root now goes in the text segment and stays in flash, which
+takes
+.CW teensy41 's
+data plus bss from 417216 bytes to 277552 \- a saving of
+.B 139664 ,
+the bundled root to within the padding \- while its text grows from
+392176 to 540472, into flash it has eight megabytes of.
+.CW utils/data2s/data2s.c
+grew
+.CW -t ,
+which emits
+.CW WORD
+lines under a
+.CW TEXT
+symbol instead of
+.CW DATA
+lines under a
+.CW GLOBL ,
+the same thing
+.CW os/inferno/armv7m/l.s
+already did for its vector table;
+.CW mkroot
+passes it when a board sets
+.CW ROOTINTEXT ;
+and
+.CW devroot.c
+masks the low bit of the pointer, because a reference to a text symbol
+on an ARM target carries the Thumb bit and the bytes start at the even
+address.  That last one announced itself as a panic of "bad magic"
+loading
+.CW /osinit.dis
+on the first boot after the change.
+.IP
+.CW mps2
+boots with the root in text and
+.I fptest (1)
+is still 25 of 25 there, which is what proves the mechanism though it
+gains no RAM, having no flash.
+.CW nucleof303
+comes out 288 bytes worse, bundling only 512 bytes of root against the
+per-symbol padding \- an honest non-result for a board with no userland.
+It is opt-in because
+.CW virt
+(riscv64) stops booting with the root in text: no output at all, not
+even its banner, where the same kernel with the root in data reaches an
+interactive shell.  That board has an MMU and its text grows by some
+450K, so
+.CW mmuinit 's
+mapping is the first suspect, but it is a guess and it is not
+root-caused.  Boards that do not opt in are untouched and still boot.
+.IP
+The other half is the 24856 bytes of C string literals.  Same reasoning,
+different source: they come from the compiler, not from
+.CW mkroot ,
+so this change does not reach them.
 .IP 3.
 B, for modules built into the image.  Small change, full RAM win, and it
 is where the execute-in-place property finally reaches the code rather
