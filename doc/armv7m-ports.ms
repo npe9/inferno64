@@ -266,6 +266,84 @@ of
 bytes, and its own comment about what lies past it, is the first thing
 to look at.
 .PP
+A third pass produced the measurement that states the bug in one line.
+Instrumenting
+.CW cvtwf
+in
+.CW libinterp/xec.c
+to capture what its own store left at
+.CW R.d ,
+printing nothing before the capture so the measurement cannot disturb
+what it measures:
+.DS
+.CW "mps2-an500  CVTWF-SAW d=002bdc98 40080000:00000000"
+.CW "mps2-an386  CVTWF-SAW d=002bdc98 ffffffff:002f2ea8"
+.DE
+Same destination on both cores, right on the Cortex-M7 and garbage on
+the Cortex-M4.  So
+.CW "OP(cvtwf){ F(d) = W(s); }"
+\- which is
+.CW "VMOV S30,R2" ,
+.CW "VCVT.F64.S32 D1,S30" ,
+.CW "VSTR.64 D1,[R1]"
+\- leaves garbage at
+.CW R.d
+when the middle instruction is emulated.
+.PP
+Three things stand against that and are not yet reconciled.  D1 provably
+holds
+.CW 40080000:00000000
+in the real register file at the end of the handler, read back with
+hardcoded
+.CW VMOV s
+naming S2 and S3 rather than through the same save and restore pair that
+wrote it.  The exception frame is basic for every faulting instruction
+including this one, checked per instruction rather than once.  And
+.CW OP(addf) ,
+which has the same shape \- emulated arithmetic into a D register, then
+.CW VSTR.64
+\- works.
+.PP
+.CW cvtchk
+carries the bisection: LIT-VAR, LIT-DIRECT, LIT-ZERO and LIT-ONE all
+pass on the M4, so literals are sound; IMM-CMP and IMM-TRUNC use the
+result at once without a named variable and fail, so the frame slot is
+not involved.
+.NH 3
+How not to measure this
+.PP
+Worth writing down, because three measurements in this hunt were
+artifacts of their own instrumentation and each cost an afternoon.
+.IP \(bu
+A check that read the stored value on the
+.I following
+fault is useless: Dis reuses the slot first, and what it holds by then
+is a free block, which reads as
+.CW "{its own address, ffffffff}"
+\-
+.CW H
+is
+.CW (void*)-1
+\- and looks deceptively like a mangled double.
+.IP \(bu
+A print inside
+.CW cvtwf
+that read
+.CW R.d
+after the store printed an address that was not the one written:
+.CW R
+is a global the interpreter swaps, and a print can reschedule.
+.IP \(bu
+Keying an emulator probe on the instruction encoding caught 42 sites
+rather than the one intended \-
+.CW "eeb8 1bcf"
+is any
+.CW "MOVWD R?,F1" .
+Key on the pc from a
+.CW "tl -a"
+listing of the same build, and remember that adding a line to the kernel
+moves every address after it.
+.PP
 Two observations for whoever takes it.
 .CW r
 is not a NaN \-
