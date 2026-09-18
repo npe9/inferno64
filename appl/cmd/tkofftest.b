@@ -1699,6 +1699,17 @@ checkscene()
 	report(nr > 0 && nw > nr, sys->sprint(
 		"a repaint batches widgets into fewer trees (%d widgets and %d nodes in %d trees, %d nodes a tree)",
 		nw, nn, nr, nn/nr));
+	# And the tree count is PINNED, because `more widgets than trees'
+	# cannot see a run getting shorter.  A run ends where the target
+	# image changes or a direct painter flushes the walk, so anything
+	# that adds a flush point splits a run in two and the count goes
+	# up while every pixel stays identical - a regression this check
+	# would otherwise pass straight through.  Raise the number when a
+	# widget is added to the pane and say why; do not raise it to make
+	# a change to the walk go quiet.
+	Trees: con 8;
+	report(nr <= Trees, sys->sprint(
+		"and the walk has not fragmented (%d trees, at most %d)", nr, Trees));
 
 	# Take the menu's window down again.  It sits over this Screen above
 	# the pane's own window, so anything a LATER check draws under it
