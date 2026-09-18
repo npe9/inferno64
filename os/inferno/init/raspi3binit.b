@@ -1060,6 +1060,20 @@ drawtest()
 	sys->print("DRAW-OK %dx%d\n", r.max.x-r.min.x, r.max.y-r.min.y);
 }
 
+# has usbd enumerated anything besides the root hub?  Its ctl file has a
+# line per endpoint, and ep1.0 is the root hub itself.
+usbdevices(): int
+{
+	(n, f) := sys->tokenize(readctl("/dev/usb/ctl"), "\n");
+	n = n;
+	for(; f != nil; f = tl f){
+		l := hd f;
+		if(len l > 3 && l[0:2] == "ep" && l[0:5] != "ep1.0")
+			return 1;
+	}
+	return 0;
+}
+
 readctl(path: string): string
 {
 	fd := sys->open(path, Sys->OREAD);
@@ -1141,9 +1155,29 @@ etherone(ifname, tag: string, tries: int, ip, mask, gw: string)
 {
 	dir := "/net.alt/" + ifname;
 	addr := dir + "/addr";
+	#
+	# Wait long, but only for an adapter that exists.
+	#
+	# Ten seconds was too short: the board printed ETHER-NONE and
+	# etherusb started serving immediately afterwards, and with no
+	# /net bound that whole boot had no network.  A flat minute is too
+	# long the other way -- on a machine with no USB ethernet at all,
+	# which is every QEMU raspi3b boot, it is a minute of silence, and
+	# the marker suite stops six seconds after the last thing printed.
+	#
+	# So ask usbd what is attached.  Its ctl file names every endpoint
+	# it has enumerated, and a machine with nothing but the root hub
+	# has nothing to wait for.  A board with the LAN9514 behind its hub
+	# has ep2.0 and ep3.0 there within a second or two, long before
+	# etherusb is serving.
+	#
 	for(i := 0; i < tries; i++){
 		if(sys->open(addr, Sys->OREAD) != nil)
 			break;
+		if(i >= 100 && !usbdevices()){
+			sys->print("%s-NONE (no USB device to serve ethernet)\n", tag);
+			return;
+		}
 		sys->sleep(100);
 	}
 	if(sys->open(addr, Sys->OREAD) == nil){
