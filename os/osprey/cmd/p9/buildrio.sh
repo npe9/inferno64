@@ -31,7 +31,7 @@ INC="-I$ROOT/9front/src/include -I$ROOT/9front/amd64/include"
 LIBSRC="$ROOT/9front/amd64/lib-src"
 6c $LIBINC -o /tmp/rio9_crt.6 $P/p9crt.c
 6c $THRINC -o /tmp/rio9_thrmain.6 $P/threadmain9.c
-6a -o /tmp/rio9_cons.6 $P/p9cons.s
+6a -o /tmp/rio9_cons.6 $P/p9cons-amd64.s
 OBJ="/tmp/rio9_crt.6 /tmp/rio9_thrmain.6 /tmp/rio9_cons.6"
 SUP=""
 for m in utfnlen vsnprint dofmt vfprint tokenize; do

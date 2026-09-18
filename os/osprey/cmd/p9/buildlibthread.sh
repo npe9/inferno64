@@ -14,7 +14,7 @@
 # libc.a - the archive of generated system-call stubs - entirely, and it
 # resolves: every call libthread and its libc make is either the
 # personality's, through the table, or code in the program's own image.
-# The one exception is the console, which is p9cons.s, and which the
+# The one exception is the console, which is p9cons-amd64.s, and which the
 # personality does not hold.
 #
 # p9crt.c comes first so that p9start is the first thing in the text -
@@ -28,7 +28,7 @@ TEXT=0x2800028		# P9progbase7 in p9lib.h, plus the header
 6c $LIBINC -o /tmp/libthread_crt.6 $P/p9crt.c
 6c $THRINC -o /tmp/libthread_main.6 $P/threadmain9.c
 6c $THRINC -o /tmp/libthread_prog.6 $P/libthreadp9.c
-6a -o /tmp/libthread_cons.6 $P/p9cons.s
+6a -o /tmp/libthread_cons.6 $P/p9cons-amd64.s
 OBJ="/tmp/libthread_crt.6 /tmp/libthread_main.6 /tmp/libthread_prog.6 /tmp/libthread_cons.6"
 6l -l -R4096 -T $TEXT -E p9start -o /tmp/libthreadp9 $OBJ \
 	9front/amd64/lib-src/libthread.a 9front/amd64/lib-src/libc9.a

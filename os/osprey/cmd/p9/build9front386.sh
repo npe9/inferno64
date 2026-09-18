@@ -6,7 +6,7 @@
 # of the prebuilt archive 9front/amd64/lib/libc.a, because on a real
 # Plan 9 they are generated and there is no source to compile.  There is
 # no prebuilt 386 archive here, so the stubs are written:
-# os/osprey/cmd/p9/sys386.s, twenty-one of them, the same names the
+# os/osprey/cmd/p9/sys-386.s, twenty-one of them, the same names the
 # amd64 archive holds.
 #
 # What else a machine directory owes libc, this tree already had for
@@ -55,7 +55,8 @@ for d in port fmt 9sys; do
 done
 
 # the machine's own share
-8a -o "$TMP/sys386.8" "$ROOT/os/osprey/cmd/p9/sys386.s"
+8a -o "$TMP/sys386.8" "$ROOT/os/osprey/cmd/p9/sys-386.s"
+8a -o "$TMP/setjmp.8" "$ROOT/os/osprey/cmd/p9/setjmp-386.s"
 8a -o "$TMP/tas.8" "$ROOT/os/osprey/pc/libctas.s"
 8a -o "$TMP/vlop-386.8" "$ROOT/libkern/vlop-386.s"
 8c -o "$TMP/vlrt-386.8" "$ROOT/libkern/vlrt-386.c"

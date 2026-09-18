@@ -24,7 +24,7 @@ P=os/osprey/cmd/p9
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
 6c $LIBINC -o /tmp/libcat_crt.6 $P/p9crt.c
 6c $LIBINC -o /tmp/libcat_cat.6 $P/catp9.c
-6a -o /tmp/libcat_cons.6 $P/p9cons.s
+6a -o /tmp/libcat_cons.6 $P/p9cons-amd64.s
 OBJ="/tmp/libcat_crt.6 /tmp/libcat_cat.6 /tmp/libcat_cons.6"
 SUP=""
 for m in utfnlen vsnprint dofmt vfprint; do

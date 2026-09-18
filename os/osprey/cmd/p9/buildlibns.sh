@@ -17,7 +17,7 @@ P=os/osprey/cmd/p9
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
 6c $LIBINC -o /tmp/libns_crt.6 $P/p9crt.c
 6c $LIBINC -o /tmp/libns_prog.6 $P/nsp9.c
-6a -o /tmp/libns_cons.6 $P/p9cons.s
+6a -o /tmp/libns_cons.6 $P/p9cons-amd64.s
 OBJ="/tmp/libns_crt.6 /tmp/libns_prog.6 /tmp/libns_cons.6"
 SUP=""
 for m in utfnlen vsnprint dofmt vfprint tokenize; do

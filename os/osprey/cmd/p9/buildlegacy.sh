@@ -9,7 +9,7 @@ P=os/osprey/cmd/p9
 LIBINC="-I Osprey/amd64/include -I Osprey/include -I include -I $P"
 OBJ="os/osprey/pc64/init9prog.6 os/osprey/pc64/init9tos.6"
 6c $LIBINC -o /tmp/legacyp9.6 $P/legacyp9.c
-6a -o /tmp/legacyxcall.6 $P/legacyxcall.s
+6a -o /tmp/legacyxcall.6 $P/legacyxcall-amd64.s
 OBJ="$OBJ /tmp/legacyp9.6 /tmp/legacyxcall.6"
 # The four lib9 modules that used to be linked ahead of the archive are
 # gone: they were a workaround for the members this linker cannot read,

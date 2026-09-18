@@ -13763,17 +13763,69 @@ different on 386, where 8c stops at the redeclaration.  It takes a
 .CW usize
 now and compiles for both.
 .PP
-What is left of the piece is the assembly: the personality's own three
-files
-.CW ( xcall.s ,
-.CW p9cons.s ,
-.CW legacyxcall.s ,
-ninety-eight lines between them) are amd64's \-
-.CW SYSCALL ,
-.CW RARG ,
-eight-byte labels \- and a 386 personality wants their counterparts.
-They are not written here, because nothing would build them yet, and a
-file nothing builds is what item 9 above is about.
+The assembly is written now, and it is written because something built
+it.  The three files are named by object type, as
+.CW bootsys
+is:
+.CW xcall-amd64.s
+and
+.CW xcall-386.s ,
+and the same for
+.CW p9cons
+and
+.CW legacyxcall .
+The 386 side is the shorter of the two, because 8c passes every argument
+on the stack where 6c passes the first in a register, so a stub is the
+number and the interrupt with nothing to move; a Label is two words of
+four bytes rather than of eight; and
+.CW RDTSC
+is written as its two bytes, because this assembler does not know the
+mnemonic and
+.CW os/osprey/pc/l.s
+says the same thing the same way.
+.PP
+What built them: the personality was compiled and linked for 386.  All
+124 objects compile \- the personality, the name space, the IP stack,
+libmemdraw, libmemlayer, the pieces of libdraw, the pool and the kernlib
+helpers \- and the link resolves every symbol in them, taking
+.CW setlabel ,
+.CW gotolabel
+and
+.CW ospreyxcall
+out of
+.CW xcall-386.s .
+libc wanted three more machine pieces on the way and has them:
+.CW setjmp
+and
+.CW longjmp
+.CW ( setjmp-386.s ,
+the same two words the amd64 file saves), and stubs for
+.CW dup
+and
+.CW segattach ,
+which the portable libc does not call and the personality does.  The
+archive is 202 members.  The second embedded program builds too:
+.CW prog2p9
+links at
+.CW 0x1c00020 ,
+the base and this machine's header, and its image generates.
+.PP
+Two files are not in that link and they are what is left.
+.CW p9exec.c
+embeds ten programs \- cat, wc, ns, rio, sh, gen, draw, thread, reloc
+and prog2 \- each built by a script of its own for amd64, and each
+wanting a 386 twin.
+.CW p9linuxfile.c
+embeds a Linux x86-64 binary, which is amd64 by its nature.  So what
+stands between here and a 386 personality is a list of build scripts and
+not an unknown, which is what this section set out to find.
+.PP
+One thing the renaming taught, and the sweep taught it in ninety
+seconds: the two kernel mkfiles name those assembly files as
+dependencies of the images they go into, twenty lines between them, and
+renaming the files without the mkfiles broke every configuration that
+builds the personality.  The build stage of the sweep said so before a
+single check ran.
 .PP
 One check in the sweep is not about a kernel at all, and it is there
 because of the afternoon this port began with.

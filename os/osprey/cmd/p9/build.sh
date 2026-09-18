@@ -105,7 +105,7 @@ OBJ="$OBJ /tmp/p9_drawscreen.6"
 OBJ="$OBJ /tmp/p9_blkvirtio.6"
 6c $LIBINC -o /tmp/p9_netvirtio.6 $P/netvirtio.c
 OBJ="$OBJ /tmp/p9_netvirtio.6"
-6a -o /tmp/p9_xcall.6 $P/xcall.s
+6a -o /tmp/p9_xcall.6 $P/xcall-amd64.s
 OBJ="$OBJ /tmp/p9_xcall.6"
 
 # -T is P9selfbase plus the forty-byte header (p9lib.h says why the

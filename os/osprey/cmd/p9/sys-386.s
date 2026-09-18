@@ -11,10 +11,12 @@
  * There is no prebuilt 386 archive, so for that object type the same
  * twenty-one calls are written out.
  *
- * Which twenty-one is measured rather than chosen: all 196 portable
+ * Which calls is measured rather than chosen: all 196 portable
  * files of 9front's libc here compile with 8c, and these are the
  * symbols left undefined that the prebuilt archive answers on amd64 -
- * the same names, member for member, as iar t lists in it.
+ * the same names, member for member, as iar t lists in it.  dup and
+ * segattach came later, from the personality's own link: the portable
+ * libc does not call them and the personality does.
  *
  * The convention is this kernel's own, named by its trap entry rather
  * than assumed: os/osprey/pc/trap.c takes the call number from AX and
@@ -43,6 +45,7 @@
 	RET
 
 SYSCALL1(close, 4)
+SYSCALL1(dup, 5)
 SYSCALL1(exec, 7)
 SYSCALL1(_exits, 8)
 SYSCALL1(open, 14)
@@ -53,6 +56,7 @@ SYSCALL1(fd2path, 23)
 SYSCALL1(brk_, 24)
 SYSCALL1(notify, 28)
 SYSCALL1(noted, 29)
+SYSCALL1(segattach, 30)
 SYSCALL1(rendezvous, 34)
 SYSCALL1(_seek, 39)
 SYSCALL1(errstr, 41)
