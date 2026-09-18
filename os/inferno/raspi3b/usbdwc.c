@@ -288,7 +288,7 @@ chandone(void *a)
 static int
 chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 {
-	int chan, i, pending;
+	int chan, i, pending, n, dec;
 
 	USED(mask);
 	chan = hc - ctlr->regs->hchan;
@@ -350,11 +350,24 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 			if(i >= Rearmsecs && (hc->hcchar & Chen) != 0){
 				hc->hcchar |= Chdis;
 				chanhaltwait(hc);
-				if((ctlr->rearm[chan]++ % 64) == 0)
+				/*
+				 * The first, then the tenth, the hundredth and
+				 * so on.  An idle NIC re-arms every couple of
+				 * seconds for as long as the board is up, and
+				 * one in sixty-four of that is still a console
+				 * with a driver talking over everything else
+				 * on it -- 2561 lines of it, on the board this
+				 * was read off.  A rate that decays says the
+				 * same thing and then stops saying it.
+				 */
+				n = ++ctlr->rearm[chan];
+				for(dec = 1; dec < n; dec *= 10)
+					;
+				if(dec == n)
 					print("usbdwc: ep%d.%d re-armed after %d s "
 						"(%d times): hcchar %8.8ux hcint %8.8ux\n",
 						ep->dev->nb, ep->nb, i,
-						ctlr->rearm[chan], hc->hcchar, hc->hcint);
+						n, hc->hcchar, hc->hcint);
 				return Chhltd|Nak;
 			}
 			/*
