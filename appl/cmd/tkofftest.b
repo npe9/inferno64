@@ -1814,6 +1814,36 @@ checkscene()
 		"a render-node tree draws a flat border identically to draw() (%d of %d bytes differ%s)",
 		diff, len who*W*H*3, at(first)));
 
+	# The same pair again, with the widget's own rectangle SCRIBBLED ON
+	# first, so the repaint that follows has damage to erase.
+	#
+	# A repaint that covers the whole widget wipes the scribble; one
+	# that covers less leaves some of it, which is what an afterimage
+	# is.  Both paths are given the same damage, so this compares like
+	# with like and says nothing about whether a focus change ought to
+	# repaint the whole widget - only that the two paths must agree
+	# about it.
+	#
+	# Every other check here drives a FULL repaint, where every widget
+	# paints all of itself and the question cannot arise.  A window
+	# moving over another is the case that reaches this, and until this
+	# check existed the node path had never been compared on it.
+	ddiff := 0;
+	dfirst := -1;
+	for(k = 0; k < len who; k++){
+		(d, f) := scenepair1(top, who[k], 1);
+		if(d < 0){
+			report(0, "the offscreen pane reads back");
+			return;
+		}
+		ddiff += d;
+		if(dfirst < 0)
+			dfirst = f;
+	}
+	report(ddiff == 0, sys->sprint(
+		"and identically over damage a repaint has to erase (%d of %d bytes differ%s)",
+		ddiff, len who*W*H*3, at(dfirst)));
+
 	# Whether a repaint built ONE tree for a run of widgets or one tree
 	# each cannot be seen in the pixels - both draw the same picture,
 	# which is the whole point - so the toolkit is asked instead.
@@ -1969,18 +1999,48 @@ cvdirty(top: ref Tk->Toplevel, who: string)
 		cvdirty(top, hd ws);
 }
 
+# Damage a widget's rectangle, so that the repaint which follows has
+# something to erase.
+#
+# This is what a window MOVING AWAY leaves behind.  wmclient(2) makes a
+# window's content image Refnone, so libmemlayer restores nothing when
+# it is uncovered and sends no message either - memlnorefresh() is
+# literally a no-op - and the pixels the covering window wrote are
+# still there.  Whoever owns them has to paint them again, and for a Tk
+# client that is a PARTIAL repaint: one widget dirty, not the pane.
+#
+# Every other check in this file drives a FULL repaint, so nothing here
+# reached that path at all, and an afterimage is exactly what a partial
+# repaint that covers too little looks like.
+scribble(top: ref Tk->Toplevel, who: string)
+{
+	r := tk->rect(top, who, Tk->Border);
+	if(r.dx() <= 0 || r.dy() <= 0)
+		return;
+	off.draw(r, disp.color(Draw->Magenta), nil, r.min);
+}
+
 scenepair(top: ref Tk->Toplevel, who: string): (int, int)
+{
+	return scenepair1(top, who, 0);
+}
+
+scenepair1(top: ref Tk->Toplevel, who: string, damage: int): (int, int)
 {
 	tk->cmd(top, "render direct");
 	tk->cmd(top, "focus .b");
 	tk->cmd(top, "focus " + who);
 	cvdirty(top, ".");
+	if(damage)
+		scribble(top, who);
 	tk->cmd(top, "update");
 	a := snap();
 	tk->cmd(top, "render scene");
 	tk->cmd(top, "focus .b");
 	tk->cmd(top, "focus " + who);
 	cvdirty(top, ".");
+	if(damage)
+		scribble(top, who);
 	tk->cmd(top, "update");
 	b := snap();
 	tk->cmd(top, "render direct");
