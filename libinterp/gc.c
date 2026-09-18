@@ -12,6 +12,8 @@ enum
 };
 
 static int quanta = Quanta;
+ulong	gcranheld;	/* collections that ran inside a gclock; see rungc() */
+
 static int gce, gct = 1;
 
 ulong	chainwalks, chainshort;	/* likewise; see rootset() */
@@ -1290,6 +1292,29 @@ rungc(Prog *p)
 	if(gchalt) {
 		gchalted++;
 		return;
+	}
+	{
+		/*
+		 * The direction of the gchalt bug that nothing counted.  A
+		 * lost decrement switches the collector off, which every
+		 * table in doc/multicore-plan.ms measures.  A lost increment
+		 * lets this run while a context is inside a gclock() region
+		 * -- a teardown, or a t->free() partway through destroy() --
+		 * and it leaves no missing collection and no counter behind.
+		 * Past the test above, gchalt says nobody has asked the
+		 * collector to stay out; if a context still holds one, the
+		 * global lost an increment and this collection is the
+		 * exposure.
+		 */
+		int i, held;
+
+		held = 0;
+		for(i = 0; i < npctx; i++)
+			held += pctxs[i]->gcheld;
+		if(held > 0)
+			if(gcranheld++ == 0)
+				print("rungc: collecting with %d gclock(s)"
+					" held and gchalt %d\n", held, gchalt);
 	}
 	if(base == nil) {
 		gcsweeps++;

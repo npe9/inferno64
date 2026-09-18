@@ -3307,15 +3307,16 @@ stalldump(void)
 		gcsema.locked, gcsema.head != nil ? gcsema.head->pid : -1,
 		gcstw, gcstwproc != nil ? gcstwproc->pid : -1, npctx, gcphase);
 	{
-		extern ulong gcnruns;
+		extern ulong gcnruns, gcranheld;
 		extern int gchalt, gcdepth;
 
 		print("stall: gcnruns %lud stwwaits %d gcidlepass %llud"
 			" gcpartial %llud gaveup %d idlegaveup %d idlebusy %d,"
-			" gchalt %d gcdepth %d, leaks seen %lud, site %s\n",
+			" gchalt %d gcdepth %d, leaks seen %lud, site %s,"
+			" collections inside a gclock %lud\n",
 			gcnruns, stwwaits, gcidlepass, gcpartial, stwgaveup,
 			gcidlegaveup, gcidlebusy, gchalt, GCDEPTH, gcleaks,
-			gclocksite != nil ? gclocksite : "none");
+			gclocksite != nil ? gclocksite : "none", gcranheld);
 	}
 	{
 		extern ulong regstale, handlerbroke, regstalesrc[8];

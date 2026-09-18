@@ -6796,3 +6796,55 @@ see a sixth but not to put a number on it.
 The raised pool stays.  With the growth bounded it is no longer load
 bearing on this workload, but nothing here bounds the spawning at four
 processors as a function of anything but the wake, and 256 is cheap.
+.NH 2
+The lost-increment direction, measured at last
+.PP
+It needed the check in the right place, and the first attempt was not.
+Counting in
+.CW collect()
+before
+.CW rungc()
+reported it in all ten boots of both arms \(em because
+.CW rungc()
+tests
+.CW gchalt
+itself and returns, so what that counted was collections that were about
+to decline.  Past that test is where it means something: if
+.CW gchalt
+says nobody asked the collector to stay out and a context still holds a
+.CW gclock() ,
+the global lost an increment and this collection is the exposure.
+.TS
+center;
+l r r.
+	boots that collected inside a gclock	collections
+*gcatomic=0	1 of 10	1612
+atomic	0 of 10	0
+.TE
+.PP
+So it is real, it is not rare when it happens \(em sixteen hundred
+collections in the boot it happened in \(em and the atomic closes it.
+That is the last of the two gaps the chapter named.  What the exposure
+did while it was open is still not known: these boots panicked in
+neither arm, and the fault it would produce is the one the collector
+already has a tripwire for.
+.NH 2
+Why parallelvm stays 0 anyway
+.PP
+Both named gaps are closed: twenty minutes of soak says the short boots
+were not hiding anything, and the corrupting direction of the
+.CW gchalt
+bug is measured and fixed.  On pc64 the case for the default is now a
+good one.
+.PP
+It stays 0, and the reason is not about pc64.
+.CW parallelvm
+is in
+.CW os/inferno/port/dis.c ,
+which every board in this tree compiles \(em virtarm64, raspi3b, the
+riscv boards, the armv7-m ones.  Not one of them has been booted with it
+on.  A default is a statement about every configuration that inherits
+it, and the measurements here are a statement about one.  The flag is a
+boot-line option precisely so that a board can turn it on when somebody
+has measured that board; moving the default would be claiming the
+measurement for eleven boards that have not had it.
