@@ -722,6 +722,24 @@ pimag(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
  * Small and linear on purpose.  A toolkit has a handful of bitmaps -
  * the chrome's artwork is sixteen - and a list that is walked when a
  * node is built costs nothing against a repaint.
+ *
+ * The entry is keyed on the address, and freeimage() hands that address
+ * straight back to the pool - an Image is a fixed-size struct, so the
+ * very next allocimage() is likely to be given it.  An entry that
+ * outlives its image is therefore worse than a leak: tkimgpath() would
+ * answer for an image that merely inherited the address, and a texture
+ * node would name a file the widget is not drawing.  The narrow case
+ * where the new image is itself opened by pbmap() is harmless, because
+ * tkimgpathset() drops first; the dangerous one is an image that never
+ * goes through here at all, which is exactly what tkimgbmcreate() makes
+ * when it composites a file and a mask into a fresh image and frees
+ * both of the originals.
+ *
+ * So every free of an image pbmap() opened must call tkimgpathdrop()
+ * first.  OPTbmap appears in three structures - TkLabel.bitmap, freed
+ * by tkfreelabel(); TkCursor.bit, freed in ebind.c; and Imgargs in
+ * image.c, whose two images are freed on four paths there - and with
+ * the replacement below that is the whole list.
  */
 static struct Imgpath {
 	Image*	img;

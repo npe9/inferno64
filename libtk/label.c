@@ -204,6 +204,7 @@ tkfreelabel(Tk *tk)
 	if(i != nil) {
 		d = i->display;
 		locked = lockdisplay(d);
+		tkimgpathdrop(i);	/* the registry is keyed on the address */
 		freeimage(i);
 		if(locked)
 			unlockdisplay(d);

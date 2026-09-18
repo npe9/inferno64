@@ -1332,6 +1332,7 @@ tkcursorcmd(TkTop *t, char *arg, char **ret)
 	if(c.img != nil || c.bit != nil){
 		e = tkcursorswitch(t, c.bit, c.img);
 		tkimgput(c.img);
+		tkimgpathdrop(c.bit);	/* the registry is keyed on the address */
 		freeimage(c.bit);
 	}
 	if(e == nil){

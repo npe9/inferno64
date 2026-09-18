@@ -58,7 +58,7 @@ Tkofftest: module
 };
 
 W: con 900;			# room for the widest widget at the largest font,
-H: con 1780;			# so that packing is never what clamps a measurement
+H: con 2600;			# so that packing is never what clamps a measurement
 				#
 				# H was 700 until the render-node pane grew: a
 				# widget packed past the bottom is never drawn,
@@ -66,7 +66,11 @@ H: con 1780;			# so that packing is never what clamps a measurement
 				# by neither path, so both scrollbars fell
 				# silently out of the identity check while it
 				# went on passing.  checkscene() asserts the
-				# pane fits now, and this is the room it needs.
+				# pane fits now, so the failure is loud rather
+				# than silent - but it is still a failure, and
+				# it cost six round trips as the pane grew, so
+				# the number carries real headroom rather than
+				# the height the current pane happens to need.
 
 off: ref Image;
 win: ref Image;
@@ -1357,6 +1361,32 @@ checkscene()
 	# named with @, which is also the other way a bitmap gets a path.
 	must(top, "label .bc -bitmap @/icons/penguin.bit");
 	tk->cmd(top, "pack .bc -padx 6 -pady 6");
+	# An -image rather than a -bitmap.  Without a mask the widget keeps
+	# the file's own image, so it has a name and takes the node path -
+	# this is the only thing in the pane that reaches tkimgfile's
+	# -image arm, and a control that shifts that node by one pixel
+	# fails by 11010 bytes.
+	must(top, "image create bitmap Icon2 -file dis.bit");
+	must(top, "label .i2 -image Icon2");
+	tk->cmd(top, "pack .i2 -padx 6 -pady 6");
+	# And with a mask, which composites the two into a third image that
+	# no file holds.  That one has no name and must fall back to being
+	# drawn, which is the arm of tkimgfile that returns nil.
+	must(top, "image create bitmap Icon -file dir.bit -maskfile dir.mask");
+	must(top, "label .im -image Icon");
+	tk->cmd(top, "pack .im -padx 6 -pady 6");
+	# Both of those free images that the path registry named, and so
+	# does destroying a widget.  The registry is keyed on the Image*
+	# and freeimage hands the address back, so an entry that outlives
+	# its image can be collected by an unrelated image later and make a
+	# node name the wrong file.  libtk drops the entry at every free
+	# now; this pane walks those frees but does NOT prove the hazard -
+	# whether a freed address is handed out again is up to the
+	# allocator, and measuring it here showed it does happen but not on
+	# the next call, so there is no control to write.  What is proved
+	# is that these widgets draw right, not that the registry is clean.
+	must(top, "label .bx -bitmap dis.bit");
+	tk->cmd(top, "destroy .bx");
 	# A button says the same three things a label can, and buton.c lays
 	# them out with the same shared code now.
 	must(top, "button .bm -text {two lines\non a button} -justify center");

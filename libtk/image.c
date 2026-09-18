@@ -120,6 +120,7 @@ tkimgbmcreate(TkTop *t, char *arg, int type, char **ret)
 		tki->img = allocimage(d, r, CHAN2(CAlpha, 8, CGrey, 8), 0, DTransparent);
 		if (tki->img != nil)
 			draw(tki->img, r, nil, iargs.maskimg, iargs.maskimg->r.min);
+		tkimgpathdrop(iargs.maskimg);
 		freeimage(iargs.maskimg);
 
 	} else if (iargs.fgimg != nil && iargs.maskimg != nil) {
@@ -132,7 +133,9 @@ tkimgbmcreate(TkTop *t, char *arg, int type, char **ret)
 		tki->img = allocimage(d, r, chan, 0, DTransparent);
 		if (tki->img != nil)
 			draw(tki->img, r, iargs.fgimg, iargs.maskimg, iargs.fgimg->r.min);
+		tkimgpathdrop(iargs.fgimg);
 		freeimage(iargs.fgimg);
+		tkimgpathdrop(iargs.maskimg);
 		freeimage(iargs.maskimg);
 	} else {
 		tki->img = iargs.fgimg;
@@ -175,6 +178,7 @@ err:
 	tkputenv(tki->env);
 	if(tki->img != nil) {
 		locked = lockdisplay(d);
+		tkimgpathdrop(tki->img);
 		freeimage(tki->img);
 		if (locked)
 			unlockdisplay(d);
@@ -209,6 +213,7 @@ tkimgbmfree(TkImg *tki)
 
 	d = tki->top->display;
 	locked = lockdisplay(d);
+	tkimgpathdrop(tki->img);
 	freeimage(tki->img);
 	if(locked)
 		unlockdisplay(d);
