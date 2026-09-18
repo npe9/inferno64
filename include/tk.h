@@ -567,9 +567,11 @@ enum {
 	 * A B-spline through its points, stroked.  A checkbutton's tick is
 	 * one, and it is the last thing in the flat style that no other
 	 * node can describe.  Like TkNpolyfill it owns a copy of the
-	 * points; width is bezspline()'s thickness and radius carries the
-	 * end style, the SAME one at both ends, which is what every caller
-	 * asks for and is written down here rather than pretended about.
+	 * points; width is bezspline()'s thickness and sp carries the two
+	 * end styles, first and last.  In sp and not in radius because an
+	 * end style is a packed value that a short truncates - a canvas
+	 * line's arrow is 25329922 - and two of them because bezspline()
+	 * takes two and a line can have an arrow at one end only.
 	 */
 	TkNspline,
 
@@ -850,7 +852,7 @@ extern	void		tkscenetexture(TkScene*, Rectangle, char*, int, ulong);
 extern	char*		tkimgpath(Image*);
 extern	void		tkimgpathset(Image*, char*);
 extern	void		tkimgpathdrop(Image*);
-extern	void		tkscenespline(TkScene*, Point*, int, int, int, ulong);
+extern	void		tkscenespline(TkScene*, Point*, int, int, int, int, ulong);
 extern	void		tkwalkopen(TkCtxt*, Image*);
 extern	void		tkwalkflush(void);
 extern	void		tkwalkclose(void);

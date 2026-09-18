@@ -1590,7 +1590,10 @@ checkscene()
 	must(top, ".cv create oval 126 4 180 40 -fill #C0F0C0 -outline black");
 	must(top, ".cv create arc 186 4 250 40 -start 30 -extent 200 -fill #F0E0A0");
 	must(top, ".cv create line 8 50 120 84 -width 3 -fill #204080");
-	must(top, ".cv create line 126 50 250 84 -width 2 -smooth true -arrow both");
+		# THREE points, because a smooth line of two is drawn as a straight
+	# one by both paths - bezspline needs three - so a two-point line
+	# reaches the spline node in neither.
+	must(top, ".cv create line 126 50 190 40 250 84 -width 2 -smooth true -arrow both");
 	must(top, ".cv create polygon 8 92 60 92 34 116 -fill #A0A0F0");
 	must(top, ".cv create text 70 100 -text {canvas text} -anchor w");
 	# Two bitmaps, because a canvas bitmap item branches on DEPTH and

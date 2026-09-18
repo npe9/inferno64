@@ -394,7 +394,8 @@ blitshaped(Image *dst, TkNode *n, Image *src)
  * points are copied for the reason a polygon's are: a node is a value.
  */
 void
-tkscenespline(TkScene *s, Point *p, int np, int end, int width, ulong rgba)
+tkscenespline(TkScene *s, Point *p, int np, int end0, int end1, int width,
+	ulong rgba)
 {
 	TkNode *n;
 
@@ -404,7 +405,19 @@ tkscenespline(TkScene *s, Point *p, int np, int end, int width, ulong rgba)
 		return;
 	n->rgba = rgba;
 	n->width = width;
-	n->radius = end;
+	/*
+	 * The ends go in sp, which is two ints, and NOT in radius, which
+	 * is a short.  An end style is a packed value - an arrow encodes
+	 * three numbers in it - and a canvas line's arrow came to
+	 * 25329922, which a short makes -32510.  The checkbutton tick that
+	 * was the only caller asks for Enddisc, which fits, so nothing
+	 * showed it until a line did: 36624 bytes.
+	 *
+	 * Two of them rather than one, because bezspline() takes two and
+	 * a canvas line can have an arrow at one end only.
+	 */
+	n->sp.x = end0;
+	n->sp.y = end1;
 	n->pts = malloc(np*sizeof(Point));
 	if(n->pts == nil){
 		n->type = TkNgroup;
@@ -1131,8 +1144,8 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 		case TkNspline:
 			col = tkcolor(c, n->rgba);
 			if(col != nil)
-				bezspline(target, n->pts, n->npts, n->radius,
-					n->radius, n->width, col, ZP);
+				bezspline(target, n->pts, n->npts, n->sp.x,
+					n->sp.y, n->width, col, ZP);
 			break;
 		default:
 			/*

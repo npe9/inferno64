@@ -228,7 +228,7 @@ tkcvspolydraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 		 * so that one draws.
 		 */
 		if(cd->sc != nil && p->smooth == BoolT)
-			tkscenespline(cd->sc, pts, i->p.npoint+1, Enddisc, w,
+			tkscenespline(cd->sc, pts, i->p.npoint+1, Enddisc, Enddisc, w,
 				e->colors[TkCforegnd]);
 		else {
 			pen = tkgc(i->env, TkCforegnd);

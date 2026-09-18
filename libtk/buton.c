@@ -410,7 +410,7 @@ tkdrawbutton(Tk *tk, Point orig)
 			 * checkbox must not use.
 			 */
 			if(bsc != nil)
-				tkscenespline(bsc, pp, 4, Enddisc, 1,
+				tkscenespline(bsc, pp, 4, Enddisc, Enddisc, 1,
 					e->colors[tkstyleflat(tk) ?
 						TkCbackgnd : TkCforegnd]);
 			else

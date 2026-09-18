@@ -199,7 +199,6 @@ tkcvslinefree(TkCitem *i)
 void
 tkcvslinedraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
-	Image *img = tkcvsdirect(cd);
 	int w;
 	Point *p;
 	TkCline *l;
@@ -209,19 +208,32 @@ tkcvslinedraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 
 	l = TKobj(TkCline, i);
 
-	pen = l->pen;
-	if(pen == nil)
-		pen = tkgc(i->env, TkCforegnd);
-
 	w = TKF2I(l->width)/2;
 	if(w < 0)
 		return;
 
 	p = i->p.drawpt;
+	/*
+	 * A SMOOTH line is TkNspline, and a straight one is not: there is
+	 * no node for a stroked polyline.  A stipple draws, as everywhere
+	 * on this path.
+	 */
+	if(cd->sc != nil && l->pen == nil && l->smooth == BoolT
+	&& i->p.npoint >= 3) {
+		tkscenespline(cd->sc, p, i->p.npoint, l->arrowf, l->arrowl, w,
+			i->env->colors[TkCforegnd]);
+		return;
+	}
+
+	pen = l->pen;
+	if(pen == nil)
+		pen = tkgc(i->env, TkCforegnd);
 	if(l->smooth == BoolT && i->p.npoint >= 3)
-		bezspline(img, p, i->p.npoint, l->arrowf, l->arrowl, w, pen, p[0]);
+		bezspline(tkcvsdirect(cd), p, i->p.npoint, l->arrowf,
+			l->arrowl, w, pen, p[0]);
 	else
-		poly(img, p, i->p.npoint, l->arrowf, l->arrowl, w, pen, p[0]);
+		poly(tkcvsdirect(cd), p, i->p.npoint, l->arrowf, l->arrowl,
+			w, pen, p[0]);
 }
 
 char*
