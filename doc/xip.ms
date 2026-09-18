@@ -1311,12 +1311,44 @@ passes it when a board sets
 .CW ROOTINTEXT ;
 and
 .CW devroot.c
-masks the low bit of the pointer, because a reference to a text symbol
+masked the low bit of the pointer, because a reference to a text symbol
 on an ARM target carries the Thumb bit and the bytes start at the even
 address.  That last one announced itself as a panic of "bad magic"
 loading
 .CW /osinit.dis
 on the first boot after the change.
+.IP
+That masking is gone.  Once
+.CW RODATA
+existed \- see
+.I "Naming a table read-only"
+below \-
+.CW data2s\ -t
+had no reason to emit a
+.CW TEXT
+symbol at all: it emits the same
+.CW DATA
+lines as without
+.CW -t
+and puts
+.CW RODATA
+on the
+.CW GLOBL ,
+so the root is data that happens to live in the text segment and its
+address is its address.
+.CW devroot.c
+uses
+.CW rootdata[p].ptr
+directly again.  The byte-packing caveat goes with it \- there is no
+longer a word to pack, so nothing here is endianness-dependent \- and a
+linker that does not know
+.CW RODATA
+ignores the flag and lays the symbol out in the data segment, which is
+the behaviour without
+.CW -t .
+Same data and bss on all three boards, a few bytes less text, and
+.CW "cat /dis/init"
+reads a built-in file.
 .IP
 .CW mps2
 boots with the root in text and

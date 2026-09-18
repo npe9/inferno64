@@ -9,23 +9,6 @@ extern Rootdata rootdata[];
 extern Dirtab roottab[];
 extern int	rootmaxq;
 
-/*
- * A built-in file's bytes.  os/inferno/port/mkroot emits each one as a
- * TEXT symbol (utils/data2s/data2s.c -t) so that it lands in the
- * kernel's text and stays in flash on a board that runs its text from
- * flash -- which is what makes Dev.xip below worth having.  On an ARM
- * target a reference to a text symbol carries the Thumb bit in its low
- * bit, and the bytes begin at the even address; clearing it is a no-op
- * on every target whose text symbols are already even.
- *
- * Directories are not this: their ptr is a Dirtab array, an ordinary
- * data symbol, and only the file cases below go through here.
- */
-static uchar*
-rootbytes(Rootdata *r)
-{
-	return (uchar*)((uintptr)r->ptr & ~(uintptr)1);
-}
 
 static Chan*
 rootattach(char *spec)
@@ -137,7 +120,7 @@ rootread(Chan *c, void *buf, s32 n, s64 offset)
 		return 0;
 	if(offset+n > len)
 		n = len - offset;
-	data = rootbytes(&rootdata[p]);
+	data = rootdata[p].ptr;
 	memmove(buf, data+offset, n);
 	return n;
 }
@@ -176,7 +159,7 @@ rootxip(Chan *c, u32 *lenp)
 	if(rootdata[p].ptr == nil)
 		return nil;
 	*lenp = rootdata[p].size;
-	return rootbytes(&rootdata[p]);
+	return rootdata[p].ptr;
 }
 
 Dev rootdevtab = {
