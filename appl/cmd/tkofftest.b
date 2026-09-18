@@ -368,6 +368,7 @@ init(nil: ref Draw->Context, nil: list of string)
 		raise "fail:tkofftest";
 }
 
+
 # Serve whatever TrueType files are in /fonts/ttf, if any and if ttffs
 # is built.  Silent when there are none: this tree ships no .ttf.
 startttf()
@@ -627,6 +628,10 @@ pump(sb: ref Spinbox, c: chan of string, acked: chan of int)
 {
 	for(;;){
 		s := <-c;
+		if(s == nil){		# the sentinel: stop pumping and go
+			acked <-= 1;
+			return;
+		}
 		sb.event(s);
 		acked <-= 1;
 	}
@@ -695,6 +700,13 @@ checkspinbox()
 	report(bykey == 6 && bykey2 == 2, sys->sprint(
 		"and the arrow keys spin it too (%d up, then %d after two down)",
 		bykey, bykey2));
+	# Take the event loop down again.  A spawned process blocked on a
+	# receive is a process, and emu does not exit while one is running:
+	# this test printed its results and then sat there until something
+	# killed it, which cost every run the whole of its timeout rather
+	# than the two minutes the checks take.
+	sc <-= "";
+	<-acked;
 
 	# what it says when it moves
 	sfd := sys->open("/dev/voice/screen", Sys->OREAD);
