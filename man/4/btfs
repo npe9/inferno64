@@ -870,6 +870,12 @@ which is every QEMU
 .B raspi3b
 boot, since the model has no radio.
 .PP
+None of this has been seen to work on silicon yet.  What is
+demonstrated is the QEMU half:
+.B BT-NONE
+on a model with no radio.  The board it was written for has not yet
+booted a kernel carrying it.
+.PP
 It does not load the controller's patch firmware
 .RB ( BCM4345C0.hcd ,
 a file on the card).  A cold BCM43438 answers HCI Reset and the vendor

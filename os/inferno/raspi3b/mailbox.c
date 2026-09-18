@@ -42,6 +42,7 @@ enum {
 	Busalias = 0xC0000000,		/* GPU-uncached view of ARM RAM */
 
 	Respok	= 0x80000000,		/* message code: request succeeded */
+	Spins	= 10*1000*1000,	/* bound on a mailbox wait: uncached reads, so about a second */
 };
 
 static u32*
@@ -52,33 +53,51 @@ mbox(void)
 
 /*
  * Post one message (already carrying its channel-free bus address in the
- * top 28 bits) on a channel and wait for the reply on the same channel.
- * Returns the bus address the GPU handed back (== what we sent).
+ * top 28 bits) on a channel.  Returns 0, or -1 if the mailbox never
+ * made room for it.
  */
-static void
+static int
 mboxwrite(int chan, u32 data)
 {
 	u32 *r = mbox();
+	int i;
 
-	while(r[Status] & Full)
-		;
+	for(i = 0; i < Spins; i++)
+		if((r[Status] & Full) == 0)
+			break;
+	if(i >= Spins)
+		return -1;
 	coherence();
 	r[Write] = data | chan;
+	return 0;
 }
 
-static u32
-mboxread(int chan)
+/*
+ * Bounded, because every one of these runs during boot and a wait
+ * without a bound is a board that says nothing at all.  The firmware
+ * answers every message on the property channel, including one whose
+ * tag it does not know, so a timeout here is not an unsupported tag:
+ * it is a mailbox that is not working, and the caller reporting that
+ * is worth more than a kernel stopped in a while loop before it has
+ * printed anything.  Returns 0 and the value, or -1.
+ */
+static int
+mboxread(int chan, u32 *val)
 {
 	u32 *r = mbox();
 	u32 v;
+	int i;
 
-	for(;;){
-		while(r[Status] & Empty)
-			;
+	for(i = 0; i < Spins; i++){
+		if(r[Status] & Empty)
+			continue;
 		v = r[Read];
-		if((int)(v & 0xf) == chan)
-			return v & ~0xfU;
+		if((int)(v & 0xf) == chan){
+			*val = v & ~0xfU;
+			return 0;
+		}
 	}
+	return -1;
 }
 
 /*
@@ -92,6 +111,7 @@ mboxprop(u32 *buf)
 {
 	uintptr pa = (uintptr)buf;	/* RAM is identity-mapped */
 	usize reqlen;
+	u32 resp;
 
 	if(pa & 0xf)
 		panic("mboxprop: buf %#p not 16-byte aligned", buf);
@@ -104,8 +124,11 @@ mboxprop(u32 *buf)
 	 * below is ordered after the clean.
 	 */
 	cacheflush(buf, reqlen);
-	mboxwrite(Chanprop, (u32)(pa | Busalias));
-	mboxread(Chanprop);
+	if(mboxwrite(Chanprop, (u32)(pa | Busalias)) < 0)
+		return -1;
+	if(mboxread(Chanprop, &resp) < 0)
+		return -1;
+	USED(resp);
 	/*
 	 * The GPU filled the response in place.  Invalidate our now-stale
 	 * D-lines so the reads below fetch what the GPU wrote.  IVAC
