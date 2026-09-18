@@ -40,9 +40,11 @@ uartintr(Ureg*, void *arg)
 	Uart *uart;
 	Ctlr *c;
 	int i, ch;
+	u32 mis;
 
 	uart = arg;
 	c = uart->regs;
+	mis = csr32r(c, UartMIS);
 	for(i = 0; i < 128; i++){
 		if(csr32r(c, UartFR) & UartFRRXFE)
 			break;
@@ -50,6 +52,15 @@ uartintr(Ureg*, void *arg)
 		uartrecv(uart, ch);
 	}
 	csr32w(c, UartICR, UartICRALL);
+	/*
+	 * Transmit side.  Without this the driver only ever pushed what
+	 * fitted in the fifo at the moment something called kick, and
+	 * whatever was left waited for the next print -- so the last burst
+	 * of a boot sat in the queue forever and every log ended cut off
+	 * mid-word.  See doc/multicore-plan.ms.
+	 */
+	if(mis & UartIMSCTX)
+		uartkick(uart);
 }
 
 static void
@@ -87,6 +98,18 @@ virtarm64_kick(Uart *uart)
 			break;
 		csr32w(c, UartDR, *uart->op++);
 	}
+	/*
+	 * Ask for a transmit interrupt while output remains, and only
+	 * while it does.  Leaving TXIM enabled with an empty fifo is an
+	 * interrupt every time the fifo drains past its trigger level,
+	 * which on a quiet console is a storm; leaving it disabled is the
+	 * bug this fixes.  uartintr() calls uartkick() when it fires, and
+	 * that comes back here to push the rest or take the request away.
+	 */
+	if(uart->op < uart->oe)
+		csr32w(c, UartIMSC, UartIMSCRX|UartIMSCTX);
+	else
+		csr32w(c, UartIMSC, UartIMSCRX);
 }
 
 static void

@@ -179,6 +179,21 @@ gicenable(int irq)
 	gicd = (u32*)GICD;
 	if(!gicv3){
 		*((uchar*)GICD + 0x400 + irq) = 0xa0;	/* GICD_IPRIORITYR[irq] */
+		/*
+		 * Target cpu0, explicitly.  GICD_ITARGETSR resets to 0 -- no
+		 * target at all -- and a uniprocessor GIC ignores it and
+		 * delivers to cpu0 anyway, so leaving it unwritten worked for
+		 * exactly as long as this board ran on one processor.  With a
+		 * second one present every SPI went to nobody: the uart's
+		 * interrupt never arrived, its output queue filled, and the
+		 * process holding the interpreter blocked in qflow() with
+		 * every other one queued behind it on vmacquire().  That is
+		 * the whole of "-smp 2 stops partway through the boot".
+		 * SGIs and PPIs are per-cpu and have no target register.
+		 * The GICv3 path below already routes explicitly.
+		 */
+		if(irq >= GicSpiBase)
+			*((uchar*)GICD + 0x800 + irq) = 1;	/* GICD_ITARGETSR */
 		gicd[GicdISENABLER + irq/32] = 1 << (irq%32);
 		return;
 	}

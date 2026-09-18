@@ -7115,3 +7115,67 @@ on a print, so it inherits this: the first-quantum line prints early and
 was seen for cpu0 in every boot, which is why the conclusion stands, but
 it is a print, and prints on this board are not to be trusted after the
 interpreter goes quiet.
+.NH 2
+Two bugs behind the lost console, and neither was the clock
+.PP
+.B "The uart never asked for a transmit interrupt."
+.CW virtarm64_kick()
+pushed bytes while the fifo had room and returned when it filled, and
+.CW UartIMSC
+was written once, with the receive bit only.  So whatever did not fit
+waited for the next
+.CW kick ,
+which comes from the next print \(em and the last burst of a boot has no
+next print.  Every log ended cut off mid-word for that reason.  The
+driver now asks for a transmit interrupt while output remains and takes
+the request away when it does not (leaving it on with an empty fifo is
+an interrupt every time the fifo drains), and
+.CW uartintr()
+calls
+.CW uartkick()
+when it fires.  At
+.CW "-smp 1"
+the board went from 75 lines and a truncated tail to a shell prompt.
+.PP
+.B "And every SPI went to no processor at all once there were two."
+At
+.CW "-smp 2"
+it still stopped, in the same place, with both processors in
+.CW WFI
+and nothing runnable.  A process dump through
+.CW iprint()
+\(em which goes at the uart directly, past the queue that was under
+suspicion \(em named it exactly:
+.IP
+.nf
+proc 1 interp Queueing qpc qflow+0x58
+proc 6..14 dis Queueing qpc vmacquire+0x28
+.fi
+.PP
+The console queue was full,
+.CW qflow()
+had blocked the process holding the interpreter, and every other
+interpreter was queued behind it on the VM lock.  The queue was full
+because the uart interrupt never arrived, and it never arrived because
+.CW gicenable()
+on the GICv2 path sets priority and enable and never writes
+.CW GICD_ITARGETSR .
+That register resets to zero \(em no target \(em and a uniprocessor GIC
+ignores it and delivers to cpu0 anyway, so the omission was invisible
+for exactly as long as the board ran on one processor.  With a second
+one present, every SPI was routed to nobody.  The GICv3 path a few lines
+below had always routed explicitly.
+.PP
+One byte fixes it, and it is the whole of "-smp 2 stops partway through
+the boot": four boots each of
+.CW secsched=0 ,
+.CW secsched=1
+and
+.CW secsched=1
+.CW parallelvm=1
+now reach an interactive shell, twelve of twelve, no panic.
+.PP
+What has not moved is cpu1 running Dis: the per-processor quantum
+counter still says cpu0 only, in all three arms.  The board is stable on
+two processors and interprets on one of them.  That is the next thing,
+and it is now the only thing.
