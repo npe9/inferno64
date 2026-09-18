@@ -736,10 +736,14 @@ pimag(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
  * both of the originals.
  *
  * So every free of an image pbmap() opened must call tkimgpathdrop()
- * first.  OPTbmap appears in three structures - TkLabel.bitmap, freed
- * by tkfreelabel(); TkCursor.bit, freed in ebind.c; and Imgargs in
- * image.c, whose two images are freed on four paths there - and with
- * the replacement below that is the whole list.
+ * first.  The list is whatever `grep OPTbmap libtk/*.c` says, which is
+ * nine structures, not the three a grep for "bitmap" suggests: the
+ * widget side is TkLabel.bitmap (freed by tkfreelabel), TkCursor.bit
+ * (ebind.c) and image.c's Imgargs, whose file and mask are freed on
+ * four paths there; the canvas side is a stipple on each of arc, line,
+ * oval, polygon, rectangle and text, and cbits' own bitmap, each freed
+ * where that item is.  A canvas's own back buffer is NOT in the list -
+ * it is an allocimage and was never named.
  */
 static struct Imgpath {
 	Image*	img;

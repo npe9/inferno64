@@ -177,6 +177,7 @@ tkcvsarcfree(TkCitem *i)
 
 	a = TKobj(TkCarc, i);
 	if(a->stipple)
+		tkimgpathdrop(a->stipple);
 		freeimage(a->stipple);
 	if(a->pen)
 		freeimage(a->pen);

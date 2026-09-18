@@ -171,6 +171,7 @@ tkcvspolyfree(TkCitem *i)
 
 	p = TKobj(TkCpoly, i);
 	if(p->stipple)
+		tkimgpathdrop(p->stipple);
 		freeimage(p->stipple);
 	if(p->pen)
 		freeimage(p->pen);

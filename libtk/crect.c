@@ -163,6 +163,7 @@ tkcvsrectfree(TkCitem *i)
 
 	r = TKobj(TkCrect, i);
 	if(r->stipple)
+		tkimgpathdrop(r->stipple);
 		freeimage(r->stipple);
 }
 

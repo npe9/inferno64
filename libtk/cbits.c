@@ -151,6 +151,7 @@ tkcvsbitfree(TkCitem *i)
 
 	b = TKobj(TkCbits, i);
 	if(b->bitmap)
+		tkimgpathdrop(b->bitmap);
 		freeimage(b->bitmap);
 }
 

@@ -155,6 +155,7 @@ tkcvsovalfree(TkCitem *i)
 
 	o = TKobj(TkCoval, i);
 	if(o->stipple)
+		tkimgpathdrop(o->stipple);
 		freeimage(o->stipple);
 	if(o->pen)
 		freeimage(o->pen);

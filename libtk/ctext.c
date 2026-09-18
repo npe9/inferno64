@@ -257,6 +257,7 @@ tkcvstextfree(TkCitem *i)
 
 	t = TKobj(TkCtext, i);
 	if(t->stipple != nil)
+		tkimgpathdrop(t->stipple);
 		freeimage(t->stipple);
 	if(t->pen != nil)
 		freeimage(t->pen);

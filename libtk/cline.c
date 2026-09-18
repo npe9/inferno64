@@ -190,6 +190,7 @@ tkcvslinefree(TkCitem *i)
 
 	l = TKobj(TkCline, i);
 	if(l->stipple)
+		tkimgpathdrop(l->stipple);
 		freeimage(l->stipple);
 	if(l->pen)
 		freeimage(l->pen);
