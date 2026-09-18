@@ -46,5 +46,7 @@ extern void	swcursordounlock(void);
 extern void	cursorcompose(void);
 extern void	screenstats(void);
 
+extern void	blankscreen(int);
+extern void	drawblankscreen(int);
 extern u32	blanktime;
 extern QLock	drawlock;

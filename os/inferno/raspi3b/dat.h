@@ -123,7 +123,7 @@ struct DevConf
 struct Mach
 {
 	/* OFFSETS OF THE FOLLOWING KNOWN BY l.s */
-	ulong	splpc;
+	uintptr	splpc;	/* 8 bytes: l.s stores R30 here with a 64-bit MOV */
 
 	int	machno;
 	Proc	*proc;
@@ -164,5 +164,16 @@ struct
 #define	MACHP(n)	((Mach*)(void*)&mach0)
 
 extern Mach mach0;
-extern Mach *m;
-extern Proc *up;
+/*
+ * m, up and curP are machine registers (R27/R26/R25), not memory, and
+ * they come from include/disreg.h so that this kernel and libinterp
+ * agree on which register is which: kencc assigns external registers
+ * per file in declaration order, and libinterp for aarch64 is built
+ * with DISCTXREG, so every aarch64 board has to declare the same three
+ * in the same order or its link has no definition for libinterp's curP.
+ * This board has one processor; the registers are here for the link and
+ * for the Dis context, not for SMP.  l.s's boot1 sets m and up before
+ * any C runs, and vectrap already saves and restores R25-R27 in the
+ * Ureg like every other general register.
+ */
+#include	"../../../include/disreg.h"

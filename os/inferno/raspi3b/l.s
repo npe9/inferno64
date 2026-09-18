@@ -173,6 +173,13 @@ TEXT	boot1(SB), 1, $-4
 	MOV	$stack+KSTACK(SB), R2
 	MOV	R2, RSP
 	MOV	$setSB(SB), R28
+	/*
+	 * m and up are registers (dat.h).  Establish them before any C
+	 * runs, not in machinit(), because everything from here on may
+	 * use them.
+	 */
+	MOV	$mach0(SB), R27
+	MOV	$0, R26			/* up: no process yet */
 	MOV	$0, R0
 	MOV	R0, dtbptr(SB)
 	BL	main(SB)
@@ -340,13 +347,17 @@ dead0:
 /*
  * Interrupt level.  DAIF.I is the whole of it -- MAXMACH is 1, so
  * masking IRQs is the only atomicity primitive this board needs.
+ *
+ * "MOV R30, 0(R27)" is a 64-bit store, so Mach.splpc has to be 8 bytes
+ * wide (dat.h): as a 4-byte ulong it wrote on through into Mach.machno
+ * at offset 4.  Harmless here, where machno is 0 anyway, and fatal on a
+ * board with a second processor -- virtarm64 found it.
  */
 TEXT	splhi(SB), 1, $-4
 	MRS	DAIF, R0
 	AND	$0x80, R0, R1		/* previous I-bit, for the return value */
 	MSR	$2, DAIFSet		/* imm bit1 = IRQ */
-	MOV	$mach0(SB), R2
-	MOV	R30, 0(R2)		/* m->splpc */
+	MOV	R30, 0(R27)		/* m->splpc */
 	MOV	R1, R0
 	RET	R30
 
@@ -358,8 +369,7 @@ TEXT	spllo(SB), 1, $-4
 	RET	R30
 
 TEXT	splx(SB), 1, $-4
-	MOV	$mach0(SB), R2
-	MOV	R30, 0(R2)
+	MOV	R30, 0(R27)		/* m->splpc */
 	CMP	$0, R0
 	BEQ	splxlo
 	MSR	$2, DAIFSet

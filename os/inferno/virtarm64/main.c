@@ -65,6 +65,7 @@ secmain(void)
 	if(secgic == 0)
 		clockinit();		/* this processor's own generic timer */
 	secalive = 5;
+	iprint("smp: cpu%d up: gic %d, secsched %d\n", m->machno, secgic, secsched);
 	spllo();			/* take interrupts on this processor */
 	/*
 	 * Into the scheduler.  The portable run queue is already locked

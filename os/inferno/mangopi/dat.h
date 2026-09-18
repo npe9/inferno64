@@ -123,7 +123,7 @@ struct DevConf
 struct Mach
 {
 	/* OFFSETS OF THE FOLLOWING KNOWN BY l.s */
-	ulong	splpc;
+	uintptr	splpc;	/* 8 bytes: l.s stores LINK here with a 64-bit MOV */
 
 	int	machno;
 	Proc	*proc;

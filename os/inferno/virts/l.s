@@ -129,7 +129,7 @@ TEXT	splhi(SB), 1, $-4
 	AND	R11, R10
 	MOV	R10, CSR(SSTATUS)
 	MOV	$mach0(SB), R12
-	MOV	LINK, 0(R12)		/* m->splpc */
+	MOV	LINK, 0(R12)		/* m->splpc; 8 bytes, so dat.h makes it uintptr */
 	RET
 
 TEXT	spllo(SB), 1, $-4

@@ -403,8 +403,14 @@ dead0:
 	B	dead0
 
 /*
- * Interrupt level.  DAIF.I is the whole of it -- MAXMACH is 1, so
- * masking IRQs is the only atomicity primitive this board needs.
+ * Interrupt level.  DAIF.I is the whole of it on one processor; with a
+ * secondary running, the portable Locks do the rest.
+ *
+ * "MOV R30, 0(R27)" is a 64-bit store, so Mach.splpc has to be 8 bytes
+ * wide (dat.h): as a 4-byte ulong this wrote through it into Mach.machno
+ * at offset 4 and zeroed it on every splhi.  Harmless on cpu0, whose
+ * machno is 0 already; on cpu1 it renamed the processor to 0 the first
+ * time interrupts were unmasked.
  */
 TEXT	splhi(SB), 1, $-4
 	MRS	DAIF, R0

@@ -8,8 +8,6 @@
 #include "version.h"
 
 extern Mach mach0;
-Mach *m;
-Proc *up;
 Conf conf;
 
 extern ulong kerndate;
@@ -120,6 +118,15 @@ main(void)
 		*p++ = 0;
 
 	machinit();
+#ifdef DISCTXREG
+	/*
+	 * curP is a register now (include/disreg.h), so libinterp's
+	 * "Pctx* curP = &_pctx" initialiser does not exist and nothing
+	 * else gives R25 a value.  This processor starts on the default
+	 * context and sched() moves it to the running Proc's.
+	 */
+	disctxinit();
+#endif
 	archreset();
 	confinit();
 	fpinit();

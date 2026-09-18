@@ -7179,3 +7179,267 @@ What has not moved is cpu1 running Dis: the per-processor quantum
 counter still says cpu0 only, in all three arms.  The board is stable on
 two processors and interprets on one of them.  That is the next thing,
 and it is now the only thing.
+.NH 2
+A 64-bit store into a 32-bit field renamed the second processor
+.LP
+.B "The counter was right: cpu1 ran nothing."
+.CW runproc()
+picks a process per processor, so the cheapest way to ask whether cpu1
+was idle or unscheduled was to count picks per
+.CW machno
+and print the first one on each.  cpu0 printed
+.CW "first pick on cpu0: 1 \(lqinterp\(rq" ;
+cpu1 printed nothing at all, and the boot line already said
+.CW "cpu1 clock ticks 0 -> 0 in 50ms" .
+So this was not affinity holding processes on cpu0, and not a lost
+wakeup.  cpu1 was not in the scheduler.
+.PP
+.B "It was in the scheduler.  It just was not cpu1 any more."
+Three
+.CW iprint()
+calls down
+.CW secmain() ,
+each printing
+.CW m ,
+.CW &mach1
+and
+.CW mach1.machno ,
+put the change in one gap:
+.IP
+.nf
+smp: cpu1 up: gic 0, secsched 1
+smp: A m 0x4018f080 mach1 0x4018f080 machno 0 0
+.fi
+.PP
+.CW m
+is right \(em it is
+.CW &mach1
+\(em and one line earlier
+.CW m->machno
+read 1.  Between the two there is one statement:
+.CW spllo() .
+Unmasking interrupts on the secondary renamed it to processor 0, which
+is why it then shared cpu0's
+.CW active.machs
+slot, its
+.CW MACHP(m->machno) ,
+and everything else keyed by number.
+.PP
+The cause is one instruction in
+.CW l.s :
+.IP
+.nf
+TEXT	splhi(SB), 1, $-4
+	...
+	MOV	R30, 0(R27)		/* m->splpc */
+.fi
+.PP
+.CW MOV
+on aarch64 is a 64-bit store, and
+.CW Mach.splpc
+was a
+.CW ulong
+\(em four bytes, with
+.CW Mach.machno
+immediately after it at offset 4.  Every
+.CW splhi
+and every
+.CW splx
+wrote eight bytes through a four-byte field and cleared the processor's
+number.  On cpu0 that stores 0 over a 0 and is invisible; pc64 had
+already declared
+.CW splpc
+.CW uintptr
+and never saw it.  It only bites a processor whose number is not zero,
+which is to say it has been waiting in this file since the board was
+written, for the first boot that had one.
+.PP
+The fix is the declaration, not the instruction:
+.CW splpc
+is a
+.CW uintptr
+now, on virtarm64 and on raspi3b, whose
+.CW l.s
+had the identical store.  With it, cpu1 keeps its number, enters
+.CW schedinit() ,
+and picks processes:
+.IP
+.nf
+sched: first pick on cpu0: 1 "interp"
+sched: first pick on cpu1: 2 "closeproc"
+dis: first Dis quantum on cpu0
+dis: first Dis quantum on cpu1
+.fi
+.PP
+That is the second processor interpreting Dis on this board, which is
+what the whole
+.CW secsched
+option existed to reach.
+.PP
+.B "Every 64-bit board in the tree had the same store."
+The declaration is the bug, so the check is mechanical: which boards
+store a whole register into
+.CW splpc ?
+.CW pc64
+had already been given
+.CW uintptr .
+The six riscv64 boards \(em
+.CW virt ,
+.CW virts ,
+.CW spike ,
+.CW sifiveu ,
+.CW shakti ,
+.CW mangopi
+\(em all write
+.CW "MOV LINK, 0(R12)" ,
+which on rv64 is an eight-byte
+.CW SD ,
+into the same four-byte field with
+.CW machno
+behind it.  They are uniprocessor, so they have been overwriting a zero
+with a zero and will go on doing so until one of them has a second
+processor; the declaration is
+.CW uintptr
+on all six now, which costs nothing and removes the trap.  The three
+32-bit boards
+.CW ( armv7 ,
+.CW virt32 ,
+.CW virt32s )
+use
+.CW MOVW
+and were never wrong.  All seven riscv kernels build and boot to
+.CW "Initial Dis"
+and a first Dis quantum with no panic after the change.
+.NH 2
+Two build breaks that stale objects had been hiding
+.LP
+.B "raspi3b could not link at all."
+Giving libinterp's
+.CW curP
+a register (
+.CW DISCTXREG ,
+include/disreg.h) was done for virtarm64 and pc64, but the flag that
+turns it on for
+.I libinterp
+lives in
+.CW mkfiles/mkfile-Inferno-aarch64 ,
+which is every aarch64 board's libinterp.  So
+.CW libinterp.a
+referenced
+.CW curP
+as an external register and raspi3b, which never got the flag, had
+nothing to define it:
+.IP
+.nf
+dbgxec: undefined external: curR in dbgxec
+dbgxec: undefined external: curP in dbgxec
+.fi
+.PP
+An aarch64 board cannot opt out, because the archive is shared.  So
+raspi3b now takes the same three registers from the same header \(em
+.CW m
+R27,
+.CW up
+R26,
+.CW curP
+R25 \(em with
+.CW -DDISCTXREG
+in its mkfile, the
+.CW "Mach *m"
+and
+.CW "Proc *up"
+globals in its
+.CW main.c
+deleted,
+.CW l.s 's
+.CW boot1
+setting R27 and R26 before any C runs, and
+.CW disctxinit()
+after
+.CW machinit() .
+Its
+.CW vectrap
+already saved and restored R25\-R27 in the Ureg.  The board is
+MAXMACH 1; the registers are there for the link and for the Dis
+context, not for SMP.  It boots:
+.CW RASPI3B-OK ,
+.CW "DRAW-OK 640x480" ,
+first Dis quantum, clock ticking.
+.PP
+.B "And devdraw.c had not compiled for either arm64 board in some time."
+Once
+.CW dat.h
+changed,
+.CW devdraw.7
+had to be rebuilt, and it would not:
+.IP
+.nf
+../port/devdraw.c:2214 function not declared: blankscreen
+.fi
+.PP
+.CW drawblankscreen()
+calls
+.CW blankscreen() ,
+which
+.CW pc64/screen.h
+declares and no other board's copy of
+.CW screen.h
+did.  Each board defines the function
+.CW ( screenbcm.c ,
+.CW screenarm.c )
+so the link was fine; only the compile was not, and it had been hidden
+for as long as the objects went untouched.  Eleven boards' copies of
+.CW screen.h
+now declare
+.CW blankscreen
+and
+.CW drawblankscreen .
+.PP
+The lesson is the one already written down as
+.I "build output filtering hid a failure" ,
+and this session repeated it:
+.CW "mk install | grep -i rror"
+matches neither
+.CW "function not declared"
+nor
+.CW "undefined external" ,
+so both breaks were invisible to the check that was being used.  Exit
+status and the tail of the whole log, not a keyword grep.
+.PP
+Separately,
+.CW nucleof303
+does not link on this branch \(em
+.CW "utflen: span looping !"
+out of
+.CW tl
+\(em and did not before any of this work; no file in these commits is
+in its build.  It is recorded here so it is not attributed to them.
+.PP
+.B "Measured, one binary, four boots an arm."
+.IP
+.nf
+secsched=0 pvm=0:  4 boots  0 panic  4 shell  cpu1 Dis 0
+secsched=1 pvm=0:  4 boots  0 panic  4 shell  cpu1 Dis 4
+secsched=1 pvm=1:  4 boots  0 panic  4 shell  cpu1 Dis 4
+.fi
+.PP
+The first arm is the control: with the secondary out of the scheduler
+nothing changes, which is what says the other two arms measure the
+secondary and not the fix.  On the parallel arm the logs carry
+.CW "nvm: 3 hold the vm"
+and
+.CW "nvm: 4 hold the vm"
+\(em three and four interpreters inside
+.CW xec()
+at once \(em and the run-queue observations come from
+.CW cpu0
+and
+.CW cpu1
+both.  That is Dis running in parallel on two arm64 processors.
+.PP
+The batch before this one is not quotable and is not quoted: it ran
+against a binary whose
+.CW devdraw.7
+predated its own sources, which is how the compile break above was
+found.  Every number here is from a kernel built with its objects
+removed first, checked by exit status.
