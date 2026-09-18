@@ -3392,10 +3392,14 @@ soakline(void)
 
 	pn = poolread(pbuf, sizeof pbuf - 1, 0);
 	pbuf[pn] = 0;
-	/* the heap line is the second; keep this to one console line */
-	p = strchr(pbuf, '\n');
-	if(p != nil){
-		p++;
+	/*
+	 * Find the heap pool by name, not by position: picking "the second
+	 * line" prints a different pool's numbers the day one is added or
+	 * reordered, and nothing in the log would say so.
+	 */
+	if((p = strstr(pbuf, " heap")) != nil){
+		while(p > pbuf && p[-1] != '\n')
+			p--;
 		if((e = strchr(p, '\n')) != nil)
 			*e = 0;
 	}else

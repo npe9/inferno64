@@ -6637,6 +6637,17 @@ The lost-increment direction above is unmeasured, and that is the
 direction that corrupts rather than the one that stalls.
 .PP
 Both are measurements, not designs, and neither is a one-batch question.
+.PP
+.B "Superseded, and the list is now shorter and worse."
+The long run below supplies the first of those and answers it well \(em
+twenty minutes, no faults, a flat heap.  It also turns the context
+growth from a property into a rate: at
+.CW "-smp 2"
+a boot goes 42, 83, 134 contexts across those twenty minutes and is
+still climbing, so it reaches the pool in about another half hour.  That
+is the blocker, ahead of both bullets above: as it stands
+.CW parallelvm=1
+does not survive an hour at two processors.
 .NH 2
 The idle-collector table, re-measured
 .PP
@@ -6697,8 +6708,15 @@ No panic, no chantest
 .CW FAIL
 and no bad frame in either
 .CW parallelvm=1
-arm over twenty minutes, and the Dis heap is flat: it ends where it
-started, within a few tens of kilobytes, in all three.  That is the
+arm over twenty minutes, and the Dis heap in use is flat: it ends where
+it started, within a few tens of kilobytes, in all three.  Its
+.I high-water
+mark is not, quite \(em at
+.CW "-smp 4"
+it reads 658, 690 and 704KB at two, ten and twenty minutes, which is
+small but goes one way at every sample.  Said here because that is the
+same shape as the contexts below, and twenty minutes is not long enough
+to tell a slow rise from noise.  That is the
 measurement the chapter above said was missing, and it does not change
 the picture the 90-second boots gave.
 .NH 2
