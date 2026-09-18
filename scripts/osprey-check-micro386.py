@@ -46,7 +46,8 @@ def main():
     q = subprocess.Popen(['qemu-system-i386', '-m', '256', '-smp', '2',
                           '-display', 'none', '-monitor', 'none', '-no-reboot',
                           '-serial', 'file:' + log,
-                          '-kernel', KERNEL, '-append', 'console=0'],
+                          '-kernel', KERNEL,
+                          '-append', 'console=0 *ospreytaskbench=20000'],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # until the idle line or a panic, rather than for the whole timeout
     t = ''
@@ -91,6 +92,22 @@ def main():
                     m is not None and m.group(1) == '4'))
     results.append(("and it reaches its idle loop rather than panicking",
                     'osprey micro: idle' in t and 'panic' not in t))
+    #
+    # The talk's own quantity: a send, a receive and a context switch
+    # between two tasks, which it measures at 270 nanoseconds.  #O/bench
+    # measures it from a shell and a microkernel has none, so the
+    # configuration asks for it (*ospreytaskbench) and the boot makes it
+    # before idling.  taskswitch is the machine layer's, so this is as
+    # much the machine's number as the kernel's, and it is asked of each
+    # object type separately for that reason.  The criterion is that a
+    # number came back at all and is the right quantity - tens of
+    # nanoseconds, not microseconds - rather than any particular value,
+    # which is a guest's clock under an emulator.
+    #
+    mb = re.search(r'osprey micro: \d+ task round trips, \d+ cycles each, (\d+) ns each,'
+                   r'.*so (\d+) ns a switch', t)
+    results.append(("and the talk's send-receive-switch is measured between two tasks: tens of nanoseconds a round trip, the machine layer's own taskswitch under it",
+                    mb is not None and 0 < int(mb.group(1)) < 1000 and 0 < int(mb.group(2)) < 1000))
     results.append(("and a kernel task exits through pexit and the stubbed group closes cleanly",
                     'osprey micro: a kernel task exited, teardown clean' in t
                     and 'panic' not in t))

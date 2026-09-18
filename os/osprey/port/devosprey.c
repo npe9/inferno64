@@ -663,6 +663,7 @@ static QLock ospreylock;
 static Rendez ospreyroomrend[16];
 static void ospreyconsdrained(Ospreyproc*);	/* the console FIFO, fed when its task frees a slot */
 static void ospreyconsrelease(Ospreyproc*, uvlong);	/* a slot given up rather than pushed */
+static void taskbench(long, uvlong*, uvlong*);	/* the talk's quantity, measured between two tasks */
 static void ospreyconscheck(Ospreyproc*, uvlong, uvlong);
 static void ospreyconspushed(Ospreyproc*, uvlong, uvlong);
 static Rendez ospreyreplyrend[16];
@@ -6388,6 +6389,7 @@ ospreymicroboot(void)
 	Ospreyproc *p;
 	uvlong arg[Ospreynarg], op;
 	long status;
+	char *s;
 	int i, n;
 
 	print("osprey micro: a task, no plan 9 boot\n");
@@ -6545,6 +6547,48 @@ ospreymicroboot(void)
 		print("osprey micro: a kernel task exited, teardown clean\n");
 	else
 		print("osprey micro: kernel task never ran\n");
+
+	/*
+	 * What a task that is not a Proc costs, measured here as well.
+	 * #O/bench measures it from a shell, and a microkernel has none:
+	 * this configuration boots into a task and never reaches a prompt,
+	 * so the same measurement is asked for in the configuration
+	 * (*ospreytaskbench=N) and made before idling.  It is the talk's
+	 * own quantity - a send, a receive and a context switch - between
+	 * two tasks with an eight-kilobyte stack each, and taskswitch is
+	 * the machine layer's, so the number is the machine's as much as
+	 * the kernel's.  That is why it is worth having on both object
+	 * types rather than on the one with a shell.
+	 */
+	if((s = getconf("*ospreytaskbench")) != nil){
+		long count;
+		uvlong pertrip, perread, hz;
+
+		count = strtol(s, nil, 0);
+		if(count < 1)
+			count = 1;
+		if(count > 20000)	/* as #O/bench: interrupts are off in it */
+			count = 20000;
+		qlock(&ospreylock);
+		if(waserror()){
+			qunlock(&ospreylock);
+			print("osprey micro: task bench failed: %s\n", up->errstr);
+		} else {
+			taskbench(count, &pertrip, &perread);
+			poperror();
+			qunlock(&ospreylock);
+			hz = m->cpuhz == 0 ? 1 : m->cpuhz;
+			print("osprey micro: %ld task round trips, %llud cycles each,"
+				" %llud ns each, at %llud hz; two switches a trip,"
+				" so %llud ns a switch; one read of the cycle counter"
+				" is %llud ns\n",
+				count, pertrip,
+				m->cpuhz == 0 ? 0 : pertrip*1000000000ULL/hz,
+				m->cpuhz,
+				m->cpuhz == 0 ? 0 : pertrip*1000000000ULL/hz/2,
+				m->cpuhz == 0 ? 0 : perread*1000000000ULL/hz);
+		}
+	}
 
 	print("osprey micro: idle\n");
 	for(;;)

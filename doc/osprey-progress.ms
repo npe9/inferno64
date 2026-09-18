@@ -2084,6 +2084,21 @@ tree.  Nothing builds it, which is why nobody had noticed.  A non-x86
 board is written from nothing.  The plan's "adapter selected by OBJTYPE"
 has one adapter to select.
 .PP
+.I "Corrected, 18 September 2026."
+Every clause of the paragraph above is now false, and it is left standing
+because what it said was true when it was written and the work that
+falsified it is the answer to it.  8a and 8l have the four instructions;
+the
+.CW JMPF
+is written in the instructions this assembler does have; and there are
+two adapters, the second measured by twenty-six criteria in the sweep.
+What is still true is the last sentence's spirit rather than its letter:
+a non-x86 board is still written from nothing, and 386 is the plan's
+adapter claim tested rather than the talk's second machine met, both
+object types being x86 under the same emulator.  See
+.I doc/osprey-gap.ms ,
+"Reconciled again, 18 September 2026".
+.PP
 .B "10.  The number: 270 nanoseconds."
 The talk measures a send, a receive and a context switch at 270 ns
 between tasks of the shape slide 25 dumps \- an 8 KB task with
@@ -2096,7 +2111,9 @@ sweeps, four microseconds in the work.  The microkernel's tasks are
 still Procs.  A task of the talk's shape on the microkernel, and the
 number measured on hardware, is the piece; it is structural, and it is
 last because everything above it is correct without it.  What a task
-that is not a Proc costs is measured now, in 10a below.
+that is not a Proc costs is measured now, in 10a below, and on both
+object types since 18 September: 71 nanoseconds a round trip on amd64
+and 81 on 386, each read by its own microkernel check.
 .PP
 The microkernel's own number, between two personalities, is measured
 now \- 56 \(mcs a request after item 2 of the section on making the
@@ -2135,17 +2152,14 @@ other side is what the same exchange costs when there is no scheduler
 in it, and that is now measured rather than assumed.
 .PP
 .CW taskswitch
-.CW os/osprey/pc64/l.s ; (
-amd64 only, since the 386 machine layer in this tree does not assemble
-at all \- 8a rejects the
-.CW FXSAVE ,
-.CW FXRSTOR
+.CW os/osprey/pc64/l.s ,
 and
-.CW LDMXCSR
-in its
-.CW l.s \-
-and a line nobody can assemble is a line nobody can prove) leaves one
-task and enters another in one instruction stream, and
+.CW os/osprey/pc/l.s
+since 18 September: the reason given here for amd64 only \- that the 386
+layer does not assemble at all, and a line nobody can assemble is a line
+nobody can prove \- stopped being true when 8a learned the four
+instructions) leaves one task and enters another in one instruction
+stream, and
 .CW devosprey.c
 has two tasks with an eight-kilobyte stack each \- the size the talk
 dumps \- that pass a message by switching straight from one to the

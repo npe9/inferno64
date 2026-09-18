@@ -460,3 +460,110 @@ Board-bound: the raw-flash storage tier, a non-amd64 second machine, and
 the hardware latency figure each want a board this tree has no Osprey
 target for.  Everything else the paper and the talk describe is built
 and checked.
+.NH 1
+Reconciled again, 18 September 2026: the second object type
+.PP
+This is an audit of the tree against the paper and the talk, made after
+the 386 work.  It says what the survey above and the progress doc's
+item-by-item section got wrong, what is now true that was not, and what
+is unchanged.
+.NH 2
+Two claims in the progress doc were stale
+.PP
+Item 9 read: Osprey builds for amd64 only; 8a here does not know
+.CW FXSAVE ,
+.CW FXRSTOR
+or
+.CW LDMXCSR ,
+so
+.CW os/osprey/pc/l.s
+has never been through an assembler in this tree; and the plan's
+"adapter selected by
+.CW OBJTYPE "
+has one adapter to select.  Every clause of that is now false.  The four
+instructions are in 8a and 8l, the
+.CW "JMPF syscall(SB)"
+that stopped the same file is written in the instructions this assembler
+has, and there are two adapters.
+.PP
+Item 10a read that the task pair was measured on amd64 only "since the
+386 machine layer in this tree does not assemble at all \- and a line
+nobody can assemble is a line nobody can prove".  The reason is gone:
+.CW taskswitch
+is in
+.CW os/osprey/pc/l.s
+as well now.  Both items are corrected where they stand.
+.NH 2
+What the second object type is, and what it is not
+.PP
+It is: a 386 kernel that builds from the same port, policy and adapter
+sources, boots under qemu through its own multiboot header, enters user
+mode, starts its second processor, sets a frame buffer for itself, takes
+real keyboard and mouse interrupts into semaphores its user drivers
+select on, and runs the library-OS program that opens and reads a file
+at a user-mode server over the ring.  Twenty-six criteria in the sweep,
+ten in
+.CW osprey-check-micro386.py
+and sixteen in
+.CW osprey-check-user386.py ,
+each mutation-tested where it measures rather than observes.
+.PP
+It is not a second machine in the talk's sense.  Both object types are
+x86 under the same emulator on the same host; the talk's
+.CW kpc32
+is a board.  There is no 386 userland and no 386 personality \- the
+library the personality needs is measured in the progress doc and the
+system-call stubs are the piece to write \- so the 386 line stops at the
+microkernel and the minimal program above it.  The two-machine check is
+amd64 on both sides.  And
+.CW iogrant
+with the TSS I/O-permission bitmap the 386 adapter grew is written and
+unexercised: the drivers that ask for ports are the personality's.
+.NH 2
+The talk's number, now measured on both
+.PP
+The talk measures a send, a receive and a context switch together at 270
+nanoseconds between tasks of the shape slide 25 dumps.  This tree's
+answer to that quantity is the task pair in
+.CW devosprey.c \-
+two tasks with an eight-kilobyte stack each, switching straight from one
+to the other through the machine layer's
+.CW taskswitch \-
+and until this audit it was measured on amd64 only, from a shell, by
+writing to
+.CW #O/bench .
+A microkernel has no shell, so the measurement is asked for in the
+configuration instead, as
+.CW *ospreytaskbench ,
+and made at the end of the microkernel boot; both microkernel checks
+read it now:
+.IP \(bu 2
+amd64: 71 cycles a round trip, 71 ns, 35 ns a switch.
+.IP \(bu 2
+386: 81 cycles a round trip, 81 ns, 40 ns a switch.
+.PP
+Both at about a gigahertz under QEMU, where one read of the cycle
+counter is 33 to 34 ns \- so a switch costs about what reading the clock
+costs, on either object type.  Against the talk's 270 ns the quantity is
+the same quantity, and that is as far as the comparison goes: this is an
+emulator, not the talk's hardware, and the number that is still not
+measured is the one on a board.
+.PP
+What this does not say, and the earlier text was careful about: the
+microkernel's ordinary request path still goes between Procs through the
+scheduler, at 46 to 59 microseconds a round trip.  The task pair is the
+measurement of what that shape costs, not a replacement for it.
+.NH 2
+Unchanged
+.PP
+The structural remainder of 5 September stands:
+.CW rfork(RFPROC)
+is refused by a library that cannot split its caller's flow of control,
+which is why rio on
+.CW p964
+is relinked rather than unmodified.  The board-bound items stand: the
+raw-flash tier, a non-x86 second machine, and the hardware latency
+figure each want a board this tree has no Osprey target for.  Adding a
+second object type does not touch any of them, and it is worth saying so
+plainly: 386 is the plan's adapter claim tested, not the talk's second
+machine met.
