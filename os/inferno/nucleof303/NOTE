@@ -16,25 +16,30 @@ one that still links -- no root file system, no Limbo, no ip, no ssl, no
 capabilities, no profiling:
 
 	        was      is
-	text	259416	279376	  flash is 524288, so this fits
-	data	 50368	 24704
+	text	259416	281960	  flash is 524288, so this fits
+	data	 50368	 23136
 	bss	 38560	 24392
 		------	------
-		 88928	 49096	  RAM is 81920, so this now fits
+		 88928	 47528	  RAM is 81920, so this now fits
 
-The 39832 came from four changes, none of them to this directory: the
-Dis tracker's and the pool history's tables are allocated on demand
+The 41400 came from changes elsewhere, none of them to this directory:
+the Dis tracker's and the pool history's tables are allocated on demand
 rather than reserved (os/inferno/port/{alloc,heap}.c), the console log
-is sized per board by KMESGSIZE, and the C string literals are linked
-into the text segment by tl -t instead of being copied into RAM at boot.
-See doc/xip.ms.
+is sized per board by KMESGSIZE, the C string literals and the Runtab
+tables are linked into the text segment instead of being copied into
+RAM at boot, and NERR is 24 here rather than 64.  See doc/xip.ms.
 
-What is left is the pool floor: roughly 78K of kernel allocations before
-anything is loaded, of which the largest items are the Proc array's
-kernel stacks, the Dis type descriptors and addprog.  That is still more
-than this board's whole SRAM, so a Limbo module has nowhere to live.
-The floor is portable code and is measured in doc/xip.ms; it is not a
-board problem and it is not fixed here.
+Two things are left, and neither is a board problem.
+
+The Proc array is conf.nproc*sizeof(Proc) out of xalloc, which does not
+appear in #c/memory because it is not pool memory: 8 procs of 2420
+bytes, 19360, on top of the figures above.  That is 66888 of the 81920.
+
+And the pool floor: the kernel allocates before anything is loaded, and
+on mps2's device set that is about 97000 at a shell prompt.  Even the
+14000 this board has left after the Proc array is not enough for the
+kernel's own allocations, let alone a Limbo module.  The floor is
+portable code and is measured in doc/xip.ms.
 
 The second wall
 ---------------
