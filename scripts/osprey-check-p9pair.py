@@ -184,6 +184,23 @@ def main():
     rtus = (int(rt.group(1)) * 1000000.0 / int(hz.group(1))) if hz and rt else None
     m = re.search(r"pair-client: read (\d+) entries from the server personality's exported root", t)
     results = [
+        #
+        # The console item's own proof, which until now was a person
+        # reading the kernel's exit lines: every print goes through the
+        # console task once the task exists, and no slot the task was
+        # pushing was rewritten under it.  Both were claimed as "all
+        # zero" in doc/osprey-progress.ms, and the second turned out to
+        # be zero because the load never reached the bug rather than
+        # because the mechanism was sound - a program writing twice more
+        # to the console than this one does made it fire every run.  The
+        # counters are read here so that the claim is checked and not
+        # merely printed.
+        #
+        ("every print goes through the console task once the task exists: none straight to the port, none through uartputs afterwards, none through the bare console",
+         re.search(r'osprey console: \d+ bytes of this went out through the console task, 0 straight to the port', t) is not None
+         and re.search(r'osprey console: \d+ bytes went to the port through uartputs, 0 of them after the task took over.*and 0 through kdebugputs', t) is not None),
+        ("and no console slot was rewritten under the task: the fill-to-push checksums and the in-flight count are zero",
+         re.search(r'osprey console: 0 slots found changed between fill and push, 0 refilled while in flight', t) is not None),
         ("the real-time clock is read in user space, by the personality's own outb/inb on the CMOS ports, no kernel rtc device in the data path",
          re.search(r'p9 rtc: read the CMOS clock in user space by its own outb/inb \(ports 0x70/0x71\): \d{4}-\d\d-\d\d \d\d:\d\d:\d\d', t) is not None),
         ("and the task hands the kernel the time of day by request: the kernel read no clock at boot, and the seconds it was given are the host's own time within ten minutes",

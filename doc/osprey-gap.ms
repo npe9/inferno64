@@ -554,6 +554,36 @@ microkernel's ordinary request path still goes between Procs through the
 scheduler, at 46 to 59 microseconds a round trip.  The task pair is the
 measurement of what that shape costs, not a replacement for it.
 .NH 2
+A proof that was prose, and was fragile
+.PP
+The audit mapped every criterion in
+.CW scripts/
+to what the sources describe, and one item's proof turned out to be a
+person reading a line rather than a check.  The console item \- "the
+console never bypasses its task" \- rested on the kernel's own summary
+at exit:
+.CW "0 straight to the port" ,
+and the console slots "checksummed at fill and at the end of their push,
+and a fill landing on the slot in flight is counted: all zero".  Nothing
+read those lines but a reader.
+.PP
+The second half of that was true and fragile.  The counters were zero
+because the load never reached the bug, not because the mechanism was
+sound: the kernel decided a slot was free by counting seventeen fills,
+which is one short of what sixteen queued and one in flight need, and a
+program writing twice as often to the console as this one does made it
+fire on every run.  That is fixed, and the counters that reported it are
+the reason it was findable at all.
+.PP
+Both halves are criteria now
+.CW ( osprey-check-p9pair.py ,
+103): every print through the task once the task exists, and the
+fill-to-push checksums and in-flight count zero.  The first is
+mutation-tested \- a kernel made to write the port directly fails it,
+along with four of its neighbours.  The second does not discriminate
+against the kernel that had the bug, for the reason the bug was missed
+in the first place, and the script says so where it stands.
+.NH 2
 Unchanged
 .PP
 The structural remainder of 5 September stands:
