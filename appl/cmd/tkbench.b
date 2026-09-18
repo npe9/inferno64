@@ -143,7 +143,26 @@ init(nil: ref Draw->Context, argv: list of string)
 		# that all describe themselves, so this is the item table's
 		# node path against the item table's drawing path rather
 		# than a mixture of the two.
+		#
+		# TWO rows, because a canvas has two routes and they measure
+		# different things.  Buffered - the DEFAULT - the items are
+		# drawn into an image the canvas keeps and c->update is
+		# cleared, so a STEADY-STATE repaint is a background fill and
+		# a blit and the item draw methods do not run at all: that
+		# row is the honest cost of a default canvas, and neither
+		# drawing path is in it.  Unbuffered, every repaint runs the
+		# items, which is the row that compares the two paths.
+		#
+		# This was measured, not reasoned: a counter in
+		# tkcvsrectdraw() reports fewer than 50 calls across a whole
+		# buffered run and 117200 across an unbuffered one.
 		("canvas",	"canvas %s -width 160 -height 60"+
+				";%s create rectangle 4 4 60 28 -fill #C0D8F0 -outline black"+
+				";%s create oval 70 4 130 28 -fill #C0F0C0 -outline black"+
+				";%s create line 8 36 150 46 -width 2 -fill #204080"+
+				";%s create polygon 8 50 40 50 24 58 -fill #A0A0F0"+
+				";%s create text 60 54 -text {items} -anchor w"),
+		("canvas none",	"canvas %s -width 160 -height 60 -buffer none"+
 				";%s create rectangle 4 4 60 28 -fill #C0D8F0 -outline black"+
 				";%s create oval 70 4 130 28 -fill #C0F0C0 -outline black"+
 				";%s create line 8 36 150 46 -width 2 -fill #204080"+

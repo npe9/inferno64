@@ -1350,30 +1350,49 @@ there was never speed on the table here anyway.
    item list: with a drawing item last it failed by 13209 bytes, with a
    node item last by 38409.
 
-   **The prediction the text widget's cost made was wrong, and that is
-   worth as much as if it had been right.** When `text` came out 13%
-   dearer through nodes, the reason given was that it emits a node per
-   item *per line* where every widget before it emitted a fixed
-   handful, and the note said that was "the number to watch when
-   `canvas` is looked at, since a canvas is nothing but items". So
-   `tkbench(1)` grew a canvas row — five items of four kinds that all
-   describe themselves, and a spec that may be several commands
-   separated by semicolons, because an empty canvas repaints a
-   background and measures nothing about the item table.
+   **The text widget's prediction held, and the first measurement of it
+   was worthless.** When `text` came out dearer through nodes, the
+   reason given was that it emits a node per item *per line* where every
+   widget before it emitted a fixed handful, and the note said that was
+   "the number to watch when `canvas` is looked at, since a canvas is
+   nothing but items". So `tkbench(1)` grew a canvas row — five items of
+   four kinds that all describe themselves, and a spec that may be
+   several commands separated by semicolons, because an empty canvas
+   repaints a background and measures nothing about the item table.
 
-   A canvas is **22.94µs** drawn and **23.60µs** through nodes, about
-   3%, steady over repeated runs, where `text` in the same runs is 5.74
-   against 6.77. So "nothing but items" was the wrong reading of the
-   text figure. What matters is not how many nodes a widget emits but
-   what the node replaces: a text line's direct drawing is one cheap
-   `string` call, so the node is a large fraction of it, while a canvas
-   item's is `fillpoly`, `ellipse` or `bezspline`, and the node
-   describing it is noise beside the rasterising. The cost of the node
-   path tracks the *cheapness of what it describes*, not the count.
+   That row came out at 22.94µs drawn against 23.60µs through nodes,
+   about 3%, steady over repeated runs, and the conclusion drawn from it
+   — that the prediction was wrong and the node path's cost tracks the
+   cheapness of what it describes rather than the count — **is withdrawn.
+   The row was timing a blit.** The canvas was created with no `-buffer`
+   option, which is the default, which is buffered; `tkdrawcanv()`
+   clears `c->update` at the end of every repaint and runs the item loop
+   only when the clip of the update rectangle is non-empty, so the items
+   were drawn once at creation and every timed repaint after that was a
+   background fill and a blit. Which is exactly the fact this session
+   had just spent its time discovering in `tkofftest(1)` and fixing with
+   `cvdirty` — reintroduced one commit later in the benchmark. The
+   stability across runs was not evidence of anything: two runs of a
+   worthless measurement agree.
 
-   The fixed cost of a repaint is unchanged and still the real gap:
-   56.74µs drawn against 112.80µs through nodes for an empty toplevel,
-   the same 59-against-111 recorded above with the same diagnosis.
+   A counter in `tkcvsrectdraw()` settles it without inference: **fewer
+   than 50 calls across a whole buffered run, 117200 across an
+   unbuffered one.**
+
+   With `-buffer none` the real figures are **10.2µs drawn against
+   11.3–11.7µs through nodes**, about 12%, beside `text`'s 5.8 against
+   6.75, about 16%, in the same runs. So the prediction held: a widget
+   whose drawing is in its contents costs measurably more through nodes,
+   and the two content-heavy widgets are the two that do.
+
+   The honest shape is two rows rather than a corrected one, because a
+   buffered canvas's steady-state repaint genuinely is a blit — that is
+   what buffering is *for*. And that row says something neither node
+   comparison does: the blit is **22.9µs** where drawing all five items
+   unbuffered is **10.2µs**. Buffering a canvas costs more than twice
+   what redrawing it costs, at this size, and for a default canvas the
+   direct-versus-nodes question barely applies, because in steady state
+   neither path runs.
 
    A canvas does not *join* the walk even when its items are nodes: its
    items usually go into its own buffer, and a tree belongs to one

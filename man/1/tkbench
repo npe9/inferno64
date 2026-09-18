@@ -134,6 +134,21 @@ emu\-cocoa \-r. /dis/sh.dis \-c tkbench
 .IR tkgallery (1),
 .IR tkofftest (1)
 .SH BUGS
+The
+.B canvas
+row measures no drawing path at all, and that is what it is for.
+Buffered is a canvas's default, and a buffered canvas re-runs its item
+draw methods only while something in it has changed; the repaint that
+follows is a background fill and a blit.
+So that row is the honest cost of a default canvas in steady state,
+and the row that compares the drawing paths is
+.BR "canvas none" .
+Measured rather than reasoned: a counter in
+.I tkcvsrectdraw
+reports fewer than 50 calls across a whole buffered run and 117200
+across an unbuffered one.
+Every other row in the table draws on every repaint.
+.PP
 It needs a window system to allocate a display, so it runs under
 .I emu\-cocoa
 and not
