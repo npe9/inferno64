@@ -1593,7 +1593,13 @@ checkscene()
 	must(top, ".cv create line 126 50 250 84 -width 2 -smooth true -arrow both");
 	must(top, ".cv create polygon 8 92 60 92 34 116 -fill #A0A0F0");
 	must(top, ".cv create text 70 100 -text {canvas text} -anchor w");
+	# Two bitmaps, because a canvas bitmap item branches on DEPTH and
+	# the two arms draw differently.  caution.bit is m8 and is drawn as
+	# a source; uparrow.bit is k1, one bit, and is a mask stencilled in
+	# the foreground colour over a background fill.  With only the m8
+	# one here the second arm was written and never walked.
 	must(top, ".cv create bitmap 200 100 -bitmap caution.bit");
+	must(top, ".cv create bitmap 236 100 -bitmap uparrow.bit");
 	# A SMOOTH polygon, which is the only thing that reaches the spline
 	# node on this path: an ordinary polygon's outline is a stroked
 	# polyline and no node says that.
