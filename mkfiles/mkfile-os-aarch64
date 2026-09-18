@@ -18,7 +18,11 @@ CFLAGS=		-wFV -I$ROOT/Inferno/aarch64/include -I$ROOT/include
 ANSICPP= -p
 
 LD=		7l
-LDFLAGS=
+# -t: put C string constants in the text segment rather than the data
+#     segment (utils/7l/pass.c, symbol type SSTRING).  A board that runs
+#     its text from flash, or simply does not want a copy of every print
+#     format in RAM, keeps them there.  See doc/xip.ms.
+LDFLAGS=	-t
 
 SYSLIBS=	#-lc
 

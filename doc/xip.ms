@@ -2257,6 +2257,38 @@ under a
 .CW GLOBL ,
 which is what the boards do now, boots on all five.
 .PP
+The string constants go too.  Both linkers had the same unrestricted
+.CW -t
+that
+.CW tl
+had \- any symbol with a
+.CW D_SCONST
+initialiser, which includes a writable
+.CW "char x[] = \(fm...\(fm"
+\- so all three are now restricted to
+.CW .string
+first.  Neither board's link rule used
+.CW $LDFLAGS
+at all, which is why adding
+.CW -t
+to the target's mkfile did nothing until the rule was fixed to pass it,
+the way the thumb boards already do.  With both:
+.DS
+.CW "            root only   and strings     saved"
+.CW "virt           385312        330984     54328"
+.CW "raspi3b       4566456       4505656     60800"
+.DE
+.CW virt
+still reaches an interactive shell with its three markers;
+.CW raspi3b
+still boots and runs its probes;
+.CW mangopi ,
+which uses
+.CW 5l
+and passes no
+.CW -t ,
+still links.
+.PP
 One thing cost an hour and is worth writing down.  Adding the flag
 looked like it had no effect on
 .CW virt :

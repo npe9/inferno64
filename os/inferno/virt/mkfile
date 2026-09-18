@@ -66,7 +66,7 @@ install:V: i$CONF
 
 i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
-	$LD -o $target -H5 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
+	$LD $LDFLAGS -o $target -H5 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
 	cp $target $INSTALLDIR/$target
 
 <../port/portmkfile

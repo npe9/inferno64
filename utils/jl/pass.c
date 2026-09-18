@@ -30,11 +30,20 @@ dodata(void)
 
 	if(debug['t']) {
 		/*
-		 * pull out string constants
+		 * Pull out string constants: move the compiler's per-file
+		 * literal pool into the text segment.
+		 *
+		 * Only ".string", which is the name utils/cc/lex.c gives
+		 * that pool.  A D_SCONST datum is not on its own a
+		 * read-only one: sextern() in the compiler emits a plain
+		 *	char x[] = "abc";
+		 * the same way, under the user's own symbol, and that
+		 * array is writable.
 		 */
 		for(p = datap; p != P; p = p->link) {
 			s = p->from.sym;
-			if(p->to.type == D_SCONST)
+			if(p->to.type == D_SCONST && s->name != nil
+			&& strcmp(s->name, ".string") == 0)
 				s->type = SSTRING;
 		}
 	}

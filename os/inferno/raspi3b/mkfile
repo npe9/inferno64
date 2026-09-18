@@ -79,7 +79,7 @@ install:V: i$CONF
 # times.
 i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES $LIBFILES
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
-	$LD -o $target -H7 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
+	$LD $LDFLAGS -o $target -H7 -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
 	cp $target $INSTALLDIR/$target
 
 # Raw flat image for a real Pi 3: the VideoCore firmware loads kernel8.img
