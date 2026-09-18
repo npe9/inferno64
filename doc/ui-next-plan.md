@@ -1024,9 +1024,9 @@ there was never speed on the table here anyway.
    against the pane passed while the scrollbars were 886 by −14.
 
    Still drawn through a scratch image: a widget whose image came from
-   a file *descriptor*, which has no path for a texture node to name,
-   and a `canvas`. A `menu` and a `text` no longer paint directly —
-   see below — and a `panel` never will.
+   a file *descriptor*, which has no path for a texture node to name.
+   A `menu`, a `text` and a `canvas` no longer paint directly — see
+   below — and a `panel` never will.
 
    **A `panel` is out on principle, not pending.** Its image is a live
    `Image` a Limbo program writes through `putimage`, so there is no
@@ -1037,7 +1037,9 @@ there was never speed on the table here anyway.
    the top of `tkdrawpanel()` is load-bearing and stays. A `canvas`
    has the same problem per item rather than per widget: a stipple and
    a pen are live images too, so it is the *last* of these to look at
-   and may end up partly excluded for the same reason. `text` is the
+   and may end up partly excluded for the same reason. That guess was
+   right, and it is recorded below: a canvas is converted, and a
+   stipple draws. `text` is the
    honest middle — glyph runs, and `TkNglyphs` already exists.
 
    **A `menu` is nodes, and the walk runs through it.** This was much
@@ -1287,6 +1289,75 @@ there was never speed on the table here anyway.
    pixel two in from the border and passed — it had landed on a glyph,
    and the selected foreground and the ordinary one are the same shade
    in this theme. A band, not a pixel.
+
+   **A `canvas` is nine draw methods, and seven of them describe
+   themselves.** A canvas is the only widget whose drawing is not its
+   own, so converting the widget meant converting the items. Doing them
+   one at a time needed both ways to work in the same pass, which is
+   what `TkCdraw` is for: it carries the destination image, the
+   context, and the tree or `nil`, and an item that draws calls
+   `tkcvsdirect()` — which renders whatever is pending and hands back
+   the image. The order is therefore preserved by construction rather
+   than by a flag on the item.
+
+   `rectangle`, `oval`, `polygon`, `bitmap`, `line`, `text` and `image`
+   describe themselves. `arc` and `window` draw, and each says in its
+   own source why: there is no node for a partial ellipse — `TkNellipse`
+   is a whole one — and an arc's pieslice arm needs a temporary image to
+   cut its two radii against, which no node describes either; a window
+   item has nothing to describe at all, because the picture is whatever
+   the embedded widget paints.
+
+   Several are converted only in part, and the part is named rather
+   than the item excluded. `TkNpolyfill` fills by the nonzero winding
+   rule and by nothing else, so a polygon asked for another one draws;
+   there is no node for a filled spline, so a smooth polygon's fill
+   draws while its outline is a `TkNspline`; a stroked polyline has no
+   node, so only a *smooth* line reaches one; and a stipple draws
+   everywhere, which is the guess made when `panel` was excluded,
+   confirmed.
+
+   **A fourth real defect, and this one was in the vocabulary.**
+   `TkNspline` kept its two end styles packed in a `short`. A canvas
+   arrow is `Endarrow(25,20,10)`, which is 25329922 — it came back as
+   −32510. The ends moved into the node's spare `Point`, which is two
+   full ints, and nothing else in the vocabulary packs a value it does
+   not own. Only an `-arrow` on a *smooth* line reaches it, so the pane
+   needed one added before the bug could be seen at all.
+
+   **The buffered route had no control, and that is worse than having a
+   weak one.** A canvas draws its items by one of two routes:
+   unbuffered, straight into the window under a narrowed clip;
+   buffered, which is the *default*, into an image the canvas keeps
+   that is blitted afterwards. Both render the tree. Adding a buffered
+   canvas holding the same items was not enough, because a buffered
+   canvas re-runs its item draw methods only while something in it has
+   changed — a repaint that finds it clean blits what is already there.
+   So both halves of a snapshot pair compared one cached image with
+   itself, built once at creation in whichever mode was current, and
+   deleting that render outright moved *no pixel* of the test. The pair
+   dirties every canvas it can find before each snapshot now (`move all
+   0 0`: every item's bounding box into the update rectangle, every
+   item translated by zero), and deleting the render fails by 38409
+   bytes.
+
+   Two smaller things fell out of measuring that. The dirtying walks
+   `winfo children` rather than a list of the canvases in the pane
+   today, because a hardcoded list is the same shape as the hole it was
+   written to close. And the render at the end of the item loop covers
+   only what the *last drawing item* left after it — every item that
+   draws flushes — so the control's size depends on the order of the
+   item list: with a drawing item last it failed by 13209 bytes, with a
+   node item last by 38409.
+
+   A canvas does not *join* the walk even when its items are nodes: its
+   items usually go into its own buffer, and a tree belongs to one
+   target, so it flushes and builds a tree of its own — the same thing
+   `tkdrawrelief()` does with a one-off tree. With four canvases in it
+   the pane is **44 widgets and 250 nodes in 12 trees**, and the tree
+   count did not move when the fourth was added, because it is packed
+   next to the third with no node widget between them and the second
+   `tkwalkflush()` finds an empty walk.
 
    **The walk is done, and it is one tree per *run*, not per repaint.**
    `tkdrawslaves` opens a walk around its descent, `tkwalkjoin` hands a
@@ -1551,6 +1622,8 @@ re-derive it:
   carrying positions (B) makes moot.
 - **Images and bitmaps** — need `TkNtexture`, which is declared and not
   implemented. This is the same problem as B and should follow it.
-- **`text`, `canvas`, `panel`, `menu`** — paint into the window
-  directly. Each is a flush point in the walk and each is a much larger
-  conversion than any widget so far.
+- **`panel`** — paints into the window directly, is a flush point in
+  the walk, and stays that way on principle: its image is a live
+  `Image` a Limbo program writes through `putimage`, so there is no
+  file for a node to name. `text`, `canvas` and `menu` were on this
+  line and are done.

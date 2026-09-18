@@ -104,8 +104,6 @@ below matters to them and to nothing else.
 Everything else \(em the classic two-tone bevel outside a
 .IR text (9)'s
 tags, a
-.IR canvas (9),
-a
 .IR panel (9),
 an image that came from a file descriptor rather than a path, and the
 chrome that
@@ -114,6 +112,56 @@ and
 .IR scrollbar (9)
 draw for themselves \(em still draws directly, so a scene is at present a
 description of part of a frame rather than of a frame.
+.PP
+A
+.IR canvas (9)
+was on that list and is not.
+It is the only widget whose drawing is not its own: the picture is in
+the items, nine kinds of them, each with a draw method \(em so
+converting the widget meant converting those.
+A
+.IR rectangle ,
+an
+.IR oval ,
+a
+.IR polygon ,
+a
+.IR bitmap ,
+a
+.IR line ,
+a
+.I text
+and an
+.I image
+item describe themselves.
+An
+.I arc
+and a
+.I window
+item draw, and each says in its own source why.
+There is no node for a partial ellipse \(em
+.B TkNellipse
+is a whole one \(em and an arc's pieslice arm needs a temporary image
+to cut its two radii against, which no node describes either.
+A window item has nothing to describe at all: the picture is whatever
+the embedded widget paints.
+.PP
+Several of the converted items describe themselves only in part, and
+the part is named rather than the item excluded.
+.B TkNpolyfill
+fills by the nonzero winding rule and by nothing else, so a polygon
+asked for another one draws; there is no node for a filled spline, so a
+smooth polygon's fill draws while its outline is a
+.BR TkNspline ;
+a stroked polyline has no node, so only a smooth line reaches one; and
+a STIPPLE draws everywhere, because it is a repeating image with the
+item's centre as its source point and the ellipse and fill nodes pass
+.BR ZP .
+An item that draws calls
+.I tkcvsdirect
+first, which renders what the canvas has pending, so the order in which
+items are declared is the order in which they appear \(em that is the
+whole reason it takes that shape rather than being a flag on the item.
 .PP
 The tree is built and thrown away on every repaint, so none of the
 benefit of a RETAINED tree is realised: nothing is diffed, nothing is
@@ -280,6 +328,26 @@ for the scratch surface, and the canvas and panel painters, which draw
 straight into it \(em calls
 .I tkwalkflush
 first, or the tree, rendered later, would land on top of what it drew.
+.PP
+A canvas flushes and then builds a tree of its OWN rather than joining
+the walk.
+Its items are usually drawn into an image the canvas keeps rather than
+into the window, and a tree belongs to one target, so it renders its
+tree where the items would have drawn \(em which is what
+.I tkdrawrelief
+already does with a one-off tree.
+There are two places that happens.
+Unbuffered, the items go straight into the window under a narrowed
+clip; buffered, which is the DEFAULT, they go into the canvas's own
+image and that is blitted afterwards.
+The buffered one was covered by nothing at all until it was looked for:
+a buffered canvas re-runs its item draw methods only while something in
+it has changed, and a repaint that finds it clean blits what is already
+there \(em so a pair of snapshots taken either side of a change of path
+compared one cached image with itself, and deleting that render
+outright moved no pixel of
+.IR tkofftest (1).
+The test dirties every canvas it can find before each snapshot now.
 A
 .IR menu (9)
 used to be on that list and is not: its items are labels and were
