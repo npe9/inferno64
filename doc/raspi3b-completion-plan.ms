@@ -3519,6 +3519,112 @@ The card has not had to move since.  That is the practical end of the
 bring-up loop this document opened with: a kernel can be built here and
 booted there without carrying anything.
 .NH 2
+The FAT bugs, found in seconds instead of one boot at a time
+.PP
+Every corruption this card suffered was found by booting the board,
+looking at what broke, and swapping the card.
+.I Fatstress (1)
+and
+.CW tests/dossrv-stress.sh
+do the same work on the build host: write, read back, rename, rename
+onto a name that exists, remove, on FAT16, on FAT32 with 512-byte
+clusters and a filler so files land above cluster 65535, and on FAT32
+with 4KB clusters \(em and then
+.CW "fsck_msdos -n"
+over each image.  Reading the files back through the code that wrote
+them is not a check on that code: every bug here left an image that
+still mounted and still listed.  All three pass, fsck clean.
+.PP
+It found four more, none of which the board had reached:
+.IP \(bu
+.CW doremove
+followed a long name into the sector before it whenever its backward
+walk stopped at offset 0 \(em including when it stopped there because
+that entry is live and the chain had already ended.  It deleted the
+trailing long-name entries of a different file, which was left with a
+live directory entry and no name.  Six files renamed and removed in
+turn was enough to show it.
+.IP \(bu
+The short-alias search in the rename path was given the file being
+renamed instead of its parent, so it walked a file as a directory and
+panicked.
+.IP \(bu
+.CW mkdentry 's
+error path left a sector held.
+.IP \(bu
+The free-run search kept its start across a live entry, so a directory
+could be extended from one place and written in another.
+.PP
+The rename-onto-an-existing-name check is back at the top of the
+rename, where it refuses before anything is touched, and it asks by the
+name given rather than by its 8.3 form \(em a file created as
+.CW inferno.txt
+has the short alias
+.CW INFERN~1TXT ,
+so the 8.3 form finds nothing and the check passes over the very file
+it exists to find.
+.NH 2
+Bluetooth: the radio is wired, the board has not answered yet
+.PP
+The BCM43438 is an H4 controller on the PL011, and nothing it needs is
+Bluetooth's doing.  The console has to be elsewhere, which it now is:
+the firmware gives the header the mini UART and keeps the PL011 for the
+radio, and the kernel reads GPIO 14's function at boot and follows that
+rather than assuming.  The UART has to be routed to GPIO 32 and 33 with
+flow control on 30 and 31 at alt3.  And the radio has to be powered \(em
+BT_ON is not a SoC pin at all but line 0 of an eight-line expander the
+VideoCore owns, reached only by a mailbox property call.
+.PP
+.CW btbcm.c
+does the three of them at boot and then sends HCI Reset on the raw
+PL011, so the console says whether a controller is answering before any
+Limbo starts:
+.CW BT-OK ,
+.CW BT-FAIL
+with what did arrive, or
+.CW BT-NONE
+where the console has the PL011 and there is no radio, which is every
+QEMU boot.  It does not load
+.CW BCM4345C0.hcd ;
+a cold controller answers Reset and the vendor download commands and
+refuses much else, so
+.CW BT-OK
+would mean a controller talking and not a usable radio.
+.PP
+.B "None of it has run on the board."
+The kernel carrying it was copied onto the card by the board itself,
+over Styx, with
+.CW "cat > /n/dos/kernel8.img"
+\(em and the board has not come back.  The copy went through the
+dossrv the board was running, which is the one
+.I without
+today's fixes, on a boot that had already printed
+.CW "phase error -- directory entry not found"
+from the FAT check.  So there are two candidates and they are told
+apart by looking rather than by guessing: the image boots under QEMU
+from the same file that was installed, so before anything is repaired
+the card gets
+.CW "fsck_msdos -n"
+and the installed
+.CW kernel8.img
+gets
+.CW cmp 'd
+against the build.
+.PP
+Two lessons already banked.
+.CW kupdate()
+writes
+.CW kernel8.new
+and renames, keeping the old kernel as
+.CW kernel8.bak ,
+precisely so a bad image costs a card swap rather than the board;
+copying over
+.CW kernel8.img
+in place gave that up.  And
+.CW "ls -l"
+is not a read-back: the length it prints is the directory entry, which
+is the field most likely to be the wrong one.
+.NH 2
 Suggested order
 .PP
 The transmit-queue fix is confirmed on the board and kernel updates
