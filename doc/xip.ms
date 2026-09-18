@@ -2767,13 +2767,74 @@ the thing the estimate was about \- are 3008 bytes of master copies and
 between 24 and 2360 bytes; 3368 for all nine together.  There is no
 35200 of load-time constants to move.
 .PP
-What is left is 38144 of strings and arrays that the shell makes while
-it runs, and a fraction of that which module loading makes and never
-writes.  Separating the two needs the caller of
-.CW newstring ,
-not
+Separating what module loading leaves from what the shell makes while it
+runs does not need the caller of
 .CW newstring
-itself, so it is not measured here.
+after all: the heap in use can be read either side of
+.CW parsemod .
+Doing that, with the nine modules and an
+.I ls (1):
+.DS
+.CW "  /dis/sh.dis          20928"
+.CW "  /dis/ls.dis           3648"
+.CW "  /osinit.dis           1280"
+.CW "  /dis/cat.dis          1088"
+.CW "  six /dis/lib modules  2944"
+.CW "                       -----"
+.CW "                       29888"
+.DE
+So 30144 of the 56832, counting a second
+.CW readdir
+load, is what module loading leaves behind, and the other 26688 is the
+shell running.  The estimate this document started with was 35200, which
+is close in size but wrong in attribution: it blamed the module data
+segments, and those are 3368 for all nine together.  They are the
+.CW String
+objects
+.CW parsemod
+builds from each module's data section, one per string constant \-
+.CW libinterp/load.c:/DEFS ,
+.CW c2string() .
+.PP
+That is the size of the prize and it is not small.  It is also not taken
+here, and the reason is the surface rather than the difficulty.  A
+.CW Type
+went to flash by routing 23 reference-count sites through two helpers.
+For a
+.CW Heap
+the count is 143 sites across
+.CW libinterp
+and
+.CW os/inferno/port ,
+not all of which are heap objects, plus 33 calls to
+.CW Setmark ,
+which is
+.DS
+.CW "#define Setmark(h) if((h)->color!=mutator) {"
+.CW "	(h)->color = propagator; nprop=1; }"
+.DE
+and would need an immortality test in front of the colour write.  On top
+of that,
+.CW dis2s
+would have to emit the
+.CW String
+objects with their internal pointers relocated and
+.CW origmp
+pointing at them, and
+.CW newmp
+increments the count of everything
+.CW origmp
+points at on every instantiation.
+.PP
+None of that is beyond doing.  What stops it being done here is that a
+mistake in it is silent heap corruption, and the verification this bench
+offers \- a shell, an
+.I ls ,
+.I fptest ,
+.I cvtchk
+\- would not reliably catch one.  It wants a target that can run the
+existing Dis test suite, and that is a different piece of work from
+this.
 .PP
 And there is an obstacle worth naming before anyone tries, because it is
 not the one the reference count was.  A
