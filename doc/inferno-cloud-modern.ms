@@ -2347,6 +2347,30 @@ the network driver reports
 against 27 packets received: every packet arrived as an interrupt
 rather than on the poll.
 .PP
+.B "What the interrupts are worth, measured."
+.CW *gvepoll
+in
+.CW plan9.ini
+forces the polling path on a machine that could interrupt, so the two
+can be compared on the same image and the same shape.  Two
+.CW t2a-standard-1
+instances, one each way, pinged 40 times from a third instance in the
+same zone \(em so the round trip is the network this is about and not
+the internet:
+.TS
+box, tab(;);
+l l l l.
+;min;avg;max
+_
+interrupts;1.13 ms;1.42 ms;2.37 ms
+polling;3.01 ms;3.20 ms;3.95 ms
+.TE
+The floor moves by 1.9 ms and the average by 1.8, which is a packet
+waiting for a timer rather than for the wire.  Measured from outside
+the cloud the same difference is there and is not worth quoting: 54 ms
+against 58 ms with a 23 ms standard deviation, which is the internet
+and not the driver.
+.PP
 .B "The page size is the hardware's to choose."
 .CW GITS_BASER
 takes a requested page size and returns the one it will use.  Asking

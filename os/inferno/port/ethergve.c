@@ -659,10 +659,16 @@ start(Ctlr *c)
 	 * Notification block i is MSI-X vector i, because
 	 * CONFIGURE_DEVICE_RESOURCES above set the base index to 0: the
 	 * transmit queue took block 0 and the receive queue block 1.
+	 *
+	 * *gvepoll in plan9.ini forces the polling path on a machine that
+	 * could interrupt, which is how the two were measured against
+	 * each other on the same instance.
 	 */
 	wdb(c, c->txirqdb, Irqmask);
 	wdb(c, c->rxirqdb, Irqmask);
-	if(pcimsixintrenable != nil && pcimsixcount(c->pcidev) >= 2){
+	if(getconf("*gvepoll") != nil)
+		print("gve: *gvepoll: polling, not interrupts\n");
+	else if(pcimsixintrenable != nil && pcimsixcount(c->pcidev) >= 2){
 		(*pcimsixintrenable)(c->pcidev, 0, gvetxintr, c, "gve tx");
 		(*pcimsixintrenable)(c->pcidev, 1, gverxintr, c, "gve rx");
 		c->msix = 1;
