@@ -205,6 +205,26 @@ init0(void)
 	disinit("/osinit.dis");
 }
 
+/*
+ * The top of a kernel stack, 16-byte aligned, which AArch64 requires
+ * of SP itself: with SCTLR_EL1.SA set, the first SP-relative access
+ * after a misaligned SP is loaded raises an alignment fault -- and
+ * the fault handler builds its own frame on that same SP, so it
+ * faults again, and again, silently, at 100% of the processor.
+ *
+ * p->kstack is a plain malloc(), and a pool block's data pointer is
+ * the block start past a header: it can be, and on a Compute Engine
+ * t2a with 4 GiB regularly is, 8 modulo 16.  Rounding the size up to
+ * the pool quanta does not make the pointer aligned, which is the
+ * reasoning that let this stand -- measured instead: the scheduler
+ * was seen jumping into a new process with sp 0x408f0898 from kstack
+ * 0x408e88a8, both 8 modulo 16, and the machine spun there with no
+ * output.  It depends on where the allocator put that one stack, so
+ * it came and went with the machine's memory size: a 4 GiB instance
+ * hung, an 8 GiB one did not, and QEMU never did.
+ */
+#define	KSTACKTOP(p)	((((uintptr)(p)->kstack + KSTACK) & ~(uintptr)15) - 16)
+
 void
 userinit(void)
 {
@@ -234,7 +254,7 @@ userinit(void)
 	kstrdup(&p->text, "interp");
 	p->fpstate = FPINIT;
 	p->sched.pc = (uintptr)init0entry;
-	p->sched.sp = (uintptr)p->kstack+KSTACK-16;
+	p->sched.sp = KSTACKTOP(p);
 	ready(p);
 }
 
@@ -251,6 +271,7 @@ exit(int inpanic)
 	archreboot();
 }
 
+
 static void
 linkproc(void)
 {
@@ -266,7 +287,7 @@ void
 kprocchild(Proc *p, void (*func)(void*), void *arg)
 {
 	p->sched.pc = (uintptr)linkproc;
-	p->sched.sp = (uintptr)p->kstack+KSTACK-16;
+	p->sched.sp = KSTACKTOP(p);
 	p->kpfun = func;
 	p->kparg = arg;
 }

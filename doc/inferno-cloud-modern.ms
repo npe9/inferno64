@@ -1978,6 +1978,151 @@ virtual timer is the one a hypervisor is required to give a guest.  That
 second one is not the repair of an observed failure \(em both timers were
 watched ticking on a t2a \(em it is the one a guest is entitled to.
 .NH 2
+Fixed: a kernel stack that was not 16-byte aligned
+.PP
+On a
+.CW t2a-standard-1 ,
+one vCPU and 4 GiB, a kernel with the gVNIC driver used to stop during
+.CW /dis/init ,
+pegged at
+.B 100%
+of its vCPU (Cloud Monitoring said so; a healthy instance sits at 0.4%)
+and printing nothing.  The same image on a
+.CW t2a-standard-2
+booted and did everything.  It is fixed, and the driver was not at
+fault.
+.PP
+.B "What the bisect said, and what it cost to believe it."
+Three one-vCPU instances differing only by a
+.CW plan9.ini
+line put the trigger at the driver's two polling kernel processes and
+not at its queues or their DMA: the device identified with no queues
+booted, all queues with no processes booted, and either variant with
+processes stalled.  Replacing the bodies of those processes with a
+heartbeat that touches no device, no timer and no lock \(em
+.CW delay ()
+spins on the counter and
+.CW iprint ()
+writes the UART directly \(em stalled just the same, and the heartbeat
+never printed its first line.  One such process was enough; none was
+fine.  So the driver's code was out of it, and what was left was the
+act of creating a kernel process.
+.PP
+.B "The scheduler said the rest."
+A print before
+.CW gotolabel ()
+showed the last switch of the machine's life:
+.IP
+.EX
+sched: -> rxmitproc pid 4 pc 0x40003648 sp 0x408f0898 kstack 0x408e88a8
+.EE
+.PP
+.CW 0x40003648
+is
+.CW linkproc ,
+where a new kernel process begins, so that process was being started
+for the first time \(em and its own first statement, an
+.CW iprint ,
+never ran.  The stack pointer is the answer:
+.CW 0x408f0898
+is 8 modulo 16, because
+.CW 0x408e88a8
+is.  AArch64 requires SP itself to be 16-byte aligned, and with
+.CW SCTLR_EL1.SA
+set the first SP-relative access after a misaligned SP is loaded
+raises an alignment fault \(em whose handler builds its own frame on
+that same SP and faults again, forever, silently, at full speed.
+.PP
+.CW p->kstack
+is a plain
+.CW malloc (),
+and a pool block's data pointer is the block start past a header, so
+it can be 8 modulo 16.  Rounding the block
+.I size
+up to the pool quanta does not align the
+.I pointer ,
+which is the reasoning that let this stand earlier in this hunt \(em
+one of three wrong ideas here that were argued rather than measured,
+along with the 1460-byte MTU and the entropy pool.  The fix is one
+expression, used at both places this board sets a new stack:
+.IP
+.EX
+#define KSTACKTOP(p)	((((uintptr)(p)->kstack + KSTACK) & ~(uintptr)15) - 16)
+.EE
+.PP
+With it the one-vCPU t2a boots to a shell, reads its NVMe disk, takes
+a DHCP lease over gVNIC and fetches over https.  Whether it bit at all
+depended on where the allocator happened to put one stack, which is
+why a 4 GiB instance hung, an 8 GiB one did not, and QEMU never did.
+.PP
+.B "The same expression belongs on raspi3b."
+.CW os/inferno/raspi3b/main.c
+sets
+.CW sched.sp
+the same unaligned way and is the other AArch64 board in this tree.  It
+is another session's board and is not touched here; the 32-bit ARM and
+RISC-V boards are not exposed, since they require 8.
+.NH 2
+A gVNIC driver, because a t2a has no other network card
+.PP
+.CW os/inferno/port/ethergve.c
+drives Google's virtual NIC (PCI
+.CW 1ae0:0042 )
+in the GQI queue format with queue page lists.  It is written from
+FreeBSD's
+.CW sys/dev/gve ,
+which is the reference for every layout and sequence in it.  Without it
+the arm64 cloud kernel has no network at all on Compute Engine: a t2a
+instance offers gVNIC, a virtio entropy source and an NVMe disk, and
+asking for a virtio NIC is refused outright.
+.PP
+.B "What is real, and where."
+On a rented
+.CW t2a-standard-2 ,
+this kernel takes a DHCP lease from Google's server on its real address
+and reads the metadata service over TCP:
+.CW "cloudinit" ,
+then
+.CW "mount {cloudfs} /mnt" ,
+then
+.CW "cat /mnt/zone"
+prints
+.CW projects/232418375880/zones/us-central1-a
+and
+.CW /mnt/hostname
+prints the instance's own name.  That is the whole path \(em transmit,
+receive, ARP, DHCP, TCP \(em through this driver.
+.PP
+.B "No interrupts: it polls."
+gVNIC signals only through MSI-X, and MSI-X on this board needs a GICv3
+ITS that this kernel does not drive
+.CW ( "msix: this machine has an ITS and no v2m frame" ).
+Nothing is lost by polling, because every completion is a DMA write the
+driver can read at any time \(em a receive descriptor's sequence number,
+a transmit event counter \(em and the interrupt doorbells only mask and
+acknowledge.  Each queue has a kernel process that polls, busily while
+there is work and once a tick while there is none.  The cost is latency,
+up to a tick on an idle link, and it is the first thing to replace when
+the ITS is driven.
+.PP
+.B "Two board bugs found on the way, both invisible under QEMU."
+.CW va2pa()
+returned
+.CW ulong ,
+which is 32 bits under
+.CW 7c ,
+so every DMA address above 4 GiB was truncated by exactly 4 GiB and the
+device wrote into whatever kernel memory sat at the low address.  RAM
+starts at 1 GiB on this board, so it takes a machine with more than
+3 GiB to reach that address at all; every QEMU run here had 1 or 2, and
+a t2a has 4 or 8.  The build had been saying
+.CW "conversion of pointer to shorter integer"
+at that line all along.  And the clock is now the EL1 virtual timer
+rather than the physical one: a kernel at EL1 is a guest, and the
+virtual timer is the one a hypervisor is required to give a guest.  That
+second one is not the repair of an observed failure \(em both timers were
+watched ticking on a t2a \(em it is the one a guest is entitled to.
+.NH 2
 Known broken: one vCPU and this driver do not boot together
 .PP
 On a
