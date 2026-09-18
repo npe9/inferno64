@@ -1620,6 +1620,47 @@ simply not matched \- the length of the file it was built from is part
 of the match \- so getting the list wrong loses the saving rather than
 running the wrong code.
 .PP
+Two checks, because running a shell exercises a few hundred of
+.CW sh.dis 's
+6111 instructions and says nothing about the rest.  The first is that
+the emitter agrees with the interpreter.  The decode loop still runs in
+the execute-in-place case, into a scratch
+.CW Inst ,
+so the two can be compared where they are both in hand: with
+.CW brpatch
+run on the scratch copy, whose
+.CW &m->prog[target]
+is the flash entry,
+.CW memcmp
+against the built-in array is exact \-
+.CW sizeof(Inst)
+is 12 with no padding and the loop clears every field it does not set.
+Nine modules, 9218 instructions, no mismatch.  That is every instruction
+of every module checked against what
+.CW parsemod
+would have built, rather than the fraction a shell session happens to
+execute, and it is what makes a hand-written mirror of the decode
+acceptable.
+.PP
+The second is that nothing writes its own text, checked the same way as
+for the string literals but now over 989720 bytes that include the nine
+instruction arrays:
+.DS
+.CW "(qemu) pmemsave 0 0xf1a18 \(fmtext.bin\(fm"
+.DE
+after a shell,
+.I ls ,
+.I fptest
+and
+.I cvtchk ,
+compared against
+.CW imps2 :
+identical.  Nothing patches a Dis instruction at runtime, which a grep
+for
+.CW m->prog[
+could not have settled, since the dump does not care how a write would
+have arrived.
+.PP
 What is not done: the type descriptors, the link tables and the
 exception handlers still parse into RAM.
 .CW Type

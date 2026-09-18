@@ -115,8 +115,6 @@ $CONF.prog.s $CONF.xipmod.c: $INITDIR/$INIT.dis $XIPDISFILES
 	$DIS2S -o $CONF.prog -c $CONF.xipmod -r $ROOT/dis32 -p /dis \
 		/osinit.dis=$INITDIR/$INIT.dis $XIPDIS
 
-CLEANEXTRA=$CONF.prog.s $CONF.xipmod.c
-
 i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES $ROOT/tools/aout2imxrt
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
 	$LD $LDFLAGS -o $target -H4 -T$KTZERO -D$KDATA -R0 -l $OBJ $CONF.$O $LIBFILES
@@ -127,9 +125,13 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES $ROOT/tools/aout2imxrt
 $ROOT/tools/aout2imxrt:
 	cd $ROOT/tools; mk aout2imxrt
 
-CLEANEXTRA=$CONF.bin $CONF.hex
 
 <../port/portmkfile
+
+# After the include: portmkfile sets CLEANEXTRA empty, so an assignment
+# before it -- which is where the .bin and .hex one used to be -- never
+# reached mk clean.
+CLEANEXTRA=$CONF.bin $CONF.hex $CONF.prog.s $CONF.xipmod.c
 
 ../init/$INIT.dis:	../init/$INIT.b
 	cd ../init; mk 'DISWORD='$DISWORD $INIT.dis
