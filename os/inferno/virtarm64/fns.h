@@ -24,6 +24,8 @@ ulong	getfsr(void);
 void	acpiinit(void);
 int	acpitables(void);
 void	msiinit(void);
+int	itsinit(void);
+int	acpiitsdevid(int, u32int*);
 uvlong	getmpidr(void);
 void	startcpus(void);
 int	spcrconsole(void);

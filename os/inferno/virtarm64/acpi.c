@@ -539,3 +539,87 @@ acpiinit(void)
 		pciecam = mcfgbase;
 	}
 }
+
+/*
+ * The IORT, as far as one question: what device id does the ITS see
+ * when PCI function `rid` (bus:dev.fn) writes to GITS_TRANSLATER?
+ *
+ * The answer is usually rid itself, and assuming that is how this
+ * board first got MSI-X working under QEMU and delivered nothing at
+ * all on a Compute Engine t2a, where every vector was accepted and
+ * mapped and no interrupt ever arrived.  A mapping the firmware
+ * publishes and the driver ignores fails exactly that quietly: the
+ * ITS is asked about a device that never writes to it.
+ *
+ * Only the root complex nodes are walked, and only their ID mappings.
+ * SMMU nodes in the path would make this a two-step translation, and
+ * this says so rather than guessing: a machine with one gets the
+ * identity answer and a printed warning, which is the same silence as
+ * before but with a reason attached.
+ *
+ * Layout is ARM DEN 0049: table header, then node count and the offset
+ * of the first node; each node has a type, a length, a mapping count
+ * and a mapping offset; each mapping is input base, count minus one,
+ * output base, the offset of the target node, and flags whose bit 0
+ * means "map the whole range to one id".
+ */
+static uchar*
+iortfind(void)
+{
+	int i;
+
+	for(i = 0; i < acpintab; i++)
+		if(strcmp(acpitab[i].sig, "IORT") == 0 && acpitab[i].ok)
+			return (uchar*)(uintptr)acpitab[i].addr;
+	return nil;
+}
+
+int
+acpiitsdevid(int rid, u32int *devid)
+{
+	uchar *t, *node, *map;
+	int nnode, i, j, nmap, type, len;
+	u32int inbase, nid, outbase, outref, flags;
+	static int warned;
+
+	*devid = rid;
+	if((t = iortfind()) == nil)
+		return 0;
+	nnode = le32(t + 36);
+	node = t + le32(t + 40);
+	for(i = 0; i < nnode; i++){
+		type = node[0];
+		len = le16(node+1);
+		if(len <= 0)
+			return 0;
+		if(type == 3 || type == 4){
+			if(!warned){
+				warned = 1;
+				print("acpi: the IORT has an SMMU node;"
+					" device ids are not translated through it\n");
+			}
+		}
+		if(type == 2){			/* PCI root complex */
+			nmap = le32(node+8);
+			map = node + le32(node+12);
+			for(j = 0; j < nmap; j++, map += 20){
+				inbase = le32(map);
+				nid = le32(map+4);
+				outbase = le32(map+8);
+				outref = le32(map+12);
+				flags = le32(map+16);
+				if(flags & 1){		/* single mapping */
+					*devid = outbase;
+					USED(outref);
+					return 1;
+				}
+				if((u32int)rid >= inbase && (u32int)rid - inbase <= nid){
+					*devid = outbase + ((u32int)rid - inbase);
+					return 1;
+				}
+			}
+		}
+		node += len;
+	}
+	return 0;
+}

@@ -2308,3 +2308,80 @@ of heap.  That is pool memory, not the whole footprint \(em the kernel
 image and its fixed structures are outside it, and item 10's floor
 measurement, 66 MiB to boot and 68 to work, is the number to quote for
 how small a machine it needs.
+.NH 2
+Interrupts for the network at last: a GICv3 ITS
+.PP
+The gVNIC driver polled, because gVNIC signals only through MSI-X and
+this board could not receive one: a GICv2 machine turns an MSI into an
+interrupt with a v2m frame, which
+.CW msivirtarm64.c
+drives, and a GICv3 machine uses an ITS instead, which it did not.  A
+Compute Engine t2a is the second kind, so the driver's two kernel
+processes woke on a timer and a packet could wait a tick.
+.PP
+.CW os/inferno/virtarm64/itsvirtarm64.c
+drives the ITS.  Three things have to be built and none of them
+implies the others: the redistributor's LPI tables, one byte of
+configuration and one bit of pending state per LPI, and
+.CW GICR_CTLR.EnableLPIs ;
+the ITS's own device and collection tables and its command queue; and
+per device an interrupt translation table, with MAPD, MAPC, MAPTI, INV
+and SYNC to map device and event to an LPI.  An LPI is numbered from
+8192 up and is not an SPI, so
+.CW trap.c
+dispatches it out of its own table rather than
+.CW irqhandler[] .
+.PP
+.B "Verified on both kinds of machine."
+Under QEMU with
+.CW gic-version=3 ,
+NVMe takes two vectors and both deliver
+.CW ( "nvme: msix vector 0 delivered" ,
+then vector 1), and with
+.CW gic-version=2
+the v2m path still does the same, which is the control that says this
+did not break the machine it was not written for.  On a rented
+.CW t2a-standard-1
+the network driver reports
+.CW "interrupts msi-x rx 27 tx 1"
+against 27 packets received: every packet arrived as an interrupt
+rather than on the poll.
+.PP
+.B "The page size is the hardware's to choose."
+.CW GITS_BASER
+takes a requested page size and returns the one it will use.  Asking
+for 4 KiB and not reading the answer is how this spent three rented
+instances delivering nothing: the t2a returns 64 KiB, after which the
+size field means sixteen 64 KiB pages rather than sixteen 4 KiB ones,
+and the ITS reads a device table that is not the table that was
+allocated.  Nothing reports it \(em commands are accepted, mappings are
+made, and no interrupt is ever translated.  The driver now asks, reads
+the answer, and then allocates; the same read-back catches an ITS that
+will not take a cacheable attribute, and the tables are cleaned to
+memory by hand when it will not.
+.PP
+.B "And the device ids are the firmware's to give."
+A PCI function's device id at the ITS is normally its requester id, and
+assuming that is the same class of mistake, so
+.CW acpi.c
+reads the IORT and translates.  Both machines here happen to map
+identity; the assumption was still wrong to make.
+.PP
+.B "Programming a vector is not receiving one."
+The driver polls at a tick until an interrupt has actually arrived and
+only then lengthens its timeout to a backstop.  That is not caution for
+its own sake: on the t2a every vector was accepted, unmasked and
+pointed at the right doorbell for three images running, and not one
+interrupt was delivered.  A driver that believed the programming would
+have gone from polling every tick to polling every second.
+.PP
+.B "Open: NVMe's MSI-X table does not answer on a t2a."
+Its table lives in BAR4, 64 bytes at
+.CW 0x10000000 ,
+and reads back all ones there while gve's, 128 bytes further up the
+same page, reads back what was written.  The controller's own
+registers in BAR0 work, and the disk is read, because
+.CW sdnvme.c
+polls its completion queue on a timer.  So NVMe on that machine keeps
+working and keeps polling, and why that BAR does not decode is not yet
+known.

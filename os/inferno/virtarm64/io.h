@@ -95,6 +95,13 @@ enum {
 	 * those -- QEMU's is 80..143, which is why this is not 96 any more.
 	 */
 	GicIRQMax	= 224,
+	/*
+	 * LPIs, which an ITS delivers.  They start at 8192 by
+	 * architecture; how many this board hands out is its own choice
+	 * and is the size of the dispatch table in trap.c.
+	 */
+	Lpiintid	= 8192,
+	Nlpivec		= 64,
 	GicSpiBase	= 32,
 	GicPPITimer	= 27,		/* virtual timer (PPI 11); see cycles() in l.s */
 };

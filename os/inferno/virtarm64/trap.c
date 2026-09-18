@@ -9,6 +9,15 @@
 static void	(*irqhandler[GicIRQMax])(Ureg*, void*);
 static void	*irqarg[GicIRQMax];
 
+/*
+ * LPIs are numbered from 8192 up and are not SPIs: they do not live in
+ * the distributor's registers, they are not enabled with gicenable(),
+ * and they are far outside irqhandler[].  An ITS delivers them (see
+ * itsvirtarm64.c); this is the other half, the dispatch.
+ */
+static void	(*lpihandler[Nlpivec])(Ureg*, void*);
+static void	*lpiarg[Nlpivec];
+
 extern char	etext[];
 
 extern void	vectrap(void);
@@ -426,6 +435,9 @@ trap(Ureg *ur)
 				clockintr(ur);
 			else
 				clocksecondary();
+		}else if(irq >= Lpiintid && irq - Lpiintid < Nlpivec){
+			if((f = lpihandler[irq - Lpiintid]) != nil)
+				f(ur, lpiarg[irq - Lpiintid]);
 		}else if(irq < GicIRQMax && (f = irqhandler[irq]) != nil)
 			f(ur, irqarg[irq]);
 		if(gicv3)
@@ -470,6 +482,16 @@ void
 intrenable(int v, void (*f)(Ureg*, void*), void *a, int tbdf, char *name)
 {
 	USED(tbdf, name);
+	if(v >= Lpiintid && v - Lpiintid < Nlpivec){
+		/*
+		 * An LPI is already enabled by its configuration byte and
+		 * the ITS mapping that produced it, so there is nothing to
+		 * turn on here -- only the handler to record.
+		 */
+		lpihandler[v - Lpiintid] = f;
+		lpiarg[v - Lpiintid] = a;
+		return;
+	}
 	if(v <= 0 || v >= GicIRQMax)
 		panic("intrenable: irq %d", v);
 	irqhandler[v] = f;
@@ -481,6 +503,11 @@ void
 intrdisable(int v, void (*f)(Ureg*, void*), void *a, int tbdf, char *name)
 {
 	USED(tbdf, f, a, name);
+	if(v >= Lpiintid && v - Lpiintid < Nlpivec){
+		lpihandler[v - Lpiintid] = nil;
+		lpiarg[v - Lpiintid] = nil;
+		return;
+	}
 	if(v > 0 && v < GicIRQMax){
 		irqhandler[v] = nil;
 		irqarg[v] = nil;

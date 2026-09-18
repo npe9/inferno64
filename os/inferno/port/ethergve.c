@@ -42,6 +42,8 @@
 #include "../port/etherif.h"
 
 static long ifstatinf(Ether*, void*, long, ulong);
+static void gverxintr(Ureg*, void*);
+static void gvetxintr(Ureg*, void*);
 
 typedef struct Ctlr Ctlr;
 
@@ -84,7 +86,9 @@ enum {
 	Fmtgqiqpl	= 0x2,
 
 	/* interrupt doorbell bits */
+	Irqack		= 1<<31,
 	Irqmask		= 1<<30,
+	Irqevent	= 1<<29,
 
 	/* transmit descriptor */
 	Txdsz		= 16,
@@ -157,6 +161,11 @@ struct Ctlr {
 	uvlong	*rxdata;
 	uchar	*rxpages;
 	uintptr	*rxpgs;
+	u32int	rxirqdb;	/* the rx queue's interrupt doorbell */
+	u32int	txirqdb;
+	int	msix;		/* interrupts rather than polling */
+	ulong	rxintr;
+	ulong	txintr;
 	u32int	rxdb;
 	u32int	rxcnt;
 	u32int	rxfill;
@@ -495,6 +504,34 @@ identify(Ctlr *c, uchar *ea)
 }
 
 /*
+ * An MSI arrives with the queue's interrupts masked by the device, so
+ * each handler only wakes its process; the process re-arms the doorbell
+ * when it has drained what was there.  Nothing else can run here: this
+ * is interrupt level, and the work needs a process to block in.
+ */
+static void
+gverxintr(Ureg*, void *arg)
+{
+	Ctlr *c;
+
+	c = arg;
+	c->rxintr++;
+	wdb(c, c->rxirqdb, Irqmask);
+	wakeup(&c->rxr);
+}
+
+static void
+gvetxintr(Ureg*, void *arg)
+{
+	Ctlr *c;
+
+	c = arg;
+	c->txintr++;
+	wdb(c, c->txirqdb, Irqmask);
+	wakeup(&c->txr);
+}
+
+/*
  * Attach time, in a process: build and register the rings and start
  * the queues.  Allocation failures raise errors.
  */
@@ -608,9 +645,30 @@ start(Ctlr *c)
 		error("gve: bad counter index");
 	}
 
-	/* keep both queues' interrupts masked: this driver polls */
-	wdb(c, 4*get32(c->irqdb + 0*Irqdbstride), Irqmask);
-	wdb(c, 4*get32(c->irqdb + 1*Irqdbstride), Irqmask);
+	c->txirqdb = 4*get32(c->irqdb + 0*Irqdbstride);
+	c->rxirqdb = 4*get32(c->irqdb + 1*Irqdbstride);
+
+	/*
+	 * Interrupts if this machine can deliver an MSI, polling if it
+	 * cannot.  gVNIC signals only through MSI-X: on a GICv3 machine
+	 * that wants an ITS (os/inferno/virtarm64/itsvirtarm64.c), and
+	 * where there is none the queues stay masked and the two kernel
+	 * processes below poll, which costs up to a tick of latency on
+	 * an idle link.
+	 *
+	 * Notification block i is MSI-X vector i, because
+	 * CONFIGURE_DEVICE_RESOURCES above set the base index to 0: the
+	 * transmit queue took block 0 and the receive queue block 1.
+	 */
+	wdb(c, c->txirqdb, Irqmask);
+	wdb(c, c->rxirqdb, Irqmask);
+	if(pcimsixintrenable != nil && pcimsixcount(c->pcidev) >= 2){
+		(*pcimsixintrenable)(c->pcidev, 0, gvetxintr, c, "gve tx");
+		(*pcimsixintrenable)(c->pcidev, 1, gverxintr, c, "gve rx");
+		c->msix = 1;
+		wdb(c, c->txirqdb, Irqack|Irqevent);
+		wdb(c, c->rxirqdb, Irqack|Irqevent);
+	}
 
 	/* every receive slot is already posted */
 	c->rxseq = 1;
@@ -724,7 +782,9 @@ txproc(void *v)
 		}
 		while(txput(c, b) < 0){
 			c->txfull++;
-			tsleep(&c->txr, txroom, c, 10);
+			tsleep(&c->txr, txroom, c, c->txintr != 0 ? 1000 : 10);
+			if(c->msix)
+				wdb(c, c->txirqdb, Irqack|Irqevent);
 			txreclaim(c);
 		}
 		freeb(b);
@@ -758,7 +818,22 @@ rxproc(void *v)
 		;
 	for(;;){
 		c->rxpolls++;
-		tsleep(&c->rxr, rxready, c, 10);
+		/*
+		 * With an interrupt the timeout is a backstop, not the
+		 * clock this runs on: a missed wakeup costs a second
+		 * rather than a stall.  Without one it is the poll
+		 * interval, and a packet waits up to a tick.
+		 */
+		/*
+		 * The timeout is the poll interval until an interrupt has
+		 * actually arrived, and a backstop afterwards.  Programming
+		 * MSI-X is not the same as receiving one: on a Compute
+		 * Engine t2a every vector was accepted and mapped and not
+		 * one interrupt was delivered, and a driver that believed
+		 * the programming would have gone from polling every tick
+		 * to polling every second.
+		 */
+		tsleep(&c->rxr, rxready, c, c->rxintr != 0 ? 1000 : 10);
 		n = 0;
 		while(rxready(c)){
 			slot = c->rxcnt & (c->nrxd-1);
@@ -798,6 +873,8 @@ rxproc(void *v)
 			coherence();
 			wdb(c, c->rxdb, c->rxfill);
 		}
+		if(c->msix)
+			wdb(c, c->rxirqdb, Irqack|Irqevent);
 	}
 }
 
@@ -843,6 +920,9 @@ ifstat(void *a, char *s, char *e)
 		c->txavail, c->ntxpages*Pgsz);
 	s = seprint(s, e, "rx cnt %ud fill %ud seq %d pkts %lud err %lud drop %lud polls %lud\n",
 		c->rxcnt, c->rxfill, c->rxseq, c->rxpkts, c->rxerr, c->rxdrop, c->rxpolls);
+	s = seprint(s, e, "interrupts %s rx %lud tx %lud%s\n",
+		c->msix ? "msi-x" : "none (polling)", c->rxintr, c->txintr,
+		c->msix && c->rxintr == 0 ? " (programmed, none delivered: still polling)" : "");
 	s = seprint(s, e, "adminq prod %ud event %ud failed %d\n",
 		c->aqprod, rreg(c, Raqevent), c->aqfail);
 	return s;

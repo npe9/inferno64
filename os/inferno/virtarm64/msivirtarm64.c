@@ -134,9 +134,17 @@ msiinit(void)
 	u32 t;
 
 	if(acpinmsiframe == 0){
+		/*
+		 * No frame.  A GICv3 machine says so and offers an ITS
+		 * instead, which itsvirtarm64.c drives; this board used to
+		 * print that msi-x was unavailable and leave the network
+		 * driver polling.
+		 */
+		if(acpinits > 0 && itsinit() == 0)
+			return;
 		if(acpinits > 0)
-			print("msix: this machine has an ITS and no v2m frame;"
-				" msi-x is not available\n");
+			print("msix: this machine has an ITS and it could not be"
+				" set up; msi-x is not available\n");
 		return;
 	}
 	v2mbase = acpimsiframe[0].base;
