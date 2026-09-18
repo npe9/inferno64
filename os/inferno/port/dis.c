@@ -519,8 +519,9 @@ stoptheworld(void)
 	 * one instant at which the run-queue counts are comparable: every
 	 * other executor is parked at a safepoint, so nothing links,
 	 * unlinks or changes state underneath the walk.  The check in
-	 * vmachine() cannot say that -- see *runqstrict there -- so this is
-	 * where an answer about the queues themselves comes from.  Every
+	 * vmachine()'s own loop cannot say that -- it walks structures the
+	 * other executors are changing -- so this is where an answer about
+	 * the queues themselves comes from.  Every
 	 * Runqauditevery'th collection, because it walks every Prog and
 	 * every queue and the collector runs hundreds of thousands of times
 	 * a boot.
@@ -1041,19 +1042,6 @@ int maxnvm;
  */
 enum { Runqcap = 64 };
 int maxnrunq;
-int nrunqmismatch;	/* MULTICORE INSTRUMENTATION - temporary */
-ulong nrunqchecks, nrunqraced, nrunqlone;	/* likewise */
-/*
- * The run-queue cross-check below walks two structures another
- * executor is free to change underneath it, so at parallelvm=1 a
- * disagreement can be the instrument's own snapshot race rather than
- * anything wrong with the queues.  *runqstrict=1 (the default) holds
- * isched.l for the walk of isched.head and compares only when this
- * executor is the only one inside the VM, which is the condition under
- * which the two counts are meant to be equal at an instant; =0 is the
- * old unlocked comparison, so one kernel measures both.
- */
-int runqstrict = 1;
 int maxvmq;
 int vmqbad;
 uvlong vmpasses;	/* MULTICORE INSTRUMENTATION - temporary */
@@ -2961,76 +2949,42 @@ vmachine(void*)
 		if(r != nil) {
 			{	/* MULTICORE INSTRUMENTATION - temporary */
 				Prog *q;
-				int i, n = 0, ready = 0, lone;
+				int i, n = 0;
 
-				lone = nvm <= 1;
-				if(runqstrict)
-					lock(&isched.l);
 				for(q = r; q != nil && n < Runqcap; q = q->link)
 					n++;
-				/*
-				 * The same quantity by an independent path, as
-				 * a control on the walk above.  maxnrunq counts
-				 * the run-queue links; this counts Progs in
-				 * state Pready over isched.head, which is the
-				 * list of every Prog and is maintained by
-				 * different code.  Two counts that agree are a
-				 * measurement; one count is an assertion about
-				 * a data structure.
-				 *
-				 * They should agree, because addrun() sets
-				 * Pready exactly when it links, and delrun()
-				 * and delrunq() unlink.  A persistent
-				 * disagreement would mean one of those paths
-				 * leaves a Prog on the queue in another state
-				 * or in a state without being queued -- which
-				 * is the shape of the delprog() bug fixed
-				 * above, where a freed Prog stayed linked.
-				 */
-				for(q = isched.head; q != nil; q = q->next)
-					if(q->state == Pready)
-						ready++;
 				/*
 				 * Every context's local queue, not just this
 				 * one.  A Prog on another context's queue is
 				 * Pready and invisible to the walk above, so
 				 * comparing against this context alone made
 				 * the control fire the moment a second
-				 * context could hold work -- which is the
-				 * control noticing, correctly, that the
-				 * structures changed meaning again.  It did
-				 * the same when the global queue arrived.
+				 * context could hold work.
 				 */
 				for(i = 0; i < npctx; i++)
 					if(pctxs[i] != curP)
 						n += pctxs[i]->nlocal;
 				if(n > maxnrunq){
 					maxnrunq = n;
-					print("runq: %d dis programs ready at once "
-						"(%d by state), cpu%d\n",
-						n, ready, m->machno);
+					print("runq: %d dis programs ready at once,"
+						" cpu%d\n", n, m->machno);
 				}
 				/*
-				 * Pready counts Progs on the global queue too,
-				 * so the local walk is short by exactly ngq.
-				 * Comparing without that term made this fire
-				 * the moment the global queue was first used,
-				 * which is the control working -- it noticed a
-				 * real change in what the structures mean.
+				 * The control that used to live here -- the
+				 * same total counted a second way, over Progs
+				 * in state Pready on isched.head -- is gone,
+				 * and not because it was expensive.  It walked
+				 * two structures other executors change while
+				 * it walked them, so at parallelvm=1 it
+				 * disagreed on about three quarters of its
+				 * comparisons and said nothing about the
+				 * queues; holding isched.l did not help, since
+				 * a local queue belongs to its own executor.
+				 * auditrunq() asks the same question from
+				 * inside stoptheworld(), where the answer
+				 * means something, and costs nothing per
+				 * quantum.  See doc/multicore-plan.ms.
 				 */
-				nrunqchecks++;
-				if(lone)
-					nrunqlone++;
-				if(ready != n + isched.ngq){
-					if(runqstrict && !lone)
-						nrunqraced++;	/* not comparable; another executor was running */
-					else if(nrunqmismatch++ == 0)
-						print("runq: %d linked + %d global but %d in "
-							"Pready -- the counts disagree\n",
-							n, isched.ngq, ready);
-				}
-				if(runqstrict)
-					unlock(&isched.l);
 			}
 			o = r->osenv;
 			/*
@@ -3541,12 +3495,9 @@ stalldump(void)
 			shortringok, shortringshort, shortnoring);
 	}
 	{
-		print("stall: runq checks %lud (%lud with this executor alone in"
-			" the VM), mismatches %d, disagreed while another ran %lud,"
-			" runqstrict %d; stopped-world audits %lud, bad %lud,"
+		print("stall: stopped-world audits %lud, bad %lud,"
 			" a Prog queued twice %lud (its own %lud), queued but not"
 			" listed %lud, placeholders skipped %lud\n",
-			nrunqchecks, nrunqlone, nrunqmismatch, nrunqraced, runqstrict,
 			nrunqaudits, nrunqauditbad, nrunqauditdup, nrunqauditself,
 			nrunqauditnotlisted, nrunqauditplace);
 		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud,"
@@ -3624,12 +3575,9 @@ soakline(void)
 	 * tail is unreliable a long dump loses its last lines and this one
 	 * line does not.  MULTICORE INSTRUMENTATION - temporary.
 	 */
-	print("soak: runq checks %lud (%lud alone in the VM), mismatches %d,"
-		" disagreed while another ran %lud, runqstrict %d;"
-		" stopped-world audits %lud, bad %lud, a Prog queued twice %lud"
-		" (its own %lud), queued but not listed %lud, placeholders"
+	print("soak: stopped-world audits %lud, bad %lud, a Prog queued twice"
+		" %lud (its own %lud), queued but not listed %lud, placeholders"
 		" skipped %lud; quanta",
-		nrunqchecks, nrunqlone, nrunqmismatch, nrunqraced, runqstrict,
 		nrunqaudits, nrunqauditbad, nrunqauditdup, nrunqauditself,
 		nrunqauditnotlisted, nrunqauditplace);
 	{

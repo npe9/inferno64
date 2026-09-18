@@ -263,9 +263,9 @@ main(void)
 			extern int spawnwoken;
 			spawnwoken = strtol(p, nil, 0);
 		}
-		if((p = getconf("*runqstrict")) != nil){
-			extern int runqstrict;
-			runqstrict = strtol(p, nil, 0);
+		if((p = getconf("*runqaudit")) != nil){
+			extern int runqaudit;
+			runqaudit = strtol(p, nil, 0);
 		}
 		if((p = getconf("*gcatomic")) != nil){
 			extern int gcatomic;

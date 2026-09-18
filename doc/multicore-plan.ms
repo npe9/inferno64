@@ -7615,3 +7615,98 @@ the quanta split
 \(em the other way round from the earlier boot's 605/1394, which is
 what two processors sharing one queue should look like.  So the
 withdrawal above is not a pc64 result that arm64 has yet to confirm.
+.NH 2
+And then the check comes out of the quantum path
+.LP
+.B "A control that cannot be read is a cost, not a control."
+With the question settled, what
+.CW *runqstrict=1
+left behind was a
+.CW isched.l
+acquisition and a walk of every Prog on
+.CW isched.head ,
+once per quantum, in the parallel VM, by default.  The comparison is
+gone from
+.CW vmachine()
+now.  What stays there is the watermark \(em how many Dis programs are
+ready at once, which costs a bounded walk of the local queue and one
+add per context \(em and
+.CW auditrunq()
+carries the invariant at one collection in a thousand, where it can be
+believed.  The boot flag is
+.CW *runqaudit .
+.PP
+.B "Measured as a workload, not as ticks."
+Ticks and collector passes are exactly the two numbers that would not
+move if an instrument were throttling the scheduler: this file's own
+comment records a print in this loop taking shell iterations from 18 to
+2 while the collector count stayed plausible.  So the arms are two
+pinned binaries \(em one built from the parent commit's
+.CW dis.c ,
+one from the tree \(em booted for the same wall-clock window with
+.CW *soak=1 ,
+counted in completed
+.CW chantest
+runs.
+.PP
+Three boots an arm, alternating, one QEMU at a time, each capped at the
+same 200 seconds of wall clock:
+.IP
+.nf
+              chantest runs        Dis quanta in the window
+before             15                 62688  58872  60693
+after              15                 66221  61646  67798
+.fi
+.PP
+The workload count does not move and the quanta count does: about 7
+per cent more Dis quanta in the same time with the check gone, which is
+the direction removing a lock and a walk should go, and no change in
+what the workload got through.
+.PP
+.B "The controls that make those numbers readable."
+Fifteen in six boots out of six is the shape of an instrument that
+cannot see, so the same binary was booted at
+.CW *parallelvm=0
+and at
+.CW "-smp 1" :
+both give 3
+.CW chantest
+runs and 15945 quanta against 60000-odd.  The counter moves when the
+thing it measures changes, so the equal 15s are a result and not a
+ceiling.
+.PP
+.B "Three harness faults, none of them the kernel."
+The first attempt at this measurement rebuilt
+.CW ipc64
+while a boot of it was running; the second died to
+.CW "rm -f cyc2.*.log"
+matching nothing, which in
+.CW zsh
+aborts the whole command line; the third ran while the first job was
+still booting, so two QEMUs shared the machine and the arm that
+happened to run during the contention read 3 against the other's 15.
+That last one would have been reported as a fivefold regression from
+deleting a lock.  One QEMU at a time, arms alternating, and the
+duration of each boot recorded beside its count.
+.PP
+.B "And one audit in ten thousand disagrees."
+Across the six boots
+.CW auditrunq()
+ran 10097 times and reported one disagreement:
+.IP
+.nf
+audit: 0 queued (0 not ready, 0 twice, 0 of them this interpreter's own)
+       but 1 in Pready
+.fi
+.PP
+A Prog ready and in no queue \(em the opposite shape from the
+placeholder, and exactly the window
+.CW addrun()
+opens by setting
+.CW "state = Pready"
+before it links.  With the stopped world excluding only contexts that
+have a quantum open, an executor between quanta or a kernel process
+readying a Prog through
+.CW /prog
+can be caught in it.  A leak would persist and recur; this happened
+once in ten thousand samples and the counts agree on every other one.

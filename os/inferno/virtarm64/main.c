@@ -345,9 +345,9 @@ main(void)
 			extern int parallelvm;
 			parallelvm = strtol(p, nil, 0);
 		}
-		if((p = getconf("*runqstrict")) != nil){
-			extern int runqstrict;
-			runqstrict = strtol(p, nil, 0);
+		if((p = getconf("*runqaudit")) != nil){
+			extern int runqaudit;
+			runqaudit = strtol(p, nil, 0);
 		}
 		if((p = getconf("*soak")) != nil)
 			ksetenv("soak", p, 0);
