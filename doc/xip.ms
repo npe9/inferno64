@@ -1968,6 +1968,46 @@ and reducing it would save 396 more, but nothing in these workloads
 posts a note, so there is no measurement to size it by and a dropped
 note is a lost kill.
 .NH 2
+The kernel stacks, which cannot be cut
+.PP
+With the frame types shared,
+.CW newproc
+is the largest single allocation left: 20800 bytes, being five kernel
+stacks of
+.CW KSTACK
+4096 plus their block headers.  4096 is already down from the 16384 this
+document started with, and the obvious next step is 2048.  It is not
+available.
+.PP
+Measured by filling each stack with a pattern at
+.CW newproc
+and reporting the deepest byte disturbed:
+.DS
+.CW "pid 1  used 2704 of 4096  (interp)"
+.CW "pid 3  used 2524 of 4096  (dis)"
+.CW "pid 4  used 2148 of 4096  (dis)"
+.CW "pid 2  used  272 of 4096  (closeproc)"
+.DE
+over a shell, three nested
+.I sh (1)s,
+a pipeline,
+.I ls (1),
+.I fptest (1)
+and
+.I cvtchk (1).
+The interpreter proc peaks a little over 2700 bytes, which leaves about
+1300 of headroom in 4096 and none at all in 2048.  So
+.CW KSTACK
+stays at 4096, and the 16K to 4K cut made earlier was closer to the edge
+than it looked.
+.PP
+The honest caveat is that a watermark measures the paths that ran.  1300
+bytes is not a lot of margin for one that did not, and the parts this is
+for have no memory protection to catch an overflow \- it would land in
+whatever the allocator put below the stack.  That is an argument for
+measuring it again on the real board with its own drivers in the way,
+not for cutting it further.
+.NH 2
 What gates any of it
 .PP
 The kernel pool floor: 78208 bytes in 343 allocations with the minimal
