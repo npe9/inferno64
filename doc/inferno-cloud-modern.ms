@@ -2467,7 +2467,10 @@ control in
 and it was
 .B slower :
 169 ms a verification against 97, and 84 ms an ECDH against 49.  It was
-reverted.
+reverted.  (Those two figures were taken together in one sitting; the
+same affine code measures 83 ms elsewhere in this paper, because the
+absolute numbers move with what else the machine is running.  The
+comparison is between the pair, not across the page.)
 .PP
 The reason is where the work actually is.  A field operation here is
 not an instruction, it is a call out of interpreted Dis into
