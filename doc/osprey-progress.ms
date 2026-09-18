@@ -13648,7 +13648,7 @@ archives for 386, and as many again for each of the other four types the
 tree has built.
 .PP
 The tally as this is written, every configuration building and every
-check clean:
+check clean, the staleness check first at ten:
 .CW pc64
 65,
 .CW p9pair
