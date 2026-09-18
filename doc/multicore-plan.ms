@@ -7710,3 +7710,72 @@ readying a Prog through
 .CW /prog
 can be caught in it.  A leak would persist and recur; this happened
 once in ten thousand samples and the counts agree on every other one.
+.NH 2
+This host is shared, and that is a fact about every timing number here
+.LP
+.B "Four other QEMU guests, one of them at 322 per cent of a processor."
+The
+.CW -smp
+.CW 4
+spawn-gate measurement below was taken with a guard that refuses to
+start when another QEMU is already running, and the guard fired:
+.IP
+.nf
+qemu-system-aarch64   elapsed 03:10   322.8% cpu
+qemu-system-x86_64    elapsed 8:42:27
+qemu-system-riscv64   elapsed 11:36
+qemu-system-arm       elapsed 00:43
+.fi
+.PP
+None of them are this session's.  Other work runs on this machine, and
+a throughput number taken while a neighbour has three processors is not
+a number about the kernel.  That is the most likely explanation for the
+spread in the spawn-gate table \(em 52105 to 75877 quanta within one
+arm \(em and it is a caveat on every wall-clock measurement in this
+document, including the seven per cent above.
+.PP
+So the protocol has one more step: sample the process table every ten
+seconds for the length of a boot, and discard any boot during which a
+QEMU that is not ours was running.  Correctness results \(em panics,
+audits, markers, whether a processor interprets \(em do not depend on
+the neighbours and stand as they are.
+.NH 2
+Withdrawn: the seven per cent was the neighbours
+.LP
+.B "Five more pairs, and the difference walks off."
+The commit that took the cross-check out of the quantum path claimed
+about seven per cent more Dis quanta, from three alternating pairs.
+Five further pairs of the same two pinned binaries, alternating, one
+QEMU of ours at a time:
+.IP
+.nf
+      before    after     after - before
+      62688     66221         +3533
+      58872     61646         +2774
+      60693     67798         +7105
+      62201     62629          +428
+      64285     67031         +2746
+      66021     64107         -1914
+      64381     64398           +17
+      65113     56824         -8289
+.fi
+.PP
+Mean difference +800 quanta, which is 1.3 per cent, six pairs positive
+of eight, and a single pair swinging further than the whole claimed
+effect.  The
+.I before
+arm spans 58872 to 66021 and the
+.I after
+arm 56824 to 67798: the spread within an arm is larger than the gap
+between them.  So the honest statement is that removing the check costs
+nothing measurable, not that it gains seven per cent.  The first three
+pairs happened to run while the machine was quieter than the next five.
+.PP
+.B "The reason is the section above, and it applies to every table here."
+This host runs other people's QEMU guests.  A number taken without
+looking at the process table is a number about the afternoon, and the
+only measurements in this document that do not depend on it are the
+ones that count events rather than time: panics, audits, markers,
+whether a second processor interprets.  Those stand.  For throughput,
+alternate the arms, take pairs, and report the spread rather than a
+mean \(em and say what else was running.

@@ -444,6 +444,7 @@ int gcsemaheld;		/* set when collectq() could not take gcsema */
 int runqaudit = 1;
 ulong nrunqaudits, nrunqauditbad, nrunqaudittick;
 ulong nrunqauditdup, nrunqauditself, nrunqauditnotlisted, nrunqauditplace;
+ulong nrunqauditstuck;	/* ready and unqueued at two audits running */
 int nrunqauditsaid;
 enum { Runqauditevery = 1000 };
 static void auditrunq(void);
@@ -555,7 +556,9 @@ auditrunq(void)
 {
 	Prog *p, *seen[64];
 	int i, j, nq = 0, ready = 0, badstate = 0, dup = 0, self = 0;
-	int notlisted = 0, placeheld = 0;
+	int notlisted = 0, placeheld = 0, unqueuedready = 0;
+	static int unqueuedpid;		/* the one seen at the last audit */
+	int nextunqueued = 0;
 
 	for(i = 0; i < npctx; i++)
 		for(p = pctxs[i]->runhd; p != nil; p = p->link){
@@ -613,9 +616,34 @@ auditrunq(void)
 		if(p->state != Pready)
 			badstate++;
 	}
-	for(p = isched.head; p != nil; p = p->next)
-		if(p->state == Pready)
-			ready++;
+	for(p = isched.head; p != nil; p = p->next){
+		if(p->state != Pready)
+			continue;
+		ready++;
+		/*
+		 * Ready and in no queue.  addrun() sets Pready and only
+		 * then links, and the stopped world does not exclude an
+		 * executor between quanta (see stoptheworld()), so this
+		 * is reachable without anything being wrong.  What tells
+		 * a transient from a leak is whether the SAME program is
+		 * still like this at the next audit, so remember the pid
+		 * -- not the pointer, which may be freed by then -- and
+		 * look it up again below.
+		 */
+		for(j = 0; j < nq && j < nelem(seen); j++)
+			if(seen[j] == p)
+				break;
+		if(j == nq || j == nelem(seen)){
+			if(p->pid == unqueuedpid && unqueuedpid != 0){
+				if(nrunqauditstuck++ == 0)
+					print("audit: prog %d was ready and unqueued"
+						" at two audits running\n", p->pid);
+			}
+			nextunqueued = p->pid;
+			unqueuedready++;
+		}
+	}
+	unqueuedpid = nextunqueued;
 	/*
 	 * Which Prog, not how many.  A queued Prog that is not on
 	 * isched.head is the whole difference between a counting artefact
@@ -3497,9 +3525,10 @@ stalldump(void)
 	{
 		print("stall: stopped-world audits %lud, bad %lud,"
 			" a Prog queued twice %lud (its own %lud), queued but not"
-			" listed %lud, placeholders skipped %lud\n",
+			" listed %lud, placeholders skipped %lud, ready and"
+			" unqueued twice running %lud\n",
 			nrunqaudits, nrunqauditbad, nrunqauditdup, nrunqauditself,
-			nrunqauditnotlisted, nrunqauditplace);
+			nrunqauditnotlisted, nrunqauditplace, nrunqauditstuck);
 		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud,"
 			" fddefer %d, nwoken %d, interpreters spawned %lud"
 			" (by type %lud %lud %lud %lud %lud)\n",
@@ -3577,9 +3606,9 @@ soakline(void)
 	 */
 	print("soak: stopped-world audits %lud, bad %lud, a Prog queued twice"
 		" %lud (its own %lud), queued but not listed %lud, placeholders"
-		" skipped %lud; quanta",
+		" skipped %lud, ready and unqueued twice running %lud; quanta",
 		nrunqaudits, nrunqauditbad, nrunqauditdup, nrunqauditself,
-		nrunqauditnotlisted, nrunqauditplace);
+		nrunqauditnotlisted, nrunqauditplace, nrunqauditstuck);
 	{
 		int mi;
 
