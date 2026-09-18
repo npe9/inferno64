@@ -1342,6 +1342,55 @@ xdecl(int c, Type *t, Sym *s)
 	s->class = c;
 	s->block = 0;
 	s->offset = o;
+
+	/*
+	 * A const object at file scope is laid out read-only, the same as
+	 * one named in a #pragma rodata: the back end puts RODATA on its
+	 * GLOBL and the linker places it in the text segment rather than
+	 * in data (utils/tl/l.h, doc/xip.ms).  On a part that runs its
+	 * text from flash and copies its data segment into RAM at boot,
+	 * that is what const has been asking for all along.
+	 *
+	 * The qualifier can sit on the object or, for an array, on the
+	 * element type -- "static const u32 Te0[256]" is an array of
+	 * const, not a const array -- so both are looked at.
+	 *
+	 * Writing through a const declaration is undefined behaviour, and
+	 * on a target whose text is writable it will still work, so this
+	 * changes nothing there.  On one whose text is flash the write is
+	 * dropped, which is the point.
+	 *
+	 * Under -r, and not by default, because it is not safe everywhere:
+	 * aarch64 and riscv64 reach static data with an offset from a base
+	 * register that does not extend to the text segment, so moving
+	 * every const object there breaks libmath's floating point
+	 * constants with "tanh: imm out of range" on
+	 *	MOVD	tiny<>+0(SB),F4
+	 * and libkern's dtoa with "offset out of range: 192078".  A board
+	 * whose code addresses data absolutely -- thumb does -- sets -r in
+	 * its target mkfile.  #pragma rodata has no such restriction in
+	 * practice only because it is applied to named tables that have
+	 * been checked to link.
+	 */
+	if(debug['r'])
+		if(c == CGLOBL || c == CSTATIC)
+			if(isrodatatype(t))
+				s->rodata = 1;
+}
+
+/*
+ * Is this a type whose object may be laid out read-only?
+ */
+int
+isrodatatype(Type *t)
+{
+	if(t == T)
+		return 0;
+	if(t->garb & GCONSTNT)
+		return 1;
+	if(t->etype == TARRAY)
+		return isrodatatype(t->link);
+	return 0;
 }
 
 void

@@ -772,6 +772,7 @@ void	pragfpround(void);
 void pragprofile(void);
 void	pragincomplete(void);
 void	pragrodata(void);
+int	isrodatatype(Type*);
 
 /*
  * calls to machine depend part

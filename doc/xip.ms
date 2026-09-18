@@ -2489,13 +2489,34 @@ links
 on top of the root and string moves:
 .DS
 .CW "              before     after     saved"
-.CW "virt          330984    266936     64048"
-.CW "raspi3b      4505656   4444920     60736"
+.CW "virt          330984    258200     72784"
+.CW "raspi3b      4505656   4436168     69488"
 .DE
 .CW virt
 still reaches an interactive shell with its three markers and
 .CW raspi3b
 still boots.
+.PP
+Those two figures were first written down as 64048 and 60736, measured
+before every affected library had actually been recompiled.  That is
+worth a paragraph, because it wasted an hour and will do so again.
+.CW mk
+decides an archive is up to date by comparing the source against the
+.I member
+inside the
+.CW .a ,
+so deleting the object files and rebuilding does nothing: it prints
+.CW "mk: 'install' is up to date"
+and re-archives what it already has.  Deleting the
+.CW .a
+is not enough either, because then it re-archives the stale objects
+beside it.  Both have to go, and for every target separately \-
+.CW .t ,
+.CW .7
+and
+.CW .j
+live in the same source directory.  Every "no change" in this section
+was that, twice.
 .PP
 This is the failure mode the bench cannot see.
 .CW mps2 's
@@ -2509,6 +2530,85 @@ of it, including
 .CW smallprimes ,
 the nine instruction arrays and all 214 type descriptors.
 .NH 2
+Honouring const, under -r
+.PP
+The pragma names a table.  A great many tables already say the same
+thing in C and are ignored: kencc parses
+.CW const
+and does nothing with it.
+.CW libsec/aes.c
+alone has ten \-
+.CW Te0
+through
+.CW Te4 ,
+.CW Td0
+through
+.CW Td4
+and
+.CW rcon ,
+all
+.CW "static const" .
+.PP
+So the front end can read it:
+.CW utils/cc/dcl.c 's
+.CW xdecl()
+sets the same flag the pragma sets when the declared type is
+const-qualified, which for
+.CW "static const u32 Te0[256]"
+means the array's element type, not the array.  No back-end change: the
+line that emits
+.CW RODATA
+was already there.  On
+.CW mps2
+and
+.CW teensy41
+that is another 14056 bytes of
+.CW "data + bss" ,
+and on
+.CW nucleof303 ,
+which links less of libsec, 264.
+.PP
+Under
+.CW -r
+and not by default, because it is not safe everywhere.  With it on for
+every target,
+.CW libmath
+and
+.CW libkern
+stop compiling for aarch64 and riscv64:
+.DS
+.CW "tanh: imm out of range"
+.CW "(956)	MOVD	tiny<>+0(SB),F4"
+.CW "dtoa: offset out of range: 192078"
+.CW "(2274)	FMOVD	bigtens<>+32(SB),F2"
+.DE
+Those targets reach a static with an offset from a base register whose
+range does not extend to the text segment, and a file-scope
+.CW const
+double is exactly what that addressing mode is for.  Thumb addresses
+data absolutely and does not care, so
+.CW mkfiles/mkfile-os-thumb
+passes
+.CW -r
+and the others do not.  The pragma has no such trouble only because it
+is applied to four named tables that were checked to link.
+.PP
+One bug of mine is worth recording.  The pragma commit added a field to
+.CW Sym
+and
+.CW utils/cc/lex.c 's
+.CW syminit()
+clears every field of a new one by hand \- it does not
+.CW memset
+\- so the new field was whatever
+.CW mysbrk
+last left there.  Symbols were being moved to read-only memory at
+random.  It presented as the aarch64 and riscv64 failures above
+appearing and disappearing between builds, which is what sent me looking
+for a target-specific cause when the cause was an uninitialised byte.
+The thumb figures did not change once it was fixed, so they were not an
+artifact, but they could have been.
+.NH 2
 Where this stands
 .PP
 Everything below is measured, on
@@ -2519,22 +2619,22 @@ loaded.  The first column is where this document began; the second is
 the tree as it is now.
 .DS
 .CW "                        was        is    saved"
-.CW "kernel data + bss    162904     76400    86504"
+.CW "kernel data + bss    162904     62344   100560"
 .CW "Proc array           175360     38720   136640"
-.CW "main pool            367104    114688   252416"
+.CW "main pool            367104    113472   253632"
 .CW "heap pool             73728     56832    16896"
 .CW "                     ------    ------   ------"
-.CW "                     779096    286640   492456"
+.CW "                     779096    271368   507728"
 .DE
 .CW "kernel text"
-went 848200 to 1054496 over the same span, which is the price: 206296
-bytes of flash bought 492456 of RAM.  On
+went 848200 to 1068552 over the same span, which is the price: 220352
+bytes of flash bought 507728 of RAM.  On
 .CW mps2 ,
 whose text is SRAM, that is not a win at all \- it is the bench, not
 the target.  On
 .CW teensy41 ,
 with eight megabytes of flash and a few hundred kilobytes of SRAM, it
-is the whole point: 746960 of text against 74312 of data and bss and a
+is the whole point: 761016 of text against 60256 of data and bss and a
 38720-byte
 .CW Proc
 array.
@@ -2545,7 +2645,7 @@ device set, which is the one the other two boards are configured
 against, so they carry over; the text and data figures are each board's
 own.
 .CW nucleof303
-is 281960 of text against 47528 of data and bss, which fits both its
+is 282224 of text against 47264 of data and bss, which fits both its
 512K of flash and its 64K of SRAM, with a 19360-byte
 .CW Proc
 array on top \- and a pool floor that still leaves no room for Limbo,

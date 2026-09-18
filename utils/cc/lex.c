@@ -413,6 +413,7 @@ syminit(Sym *s)
 	s->class = CXXX;
 	s->aused = 0;
 	s->sig = SIGNONE;
+	s->rodata = 0;
 }
 
 #define	EOF	(-1)

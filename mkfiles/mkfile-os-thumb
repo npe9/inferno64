@@ -19,7 +19,11 @@ ASFLAGS=	-t
 DISWORD=	4
 
 CC=		tc
-CFLAGS=		-wFV -I$ROOT/Inferno/thumb/include -I$ROOT/include
+# -r: lay a file-scope const object out read-only, so it costs flash
+#     rather than SRAM (utils/cc/dcl.c).  Safe here because this target
+#     addresses data absolutely; see the comment there for the two
+#     targets where it is not.
+CFLAGS=		-wFV -r -I$ROOT/Inferno/thumb/include -I$ROOT/include
 ANSICPP= -p
 
 LD=		tl
