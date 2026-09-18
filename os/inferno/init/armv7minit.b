@@ -33,8 +33,8 @@ init()
 	sys->bind("#c", "/dev", sys->MAFTER);
 	sys->bind("#t", "/dev", sys->MAFTER);
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
-	# The PyCubed device if this kernel has one; harmless if not.
-	sys->bind("#H", "/dev", sys->MAFTER);
+	# Board-specific files, if this kernel has the arch device.
+	sys->bind("#P", "/dev", sys->MAFTER);
 
 	shell = load Shell "/dis/sh.dis";
 	if(shell == nil){

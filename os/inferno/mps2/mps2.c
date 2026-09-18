@@ -23,7 +23,7 @@ extern Dev ssldevtab;
 extern Dev capdevtab;
 extern Dev kprofdevtab;
 extern Dev flashfsdevtab;
-extern Dev pycubeddevtab;
+extern Dev archdevtab;
 Dev* devtab[22]={
 	&rootdevtab,
 	&consdevtab,
@@ -38,7 +38,7 @@ Dev* devtab[22]={
 	&capdevtab,
 	&kprofdevtab,
 	&flashfsdevtab,
-	&pycubeddevtab,
+	&archdevtab,
 	nil,
 };
 

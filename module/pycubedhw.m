@@ -30,10 +30,11 @@
 #	imu       read   "mag <x> <y> <z>\n"
 #	                 "gyro <x> <y> <z>\n"
 #	                 "accel <x> <y> <z>\n"   milli-units
-#	radio     read   the packet received, 0 bytes if none
-#	          write  the packet to transmit
-#	radioctl  read   "rssi <dBm>\n"
-#	          write  "listen" or "sleep"
+
+# The radio is not here.  An SX127x on SPI is a network interface, and
+# Inferno's home for one is devether: a Medium driver puts it at
+# /net/ether0 and the IP stack runs over it.  That is not a file to
+# read, and standing in for it would be inventing a network.
 #
 # Text, and integers rather than reals, because the parts this is for
 # have no double-precision floating point (doc/armv7m-ports.ms) and
@@ -53,11 +54,7 @@ Hw: module
 
 	battmv:		fn(): int;
 	rgb:		fn(r, g, b: int);
-	radiolisten:	fn();
-	radiosleep:	fn();
-	radiosend:	fn(msg: array of byte): int;
-	radiorecv:	fn(tmo: int): array of byte;
-	radiorssi:	fn(): int;
+	haveradio:	fn(): int;
 	imumag:		fn(): array of int;
 	imugyro:	fn(): array of int;
 	imuaccel:	fn(): array of int;

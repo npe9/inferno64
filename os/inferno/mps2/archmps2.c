@@ -12,7 +12,7 @@
  * RAM with nothing to turn on first.
  */
 
-extern void pycubedhwinit(void);	/* os/inferno/mps2/pycubednone.c */
+extern void archfilesinit(void);	/* os/inferno/mps2/archfiles.c */
 extern uchar flashimgcode[];	/* mps2.flash.s, from utils/mkflashfs */
 extern u32 flashimglen;
 extern uchar *flashfsbase;	/* os/inferno/port/devflashfs.c */
@@ -36,11 +36,10 @@ archreset(void)
 	 */
 
 	/*
-	 * And what hardware the PyCubed device has behind it: none, on
-	 * this board.  os/inferno/mps2/pycubednone.c says so on every
-	 * reading it invents.
+	 * The board files under #P: os/inferno/mps2/archfiles.c.  There
+	 * are no sensors on this board and it says so on every reading.
 	 */
-	pycubedhwinit();
+	archfilesinit();
 
 	/*
 	 * Where the flash file system is.  This board has no flash, so

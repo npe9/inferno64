@@ -18,7 +18,7 @@ include "pycubedhw.m";
 FD: import Sys;
 
 hwdir: string;
-fbatt, frgb, fimu, fradio, fradioctl: ref FD;
+fbatt, frgb, fimu: ref FD;
 
 open(name: string, mode: int): ref FD
 {
@@ -36,10 +36,7 @@ init(dir: string): string
 	fbatt = open("battery", Sys->OREAD);
 	frgb = open("rgb", Sys->OWRITE);
 	fimu = open("imu", Sys->OREAD);
-	fradio = open("radio", Sys->ORDWR);
-	fradioctl = open("radioctl", Sys->ORDWR);
-	if(fbatt == nil || frgb == nil || fimu == nil
-	|| fradio == nil || fradioctl == nil)
+	if(fbatt == nil || frgb == nil || fimu == nil)
 		return sys->sprint("%s: %r", hwdir);
 	return nil;
 }
@@ -49,7 +46,7 @@ source(): string
 	# Whatever is serving the directory says what it is, if it has
 	# anything to say.  A real device has no such file and the
 	# absence is the answer.
-	fd := open("source", Sys->OREAD);
+	fd := open("arch", Sys->OREAD);
 	if(fd == nil)
 		return hwdir;
 	buf := array[128] of byte;
@@ -82,46 +79,16 @@ rgb(r, g, b: int)
 	sys->write(frgb, s, len s);
 }
 
-radiolisten()
+# There is no radio here.
+#
+# On a PyCubed the RFM9x is an SX127x on SPI, and its Inferno home is
+# devether: a Medium driver puts it at /net/ether0 and the IP stack runs
+# over it, the way ethermedium.c and pktmedium.c do for the media this
+# tree already has.  That is a driver and a Medium, not a file to read,
+# and it is phase 2.  A board without one says so rather than inventing
+# traffic: see doc/pycubed-plan.ms.
+haveradio(): int
 {
-	s := array of byte "listen";
-	sys->write(fradioctl, s, len s);
-}
-
-radiosleep()
-{
-	s := array of byte "sleep";
-	sys->write(fradioctl, s, len s);
-}
-
-radiosend(msg: array of byte): int
-{
-	if(sys->write(fradio, msg, len msg) != len msg)
-		return -1;
-	return 0;
-}
-
-# Nothing arriving is a zero-length read, not an error, so a caller
-# waits by polling rather than by blocking a process forever on a radio
-# that may never speak.
-radiorecv(tmo: int): array of byte
-{
-	for(waited := 0; waited < tmo; waited += 200){
-		buf := array[256] of byte;
-		n := sys->pread(fradio, buf, len buf, big 0);
-		if(n > 0)
-			return buf[0:n];
-		sys->sleep(200);
-	}
-	return nil;
-}
-
-radiorssi(): int
-{
-	s := rdline(fradioctl);
-	(nil, flds) := sys->tokenize(s, " \t\n");
-	if(len flds == 2 && hd flds == "rssi")
-		return int hd tl flds;
 	return 0;
 }
 

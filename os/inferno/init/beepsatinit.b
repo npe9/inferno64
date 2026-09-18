@@ -37,11 +37,10 @@ init()
 	sys->bind("#t", "/dev", sys->MAFTER);
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 
-	# The PyCubed sensors and radio, as files: os/inferno/port/
-	# devpycubed.c.  A board whose kernel does not carry the device,
-	# or carries it with no backend, fails this bind and the mission
-	# then says which file it could not open.
-	sys->bind("#H", "/dev", sys->MAFTER);
+	# The board's own files: os/inferno/port/devarch.c.  A kernel
+	# without the arch device fails this bind and the mission then
+	# says which file it could not open.
+	sys->bind("#P", "/dev", sys->MAFTER);
 
 	mission = load Mission "/dis/pycubed/beepsat.dis";
 	if(mission == nil){

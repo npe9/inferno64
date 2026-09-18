@@ -139,24 +139,18 @@ beacontask()
 {
 	for(;;){
 		sys->sleep(30*1000);		# once every 30s
-		if(antennaattached){
-			debug("beacon", "sending beacon");
-			hw->radiosend(array of byte "Hello World!");
-		} else {
-			debug("beacon", "NOT sending beacon (unknown antenna state)");
-			hw->radiolisten();
+		if(!hw->haveradio()){
+			# The Python guards keying the transmitter with
+			# ANTENNA_ATTACHED because nobody knows whether an
+			# antenna is on the board.  Here there is no radio
+			# at all, which is a stronger statement and the
+			# honest one: see module/pycubedhw.m.
+			debug("beacon", "no radio on this board, nothing sent");
+			continue;
 		}
-		debug("beacon", "listening 10s for a response");
-		resp := hw->radiorecv(10*1000);
-		if(resp == nil){
-			debug("beacon", "no messages");
-		} else {
-			s := ask(sat->Bump, "gsresp", 1);
-			debug("beacon", sys->sprint("packet received, RSSI %d, responses %d",
-				hw->radiorssi(), s.cgsresp));
-			cdh(resp);
-		}
-		hw->radiosleep();
+		debug("beacon", "sending beacon");
+		# The transmit and receive path is a Medium over
+		# devether once there is a radio; phase 2.
 	}
 }
 
