@@ -306,6 +306,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkbevelhue();
 	checkscene();
 	checkselband();
+	checkunderline();
 	checkelide();
 	checkcontrast();
 	checkmenu();
@@ -1639,6 +1640,16 @@ checkscene()
 	report(nr > 0 && nw > nr, sys->sprint(
 		"a repaint batches widgets into fewer trees (%d widgets and %d nodes in %d trees, %d nodes a tree)",
 		nw, nn, nr, nn/nr));
+
+	# Take the menu's window down again.  It sits over this Screen above
+	# the pane's own window, so anything a LATER check draws under it
+	# would be clipped away without saying so - and every check in this
+	# file shares the one Screen.  It passes today only because what
+	# runs after this packs at the left, which is not a property to
+	# depend on: a check whose result depends on its neighbours is not
+	# measuring what it says it is.
+	tk->cmd(top, ".mn unpost");
+	mw = nil;
 }
 
 # Every widget under `who', named if it is not wholly inside the pane.
@@ -1731,6 +1742,57 @@ scenepair(top: ref Tk->Toplevel, who: string): (int, int)
 			}
 	}
 	return (diff, first);
+}
+
+# What an -underline index PAST THE END of the text does.
+#
+# options(9) defines -underline as an index into the displayed text and
+# says nothing about an index beyond it, and tksizelabel() clamps such
+# an index to strlen(text) - which tkdrawstring() then reads as "underline
+# the whole line".  On a label of several lines that clamp can never match
+# any line, because strlen counts the newlines too, so nothing is
+# underlined at all.
+#
+# Neither behaviour is in the manual and both paths share the arithmetic,
+# so the identity check is blind to it.  Asked here of the pixels: the
+# same label with and without the option, twice.
+checkunderline()
+{
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	tk->cmd(top, "style flat");
+	must(top, "label .a -text {handgloves} -underline 99");
+	must(top, "label .b -text {handgloves}");
+	must(top, "label .c -text {hand\ngloves} -underline 99");
+	must(top, "label .d -text {hand\ngloves}");
+	for(l := list of {".a", ".b", ".c", ".d"}; l != nil; l = tl l)
+		tk->cmd(top, "pack " + hd l + " -padx 6 -pady 6");
+	if(!map(top))
+		return;
+	tk->cmd(top, "update");
+	report(different(top, ".a", ".b") > 0,
+		"an -underline index past the end underlines a single line");
+	report(different(top, ".c", ".d") == 0,
+		"and underlines nothing at all when the label has several lines");
+}
+
+# how many bytes of one widget's rectangle differ from another's, the two
+# being the same size
+different(top: ref Tk->Toplevel, u, v: string): int
+{
+	ru := tk->rect(top, u, Tk->Border);
+	rv := tk->rect(top, v, Tk->Border);
+	if(ru.dx() <= 0 || ru.dx() != rv.dx() || ru.dy() != rv.dy())
+		return -1;
+	a := grab(ru);
+	b := grab(rv);
+	n := 0;
+	for(k := 0; k < len a && k < len b; k++)
+		if(a[k] != b[k])
+			n++;
+	return n;
 }
 
 # A SELECTION that runs off the right-hand end stops at the text, not at

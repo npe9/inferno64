@@ -205,6 +205,17 @@ This option is used by the default bindings to implement keyboard
 traversal for menu buttons and menu entries.
 0 corresponds to the first character of the text displayed in the
 widget, 1 to the next character, and so on.
+A newline is not a displayed character and is not counted, so on a
+widget of several lines the index runs on from the end of one line to
+the start of the next.
+An index PAST the end is clamped, and the clamp is then read as a
+request to underline the whole line \(em but only on a widget of one
+line, because the clamp counts the newlines and so can never match any
+line of a longer text, which is left with nothing underlined at all.
+Both of those are what the code does rather than anything intended;
+.IR tkofftest (1)
+records them so that a change to either is a change somebody made on
+purpose.
 .TP
 .B -xscrollcommand \fIcommand\fP
 Specifies the prefix for a command used to communicate with horizontal
