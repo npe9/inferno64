@@ -59,7 +59,7 @@ to agree byte for byte.
 .IR tkofftest (1),
 .IR tkbench (1)
 .SH BUGS
-Nine things go through it: a flat border, a plain
+Ten things go through it: a flat border, a plain
 .IR button (9)
 with text, a
 .IR radiobutton (9)
@@ -81,16 +81,23 @@ which is the widget there are most of and which brings
 .IR menubutton (9)
 and
 .IR choicebutton (9)
-with it, since one draw method serves all three, and a
+with it, since one draw method serves all three, a
 .IR checkbutton (9)
-in either state.
+in either state, and a
+.IR menu (9),
+whose items are labels and whose own slab and border are nodes as well.
 Each of those draws its whole interior as nodes \(em fill, glyphs, caret,
 selection band, focus ring, border \(em inside one
 .BR TkNlayer .
 .PP
-Everything else \(em images, the classic two-tone bevel, a
+Everything else \(em the classic two-tone bevel, a
 .IR text (9),
-and the chrome that
+a
+.IR canvas (9),
+a
+.IR panel (9),
+an image that came from a file descriptor rather than a path, and the
+chrome that
 .IR scale (9)
 and
 .IR scrollbar (9)
@@ -258,14 +265,21 @@ window, and
 renders a tree only if it is not the walk's.
 Anything that paints into the window itself \(em every widget that asks
 .I tkitmp
-for the scratch surface, and the canvas, panel, text and menu painters,
-which draw straight into it \(em calls
+for the scratch surface, and the canvas, panel and text painters, which
+draw straight into it \(em calls
 .I tkwalkflush
 first, or the tree, rendered later, would land on top of what it drew.
-So does the grid clipping in
-.IR tkdrawslaves1 ,
-whose narrowed clip rectangle is gone by the time the nodes would
-otherwise be rendered.
+A
+.IR menu (9)
+used to be on that list and is not: its items are labels and were
+already nodes, and the two things it painted itself \(em the slab behind
+an item and its own border \(em have nodes too, so the walk runs through
+it.
+The grid clipping in
+.I tkdrawslaves1
+used to be on it as well, and carries a
+.B TkNclip
+instead.
 Descents nest \(em a canvas's window item and a text widget's embedded
 windows each descend from inside a draw method \(em so the walk is a
 small stack.
@@ -298,16 +312,68 @@ backend cannot call
 .I string
 at all.
 .PP
-Six node types are declared and not implemented:
-.BR TkNtexture ,
+.B TkNtexture
+keeps the same rule and names a FILE.
+Both sources of an image in this toolkit end at a path \(em a
+.B -bitmap
+is
+.BI /icons/tk/ name
+or an
+.BI @ path \fR,\fP
+and
+.B "image create bitmap -file"
+goes through the same option parser \(em and a path is resolvable by a
+renderer, which has a
+.B Display
+for
+.I display_open
+but no
+.B TkTop
+with which to look a Tk image name up.
+The renderer opens the file and caches it, as it caches a face.
+.B width
+says how the image is used: 1 for a MASK, with
+.B rgba
+the colour painted through it, which is what a one-bit icon in the
+foreground colour is; 0 for a source, drawn as it stands.
+An image that came from a file DESCRIPTOR has no path and keeps the
+scratch.
+.PP
+A clip is a property of a SPAN of nodes rather than of one, so
+.B TkNclip
+is bracketed the way
+.B TkNlayer
+is, and
+.B TkNclipend
+closes it.
+The renderer narrows the target's clipping rectangle and puts it back,
+which is what a
+.IR grid (9)
+does to the window by hand around its children \(em and because the
+node carries the clip along with the drawing it applies to, the walk no
+longer has to flush on each side of a grid to render its nodes while
+the clip still held.
+Clips do not nest and do not mix with a layer, whose target is a
+scratch image in different coordinates.
+.B TkNclipend
+is not numbered next to
+.B TkNclip
+because
+.BR TkNclip 's
+slot was reserved before its shape was settled and a node type's number
+must not move once a backend has seen it.
+.PP
+Four node types are declared and not implemented:
 .BR TkNlinear ,
 .BR TkNshadow ,
-.BR TkNclip ,
 .B TkNtransform
 and
 .BR TkNopacity .
 They are written down so the numbering does not change later, and
 .I tkscenerender
 counts them and ignores them.
-The last three are the ones that make an animation cost nothing to
-rasterise, which is the whole point of the exercise and is not done.
+.B TkNtransform
+and
+.B TkNopacity
+are the ones that make an animation cost nothing to rasterise, which is
+the whole point of the exercise and is not done.

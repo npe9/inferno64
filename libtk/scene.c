@@ -424,8 +424,13 @@ tkscenespline(TkScene *s, Point *p, int np, int end, int width, ulong rgba)
  * painted would land ON TOP of it, since it is rendered later.  So the
  * walk is not one tree per repaint but one tree per RUN of consecutive
  * node widgets: anything that paints directly flushes what is pending
- * first, and so does the grid clipping in windw.c, whose replclipr()
- * would otherwise be gone by the time the nodes were rendered.
+ * first.
+ *
+ * The grid clipping in windw.c used to flush too - twice, once each
+ * side - because its replclipr() would have been put back by the time
+ * the nodes were rendered.  It carries a TkNclip instead now, which is
+ * what a clip being a property of a SPAN rather than of a repaint
+ * means, and the run runs straight through a grid.
  *
  * That leaves painter order exactly as it was - which is the property
  * the identity check measures - while giving a backend runs of nodes to
@@ -660,6 +665,35 @@ tkscenelayerend(TkScene *s)
 	newnode(s, TkNlayerend);
 }
 
+/*
+ * Narrow the clipping rectangle for the nodes up to the matching
+ * tksceneclipend().  Bracketed rather than carried on each node,
+ * because a clip is a property of a SPAN - the text widget sets one
+ * around every line it draws and puts the window's own back afterwards
+ * - and because a glyph run cannot be clipped by trimming a rectangle:
+ * the clip has to reach the raster.
+ *
+ * In WINDOW coordinates, which is what replclipr() wants and what the
+ * widget already computed.  Inside a layer the target is a scratch and
+ * the coordinates would be wrong, so a clip and a layer do not mix;
+ * nothing asks for both, and the renderer says so rather than trying.
+ */
+void
+tksceneclip(TkScene *s, Rectangle r)
+{
+	TkNode *n;
+
+	if((n = newnode(s, TkNclip)) == nil)
+		return;
+	n->r = r;
+}
+
+void
+tksceneclipend(TkScene *s)
+{
+	newnode(s, TkNclipend);
+}
+
 int
 tkscenecount(TkScene *s)
 {
@@ -815,7 +849,8 @@ int
 tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 {
 	TkNode *n, *open;
-	Image *col, *target, *saved, *t, *img;
+	Image *col, *target, *saved, *t, *img, *clipped;
+	Rectangle oclipr, clipr;
 	Font *fnt;
 	int drawn;
 
@@ -825,6 +860,8 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 	target = dst;
 	saved = nil;
 	open = nil;
+	clipped = nil;
+	oclipr = dst->clipr;
 	for(n = s->head; n != nil; n = n->next){
 		switch(n->type){
 		case TkNlayer:
@@ -845,6 +882,24 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 			target = saved;
 			saved = nil;
 			open = nil;
+			drawn++;
+			continue;
+		case TkNclip:
+			if(saved != nil || clipped)
+				continue;	/* not inside a layer, and no nesting */
+			oclipr = target->clipr;
+			clipr = n->r;
+			if(!rectclip(&clipr, oclipr))
+				clipr.max = clipr.min;
+			replclipr(target, target->repl, clipr);
+			clipped = target;
+			drawn++;
+			continue;
+		case TkNclipend:
+			if(clipped == nil)
+				continue;
+			replclipr(clipped, clipped->repl, oclipr);
+			clipped = nil;
 			drawn++;
 			continue;
 		}
@@ -923,5 +978,12 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 		}
 		drawn++;
 	}
+	/*
+	 * A tree that ends inside its clip leaves the window narrowed for
+	 * whatever draws next, which would be a fault nothing in the
+	 * picture points at.  Put it back.
+	 */
+	if(clipped != nil)
+		replclipr(clipped, clipped->repl, oclipr);
 	return drawn;
 }

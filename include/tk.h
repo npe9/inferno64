@@ -571,7 +571,22 @@ enum {
 	 * end style, the SAME one at both ends, which is what every caller
 	 * asks for and is written down here rather than pretended about.
 	 */
-	TkNspline
+	TkNspline,
+
+	/*
+	 * The close of a TkNclip, which is NOT next to it: TkNclip's slot
+	 * was reserved before the shape was settled, and a node type's
+	 * number must not move once a backend has seen it, so the pair is
+	 * split across the enum rather than the numbering disturbed.
+	 *
+	 * A clip is bracketed the way a layer is, and for the same reason:
+	 * it is a property of a SPAN of nodes rather than of one, and a
+	 * flat list has nowhere else to put that.  The renderer narrows
+	 * the target's clipping rectangle at TkNclip and restores it here,
+	 * which is what the text widget does to the window by hand.
+	 * Clips do not nest, again as layers do not.
+	 */
+	TkNclipend
 };
 
 struct TkNode
@@ -839,6 +854,8 @@ extern	void		tkscenespline(TkScene*, Point*, int, int, int, ulong);
 extern	void		tkwalkopen(TkCtxt*, Image*);
 extern	void		tkwalkflush(void);
 extern	void		tkwalkclose(void);
+extern	void		tksceneclip(TkScene*, Rectangle);
+extern	void		tksceneclipend(TkScene*);
 extern	TkScene*	tkwalkjoin(TkCtxt*, Image*);
 extern	void		tkscenefinish(TkScene*, TkCtxt*, Image*);
 extern	void		tkwalkcount(int*, int*, int*);

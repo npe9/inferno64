@@ -1714,7 +1714,7 @@ checkscene()
 	# would otherwise pass straight through.  Raise the number when a
 	# widget is added to the pane and say why; do not raise it to make
 	# a change to the walk go quiet.
-	Trees: con 8;
+	Trees: con 6;
 	report(nr <= Trees, sys->sprint(
 		"and the walk has not fragmented (%d trees, at most %d)", nr, Trees));
 
