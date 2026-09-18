@@ -7894,3 +7894,31 @@ in both arms says
 is tracking real blocked interpreters, not drifting to zero and
 tightening the bound to nothing.  A ceiling whose input is wrong looks
 exactly like a ceiling that is too low.
+.PP
+.B "And the pool raise is no longer load-bearing."
+The entry above measured
+.CW *ctxcap=64
+panicking on 8 boots of 16 with "pool of 64 exhausted".  Four boots an
+arm at
+.CW "-smp 4"
+with the old cap restored:
+.IP
+.nf
+ctxcap=64 spawncap=0:  0 panics, 0 exhausted, interpreters 14 14 12 14
+ctxcap=64 spawncap=1:  0 panics, 0 exhausted, interpreters 10  9  9  9
+.fi
+.PP
+Neither arm comes near 64, so the exhaustion does not reproduce on this
+workload with or without the ceiling \(em the fixes between then and
+now (the
+.CW nwoken
+gate,
+.CW canqlock
+in
+.CW execatidle() ,
+atomic
+.CW gchalt )
+took the demand down.  The ceiling is worth having for what it
+guarantees rather than for a panic it currently prevents: 256 stays as
+headroom, because a workload with a hundred programs blocked at once
+still needs a context each.
