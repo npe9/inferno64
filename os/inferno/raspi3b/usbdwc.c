@@ -62,7 +62,8 @@ enum
 	 * Reading bulk input packets one at a time avoids it.
 	 */
 	Slowbulkin	= 1,
-	Maxnak		= 2000,		/* ~2s of 1ms retries: not for bulk IN */
+	Maxnak		= 2000,		/* not for bulk IN; see the NAK path */
+	Nakspins	= 64,		/* NAKs to spin through before sleeping */
 	Maxiters	= 4000,		/* attempts at one transfer, likewise */
 	Rearmsecs	= 2,		/* a bulk IN waits this long, then its channel restarts */
 };
@@ -629,8 +630,28 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 							dir == Epin? "in": "out", naks);
 						error(Eio);
 					}
+				/*
+				 * Wait microseconds before waiting
+				 * milliseconds.
+				 *
+				 * tsleep's resolution is the clock tick, and
+				 * this kernel ticks at 100Hz, so every NAK
+				 * cost 10ms whatever it asked for.  A device
+				 * that NAKs because it is busy for a moment
+				 * is ready long before that: the LAN9514's
+				 * set-up is a few hundred control transfers
+				 * to its registers, and on this board it has
+				 * taken anywhere from 10 to 149 seconds,
+				 * which is the shape of a fixed cost paid a
+				 * few hundred times over.  Spin for the first
+				 * few and sleep after that, so a device that
+				 * is genuinely not answering still costs
+				 * nothing to wait for.
+				 */
 				if(ep->ttype == Tintr)
 					tsleep(&up->sleep, return0, 0, ep->pollival);
+				else if(naks <= Nakspins)
+					microdelay(50);
 				else
 					tsleep(&up->sleep, return0, 0, 1);
 				continue;
