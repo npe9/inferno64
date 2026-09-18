@@ -13728,7 +13728,7 @@ check clean, the staleness check first at ten:
 .CW pc64
 65,
 .CW p9pair
-101,
+103,
 .CW p9buddy
 15,
 .CW p9linux
@@ -13736,7 +13736,7 @@ check clean, the staleness check first at ten:
 .CW p964
 74,
 .CW p9legacy
-16, keyboard 8, rio 14, the window gestures 10, micro 7, micro on 386 9,
+16, keyboard 8, rio 14, the window gestures 10, micro 8, micro on 386 10,
 user 12, user on 386 16, net 13, wire 14, pair 1, two-machine 20, the six
 criteria of the userland the tree builds itself, and two portable builds.
 The two 386 checks are the second object type's, and they are the new

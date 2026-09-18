@@ -554,6 +554,27 @@ microkernel's ordinary request path still goes between Procs through the
 scheduler, at 46 to 59 microseconds a round trip.  The task pair is the
 measurement of what that shape costs, not a replacement for it.
 .NH 2
+How this audit was made
+.PP
+Not by reading the prose for claims.  The criterion texts and the
+assertions under them were pulled out of the eighteen scripts in
+.CW scripts/
+\- four hundred and three of them \- and mapped against what the paper
+and the talk name: message passing, address spaces, interrupts and the
+driver as a task, the scheduler, files over \[*p]p, the library and buddy
+operating systems, checkpoint and migration, and the numbers.  Every one
+of those has criteria behind it.  What the mapping is good for is the
+other direction: a claim in the doc with nothing behind it.
+.PP
+One thing about the method is worth recording, because it nearly made
+the audit wrong.  Scanning criterion
+.I labels
+alone misses what the assertion tests: the p9pair check proves the
+frames "no polls" in its regular expression and not in its label, so a
+scan of labels reported it unbacked when it is not.  The scan that
+counts is over the whole script, and the two findings below were each
+confirmed that way.
+.NH 2
 A proof that was prose, and was fragile
 .PP
 The audit mapped every criterion in
