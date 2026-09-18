@@ -7064,3 +7064,19 @@ preemption, and a scheduler with no tick hands a second processor no
 work.  It is pre-existing, it is nothing to do with
 .CW parallelvm ,
 and it is where this board's next session starts.
+.PP
+The same counter answers the question this document has been asking
+since its first page, and it is worth having plainly.  On pc64 at
+.CW parallelvm=1
+.CW "-smp 2" ,
+four boots of four print both:
+.QP
+.CW "dis: first Dis quantum on cpu0"
+.br
+.CW "dis: first Dis quantum on cpu1"
+.PP
+Two processors interpreting Dis, said by the interpreter itself rather
+than inferred from a lock count.  virtarm64 prints only cpu0.  That is
+the difference between the two boards in one line, and it is why the
+arm64 numbers above are a crash that stopped rather than a second
+processor that started.
