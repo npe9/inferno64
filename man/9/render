@@ -259,9 +259,45 @@ blitted every repaint, and a frame is usually the size of the window:
 put an empty toplevel \(em two frames \(em at 1.41ms on the node path
 against 59us direct, and taking the layer off the frame put it back to
 114us.
-With that gone, each widget's node path costs what its direct path
-costs, to within the noise of the measurement.
 The six widgets that genuinely need a layer keep the node exercised.
+.PP
+114 against 59 was still double, and that was read for a while as the
+fixed cost of the node path and left alone.
+It was a frame filling the window TWICE.
+An empty toplevel is one tree of exactly two nodes \(em a
+.B TkNcolour
+and then a
+.B TkNroundfill
+over the same 900\(mu700 rectangle \(em because a frame emits the corner
+MEND before its fill: the rounded fill leaves the corner pixels alone,
+so what is behind them has to be painted first.
+At a radius of ZERO it leaves nothing alone and covers every pixel the
+mend painted, and a frame with no border is the commonest widget in a
+window and is usually the size of the window.
+The mend is emitted only when there is a corner to mend now, and the
+empty toplevel is 56.6us drawn against 56.7us through nodes \(em the gap
+is gone rather than reduced, and
+.IR listbox (9),
+.IR button (9),
+.IR entry (9)
+and
+.IR frame (9)
+are cheaper through nodes than drawn.
+A
+.IR text (9)
+and a
+.IR canvas (9)
+are 3 to 4 per cent dearer, which is what "a node per item" actually
+costs.
+.PP
+The lesson is the one this work keeps relearning, and it cost three
+measurements this time: the thing that makes a renderer slow is not the
+vocabulary, it is one draw in the wrong place, and nothing but counting
+finds it.
+Two readings of that gap were published before this one \(em a
+benchmark row that was timing a blit because its canvas was buffered,
+and then a set of per-widget figures that had this very fill inside
+their slope.
 .PP
 The one shape in the flat style that is not a rectangle is a
 .IR radiobutton (9)'s
