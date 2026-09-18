@@ -22,6 +22,8 @@
 #include "dat.h"
 #include "fns.h"
 
+extern int mboxtag(u32, u32*, int, int, u32*);	/* mailbox.c */
+
 enum {
 	Ctl	= 0x00/4,
 	Stat	= 0x04/4,
@@ -34,6 +36,8 @@ enum {
 
 	Offsetmc	= 412000,	/* millidegrees at adc == 0 */
 	Coeffmc		= 538,		/* millidegrees lost per adc count */
+
+	Taggettemp	= 0x00030006,	/* firmware: get temperature */
 };
 
 static u32*
@@ -58,20 +62,55 @@ thermread(void)
 	return Offsetmc - Coeffmc * (long)(s & Statdata);
 }
 
+/*
+ * What the firmware says the die is, in millidegrees, or -1.
+ *
+ * The VideoCore owns this sensor: it is what the firmware throttles
+ * on, and on this board the ARM's own enable bit does not produce a
+ * valid reading -- THERM-NONE, on every boot, from a chip that is
+ * plainly at some temperature.  Linux reads it through the same
+ * property tag rather than the registers for the same reason.  The
+ * register path is kept and tried first, because where it works it is
+ * the direct one and needs nobody's cooperation.
+ */
+static long
+thermfw(void)
+{
+	u32 v[2], resp;
+
+	v[0] = 0;			/* temperature id 0 */
+	v[1] = 0;
+	resp = 0;
+	if(mboxtag(Taggettemp, v, 2, 4, &resp) < 0)
+		return -1;
+	if((resp & 0x80000000) == 0)
+		return -1;
+	if(v[1] == 0)
+		return -1;
+	return (long)v[1];
+}
+
 void
 therminit(void)
 {
 	u32 *r = th();
 	long mc;
+	char *from;
 
 	r[Ctl] = Ctlenable | Ctlregulator;
+	from = "the sensor's own registers";
 	mc = thermread();
 	if(mc < 0){
-		print("THERM-NONE no valid reading at %#p\n", (void*)THERMAL);
+		mc = thermfw();
+		from = "the firmware";
+	}
+	if(mc < 0){
+		print("THERM-NONE no valid reading at %#p and the firmware has none\n",
+			(void*)THERMAL);
 		return;
 	}
-	print("therm: die %ld.%.3ld C (adc %ud) at %#p\n",
-		mc/1000, mc%1000, r[Stat] & Statdata, (void*)THERMAL);
+	print("therm: die %ld.%.3ld C (adc %ud) from %s\n",
+		mc/1000, mc%1000, r[Stat] & Statdata, from);
 	/*
 	 * Anything outside this is either a broken conversion or a chip
 	 * that is about to stop being a chip.
@@ -80,5 +119,5 @@ therminit(void)
 		print("THERM-FAIL %ld millidegrees is not a plausible die temperature\n", mc);
 		return;
 	}
-	print("THERM-OK sensor reads a plausible die temperature\n");
+	print("THERM-OK a plausible die temperature, read from %s\n", from);
 }
