@@ -4,6 +4,7 @@ include "sys.m";
 include "draw.m";
 	draw: Draw;
 	Display, Image, Rect, Point: import draw;
+include "daytime.m";
 include "dhcpclient.m";
 	dhcpclient: Dhcpclient;
 	Bootconf, Lease: import dhcpclient;
@@ -1257,7 +1258,104 @@ etherone(ifname, tag: string, tries: int, ip, mask, gw: string)
 	}
 	sys->print("%s-DHCP-OK ip=%s gw=%s\n", tag, cfg.ip, cfg.ipgw);
 	pingcheck(tag, cfg.ipgw);
+	spawn timecheck(cfg.ipgw);
 	lease = nil;
+}
+
+#
+# Ask the network what the time is.
+#
+# This board has no clock.  There is no battery-backed RTC on a Pi and
+# nothing here ever asked anyone, so every boot started at the epoch and
+# every file the board wrote was stamped 1 January 1980 -- which is
+# what the card says about the kernels this board installed on itself.
+#
+# The gateway first, because a home router almost always answers NTP and
+# it is the one address the board is certain it can reach; then two
+# public servers by address, since there is no resolver here.  Each is
+# given one go: sntp(8) sets the clock and says so, and a board whose
+# network cannot reach any of them says that instead of guessing.
+#
+timecheck(gw: string)
+{
+	sntp := load Command "/dis/ip/sntp.dis";
+	if(sntp == nil){
+		sys->print("TIME-NONE load sntp: %r\n");
+		return;
+	}
+	#
+	# The gateway, and then whatever /n/dos/ntp.txt names.
+	#
+	# Only the gateway by default, and deliberately: a home router
+	# almost always answers NTP and it is the one address the board is
+	# certain it can reach, while a public server by address turns this
+	# marker into a question about the machine running the emulator.
+	# Under QEMU the gateway is slirp's own address, which answers
+	# nothing, so the emulator says TIME-NONE every time and says it
+	# for a reason.
+	#
+	servers := gw :: ntpservers();
+	for(; servers != nil; servers = tl servers){
+		srv := hd servers;
+		ok := 1;
+		{
+			sntp->init(nil, "sntp" :: "udp!" + srv + "!ntp" :: nil);
+		} exception {
+		"*" =>
+			ok = 0;
+		}
+		# 2001, comfortably past anything a board without a clock
+		# would have made up, and past the epoch it starts at
+		if(ok && tod() > 1000000000){
+			sys->print("TIME-OK %s from %s\n", daytime(), srv);
+			return;
+		}
+	}
+	sys->print("TIME-NONE no NTP answer from the gateway or the servers tried\n");
+}
+
+# extra servers, one per line, from the card
+ntpservers(): list of string
+{
+	fd := sys->open("/n/dos/ntp.txt", Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	b := array[512] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0)
+		return nil;
+	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
+	nf = nf;
+	rev: list of string;
+	for(; f != nil; f = tl f)
+		rev = hd f :: rev;
+	l: list of string;
+	for(; rev != nil; rev = tl rev)
+		l = hd rev :: l;
+	return l;
+}
+
+# seconds since 1970, from the kernel's own clock
+tod(): int
+{
+	fd := sys->open("/dev/time", Sys->OREAD);
+	if(fd == nil)
+		return 0;
+	b := array[32] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0)
+		return 0;
+	# microseconds, and only the top of it matters here
+	us := big string b[0:n];
+	return int (us / big 1000000);
+}
+
+daytime(): string
+{
+	dt := load Daytime Daytime->PATH;
+	if(dt == nil)
+		return "(no daytime module)";
+	return dt->text(dt->local(tod()));
 }
 
 pingcheck(tag, gw: string)

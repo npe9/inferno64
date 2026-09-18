@@ -158,6 +158,7 @@ root
 	/dis/usb/etherusb.dis
 	/dis/dossrv.dis
 	/dis/ip/ping.dis
+	/dis/ip/sntp.dis
 	/dis/lib/dhcpclient.dis
 	/dis/bt/btfs.dis
 	/dis/bt/bcmfw.dis

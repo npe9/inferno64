@@ -165,10 +165,39 @@ auxinit(void)
 	u32 *r = aux();
 	static char msg[] = "AUXUART-HELLO\r\n";
 	int i, j;
+	extern int minihasconsole(void);	/* uartmini.c */
 
 	r[Enables] |= Enmuart;
 	if((r[Enables] & Enmuart) == 0){
 		print("AUX-NONE no AUX block at %#p\n", (void*)AUX0);
+		return;
+	}
+
+	/*
+	 * Stand back if the console is on it.
+	 *
+	 * On a Pi 3 wired the firmware's way the mini UART is the header's
+	 * and this kernel's console, and the check below reprograms it --
+	 * baud, line control, FIFOs, the lot -- underneath the driver that
+	 * is talking on it.  That is why the board answered AUX-FAIL with
+	 * lsr 0x0: not a block that does not work, a block being taken
+	 * apart while in use.  What can still be said without touching
+	 * anything is that the block is enabled and its transmitter
+	 * reaches idle, so that is what is said.
+	 */
+	if(minihasconsole()){
+		for(j = 0; j < 500; j++){
+			if(r[Lsr] & Lsrtxidle)
+				break;
+			microdelay(100);
+		}
+		if((r[Lsr] & Lsrtxidle) == 0){
+			print("AUX-FAIL console mini uart never idles (lsr %#ux)\n", r[Lsr]);
+			return;
+		}
+		print("AUX-CONSOLE the mini uart is this kernel's console: "
+			"the block is enabled and its transmitter idles, "
+			"and nothing here reprogrammed it\n");
 		return;
 	}
 
