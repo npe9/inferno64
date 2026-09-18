@@ -7602,3 +7602,16 @@ soak: ... quanta cpu0 605 cpu1 1394
 .fi
 .PP
 The second processor ran more than twice the Dis quanta of the first.
+.PP
+.B "The same reading on arm64."
+With the placeholder skipped, a 260-second virtarm64 boot at
+.CW "-smp 2"
+.CW *secsched=1
+.CW *parallelvm=1
+gives 1999 run-queue checks, 1298 of them with this executor alone in
+the VM and none disagreeing, 4 stopped-world audits and none bad, and
+the quanta split
+.CW "cpu0 1166 cpu1 833"
+\(em the other way round from the earlier boot's 605/1394, which is
+what two processors sharing one queue should look like.  So the
+withdrawal above is not a pc64 result that arm64 has yet to confirm.
