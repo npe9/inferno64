@@ -330,6 +330,15 @@ root
 	/dis/lib/crypt/x509.dis
 	/dis/lib/crypt/pkcs.dis
 	/dis/lib/crypt/p256.dis
+# the two instruments for that crypto.  They are here because the
+# numbers that matter are the ones this kernel produces on the machine
+# it is rented on: p256test(1) prices a verification and the field
+# operations under it, ipinttest(1) shows that the arithmetic which
+# used to end in sysfatal raises instead -- and sysfatal here is a
+# panic, which is exactly what cannot be demonstrated under a hosted
+# emu.  About 20 KB against a 66 MiB boot floor.
+	/dis/p256test.dis
+	/dis/ipinttest.dis
 	/dis/lib/asn1.dis
 	/dis/lib/encoding
 	/dis/lib/encoding/base64.dis

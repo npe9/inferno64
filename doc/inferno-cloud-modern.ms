@@ -2663,3 +2663,68 @@ until someone edits
 .PP
 This was not on any list.  It was found by reading the neighbours of
 the code being changed, which is the argument for doing that.
+.NH 2
+The same measurement on a rented machine
+.PP
+Everything above was measured on a laptop, interpreted, which is the
+right shape for a native kernel but not the machine anyone would run
+one on.  So the two instruments went into the
+.CW pc64
+root \(em about 20 KB against a 66 MiB boot floor \(em and a
+.CW e2-small
+was rented to run them.
+.PP
+.TS
+center box tab(;);
+c | c | c
+l | n | n .
+operation;two calls;one call
+_
+256-bit multiply;\(em;32.50 \(*ms
+multiply and reduce;52.50 \(*ms;37.50 \(*ms
+subtract and reduce;50.00 \(*ms;35.00 \(*ms
+invert;\(em;107.50 \(*ms
+.TE
+.PP
+An instance is about five times slower per operation than interpreted
+Dis on the laptop, and the two ratios that the argument rests on come
+out the same on both: a crossing costs about as much as the multiply
+behind it (15 \(*ms against 32.5 here), and an inversion costs 2.9
+modular multiplies.  The case against Jacobian coordinates was made on
+a laptop and holds on the hardware.
+.PP
+A P-256 verification on that instance takes 296 ms and an ECDH
+agreement 152 ms.  The before-and-after for those is the pair of
+columns above, measured in the same run on the same machine: the
+two-call spelling is what the curve code used before this change, and
+it is 40 percent dearer for a multiply and 43 percent for a subtract.
+.PP
+.B "What a handshake costs there."
+Timed from outside, by typing a compound line at the serial console so
+that the guest prints its own markers either side of the fetch:
+.DS
+.CW
+  2.63 ; echo PLAIN-BEGIN; hget http://example.com/ >/dev/null; echo PLAIN-END
+  2.67 PLAIN-BEGIN
+  2.84 PLAIN-END
+ 65.96 TLS-BEGIN
+ 69.20 TLS-END
+132.37 TLS2-BEGIN
+135.51 TLS2-END
+.DE
+.PP
+0.17 s in the clear, 3.24 and 3.14 s over TLS, on the same instance to
+the same host.  So the handshake costs about three seconds of
+processor \(em a number that used to be a hundred, before the trust
+bundle and the chain walk were fixed, and which no server was willing
+to wait for.
+.PP
+.B "And the panics are gone on the hardware."
+.CW ipinttest (1)
+ran there first, and all nine of the formerly fatal calls raised and
+were caught.  That is the demonstration a hosted
+.CW emu
+cannot give: on a kernel,
+.CW sysfatal
+is a panic, so the machine that went on to run the benchmark is the
+evidence.

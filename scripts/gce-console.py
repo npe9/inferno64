@@ -15,20 +15,25 @@
 #   -w  how long to wait for each command's output to go quiet (default 20)
 #   -p  wait for this text before typing anything (default "; ")
 #   -t  give up waiting for the prompt after this many seconds (default 300)
+#   -T  stamp each line with seconds since the first command was typed
 #
 # Each CMD is typed as one line.  Everything the console printed is
-# written to stdout as it arrives, carriage returns removed.  Exit status 1 if the
+# written to stdout as it arrives, carriage returns removed.  With -T
+# each line carries the seconds since the first command went in, which
+# is how a command that takes a while on the guest -- a TLS handshake,
+# say -- is timed without a clock in the guest to do it with.  Exit status 1 if the
 # prompt never appeared -- that is a boot that did not finish, and it is
 # reported as such rather than as a command that printed nothing.
 import getopt, os, pty, select, signal, subprocess, sys, time
 
-zone, quiet, prompt, limit = "us-central1-a", 20.0, "; ", 300.0
-opts, args = getopt.getopt(sys.argv[1:], "z:w:p:t:")
+zone, quiet, prompt, limit, stamp = "us-central1-a", 20.0, "; ", 300.0, False
+opts, args = getopt.getopt(sys.argv[1:], "z:w:p:t:T")
 for o, v in opts:
     if o == "-z": zone = v
     elif o == "-w": quiet = float(v)
     elif o == "-p": prompt = v
     elif o == "-t": limit = float(v)
+    elif o == "-T": stamp = True
 if len(args) < 1:
     sys.stderr.write("usage: gce-console.py [-z zone] [-w secs] [-p pat] INSTANCE CMD...\n")
     sys.exit(2)
@@ -40,6 +45,24 @@ if pid == 0:
         "--zone", zone, "--port", "1"])
 
 out = bytearray()
+t0 = None		# set when the first command is typed
+partial = ""		# a line the console has not finished sending
+
+def emit(text):
+    # -T stamps whole lines only, so a prompt with no newline after it
+    # is held rather than stamped twice
+    global partial
+    if not stamp:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        return
+    partial += text
+    while "\n" in partial:
+        line, partial = partial.split("\n", 1)
+        el = 0.0 if t0 is None else time.time() - t0
+        sys.stdout.write("%7.2f %s\n" % (el, line))
+    sys.stdout.flush()
+
 def pump(secs, until=None):
     # read until secs pass with nothing new, or until `until` appears
     # in what arrived after `start`; return whether `until` was seen
@@ -57,8 +80,7 @@ def pump(secs, until=None):
             return False
         out.extend(b)
         # written as it arrives, so a caller's timeout loses nothing
-        sys.stdout.write(b.decode("utf-8", "replace").replace("\r", ""))
-        sys.stdout.flush()
+        emit(b.decode("utf-8", "replace").replace("\r", ""))
         last = time.time()
         if until is not None and until.encode() in out[start:]:
             return True
@@ -86,7 +108,10 @@ def typeline(line):
 
 if ok:
     for c in cmds:
+        if t0 is None:
+            t0 = time.time()
         typeline(c)
         pump(quiet)
+    emit("\n")
 os.kill(pid, signal.SIGTERM)
 sys.exit(0 if ok else 1)
