@@ -1023,11 +1023,25 @@ there was never speed on the table here anyway.
    packer hands it a negative size, so comparing only x plus width
    against the pane passed while the scrollbars were 886 by −14.
 
-   Still drawn through a scratch image: a `cascade`, whose arrow is
-   `tktriangle()`; a button, radiobutton, checkbutton or label carrying
-   an image or a bitmap, which want a texture node; a checkbutton or
-   radiobutton with `-indicatoron 0`; and a `text`, a `canvas`, a
-   `panel` and a `menu`, which paint into the window directly. No
+   Still drawn through a scratch image: a button, radiobutton,
+   checkbutton or label carrying an image or a bitmap, which want a
+   texture node; a checkbutton or radiobutton with `-indicatoron 0`;
+   and a `text`, a `canvas`, a `panel` and a `menu`, which paint into
+   the window directly.
+
+   **The `cascade` came in on `TkNpolyfill`**, which the scrollbar's
+   arrows had already put there — `tktriangle()` is one `fillpoly()` of
+   three points, and the node renderer calls the same `fillpoly()` with
+   the same winding rule and the same source point, so all that was
+   needed was for both to be handed the same three points. What had
+   kept the cascade out was not the drawing but the *test*: its arrow
+   is only ever seen in a posted menu, and a posted menu is a separate
+   window with nobody offscreen to give it a backing image. `checkmenu`
+   had already solved that — make the window over the pane's own Screen
+   and hand it over the way a toplevel gets one — so the identity pane
+   now posts a menu with a cascade in it, and what the menu draws lands
+   in the pane's image. Control: the triangle's points moved two pixels
+   on the node side, 468 bytes, at (724,63), inside the menu. No
    widget needs an exception for anything it does with *text* any more:
    `buton.c` took the same three cases as `label.c` the moment
    `tkscenestring()` existed, and its own controls — the underline

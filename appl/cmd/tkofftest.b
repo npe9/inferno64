@@ -1553,6 +1553,24 @@ checkscene()
 	}
 	tk->cmd(top, "update");
 
+	# A posted MENU with a cascade item in it.  A cascade's arrow is the
+	# one thing tkdrawlabel() drew with fillpoly() rather than through a
+	# node, and it is only ever seen in a posted menu - which is a
+	# separate window, and offscreen has nobody to hand it a backing
+	# image, so it must be given one the way checkmenu() does.  The
+	# window is made over the same Screen as the pane, so what the menu
+	# draws lands in the pane's own image and the comparison sees it.
+	must(top, "menu .mn");
+	must(top, ".mn add command -label {Open}");
+	must(top, ".mn add cascade -label {Recent}");
+	must(top, ".mn add command -label {Close}");
+	mw := scr.newwindow(Rect((640,20),(880,140)), Draw->Refbackup, Draw->Nofill);
+	if(mw != nil){
+		tk->cmd(top, ".mn post 640 20");
+		tk->putimage(top, ".mn -1", mw, nil);
+		tk->cmd(top, "update");
+	}
+
 	# Every widget in the pane is INSIDE the pane.
 	#
 	# A widget packed past the bottom edge is never drawn - tkdrawslaves

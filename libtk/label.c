@@ -212,8 +212,15 @@ tkfreelabel(Tk *tk)
 		free(tkl->menu);
 }
 
-static void
-tktriangle(Point u, Image *i, TkEnv *e)
+static /*
+ * A cascade's arrow, into an image or into a scene.  It is one filled
+ * triangle either way, and the renderer's TkNpolyfill calls the same
+ * fillpoly() with the same winding rule and the same source point - so
+ * the only thing that had to be arranged was that both be given the
+ * same three points, which is why they are computed here once.
+ */
+void
+tktriangle(Point u, Image *i, TkScene *sc, TkEnv *e)
 {	
 	Point p[3];
 
@@ -224,7 +231,10 @@ tktriangle(Point u, Image *i, TkEnv *e)
 	p[1].y = u.y + CheckButton;
 	p[2].x = u.x;
 	p[2].y = u.y;
-	fillpoly(i, p, 3, ~0, tkgc(e, TkCforegnd), p[0]);
+	if(sc != nil)
+		tkscenepolyfill(sc, p, 3, e->colors[TkCforegnd]);
+	else
+		fillpoly(i, p, 3, ~0, tkgc(e, TkCforegnd), p[0]);
 }
 
 /*
@@ -300,16 +310,16 @@ tkdrawlabel(Tk *tk, Point orig)
 	 * tkitmp() for the scratch is what says a widget is about to paint
 	 * into the window itself.
 	 *
-	 * The exclusions are what still has no nodes: an image or a bitmap,
-	 * which want a texture node, and a cascade, whose arrow tktriangle()
-	 * draws.  Several lines, an underline and a justification are NOT
+	 * The only exclusion left is an image or a bitmap, which want a
+	 * texture node.  A cascade's arrow is a TkNpolyfill now, and
+	 * several lines, an underline and a justification are NOT
 	 * among them any more - tkscenestring() lays those out from the same
 	 * code tkdrawstring() uses, a line to a glyph node and the underline
 	 * rule as a filled rectangle.  This draw is shared with menubutton
 	 * and choicebutton, so those come with it.
 	 */
 	lsc = nil;
-	if(tkviascene && tkstyleflat(tk) && tk->type != TKcascade
+	if(tkviascene && tkstyleflat(tk)
 	&& tkl->img == nil && tkl->bitmap == nil && tkl->text != nil)
 		lsc = tkwalkjoin(e->top->ctxt, dst);
 	if(lsc != nil){
@@ -348,7 +358,7 @@ tkdrawlabel(Tk *tk, Point orig)
 	if(tk->type == TKcascade) {
 		u.x = mainr.max.x - CheckButton - CheckButtonBW;	/* TO DO: CheckButton etc is really the triangle/arrow */
 		u.y = p.y + ButtonBorder + (h-CheckSpace)/2;
-		tktriangle(u, i, e);
+		tktriangle(u, i, lsc, e);
 	}
 
 	p.x += tk->ipad.x/2;
