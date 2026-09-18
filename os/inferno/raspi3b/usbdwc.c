@@ -63,8 +63,6 @@ enum
 	 */
 	Slowbulkin	= 1,
 	Maxnak		= 2000,		/* not for bulk IN; see the NAK path */
-	Nakspins	= 2000,		/* NAKs to spin through before sleeping */
-	Nakspinus	= 100,		/* and how long each of those spins is */
 	Maxiters	= 4000,		/* attempts at one transfer, likewise */
 	Rearmsecs	= 2,		/* a bulk IN waits this long, then its channel restarts */
 };
@@ -662,31 +660,20 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 						error(Eio);
 					}
 				/*
-				 * Wait microseconds before waiting
-				 * milliseconds.
+				 * A tick, as the donor does.
 				 *
-				 * tsleep's resolution is the clock tick, and
-				 * this kernel ticks at 100Hz, so every NAK
-				 * cost 10ms whatever it asked for.  A device
-				 * that NAKs because it is busy for a moment
-				 * is ready long before that: the LAN9514's
-				 * set-up is 86 control transfers to its
-				 * registers, and on this board it has taken
-				 * anywhere from 10 to 149 seconds.  Measured
-				 * with the count in etherusb: 120ms a
-				 * transfer, twelve clock ticks, so each one
-				 * was NAKing dozens of times and sleeping a
-				 * whole tick for most of them.  Spin first
-				 * and sleep after, so a device that is
-				 * genuinely not answering still costs nothing
-				 * to wait for: 2000 spins of 100us is 200ms
-				 * at the worst, during enumeration only,
-				 * against the 10s of sleeping it replaces.
+				 * Spinning here first was tried -- 64 spins of
+				 * 50us, then 2000 of 100us -- on the theory
+				 * that tsleep's tick resolution was what made
+				 * the LAN9514's set-up take 10 to 149 seconds.
+				 * It changed nothing, and timing the transfers
+				 * said why: they take one loop with no NAKs at
+				 * all.  9front sleeps a tick here and so does
+				 * this; a deviation from the donor that buys
+				 * nothing measurable is not worth carrying.
 				 */
 				if(ep->ttype == Tintr)
 					tsleep(&up->sleep, return0, 0, ep->pollival);
-				else if(naks <= Nakspins)
-					microdelay(Nakspinus);
 				else
 					tsleep(&up->sleep, return0, 0, 1);
 				continue;

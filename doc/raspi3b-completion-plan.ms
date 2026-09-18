@@ -3886,7 +3886,39 @@ answer: it moves the contention rather than removing it, and the boot it
 produced died in the kernel with
 .CW "double sleep"
 where the ordering before it does not.  What removes it is DMA for the
-SD controller.  The timing is still in the driver, off by default \(em
+SD controller.
+.PP
+.B "Which is what both of the systems this port learns from do."
+Plan 9 and 9front's
+.CW bcm/emmc.c
+transfers with the DMA controller \(em
+.CW "dmastart(DmaChanEmmc, DmaDevEmmc, ...)"
+and
+.CW dmawait
+\(em and waits for the interrupt with
+.CW "tsleep(&emmc.r, datadone, 0, 3000)" .
+Linux's
+.CW drivers/mmc/host/bcm2835.c
+sets
+.CW "PIO_THRESHOLD 1" ,
+commented "Maximum block count for PIO (0 = always DMA)", so anything
+past a single block is DMA and even the PIO path is interrupt-driven
+through a work queue.  Neither holds the processor for the length of a
+transfer.  This driver polls, always, and that is the difference the
+measurement found.
+.PP
+The same comparison on the USB side says the other half of it.  9front
+runs the DWC2 channel scan in a fast interrupt and defers the wakeups it
+needs to a normal one, so completion handling outranks whatever else the
+machine is doing; this port dropped the FIQ deliberately, which its own
+header records.  Linux's dwc2 masks NAK as an interrupt condition
+.RB ( HCINTMSK_NAK )
+and completes transfers from the handler, so nothing sleeps per NAK
+there at all.  And 9front's NAK path is what this file had before today,
+to the character:
+.CW "tsleep(&up->sleep, return0, 0, 1)" .
+Spinning instead was a deviation from the donor that measurement showed
+bought nothing, and it has been put back.  The timing is still in the driver, off by default \(em
 .CW chaniotrace
 names how many transfers to time \(em because the next person to wonder
 where a USB transfer went should not have to guess twice first.
