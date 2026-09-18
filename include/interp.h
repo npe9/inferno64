@@ -57,6 +57,7 @@ typedef struct Modlink	Modlink;
 typedef struct Modl	Modl;
 typedef struct Type	Type;
 typedef struct Prog	Prog;
+typedef struct Wmtrace	Wmtrace;
 typedef struct Progs	Progs;
 typedef struct Heap	Heap;
 typedef struct Link	Link;
@@ -241,6 +242,17 @@ struct Progs
 	Prog*	tail;
 };
 
+struct Wmtrace
+{
+	int	pc;
+	int	op;
+	void*	fp;
+	void*	mp;
+	void*	d;	/* decoded destination operand, R.d */
+	void*	s;
+	void*	m;
+};
+
 struct Prog
 {
 	REG		R;		/* Register set */
@@ -273,16 +285,14 @@ struct Prog
 	 * different native thread or be interleaved with many other procs
 	 * on the same one, and either way a shared/thread-local buffer
 	 * gets swamped by unrelated procs' instructions long before this
-	 * one gets scheduled again. */
-	struct {
-		int	pc;
-		int	op;
-		void*	fp;
-		void*	mp;
-		void*	d;	/* decoded destination operand, R.d */
-		void*	s;
-		void*	m;
-	} wmtrace[256];
+	 * one gets scheduled again.
+	 *
+	 * Allocated rather than held inline, and only when wmtracesize is
+	 * non-zero: 256 entries is 7168 bytes in every Prog, which is the
+	 * largest single item in a small board's pool and is charged
+	 * whether or not anyone is debugging.  nil means not recording.
+	 * See os/inferno/port/dis.c:/^addprog. */
+	Wmtrace*	wmtrace;
 	int	wmtracei;
 	int	wmtracen;
 };
@@ -551,6 +561,7 @@ extern	void		modinit(void);
 extern	WORD		modstatus(REG*, char*, int);
 extern	int			progstack(REG*, int, char*, int, long);
 extern	void		wmtracedump(Prog*);
+extern	int		wmtracesize;
 extern	void		movp(void);
 extern	void		movtmp(void);
 extern	void		movtmpsafe(void);

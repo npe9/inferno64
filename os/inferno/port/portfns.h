@@ -403,3 +403,4 @@ long		lcycles(void);
 
 extern int	freehistsize;	/* ../port/alloc.c: 0 turns the ring off */
 extern int	distrack;	/* libinterp/heap.c: 0 turns the Dis heap tracker off */
+extern int	wmtracesize;	/* libinterp/xec.c: 0 turns the per-proc instruction trace off */

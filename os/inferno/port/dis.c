@@ -194,6 +194,13 @@ newprog(Prog *p, Modlink *m)
 	*ph = n;
 
 	n->osenv = (Osenv*)((uchar*)n + sizeof(Prog));
+	/*
+	 * The instruction trace, if this kernel records one.  malloc
+	 * failing here is not fatal: nil means this proc is not traced,
+	 * which is the same state every proc is in when the trace is off.
+	 */
+	if(wmtracesize > 0)
+		n->wmtrace = malloc(wmtracesize*sizeof(Wmtrace));
 	n->xec = xec;
 	n->quanta = PQUANTA;
 	n->flags = 0;
@@ -302,6 +309,7 @@ delprog(Prog *p, char *msg)
 	free(o->user);
 	free(p->killstr);
 	free(p->exstr);
+	free(p->wmtrace);
 	free(p);
 }
 
@@ -718,14 +726,25 @@ void
 addprog(Proc *p)
 {
 	Prog *n;
+	Wmtrace *w;
 
 	if((n = p->prog) == nil) {
 		n = malloc(sizeof(Prog));
 		if(n == nil)
 			panic("no memory");
 		p->prog = n;
-	} else
+	} else {
+		/*
+		 * The trace buffer outlives the Prog's contents: a Proc
+		 * reuses its Prog, and reallocating the buffer on every
+		 * reuse would leak the old one.
+		 */
+		w = n->wmtrace;
 		memset(n, 0, sizeof(Prog));
+		n->wmtrace = w;
+	}
+	if(n->wmtrace == nil && wmtracesize > 0)
+		n->wmtrace = malloc(wmtracesize*sizeof(Wmtrace));
 	n->osenv = p->env;
 }
 

@@ -23,7 +23,14 @@ String	snil;			/* String known to be zero length */
  * with many other unrelated procs, or resume on a different thread
  * entirely - either way a shared/thread-local buffer gets swamped by
  * those other procs' instructions long before this one gets scheduled
- * again and actually faults. Keying by Prog* survives all of that. */
+ * again and actually faults. Keying by Prog* survives all of that.
+ *
+ * wmtracesize is how many entries each proc gets, and zero turns the
+ * whole thing off: the buffer is not allocated, nothing is recorded,
+ * and a fault report says so.  A board with kilobytes of SRAM sets it
+ * to zero (os/inferno/armv7m/main.c). */
+int	wmtracesize = 256;
+
 void
 wmtracedump(Prog *p)
 {
@@ -31,7 +38,14 @@ wmtracedump(Prog *p)
 	Modlink *m;
 	char *path;
 
-	wn = nelem(p->wmtrace);
+	if(p->wmtrace == nil){
+		/* either the trace is off for this kernel, or its buffer
+		 * could not be allocated for this proc */
+		print("wmtrace: no trace for pid %d (wmtracesize %d)\n",
+			p->pid, wmtracesize);
+		return;
+	}
+	wn = wmtracesize;
 	cnt = p->wmtracen < wn? p->wmtracen: wn;
 	print("wmtrace (last %d instructions dispatched by this proc before fault):\n", cnt);
 	for(i = 0; i < cnt; i++){
@@ -2427,8 +2441,8 @@ xec(Prog *p)
 		 * is exactly what we want to see what this proc was actually
 		 * doing right before the fault. Recorded on p itself so it
 		 * survives yields/thread migration - see wmtracedump(). */
-		{
-			int wn = nelem(p->wmtrace);
+		if(p->wmtrace != nil){
+			int wn = wmtracesize;
 			p->wmtrace[p->wmtracei].pc = R.PC - R.M->prog;
 			p->wmtrace[p->wmtracei].op = R.PC->op;
 			p->wmtrace[p->wmtracei].fp = R.FP;
@@ -2437,9 +2451,12 @@ xec(Prog *p)
 			p->wmtracen++;
 		}
 		dec[R.PC->add]();
-		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].d = R.d;
-		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].s = R.s;
-		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].m = R.m;
+		if(p->wmtrace != nil){
+			int wi = (p->wmtracei-1+wmtracesize) % wmtracesize;
+			p->wmtrace[wi].d = R.d;
+			p->wmtrace[wi].s = R.s;
+			p->wmtrace[wi].m = R.m;
+		}
 		op = R.PC->op;
 		R.PC++;
 		/*

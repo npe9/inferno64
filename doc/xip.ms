@@ -1740,11 +1740,85 @@ and
 and
 .I cvtchk (1)
 are clean on the M7 and the M4 bench.
+.NH 2
+The per-proc instruction trace, which was in every Prog
+.PP
+With the quantum corrected,
+.CW #c/poolhist
+still showed twelve blocks of about six kilobytes each, 73280 bytes, and
+.CW addprog
+holding 36800 of it.  The reason is in
+.CW Prog :
+.DS
+.CW "	} wmtrace[256];"
+.DE
+a ring of the last 256 Dis instructions the proc dispatched \- pc, op,
+frame pointer, module and the three decoded operands, 28 bytes an entry
+\- which is 7168 bytes in every
+.CW Prog ,
+recorded unconditionally, seven stores per instruction interpreted.  It
+is a diagnostic from the
+.CW wm.dis
+hunt and its comment says so.
+.PP
+Same treatment as
+.CW freehist
+and
+.CW track :
+the buffer is allocated rather than held inline, and
+.CW wmtracesize
+says how many entries a proc gets, with zero meaning the buffer is not
+allocated and nothing is recorded.  The armv7m boards set it to zero
+beside the other two.  From
+.CW #c/memory
+on
+.CW mps2 :
+.DS
+.CW "                      before     after"
+.CW "main, at a prompt     170688    127680"
+.CW "main, after ls        204544    147200"
+.DE
+.PP
+Checking a diagnostic that is switched off is worth more than it sounds,
+because a switched-off feature that has been broken looks exactly like
+one that is working.  Building
+.CW mps2
+with
+.CW wmtracesize
+left at its default and dumping the ring from
+.CW xec
+after two hundred instructions printed nothing at all \- the buffer was
+nil.  The allocation had been put in
+.CW addprog ,
+which is not where a Dis proc is made:
+.CW newprog
+is, and it allocates the
+.CW Prog
+and its
+.CW Osenv
+in one block.  With the allocation there too, and the buffer freed in
+.CW delprog ,
+the same test prints what it should:
+.DS
+.CW "wmtrace (last 200 instructions dispatched ...):"
+.CW "  [0] pc=11 op=41 fp=1a6370 ... path=/dis/lib/readdir.dis"
+.DE
+descending through the ring with the module paths resolved.  The
+measurement above would have been the same either way, which is the
+point.
 .PP
 Against where this document started, the main pool after an
 .I ls
-has gone 367104, then 265216 with the instruction arrays in flash, then
-204544 with the quantum corrected.
+has gone 367104, then 265216 with the instruction arrays in flash,
+204544 with the quantum corrected, and 147200 with the trace off.  Eight
+more rounds of
+.I ls
+\- 5164 allocations, 3832 frees \- leave it at 136064 live with no
+fault, and
+.I fptest (1)
+and
+.I cvtchk (1)
+are clean on the M7 and the M4 bench.
 .NH 2
 What gates any of it
 .PP

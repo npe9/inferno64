@@ -124,6 +124,15 @@ main(void)
 	 */
 	distrack = 0;
 
+	/*
+	 * And no per-proc instruction trace.  It is a ring of the last 256
+	 * Dis instructions a proc dispatched, for the wm.dis hunt in
+	 * libinterp/xec.c, and it costs 7168 bytes in every Prog plus
+	 * seven stores per instruction interpreted.  Measured from
+	 * #c/poolhist on mps2 it was the largest single item in the pool.
+	 */
+	wmtracesize = 0;
+
 	serialputs("Inferno/", -1);
 	serialputs(CONFNAME, -1);
 	serialputs("\n", -1);
