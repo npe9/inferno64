@@ -344,11 +344,12 @@ entryshow(TkEntry *tke)
  * apart when it is written twice - so it is written here, and the
  * draw() path and the node path both ask.
  *
- * XXX the far edge looks wrong: xs1 for a selection running off the
- * right is s.max.x, an ABSOLUTE x, while every other value here is an
- * offset that rectaddpt() then shifts by s.min.  The band ends up
- * s.min.x too far right.  Left as it was: both paths share it, so it is
- * not what this change is about.
+ * The far edge used to be s.max.x, an ABSOLUTE x, where every other
+ * value here is an offset that rectaddpt() then shifts by s.min - so
+ * the band's right edge landed on the widget's OUTER edge, covering the
+ * inset gutter, and only the borderwidth part of that was painted over
+ * afterwards.  Both paths shared the mistake, so the two of them agreed
+ * and an identity check said nothing; tkofftest(1) asks the pixels.
  */
 static int
 entrysel(TkEntry *tke, Rectangle s, int fh, Rectangle *rp, int *s0p, int *s1p)
@@ -368,7 +369,7 @@ entrysel(TkEntry *tke, Rectangle s, int fh, Rectangle *rp, int *s0p, int *s1p)
 
 	if (tke->sel1 > tke->v1) {
 		s1 = tke->v1;
-		xs1 = s.max.x;
+		xs1 = s.max.x - s.min.x;
 	} else {
 		s1 = tke->sel1;
 		xs1 = tke->xsel1 - tke->x0;

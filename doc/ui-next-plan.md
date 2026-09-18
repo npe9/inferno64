@@ -1043,9 +1043,17 @@ there was never speed on the table here anyway.
    in the inset gutter, on screen, today, in both paths. An identity
    check cannot see it — both paths call the same function and so make
    the same mistake — which is exactly why it is worth writing down
-   that an identity check is not a correctness check. Fixed separately,
-   with a test that looks at the pixels rather than at two paths
-   agreeing.
+   that an identity check is not a correctness check.
+
+   So `tkofftest(1)` gained one check that looks at the pixels instead:
+   an entry with a selection running off the right, beside one with
+   nothing selected, and the gutter between the text and the border
+   must read the same in both. Against the old arithmetic it failed by
+   264 of 672 bytes; with `xs1` made an offset like everything else
+   around it, 0. The first version of that check sampled a single
+   pixel two in from the border and passed — it had landed on a glyph,
+   and the selected foreground and the ordinary one are the same shade
+   in this theme. A band, not a pixel.
 
    **The walk is done, and it is one tree per *run*, not per repaint.**
    `tkdrawslaves` opens a walk around its descent, `tkwalkjoin` hands a

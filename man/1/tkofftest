@@ -249,6 +249,19 @@ went into them.
 It does not say WHICH widgets shared a tree, so a walk that batched two
 widgets out of thirteen would pass it.
 .PP
+An identity check is not a correctness check, and the selection band is
+the case that showed it.
+Both paths compute the band with the same function \(em deliberately,
+so that they cannot come to disagree about it \(em which also means a
+mistake inside that function is made twice and compared clean.
+One check therefore looks at the pixels instead: a selection that runs
+off the right-hand end of an
+.IR entry (9)
+must leave the inset gutter alone, and it is asked by comparing that
+gutter against the same pixel of an entry with nothing selected.
+Nothing else here is checked that way, so any other arithmetic the two
+paths share is covered only against itself.
+.PP
 The render-node comparison never presses anything.
 A scrollbar arrow or slider held down with the mouse is drawn in the
 accent colour, the same shape as the unpressed one, and that colour is

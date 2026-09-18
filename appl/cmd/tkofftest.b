@@ -305,6 +305,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkstyleenv();
 	checkbevelhue();
 	checkscene();
+	checkselband();
 	checkelide();
 	checkcontrast();
 	checkmenu();
@@ -1678,6 +1679,70 @@ scenepair(top: ref Tk->Toplevel, who: string): (int, int)
 			}
 	}
 	return (diff, first);
+}
+
+# A SELECTION that runs off the right-hand end stops at the text, not at
+# the edge of the widget.
+#
+# This is the kind of defect an identity check cannot find.  The two
+# drawing paths agree about the band because they now call the same
+# function for it - which is worth doing, and is also why the arithmetic
+# inside that function has to be checked against the pixels instead.
+#
+# The band ends at s.max.x, an absolute x, where every other value in
+# that calculation is an offset that is then shifted by s.min.  The
+# right edge lands on the widget's OUTER edge, so the band covers the
+# inset gutter - entrypadx, 8 pixels in the flat style - and only the
+# borderwidth part of that is painted over afterwards.
+#
+# Asked by comparing two entries built alike, one with a selection
+# running off the end and one with none.  The gutter pixel just inside
+# the border must be the same in both: it is not part of either
+# entry's text.
+checkselband()
+{
+	blank();
+	top := offscreen();
+	if(top == nil)
+		return;
+	tk->cmd(top, "style flat");
+	txt := "a selection that runs off the right-hand end";
+	must(top, "entry .a -width 90");
+	must(top, ".a insert 0 {" + txt + "}");
+	must(top, ".a selection range 0 end");
+	must(top, ".a see 20");
+	must(top, "entry .b -width 90");
+	must(top, ".b insert 0 {" + txt + "}");
+	must(top, ".b see 20");
+	must(top, "pack .a -padx 6 -pady 6");
+	must(top, "pack .b -padx 6 -pady 6");
+	if(!map(top))
+		return;
+	tk->cmd(top, "update");
+	bw := int tk->cmd(top, ".a cget -borderwidth");
+	ra := tk->rect(top, ".a", Tk->Border);
+	rb := tk->rect(top, ".b", Tk->Border);
+	if(ra.dx() <= 0 || rb.dx() <= 0 || ra.dy() != rb.dy())
+		return;
+	# The GUTTER, not one pixel of it.  A single sample is a coin toss:
+	# the first version of this check took the pixel two in from the
+	# border and landed on a glyph, which is the same colour in both
+	# entries - the selected foreground and the ordinary one are the
+	# same shade in this theme - so it passed with the band plainly
+	# wrong.  The gutter is entrypadx plus the highlight ring wide, 8
+	# plus 1 in the flat style, and the ring can only make it wider, so
+	# the eight columns just inside the border are inside it whatever
+	# the ring does.
+	g := Rect((ra.max.x - bw - 8, ra.min.y + bw), (ra.max.x - bw, ra.max.y - bw));
+	a := grab(g);
+	b := grab(g.addpt((rb.min.x - ra.min.x, rb.min.y - ra.min.y)));
+	n := 0;
+	for(k := 0; k < len a && k < len b; k++)
+		if(a[k] != b[k])
+			n++;
+	report(n == 0, sys->sprint(
+		"a selection stops at the text, not at the edge of the entry (%d of %d bytes of the gutter differ from an unselected one)",
+		n, len a));
 }
 
 # A command whose failure would otherwise go unnoticed.
