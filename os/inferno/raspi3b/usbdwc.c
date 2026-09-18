@@ -49,6 +49,7 @@ enum
 	Cachelinesz	= 64,			/* Cortex-A53 D-cache line */
 	PowerUsb	= 3,			/* mailbox power-domain id */
 
+	Compspins	= 200,		/* microseconds to spin for a completion */
 	Enabledelay	= 50,
 	Resetdelay	= 10,
 	ResetdelayHS	= 50,
@@ -81,6 +82,9 @@ struct Ctlr {
 	uint	sofchan;		/* bitmap of channels waiting for sof */
 	Rendez	*chanintr;		/* per-channel wait, sleep till interrupt */
 	uint	hcintr[Maxchans];	/* hcint the handler read-and-cleared, per channel */
+	vlong	armed_[Maxchans];	/* timing, under chaniotrace: channel armed */
+	vlong	isr_[Maxchans];		/* the handler saw it halt */
+	vlong	woke_[Maxchans];	/* and the waiting process ran */
 	uint	rearm[Maxchans];	/* bulk IN channels restarted after a silent NAK */
 };
 
@@ -315,8 +319,33 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 	 * host asked for, and silence there is a fault.
 	 */
 	pending = ep->ttype == Tbulk && (hc->hcchar & Epdir) == Epin;
+	if(chaniotrace > 0)
+		ctlr->armed_[chan] = todget(nil);
+	/*
+	 * Spin for the completion before sleeping for it.
+	 *
+	 * Measured on the board, from arming the channel: 3 or 4
+	 * microseconds to the interrupt, and then 2.7 to 142
+	 * MILLISECONDS before the process waiting on it ran.  The
+	 * controller and the device are instant; what the transfer waits
+	 * for is a trip round this kernel's run queue, once per transfer,
+	 * and the LAN9514's set-up is 83 transfers -- which is the whole
+	 * of ETHERUSB-SETUP's 10 seconds.
+	 *
+	 * A sleep that is woken 4 microseconds later is a sleep that
+	 * should not have happened.  Spin first, briefly: a completion
+	 * that is coming will be here, and one that is not costs 200
+	 * microseconds before the wait it was always going to need.
+	 */
+	for(i = 0; i < Compspins; i++){
+		if(ctlr->hcintr[chan] & Chhltd)
+			break;
+		microdelay(1);
+	}
 	for(i = 0; (ctlr->hcintr[chan] & Chhltd) == 0; i++){
 		tsleep(&ctlr->chanintr[chan], chandone, &ctlr->hcintr[chan], 1000);
+		if(chaniotrace > 0)
+			ctlr->woke_[chan] = todget(nil);
 		if(pending){
 			/*
 			 * A bulk IN may wait for ever for data, but not for a
@@ -720,9 +749,24 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 			break;
 	}
 	if(chaniot0 != 0)
-		print("usbdwc: ep%d.%d type %d len %d: %lld us, %d loops, %d naks, %d nyets\n",
+		/*
+		 * Three numbers, because two of them answer different
+		 * questions: how long the whole transfer took, how long
+		 * the controller took to report it done (armed to
+		 * interrupt), and how long after that the waiting process
+		 * actually ran (interrupt to wake).  The first said the
+		 * set-up costs 115ms a transfer; these say whether that is
+		 * the device, the controller, or this kernel's scheduler.
+		 */
+		print("usbdwc: ep%d.%d type %d len %d: %lld us total, "
+			"%lld us to intr, %lld us to wake, %d loops, %d naks\n",
 			ep->dev->nb, ep->nb, ep->ttype, len,
-			(todget(nil) - chaniot0)/1000, iters, naks, nyets);
+			(todget(nil) - chaniot0)/1000,
+			ctlr->isr_[chan] > ctlr->armed_[chan]?
+				(ctlr->isr_[chan] - ctlr->armed_[chan])/1000: -1LL,
+			ctlr->woke_[chan] > ctlr->isr_[chan]?
+				(ctlr->woke_[chan] - ctlr->isr_[chan])/1000: -1LL,
+			iters, naks);
 	return len - nleft;
 }
 
@@ -934,8 +978,11 @@ usbintr(Ureg*, void *a)
 			if((hc->hcsplt & Spltena) && splitcontinue(ctlr, hc, v, i))
 				continue;
 			ctlr->hcintr[i] |= v;
-			if(ctlr->hcintr[i] & Chhltd)
+			if(ctlr->hcintr[i] & Chhltd){
+				if(chaniotrace > 0)
+					ctlr->isr_[i] = todget(nil);
 				wakeup(&ctlr->chanintr[i]);
+			}
 		}
 	}
 	if(intr & Sofintr){

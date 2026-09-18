@@ -3888,6 +3888,35 @@ produced died in the kernel with
 where the ordering before it does not.  What removes it is DMA for the
 SD controller.
 .PP
+.B "And the answer was neither of them."
+The timing was taken one level further in \(em when the channel was
+armed, when the interrupt recorded the completion, when the process
+waiting on it actually ran:
+.IP
+.EX
+ep2.0 len 8:  44603 us total, 3 us to intr, 44596 us to wake
+ep2.0 len 0:  86553 us total, 3 us to intr, 86547 us to wake
+ep2.0 len 0: 142411 us total, 3 us to intr, 142405 us to wake
+.EE
+.PP
+Three or four microseconds to the interrupt, every time: the controller
+and the device are instant.  What the transfer waits for is a trip round
+this kernel's run queue, once per transfer, and the set-up is 83 of
+them.  A sleep that is woken four microseconds later is a sleep that
+should not have happened, so
+.CW chanwait
+now spins 200 microseconds for the completion before it sleeps for it.
+.PP
+On the board that took
+.CW ETHERUSB-SETUP
+from 9620ms to 2280ms and
+.CW ETHER-WAITED
+from 9600ms to 2600ms, with every traced transfer costing 6 to 13
+microseconds and none of them sleeping at all.  The card's contention
+is real and the SD driver sleeps for its interrupt now rather than
+spinning, which is right on its own; it was not what the ethernet was
+waiting for.
+.PP
 .B "Which is what both of the systems this port learns from do."
 Plan 9 and 9front's
 .CW bcm/emmc.c
