@@ -1,0 +1,85 @@
+#!/bin/sh
+# picard - look at the Pi's card before touching it, then install a kernel.
+#
+# The board writes to this card itself, and twice now its own file
+# server has damaged it: once the overlays directory lost its contents
+# and every kernel print went out the Bluetooth pins, once a kernel was
+# copied over the one the board boots from and the board did not come
+# back.  Both times the first instinct was to copy a good kernel on and
+# reboot, which destroys the evidence of which of the two it was.
+#
+# So: check first, and only then repair.
+#
+#	tools/picard check	fsck the card, compare the kernel on it
+#				with the build, and say nothing else
+#	tools/picard install	keep the card's kernel as kernel8.bak and
+#				write the build's, after check passes
+#
+# The card is found by looking for a mounted volume holding config.txt
+# and kernel8.img rather than by name: this one is "bootfs", a Raspberry
+# Pi OS card is "boot", and a card that has been reamed is neither.
+set -e
+root=`cd \`dirname $0\`/.. && pwd`
+img=$root/os/inferno/raspi3b/kernel8.img
+
+vol=
+for v in /Volumes/*; do
+	if [ -f "$v/config.txt" ] && [ -f "$v/kernel8.img" ]; then
+		vol=$v
+		break
+	fi
+done
+if [ -z "$vol" ]; then
+	echo "picard: no card mounted (looked for config.txt and kernel8.img under /Volumes)" >&2
+	exit 2
+fi
+dev=`diskutil info "$vol" | awk -F': *' '/Device Node/{print $2}'`
+echo "card: $vol on $dev"
+
+check() {
+	# fsck wants the raw device and the filesystem not mounted; -n
+	# changes nothing whatever it finds.
+	diskutil unmount "$vol" >/dev/null
+	rdev=`echo "$dev" | sed 's|/dev/|/dev/r|'`
+	if fsck_msdos -n "$rdev"; then
+		echo "FSCK-OK"
+	else
+		echo "FSCK-FAIL $rdev"
+		fail=1
+	fi
+	diskutil mount "$dev" >/dev/null
+	if cmp -s "$vol/kernel8.img" "$img"; then
+		echo "KERNEL-SAME as the build"
+	else
+		echo "KERNEL-DIFFERS from the build:"
+		ls -l "$vol/kernel8.img" "$img"
+		cmp "$vol/kernel8.img" "$img" || true
+	fi
+}
+
+case "${1:-check}" in
+check)
+	fail=0
+	check
+	exit $fail
+	;;
+install)
+	fail=0
+	check
+	[ $fail = 0 ] || { echo "picard: not installing over a card fsck is unhappy with" >&2; exit 1; }
+	# the old kernel stays as kernel8.bak, which is the discipline
+	# kupdate() follows and the one that was given up the day the
+	# board went dark
+	cp "$vol/kernel8.img" "$vol/kernel8.bak"
+	cp "$img" "$vol/kernel8.img.new"
+	mv "$vol/kernel8.img.new" "$vol/kernel8.img"
+	cmp "$vol/kernel8.img" "$img" && echo "KERNEL-INSTALLED `ls -l \"$img\" | awk '{print $5}'` bytes"
+	sync
+	diskutil unmount "$vol" >/dev/null
+	echo "card unmounted; it is safe to pull"
+	;;
+*)
+	echo "usage: picard [check|install]" >&2
+	exit 2
+	;;
+esac
