@@ -1385,7 +1385,18 @@ rungc(Prog *p)
 	if(base != nil){		/* Completed this iteration ? */
 		return;
 	}
-	if(nprop == 0) {	/* Completed the epoch ? */
+	/*
+	 * Read and clear in one step.  This was "if(nprop == 0) ... " and
+	 * then "nprop = 0" a few lines below, and a mark landing between
+	 * the two is lost: at an epoch boundary that advances gccolor with
+	 * a grey object still grey, and the sweeper takes it.  The window
+	 * needs a marker running while the world is stopped, which
+	 * stoptheworld() does not exclude for a context that is between
+	 * quanta -- narrow, not closed.  doc/dis-parallel-plan.ms's Phase 5
+	 * asks for gchalt and nprop to be made atomic; this is the second
+	 * of the two.
+	 */
+	if(aclr(&nprop) == 0) {	/* Completed the epoch ? */
 		gcepochs++;
 		gccolor++;
 		rootset(p);
@@ -1393,5 +1404,4 @@ rungc(Prog *p)
 		gct = 1;
 		return;
 	}
-	nprop = 0;
 }

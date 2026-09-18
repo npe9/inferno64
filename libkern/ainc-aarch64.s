@@ -52,3 +52,20 @@ adec1:
 	DSB	$15
 	MOV	R2, R0
 	RET	R30
+
+/*
+ * Atomic read-and-clear of an int: return what *p held and leave zero,
+ * indivisibly.  See the amd64 file beside this one for what the
+ * collector needs it for; the W forms for the same reason as above,
+ * the flag is an int and its neighbour is not ours to clear.
+ */
+TEXT	aclr(SB), 1, $-4		/* int aclr(int*) */
+	MOV	R0, R3
+	MOV	$0, R2
+aclr1:
+	LDXRW	(R3), R1
+	STXRW	R4, R2, (R3)
+	CBNZW	R4, aclr1
+	DSB	$15
+	MOV	R1, R0
+	RET	R30

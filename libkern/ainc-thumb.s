@@ -42,3 +42,20 @@ _decloop:
 	DMBSY
 	MOVW	R1, R0
 	RET
+
+/*
+ * Atomic read-and-clear of an int: return what *p held and leave zero.
+ * One core here, but the exclusive pair costs nothing and says what is
+ * meant; see the amd64 file for what the collector wants it for.
+ */
+TEXT	aclr(SB), 1, $-4		/* int aclr(int*) */
+	MOVW	R0, R3
+	MOVW	$0, R2
+_clrloop:
+	LDREXW(1, 3)
+	STREXW(4, 2, 3)
+	CMP	$0, R4
+	BNE	_clrloop
+	DMBSY
+	MOVW	R1, R0
+	RET

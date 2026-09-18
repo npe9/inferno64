@@ -7922,3 +7922,113 @@ took the demand down.  The ceiling is worth having for what it
 guarantees rather than for a panic it currently prevents: 256 stays as
 headroom, because a workload with a hundred programs blocked at once
 still needs a context each.
+.NH 2
+Phase 5's second atomic, and a build that had been linking on luck
+.LP
+.B "nprop was tested and then cleared."
+.CW dis-parallel-plan.ms 's
+Phase 5 asks for two flags to be made atomic.
+.CW gchalt
+was done earlier in this document, and it mattered: a lost decrement
+switched the collector off for the rest of a boot.
+.CW nprop
+is the other, and it is the collector's "something was marked" flag,
+written by
+.CW Setmark
+in
+.CW interp.h
+\(em which is to say by the write barrier, on every pointer store that
+greys an object, including from JIT-generated code.
+.CW rungc()
+read it and cleared it a few lines later:
+.IP
+.nf
+if(nprop == 0) {	/* Completed the epoch ? */
+	gcepochs++; gccolor++; rootset(p); ...
+	return;
+}
+nprop = 0;
+.fi
+.PP
+A mark landing between the test and the clear is lost.  On the second
+branch that is harmless \(em the grey work is found by the next slice's
+walk \(em but on the first it advances
+.CW gccolor
+with an object still grey, and the sweeper takes a live object.
+.PP
+The window needs a marker running while the world is stopped, which is
+narrower than it sounds and not closed:
+.CW rungc()
+is only ever called from
+.CW collectq()
+after
+.CW stoptheworld()
+returns 1, and that waits only for contexts with
+.CW inxec
+set.  So it is one read-and-clear now,
+.CW aclr() ,
+which the tree did not have.
+.CW XCHGL
+on amd64 and 386,
+.CW LDXRW/STXRW
+on aarch64,
+.CW amoswap.w
+on riscv64,
+.CW LDREX/STREX
+on thumb, and an
+.CW splhi
+read-and-clear on the three boards that write their own atomics in C
+because they run one processor.
+.PP
+.B "And the rebuild broke both arm64 boards, which is the useful part."
+Adding one declaration to
+.CW interp.h
+forced
+.CW libinterp
+to rebuild, and the link failed:
+.IP
+.nf
+secmain: undefined: disctxinit
+.fi
+.PP
+An aarch64 kernel compiles its own files through the board mkfile,
+which carries
+.CW -DDISCTXREG ,
+and its libraries through
+.CW mkfiles/mkfile-os-aarch64 ,
+which did not.  So
+.CW libinterp
+had
+.CW curP
+as an ordinary global while the boards declared it an external
+register.  It had been linking because the archive was older than that
+path and had been built through
+.CW mkfile-Inferno-aarch64 ,
+which does carry the flag \(em an artifact standing in for a build that
+would not reproduce, the same shape as the
+.CW devdraw.7
+break earlier in this document.  The flag is in
+.CW mkfile-os-aarch64
+now.
+.PP
+Two mk facts worth writing down again, because both cost a cycle here:
+it does not notice a
+.CW CFLAGS
+change, so the objects have to be removed by hand; and it compares the
+.I archive
+against the sources rather than the objects, so removing the objects
+alone recompiles nothing \(em the archive has to go too.
+.PP
+.B "Measured."
+All fourteen boards build.  pc64 at
+.CW "-smp 2"
+.CW parallelvm=1 ,
+two boots, no panic, 750083 collector runs; virtarm64 two boots to a
+shell with cpu1 interpreting; and
+.CW virt ,
+.CW virts ,
+.CW spike ,
+.CW sifiveu
+and
+.CW shakti
+each reach their first Dis quantum with no panic.

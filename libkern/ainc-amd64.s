@@ -41,3 +41,19 @@ TEXT	aswap(SB), $0			/* void* aswap(void**, void*) */
 	MOVQ	v+8(FP), AX
 	XCHGQ	AX, (RARG)		/* AX = old *p, *p = v */
 	RET
+
+/*
+ * Atomic read-and-clear of an int: return what *p held and leave zero,
+ * indivisibly.  XCHG with a memory operand is atomic on x86 without a
+ * LOCK prefix, as above; the L suffix because the caller's flag is an
+ * int and the field beside it must not be touched.
+ *
+ * What it is for: the collector's "did anything get marked" flag,
+ * nprop.  Testing it and then clearing it in two steps loses a mark
+ * that lands in between, and a lost mark at an epoch boundary ends the
+ * epoch with a grey object -- which the sweeper then takes.
+ */
+TEXT	aclr(SB), $0			/* int aclr(int*) */
+	MOVL	$0, AX
+	XCHGL	AX, (RARG)		/* AX = old *p, *p = 0 */
+	RET

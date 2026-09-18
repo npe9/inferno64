@@ -168,3 +168,20 @@ adec(int *addr)
 	splx(s);
 	return r;
 }
+
+/*
+ * Read and clear.  Masking interrupts is the whole of it here, as
+ * above: this board runs one processor.  libkern has the real
+ * instruction for the boards that have more (libkern/ainc-amd64.s).
+ */
+int
+aclr(int *addr)
+{
+	int s, r;
+
+	s = splhi();
+	r = *addr;
+	*addr = 0;
+	splx(s);
+	return r;
+}

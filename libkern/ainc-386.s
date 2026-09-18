@@ -36,3 +36,15 @@ _decloop:
 	JNE	_decloop
 	MOVL	CX, AX
 	RET
+
+/*
+ * Atomic read-and-clear of an int: return what *p held and leave zero,
+ * indivisibly.  XCHG with a memory operand carries an implied LOCK on
+ * x86, so this one needs no loop.  See the amd64 file for what the
+ * collector wants it for.
+ */
+TEXT	aclr(SB), $0			/* int aclr(int*) */
+	MOVL	p+0(FP), BX
+	MOVL	$0, AX
+	XCHGL	AX, (BX)		/* AX = old *p, *p = 0 */
+	RET

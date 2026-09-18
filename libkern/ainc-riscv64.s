@@ -32,3 +32,18 @@ TEXT	adec(SB), 1, $-4		/* int adec(int*) */
 	AMOADDW(10, 12, 8)		/* R8 = old, (R12) = old-1 */
 	ADD	$-1, R8
 	RET
+
+/*
+ * Atomic read-and-clear of an int: return what *p held and leave zero.
+ *
+ * amoswap.w rd, rs2, (rs1):  rd = M[rs1]; M[rs1] = rs2, and the
+ * encoding is amoadd's with funct5 00001 rather than 00000.
+ */
+#define AMOSWAPW(rs2, rs1, rd) \
+	WORD $((1<<27)|AQ|RL|((rs2)<<20)|((rs1)<<15)|(2<<12)|((rd)<<7)|057)
+
+TEXT	aclr(SB), 1, $-4		/* int aclr(int*) */
+	MOV	RARG, R12
+	MOV	$0, R10
+	AMOSWAPW(10, 12, 8)		/* R8 = old, (R12) = 0 */
+	RET

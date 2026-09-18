@@ -498,6 +498,7 @@ struct Handler
  * every .c file that touches a ->ref field includes both). */
 #ifndef AINC
 extern	int	ainc(int*);
+extern	int	aclr(int*);	/* read and clear; see libkern/ainc-amd64.s */
 extern	int	adec(int*);
 #define AINC(p)	ainc(p)
 #define ADEC(p)	adec(p)

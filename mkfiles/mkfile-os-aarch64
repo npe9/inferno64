@@ -14,7 +14,17 @@ AS=		7a
 ASFLAGS=
 
 CC=		7c
-CFLAGS=		-wFV -I$ROOT/Inferno/aarch64/include -I$ROOT/include
+#
+# -DDISCTXREG here, not only in the boards.  An aarch64 kernel builds
+# its libraries through this file (SYSTARG=os), and its own files
+# through the board mkfile, which carries the flag: so libinterp was
+# compiled with curP an ordinary global while virtarm64 and raspi3b
+# declared it an external register, and the link failed with
+# "secmain: undefined: disctxinit" the first time interp.h changed and
+# forced libinterp to rebuild.  It had been working on objects built
+# earlier through mkfile-Inferno-aarch64, which does carry it.
+#
+CFLAGS=		-wFV -DDISCTXREG -I$ROOT/Inferno/aarch64/include -I$ROOT/include
 ANSICPP= -p
 
 LD=		7l
