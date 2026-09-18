@@ -55,7 +55,7 @@ enum {
 	Fpv	= 1<<28,
 };
 
-int fpitrace = 1;	/* TEMPORARY: set from the console to trace conversions */
+int fpitrace = 0;	/* TEMPORARY: set from the console to trace conversions */
 
 static void
 getd(Internal *x, ulong *s, int d)
@@ -334,7 +334,8 @@ fpiemu(Ureg *ur)
 	}
 
 	if(fpitrace){
-		print("emu %.4ux ", hw1); print("%.4ux", hw2);
+		print("emu pc=%.8lux ", (ulong)ur->pc);
+		print("%.4ux ", hw1); print("%.4ux", hw2);
 		print(" d%d", dd); print(" n%d", dn); print(" m%d", dm);
 		print(" -> ");
 		if(dd < Ndreg){

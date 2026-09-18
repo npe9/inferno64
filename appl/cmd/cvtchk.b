@@ -27,8 +27,20 @@ init(nil: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
 
+	# Graded literal tests first: if a REAL constant in the module's own
+	# data segment is wrong, everything below it is meaningless.
+	x := 3.0;
+	y := 3.0;
+	say("LIT-VAR", x == y);
+	say("LIT-DIRECT", x == 3.0);
+	z := 0.0;
+	say("LIT-ZERO", z == 0.0);
+	say("LIT-ONE", 1.0 == 1.0/1.0);
+
 	i := 3;
 	r := real i;			# CVTWF
+	say("R-SELF", r == r);		# a NaN fails this; garbage shows up here
+	sys->print("R-TRUNC %d want 3\n", int r);
 	say("CVT-I2R", r == 3.0);
 
 	n := int (r + 0.5);		# CVTFW
