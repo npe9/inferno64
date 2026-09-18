@@ -36,7 +36,15 @@
 #define	KMESGSIZE	2048
 #define	MAXMACH		1
 #define	HZ		100
-#define	KSTACK		(16*1024)
+/*
+ * 4K, not 16K.  Every process pays this twice over: the boot stack is
+ * reserved in bss (os/inferno/armv7m/l.s) and every proc's kernel stack
+ * is malloc(KSTACK) from the main pool (os/inferno/port/proc.c), which
+ * os/inferno/port/alloc.c's #c/poolhist shows as the largest single
+ * caller in the pool floor.  Verified to reach a shell at 4K on
+ * mps2-an386 and mps2-an500.
+ */
+#define	KSTACK		(4*1024)
 #define	NPROC		32
 #define	CONFNAME	"teensy41"
 
@@ -48,7 +56,7 @@
 #define	CPUHZ		600000000
 
 /* the boot stack and the Mach, both reserved in os/inferno/armv7m/l.s */
-#define	KSTKSIZE	(16*1024)
+#define	KSTKSIZE	(4*1024)
 #define	MACHSIZE	4096
 
 /*
