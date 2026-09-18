@@ -1110,6 +1110,19 @@ there was never speed on the table here anyway.
    removed, so the ordering across an embedded descent is a separate
    and unsolved thing, and the gate stays.
 
+   **It is the first widget whose node path costs more, and the reason
+   is structural.** `tkbench(1)` puts a flat `text` at 5.97µs a widget
+   drawn directly and 6.72µs through nodes — about 13% — where every
+   other row is within a couple of per cent either way (label 8.60 against
+   8.78, entry 19.06 against 17.88, listbox 31.62 against 31.08). A
+   text widget emits a node per *item per line*; every widget converted
+   before it emits a fixed handful whatever it contains. So this is the
+   first evidence that the node path's cost tracks content rather than
+   widget count, which is the thing a retained tree would eventually be
+   for. It is 0.75µs, so it buys nothing to act on now, but it is the
+   number to watch when `canvas` is looked at, since a canvas is
+   nothing but items.
+
    **A real defect fell out of it, and it was not in the text widget.**
    Adding a tagged `text` to the pane made the comparison differ by one
    pixel, at the widget's top right. The cause was that `tkdrawrelief`
