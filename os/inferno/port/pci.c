@@ -356,6 +356,25 @@ pcibusmap(Pcidev *root, uvlong *pmema, ulong *pioa, int wrreg)
 	}
 
 	/*
+	 * A BAR is moved with the device's decoders off.  PCI says the
+	 * effect of writing a base address while the device is decoding
+	 * is undefined, and a machine really does take it that way: on a
+	 * Compute Engine t2a the NVMe controller -- which the firmware
+	 * had used to boot, and had left enabled -- kept answering at the
+	 * address the firmware gave it, so its MSI-X table read back all
+	 * ones wherever this code put it, and its interrupts could not be
+	 * programmed at all.  The network card, which the firmware never
+	 * touched and left disabled, took its new address without
+	 * complaint.  pcienable() below turns the decoders back on.
+	 */
+	if(wrreg){
+		for(p = root; p != nil; p = p->link){
+			p->pcr = pcicfgr16(p, PciPCR);
+			pcicfgw16(p, PciPCR, p->pcr & ~(IOen|MEMen));
+		}
+	}
+
+	/*
 	 * Sort both tables IO smallest first, Memory largest
 	 */
 	qsort(table, itb-table, sizeof(Pcisiz), pcisizcmp);
@@ -420,6 +439,10 @@ pcibusmap(Pcidev *root, uvlong *pmema, ulong *pioa, int wrreg)
 
 	if(wrreg == 0)
 		return;
+
+	/* the decoders come back on, exactly as they were found */
+	for(p = root; p != nil; p = p->link)
+		pcicfgw16(p, PciPCR, p->pcr);
 
 	/*
 	 * Finally set all the bridge addresses & registers
@@ -1278,6 +1301,13 @@ pcienable(Pcidev *p)
 		}
 	}
 
+	/*
+	 * From the register, not from the copy taken when the bus was
+	 * walked: anything that has moved a BAR since has had to turn
+	 * the decoders off to do it, and a stale copy here would decide
+	 * they were already on and leave the device dark.
+	 */
+	p->pcr = pcicfgr16(p, PciPCR);
 	if((p->pcr & pcr) != pcr){
 		print("pcienable %T: pcr %ux->%ux\n", p->tbdf, p->pcr, p->pcr|pcr);
 		p->pcr |= pcr;

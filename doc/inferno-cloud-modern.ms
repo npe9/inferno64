@@ -2374,14 +2374,54 @@ its own sake: on the t2a every vector was accepted, unmasked and
 pointed at the right doorbell for three images running, and not one
 interrupt was delivered.  A driver that believed the programming would
 have gone from polling every tick to polling every second.
+.NH 2
+A BAR is moved with the device's decoders off
 .PP
-.B "Open: NVMe's MSI-X table does not answer on a t2a."
-Its table lives in BAR4, 64 bytes at
-.CW 0x10000000 ,
-and reads back all ones there while gve's, 128 bytes further up the
-same page, reads back what was written.  The controller's own
-registers in BAR0 work, and the disk is read, because
+NVMe's MSI-X table would not answer on a t2a.  Its table is 64 bytes in
+BAR4, and it read back all ones wherever this kernel put it, while
+gve's, in the same page, read back what was written.  The controller's
+own registers worked and the disk was read, because
 .CW sdnvme.c
-polls its completion queue on a timer.  So NVMe on that machine keeps
-working and keeps polling, and why that BAR does not decode is not yet
-known.
+polls its completion queue on a timer, so the machine looked healthy
+and one device simply had no interrupts.
+.PP
+Four things were eliminated by measurement before the cause turned up.
+The device id was not it: Linux's own
+.CW /proc/interrupts
+on the same shape shows NVMe taking ITS MSIs, and the IORT maps
+identity.  The address was not it: moving the BAR to another page
+changed nothing, and sharing a page with two other devices was not it
+either.  The command register said memory decoding was on, and the BAR
+in configuration space held exactly what this kernel had written.
+.PP
+And that last pair is the answer.  PCI says the effect of writing a
+base address while the device is decoding is undefined, and this
+machine takes it at its word: the firmware had booted from that NVMe
+disk and left it enabled, so the controller kept answering at the
+address the firmware gave it while its configuration register showed
+ours.  The network card, which the firmware never touched and left
+disabled, took its new address without complaint \(em which is why one
+device worked and the other did not, on the same bus, with the same
+code.
+.PP
+.CW pcibusmap ()
+now turns the decoders off before it places anything and restores them
+exactly as it found them afterwards.  With that, the NVMe table reads
+back what is written on a t2a and both its vectors deliver:
+.CW "nvme: msix vector 0 delivered" ,
+then vector 1.
+.PP
+.B "And a cache that hid it."
+.CW pcienable ()
+decided whether to enable a device from
+.CW p->pcr ,
+a copy of the command register taken when the bus was walked.  With the
+decoders turned off after that copy was made, it saw bits it believed
+were already set and wrote nothing, and the disk went dark \(em the same
+kernel that had just been fixed now failed to read its own root.  It
+reads the register.
+.PP
+This is not a Compute Engine quirk.  Any machine whose firmware leaves
+a device enabled \(em which is every machine that boots from one \(em
+has been getting undefined behaviour out of this code, and getting away
+with it because the devices in question tolerated it.
