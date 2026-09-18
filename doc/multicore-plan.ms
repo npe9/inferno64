@@ -6963,3 +6963,26 @@ is
 in little-endian ASCII \(em which says a string is being used as a
 pointer somewhere on that path.  Chasing it wants a session of its own,
 starting with a console lock so that the next capture is readable.
+.PP
+.B "And the check that says it is the board's."
+Everything on that path includes code written an hour before the
+measurement \(em
+.CW bootargsinit()
+and
+.CW fwcfgfile()
+run in every arm, and a data abort on an ASCII string is exactly the
+shape of a mis-parsed fw_cfg structure.  So: with the
+.CW secsched=1
+compiled in as it used to be, the
+.CW bootargsinit()
+call and the option block compiled
+.I out ,
+and no
+.CW -fw_cfg
+on the command line, six boots of six panic and none reaches
+.CW VIRT-OK .
+The new code is not on the path and the failure is unchanged, so the
+regression is the board's and predates this session.  The same kernel
+with
+.CW secsched=0
+boots clean ten times out of ten.
