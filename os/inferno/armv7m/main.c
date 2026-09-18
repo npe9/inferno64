@@ -105,6 +105,16 @@ main(void)
 	archreset();
 	confinit();
 
+	/*
+	 * No free-history ring on these parts.  It is 64KiB of allocator
+	 * debugging for the pc64 and riscv64 hunts (os/inferno/port/alloc.c),
+	 * which is nothing against their pools and is the largest single
+	 * item in the bss of a kernel for a part with a couple of hundred
+	 * kilobytes of SRAM.  confinit() runs before anything frees, so
+	 * clearing it here means it is never allocated.
+	 */
+	freehistsize = 0;
+
 	serialputs("Inferno/", -1);
 	serialputs(CONFNAME, -1);
 	serialputs("\n", -1);

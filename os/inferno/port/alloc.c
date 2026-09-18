@@ -133,8 +133,26 @@ void (*poolfault)(void *, char *, uintptr) = _poolfault;
  * 4096 entries is 64KiB, trivial next to this port's pool sizes.  See
  * doc/inferno-ports.ms.
  */
-enum { NFREEHIST = 4096 };
-static struct { void *addr; uintptr pc; int pid; char *mname; } freehist[NFREEHIST];
+/*
+ * The ring is allocated rather than reserved, and a board that does not
+ * want it sets freehistsize to zero in its confinit(), which runs before
+ * poolinit() below.  At 4096 entries it is 64KiB on a 32-bit target --
+ * trivial against pc64's pools, and the single largest item in the bss
+ * of a kernel for a part with a couple of hundred kilobytes of SRAM,
+ * where it is the whole of the memory rather than a rounding error.
+ * The default keeps every board that was using it using it.
+ */
+typedef struct Freeslot Freeslot;
+struct Freeslot
+{
+	void*	addr;
+	uintptr	pc;
+	int	pid;
+	char*	mname;
+};
+
+int freehistsize = 4096;
+static Freeslot *freehist;
 static int freehistn;
 
 static void
@@ -176,7 +194,21 @@ notefree(void *v, uintptr pc)
 	 * ports.ms, "Who freed it first, this time reliably"). pc64-
 	 * only, temporary.
 	 */
-	i = freehistn % NFREEHIST;
+	/*
+	 * Allocated on first use rather than reserved in bss.  xalloc
+	 * under the pool lock is what poolalloc() below already does when
+	 * it grows an arena, so this is safe by the same argument.
+	 */
+	if(freehist == nil){
+		if(freehistsize <= 0)
+			return;
+		freehist = xalloc(freehistsize * sizeof(Freeslot));
+		if(freehist == nil){
+			freehistsize = 0;	/* do not keep asking */
+			return;
+		}
+	}
+	i = freehistn % freehistsize;
 	freehist[i].addr = v;
 	freehist[i].pc = pc;
 	{
@@ -228,7 +260,9 @@ printfreehist(void *v)
 {
 	int i, n;
 
-	n = freehistn < NFREEHIST ? freehistn : NFREEHIST;
+	if(freehist == nil)
+		return;
+	n = freehistn < freehistsize ? freehistn : freehistsize;
 	for(i = 0; i < n; i++)
 		if(freehist[i].addr == v)
 			print("_poolfault: %#p was freed before, from pc=%#p pid %d module %s\n",

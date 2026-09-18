@@ -400,3 +400,5 @@ u32		nhgetl(void*);
 u16		nhgets(void*);
 u32		µs(void);
 long		lcycles(void);
+
+extern int	freehistsize;	/* ../port/alloc.c: 0 turns the ring off */
