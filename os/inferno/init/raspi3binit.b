@@ -573,7 +573,12 @@ kupdate()
 	# from a process spawned while the network is still coming up, and
 	# dialling before /net is bound fails with "file does not exist",
 	# which reads like a missing server rather than a missing namespace.
-	for(i := 0; i < 300; i++){
+	# and wait for one.  Thirty seconds was not enough: the interface
+	# has taken more than a minute to appear, and a kernel update that
+	# gives up before the network exists is a board that cannot be
+	# updated at all that boot.  Five minutes, in a process nothing
+	# waits on.
+	for(i := 0; i < 3000; i++){
 		if(hasaddr())
 			break;
 		sys->sleep(100);
@@ -1171,13 +1176,29 @@ etherone(ifname, tag: string, tries: int, ip, mask, gw: string)
 	# has ep2.0 and ep3.0 there within a second or two, long before
 	# etherusb is serving.
 	#
-	for(i := 0; i < tries; i++){
+	#
+	# No deadline, because every deadline tried here has been wrong.
+	# Ten seconds: the board printed ETHER-NONE and etherusb served
+	# immediately after.  Sixty: the same thing again, with etherusb
+	# printing "link up" early and taking longer than a minute to
+	# serve.  The board is not slow in a way that can be guessed at.
+	#
+	# What can be asked is whether there is an adapter at all, and
+	# usbd's ctl file answers that in a second or two -- so wait as
+	# long as the hardware is there, and give up at once when it is
+	# not.  This runs in its own process; nothing waits on it.
+	# Progress every ten seconds so a console shows the difference
+	# between waiting and wedged.
+	#
+	for(i := 0; ; i++){
 		if(sys->open(addr, Sys->OREAD) != nil)
 			break;
 		if(i >= 100 && !usbdevices()){
 			sys->print("%s-NONE (no USB device to serve ethernet)\n", tag);
 			return;
 		}
+		if(i > 0 && i % 100 == 0)
+			sys->print("%s-WAIT %d s for %s\n", tag, i/10, addr);
 		sys->sleep(100);
 	}
 	if(sys->open(addr, Sys->OREAD) == nil){
