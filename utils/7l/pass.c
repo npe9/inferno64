@@ -38,6 +38,17 @@ dodata(void)
 	}
 
 	/*
+	 * And whatever asked for it by name, with RODATA on its GLOBL.
+	 * Unlike -t this is not a policy the link applies to a whole
+	 * program: the symbol said so itself, so it is honoured whether
+	 * -t was given or not.
+	 */
+	for(i=0; i<NHASH; i++)
+		for(s = hash[i]; s != S; s = s->link)
+			if(s->rodata && s->type == SDATA)
+				s->type = SSTRING;
+
+	/*
 	 * pass 1
 	 *	assign 'small' variables to data segment
 	 *	(rationale is that data segment is more easily

@@ -17,6 +17,11 @@ PORTDIR=../port
 
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
 
+# The built-in root goes in the text segment rather than the data
+# segment: utils/data2s/data2s.c -t puts RODATA on its GLOBL and the
+# linker lays it out with the string constants.  See doc/xip.ms.
+ROOTINTEXT=1
+
 <| $SHELLNAME ../port/mkdevlist $CONF
 
 # QEMU -M virt (64 bit), same address layout as armv7's own board

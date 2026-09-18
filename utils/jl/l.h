@@ -78,6 +78,7 @@ struct	Sym
 	short	version;
 	short	become;
 	short	frame;
+	uchar	rodata;	/* GLOBL asked for the text segment: see RODATA */
 	ushort	file;
 	long	value;
 	long	sig;
@@ -368,3 +369,16 @@ void	xdefine(char*, int, long);
 void	xfol(Prog*);
 void	xfol(Prog*);
 void	nopstat(char*, Count*);
+
+/*
+ * Flag on GLOBL, as in
+ *	GLOBL	sym(SB), $RODATA, $size
+ * asking for the symbol to be laid out in the text segment rather than
+ * in data.  On a part that runs its text from flash and copies its data
+ * segment into RAM at boot, that is the difference between a table
+ * costing flash and the same table costing RAM.  The symbol is still
+ * data: a reference to it is a plain address, and it must not be
+ * written.  The value matches the Go toolchain's, which descends from
+ * this one.
+ */
+#define	RODATA	8

@@ -1358,15 +1358,21 @@ gains no RAM, having no flash.
 .CW nucleof303
 comes out 288 bytes worse, bundling only 512 bytes of root against the
 per-symbol padding \- an honest non-result for a board with no userland.
-It is opt-in because
+It was opt-in because
 .CW virt
-(riscv64) stops booting with the root in text: no output at all, not
-even its banner, where the same kernel with the root in data reaches an
-interactive shell.  That board has an MMU and its text grows by some
-450K, so
+(riscv64) stopped booting with the root in text: no output at all, not
+even its banner, where the same kernel with the root in data reached an
+interactive shell.  The guess recorded here was
 .CW mmuinit 's
-mapping is the first suspect, but it is a guess and it is not
-root-caused.  Boards that do not opt in are untouched and still boot.
+mapping, on the grounds that the board has an MMU and its text grew by
+some 450K.  The guess was wrong, and the answer turned out to be the
+.CW TEXT
+emission itself \- see
+.I "The other two linkers"
+below.  It is no longer opt-out for anyone: with
+.CW RODATA ,
+.CW virt
+boots with its root in the text segment and 590856 bytes off its RAM.
 .IP
 .B "Strings to flash."
 The other half is the C string literals.  Same reasoning, different
@@ -2183,6 +2189,97 @@ on some runs, which is the Dis heap tracker from that same hunt and is
 not this work: four runs in ten with the change and four in ten without
 it, on the same workload.  It is left as found and named here so the
 next person does not attribute it.
+.NH 2
+The other two linkers, and what the riscv64 failure actually was
+.PP
+.CW RODATA
+was added to
+.CW tl
+for the pre-decoded modules, but there is nothing thumb-specific about
+it, and two other targets in this tree can be booted here:
+.CW raspi3b
+(aarch64,
+.CW 7l )
+and
+.CW virt
+(riscv64,
+.CW jl ).
+Both linkers already had the
+.CW SSTRING
+type, the placement loop and the
+.CW datblk
+case, and neither had
+.CW tl 's
+zero-fill bug \- that one was
+.CW tl 's
+alone.  So each needed the same four small changes:
+.CW rodata
+on
+.CW Sym ,
+.CW RODATA
+read from
+.CW GLOBL
+in
+.CW obj.c ,
+the retype in
+.CW pass.c ,
+and the placement loop made unconditional.
+.PP
+With that,
+.CW ROOTINTEXT
+works on both.  Measured as
+.CW "data + bss" :
+.DS
+.CW "            root in data   root in text     saved"
+.CW "virt              976168         385312    590856"
+.CW "raspi3b          5041896        4566456    475440"
+.DE
+.CW virt
+reaches an interactive shell and prints
+.CW VIRT-OK ,
+.CW ROOT-APPS-OK
+and
+.CW ROOT-CMDS-OK ;
+.CW raspi3b
+reaches a shell and runs its own probes.
+.PP
+So the riscv64 failure this document recorded as not root-caused was not
+the MMU.  It was the
+.CW TEXT
+symbol:
+.CW data2s\ -t
+used to emit the root as code, and a reference to a text symbol is not
+an address to read bytes from on every target the way it is on ARM after
+masking.  Emitting the same bytes as
+.CW DATA
+under a
+.CW RODATA
+.CW GLOBL ,
+which is what the boards do now, boots on all five.
+.PP
+One thing cost an hour and is worth writing down.  Adding the flag
+looked like it had no effect on
+.CW virt :
+the generated assembler had
+.CW RODATA
+on 63 symbols, the segment sizes did not move a byte, and a temporary
+print in
+.CW jl
+showed every one of 2590
+.CW GLOBL s
+arriving with the same
+.CW reg
+value \- including symbols that were never marked.  The reason was not
+in the linker at all.  The riscv object suffix is
+.CW .j ,
+and the stale
+.CW virt.root.j
+was being relinked because the rebuild had deleted
+.CW virt.root.o ,
+which does not exist.  The uniform
+.CW reg
+value was the tell: a flag that is being read would differ between
+symbols that carry it and symbols that do not.
 .NH 2
 Where this stands
 .PP

@@ -62,6 +62,7 @@ struct	Sym
 	short	become;
 	short	frame;
 	uchar	subtype;
+	uchar	rodata;	/* GLOBL asked for the text segment: see RODATA */
 	ushort	file;
 	vlong	value;
 	long	sig;
@@ -307,3 +308,16 @@ Mask*	findmask(uvlong);
 #define	isreturn(a)	((a) == ARETURN || (a) == ARET || (a) == AERET)
 #define	branchop()	AB
 #define	canfollow(a)	((a) != ATEXT && (a) != ABCASE)
+
+/*
+ * Flag on GLOBL, as in
+ *	GLOBL	sym(SB), $RODATA, $size
+ * asking for the symbol to be laid out in the text segment rather than
+ * in data.  On a part that runs its text from flash and copies its data
+ * segment into RAM at boot, that is the difference between a table
+ * costing flash and the same table costing RAM.  The symbol is still
+ * data: a reference to it is a plain address, and it must not be
+ * written.  The value matches the Go toolchain's, which descends from
+ * this one.
+ */
+#define	RODATA	8

@@ -875,6 +875,8 @@ loop:
 		}
 		if(p->to.offset > s->value)
 			s->value = p->to.offset;
+		if(p->reg & RODATA)
+			s->rodata = 1;
 		break;
 
 	case ADYNT:

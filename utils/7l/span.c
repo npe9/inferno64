@@ -121,21 +121,22 @@ span(void)
 		}
 	}
 
-	if(debug['t']) {
-		/* 
-		 * add strings to text segment
-		 */
-		c = rnd(c, 8);
-		for(i=0; i<NHASH; i++)
-		for(s = hash[i]; s != S; s = s->link) {
-			if(s->type != SSTRING)
-				continue;
-			v = s->value;
-			while(v & 3)
-				v++;
-			s->value = c;
-			c += v;
-		}
+	/*
+	 * Lay the read-only data out after the instruction stream:
+	 * the string constants -t gathered, and anything whose GLOBL
+	 * asked for RODATA.  A no-op, and the same addresses as
+	 * before, when there is none of either.
+	 */
+	c = rnd(c, 8);
+	for(i=0; i<NHASH; i++)
+	for(s = hash[i]; s != S; s = s->link) {
+		if(s->type != SSTRING)
+			continue;
+		v = s->value;
+		while(v & 3)
+			v++;
+		s->value = c;
+		c += v;
 	}
 
 	c = rnd(c, 8);
