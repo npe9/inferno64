@@ -841,6 +841,7 @@ extern	void		tksceneroundfill(TkScene*, Rectangle, int, ulong);
 extern	void		tksceneborder(TkScene*, Rectangle, int, int, ulong);
 extern	void		tksceneborderon(TkScene*, Rectangle, int, int, ulong, ulong);
 extern	void		tkscenetext(TkScene*, Point, char*, Font*, ulong);
+extern	void		tkscenetextn(TkScene*, Point, char*, int, Font*, ulong);
 extern	void		tksceneellipse(TkScene*, Point, Point, int, ulong);
 extern	void		tksceneellipsefill(TkScene*, Point, Point, ulong);
 extern	int		tkscenecorner(Tk*, int);

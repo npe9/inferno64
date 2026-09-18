@@ -242,6 +242,28 @@ tkscenetexture(TkScene *s, Rectangle r, char *path, int mask, ulong rgba)
 		n->type = TkNgroup;	/* a node that draws nothing */
 }
 
+/*
+ * A glyph node for the first n bytes of a string, which is what a
+ * canvas text item draws: it holds one buffer and puts a line of it on
+ * the page at a time.  The node owns its copy, as tkscenetext()'s does,
+ * so the caller's buffer is not depended on.
+ */
+void
+tkscenetextn(TkScene *s, Point p, char *text, int n, Font *f, ulong rgba)
+{
+	char *t;
+
+	if(text == nil || n <= 0)
+		return;
+	t = malloc(n+1);
+	if(t == nil)
+		return;
+	memmove(t, text, n);
+	t[n] = '\0';
+	tkscenetext(s, p, t, f, rgba);
+	free(t);
+}
+
 void
 tkscenetext(TkScene *s, Point p, char *text, Font *f, ulong rgba)
 {
