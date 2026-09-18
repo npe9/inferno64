@@ -1656,16 +1656,22 @@ software when it is nil, and the software renderer as the oracle.
 Not on the critical path, but this is where they stand, so nobody has to
 re-derive it:
 
-- **`cascade`** — its arrow is `tktriangle()`, which `TkNpolyfill`
-  already covers. The obstacle is the *test*: a cascade lives in a
-  posted menu, which is a separate window, and the offscreen pane has no
-  way to post one. Converting it without a way to compare it would be
-  the thing this whole exercise exists to avoid.
-- **`entry` with a selection or `-show`** — a band and two runs, no new
-  vocabulary; `-show` builds a throwaway Rune buffer, which a glyph node
-  carrying positions (B) makes moot.
-- **Images and bitmaps** — need `TkNtexture`, which is declared and not
-  implemented. This is the same problem as B and should follow it.
+Three entries stood here and are **withdrawn** — they were written
+before the work that closed them and were still being read as open:
+
+- **`cascade`** — done. Its arrow is `tktriangle()`, one `fillpoly()` of
+  three points, and `TkNpolyfill` renders it with the same winding rule
+  and source point. The obstacle was never the drawing but the *test* —
+  a cascade is only seen in a posted menu, and a posted menu is a
+  separate window — and that was solved by making the window over the
+  pane's own Screen, so the pane posts a menu with a cascade in it now.
+- **`entry` with a selection or `-show`** — done. The band is
+  `tkscenetextsel()`, five `TkNcolour`s, and the runs are `TkNglyphs`;
+  `entrysel()` is the shared arithmetic both paths reach, and sharing it
+  turned up a real defect neither path could see on its own.
+- **Images and bitmaps** — done. `TkNtexture` is implemented and names
+  a *file*, which is why an image that came from a file descriptor is
+  the one case still excluded: it has no name to give.
 - **`panel`** — paints into the window directly, is a flush point in
   the walk, and stays that way on principle: its image is a live
   `Image` a Limbo program writes through `putimage`, so there is no
