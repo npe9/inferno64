@@ -6865,3 +6865,101 @@ it, and the measurements here are a statement about one.  The flag is a
 boot-line option precisely so that a board can turn it on when somebody
 has measured that board; moving the default would be claiming the
 measurement for eleven boards that have not had it.
+.NH 1
+A second board
+.PP
+Everything measured so far is pc64.  The reason given above for leaving
+.CW parallelvm
+at 0 is that ten other boards compile
+.CW port/dis.c
+and none has been booted with it on, so the next piece of work is to
+boot one.
+.NH 2
+virtarm64 had no boot options at all
+.PP
+Its
+.CW getconf()
+returned nil for every name.  pc64 reads the multiboot command line;
+this board is loaded as a bare ELF, QEMU hands it no DTB in x0 (the
+comment beside its
+.CW fdtinit()
+call says so), and
+.CW FW_CFG_CMDLINE
+is empty for that kind of load \(em measured, fw_cfg reports 0 bytes.
+So the options arrive as a named fw_cfg item instead, which the board
+already has the machinery for, because
+.CW screenarm.c
+talks to fw_cfg for ramfb:
+.IP
+.nf
+qemu-system-aarch64 -M virt -cpu cortex-a53 -smp 2 -kernel ivirtarm64 \e
+	-fw_cfg name=opt/bootargs,string='*parallelvm=1'
+.fi
+.PP
+.CW fwcfgfile()
+looks a name up in the fw_cfg directory,
+.CW bootargsinit()
+reads
+.CW opt/bootargs
+into a buffer once, and
+.CW getconf()
+parses "name=value" out of it.  The board now takes
+.CW *parallelvm ,
+.CW *soak
+and
+.CW *secsched .
+.NH 2
+parallelvm=1 on virtarm64, with one processor scheduling
+.PP
+Eight boots each,
+.CW "-smp 2" :
+no panic in either arm, every marker the boot prints in both, no bad
+frame.  The lock-free interpreter engages \(em
+.CW "nvm: 4 hold the vm"
+against the
+.CW "vmq: N interpreters blocked on the vm lock"
+that
+.CW parallelvm=0
+prints.
+.PP
+The caveat is the size of the result.  This board sets
+.CW secsched
+to 0, so cpu1 comes up, takes its own timer interrupts and then idles:
+one processor runs processes.  So what these boots exercise is the
+lock-free path with several interpreters interleaved on one processor,
+not two processors inside the interpreter at once.  It is a second
+board, and it is not a second multiprocessor.
+.NH 2
+And the arm64 secondary is worse than the table that recorded it
+.PP
+.CW *secsched=1
+now makes it a boot option rather than an edit-and-rebuild, so the arms
+interleave.  Ten boots each:
+.TS
+center;
+l r r.
+	panics	boots reaching VIRT-OK
+secsched=0, parallelvm=0	0 of 10	10
+secsched=1, parallelvm=0	10 of 10	0
+secsched=1, parallelvm=1	9 of 10	0
+.TE
+.PP
+The table earlier in this document, from when that flag was first tried,
+reads 9 clean of 10 with
+.CW secsched=1 .
+This is 0 of 10, on a kernel rebuilt from nothing to rule out a stale
+object, and it fails before the boot reaches its first marker.  So the
+arm64 secondary has gone backwards since that was measured, and by a
+lot.
+.PP
+What can be said about the failure is thin, and honestly so: the console
+comes out interleaved because two processors print into it without a
+lock, so the captures are shredded.  What survives is a data abort
+.CW ( "esr 0x96000000" )
+whose faulting address is a device-tree string \(em
+.CW 0x75642c78756e696c
+is
+.CW "linux,du"
+in little-endian ASCII \(em which says a string is being used as a
+pointer somewhere on that path.  Chasing it wants a session of its own,
+starting with a console lock so that the next capture is readable.

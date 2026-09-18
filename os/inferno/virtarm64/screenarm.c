@@ -106,7 +106,7 @@ fwcfgsel(u16int sel)
 	*(volatile u16int*)FwCfgSel = (u16int)(((sel&0xff)<<8) | ((sel>>8)&0xff));
 }
 
-static int
+int
 fwcfgdma(u32int control, void *buf, u32int len)
 {
 	FwDmaDesc *dma;
@@ -131,6 +131,42 @@ fwcfgdma(u32int control, void *buf, u32int len)
 	}
 	free(dma);
 	return 0;
+}
+
+/*
+ * The same scan, by name, for anything else in the directory: boot
+ * options arrive as "opt/bootargs" from QEMU's -fw_cfg, because this
+ * board is loaded as a bare ELF and FW_CFG_CMDLINE is empty for that
+ * (measured: fw_cfg says 0 bytes).  Returns the selector, and the item's
+ * size through *size.
+ */
+int
+fwcfgfile(char *name, u32int *size)
+{
+	u32int count, i;
+	uchar ent[64];
+	u16int sel;
+	int n;
+
+	n = strlen(name);
+	if(fwcfgdma(((u32int)FwCfgFileDir<<16) | FwCfgDmaSelect | FwCfgDmaRead,
+	    &count, 4) < 0)
+		return -1;
+	count = be32(count);
+	if(count > 512)
+		count = 512;
+	for(i = 0; i < count; i++){
+		if(fwcfgdma(FwCfgDmaRead, ent, 64) < 0)
+			return -1;
+		sel = ((u16int)ent[4]<<8) | ent[5];
+		if(strncmp((char*)(ent+8), name, n) == 0 && ent[8+n] == 0){
+			if(size != nil)
+				*size = ((u32int)ent[0]<<24) | ((u32int)ent[1]<<16)
+					| ((u32int)ent[2]<<8) | ent[3];
+			return (int)sel;
+		}
+	}
+	return -1;
 }
 
 /*

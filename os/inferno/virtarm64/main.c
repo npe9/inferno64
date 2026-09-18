@@ -141,10 +141,82 @@ poolinit(void)
 {
 }
 
+/*
+ * Boot options on this board.
+ *
+ * pc64 gets them from the multiboot command line; this board is loaded
+ * as a bare ELF and QEMU hands it no DTB in x0 (see fdtinit() below), so
+ * neither route exists.  QEMU does put -append into fw_cfg, which this
+ * board already talks to for ramfb, so that is where they come from:
+ * FW_CFG_CMDLINE_SIZE then FW_CFG_CMDLINE_DATA, read once into bootargs
+ * and parsed on demand.  Without it *parallelvm and the rest are
+ * unreachable here and the board can only ever run the default.
+ */
+enum {
+	FwCfgDmaRead		= 1<<1,
+	FwCfgDmaSelect		= 1<<3,
+};
+
+extern int fwcfgdma(u32int, void*, u32int);
+extern int fwcfgfile(char*, u32int*);
+
+static char bootargs[512];
+
+void
+bootargsinit(void)
+{
+	u32int n;
+
+	u32int sz;
+	int sel;
+
+	/*
+	 * FW_CFG_CMDLINE is empty for a bare ELF -- measured, fw_cfg says 0
+	 * bytes -- so the options come from a named item instead:
+	 *	-fw_cfg name=opt/bootargs,string='*parallelvm=1'
+	 */
+	sz = 0;
+	if((sel = fwcfgfile("opt/bootargs", &sz)) < 0 || sz == 0)
+		return;
+	n = sz;
+	if(n >= sizeof bootargs)
+		n = sizeof bootargs - 1;
+	if(fwcfgdma(((u32int)sel<<16) | FwCfgDmaSelect | FwCfgDmaRead,
+	    bootargs, n) < 0){
+		bootargs[0] = 0;
+		return;
+	}
+	bootargs[n] = 0;
+	print("bootargs: %s\n", bootargs);
+}
+
+/*
+ * "name=value", space separated.  Returns a pointer into a static
+ * buffer, valid until the next call -- the same contract pc64's has,
+ * and every caller copies or converts immediately.
+ */
 char*
 getconf(char *name)
 {
-	USED(name);
+	static char val[128];
+	char *p, *e;
+	int n;
+
+	n = strlen(name);
+	for(p = bootargs; (p = strstr(p, name)) != nil; p += n){
+		if(p != bootargs && p[-1] != ' ')
+			continue;
+		if(p[n] != '=')
+			continue;
+		p += n + 1;
+		for(e = p; *e != 0 && *e != ' '; e++)
+			;
+		if(e - p >= sizeof val)
+			return nil;
+		memmove(val, p, e - p);
+		val[e - p] = 0;
+		return val;
+	}
 	return nil;
 }
 
@@ -250,6 +322,30 @@ main(void)
 		extern void *dtbptr;
 		extern void fdtinit(void*);
 		fdtinit(dtbptr);
+	}
+	bootargsinit();
+	{	/* the same options pc64 takes; see doc/multicore-plan.ms */
+		char *p;
+
+		if((p = getconf("*parallelvm")) != nil){
+			extern int parallelvm;
+			parallelvm = strtol(p, nil, 0);
+		}
+		if((p = getconf("*soak")) != nil)
+			ksetenv("soak", p, 0);
+		if((p = getconf("*secsched")) != nil){
+			extern int secsched;
+
+			/*
+			 * The matrix in doc/multicore-plan.ms was measured by
+			 * editing this and rebuilding; now it is a boot
+			 * option, so one kernel measures both and the arms
+			 * can be interleaved.  Read here because smpprobe()
+			 * below is what starts the secondary, and the
+			 * secondary tests this once, before its idle loop.
+			 */
+			secsched = strtol(p, nil, 0);
+		}
 	}
 	pciarchinit();
 	chandevreset();
