@@ -138,6 +138,17 @@ init(nil: ref Draw->Context, argv: list of string)
 		("listbox",	"listbox %s -width 160 -height 60"),
 		("text",	"text %s -width 160 -height 60"),
 		("frame",	"frame %s -width 120 -height 40 -borderwidth 2 -relief raised"),
+		# A canvas, with items, because a canvas with none measures
+		# the background and nothing else.  Five items of four kinds
+		# that all describe themselves, so this is the item table's
+		# node path against the item table's drawing path rather
+		# than a mixture of the two.
+		("canvas",	"canvas %s -width 160 -height 60"+
+				";%s create rectangle 4 4 60 28 -fill #C0D8F0 -outline black"+
+				";%s create oval 70 4 130 28 -fill #C0F0C0 -outline black"+
+				";%s create line 8 36 150 46 -width 2 -fill #204080"+
+				";%s create polygon 8 50 40 50 24 58 -fill #A0A0F0"+
+				";%s create text 60 54 -text {items} -anchor w"),
 	};
 
 	for(sl := list of {"classic", "flat"}; sl != nil; sl = tl sl){
@@ -261,10 +272,17 @@ repaint(style, spec: string, n: int): int
 		if(i >= (n+1)/2)
 			col = ".b";
 		w := sys->sprint("%s.w%d", col, i);
-		e := tk->cmd(top, subst(spec, w));
-		if(e != nil && len e > 0 && e[0] == '!'){
-			sys->print("tkbench: %s: %s\n", w, e);
-			return 0;
+		# A spec may be SEVERAL commands separated by semicolons, so
+		# that a widget whose drawing is in its contents rather than
+		# in itself can bring them.  A canvas with no items repaints
+		# a background and measures nothing about the item table.
+		(nil, cmds) := sys->tokenize(spec, ";");
+		for(cl := cmds; cl != nil; cl = tl cl){
+			e := tk->cmd(top, subst(hd cl, w));
+			if(e != nil && len e > 0 && e[0] == '!'){
+				sys->print("tkbench: %s: %s\n", w, e);
+				return 0;
+			}
 		}
 		tk->cmd(top, "pack " + w);
 	}

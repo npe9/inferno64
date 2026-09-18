@@ -1350,6 +1350,31 @@ there was never speed on the table here anyway.
    item list: with a drawing item last it failed by 13209 bytes, with a
    node item last by 38409.
 
+   **The prediction the text widget's cost made was wrong, and that is
+   worth as much as if it had been right.** When `text` came out 13%
+   dearer through nodes, the reason given was that it emits a node per
+   item *per line* where every widget before it emitted a fixed
+   handful, and the note said that was "the number to watch when
+   `canvas` is looked at, since a canvas is nothing but items". So
+   `tkbench(1)` grew a canvas row — five items of four kinds that all
+   describe themselves, and a spec that may be several commands
+   separated by semicolons, because an empty canvas repaints a
+   background and measures nothing about the item table.
+
+   A canvas is **22.94µs** drawn and **23.60µs** through nodes, about
+   3%, steady over repeated runs, where `text` in the same runs is 5.74
+   against 6.77. So "nothing but items" was the wrong reading of the
+   text figure. What matters is not how many nodes a widget emits but
+   what the node replaces: a text line's direct drawing is one cheap
+   `string` call, so the node is a large fraction of it, while a canvas
+   item's is `fillpoly`, `ellipse` or `bezspline`, and the node
+   describing it is noise beside the rasterising. The cost of the node
+   path tracks the *cheapness of what it describes*, not the count.
+
+   The fixed cost of a repaint is unchanged and still the real gap:
+   56.74µs drawn against 112.80µs through nodes for an empty toplevel,
+   the same 59-against-111 recorded above with the same diagnosis.
+
    A canvas does not *join* the walk even when its items are nodes: its
    items usually go into its own buffer, and a tree belongs to one
    target, so it flushes and builds a tree of its own — the same thing
