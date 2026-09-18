@@ -279,19 +279,44 @@ Pre-decode the
 .CW Inst
 arrays and tables into the QSPI window at build time and point
 .CW m->prog
-at flash.  No interpreter change.  One thing to settle first, and it
-applies to any flash-resident code: whether an immediate can ever be an
-instruction's destination rather than a source \-
+at flash.  No interpreter change.
+.B "Done for the built-in root"
+\- into the kernel's own text rather than a QSPI window, which is the
+same mechanism with a different address:
+.CW utils/dis2s
+lays out the instruction arrays and the type descriptors, and
+.CW mps2
+and
+.CW teensy41
+carry nine modules including
+.CW sh.dis .
+The QSPI window is the remaining half, and it needs item 2.
+.IP
+The thing to settle first is settled.  Whether an immediate can be an
+instruction's destination rather than a source: it can \-
 .CW libinterp/dec.c 's
 .CW D02
 points
 .CW R.d
-into the instruction, and
+into the instruction and
 .CW brpatch()
-does not forbid it for a non-branch op.  If
-.CW limbo
-never emits that form the question is moot; if it does, flash-resident
-code faults where heap-resident code silently modified itself.
+does not forbid it \- and 4886 instructions across all 552 Dis modules
+in the tree do exactly that.  All of them are array indexing
+.CW ( IINDB ,
+.CW IINDX ,
+.CW IINDL ,
+.CW IINDF )
+with an
+.CW AXINF
+middle operand, so
+.CW R.m
+is a frame slot, never aliases
+.CW R.d ,
+and the immediate is read and not written.  With no middle operand:
+zero.  It is a build-time refusal in
+.CW dis2s
+now rather than a property to rely on.  See
+.CW doc/xip.ms .
 .NH 1
 Phase 4: the flight software, in Limbo
 .PP

@@ -2313,6 +2313,65 @@ which does not exist.  The uniform
 value was the tell: a flag that is being read would differ between
 symbols that carry it and symbols that do not.
 .NH 2
+Can an instruction be its own destination?  Settled
+.PP
+.CW doc/pycubed-plan.ms
+raised one thing to settle before any code runs from flash, and the
+.CW Inst
+arrays above shipped without settling it.
+.CW libinterp/dec.c 's
+.CW D02
+sets
+.DS
+.CW "	R.d = (uchar*)&R.PC->d.imm;"
+.CW "	R.m = R.d;"
+.DE
+\- the destination is the immediate inside the instruction \- and
+.CW brpatch()
+does not forbid that form for a non-branch opcode.  An opcode that
+writes its result would write its own instruction.  With the array in
+RAM that works and nobody notices.  With it in flash the write is
+dropped or faults, and
+.CW mps2
+would not catch it either, because
+.CW mps2 's
+text is SRAM: the write would succeed there and fail only on the board
+this is for.
+.PP
+So every Dis module in the tree was scanned: 552 of them, decoding each
+instruction stream the way
+.CW parsemod
+does.  4886 instructions do have a non-branch immediate destination, and
+they are all array indexing \-
+.CW IINDB
+2903,
+.CW IINDX
+1866,
+.CW IINDL
+105,
+.CW IINDF
+12.  Every one of the 4886 carries an
+.CW AXINF
+middle operand, so
+.CW R.m
+is a frame slot and never aliases
+.CW R.d ,
+and those opcodes read the immediate
+.CW ( "i = W(d)" )
+rather than writing it.  With no middle operand: zero, in 552 modules.
+.PP
+That is an empirical property of what
+.CW limbo
+emits, not a guarantee about what it could emit, so it is now a
+build-time refusal:
+.CW utils/dis2s
+will not lay out a module containing a non-branch immediate destination
+with no middle operand, and says why.  All nine modules
+.CW mps2
+and
+.CW teensy41
+carry pass it.
+.NH 2
 Where this stands
 .PP
 Everything below is measured, on

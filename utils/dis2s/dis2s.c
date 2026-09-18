@@ -226,7 +226,27 @@ emit(Biobuf *bs, char *sym, char *file, int *ntypep)
 					sysfatal("%s: instruction %d branches to %ld",
 						file, i, d);
 				br = d;
-			}
+			} else if((add & ARM) == AXNON)
+				/*
+				 * The destination is the immediate in the
+				 * instruction itself: libinterp/dec.c's D02
+				 * sets R.d there, and with no middle operand
+				 * it sets R.m there too, so an opcode that
+				 * writes its result writes the instruction.
+				 * That works when the array is in RAM and
+				 * does not when it is in flash, so refuse it
+				 * rather than emit something that would be
+				 * wrong only on the target.
+				 *
+				 * No module in this tree does it: 4886
+				 * instructions across 552 modules have a
+				 * non-branch immediate destination and every
+				 * one is an array index with an AXINF middle
+				 * operand, which is a read.  See doc/xip.ms.
+				 */
+				sysfatal("%s: instruction %d writes its own "
+					"immediate (op %d, no middle operand)",
+					file, i, op);
 			break;
 		case DST(AIND|AFP):
 		case DST(AIND|AMP):
