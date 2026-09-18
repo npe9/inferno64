@@ -1306,21 +1306,29 @@ char *Ebadtimectl = "bad time control";
  *	secs	nanosecs	fastticks	fasthz
  */
 static int
+/*
+ * Microseconds since the epoch, one number, which is what cons(3)
+ * describes and what the hosted kernel has always returned.
+ *
+ * This returned Plan 9's four fields -- seconds, nanoseconds, ticks and
+ * the tick rate -- and every Limbo program that asks the time reads the
+ * first number and divides it by a million: daytime(2)'s now(), which
+ * is what dates a file, ping(8)'s round trip, cs, dns, keyfs, iostats,
+ * timestamp, memfs, lockfs.  On a native kernel all of them therefore
+ * got zero, or a round trip a million times too small.  The Pi wrote
+ * every file with a 1980 date long before anything asked the network
+ * what year it was, and its pings all read "rtt 0 us".
+ *
+ * /dev/bintime is the binary form and is unchanged; a reader that wants
+ * ticks and the tick rate wants that.
+ */
 readtime(ulong off, char *buf, int n)
 {
-	vlong	nsec, ticks;
-	long sec;
-	char str[7*NUMSIZE];
+	vlong nsec, ticks;
+	char str[VLNUMSIZE];
 
 	nsec = todget(&ticks);
-	if(fasthz == 0LL)
-		fastticks((uvlong*)&fasthz);
-	sec = nsec/1000000000ULL;
-	snprint(str, sizeof(str), "%*lud %*llud %*llud %*llud ",
-		NUMSIZE-1, sec,
-		VLNUMSIZE-1, nsec,
-		VLNUMSIZE-1, ticks,
-		VLNUMSIZE-1, fasthz);
+	snprint(str, sizeof(str), "%lld", nsec/1000LL);
 	return readstr(off, buf, n, str);
 }
 
