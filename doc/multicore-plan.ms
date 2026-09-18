@@ -6637,3 +6637,40 @@ The lost-increment direction above is unmeasured, and that is the
 direction that corrupts rather than the one that stalls.
 .PP
 Both are measurements, not designs, and neither is a one-batch question.
+.NH 2
+The idle-collector table, re-measured
+.PP
+The
+.CW canqlock()
+change was measured before
+.CW gchalt
+was atomic, so about half the boots in each of its arms were running with
+no collector.  The mechanism it describes \(em a queued interpreter looks
+busy, so
+.CW release()
+spawns another, which queues too \(em is unaffected by that, but its
+numbers are not.  Ten boots per arm on the current kernel:
+.TS
+center;
+l r r r.
+	contexts held	collections	chantest lines
+-smp 4, queueing	48 to 71	620000 to 1160000	260 of 270
+-smp 4, one at a time	19 to 23	378000 to 800000	267 of 270
+-smp 2, queueing	39 to 59	1075000 to 1400000	270 of 270
+-smp 2, one at a time	26 to 27	510000 to 566000	270 of 270
+.TE
+.PP
+The effect is real and smaller than the table it replaces: 19 to 23
+against 48 to 71, not against 97.  Collections roughly halve, which is
+the same thing said from the other side \(em what the queue was holding
+was interpreters waiting to run a collection somebody else was already
+running.  chantest does as much or slightly more.
+.PP
+No boot in any arm had its collection suppressed; the lowest count in
+forty boots is 378000.  Two boots read
+.CW "gchalt 1"
+at a dump with a context genuinely holding it, and ran 1.1 and 1.4
+million collections regardless \(em which is the reminder that
+.CW gchalt
+sampled once is a snapshot of a lock, not a verdict on the collector.
+The count is the verdict.
