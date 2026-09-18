@@ -212,14 +212,28 @@ tkfreelabel(Tk *tk)
 		free(tkl->menu);
 }
 
-static /*
+/*
+ * The file behind whatever image this widget shows, or nil when there
+ * is none to name - no image at all, or one read from a descriptor.
+ */
+char*
+tkimgfile(TkLabel *tkl)
+{
+	if(tkl->img != nil && tkl->img->img != nil)
+		return tkimgpath(tkl->img->img);
+	if(tkl->bitmap != nil)
+		return tkimgpath(tkl->bitmap);
+	return nil;
+}
+
+/*
  * A cascade's arrow, into an image or into a scene.  It is one filled
  * triangle either way, and the renderer's TkNpolyfill calls the same
  * fillpoly() with the same winding rule and the same source point - so
  * the only thing that had to be arranged was that both be given the
  * same three points, which is why they are computed here once.
  */
-void
+static void
 tktriangle(Point u, Image *i, TkScene *sc, TkEnv *e)
 {	
 	Point p[3];
@@ -318,9 +332,15 @@ tkdrawlabel(Tk *tk, Point orig)
 	 * rule as a filled rectangle.  This draw is shared with menubutton
 	 * and choicebutton, so those come with it.
 	 */
+	/*
+	 * An image or a bitmap is in now, as long as it has a FILE behind
+	 * it: a texture node names the file and the renderer opens it.  One
+	 * that came from a file descriptor has no name and keeps the
+	 * scratch, which is the only exclusion left.
+	 */
 	lsc = nil;
 	if(tkviascene && tkstyleflat(tk)
-	&& tkl->img == nil && tkl->bitmap == nil && tkl->text != nil)
+	&& (tkl->text != nil || tkimgfile(tkl) != nil))
 		lsc = tkwalkjoin(e->top->ctxt, dst);
 	if(lsc != nil){
 		Rectangle dr;
@@ -376,7 +396,18 @@ tkdrawlabel(Tk *tk, Point orig)
 		s.max.x = s.min.x + Dx(img->r);
 		s.max.y = s.min.y + Dy(img->r);
 		s = rectaddpt(s, u);
-		if(tkchanhastype(img->chan, CGrey))
+		/*
+		 * A node when the image has a file behind it - which is
+		 * every one that did not come from a descriptor - because
+		 * the node names that file and the renderer opens it.  A
+		 * one-bit image is painted THROUGH in the foreground
+		 * colour, exactly as draw() does with it as the mask.
+		 */
+		if(lsc != nil && tkimgpath(img) != nil)
+			tkscenetexture(lsc, s, tkimgpath(img),
+				tkchanhastype(img->chan, CGrey),
+				e->colors[fgnd]);
+		else if(tkchanhastype(img->chan, CGrey))
 			draw(i, s, tkgc(e, fgnd), img, ZP);
 		else
 			draw(i, s, img, nil, ZP);

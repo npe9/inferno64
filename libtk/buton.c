@@ -318,7 +318,7 @@ tkdrawbutton(Tk *tk, Point orig)
 	&& (tk->type == TKbutton
 		|| ((tk->type == TKradiobutton || tk->type == TKcheckbutton)
 			&& tkl->indicator != BoolF))
-	&& tkl->img == nil && tkl->bitmap == nil && tkl->text != nil)
+	&& (tkl->text != nil || tkimgfile(tkl) != nil))
 		bsc = tkwalkjoin(e->top->ctxt, dst);
 	if(bsc != nil){
 		Rectangle dr;
@@ -482,7 +482,18 @@ tkdrawbutton(Tk *tk, Point orig)
 		s.max.x = s.min.x + Dx(img->r);
 		s.max.y = s.min.y + Dy(img->r);
 		s = rectaddpt(s, u);
-		if(tkchanhastype(img->chan, CGrey))
+		/*
+		 * A node when the image has a file behind it - which is
+		 * every one that did not come from a descriptor - because
+		 * the node names that file and the renderer opens it.  A
+		 * one-bit image is painted THROUGH in the foreground
+		 * colour, exactly as draw() does with it as the mask.
+		 */
+		if(bsc != nil && tkimgpath(img) != nil)
+			tkscenetexture(bsc, s, tkimgpath(img),
+				tkchanhastype(img->chan, CGrey),
+				e->colors[fgnd]);
+		else if(tkchanhastype(img->chan, CGrey))
 			draw(i, s, tkgc(e, fgnd), img, ZP);
 		else
 			draw(i, s, img, nil, ZP);

@@ -220,6 +220,28 @@ tksceneborderon(TkScene *s, Rectangle r, int radius, int width, ulong rgba, ulon
  *
  * The string is copied for the same reason the name is.
  */
+/*
+ * An image, named by the file it came from.  mask says whether it is
+ * painted THROUGH - a one-bit icon in the foreground colour, which is
+ * how the chrome's artwork is drawn - or drawn as it stands.
+ */
+void
+tkscenetexture(TkScene *s, Rectangle r, char *path, int mask, ulong rgba)
+{
+	TkNode *n;
+
+	if(path == nil || *path == '\0' || Dx(r) <= 0 || Dy(r) <= 0)
+		return;
+	if((n = newnode(s, TkNtexture)) == nil)
+		return;
+	n->r = r;
+	n->rgba = rgba;
+	n->width = mask != 0;
+	n->fontname = strdup(path);
+	if(n->fontname == nil)
+		n->type = TkNgroup;	/* a node that draws nothing */
+}
+
 void
 tkscenetext(TkScene *s, Point p, char *text, Font *f, ulong rgba)
 {
@@ -247,6 +269,41 @@ tkscenetext(TkScene *s, Point p, char *text, Font *f, ulong rgba)
  * draws nothing, which is visible, rather than falling back to another
  * face, which would not be.
  */
+/*
+ * The image a texture node names, opened once and kept.  The same
+ * arrangement as scenefont() below and for the same reasons: the
+ * renderer must not hold a resource on a node's behalf, an image is
+ * cheap to keep and expensive to reopen per repaint, and a toolkit has
+ * a handful of them.  Never emptied, like the font cache.
+ */
+static Image*
+scenetexture(TkCtxt *c, char *path)
+{
+	static struct {
+		char*	path;
+		Image*	img;
+	} cache[16];
+	int i;
+	Image *m;
+
+	if(path == nil || c == nil || c->display == nil)
+		return nil;
+	for(i = 0; i < nelem(cache); i++){
+		if(cache[i].path == nil)
+			break;
+		if(strcmp(cache[i].path, path) == 0)
+			return cache[i].img;
+	}
+	m = display_open(c->display, path);
+	if(m == nil || i >= nelem(cache))
+		return m;
+	cache[i].path = strdup(path);
+	if(cache[i].path == nil)
+		return m;
+	cache[i].img = m;
+	return m;
+}
+
 static Font*
 scenefont(TkCtxt *c, char *name)
 {
@@ -758,7 +815,7 @@ int
 tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 {
 	TkNode *n, *open;
-	Image *col, *target, *saved, *t;
+	Image *col, *target, *saved, *t, *img;
 	Font *fnt;
 	int drawn;
 
@@ -823,6 +880,25 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 			if(col != nil)
 				fillellipse(target, n->r.min, n->sp.x, n->sp.y,
 					col, ZP);
+			break;
+		case TkNtexture:
+			img = scenetexture(c, n->fontname);
+			if(img == nil)
+				break;
+			/*
+			 * ZP for the source point, not img->r.min, because
+			 * ZP is what the widget passed and the two have to
+			 * be the same call.  A colour image showed the
+			 * difference at once - 604800 bytes - where every
+			 * mask under /icons/tk had hidden it by starting at
+			 * the origin.
+			 */
+			if(n->width){
+				col = tkcolor(c, n->rgba);
+				if(col != nil)
+					draw(target, n->r, col, img, ZP);
+			}else
+				draw(target, n->r, img, nil, ZP);
 			break;
 		case TkNpolyfill:
 			col = tkcolor(c, n->rgba);

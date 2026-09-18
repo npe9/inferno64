@@ -708,13 +708,80 @@ pimag(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
 	return nil;
 }
 
+/*
+ * Where an image came from.
+ *
+ * pbmap() opens a file and hands the widget a bare Image*, and nothing
+ * anywhere remembers which file it was.  A render node names its
+ * resources rather than holding them - a glyph node names its face -
+ * and a texture node has to name a file, so the path has to be kept
+ * somewhere.  Here, beside the images themselves, rather than in the
+ * widget: the option parser writes an Image* into a struct field by
+ * offset and has no idea what widget it is filling in.
+ *
+ * Small and linear on purpose.  A toolkit has a handful of bitmaps -
+ * the chrome's artwork is sixteen - and a list that is walked when a
+ * node is built costs nothing against a repaint.
+ */
+static struct Imgpath {
+	Image*	img;
+	char*	path;
+	struct Imgpath*	next;
+} *imgpaths;
+
+char*
+tkimgpath(Image *i)
+{
+	struct Imgpath *p;
+
+	for(p = imgpaths; p != nil; p = p->next)
+		if(p->img == i)
+			return p->path;
+	return nil;
+}
+
+void
+tkimgpathset(Image *i, char *path)
+{
+	struct Imgpath *p;
+
+	if(i == nil || path == nil)
+		return;
+	tkimgpathdrop(i);
+	p = malloc(sizeof(*p));
+	if(p == nil)
+		return;
+	p->path = strdup(path);
+	if(p->path == nil){
+		free(p);
+		return;
+	}
+	p->img = i;
+	p->next = imgpaths;
+	imgpaths = p;
+}
+
+void
+tkimgpathdrop(Image *i)
+{
+	struct Imgpath **pp, *p;
+
+	for(pp = &imgpaths; (p = *pp) != nil; pp = &p->next)
+		if(p->img == i){
+			*pp = p->next;
+			free(p->path);
+			free(p);
+			return;
+		}
+}
+
 static char*
 pbmap(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
 {
 	Display *d;
 	Image *i, **p;
 	int locked, fd;
-	char *c;
+	char *c, *path;
 
 	p = &OPTION(place, Image*, o->offset);
 
@@ -723,6 +790,7 @@ pbmap(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
 	if(*buf == '\0' || *buf == '-') {
 		if(*p != nil) {
 			locked = lockdisplay(d);
+			tkimgpathdrop(*p);
 			freeimage(*p);
 			if(locked)
 				unlockdisplay(d);
@@ -731,8 +799,11 @@ pbmap(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
 		return nil;
 	}
 
-	if(buf[0] == '@')
+	path = nil;
+	if(buf[0] == '@'){
 		i = display_open(d, buf+1);
+		path = buf+1;
+	}
  else if(buf[0] == '<') {
 		buf++;
 		fd = strtoul(buf, &c, 0);
@@ -740,6 +811,7 @@ pbmap(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
 			return TkBadvl;
 		}
 		i = readimage(d, fd, 1);
+		/* a descriptor is not a name: this one cannot be a node */
 	}
 	else {
 		char *file;
@@ -750,13 +822,18 @@ pbmap(TkTop *t, TkOption *o, void *place, char **str, char *buf, char *ebuf)
 
 		snprint(file, Tkmaxitem, "/icons/tk/%s", buf);
 		i = display_open(d, file);
+		if(i != nil)
+			tkimgpathset(i, file);
 		free(file);
 	}
 	if(i == nil)
 		return TkBadbm;
+	if(path != nil)
+		tkimgpathset(i, path);
 
 	if(*p != nil) {
 		locked = lockdisplay(d);
+		tkimgpathdrop(*p);
 		freeimage(*p);
 		if(locked)
 			unlockdisplay(d);

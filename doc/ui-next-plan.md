@@ -1029,34 +1029,40 @@ there was never speed on the table here anyway.
    and a `text`, a `canvas`, a `panel` and a `menu`, which paint into
    the window directly.
 
-   **`TkNtexture` is the last of these, and the fact that decides its
-   shape is already in.** The rule the node vocabulary has kept so far
-   is that a node holds no display-side resource: that is why
-   `TkNglyphs` gave up its `Font*` for a face *name* the renderer
-   resolves through `scenefont()`, and it is what would let a tree
-   outlive the repaint that built it. A texture node wants the same
-   treatment — carry the image's name, resolve it in the renderer.
+   **`TkNtexture` is done, and it names a FILE.** The rule the node
+   vocabulary keeps is that a node holds no display-side resource —
+   that is why `TkNglyphs` gave up its `Font*` for a face name the
+   renderer resolves through `scenefont()` — and a texture node keeps
+   it the same way.
 
-   It cannot, for half the cases. A Tk `image` is a `TkImg`, and a
-   `TkImg` has a `TkName`. A `-bitmap` does not: `pbmap()` in `parse.c`
-   calls `display_open()` on `/icons/tk/<name>` (or `@file`, or a file
-   descriptor) and stores the bare `Image*` in the widget. There is no
-   table it is registered in and no name to look it up by. So the fork
-   is:
+   What settled the shape was asking what the renderer can reach. A
+   `TkCtxt` has a `Display`, which is all `display_open()` wants, and
+   no `TkTop`, so a Tk image *name* would be unresolvable there even
+   though a `TkImg` has one. A path is resolvable, and a path is what
+   both sources of an image actually have: a `-bitmap` is
+   `/icons/tk/NAME` or an `@path`, and `image create bitmap -file` goes
+   through the same option parser. So `pbmap()` now remembers the path
+   of what it opens, in a small list beside the images (`tkimgpath()`
+   in `parse.c`) rather than in the widget, because the option parser
+   writes an `Image*` into a struct field by offset and has no idea
+   what widget it is filling in. An image that came from a file
+   *descriptor* has no path and keeps the scratch — the only exclusion
+   left.
 
-   - carry an `Image*` in the node, which works today — a tree is built
-     and rendered inside one repaint — and forecloses retention for
-     every widget with an image or a bitmap;
-   - give a bitmap a name, which means `pbmap()` registers what it
-     loads, and changes who owns the image and when it is freed;
-   - two node types, one naming a `TkImg` and one carrying a raw
-     `Image*`, which is honest about the difference and doubles the
-     thing a backend has to implement.
+   The renderer opens the file and caches it, exactly as `scenefont()`
+   caches a face. That is the part worth having a check on, and the
+   identity check is the right one: it says the re-opened file draws
+   the same pixels as the image the widget is holding.
 
-   Worth deciding deliberately rather than discovering. The first is
-   the cheapest and the third is the most truthful; the second is the
-   only one that keeps the rule intact, and it is the only one that
-   touches code outside the renderer.
+   **The colour image earned its place immediately.** Every icon under
+   `/icons/tk` is an 8-bit mask, painted through in the foreground
+   colour, and with only those in the pane the node path looked
+   perfect. `icons/penguin.bit` is `r5g6b5`, drawn as a source, and it
+   failed by 604800 bytes: the renderer was passing `img->r.min` as the
+   source point where the widget passes `ZP`, and every mask had hidden
+   that by starting at the origin. Three controls now: the texture
+   shifted a pixel, 6468 bytes; the colour one shifted, 4380; mask and
+   source swapped, 23274.
 
    **The `cascade` came in on `TkNpolyfill`**, which the scrollbar's
    arrows had already put there — `tktriangle()` is one `fillpoly()` of

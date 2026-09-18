@@ -510,6 +510,26 @@ enum {
 	 */
 	TkNlayer,
 	TkNlayerend,
+	/*
+	 * An image, drawn into r.  It names a FILE and the renderer opens
+	 * it - the same arrangement TkNglyphs has with its face, and for
+	 * the same reason: a node holds no display-side resource, so a
+	 * tree can outlive the repaint that built it and can be written
+	 * down for something else to draw.
+	 *
+	 * A file rather than a Tk image name, because of what the renderer
+	 * can reach: a TkCtxt has a Display, which is all display_open()
+	 * wants, and no TkTop, so tkname2img() is not available to it.
+	 * Both sources of an image here end up at a path anyway - a
+	 * -bitmap is /icons/tk/NAME or an @path, and `image create bitmap
+	 * -file' goes through the same option parser - so a path is what
+	 * there always is.  An image that came from a file DESCRIPTOR has
+	 * no path and keeps the scratch.
+	 *
+	 * width says how the image is used: 1 for a MASK, with rgba the
+	 * colour painted through it, which is what a one-bit icon in the
+	 * foreground colour is; 0 for a source, drawn as it stands.
+	 */
 	TkNtexture,
 	TkNglyphs,
 	TkNlinear,
@@ -564,7 +584,8 @@ struct TkNode
 	Rectangle	dstr;		/* TkNlayer: where the result lands */
 	Point		sp;		/* TkNlayer: source point of the blit */
 	ulong		rgba;
-	char*		fontname;	/* TkNglyphs, owned by the scene */
+	char*		fontname;	/* TkNglyphs and TkNtexture: the face or
+					 * the file, owned by the scene */
 	char*		text;		/* TkNglyphs, owned by the scene */
 	Point*		pts;		/* TkNpolyfill, owned by the scene */
 	int		npts;
@@ -810,6 +831,10 @@ extern	void		tkshapedblit(Image*, Rectangle, Image*, Point, int);
 extern	int		tkinset(int, int);
 extern	int		tkclamprad(Rectangle, int);
 extern	void		tkscenepolyfill(TkScene*, Point*, int, ulong);
+extern	void		tkscenetexture(TkScene*, Rectangle, char*, int, ulong);
+extern	char*		tkimgpath(Image*);
+extern	void		tkimgpathset(Image*, char*);
+extern	void		tkimgpathdrop(Image*);
 extern	void		tkscenespline(TkScene*, Point*, int, int, int, ulong);
 extern	void		tkwalkopen(TkCtxt*, Image*);
 extern	void		tkwalkflush(void);

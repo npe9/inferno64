@@ -1,5 +1,7 @@
 typedef struct TkLabel TkLabel;
 
+extern	char*	tkimgfile(TkLabel*);
+
 /*
  * widgets that use the label code:
  *	label

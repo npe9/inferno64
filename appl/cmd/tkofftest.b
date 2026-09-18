@@ -58,7 +58,7 @@ Tkofftest: module
 };
 
 W: con 900;			# room for the widest widget at the largest font,
-H: con 1460;			# so that packing is never what clamps a measurement
+H: con 1700;			# so that packing is never what clamps a measurement
 				#
 				# H was 700 until the render-node pane grew: a
 				# widget packed past the bottom is never drawn,
@@ -1328,6 +1328,21 @@ checkscene()
 	tk->cmd(top, "frame .f -width 90 -height 46 -borderwidth 2 " +
 		"-relief raised -bg white");
 	tk->cmd(top, "button .b -text {Cancel}");
+	# A BITMAP, on a label and on a button.  The chrome's artwork is
+	# one-bit images under /icons/tk, painted through in the foreground
+	# colour, and a texture node names the file rather than holding the
+	# image - so this is also the check that the renderer opens what the
+	# node named and gets the same pixels the widget already had.
+	must(top, "label .bi -bitmap caution.bit");
+	tk->cmd(top, "pack .bi -padx 6 -pady 6");
+	must(top, "button .bb -bitmap bomb.bit");
+	tk->cmd(top, "pack .bb -padx 6 -pady 6");
+	# A COLOUR image, which is the other half of the texture node: every
+	# icon under /icons/tk is an 8-bit mask painted through in the
+	# foreground colour, and only this one is drawn as a source.  It is
+	# named with @, which is also the other way a bitmap gets a path.
+	must(top, "label .bc -bitmap @/icons/penguin.bit");
+	tk->cmd(top, "pack .bc -padx 6 -pady 6");
 	# A button says the same three things a label can, and buton.c lays
 	# them out with the same shared code now.
 	must(top, "button .bm -text {two lines\non a button} -justify center");
