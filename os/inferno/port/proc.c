@@ -526,6 +526,34 @@ ready(Proc *p)
 		return;
 	}
 
+	/*
+	 * A process on its way out is not something to wake.
+	 *
+	 * pexit sets Moribund and calls sched(), which is not supposed to
+	 * return: schedinit sees Moribund and frees the proc.  Queue that
+	 * process here in between and its state becomes Ready, schedinit
+	 * sees a runnable process instead of a dying one, and it is
+	 * scheduled again -- sched() returns into pexit, which panics.
+	 * The board did exactly that: "panic: pexit", on the boot after
+	 * sntp(8) killed its own process group.
+	 *
+	 * Dropping the wakeup is right: what it would wake is already
+	 * gone.  The caller is printed because whoever readies a dying
+	 * process has a bug of its own, and this says where to look.
+	 *
+	 * Moribund only.  Dead is not the same thing here: this kernel
+	 * readies a Dead proc as a matter of course during start-up --
+	 * "ready interp 1 in Dead" on the first boot that refused it, and
+	 * the boot then stopped at thirteen markers -- so Dead is a state
+	 * a process is legitimately brought back from and Moribund is the
+	 * one that is on its way to being freed.
+	 */
+	if(p->state == Moribund){
+		print("ready %s %ud in %s from pc %#p\n",
+			p->text, p->pid, statename[p->state], getcallerpc(&p));
+		return;
+	}
+
 	s = splhi();
 	if(edfready(p)){
 		splx(s);
