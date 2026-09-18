@@ -1,5 +1,10 @@
 #include "../port/portfns.h"
 
+/*
+ * Board-specific files under #P: see ../armv7m/devarch.c.  A board
+ * registers one from archinit, before chandevreset().
+ */
+Dirtab*	addarchfile(char*, u32, s32(*)(Chan*,void*,s32,s64), s32(*)(Chan*,void*,s32,s64));
 void	archconfinit(void);
 void	archconsole(void);
 void	archreboot(void);

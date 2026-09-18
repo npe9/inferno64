@@ -504,15 +504,43 @@ into
 .CW #P ,
 which
 .CW os/inferno/pc/devarch.c
-has had all along and which the ARM and RISC-V ports never got.
+has had all along and which the ARMv7-M boards never got.
 .PP
 So
-.CW os/inferno/port/devarch.c
-is that mechanism, portable: the registry,
+.CW os/inferno/armv7m/devarch.c
+is that mechanism: the registry,
 .CW addarchfile() ,
 and the device that serves it, with the pc version's
 .CW "iob, iow, iol and msr"
 left behind because they are x86.
+It was written into
+.CW os/inferno/port
+first, and that was wrong.  Every
+.CW devarch.c
+in the tree \(em
+.CW os/inferno/pc ,
+.CW os/inferno/pc64 ,
+.CW os/9front/pc ,
+.CW os/osprey/pc
+\(em lives in a machine directory, and a portable one is not a shared
+implementation but a second file of the same name defining the same
+.CW archdevtab
+and the same
+.CW #P ,
+which for a pc kernel is a collision rather than a choice.
+.CW armv7m
+is where mps2, teensy41 and nucleof303 already share
+.CW l.s ,
+.CW trap.c
+and
+.CW fpu.c ,
+so it is where they share this; the declaration went with it, out of
+.CW ../port/portfns.h
+and into
+.CW os/inferno/mps2/fns.h ,
+spelled longhand the way
+.CW os/inferno/pc/fns.h
+spells it.
 .CW os/inferno/mps2/archfiles.c
 registers this board's, and there are no sensors on this board, so
 .DS

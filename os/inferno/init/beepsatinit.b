@@ -37,7 +37,7 @@ init()
 	sys->bind("#t", "/dev", sys->MAFTER);
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 
-	# The board's own files: os/inferno/port/devarch.c.  A kernel
+	# The board's own files: os/inferno/armv7m/devarch.c.  A kernel
 	# without the arch device fails this bind and the mission then
 	# says which file it could not open.
 	sys->bind("#P", "/dev", sys->MAFTER);

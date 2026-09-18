@@ -39,7 +39,7 @@ dev
 	flashfs
 # Board-specific files under #P, the way os/inferno/pc has always had
 # them.  This board registers a few invented sensor readings through
-# addarchfile(); see os/inferno/port/devarch.c and os/inferno/mps2/
+# addarchfile(); see os/inferno/armv7m/devarch.c and os/inferno/mps2/
 # archfiles.c.
 	arch
 

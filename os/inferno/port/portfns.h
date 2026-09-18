@@ -405,9 +405,3 @@ extern int	freehistsize;	/* ../port/alloc.c: 0 turns the ring off */
 extern int	distrack;	/* libinterp/heap.c: 0 turns the Dis heap tracker off */
 extern int	wmtracesize;	/* libinterp/xec.c: 0 turns the per-proc instruction trace off */
 
-/*
- * Board-specific files under #P: see os/inferno/port/devarch.c.  A
- * board registers one from its arch init, before chandevreset().
- */
-typedef s32 Rdwrfn(Chan*, void*, s32, s64);
-Dirtab*	addarchfile(char*, u32, Rdwrfn*, Rdwrfn*);

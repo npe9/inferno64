@@ -8,8 +8,8 @@
 /*
  * Board-specific files: #P, and addarchfile() to add one.
  *
- * This is the mechanism os/inferno/pc/devarch.c has and the ARM and
- * RISC-V ports did not.  It is the Plan 9 answer to "this board has a
+ * This is the mechanism os/inferno/pc/devarch.c has and the ARMv7-M
+ * boards did not.  It is the Plan 9 answer to "this board has a
  * register worth a file": a sensor, a voltage, an LED, anything small
  * and particular to the machine that Limbo should see but that is not
  * worth a device letter of its own and does not belong in the portable
@@ -24,6 +24,14 @@
  * are its own -- so what is left is the registry and the device that
  * serves it.  A board calls addarchfile() from its archinit, before
  * chandevreset().
+ *
+ * It lives here and not in ../port because every other devarch.c in the
+ * tree lives in a machine directory -- os/inferno/pc, os/inferno/pc64,
+ * os/9front/pc, os/osprey/pc -- and a portable one would be a second
+ * file of the same name defining the same archdevtab and the same #P,
+ * which for a pc kernel is a collision rather than a choice.  armv7m is
+ * where mps2, teensy41 and nucleof303 already share their l.s, trap.c
+ * and fpu.c, so it is where they share this.
  */
 
 enum
@@ -31,6 +39,8 @@ enum
 	Qdir	= 0,
 	Qmax	= 32,
 };
+
+typedef s32 Rdwrfn(Chan*, void*, s32, s64);
 
 static Dirtab archdir[Qmax] = {
 	".",	{ Qdir, 0, QTDIR },	0,	0555,
