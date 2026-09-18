@@ -8093,3 +8093,85 @@ handed back now, which is the only number that means a non-local exit
 leaked one, and two boots report
 .CW "gclocks given back 0"
 against 1144005 and 1843107 collections.
+.NH 2
+Every processor PSCI offers, not just the second
+.LP
+.B "What -smp 4 did before: nothing."
+The board started exactly one secondary.  At
+.CW "-smp 4"
+cpu2 and cpu3 stayed powered off \(em correctly, since PSCI leaves them
+off until
+.CW CPU_ON ,
+so this is bring-up that was missing rather than a race that was
+running.  Everything this session fixed was a prerequisite for it: a
+.CW Mach
+per processor,
+.CW splpc
+not clearing
+.CW machno ,
+SPIs with a target, and
+.CW curP
+per executor.
+.PP
+.B "Three constraints shaped it, and none of them needed new assembly."
+.IP \(bu
+.CW _secondary
+reads
+.CW secmach
+and
+.CW secstacktop
+as globals, so two processors starting at once land on the same stack
+with the same
+.CW Mach .
+They are started one at a time: set the pair, call
+.CW CPU_ON ,
+wait for the new processor to reach C and say so, then the next.  That
+costs milliseconds once a boot.
+.IP \(bu
+PSCI answers "how many processors are there" by itself \(em
+.CW CPU_ON
+for one that does not exist returns INVALID_PARAMETERS \(em so nothing
+here reads a device tree, which this board is not given under
+.CW -kernel .
+At
+.CW "-smp 1"
+the first call fails and the loop stops, which is the discovery
+working.
+.IP \(bu
+The loop stops at
+.CW MAXMACH
+because
+.CW machp[]
+and
+.CW active.machs[]
+are that long.
+.PP
+.B "conf.nmach counts arrivals, not intentions."
+A processor is counted when
+.CW secmain()
+has set
+.CW secalive
+to 5 \(em vectors, GIC and timer up \(em not when
+.CW CPU_ON
+returned 0.  That is not tidiness: the interpreter ceiling added above
+compares against
+.CW conf.nmach ,
+so a processor claimed and never arrived would loosen the bound with no
+panic and nothing in any counter to show it.
+.PP
+.B "Twelve boots, six at each width."
+.IP
+.nf
+-smp 4:  6 boots, 4 processors each, 0 panics, 6 shells
+-smp 2:  6 boots, 2 processors each, 0 panics, 6 shells
+.fi
+.PP
+Dis quanta on all four in every
+.CW "-smp 4"
+boot \(em for instance
+.CW "cpu0 188 cpu1 713 cpu2 935 cpu3 163"
+and
+.CW "cpu0 216 cpu1 172 cpu2 1440 cpu3 171" .
+The split is lopsided and varies from boot to boot, which is what a
+shared queue with no affinity does; the useful claim is the one these
+are counts of, that every processor brought up runs Dis.

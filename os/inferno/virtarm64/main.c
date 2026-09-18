@@ -30,12 +30,19 @@ extern int image_pool_pcnt;
  * means no print() and no lock -- it may only touch these two words.
  * cpu0 polls them.
  */
-/* volatile: cpu0 polls these in a loop and cpu1 is the only writer */
-static uvlong	secstackbuf[KSTACK/sizeof(uvlong)];
+/*
+ * volatile: cpu0 polls these in a loop and the secondary is the only
+ * writer.  One set of them, not one per processor, because the
+ * secondaries are started ONE AT A TIME: _secondary reads secmach and
+ * secstacktop as globals, so two starting at once would land on the
+ * same stack with the same Mach.  Sequential bring-up costs a few
+ * milliseconds once a boot and no assembly.
+ */
+static uvlong	secstackbuf[MAXMACH][KSTACK/sizeof(uvlong)];
 uintptr		secstacktop;
-Mach		mach1;		/* cpu1's own Mach */
+Mach		machs[MAXMACH];		/* each secondary's own Mach */
 Mach*		machp[MAXMACH];
-uintptr		secmach;	/* &mach1, read by _secondary */
+uintptr		secmach;	/* the one being started, read by _secondary */
 volatile uintptr	secsp;
 volatile uintptr	seccflag;	/* set only by C on cpu1 */
 int		secgic = -1;
@@ -79,6 +86,7 @@ secmain(void)
 
 	mm = (Mach*)gettpidr();
 	seccflag = (uintptr)mm;
+	USED(mm);
 	if(vectab != nil)
 		vectorinit(vectab);
 	secgic = gicsecondary();
@@ -118,38 +126,75 @@ void
 smpprobe(void)
 {
 	extern void _secondary(void), _main(void);
-	void main(void);
 	vlong r;
-	int i;
+	int i, cpu, started;
 	uvlong c0;
 
-	print("smp: PSCI %#llux, cpu1 %s\n", psci(0x84000000ULL, 0, 0, 0),
-		psci(0xc4000004ULL, 1, 0, 0) == 1 ? "off" : "not off");
-	secstacktop = ((uintptr)secstackbuf + sizeof secstackbuf) & ~(uintptr)15;
-	memset(&mach1, 0, sizeof mach1);
-	mach1.machno = 1;
-	secmach = (uintptr)&mach1;
-	machp[1] = &mach1;
-	conf.nmach = 2;		/* cpu1 is about to exist */
+	print("smp: PSCI %#llux\n", psci(0x84000000ULL, 0, 0, 0));
 	settpidr((uintptr)m);		/* cpu0 takes its own slot too */
-	r = psci(0xc4000003ULL, 1, (uintptr)_secondary, 0);
-	print("smp: PSCI CPU_ON cpu1 entry %#llux -> %lld\n", (uvlong)(uintptr)_secondary, r);
-	if(r != 0)
-		return;
-	for(i = 0; i < 100 && secalive == 0; i++)
-		delay(10);
-	print("smp: cpu0 tpidr %#llux (m %#llux), cpu1 stage %llud tpidr %#llux (mach1 %#llux)\n",
-		(uvlong)gettpidr(), (uvlong)(uintptr)m, (uvlong)secalive,
-		(uvlong)seccflag, (uvlong)(uintptr)&mach1);
+	machp[0] = m;
+	started = 1;
 	/*
-	 * alive 1 = reached the entry, 2 = stack up, 3 = running C.
-	 * seccount is incremented by cpu1 in a loop, so two reads a
-	 * moment apart say whether it is still going.
+	 * One at a time, and only as far as MAXMACH: machp[] and
+	 * active.machs[] are that long, and the QEMU command line is not
+	 * ours to trust.  PSCI answers the "how many processors are
+	 * there" question by itself -- CPU_ON for one that does not exist
+	 * returns INVALID_PARAMETERS -- so nothing here needs a device
+	 * tree, which this board is not given at all under -kernel.
+	 */
+	for(cpu = 1; cpu < MAXMACH; cpu++){
+		memset(&machs[cpu], 0, sizeof machs[cpu]);
+		machs[cpu].machno = cpu;
+		machp[cpu] = &machs[cpu];
+		secmach = (uintptr)&machs[cpu];
+		secstacktop = ((uintptr)secstackbuf[cpu]
+			+ sizeof secstackbuf[cpu]) & ~(uintptr)15;
+		secalive = 0;
+		seccflag = 0;
+		coherence();
+		r = psci(0xc4000003ULL, cpu, (uintptr)_secondary, 0);
+		if(r != 0){
+			print("smp: cpu%d CPU_ON -> %lld, stopping there\n",
+				cpu, r);
+			machp[cpu] = nil;
+			break;
+		}
+		/*
+		 * Wait for it to reach C and say so.  secmain() sets
+		 * secalive to 5 once it has its vectors, its GIC and its
+		 * timer; stage 1, 2 and 3 are l.s's markers on the way.  A
+		 * processor that never gets there is not counted, because
+		 * conf.nmach is what the interpreter ceiling and the
+		 * per-processor counters are sized by -- claiming a
+		 * processor that did not arrive loosens the ceiling
+		 * silently.
+		 */
+		for(i = 0; i < 200 && secalive != 5; i++)
+			delay(10);
+		if(secalive != 5){
+			print("smp: cpu%d stopped at stage %llud\n",
+				cpu, (uvlong)secalive);
+			machp[cpu] = nil;
+			break;
+		}
+		started++;
+		conf.nmach = started;
+		print("smp: cpu%d up (tpidr %#llux, Mach %#llux), %d processors\n",
+			cpu, (uvlong)seccflag, (uvlong)(uintptr)&machs[cpu],
+			started);
+	}
+	conf.nmach = started;
+	/*
+	 * seccount is incremented by the last secondary in its idle loop
+	 * when secsched is off, so two reads a moment apart say whether it
+	 * is still going; with secsched on it is in the scheduler instead
+	 * and this reads zero, which is the point of the counter beside it.
 	 */
 	c0 = seccount;
 	delay(50);
-	print("smp: MACHP(1)->machno %d gic %d; cpu1 clock ticks %llud -> %llud in 50ms\n",
-		MACHP(1)->machno, secgic, (uvlong)c0, (uvlong)seccount);
+	print("smp: %lud processors, gic %d, last one's ticks %llud -> %llud"
+		" in 50ms\n",
+		(ulong)conf.nmach, secgic, (uvlong)c0, (uvlong)seccount);
 }
 
 int
