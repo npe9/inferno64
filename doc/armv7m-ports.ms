@@ -309,7 +309,7 @@ carries the bisection: LIT-VAR, LIT-DIRECT, LIT-ZERO and LIT-ONE all
 pass on the M4, so literals are sound; IMM-CMP and IMM-TRUNC use the
 result at once without a named variable and fail, so the frame slot is
 not involved.
-.NH 3
+.NH 2
 How not to measure this
 .PP
 Worth writing down, because three measurements in this hunt were
