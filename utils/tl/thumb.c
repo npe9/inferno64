@@ -218,6 +218,16 @@ thumbaclass(Adr *a, Prog *p)
 					a->sym->name, TNAME);
 				a->sym->type = SDATA;
 			}
+			/*
+			 * Under -t a string constant lives in the text
+			 * segment, so its symbol value is already an
+			 * absolute address and must not be relocated
+			 * against INITDAT.
+			 */
+			if(t == SSTRING){
+				instoffset = a->sym->value + a->offset;
+				return C_LEXT;
+			}
 			instoffset = a->sym->value + a->offset + INITDAT;
 			return C_LEXT;	/* INITDAT unknown at this stage */
 			// return immacon(instoffset, p, C_SEXT, C_LEXT);
@@ -251,6 +261,10 @@ thumbaclass(Adr *a, Prog *p)
 				s->type = SDATA;
 			}
 			instoffset = s->value + a->offset + INITDAT;
+			if(t == SSTRING){		/* already absolute: see above */
+				instoffset = s->value + a->offset;
+				return C_LCON;
+			}
 			if(s->type == STEXT || s->type == SLEAF){
 				instoffset = s->value + a->offset;
 #ifdef CALLEEBX
@@ -293,6 +307,15 @@ thumbaclass(Adr *a, Prog *p)
 					s->name, TNAME);
 				s->type = SDATA;
 				break;
+			case SSTRING:
+				/*
+				 * A string is data that happens to be stored
+				 * in the text segment; it is not code, so it
+				 * gets neither the Thumb bit nor a function
+				 * pointer's increment.
+				 */
+				instoffset = s->value + a->offset;
+				return C_LCON;
 			case SCONST:
 			case STEXT:
 			case SLEAF:

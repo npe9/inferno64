@@ -676,15 +676,19 @@ at 4K and
 .CW NPROC
 at 8:
 .DS
-.CW "data + bss                       77364"
+.CW "data + bss                       52508"
 .CW "Proc array (8 x 2740)            21920"
 .CW "pid hash table                     128"
 .CW "main pool in use                 78208"
 .CW "heap pool in use                  3840"
 .CW "                                ------"
-.CW "                                181460"
+.CW "                                156604"
 .DE
-That is 69% of 262144, leaving about 80K for a Limbo program.  So the
+The first line is 77364 less the 24856 of string literals that
+.CW tl\ -t
+now puts in flash; see
+.I "Strings to flash"
+below.  That is 60% of 262144, leaving about 105K for a Limbo program.  So the
 answer is yes, with the cuts above \- and with one configuration change
 the arithmetic forces:
 .CW main_pool_pcnt
@@ -862,15 +866,15 @@ at 2K,
 .CW NPROC
 8, and modules pre-decoded into flash:
 .DS
-.CW "kernel data + bss                77364"
+.CW "kernel data + bss                52508"
 .CW "Proc array + pid hash            22048"
 .CW "kernel pool floor, no modules    78208"
 .CW "shell MP + stacks                 8400"
 .CW "Dis heap objects                 68224"
 .CW "                                ------"
-.CW "                                254244"
+.CW "                                229388"
 .DE
-262144 is the budget, so that is a shell fitting with about eight
+262144 is the budget, so that is a shell fitting with about thirty-two
 kilobytes to spare \- where against today's loader it overruns the whole
 budget by itself.  That is the case for doing this, and it is the
 answer: the shell does not have to load.
@@ -894,7 +898,7 @@ the kernel pool floor as measured, which is the right side to err on but
 is not the same as having measured a pre-decoded kernel, because there
 is not one yet.
 .NH 2
-Is 254244 the floor?  No, and here is what is left in it
+Is 229388 the floor?  No, and here is what is left in it
 .PP
 Categorising the whole of the minimal kernel's 181848 of
 .CW data
@@ -914,9 +918,10 @@ same problem as the root file system: 24856 bytes of C string literals \-
 print formats, error messages, device names \- that the Plan 9 linkers
 put in the data segment, so
 .CW os/inferno/armv7m/l.s:/^_datacopy
-copies them into RAM although nothing ever writes one.  Whatever change
-emits the root read-only should emit these read-only too, and it is the
-same 24856 bytes off the RAM either way.
+copies them into RAM although nothing ever writes one.  This one is now
+built; see
+.I "Strings to flash"
+below.
 .PP
 Below that the items are small and there is no third big one:
 .CW mntalloc
@@ -957,13 +962,12 @@ and
 and the saving multiplies by
 .CW NPROC .
 .PP
-So the cuts that remain, none of them yet built: the string literals to
-flash (24856), the load-time Dis constants to flash behind an
+So the cuts that remain: the load-time Dis constants to flash behind an
 immortal-object convention (35200 of the 68224 heap), and
 .CW NERR / NNOTE
 against
 .CW NPROC
-(a few kilobytes).  Together they would take the 254244 to roughly 190K.
+(a few kilobytes).  Together they would take the 229388 to roughly 190K.
 .NH 3
 The part that is not understood
 .PP
@@ -1308,10 +1312,147 @@ interactive shell.  That board has an MMU and its text grows by some
 mapping is the first suspect, but it is a guess and it is not
 root-caused.  Boards that do not opt in are untouched and still boot.
 .IP
-The other half is the 24856 bytes of C string literals.  Same reasoning,
-different source: they come from the compiler, not from
+.B "Strings to flash."
+The other half is the C string literals.  Same reasoning, different
+source: they come from the compiler, not from
 .CW mkroot ,
-so this change does not reach them.
+so the root change does not reach them.  It turns out
+.CW tl
+already has the feature, under
+.CW -t :
+.CW utils/tl/pass.c
+retypes a string constant's symbol to
+.CW SSTRING ,
+.CW utils/tl/span.c
+gives it an address past the end of the instruction stream, and
+.CW utils/tl/asm.c
+writes it as
+.CW 'T'
+in the symbol table.  It had never been used on this target and did not
+work.  Three faults, each of which had to be fixed before the next was
+visible:
+.IP \(bu
+.CW asm.c
+zero-fills the text segment out to
+.CW etext
+after the last instruction, and only then runs the loop that writes the
+strings \- which by that point starts at
+.CW etext
+and writes nothing.  Every string read as zeroes; the board died before
+its first character of output.  Fixed by having
+.CW span.c
+record where the string block starts
+.CW ( strbase )
+and padding only that far.
+.CW 5l ,
+which has no such fill loop, does not have this bug.
+.IP \(bu
+.CW thumbaclass
+in
+.CW utils/tl/thumb.c
+has cases for
+.CW STEXT ,
+.CW SLEAF
+and
+.CW SCONST
+but none for
+.CW SSTRING ,
+so every string pointer fell through to the default and was relocated as
+.CW "s->value + INITDAT" \-
+a flash address biased by the RAM base.  The same gap is in
+.CW aclass
+in
+.CW span.c ,
+where
+.CW SSTRING
+was instead grouped with
+.CW STEXT
+and so would have taken a Thumb bit and a function-pointer thunk.  A
+string is data that happens to live in the text segment: it gets
+neither.
+.IP \(bu
+.CW pass.c
+moved any symbol with a
+.CW D_SCONST
+initialiser, and
+.CW sextern()
+in the compiler emits a plain
+.CW "char x[] = \(fm...\(fm;"
+that way too, under the user's own symbol.  That array is writable, and
+moving it to flash would lose every write to it in silence.  Restricted
+to
+.CW .string ,
+which is the name
+.CW utils/cc/lex.c
+gives the compiler's own per-file literal pool.  No kernel symbol was
+being wrongly moved \- all 78 that move on
+.CW teensy41
+are
+.CW .string \-
+so the restriction costs nothing and removes the trap.
+.IP
+With
+.CW "-t"
+in
+.CW LDFLAGS
+for the
+.CW os-thumb
+target, measured as
+.CW "data + bss" :
+.DS
+.CW "               before     after    saved"
+.CW "teensy41       160824    130312    30512"
+.CW "nucleof303      74696     49096    25600"
+.CW "mps2           162904    132400    30504"
+.DE
+On
+.CW nucleof303
+that is a third of the board's remaining RAM, and its data segment more
+than halves, 50304 to 24704.
+.CW mps2
+gains nothing real, having no flash, but it is where the result is
+checked:
+.I fptest (1)
+is 25 of 25 and
+.I cvtchk (1)
+is clean on both the M4 and the M7 bench, and every diagnostic quoted in
+this document is itself a string literal now read from flash.
+.PP
+That last check is weaker than it looks and needs one more, because
+.CW mps2 's
+text segment is ZBT SRAM: a write to a string literal succeeds there in
+silence, where on
+.CW teensy41 's
+memory-mapped flash it would not.  So the test has to be whether the
+text segment is written at all, and QEMU can answer that from outside
+the kernel.  Boot, run
+.I fptest ,
+.I cvtchk ,
+.CW "ls /dis"
+and
+.CW "cat /dev/memory" ,
+then from the monitor
+.DS
+.CW "(qemu) pmemsave 0 0xd68b0 \(fmtext.bin\(fm"
+.DE
+and compare with the first
+.CW 0xd68b0
+bytes of
+.CW imps2 :
+byte for byte identical.  Nothing in that workload writes its own text.
+That is not a proof for paths it does not exercise, so the pattern that
+would break it was looked for as well \-
+.CW tokenize() ,
+.CW getfields()
+and the rest write their argument in place, and a literal passed to one
+would now be a write to flash.  Every call in the port and
+.CW armv7m
+directories takes a buffer that came from a control message or a
+.CW kstrdup ,
+including
+.CW devether.c:/nopt\ =\ tokenize ,
+which tokenises the copy and not the configuration string.  None takes a
+literal.
 .IP 3.
 B, for modules built into the image.  Small change, full RAM win, and it
 is where the execute-in-place property finally reaches the code rather
@@ -1460,7 +1601,7 @@ The
 femtosatellites from KickSat are a single small board with an MSP430
 class part, memory in the tens of kilobytes.  That is orders of
 magnitude below anything in this document; the minimal kernel measured
-above is 181460 bytes and the interpreter alone does not fit.  Not a
+above is 156604 bytes and the interpreter alone does not fit.  Not a
 candidate, and no amount of the work listed here changes that.
 .PP
 .B PyCubed
@@ -1473,9 +1614,9 @@ in CircuitPython.
 It lands exactly on the boundary this document measured
 .PP
 The 256K budget above was not chosen with this board in mind and comes
-out at 181460 bytes for a minimal kernel plus a purpose-built Dis
-program.  On a 256K variant that fits with about 80K spare; on a 192K
-one it leaves nearer ten.  So the conclusion is the same as before and
+out at 156604 bytes for a minimal kernel plus a purpose-built Dis
+program.  On a 256K variant that fits with about 100K spare; on a 192K
+one it leaves about 35K.  So the conclusion is the same as before and
 now it is about a real board: a kernel and one purpose-built module,
 never the shell, which costs 260992 by itself.
 .NH 2
@@ -1578,8 +1719,8 @@ contrived.  It is what the part is built for.
 .NH 2
 The budget, which is tighter than the 256K section
 .PP
-181460 measured, less the 24856 string-literal move, is 156604 against
-192K: about 35K left for the flight software's own data.  That is real
+156604 against 192K: about 35K left for the flight software's own data.
+That already includes the string-literal move, which is built.  That is real
 but it is not comfortable, and the risk is named elsewhere in this
 document \- the 78208 pool floor was measured on
 .CW mps2 's

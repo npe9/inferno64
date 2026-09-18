@@ -22,10 +22,16 @@ CC=		tc
 CFLAGS=		-wFV -I$ROOT/Inferno/thumb/include -I$ROOT/include
 ANSICPP= -p
 
-# -M: the target is an ARMv7-M core, which has no ARM state.  See
-# utils/tl/l.h.
 LD=		tl
-LDFLAGS=	-M
+# -M: an ARMv7-M core has no ARM state, so refuse to emit an ARM
+#     instruction rather than silently emit one that would fault.
+#     See utils/tl/l.h.
+# -t: put C string constants in the text segment rather than the data
+#     segment (utils/tl/pass.c, symbol type SSTRING).  Every board built
+#     for this target runs its text from flash and copies its whole data
+#     segment into RAM at boot, so a string literal that is never written
+#     costs RAM for nothing.
+LDFLAGS=	-M -t
 
 SYSLIBS=	#-lc
 

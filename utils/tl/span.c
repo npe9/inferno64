@@ -350,6 +350,7 @@ span(void)
 		 * add strings to text segment
 		 */
 		c = rnd(c, 8);
+		strbase = c;
 		for(i=0; i<NHASH; i++)
 		for(s = hash[i]; s != S; s = s->link) {
 			if(s->type != SSTRING)
@@ -363,6 +364,8 @@ span(void)
 	}
 			
 	c = rnd(c, 8);
+	if(!debug['t'])
+		strbase = c;
 
 	setext = lookup("etext", 0);
 	if(setext != S) {
@@ -724,9 +727,12 @@ aclass(Adr *a)
 					s->name, TNAME);
 				s->type = SDATA;
 				break;
+			case SSTRING:
+				/* data stored in text: no Thumb bit, no thunk */
+				instoffset = s->value + a->offset;
+				return C_LCON;
 			case SUNDEF:
 			case STEXT:
-			case SSTRING:
 			case SCONST:
 			case SLEAF:
 				instoffset = s->value + a->offset;

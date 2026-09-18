@@ -5,7 +5,8 @@ An STM32F303RE: a Cortex-M4 with 512K of flash, 64K of SRAM and 16K of
 core coupled memory, and a floating point extension that is single
 precision only.
 
-This kernel does not fit, and this is what that means in numbers.
+The kernel now fits in the SRAM.  It still cannot run Limbo, and the
+reason is no longer the link.
 
 What was measured
 -----------------
@@ -14,30 +15,46 @@ Linked with the configuration beside this file, which is the smallest
 one that still links -- no root file system, no Limbo, no ip, no ssl, no
 capabilities, no profiling:
 
-	text	259416	  flash is 524288, so this fits
-	data	 50368
-	bss	 38560
-		------
-		 88928	  RAM is 81920, so this does not
+	        was      is
+	text	259416	279376	  flash is 524288, so this fits
+	data	 50368	 24704
+	bss	 38560	 24392
+		------	------
+		 88928	 49096	  RAM is 81920, so this now fits
 
-That is before any heap at all.  Inferno wants hundreds of kilobytes of
-heap to load a Dis module into, and there is none left.
+The 39832 came from four changes, none of them to this directory: the
+Dis tracker's and the pool history's tables are allocated on demand
+rather than reserved (os/inferno/port/{alloc,heap}.c), the console log
+is sized per board by KMESGSIZE, and the C string literals are linked
+into the text segment by tl -t instead of being copied into RAM at boot.
+See doc/xip.ms.
+
+What is left is the pool floor: roughly 78K of kernel allocations before
+anything is loaded, of which the largest items are the Proc array's
+kernel stacks, the Dis type descriptors and addprog.  That is still more
+than this board's whole SRAM, so a Limbo module has nowhere to live.
+The floor is portable code and is measured in doc/xip.ms; it is not a
+board problem and it is not fixed here.
 
 The second wall
 ---------------
 
-Even with the memory, the floating point would not work.  The Cortex-M4
-has FPv4-SP, which has no double precision instructions, and
-utils/tl/thumb.c gives every F register a D register -- the way the FPA
-it replaces held one value whatever the memory format was.  Linking with
+The Cortex-M4 has FPv4-SP, which has no double precision instructions,
+and utils/tl/thumb.c gives every F register a D register -- the way the
+FPA it replaces held one value whatever the memory format was.  Linking
+with
 
 	tl -M -F ...
 
 names every function that would fault: the Dis interpreter's real
-arithmetic, its conversions, and everything in libmath.  A Cortex-M4
-needs software double precision before it can run any of this, either as
-calls the linker emits or as emulation from the fault, which is what
-os/inferno/port/fpiarm.c did for the FPA on ARM.
+arithmetic, its conversions, and everything in libmath.
+
+This is now handled the way os/inferno/port/fpiarm.c handled the FPA on
+ARM: os/inferno/armv7m/fpiarmv7m.c decodes the faulting double
+precision instruction out of the UsageFault and emulates it with
+os/inferno/port/fpi.c.  It is in this board's mkfile.  On the mps2
+Cortex-M4 bench, where it can be run, fptest(1) passes 25 of 25.  On
+this board it has never been run, because nothing here has.
 
 What is here anyway
 -------------------
@@ -53,5 +70,5 @@ in their memory and their peripherals and not in their core.
 What would have to change
 -------------------------
 
-Software double precision, and a board with at least a quarter of a
-megabyte of RAM.  Neither is a change to this directory.
+The kernel pool floor, which is portable work, or a board with more
+RAM.  Not a change to this directory.

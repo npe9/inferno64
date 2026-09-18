@@ -250,6 +250,20 @@ A change to
 .CW utils/data2s/data2s.c ,
 .CW os/inferno/port/mkroot
 and the linkers' segment handling.
+.B Done .
+The root goes to text under
+.CW ROOTINTEXT ;
+the strings go under
+.CW tl 's
+.CW -t ,
+after three bugs in that long-unused path were fixed.  Measured on
+.CW teensy41 ,
+30512 bytes of string literals and 139664 of root left RAM; on
+.CW nucleof303 ,
+25600 of strings.  See
+.I "Strings to flash"
+in
+.CW doc/xip.ms .
 .IP 2.
 A QSPI driver that exposes the memory-mapped window, and
 .CW Dev.xip

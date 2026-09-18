@@ -307,6 +307,7 @@ EXTERN	uchar	repop[ALAST];
 EXTERN	long	symsize;
 EXTERN	Prog*	textp;
 EXTERN	long	textsize;
+EXTERN	long	strbase;	/* where the -t string block starts in the text segment */
 EXTERN	long	thunk;
 EXTERN	int	version;
 EXTERN	char	xcmp[C_GOK+1][C_GOK+1];

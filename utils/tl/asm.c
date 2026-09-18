@@ -63,7 +63,13 @@ asmb(void)
 			asmout(p, o);
 		pc += o->size;
 	}
-	while(pc-INITTEXT < textsize) {
+	/*
+	 * Pad out to the end of the instruction stream, but no further:
+	 * under -t the text segment continues with the string constants,
+	 * which are written below by datblk().  Zeroing up to etext here
+	 * would leave pc == etext and emit no strings at all.
+	 */
+	while(pc < strbase) {
 		cput(0);
 		pc++;
 	}
