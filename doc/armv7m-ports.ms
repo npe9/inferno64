@@ -209,10 +209,74 @@ is
 \- bit 4 set, the basic frame \- so the return does not unstack floating
 point state over the result.
 .PP
-What is left is narrow: the destination register holds the right value
-when the handler returns, no emulated instruction runs between, and the
-value the following comparison reads is garbage.  The next step wants
-single-stepping the native instructions after the exception return.
+Four more, from a second pass:
+.IP \(bu
+REAL literals.
+.CW cvtchk
+tests them in grades \- variable against variable, against a written
+constant, zero, one \- and all four pass on the Cortex-M4.  So a
+constant built by
+.CW parsemod
+through
+.CW canontod
+arrives intact, and
+.CW canontod
+compiles
+.CW ( tl
+.CW -a )
+to integer work plus a constant load and two transfers, with no emulated
+instruction in it.  This also corrects a misreading: in
+.CW "r == 3.0"
+the literal is the first operand and the converted value the second, so
+the garbage was never the literal.
+.IP \(bu
+The RAM bank.  64-bit floating point stores to the stack, to SSRAM1
+where the text lives, and to SSRAM23 all read back correctly on both
+cores.  The frame that loses the result is in SSRAM1, which is why it
+was worth ruling out.
+.IP \(bu
+The
+.CW Ureg .
+At the faulting VCVT,
+.CW r2
+reads 3 \- the integer being converted \- and S30 reads 3, so the offsets
+.CW l.s
+fills are right and
+.CW ur->r1
+really is
+.CW R.d .
+.IP \(bu
+The store.  With the handler writing the result to
+.CW R.d
+itself and stepping past the native
+.CW VSTR.64 ,
+.CW cvtchk
+is unchanged.
+.PP
+That last one is where the suspicion now sits.  Putting the right bytes
+at
+.CW R.d
+does not make the variable read correctly, so the loss is neither in the
+register file nor in the store but in where the value is read from: a
+Dis frame that has moved, been copied short, or been reused.
+.CW libinterp/stack.c:/^newstack 's
+.CW memmove
+of
+.CW t->size
+bytes, and its own comment about what lies past it, is the first thing
+to look at.
+.PP
+Two observations for whoever takes it.
+.CW r
+is not a NaN \-
+.CW "r == r"
+passes \- yet the conversion back to an integer reads a NaN out of D0,
+so some loads of
+.CW r
+see one value and some another.  And what sits in that slot is
+.CW "{its own address, ffffffff}" ,
+which is what a free or uninitialised pool block looks like rather than
+a mangled double.
 .PP
 A second thing, found and not explained: none of this works from
 .CW fpinit() .
