@@ -46,18 +46,6 @@ PhysUart* physuart[] = {
 	nil,
 };
 
-	/*
-	 * Percentages of the memory left after the kernel, so they are
-	 * ceilings and not reservations -- except that poolsize() asks
-	 * the image pool for its whole arena contiguously at boot and
-	 * panics if it cannot get it.  Measured on mps2 at a shell
-	 * prompt after ls(1): main 367104 in use, heap 73728, image 0,
-	 * and image has never been anything but 0 on a board with no
-	 * draw device and no segments.  40/40/20 gives main a ceiling
-	 * under what it is measured to need as soon as the board is
-	 * small; this is the same arithmetic run on the measurements.
-	 * See doc/xip.ms.
-	 */
 	int main_pool_pcnt = 70;
 	int heap_pool_pcnt = 25;
 	int image_pool_pcnt = 5;
