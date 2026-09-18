@@ -214,6 +214,16 @@ main(void)
 		mailboxinit();
 	}
 
+	{	/*
+		 * Bluetooth: power the radio through the firmware's GPIO
+		 * expander and give it the PL011.  After the mailbox,
+		 * which is the only way to BT_ON, and after the GPIO
+		 * probe, whose pins it takes four of.
+		 */
+		extern void btinit(void);
+		btinit();
+	}
+
 	{	/* hardware RNG: replaces the software LCG behind /dev/random */
 		extern void rnginit(void);
 		rnginit();

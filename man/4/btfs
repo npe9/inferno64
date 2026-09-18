@@ -834,6 +834,49 @@ database, a characteristic read, three notifications, pairing, and a
 disconnection.  It is the test program, and it runs unchanged under
 .IR emu (1)
 and inside the native kernels.
+.SS The Raspberry Pi 3B radio
+The board's BCM43438 is an H4 controller on the PL011, so
+.B "btfs -t h4 /dev/eia0!115200!fc"
+is the whole of the transport.  Three things have to be true before
+that works, and none of them is Bluetooth's doing.
+.PP
+The console must be somewhere else.  The firmware gives the header
+the mini UART and keeps the PL011 for the radio unless
+.B config.txt
+says
+.BR dtoverlay=disable-bt ;
+the kernel reads GPIO 14's function at boot and follows whichever
+arrangement is in force, so leaving that overlay out is what leaves
+the radio reachable.
+.PP
+The radio must be powered.  BT_ON is not a SoC pin: it is line 0 of
+an eight-line expander the VideoCore owns, reached only through a
+mailbox property call.
+.PP
+And the UART must be routed to it \- GPIO 32 and 33 for the data,
+30 and 31 for the flow control it needs, all at alt3.
+.PP
+.B os/inferno/raspi3b/btbcm.c
+does all three at boot and then asks the controller one question, HCI
+Reset, so that the console says whether there is a radio answering
+before anything in Limbo is started:
+.B BT-OK
+if the Command Complete came back,
+.B BT-FAIL
+with what did arrive if it did not, and
+.B BT-NONE
+where the console has the PL011 and there is no radio to talk to \-
+which is every QEMU
+.B raspi3b
+boot, since the model has no radio.
+.PP
+It does not load the controller's patch firmware
+.RB ( BCM4345C0.hcd ,
+a file on the card).  A cold BCM43438 answers HCI Reset and the vendor
+commands that download the patch and refuses much else until it has
+one, so a board that prints
+.B BT-OK
+has a controller talking and not yet a usable radio.
 .SH SOURCE
 .B /appl/cmd/bt
 .br

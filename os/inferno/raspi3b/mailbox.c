@@ -521,3 +521,66 @@ otpinit(void)
 		rows[4], rows[5], rows[6], rows[7], n);
 	print("OTP-OK board identity and customer OTP read (never written)\n");
 }
+
+/*
+ * Set and read one of the firmware's own GPIO lines (tags 0x00038041
+ * and 0x00030041).
+ *
+ * These are not the SoC's GPIO pins, which this kernel drives itself
+ * through gpiobcm.c.  A Pi 3B carries eight more lines on an expander
+ * the ARM cannot reach at all: they hang off the VideoCore, and the
+ * only way to either of them is to ask the firmware.  Linux calls the
+ * same thing raspberrypi,firmware-gpio.  Their numbers start at 128,
+ * and on this board line 0 -- pin 128 -- is BT_ON, the Bluetooth
+ * radio's enable.  The rest, in order, are WL_ON, PWR_LED_OFF,
+ * GLOBAL_RESET, VDD_SD_IO_SEL, CAM_GPIO, SD_PWR_ON and SD_OC_N.
+ *
+ * Returns 0 or -1.  The firmware answers a line it does not have with
+ * a cleared response, which is a failure here rather than a silent
+ * nothing: a radio that is never powered looks exactly like a radio
+ * that is not answering.
+ */
+int
+mboxsetgpio(int pin, int on)
+{
+	static u32 raw[9+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 8 * 4;
+	buf[1] = 0;
+	buf[2] = 0x00038041;		/* tag: set gpio state */
+	buf[3] = 8;			/* value buffer: pin, state */
+	buf[4] = 8;			/* request length */
+	buf[5] = pin;
+	buf[6] = on != 0;
+	buf[7] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	return 0;
+}
+
+int
+mboxgetgpio(int pin, int *on)
+{
+	static u32 raw[9+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 8 * 4;
+	buf[1] = 0;
+	buf[2] = 0x00030041;		/* tag: get gpio state */
+	buf[3] = 8;			/* value buffer: pin, state */
+	buf[4] = 4;			/* request length */
+	buf[5] = pin;
+	buf[6] = 0;
+	buf[7] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	*on = buf[6] != 0;
+	return 0;
+}
