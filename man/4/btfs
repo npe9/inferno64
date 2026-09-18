@@ -910,6 +910,17 @@ gives the controller an address afterwards, twelve hex digits.
 Without it the controller keeps whatever the patch left, which for
 this part is a Broadcom default that every such board would share.
 .PP
+.PP
+.B scripts/bcmfwtest.sh
+loads a patch into the controller model and checks what came back.  The
+model refuses a Write RAM that arrives before the minidriver, so a
+loader that sent the records in the wrong order fails there rather than
+on a board, and it restarts after Launch RAM the way the real part does
+\- putting zero bytes on the wire before it answers anything again.
+The address is the verdict: a cold model answers Read BD_ADDR with one
+address and a patched one with another, so a loader that reported
+success without loading anything is caught by reading it back.
+.PP
 Two things about it are worth knowing because both were learned the
 hard way.  Launch RAM restarts the controller, and a restarting
 controller puts zero bytes on the wire before it says anything, so a

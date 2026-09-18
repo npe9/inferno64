@@ -126,6 +126,51 @@ rename(name, newname: string): int
 	return r;
 }
 
+#
+# What kupdate does to the kernel, which is the sequence that has
+# actually damaged a card: write the new kernel beside the old one,
+# remove last time's backup, rename the running kernel to the backup
+# name, and rename the new one into its place.  Two renames of a
+# megabyte-and-a-half file in a directory that has just had an entry
+# removed from it.
+#
+# It belongs here because the board has now failed it twice with
+# "KUPDATE-FAIL keep the old kernel: file does not exist" -- a rename
+# of a file that the same boot had just stat'd -- and because a rename
+# this size is the one that must not go wrong.
+#
+kupdaterehearsal(r: int)
+{
+	img := dir + "/k.img";
+	bak := dir + "/k.bak";
+	n := 1536000;
+	key := sys->sprint("kernel-%d", r);
+
+	if(write("k.new", key, n) < 0)
+		return;
+	sys->remove(bak);
+	(ok, nil) := sys->stat(img);
+	if(ok >= 0 && rename("k.img", "k.bak") < 0){
+		fail(sys->sprint("rename k.img to k.bak: %r"));
+		return;
+	}
+	if(rename("k.new", "k.img") < 0){
+		fail(sys->sprint("rename k.new to k.img: %r"));
+		return;
+	}
+	if(check("k.img", key, n) < 0)
+		return;
+	# and the backup, which is last round's kernel, must still be
+	# whole: a board that cannot fall back on it has nothing
+	if(r > 0){
+		(ok2, d) := sys->stat(bak);
+		if(ok2 < 0)
+			fail(sys->sprint("stat %s: %r", bak));
+		else if(int d.length != n)
+			fail(sys->sprint("%s is %bd bytes, wrote %d", bak, d.length, n));
+	}
+}
+
 # Make a directory, put a file in it, and read it back through a fresh
 # walk.  A directory is the one thing that gets a cluster the moment it
 # is created, so it is the only way to reach the code that writes a
@@ -344,6 +389,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		# a different path through the server.
 		openrename(r);
 		dirtest(r);
+		kupdaterehearsal(r);
 
 		# remove half of them, then write new ones, so the next
 		# round allocates clusters that were just freed

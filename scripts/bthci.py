@@ -625,6 +625,14 @@ def rpa(irk):
 IRK = bytes(range(16, 32))                    # what pairing distributes
 
 ADDR = _argaddr() or bytes.fromhex('554433221100')   # 001122334455 written down
+#
+# What the address becomes once a Broadcom patch has been launched.  A
+# cold part has no address of its own; this is how the model shows the
+# difference between one that has been patched and one that has not, so
+# a loader that reported success without loading anything would be
+# caught by reading the address back.
+#
+BCM_PATCHED_ADDR = bytes.fromhex('efbeadde0043')    # 4300deadbeef written down
 PEERS = [
     (bytes.fromhex('efcdab785634'), 0, 'thermometer'),   # 3456 78AB CDEF
     (bytes.fromhex('010203040506'), 1, 'sensor'),        # random address
@@ -1194,11 +1202,64 @@ class Model:
             return
         self.event(0x13, bytes([1]) + struct.pack('<HH', handle, n))
 
+    # ------------------------------------------------ broadcom vendor
+    #
+    # What a Broadcom part does while its patch firmware is loaded, which
+    # is what bt/bcmfw drives: Download Minidriver puts it in the state
+    # that accepts RAM writes, a run of Write RAM records carries the
+    # patch, and Launch RAM starts it.  The order is enforced here --
+    # a Write RAM before the minidriver is refused -- because a loader
+    # that happened to send them in the wrong order would otherwise pass.
+    #
+    # Launch RAM restarts the controller, and this model restarts the
+    # way the real one does: it puts a few zero bytes on the wire before
+    # it will answer anything again.  That is not decoration.  It is
+    # exactly what made the first loader give up on the Pi -- "bad H4
+    # packet indicator 0x00" from a controller that was merely still
+    # coming back -- and a model that comes back cleanly would have let
+    # that bug through.
+    #
+    def bcm_command(self, op, params):
+        global ADDR
+        if op == 0xfc2e:                       # Download Minidriver
+            self.bcm_minidriver = True
+            self.bcm_records = 0
+            self.cmd_complete(op, bytes([0]))
+        elif op == 0xfc4c:                     # Write RAM
+            if not getattr(self, 'bcm_minidriver', False):
+                print('bthci: Write RAM before Download Minidriver', flush=True)
+                self.cmd_complete(op, bytes([0x12]))   # invalid parameters
+                return
+            self.bcm_records = getattr(self, 'bcm_records', 0) + 1
+            self.cmd_complete(op, bytes([0]))
+        elif op == 0xfc4e:                     # Launch RAM
+            if not getattr(self, 'bcm_minidriver', False):
+                print('bthci: Launch RAM before Download Minidriver', flush=True)
+                self.cmd_complete(op, bytes([0x12]))
+                return
+            self.cmd_complete(op, bytes([0]))
+            print('bthci: patch loaded, %d records, restarting'
+                  % getattr(self, 'bcm_records', 0), flush=True)
+            self.bcm_minidriver = False
+            self.bcm_patched = True
+            ADDR = BCM_PATCHED_ADDR
+            # the noise a restarting controller puts on the line
+            self.send(bytes([0, 0, 0]))
+        elif op == 0xfc01:                     # Write BD_ADDR
+            if len(params) != 6:
+                self.cmd_complete(op, bytes([0x12]))
+                return
+            ADDR = bytes(params)
+            print('bthci: address set to %s' % bytes(params)[::-1].hex(), flush=True)
+            self.cmd_complete(op, bytes([0]))
+
     # ------------------------------------------------ command dispatch
     def command(self, op, params):
         self.trace.append(('cmd', op))
         log('command %#06x %s' % (op, params.hex()))
-        if op == 0x0c03:                       # Reset
+        if op in (0xfc2e, 0xfc4c, 0xfc4e, 0xfc01):
+            self.bcm_command(op, params)
+        elif op == 0x0c03:                     # Reset
             self.cmd_complete(op, bytes([0]))
         elif op == 0x1001:                     # Read Local Version
             self.cmd_complete(op, bytes([0, 0x0c]) + struct.pack('<HBHH', 0x0001, 0x0c, 0xffff, 0x0001))

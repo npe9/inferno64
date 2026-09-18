@@ -91,8 +91,9 @@ Reply: adt {
 	err:	string;
 };
 
-readproc(c: chan of ref Reply)
+readproc(c: chan of ref Reply, pidc: chan of int)
 {
+	pidc <-= sys->pctl(0, nil);
 	(ptype, ev, err) := tport->read();
 	c <-= ref Reply(ptype, ev, err);
 }
@@ -103,16 +104,36 @@ timeout(ms: int, c: chan of int)
 	c <-= 1;
 }
 
+#
+# Both channels are buffered and the reader is killed rather than left.
+#
+# Abandoning it looked tidy and was not: a process blocked in a read
+# keeps emu from exiting, so the test that drives this against the
+# controller model never finished -- the load succeeded, the program
+# printed its line, and nothing came back to the shell.  An unbuffered
+# channel does the same thing from the other side: a timer that fires
+# with nobody listening blocks the timer process for ever.
+#
+kill(pid: int)
+{
+	fd := sys->open("/prog/" + string pid + "/ctl", Sys->OWRITE);
+	if(fd != nil)
+		sys->fprint(fd, "kill");
+}
+
 readwait(ms: int): ref Reply
 {
-	c := chan of ref Reply;
-	t := chan of int;
-	spawn readproc(c);
+	c := chan[1] of ref Reply;
+	t := chan[1] of int;
+	pidc := chan[1] of int;
+	spawn readproc(c, pidc);
+	pid := <-pidc;
 	spawn timeout(ms, t);
 	alt {
 	r := <-c =>
 		return r;
 	<-t =>
+		kill(pid);
 		return nil;
 	}
 }
