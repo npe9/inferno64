@@ -144,12 +144,38 @@ SH
 	# cross-links, bad directory entries and a wrong free count
 	# without changing anything.
 	#
-	if fsck_msdos -n "$ROOT/tmp/stress.img" > "$OUT/$1.fsck" 2>&1; then
-		echo "fsck: clean"
-	else
+	#
+	# Its exit status is not enough.  fsck_msdos -n exits 0 having
+	# printed "Free space in FSInfo block (807357) not correct
+	# (807350)", which is what a directory pointing at a cluster
+	# somebody else owns looks like from outside -- the truncated
+	# start cluster that mkdir used to write on a filesystem with
+	# more than 65535 clusters in use.  Found by putting that bug
+	# back: fatstress passed it (a write and a read follow the same
+	# wrong pointer, so the round trip agrees with itself) and so did
+	# the exit status.  So read what it says, and allow only the one
+	# line it always prints, the summary count.
+	#
+	fsck_msdos -n "$ROOT/tmp/stress.img" > "$OUT/$1.fsck" 2>&1
+	rc=$?
+	# Two lines are allowed.  One is the summary count fsck always
+	# prints.  The other is "Free space in FSInfo block is unset",
+	# which is a state dossrv chooses: it does not maintain FAT32's
+	# cached free-cluster count, so it writes the "unknown" value the
+	# specification provides rather than leaving a stale one.  A
+	# "not correct" there is a different thing and fails.
+	if grep -a Warning "$OUT/$1.fsck" |
+	   grep -av "files, .* free" |
+	   grep -av "FSInfo block is unset" > "$OUT/$1.warn"; then
 		echo "STRESS FAIL ($1): fsck_msdos is not happy"
+		sed -n 1,20p "$OUT/$1.warn"
+		status=1
+	elif [ $rc != 0 ]; then
+		echo "STRESS FAIL ($1): fsck_msdos exited $rc"
 		sed -n 1,20p "$OUT/$1.fsck"
 		status=1
+	else
+		echo "fsck: clean"
 	fi
 }
 

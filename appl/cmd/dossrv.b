@@ -627,8 +627,18 @@ rcreate(t: ref Tmsg.Create): ref Rmsg
 		nd.attr |= byte DRONLY;
 
 	puttime(nd);
-	nd.start[0] = byte start;
-	nd.start[1] = byte (start>>8);
+	#
+	# putstart, not the low two bytes.  A start cluster is 32 bits on
+	# FAT32 and the top half lives in the entry's reserved area, so
+	# writing only start[0..1] points the entry at start mod 65536.
+	# Only a directory gets a cluster here -- a file is created empty
+	# and fileclust allocates its first, correctly -- so what this
+	# broke is mkdir on a filesystem with more than 65535 clusters in
+	# use, which is the Pi's own boot partition after 112MB of
+	# firmware.  The directory then reads as whatever lives in the
+	# cluster with the same low sixteen bits.
+	#
+	putstart(f.xf, nd, start);
 
 	if(islong)
 		putname(sname[0:8]+"."+sname[8:11], nd);
@@ -1204,6 +1214,8 @@ Dosbpb: adt {
 	rootaddr: int; #big;
 	dataaddr: int; #big;
 	freeptr: int; #big;	# next free cluster candidate 
+	fsinfo: int;	# FAT32: sector holding the free-cluster count, 0 if none
+	fsinfoclr: int;	# and whether this mount has already marked it unknown
 };
 
 Dosdir: adt {
@@ -1378,6 +1390,18 @@ Dmddo:
 	bp := ref Dosbpb;
 	xf.ptr = bp;
 	xf.fmt = 1;
+	#
+	# Explicitly, because a ref adt in this language is allocated, not
+	# cleared: an unwritten field holds whatever the allocator had
+	# there.  Every other field below is assigned on every path;
+	# these two are set only when the filesystem turns out to be
+	# FAT32, so on a FAT16 mount they were residue -- and on a FAT32
+	# one, fsinfoclr coming up non-zero meant the free-count was
+	# quietly never marked unknown.  That is what made the stress
+	# suite fail on a different case each run.
+	#
+	bp.fsinfo = 0;
+	bp.fsinfoclr = 0;
 
 	bp.sectsize = bytes2short(b.sectsize);
 	bp.clustsize = int b.clustsize;
@@ -1406,6 +1430,9 @@ Dmddo:
 		bp.rootclust = bytes2int(b.rootclust);
 		bp.rootaddr = bp.fataddr + bp.nfats*bp.fatsize;
 		bp.dataaddr = bp.rootaddr;
+		# and the FSInfo sector, which is where the free-cluster
+		# count is cached.  Its number is BPB offset 48.
+		bp.fsinfo = bytes2short(p.iobuf[48:50]);
 	}
 	bp.fatclusters = FATRESRV+(bp.volsize - bp.dataaddr)/bp.clustsize;
 	if(bp.isfat32)
@@ -2569,9 +2596,63 @@ getfat(xf: ref Xfs, n: int): int
 	return k;
 }
 
+#
+# Say "I do not know" about the free-cluster count.
+#
+# FAT32 caches the count and the next-free hint in the FSInfo sector, and
+# this server has never maintained either: every filesystem it wrote left
+# fsck_msdos saying "Free space in FSInfo block (807357) not correct
+# (807350)".  A permanent expected warning is worse than no warning at
+# all -- it is what a test suite learns to ignore, and this suite needs
+# to fail on the next one, because a directory pointing at a cluster
+# somebody else owns says so in exactly that voice.
+#
+# 0xffffffff is what the specification says to write when the count is
+# unknown, and every driver recomputes it rather than trusting it.  Once
+# per mount is enough: unknown stays unknown until something else works
+# it out.
+#
+fsinfounknown(xf: ref Xfs)
+{
+	bp := xf.ptr;
+
+	if(!bp.isfat32 || bp.fsinfo <= 0 || bp.fsinfoclr)
+		return;
+	bp.fsinfoclr = 1;		# tried; do not try again either way
+	p := getsect(xf, bp.fsinfo);
+	if(p == nil)
+		return;
+	# both signatures, or it is not an FSInfo sector and writing to it
+	# would be writing over something else
+	if(bytes2int(p.iobuf[0:4]) != 16r41615252
+	|| bytes2int(p.iobuf[484:488]) != 16r61417272){
+		putsect(p);
+		return;
+	}
+	p.iobuf[488] = byte 16rff;
+	p.iobuf[489] = byte 16rff;
+	p.iobuf[490] = byte 16rff;
+	p.iobuf[491] = byte 16rff;
+	p.flags |= BMOD;
+	putsect(p);
+	#
+	# and out to the medium now.  This is written once per mount, at
+	# the first change to the FAT, and a buffer that is only marked
+	# dirty goes when something else happens to flush it -- which, for
+	# a server killed at the end of a test run or a board whose power
+	# goes, is never.  The stress harness saw exactly that: by hand
+	# the count read as unknown afterwards and under the harness,
+	# which kills emu as soon as the run reports, it still held the
+	# stale number.
+	#
+	sync();
+}
+
 putfat(xf: ref Xfs, n, val: int)
 {
 	bp := xf.ptr;
+
+	fsinfounknown(xf);
 	if(n < 2 || n >= bp.fatclusters)
 		panic(sys->sprint("putfat n=%d", n));
 	k := (bp.fatbits*n) >> 3;

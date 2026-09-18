@@ -126,6 +126,69 @@ rename(name, newname: string): int
 	return r;
 }
 
+# Make a directory, put a file in it, and read it back through a fresh
+# walk.  A directory is the one thing that gets a cluster the moment it
+# is created, so it is the only way to reach the code that writes a
+# start cluster into a new entry -- and on a filesystem with more than
+# 65535 clusters in use, that code wrote only the low half of it.  A
+# file cannot show this: files are created empty.
+dirtest(r: int)
+{
+	name := sys->sprint("dir-%d", r);
+	path := dir + "/" + name;
+	sys->remove(path + "/inside.dat");
+	sys->remove(path);
+	if(sys->create(path, Sys->OREAD, Sys->DMDIR|8r777) == nil){
+		fail(sys->sprint("mkdir %s: %r", path));
+		return;
+	}
+	(ok, d) := sys->stat(path);
+	if(ok < 0 || (d.mode & Sys->DMDIR) == 0){
+		fail(sys->sprint("%s is not a directory after mkdir", path));
+		return;
+	}
+	n := 1024;
+	fd := sys->create(path + "/inside.dat", Sys->OWRITE, 8r666);
+	if(fd == nil){
+		fail(sys->sprint("create %s/inside.dat: %r", path));
+		return;
+	}
+	b := array[n] of byte;
+	fill(b, "inside", 0);
+	if(sys->write(fd, b, n) != n){
+		fail(sys->sprint("write %s/inside.dat: %r", path));
+		return;
+	}
+	fd = nil;
+	# a fresh walk, so the directory's own start cluster is read back
+	# out of its entry rather than remembered
+	fd = sys->open(path + "/inside.dat", Sys->OREAD);
+	if(fd == nil){
+		fail(sys->sprint("reopen %s/inside.dat: %r", path));
+		return;
+	}
+	rb := array[n] of byte;
+	if(sys->read(fd, rb, n) != n){
+		fail(sys->sprint("read %s/inside.dat: %r", path));
+		return;
+	}
+	for(i := 0; i < n; i++)
+		if(rb[i] != b[i]){
+			fail(sys->sprint("%s/inside.dat differs at %d", path, i));
+			return;
+		}
+	fd = nil;
+	#
+	# and left in place, on purpose.  Reading the file back proves
+	# nothing about where the directory points: the write and the
+	# read follow the same start cluster, so a truncated one is
+	# self-consistent and the round trip passes.  Checked, by putting
+	# the truncation back -- this case passed.  What finds it is
+	# fsck_msdos afterwards, which knows what else owns that cluster,
+	# so the directory has to survive the run for it to look at.
+	#
+}
+
 # write a file, hold it open, rename it, and see whether it is still
 # itself.  The name is its own round's, so rounds do not collide.
 openrename(r: int)
@@ -280,6 +343,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		# same entry, and what happens to it when the entry moves is
 		# a different path through the server.
 		openrename(r);
+		dirtest(r);
 
 		# remove half of them, then write new ones, so the next
 		# round allocates clusters that were just freed
