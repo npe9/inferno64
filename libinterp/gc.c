@@ -1305,6 +1305,11 @@ rungc(Prog *p)
 		 * collector to stay out; if a context still holds one, the
 		 * global lost an increment and this collection is the
 		 * exposure.
+		 *
+		 * Not a race in the reading: the sites that hold a gclock()
+		 * with a quantum open are the two teardowns, and
+		 * stoptheworld() waits for those, so they cannot be what this
+		 * sees.
 		 */
 		int i, held;
 

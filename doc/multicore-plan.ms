@@ -6822,8 +6822,25 @@ l r r.
 atomic	0 of 10	0
 .TE
 .PP
-So it is real, it is not rare when it happens \(em sixteen hundred
-collections in the boot it happened in \(em and the atomic closes it.
+The reading is sound for a reason worth stating, because it is the first
+question to ask of it: the sites that hold a
+.CW gclock()
+with a quantum open \(em the two teardowns \(em are sites
+.CW stoptheworld()
+waits for, so they cannot be what
+.CW held
+sees.  Past the
+.CW gchalt
+test, a context still holding one is a lost increment and not a race in
+the counting.
+.PP
+So it is real and the atomic closes it.  Sixteen hundred collections in
+the boot it happened in, though that is one number and not sixteen
+hundred: a single lost increment leaves
+.CW gchalt
+one short for the rest of the boot, and every collection after it counts
+\(em which is the same stickiness the off-direction showed, reading 1 at
+60 seconds and 1 again at 70.
 That is the last of the two gaps the chapter named.  What the exposure
 did while it was open is still not known: these boots panicked in
 neither arm, and the fault it would produce is the one the collector
