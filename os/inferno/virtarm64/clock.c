@@ -85,6 +85,29 @@ clockintr(Ureg *u)
 	}
 	checkalarms();
 	timercheck(u);
+	/*
+	 * The two instrumentation dumps pc64 gets from portclock.c's
+	 * hzclock().  This board has its own clock and does not link
+	 * portclock, so it saw neither -- which is why the quanta-per-cpu
+	 * and run-queue counters could only be read on pc64.  Same
+	 * conditions, same prints.  MULTICORE INSTRUMENTATION - temporary.
+	 */
+	/*
+	 * soakline() before stalldump(), not after: this board's console
+	 * loses the tail of a long dump, and the one-line summary is the
+	 * part worth having.  Under TCG 120 guest seconds is several
+	 * hundred wall seconds, so the first one is at 55.
+	 */
+	if(m->ticks == 55*HZ || m->ticks % (120*HZ) == 0){
+		extern void soakline(void);
+
+		soakline();
+	}
+	if(m->ticks == 60*HZ || m->ticks == 70*HZ){
+		extern void stalldump(void);
+
+		stalldump();
+	}
 
 	n = now();
 	hznext = n + m->cpuhz/HZ;

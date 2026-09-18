@@ -437,6 +437,18 @@ int gcsemaheld;		/* set when collectq() could not take gcsema */
  * waiting is for is wall-clock time for somebody else's quantum to
  * end, so that is what to bound.
  */
+/*
+ * The same question asked where it can be answered: see auditrunq().
+ * *runqaudit=0 turns it off.
+ */
+int runqaudit = 1;
+ulong nrunqaudits, nrunqauditbad, nrunqaudittick;
+ulong nrunqauditdup, nrunqauditself, nrunqauditnotlisted, nrunqauditplace;
+int nrunqauditsaid;
+enum { Runqauditevery = 1000 };
+static void auditrunq(void);
+static void idlexec(Prog*);	/* the placeholder's xec; see addprog() */
+
 int
 stoptheworld(void)
 {
@@ -502,6 +514,19 @@ stoptheworld(void)
 	 * and removing it cut shell iterations from 18 to 2.  Six lines a
 	 * boot does not.
 	 */
+	/*
+	 * MULTICORE INSTRUMENTATION - temporary.  The stopped world is the
+	 * one instant at which the run-queue counts are comparable: every
+	 * other executor is parked at a safepoint, so nothing links,
+	 * unlinks or changes state underneath the walk.  The check in
+	 * vmachine() cannot say that -- see *runqstrict there -- so this is
+	 * where an answer about the queues themselves comes from.  Every
+	 * Runqauditevery'th collection, because it walks every Prog and
+	 * every queue and the collector runs hundreds of thousands of times
+	 * a boot.
+	 */
+	if(runqaudit && (++nrunqaudittick % Runqauditevery) == 0)
+		auditrunq();
 	{
 		static ulong said;
 
@@ -513,6 +538,119 @@ stoptheworld(void)
 		}
 	}
 	return 1;
+}
+
+/*
+ * The run queues, counted while the world is stopped.
+ *
+ * Two things are checked.  The lengths: Progs in state Pready over
+ * isched.head, against every context's local queue plus the global one.
+ * And the states: a Prog sitting in a queue must be Pready, which is
+ * the shape of a leak the length check alone can miss when two errors
+ * cancel.
+ */
+static void
+auditrunq(void)
+{
+	Prog *p, *seen[64];
+	int i, j, nq = 0, ready = 0, badstate = 0, dup = 0, self = 0;
+	int notlisted = 0, placeheld = 0;
+
+	for(i = 0; i < npctx; i++)
+		for(p = pctxs[i]->runhd; p != nil; p = p->link){
+			/*
+			 * The placeholder Prog addprog() builds is queued on
+			 * purpose and is deliberately not on isched.head -- it
+			 * is not a program (see the comment on addprog()).  It
+			 * is queued and Pready, so counting it made every
+			 * audit disagree by exactly the number of executors
+			 * collecting: 723 of 723 audits, "queued prog 0 state
+			 * 4 is not on isched.head".  An instrument that fires
+			 * every time is measuring its own assumption.
+			 */
+			if(p->xec == idlexec){
+				placeheld++;
+				continue;
+			}
+			if(nq < nelem(seen)){
+				/*
+				 * A Prog in two queues at once, or twice in
+				 * one, is the thing a count can only hint at.
+				 * The queues are a handful of entries, so the
+				 * quadratic scan costs nothing and says which
+				 * Prog it is rather than that a number is off.
+				 */
+				for(j = 0; j < nq; j++)
+					if(seen[j] == p){
+						dup++;
+						if(p == (Prog*)up->prog)
+							self++;
+						break;
+					}
+				seen[nq] = p;
+			}
+			nq++;
+			if(p->state != Pready)
+				badstate++;
+		}
+	for(p = isched.ghead; p != nil; p = p->link){
+		if(p->xec == idlexec){
+			placeheld++;
+			continue;
+		}
+		if(nq < nelem(seen)){
+			for(j = 0; j < nq; j++)
+				if(seen[j] == p){
+					dup++;
+					if(p == (Prog*)up->prog)
+						self++;
+					break;
+				}
+			seen[nq] = p;
+		}
+		nq++;
+		if(p->state != Pready)
+			badstate++;
+	}
+	for(p = isched.head; p != nil; p = p->next)
+		if(p->state == Pready)
+			ready++;
+	/*
+	 * Which Prog, not how many.  A queued Prog that is not on
+	 * isched.head is the whole difference between a counting artefact
+	 * and a Prog that outlived the list, so ask that question
+	 * directly rather than inferring it from two totals.
+	 */
+	for(j = 0; j < nq && j < nelem(seen); j++){
+		for(p = isched.head; p != nil; p = p->next)
+			if(p == seen[j])
+				break;
+		if(p == nil){
+			notlisted++;
+			if(nrunqauditsaid < 4){
+				nrunqauditsaid++;
+				print("audit: queued prog %d state %d is not on"
+					" isched.head (curprog %d, up->prog %d)\n",
+					seen[j]->pid, seen[j]->state,
+					curP->curprog != nil ? curP->curprog->pid : -1,
+					up->prog != nil ? ((Prog*)up->prog)->pid : -1);
+			}
+		}
+	}
+	nrunqaudits++;
+	nrunqauditnotlisted += notlisted;
+	nrunqauditplace += placeheld;
+	if(dup != 0)
+		nrunqauditdup++;
+	if(self != 0)
+		nrunqauditself++;
+	if((ready != nq && ready != nq - dup) || badstate != 0){
+		if(nrunqauditbad++ == 0)
+			print("audit: %d queued (%d not ready, %d twice, %d of"
+				" them this interpreter's own) but %d in Pready"
+				" -- the stopped world disagrees\n",
+				nq, badstate, dup, self, ready);
+	}
 }
 
 /*
@@ -583,6 +721,7 @@ static QLock gcsema;
 
 static void	starttheworld(void);
 int		stoptheworld(void);
+
 
 /*
  * Returns whether it actually collected.  A caller that loops until the
@@ -903,6 +1042,18 @@ int maxnvm;
 enum { Runqcap = 64 };
 int maxnrunq;
 int nrunqmismatch;	/* MULTICORE INSTRUMENTATION - temporary */
+ulong nrunqchecks, nrunqraced, nrunqlone;	/* likewise */
+/*
+ * The run-queue cross-check below walks two structures another
+ * executor is free to change underneath it, so at parallelvm=1 a
+ * disagreement can be the instrument's own snapshot race rather than
+ * anything wrong with the queues.  *runqstrict=1 (the default) holds
+ * isched.l for the walk of isched.head and compares only when this
+ * executor is the only one inside the VM, which is the condition under
+ * which the two counts are meant to be equal at an instant; =0 is the
+ * old unlocked comparison, so one kernel measures both.
+ */
+int runqstrict = 1;
 int maxvmq;
 int vmqbad;
 uvlong vmpasses;	/* MULTICORE INSTRUMENTATION - temporary */
@@ -2810,8 +2961,11 @@ vmachine(void*)
 		if(r != nil) {
 			{	/* MULTICORE INSTRUMENTATION - temporary */
 				Prog *q;
-				int i, n = 0, ready = 0;
+				int i, n = 0, ready = 0, lone;
 
+				lone = nvm <= 1;
+				if(runqstrict)
+					lock(&isched.l);
 				for(q = r; q != nil && n < Runqcap; q = q->link)
 					n++;
 				/*
@@ -2864,10 +3018,19 @@ vmachine(void*)
 				 * which is the control working -- it noticed a
 				 * real change in what the structures mean.
 				 */
-				if(ready != n + isched.ngq && nrunqmismatch++ == 0)
-					print("runq: %d linked + %d global but %d in "
-						"Pready -- the counts disagree\n",
-						n, isched.ngq, ready);
+				nrunqchecks++;
+				if(lone)
+					nrunqlone++;
+				if(ready != n + isched.ngq){
+					if(runqstrict && !lone)
+						nrunqraced++;	/* not comparable; another executor was running */
+					else if(nrunqmismatch++ == 0)
+						print("runq: %d linked + %d global but %d in "
+							"Pready -- the counts disagree\n",
+							n, isched.ngq, ready);
+				}
+				if(runqstrict)
+					unlock(&isched.l);
 			}
 			o = r->osenv;
 			/*
@@ -3378,6 +3541,14 @@ stalldump(void)
 			shortringok, shortringshort, shortnoring);
 	}
 	{
+		print("stall: runq checks %lud (%lud with this executor alone in"
+			" the VM), mismatches %d, disagreed while another ran %lud,"
+			" runqstrict %d; stopped-world audits %lud, bad %lud,"
+			" a Prog queued twice %lud (its own %lud), queued but not"
+			" listed %lud, placeholders skipped %lud\n",
+			nrunqchecks, nrunqlone, nrunqmismatch, nrunqraced, runqstrict,
+			nrunqaudits, nrunqauditbad, nrunqauditdup, nrunqauditself,
+			nrunqauditnotlisted, nrunqauditplace);
 		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud,"
 			" fddefer %d, nwoken %d, interpreters spawned %lud"
 			" (by type %lud %lud %lud %lud %lud)\n",
@@ -3448,4 +3619,24 @@ soakline(void)
 		p = pbuf;
 	print("soak: %lud ticks, gcnruns %lud, gchalt %d, npctx %d, pools %s\n",
 		(ulong)MACHP(0)->ticks, gcnruns, gchalt, npctx, p);
+	/*
+	 * Here as well as in stalldump(), because on a board whose console
+	 * tail is unreliable a long dump loses its last lines and this one
+	 * line does not.  MULTICORE INSTRUMENTATION - temporary.
+	 */
+	print("soak: runq checks %lud (%lud alone in the VM), mismatches %d,"
+		" disagreed while another ran %lud, runqstrict %d;"
+		" stopped-world audits %lud, bad %lud, a Prog queued twice %lud"
+		" (its own %lud), queued but not listed %lud, placeholders"
+		" skipped %lud; quanta",
+		nrunqchecks, nrunqlone, nrunqmismatch, nrunqraced, runqstrict,
+		nrunqaudits, nrunqauditbad, nrunqauditdup, nrunqauditself,
+		nrunqauditnotlisted, nrunqauditplace);
+	{
+		int mi;
+
+		for(mi = 0; mi < conf.nmach && mi < nelem(disquanta); mi++)
+			print(" cpu%d %lud", mi, disquanta[mi]);
+		print("\n");
+	}
 }

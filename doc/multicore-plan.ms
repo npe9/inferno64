@@ -7443,3 +7443,162 @@ against a binary whose
 predated its own sources, which is how the compile break above was
 found.  Every number here is from a kernel built with its objects
 removed first, checked by exit status.
+.NH 2
+"The counts disagree" was the instrument reading a moving structure
+.LP
+.B "The oldest open signal against parallelvm=1."
+Since 11 September the record here has said the parallel VM is broken
+on the evidence of one line:
+.IP
+.nf
+runq: 2 linked + 0 global but 1 in Pready -- the counts disagree
+.fi
+.PP
+It fired on 6 of 6
+.CW parallelvm=1
+boots and 0 of 11 controls, which looked like exactly the right shape
+for a real bookkeeping fault: a count of run-queue links against an
+independent count of Progs in state
+.CW Pready
+over
+.CW isched.head ,
+two structures maintained by different code, disagreeing only when more
+than one executor could touch them.
+.PP
+.B "It fires because nothing holds still while it counts."
+The check walks
+.CW isched.head
+and every context's
+.CW nlocal
+with no lock at all.
+.CW isched.head
+is linked and unlinked under
+.CW isched.l
+.CW ( newprog()
+and
+.CW delprog()
+both take it), and
+.CW nlocal
+is written by whichever executor owns that context.  At
+.CW parallelvm=0
+the VM lock serialises every writer, so the two walks see one state and
+agree.  At
+.CW parallelvm=1
+they do not, and a disagreement says the structure changed between the
+first walk and the second \(em not that it was ever wrong.
+.PP
+Two things make that testable in one kernel.
+.CW *runqstrict=1
+(the default now) holds
+.CW isched.l
+across both walks and compares only when this executor is the only one
+inside the VM \(em the condition under which the two counts are meant to
+be equal at an instant.
+.CW *runqstrict=0
+is the old unlocked comparison.  And the counters are reported rather
+than printed once: the old code printed on the first disagreement and
+never again, so nobody knew whether it happened once a boot or ten
+thousand times.
+.PP
+.B "Measured on pc64, -smp 2, parallelvm=1, one kernel."
+.IP
+.nf
+*runqstrict=0:  22606 checks, 17308 disagreed
+                22672 checks, 16891 disagreed
+*runqstrict=1:  22466 checks, 2875 of them with this executor alone
+                in the VM, 0 disagreed; 17045 disagreed while another
+                executor was running
+.fi
+.PP
+The lock alone does not settle it \(em with
+.CW isched.l
+held, 17045 comparisons still disagreed.  What settles it is comparing
+at a moment when nobody else is changing the queues: of the 2875 such
+moments in that boot, and 231 in a shorter one, not one disagreed.  The
+counts are right whenever they can be read; the old line was the
+instrument watching a structure move.
+.PP
+.B "And the instrument that can answer it: audit the queues while the world is stopped."
+.CW auditrunq()
+runs from
+.CW stoptheworld() ,
+every thousandth collection, and counts the same two quantities plus
+two the old check could not: a Prog queued twice, and a queued Prog
+that is not on
+.CW isched.head
+at all.
+.PP
+It disagreed on
+.B "723 of 723"
+audits, which is the shape of an instrument measuring its own
+assumption rather than a kernel with a fault on every collection.  Made
+to name the Prog instead of report a total, it said:
+.IP
+.nf
+audit: queued prog 0 state 4 is not on isched.head
+.fi
+.PP
+That is the placeholder
+.CW addprog()
+builds \(em a zeroed Prog with no module and no code, queued by
+.CW execatidle()
+so the scheduler counts a collecting executor as having work, and never
+registered on the program list because it is not a program.  This
+document already says so, a hundred lines above, in the comment on
+.CW idlexec() .
+The audit skips it now
+.CW ( xec
+.CW ==
+.CW idlexec ),
+and two pc64 boots give:
+.IP
+.nf
+727 audits, 0 bad, 0 queued twice, 0 queued but not listed, 951 placeholders
+569 audits, 0 bad, 0 queued twice, 0 queued but not listed, 676 placeholders
+.fi
+.PP
+So the run queues are consistent at every instant the question can be
+asked, and
+.B "the parallelvm=1 bookkeeping failure recorded on 11 September is withdrawn."
+What was measured then was a comparison taken while other executors
+were changing the structures it compared.
+.PP
+.B "One bound on the audit, which is a fact about the collector."
+.CW stoptheworld()
+waits on
+.CW othersrunning() ,
+and that counts only contexts with
+.CW inxec
+set.  "Stopped" therefore means no quantum is executing Dis
+instructions; it does not mean nothing is touching the scheduler's
+lists.  An executor between quanta is inside
+.CW vmachine() 's
+own queue manipulation and is not waited for, and
+.CW delprog()
+unlinks from
+.CW isched.head
+before it calls
+.CW delrunq() ,
+so a Prog can be queued and unlisted for a window with the world
+"stopped".  The audit saw neither in 1296 samples, but it is worth
+knowing that the word does less than it sounds like it does.
+.PP
+.B "virtarm64 reports the same counters now."
+That board has its own clock and does not link
+.CW portclock.c ,
+so it never ran
+.CW soakline()
+or
+.CW stalldump()
+and none of this could be read there.  Its
+.CW clockintr()
+calls both now, with
+.CW soakline()
+first because the board loses the tail of a long dump, and the line
+carries the quanta split:
+.IP
+.nf
+soak: ... quanta cpu0 605 cpu1 1394
+.fi
+.PP
+The second processor ran more than twice the Dis quanta of the first.
