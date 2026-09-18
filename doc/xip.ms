@@ -1820,6 +1820,76 @@ and
 .I cvtchk (1)
 are clean on the M7 and the M4 bench.
 .NH 2
+The Proc array, which is not pool memory and so was never in the figures
+.PP
+.CW procinit
+takes
+.CW conf.nproc*sizeof(Proc)
+from
+.CW xalloc ,
+not from a pool, so none of the
+.CW #c/memory
+numbers above ever included it.  On
+.CW mps2
+that was 64 procs of 2740 bytes: 175360 bytes, more than the whole main
+pool at a prompt.
+.PP
+Two measurements.  How many are used, counted at every
+.CW newproc
+without ever decrementing, so it is an upper bound: five, over a shell,
+background jobs,
+.I fptest (1)
+and
+.I cvtchk (1).
+Kernel procs are not what a shell's background jobs create \- those are
+.CW Prog s
+\- so five is the device set, not the workload.  And how deep
+.CW waserror()
+nests, since
+.CW Proc.errlab
+is
+.CW NERR
+.CW Label s
+at eight bytes each: eight, over the same workload plus failing opens.
+.PP
+So
+.CW NPROC
+is 16 on
+.CW mps2
+and
+.CW teensy41 ,
+three times what was measured, and
+.CW NERR
+is 24, also three times, which a board now sets in its
+.CW mem.h
+the way it already sets
+.CW KMESGSIZE .
+.CW sizeof(Proc)
+goes 2740 to 2420, checked with the compiler rather than counted.
+.DS
+.CW "               before    after     saved"
+.CW "mps2           175360    38720    136640"
+.CW "teensy41        87680    38720     48960"
+.CW "nucleof303      21920    19360      2560"
+.DE
+.CW nucleof303
+keeps 8 procs, which it already had.  Heavy concurrency \- four
+.I ls (1)
+at once, repeatedly \- brings no
+.CW newproc
+failure, and
+.I fptest (1)
+is 25 of 25 and
+.I cvtchk (1)
+clean on the M7 and the M4 bench.
+.PP
+.CW NNOTE
+is left alone.  It is 5 notes of 132 bytes in every
+.CW Proc
+and reducing it would save 396 more, but nothing in these workloads
+posts a note, so there is no measurement to size it by and a dropped
+note is a lost kill.
+.NH 2
 What gates any of it
 .PP
 The kernel pool floor: 78208 bytes in 343 allocations with the minimal

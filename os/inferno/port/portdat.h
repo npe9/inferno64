@@ -579,7 +579,18 @@ enum
 	TCSys,
 	TCReal,
 
+	/*
+	 * NERR is how deep waserror() may nest in one proc, and the
+	 * Label array it sizes is 8 bytes an entry in every Proc, times
+	 * NPROC.  A board that will never nest 64 levels says so in its
+	 * mem.h; measured on mps2 over a shell, failing opens, background
+	 * jobs, fptest and cvtchk, the peak was 8.  See doc/xip.ms.
+	 */
+#ifndef NERR
 	NERR		= 64,
+#else
+	Nerrfromboard	= 0,	/* NERR came from the board's mem.h */
+#endif
 	NNOTE = 5,
 
 	Unknown		= 0,

@@ -34,6 +34,15 @@
  * still holds the last of the boot.
  */
 #define	KMESGSIZE	2048
+
+/*
+ * waserror() nesting depth, and so the size of Proc.errlab at 8 bytes
+ * an entry, times NPROC.  64 is the portable default (os/inferno/port/
+ * portdat.h); measured on mps2 over a shell, failing opens, background
+ * jobs, fptest and cvtchk, the deepest nesting reached was 8.  24 is
+ * three times that, and saves 320 bytes in every Proc.
+ */
+#define	NERR		24
 #define	MAXMACH		1
 #define	HZ		100
 /*
@@ -45,7 +54,15 @@
  * mps2-an386 and mps2-an500.
  */
 #define	KSTACK		(4*1024)
-#define	NPROC		32
+/*
+ * Kernel processes.  Measured on mps2 with a shell, background jobs,
+ * fptest and cvtchk, five were ever allocated; the array is
+ * conf.nproc*sizeof(Proc) out of xalloc (os/inferno/port/proc.c:
+ * /^procinit), which is 2740 bytes apiece and does not appear in
+ * #c/memory because it is not pool memory.  16 is three times what was
+ * measured.  See doc/xip.ms.
+ */
+#define	NPROC		16
 #define	CONFNAME	"teensy41"
 
 /*

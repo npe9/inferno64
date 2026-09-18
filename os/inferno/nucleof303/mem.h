@@ -24,6 +24,15 @@
  * still holds the last of the boot.
  */
 #define	KMESGSIZE	2048
+
+/*
+ * waserror() nesting depth, and so the size of Proc.errlab at 8 bytes
+ * an entry, times NPROC.  64 is the portable default (os/inferno/port/
+ * portdat.h); measured on mps2 over a shell, failing opens, background
+ * jobs, fptest and cvtchk, the deepest nesting reached was 8.  24 is
+ * three times that, and saves 320 bytes in every Proc.
+ */
+#define	NERR		24
 #define	MAXMACH		1
 #define	HZ		100
 #define	KSTACK		(4*1024)
