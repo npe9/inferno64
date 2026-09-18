@@ -1350,67 +1350,103 @@ there was never speed on the table here anyway.
    item list: with a drawing item last it failed by 13209 bytes, with a
    node item last by 38409.
 
-   **The text widget's prediction held, and the first measurement of it
-   was worthless.** When `text` came out dearer through nodes, the
-   reason given was that it emits a node per item *per line* where every
-   widget before it emitted a fixed handful, and the note said that was
-   "the number to watch when `canvas` is looked at, since a canvas is
-   nothing but items". So `tkbench(1)` grew a canvas row — five items of
-   four kinds that all describe themselves, and a spec that may be
-   several commands separated by semicolons, because an empty canvas
-   repaints a background and measures nothing about the item table.
+   **What the node path costs, measured three times, twice wrongly.**
+   This entry was rewritten twice before it was right, and both wrong
+   versions are described here rather than deleted, because the way
+   each was wrong is the useful part.
 
-   That row came out at 22.94µs drawn against 23.60µs through nodes,
-   about 3%, steady over repeated runs, and the conclusion drawn from it
-   — that the prediction was wrong and the node path's cost tracks the
-   cheapness of what it describes rather than the count — **is withdrawn.
-   The row was timing a blit.** The canvas was created with no `-buffer`
-   option, which is the default, which is buffered; `tkdrawcanv()`
-   clears `c->update` at the end of every repaint and runs the item loop
-   only when the clip of the update rectangle is non-empty, so the items
-   were drawn once at creation and every timed repaint after that was a
-   background fill and a blit. Which is exactly the fact this session
-   had just spent its time discovering in `tkofftest(1)` and fixing with
-   `cvdirty` — reintroduced one commit later in the benchmark. The
-   stability across runs was not evidence of anything: two runs of a
-   worthless measurement agree.
+   When `text` came out dearer through nodes the reason given was that
+   it emits a node per item *per line* where every widget before it
+   emitted a fixed handful, and the note said that was "the number to
+   watch when `canvas` is looked at, since a canvas is nothing but
+   items". So `tkbench(1)` grew a canvas row — five items of four
+   kinds that all describe themselves, and a spec that may be several
+   commands separated by semicolons, because an empty canvas repaints a
+   background and measures nothing about the item table.
 
-   A counter in `tkcvsrectdraw()` settles it without inference: **fewer
-   than 50 calls across a whole buffered run, 117200 across an
-   unbuffered one.**
+   **First wrong version: the row was timing a blit.** It reported
+   22.94µs drawn against 23.60µs through nodes, about 3%, and the
+   conclusion drawn — that the prediction was wrong and the node path's
+   cost tracks the cheapness of what it describes rather than the count
+   — was worthless. The canvas was created with no `-buffer` option,
+   which is the default, which is buffered; `tkdrawcanv()` clears
+   `c->update` at the end of every repaint and runs the item loop only
+   when the clip of the update rectangle is non-empty, so the items
+   were drawn once at creation and every timed repaint after was a
+   blit. Which is exactly the fact this session had just spent its time
+   discovering in `tkofftest(1)` and fixing with `cvdirty`,
+   reintroduced one commit later in the benchmark. Stability across
+   runs was not evidence: two runs of a worthless measurement agree. A
+   counter in `tkcvsrectdraw()` settled it — **fewer than 50 calls
+   across a buffered run, 117200 across an unbuffered one.**
 
-   With `-buffer none` the real figures are **10.2µs drawn against
-   11.3–11.7µs through nodes**, about 12%, beside `text`'s 5.8 against
-   6.75, about 16%, in the same runs. So the prediction held: a widget
-   whose drawing is in its contents costs measurably more through nodes,
-   and the two content-heavy widgets are the two that do.
+   **Second wrong version: the fixed cost was inside the slope.** With
+   `-buffer none` the figures became 10.2µs drawn against 11.3–11.7µs
+   through nodes, and `text` 5.8 against 6.75, so the entry said the
+   prediction had held — content-heavy widgets cost 12–16% more through
+   nodes. That was measured on a build where **a frame filled the
+   window twice** (below), and since a row's widgets are packed into
+   frames that grow with the widget count, part of every node slope was
+   that redundant fill growing. It was not a property of the widgets at
+   all.
 
-   The honest shape is two rows rather than a corrected one, because a
-   buffered canvas's steady-state repaint genuinely is a blit — that is
-   what buffering is *for*. And that row says something neither node
-   comparison does: the blit is **22.9µs** where drawing all five items
-   unbuffered is **10.2µs**. For a default canvas the
-   direct-versus-nodes question barely applies, because in steady state
-   neither path runs.
+   **What is true, after the frame was fixed**, over repeated runs:
 
-   **"Buffering costs more than redrawing" was the wrong reading of
-   that, and the mechanism says why.** It is in `tkdrawcanv()`: a
-   buffered steady-state repaint does *two full-area* draws into the
-   destination — the background, then the blit of `c->image` — where an
-   unbuffered one does a full-area background plus the items, which
-   cover less than the rectangle. So the buffered cost is **fixed in
-   the canvas's size** and the unbuffered cost **grows with its
-   contents**, and the comparison is entirely a statement about how
-   full this particular canvas is.
+   | | drawn | nodes |
+   |---|---|---|
+   | empty toplevel | 56.6–56.8µs | 56.7–57.2µs |
+   | `text` | 5.54–5.59µs | 5.73–5.78µs |
+   | `canvas -buffer none` | 9.90µs | 10.25–10.32µs |
+   | `listbox` | 31.40–31.50µs | 29.74–30.07µs |
 
-   Measured, with the same canvas at three item counts: buffered
-   **23.6 / 23.1 / 22.9µs** at 5, 20 and 40 items — flat, as the
-   mechanism predicts — against unbuffered **10.2 / 20.8 / 23.8µs**.
-   The lines cross between 20 and 40, which was *predicted* from the 5-
-   and 20-item slope (≈24 items) before the 40-item run was made, and
-   the prediction held. So buffering a canvas pays above a content
-   threshold and costs above nothing below it; at five items it looks
-   like a loss only because five items is nearly empty.
+   The fixed cost is **gone, not reduced**, and the per-widget figures
+   are at parity or better — `listbox`, `button`, `entry` and `frame`
+   are all *cheaper* through nodes. `text` and `canvas` are 3–4%
+   dearer, which is the honest residue of "a node per item", an order
+   of magnitude smaller than either earlier reading.
+
+   **A frame filled the window twice, and that was the whole fixed-cost
+   gap.** The guess recorded above and never tested — "most likely a
+   tree allocated and freed per run, and per widget in `tkdrawrelief`"
+   — was wrong: an empty toplevel's frames have `borderwidth` 0, so
+   `tkdrawrelief` returns before allocating anything. Counting instead
+   of guessing, an empty toplevel is one tree of exactly **two** nodes,
+   `TkNcolour` then `TkNroundfill`, **both 900×700**. The first is the
+   corner mend; the rounded fill leaves the corner pixels alone, so
+   what is behind them must be painted first — but at a radius of zero
+   it leaves nothing alone and covers every pixel the mend painted. A
+   frame with no border is the commonest widget in a window and is
+   usually the size of the window, so this was a second full-window
+   fill on every repaint, and 2.5MB of redundant fill is 56µs.
+   Emitting the mend only when there is a corner to mend leaves the
+   empty toplevel at one node. Controls: dropping the mend for *every*
+   frame fails by 840 bytes, at the bordered frame over `.c`'s red
+   canvas rectangle, which is the arrangement the comment there
+   describes; perturbing the surviving fill fails by 6258 bytes.
+
+   **The buffered row, and a mechanism stated wrongly once.** Two rows
+   rather than one, because a buffered canvas's steady-state repaint
+   genuinely is a blit — that is what buffering is *for* — and for a
+   default canvas the direct-versus-nodes question barely applies,
+   because in steady state neither path runs. The blit is 22.9µs where
+   drawing all five items unbuffered is 10.0µs, and the first attempt
+   to explain that said a buffered repaint does "two full-area draws,
+   the background and then the blit". **It does not.** A counter says
+   the background draw is taken **0 times in 60000** — it is guarded on
+   the canvas image not covering the dirty rectangle, which in steady
+   state it does. The blit is the whole of it, and a blit reads as well
+   as writes where the unbuffered background only writes.
+
+   The conclusion survives the correction because it never depended on
+   the count of draws, only on which cost is fixed: the buffered cost
+   is fixed in the canvas's **size** and the unbuffered cost grows with
+   its **contents**. Measured at three item counts: buffered 23.6 /
+   23.1 / 22.9µs at 5, 20 and 40 items — flat, as that predicts —
+   against unbuffered 10.2 / 20.8 / 23.8µs. The lines cross between 20
+   and 40, which was predicted from the 5- and 20-item slope (≈24
+   items) *before* the 40-item run was made. So buffering a canvas pays
+   above a content threshold; at five items it looks like a loss only
+   because five items is nearly empty.
 
    A canvas does not *join* the walk even when its items are nodes: its
    items usually go into its own buffer, and a tree belongs to one
