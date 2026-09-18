@@ -602,14 +602,23 @@ kupdate()
 		sys->print("KUPDATE-FAIL mount %s: %r\n", addr);
 		return;
 	}
+	#
+	# and take the mount down on every way out from here.  The board
+	# fetched a kernel over a link that hung up mid-read -- "read
+	# /os/inferno/raspi3b/kernel8.img: Hangup" -- and this returned
+	# with the dead mount still on /n/remote.  A mount whose far end
+	# is gone is not a file that fails, it is one that waits.
+	#
 	src := sys->open("/n/remote" + path, Sys->OREAD);
 	if(src == nil){
 		sys->print("KUPDATE-FAIL open %s: %r\n", path);
+		unmountremote();
 		return;
 	}
 	dst := sys->create("/n/dos/kernel8.new", Sys->OWRITE, 8r666);
 	if(dst == nil){
 		sys->print("KUPDATE-FAIL create kernel8.new: %r\n");
+		unmountremote();
 		return;
 	}
 	buf := array[8192] of byte;
@@ -618,18 +627,25 @@ kupdate()
 		n = sys->read(src, buf, len buf);
 		if(n < 0){
 			sys->print("KUPDATE-FAIL read %s: %r\n", path);
+			src = nil;
+			dst = nil;
+			unmountremote();
 			return;
 		}
 		if(n == 0)
 			break;
 		if(sys->write(dst, buf[0:n], n) != n){
 			sys->print("KUPDATE-FAIL write kernel8.new: %r\n");
+			src = nil;
+			dst = nil;
+			unmountremote();
 			return;
 		}
 		total += n;
 	}
 	src = nil;
 	dst = nil;
+	unmountremote();
 	if(total == 0){
 		sys->print("KUPDATE-FAIL %s is empty\n", path);
 		return;
@@ -646,6 +662,11 @@ kupdate()
 	}
 	sys->print("KUPDATE-OK %d bytes installed; the old kernel is kernel8.bak\n",
 		total);
+}
+
+unmountremote()
+{
+	sys->unmount(nil, "/n/remote");
 }
 
 # does the IP stack have an address yet?
@@ -1257,8 +1278,10 @@ etherone(ifname, tag: string, tries: int, ip, mask, gw: string)
 		return;
 	}
 	sys->print("%s-DHCP-OK ip=%s gw=%s\n", tag, cfg.ip, cfg.ipgw);
-	pingcheck(tag, cfg.ipgw);
+	# the clock first, and in its own process: everything after this
+	# line used to depend on ping(8) returning, and it does not always
 	spawn timecheck(cfg.ipgw);
+	pingcheck(tag, cfg.ipgw);
 	lease = nil;
 }
 
@@ -1430,25 +1453,22 @@ ntpservers(): list of string
 }
 
 #
-# Seconds since 1970, from the kernel's own clock.
+# Seconds since 1970, and the date, both straight from daytime(2).
 #
-# /dev/time's first field is seconds, not microseconds -- the four
-# fields are seconds, nanoseconds, ticks and the tick frequency -- and
-# dividing it by a million here is what made this report TIME-NONE
-# from a board whose clock sntp had just set correctly.  The same
-# command typed at the shell worked every time, which is what took so
-# long to see: the thing that was wrong was the test, not the clock.
+# This parsed /dev/time here instead, and got it wrong twice in
+# opposite directions: first dividing seconds by a million, which
+# reported TIME-NONE from a board whose clock had just been set, and
+# then -- once the kernel was fixed to return microseconds, which is
+# what cons(3) says it is -- not dividing at all, which dated the board
+# to the year 56716824.  The library has done this correctly all along;
+# there was never a reason to do it here.
 #
 tod(): int
 {
-	fd := sys->open("/dev/time", Sys->OREAD);
-	if(fd == nil)
+	dt := load Daytime Daytime->PATH;
+	if(dt == nil)
 		return 0;
-	b := array[32] of byte;
-	n := sys->read(fd, b, len b);
-	if(n <= 0)
-		return 0;
-	return int big string b[0:n];
+	return dt->now();
 }
 
 daytime(): string
@@ -1466,7 +1486,22 @@ pingcheck(tag, gw: string)
 		sys->print("%s-PING-NONE load: %r\n", tag);
 		return;
 	}
-	ping->init(nil, "ping" :: "-n" :: "3" :: gw :: nil);
+	#
+	# And catch what it raises.  ping(8) exits with an error when it
+	# loses a message, and the first one to a gateway is answered
+	# only after an ARP, which on this board took 471 milliseconds --
+	# long enough to count as lost.  That exception unwound through
+	# the caller and skipped everything after it, which is how the
+	# board stopped setting its clock the moment its round trips
+	# started being measured properly.
+	#
+	{
+		ping->init(nil, "ping" :: "-n" :: "3" :: gw :: nil);
+	} exception e {
+	"*" =>
+		sys->print("%s-PING-DONE (%s)\n", tag, e);
+		return;
+	}
 	sys->print("%s-PING-DONE\n", tag);
 }
 

@@ -3774,6 +3774,84 @@ sees
 promptly.  A deadline on hardware whose timing has not been measured is
 a guess, and this one was wrong twice in the same afternoon.
 .NH 2
+The clock, and the three bugs between an answer and a timestamp
+.PP
+The board has no clock \(em there is no battery-backed RTC on a Pi \(em
+and nothing here ever asked anyone, so every boot started at the epoch.
+sntp(8) was already in the tree and simply never run.  Running it took
+three fixes, and each one hid the next.
+.IP 1.
+.CW /dev/time
+on the native kernel took seconds in a thirteen-character buffer.
+cons(3) says microseconds, the hosted kernel has always read
+microseconds, and both programs in this tree that set the clock write
+microseconds.  So a correct write was a thousand times too large and too
+long to fit, and failed; sntp ignores the error.
+.IP 2.
+The same file
+.I read
+as Plan 9's four fields \(em seconds, nanoseconds, ticks, tick rate \(em
+while every Limbo program that asks the time reads the first number and
+divides it by a million:
+.CW daytime(2) 's
+.CW now() ,
+which is what dates a file, and ping's round trip, and cs, dns, keyfs,
+iostats, timestamp, memfs, lockfs.  On a native kernel all of them got
+zero.  That is why the Pi dated every file 1 January 1980 whatever the
+clock said, and why every ping it printed read
+.CW "rtt 0 us" .
+.IP 3.
+.I Dossrv
+stamped files from a clock it read once at startup plus a stopwatch, so
+a board whose clock is set after it starts goes on writing 1980.
+.PP
+On the board:
+.CW "TIME-OK Fri Sep 18 15:14:27 GMT 2026 from 192.168.8.1" ,
+the gateway, which answered all along \(em the earlier
+.CW TIME-NONE
+came from a check of mine that divided seconds by a million.
+.CW /dev/time
+then read within nine seconds of this machine.
+.PP
+Two things worth keeping from the way round it went.  A service name
+needs a connection server:
+.CW "udp!gw!ntp"
+came back "non-numeric port number", which reads like a network failure
+and is dial(2) falling back to identity translation when there is no
+/net/cs, so the kernel now carries cs and the three ndb files.  And
+fixing the round trips broke the clock: with real timings ping counted
+its first message lost \(em 471 milliseconds, which is the ARP \(em and
+raised, and that exception unwound through the caller and skipped the
+time check that followed it.
+.NH 2
+A mount whose far end hangs up
+.PP
+The board fetched a kernel over a Styx link that hung up mid-read and
+then wedged: the console still echoed every character typed, and no Dis
+process ran again.
+.I Kupdate
+had returned with the dead mount still on
+.CW /n/remote ,
+which it no longer does \(em a mount whose far end is gone is not a file
+that fails, it is one that waits.
+.PP
+That is the fix for the symptom and it is not a diagnosis.  The hangup
+itself was reproduced deliberately under QEMU \(em mount this machine's
+export, start a long read, kill the server \(em and the kernel survives
+it: the same
+.CW "mountio waserror()"
+prints, the same
+.CW Hangup
+on the read, and a shell that answers afterwards.  So something else was
+in the board's wedge, and the instrumentation already in
+.CW os/inferno/port/dis.c
+is the place to look next: it reports that
+.CW delprog 's
+window \(em where it releases the scheduler lock to close a process's
+groups \(em overlaps another's on this board regularly, which is where a
+kernel that still takes interrupts while no Dis program runs would come
+from.
+.NH 2
 Suggested order
 .PP
 The transmit-queue fix is confirmed on the board and kernel updates
