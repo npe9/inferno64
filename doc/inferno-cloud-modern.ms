@@ -2189,7 +2189,9 @@ the ring is 256 entries \(em is worth about 8%.
 .CW "hget https://example.com/"
 returns the page, and
 .CW "gcs -t /mnt/token ls"
-lists a real bucket with the instance's own credential.  Locally,
+lists a real bucket with the instance's own credential.  The arm64
+kernel does it too, on a t2a over gVNIC, with the DER bundle in its
+root: same fetch, same page.  Locally,
 .CW scripts/check-tls.sh
 now passes rather than depending on how patient the server feels; it is
 in
