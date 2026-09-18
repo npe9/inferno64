@@ -9,7 +9,7 @@
 
 #include "mps2.root.h"
 
-ulong ndevs = 21;
+ulong ndevs = 22;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -23,7 +23,8 @@ extern Dev ssldevtab;
 extern Dev capdevtab;
 extern Dev kprofdevtab;
 extern Dev flashfsdevtab;
-Dev* devtab[21]={
+extern Dev pycubeddevtab;
+Dev* devtab[22]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -37,6 +38,7 @@ Dev* devtab[21]={
 	&capdevtab,
 	&kprofdevtab,
 	&flashfsdevtab,
+	&pycubeddevtab,
 	nil,
 };
 

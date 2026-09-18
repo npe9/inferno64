@@ -4,7 +4,6 @@ TARG=\
 	beepsat.dis\
 	sat.dis\
 	hw.dis\
-	hwsim.dis\
 
 MODULES=\
 	$ROOT/module/pycubed.m\

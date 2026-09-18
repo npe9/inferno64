@@ -226,16 +226,15 @@ init(nil: ref Draw->Context, argv: list of string)
 	# beepsat [seconds [hwdir]].  seconds 0 or absent runs forever,
 	# which is what a satellite does; a bench wants to stop.
 	secs := 0;
-	hwdir := "/n/pycubed";
+	hwdir := "/dev";
 	if(tl argv != nil){
 		secs = int hd tl argv;
 		if(tl tl argv != nil)
 			hwdir = hd tl tl argv;
 	}
 
-	# A real board's C device puts these files in /dev;
-	# appl/pycubed/hwsim.b serves /n/pycubed and says what it is.
-	# See module/pycubedhw.m.
+	# os/inferno/port/devpycubed.c serves these, bound into /dev by
+	# the init.  See module/pycubedhw.m for the protocol.
 	err := hw->init(hwdir);
 	if(err != nil){
 		sys->print("beepsat: hardware at %s: %s\n", hwdir, err);

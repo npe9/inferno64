@@ -451,25 +451,54 @@ same way: it is
 .CW ( os/inferno/port/devcons.c ),
 not a call into a driver.
 .PP
-And what is standing in for the drivers.
-.CW appl/pycubed/hwsim.b
-serves that directory with
+Who serves those files was wrong a second time.  The first attempt at it
+was
 .CW sys->file2chan
 over
 .CW #s ,
-which is how a Limbo program serves files here
+which is how a Limbo program serves files
 .CW ( appl/cmd/ramfile.b
-is the smallest example in the tree).  There is no ADM1176, no RFM9x
-and no BMX160 on an MPS2: every number it returns is invented, its
-.CW source
-file says exactly that, and the mission prints it at startup, so a run
-cannot be mistaken for a reading.  The battery it reports discharges
-only so that the low-battery path in the
-.CW vbatt
-task can be reached at all.
+is the smallest example in the tree) \- but it is not how a
+.I device
+serves them.  Every reading went out of the kernel, through
+.CW #s ,
+into another Dis process and back: two scheduler switches and a Chan
+round trip to fetch a battery voltage, and 29504 bytes of pool for the
+server that did it.  A device is the direct path, and it is the path the
+real drivers will take.
 .PP
-The boundary being the same one a C device would present is the point:
-replacing the simulator with the real drivers changes nothing above it.
+So there is a device.
+.CW os/inferno/port/devpycubed.c
+is
+.CW #H
+and serves the protocol above; a read is one system call and the backend
+answers it.  The backend is the board's, through
+.CW PycubedHw
+in
+.CW os/inferno/port/pycubedif.h ,
+which is the same shape
+.CW PhysUart
+has for a uart: the device does the file interface, the board does the
+register access, and phase 2 is writing a real one.  There is no default
+backend, so a board that lists the device must name one and cannot
+acquire an invented battery reading by forgetting to write a driver.
+.PP
+.CW os/inferno/mps2/pycubednone.c
+is this board's, and it is not one: there is no ADM1176, no RFM9x and no
+BMX160 on an MPS2.  Every number is invented, the
+.CW source
+file says exactly that, and the mission prints it at startup:
+.DS
+.CW "hardware: pycubed-none: no hardware on this board,"
+.CW "          every reading is invented"
+.DE
+The battery it reports discharges only so that the low-battery path in
+the
+.CW vbatt
+task can be reached at all.  A real PyCubed replaces that one file:
+the device above it, the file protocol, and every line of Limbo in
+.CW appl/pycubed
+stay as they are.  That is what it is for.
 .PP
 It runs.  On
 .CW mps2 ,
@@ -499,9 +528,9 @@ headers:
 .CW "sat.dis        692     924    176"
 .CW "hw.dis        1762    2988    112"
 .CW "              ----    ----   ----"
-.CW "  mission     6299    9828    548"
-.CW "hwsim.dis     1797    2436    264   (does not fly)"
+.CW "              6299    9828    548"
 .DE
+All of it flies: the backend that does not is C in the kernel, not Dis.
 This document estimated 14900 bytes of
 .CW .dis
 for the mission, from 760 Limbo lines at 12 to 17 bytes a line.  The
@@ -515,33 +544,34 @@ on
 .CW mps2 ,
 booted into the mission with no shell at all, forty seconds in:
 .DS
-.CW "  kernel data + bss     62896"
+.CW "  kernel data + bss     63272"
 .CW "  Proc array            38720"
-.CW "  main pool            133248"
-.CW "  heap pool             23936"
+.CW "  main pool            114560"
+.CW "  heap pool             12608"
 .CW "                       ------"
-.CW "                       258800"
+.CW "                       229160"
 .DE
-The same kernel running a shell instead is 62896, 38720, 97600 and
-56512: 255728.  So the mission and the simulator together come to about
-what a shell costs.
+against 255728 for the same kernel running a shell.
 .PP
-The simulator is a large part of that and would not fly.  Measured by
-difference from a shell prompt, starting it costs 17792 of the main pool
-and 11712 of the heap: 29504 for one process, six
-.CW file2chan
-channels and the
-.CW .dis .
-The first version spawned a process per file and cost 37632; a single
-.CW alt
-over the six pairs does the same work, because these files answer
-immediately and nothing blocks.  A server whose files could block would
-need the processes back.
+What the device saved over serving the same files from Limbo is worth
+recording, because it is most of the difference between a boundary that
+is right and one that merely looks right:
+.DS
+.CW "                    file2chan    device    saved"
+.CW "main pool              133248    114560    18688"
+.CW "heap pool               23936     12608    11328"
+.CW "kernel text           1081008   1079808     1200"
+.DE
+29640 of RAM, and the kernel got
+.I smaller ,
+because the Limbo server's own
+.CW .dis
+was in the image too.  From a shell the same comparison is 98240 for the
+mission and its server against 70400 for the mission alone.
 .PP
-So the mission's own share, with a real device underneath instead, is
-about 229000 rather than 258800 \- and that is the figure to carry
-forward, remembering that the C drivers will put their own cost back in
-the kernel's text and their own buffers in its pools.
+That is the figure to carry forward, remembering that the four real
+drivers will put their own code back in the kernel's text and their own
+buffers in its pools.
 .PP
 Two honest qualifications.  This is
 .CW mps2 's

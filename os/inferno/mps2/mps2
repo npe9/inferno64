@@ -37,6 +37,10 @@ dev
 # the same thing a memory-mapped NOR window is as far as the kernel can
 # tell.  See os/inferno/port/devflashfs.c and doc/xip.ms.
 	flashfs
+# The PyCubed sensors and radio, as files.  This board has none of the
+# parts; os/inferno/mps2/pycubednone.c is the backend that says so.  See
+# os/inferno/port/devpycubed.c and doc/pycubed-plan.ms.
+	pycubed
 
 # the order matters: a library with an undefined symbol at the end
 # makes the loader complain
@@ -82,6 +86,7 @@ port
 	xalloc
 
 	archmps2
+	pycubednone
 	randomarmv7m
 	screenarmv7m
 
@@ -130,7 +135,6 @@ root
 	/env	/
 	/fd	/
 	/n	/
-	/n/pycubed	/
 	/net	/
 	/net.alt	/
 	/nvfs	/
@@ -154,7 +158,6 @@ root
 	/dis/pycubed/beepsat.dis	/dis32/pycubed/beepsat.dis
 	/dis/pycubed/sat.dis	/dis32/pycubed/sat.dis
 	/dis/pycubed/hw.dis	/dis32/pycubed/hw.dis
-	/dis/pycubed/hwsim.dis	/dis32/pycubed/hwsim.dis
 	/dis/ftest.dis	/dis32/ftest.dis
 	/dis/grep.dis	/dis32/grep.dis
 	/dis/ls.dis	/dis32/ls.dis

@@ -12,6 +12,7 @@
  * RAM with nothing to turn on first.
  */
 
+extern void pycubedhwinit(void);	/* os/inferno/mps2/pycubednone.c */
 extern uchar flashimgcode[];	/* mps2.flash.s, from utils/mkflashfs */
 extern u32 flashimglen;
 extern uchar *flashfsbase;	/* os/inferno/port/devflashfs.c */
@@ -33,6 +34,13 @@ archreset(void)
 	 * here.  A real board's archreset is where its clocks are set up;
 	 * see os/inferno/teensy41/archteensy41.c.
 	 */
+
+	/*
+	 * And what hardware the PyCubed device has behind it: none, on
+	 * this board.  os/inferno/mps2/pycubednone.c says so on every
+	 * reading it invents.
+	 */
+	pycubedhwinit();
 
 	/*
 	 * Where the flash file system is.  This board has no flash, so

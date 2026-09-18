@@ -37,15 +37,11 @@ init()
 	sys->bind("#t", "/dev", sys->MAFTER);
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 
-	# The hardware files first: on this board nothing serves them, so
-	# appl/pycubed/hwsim.b does and says so.  A board with the parts
-	# has a C device instead and this spawn goes away.
-	sim := load Mission "/dis/pycubed/hwsim.dis";
-	if(sim == nil){
-		sys->print("init: load hwsim: %r\n");
-		exit;
-	}
-	sim->init(nil, "hwsim" :: nil);
+	# The PyCubed sensors and radio, as files: os/inferno/port/
+	# devpycubed.c.  A board whose kernel does not carry the device,
+	# or carries it with no backend, fails this bind and the mission
+	# then says which file it could not open.
+	sys->bind("#H", "/dev", sys->MAFTER);
 
 	mission = load Mission "/dis/pycubed/beepsat.dis";
 	if(mission == nil){
