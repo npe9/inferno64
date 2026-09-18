@@ -250,11 +250,25 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 
 	if(devname != nil){
+		#
+		# Timed, because this is where the boot goes.  The Pi has
+		# taken between 8.7 and 95.2 seconds to reach the line
+		# below, and the init check that waits for it has now been
+		# given the wrong deadline twice on the strength of a
+		# guess.  There is no sleep in here: it is all control
+		# transfers to the chip's registers, so the number is a
+		# measurement of the host controller's control path on
+		# this silicon, and it belongs on the console rather than
+		# in somebody's head.
+		#
+		t0 := sys->millisec();
 		err := devsetup(devname, macarg != nil);
 		if(err != nil){
 			sys->print("ETHERUSB-FAIL %s: %s\n", devname, err);
 			return;
 		}
+		sys->print("ETHERUSB-SETUP %d ms for %s\n",
+			sys->millisec()-t0, devname);
 	}
 
 	conns = array[16] of ref Conn;

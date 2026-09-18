@@ -3744,6 +3744,36 @@ the one path that runs before anything else works.  With the fix and the
 same measurement, the PL011 port takes nothing at all and the banner is
 the mini UART's first line.
 .NH 2
+The ethernet's start-up time is the boot's, and it is not a constant
+.PP
+.CW ETHERUSB-SETUP
+now times the chip set-up, and the init check prints how long it waited.
+Measured on the board:
+.CW "ETHERUSB-SETUP 10380 ms"
+with the check waiting 11000, and on other boots 8700, 9200, 12300 and
+one over 95000.  There is no sleep anywhere in that path \(em it is all
+control transfers to the LAN9514's registers \(em so what varies is the
+host controller's control path on this silicon, and that is where the
+next look belongs.
+.PP
+It cost two wrong guesses first.  Ten seconds: the board printed
+.CW ETHER-NONE
+and
+.I etherusb
+served immediately afterwards, and with no
+.CW /net
+bound that whole boot had no network, no
+.I kupdate ,
+and nothing to reach the board by but the console.  Sixty seconds: the
+same thing again.  The check now waits as long as usbd's
+.CW ctl
+file says there is an adapter to wait for, and gives up at once when
+there is not \(em which is every QEMU boot, so the marker suite still
+sees
+.CW ETHER-NONE
+promptly.  A deadline on hardware whose timing has not been measured is
+a guess, and this one was wrong twice in the same afternoon.
+.NH 2
 Suggested order
 .PP
 The transmit-queue fix is confirmed on the board and kernel updates
