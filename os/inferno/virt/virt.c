@@ -124,5 +124,6 @@ void (*ipprotoinit[])(Fs*) = {
 	int cflag = 0;
 	int consoleprint = 1;
 	int panicreset = 0;
+Xipmod *xipmods = nil;
 char* conffile = "virt";
 u32 kerndate = KERNDATE;
