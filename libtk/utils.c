@@ -1415,8 +1415,8 @@ tkstringsize(Tk *tk, char *text)
 	return p;	
 }
 
-static void
-tkulall(Image *i, Point o, Image *col, Font *f, char *text)
+static Rectangle
+tkulallrect(Point o, Font *f, char *text)
 {
 	Rectangle r;
 
@@ -1424,11 +1424,11 @@ tkulall(Image *i, Point o, Image *col, Font *f, char *text)
 	r.max = addpt(r.max, o);
 	r.min.x = o.x;
 	r.min.y = r.max.y - 1;
-	draw(i, r, col, nil, ZP);	
+	return r;
 }
 
-static void
-tkul(Image *i, Point o, Image *col, int ul, Font *f, char *text)
+static Rectangle
+tkulrect(Point o, int ul, Font *f, char *text)
 {
 	char c, *v;
 	Rectangle r;
@@ -1443,15 +1443,29 @@ tkul(Image *i, Point o, Image *col, int ul, Font *f, char *text)
 	r.min.x = r.max.x - r.min.x;
 	r.min.y = r.max.y - 1;
 	r.max.y++;
-	draw(i, r, col, nil, ZP);	
+	return r;
 }
 
-void
-tkdrawstring(Tk *tk, Image *i, Point o, char *text, int ul, Image *col, int j)
+/*
+ * A label's text, line by line, into an image or into a scene.
+ *
+ * One function for both because every number in it - where a line
+ * starts once the justification has shifted it, where the underline
+ * rule goes, how far down the next line is - is a number the two paths
+ * have to agree about exactly.  Written twice they would agree until
+ * somebody changed one, and the identity check would then report a
+ * transcription slip as a renderer fault.  The same argument as
+ * tkselrects() in the entry.
+ *
+ * Nothing here is new to the node vocabulary: a line is a TkNglyphs and
+ * the underline is a filled rectangle, which is a TkNcolour.
+ */
+static void
+drawstring(Tk *tk, Image *i, TkScene *sc, Point o, char *text, int ul, Image *col, ulong rgba, int j)
 {
 	int n, l, maxl, sox;
 	char *q, *txt;
-	Point p;
+	Rectangle r;
 	TkEnv *e;
 
 	e = tk->env;
@@ -1485,17 +1499,27 @@ tkdrawstring(Tk *tk, Image *i, Point o, char *text, int ul, Image *col, int j)
 			else
 				o.x += maxl-l;
 		}
-		p = string(i, o, col, o, e->font, text);
+		if(sc != nil)
+			tkscenetext(sc, o, text, e->font, rgba);
+		else
+			string(i, o, col, o, e->font, text);
 		if(ul >= 0) {
 			n = strlen(text);
+			r = Rect(0, 0, 0, 0);
 			if(ul < n) {
-				tkul(i, o, col, ul, e->font, text);
+				r = tkulrect(o, ul, e->font, text);
 				ul = -1;
 			} else if(ul == n) {
-				tkulall(i, o, col, e->font, text);
+				r = tkulallrect(o, e->font, text);
 				ul = -1;
 			} else
 				ul -= n;
+			if(Dx(r) > 0 && Dy(r) > 0){
+				if(sc != nil)
+					tkscenecolour(sc, r, rgba);
+				else
+					draw(i, r, col, nil, ZP);
+			}
 		}
 		o.y += e->font->height;
 		if(q == nil)
@@ -1503,6 +1527,18 @@ tkdrawstring(Tk *tk, Image *i, Point o, char *text, int ul, Image *col, int j)
 		text = q+1;
 		*q = '\n';
 	}
+}
+
+void
+tkdrawstring(Tk *tk, Image *i, Point o, char *text, int ul, Image *col, int j)
+{
+	drawstring(tk, i, nil, o, text, ul, col, 0, j);
+}
+
+void
+tkscenestring(TkScene *sc, Tk *tk, Point o, char *text, int ul, ulong rgba, int j)
+{
+	drawstring(tk, nil, sc, o, text, ul, nil, rgba, j);
 }
 
 /* for debugging */

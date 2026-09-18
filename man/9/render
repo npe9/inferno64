@@ -76,6 +76,7 @@ in either orientation, a
 .IR scrollbar (9),
 and a
 .IR label (9),
+several lines, an underline and a justification included,
 which is the widget there are most of and which brings
 .IR menubutton (9)
 and

@@ -1024,11 +1024,31 @@ there was never speed on the table here anyway.
    against the pane passed while the scrollbars were 886 by −14.
 
    Still drawn through a scratch image: a `cascade`, whose arrow is
-   `tktriangle()`; a button, radiobutton, checkbutton or label with an
-   image, a bitmap, several lines, an underline or text that is not
-   left-justified; and a `text`, a `canvas`, a `panel` and a `menu`,
-   which paint into the window directly. An `entry` no longer needs an
-   exception at all.
+   `tktriangle()`; a button, radiobutton, checkbutton or label carrying
+   an image or a bitmap, which want a texture node; and a `text`, a
+   `canvas`, a `panel` and a `menu`, which paint into the window
+   directly. Neither an `entry` nor a `label` needs an exception for
+   anything it does with text any more.
+
+   **A label's remaining three cases went the same way as the entry's,
+   and for the same reason.** Several lines, an underline and a
+   justification are not new node types — a line is a `TkNglyphs` and
+   the underline rule is a filled rectangle — so all that was needed
+   was for both paths to lay them out identically, which they now do
+   because `tkdrawstring()` and `tkscenestring()` are one function with
+   two tails. Four controls, each on the node side only: every line
+   shifted a pixel, 46902 bytes; the underline rule shifted a pixel,
+   144; the justification ignored, 8172; all but the first line
+   dropped, 14526.
+
+   That last one was clean the first time it was run, and the reason is
+   worth keeping. The layout walks the caller's string by writing a
+   `\0` over each newline and putting it back afterwards; a
+   perturbation that broke out of the loop early skipped the putting
+   back, so the label's text stayed truncated and the *draw()* path
+   drew one line too. Both paths agreed, and the check passed. A
+   perturbation has to be on the side under test — and a perturbation
+   that corrupts shared state is not on either side.
 
    **Sharing the geometry turned up a defect neither path could see.**
    `entrysel()`, which is the old selection arithmetic moved somewhere

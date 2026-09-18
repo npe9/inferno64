@@ -300,16 +300,17 @@ tkdrawlabel(Tk *tk, Point orig)
 	 * tkitmp() for the scratch is what says a widget is about to paint
 	 * into the window itself.
 	 *
-	 * The exclusions are the ones that have no nodes: an image or a
-	 * bitmap, a run that does not reduce to one string(), and a cascade,
-	 * whose arrow tktriangle() draws.  This draw is shared with
-	 * menubutton and choicebutton, so those come with it.
+	 * The exclusions are what still has no nodes: an image or a bitmap,
+	 * which want a texture node, and a cascade, whose arrow tktriangle()
+	 * draws.  Several lines, an underline and a justification are NOT
+	 * among them any more - tkscenestring() lays those out from the same
+	 * code tkdrawstring() uses, a line to a glyph node and the underline
+	 * rule as a filled rectangle.  This draw is shared with menubutton
+	 * and choicebutton, so those come with it.
 	 */
 	lsc = nil;
 	if(tkviascene && tkstyleflat(tk) && tk->type != TKcascade
-	&& tkl->img == nil && tkl->bitmap == nil && tkl->text != nil
-	&& tkl->justify == Tkleft && tkl->ul < 0
-	&& strchr(tkl->text, '\n') == nil)
+	&& tkl->img == nil && tkl->bitmap == nil && tkl->text != nil)
 		lsc = tkwalkjoin(e->top->ctxt, dst);
 	if(lsc != nil){
 		Rectangle dr;
@@ -376,28 +377,27 @@ tkdrawlabel(Tk *tk, Point orig)
 		
 		p.y += (h - tkl->textheight) / 2;
 		/*
-		 * Through a node when the run is the simple one - left
-		 * justified, one line, no underline - because that is what
-		 * reduces to a single string() and so is what a text node can
-		 * be shown to reproduce exactly.  Everything else keeps
-		 * tkdrawstring(), which lays out lines and draws the underline
-		 * rule, and which a node cannot describe until it can carry
-		 * positioned glyphs rather than a string and a font.
+		 * Whatever the run is.  tkscenestring() and tkdrawstring()
+		 * are the same layout code, so a label of three centred lines
+		 * with an underline under one of them is as describable as a
+		 * one-word left-justified one.
 		 *
-		 * So a scene is still not a complete description of a label.
-		 * It is a complete description of the common one.
+		 * The middle branch is for a label that is NOT a scene as a
+		 * whole - a cascade, or one carrying an image - whose text
+		 * still goes through the node path, into a scene of its own
+		 * rendered straight into the scratch.  It keeps the text node
+		 * exercised on a widget the walk cannot take.
 		 */
 		if(lsc != nil)
-			tkscenetext(lsc, addpt(u, p), tkl->text, e->font,
-				e->colors[fgnd]);
-		else if(tkviascene && tkl->justify == Tkleft && tkl->ul < 0
-		&& strchr(tkl->text, '\n') == nil){
+			tkscenestring(lsc, tk, addpt(u, p), tkl->text,
+				tkl->ul, e->colors[fgnd], tkl->justify);
+		else if(tkviascene){
 			TkScene *ts;
 
 			ts = tkscenenew();
 			if(ts != nil){
-				tkscenetext(ts, addpt(u, p), tkl->text,
-					e->font, e->colors[fgnd]);
+				tkscenestring(ts, tk, addpt(u, p), tkl->text,
+					tkl->ul, e->colors[fgnd], tkl->justify);
 				tkscenerender(ts, e->top->ctxt, i);
 				tkscenefree(ts);
 			}else

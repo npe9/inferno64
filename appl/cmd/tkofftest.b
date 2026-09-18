@@ -58,7 +58,7 @@ Tkofftest: module
 };
 
 W: con 900;			# room for the widest widget at the largest font,
-H: con 1120;			# so that packing is never what clamps a measurement
+H: con 1340;			# so that packing is never what clamps a measurement
 				#
 				# H was 700 until the render-node pane grew: a
 				# widget packed past the bottom is never drawn,
@@ -1338,6 +1338,22 @@ checkscene()
 	# node is never reached, and a control that perturbs it passes for
 	# that reason rather than because it is right.
 	tk->cmd(top, "label .t -text {Handgloves 123}");
+	# The three things a label can do that a single string() cannot:
+	# several lines, an underline, and a justification that is not left.
+	# Each is laid out by the same code in both paths now, and none of
+	# them is reached by a one-word left-justified label.
+	must(top, "label .tm -text {two lines\nof handgloves}");
+	tk->cmd(top, "pack .tm -padx 6 -pady 6");
+	must(top, "label .tu -text {Underlined} -underline 3");
+	tk->cmd(top, "pack .tu -padx 6 -pady 6");
+	# Centred AND several lines: the justification does nothing to a
+	# single line, because there is no longest line for it to measure
+	# against, so a one-line centred label would leave the arithmetic
+	# that matters untouched.
+	must(top, "label .tc -text {centred\nover two lines} -justify center");
+	tk->cmd(top, "pack .tc -padx 6 -pady 6");
+	must(top, "label .tr -text {ranged\nright} -justify right");
+	tk->cmd(top, "pack .tr -padx 6 -pady 6");
 	tk->cmd(top, "pack .t -padx 6 -pady 6");
 	tk->cmd(top, "pack .f -padx 6 -pady 6");
 	tk->cmd(top, "pack .b -padx 6 -pady 6");
