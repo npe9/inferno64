@@ -139,7 +139,24 @@ tkdrawframe(Tk *tk, Point orig)
 		 * the size of the widget, allocated, filled and blitted every
 		 * repaint, and a frame is usually the size of the window.
 		 */
-		{
+		/*
+		 * The MEND, and only when there is a corner to mend.
+		 *
+		 * The rounded fill below leaves the corner pixels alone, so
+		 * what is behind them has to be painted first or they keep
+		 * whatever was there.  With a radius of ZERO it leaves
+		 * nothing alone: it covers every pixel of framebox, which
+		 * contains fr, so this fill is overwritten in its entirety.
+		 *
+		 * That is not a small waste.  A frame with no border is the
+		 * commonest widget in a window and is usually the size of
+		 * the window, so this was a second full-window fill on every
+		 * repaint - and it is the whole of the fixed-cost gap that
+		 * tkbench(1) has been reporting: an empty toplevel is one
+		 * tree of exactly two nodes, TkNcolour then TkNroundfill,
+		 * both 900x700, against a direct path that fills once.
+		 */
+		if(tkscenecorner(tk, tk->relief) > 0){
 			Rectangle fr;
 
 			fr = rectaddpt(tk->dirty, p);
