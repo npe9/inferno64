@@ -3625,6 +3625,95 @@ in place gave that up.  And
 is not a read-back: the length it prints is the directory entry, which
 is the field most likely to be the wrong one.
 .NH 2
+The rename that emptied a kernel, and why the board was dark
+.PP
+Twice the board went dark after a reboot and came up perfectly from
+cold, and twice that was read as a peripheral a cold start
+power-cycles.  It was not.
+.CW fsck
+on the card said it in one line:
+.CW "/KERNEL8.IMG has too many clusters allocated (logical=0, physical=1795584)"
+\(em the kernel's directory entry had the whole chain and a length of
+zero, and a kernel of zero bytes is one the firmware will not load.
+.CW KERNEL8.BAK
+had a length of 4177531875.
+.I Kupdate
+renames
+.CW kernel8.img
+to
+.CW kernel8.bak
+and
+.CW kernel8.new
+to
+.CW kernel8.img
+on every update, so the board emptied its own kernel every time it
+updated itself.
+.PP
+.B "The cause is one line, and it is in Limbo's semantics."
+.CW Dosdir.arr2Dd
+builds a
+.CW Dosdir
+whose
+.CW reserved ,
+.CW time ,
+.CW date ,
+.CW start
+and
+.CW length
+are
+.I slices
+of the sector it was read from, and a Limbo slice shares the array it
+is taken from.  A
+.CW Dosdir
+is therefore a window on a buffer, not a copy of an entry, and it is
+only valid while that buffer holds that sector.
+.CW Rwstat
+took the length from the old entry and then, before writing it into the
+new one, released the file, removed the old entry and searched the
+directory for a slot \(em and that search is what hands the buffer to
+another sector.  The four bytes written into the new entry were whatever
+had landed there.
+.PP
+.B "Which is why nothing on the host could see it."
+On a small filesystem the search touches few sectors, the buffer
+survives, and the window still shows the right bytes.
+.I Fatstress
+passed on FAT16, on FAT32 with 512-byte clusters and files above cluster
+65535, and on FAT32 with 4KB clusters, while the board failed the same
+rename on every boot.  What it takes is a root directory long enough for
+the search to recycle the buffer: an image built like the Pi's own boot
+partition \(em sixty long-named files and a hundred-odd megabytes in
+them \(em fails against the old server and passes against the fixed one,
+and that image is now the fourth case in
+.CW tests/dossrv-stress.sh .
+.PP
+The fix is to copy the four bytes.  Making
+.CW arr2Dd
+copy everything was tried first and is wrong: the window is depended on
+\(em a
+.CW Dosptr
+caches its entry in
+.CW .d
+and expects it to track the buffer, and
+.I rcreate
+stamps the parent directory's time through the window and only marks the
+sector modified.  With the copy in place the files came back with no
+clusters at all.  So the copy is where the value outlives the sector,
+and what
+.CW arr2Dd
+returns is documented as what it is.
+.PP
+.B "A correction to the commit before it."
+The USB controller's
+.CW shutdown
+hook was
+.CW USED(hp) ,
+and it now quiesces the core before the machine resets \(em masking
+interrupts, halting every channel, dropping port power and resetting the
+core \(em because the PM watchdog resets the ARM and leaves the
+peripherals bus-mastering into RAM.  That is worth doing and it is not
+why the board was dark.  The commit that made it said it was.
+.NH 2
 Why the mini UART looked slow to come up
 .PP
 It did not.  Everything the kernel printed before

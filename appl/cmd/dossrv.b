@@ -605,7 +605,7 @@ rcreate(t: ref Tmsg.Create): ref Rmsg
 
 	 # now we're committed
 	if(pd != nil) {
-		puttime(pd);
+		puttime(pd);		# through the window; see Dosdir.arr2Dd
 		pdp.p.flags |= BMOD;
 	}
 
@@ -996,7 +996,18 @@ rwstat(t: ref Tmsg.Wstat): ref Rmsg
 #		od := *d;
 		# start := getstart(f.xf, d);
 		start := getstart(f.xf, d);
-		length := d.length;
+		#
+		# A copy of the length, not the entry's own four bytes.
+		# d is a window on the sector (Dosdir.arr2Dd), and this
+		# value is carried across putfile, doremove and a
+		# searchdir -- any of which can hand that buffer to
+		# another sector.  Held as a slice, the length written
+		# into the new entry was whatever had landed there: zero
+		# for the Pi's kernel8.img, 176168 for a 29-byte file in
+		# the stress test.
+		#
+		length := array[4] of byte;
+		length[0:] = d.length[0:4];
 		attr := d.attr;
 
 		#
@@ -2891,6 +2902,25 @@ Dosboot.arr2Db(arr: array of byte): ref Dosboot
 	return db;
 }
 
+#
+# The result is a window on the sector, not a copy.
+#
+# reserved, time, date, start and length are slices of arr, which is a
+# slice of a sector in the buffer cache, and a Limbo slice shares the
+# array it is taken from.  That is deliberate and it is depended on: a
+# Dosptr caches its entry in .d and expects it to track the buffer, and
+# rcreate stamps the parent directory's time through the window and only
+# marks the sector modified.  Making this copy instead breaks both, in
+# silence -- tried, and the files came back with no clusters.
+#
+# What it costs is that a Dosdir is only valid while its sector is held.
+# Carry one of these fields past a putsect and it is four bytes of
+# whatever sector next takes the buffer.  rwstat did exactly that with
+# the length, and the Pi renamed kernel8.img to kernel8.bak on every
+# kernel update and got a zero-length file back -- a kernel the firmware
+# will not load, and a board dark after a reboot, twice.  See the copy
+# there.
+#
 Dosdir.arr2Dd(arr: array of byte): ref Dosdir
 {
 	dir := ref Dosdir;

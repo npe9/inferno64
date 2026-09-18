@@ -42,6 +42,45 @@ chmod 777 "$ROOT/n/t" "$ROOT/tmp"
 
 status=0
 
+#
+# A filesystem shaped like the Pi's own boot partition: a root directory
+# of sixty long-named files and a hundred-odd megabytes in them.
+#
+# This is not decoration.  Every empty image above passes against a
+# dossrv that renames a file into a zero-length entry on the board --
+# the length is read back out of the sector buffer long after the
+# sector has been handed to something else, and on a filesystem small
+# enough that the buffer survives, nothing shows.  It takes a root
+# directory long enough for the search to recycle that buffer.  Checked
+# both ways: this case fails against the server before the fix and
+# passes after it.
+#
+mkbusy() {	# $1 image
+	rm -f "$1"
+	dd if=/dev/zero of="$1" bs=1048576 count=0 seek=512 2>/dev/null
+	dev=`hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount "$1" | awk '{print $1; exit}'`
+	[ -n "$dev" ] || { echo "dossrv-stress: cannot attach $1" >&2; exit 2; }
+	newfs_msdos -F 32 -c 1 -v BOOTFS "$dev" >/dev/null 2>&1 ||
+		{ hdiutil detach "$dev" >/dev/null 2>&1; echo "dossrv-stress: newfs $1" >&2; exit 2; }
+	mnt="$OUT/busy"
+	mkdir -p "$mnt"
+	diskutil mount -mountPoint "$mnt" "$dev" >/dev/null
+	i=0
+	while [ $i -lt 60 ]; do
+		dd if=/dev/zero of="$mnt/bcm2710-rpi-firmware-blob-$i.dtb" bs=32768 count=1 2>/dev/null
+		i=`expr $i + 1`
+	done
+	dd if=/dev/zero of="$mnt/start.elf" bs=1048576 count=3 2>/dev/null
+	dd if=/dev/zero of="$mnt/start4x.elf" bs=1048576 count=3 2>/dev/null
+	dd if=/dev/zero of="$mnt/kernel8.img" bs=1048576 count=2 2>/dev/null
+	dd if=/dev/zero of="$mnt/filler.bin" bs=1048576 count=100 2>/dev/null
+	mkdir -p "$mnt/overlays"
+	dd if=/dev/zero of="$mnt/overlays/an-overlay-file.dtbo" bs=4096 count=1 2>/dev/null
+	diskutil unmount "$mnt" >/dev/null
+	hdiutil detach "$dev" >/dev/null 2>&1
+	chmod 666 "$1"
+}
+
 mkfs() {	# $1 image, $2 MB, $3 fat bits, $4 sectors/cluster, $5 filler MB
 	rm -f "$1"
 	dd if=/dev/zero of="$1" bs=1048576 count=0 seek=$2 2>/dev/null
@@ -60,8 +99,13 @@ mkfs() {	# $1 image, $2 MB, $3 fat bits, $4 sectors/cluster, $5 filler MB
 }
 
 run() {		# $1 name, $2 image, $3 MB, $4 fat bits, $5 spc, $6 filler
+	if [ "$1" = busy ]; then
+		echo "=== busy (FAT32, 512-byte clusters, a Pi boot partition's shape)"
+		mkbusy "$ROOT/tmp/stress.img"
+	else
 	echo "=== $1 (FAT$4, $5 sector(s) per cluster, ${6:-0}MB filler)"
 	mkfs "$ROOT/tmp/stress.img" $3 $4 $5 "$6"
+	fi
 	chmod 666 "$ROOT/tmp/stress.img"
 	cat > "$ROOT/tmp/stress.sh" <<SH
 load std
@@ -77,7 +121,10 @@ SH
 	"$EMU" -r "$ROOT" sh /tmp/stress.sh > "$OUT/$1.log" 2>&1 &
 	emupid=$!
 	i=0
-	while [ $i -lt ${WAIT:-150} ]; do
+	# 150 was too short once the rename-while-open case joined: the
+	# fat32 image reached round 2 of 4 and the harness killed it,
+	# which reads exactly like a server that hung.
+	while [ $i -lt ${WAIT:-600} ]; do
 		grep -q 'FATSTRESS-' "$OUT/$1.log" 2>/dev/null && break
 		kill -0 $emupid 2>/dev/null || break
 		sleep 1
@@ -111,6 +158,7 @@ run fat32 "$ROOT/tmp/stress.img" 64 32 1 34
 # 512MB, not 256: with 4KB clusters a 256MB filesystem has just under
 # the 65525 clusters that make it FAT32, and newfs_msdos refuses it
 run fat32b "$ROOT/tmp/stress.img" 512 32 8 0
+run busy "$ROOT/tmp/stress.img" 512 32 1 0
 
 rm -f "$ROOT/tmp/stress.img" "$ROOT/tmp/stress.sh"
 if [ $status = 0 ]; then

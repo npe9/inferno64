@@ -191,6 +191,8 @@ btinit(void)
 	uchar buf[16];
 	int i, n;
 
+	n = 0;
+
 	/*
 	 * Each step says it has been reached before it is taken, with
 	 * iprint, which writes the UART itself rather than queueing:
@@ -226,8 +228,9 @@ btinit(void)
 	for(i = 0; i < 1024; i++){
 		if(csr32r(UartFR) & UartFRRXFE)
 			break;
-		csr32r(UartDR);
+		n = csr32r(UartDR);	/* read to discard */
 	}
+	USED(n);
 
 	iprint("bt: reset\n");
 	btput(reset, sizeof reset);
