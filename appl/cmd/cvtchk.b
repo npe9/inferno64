@@ -37,7 +37,12 @@ init(nil: ref Draw->Context, nil: list of string)
 	say("LIT-ZERO", z == 0.0);
 	say("LIT-ONE", 1.0 == 1.0/1.0);
 
+	# Bisection: is the conversion result wrong, or is it wrong only
+	# once it has been through a frame slot?
 	i := 3;
+	say("IMM-CMP", real i == 3.0);		# result used at once
+	sys->print("IMM-TRUNC %d want 3\n", int (real i));
+
 	r := real i;			# CVTWF
 	say("R-SELF", r == r);		# a NaN fails this; garbage shows up here
 	sys->print("R-TRUNC %d want 3\n", int r);
