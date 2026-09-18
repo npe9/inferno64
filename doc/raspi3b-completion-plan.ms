@@ -3589,27 +3589,30 @@ QEMU boot.  It does not load
 a cold controller answers Reset and the vendor download commands and
 refuses much else, so
 .CW BT-OK
-would mean a controller talking and not a usable radio.
+means a controller talking and not yet a usable radio.
 .PP
-.B "None of it has run on the board."
-The kernel carrying it was copied onto the card by the board itself,
-over Styx, with
-.CW "cat > /n/dos/kernel8.img"
-\(em and the board has not come back.  The copy went through the
-dossrv the board was running, which is the one
-.I without
-today's fixes, on a boot that had already printed
-.CW "phase error -- directory entry not found"
-from the FAT check.  So there are two candidates and they are told
-apart by looking rather than by guessing: the image boots under QEMU
-from the same file that was installed, so before anything is repaired
-the card gets
-.CW "fsck_msdos -n"
-and the installed
-.CW kernel8.img
-gets
+.B "It runs on the board."
+.CW BT-OK :
+HCI Reset sent on the raw PL011 and the Command Complete read back, on
+silicon.  Getting there meant giving something up.  This firmware sets
+the response word's top bit for the get (0x80000008) and not for either
+set (0x18, 0x8), while the get reports BT_ON already at 1 \(em so the
+radio is powered and the bit says nothing useful about it.  Refusing on
+that bit was the only thing in the way; the kernel now asks, prints what
+the firmware answered, and lets the controller judge.
+.PP
+.B "What was written here first, and was wrong."
+When the board went dark after a kernel was copied onto its card, this
+said the copy was the suspect and the card had to be looked at before
+anything was repaired.  The looking was right and the suspicion was
+not: the installed image booted under QEMU from the same file, the
+board's own later copy of a spare kernel was
 .CW cmp 'd
-against the build.
+byte for byte against its source and matched, and every firmware file
+on the card md5'd equal to the upstream Raspberry Pi firmware.  The
+card was damaged, and repairing it was worth doing, but the damage was
+not why the board was dark.  A rename that wrote a zero length was.
+See the chapter above.
 .PP
 Two lessons already banked.
 .CW kupdate()

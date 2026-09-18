@@ -1111,7 +1111,18 @@ usbcheck()
 
 ethercheck()
 {
-	etherone("ether", "ETHER", 100, nil, nil, nil);
+	#
+	# Sixty seconds, not ten.  This waits for usbd to enumerate the
+	# hub and the NIC behind it and for etherusb to serve its
+	# directory, and on a boot where the SD checks and kfs are
+	# running at the same time that took longer than ten: the board
+	# printed ETHER-NONE while etherusb was up and talking to the
+	# chip, and with no /net bound the whole boot had no network --
+	# no kupdate, and no way to reach the board but the console.
+	# There is nothing to lose by waiting: this runs in its own
+	# process, and a board with no adapter waits alone.
+	#
+	etherone("ether", "ETHER", 600, nil, nil, nil);
 
 	# A second adapter, if there is one.  usbd names the first netif
 	# directory "ether" and the rest "ether1", "ether2", so a board
@@ -1136,9 +1147,12 @@ etherone(ifname, tag: string, tries: int, ip, mask, gw: string)
 		sys->sleep(100);
 	}
 	if(sys->open(addr, Sys->OREAD) == nil){
-		sys->print("%s-NONE (no USB ethernet served at %s)\n", tag, addr);
+		sys->print("%s-NONE (no USB ethernet served at %s after %d ms)\n",
+			tag, addr, tries*100);
 		return;
 	}
+	if(i > 0)
+		sys->print("%s-WAITED %d ms for %s\n", tag, i*100, addr);
 	sys->bind("#I", "/net", Sys->MAFTER);
 	# The fd returned by opening the clone file IS the interface: when the
 	# last reference to it goes, devip unbinds the ether and the address

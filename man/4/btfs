@@ -870,11 +870,17 @@ which is every QEMU
 .B raspi3b
 boot, since the model has no radio.
 .PP
-None of this has been seen to work on silicon yet.  What is
-demonstrated is the QEMU half:
-.B BT-NONE
-on a model with no radio.  The board it was written for has not yet
-booted a kernel carrying it.
+The board prints
+.B BT-OK
+and the controller answers, on silicon: HCI Reset sent on the raw
+PL011 at 115200 and the Command Complete read back.
+.PP
+One thing had to be given up to get there.  This firmware sets the top
+bit of the response word for the get (0x80000008) and not for either
+set (0x18 and 0x8), while the get reports the line already at 1 \- so
+the radio is powered and the bit says nothing useful.  Refusing to go
+on because of it was the only thing in the way.  The kernel now asks,
+prints what the firmware said, and lets the controller be the judge.
 .PP
 It does not load the controller's patch firmware
 .RB ( BCM4345C0.hcd ,

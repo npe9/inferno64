@@ -171,11 +171,17 @@ radioon(void)
 	resp = 0;
 	r = mboxtag(Tagsetstate, v, 2, 2, &resp);
 	iprint("bt: set state -> %d resp %#ux\n", r, resp);
-	if(r < 0 || (resp & 0x80000000) == 0){
-		print("BT-FAIL firmware refused BT_ON (expander pin %d, resp %#ux)\n",
-			Btonpin, resp);
-		return -1;
-	}
+	/*
+	 * And on, whatever it answered.
+	 *
+	 * This board's firmware sets the top bit of the response word for
+	 * the get (0x80000008) and not for either set (0x18, 0x8), and the
+	 * get reports the line already at 1.  Refusing to go on because of
+	 * that bit is deciding, on the strength of one undocumented bit,
+	 * that a radio which may well be powered cannot be talked to.  The
+	 * controller is the better judge: it either answers HCI Reset or it
+	 * does not, and that is what the marker below reports.
+	 */
 
 	v[0] = Btonpin;
 	v[1] = 0;
