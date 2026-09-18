@@ -706,7 +706,30 @@ struct Trackslot
 	Type	**typetagp;	/* nil, or &container's current type field */
 	int	regpid;	/* currun()'s pid at registration, -1 if none */
 };
-static Trackslot track[NTRACK];
+/*
+ * Allocated on first use rather than reserved.  distrack already gates
+ * the tracker at run time, but the table sat in bss whether it ran or
+ * not: 24576 bytes on a 32-bit target, in every kernel built from this
+ * tree.  A board that sets distrack to zero in its confinit() now pays
+ * nothing for it, and pays none of checktracked()'s sweep of all NTRACK
+ * slots after every Dis instruction either.
+ */
+static Trackslot *track;
+
+static int
+trackon(void)
+{
+	if(track != nil)
+		return 1;
+	if(!distrack)
+		return 0;
+	track = malloc(NTRACK*sizeof(Trackslot));
+	if(track == nil){
+		distrack = 0;		/* do not keep asking */
+		return 0;
+	}
+	return 1;
+}
 
 /* set by xec()'s dispatch loop just before optab[op]() runs */
 Modlink	*trackM;
@@ -743,7 +766,7 @@ trackclear(void *base, long size)
 	int i;
 	uintptr lo, hi;
 
-	if(!distrack)
+	if(!distrack || track == nil)
 		return;
 	lo = (uintptr)base;
 	hi = lo + size;
@@ -761,7 +784,7 @@ trackreg(uintptr *addr, Type *t, void *obj, Type **typetagp)
 	int i, start, pid;
 	Prog *pr;
 
-	if(!distrack)
+	if(!trackon())
 		return;
 	pr = currun();
 	pid = pr != nil ? pr->pid : -1;
@@ -795,7 +818,7 @@ checktracked(void)
 	uintptr v;
 	Type *t;
 
-	if(!distrack)
+	if(!distrack || track == nil)
 		return;
 	for(i = 0; i < NTRACK; i++){
 		if(track[i].addr == nil)

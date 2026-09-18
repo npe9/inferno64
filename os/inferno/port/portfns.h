@@ -402,3 +402,4 @@ u32		µs(void);
 long		lcycles(void);
 
 extern int	freehistsize;	/* ../port/alloc.c: 0 turns the ring off */
+extern int	distrack;	/* libinterp/heap.c: 0 turns the Dis heap tracker off */

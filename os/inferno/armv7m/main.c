@@ -115,6 +115,15 @@ main(void)
 	 */
 	freehistsize = 0;
 
+	/*
+	 * And no Dis heap tracker.  distrack already gates it, but it also
+	 * costs 24576 bytes of table and a sweep of all of it after every
+	 * Dis instruction (libinterp/heap.c:/^checktracked), which is a
+	 * price a 120MHz part with a couple of hundred kilobytes of SRAM
+	 * should not pay for another board's allocator hunt.
+	 */
+	distrack = 0;
+
 	serialputs("Inferno/", -1);
 	serialputs(CONFNAME, -1);
 	serialputs("\n", -1);
