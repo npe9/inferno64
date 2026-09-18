@@ -65,4 +65,56 @@ try() {			# try compiler objtype policyheaders [libraryheaders]
 
 try 8c 386 "$ROOT/Inferno/386/include" "$ROOT/9front/386/include"
 try kc riscv64 "$ROOT/Inferno/riscv64/include"
+
+# And 9front's libc itself for 386, which is the piece a personality on
+# that object type would stand on.  All 196 portable files compile; what
+# the machine directory owes - the twenty-one system-call stubs, _tas,
+# the 64-bit arithmetic, argv0 and _tos - is written or already in the
+# tree, and os/osprey/cmd/p9/build9front386.sh puts them together.  The
+# claim checked here is that the archive builds and that an ordinary
+# program links against it: print, open, seek and exits, which reach
+# fmt, the stubs and the vlong wrapper between them.  It does not say
+# the program runs - there is no 386 personality to run it on, which is
+# the piece after this one.
+libc386() {
+	out=$TMP/libc386.log
+	: >"$out"
+	if sh "$ROOT/os/osprey/cmd/p9/build9front386.sh" >>"$out" 2>&1; then
+		cat > "$TMP/l.c" <<'EOF'
+#include <u.h>
+#include <libc.h>
+
+void
+main(int argc, char **argv)
+{
+	int fd;
+	char buf[64];
+
+	USED(argc); USED(argv);
+	print("hello from a 386 program: argv0 %s\n", argv0 ? argv0 : "none");
+	fd = open("/dev/null", OREAD);
+	snprint(buf, sizeof buf, "fd %d, seek %lld", fd, seek(fd, 0, 2));
+	print("%s\n", buf);
+	exits(nil);
+}
+EOF
+		INC="-I$ROOT/9front/src/include -I$ROOT/9front/386/include"
+		8c $INC -o "$TMP/l.8" "$TMP/l.c" >>"$out" 2>&1 &&
+		8c $INC -o "$TMP/i.8" "$ROOT/os/osprey/pc/init9main.c" >>"$out" 2>&1 &&
+		8c $INC -o "$TMP/t.8" "$ROOT/os/osprey/pc/init9tos.c" >>"$out" 2>&1 &&
+		8l -l -o "$TMP/l.out" "$TMP/i.8" "$TMP/t.8" "$TMP/l.8" \
+			"$ROOT/9front/386/lib-src/libc9.a" >>"$out" 2>&1 || true
+	fi
+	# a 386 Plan 9 a.out, entered past its 32-byte header
+	if [ -s "$TMP/l.out" ] &&
+	   [ "`od -A n -t x1 -N 4 < "$TMP/l.out" | tr -d ' '`" = "000001eb" ]; then
+		echo "ok   9front's libc builds for 386 and an ordinary program links against it"
+	else
+		echo "FAIL 9front's libc for 386, or a program against it"
+		sed 's/^/     /' "$out"
+		bad=1
+	fi
+}
+libc386
+
 exit $bad

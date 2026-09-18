@@ -13686,6 +13686,49 @@ which is the shape
 .CW bootsys-386.s
 already has fourteen of.
 .PP
+The library is built now, and the measurement above is what it was
+built from.
+.CW os/osprey/cmd/p9/sys386.s
+is the twenty-one stubs \- the number in AX and
+.CW "INT $64" ,
+the numbers being the kernel's own table \- and the two words a machine
+directory owes libc beside them,
+.CW argv0
+and
+.CW _tos ,
+four bytes here where amd64's
+.CW argv0.s
+makes them eight.
+.CW build9front386.sh
+puts those with the 196 portable files,
+.CW _tas
+from the boot libc, libkern's 386 arithmetic, and
+.CW _seek.c
+from the amd64 directory, which is plain C: 201 members in
+.CW 9front/386/lib-src/libc9.a .
+.PP
+An ordinary program links against it \- print, open, seek and exits,
+which reach fmt, the stubs and the vlong wrapper between them \- and
+comes out a 386 a.out of 19722 bytes entered at
+.CW UTZERO+0x20 .
+That is a criterion in the portable check now, and it takes under a
+second: a clean build of the whole libc and the link is 0.9 seconds,
+which is what kencc costs.  What it does not say is that the program
+runs: there is nothing on 386 to run it on, which is the piece after
+this one.
+.PP
+One thing the build taught, and it is the sort of thing that would have
+been a bug later: a Plan 9 archive's member name is sixteen characters.
+The first version of the script named its objects
+.CW port_runestrncmp.8
+and the like, and the long ones were silently truncated \- the archive
+held 201 members and
+.CW "iar t"
+showed 177 of them with a
+.CW .8
+on the end.  The objects keep their source's own name now, as upstream's
+archive does.
+.PP
 So the library is the small half.  The personality's own three assembly
 files
 .CW ( xcall.s ,
