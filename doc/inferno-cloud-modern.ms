@@ -2686,15 +2686,19 @@ subtract and reduce;50.00 \(*ms;35.00 \(*ms
 invert;\(em;107.50 \(*ms
 .TE
 .PP
-An instance is about five times slower per operation than interpreted
-Dis on the laptop, and the two ratios that the argument rests on come
-out the same on both: a crossing costs about as much as the multiply
+An instance is four to six times slower per operation than interpreted
+Dis on the laptop \(em the range rather than a figure, because the
+laptop's own column moves by that much depending on what else it is
+running \(em and the two ratios that the argument rests on come out the
+same on both: a crossing costs about as much as the multiply
 behind it (15 \(*ms against 32.5 here), and an inversion costs 2.9
 modular multiplies.  The case against Jacobian coordinates was made on
 a laptop and holds on the hardware.
 .PP
-A P-256 verification on that instance takes 296 ms and an ECDH
-agreement 152 ms.  The before-and-after for those is the pair of
+A P-256 verification on that instance takes about 300 ms and an ECDH
+agreement about 150 (296 and 152 in the run above, one pass of five
+rather than the best of five the field costs get, so the field table
+is what carries the argument).  The before-and-after for those is the pair of
 columns above, measured in the same run on the same machine: the
 two-call spelling is what the curve code used before this change, and
 it is 40 percent dearer for a multiply and 43 percent for a subtract.
@@ -2715,9 +2719,13 @@ that the guest prints its own markers either side of the fetch:
 .PP
 0.17 s in the clear, 3.24 and 3.14 s over TLS, on the same instance to
 the same host.  So the handshake costs about three seconds of
-processor \(em a number that used to be a hundred, before the trust
-bundle and the chain walk were fixed, and which no server was willing
-to wait for.
+processor.  It is worth being careful about what that replaces: the
+hundred seconds reported earlier in this paper was the
+.I "certificate work"
+inside a handshake, timed step by step, and there was no end-to-end
+figure to compare it against because the fetch never finished \(em the
+server hung up first.  Three seconds is the first completed
+measurement of the whole thing on an instance.
 .PP
 .B "And the panics are gone on the hardware."
 .CW ipinttest (1)
