@@ -389,31 +389,81 @@ and array constants inside that 20000-byte heap estimate into flash too;
 at 4 rather than 8, worth 10960; or the pool floor being smaller than
 the figure used here.  Each is plausible and none is measured.
 .NH 1
-The one figure that decides it
+The figure that decided it, now measured
 .PP
-78208 bytes, the kernel pool floor.  It is
-.B measured
-\- on
-.CW mps2
-with a minimal configuration and a 512-byte init, nothing else loaded \-
-and 16384 of it is four 4K kernel stacks.  The other 62K has never been
-looked inside: it is
-.CW Chan ,
-.CW Osenv ,
-.CW Pgrp
-and the namespace, each device's reset and init, the osinit module, and
-the pools' own per-block headers and quanta rounding.
+The pool floor was the gating item here: the largest single term in the
+budget and the only one nobody had looked inside.
+.CW #c/poolhist
+now walks the pools block by block and totals the live bytes by size and
+by the pc that asked for them
+.CW ( os/inferno/port/alloc.c ).
 .PP
-It is the largest single term in the table, larger than the
+Measured on
+.CW mps2-an386 ,
+stock configuration, before the shell is loaded \- which is the floor
+this plan costed:
+.DS
+.CW "newproc   49536    kernel stacks, KSTACK 16K x three procs"
+.CW "dtype     46080    Dis type descriptors"
+.CW "addprog   22272    Prog structures"
+.CW "newchan    5760    namespace"
+.CW "qopen      2560"
+.CW "strdup     1792"
+.CW "newpath     768"
+.DE
+772 of the 810 live blocks are 128 bytes or less, 98816 bytes between
+them, carrying 16200 bytes of block header.  At a shell the order swaps:
+.CW dtype
+70016 first,
+.CW newproc
+66048 second.
+.PP
+Three things follow, and two of them change this plan.
+.IP \(bu
+The stacks term is
+.CW KSTACK ,
+which the cheap cuts already halve twice over and which is verified to
+boot at 4K.  Nothing new.
+.IP \(bu
+.CW dtype
+is module type descriptors, built by
+.CW parsemod
+and immutable once built.  Pre-decoding into flash moves them as well as
+the
 .CW Inst
-arrays this plan is mostly about, and this board needs more devices than
-the configuration it was measured on \- SPI, I2C, ADC, SD, QSPI and the
-four bus drivers on top of nine.  So it could as easily be 90K as 70K,
-and that is a 20K swing on a budget with 2884 bytes of slack.
+arrays, so execute in place is worth
+.I more
+than the 113283 bytes computed above \-
+.CW doc/xip.ms
+counted only the code.  How much more for this board's module set is not
+measured; on
+.CW mps2 's
+it is 46080 bytes at the floor and 70016 at a shell, which is not a
+rounding error.
+.IP \(bu
+Small blocks carry an 8% header tax that no trimming elsewhere removes.
+.NH 2
+And a correction the walk forces
 .PP
-Measure it before phase 1.  A size histogram of the minimal
-configuration's 343 pool allocations is a day's work and it decides
-whether this plan's last phase is arithmetic or wishful.
+The pools are charged their
+.I arena ,
+not their in-use figure.
+.CW main
+reads 194688 live with 329600 free beside it, so it had taken 524288
+bytes from
+.CW xalloc
+\- exactly half a megabyte.  The budget above costs the pools at
+.CW cursize
+and so understates them.  On a part where
+.CW main_pool_pcnt
+and its fellows cap the arena, the cap is the number to count, which
+makes the pool split in the cheap cuts a sizing decision rather than a
+tidy-up.
+.PP
+That does not change the conclusion \- execute in place is still the
+difference between not close and one measurement away \- but it does mean
+the 199492 figure is a floor for the pool terms rather than an estimate
+of them.
 .NH 1
 Order, and what each phase proves
 .IP 0.
@@ -427,8 +477,12 @@ on
 by emulation from the fault rather than by a compiler mode.  No hardware
 was needed.
 .IP 0a.
-The pool-floor histogram.  Cheap, and it either confirms the budget or
-changes the plan.
+The pool-floor histogram.
+.B Done :
+.CW #c/poolhist ,
+and it changed the plan twice \- type descriptors join the
+execute-in-place saving, and the pools are charged their arena rather
+than their in-use figure.
 .IP 1.
 The
 .CW samd51
