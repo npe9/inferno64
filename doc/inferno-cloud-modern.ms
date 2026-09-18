@@ -1718,8 +1718,9 @@ Debian 12 on the same
 .CW e2-micro ,
 and item 11 across an amd64 instance and an arm64 one sharing a
 namespace.  The arm64 half needed a driver first \(em a Compute Engine
-t2a offers gVNIC and refuses virtio \(em and it has one known limit: it
-does not boot on a single-vCPU t2a.
+t2a offers gVNIC and refuses virtio \(em and, for a while, would not
+boot on a single-vCPU t2a; that turned out to be a kernel stack this
+board left 8 modulo 16, and is fixed.
 .PP
 .B "And one thing that is known broken."
 The parallel Dis VM does not work on pc64:
@@ -2062,118 +2063,6 @@ sets
 the same unaligned way and is the other AArch64 board in this tree.  It
 is another session's board and is not touched here; the 32-bit ARM and
 RISC-V boards are not exposed, since they require 8.
-.NH 2
-A gVNIC driver, because a t2a has no other network card
-.PP
-.CW os/inferno/port/ethergve.c
-drives Google's virtual NIC (PCI
-.CW 1ae0:0042 )
-in the GQI queue format with queue page lists.  It is written from
-FreeBSD's
-.CW sys/dev/gve ,
-which is the reference for every layout and sequence in it.  Without it
-the arm64 cloud kernel has no network at all on Compute Engine: a t2a
-instance offers gVNIC, a virtio entropy source and an NVMe disk, and
-asking for a virtio NIC is refused outright.
-.PP
-.B "What is real, and where."
-On a rented
-.CW t2a-standard-2 ,
-this kernel takes a DHCP lease from Google's server on its real address
-and reads the metadata service over TCP:
-.CW "cloudinit" ,
-then
-.CW "mount {cloudfs} /mnt" ,
-then
-.CW "cat /mnt/zone"
-prints
-.CW projects/232418375880/zones/us-central1-a
-and
-.CW /mnt/hostname
-prints the instance's own name.  That is the whole path \(em transmit,
-receive, ARP, DHCP, TCP \(em through this driver.
-.PP
-.B "No interrupts: it polls."
-gVNIC signals only through MSI-X, and MSI-X on this board needs a GICv3
-ITS that this kernel does not drive
-.CW ( "msix: this machine has an ITS and no v2m frame" ).
-Nothing is lost by polling, because every completion is a DMA write the
-driver can read at any time \(em a receive descriptor's sequence number,
-a transmit event counter \(em and the interrupt doorbells only mask and
-acknowledge.  Each queue has a kernel process that polls, busily while
-there is work and once a tick while there is none.  The cost is latency,
-up to a tick on an idle link, and it is the first thing to replace when
-the ITS is driven.
-.PP
-.B "Two board bugs found on the way, both invisible under QEMU."
-.CW va2pa()
-returned
-.CW ulong ,
-which is 32 bits under
-.CW 7c ,
-so every DMA address above 4 GiB was truncated by exactly 4 GiB and the
-device wrote into whatever kernel memory sat at the low address.  RAM
-starts at 1 GiB on this board, so it takes a machine with more than
-3 GiB to reach that address at all; every QEMU run here had 1 or 2, and
-a t2a has 4 or 8.  The build had been saying
-.CW "conversion of pointer to shorter integer"
-at that line all along.  And the clock is now the EL1 virtual timer
-rather than the physical one: a kernel at EL1 is a guest, and the
-virtual timer is the one a hypervisor is required to give a guest.  That
-second one is not the repair of an observed failure \(em both timers were
-watched ticking on a t2a \(em it is the one a guest is entitled to.
-.NH 2
-Known broken: one vCPU and this driver do not boot together
-.PP
-On a
-.CW t2a-standard-1 ,
-one vCPU and 4 GiB, a kernel with this driver stops during
-.CW /dis/init ,
-just after the device comes up and just before the NVMe disk is read.
-The instance is not halted: Cloud Monitoring shows it pegged at
-.B 100%
-of its vCPU while a healthy instance sits at 0.4%, so a processor is
-spinning somewhere with interrupts masked, printing nothing.  The same
-image on a
-.CW t2a-standard-2
-boots and does everything above.
-.PP
-.B "What the bisect says."
-Three one-vCPU instances, one image each, differing only by a
-.CW plan9.ini
-line:
-.TS
-box, tab(;);
-l l.
-driver state;result
-_
-device identified, no queues;boots to a shell
-all queues created, no polling processes;boots to a shell
-transmit queue only, polling processes;stalls
-everything (the shipped driver);stalls
-.TE
-So the queues and their DMA are not it: the stall arrives with the two
-polling kernel processes, and the first of them never reaches its own
-first statement.
-.PP
-.B "What it is not."
-Not a lock: the spin reports in
-.CW taslock.c
-were made to print through
-.CW iprint
-and neither fired.  Not the console: a jammed PL011 would trickle
-characters and three minutes produced none.  Not the 4 GiB truncation
-above, which is fixed and whose buffers landed below 4 GiB anyway.  Not
-the timer, which ticks on both machines.  Two kernel processes doing the
-same 10 ms
-.CW tsleep
-loop, added to the virtio driver and booted under QEMU with one
-processor and an NVMe disk, do not reproduce it.
-.PP
-A t2a-standard-2 is what item 11 needs anyway, so this is recorded
-rather than worked around: the driver is not at fault for it as far as
-the bisect can see, and the next step is instrumenting the context
-switch into a new kernel process on that machine.
 .NH 2
 Item 11 on two rented machines
 .PP
