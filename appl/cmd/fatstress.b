@@ -126,6 +126,72 @@ rename(name, newname: string): int
 	return r;
 }
 
+# write a file, hold it open, rename it, and see whether it is still
+# itself.  The name is its own round's, so rounds do not collide.
+openrename(r: int)
+{
+	name := sys->sprint("open-%d.dat", r);
+	newname := "r-" + name;
+	n := 29;
+	#
+	# Leave a file under the target name and remove it, so the rename
+	# below lands in a directory slot freed a moment ago.  The Pi does
+	# this on every boot -- its check removes what the last boot left
+	# before renaming onto the same name -- and a fresh image here
+	# never does, because the target has never existed.
+	#
+	if(write(newname, newname, 512) < 0)
+		return;
+	if(sys->remove(dir + "/" + newname) < 0){
+		fail(sys->sprint("remove %s: %r", newname));
+		return;
+	}
+	if(write(name, name, n) < 0)
+		return;
+	# open it and keep the descriptor: this is the whole point
+	fd := sys->open(dir + "/" + name, Sys->OREAD);
+	if(fd == nil){
+		fail(sys->sprint("open %s/%s: %r", dir, name));
+		return;
+	}
+	b := array[n] of byte;
+	if(sys->read(fd, b, n) != n){
+		fail(sys->sprint("read %s: %r", name));
+		return;
+	}
+	if(rename(name, newname) < 0){
+		fail(sys->sprint("rename %s while open: %r", name));
+		return;
+	}
+	(ok, d) := sys->stat(dir + "/" + newname);
+	if(ok < 0){
+		fail(sys->sprint("stat %s after rename while open: %r", newname));
+		return;
+	}
+	if(int d.length != n)
+		fail(sys->sprint("%s is %bd bytes after a rename while open, wrote %d",
+			newname, d.length, n));
+	# and the descriptor that was held across it: it is the same file,
+	# so reading from the start must still give what was written
+	if(sys->seek(fd, big 0, Sys->SEEKSTART) != big 0){
+		fail(sys->sprint("seek %s: %r", name));
+		return;
+	}
+	w := array[n] of byte;
+	if(sys->read(fd, b, n) != n){
+		fail(sys->sprint("read held fd after rename: %r"));
+		return;
+	}
+	fill(w, name, 0);
+	for(i := 0; i < n; i++)
+		if(b[i] != w[i]){
+			fail(sys->sprint("held fd reads wrong at %d after rename", i));
+			return;
+		}
+	fd = nil;
+	check(newname, name, n);
+}
+
 init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -205,6 +271,15 @@ init(nil: ref Draw->Context, argv: list of string)
 				check(b, kb, nb);
 			}
 		}
+
+		# Rename a file that is still open.  The Pi's own boot check
+		# does exactly this -- it reads the file back and renames it
+		# without closing -- and it failed on the board while every
+		# rename here passed, because every rename here was of a
+		# file nobody held.  A held file has a second Dosptr for the
+		# same entry, and what happens to it when the entry moves is
+		# a different path through the server.
+		openrename(r);
 
 		# remove half of them, then write new ones, so the next
 		# round allocates clusters that were just freed

@@ -1232,7 +1232,46 @@ portstatus(Hci *hp, int port)
 static void
 shutdown(Hci *hp)
 {
-	USED(hp);
+	Ctlr *ctlr;
+	Dwcregs *r;
+	Hostchan *hc;
+	int i;
+
+	/*
+	 * Quiesce the core before the machine resets, because the reset
+	 * does not.
+	 *
+	 * The way out of exit() is the PM watchdog, and on a BCM2837 that
+	 * resets the ARM and leaves the peripherals as they are: this
+	 * controller keeps its channels enabled and keeps bus-mastering
+	 * into RAM while the firmware reloads a kernel image into that
+	 * same RAM.  A board rebooted from the shell went dark twice, and
+	 * came up perfectly from cold both times, which is the shape of a
+	 * peripheral a cold start power-cycles and a warm one does not.
+	 *
+	 * Nothing here may sleep: exit() clears up before calling this,
+	 * so a tsleep would be a nil dereference at the end of the world.
+	 * Every wait below is a polled microdelay, as greset and
+	 * chanhaltwait already are.
+	 */
+	ctlr = hp->aux;
+	if(ctlr == nil || ctlr->regs == nil)
+		return;
+	r = ctlr->regs;
+	r->gahbcfg &= ~Glblintrmsk;
+	r->gintmsk = 0;
+	for(i = 0; i < ctlr->nchan; i++){
+		hc = &r->hchan[i];
+		hc->hcintmsk = 0;
+		if(hc->hcchar & Chen){
+			hc->hcchar |= Chdis;
+			chanhaltwait(hc);
+		}
+	}
+	r->hport0 = 0;			/* port power off */
+	r->gahbcfg &= ~Dmaenable;	/* no more bus mastering */
+	greset(r, Csftrst);
+	print("usbdwc: core reset for shutdown\n");
 }
 
 static void

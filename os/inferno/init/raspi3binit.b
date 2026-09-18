@@ -720,6 +720,20 @@ fatwrite()
 	}
 	sys->print("FAT-WRITE-OK %s holds %d bytes\n", name, n);
 
+	#
+	# Close it before renaming.  This check used to rename with that
+	# read descriptor still open -- which is a fair thing to do and
+	# the board says it does not work: the renamed file came back
+	# zero bytes long, on a card whose fsck then reported
+	# INFERNO2.TXT with a zero length and 512 clusters.  Every rename
+	# that works here, including the two kupdate does on every kernel
+	# it installs, is of a file nobody is holding.  So the two are
+	# separated: this one is the rename that has to work, and the
+	# held one below is the one being investigated, reported by its
+	# own marker so it cannot be mistaken for this.
+	#
+	fd = nil;
+
 	# And rename it, which is where FAT32 is easiest to get wrong: the
 	# top half of a file's start cluster is kept in the directory
 	# entry's reserved area, away from the low half, so a rename that
@@ -794,7 +808,78 @@ fatwrite()
 	}
 	sys->print("FAT-CLOBBER-OK refused, and the source is whole\n");
 	sys->remove("/n/dos/inferno2.txt");
+	fatheld();
 	fatbig();
+}
+
+#
+# Rename a file while a descriptor is open on it.
+#
+# Held open, the same rename that passes above comes back zero bytes
+# long on this board, and the host cannot be made to do it: fatstress
+# does exactly this against three filesystems under emu and all three
+# pass.  So the difference is here, and this is the instrument -- it
+# says what the length was before, what it is after, and whether the
+# descriptor that was held across the rename still reads what was
+# written.
+#
+fatheld()
+{
+	name := "/n/dos/held.txt";
+	msg := "held open across a rename\n";
+	sys->remove("/n/dos/held2.txt");
+	fd := sys->create(name, Sys->ORDWR, 8r666);
+	if(fd == nil){
+		sys->print("FAT-HELD-FAIL create: %r\n");
+		return;
+	}
+	b := array of byte msg;
+	if(sys->write(fd, b, len b) != len b){
+		sys->print("FAT-HELD-FAIL write: %r\n");
+		return;
+	}
+	fd = nil;
+	# the descriptor that stays open across the rename
+	held := sys->open(name, Sys->OREAD);
+	if(held == nil){
+		sys->print("FAT-HELD-FAIL open: %r\n");
+		return;
+	}
+	rb := array[len b] of byte;
+	if(sys->read(held, rb, len rb) != len b){
+		sys->print("FAT-HELD-FAIL read: %r\n");
+		return;
+	}
+	(ok, before) := sys->stat(name);
+	if(ok < 0){
+		sys->print("FAT-HELD-FAIL stat: %r\n");
+		return;
+	}
+	if(rename(name, "held2.txt") < 0){
+		sys->print("FAT-HELD-FAIL rename: %r\n");
+		return;
+	}
+	(ok2, after) := sys->stat("/n/dos/held2.txt");
+	if(ok2 < 0){
+		sys->print("FAT-HELD-FAIL stat after: %r\n");
+		return;
+	}
+	if(after.length != before.length){
+		sys->print("FAT-HELD-FAIL %bd bytes before, %bd after, held open\n",
+			before.length, after.length);
+		# and what the held descriptor sees, which says whether the
+		# data moved or only the entry's idea of it
+		sys->seek(held, big 0, Sys->SEEKSTART);
+		hn := sys->read(held, rb, len rb);
+		sys->print("FAT-HELD the held descriptor reads %d bytes\n", hn);
+		held = nil;
+		sys->remove("/n/dos/held2.txt");
+		return;
+	}
+	held = nil;
+	sys->print("FAT-HELD-OK %bd bytes across a rename with the file open\n",
+		after.length);
+	sys->remove("/n/dos/held2.txt");
 }
 
 # A big file, because that is the one the board actually writes.
