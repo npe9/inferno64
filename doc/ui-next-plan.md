@@ -1389,10 +1389,28 @@ there was never speed on the table here anyway.
    buffered canvas's steady-state repaint genuinely is a blit — that is
    what buffering is *for*. And that row says something neither node
    comparison does: the blit is **22.9µs** where drawing all five items
-   unbuffered is **10.2µs**. Buffering a canvas costs more than twice
-   what redrawing it costs, at this size, and for a default canvas the
+   unbuffered is **10.2µs**. For a default canvas the
    direct-versus-nodes question barely applies, because in steady state
    neither path runs.
+
+   **"Buffering costs more than redrawing" was the wrong reading of
+   that, and the mechanism says why.** It is in `tkdrawcanv()`: a
+   buffered steady-state repaint does *two full-area* draws into the
+   destination — the background, then the blit of `c->image` — where an
+   unbuffered one does a full-area background plus the items, which
+   cover less than the rectangle. So the buffered cost is **fixed in
+   the canvas's size** and the unbuffered cost **grows with its
+   contents**, and the comparison is entirely a statement about how
+   full this particular canvas is.
+
+   Measured, with the same canvas at three item counts: buffered
+   **23.6 / 23.1 / 22.9µs** at 5, 20 and 40 items — flat, as the
+   mechanism predicts — against unbuffered **10.2 / 20.8 / 23.8µs**.
+   The lines cross between 20 and 40, which was *predicted* from the 5-
+   and 20-item slope (≈24 items) before the 40-item run was made, and
+   the prediction held. So buffering a canvas pays above a content
+   threshold and costs above nothing below it; at five items it looks
+   like a loss only because five items is nearly empty.
 
    A canvas does not *join* the walk even when its items are nodes: its
    items usually go into its own buffer, and a tree belongs to one
