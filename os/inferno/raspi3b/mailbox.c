@@ -546,6 +546,49 @@ otpinit(void)
 }
 
 /*
+ * One property tag with a value buffer of nwords, of which the first
+ * reqwords are the request.  The answer is written back over vals, and
+ * the tag's own response word -- the one whose top bit says the
+ * firmware understood it, and whose low bits say how much it wrote --
+ * is handed back through resp.
+ *
+ * Every wrapper below could be written this way; this one exists
+ * because the Bluetooth radio's enable is reached by a tag the
+ * firmware may or may not implement, and "it said no" is not a useful
+ * thing for a driver to report when what is wanted is what it actually
+ * said.
+ *
+ * Returns 0 if the firmware processed the message at all, -1 if not.
+ * A refused tag is a 0 return with the top bit of resp clear.
+ */
+int
+mboxtag(u32 tag, u32 *vals, int nwords, int reqwords, u32 *resp)
+{
+	static u32 raw[24+4];
+	u32 *buf;
+	int i;
+
+	if(nwords > 16)
+		return -1;
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = (6 + nwords) * 4;
+	buf[1] = 0;
+	buf[2] = tag;
+	buf[3] = nwords * 4;		/* value buffer size */
+	buf[4] = reqwords * 4;		/* request length */
+	for(i = 0; i < nwords; i++)
+		buf[5+i] = vals[i];
+	buf[5+nwords] = 0;		/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if(resp != nil)
+		*resp = buf[4];
+	for(i = 0; i < nwords; i++)
+		vals[i] = buf[5+i];
+	return 0;
+}
+
+/*
  * Set and read one of the firmware's own GPIO lines (tags 0x00038041
  * and 0x00030041).
  *

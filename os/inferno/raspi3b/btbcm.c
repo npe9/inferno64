@@ -40,9 +40,13 @@ extern void gpiofsel(int, int);		/* gpiobcm.c */
 extern int gpiofselget(int);
 extern int mboxsetgpio(int, int);	/* mailbox.c */
 extern int mboxgetgpio(int, int*);
+extern int mboxtag(u32, u32*, int, int, u32*);
 
 enum {
 	Btonpin	= 128,		/* firmware expander line 0: BT_ON */
+	Taggetstate	= 0x00030041,	/* firmware GPIO: get state */
+	Tagsetstate	= 0x00038041,	/* set state */
+	Tagsetconfig	= 0x00038043,	/* set direction, pull, initial state */
 	Alt3	= 7,		/* GPFSEL code for alt3 */
 	Altmini	= 2,		/* GPFSEL code for alt5, the mini UART */
 	Btcts	= 30,		/* GPIO 30-33 at alt3: CTS0, RTS0, TXD0, RXD0 */
@@ -124,11 +128,68 @@ btget(uchar *p, int n)
 	return i;
 }
 
+/*
+ * Power the radio through the firmware's GPIO expander, the way Linux
+ * does it: configure the line as an output first (tag 0x00038043),
+ * then set its state (0x00038041).  A line left as an input is a line
+ * whose state the firmware has nothing to drive with, and this board
+ * answered the bare state call with a refusal.
+ *
+ * What the firmware said is printed either way, because a driver
+ * reporting "it said no" about a tag the firmware may not implement at
+ * all is not worth reading.  The response word's top bit is the
+ * firmware saying it understood the tag; the low bits are how much it
+ * wrote back.
+ */
+static int
+radioon(void)
+{
+	u32 v[6], resp;
+	int r;
+
+	/* what it says the line is now */
+	v[0] = Btonpin;
+	v[1] = 0;
+	resp = 0;
+	r = mboxtag(Taggetstate, v, 2, 1, &resp);
+	iprint("bt: get state -> %d resp %#ux pin %ud state %ud\n",
+		r, resp, v[0], v[1]);
+
+	/* an output, push-pull, no pull resistor, starting high */
+	v[0] = Btonpin;
+	v[1] = 1;		/* direction: out */
+	v[2] = 0;		/* polarity: active high */
+	v[3] = 0;		/* terminator disabled */
+	v[4] = 0;		/* pull up: no */
+	v[5] = 1;		/* state: on */
+	resp = 0;
+	r = mboxtag(Tagsetconfig, v, 6, 6, &resp);
+	iprint("bt: set config -> %d resp %#ux\n", r, resp);
+
+	v[0] = Btonpin;
+	v[1] = 1;
+	resp = 0;
+	r = mboxtag(Tagsetstate, v, 2, 2, &resp);
+	iprint("bt: set state -> %d resp %#ux\n", r, resp);
+	if(r < 0 || (resp & 0x80000000) == 0){
+		print("BT-FAIL firmware refused BT_ON (expander pin %d, resp %#ux)\n",
+			Btonpin, resp);
+		return -1;
+	}
+
+	v[0] = Btonpin;
+	v[1] = 0;
+	resp = 0;
+	mboxtag(Taggetstate, v, 2, 1, &resp);
+	iprint("bt: get state -> resp %#ux pin %ud state %ud\n", resp, v[0], v[1]);
+	return 0;
+}
+
 void
 btinit(void)
 {
 	uchar buf[16];
-	int i, n, on;
+	int i, n;
 
 	/*
 	 * Each step says it has been reached before it is taken, with
@@ -148,15 +209,8 @@ btinit(void)
 	gpiofsel(Btrx, Alt3);
 
 	iprint("bt: power\n");
-	if(mboxsetgpio(Btonpin, 1) < 0){
-		print("BT-FAIL firmware refused BT_ON (expander pin %d)\n", Btonpin);
+	if(radioon() < 0)
 		return;
-	}
-	on = 0;
-	if(mboxgetgpio(Btonpin, &on) == 0 && on == 0){
-		print("BT-FAIL BT_ON reads back low\n");
-		return;
-	}
 	delay(Powerms);
 
 	iprint("bt: uart\n");
