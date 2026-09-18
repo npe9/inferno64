@@ -335,7 +335,125 @@ zero.  It is a build-time refusal in
 now rather than a property to rely on.  See
 .CW doc/xip.ms .
 .NH 1
-Phase 4: the flight software, in Limbo
+Phase 4: the flight software, in Limbo.  Begun, and measured
+.PP
+The mission logic is ported and runs.  What is in the tree:
+.DS
+.CW "  module/pycubed.m        the satellite state"
+.CW "  module/pycubedhw.m      the hardware boundary"
+.CW "  appl/pycubed/sat.b      the state server"
+.CW "  appl/pycubed/beepsat.b  the tasks and cdh"
+.CW "  appl/pycubed/hwstub.b   no hardware behind it"
+.CW "  os/inferno/init/beepsatinit.b  boot into it"
+.DE
+523 lines of Limbo against the 540 lines of Python this part of
+.CW software_example_beepsat/advanced
+is
+.CW ( main.py ,
+.CW cdh.py ,
+.CW Tasks/ ,
+.CW lib/bitflags.py ).
+.PP
+What was ported and what was not, plainly.
+.CW lib/tasko
+is not ported: the four tasks are four processes with their own timers
+and the state is a server answering on a channel, so the cooperative
+scheduler, the managed-resource lock and the managed-SPI wrapper have
+nothing left to do.  Neither is
+.CW main.py 's
+directory scan and its
+.CW exec()
+of each task file: the tasks are named in the source, so a typo is a
+compile error rather than a task that silently never runs.
+.CW debugcolor.py
+is not ported, being ANSI colour for a terminal.  The four bus drivers
+are phase 2 and are not here.
+.PP
+And what is standing in for them.
+.CW appl/pycubed/hwstub.b
+implements the hardware boundary and touches no hardware: there is no
+ADM1176, no RFM9x and no BMX160 on an MPS2.  Every value it returns is
+invented, it says so on the line it prints at startup, and the battery
+it reports discharges so that the low-battery path in the
+.CW vbatt
+task can be reached at all.  It is not a driver and the file says so
+twice.  What it does fix is the shape the real drivers have to meet.
+.PP
+It runs.  On
+.CW mps2 ,
+booted into the mission rather than a shell
+.CW ( beepsatinit ):
+.DS
+.CW "BEEPSAT-RUNNING 4 tasks"
+.CW "       vbatt | 3.96V > threshold 3.60V"
+.CW "        time | 20s since boot"
+.CW "      beacon | NOT sending beacon (unknown antenna"
+.CW "                 state)"
+.CW "      beacon | listening 10s for a response"
+.CW "      beacon | no messages"
+.CW "        time | 40s since boot"
+.DE
+at the Python's own periods \- blink 2Hz, battery every 10s, time every
+20s, beacon every 30s.
+.NH 2
+What it costs, which is the part that was an estimate
+.PP
+Static, from the
+.CW .dis
+headers:
+.DS
+.CW "              .dis    Inst   data   stack  types"
+.CW "beepsat.dis   3510    5412    240     800     18"
+.CW "sat.dis        692     924    176     560      6"
+.CW "hwstub.dis     831     852     40     560      9"
+.CW "              ----    ----   ----"
+.CW "              5033    7188    456"
+.DE
+This document estimated 14900 bytes of
+.CW .dis
+for the mission, from 760 Limbo lines at 12 to 17 bytes a line.  The
+port is 523 lines and 5033 bytes, which is 9.6 bytes a line \- the
+estimate was high on both counts, and the line count was high because
+it counted Python that turned out not to need porting.
+.PP
+Running, from
+.CW #c/memory
+on
+.CW mps2 ,
+booted into the mission with no shell at all, forty seconds in:
+.DS
+.CW "  kernel data + bss     62744"
+.CW "  Proc array            38720"
+.CW "  main pool            107072"
+.CW "  heap pool             11136"
+.CW "                       ------"
+.CW "                       219672"
+.DE
+The same kernel running a shell instead sits at 62344, 38720, 96640 and
+56512, which is 254216.  The mission costs 10432 more of the main pool
+than a shell does and 45376 less of the Dis heap, because four tasks and
+a state server are a smaller thing than
+.I sh (1)
+and its six library modules.
+.PP
+Two honest qualifications.  This is
+.CW mps2 's
+device set, which is not minimal \- it carries
+.CW ssl ,
+.CW cap ,
+.CW kprof ,
+.CW keyring ,
+.CW crypt ,
+.CW math
+and a 60-file root \- and the 256K budget elsewhere in this document
+assumes the minimal one, which measured 156604.  And the four drivers
+are absent: they will add their own code, their own buffers and their
+own processes, and on the evidence of
+.CW os/inferno/riscv/spisifive.c
+and the uart drivers in this tree that is thousands of bytes each, not
+hundreds.
+.NH 1
+Phase 4 detail: the flight software, in Limbo
 .PP
 The beepsat example is 3966 lines of Python and divides three ways.
 .IP \(bu

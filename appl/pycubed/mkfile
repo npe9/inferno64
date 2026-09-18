@@ -1,0 +1,16 @@
+<../../mkconfig
+
+TARG=\
+	beepsat.dis\
+	sat.dis\
+	hwstub.dis\
+
+MODULES=\
+	$ROOT/module/pycubed.m\
+	$ROOT/module/pycubedhw.m\
+
+SYSMODULES=sys.m draw.m
+
+DISBIN=$ROOT/$DISROOT/pycubed
+
+<$ROOT/mkfiles/mkdis
