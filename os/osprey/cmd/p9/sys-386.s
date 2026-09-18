@@ -33,10 +33,18 @@
  * wraps it is C, in 9front/src/libc/amd64/_seek.c, which compiles for
  * either object type.
  *
- * The two words at the end are libc's own and are not calls at all.
- * Upstream they are the machine directory's argv0.s, which this tree
- * has for amd64 (9front/src/libc/amd64/argv0.s, eight bytes each) and
- * not for 386; four bytes each here, which is what a pointer is.
+ * One archive member each, not one for the file.  build9front386.sh
+ * reads the SYSCALL1 lines below and assembles each into an object of
+ * its own, which is how the prebuilt amd64 archive holds them
+ * (open.6, close.6, and so on) and is not a matter of taste: a program
+ * may define one of these names itself and mean it.  p9crt.c does -
+ * open, read, write, close, seek, dup, fd2path and exits go to the
+ * personality in its own address space, not to the kernel - and with
+ * the stubs in one object the linker pulled all twenty-one in behind
+ * the first symbol it wanted and called p9crt.c's own a redefinition.
+ *
+ * libc's two words, argv0 and _tos, are argv0-386.s beside this, for
+ * the same reason.
  */
 #define SYSCALL1(name, number) \
 	TEXT name(SB), 1, $0; \
@@ -67,6 +75,3 @@ SYSCALL1(fwstat, 45)
 SYSCALL1(await, 47)
 SYSCALL1(pread, 50)
 SYSCALL1(pwrite, 51)
-
-GLOBL	argv0(SB), $4
-GLOBL	_tos(SB), $4

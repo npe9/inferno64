@@ -13810,6 +13810,57 @@ links at
 .CW 0x1c00020 ,
 the base and this machine's header, and its image generates.
 .PP
+Then one of the ten, to see what a twin costs: cat.  It is built as a
+relocatable module \- linked with
+.CW -u ,
+no address of its own, entered at offset 0 \- and it builds for 386 and
+passes every invariant
+.CW scripts/checkmodule.py
+tests: 178 relocations, all absolute, each naming an address inside the
+module, and
+.CW p9start
+at offset 0 read out of its own symbol table.  Two things had to be
+fixed for it, and the first is a loader bug older than this port.
+.PP
+.CW 8l
+refused its own output: "bad nuxi 8 0", an eight-byte data item in a
+386 image.  The export table a
+.CW -u
+link writes is built in
+.CW export()
+.CW ( utils/8l/pass.c ),
+and the width of an entry there was
+.CW sizeof(long) \-
+the
+.I host's
+long, which is eight bytes on this Mac and was four on the machine these
+loaders were written for.  So 8l wrote amd64-shaped entries for a 386
+image and then would not read them.  It is the target's word now, four
+in 8l and eight in 6l, named rather than taken from the host;
+.CW 6l
+was right here by accident of the host and is right on purpose now.
+This is the same family as the loader bug the doc records at
+.CW 8051b2eb ,
+"every loader lost the high word of a double on a 64 bit host".
+.PP
+The second was mine.  The twenty-one stubs were one object, so the
+linker pulled all of them in behind the first symbol it wanted, and
+.CW p9crt.c \-
+which defines open, read, write, close, seek, dup, fd2path and exits
+itself, because those go to the personality in the program's own address
+space \- was told it was redefining them.  The prebuilt amd64 archive
+has one member per stub for exactly this reason.
+.CW build9front386.sh
+generates them one at a time from the
+.CW SYSCALL1
+lines of
+.CW sys-386.s
+now, the way Plan 9's own libc generates them from a table, and
+.CW argv0
+and
+.CW _tos
+are a member of their own beside them.  224 members.
+.PP
 Two files are not in that link and they are what is left.
 .CW p9exec.c
 embeds ten programs \- cat, wc, ns, rio, sh, gen, draw, thread, reloc

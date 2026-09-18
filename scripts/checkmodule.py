@@ -6,7 +6,8 @@ usage: scripts/checkmodule.py <module> <out.i> <arrayname>
 The checks are the point of it, and each is here because getting it
 wrong produced an image that looked fine and failed later:
 
-  - it must be an amd64 dynamically loadable module, by magic;
+  - it must be a dynamically loadable module for one of the two object
+    types this tree builds, by magic;
   - p9start must be at offset 0, which is where the loader enters it,
     taken from the module's own symbol table rather than assumed;
   - it must have no imports, since nothing here resolves them;
@@ -36,8 +37,13 @@ magic,hdr,text,data,bss,syms,spsz,pcsz = hdrof(d)
 
 if (magic & 0x80000000) == 0:
     raise SystemExit('not a dynamically loadable module: magic %#x' % magic)
-if (magic & 0xffff) != 0x8a97:
-    raise SystemExit('not an amd64 module: magic %#x' % magic)
+# Either object type this tree builds.  The width of a symbol table
+# entry's value goes with the magic: eight bytes on amd64, four on 386,
+# which is what the p9start check below reads.
+WIDTH = {0x8a97: 8, 0x01eb: 4}
+if (magic & 0xffff) not in WIDTH:
+    raise SystemExit('not an amd64 or 386 module: magic %#x' % magic)
+vw = WIDTH[magic & 0xffff]
 
 # p9start must be at offset 0 of the module, because that is what the
 # loader enters.  Taken from the module's own symbol table rather than
@@ -49,9 +55,9 @@ if (magic & 0xffff) != 0x8a97:
 st = hdr+text+data
 sym = d[st:st+syms]
 i = sym.find(b'p9start\x00')
-if i < 9:
+if i < vw+1:
     raise SystemExit('p9start is not in the module symbol table')
-val = int.from_bytes(sym[i-9:i-1],'big')
+val = int.from_bytes(sym[i-(vw+1):i-1],'big')
 typ = sym[i-1]
 if (typ & 0x7f) != ord('T'):
     raise SystemExit('p9start is symbol type %r, not text' % chr(typ & 0x7f))

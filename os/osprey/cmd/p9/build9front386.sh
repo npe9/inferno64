@@ -55,7 +55,18 @@ for d in port fmt 9sys; do
 done
 
 # the machine's own share
-8a -o "$TMP/sys386.8" "$ROOT/os/osprey/cmd/p9/sys-386.s"
+# One object per stub, generated from the SYSCALL1 lines of sys-386.s:
+# the file says why (a program may define one of these names itself, and
+# p9crt.c does).
+sed -n 's/^SYSCALL1(\([a-z_0-9]*\), \([0-9]*\))$/\1 \2/p' \
+	"$ROOT/os/osprey/cmd/p9/sys-386.s" |
+while read name num; do
+	printf 'TEXT\t%s(SB), 1, $0\n\tMOVL\t$%s, AX\n\tINT\t$64\n\tRET\n' \
+		"$name" "$num" > "$TMP/$name.s"
+	8a -o "$TMP/$name.8" "$TMP/$name.s"
+	rm -f "$TMP/$name.s"
+done
+8a -o "$TMP/argv0.8" "$ROOT/os/osprey/cmd/p9/argv0-386.s"
 8a -o "$TMP/setjmp.8" "$ROOT/os/osprey/cmd/p9/setjmp-386.s"
 8a -o "$TMP/tas.8" "$ROOT/os/osprey/pc/libctas.s"
 8a -o "$TMP/vlop-386.8" "$ROOT/libkern/vlop-386.s"

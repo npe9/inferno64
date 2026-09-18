@@ -740,6 +740,16 @@ newdata(Sym *s, int o, int w, int t)
 void
 export(void)
 {
+	/*
+	 * The width of an entry in the export table is the TARGET's word,
+	 * not the host's.  It was Wordsize, which was the same thing
+	 * when these loaders ran on a 32-bit machine and is not now: on an
+	 * LP64 host Wordsize is 8, so 8l wrote eight-byte data items
+	 * for a 386 image and refused its own output - "bad nuxi 8 0" -
+	 * the first time anything asked it for a loadable module.  6l was
+	 * right here by accident of the host, and is right on purpose now.
+	 */
+	enum { Wordsize = 8 };	/* amd64 */
 	int i, j, n, off, nb, sv, ne;
 	Sym *s, *et, *str, **esyms;
 	Prog *p;
@@ -782,13 +792,13 @@ export(void)
 		/* Bprint(&bso, "EXPORT: %s sig=%lux t=%d\n", s->name, s->sig, s->type); */
 
 		/* signature */
-		p = newdata(et, off, sizeof(long), D_EXTERN);
-		off += sizeof(long);
+		p = newdata(et, off, Wordsize, D_EXTERN);
+		off += Wordsize;
 		p->to.offset = s->sig;
 
 		/* address */
-		p = newdata(et, off, sizeof(long), D_EXTERN);
-		off += sizeof(long);
+		p = newdata(et, off, Wordsize, D_EXTERN);
+		off += Wordsize;
 		p->to.type = D_ADDR;
 		p->to.index = D_EXTERN;
 		p->to.sym = s;
@@ -810,8 +820,8 @@ export(void)
 		}
 
 		/* name */
-		p = newdata(et, off, sizeof(long), D_EXTERN);
-		off += sizeof(long);
+		p = newdata(et, off, Wordsize, D_EXTERN);
+		off += Wordsize;
 		p->to.type = D_ADDR;
 		p->to.index = D_STATIC;
 		p->to.sym = str;
@@ -825,8 +835,8 @@ export(void)
 	}
 
 	for(i = 0; i < 3; i++){
-		newdata(et, off, sizeof(long), D_EXTERN);
-		off += sizeof(long);
+		newdata(et, off, Wordsize, D_EXTERN);
+		off += Wordsize;
 	}
 	et->value = off;
 	if(sv == 0)
