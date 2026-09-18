@@ -21,6 +21,7 @@ struct
 	Rendez	irend;
 	int	nidle;		/* interpreters parked on idlevmq */
 	int	nwoken;		/* woken from it and not yet running again */
+	int	nblocked;	/* interpreters between release() and acquire() */
 	int	nyield;
 	int	creating;
 	Proc*	idlevmq;	/* interpreters with no program to run */
@@ -810,6 +811,25 @@ ulong vmspawns;		/* interpreters made by release(); temporary */
  * at -smp 4, same workload.  Temporary, like the rest.
  */
 int spawnwoken = 1;
+/*
+ * A ceiling on interpreters, which the pool size was only ever a
+ * mitigation for (*ctxcap raised 64 to 256 and the doc says a harder
+ * workload exhausts that too).  The reason to have more interpreters
+ * than processors is that some are blocked in a Dis system call and
+ * cannot use one; so the rule is that interpreters NOT blocked never
+ * outnumber the processors, and each blocked one justifies at most one
+ * more.  That is Go's model -- GOMAXPROCS runnable Ms, plus one per M
+ * in a syscall -- and unlike a pool size it does not have to be guessed
+ * per workload.
+ *
+ * nvmprocs counts interpreters that have entered vmachine();
+ * isched.nblocked counts those between release() and acquire().  A
+ * blocked interpreter always leaves room for a new one, so the case
+ * this exists for -- every interpreter in a blocking call and work
+ * ready -- still spawns.  *spawncap=0 removes the ceiling.
+ */
+int spawncap = 1;
+ulong nvmprocs;		/* interpreters that reached vmachine(); isched.l */
 ulong vmspawnsby[8];	/* and by the type of process that made them */
 int fddefer = 1;	/* *fddefer=0: close inline, as before; temporary */
 
@@ -2455,6 +2475,10 @@ acquire(void)
 	vmacquire();
 
 	if(up->type == Interp) {
+		lock(&isched.l);
+		if(isched.nblocked > 0)
+			isched.nblocked--;	/* see spawncap */
+		unlock(&isched.l);
 		p = up->iprog;
 		up->iprog = nil;
 		/*
@@ -2519,6 +2543,8 @@ release(void)
 	 */
 	lock(&isched.l);
 	spawn = 0;
+	if(up->type == Interp)
+		isched.nblocked++;	/* see spawncap */
 	/*
 	 * The global queue counts as work here.  Testing curP->runhd alone
 	 * asks "is there work on THIS context's local queue", which stopped
@@ -2531,7 +2557,9 @@ release(void)
 	 */
 	if((curP->runhd != nil || isched.ghead != nil)
 	&& isched.nidle == 0 && isched.creating == 0
-	&& (spawnwoken == 0 || isched.nwoken == 0)){
+	&& (spawnwoken == 0 || isched.nwoken == 0)
+	&& (spawncap == 0
+	   || (long)nvmprocs - isched.nblocked < conf.nmach)){
 		isched.creating = 1;
 		spawn = 1;
 		vmspawns++;	/* MULTICORE INSTRUMENTATION - temporary */
@@ -2679,6 +2707,9 @@ vmachine(void*)
 
 	if(up->pctx == nil)
 		up->pctx = claimctx();
+	lock(&isched.l);
+	nvmprocs++;		/* this interpreter exists from here; see spawncap */
+	unlock(&isched.l);
 	startup();
 
 	/* cleans out the exception stack (error labels) */
@@ -3604,6 +3635,10 @@ soakline(void)
 	 * tail is unreliable a long dump loses its last lines and this one
 	 * line does not.  MULTICORE INSTRUMENTATION - temporary.
 	 */
+	print("soak: interpreters %lud, blocked %d, idle %d, woken %d, nmach %d,"
+		" spawncap %d\n",
+		nvmprocs, isched.nblocked, isched.nidle, isched.nwoken,
+		conf.nmach, spawncap);
 	print("soak: stopped-world audits %lud, bad %lud, a Prog queued twice"
 		" %lud (its own %lud), queued but not listed %lud, placeholders"
 		" skipped %lud, ready and unqueued twice running %lud; quanta",

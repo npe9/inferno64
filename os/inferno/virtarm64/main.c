@@ -365,6 +365,10 @@ main(void)
 			extern int parallelvm;
 			parallelvm = strtol(p, nil, 0);
 		}
+		if((p = getconf("*spawncap")) != nil){
+			extern int spawncap;
+			spawncap = strtol(p, nil, 0);
+		}
 		if((p = getconf("*runqaudit")) != nil){
 			extern int runqaudit;
 			runqaudit = strtol(p, nil, 0);

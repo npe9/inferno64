@@ -7824,3 +7824,73 @@ is exactly what this host cannot answer today.
 .PP
 Four boots with no boot line at all \(em the default a user gets \(em
 reach a shell with both processors interpreting, no panic.
+.NH 2
+A ceiling on interpreters, instead of a bigger pool
+.LP
+.B "The pool size was a guess, and the doc said so."
+Raising the context array from 64 to 256 stopped the exhaustion
+panics, and the entry above admits it is "a mitigation with no ceiling":
+nothing bounded how many interpreters
+.CW release()
+could make, so a harder collecting workload would exhaust 256 the same
+way.
+.PP
+.B "What the bound should be, and it does not have to be guessed."
+The only reason to have more interpreters than processors is that some
+are blocked in a Dis system call and cannot use one.  So: interpreters
+that are not blocked never outnumber the processors, and each blocked
+one justifies at most one more.  That is Go's rule for Ms \(em
+GOMAXPROCS runnable, plus one per M in a syscall \(em and it is stated
+in terms the kernel already knows rather than a number per workload.
+.PP
+It needed a count that did not exist.
+.CW isched.nblocked
+goes up in
+.CW release()
+and down in
+.CW acquire() ,
+both under
+.CW isched.l ;
+.CW nvmprocs
+counts interpreters that have reached
+.CW vmachine() .
+The test in
+.CW release()
+gains
+.CW "nvmprocs - isched.nblocked < conf.nmach" .
+The case the spawn exists for \(em every interpreter blocked and work
+ready \(em still spawns, because a blocked one always leaves room.
+.CW *spawncap=0
+removes the ceiling.
+.PP
+.B "Measured, two boots an arm, 240 seconds, soak workload."
+.IP
+.nf
+              interpreters   blocked   idle   chantest
+-smp 2  off      18, 16        4, 4    12,10    3, 18
+-smp 2  on        9, 10        2, 4     4, 4   18, 18
+-smp 4  off       9, 13        4, 3     1, 0    3,  6
+-smp 4  on       10,  9        4, 4     1, 0   12, 15
+.fi
+.PP
+At two processors the ceiling halves the interpreters and the whole
+difference is idle ones: the same two to four are genuinely blocked
+either way.  At four it changes little, because four processors already
+put the uncapped count near the bound \(em which is what a bound
+derived from
+.CW conf.nmach
+should do.  No panics in eight boots, and none in two virtarm64 boots
+with it on by default.
+.PP
+.B "And the first reading of this said the ceiling halved the workload."
+Six completed
+.CW chantest
+runs against fifteen, which would have been a reason to abandon it.
+That was the shared host again.  What told starvation from a broken
+counter was printing the counter:
+.CW "blocked 3"
+in both arms says
+.CW nblocked
+is tracking real blocked interpreters, not drifting to zero and
+tightening the bound to nothing.  A ceiling whose input is wrong looks
+exactly like a ceiling that is too low.
