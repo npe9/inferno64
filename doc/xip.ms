@@ -693,10 +693,33 @@ answer is yes, with the cuts above \- and with one configuration change
 the arithmetic forces:
 .CW main_pool_pcnt
 and friends are percentages of the memory left after the kernel, and
-40/40/20 of the roughly 163K remaining gives the main pool a 65K
-ceiling, under the 78K it is measured to need.  The image pool is
-measured at zero in use on these boards, so something like 60/25/15 is
-what a part this size wants.
+40/40/20 of the roughly 188K remaining gives the main pool a 75K
+ceiling, under the 78K it is measured to need.  The three armv7m boards
+now carry 70/25/5, which is the same arithmetic run on measurements
+rather than on a guess.  From
+.CW #c/memory
+on
+.CW mps2
+at a prompt, after
+.I fptest
+and an
+.I ls (1):
+.DS
+.CW "            in use     arena high water"
+.CW "main        367104            398848"
+.CW "heap         73728            106240"
+.CW "image            0                 0"
+.DE
+Heap is a fifth of main, so 25 against 70 leaves it room it has never
+used.  Image is zero and has never been anything else on a board with no
+draw device and no segments, but it cannot be zero in the percentages:
+.CW poolsize()
+asks that pool for its whole arena in one contiguous piece at boot and
+panics if it cannot have it, so its share is a boot-time requirement as
+well as a ceiling.  5% of 188K is 9K, which is both allocatable and not
+worth arguing about.  These are ceilings, not reservations \- the pools
+grow lazily \- so raising main costs nothing until it is used, and what
+40/40/20 was costing was the ceiling itself.
 .NH 3
 What 256K costs you: the shell
 .PP
