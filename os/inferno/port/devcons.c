@@ -195,10 +195,49 @@ putstrn0(char *str, int n, int usewrite)
 	}
 }
 
+static Lock iprintlock;
+
+/*
+ * Serialise the console against other processors.
+ *
+ * iprint() has done this since Plan 9; print() never has, and on one
+ * processor it did not matter.  On two it does: a panic on virtarm64
+ * with the secondary scheduling came out with both processors' output
+ * shredded into each other, one character group at a time, so the
+ * register dump and the stack could not be read at all -- which is the
+ * state the arm64 secondary hunt has to start from.
+ *
+ * Best effort, and the same lock iprint() uses so the two serialise
+ * against each other.  A short spin rather than iprintcanlock()'s
+ * hundred milliseconds of microdelay(): this sits under every print()
+ * in the kernel, and giving up quickly leaves exactly the behaviour
+ * there was before rather than a new way to stall.
+ */
+static int
+printcanlock(Lock *l)
+{
+	int i;
+
+	for(i = 0; i < 10000; i++){
+		if(canlock(l))
+			return 1;
+		if(l->m == MACHP(m->machno))
+			return 0;	/* this processor already holds it */
+	}
+	return 0;
+}
+
 void
 putstrn(char *str, int n)
 {
+	int locked, s;
+
+	s = splhi();
+	locked = printcanlock(&iprintlock);
 	putstrn0(str, n, 0);
+	if(locked)
+		unlock(&iprintlock);
+	splx(s);
 }
 
 int
@@ -263,7 +302,6 @@ fprint(int fd, char *fmt, ...)
  * dies during print and another has something important to say.
  * Make a good faith effort.
  */
-static Lock iprintlock;
 static int
 iprintcanlock(Lock *l)
 {

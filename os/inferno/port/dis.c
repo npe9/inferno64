@@ -808,6 +808,7 @@ starttheworld(void)
 enum { Gqevery = 61 };	/* Go's schedule() uses 61 for the same reason */
 int gqtick;
 int gqput, gqget;	/* MULTICORE INSTRUMENTATION - temporary */
+ulong disquanta[MAXMACH];	/* quanta run, per processor; likewise */
 
 static void
 gput(Prog *p)
@@ -2981,6 +2982,18 @@ vmachine(void*)
 				}
 				r->onctx = curP->idx + 1;
 			}
+			/*
+			 * MULTICORE INSTRUMENTATION - temporary.  Which
+			 * processors actually interpret.  "No panic" on a
+			 * second processor means nothing until something says
+			 * that processor ran Dis at all -- and this document
+			 * has caught a quieter number being a slower kernel
+			 * three times already.
+			 */
+			if((uint)m->machno < nelem(disquanta))
+				if(disquanta[m->machno]++ == 0)
+					print("dis: first Dis quantum on cpu%d\n",
+						m->machno);
 			fpurestore(up->env->fpuostate);
 			r->xec(r);
 			up->env->fpuostate = fpusave();
@@ -3196,7 +3209,15 @@ disdump(void)
 	Proc *q;
 	int i;
 
-	print("\ndis: vmlocked %d nidle %d creating %d runhd %#p runtl %#p\n",
+	{
+		int mi;
+
+		print("\ndis: quanta per cpu:");
+		for(mi = 0; mi < conf.nmach && mi < nelem(disquanta); mi++)
+			print(" cpu%d %lud", mi, disquanta[mi]);
+		print("\n");
+	}
+	print("dis: vmlocked %d nidle %d creating %d runhd %#p runtl %#p\n",
 		vmlock.locked, isched.nidle, isched.creating,
 		curP->runhd, curP->runtl);
 	/* MULTICORE INSTRUMENTATION - temporary */

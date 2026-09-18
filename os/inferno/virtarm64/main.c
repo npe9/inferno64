@@ -75,6 +75,9 @@ secmain(void)
 	 */
 	active.machs[m->machno] = 1;
 	coherence();
+#ifdef DISCTXREG
+	disctxinit();		/* curP is a register: this processor needs its own */
+#endif
 	if(secsched)
 		schedinit();
 	for(;;){
@@ -288,6 +291,16 @@ main(void)
 		*p++ = 0;
 
 	machinit();
+#ifdef DISCTXREG
+	/*
+	 * curP is a register now (include/disreg.h), so libinterp's
+	 * "Pctx* curP = &_pctx" initialiser does not exist and nothing
+	 * else gives R25 a value.  Every processor starts on the default
+	 * context and sched() moves it to the running Proc's; this is
+	 * cpu0's, and secondary() does the same for the other one.
+	 */
+	disctxinit();
+#endif
 	archreset();
 	confinit();
 	fpinit();

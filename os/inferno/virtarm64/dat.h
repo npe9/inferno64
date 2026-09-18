@@ -185,6 +185,17 @@ extern Mach mach0;
  * The register is R27.  It is not touched by libinterp/comp-arm64.c,
  * whose JIT uses R0-R5 and R20-R22, and l.s's trap path already saves
  * and restores R26/R27 in the Ureg, so a trap and return keeps it.
+ *
+ * All three come from include/disreg.h, because kencc assigns external
+ * registers per file by declaration order and libinterp has to see the
+ * same set in the same order to get the same register for curP:
+ *		m	R27
+ *		up	R26
+ *		curP	R25	(the Dis context)
+ * Declaring m and up here as well would give this file five
+ * declarations where four registers exist.  7c reserves R24-R27 (see
+ * utils/7c/txt.c), and the only R24/R25 references in aarch64 assembly
+ * are vectrap's, which saves and restores them in the Ureg like every
+ * other general register.
  */
-extern register Mach *m;			/* R27 */
-extern register Proc *up;			/* R26 */
+#include	"../../../include/disreg.h"

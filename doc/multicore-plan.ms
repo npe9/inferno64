@@ -6986,3 +6986,81 @@ regression is the board's and predates this session.  The same kernel
 with
 .CW secsched=0
 boots clean ten times out of ten.
+.NH 2
+curP was a global on arm64, and that is what the secondary was breaking
+.PP
+The console first: two processors printed into it without a lock, so
+every capture was shredded.
+.CW iprint()
+has interlocked since Plan 9 and
+.CW print()
+never has, which costs nothing on one processor.  It costs the evidence
+on two, so
+.CW putstrn()
+now takes the same lock, best effort, with a short spin rather than
+.CW iprintcanlock() 's
+hundred milliseconds \(em giving up quickly leaves exactly the behaviour
+there was before.
+.PP
+With a readable capture the fault is one line:
+.CW notefree() ,
+in
+.CW alloc.c ,
+reaching
+.CW currun()
+\(em which is
+.CW curP->runhd .
+.CW curP
+is per-executor by design, and on amd64 it is an external register, one
+per processor.  On arm64
+.CW DISCTXREG
+was never defined, so it was an ordinary global: both processors shared
+one Dis context pointer, which is the single thing the per-executor
+design exists to prevent.
+.PP
+.CW utils/7c
+already reserves four external registers and its own comment says why
+\(em "two is not enough for a per-executor Dis context" \(em so the
+registers were waiting.  virtarm64's
+.CW dat.h
+now takes
+.CW m ,
+.CW up
+and
+.CW curP
+from
+.CW include/disreg.h
+as pc64 does (R27, R26, R25), the board and libinterp compile with
+.CW -DDISCTXREG ,
+and
+.CW disctxinit()
+runs on cpu0 and on the secondary.
+.TS
+center;
+l r r.
+	panics	boots reaching VIRT-OK
+secsched=1, parallelvm=0, before	10 of 10	0
+secsched=1, parallelvm=1, before	9 of 10	0
+secsched=1, parallelvm=0, after	1 of 20	19
+secsched=1, parallelvm=1, after	0 of 20	20
+.TE
+.NH 2
+What that result is not
+.PP
+It is the crash gone, not two processors interpreting.  A counter on
+.CW vmachine() 's
+quantum, printing the first one each processor runs, says
+.CW "first Dis quantum on cpu0"
+in every boot of every arm and never says cpu1.  The secondary enters
+the scheduler and finds nothing to interpret.
+.PP
+The reason is probably the next bug, and it is not about SMP at all:
+this board's clock stops.  A print at tick 5, 200 and 2000 fires once,
+at 5, and never again \(em at
+.CW "-smp 1" ,
+with the secondary never started, and with the console lock compiled
+back out.  Fifty milliseconds of clock and then nothing, so there is no
+preemption, and a scheduler with no tick hands a second processor no
+work.  It is pre-existing, it is nothing to do with
+.CW parallelvm ,
+and it is where this board's next session starts.

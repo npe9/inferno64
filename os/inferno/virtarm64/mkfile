@@ -52,7 +52,7 @@ HFILES=\
 	dat.h\
 	io.h\
 
-CFLAGS=-wFV -I. -I../port -I../ip -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp
+CFLAGS=-wFV -DDISCTXREG -I. -I../port -I../ip -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp
 KERNDATE=`{$NDATE}
 
 default:V: i$CONF
