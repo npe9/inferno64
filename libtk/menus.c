@@ -1549,14 +1549,28 @@ drawmenu(Tk *tk, Point orig)
 	Point p, bd;
 	int bg;
 	Rectangle mainr, clientr, subr;
+	TkScene *msc;
 
-	/*
-	 * Anything that paints into the window itself has to render what
-	 * the walk has pending first, or the tree would land on top of it.
-	 */
-	tkwalkflush();
 	tkw = TKobj(TkWin, tk);
 	dst = tkimageof(tk);
+
+	/*
+	 * A menu's items are labels, and a label has been nodes since
+	 * f32a759e - so the only things a menu painted itself were the
+	 * slab behind each item and its own border.  Both are nodes now,
+	 * which is what lets the walk run THROUGH a menu rather than stop
+	 * at it: the slab, the item's text and the border go into one tree
+	 * in that order, which is the order they have to be drawn in.
+	 *
+	 * The flush stays for the other case.  Anything that paints into
+	 * the window itself has to render what the walk has pending first,
+	 * or the tree would land on top of it.
+	 */
+	msc = nil;
+	if(tkviascene && tkstyleflat(tk))
+		msc = tkwalkjoin(tk->env->top->ctxt, dst);
+	if(msc == nil)
+		tkwalkflush();
 
 	bd = Pt(tk->borderwidth, tk->borderwidth);
 	mainr.min = addpt(orig, Pt(tk->act.x, tk->act.y));
@@ -1594,7 +1608,10 @@ drawmenu(Tk *tk, Point orig)
 			 */
 			bg = tkstyleflat(sub) ? TkCselect : TkCactivebgnd;
 		}
-		draw(dst, subr, tkgc(sub->env, bg), nil, ZP);
+		if(msc != nil)
+			tkscenecolour(msc, subr, sub->env->colors[bg]);
+		else
+			draw(dst, subr, tkgc(sub->env, bg), nil, ZP);
 		sub->dirty = tkrect(sub, 1);
 		sub->flag |= Tkrefresh;
 		tkmethod[sub->type]->draw(sub, p);
@@ -1602,7 +1619,10 @@ drawmenu(Tk *tk, Point orig)
 		sub->flag &= ~Tkrefresh;
 	}
 	/* todo: dirty check */
-	tkdrawrelief(dst, tk, mainr.min, TkCbackgnd, tk->relief);
+	if(msc != nil)
+		tkreliefnodes(msc, tk, mainr.min, TkCbackgnd, tk->relief);
+	else
+		tkdrawrelief(dst, tk, mainr.min, TkCbackgnd, tk->relief);
 	return nil;
 }
 

@@ -1628,6 +1628,13 @@ checkscene()
 	if(mw != nil){
 		tk->cmd(top, ".mn post 640 20");
 		tk->putimage(top, ".mn -1", mw, nil);
+		# ACTIVATE an item, because the slab behind an item is the
+		# background colour unless the pointer is on it - so without
+		# this the menu's own fill node is the same colour as what is
+		# already there, and a perturbation of it changes no pixel.
+		# The accent is the only version of that node with anything
+		# to compare.
+		tk->cmd(top, ".mn activate 1");
 		tk->cmd(top, "update");
 	}
 

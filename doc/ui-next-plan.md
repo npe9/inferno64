@@ -1025,8 +1025,38 @@ there was never speed on the table here anyway.
 
    Still drawn through a scratch image: a widget whose image came from
    a file *descriptor*, which has no path for a texture node to name;
-   and a `text`, a `canvas`, a `panel` and a `menu`, which paint into
-   the window directly. That is the whole list.
+   and a `text` and a `canvas`, which paint into the window directly.
+   A `menu` no longer does — see below — and a `panel` never will.
+
+   **A `panel` is out on principle, not pending.** Its image is a live
+   `Image` a Limbo program writes through `putimage`, so there is no
+   file for a node to name, and a node that held the `Image` itself
+   would break the one rule the vocabulary keeps — which is also the
+   rule that would let a tree outlive its repaint, since the program
+   may have redrawn that image in the meantime. The `tkwalkflush()` at
+   the top of `tkdrawpanel()` is load-bearing and stays. A `canvas`
+   has the same problem per item rather than per widget: a stipple and
+   a pen are live images too, so it is the *last* of these to look at
+   and may end up partly excluded for the same reason. `text` is the
+   honest middle — glyph runs, and `TkNglyphs` already exists.
+
+   **A `menu` is nodes, and the walk runs through it.** This was much
+   smaller than "a direct painter" suggested, because a menu's items
+   are `TkLabel`s and a label has been nodes since `f32a759e`. The only
+   things a menu painted itself were the slab behind each item and its
+   own border, and both had a node already — `tkscenecolour()` and
+   `tkreliefnodes()`. A menu sits in its own posted window, so it joins
+   the walk on that window's image and the run structure did not
+   change at all: the pane went from 40 widgets to 41 in the same 8
+   trees.
+
+   The slab needed a second look. Perturbing its *position* changed no
+   pixel, because an item's slab is the background colour unless the
+   pointer is on it — it was drawn to get full-width highlighting, and
+   with nothing highlighted it is invisible by construction. The pane
+   now activates an item, and the accent it gets is what the control
+   bites on: dropping it from the node path alone fails by 81018
+   bytes, and the border control by 1944.
 
    **`-indicatoron 0` was a stale exclusion.** Such a button draws no
    indicator at all — it picks a relief from its state and is otherwise
