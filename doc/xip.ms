@@ -985,12 +985,13 @@ and
 and the saving multiplies by
 .CW NPROC .
 .PP
-So the cuts that remain: the load-time Dis constants to flash behind an
-immortal-object convention (35200 of the 68224 heap), and
-.CW NERR / NNOTE
+Both of those are now built \-
+.CW NERR
 against
 .CW NPROC
-(a few kilobytes).  Together they would take the 229388 to roughly 190K.
+above, and the Dis heap is measured rather than estimated below \- so
+what remains is named in
+.I "Where this stands" .
 .NH 3
 The part that is not understood
 .PP
@@ -2192,6 +2193,89 @@ is 280408 of text against 49112 of data and bss, which fits both its
 .CW Proc
 array on top \- and a pool floor that still leaves no room for Limbo,
 which its NOTE says.
+.NH 2
+What is in the Dis heap, and what stops the next step
+.PP
+The remaining item on this document's own list was the load-time Dis
+constants to flash behind an immortal-object convention, estimated at
+35200 of the heap.  The estimate does not survive measurement.
+.PP
+Heap allocations were not attributable, because
+.CW nheap()
+and its siblings call
+.CW poolalloc(heapmem, ...)
+without a
+.CW setmalloctag ,
+so every one of them reported an allocating pc of zero.  Tagging them
+temporarily and reading
+.CW #c/poolhist
+after a shell and an
+.I ls (1),
+of 56896 bytes live in 357 blocks:
+.DS
+.CW "  20416  newstring"
+.CW "  17728  newaz"
+.CW "   3264  linkmod    (module data, per instance)"
+.CW "   3008  parsemod   (origmp, the master copy)"
+.CW "   3008  arraycpy"
+.CW "   2496  mklinkmod  (Modlink)"
+.CW "   2368  cons"
+.DE
+So the heap is Dis strings and arrays, and the module data segments \-
+the thing the estimate was about \- are 3008 bytes of master copies and
+3264 of instances.  Every module the nine carry declares a data segment
+between 24 and 2360 bytes; 3368 for all nine together.  There is no
+35200 of load-time constants to move.
+.PP
+What is left is 38144 of strings and arrays that the shell makes while
+it runs, and a fraction of that which module loading makes and never
+writes.  Separating the two needs the caller of
+.CW newstring ,
+not
+.CW newstring
+itself, so it is not measured here.
+.PP
+And there is an obstacle worth naming before anyone tries, because it is
+not the one the reference count was.  A
+.CW Type
+went to flash once its count was handled, because the count was the only
+field written.  A
+.CW Heap
+is different:
+.DS
+.CW "	int	color;"
+.DE
+the garbage collector writes it on every mark.  An immortal heap object
+in flash would have to be one the collector never touches at all \-
+recognised and skipped, not coloured \- which is a change to the
+collector rather than a convention on a field.  That is why this item is
+separate from the
+.CW Type
+one and why it is not attempted here on the strength of an estimate that
+measurement does not support.
+.PP
+One more thing found while looking:
+.CW reallocpc
+in
+.CW Bhdr
+.CW ( include/pool.h )
+is written by
+.CW setrealloctag
+and read only by
+.CW getrealloctag ,
+which nothing in this tree calls.  It is four bytes in every block
+header, and dropping it would take
+.CW BHDRSIZE
+from 20 to 16 and let about one request in sixteen fall into a smaller
+quantum \- roughly 4800 bytes on
+.CW mps2 .
+It is not done, because
+.CW include/pool.h
+is shared with
+.CW os/osprey
+and
+.CW os/9front ,
+and neither can be booted from here to check it.
 .NH 2
 What gates any of it
 .PP
