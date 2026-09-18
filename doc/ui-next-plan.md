@@ -1108,31 +1108,43 @@ contact with the numbers are:
 
 ### The order, and the evidence each step owes
 
-**A. Widget fills become `TkNroundfill`** (plan item 1, unchanged and
-still first) — **and the fill is not where the plan said it was.** Every
-converted widget takes its fill from the *layer*: `tkscenelayer()` fills
-the scratch with a flat colour before anything is drawn into it
-(`libtk/buton.c:329`, `entry.c:429`, `label.c:318`, `listb.c:195`,
-`scale.c:661`, `scrol.c:432`, and the renderer at `scene.c:681`, which
-hands the fill straight to `tkitmppix`). The corner then arrives wrong
-and `tkreliefnodes()` → `tksceneborderon()` paints it back with a
-`TkNcorners`. Only `frame` fills with a real `TkNroundfill`
-(`libtk/frame.c:152`), and it is the one widget that opens its layer
-with the *parent's* colour rather than its own.
+**A. ~~Widget fills become `TkNroundfill`~~ — DONE, as a shaped
+composite, and the plan was wrong about it twice.**
 
-   So the work is in `TkNlayer`, not in six call sites: either the layer
-   node carries a corner radius, or it is filled with nothing and every
-   widget emits a `TkNroundfill` as its first node. The second is the
-   honest one — a layer is a scope, and a fill colour on a scope is the
-   same shortcut that put the corner wrong in the first place — but it
-   costs a clear of the scratch, so measure both.
+   It said the *fills* should become rounded so that `TkNcorners` — four
+   cutaways painted in the parent's colour after the widget is drawn —
+   would stop being needed. The first correction: the fill it named does
+   not exist. Every converted widget takes its fill from `TkNlayer`,
+   which fills the scratch flat before anything is drawn into it.
 
-   *Done when* no widget emits a `TkNcorners`, the identity check still
-   reads 0 bytes, and the pane's node count *falls* — that last is the
-   measurement which says the corner nodes went away rather than being
-   joined by fills. *Control:* perturb the fill's radius on the scene
-   side only; a clean control means a rounded fill is being emitted with
-   radius 0, which is a square fill wearing the right name.
+   The second correction cost a failing run to find, which is the point
+   of having one. A rounded fill under a square composite still shows a
+   `listbox`'s selection band in the corner, because the band is drawn
+   *after* the fill and runs the full width of the widget. Twelve
+   pixels. So the corner node was not mending the fill; it was mending
+   everything drawn over it, and a fill of any shape cannot do that.
+
+   The shape therefore belongs on the **composite**:
+   `tkscenelayerround()` takes a radius, and the layer's blit copies the
+   middle band plus each corner row span by span with the same `inset()`
+   the rounded fill and the border already use, so the three agree by
+   construction. The corners are not copied, what shows through is what
+   was already there — the parent's background, the same colour the mend
+   used to paint — and a widget no longer needs to know what is behind
+   it in order to draw itself.
+
+   It also needed the focus ring drawn *before* the border in `entry`
+   and `scale`, which is the order `button`, `label` and `listbox`
+   already used: a ring drawn after the border puts its square corner
+   where the border has just cut the widget away. A focused entry had a
+   blue notch outside its own rounded corner, in the ordinary drawing
+   path and not only in the nodes.
+
+   Identity holds at 0 of 13500000 bytes; the pane's node count fell
+   from 123 to 118, which is the five corner nodes. Controls: the
+   composite squared again differs by 2400 bytes, its radius widened by
+   two by 2712, and a print in the `TkNcorners` renderer is reached by
+   no run at all.
 
 **B. `TkNglyphs` carries an atlas reference, not a `Font*`** (plan item
 2). This is the one node that still holds a resource, and `scene.c` says
