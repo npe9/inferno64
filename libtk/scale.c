@@ -658,7 +658,8 @@ tkdrawscale(Tk *tk, Point orig)
 		Rectangle dr;
 
 		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
-		tkscenelayer(sc, r.max, env->colors[TkCbackgnd], dr, ZP);
+		tkscenelayerround(sc, r.max, env->colors[TkCbackgnd], dr, ZP,
+			tkscenecorner(tk, tk->relief));
 		i = nil;
 	}else{
 		i = tkitmp(env, r.max, TkCbackgnd);
@@ -672,21 +673,29 @@ tkdrawscale(Tk *tk, Point orig)
 		tkscalehoriz(tk, i, sc);
 
 	if(sc != nil){
-		tkreliefnodes(sc, tk, ZP, TkCbackgnd, tk->relief);
 		if(tkhaskeyfocus(tk))
 			tksceneborder(sc, insetrect(r, tk->borderwidth), 0,
 				tk->highlightwidth,
 				env->colors[TkChighlightfgnd]);
+		tkreliefnodes(sc, tk, ZP, TkCbackgnd, tk->relief);
 		tkscenelayerend(sc);
 		tkscenefinish(sc, env->top->ctxt, tkimageof(tk));
 		return nil;
 	}
 
-	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
+	/*
+	 * The ring before the border, which is the order every other widget
+	 * here already used.  It matters once a widget is composited in its
+	 * own rounded shape: a ring drawn AFTER the border puts its square
+	 * corner where the border has just cut the widget away, so a
+	 * focused entry showed a blue notch outside its own rounded corner.
+	 * The border is the last word on the shape of a widget.
+	 */
 	if (tkhaskeyfocus(tk)) {
 		fr = insetrect(r, tk->borderwidth);
 		tkbox(i, fr, tk->highlightwidth, tkgc(env, TkChighlightfgnd));
 	}
+	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
 
 	p.x = tk->act.x + orig.x;
 	p.y = tk->act.y + orig.y;

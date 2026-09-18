@@ -1055,10 +1055,27 @@ tkroundbox(Image *i, Tk *tk, Point o, int w, int h, int bd, Image *col)
  * halfway through - which is right when the border is all there is and
  * wrong once the widget is a layer.
  */
+/*
+ * The corner radius a widget's LAYER should take, which is the radius
+ * its border will be drawn with, or none when no border is drawn.
+ *
+ * The two have to agree, because they describe one widget: a border
+ * that is not drawn leaves square corners, and a layer composited round
+ * under it would round a widget the direct path leaves square.  So this
+ * repeats tkreliefnodes' own early return rather than guessing at it.
+ */
+int
+tkscenecorner(Tk *tk, int rlf)
+{
+	if(tk->borderwidth <= 0 || rlf == TKflat)
+		return 0;
+	return tkspace(tk)->corner;
+}
+
 void
 tkreliefnodes(TkScene *sc, Tk *tk, Point o, int color, int rlf)
 {
-	TkEnv *e, *pe;
+	TkEnv *e;
 	ulong brgba;
 	int w, h, bd;
 
@@ -1077,9 +1094,8 @@ tkreliefnodes(TkScene *sc, Tk *tk, Point o, int color, int rlf)
 		brgba = e->colors[color+TkDarkshade];
 	else
 		brgba = tkrgbashade(e->colors[color], TkDarkshade);
-	pe = tkbehind(tk);
-	tksceneborderon(sc, Rect(o.x, o.y, o.x + w + 2*bd, o.y + h + 2*bd),
-		tkspace(tk)->corner, bd, brgba, pe->colors[TkCbackgnd]);
+	tksceneborder(sc, Rect(o.x, o.y, o.x + w + 2*bd, o.y + h + 2*bd),
+		tkspace(tk)->corner, bd, brgba);
 }
 
 void

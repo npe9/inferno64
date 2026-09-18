@@ -111,18 +111,35 @@ A
 .I frame
 works that way now.
 .PP
-Every other widget still needs
-.IR tksceneborderon ,
-which emits a
+No widget needs that any more.
+A
+.B TkNlayer
+carries a corner radius and its composite takes that shape, so a
+widget's corners are simply not copied and
 .B TkNcorners
-before the stroke to paint the corner back.
-That is not a property of a border and is not pretended to be one \(em it
-is there because those widgets fill their whole rectangle, then draw
-text, and only then ask for a border, by which point the corner is
-already wrong.
-Each widget converted to emit its own fill as a
+is emitted by nothing.
+The type and its renderer stay, because a node type's number must not
+move once a backend has seen it.
+.PP
+The shape belongs on the composite rather than on the fill, and that
+was established by trying the fill first: a rounded
 .B TkNroundfill
-stops needing it.
+under a square composite still showed a
+.IR listbox (9)'s
+selection band in the corner, because the band is drawn after the fill
+and runs the full width of the widget.
+Twelve pixels.
+.PP
+It also required the focus ring to be drawn BEFORE the border in
+.IR entry (9)
+and
+.IR scale (9),
+which is the order the other widgets already used.
+A ring drawn after the border puts its square corner where the border
+has just cut the widget away, so a focused entry showed a blue notch
+outside its own rounded corner \(em in the ordinary drawing path, not
+just in the nodes.
+The border is the last word on the shape of a widget.
 .PP
 A
 .B TkNlayer

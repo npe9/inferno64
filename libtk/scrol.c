@@ -429,8 +429,8 @@ tkdrawscrlb(Tk *tk, Point orig)
 	if(tkviascene && flatenv(e))
 		sc = tkwalkjoin(e->top->ctxt, dst);
 	if(sc != nil){
-		tkscenelayer(sc, r.max, e->colors[TkCbackgnd],
-			rectaddpt(r, p), ZP);
+		tkscenelayerround(sc, r.max, e->colors[TkCbackgnd],
+			rectaddpt(r, p), ZP, tkscenecorner(tk, tk->relief));
 		i = nil;
 	}else{
 		i = tkitmp(e, r.max, TkCbackgnd);

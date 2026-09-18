@@ -485,7 +485,11 @@ enum {
 	TkNcolour,		/* r filled with rgba */
 	TkNroundfill,		/* r filled, corners rounded by radius */
 	TkNborder,		/* rounded rectangle, stroked, width wide */
-	TkNcorners,		/* the four corner cutaways, in rgba */
+	TkNcorners,		/* the four corner cutaways, in rgba.
+				 * Emitted by nothing since a layer takes its
+				 * own rounded shape; the type and its
+				 * renderer stay because a node type's number
+				 * must not move once a backend has seen it. */
 
 	/*
 	 * Declared, not implemented.  This is the vocabulary a GPU backend
@@ -801,6 +805,7 @@ extern	void		tksceneborderon(TkScene*, Rectangle, int, int, ulong, ulong);
 extern	void		tkscenetext(TkScene*, Point, char*, Font*, ulong);
 extern	void		tksceneellipse(TkScene*, Point, Point, int, ulong);
 extern	void		tksceneellipsefill(TkScene*, Point, Point, ulong);
+extern	int		tkscenecorner(Tk*, int);
 extern	void		tkscenepolyfill(TkScene*, Point*, int, ulong);
 extern	void		tkscenespline(TkScene*, Point*, int, int, int, ulong);
 extern	void		tkwalkopen(TkCtxt*, Image*);
@@ -811,6 +816,7 @@ extern	void		tkscenefinish(TkScene*, TkCtxt*, Image*);
 extern	void		tkwalkcount(int*, int*, int*);
 extern	void		tkwalkreset(void);
 extern	void		tkscenelayer(TkScene*, Point, ulong, Rectangle, Point);
+extern	void		tkscenelayerround(TkScene*, Point, ulong, Rectangle, Point, int);
 extern	void		tkscenelayerend(TkScene*);
 extern	void		tkreliefnodes(TkScene*, Tk*, Point, int, int);
 extern	int		tkscenerender(TkScene*, TkCtxt*, Image*);

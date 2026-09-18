@@ -192,7 +192,8 @@ tkdrawlistb(Tk *tk, Point orig)
 		Rectangle dr;
 
 		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
-		tkscenelayer(sc, r.max, env->colors[TkCfield], dr, ZP);
+		tkscenelayerround(sc, r.max, env->colors[TkCfield], dr, ZP,
+			tkscenecorner(tk, tk->relief));
 		i = nil;
 	}else{
 		i = tkitmp(env, r.max, tkstyleflat(tk) ? TkCfield : TkCbackgnd);

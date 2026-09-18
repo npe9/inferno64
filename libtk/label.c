@@ -315,7 +315,8 @@ tkdrawlabel(Tk *tk, Point orig)
 		Rectangle dr;
 
 		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
-		tkscenelayer(lsc, r.max, e->colors[bgnd], dr, ZP);
+		tkscenelayerround(lsc, r.max, e->colors[bgnd], dr, ZP,
+			tkscenecorner(tk, relief));
 		if(tk->flag & Tkactive)
 			tkscenecolour(lsc, r, e->colors[bgnd]);
 		i = nil;

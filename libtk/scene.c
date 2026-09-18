@@ -278,6 +278,45 @@ tksceneellipsefill(TkScene *s, Point c, Point rad, ulong rgba)
 	n->rgba = rgba;
 }
 
+/* defined with the renderers below, and used by the composite above them */
+static int	inset(int, int);
+static int	clamprad(Rectangle, int);
+
+/*
+ * Composite a layer, in its own shape.
+ *
+ * Square is the whole rectangle in one draw, which is what this always
+ * did.  Rounded is the middle band plus the two rows of each corner,
+ * span by span, using the same inset() the rounded fill and the border
+ * use - so the three agree on where the curve is by construction rather
+ * than by three copies of the arithmetic.
+ */
+static void
+blitshaped(Image *dst, TkNode *n, Image *src)
+{
+	Rectangle d;
+	int rad, y, cut, w, h;
+
+	d = n->dstr;
+	w = Dx(d);
+	h = Dy(d);
+	rad = clamprad(d, n->radius);
+	if(rad <= 0){
+		draw(dst, d, src, nil, n->sp);
+		return;
+	}
+	draw(dst, Rect(d.min.x, d.min.y+rad, d.max.x, d.max.y-rad), src, nil,
+		addpt(n->sp, Pt(0, rad)));
+	for(y = 0; y < rad; y++){
+		cut = inset(rad, y);
+		draw(dst, Rect(d.min.x+cut, d.min.y+y, d.max.x-cut, d.min.y+y+1),
+			src, nil, addpt(n->sp, Pt(cut, y)));
+		draw(dst, Rect(d.min.x+cut, d.min.y+h-1-y, d.max.x-cut, d.min.y+h-y),
+			src, nil, addpt(n->sp, Pt(cut, h-1-y)));
+	}
+	USED(w);
+}
+
 /*
  * A stroked B-spline through np points, with the same end style at both
  * ends.
@@ -509,6 +548,31 @@ tkscenepolyfill(TkScene *s, Point *p, int np, ulong rgba)
 void
 tkscenelayer(TkScene *s, Point size, ulong fill, Rectangle dstr, Point sp)
 {
+	tkscenelayerround(s, size, fill, dstr, sp, 0);
+}
+
+/*
+ * A layer with ROUNDED CORNERS: the composite takes the shape, so the
+ * four corners of the destination are left as they were.
+ *
+ * This is what a widget with a rounded border actually is, and the
+ * reason it is on the composite rather than on the fill.  A fill of the
+ * right shape is not enough: a listbox draws a selection band the full
+ * width of itself, and an entry its selection, AFTER the fill - so with
+ * a shaped fill and a square composite the corner shows the band.  That
+ * was 12 pixels, and it is what sent the first attempt at this back.
+ *
+ * The alternative, which is what the direct path does and what
+ * TkNcorners described, is to paint the corners back with the parent's
+ * colour once the widget is drawn.  That works and is a mend: it needs
+ * to know what is behind a widget in order to draw the widget.  Shaping
+ * the composite needs to know nothing, which is the difference between
+ * describing a frame and reproducing one.
+ */
+void
+tkscenelayerround(TkScene *s, Point size, ulong fill, Rectangle dstr, Point sp,
+	int radius)
+{
 	TkNode *n;
 
 	if((n = newnode(s, TkNlayer)) == nil)
@@ -518,6 +582,7 @@ tkscenelayer(TkScene *s, Point size, ulong fill, Rectangle dstr, Point sp)
 	n->rgba = fill;
 	n->dstr = dstr;
 	n->sp = sp;
+	n->radius = radius;
 }
 
 void
@@ -689,7 +754,7 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 		case TkNlayerend:
 			if(saved == nil)
 				continue;
-			draw(saved, open->dstr, target, nil, open->sp);
+			blitshaped(saved, open, target);
 			target = saved;
 			saved = nil;
 			open = nil;

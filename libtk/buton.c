@@ -326,7 +326,8 @@ tkdrawbutton(Tk *tk, Point orig)
 		Rectangle dr;
 
 		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
-		tkscenelayer(bsc, r.max, e->colors[bgnd], dr, ZP);
+		tkscenelayerround(bsc, r.max, e->colors[bgnd], dr, ZP,
+			tkscenecorner(tk, relief));
 		if(tk->flag & Tkactive)
 			tkscenecolour(bsc, r, e->colors[bgnd]);
 		i = nil;

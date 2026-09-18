@@ -426,7 +426,8 @@ tkdrawentry(Tk *tk, Point orig)
 		Rectangle dr;
 
 		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
-		tkscenelayer(sc, r.max, env->colors[TkCfield], dr, ZP);
+		tkscenelayerround(sc, r.max, env->colors[TkCfield], dr, ZP,
+			tkscenecorner(tk, tk->relief));
 		txt = entryutf(tke);
 		if(txt != nil){
 			dp = Pt(s.min.x - (tke->x0 - tke->xv0), s.min.y);
@@ -441,11 +442,11 @@ tkdrawentry(Tk *tk, Point orig)
 				tke->xicursor - tke->x0 + Inswidth,
 				env->font->height), s.min),
 				env->colors[TkCforegnd]);
-		tkreliefnodes(sc, tk, ZP, TkCbackgnd, tk->relief);
 		if(tkhaskeyfocus(tk))
 			tksceneborder(sc, insetrect(r, tk->borderwidth), 0,
 				tk->highlightwidth,
 				env->colors[TkChighlightfgnd]);
+		tkreliefnodes(sc, tk, ZP, TkCbackgnd, tk->relief);
 		tkscenelayerend(sc);
 		tkscenefinish(sc, env->top->ctxt, tkimageof(tk));
 		return nil;
@@ -457,10 +458,18 @@ tkdrawentry(Tk *tk, Point orig)
 
 	tkentrytext(i, s, tk, env);
 
-	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
-
+	/*
+	 * The ring before the border, which is the order every other widget
+	 * here already used.  It matters once a widget is composited in its
+	 * own rounded shape: a ring drawn AFTER the border puts its square
+	 * corner where the border has just cut the widget away, so a
+	 * focused entry showed a blue notch outside its own rounded corner.
+	 * The border is the last word on the shape of a widget.
+	 */
 	if (tkhaskeyfocus(tk))
 		tkbox(i, insetrect(r, tk->borderwidth), tk->highlightwidth, tkgc(tk->env, TkChighlightfgnd));
+
+	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
 
 	p.x = tk->act.x + orig.x;
 	p.y = tk->act.y + orig.y;
