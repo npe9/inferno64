@@ -88,9 +88,36 @@ default:V: i$CONF
 install:V: i$CONF
 	cp i$CONF $INSTALLDIR/i$CONF
 
+# The modules whose decoded instruction arrays are built into the image.
+# These are the ones a shell prompt and an ls(1) actually load, traced by
+# printing every path libinterp/load.c:/^parsemod is given; between them
+# they are 110616 bytes of Inst that no longer has to be built in RAM.
+# A name here is the same relative name under /dis in the built-in root
+# and under dis32 where it was installed, which is how the root section
+# of the conf names them too.  A module whose file does not match what
+# the root carries simply is not matched at load time, so the failure
+# mode of getting this list wrong is losing the saving, not running the
+# wrong code.
+XIPDIS=\
+	sh.dis\
+	ls.dis\
+	lib/string.dis\
+	lib/bufio.dis\
+	lib/filepat.dis\
+	lib/readdir.dis\
+	lib/env.dis\
+	lib/arg.dis\
+
+# dis32, not $DISROOT: the root section of the conf beside this file
+# names /dis32 explicitly, because a Dis word is four bytes on this board
+# and a module compiled for eight will not load.  These have to be the
+# same files the root carries.
+XIPDISFILES=${XIPDIS:%=$ROOT/dis32/%}
+
 # dis2s is a host tool, found on the path like data2s and ndate are.
-$CONF.prog.s $CONF.xipmod.c: $INITDIR/$INIT.dis
-	$DIS2S -p /osinit.dis -s osinit -o $CONF.prog -c $CONF.xipmod $INITDIR/$INIT.dis
+$CONF.prog.s $CONF.xipmod.c: $INITDIR/$INIT.dis $XIPDISFILES
+	$DIS2S -o $CONF.prog -c $CONF.xipmod -r $ROOT/dis32 -p /dis \
+		/osinit.dis=$INITDIR/$INIT.dis $XIPDIS
 
 CLEANEXTRA=$CONF.prog.s $CONF.xipmod.c
 

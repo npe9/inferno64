@@ -1578,10 +1578,47 @@ to 366336 \- 768 bytes, being 55 instructions at twelve plus the
 allocator's header, which is the whole of what that module's
 .CW Inst
 array used to cost.  A 55-instruction module is a demonstration and not
-a saving; what makes this worth the machinery is the library modules and
-the shell, measured at 106284 bytes of
+a saving, so the modules a shell prompt actually loads went in next.
+Which those are was traced rather than guessed, by printing every path
+.CW parsemod
+is given: nine of them, being
+.CW /osinit.dis ,
+.CW sh.dis ,
+.CW ls.dis
+and the six library modules under
+.CW /dis/lib
+that those two pull in, 110616 bytes of
 .CW Inst
-between them, and they are the next step.
+between them.  With all nine built in, from
+.CW #c/memory
+on
+.CW mps2 :
+.DS
+.CW "                      before     after"
+.CW "main, at a prompt     349952    248832"
+.CW "main, after ls        367104    265216"
+.CW "arena high water      398848    287488"
+.CW "kernel text           878704    989720"
+.CW "kernel data + bss     132400    132568"
+.DE
+101888 bytes of RAM for 111016 of flash, which on a part with megabytes
+of flash and a couple of hundred kilobytes of SRAM is the trade this
+whole document is about.  The 168 bytes of data are the table itself,
+nine entries and a pointer.  The shell runs from flash:
+.I fptest (1)
+is 25 of 25,
+.I cvtchk (1)
+is clean and
+.I ls (1)
+works, on the M7 and the M4 bench both.
+.CW teensy41
+carries the same nine, going from 571152 of text to 682144 against its
+eight megabytes of flash.
+.PP
+A module that is in the list but is not the module the root carries is
+simply not matched \- the length of the file it was built from is part
+of the match \- so getting the list wrong loses the saving rather than
+running the wrong code.
 .PP
 What is not done: the type descriptors, the link tables and the
 exception handlers still parse into RAM.
