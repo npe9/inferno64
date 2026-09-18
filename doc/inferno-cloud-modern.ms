@@ -2670,7 +2670,7 @@ Everything above was measured on a laptop, interpreted, which is the
 right shape for a native kernel but not the machine anyone would run
 one on.  So the two instruments went into the
 .CW pc64
-root \(em about 20 KB against a 66 MiB boot floor \(em and a
+root \(em about 20 KB against a 66 MiB boot floor \(em and an
 .CW e2-small
 was rented to run them.
 .PP
