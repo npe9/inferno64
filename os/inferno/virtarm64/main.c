@@ -40,12 +40,32 @@ volatile uintptr	secsp;
 volatile uintptr	seccflag;	/* set only by C on cpu1 */
 int		secgic = -1;
 /*
- * Off.  cpu1 can enter the scheduler -- it works, and it runs
- * processes -- but it corrupts the Dis heap about one boot in ten, with
- * the same track: signature doc/inferno-ports.ms is chasing on pc64.
- * Set to 1 to reproduce; see the commit and doc/multicore-plan.ms.
+ * On.  The secondary enters the scheduler, picks processes and
+ * interprets Dis.
+ *
+ * This comment used to say the opposite -- that cpu1 corrupted the Dis
+ * heap about one boot in ten -- and that was three bugs, all of them
+ * now fixed and none of them the scheduler:
+ *
+ *	curP, the per-executor Dis context, was a plain global on
+ *	arm64 (no DISCTXREG), so both processors shared one;
+ *
+ *	gicenable()'s GICv2 path never wrote GICD_ITARGETSR, which
+ *	resets to no target, so with a second processor present every
+ *	SPI went to nobody and the console interrupt was lost;
+ *
+ *	splhi stored eight bytes into Mach.splpc, four bytes wide, and
+ *	cleared Mach.machno behind it -- invisible on cpu0, whose
+ *	number is 0 anyway, and on cpu1 it renamed the processor to 0
+ *	the first time interrupts were unmasked.
+ *
+ * Measured after those: eight boots at parallelvm=0 and eight at
+ * parallelvm=1, -smp 2, no panic, an interactive shell every time, and
+ * "first Dis quantum on cpu1" every time.  *secsched=0 on the boot line
+ * keeps the secondary out of the scheduler, which is what every table
+ * in doc/multicore-plan.ms before this was measured on.
  */
-int		secsched = 0;
+int		secsched = 1;
 volatile uintptr	secalive;
 volatile uintptr	seccount;
 

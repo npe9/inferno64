@@ -7779,3 +7779,48 @@ ones that count events rather than time: panics, audits, markers,
 whether a second processor interprets.  Those stand.  For throughput,
 alternate the arms, take pairs, and report the spread rather than a
 mean \(em and say what else was running.
+.NH 2
+virtarm64 runs on both processors by default now
+.LP
+.B "The comment was older than the fixes."
+.CW "int secsched = 0"
+carried a note saying the secondary corrupted the Dis heap about one
+boot in ten.  That was three bugs, none of them the scheduler, and all
+three are fixed above: a shared
+.CW curP
+(arm64 had no
+.CW DISCTXREG ),
+.CW gicenable()
+never writing
+.CW GICD_ITARGETSR
+on the GICv2 path, and
+.CW splhi
+clearing
+.CW Mach.machno
+with an eight-byte store into a four-byte field.
+.PP
+Sixteen boots at
+.CW "-smp 2" ,
+eight with
+.CW parallelvm=0
+and eight with
+.CW parallelvm=1 :
+.IP
+.nf
+secsched=1 pvm=0:  8 boots  0 panic  8 shell  8 with cpu1 interpreting
+secsched=1 pvm=1:  8 boots  0 panic  8 shell  8 with cpu1 interpreting
+.fi
+.PP
+These are counts of events, not of seconds, so the shared host above
+does not touch them.
+.CW secsched
+is 1 now and
+.CW *secsched=0
+on the boot line puts the board back to one processor in the scheduler,
+which is what every table before this was measured on.
+.CW parallelvm
+stays 0 by default: that one is a throughput question, and throughput
+is exactly what this host cannot answer today.
+.PP
+Four boots with no boot line at all \(em the default a user gets \(em
+reach a shell with both processors interpreting, no panic.
