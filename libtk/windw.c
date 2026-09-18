@@ -289,7 +289,6 @@ tkdrawslaves1(Tk *tk, Point orig, Image *dst, int *dirty)
 	char *e = nil;
 	Point worig;
 	Rectangle r, oclip;
-	int gclip;
 
 	worig.x = orig.x + tk->act.x + tk->borderwidth;
 	worig.y = orig.y + tk->act.y + tk->borderwidth;
@@ -309,36 +308,23 @@ tkdrawslaves1(Tk *tk, Point orig, Image *dst, int *dirty)
 	 */
 	/*
 	 * A grid clips its children by narrowing the destination's clip
-	 * rectangle around them, and the clip is a property of the SPAN of
-	 * drawing between here and the end of the loop - which is what a
-	 * clip node says, so the walk can carry it and does not have to
-	 * stop.  The nodes the children build are rendered later, and the
-	 * clip node travels with them.
-	 *
-	 * Without one the clip is gone by the time the nodes are drawn, so
-	 * the walk had to be flushed twice to render them while it still
-	 * held - which cut the run in two at every grid.
+	 * rectangle around them.  Nodes are rendered when the walk flushes,
+	 * which is after this has been put back, so what is pending has to
+	 * be rendered while the clip still says what it said when the nodes
+	 * were built - on the way in and on the way out.
 	 */
-	gclip = 0;
 	if (tk->grid != nil) {
 		r = rectaddpt(tkrect(tk, 0), worig);
 		if (rectclip(&r, dst->clipr) == 0)
 			return nil;
 		oclip = dst->clipr;
-		if(tkviascene){
-			tkwalkclip(r);
-			gclip = 1;
-		}else
-			tkwalkflush();
+		tkwalkflush();
 		replclipr(dst, 0, r);
 	}
 	for(f = tk->slave; e == nil && f; f = f->next)
 		e = tkdrawslaves1(f, worig, dst, dirty);
 	if (tk->grid != nil){
-		if(gclip)
-			tkwalkclipend();
-		else
-			tkwalkflush();
+		tkwalkflush();
 		replclipr(dst, 0, oclip);
 	}
 	return e;

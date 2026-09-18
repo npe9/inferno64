@@ -1088,8 +1088,31 @@ there was never speed on the table here anyway.
    flush has the clip re-emitted into it. Clips nest by intersection,
    innermost last, so what reaches the renderer is always one
    rectangle — which is all it supports, and is enough, since a clip
-   inside a clip is just a smaller clip. The grid uses this too, and
-   is simpler for it.
+   inside a clip is just a smaller clip.
+
+   **The grid does not use it, and the earlier claim that it did is
+   withdrawn.** `e0ad7abb` said a clip node let the walk run through a
+   grid, taking the pane from 8 trees to 6, and that was measured on a
+   pane where no gridded child ever painted into the window. Gridding a
+   `canvas` — which does — makes it fail by 16212 bytes, and the reason
+   is a rule that was not stated anywhere: **a tree must not span a
+   change to the destination's own clip.** The grid narrows the
+   window's clip around its children for the sake of the ones that draw
+   directly; the frame's own border lies *outside* that rectangle and
+   was already in the tree, so when the child's flush rendered it, it
+   was cut away.
+
+   Two ways out were tried and both are recorded because the second
+   looked better than it was. Flushing on each side of the narrowing is
+   correct and is what the grid already did, so the grid is simply back
+   to that. Having the walk remember the clip each tree *began* under
+   and restoring it to render seemed to remove the rule entirely — it
+   is worse, 124572 bytes, because a widget legitimately drawn under a
+   narrower clip later in the same run then renders under the wider
+   one. The clip node keeps the customer it was built for, the text
+   widget, whose tree genuinely outlives its narrowing and whose
+   control fails by 50148 bytes; for the grid it earns nothing, and a
+   control proves that too — removing it changes not one pixel.
 
    **The one exclusion is an embedded window, and it does not merely
    look wrong.** A `text` can hold a widget in the middle of a line,

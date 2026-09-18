@@ -288,10 +288,12 @@ an item and its own border \(em have nodes too, so the walk runs through
 it.
 The grid clipping in
 .I tkdrawslaves1
-used to be on it as well, and carries a
-.B TkNclip
-instead.
-So does a
+is on it and stays on it: a tree must not span a change to the
+destination's own clip, because the nodes already in it were drawn
+before the narrowing and would be cut by it \(em the frame's own border
+lies outside the rectangle a grid clips its children to, and vanished
+as soon as a gridded child flushed.
+A
 .IR text (9),
 which narrows the window's clip around its own inside: the clip is a
 .B TkNclip
@@ -376,6 +378,10 @@ longer has to flush on each side of a grid to render its nodes while
 the clip still held.
 Clips do not nest and do not mix with a layer, whose target is a
 scratch image in different coordinates.
+A clip node is for a span whose tree OUTLIVES the narrowing, which is
+the text widget's case and not the grid's: a grid flushes on each side
+of its own narrowing, so the image's clip does the work and a node
+there changes not one pixel.
 The clip belongs to the WALK rather than to a tree: a tree is rendered
 and freed when the walk flushes, which can happen inside the span a
 clip covers, so

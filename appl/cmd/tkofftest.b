@@ -1611,13 +1611,35 @@ checkscene()
 	# border back over the child.  The frame draws in place now, into
 	# the same tree its children use, so the order is the only thing
 	# keeping them apart.
-	must(top, "frame .g -width 60 -height 30 -borderwidth 3 -relief sunken");
+	must(top, "frame .g -width 60 -height 70 -borderwidth 3 -relief sunken");
 	must(top, "scale .g.s -orient horizontal -from 0 -to 10 -length 200");
 	must(top, ".g.s set 3");
 	must(top, "grid propagate .g 0");
-	must(top, "grid .g.s -row 0 -column 0");
-	must(top, ".g configure -width 60 -height 30");
+	must(top, "grid .g.s -row 1 -column 0");
+	# A CANVAS gridded above it, because a canvas paints into the window
+	# and so flushes the walk from INSIDE the grid.  That is what found
+	# the defect described in the plan: a tree that spans the grid
+	# narrowing the window's clip has its earlier nodes - the frame's
+	# own border, which lies outside that rectangle - cut away when the
+	# flush renders them.  16212 bytes.  The grid flushes on both sides
+	# again, which is what it did before, and this widget is what says
+	# so if it stops.
+	#
+	# A panel was the first choice and was no use: with no image put
+	# into it, its draw method is never called at all.  It also has to
+	# be -sticky w, or the grid centres it in a column the scale makes
+	# 207 wide and it lands outside the frame, where nothing draws it.
+	must(top, "canvas .g.c -width 40 -height 20");
+	must(top, ".g.c create rectangle 2 2 38 18 -fill red");
+	must(top, "grid .g.c -row 0 -column 0 -sticky w");
+	must(top, ".g configure -width 60 -height 70");
 	tk->cmd(top, "pack .g -padx 6 -pady 6");
+	for(gz := list of {".g", ".g.c", ".g.s"}; gz != nil; gz = tl gz){
+		gq := hd gz;
+		sys->print("PROBE %s %s,%s %s x %s\n", gq,
+			tk->cmd(top, gq + " cget -actx"), tk->cmd(top, gq + " cget -acty"),
+			tk->cmd(top, gq + " cget -actwidth"), tk->cmd(top, gq + " cget -actheight"));
+	}
 	tk->cmd(top, "pack .hb -fill x -padx 6 -pady 6");
 	tk->cmd(top, "pack .vb -side right -fill y -padx 6 -pady 6");
 	map(top);
@@ -1748,19 +1770,19 @@ checkscene()
 	# widget is added to the pane and say why; do not raise it to make
 	# a change to the walk go quiet.
 	#
-	# It would be 6: the grid carries a clip NODE now instead of
-	# flushing on each side of itself, which took it from 8 to 6.  If
-	# that ever goes back to a flush this fires, and it will read as
-	# fragmentation - which it is, but the cause would be the clip.
+	# The flushes it counts, and why each is there: the grid flushes on
+	# both sides of narrowing the window's clip; .tw, the text widget
+	# holding an embedded window, is excluded and flushes on the way in
+	# and again when the descent into that window paints; .mn holds a
+	# SEPARATOR, which frame.c draws by painting into the window; .c
+	# and .g.c are canvases, which paint into the window too.
 	#
-	# It is 9 because .tw, the text widget holding an embedded window,
-	# is excluded and so flushes: once on the way in and once when the
-	# descent into the embedded window paints; and because .mn holds a
-	# SEPARATOR, which frame.c draws by painting into the window, so
-	# that flushes too.  The separator is in the pane deliberately: a
-	# menu item that flushes is what proved that a held TkScene* is a
-	# pointer to freed memory.
-	Trees: con 9;
+	# The separator and the gridded canvas are in the pane
+	# deliberately.  A menu item that flushes is what proved that a
+	# held TkScene* is a pointer to freed memory, and a gridded child
+	# that flushes is what proved that a tree must not span the
+	# narrowing of the image's own clip.
+	Trees: con 11;
 	report(nr <= Trees, sys->sprint(
 		"and the walk has not fragmented (%d trees, at most %d)", nr, Trees));
 
