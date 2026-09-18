@@ -474,7 +474,7 @@ tkdrawentry(Tk *tk, Point orig)
 	p.x = tk->act.x + orig.x;
 	p.y = tk->act.y + orig.y;
 	r = rectaddpt(r, p);
-	draw(tkimageof(tk), r, i, nil, ZP);
+	tkshapedblit(tkimageof(tk), r, i, ZP, tkscenecorner(tk, tk->relief));
 
 	return nil;
 }

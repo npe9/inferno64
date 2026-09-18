@@ -995,7 +995,7 @@ tkroundbox(Image *i, Tk *tk, Point o, int w, int h, int bd, Image *col)
 {
 	TkEnv *pe;
 	Image *bg;
-	int rad, x, y, dx, dy, cut, r2;
+	int rad, x, y, dx, dy, cut, r2, in0, in1, l0, r0;
 
 	rad = tkspace(tk)->corner;
 	if(rad*2 > w)
@@ -1037,11 +1037,29 @@ tkroundbox(Image *i, Tk *tk, Point o, int w, int h, int bd, Image *col)
 			draw(i, Rect(o.x, o.y+h-1-y, o.x+cut, o.y+h-y), bg, nil, ZP);
 			draw(i, Rect(o.x+w-cut, o.y+h-1-y, o.x+w, o.y+h-y), bg, nil, ZP);
 		}
-		/* on the curve: the border itself */
-		draw(i, Rect(o.x+cut, o.y+y, o.x+cut+bd, o.y+y+1), col, nil, ZP);
-		draw(i, Rect(o.x+w-cut-bd, o.y+y, o.x+w-cut, o.y+y+1), col, nil, ZP);
-		draw(i, Rect(o.x+cut, o.y+h-1-y, o.x+cut+bd, o.y+h-y), col, nil, ZP);
-		draw(i, Rect(o.x+w-cut-bd, o.y+h-1-y, o.x+w-cut, o.y+h-y), col, nil, ZP);
+		/*
+		 * On the curve: the border itself, clamped to the span the
+		 * cut above left behind.  Unclamped it draws OUTSIDE the
+		 * outline it has just cut away, which is invisible until a
+		 * widget is narrower than twice its own corner - an 8-pixel
+		 * entry, a thin scrollbar - and then the widget has two
+		 * pixels of border sticking out of a row that is otherwise
+		 * not the widget at all.
+		 */
+		in0 = o.x+cut;
+		in1 = o.x+w-cut;
+		if(in1 < in0)
+			in1 = in0;
+		l0 = in0+bd;
+		if(l0 > in1)
+			l0 = in1;
+		r0 = in1-bd;
+		if(r0 < in0)
+			r0 = in0;
+		draw(i, Rect(in0, o.y+y, l0, o.y+y+1), col, nil, ZP);
+		draw(i, Rect(r0, o.y+y, in1, o.y+y+1), col, nil, ZP);
+		draw(i, Rect(in0, o.y+h-1-y, l0, o.y+h-y), col, nil, ZP);
+		draw(i, Rect(r0, o.y+h-1-y, in1, o.y+h-y), col, nil, ZP);
 	}
 }
 
@@ -1055,6 +1073,44 @@ tkroundbox(Image *i, Tk *tk, Point o, int w, int h, int bd, Image *col)
  * halfway through - which is right when the border is all there is and
  * wrong once the widget is a layer.
  */
+/*
+ * Blit a widget into its own rounded shape: the middle band, then each
+ * corner row span by span.
+ *
+ * Both paths end in this.  A widget draws itself square into a scratch
+ * and the SHAPE is applied when the result is copied out, so the corners
+ * of the destination are left exactly as they were - which is what is
+ * behind the widget, whatever that is.
+ *
+ * The alternative, which is what this tree did until now, is to paint
+ * the corners with the parent's flat background once the widget is
+ * drawn.  That is right only while the thing behind a widget is that
+ * flat colour: a bordered entry over a red canvas item had its corners
+ * painted page-grey over the red, and the byte comparison found it as
+ * soon as the two paths stopped agreeing about which was correct.
+ */
+void
+tkshapedblit(Image *dst, Rectangle d, Image *src, Point sp, int radius)
+{
+	int rad, y, cut, h;
+
+	rad = tkclamprad(d, radius);
+	if(rad <= 0){
+		draw(dst, d, src, nil, sp);
+		return;
+	}
+	h = Dy(d);
+	draw(dst, Rect(d.min.x, d.min.y+rad, d.max.x, d.max.y-rad), src, nil,
+		addpt(sp, Pt(0, rad)));
+	for(y = 0; y < rad; y++){
+		cut = tkinset(rad, y);
+		draw(dst, Rect(d.min.x+cut, d.min.y+y, d.max.x-cut, d.min.y+y+1),
+			src, nil, addpt(sp, Pt(cut, y)));
+		draw(dst, Rect(d.min.x+cut, d.min.y+h-1-y, d.max.x-cut, d.min.y+h-y),
+			src, nil, addpt(sp, Pt(cut, h-1-y)));
+	}
+}
+
 /*
  * The corner radius a widget's LAYER should take, which is the radius
  * its border will be drawn with, or none when no border is drawn.

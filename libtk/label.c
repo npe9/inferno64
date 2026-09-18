@@ -425,7 +425,7 @@ tkdrawlabel(Tk *tk, Point orig)
 	p.x = tk->act.x + orig.x;
 	p.y = tk->act.y + orig.y;
 	r = rectaddpt(r, p);
-	draw(dst, r, i, nil, ZP);
+	tkshapedblit(dst, r, i, ZP, tkscenecorner(tk, relief));
 
 	return nil;
 }

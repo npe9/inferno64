@@ -453,7 +453,7 @@ tkdrawscrlb(Tk *tk, Point orig)
 	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
 
 	r = rectaddpt(r, p);
-	draw(dst, r, i, nil, ZP);
+	tkshapedblit(dst, r, i, ZP, tkscenecorner(tk, tk->relief));
 
 	return nil;
 }

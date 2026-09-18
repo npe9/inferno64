@@ -1140,11 +1140,30 @@ composite, and the plan was wrong about it twice.**
    blue notch outside its own rounded corner, in the ordinary drawing
    path and not only in the nodes.
 
-   Identity holds at 0 of 13500000 bytes; the pane's node count fell
-   from 123 to 118, which is the five corner nodes. Controls: the
-   composite squared again differs by 2400 bytes, its radius widened by
-   two by 2712, and a print in the `TkNcorners` renderer is reached by
-   no run at all.
+   Identity holds at 0 bytes; the pane's node count fell by the five
+   corner nodes. Controls: the composite squared again differs by 2400
+   bytes, its radius widened by two by 2712, and a print in the
+   `TkNcorners` renderer is reached by no run at all.
+
+   **Then the direct path had to be clipped too, and that is the part
+   the whole-pane check could not have found on its own.** The composite
+   leaves the destination's corner pixels alone; the mend painted the
+   parent's flat background over them. Those agree only while what is
+   behind a widget *is* that flat colour, which is true of every widget
+   in a pane of widgets on frames. Put a bordered `entry` in a `canvas`
+   over a red item and they disagree: page-grey against red, six pixels
+   a row. So both paths now end in one shaped blit, `tkshapedblit()`,
+   with `tkinset()` and `tkclamprad()` shared so the fill, the border
+   and the blit cannot hold different opinions about where the curve is.
+   The control is one widget's blit put back to square, which brings the
+   red back on one side only.
+
+   Two real defects fell out of insisting the paths agree. A widget
+   narrower than twice its own corner had its border stroke drawn
+   *outside* the outline the same routine had just cut away — an
+   8-pixel entry, a thin scrollbar — and the stroke is clamped now, in
+   both paths. And a focused `entry` or `scale` drew its ring after its
+   border, putting a square blue corner outside a rounded one.
 
 **B. `TkNglyphs` carries an atlas reference, not a `Font*`** (plan item
 2). This is the one node that still holds a resource, and `scene.c` says

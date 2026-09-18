@@ -1414,12 +1414,29 @@ checkscene()
 	# walk of its own.  A node widget is packed after it, so anything
 	# the nesting did to the pending tree would show as paint landing in
 	# the wrong order.
-	must(top, "canvas .c -width 120 -height 40");
+	must(top, "canvas .c -width 170 -height 130");
+	# Something under the embedded widget that is NOT the flat colour of
+	# the widget behind it.  A layer composited in its own rounded shape
+	# leaves its corner pixels alone, where the mend it replaced painted
+	# the parent's background over them - so the two disagree exactly
+	# where what is underneath is not that background, and nothing in a
+	# pane of plain widgets on plain frames can tell.
+	must(top, ".c create rectangle 0 0 170 130 -fill red");
 	must(top, "frame .c.f -width 100 -height 30 -borderwidth 2 -relief sunken");
+	must(top, "entry .c.f.e -width 8");
+	must(top, ".c.f.e insert 0 {edge}");
+	must(top, "pack .c.f.e");
 	must(top, "scale .c.f.s -orient horizontal -from 0 -to 10 -length 90");
 	must(top, ".c.f.s set 7");
 	must(top, "pack .c.f.s");
 	must(top, ".c create window 4 4 -window .c.f -anchor nw");
+	# A bordered widget whose own corners sit on the red, rather than on
+	# the flat colour of a frame: the composite leaves those pixels and
+	# the mend it replaced painted over them, so this is the arrangement
+	# where the two could differ.
+	must(top, "entry .c.e2 -width 4");
+	must(top, ".c.e2 insert 0 {ab}");
+	must(top, ".c create window 8 90 -window .c.e2 -anchor nw");
 	tk->cmd(top, "pack .c -padx 6 -pady 6");
 
 	# A gridded widget, because a grid is the one thing that narrows the

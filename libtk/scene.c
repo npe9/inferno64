@@ -278,43 +278,14 @@ tksceneellipsefill(TkScene *s, Point c, Point rad, ulong rgba)
 	n->rgba = rgba;
 }
 
-/* defined with the renderers below, and used by the composite above them */
-static int	inset(int, int);
-static int	clamprad(Rectangle, int);
-
 /*
- * Composite a layer, in its own shape.
- *
- * Square is the whole rectangle in one draw, which is what this always
- * did.  Rounded is the middle band plus the two rows of each corner,
- * span by span, using the same inset() the rounded fill and the border
- * use - so the three agree on where the curve is by construction rather
- * than by three copies of the arithmetic.
+ * Composite a layer, in its own shape: the shared blit in utils.c,
+ * which the direct path also ends in.
  */
 static void
 blitshaped(Image *dst, TkNode *n, Image *src)
 {
-	Rectangle d;
-	int rad, y, cut, w, h;
-
-	d = n->dstr;
-	w = Dx(d);
-	h = Dy(d);
-	rad = clamprad(d, n->radius);
-	if(rad <= 0){
-		draw(dst, d, src, nil, n->sp);
-		return;
-	}
-	draw(dst, Rect(d.min.x, d.min.y+rad, d.max.x, d.max.y-rad), src, nil,
-		addpt(n->sp, Pt(0, rad)));
-	for(y = 0; y < rad; y++){
-		cut = inset(rad, y);
-		draw(dst, Rect(d.min.x+cut, d.min.y+y, d.max.x-cut, d.min.y+y+1),
-			src, nil, addpt(n->sp, Pt(cut, y)));
-		draw(dst, Rect(d.min.x+cut, d.min.y+h-1-y, d.max.x-cut, d.min.y+h-y),
-			src, nil, addpt(n->sp, Pt(cut, h-1-y)));
-	}
-	USED(w);
+	tkshapedblit(dst, n->dstr, src, n->sp, n->radius);
 }
 
 /*
@@ -605,8 +576,14 @@ tkscenecount(TkScene *s)
  * handful of pixels, this is exact at those sizes, and it keeps the
  * maths library out of every kernel that links libtk.
  */
-static int
-inset(int radius, int y)
+/*
+ * Where the curve is, at one row of a corner, and the radius a
+ * rectangle can actually carry.  Not static: the shaped blit in utils.c
+ * is the other half of the same shape and must not have its own copy of
+ * this arithmetic.
+ */
+int
+tkinset(int radius, int y)
 {
 	int x, dx, dy, r2;
 
@@ -620,8 +597,8 @@ inset(int radius, int y)
 	return radius;
 }
 
-static int
-clamprad(Rectangle r, int radius)
+int
+tkclamprad(Rectangle r, int radius)
 {
 	if(radius*2 > Dx(r))
 		radius = Dx(r)/2;
@@ -641,7 +618,7 @@ renderroundfill(TkCtxt *c, Image *dst, TkNode *n)
 	col = tkcolor(c, n->rgba);
 	if(col == nil)
 		return;
-	rad = clamprad(n->r, n->radius);
+	rad = tkclamprad(n->r, n->radius);
 	w = Dx(n->r);
 	h = Dy(n->r);
 	if(rad <= 0){
@@ -651,7 +628,7 @@ renderroundfill(TkCtxt *c, Image *dst, TkNode *n)
 	draw(dst, Rect(n->r.min.x, n->r.min.y+rad, n->r.max.x, n->r.max.y-rad),
 		col, nil, ZP);
 	for(y = 0; y < rad; y++){
-		cut = inset(rad, y);
+		cut = tkinset(rad, y);
 		draw(dst, Rect(n->r.min.x+cut, n->r.min.y+y,
 			n->r.max.x-cut, n->r.min.y+y+1), col, nil, ZP);
 		draw(dst, Rect(n->r.min.x+cut, n->r.min.y+h-1-y,
@@ -674,9 +651,9 @@ rendercorners(TkCtxt *c, Image *dst, TkNode *n)
 	o = n->r.min;
 	w = Dx(n->r);
 	h = Dy(n->r);
-	rad = clamprad(n->r, n->radius);
+	rad = tkclamprad(n->r, n->radius);
 	for(y = 0; y < rad; y++){
-		cut = inset(rad, y);
+		cut = tkinset(rad, y);
 		if(cut <= 0)
 			continue;
 		draw(dst, Rect(o.x, o.y+y, o.x+cut, o.y+y+1), out, nil, ZP);
@@ -690,7 +667,7 @@ static void
 renderborder(TkCtxt *c, Image *dst, TkNode *n)
 {
 	Image *col;
-	int rad, bd, y, cut, w, h;
+	int rad, bd, y, cut, w, h, in0, in1, l0, r0;
 	Point o;
 
 	col = tkcolor(c, n->rgba);
@@ -700,7 +677,7 @@ renderborder(TkCtxt *c, Image *dst, TkNode *n)
 	w = Dx(n->r);
 	h = Dy(n->r);
 	bd = n->width;
-	rad = clamprad(n->r, n->radius);
+	rad = tkclamprad(n->r, n->radius);
 
 	if(w > 2*rad){
 		draw(dst, Rect(o.x+rad, o.y, o.x+w-rad, o.y+bd), col, nil, ZP);
@@ -713,11 +690,22 @@ renderborder(TkCtxt *c, Image *dst, TkNode *n)
 	if(rad <= 0)
 		return;
 	for(y = 0; y < rad; y++){
-		cut = inset(rad, y);
-		draw(dst, Rect(o.x+cut, o.y+y, o.x+cut+bd, o.y+y+1), col, nil, ZP);
-		draw(dst, Rect(o.x+w-cut-bd, o.y+y, o.x+w-cut, o.y+y+1), col, nil, ZP);
-		draw(dst, Rect(o.x+cut, o.y+h-1-y, o.x+cut+bd, o.y+h-y), col, nil, ZP);
-		draw(dst, Rect(o.x+w-cut-bd, o.y+h-1-y, o.x+w-cut, o.y+h-y), col, nil, ZP);
+		/* clamped to the shape, as tkroundbox() is: see there */
+		cut = tkinset(rad, y);
+		in0 = o.x+cut;
+		in1 = o.x+w-cut;
+		if(in1 < in0)
+			in1 = in0;
+		l0 = in0+bd;
+		if(l0 > in1)
+			l0 = in1;
+		r0 = in1-bd;
+		if(r0 < in0)
+			r0 = in0;
+		draw(dst, Rect(in0, o.y+y, l0, o.y+y+1), col, nil, ZP);
+		draw(dst, Rect(r0, o.y+y, in1, o.y+y+1), col, nil, ZP);
+		draw(dst, Rect(in0, o.y+h-1-y, l0, o.y+h-y), col, nil, ZP);
+		draw(dst, Rect(r0, o.y+h-1-y, in1, o.y+h-y), col, nil, ZP);
 	}
 }
 

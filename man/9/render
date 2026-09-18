@@ -121,6 +121,30 @@ is emitted by nothing.
 The type and its renderer stay, because a node type's number must not
 move once a backend has seen it.
 .PP
+Both paths end in the same shaped blit
+.RI ( tkshapedblit ,
+with
+.I tkinset
+and
+.I tkclamprad
+shared so that the fill, the border and the blit cannot disagree about
+where the curve is).
+A widget draws itself square into a scratch and the shape is applied
+when the result is copied out, so the corners of the destination are
+left as they were \(em which is whatever is behind the widget.
+Painting them with the parent's flat background, which is what this did
+before, is right only while that is what is there: a bordered
+.IR entry (9)
+over a red
+.IR canvas (9)
+item had its corners painted page-grey over the red.
+.PP
+The border stroke is clamped to that shape too, in both paths.
+Unclamped it draws outside the outline it has just cut away, which is
+invisible until a widget is narrower than twice its own corner \(em an
+8-pixel entry, a thin scrollbar \(em and then two pixels of border stick
+out of a row that is otherwise not the widget at all.
+.PP
 The shape belongs on the composite rather than on the fill, and that
 was established by trying the fill first: a rounded
 .B TkNroundfill
