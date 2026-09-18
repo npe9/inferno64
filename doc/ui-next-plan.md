@@ -1025,10 +1025,14 @@ there was never speed on the table here anyway.
 
    Still drawn through a scratch image: a `cascade`, whose arrow is
    `tktriangle()`; a button, radiobutton, checkbutton or label carrying
-   an image or a bitmap, which want a texture node; and a `text`, a
-   `canvas`, a `panel` and a `menu`, which paint into the window
-   directly. Neither an `entry` nor a `label` needs an exception for
-   anything it does with text any more.
+   an image or a bitmap, which want a texture node; a checkbutton or
+   radiobutton with `-indicatoron 0`; and a `text`, a `canvas`, a
+   `panel` and a `menu`, which paint into the window directly. No
+   widget needs an exception for anything it does with *text* any more:
+   `buton.c` took the same three cases as `label.c` the moment
+   `tkscenestring()` existed, and its own controls — the underline
+   dropped from the node side, 288 bytes; the justification forced back
+   to left, 4068 — say the pane reaches them.
 
    **A label's remaining three cases went the same way as the entry's,
    and for the same reason.** Several lines, an underline and a

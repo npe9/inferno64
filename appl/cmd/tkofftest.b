@@ -58,7 +58,7 @@ Tkofftest: module
 };
 
 W: con 900;			# room for the widest widget at the largest font,
-H: con 1340;			# so that packing is never what clamps a measurement
+H: con 1460;			# so that packing is never what clamps a measurement
 				#
 				# H was 700 until the render-node pane grew: a
 				# widget packed past the bottom is never drawn,
@@ -1327,6 +1327,12 @@ checkscene()
 	tk->cmd(top, "frame .f -width 90 -height 46 -borderwidth 2 " +
 		"-relief raised -bg white");
 	tk->cmd(top, "button .b -text {Cancel}");
+	# A button says the same three things a label can, and buton.c lays
+	# them out with the same shared code now.
+	must(top, "button .bm -text {two lines\non a button} -justify center");
+	tk->cmd(top, "pack .bm -padx 6 -pady 6");
+	must(top, "checkbutton .cu -text {Underlined} -underline 2");
+	tk->cmd(top, "pack .cu -padx 6 -pady 6");
 	# An entry with TEXT in it, and holding the keyboard.  Empty and
 	# unfocused it exercises only the fill and the border, which the
 	# frame already covers; the glyph run, the caret and the focus ring

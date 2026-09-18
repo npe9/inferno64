@@ -318,9 +318,7 @@ tkdrawbutton(Tk *tk, Point orig)
 	&& (tk->type == TKbutton
 		|| ((tk->type == TKradiobutton || tk->type == TKcheckbutton)
 			&& tkl->indicator != BoolF))
-	&& tkl->img == nil && tkl->bitmap == nil && tkl->text != nil
-	&& tkl->justify == Tkleft && tkl->ul < 0
-	&& strchr(tkl->text, '\n') == nil)
+	&& tkl->img == nil && tkl->bitmap == nil && tkl->text != nil)
 		bsc = tkwalkjoin(e->top->ctxt, dst);
 	if(bsc != nil){
 		Rectangle dr;
@@ -495,8 +493,8 @@ tkdrawbutton(Tk *tk, Point orig)
 		
 		p.y += (h - tkl->textheight) / 2;
 		if(bsc != nil)
-			tkscenetext(bsc, addpt(u, p), tkl->text, e->font,
-				e->colors[fgnd]);
+			tkscenestring(bsc, tk, addpt(u, p), tkl->text,
+				tkl->ul, e->colors[fgnd], tkl->justify);
 		else
 			tkdrawstring(tk, i, addpt(u, p), tkl->text, tkl->ul, ct,
 				tkl->justify);
