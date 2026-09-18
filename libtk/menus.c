@@ -1549,7 +1549,7 @@ drawmenu(Tk *tk, Point orig)
 	Point p, bd;
 	int bg;
 	Rectangle mainr, clientr, subr;
-	TkScene *msc;
+	int msc;
 
 	tkw = TKobj(TkWin, tk);
 	dst = tkimageof(tk);
@@ -1566,10 +1566,19 @@ drawmenu(Tk *tk, Point orig)
 	 * the window itself has to render what the walk has pending first,
 	 * or the tree would land on top of it.
 	 */
-	msc = nil;
-	if(tkviascene && tkstyleflat(tk))
-		msc = tkwalkjoin(tk->env->top->ctxt, dst);
-	if(msc == nil)
+	/*
+	 * A boolean, NOT a held TkScene*.  The walk frees a tree when it
+	 * flushes, and an item can flush - a separator is drawn by frame.c,
+	 * which paints into the window - so a pointer taken here and used
+	 * after the loop is a pointer to freed memory.  It faulted on an
+	 * address built out of the menu's own item text.  Ask the walk
+	 * again at each point instead; it is two comparisons.
+	 */
+	msc = tkviascene && tkstyleflat(tk)
+		&& tkwalkhas(tk->env->top->ctxt, dst);
+	if(msc)
+		tkwalkjoin(tk->env->top->ctxt, dst);	/* count it once */
+	else
 		tkwalkflush();
 
 	bd = Pt(tk->borderwidth, tk->borderwidth);
@@ -1608,8 +1617,9 @@ drawmenu(Tk *tk, Point orig)
 			 */
 			bg = tkstyleflat(sub) ? TkCselect : TkCactivebgnd;
 		}
-		if(msc != nil)
-			tkscenecolour(msc, subr, sub->env->colors[bg]);
+		if(msc)
+			tkscenecolour(tkwalkscene(tk->env->top->ctxt, dst),
+				subr, sub->env->colors[bg]);
 		else
 			draw(dst, subr, tkgc(sub->env, bg), nil, ZP);
 		sub->dirty = tkrect(sub, 1);
@@ -1619,8 +1629,9 @@ drawmenu(Tk *tk, Point orig)
 		sub->flag &= ~Tkrefresh;
 	}
 	/* todo: dirty check */
-	if(msc != nil)
-		tkreliefnodes(msc, tk, mainr.min, TkCbackgnd, tk->relief);
+	if(msc)
+		tkreliefnodes(tkwalkscene(tk->env->top->ctxt, dst), tk,
+			mainr.min, TkCbackgnd, tk->relief);
 	else
 		tkdrawrelief(dst, tk, mainr.min, TkCbackgnd, tk->relief);
 	return nil;

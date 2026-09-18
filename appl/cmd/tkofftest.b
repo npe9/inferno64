@@ -1650,6 +1650,11 @@ checkscene()
 	# draws lands in the pane's own image and the comparison sees it.
 	must(top, "menu .mn");
 	must(top, ".mn add command -label {Open}");
+	# A SEPARATOR, because it is an item that paints into the window
+	# itself, which makes the walk flush in the middle of the menu.
+	# That is the case that says drawmenu must not be holding the
+	# walk's tree in a variable: the flush frees it.
+	must(top, ".mn add separator");
 	must(top, ".mn add cascade -label {Recent}");
 	must(top, ".mn add command -label {Close}");
 	mw := scr.newwindow(Rect((640,20),(880,140)), Draw->Refbackup, Draw->Nofill);
@@ -1748,10 +1753,14 @@ checkscene()
 	# that ever goes back to a flush this fires, and it will read as
 	# fragmentation - which it is, but the cause would be the clip.
 	#
-	# It is 8 because .tw, the text widget holding an embedded window,
+	# It is 9 because .tw, the text widget holding an embedded window,
 	# is excluded and so flushes: once on the way in and once when the
-	# descent into the embedded window paints.
-	Trees: con 8;
+	# descent into the embedded window paints; and because .mn holds a
+	# SEPARATOR, which frame.c draws by painting into the window, so
+	# that flushes too.  The separator is in the pane deliberately: a
+	# menu item that flushes is what proved that a held TkScene* is a
+	# pointer to freed memory.
+	Trees: con 9;
 	report(nr <= Trees, sys->sprint(
 		"and the walk has not fragmented (%d trees, at most %d)", nr, Trees));
 

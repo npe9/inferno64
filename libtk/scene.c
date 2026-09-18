@@ -448,11 +448,37 @@ tkscenespline(TkScene *s, Point *p, int np, int end, int width, ulong rgba)
  * what the outer walk had pending, so the order is still the order the
  * widgets drew in.
  */
+enum {
+	Maxclip = 8,	/* a text in a grid in a text ... */
+};
+
 typedef struct Walk Walk;
 struct Walk {
 	TkScene*	scene;
 	TkCtxt*		ctxt;
 	Image*		dst;
+	/*
+	 * The clip belongs to the WALK, not to the tree.
+	 *
+	 * A tree is rendered and FREED when the walk flushes, so a clip
+	 * emitted into one is gone the moment anything inside the span it
+	 * covers paints into the window - a text widget's embedded window,
+	 * a menu's separator - while the span itself is still open.  The
+	 * walk remembers what is open, re-emits it into whatever tree comes
+	 * next, and closes it in that one.  Nobody holding a TkScene* could
+	 * do that, and holding one across a flush is a use-after-free: a
+	 * menu with a separator in it faulted on a pointer built out of its
+	 * own item text.
+	 *
+	 * Innermost last, each already intersected with the one outside it,
+	 * so what is emitted is always a single rectangle - which is what
+	 * the renderer supports, and it is enough, since a clip that nests
+	 * is just a smaller clip.
+	 */
+	Rectangle	clip[Maxclip];
+	int		nclip;
+	int		lost;		/* opens past Maxclip, to keep the balance */
+	int		clipon;		/* this tree has one open */
 };
 
 enum {
@@ -479,6 +505,71 @@ tkwalkopen(TkCtxt *c, Image *dst)
 	w->scene = nil;
 	w->ctxt = c;
 	w->dst = dst;
+	w->nclip = 0;
+	w->lost = 0;
+	w->clipon = 0;
+}
+
+/*
+ * Make this tree's open clip say what the walk says.  Called wherever
+ * either could have changed: a clip opened or closed, or a fresh tree
+ * begun after a flush.
+ */
+static void
+clipsync(Walk *w)
+{
+	if(w->scene == nil)
+		return;
+	if(w->clipon){
+		tksceneclipend(w->scene);
+		w->clipon = 0;
+	}
+	if(w->nclip > 0){
+		tksceneclip(w->scene, w->clip[w->nclip-1]);
+		w->clipon = 1;
+	}
+}
+
+/*
+ * Narrow the clip for everything drawn until the matching
+ * tkwalkclipend(), across flushes and whatever trees they leave behind.
+ * In window coordinates.
+ */
+void
+tkwalkclip(Rectangle r)
+{
+	Walk *w;
+
+	if(walk.depth == 0)
+		return;
+	w = &walk.s[walk.depth-1];
+	if(w->nclip >= Maxclip){
+		w->lost++;	/* so the close below still balances */
+		return;
+	}
+	if(w->nclip > 0 && !rectclip(&r, w->clip[w->nclip-1]))
+		r.max = r.min;
+	w->clip[w->nclip++] = r;
+	tkwalkscene(w->ctxt, w->dst);	/* a tree to put it in */
+	clipsync(w);
+}
+
+void
+tkwalkclipend(void)
+{
+	Walk *w;
+
+	if(walk.depth == 0)
+		return;
+	w = &walk.s[walk.depth-1];
+	if(w->lost > 0){
+		w->lost--;
+		return;
+	}
+	if(w->nclip == 0)
+		return;
+	w->nclip--;
+	clipsync(w);
 }
 
 /*
@@ -500,6 +591,7 @@ tkwalkflush(void)
 	w->scene = nil;			/* before rendering: a layer's
 					 * scratch must not join the tree
 					 * it is rendering */
+	w->clipon = 0;			/* the tree holding it is going */
 	walk.nodes += s->n;
 	tkscenerender(s, w->ctxt, w->dst);
 	tkscenefree(s);
@@ -527,14 +619,66 @@ tkwalkjoin(TkCtxt *c, Image *dst)
 	if(walk.depth > 0){
 		w = &walk.s[walk.depth-1];
 		if(w->ctxt == c && w->dst == dst){
-			if(w->scene == nil)
+			if(w->scene == nil){
 				w->scene = tkscenenew();
-			if(w->scene != nil)
+				w->clipon = 0;
+			}
+			if(w->scene != nil){
+				/*
+				 * A tree begun after a flush starts inside
+				 * whatever clip is still open, which is the
+				 * whole point of the walk owning it.
+				 */
+				if(!w->clipon && w->nclip > 0)
+					clipsync(w);
 				walk.widgets++;
+			}
 			return w->scene;
 		}
 	}
 	return tkscenenew();
+}
+
+/*
+ * Is the walk open for this target?
+ *
+ * A widget asks before deciding to describe itself as nodes, so that
+ * the decision and the emission cannot disagree - tkwalkjoin() makes a
+ * standalone tree when the walk is not open for the target, which a
+ * widget that emits piecemeal has nowhere to render.
+ */
+int
+tkwalkhas(TkCtxt *c, Image *dst)
+{
+	Walk *w;
+
+	if(walk.depth == 0)
+		return 0;
+	w = &walk.s[walk.depth-1];
+	return w->ctxt == c && w->dst == dst;
+}
+
+/*
+ * The walk's current tree, for a widget that emits in more than one
+ * place and must not hold the pointer between them.  Nil if the walk is
+ * not open for this target.  Counts nothing: tkwalkjoin() is what says
+ * a widget joined, and is called once.
+ */
+TkScene*
+tkwalkscene(TkCtxt *c, Image *dst)
+{
+	Walk *w;
+
+	if(!tkwalkhas(c, dst))
+		return nil;
+	w = &walk.s[walk.depth-1];
+	if(w->scene == nil){
+		w->scene = tkscenenew();
+		w->clipon = 0;
+	}
+	if(w->scene != nil && !w->clipon && w->nclip > 0)
+		clipsync(w);
+	return w->scene;
 }
 
 /*

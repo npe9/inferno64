@@ -125,12 +125,22 @@ static TkEbind tktbinds[] = {
 
 static int	tktclickmatch(TkText *, int, int, int, TkTindex *);
 static void	tktdoubleclick(TkText *, TkTindex *, TkTindex *);
-static char* 	tktdrawline(Image*, TkScene*, Tk*, TkTline*, Point);
-static void	tktextcursordraw(Tk *, TkScene *, int);
+static char* 	tktdrawline(Image*, int, Tk*, TkTline*, Point);
+static void	tktextcursordraw(Tk *, int, int);
 static char* 	tktsetscroll(Tk*, int);
 static void	tktsetclip(Tk *);
 static Rectangle	tktcliprect(Tk *);
 static int	tkthaswindow(Tk *);
+
+/*
+ * The walk's tree, asked for afresh every time.
+ *
+ * Never held in a variable across anything that can paint: the walk
+ * frees a tree when it flushes, and a text widget flushes in the middle
+ * of its own line loop whenever a line holds an embedded window.  The
+ * clip survives that because the WALK owns it; a pointer would not.
+ */
+#define SC(tk, dst)	tkwalkscene((tk)->env->top->ctxt, (dst))
 static char* 	tktview(Tk*, char*, char**, int, s32*, int, int);
 static Interval tkttranslate(Tk*, Interval, int);
 static void 	tktfixscroll(Tk*, Point);
@@ -424,7 +434,7 @@ tkdrawtext(Tk *tk, Point orig)
 	Rectangle oclipr;
 	int reldone = 1;
 	char *e;
-	TkScene *tsc;
+	int tsc;
 
 	tkt = TKobj(TkText, tk);
 	dst = tkimageof(tk);
@@ -450,11 +460,12 @@ tkdrawtext(Tk *tk, Point orig)
 	 * the walk has pending first, or the tree would land on top of it -
 	 * which is what the other path still does.
 	 */
-	tsc = nil;
-	if(tkviascene && tkstyleflat(tk) && !tkthaswindow(tk))
-		tsc = tkwalkjoin(tk->env->top->ctxt, dst);
-	if(tsc != nil)
-		tksceneclip(tsc, tktcliprect(tk));
+	tsc = tkviascene && tkstyleflat(tk) && !tkthaswindow(tk)
+		&& tkwalkhas(tk->env->top->ctxt, dst);
+	if(tsc){
+		tkwalkjoin(tk->env->top->ctxt, dst);	/* count it once */
+		tkwalkclip(tktcliprect(tk));
+	}
 	else
 		tkwalkflush();
 	tktsetclip(tk);
@@ -480,8 +491,8 @@ tkdrawtext(Tk *tk, Point orig)
 		}
 	}
 
-	if(tsc != nil)
-		tksceneclipend(tsc);
+	if(tsc)
+		tkwalkclipend();
 	tktreplclipr(dst, oclipr);
 	if(!reldone) {
 		Rectangle ring;
@@ -498,8 +509,9 @@ tkdrawtext(Tk *tk, Point orig)
 			 * radius 0 draws: tkbox() and renderborder() name
 			 * different rectangles but cover the same outline.
 			 */
-			if(tsc != nil)
-				tksceneborder(tsc, ring, 0, tk->highlightwidth,
+			if(tsc)
+				tksceneborder(SC(tk, dst), ring, 0,
+					tk->highlightwidth,
 					tk->env->colors[TkChighlightfgnd]);
 			else
 				tkbox(dst, ring, tk->highlightwidth,
@@ -511,8 +523,9 @@ tkdrawtext(Tk *tk, Point orig)
 		 * parent's, and a tag that reaches the edge covers the pixel
 		 * the corner curve cuts away.
 		 */
-		if(tsc != nil)
-			tkreliefnodeson(tsc, tk, p, TkCbackgnd, tk->relief);
+		if(tsc)
+			tkreliefnodeson(SC(tk, dst), tk, p, TkCbackgnd,
+				tk->relief);
 		else
 			tkdrawrelief(dst, tk, p, TkCbackgnd, tk->relief);
 	}
@@ -586,7 +599,7 @@ tktsetclip(Tk *tk)
 }
 
 static char*
-tktdrawline(Image *i, TkScene *sc, Tk *tk, TkTline *l, Point deltait)
+tktdrawline(Image *i, int usesc, Tk *tk, TkTline *l, Point deltait)
 {
 	Tk *sub;
 	Font *f;
@@ -636,8 +649,8 @@ tktdrawline(Image *i, TkScene *sc, Tk *tk, TkTline *l, Point deltait)
 				r.min.y -= la;
 				r.max.x = r.min.x + it->width;
 				r.max.y = r.min.y + lh;
-				if(sc != nil)
-					tkscenecolour(sc, r, bgrgba);
+				if(usesc)
+					tkscenecolour(SC(tk, i), r, bgrgba);
 				else
 					draw(i, r, bg, nil, ZP);
 			}
@@ -663,8 +676,8 @@ tktdrawline(Image *i, TkScene *sc, Tk *tk, TkTline *l, Point deltait)
 					bevbot = TkLightshade;
 				}
 
-				if(sc != nil)
-					tkbevelnodes(sc, q, w, h, bd,
+				if(usesc)
+					tkbevelnodes(SC(tk, i), q, w, h, bd,
 						et->colors[TkCbackgnd+bevtop],
 						et->colors[TkCbackgnd+bevbot]);
 				else
@@ -678,14 +691,14 @@ tktdrawline(Image *i, TkScene *sc, Tk *tk, TkTline *l, Point deltait)
 					r.max.x = q.x + bd;
 					r.min.y = q.y + bd;
 					r.max.y = r.min.y + h;
-					if(sc != nil)
-						tkscenecolour(sc, r, bgrgba);
+					if(usesc)
+						tkscenecolour(SC(tk, i), r, bgrgba);
 					else
 						draw(i, r, bg, nil, ZP);
 					r.min.y = r.max.y;
 					r.max.y = r.min.y + bd;
-					if(sc != nil)
-						tkscenecolour(sc, r,
+					if(usesc)
+						tkscenecolour(SC(tk, i), r,
 							et->colors[TkCbackgnd+bevbot]);
 					else
 						draw(i, r, tkgc(et, TkCbackgnd+bevbot), nil, ZP);
@@ -697,15 +710,15 @@ tktdrawline(Image *i, TkScene *sc, Tk *tk, TkTline *l, Point deltait)
 					r.max.x = r.min.x + bd;
 					r.min.y = q.y;
 					r.max.y = q.y + bd;
-					if(sc != nil)
-						tkscenecolour(sc, r,
+					if(usesc)
+						tkscenecolour(SC(tk, i), r,
 							et->colors[TkCbackgnd+bevtop]);
 					else
 						draw(i, r, tkgc(et, TkCbackgnd+bevtop), nil, ZP);
 					r.min.y = r.max.y;
 					r.max.y = r.min.y + h;
-					if(sc != nil)
-						tkscenecolour(sc, r, bgrgba);
+					if(usesc)
+						tkscenecolour(SC(tk, i), r, bgrgba);
 					else
 						draw(i, r, bg, nil, ZP);
 					join = 1;
@@ -731,8 +744,8 @@ tktdrawline(Image *i, TkScene *sc, Tk *tk, TkTline *l, Point deltait)
 			q.x = p.x;
 			q.y = p.y - env->font->ascent - o;
 /*if(tktdbg)print("q=(%d,%d)\n", q.x, q.y);*/
-			if(sc != nil)
-				tkscenetext(sc, q, it->istring, env->font,
+			if(usesc)
+				tkscenetext(SC(tk, i), q, it->istring, env->font,
 					et->colors[TkCforegnd]);
 			else
 				string(i, q, tkgc(et, TkCforegnd), q, env->font,
@@ -742,8 +755,9 @@ tktdrawline(Image *i, TkScene *sc, Tk *tk, TkTline *l, Point deltait)
 				r.max.x = r.min.x + it->width;
 				r.min.y = q.y + 2*env->font->ascent/3;
 				r.max.y = r.min.y + 2;
-				if(sc != nil)
-					tkscenecolour(sc, r, et->colors[TkCforegnd]);
+				if(usesc)
+					tkscenecolour(SC(tk, i), r,
+						et->colors[TkCforegnd]);
 				else
 					draw(i, r, tkgc(et, TkCforegnd), nil, ZP);
 			}
@@ -752,8 +766,9 @@ tktdrawline(Image *i, TkScene *sc, Tk *tk, TkTline *l, Point deltait)
 				r.max.x = r.min.x + it->width;
 				r.max.y = p.y - la + lh;
 				r.min.y = r.max.y - 2;
-				if(sc != nil)
-					tkscenecolour(sc, r, et->colors[TkCforegnd]);
+				if(usesc)
+					tkscenecolour(SC(tk, i), r,
+						et->colors[TkCforegnd]);
 				else
 					draw(i, r, tkgc(et, TkCforegnd), nil, ZP);
 			}
@@ -794,7 +809,7 @@ tktdrawline(Image *i, TkScene *sc, Tk *tk, TkTline *l, Point deltait)
 			blinkreset(tk);
 		tkt->cur_rec = r;
 		if(tkt->cur_flag)
-			tktextcursordraw(tk, sc, TkCforegnd);
+			tktextcursordraw(tk, usesc, TkCforegnd);
 	}
 
 	free(opts);
@@ -803,7 +818,7 @@ tktdrawline(Image *i, TkScene *sc, Tk *tk, TkTline *l, Point deltait)
 }
 
 static void
-tktextcursordraw(Tk *tk, TkScene *sc, int color)
+tktextcursordraw(Tk *tk, int usesc, int color)
 {
 	Rectangle r;
 	TkText *tkt;
@@ -836,11 +851,11 @@ tktextcursordraw(Tk *tk, TkScene *sc, int color)
 		 * pending would be covered by that tree when it rendered -
 		 * which is the whole reason a direct painter flushes.
 		 */
-		if(sc != nil){
-			tkscenecolour(sc, r, tk->env->colors[color]);
+		i = tkimageof(tk);
+		if(usesc && i != nil){
+			tkscenecolour(SC(tk, i), r, tk->env->colors[color]);
 			return;
 		}
-		i = tkimageof(tk);
 		if (i != nil)
 			draw(i, r, tkgc(tk->env, color), nil, ZP);
 	}
@@ -876,7 +891,7 @@ showcaret(Tk *tk, int on)
 					 * the caret goes straight to the
 					 * window, as it always did.
 					 */
-					tktextcursordraw(tk, nil, TkCforegnd);
+					tktextcursordraw(tk, 0, TkCforegnd);
 					tk->dirty = tkrect(tk, 1);
 				} else
 					tktnotdrawn(tk, l->orig.y, l->orig.y+l->height, 0);

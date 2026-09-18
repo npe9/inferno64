@@ -376,6 +376,20 @@ longer has to flush on each side of a grid to render its nodes while
 the clip still held.
 Clips do not nest and do not mix with a layer, whose target is a
 scratch image in different coordinates.
+The clip belongs to the WALK rather than to a tree: a tree is rendered
+and freed when the walk flushes, which can happen inside the span a
+clip covers, so
+.I tkwalkclip
+records what is open and re-emits it into whatever tree comes next.
+Clips nest by intersection, innermost last, so one rectangle is all the
+renderer ever sees.
+A tree pointer must NOT be held across anything that paints \(em
+.I tkwalkflush
+frees the tree, and a
+.IR menu (9)
+with a separator in it faulted on a pointer built out of its own item
+text before this was understood.
+.PP
 .B TkNclipend
 is not numbered next to
 .B TkNclip

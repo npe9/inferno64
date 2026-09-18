@@ -289,7 +289,7 @@ tkdrawslaves1(Tk *tk, Point orig, Image *dst, int *dirty)
 	char *e = nil;
 	Point worig;
 	Rectangle r, oclip;
-	TkScene *gsc;
+	int gclip;
 
 	worig.x = orig.x + tk->act.x + tk->borderwidth;
 	worig.y = orig.y + tk->act.y + tk->borderwidth;
@@ -319,25 +319,24 @@ tkdrawslaves1(Tk *tk, Point orig, Image *dst, int *dirty)
 	 * the walk had to be flushed twice to render them while it still
 	 * held - which cut the run in two at every grid.
 	 */
-	gsc = nil;
+	gclip = 0;
 	if (tk->grid != nil) {
 		r = rectaddpt(tkrect(tk, 0), worig);
 		if (rectclip(&r, dst->clipr) == 0)
 			return nil;
 		oclip = dst->clipr;
-		if(tkviascene)
-			gsc = tkwalkjoin(tk->env->top->ctxt, dst);
-		if(gsc != nil)
-			tksceneclip(gsc, r);
-		else
+		if(tkviascene){
+			tkwalkclip(r);
+			gclip = 1;
+		}else
 			tkwalkflush();
 		replclipr(dst, 0, r);
 	}
 	for(f = tk->slave; e == nil && f; f = f->next)
 		e = tkdrawslaves1(f, worig, dst, dirty);
 	if (tk->grid != nil){
-		if(gsc != nil)
-			tksceneclipend(tkwalkjoin(tk->env->top->ctxt, dst));
+		if(gclip)
+			tkwalkclipend();
 		else
 			tkwalkflush();
 		replclipr(dst, 0, oclip);

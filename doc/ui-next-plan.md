@@ -1071,6 +1071,26 @@ there was never speed on the table here anyway.
    going straight to the window while a tree was pending would be
    covered by that tree.
 
+   **A held `TkScene*` is a pointer to freed memory, and that was a
+   real bug in the committed menu.** `tkwalkflush()` renders the
+   pending tree and calls `tkscenefree()` on it, so the pointer
+   `tkwalkjoin()` returned is only good until the next thing that
+   paints into the window. `drawmenu()` took one before its item loop
+   and used it after; a `separator` is an item that paints directly,
+   through `frame.c`, so a menu with one in it faulted —
+   `sys: bad address addr=0x430000010f`. The pane has a separator now,
+   and neither `drawmenu()` nor the text widget holds a tree any more:
+   they ask the walk again at each emission, which is two comparisons.
+
+   That left the clip, which cannot be re-asked for, because a span is
+   not a point. So the **walk** owns it: `tkwalkclip()` and
+   `tkwalkclipend()` record what is open, and a tree begun after a
+   flush has the clip re-emitted into it. Clips nest by intersection,
+   innermost last, so what reaches the renderer is always one
+   rectangle — which is all it supports, and is enough, since a clip
+   inside a clip is just a smaller clip. The grid uses this too, and
+   is simpler for it.
+
    **The one exclusion is an embedded window, and it does not merely
    look wrong.** A `text` can hold a widget in the middle of a line,
    which is drawn by descending into it from inside `tktdrawline` — so
@@ -1084,9 +1104,11 @@ there was never speed on the table here anyway.
    `disfault: sys: bad address addr=0x6574666150`, and those bytes are
    ASCII — a string being followed as a pointer. The nodes themselves
    are not what dangles; `tkscenetext` copies both the run and the face
-   name, which is the rule the vocabulary keeps. That is a firmer
-   control than a byte count, and it is also the reason the exclusion
-   is a gate rather than a note in the BUGS section.
+   name, which is the rule the vocabulary keeps. That fault was the
+   same held-pointer bug described above, and fixing it stopped the
+   crash — but the pixels still differ by 83898 bytes with the gate
+   removed, so the ordering across an embedded descent is a separate
+   and unsolved thing, and the gate stays.
 
    **A real defect fell out of it, and it was not in the text widget.**
    Adding a tagged `text` to the pane made the comparison differ by one
