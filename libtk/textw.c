@@ -130,7 +130,6 @@ static void	tktextcursordraw(Tk *, int, int);
 static char* 	tktsetscroll(Tk*, int);
 static void	tktsetclip(Tk *);
 static Rectangle	tktcliprect(Tk *);
-static int	tkthaswindow(Tk *);
 
 /*
  * The walk's tree, asked for afresh every time.
@@ -460,14 +459,29 @@ tkdrawtext(Tk *tk, Point orig)
 	 * the walk has pending first, or the tree would land on top of it -
 	 * which is what the other path still does.
 	 */
-	tsc = tkviascene && tkstyleflat(tk) && !tkthaswindow(tk)
+	tsc = tkviascene && tkstyleflat(tk)
 		&& tkwalkhas(tk->env->top->ctxt, dst);
+	/*
+	 * FLUSH FIRST, always, and then narrow.  A tree must not span a
+	 * change to the destination's own clip: tktsetclip() narrows the
+	 * window around this widget's inside, and anything already in the
+	 * tree was drawn by EARLIER widgets, which would be cut to this
+	 * widget's rectangle if a later flush rendered them while the
+	 * narrowing held.  An embedded window makes exactly that flush
+	 * happen, and it cost 83898 bytes and an exclusion before the rule
+	 * was understood.
+	 *
+	 * With the tree empty at the narrowing, what such a flush renders
+	 * is this widget's own nodes, which belong inside the clip anyway,
+	 * and the walk hands the clip on to whatever tree comes after it.
+	 * That is the whole reason the clip belongs to the walk rather
+	 * than to a tree.
+	 */
+	tkwalkflush();
 	if(tsc){
 		tkwalkjoin(tk->env->top->ctxt, dst);	/* count it once */
 		tkwalkclip(tktcliprect(tk));
 	}
-	else
-		tkwalkflush();
 	tktsetclip(tk);
 
 	if(tk->flag&Tkrefresh) {
@@ -540,34 +554,6 @@ tkdrawtext(Tk *tk, Point orig)
  * the text widget that needs to be redrawn.
  * The caller should save the old one and restore it later.
  */
-/*
- * Does this widget hold an embedded WINDOW?
- *
- * One is drawn by descending into it from the middle of a line, which
- * paints into the window there and then.  A tree that was still being
- * built would be rendered after that and land on top of it, and the
- * usual answer - flush first - cannot be used here, because the flush
- * would close the clip span the lines are being drawn through and
- * everything after it would be unclipped.  So a text widget with a
- * window item in it keeps the drawing path entirely.  The lines are
- * already built by the time this is asked, so it is a walk over what
- * is there rather than a guess.
- */
-static int
-tkthaswindow(Tk *tk)
-{
-	TkText *tkt = TKobj(TkText, tk);
-	TkTline *l, *lend;
-	TkTitem *it;
-
-	lend = &tkt->end;
-	for(l = tkt->start.next; l != lend; l = l->next)
-		for(it = l->items; it != nil; it = it->next)
-			if(it->kind == TkTwin)
-				return 1;
-	return 0;
-}
-
 /*
  * Where the widget may draw, in window coordinates: the inside of the
  * widget, narrowed to whatever the destination already allowed.  Split

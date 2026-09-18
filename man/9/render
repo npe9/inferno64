@@ -294,15 +294,15 @@ before the narrowing and would be cut by it \(em the frame's own border
 lies outside the rectangle a grid clips its children to, and vanished
 as soon as a gridded child flushed.
 A
-.IR text (9),
-which narrows the window's clip around its own inside: the clip is a
+.IR text (9)
+narrows the window's clip around its own inside, so it flushes once
+before doing so \(em a tree must not span that \(em and its own drawing
+is then a
 .B TkNclip
-and its lines are fills, glyph runs and rules.
-The one text widget that still paints directly is one holding an
-embedded WINDOW, which is drawn by descending into it from the middle
-of a line \(em the tree would be rendered afterwards and land on top of
-it, and flushing is not open either, since that would close the clip
-the lines are drawn through.
+with fills, glyph runs and rules inside it.
+A text widget holding an embedded WINDOW needs no exception: the
+descent flushes in the middle of a line, and the walk hands the clip on
+to the tree that comes after.
 Descents nest \(em a canvas's window item and a text widget's embedded
 windows each descend from inside a draw method \(em so the walk is a
 small stack.

@@ -474,6 +474,13 @@ struct Walk {
 	 * so what is emitted is always a single rectangle - which is what
 	 * the renderer supports, and it is enough, since a clip that nests
 	 * is just a smaller clip.
+	 *
+	 * NOTHING NESTS TODAY: a widget closes its clip before it returns,
+	 * and a descent into another window gets a Walk of its own.  The
+	 * stack is kept rather than reduced to one rectangle so that a
+	 * caller which does nest is right rather than silently wrong, but
+	 * it is unexercised, and `lost' - the overflow arm - is reachable
+	 * only past eight of them.
 	 */
 	Rectangle	clip[Maxclip];
 	int		nclip;
@@ -550,8 +557,13 @@ tkwalkclip(Rectangle r)
 	if(w->nclip > 0 && !rectclip(&r, w->clip[w->nclip-1]))
 		r.max = r.min;
 	w->clip[w->nclip++] = r;
-	tkwalkscene(w->ctxt, w->dst);	/* a tree to put it in */
-	clipsync(w);
+	/*
+	 * tkwalkscene() emits the clip itself when it has to make the
+	 * tree, so only sync when it did not - otherwise every open costs
+	 * a clipend and a second clip that say nothing.
+	 */
+	if(tkwalkscene(w->ctxt, w->dst) != nil && !w->clipon)
+		clipsync(w);
 }
 
 void

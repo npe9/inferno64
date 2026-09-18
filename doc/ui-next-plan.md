@@ -1114,24 +1114,36 @@ there was never speed on the table here anyway.
    control fails by 50148 bytes; for the grid it earns nothing, and a
    control proves that too — removing it changes not one pixel.
 
-   **The one exclusion is an embedded window, and it does not merely
-   look wrong.** A `text` can hold a widget in the middle of a line,
-   which is drawn by descending into it from inside `tktdrawline` — so
-   it paints into the window there and then, and a tree still being
-   built would be rendered afterwards and land on top of it. The usual
-   answer, flush first, is not available: the flush would close the
-   clip span the lines are being drawn through and everything after it
-   would be unclipped. So such a widget keeps the drawing path, decided
-   by walking the items, which are already built by then. Without the
-   exclusion the suite does not merely draw wrong, it dies:
-   `disfault: sys: bad address addr=0x6574666150`, and those bytes are
-   ASCII — a string being followed as a pointer. The nodes themselves
-   are not what dangles; `tkscenetext` copies both the run and the face
-   name, which is the rule the vocabulary keeps. That fault was the
-   same held-pointer bug described above, and fixing it stopped the
-   crash — but the pixels still differ by 83898 bytes with the gate
-   removed, so the ordering across an embedded descent is a separate
-   and unsolved thing, and the gate stays.
+   **There is no exclusion, and the two reasons given for one were both
+   wrong.** A `text` can hold a widget in the middle of a line, drawn by
+   descending into it from inside `tktdrawline`, which paints into the
+   window there and then. That was gated off twice. The first reason
+   was a crash — `sys: bad address addr=0x6574666150`, ASCII bytes
+   followed as a pointer — which turned out to be the held-pointer bug
+   above and nothing to do with embedding. The second was 83898 bytes
+   of difference once the crash was fixed, called "ordering across a
+   descent"; it is the clip-span rule, the same defect as the grid's.
+   The descent's flush renders the pending tree *while the image is
+   narrowed to this widget's inside*, so every earlier widget's nodes
+   are cut to that rectangle.
+
+   `tkdrawtext` flushes once before `tktsetclip()` now, so the tree is
+   empty at the narrowing; what a mid-line flush renders is this
+   widget's own nodes, which belong inside the clip anyway, and the
+   walk hands the clip to the tree that comes after. 83898 goes to 0,
+   the gate goes, and `tkthaswindow()` — which walked every line and
+   every item of the whole buffer on every repaint, with no early exit
+   — goes with it.
+
+   That also gives the walk-owned clip its only test. Nothing else in
+   the pane flushes inside a clip span, so without an embedded window
+   the re-emit branch was committed code that never ran; with one, the
+   control fails by 147 bytes. What is still unexercised is the
+   *nesting*: a widget closes its clip before returning and a descent
+   into another window gets a `Walk` of its own, so nothing nests
+   today. The stack is kept rather than reduced to one rectangle so a
+   caller that does nest is right rather than silently wrong, and the
+   comment says it is unexercised.
 
    **It is the first widget whose node path costs more, and the reason
    is structural.** `tkbench(1)` puts a flat `text` at 5.97µs a widget

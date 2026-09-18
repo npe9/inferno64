@@ -1585,14 +1585,18 @@ checkscene()
 	must(top, ".tx insert end {tagged} warm");
 	must(top, ".tx insert end {\nand a second line that is wider than the widget is}");
 	tk->cmd(top, "pack .tx -padx 6 -pady 6");
-	# And a text widget holding an embedded WINDOW, which is the one
-	# case that keeps the drawing path.  Such a window is drawn by
-	# descending into it from the middle of a line, so it paints into
-	# the window there and then, and a tree still being built would be
-	# rendered afterwards and land on top of it.  Flushing is not open
-	# here either: it would close the clip the lines are drawn through.
-	# Without the exclusion this widget fails the comparison, which is
-	# what says the exclusion is doing something.
+	# And a text widget holding an embedded WINDOW, which is drawn by
+	# descending into it from the middle of a line - so it paints into
+	# the window there and then, and flushes the walk while this
+	# widget's clip is open.  It is the only thing in the pane that
+	# does, which makes it the test of the walk carrying a clip across
+	# a flush: 147 bytes when that is taken out.
+	#
+	# It was excluded from the node path for a while, on the theory
+	# that the flush could not be allowed mid-line.  The theory was
+	# wrong.  The flush is fine as long as the tree does not span the
+	# narrowing of the image's own clip, which the leading
+	# tkwalkflush() in tkdrawtext is what ensures.
 	must(top, "text .tw -width 200 -height 40");
 	must(top, "button .tw.b -text {in a line}");
 	must(top, ".tw insert end {before }");
@@ -1782,7 +1786,7 @@ checkscene()
 	# held TkScene* is a pointer to freed memory, and a gridded child
 	# that flushes is what proved that a tree must not span the
 	# narrowing of the image's own clip.
-	Trees: con 11;
+	Trees: con 12;
 	report(nr <= Trees, sys->sprint(
 		"and the walk has not fragmented (%d trees, at most %d)", nr, Trees));
 
