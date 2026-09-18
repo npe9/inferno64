@@ -1440,6 +1440,65 @@ is 25 of 25 and
 .I cvtchk (1)
 is clean on both the M4 and the M7 bench, and every diagnostic quoted in
 this document is itself a string literal now read from flash.
+.NH 3
+Naming a table read-only, for what comes next
+.PP
+.CW -t
+moves the compiler's literal pool and nothing else, which is right for
+what it is but is not a mechanism anything else can use.  The next item
+on the list \- pre-decoded
+.CW Inst
+arrays \- needs a way to say that one named table belongs in the text
+segment, and it needs a reference to that table's own address to come
+out exactly right, since a branch target in a decoded
+.CW Inst
+is a pointer into the array itself.
+.PP
+The assembler already had the syntax.
+.CW utils/5a/a.y
+accepts a flags field on
+.CW GLOBL
+and has for as long as this tree has existed;
+.CW utils/tl/obj.c
+threw it away.  It is now read, with the value the Go toolchain uses for
+the same thing, and a symbol that asks for it is laid out with the
+strings:
+.DS
+.CW "GLOBL	tab(SB), RODATA, $16"
+.CW "DATA	tab+4(SB)/4, $tab+12(SB)"
+.DE
+Linked into
+.CW mps2
+and read back at boot, that table lands at
+.CW 0xd5710 ,
+inside the text segment, and the self-reference reads
+.CW 0xd571c :
+base plus twelve, even, no Thumb bit.  The same word written as
+.CW "WORD $sym(SB)"
+inside a
+.CW TEXT
+block \- which is how the root file system is emitted \- comes back
+.CW 0xd5719
+instead, because a reference to a text symbol is a reference to code.
+The root can mask that off at its one site;
+.CW Inst
+branch targets could not.  So this is the placement the pre-decoded
+modules will use, and the
+.CW SSTRING
+relocation it depends on is the one fixed above.
+.PP
+Unlike
+.CW -t
+this is not a policy applied to a program, so it is honoured whether
+.CW -t
+was given or not, and the layout pass that places these symbols now runs
+unconditionally \- it does nothing when there are none.  Linking
+.CW teensy41
+with the old and the new
+.CW tl ,
+both with and without
+.CW -t ,
+gives byte-identical images.
 .PP
 That last check is weaker than it looks and needs one more, because
 .CW mps2 's

@@ -88,6 +88,7 @@ struct	Sym
 	uchar	thumb;	// thumb code
 	uchar	foreign;	// called by arm if thumb, by thumb if arm
 	uchar	fnptr;	// used as fn ptr
+	uchar	rodata;	// GLOBL asked for the text segment: see RODATA
 	Use*		use;
 	Sym*	link;
 };
@@ -308,6 +309,20 @@ EXTERN	long	symsize;
 EXTERN	Prog*	textp;
 EXTERN	long	textsize;
 EXTERN	long	strbase;	/* where the -t string block starts in the text segment */
+
+/*
+ * Flag on GLOBL, as in
+ *	GLOBL	sym(SB), $RODATA, $size
+ * asking for the symbol to be laid out in the text segment rather than
+ * in data.  On a part that runs its text from flash and copies its data
+ * segment into RAM at boot, that is the difference between a table
+ * costing flash and the same table costing SRAM.  The symbol is still
+ * data -- a reference to it gets no Thumb bit and no function pointer's
+ * thunk -- and it must not be written, since on such a part the write
+ * would be dropped or would fault.  The value matches the Go
+ * toolchain's, which descends from this one.
+ */
+#define	RODATA	8
 EXTERN	long	thunk;
 EXTERN	int	version;
 EXTERN	char	xcmp[C_GOK+1][C_GOK+1];
