@@ -1455,7 +1455,13 @@ checkscene()
 	# rendered after that has been put back unless the walk flushes
 	# while it still holds.  The scale is wider than the frame it is
 	# gridded in, so the clip has something to cut.
-	must(top, "frame .g -width 60 -height 30");
+	# Bordered, and holding a child that overflows it: the child is drawn
+	# after the frame, so it covers the frame's border band, and a frame
+	# whose nodes reached the tree AFTER its child's would paint that
+	# border back over the child.  The frame draws in place now, into
+	# the same tree its children use, so the order is the only thing
+	# keeping them apart.
+	must(top, "frame .g -width 60 -height 30 -borderwidth 3 -relief sunken");
 	must(top, "scale .g.s -orient horizontal -from 0 -to 10 -length 200");
 	must(top, ".g.s set 3");
 	must(top, "grid propagate .g 0");
