@@ -130,6 +130,7 @@ root
 	/env	/
 	/fd	/
 	/n	/
+	/n/pycubed	/
 	/net	/
 	/net.alt	/
 	/nvfs	/
@@ -152,7 +153,8 @@ root
 	/dis/cvtchk.dis	/dis32/cvtchk.dis
 	/dis/pycubed/beepsat.dis	/dis32/pycubed/beepsat.dis
 	/dis/pycubed/sat.dis	/dis32/pycubed/sat.dis
-	/dis/pycubed/hwstub.dis	/dis32/pycubed/hwstub.dis
+	/dis/pycubed/hw.dis	/dis32/pycubed/hw.dis
+	/dis/pycubed/hwsim.dis	/dis32/pycubed/hwsim.dis
 	/dis/ftest.dis	/dis32/ftest.dis
 	/dis/grep.dis	/dis32/grep.dis
 	/dis/ls.dis	/dis32/ls.dis

@@ -184,8 +184,18 @@ cdh(msg: array of byte)
 	"NO" =>
 		debug("cdh", "no-op");
 	"HR" =>
+		# A reset is the kernel's, not a device's: Inferno puts it
+		# at /dev/reboot (os/inferno/port/devcons.c).  The Python
+		# reaches for microcontroller.on_next_reset() because
+		# CircuitPython has no such file.
 		debug("cdh", "hard reset");
-		hw->reset();
+		fd := sys->open("/dev/reboot", Sys->OWRITE);
+		if(fd == nil)
+			debug("cdh", sys->sprint("reboot: %r"));
+		else {
+			b := array of byte "reboot";
+			sys->write(fd, b, len b);
+		}
 	"SD" =>
 		debug("cdh", "shutdown");
 		ask(sat->Setpower, "minimum", 0);
@@ -212,10 +222,28 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	}
 	sat->init();
-	hw->init();
+
+	# beepsat [seconds [hwdir]].  seconds 0 or absent runs forever,
+	# which is what a satellite does; a bench wants to stop.
+	secs := 0;
+	hwdir := "/n/pycubed";
+	if(tl argv != nil){
+		secs = int hd tl argv;
+		if(tl tl argv != nil)
+			hwdir = hd tl tl argv;
+	}
+
+	# A real board's C device puts these files in /dev;
+	# appl/pycubed/hwsim.b serves /n/pycubed and says what it is.
+	# See module/pycubedhw.m.
+	err := hw->init(hwdir);
+	if(err != nil){
+		sys->print("beepsat: hardware at %s: %s\n", hwdir, err);
+		return;
+	}
 
 	sys->print("\nBeep-Sat, ported to Limbo\n");
-	sys->print("hardware: %s\n\n", hw->name());
+	sys->print("hardware: %s\n\n", hw->source());
 
 	req = chan of ref Req;
 	spawn sat->server(req);
@@ -227,11 +255,6 @@ init(nil: ref Draw->Context, argv: list of string)
 	spawn beacontask();
 	sys->print("BEEPSAT-RUNNING 4 tasks\n");
 
-	# How long to run.  The Python runs forever; a test bench wants to
-	# stop, so an argument says for how many seconds.
-	secs := 0;
-	if(tl argv != nil)
-		secs = int hd tl argv;
 	if(secs <= 0){
 		for(;;)
 			sys->sleep(60*1000);

@@ -37,6 +37,16 @@ init()
 	sys->bind("#t", "/dev", sys->MAFTER);
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 
+	# The hardware files first: on this board nothing serves them, so
+	# appl/pycubed/hwsim.b does and says so.  A board with the parts
+	# has a C device instead and this spawn goes away.
+	sim := load Mission "/dis/pycubed/hwsim.dis";
+	if(sim == nil){
+		sys->print("init: load hwsim: %r\n");
+		exit;
+	}
+	sim->init(nil, "hwsim" :: nil);
+
 	mission = load Mission "/dis/pycubed/beepsat.dis";
 	if(mission == nil){
 		sys->print("init: load beepsat: %r\n");
