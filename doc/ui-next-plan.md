@@ -1029,6 +1029,35 @@ there was never speed on the table here anyway.
    and a `text`, a `canvas`, a `panel` and a `menu`, which paint into
    the window directly.
 
+   **`TkNtexture` is the last of these, and the fact that decides its
+   shape is already in.** The rule the node vocabulary has kept so far
+   is that a node holds no display-side resource: that is why
+   `TkNglyphs` gave up its `Font*` for a face *name* the renderer
+   resolves through `scenefont()`, and it is what would let a tree
+   outlive the repaint that built it. A texture node wants the same
+   treatment — carry the image's name, resolve it in the renderer.
+
+   It cannot, for half the cases. A Tk `image` is a `TkImg`, and a
+   `TkImg` has a `TkName`. A `-bitmap` does not: `pbmap()` in `parse.c`
+   calls `display_open()` on `/icons/tk/<name>` (or `@file`, or a file
+   descriptor) and stores the bare `Image*` in the widget. There is no
+   table it is registered in and no name to look it up by. So the fork
+   is:
+
+   - carry an `Image*` in the node, which works today — a tree is built
+     and rendered inside one repaint — and forecloses retention for
+     every widget with an image or a bitmap;
+   - give a bitmap a name, which means `pbmap()` registers what it
+     loads, and changes who owns the image and when it is freed;
+   - two node types, one naming a `TkImg` and one carrying a raw
+     `Image*`, which is honest about the difference and doubles the
+     thing a backend has to implement.
+
+   Worth deciding deliberately rather than discovering. The first is
+   the cheapest and the third is the most truthful; the second is the
+   only one that keeps the rule intact, and it is the only one that
+   touches code outside the renderer.
+
    **The `cascade` came in on `TkNpolyfill`**, which the scrollbar's
    arrows had already put there — `tktriangle()` is one `fillpoly()` of
    three points, and the node renderer calls the same `fillpoly()` with
