@@ -2151,6 +2151,48 @@ not this work: four runs in ten with the change and four in ten without
 it, on the same workload.  It is left as found and named here so the
 next person does not attribute it.
 .NH 2
+Where this stands
+.PP
+Everything below is measured, on
+.CW mps2
+because it is the board that can be run, with a shell and an
+.I ls (1)
+loaded.  The first column is where this document began; the second is
+the tree as it is now.
+.DS
+.CW "                        was        is    saved"
+.CW "kernel data + bss    162904    132656    30248"
+.CW "Proc array           175360     38720   136640"
+.CW "main pool            367104    114688   252416"
+.CW "heap pool             73728     56832    16896"
+.CW "                     ------    ------   ------"
+.CW "                     779096    342896   436200"
+.DE
+.CW "kernel text"
+went 848200 to 998256 over the same span, which is the price: 150056
+bytes of flash bought 436200 of RAM.  On
+.CW mps2 ,
+whose text is SRAM, that is not a win at all \- it is the bench, not
+the target.  On
+.CW teensy41 ,
+with eight megabytes of flash and a few hundred kilobytes of SRAM, it
+is the whole point: 690720 of text against 130568 of data and bss and a
+38720-byte
+.CW Proc
+array.
+.PP
+The pool figures are
+.CW mps2 's
+device set, which is the one the other two boards are configured
+against, so they carry over; the text and data figures are each board's
+own.
+.CW nucleof303
+is 280408 of text against 49112 of data and bss, which fits both its
+512K of flash and its 64K of SRAM, with a 19360-byte
+.CW Proc
+array on top \- and a pool floor that still leaves no room for Limbo,
+which its NOTE says.
+.NH 2
 What gates any of it
 .PP
 The kernel pool floor: 78208 bytes in 343 allocations with the minimal
