@@ -6748,3 +6748,51 @@ two configurations, as they stand today, differ by about five times on
 this workload, and that attributing that to the parallel interpreter
 rather than to the idle collector would need the collector made
 comparable first.
+.NH 2
+The spawn test was measuring scheduler latency
+.PP
+.CW release()
+spawns an interpreter when work is ready and none is idle.  An
+interpreter that
+.CW wakeidle()
+has just taken off the idle queue is neither: it is not on
+.CW isched.idlevmq
+any more, and it is not running until a processor gets to it.  So the
+test fires again, and again, for as long as the wake takes to land \(em
+which is why the count grows faster on a guest with fewer processors,
+and why it grows with time rather than with the work.  It is measuring
+how long a wake takes, not how much work there is.
+.PP
+.CW isched.nwoken
+counts the interpreters in that state, and the spawn test now requires
+it to be zero.
+.CW *spawnwoken=0
+restores the old test.  Two rounds of four 21-minute soaks, all four run
+together:
+.TS
+center;
+l r r r r.
+	contexts, round 1	round 2	cycles, round 1	round 2
+-smp 2, old test	137	138	22	23
+-smp 2, new test	32	38	27	27
+-smp 4, old test	65	61	24	25
+-smp 4, new test	18	17	19	23
+.TE
+.PP
+The growth is bounded: 17 to 38 contexts after twenty minutes against 61
+to 138, in both configurations and both rounds, and the
+.CW "-smp 2"
+arm is no longer climbing at the end.  That removes the blocker the soak
+found \(em this workload no longer walks into the pool.
+.PP
+The cost is at four processors: 19 and 23 cycles against 24 and 25,
+about a sixth less work, while two processors gain (27 against 22 and
+23).  That shape is what the change is: fewer interpreters is exactly
+the point, and an interpreter that would have been spawned while a wake
+was in flight sometimes turns out to have been useful.  Recorded as a
+cost rather than argued away; it is two runs per arm, which is enough to
+see a sixth but not to put a number on it.
+.PP
+The raised pool stays.  With the growth bounded it is no longer load
+bearing on this workload, but nothing here bounds the spawning at four
+processors as a function of anything but the wake, and 256 is cheap.

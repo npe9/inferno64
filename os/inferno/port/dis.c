@@ -20,6 +20,7 @@ struct
 	Prog*	tail;
 	Rendez	irend;
 	int	nidle;		/* interpreters parked on idlevmq */
+	int	nwoken;		/* woken from it and not yet running again */
 	int	nyield;
 	int	creating;
 	Proc*	idlevmq;	/* interpreters with no program to run */
@@ -630,6 +631,17 @@ static Fdclose *fdcloseq;
 ulong fdclosedeferred;	/* MULTICORE INSTRUMENTATION - temporary */
 ulong freefds, freefdstw;	/* likewise; counted in freeFD() */
 ulong vmspawns;		/* interpreters made by release(); temporary */
+/*
+ * *spawnwoken=0 restores the old spawn test, so one kernel measures
+ * both.  The test is "work is ready and no interpreter is idle", and an
+ * interpreter that wakeidle() has just taken off the idle queue is
+ * neither idle nor running until a processor gets to it -- so on a guest
+ * with fewer processors the test is true more often, and the interpreter
+ * count grows with scheduler latency rather than with demand.  Measured
+ * over twenty minutes: contexts 42, 83, 134 at -smp 2 against 33, 44, 49
+ * at -smp 4, same workload.  Temporary, like the rest.
+ */
+int spawnwoken = 1;
 ulong vmspawnsby[8];	/* and by the type of process that made them */
 int fddefer = 1;	/* *fddefer=0: close inline, as before; temporary */
 
@@ -977,6 +989,7 @@ wakeidle(void)
 		isched.idlevmq = p->vmnext;
 		p->vmnext = nil;
 		isched.nidle--;
+		isched.nwoken++;	/* see release(); it is not idle and not running */
 	}
 	unlock(&isched.l);
 	if(p != nil)
@@ -2349,7 +2362,8 @@ release(void)
 	 * 8318 for the same boot at the default bound.
 	 */
 	if((curP->runhd != nil || isched.ghead != nil)
-	&& isched.nidle == 0 && isched.creating == 0){
+	&& isched.nidle == 0 && isched.creating == 0
+	&& (spawnwoken == 0 || isched.nwoken == 0)){
 		isched.creating = 1;
 		spawn = 1;
 		vmspawns++;	/* MULTICORE INSTRUMENTATION - temporary */
@@ -2698,6 +2712,10 @@ vmachine(void*)
 				up->pc = getcallerpc(&r);
 				unlock(&isched.l);
 				sched();
+				lock(&isched.l);
+				if(isched.nwoken > 0)	/* running again; see release() */
+					isched.nwoken--;
+				unlock(&isched.l);
 			} else
 				unlock(&isched.l);
 			vmacquire();
@@ -3338,9 +3356,10 @@ stalldump(void)
 	}
 	{
 		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud,"
-			" fddefer %d, interpreters spawned %lud"
+			" fddefer %d, nwoken %d, interpreters spawned %lud"
 			" (by type %lud %lud %lud %lud %lud)\n",
-			freefds, freefdstw, fdclosedeferred, fddefer, vmspawns,
+			freefds, freefdstw, fdclosedeferred, fddefer,
+			isched.nwoken, vmspawns,
 			vmspawnsby[0], vmspawnsby[1], vmspawnsby[2],
 			vmspawnsby[3], vmspawnsby[4]);
 	}

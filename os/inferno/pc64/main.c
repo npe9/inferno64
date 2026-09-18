@@ -259,6 +259,10 @@ main(void)
 		extern int teardrop;
 		char *p;
 
+		if((p = getconf("*spawnwoken")) != nil){
+			extern int spawnwoken;
+			spawnwoken = strtol(p, nil, 0);
+		}
 		if((p = getconf("*gcatomic")) != nil){
 			extern int gcatomic;
 			gcatomic = strtol(p, nil, 0);
