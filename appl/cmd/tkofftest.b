@@ -1622,8 +1622,13 @@ checkscene()
 		# -maskfile, so the two were composited into a fresh image
 		# that no file names - and that one MUST draw, because what
 		# it draws is the composite rather than either file.
-		"create image 256 4 -image Icon2 -anchor nw",
+		# The DRAWING one first and the node one last, because the
+		# render at the end of the item loop covers only what the
+		# last drawing item left after it: every item that draws
+		# calls tkcvsdirect() and flushes what is pending, so a list
+		# ending in a draw leaves that render nothing to do.
 		"create image 296 44 -image Icon -anchor nw",
+		"create image 256 4 -image Icon2 -anchor nw",
 	};
 	must(top, "canvas .cv -width 340 -height 120 -buffer none");
 	must(top, "canvas .cb -width 340 -height 120");
@@ -1840,8 +1845,17 @@ checkscene()
 	# both sides of narrowing the window's clip; .tw, the text widget
 	# holding an embedded window, is excluded and flushes on the way in
 	# and again when the descent into that window paints; .mn holds a
-	# SEPARATOR, which frame.c draws by painting into the window; .c
-	# and .g.c are canvases, which paint into the window too.
+	# SEPARATOR, which frame.c draws by painting into the window; and
+	# .c, .cv, .cb and .g.c are canvases, every one of which flushes on
+	# the way in.  A canvas does not join the walk even when its items
+	# are nodes - it builds a tree of its own, because its items are
+	# usually drawn into a buffer of its own and a tree belongs to one
+	# target.
+	#
+	# Four canvases and not four flush points: .cv and .cb are packed
+	# next to each other with no node widget between them, so the
+	# second one's tkwalkflush() finds an empty walk and ends no run.
+	# That is why adding .cb left this number where it was.
 	#
 	# The separator and the gridded canvas are in the pane
 	# deliberately.  A menu item that flushes is what proved that a
@@ -1932,10 +1946,27 @@ counts(s: string): (int, int, int)
 # `move all 0 0' is the innocuous dirty: tkcvsmove() unions every item's
 # bounding box into the update rectangle and translates each of them by
 # zero, so the canvas redraws exactly the picture it had.
-cvdirty(top: ref Tk->Toplevel)
+#
+# RECURSIVE over winfo children rather than a list of the canvases that
+# are in the pane today, because a list is the same shape as the hole it
+# was written to close: the next canvas someone adds would be silently
+# uncovered and this file would go on saying 82 ok.  -buffer is a canvas
+# option and nothing else has one, so a widget that answers `cget
+# -buffer' without an error is a canvas; dirtying an unbuffered one
+# costs a redraw it was going to do anyway.
+cvdirty(top: ref Tk->Toplevel, who: string)
 {
-	for(l := list of {".c", ".g.c", ".cb"}; l != nil; l = tl l)
-		tk->cmd(top, hd l + " move all 0 0");
+	if(who != "."){
+		b := tk->cmd(top, who + " cget -buffer");
+		if(b != nil && b[0] != '!')
+			tk->cmd(top, who + " move all 0 0");
+	}
+	kids := tk->cmd(top, "winfo children " + who);
+	if(kids == nil || kids[0] == '!')
+		return;
+	(nil, ws) := sys->tokenize(kids, " ");
+	for(; ws != nil; ws = tl ws)
+		cvdirty(top, hd ws);
 }
 
 scenepair(top: ref Tk->Toplevel, who: string): (int, int)
@@ -1943,13 +1974,13 @@ scenepair(top: ref Tk->Toplevel, who: string): (int, int)
 	tk->cmd(top, "render direct");
 	tk->cmd(top, "focus .b");
 	tk->cmd(top, "focus " + who);
-	cvdirty(top);
+	cvdirty(top, ".");
 	tk->cmd(top, "update");
 	a := snap();
 	tk->cmd(top, "render scene");
 	tk->cmd(top, "focus .b");
 	tk->cmd(top, "focus " + who);
-	cvdirty(top);
+	cvdirty(top, ".");
 	tk->cmd(top, "update");
 	b := snap();
 	tk->cmd(top, "render direct");
