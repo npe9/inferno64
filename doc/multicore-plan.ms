@@ -6595,3 +6595,45 @@ atomic it holds 362 to 455KB against
 .CW parallelvm=0 's
 380 to 415KB, which is the same place \(em and it does it while using
 fewer contexts than the VM-locked kernel, not more.
+.NH 2
+The direction that was not measured
+.PP
+.CW gchalt
+reached \-1, and that is the other half of the same bug.  A lost
+.I decrement
+switches the collector off, which is what every table above measures.  A
+lost
+.I increment
+lets a collection run through a region that asked it not to \(em a
+teardown, or a
+.CW t->free()
+partway through
+.CW destroy() .
+Nothing here measures that direction: it produces no counter and no
+missing collection, only a collector walking something that was being
+taken apart.
+.PP
+It was live for every batch in this document, which is worth saying next
+to the faults those batches chased: the bad frames, the
+.CW alloc:D2B:destroy-entry
+and the protection faults of the earlier chapters all sat on top of it.
+This does not claim it caused them \(em the register-sync fix has its own
+same-binary A/B and stands on that \(em only that the exposure existed
+underneath and is now gone, and that it was never counted.
+.NH 2
+What would have to be true to make parallelvm=1 the default
+.PP
+Two objections have been closed since the question was last asked.  The
+collection counts are no longer bimodal, so a boot is no longer
+sometimes running with no collector; and the heap claim that stood
+against it has been withdrawn and re-measured at parity.  What is left
+is not an objection but a gap in the evidence:
+.IP \(bu
+Every number in this chapter is a 90-second boot of one workload \(em
+three chantests and a shell loop.  Nothing here says what an hour does,
+and the failures this document chased are rates, not certainties.
+.IP \(bu
+The lost-increment direction above is unmeasured, and that is the
+direction that corrupts rather than the one that stalls.
+.PP
+Both are measurements, not designs, and neither is a one-batch question.
