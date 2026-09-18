@@ -6674,3 +6674,59 @@ million collections regardless \(em which is the reminder that
 .CW gchalt
 sampled once is a snapshot of a lock, not a verdict on the collector.
 The count is the verdict.
+.NH 1
+Twenty minutes
+.PP
+Everything above is a 90-second boot.
+.CW *soak=1
+makes
+.CW /dis/init
+repeat its workload \(em three chantests and a 300-iteration shell loop
+\(em instead of running it once, so the same kernel can be left going.
+Three arms, 21 minutes each, run together:
+.TS
+center;
+l r r r r r.
+	cycles	chantests	panics	Dis heap at 2/10/20 min	contexts at 2/10/20 min
+-smp 4, parallelvm=1	20	66	0	432/467/430 KB	33/44/49
+-smp 2, parallelvm=1	23	75	0	474/435/485 KB	42/83/134
+-smp 4, parallelvm=0	4	18	0	407/426/412 KB	39/57/57
+.TE
+.PP
+No panic, no chantest
+.CW FAIL
+and no bad frame in either
+.CW parallelvm=1
+arm over twenty minutes, and the Dis heap is flat: it ends where it
+started, within a few tens of kilobytes, in all three.  That is the
+measurement the chapter above said was missing, and it does not change
+the picture the 90-second boots gave.
+.NH 2
+Two things the long run shows that the short ones could not
+.PP
+.B "The contexts keep climbing."
+At
+.CW "-smp 2"
+they go 42, 83, 134 across the twenty minutes and are still going up at
+the end.  The pool is 256, so this boot would have reached it in about
+another half hour.  That is the "mitigation with no ceiling" of the
+section above, now watched rather than reasoned about: what needs
+bounding is the spawning, and a long enough run at
+.CW parallelvm=1
+still exhausts any fixed pool.  Curiously it is worse at two processors
+than at four (49 at the end), which is not explained here.
+.PP
+.B "Throughput, with a caveat that is bigger than the number."
+The
+.CW parallelvm=1
+arms complete 20 and 23 cycles where the VM-locked arm completes 4.
+Before reading that as five times faster, look at the collector column:
+.CW parallelvm=0
+ran 294 million collector passes in those twenty minutes against 14
+million.  The VM-locked kernel's idle collector spins in a way the
+stop-the-world one cannot, so a large part of what separates the two
+arms is the CPU that spinning eats.  The honest statement is that these
+two configurations, as they stand today, differ by about five times on
+this workload, and that attributing that to the parallel interpreter
+rather than to the idle collector would need the collector made
+comparable first.
