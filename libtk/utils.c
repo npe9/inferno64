@@ -891,33 +891,58 @@ tklook(TkTop *t, char *wp, int parent)
 	return f;
 }
 
+/*
+ * A selection band is a fill and four edges - light along the top and the
+ * left, dark along the bottom and the right.  The geometry lives here
+ * once, and both the draw() path and the node path walk what it returns,
+ * so the two cannot come to describe different bands.  It was five
+ * open-coded draw()s accumulating into one rectangle, and the order
+ * below is theirs.  Keeping it costs nothing, and the order turns out
+ * not to matter anyway: all four edges lie OUTSIDE the fill, and where
+ * two of them overlap - the corner squares - they are the same colour,
+ * so nothing here paints over anything of a different shade.
+ */
+int
+tkselrects(Rectangle r, int sbw, Rectangle *rr, int *ci)
+{
+	ci[0] = TkCselectbgnd;
+	rr[0] = r;
+
+	ci[1] = TkCselectbgndlght;			/* top */
+	rr[1] = Rect(r.min.x-sbw, r.min.y-sbw, r.max.x, r.min.y);
+
+	ci[2] = TkCselectbgndlght;			/* left */
+	rr[2] = Rect(r.min.x-sbw, r.min.y-sbw, r.min.x, r.max.y+sbw);
+
+	ci[3] = TkCselectbgnddark;			/* bottom */
+	rr[3] = Rect(r.min.x, r.max.y, r.max.x+sbw, r.max.y+sbw);
+
+	ci[4] = TkCselectbgnddark;			/* right */
+	rr[4] = Rect(r.max.x, r.min.y-sbw, r.max.x+sbw, r.max.y+sbw);
+
+	return 5;
+}
+
 void
 tktextsdraw(Image *img, Rectangle r, TkEnv *e, int sbw)
 {
-	Image *l, *d;
-	Rectangle s;
+	Rectangle rr[5];
+	int ci[5], k, n;
 
-	draw(img, r, tkgc(e, TkCselectbgnd), nil, ZP);
-	s.min = r.min;
-	s.min.x -= sbw;
-	s.min.y -= sbw;
-	s.max.x = r.max.x;
-	s.max.y = r.min.y;
-	l = tkgc(e, TkCselectbgndlght);
-	draw(img, s, l, nil, ZP);
-	s.max.x = s.min.x + sbw;
-	s.max.y = r.max.y + sbw;
-	draw(img, s, l, nil, ZP);
-	s.max = r.max;
-	s.max.x += sbw;
-	s.max.y += sbw;
-	s.min.x = r.min.x;
-	s.min.y = r.max.y;
-	d = tkgc(e, TkCselectbgnddark);
-	draw(img, s, d, nil, ZP);
-	s.min.x = r.max.x;
-	s.min.y = r.min.y - sbw;
-	draw(img, s, d, nil, ZP);
+	n = tkselrects(r, sbw, rr, ci);
+	for(k = 0; k < n; k++)
+		draw(img, rr[k], tkgc(e, ci[k]), nil, ZP);
+}
+
+void
+tkscenetextsel(TkScene *s, Rectangle r, TkEnv *e, int sbw)
+{
+	Rectangle rr[5];
+	int ci[5], k, n;
+
+	n = tkselrects(r, sbw, rr, ci);
+	for(k = 0; k < n; k++)
+		tkscenecolour(s, rr[k], e->colors[ci[k]]);
 }
 
 void

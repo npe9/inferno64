@@ -875,10 +875,17 @@ there was never speed on the table here anyway.
    second tree rendered into an image halfway through its own drawing.
 
    **`entry` is the second, and it went the same way.** Fill, glyph run,
-   caret and focus ring inside one `TkNlayer`, with the scratch-and-blit
-   kept for the two cases that have no nodes yet: a visible selection
-   (two more runs and a band behind them) and `-show`, which builds a
-   throwaway Rune buffer. The glyph node carries a *string*, so the
+   caret and focus ring inside one `TkNlayer`. The two cases first left
+   out — a visible selection and `-show` — are in now, and neither
+   needed a new node type: the selection band is the five filled
+   rectangles `tktextsdraw()` always drew, and `-show` changes which
+   runes the glyph node names, not what kind of node it is. What the
+   conversion actually bought was the *sharing*: the band's geometry is
+   `tkselrects()` in `utils.c` and the selection's clipping is
+   `entrysel()` in `entry.c`, each written once and called by both
+   paths, because four boundary cases (a selection starting before the
+   first visible rune, ending after the last, or both) written out twice
+   is two chances to disagree. The glyph node carries a *string*, so the
    visible slice of the entry's Runes is converted to UTF-8 and the node
    takes its own copy — a `Rune*` into a widget's buffer is not a value
    and the node outlives the call.
@@ -999,7 +1006,10 @@ there was never speed on the table here anyway.
    the end style, the same at both ends because that is what every
    caller asks. Its box is a filled rectangle when on and a stroke when
    off, so both states are in the pane. Three controls, all failing:
-   filled box 240 bytes of 13500000, empty box 420, tick 195.
+   filled box 240 bytes, empty box 420, tick 195. (The denominator those
+   were measured against is not the one a run prints today: the pane has
+   grown twice since, and it is `len who * W * H * 3`. Only the numerator
+   means anything — a control that fails.)
 
    **A lesson that cost real coverage.** Adding those widgets pushed
    both scrollbars off the bottom of the 900×700 pane — and a widget
@@ -1016,9 +1026,26 @@ there was never speed on the table here anyway.
    Still drawn through a scratch image: a `cascade`, whose arrow is
    `tktriangle()`; a button, radiobutton, checkbutton or label with an
    image, a bitmap, several lines, an underline or text that is not
-   left-justified; an `entry` showing a selection or `-show`; and a
-   `text`, a `canvas`, a `panel` and a `menu`, which paint into the
-   window directly.
+   left-justified; and a `text`, a `canvas`, a `panel` and a `menu`,
+   which paint into the window directly. An `entry` no longer needs an
+   exception at all.
+
+   **Sharing the geometry turned up a defect neither path could see.**
+   `entrysel()`, which is the old selection arithmetic moved somewhere
+   both paths can reach it, ends a selection that runs off the right at
+   `s.max.x` — an absolute x — where every other value it computes is an
+   offset that `rectaddpt()` then shifts by `s.min`. Working it through:
+   `s.max.x` is `r.max.x - xp` and `rectaddpt` adds `s.min.x = xp` back,
+   so the band's right edge lands on `r.max.x`, the widget's *outer*
+   edge. `xp` is `borderwidth + entrypadx + highlightwidth`, and
+   `entrypadx` is 8 in the flat style, so the border painted afterwards
+   covers only `borderwidth` of that: the rest is selection colour lying
+   in the inset gutter, on screen, today, in both paths. An identity
+   check cannot see it — both paths call the same function and so make
+   the same mistake — which is exactly why it is worth writing down
+   that an identity check is not a correctness check. Fixed separately,
+   with a test that looks at the pixels rather than at two paths
+   agreeing.
 
    **The walk is done, and it is one tree per *run*, not per repaint.**
    `tkdrawslaves` opens a walk around its descent, `tkwalkjoin` hands a

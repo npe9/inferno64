@@ -58,7 +58,7 @@ Tkofftest: module
 };
 
 W: con 900;			# room for the widest widget at the largest font,
-H: con 1000;			# so that packing is never what clamps a measurement
+H: con 1120;			# so that packing is never what clamps a measurement
 				#
 				# H was 700 until the render-node pane grew: a
 				# widget packed past the bottom is never drawn,
@@ -1360,6 +1360,33 @@ checkscene()
 	tk->cmd(top, "radiobutton .r1 -text {On} -variable rv -value 1");
 	tk->cmd(top, "variable rv 1");
 	tk->cmd(top, "pack .e -padx 6 -pady 6");
+	# An entry with a SELECTION.  The band is five fills and the selected
+	# runes are a second glyph run drawn over it, and an entry with
+	# nothing selected reaches neither.  Selected end to end and then
+	# scrolled, so the selection begins before the first visible rune and
+	# ends after the last - the two clipping branches inside entrysel(),
+	# which an entry whose selection sits wholly on screen never takes.
+	must(top, "entry .es -width 90");
+	must(top, ".es insert 0 {selected text runs off both ends}");
+	must(top, ".es selection range 0 end");
+	must(top, ".es icursor 20");
+	must(top, ".es see 20");
+	tk->cmd(top, "pack .es -padx 6 -pady 6");
+	# An EMPTY entry, which is the one that has no runes at all: its text
+	# pointer is nil until something is typed into it, and all it draws
+	# is the fill, the border, the ring and - when it holds the keyboard
+	# - the caret.  It is in the focus loop below for that last one: a
+	# refactor that returned early on a nil text pointer dropped the
+	# caret from the draw() path and nothing here could see it, because
+	# every other entry in the pane has text.
+	must(top, "entry .ee -width 60");
+	tk->cmd(top, "pack .ee -padx 6 -pady 6");
+	# -show: the same glyph node naming a different string.  Nothing else
+	# in the pane builds the substituted buffer, so without this the
+	# node path's copy of it is never run.
+	must(top, "entry .ep -width 90 -show *");
+	must(top, ".ep insert 0 {hunter2}");
+	tk->cmd(top, "pack .ep -padx 6 -pady 6");
 	tk->cmd(top, "pack .l -padx 6 -pady 6");
 	# A scale in both orientations, with every annotation it can draw:
 	# a label, the value, and tick marks.  Each of those is a separate
@@ -1524,7 +1551,7 @@ checkscene()
 	# item's box - both are guarded by tkhaskeyfocus() - so a
 	# perturbation of either passes, which by the usual rule means the
 	# check never reached the code rather than that the code is right.
-	who := array[] of {".e", ".l", ".s", ".v", ".mb"};
+	who := array[] of {".e", ".ee", ".l", ".s", ".v", ".mb"};
 	diff := 0;
 	first := -1;
 	for(k := 0; k < len who; k++){

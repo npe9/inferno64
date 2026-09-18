@@ -948,6 +948,8 @@ extern	void		tkfreeobj(Tk*);
 extern	char*		tkaddchild(TkTop*, Tk*, TkName**);
 extern	Tk*		tklook(TkTop*, char*, int);
 extern	void		tktextsdraw(Image*, Rectangle, TkEnv*, int);
+extern	int		tkselrects(Rectangle, int, Rectangle*, int*);
+extern	void		tkscenetextsel(TkScene*, Rectangle, TkEnv*, int);
 extern	void		tkbox(Image*, Rectangle, int, Image*);
 extern	void		tkbevel(Image*, Point, int, int, int, Image*, Image*);
 extern	void		tkdrawrelief(Image*, Tk*, Point, int, int);
