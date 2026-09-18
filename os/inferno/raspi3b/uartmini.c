@@ -60,6 +60,7 @@
 
 extern void gpiofsel(int, int);		/* gpiobcm.c */
 extern void gpiopull(int, int);
+extern int gpiofselget(int);
 
 enum {
 	IRQaux	= 29,
@@ -180,6 +181,33 @@ static Uart*
 minipnp(void)
 {
 	return &miniuart;
+}
+
+/*
+ * Is this UART the one the firmware wired to the header, and on?
+ *
+ * Asked before the console has been chosen, by serialputc, which until
+ * now fell back to the PL011 whenever consuart was nil.  On a Pi 3 with
+ * the firmware's own arrangement that is the Bluetooth pins: the build
+ * banner, the crumbs and any trap taken before uartconsole() went out
+ * where nothing is listening, and the header's first sight of the
+ * kernel was whatever printed after the console had been chosen --
+ * which is what "the mini UART comes up late" was.
+ *
+ * Both halves have to be true.  A mini UART whose AUX enable is clear
+ * reads every register as zero, and zero in LSR says the transmitter is
+ * not ready, so writing a character to it costs a million polls before
+ * giving up -- on the one path that runs before anything else works.
+ */
+int
+minihasconsole(void)
+{
+	Ctlr *c;
+
+	c = &minictlr;
+	if((c->reg[Enables] & UartEn) == 0)
+		return 0;
+	return gpiofselget(TxPin) == Alt5;
 }
 
 /* Rate the divisor gives, or 0 for no divisor. */

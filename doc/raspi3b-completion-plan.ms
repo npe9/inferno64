@@ -3625,6 +3625,33 @@ in place gave that up.  And
 is not a read-back: the length it prints is the directory entry, which
 is the field most likely to be the wrong one.
 .NH 2
+Why the mini UART looked slow to come up
+.PP
+It did not.  Everything the kernel printed before
+.CW uartconsole()
+chose a console went to the PL011, because that is what
+.CW serialputc()
+fell back to while
+.CW consuart
+was nil \(em and on a Pi 3 wired the firmware's own way the PL011 is the
+Bluetooth pins.  Measured, with both of QEMU's serial ports captured to
+separate files and the console forced to the mini UART: the PL011 port
+took 40 bytes, exactly the build banner, and the mini UART took the
+other 4736.  So the header's first sight of the kernel was the pool
+sizes, a good way into the boot, and a board that says nothing for its
+first half second looks exactly like a board that did not start.
+.PP
+The early path now asks the pins, which is what
+.CW uartconsole()
+asks a moment later and with the same answer.  It asks a stricter
+question than the console does \(em the AUX enable bit as well as the
+pin function \(em because it cannot turn anything on: a mini UART whose
+enable is clear reads every register as zero, zero in LSR says the
+transmitter is not ready, and a character then costs a million polls on
+the one path that runs before anything else works.  With the fix and the
+same measurement, the PL011 port takes nothing at all and the banner is
+the mini UART's first line.
+.NH 2
 Suggested order
 .PP
 The transmit-queue fix is confirmed on the board and kernel updates

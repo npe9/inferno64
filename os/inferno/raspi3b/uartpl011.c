@@ -17,6 +17,7 @@ extern void gpiofsel(int, int);		/* gpiobcm.c */
 
 extern Uart miniuart;			/* uartmini.c */
 extern int gpiofselget(int);		/* gpiobcm.c */
+extern int minihasconsole(void);	/* uartmini.c */
 
 enum {
 	Altpl011 = 4,		/* GPFSEL code for alt0: PL011 on GPIO 14/15 */
@@ -423,10 +424,36 @@ PhysUart pl011physuart = {
 	.putc		= pl011_putc,
 };
 
+/*
+ * Where output goes before uartconsole() has chosen a console.
+ *
+ * This used to be the PL011, always.  On a Pi 3 wired the firmware's own
+ * way that is the Bluetooth pins, so the build banner, the crumbs and
+ * any trap taken this early were written where nothing is listening,
+ * and a header console's first sight of the kernel was whatever printed
+ * after the console had been chosen -- pool sizes, a good way into the
+ * boot.  A board that says nothing for its first half second looks
+ * exactly like a board that did not start.
+ *
+ * Ask the pins instead, which is what uartconsole() does a moment later
+ * and with the same answer; minihasconsole() also refuses a mini UART
+ * whose AUX enable is clear, because writing to one of those costs a
+ * million polls a character.
+ */
+static Uart*
+earlyuart(void)
+{
+	if(consuart != nil)
+		return consuart;
+	if(minihasconsole())
+		return &miniuart;
+	return &pl011uart;
+}
+
 void
 serialputc(int c)
 {
-	Uart *uart = consuart != nil? consuart: &pl011uart;
+	Uart *uart = earlyuart();
 
 	(*uart->phys->putc)(uart, c);
 }
