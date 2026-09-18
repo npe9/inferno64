@@ -17,6 +17,12 @@ ARCHDIR=../armv7m
 
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
 
+# The built-in root goes in the text segment, not the data segment: this
+# board runs its text from flash (or, on mps2, models one that does), and
+# os/inferno/armv7m/l.s copies the data segment into RAM at boot.  See
+# os/inferno/port/mkroot and utils/data2s/data2s.c.
+ROOTINTEXT=1
+
 <| $SHELLNAME ../port/mkdevlist $CONF
 
 # The text runs out of the flash at the bottom of the address map, where
