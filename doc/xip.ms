@@ -2479,6 +2479,24 @@ and
 All four now call
 .CW typeinc() .
 .PP
+.CW 7c
+and
+.CW jc
+take the pragma too, since the same four tables are in every kernel that
+links
+.CW libsec .
+.CW "data + bss" ,
+on top of the root and string moves:
+.DS
+.CW "              before     after     saved"
+.CW "virt          330984    266936     64048"
+.CW "raspi3b      4505656   4444920     60736"
+.DE
+.CW virt
+still reaches an interactive shell with its three markers and
+.CW raspi3b
+still boots.
+.PP
 This is the failure mode the bench cannot see.
 .CW mps2 's
 text is SRAM, so the increment succeeded and nothing went wrong; on
