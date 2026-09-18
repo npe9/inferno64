@@ -6562,3 +6562,36 @@ chantest does the same amount of work either way, which is the thing to
 notice: a boot with no collector looks fine from outside until it runs
 out of memory, and every batch in this document that counted panics was
 counting some boots whose collector had stopped in the first seconds.
+.NH 2
+Re-checking what was measured while the collector was off
+.PP
+Every batch in this document before the atomic fix included boots whose
+collector had stopped in the first seconds, and nothing in those tables
+could tell.  So the state of things is measured again on the kernel as
+it now stands, 40 boots:
+.TS
+center;
+l r r r r r.
+	panics	bad frame	chain short	Dis heap	contexts
+-smp 4, parallelvm=1	0 of 16	0	0	362 to 455KB	18 to 23
+-smp 2, parallelvm=1	0 of 16	0	0	188 to 441KB	25 to 28
+-smp 4, parallelvm=0	0 of 8	0	0	380 to 415KB	38 to 45
+.TE
+.PP
+No panic in 32
+.CW parallelvm=1
+boots, no bad frame, no short chain, no pool exhaustion, no chantest
+.CW FAIL ,
+and 418 and 399 of 432 chantest lines against 216 of 216 for the VM
+lock \(em the missing ones are boots the 90-second timeout cut off, not
+failures.
+.PP
+And the heap claim from earlier in this chapter is withdrawn.  It said
+the stop-the-world collector keeps the heap bounded but not where the
+VM-locked collector does, 426KB to 3.7MB against a steady 410KB.  That
+was the collector being switched off in some of those boots.  With
+.CW gchalt
+atomic it holds 362 to 455KB against
+.CW parallelvm=0 's
+380 to 415KB, which is the same place \(em and it does it while using
+fewer contexts than the VM-locked kernel, not more.
