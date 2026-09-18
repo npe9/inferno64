@@ -43,6 +43,7 @@ cartesian cartesian
 castlefrankenstein castlefrankenstein
 cat cat
 cd cd
+chainbench chainbench
 chan sh-tk
 chantest chantest
 chardemo chardemo
@@ -403,6 +404,7 @@ ohgreat ohgreat
 or sh-std
 os os
 p p
+p256test p256test
 parse sh-std
 parts math-misc
 passwd passwd

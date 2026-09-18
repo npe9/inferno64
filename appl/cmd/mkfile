@@ -105,6 +105,8 @@ TARG=\
 	memfs.dis\
 	metamorph.dis\
 	mkdir.dis\
+	p256test.dis\
+	chainbench.dis\
 	cloudauth.dis\
 	cloudfs.dis\
 	cloudinit.dis\

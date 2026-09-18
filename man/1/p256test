@@ -1,0 +1,50 @@
+.TH P256TEST 1
+.SH NAME
+p256test \- check p256(2) against another library, and time it
+.SH SYNOPSIS
+.B p256test
+[
+.I reps
+]
+.SH DESCRIPTION
+.I P256test
+checks
+.IR p256 (2)
+\(em the NIST curve arithmetic this TLS client verifies certificate
+chains with \(em against vectors produced by OpenSSL 3.6.3, and reports
+how long a verification takes.
+.PP
+The vectors are two key pairs per curve, the ECDH shared secret each
+way, and an ECDSA signature over a fixed message with the digest
+matched to the curve: SHA-256 for P-256 and SHA-384 for P-384.  Both
+curves are checked because a certificate chain in the wild has a P-256
+leaf under a P-384 intermediate, so a client that could only do one of
+them would fail on real traffic.
+.PP
+Every positive check has a negative control beside it: the same
+verification with one byte changed in the hash, in
+.IR r ,
+in
+.IR s ,
+or under the wrong public key, and a point moved off the curve.  A
+verifier that answers yes to everything passes the positive checks
+alone, so the controls are what makes the positives mean anything.
+.PP
+.I Reps
+sets how many verifications and agreements the timing does; one by
+default.  The timing is the reason to keep this command: certificate
+verification is where a handshake spends its time, and this says what
+one costs on the machine in hand.  Run it interpreted \(em
+.B emu
+.B -c0
+\(em for a figure that means anything about a native kernel, which has
+no JIT.
+.SH SOURCE
+.B /appl/cmd/p256test.b
+.SH SEE ALSO
+.IR chainbench (1),
+.IR p256 (2),
+.IR tls12 (2)
+.SH BUGS
+The vectors are compiled in.  Refreshing them means running OpenSSL
+again and editing the constants at the top of the source.
