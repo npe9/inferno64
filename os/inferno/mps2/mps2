@@ -137,7 +137,6 @@ root
 	/tmp	/
 	/proc	/
 	/dis/lib
-	/dis/pycubed
 	/dis/svc
 	/dis/wm
 	/osinit.dis
