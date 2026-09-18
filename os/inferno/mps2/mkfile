@@ -23,6 +23,15 @@ ARCHDIR=../armv7m
 # os/inferno/port/mkroot and utils/data2s/data2s.c.
 ROOTINTEXT=1
 
+# And the boot module's decoded instruction array with it.  utils/dis2s
+# lays out at build time what libinterp/load.c:/^parsemod would
+# otherwise build in RAM every time the module is loaded, as a RODATA
+# symbol that the linker puts in the text segment.  XIPMODS tells
+# os/inferno/port/mkdevc that this board defines xipmods itself, in the
+# file dis2s generates, rather than taking the empty one.  See
+# doc/xip.ms.
+XIPMODS=1
+
 <| $SHELLNAME ../port/mkdevlist $CONF
 
 # The core reads its initial stack pointer and reset address from the
@@ -54,6 +63,8 @@ OBJ=\
 	mul64fract.$O\
 	stubs.$O\
 	$CONF.root.$O\
+	$CONF.prog.$O\
+	$CONF.xipmod.$O\
 	$DEVS\
 	$LINKS\
 	$PORT\
@@ -76,6 +87,12 @@ default:V: i$CONF
 
 install:V: i$CONF
 	cp i$CONF $INSTALLDIR/i$CONF
+
+# dis2s is a host tool, found on the path like data2s and ndate are.
+$CONF.prog.s $CONF.xipmod.c: $INITDIR/$INIT.dis
+	$DIS2S -p /osinit.dis -s osinit -o $CONF.prog -c $CONF.xipmod $INITDIR/$INIT.dis
+
+CLEANEXTRA=$CONF.prog.s $CONF.xipmod.c
 
 i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c

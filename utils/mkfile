@@ -20,6 +20,7 @@ ALWAYS=\
 	ms2\
 	data2c\
 	data2s\
+	dis2s\
 	idea\
 	kprof\
 	c2l\

@@ -64,5 +64,6 @@ PhysUart* physuart[] = {
 	int cflag = 0;
 	int consoleprint = 1;
 	int panicreset = 0;
+Xipmod *xipmods = nil;
 char* conffile = "teensy41";
 u32 kerndate = KERNDATE;

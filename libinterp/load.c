@@ -169,6 +169,25 @@ brpatch(Inst *ip, Module *m)
 	return 1;
 }
 
+/*
+ * Is this module one whose decoded instruction array was built into the
+ * image?  Matched on what the module is loaded as and on the size of
+ * the file it was built from, so that a root file system rebuilt with a
+ * different module under the same name is not mistaken for this one.
+ */
+static Inst*
+xipprog(char *path, int isize, u32 length)
+{
+	Xipmod *x;
+
+	if(xipmods == nil || path == nil)
+		return nil;
+	for(x = xipmods; x->path != nil; x++)
+		if(x->nprog == isize && x->length == length && strcmp(x->path, path) == 0)
+			return x->prog;
+	return nil;
+}
+
 void
 asmstring(intptr offset, uchar* absoluteoffset, String* stored, int len, uchar *s)
 {
@@ -219,6 +238,7 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 	 * before this fix.  See doc/inferno-ports.ms.
 	 */
 	intptr addrlim, limstack[DADEPTH];
+	Inst scratch;
 	uchar *mod, sm, *istream, **isp, *si, *addr, *dastack[DADEPTH], *e, *b;
 	Link *l;
 	intptr i, n, v, pc, entry, entryt;
@@ -281,14 +301,26 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 		" lsize %d entry 0x%zx entryt 0x%zx sizeof(Inst) %d\n",
 		isize, dsize, hsize, lsize, entry, entryt, sizeof(Inst));
 	m->nprog = isize;
-	m->prog = mallocz(isize*sizeof(Inst), 0);
-	if(m->prog == nil) {
-		kwerrstr(exNomem);
-		goto bad;
+	m->prog = xipprog(path, isize, length);
+	if(m->prog != nil)
+		m->xip = 1;
+	else {
+		m->prog = mallocz(isize*sizeof(Inst), 0);
+		if(m->prog == nil) {
+			kwerrstr(exNomem);
+			goto bad;
+		}
 	}
 
 	m->ref = 1;
-	ip = m->prog;
+	/*
+	 * When the array came from the image it is already decoded and
+	 * already branch-patched, and it is in memory that cannot be
+	 * written.  The stream still has to be walked, to leave istream
+	 * on the data segment that follows, so the decode runs into a
+	 * scratch Inst whose contents are thrown away.
+	 */
+	ip = m->xip ? &scratch : m->prog;
 	for(i = 0; i < isize; i++) {
 		ip->op = *istream++;
 		ip->add = *istream++;
@@ -321,7 +353,7 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			break;
 		case DST(AIMM):
 			ip->d.ind = operand(isp);
-			if(brpatch(ip, m) == 0) {
+			if(!m->xip && brpatch(ip, m) == 0) {
 				kwerrstr("bad branch addr");
 				goto bad;
 			}
@@ -335,7 +367,8 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 		if(i % 10 == 0)
 			DNP("#%p\n", ip);
 		DNP("	%d %zd %D\n", i, (intptr)ip, ip);
-		ip++;		
+		if(!m->xip)
+			ip++;
 	}
 
 	DNP("\tentry\t0,%d\n",hsize);
@@ -864,7 +897,8 @@ freemod(Module *m)
 		free(m->type);
 	}
 	free(m->name);
-	freejitcode(m->prog);
+	if(!m->xip)
+		freejitcode(m->prog);
 	free(m->path);
 	free(m->pctab);
 	if(m->ldt != nil){

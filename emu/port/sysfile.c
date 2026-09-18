@@ -680,6 +680,16 @@ kxip(int fd, u32 *lenp)
 	return nil;
 }
 
+/*
+ * And for the same reason no module here has its decoded instruction
+ * array built into the image: there is no image, and there is no
+ * read-only memory to put one in.  libinterp/load.c wants the symbol
+ * wherever it is linked; a kernel gets its own from
+ * os/inferno/port/mkdevc.
+ */
+typedef struct Xipmod Xipmod;
+Xipmod *xipmods = nil;
+
 s32
 kpread(int fd, void *va, s32 n, s64 off)
 {

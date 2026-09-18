@@ -1539,6 +1539,55 @@ literal.
 B, for modules built into the image.  Small change, full RAM win, and it
 is where the execute-in-place property finally reaches the code rather
 than only the file.
+.B "Begun."
+.CW utils/dis2s
+lays out at build time the
+.CW Inst
+array that
+.CW libinterp/load.c:/^parsemod
+would otherwise build in RAM at every load, as a
+.CW RODATA
+symbol the linker puts in the text segment, with each branch target
+written
+.CW "$<sym>prog+<12*target>(SB)"
+and left for the linker \- so nothing in the tool has to know where the
+array will land.
+.CW parsemod
+looks the module up by what it is loaded as and by the length of the
+file it was built from, and on a match points
+.CW m->prog
+at the image and walks the instruction stream into a scratch
+.CW Inst
+whose contents are thrown away, since the stream still has to be walked
+to leave the data segment in the right place.
+.CW freemod
+does not free an array it does not own.
+.PP
+.CW mps2
+carries one module so far,
+.CW /osinit.dis ,
+which is the right one to start with because it loads at boot on every
+board and a failure is immediately visible.  It does:
+.DS
+.CW "XIPMOD /osinit.dis nprog 55 prog d4fb0"
+.DE
+with
+.CW 0xd4fb0
+inside the text segment, and the main pool at a prompt goes from 367104
+to 366336 \- 768 bytes, being 55 instructions at twelve plus the
+allocator's header, which is the whole of what that module's
+.CW Inst
+array used to cost.  A 55-instruction module is a demonstration and not
+a saving; what makes this worth the machinery is the library modules and
+the shell, measured at 106284 bytes of
+.CW Inst
+between them, and they are the next step.
+.PP
+What is not done: the type descriptors, the link tables and the
+exception handlers still parse into RAM.
+.CW Type
+carries a reference count, so it cannot simply be laid in flash \- that
+is the immortal-object item below, and it is separate on purpose.
 .IP 4.
 The immortal-object change, which is what is left of the heap.
 .IP 5.

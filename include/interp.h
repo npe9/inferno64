@@ -52,6 +52,7 @@ typedef struct Import	Import;
 typedef struct ILock	ILock;
 typedef struct Inst	Inst;
 typedef struct Module	Module;
+typedef struct Xipmod	Xipmod;
 typedef struct Modlink	Modlink;
 typedef struct Modl	Modl;
 typedef struct Type	Type;
@@ -314,7 +315,32 @@ struct Module
 	Handler*	htab;	/* Exception handler table */
 	uintptr*	pctab;	/* dis pc to code pc when compiled */
 	void*	dlm;		/* dynamic C module */
+	int	xip;		/* prog is built into the image: see Xipmod */
 };
+
+/*
+ * A module whose decoded instruction stream was built into the kernel
+ * image, so that loading it does not have to decode one into RAM.
+ *
+ * Nothing in the Inst array depends on which instance of the module is
+ * running -- the per-instance state is the module data segment, which
+ * is elsewhere -- and the only pointers in it are branch targets, which
+ * point into the array itself.  So it can be laid out once at build
+ * time, by utils/dis2s, and read where it lies.  On the parts this is
+ * for, where it lies is flash.
+ *
+ * xipmods is nil, or a table ending in an entry with a nil path.  A
+ * kernel gets one from os/inferno/port/mkdevc; see doc/xip.ms.
+ */
+struct Xipmod
+{
+	char*	path;		/* what the module is loaded as */
+	u32	length;		/* length of the .dis it was built from */
+	int	nprog;		/* instructions, and so the size of prog */
+	Inst*	prog;
+};
+
+extern Xipmod*	xipmods;
 
 struct Modl
 {

@@ -1,0 +1,13 @@
+<../../mkconfig
+
+TARG=dis2s
+
+OFILES=	dis2s.$O\
+
+HFILES=../../include/bio.h ../../include/isa.h
+
+LIBS=bio 9			#order matters
+
+BIN=$ROOT/$OBJDIR/bin
+
+<$ROOT/mkfiles/mkone-$SHELLTYPE
