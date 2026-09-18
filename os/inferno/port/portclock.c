@@ -181,6 +181,11 @@ hzclock(Ureg *ur)
 			kstackmin, KSTACK, kstackminproc);
 		disdump();
 	}
+	if(m->machno == 0 && m->ticks > 0 && (m->ticks % (120*HZ)) == 0){
+		extern void soakline(void);
+
+		soakline();	/* MULTICORE INSTRUMENTATION - temporary */
+	}
 	if(m->machno == 0 && (m->ticks == 60*HZ || m->ticks == 70*HZ)){
 		extern void stalldump(void);
 

@@ -3374,3 +3374,32 @@ stalldump(void)
 			q->sleeppc, q->qpc);
 	}
 }
+
+/*
+ * MULTICORE INSTRUMENTATION - temporary.  One line every two minutes,
+ * for the long run: is the heap flat, is the collector still running,
+ * and how many contexts are in use.  The 60/70-second dump answers that
+ * for a 90-second boot and says nothing about twenty minutes.
+ */
+void
+soakline(void)
+{
+	extern ulong gcnruns;
+	extern int gchalt;
+	char pbuf[400];
+	char *p, *e;
+	int pn;
+
+	pn = poolread(pbuf, sizeof pbuf - 1, 0);
+	pbuf[pn] = 0;
+	/* the heap line is the second; keep this to one console line */
+	p = strchr(pbuf, '\n');
+	if(p != nil){
+		p++;
+		if((e = strchr(p, '\n')) != nil)
+			*e = 0;
+	}else
+		p = pbuf;
+	print("soak: %lud ticks, gcnruns %lud, gchalt %d, npctx %d, pools %s\n",
+		(ulong)MACHP(0)->ticks, gcnruns, gchalt, npctx, p);
+}

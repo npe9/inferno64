@@ -400,6 +400,19 @@ init0(void)
 	}*/
 
 	if(waserror() == 0){
+		char *sk;
+
+		/*
+		 * *soak=1 puts "soak" in the environment, which /dis/init
+		 * reads to repeat its workload instead of running it once.
+		 * Here, not with the other boot options above: ksetenv()
+		 * writes through up->egrp, and up is nil that early -- a page
+		 * fault at mathinit(), with "up 0" in the register dump.
+		 * Every table in doc/multicore-plan.ms is a 90-second boot of
+		 * the one-shot workload, so the default stays exactly that.
+		 */
+		if((sk = getconf("*soak")) != nil)
+			ksetenv("soak", sk, 0);
 		ksetenv("cputype", "am64", 0);
 		//snprint(buf, sizeof(buf), "amd64 %s", conffile);
 		//ksetenv("terminal", buf, 0);
