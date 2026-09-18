@@ -1218,6 +1218,15 @@ property being bought.
    against 34.56, entry 16.15 against 19.79. The proof stands; six
    widgets that genuinely need a layer keep the node exercised.
 
+   The remaining gap is fixed cost, not per-widget: 111µs against 59µs
+   for an empty toplevel, and it is *not* the rounded fill — making a
+   borderless frame's fill square, which is what it should have been
+   anyway, moved 114µs to 111µs and no more. What is left is most
+   likely a tree allocated and freed per run, and per widget in
+   `tkdrawrelief`, which builds a scene of its own for any widget whose
+   relief is drawn in the flat style. Worth knowing; not worth chasing
+   at 4% of a frame until something asks for it.
+
    The lesson is the one this plan keeps relearning: the thing that
    makes a renderer slow is not the vocabulary, it is one allocation in
    the wrong place, and nothing but a measurement finds it.

@@ -146,7 +146,15 @@ tkdrawframe(Tk *tk, Point orig)
 			if(rectclip(&fr, framebox))
 				tkscenecolour(framescene, fr, par);
 		}
-		tksceneroundfill(framescene, framebox, tkspace(tk)->corner, own);
+		/*
+		 * Rounded only if this frame draws a border to round: a
+		 * rounded fill is a row of draws per corner row, and a frame
+		 * with no border is the commonest widget in a window.  The
+		 * radius is invisible on such a frame anyway - its background
+		 * is its parent's - so nothing here showed the cost.
+		 */
+		tksceneroundfill(framescene, framebox,
+			tkscenecorner(tk, tk->relief), own);
 	}else{
 		/* a frame that is not nodes paints into the window itself */
 		tkwalkflush();
