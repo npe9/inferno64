@@ -130,6 +130,13 @@ btinit(void)
 	uchar buf[16];
 	int i, n, on;
 
+	/*
+	 * Each step says it has been reached before it is taken, with
+	 * iprint, which writes the UART itself rather than queueing:
+	 * this runs during boot, and a hang here used to be a board that
+	 * had said nothing since the firmware let go of it.
+	 */
+	iprint("bt: pins\n");
 	if(gpiofselget(14) != Altmini){
 		print("BT-NONE console has the pl011, no radio\n");
 		return;
@@ -140,6 +147,7 @@ btinit(void)
 	gpiofsel(Bttx, Alt3);
 	gpiofsel(Btrx, Alt3);
 
+	iprint("bt: power\n");
 	if(mboxsetgpio(Btonpin, 1) < 0){
 		print("BT-FAIL firmware refused BT_ON (expander pin %d)\n", Btonpin);
 		return;
@@ -151,11 +159,23 @@ btinit(void)
 	}
 	delay(Powerms);
 
+	iprint("bt: uart\n");
 	btuart();
-	/* whatever the line held while the radio was powering up */
-	while((csr32r(UartFR) & UartFRRXFE) == 0)
+	/*
+	 * Whatever the line held while the radio was powering up.
+	 * Bounded: a UART that is not clocked reads every register as
+	 * zero, and zero in FR says the receive FIFO is not empty, so
+	 * the obvious drain loop never ends -- and it ends in a board
+	 * that prints nothing, which is the one failure that cannot be
+	 * read off a console.
+	 */
+	for(i = 0; i < 1024; i++){
+		if(csr32r(UartFR) & UartFRRXFE)
+			break;
 		csr32r(UartDR);
+	}
 
+	iprint("bt: reset\n");
 	btput(reset, sizeof reset);
 	n = btget(buf, sizeof want);
 	if(n != sizeof want){

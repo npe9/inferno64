@@ -34,20 +34,34 @@ if [ -z "$vol" ]; then
 	exit 2
 fi
 dev=`diskutil info "$vol" | awk -F': *' '/Device Node/{print $2}'`
+out=${TMPDIR:-/tmp}/picard.$$
+trap 'rm -f "$out"' 0
 echo "card: $vol on $dev"
 
+#
+# Stop macOS writing to this card.  Spotlight indexing and the FSEvents
+# log are what put .Spotlight-V100 and .fseventsd on a boot partition,
+# and on this one a cross-linked cluster 3 turned up inside .fseventsd:
+# the volume is mounted on this Mac after every board failure, so it is
+# written to more often than the board writes to it.  Neither file needs
+# root to refuse: the names are the interface.
+#
+[ -f "$vol/.metadata_never_index" ] || : > "$vol/.metadata_never_index"
+[ -d "$vol/.fseventsd" ] || mkdir "$vol/.fseventsd"
+[ -f "$vol/.fseventsd/no_log" ] || : > "$vol/.fseventsd/no_log"
+
 check() {
-	# fsck wants the raw device and the filesystem not mounted; -n
-	# changes nothing whatever it finds.
-	diskutil unmount "$vol" >/dev/null
-	rdev=`echo "$dev" | sed 's|/dev/|/dev/r|'`
-	if fsck_msdos -n "$rdev"; then
+	# diskutil rather than fsck_msdos directly: fsck wants the raw
+	# device, which wants root, and this has to run without a
+	# password prompt in the middle of a card swap.  verifyVolume
+	# unmounts, runs the same fsck_msdos -n, and remounts.
+	if diskutil verifyVolume "$dev" > "$out" 2>&1; then
 		echo "FSCK-OK"
 	else
-		echo "FSCK-FAIL $rdev"
+		echo "FSCK-FAIL:"
+		grep -E "Warning|Error|Invalid|cross-link|orphan" "$out" | head -20
 		fail=1
 	fi
-	diskutil mount "$dev" >/dev/null
 	if cmp -s "$vol/kernel8.img" "$img"; then
 		echo "KERNEL-SAME as the build"
 	else
