@@ -9,7 +9,7 @@
 
 #include "mps2.root.h"
 
-ulong ndevs = 20;
+ulong ndevs = 21;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -22,7 +22,8 @@ extern Dev envdevtab;
 extern Dev ssldevtab;
 extern Dev capdevtab;
 extern Dev kprofdevtab;
-Dev* devtab[20]={
+extern Dev flashfsdevtab;
+Dev* devtab[21]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -35,6 +36,7 @@ Dev* devtab[20]={
 	&ssldevtab,
 	&capdevtab,
 	&kprofdevtab,
+	&flashfsdevtab,
 	nil,
 };
 

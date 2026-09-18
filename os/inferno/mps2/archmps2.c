@@ -12,6 +12,11 @@
  * RAM with nothing to turn on first.
  */
 
+extern uchar flashimgcode[];	/* mps2.flash.s, from utils/mkflashfs */
+extern u32 flashimglen;
+extern uchar *flashfsbase;	/* os/inferno/port/devflashfs.c */
+extern u32 flashfslen;
+
 void
 archreset(void)
 {
@@ -28,6 +33,17 @@ archreset(void)
 	 * here.  A real board's archreset is where its clocks are set up;
 	 * see os/inferno/teensy41/archteensy41.c.
 	 */
+
+	/*
+	 * Where the flash file system is.  This board has no flash, so
+	 * the image is a RODATA blob in the text segment -- which is
+	 * what a memory-mapped NOR window is as far as
+	 * os/inferno/port/devflashfs.c can tell, and the point of putting
+	 * it here is that the device's code is exercised on the only
+	 * board that can be run.  A real one points these at its window.
+	 */
+	flashfsbase = flashimgcode;
+	flashfslen = flashimglen;
 }
 
 extern char bdata[];

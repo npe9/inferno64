@@ -267,13 +267,30 @@ in
 .IP 2.
 A QSPI driver that exposes the memory-mapped window, and
 .CW Dev.xip
-over it, so a module in external NOR is read where it lies.  The
-mechanism already exists and is verified
-.CW ( os/inferno/port/devroot.c ,
-this branch); this is a second provider for it.
+over it, so a module in external NOR is read where it lies.
+.B "The file system half is done."
+.CW os/inferno/port/devflash.c
+serves a read-only file system out of addressable memory as
+.CW #G ,
+with
+.CW Dev.xip
+over it, and
+.CW utils/mkflashfs
+packs one.  A board points
+.CW flashbase
+and
+.CW flashlen
+at its window; on
+.CW mps2 ,
+which has no flash, the image is a
+.CW RODATA
+blob in the text segment and
+.I echo (1)
+runs from it without being copied.  What is left for this board is the
+QSPI driver that makes the window appear \-
 .CW os/inferno/riscv/spisifive.c
 is the nearest precedent, and it deliberately declines the XIP path,
-with a comment saying so.
+with a comment saying so \- and that needs the hardware.
 .IP 3.
 Pre-decode the
 .CW Inst

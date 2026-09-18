@@ -2609,6 +2609,89 @@ for a target-specific cause when the cause was an uninitialised byte.
 The thumb figures did not change once it was fixed, so they were not an
 artifact, but they could have been.
 .NH 2
+A file system in flash, which is what this was for
+.PP
+The built-in root answers
+.CW Dev.xip ,
+but it is compiled into the kernel: changing a file means relinking.
+The thing the branch was asked for is a file system that is not part of
+the image \- written into a board's spare flash, served where it lies,
+with a Dis module in it executed in place.
+.PP
+.CW os/inferno/port/devflash.c
+is that, as
+.CW #G
+.CW ( F
+and
+.CW f
+are taken).  A board sets
+.CW flashbase
+and
+.CW flashlen
+before
+.CW chandevreset() ,
+zero meaning it has none, so a kernel can carry the driver and a board
+need not have the memory.  The format is what
+.CW utils/mkflashfs
+writes:
+.DS
+.CW "  0   8   \(fmflashfs\(fm"
+.CW "  8   4   version"
+.CW " 12   4   nfile"
+.CW " 16   4   total length"
+.CW " 24  nfile*64  the directory"
+.CW " ...  the file data, each 4-aligned"
+.DE
+One flat directory, every file's bytes contiguous and word-aligned,
+which is the whole of what execute-in-place demands.  Anything wanting a
+tree mounts several.
+.PP
+The header is checked once at attach, not per access: every entry has to
+lie inside the image, so nothing below bounds-checks again and a region
+that is not one of these is refused rather than served as an empty
+directory.  Confirmed by pointing
+.CW flashbase
+four bytes into the image, which gives
+.DS
+.CW "ls: #G: bad flash file system magic"
+.DE
+.PP
+.CW mps2
+has no flash, so its image is a
+.CW RODATA
+blob linked into the text segment \- which is what a memory-mapped NOR
+window is as far as the device can tell, and it means the code is
+exercised on the only board that can be run.  Two modules,
+.CW echo.dis
+and
+.CW cat.dis .
+It works:
+.DS
+.CW "; ls -l \(fm#G\(fm"
+.CW "--r--r--r-- G 0 inferno inferno 707 ... #G/cat.dis"
+.CW "--r--r--r-- G 0 inferno inferno 433 ... #G/echo.dis"
+.CW "; bind -b \(fm#G\(fm /dis"
+.CW "; echo hello-from-flash"
+.CW "hello-from-flash"
+.DE
+and with a temporary print in
+.CW readmod ,
+that
+.I echo
+reports
+.DS
+.CW "XIPREAD /dis/echo.dis at 83b20 len 433"
+.DE
+against a
+.CW flashfscode
+of
+.CW 0x83a88 :
+offset 152, which is the 24-byte header plus two 64-byte entries
+exactly.  The module was not copied.  It was run out of the image.
+.PP
+The kernel grows 2880 bytes of text and 104 of data for the driver and
+the two modules; a board with real flash pays neither.
+.NH 2
 Where this stands
 .PP
 Everything below is measured, on

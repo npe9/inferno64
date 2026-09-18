@@ -1,0 +1,13 @@
+<../../mkconfig
+
+TARG=mkflashfs
+
+OFILES=	mkflashfs.$O\
+
+HFILES=../../include/bio.h
+
+LIBS=bio 9			#order matters
+
+BIN=$ROOT/$OBJDIR/bin
+
+<$ROOT/mkfiles/mkone-$SHELLTYPE

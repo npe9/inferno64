@@ -65,6 +65,7 @@ OBJ=\
 	$CONF.root.$O\
 	$CONF.prog.$O\
 	$CONF.xipmod.$O\
+	$CONF.flash.$O\
 	$DEVS\
 	$LINKS\
 	$PORT\
@@ -114,6 +115,21 @@ XIPDIS=\
 # same files the root carries.
 XIPDISFILES=${XIPDIS:%=$ROOT/dis32/%}
 
+# A test file system for the flash device: packed by utils/mkflashfs and
+# linked in as a RODATA blob, which puts it in the text segment, which is
+# what a memory-mapped NOR window looks like to the kernel.  A real board
+# points flashbase at its own window and needs none of this.
+FLASHDIS=\
+	echo.dis\
+	cat.dis\
+
+FLASHDISFILES=${FLASHDIS:%=$ROOT/dis32/%}
+
+$CONF.flash.s: $FLASHDISFILES
+	mkflashfs -o $CONF.flash.img $FLASHDISFILES
+	data2s -t flashimg <$CONF.flash.img >$target
+	rm -f $CONF.flash.img
+
 # dis2s is a host tool, found on the path like data2s and ndate are.
 $CONF.prog.s $CONF.xipmod.c: $INITDIR/$INIT.dis $XIPDISFILES
 	$DIS2S -o $CONF.prog -c $CONF.xipmod -r $ROOT/dis32 -p /dis \
@@ -127,7 +143,7 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 <../port/portmkfile
 
 # After the include: portmkfile sets CLEANEXTRA empty.
-CLEANEXTRA=$CONF.prog.s $CONF.xipmod.c
+CLEANEXTRA=$CONF.prog.s $CONF.xipmod.c $CONF.flash.s $CONF.flash.img
 
 ../init/$INIT.dis:	../init/$INIT.b
 	cd ../init; mk 'DISWORD='$DISWORD $INIT.dis
