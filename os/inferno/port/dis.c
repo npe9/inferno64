@@ -73,7 +73,11 @@ extern int parallelvm;		/* defined below, with stoptheworld() */
  * *disdump=1 on the boot line turns the multicore instrumentation's
  * reporting on.  It is off by default because it is not silent: a dump
  * of every process, every run queue and every VM waiter, once a boot,
- * plus a line each time the VM-lock queue reaches a new depth.  That
+ * plus a line each time the VM-lock queue, the run queue or the number
+ * of VM holders reaches a new maximum.  The consistency checks beside
+ * them -- runq counts that disagree, a waiter not Queueing, a Prog
+ * with no usable xec -- are not behind it: those report a fault
+ * rather than a measurement, and something is wrong if they print.  That
  * was written for a laptop with a scrollback; on a rented instance the
  * serial console is the only interface there is, and forty seconds
  * into every boot it filled with kernel internals.  The counters run
@@ -561,8 +565,9 @@ vmacquire(void)
 			int n = ainc(&nvm);
 			if(n > maxnvm){
 				maxnvm = n;
-				print("nvm: %d hold the vm, cpu%d %s\n",
-					n, m->machno, up->text);
+				if(disdumpon)
+					print("nvm: %d hold the vm, cpu%d %s\n",
+						n, m->machno, up->text);
 			}
 		}
 	}
@@ -2049,9 +2054,11 @@ vmachine(void*)
 						n += pctxs[i]->nlocal;
 				if(n > maxnrunq){
 					maxnrunq = n;
-					print("runq: %d dis programs ready at once "
-						"(%d by state), cpu%d\n",
-						n, ready, m->machno);
+					if(disdumpon)
+						print("runq: %d dis programs ready"
+							" at once (%d by state),"
+							" cpu%d\n",
+							n, ready, m->machno);
 				}
 				/*
 				 * Pready counts Progs on the global queue too,
