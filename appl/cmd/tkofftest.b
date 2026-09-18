@@ -1572,6 +1572,30 @@ checkscene()
 	must(top, ".c create window 8 90 -window .c.e2 -anchor nw");
 	tk->cmd(top, "pack .c -padx 6 -pady 6");
 
+	# A second canvas holding ONE OF EACH ITEM TYPE.  A canvas is the
+	# last widget that paints into the window itself, and its items are
+	# where the drawing actually is - nine kinds, each with its own
+	# draw method - so converting it means converting them, and a
+	# conversion of a kind the pane does not contain is a conversion
+	# nothing compares.  This is that pane.
+	#
+	# Stippled where a stipple is allowed, because a stipple is the one
+	# thing an item holds that is not a colour: tkmkpen() derives a
+	# repeating image from the fill colour and the stipple's own mask,
+	# and both halves of that have names - the colour is a value and
+	# the mask came from a file the path registry knows.
+	must(top, "canvas .cv -width 260 -height 120 -buffer none");
+	must(top, ".cv create rectangle 4 4 60 40 -fill #C0D8F0 -outline black");
+	must(top, ".cv create rectangle 66 4 120 40 -fill #F0C0C0 -stipple dis.bit");
+	must(top, ".cv create oval 126 4 180 40 -fill #C0F0C0 -outline black");
+	must(top, ".cv create arc 186 4 250 40 -start 30 -extent 200 -fill #F0E0A0");
+	must(top, ".cv create line 8 50 120 84 -width 3 -fill #204080");
+	must(top, ".cv create line 126 50 250 84 -width 2 -smooth true -arrow both");
+	must(top, ".cv create polygon 8 92 60 92 34 116 -fill #A0A0F0");
+	must(top, ".cv create text 70 100 -text {canvas text} -anchor w");
+	must(top, ".cv create bitmap 200 100 -bitmap caution.bit");
+	tk->cmd(top, "pack .cv -padx 6 -pady 6");
+
 	# A TEXT widget, which narrows the window's clip around its own
 	# inside and draws its lines through it.  Both are nodes now, so
 	# this is what walks the clip node on a widget that owns one rather

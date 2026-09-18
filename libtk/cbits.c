@@ -156,8 +156,9 @@ tkcvsbitfree(TkCitem *i)
 }
 
 void
-tkcvsbitdraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvsbitdraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
+	Image *img = tkcvsdirect(cd);
 	TkEnv *e;
 	TkCbits *b;
 	Rectangle r;

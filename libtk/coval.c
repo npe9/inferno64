@@ -162,8 +162,9 @@ tkcvsovalfree(TkCitem *i)
 }
 
 void
-tkcvsovaldraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvsovaldraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
+	Image *img = tkcvsdirect(cd);
 	Point c;
 	TkEnv *e;
 	Image *pen;

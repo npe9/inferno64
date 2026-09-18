@@ -168,7 +168,7 @@ tkcvsrectfree(TkCitem *i)
 }
 
 void
-tkcvsrectdraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvsrectdraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
 	int lw, rw;
 	TkEnv *e;
@@ -185,12 +185,25 @@ tkcvsrectdraw(Image *img, TkCitem *i, TkEnv *pe)
 	e = i->env;
 	r = TKobj(TkCrect, i);
 
-	pen = nil;
-	if((e->set & (1<<TkCfill)))
-		pen = tkgc(e, TkCfill);
-
-	if(pen != nil)
-		draw(img, d, pen, r->stipple, d.min);
+	/*
+	 * The fill is a colour, and a node when there is no STIPPLE.  A
+	 * stipple is a colour painted through a mask at a source point of
+	 * the fill's own origin, which no node says: TkNtexture paints
+	 * through a file from ZP, which is a different alignment, and
+	 * making it carry a source point would change a node type that a
+	 * backend may already have seen.  So a stippled fill draws, and
+	 * says so first - the outline after it is still nodes, and comes
+	 * after it either way, which is the order a rectangle wants.
+	 */
+	if((e->set & (1<<TkCfill))) {
+		if(cd->sc != nil && r->stipple == nil)
+			tkscenecolour(cd->sc, d, e->colors[TkCfill]);
+		else {
+			pen = tkgc(e, TkCfill);
+			if(pen != nil)
+				draw(tkcvsdirect(cd), d, pen, r->stipple, d.min);
+		}
+	}
 
 	tr.x = d.max.x;
 	tr.y = d.min.y;
@@ -202,8 +215,35 @@ tkcvsrectdraw(Image *img, TkCitem *i, TkEnv *pe)
 		return;
 	lw = (TKF2I(r->width))/2;
 
+	if(cd->sc != nil) {
+		ulong fg;
+
+		fg = e->colors[TkCforegnd];
+		/* horizontal lines first */
+		rr.min.x = d.min.x - lw;
+		rr.max.x = d.max.x + rw;
+		rr.min.y = d.min.y - lw;
+		rr.max.y = d.min.y + rw;
+		tkscenecolour(cd->sc, rr, fg);
+		rr.min.y += Dy(d);
+		rr.max.y += Dy(d);
+		tkscenecolour(cd->sc, rr, fg);
+		/* now the vertical */
+		rr.min.x = d.min.x - lw;
+		rr.max.x = d.min.x + rw;
+		rr.min.y = d.min.y + rw;
+		rr.max.y = d.max.y - lw;
+		tkscenecolour(cd->sc, rr, fg);
+		rr.min.x += Dx(d);
+		rr.max.x += Dx(d);
+		tkscenecolour(cd->sc, rr, fg);
+		return;
+	}
+
 	pen = tkgc(e, TkCforegnd);
 	if(pen != nil) {
+		Image *img = cd->img;
+
 		/* horizontal lines first */
 		rr.min.x = d.min.x - lw;
 		rr.max.x = d.max.x + rw;
@@ -214,7 +254,6 @@ tkcvsrectdraw(Image *img, TkCitem *i, TkEnv *pe)
 		rr.max.y += Dy(d);
 		draw(img, rr, pen, nil, rr.min);
 		/* now the vertical */
-		/* horizontal lines first */
 		rr.min.x = d.min.x - lw;
 		rr.max.x = d.min.x + rw;
 		rr.min.y = d.min.y + rw;

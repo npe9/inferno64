@@ -390,12 +390,25 @@ tkdrawcanv(Tk *tk, Point orig)
 	int vis, alpha, buffer;
 	Point rel, p;
 	TkCimeth *imeth;
+	TkCdraw cd;
 
 	/*
 	 * Anything that paints into the window itself has to render what
 	 * the walk has pending first, or the tree would land on top of it.
+	 *
+	 * A canvas does not JOIN the walk even when its items are nodes.
+	 * Its items are usually drawn into a buffer of its own rather than
+	 * into the window, and a tree belongs to one target - so a canvas
+	 * builds its own and renders it where the items would have drawn,
+	 * which is what tkdrawrelief() does with a one-off tree.  The
+	 * batching is unchanged; what changes is that the drawing is
+	 * described before it happens.
 	 */
 	tkwalkflush();
+	cd.sc = nil;
+	cd.ctxt = tk->env->top->ctxt;
+	if(tkviascene && tkstyleflat(tk))
+		cd.sc = tkscenenew();
 	c = TKobj(TkCanvas, tk);
 	d = tk->env->top->display;
 	dst = tkimageof(tk);
@@ -432,10 +445,14 @@ tkdrawcanv(Tk *tk, Point orig)
 			if(rectXrect(i->p.bb, bufr)) {
 				imeth = &tkcimethod[i->type];
 				imeth->coord(i, nil, p.x, p.y);
-				imeth->draw(dst, i, tk->env);
+				cd.img = dst;
+				imeth->draw(&cd, i, tk->env);
 				imeth->coord(i, nil, -p.x, -p.y);
 			}
 		}
+		/* while the clip still says what the items were drawn under */
+		cd.img = dst;
+		tkcvsdirect(&cd);
 		replclipr(dst, 0, oclipr);
 	} else {
 		if (c->buffer == TkCbufall)
@@ -465,9 +482,13 @@ tkdrawcanv(Tk *tk, Point orig)
 			draw(c->image, c->update, tkgc(tk->env, TkCbackgnd), nil, c->view);
 			replclipr(c->image, 0, r);
 			for(i = c->head; i; i = i->next) {
-				if(rectXrect(i->p.bb, r))
-					tkcimethod[i->type].draw(c->image, i, tk->env);
+				if(rectXrect(i->p.bb, r)){
+					cd.img = c->image;
+					tkcimethod[i->type].draw(&cd, i, tk->env);
+				}
 			}
+			cd.img = c->image;
+			tkcvsdirect(&cd);
 			replclipr(c->image, 0, c->image->r);
 		}
 		/*
@@ -496,6 +517,8 @@ tkdrawcanv(Tk *tk, Point orig)
 		r.min.y -= tk->borderwidth;
 		tkdrawrelief(dst, tk, r.min, TkCbackgnd, tk->relief);
 	}
+	if(cd.sc != nil)
+		tkscenefree(cd.sc);
 	c->update = bbnil;
 	return nil;
 }
@@ -2113,6 +2136,27 @@ tkcvsgetimgs(Tk* tk, Image **image, Image **mask)
 
 	*image = c->image;
 	*mask = c->mask;		/* XXX this is wrong - the mask image has nothing to do with the main image */
+}
+
+/*
+ * An item is about to draw DIRECTLY: render what is pending first, so
+ * that what it draws is not painted over when the tree renders, and
+ * start a fresh tree for whatever comes after it.  Returns the image
+ * to draw into, so an item's first line can be
+ *
+ *	Image *img = tkcvsdirect(cd);
+ *
+ * and an item that is entirely nodes simply never uses the result.
+ */
+Image*
+tkcvsdirect(TkCdraw *cd)
+{
+	if(cd->sc != nil && tkscenecount(cd->sc) > 0){
+		tkscenerender(cd->sc, cd->ctxt, cd->img);
+		tkscenefree(cd->sc);
+		cd->sc = tkscenenew();
+	}
+	return cd->img;
 }
 
 TkCimeth tkcimethod[] =

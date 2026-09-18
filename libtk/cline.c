@@ -197,8 +197,9 @@ tkcvslinefree(TkCitem *i)
 }
 
 void
-tkcvslinedraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvslinedraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
+	Image *img = tkcvsdirect(cd);
 	int w;
 	Point *p;
 	TkCline *l;

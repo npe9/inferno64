@@ -178,8 +178,9 @@ tkcvspolyfree(TkCitem *i)
 }
 
 void
-tkcvspolydraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvspolydraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
+	Image *img = tkcvsdirect(cd);
 	int w;
 	TkEnv *e;
 	TkCpoly *p;

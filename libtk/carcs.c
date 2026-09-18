@@ -184,8 +184,9 @@ tkcvsarcfree(TkCitem *i)
 }
 
 void
-tkcvsarcdraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvsarcdraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
+	Image *img = tkcvsdirect(cd);
 	TkEnv *e;
 	TkCarc *a;
 	Rectangle d;

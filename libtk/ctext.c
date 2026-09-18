@@ -266,8 +266,9 @@ tkcvstextfree(TkCitem *i)
 }
 
 void
-tkcvstextdraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvstextdraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
+	Image *img = tkcvsdirect(cd);
 	TkEnv *e;
 	TkCtext *t;
 	Point o, dp;

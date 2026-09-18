@@ -373,8 +373,9 @@ tkcvswindfree(TkCitem *i)
 }
 
 void
-tkcvswinddraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvswinddraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
+	Image *img = tkcvsdirect(cd);
 	TkCwind *w;
 	Point rel;
 	Rectangle r;

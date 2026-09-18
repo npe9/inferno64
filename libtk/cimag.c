@@ -159,8 +159,9 @@ tkcvsimgfree(TkCitem *i)
 }
 
 void
-tkcvsimgdraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvsimgdraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
+	Image *img = tkcvsdirect(cd);
 	TkCimag *t;
 	TkImg *tki;
 	Rectangle r;
