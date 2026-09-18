@@ -1012,3 +1012,17 @@ poolaudit(char*(*audit)(int, Bhdr *))
 	}
 	return r;
 }
+
+/*
+ * The kernel allocator keeps a ring of recent frees so that a
+ * double-free can name the pc that freed the block first
+ * (os/inferno/port/alloc.c:/^printfreehist), and libinterp's movp check
+ * calls it.  This allocator keeps no such ring, so there is nothing to
+ * report -- but the symbol has to exist, the way dumpstack() does in
+ * emu/port/main.c, or nothing that links libinterp links at all.
+ */
+void
+printfreehist(void *v)
+{
+	USED(v);
+}

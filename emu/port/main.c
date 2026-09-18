@@ -238,6 +238,21 @@ nofence(void)
 	USED(i);
 }
 
+/*
+ * Every kernel has one, per machine, in its trap.c; libinterp's
+ * allocator and garbage-collector checks call it before giving up
+ * (libinterp/heap.c:/^checkfreeptr, libinterp/gc.c).  Emu is a hosted
+ * process with no kernel stack to walk and no Ureg to walk it from, so
+ * there is nothing honest to print -- but the symbol has to exist, or
+ * nothing that links libinterp links at all, which is what had been
+ * true here.
+ */
+void
+dumpstack(void)
+{
+	print("dumpstack: not available in emu\n");
+}
+
 void
 main(int argc, char *argv[])
 {

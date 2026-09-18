@@ -2106,6 +2106,51 @@ whatever the allocator put below the stack.  That is an argument for
 measuring it again on the real board with its own drivers in the way,
 not for cutting it further.
 .NH 2
+The hosted build, which had not linked
+.PP
+.CW emu
+links
+.CW libinterp
+too, and on this branch it had not linked at all: the allocator and
+garbage-collector checks added during the
+.CW wm.dis
+hunt call
+.CW dumpstack()
+and
+.CW printfreehist() ,
+which every kernel has \-
+.CW dumpstack
+per machine in its
+.CW trap.c ,
+.CW printfreehist
+in
+.CW os/inferno/port/alloc.c
+\- and which a hosted process has neither of.  Nothing that links
+.CW libinterp
+could link.  Both now have honest stubs in
+.CW emu/port
+saying there is nothing to report, and
+.I emu (1)
+runs a shell again.
+.PP
+That matters beyond tidiness: it is the only way to check that portable
+changes made for these boards have not broken the 64-bit path, and the
+.CW Timmortal
+work is portable code.  It has not:
+.CW libinterp
+builds for
+.CW arm64
+and
+.CW emu
+runs.  It does print
+.DS
+.CW "marklist: bad container ... ref 0 color 2"
+.DE
+on some runs, which is the Dis heap tracker from that same hunt and is
+not this work: four runs in ten with the change and four in ten without
+it, on the same workload.  It is left as found and named here so the
+next person does not attribute it.
+.NH 2
 What gates any of it
 .PP
 The kernel pool floor: 78208 bytes in 343 allocations with the minimal
