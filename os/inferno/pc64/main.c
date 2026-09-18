@@ -263,10 +263,13 @@ main(void)
 	 */
 	{
 		extern int parallelvm;		/* os/inferno/port/dis.c */
+		extern int disdumpon;		/* likewise */
 		char *p;
 
 		if((p = getconf("*parallelvm")) != nil)
 			parallelvm = strtol(p, nil, 0);
+		if((p = getconf("*disdump")) != nil)
+			disdumpon = strtol(p, nil, 0);
 	}
 	doc("procinit");
 	procinit();

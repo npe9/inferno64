@@ -2728,3 +2728,53 @@ cannot give: on a kernel,
 .CW sysfatal
 is a panic, so the machine that went on to run the benchmark is the
 evidence.
+.NH 2
+Two things the instance's console said about the harness
+.PP
+The boot log of both rented machines carried this, forty seconds in:
+.DS
+.CW
+dis: global runq: 0 put, 0 got, 0 now, bound 64
+dis: parked for work: proc 19 dis
+dis: proc 1 *init* Wakeme type 2 vmheld 0 iprog 0x1b36d7c0 ...
+.DE
+.PP
+and, during each fetch, a line every time the VM-lock queue reached a
+new depth.  That is the multicore merge's instrumentation, which
+.CW portclock.c
+called unconditionally at
+.CW 40*HZ
+on every board.  On a laptop with a scrollback it is a debugging aid.
+On an instance the serial console is the entire interface \(em there is
+no ssh and no agent \(em and it was filling with kernel internals while
+someone was trying to read a DHCP lease off it.
+.PP
+It is behind
+.CW *disdump=1
+now, read where
+.CW *parallelvm
+is read, on both cloud boards.  The counters still run; only the
+reporting is optional, so the VM-lock figures quoted earlier in this
+paper are still obtainable \(em by asking.
+.CW scripts/check-disdump.sh
+boots both ways, because "no dump appeared" is also what a kernel that
+died before the fortieth second prints: the
+.CW *disdump=1
+arm is the control that says the silence was chosen.
+.PP
+.B "And the check that was testing an eight-day-old kernel."
+Writing that control meant reading the boot checks, and
+.CW check-pc64-timers.sh
+did not build its image.  It booted
+.CW .qemu/inferno-efi.iso ,
+whatever that was \(em and it was from the tenth of September while the
+kernel it was supposed to be checking had been rebuilt a dozen times.
+It reported
+.CW ok
+throughout.  Every other check in the suite builds its own image from
+the kernel in the tree; this one now does too, with an argument for
+the deliberate case.
+.PP
+A stale image passes a boot test perfectly well.  That is the whole
+trouble with it: the check was green, the suite was green, and the
+thing being asserted had not been tested since the date on the file.

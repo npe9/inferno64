@@ -138,6 +138,19 @@ main(void)
 	acpiinit();
 	startcpus();
 
+	/*
+	 * *disdump=1 on the boot line asks for the multicore
+	 * instrumentation's dump; see os/inferno/port/dis.c.  Read here
+	 * rather than defaulted on, because this board's console on a
+	 * rented instance is a serial line and nothing else.
+	 */
+	{
+		extern int disdumpon;		/* os/inferno/port/dis.c */
+		char *p;
+
+		if((p = getconf("*disdump")) != nil)
+			disdumpon = strtol(p, nil, 0);
+	}
 	procinit();
 	links();
 	screeninit();

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Run this branch's checks and say which ones failed.
 #
-# There are fourteen of them now and nothing ran them together, so a
+# There are fifteen of them now and nothing ran them together, so a
 # change to the shared port code -- which every board links -- was
 # verified by whichever checks came to mind.  This runs them all.
 #
@@ -30,7 +30,7 @@ QUICK="check-man-pages check-config-portlines check-cabundle check-cloudauth che
 # check-tls wants the host's own network: it fetches one URL over http
 # and over https from a booted kernel, and says "cannot tell" rather
 # than failing when the plain fetch does not finish.
-BOOT="check-pc64-timers check-pc64-tcp check-pc64-disk check-pc64-redeploy check-arm64-smp check-crossarch check-tls check-pc64-smp"
+BOOT="check-pc64-timers check-pc64-tcp check-pc64-disk check-pc64-redeploy check-arm64-smp check-crossarch check-tls check-pc64-smp check-disdump"
 # Bisect or sweep; tens of minutes.  Measurements rather than pass/fail
 # -- check-pc64-parallelvm FAILS on purpose, because the parallel VM is
 # broken and the check says so; it is here to detect the day that changes.

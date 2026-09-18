@@ -69,6 +69,19 @@ static void gput(Prog*);	/* defined below */
 
 extern int parallelvm;		/* defined below, with stoptheworld() */
 
+/*
+ * *disdump=1 on the boot line turns the multicore instrumentation's
+ * reporting on.  It is off by default because it is not silent: a dump
+ * of every process, every run queue and every VM waiter, once a boot,
+ * plus a line each time the VM-lock queue reaches a new depth.  That
+ * was written for a laptop with a scrollback; on a rented instance the
+ * serial console is the only interface there is, and forty seconds
+ * into every boot it filled with kernel internals.  The counters run
+ * either way -- they cost an increment -- so asking for the dump is
+ * all that is behind the flag.
+ */
+int disdumpon;
+
 static Pctx pctxpool[MAXPCTX];
 static int npctxused;
 
@@ -1947,7 +1960,9 @@ vmachine(void*)
 			}
 			if(d > maxvmq) {
 				maxvmq = d;
-				print("vmq: %d interpreters blocked on the vm lock at once\n", d);
+				if(disdumpon)
+					print("vmq: %d interpreters blocked on"
+						" the vm lock at once\n", d);
 			}
 		}
 

@@ -18,10 +18,28 @@
 # usage: scripts/check-pc64-timers.sh [iso]
 set -e
 ROOT=`cd \`dirname "$0"\`/.. && pwd`
-ISO=${1:-$ROOT/.qemu/inferno-efi.iso}
+PATH=$ROOT/MacOSX/arm64/bin:$PATH
+export PATH ROOT
 SECS=${SECS:-90}
 
-test -f "$ISO" || { echo "no iso: $ISO (scripts/mkinferno-efi-iso.sh)" >&2; exit 1; }
+# The iso is built here from the kernel that is in the tree, the way
+# every other check does it.  It used to default to a file left in
+# .qemu by whoever ran mkinferno-efi-iso.sh last, and that file was
+# eight days old while this check reported "ok" twice a day: a stale
+# image passes a boot test perfectly well, and says nothing about the
+# kernel that was just built.  Pass an iso as $1 to test some other
+# one deliberately.
+if [ -n "$1" ]; then
+	ISO=$1
+	test -f "$ISO" || { echo "no iso: $ISO" >&2; exit 1; }
+else
+	KERN=$ROOT/os/inferno/pc64/ipc64
+	[ -f "$KERN" ] || { echo "check-pc64-timers: no $KERN; mk CONF=pc64 first" >&2; exit 1; }
+	WORK=`mktemp -d`
+	trap 'st=$?; rm -rf "$WORK" || true; exit $st' 0
+	ISO=$WORK/t.iso
+	INFERNO_KERNEL=$KERN sh "$ROOT/scripts/mkinferno-efi-iso.sh" "$ISO" >/dev/null 2>&1
+fi
 
 fail=0
 for hpet in on off; do
