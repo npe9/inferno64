@@ -28,13 +28,44 @@ the kernel's own handlers fill; the drivers that ask for ports
 
 usage: scripts/osprey-check-user386.py [-k]
 """
-import os, re, subprocess, sys, tempfile, time
+import json, os, re, socket, subprocess, sys, tempfile, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
 env = dict(os.environ, PATH=os.path.join(ROOT, 'MacOSX/arm64/bin') + ':' + os.environ['PATH'])
 KERNEL = os.path.join(ROOT, 'os/osprey/pc/9xu386')
 TIMEOUT = 90
+
+def sendinput(qmp):
+    """Press a few keys and move the mouse, over QMP.
+
+    This is what makes the 386 interrupt path run: IRQ1 and IRQ12 into
+    the kernel's handlers, each filling a ring in the program's own data
+    area and giving a semaphore, and the user drivers waiting on those
+    semaphores with select.  Without it the drivers wait twenty seconds
+    and report nothing, which says only that they waited.
+    """
+    try:
+        s = socket.socket(socket.AF_UNIX)
+        s.connect(qmp)
+        f = s.makefile('rw')
+        f.readline()
+        f.write(json.dumps({"execute": "qmp_capabilities"}) + "\n"); f.flush(); f.readline()
+        for k in ('a', 'b', 'c', 'spc'):
+            f.write(json.dumps({"execute": "send-key",
+                "arguments": {"keys": [{"type": "qcode", "data": k}]}}) + "\n")
+            f.flush(); f.readline()
+            time.sleep(0.2)
+        for _ in range(6):
+            f.write(json.dumps({"execute": "input-send-event", "arguments": {"events": [
+                {"type": "rel", "data": {"axis": "x", "value": 15}},
+                {"type": "rel", "data": {"axis": "y", "value": 7}}]}}) + "\n")
+            f.flush(); f.readline()
+            time.sleep(0.2)
+        s.close()
+    except OSError:
+        pass
+
 
 def plain(s):
     return re.sub(r'\x1b\[[0-9;=?]*[a-zA-Z]', '', s).replace('\r', '')
@@ -49,14 +80,17 @@ def main():
         return 1
 
     log = tempfile.mktemp(prefix='osprey-user386-', suffix='.log')
+    qmp = tempfile.mktemp(prefix='osprey-user386-', suffix='.qmp')
     q = subprocess.Popen(['qemu-system-i386', '-m', '256', '-smp', '2',
                           '-vga', 'std',	# named, not defaulted: machfb.c programs this card
                           '-display', 'none', '-monitor', 'none', '-no-reboot',
                           '-serial', 'file:' + log,
+                          '-qmp', 'unix:%s,server,nowait' % qmp,
                           '-kernel', KERNEL, '-append', 'console=0'],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    # until the idle line or a panic, rather than for the whole timeout
+    # until the drivers finish or a panic, rather than for the whole timeout
     t = ''
+    injected = False
     deadline = time.time() + TIMEOUT
     while time.time() < deadline and q.poll() is None:
         time.sleep(1)
@@ -64,7 +98,10 @@ def main():
             t = plain(open(log, errors='replace').read())
         except OSError:
             t = ''
-        if 'osprey server: done' in t or 'panic' in t:
+        if 'selecting on their interrupt semaphores' in t and not injected:
+            injected = True
+            sendinput(qmp)
+        if 'drivers done' in t or 'panic' in t:
             time.sleep(1)
             break
     if q.poll() is None:
@@ -133,6 +170,17 @@ def main():
                     'drew a windowed desktop to the frame buffer' in t))
     results.append(("and user-level keyboard and mouse drivers select on the interrupt semaphores the microkernel exposes",
                     'selecting on their interrupt semaphores' in t))
+    #
+    # And that those drivers were woken by real interrupts, not just
+    # left waiting: the keys and mouse motion this check injects over
+    # QMP arrive as IRQ1 and IRQ12, the kernel's handlers fill the rings
+    # and give the semaphores, and the drivers count what they read.
+    # Without the injection the loop waits twenty seconds and reports
+    # nothing, which says only that it waited.
+    #
+    m2 = re.search(r'osprey user: keyboard saw (\d+) keys, mouse moved (\d+) steps', t)
+    results.append(("and real keyboard and mouse interrupts reach those drivers: the keys and motion injected are counted back",
+                    m2 is not None and int(m2.group(1)) > 0 and int(m2.group(2)) > 0))
     results.append(("and it exits through the microkernel's minimal syscall interface, no Plan 9 personality",
                     'the program exited' in t and 'panic' not in t))
     #

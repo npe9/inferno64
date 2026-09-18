@@ -765,7 +765,15 @@ startboot(char *arg0, char**)
 						}
 					}
 				}
-				puts("osprey user: mouse moved "); putint(moved);
+				/*
+				 * What the two interrupts actually delivered.  The key
+				 * count is here so that a check can inject keys and read
+				 * back that they arrived: the squares the loop draws are
+				 * in the frame buffer, where nothing but a person can see
+				 * them.
+				 */
+				puts("osprey user: keyboard saw "); putint(keys);
+				puts(" keys, mouse moved "); putint(moved);
 				puts(" steps; drivers done\n");
 			}
 		}

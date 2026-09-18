@@ -6556,6 +6556,27 @@ the driver wrote into the memory the kernel exposed.  Neither looks at
 pixels, and the machine is run with
 .CW "-display none" .
 .PP
+And then the interrupts themselves.  The drivers were waiting on
+semaphores that nothing ever gave: with no input injected the loop
+waits its twenty seconds and reports nothing, which says only that it
+waited.  The check sends four keys and six mouse movements over qemu's
+QMP socket once the drivers say they are up, and the program counts
+what it read back \- four keys and six steps.  That is IRQ1 and IRQ12
+arriving at this machine's handlers, each filling a ring in the
+program's own data area and giving a semaphore, and
+.CW select
+over the two arms waking on them.  The program prints the key count for
+this reason; the squares it draws are in the frame buffer, where nothing
+but a person could see them.
+.PP
+The amd64 user check is left as it was.  Its i8042 path is measured by
+.CW osprey-check-kbd.py ,
+where the personality's own driver reads the scancodes out of port 0x60
+with
+.CW inb ,
+which is a stronger statement than this one and already made.  What 386
+has now is the kernel half of it.
+.PP
 Still not exercised, and worth naming because it is code written blind:
 .CW iogrant
 and the TSS I/O-permission bitmap this adapter grew.  The drivers this
@@ -13613,7 +13634,7 @@ check clean:
 74,
 .CW p9legacy
 16, keyboard 8, rio 14, the window gestures 10, micro 7, micro on 386 9,
-user 12, user on 386 13, net 13, wire 14, pair 1, two-machine 20, the six
+user 12, user on 386 16, net 13, wire 14, pair 1, two-machine 20, the six
 criteria of the userland the tree builds itself, and two portable builds.
 The two 386 checks are the second object type's, and they are the new
 ones: the microkernel boots there and a user program runs on it.  A
