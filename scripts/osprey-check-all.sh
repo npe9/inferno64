@@ -40,6 +40,21 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+run() {
+	name=$1; script=$2
+	out=`python3 "$script" 2>&1` || true
+	n=`printf '%s\n' "$out" | grep -c '^ok' || true`
+	f=`printf '%s\n' "$out" | grep -c '^FAIL' || true`
+	printf '%-8s ok=%s fail=%s\n' "$name" "$n" "$f"
+	printf '%s\n' "$out" | grep '^FAIL' | sed 's/^/  /' || true
+}
+
+# Before anything is built, because what it looks for is what a build
+# will not fix: an object or an archive older than the header its
+# opcodes come from.  mk judges an object by its source and an archive
+# member by the member, and knows nothing of the compiler.
+run stale   scripts/osprey-check-stale.py
+
 # The configurations, so that a build failure is seen as one rather than
 # as every criterion of a check failing at once.
 for c in pc64 upc64 xup64 p964 p9pair p9buddy p9linux; do
@@ -51,15 +66,6 @@ for c in pc64 upc64 xup64 p964 p9pair p9buddy p9linux; do
 	fi
 done
 echo "=== builds done ==="
-
-run() {
-	name=$1; script=$2
-	out=`python3 "$script" 2>&1` || true
-	n=`printf '%s\n' "$out" | grep -c '^ok' || true`
-	f=`printf '%s\n' "$out" | grep -c '^FAIL' || true`
-	printf '%-8s ok=%s fail=%s\n' "$name" "$n" "$f"
-	printf '%s\n' "$out" | grep '^FAIL' | sed 's/^/  /' || true
-}
 
 run pc64    scripts/osprey-check.py
 run p9pair  scripts/osprey-check-p9pair.py

@@ -13620,6 +13620,33 @@ waits for the arrival to have exited as well.  No log survived the first
 failure, so this is a probable cause rather than a demonstrated one \-
 but it is the same check, the same shape, and a race the file's own
 comment had already recorded one earlier instance of.
+One check in the sweep is not about a kernel at all, and it is there
+because of the afternoon this port began with.
+.CW scripts/osprey-check-stale.py
+compares dates: every object of a type, and every archive that holds
+them, against the one header its opcodes come from.  mk cannot see that
+relation \- it judges an object by its source's date and an archive
+member by the member's own, and knows nothing of the compiler that made
+either \- so when
+.CW 8.out.h
+grew four opcodes in the middle of its enum, every
+.CW .8
+in the tree kept the old numbers and 8l read one as "opcode out of range
+3077, probably not a .8 file".  The check runs before the sweep builds
+anything, since what it looks for is exactly what a build does not fix.
+.PP
+Two things about it are worth saying.  It reads an archive's type out of
+the archive, because a Plan 9 archive names its members in plain text
+and
+.CW MacOSX/arm64/lib
+holds host libraries whose path says arm64 and whose members are ELF;
+the first version of the check called one of those an arm64 archive.
+And it was mutation-tested, like the others: a
+.CW .8
+given an old date is reported by name.  It counts 306 objects and 8
+archives for 386, and as many again for each of the other four types the
+tree has built.
+.PP
 The tally as this is written, every configuration building and every
 check clean:
 .CW pc64
