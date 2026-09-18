@@ -2098,9 +2098,9 @@ ls: /dis/ip: file does not exist
 ; bind -a /mnt /dis
 ; ip/ping -n 3 10.128.0.58
 sending 3 64 byte messages 1000 ms apart
-0: rtt 0 \(mgs, avg rtt 0 \(mgs, ttl = 255
-1: rtt 0 \(mgs, avg rtt 0 \(mgs, ttl = 255
-2: rtt 0 \(mgs, avg rtt 0 \(mgs, ttl = 255
+0: rtt 0 \(*ms, avg rtt 0 \(*ms, ttl = 255
+1: rtt 0 \(*ms, avg rtt 0 \(*ms, ttl = 255
+2: rtt 0 \(*ms, avg rtt 0 \(*ms, ttl = 255
 ; 9660srv
 usage: 9660srv [-rabc] [-9JR] [-s] cd_device dir
 .EE
