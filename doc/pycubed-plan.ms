@@ -42,7 +42,33 @@ The SAMD51's QSPI supports execute in place, mapping that external NOR
 into the address space.  That is what makes this board the right one for
 this work rather than merely a board that could run it.
 .NH 1
-Phase 0: software double precision.  Precondition, not step one
+Phase 0: software double precision.  Done
+.PP
+.B Done ,
+by trap and emulate rather than the soft-double compiler mode this plan
+first chose.
+.I fptest (1)
+passes all twenty-five lines on
+.CW mps2-an386 ,
+a Cortex-M4 with no double precision, exactly as on the Cortex-M7.  The
+reason for the switch is better than the original reason for the other
+route: the same kernel binary then runs on either core.  It is also much
+the slower arrangement, a trap per double, and that is written down
+beside the code.
+.PP
+The work is
+.CW os/inferno/armv7m/fpiarmv7m.c
+with
+.CW fpregsave / fpregrestore
+in
+.CW l.s ,
+and it is the whole of what follows in this section \- kept because the
+reasoning about the two routes still applies to anyone who wants the
+speed back.  One thing found on the way was not floating point at all:
+this port's exception entry destroyed the interrupted code's R1 on every
+exception, SysTick included, and
+.CW doc/armv7m-ports.ms
+has it.
 .PP
 The Cortex-M4F has FPv4-SP: single precision only.
 .CW utils/tl/thumb.c
@@ -391,17 +417,15 @@ whether this plan's last phase is arithmetic or wishful.
 .NH 1
 Order, and what each phase proves
 .IP 0.
-Soft double in
-.CW tc ,
-verified by
+Software double precision.
+.B Done :
 .I fptest (1)
-going from a usage fault to
+is
 .CW FPTEST-OK
 on
 .CW mps2-an386 ,
-with
-.CW mps2-an500
-as the oracle.  No hardware.  Without it there is no flight software.
+by emulation from the fault rather than by a compiler mode.  No hardware
+was needed.
 .IP 0a.
 The pool-floor histogram.  Cheap, and it either confirms the budget or
 changes the plan.

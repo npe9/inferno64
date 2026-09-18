@@ -110,17 +110,16 @@ on
 with the
 .CW mps2-an500
 run as the oracle for the answers.
-.PP
-.B "Double precision is emulated there, and not yet finished."
+.B "Double precision is emulated there, and it works."
 .CW os/inferno/armv7m/fpiarmv7m.c
 takes the UsageFault, decodes the instruction, does the arithmetic with
 .CW os/inferno/port/fpi.c
-and returns past it, so one binary runs on either core.  The operands
-are reached with
+and returns past it, so one binary runs on either core.  Operands are
+reached with
 .CW fpregsave
 and
 .CW fpregrestore ,
-which move all 32 S registers with single-precision transfers the part
+which move all 32 S registers using single-precision transfers the part
 does have; nothing in the handler uses floating point, which it must
 not, since
 .CW fpu.c
@@ -128,192 +127,90 @@ turns
 .CW FPCCR.ASPEN
 and
 .CW FPCCR.LSPEN
-off and an exception therefore never stacks the file.
+off and an exception therefore never stacks the file.  The instruction
+classes were found by scanning the image for cp11 encodings rather than
+guessed, and anything undecoded prints its encoding and pc and falls
+through to the ordinary fault report.
 .PP
-The instruction classes were found by scanning the image for cp11
-encodings rather than guessed, and anything undecoded prints its
-encoding and pc and falls through to the ordinary fault report.
 .I fptest (1)
-on
-.CW mps2-an386
-now gets 21 of its 25 lines right, where before it faulted on the first
-double-precision instruction and printed nothing.  Add, subtract,
-multiply, divide, negate, compare, round, sqrt, floor, log, exp and all
-five pow and exp cases are correct, so libmath runs.  Four fail:
-.DS
-.CW "array        want 3.25 got 0.25 FAIL"
-.CW "int->real    want 1234567 got 7.52690581e-308 FAIL"
-.CW "real->int    want 1234568 got 1 FAIL"
-.CW "modf int     want 3 got 2874996 FAIL"
-.DE
-Every one of them is the integer-to-real conversion path and nothing
-else is.  The conversion primitives are not the problem: traced live,
-the emulator turns 2 into 2.0, 1 into 1.0, 5 into 5.0 and 1.5 into 1, so
-it is how the operand reaches them that is wrong.  Not root-caused.  One
-clue for whoever takes it: the same run prints
-.CW "neg want -3 got 0.75 ok" ,
-passing its own check while printing the previous test's value, so the
-checking path and the printing path disagree about a register.
-.PP
-.CW appl/cmd/cvtchk.b
-is the minimal reproduction and judges without formatting a real, so a
-broken print cannot be mistaken for a broken conversion: all OK on
-.CW mps2-an500 ,
-all BAD on
+passes all twenty-five lines on
 .CW mps2-an386 ,
-with
-.CW "CVT-R2I 2147483647"
-\- which is
-.CW fpii2w 's
-overflow arm, so the double handed to it is already wrong.
+the same as on
+.CW mps2-an500 .
+.NH 2
+The bug that took the longest, and was not in the emulation
 .PP
-Ruled out, each with evidence rather than reasoning, so that none of it
-is chased twice:
-.IP \(bu
-The decode.
-.CW "tl -a"
-shows
-.CW cvtwf
-compiling to
-.CW "VMOV S30,R2"
-then
-.CW "VCVT.F64.S32 D1,S30" ,
-which is what the handler decodes.
-.IP \(bu
-The arithmetic.  Traced live, 3 becomes 40080000:00000000 and 1234567
-becomes 4132d687:00000000, both exact.
-.IP \(bu
-The C path.  A kernel probe after
-.CW spllo
-converts both correctly on the Cortex-M4, matching the M7.
-.IP \(bu
-The register transfers.
-.CW fpregcheck() 's
-round trip was self-consistent and would have passed even if the
-hand-encoded instructions addressed the wrong registers; it now also
-reads S2 back with a hardcoded
-.CW VMOV
-naming S2 alone, and both benches report
-.CW FPREG-S2-OK .
-.IP \(bu
-The restore.  Re-reading all 32 registers after
-.CW fpregrestore
-shows every one holding what was written.
-.IP \(bu
-The exception frame.
-.CW CONTROL
-reads 0, so FPCA is clear, and
-.CW EXC_RETURN
-is
-.CW fffffff9
-\- bit 4 set, the basic frame \- so the return does not unstack floating
-point state over the result.
+Getting there went through a long stretch at 21 of 25, where every
+failure was an integer-to-real conversion and nothing else was.  The
+cause was not the emulator.  It was this port's exception entry, wrong
+since the port was written.
 .PP
-Four more, from a second pass:
-.IP \(bu
-REAL literals.
-.CW cvtchk
-tests them in grades \- variable against variable, against a written
-constant, zero, one \- and all four pass on the Cortex-M4.  So a
-constant built by
-.CW parsemod
-through
-.CW canontod
-arrives intact, and
-.CW canontod
-compiles
-.CW ( tl
-.CW -a )
-to integer work plus a constant load and two transfers, with no emulated
-instruction in it.  This also corrects a misreading: in
-.CW "r == 3.0"
-the literal is the first operand and the converted value the second, so
-the garbage was never the literal.
-.IP \(bu
-The RAM bank.  64-bit floating point stores to the stack, to SSRAM1
-where the text lives, and to SSRAM23 all read back correctly on both
-cores.  The frame that loses the result is in SSRAM1, which is why it
-was worth ruling out.
-.IP \(bu
-The
-.CW Ureg .
-At the faulting VCVT,
-.CW r2
-reads 3 \- the integer being converted \- and S30 reads 3, so the offsets
-.CW l.s
-fills are right and
-.CW ur->r1
-really is
-.CW R.d .
-.IP \(bu
-The store.  With the handler writing the result to
-.CW R.d
-itself and stepping past the native
-.CW VSTR.64 ,
-.CW cvtchk
-is unchanged.
-.PP
-That last one is where the suspicion now sits.  Putting the right bytes
-at
-.CW R.d
-does not make the variable read correctly, so the loss is neither in the
-register file nor in the store but in where the value is read from: a
-Dis frame that has moved, been copied short, or been reused.
-.CW libinterp/stack.c:/^newstack 's
-.CW memmove
-of
-.CW t->size
-bytes, and its own comment about what lies past it, is the first thing
-to look at.
-.PP
-A third pass produced the measurement that states the bug in one line.
-Instrumenting
-.CW cvtwf
-in
-.CW libinterp/xec.c
-to capture what its own store left at
-.CW R.d ,
-printing nothing before the capture so the measurement cannot disturb
-what it measures:
+.CW _trapentry
+called
+.CW trap(ur)
+with R13 pointing straight at the Ureg it had just built.  A Plan 9
+function reaches its arguments at
+.CW 0(FP) ,
+which is its own SP plus its frame size plus four \- a slot in the
+.I caller's
+frame \- and
+.CW trap()
+spills its
+.CW Ureg*
+parameter there on entry:
 .DS
-.CW "mps2-an500  CVTWF-SAW d=002bdc98 40080000:00000000"
-.CW "mps2-an386  CVTWF-SAW d=002bdc98 ffffffff:002f2ea8"
+.CW "00002f20: 930a   MOVW R3,ur+0(FP)   = STR R3,[SP,#40]"
 .DE
-Same destination on both cores, right on the Cortex-M7 and garbage on
-the Cortex-M4.  So
+.CW trap 's
+frame is 36 bytes, so that store lands at
+.CW callerSP+4 ,
+and the caller had reserved nothing: the caller's SP
+.I was
+the Ureg, so the store went to
+.CW Ureg+4 ,
+which is
+.CW Ureg.r1 .
+On the way out
+.CW l.s
+copies that back into the hardware frame, so the interrupted code
+resumed with the address of its own Ureg in R1.  The evidence is exact:
+.CW ur->r1
+read back as
+.CW ur
+itself.
+.PP
+So every exception on this port destroyed the interrupted code's R1.
+SysTick included.  It stayed invisible because most code reloads R1 and
+because a SysTick lands between Dis instructions rather than inside one.
+Emulating double precision put an exception
+.I inside
+a single Dis instruction, thousands of times a second, and made it a
+certainty:
 .CW "OP(cvtwf){ F(d) = W(s); }"
-\- which is
-.CW "VMOV S30,R2" ,
-.CW "VCVT.F64.S32 D1,S30" ,
-.CW "VSTR.64 D1,[R1]"
-\- leaves garbage at
+loads
 .CW R.d
-when the middle instruction is emulated.
+into R1, faults on the conversion, and stores through a destroyed R1.
+.CW OP(addf)
+survived because it reloads R1
+.I after
+the arithmetic \- which is exactly the difference that made the two
+behave differently and took so long to explain.
 .PP
-Three things stand against that and are not yet reconciled.  D1 provably
-holds
-.CW 40080000:00000000
-in the real register file at the end of the handler, read back with
-hardcoded
-.CW VMOV s
-naming S2 and S3 rather than through the same save and restore pair that
-wrote it.  The exception frame is basic for every faulting instruction
-including this one, checked per instruction rather than once.  And
-.CW OP(addf) ,
-which has the same shape \- emulated arithmetic into a D register, then
-.CW VSTR.64
-\- works.
-.PP
-.CW cvtchk
-carries the bisection: LIT-VAR, LIT-DIRECT, LIT-ZERO and LIT-ONE all
-pass on the M4, so literals are sound; IMM-CMP and IMM-TRUNC use the
-result at once without a named variable and fail, so the frame slot is
-not involved.
+.CW _trapentry
+now reserves eight bytes for the argument before the call and releases
+them after.
+.CW fpr1test
+in
+.CW l.s
+is the regression test: a sentinel in R1, a double-precision fault, and
+R1 handed back, reported at boot as
+.CW TRAPREG-OK .
+It is vacuous on a Cortex-M7, where there is no fault to take.
 .NH 2
 How not to measure this
 .PP
-Worth writing down, because three measurements in this hunt were
-artifacts of their own instrumentation and each cost an afternoon.
+Worth writing down, because four measurements in this hunt were
+artifacts of their own instrumentation and each cost hours.
 .IP \(bu
 A check that read the stored value on the
 .I following
@@ -343,30 +240,16 @@ Key on the pc from a
 .CW "tl -a"
 listing of the same build, and remember that adding a line to the kernel
 moves every address after it.
-.PP
-Two observations for whoever takes it.
-.CW r
-is not a NaN \-
-.CW "r == r"
-passes \- yet the conversion back to an integer reads a NaN out of D0,
-so some loads of
-.CW r
-see one value and some another.  And what sits in that slot is
-.CW "{its own address, ffffffff}" ,
-which is what a free or uninitialised pool block looks like rather than
-a mangled double.
-.PP
-A second thing, found and not explained: none of this works from
-.CW fpinit() .
-A double-precision fault there escalates to a hard fault \-
-.CW hfsr
-0x40000000, FORCED, with
-.CW cfsr
-still reading UNDEFINSTR \- although
-.CW trapinit()
-enables UsageFault two lines earlier in
-.CW os/inferno/armv7m/main.c .
-From a process later in boot it works.
+.IP \(bu
+Reading a Ureg field after calling
+.CW print
+proves nothing about what was in it on entry.  What finally worked was
+capturing the value into a static at three points \- the top of
+.CW trap ,
+just before the call, and the first statement of
+.CW fpiemu
+\- with nothing printed until afterwards.  That bisected the corruption
+to a single call in three runs.
 .PP
 .B teensy41
 does not.  There is no emulator for an i.MX RT1062, and this was written
