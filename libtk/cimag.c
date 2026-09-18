@@ -161,11 +161,11 @@ tkcvsimgfree(TkCitem *i)
 void
 tkcvsimgdraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
-	Image *img = tkcvsdirect(cd);
 	TkCimag *t;
 	TkImg *tki;
 	Rectangle r;
 	Image *fg;
+	char *path;
 
 	USED(pe);
 
@@ -182,7 +182,33 @@ tkcvsimgdraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 	r.max.x += tki->w;
 	r.max.y += tki->h;
 
-	draw(img, r, fg, nil, ZP);
+	/*
+	 * A texture node, on the same rule as a label's -image and a
+	 * canvas bitmap item: the node names the FILE and the renderer
+	 * opens it, so an image with no file behind it has no name to
+	 * give and draws instead.
+	 *
+	 * Which of the two happens is decided by how the image was made,
+	 * not by this item.  `image create bitmap -file X' with no mask
+	 * leaves tki->img as the image pbmap() read, path and all; a
+	 * -maskfile, or a -mask, composites the two into a fresh
+	 * allocimage() that no file names, and tkputimage() loads raw
+	 * bytes into another one.  So a masked image draws here, and it
+	 * has to: what it draws is the composite, which is not what
+	 * opening either file would give.
+	 *
+	 * No foreground colour and no mask flag, unlike the label, which
+	 * paints a one-bit image THROUGH in its foreground.  This item's
+	 * drawing arm is a plain draw() of the image as a source, so the
+	 * node has to be the plain one.
+	 */
+	path = tkimgpath(fg);
+	if(cd->sc != nil && path != nil){
+		tkscenetexture(cd->sc, r, path, 0, 0);
+		return;
+	}
+
+	draw(tkcvsdirect(cd), r, fg, nil, ZP);
 }
 
 char*

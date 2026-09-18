@@ -1614,6 +1614,16 @@ checkscene()
 		# node on this path: an ordinary polygon's outline is a stroked
 		# polyline and no node says that.
 		"create polygon 266 92 330 92 298 116 -smooth true -fill #F0A0C0 -outline black -width 2",
+		# Two IMAGE items, for the same reason as the two bitmaps: the
+		# item names a file when the image has one and draws when it
+		# has not, and which it is was decided when the image was
+		# made.  Icon2 is -file only, so tki->img is still the image
+		# the file was read into and the path survives; Icon has a
+		# -maskfile, so the two were composited into a fresh image
+		# that no file names - and that one MUST draw, because what
+		# it draws is the composite rather than either file.
+		"create image 256 4 -image Icon2 -anchor nw",
+		"create image 296 44 -image Icon -anchor nw",
 	};
 	must(top, "canvas .cv -width 340 -height 120 -buffer none");
 	must(top, "canvas .cb -width 340 -height 120");
