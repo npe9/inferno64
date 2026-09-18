@@ -2773,10 +2773,32 @@ bootdump(b: ref Dosboot)
 	chat(sys->sprint("label: \"%11.11s\"\n", string b.label));
 }
 
+#
+# The time, now, not the time this server started plus a stopwatch.
+#
+# nowt was read once at startup and every stamp since was that plus the
+# milliseconds elapsed.  On a board with no clock that base is 1970, and
+# it stays 1970 after the network has told the machine what year it is:
+# the Pi set its clock from NTP at boot and went on writing files dated
+# 1 January 1980 -- the first date FAT can express -- because the server
+# that stamps them had made its mind up before the answer arrived.
+#
+# Re-reading costs an open and a read of /dev/time per stamp, which
+# happens when a file is created or its length changes, not per block.
+# The stopwatch stays as the fallback for a clock that reads as nothing.
+#
+nowsec(): int
+{
+	t := daytime->now();
+	if(t <= 0)
+		return (sys->millisec() - nowt1)/1000 + nowt;
+	return t;
+}
+
 xputtime(d: ref Dosdir, s: int)
 {
 	if(s == 0)
-		t := daytime->local((sys->millisec() - nowt1)/1000 + nowt);
+		t := daytime->local(nowsec());
 	else
 		t = daytime->local(s);
 	x := (t.hour<<11) | (t.min<<5) | (t.sec>>1);

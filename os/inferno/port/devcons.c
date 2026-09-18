@@ -1328,21 +1328,30 @@ readtime(ulong off, char *buf, int n)
  *  set the time in seconds
  */
 static int
+/*
+ * Microseconds, which is what cons(3) says this file is and what every
+ * program that writes it writes: sntp(8) sends seconds*1000000 and
+ * wm/calendar appends six zeroes to an epoch time.  This took seconds
+ * instead, in a thirteen-character buffer -- so a correct write was
+ * both a thousand times too large and too long to fit, and failed with
+ * Ebadtimectl.  sntp ignores the error, so a board with no clock asked
+ * the network for the time, was told, and stayed at 1970: its console
+ * printed the answer and its files kept 1 January 1980 timestamps.
+ * The hosted kernel has always read it as microseconds.
+ */
 writetime(char *buf, int n)
 {
-	char b[13];
-	long i;
-	vlong now;
+	char b[32];
+	vlong us;
 
 	if(n >= sizeof(b))
 		error(Ebadtimectl);
 	strncpy(b, buf, n);
 	b[n] = 0;
-	i = strtol(b, 0, 0);
-	if(i <= 0)
+	us = strtoll(b, 0, 0);
+	if(us <= 0)
 		error(Ebadtimectl);
-	now = i*1000000000LL;
-	todset(now, 0, 0);
+	todset(us*1000LL, 0, 0);
 	return n;
 }
 

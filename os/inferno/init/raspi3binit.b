@@ -1332,16 +1332,35 @@ timecheck(gw: string)
 	servers := gw :: ntpservers();
 	for(; servers != nil; servers = tl servers){
 		srv := hd servers;
-		ok := 1;
-		{
-			sntp->init(nil, "sntp" :: "udp!" + srv + "!ntp" :: nil);
-		} exception {
-		"*" =>
-			ok = 0;
+		#
+		# Watch the clock, not sntp's return: it ends by killing
+		# its own process group, so what it returns is not
+		# something to wait for.  But it does say when it has
+		# stopped, and waiting out a fixed fifteen seconds after
+		# that wasted three seconds a server and cost the marker
+		# suite the TIME-NONE at the end of the run.
+		#
+		donec := chan[1] of int;
+		spawn sntpproc(sntp, srv, donec);
+		done := 0;
+		for(i := 0; i < 150 && !done; i++){
+			# 2001, comfortably past anything a board without a
+			# clock would have made up, and past the epoch it
+			# starts at
+			if(tod() > 1000000000){
+				sys->print("TIME-OK %s from %s\n", daytime(), srv);
+				return;
+			}
+			alt {
+			<-donec =>
+				done = 1;
+			* =>
+				;
+			}
+			sys->sleep(100);
 		}
-		# 2001, comfortably past anything a board without a clock
-		# would have made up, and past the epoch it starts at
-		if(ok && tod() > 1000000000){
+		# once more: it may have set the clock as it exited
+		if(tod() > 1000000000){
 			sys->print("TIME-OK %s from %s\n", daytime(), srv);
 			return;
 		}
@@ -1349,9 +1368,49 @@ timecheck(gw: string)
 	sys->print("TIME-NONE no NTP answer from the gateway or the servers tried\n");
 }
 
+#
+# sntp in a process group of its own.
+#
+# It finishes by writing "killgrp" to its own control file, which is
+# the right thing for a command and fatal for a caller that spawned it:
+# without the NEWPGRP below that kill lands on init's group and takes
+# the board's shell with it.
+#
+sntpproc(sntp: Command, srv: string, donec: chan of int)
+{
+	sys->pctl(Sys->NEWPGRP, nil);
+	sys->print("TIME-TRY udp!%s!ntp\n", srv);
+	{
+		sntp->init(nil, "sntp" :: "udp!" + srv + "!ntp" :: nil);
+	} exception e {
+	"*" =>
+		# and say which: a caught exception printed as nothing is
+		# how this looked like "no answer" for three boots while
+		# sntp was in fact not getting as far as asking
+		sys->print("TIME-TRY %s ended: %s\n", srv, e);
+		donec <-= 1;
+		return;
+	}
+	donec <-= 1;
+}
+
 # extra servers, one per line, from the card
 ntpservers(): list of string
 {
+	#
+	# Wait for the card to be mounted.  This runs the moment DHCP
+	# finishes and the FAT partition is mounted by another process a
+	# little later, so the first attempt read no file at all and the
+	# board fell back on a gateway that does not answer NTP -- while
+	# the same sntp, typed at the shell a minute later, got the time
+	# from the server named in that file.
+	#
+	for(i := 0; i < 300; i++){
+		(ok, nil) := sys->stat("/n/dos/kernel8.img");
+		if(ok == 0)
+			break;
+		sys->sleep(100);
+	}
 	fd := sys->open("/n/dos/ntp.txt", Sys->OREAD);
 	if(fd == nil)
 		return nil;
@@ -1370,7 +1429,16 @@ ntpservers(): list of string
 	return l;
 }
 
-# seconds since 1970, from the kernel's own clock
+#
+# Seconds since 1970, from the kernel's own clock.
+#
+# /dev/time's first field is seconds, not microseconds -- the four
+# fields are seconds, nanoseconds, ticks and the tick frequency -- and
+# dividing it by a million here is what made this report TIME-NONE
+# from a board whose clock sntp had just set correctly.  The same
+# command typed at the shell worked every time, which is what took so
+# long to see: the thing that was wrong was the test, not the clock.
+#
 tod(): int
 {
 	fd := sys->open("/dev/time", Sys->OREAD);
@@ -1380,9 +1448,7 @@ tod(): int
 	n := sys->read(fd, b, len b);
 	if(n <= 0)
 		return 0;
-	# microseconds, and only the top of it matters here
-	us := big string b[0:n];
-	return int (us / big 1000000);
+	return int big string b[0:n];
 }
 
 daytime(): string
