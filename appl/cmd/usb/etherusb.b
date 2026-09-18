@@ -267,8 +267,12 @@ init(nil: ref Draw->Context, argv: list of string)
 			sys->print("ETHERUSB-FAIL %s: %s\n", devname, err);
 			return;
 		}
-		sys->print("ETHERUSB-SETUP %d ms for %s\n",
-			sys->millisec()-t0, devname);
+		ms := sys->millisec()-t0;
+		per := 0;
+		if(nctl > 0)
+			per = ms/nctl;
+		sys->print("ETHERUSB-SETUP %d ms for %s, %d control transfers, %d ms each\n",
+			ms, devname, nctl, per);
 	}
 
 	conns = array[16] of ref Conn;
@@ -611,8 +615,15 @@ Phyintmask: con 30;
 Anegcomp: con 1<<6;
 Linkdown: con 1<<4;
 
+# how many control transfers the set-up costs, and how long they take:
+# ETHERUSB-SETUP is measured in seconds and a control transfer should be
+# a millisecond, so the count is what says which of those two numbers is
+# surprising
+nctl := 0;
+
 wr(reg, val: int): int
 {
+	nctl++;
 	b := array[4] of byte;
 	b[0] = byte val; b[1] = byte (val>>8); b[2] = byte (val>>16); b[3] = byte (val>>24);
 	if(usbcmd(dev, Rh2d|Rvendor|Rdev, 16rA0, 0, reg, b, 4) < 0){
@@ -624,6 +635,7 @@ wr(reg, val: int): int
 
 rr(reg: int): int
 {
+	nctl++;
 	(n, b) := usbin(dev, Rd2h|Rvendor|Rdev, 16rA1, 0, reg, 4);
 	if(n < 4){
 		sys->print("etherusb: smsc read reg %#x: %r\n", reg);

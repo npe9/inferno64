@@ -3852,6 +3852,45 @@ groups \(em overlaps another's on this board regularly, which is where a
 kernel that still takes interrupts while no Dis program runs would come
 from.
 .NH 2
+Where the ethernet's ten to a hundred and fifty seconds go
+.PP
+.CW ETHERUSB-SETUP
+times the LAN9514's set-up and
+.I etherusb
+counts the control transfers it takes: 86 of them, and on this board
+each one costs about 120ms.  A control transfer is a millisecond's work,
+so the count was never the surprising number.
+.PP
+Two guesses were wrong before the measurement.  A NAK used to cost a
+whole clock tick \(em
+.CW tsleep 's
+resolution is the tick and this kernel ticks at 100Hz \(em so the first
+64 NAKs now spin instead, and then 2000 of them; neither changed the
+120ms.  What settled it was timing the transfers inside the driver:
+.IP
+.EX
+usbdwc: ep2.0 type 1 len 8: 20305 us, 1 loops, 0 naks, 0 nyets
+usbdwc: ep2.0 type 1 len 0: 93802 us, 1 loops, 0 naks, 0 nyets
+usbdwc: ep2.0 type 1 len 0: 8 us, 1 loops, 0 naks, 0 nyets
+.EE
+.PP
+One loop, no NAKs, no Nyets, and either 8 microseconds or ninety
+milliseconds.  Nothing is being retried: the transfer is waiting for the
+CPU.  This kernel's SD driver is polled, so the boot's 1.5MB FAT write
+and the kfs ream hold the processor while USB enumeration is a Dis
+program waiting on completion interrupts, and the whole spread is which
+of them got there first.
+.PP
+Making the card's work wait for the ethernet was tried and is not the
+answer: it moves the contention rather than removing it, and the boot it
+produced died in the kernel with
+.CW "double sleep"
+where the ordering before it does not.  What removes it is DMA for the
+SD controller.  The timing is still in the driver, off by default \(em
+.CW chaniotrace
+names how many transfers to time \(em because the next person to wonder
+where a USB transfer went should not have to guess twice first.
+.NH 2
 Suggested order
 .PP
 The transmit-queue fix is confirmed on the board and kernel updates

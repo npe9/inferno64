@@ -63,7 +63,8 @@ enum
 	 */
 	Slowbulkin	= 1,
 	Maxnak		= 2000,		/* not for bulk IN; see the NAK path */
-	Nakspins	= 64,		/* NAKs to spin through before sleeping */
+	Nakspins	= 2000,		/* NAKs to spin through before sleeping */
+	Nakspinus	= 100,		/* and how long each of those spins is */
 	Maxiters	= 4000,		/* attempts at one transfer, likewise */
 	Rearmsecs	= 2,		/* a bulk IN waits this long, then its channel restarts */
 };
@@ -138,6 +139,16 @@ dmabufalloc(long n)
 		error(Enomem);
 	return p;
 }
+
+/*
+ * How many transfers to time, and off by default: set it and the first
+ * N print how long they took, how many times round the retry loop, and
+ * how many NAKs and Nyets.  That is what said the 10-to-149-second
+ * ethernet set-up on this board is not this driver -- one loop, no
+ * NAKs, no Nyets, and 20 to 93 milliseconds of waiting for the CPU
+ * while the polled SD driver had it.
+ */
+static int chaniotrace = 0;
 
 static Hostchan*
 chanalloc(Ep *ep)
@@ -443,11 +454,28 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 {
 	Ctlr *ctlr;
 	int nleft, n, nt, i, imask, maxpkt, npkt, chan, split, naks, iters;
+	int nyets;
 	uint hcdma, hctsiz;
+	vlong chaniot0;
 	Dwcregs *r;
 
 	ctlr = ep->hp->aux;
 	r = ctlr->regs;
+	/*
+	 * Where a transfer's time goes, for the first few of them.
+	 *
+	 * The LAN9514's set-up is 86 control transfers and each costs
+	 * 120ms on this board.  Spinning through the NAKs rather than
+	 * sleeping did not change that, so the time is not in the NAK
+	 * path, and guessing where it is instead has now cost two board
+	 * cycles.  This says: how long the whole transfer took, how many
+	 * times round the retry loop, how many NAKs and how many Nyets.
+	 */
+	if(chaniotrace > 0){
+		chaniotrace--;
+		chaniot0 = todget(nil);
+	}else
+		chaniot0 = 0;
 	maxpkt = ep->maxpkt;
 	npkt = HOWMANY(len, ep->maxpkt);
 	if(npkt == 0)
@@ -480,6 +508,7 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 
 	nleft = len;
 	naks = 0;
+	nyets = 0;
 	iters = 0;
 	i = 0;
 	chan = hc - r->hchan;
@@ -609,8 +638,10 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		if((i & Xfercomp) == 0 && i != (Chhltd|Ack) && i != Chhltd){
 			if(i & Stall)
 				error(Estalled);
-			if(i & (Nyet|Frmovrun))
+			if(i & (Nyet|Frmovrun)){
+				nyets++;
 				continue;
+			}
 			if(i & Nak){
 				/*
 				 * A device with nothing to send NAKs, and the
@@ -639,19 +670,23 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 				 * cost 10ms whatever it asked for.  A device
 				 * that NAKs because it is busy for a moment
 				 * is ready long before that: the LAN9514's
-				 * set-up is a few hundred control transfers
-				 * to its registers, and on this board it has
-				 * taken anywhere from 10 to 149 seconds,
-				 * which is the shape of a fixed cost paid a
-				 * few hundred times over.  Spin for the first
-				 * few and sleep after that, so a device that
-				 * is genuinely not answering still costs
-				 * nothing to wait for.
+				 * set-up is 86 control transfers to its
+				 * registers, and on this board it has taken
+				 * anywhere from 10 to 149 seconds.  Measured
+				 * with the count in etherusb: 120ms a
+				 * transfer, twelve clock ticks, so each one
+				 * was NAKing dozens of times and sleeping a
+				 * whole tick for most of them.  Spin first
+				 * and sleep after, so a device that is
+				 * genuinely not answering still costs nothing
+				 * to wait for: 2000 spins of 100us is 200ms
+				 * at the worst, during enumeration only,
+				 * against the 10s of sleeping it replaces.
 				 */
 				if(ep->ttype == Tintr)
 					tsleep(&up->sleep, return0, 0, ep->pollival);
 				else if(naks <= Nakspins)
-					microdelay(50);
+					microdelay(Nakspinus);
 				else
 					tsleep(&up->sleep, return0, 0, 1);
 				continue;
@@ -697,6 +732,10 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		if((i & Xfercomp) && ep->ttype != Tctl)
 			break;
 	}
+	if(chaniot0 != 0)
+		print("usbdwc: ep%d.%d type %d len %d: %lld us, %d loops, %d naks, %d nyets\n",
+			ep->dev->nb, ep->nb, ep->ttype, len,
+			(todget(nil) - chaniot0)/1000, iters, naks, nyets);
 	return len - nleft;
 }
 

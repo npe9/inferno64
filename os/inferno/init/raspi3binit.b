@@ -1927,6 +1927,24 @@ init()
 	# that kernel stacks are aligned, so the create is worth trying
 	# again; it runs in its own process either way, so a hang there
 	# leaves the board usable.
+	#
+	# Both of these and the ethernet run at once, and they compete for
+	# the one thing they cannot share.  This kernel's SD driver is
+	# polled, so the 1.5MB write below holds the CPU, and USB
+	# enumeration is a Dis program waiting on completion interrupts.
+	# Timed inside the driver, a single control transfer with no
+	# retries at all -- one loop, no NAKs, no Nyets -- took 20, 58 and
+	# 93 milliseconds while the card was busy and 8 microseconds when
+	# it was not.  That is the whole of the 10-to-149-second spread in
+	# ETHERUSB-SETUP: not the USB driver, not the chip, the CPU.
+	#
+	# Making the card wait for the ethernet was tried and is not the
+	# answer: it moved the contention rather than removing it, and the
+	# boot that came out of it died in the kernel with "double sleep",
+	# which the ordering before it does not.  What removes it is DMA
+	# for the SD controller, which doc/raspi3b-completion-plan.ms has
+	# as its own piece of work.
+	#
 	spawn sdfs();
 	spawn fatcheck();
 
