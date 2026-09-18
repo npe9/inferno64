@@ -1667,6 +1667,116 @@ verify_certpath(sc: list of (ref Signed, ref Certificate)): (int, string)
 # actual signatures with the actual (SHA-family RSA) algorithms real
 # chains use today.
 
+# [private]
+# One DER tag/length at off: (tag, contents offset, contents length).
+# Returns a negative tag when the encoding is not one this needs to
+# understand -- indefinite lengths, or a length that runs off the end.
+dertlv(b: array of byte, off: int): (int, int, int)
+{
+	if(b == nil || off < 0 || off+2 > len b)
+		return (-1, 0, 0);
+	tag := int b[off];
+	i := off+1;
+	n := int b[i++];
+	if(n == 16r80)
+		return (-1, 0, 0);		# indefinite: not DER
+	if(n & 16r80){
+		k := n & 16r7F;
+		if(k > 4 || i+k > len b)
+			return (-1, 0, 0);
+		n = 0;
+		while(k-- > 0)
+			n = (n<<8) | int b[i++];
+	}
+	if(n < 0 || i+n > len b)
+		return (-1, 0, 0);
+	return (tag, i, n);
+}
+
+# [private]
+# The DER of a Certificate's issuer or subject Name, without decoding
+# the certificate.  tbsCertificate is
+#	[0] version OPTIONAL, serialNumber, signature,
+#	issuer, validity, subject, ...
+# so this walks in and counts fields.  which is 0 for issuer, 1 for
+# subject.  nil if the shape is not what a certificate must be.
+namederat(cert: array of byte, which: int): array of byte
+{
+	(tag, off, n) := dertlv(cert, 0);	# Certificate ::= SEQUENCE
+	if(tag != 16r30)
+		return nil;
+	(tag, off, n) = dertlv(cert, off);	# tbsCertificate ::= SEQUENCE
+	if(tag != 16r30)
+		return nil;
+	end := off + n;
+	i := off;
+	(tag, nil, nil) = dertlv(cert, i);
+	if(tag == 16rA0)			# [0] version, optional
+		i = skip(cert, i);
+	i = skip(cert, i);			# serialNumber
+	i = skip(cert, i);			# signature (AlgorithmIdentifier)
+	if(which != 0){
+		i = skip(cert, i);		# issuer
+		i = skip(cert, i);		# validity
+	}
+	if(i < 0 || i >= end)
+		return nil;
+	(tag, off, n) = dertlv(cert, i);
+	if(tag != 16r30)			# Name ::= SEQUENCE
+		return nil;
+	return cert[i:off+n];			# tag, length and contents
+}
+
+# [private]
+skip(b: array of byte, off: int): int
+{
+	(tag, coff, n) := dertlv(b, off);
+	if(tag < 0)
+		return -1;
+	return coff + n;
+}
+
+# [private]
+subjectder(cert: array of byte): array of byte
+{
+	return namederat(cert, 1);
+}
+
+# [private]
+issuerder(tbs: array of byte): array of byte
+{
+	# tbs here is the tobe_signed bytes, i.e. the tbsCertificate
+	# SEQUENCE itself rather than the whole certificate, so wrap the
+	# walk by hand: skip version/serial/signature and take issuer.
+	(tag, off, n) := dertlv(tbs, 0);
+	if(tag != 16r30)
+		return nil;
+	end := off + n;
+	i := off;
+	(tag, nil, nil) = dertlv(tbs, i);
+	if(tag == 16rA0)
+		i = skip(tbs, i);
+	i = skip(tbs, i);			# serialNumber
+	i = skip(tbs, i);			# signature
+	if(i < 0 || i >= end)
+		return nil;
+	(tag, off, n) = dertlv(tbs, i);
+	if(tag != 16r30)
+		return nil;
+	return tbs[i:off+n];
+}
+
+# [private]
+dereq(a, b: array of byte): int
+{
+	if(a == nil || b == nil || len a != len b)
+		return 0;
+	for(i := 0; i < len a; i++)
+		if(a[i] != b[i])
+			return 0;
+	return 1;
+}
+
 verify_chain_host(chain: list of array of byte, host: string,
 		roots: list of array of byte): (int, string)
 {
@@ -1689,22 +1799,21 @@ verify_chain_host(chain: list of array of byte, host: string,
 	for(; rl != nil; rl = tl rl)
 		sc = (hd rl) :: sc;
 
-	# parse the trust roots; an individual root our decoder cannot
-	# handle is skipped, but if none survive that is an error, not a
-	# clean "untrusted" - it would make every failure below a lie
-	troots: list of ref Certificate;
+	# The roots are NOT decoded here.  A bundle is the whole of
+	# Mozilla's list - 121 certificates in the one this tree ships -
+	# and decoding every one of them took about fifteen seconds of
+	# interpreted Dis on a fast machine, per handshake, which is
+	# longer than a server will hold a connection open waiting for
+	# the client's next flight.  Nothing in the walk below needs a
+	# decoded root until one of them turns out to be the issuer, and
+	# that is at most one of them.  So a root's subject is compared
+	# as raw DER, a handful of tag/length reads (subjectder below),
+	# and only the root that matches is decoded and its signature
+	# checked.  Same answer, and the answer arrives.
 	nroots := 0;
-	for(l = roots; l != nil; l = tl l) {
-		(err, s) := Signed.decode(hd l);
-		if(err != "")
-			continue;
-		c: ref Certificate;
-		(err, c) = Certificate.decode(s.tobe_signed);
-		if(err != "")
-			continue;
-		troots = c :: troots;
-		nroots++;
-	}
+	for(l = roots; l != nil; l = tl l)
+		if(subjectder(hd l) != nil)
+			nroots++;
 	if(nroots == 0)
 		return (0, "no usable trust roots");
 
@@ -1722,10 +1831,20 @@ verify_chain_host(chain: list of array of byte, host: string,
 	rest := tl sc;
 	depth := 0;
 	for(;;) {
-		for(tr := troots; tr != nil; tr = tl tr) {
-			rc := hd tr;
-			if(!curc.issuer.equal(rc.subject))
+		iss := issuerder(curs.tobe_signed);
+		for(tr := roots; tr != nil; tr = tl tr) {
+			rsub := subjectder(hd tr);
+			if(rsub == nil || !dereq(iss, rsub))
 				continue;
+			(rerr, rs) := Signed.decode(hd tr);
+			if(rerr != "")
+				continue;
+			rc: ref Certificate;
+			(rerr, rc) = Certificate.decode(rs.tobe_signed);
+			if(rerr != "")
+				continue;
+			if(!curc.issuer.equal(rc.subject))
+				continue;	# DER said yes, the decoded names say no
 			if(checksig(curs, rc) != nil)
 				continue;	# same subject, different root key: keep looking
 			if(!is_validtime(rc.validity))

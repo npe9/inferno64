@@ -143,10 +143,24 @@ init(): string
 # cached parse of the CAPATH bundle (loaded once per process)
 cachedroots: list of array of byte;
 
+# The trust bundle, as a list of DER certificates.
+#
+# CAPATHDER is the same roots already in DER, which is self-delimiting
+# and costs one read and a walk down the tag/length headers.  The PEM
+# beside it is the readable original and the fallback, and it costs
+# real time: 2950 lines through bufio and 182 KB of base64 took 1.5 s
+# and 1.7 s of interpreted Dis on a fast machine, and a native kernel
+# has no JIT.  That is spent inside a handshake the server is timing,
+# and it is why this client used to lose the connection before it had
+# finished deciding whether to trust the other end.
 loadroots(path: string): (list of array of byte, string)
 {
-	if(path == nil)
+	if(path == nil){
+		(dl, derr) := loadrootsder(CAPATHDER);
+		if(derr == nil)
+			return (dl, nil);
 		path = CAPATH;
+	}
 	ib := bufio->open(path, Bufio->OREAD);
 	if(ib == nil)
 		return (nil, sys->sprint("tls: %s: %r", path));
@@ -174,6 +188,57 @@ loadroots(path: string): (list of array of byte, string)
 	if(roots == nil)
 		return (nil, sys->sprint("tls: %s: no certificates found", path));
 	return (roots, nil);
+}
+
+# read a file of concatenated DER certificates
+loadrootsder(path: string): (list of array of byte, string)
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return (nil, sys->sprint("tls: %s: %r", path));
+	(ok, d) := sys->fstat(fd);
+	if(ok < 0 || d.length <= big 0)
+		return (nil, sys->sprint("tls: %s: no size", path));
+	b := array[int d.length] of byte;
+	if(sys->readn(fd, b, len b) != len b)
+		return (nil, sys->sprint("tls: %s: short read", path));
+	roots: list of array of byte;
+	n := 0;
+	i := 0;
+	while(i < len b){
+		(tag, off, ln) := dertlv(b, i);
+		if(tag != 16r30)
+			return (nil, sys->sprint("tls: %s: not a certificate at %d", path, i));
+		roots = b[i:off+ln] :: roots;
+		n++;
+		i = off + ln;
+	}
+	if(n == 0)
+		return (nil, sys->sprint("tls: %s: empty", path));
+	return (roots, nil);
+}
+
+# one DER tag/length: (tag, contents offset, contents length)
+dertlv(b: array of byte, off: int): (int, int, int)
+{
+	if(b == nil || off < 0 || off+2 > len b)
+		return (-1, 0, 0);
+	tag := int b[off];
+	i := off+1;
+	n := int b[i++];
+	if(n == 16r80)
+		return (-1, 0, 0);
+	if(n & 16r80){
+		k := n & 16r7F;
+		if(k > 4 || i+k > len b)
+			return (-1, 0, 0);
+		n = 0;
+		while(k-- > 0)
+			n = (n<<8) | int b[i++];
+	}
+	if(n < 0 || i+n > len b)
+		return (-1, 0, 0);
+	return (tag, i, n);
 }
 
 prf(secret: array of byte, label: string, seed: array of byte, n: int): array of byte
@@ -317,7 +382,6 @@ client(fd: ref Sys->FD, hostname: string, suites: list of int): (ref Session, st
 	skerr := checkskx(s.certs, crandom, srandom, skxparams, skxhash, skxsigtype, skxsig);
 	if(skerr != nil)
 		return (nil, skerr);
-
 	# ClientKeyExchange + premaster secret, on the curve the server
 	# named. z is the shared secret feeding the master secret.
 	z: array of byte;

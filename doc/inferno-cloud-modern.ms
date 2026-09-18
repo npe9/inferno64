@@ -2109,48 +2109,94 @@ once each way, and both succeed \(em the https one takes minutes, which
 is bignum arithmetic under TCG and is why a shorter hold first looked
 like a hang.
 .PP
-The control was then run on an instance:
+.B "Found, and it was not the network at all."
+The control was then run on an instance: a plain
 .CW "hget https://example.com/"
 hangs there too, with no error, while
 .CW http
-to the same host returns the page.  So it is not
-.CW gcs
-and not the credential; it is https on an instance.  Two guesses were
-tested and neither holds.  Compute Engine's network MTU is 1460 and
-this stack advertises from 1514, which would drop a full-sized segment
-and could stall a handshake carrying a certificate chain \(em but
-.CW "echo mtu 1460 > /net/ipifc/0/ctl"
-changes nothing.  And
-.CW /dev/random
-blocks until 64 bytes of timer jitter have accumulated, which would
-stall anything needing a key \(em but the same read returns at once on
-the same kernel under QEMU with one processor and with two, and the
-instance-side test that looked like a block was
+to the same host returns the page.  Two guesses were tested and
+neither held \(em Compute Engine's 1460-byte MTU (setting
+.CW "mtu 1460"
+on the interface changes nothing) and entropy
+.CW ( /dev/random
+returns at once on the same kernel under QEMU on one processor and on
+two; the instance-side test that looked like a block was
 .CW "cat /dev/random" ,
-which never ends by design and had merely wedged the shell.  So this
-one is still open, with those two off the list.  On the arm64
-instance the same
-.CW gcs
-run took the kernel down in
-.CW movp
-with a data abort at address
-.CW 0xffffffffffffffff ,
-which is
-.CW H ,
-the Dis nil \(em the shape
-.CW libinterp/xec.c 's
-own
-.CW movp
-probes and
-.CW doc/inferno-ports.ms
-have been chasing on arm64 all along.  And the serial console drops
-input sent as a burst: a port typed as
-.CW 17010
-arrived as
-.CW 17 ,
-so
-.CW scripts/gce-console.py
-types a character at a time.
+which never ends by design and had merely wedged the shell).
+.PP
+Printing a timestamp at each step of the handshake settled it.  The
+connection is made, the ClientHello goes out, the ServerHello comes
+back \(em 30 ms \(em and then the client spends
+.B a hundred seconds
+on the certificates before it writes another byte.  The server hangs up
+long before that, which is why the next write failed with
+.CW Hangup
+and why it looked like a broken connection.  Two things cost that time,
+and both are now fixed:
+.TS
+box, tab(;);
+l l l.
+;before;after
+_
+read the trust bundle;52.5 s;0.06 s
+verify the chain;194.2 s;8.0 s
+whole handshake;247 s;9.6 s
+.TE
+(QEMU, which is about fifteen times slower than the instance.)
+.PP
+.B "Verification decoded every root, every time."
+.CW verify_chain_host
+began by decoding the whole trust bundle \(em 121 certificates \(em
+before walking the chain, and the caller cached only the bundle's raw
+bytes, so every handshake paid it again.  Nothing in the walk needs a
+decoded root until one of them turns out to be the issuer, and that is
+at most one of them.  A root's subject is now compared as raw DER,
+which is a handful of tag/length reads, and only the matching root is
+decoded and its signature checked.  Same verdict, 25 times quicker:
+.CW chainbench (1)
+reports 15 s falling to 0.6 s interpreted, on four real chains
+(example.com, google.com, github.com, debian.org), each with its four
+controls still failing.
+.PP
+.B "The bundle is read as DER."
+What was left was the PEM: 2950 lines through
+.IR bufio (2)
+and 182 KB of base64, 1.5 s and 1.7 s of interpreted Dis.  A DER
+certificate is self-delimiting, so
+.CW lib/tls/ca-bundle.der
+is simply those certificates end to end, and reading it is one read and
+a walk down the tag/length headers.
+.CW tls12 (2)
+prefers it and falls back to the PEM, which stays the readable
+original;
+.CW scripts/mkcabundle.sh
+makes one from the other and
+.CW scripts/check-cabundle.sh
+checks they hold the same certificates, because a DER that quietly
+dropped a root would narrow what this system trusts and nothing else
+would notice.
+.PP
+.B "What it was not."
+Not P-256, which
+.CW p256test (1)
+puts at 103 ms a verification interpreted.  Not the interpreter's
+per-instruction trace either, though that was worth fixing while
+looking: it took the remainder four times per Dis instruction, and a
+signed remainder is a division on this compiler.  Masking instead \(em
+the ring is 256 entries \(em is worth about 8%.
+.PP
+.B "Confirmed on the instance."
+.CW "hget https://example.com/"
+returns the page, and
+.CW "gcs -t /mnt/token ls"
+lists a real bucket with the instance's own credential.  Locally,
+.CW scripts/check-tls.sh
+now passes rather than depending on how patient the server feels; it is
+in
+.CW check-all.sh 's
+boot tier, with
+.CW check-cabundle
+in the quick one.
 .PP
 .B "One number that is not a measurement."
 .CW ping

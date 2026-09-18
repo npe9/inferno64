@@ -25,9 +25,12 @@ export PATH ROOT
 cd "$ROOT"
 
 # Fast, and each asserts something specific.
-QUICK="check-man-pages check-config-portlines check-cloudauth check-discovery-retry"
+QUICK="check-man-pages check-config-portlines check-cabundle check-cloudauth check-discovery-retry"
 # Boot a kernel; minutes each.
-BOOT="check-pc64-timers check-pc64-tcp check-pc64-disk check-pc64-redeploy check-arm64-smp check-crossarch check-pc64-smp"
+# check-tls wants the host's own network: it fetches one URL over http
+# and over https from a booted kernel, and says "cannot tell" rather
+# than failing when the plain fetch does not finish.
+BOOT="check-pc64-timers check-pc64-tcp check-pc64-disk check-pc64-redeploy check-arm64-smp check-crossarch check-tls check-pc64-smp"
 # Bisect or sweep; tens of minutes.  Measurements rather than pass/fail
 # -- check-pc64-parallelvm FAILS on purpose, because the parallel VM is
 # broken and the check says so; it is here to detect the day that changes.

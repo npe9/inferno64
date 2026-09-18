@@ -37,6 +37,14 @@ TLS12: module
 	# it from https://curl.se/ca/cacert.pem when it goes stale)
 	CAPATH: con "/lib/tls/ca-bundle.pem";
 
+	# The same roots as concatenated DER, which is what loadroots
+	# reads when it can: a DER certificate is self-delimiting, so the
+	# whole bundle is one read and a walk down the tag/length
+	# headers, against 1.5 s of bufio and 1.7 s of base64 for the PEM
+	# in interpreted Dis.  scripts/mkcabundle.sh makes it from the
+	# PEM and scripts/check-cabundle.sh checks the two agree.
+	CAPATHDER: con "/lib/tls/ca-bundle.der";
+
 	# parse a PEM certificate bundle into DER certs (path nil = CAPATH).
 	# client() calls this itself and caches the result; it is exported
 	# so tests can hand doctored root sets to x509->verify_chain_host.

@@ -335,6 +335,7 @@ root
 	/dis/lib/encoding/base64.dis
 	/lib/tls	/
 	/lib/tls/ca-bundle.pem
+	/lib/tls/ca-bundle.der
 # libraries for the above commands
 	/dis/disk/calc.tab.dis
 	/dis/disk/pedit.dis
