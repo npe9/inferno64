@@ -13620,6 +13620,68 @@ waits for the arrival to have exited as well.  No log survived the first
 failure, so this is a probable cause rather than a demonstrated one \-
 but it is the same check, the same shape, and a race the file's own
 comment had already recorded one earlier instance of.
+What a Plan 9 personality on 386 would want is measured rather than
+estimated, in the way the boot libc was.  All 196 portable files of
+9front's libc in this tree \-
+.CW port ,
+.CW fmt
+and
+.CW 9sys
+\- compile with 8c, none failing and none warning.  Linking what they
+make and reading what is left undefined gives forty symbols, and they
+sort into four kinds.  The 64-bit arithmetic helpers
+.CW ( _divvu
+and its family) are libkern's
+.CW vlrt-386.c ,
+which this tree already builds, and
+.CW _tas
+is
+.CW libctas.s ,
+written for the boot libc.  The entry and its words
+.CW ( main ,
+.CW _tos ,
+.CW argv0 ,
+.CW end )
+are what
+.CW init9*.c
+stands in for, as it does on amd64.  Two files bring symbols that only
+a program using them pulls in:
+.CW profile.c
+wants
+.CW _savearg
+and
+.CW _callpc ,
+and
+.CW crypt.c
+wants libsec's block cipher.
+.PP
+That leaves the twenty-one system-call stubs \-
+.CW open ,
+.CW close ,
+.CW create ,
+.CW pread ,
+.CW rfork ,
+.CW notify
+and the rest.  On amd64 they are not built at all: they come out of the
+prebuilt 9front archive, because on a real Plan 9 they are generated
+from the kernel's table and there is no source file to compile.  There
+is no prebuilt 386 archive here, so they would be written \- each one
+the number in AX and
+.CW "INT $64" ,
+which is the shape
+.CW bootsys-386.s
+already has fourteen of.
+.PP
+So the library is the small half.  The personality's own three assembly
+files
+.CW ( xcall.s ,
+.CW p9cons.s ,
+.CW legacyxcall.s ,
+ninety-eight lines between them) are amd64's and would want their 386
+counterparts, and what else the personality assumes about its machine is
+not known until those are there.  That is the next piece, and it is
+named rather than sized.
+.PP
 One check in the sweep is not about a kernel at all, and it is there
 because of the afternoon this port began with.
 .CW scripts/osprey-check-stale.py
