@@ -525,7 +525,11 @@ static int
 consolerx(Queue*, int ch)
 {
 	extern Queue *kbdq;
+	extern int consdebugchar(int);
 
+	/* ^\ asks the kernel for a dump; it never reaches a program */
+	if(consdebugchar(ch))
+		return 0;
 	if(kbdq == nil)
 		return 0;
 	return kbdcr2nl(kbdq, ch);

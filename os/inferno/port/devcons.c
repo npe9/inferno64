@@ -115,6 +115,50 @@ kstackdump(void)
 	}
 }
 
+/*
+ * ^\ on the console asks for that dump.
+ *
+ * A wedged board cannot be asked anything through a file: writing
+ * /dev/sysctl needs a shell, and the shell is one of the things that
+ * has stopped.  The console's own receive path still runs -- every
+ * character typed is still echoed -- so that is where the question has
+ * to go in.  ^\ is the file separator, which nothing here types and no
+ * terminal sends by accident.
+ */
+static Rendez	dumpr;
+static int	dumpwanted;
+
+static int
+dumpready(void*)
+{
+	return dumpwanted;
+}
+
+static void
+consdumpproc(void*)
+{
+	for(;;){
+		sleep(&dumpr, dumpready, nil);
+		dumpwanted = 0;
+		print("\n^\\ every process:\n");
+		kstackdump();
+	}
+}
+
+/*
+ * Called from the console receive path with every character.  Returns
+ * 1 if it was a debug request and should not reach the keyboard queue.
+ */
+int
+consdebugchar(int ch)
+{
+	if(ch != 0x1c)		/* ^\ */
+		return 0;
+	dumpwanted = 1;
+	wakeup(&dumpr);
+	return 1;
+}
+
 static Cmdtab sysctlcmd[] =
 {
 	CMreboot,	"reboot",	0,
@@ -641,6 +685,18 @@ consinit(void)
 
 	todinit();
 	randominit();
+
+	/*
+	 * And a process to answer the console's debug key.  It is a
+	 * kproc on purpose: when the Dis scheduler wedges -- which this
+	 * board does, with the console still echoing every character and
+	 * no program running again -- a kproc still runs, and it is the
+	 * only thing left that can say what every process was doing.
+	 * Doing it from the interrupt handler instead would take the
+	 * print lock from interrupt context, which is how a debugging
+	 * aid becomes the second fault.
+	 */
+	kproc("consdump", consdumpproc, nil, 0);
 /*
 	debugkey('f', "files/6", fddump, 0);
 	debugkey('q', "panic", qpanic, 1);
