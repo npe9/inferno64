@@ -8032,3 +8032,64 @@ shell with cpu1 interpreting; and
 and
 .CW shakti
 each reach their first Dis quantum with no panic.
+.NH 2
+Phase 5's remaining choice, answered by the counter it asked for
+.LP
+.B "The collector is an idle-time activity here, and that decides it."
+.CW dis-parallel-plan.ms
+leaves one thing open after the two atomics: stop-the-world with
+parallel marking, or Go-style concurrent marking.  It also says how to
+choose \(em read the collector's own counters \(em and the reading, on
+pc64 with the soak workload:
+.IP
+.nf
+-smp 2:  gcnruns 976263, gcidlepass 976128   (135 from the busy path)
+-smp 4:  gcnruns 1317847, gcidlepass 1317716 (131 from the busy path)
+.fi
+.PP
+Better than 99.98% of collections are entered from
+.CW execatidle() ,
+at both processor counts, on a kernel where two and four processors
+interpret Dis.  The same shape the emu measurement in that document
+found, on hardware it was written before.  Parallel marking and
+concurrent marking both exist to keep marking from competing with
+mutators, and here it barely competes: what matters is that a
+collection not hold a processor that has work, which
+.CW execatidle() 's
+early break and
+.CW stoptheworld() 's
+give-up already do.  So neither is justified yet, and the counter to
+watch is the busy-path count \(em 131 and 135 today.
+.PP
+The other half of that entry follows from the same fact.  Giving the
+mark state a home per collection rather than per file matters when two
+markers run at once;
+.CW gcsema
+serialises collections, so
+.CW gc.c 's
+file statics are correct until the paragraph above changes its answer.
+.PP
+.B "And the counters caught one more instrument measuring itself."
+The same dump said
+.CW "leaks seen 63"
+at
+.CW "-smp 2"
+and 16 at
+.CW "-smp 4" ,
+in boots whose collector ran nearly a million times.  A leak switches
+the collector off \(em that is what makes a boot sit at a few thousand
+collections \(em so 63 leaks and a million collections cannot both be
+true.  The test was
+.CW "if(gchalt != 0)"
+after
+.CW gcunwind()
+had already given this context's locks back, and
+.CW gchalt
+is a global: every other executor holding a
+.CW gclock
+at that instant counted as this context's leak.  It counts what
+.CW gcunwind()
+handed back now, which is the only number that means a non-local exit
+leaked one, and two boots report
+.CW "gclocks given back 0"
+against 1144005 and 1843107 collections.

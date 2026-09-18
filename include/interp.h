@@ -481,7 +481,17 @@ struct Handler
 #define gclock()	do{ if(gcatomic) AINC(&gchalt); else gchalt++; if(curP != nil){ curP->gcheld++; if(++curP->gcdepth > gcdepthmax) gcdepthmax = curP->gcdepth; } else if(++gcdepth > gcdepthmax) gcdepthmax = gcdepth; }while(0)
 #define gcunlock()	do{ if(gcatomic) ADEC(&gchalt); else gchalt--; if(curP != nil){ curP->gcheld--; curP->gcdepth--; } else gcdepth--; }while(0)
 #define GCDEPTH		(curP != nil ? curP->gcdepth : gcdepth)
-#define gcunwind()	do{ while(gcunwindon && curP != nil && curP->gcheld > 0) gcunlock(); }while(0)
+/*
+ * How many gclock()s gcunwind() has given back.  This is the count that
+ * says a non-local exit leaked one, and gchalt is not: gchalt is a
+ * global, so testing it after the unwind reports every OTHER context's
+ * live gclock as this context's leak.  Measured before the change: 63
+ * "leaks" at -smp 2 and 16 at -smp 4 in boots whose collector ran a
+ * million times, which is what a healthy kernel looks like -- they were
+ * other executors holding locks, not leaks.
+ */
+extern	ulong	gcunwound;
+#define gcunwind()	do{ while(gcunwindon && curP != nil && curP->gcheld > 0){ gcunlock(); gcunwound++; } }while(0)
 #define gcruns()	(gchalt == 0)
 
 /* Atomic refcount inc/dec: the scheduler genuinely runs multiple native

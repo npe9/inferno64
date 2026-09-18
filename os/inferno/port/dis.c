@@ -2234,6 +2234,7 @@ ulong regmoved;		/* saved registers changed between quanta */
 ulong regmovedsrc[8], spregress, regmovedtold;
 ulong unsynced, unsyncedtold, unsyncedran, unsyncedrantold;
 ulong gcleaks, gcleaktold;
+ulong gcunwound;	/* gclock()s handed back by gcunwind(); see interp.h */
 /*
  * *syncfix=0 turns the sync above off, so one kernel measures both
  * arms of it in one batch.  Temporary, like *tearlock and *chanlock.
@@ -2726,8 +2727,9 @@ vmachine(void*)
 		 * one: exception.c has already synced p->reg from R on the
 		 * path that carries on executing.
 		 */
-		gcunwind();	/* see gclock() in interp.h */
-		if(gchalt != 0){
+		{
+			ulong unwound;
+
 			/*
 			 * A longjmp out of a gclock() region leaks the count,
 			 * and gchalt is a global: the collector is then off
@@ -2735,14 +2737,29 @@ vmachine(void*)
 			 * and boots that sit at a few thousand collections
 			 * instead of hundreds of thousands are boots where
 			 * this happened.
+			 *
+			 * Count what gcunwind() gave back, not what gchalt
+			 * reads afterwards.  The old test was "gchalt != 0"
+			 * here, which is true whenever ANY other executor
+			 * holds a gclock at this instant -- so it reported 63
+			 * leaks at -smp 2 and 16 at -smp 4 in boots whose
+			 * collector ran nearly a million times.  Those were
+			 * other contexts working, and this context had leaked
+			 * nothing.
 			 */
-			if(gcleaktold++ < 6)
-				print("vmachine: gchalt %d gcdepth %d at the"
-					" handler, site %s, err \"%s\"\n",
-					gchalt, GCDEPTH,
-					gclocksite != nil ? gclocksite : "none",
-					up->env->errstr);
-			gcleaks++;
+			unwound = gcunwound;
+			gcunwind();	/* see gclock() in interp.h */
+			unwound = gcunwound - unwound;
+			if(unwound != 0){
+				if(gcleaktold++ < 6)
+					print("vmachine: gave back %lud gclock(s)"
+						" at the handler, gcdepth %d, site %s,"
+						" err \"%s\"\n",
+						unwound, GCDEPTH,
+						gclocksite != nil ? gclocksite : "none",
+						up->env->errstr);
+				gcleaks += unwound;
+			}
 		}
 		{	/* MULTICORE INSTRUMENTATION - temporary */
 			Prog *was;
@@ -3510,7 +3527,7 @@ stalldump(void)
 
 		print("stall: gcnruns %lud stwwaits %d gcidlepass %llud"
 			" gcpartial %llud gaveup %d idlegaveup %d idlebusy %d,"
-			" gchalt %d gcdepth %d, leaks seen %lud, site %s,"
+			" gchalt %d gcdepth %d, gclocks given back %lud, site %s,"
 			" collections inside a gclock %lud\n",
 			gcnruns, stwwaits, gcidlepass, gcpartial, stwgaveup,
 			gcidlegaveup, gcidlebusy, gchalt, GCDEPTH, gcleaks,
