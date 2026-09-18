@@ -301,6 +301,20 @@ netdebug()
 # a board with no network at all, and the difference matters.
 pingtest()
 {
+	# Opt in, with the rest of the network diagnostics: /n/dos/netdebug
+	# turns this on as well.  A board that pings something every twenty
+	# seconds for an hour and says so is a board whose console cannot
+	# be read.
+	on := 0;
+	for(w := 0; w < 300 && !on; w++){
+		if(sys->open("/n/dos/netdebug", Sys->OREAD) != nil)
+			on = 1;
+		else
+			sys->sleep(100);
+	}
+	if(!on)
+		return;
+
 	# the FAT partition is mounted by another process a moment later
 	fd: ref Sys->FD;
 	for(i := 0; i < 300; i++){
@@ -657,7 +671,21 @@ rename(path: string, newname: string): int
 	if(ok < 0)
 		return -1;
 	d.name = newname;
-	return sys->wstat(path, d);
+	#
+	# A wstat the server refuses arrives here as an exception, not as
+	# -1: renaming onto a name that exists broke this process with
+	# "file exists" rather than returning an error to be reported.
+	# kupdate renames twice on every kernel update and would have gone
+	# the same way.
+	#
+	r := -1;
+	{
+		r = sys->wstat(path, d);
+	} exception {
+	"*" =>
+		return -1;
+	}
+	return r;
 }
 
 # Write to the partition the firmware reads, which is the point of
@@ -700,6 +728,10 @@ fatwrite()
 	# 279704 bytes and emptied a directory whose clusters then looked
 	# free.  Nothing below 65536 clusters can show it, which is why the
 	# 4GB card's partition is 512MB.
+	# Anything a previous boot left, first: a leftover target used to
+	# poison every later boot, because a rename onto an existing name
+	# removed the source entry before finding out.
+	sys->remove("/n/dos/inferno2.txt");
 	(ok, before) := sys->stat(name);
 	if(ok < 0){
 		sys->print("FAT-RENAME-FAIL stat %s: %r\n", name);
@@ -729,9 +761,116 @@ fatwrite()
 		sys->print("FAT-RENAME-FAIL the renamed file does not read back\n");
 		return;
 	}
-	sys->remove("/n/dos/inferno2.txt");
 	sys->print("FAT-RENAME-OK %bd bytes, contents intact across a rename\n",
 		after.length);
+
+	# And a rename onto a name that exists must be refused, with the
+	# source left whole.  Getting this wrong is not a failed rename,
+	# it is a lost file: dossrv removed the old entry and then found
+	# it could not make the new one, and said "phase error" while the
+	# data went with it.  That is what happened to this board's own
+	# kernel, renamed over kernel8.bak on every update.
+	fd2 := sys->create(name, Sys->ORDWR, 8r666);
+	if(fd2 == nil){
+		sys->print("FAT-CLOBBER-FAIL create %s: %r\n", name);
+		return;
+	}
+	b2 := array of byte msg;
+	sys->write(fd2, b2, len b2);
+	fd2 = nil;
+	if(rename("/n/dos/inferno2.txt", "inferno.txt") >= 0){
+		sys->print("FAT-CLOBBER-FAIL the rename onto an existing name was allowed\n");
+		return;
+	}
+	(ok3, still) := sys->stat("/n/dos/inferno2.txt");
+	if(ok3 < 0){
+		sys->print("FAT-CLOBBER-FAIL the source is gone: %r\n");
+		return;
+	}
+	if(still.length != after.length){
+		sys->print("FAT-CLOBBER-FAIL the source is %bd bytes, was %bd\n",
+			still.length, after.length);
+		return;
+	}
+	sys->print("FAT-CLOBBER-OK refused, and the source is whole\n");
+	sys->remove("/n/dos/inferno2.txt");
+	fatbig();
+}
+
+# A big file, because that is the one the board actually writes.
+#
+# kupdate fetches a kernel -- 1.7MB -- creates it, renames the old one
+# aside and renames the new one into place.  The 29-byte check above
+# passes on a filesystem where that loses data: the card the Pi boots
+# from ended with 478MB of its 504MB allocated while its files came to
+# 176MB, and a kernel8.img whose first cluster was right and whose
+# later clusters held something else.  So write something of that size,
+# read every byte back, and rename it.
+Bigfile: con "/n/dos/bigfile.bin";
+Bigsize: con 1500*1024;
+
+fatbig()
+{
+	sys->remove("/n/dos/bigfile2.bin");
+	sys->remove(Bigfile);
+	fd := sys->create(Bigfile, Sys->ORDWR, 8r666);
+	if(fd == nil){
+		sys->print("FAT-BIG-FAIL create: %r\n");
+		return;
+	}
+	b := array[4096] of byte;
+	for(i := 0; i < len b; i++)
+		b[i] = byte (i*7+1);
+	n := 0;
+	while(n < Bigsize){
+		if(sys->write(fd, b, len b) != len b){
+			sys->print("FAT-BIG-FAIL write at %d: %r\n", n);
+			return;
+		}
+		n += len b;
+	}
+	fd = nil;
+	if(fatbigcheck(Bigfile, n, b) < 0)
+		return;
+	if(rename(Bigfile, "bigfile2.bin") < 0){
+		sys->print("FAT-BIG-FAIL rename: %r\n");
+		return;
+	}
+	if(fatbigcheck("/n/dos/bigfile2.bin", n, b) < 0)
+		return;
+	sys->remove("/n/dos/bigfile2.bin");
+	sys->print("FAT-BIG-OK %d bytes written, read back and renamed\n", n);
+}
+
+fatbigcheck(name: string, n: int, b: array of byte): int
+{
+	(ok, d) := sys->stat(name);
+	if(ok < 0){
+		sys->print("FAT-BIG-FAIL stat %s: %r\n", name);
+		return -1;
+	}
+	if(int d.length != n){
+		sys->print("FAT-BIG-FAIL %s is %bd bytes, wrote %d\n", name, d.length, n);
+		return -1;
+	}
+	fd := sys->open(name, Sys->OREAD);
+	if(fd == nil){
+		sys->print("FAT-BIG-FAIL open %s: %r\n", name);
+		return -1;
+	}
+	r := array[len b] of byte;
+	for(off := 0; off < n; off += len b){
+		if(sys->read(fd, r, len r) != len r){
+			sys->print("FAT-BIG-FAIL read at %d: %r\n", off);
+			return -1;
+		}
+		for(i := 0; i < len r; i++)
+			if(r[i] != b[i]){
+				sys->print("FAT-BIG-FAIL %s differs at %d\n", name, off+i);
+				return -1;
+			}
+	}
+	return 0;
 }
 
 # The FAT partition the firmware boots from, found in the master boot

@@ -473,7 +473,13 @@ mkdentry(xf: ref Xfs, ndp: ref Dosptr, name: string, sname: string, islong: int,
 	if(ndp.p == nil)
 		return Eio;
 	if(islong && (r := putlongname(xf, ndp, name, sname)) < 0){
-		putsect(ndp.p);
+		# putlongname releases the sector it was on before moving
+		# to naddr, and returns -1 having set p to nil when there
+		# is no naddr to move to.  Releasing it again dereferences
+		# nil, which is how a rename to a long name that straddles
+		# a directory sector took the whole file server down.
+		if(ndp.p != nil)
+			putsect(ndp.p);
 		if(r == -2)
 			return Efull;
 		return Eio;
@@ -734,7 +740,19 @@ doremove(f: ref Xfs, dp: ref Dosptr)
 		dp.p.iobuf[prevdo] = byte DOSEMPTY;
 	}
 
-	if (prevdo <= 0 && dp.prevaddr != -1){
+	#
+	# Only if the walk ran off the bottom of this sector without
+	# meeting a live entry does the name continue in the sector
+	# before.  prevdo == 0 means it stopped ON the first entry of
+	# this sector because that entry is not a long-name one -- the
+	# chain ended there -- and going back anyway deleted the
+	# trailing long-name entries of the file before it.  That file
+	# then had a live short entry and no name: the stress test
+	# renamed six files, removed them in turn, and the one whose
+	# short entry sat at offset 0 of a sector could no longer be
+	# found by the name it was renamed to.
+	#
+	if (prevdo < 0 && dp.prevaddr != -1){
 		p := getsect(f,dp.prevaddr);
 		for(prevdo = f.ptr.sectsize-DOSDIRSIZE; prevdo >= 0; prevdo-=DOSDIRSIZE) {
 			if(p.iobuf[prevdo+11] != byte DLONG)
@@ -1006,7 +1024,13 @@ rwstat(t: ref Tmsg.Wstat): ref Rmsg
 			i := 1;
 			for(;;) {
 				sname = long2short(wdir.name, i);
-				(r1, tmpdp) := searchdir(f, sname, 0, 0);
+				# in the parent, not in the file being
+				# renamed: searching f walks the file as
+				# though it were a directory, and the first
+				# rename to a long name panicked dossrv in
+				# fileclust with the file's own entry as the
+				# directory to read
+				(r1, tmpdp) := searchdir(pf, sname, 0, 0);
 				if(r1 < 0)
 					break;
 				putsect(tmpdp.p);
@@ -1017,12 +1041,41 @@ rwstat(t: ref Tmsg.Wstat): ref Rmsg
 			(b, e) := dosname(wdir.name);
 			sname = b+e;
 		}
-		# (r, ndp) := searchdir(pf, wdir.name, 1, 1);
-		# if(r < 0){
-		#	putsect(parp);
-		#	g.errno = Eperm;
-		#	return;
-		# }
+		#
+		# Does the new name exist already?  Ask before touching
+		# anything.
+		#
+		# This check was here, commented out, and its absence cost
+		# a filesystem.  The order below is: remove the old entry,
+		# then look for a slot for the new name -- and searchdir
+		# with cflag refuses a name that exists, so a rename onto
+		# an existing file destroyed the source and reported
+		# "phase error -- directory entry not found".  The Pi does
+		# exactly that on every kernel update, renaming kernel8.img
+		# over kernel8.bak, and its card ended with a kernel8.img
+		# whose first cluster was right and whose rest was
+		# somebody else's data.
+		#
+		# A rename onto an existing name is refused here, which is
+		# what wstat is specified to do.
+		# By the name asked for, with the long-name search, which
+		# matches a short name too.  Not by sname: that is a short
+		# name chosen a moment ago precisely because nothing has
+		# it.  And not by the 8.3 form of the new name either --
+		# a file created as "inferno.txt" carries a long name
+		# whose short alias is INFERN~1TXT, so the 8.3 form finds
+		# nothing and the check passes over the file it is meant
+		# to find.
+		(rex, exdp) := searchdir(pf, wdir.name, 0, 1);
+		if(rex >= 0){
+			if(exdp != nil && exdp.p != nil)
+				putsect(exdp.p);
+			putsect(parp);
+			# and no putfile: the file was released a few lines
+			# above, at "temporarily release file", and putfile
+			# panics on a file that is not held
+			return e(Eexist);
+		}
 		if(getfile(f) < 0){
 			putsect(parp);
 			return e(Eio);
@@ -1036,7 +1089,21 @@ rwstat(t: ref Tmsg.Wstat): ref Rmsg
 		# create new entry.
 		#
 		r := 0;
-		(r, dp) = searchdir(pf, sname, 1, islong);
+		#
+		# By the name being created, not by its short alias.
+		# searchdir sizes the run of free directory entries from the
+		# name it is given -- one for the entry itself and one for
+		# every thirteen characters of a long name -- and the alias is
+		# eleven characters whatever the long name is.  So a rename to
+		# a long name reserved two slots where the name wanted three,
+		# and putlongname then walked off the end of the sector into
+		# whatever came next.  rcreate has always passed the long name
+		# here; this did not.
+		#
+		lookup := sname;
+		if(islong)
+			lookup = wdir.name;
+		(r, dp) = searchdir(pf, lookup, 1, islong);
 		if(r < 0){
 			putsect(parp);
 			return e(Ephase);
@@ -1647,9 +1714,19 @@ searchdir(f: ref Xfile, name: string, cflag: int, lflag: int): (int, ref Dosptr)
 					addr2 = addr;
 				continue;
 			}
+			#
+			# A live entry ends the free run, and the run's
+			# start goes with it.  This kept addr1 when addr2
+			# had been set, so a later end-of-directory could
+			# be answered with a start from before the live
+			# entries and a second sector from after them --
+			# two unrelated places, and putlongname writing
+			# the name across both, over whatever was in the
+			# first.
+			#
 			have = 0;
-			if(addr2 == -1)
-				addr1 = -1;
+			addr1 = -1;
+			addr2 = -1;
 
 			if(0 && lflag && debug)
 				dirdump(p.iobuf[o:o+DOSDIRSIZE],addr,o);

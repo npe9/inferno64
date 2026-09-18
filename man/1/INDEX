@@ -286,6 +286,7 @@ env sh-std
 exit sh
 expr sh-expr
 factor math-misc
+fatstress fatstress
 fc fc
 fcp cp
 fibonacci math-misc

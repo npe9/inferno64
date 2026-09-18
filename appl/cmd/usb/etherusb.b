@@ -125,6 +125,10 @@ ndump6 := 0;		# ARP frames dumped, for comparison
 # source mac, ethertype, and the start of what follows.  A frame the
 # other end never sees is either not written or written wrong, and the
 # second of those is only visible here.
+#
+# Under -d only.  These ran on every boot while the board's network was
+# being found out, and they are noise now that it works: a console with
+# frame dumps scrolling past it is one nothing else can be read on.
 txdump(what: string, f: array of byte)
 {
 	s := "";
@@ -924,10 +928,12 @@ txproc()
 		t := 0;
 		if(len frame0 >= 14)
 			t = (int frame0[12] << 8) | int frame0[13];
-		if(t == 16r800 && ndump4++ < 4)
-			txdump("ip", f);
-		else if(t == 16r806 && ndump6++ < 2)
-			txdump("arp", f);
+		if(debug){
+			if(t == 16r800 && ndump4++ < 4)
+				txdump("ip", f);
+			else if(t == 16r806 && ndump6++ < 2)
+				txdump("arp", f);
+		}
 		if(debug)
 			sys->print("etherusb: tx write %d\n", len f);
 		if(sys->write(bout.dfd, f, len f) != len f){
@@ -1234,7 +1240,7 @@ deliver(f: array of byte)
 	# every ARP frame that reaches this server, so a reply the other end
 	# swears it sent can be placed on one side of the endpoint or the
 	# other
-	if(t == 16r806 && nrxdump++ < 8)
+	if(debug && t == 16r806 && nrxdump++ < 8)
 		txdump("rxarp", f);
 	if(debug)
 		sys->print("etherusb: rx %d bytes type %#4.4x\n", len f, t);

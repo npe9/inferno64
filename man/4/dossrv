@@ -71,6 +71,36 @@ to make a union directory with the CD contents before the contents of
 .B /appl/cmd/dossrv.b
 .br
 .B /appl/cmd/9660srv.b
+.SH TESTING
+.IR Fatstress (1)
+and
+.B /tests/dossrv-stress.sh
+write, rename and remove files through
+.I dossrv
+on three file systems \- FAT16, FAT32 with 512-byte clusters and
+files above cluster 65535, and FAT32 with 4KB clusters \- and then
+run
+.B "fsck_msdos -n"
+over each image.
+All three pass, image clean.
+The Raspberry Pi 3B kernel runs a smaller version of the same checks
+against its own card at boot, in
+.BR /os/inferno/init/raspi3binit.b ,
+and prints FAT-RENAME-OK, FAT-CLOBBER-OK and FAT-BIG-OK.
 .SH BUGS
 .I Dossrv
 cannot handle all the FAT32 extensions.
+.PP
+These were all found by a Raspberry Pi 3B damaging the card it boots
+from, one boot at a time, and are fixed:
+a rename kept only the low sixteen bits of a start cluster, so a file
+above cluster 65535 was rewritten to point somewhere else;
+a FAT32 root directory could not grow past its first cluster;
+a rename onto a name that already existed removed the source entry
+before finding out it could not finish, leaving neither file and
+reporting a phase error;
+and
+.I doremove
+followed a long name into the sector before it even when the chain
+had already ended, deleting the long-name entries of a different
+file, which left that file with a live directory entry and no name.

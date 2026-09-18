@@ -1,0 +1,74 @@
+.TH FATSTRESS 1
+.SH NAME
+fatstress \- hammer a FAT file system and check what comes back
+.SH SYNOPSIS
+.B fatstress
+[
+.BI -n " rounds"
+]
+[
+.BI -f " files"
+]
+[
+.BI -s " maxk"
+]
+.I dir
+.SH DESCRIPTION
+.I Fatstress
+writes, reads back, renames and removes files in
+.IR dir ,
+which is normally a FAT file system served by
+.IR dossrv (4),
+and reports what did not survive.
+Each round creates
+.I files
+files, checks every one of them, renames every one of them and
+checks it again, tries a rename onto a name that already exists,
+and removes half of them.
+The options are:
+.TP
+.BI -n " rounds"
+how many rounds to run; the default is 4
+.TP
+.BI -f " files"
+how many files each round writes; the default is 12
+.TP
+.BI -s " maxk"
+the largest file, in kilobytes; the default is 200
+.PP
+A file's contents are a function of a key that stays with the file
+across a rename, so a file that comes back holding another file's
+bytes is caught and not only one that comes back short.
+The names are a mixture of long ones and 8.3 ones, because they take
+different numbers of directory entries and only a long one can
+straddle a sector, and the sizes are chosen so that a file of no
+clusters, a file of one and a file of many are all covered.
+.PP
+The last line is
+.B FATSTRESS-OK
+or
+.BR "FATSTRESS-FAIL n failures" ,
+and each failure is reported as it happens.
+.PP
+.B /tests/dossrv-stress.sh
+runs it on the build host against three file systems built with
+.IR newfs_msdos :
+FAT16 with 512-byte clusters, FAT32 with 512-byte clusters and a
+34MB filler so that files land above cluster 65535, and FAT32 with
+4KB clusters.
+It then runs
+.B "fsck_msdos -n"
+over each image, which is the part that matters: reading the files
+back through the same code that wrote them is not a check on that
+code, and every FAT bug this found left an image that still mounted
+and still listed.
+.SH SOURCE
+.B /appl/cmd/fatstress.b
+.br
+.B /tests/dossrv-stress.sh
+.SH SEE ALSO
+.IR dossrv (4)
+.SH BUGS
+It does not test concurrent writers, and it never crashes the server
+in the middle of a write, so it says nothing about what a FAT looks
+like after a power cut.

@@ -68,6 +68,7 @@ TARG=\
 	engridden.dis\
 	env.dis\
 	export.dis\
+	fatstress.dis\
 	fc.dis\
 	fcp.dis\
 	fmt.dis\
