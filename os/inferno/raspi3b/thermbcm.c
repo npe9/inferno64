@@ -81,7 +81,7 @@ thermfw(void)
 	v[0] = 0;			/* temperature id 0 */
 	v[1] = 0;
 	resp = 0;
-	if(mboxtag(Taggettemp, v, 2, 4, &resp) < 0)
+	if(mboxtag(Taggettemp, v, 2, 1, &resp) < 0)	/* one word of request */
 		return -1;
 	if((resp & 0x80000000) == 0)
 		return -1;

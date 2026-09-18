@@ -1276,8 +1276,43 @@ etherone(ifname, tag: string, tries: int, ip, mask, gw: string)
 # given one go: sntp(8) sets the clock and says so, and a board whose
 # network cannot reach any of them says that instead of guessing.
 #
+#
+# The connection server, which is what turns a service name into a port.
+#
+# dial(2) asks /net/cs and falls back to passing the address through
+# unchanged when there is none, so on a board without cs "udp!gw!ntp"
+# reached the IP device with "ntp" where a port number goes and was
+# refused -- "non-numeric port number", which reads like a network
+# failure and is a missing name service.  cs answers it out of
+# /lib/ndb, where common has udp=ntp port=123, so the kernel carries
+# those three files and cs itself.
+#
+csstart(): int
+{
+	(have, nil) := sys->stat("/net/cs");
+	if(have == 0)
+		return 1;
+	cs := load Command "/dis/ndb/cs.dis";
+	if(cs == nil){
+		sys->print("CS-NONE load cs: %r\n");
+		return 0;
+	}
+	spawn cs->init(nil, "cs" :: nil);
+	for(i := 0; i < 100; i++){
+		(ok, nil) := sys->stat("/net/cs");
+		if(ok == 0){
+			sys->print("CS-OK /net/cs answers service names\n");
+			return 1;
+		}
+		sys->sleep(100);
+	}
+	sys->print("CS-NONE /net/cs never appeared\n");
+	return 0;
+}
+
 timecheck(gw: string)
 {
+	csstart();
 	sntp := load Command "/dis/ip/sntp.dis";
 	if(sntp == nil){
 		sys->print("TIME-NONE load sntp: %r\n");

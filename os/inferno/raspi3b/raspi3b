@@ -159,6 +159,12 @@ root
 	/dis/dossrv.dis
 	/dis/ip/ping.dis
 	/dis/ip/sntp.dis
+	/dis/ndb/cs.dis
+	/dis/lib/attrdb.dis
+	/dis/lib/ipattr.dis
+	/lib/ndb/local
+	/lib/ndb/common
+	/lib/ndb/inferno
 	/dis/lib/dhcpclient.dis
 	/dis/bt/btfs.dis
 	/dis/bt/bcmfw.dis
