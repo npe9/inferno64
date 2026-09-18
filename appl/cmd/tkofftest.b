@@ -1403,6 +1403,17 @@ checkscene()
 	# underline - so a centred one is drawn the old way and its controls
 	# come back clean.  Active because the fill is drawn only for a
 	# widget the pointer is on, and there is no pointer here.
+	# A second FONT in the pane, because a glyph node carries the name of
+	# its face and the renderer opens it by that name: with every widget
+	# in the default face, a node that named the wrong font would still
+	# draw, since there would be nothing else for it to be confused
+	# with.  Skipped when no face is being served, and the run says so.
+	ttf2 := ttfname();
+	if(ttf2 != nil){
+		must(top, "label .tf -text {Handgloves 123} -font /mnt/ft/" + ttf2);
+		tk->cmd(top, "pack .tf -padx 6 -pady 6");
+	}else
+		sys->print("     (no face served: the pane is one font)\n");
 	must(top, "menubutton .mb -text {File} -relief sunken " +
 		"-justify left -state active");
 	tk->cmd(top, "pack .mb -padx 6 -pady 6");

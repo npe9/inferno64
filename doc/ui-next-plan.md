@@ -1165,8 +1165,26 @@ composite, and the plan was wrong about it twice.**
    both paths. And a focused `entry` or `scale` drew its ring after its
    border, putting a square blue corner outside a rounded one.
 
-**B. `TkNglyphs` carries an atlas reference, not a `Font*`** (plan item
-2). This is the one node that still holds a resource, and `scene.c` says
+**B. `TkNglyphs` carries a font NAME, not a `Font*` — half done.**
+
+   The node no longer holds a display-side resource: it carries the
+   face's name and the renderer resolves it with `font_open()`, the same
+   call `libtk` already uses for every face including `*default*`, with
+   a small never-emptied cache. Identity holds at 0 bytes with two faces
+   in the pane — the second one had to be *added*, because with every
+   widget in the default face a node naming the wrong font would still
+   have drawn. Controls: a name nothing can open loses 45891 bytes of
+   text, and the wrong name — `*default*` for every node — differs by
+   64158.
+
+   What is left of B is the layout: the node still carries a string, so
+   the renderer calls `string()`. A backend cannot, so positioned glyphs
+   and an atlas are still owed — but that changes what the pixels are
+   made of and is a step of its own. The original phrasing of this item
+   follows, and the atlas half of it stands:
+
+   ~~**`TkNglyphs` carries an atlas reference, not a `Font*`**~~ (plan
+   item 2). This is the one node that still holds a resource, and `scene.c` says
 so in place. It blocks two separate things: a retained tree cannot
 outlive the caller while it points at a `Font`, and no backend can draw
 text from a node that hands it a display-side font object. The pieces

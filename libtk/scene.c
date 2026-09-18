@@ -75,6 +75,8 @@ tkscenefree(TkScene *s)
 	for(n = s->head; n != nil; n = n->next){
 		if(n->text != nil)
 			free(n->text);
+		if(n->fontname != nil)
+			free(n->fontname);
 		if(n->pts != nil)
 			free(n->pts);
 	}
@@ -200,38 +202,77 @@ tksceneborderon(TkScene *s, Rectangle r, int radius, int width, ulong rgba, ulon
 }
 
 /*
- * A run of text at a point.
+ * A run of text at a point, in a NAMED font.
  *
- * This one carries a Font*, and so breaks the rule that a node holds
- * values and never a resource.  GSK's glyph node does the same thing for
- * the same reason: a font is not reducible to a number, and the
- * alternative - laying the run out here into positioned glyph indices -
- * needs the glyph atlas that does not exist yet.  When it does, this
- * node becomes an atlas reference and a list of positions, and the Font*
- * goes away.  Recording that now so the field is not mistaken for a
- * decision.
+ * The node used to carry the Font* itself, which was the one place a
+ * node held a display-side resource rather than a value, and it is the
+ * reason a tree could not outlive the call that built it: a Font
+ * belongs to a display and can be closed under a tree that points at
+ * it.  A name is a value.  The renderer resolves it with font_open(),
+ * which is how the toolkit opens every font it uses anyway - including
+ * "*default*", which libtk asks for by that name in utils.c.
  *
- * The string is copied because a retained tree may outlive its caller's
- * buffer.  Today it does not - a scene is built and rendered in one call
- * - so this is an allocation per text node per repaint, paid for a
- * property nothing yet relies on.
+ * What this does NOT yet do is lay the run out into positioned glyphs.
+ * That is the other half of the same job, and it is what a backend
+ * needs, since it cannot call string() at all; but it changes what the
+ * pixels are made of, so it is a step of its own and this one is not
+ * pretending to have taken it.
+ *
+ * The string is copied for the same reason the name is.
  */
 void
 tkscenetext(TkScene *s, Point p, char *text, Font *f, ulong rgba)
 {
 	TkNode *n;
 
-	if(text == nil || *text == '\0' || f == nil)
+	if(text == nil || *text == '\0' || f == nil || f->name == nil)
 		return;
 	if((n = newnode(s, TkNglyphs)) == nil)
 		return;
 	n->r.min = p;
 	n->r.max = p;
 	n->rgba = rgba;
-	n->font = f;
 	n->text = strdup(text);
-	if(n->text == nil)
+	n->fontname = strdup(f->name);
+	if(n->text == nil || n->fontname == nil)
 		n->type = TkNgroup;	/* a node that draws nothing */
+}
+
+/*
+ * Name to Font, for the renderer.
+ *
+ * Small and never emptied: a window uses a handful of faces and each is
+ * opened once for the life of the process, which is what the toolkit
+ * already does with the fonts in a TkEnv.  A miss that cannot be opened
+ * draws nothing, which is visible, rather than falling back to another
+ * face, which would not be.
+ */
+static Font*
+scenefont(TkCtxt *c, char *name)
+{
+	static struct {
+		char*	name;
+		Font*	font;
+	} cache[16];
+	int i;
+	Font *f;
+
+	if(name == nil || c == nil || c->display == nil)
+		return nil;
+	for(i = 0; i < nelem(cache); i++){
+		if(cache[i].name == nil)
+			break;
+		if(strcmp(cache[i].name, name) == 0)
+			return cache[i].font;
+	}
+	f = font_open(c->display, name);
+	if(f == nil || i >= nelem(cache))
+		return f;
+	cache[i].name = strdup(name);
+	if(cache[i].name == nil)
+		return f;
+	cache[i].font = f;
+	return f;
 }
 
 /*
@@ -718,6 +759,7 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 {
 	TkNode *n, *open;
 	Image *col, *target, *saved, *t;
+	Font *fnt;
 	int drawn;
 
 	if(s == nil || c == nil || dst == nil)
@@ -766,8 +808,9 @@ tkscenerender(TkScene *s, TkCtxt *c, Image *dst)
 			break;
 		case TkNglyphs:
 			col = tkcolor(c, n->rgba);
-			if(col != nil)
-				string(target, n->r.min, col, ZP, n->font, n->text);
+			fnt = scenefont(c, n->fontname);
+			if(col != nil && fnt != nil)
+				string(target, n->r.min, col, ZP, fnt, n->text);
 			break;
 		case TkNellipse:
 			col = tkcolor(c, n->rgba);

@@ -271,6 +271,21 @@ identity check measures;
 answers how many trees and how many widgets, which is what a test asks
 to see the batching, since the pixels cannot show it.
 .PP
+.B TkNglyphs
+carries the NAME of its face, not a
+.BR Font* .
+A font belongs to a display and can be closed under a tree that points
+at it, which is why a node holding one could not outlive the call that
+built it; a name is a value, and the renderer resolves it with
+.I font_open
+\(em the same call the toolkit uses for every face it opens, including
+.BR *default* .
+What it does not yet do is lay the run out into positioned glyphs, which
+is the other half of that job and the half a backend needs, since a
+backend cannot call
+.I string
+at all.
+.PP
 Six node types are declared and not implemented:
 .BR TkNtexture ,
 .BR TkNlinear ,

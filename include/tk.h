@@ -564,7 +564,7 @@ struct TkNode
 	Rectangle	dstr;		/* TkNlayer: where the result lands */
 	Point		sp;		/* TkNlayer: source point of the blit */
 	ulong		rgba;
-	Font*		font;		/* TkNglyphs */
+	char*		fontname;	/* TkNglyphs, owned by the scene */
 	char*		text;		/* TkNglyphs, owned by the scene */
 	Point*		pts;		/* TkNpolyfill, owned by the scene */
 	int		npts;
