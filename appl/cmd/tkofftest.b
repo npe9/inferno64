@@ -58,7 +58,7 @@ Tkofftest: module
 };
 
 W: con 900;			# room for the widest widget at the largest font,
-H: con 1700;			# so that packing is never what clamps a measurement
+H: con 1780;			# so that packing is never what clamps a measurement
 				#
 				# H was 700 until the render-node pane grew: a
 				# widget packed past the bottom is never drawn,
@@ -1328,6 +1328,20 @@ checkscene()
 	tk->cmd(top, "frame .f -width 90 -height 46 -borderwidth 2 " +
 		"-relief raised -bg white");
 	tk->cmd(top, "button .b -text {Cancel}");
+	# Indicator-LESS check and radio buttons, which is what a
+	# tknotebook(2) tab is: no indicator drawn, a relief chosen from
+	# whether it is set, and the accent behind it when it is.  Both
+	# states, because the relief is the only thing that differs.
+	# With a BORDER, deliberately: a check or radio button is made with
+	# borderwidth 0, so the relief such a button picks from its state
+	# draws nothing at all and a control that perturbs it passes.  Given
+	# a border the relief is visible, and the state is then shown twice
+	# over - by the accent behind it and by the bevel.
+	must(top, "checkbutton .ci -text {Chip on} -indicatoron 0 -variable cvi -borderwidth 2");
+	must(top, "variable cvi 1");
+	tk->cmd(top, "pack .ci -padx 6 -pady 6");
+	must(top, "radiobutton .ri -text {Tab off} -indicatoron 0 -variable rvi -value 7 -borderwidth 2");
+	tk->cmd(top, "pack .ri -padx 6 -pady 6");
 	# A BITMAP, on a label and on a button.  The chrome's artwork is
 	# one-bit images under /icons/tk, painted through in the foreground
 	# colour, and a texture node names the file rather than holding the

@@ -303,8 +303,9 @@ tkdrawbutton(Tk *tk, Point orig)
 	 * The whole widget as one layer, when it is the simple case: a plain
 	 * button with text and no image, a run that reduces to one string(),
 	 * and the flat style.  Everything else keeps the scratch-and-blit it
-	 * has always used, because the indicator a checkbutton draws and the
-	 * bitmap path have no nodes yet.
+	 * has always used.  -indicatoron 0 is in as well: such a button draws
+	 * no indicator at all, it picks a relief and is otherwise a push
+	 * button, and every part of that already had a node.
 	 *
 	 * Nothing is translated: a button already draws its interior in
 	 * coordinates relative to its own top-left, which is exactly what a
@@ -315,9 +316,8 @@ tkdrawbutton(Tk *tk, Point orig)
 	 */
 	bsc = nil;
 	if(tkviascene && tkstyleflat(tk)
-	&& (tk->type == TKbutton
-		|| ((tk->type == TKradiobutton || tk->type == TKcheckbutton)
-			&& tkl->indicator != BoolF))
+	&& (tk->type == TKbutton || tk->type == TKradiobutton
+		|| tk->type == TKcheckbutton)
 	&& (tkl->text != nil || tkimgfile(tkl) != nil))
 		bsc = tkwalkjoin(e->top->ctxt, dst);
 	if(bsc != nil){

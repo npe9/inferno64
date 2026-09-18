@@ -1023,11 +1023,21 @@ there was never speed on the table here anyway.
    packer hands it a negative size, so comparing only x plus width
    against the pane passed while the scrollbars were 886 by −14.
 
-   Still drawn through a scratch image: a button, radiobutton,
-   checkbutton or label carrying an image or a bitmap, which want a
-   texture node; a checkbutton or radiobutton with `-indicatoron 0`;
+   Still drawn through a scratch image: a widget whose image came from
+   a file *descriptor*, which has no path for a texture node to name;
    and a `text`, a `canvas`, a `panel` and a `menu`, which paint into
-   the window directly.
+   the window directly. That is the whole list.
+
+   **`-indicatoron 0` was a stale exclusion.** Such a button draws no
+   indicator at all — it picks a relief from its state and is otherwise
+   a push button — so every part of it already had a node. Its control
+   was clean twice before it discriminated, and the reason is worth
+   keeping: a check or radio button is created with `borderwidth 0`, so
+   the relief it picks draws *nothing*, and perturbing it changes no
+   pixels. What proved the widget was reached at all was moving its
+   text, 8856 bytes; what makes the relief control bite is giving the
+   button a border, 16128. A state shown only by a bevel that is never
+   drawn would have been worth knowing about either way.
 
    **`TkNtexture` is done, and it names a FILE.** The rule the node
    vocabulary keeps is that a node holds no display-side resource —
