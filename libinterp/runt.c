@@ -391,6 +391,52 @@ Sys_char2byte(void *fp)
 	*f->ret = 0;
 }
 
+/*
+ * The frame type for a builtin function, shared between every builtin
+ * that has the same one.
+ *
+ * builtinmod() used to call dtype() once per exported function, which
+ * on a kernel carrying sys, keyring, crypt and math is 334 Type
+ * allocations -- 21376 bytes at the pool's 64-byte granularity, and the
+ * largest single item in a small board's pool after the Dis
+ * instruction arrays went to flash.  Of those 334 only about twenty are
+ * distinct: a frame descriptor is a size, a pointer count and a pointer
+ * map, and most builtins have the same shape.
+ *
+ * Sharing is safe here in a way it would not be for a Dis module's own
+ * types: a Type is a pure descriptor, nothing compares one by identity,
+ * the reference count is kept correct below, and destroylinks() never
+ * frees these at all -- it frees the names and the Link array, because
+ * a builtin module is never unloaded.  They have always lived for the
+ * life of the kernel; now there are twenty of them instead of 334.
+ */
+static Type**	frames;
+static int	nframes;
+
+static Type*
+frametype(int size, uchar *map, int np)
+{
+	Type *t, **nf;
+	int i;
+
+	for(i = 0; i < nframes; i++){
+		t = frames[i];
+		if(t->size == size && t->np == np && memcmp(t->map, map, np) == 0){
+			AINC(&t->ref);
+			return t;
+		}
+	}
+	t = dtype(freeheap, size, map, np);
+	if(t == nil)
+		return nil;
+	nf = realloc(frames, (nframes+1)*sizeof(Type*));
+	if(nf == nil)
+		return t;	/* unshared, but correct */
+	frames = nf;
+	frames[nframes++] = t;
+	return t;
+}
+
 Module *
 builtinmod(char *name, void *vr, int rlen)
 {
@@ -413,7 +459,7 @@ builtinmod(char *name, void *vr, int rlen)
 		return nil;
 	}
 	while(r->name) {
-		t = dtype(freeheap, r->size, r->map, r->np);
+		t = frametype(r->size, r->map, r->np);
 		runtime(m, l, r->name, r->sig, r->fn, t);
 		r++;
 		l++;

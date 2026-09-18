@@ -1820,6 +1820,84 @@ and
 .I cvtchk (1)
 are clean on the M7 and the M4 bench.
 .NH 2
+One frame type per builtin function, of which twenty are distinct
+.PP
+With the instruction arrays in flash, the quantum corrected and the
+trace gone,
+.CW dtype
+was the largest item left: 35072 bytes in 548 live
+.CW Type s.
+The nine pre-decoded modules declare 214 of those between them.  The
+other 334 come from one place,
+.CW libinterp/runt.c:/^builtinmod ,
+which calls
+.CW dtype
+once per exported function of every builtin module \- the frame
+descriptor for a call into C.  On a kernel carrying
+.CW sys ,
+.CW keyring ,
+.CW crypt
+and
+.CW math
+that is 334 allocations of about forty bytes, charged 64 each.
+.PP
+A frame descriptor is a size, a pointer count and a pointer map, and
+most builtins have the same shape: of the 334, about twenty are
+distinct.  They are now shared.  Sharing is safe here in a way it would
+not be for a Dis module's own types \- a
+.CW Type
+is a pure descriptor, nothing compares one by identity, the reference
+count is kept correct, and
+.CW destroylinks()
+never frees these at all, because a builtin module is never unloaded.
+They have always lived for the life of the kernel; there are now twenty
+of them rather than 334.
+.PP
+Counted rather than assumed: the call was instrumented before the change
+and reported 558 calls, 10 frees, 548 live at the first prompt, and 35
+more created and 35 freed on each
+.I ls (1)
+\- so no leak, and the 334 really are permanent.  After the change, from
+.CW #c/memory
+and
+.CW #c/poolhist
+on
+.CW mps2 :
+.DS
+.CW "                      before     after"
+.CW "main, at a prompt     127680    109184"
+.CW "main, after ls        147200    128704"
+.CW "dtype                  35072     16448"
+.CW "live blocks              1327      1041"
+.CW "block headers           26540     20820"
+.DE
+286 fewer blocks, which is the 334 collapsing to about fifty once the
+.CW sys
+table's larger maps are counted.
+.PP
+The check that matters is the pointer map, because a shared descriptor
+with the wrong map would not fail loudly \- it would make the garbage
+collector mark the wrong words.  Ten rounds of
+.I ls (1)
+over four directories, 5603 allocations and 4562 frees, with
+.I fptest (1)
+and
+.I cvtchk (1)
+after them: clean, on the M7 and the M4 bench.  That exercises
+.CW sys
+and
+.CW math
+builtins heavily and the
+.CW string
+and
+.CW bufio
+modules through them;
+.CW keyring
+and
+.CW crypt
+are linked into this board but nothing in its root reaches them, so they
+are shared on the same argument and not on the same evidence.
+.NH 2
 The Proc array, which is not pool memory and so was never in the figures
 .PP
 .CW procinit
