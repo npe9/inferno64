@@ -1,0 +1,58 @@
+.TH IPINTTEST 1
+.SH NAME
+ipinttest \- check that IPint arithmetic raises rather than panics
+.SH SYNOPSIS
+.B ipinttest
+.SH DESCRIPTION
+.I Ipinttest
+asks
+.IR keyring (2)'s
+.B IPint
+for the arithmetic that the C library underneath it answers with
+.IR sysfatal :
+a remainder or a division by zero, a modular exponentiation with a
+negative exponent or a zero modulus, and an inverse that does not
+exist.
+.PP
+None of those is a bug in the caller's sense.  A modulus arrives from a
+certificate, an exponent from a key file, and a base that shares a
+factor with the modulus is something arithmetic produces.  But
+.B mpdiv
+ends
+.B "divide by zero"
+in
+.IR sysfatal ,
+and on a native kernel
+.I sysfatal
+is a panic \(em so one line of Limbo could stop a booted machine.  The
+builtins check first and raise an exception the program can catch:
+.BR "zero divide" ,
+.BR "negative exponent"
+or
+.BR "no inverse" .
+.PP
+Six of the calls were fatal before the guards existed; the three
+modular operations
+.RB ( mulmod ,
+.B addmod
+and
+.BR submod )
+are newer than them, and would have been fatal too had they been
+written as an operation followed by a
+.BR mod .
+.PP
+Each case is run inside a handler.  A case that returns normally is
+reported as a failure; a case that is still fatal takes the test with
+it, which is a failure of a louder kind.
+.PP
+Beside each is a positive control \(em the same operation with legal
+arguments, checked against its answer \(em so a build that raised for
+everything would fail here rather than pass.
+.SH SOURCE
+.B /appl/cmd/ipinttest.b
+.SH SEE ALSO
+.IR keyring-ipint (2),
+.IR p256test (1)
+.SH BUGS
+It covers the calls that were fatal, not the whole of
+.BR IPint .

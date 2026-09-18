@@ -90,17 +90,22 @@ hex(s: string): ref IPint
 
 fadd(cv: ref Curve, x, y: ref IPint): ref IPint
 {
-	return x.add(y).mod(cv.p);
+	return x.addmod(y, cv.p);
 }
 
 fsub(cv: ref Curve, x, y: ref IPint): ref IPint
 {
-	return x.sub(y).mod(cv.p);
+	return x.submod(y, cv.p);
 }
 
 fmul(cv: ref Curve, x, y: ref IPint): ref IPint
 {
-	return x.mul(y).mod(cv.p);
+	# addmod, submod and mulmod rather than the operation and then
+	# a mod: one call out of Dis into libmp instead of two, which is
+	# where a field operation's time goes here.  p256test(1) prints
+	# both costs.  A point addition does six subtractions to three
+	# multiplications, so the cheap-looking ones mattered most.
+	return x.mulmod(y, cv.p);
 }
 
 finv(cv: ref Curve, x: ref IPint): ref IPint
@@ -227,8 +232,8 @@ ecdsa_verify(hash, r, s, pub: array of byte): int
 
 	e := hashint(hash, cv);
 	w := si.invert(cv.n);
-	u1 := e.mul(w).mod(cv.n);
-	u2 := ri.mul(w).mod(cv.n);
+	u1 := e.mulmod(w, cv.n);
+	u2 := ri.mulmod(w, cv.n);
 
 	G := ref Point(0, cv.gx, cv.gy);
 	R := padd(cv, pmul(cv, u1, G), pmul(cv, u2, Q));

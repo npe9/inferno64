@@ -336,6 +336,7 @@ import sh-alphabet
 in sh-string
 index sh-std
 intro 0intro
+ipinttest ipinttest
 islist sh-sexprs
 itest itest
 itreplay itest

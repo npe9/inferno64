@@ -338,6 +338,28 @@ IPint_iptoint(void *fp)
 	*f->ret = mptoi(MP(f->i));
 }
 
+/*
+ * Two of libmp's failures are things a Limbo program can ask for, so
+ * they are raised rather than fatal; the strings are this module's own,
+ * since the interpreter has no name for either.
+ */
+static char exNegexp[] = "negative exponent";
+static char exNoinverse[] = "no inverse";
+
+/*
+ * libmp answers a division by zero with sysfatal, which on a native
+ * kernel is a panic: one line of Limbo could stop the machine.  Every
+ * builtin here that divides checks first and raises the same exception
+ * the Dis instruction set raises for integer division by zero, so a
+ * program can catch it.
+ */
+static void
+nonzero(mpint *m)
+{
+	if(m->top == 0)
+		error(exZdiv);
+}
+
 /* modular exponentiation */
 void
 IPint_expmod(void *fp)
@@ -353,32 +375,67 @@ IPint_expmod(void *fp)
 
 	base = MP(f->base);
 	exp = MP(f->exp);
-	if(f->mod != H)
+	if(f->mod != H){
 		mod = MP(f->mod);
-	else
+		nonzero(mod);
+	}else
 		mod = nil;
+	/*
+	 * mpexp answers a negative exponent with sysfatal; see nonzero.
+	 * The test is mpexp's own -- a sign field alone would differ
+	 * from it for a negative zero.
+	 */
+	if(mpcmp(exp, mpzero) < 0)
+		error(exNegexp);
 	ret = mpnew(0);
 	if(ret != nil)
 		mpexp(base, exp, mod, ret);
 	*f->ret = newIPint(ret);
 }
 
-/* multiplicative inverse */
+/*
+ * multiplicative inverse.  The extended gcd is done here rather than in
+ * mpinvert because mpinvert answers "no inverse" with sysfatal, and a
+ * base sharing a factor with the modulus is something a Limbo program
+ * can arrive at by arithmetic rather than by a bug -- it should get an
+ * exception it can catch, not a stopped machine.
+ */
 void
 IPint_invert(void *fp)
 {
 	F_IPint_invert *f;
-	mpint *ret;
+	mpint *b, *m, *ret, *g, *dc;
 	void *v;
+	int r;
 
 	f = fp;
 	v = *f->ret;
 	*f->ret = H;
 	destroy(v);
 
+	b = MP(f->base);
+	m = MP(f->mod);
+	nonzero(m);
 	ret = mpnew(0);
-	if(ret != nil)
-		mpinvert(MP(f->base), MP(f->mod), ret);
+	if(ret != nil){
+		g = mpnew(0);
+		dc = mpnew(0);
+		if(g == nil || dc == nil){
+			mpfree(g);
+			mpfree(dc);
+			mpfree(ret);
+			error(exHeap);
+		}
+		mpextendedgcd(b, m, g, ret, dc);
+		r = mpcmp(g, mpone);
+		mpfree(g);
+		mpfree(dc);
+		if(r != 0){
+			mpfree(ret);
+			error(exNoinverse);
+		}
+		mpmod(ret, m, ret);
+	}
 	*f->ret = newIPint(ret);
 }
 
@@ -443,6 +500,81 @@ IPint_mul(void *fp)
 
 	*f->ret = newIPint(ret);
 }
+/*
+ * i1 op i2 mod m, for op in multiply, add, subtract.  Separately from
+ * mul, add, sub and mod because a field operation is what
+ * elliptic-curve arithmetic spends itself on, and done as two calls it
+ * pays twice to leave interpreted Dis and allocates an unreduced
+ * intermediate the caller never reads.  Measured: a 256-bit multiply
+ * and reduction is 10.25 us as two calls and 6.50 us as one.
+ *
+ * mpmod reduces into the range [0,m) whatever the sign, so subtract
+ * needs nothing else to keep a field element canonical.
+ */
+static void
+modop(IPints_IPint **retp, IPints_IPint *a1, IPints_IPint *a2, IPints_IPint *am,
+	void (*op)(mpint*, mpint*, mpint*))
+{
+	mpint *i1, *i2, *m, *t, *ret;
+	void *v;
+
+	v = *retp;
+	*retp = H;
+	destroy(v);
+
+	i1 = MP(a1);
+	i2 = MP(a2);
+	m = MP(am);
+	nonzero(m);
+	ret = mpnew(0);
+	if(ret != nil){
+		/*
+		 * the unreduced value goes in a temporary rather than in
+		 * ret: mpmod is mpdiv, which writes its remainder from a
+		 * copy of the dividend and then takes that dividend's
+		 * sign, so handing it the same mpint twice depends on an
+		 * aliasing rule libmp does not state.
+		 */
+		t = mpnew(0);
+		if(t == nil){
+			mpfree(ret);
+			error(exHeap);
+		}
+		(*op)(i1, i2, t);
+		mpmod(t, m, ret);
+		mpfree(t);
+	}
+
+	*retp = newIPint(ret);
+}
+
+void
+IPint_mulmod(void *fp)
+{
+	F_IPint_mulmod *f;
+
+	f = fp;
+	modop(f->ret, f->i1, f->i2, f->m, mpmul);
+}
+
+void
+IPint_addmod(void *fp)
+{
+	F_IPint_addmod *f;
+
+	f = fp;
+	modop(f->ret, f->i1, f->i2, f->m, mpadd);
+}
+
+void
+IPint_submod(void *fp)
+{
+	F_IPint_submod *f;
+
+	f = fp;
+	modop(f->ret, f->i1, f->i2, f->m, mpsub);
+}
+
 void
 IPint_div(void *fp)
 {
@@ -460,6 +592,7 @@ IPint_div(void *fp)
 
 	i1 = MP(f->i1);
 	i2 = MP(f->i2);
+	nonzero(i2);
 	quo = mpnew(0);
 	if(quo == nil)
 		error(exHeap);
@@ -487,6 +620,7 @@ IPint_mod(void *fp)
 
 	i1 = MP(f->i1);
 	i2 = MP(f->i2);
+	nonzero(i2);
 	ret = mpnew(0);
 	if(ret != nil)
 		mpmod(i1, i2, ret);

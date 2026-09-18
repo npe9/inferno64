@@ -25,6 +25,8 @@ include "sys.m";
 	sys: Sys;
 include "draw.m";
 include "keyring.m";
+	kr: Keyring;
+	IPint: import kr;
 include "security.m";
 include "p256.m";
 	p256: P256;
@@ -69,9 +71,16 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(tl argv != nil)
 		reps = int hd tl argv;
 
+	kr = load Keyring Keyring->PATH;
+	if(kr == nil){
+		sys->print("p256test: load keyring: %r\n");
+		raise "fail:load";
+	}
+
 	ecdh();
 	ecdsa();
 	timing(reps);
+	fieldcosts();
 
 	if(nfail != 0){
 		sys->print("p256test: %d FAILED\n", nfail);
@@ -194,6 +203,90 @@ timing(reps: int)
 	t1 = sys->millisec();
 	sys->print("\t%d ECDH agreements in %d ms (%d ms each)\n",
 		reps, t1-t0, (t1-t0)/reps);
+}
+
+# What a field operation costs, which is the thing that decides which
+# point formulas are worth using.  Every one of them is a call out of
+# interpreted Dis into libmp, so the unit that matters is the crossing
+# and not the multiplication: mul-then-mod is two of them, mulmod is
+# one, and an inversion is one.  Jacobian coordinates trade several
+# multiplications for one inversion, which is only a saving if an
+# inversion costs much more than a multiply -- so the ratio printed
+# here is the evidence for or against that trade, and it is measured
+# rather than assumed.
+fieldcosts()
+{
+	# enough repetitions that the millisecond clock is not the thing
+	# being reported -- at a few microseconds a call, 200 of them
+	# round to one tick -- and enough passes to say what the spread
+	# is.  A single sample of a quantity that varies with whatever
+	# else the machine is doing supports no conclusion at all.
+	reps := 4000;
+	passes := 5;
+	p := IPint.strtoip("FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF", 16);
+	x := IPint.strtoip(A256PRIV, 16);
+	y := IPint.strtoip(B256PRIV, 16);
+
+	sys->print("field operations (%d calls, best of %d passes)\n", reps, passes);
+
+	nops := 6;
+	best := array[nops] of int;
+	worst := array[nops] of int;
+	for(k := 0; k < nops; k++){
+		best[k] = -1;
+		worst[k] = -1;
+	}
+	names := array[] of {"mul", "mul then mod", "mulmod",
+		"sub then mod", "submod", "invert"};
+
+	for(pass := 0; pass < passes; pass++){
+		for(k = 0; k < nops; k++){
+			t0 := sys->millisec();
+			for(i := 0; i < reps; i++){
+				case k {
+				0 =>	x.mul(y);
+				1 =>	x.mul(y).mod(p);
+				2 =>	x.mulmod(y, p);
+				3 =>	x.sub(y).mod(p);
+				4 =>	x.submod(y, p);
+				5 =>	x.invert(p);
+				}
+			}
+			t1 := sys->millisec();
+			# hundredths of a microsecond a call
+			us := (t1-t0)*100000/reps;
+			if(best[k] < 0 || us < best[k])
+				best[k] = us;
+			if(worst[k] < 0 || us > worst[k])
+				worst[k] = us;
+		}
+	}
+
+	for(k = 0; k < nops; k++)
+		sys->print("\t%-16s %4d.%.2d us  (worst %4d.%.2d)\n", names[k],
+			best[k]/100, best[k]%100, worst[k]/100, worst[k]%100);
+
+	# mulmod must agree with mul then mod, or the cheap one is
+	# cheap because it is wrong
+	a := x.mul(y).mod(p);
+	b := x.mulmod(y, p);
+	check("mulmod agrees with mul then mod", a.eq(b), 1);
+	# and it must not be doing something trivially constant
+	z := y.mulmod(y, p);
+	check("mulmod of a different pair differs", a.eq(z), 0);
+
+	check("addmod agrees with add then mod",
+		x.add(y).mod(p).eq(x.addmod(y, p)), 1);
+	# subtraction is the one that could differ: y > x here, so the
+	# difference is negative and a reduction that merely truncated
+	# would leave it that way
+	check("submod agrees with sub then mod",
+		y.sub(x).mod(p).eq(y.submod(x, p)), 1);
+	check("submod of a bigger from a smaller is positive",
+		y.submod(x, p).cmp(IPint.inttoip(0)) > 0, 1);
+
+	if(best[2] > 0)
+		sys->print("\tan inversion costs %d mulmods\n", best[5]/best[2]);
 }
 
 unhex(s: string): array of byte

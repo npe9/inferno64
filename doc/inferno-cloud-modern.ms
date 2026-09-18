@@ -1689,10 +1689,10 @@ c | c | l
 n | l | l .
 item;state;note
 _
-1\-4;done;credentials and reach; Phase 1
+1\-4;done;Phase 1, credentials and reach
 5;done;styxlisten in the root, a service exporting a namespace
 6;done;two instances, one mounting the other
-7;done;cloudauth(1); check-cloudauth.sh, with a wrong-signer control
+7;done;cloudauth(1), checked with a wrong-signer control
 8;done;Styx costs about what a framed RPC costs
 9;done;measured against Debian 12 on the same e2-micro
 10;done;66 MiB to boot, 68 to work, ~78 KiB a service
@@ -2492,5 +2492,171 @@ are cheap relative to inversion, and in interpreted Dis over
 .CW IPint
 they are not.  What would change the answer is a
 .CW mulmod
-builtin, which would halve the crossings for both shapes and is the
-thing to try before any curve algebra.
+builtin, which would take a crossing off every field multiply and is
+the thing to try before any curve algebra.  The section below is that
+builtin, and it settles the ratio by measurement rather than by
+counting: an inversion costs about three modular multiplies here, so
+even with the crossings halved the trade Jacobian coordinates make
+\(em several multiplies for one inversion \(em is a bad one, and
+.CW p256 (2)
+stays affine.
+.NH 2
+Modular arithmetic in one crossing
+.PP
+A field operation in
+.CW p256 (2)
+was written the way the module allowed:
+.CW x.mul(y).mod(p) ,
+.CW x.add(y).mod(p) ,
+.CW x.sub(y).mod(p) .
+Each of those is two calls out of interpreted Dis into
+.CW libmp
+and one intermediate \(em an unreduced product or a negative
+difference \(em that nobody looks at.  Since the section above found
+that the crossing and not the arithmetic is what a field operation
+costs, the fix is to do both halves on the far side of one call.
+.PP
+The
+.CW IPint
+adt in
+.CW keyring (2)
+gained
+.CW mulmod ,
+.CW addmod
+and
+.CW submod :
+one C routine parameterised by the operation, reducing through
+.CW mpmod ,
+so a subtraction that goes negative comes back positive.
+.CW p256test (1)
+now prices the operations and checks each new one against the form it
+replaces.
+.PP
+.TS
+center box tab(;);
+c | c | c
+l | n | n .
+operation;two calls;one call
+_
+256-bit multiply;\(em;7.00 \(*ms
+multiply and reduce;11.25 \(*ms;8.00 \(*ms
+subtract and reduce;10.75 \(*ms;7.50 \(*ms
+invert;\(em;20.50 \(*ms
+.TE
+.PP
+Best of five passes of four thousand calls each, interpreted.  The
+absolute figures move with whatever else the machine is doing \(em an
+idle laptop gives 5.00, 10.25, 6.00 and 19.00 for the same four \(em
+so what is worth reading is the differences, which do not.  A crossing
+costs three to four microseconds and the 256-bit multiply behind it
+about the same, which is the finding: at this size the call costs as
+much as the arithmetic.
+.PP
+What it buys, measured with the same binary either side of the change,
+interpreted:
+.TS
+center box tab(;);
+c | c | c
+l | n | n .
+;before;after
+_
+ECDSA P-256 verification;83 ms;58 ms
+ECDH agreement;44 ms;30 ms
+a three-certificate chain;530 ms;417 ms
+.TE
+.PP
+A third off the curve arithmetic and a fifth off chain verification,
+for a change of spelling in three one-line functions.  The chain does
+not improve by as much because the rest of it is DER parsing, which
+this did not touch.
+.PP
+.B "And the ratio that was assumed."
+The reason to price
+.CW invert
+beside
+.CW mulmod
+is that the textbook case for Jacobian coordinates rests on an
+inversion costing thirty to a hundred multiplies, which is true of
+field arithmetic written in assembly over a Mersenne-like prime.  Here
+it costs between two and a half and three: both are single crossings,
+and
+.CW mpinvert 's
+extended Euclid over 256 bits is genuinely not much slower than
+.CW mpmul
+plus
+.CW mpdiv .
+Affine coordinates are the right shape for this machine for the same
+reason they were before the builtins, and now there is a number for it
+rather than an argument.
+.NH 2
+One line of Limbo could stop the machine
+.PP
+Adding those three builtins meant reading the ones beside them, and
+they have a hole.
+.CW libmp
+answers a division by zero with
+.CW sysfatal :
+.PP
+.DS
+.CW
+five := IPint.inttoip(5);
+zero := IPint.inttoip(0);
+r := five.mod(zero);        # inside an exception handler
+.DE
+.PP
+run under hosted
+.CW emu :
+.DS
+.CW
+about to take 5 mod 0
+emu-g: mpdiv: divide by zero
+.DE
+.PP
+That is the hosted emulator dying.  On a native kernel
+.CW sysfatal
+is a panic, so the same line stops a booted machine \(em and the
+arguments that reach it are not necessarily a caller's mistake.  A
+modulus arrives from a certificate, an exponent from a key file, and a
+base that shares a factor with the modulus is something arithmetic
+produces.  Four calls were fatal this way:
+.CW mod
+and
+.CW div
+by zero,
+.CW expmod
+with a negative exponent, and
+.CW invert
+of a base with no inverse.
+.PP
+They now raise.  Zero divisors and moduli raise the interpreter's own
+.CW "zero divide" ,
+the two cases libmp names on its own raise
+.CW "negative exponent"
+and
+.CW "no inverse" ,
+and a Limbo program can catch any of them.
+.CW invert
+does its extended gcd in
+.CW ipint.c
+rather than calling
+.CW mpinvert ,
+because the fatal test is inside
+.CW mpinvert
+itself.
+.PP
+.CW ipinttest (1)
+is the check: nine calls that end the process without the guards \(em
+the six that were fatal before this change, and the three new modular
+operations, which would have been had they been written as an
+operation followed by a
+.CW mod
+\(em each run inside a handler, and eight working calls beside them
+with their answers, so a build that raised for everything would fail
+rather than pass.  It is in
+.CW check-all.sh 's
+quick tier: it takes under a second, and what it protects is invisible
+until someone edits
+.CW ipint.c .
+.PP
+This was not on any list.  It was found by reading the neighbours of
+the code being changed, which is the argument for doing that.

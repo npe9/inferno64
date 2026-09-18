@@ -34,6 +34,14 @@ Keyring: module
 		sub:		fn(i1: self ref IPint, i2: ref IPint): ref IPint;
 		neg:		fn(i: self ref IPint): ref IPint;
 		mul:		fn(i1: self ref IPint, i2: ref IPint): ref IPint;
+		# these three do the arithmetic and the reduction in one
+		# crossing.  A field operation is the inner loop of
+		# elliptic-curve arithmetic, and done as two calls it
+		# pays twice to leave Dis and allocates an intermediate
+		# the caller never looks at; p256test(1) measures both.
+		mulmod:	fn(i1: self ref IPint, i2, m: ref IPint): ref IPint;
+		addmod:	fn(i1: self ref IPint, i2, m: ref IPint): ref IPint;
+		submod:	fn(i1: self ref IPint, i2, m: ref IPint): ref IPint;
 		div:		fn(i1: self ref IPint, i2: ref IPint): (ref IPint, ref IPint);
 		mod:	fn(i1: self ref IPint, i2: ref IPint): ref IPint;
 		eq:		fn(i1: self ref IPint, i2: ref IPint): int;

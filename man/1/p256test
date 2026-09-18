@@ -39,6 +39,29 @@ one costs on the machine in hand.  Run it interpreted \(em
 .B -c0
 \(em for a figure that means anything about a native kernel, which has
 no JIT.
+.PP
+The last section prices the field operations themselves.  Each one is a
+call out of interpreted Dis into
+.IR libmp ,
+so what a point formula costs is decided by how many of those crossings
+it makes rather than by how many multiplications it does.  It reports
+the best of five passes of four thousand calls: on an idle machine a
+256-bit multiply alone is about 5 \(*ms, a multiply followed by a
+reduction about 10, the single
+.B mulmod
+about 6, and an inversion about 19, and all four rise together when the
+machine is busy \(em so read the differences rather than the figures.
+The last ratio is the one that matters \(em an inversion costs between
+two and a half and three modular multiplies here, not the thirty or
+hundred the textbook formulas assume, which is why
+.IR p256 (2)
+stays in affine coordinates.  The section also checks that
+.BR mulmod ,
+.B addmod
+and
+.B submod
+agree with the two-call forms, including a subtraction that goes
+negative before it is reduced.
 .SH SOURCE
 .B /appl/cmd/p256test.b
 .SH SEE ALSO

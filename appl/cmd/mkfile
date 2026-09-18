@@ -87,6 +87,7 @@ TARG=\
 	idea.dis\
 	import.dis\
 	iostats.dis\
+	ipinttest.dis\
 	itest.dis\
 	itreplay.dis\
 	kill.dis\
