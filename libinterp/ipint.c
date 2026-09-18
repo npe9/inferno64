@@ -33,13 +33,22 @@ static uchar IPintmap[] = IPints_IPint_map;
 
 #define	MP(x)	checkIPint((x))
 
+/*
+ * Called from modinit, Keyring and Crypt, so it has to be idempotent --
+ * which the TIPint guard made it for the type and not for the module.
+ * A kernel configured with both keyring and crypt registered $IPints
+ * twice and carried two of everything it allocates: a Module, a
+ * 36-entry Link array and, before the names stopped being copied, 35
+ * name blocks.  Nothing used the second one; loading $IPints finds the
+ * first in the module list.
+ */
 void
 ipintsmodinit(void)
 {
-	/* can be called from modinit, Keyring or Crypt */
-	if(TIPint == nil)
-		TIPint = dtype(freeIPint, sizeof(IPint), IPintmap, sizeof(IPintmap));
-	builtinmod("$IPints", IPintsmodtab, IPintsmodlen);
+	if(TIPint != nil)
+		return;
+	TIPint = dtype(freeIPint, sizeof(IPint), IPintmap, sizeof(IPintmap));
+	builtinmod("$IPints", IPintsmodtab, IPintsmodlen, 1);
 }
 
 //IPints_IPint*

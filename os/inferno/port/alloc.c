@@ -854,7 +854,7 @@ poolfmt11(char *d, int nd, uintptr v)
  */
 enum {
 	Nbucket	= 13,
-	Npc	= 20,
+	Npc	= 96,
 };
 
 static void
@@ -862,19 +862,20 @@ histone(Pool *p)
 {
 	Bhdr *c, *b;
 	uintptr nalloc[Nbucket], balloc[Nbucket];
-	uintptr pcb[Npc];
+	uintptr pcb[Npc], pcn[Npc];
 	intptr pcv[Npc];
-	uintptr live, freeb, hdrs, sz;
-	int i, j, k, n, nlive, nfree;
+	uintptr live, freeb, hdrs, sz, lost;
+	int i, j, k, n, nlive, nfree, nlost;
 
 	for(i = 0; i < Nbucket; i++)
 		nalloc[i] = balloc[i] = 0;
 	for(i = 0; i < Npc; i++){
 		pcv[i] = 0;
 		pcb[i] = 0;
+		pcn[i] = 0;
 	}
-	live = freeb = hdrs = 0;
-	nlive = nfree = 0;
+	live = freeb = hdrs = lost = 0;
+	nlive = nfree = nlost = 0;
 
 	for(c = poolchain(p); c != nil; c = c->clink)
 		for(b = B2NB(c); b != nil && b->magic != MAGIC_E; b = B2NB(b)){
@@ -898,11 +899,15 @@ histone(Pool *p)
 			balloc[i] += sz;
 
 			for(j = 0; j < Npc; j++)
-				if(pcv[j] == b->allocpc || pcb[j] == 0)
+				if(pcv[j] == b->allocpc || pcn[j] == 0)
 					break;
 			if(j < Npc){
 				pcv[j] = b->allocpc;
 				pcb[j] += sz;
+				pcn[j]++;
+			}else{
+				lost += sz;
+				nlost++;
 			}
 		}
 
@@ -920,18 +925,29 @@ histone(Pool *p)
 		print("\t%zud blocks", nalloc[i]);
 		print("\t%zud bytes\n", balloc[i]);
 	}
-	/* the callers holding the most, biggest first */
-	for(k = 0; k < 8; k++){
+	/*
+	 * Every caller, biggest first, not a top-eight: the point of the
+	 * report is to account for the whole pool, and a list that stops
+	 * at eight of ninety-six looks exactly like a pool that has eight
+	 * callers.  For the same reason the blocks that found no slot are
+	 * printed rather than dropped -- an itemisation that silently
+	 * loses bytes is worse than no itemisation, because it adds up.
+	 */
+	for(k = 0; k < Npc; k++){
 		j = -1;
 		for(i = 0; i < Npc; i++)
-			if(pcb[i] != 0 && (j < 0 || pcb[i] > pcb[j]))
+			if(pcn[i] != 0 && (j < 0 || pcb[i] > pcb[j]))
 				j = i;
 		if(j < 0)
 			break;
 		print("  pc %#p", (void*)pcv[j]);
-		print("\t%zud bytes\n", pcb[j]);
-		pcb[j] = 0;
+		print("\t%zud bytes", pcb[j]);
+		print("\tin %zud\n", pcn[j]);
+		pcn[j] = 0;
 	}
+	if(nlost != 0)
+		print("  unattributed %zud bytes in %d blocks (Npc %d too small)\n",
+			lost, nlost, Npc);
 }
 
 void

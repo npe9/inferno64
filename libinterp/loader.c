@@ -17,7 +17,7 @@ void
 loadermodinit(void)
 {
 	sysinit();
-	builtinmod("$Loader", Loadermodtab, Loadermodlen);
+	builtinmod("$Loader", Loadermodtab, Loadermodlen, 1);
 	Tinst = dtype(freeheap, sizeof(Loader_Inst), Instmap, sizeof(Instmap));
 	Tdesc = dtype(freeheap, sizeof(Loader_Typedesc), Tdescmap, sizeof(Tdescmap));
 	Tlink = dtype(freeheap, sizeof(Loader_Link), Tlinkmap, sizeof(Tlinkmap));

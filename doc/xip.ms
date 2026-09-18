@@ -999,7 +999,7 @@ The honest gap is the kernel pool floor: 78208 bytes in 343 allocations
 with the minimal configuration and nothing loaded but a 512-byte init.
 Four kernel stacks at
 .CW KSTACK
-4K are 16384 of it.  The other 62K is not itemised \- it is
+4K are 16384 of it.  The other 62K is
 .CW Chan ,
 .CW Osenv ,
 .CW Pgrp
@@ -1008,10 +1008,12 @@ osinit module, and the pools' own per-block headers and quanta rounding
 .CW ( os/inferno/port/alloc.c:/^poolalloc
 rounds every request up by
 .CW BHDRSIZE
-and the pool quantum, which over 343 blocks is not nothing).  It is now
-the largest single term in the budget and the only one nobody has looked
-inside.  Anything further than the 190K above should start there rather
-than with more trimming of what is already measured.
+and the pool quantum, which over 343 blocks is not nothing).  It was the
+largest single term in the budget and the only one nobody had looked
+inside; it has been looked inside now, on the full device set rather
+than this one, and what came out of it is under
+.I "What gates any of it: the kernel pool, itemised"
+below.
 .NH 2
 Could the interpreter just run the packed form?
 .PP
@@ -2704,11 +2706,20 @@ the tree as it is now.
 .CW "                        was        is    saved"
 .CW "kernel data + bss    162904     62344   100560"
 .CW "Proc array           175360     38720   136640"
-.CW "main pool            367104    113472   253632"
-.CW "heap pool             73728     56832    16896"
+.CW "main pool            367104     76544   290560"
+.CW "heap pool             73728     56576    17152"
 .CW "                     ------    ------   ------"
-.CW "                     779096    271368   507728"
+.CW "                     779096    234184   544912"
 .DE
+The two pool rows were re-measured for this revision, from
+.CW "#c/memory" 's
+first column with a shell and an
+.I ls (1)
+loaded; the main pool row read 113472 when this table was first
+written, and 20800 of the fall since is the link-name change described
+under
+.I "What gates any of it: the kernel pool, itemised" .
+The other two rows are as first measured.
 .CW "kernel text"
 went 848200 to 1068552 over the same span, which is the price: 220352
 bytes of flash bought 507728 of RAM.  On
@@ -2878,14 +2889,275 @@ and
 .CW os/9front ,
 and neither can be booted from here to check it.
 .NH 2
-What gates any of it
+What gates any of it: the kernel pool, itemised
 .PP
-The kernel pool floor: 78208 bytes in 343 allocations with the minimal
-configuration and a 512-byte init, of which 16384 is four kernel stacks
-and the other 62K has never been looked at.  It is larger than the code
-bucket this whole document is about.  Every number above is arithmetic
-on top of it, so it is the next thing to measure rather than the next
-thing to optimise.
+This section used to say that the kernel pool floor had never been
+looked at and was the next thing to measure.  It has been looked at
+now.
+.PP
+.CW "#c/poolhist"
+already walked the chunks and reported live bytes by block size and by
+allocating pc, which every kernel allocator records:
+.CW os/inferno/port/alloc.c 's
+.CW malloc (),
+.CW smalloc ()
+and
+.CW mallocz ()
+all call
+.CW "setmalloctag(v, getcallerpc(&size))" .
+What it did not do was report all of it.  It tracked twenty distinct
+pcs and printed the eight largest, and a block whose pc found no slot
+was dropped from the total without a word \- so a pool with sixty
+callers read exactly like a pool with eight.  It now tracks ninety-six,
+prints every one with its block count, and prints what did not fit and
+how many blocks that was.  On this kernel nothing does not fit, which
+is a thing the report now says rather than a thing to assume.
+.PP
+Reading the pcs takes a symbol table, which the
+.CW -H4
+image these boards flash does not carry.  Relinking the same objects
+with
+.CW "tl -H2"
+and the same
+.CW -T / -D
+gives one at the same addresses \- the same trick this document already
+uses for
+.CW "text / data / bss" .
+The table is at
+.CW "HEADR + text + data" ,
+each entry a 4-byte big-endian value, a type byte with 0x80 set and a
+name; a static symbol's type letter is lowercased, a
+.CW z / Z
+history entry's name is one byte then 2-byte pairs to a zero pair
+rather than a C string, and a Thumb return address has bit 0 set.  All
+four of those, got wrong, produce plausible names for the wrong
+functions, which is worse than no name at all.
+.PP
+So, mps2, a shell and an
+.I ls (1)
+loaded, one command typed ahead \- the console input queue holds a block
+per chunk of type-ahead, so two runs typing different things are not
+comparable \- 97344 bytes live in 823 blocks:
+.DS
+.CW "  25856  newlink     404 blocks  builtin+Dis link names"
+.CW "  16640  newproc       4          kernel stacks"
+.CW "   8704  strdup      136"
+.CW "   5760  newchan      18"
+.CW "   5440  builtinmod    6          Link arrays"
+.CW "   4544  dtype        71"
+.CW "   5440  parsemod     47  (4 sites)"
+.CW "   3776  copypath/newpath 41"
+.DE
+and a tail of fifty-odd callers holding 64 to 768 bytes each.  Two
+things in that are worth saying before the fix.  A caller is the
+immediate caller of
+.CW malloc (),
+so a wrapper hides everyone behind it: the 136 blocks at
+.CW strdup
+are one line for every
+.CW strdup ()
+in the kernel.  And the largest single item, 404 blocks of 64 bytes,
+is not a data structure at all.
+.NH 3
+A module's function names did not need copying
+.PP
+.CW libinterp/link.c 's
+.CW newlink ()
+copies each exported function name into the pool, one small block each.
+For a module loaded from a Dis file that is necessary: the name points
+into the file's byte stream, which is freed after the load.  For a
+module built into the kernel it never was.
+.CW builtinmod ()
+walks a
+.CW Runtab
+\-
+.CW Sysmodtab ,
+.CW Keyringmodtab
+and the rest, generated tables of string literals that are in the
+kernel image, in flash on the parts this document is about \- and copied
+each name out of flash into RAM, where a ten-character name costs 64
+bytes at the pool's quantum.  On this kernel that is 311 names: 43 for
+.CW $Sys ,
+94 for
+.CW $Keyring ,
+36 for
+.CW $Crypt ,
+68 for
+.CW $Math
+and 35 for
+.CW $IPints ,
+twice.
+.PP
+.CW Module
+gains
+.CW xipext ,
+beside the
+.CW xip
+and
+.CW xiptype
+flags that already mean "this came from the image and is not freed",
+and
+.CW runtime ()
+uses the name where it lies when it is set.  The flag is the caller's
+to pass, not
+.CW builtinmod () 's
+to decide, and that is the whole care in this change: the other kind of
+caller is
+.CW libinterp/dlm-*.c ,
+a dynamic C module, whose
+.CW Runtab
+lives in the loaded object's image \- and
+.CW libinterp/load.c 's
+.CW unload ()
+calls
+.CW freedyncode ()
+.I before
+.CW destroylinks (),
+so by the time
+.CW destroylinks ()
+runs its
+.CW "for(l = m->ext; l->name; l++)"
+that image is gone.  Not freeing a pointer it does not own would have
+been harmless; reading one, as that loop's own terminator does, would
+not.  So the three dynamic-module callers pass false and keep copying,
+the in-kernel ones pass true, and
+.CW destroylinks ()
+does not enter the loop at all when the names are not owned.  No
+configuration here can boot a dynamic C module, so that path is
+reasoned about rather than tested, and it is left doing exactly what it
+did before.
+.NH 3
+And $IPints was registered twice
+.PP
+.CW ipintsmodinit ()
+is called from
+.CW Keyring
+and from
+.CW Crypt ,
+each "in case only the other is configured", and its comment says it
+can be called from either \- but the guard that made it idempotent
+covered the
+.CW TIPint
+type and not the
+.CW builtinmod ()
+call under it.  A kernel with both carried two
+.CW $IPints
+modules: two
+.CW Module s,
+two 36-entry
+.CW Link
+arrays and, before the above, two sets of 35 names.  Nothing used the
+second; loading
+.CW $IPints
+finds the first in the module list.  The guard now covers both.
+.NH 3
+What it came to
+.PP
+Same board, same commands, same one command typed ahead,
+.CW "#c/memory" 's
+first column, which is what
+.CW poolhist
+calls live:
+.DS
+.CW "                        was        is    saved"
+.CW "main pool            97344     76544    20800"
+.CW "blocks                 823       509      314"
+.CW "block headers        16460     10180     6280"
+.DE
+19904 of the 20800 is the 311 names at 64 bytes each and 896 is the
+duplicate
+.CW $IPints ;
+the block headers follow the block count at
+.CW BHDRSIZE
+20.  Counting the headers, which are pool memory too, it is 27080
+bytes.  Kernel text went 1114104 to 1114168, 64 bytes.
+.PP
+.CW newlink
+is now 5952 in 93 blocks, which is the Dis modules' own exports and
+has to stay, and
+.CW builtinmod
+is 4800 in 5 rather than 5440 in 6.  What is left at the top is
+.CW newproc
+at 16640 in 4 \- the kernel stacks, which is
+.CW KSTACK
+and
+.CW NPROC
+and already accounted for above \- then
+.CW strdup
+at 8640 in 135, which is a wrapper hiding its callers and wants
+.CW malloc () 's
+tag pushed one frame out before it means anything, and
+.CW newchan
+at 5760 in 18.
+.NH 3
+A check that the modules still answer
+.PP
+A builtin module's exported functions are found by name:
+.CW linkm ()
+does a
+.CW strcmp
+against the
+.CW Link
+array
+.CW builtinmod ()
+built, and that comparison now reads kernel text rather than a pool
+block.  Every Dis program exercises
+.CW $Sys
+and
+.I fptest
+exercises
+.CW $Math ,
+but nothing on a small board loads
+.CW $Keyring ,
+.CW $Crypt
+or
+.CW $IPints ,
+and
+.CW $IPints
+is exactly the one whose registration changed.
+.CW appl/cmd/modchk.b
+loads each and makes it answer \- sha1 and md5 of
+.CW abc ,
+sha256 of
+.CW abc ,
+.CW strtoip
+and
+.CW expmod
+against known values \- and reports a module the kernel is not
+configured with as absent, counted apart from the checks that ran,
+because a check that could not run must not read as one that passed.
+It is 2019 bytes in the
+.CW dis32
+tree and costs the pool nothing at boot; the measurements above are the
+same with and without it in the root.  On mps2:
+.DS
+.CW "; modchk"
+.CW "$Math sqrt(9) ok"
+.CW "$Math pow(2,10) ok"
+.CW "$Keyring sha1(abc) ok"
+.CW "$Keyring md5(abc) ok"
+.CW "$Crypt sha256(abc) ok"
+.CW "$IPints strtoip(123456789) ok"
+.CW "$IPints 2^10 mod 1000 ok"
+.CW "7 checks, 0 failed, 0 modules absent"
+.CW "MODCHK-OK"
+.DE
+and the same seven under the host
+.I emu ,
+which is the 8-byte Dis word and a different compiler.
+.NH 3
+What is still not itemised
+.PP
+The floor this section set out to explain was measured on the minimal
+configuration \- 78208 in 343 allocations with a 512-byte init and no
+modules \- and the itemisation above is the full mps2 device set with a
+shell loaded, because that is the configuration that can be run without
+rebuilding the tree twice.  The two are not the same number and should
+not be subtracted from one another.  What the itemisation does settle
+is the shape: the floor is a long tail of small namespace and device
+allocations plus four kernel stacks, with no single large unknown in
+it, and the largest term that was not stacks turned out to be a copy
+that did not need making.
 .NH 1
 A candidate board: Olimex ESP32-P4-PC
 .PP

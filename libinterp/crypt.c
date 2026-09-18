@@ -437,7 +437,7 @@ cryptmodinit(void)
 	TPKrsa = dtype(freeheap, Crypt_PK_RSA_size, RSApkmap, sizeof(RSApkmap));
 	TPKsigrsa = dtype(freeheap, Crypt_PKsig_RSA_size, RSAsigmap, sizeof(RSAsigmap));
 
-	builtinmod("$Crypt", Cryptmodtab, Cryptmodlen);
+	builtinmod("$Crypt", Cryptmodtab, Cryptmodlen, 1);
 }
 
 void

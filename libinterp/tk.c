@@ -68,7 +68,7 @@ tkmarktop(Type *t, void *vw)
 void
 tkmodinit(void)
 {
-	builtinmod("$Tk", Tkmodtab, Tkmodlen);
+	builtinmod("$Tk", Tkmodtab, Tkmodlen, 1);
 	fmtinstall('v', tkeventfmt);			/* XXX */
 
 	fakeTkTop = dtype(tkfreetop, sizeof(TkTop), TktypeMap, sizeof(TktypeMap));

@@ -20,8 +20,8 @@ extern unsigned char root25code[];
 extern int root25len;
 extern unsigned char root26code[];
 extern int root26len;
-extern unsigned char root28code[];
-extern int root28len;
+extern unsigned char root27code[];
+extern int root27len;
 extern unsigned char root29code[];
 extern int root29len;
 extern unsigned char root30code[];
@@ -50,14 +50,14 @@ extern unsigned char root41code[];
 extern int root41len;
 extern unsigned char root42code[];
 extern int root42len;
-extern unsigned char root44code[];
-extern int root44len;
+extern unsigned char root43code[];
+extern int root43len;
 extern unsigned char root45code[];
 extern int root45len;
 extern unsigned char root46code[];
 extern int root46len;
-extern unsigned char root48code[];
-extern int root48len;
+extern unsigned char root47code[];
+extern int root47len;
 extern unsigned char root49code[];
 extern int root49len;
 extern unsigned char root50code[];
@@ -66,12 +66,12 @@ extern unsigned char root51code[];
 extern int root51len;
 extern unsigned char root52code[];
 extern int root52len;
-extern unsigned char root54code[];
-extern int root54len;
+extern unsigned char root53code[];
+extern int root53len;
 extern unsigned char root55code[];
 extern int root55len;
-extern unsigned char root57code[];
-extern int root57len;
+extern unsigned char root56code[];
+extern int root56len;
 extern unsigned char root58code[];
 extern int root58len;
 extern unsigned char root59code[];
@@ -116,8 +116,8 @@ extern unsigned char root78code[];
 extern int root78len;
 extern unsigned char root79code[];
 extern int root79len;
-extern unsigned char root81code[];
-extern int root81len;
+extern unsigned char root80code[];
+extern int root80len;
 extern unsigned char root82code[];
 extern int root82len;
 extern unsigned char root83code[];
@@ -128,8 +128,10 @@ extern unsigned char root85code[];
 extern int root85len;
 extern unsigned char root86code[];
 extern int root86len;
-int rootmaxq = 87;
-Dirtab roottab[87] = {
+extern unsigned char root87code[];
+extern int root87len;
+int rootmaxq = 88;
+Dirtab roottab[88] = {
 	"",	{0, 0, QTDIR},	 0,	0555,
 	"chan",	{1, 0, QTDIR},	 0,	0555,
 	"dev",	{2, 0, QTDIR},	 0,	0555,
@@ -157,72 +159,73 @@ Dirtab roottab[87] = {
 	"echo.dis",	{24, 0, QTFILE},	 0,	0444,
 	"fptest.dis",	{25, 0, QTFILE},	 0,	0444,
 	"cvtchk.dis",	{26, 0, QTFILE},	 0,	0444,
-	"pycubed",	{27, 0, QTDIR},	 0,	0555,
-	"ftest.dis",	{28, 0, QTFILE},	 0,	0444,
-	"grep.dis",	{29, 0, QTFILE},	 0,	0444,
-	"ls.dis",	{30, 0, QTFILE},	 0,	0444,
-	"mntgen.dis",	{31, 0, QTFILE},	 0,	0444,
-	"mount.dis",	{32, 0, QTFILE},	 0,	0444,
-	"memfs.dis",	{33, 0, QTFILE},	 0,	0444,
-	"dossrv.dis",	{34, 0, QTFILE},	 0,	0444,
-	"ns.dis",	{35, 0, QTFILE},	 0,	0444,
-	"ps.dis",	{36, 0, QTFILE},	 0,	0444,
-	"pwd.dis",	{37, 0, QTFILE},	 0,	0444,
-	"read.dis",	{38, 0, QTFILE},	 0,	0444,
-	"sh.dis",	{39, 0, QTFILE},	 0,	0444,
-	"sh",	{40, 0, QTDIR},	 0,	0555,
-	"unmount.dis",	{41, 0, QTFILE},	 0,	0444,
-	"9660srv.dis",	{42, 0, QTFILE},	 0,	0444,
-	"disk",	{43, 0, QTDIR},	 0,	0555,
-	"ip",	{44, 0, QTDIR},	 0,	0555,
-	"auth",	{45, 0, QTDIR},	 0,	0555,
-	"arg.dis",	{46, 0, QTFILE},	 0,	0444,
-	"auth.dis",	{47, 0, QTFILE},	 0,	0444,
-	"bufio.dis",	{48, 0, QTFILE},	 0,	0444,
-	"daytime.dis",	{49, 0, QTFILE},	 0,	0444,
-	"dhcpclient.dis",	{50, 0, QTFILE},	 0,	0444,
-	"dial.dis",	{51, 0, QTFILE},	 0,	0444,
-	"disks.dis",	{52, 0, QTFILE},	 0,	0444,
-	"env.dis",	{53, 0, QTFILE},	 0,	0444,
-	"factotum.dis",	{54, 0, QTFILE},	 0,	0444,
-	"filepat.dis",	{55, 0, QTFILE},	 0,	0444,
-	"ip.dis",	{56, 0, QTFILE},	 0,	0444,
-	"names.dis",	{57, 0, QTFILE},	 0,	0444,
-	"nametree.dis",	{58, 0, QTFILE},	 0,	0444,
-	"rand.dis",	{59, 0, QTFILE},	 0,	0444,
-	"random.dis",	{60, 0, QTFILE},	 0,	0444,
-	"readdir.dis",	{61, 0, QTFILE},	 0,	0444,
-	"regex.dis",	{62, 0, QTFILE},	 0,	0444,
-	"ssl.dis",	{63, 0, QTFILE},	 0,	0444,
-	"string.dis",	{64, 0, QTFILE},	 0,	0444,
-	"styx.dis",	{65, 0, QTFILE},	 0,	0444,
-	"styxconv",	{66, 0, QTDIR},	 0,	0555,
-	"styxpersist.dis",	{67, 0, QTFILE},	 0,	0444,
-	"styxservers.dis",	{68, 0, QTFILE},	 0,	0444,
-	"timers.dis",	{69, 0, QTFILE},	 0,	0444,
-	"workdir.dis",	{70, 0, QTFILE},	 0,	0444,
-	"beepsat.dis",	{71, 0, QTFILE},	 0,	0444,
-	"sat.dis",	{72, 0, QTFILE},	 0,	0444,
-	"hw.dis",	{73, 0, QTFILE},	 0,	0444,
-	"std.dis",	{74, 0, QTFILE},	 0,	0444,
-	"fdisk.dis",	{75, 0, QTFILE},	 0,	0444,
-	"kfs.dis",	{76, 0, QTFILE},	 0,	0444,
-	"kfs64.dis",	{77, 0, QTFILE},	 0,	0444,
-	"kfscmd.dis",	{78, 0, QTFILE},	 0,	0444,
-	"prep.dis",	{79, 0, QTFILE},	 0,	0444,
-	"calc.tab.dis",	{80, 0, QTFILE},	 0,	0444,
-	"pedit.dis",	{81, 0, QTFILE},	 0,	0444,
-	"dhcp.dis",	{82, 0, QTFILE},	 0,	0444,
-	"ping.dis",	{83, 0, QTFILE},	 0,	0444,
-	"factotum.dis",	{84, 0, QTFILE},	 0,	0444,
-	"new2old.dis",	{85, 0, QTFILE},	 0,	0444,
-	"ostyx.dis",	{86, 0, QTFILE},	 0,	0444,
+	"modchk.dis",	{27, 0, QTFILE},	 0,	0444,
+	"pycubed",	{28, 0, QTDIR},	 0,	0555,
+	"ftest.dis",	{29, 0, QTFILE},	 0,	0444,
+	"grep.dis",	{30, 0, QTFILE},	 0,	0444,
+	"ls.dis",	{31, 0, QTFILE},	 0,	0444,
+	"mntgen.dis",	{32, 0, QTFILE},	 0,	0444,
+	"mount.dis",	{33, 0, QTFILE},	 0,	0444,
+	"memfs.dis",	{34, 0, QTFILE},	 0,	0444,
+	"dossrv.dis",	{35, 0, QTFILE},	 0,	0444,
+	"ns.dis",	{36, 0, QTFILE},	 0,	0444,
+	"ps.dis",	{37, 0, QTFILE},	 0,	0444,
+	"pwd.dis",	{38, 0, QTFILE},	 0,	0444,
+	"read.dis",	{39, 0, QTFILE},	 0,	0444,
+	"sh.dis",	{40, 0, QTFILE},	 0,	0444,
+	"sh",	{41, 0, QTDIR},	 0,	0555,
+	"unmount.dis",	{42, 0, QTFILE},	 0,	0444,
+	"9660srv.dis",	{43, 0, QTFILE},	 0,	0444,
+	"disk",	{44, 0, QTDIR},	 0,	0555,
+	"ip",	{45, 0, QTDIR},	 0,	0555,
+	"auth",	{46, 0, QTDIR},	 0,	0555,
+	"arg.dis",	{47, 0, QTFILE},	 0,	0444,
+	"auth.dis",	{48, 0, QTFILE},	 0,	0444,
+	"bufio.dis",	{49, 0, QTFILE},	 0,	0444,
+	"daytime.dis",	{50, 0, QTFILE},	 0,	0444,
+	"dhcpclient.dis",	{51, 0, QTFILE},	 0,	0444,
+	"dial.dis",	{52, 0, QTFILE},	 0,	0444,
+	"disks.dis",	{53, 0, QTFILE},	 0,	0444,
+	"env.dis",	{54, 0, QTFILE},	 0,	0444,
+	"factotum.dis",	{55, 0, QTFILE},	 0,	0444,
+	"filepat.dis",	{56, 0, QTFILE},	 0,	0444,
+	"ip.dis",	{57, 0, QTFILE},	 0,	0444,
+	"names.dis",	{58, 0, QTFILE},	 0,	0444,
+	"nametree.dis",	{59, 0, QTFILE},	 0,	0444,
+	"rand.dis",	{60, 0, QTFILE},	 0,	0444,
+	"random.dis",	{61, 0, QTFILE},	 0,	0444,
+	"readdir.dis",	{62, 0, QTFILE},	 0,	0444,
+	"regex.dis",	{63, 0, QTFILE},	 0,	0444,
+	"ssl.dis",	{64, 0, QTFILE},	 0,	0444,
+	"string.dis",	{65, 0, QTFILE},	 0,	0444,
+	"styx.dis",	{66, 0, QTFILE},	 0,	0444,
+	"styxconv",	{67, 0, QTDIR},	 0,	0555,
+	"styxpersist.dis",	{68, 0, QTFILE},	 0,	0444,
+	"styxservers.dis",	{69, 0, QTFILE},	 0,	0444,
+	"timers.dis",	{70, 0, QTFILE},	 0,	0444,
+	"workdir.dis",	{71, 0, QTFILE},	 0,	0444,
+	"beepsat.dis",	{72, 0, QTFILE},	 0,	0444,
+	"sat.dis",	{73, 0, QTFILE},	 0,	0444,
+	"hw.dis",	{74, 0, QTFILE},	 0,	0444,
+	"std.dis",	{75, 0, QTFILE},	 0,	0444,
+	"fdisk.dis",	{76, 0, QTFILE},	 0,	0444,
+	"kfs.dis",	{77, 0, QTFILE},	 0,	0444,
+	"kfs64.dis",	{78, 0, QTFILE},	 0,	0444,
+	"kfscmd.dis",	{79, 0, QTFILE},	 0,	0444,
+	"prep.dis",	{80, 0, QTFILE},	 0,	0444,
+	"calc.tab.dis",	{81, 0, QTFILE},	 0,	0444,
+	"pedit.dis",	{82, 0, QTFILE},	 0,	0444,
+	"dhcp.dis",	{83, 0, QTFILE},	 0,	0444,
+	"ping.dis",	{84, 0, QTFILE},	 0,	0444,
+	"factotum.dis",	{85, 0, QTFILE},	 0,	0444,
+	"new2old.dis",	{86, 0, QTFILE},	 0,	0444,
+	"ostyx.dis",	{87, 0, QTFILE},	 0,	0444,
 };
-Rootdata rootdata[87] = {
+Rootdata rootdata[88] = {
 	0,	 &roottab[1],	 13,	nil,
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
-	0,	 &roottab[14],	 32,	nil,
+	0,	 &roottab[14],	 33,	nil,
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
@@ -233,7 +236,7 @@ Rootdata rootdata[87] = {
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
 	0,	 root16code,	 0,	 &root16len,
-	3,	 &roottab[46],	 25,	nil,
+	3,	 &roottab[47],	 25,	nil,
 	3,	 nil,	 0,	 nil,
 	3,	 nil,	 0,	 nil,
 	3,	 root17code,	 0,	 &root17len,
@@ -246,8 +249,8 @@ Rootdata rootdata[87] = {
 	3,	 root24code,	 0,	 &root24len,
 	3,	 root25code,	 0,	 &root25len,
 	3,	 root26code,	 0,	 &root26len,
-	3,	 &roottab[71],	 3,	nil,
-	3,	 root31code,	 0,	 &root31len,
+	3,	 root27code,	 0,	 &root27len,
+	3,	 &roottab[72],	 3,	nil,
 	3,	 root32code,	 0,	 &root32len,
 	3,	 root33code,	 0,	 &root33len,
 	3,	 root34code,	 0,	 &root34len,
@@ -259,13 +262,13 @@ Rootdata rootdata[87] = {
 	3,	 root40code,	 0,	 &root40len,
 	3,	 root41code,	 0,	 &root41len,
 	3,	 root42code,	 0,	 &root42len,
-	3,	 &roottab[74],	 1,	nil,
-	3,	 root45code,	 0,	 &root45len,
+	3,	 root43code,	 0,	 &root43len,
+	3,	 &roottab[75],	 1,	nil,
 	3,	 root46code,	 0,	 &root46len,
-	3,	 &roottab[75],	 7,	nil,
-	3,	 &roottab[82],	 2,	nil,
-	3,	 &roottab[84],	 1,	nil,
-	14,	 root60code,	 0,	 &root60len,
+	3,	 root47code,	 0,	 &root47len,
+	3,	 &roottab[76],	 7,	nil,
+	3,	 &roottab[83],	 2,	nil,
+	3,	 &roottab[85],	 1,	nil,
 	14,	 root61code,	 0,	 &root61len,
 	14,	 root62code,	 0,	 &root62len,
 	14,	 root63code,	 0,	 &root63len,
@@ -285,25 +288,26 @@ Rootdata rootdata[87] = {
 	14,	 root77code,	 0,	 &root77len,
 	14,	 root78code,	 0,	 &root78len,
 	14,	 root79code,	 0,	 &root79len,
-	14,	 &roottab[85],	 2,	nil,
-	14,	 root83code,	 0,	 &root83len,
+	14,	 root80code,	 0,	 &root80len,
+	14,	 &roottab[86],	 2,	nil,
 	14,	 root84code,	 0,	 &root84len,
 	14,	 root85code,	 0,	 &root85len,
 	14,	 root86code,	 0,	 &root86len,
-	27,	 root28code,	 0,	 &root28len,
-	27,	 root29code,	 0,	 &root29len,
-	27,	 root30code,	 0,	 &root30len,
-	40,	 root44code,	 0,	 &root44len,
-	43,	 root48code,	 0,	 &root48len,
-	43,	 root49code,	 0,	 &root49len,
-	43,	 root50code,	 0,	 &root50len,
-	43,	 root51code,	 0,	 &root51len,
-	43,	 root52code,	 0,	 &root52len,
-	43,	 root58code,	 0,	 &root58len,
-	43,	 root59code,	 0,	 &root59len,
-	44,	 root54code,	 0,	 &root54len,
-	44,	 root55code,	 0,	 &root55len,
-	45,	 root57code,	 0,	 &root57len,
-	66,	 root81code,	 0,	 &root81len,
-	66,	 root82code,	 0,	 &root82len,
+	14,	 root87code,	 0,	 &root87len,
+	28,	 root29code,	 0,	 &root29len,
+	28,	 root30code,	 0,	 &root30len,
+	28,	 root31code,	 0,	 &root31len,
+	41,	 root45code,	 0,	 &root45len,
+	44,	 root49code,	 0,	 &root49len,
+	44,	 root50code,	 0,	 &root50len,
+	44,	 root51code,	 0,	 &root51len,
+	44,	 root52code,	 0,	 &root52len,
+	44,	 root53code,	 0,	 &root53len,
+	44,	 root59code,	 0,	 &root59len,
+	44,	 root60code,	 0,	 &root60len,
+	45,	 root55code,	 0,	 &root55len,
+	45,	 root56code,	 0,	 &root56len,
+	46,	 root58code,	 0,	 &root58len,
+	67,	 root82code,	 0,	 &root82len,
+	67,	 root83code,	 0,	 &root83len,
 };

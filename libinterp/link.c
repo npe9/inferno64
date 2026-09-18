@@ -17,11 +17,27 @@ newlink(Link *l, char *fn, int sig, Type *t)
 	l->frame = t;
 }
 
+/*
+ * A builtin module's function names come from a Runtab the module does
+ * not own: for the modules linked into the kernel that is a table of
+ * string literals in the image, which outlives everything, and copying
+ * each name into the pool cost 64 bytes apiece at the pool's quantum
+ * for a name averaging ten characters.  m->xipext says the names may be
+ * used where they lie; it is set by the caller of builtinmod() and not
+ * by builtinmod() itself, because the one other kind of caller is a
+ * dynamic C module, whose Runtab is unmapped by freedyncode() before
+ * destroylinks() runs (libinterp/load.c:/freedyncode).  Those keep
+ * copying.
+ */
 void
 runtime(Module *m, Link *l, char *fn, int sig, void (*runt)(void*), Type *t)
 {
-	USED(m);
-	newlink(l, fn, sig, t);
+	if(m->xipext){
+		l->name = fn;
+		l->sig = sig;
+		l->frame = t;
+	}else
+		newlink(l, fn, sig, t);
 	l->u.runt = runt;
 }
 
@@ -155,7 +171,8 @@ destroylinks(Module *m)
 {
 	Link *l;
 
-	for(l = m->ext; l->name; l++)
-		free(l->name);
+	if(!m->xipext)
+		for(l = m->ext; l->name; l++)
+			free(l->name);
 	free(m->ext);
 }

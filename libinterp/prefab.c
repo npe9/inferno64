@@ -36,7 +36,7 @@ prefabmodinit(void)
 	TElement = dtype(freeheap, sizeof(PElement), elementmap, sizeof(elementmap));
 	TLayout = dtype(freeheap, Prefab_Layout_size, layoutmap, sizeof(layoutmap));
 	TCompound = dtype(freeprefabcompound, sizeof(PCompound), compoundmap, sizeof(compoundmap));
-	builtinmod("$Prefab", Prefabmodtab, Prefabmodlen);
+	builtinmod("$Prefab", Prefabmodtab, Prefabmodlen, 1);
 }
 
 PElement*

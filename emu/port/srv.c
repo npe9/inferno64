@@ -149,5 +149,5 @@ Srv_ipn2p(void *fp)
 void
 srvmodinit(void)
 {
-	builtinmod("$Srv", Srvmodtab, Srvmodlen);
+	builtinmod("$Srv", Srvmodtab, Srvmodlen, 1);
 }

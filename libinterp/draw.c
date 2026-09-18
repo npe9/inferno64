@@ -118,7 +118,7 @@ drawmodinit(void)
 	TImage = dtype(freedrawimage, sizeof(DImage), imagemap, sizeof(imagemap));
 	TScreen = dtype(freedrawscreen, sizeof(DScreen), screenmap, sizeof(screenmap));
 	TDisplay = dtype(freedrawdisplay, sizeof(DDisplay), displaymap, sizeof(displaymap));
-	builtinmod("$Draw", Drawmodtab, Drawmodlen);
+	builtinmod("$Draw", Drawmodtab, Drawmodlen, 1);
 }
 
 static int

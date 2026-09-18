@@ -20,7 +20,7 @@ static union{
 void
 mathmodinit(void)
 {
-	builtinmod("$Math", Mathmodtab, Mathmodlen);
+	builtinmod("$Math", Mathmodtab, Mathmodlen, 1);
 	fmtinstall('g', gfltconv);
 	fmtinstall('G', gfltconv);
 	fmtinstall('e', gfltconv);

@@ -106,6 +106,7 @@ TARG=\
 	metamorph.dis\
 	mkdir.dis\
 	mntgen.dis\
+	modchk.dis\
 	mount.dis\
 	mouse.dis\
 	mprof.dis\

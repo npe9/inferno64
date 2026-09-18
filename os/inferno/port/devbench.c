@@ -1011,7 +1011,7 @@ static Dirtab benchtab[]={
 static void
 benchreset(void)
 {
-	builtinmod("$Bench", Benchmodtab);
+	builtinmod("$Bench", Benchmodtab, 0, 1);
 }
 
 static Chan*

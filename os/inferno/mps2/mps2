@@ -156,6 +156,7 @@ root
 	/dis/echo.dis	/dis32/echo.dis
 	/dis/fptest.dis	/dis32/fptest.dis
 	/dis/cvtchk.dis	/dis32/cvtchk.dis
+	/dis/modchk.dis	/dis32/modchk.dis
 	/dis/pycubed/beepsat.dis	/dis32/pycubed/beepsat.dis
 	/dis/pycubed/sat.dis	/dis32/pycubed/sat.dis
 	/dis/pycubed/hw.dis	/dis32/pycubed/hw.dis

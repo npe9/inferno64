@@ -30,7 +30,7 @@ static Face*	ckface(Freetype_Face*);
 void
 freetypemodinit(void)
 {
-	builtinmod("$Freetype", Freetypemodtab, Freetypemodlen);
+	builtinmod("$Freetype", Freetypemodtab, Freetypemodlen, 1);
 	TMatrix = dtype(freeheap, sizeof(Freetype_Matrix), Matrixmap, sizeof(Matrixmap));
 	TVector = dtype(freeheap, sizeof(Freetype_Vector), Vectormap, sizeof(Vectormap));
 	TFace = dtype(freeface, sizeof(Face), Facemap, sizeof(Facemap));

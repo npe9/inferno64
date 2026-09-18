@@ -327,6 +327,11 @@ struct Module
 	void*	dlm;		/* dynamic C module */
 	int	xip;		/* prog is built into the image: see Xipmod */
 	int	xiptype;	/* and so is type[], and neither is freed */
+	int	xipext;		/* ext[].name points into whoever owns the
+				   Runtab rather than at a copy this module
+				   made, so destroylinks() must not free it
+				   -- nor even read it, since a dynamic C
+				   module's Runtab is gone by then */
 };
 
 /*
@@ -478,7 +483,7 @@ extern	void		addrun(Prog*);
 extern	void		altdone(Alt*, Prog*, Channel*, int);
 extern	void		altgone(Prog*);
 extern	Array*		allocimgarray(Heap*, Heap*);
-extern	Module*	builtinmod(char*, void*, int);
+extern	Module*	builtinmod(char*, void*, int, int);
 extern	void		cblock(Prog*);
 extern	void*		checktype(void*, Type*, char*, int);
 extern	void		cmovw(void*, void*);

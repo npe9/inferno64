@@ -2129,7 +2129,7 @@ keyringmodinit(void)
 	fmtinstall('U', big64conv);
 	/* %B in libkeyring *alg.c is base64 (same as %U / big64conv) */
 	fmtinstall('B', big64conv);
-	builtinmod("$Keyring", Keyringmodtab, Keyringmodlen);
+	builtinmod("$Keyring", Keyringmodtab, Keyringmodlen, 1);
 }
 
 /*

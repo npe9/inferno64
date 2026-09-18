@@ -48,7 +48,7 @@ newdyncode(int fd, char *path, Dir *dir)
 	r = addr(name, "modtab", o, signof(Runtab[]));
 	if(r == nil)
 		goto Error;
-	m = builtinmod(name, r, 0);
+	m = builtinmod(name, r, 0, 0);	/* a DLM's Runtab dies with it: copy the names */
 	m->rt = DYNMOD;
 	m->dev = dir->dev;
 	m->dtype = dir->type;

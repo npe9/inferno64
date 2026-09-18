@@ -12,7 +12,7 @@ void
 sysmodinit(void)
 {
 	sysinit();
-	builtinmod("$Sys", Sysmodtab, Sysmodlen);
+	builtinmod("$Sys", Sysmodtab, Sysmodlen, 1);
 }
 
 int
@@ -437,8 +437,15 @@ frametype(int size, uchar *map, int np)
 	return t;
 }
 
+/*
+ * xipext says the caller's Runtab outlives every module built from it,
+ * so the function names in it can be used where they lie instead of
+ * copied into the pool one small block each.  It is the caller's to
+ * assert: true for the tables linked into the kernel, false for a
+ * dynamic C module, whose table goes away with the module.
+ */
 Module *
-builtinmod(char *name, void *vr, int rlen)
+builtinmod(char *name, void *vr, int rlen, int xipext)
 {
 	Runtab *r = vr;
 	Type *t;
@@ -446,6 +453,7 @@ builtinmod(char *name, void *vr, int rlen)
 	Link *l;
 
 	m = newmod(name);
+	m->xipext = xipext;
 	if(rlen == 0){
 		while(r->name){
 			rlen++;

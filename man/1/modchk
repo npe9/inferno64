@@ -1,0 +1,105 @@
+.TH MODCHK 1
+.SH NAME
+modchk \- check that the kernel's builtin modules answer
+.SH SYNOPSIS
+.B modchk
+.SH DESCRIPTION
+.I Modchk
+loads each module built into the kernel and calls through it for an
+answer that is known, printing the module, the call, and whether it
+matched.  It is meant for a kernel that has been changed under the
+modules rather than for the modules themselves.
+.PP
+.IR Math ,
+.IR Keyring ,
+.I Crypt
+and
+.I IPints
+are covered:
+.B sqrt
+and
+.BR pow ;
+.B sha1
+and
+.B md5
+of
+.BR abc ;
+.B sha256
+of
+.BR abc ;
+.B strtoip
+and
+.BR expmod .
+.I Sys
+is not, because nothing runs without it.
+.PP
+A module the kernel is not configured with is reported absent and
+counted apart from the checks that ran, so that a run in which nothing
+could be checked does not read like a run in which everything passed.
+The last lines are a count and, only if at least one check ran and none
+failed,
+.BR MODCHK-OK .
+.SH SOURCE
+.B /appl/cmd/modchk.b
+.SH HISTORY
+Written for a change to how a builtin module's exported functions are
+named.
+.IR Linkm ()
+in
+.B /libinterp/link.c
+finds an exported function by
+.B strcmp
+against the
+.B Link
+array that
+.IR builtinmod ()
+built from the module's
+.BR Runtab .
+Those names used to be copied into the kernel pool, one small block
+each; for a module built into the kernel the
+.B Runtab
+is a table of string literals in the image, so the copy was 311 blocks
+of 64 bytes on an
+.B mps2
+kernel carrying
+.IR Sys ,
+.IR Keyring ,
+.IR Crypt ,
+.I Math
+and
+.IR IPints .
+The names are now used where they lie and that comparison reads kernel
+text.  Every Dis program exercises
+.I Sys
+and
+.IR fptest (1)
+exercises
+.IR Math ,
+but nothing on a small board loads the other three.
+.PP
+.I IPints
+is the reason this exists rather than a note in a commit: it is
+registered from both
+.I Keyring
+and
+.IR Crypt ,
+each in case only the other is configured, and the guard that made
+.IR ipintsmodinit ()
+idempotent covered the type it creates and not the
+.IR builtinmod ()
+call under it, so a kernel with both carried two of it.  That guard now
+covers both, and this is what says the remaining one still works.
+.PP
+Run on
+.B mps2
+under
+.IR qemu (1)
+and under the host
+.IR emu (1),
+which is the other Dis word size and another compiler: seven checks,
+none failed, no module absent.
+.SH SEE ALSO
+.IR fptest (1),
+.IR keyring (2),
+.IR crypt (2),
+.IR ipints (2)
