@@ -3,6 +3,14 @@
 #define	NREG		16
 
 #define NOPROF		(1<<0)
+
+/*
+ * Flags field on GLOBL, shared with the linker (utils/tl/l.h).
+ * #pragma rodata sets it; the linker lays the symbol out in the text
+ * segment rather than in data.  The value matches the Go toolchain's,
+ * which descends from this one.
+ */
+#define RODATA		8
 #define DUPOK		(1<<1)
 #define	ALLTHUMBS	(1<<2)
 

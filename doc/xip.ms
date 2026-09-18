@@ -2372,6 +2372,125 @@ and
 .CW teensy41
 carry pass it.
 .NH 2
+#pragma rodata, for the C tables that are never written
+.PP
+.CW -t
+moves the compiler's string pool and
+.CW RODATA
+moves what assembler asks for it, but a C table has no way to ask.  The
+largest single item in
+.CW teensy41 's
+data segment was one of those:
+.DS
+.CW "  40000  smallprimes   (libsec/smallprimetest.c)"
+.CW "   8248  mntalloc      (bss)"
+.CW "   4416  lpuartuart"
+.CW "   4096  sbox          (libsec/blowfish.c)"
+.CW "   3420  Keyringmodtab (generated)"
+.CW "   2520  roottab"
+.CW "   2484  Mathmodtab    (generated)"
+.CW "   2048  spbox         (libsec/des.c)"
+.DE
+40000 bytes of prime table is 39% of that board's data segment, and it
+is a table of constants.
+.PP
+So the compiler can be told:
+.DS
+.CW "#pragma rodata smallprimes"
+.DE
+.CW utils/cc
+records it on the
+.CW Sym
+and
+.CW utils/tc 's
+.CW gpseudo()
+puts
+.CW RODATA
+on the symbol's
+.CW GLOBL ,
+which the linker already knows what to do with.  It is an assertion by
+the programmer and not something the compiler checks \- kencc does not
+track
+.CW const ,
+and a write to one of these is dropped or faults rather than diagnosed
+\- so it is for tables, not for anything a program assigns to.  A
+compiler that does not know the pragma ignores it.
+.PP
+Four marked:
+.CW smallprimes ,
+.CW sbox ,
+.CW spbox ,
+and the
+.CW Runtab
+tables, which are generated, so
+.CW limbo/stubs.c
+emits the pragma with them.
+.CW "data + bss" :
+.DS
+.CW "              before     after     saved"
+.CW "mps2          132656     76400     56256"
+.CW "teensy41      130568     74312     56256"
+.CW "nucleof303     49112     47528      1584"
+.DE
+.CW nucleof303
+gains only
+.CW Sysmodtab ,
+having no
+.CW keyring ,
+.CW crypt
+or
+.CW math .
+.PP
+And the check found a bug that had been there all along.  Dumping the
+text segment after a workload and comparing it with the image \- the
+same recipe as for the string literals \- came back with exactly one
+byte different:
+.DS
+.CW "image: 40000000 0003b131 0003c445 ..."
+.CW "run  : 40000001 0003b131 0003c445 ..."
+.DE
+the low byte of an immortal
+.CW Type 's
+reference count, on
+.CW /osinit.dis 's
+data-segment descriptor.  Something had incremented it.
+.PP
+The 23 sites routed through
+.CW typeinc()
+were found by grepping
+.CW libinterp
+for
+.CW AINC(&t->ref) .
+The one that was missed is in
+.CW os/inferno/port/dis.c 's
+.CW schedmod() ,
+it is spelled
+.CW t->ref++ ,
+and it is not in
+.CW libinterp
+at all.  Two more like it turned up once the spelling was included:
+.CW os/inferno/port/devsrv.c
+and, in
+.CW AINC
+form,
+.CW emu/port/dis.c
+and
+.CW emu/port/devsrv.c .
+All four now call
+.CW typeinc() .
+.PP
+This is the failure mode the bench cannot see.
+.CW mps2 's
+text is SRAM, so the increment succeeded and nothing went wrong; on
+.CW teensy41 's
+flash it would have been dropped, which is also harmless, but only by
+luck \- the invariant was being violated either way and no test would
+have said so.  What said so was comparing a megabyte of text against
+the file it was built from.  It is now byte-identical over all 1054496
+of it, including
+.CW smallprimes ,
+the nine instruction arrays and all 214 type descriptors.
+.NH 2
 Where this stands
 .PP
 Everything below is measured, on

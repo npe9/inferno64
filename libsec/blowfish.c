@@ -317,6 +317,8 @@ static u32int pbox[BFrounds+2] = {
 	0x9216d5d9, 0x8979fb1b
 };
 
+#pragma rodata sbox		/* never written: see doc/xip.ms */
+
 static u32int sbox[1024] = {
 	0xd1310ba6L, 0x98dfb5acL, 0x2ffd72dbL, 0xd01adfb7L, 
 	0xb8e1afedL, 0x6a267e96L, 0xba7c9045L, 0xf12c7f99L, 

@@ -1093,6 +1093,12 @@ gpseudo(int a, Sym *s, Node *n)
 	p->from.name = D_EXTERN;
 	if(a == ATEXT)
 		p->reg = (profileflg ? 0 : NOPROF);
+	/*
+	 * #pragma rodata: the flags field on GLOBL asks the linker to lay
+	 * the symbol out in the text segment.  See utils/tl/l.h.
+	 */
+	if(a == AGLOBL && s->rodata)
+		p->reg = RODATA;
 	if(s->class == CSTATIC)
 		p->from.name = D_STATIC;
 	naddr(n, &p->to);

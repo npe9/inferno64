@@ -1,5 +1,12 @@
 #include "os.h"
 
+/*
+ * Never written.  40000 bytes on a 32-bit target, which on a part that
+ * copies its data segment into RAM at boot is 40000 bytes of SRAM for a
+ * table of constants.  See doc/xip.ms.
+ */
+#pragma rodata smallprimes
+
 ulong smallprimes[1000] = {
 	2,
 	3,

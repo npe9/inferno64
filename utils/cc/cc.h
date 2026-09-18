@@ -115,6 +115,7 @@ struct	Sym
 	char	sym;
 	char	aused;
 	char	sig;
+	char	rodata;	/* #pragma rodata: lay it out read-only */
 };
 #define	S	((Sym*)0)
 
@@ -770,6 +771,7 @@ void	pragpack(void);
 void	pragfpround(void);
 void pragprofile(void);
 void	pragincomplete(void);
+void	pragrodata(void);
 
 /*
  * calls to machine depend part

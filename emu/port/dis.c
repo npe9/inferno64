@@ -960,7 +960,7 @@ schedmod(Module *m)
 		t = m->type[0];
 		h = nheap(t->size);
 		h->t = t;
-		AINC(&t->ref);
+		typeinc(t);	/* not AINC: the Type may be immortal.  doc/xip.ms */
 		ml->MP = H2D(uchar*, h);
 		newmp(ml->MP, m->origmp, t);
 	}

@@ -742,7 +742,7 @@ srvretype(Channel *c, SrvFile *f, Type *t)
 	h = D2H(c);
 	freetype(h->t);
 	h->t = t;
-	AINC(&t->ref);
+	typeinc(t);	/* the Type may be immortal: doc/xip.ms */
 	c->aux = f;
 }
 

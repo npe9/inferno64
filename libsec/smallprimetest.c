@@ -2,6 +2,14 @@
 #include <mp.h>
 #include <libsec.h>
 
+/*
+ * Never written.  40000 bytes on a 32-bit target, and on a part that
+ * copies its data segment into RAM at boot that is 40000 bytes of SRAM
+ * spent on a table of constants -- the largest single item in
+ * teensy41's data segment.  See doc/xip.ms.
+ */
+#pragma rodata smallprimes
+
 static ulong smallprimes[] = {
 	2,	3,	5,	7,	11,	13,	17,	19,	23,	29,
 	31,	37,	41,	43,	47,	53,	59,	61,	67,	71,

@@ -4,6 +4,8 @@
 /*
  * integrated sbox & p perm
  */
+#pragma rodata spbox		/* never written: see doc/xip.ms */
+
 static u32int spbox[] = {
 
 0x00808200,0x00000000,0x00008000,0x00808202,0x00808002,0x00008202,0x00000002,0x00008000,

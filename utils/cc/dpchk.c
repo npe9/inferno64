@@ -446,6 +446,36 @@ pragprofile(void)
 			print("%4ld: profileflg off\n", lineno);
 }
 
+/*
+ * #pragma rodata name ...
+ *
+ * Lay the named objects out read-only: the compiler puts RODATA on their
+ * GLOBL and the linker places them in the text segment rather than the
+ * data segment (utils/tl/l.h, utils/tl/pass.c).  On a part that runs its
+ * text from flash and copies its data segment into RAM at boot, a table
+ * that is never written has no business costing RAM.
+ *
+ * It is an assertion by the programmer, not something the compiler
+ * checks: kencc does not track const, and a write to one of these on
+ * such a part is dropped or faults rather than diagnosed.  Use it for
+ * tables, not for anything a program assigns to.
+ */
+void
+pragrodata(void)
+{
+	Sym *s;
+
+	for(;;){
+		s = getsym();
+		if(s == nil)
+			break;
+		s->rodata = 1;
+	}
+	while(getnsc() != '\n')
+		;
+	unget('\n');
+}
+
 void
 pragincomplete(void)
 {

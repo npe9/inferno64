@@ -163,6 +163,15 @@ modtab(Decl *globals)
 	for(d = globals; d != nil; d = d->next){
 		if(d->store == Dtype && d->ty->kind == Tmodule && strcmp(d->sym->name, emittab) == 0){
 			n = 0;
+			/*
+			 * The table is read by builtinmod() and never
+			 * written, so ask the C compiler to lay it out
+			 * read-only: on a part that copies its data
+			 * segment into RAM at boot it costs flash rather
+			 * than SRAM.  A compiler that does not know the
+			 * pragma ignores it.  See doc/xip.ms.
+			 */
+			print("#pragma rodata %smodtab\n", d->sym->name);
 			print("Runtab %smodtab[]={\n", d->sym->name);
 			for(id = d->ty->tof->ids; id != nil; id = id->next){
 				n++;

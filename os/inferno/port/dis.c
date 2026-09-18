@@ -879,7 +879,15 @@ schedmod(Module *m)
 		t = m->type[0];
 		h = nheap(t->size);
 		h->t = t;
-		t->ref++;
+		/*
+		 * typeinc(), not t->ref++: a Type laid out in the image
+		 * carries Timmortal and lives in memory that cannot be
+		 * written (include/interp.h, doc/xip.ms).  A bare
+		 * increment here wrote it -- harmlessly on a board whose
+		 * text is SRAM, which is why only a dump of the text
+		 * segment found it.
+		 */
+		typeinc(t);
 		ml->MP = H2D(uchar*, h);
 		if(ml->MP != H && (uintptr)ml->MP < 0x1000)
 			print("schedmod: bad ml->MP %#p right after H2D, h %#p ml %#p\n",
