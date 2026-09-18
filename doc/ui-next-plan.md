@@ -1024,9 +1024,9 @@ there was never speed on the table here anyway.
    against the pane passed while the scrollbars were 886 by −14.
 
    Still drawn through a scratch image: a widget whose image came from
-   a file *descriptor*, which has no path for a texture node to name;
-   and a `text` and a `canvas`, which paint into the window directly.
-   A `menu` no longer does — see below — and a `panel` never will.
+   a file *descriptor*, which has no path for a texture node to name,
+   and a `canvas`. A `menu` and a `text` no longer paint directly —
+   see below — and a `panel` never will.
 
    **A `panel` is out on principle, not pending.** Its image is a live
    `Image` a Limbo program writes through `putimage`, so there is no
@@ -1057,6 +1057,56 @@ there was never speed on the table here anyway.
    now activates an item, and the accent it gets is what the control
    bites on: dropping it from the node path alone fails by 81018
    bytes, and the border control by 1944.
+
+   **A `text` is nodes, and it needed `TkNclip` first.** A text widget
+   narrows the window's clip around its own inside and draws its lines
+   through it, so it could not be converted until a clip was something
+   a tree could carry. It is eight things, each with a control that
+   fails: the glyph run (25020 bytes), a tag's background (59670), a
+   tag's relief, which is the classic two-tone bevel and now has a node
+   form beside `tkbevel` (20088), the widget's own border (4392), the
+   clip itself (50148), the underline (13770), the overstrike (10854)
+   and the caret (9). The caret had to be a node rather than be left
+   alone: it is drawn last so that no item overwrites it, and a caret
+   going straight to the window while a tree was pending would be
+   covered by that tree.
+
+   **The one exclusion is an embedded window, and it does not merely
+   look wrong.** A `text` can hold a widget in the middle of a line,
+   which is drawn by descending into it from inside `tktdrawline` — so
+   it paints into the window there and then, and a tree still being
+   built would be rendered afterwards and land on top of it. The usual
+   answer, flush first, is not available: the flush would close the
+   clip span the lines are being drawn through and everything after it
+   would be unclipped. So such a widget keeps the drawing path, decided
+   by walking the items, which are already built by then. Without the
+   exclusion the suite does not merely draw wrong, it dies:
+   `disfault: sys: bad address addr=0x6574666150`, and those bytes are
+   ASCII — a string being followed as a pointer. The nodes themselves
+   are not what dangles; `tkscenetext` copies both the run and the face
+   name, which is the rule the vocabulary keeps. That is a firmer
+   control than a byte count, and it is also the reason the exclusion
+   is a gate rather than a note in the BUGS section.
+
+   **A real defect fell out of it, and it was not in the text widget.**
+   Adding a tagged `text` to the pane made the comparison differ by one
+   pixel, at the widget's top right. The cause was that `tkdrawrelief`
+   already goes through nodes when `render scene` is on, and the border
+   node is a pure stroke, while `tkroundbox` — what it does otherwise —
+   paints the parent's colour back where the curve cuts the corner.
+   Turning the switch on therefore changed what a border *meant* for
+   any widget that draws in place. Nothing had shown it because nothing
+   in the pane had ever painted into a corner; a tag background that
+   reaches the widget's edge does. `tksceneborderon` existed for
+   exactly this case and was being used by nobody; `tkreliefnodeson`
+   now calls it, from both `tkdrawrelief` and the text widget.
+
+   The first guess was wrong and is worth recording: the border is
+   skipped unless the whole widget refreshes, which is two repaints in
+   thirty-three, so a skipped corner mend looked like the answer.
+   Making the border unconditional did not fix the pixel, and once the
+   real cause was found the change was taken back out rather than left
+   in as a plausible-looking extra.
 
    **`-indicatoron 0` was a stale exclusion.** Such a button draws no
    indicator at all — it picks a relief from its state and is otherwise

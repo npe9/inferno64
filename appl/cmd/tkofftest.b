@@ -1572,6 +1572,34 @@ checkscene()
 	must(top, ".c create window 8 90 -window .c.e2 -anchor nw");
 	tk->cmd(top, "pack .c -padx 6 -pady 6");
 
+	# A TEXT widget, which narrows the window's clip around its own
+	# inside and draws its lines through it.  Both are nodes now, so
+	# this is what walks the clip node on a widget that owns one rather
+	# than on a grid, and what walks a glyph run that did not come from
+	# tkscenestring.  Given a tag with a background, a relief and an
+	# underline, because those are separate arms of tktdrawline and a
+	# plain run of text reaches none of them.
+	must(top, "text .tx -width 200 -height 60 -wrap none");
+	must(top, ".tx insert end {plain text then }");
+	must(top, ".tx tag configure warm -background #FFD0D0 -relief raised -borderwidth 2 -underline true -overstrike true");
+	must(top, ".tx insert end {tagged} warm");
+	must(top, ".tx insert end {\nand a second line that is wider than the widget is}");
+	tk->cmd(top, "pack .tx -padx 6 -pady 6");
+	# And a text widget holding an embedded WINDOW, which is the one
+	# case that keeps the drawing path.  Such a window is drawn by
+	# descending into it from the middle of a line, so it paints into
+	# the window there and then, and a tree still being built would be
+	# rendered afterwards and land on top of it.  Flushing is not open
+	# here either: it would close the clip the lines are drawn through.
+	# Without the exclusion this widget fails the comparison, which is
+	# what says the exclusion is doing something.
+	must(top, "text .tw -width 200 -height 40");
+	must(top, "button .tw.b -text {in a line}");
+	must(top, ".tw insert end {before }");
+	must(top, ".tw window create end -window .tw.b");
+	must(top, ".tw insert end { after}");
+	tk->cmd(top, "pack .tw -padx 6 -pady 6");
+
 	# A gridded widget, because a grid is the one thing that narrows the
 	# destination's clip rectangle around its children - and nodes are
 	# rendered after that has been put back unless the walk flushes
@@ -1671,7 +1699,7 @@ checkscene()
 	# item's box - both are guarded by tkhaskeyfocus() - so a
 	# perturbation of either passes, which by the usual rule means the
 	# check never reached the code rather than that the code is right.
-	who := array[] of {".e", ".ee", ".l", ".s", ".v", ".mb"};
+	who := array[] of {".e", ".ee", ".l", ".s", ".v", ".mb", ".tx"};
 	diff := 0;
 	first := -1;
 	for(k := 0; k < len who; k++){
@@ -1715,11 +1743,15 @@ checkscene()
 	# widget is added to the pane and say why; do not raise it to make
 	# a change to the walk go quiet.
 	#
-	# It is 6 rather than 8 because the grid carries a clip NODE now
-	# instead of flushing on each side of itself.  If that ever goes
-	# back to a flush this fires, and it will read as fragmentation -
-	# which it is, but the cause would be the clip.
-	Trees: con 6;
+	# It would be 6: the grid carries a clip NODE now instead of
+	# flushing on each side of itself, which took it from 8 to 6.  If
+	# that ever goes back to a flush this fires, and it will read as
+	# fragmentation - which it is, but the cause would be the clip.
+	#
+	# It is 8 because .tw, the text widget holding an embedded window,
+	# is excluded and so flushes: once on the way in and once when the
+	# descent into the embedded window paints.
+	Trees: con 8;
 	report(nr <= Trees, sys->sprint(
 		"and the walk has not fragmented (%d trees, at most %d)", nr, Trees));
 

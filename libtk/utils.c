@@ -956,8 +956,16 @@ tkbox(Image *i, Rectangle r, int bd, Image *fill)
 	}
 }
 
-void
-tkbevel(Image *i, Point o, int w, int h, int bw, Image *top, Image *bottom)
+/*
+ * The classic two-tone bevel, into an image or into a scene.  Written
+ * once and branched at the draw, the way drawstring() is: the shape is
+ * a staircase, eight rectangles for a border width of two, and two
+ * copies of that arithmetic would drift apart the first time either
+ * was touched.
+ */
+static void
+bevel(Image *i, TkScene *sc, Point o, int w, int h, int bw, Image *top,
+	Image *bottom, ulong toprgba, ulong botrgba)
 {
 	Rectangle r;
 	int x, border;
@@ -967,28 +975,52 @@ tkbevel(Image *i, Point o, int w, int h, int bw, Image *top, Image *bottom)
 	r.min = o;
 	r.max.x = r.min.x + w + border;
 	r.max.y = r.min.y + bw;
-	draw(i, r, top, nil, ZP);
+	if(sc != nil)
+		tkscenecolour(sc, r, toprgba);
+	else
+		draw(i, r, top, nil, ZP);
 
 	r.max.x = r.min.x + bw;
 	r.max.y = r.min.y + h + border;
-	draw(i, r, top, nil, ZP);
+	if(sc != nil)
+		tkscenecolour(sc, r, toprgba);
+	else
+		draw(i, r, top, nil, ZP);
 
 	r.max.x = o.x + w + border;
 	r.max.y = o.y + h + border;
 	r.min.x = o.x + bw;
 	r.min.y = r.max.y - bw;
 	for(x = 0; x < bw; x++) {
-		draw(i, r, bottom, nil, ZP);
+		if(sc != nil)
+			tkscenecolour(sc, r, botrgba);
+		else
+			draw(i, r, bottom, nil, ZP);
 		r.min.x--;
 		r.min.y++;
 	}
 	r.min.x = o.x + bw + w;
 	r.min.y = o.y + bw;
 	for(x = bw; x >= 0; x--) {
-		draw(i, r, bottom, nil, ZP);
+		if(sc != nil)
+			tkscenecolour(sc, r, botrgba);
+		else
+			draw(i, r, bottom, nil, ZP);
 		r.min.x++;
 		r.min.y--;
 	}
+}
+
+void
+tkbevel(Image *i, Point o, int w, int h, int bw, Image *top, Image *bottom)
+{
+	bevel(i, nil, o, w, h, bw, top, bottom, 0, 0);
+}
+
+void
+tkbevelnodes(TkScene *sc, Point o, int w, int h, int bw, ulong top, ulong bottom)
+{
+	bevel(nil, sc, o, w, h, bw, nil, nil, top, bottom);
 }
 
 /*
@@ -1153,11 +1185,12 @@ tkscenecorner(Tk *tk, int rlf)
 	return tkspace(tk)->corner;
 }
 
-void
-tkreliefnodes(TkScene *sc, Tk *tk, Point o, int color, int rlf)
+static void
+relief(TkScene *sc, Tk *tk, Point o, int color, int rlf, int mend)
 {
-	TkEnv *e;
+	TkEnv *e, *pe;
 	ulong brgba;
+	Rectangle r;
 	int w, h, bd;
 
 	if(sc == nil || tk->borderwidth == 0 || rlf == TKflat)
@@ -1175,8 +1208,38 @@ tkreliefnodes(TkScene *sc, Tk *tk, Point o, int color, int rlf)
 		brgba = e->colors[color+TkDarkshade];
 	else
 		brgba = tkrgbashade(e->colors[color], TkDarkshade);
-	tksceneborder(sc, Rect(o.x, o.y, o.x + w + 2*bd, o.y + h + 2*bd),
-		tkspace(tk)->corner, bd, brgba);
+	r = Rect(o.x, o.y, o.x + w + 2*bd, o.y + h + 2*bd);
+	if(mend){
+		pe = tkbehind(tk);
+		tksceneborderon(sc, r, tkspace(tk)->corner, bd, brgba,
+			pe->colors[TkCbackgnd]);
+	}else
+		tksceneborder(sc, r, tkspace(tk)->corner, bd, brgba);
+}
+
+void
+tkreliefnodes(TkScene *sc, Tk *tk, Point o, int color, int rlf)
+{
+	relief(sc, tk, o, color, rlf, 0);
+}
+
+/*
+ * The same border, plus the parent's colour painted back where the
+ * corner is cut away.
+ *
+ * For a widget that draws IN PLACE and is not described entirely by
+ * nodes - a text(9) is the one there is - because such a widget's
+ * background is its parent's and its own content can reach the corner
+ * pixel the curve cuts.  tkroundbox() has always done this in the
+ * drawing path; a plain border node does not, which made `render
+ * scene' change what a border meant for exactly those widgets.  It
+ * showed as ONE pixel, at the top right of a text widget whose tag had
+ * a background reaching the edge.
+ */
+void
+tkreliefnodeson(TkScene *sc, Tk *tk, Point o, int color, int rlf)
+{
+	relief(sc, tk, o, color, rlf, 1);
 }
 
 void
@@ -1220,7 +1283,15 @@ tkdrawrelief(Image *i, Tk *tk, Point o, int color, int rlf)
 
 			sc = tkscenenew();
 			if(sc != nil){
-				tkreliefnodes(sc, tk, o, color, rlf);
+				/*
+				 * MENDING, because the line below it does:
+				 * tkroundbox() lets the parent through where
+				 * the curve cuts, and this is the same call
+				 * with the same job.  Without that, turning
+				 * on `render scene' changed what a border did
+				 * to a widget that draws in place.
+				 */
+				tkreliefnodeson(sc, tk, o, color, rlf);
 				tkscenerender(sc, e->top->ctxt, i);
 				tkscenefree(sc);
 				return;

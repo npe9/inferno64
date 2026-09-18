@@ -59,7 +59,7 @@ to agree byte for byte.
 .IR tkofftest (1),
 .IR tkbench (1)
 .SH BUGS
-Ten things go through it: a flat border, a plain
+Eleven things go through it: a flat border, a plain
 .IR button (9)
 with text, a
 .IR radiobutton (9)
@@ -83,16 +83,27 @@ and
 .IR choicebutton (9)
 with it, since one draw method serves all three, a
 .IR checkbutton (9)
-in either state, and a
+in either state, a
 .IR menu (9),
-whose items are labels and whose own slab and border are nodes as well.
-Each of those draws its whole interior as nodes \(em fill, glyphs, caret,
-selection band, focus ring, border \(em inside one
-.BR TkNlayer .
-.PP
-Everything else \(em the classic two-tone bevel, a
+whose items are labels and whose own slab and border are nodes as well,
+and a
 .IR text (9),
+with its clip, its glyph runs, its tag backgrounds and reliefs, its
+underline and overstrike rules, its border and its caret.
+Each of those draws its whole interior as nodes \(em fill, glyphs, caret,
+selection band, focus ring, border.
+The widget-sized ones do it inside one
+.BR TkNlayer ;
 a
+.IR menu (9)
+and a
+.IR text (9)
+do not, because they draw in place \(em which is why the corner mend
+below matters to them and to nothing else.
+.PP
+Everything else \(em the classic two-tone bevel outside a
+.IR text (9)'s
+tags, a
 .IR canvas (9),
 a
 .IR panel (9),
@@ -265,8 +276,8 @@ window, and
 renders a tree only if it is not the walk's.
 Anything that paints into the window itself \(em every widget that asks
 .I tkitmp
-for the scratch surface, and the canvas, panel and text painters, which
-draw straight into it \(em calls
+for the scratch surface, and the canvas and panel painters, which draw
+straight into it \(em calls
 .I tkwalkflush
 first, or the tree, rendered later, would land on top of what it drew.
 A
@@ -280,6 +291,16 @@ The grid clipping in
 used to be on it as well, and carries a
 .B TkNclip
 instead.
+So does a
+.IR text (9),
+which narrows the window's clip around its own inside: the clip is a
+.B TkNclip
+and its lines are fills, glyph runs and rules.
+The one text widget that still paints directly is one holding an
+embedded WINDOW, which is drawn by descending into it from the middle
+of a line \(em the tree would be rendered afterwards and land on top of
+it, and flushing is not open either, since that would close the clip
+the lines are drawn through.
 Descents nest \(em a canvas's window item and a text widget's embedded
 windows each descend from inside a draw method \(em so the walk is a
 small stack.
