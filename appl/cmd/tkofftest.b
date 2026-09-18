@@ -1584,30 +1584,45 @@ checkscene()
 	# repeating image from the fill colour and the stipple's own mask,
 	# and both halves of that have names - the colour is a value and
 	# the mask came from a file the path registry knows.
-	must(top, "canvas .cv -width 340 -height 120 -buffer none");
-	must(top, ".cv create rectangle 4 4 60 40 -fill #C0D8F0 -outline black");
-	must(top, ".cv create rectangle 66 4 120 40 -fill #F0C0C0 -stipple dis.bit");
-	must(top, ".cv create oval 126 4 180 40 -fill #C0F0C0 -outline black");
-	must(top, ".cv create arc 186 4 250 40 -start 30 -extent 200 -fill #F0E0A0");
-	must(top, ".cv create line 8 50 120 84 -width 3 -fill #204080");
+	# The list is applied to TWO canvases because a canvas draws its
+	# items by one of two routes: unbuffered, straight into the window
+	# under a narrowed clip, and buffered, into an image of its own that
+	# is blitted afterwards.  Both render the tree, at different
+	# moments and into different targets, and with only one of them here
+	# the other's render had nothing comparing it but the single
+	# rectangle in .g.c.
+	cvitems := array[] of {
+		"create rectangle 4 4 60 40 -fill #C0D8F0 -outline black",
+		"create rectangle 66 4 120 40 -fill #F0C0C0 -stipple dis.bit",
+		"create oval 126 4 180 40 -fill #C0F0C0 -outline black",
+		"create arc 186 4 250 40 -start 30 -extent 200 -fill #F0E0A0",
+		"create line 8 50 120 84 -width 3 -fill #204080",
 		# THREE points, because a smooth line of two is drawn as a straight
-	# one by both paths - bezspline needs three - so a two-point line
-	# reaches the spline node in neither.
-	must(top, ".cv create line 126 50 190 40 250 84 -width 2 -smooth true -arrow both");
-	must(top, ".cv create polygon 8 92 60 92 34 116 -fill #A0A0F0");
-	must(top, ".cv create text 70 100 -text {canvas text} -anchor w");
-	# Two bitmaps, because a canvas bitmap item branches on DEPTH and
-	# the two arms draw differently.  caution.bit is m8 and is drawn as
-	# a source; uparrow.bit is k1, one bit, and is a mask stencilled in
-	# the foreground colour over a background fill.  With only the m8
-	# one here the second arm was written and never walked.
-	must(top, ".cv create bitmap 200 100 -bitmap caution.bit");
-	must(top, ".cv create bitmap 236 100 -bitmap uparrow.bit");
-	# A SMOOTH polygon, which is the only thing that reaches the spline
-	# node on this path: an ordinary polygon's outline is a stroked
-	# polyline and no node says that.
-	must(top, ".cv create polygon 266 92 330 92 298 116 -smooth true -fill #F0A0C0 -outline black -width 2");
+		# one by both paths - bezspline needs three - so a two-point line
+		# reaches the spline node in neither.
+		"create line 126 50 190 40 250 84 -width 2 -smooth true -arrow both",
+		"create polygon 8 92 60 92 34 116 -fill #A0A0F0",
+		"create text 70 100 -text {canvas text} -anchor w",
+		# Two bitmaps, because a canvas bitmap item branches on DEPTH and
+		# the two arms draw differently.  caution.bit is m8 and is drawn as
+		# a source; uparrow.bit is k1, one bit, and is a mask stencilled in
+		# the foreground colour over a background fill.  With only the m8
+		# one here the second arm was written and never walked.
+		"create bitmap 200 100 -bitmap caution.bit",
+		"create bitmap 236 100 -bitmap uparrow.bit",
+		# A SMOOTH polygon, which is the only thing that reaches the spline
+		# node on this path: an ordinary polygon's outline is a stroked
+		# polyline and no node says that.
+		"create polygon 266 92 330 92 298 116 -smooth true -fill #F0A0C0 -outline black -width 2",
+	};
+	must(top, "canvas .cv -width 340 -height 120 -buffer none");
+	must(top, "canvas .cb -width 340 -height 120");
+	for(cvn := 0; cvn < len cvitems; cvn++){
+		must(top, ".cv " + cvitems[cvn]);
+		must(top, ".cb " + cvitems[cvn]);
+	}
 	tk->cmd(top, "pack .cv -padx 6 -pady 6");
+	tk->cmd(top, "pack .cb -padx 6 -pady 6");
 
 	# A TEXT widget, which narrows the window's clip around its own
 	# inside and draws its lines through it.  Both are nodes now, so
@@ -1892,16 +1907,39 @@ counts(s: string): (int, int, int)
 # is taken a few milliseconds into a fresh half-second of it being lit.
 # It goes AWAY and back, because focusing what already has the focus is
 # not a focus change and fires no binding.
+# Make every BUFFERED canvas redraw its items on the next update.
+#
+# A buffered canvas keeps an image of its own and only re-runs its item
+# draw methods while c->update says something in it changed; a repaint
+# that finds it clean just blits what is already there.  So a pair of
+# snapshots taken either side of `render scene' compared one cached
+# image with itself, and the buffered arm of the canvas conversion - the
+# DEFAULT arm, and the one that renders the tree into that image rather
+# than into the window - was covered by nothing at all.  Dropping its
+# render entirely changed no pixel of this test, which is how that was
+# found.
+#
+# `move all 0 0' is the innocuous dirty: tkcvsmove() unions every item's
+# bounding box into the update rectangle and translates each of them by
+# zero, so the canvas redraws exactly the picture it had.
+cvdirty(top: ref Tk->Toplevel)
+{
+	for(l := list of {".c", ".g.c", ".cb"}; l != nil; l = tl l)
+		tk->cmd(top, hd l + " move all 0 0");
+}
+
 scenepair(top: ref Tk->Toplevel, who: string): (int, int)
 {
 	tk->cmd(top, "render direct");
 	tk->cmd(top, "focus .b");
 	tk->cmd(top, "focus " + who);
+	cvdirty(top);
 	tk->cmd(top, "update");
 	a := snap();
 	tk->cmd(top, "render scene");
 	tk->cmd(top, "focus .b");
 	tk->cmd(top, "focus " + who);
+	cvdirty(top);
 	tk->cmd(top, "update");
 	b := snap();
 	tk->cmd(top, "render direct");

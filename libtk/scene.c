@@ -269,6 +269,16 @@ tkscenetext(TkScene *s, Point p, char *text, Font *f, ulong rgba)
 {
 	TkNode *n;
 
+	/*
+	 * A face with no name cannot be described, so the run is dropped -
+	 * and a caller that chose this arm over drawing then draws nothing
+	 * at all, which is a blank line rather than a wrong one.  That is
+	 * survivable only because it cannot happen here: a Font comes from
+	 * buildfont(), which fails outright if it cannot strdup the name,
+	 * or from mkfont(), which names it `<synthetic>' and has no caller
+	 * in this tree.  Giving mkfont() one means giving this a way to
+	 * tell its caller it emitted nothing.
+	 */
 	if(text == nil || *text == '\0' || f == nil || f->name == nil)
 		return;
 	if((n = newnode(s, TkNglyphs)) == nil)
