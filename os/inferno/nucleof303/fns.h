@@ -12,6 +12,7 @@ uvlong	timersoon(void);
 uvlong	fastticks(uvlong*);
 ulong	tk2ms(ulong);
 void	coherence(void);
+ulong	fpr1test(void);	/* ../armv7m/l.s */
 ulong	s2get(void);		/* ../armv7m/l.s */
 ulong	fpscrget(void);		/* ../armv7m/l.s */
 void	fpscrset(ulong);	/* ../armv7m/l.s */

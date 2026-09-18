@@ -193,8 +193,26 @@ _noalign:
 	MRS(SYSM_IPSR, 0)
 	MOVW	R0, UREG_TYPE(R13)
 
-	MOVW	$0(R13), R0		/* &Ureg */
+	/*
+	 * Reserve the outgoing argument word before calling trap().  A
+	 * Plan 9 function reaches its arguments at 0(FP), which is its own
+	 * SP plus its frame size plus four -- that is, a slot in the
+	 * caller's frame -- and trap() spills its Ureg* parameter there on
+	 * entry.  Calling it with R13 pointing straight at the Ureg gave it
+	 * Ureg+4 to spill into, so every exception overwrote the
+	 * interrupted code's R1 with the address of its own Ureg.
+	 *
+	 * That corrupts any register R1 held live across an exception, and
+	 * it went unnoticed because most code reloads R1 and because a
+	 * SysTick lands between Dis instructions rather than inside one.
+	 * Emulating double precision made every such instruction take an
+	 * exception and turned it into a reliable failure -- see
+	 * doc/armv7m-ports.ms.
+	 */
+	SUB	$8, R13			/* argument space for trap() */
+	MOVW	$8(R13), R0		/* &Ureg */
 	BL	trap(SB)
+	ADD	$8, R13
 
 	MOVW	(UREG_R0+0)(R13), R0
 	MOVW	R0, HW_R0(R13)
@@ -307,6 +325,18 @@ TEXT	fpscrget(SB), 1, $-4
 
 TEXT	fpscrset(SB), 1, $-4
 	VMSRFPSCR(0)
+	RET
+
+/*
+ * TEMPORARY: does a core register live across an emulated
+ * double-precision fault?  Put a sentinel in R1, execute a cp11
+ * instruction (which a Cortex-M4 traps and os/inferno/armv7m/fpiarmv7m.c
+ * emulates), and hand R1 back.  Nothing about Dis is involved.
+ */
+TEXT	fpr1test(SB), 1, $-4
+	MOVW	$1515870810, R1		/* 0x5a5a5a5a */
+	ADDD	F1, F0			/* cp11: traps on a Cortex-M4 */
+	MOVW	R1, R0
 	RET
 
 TEXT	coherence(SB), 1, $-4

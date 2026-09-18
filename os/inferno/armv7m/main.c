@@ -159,6 +159,21 @@ init0(void)
 	up->egrp = o->egrp;
 
 	chandevinit();
+
+	/*
+	 * A register held live across an exception must come back.  This
+	 * puts a sentinel in R1, takes a fault on a double-precision
+	 * instruction, and looks at R1 afterwards; on a Cortex-M4 that
+	 * fault goes through os/inferno/armv7m/fpiarmv7m.c, and on a
+	 * Cortex-M7 there is no fault to take and the check is vacuous.
+	 * It is here because it failed: see the note on the outgoing
+	 * argument word in os/inferno/armv7m/l.s:/^_trapentry.
+	 */
+	if(fpr1test() == 0x5a5a5a5aUL)
+		print("TRAPREG-OK R1 survives an exception\n");
+	else
+		print("TRAPREG-FAIL R1 did not survive an exception\n");
+
 	poperror();
 	disinit("/osinit.dis");
 }

@@ -49,7 +49,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	say("CVT-I2R", r == 3.0);
 
 	n := int (r + 0.5);		# CVTFW
-	sys->print("CVT-R2I %d want 3\n", n);
+	sys->print("CVT-R2I %d want 4\n", n);	# int rounds away from zero
 
 	a := array[4] of real;
 	for(k := 0; k < 4; k++)
