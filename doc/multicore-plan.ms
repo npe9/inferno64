@@ -7054,16 +7054,9 @@ quantum, printing the first one each processor runs, says
 in every boot of every arm and never says cpu1.  The secondary enters
 the scheduler and finds nothing to interpret.
 .PP
-The reason is probably the next bug, and it is not about SMP at all:
-this board's clock stops.  A print at tick 5, 200 and 2000 fires once,
-at 5, and never again \(em at
-.CW "-smp 1" ,
-with the secondary never started, and with the console lock compiled
-back out.  Fifty milliseconds of clock and then nothing, so there is no
-preemption, and a scheduler with no tick hands a second processor no
-work.  It is pre-existing, it is nothing to do with
-.CW parallelvm ,
-and it is where this board's next session starts.
+Why is open.  The first answer written here was that the board's clock
+stops, and it was wrong; the correction is below, because how it was
+wrong is the useful part.
 .PP
 The same counter answers the question this document has been asking
 since its first page, and it is worth having plainly.  On pc64 at
@@ -7080,3 +7073,45 @@ than inferred from a lock count.  virtarm64 prints only cpu0.  That is
 the difference between the two boards in one line, and it is why the
 arm64 numbers above are a crash that stopped rather than a second
 processor that started.
+
+.NH 2
+The clock does not stop.  The console tail is lost
+.PP
+The evidence for "the clock stops" was a print in
+.CW clockintr()
+at every fifth tick: it printed up to 50 and never again, at
+.CW "-smp 1" ,
+with the secondary never started and the console lock compiled out.
+That is a real observation and the conclusion drawn from it was not.
+.PP
+Read without the console, the timer is healthy.  A probe in the
+interpreter's own quantum \(em which prints early enough to be seen \(em
+reads, at 175 quanta:
+.QP
+.CW "islo 1, ticks 55, rpr 0xff, ctl 0x1, cval 56195312, now 55749250"
+.PP
+Interrupts enabled; no interrupt left active at the controller; the
+timer enabled and unmasked; and its compare 446000 cycles ahead, which
+is seven milliseconds.  The tick count is 55, past the 50 where the
+prints stopped.  And the QEMU monitor, which needs no guest cooperation
+at all, finds the processor in
+.CW WFI
+under
+.CW idlehands
+with a counter advancing between samples.
+.PP
+So the machine is alive and ticking, and what stopped is the console:
+the last line of every boot is cut mid-word, always at the same place,
+and everything printed after it is gone.  The interpreter runs about 175
+quanta in this boot and then has nothing to do, and the output queued
+behind that moment never drains.  Plan 9 kernels lose the tail of the
+console this way \(em it is why
+.CW iprint()
+exists \(em and this board loses it at the end of every boot.
+.PP
+Two things follow.  The board's next session is about the console drain,
+not the clock.  And the reading that cpu1 never runs a Dis quantum rests
+on a print, so it inherits this: the first-quantum line prints early and
+was seen for cpu0 in every boot, which is why the conclusion stands, but
+it is a print, and prints on this board are not to be trusted after the
+interpreter goes quiet.

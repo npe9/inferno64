@@ -2990,10 +2990,11 @@ vmachine(void*)
 			 * has caught a quieter number being a slower kernel
 			 * three times already.
 			 */
-			if((uint)m->machno < nelem(disquanta))
+			if((uint)m->machno < nelem(disquanta)){
 				if(disquanta[m->machno]++ == 0)
 					print("dis: first Dis quantum on cpu%d\n",
 						m->machno);
+			}
 			fpurestore(up->env->fpuostate);
 			r->xec(r);
 			up->env->fpuostate = fpusave();

@@ -2648,13 +2648,6 @@ xec(Prog *p)
 			regstale++;
 			if((uint)p->regsrc < 8)
 				regstalesrc[p->regsrc]++;
-			if(regstaletold++ < 6)
-				print("xec: prog %d resumes at FP %#p, last ran"
-					" at FP %#p (pc %d op %#ux), regsrc %d"
-					" state %d\n",
-					p->pid, R.FP, p->wmtrace[wi].fp2,
-					p->wmtrace[wi].pc, p->wmtrace[wi].op,
-					p->regsrc, p->state);
 		}
 	}
 	curP->curprog = p;
