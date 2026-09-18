@@ -13729,15 +13729,51 @@ showed 177 of them with a
 on the end.  The objects keep their source's own name now, as upstream's
 archive does.
 .PP
-So the library is the small half.  The personality's own three assembly
+So the library is the small half.  What the personality itself assumes
+about its machine was the part this said was "not known until those are
+there"; it is measured now, the same way.  Compiled with 8c against the
+386 headers, in the include sets its own build scripts use, forty-two of
+its forty-five C files compile.
+.CW linuxlegacy.c
+is not among the forty-five: it is a Linux x86-64 binary built by clang,
+and amd64 by its nature.
+.PP
+The three that did not:
+.CW p9exec.c
+and
+.CW p9linuxfile.c
+want
+.CW prog2.i
+and
+.CW linuxprog.i ,
+which are generated \- an embedded program apiece, made for amd64 by the
+build scripts \- so they are a build order and not a portability
+question.  The third was one line, and it is fixed here:
+.CW p9crt.c
+defined
+.CW sbrk
+as taking a
+.CW uvlong
+where
+.CW libc.h
+declares it taking a
+.CW usize .
+Those are the same type on amd64, where a long is sixty-four bits, and
+different on 386, where 8c stops at the redeclaration.  It takes a
+.CW usize
+now and compiles for both.
+.PP
+What is left of the piece is the assembly: the personality's own three
 files
 .CW ( xcall.s ,
 .CW p9cons.s ,
 .CW legacyxcall.s ,
-ninety-eight lines between them) are amd64's and would want their 386
-counterparts, and what else the personality assumes about its machine is
-not known until those are there.  That is the next piece, and it is
-named rather than sized.
+ninety-eight lines between them) are amd64's \-
+.CW SYSCALL ,
+.CW RARG ,
+eight-byte labels \- and a 386 personality wants their counterparts.
+They are not written here, because nothing would build them yet, and a
+file nothing builds is what item 9 above is about.
 .PP
 One check in the sweep is not about a kernel at all, and it is there
 because of the afternoon this port began with.

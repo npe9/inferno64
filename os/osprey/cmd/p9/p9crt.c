@@ -914,8 +914,16 @@ enum { Nheap = 1024*1024 };
 static char heaparena[Nheap];
 static long heapused;
 
+/*
+ * usize and not uvlong, which is what libc.h declares it as: the two
+ * are the same type on amd64, where a long is sixty-four bits, and are
+ * not on 386, where 8c calls the difference an external redeclaration
+ * and stops.  This was the one line of the personality that a 386
+ * compiler refused; the rest of it compiles for that object type as it
+ * stands (forty-two of its forty-five files).
+ */
 void*
-sbrk(uvlong n)
+sbrk(usize n)
 {
 	char *p;
 
