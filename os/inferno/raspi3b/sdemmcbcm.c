@@ -130,21 +130,44 @@ extern SDifc sdemmcbcmifc;
 static int emmctrace = 0;
 
 /*
- * Whether to sleep for the controller's interrupt, and off.
+ * Whether to sleep for the controller's interrupt.  On, since
+ * 19 September 2026, and this is the measurement that turned it on.
  *
- * The interrupt works: the handler runs, EMMC-NOINTR never prints.
- * Sleeping for it is still twelve times slower than spinning -- the
- * board's 1.5MB write measured 86 KB/s spinning and 6 KB/s sleeping --
- * because a woken process on this kernel waits tens of milliseconds to
- * be scheduled, and a block transfer waits once per block.  The same
- * latency is why usbdwc spins 200us for a completion that arrives in 4.
+ * It used to be off, and the comment that turned it off said sleeping
+ * was twelve times slower -- 86 KB/s spinning against 6 -- "because a
+ * woken process on this kernel waits tens of milliseconds to be
+ * scheduled".  It then said that fixing the wake-up latency is what
+ * would make sleeping worth having, and that turning this on is how
+ * such a fix gets measured.
  *
- * So the code stays and the switch is off: what makes sleeping here
- * worth having is fixing the wake-up latency, which is its own piece of
- * work and is written down in doc/raspi3b-completion-plan.ms.  Turning
- * this on is how that fix gets measured.
+ * The fix landed.  Stage one of the scheduling work found that
+ * clockintr() ends in canlock(), that canlock() raised its caller to
+ * PriLock and nothing ever put it back, and so that every clock tick
+ * pinned whatever was running at the top of the ordinary range -- which
+ * is exactly what a process woken from the tsleep below had to outrank.
+ * With that removed the old number does not survive.  Two pairs of
+ * 1.5MB writes on the board, dd through dossrv onto the card:
+ *
+ *	                     spinning        sleeping
+ *	write 1.5MB          15.6 s, 16.4 s  15.8 s, 17.4 s
+ *	worst held window    203 ms, 178 ms  262 us, 262 us
+ *	mean held window     376 us, 362 us  118 us, 117 us
+ *
+ * So it costs a few percent of throughput and takes the longest stretch
+ * this driver holds the processor without yielding from a fifth of a
+ * second to a quarter of a millisecond -- and 262us is the Spinreads
+ * spin at the top of awaitirq, which is to say the whole of the rest of
+ * it is gone.  That window was the largest in the kernel by two orders
+ * of magnitude, and every wake that lands behind it pays for it.
+ *
+ * The interrupt does arrive and is what does the waking: 1815 of 1821
+ * sleeps in the run above were ended by the handler rather than by the
+ * timeout, about 1.8ms from the interrupt to the process running again.
+ *
+ * "echo sleep 0 >/dev/sdM0/ctl" puts it back, because the comparison
+ * should stay takeable.
  */
-static int emmcsleep = 0;
+static int emmcsleep = 1;
 static ulong emmcnwait, emmcnslept, emmcwoke, emmctimeout;
 static uvlong emmcwakeus;
 static uvlong emmcus;
