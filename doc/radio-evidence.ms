@@ -298,6 +298,60 @@ driver, not ours.  Only R3 reaches
 .CW hardware ,
 and only for the 515 lines that deserve to.
 .NH 1
+What has been run
+.PP
+E1, E2, R1 and half of E3, with the results in
+.CW tools/zephyr-checks/README
+and the patches they produced in
+.CW tools/qemu-patches .
+The short version, because the point of this document was that a
+passing test can mean the model implements the driver's mistake:
+.IP \(bu
+.B E1 .
+Zephyr's
+.CW gpio_basic_api
+passes five tests against the CMSDK GPIO model and fails on a stock
+qemu.  The model's register map came from Zephyr's own header, so their
+driver driving it closes the loop.
+.IP \(bu
+.B E2 .
+Semtech's
+.CW drivers/lora/loramac-node/sx127x.c
+finds the part, resets it, configures the modem and transmits, with no
+guest-error output at all.  Getting there took three model fixes, and
+two of them were faults the Inferno driver could never have reached
+because it only ever uses the LoRa register page.
+.IP \(bu
+.B R1 .
+Time on air, checked against a published figure rather than against
+itself, which caught a fixed 1000ms TxDone timeout that failed every
+SF12 transmit while every SF12 transmit succeeded.
+.IP \(bu
+.B "E3, half."
+Semtech transmitting, Inferno receiving: 24 sent, 24 arrive, 24
+correctly rejected for not carrying a RadioHead header.  The finding
+was that a rejected packet and a dead link looked identical from
+.CW stat .
+.PP
+And one thing that was not on this list at all.  The airtime arithmetic
+came out wrong, and it was not the arithmetic:
+.CW utils/tc
+dropped a constant middle operand, so
+.CW "8*a - 4*b"
+compiled to
+.CW "-4*b"
+on thumb and nowhere else.  Silent, since this port existed.  The
+independence work did not find that; a reference value did \- the
+number the model produced disagreed with a datasheet formula, and
+chasing the disagreement rather than adjusting the expectation is what
+turned it up.
+.PP
+Still not run: R2, acknowledgement and retry, which is the largest
+remaining gap to something a PyCubed could talk to; R3, real silicon;
+and the two claims the rest of the tree rests on \-
+.I ssl (3)
+over the radio and Styx over that.
+.NH 1
 How, as opposed to whether
 .PP
 .CW doc/radio-evidence-howto.ms
