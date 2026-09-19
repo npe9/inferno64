@@ -14,6 +14,22 @@
 # positive control: the same kernel, the same forty seconds, and the
 # dump has to be there.  Both arms must reach a shell.
 #
+# The quiet arm looks for every prefix the instrumentation prints under,
+# not just the dump's.  The first version of this check greped for
+# disdump()'s own lines alone, and the multicore branch -- which this
+# one will adopt -- calls stalldump() at 60 and 70 seconds and
+# soakline() every 120 seconds from hzclock() with no flag on either.
+# A check that only knows about disdump() passes a kernel that prints
+# "soak:" down an instance's serial console for the life of the
+# machine.  So the list below is the list, and a print added under a
+# new prefix has to be added to it.
+#
+# What is deliberately NOT here: "the counts disagree", "waiter %d %s
+# state", "vmachine: prog", and the poolcheckoverlap sweep.  Those
+# report a fault rather than a measurement.  They must stay
+# unconditional, they are silent unless something is wrong, and
+# check-pc64-parallelvm greps for the first of them.
+#
 # usage: scripts/check-disdump.sh
 # needs: os/inferno/pc64/ipc64, .qemu/edk2-code.fd, .qemu/edk2-vars.fd
 set -e
@@ -52,10 +68,15 @@ for arm in off on; do
 		-serial "file:$log" \
 		-display none -no-reboot >/dev/null 2>&1 || true
 
+	# every prefix the temporary instrumentation prints under
+	NOISE='dis: parked for work|dis: global runq|kstack: least headroom'
+	NOISE="$NOISE"'|^soak:|^stall:|^nvm:|^audit:|^runq: [0-9]+ dis programs'
+	NOISE="$NOISE"'|^vmq: [0-9]+ interpreters'
+
 	shell=no; dump=no
 	sed -e 's/\r$//' "$log" | grep -q 'spawn sh -n /dis/init' && shell=yes
-	sed -e 's/\r$//' "$log" | grep -q 'dis: parked for work\|dis: global runq\|kstack: least headroom' && dump=yes
-	echo "*disdump=$arm: shell=$shell dump=$dump"
+	sed -e 's/\r$//' "$log" | grep -qE "$NOISE" && dump=yes
+	echo "*disdump=$arm: shell=$shell instrumentation=$dump"
 	if [ $shell = no ]; then
 		echo "check-disdump: FAIL -- the $arm arm never reached a shell" >&2
 		sed -e 's/\r$//' "$log" | grep -a panic | head -2
@@ -63,10 +84,15 @@ for arm in off on; do
 		continue
 	fi
 	case "$arm:$dump" in
-	off:yes)	echo "check-disdump: FAIL -- dumped with no *disdump" >&2; fail=1;;
-	on:no)		echo "check-disdump: FAIL -- *disdump=1 printed nothing" >&2; fail=1;;
+	off:yes)
+		echo "check-disdump: FAIL -- instrumentation printed with no *disdump:" >&2
+		sed -e 's/\r$//' "$log" | grep -aE "$NOISE" | sed 's/^/    | /' | head -4
+		fail=1;;
+	on:no)
+		echo "check-disdump: FAIL -- *disdump=1 printed nothing" >&2
+		fail=1;;
 	esac
 done
 
 [ $fail -eq 0 ] || exit 1
-echo "check-disdump: ok -- quiet by default, dumps when asked"
+echo "check-disdump: ok -- quiet by default, reports when asked"
