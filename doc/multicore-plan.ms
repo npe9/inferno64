@@ -8189,3 +8189,82 @@ onto that path, in two routes with a step-by-step for the first, is
 .CW doc/multicore-bare-metal-plan.ms .
 Nothing in this document's event counts depends on it; everything in
 its wall-clock tables does.
+.NH 2
+The control says the gap is not parallelism, or not only parallelism
+.LP
+.B "First, the workload was wrong and the earlier figures go."
+Every soak boot on virtarm64 printed
+.CW "sh: chantest: file does not exist"
+twice a cycle and carried on: the board's root had no
+.CW chantest.dis ,
+though pc64's has had it since the workload was written.  What those
+boots measured was 300 shell invocations a cycle \(em process creation
+and module load, which is close to the easy case \(em and not the
+channel traffic the parallel VM changes.  Fixed in
+.CW 5fef4719 ;
+anything measured before it is withdrawn.
+.PP
+.B "Then the real workload, four pairs, alternating, equal windows."
+.IP
+.nf
+-smp 4      chantest   cycles    quanta
+pvm=0          3          0       9096
+pvm=1         12          3      52822
+pvm=0          3          0       9445
+pvm=1          6          1      28477
+pvm=0          3          0      14103
+pvm=1          6          1      27341
+pvm=0          3          0      14189
+pvm=1          6          1      21774
+.fi
+.PP
+Four boots of the serialised arm and every one of them does 3 chantest
+runs and finishes no cycle; the parallel arm does 6 to 12 and finishes
+1 to 3.  The reproducibility on the left is what a workload bounded by
+one global lock looks like \(em the width of the machine stops mattering
+\(em and it is tempting to read the right-hand column as the lock coming
+off.  That reading is wrong, and the control says so.
+.PP
+.B "The control: one processor, where the flag has nothing to parallelise."
+.IP
+.nf
+-smp 1      chantest   cycles    quanta
+pvm=0          9          2          -
+pvm=1         24          7     141464
+.fi
+.PP
+Two things in that, and both matter.
+.IP \(bu
+.B "parallelvm=1 is faster on a single processor, by 2.7x."
+There is no second processor for it to use, so whatever this is, it is
+not parallel execution.  What
+.CW parallelvm=0
+also does is take
+.CW vmlock
+on every acquire and make every other interpreter queue on it through
+the kernel scheduler; that cost is paid on one processor as much as on
+four.  So the
+.CW "-smp 4"
+gap is at least partly the same uniprocessor effect, and how much of it
+is parallelism is not established by these boots.
+.IP \(bu
+.B "One processor does more work than four, in both arms."
+9 chantest runs against 3 at
+.CW pvm=0 ,
+24 against 6 to 12 at
+.CW pvm=1 .
+Adding emulated processors makes this workload slower.  Under TCG each
+guest processor is a host thread and they contend for a host that is
+already shared; the kernel's own cross-processor work is then paid for
+nothing.  It is a statement about the emulator and this laptop, not
+about the kernel.
+.PP
+.B "What this leaves."
+The parallel VM is worth something on this workload and the direction is
+consistent across eight boots, but the size cannot be attributed, and
+the machine these numbers came from makes more processors worse.  That
+is the argument for
+.CW doc/multicore-bare-metal-plan.ms
+stated in data rather than in expectation: the question needs a machine
+whose processors are real.  The control is what turned a clean 4x into
+a question, and it cost two boots.
