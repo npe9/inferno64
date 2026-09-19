@@ -7,8 +7,10 @@ implement Hw;
 # This is Limbo wrapping a file interface, which is what appl/lib/
 # daytime.b does with /dev/time, and it is the reason this module's
 # PATH is a .dis: it genuinely is Limbo.  Nothing below touches a
-# register.  Whatever serves the directory does that -- a C device on a
-# real board, appl/pycubed/hwsim.b on one without the parts.
+# register.  Whatever serves the directory does that -- on a real board
+# the C drivers of phase 2; on a board without the parts,
+# os/inferno/mps2/archfiles.c, which registers the same files through
+# addarchfile() and says in /dev/arch that every reading is invented.
 #
 
 include "sys.m";
@@ -79,14 +81,18 @@ rgb(r, g, b: int)
 	sys->write(frgb, s, len s);
 }
 
-# There is no radio here.
+# There is no radio here.  Not a stub, not a simulation: no driver for
+# an SX127x exists anywhere in this tree, so this answers 0 and the
+# beacon task says so rather than inventing traffic.
 #
-# On a PyCubed the RFM9x is an SX127x on SPI, and its Inferno home is
-# devether: a Medium driver puts it at /net/ether0 and the IP stack runs
-# over it, the way ethermedium.c and pktmedium.c do for the media this
-# tree already has.  That is a driver and a Medium, not a file to read,
-# and it is phase 2.  A board without one says so rather than inventing
-# traffic: see doc/pycubed-plan.ms.
+# When there is one it is a C driver on SPI, phase 2.  What it should
+# present is a file, not a Medium at /net/ether0: ssl(3) attaches to a
+# file descriptor ("fd m" on its ctl file) and ssl->connect() takes a
+# ref Sys->FD, so an authenticated, encrypted Styx link runs straight
+# over a /dev/radio with no IP stack under it.  See "What Inferno
+# already answers" in doc/pycubed-plan.ms, which also has the one thing
+# that does not fall out for free: the radio's RadioHead framing leaves
+# 252 bytes and os/inferno/port/devmnt.c refuses an msize below 256.
 haveradio(): int
 {
 	return 0;

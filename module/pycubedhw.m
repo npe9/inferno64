@@ -31,18 +31,20 @@
 #	                 "gyro <x> <y> <z>\n"
 #	                 "accel <x> <y> <z>\n"   milli-units
 
-# The radio is not here.  An SX127x on SPI is a network interface, and
-# Inferno's home for one is devether: a Medium driver puts it at
-# /net/ether0 and the IP stack runs over it.  That is not a file to
-# read, and standing in for it would be inventing a network.
+# The radio is not here, and no driver for an SX127x exists anywhere in
+# this tree.  haveradio() answers 0 on every board so far.  When there
+# is one it should serve a file rather than a Medium at /net/ether0:
+# ssl(3) attaches to a file descriptor, so Styx over an authenticated,
+# encrypted link needs no IP stack under it.  See doc/pycubed-plan.ms.
 #
 # Text, and integers rather than reals, because the parts this is for
 # have no double-precision floating point (doc/armv7m-ports.ms) and
 # because a file you can cat is the point of the file interface.
 #
-# On a real board a C device serves this directory as part of /dev.  On
-# a board with none of the hardware, appl/pycubed/hwsim.b serves it and
-# says so.
+# On a real board the C drivers of phase 2 serve these as part of /dev.
+# On a board with none of the hardware, os/inferno/mps2/archfiles.c
+# registers them through addarchfile() and /dev/arch says that every
+# reading is invented.
 #
 
 Hw: module
