@@ -84,13 +84,31 @@ The default destination address; 255 is broadcast.
 .B reset
 Put the part back in sleep and reapply the settings.
 .PP
+.B Ctl 's
+.B sf
+also sets LowDataRateOptimize, which the datasheet (4.1.1.6) requires
+whenever a symbol lasts longer than 16ms \- SF11 and SF12 at 125kHz.
+It is mandatory rather than advisory, because the receiver has to agree:
+a link with one end setting it and the other not does not work.
+.PP
+A transmit waits for the time the packet will really be on the air,
+computed from the spreading factor, bandwidth, coding rate and length,
+and not for a constant.  At 125kHz a 20-byte packet is 57ms at SF7 and
+1319ms at SF12, so a constant is either wrong at one end or pointlessly
+long at the other.
+.PP
 .B Stat
 returns the parameters in force, the RSSI and SNR of the last packet
 received, and counters for packets sent and received, CRC errors,
 oversize writes, packets heard but addressed elsewhere
 .RB ( notours )
-and packets too short to carry a header
-.RB ( runt ).
+packets too short to carry a header
+.RB ( runt ),
+transmits that never reported done
+.RB ( txtimeout )
+and the computed airtime of a 20-byte packet in the current
+configuration
+.RB ( airtime-20B-ms ).
 The last two matter more than they look.  A sender that does not speak
 the RadioHead header \- a bare LoRa transmitter, which Semtech's own
 driver is \- is heard and dropped, and without a counter that is

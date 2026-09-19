@@ -55,6 +55,7 @@ struct Radio
 	u32	ncrcerr;
 	u32	ntoobig;
 	u32	nnotours;		/* heard, addressed to someone else */
+	u32	ntxtimeout;		/* transmits that never reported done */
 	u32	nrunt;			/* heard, too short to be a packet */
 
 	QLock	qlock;			/* one user of the part at a time */

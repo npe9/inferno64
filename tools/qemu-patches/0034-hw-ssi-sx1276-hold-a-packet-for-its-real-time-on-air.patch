@@ -1,0 +1,171 @@
+From 152f447cb5b1496cf2d651f66a17bc1e9848e2b8 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sat, 19 Sep 2026 07:28:09 -0400
+Subject: [PATCH] hw/ssi/sx1276: hold a packet for its real time on air
+
+The model transmitted in zero time, which makes it useless for testing
+anything about timing -- and two things depend on timing.  A drop
+probability is pointless if nothing ever overlaps, and an
+acknowledgement timeout against an instantaneous channel passes for the
+wrong reason.
+
+Time on air is the datasheet's formula (4.1.1.7): a symbol is 2^SF/BW,
+the preamble is n+4.25 of them, and the payload rounds up into whole
+symbols by an expression taking the header, the CRC and the low data
+rate optimisation into account.  The model computes it from the modem
+configuration registers the guest actually wrote, arms a timer, stays in
+TX until it fires, and only then puts the frame on the wire and raises
+TxDone.
+
+Checked against a published figure rather than against itself: SF12,
+125kHz, 10-byte payload, CR 4/5 gives 991ms, which is the number the
+airtime calculators give.  On mps2 at SF7/125kHz a 20-byte packet is
+57ms and at SF12 it is 1319ms, a factor of twenty-three, which is why a
+fixed timeout in a driver cannot be right at both ends.
+
+It caught one immediately: the Inferno driver waited a constant 1000ms
+for TxDone, so every SF12 transmit reported failure while every SF12
+transmit succeeded, and its sent counter went up regardless.
+---
+ hw/ssi/sx1276.c | 90 +++++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 84 insertions(+), 6 deletions(-)
+
+diff --git a/hw/ssi/sx1276.c b/hw/ssi/sx1276.c
+index 0b7d926..c5a54f3 100644
+--- a/hw/ssi/sx1276.c
++++ b/hw/ssi/sx1276.c
+@@ -60,6 +60,8 @@ OBJECT_DECLARE_SIMPLE_TYPE(SX1276State, SX1276)
+ #define R_RSSIVALUE         0x1b
+ #define R_MODEMCONFIG1      0x1d
+ #define R_MODEMCONFIG2      0x1e
++#define R_PREAMBLEMSB       0x20
++#define R_PREAMBLELSB       0x21
+ #define R_PAYLOADLENGTH     0x22
+ #define R_MAXPAYLOADLENGTH  0x23
+ #define R_MODEMCONFIG3      0x26
+@@ -123,6 +125,10 @@ struct SX1276State {
+     NICState *nic;
+     NICConf conf;
+ 
++    QEMUTimer *tx_timer;
++    uint8_t tx_buf[FIFOSZ];
++    int tx_len;
++
+     uint32_t drop_pct;
+     uint32_t drop_seed;
+     GRand *rand;
+@@ -161,6 +167,67 @@ static int sx1276_mode(SX1276State *s)
+     return s->regs[R_OPMODE] & OPMODE_MODE;
+ }
+ 
++/*
++ * Time on air, from the datasheet (4.1.1.7).  A LoRa symbol is 2^SF/BW,
++ * the preamble is n+4.25 of them, and the payload rounds up into whole
++ * symbols by a formula that takes the header, the CRC and the low data
++ * rate optimisation into account.
++ *
++ * This exists because a model that transmits in zero time cannot be
++ * used to test anything about timing, and two specific things depended
++ * on it: a drop probability is pointless if nothing ever overlaps, and
++ * an acknowledgement timeout against an instantaneous channel passes
++ * for the wrong reason.  At SF7 and 125kHz a short packet is tens of
++ * milliseconds, which is the difference between a retry path that is
++ * exercised and one that is merely present.
++ */
++static const uint32_t bwtab[] = {
++    7800, 10400, 15600, 20800, 31250, 41700, 62500, 125000, 250000, 500000,
++};
++
++static int64_t sx1276_time_on_air_ns(SX1276State *s, int len)
++{
++    int sf = (s->regs[R_MODEMCONFIG2] >> 4) & 0xf;
++    int bwcode = (s->regs[R_MODEMCONFIG1] >> 4) & 0xf;
++    int cr = (s->regs[R_MODEMCONFIG1] >> 1) & 7;
++    int ih = s->regs[R_MODEMCONFIG1] & 1;
++    int crc = (s->regs[R_MODEMCONFIG2] >> 2) & 1;
++    int de = (s->regs[R_MODEMCONFIG3] >> 3) & 1;
++    int npreamble = (s->regs[R_PREAMBLEMSB] << 8) | s->regs[R_PREAMBLELSB];
++    uint32_t bw;
++    int64_t tsym_ns;
++    int num, den, nsym;
++
++    if (sf < 6 || sf > 12 || bwcode >= ARRAY_SIZE(bwtab) || cr < 1 || cr > 4) {
++        return 0;
++    }
++    bw = bwtab[bwcode];
++
++    /* 2^SF / BW, in nanoseconds */
++    tsym_ns = ((int64_t)(1 << sf) * 1000000000LL) / bw;
++
++    num = 8 * len - 4 * sf + 28 + 16 * crc - 20 * ih;
++    den = 4 * (sf - 2 * de);
++    nsym = 8;
++    if (num > 0 && den > 0) {
++        nsym += ((num + den - 1) / den) * (cr + 4);
++    }
++
++    /* preamble is npreamble + 4.25 symbols; keep the quarter */
++    return (tsym_ns * (4 * npreamble + 17)) / 4 + tsym_ns * nsym;
++}
++
++static void sx1276_tx_done(void *opaque)
++{
++    SX1276State *s = opaque;
++
++    qemu_send_packet(qemu_get_queue(s->nic), s->tx_buf, s->tx_len);
++    s->regs[R_IRQFLAGS] |= IRQ_TXDONE;
++    /* The part drops to standby when the packet has gone. */
++    s->regs[R_OPMODE] = (s->regs[R_OPMODE] & ~OPMODE_MODE) | MODE_STDBY;
++    sx1276_update_irq(s);
++}
++
+ static void sx1276_transmit(SX1276State *s)
+ {
+     uint8_t len = s->regs[R_PAYLOADLENGTH];
+@@ -186,12 +253,16 @@ static void sx1276_transmit(SX1276State *s)
+                       base, len);
+     }
+ 
+-    qemu_send_packet(qemu_get_queue(s->nic), buf, len);
+-
+-    s->regs[R_IRQFLAGS] |= IRQ_TXDONE;
+-    /* The part drops to standby when the packet has gone. */
+-    s->regs[R_OPMODE] = (s->regs[R_OPMODE] & ~OPMODE_MODE) | MODE_STDBY;
+-    sx1276_update_irq(s);
++    /*
++     * Hold the packet for as long as it would really take to send, and
++     * stay in TX until then, which is what a driver polling RegOpMode
++     * or waiting on DIO0 would see.
++     */
++    memcpy(s->tx_buf, buf, len);
++    s->tx_len = len;
++    timer_mod_ns(s->tx_timer,
++                 qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
++                 sx1276_time_on_air_ns(s, len));
+ }
+ 
+ static void sx1276_set_opmode(SX1276State *s, uint8_t val)
+@@ -488,6 +559,12 @@ static void sx1276_reset(DeviceState *dev)
+     s->regs[R_FRFMSB] = 0x6c;           /* 434 MHz */
+     s->regs[R_FRFMID] = 0x80;
+     s->regs[R_FRFLSB] = 0x00;
++    s->regs[R_PREAMBLEMSB] = 0x00;
++    s->regs[R_PREAMBLELSB] = 0x08;      /* 8 symbols */
++
++    if (s->tx_timer) {
++        timer_del(s->tx_timer);
++    }
+ 
+     qemu_set_irq(s->dio0, 0);
+     qemu_set_irq(s->dio4, 0);
+@@ -503,6 +580,7 @@ static void sx1276_realize(SSIPeripheral *d, Error **errp)
+         return;
+     }
+     s->rand = g_rand_new_with_seed(s->drop_seed);
++    s->tx_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, sx1276_tx_done, s);
+ 
+     qdev_init_gpio_out_named(dev, &s->dio0, "dio0", 1);
+     qdev_init_gpio_out_named(dev, &s->dio4, "dio4", 1);
+-- 
+2.51.0
+

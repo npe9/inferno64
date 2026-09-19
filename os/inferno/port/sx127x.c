@@ -170,10 +170,22 @@ bwcode(u32 bw)
 	return -1;
 }
 
+/*
+ * Symbol time in microseconds: 2^SF / BW.  Wanted in two places, and
+ * both of them matter -- see lowdatarate() and timeonair().
+ */
+static u32
+symbolus(Radio *rr)
+{
+	if(rr->bw == 0)
+		return 0;
+	return ((uvlong)(1 << rr->sf) * 1000000) / rr->bw;
+}
+
 static void
 setmodem(Radio *rr)
 {
-	int c;
+	int c, ldro;
 
 	c = bwcode(rr->bw);
 	if(c < 0)
@@ -181,8 +193,45 @@ setmodem(Radio *rr)
 	wr(rr, Sxmodemconfig1, (c << 4) | ((rr->cr - 4) << 1));
 	/* bit 2 is RxPayloadCrcOn: on, so a corrupt packet says so */
 	wr(rr, Sxmodemconfig2, (rr->sf << 4) | (1 << 2));
-	/* bit 2 is AgcAutoOn */
-	wr(rr, Sxmodemconfig3, 1 << 2);
+	/*
+	 * LowDataRateOptimize, bit 3, which the datasheet (4.1.1.6)
+	 * requires whenever a symbol is longer than 16ms -- SF11 and SF12
+	 * at 125kHz, and more of them at narrower bandwidths.  It is
+	 * mandatory, not advisory: the receiver has to agree, so a link
+	 * with one end setting it and the other not does not work.  This
+	 * was missing, and nothing here could see it until the model
+	 * started charging for time on air.  Bit 2 is AgcAutoOn.
+	 */
+	ldro = symbolus(rr) > 16000;
+	wr(rr, Sxmodemconfig3, (ldro << 3) | (1 << 2));
+}
+
+/*
+ * How long a packet of n bytes will be on the air, in milliseconds,
+ * rounded up.  Datasheet 4.1.1.7.  A driver needs this because the
+ * alternative is a fixed timeout, and a fixed timeout is either wrong
+ * at SF12 or pointlessly long at SF7: at 125kHz a 20-byte packet is
+ * 57ms at SF7 and 1319ms at SF12, which is a factor of twenty-three.
+ */
+static int
+timeonair(Radio *rr, int n)
+{
+	uvlong ts, total;
+	int num, den, nsym, ldro;
+
+	ts = symbolus(rr);
+	if(ts == 0)
+		return 1000;
+	ldro = symbolus(rr) > 16000;
+	/* CRC on, explicit header */
+	num = 8*n - 4*rr->sf + 28 + 16;
+	den = 4 * (rr->sf - 2*ldro);
+	nsym = 8;
+	if(num > 0 && den > 0)
+		nsym += ((num + den - 1) / den) * rr->cr;
+	/* preamble is 8 + 4.25 symbols; keep the quarter */
+	total = (ts * (4*8 + 17)) / 4 + ts * nsym;
+	return (total + 999) / 1000;
 }
 
 static void
@@ -216,6 +265,7 @@ int
 sx127xsend(Radio *rr, uchar *p, int n)
 {
 	uchar hdr[Rhhdrlen];
+	int ms;
 
 	if(n <= 0 || n > Maxpayload - Rhhdrlen){
 		rr->ntoobig++;
@@ -260,14 +310,24 @@ sx127xsend(Radio *rr, uchar *p, int n)
 	 * interrupt handler and always lost.  The part tells you it is
 	 * done; there is no reason to ask.
 	 */
-	tsleep(&rr->txr, txdone, rr, 1000);
-	if(!rr->txdone)
-		print("sx127x %s: no TxDone after a second\n", rr->spi->name);
+	/*
+	 * Wait for as long as this packet can take, and a little over.
+	 * A constant here was wrong: 1000ms against a 1319ms packet at
+	 * SF12 reported every transmit as failed while every transmit
+	 * succeeded, and the count below went up anyway.
+	 */
+	ms = timeonair(rr, n + Rhhdrlen);
+	tsleep(&rr->txr, txdone, rr, ms + ms/2 + 50);
+	if(!rr->txdone){
+		rr->ntxtimeout++;
+		print("sx127x %s: no TxDone in %dms for a %dms packet\n",
+			rr->spi->name, ms + ms/2 + 50, ms);
+	}else
+		rr->nsent++;
 
 	rr->spi->lock(rr->spi);
 	listen(rr);
 	rr->spi->unlock(rr->spi);
-	rr->nsent++;
 
 	poperror();
 	qunlock(&rr->qlock);
@@ -467,6 +527,8 @@ sx127xstat(Radio *rr, char *a, int n)
 	p = seprint(p, e, "crcerrors %ud\n", rr->ncrcerr);
 	p = seprint(p, e, "toobig %ud\n", rr->ntoobig);
 	p = seprint(p, e, "notours %ud\n", rr->nnotours);
+	p = seprint(p, e, "txtimeout %ud\n", rr->ntxtimeout);
+	p = seprint(p, e, "airtime-20B-ms %d\n", timeonair(rr, 20));
 	p = seprint(p, e, "runt %ud\n", rr->nrunt);
 	return p - a;
 }
