@@ -87,6 +87,7 @@ struct Lock
 	u32	priority;
 	u16	isilock;
 	long	lockcycles;	/* when ilocktrace is on; see taslock.c */
+	u16	lcarmed;	/* .. and lockcycles holds a start, not junk */
 	Mach	*m;
 	Proc	*p;
 };

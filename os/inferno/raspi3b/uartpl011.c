@@ -30,6 +30,7 @@ static int pl011_baud(Uart*, int);
 
 enum {
 	Putcspin = 1000000,	/* bound: a dead UART must not hang a panic */
+	Maxpoll = 64,		/* bytes to poll out under ilock; see pl011_kick */
 	Consbaud = 115200,	/* what the far end of a Pi's serial cable expects */
 };
 
@@ -182,7 +183,8 @@ static void
 pl011_kick(Uart *uart)
 {
 	Ctlr *c;
-	int i, lo;
+	int i, lo, bounded, n;
+	extern int panicking;
 
 	c = uart->regs;
 	/*
@@ -211,9 +213,37 @@ pl011_kick(Uart *uart)
 	 * there, mid-line, because the rest of the line sat in the queue
 	 * with no way out -- and it is panic()'s path too.  So when
 	 * interrupts are off, drain by polling, bounded per byte.
+	 *
+	 * Bounded in bytes as well, and only when something will come
+	 * back for the rest.  kick() runs under ilock, so this polling
+	 * drain is time in which no interrupt can be taken at all, and
+	 * its length is the length of the console queue.  A print() from
+	 * inside a handler takes this path and is not the shutdown case:
+	 * the TX interrupt and uarttxpoll() will finish what is left, so
+	 * leaving after Maxpoll bytes costs a tick at worst.
+	 *
+	 * The interrupts-on path above needs no bound, on this part: it
+	 * stops when the transmit FIFO fills, and that is 16 bytes.  It
+	 * looks unbounded under QEMU, where the model consumes a byte
+	 * the instant it is written and the loop therefore writes the
+	 * whole queue -- which is also why ILOCK-MAX read 40
+	 * milliseconds in uartkick there.  Each of those writes is a
+	 * trapping MMIO access and the host's own chardev write is
+	 * inside the window, so that number is mostly the emulator.
+	 * What this bound is worth has to be read on the board.
+	 *
+	 * panicking and active.exiting are the cases where nothing will
+	 * come back for the rest, and there the whole queue still goes
+	 * out: latency is not a consideration for a machine that is
+	 * stopping, and a truncated panic message is the thing this
+	 * bound must not reintroduce.  main.c's exit() sets exiting for
+	 * that reason.
 	 */
 	lo = islo();
-	for(;;){
+	bounded = !lo && !panicking && !active.exiting;
+	for(n = 0;; n++){
+		if(bounded && n >= Maxpoll)
+			break;
 		if(csr32r(c, UartFR) & UartFRTXFF){
 			if(lo)
 				break;

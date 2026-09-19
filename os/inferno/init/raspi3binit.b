@@ -537,7 +537,29 @@ netcounters()
 # name, so a bad build costs one card swap rather than the board.
 kupdate()
 {
-	cfg := sys->open("/n/dos/kupdate.txt", Sys->OREAD);
+	#
+	# Wait for the card to be mounted before deciding there is
+	# nothing to do.
+	#
+	# This is spawned before the FAT checks, deliberately, so that a
+	# kernel update does not queue behind two minutes of them -- and
+	# that put it ahead of the mount as well.  It read a file that
+	# was not there yet and returned saying nothing, which is
+	# indistinguishable from a board that was never asked to update:
+	# one boot fetched a new kernel and the next, with the same card
+	# and the same file on it, silently did not.  The only symptom is
+	# an absence, which is the worst kind to chase.
+	#
+	# Sixty seconds, because the mount is behind sdcheck() and the
+	# card is slow, and a board with no kupdate.txt at all waits that
+	# long once and then says nothing, as before.
+	#
+	cfg: ref Sys->FD;
+	for(w := 0; w < 60; w++){
+		if((cfg = sys->open("/n/dos/kupdate.txt", Sys->OREAD)) != nil)
+			break;
+		sys->sleep(1000);
+	}
 	if(cfg == nil)
 		return;			# nothing asked for; say nothing
 	b := array[256] of byte;

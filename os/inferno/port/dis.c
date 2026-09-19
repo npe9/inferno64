@@ -53,7 +53,6 @@ static Prog*	proghash[64];
  */
 extern ulong reschedtaken;	/* port/proc.c */
 extern ulong gcticks, gcpasses, gcmax, idlegcticks, idlegcmax;
-static ulong idlegct0;
 int	disracepid = -1;
 int	disracehits;
 int	disracewindows;	/* delprog windows opened, total */
@@ -126,6 +125,7 @@ static void
 execatidle(void)
 {
 	int done;
+	ulong t0;
 
 	if(tready(nil))
 		return;
@@ -135,6 +135,7 @@ execatidle(void)
 	up->iprog = nil;
 	addrun(up->prog);
 
+	t0 = m->ticks;
 	done = gccolor+3;
 	while(gccolor < done && gcruns()) {
 		if(isched.vmq != nil || isched.runhd != isched.runtl) {
@@ -149,10 +150,17 @@ execatidle(void)
 
 	up->type = Interp;
 	delrunq(up->prog);
-	idlegct0 = m->ticks - idlegct0;
-	idlegcticks += idlegct0;
-	if(idlegct0 > idlegcmax)
-		idlegcmax = idlegct0;
+	/*
+	 * t0 is a local because this loop calls sched(): a static held
+	 * the start time of whichever interpreter kproc ran last, so
+	 * every other one measured from there and the total came out at
+	 * 1.8 million ticks on a board that had been up for 12 thousand.
+	 * A counter larger than the uptime is the tell.
+	 */
+	t0 = m->ticks - t0;
+	idlegcticks += t0;
+	if(t0 > idlegcmax)
+		idlegcmax = t0;
 }
 
 Prog*

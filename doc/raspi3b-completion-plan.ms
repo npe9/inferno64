@@ -4489,12 +4489,63 @@ running process was itself at 14 or above on 221 of 266 ticks.  A boost
 everyone has is not a boost.  It is committed, set to 0, and kept for
 the measurement.
 .PP
-.B "Where it stands."
+.B "Where it stands, on the board."
 .CW SCHED-LAT-OK
-on all four QEMU configurations: a 50ms sleep against a Limbo loop
-overshoots by a median of 0ms, the same as idle.  Before this work the
+on all four QEMU configurations and on silicon: a 50ms sleep against a
+Limbo loop overshoots by a median of 0ms under QEMU and 10ms on the
+board, and 10ms on the board with nothing running at all.  The two
+figures are the same, which is the whole claim.  Before this work the
 loaded figure was not a few ticks worse, it was unbounded \(em a Dis
 program that makes no system call held the processor until it made one.
+.PP
+.B "And the board corrected two numbers and two instruments."
+The 40 milliseconds
+.CW ILOCK-MAX
+reported in
+.CW uartkick
+under QEMU is 3.2 milliseconds on silicon, in the same function, which
+is what the emulator's instant-drain PL011 predicted it would be.  A
+term worth three tenths of a tick, not four.
+.PP
+Both instrument bugs were found by the board and neither could have
+been found anywhere else.
+.CW lcycles()
+returns a
+.CW long ,
+kencc's
+.CW long
+is 32 bits, and the A53's counter runs at 19.2MHz \(em so its low half
+is negative for half of every 223 seconds, and the ilock instrument,
+which used the sign of the saved start time as its armed flag, counted
+506 ilocks early in a boot and then zero for the rest of it.  Zero
+ilocks reads exactly like a quiet kernel.  It carries its own armed bit
+now, and subtracting two wrapped 32-bit counts is still right for any
+interval shorter than the wrap.
+.PP
+The idle-GC timer kept its start in a static, and
+.CW execatidle() 's
+loop calls
+.CW sched() ,
+so every interpreter kproc measured from whichever one ran last: the
+total came to 1.8 million ticks on a board that had been up for 12
+thousand.  A counter larger than the uptime is the tell, and the fix is
+a local.
+.PP
+.B "What the board then said about the real problem."
+Over two minutes of ordinary running \(em ethernet, kfs, the FAT
+checks \(em the worst run-queue wait was 1824 ticks.  Eighteen seconds.
+.CW USB-WAKE
+over the same boot is a mean of 107 milliseconds and a worst of 855
+over the eight completions that slept.  That is not the scheduler
+failing to yield: the counters say it yielded, and
+.CW SCHED-LAT
+says a woken process gets the processor at once when what holds it is
+Limbo.  It is the first thing stage one wrote down as not preempted on
+purpose \(em a kproc in a C loop \(em and on this board that kproc is
+the polled SD driver, which holds the processor for as long as it takes
+to move a block and is the reason writing 1.5MB took 212 seconds while
+everything else ran.  Stage two is where that becomes a number instead
+of a cause.
 .PP
 .B "And one thing that is not explained."
 The worst of the ten is 670 milliseconds, every time, on the first
@@ -4579,18 +4630,44 @@ unchanged.
 .IP
 First reading, over stage one's
 .CW SCHED-LAT
-interval: 46 milliseconds, in
+interval: 40 milliseconds, in
 .CW uartkick ,
 in one call.  That is the console, and it is far and away the largest
-thing found so far \(em
+thing found so far.
+.IP
+.B "And it is mostly the emulator, which took a second look to see."
 .CW pl011_kick
-fills the FIFO and stops when interrupts are on, but when they are
-already off it drains the whole queue, spinning per byte, which is the
-path
+fills the transmit FIFO and stops when interrupts are on, and that
+FIFO is 16 bytes \(em but QEMU's model consumes a byte the instant it
+is written, so the FIFO never fills and the loop writes the whole
+console queue, one trapping MMIO access each, with the host's own
+chardev write inside the
+.CW ilock .
+A number taken on an emulator for a thing the emulator does not model
+is not a fact about this kernel, and this one is not.  The term is
+real; the reading has to be taken on the board.
+.IP
+What is worth fixing regardless is the other path.  With interrupts
+already off \(em which is what
 .CW print()
-from inside a handler takes.  Four ticks of interrupt latency from one
-line of output is a real number and it is the first thing stage two has
-to deal with.
+from inside a handler does \(em
+.CW pl011_kick
+drains the whole queue, spinning per byte, and the length of that is
+the length of the queue.  That is now bounded at 64 bytes, because the
+TX interrupt and
+.CW uarttxpoll()
+will finish what is left and leaving costs a tick at worst.  The
+exception is a machine that is stopping, where nothing will come back
+for the rest: under
+.CW panicking
+or
+.CW active.exiting
+the whole queue still goes out, and
+.CW main.c 's
+.CW exit()
+sets the second for that reason.  This is reasoning, not measurement:
+QEMU cannot show what it is worth and the board has not been asked
+yet.
 .IP
 Not yet measured, and part of the same term: the masked windows that
 are not ilocks \(em

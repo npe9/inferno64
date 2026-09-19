@@ -507,6 +507,13 @@ wantsched(void)
 	 * the latency was measured in milliseconds.
 	 */
 	if(anyready()){
+		/*
+		 * Clear the cooperative hint as hzsched() does.  runproc()
+		 * honours m->readied without scanning the priority queues
+		 * at all, so leaving it set while asking for a reschedule
+		 * asks for the same process back.
+		 */
+		m->readied = nil;
 		up->resched = 1;
 		reschedraised++;
 	}

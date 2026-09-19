@@ -414,6 +414,17 @@ exit(int inpanic)
 
 	up = 0;
 	/*
+	 * Say so, because one thing reads it: pl011_kick bounds how much
+	 * it will poll out under ilock, so that a print() from inside a
+	 * handler cannot hold interrupts off for the length of the
+	 * console queue -- and lifts that bound while the machine is
+	 * stopping, when nothing will come back for the rest of the
+	 * line.  chandevshutdown() below prints with interrupts off and
+	 * is exactly that case: it is what once left a reboot stopped
+	 * mid-line at "#S/sd".
+	 */
+	active.exiting = 1;
+	/*
 	 * Arm the watchdog before shutting anything down, not after.
 	 *
 	 * The way out of here is archreboot(), which is the watchdog with

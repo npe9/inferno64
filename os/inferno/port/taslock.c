@@ -21,9 +21,16 @@ long maxilockcycles;
  * "echo ilock on >/dev/sysctl", "echo ilock >/dev/sysctl" to read and
  * reset -- because it costs two counter reads on every ilock in the
  * kernel, which is every interrupt and every queue operation.  Off it
- * is one predictable branch.  The Lock carries the start time, so a
- * lock taken before tracing was switched on has lockcycles >= 0 and is
- * skipped rather than reported as an interval since the epoch.
+ * is one predictable branch.
+ *
+ * The Lock carries a separate armed bit rather than the sign of the
+ * start time, which is what this did first and which does not work
+ * here: lcycles() returns a long, kencc's long is 32 bits, and the
+ * A53's counter runs at 19.2MHz, so its low half is "negative" for
+ * half of every 223 seconds.  On the board the instrument counted 506
+ * ilocks early in a boot and then zero for the rest of it, which reads
+ * exactly like a quiet kernel and is not.  Subtracting two wrapped
+ * 32-bit counts is still right for any interval shorter than that.
  *
  * ILOCKTRACE is defined in a board's mkfile, and a board that defines
  * it owes two things: a "long lockcycles" in its dat.h Lock, and an
@@ -184,8 +191,10 @@ acquire:
 	l->m = MACHP(m->machno);
 	l->isilock = 1;
 #ifdef ILOCKTRACE
-	if(ilocktrace)
-		l->lockcycles = -lcycles();
+	if(ilocktrace){
+		l->lockcycles = lcycles();
+		l->lcarmed = 1;
+	}
 #endif
 #ifdef LOCKCYCLES
 	l->lockcycles = -lcycles();
@@ -287,15 +296,19 @@ iunlock(Lock *l)
 	ulong sr;
 
 #ifdef ILOCKTRACE
-	if(ilocktrace && l->lockcycles < 0){
-		l->lockcycles += lcycles();
-		cumilockcycles += l->lockcycles;
-		nilocktraced++;
-		if(l->lockcycles > maxilockcycles){
-			maxilockcycles = l->lockcycles;
-			maxilockpc = l->pc;
+	if(ilocktrace && l->lcarmed){
+		long d;
+
+		d = lcycles() - l->lockcycles;
+		l->lcarmed = 0;
+		if(d >= 0){
+			cumilockcycles += d;
+			nilocktraced++;
+			if(d > maxilockcycles){
+				maxilockcycles = d;
+				maxilockpc = l->pc;
+			}
 		}
-		l->lockcycles = 0;
 	}
 #endif
 
