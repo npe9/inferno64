@@ -208,6 +208,88 @@ to
 without a SAMD51 port existing.  Two of them is a real RF link; one of
 them against a Feather running RadioHead is a real interop test.
 .PP
+.B "What to buy, and the two things to settle before buying it."
+.PP
+A Raspberry Pi
+.B 3B
+specifically, not a 3B+ and not a 4: the port is
+.CW os/inferno/raspi3b ,
+and the 3B+ carries a LAN7515 where the 3B has the LAN9514 that
+.CW tools/qemu-patches
+0003 models.  With it, a microSD card, a 2.5A supply, and a 3.3V
+USB-to-serial adapter, because the console is the UART and not HDMI.
+.PP
+Then the radio.  An RFM95W or RFM96W breakout, or a LoRa bonnet that
+wires one to the Pi header already.  The module is 3.3V and so is the
+Pi's GPIO, so there is no level shifting to do.  Wiring, in BCM
+numbering:
+.DS
+.CW "  MOSI   GPIO10   header 19"
+.CW "  MISO   GPIO9    header 21"
+.CW "  SCLK   GPIO11   header 23"
+.CW "  CS     GPIO8    header 24"
+.CW "  RESET  GPIO25   header 22"
+.CW "  DIO0   GPIO24   header 18"
+.CW "  3V3, GND        header 1, 6"
+.DE
+.PP
+.B "Buy antennas, and fit them before transmitting."
+A quarter wave of wire is enough: 165mm at 433MHz, 86mm at 868, 82mm at
+915.  Keying a LoRa PA into an open circuit is how the part is
+destroyed.
+.PP
+.B "And the frequency is a legal question, not a technical one."
+A PyCubed works at 433MHz, which in ITU Region 1 is licence-free ISM
+and in Region 2 is the 70cm amateur band, where it is not.  The
+driver's frequency is a
+.CW ctl
+setting, so testing the driver does not need 433 \(em buy 868 or 915 for
+where that is the ISM band, and keep 433 for talking to an actual
+PyCubed under whatever licence that needs.
+.PP
+.B "The second station is the point."
+Two Pis would be this driver talking to itself on real RF, which is
+worth something but is not an interop test.  An Adafruit Feather M0
+RFM95 running RadioHead's own
+.CW rf95_server
+is an independent implementation of the header this driver claims
+compatibility with, on real silicon, for about the price of the
+breakout.  That is the purchase that answers the question E3 asks.
+.PP
+Two things to settle before spending anything.
+.IP \(bu
+.B "Nothing in this tree is claimed at the hardware tier."
+.CW doc/raspi3b-completion-plan.ms
+uses
+.CW qemu+patch
+ten times and
+.CW hardware
+once, to say that hardware "will be the only real user" of a path.  So
+a Pi buys two problems and the first is whether the port boots on it at
+all.  That is worth an evening with a serial cable before the radio is
+even unwrapped.
+.IP \(bu
+.B "DIO0 has nowhere to land yet."
+.CW gpiobcm.c
+has
+.CW gpiofsel ,
+.CW gpiopull ,
+.CW gpioout
+and
+.CW gpiolev
+and no interrupt registration at all, and QEMU's
+.CW hw/gpio/bcm2835_gpio.c
+answers 0 for
+.CW GPEDS ,
+.CW GPREN
+and the rest with no
+.CW sysbus_init_irq .
+So the edge detection has to be written either way, and whether it can
+be debugged under emulation first depends on a fourth QEMU patch that
+does not exist.
+.NH 2
+The blocker
+.PP
 .B "One blocker, found rather than assumed."
 .CW gpiobcm.c
 has
