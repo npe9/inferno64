@@ -53,19 +53,6 @@ optabinit(void)
 	isrelop[Ooror] = 1;
 	isrelop[Onot] = 1;
 
-	precasttab[Tstring][Tbyte] = tint;
-	precasttab[Tbyte][Tstring] = tint;
-	precasttab[Treal][Tbyte] = tint;
-	precasttab[Tbyte][Treal] = tint;
-	precasttab[Tbig][Tbyte] = tint;
-	precasttab[Tbyte][Tbig] = tint;
-	precasttab[Tfix][Tbyte] = tint;
-	precasttab[Tbyte][Tfix] = tint;
-	precasttab[Tbig][Tfix] = treal;
-	precasttab[Tfix][Tbig] = treal;
-	precasttab[Tstring][Tfix] = treal;
-	precasttab[Tfix][Tstring] = treal;
-
 	casttab[Tint][Tint] = IMOVW;
 	casttab[Tbig][Tbig] = IMOVL;
 	casttab[Treal][Treal] = IMOVF;
@@ -113,6 +100,35 @@ optabinit(void)
 	casttab[Tbig][Tfix] = 0xff;
 	casttab[Tfix][Tstring] = 0xff;
 	casttab[Tstring][Tfix] = 0xff;
+}
+
+/*
+ * The type half of the table above, which cannot be filled in until the
+ * built-in types exist.  optabinit() runs before the command line is
+ * parsed; typeinit() runs after it, because -W sets how wide a Dis word
+ * is and the built-in types are sized from that.  This used to sit in
+ * optabinit and so stored nil in every entry.  See the comment at the
+ * call site in limbo.y.
+ *
+ * Every pair here is one that casttab marks 0xff -- no single
+ * instruction converts them, so the cast is done in two, through the
+ * type named here.
+ */
+void
+precastinit(void)
+{
+	precasttab[Tstring][Tbyte] = tint;
+	precasttab[Tbyte][Tstring] = tint;
+	precasttab[Treal][Tbyte] = tint;
+	precasttab[Tbyte][Treal] = tint;
+	precasttab[Tbig][Tbyte] = tint;
+	precasttab[Tbyte][Tbig] = tint;
+	precasttab[Tfix][Tbyte] = tint;
+	precasttab[Tbyte][Tfix] = tint;
+	precasttab[Tbig][Tfix] = treal;
+	precasttab[Tfix][Tbig] = treal;
+	precasttab[Tstring][Tfix] = treal;
+	precasttab[Tfix][Tstring] = treal;
 }
 
 /*

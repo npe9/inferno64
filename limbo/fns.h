@@ -253,6 +253,7 @@ void	nwarn(Node*, char*, ...);
 int	occurs(Decl*, Node*);
 int	opconv(Fmt*);
 void	optabinit(void);
+void	precastinit(void);
 void	optim(Inst*, Decl*);
 Inst	*oror(Node*, int, Inst*);
 Decl	*outerpolys(Node*);
