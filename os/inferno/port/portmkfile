@@ -154,7 +154,14 @@ trap.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
 
 devroot.$O:	$CONF.root.h
 $CONF.$O:	$CONF.root.h
-$CONF.root.s $CONF.root.h: $CONF $INITDIR/$INIT.dis $PORTDIR/mkroot $ROOTFILES
+# The built-in root depends on the files it is made of.  $ROOTFILES was
+# named on this line from the start and never defined anywhere, so it
+# expanded to nothing and a kernel rebuilt after a .dis changed kept the
+# old copy inside the image, silently.  $PORTDIR/rootfiles reads the
+# conf's root section with mkroot's own rules and prints them.
+ROOTFILES=`{$SHELLNAME $PORTDIR/rootfiles $CONF}
+
+$CONF.root.s $CONF.root.h: $CONF $INITDIR/$INIT.dis $PORTDIR/mkroot $PORTDIR/rootfiles $ROOTFILES
 	$SHELLNAME $PORTDIR/mkroot $CONF
 
 %.i:D:	%.out

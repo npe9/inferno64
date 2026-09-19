@@ -70,7 +70,16 @@ Once only, and for the life of the boot.
 .TP
 .BI addr " CALL\fP-\fIn"
 This station's callsign, at most six letters and digits, with an
-optional SSID of 0 to 15.
+optional SSID of 0 to 15.  A refused callsign leaves the one in force
+alone: a station transmitting under a callsign nobody asked for is the
+one mistake this device must not make.
+.TP
+.BI digipeat " onPorB off"
+Repeat frames whose next unrepeated hop is this station, with the
+has-been-repeated bit set on that address and nothing else touched.
+Off by default: repeating costs air this station is accountable for,
+and on a duty-cycled band it is spending somebody else's traffic out of
+your own allowance.
 .PP
 Opening
 .B clone
@@ -206,8 +215,11 @@ station that never offers them is never sent one; the argument is in
 .BR doc/ax25-plan.ms .
 FRMR is not sent either, which 2.2 prefers.
 .PP
-This does not digipeat.  A frame with a hop still to go is counted
-under
+Digipeating matches a callsign and nothing else.  There are no aliases
+\- no WIDE1-1, no generic paths \- because those are APRS conventions
+rather than AX.25, and a station that answered to a name it was not
+given would repeat traffic nobody asked it to.  A frame whose next hop
+is somebody else is counted under
 .B todigi
 and dropped, separately from a frame for another station, because the
 two mean different things about a link.

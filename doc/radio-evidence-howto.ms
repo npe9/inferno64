@@ -217,3 +217,46 @@ that need no Zephyr at all: ssl(3) over
 .CW /dev/radio0/data ,
 and Styx over that with the message size actually watched.  Those close
 out an argument the rest of the tree has been making on credit.
+.NH 1
+The console, which is fifty characters wide
+.PP
+Every test in this document types commands into a QEMU serial console
+from a pipe, and that console loses characters.
+.B Measured
+on
+.CW mps2-an386 ,
+by typing lines of increasing length and printing what the program was
+handed:
+.DS
+.CW "  echo aaaa bbbb cccc dddd eeee ffff LAST        48  ok"
+.CW "  echo aaaa ... hhhh LAST                        48  ok"
+.CW "  echo aaaa ... jjjj LAST                        58  lost"
+.DE
+At 58 characters the newline goes with the rest, so the next line typed
+is appended to the same command.  What the program then receives is the
+tail of one line glued to the head of the next:
+.CW GB1SAT-3
+followed by
+.CW "ax25raw hear 1"
+arrived as one argument reading
+.CW GB1Sax25raw ,
+which is a callsign no station has and a frame addressed through a
+digipeater that does not exist.
+.PP
+That is worth knowing because of what it looks like.  It cost four runs
+of the digipeater test, which reported a frame correctly recognised as
+being for somebody else \- and it was, because the callsign in it was
+wrong before it was ever transmitted.  Nothing in the kernel was at
+fault and nothing in it could have said so.
+.PP
+The cause is a UART with a one-byte receive register and no flow
+control, driven by a host that writes a whole line at once while the
+guest runs under TCG.  It is a real property of the board and not an
+emulator artifact; a real MPS2 typed at by hand would never see it.
+.PP
+So: keep a typed command under about forty characters, and where a test
+needs a long argument, give the program a shorter way to say it.
+.CW lorachk 's
+.CW padto
+exists for exactly this \- a 200-byte payload from a console that
+cannot carry forty.

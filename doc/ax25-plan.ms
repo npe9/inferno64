@@ -392,8 +392,28 @@ for the larger counted every SABM as a runt, which is a link that is
 silent for a reason nothing prints.
 .RE
 .IP 5. 4
-Digipeaters.  The path is carried, and a frame with a hop still to go
-is recognised and not delivered, but nothing repeats one.
+.B Done .
+Digipeaters.
+.CW "ctl: digipeat on" ,
+off by default, repeats a frame whose next unrepeated hop is this
+station, setting the has-been-repeated bit on that address and touching
+nothing else.
+.B Measured :
+a peer sent
+.CW "N0-7>W1AW-2 via GB1SAT-3"
+and heard back
+.CW "N0-7>W1AW-2 via GB1SAT-3*"
+\(em the star being that bit, decoded by a program that builds the
+bytes from the specification \(em while the station in the middle
+counted
+.CW "repeated 1"
+and
+.CW "todigi 0" .
+.PP
+Matching is on the callsign and nothing else.  No WIDE1-1, no generic
+paths: those are APRS conventions rather than AX.25, and a station
+that answered to a name it was not given would repeat traffic nobody
+asked it to.
 .PP
 Each of those is a thing a TNC on the other end can be pointed at, which
 is the reason for that order rather than any other.

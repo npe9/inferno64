@@ -47,14 +47,23 @@ Call: adt {
 	ssid:	int;
 };
 
+#
+# Slices only.  The first version built the callsign a character at a
+# time with s[len s] = ch, which extends a string in place -- and on a
+# string that shares its storage that runs into whatever is next to it:
+# "GB1SAT-3" came out as "GB1Sax25raw", the program's own name, and the
+# frame went out addressed through a station that does not exist.  It
+# looked exactly like a fault in the digipeater it was testing.
+#
 parse(s: string): Call
 {
-	c := Call("", 0);
-	i := 0;
-	for(; i < len s && s[i] != '-'; i++)
-		c.call[len c.call] = s[i];
-	if(i < len s && s[i] == '-')
-		c.ssid = int s[i+1:];
+	c := Call(s, 0);
+	for(i := 0; i < len s; i++)
+		if(s[i] == '-'){
+			c.call = s[0:i];
+			c.ssid = int s[i+1:];
+			break;
+		}
 	return c;
 }
 
@@ -81,14 +90,14 @@ put(b: array of byte, off: int, c: Call, flag, last: int)
 
 get(b: array of byte, off: int): Call
 {
-	c := Call("", 0);
+	call := array[Ncall] of byte;
+	n := 0;
 	for(i := 0; i < Ncall; i++){
 		ch := int b[off+i] >> 1;
 		if(ch != ' ')
-			c.call[len c.call] = ch;
+			call[n++] = byte ch;
 	}
-	c.ssid = (int b[off+Ncall] >> 1) & 16rf;
-	return c;
+	return Call(string call[0:n], (int b[off+Ncall] >> 1) & 16rf);
 }
 
 # The control field, modulo 8.  Bit 0 clear is I; 01 in the low two
@@ -205,7 +214,16 @@ poke(dest, src: Call, digis: list of Call, info: string)
 		sys->print("ax25raw: write: %d %r\n", n);
 		return;
 	}
-	sys->print("RAWSENT %s>%s %d bytes\n", text(src), text(dest), n);
+	via := "";
+	for(l = digis; l != nil; l = tl l){
+		if(via != "")
+			via += ",";
+		via += text(hd l);
+	}
+	if(via != "")
+		via = " via " + via;
+	sys->print("RAWSENT %s>%s%s %d bytes\n",
+		text(src), text(dest), via, n);
 }
 
 init(nil: ref Draw->Context, argv: list of string)

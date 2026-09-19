@@ -33,6 +33,9 @@ dev
 # a packet device by file descriptor, so it is board-independent in a
 # way the chip driver is not.  See os/inferno/radio/devlora.c.
 	lora
+# AX.25 over the same packet device, at #a served on /net/ax25.  See
+# doc/ax25-plan.ms and os/inferno/radio/devax25.c.
+	ax25
 	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 
 
@@ -155,6 +158,8 @@ root
 	/dis/basename.dis
 	/dis/bind.dis
 	/dis/cat.dis
+	/dis/ax25chk.dis
+	/dis/ax25raw.dis
 	/dis/lorachk.dis
 	/dis/loraraw.dis
 	/dis/radiochk.dis

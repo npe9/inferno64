@@ -209,6 +209,7 @@ static struct
 	Call	me;
 	int	haveaddr;
 	int	started;
+	int	digipeat;	/* repeat frames addressed through us */
 
 	QLock	tx;
 	Queue	*oq;		/* frames waiting for the air */
@@ -223,6 +224,7 @@ static struct
 	u32	nnotui;		/* a control field this does not implement */
 	u32	nnoconv;	/* for us, and nobody had announced */
 	u32	ndigi;		/* for a digipeater we are not */
+	u32	nrepeat;	/* and for one we are */
 	u32	noqdrop;	/* a control frame with no room to queue */
 } ax25;
 
@@ -871,8 +873,8 @@ ax25reader(void*)
 	Block *b;
 	Conv *cv, *ann;
 	Chan *c;
-	Call dest, src, digi;
-	uchar *p, *e;
+	Call dest, src, digi, hopcall;
+	uchar *p, *e, *nexthop;
 	int n, repeated, ndigi, cmd, ctl;
 
 	for(;;){
@@ -906,6 +908,7 @@ ax25reader(void*)
 		 */
 		ndigi = 0;
 		repeated = 1;
+		nexthop = nil;
 		p += 2*Addrlen;
 		if((b->rp[2*Addrlen - 1] & Aend) == 0){
 			for(;;){
@@ -914,8 +917,11 @@ ax25reader(void*)
 					break;
 				}
 				getcall(p, &digi);
-				if((p[Ncall] & Acmd) == 0)
+				if((p[Ncall] & Acmd) == 0 && repeated){
 					repeated = 0;
+					nexthop = p;
+					hopcall = digi;
+				}
 				ndigi++;
 				p += Addrlen;
 				if((p[-1] & Aend) != 0)
@@ -936,6 +942,27 @@ ax25reader(void*)
 		 * because the two mean different things about a link.
 		 */
 		if(!repeated){
+			/*
+			 * The frame is addressed to the next unrepeated
+			 * hop, not to the destination.  If that hop is
+			 * this station and repeating is on, set the
+			 * has-been-repeated bit on that address and put
+			 * the frame back on the air unchanged; everything
+			 * else about it, including who it is really for,
+			 * is none of a digipeater's business.
+			 *
+			 * Off by default.  Repeating costs air that this
+			 * station is accountable for, and on a duty-cycled
+			 * band it is spending somebody else's traffic out
+			 * of your own allowance.
+			 */
+			if(ax25.digipeat && nexthop != nil &&
+			   samecall(&hopcall, &ax25.me)){
+				nexthop[Ncall] |= Acmd;
+				ax25.nrepeat++;
+				sendctl(b);
+				continue;
+			}
 			ax25.ndigi++;
 			freeb(b);
 			continue;
@@ -1350,6 +1377,7 @@ ax25stats(char *buf, int len)
 		p = seprint(p, e, "addr %s\n", cb);
 	}else
 		p = seprint(p, e, "addr none\n");
+	p = seprint(p, e, "digipeat %s\n", ax25.digipeat ? "on" : "off");
 	p = seprint(p, e, "iounit %d\npayload %d\n",
 		ax25.iounit, ax25.iounit - Minhdr);
 	p = seprint(p, e, "in %ud\nout %ud\n", ax25.nin, ax25.nout);
@@ -1357,6 +1385,7 @@ ax25stats(char *buf, int len)
 		ax25.nnotours, ax25.nrunt, ax25.nbad);
 	p = seprint(p, e, "notui %ud\nnoconv %ud\ntodigi %ud\n",
 		ax25.nnotui, ax25.nnoconv, ax25.ndigi);
+	p = seprint(p, e, "repeated %ud\n", ax25.nrepeat);
 	p = seprint(p, e, "ctldropped %ud\n", ax25.noqdrop);
 	return p - buf;
 }
@@ -1533,6 +1562,7 @@ ax25write(Chan *c, void *a, s32 n, s64)
 	Conv *cv;
 	Cmdbuf *cb;
 	Block *b;
+	Call tmp;
 	char *p;
 	int budget, v;
 
@@ -1553,8 +1583,22 @@ ax25write(Chan *c, void *a, s32 n, s64)
 		}else if(strcmp(p, "addr") == 0){
 			if(cb->nf != 2)
 				error(Ebadarg);
-			parsecall(cb->f[1], &ax25.me);
+			/*
+			 * Into a temporary and only then into place.
+			 * parsecall() fills as it goes and errors when it
+			 * finds the fault, so parsing straight into the
+			 * station's own callsign leaves it holding half
+			 * of a refused one -- a station transmitting
+			 * under a callsign nobody asked for, which is
+			 * the one mistake this device must not make.
+			 */
+			parsecall(cb->f[1], &tmp);
+			ax25.me = tmp;
 			ax25.haveaddr = 1;
+		}else if(strcmp(p, "digipeat") == 0){
+			if(cb->nf != 2)
+				error(Ebadarg);
+			ax25.digipeat = strcmp(cb->f[1], "on") == 0;
 		}else
 			error(Ebadarg);
 		poperror();
@@ -1576,7 +1620,8 @@ ax25write(Chan *c, void *a, s32 n, s64)
 				error(Ebadarg);
 			if(cv->state != Sdisc)
 				error("already connected");
-			parsecall(cb->f[1], &cv->remote);
+			parsecall(cb->f[1], &tmp);
+			cv->remote = tmp;
 			cv->haveremote = 1;
 			cv->announced = 0;
 			if(cb->nf == 4){

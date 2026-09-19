@@ -1,0 +1,43 @@
+#!/bin/sh
+# Print the host-side source of every ordinary file a conf's root
+# section embeds, one per line, so that a kernel's built-in root can
+# depend on the files it is made of.
+#
+# $ROOTFILES on portmkfile:157 had always been empty -- nothing ever
+# defined it -- so changing a .dis and rebuilding a kernel left the old
+# copy inside the image with no sign that it had.  That is the sort of
+# thing that gets diagnosed as a device bug for an afternoon.
+#
+# The rules for resolving a source are mkroot's and must stay the same
+# as mkroot's: a second field is the source, /osinit.dis comes from the
+# init directory, and anything else is its own name under the tree
+# root.  Directories are left out, because a root section names them to
+# have them made and there is nothing to read.
+
+${AWK:-awk} '
+BEGIN{
+	infernoroot = ENVIRON["ROOT"];
+	init = ENVIRON["INIT"];
+}
+/^$/{ next }
+/^#/{ next }
+collect && /^[^\t ]/{ collect = 0 }
+collect && section ~ "root"{
+	if (NF > 1)
+		src = infernoroot $2;
+	else if ($1 == "/osinit.dis")
+		src = infernoroot "/os/inferno/init/" init ".dis";
+	else
+		src = infernoroot $1;
+	if (system("test -f " src) == 0)
+		print src;
+	next;
+}
+$0 ~ /^[^ \t]/{
+	if($0 ~ "(code|dev|ether|ip|lib|link|mod|misc|port|root|vga)"){
+		section = $0;
+		collect = 1;
+	}
+	next;
+}
+' $1
