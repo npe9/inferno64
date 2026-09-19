@@ -249,7 +249,7 @@ exread1(Chan *c, void *buf, int n)
  * a transport for four bytes is a short read, which it is right to
  * refuse rather than truncate.
  *
- * That was not a theoretical case.  os/inferno/port/devradio.c hands
+ * That was not a theoretical case.  os/inferno/radio/devradio.c hands
  * out one packet per read and refuses a buffer too small to hold it,
  * because ssl(3) and everything above depend on the boundary surviving;
  * sys->export() over it read four bytes, was refused, and returned at

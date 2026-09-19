@@ -36,8 +36,8 @@ halves of it are ours:
 .DS
 .CW "  hw/ssi/sx1276.c          489   model"
 .CW "  hw/gpio/cmsdk-ahb-gpio.c 350   model"
-.CW "  os/inferno/port/sx127x.c 515   driver, carries over"
-.CW "  os/inferno/port/devradio.c 280 device, carries over"
+.CW "  os/inferno/radio/sx127x.c 515   driver, carries over"
+.CW "  os/inferno/radio/devradio.c 280 device, carries over"
 .CW "  os/inferno/mps2/spipl022.c 188 fixture, thrown away"
 .DE
 So 188 lines of 983 in the guest \- 19% \- are the part that does not
@@ -253,7 +253,7 @@ Said because one is to hand.  A CC1101, CC1200 or CC2520 is not an
 SX127x: different register map, and no TI part demodulates LoRa at all,
 which is a proprietary Semtech chirp modulation rather than a mode
 anyone else implements.  So such a part cannot exercise
-.CW os/inferno/port/sx127x.c
+.CW os/inferno/radio/sx127x.c
 and cannot talk to a PyCubed's RFM9x.  For R3 as written it is the
 wrong chip.
 .PP

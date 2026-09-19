@@ -153,11 +153,13 @@ the RadioHead header \- a bare LoRa transmitter, which Semtech's own
 driver is \- is heard and dropped, and without a counter that is
 indistinguishable from a dead link: received stays 0 either way.
 .SH SOURCE
-.B /os/inferno/port/devradio.c
+.B /os/inferno/radio/devradio.c
 .br
-.B /os/inferno/port/sx127x.c
+.B /os/inferno/radio/sx127x.c
 .br
 .B /os/inferno/mps2/spipl022.c
+.br
+.B /os/inferno/raspi3b/spipiradio.c
 .SH DIAGNOSTICS
 A kernel with no radio fitted serves an empty
 .B #W
@@ -182,15 +184,40 @@ unfinished.
 Only one interface exists.  A PyCubed has two radio sockets on one SPI
 bus, RF1 and RF2; this drives the first.
 .PP
-The only board this runs on is
-.BR mps2 ,
-under a QEMU patched to model an SX1276 on its Shield0 SPI header
+Two boards run this, both under a QEMU patched to model an SX1276:
+.B mps2
+on its Shield0 SPI header and
+.B raspi3b
+on SPI0
 .RB ( tools/qemu-patches ,
-0027 to 0029).  That is a fixture: an MPS2 has the expansion header and
-no radio on it, and a PyCubed wires the same part to a SAMD51 SERCOM
-instead.  So what is tested here is the register, FIFO and interrupt
-sequencing and the file interface above it, and not any real board's
-bus.
+0027 to 0036).  Both are fixtures \- an MPS2 has the expansion header
+and no radio on it, and a Pi has a header and whatever is plugged into
+it \- so what is tested is the register, FIFO and interrupt sequencing
+and the file interface above them, and not any real board's bus.
+.PP
+Of the two,
+.B mps2-an386
+is the one to test on: it is a Cortex-M4, which is what a SAMD51 is, and
+a PyCubed is the target.
+.B mps2-an500
+is the same board with a Cortex-M7, whose double precision a SAMD51 does
+not have, and
+.B raspi3b
+is a 64-bit Cortex-A53 with a gigabyte of memory, which is nothing like
+either.  The Pi is there because it is the board a real part can be
+plugged into, not because it resembles the destination.
+.PP
+The chip and the device are in
+.BR /os/inferno/radio ,
+beside
+.B /os/inferno/ip
+and for the same reason: they are shared by more than one machine and
+are hardware, so they belong in neither
+.B port
+nor any one machine's directory.  What is in a machine's directory is
+its own half \- the controller, the chip select, which pin the interrupt
+arrived on \- and that is the part thrown away when the machine
+changes.
 .SH SEE ALSO
 .IR radiochk (1),
 .IR ssl (3)

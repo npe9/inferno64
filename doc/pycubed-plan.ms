@@ -902,7 +902,7 @@ returns it.
 .PP
 .B Measured ,
 since this was written.
-.CW os/inferno/port/devradio.c
+.CW os/inferno/radio/devradio.c
 reports an
 .CW iounit
 of 251 \- 255 of FIFO less the four-byte RadioHead header \- and a

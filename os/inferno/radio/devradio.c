@@ -4,7 +4,7 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"../port/error.h"
-#include	"../port/sx127x.h"
+#include	"../radio/sx127x.h"
 
 /*
  * #W, a packet radio.

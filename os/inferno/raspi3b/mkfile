@@ -12,6 +12,7 @@ INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
 IPDIR=../ip
 INITDIR=../init
 PORTDIR=../port
+RADIODIR=../radio
 
 #end configurable parameters
 
@@ -124,3 +125,7 @@ devuart.$O:	../port/devuart.c
 	$CC $CFLAGS ../port/devuart.c
 
 # qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256 -nographic -kernel ivirtarm64
+
+# sx127x.h carries the Radio struct that three files share; see the same
+# line in os/inferno/mps2/mkfile for why it is written out.
+devradio.$O sx127x.$O spipiradio.$O:	$RADIODIR/sx127x.h

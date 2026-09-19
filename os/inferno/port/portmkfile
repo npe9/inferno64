@@ -23,6 +23,13 @@ CLEANEXTRA=
 %.$O:		$IPDIR/%.c
 		$CC $CFLAGS -I. $IPDIR/$stem.c
 
+# os/inferno/radio holds the parts of a radio that are a part -- an
+# SX127x's register map, and the device that serves it -- which are
+# hardware and so do not belong in port, and which two machines share
+# and so do not belong in either of theirs.  Same shape as $IPDIR.
+%.$O:		$RADIODIR/%.c
+		$CC $CFLAGS -I. $RADIODIR/$stem.c
+
 &.$O:		$HFILES $PORTHFILES
 
 $INSTALLDIR/%: %

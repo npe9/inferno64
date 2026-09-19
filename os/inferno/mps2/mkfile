@@ -11,6 +11,7 @@ INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
 
 INITDIR=../init
 PORTDIR=../port
+RADIODIR=../radio
 ARCHDIR=../armv7m
 
 #end configurable parameters
@@ -182,7 +183,7 @@ fpiarmv7m.$O:	$ARCHDIR/fpiarmv7m.c $ARCHDIR/fpi.h
 # field while one of its users keeps the old layout does not fail to
 # build, it reads a different member at run time.  That cost an afternoon
 # once already, in include/pool.h; see doc/xip.ms.
-devradio.$O sx127x.$O spipl022.$O:	$PORTDIR/sx127x.h
+devradio.$O sx127x.$O spipl022.$O:	$RADIODIR/sx127x.h
 
 devuart.$O:	../port/devuart.c
 	$CC $CFLAGS ../port/devuart.c

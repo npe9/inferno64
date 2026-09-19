@@ -4,7 +4,7 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"io.h"
-#include	"../port/sx127x.h"
+#include	"../radio/sx127x.h"
 
 /*
  * The MPS2's SPI and GPIO, and the radio shield on Shield0.
