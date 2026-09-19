@@ -150,6 +150,7 @@ send(dest: int, text: string, acked, count: int)
 			return;
 		}
 	}
+	t0 := sys->millisec();
 	for(i := 0; i < count; i++){
 		b := array of byte sys->sprint("%s-%d", text, i);
 		n := sys->write(c.dfd, b, len b);
@@ -160,6 +161,8 @@ send(dest: int, text: string, acked, count: int)
 			ck(sys->sprint("write-%d", i), n == len b,
 				sys->sprint("%d %r", n));
 	}
+	sys->print("elapsed %d ms for %d writes\n",
+		sys->millisec() - t0, count);
 	sys->print("%s\n", status(c.n));
 }
 

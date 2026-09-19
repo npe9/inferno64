@@ -214,6 +214,32 @@ setmodem(Radio *rr)
  * at SF12 or pointlessly long at SF7: at 125kHz a 20-byte packet is
  * 57ms at SF7 and 1319ms at SF12, which is a factor of twenty-three.
  */
+/*
+ * Milliseconds since boot.  TK2MS on the tick counter: this is a
+ * duty-cycle clock, where being out by a tick does not matter and
+ * being out by a factor does, so the coarse one is the right one.
+ */
+static uvlong
+nowms(void)
+{
+	return TK2MS((uvlong)MACHP(0)->ticks);
+}
+
+/*
+ * How long until a transmit is permitted, in milliseconds.  Zero when
+ * the duty cycle is off or the silence has already been served.
+ */
+static vlong
+dutyowed(Radio *rr)
+{
+	vlong owed;
+
+	if(rr->duty <= 0 || rr->duty >= 100)
+		return 0;
+	owed = (vlong)rr->nextok - (vlong)nowms();
+	return owed > 0 ? owed : 0;
+}
+
 static int
 timeonair(Radio *rr, int n)
 {
@@ -271,10 +297,29 @@ int
 sx127xsend(Radio *rr, uchar *p, int n)
 {
 	int ms;
+	vlong owed;
 
 	if(n <= 0 || n > Maxpayload){
 		rr->ntoobig++;
 		return -1;
+	}
+
+	/*
+	 * Wait out the duty cycle before taking the lock, not after: a
+	 * transmitter that has spent its allowance has no business
+	 * holding the part while it waits, and a receiver on the same
+	 * radio must go on receiving.
+	 */
+	if(rr->duty > 0){
+		owed = dutyowed(rr);
+		if(owed > 0)
+			rr->nwaited++;
+		while(owed > 0){
+			if(owed > 1000)
+				owed = 1000;
+			tsleep(&up->sleep, return0, 0, (int)owed);
+			owed = dutyowed(rr);
+		}
 	}
 
 	qlock(&rr->qlock);
@@ -304,6 +349,19 @@ sx127xsend(Radio *rr, uchar *p, int n)
 			rr->spi->name, ms + ms/2 + 50, ms);
 	}else
 		rr->nsent++;
+
+	/*
+	 * Charge for the air whether or not TxDone arrived: the energy
+	 * went out either way, and a regulator counts transmissions and
+	 * not successes.  The rule is the one every LoRaWAN stack
+	 * implements and it is stricter than the directive's: a packet
+	 * of A milliseconds is followed by A*(100-D)/D of silence, so
+	 * the ratio holds over every window rather than over an hour.
+	 */
+	rr->airms += ms;
+	if(rr->duty > 0)
+		rr->nextok = nowms() +
+			((uvlong)ms * (100 - rr->duty)) / rr->duty;
 
 	rr->spi->lock(rr->spi);
 	listen(rr);
@@ -402,6 +460,7 @@ sx127xctl(Radio *rr, char *a, int n)
 		{ 3,	"sf",		2 },
 		{ 4,	"bw",		2 },
 		{ 5,	"cr",		2 },
+		{ 6,	"duty",		2 },
 		{ 8,	"reset",	1 },
 	};
 	int v;
@@ -437,6 +496,10 @@ sx127xctl(Radio *rr, char *a, int n)
 		if(v < 5 || v > 8)
 			error("coding rate is 5 to 8");
 		break;
+	case 6:
+		if(v < 0 || v > 100)
+			error("duty cycle is 0 to 100 per cent; 0 is off");
+		break;
 	}
 
 	rr->spi->lock(rr->spi);
@@ -458,6 +521,10 @@ sx127xctl(Radio *rr, char *a, int n)
 	case 5:
 		rr->cr = v;
 		setmodem(rr);
+		break;
+	case 6:
+		rr->duty = v;
+		rr->nextok = 0;
 		break;
 	case 8:
 		setmode(rr, Msleep);
@@ -499,6 +566,13 @@ sx127xstat(Radio *rr, char *a, int n)
 	p = seprint(p, e, "toobig %ud\n", rr->ntoobig);
 	p = seprint(p, e, "txtimeout %ud\n", rr->ntxtimeout);
 	p = seprint(p, e, "airtime-20B-ms %d\n", timeonair(rr, 20));
+	if(rr->duty > 0)
+		p = seprint(p, e, "duty %d\n", rr->duty);
+	else
+		p = seprint(p, e, "duty off\n");
+	p = seprint(p, e, "airtime-total-ms %llud\n", rr->airms);
+	p = seprint(p, e, "airtime-owed-ms %lld\n", dutyowed(rr));
+	p = seprint(p, e, "dutywaits %ud\n", rr->nwaited);
 	return p - a;
 }
 

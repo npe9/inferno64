@@ -128,15 +128,56 @@ Bandwidth; one of the values the part has, 7800 through 500000.
 .BI cr " n"
 Coding rate denominator, 5 to 8.
 .TP
+.BI duty " percent"
+The share of the air this radio may use, 0 to 100.  Zero is off and is
+the default.
+.TP
 .B reset
 Put the part back in sleep and reapply the settings.
 .PP
-Those are the modem's parameters and nothing else, which is the point:
-there is no
+Those are the modem's parameters and the band's, and nothing else,
+which is the point: there is no
 .B node
 or
 .B dest
 here because there is no address here.
+.PP
+.B Duty
+is the one control that is not about the radio.  An
+.B iounit
+says how much one operation carries and nothing about how often, and a
+.B data
+file that took writes as fast as a program made them would be telling
+that program something untrue: the packets go out, and what breaks is
+the licence.  So the write waits, which is the only way a file
+interface says this.
+.PP
+The rule is the one every LoRaWAN stack implements: a packet of
+.I A
+milliseconds on the air, at a duty cycle of
+.I D
+per cent, is followed by
+.I "A (100 - D) / D"
+of silence, so the ratio holds over every window rather than over an
+hour.  At 1 per cent and SF7, a nine-byte payload is 47ms of air and
+4653ms of silence.  Measured, four such writes in a row:
+.PP
+.EX
+	duty off        240 ms
+	duty 1        14190 ms
+.EE
+.PP
+against 14147 predicted, and
+.B airtime-total-ms
+agreeing at 47ms a packet.  The air is charged for whether or not
+TxDone arrives, because the energy went out either way and a regulator
+counts transmissions rather than successes.
+.PP
+The first packet after a silence does not wait, so a short burst is
+slightly over the ratio and a long run converges on it.  That is the
+behaviour of the rule and not an approximation of it; a scheme that
+made the first packet wait would be refusing to transmit into an hour
+it had not used.
 .PP
 .B Ctl 's
 .B sf
@@ -162,9 +203,16 @@ writes refused for being past the payload
 .RB ( toobig ),
 transmits that never reported done
 .RB ( txtimeout ),
-and the computed airtime of a 20-byte packet in the current
-configuration
-.RB ( airtime-20B-ms ).
+the computed airtime of a 20-byte packet in the current configuration
+.RB ( airtime-20B-ms ),
+the duty cycle in force
+.RB ( duty ),
+all the air this radio has used since boot
+.RB ( airtime-total-ms ),
+how long until it may transmit again
+.RB ( airtime-owed-ms )
+and how many writes have had to wait for that
+.RB ( dutywaits ).
 .SH SOURCE
 .B /os/inferno/radio/devradio.c
 .br
@@ -186,11 +234,19 @@ and those are worth telling apart from a different chip.
 Only one interface exists.  A PyCubed has two radio sockets on one SPI
 bus, RF1 and RF2; this drives the first.
 .PP
-Nothing arbitrates the air.  There is no carrier sense, no backoff and
-no duty-cycle accounting, so a write transmits whenever it is called
-and two stations that write at once collide.  On the ISM bands duty
-cycle is a legal limit and not a courtesy, which makes this the next
-thing the device owes and not a nicety.
+Nothing arbitrates the air between stations.  There is no carrier
+sense and no backoff, so two stations that write at once collide;
+.B duty
+limits what one radio spends and says nothing about what it spends it
+on top of.
+.PP
+.B Duty
+is a number somebody has to know.  The band, the sub-band and the
+region decide it \- one per cent on 868 in Europe, ten on some 433
+sub-bands, and in the United States a dwell time rather than a ratio,
+which this cannot express \- so the device refuses to guess and starts
+at zero.  A kernel that never sets it transmits as fast as it is
+asked.
 .PP
 Two boards run this, both under a QEMU patched to model an SX1276:
 .B mps2

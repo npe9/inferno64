@@ -59,10 +59,16 @@ struct Radio
 	int	sf;			/* spreading factor 6..12 */
 	u32	bw;			/* Hz */
 	int	cr;			/* coding rate denominator 5..8 */
+	int	duty;			/* per cent of air permitted, 0 off */
 
 	/* what the last received packet looked like */
 	int	rssi;
 	int	snr;
+
+	/* duty cycle */
+	uvlong	airms;			/* time on the air, total */
+	uvlong	nextok;			/* ms when a transmit is allowed */
+	u32	nwaited;		/* transmits made to wait for it */
 
 	/* counters */
 	u32	nsent;

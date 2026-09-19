@@ -180,9 +180,37 @@ takes a
 window, because the window is a property of where the radio is standing
 rather than of the radio.
 .PP
-Not built.  What is built is the half that makes it possible: the model
-charges for time on air, so a driver that ignores duty cycle can be
-caught here rather than by a regulator.
+Built.
+.CW ctl
+takes
+.CW "duty n" ,
+zero to a hundred and zero by default, and a transmit of
+.I A
+milliseconds is followed by
+.I "A (100 - D) / D"
+of silence \(em the rule every LoRaWAN stack implements, which holds
+the ratio over every window rather than over an hour.
+.CW stats
+reports the duty cycle, all the air the radio has used, how long until
+it may transmit again, and how many writes have waited.
+.PP
+.B Measured .
+Four nine-byte writes in a row at SF7 took 240ms with the duty cycle
+off and 14190ms at one per cent, against 14147 predicted from the
+driver's own
+.CW airtime-total-ms
+of 47 milliseconds a packet.  The first packet after a silence does not
+wait, so a short burst is slightly over the ratio and a long run
+converges on it; that is the rule's behaviour and not an approximation
+of it, since a scheme that made the first packet wait would be refusing
+to transmit into an hour it had not used.
+.PP
+.CW Duty
+is off by default because it is a number somebody has to know: the
+band, the sub-band and the region decide it, and in the United States
+it is a dwell time rather than a ratio, which this cannot express.  A
+kernel that never sets it transmits as fast as it is asked, which is
+the same as before this existed.
 .NH 1
 The sizes, which are a chain
 .PP
@@ -352,7 +380,8 @@ renamed from
 .CW stat
 to match what it holds.
 .IP 4. 4
-Duty cycle, when a real radio makes it matter.
+.B Done .
+Duty cycle.
 .PP
 Everything else stays, and the reason to trust it is that it has been
 load-bearing: one write one packet, one read one packet, a short read
