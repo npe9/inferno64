@@ -340,9 +340,33 @@ pmap(uintptr pa, u64 flags, s64 size)
 	pa = PPN(pa);
 	DP("\tpa 0x%zux\n", pa);
 	while(size > 0){
-		/* reducing complexity, use 4096 byte pages all through */
+		/*
+		 * A 2 MiB page where the range allows one.
+		 *
+		 * This used to say "reducing complexity, use 4096 byte
+		 * pages all through", and that is why mapkzero() refuses
+		 * RAM above 1 GiB: sixteen gibibytes of 4 KiB entries is
+		 * four million PTEs and 32 MiB of page tables out of the
+		 * early allocator, before there is an allocator.  The same
+		 * range in 2 MiB entries is eight thousand.
+		 *
+		 * Only when the physical address and what is left are both
+		 * 2 MiB aligned, and only into a page-directory entry that
+		 * is empty: one that is already valid points at a table of
+		 * 4 KiB pages that l.s or an earlier call built, and
+		 * replacing it with a large page would orphan them.
+		 */
 		l = 0;
 		z = PGLSZ(0);
+		if((pa & (PGLSZ(1)-1)) == 0 && size >= (s64)PGLSZ(1)){
+			pte = mmuwalk(m->pml4, pa, 1, 1);
+			if(pte != nil && (*pte & PTEVALID) == 0){
+				*pte = pa | flags | PTESIZE;
+				pa += PGLSZ(1);
+				size -= PGLSZ(1);
+				continue;
+			}
+		}
 		pte = mmuwalk(m->pml4, pa, l, 1);
 		if(pte == nil){
 			panic("pmap: pa=%#p size=%lld", pa, size);

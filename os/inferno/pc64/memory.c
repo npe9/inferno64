@@ -71,14 +71,19 @@ mapkzero(uintptr base, uintptr len, int type)
 		base = MemMin;
 	}
 
-	/* arbitrarily limiting the page table size while the
-	 * kernel is still booting
+	/*
+	 * The limit that used to be here -- no RAM above 1 GiB, and a run
+	 * longer than that truncated to 2*MemMin -- called itself
+	 * arbitrary, and it was there because pmap() mapped 4 KiB pages
+	 * only: sixteen gibibytes that way is four million entries out of
+	 * the early allocator.  pmap() uses a 2 MiB entry where the range
+	 * allows one now, which is eight thousand for the same memory, so
+	 * the machine's own RAM is mappable and the limit goes.
+	 *
+	 * meminit() still takes only what it finds mapped (see the walk
+	 * there), so if this ever fails to map something the kernel will
+	 * decline to hand it out rather than fault on it.
 	 */
-	if(base > 1*GiB && type == MemRAM)
-		return;
-	if(base >= MemMin && len > 1*GiB && type == MemRAM){
-		len=2*MemMin;
-	}
 	switch(type){
 	default:
 		return;
@@ -804,6 +809,17 @@ meminit(void)
 		{
 			uintptr *pte, last;
 
+			/*
+			 * Map it here rather than hope e820scan() did.  That
+			 * pass walks the ranges it knows at the time; the
+			 * bank above 4 GiB on a 16 GiB machine was not among
+			 * them, so it went unmapped and the walk below then
+			 * dropped 13 GiB of perfectly good memory.  mapkzero()
+			 * is idempotent -- pmap() writes the same entries --
+			 * so calling it for a range already mapped costs a
+			 * walk and nothing else.
+			 */
+			mapkzero(pa, size, MemRAM);
 			while(size >= BY2PG){
 				last = pa + size - BY2PG;
 				pte = mmuwalk((uintptr*)PML4ADDR, last, 0, 0);

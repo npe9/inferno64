@@ -19,7 +19,19 @@ struct Pool
 	int	pnum;
 	uintptr	maxsize;
 	intptr	quanta;
-	int	chunk;
+	/*
+	 * uintptr, not int.  poolsize() sets this to what is left of the
+	 * pool -- on a 16 GiB machine that is 3.4 GiB, which does not fit
+	 * in 32 bits -- and poolalloc() then takes it as its uintptr
+	 * argument.  As an int the value went negative, sign-extended to
+	 * 0xffffffffcbd55b00 on the way in, and the size arithmetic
+	 * wrapped: the block was built at the address xalloc() returned
+	 * but its length was nonsense, and the first write through the
+	 * tail landed in the PCI hole below 4 GiB.  That was the page
+	 * fault the first Compute Engine boot died of, and it is not a
+	 * mapping bug, which is what it looked like.
+	 */
+	uintptr	chunk;
 	uintptr	ressize;
 	uintptr	cursize;
 	uintptr	arenasize;
