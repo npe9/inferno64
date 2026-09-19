@@ -134,6 +134,15 @@ root
 	/dis/wm
 	/osinit.dis
 	/dis/init
+#
+# The channel stress the measurements in doc/multicore-plan.ms run.
+# virtarm64 gained this and virtarm64cloud did not, so the first arm64
+# soak on a rented t2a printed "sh: chantest: file does not exist"
+# three times a cycle and measured failed shell invocations instead.
+# Two configurations for one board means every addition has to be made
+# twice, which is also how this board lost fw_cfg.
+#
+	/dis/chantest.dis
 	/dis/shutdown
 	/dis/basename.dis
 	/dis/bind.dis
