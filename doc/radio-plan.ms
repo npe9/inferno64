@@ -213,6 +213,30 @@ calls
 so there is a named SSI bus to hang a peripheral on.  No controller
 model is needed at all.
 .PP
+One thing that was needed and is not in that list.  The SX127x delimits
+a SPI transaction with chip select \- the first byte after CS falls is
+the register address \- and an MPS2 drives a shield's chip select from a
+GPIO, as a PyCubed drives
+.CW RF1_CS
+from
+.CW PB30 .
+DIO0 comes back the same way.  But
+.CW hw/arm/mps2.c
+created all four GPIO blocks with
+.CW create_unimplemented_device () ,
+and
+.B "no CMSDK GPIO model exists anywhere in QEMU"
+\-
+.CW "grep -rln 'cmsdk.*gpio' hw/ include/hw/"
+finds
+.CW mps2.c
+and
+.CW mps3r.c ,
+both of which only name the string.  So there is a patch before the two
+this section started with, and it is not a detour: a guest that cannot
+drive a pin or take an interrupt from one cannot work this radio at all.
+.B Done .
+.PP
 Two of those five are the point.
 .CW Shield0
 and
@@ -230,8 +254,17 @@ so the driver has a shared interrupt and must establish that a given
 interrupt was its own.
 .PP
 Three patches.
+.IP "R1.0" 8
+.B "hw/gpio: model the ARM CMSDK AHB GPIO."
+.B Done .
+16 pins, each with its own interrupt as well as the combined one.  The
+register map was written from the CMSDK documentation and then checked
+against Zephyr's independent driver in
+.CW include/zephyr/drivers/gpio/gpio_cmsdk_ahb.h ,
+which agrees offset for offset.
 .IP "R1.1" 8
 .B "hw/ssi: model the Semtech SX1276."
+.B Done .
 An
 .CW SSIPeripheral
 implementing the register file: the FIFO at 0x00, the modem
@@ -254,6 +287,11 @@ write the datasheet marks reserved is a
 not a shrug.
 .IP "R1.2" 8
 .B "hw/arm/mps2: put it on the shield header."
+.B Done .
+The four GPIO blocks are real now, with the combined interrupts the MPS2
+application notes give and Zephyr's
+.CW mps2_base.dtsi
+carries \- 6, 7, 16 and 17.
 .CW "sysbus_create_simple(TYPE_PL022, ...)"
 discards the
 .CW DeviceState* ,

@@ -1,0 +1,583 @@
+From d9140dceed5323e0add964fdfa6a0f7a0aa40abe Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Fri, 18 Sep 2026 21:01:48 -0400
+Subject: [PATCH 28/29] hw/ssi: model the Semtech SX1276 LoRa transceiver
+
+The part an RFM9x module is built around, and the radio on a PyCubed: an
+SX1276 with its matching network and crystal, no processor and no
+firmware of its own.  It is a register file on SPI with a 256-byte FIFO,
+and everything a RadioHead-style link layer does -- header, sequence
+number, acknowledgement, retry -- runs on the host.
+
+Written from the SX1276 datasheet register map.  Only LoRa mode is
+modelled and FSK/OOK is refused with LOG_GUEST_ERROR rather than
+half-implemented, because a model that quietly accepted an FSK
+configuration would let a driver believe it had configured something.
+Three more refusals in the same spirit: changing LongRangeMode outside
+sleep, which the datasheet forbids; transmitting with RegPayloadLength
+zero; and writing a read-only register.
+
+The air interface is a QEMU NIC, so -netdev socket,mcast= gives a
+broadcast medium and two instances in a group hear each other.  Frames
+are bare LoRa payloads, not Ethernet.  What it does not model is said in
+the file: no range, no collisions, no interference, and by default no
+loss -- which is the opposite of the medium an acknowledge-and-retry
+layer exists for, so there is a drop-pct property, defaulting to zero,
+without which that path in a guest driver is never exercised at all.  It
+draws from a seeded GRand so a run with loss is reproducible.
+---
+ hw/ssi/Kconfig          |   4 +
+ hw/ssi/meson.build      |   1 +
+ hw/ssi/sx1276.c         | 489 ++++++++++++++++++++++++++++++++++++++++
+ include/hw/ssi/sx1276.h |  16 ++
+ 4 files changed, 510 insertions(+)
+ create mode 100644 hw/ssi/sx1276.c
+ create mode 100644 include/hw/ssi/sx1276.h
+
+diff --git a/hw/ssi/Kconfig b/hw/ssi/Kconfig
+index 1bd5646..00126d1 100644
+--- a/hw/ssi/Kconfig
++++ b/hw/ssi/Kconfig
+@@ -9,6 +9,10 @@ config SIFIVE_SPI
+ config SSI
+     bool
+ 
++config SX1276
++    bool
++    select SSI
++
+ config XILINX_SPI
+     bool
+     select SSI
+diff --git a/hw/ssi/meson.build b/hw/ssi/meson.build
+index 6afb1ea..bb38c09 100644
+--- a/hw/ssi/meson.build
++++ b/hw/ssi/meson.build
+@@ -5,6 +5,7 @@ system_ss.add(when: 'CONFIG_NPCM7XX', if_true: files('npcm7xx_fiu.c', 'npcm_pspi
+ system_ss.add(when: 'CONFIG_PL022', if_true: files('pl022.c'))
+ system_ss.add(when: 'CONFIG_SIFIVE_SPI', if_true: files('sifive_spi.c'))
+ system_ss.add(when: 'CONFIG_SSI', if_true: files('ssi.c'))
++system_ss.add(when: 'CONFIG_SX1276', if_true: files('sx1276.c'))
+ system_ss.add(when: 'CONFIG_STM32F2XX_SPI', if_true: files('stm32f2xx_spi.c'))
+ system_ss.add(when: 'CONFIG_XILINX_SPI', if_true: files('xilinx_spi.c'))
+ system_ss.add(when: 'CONFIG_XILINX_SPIPS', if_true: files('xilinx_spips.c'))
+diff --git a/hw/ssi/sx1276.c b/hw/ssi/sx1276.c
+new file mode 100644
+index 0000000..4bc1314
+--- /dev/null
++++ b/hw/ssi/sx1276.c
+@@ -0,0 +1,489 @@
++/*
++ * Semtech SX1276 LoRa transceiver, as an SSI peripheral
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 or
++ * (at your option) any later version.
++ *
++ * The part an RFM9x module is built around: an SX1276 with its matching
++ * network and crystal, no processor and no firmware of its own.  It is
++ * a register file on SPI with a 256-byte FIFO, and everything a
++ * RadioHead-style link layer does -- header, sequence number,
++ * acknowledgement, retry -- runs on the host.
++ *
++ * Written from the SX1276 datasheet register map.  Only LoRa mode is
++ * modelled; FSK/OOK is refused rather than half-implemented, because a
++ * model that quietly accepted an FSK configuration would let a driver
++ * think it had configured something.
++ *
++ * The air interface is a QEMU NIC: a LoRa channel is a broadcast
++ * medium, and -netdev socket,mcast= is one.  Frames on it are bare LoRa
++ * payloads, not Ethernet.  Note what that does NOT model: no range, no
++ * collisions, no interference, and by default no loss.  Set drop-pct to
++ * get loss; without it the acknowledge-and-retry path in a guest driver
++ * is never exercised at all.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "qapi/error.h"
++#include "hw/irq.h"
++#include "hw/qdev-properties.h"
++#include "hw/ssi/ssi.h"
++#include "migration/vmstate.h"
++#include "net/net.h"
++#include "qom/object.h"
++#include "hw/ssi/sx1276.h"
++
++OBJECT_DECLARE_SIMPLE_TYPE(SX1276State, SX1276)
++
++/* Registers.  LoRa page; the datasheet's names. */
++#define R_FIFO              0x00
++#define R_OPMODE            0x01
++#define R_FRFMSB            0x06
++#define R_FRFMID            0x07
++#define R_FRFLSB            0x08
++#define R_PACONFIG          0x09
++#define R_FIFOADDRPTR       0x0d
++#define R_FIFOTXBASEADDR    0x0e
++#define R_FIFORXBASEADDR    0x0f
++#define R_FIFORXCURRENTADDR 0x10
++#define R_IRQFLAGSMASK      0x11
++#define R_IRQFLAGS          0x12
++#define R_RXNBBYTES         0x13
++#define R_PKTSNRVALUE       0x19
++#define R_PKTRSSIVALUE      0x1a
++#define R_RSSIVALUE         0x1b
++#define R_MODEMCONFIG1      0x1d
++#define R_MODEMCONFIG2      0x1e
++#define R_PAYLOADLENGTH     0x22
++#define R_MAXPAYLOADLENGTH  0x23
++#define R_MODEMCONFIG3      0x26
++#define R_DIOMAPPING1       0x40
++#define R_DIOMAPPING2       0x41
++#define R_VERSION           0x42
++#define R_PADAC             0x4d
++
++#define NREG 0x80
++#define FIFOSZ 256
++
++/* RegOpMode */
++#define OPMODE_LONGRANGE    0x80
++#define OPMODE_MODE         0x07
++#define MODE_SLEEP          0
++#define MODE_STDBY          1
++#define MODE_FSTX           2
++#define MODE_TX             3
++#define MODE_FSRX           4
++#define MODE_RXCONTINUOUS   5
++#define MODE_RXSINGLE       6
++#define MODE_CAD            7
++
++/* RegIrqFlags */
++#define IRQ_RXTIMEOUT       0x80
++#define IRQ_RXDONE          0x40
++#define IRQ_PAYLOADCRCERROR 0x20
++#define IRQ_VALIDHEADER     0x10
++#define IRQ_TXDONE          0x08
++#define IRQ_CADDONE         0x04
++#define IRQ_FHSSCHANGE      0x02
++#define IRQ_CADDETECTED     0x01
++
++/* RegDioMapping1 bits 7:6 select what DIO0 reports. */
++#define DIO0_RXDONE         0
++#define DIO0_TXDONE         1
++#define DIO0_CADDONE        2
++
++#define SX1276_VERSION      0x12
++
++struct SX1276State {
++    SSIPeripheral parent_obj;
++
++    uint8_t regs[NREG];
++    uint8_t fifo[FIFOSZ];
++
++    /* SPI transaction state: the first byte after CS falls is the
++     * address, its top bit saying write.
++     */
++    bool have_addr;
++    bool writing;
++    uint8_t addr;
++
++    qemu_irq dio0;
++    qemu_irq dio4;
++
++    NICState *nic;
++    NICConf conf;
++
++    uint32_t drop_pct;
++    uint32_t drop_seed;
++    GRand *rand;
++};
++
++static void sx1276_update_irq(SX1276State *s)
++{
++    uint8_t active = s->regs[R_IRQFLAGS] & ~s->regs[R_IRQFLAGSMASK];
++    int map = (s->regs[R_DIOMAPPING1] >> 6) & 3;
++    bool level = false;
++
++    switch (map) {
++    case DIO0_RXDONE:
++        level = active & IRQ_RXDONE;
++        break;
++    case DIO0_TXDONE:
++        level = active & IRQ_TXDONE;
++        break;
++    case DIO0_CADDONE:
++        level = active & IRQ_CADDONE;
++        break;
++    default:
++        level = false;
++        break;
++    }
++    qemu_set_irq(s->dio0, level);
++}
++
++static bool sx1276_lora(SX1276State *s)
++{
++    return !!(s->regs[R_OPMODE] & OPMODE_LONGRANGE);
++}
++
++static int sx1276_mode(SX1276State *s)
++{
++    return s->regs[R_OPMODE] & OPMODE_MODE;
++}
++
++static void sx1276_transmit(SX1276State *s)
++{
++    uint8_t len = s->regs[R_PAYLOADLENGTH];
++    uint8_t base = s->regs[R_FIFOTXBASEADDR];
++    uint8_t buf[FIFOSZ];
++    int i;
++
++    if (len == 0) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "sx1276: transmit with RegPayloadLength 0\n");
++        return;
++    }
++
++    /* The FIFO wraps at 256; a real part would send the wrapped bytes,
++     * so do that rather than clamping, but say so.
++     */
++    for (i = 0; i < len; i++) {
++        buf[i] = s->fifo[(base + i) & (FIFOSZ - 1)];
++    }
++    if (base + len > FIFOSZ) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "sx1276: transmit wraps the FIFO: base %u length %u\n",
++                      base, len);
++    }
++
++    qemu_send_packet(qemu_get_queue(s->nic), buf, len);
++
++    s->regs[R_IRQFLAGS] |= IRQ_TXDONE;
++    /* The part drops to standby when the packet has gone. */
++    s->regs[R_OPMODE] = (s->regs[R_OPMODE] & ~OPMODE_MODE) | MODE_STDBY;
++    sx1276_update_irq(s);
++}
++
++static void sx1276_set_opmode(SX1276State *s, uint8_t val)
++{
++    int was = sx1276_mode(s);
++    int now = val & OPMODE_MODE;
++
++    /* LongRangeMode can only be changed in sleep: datasheet 4.1.1.2.
++     * Refuse rather than tolerate, so a driver that gets the order wrong
++     * finds out here and not by receiving nothing for ever.
++     */
++    if (((val ^ s->regs[R_OPMODE]) & OPMODE_LONGRANGE) && was != MODE_SLEEP) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "sx1276: LongRangeMode changed outside sleep (mode %d)\n",
++                      was);
++        return;
++    }
++
++    s->regs[R_OPMODE] = val;
++
++    if (!sx1276_lora(s)) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "sx1276: FSK/OOK mode is not modelled\n");
++        return;
++    }
++
++    if (now == MODE_TX && was != MODE_TX) {
++        if (was == MODE_SLEEP) {
++            qemu_log_mask(LOG_GUEST_ERROR,
++                          "sx1276: transmit requested straight out of sleep\n");
++        }
++        sx1276_transmit(s);
++    }
++}
++
++static void sx1276_reg_write(SX1276State *s, uint8_t addr, uint8_t val)
++{
++    switch (addr) {
++    case R_FIFO:
++        /* Writing the FIFO register puts a byte at FifoAddrPtr, which
++         * then advances; the register address itself does not.
++         */
++        s->fifo[s->regs[R_FIFOADDRPTR]] = val;
++        s->regs[R_FIFOADDRPTR]++;
++        return;
++    case R_OPMODE:
++        sx1276_set_opmode(s, val);
++        return;
++    case R_IRQFLAGS:
++        /* write one to clear */
++        s->regs[R_IRQFLAGS] &= ~val;
++        sx1276_update_irq(s);
++        return;
++    case R_VERSION:
++    case R_RXNBBYTES:
++    case R_FIFORXCURRENTADDR:
++    case R_PKTSNRVALUE:
++    case R_PKTRSSIVALUE:
++    case R_RSSIVALUE:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "sx1276: write to read-only register 0x%02x\n", addr);
++        return;
++    default:
++        break;
++    }
++
++    if (addr >= NREG) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "sx1276: write to register 0x%02x, past the map\n", addr);
++        return;
++    }
++    s->regs[addr] = val;
++
++    if (addr == R_DIOMAPPING1 || addr == R_IRQFLAGSMASK) {
++        sx1276_update_irq(s);
++    }
++}
++
++static uint8_t sx1276_reg_read(SX1276State *s, uint8_t addr)
++{
++    if (addr == R_FIFO) {
++        uint8_t v = s->fifo[s->regs[R_FIFOADDRPTR]];
++        s->regs[R_FIFOADDRPTR]++;
++        return v;
++    }
++    if (addr >= NREG) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "sx1276: read of register 0x%02x, past the map\n", addr);
++        return 0;
++    }
++    return s->regs[addr];
++}
++
++static uint32_t sx1276_transfer(SSIPeripheral *dev, uint32_t val)
++{
++    SX1276State *s = SX1276(dev);
++    uint8_t byte = val & 0xff;
++    uint8_t out;
++
++    if (!s->have_addr) {
++        s->writing = !!(byte & 0x80);
++        s->addr = byte & 0x7f;
++        s->have_addr = true;
++        return 0;
++    }
++
++    if (s->writing) {
++        sx1276_reg_write(s, s->addr, byte);
++        out = 0;
++    } else {
++        out = sx1276_reg_read(s, s->addr);
++    }
++
++    /* Burst access walks the register map; the FIFO stays put and its
++     * own pointer moves instead.
++     */
++    if (s->addr != R_FIFO) {
++        s->addr++;
++    }
++    return out;
++}
++
++static int sx1276_set_cs(SSIPeripheral *dev, bool select)
++{
++    SX1276State *s = SX1276(dev);
++
++    /* select is the line level, and the part is active low, so a high
++     * line ends the transaction and the next byte is an address again.
++     */
++    if (select) {
++        s->have_addr = false;
++    }
++    return 0;
++}
++
++static bool sx1276_can_receive(NetClientState *nc)
++{
++    SX1276State *s = qemu_get_nic_opaque(nc);
++    int mode = sx1276_mode(s);
++
++    return sx1276_lora(s) &&
++           (mode == MODE_RXCONTINUOUS || mode == MODE_RXSINGLE);
++}
++
++static ssize_t sx1276_receive(NetClientState *nc, const uint8_t *buf,
++                              size_t size)
++{
++    SX1276State *s = qemu_get_nic_opaque(nc);
++    uint8_t base = s->regs[R_FIFORXBASEADDR];
++    size_t i;
++
++    if (!sx1276_can_receive(nc)) {
++        return size;
++    }
++
++    if (s->drop_pct && (uint32_t)g_rand_int_range(s->rand, 0, 100) < s->drop_pct) {
++        /* The channel ate it.  A real one gives no sign, so neither
++         * does this: no flag, no interrupt, nothing to read.
++         */
++        return size;
++    }
++
++    if (size > FIFOSZ) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "sx1276: %zu byte frame is larger than the FIFO\n", size);
++        return size;
++    }
++    if (size > s->regs[R_MAXPAYLOADLENGTH]) {
++        /* The part would not raise RxDone for it. */
++        return size;
++    }
++
++    for (i = 0; i < size; i++) {
++        s->fifo[(base + i) & (FIFOSZ - 1)] = buf[i];
++    }
++
++    s->regs[R_FIFORXCURRENTADDR] = base;
++    s->regs[R_FIFOADDRPTR] = base;
++    s->regs[R_RXNBBYTES] = size;
++    /* Numbers a receiver would see.  Invented, and flat: this model has
++     * no notion of distance, so they do not vary.
++     */
++    s->regs[R_PKTRSSIVALUE] = 90;       /* -157 + 90 = -67 dBm */
++    s->regs[R_PKTSNRVALUE] = 40;        /* 40/4 = +10 dB */
++    s->regs[R_RSSIVALUE] = 90;
++    s->regs[R_IRQFLAGS] |= IRQ_RXDONE | IRQ_VALIDHEADER;
++
++    if (sx1276_mode(s) == MODE_RXSINGLE) {
++        s->regs[R_OPMODE] = (s->regs[R_OPMODE] & ~OPMODE_MODE) | MODE_STDBY;
++    }
++    sx1276_update_irq(s);
++    return size;
++}
++
++static NetClientInfo net_sx1276_info = {
++    .type = NET_CLIENT_DRIVER_NIC,
++    .size = sizeof(NICState),
++    .can_receive = sx1276_can_receive,
++    .receive = sx1276_receive,
++};
++
++static void sx1276_reset(DeviceState *dev)
++{
++    SX1276State *s = SX1276(dev);
++
++    memset(s->regs, 0, sizeof(s->regs));
++    memset(s->fifo, 0, sizeof(s->fifo));
++    s->have_addr = false;
++    s->writing = false;
++    s->addr = 0;
++
++    /* Datasheet reset values for the ones a driver checks. */
++    s->regs[R_VERSION] = SX1276_VERSION;
++    s->regs[R_OPMODE] = 0x01;           /* FSK, standby */
++    s->regs[R_FIFOTXBASEADDR] = 0x80;
++    s->regs[R_FIFORXBASEADDR] = 0x00;
++    s->regs[R_MAXPAYLOADLENGTH] = 0xff;
++    s->regs[R_PACONFIG] = 0x4f;
++    s->regs[R_MODEMCONFIG1] = 0x72;
++    s->regs[R_MODEMCONFIG2] = 0x70;
++    s->regs[R_MODEMCONFIG3] = 0x00;
++    s->regs[R_PADAC] = 0x84;
++    s->regs[R_FRFMSB] = 0x6c;           /* 434 MHz */
++    s->regs[R_FRFMID] = 0x80;
++    s->regs[R_FRFLSB] = 0x00;
++
++    qemu_set_irq(s->dio0, 0);
++    qemu_set_irq(s->dio4, 0);
++}
++
++static void sx1276_realize(SSIPeripheral *d, Error **errp)
++{
++    DeviceState *dev = DEVICE(d);
++    SX1276State *s = SX1276(d);
++
++    if (s->drop_pct > 100) {
++        error_setg(errp, "drop-pct must be 0 to 100");
++        return;
++    }
++    s->rand = g_rand_new_with_seed(s->drop_seed);
++
++    qdev_init_gpio_out_named(dev, &s->dio0, "dio0", 1);
++    qdev_init_gpio_out_named(dev, &s->dio4, "dio4", 1);
++
++    qemu_macaddr_default_if_unset(&s->conf.macaddr);
++    s->nic = qemu_new_nic(&net_sx1276_info, &s->conf,
++                          object_get_typename(OBJECT(dev)), dev->id,
++                          &dev->mem_reentrancy_guard, s);
++}
++
++static const VMStateDescription vmstate_sx1276 = {
++    .name = "sx1276",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_SSI_PERIPHERAL(parent_obj, SX1276State),
++        VMSTATE_UINT8_ARRAY(regs, SX1276State, NREG),
++        VMSTATE_UINT8_ARRAY(fifo, SX1276State, FIFOSZ),
++        VMSTATE_BOOL(have_addr, SX1276State),
++        VMSTATE_BOOL(writing, SX1276State),
++        VMSTATE_UINT8(addr, SX1276State),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static const Property sx1276_properties[] = {
++    DEFINE_NIC_PROPERTIES(SX1276State, conf),
++    DEFINE_PROP_UINT32("drop-pct", SX1276State, drop_pct, 0),
++    DEFINE_PROP_UINT32("drop-seed", SX1276State, drop_seed, 1),
++};
++
++static void sx1276_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    SSIPeripheralClass *k = SSI_PERIPHERAL_CLASS(klass);
++
++    k->realize = sx1276_realize;
++    k->transfer = sx1276_transfer;
++    k->set_cs = sx1276_set_cs;
++    k->cs_polarity = SSI_CS_LOW;
++    dc->vmsd = &vmstate_sx1276;
++    device_class_set_legacy_reset(dc, sx1276_reset);
++    device_class_set_props(dc, sx1276_properties);
++    dc->desc = "Semtech SX1276 LoRa transceiver";
++    set_bit(DEVICE_CATEGORY_NETWORK, dc->categories);
++}
++
++static const TypeInfo sx1276_info = {
++    .name = TYPE_SX1276,
++    .parent = TYPE_SSI_PERIPHERAL,
++    .instance_size = sizeof(SX1276State),
++    .class_init = sx1276_class_init,
++};
++
++static void sx1276_register_types(void)
++{
++    type_register_static(&sx1276_info);
++}
++
++type_init(sx1276_register_types);
+diff --git a/include/hw/ssi/sx1276.h b/include/hw/ssi/sx1276.h
+new file mode 100644
+index 0000000..cac8b16
+--- /dev/null
++++ b/include/hw/ssi/sx1276.h
+@@ -0,0 +1,16 @@
++/*
++ * Semtech SX1276 LoRa transceiver
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 or
++ * (at your option) any later version.
++ */
++
++#ifndef HW_SSI_SX1276_H
++#define HW_SSI_SX1276_H
++
++#define TYPE_SX1276 "sx1276"
++
++#endif
+-- 
+2.51.0
+

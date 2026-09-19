@@ -1,0 +1,171 @@
+From 4843d6033165df5a1d6340a0ceac5314d30fa8e6 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Fri, 18 Sep 2026 21:01:48 -0400
+Subject: [PATCH 29/29] hw/arm/mps2: real GPIO, and an SX1276 on the Shield0
+ header
+
+Replaces the four create_unimplemented_device("cmsdk-ahb-gpio") calls
+with the real block and wires each one's combined interrupt to the NVIC:
+6, 7, 16 and 17, which are the numbers the MPS2 application notes give
+and that Zephyr's mps2_base.dtsi carries.
+
+Then, with -machine radio=on, fits an SX1276 on the Shield0 SPI
+controller at 0x40026000.  Shield0 and Shield1 are the Arduino-style
+expansion headers the board physically has, which is where an add-on
+radio board plugs in, so this is a shield rather than an address picked
+for convenience.  Its chip select is driven from gpio0 pin 0 and its
+DIO0 is read on gpio0 pin 1 -- and those two pin numbers are this
+model's own, not an MPS2 document's, because the board has a header and
+no radio on it, so a shield's pinout is whatever the shield is.  Said in
+the source at the point it matters.  A PyCubed wires the same signals to
+a SAMD51 SERCOM and its own GPIOs (RF1_CS PB30, RF1_IO0 PB05), which is
+a different machine again.
+
+Off by default, so no existing MPS2 configuration moves.
+---
+ hw/arm/Kconfig |  2 ++
+ hw/arm/mps2.c  | 78 ++++++++++++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 77 insertions(+), 3 deletions(-)
+
+diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
+index 2aa4b5d..d2a1636 100644
+--- a/hw/arm/Kconfig
++++ b/hw/arm/Kconfig
+@@ -571,6 +571,8 @@ config MPS2
+     depends on TCG && ARM
+     imply I2C_DEVICES
+     select ARMSSE
++    select CMSDK_AHB_GPIO
++    select SX1276
+     select LAN9118
+     select MPS2_FPGAIO
+     select MPS2_SCC
+diff --git a/hw/arm/mps2.c b/hw/arm/mps2.c
+index bd378e3..21cdbd7 100644
+--- a/hw/arm/mps2.c
++++ b/hw/arm/mps2.c
+@@ -48,6 +48,9 @@
+ #include "net/net.h"
+ #include "hw/watchdog/cmsdk-apb-watchdog.h"
+ #include "hw/qdev-clock.h"
++#include "hw/gpio/cmsdk-ahb-gpio.h"
++#include "hw/ssi/ssi.h"
++#include "hw/ssi/sx1276.h"
+ #include "qobject/qlist.h"
+ #include "qom/object.h"
+ 
+@@ -87,8 +90,11 @@ struct MPS2MachineState {
+     CMSDKAPBDualTimer dualtimer;
+     CMSDKAPBWatchdog watchdog;
+     CMSDKAPBTimer timer[2];
++    CMSDKAHBGPIO gpio[4];
+     Clock *sysclk;
+     Clock *refclk;
++    /* An SX1276 on the Shield0 SPI, present only with -machine radio=on. */
++    bool radio;
+ };
+ 
+ #define TYPE_MPS2_MACHINE "mps2"
+@@ -358,10 +364,28 @@ static void mps2_common_init(MachineState *machine)
+     default:
+         g_assert_not_reached();
+     }
++    /*
++     * The CMSDK AHB GPIO blocks.  These were create_unimplemented_device()
++     * until a peripheral needed a chip select and an interrupt line, which
++     * on this board is what GPIO is for.  Addresses and the combined
++     * interrupt numbers are the ones the MPS2 application notes give and
++     * that Zephyr's mps2_base.dtsi carries: 6, 7, 16, 17.
++     */
+     for (i = 0; i < 4; i++) {
+         static const hwaddr gpiobase[] = {0x40010000, 0x40011000,
+                                           0x40012000, 0x40013000};
+-        create_unimplemented_device("cmsdk-ahb-gpio", gpiobase[i], 0x1000);
++        static const int gpioirq[] = {6, 7, 16, 17};
++        g_autofree char *name = g_strdup_printf("gpio%d", i);
++        SysBusDevice *sbd;
++
++        object_initialize_child(OBJECT(mms), name, &mms->gpio[i],
++                                TYPE_CMSDK_AHB_GPIO);
++        sbd = SYS_BUS_DEVICE(&mms->gpio[i]);
++        sysbus_realize(sbd, &error_fatal);
++        sysbus_mmio_map(sbd, 0, gpiobase[i]);
++        /* irq 0..15 are the per-pin lines, 16 is the combined one */
++        sysbus_connect_irq(sbd, CMSDK_AHB_GPIO_NPINS,
++                           qdev_get_gpio_in(armv7m, gpioirq[i]));
+     }
+ 
+     /* CMSDK APB subsystem */
+@@ -434,8 +458,37 @@ static void mps2_common_init(MachineState *machine)
+         qdev_connect_gpio_out(orgate_dev, 0,
+                               qdev_get_gpio_in(armv7m, spi_irqno[i]));
+         for (j = 0; j < 2; j++) {
+-            sysbus_create_simple(TYPE_PL022, spibase[2 * i + j],
+-                                 qdev_get_gpio_in(orgate_dev, j));
++            DeviceState *spi;
++
++            spi = sysbus_create_simple(TYPE_PL022, spibase[2 * i + j],
++                                       qdev_get_gpio_in(orgate_dev, j));
++
++            /*
++             * Shield0 is the Arduino-style expansion header, which is
++             * where an add-on radio board plugs in.  With -machine
++             * radio=on an SX1276 sits there, with its chip select driven
++             * from gpio0 pin 0 and its DIO0 read on gpio0 pin 1.
++             *
++             * Those two pin numbers are this model's, not an MPS2
++             * document's: the board has a header and no radio on it, so
++             * a shield's pinout is whatever the shield is.  A PyCubed
++             * wires the same signals to a SAMD51 SERCOM and its own
++             * GPIOs (RF1_CS PB30, RF1_IO0 PB05), which is a different
++             * machine again.
++             */
++            if (mms->radio && spibase[2 * i + j] == 0x40026000) {
++                DeviceState *radio;
++                SSIBus *ssi = (SSIBus *)qdev_get_child_bus(spi, "ssi");
++
++                radio = qdev_new(TYPE_SX1276);
++                qdev_realize_and_unref(radio, BUS(ssi), &error_fatal);
++                qdev_connect_gpio_out(DEVICE(&mms->gpio[0]), 0,
++                                      qdev_get_gpio_in_named(radio,
++                                                             SSI_GPIO_CS, 0));
++                qdev_connect_gpio_out_named(radio, "dio0", 0,
++                                            qdev_get_gpio_in(
++                                                DEVICE(&mms->gpio[0]), 1));
++            }
+         }
+     }
+     for (i = 0; i < 4; i++) {
+@@ -468,10 +521,29 @@ static void mps2_common_init(MachineState *machine)
+                        0, 0x400000);
+ }
+ 
++static bool mps2_get_radio(Object *obj, Error **errp)
++{
++    MPS2MachineState *mms = MPS2_MACHINE(obj);
++
++    return mms->radio;
++}
++
++static void mps2_set_radio(Object *obj, bool value, Error **errp)
++{
++    MPS2MachineState *mms = MPS2_MACHINE(obj);
++
++    mms->radio = value;
++}
++
+ static void mps2_class_init(ObjectClass *oc, const void *data)
+ {
+     MachineClass *mc = MACHINE_CLASS(oc);
+ 
++    object_class_property_add_bool(oc, "radio",
++                                   mps2_get_radio, mps2_set_radio);
++    object_class_property_set_description(oc, "radio",
++        "Fit an SX1276 LoRa transceiver on the Shield0 SPI header");
++
+     mc->init = mps2_common_init;
+     mc->max_cpus = 1;
+     mc->default_ram_size = 16 * MiB;
+-- 
+2.51.0
+

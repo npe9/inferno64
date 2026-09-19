@@ -1,10 +1,14 @@
-QEMU device models for the Raspberry Pi 3B port
-===============================================
+QEMU device models for boards in this tree
+==========================================
 
 Patches against qemu v10.1.3, the version these boards are tested on.
-They are here because parts of the Pi 3B are either unmodelled by QEMU
-or modelled in a way that cannot exercise the guest driver: without
-them the corresponding kernel code is written blind.
+They are here because parts of a board are either unmodelled by QEMU or
+modelled in a way that cannot exercise the guest driver: without them
+the corresponding kernel code is written blind.
+
+0001-0026 are the Raspberry Pi 3B and 4B, which is what this series
+started as.  0027-0029 are the MPS2, for the PyCubed radio work in
+doc/radio-plan.ms.
 
 To apply and build:
 
@@ -1078,3 +1082,50 @@ attached, a default kernel prints:
 	ETHERBIND-OK
 	ETHER-DHCP-OK ip=10.0.2.15 gw=10.0.2.2
 	ETHER-PING-DONE
+
+0027 hw/gpio: model the ARM CMSDK AHB GPIO.
+	The GPIO block the MPS2 FPGA images put at 0x40010000 and above.
+	hw/arm/mps2.c created all four with create_unimplemented_device(),
+	so a guest could neither drive a pin nor take an interrupt from
+	one -- a hole the moment any peripheral on the board needs a chip
+	select or an interrupt line, which on an MPS2 is what GPIO is for.
+	16 pins, each with its own interrupt as well as the combined one.
+	The register map was written from the CMSDK documentation and then
+	checked against Zephyr's independent driver in
+	include/zephyr/drivers/gpio/gpio_cmsdk_ahb.h, which agrees offset
+	for offset; it was not taken from the guest this is for.
+
+0028 hw/ssi: model the Semtech SX1276 LoRa transceiver.
+	The part an RFM9x is built around and the radio on a PyCubed: a
+	register file on SPI with a 256-byte FIFO, no processor and no
+	firmware, so the RadioHead header, sequence number, acknowledgement
+	and retry all run on the host.  From the datasheet register map,
+	LoRa mode only -- FSK/OOK is refused rather than half-implemented,
+	because a model that accepted an FSK configuration would let a
+	driver believe it had configured something.  Also refused:
+	changing LongRangeMode outside sleep, which the datasheet forbids;
+	transmitting with RegPayloadLength zero; writing a read-only
+	register.
+	The air interface is a QEMU NIC, so -netdev socket,mcast= is a
+	broadcast medium and two instances in a group hear each other.
+	It models a perfect channel -- no range, no collisions, no
+	interference and no loss -- which is the opposite of the medium an
+	acknowledge-and-retry layer exists for, so drop-pct exists and
+	defaults to zero.  Without setting it that path in a guest driver
+	is never exercised at all.  Seeded GRand, so a lossy run repeats.
+
+0029 hw/arm/mps2: real GPIO, and an SX1276 on the Shield0 header.
+	Wires 0027 in with the combined interrupts the MPS2 application
+	notes give and Zephyr's mps2_base.dtsi carries -- 6, 7, 16, 17 --
+	and then, with -machine radio=on, fits an SX1276 on the Shield0
+	SPI controller at 0x40026000.  Shield0 and Shield1 are the
+	Arduino-style expansion headers the board physically has, so this
+	is a shield rather than an address picked for convenience; but the
+	chip select on gpio0 pin 0 and DIO0 on gpio0 pin 1 are this
+	model's own numbers, because the board has a header and no radio
+	on it and a shield's pinout is whatever the shield is.  A PyCubed
+	wires the same signals to a SAMD51 SERCOM and its own GPIOs, which
+	is a different machine again -- so a test here says the SX1276
+	register, FIFO and interrupt sequencing are right and says nothing
+	about the real board's bus.  Off by default, so no existing MPS2
+	configuration moves.

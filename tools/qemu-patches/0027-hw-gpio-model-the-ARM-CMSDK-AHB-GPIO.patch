@@ -1,0 +1,473 @@
+From dec25fb1c12b8a3ba5d820e984b4e9e03c5ce5f1 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Fri, 18 Sep 2026 21:01:47 -0400
+Subject: [PATCH 27/29] hw/gpio: model the ARM CMSDK AHB GPIO
+
+The GPIO block from the Cortex-M System Design Kit, which the MPS2 FPGA
+images place at 0x40010000, 0x40011000, 0x40012000 and 0x40013000.
+hw/arm/mps2.c created all four with create_unimplemented_device(), so a
+guest could neither drive a pin nor take an interrupt from one -- which
+is a hole as soon as any peripheral on the board needs a chip select or
+an interrupt line, since on an MPS2 that is what GPIO is for.
+
+16 pins.  Each has a gpio_out line, takes a gpio_in line, and has its
+own interrupt as well as the combined one, matching the block's 16+1
+interrupt outputs.
+
+Written from the CMSDK documentation for the register map; the layout
+agrees register for register with Zephyr's independent driver in
+include/zephyr/drivers/gpio/gpio_cmsdk_ahb.h, which is where it was
+checked rather than against any guest this is for.  DATA reads what an
+output pin drives and what an input pin is being driven with; INTSTATUS
+is write-one-to-clear; the MASKLOWBYTE and MASKHIGHBYTE windows carry
+their mask in the address bits.  A write to read-only DATA or to an ID
+register is LOG_GUEST_ERROR rather than silently dropped.
+
+Part number 0x820 in PID0/PID1, beside 0x821 for the UART and 0x822 for
+the timer QEMU already models.
+---
+ hw/gpio/Kconfig                  |   3 +
+ hw/gpio/cmsdk-ahb-gpio.c         | 350 +++++++++++++++++++++++++++++++
+ hw/gpio/meson.build              |   1 +
+ include/hw/gpio/cmsdk-ahb-gpio.h |  52 +++++
+ 4 files changed, 406 insertions(+)
+ create mode 100644 hw/gpio/cmsdk-ahb-gpio.c
+ create mode 100644 include/hw/gpio/cmsdk-ahb-gpio.h
+
+diff --git a/hw/gpio/Kconfig b/hw/gpio/Kconfig
+index a209294..48cd131 100644
+--- a/hw/gpio/Kconfig
++++ b/hw/gpio/Kconfig
+@@ -1,3 +1,6 @@
++config CMSDK_AHB_GPIO
++    bool
++
+ config PL061
+     bool
+ 
+diff --git a/hw/gpio/cmsdk-ahb-gpio.c b/hw/gpio/cmsdk-ahb-gpio.c
+new file mode 100644
+index 0000000..944286d
+--- /dev/null
++++ b/hw/gpio/cmsdk-ahb-gpio.c
+@@ -0,0 +1,350 @@
++/*
++ * ARM CMSDK AHB GPIO
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 or
++ * (at your option) any later version.
++ *
++ * Written from the Cortex-M System Design Kit documentation for the
++ * register map and from the MPS2 application notes for where the block
++ * sits, not from any guest driver.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "qapi/error.h"
++#include "hw/irq.h"
++#include "hw/qdev-properties.h"
++#include "hw/registerfields.h"
++#include "hw/sysbus.h"
++#include "migration/vmstate.h"
++#include "hw/gpio/cmsdk-ahb-gpio.h"
++
++REG32(DATA, 0x00)
++REG32(DATAOUT, 0x04)
++REG32(OUTENABLESET, 0x10)
++REG32(OUTENABLECLR, 0x14)
++REG32(ALTFUNCSET, 0x18)
++REG32(ALTFUNCCLR, 0x1c)
++REG32(INTENSET, 0x20)
++REG32(INTENCLR, 0x24)
++REG32(INTTYPESET, 0x28)
++REG32(INTTYPECLR, 0x2c)
++REG32(INTPOLSET, 0x30)
++REG32(INTPOLCLR, 0x34)
++REG32(INTSTATUS, 0x38)
++REG32(PID4, 0xfd0)
++REG32(CID3, 0xffc)
++
++#define A_MASKLOWBYTE 0x400
++#define A_MASKHIGHBYTE 0x800
++
++#define PINMASK ((1u << CMSDK_AHB_GPIO_NPINS) - 1)
++
++/* PID/CID values.  Part number 0x820 is the AHB GPIO, beside 0x821 for
++ * the UART and 0x822 for the timer that QEMU already models.
++ */
++static const int gpio_id[] = {
++    0x04, 0x00, 0x00, 0x00, /* PID4..PID7 */
++    0x20, 0xb8, 0x1b, 0x00, /* PID0..PID3 */
++    0x0d, 0xf0, 0x05, 0xb1, /* CID0..CID3 */
++};
++
++/* What a pin reads as: what we drive if it is an output, else what the
++ * outside world last drove into it.
++ */
++static uint32_t cmsdk_ahb_gpio_data(CMSDKAHBGPIO *s)
++{
++    return ((s->dataout & s->outenable) | (s->inputs & ~s->outenable)) & PINMASK;
++}
++
++static void cmsdk_ahb_gpio_update_irq(CMSDKAHBGPIO *s)
++{
++    uint32_t active = s->intstatus & s->intenable;
++    int i;
++
++    for (i = 0; i < CMSDK_AHB_GPIO_NPINS; i++) {
++        qemu_set_irq(s->pinint[i], !!(active & (1u << i)));
++    }
++    qemu_set_irq(s->combint, !!active);
++}
++
++/* Level-triggered pins latch while the level is present; edge-triggered
++ * ones latch on the edge, which the input handler does.
++ */
++static void cmsdk_ahb_gpio_update_levels(CMSDKAHBGPIO *s)
++{
++    uint32_t data = cmsdk_ahb_gpio_data(s);
++    uint32_t level = ~s->inttype & PINMASK;
++    uint32_t hi = level & s->intpol & data;
++    uint32_t lo = level & ~s->intpol & ~data;
++
++    s->intstatus |= (hi | lo) & PINMASK;
++    cmsdk_ahb_gpio_update_irq(s);
++}
++
++static void cmsdk_ahb_gpio_update_outputs(CMSDKAHBGPIO *s, uint32_t changed)
++{
++    int i;
++
++    for (i = 0; i < CMSDK_AHB_GPIO_NPINS; i++) {
++        if (changed & (1u << i)) {
++            qemu_set_irq(s->out[i], !!(s->dataout & s->outenable & (1u << i)));
++        }
++    }
++}
++
++static void cmsdk_ahb_gpio_set_dataout(CMSDKAHBGPIO *s, uint32_t val)
++{
++    uint32_t was = s->dataout & s->outenable;
++
++    s->dataout = val & PINMASK;
++    cmsdk_ahb_gpio_update_outputs(s, (s->dataout & s->outenable) ^ was);
++    cmsdk_ahb_gpio_update_levels(s);
++}
++
++static uint64_t cmsdk_ahb_gpio_read(void *opaque, hwaddr offset, unsigned size)
++{
++    CMSDKAHBGPIO *s = CMSDK_AHB_GPIO(opaque);
++
++    if (offset >= A_MASKLOWBYTE && offset < A_MASKHIGHBYTE) {
++        return cmsdk_ahb_gpio_data(s) & ((offset - A_MASKLOWBYTE) >> 2) & 0xff;
++    }
++    if (offset >= A_MASKHIGHBYTE && offset < 0xc00) {
++        return cmsdk_ahb_gpio_data(s) &
++               ((((offset - A_MASKHIGHBYTE) >> 2) & 0xff) << 8);
++    }
++
++    switch (offset) {
++    case A_DATA:
++        return cmsdk_ahb_gpio_data(s);
++    case A_DATAOUT:
++        return s->dataout;
++    case A_OUTENABLESET:
++    case A_OUTENABLECLR:
++        return s->outenable;
++    case A_ALTFUNCSET:
++    case A_ALTFUNCCLR:
++        return s->altfunc;
++    case A_INTENSET:
++    case A_INTENCLR:
++        return s->intenable;
++    case A_INTTYPESET:
++    case A_INTTYPECLR:
++        return s->inttype;
++    case A_INTPOLSET:
++    case A_INTPOLCLR:
++        return s->intpol;
++    case A_INTSTATUS:
++        return s->intstatus;
++    case A_PID4 ... A_CID3:
++        return gpio_id[(offset - A_PID4) / 4];
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "CMSDK AHB GPIO read: bad offset %" HWADDR_PRIx "\n",
++                      offset);
++        return 0;
++    }
++}
++
++static void cmsdk_ahb_gpio_write(void *opaque, hwaddr offset, uint64_t value,
++                                 unsigned size)
++{
++    CMSDKAHBGPIO *s = CMSDK_AHB_GPIO(opaque);
++    uint32_t val = value;
++    uint32_t was;
++
++    if (offset >= A_MASKLOWBYTE && offset < A_MASKHIGHBYTE) {
++        uint32_t mask = ((offset - A_MASKLOWBYTE) >> 2) & 0xff;
++        cmsdk_ahb_gpio_set_dataout(s, (s->dataout & ~mask) | (val & mask));
++        return;
++    }
++    if (offset >= A_MASKHIGHBYTE && offset < 0xc00) {
++        uint32_t mask = ((((offset - A_MASKHIGHBYTE) >> 2) & 0xff) << 8);
++        cmsdk_ahb_gpio_set_dataout(s, (s->dataout & ~mask) | (val & mask));
++        return;
++    }
++
++    switch (offset) {
++    case A_DATAOUT:
++        cmsdk_ahb_gpio_set_dataout(s, val);
++        break;
++    case A_OUTENABLESET:
++    case A_OUTENABLECLR:
++        was = s->dataout & s->outenable;
++        if (offset == A_OUTENABLESET) {
++            s->outenable |= val & PINMASK;
++        } else {
++            s->outenable &= ~val;
++        }
++        cmsdk_ahb_gpio_update_outputs(s, (s->dataout & s->outenable) ^ was);
++        cmsdk_ahb_gpio_update_levels(s);
++        break;
++    case A_ALTFUNCSET:
++        s->altfunc |= val & PINMASK;
++        break;
++    case A_ALTFUNCCLR:
++        s->altfunc &= ~val;
++        break;
++    case A_INTENSET:
++        s->intenable |= val & PINMASK;
++        cmsdk_ahb_gpio_update_irq(s);
++        break;
++    case A_INTENCLR:
++        s->intenable &= ~val;
++        cmsdk_ahb_gpio_update_irq(s);
++        break;
++    case A_INTTYPESET:
++        s->inttype |= val & PINMASK;
++        cmsdk_ahb_gpio_update_levels(s);
++        break;
++    case A_INTTYPECLR:
++        s->inttype &= ~val;
++        cmsdk_ahb_gpio_update_levels(s);
++        break;
++    case A_INTPOLSET:
++        s->intpol |= val & PINMASK;
++        cmsdk_ahb_gpio_update_levels(s);
++        break;
++    case A_INTPOLCLR:
++        s->intpol &= ~val;
++        cmsdk_ahb_gpio_update_levels(s);
++        break;
++    case A_INTSTATUS:
++        /* write one to clear */
++        s->intstatus &= ~val;
++        cmsdk_ahb_gpio_update_levels(s);
++        break;
++    case A_DATA:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "CMSDK AHB GPIO write to read-only DATA\n");
++        break;
++    case A_PID4 ... A_CID3:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "CMSDK AHB GPIO write to read-only ID register %"
++                      HWADDR_PRIx "\n", offset);
++        break;
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "CMSDK AHB GPIO write: bad offset %" HWADDR_PRIx "\n",
++                      offset);
++        break;
++    }
++}
++
++/* A pin driven from outside.  An output pin ignores it, the way a real
++ * one would win against whatever is on the other end.
++ */
++static void cmsdk_ahb_gpio_set(void *opaque, int line, int level)
++{
++    CMSDKAHBGPIO *s = CMSDK_AHB_GPIO(opaque);
++    uint32_t bit = 1u << line;
++    bool was = !!(s->inputs & bit);
++
++    assert(line >= 0 && line < CMSDK_AHB_GPIO_NPINS);
++
++    if (level) {
++        s->inputs |= bit;
++    } else {
++        s->inputs &= ~bit;
++    }
++
++    if (!(s->outenable & bit) && was != !!level) {
++        /* edge-triggered pins latch the edge they were asked for */
++        if (s->inttype & bit) {
++            if (!!level == !!(s->intpol & bit)) {
++                s->intstatus |= bit;
++            }
++        }
++    }
++    cmsdk_ahb_gpio_update_levels(s);
++}
++
++static const MemoryRegionOps cmsdk_ahb_gpio_ops = {
++    .read = cmsdk_ahb_gpio_read,
++    .write = cmsdk_ahb_gpio_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid.min_access_size = 4,
++    .valid.max_access_size = 4,
++};
++
++static void cmsdk_ahb_gpio_reset(DeviceState *dev)
++{
++    CMSDKAHBGPIO *s = CMSDK_AHB_GPIO(dev);
++
++    s->dataout = 0;
++    s->outenable = 0;
++    s->altfunc = 0;
++    s->intenable = 0;
++    s->inttype = 0;
++    s->intpol = 0;
++    s->intstatus = 0;
++    /* s->inputs is what the outside world is driving; reset does not
++     * change what someone else's output pin is doing.
++     */
++    cmsdk_ahb_gpio_update_outputs(s, PINMASK);
++    cmsdk_ahb_gpio_update_irq(s);
++}
++
++static void cmsdk_ahb_gpio_init(Object *obj)
++{
++    SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
++    CMSDKAHBGPIO *s = CMSDK_AHB_GPIO(obj);
++    int i;
++
++    memory_region_init_io(&s->iomem, obj, &cmsdk_ahb_gpio_ops, s,
++                          "cmsdk-ahb-gpio", 0x1000);
++    sysbus_init_mmio(sbd, &s->iomem);
++
++    for (i = 0; i < CMSDK_AHB_GPIO_NPINS; i++) {
++        sysbus_init_irq(sbd, &s->pinint[i]);
++    }
++    sysbus_init_irq(sbd, &s->combint);
++
++    qdev_init_gpio_in(DEVICE(obj), cmsdk_ahb_gpio_set, CMSDK_AHB_GPIO_NPINS);
++    qdev_init_gpio_out(DEVICE(obj), s->out, CMSDK_AHB_GPIO_NPINS);
++}
++
++static const VMStateDescription vmstate_cmsdk_ahb_gpio = {
++    .name = "cmsdk-ahb-gpio",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32(dataout, CMSDKAHBGPIO),
++        VMSTATE_UINT32(outenable, CMSDKAHBGPIO),
++        VMSTATE_UINT32(altfunc, CMSDKAHBGPIO),
++        VMSTATE_UINT32(intenable, CMSDKAHBGPIO),
++        VMSTATE_UINT32(inttype, CMSDKAHBGPIO),
++        VMSTATE_UINT32(intpol, CMSDKAHBGPIO),
++        VMSTATE_UINT32(intstatus, CMSDKAHBGPIO),
++        VMSTATE_UINT32(inputs, CMSDKAHBGPIO),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void cmsdk_ahb_gpio_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    dc->vmsd = &vmstate_cmsdk_ahb_gpio;
++    device_class_set_legacy_reset(dc, cmsdk_ahb_gpio_reset);
++    dc->desc = "ARM CMSDK AHB GPIO";
++}
++
++static const TypeInfo cmsdk_ahb_gpio_info = {
++    .name = TYPE_CMSDK_AHB_GPIO,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(CMSDKAHBGPIO),
++    .instance_init = cmsdk_ahb_gpio_init,
++    .class_init = cmsdk_ahb_gpio_class_init,
++};
++
++static void cmsdk_ahb_gpio_register_types(void)
++{
++    type_register_static(&cmsdk_ahb_gpio_info);
++}
++
++type_init(cmsdk_ahb_gpio_register_types);
+diff --git a/hw/gpio/meson.build b/hw/gpio/meson.build
+index 7484061..5205741 100644
+--- a/hw/gpio/meson.build
++++ b/hw/gpio/meson.build
+@@ -1,3 +1,4 @@
++system_ss.add(when: 'CONFIG_CMSDK_AHB_GPIO', if_true: files('cmsdk-ahb-gpio.c'))
+ system_ss.add(when: 'CONFIG_GPIO_KEY', if_true: files('gpio_key.c'))
+ system_ss.add(when: 'CONFIG_GPIO_MPC8XXX', if_true: files('mpc8xxx.c'))
+ system_ss.add(when: 'CONFIG_GPIO_PWR', if_true: files('gpio_pwr.c'))
+diff --git a/include/hw/gpio/cmsdk-ahb-gpio.h b/include/hw/gpio/cmsdk-ahb-gpio.h
+new file mode 100644
+index 0000000..cdf83c5
+--- /dev/null
++++ b/include/hw/gpio/cmsdk-ahb-gpio.h
+@@ -0,0 +1,52 @@
++/*
++ * ARM CMSDK AHB GPIO
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 or
++ * (at your option) any later version.
++ *
++ * This is the GPIO block from the ARM Cortex-M System Design Kit, the
++ * one the MPS2 FPGA images place at 0x40010000 and above.  QEMU's mps2
++ * board created it with create_unimplemented_device(), so a guest could
++ * neither drive a pin nor take an interrupt from one.
++ *
++ * 16 pins.  Each has a gpio_out line, takes a gpio_in line, and can
++ * raise its own interrupt as well as the combined one.
++ */
++
++#ifndef CMSDK_AHB_GPIO_H
++#define CMSDK_AHB_GPIO_H
++
++#include "hw/sysbus.h"
++#include "qom/object.h"
++
++#define TYPE_CMSDK_AHB_GPIO "cmsdk-ahb-gpio"
++OBJECT_DECLARE_SIMPLE_TYPE(CMSDKAHBGPIO, CMSDK_AHB_GPIO)
++
++#define CMSDK_AHB_GPIO_NPINS 16
++
++struct CMSDKAHBGPIO {
++    /*< private >*/
++    SysBusDevice parent_obj;
++
++    /*< public >*/
++    MemoryRegion iomem;
++    qemu_irq pinint[CMSDK_AHB_GPIO_NPINS];
++    qemu_irq combint;
++    qemu_irq out[CMSDK_AHB_GPIO_NPINS];
++
++    uint32_t dataout;
++    uint32_t outenable;
++    uint32_t altfunc;
++    uint32_t intenable;
++    uint32_t inttype;
++    uint32_t intpol;
++    uint32_t intstatus;
++
++    /* level last driven onto each pin from outside, one bit per pin */
++    uint32_t inputs;
++};
++
++#endif
+-- 
+2.51.0
+
