@@ -1,0 +1,267 @@
+The fw_cfg reader has to be where every configuration links it.
+
+Verified in a detached worktree at multicore's 225c058c: with this
+applied, both os/inferno/virtarm64 configurations build -- ivirtarm64
+1848059 bytes and ivirtarm64cloud 2205080 -- where before the cloud one
+failed at "fwcfgbootargs: undefined: fwcfgfile", because bootargs.c
+reads the boot options out of fw_cfg and the reader lived in
+screenarm.c, which virtarm64cloud does not link (probing ramfb at a
+fixed address kills a Compute Engine t2a).
+
+It is recorded here rather than applied because the file it moves code
+out of is the other branch's: their screenarm.c made fwcfgdma
+non-static and gave it a static descriptor, since the options are read
+before the allocator exists, and that version is the one that survives.
+Apply this on their line, or fold it into the merge resolution.
+
+See doc/merge-parallelvm-cloud.ms.
+
+diff --git a/os/inferno/virtarm64/bootargs.c b/os/inferno/virtarm64/bootargs.c
+index 1d4148e9..12696948 100644
+--- a/os/inferno/virtarm64/bootargs.c
++++ b/os/inferno/virtarm64/bootargs.c
+@@ -40,12 +40,114 @@ static char confbuf[BOOTARGSLEN];
+  * the fallback, so a UEFI boot keeps using the loader's block.
+  */
+ enum {
++	FwCfgBase		= ((uintptr)0x9020000),	/* arm64 virt fw_cfg */
++	FwCfgSel		= FwCfgBase + 8,
++	FwCfgDmaReg		= FwCfgBase + 16,
++
++	FwCfgFileDir		= 0x19,
+ 	FwCfgDmaRead		= 1<<1,
+ 	FwCfgDmaSelect		= 1<<3,
++	FwCfgDmaWrite		= 1<<4,
++};
++
++typedef struct FwDmaDesc FwDmaDesc;
++struct FwDmaDesc
++{
++	u32int	control;
++	u32int	length;
++	u64int	address;
+ };
+ 
+-extern int fwcfgdma(u32int, void*, u32int);
+-extern int fwcfgfile(char*, u32int*);
++static u32int
++be32(u32int v)
++{
++	return ((v&0xff)<<24) | ((v&0xff00)<<8) | ((v>>8)&0xff00) | ((v>>24)&0xff);
++}
++
++static u64int
++be64(u64int v)
++{
++	return ((u64int)be32((u32int)v)<<32) | (u64int)be32((u32int)(v>>32));
++}
++
++static void
++fwcfgsel(u16int sel)
++{
++	/* big-endian 16-bit selector */
++	*(volatile u16int*)FwCfgSel = (u16int)(((sel&0xff)<<8) | ((sel>>8)&0xff));
++}
++
++int
++fwcfgdma(u32int control, void *buf, u32int len)
++{
++	/*
++	 * A static descriptor, not a malloc'd one.  bootargsinit() reads
++	 * the boot options through here, and it runs before the allocator
++	 * exists -- it has to, because the loader leaves its block in
++	 * memory the kernel is about to allocate over.  malloc() returned
++	 * nil there and this returned -1, so the options silently did not
++	 * arrive and every *parallelvm, *soak and *secsched on a -kernel
++	 * boot line was ignored.
++	 *
++	 * Safe because fw_cfg is read at boot, by one processor: the
++	 * options here, and the framebuffer below before any other
++	 * processor is started.
++	 */
++	static FwDmaDesc dmabuf;
++	FwDmaDesc *dma;
++	u64int dmap;
++
++	dma = &dmabuf;
++	memset(dma, 0, sizeof(*dma));
++	dma->control = be32(control);
++	dma->length = be32(len);
++	dma->address = be64((u64int)(uintptr)buf);
++	coherence();
++	dmap = (u64int)(uintptr)dma;
++	*(volatile u32int*)FwCfgDmaReg = be32((u32int)(dmap>>32));
++	*(volatile u32int*)(FwCfgDmaReg+4) = be32((u32int)dmap);
++	while(be32(dma->control) & ~(u32int)1)
++		;
++	if(be32(dma->control) & 1)
++		return -1;
++	return 0;
++}
++
++/*
++ * The same scan, by name, for anything else in the directory: boot
++ * options arrive as "opt/bootargs" from QEMU's -fw_cfg, because this
++ * board is loaded as a bare ELF and FW_CFG_CMDLINE is empty for that
++ * (measured: fw_cfg says 0 bytes).  Returns the selector, and the item's
++ * size through *size.
++ */
++int
++fwcfgfile(char *name, u32int *size)
++{
++	u32int count, i;
++	uchar ent[64];
++	u16int sel;
++	int n;
++
++	n = strlen(name);
++	if(fwcfgdma(((u32int)FwCfgFileDir<<16) | FwCfgDmaSelect | FwCfgDmaRead,
++	    &count, 4) < 0)
++		return -1;
++	count = be32(count);
++	if(count > 512)
++		count = 512;
++	for(i = 0; i < count; i++){
++		if(fwcfgdma(FwCfgDmaRead, ent, 64) < 0)
++			return -1;
++		sel = ((u16int)ent[4]<<8) | ent[5];
++		if(strncmp((char*)(ent+8), name, n) == 0 && ent[8+n] == 0){
++			if(size != nil)
++				*size = ((u32int)ent[0]<<24) | ((u32int)ent[1]<<16)
++					| ((u32int)ent[2]<<8) | ent[3];
++			return (int)sel;
++		}
++	}
++	return -1;
++}
+ 
+ static char fwbuf[512];
+ void
+diff --git a/os/inferno/virtarm64/screenarm.c b/os/inferno/virtarm64/screenarm.c
+index 235b6873..90873e50 100644
+--- a/os/inferno/virtarm64/screenarm.c
++++ b/os/inferno/virtarm64/screenarm.c
+@@ -46,13 +46,17 @@ enum { FourccXRGB8888 = 0x34325258 };
+  */
+ enum { RamfbCfgSize = 28 };
+ 
+-typedef struct FwDmaDesc FwDmaDesc;
+-struct FwDmaDesc
+-{
+-	u32int	control;
+-	u32int	length;
+-	u64int	address;
+-};
++
++/*
++ * The fw_cfg reader lives in bootargs.c, not here.  It used to be in
++ * this file because the framebuffer was the only thing that read
++ * fw_cfg; then the boot options started arriving the same way, and
++ * this file is not linked by every configuration -- virtarm64cloud
++ * takes screennone, because probing ramfb at a fixed address kills a
++ * Compute Engine t2a -- so that configuration would not link.
++ */
++extern int fwcfgdma(u32int, void*, u32int);
++extern int fwcfgfile(char*, u32int*);
+ 
+ static Memdata	scrdata;
+ Memimage	*gscreen;
+@@ -93,90 +97,9 @@ be32(u32int v)
+ 	return (v>>24) | ((v>>8)&0xff00) | ((v<<8)&0xff0000) | (v<<24);
+ }
+ 
+-static u64int
+-be64(u64int v)
+-{
+-	return ((u64int)be32((u32int)v)<<32) | (u64int)be32((u32int)(v>>32));
+-}
+-
+-static void
+-fwcfgsel(u16int sel)
+-{
+-	/* big-endian 16-bit selector */
+-	*(volatile u16int*)FwCfgSel = (u16int)(((sel&0xff)<<8) | ((sel>>8)&0xff));
+-}
+ 
+-int
+-fwcfgdma(u32int control, void *buf, u32int len)
+-{
+-	/*
+-	 * A static descriptor, not a malloc'd one.  bootargsinit() reads
+-	 * the boot options through here, and it runs before the allocator
+-	 * exists -- it has to, because the loader leaves its block in
+-	 * memory the kernel is about to allocate over.  malloc() returned
+-	 * nil there and this returned -1, so the options silently did not
+-	 * arrive and every *parallelvm, *soak and *secsched on a -kernel
+-	 * boot line was ignored.
+-	 *
+-	 * Safe because fw_cfg is read at boot, by one processor: the
+-	 * options here, and the framebuffer below before any other
+-	 * processor is started.
+-	 */
+-	static FwDmaDesc dmabuf;
+-	FwDmaDesc *dma;
+-	u64int dmap;
+-
+-	dma = &dmabuf;
+-	memset(dma, 0, sizeof(*dma));
+-	dma->control = be32(control);
+-	dma->length = be32(len);
+-	dma->address = be64((u64int)(uintptr)buf);
+-	coherence();
+-	dmap = (u64int)(uintptr)dma;
+-	*(volatile u32int*)FwCfgDmaReg = be32((u32int)(dmap>>32));
+-	*(volatile u32int*)(FwCfgDmaReg+4) = be32((u32int)dmap);
+-	while(be32(dma->control) & ~(u32int)1)
+-		;
+-	if(be32(dma->control) & 1)
+-		return -1;
+-	return 0;
+-}
+ 
+-/*
+- * The same scan, by name, for anything else in the directory: boot
+- * options arrive as "opt/bootargs" from QEMU's -fw_cfg, because this
+- * board is loaded as a bare ELF and FW_CFG_CMDLINE is empty for that
+- * (measured: fw_cfg says 0 bytes).  Returns the selector, and the item's
+- * size through *size.
+- */
+-int
+-fwcfgfile(char *name, u32int *size)
+-{
+-	u32int count, i;
+-	uchar ent[64];
+-	u16int sel;
+-	int n;
+ 
+-	n = strlen(name);
+-	if(fwcfgdma(((u32int)FwCfgFileDir<<16) | FwCfgDmaSelect | FwCfgDmaRead,
+-	    &count, 4) < 0)
+-		return -1;
+-	count = be32(count);
+-	if(count > 512)
+-		count = 512;
+-	for(i = 0; i < count; i++){
+-		if(fwcfgdma(FwCfgDmaRead, ent, 64) < 0)
+-			return -1;
+-		sel = ((u16int)ent[4]<<8) | ent[5];
+-		if(strncmp((char*)(ent+8), name, n) == 0 && ent[8+n] == 0){
+-			if(size != nil)
+-				*size = ((u32int)ent[0]<<24) | ((u32int)ent[1]<<16)
+-					| ((u32int)ent[2]<<8) | ent[3];
+-			return (int)sel;
+-		}
+-	}
+-	return -1;
+-}
+ 
+ /*
+  * Scan fw_cfg file directory for etc/ramfb; return selector or -1.
+@@ -227,7 +150,6 @@ ramfbconfigure(void)
+ 	uchar cfg[RamfbCfgSize];
+ 	int sel;
+ 
+-	USED(fwcfgsel);
+ 	sel = ramfbsel();
+ 	if(sel < 0){
+ 		print("ramfb: no etc/ramfb (add -device ramfb)\n");

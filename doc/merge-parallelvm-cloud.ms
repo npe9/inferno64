@@ -24,8 +24,27 @@ is an
 .I ancestor
 of
 .CW multicore .
-There is nothing to reconcile and no merge commit to write: adoption is
-a fast-forward of 95 commits.
+There was nothing to reconcile and no merge commit to write: adoption
+was a fast-forward of 95 commits.
+.B "That window has since closed" ,
+and by this branch's own hand \(em the work below it put eight commits
+on top, so
+.CW "--ff-only"
+will now refuse and adoption is a merge again.  A small one: the
+conflict surface is those eight commits' files against theirs, and one
+of them,
+.CW mkconfig ,
+is a certain conflict, because their
+.CW ROOT
+line differs from this tree's and this tree has added
+.CW SYSMODULES=
+beside it.  Keep this tree's
+.CW ROOT ,
+keep the
+.CW SYSMODULES
+line.  The lesson is the one in the ownership section below rather than
+a new one: the cheap merge is the one taken the same day, and this
+branch spent that day's credit within the hour.
 .IP \(bu
 200 files, +23265 \-235 lines, of which 14219 insertions are a vendored
 .CW 9front/include
@@ -283,9 +302,17 @@ stale object compiled by the old one put garbage in
 .CW curP
 last time and cost a day.
 .IP "3." 5
-Adopt \(em
-.CW "git merge --ff-only <sha>"
-\(em once G1 passes, which means once their Phase C1 and C3 have landed.
+Adopt once G1 passes, which means once their Phase C1 and C3 have
+landed.  Not
+.CW "--ff-only"
+any more \(em see section 1 \(em so it is
+.CW "git merge <sha>"
+with
+.CW mkconfig
+resolved by hand: this tree's
+.CW ROOT ,
+and keep
+.CW SYSMODULES= .
 Leave nothing staged: the index is shared with every other worktree.
 .IP "4." 5
 Then G4 and G5, and rewrite the two paragraphs of this paper that
@@ -379,7 +406,8 @@ Step 1 was run against
 in a detached worktree with
 .CW mkconfig 's
 .CW ROOT
-pointed at it.  Six findings, in the order they appeared.
+pointed at it.  Four findings, in the order they appeared, and one caution about the
+fifth thing it was asked.
 .PP
 .B "1. A clean checkout could not build, for four separate reasons, none
 of them the merge's."
@@ -479,6 +507,30 @@ ISO: an input the check does not build.
 .B "4. The rest built."
 The tree, the host compilers, pc64 and pc64dev, virtarm64, and nine of
 the fourteen boards, all from clean.
+.PP
+.B "And the caution: nothing from the suite goes back to them until it
+has run alone."
+Five QEMU processes were live when the trial's suite started, four of
+them another session's, and
+.CW check-crossarch
+has already failed here once on contention alone.  A failure handed to
+an active session that turns out to be this host is expensive in both
+directions, so any failure is re-run by itself before it is reported.
+.PP
+The verified fix from finding 2 is in
+.CW doc/fwcfg-move.txt ,
+because a diff that exists only in a worktree about to be deleted is not
+a durable thing.  Note that the trial tree carries five local edits, not
+one: that patch,
+.CW mkconfig 's
+.CW ROOT
+and
+.CW SYSMODULES ,
+the
+.CW mkdis
+install rule, the
+.CW libprefab
+removal, and 1319 created directories.
 .NH 1
 Order
 .PP
