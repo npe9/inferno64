@@ -479,7 +479,26 @@ struct Handler
  * other's.
  */
 #define gclock()	do{ if(gcatomic) AINC(&gchalt); else gchalt++; if(curP != nil){ curP->gcheld++; if(++curP->gcdepth > gcdepthmax) gcdepthmax = curP->gcdepth; } else if(++gcdepth > gcdepthmax) gcdepthmax = gcdepth; }while(0)
-#define gcunlock()	do{ if(gcatomic) ADEC(&gchalt); else gchalt--; if(curP != nil){ curP->gcheld--; curP->gcdepth--; } else gcdepth--; }while(0)
+/*
+ * gcunlock() gives back the context's count BEFORE the global, which is
+ * the opposite order to gclock() and is the correct one for each.
+ *
+ * gclock() raises gchalt first: the collector must be excluded before
+ * this context is marked as holding anything.  gcunlock() has to unmark
+ * the context before it lets the collector back in, or there is an
+ * instant where gchalt reads 0 while curP->gcheld still reads 1 -- and
+ * rungc()'s own check for a lost increment walks exactly those two
+ * values and reports it as "collecting with 1 gclock(s) held and gchalt
+ * 0".
+ *
+ * That check fired once across twenty Compute Engine instances, and
+ * this window is what it saw: not a lost increment, but a correct
+ * release observed halfway through.  An instrument with a false
+ * positive of its own is worse than no instrument, because the one
+ * firing that matters cannot be told from the noise.  Swapped, so the
+ * next firing means what it says.
+ */
+#define gcunlock()	do{ if(curP != nil){ curP->gcheld--; curP->gcdepth--; } else gcdepth--; if(gcatomic) ADEC(&gchalt); else gchalt--; }while(0)
 #define GCDEPTH		(curP != nil ? curP->gcdepth : gcdepth)
 /*
  * How many gclock()s gcunwind() has given back.  This is the count that
