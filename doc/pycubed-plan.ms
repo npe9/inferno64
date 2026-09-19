@@ -397,7 +397,7 @@ Where each goes, with what this tree already has:
 .CW "  GPS             #t devuart"
 .CW "  NVM flags       #F devflash, or devflashfs"
 .CW "  reset           /dev/reboot in #c devcons"
-.CW "  RTC             #r devrtc"
+.CW "  RTC             #r devrtc, but pc only so far"
 .CW "  I2C sensors     #J devi2c for the bus, chip"
 .CW "                  protocol above it"
 .CW "  LED, burn wires, ADC   nothing"
@@ -942,14 +942,24 @@ through the same authenticated namespace, so there is no
 command and no file-transfer protocol.
 .IP \(bu
 .B "Time."
-.CW #r
-.CW devrtc ,
-.CW /dev/time ,
+.CW /dev/time
+in
+.CW #c
+.CW devcons ,
 .CW /dis/lib/daytime.dis
 and
-.CW timers.dis .
-The GPS discipline of the clock remains mission code; the clock does
-not.
+.CW timers.dis ,
+all of which
+.CW mps2
+has and
+.CW pycubed/beepsat
+already uses.  The battery-backed clock is not free: the only
+.CW devrtc.c
+in this tree is
+.CW os/inferno/pc 's ,
+which is the PC's CMOS clock, so a SAMD51 wants its own \- small, and
+the same shape.  The GPS discipline of the clock is mission code either
+way.
 .IP \(bu
 .B "Reset."
 .CW timeout_handler ()
