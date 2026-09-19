@@ -132,6 +132,16 @@ root
 	/dis/wm
 	/osinit.dis
 	/dis/init
+#
+# The channel stress the measurements in doc/multicore-plan.ms are
+# supposed to run.  It was missing from this board's root, so every
+# soak boot printed "sh: chantest: file does not exist" twice a cycle
+# and measured 300 shell invocations instead -- process creation, which
+# is close to the easy case, rather than the channel traffic the
+# parallel VM actually changes.
+#
+	/dis/chantest.dis
+	/dis/lib/dial.dis
 	/dis/shutdown
 	/dis/basename.dis
 	/dis/bind.dis
