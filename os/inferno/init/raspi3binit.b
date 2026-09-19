@@ -535,6 +535,57 @@ netcounters()
 #	styxlisten -A 'tcp!*!6666' export /
 # The current kernel is kept as kernel8.bak before the new one takes its
 # name, so a bad build costs one card swap rather than the board.
+#
+# A running sum over what was fetched, and the same sum over what
+# landed on the card.
+#
+# Not a checksum anyone should trust against an adversary; it is here
+# to catch a write path that drops whole 32KB chunks and says it
+# didn't, which is what this board did.  Position matters -- the
+# multiply by 31 is what makes two chunks in the wrong order fail --
+# and it is arithmetic on an int, so it costs nothing next to the I/O.
+#
+kusum(sum: int, b: array of byte, n: int): int
+{
+	for(i := 0; i < n; i++)
+		sum = sum * 31 + int b[i];
+	return sum;
+}
+
+kuverify(name: string, want: int, sum: int): int
+{
+	fd := sys->open(name, Sys->OREAD);
+	if(fd == nil){
+		sys->print("KUPDATE-VERIFY cannot reopen %s: %r\n", name);
+		return -1;
+	}
+	buf := array[8192] of byte;
+	got := 0;
+	back := 0;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n < 0){
+			sys->print("KUPDATE-VERIFY read %s: %r\n", name);
+			return -1;
+		}
+		if(n == 0)
+			break;
+		back = kusum(back, buf, n);
+		got += n;
+	}
+	if(got != want){
+		sys->print("KUPDATE-VERIFY %s is %d bytes, wrote %d\n", name, got, want);
+		return -1;
+	}
+	if(back != sum){
+		sys->print("KUPDATE-VERIFY %s reads back differently (%#x against %#x)\n",
+			name, back, sum);
+		return -1;
+	}
+	sys->print("KUPDATE-VERIFY %d bytes read back identical\n", got);
+	return 0;
+}
+
 kupdate()
 {
 	#
@@ -645,6 +696,7 @@ kupdate()
 	}
 	buf := array[8192] of byte;
 	total := 0;
+	sum := 0;
 	for(;;){
 		n = sys->read(src, buf, len buf);
 		if(n < 0){
@@ -663,6 +715,7 @@ kupdate()
 			unmountremote();
 			return;
 		}
+		sum = kusum(sum, buf, n);
 		total += n;
 	}
 	src = nil;
@@ -673,6 +726,27 @@ kupdate()
 		return;
 	}
 	sys->print("KUPDATE fetched %d bytes\n", total);
+	#
+	# Read back what was written before installing it.
+	#
+	# Every write above was checked and every one of them said it had
+	# written what it was given, and the kernel that went onto the
+	# card was still wrong: 14 of its 57 32KB chunks, the first 448KB
+	# and one more, held the previous kernel's bytes instead.  The
+	# board then did not boot and the card had to come out, which is
+	# the one thing this whole mechanism exists to avoid.
+	#
+	# So the write's return value is not the evidence.  The file is.
+	# This costs one more pass over 1.8MB through the same slow path
+	# -- tens of seconds -- and it turns a board that does not boot
+	# into a line that says why, with the working kernel still
+	# installed.  That trade is not close.
+	#
+	if((n = kuverify("/n/dos/kernel8.new", total, sum)) < 0){
+		sys->print("KUPDATE-FAIL what was written is not what was fetched; the old kernel is untouched\n");
+		sys->remove("/n/dos/kernel8.new");
+		return;
+	}
 	sys->remove("/n/dos/kernel8.bak");
 	if(rename("/n/dos/kernel8.img", "kernel8.bak") < 0){
 		sys->print("KUPDATE-FAIL keep the old kernel: %r\n");

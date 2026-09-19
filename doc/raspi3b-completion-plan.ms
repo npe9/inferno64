@@ -4593,6 +4593,69 @@ large reads and the FAT server's sector walks can be.
 The interrupt handler itself, which is upstream of all of this and is
 stage two's first term.
 .NH 2
+The card came out, and what was on it
+.PP
+A kernel installed over the network did not boot, and the card had to
+be read on the host to find out why.  What was there was the right
+name, the right size to the byte, and the wrong contents: 13780 bytes
+wrong out of 1851880, in what looked at first like 8363 scattered runs
+of one and two bytes.
+.PP
+That shape was the whole answer, and it took one more question to see
+it.  Two adjacent builds of this kernel differ only in scattered bytes,
+so a whole block written from the wrong build shows up as scattered
+bytes.  Aligning the comparison says so plainly: at 32KB \(em the
+cluster size on this card \(em 42 chunks matched the new kernel, 14
+matched the old one exactly, and one, the last, was partial.  The 14
+are chunks 0 to 13 and chunk 29.
+.B "The first 448KB of the file was never written, and nothing said so."
+.PP
+.CW kupdate()
+checks every write it makes.  Every one of them returned the length it
+was given; the fetched total was right; it printed
+.CW "KUPDATE fetched 1851880 bytes"
+and installed it.  So the loss is below
+.CW sys->write :
+in
+.CW dossrv ,
+in
+.CW devsd ,
+or in
+.CW sdemmcbcm ,
+and it is silent.  That is a more serious thing than any number in the
+section below, because it means a write on this board can be believed
+and be wrong.
+.PP
+The first thing to do about it is not to fix it, it is to stop it
+costing a card swap.
+.CW kupdate()
+now sums what it fetches as it fetches it, reads the file back off the
+card, and sums that too.  If they differ it says so and leaves the old
+kernel exactly where it is.  It costs one more pass over 1.8MB through
+the same slow path, which is tens of seconds, and it turns a board that
+does not boot into a line that says why.  That trade is not close.
+.PP
+Then the fault itself.  It is reproducible in principle without the
+board \(em
+.CW fatstress
+and
+.CW tests/dossrv-stress.sh
+drive the same
+.CW dossrv
+against a file image under
+.CW emu ,
+and the FAT32 case there uses 512-byte clusters where the card uses
+32KB.  A first pass should be a 1.8MB sequential write to a 32KB
+cluster image, read back and compared, because that is the exact shape
+that failed.  If it passes there, the difference is
+.CW devsd
+or the driver, and
+.CW sdemmcbcm 's
+short-count return on error is the first place to look:
+.CW emmcbio
+breaks out of its block loop and returns the bytes it managed, and
+whether anything above it notices is a question this has not asked.
+.NH 2
 Stage two: soft real time, which is turning a latency into a bound
 .PP
 .B "Soft real time is a bound you can measure."
@@ -4676,6 +4739,49 @@ in
 .CW sched() ,
 the trap prologue before the handler is reached, and whatever a handler
 does before it returns.
+.IP 1a.
+.B "And the SD number went backwards, which is how the term got found."
+The board's 1.5MB FAT write measured 17.4 seconds at the commit that
+recorded 88 KB/s for the spinning driver, and 219 seconds now \(em 6
+KB/s, which is exactly the figure that same commit recorded for the
+sleeping driver it rejected.  Same check, same board, same
+.CW emmcsleep=0 .
+.IP
+The first thing to rule out was the driver, and the way to rule it out
+is a quiet board: copying 1.85MB card to card from the shell, with
+nothing else running, took 36 seconds \(em 3.7MB of traffic through the
+same path, about 100 KB/s.  So the path is not slower.  What is slower
+is the writer's share of the processor while the rest of the boot is
+happening, which is a scheduling answer to a throughput question and is
+the reason this section exists.
+.IP
+Two candidates, and both are switches now rather than arguments.
+.CW schedclock
+turns off the tick's calls to
+.CW hzsched()
+and
+.CW accounttime() ,
+which is what this kernel did before any of this work: nothing
+preempted, and a process doing a long write ran uninterrupted until it
+blocked.
+.CW lockboost
+restores
+.CW canlock() 's
+unrestored
+.CW PriLock ,
+removed above as a bug and quite possibly load-bearing \(em
+.CW clockintr()
+calls
+.CW canlock()
+every tick, so whoever was running was pinned at the top of the
+ordinary range until its next
+.CW sched() ,
+and that includes the process doing the writing.  Pinning the runner at
+20 is not a defensible way to get throughput.  Whether it is what was
+providing it is a measurement, and
+.CW FAT-BIG
+is the same 1.5MB write all three numbers came from, so they compare
+directly.
 .IP 2.
 .B "The spins the drivers keep on purpose."
 .CW usbdwc
