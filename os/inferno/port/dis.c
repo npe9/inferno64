@@ -137,7 +137,6 @@ static Pctx*
 claimctx(void)
 {
 	Pctx *c;
-	int i;
 
 	lock(&isched.l);
 	/*
@@ -1573,7 +1572,7 @@ static struct {
 	char	*name;
 	int	off;
 } progfield[] = {
-	{"reg",		(int)(uintptr)&((Prog*)0)->reg},
+	{"reg",		(int)(uintptr)&((Prog*)0)->reg.PC},
 	{"xecby",	(int)(uintptr)&((Prog*)0)->xecby},
 	{"lastfp",	(int)(uintptr)&((Prog*)0)->lastfp},
 	{"link",	(int)(uintptr)&((Prog*)0)->link},
@@ -1594,7 +1593,7 @@ static struct {
 	{"addrun",	(int)(uintptr)&((Prog*)0)->addrun},
 	{"xec",		(int)(uintptr)&((Prog*)0)->xec},
 	{"osenv",	(int)(uintptr)&((Prog*)0)->osenv},
-	{"wmtrace",	(int)(uintptr)&((Prog*)0)->wmtrace},
+	{"wmtrace",	(int)(uintptr)&((Prog*)0)->wmtrace[0]},
 };
 
 static char*
@@ -1849,9 +1848,13 @@ grpleader(Prog *p)
 	Progs *g;
 	Prog *l;
 
+	lock(&grpl);
 	g = p->group;
-	if(g != nil && (l = g->head) != nil && l->pid == g->id)
+	if(g != nil && (l = g->head) != nil && l->pid == g->id){
+		unlock(&grpl);
 		return l;
+	}
+	unlock(&grpl);
 	return nil;
 }
 
@@ -1905,7 +1908,7 @@ exprog(Prog *p, char *exc)
 static void
 propex(Prog *p, char *estr)
 {
-	Prog *f, *nf, *pgl;
+	Prog *f, *pgl;
 
 	if(!(p->flags & (Ppropagate|Pnotifyleader)) || p->group == nil)
 		return;
@@ -1919,14 +1922,47 @@ propex(Prog *p, char *estr)
 		pgl = p;
 	if(!(pgl->flags & (Ppropagate|Pnotifyleader)))
 		return;	/* exceptions are local; don't propagate */
-	for(f = p->group->head; f != nil; f = nf){
-		nf = f->grpnext;
-		if(f != p && f != pgl){
-			if(pgl->flags & Ppropagate)
-				exprog(f, estr);
-			else{
-				f->flags &= ~(Ppropagate|Pnotifyleader);	/* prevent recursion */
-				killprog(f, "killed");
+	/*
+	 * Snapshot pids under the group lock, then act outside it.
+	 *
+	 * This used to walk the list live, holding f and its successor
+	 * across exprog() and killprog() -- and killprog() reaches
+	 * delprog(), which unlinks and frees.  With one executor that was
+	 * safe because nothing else ran; with parallelvm=1 another
+	 * executor can free f while this loop holds it, which is the same
+	 * class of bug as the unlocked addgrp()/delgrp() (see grpl).
+	 *
+	 * Pids, not pointers, for the reason killgrp() already gives: a
+	 * Prog's state can change while this loop runs, and progpid()
+	 * returning nil is the correct answer for one that has gone.  No
+	 * allocation, because this is an exception path: a fixed batch,
+	 * repeated from where it left off, and groups are small.
+	 */
+	{
+		enum { Nbatch = 32 };
+		int pids[Nbatch], npid, i, after;
+
+		after = -1;
+		for(;;){
+			npid = 0;
+			lock(&grpl);
+			for(f = p->group != nil ? p->group->head : nil;
+			    f != nil && npid < Nbatch; f = f->grpnext)
+				if(f->pid > after && f != p && f != pgl)
+					pids[npid++] = f->pid;
+			unlock(&grpl);
+			if(npid == 0)
+				break;
+			after = pids[npid-1];
+			for(i = 0; i < npid; i++){
+				if((f = progpid(pids[i])) == nil)
+					continue;
+				if(pgl->flags & Ppropagate)
+					exprog(f, estr);
+				else{
+					f->flags &= ~(Ppropagate|Pnotifyleader);	/* prevent recursion */
+					killprog(f, "killed");
+				}
 			}
 		}
 	}
@@ -2121,6 +2157,7 @@ printgrp(Prog *p, char *v)
 	Progs *g;
 	Prog *q;
 
+	lock(&grpl);
 	g = p->group;
 	print("%s pid %d grp %d pgrp %d: [pid", v, p->pid, g->id, g->parent!=nil?g->parent->id:0);
 	for(q = g->head; q != nil; q = q->grpnext)
@@ -2129,6 +2166,7 @@ printgrp(Prog *p, char *v)
 	for(g = g->child; g != nil; g = g->sib)
 		print(" %d", g->id);
 	print("]\n");
+	unlock(&grpl);
 }
 
 int
@@ -2146,19 +2184,36 @@ killgrp(Prog *p, char *msg)
 		release();
 		acquire();
 	}
+	/*
+	 * Both walks under the group lock: the list they count is the
+	 * same list addgrp()/delgrp() are free to change on another
+	 * processor once parallelvm=1 is set.  Separately, because
+	 * malloc() must not run with a spin lock held, and the second
+	 * walk clamps to what the first counted in case the group grew
+	 * in between.
+	 */
 	npid = 0;
+	lock(&grpl);
 	for(f = g->head; f != nil; f = f->grpnext)
 		if(f->group != g)
 			panic("killgrp");
 		else
 			npid++;
+	unlock(&grpl);
 	/* use pids not Prog* because state can change during killprog (eg, in delprog) */
 	pids = malloc(npid*sizeof(int));
 	if(pids == nil)
 		error(Enomem);
-	npid = 0;
-	for(f = g->head; f != nil; f = f->grpnext)
-		pids[npid++] = f->pid;
+	{
+		int max;
+
+		max = npid;
+		npid = 0;
+		lock(&grpl);
+		for(f = g->head; f != nil && npid < max; f = f->grpnext)
+			pids[npid++] = f->pid;
+		unlock(&grpl);
+	}
 	g->flags |= Pkilled;
 	if(waserror()) {
 		g->flags &= ~Pkilled;
