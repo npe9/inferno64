@@ -8804,3 +8804,68 @@ The 3.3x on the module-loading workload was taken on the kernel before
 the process-group lock.  That arm never panicked, in six boots, so the
 figure is probably still good \(em but it is not a measurement of the
 kernel that would ship, and it should not be quoted as though it were.
+.NH 1
+arm64 on real hardware: boots, runs, and then goes quiet
+.PP
+Phase D's last acceptance item is the second architecture.  Five
+.CW t2a-standard-4
+instances \(em four Neoverse processors each \(em booted the
+.CW virtarm64cloud
+kernel from a UEFI disk with the soak workload.
+.PP
+.B "What works."
+Every instance boots, brings up four processors, and runs the parallel
+VM: nine contexts, eight to nineteen interpreters,
+.CW "nmach 4" ,
+six soak lines, and no panic on any of the five.  That is arm64 running
+.CW parallelvm=1
+on real silicon without dying, which is the thing that had never been
+shown.
+.PP
+.B "What does not."
+Four of the five stop producing console output partway through and
+never resume.  Not a collection artefact: Compute Engine's serial-port
+API reports the next byte offset, and for two stopped instances it was
+frozen at 941,576 and 139,193 across twenty seconds while the one
+healthy instance grew by 42,625 bytes in the same twenty.  The
+instances remain
+.CW RUNNING .
+.PP
+It is not the parallel VM.  Three of three
+.CW parallelvm=1
+instances stopped and so did one of the two
+.CW parallelvm=0
+controls, which is what a board-level fault looks like rather than a
+scheduler one.  The surviving control ran to 240,000 ticks and was still
+printing.
+.PP
+.B "So the arm64 half of Phase D is not met, and the reason is named."
+What is available is the panic count, which is zero over five instances,
+and one measurement each side before the output stopped:
+.IP
+.nf
+lock on    22.4  22.5   Dis quanta per tick
+lock off   85.4         (one instance, 5,500 ticks)
+.fi
+.PP
+One sample against two, on a run that ended by going quiet, is not a
+throughput result and is not quoted as one.
+.PP
+.B "And a configuration split that has now cost twice."
+The first arm64 attempt measured nothing at all, because
+.CW virtarm64cloud
+had no
+.CW /dis/chantest.dis
+in its root: it printed "sh: chantest: file does not exist" three times
+a cycle and ran failed shell invocations for ten minutes.
+.CW virtarm64
+had gained the line;
+.CW virtarm64cloud
+is a second configuration file for the same board and did not.  That is
+the same shape as
+.CW fw_cfg
+living inside
+.CW screenarm.c ,
+which broke the cloud board's link earlier the same day.  Two
+configurations for one board means every addition has to be made twice,
+and twice today it was made once.
