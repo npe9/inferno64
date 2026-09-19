@@ -4562,7 +4562,7 @@ sectors and both FATs (they end at byte 8275968 \(em so in fact the
 saved prefix does not cover them, and a full metadata backup needs 8MB,
 which is worth doing before the next destructive run).
 .NH 2
-FAT32 in disk/format
+FAT32 in disk/format -- DONE
 .PP
 .CW appl/cmd/disk/format.b
 cannot make a FAT32 filesystem.  It sizes the FAT by trying 12 bits and
@@ -4666,6 +4666,142 @@ One further prize once it works, and it is worth saying out loud: a
 that writes FAT32 can lay down the boot partition itself, so the card
 stops being something a Linux machine has to prepare before Inferno can
 use it.
+.PP
+.B "Done, 19 September 2026, and it cost a compiler bug on the way."
+All three checks above pass.
+.CW disk/format
+then
+.CW fsck_msdos :
+2MB gives FAT12, 32MB FAT16, 64MB and 512MB FAT32, and all four are
+clean \(em the only lines
+.CW fsck_msdos
+prints are the summary count and "Free space in FSInfo block is unset",
+which are the two the stress harness already allows because
+.I dossrv
+chooses to write the specification's "unknown" rather than a number
+nothing maintains.  Then
+.I dossrv
+mounted on a 512MB FAT32 this tree made,
+.CW "fatstress -n 2 -f 6"
+through it, and
+.CW fsck_msdos
+again: FATSTRESS-OK, eight files, clean.  The writer and the reader in
+this tree now check each other with an outsider watching, which is the
+thing that could not be done before.
+.PP
+The sizing turned out to be the larger half of the work and it was
+wrong at every width, not just the missing one.  The FAT and the data
+area depend on each other, and the code iterated from a guess of zero
+clusters and gave up after ten rounds with "can't decide how many
+clusters to use".  That is what any volume needing a FAT of more than a
+few hundred sectors does: the iteration settles into a two-cycle
+between adjacent values rather than a fixed point.  So the width was
+never chosen for such a volume at all, and the FAT12/FAT16 boundary
+above was unreachable for the same reason the FAT32 one was.  It grows
+the FAT instead, which converges in one direction, and stops when the
+FAT holds every entry the data area can ask for \(em which is the
+invariant
+.CW fsck_msdos
+checks and the one the old arithmetic met only by accident.  It said so
+out loud the first time:
+.CW "FAT size too small, 129026 entries won't fit into 1008 sectors" .
+.PP
+.B "And disk/format had never run in this tree at all."
+The first attempt died with
+.CW "exception: illegal dis instruction" ,
+on unmodified source, before any of this.  The cause is not in
+.CW format.b .
+.CW optabinit()
+in the limbo compiler fills two tables, one of opcodes and one of types
+\(em
+.CW precasttab ,
+the pairs no single Dis instruction converts, each naming the type to go
+through.
+.CW optabinit()
+runs before the command line is parsed, and
+.CW typeinit()
+was moved to after the flags in
+.CW 97b2543b
+so that
+.CW -W
+could size the built-in types.  So every
+.CW "precasttab[a][b] = tint"
+stored a nil, no cast got its step through int, and
+.CW casttab 's
+0xff sentinel went out as an instruction: opcode 255, no optab entry,
+.CW badop .
+Every conversion between
+.CW byte
+and
+.CW big ,
+.CW real ,
+.CW string
+or
+.CW fix ,
+in every program this branch has compiled.
+.CW "big b[DB_NFATS]"
+in the boot sector code is the one that found it, and writing the same
+cast out by hand as
+.CW "big (int b[0])"
+works, which is what makes it look like a strange bug in one program
+rather than the compiler under all of them.
+.CW multicore
+and
+.CW inferno-ports
+moved
+.CW typeinit
+the same way and have the same bug;
+.CW inferno-rio ,
+.CW main ,
+.CW arm64
+and
+.CW pr-ember
+call it first and do not.
+.NH 2
+fatstress on real silicon, 19 September 2026
+.PP
+.CW fatstress
+had never run on the board.  It does now, over the styx mount that
+.I kupdate
+already uses
+.CW ( "mount -A tcp!192.168.8.153!6666 /n/remote" ),
+so the host's
+.CW /dis
+is available to the board without rebuilding a kernel to carry a test
+program into it.
+.PP
+.B "The full case passes."
+.CW "fatstress -n 4 -f 12 /n/dos"
+against the card's own boot partition, through
+.I dossrv ,
+.CW devsd
+and
+.CW sdemmcbcm
+on real hardware: four rounds, FATSTRESS-OK.  Afterwards the installed
+.CW kernel8.img
+is still byte for byte the host's copy and
+.CW /dev/sdM0/ctl
+still says
+.CW "errors 0" .
+.PP
+That is worth stating plainly because of what it removes.  The rename
+that loses a file does not reproduce on the host in 60 runs and does not
+reproduce on the board in a full stress run, with the
+.I dossrv
+that carries
+.CW 4ba7ee59 's
+write-back failure path and the two rename fixes before it.  The most
+likely reading is that it is already fixed and that the section above is
+describing a bug that no longer exists.  What would settle it is the
+scratch partition: sectors above 1064960 are unallocated, so a FAT32
+there at the boot partition's own geometry can be hammered for as long
+as it takes without the firmware's partition on the table \(em and that
+is exactly what
+.CW disk/format
+could not make until today.
+.PP
+One thing the board said during the run and nothing here has chased:
+.CW "usbdwc: ep3.1 re-armed after 2 s (1000 times): hcchar 00d88a00 hcint 00000000" .
 .NH 2
 Stage one: making the clock scheduling actually work
 .PP
@@ -5326,20 +5462,22 @@ is not better than
 .I kfs
 and should not replace it.
 .PP
-.B "Alongside it, FAT32 in disk/format."
-.CW appl/cmd/disk/format.b
-refuses any filesystem over 65527 clusters with
-.CW "fatal(\(dqdisk too big; implement fat32\(dq)" ,
-so this tree cannot make a FAT32 and has only ever read ones other
-systems wrote.  That is what stops the obvious safe experiment: a
-scratch FAT32 on the card's unallocated 29GB, at the card's own
-geometry, where
+.B "Alongside it, FAT32 in disk/format -- DONE 19 September 2026."
+It was wanted for the obvious safe experiment: a scratch FAT32 on the
+card's unallocated 29GB, at the card's own geometry, where
 .I dossrv
 can be hammered through the real driver with the boot partition off the
-table.  It is host work, it is checkable against
-.CW fsck_msdos ,
-and it ends with a board that can prepare its own card.  The section
-above says what the BPB needs.
+table.  That experiment is now the next thing to do and nothing blocks
+it.  Getting there also fixed a sizing bug at every FAT width and a
+limbo bug that had broken every cast between
+.CW byte
+and
+.CW big ,
+.CW real ,
+.CW string
+or
+.CW fix
+in every program this branch compiled; both are written up above.
 .PP
 Then the rest, in the order it was in.
 The transmit-queue fix is confirmed on the board and kernel updates
