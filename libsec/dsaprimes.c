@@ -12,12 +12,29 @@
 static void
 Hrand(uchar *s)
 {
-	ulong *u = (ulong*)s;
-	*u++ = fastrand();
-	*u++ = fastrand();
-	*u++ = fastrand();
-	*u++ = fastrand();
-	*u = fastrand();
+	u32int r;
+	int i;
+
+	/*
+	 * s is the 20-byte array this file's header comment describes.
+	 * This wrote five ulongs into it, which is exactly 20 bytes
+	 * where ulong is 32 bits and 40 where it is 64 -- a twenty-byte
+	 * overrun of a stack array on every 64-bit host, before any of
+	 * it is read.  On macOS that is an abort, so DSAprimes() and
+	 * therefore keyring->dhparams() could not be called at all.
+	 *
+	 * Four bytes at a time, counted, and assembled little-endian
+	 * because that is what the comment above says these twenty
+	 * bytes are.  fastrand() returns a ulong; its low 32 bits are
+	 * what is wanted whatever the width.
+	 */
+	for(i = 0; i < SHA1dlen; i += 4){
+		r = (u32int)fastrand();
+		s[i] = r;
+		s[i+1] = r >> 8;
+		s[i+2] = r >> 16;
+		s[i+3] = r >> 24;
+	}
 }
 
 static void
