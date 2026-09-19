@@ -273,3 +273,69 @@ changes that consume it \(em a real merge in
 where both branches have written, but a small one.  Step 2 is not
 finished until the same disk reaches a Dis quantum under OVMF; nothing
 should go near Compute Engine before it does.
+.NH 1
+Route 2 done: the branches are one
+.PP
+.CW 8fcc14cd
+merges cloud-port into multicore.  Six files conflicted and the
+resolutions are in the commit message; the shape the table above
+predicted held, and the arm64 file was the one that needed a decision
+rather than a merge.
+.PP
+.B "The arm64 answer: cloud-port's design, this branch's behaviour."
+Its
+.CW _secondary
+hands each processor a record instead of a set of globals, and turns
+the MMU on over there \(em this board had no MMU when the other version
+was written, which is also why that version could start processors one
+at a time through shared globals.  What came across from here is what
+the processors then do: enter the scheduler, count themselves in
+.CW conf.nmach
+as they arrive, take a Dis context each, and be discovered by PSCI when
+there is no ACPI to read.  That last one matters more than it sounds:
+.CW startcpus()
+reads the processor list from ACPI, which the UEFI path provides and
+QEMU's
+.CW -kernel
+does not, so without the probe the merged kernel found an empty list
+and started nothing.
+.PP
+.B "Verified."
+All fourteen boards build.  pc64 boots at
+.CW "-smp 2"
+.CW parallelvm=1
+with both processors interpreting and no panic.  virtarm64 boots to a
+shell at
+.CW "-smp 2"
+and
+.CW "-smp 4"
+with every processor started, counted and in the scheduler.
+.NH 2
+What is open, in the order it blocks things
+.IP 1.
+.B "Boot options do not reach the kernel under -kernel."
+.CW bootargsinit()
+now runs before
+.CW mmuinit()
+\(em it has to, because the loader's block sits in memory the kernel is
+about to allocate over \(em and fw_cfg is device memory, so reading it
+there works while reading it later traps.  The options
+.CW ( *parallelvm ,
+.CW *soak ,
+.CW *secsched )
+are how every measurement is taken, so this blocks measuring anything
+on the merged arm64 kernel.  Either read fw_cfg in that first call, or
+map it before a second one.
+.IP 2.
+.B "The e820/meminit stop on the UEFI path."
+Step 2 of Route 1 is still unfinished: the kernel boots through the
+loader and loops in
+.CW meminit() .
+The merge brought
+.CW os/inferno/pc/bootargs.c
+across, which is what
+.CW 73ac4db6
+said was missing, so this is now a question of wiring rather than of
+code that does not exist.
+.IP 3.
+.B "Then Compute Engine, and the measurement the whole plan is for."
