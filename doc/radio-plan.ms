@@ -632,6 +632,19 @@ big enough.  Found by
 which exists because the console line discipline will not carry a
 command line long enough for a shell to make an oversize write.
 .NH 1
+Getting it relevant and right
+.PP
+Everything above runs, and none of it is evidence about a real board.
+The model and the driver that talks to it were written by the same hand
+in the same sitting, so a passing test can mean the model implements the
+driver's mistake; and an MPS2 has no radio, so the fixture is a fixture.
+.CW doc/radio-evidence.ms
+is the plan for both \- three independent checks, three steps toward a
+part on a desk, the claims this work has asserted and never run, and a
+table of which step moves which claim to which of
+.CW tools/qemu-patches/README 's
+evidence tiers.  It also says what would falsify the whole fixture.
+.NH 1
 What this will not tell anyone
 .PP
 Worth writing down now rather than discovering it at step 6.
