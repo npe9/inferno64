@@ -24,6 +24,8 @@ authchk authchk
 autoconvert sh-alphabet
 autodeclare sh-alphabet
 avr avr
+ax25chk ax25chk
+ax25raw ax25raw
 basename basename
 battlelines battlelines
 bigguns bigguns

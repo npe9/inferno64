@@ -1,0 +1,165 @@
+.TH AX25 3
+.SH NAME
+ax25 \- AX.25 over a packet device
+.SH SYNOPSIS
+.B bind '#a' /net/ax25
+.PP
+.B /net/ax25/ctl
+.br
+.B /net/ax25/addr
+.br
+.B /net/ax25/stats
+.br
+.B /net/ax25/clone
+.br
+.BI /net/ax25/ n /ctl
+.br
+.BI /net/ax25/ n /data
+.br
+.BI /net/ax25/ n /local
+.br
+.BI /net/ax25/ n /remote
+.br
+.BI /net/ax25/ n /status
+.SH DESCRIPTION
+The
+.I ax25
+device carries AX.25 frames over anything that delimits packets,
+attached by a file descriptor written to its
+.BR ctl ,
+the way
+.I ssl (3)
+and
+.I lora (3)
+attach.
+.PP
+It is beside
+.I lora (3)
+rather than inside it.  A RadioHead address is a byte a station picks;
+an AX.25 address is a callsign, and on an amateur band an unidentified
+transmission is not permitted, so a satellite on 70cm has to say who it
+is in a form a regulator and a receiving station both already read.  The
+other half is that
+.IR direwolf ,
+a TNC and a handheld with a KISS port all decode AX.25 today and none
+of them has heard of RadioHead.  The argument in full is in
+.BR doc/ax25-plan.ms .
+.PP
+What goes on the air is an AX.25 frame without the HDLC flags, the bit
+stuffing or the FCS \- the LoRa PHY already delimits the packet and
+checks it, and a second CRC inside the first is paying twice:
+.PP
+.EX
+	dest[7] src[7] [digi[7] ...] control[1] pid[1] info...
+.EE
+.PP
+Each address is six bytes of callsign, ASCII, shifted left one bit and
+padded with spaces, then an SSID byte holding the command or
+has-been-repeated bit, two reserved bits sent as ones, four bits of
+SSID, and the end-of-address bit on the last address only.
+.PP
+.B Ctl
+takes:
+.TP
+.BI fd " n"
+Attach the packet device open on file descriptor
+.IR n .
+Once only, and for the life of the boot.
+.TP
+.BI addr " CALL\fP-\fIn"
+This station's callsign, at most six letters and digits, with an
+optional SSID of 0 to 15.
+.PP
+Opening
+.B clone
+makes a conversation and returns its
+.BR ctl ,
+whose first read is the conversation's number; holding that descriptor
+open holds the conversation open.  A conversation's
+.B ctl
+takes:
+.TP
+.BI connect " CALL\fP-\fIn\fP [via \fICALL\fP-\fIn\fP[,\fICALL\fP-\fIn\fP]]"
+Send to that station, by that path, and take frames from it.
+.TP
+.B announce
+Take frames from any station no other conversation has claimed.
+.TP
+.BI via " CALL\fP-\fIn\fP[,\fICALL\fP-\fIn\fP]"
+The digipeater path on its own, at most two, which is what AX.25 2.2
+allows.
+.TP
+.BI pid " n"
+The protocol identifier byte; 0xf0, no layer 3, by default.
+.TP
+.B ui on
+Connectionless.  It is the only mode, and
+.B ui off
+is refused rather than ignored.
+.PP
+.B Data
+is one information field per read and one per write, inheriting both of
+.IR radio (3)'s
+refusals.
+.B QST
+and
+.B CQ
+are destinations no station answers to, which is the whole of what
+broadcast means here: there is no bit for it.
+.PP
+The
+.B iounit
+of
+.B data
+is the packet device's less the header this conversation's path needs:
+239 with no digipeaters over a 255-byte packet device, and 225 with
+two.  It is exact rather than a worst case, which is why
+.B via
+is refused while
+.B data
+is open \-
+.B appl/lib/ssl.b
+once opened
+.B data
+before pushing its descriptor and so published a budget computed from
+nothing, and that is the mistake this ordering avoids.
+.PP
+.B N1 ,
+whose specified default is 256, is therefore not a tuning parameter on
+this link but a property of it, and it is this number.
+.SH SOURCE
+.B /os/inferno/radio/devax25.c
+.SH BUGS
+Connected mode is not implemented.  SABM, UA, DISC, DM, I, RR, RNR, REJ
+and the sequence numbers are steps two to four of
+.BR doc/ax25-plan.ms ;
+a control field that is not UI is counted under
+.B notui
+and dropped, because answering a SABM this cannot honour would promise
+a connection that does not exist.
+.PP
+This does not digipeat.  A frame with a hop still to go is counted
+under
+.B todigi
+and dropped, separately from a frame for another station, because the
+two mean different things about a link.
+.PP
+Four conversations, which is a constant.
+.PP
+Nothing here identifies the station periodically.  Most jurisdictions
+require identification at an interval as well as on each transmission,
+and every frame does carry the source callsign, but nothing sends a
+beacon on its own.
+.PP
+.B #L
+and
+.B #a
+cannot both hold one radio, because
+.IR radio (3)'s
+receive path is a claim.  That is correct and is also the only way to
+find out, since neither device knows the other exists.
+.SH SEE ALSO
+.I ax25chk (1),
+.I ax25raw (1),
+.I lora (3),
+.I radio (3)

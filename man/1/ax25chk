@@ -1,0 +1,72 @@
+.TH AX25CHK 1
+.SH NAME
+ax25chk \- check the ax25 device
+.SH SYNOPSIS
+.B ax25chk setup
+.I call
+.br
+.B ax25chk send
+.I call text
+.RI [ count ]
+.br
+.B ax25chk sendvia
+.I call path text
+.br
+.B ax25chk beacon
+.I text
+.br
+.B ax25chk recv
+.RI [ count ]
+.br
+.B ax25chk stats
+.SH DESCRIPTION
+.I Ax25chk
+exercises
+.IR ax25 (3)
+from outside the kernel.
+.PP
+.B Setup
+attaches
+.B /dev/radio0/data
+to
+.B #a
+and sets this station's callsign, then checks the things a shell cannot
+reach: that a seventh callsign character and an SSID of 16 are refused,
+that a conversation's
+.B iounit
+is 239 with no digipeaters and 225 with two, that a write past the
+information field is refused naming the budget, that a third digipeater
+is refused, and that the path may not change while
+.B data
+is open.  That last is the
+.B iounit
+being a promise rather than an estimate.
+.PP
+.B Beacon
+sends one UI frame to
+.BR QST ,
+which is what a beacon is.
+.B Sendvia
+sends through a digipeater path.
+.SH EXAMPLE
+Two stations under a QEMU patched to model an SX1276.  On the first:
+.PP
+.EX
+	ax25chk setup KA9Q-1
+	ax25chk recv 2
+.EE
+.PP
+and on the second,
+.IR ax25raw (1)
+building the frames by hand.
+.SH SOURCE
+.B /appl/cmd/ax25chk.b
+.SH SEE ALSO
+.I ax25raw (1),
+.I ax25 (3),
+.I lorachk (1)
+.SH BUGS
+Each invocation opens its own conversation and closes it on exit.
+.PP
+.B Setup
+must run before anything else, and only once.

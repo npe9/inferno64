@@ -1,5 +1,6 @@
 arch arch
 audio audio
+ax25 ax25
 boot boot
 cap cap
 cmd cmd

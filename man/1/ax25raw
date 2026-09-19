@@ -1,0 +1,61 @@
+.TH AX25RAW 1
+.SH NAME
+ax25raw \- an AX.25 peer built by hand
+.SH SYNOPSIS
+.B ax25raw hear
+.RI [ n ]
+.br
+.B ax25raw poke
+.I dest src text
+.RB [ via
+.IR path ]
+.SH DESCRIPTION
+.I Ax25raw
+assembles and decodes AX.25 frames directly on
+.BR /dev/radio0/data ,
+from the specification rather than from
+.BR /os/inferno/radio/devax25.c :
+six characters of callsign shifted left one bit and padded with spaces,
+then an SSID byte of command-or-repeated, two reserved bits sent as
+ones, four bits of SSID and the end-of-address bit on the last address
+only; then control
+.B 0x03
+for UI and PID
+.B 0xf0
+for no layer 3.
+.PP
+It exists because
+.IR ax25chk (1)
+checks
+.IR ax25 (3)
+against itself, which cannot catch an address field this tree agrees
+with and no TNC does.  It is not somebody else's program, which is its
+weakness; it is somebody else's format, written on the other side of a
+device boundary with none of
+.IR ax25 (3)'s
+code reachable from it.
+.PP
+.B Poke
+sends one frame exactly as given, with no checking, because the point
+is to be able to send what a correct implementation would not.
+.SH EXAMPLE
+.EX
+	; ax25raw poke KA9Q-1 N0CALL-7 hand-built
+	RAWSENT N0CALL-7>KA9Q-1 26 bytes
+	; ax25raw hear 1
+	RAW KA9Q-1>W1AW-2 via WIDE1-1,WIDE2-1 UI pid 0xf0 info hopped-0
+.EE
+.SH SOURCE
+.B /appl/cmd/ax25raw.b
+.SH SEE ALSO
+.I ax25chk (1),
+.I ax25 (3),
+.I loraraw (1)
+.SH BUGS
+It speaks only to
+.B /dev/radio0/data
+and there is no way to point it at another packet device.
+.PP
+It decodes a control field it does not recognise by printing the byte,
+which is the most it can say about a frame whose format it does not
+implement.

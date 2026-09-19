@@ -123,6 +123,8 @@ TARG=\
 	plumber.dis\
 	prof.dis\
 	authchk.dis\
+	ax25chk.dis\
+	ax25raw.dis\
 	mkradiokeys.dis\
 	lorachk.dis\
 	loraraw.dis\
