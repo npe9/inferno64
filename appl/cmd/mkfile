@@ -124,6 +124,7 @@ TARG=\
 	prof.dis\
 	radiochk.dis\
 	radiossl.dis\
+	radiostyx.dis\
 	ps.dis\
 	puttar.dis\
 	pwd.dis\

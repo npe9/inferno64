@@ -227,31 +227,78 @@ exreadn(Chan *c, void *buf, int n)
 }
 
 static int
+exread1(Chan *c, void *buf, int n)
+{
+	int t;
+
+	if(waserror())
+		return -1;
+	t = devtab[c->type]->read(c, buf, n, 0);
+	poperror();
+	return t;
+}
+
+/*
+ * One Styx message.
+ *
+ * The first read asks for the whole buffer rather than for the
+ * four-byte size field.  On a byte stream that returns whatever has
+ * arrived, which may be a fragment or several messages' worth, and the
+ * code below finishes the job exactly as it always did.  On a
+ * message-delimited transport it returns one message -- and asking such
+ * a transport for four bytes is a short read, which it is right to
+ * refuse rather than truncate.
+ *
+ * That was not a theoretical case.  os/inferno/port/devradio.c hands
+ * out one packet per read and refuses a buffer too small to hold it,
+ * because ssl(3) and everything above depend on the boundary surviving;
+ * sys->export() over it read four bytes, was refused, and returned at
+ * once with the connection apparently closed.
+ */
+static int
 exreadmsg(Chan *c, void *a, uint n)
 {
-	int m, len;
+	int m, k, len;
 	uchar *buf;
 
 	buf = a;
-	m = exreadn(c, buf, BIT32SZ);
-	if(m < BIT32SZ){
-		if(m < 0)
-			return -1;
+	m = exread1(c, buf, n);
+	if(m < 0)
+		return -1;
+	if(m == 0)
 		return 0;
+	if(m < BIT32SZ){
+		k = exreadn(c, buf+m, BIT32SZ-m);
+		if(k < 0)
+			return -1;
+		if(k < BIT32SZ-m)
+			return 0;
+		m = BIT32SZ;
 	}
 	len = GBIT32(buf);
 	if(len <= BIT32SZ || len > n){
 		kwerrstr("bad length in Styx message header");
 		return -1;
 	}
-	len -= BIT32SZ;
-	m = exreadn(c, buf+BIT32SZ, len);
-	if(m < len){
-		if(m < 0)
-			return -1;
-		return 0;
+	if(m > len){
+		/*
+		 * More than one message in a single read.  A stream can do
+		 * this and the old code could not either: it read exactly
+		 * one message's worth at a time.  Nothing in this tree
+		 * sends Styx down a transport that coalesces, so say so
+		 * rather than silently dropping the remainder.
+		 */
+		kwerrstr("two Styx messages in one read");
+		return -1;
 	}
-	return BIT32SZ+m;
+	if(m < len){
+		k = exreadn(c, buf+m, len-m);
+		if(k < 0)
+			return -1;
+		if(k < len-m)
+			return 0;
+	}
+	return len;
 }
 
 static void

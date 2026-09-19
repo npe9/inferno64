@@ -1,0 +1,93 @@
+.TH RADIOSTYX 1
+.SH NAME
+radiostyx \- Styx over the radio, and the message size it settles on
+.SH SYNOPSIS
+.B radiostyx
+.B serve
+.RB [ ssl ]
+.br
+.B radiostyx
+.B get
+.RI [ path
+.RB [ ssl ]]
+.SH DESCRIPTION
+.B Serve
+exports the namespace over
+.BR /dev/radio0/data .
+.B Get
+walks to
+.I path
+on the other end, reads it and prints it, first printing the message
+size the two agreed on.  With
+.B ssl
+as a last argument both push
+.IR ssl (3)
+onto the radio first.
+.PP
+It exists to run the argument in
+.B doc/pycubed-plan.ms
+that a satellite needs no change to speak Styx over a radio-sized
+message, because
+.B exportfs
+adopts the transport's
+.B iounit
+when negotiating \-
+.B os/inferno/port/exportfs.c:806
+turns an iounit above 64 and below the requested size into the size.
+.PP
+The ground half does not use
+.IR mount (2),
+on purpose.
+.B os/inferno/port/devmnt.c:195
+refuses a message size below 256 and a radio payload is 251, which is
+the argument's whole point: the floor is on the client, and the client
+is a workstation.
+.B appl/lib/styx.b
+has no floor, so this speaks Styx directly.
+.SH EXAMPLE
+On the satellite,
+.B "radiostyx serve" ;
+on the ground,
+.BR "radiostyx get dev/battery" .
+The ground asks for 8192 and prints what it got:
+.IP
+.EX
+RADIOSTYX-MSIZE 251 version 9P2000
+RADIOSTYX-READ '3960
+'
+.EE
+.PP
+251 is the radio's payload budget, arrived at by the server without
+being told.
+.SH BUGS
+The message size is not adopted through
+.IR ssl (3).
+.B exportfs
+reads the iounit of the file it was handed, and with
+.I ssl
+pushed on, that is the
+.I ssl
+device's and not the radio's, so the same exchange settles on 8192:
+.IP
+.EX
+RADIOSTYX-SSL #D/0
+RADIOSTYX-MSIZE 8192 version 9P2000
+.EE
+.PP
+The reads above still worked, because what came back was about 210
+bytes against a 251-byte budget \- it fitted by luck and not by
+arrangement.  A reply over the budget would be refused by the radio,
+with the error naming the budget.  Over
+.I ssl
+the ground has to ask for a size the link can carry, which it can,
+having no floor; it is the automatic part that is missing.
+.PP
+The client is one exchange deep: one walk, one open, one read, no
+clunk, and no second read for a file longer than one reply.  It is a
+demonstration of the transport, not a file system client.
+.SH SOURCE
+.B /appl/cmd/radiostyx.b
+.SH SEE ALSO
+.IR radio (3),
+.IR radiossl (1),
+.IR styx (2)
