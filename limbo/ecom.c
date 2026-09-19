@@ -53,19 +53,6 @@ optabinit(void)
 	isrelop[Ooror] = 1;
 	isrelop[Onot] = 1;
 
-	precasttab[Tstring][Tbyte] = tint;
-	precasttab[Tbyte][Tstring] = tint;
-	precasttab[Treal][Tbyte] = tint;
-	precasttab[Tbyte][Treal] = tint;
-	precasttab[Tbig][Tbyte] = tint;
-	precasttab[Tbyte][Tbig] = tint;
-	precasttab[Tfix][Tbyte] = tint;
-	precasttab[Tbyte][Tfix] = tint;
-	precasttab[Tbig][Tfix] = treal;
-	precasttab[Tfix][Tbig] = treal;
-	precasttab[Tstring][Tfix] = treal;
-	precasttab[Tfix][Tstring] = treal;
-
 	casttab[Tint][Tint] = IMOVW;
 	casttab[Tbig][Tbig] = IMOVL;
 	casttab[Treal][Treal] = IMOVF;
@@ -113,6 +100,47 @@ optabinit(void)
 	casttab[Tbig][Tfix] = 0xff;
 	casttab[Tfix][Tstring] = 0xff;
 	casttab[Tstring][Tfix] = 0xff;
+}
+
+/*
+ * The half of optabinit() that needs the built-in types to exist.
+ *
+ * These entries are Type* -- tint and treal -- and typeinit() is what
+ * creates those.  optabinit() runs from limbo.y before the argument
+ * loop, because it fills tables the flags do not affect; typeinit()
+ * runs after it, because -W says how wide a Dis word is and the type
+ * sizes depend on that.  So every one of these assignments used to
+ * read a nil tint and store nil.
+ *
+ * What that cost: precasttab is how a cast with no single Dis
+ * instruction gets split in two.  casttab holds an explicit 0xff
+ * placeholder for each such pair -- byte to big, byte to real, byte to
+ * string, fix to big, fix to string and their inverses -- and
+ * rewrite()'s Ocast case only splits the cast when
+ * precasttab[from][to] is not nil.  With the whole table nil, nothing
+ * split, and the 0xff went out as an opcode.  The compiler emitted an
+ * unexecutable Dis file, silently, with no diagnostic: the program
+ * died at run time with "illegal dis instruction" the first time it
+ * reached the cast.  disk/kfs64 and disdump were two of the casualties
+ * in this tree, which is how it was found.
+ *
+ * Called from limbo.y immediately after typeinit().
+ */
+void
+precastinit(void)
+{
+	precasttab[Tstring][Tbyte] = tint;
+	precasttab[Tbyte][Tstring] = tint;
+	precasttab[Treal][Tbyte] = tint;
+	precasttab[Tbyte][Treal] = tint;
+	precasttab[Tbig][Tbyte] = tint;
+	precasttab[Tbyte][Tbig] = tint;
+	precasttab[Tfix][Tbyte] = tint;
+	precasttab[Tbyte][Tfix] = tint;
+	precasttab[Tbig][Tfix] = treal;
+	precasttab[Tfix][Tbig] = treal;
+	precasttab[Tstring][Tfix] = treal;
+	precasttab[Tfix][Tstring] = treal;
 }
 
 /*
