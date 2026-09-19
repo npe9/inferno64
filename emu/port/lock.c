@@ -37,7 +37,24 @@ void
 unlock(Lock *l)
 {
 	coherencefn();
-	l->val = 0;
+	/*
+	 * A release store, not a plain one.
+	 *
+	 * coherencefn is nil until main() sets it, and main() sets it to
+	 * nofence - an empty function - on every platform in this tree;
+	 * nothing anywhere assigns it anything else. So this was a plain
+	 * store with no barrier in front of it.
+	 *
+	 * On x86 that is nearly harmless, because its store order is already
+	 * what the code assumes. On arm64 it is not: the stores a critical
+	 * section made can become visible after the store that releases the
+	 * lock, so the next thread to take the lock - whose _tas does have
+	 * acquire semantics - can read state the previous holder has already
+	 * finished writing but not yet published. That is how a proc pushed
+	 * onto isched.vmq could vanish from it with nobody popping it, which
+	 * is the scheduler hang.
+	 */
+	__atomic_store_n(&l->val, 0, __ATOMIC_RELEASE);
 }
 
 void

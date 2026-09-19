@@ -132,6 +132,21 @@ checkmarkptr(WORD **q, Type *t, void *vw)
 	int wordidx, i, n;
 
 	/*
+	 * Board bring-up instrumentation, so it answers to the same
+	 * switch heap.c's tracker does.  This probe and checklistcell()
+	 * below both end in abort(), and both fire on a hosted emu
+	 * within a second of starting a shell -- checklistcell() on a
+	 * list cell whose type is right and whose ref is 0, which is a
+	 * state the host reaches and pc64 apparently does not.  Left
+	 * ungated they make emu unusable, which matters because running
+	 * the same .dis under emu on the build host is how every dossrv
+	 * bug in this port was found.  distrack is 1 everywhere except
+	 * raspi3b and emu, so no board loses anything.
+	 */
+	if(!distrack)
+		return;
+
+	/*
 	 * Both earlier passes at this (one with a print() between each
 	 * reread, one calling itself "silent") still had two full
 	 * print() calls -- bad-word and object-type, each real kernel
@@ -361,6 +376,8 @@ checklistcell(List *l)
 	extern void dumpstack(void);
 	Heap *h;
 
+	if(!distrack)		/* see checkmarkptr() above */
+		return;
 	h = D2H(l);
 	if(h->t == &Tlist && h->ref > 0)
 		return;

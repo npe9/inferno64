@@ -1012,3 +1012,49 @@ poolaudit(char*(*audit)(int, Bhdr *))
 	}
 	return r;
 }
+
+/*
+ * libinterp's crash diagnostics call two functions that only a kernel
+ * has: dumpstack(), which every board's os/inferno trap.c defines, and
+ * printfreehist(), which is os/inferno/port/alloc.c's record of what
+ * freed a block last.  They used to be called under a flag; they are
+ * called unconditionally now (gc.c's checkmarkptr, heap.c's destroy and
+ * freemodlink, xec.c's movp), and since nothing hosted defines either,
+ * emu has not linked at all against a freshly built libinterp.a --
+ * "Undefined symbols: _dumpstack, _printfreehist".  The binary in
+ * MacOSX/arm64/bin predates the change, which is why this went unseen.
+ *
+ * So define them here, beside auditmemloc(), which is the third of the
+ * same set and the one that was already hosted.  They are not stubs:
+ * a hosted emu has a real C stack and the host can walk it, which is
+ * the thing dumpstack() is asked for.  What emu does not have is the
+ * kernel pool's free history, and printfreehist() says so rather than
+ * printing nothing, because a diagnostic that prints nothing reads
+ * exactly like a block with no history.
+ */
+#if defined(__APPLE__) || defined(__linux__)
+#include <execinfo.h>
+
+void
+dumpstack(void)
+{
+	void *pc[64];
+	int n;
+
+	n = backtrace(pc, nelem(pc));
+	print("dumpstack: %d host frames\n", n);
+	backtrace_symbols_fd(pc, n, 2);
+}
+#else
+void
+dumpstack(void)
+{
+	print("dumpstack: no host backtrace on this system\n");
+}
+#endif
+
+void
+printfreehist(void *v)
+{
+	print("printfreehist(%p): the hosted pool keeps no free history\n", v);
+}

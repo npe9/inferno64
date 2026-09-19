@@ -247,6 +247,18 @@ main(int argc, char *argv[])
 
 	if(coherencefn == nil)
 		coherencefn = nofence;
+	/*
+	 * The Dis heap watchdog is board bring-up instrumentation: it
+	 * reads all 1024 tracked slots on every instruction, and its two
+	 * GC probes (gc.c's checkmarkptr and checklistcell) end in
+	 * abort().  On this host the second of them fires within a
+	 * second of starting a shell, on a list cell whose type is right
+	 * and whose ref is 0.  raspi3b clears distrack in its own main()
+	 * and says why in doc/raspi3b-completion-plan.ms; emu clears it
+	 * for the same reason and one more, that emu is the machine the
+	 * other programs are debugged on and it has to run.
+	 */
+	distrack = 0;
 	quotefmtinstall();
 	savestartup(argc, argv);
 	/* set default root now, so either $EMU or -r can override it later */
