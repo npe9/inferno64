@@ -881,10 +881,20 @@ meminit(void)
 		cm++;
 	}
 	{
-		extern ulong npmaplarge, npmapsmall, npmapsplit;
+		extern ulong npmaplarge, npmapsmall, npmapsplit, npmapmixed;
+		u64 next;
+		char *attr;
 
-		print("meminit: pmap built %lud 2 MiB pages, %lud 4 KiB, %lud splits\n",
-			npmaplarge, npmapsmall, npmapsplit);
+		/*
+		 * Say whether the MTRRs were readable, because a mixed-type
+		 * count of zero means two different things and only one of
+		 * them is information.
+		 */
+		next = 0;
+		attr = mtrrattr(MemMin, &next);
+		print("meminit: pmap built %lud 2 MiB pages, %lud 4 KiB, %lud splits, %lud mixed-type (mtrr at 1M %s to %#llux)\n",
+			npmaplarge, npmapsmall, npmapsplit, npmapmixed,
+			attr == nil ? "unreadable" : attr, next);
 	}
 	print("meminit: conf.mem entries\n");
 	for(i = 0; i < nelem(conf.mem); i++)

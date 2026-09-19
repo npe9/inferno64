@@ -8336,49 +8336,84 @@ beginning is 4x on four processors for this workload, of which roughly
 and fourth processor doing work.  Both halves are real and neither was
 visible from a laptop.
 .NH 1
-Large pages, and why they stay off
+Large pages, and the number that was measuring the host
 .PP
-The pc64 kernel can map kernel memory with 2 MiB pages.  It is correct:
+The pc64 kernel maps kernel memory with 2 MiB pages, and it is on by
+default.  Getting there took four fixes:
 .CW mmuwalk
 splits a large entry when something asks for a 4 KiB mapping inside it,
+.CW pmap
+leaves an identical large mapping alone instead of splitting the page it
+is about to rebuild,
 .CW meminit
-stops at the first unmapped page rather than assuming a limit,
+stops at the first unmapped page rather than assuming a limit, and
 .CW mapkzero
-no longer refuses above 1 GiB, and a 16 GiB boot runs with the pool
-overlap checker silent.  The bug that made large pages look impossible
-\(em heap blocks with
+no longer refuses RAM above 1 GiB.  The bug that made large pages look
+impossible \(em heap blocks with
 .CW "magic 0x2103" ,
 which is a page table entry \(em was
 .CW mmuwalk
 walking into a 2 MiB entry as though it were a table.
 .PP
-.B "It is off by default anyway."
-Six Compute Engine instances, four real Xeons each, the soak workload
-cut at the same guest tick:
+.B "The measurement was wrong for a while, and that is the interesting part."
+Eight Compute Engine instances, four Cascade Lake Xeons each, the soak
+workload cut at the same guest tick:
 .IP
 .nf
-4 KiB pages   78 78 78 78 78
-2 MiB pages   57 60 63 78 78 81
+4 KiB   78 78 78 78
+2 MiB   78 81 63 57
 .fi
 .PP
-The small-page kernel returns the same number every time.  The
-large-page kernel does not: it averages about a tenth less work, and
-once beat every small-page run.  The spread is not in the mapping \(em
-two instances that both reported 7936 large pages, 231024 small pages
-and the same
-.CW conf.npage
-returned 78 and 60.  What large pages certainly buy is 38 times fewer
-entries and about 71 MiB of page tables handed back on a 16 GiB machine,
-which is 0.4 per cent of memory against a possible 10 per cent of
-throughput.  So the mapping ships, the flag ships,
-.CW *pmaplarge=1
-turns it on, and the default is 4 KiB.
+Read as it stands that says large pages cost about a tenth of the
+throughput, and that is what this document said for one commit.  It is
+not what happened.  The two low runs also did proportionally fewer
+quanta and proportionally fewer collections \(em 511,658 quanta against
+651,979, 18.0 million collections against 21.9 million, the same ratio
+in all three.  The whole kernel ran slower against the clock, uniformly.
+A TLB does not do that; a host handing the guest fewer cycles per tick
+does.  All eight instances reported the same processor, the same
+stepping and the same clock to within three per cent, so it was not the
+silicon either.
 .PP
-.B "The next question is memory typing."
-A 2 MiB page that straddles an MTRR boundary can be demoted to uncached
-for its whole extent.  This kernel calls
-.CW mtrrexclude(MemRAM, \(dqwb\(dq) ,
-so mixed types inside a mapped range are possible, and an uncached 2 MiB
-window would cost far more than the TLB saves while producing exactly
-the bimodal result above.  Reading the MTRRs and refusing a large page
-that spans a type change is the experiment that settles it.
+.B "Divide the work by the quanta it took and the host drops out."
+.IP
+.nf
+4 KiB   120.9  121.6  121.2  118.9   chantest per million quanta
+2 MiB   119.6  122.1  123.1  120.9
+.fi
+.PP
+Eight runs inside a 3.5 per cent band with the arms interleaved, and the
+three runs that looked worst per tick are among the best per quantum.
+The two arms cannot be told apart on throughput.  What large pages
+certainly buy is 38 times fewer entries and about 71 MiB of page tables
+handed back on a 16 GiB machine, so they ship on, with
+.CW *pmaplarge=0
+to turn them off.
+.PP
+.B "Memory typing was a false lead, and the kernel now says so."
+A 2 MiB page straddling an MTRR boundary can be demoted to uncached for
+its whole extent, which would have explained a bimodal result.  It does
+not arise:
+.CW e820scan
+calls
+.CW "mtrrexclude(MemRAM, \(dqwb\(dq)"
+before it maps anything, which moves every non-writeback piece of RAM
+out of
+.CW MemRAM ,
+so what
+.CW pmap
+is handed is uniform by construction.
+.CW pmap
+checks anyway and
+.CW meminit
+prints the count together with whether the MTRRs were readable, because
+a refusal count of zero from an unreadable register file is not
+evidence.  A 16 GiB boot says
+.CW "0 mixed-type (mtrr at 1M wb to 0xc0000000)" :
+readable, and nothing to refuse.
+.PP
+.B "The lesson is worth more than the default."
+A per-tick number taken on a machine you do not own measures the
+machine.  Normalise by something the guest counts for itself \(em
+quanta, instructions, collections \(em before believing any difference,
+and check that the normaliser and the result move together.

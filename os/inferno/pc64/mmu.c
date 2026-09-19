@@ -227,29 +227,77 @@ static uvlong vmaplimit;
  * The check that says it is right is a boot at -m 16384 with the
  * overlap checker silent, and 512 MiB and 4 GiB boots beside it.
  *
- * Off by default, and the reason is measurement rather than doubt about
- * correctness.  Six Compute Engine instances, four real Xeons each, the
- * soak workload cut at the same guest tick:
+ * On by default, and the reason is measurement.  Eight Compute Engine
+ * instances, four Cascade Lake Xeons each, the soak workload cut at the
+ * same guest tick.  Counted per tick the large-page arm looks worse:
  *
- *	4 KiB pages   78 78 78 78 78      (the same number every time)
- *	2 MiB pages   57 60 63 78 78 81
+ *	4 KiB   78 78 78 78
+ *	2 MiB   78 81 63 57
  *
- * The small-page kernel is deterministic; the large-page kernel is not,
- * and averages about a tenth less work while once beating everything.
- * Two instances that mapped identically -- 7936 large pages, 231024
- * small, same conf.npage -- returned 78 and 60, so the spread is not in
- * the mapping.  What it buys is certain: 38 times fewer entries and
- * about 71 MiB of page tables given back on a 16 GiB machine.
+ * It is not.  The two low runs did proportionally fewer quanta and
+ * proportionally fewer collections as well -- the whole kernel ran
+ * slower against the clock, uniformly, which is a host handing the
+ * guest fewer cycles per tick and not anything a TLB can do.  Dividing
+ * the work by the quanta it took removes the host:
  *
- * The next question is memory typing.  A 2 MiB page that spans an MTRR
- * boundary can be demoted to uncached for its whole extent, and this
- * kernel calls mtrrexclude(MemRAM, "wb"), so mixed types in a mapped
- * range are possible; that would cost far more than the TLB saves and
- * would explain a bimodal result.  Until that is answered a flag that
- * defaults off is the honest place for this.
+ *	4 KiB   120.9 121.6 121.2 118.9 chantest per million quanta
+ *	2 MiB   119.6 122.1 123.1 120.9
+ *
+ * Eight runs inside a 3.5 per cent band with the arms interleaved.  The
+ * two arms are indistinguishable on throughput, and 2 MiB pages are
+ * free: 38 times fewer entries and about 71 MiB of page tables given
+ * back on a 16 GiB machine.
+ *
+ * The lesson is worth as much as the default.  A per-tick number on a
+ * shared machine measures the machine; normalise by something the guest
+ * counts itself before believing a difference.
  */
-int pmaplarge = 0;	/* *pmaplarge=1 turns 2 MiB pages on; see above */
-ulong npmaplarge, npmapsmall, npmapsplit;	/* what pmap() built */
+int pmaplarge = 1;	/* *pmaplarge=0 turns 2 MiB pages off; see above */
+ulong npmaplarge, npmapsmall, npmapsplit, npmapmixed;	/* what pmap() built */
+
+/*
+ * Does one memory type cover the whole of [pa, pa+len)?
+ *
+ * A 2 MiB page carries a single cache attribute for its whole extent,
+ * so mapping one across an MTRR boundary makes the processor pick, and
+ * what it picks for a mixed range is the strongest type present -- an
+ * uncached window two megabytes wide where half of it was writeback.
+ * That would cost far more than the TLB saves.  The type is allowed to
+ * change so long as it changes to the same name, which is what two
+ * adjacent variable ranges that both say wb look like from here.
+ *
+ * No MTRRs at all means nothing to straddle.
+ *
+ * In practice this never fires for RAM and is not meant to: e820scan()
+ * calls mtrrexclude(MemRAM, "wb") before it maps anything, which moves
+ * every non-writeback piece of RAM out of MemRAM, so what pmap() is
+ * handed is uniform by construction.  meminit() reports the count and
+ * whether the MTRRs were readable at all, and a 16 GiB boot says "0
+ * mixed-type (mtrr at 1M wb to 0xc0000000)" -- readable, and nothing to
+ * refuse.  The guard is here for the next caller that maps something
+ * other than RAM this way.
+ */
+static int
+onetype(uintptr pa, uintptr len)
+{
+	u64 next, end;
+	char *first, *a;
+
+	next = 0;
+	first = mtrrattr(pa, &next);
+	if(first == nil)
+		return 1;
+	end = pa + len;
+	while(next < end){
+		if(next <= pa)		/* no progress: do not trust it */
+			return 0;
+		pa = next;
+		a = mtrrattr(pa, &next);
+		if(a == nil || strcmp(a, first) != 0)
+			return 0;
+	}
+	return 1;
+}
 
 static void
 vmaplimitinit(void)
@@ -465,7 +513,10 @@ pmap(uintptr pa, u64 flags, s64 size)
 		 */
 		l = 0;
 		z = PGLSZ(0);
-		if(pmaplarge && (pa & (PGLSZ(1)-1)) == 0 && size >= (s64)PGLSZ(1)){
+		if(pmaplarge && (pa & (PGLSZ(1)-1)) == 0 && size >= (s64)PGLSZ(1)
+		&& !onetype(pa, PGLSZ(1)))
+			npmapmixed++;
+		else if(pmaplarge && (pa & (PGLSZ(1)-1)) == 0 && size >= (s64)PGLSZ(1)){
 			pte = mmuwalk(m->pml4, pa, 1, 1);
 			if(pte != nil && (*pte & PTEVALID) == 0){
 				*pte = pa | flags | PTESIZE;
