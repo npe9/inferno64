@@ -669,6 +669,25 @@ and
 .CW lib/bitflags.py
 over the NVM device.
 .PP
+Two of those shrink once the link is the tree's rather than the
+example's, for the reasons under
+.I "What Inferno already answers"
+below.
+.CW cdh.py 's
+58 lines are a pass-code, a dispatch table and two ways to run Python
+sent from the ground; what replaces them is
+.CW keyring->auth (),
+.CW ssl->connect ()
+and
+.CW sys->export (),
+which is setup rather than logic and has no per-command part to grow.
+.CW lib/bitflags.py 's
+masks and shifts become a file per flag.  The port in the tree still has
+.CW cdh ()
+in it, written as the Python writes it and labelled as the
+demonstration it is, so that the two can be read against each other;
+it is not what the finished thing should be.
+.PP
 Each
 .CW Tasks/
 entry becomes a process with its own channel rather than a coroutine

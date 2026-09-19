@@ -160,6 +160,17 @@ beacontask()
 # two-byte command through a dict.  The pass-code is a demonstration in
 # the original and says so; it is not a security mechanism and is not
 # presented as one here either.
+#
+# It is also not what this should end up as, and the reason is written
+# down in doc/pycubed-plan.ms under "What Inferno already answers":
+# a pass-code that crosses the air in clear is a constant where Inferno
+# has a mechanism.  The link should carry Styx, authenticated with
+# keyring->auth() and encrypted with ssl(3) before any message crosses
+# it, and then there is no command table -- the ground reads and writes
+# files in a namespace this program exported, and "HR" is a write to
+# /dev/reboot done from the other end rather than a case in a switch.
+# What is here is the port of what the example does, kept so that the
+# two can be read against each other.
 supersecret := array[] of {byte 16r70, byte 16rba, byte 16rb8, byte 16r43};
 
 cdh(msg: array of byte)
