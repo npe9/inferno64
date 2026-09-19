@@ -8533,22 +8533,41 @@ the lock-on arms did not panic in seven.  The fault is in the
 interaction of the lock-free VM with channel traffic at width, and that
 is now a bug with three reproductions rather than a suspicion.
 .NH 2
-A boot path that hangs, written down and set aside
+Nested virtualisation hangs at schedinit, written down and set aside
 .PP
-Separately, and not on the path above: booting this kernel with QEMU's
-.CW -kernel
-under
+Separately, and not on the path above: this kernel booted inside a
+nested-virtualisation guest \(em a Compute Engine instance with
+.CW --enable-nested-virtualization ,
+running QEMU with
 .CW -enable-kvm
-on a nested-virtualisation host reaches
+\(em reaches
 .CW schedinit
-and stops, spinning at 100 per cent, with no Dis quantum ever run.  The
-clock is alive \(em with
+and stops, spinning at 100 per cent, with no Dis quantum ever run.
+.PP
+It is the nesting and not the boot path.  The first guess was
+.CW -kernel ,
+so the same UEFI disk image that twenty Compute Engine instances booted
+and ran for 48,000 ticks was copied onto the nested host and booted
+there under OVMF: it stopped at
+.CW schedinit
+in exactly the same way, 197 lines in.  Both boot paths hang nested;
+both work on Compute Engine's own hypervisor.
+.PP
+The clock is alive while it hangs.  With
 .CW *disdump=1
 the stall dump fires 24 times, which means
 .CW m->ticks
-passed 7000 \(em so this is the scheduler and not the timer.  It is not
-a function of processor count in any simple way (seen at 1, 2 and 4
-vCPUs, absent at 8) and the rate varies between batches.  The UEFI
-disk path, which is what every measurement above used and what a real
-machine uses, does not show it in twenty boots.  Recorded here rather
-than chased.
+passed 7000, so this is the scheduler and not the timer.  It is not a
+simple function of processor count \(em seen at 1, 2 and 4 vCPUs,
+absent at 8 \(em and it varies between batches.  Recorded rather than
+chased, because nested virtualisation is not a platform this kernel
+has to run on, and because the measurement harness it was meant to
+support can be built without it.
+.PP
+.B "It did cost one idea."
+The plan was to settle the large-page question by running both arms as
+two KVM guests side by side on one host, so that host speed would be
+common to both members of a pair.  That configuration does not boot, so
+the pairing has to be sequential boots on one instance instead \(em or,
+better, the host-speed control loop that Phase D has now shown works to
+0.06 per cent.
