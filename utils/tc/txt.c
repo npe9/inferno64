@@ -1007,6 +1007,37 @@ gopcode(int o, Node *f1, Node *f2, Node *t)
 	}
 	if(a == AGOK)
 		diag(Z, "bad in gopcode %O", o);
+	/*
+	 * The middle operand becomes p->reg, which is a register number
+	 * and nothing else, so a constant there has nowhere to go and was
+	 * silently dropped -- the three-operand instruction came out as a
+	 * two-operand one with the constant missing.  "8*a - 4*b" is the
+	 * shortest expression that reaches it: the compiler factors it to
+	 * -(4*(b - 2a)) and negates by subtracting from zero, and the
+	 * zero disappeared, so the negate became "SUB R0,R0", which is
+	 * R0 - R0, which is nought.  5c does not have the fault because
+	 * its OSUB swaps the operands and uses RSB, which thumb has no
+	 * general form of; putting the value in a register is the fix
+	 * that needs no such instruction.
+	 */
+	if(f2 != Z && f2->op == OCONST) {
+		Node nod;
+
+		nodreg(&nod, f2, REGTMPT);
+		gmove(f2, &nod);
+		f2 = &nod;
+		nextpc();
+		p->as = a;
+		if(f1 != Z)
+			naddr(f1, &p->from);
+		naddr(f2, &ta);
+		p->reg = ta.reg;
+		if(t != Z)
+			naddr(t, &p->to);
+		if(debug['g'])
+			print("%P\n", p);
+		return;
+	}
 	nextpc();
 	p->as = a;
 	if(f1 != Z)
