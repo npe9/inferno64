@@ -4471,6 +4471,202 @@ directory that is one cluster, a cluster that spans several tracks, and
 a track that spans several clusters are three different arithmetics and
 only one of them is exercised by the existing cases.
 .NH 2
+What the card's boot partition actually is, 19 September 2026
+.PP
+The section above rests on a premise, and the premise is wrong.  It says
+the card's filesystem has 64 sectors to a cluster, and the
+.CW card
+case in
+.CW tests/dossrv-stress.sh
+was built to match: 2400MB, FAT32, 64 sectors per cluster, at that size
+only because FAT32 needs 65525 clusters and 32KB ones do not reach that
+until 2.1GB.  So the case that was supposed to be the card's own shape
+is the only one in the file that is nothing like it.
+.PP
+The boot sector was read off the board today rather than assumed.  A
+2MB prefix of
+.CW /dev/sdM0/dos
+copied to the host through the styx mount, and parsed:
+.P1
+bytes/sector 512   sectors/cluster 1   reserved 32   nfats 2
+sectors/FAT32 8066   total sectors 1048572   sectors/track 63
+clusters 1032408
+oem "mkfs.fat"   label "bootfs"   hidden sectors 16384   sig 55 aa
+.P2
+.B "One sector to a cluster."
+512-byte clusters, a million of them, and the partition really is the
+one the firmware boots from \(em hidden sectors 16384 is its start, the
+label is the one the plan names, and the signature is there.  Whatever
+made a kernel come back with 448KB of the previous one, it was not a
+32KB cluster, because there are no 32KB clusters on this card.
+.PP
+The second half of that step is wrong too.
+.CW sect2trk
+does not come from the BPB.
+.CW dossrv 's
+.CW -S
+option sets it and nothing else does, the default is 9 \(em a 1980s
+floppy track \(em and
+.CW raspi3binit.b
+starts the server as
+.CW "dossrv -f /dev/sdM0/dos -m /n/dos"
+with no
+.CW -S .
+So the server reads and writes this card in 9-sector, 4608-byte units
+that correspond to nothing on the medium, and caches 20 of them: 92KB
+of write-back cache in front of a card whose own BPB says 63 sectors to
+a track.  That is the granularity the corruption should be measured
+against, and 448KB is 97 of those tracks.
+.PP
+What this leaves standing, and what it removes.  It removes the cluster
+size as an explanation and it removes the
+.CW card
+case as evidence of anything about this card.  It leaves the
+.CW busy
+case as the closest thing in the file to the real shape \(em 512-byte
+clusters, 512MB, a Pi boot partition's root \(em and that case passes.
+So the difference between the host and the board is not the filesystem's
+shape.  It is
+.CW devsd
+and
+.CW sdemmcbcm ,
+and the board is where to look, which is what the plan said for a worse
+reason than it now has.
+.PP
+.B "First measurements from the board."
+The installed
+.CW kernel8.img
+was compared byte for byte against the host's copy through the same
+mount
+.CW ( cmp
+over
+.CW "mount -A tcp!192.168.8.153!6666 /n/remote" )
+and is identical, so the card is clean as it stands and there is a
+baseline to go back to.
+.CW fatstress
+was then run against
+.CW /n/dos
+on the board itself, which is the first time that program has ever run
+on real silicon:
+.CW "-n 1 -f 1"
+passes.  A fuller run is what has to be pushed on, since 60 runs on the
+host at that size never reproduced the failure either.
+.PP
+Reading the card at all is slow enough to shape what is worth trying:
+10MB from
+.CW /dev/sdM0/dos
+to the host over styx took about 45 seconds, some 230KB/s, so copying
+the whole 512MB partition for a backup is a 40-minute operation and was
+not done.  Only the first 2MB was saved, which covers the reserved
+sectors and both FATs (they end at byte 8275968 \(em so in fact the
+saved prefix does not cover them, and a full metadata backup needs 8MB,
+which is worth doing before the next destructive run).
+.NH 2
+FAT32 in disk/format
+.PP
+.CW appl/cmd/disk/format.b
+cannot make a FAT32 filesystem.  It sizes the FAT by trying 12 bits and
+then 16, iterating the cluster count against the table size until the
+two agree, and then:
+.P1
+if(clusters >= 65527)
+	fatal("disk too big; implement fat32");
+.P2
+That line is twenty-odd years old and until this week nothing in this
+tree needed it to be otherwise.  It is needed now, and this is where it
+bit: the card's unallocated 29GB is the obvious place to put a scratch
+FAT32 with the card's own geometry, so that
+.I dossrv
+can be hammered on real silicon through the real driver without
+risking the partition the firmware boots from.  There is no way to
+create one.  Every FAT32 this port has ever touched was written by some
+other machine \(em
+.CW mkfs.fat
+wrote the board's, and
+.CW newfs_msdos
+writes the stress images \(em and a system that can only ever read a
+filesystem someone else made cannot test its own writer against a
+fresh one.
+.PP
+.B "What it takes."
+Not much, and the shape of the existing code is most of the way there.
+.IP \(bu
+The sizing loop gains a third pass.  It already iterates fatbits 12
+then 16; 32 is the same loop with a different width, and the boundary
+is 65525 clusters, the number that defines FAT32 \(em not 65527, which
+is what the
+.CW fatal
+above compares against and is itself off by two.
+.IP \(bu
+The BPB changes shape rather than gaining fields.  The 16-bit
+.CW DB_FATSIZE
+and
+.CW DB_ROOTSIZE
+must both be written as zero, the 32-bit sectors-per-FAT goes at offset
+36, the root directory becomes an ordinary cluster chain whose first
+cluster (normally 2) goes at offset 44, and the whole extended BPB \(em
+drive number, boot signature, volume id, label, the
+.CW "FAT32   "
+type string \(em moves from offset 36 to offset 64.  That last move is
+the one that silently produces a filesystem every other system refuses,
+because the fields are all still there, just four bytes at a time in
+the wrong place.
+.IP \(bu
+Two sectors that FAT12 and FAT16 do not have: an FSInfo sector, whose
+number goes at offset 48 and is normally 1, and a backup boot sector at
+offset 50, normally 6.  The free-cluster count in FSInfo may be written
+as the specification's "unknown" value, which is what
+.I dossrv
+already does and what
+.CW fsck_msdos
+already accepts from this tree.
+.IP \(bu
+FAT entries are 32-bit with the top four bits reserved, so a write is a
+read-modify-write of those four bits and end-of-chain is any of
+0x0FFFFFF8 through 0x0FFFFFFF.  The media-descriptor entry at index 0
+is 0x0FFFFFF8.  The one rule to write into the code rather than the
+comment is that no FAT32 cluster number is ever assembled from two
+halves; this tree has now fixed that truncation three times in
+.I dossrv
+alone.
+.PP
+.B "How it gets believed."
+Three checks, in order, and the third is the one that matters.
+.IP "1." 5
+.CW fsck_msdos
+on the host against an image
+.CW disk/format
+made.  An outside opinion that knows nothing about this tree, and the
+same one
+.CW tests/dossrv-stress.sh
+already uses.
+.IP "2." 5
+Mount it with
+.I dossrv
+and run
+.CW fatstress
+on it, then
+.CW fsck_msdos
+again.  A new case in
+.CW tests/dossrv-stress.sh
+whose image is made by
+.CW disk/format
+instead of
+.CW newfs_msdos ,
+so that the tree's writer and the tree's reader are checked against each
+other and against an outsider at once.
+.IP "3." 5
+Format a scratch partition on the board's own card, at the card's own
+geometry, and hammer it there.  That is the thing this is wanted for:
+it makes the SD write path testable on silicon without the boot
+partition on the table.
+.PP
+One further prize once it works, and it is worth saying out loud: a
+.CW disk/format
+that writes FAT32 can lay down the boot partition itself, so the card
+stops being something a Linux machine has to prepare before Inferno can
+use it.
+.NH 2
 Stage one: making the clock scheduling actually work
 .PP
 The tick is wired up and the interpreter yields on request, and that is
@@ -5053,10 +5249,22 @@ reproduces it in emu in seconds: write 1.5MB as
 rename it to
 .CW k.img ,
 open it, and find nothing there, with the rename having returned
-success.  Intermittent, so the first job is a rate and a smaller
-sequence that still shows it; the second is
-.CW iodebug
-on the failing round.  Nothing about it needs the Pi.
+success.
+.PP
+.B "Corrected 19 September 2026, and the correction matters."
+That paragraph describes a failure seen once.  Sixty runs at
+.CW ROUNDS=1
+.CW FILES=1
+never reproduced it, so the smaller sequence the step above asks for is
+answered: at that size it does not fail, and the shrink is not the way
+in.  What does reproduce in seconds, about one run in fifteen, is a
+.I hang
+with an empty log, and that hang is not
+.I dossrv
+at all \(em it is emu, and it is fixed; see the two sections below.  So
+"reproduces it in emu in seconds" was true of the hang and not of the
+rename.  And the card case it was reproduced in has the wrong geometry
+anyway: the card has 512-byte clusters, not 32KB ones.
 .PP
 .B "Second, what the board said about it."
 .CW "cat /dev/sdM0/ctl"
@@ -5117,6 +5325,21 @@ the project was worth doing; if it does not hold,
 is not better than
 .I kfs
 and should not replace it.
+.PP
+.B "Alongside it, FAT32 in disk/format."
+.CW appl/cmd/disk/format.b
+refuses any filesystem over 65527 clusters with
+.CW "fatal(\(dqdisk too big; implement fat32\(dq)" ,
+so this tree cannot make a FAT32 and has only ever read ones other
+systems wrote.  That is what stops the obvious safe experiment: a
+scratch FAT32 on the card's unallocated 29GB, at the card's own
+geometry, where
+.I dossrv
+can be hammered through the real driver with the boot partition off the
+table.  It is host work, it is checkable against
+.CW fsck_msdos ,
+and it ends with a board that can prepare its own card.  The section
+above says what the BPB needs.
 .PP
 Then the rest, in the order it was in.
 The transmit-queue fix is confirmed on the board and kernel updates
