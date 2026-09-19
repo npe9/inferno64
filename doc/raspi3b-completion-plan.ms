@@ -5489,12 +5489,33 @@ keyboard on the board; then the
 SD/Wi-Fi controller question; then DMA for SD; then the peripherals
 nothing is currently attached to.
 .PP
-Stage one of the scheduling work comes before all of it, because it is
-one boot: the counters, the
+Stage one of the scheduling work used to come before all of it, and it
+is done: the counters, the
 .CW SCHED-LAT
-check, and reading them off the board.  Until that is done every other
-number on this board is being taken on a scheduler nobody has watched
-work.  Stage two runs alongside the peripheral work rather than after
-it, because its terms are measurements the board takes while it is
-doing everything else.  Stage three is its own piece and waits for
-stage two's ceiling.
+check and both readings are on silicon, and the section above says what
+it found.  This paragraph asked for it as though it were still ahead,
+which is how it came to be recommended as the next thing to do on 19
+September, six weeks after it was finished.  A plan that keeps a
+completed item in the imperative will get it done twice.
+.PP
+.B "And it settles where I/O performance is not."
+The card is slow \(em 10MB off
+.CW /dev/sdM0/dos
+took about 45 seconds over the styx mount, and writing 1.5MB through
+.I dossrv
+took 212 seconds with everything else running \(em and none of that is
+the scheduler.
+.CW SCHED-LAT
+says a woken process gets the processor at once when what holds it is
+Limbo, and the counters say the interpreter yields on every tick it is
+asked to.  What holds the processor is a kproc in a C loop, which is
+the one thing stage one wrote down as not preempted on purpose, and on
+this board that kproc is the polled SD driver: it owns the processor
+for as long as a block takes.  So the throughput item is DMA for SD and
+the latency item is stage two bounding what a non-preemptible kproc may
+hold, and neither of them is more scheduler work.
+.PP
+Stage two runs alongside the peripheral work rather than after it,
+because its terms are measurements the board takes while it is doing
+everything else.  Stage three is its own piece and waits for stage
+two's ceiling.
