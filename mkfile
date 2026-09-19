@@ -6,6 +6,14 @@
 #	- commands
 #	- utilities
 
+# libprefab is deliberately not here.  Nothing links libprefab.a:
+# prefab.$O is commented out of libinterp's OFILES, no emu
+# configuration names it, and MacOSX/arm64/lib has never held it.  It
+# also cannot compile -- box.c includes ../libinterp/runt.h, which moved
+# to libinterp/w$DISWORD/runt.h when those tables went per word size,
+# and nothing generates the old path.  A fresh checkout's top-level
+# build died there, while every working tree in this repository builds
+# fine directory by directory, which is why it went unnoticed.
 EMUDIRS=\
 	lib9\
 	libbio\
@@ -17,7 +25,6 @@ EMUDIRS=\
 	libinterp\
 	libkeyring\
 	libdraw\
-	libprefab\
 	libtk\
 	libfreetype\
 	libmemdraw\
