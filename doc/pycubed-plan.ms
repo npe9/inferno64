@@ -774,7 +774,7 @@ The pieces are in this tree and in this kernel:
 .CW "  /dis/auth/factotum.dis            in the root"
 .DE
 The load-bearing detail is that none of it requires IP.
-.IR Ssl (3)
+.I Ssl (3)
 is attached with
 .CW "fd m" ,
 a file descriptor number, and
@@ -793,7 +793,7 @@ and
 are already built into the
 .CW mps2
 kernel and
-.IR modchk (1)
+.I modchk (1)
 says on a booted board that they answer, so the cost of this is a
 .CW /dev/radio
 and the mission code that opens it.
@@ -803,7 +803,7 @@ What that leaves not free
 One thing, and it is real.  Styx assumes an ordered, reliable transport
 and an RFM9x does not provide one: it is a framed packet radio with a
 payload of a couple of hundred bytes, no retransmission and no ordering.
-.IR Ssl (3)
+.I Ssl (3)
 delimits messages and digests them \- it will refuse a corrupted read \-
 but it does not resend one.  So something under Styx has to retry, and
 that is either a small reliable-datagram layer over the radio device or
