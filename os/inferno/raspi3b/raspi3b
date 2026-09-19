@@ -28,6 +28,11 @@ dev
 # "-machine raspi3b,radio=on", which fits an SX1276 to SPI0; on a real
 # Pi it is whatever is wired to the header.  See doc/radio-plan.ms.
 	radio
+# The link layer #W deliberately does not have: RadioHead addressing,
+# acknowledgement and retry, at #L served on /net/lora.  It attaches to
+# a packet device by file descriptor, so it is board-independent in a
+# way the chip driver is not.  See os/inferno/radio/devlora.c.
+	lora
 	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 
 
@@ -150,6 +155,8 @@ root
 	/dis/basename.dis
 	/dis/bind.dis
 	/dis/cat.dis
+	/dis/lorachk.dis
+	/dis/loraraw.dis
 	/dis/radiochk.dis
 	/dis/cd.dis
 	/dis/echo.dis
