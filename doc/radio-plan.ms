@@ -51,6 +51,36 @@ and
 So all three halves are missing: the emulated part, the driver, and the
 file interface.  Taking them in that order is what makes each step
 testable by the one before it.
+.NH 2
+A board that already exists, and why this does not use it
+.PP
+Worth saying before the rest, because it will be found: there is a
+QEMU checkout on this machine at
+.CW /Users/npe/src/qemu
+whose HEAD is
+.CW "upsat-comms devices updates" ,
+and UPSAT is a CubeSat.  It is not a radio.
+.CW hw/arm/upsat-comm.c
+is 65 lines that instantiate an
+.CW STM32F407VGTX
+SoC and nothing else \- its own commit message calls it "a placeholder
+for the upsat comms board" \- and there is no device model for a
+transceiver anywhere in it.
+.PP
+This plan does not build on it, for three reasons, none of them a
+judgement on the work.  It is based on
+.CW v6.2.0
+with 533 files of local change, while
+.CW tools/qemu-patches
+is pinned at
+.CW v10.1.3
+and the container that builds the patched QEMU builds that.  Its board
+is an STM32F407, which no Inferno kernel in this tree boots.  And
+.CW mps2-an500
+is the only ARMv7-M board here that runs at all, which is the whole
+reason phase 0 could be done without hardware.  If the UPSAT board grows
+a radio and a kernel, the SX127x model below is the part that moves
+across; the board wiring is not.
 .NH 1
 Phase R1: the emulated radio
 .PP
