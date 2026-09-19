@@ -39,6 +39,7 @@ long maxilockcycles;
  * way to find out.
  */
 int ilocktrace;
+int lockboost;		/* restore the bug below, to measure it */
 ulong nilocktraced;
 long cumlockcycles;
 long cumilockcycles;
@@ -214,6 +215,20 @@ canlock(Lock *l)
 
 	if(up)
 		up->lastlock = l;
+	/*
+	 * lockboost is the bug below, restored on purpose and off by
+	 * default, because it turns out to have been load-bearing: the
+	 * board's 1.5MB FAT write measured 17 seconds before it was
+	 * removed and 219 after, which is the difference between 88 KB/s
+	 * and 6.  Pinning whoever was running at priority 20 gave the
+	 * process doing the writing the processor and kept it there.
+	 * That is not a defensible way to get throughput, but it is the
+	 * only way to tell whether it is what was providing it.
+	 */
+	if(lockboost && up){
+		l->priority = up->priority;
+		up->priority = PriLock;
+	}
 	/*
 	 * This used to raise the caller to PriLock, the top of the
 	 * ordinary range, and save what it had in l->priority.  Nothing

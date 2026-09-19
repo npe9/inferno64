@@ -17,6 +17,7 @@ static Lock clock0lock;
 
 extern void	timercheck(Ureg*);
 extern ulong	ticknoup, ticknotrun, tickrun;
+extern int	schedclock;
 extern void	(*kproftick)(ulong);
 
 static uvlong
@@ -86,7 +87,8 @@ clockintr(Ureg *u)
 		kproftick((ulong)u->pc);
 
 	m->ticks++;
-	accounttime();
+	if(schedclock)
+		accounttime();
 	checkalarms();
 	timercheck(u);
 
@@ -111,7 +113,7 @@ clockintr(Ureg *u)
 		ticknotrun++;
 	else
 		tickrun++;
-	if(up != nil && up->state == Running)
+	if(schedclock && up != nil && up->state == Running)
 		hzsched();
 
 	n = now();

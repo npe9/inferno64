@@ -32,6 +32,7 @@ int	preempttrace = 0;
 int	ioboost = 0;		/* a boost everyone gets is not a boost; see hzsched() */
 int	coopsched = 1;		/* runproc runs m->readied without scanning */
 int	schedgate = 1;		/* 1: anyready() opens the gate; 0: anyhigher() */
+int	schedclock = 1;		/* clock.c calls hzsched() and accounttime() */
 /*
  * The four links of the preemption chain, each counted separately,
  * because three of them working looks exactly like none.  hzschedcalls

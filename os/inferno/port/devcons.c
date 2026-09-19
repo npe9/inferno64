@@ -67,7 +67,8 @@ extern ulong	ticknoup, ticknotrun, tickrun;
 extern ulong	tickhipri, tickuphi, tickanyhi;
 extern ulong	gcticks, gcpasses, gcmax, idlegcticks, idlegcmax;
 extern ulong	delayedscheds, skipscheds, preempts;
-extern int	ioboost, coopsched, schedgate;
+extern int	ioboost, coopsched, schedgate, schedclock;
+extern int	lockboost;
 
 extern int	ilocktrace;		/* taslock.c */
 extern ulong	nilocktraced;
@@ -1272,7 +1273,7 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 				"higher %lud quantum %lud uppri %lud runvec %#lux wokepri %lud; "
 				"ticks noup %lud notrun %lud run %lud hipri %lud uphi %lud anyhi %lud; "
 				"gc %lud/%lud max %lud, idlegc %lud max %lud ticks; "
-				"skipscheds %lud preempts %lud coop %d gate %d\n",
+				"skipscheds %lud preempts %lud coop %d gate %d clock %d boost %d\n",
 				m->ticks, hzschedcalls, reschedraised,
 				reschedtaken, delayedscheds, ioboost,
 				sleepacqticks, sleepacqn, sleepacqmax,
@@ -1282,13 +1283,18 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 				lastrunvec, wokepri, ticknoup, ticknotrun, tickrun,
 				tickhipri, tickuphi, tickanyhi,
 				gcticks, gcpasses, gcmax, idlegcticks, idlegcmax,
-				skipscheds, preempts, coopsched, schedgate);
+				skipscheds, preempts, coopsched, schedgate,
+				schedclock, lockboost);
 			if(cb->nf > 2 && strcmp(cb->f[1], "ioboost") == 0)
 				ioboost = atoi(cb->f[2]);
 			if(cb->nf > 2 && strcmp(cb->f[1], "coopsched") == 0)
 				coopsched = atoi(cb->f[2]);
 			if(cb->nf > 2 && strcmp(cb->f[1], "schedgate") == 0)
 				schedgate = atoi(cb->f[2]);
+			if(cb->nf > 2 && strcmp(cb->f[1], "schedclock") == 0)
+				schedclock = atoi(cb->f[2]);
+			if(cb->nf > 2 && strcmp(cb->f[1], "lockboost") == 0)
+				lockboost = atoi(cb->f[2]);
 			if(cb->nf > 1 && strcmp(cb->f[1], "reset") == 0){
 				hzschedcalls = reschedraised = reschedtaken = 0;
 				sleepacqticks = sleepacqn = sleepacqmax = 0;
