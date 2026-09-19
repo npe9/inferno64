@@ -268,6 +268,41 @@ int stwwaits;		/* MULTICORE INSTRUMENTATION - temporary: turns round
 
 /* how many contexts other than this one have a quantum open */
 static int
+/*
+ * How many other contexts are running Dis.
+ *
+ * inxec, and only inxec, and that is the right predicate rather than a
+ * shortcut -- which is worth writing down, because "stoptheworld()
+ * waits only for contexts with inxec set, so stopped does not mean
+ * quiescent" has been on the open list as a correctness worry since the
+ * parallel VM was built.  It is not one, for the collector.
+ *
+ * What the stopped world is for is rootset(), and what rootset() reads
+ * from another context is progreg(): the live register file of a
+ * program that is executing right now, because the copy saved in the
+ * Prog is a quantum out of date.  inxec is exactly the statement "this
+ * context's register file is live", so it is precisely the set that has
+ * to be parked.
+ *
+ * What a context outside xec can still do is two things, and neither
+ * costs the collector anything:
+ *
+ * It can mutate the Dis heap from a system call.  Marking tolerates
+ * that by design -- that is what the write barrier and nprop are for --
+ * and not by the world being stopped.
+ *
+ * It can call addrun(), which sets p->state = Pready before it links
+ * the Prog onto any queue.  A run-queue audit running in that window
+ * sees a program that is ready and in no queue.  That is the one-in-ten
+ * thousand disagreement the audit reports: over ten thousand stopped
+ * worlds the transient fires about once, and the persistence check that
+ * asks whether the SAME pid is still like that at the next audit has
+ * never fired at all.  It cannot cost a root either, because roots come
+ * from isched.head -- which newprog() and delprog() maintain under
+ * isched.l -- and never from the run queues.
+ *
+ * So the narrow answer is that the audit has a window, not the kernel.
+ */
 othersrunning(void)
 {
 	int i, n;

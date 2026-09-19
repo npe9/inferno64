@@ -184,17 +184,15 @@ Phase E \- the open correctness items
 .B "The parallelvm memory corruption," above.  This is now the first
 item, not a Phase D footnote.
 .IP \(bu
-.CW stoptheworld()
-waits only for contexts with
-.CW inxec
-set, so "stopped" does not mean quiescent.  Documented, not fixed.
-.IP \(bu
-One stopped-world audit disagreement in ten thousand, shape "ready and
-in no queue", consistent with
-.CW addrun()
-setting
-.CW Pready
-before it links.  The persistence check is in place and has not fired.
+The group-list walks in
+.CW killgrp() ,
+.CW printgrp()
+and
+.CW propex() .
+.B Closed:
+.CW propex()
+snapshots pids under the lock and acts outside it, the others take the
+lock for their reads.
 .IP \(bu
 Nested virtualisation hangs at
 .CW schedinit
@@ -209,9 +207,43 @@ returning two different values for the same block on a single-vCPU
 harness.  That is the allocator disagreeing with itself, and it is now
 a suspect in the corruption above rather than a curiosity.
 .PP
+.B "Two items are answered rather than open."
+.CW stoptheworld()
+waiting only on
+.CW inxec
+is correct, not a shortcut: what the stopped world exists for is
+.CW rootset()
+reading another context's live register file through
+.CW progreg() ,
+and
+.CW inxec
+is exactly "this context's register file is live".  A context outside
+.CW xec
+can mutate the heap, which the write barrier handles by design, and can
+call
+.CW addrun() ,
+which cannot cost a root because roots come from
+.CW isched.head
+and never from the run queues.
+.PP
+And the one-in-ten-thousand audit disagreement is that same
+.CW addrun()
+window \(em
+.CW "p->state = Pready"
+is set before the Prog is linked \(em seen by an audit while a context
+that is not
+.CW inxec
+is inside it.  The persistence check that asks whether the same pid is
+still like that at the next audit has never fired.  The window is in
+the audit, not in the kernel.
+.PP
 .B "Closed since this plan was written:"
 .CW nucleof303
-links and builds.
+links and builds; the process-group race is found and fixed; and
+.CW gcunlock()
+no longer gives
+.CW rungc() 's
+lost-increment check a false positive of its own.
 .NH 1
 How to run any of this
 .PP
