@@ -357,6 +357,45 @@ trap(Ureg *ur)
 			if((f = irqhandler[v]) != nil)
 				f(ur, irqarg[v]);
 		}
+		/*
+		 * And let a process a handler just readied have the
+		 * processor, which is what preempted() is for and what
+		 * nothing in this kernel called.
+		 *
+		 * Plan 9's trap() ends every non-clock interrupt with
+		 * exactly this, under the same two guards.  Without it a
+		 * process woken by a device waits for the clock path --
+		 * hzsched raising delaysched, then sched() at a quantum
+		 * boundary -- so at HZ=100 an I/O completion costs up to
+		 * a tick before its waiter runs, and longer behind
+		 * anything queued at the same priority.  Measured in
+		 * usbdwc: 3 or 4 microseconds from arming a channel to
+		 * the interrupt, then 2.7 to 142 milliseconds to be
+		 * scheduled.
+		 *
+		 * The guards matter, and nlocks is the one that is not
+		 * obvious.  sched() delays a reschedule while the process
+		 * holds locks -- but only twenty times, and then goes
+		 * anyway, "to avoid a missing unlock hanging the entire
+		 * kernel".  Called once a tick that escape hatch is never
+		 * reached; called on every device interrupt it is reached
+		 * in milliseconds, and switching away from a process that
+		 * holds a spin lock on a uniprocessor is every other
+		 * process spinning on it for ever.  The board wedged
+		 * exactly that way, and ^\ said so: every process in
+		 * acquire(), the Dis interpreter's lock, and nobody
+		 * running.
+		 */
+		/*
+		 * Not islo(): interrupts are masked inside the handler,
+		 * so a guard on them never lets this run -- which is what
+		 * happened, and the counters in preempted() stayed at
+		 * zero.  Plan 9's trap() guards on up and ilockdepth
+		 * alone, and sched() panics by itself if it is ever
+		 * entered holding an ilock.
+		 */
+		if(up != nil && m->ilockdepth == 0 && up->nlocks == 0)
+			preempted();
 		return;
 	default:
 		/*

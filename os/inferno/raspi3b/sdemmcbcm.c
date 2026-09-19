@@ -111,6 +111,7 @@ struct Ctlr {
 	u32	want;		/* the status bits a wait is for */
 	int	armed;		/* the handler is registered */
 	int	fired;		/* and it has actually run at least once */
+	vlong	isr;		/* when it last ran, for the timing below */
 	int	nointr;		/* or it has not: poll instead */
 };
 
@@ -144,7 +145,8 @@ static int emmctrace = 0;
  * this on is how that fix gets measured.
  */
 static int emmcsleep = 0;
-static ulong emmcnwait, emmcnslept;
+static ulong emmcnwait, emmcnslept, emmcwoke, emmctimeout;
+static uvlong emmcwakeus;
 static uvlong emmcus;
 
 /*
@@ -183,6 +185,7 @@ emmcintr(Ureg*, void *a)
 	Ctlr *c = a;
 
 	c->fired = 1;
+	c->isr = todget(nil);
 	c->r[Rirpten] = 0;	/* disarm; the waiter re-arms what it needs */
 	wakeup(&c->irq);
 }
@@ -223,7 +226,19 @@ awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 		for(ms = 0; ms < Waitms/Sleepms; ms++){
 			if((r[Rinterrupt] & (want|Ierr)) != 0)
 				break;
+			emmcctlr.fired = 0;	/* per wait, not for ever */
 			tsleep(&emmcctlr.irq, irqready, &emmcctlr, Sleepms);
+			emmcnwait++;
+			if(emmcctlr.fired){
+				emmcwoke++;
+				emmcwakeus += (todget(nil) - emmcctlr.isr)/1000;
+			}else
+				emmctimeout++;
+			if(emmcnwait % 500 == 0)
+				print("emmc: %lud sleeps, %lud woken by the interrupt, "
+					"%lud timed out, %llud us from interrupt to running\n",
+					emmcnwait, emmcwoke, emmctimeout,
+					emmcwoke? emmcwakeus/emmcwoke: 0);
 			/*
 			 * One sleep is enough to tell.  If the handler has
 			 * never run, the wait above ended on its timeout
@@ -235,14 +250,14 @@ awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 			 * whether the bit arrives, it is whether the
 			 * interrupt does.
 			 */
-			if(!emmcctlr.fired)
-				break;
+			if(emmctimeout > 8 && emmcwoke == 0)
+				break;	/* it never wakes us; stop trying */
 		}
 		r[Rirpten] = 0;
 		sts = r[Rinterrupt];
-		if(emmcctlr.fired && (sts & (want|Ierr)) != 0)
+		if((sts & (want|Ierr)) != 0)
 			goto done;
-		if(!emmcctlr.fired){
+		if(emmctimeout > 8 && emmcwoke == 0){
 			emmcctlr.nointr = 1;
 			print("EMMC-NOINTR the controller's interrupt never ran; polling\n");
 		}

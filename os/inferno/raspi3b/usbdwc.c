@@ -49,7 +49,6 @@ enum
 	Cachelinesz	= 64,			/* Cortex-A53 D-cache line */
 	PowerUsb	= 3,			/* mailbox power-domain id */
 
-	Compspins	= 200,		/* microseconds to spin for a completion */
 	Enabledelay	= 50,
 	Resetdelay	= 10,
 	ResetdelayHS	= 50,
@@ -322,26 +321,18 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 	if(chaniotrace > 0)
 		ctlr->armed_[chan] = todget(nil);
 	/*
-	 * Spin for the completion before sleeping for it.
+	 * No spin here, as the donor has none.
 	 *
-	 * Measured on the board, from arming the channel: 3 or 4
-	 * microseconds to the interrupt, and then 2.7 to 142
-	 * MILLISECONDS before the process waiting on it ran.  The
-	 * controller and the device are instant; what the transfer waits
-	 * for is a trip round this kernel's run queue, once per transfer,
-	 * and the LAN9514's set-up is 83 transfers -- which is the whole
-	 * of ETHERUSB-SETUP's 10 seconds.
-	 *
-	 * A sleep that is woken 4 microseconds later is a sleep that
-	 * should not have happened.  Spin first, briefly: a completion
-	 * that is coming will be here, and one that is not costs 200
-	 * microseconds before the wait it was always going to need.
+	 * There was one, 200us, and it took ETHERUSB-SETUP from 9620ms to
+	 * 2280ms -- because a completion arrives in 3 or 4 microseconds
+	 * and the process waiting for it then took 2.7 to 142
+	 * milliseconds to be scheduled.  That latency is fixed now, in
+	 * the scheduler where it belonged: trap() calls preempted() at
+	 * the end of an interrupt, and a process woken from a sleep gets
+	 * a priority level so that it outranks whatever was computing.
+	 * With that and no spin at all, the same set-up measures 2300ms
+	 * and the wake takes 203us.
 	 */
-	for(i = 0; i < Compspins; i++){
-		if(ctlr->hcintr[chan] & Chhltd)
-			break;
-		microdelay(1);
-	}
 	for(i = 0; (ctlr->hcintr[chan] & Chhltd) == 0; i++){
 		tsleep(&ctlr->chanintr[chan], chandone, &ctlr->hcintr[chan], 1000);
 		if(chaniotrace > 0)

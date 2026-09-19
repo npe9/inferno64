@@ -1024,8 +1024,20 @@ fatcheck()
 		(ok, d) := sys->stat("/n/dos/kernel8.img");
 		if(ok == 0){
 			sys->print("FAT-OK /n/dos/kernel8.img is %bd bytes\n", d.length);
+			#
+			# The update first, and in its own process.
+			#
+			# It used to run after the checks below, which is
+			# fine until one of them is what the new kernel
+			# fixes: a kernel that wedges during FAT-BIG never
+			# reaches kupdate, so the board cannot replace it
+			# and the card has to be carried to another machine.
+			# That happened three times today.  Spawned, so the
+			# checks and the fetch proceed together -- dossrv
+			# serialises what they both touch.
+			#
+			spawn kupdate();
 			fatwrite();
-			kupdate();
 			return;
 		}
 		sys->sleep(100);

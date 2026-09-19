@@ -21,6 +21,15 @@ int reprioritize(Proc*);
 ulong	delayedscheds;	/* statistics */
 ulong	skipscheds;
 ulong	preempts;
+/*
+ * Counting whether preemption can fire at all.  preempted() only acts
+ * when a strictly higher priority process is ready, and on this board
+ * adding the call that was missing changed nothing measurable -- so the
+ * question is whether anyhigher() is ever true, which means asking what
+ * priorities the processes actually have.
+ */
+int	preempttrace = 0;
+int	ioboost = 0;		/* wake from a sleep one priority level up */
 ulong	pload;
 s32	prevpid;
 
@@ -319,9 +328,21 @@ hzsched(void)
  *  here at the end of non-clock interrupts to see if we should preempt the
  *  current process.  Returns 1 if preempted, 0 otherwise.
  */
+ulong preemptcalls, preempthits;
+
 int
 preempted(void)
 {
+	if(preempttrace){
+		preemptcalls++;
+		if(up != nil && anyhigher())
+			preempthits++;
+		if(preemptcalls % 2000 == 0)
+			print("preempt: %lud calls, %lud with a higher process ready, "
+				"up pri %d runvec %#lux\n",
+				preemptcalls, preempthits,
+				up != nil? up->priority: -1, runvec);
+	}
 	if(up != nil && up->state == Running)
 	if(up->preempted == 0)
 	if(anyhigher())
@@ -579,6 +600,28 @@ ready(Proc *p)
 
 	updatecpu(p);
 	pri = reprioritize(p);
+	/*
+	 * A process woken from a sleep gets one level above what it
+	 * would otherwise have, so that it outranks whatever has been
+	 * computing and preempted() can hand it the processor.
+	 *
+	 * Without it nothing preempts on this board: every process here
+	 * is a kernel process at PriKproc, reprioritize only ever lowers
+	 * a priority, and anyhigher() wants one strictly above the
+	 * runner's -- measured, 10000 calls to preempted() and 33 of
+	 * them with anything higher ready, "up pri 13 runvec 0x2000".
+	 * So an I/O completion joined the back of the queue it was
+	 * already in and waited its turn: 2.7 to 142 milliseconds,
+	 * which is what usbdwc spins 200us to avoid and what makes the
+	 * SD driver twelve times slower asleep than spinning.
+	 *
+	 * It is a boost and not a base: the process keeps it only until
+	 * it next uses enough processor for reprioritize to take it
+	 * away, so a program that wakes constantly and then computes
+	 * does not stay above everything else.
+	 */
+	if(ioboost && p->state == Wakeme && pri < Npriq-1)
+		pri++;
 	p->priority = pri;
 	rq = &runq[pri];
 	p->readypc = getcallerpc(&p);
