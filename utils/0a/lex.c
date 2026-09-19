@@ -92,9 +92,21 @@ main(int argc, char *argv[])
 int
 assemble(char *file)
 {
-	char ofile[100], incfile[20], *p;
+	char ofile[1024], incfile[20], *p;
 	int i, of;
 
+	/*
+	 * A source path longer than this buffer used to reach the host's
+	 * fortified strcpy, which answers an overflow with a breakpoint:
+	 * the build died with "Trace/BPT trap: 5" and no other word about
+	 * it.  100 bytes was the old size, and a worktree in a scratch
+	 * directory passes it easily -- measured at 105 characters.
+	 */
+	if(strlen(file) + 4 > sizeof ofile) {
+		print("%ca: source path too long (%d bytes): %s\n",
+			thechar, (int)strlen(file), file);
+		errorexit();
+	}
 	strcpy(ofile, file);
 	p = utfrrune(ofile, '/');
 	if(p) {

@@ -36,7 +36,14 @@ set -e
 ROOT=`cd \`dirname "$0"\`/.. && pwd`
 PATH=$ROOT/MacOSX/arm64/bin:$PATH
 export PATH ROOT
-SECS=${SECS:-90}
+# Long enough for the guest to reach tick 70, not just tick 40.  The
+# dump this check was written for is at 40*HZ, but the branch this one
+# will adopt also prints at 60 and 70, and under OVMF and TCG a 90-second
+# wall-clock window does not always get there -- so a quiet arm could
+# have been quiet about a kernel that simply had not printed yet.  A
+# boot of that kernel with 120 seconds showed 43 stall: lines, so 150
+# leaves margin.
+SECS=${SECS:-150}
 
 KERN=$ROOT/os/inferno/pc64/ipc64
 [ -f "$KERN" ] || { echo "check-disdump: no $KERN; mk CONF=pc64 first" >&2; exit 1; }
@@ -57,8 +64,10 @@ for arm in off on; do
 		sh "$ROOT/scripts/mkinferno-efi-iso.sh" "$WORK/$arm.iso" >/dev/null 2>&1
 	cp "$ROOT/.qemu/edk2-vars.fd" "$WORK/vars-$arm.fd"
 	log=$WORK/$arm.log
-	# The dump is at 40*HZ, so the boot has to run past forty seconds
-	# of guest time for either arm to mean anything.
+	# The prints are at 40, 60 and 120 ticks-seconds, so the boot has
+	# to run well past forty seconds of GUEST time for either arm to
+	# mean anything; SECS is wall clock and the two are not the same
+	# under TCG.
 	timeout "$SECS" qemu-system-x86_64 \
 		-machine q35 -m 1024 \
 		-drive if=pflash,format=raw,unit=0,readonly=on,file="$ROOT/.qemu/edk2-code.fd" \
