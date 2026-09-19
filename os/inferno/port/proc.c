@@ -30,6 +30,8 @@ ulong	preempts;
  */
 int	preempttrace = 0;
 int	ioboost = 0;		/* a boost everyone gets is not a boost; see hzsched() */
+int	coopsched = 1;		/* runproc runs m->readied without scanning */
+int	schedgate = 1;		/* 1: anyready() opens the gate; 0: anyhigher() */
 /*
  * The four links of the preemption chain, each counted separately,
  * because three of them working looks exactly like none.  hzschedcalls
@@ -398,8 +400,8 @@ hzsched(void)
 	 * sleeper to the interpreter's own level as soon as it has run
 	 * for a while, so "strictly higher" stops seeing it.
 	 */
-	if(anyready()
-	|| (!up->fixedpri && (long)(m->ticks - m->schedticks) > 0)){
+	if((schedgate? anyready(): anyhigher())
+	|| (!up->fixedpri && (long)(m->ticks - m->schedticks) > 0 && anyready())){
 		m->readied = nil;	/* avoid cooperative scheduling */
 		reschedraised++;
 		/*
@@ -506,7 +508,7 @@ wantsched(void)
 	 * interrupt that readied its waiter -- and it is the one where
 	 * the latency was measured in milliseconds.
 	 */
-	if(anyready()){
+	if(schedgate? anyready(): anyhigher()){
 		/*
 		 * Clear the cooperative hint as hzsched() does.  runproc()
 		 * honours m->readied without scanning the priority queues
@@ -866,7 +868,20 @@ runproc(void)
 
 	start = perfticks();
 
-	/* cooperative scheduling until the clock ticks */
+	/*
+	 * Cooperative scheduling until the clock ticks: run whatever was
+	 * readied last, without looking at the priority queues at all.
+	 *
+	 * Counted on the board, over 67 seconds of ordinary running:
+	 * 51808 times here against 16141 times through the scan below.
+	 * Three quarters of every scheduling decision this kernel makes
+	 * never looks at what is queued -- and the worst run-queue wait
+	 * over the same interval was 1090 ticks, which is what starving
+	 * a third process looks like while two hand off to each other.
+	 * coopsched is here to measure that rather than argue about it:
+	 * "echo sched coopsched 0 >/dev/sysctl".
+	 */
+	if(coopsched)
 	if((p = m->readied) != nil && p->mach == nil && p->state == Ready
 	&& (p->wired == nil || p->wired == MACHP(m->machno))
 	&& runq[Nrq-1].head == nil && runq[Nrq-2].head == nil){
