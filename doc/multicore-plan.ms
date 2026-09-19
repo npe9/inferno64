@@ -8751,6 +8751,12 @@ lock on  (parallelvm=0)   0/3    42.6  43.0  43.3
 lock off (parallelvm=1)   0/6    86.3  110.1  110.2  111.5
 .fi
 .PP
+Nine instances gave nine panic counts and seven throughput figures: the
+soak line fires every 120 guest seconds and two of the six lock-off
+instances had not reached one when the window closed.  Four of six
+contributed a number, not six, and the table says so rather than
+letting the panic column carry the throughput column's sample size.
+.PP
 Six of six clean, where three of four had corrupted memory.  And at the
 median that is 2.5x at four processors on real hardware \(em against
 1.4x measured before, which was being dragged down by the runs that
@@ -8792,3 +8798,9 @@ That is four numbers on this branch now that measured something other
 than what they appeared to: the 7 per cent that was a shared laptop, the
 run-queue audit that was reporting its own placeholder, the 3.5 per cent
 band that was a constant of the program, and this.
+.PP
+.B "And one number that is carried forward rather than re-measured."
+The 3.3x on the module-loading workload was taken on the kernel before
+the process-group lock.  That arm never panicked, in six boots, so the
+figure is probably still good \(em but it is not a measurement of the
+kernel that would ship, and it should not be quoted as though it were.
