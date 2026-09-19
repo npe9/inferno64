@@ -372,6 +372,114 @@ processor outruns four.
 Do not adopt an unpinned tip, and do not adopt one whose own session
 has uncommitted changes in the files the gate exercises.
 .NH 1
+What the trial found
+.PP
+Step 1 was run against
+.CW 225c058c
+in a detached worktree with
+.CW mkconfig 's
+.CW ROOT
+pointed at it.  Six findings, in the order they appeared.
+.PP
+.B "1. A clean checkout could not build, for four separate reasons, none
+of them the merge's."
+The output directories
+.CW mk
+writes into are not in the repository \(em
+.CW MacOSX/*/lib ,
+.CW Inferno/*/lib ,
+.CW acme/dis
+and many more \(em so
+.CW ar
+and
+.CW cp
+failed until they were created.  The top level listed
+.CW libprefab ,
+which nothing links and which cannot compile since
+.CW runt.h
+moved under
+.CW w$DISWORD .
+Four directory mkfiles never set
+.CW SYSMODULES ,
+which
+.CW mk
+answers with "don't know how to make 'SYSMODULES'".  And
+.CW mkdis 's
+install rule assumed somebody had made
+.CW dis/danby/plugin
+by hand.  The last three are fixed here; the first is a documented step
+until somebody writes the host-side equivalent of
+.CW lib/emptydirs .
+.PP
+.B "2. The merged tree does not build virtarm64cloud, and neither branch
+could have seen it."
+.CW bootargs.c
+on their side reads the boot options out of fw_cfg, and the fw_cfg
+reader \(em
+.CW fwcfgdma() ,
+.CW fwcfgfile()
+\(em lives in
+.CW screenarm.c ,
+which
+.CW virtarm64cloud
+deliberately does not link: probing ramfb at a fixed address kills a
+.CW t2a .
+So the link fails with
+.CW "fwcfgbootargs: undefined: fwcfgfile" .
+They do not build that configuration; this branch did not have
+.CW fwcfgbootargs .
+.PP
+The fix is to put the reader where every configuration gets it.  Moving
+.CW fwcfgsel ,
+.CW fwcfgdma ,
+.CW fwcfgfile ,
+the
+.CW FwDmaDesc
+descriptor and the byte-swap helper out of
+.CW screenarm.c
+and into
+.CW bootargs.c ,
+which is in the board's
+.CW OBJ
+list, builds both configurations \(em verified in the trial tree, 1848059
+and 2205080 bytes.  It belongs on their line rather than this one,
+because their
+.CW screenarm.c
+is the version that survives: they made
+.CW fwcfgdma
+non-static and gave it a static descriptor, since the options are read
+before the allocator exists.
+.PP
+.B "3. Five boards failed, and it was the worktree rather than the
+merge."
+.CW virt32 ,
+.CW virt32s ,
+.CW armv7 ,
+.CW mps2
+and
+.CW teensy41
+stopped at
+.CW "don't know how to make dis32/basename.dis" .
+The 32-bit boards want a second Dis tree at a 32-bit word size, built
+with
+.CW "mk DISROOT=dis32 DISWORD=4 install"
+in
+.CW appl/lib
+and
+.CW appl/cmd
+as
+.CW AGENTS.md
+says, and a clean worktree has none.  The control that established this
+was building the same five boards in
+.I this
+tree, where they all succeed \(em which is the only reason it was not
+written up as a regression.  It is the same trap as the eight-day-old
+ISO: an input the check does not build.
+.PP
+.B "4. The rest built."
+The tree, the host compilers, pc64 and pc64dev, virtarm64, and nine of
+the fourteen boards, all from clean.
+.NH 1
 Order
 .PP
 Step 0 today.  Step 1 against
