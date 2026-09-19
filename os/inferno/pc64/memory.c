@@ -780,6 +780,43 @@ meminit(void)
 				(void *)base, size);
 			continue;
 		}
+		/*
+		 * Only memory this kernel has actually mapped.
+		 *
+		 * mapkzero() above declines RAM above 1 GiB and truncates a
+		 * run longer than that, with a comment calling the limit
+		 * arbitrary -- and until now meminit() recorded the whole
+		 * bank anyway.  On a 512 MiB QEMU guest the two agree by
+		 * accident.  On a 16 GiB Compute Engine instance they do
+		 * not: conf.npage counted 17 GiB, poolsizeinit() asked for
+		 * a 3.4 GiB contiguous chunk, xalloc() served it out of the
+		 * bank above 4 GiB, and the first write through it was a
+		 * page fault in poolalloc() -- on real hardware, in the
+		 * first boot on real hardware.
+		 *
+		 * So ask the page tables rather than assume: walk back from
+		 * the end of the bank to the last page that is mapped, and
+		 * take only that much.  A kernel that hands out memory it
+		 * cannot address is worse than one that leaves memory
+		 * unused, and this way the two numbers cannot disagree
+		 * again whatever mapkzero() decides to do.
+		 */
+		{
+			uintptr *pte, last;
+
+			while(size >= BY2PG){
+				last = pa + size - BY2PG;
+				pte = mmuwalk((uintptr*)PML4ADDR, last, 0, 0);
+				if(pte != nil && (*pte & PTEVALID) != 0)
+					break;
+				size -= BY2PG;
+			}
+			if(size == 0){
+				print("meminit: 0x%p is not mapped; skipped\n",
+					(void*)pa);
+				continue;
+			}
+		}
 		cm->base = pa;
 		cm->npage = size/BY2PG;
 		DP("	cm->base 0x%zx cm->npage 0x%zux %zud\n", cm->base, cm->npage, cm->npage);
