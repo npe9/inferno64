@@ -10,10 +10,16 @@ implement Radiostyx;
 # runs it and prints the number.
 #
 # The ground half deliberately does not use mount(2).  devmnt.c:195
-# refuses an msize below 256 and a radio payload is 251, which is the
-# whole point of the argument: the floor is on the client and the client
-# is a workstation.  appl/lib/styx.b has no floor, so this speaks Styx
-# directly.
+# refuses an msize below 256 and a radio payload is 255 raw and 251
+# through #L, which is the whole point of the argument: the floor is on
+# the client and the client is a workstation.  appl/lib/styx.b has no
+# floor, so this speaks Styx directly.
+#
+# With "lora" it goes through #L rather than straight at #W, which is
+# the same link with a RadioHead header, an address filter and
+# acknowledgement on it.  The four bytes that header costs come off the
+# iounit and out the far end as a smaller msize, without exportfs being
+# told there is a radio, let alone a header.
 #
 # Messages are read whole, with one read per packet, because the device
 # is message-delimited and refuses a short read.  That is what Styx's
@@ -36,9 +42,9 @@ Radiostyx: module
 };
 
 Data:	con "/dev/radio0/data";
-Payload:	con 251;
 
 fd: ref Sys->FD;
+payload: int;
 tag: int;
 
 rpc(t: ref Tmsg): ref Rmsg
@@ -48,7 +54,7 @@ rpc(t: ref Tmsg): ref Rmsg
 		sys->print("radiostyx: write: %r\n");
 		return nil;
 	}
-	b := array[Payload] of byte;
+	b := array[payload] of byte;
 	n := sys->read(fd, b, len b);
 	if(n <= 0){
 		sys->print("radiostyx: read: %r\n");
@@ -70,6 +76,69 @@ rpc(t: ref Tmsg): ref Rmsg
 	return r;
 }
 
+#
+# A conversation on #L over the packet device.  The server announces and
+# takes the address of whoever speaks to it; the client names the server.
+# Two addresses is what a link between two stations needs and inventing
+# more would be inventing a network.
+#
+loraconv(serving: int): ref Sys->FD
+{
+	rfd := sys->open(Data, Sys->ORDWR);
+	if(rfd == nil){
+		sys->print("radiostyx: %s: %r\n", Data);
+		return nil;
+	}
+	lfd := sys->open("#L/ctl", Sys->ORDWR);
+	if(lfd == nil){
+		sys->print("radiostyx: #L/ctl: %r\n");
+		return nil;
+	}
+	me := 1;
+	if(serving)
+		me = 2;
+	if(sys->fprint(lfd, "addr %d", me) < 0){
+		sys->print("radiostyx: addr: %r\n");
+		return nil;
+	}
+	if(sys->fprint(lfd, "fd %d", rfd.fd) < 0){
+		sys->print("radiostyx: attach: %r\n");
+		return nil;
+	}
+	cfd := sys->open("#L/clone", Sys->ORDWR);
+	if(cfd == nil){
+		sys->print("radiostyx: #L/clone: %r\n");
+		return nil;
+	}
+	b := array[32] of byte;
+	n := sys->read(cfd, b, len b);
+	if(n <= 0){
+		sys->print("radiostyx: read clone: %r\n");
+		return nil;
+	}
+	num := int string b[0:n];
+	if(serving)
+		n = sys->fprint(cfd, "announce");
+	else
+		n = sys->fprint(cfd, "connect 2");
+	if(n < 0){
+		sys->print("radiostyx: conversation ctl: %r\n");
+		return nil;
+	}
+	dfd := sys->open(sys->sprint("#L/%d/data", num), Sys->ORDWR);
+	if(dfd == nil){
+		sys->print("radiostyx: #L/%d/data: %r\n", num);
+		return nil;
+	}
+	sys->print("RADIOSTYX-LORA #L/%d addr %d\n", num, me);
+	# The conversation ctl must stay open: closing it closes the
+	# conversation.  Holding it in a global is the whole of that.
+	lorectl = cfd;
+	return dfd;
+}
+
+lorectl: ref Sys->FD;
+
 init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -84,14 +153,32 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(tl argv != nil)
 		mode = hd tl argv;
 	path := "dev/battery";
-	if(tl argv != nil && tl tl argv != nil && hd tl tl argv != "ssl")
-		path = hd tl tl argv;
-
-	fd = sys->open(Data, Sys->ORDWR);
-	if(fd == nil){
-		sys->print("radiostyx: %s: %r\n", Data);
-		return;
+	if(tl argv != nil && tl tl argv != nil){
+		p3 := hd tl tl argv;
+		if(p3 != "ssl" && p3 != "lora")
+			path = p3;
 	}
+
+	uselora := 0;
+	for(l0 := argv; l0 != nil; l0 = tl l0)
+		if(hd l0 == "lora")
+			uselora = 1;
+
+	if(uselora){
+		fd = loraconv(mode == "serve");
+		if(fd == nil)
+			return;
+	}else{
+		fd = sys->open(Data, Sys->ORDWR);
+		if(fd == nil){
+			sys->print("radiostyx: %s: %r\n", Data);
+			return;
+		}
+	}
+	payload = sys->iounit(fd);
+	if(payload <= 0)
+		payload = 255;
+	sys->print("RADIOSTYX-PAYLOAD %d\n", payload);
 
 	# With "ssl" as the last argument, put ssl(3) under the Styx.
 	# That is the whole claim in doc/pycubed-plan.ms: Styx over an

@@ -122,6 +122,7 @@ TARG=\
 	plumb.dis\
 	plumber.dis\
 	prof.dis\
+	lorachk.dis\
 	radiochk.dis\
 	radiossl.dis\
 	radiostyx.dis\

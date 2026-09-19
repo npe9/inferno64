@@ -25,6 +25,7 @@ intro 0intro
 ip ip
 kprof kprof
 logfs logfs
+lora lora
 lpt lpt
 mnt mnt
 mpeg mpeg
@@ -37,6 +38,7 @@ pnp pnp
 pointer pointer
 prof prof
 prog prog
+radio radio
 root root
 rtc rtc
 sd sd

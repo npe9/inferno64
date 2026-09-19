@@ -45,15 +45,12 @@ Two boards on one socket, as in
 On the receiver
 .IP
 .EX
-echo -n node 2 > /dev/radio0/ctl
 radiossl recv
 .EE
 .PP
 and on the sender
 .IP
 .EX
-echo -n node 1 > /dev/radio0/ctl
-echo -n dest 2 > /dev/radio0/ctl
 radiossl send
 .EE
 .PP
@@ -62,6 +59,16 @@ which reports
 and the text.  Run the receiver as
 .B "radiossl recv wrong-key"
 for the other result.
+There is no address to set, because
+.B /dev/radio0
+has none: it is a broadcast packet device and two stations on one
+channel hear each other.  Addressing is
+.IR lora (3)'s,
+and this runs under it as well \- over
+.BI #L/ n /data
+in place of
+.BR /dev/radio0/data ,
+with 251 bytes of payload in place of 255.
 .SH BUGS
 It does not authenticate.
 .IR keyring (2)'s

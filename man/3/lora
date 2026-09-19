@@ -1,0 +1,211 @@
+.TH LORA 3
+.SH NAME
+lora \- addressed, acknowledged packets over a packet device
+.SH SYNOPSIS
+.B bind '#L' /net/lora
+.PP
+.B /net/lora/ctl
+.br
+.B /net/lora/addr
+.br
+.B /net/lora/stats
+.br
+.B /net/lora/clone
+.br
+.BI /net/lora/ n /ctl
+.br
+.BI /net/lora/ n /data
+.br
+.BI /net/lora/ n /local
+.br
+.BI /net/lora/ n /remote
+.br
+.BI /net/lora/ n /status
+.SH DESCRIPTION
+The
+.I lora
+device is the link layer that
+.I radio (3)
+deliberately does not have.  A packet device carries packets and knows
+nothing about who they are for, the way
+.I ether (3)
+knows nothing about an IP address; everything that decides who a packet
+is for, and whether it arrived, is here.
+.PP
+What goes on the air is the RadioHead header, four bytes of
+.PP
+.EX
+	to from id flags
+.EE
+.PP
+because that is what the other end of a PyCubed link speaks \-
+.B lib/pycubed_rfm9x.py
+and RadioHead's
+.B RH_RF95
+driver both put exactly these four in front of the payload.  Address 255
+is broadcast, flag
+.B 0x80
+marks an acknowledgement and
+.B 0x40
+a retransmission.
+.PP
+The device is not welded to a radio.  It attaches to a file descriptor
+written to its
+.BR ctl ,
+the way
+.I ssl (3)
+does, so anything that delimits messages will drive it \- which is what
+makes it testable with no radio in the room.  It includes no header of
+the chip driver's: everything it knows about what is underneath it, it
+learns from the channel.
+.PP
+.B Ctl
+takes:
+.TP
+.BI fd " n"
+Attach the packet device open on file descriptor
+.IR n .
+The device keeps its own reference, so the process that wrote this may
+close the descriptor and exit.  Once only.
+.TP
+.BI addr " n"
+This station's address, 0 to 254.
+.PP
+.B Addr
+reads back that address and
+.B stats
+the interface's counters.
+.PP
+Opening
+.B clone
+makes a conversation and returns its
+.BR ctl ,
+whose first read is the conversation's number.  Holding that descriptor
+open is what holds the conversation open; closing it closes the
+conversation, as on
+.IR ip (3).
+A conversation's
+.B ctl
+takes:
+.TP
+.BI connect " n"
+Send to address
+.IR n ,
+and take packets from it.
+.TP
+.B announce
+Take packets from any address no other conversation has claimed, and
+remember the last one heard from so a reply has somewhere to go.
+.TP
+.B ack on
+.RB | off
+Send reliably, and acknowledge what arrives.  Off by default, because a
+link with one end acknowledging and the other not is worse than neither.
+.TP
+.BI retries " n"
+How many times a reliable send is attempted before it gives up.
+.TP
+.BI timeout " ms"
+How long to wait for each acknowledgement.
+.PP
+.B Data
+is one packet per read and one per write, inheriting both of
+.IR radio (3)'s
+refusals: a read whose buffer is smaller than the packet fails and the
+packet stays, and a write past the payload budget fails and names it.  A
+write with nothing to send to \- a conversation that has neither
+connected nor been spoken to \- fails rather than broadcasting, because
+a silent broadcast is not what anyone meant.
+.PP
+The
+.B iounit
+of
+.B data
+is the packet device's less the four header bytes.  It is republished
+rather than invented: a filter above lands on a number that accounts for
+a header it never sees, which is how a Styx server over a radio
+negotiates a radio-sized message without being told there is a radio.
+A packet device that publishes no usable iounit is refused at
+.BR "fd n" ,
+because guessing would put the error at the far end of a link.
+.PP
+With
+.B ack
+on, a write is a reliable datagram in the manner of
+.IR lib/pycubed_rfm9x.py 's
+.BR send_with_ack :
+the identifier carries a sequence number, the sender waits for a packet
+with the ACK flag and the same identifier, and a retransmission sets the
+RETRY flag.  A receiver replies to anything addressed to it that is not
+itself an acknowledgement, with the payload
+.BR ! ,
+and it does so from a separate process, because a reply is a transmit
+and a transmit blocks for the packet's whole time on the air \- over a
+second at SF12, during which nothing would be read.  A broadcast is
+neither acknowledged nor waited for.
+.PP
+A retransmission of something already delivered means the
+acknowledgement was lost rather than the packet, so it is acknowledged
+again and not delivered again.  The last identifier from each address is
+kept for that, flat, 512 bytes, as RadioHead keeps it.
+.PP
+A write returns the number of bytes sent, or fails, and with
+.B ack
+on it fails only after every retry has been tried.  That is the
+difference between this and an unacknowledged write, which cannot fail
+for any reason the other end would know about.
+.PP
+.B Stats
+reports whether a packet device is attached, this station's address, the
+iounit underneath and the payload above it, packets in and out,
+.RB ( notours )
+heard but addressed elsewhere,
+.RB ( runt )
+too short to carry a header,
+.RB ( noconv )
+for this station with no conversation to take them,
+.RB ( acksent )
+acknowledgements sent,
+.RB ( duplicate )
+retransmissions recognised and not delivered twice, and
+.RB ( ackdropped )
+acknowledgements owed and lost because too many were owed at once.
+.PP
+A conversation's
+.B status
+reports its state, whether it announced, the address at the other end,
+its acknowledgement settings, and its own counters.
+.B Local
+and
+.B remote
+are those two addresses on their own.
+.SH SOURCE
+.B /os/inferno/radio/devlora.c
+.SH BUGS
+There is no
+.B listen
+and no
+.BR accept ,
+so an announced conversation serves one peer at a time: a second station
+talking to it interleaves, and a reply goes to whichever spoke last.
+Two stations that must both be served want two conversations and a
+.B connect
+each.
+.PP
+Four conversations, which is a constant.
+.PP
+Nothing here arbitrates the air, because nothing below it does either;
+see the same entry in
+.IR radio (3).
+Acknowledgement and retry make that worse rather than better, since a
+lost acknowledgement puts a second copy of a packet on a band that was
+already busy.
+.PP
+The address is a byte, which is RadioHead's and therefore a PyCubed's.
+It is not a name, there is no way to learn one, and two stations
+configured with the same address will both answer.
+.SH SEE ALSO
+.I lorachk (1),
+.I radio (3),
+.I ssl (3),
+.I ether (3)

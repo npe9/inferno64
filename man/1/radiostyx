@@ -4,25 +4,31 @@ radiostyx \- Styx over the radio, and the message size it settles on
 .SH SYNOPSIS
 .B radiostyx
 .B serve
+.RB [ lora ]
 .RB [ ssl ]
 .br
 .B radiostyx
 .B get
 .RI [ path
+.RB [ lora ]
 .RB [ ssl ]]
 .SH DESCRIPTION
 .B Serve
-exports the namespace over
-.BR /dev/radio0/data .
+exports the namespace over the radio.
 .B Get
 walks to
 .I path
 on the other end, reads it and prints it, first printing the message
 size the two agreed on.  With
+.B lora
+both go through
+.IR lora (3)
+\- addressed, and able to acknowledge \- rather than straight at the
+packet device; with
 .B ssl
-as a last argument both push
+both push
 .IR ssl (3)
-onto the radio first.
+on top of whichever that was.
 .PP
 It exists to run the argument in
 .B doc/pycubed-plan.ms
@@ -39,9 +45,9 @@ The ground half does not use
 .IR mount (2),
 on purpose.
 .B os/inferno/port/devmnt.c:195
-refuses a message size below 256 and a radio payload is 251, which is
-the argument's whole point: the floor is on the client, and the client
-is a workstation.
+refuses a message size below 256 and a radio payload is 255 at most,
+which is the argument's whole point: the floor is on the client, and
+the client is a workstation.
 .B appl/lib/styx.b
 has no floor, so this speaks Styx directly.
 .SH EXAMPLE
@@ -52,42 +58,47 @@ on the ground,
 The ground asks for 8192 and prints what it got:
 .IP
 .EX
-RADIOSTYX-MSIZE 251 version 9P2000
+RADIOSTYX-PAYLOAD 255
+RADIOSTYX-MSIZE 255 version 9P2000
 RADIOSTYX-READ '3960
 '
 .EE
 .PP
-251 is the radio's payload budget, arrived at by the server without
-being told.
-.SH BUGS
-The message size is not adopted through
-.IR ssl (3).
-.B exportfs
-reads the iounit of the file it was handed, and with
-.I ssl
-pushed on, that is the
-.I ssl
-device's and not the radio's, so the same exchange settles on 8192:
+255 is the radio's payload budget, arrived at by the server without
+being told.  Four measurements, two stations, both
+.BR mps2-an386 :
 .IP
 .EX
-RADIOSTYX-SSL #D/0
-RADIOSTYX-MSIZE 8192 version 9P2000
+	plain              255
+	lora               251
+	ssl                225
+	lora ssl           221
 .EE
 .PP
-The reads above still worked, because what came back was about 210
-bytes against a 251-byte budget \- it fitted by luck and not by
-arrangement.  A reply over the budget would be refused by the radio,
-with the error naming the budget.  Over
-.I ssl
-the ground has to ask for a size the link can carry, which it can,
-having no floor; it is the automatic part that is missing.
-.PP
+Every step of that is a subtraction somebody has to do and publish.
+.IR Lora (3)
+spends four bytes on the RadioHead header and republishes the rest;
+.IR ssl (3)
+spends thirty on its record header, digest and padding and republishes
+the rest; and
+.B exportfs
+adopts whatever it is handed.  Nothing in the chain is told there is a
+radio at the bottom of it.
+.SH BUGS
 The client is one exchange deep: one walk, one open, one read, no
 clunk, and no second read for a file longer than one reply.  It is a
 demonstration of the transport, not a file system client.
+.PP
+With
+.B lora
+the addresses are 1 for the ground and 2 for the satellite, written
+into the program, and the satellite announces rather than connecting.
+Two stations is what the demonstration needs; three would need
+somewhere to say which.
 .SH SOURCE
 .B /appl/cmd/radiostyx.b
 .SH SEE ALSO
 .IR radio (3),
+.IR lora (3),
 .IR radiossl (1),
 .IR styx (2)

@@ -350,6 +350,7 @@ logon logon
 logwindow logwindow
 look look
 lookman man
+lorachk lorachk
 ls ls
 lstar gettar
 lszip getzip
@@ -378,6 +379,7 @@ mklist sh-sexprs
 mktext sh-sexprs
 mktextlist sh-sexprs
 mload sh-mload
+modchk modchk
 monitor grid-monitor
 mount bind
 mpexpr sh-expr
@@ -423,6 +425,9 @@ putzip getzip
 pwd pwd
 query grid-query
 quote sh
+radiochk radiochk
+radiossl radiossl
+radiostyx radiostyx
 raindrops raindrops
 raise sh-std
 raw2iaf auplay

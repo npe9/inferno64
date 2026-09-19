@@ -1,0 +1,100 @@
+.TH LORACHK 1
+.SH NAME
+lorachk \- check the lora link layer
+.SH SYNOPSIS
+.B lorachk setup
+.I addr
+.br
+.B lorachk send
+.I to text
+.RI [ count ]
+.br
+.B lorachk ack
+.I to text
+.RI [ count ]
+.br
+.B lorachk elsewhere
+.I to
+.br
+.B lorachk recv
+.RI [ count ]
+.br
+.B lorachk ackrecv
+.RI [ count ]
+.br
+.B lorachk stats
+.SH DESCRIPTION
+.I Lorachk
+exercises
+.IR lora (3)
+\- the addressing, acknowledgement and retry taken out of the packet
+device \- from outside the kernel, where a shell cannot reach.
+.PP
+.B Setup
+attaches
+.B /dev/radio0/data
+to
+.B #L
+and sets this station's address, then checks four things that need no
+second station: that a conversation's
+.B iounit
+is the radio's less the four header bytes, that a write with nobody to
+send to is refused, that
+.B connect
+is accepted, and that a write past the payload is refused naming the
+budget.
+.PP
+.B Send
+and
+.B recv
+are one unacknowledged packet each way;
+.B ack
+and
+.B ackrecv
+the same with acknowledgement on.  With a
+.I count
+they repeat, which is what makes a lossy channel say anything: one
+packet either arrives or does not, and a run of them measures.
+.PP
+.B Elsewhere
+sends a packet addressed to somebody else.  The other station must
+count it under
+.B notours
+and deliver nothing, and without that counter a working address filter
+and a dead link look exactly the same from the ground.
+.PP
+.B Stats
+prints the interface's counters.
+.SH EXAMPLE
+Two stations under a QEMU patched to model an SX1276, one listening and
+one connecting.  On the first:
+.PP
+.EX
+	lorachk setup 2
+	lorachk ackrecv 4
+.EE
+.PP
+and on the second:
+.PP
+.EX
+	lorachk setup 1
+	lorachk ack 2 loss 8
+.EE
+.SH SOURCE
+.B /appl/cmd/lorachk.b
+.SH SEE ALSO
+.I lora (3),
+.I radiochk (1),
+.I radio (3)
+.SH BUGS
+Each invocation opens its own conversation and closes it on exit, so
+counters in a conversation's
+.B status
+cover that invocation and the interface's
+.B stats
+cover the boot.
+.PP
+.B Setup
+must run before anything else, and only once: a second
+.B "fd n"
+is refused.

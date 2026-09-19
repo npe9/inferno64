@@ -47,6 +47,11 @@ dev
 # without it sx127xinit() finds no part and the device serves an empty
 # directory.  See doc/radio-plan.ms.
 	radio
+# The link layer #W deliberately does not have: RadioHead addressing,
+# acknowledgement and retry, at #L served on /net/lora.  It attaches to
+# a packet device by file descriptor, the way #D ssl does, so it is not
+# welded to the radio.  See os/inferno/radio/devlora.c.
+	lora
 
 # the order matters: a library with an undefined symbol at the end
 # makes the loader complain
@@ -170,6 +175,7 @@ root
 	/dis/fptest.dis	/dis32/fptest.dis
 	/dis/cvtchk.dis	/dis32/cvtchk.dis
 	/dis/modchk.dis	/dis32/modchk.dis
+	/dis/lorachk.dis	/dis32/lorachk.dis
 	/dis/radiochk.dis	/dis32/radiochk.dis
 	/dis/radiossl.dis	/dis32/radiossl.dis
 	/dis/radiostyx.dis	/dis32/radiostyx.dis

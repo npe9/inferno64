@@ -195,24 +195,33 @@ overhead and republish or the number stops.
 .DS
 .CW "  SX1276 FIFO, LoRa explicit header   255"
 .CW "  /dev/radio0/data                    255"
+.CW "  less the RadioHead header             4"
+.CW "  /net/lora/n/data                    251"
 .CW "  less ssl(3) header, digest, padding  30"
-.CW "  #D/n/data                           225"
-.CW "  Styx msize, adopted from it         225"
+.CW "  #D/n/data                           221"
+.CW "  Styx msize, adopted from it         221"
 .CW "  less IOHDRSZ                         24"
-.CW "  one Tread                           201"
+.CW "  one Tread                           197"
 .DE
 .PP
-The first subtraction in that table used to be four bytes for the
-RadioHead header, and it is gone because the header is: a packet
-device that adds nothing to what is written hands the whole FIFO to
-whatever is above it, and the four bytes are charged to
-.CW /net/lora
-instead, where they are spent.  Two stations measured
-.CW "RADIOSTYX-MSIZE 255"
-without
+All four of the message sizes in that chain were printed by
+.CW radiostyx
+on a second station: 255 straight at the packet device, 251 through
+.CW #L ,
+225 through
 .I ssl (3)
-and 225 with it, which is the same chain with one fewer link in it.
-Two of those subtractions were not being done until this week.
+alone and 221 through both.  Nothing in it is told there is a radio at
+the bottom.
+.PP
+The first subtraction used to happen inside
+.CW sx127x.c ,
+which is why
+.CW /dev/radio0/data
+used to be 251.  The four bytes are not saved by moving them, they are
+charged where they are spent; what changed is that a program that does
+not want addressing no longer pays for it.
+.PP
+Two of the subtractions were not being done at all until this week.
 .IP \(bu
 .CW os/inferno/port/exportfs.c:806
 adopts a transport's
@@ -262,6 +271,7 @@ come out of its
 .CW ctl .
 What is left is a packet radio.
 .IP 2. 4
+.B Done .
 Put them back above it, as a
 .CW /net/lora
 device with
@@ -276,15 +286,48 @@ cannot be that: what sits on top of this link is
 and
 .CW sys->export (),
 and both of those are filters over a file descriptor.  A library has
-no file descriptor to give them.  The device attaches to a packet
-device the way
+no file descriptor to give them.
+.CW os/inferno/radio/devlora.c
+is
+.CW #L ,
+served on
+.CW /net/lora ,
+and it attaches to a packet device the way
 .CW devssl
 attaches to anything \(em a file descriptor written to its
 .CW ctl
 \(em so it is not welded to
 .CW #W
-and can be driven over a pipe, which is the only honest negative
-control for it.
+and includes none of the chip driver's headers.
+.PP
+Measured, two
+.CW mps2-an386
+over a socket pair: a conversation's
+.CW iounit
+is 251, four less than the 255 underneath it; a packet addressed to 9
+arrives at station 2 and is counted under
+.CW notours
+rather than delivered; an acknowledged write reports one send, no
+retries and one acknowledgement received, and the other end reports one
+acknowledgement sent.
+.PP
+Under
+.CW "-global sx1276.drop-pct=50" ,
+eight acknowledged writes became 24 transmissions with 16 retries, two
+got through and six gave up \(em and the receiver delivered
+.CW loss-1
+and
+.CW loss-2
+twice each.  That is the duplicate the old
+.CW radio (3)
+listed as a bug and nobody had watched.  The fix is RadioHead's: the
+last identifier from each address, and a retransmission of something
+already delivered is acknowledged again rather than delivered again.
+On the same seeded channel the same six arrivals now deliver four
+payloads, once each, with
+.CW "duplicate 2"
+in
+.CW stats .
 .IP 3. 4
 .B Done .
 .CW pkt ,
