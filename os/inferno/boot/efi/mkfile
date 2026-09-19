@@ -1,34 +1,49 @@
 <../../../../mkconfig
-objtype=386
-SYSTARG=$OSTARG
-OBJTYPE=386
+SYSTARG=Inferno
+OBJTYPE=amd64
 BIN=$ROOT/Inferno/$OBJTYPE
 LIBDIR=$ROOT/Inferno/$OBJTYPE/lib
-LIBDIRS=$ROOT/libfis $ROOT/libflate $ROOT/libkern
-LIBS=\
-	libfis\
-	libflate\
-	libkern\
-
-LIBFILES=${LIBS:%=$LIBDIR/%.a}
 <$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
 
-BIN=$ROOT/Inferno/$OBJTYPE
-
-TARG=bootia32.efi bootx64.efi efiboot.fat
+# bootx64.efi alone.  bootia32.efi wants a whole Inferno/386 target
+# (headers and an 8l), which this tree does not build, and no UEFI
+# machine a cloud provider rents runs 32 bit firmware; efiboot.fat's
+# recipe below wants Plan 9's disk/format and dossrv, so the EFI system
+# partition is built on the host by scripts/mkinferno-efi-iso.sh with
+# mtools instead.
+TARG=bootx64.efi bootaa64.efi
 HFILES=fns.h mem.h
 IMAGEBASE=0x8000
-LINKBASE=0x8200
+LINKBASE=0x9000		# IMAGEBASE + 0x1000: see tools/aout2efi.c
+
+# The AArch64 image cannot share the amd64 base.  A PE with its
+# relocations stripped -- which is what tools/aout2efi emits, because
+# a Plan 9 a.out carries no relocation information to build a .reloc
+# section from -- must be loaded at its ImageBase or not at all, and
+# on an arm64 machine there is no RAM at 0x8000: QEMU's virt starts
+# its at 0x40000000, where os/inferno/virtarm64 itself links.  This
+# base is 128 MiB above that, which the firmware can allocate and the
+# kernel does not want.  A machine whose RAM starts elsewhere needs a
+# different number here, and that is the limitation to fix before this
+# loader is portable.
+IMAGEBASEARM=0x48000000	# where the arm64 loader runs, after it copies itself
+PEBASEARM=0x4C000000	# where the firmware is told to put it: see tools/aout2efi.c
+LINKBASEARM=0x48001000	# IMAGEBASEARM + 0x1000: see tools/aout2efi.c
 
 # The loader is freestanding: it uses only the kernel-side headers, so the
 # include path is set per object type rather than taken from the host mkfile.
-INC32=-I$ROOT/9front/386/include -I$ROOT/9front/include -I$ROOT/include
-INC64=-I$ROOT/9front/amd64/include -I$ROOT/9front/include -I$ROOT/include
+# Inferno's own headers: a file under os/inferno may not name another
+# flavour's target tree, and the loader needs only <u.h> and <a.out.h>.
+INC32=-I$ROOT/Inferno/386/include -I$ROOT/include
+INC64=-I$ROOT/Inferno/amd64/include -I$ROOT/include
+INCARM=-I$ROOT/Inferno/aarch64/include -I$ROOT/include
 CFLAGS=-FTVw
 CFLAGS32=$CFLAGS $INC32
 CFLAGS64=$CFLAGS $INC64
+CFLAGSARM=$CFLAGS $INCARM
 PEFLAGS32=$CFLAGS32 '-DIMAGEBASE='$IMAGEBASE
 PEFLAGS64=$CFLAGS64 '-DIMAGEBASE='$IMAGEBASE
+PEFLAGSARM=$CFLAGSARM '-DIMAGEBASE='$IMAGEBASEARM
 
 all:V: $TARG
 
@@ -60,7 +75,7 @@ sub.8:	sub.c
 
 
 bootx64.efi:	x64.6 efi.6 fs.6 pxe.6 iso.6 sub.6
-	6l -l -s -R1 -T$LINKBASE -o bootx64.out $prereq
+	6l -l -s -R4096 -T$LINKBASE -o bootx64.out $prereq
 	$ROOT/tools/aout2efi bootx64.out $target
 
 pe64.6:	pe64.s
@@ -85,6 +100,33 @@ x64.6:	x64.s
 	6a $PEFLAGS64 x64.s
 
 %.6:	$HFILES
+
+# bootaa64.efi, the same five C files through 7c.  A different object
+# type in the same directory is why this mkfile names the compilers
+# rather than $CC and $LD, the way it already does for 8 and 6.
+bootaa64.efi:	aa64.7 efi.7 fs.7 pxe.7 iso.7 sub.7
+	7l -l -s -R4096 -T$LINKBASEARM -o bootaa64.out $prereq
+	$ROOT/tools/aout2efi bootaa64.out $target $PEBASEARM
+
+efi.7:	efi.c efi.h
+	7c $CFLAGSARM efi.c
+
+fs.7:	fs.c efi.h
+	7c $CFLAGSARM fs.c
+
+pxe.7:	pxe.c efi.h
+	7c $CFLAGSARM pxe.c
+
+iso.7:	iso.c efi.h
+	7c $CFLAGSARM iso.c
+
+sub.7:	sub.c
+	7c $CFLAGSARM sub.c
+
+aa64.7:	aa64.s
+	7a $PEFLAGSARM aa64.s
+
+%.7:	$HFILES
 
 efiboot.fat:D:	bootia32.efi bootx64.efi
 	s = $target.$pid
@@ -131,4 +173,4 @@ test.fat:D:	bootia32.efi bootx64.efi
 
 
 clean:V:
-	rm -f *.[68] *.out $TARG test.* 
+	rm -f *.[678] *.out $TARG test.* 

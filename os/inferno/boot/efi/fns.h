@@ -39,3 +39,4 @@ char *decfmt(char *s, int i, ulong a);
 uintptr eficall(void *proc, ...);
 void eficonfig(char **cfg);
 void memconf(char **cfg);
+extern char *confmax;

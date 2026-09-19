@@ -207,3 +207,69 @@ the fallback if the UEFI path fights back, not the plan.
 An n2-standard-8 is about forty cents an hour and the batches are
 minutes.  Instances and custom images are deleted when the run ends;
 an idle instance left running is the only way this gets expensive.
+.NH 1
+First contact: steps 1 and 2, done
+.PP
+The graft landed and it builds.  Every file came across without a
+conflict, as predicted \(em
+.CW os/inferno/boot/efi/{efi.c,sub.c,fns.h,mkfile} ,
+.CW aa64.s ,
+.CW tools/aout2efi.c ,
+.CW scripts/mkinferno-efi-disk.sh ,
+.CW mkinferno-efi-iso.sh ,
+.CW qemu-inferno-efi.sh ,
+.CW mkgptdisk.py ,
+.CW gce-console.py
+and
+.CW gce-boot-stamp.py .
+.CW "mk bootx64.efi"
+builds the loader and the script writes a 128 MiB GPT disk with this
+branch's own
+.CW ipc64
+on its EFI system partition.
+.PP
+.B "A stale tool binary cost the first boot, and would have cost the cloud one."
+Under OVMF the loader faulted at its own entry point, IP 0x9004 against
+an image based at 0x8000.  Nothing to do with the kernel:
+.CW tools/aout2efi
+is a checked-in host binary two weeks older than the source the graft
+had just replaced, and
+.CW tools/mkfile
+rebuilds it only when the object is older than the source \(em which it
+was not, because the binary was newer than the file I overwrote.  Built
+by hand, the same disk boots.  This is the tree's recurring shape and
+the third instance of it in two days: an artifact standing in for a
+build that would not reproduce.
+.PP
+.B "The kernel boots through UEFI and stops where cloud-port said it would."
+.IP
+.nf
+Inferno release built at 1789761942
+	cpu0mach 0x102000 cpu0sp 0x112000 cpu0gdt 0x101000
+	...
+meminit: ignoring RAM below MemMin 0xa7b000 base 0x100000 size 0x9940992
+base == -1                                      (repeating)
+.fi
+.PP
+The loader hands over, the kernel runs, and
+.CW meminit()
+cannot make sense of the memory map, so it loops.  That is exactly the
+piece Route 1 step 1 said would have to be read across by hand, and
+cloud-port has already written down what it costs:
+.CW 73ac4db6 ,
+"what the three pieces would cost multicore to take, checked", says the
+UEFI map is read through
+.CW os/inferno/pc/bootargs.c ,
+.I "which that branch does not have at all" .
+.PP
+So the next piece of work is bounded and named:
+.CW os/inferno/pc/bootargs.c
+comes across, together with the
+.CW pc64/main.c
+and
+.CW os/inferno/pc
+changes that consume it \(em a real merge in
+.CW main.c ,
+where both branches have written, but a small one.  Step 2 is not
+finished until the same disk reaches a Dis quantum under OVMF; nothing
+should go near Compute Engine before it does.

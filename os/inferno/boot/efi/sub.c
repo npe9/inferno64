@@ -159,6 +159,7 @@ extern char *confaddr;
 extern void *jumpentry;
 void *jumpargs;
 static char *confend;
+char *confmax;		/* end of the boot-argument area, for memconf() */
 
 char*
 findconf(char *s)
@@ -220,6 +221,7 @@ Clear:
 		memset(BOOTLINE, 0, BOOTLINELEN);
 
 		confend = BOOTARGS;
+		confmax = BOOTARGS + BOOTARGSLEN;
 		memset(confend, 0, BOOTARGSLEN);
 		eficonfig(&confend);
 	}
@@ -340,24 +342,149 @@ beswall(uvlong l)
 	return ((uvlong)p[0]<<56) | ((uvlong)p[1]<<48) | ((uvlong)p[2]<<40) | ((uvlong)p[3]<<32) | ((uvlong)p[4]<<24) | ((uvlong)p[5]<<16) | ((uvlong)p[6]<<8) | (uvlong)p[7];
 }
 
+static ushort
+le2(uchar *p)
+{
+	return p[0] | p[1]<<8;
+}
+
+static ulong
+le4(uchar *p)
+{
+	return p[0] | p[1]<<8 | p[2]<<16 | (ulong)p[3]<<24;
+}
+
+static uvlong
+le8(uchar *p)
+{
+	return (uvlong)le4(p) | (uvlong)le4(p+4)<<32;
+}
+
+/*
+ * Read and discard.  The file interface is open/read/close with no
+ * seek, so a format whose parts are named by file offset can only be
+ * loaded by reading forward -- which is enough, because the loaders
+ * write their segments in ascending offset order.
+ */
+static int
+skip(void *f, uvlong n)
+{
+	uchar buf[512];
+	int m;
+
+	while(n > 0){
+		m = n > sizeof buf ? sizeof buf : (int)n;
+		if(readn(f, buf, m) != m)
+			return -1;
+		n -= m;
+	}
+	return 0;
+}
+
+/*
+ * Load an ELF64 kernel.  Every board in this tree but pc64 and armv7
+ * links its kernel as ELF -- 7l -H7, jl and the rest -- because that
+ * is what QEMU's -kernel takes, so a loader that reads only Plan 9
+ * a.out can boot none of them.  hdr holds the first sizeof(Exec) bytes,
+ * already read.
+ *
+ * Segments are loaded at their physical address, which is what the
+ * boards' own linkers set and what a loader running with the MMU as the
+ * firmware left it has to use.
+ */
+static char*
+loadelf(void *f, uchar *hdr, uchar **entry)
+{
+	uchar eh[64], phs[16*56];
+	uvlong off, fileoff, filesz, memsz, paddr;
+	int i, phnum, phentsize;
+
+	memmove(eh, hdr, sizeof(Exec));
+	if(readn(f, eh+sizeof(Exec), sizeof eh - sizeof(Exec)) != sizeof eh - sizeof(Exec))
+		return "bad ELF header";
+	if(eh[4] != 2)
+		return "not a 64-bit ELF";
+	if(eh[5] != 1)
+		return "not a little-endian ELF";
+	if(le2(eh+16) != 2)
+		return "not an ELF executable";
+	phentsize = le2(eh+54);
+	phnum = le2(eh+56);
+	if(phentsize != 56)
+		return "bad ELF program header size";
+	if(phnum <= 0 || phnum > 16)
+		return "bad ELF program header count";
+	off = le8(eh+32);
+	if(off < sizeof eh || skip(f, off - sizeof eh) < 0)
+		return "i/o error";
+	if(readn(f, phs, phnum*phentsize) != phnum*phentsize)
+		return "i/o error";
+	off += phnum*phentsize;
+
+	for(i = 0; i < phnum; i++){
+		uchar *p = phs + i*phentsize;
+
+		if(le4(p) != 1)			/* PT_LOAD */
+			continue;
+		fileoff = le8(p+8);
+		paddr = le8(p+24);		/* p_paddr */
+		if(paddr == 0)
+			paddr = le8(p+16);	/* p_vaddr, when there is no separate physical */
+		filesz = le8(p+32);
+		memsz = le8(p+40);
+		if(fileoff < off)
+			return "ELF segments out of order";
+		if(skip(f, fileoff - off) < 0)
+			return "i/o error";
+		off = fileoff;
+		if(filesz > 0){
+			if(readn(f, (uchar*)paddr, (int)filesz) != (int)filesz)
+				return "i/o error";
+			off += filesz;
+		}
+		if(memsz > filesz)
+			memset((uchar*)(paddr+filesz), 0, (int)(memsz - filesz));
+	}
+	*entry = (uchar*)le8(eh+24);
+	return nil;
+}
+
 char*
 bootkern(void *f)
 {
 	uchar *e, *d, *t;
 	ulong n;
 	Exec ex;
+	char *err;
 
 	if(readn(f, &ex, sizeof(ex)) != sizeof(ex))
 		return "bad header";
 
+	if(memcmp(&ex, "\177ELF", 4) == 0){
+		if((err = loadelf(f, (uchar*)&ex, &e)) != nil)
+			return err;
+		goto Loaded;
+	}
+
 	e = (uchar*)(beswal(ex.entry) & ~0xF0000000UL);
 	switch(beswal(ex.magic)){
 	case S_MAGIC:
-	case R_MAGIC:
 		if(readn(f, &e, 8) != 8)
 			goto Error;
 		/* load low address */
 		e = (uchar*)(beswall((uvlong)e) & 0x0FFFFFFFUL);
+		break;
+	case R_MAGIC:
+		if(readn(f, &e, 8) != 8)
+			goto Error;
+		/*
+		 * No masking.  An arm64 kernel here is linked at the
+		 * physical address it runs at -- 0x40000000 for
+		 * virtarm64 -- and the 28-bit mask that turns a
+		 * high-mapped amd64 entry into its low physical alias
+		 * gives 0 for it.
+		 */
+		e = (uchar*)beswall((uvlong)e);
 		break;
 	case I_MAGIC:
 		break;
@@ -380,6 +507,7 @@ bootkern(void *f)
 	t += PGROUND(beswal(ex.bss));
 	memset(d, 0, t - d);
 
+Loaded:
 	close(f);
 
 	/* stop device */
