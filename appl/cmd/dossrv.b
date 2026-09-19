@@ -161,6 +161,7 @@ init2(nil: ref Draw->Context, args: list of string, iscmd: int): string
 	Eauth,
 	Econtig,
 	Efull,
+	Ewbfail,
 	Eopen,
 	Ephase: con iota;
 
@@ -180,6 +181,7 @@ errmsg := array[] of {
 	Eauth		=> "authentication failed",
 	Econtig =>	"out of contiguous disk space",
 	Efull =>	"file system full",
+	Ewbfail =>	"write-back failed; the filesystem has lost data",
 	Eopen =>	"invalid open mode",
 	Ephase => "phase error -- directory entry not found",
 };
@@ -730,6 +732,16 @@ rwrite(t: ref Tmsg.Write): ref Rmsg
 			return e(Efull);
 		return e(Eio);
 	}
+	#
+	# After the write, not before: the bytes this call was given may
+	# be exactly the ones that could not be written back, and a
+	# filesystem that has already lost a track cannot honestly tell
+	# anyone that a later write landed.  Sticky, so the failure
+	# reaches the program whatever it does next rather than the one
+	# unlucky call.
+	#
+	if(wberr)
+		return e(Ewbfail);
 	return ref Rmsg.Write(t.tag, r);
 }
 
@@ -3250,6 +3262,24 @@ getiosect(xf: ref Xfs, addr , rflag: int): ref Iosect
 	return t.tp.p[toff];
 }
 
+#
+# A write-back that failed, and the flag that makes it impossible to
+# miss.  wberr is sticky: once a track has been lost, this filesystem
+# has a hole in it and no later write can be trusted to have landed
+# either, so every one of them fails until the server is restarted.
+# Losing the rest of a file is better than finishing it and being
+# believed.
+#
+wberr := 0;
+wberrn := 0;
+
+wbfailed(addr: int)
+{
+	wberr = 1;
+	if(wberrn++ < 8)
+		chat(sys->sprint("dossrv: write-back of track %d failed; the filesystem has lost data\n", addr));
+}
+
 putsect(p: ref Iosect)
 {
 	t: ref Iotrack;
@@ -3263,7 +3293,8 @@ putsect(p: ref Iosect)
 
 	if(t.flags & BIMM) {
 		if(t.flags & BMOD)
-			twrite(t);
+			if(twrite(t) < 0)
+				wbfailed(t.addr);
 		t.flags &= ~(BMOD|BIMM);
 	}
 }
@@ -3309,7 +3340,38 @@ getiotrack(xf: ref Xfs, addr: int): ref Iotrack
 			}
 
 			if((p.flags & BMOD)!= 0) {
-				twrite(p);
+				#
+				# A failed write-back used to be thrown
+				# away here: twrite()'s result was
+				# ignored and BMOD cleared regardless, so
+				# a track the device refused was marked
+				# clean and its contents ceased to exist.
+				# Nothing above ever heard: the client's
+				# sys->write had returned the full count
+				# long before, when the bytes reached
+				# this cache.
+				#
+				# That is not a hypothetical.  A 1.8MB
+				# kernel written to a Raspberry Pi's card
+				# came back with 12 of its 58 32KB chunks
+				# holding the previous kernel's bytes --
+				# the earliest ones, which are the first
+				# to be evicted -- and the board did not
+				# boot.  Every write had returned success
+				# and so had a read-back, because the
+				# read-back was served out of this same
+				# cache.
+				#
+				# So say so, and keep saying so.  The
+				# track is still dropped, because the
+				# alternative here is to pick the same
+				# victim for ever, but wberr makes every
+				# subsequent write to this filesystem
+				# fail, which is what carries the news to
+				# whoever is writing.
+				#
+				if(twrite(p) < 0)
+					wbfailed(p.addr);
 				p.flags &= ~(BMOD|BIMM);
 				continue loop;
 			}

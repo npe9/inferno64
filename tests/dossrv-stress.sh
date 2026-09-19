@@ -185,6 +185,29 @@ run fat32 "$ROOT/tmp/stress.img" 64 32 1 34
 # the 65525 clusters that make it FAT32, and newfs_msdos refuses it
 run fat32b "$ROOT/tmp/stress.img" 512 32 8 0
 run busy "$ROOT/tmp/stress.img" 512 32 1 0
+#
+# The card's own shape: 537MB, FAT32, 64 sectors to a cluster -- 32KB.
+#
+# None of the cases above uses a cluster anywhere near that size, and
+# that turned out to matter.  A kernel installed on the board by
+# kupdate had the right name and the right size to the byte and 13780
+# wrong bytes in it, and aligning the comparison to 32KB is what made
+# the shape legible: 14 of its 57 chunks held the previous kernel's
+# bytes, the first 448KB and one more.  The writes all returned the
+# length they were given.  If this case reproduces it, the fault is in
+# dossrv and this is where to fix it; if it does not, the difference is
+# devsd or sdemmcbcm and the board is the only place left to look.
+#
+# kupdaterehearsal() in fatstress is already the exact sequence --
+# 1.5MB written, the old one renamed aside, the new one renamed into
+# place, and then read back and compared byte for byte.
+#
+# 2400MB, not the card's 537: FAT32 wants at least 65525 clusters and
+# 32KB clusters do not reach that until 2.1GB, so newfs_msdos refuses
+# the real partition's size outright.  The Pi's own firmware wrote the
+# card, and it is not fussy.  The image is sparse, so the size costs a
+# directory entry.
+run card "$ROOT/tmp/stress.img" 2400 32 64 0
 
 rm -f "$ROOT/tmp/stress.img" "$ROOT/tmp/stress.sh"
 if [ $status = 0 ]; then
