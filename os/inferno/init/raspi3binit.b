@@ -1450,9 +1450,107 @@ csstart(): int
 	return 0;
 }
 
+#
+# Start the resolver and prove it resolved something.
+#
+# ndb/cs answers the translations in /lib/ndb -- that is what CS-OK
+# says, and it is why "udp!gw!ntp" works -- but a name it has never
+# heard of has to be asked of somebody, and cs asks by opening
+# /net/dns.  Nothing served that file, so every name on this board was
+# a number or an error.
+#
+# No configuration is needed and that is worth knowing: dns recurses
+# from the root servers itself (rootservers() in dns.b carries
+# a.root-servers.net at 198.41.0.4), so it needs no forwarder, no
+# writable /lib/ndb and nothing from DHCP.  It is slower than asking
+# the router would be, and it is the version that cannot be wrong about
+# a router that does not answer.
+#
+# The check is a name this board did not look up and cannot have
+# cached, resolved to an address, and it prints what it got: a resolver
+# that starts and answers nothing is the failure this is here to catch,
+# and "DNS-OK" on its own would not have caught it.
+#
+dnsstart()
+{
+	(have, nil) := sys->stat("/net/dns");
+	if(have == 0){
+		sys->print("DNS-OK /net/dns already served\n");
+		return;
+	}
+	dns := load Command "/dis/ndb/dns.dis";
+	if(dns == nil){
+		sys->print("DNS-NONE load dns: %r\n");
+		return;
+	}
+	spawn dns->init(nil, "dns" :: nil);
+	for(i := 0; i < 100; i++){
+		(ok, nil) := sys->stat("/net/dns");
+		if(ok == 0)
+			break;
+		sys->sleep(100);
+	}
+	(ok2, nil) := sys->stat("/net/dns");
+	if(ok2 < 0){
+		sys->print("DNS-NONE /net/dns never appeared\n");
+		return;
+	}
+	spawn dnscheck();
+}
+
+dnscheck()
+{
+	#
+	# Not a.root-servers.net, which was the first thing tried here and
+	# which cannot fail: dns.b's rootservers() carries that name and
+	# its address as the hint it starts every recursion from, so the
+	# check was reading the answer out of the program.  It printed
+	# DNS-OK 198.41.0.4 under QEMU and would have printed it with no
+	# network at all.
+	#
+	# example.com is reserved for exactly this, its address is not in
+	# this tree, and reaching it needs the whole path: a query to a
+	# root server, a referral to the .com servers, another query, and
+	# an answer -- four round trips over the board's own UDP stack.
+	#
+	name := "example.com";
+	fd := sys->open("/net/dns", Sys->ORDWR);
+	if(fd == nil){
+		sys->print("DNS-FAIL open /net/dns: %r\n");
+		return;
+	}
+	q := array of byte (name + " ip");
+	if(sys->write(fd, q, len q) != len q){
+		sys->print("DNS-FAIL ask for %s: %r\n", name);
+		return;
+	}
+	b := array[512] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0){
+		sys->print("DNS-FAIL %s has no answer: %r\n", name);
+		return;
+	}
+	ans := string b[0:n];
+	# "name ip 1.2.3.4"; the address is the last field
+	(nf, f) := sys->tokenize(ans, " \t\n");
+	if(nf < 3){
+		sys->print("DNS-FAIL %s answered %q\n", name, ans);
+		return;
+	}
+	addr := "";
+	for(l := f; l != nil; l = tl l)
+		addr = hd l;
+	if(addr == "198.41.0.4"){
+		sys->print("DNS-FAIL %s came back as the root hint; nothing was resolved\n", name);
+		return;
+	}
+	sys->print("DNS-OK %s is %s\n", name, addr);
+}
+
 timecheck(gw: string)
 {
 	csstart();
+	dnsstart();
 	sntp := load Command "/dis/ip/sntp.dis";
 	if(sntp == nil){
 		sys->print("TIME-NONE load sntp: %r\n");

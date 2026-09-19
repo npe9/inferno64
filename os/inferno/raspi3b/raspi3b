@@ -160,6 +160,9 @@ root
 	/dis/ip/ping.dis
 	/dis/ip/sntp.dis
 	/dis/ndb/cs.dis
+	/dis/ndb/dns.dis
+	/dis/ndb/dnsquery.dis
+	/lib/ndb/dns
 	/dis/lib/attrdb.dis
 	/dis/lib/ipattr.dis
 	/lib/ndb/local
