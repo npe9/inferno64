@@ -29,6 +29,7 @@ OBJ=\
 	acpi.$O\
 	auth.$O\
 	bootargs.$O\
+	fwcfg.$O\
 	startcpu.$O\
 	msivirtarm64.$O\
 	itsvirtarm64.$O\

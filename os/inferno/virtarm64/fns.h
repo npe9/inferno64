@@ -92,6 +92,8 @@ long	archkprofmicrosecondspertick(void);
 void	archkprofenable(int);
 int	isaconfig(char*, int, void*);
 void	blankscreen(int);
+int	fwcfgdma(u32int, void*, u32int);	/* fwcfg.c */
+int	fwcfgfile(char*, u32int*);	/* fwcfg.c */
 void	cycles(uvlong*);		/* also in io.h; proc.c includes fns.h, not io.h */
 
 /*
