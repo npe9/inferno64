@@ -8869,3 +8869,40 @@ living inside
 which broke the cloud board's link earlier the same day.  Two
 configurations for one board means every addition has to be made twice,
 and twice today it was made once.
+.NH 1
+Both amd64 workloads, on the kernel that would ship
+.PP
+The module-loading arm re-measured on the fixed kernel \(em six
+instances, four Xeons each, 108,000 guest ticks:
+.IP
+.nf
+                     panics   Dis quanta per tick
+lock on   (pvm=0)      0/3    3.2  3.2  3.2
+lock off  (pvm=1)      0/3    11.0  12.3  12.6
+.fi
+.PP
+3.7x, against the 3.3x measured before the process-group lock, and this
+time on the build that would go out.  With the channel workload's 2.5x
+over six clean instances, Phase D's "a consistent gain at four
+processors across two workloads" is satisfied on amd64:
+.IP
+.nf
+                  lock on        lock off      gain
+channel        42.6 43.0 43.3   86.3 110 110 112   2.5x
+module load     3.2  3.2  3.2   11.0 12.3 12.6     3.7x
+.fi
+.PP
+Twelve instances with
+.CW parallelvm=1 ,
+no panic on any of them, where the same channel workload on the same
+hardware panicked three times in four a few hours earlier.  The lock-on
+controls return the same numbers they always have, which is what says
+the workload and the machine did not move under the comparison.
+.PP
+.B "What remains before the default can be flipped"
+is the second architecture, and it is not the parallel VM's fault: arm64
+boots, brings up four processors and runs without panicking on a
+.CW t2a ,
+and then the console goes quiet on four instances in five \(em including
+one of the two lock-on controls.  That is a board-level fault to find
+before arm64 can produce a throughput number at all.
