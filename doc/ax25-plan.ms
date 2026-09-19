@@ -139,7 +139,9 @@ SABM, UA, DISC, DM: connection up and down.
 I frames with N(S), N(R) and the poll/final bit; RR, RNR and REJ.
 Modulo 8.
 .IP 5. 4
-T1, T3, N2, k and N1, with values that can be set.
+T1, T2, T3, N2, k and N1, with values that can be set.  T2 was left
+off this list when it was written, on the grounds that a response
+delay is a refinement.  It is not: see step four below.
 .PP
 What is deliberately left out, and why each is safe to leave out:
 .IP \(bu
@@ -202,7 +204,14 @@ publishes 251, and the chain
 .CW doc/radio-interface.ms
 measured runs 255, 251, 225, 221 through
 .I ssl (3)
-and Styx.  Under AX.25 that becomes 255, 239, 209, 205.
+and Styx.  Under AX.25 the same arithmetic gives 255, 239, 209 and
+205, and that is arithmetic and not a measurement: 239 has been read
+out of
+.CW sys->iounit
+on a booted board, and nothing has yet run
+.I ssl (3)
+or Styx over
+.CW #a .
 .NH 1
 What it is as files
 .PP
