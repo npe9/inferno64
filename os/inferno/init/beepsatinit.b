@@ -41,6 +41,7 @@ init()
 	# without the arch device fails this bind and the mission then
 	# says which file it could not open.
 	sys->bind("#P", "/dev", sys->MAFTER);
+	sys->bind("#W", "/dev", sys->MAFTER);
 
 	mission = load Mission "/dis/pycubed/beepsat.dis";
 	if(mission == nil){

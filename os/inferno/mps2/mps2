@@ -42,6 +42,11 @@ dev
 # addarchfile(); see os/inferno/armv7m/devarch.c and os/inferno/mps2/
 # archfiles.c.
 	arch
+# A packet radio at #W/radio0.  Real only when qemu is given
+# "-machine radio=on", which fits an SX1276 to the Shield0 SPI header;
+# without it sx127xinit() finds no part and the device serves an empty
+# directory.  See doc/radio-plan.ms.
+	radio
 
 # the order matters: a library with an undefined symbol at the end
 # makes the loader complain
@@ -90,11 +95,19 @@ port
 	archfiles
 	randomarmv7m
 	screenarmv7m
+	sx127x
 
 # uartcmsdk is this board's PhysUart -- mkdevc turns a misc name
 # beginning uart into <rest>physuart, so uartcmsdk gives cmsdkphysuart.
 misc
 	uartcmsdk
+
+# spipl022 brings up the Shield0 SPI and the GPIO pins the radio shield
+# uses, then asks sx127x.c whether a part is there.  It is in link
+# rather than port because links() runs after poolinit() and trapinit(),
+# which is what a driver that allocates and takes an interrupt needs.
+link
+	spipl022
 
 mod
 	sys
@@ -157,6 +170,7 @@ root
 	/dis/fptest.dis	/dis32/fptest.dis
 	/dis/cvtchk.dis	/dis32/cvtchk.dis
 	/dis/modchk.dis	/dis32/modchk.dis
+	/dis/radiochk.dis	/dis32/radiochk.dis
 	/dis/pycubed/beepsat.dis	/dis32/pycubed/beepsat.dis
 	/dis/pycubed/sat.dis	/dis32/pycubed/sat.dis
 	/dis/pycubed/hw.dis	/dis32/pycubed/hw.dis

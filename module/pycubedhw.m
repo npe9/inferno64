@@ -31,11 +31,17 @@
 #	                 "gyro <x> <y> <z>\n"
 #	                 "accel <x> <y> <z>\n"   milli-units
 
-# The radio is not here, and no driver for an SX127x exists anywhere in
-# this tree.  haveradio() answers 0 on every board so far.  When there
-# is one it should serve a file rather than a Medium at /net/ether0:
-# ssl(3) attaches to a file descriptor, so Styx over an authenticated,
-# encrypted link needs no IP stack under it.  See doc/pycubed-plan.ms.
+# The radio is a file, not a Medium at /net/ether0: ssl(3) attaches to a
+# file descriptor, so Styx over an authenticated, encrypted link needs
+# no IP stack under it.  See doc/pycubed-plan.ms and radio(3).
+#
+#	radio0    write  one write is one packet
+#	                 read  one read is one packet
+#
+# haveradio() answers whether #W/radio0/data opened.  On a board with no
+# radio fitted -- which is every board in this tree except mps2 under a
+# QEMU with "-machine radio=on" -- it answers 0 and beacon() says so
+# rather than pretending to transmit.
 #
 # Text, and integers rather than reals, because the parts this is for
 # have no double-precision floating point (doc/armv7m-ports.ms) and
@@ -57,6 +63,7 @@ Hw: module
 	battmv:		fn(): int;
 	rgb:		fn(r, g, b: int);
 	haveradio:	fn(): int;
+	radiosend:	fn(b: array of byte): int;
 	imumag:		fn(): array of int;
 	imugyro:	fn(): array of int;
 	imuaccel:	fn(): array of int;

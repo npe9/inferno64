@@ -122,6 +122,7 @@ TARG=\
 	plumb.dis\
 	plumber.dis\
 	prof.dis\
+	radiochk.dis\
 	ps.dis\
 	puttar.dis\
 	pwd.dis\

@@ -9,7 +9,7 @@
 
 #include "mps2.root.h"
 
-ulong ndevs = 22;
+ulong ndevs = 23;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -24,7 +24,8 @@ extern Dev capdevtab;
 extern Dev kprofdevtab;
 extern Dev flashfsdevtab;
 extern Dev archdevtab;
-Dev* devtab[22]={
+extern Dev radiodevtab;
+Dev* devtab[23]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -39,10 +40,13 @@ Dev* devtab[22]={
 	&kprofdevtab,
 	&flashfsdevtab,
 	&archdevtab,
+	&radiodevtab,
 	nil,
 };
 
+extern void spipl022link(void);
 void links(void){
+	spipl022link();
 }
 
 extern void sysmodinit(void);

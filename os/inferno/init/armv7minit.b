@@ -35,6 +35,8 @@ init()
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 	# Board-specific files, if this kernel has the arch device.
 	sys->bind("#P", "/dev", sys->MAFTER);
+	# A packet radio, if one is fitted: /dev/radio0/{data,ctl,stat}.
+	sys->bind("#W", "/dev", sys->MAFTER);
 
 	shell = load Shell "/dis/sh.dis";
 	if(shell == nil){

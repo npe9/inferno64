@@ -1,0 +1,44 @@
+.TH RADIOCHK 1
+.SH NAME
+radiochk \- check what the radio device refuses
+.SH SYNOPSIS
+.B radiochk
+.RI [ recv ]
+.SH DESCRIPTION
+.I Radiochk
+exercises the two things
+.IR radio (3)
+refuses, which are the part of its design a shell cannot reach: the
+console line discipline will not carry a command line long enough to
+make an oversize write, so there is no other way to test them.
+.PP
+With no argument it checks the write side, which needs no second
+station: a write one byte past the payload budget must fail and the
+error must name the budget, and a legal write must be accepted.
+.PP
+.B recv
+checks the read side and waits for a packet from somewhere.  It asks for
+one byte of it first, which must fail rather than hand back a byte and
+discard the rest, and then reads it whole and prints it \- the same
+packet, still queued after the read that was refused.
+.PP
+The last lines are a count and, only if every check ran and none failed,
+.BR RADIOCHK-OK .
+.SH SOURCE
+.B /appl/cmd/radiochk.b
+.SH EXAMPLE
+Two emulated boards on one socket, one listening and one sending:
+.IP
+.EX
+qemu-system-arm -M mps2-an500,radio=on -kernel imps2 \e
+	-nic socket,model=sx1276,listen=127.0.0.1:11211
+qemu-system-arm -M mps2-an500,radio=on -kernel imps2 \e
+	-nic socket,model=sx1276,connect=127.0.0.1:11211
+.EE
+.PP
+.B radiochk recv
+on the first,
+.B "echo -n hello > /dev/radio0/data"
+on the second.
+.SH SEE ALSO
+.IR radio (3)

@@ -92,3 +92,14 @@
 #define	UART0		0x40004000
 #define	UART1		0x40005000
 #define	UART0IRQ	0		/* receive; transmit is the next one */
+
+/*
+ * The Arduino-style expansion headers and the GPIO block beside them.
+ * Shield0's PL022 is where os/inferno/mps2/spipl022.c looks for a radio
+ * shield; GPIO0's combined interrupt is 6, which is the number the MPS2
+ * application notes give.
+ */
+#define	SPISHIELD0	0x40026000
+#define	SPISHIELD1	0x40027000
+#define	GPIO0		0x40010000
+#define	GPIO0IRQ	6

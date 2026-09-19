@@ -528,6 +528,110 @@ off the satellite.
 measurement, because the msize the two ends negotiate is a number that
 gets printed.
 .NH 1
+Where this got to
+.PP
+.B "Steps 1 to 4 are done and run."
+Two emulated MPS2 boards, one socket between them, an SX1276 on each
+Shield0 header:
+.DS
+.CW "; pycubed/beepsat"
+.CW "BEEPSAT-RUNNING 4 tasks"
+.CW "       vbatt | 3.96V > threshold 3.60V"
+.CW "      beacon | sent 12 bytes"
+.DE
+and on the other board
+.CW "cat /dev/radio0/data"
+printing
+.CW "Hello World!" ,
+which is what
+.CW Tasks/beacon_task.py
+beacons and what
+.CW appl/pycubed/beepsat.b
+now beacons through
+.CW #W/radio0/data .
+.CW haveradio ()
+answers 1 at last.
+.PP
+Steps 5 and 6 \-
+.I ssl (3)
+pushed onto
+.CW data ,
+then
+.CW sys->export ()
+over it \- are not done.
+.NH 2
+The channel is two nodes, not a broadcast medium
+.PP
+The model is a QEMU NIC so that
+.CW "-netdev socket,mcast="
+would give a broadcast group, which is the right shape for a radio
+channel.  On this host it does not deliver: two instances in a group,
+with and without
+.CW localaddr=127.0.0.1 ,
+each transmit and neither hears the other.
+.CW "socket,listen="
+and
+.CW "socket,connect="
+do deliver, so everything above was tested over a point-to-point link
+between exactly two stations.  The broadcast case is untried rather than
+broken \- it is the same
+.CW qemu_send_packet ()
+either way \- but it is untried, and a third station has never been in
+the room.
+.NH 2
+Three things the model caught
+.PP
+Which is what it is for.  All three are guest bugs, and none of them
+would have been visible without a part to talk to.
+.IP \(bu 4
+.B "The transmit path raced its own interrupt handler."
+The driver set
+.CW RegDioMapping1
+so DIO0 reports TxDone, then polled
+.CW RegIrqFlags
+for the same bit.  The interrupt arrives the moment the bit sets and the
+handler clears it, so the poll never saw it and every transmit reported
+"no TxDone after a second" while having transmitted perfectly.  The part
+says when it is done; there is no reason to ask.  It sleeps on the
+interrupt now.
+.IP \(bu 4
+.B "A struct grew a field and one of its users kept the old layout."
+.CW sx127x.h
+carries the
+.CW Radio
+struct, which three files share, and it was on no dependency line \-
+.CW portmkfile 's
+catch-all names the headers every object has, not the ones a particular
+driver includes.  Adding a
+.CW Rendez
+to the middle of
+.CW Radio
+rebuilt two of the three; the third went on reading
+.CW rq
+at the old offset, and the first packet to arrive took a lock at address
+0x50.  It does not fail to build.  This is the second time today \- the
+first was
+.CW include/pool.h ,
+in
+.CW doc/xip.ms
+\- and the board mkfile names the dependency now.
+.IP \(bu 4
+.B "The short-read refusal did not work."
+.CW qbread ()
+on a
+.CW Qmsg
+queue hands back the
+.I n
+bytes asked for and throws the rest of the message away, so the check
+for a too-small buffer could never fire: the truncation had already
+happened inside the queue.  The device reads a whole packet and
+.CW qputback () s
+it when it does not fit, so the packet is still there for a read that is
+big enough.  Found by
+.I radiochk (1),
+which exists because the console line discipline will not carry a
+command line long enough for a shell to make an oversize write.
+.NH 1
 What this will not tell anyone
 .PP
 Worth writing down now rather than discovering it at step 6.

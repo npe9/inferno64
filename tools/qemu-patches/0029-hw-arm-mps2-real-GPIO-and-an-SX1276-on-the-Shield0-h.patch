@@ -1,4 +1,4 @@
-From 4843d6033165df5a1d6340a0ceac5314d30fa8e6 Mon Sep 17 00:00:00 2001
+From 27b82e2abdbf60fed2a41e5e1b3ba96b3c0df416 Mon Sep 17 00:00:00 2001
 From: Noah Evans <noah.evans@gmail.com>
 Date: Fri, 18 Sep 2026 21:01:48 -0400
 Subject: [PATCH 29/29] hw/arm/mps2: real GPIO, and an SX1276 on the Shield0
@@ -24,8 +24,8 @@ a different machine again.
 Off by default, so no existing MPS2 configuration moves.
 ---
  hw/arm/Kconfig |  2 ++
- hw/arm/mps2.c  | 78 ++++++++++++++++++++++++++++++++++++++++++++++++--
- 2 files changed, 77 insertions(+), 3 deletions(-)
+ hw/arm/mps2.c  | 85 ++++++++++++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 84 insertions(+), 3 deletions(-)
 
 diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
 index 2aa4b5d..d2a1636 100644
@@ -41,20 +41,21 @@ index 2aa4b5d..d2a1636 100644
      select MPS2_FPGAIO
      select MPS2_SCC
 diff --git a/hw/arm/mps2.c b/hw/arm/mps2.c
-index bd378e3..21cdbd7 100644
+index bd378e3..e91ed1d 100644
 --- a/hw/arm/mps2.c
 +++ b/hw/arm/mps2.c
-@@ -48,6 +48,9 @@
+@@ -48,6 +48,10 @@
  #include "net/net.h"
  #include "hw/watchdog/cmsdk-apb-watchdog.h"
  #include "hw/qdev-clock.h"
 +#include "hw/gpio/cmsdk-ahb-gpio.h"
 +#include "hw/ssi/ssi.h"
 +#include "hw/ssi/sx1276.h"
++#include "net/net.h"
  #include "qobject/qlist.h"
  #include "qom/object.h"
  
-@@ -87,8 +90,11 @@ struct MPS2MachineState {
+@@ -87,8 +91,11 @@ struct MPS2MachineState {
      CMSDKAPBDualTimer dualtimer;
      CMSDKAPBWatchdog watchdog;
      CMSDKAPBTimer timer[2];
@@ -66,7 +67,7 @@ index bd378e3..21cdbd7 100644
  };
  
  #define TYPE_MPS2_MACHINE "mps2"
-@@ -358,10 +364,28 @@ static void mps2_common_init(MachineState *machine)
+@@ -358,10 +365,28 @@ static void mps2_common_init(MachineState *machine)
      default:
          g_assert_not_reached();
      }
@@ -96,7 +97,7 @@ index bd378e3..21cdbd7 100644
      }
  
      /* CMSDK APB subsystem */
-@@ -434,8 +458,37 @@ static void mps2_common_init(MachineState *machine)
+@@ -434,8 +459,43 @@ static void mps2_common_init(MachineState *machine)
          qdev_connect_gpio_out(orgate_dev, 0,
                                qdev_get_gpio_in(armv7m, spi_irqno[i]));
          for (j = 0; j < 2; j++) {
@@ -125,6 +126,12 @@ index bd378e3..21cdbd7 100644
 +                SSIBus *ssi = (SSIBus *)qdev_get_child_bus(spi, "ssi");
 +
 +                radio = qdev_new(TYPE_SX1276);
++                /*
++                 * match_default false: this is not the board's ethernet
++                 * and a bare "-net nic" should not land on it.  Ask for
++                 * it by name, as -nic socket,model=sx1276,mcast=...
++                 */
++                qemu_configure_nic_device(radio, false, "sx1276");
 +                qdev_realize_and_unref(radio, BUS(ssi), &error_fatal);
 +                qdev_connect_gpio_out(DEVICE(&mms->gpio[0]), 0,
 +                                      qdev_get_gpio_in_named(radio,
@@ -136,7 +143,7 @@ index bd378e3..21cdbd7 100644
          }
      }
      for (i = 0; i < 4; i++) {
-@@ -468,10 +521,29 @@ static void mps2_common_init(MachineState *machine)
+@@ -468,10 +528,29 @@ static void mps2_common_init(MachineState *machine)
                         0, 0x400000);
  }
  

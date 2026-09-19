@@ -175,6 +175,15 @@ fpimem.$O:	../port/fpimem.c $ARCHDIR/fpi.h
 
 fpiarmv7m.$O:	$ARCHDIR/fpiarmv7m.c $ARCHDIR/fpi.h
 
+# sx127x.h carries the Radio struct, which three files share, so a change
+# to it has to rebuild all three.  Said explicitly because the catch-all
+# %.$O rule in $PORTDIR/portmkfile lists the headers every object has and
+# not the ones a particular driver includes -- and a struct that grows a
+# field while one of its users keeps the old layout does not fail to
+# build, it reads a different member at run time.  That cost an afternoon
+# once already, in include/pool.h; see doc/xip.ms.
+devradio.$O sx127x.$O spipl022.$O:	$PORTDIR/sx127x.h
+
 devuart.$O:	../port/devuart.c
 	$CC $CFLAGS ../port/devuart.c
 

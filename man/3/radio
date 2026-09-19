@@ -1,0 +1,127 @@
+.TH RADIO 3
+.SH NAME
+radio \- packet radio
+.SH SYNOPSIS
+.B bind -a '#W' /dev
+.PP
+.B /dev/radio0/data
+.br
+.B /dev/radio0/ctl
+.br
+.B /dev/radio0/stat
+.SH DESCRIPTION
+The
+.I radio
+device serves a directory per radio interface, each holding
+.BR data ,
+.B ctl
+and
+.BR stat .
+The driver behind it is for the Semtech SX127x family in LoRa mode \- the
+part an HopeRF RFM9x module is built around \- reached over SPI.
+.PP
+.B Data
+is message-delimited.  One write is one packet on the air; one read is
+one packet received, blocking until there is one.  It is not a byte
+stream, because a radio is not one and because what is layered above
+depends on the boundary surviving:
+.IR ssl (3)
+is a filter over a file descriptor, and Styx is a request and a reply.
+.PP
+Two things are refused rather than accommodated.
+.TP
+.B "a short read"
+A read whose buffer is smaller than the waiting packet fails, naming the
+size the packet needs, and the packet stays queued for a read that fits.
+It is not truncated.
+.IR Ssl (3)
+states the contract this inherits \- as long as reads specify buffers of
+equal or greater length than the writes at the other end, one write
+corresponds to one read \- and a device that quietly returned the first
+.I n
+bytes would break it somewhere else entirely.
+.TP
+.B "an oversize write"
+A write longer than the payload budget fails and names the budget.  It
+is not split across two packets.  Splitting is a segmentation layer, and
+a device that did it silently would hide the question of what message
+size a link can carry.
+.PP
+The
+.B iounit
+of
+.B data
+is that budget, which is 251 bytes: 255 of FIFO less the four-byte
+RadioHead header.  That matters beyond documentation, because
+.I exportfs
+adopts a transport's iounit when negotiating a Styx message size, so a
+server over this settles on a radio-sized message without being told.
+.PP
+.B Ctl
+takes one command per write:
+.TP
+.BI freq " hz"
+Carrier frequency.
+.TP
+.BI power " dbm"
+Transmit power, 2 to 17, through the PA_BOOST output an RFM9x bonds out.
+.TP
+.BI sf " n"
+Spreading factor, 6 to 12.
+.TP
+.BI bw " hz"
+Bandwidth; one of the values the part has, 7800 through 500000.
+.TP
+.BI cr " n"
+Coding rate denominator, 5 to 8.
+.TP
+.BI node " n"
+This station's RadioHead address.
+.TP
+.BI dest " n"
+The default destination address; 255 is broadcast.
+.TP
+.B reset
+Put the part back in sleep and reapply the settings.
+.PP
+.B Stat
+returns the parameters in force, the RSSI and SNR of the last packet
+received, and counters for packets sent and received, CRC errors and
+oversize writes.
+.SH SOURCE
+.B /os/inferno/port/devradio.c
+.br
+.B /os/inferno/port/sx127x.c
+.br
+.B /os/inferno/mps2/spipl022.c
+.SH DIAGNOSTICS
+A kernel with no radio fitted serves an empty
+.B #W
+directory; the driver says so on the console at boot, naming the
+RegVersion it read, because a bus that is not reaching the part reads
+.B 0x00
+or
+.B 0xff
+and those are worth telling apart from a different chip.
+.SH BUGS
+Acknowledgement and retry are not implemented.  The RadioHead four-byte
+header is sent and parsed, and a packet not addressed to this station or
+to the broadcast address is dropped, but
+.B _RH_FLAGS_ACK
+is never set or waited for, so a lost packet stays lost.
+.PP
+Only one interface exists.  A PyCubed has two radio sockets on one SPI
+bus, RF1 and RF2; this drives the first.
+.PP
+The only board this runs on is
+.BR mps2 ,
+under a QEMU patched to model an SX1276 on its Shield0 SPI header
+.RB ( tools/qemu-patches ,
+0027 to 0029).  That is a fixture: an MPS2 has the expansion header and
+no radio on it, and a PyCubed wires the same part to a SAMD51 SERCOM
+instead.  So what is tested here is the register, FIFO and interrupt
+sequencing and the file interface above it, and not any real board's
+bus.
+.SH SEE ALSO
+.IR radiochk (1),
+.IR ssl (3)

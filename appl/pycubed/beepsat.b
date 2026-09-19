@@ -148,9 +148,16 @@ beacontask()
 			debug("beacon", "no radio on this board, nothing sent");
 			continue;
 		}
-		debug("beacon", "sending beacon");
-		# The transmit and receive path is a Medium over
-		# devether once there is a radio; phase 2.
+		# The Python beacons the string "Hello World!"; this sends
+		# the same thing, so the two can be read against each
+		# other.  A real beacon carries telemetry, and telemetry
+		# here is a file the ground reads over the link rather
+		# than a packet format -- see doc/pycubed-plan.ms.
+		b := array of byte "Hello World!";
+		if(hw->radiosend(b) < 0)
+			debug("beacon", sys->sprint("send: %r"));
+		else
+			debug("beacon", "sent " + string len b + " bytes");
 	}
 }
 

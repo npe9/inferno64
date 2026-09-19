@@ -10,6 +10,7 @@ void	archconsole(void);
 void	archreboot(void);
 void	archreset(void);
 void	clockcheck(void);
+void	spipl022link(void);
 void	clockinit(void);
 void	clockintr(Ureg*);
 void	clockpoll(void);

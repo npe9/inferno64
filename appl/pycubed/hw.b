@@ -81,21 +81,33 @@ rgb(r, g, b: int)
 	sys->write(frgb, s, len s);
 }
 
-# There is no radio here.  Not a stub, not a simulation: no driver for
-# an SX127x exists anywhere in this tree, so this answers 0 and the
-# beacon task says so rather than inventing traffic.
+# The radio, when one is fitted: #W/radio0/data, bound at /dev by the
+# init.  One write is one packet, which is why this is a file and not a
+# Medium at /net/ether0 -- ssl(3) attaches to a file descriptor ("fd m"
+# on its ctl file) and ssl->connect() takes a ref Sys->FD, so an
+# authenticated, encrypted Styx link runs straight over this with no IP
+# stack under it.  See radio(3) and "What Inferno already answers" in
+# doc/pycubed-plan.ms, which also has the thing that does not fall out
+# for free: the payload budget is 251 bytes and os/inferno/port/
+# devmnt.c refuses an msize below 256.
 #
-# When there is one it is a C driver on SPI, phase 2.  What it should
-# present is a file, not a Medium at /net/ether0: ssl(3) attaches to a
-# file descriptor ("fd m" on its ctl file) and ssl->connect() takes a
-# ref Sys->FD, so an authenticated, encrypted Styx link runs straight
-# over a /dev/radio with no IP stack under it.  See "What Inferno
-# already answers" in doc/pycubed-plan.ms, which also has the one thing
-# that does not fall out for free: the radio's RadioHead framing leaves
-# 252 bytes and os/inferno/port/devmnt.c refuses an msize below 256.
+# No board in this tree has a radio on it.  mps2 under a QEMU carrying
+# tools/qemu-patches 0027-0029 and started with "-machine radio=on" has
+# a modelled one; everything else opens nothing and says so.
+fradio: ref Sys->FD;
+
 haveradio(): int
 {
-	return 0;
+	if(fradio == nil)
+		fradio = sys->open("/dev/radio0/data", Sys->ORDWR);
+	return fradio != nil;
+}
+
+radiosend(b: array of byte): int
+{
+	if(!haveradio())
+		return -1;
+	return sys->write(fradio, b, len b);
 }
 
 # "mag x y z", "gyro x y z", "accel x y z" -- one read, three lines, so
