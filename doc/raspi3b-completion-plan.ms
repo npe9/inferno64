@@ -4111,6 +4111,78 @@ does not feel it here because its Pi is not reaming a kfs and writing
 its completions run in the handler and the next transfer is submitted
 from there rather than by a process that has to be scheduled first.
 .NH 2
+Preemption on interrupt return: measured, written, and switched off
+.PP
+The wake-up latency above has an answer and this kernel already
+contains it.
+.CW preempted()
+is in
+.CW os/inferno/port/proc.c ,
+declared in
+.CW portfns.h ,
+with its own field in
+.CW Proc ,
+and nothing anywhere calls it.  Plan 9's
+.CW trap()
+ends every non-clock interrupt with
+.CW "if(up && !clockintr && m->ilockdepth == 0) preempted();" .
+.PP
+Adding that call took two more things, each of which had to be measured
+rather than assumed.
+.IP 1.
+It has to run.  Guarding it on
+.CW islo()
+never lets it: interrupts are masked inside a handler, and the counters
+stayed at zero through a whole boot.
+.IP 2.
+Something has to outrank the runner.
+.CW anyhigher()
+wants a strictly higher priority queue to be non-empty, and with every
+process here a kernel process at
+.CW PriKproc
+it was true 33 times in 10000 calls \(em
+.CW "up pri 13 runvec 0x2000" .
+A process woken from a sleep now gets one level, which
+.CW reprioritize
+takes away again as soon as it uses processor: 5501 in 10000 after that.
+.PP
+With both, on the board: the wake takes 203 microseconds, measured from
+the interrupt handler to the waiter running, and
+.CW ETHERUSB-SETUP
+with no spin at all in the driver is 2300ms against 9620.  That is the
+whole of what
+.CW usbdwc 's
+200-microsecond spin was standing in for.
+.PP
+.B "And it wedges the board."
+Not in the way that was expected \(em
+.CW sched()
+gives up delaying a reschedule after twenty tries and switches away from
+a lock holder anyway, which on a uniprocessor is a deadlock, so the call
+site guards on
+.CW up->nlocks
+as well.  With that guard it still wedges, and
+.CW ^\e
+says how: every process in
+.CW acquire() ,
+which is not a QLock but the Dis interpreter's own hand-off queue, and
+nobody running to release it.  Preempting a process that holds the
+interpreter looks legitimate and something about it is not.
+.PP
+So it is committed and switched off \(em
+.CW intrpreempt
+in
+.CW trap.c ,
+.CW ioboost
+in
+.CW proc.c
+\(em with the spin back in
+.CW usbdwc
+holding the line at 2280ms.  Answering the interpreter question is worth
+it: it is the difference between 203 microseconds and 142 milliseconds
+on every device wait this board makes, and it is what stands between the
+SD driver and being able to sleep at all.
+.NH 2
 Suggested order
 .PP
 The transmit-queue fix is confirmed on the board and kernel updates

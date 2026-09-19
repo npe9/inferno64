@@ -7,6 +7,14 @@
 #include "ureg.h"
 
 static void	(*irqhandler[GicIRQMax])(Ureg*, void*);
+
+/*
+ * Whether a device interrupt may preempt the process it interrupted.
+ * See the call site below: measured, it takes the wake-up latency from
+ * 2.7-142ms to 203us and ETHERUSB-SETUP from 9620ms to 2300 with no
+ * spin in the driver at all -- and it wedges the board.
+ */
+static int intrpreempt = 0;
 static void	*irqarg[GicIRQMax];
 
 extern char	etext[];
@@ -360,7 +368,16 @@ trap(Ureg *ur)
 		/*
 		 * And let a process a handler just readied have the
 		 * processor, which is what preempted() is for and what
-		 * nothing in this kernel called.
+		 * nothing in this kernel called.  Off by default: it
+		 * wedges this board, and the wedge is not the nlocks one
+		 * below.  ^\ on a wedged board shows every process in
+		 * acquire() -- the Dis interpreter's own hand-off queue,
+		 * not a QLock -- waiting for a VM that nobody is running
+		 * to release.  Preempting a process that holds the
+		 * interpreter is legitimate on its face, and something
+		 * about it is not; that is the open question, and
+		 * doc/raspi3b-completion-plan.ms carries it with the
+		 * numbers that make it worth answering.
 		 *
 		 * Plan 9's trap() ends every non-clock interrupt with
 		 * exactly this, under the same two guards.  Without it a
@@ -394,7 +411,7 @@ trap(Ureg *ur)
 		 * alone, and sched() panics by itself if it is ever
 		 * entered holding an ilock.
 		 */
-		if(up != nil && m->ilockdepth == 0 && up->nlocks == 0)
+		if(intrpreempt && up != nil && m->ilockdepth == 0 && up->nlocks == 0)
 			preempted();
 		return;
 	default:

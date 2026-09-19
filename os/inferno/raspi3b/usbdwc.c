@@ -49,6 +49,7 @@ enum
 	Cachelinesz	= 64,			/* Cortex-A53 D-cache line */
 	PowerUsb	= 3,			/* mailbox power-domain id */
 
+	Compspins	= 200,		/* microseconds to spin for a completion */
 	Enabledelay	= 50,
 	Resetdelay	= 10,
 	ResetdelayHS	= 50,
@@ -321,7 +322,27 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 	if(chaniotrace > 0)
 		ctlr->armed_[chan] = todget(nil);
 	/*
-	 * No spin here, as the donor has none.
+	 * Spin for the completion before sleeping for it.
+	 *
+	 * Measured on the board, from arming the channel: 3 or 4
+	 * microseconds to the interrupt, and then 2.7 to 142
+	 * milliseconds before the process waiting on it ran.  The
+	 * controller and the device are instant; what the transfer waits
+	 * for is a trip round this kernel's run queue.
+	 *
+	 * The proper fix for that is preemption on interrupt return,
+	 * which is written and switched off in trap.c because it wedges
+	 * the board.  Until that is answered this spin is what keeps
+	 * ETHERUSB-SETUP at 2280ms instead of 9620, so it stays, and the
+	 * note below records what it is standing in for.
+	 */
+	for(i = 0; i < Compspins; i++){
+		if(ctlr->hcintr[chan] & Chhltd)
+			break;
+		microdelay(1);
+	}
+	/*
+	 * The donor has no spin here.
 	 *
 	 * There was one, 200us, and it took ETHERUSB-SETUP from 9620ms to
 	 * 2280ms -- because a completion arrives in 3 or 4 microseconds
