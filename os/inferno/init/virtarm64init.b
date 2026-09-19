@@ -73,6 +73,27 @@ init()
 		for(;;)
 			sys->sleep(10000);
 	}
+	#
+	# *soak=1 on the boot line runs the measurement workload instead
+	# of an interactive shell.  This board's init is this file, not
+	# /dis/init -- the kernel's "init" section names it -- so the
+	# shell script every measurement in doc/multicore-plan.ms drives
+	# has to be started from here or it never runs at all.
+	#
+	soak := 0;
+	sfd := sys->open("/env/soak", Sys->OREAD);
+	if(sfd != nil){
+		sb := array[32] of byte;
+		if(sys->read(sfd, sb, len sb) > 0)
+			soak = 1;
+	}
+	if(soak){
+		sys->print("soak: running /dis/init\n");
+		shell->init(nil, "sh" :: "-n" :: "/dis/init" :: nil);
+		sys->print("VIRTARM64-FAIL: /dis/init exited\n");
+		for(;;)
+			sys->sleep(10000);
+	}
 	# -n: no host /lib/sh/profile to read
 	sys->print("interactive sh\n");
 	shell->init(nil, "sh" :: "-n" :: nil);

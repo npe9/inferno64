@@ -93,6 +93,16 @@ bootargsinit(void)
 		if(fwbuf[0] == 0)
 			return;
 		nconf = 0;
+		/*
+		 * One fw_cfg string holds every option, separated by
+		 * spaces; this parser is line-oriented, the way plan9.ini
+		 * is.  Without this the first name swallows the rest --
+		 * "*soak=1 *parallelvm=1" set soak to "1 *parallelvm=1" and
+		 * parallelvm was never seen at all.
+		 */
+		for(p = fwbuf; *p != 0; p++)
+			if(*p == ' ' || *p == '\t')
+				*p = '\n';
 		memmove(confbuf, fwbuf, sizeof(confbuf)-1);
 		confbuf[sizeof(confbuf)-1] = 0;
 		goto parse;

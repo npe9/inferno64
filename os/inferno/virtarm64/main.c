@@ -117,6 +117,7 @@ machinit(void)
 	active.machs[0] = 1;
 }
 
+
 void
 main(void)
 {
@@ -234,8 +235,13 @@ main(void)
 			extern int runqaudit;
 			runqaudit = strtol(p, nil, 0);
 		}
-		if((p = getconf("*soak")) != nil)
-			ksetenv("soak", p, 0);
+		/*
+		 * *soak is NOT read here.  ksetenv() writes through
+		 * up->egrp and up is nil this early, so the call faults --
+		 * pc64's main.c carries the same note.  It is read beside
+		 * setconfenv() below, once there is an environment to put
+		 * it in.
+		 */
 		if((p = getconf("*secsched")) != nil){
 			extern int secsched;
 
@@ -301,6 +307,19 @@ init0(void)
 	 * when there was no loader: bootargsinit() left it empty.
 	 */
 	setconfenv();
+	{
+		char *sk;
+
+		/*
+		 * *soak=1 puts "soak" in the environment, which /dis/init
+		 * reads to repeat its workload instead of running it once.
+		 * Here rather than with the other boot options, for the
+		 * reason pc64/main.c gives: ksetenv() writes through
+		 * up->egrp, and up is nil while the options are read.
+		 */
+		if((sk = getconf("*soak")) != nil)
+			ksetenv("soak", sk, 0);
+	}
 
 	poperror();
 	disinit("/osinit.dis");

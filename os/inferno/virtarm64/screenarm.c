@@ -109,12 +109,24 @@ fwcfgsel(u16int sel)
 int
 fwcfgdma(u32int control, void *buf, u32int len)
 {
+	/*
+	 * A static descriptor, not a malloc'd one.  bootargsinit() reads
+	 * the boot options through here, and it runs before the allocator
+	 * exists -- it has to, because the loader leaves its block in
+	 * memory the kernel is about to allocate over.  malloc() returned
+	 * nil there and this returned -1, so the options silently did not
+	 * arrive and every *parallelvm, *soak and *secsched on a -kernel
+	 * boot line was ignored.
+	 *
+	 * Safe because fw_cfg is read at boot, by one processor: the
+	 * options here, and the framebuffer below before any other
+	 * processor is started.
+	 */
+	static FwDmaDesc dmabuf;
 	FwDmaDesc *dma;
 	u64int dmap;
 
-	dma = malloc(sizeof(*dma));
-	if(dma == nil)
-		return -1;
+	dma = &dmabuf;
 	memset(dma, 0, sizeof(*dma));
 	dma->control = be32(control);
 	dma->length = be32(len);
@@ -125,11 +137,8 @@ fwcfgdma(u32int control, void *buf, u32int len)
 	*(volatile u32int*)(FwCfgDmaReg+4) = be32((u32int)dmap);
 	while(be32(dma->control) & ~(u32int)1)
 		;
-	if(be32(dma->control) & 1){
-		free(dma);
+	if(be32(dma->control) & 1)
 		return -1;
-	}
-	free(dma);
 	return 0;
 }
 
