@@ -4001,6 +4001,7 @@ soakline(void)
 	 * loaded to half speed; that one could not.
 	 */
 	{
+		static uvlong hostfloor = ~0ULL;
 		uvlong c0, c1, best;
 		int i, k, s;
 		vlong v;
@@ -4018,7 +4019,35 @@ soakline(void)
 			if(c1 - c0 < best)
 				best = c1 - c0;
 		}
-		print("soak: host %llud cycles for 100000 spins\n", best);
+		/*
+		 * The floor across the whole boot, not just this sample.
+		 *
+		 * splhi() masks the guest's interrupts and does nothing
+		 * about the hypervisor's: a vCPU can be taken away in the
+		 * middle of the loop, and then the cycle counter -- which is
+		 * the host's -- keeps running while the guest does not.  That
+		 * inflates a sample and can never deflate one, so the minimum
+		 * of five is only right when at least one of the five ran
+		 * uninterrupted.
+		 *
+		 * Measured, and it is not rare.  Nine Compute Engine
+		 * instances: one reported 452320 on its first line and 247086
+		 * on its second, the same machine; and the two highest
+		 * readings in the batch belonged to the two fastest
+		 * instances.  A single high reading means "preempted during
+		 * all five", not "slow host", and reading it the other way is
+		 * how this branch nearly got a fourth number that measured
+		 * something else.
+		 *
+		 * So keep the smallest ever seen.  It converges to the
+		 * machine's uninterrupted speed and each later line can only
+		 * lower it; this line's own minimum is printed beside it so a
+		 * log still shows how much the host was taking away.
+		 */
+		if(best < hostfloor)
+			hostfloor = best;
+		print("soak: host %llud cycles for 100000 spins (floor %llud)\n",
+			best, hostfloor);
 	}
 	/*
 	 * Here as well as in stalldump(), because on a board whose console

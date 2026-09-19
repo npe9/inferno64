@@ -8738,3 +8738,57 @@ from inside the loop and so cannot hold a spin lock.  They are left
 alone, and what protects them for now is that a Prog is unlinked under
 the new lock before it is freed.  That is written down in the code
 rather than assumed.
+.NH 1
+Phase D, re-run with the fix: the answer changes
+.PP
+Nine Compute Engine instances, four Xeons each, UEFI disk boot, 84,000
+guest ticks, the same channel workload that panicked three times in four
+before the process-group lock:
+.IP
+.nf
+                        panics   Dis quanta per tick
+lock on  (parallelvm=0)   0/3    42.6  43.0  43.3
+lock off (parallelvm=1)   0/6    86.3  110.1  110.2  111.5
+.fi
+.PP
+Six of six clean, where three of four had corrupted memory.  And at the
+median that is 2.5x at four processors on real hardware \(em against
+1.4x measured before, which was being dragged down by the runs that
+were on their way to dying.  The lock-on arm returns 43 quanta per tick
+as reliably as it ever has, which is the control saying the workload and
+the machine are the same ones.
+.NH 2
+And the host-speed control is not yet what it was claimed to be
+.PP
+The previous section said the calibration loop "caught the twentieth
+instance running 31 per cent slow".  That reading was too strong, and
+this batch is what shows it.
+.PP
+.CW splhi()
+masks the guest's interrupts and does nothing about the hypervisor's.  A
+vCPU can be taken away in the middle of the loop, and the cycle counter
+\(em which is the host's \(em keeps running while the guest does not.
+That inflates a sample and can never deflate one, so the minimum of five
+is only right when at least one of the five ran uninterrupted.
+.PP
+It is not rare.  One instance reported 452,320 cycles on its first line
+and 247,086 on its second, the same machine minutes apart.  And the two
+highest readings in the batch belonged to the two fastest instances:
+440,672 and 477,668 cycles against 110 and 110 quanta per tick, while
+the instance that actually was slow at 86 read 477,534.  The figure does
+not correlate with throughput at all here.
+.PP
+So a single high reading means "preempted during all five samples", not
+"slow host".  The loop now keeps the smallest value seen across the
+whole boot and prints it as a floor beside the current sample: the floor
+converges on the machine's uninterrupted speed, each later line can only
+lower it, and the gap between the two says how much the host was taking
+away at that moment.  The 0.06 per cent agreement across nineteen
+instances in the earlier batch stands as evidence the loop measures
+something real; the claim that it had identified a slow machine does
+not.
+.PP
+That is four numbers on this branch now that measured something other
+than what they appeared to: the 7 per cent that was a shared laptop, the
+run-queue audit that was reporting its own placeholder, the 3.5 per cent
+band that was a constant of the program, and this.
