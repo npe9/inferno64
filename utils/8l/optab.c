@@ -669,5 +669,33 @@ Optab optab[] =
 	{ ASTMXCSR,	ysvrs,	Pm, 0xae,(03),0xae,(03) },
 
 	{ AEND },
+
+	/*
+	 * Past AEND, because the enum puts these after it and this table
+	 * is indexed by opcode: obj.c insists optab[i].as == i for every
+	 * entry, so an opcode can only be reached by filling in every one
+	 * before it.  8a assembles all of them and 8l stopped at AEND, so
+	 * any of them linked was a read past the end of the table and a
+	 * crash rather than a diagnosis - which is what CMPXCHGL did, out
+	 * of libkern/ainc-386.s, the first time a program of this tree
+	 * used ainc.
+	 *
+	 * The ones with no ytab are not implemented: doasm answers a
+	 * missing table with "asmins: noproto", which is a line telling
+	 * you what is missing.  CMPXCHGL is implemented because something
+	 * needs it - libc's ainc and adec are a compare-and-exchange loop
+	 * on this machine - and it is 6l's entry for the same instruction,
+	 * 0F B1 with the register field in the modrm byte.
+	 */
+	{ ADYNT },			/* pseudo-ops, never assembled */
+	{ AINIT },
+	{ ASIGNAME },
+	{ AFCOMI },			/* x87 compare and set the flags */
+	{ AFCOMIP },
+	{ AFUCOMI },
+	{ AFUCOMIP },
+	{ ACMPXCHGB },			/* the byte form wants a byte ytab */
+	{ ACMPXCHGL,	yrl_ml,	Px, 0x0f,0xb1 },
+
 	0
 };

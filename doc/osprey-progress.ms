@@ -13861,15 +13861,127 @@ and
 .CW _tos
 are a member of their own beside them.  224 members.
 .PP
-Two files are not in that link and they are what is left.
-.CW p9exec.c
-embeds ten programs \- cat, wc, ns, rio, sh, gen, draw, thread, reloc
-and prog2 \- each built by a script of its own for amd64, and each
-wanting a 386 twin.
-.CW p9linuxfile.c
-embeds a Linux x86-64 binary, which is amd64 by its nature.  So what
-stands between here and a 386 personality is a list of build scripts and
-not an unknown, which is what this section set out to find.
+Then the libraries the rest of them want, and the largest program of the
+ten.  All nine other 9front libraries build for 386 from the same source
+build9front.sh builds them from for amd64, with the same files left out:
+183 sources, none failing.
+.CW libthread
+keeps
+.CW 386.c
+where the amd64 build keeps
+.CW amd64.c \-
+it carries every architecture's context switch \- and
+.CW lib9p 's
+.CW ftest.c
+is left out of both, being its own test program.
+.PP
+.I rio
+links.  The real one, 9front's window manager out of
+.CW 9front/src/cmd/rio ,
+against those libraries as a relocatable module for 386: 194656 bytes of
+text, 2025 relocations, every one absolute, and
+.CW p9start
+at offset 0, which is
+.CW checkmodule.py 's
+whole list.  Two things were in the way.
+.PP
+.CW ainc
+and
+.CW adec ,
+libc's atomics, which
+.CW libdraw
+and
+.CW libthread
+count references with: libkern has them for 386
+.CW ( ainc-386.s ,
+a compare-and-exchange loop where amd64 has one XADDL) and they are in
+the archive now.  And then 8l crashed \- a segmentation fault, no
+diagnosis \- on
+.CW CMPXCHGL ,
+which is what that loop is made of.
+.PP
+The cause is the one
+.CW 4dfce523
+records and is worth stating again because it bites in a second place:
+8l's
+.CW optab
+is indexed by opcode and
+.CW obj.c
+insists
+.CW optab[i].as
+.CW ==
+.CW i ,
+so an opcode is reachable only if every opcode before it has an entry.
+The table stopped at
+.CW AEND ;
+.CW CMPXCHGL
+is eleven past it.  8a assembles it, 8l read past the end of its own
+table and died.  The entries between are filled in now \- the three
+pseudo-ops, the four x87 compare-and-set-flags instructions, and
+.CW CMPXCHGB \-
+as entries with no operand table, which
+.CW doasm
+answers with "asmins: noproto", a line that says what is missing instead
+of a crash; and
+.CW CMPXCHGL
+has 6l's own encoding, 0F B1.
+.PP
+The ten are built, and the personality is linked.
+.CW buildprogs386.sh
+is one script rather than ten, because for this object type they are ten
+instances of two shapes: a module linked with
+.CW -u ,
+entered at offset 0 and checked by
+.CW checkmodule.py
+(cat, wc, ns, sh, reloc and rio), and a program linked at an address
+from
+.CW p9lib.h
+with
+.CW "-E p9start"
+(prog2, gen, draw and thread), the address being the base plus this
+machine's header.  The amd64 side keeps a script apiece and the
+reasoning with them; this one carries the two shapes and points at
+those.  Every module passes the whole of
+.CW checkmodule.py 's
+list.
+.PP
+The last file is
+.CW p9linuxfile.c ,
+and 386's answer to it is
+.CW p9linuxfile-386.c ,
+which is empty and says why.  The Linux binary it embeds is x86-64, and
+so is the demonstration it belongs to.  Its other half,
+.CW p9legacyfile ,
+adds the ordinary Plan 9 binaries \- /boot/legacy, /boot/cat and their
+fellows, linked against libc and trapping where the ten are linked
+against
+.CW p9crt.c
+and call the personality as a library \- and those have build scripts of
+their own and no 386 twins yet.  So this object type's file system has
+the library-OS programs and not the trapping ones, which is a thing to
+say plainly rather than to paper over with an empty program pretending
+to be one.
+.PP
+.CW build386.sh
+puts it together:
+.CW os/osprey/pc/p9prog.i ,
+1424555 bytes, 536579 of text, a 386 image entered at
+.CW 0x40000020 .
+The name space, the IP stack, the draw stack and the ten programs, for
+the second object type.
+.PP
+What it is not: nothing boots it.  No kernel configuration on this
+machine builds
+.CW p9progimg.$O \-
+.CW CONFLIST
+is
+.CW u386
+and the mkfile's
+.CW p9prog.i
+rule is still amd64's, calling
+.CW build.sh \-
+so the image is built and not yet loaded.  That is the next piece, and
+after it the trapping binaries.
 .PP
 One thing the renaming taught, and the sweep taught it in ninety
 seconds: the two kernel mkfiles name those assembly files as
