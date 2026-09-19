@@ -1,0 +1,108 @@
+.TH LORARAW 1
+.SH NAME
+loraraw \- a RadioHead peer built by hand
+.SH SYNOPSIS
+.B loraraw hear
+.RI [ n ]
+.br
+.B loraraw poke
+.I to from id flags text
+.br
+.B loraraw ackpeer
+.I me
+.RI [ n ]
+.br
+.B loraraw deaf
+.I me
+.RI [ n ]
+.SH DESCRIPTION
+.I Loraraw
+writes and reads RadioHead frames directly on
+.BR /dev/radio0/data ,
+building the four bytes
+.PP
+.EX
+	to from id flags
+.EE
+.PP
+from the specification rather than from
+.BR /os/inferno/radio/devlora.c .
+Address 255 is broadcast,
+.B 0x80
+is the acknowledge flag,
+.B 0x40
+the retry flag, and the payload of an acknowledgement is
+.BR ! .
+.PP
+It exists because
+.IR lorachk (1)
+checks
+.IR lora (3)
+against itself, which cannot catch a header this tree agrees with and
+nobody else does.  This is not somebody else's program, which is its
+weakness; it is somebody else's format, written on the other side of a
+device boundary with none of
+.IR lora (3)'s
+code reachable from it, which is as far as that can be taken without a
+second radio.
+.PP
+.B Hear
+prints frames as they arrive.
+.B Poke
+sends one, exactly as given, with no checking: an oversize
+.I id
+or a flag nobody defines goes out as written, because the point is to
+be able to send what a correct implementation would not.
+.PP
+.B Ackpeer
+answers anything addressed to
+.I me
+the way RadioHead does \- the sender's address, the same identifier,
+the ACK flag and
+.B ! .
+.B Deaf
+takes frames and says nothing, which is what makes the other end
+retransmit; it then checks that the identifier did not change and that
+the retry flag was clear on the first attempt and set on every one
+after, and prints
+.B RAWDEAF-OK
+if so.  That is the check no single implementation can make against
+itself.
+.SH EXAMPLE
+Two stations under a QEMU patched to model an SX1276.  On the first,
+.IP
+.EX
+lorachk setup 2
+lorachk ackrecv 1
+.EE
+.PP
+and on the second,
+.IP
+.EX
+loraraw poke 2 1 77 0 hand-built
+loraraw hear 1
+.EE
+.PP
+The first prints the payload; the second prints
+.PP
+.EX
+	RAW to 1 from 2 id 77 flags 0x80 payload !
+.EE
+.PP
+which is the acknowledgement, to the byte.
+.SH SOURCE
+.B /appl/cmd/loraraw.b
+.SH SEE ALSO
+.I lorachk (1),
+.I lora (3),
+.I radio (3)
+.SH BUGS
+It speaks only to
+.B /dev/radio0/data
+and there is no way to point it at another packet device.
+.PP
+.B Deaf
+counts frames addressed to
+.I me
+and ignores the rest, so a busy channel makes its count mean less than
+it looks.

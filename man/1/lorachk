@@ -84,6 +84,7 @@ and on the second:
 .B /appl/cmd/lorachk.b
 .SH SEE ALSO
 .I lora (3),
+.I loraraw (1),
 .I radiochk (1),
 .I radio (3)
 .SH BUGS

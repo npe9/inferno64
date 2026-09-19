@@ -384,28 +384,29 @@ become testable; if it does not, the plan should stop promising them.
 .NH 1
 What each step moves
 .DS
-.CW "claim                        now          after"
-.CW "GPIO register map          qemu+patch    E1  qemu"
-.CW "SX1276 register/FIFO/IRQ   qemu+patch    E2  qemu"
-.CW "RadioHead header interop   untested      E3  qemu"
-.CW "retry under loss           untested      R1+R2"
-.CW "the chip driver            qemu+patch    R3  hardware"
-.CW "ssl over the link          asserted      C1  qemu+patch"
-.CW "Styx msize negotiation     asserted      C2  qemu+patch"
-.CW "a third station            untestable    C3  or dropped"
+.CW "claim                      step   tier        status"
+.CW "GPIO register map          E1     qemu        run"
+.CW "SX1276 register/FIFO/IRQ   E2     qemu        run"
+.CW "RadioHead header interop   E3     qemu+patch  run"
+.CW "retry under loss           R1+R2  qemu+patch  run"
+.CW "Styx msize negotiation     C2     qemu+patch  run"
+.CW "ssl over the link          C1     qemu+patch  run, not authed"
+.CW "the chip driver            R3     qemu+patch  not started"
+.CW "a third station            C3     untestable  not started"
 .DE
-E1 and E2 move claims from
+E1 and E2 moved their claims from
 .CW qemu+patch
 to
-.CW qemu
+.CW qemu ,
 because after them the thing being agreed with is somebody else's
-driver, not ours.  Only R3 reaches
+driver rather than ours.  E3 does not, because the peer is written here
+even though the format is not.  Only R3 would reach
 .CW hardware ,
 and only for the 515 lines that deserve to.
 .NH 1
 What has been run
 .PP
-E1, E2, R1 and half of E3, with the results in
+E1, E2, R1 and E3, with the results in
 .CW tools/zephyr-checks/README
 and the patches they produced in
 .CW tools/qemu-patches .
@@ -432,11 +433,39 @@ Time on air, checked against a published figure rather than against
 itself, which caught a fixed 1000ms TxDone timeout that failed every
 SF12 transmit while every SF12 transmit succeeded.
 .IP \(bu
-.B "E3, half."
+.B "E3, first half."
 Semtech transmitting, Inferno receiving: 24 sent, 24 arrive, 24
 correctly rejected for not carrying a RadioHead header.  The finding
 was that a rejected packet and a dead link looked identical from
 .CW stat .
+.IP \(bu
+.B "E3, the rest."
+The peer is
+.CW appl/cmd/loraraw.b ,
+which writes the four bytes on
+.CW /dev/radio0/data
+from RadioHead's specification and not from
+.CW os/inferno/radio/devlora.c .
+It is not somebody else's program, which is the weakness of it; it is
+somebody else's format, written on the other side of a device boundary
+with none of
+.CW #L 's
+code reachable from it, which is what could be had without a second
+radio.  Three exchanges, two stations:
+.CW "to 2 from 1 id 77 flags 0"
+built by hand is delivered by
+.CW #L
+as its payload and answered with
+.CW "to 1 from 2 id 77 flags 0x80 payload !" ,
+which is RadioHead's acknowledgement to the byte; an acknowledgement
+built by hand satisfies
+.CW #L 's
+reliable send, which reports
+.CW "ackrecv 1"
+and no retries; and a peer that hears and says nothing sees three
+frames with the identifier constant at 1 and the retry flag clear,
+then set, then set.  That last is the one no single implementation can
+check against itself.
 .PP
 And one thing that was not on this list at all.  The airtime arithmetic
 came out wrong, and it was not the arithmetic:
@@ -518,6 +547,9 @@ E1, then E2, because E2 can invalidate everything downstream and is
 therefore worth knowing early.  Then C1 and C2, which are cheap and
 close out the argument the rest of the tree has been making.  Then R1
 and R2, in that order for the reason given.  E3 any time after R2, since
-that is when there is something for a peer to acknowledge.  R3 last,
+that is when there is something for a peer to acknowledge.
+.PP
+That order was followed and everything on it but R3 and the
+authentication half of C1 has been run.  R3 last,
 because it is the one that costs money, and by then it is the only thing
 left that can be learned any other way.

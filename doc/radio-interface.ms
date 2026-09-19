@@ -300,6 +300,21 @@ attaches to anything \(em a file descriptor written to its
 .CW #W
 and includes none of the chip driver's headers.
 .PP
+That is as far as the decoupling goes, and the boundary is worth
+saying exactly.  What is underneath has to delimit messages and has to
+publish an
+.CW iounit .
+A pipe does neither:
+.CW os/inferno/port/devpipe.c:73
+opens its queues as byte streams.  So the obvious negative control
+\(em run the link layer over a pipe with no radio in the room \(em is
+not available, and the only transport in the tree that satisfies both
+conditions is a packet device.  The decoupling that can be shown is
+structural: it compiles, links and runs without
+.CW sx127x.h ,
+and every number it uses comes out of the
+.CW Chan .
+.PP
 Measured, two
 .CW mps2-an386
 over a socket pair: a conversation's

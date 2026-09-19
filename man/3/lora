@@ -54,10 +54,15 @@ written to its
 .BR ctl ,
 the way
 .I ssl (3)
-does, so anything that delimits messages will drive it \- which is what
-makes it testable with no radio in the room.  It includes no header of
-the chip driver's: everything it knows about what is underneath it, it
-learns from the channel.
+does.  It includes no header of the chip driver's: everything it knows
+about what is underneath it, it learns from the channel.
+.PP
+What is underneath must delimit messages and must publish an
+.BR iounit ,
+which is a real requirement and not a style.  A pipe does neither \-
+.B os/inferno/port/devpipe.c:73
+opens its queues as byte streams \- so a pipe will not carry this, and
+the only thing in the tree that will is a packet device.
 .PP
 .B Ctl
 takes:
@@ -206,6 +211,7 @@ It is not a name, there is no way to learn one, and two stations
 configured with the same address will both answer.
 .SH SEE ALSO
 .I lorachk (1),
+.I loraraw (1),
 .I radio (3),
 .I ssl (3),
 .I ether (3)

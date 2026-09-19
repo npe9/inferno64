@@ -176,6 +176,7 @@ root
 	/dis/cvtchk.dis	/dis32/cvtchk.dis
 	/dis/modchk.dis	/dis32/modchk.dis
 	/dis/lorachk.dis	/dis32/lorachk.dis
+	/dis/loraraw.dis	/dis32/loraraw.dis
 	/dis/radiochk.dis	/dis32/radiochk.dis
 	/dis/radiossl.dis	/dis32/radiossl.dis
 	/dis/radiostyx.dis	/dis32/radiostyx.dis
