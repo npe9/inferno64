@@ -44,8 +44,15 @@ clean:V: 	clean-std
 
 nuke:V:		nuke-std
 
+#
+#	$MKDIR first: a directory's install used to depend on somebody
+#	having created its output directory by hand, and dis/ is not in
+#	the repository, so appl/danby and appl/dreammachines could not
+#	install into dis/danby/plugin and dis/dreammachines/plugin in a
+#	tree where nobody had made them.
+#
 $DISBIN/%.dis:	%.dis
-	rm -f $DISBIN/$stem.dis && cp $stem.dis $DISBIN/$stem.dis
+	$MKDIR $DISBIN && rm -f $DISBIN/$stem.dis && cp $stem.dis $DISBIN/$stem.dis
 
 %.dis:		$MODULES $SYS_MODULE $DISSTAMP
 

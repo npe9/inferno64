@@ -7,6 +7,19 @@
 ROOT=/Users/npe/src/inferno64-branches/cloud-port
 
 #
+#	Directory mkfiles that include mkfiles/mkdis name the module
+#	declarations their programs depend on in SYSMODULES.  Four of them
+#	do not -- appl/danby, appl/dreammachines and their plugin
+#	subdirectories -- and mk answers an undefined variable in mkdis's
+#	${SYSMODULES:%=$MODDIR/%} with "don't know how to make
+#	'SYSMODULES'", which is why a recursive appl build stopped there.
+#	An empty default here, before any directory mkfile is read, lets
+#	those directories build and leaves every directory that sets its
+#	own untouched.
+#
+SYSMODULES=
+
+#
 #	Specify the flavour of Tk (std for standard builds)
 #
 TKSTYLE=std
