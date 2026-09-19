@@ -249,9 +249,14 @@ wrong, not the queues.  Whichever way it comes out, this paper and
 comment change.
 .PP
 G1 fails on the current tip, and it has been shown failing rather than
-predicted: their kernel prints 43
+predicted: fourteen of the fifteen checks pass on
+.CW 225c058c
+and
+.CW check-disdump
+is the one that does not, because the kernel prints
 .CW stall:
-lines on a default boot.  That is the gate working.
+down the console with no flag asked for.  That is the gate working, and
+it is the only thing between this branch and adoption.
 .NH 1
 The procedure
 .PP
@@ -406,8 +411,7 @@ Step 1 was run against
 in a detached worktree with
 .CW mkconfig 's
 .CW ROOT
-pointed at it.  Four findings, in the order they appeared, and one caution about the
-fifth thing it was asked.
+pointed at it.  Seven findings, in the order they appeared, and a caution.
 .PP
 .B "1. A clean checkout could not build, for four separate reasons, none
 of them the merge's."
@@ -504,9 +508,88 @@ tree, where they all succeed \(em which is the only reason it was not
 written up as a regression.  It is the same trap as the eight-day-old
 ISO: an input the check does not build.
 .PP
-.B "4. The rest built."
-The tree, the host compilers, pc64 and pc64dev, virtarm64, and nine of
-the fourteen boards, all from clean.
+.B "4. An assembler trapped on a long path, which is why the boards
+looked worse than they are."
+With
+.CW dis32
+built,
+.CW armv7
+still died at
+.CW "Trace/BPT trap: 5"
+and nothing else.  Ten assemblers copy the source path into
+.CW "char ofile[100]"
+with
+.CW strcpy ,
+and the host's fortified
+.CW strcpy
+answers an overflow with a breakpoint; a worktree under a session's
+scratch directory passes 100 characters easily.  Controlled: the same
+file at a 105-character path traps and at a short path assembles, with
+both the old binary and a freshly built one.  Fixed here \(em 1024 bytes
+and a refusal that names the length \(em and with
+.CW ROOT
+a short path the merged tip builds
+.B "all fourteen boards" .
+.PP
+.B "5. The suite on the merged tip: fourteen of fifteen."
+.TS
+center box tab(;);
+c | c
+l | l .
+check;result
+_
+man-pages, config-portlines, cabundle;ok
+cloudauth, discovery-retry, ipint;ok
+pc64-timers, pc64-tcp, pc64-disk;ok
+pc64-redeploy, pc64-smp, tls;ok
+arm64-smp (8 processors ticking);ok
+crossarch (one binary, two arches);ok
+disdump;FAIL
+.TE
+.PP
+So the scheduler work does not break anything this branch checks for,
+including TLS from a booted kernel and one Dis binary running on both
+architectures out of one mount.
+.CW check-arm64-smp
+reports eight processors ticking rather than the old four.
+.PP
+The one failure is the console:
+.DS
+.CW
+*disdump=off: shell=yes instrumentation=yes
+check-disdump: FAIL -- instrumentation printed with no *disdump:
+    | stall: cpu0 ticks 6000 proc -1
+    | stall: gcsema locked 0 head -1 gcstw 0 by -1 npctx 6 phase 5
+    | stall: gcnruns 17568 stwwaits 0 gcidlepass 17565 ...
+.DE
+.PP
+.B "And the same kernel passes the check as it was written yesterday."
+The trial tree's copy of
+.CW check-disdump.sh
+came from
+.CW 225c058c ,
+which predates the extension, and it reported
+.CW ok
+on this kernel at both 90 and 150 seconds.  The extended one fails it.
+That is what a blind instrument looks like from the inside: the gate was
+not wrong about a different kernel, it was silent about this one.
+.PP
+.B "6. Three of the trial's own failures were the trial."
+.CW check-arm64-smp
+and
+.CW check-crossarch
+failed for want of
+.CW .qemu/edk2-aarch64-code.fd ,
+which had not been copied in; five boards failed for want of
+.CW dis32 ;
+.CW armv7
+failed for the path length.  All three were setup, and all three would
+have read as regressions in the merged tree if they had gone back
+unchecked.  Re-run with the firmware present, both checks pass.
+.PP
+.B "7. The rest built."
+The tree, the host compilers, pc64 and pc64dev, virtarm64, virtarm64cloud
+with the patch, and all fourteen boards, from clean.
 .PP
 .B "And the caution: nothing from the suite goes back to them until it
 has run alone."
@@ -534,11 +617,15 @@ removal, and 1319 created directories.
 .NH 1
 Order
 .PP
-Step 0 today.  Step 1 against
-.CW 225c058c ,
-whose result is useful to them whichever way it goes, because nobody has
-run this suite over that tree.  Steps 2 and 3 when Phase C lands.  Then
-Phase D's two arms, which is where this branch's hardware and their
+Steps 0 and 1 are done, and their results are the section above: the
+merged tip passes fourteen of fifteen, the one failure is the console
+noise their Phase C is already about, and the arm64 cloud kernel needs
+.CW doc/fwcfg-move.txt
+to link at all.  Steps 2 and 3 wait on Phase C1 and C3; there is nothing
+else outstanding on this side.  Then Phase D's two arms \(em a
+.CW t2a
+for arm64 on real hardware, and the crypto benchmarks as a workload that
+is not chantest \(em which is where this branch's hardware and their
 scheduler are worth more together than apart.
 .PP
 .CW main
