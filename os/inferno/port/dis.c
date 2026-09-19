@@ -97,6 +97,7 @@ int disdumpon;
  * measuring.  *soak=... sets this; the line follows the workload.
  */
 int soakon;
+vlong hostspin;	/* soakline()'s calibration loop writes here */
 
 /*
  * The instrumentation's own print.  Everything this branch added to
@@ -3691,6 +3692,52 @@ soakline(void)
 		p = pbuf;
 	print("soak: %lud ticks, gcnruns %lud, gchalt %d, npctx %d, pools %s\n",
 		(ulong)MACHP(0)->ticks, gcnruns, gchalt, npctx, p);
+	/*
+	 * How much machine did the host actually give us?
+	 *
+	 * Everything else on this line is work per guest tick, and a guest
+	 * tick is wall time: on a shared machine it buys however many
+	 * cycles the host felt like handing over, so two boots of the same
+	 * kernel can differ by a quarter with nothing in the kernel to
+	 * show for it.  That is not hypothetical, it is what four Compute
+	 * Engine instances did.
+	 *
+	 * This loop is the control.  It runs a fixed number of times, it
+	 * touches nothing but registers, and it is timed with the cycle
+	 * counter -- so no mapping, allocator or scheduler decision can
+	 * move it, and the only thing that can is the processor being
+	 * taken away or run slower.  Interrupts off, and the smallest of
+	 * five runs, because a sample that was interrupted is longer and
+	 * never shorter.
+	 *
+	 * Divide quanta per tick by this and what is left is the kernel.
+	 * Do not divide by anything the kernel itself produces: dividing
+	 * chantest by Dis quanta looked like the same idea and was not,
+	 * because chantest does a fixed amount of Dis work and the ratio
+	 * is a constant of the program.  A normaliser has to be able to
+	 * see the machine change.  This one was checked against a laptop
+	 * loaded to half speed; that one could not.
+	 */
+	{
+		uvlong c0, c1, best;
+		int i, k, s;
+		vlong v;
+
+		best = ~0ULL;
+		for(k = 0; k < 5; k++){
+			s = splhi();
+			v = k;
+			cycles(&c0);
+			for(i = 0; i < 100000; i++)
+				v += i ^ (v >> 3);
+			cycles(&c1);
+			splx(s);
+			hostspin = v;		/* v is live, so the loop stays */
+			if(c1 - c0 < best)
+				best = c1 - c0;
+		}
+		print("soak: host %llud cycles for 100000 spins\n", best);
+	}
 	/*
 	 * Here as well as in stalldump(), because on a board whose console
 	 * tail is unreliable a long dump loses its last lines and this one
