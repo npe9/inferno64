@@ -8571,3 +8571,170 @@ common to both members of a pair.  That configuration does not boot, so
 the pairing has to be sequential boots on one instance instead \(em or,
 better, the host-speed control loop that Phase D has now shown works to
 0.06 per cent.
+.NH 1
+The corruption found: the process-group lists had no lock
+.PP
+Phase D's three panics on Compute Engine \(em two page faults and a
+queue block with an impossible write pointer \(em are one bug, and it is
+found.
+.NH 2
+Reproducing it, and the instrument that named it
+.PP
+Four local guests at eight processors with
+.CW *parallelvm=1 ,
+twenty-five minutes each, reproduced it once, in a more useful shape
+than the cloud gave:
+.IP
+.nf
+poolfree:badhdr(1b2233b8): pool main CORRUPT:
+    bad size at 1b223398'3(magic=a110c)
+.fi
+.PP
+The block header was otherwise intact \(em a live
+.CW MAGIC_A
+and a plausible allocating pc \(em with only the size field holding 3,
+which is not a size.  The allocating pc resolved to
+.CW newprog+0x72 ,
+so the block was a
+.CW Prog ,
+and 3 is the sort of number a small enum holds.  That is a write
+through a pointer to a
+.CW Prog
+that had already been freed, landing on whatever the allocator had
+since put there.
+.PP
+.B "So freed Progs got a quarantine."
+With
+.CW *progquar=N
+a freed
+.CW Prog
+is filled with a position-dependent poison and held for
+.I N
+more frees; when it goes back the poison is checked, and a word that
+changed names its own offset.  Two offsets came back \(em
+.CW 0x110
+twice and
+.CW 0x118
+twenty times \(em holding live
+.CW Prog
+addresses and nil.
+.NH 2
+The offsets had to come from the compiler
+.PP
+Read off the struct with a guess at the padding, those two are
+.CW grpnext
+and
+.CW exval ,
+and that makes no sense:
+.CW exval
+is only ever written through
+.CW currun() ,
+which cannot be a freed program.  But
+.CW Inferno/amd64/include/u.h
+says
+.CW "typedef intptr WORD" ,
+so
+.CW REG 's
+three
+.CW WORD
+tails are eight bytes each,
+.CW sizeof(REG)
+is 120 rather than 112, and every field after it sits eight bytes
+further on.  The real answer is
+.CW grpprev
+at
+.CW 0x110
+and
+.CW grpnext
+at
+.CW 0x118 :
+the two words the group list manipulates, and the whole diagnosis in
+one line.  The quarantine now names the field from
+.CW &((Prog*)0)->field
+so no future capture has to be read by hand.
+.PP
+That is the second time in this session a number was resolved against
+the wrong thing.  The first was a malloctag resolved against the kernel
+in the tree rather than the kernel that ran, which confidently returned
+.CW execatidle+0x65
+for an address the right binary calls
+.CW newprog+0x72 .
+An address means nothing without the image it came from, and an offset
+means nothing without the compiler that did the padding.
+.NH 2
+The bug
+.PP
+.CW addgrp()
+and
+.CW delgrp()
+thread Progs onto a doubly-linked group list and maintain
+.CW g->head
+and
+.CW g->tail .
+Neither has ever taken a lock, and neither needed one:
+.CW newprog()
+calls
+.CW addgrp()
+after it has released
+.CW isched.l ,
+.CW delprog()
+calls
+.CW delgrp()
+before it takes it, and both run with the interpreter acquired \(em
+which, while one global
+.CW vmlock
+existed, meant one executor at a time and nothing to race with.
+.PP
+.CW parallelvm=1
+removes exactly that.  Two executors run
+.CW addgrp()
+and
+.CW delgrp()
+on the same group at once, the list tears, and
+.CW g->tail
+is left naming a Prog that
+.CW delprog()
+has since freed.  The next
+.CW addgrp()
+to that group does
+.IP
+.CW "g->tail->grpnext = n;"
+.PP
+and writes a Prog pointer into freed memory.  From there it is the
+allocator's problem, and which panic you get depends on what the pool
+had since put in that memory.
+.NH 2
+The fix, and what it measures
+.PP
+The lists get a lock of their own \(em not
+.CW isched.l ,
+because
+.CW delgrp()
+ends by freeing empty parent groups and
+.CW free()
+takes the pool's ilock.  Three guests each way, fifteen minutes,
+eight processors, the same workload:
+.IP
+.nf
+without the lock   18 and 17 detections on two guests of three
+with the lock       0 detections on three of three
+.fi
+.PP
+Channel throughput was the same either way (196 to 245 chantest runs
+without, 223 to 224 with), so the fixed kernel was working just as hard
+and simply stopped writing into freed Progs.
+.PP
+.B "What is not fixed."
+The walks in
+.CW killgrp() ,
+.CW printgrp()
+and
+.CW tellsomeone()
+call
+.CW killprog()
+and
+.CW exprog()
+from inside the loop and so cannot hold a spin lock.  They are left
+alone, and what protects them for now is that a Prog is unlinked under
+the new lock before it is freed.  That is written down in the code
+rather than assumed.
