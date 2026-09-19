@@ -138,46 +138,67 @@ it prints them all.  And the number that matters for a product, which
 nobody has yet: the throughput difference between the flag off and on,
 measured the way Phase D measures everything else.
 .NH 1
-Phase D \- answered, and the answer is no
+Phase D \- answered twice, and the second answer is different
 .PP
-Twenty Compute Engine instances, four Xeons each, UEFI disk boot, 48,000
-guest ticks.  Full numbers and the two instrument fixes are in
+Full numbers and the instrument fixes are in
 .CW doc/multicore-plan.ms .
-The short of it:
-.IP \(bu
+.PP
+.B "First answer: no."
+Twenty Compute Engine instances, four Xeons each, UEFI disk boot.  Three
+of four channel-workload instances panicked at four processors with
 .CW "parallelvm = 1"
-panicked on three of four instances running the channel workload at
-four processors \(em two page faults inside
+\(em two page faults inside
 .CW dis
 processes and one
 .CW "checkb 4 qconsume" ,
-a queue block whose write pointer had passed its limit with a live
-.CW malloctag ,
-which is memory corruption.  The block's tag names
-.CW qiwrite
-as its allocator.  No QEMU batch on this branch has ever produced any
-of these, at any width.
-.IP \(bu
-The module-loading workload, which this plan predicted would be the
-parallel VM's worst case, is its best: 3.3x, six instances, six clean
-boots.  Channel traffic, predicted to be its best case, gives 1.4x and
-is the one that corrupts memory.
-.IP \(bu
-Four processors with the lock are worth eight per cent over one.
-.IP \(bu
-.CW CHANTEST-OK
-was measuring the serial console, not the kernel \(em four instances
-returned 645 each, one-processor controls returned 645, 648, 645.  Dis
-quanta per tick replaces it everywhere.
-.IP \(bu
-The host-speed calibration loop works: nineteen of twenty instances
-within 0.06 per cent, and it caught the twentieth at 31 per cent slow.
+memory corruption.  No QEMU batch on this branch had ever produced any
+of these at any width.
 .PP
-.B "So the default stays 0, and the next work is the corruption."
-Three reproductions exist, on hardware, with a named allocator.  What is
-needed is a reproduction that can be iterated faster than a
-fifteen-minute cloud round trip; nested virtualisation was the obvious
-vehicle and does not boot (below).
+.B "The cause, found and fixed."
+.CW addgrp()
+and
+.CW delgrp()
+maintained the process-group list with no lock, because the global
+.CW vmlock
+used to mean one executor at a time.  Details in the plan; the
+instrument that named it is
+.CW *progquar=N .
+.PP
+.B "Second answer: yes on amd64, not yet on arm64."
+Nine instances with the fix, 84,000 guest ticks:
+.IP
+.nf
+                        panics   Dis quanta per tick
+lock on  (parallelvm=0)   0/3    42.6  43.0  43.3
+lock off (parallelvm=1)   0/6    86.3  110.1  110.2  111.5
+.fi
+.PP
+Six of six clean and 2.5x at the median, against 1.4x before \(em which
+was being dragged down by the runs on their way to dying.
+.PP
+.B "What is still missing before the default can be flipped."
+.IP \(bu
+arm64.  Five
+.CW t2a-standard-4
+instances boot, bring up four processors and run the parallel VM
+without panicking, and then four of the five stop producing console
+output.  It is a board-level fault, not the VM \(em one of the two
+lock-on controls stopped too \(em but until it is fixed there is no
+arm64 throughput measurement.
+.IP \(bu
+The module-loading workload, re-measured.  Its 3.3x was taken on the
+kernel before the lock.  That arm never panicked in six boots, so the
+number is probably still good, but it is not a measurement of the
+kernel that would ship.
+.PP
+.B "Two instrument lessons that the plan should carry forward."
+.CW CHANTEST-OK
+is a serial-console print and measures the console: four instances
+returned exactly 645, and so did the one-processor controls.  Use Dis
+quanta per tick.  And do not divide work by Dis quanta to remove host
+speed \(em a quantum is a slice of Dis work, so the ratio is a constant
+of the program.  Proved: loading a host cut quanta per tick from 35.9 to
+19.5 while the ratio moved one per cent.
 .NH 1
 Phase E \- the open correctness items
 .IP \(bu
