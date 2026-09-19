@@ -47,7 +47,11 @@ enum {
 	Rirptmask	= 0x34/4,
 	Rirpten		= 0x38/4,
 	Rcontrol2	= 0x3c/4,
+	Rcaps0		= 0x40/4,	/* SDHCI capabilities */
+	Rcaps1		= 0x44/4,
 	Rslotisrver	= 0xfc/4,
+
+	Capsdma		= 1<<22,	/* caps0: the controller can do SDMA */
 
 	/* Rstatus */
 	Scmdinhibit	= 1<<0,
@@ -68,6 +72,7 @@ enum {
 	/* Rinterrupt and its masks */
 	Icmddone	= 1<<0,
 	Idatadone	= 1<<1,
+	Idmairq		= 1<<3,		/* SDMA reached a buffer boundary */
 	Iwriterdy	= 1<<4,
 	Ireadrdy	= 1<<5,
 	Ierr		= 1<<15,
@@ -75,6 +80,7 @@ enum {
 	Iall		= 0x017f7137,
 
 	/* Rcmdtm flags */
+	Tdma		= 1<<0,		/* transfer mode: use SDMA */
 	Trdata		= 1<<4,		/* transfer is card to host */
 	Tmulti		= 1<<5,		/* more than one block */
 	Tautocmd12	= 1<<2,		/* the controller sends the stop itself */
@@ -87,6 +93,17 @@ enum {
 	Cmdresp48busy	= 3<<16,
 
 	Maxblocks	= 64,		/* blocks in one multi-block command */
+	/*
+	 * SDMA's buffer boundary, as Rblksizecnt bits 14:12: the value is
+	 * log2(size)-12, so 7 is 512KB.  The controller stops at each
+	 * boundary and raises Idmairq, and the driver answers by writing
+	 * the next address.  Maxblocks*Secsize is 32KB, so with 512KB the
+	 * boundary is never reached inside one command and the interrupt
+	 * never fires -- which is the arrangement here, chosen so the DMA
+	 * path has one completion to wait for and not two kinds.
+	 */
+	Dmaboundary	= 7<<12,
+	Busalias	= 0xC0000000,	/* bus-master view of ARM RAM */
 	Waitms		= 3000,		/* how long a card may take over one transfer */
 	Sleepms		= 20,		/* one sleep waiting for the interrupt */
 	Emmcirq		= 62,		/* GPU IRQ: this controller */
@@ -168,6 +185,23 @@ static int emmctrace = 0;
  * should stay takeable.
  */
 static int emmcsleep = 1;
+
+/*
+ * Whether to let the controller move the data itself.
+ *
+ * Without this the CPU copies every word through Rdata: 128 MMIO
+ * accesses per 512-byte sector, each one a trap out to the peripheral
+ * bus, and that is where a transfer's time goes.  SDHCI's SDMA has the
+ * controller read or write memory directly -- one address handed over
+ * before the command, one completion at the end, and no per-word loop.
+ *
+ * Off by default until it is measured on the board beside the loop it
+ * replaces, the same way emmcsleep was: "echo dma 1 >/dev/sdM0/ctl".
+ * A DMA path that is wrong does not fail loudly, it writes the right
+ * number of bytes to the wrong place, so it does not become the default
+ * on the strength of it compiling.
+ */
+static int emmcdma = 0;
 static ulong emmcnwait, emmcnslept, emmcwoke, emmctimeout;
 static uvlong emmcwakeus;
 static uvlong emmcus;
@@ -313,7 +347,7 @@ awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 				emmcwakeus += (todget(nil) - emmcctlr.isr)/1000;
 			}else
 				emmctimeout++;
-			if(emmcnwait % 500 == 0)
+			if(emmctrace && emmcnwait % 500 == 0)
 				print("emmc: %lud sleeps, %lud woken by the interrupt, "
 					"%lud timed out, %llud us from interrupt to running\n",
 					emmcnwait, emmcwoke, emmctimeout,
@@ -660,7 +694,7 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	volatile u32 *r = c->r;
 	uchar *p = a;
 	long i, nthis;
-	int j, k;
+	int j, k, dma;
 	u32 arg, w, sts, flags;
 
 	USED(lun);
@@ -687,37 +721,74 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			flags |= Trdata;
 		if(nthis > 1)
 			flags |= Tmulti|Tautocmd12;
+		dma = emmcdma;
+		if(dma){
+			/*
+			 * The controller is a bus master: it sees RAM
+			 * through the 0xC0000000 uncached alias and not
+			 * through the CPU's caches, exactly as the DMA
+			 * engine and the VideoCore do.  So the address it
+			 * gets is the bus one, and the caches have to be
+			 * put in order first -- clean before a write, so
+			 * what it reads is what we wrote; clean and
+			 * invalidate before a read, so no dirty line is
+			 * left to be written back over what it puts there
+			 * and nothing stale is read afterwards.
+			 */
+			if(write)
+				cacheflush(p, nthis*Secsize);
+			else
+				cacheflushinv(p, nthis*Secsize);
+			r[Rblksizecnt] = (u32)nthis<<16 | Dmaboundary | Secsize;
+			r[Rarg2] = (u32)((uintptr)p | Busalias);
+			flags |= Tdma;
+		}
 		/* READ/WRITE_SINGLE_BLOCK, or the MULTIPLE_BLOCK pair */
 		if(cmd(c, write? (nthis > 1? 25: 24): (nthis > 1? 18: 17),
 		    arg, flags, &sts) < 0){
 			bioerror(c, write, bno+i, sts);
 			break;
 		}
-		for(k = 0; k < nthis; k++){
-			if(awaitirq(r, write? Iwriterdy: Ireadrdy, &sts) < 0){
-				bioerror(c, write, bno+i+k, sts);
-				goto out;
-			}
-			if(write){
-				for(j = 0; j < Secsize; j += 4){
-					w = p[0] | p[1]<<8 | p[2]<<16 | p[3]<<24;
-					r[Rdata] = w;
-					p += 4;
+		if(!dma){
+			for(k = 0; k < nthis; k++){
+				if(awaitirq(r, write? Iwriterdy: Ireadrdy, &sts) < 0){
+					bioerror(c, write, bno+i+k, sts);
+					goto out;
 				}
-			}else{
-				for(j = 0; j < Secsize; j += 4){
-					w = r[Rdata];
-					p[0] = w;
-					p[1] = w>>8;
-					p[2] = w>>16;
-					p[3] = w>>24;
-					p += 4;
+				if(write){
+					for(j = 0; j < Secsize; j += 4){
+						w = p[0] | p[1]<<8 | p[2]<<16 | p[3]<<24;
+						r[Rdata] = w;
+						p += 4;
+					}
+				}else{
+					for(j = 0; j < Secsize; j += 4){
+						w = r[Rdata];
+						p[0] = w;
+						p[1] = w>>8;
+						p[2] = w>>16;
+						p[3] = w>>24;
+						p += 4;
+					}
 				}
 			}
 		}
 		if(awaitirq(r, Idatadone, &sts) < 0){
 			bioerror(c, write, bno+i, sts);
 			break;
+		}
+		if(dma){
+			/*
+			 * The engine wrote through the uncached alias while
+			 * the CPU may have speculated the old contents into
+			 * a line, so drop them before anyone reads.  The
+			 * buffer pointer is advanced here because the
+			 * per-word loop above, which normally does it, did
+			 * not run.
+			 */
+			if(!write)
+				cacheinval(p, nthis*Secsize);
+			p += nthis*Secsize;
 		}
 		i += nthis;
 	}
@@ -738,6 +809,16 @@ emmcrctl(SDunit *u, char *p, char *e)
 	p = seprint(p, e, "emmc status %#lux control0 %#lux control1 %#lux interrupt %#lux ver %#lux errors %d\n",
 		(ulong)r[Rstatus], (ulong)r[Rcontrol0], (ulong)r[Rcontrol1],
 		(ulong)r[Rinterrupt], (ulong)r[Rslotisrver], c->errors);
+	/*
+	 * The capabilities, and the one bit in them this driver has a
+	 * question about: bit 22 of caps0 is whether the controller can
+	 * do SDMA at all.  Printed rather than remembered, because
+	 * whether the Pi's Arasan implements it is exactly the sort of
+	 * thing that gets asserted from memory and is wrong.
+	 */
+	p = seprint(p, e, "emmc caps %#lux %#lux sdma %s\n",
+		(ulong)r[Rcaps0], (ulong)r[Rcaps1],
+		(r[Rcaps0] & Capsdma)? "yes": "no");
 	return p;
 }
 
@@ -769,6 +850,11 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 		print("emmc: sleep %d\n", emmcsleep);
 		return 0;
 	}
+	if(strcmp(cb->f[0], "dma") == 0 && cb->nf == 2){
+		emmcdma = atoi(cb->f[1]);
+		print("emmc: dma %d\n", emmcdma);
+		return 0;
+	}
 	if(strcmp(cb->f[0], "trace") == 0 && cb->nf == 2){
 		emmctrace = atoi(cb->f[1]);
 		print("emmc: trace %d\n", emmctrace);
@@ -776,11 +862,11 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	}
 	if(strcmp(cb->f[0], "spin") == 0){
 		print("EMMC-SPIN max %lud us (want %#ux), mean %llud us over %lud waits; "
-			"sleep %d: %lud slept, %lud woken by the interrupt, %lud timed out, "
+			"dma %d sleep %d: %lud slept, %lud woken by the interrupt, %lud timed out, "
 			"%llud us interrupt to running\n",
 			emmcspinmax, emmcspinwant,
 			emmcspinn? emmcspinus/emmcspinn: 0ULL, emmcspinn,
-			emmcsleep, emmcnwait, emmcwoke, emmctimeout,
+			emmcdma, emmcsleep, emmcnwait, emmcwoke, emmctimeout,
 			emmcwoke? emmcwakeus/emmcwoke: 0ULL);
 		emmcspinn = 0;
 		emmcspinus = 0;
