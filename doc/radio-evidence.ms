@@ -345,12 +345,37 @@ independence work did not find that; a reference value did \- the
 number the model produced disagreed with a datasheet formula, and
 chasing the disagreement rather than adjusting the expectation is what
 turned it up.
+.IP \(bu
+.B R2 .
+Acknowledgement and retry, the way
+.CW lib/pycubed_rfm9x.py 's
+.CW send_with_ack
+does it, since the format is not ours to choose.  With the model
+dropping three quarters of what it hears \- which is what R1 made
+meaningful, and
+.CW drop-pct
+had never been turned on before \- the first transmission was lost, the
+sender retried with the RETRY flag, and the receiver delivered the
+payload once and acknowledged it.
+.IP \(bu
+.B C1 .
+.I Ssl (3)
+over
+.CW /dev/radio0/data :
+attached as
+.CW #D/0 ,
+digesting with SHA1, and a message across.  With the negative control
+that makes it mean something \- a receiver with a different secret gets
+.CW "bad digest" .
+No IP, no ether, no medium.  Authentication is still not run, and
+.I radiossl (1)
+says so.
 .PP
-Still not run: R2, acknowledgement and retry, which is the largest
-remaining gap to something a PyCubed could talk to; R3, real silicon;
-and the two claims the rest of the tree rests on \-
-.I ssl (3)
-over the radio and Styx over that.
+Still not run: C2, Styx over that link with the message size actually
+watched, which is the one that turns an argument into a printed number;
+R3, real silicon; and
+.CW keyring (2)
+over the radio, which is the other half of C1.
 .NH 1
 How, as opposed to whether
 .PP
