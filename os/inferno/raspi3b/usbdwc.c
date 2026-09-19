@@ -152,6 +152,34 @@ dmabufalloc(long n)
  */
 static int chaniotrace = 0;
 
+/*
+ * How long a completion waits for the processor, on every boot.
+ *
+ * chaniotrace above answers this for a handful of transfers and has to
+ * be switched on and the kernel rebuilt, which is how two board cycles
+ * went on guessing.  This is the same measurement taken without asking:
+ * the first Wakesamples completions that actually sleep record the gap
+ * between the interrupt handler waking them and the process running,
+ * and the total is printed once as a marker anything can read.
+ *
+ * Only transfers that sleep are counted, and the line says how many
+ * others the 200us spin caught, because a transfer that never waited
+ * has no latency to report and the ratio is itself the answer to
+ * whether the spin is still earning its place.  Eight is the sample
+ * because a whole QEMU boot produced fewer than sixty-four and printed
+ * nothing at all, which is the one way this could fail to be useful.
+ * Cost is a few calls to todget() and then nothing.
+ *
+ * It is here because it is the number the scheduler work is judged by:
+ * 2.7 to 142 milliseconds with nothing preempting, 203 microseconds
+ * with Plan 9's preempted() (which wedges the board), and whatever
+ * asking at a Dis instruction boundary is worth.  See port/dis.c.
+ */
+enum { Wakesamples = 8 };
+static int	wakeleft = Wakesamples;
+static int	waken, wakefast;
+static vlong	wakesum, wakemax;
+
 static Hostchan*
 chanalloc(Ep *ep)
 {
@@ -322,6 +350,15 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 	if(chaniotrace > 0)
 		ctlr->armed_[chan] = todget(nil);
 	/*
+	 * A channel is reused, and its last completion's timestamp with
+	 * it.  Clearing it here is what makes the sample below mean
+	 * "this transfer's interrupt to this transfer's wake": without
+	 * it, a tsleep that timed out with no interrupt at all measured
+	 * from whenever that channel last completed, and QEMU's idle
+	 * bulk IN reported a 1.1 second scheduler latency.
+	 */
+	ctlr->isr_[chan] = 0;
+	/*
 	 * Spin for the completion before sleeping for it.
 	 *
 	 * Measured on the board, from arming the channel: 3 or 4
@@ -341,6 +378,8 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 			break;
 		microdelay(1);
 	}
+	if(wakeleft > 0 && (ctlr->hcintr[chan] & Chhltd) != 0)
+		wakefast++;		/* the spin caught it; it never waited */
 	/*
 	 * The donor has no spin here.
 	 *
@@ -356,8 +395,35 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 	 */
 	for(i = 0; (ctlr->hcintr[chan] & Chhltd) == 0; i++){
 		tsleep(&ctlr->chanintr[chan], chandone, &ctlr->hcintr[chan], 1000);
-		if(chaniotrace > 0)
+		if(chaniotrace > 0 || wakeleft > 0)
 			ctlr->woke_[chan] = todget(nil);
+		if(wakeleft > 0 && ctlr->isr_[chan] != 0
+		&& ctlr->woke_[chan] > ctlr->isr_[chan]){
+			vlong d = ctlr->woke_[chan] - ctlr->isr_[chan];
+
+			ctlr->isr_[chan] = 0;
+			wakesum += d;
+			if(d > wakemax)
+				wakemax = d;
+			waken++;
+			/*
+			 * The first one on its own, then the aggregate.  A
+			 * boot where the spin catches everything produces
+			 * no sample at all -- QEMU's does -- and a single
+			 * measured wake is worth more than silence, so the
+			 * first one does not wait for the other seven.
+			 */
+			--wakeleft;
+			if(waken == 1)
+				print("USB-WAKE first %lld us "
+					"(%d caught by the spin before it)\n",
+					d/1000, wakefast);
+			else if(wakeleft == 0)
+				print("USB-WAKE %d slept, mean %lld us, max %lld us "
+					"(%d more caught by the spin)\n",
+					waken, wakesum/waken/1000, wakemax/1000,
+					wakefast);
+		}
 		if(pending){
 			/*
 			 * A bulk IN may wait for ever for data, but not for a
@@ -991,7 +1057,7 @@ usbintr(Ureg*, void *a)
 				continue;
 			ctlr->hcintr[i] |= v;
 			if(ctlr->hcintr[i] & Chhltd){
-				if(chaniotrace > 0)
+				if(chaniotrace > 0 || wakeleft > 0)
 					ctlr->isr_[i] = todget(nil);
 				wakeup(&ctlr->chanintr[i]);
 			}

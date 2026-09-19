@@ -57,6 +57,11 @@ static int	readbintime(char*, int);
 static int	writetime(char*, int);
 static int	writebintime(char*, int);
 
+extern int	ilocktrace;		/* taslock.c */
+extern ulong	nilocktraced;
+extern long	maxilockcycles, cumilockcycles;
+extern uintptr	maxilockpc;
+
 enum
 {
 	CMreboot,
@@ -67,6 +72,7 @@ enum
 	CMconsole,
 	CMrdb,
 	CMprocdump,
+	CMilock,
 };
 
 /*
@@ -169,6 +175,7 @@ static Cmdtab sysctlcmd[] =
 	CMnobroken,	"nobroken", 0,
 	CMrdb,		"rdb",		0,
 	CMprocdump,	"procdump",	0,
+	CMilock,	"ilock",	0,
 };
 
 Cmdtab rebootmsg[] =
@@ -1231,6 +1238,46 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 			 * wedged kproc is otherwise invisible from the shell.
 			 */
 			kstackdump();
+			break;
+		case CMilock:
+			/*
+			 * The longest the kernel has kept interrupts masked,
+			 * and where.  "ilock on" starts counting, "ilock off"
+			 * stops, and a bare "ilock" reports and resets -- so
+			 * the number can be taken over a named interval (a
+			 * fatstress run, an enumeration) rather than over
+			 * whatever happened since boot.  taslock.c says why
+			 * it is not always on.
+			 */
+			if(cb->nf > 1 && strcmp(cb->f[1], "on") == 0){
+				maxilockcycles = 0;
+				maxilockpc = 0;
+				cumilockcycles = 0;
+				nilocktraced = 0;
+				ilocktrace = 1;
+				print("ILOCK-TRACE on\n");
+			}else if(cb->nf > 1 && strcmp(cb->f[1], "off") == 0){
+				ilocktrace = 0;
+				print("ILOCK-TRACE off\n");
+			}else{
+				ulong hz = m->cpuhz? m->cpuhz: 1;
+
+#ifndef ILOCKTRACE
+				print("ILOCK-TRACE not compiled in (see the board mkfile)\n");
+#endif
+				print("ILOCK-MAX %ld us at %#p, mean %ld ns over %lud ilocks%s\n",
+					maxilockcycles/(long)(hz/1000000? hz/1000000: 1),
+					(void*)maxilockpc,
+					nilocktraced?
+					  (long)(cumilockcycles/(long)nilocktraced)
+					   * 1000 / (long)(hz/1000000? hz/1000000: 1): 0L,
+					nilocktraced,
+					ilocktrace? "": " (tracing off)");
+				maxilockcycles = 0;
+				maxilockpc = 0;
+				cumilockcycles = 0;
+				nilocktraced = 0;
+			}
 			break;
 		}
 		poperror();

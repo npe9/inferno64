@@ -4110,6 +4110,11 @@ does not feel it here because its Pi is not reaming a kfs and writing
 1.5MB while it enumerates USB; Linux does not have it at all, because
 its completions run in the handler and the next transfer is submitted
 from there rather than by a process that has to be scheduled first.
+.PP
+.I "Two sections on, this paragraph turns out to be wrong about the quantum: there was not one."
+It is left as it was written because what it
+got right \(em that the time is in this kernel and not in the device
+\(em is what made looking there worth it.
 .NH 2
 Preemption on interrupt return: measured, written, and switched off
 .PP
@@ -4328,6 +4333,183 @@ behind a VM nobody is running.  That is the shape of the wedge, so
 .CW acquire()
 now panics instead of hanging.  It costs nothing and it names the fault
 if it is ever reached.
+.PP
+And the measurement stops being something to switch on.
+.CW usbdwc
+prints
+.CW USB-WAKE
+on every boot: the first completion that actually slept on its own,
+then the mean and the worst of the first eight, each measured from the
+interrupt handler waking the waiter to the waiter running.  Completions
+the 200-microsecond spin catches are counted separately and not
+averaged in, because a transfer that never waited has no latency to
+report \(em and the ratio is itself the answer to whether the spin is
+still earning its place.  Under QEMU it is 2287 caught for the first
+one that slept.
+.PP
+Two things it got wrong first, both worth keeping written down.
+Sixty-four samples was too many: a whole QEMU boot produced fewer and
+printed nothing at all, which is the one way an always-on instrument
+can fail.  And the timestamp the handler leaves behind belongs to a
+channel, not to a transfer, so a
+.CW tsleep
+that timed out with no interrupt at all measured from whenever that
+channel last completed \(em QEMU's idle bulk IN reported a 1.1 second
+scheduler latency, which is a stale subtraction and not a fact about
+anything.  Clearing it when the channel is armed is what makes the
+number mean what it says.
+.NH 2
+Hard and soft real time
+.PP
+The scheduler clock is the thing that was standing in the way of this,
+and it is worth saying what "this" is, because the two halves are not
+the same piece of work and only one of them is mostly written already.
+.PP
+.B "Soft real time is a bound you can measure."
+A process woken by a device runs within some time, and the time has a
+number on it rather than a hope.  With nothing preempting, that number
+was 142 milliseconds and it was not a bound at all \(em it was however
+long the running Limbo program took to reach its next system call, so
+it was unbounded in principle and merely finite in practice.  With the
+tick running and vmachine() yielding on request, the bound has three
+terms: the Dis instruction the interpreter is in the middle of, up to
+.CW PQUANTA
+more of them before the loop comes round, and the run queue walk.  All
+three are small and the first two are countable.
+.CW USB-WAKE
+measures the sum.
+.PP
+Three things stand between that and a bound worth quoting, each of
+which is a measurement this board can take:
+.IP 1.
+.B "The drivers that spin."
+.CW usbdwc
+spins 200 microseconds for a completion and
+.CW sdemmcbcm
+polls its data register for a whole block, both deliberately, both
+bought with latency for throughput \(em 86 KB/s spinning against 6
+sleeping.  A spin in a kproc is not preemptible under this scheme, by
+design, so every such spin is an addend in the worst case.  They have
+to be counted and named, not removed.
+.IP 2.
+.B "The ilock regions."
+Interrupts are masked inside them, so the worst one is a term in the
+interrupt latency, which is upstream of everything here.  Nothing in
+this tree had measured them; now
+.CW port/taslock.c
+does.
+.CW "echo ilock on >/dev/sysctl"
+starts counting,
+.CW "echo ilock >/dev/sysctl"
+prints the longest window in microseconds, the kernel address that
+took the lock, and the mean over every ilock since, and resets \(em so
+the number can be taken over a named interval, a
+.CW fatstress
+run or a USB enumeration, rather than over whatever happened since
+boot.  It is off until asked because it costs two counter reads on
+every ilock in the kernel, which is every interrupt and every queue
+operation; off it is one predictable branch.  The
+.CW Lock
+field it needs and
+.CW lcycles()
+exist only on this board, so
+.CW -DILOCKTRACE
+is in the raspi3b mkfile and the other boards compile past it
+unchanged.
+.IP 3.
+.B "The garbage collector."
+.CW rungc()
+runs inside the interpreter's own loop, in the same kproc, between Dis
+instructions.  Whatever its longest pass costs is added to every wake
+that lands behind it.
+.PP
+.B "Hard real time is admission control, and Plan 9's is already here."
+.CW os/inferno/port/edf.c
+is the earliest-deadline-first scheduler from the Plan 9 real-time work
+\(em 679 lines, with release timers, cost budgets, deadline notes and
+schedulability admission.
+.CW Proc
+carries an
+.CW Edf* ,
+.CW schedinit()
+calls
+.CW edfrecord() ,
+.CW taslock.c
+has a branch for a lock taken by an admitted process, and
+.CW runq
+reserves
+.CW PriEdf
+and
+.CW PriRelease
+above every ordinary queue.  It compiles for this board unchanged;
+.CW "7c ../port/edf.c"
+produces nothing but format warnings.
+.PP
+What is missing is three things, and the third is the interesting one.
+.IP 1.
+.CW edf.c
+is not linked.
+.CW raspi3b/stubs.c
+supplies six empty functions with the comment "EDF scheduler optional
+\(em classic Inferno ready queue only", and every board here does the
+same.  Linking the real one is a line in the mkfile and deleting the
+stubs.
+.IP 2.
+Nothing can admit a process.  Plan 9 writes
+.CW admit ,
+.CW period ,
+.CW cost
+and
+.CW deadline
+to
+.CW /proc/ n /ctl ;
+.CW port/devproc.c
+carries that code and its whole
+.CW ctl
+body is commented out, because Inferno's process files are
+.CW /prog ,
+served by
+.CW devprog.c ,
+which has no such verbs.  They have to be written there.
+.IP 3.
+.B "A Dis program is not a process."
+Many
+.CW Prog s
+share one interpreter kproc and take turns inside
+.CW vmachine() 's
+loop; EDF schedules
+.CW Proc s.
+So admitting a Limbo program to a deadline means deciding which of
+these it is: give the admitted
+.CW Prog
+a kproc of its own, so that EDF is scheduling the thing that has the
+deadline \(em which is what this kernel already does for a
+.CW Prog
+blocked in a system call, and is the honest answer; or admit the
+interpreter kproc and schedule
+.CW Prog s
+within it, which gives the VM a guaranteed share and gives no
+individual program anything.  The first is the one worth building and
+it is not free: it means a
+.CW Prog
+that is admitted stops sharing the token round-robin and holds it for
+its budget, which is exactly what a deadline means and exactly what
+.CW acquire() /
+.CW release()
+were not written to express.
+.PP
+The order is: measure the three soft-real-time terms first, because
+they bound what any hard guarantee can promise \(em an admitted process
+cannot beat the worst ilock \(em then link
+.CW edf.c ,
+then the
+.CW /prog
+verbs, then the kproc-per-admitted-Prog question.  A test that proves
+it: a Limbo program admitted at a 10ms period and a 2ms cost, driven by
+one of this board's real timers, holding its deadline while
+.CW fatstress
+reams the card and the ethernet runs.  That is a number, and this board
+can print it.
 .NH 2
 Suggested order
 .PP
@@ -4339,3 +4521,14 @@ this tree wrote and a part it has now met; then USB storage and the
 keyboard on the board; then the
 SD/Wi-Fi controller question; then DMA for SD; then the peripherals
 nothing is currently attached to.
+.PP
+Real time runs alongside that rather than after it, because its first
+three steps are measurements and the board takes them while it is
+doing everything else: the longest ilock, the longest GC pass, and the
+spins the drivers keep on purpose.  Those give the soft bound a number.
+Linking
+.CW edf.c ,
+the
+.CW /prog
+admission verbs and the kproc-per-admitted-Prog question follow, and
+that is the hard half.

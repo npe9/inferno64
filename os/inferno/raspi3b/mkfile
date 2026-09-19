@@ -57,7 +57,13 @@ HFILES=\
 	dat.h\
 	io.h\
 
-CFLAGS=-wFV -I. -I../port -I../ip -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp
+#
+# ILOCKTRACE compiles in the measurement of how long this kernel keeps
+# interrupts masked (port/taslock.c, read with "echo ilock >/dev/sysctl").
+# It is still off at runtime until switched on; the define is what adds
+# the Lock field it needs, which only this board's dat.h carries.
+#
+CFLAGS=-wFV -DILOCKTRACE -I. -I../port -I../ip -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp
 KERNDATE=`{$NDATE}
 
 default:V: i$CONF

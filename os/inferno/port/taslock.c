@@ -8,6 +8,25 @@
 
 long maxlockcycles;
 long maxilockcycles;
+/*
+ * How long interrupts stay masked, which is the term every other
+ * latency in this kernel sits on top of.  ilock() masks them and
+ * iunlock() restores them, so the interval between the two is exactly
+ * the window in which a device interrupt cannot be taken -- and
+ * nothing in this tree had ever measured it.  A process admitted to a
+ * deadline cannot beat the worst one of these, so it is the first
+ * number the real-time work needs; see doc/raspi3b-completion-plan.ms.
+ *
+ * Off by default and switched on from the console --
+ * "echo ilock on >/dev/sysctl", "echo ilock >/dev/sysctl" to read and
+ * reset -- because it costs two counter reads on every ilock in the
+ * kernel, which is every interrupt and every queue operation.  Off it
+ * is one predictable branch.  The Lock carries the start time, so a
+ * lock taken before tracing was switched on has lockcycles >= 0 and is
+ * skipped rather than reported as an interval since the epoch.
+ */
+int ilocktrace;
+ulong nilocktraced;
 long cumlockcycles;
 long cumilockcycles;
 uintptr maxlockpc;
@@ -158,6 +177,10 @@ acquire:
 	l->p = up;
 	l->m = MACHP(m->machno);
 	l->isilock = 1;
+#ifdef ILOCKTRACE
+	if(ilocktrace)
+		l->lockcycles = -lcycles();
+#endif
 #ifdef LOCKCYCLES
 	l->lockcycles = -lcycles();
 #endif
@@ -233,6 +256,19 @@ void
 iunlock(Lock *l)
 {
 	ulong sr;
+
+#ifdef ILOCKTRACE
+	if(ilocktrace && l->lockcycles < 0){
+		l->lockcycles += lcycles();
+		cumilockcycles += l->lockcycles;
+		nilocktraced++;
+		if(l->lockcycles > maxilockcycles){
+			maxilockcycles = l->lockcycles;
+			maxilockpc = l->pc;
+		}
+		l->lockcycles = 0;
+	}
+#endif
 
 #ifdef LOCKCYCLES
 	l->lockcycles += lcycles();

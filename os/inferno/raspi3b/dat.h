@@ -86,6 +86,7 @@ struct Lock
 	int	pri;
 	u32	priority;
 	u16	isilock;
+	long	lockcycles;	/* when ilocktrace is on; see taslock.c */
 	Mach	*m;
 	Proc	*p;
 };

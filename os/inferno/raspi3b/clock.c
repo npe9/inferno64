@@ -27,6 +27,21 @@ now(void)
 	return u;
 }
 
+/*
+ * A cheap monotonic count for measuring short intervals.  CNTPCT runs
+ * at CNTFRQ, 19.2MHz on this part, so one tick is about 52ns and a
+ * 32-bit long wraps after about three and a half minutes -- which is
+ * why only differences are ever taken from it.
+ */
+long
+lcycles(void)
+{
+	uvlong u;
+
+	cycles(&u);
+	return (long)u;
+}
+
 /* Next deadline: HZ period, or sooner soft timer if one is pending. */
 uvlong
 timernext(uvlong hznext)
