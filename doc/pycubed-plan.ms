@@ -817,26 +817,50 @@ says on a booted board that they answer, so the cost of this is a
 .CW /dev/radio
 and the mission code that opens it.
 .NH 2
-What that leaves not free
+What that leaves not free, which is four bytes
 .PP
-One thing, and it is real.  Styx assumes an ordered, reliable transport
-and an RFM9x does not provide one: it is a framed packet radio with a
-payload of a couple of hundred bytes, no retransmission and no ordering.
+Styx assumes an ordered, reliable transport.
 .I Ssl (3)
 delimits messages and digests them \- it will refuse a corrupted read \-
-but it does not resend one.  So something under Styx has to retry, and
-that is either a small reliable-datagram layer over the radio device or
-the tree's IP stack over a Medium, which is
-.CW devether.c
-with
-.CW ethermedium.c
+but it does not resend one, so something under Styx has to.  The first
+draft of this section said that was a reliable-datagram layer to be
+written.  Reading
+.CW lib/pycubed_rfm9x.py
+says otherwise: the driver already carries one.  It is
+RadioHead-compatible \- a four-byte header of destination, source,
+identifier and flags,
+.CW _RH_FLAGS_ACK
 and
-.CW pktmedium.c
-as the shapes to copy.  This is the piece to cost, and it is much
-smaller than the thing it replaces: a retry-and-sequence layer is not a
-command table, a packet format, an authorisation scheme and an
-.CW exec ()
-.
+.CW _RH_FLAGS_RETRY ,
+a sequence number, and
+.CW send_with_ack ()
+with
+.CW ack_retries
+and
+.CW ack_wait .
+Retransmission, ordering and addressing are there and are part of what
+phase 2 ports to C anyway.
+.PP
+What is left is a size.  That header leaves, in the driver's own words,
+252 bytes of payload.  And
+.CW os/inferno/port/devmnt.c:195
+is
+.DS
+.CW "if(f.msize<256 || f.msize>1024*1024)"
+.CW "	error(\(dqnonsense value of msize in fversion\(dq);"
+.DE
+so the smallest Styx message size a mount will negotiate is 256.  Four
+bytes over.  That is the whole of the gap between what the radio carries
+and what Styx needs, and it has three answers rather than a project:
+drop the RadioHead header and use the SX127x's own framing, which gives
+255; segment a Styx message across two packets in the radio device; or
+lower that floor, which is a constant with no derivation behind it in a
+kernel where
+.CW IOHDRSZ
+is 24, so a 256-byte message carries 232 bytes of data and a 240-byte
+one would carry 216.  Deciding which needs the board.  None of them is
+a command table, a packet format, an authorisation scheme and an
+.CW exec () .
 .PP
 Also not free, and unchanged from the earlier sections: the four bus
 drivers, and the LED, burn wires and ADC, for which Inferno has no
