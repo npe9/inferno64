@@ -653,6 +653,102 @@ printgrp(Prog *p, char *v)
 	print("]\n");
 }
 
+/*
+ * ^C on the console: kill whatever is holding it.
+ *
+ * Same principle as ^\ in devcons.c, and for the same reason.  A
+ * program that will not stop cannot be killed through a file, because
+ * writing /prog/n/ctl needs a shell and the shell is the thing that is
+ * blocked behind it.  The console's receive path still runs -- every
+ * character typed is still echoed -- so that is where the question goes
+ * in.  It only sets a flag and wakes this kproc: killing a Dis process
+ * needs the interpreter acquired, which an interrupt handler cannot do.
+ *
+ * What it kills, and why that rule.  Everything the console starts ends
+ * up in the process group of the first Dis program, so that group is
+ * "what the console is running" -- and its leader is the shell itself,
+ * which is the one thing that must survive or there is nothing left to
+ * type at.  So: every program in that group except the leader.  The
+ * cause is "interrupted" rather than "killed" because that is the word
+ * the program prints on its way out, and it is what happened.
+ *
+ * A program not started from the console -- a server in its own group,
+ * like dossrv -- is deliberately untouched.  ^C is for the thing in
+ * front of you, not for the machine.
+ */
+static Rendez	intrr;
+static int	intrwanted;
+
+static int
+intrready(void*)
+{
+	return intrwanted;
+}
+
+void
+consinterrupt(void)
+{
+	intrwanted = 1;
+	wakeup(&intrr);
+}
+
+void
+consintrproc(void*)
+{
+	Prog *p, *f;
+	Progs *g;
+	int *pids, npid, i, n;
+
+	for(;;){
+		sleep(&intrr, intrready, nil);
+		intrwanted = 0;
+		acquire();
+		if(waserror()){
+			release();
+			continue;
+		}
+		p = progpid(1);
+		if(p == nil || p->group == nil){
+			print("^C: nothing running\n");
+			poperror();
+			release();
+			continue;
+		}
+		g = p->group;
+		/*
+		 * Take the pids first and walk them afterwards.  killprog()
+		 * can take a program off this very list, so holding a Prog*
+		 * across it is how killgrp() below says not to do it.
+		 */
+		npid = 0;
+		for(f = g->head; f != nil; f = f->grpnext)
+			npid++;
+		pids = malloc(npid*sizeof(int));
+		if(pids == nil){
+			poperror();
+			release();
+			continue;
+		}
+		npid = 0;
+		for(f = g->head; f != nil; f = f->grpnext)
+			pids[npid++] = f->pid;
+		n = 0;
+		for(i = 0; i < npid; i++){
+			if(pids[i] == p->pid)
+				continue;	/* not the shell */
+			f = progpid(pids[i]);
+			if(f != nil && f != currun()){
+				killprog(f, "interrupted");
+				n++;
+			}
+		}
+		free(pids);
+		print("^C: interrupted %d\n", n);
+		poperror();
+		release();
+	}
+}
+
 int
 killgrp(Prog *p, char *msg)
 {

@@ -172,6 +172,12 @@ consdumpproc(void*)
 int
 consdebugchar(int ch)
 {
+	extern void consinterrupt(void);
+
+	if(ch == 0x03){		/* ^C: kill what the console is running */
+		consinterrupt();
+		return 1;
+	}
 	if(ch != 0x1c)		/* ^\ */
 		return 0;
 	dumpwanted = 1;
@@ -719,6 +725,17 @@ consinit(void)
 	 * aid becomes the second fault.
 	 */
 	kproc("consdump", consdumpproc, nil, 0);
+	/*
+	 * And one for ^C, for the same reason and with the same shape:
+	 * killing a Dis program needs the interpreter acquired, which the
+	 * console's receive path cannot do.  dis.c has it, because that
+	 * is where the process groups are.
+	 */
+	{
+		extern void consintrproc(void*);
+
+		kproc("consintr", consintrproc, nil, 0);
+	}
 /*
 	debugkey('f', "files/6", fddump, 0);
 	debugkey('q', "panic", qpanic, 1);
