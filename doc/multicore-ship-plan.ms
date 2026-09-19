@@ -138,37 +138,51 @@ it prints them all.  And the number that matters for a product, which
 nobody has yet: the throughput difference between the flag off and on,
 measured the way Phase D measures everything else.
 .NH 1
-Phase D \- the evidence that would justify flipping the default
+Phase D \- answered, and the answer is no
 .PP
-What exists is one workload, one architecture, one boot per arm.  What
-is needed before
+Twenty Compute Engine instances, four Xeons each, UEFI disk boot, 48,000
+guest ticks.  Full numbers and the two instrument fixes are in
+.CW doc/multicore-plan.ms .
+The short of it:
+.IP \(bu
 .CW "parallelvm = 1"
-is a default:
+panicked on three of four instances running the channel workload at
+four processors \(em two page faults inside
+.CW dis
+processes and one
+.CW "checkb 4 qconsume" ,
+a queue block whose write pointer had passed its limit with a live
+.CW malloctag ,
+which is memory corruption.  The block's tag names
+.CW qiwrite
+as its allocator.  No QEMU batch on this branch has ever produced any
+of these, at any width.
 .IP \(bu
-Three boots an arm at
-.CW "-smp 4" ,
-instrumentation off, plus the
-.CW *ncpu=1
-control on the same hardware.  The control is not optional: on the
-laptop it put the uniprocessor component at 2.7x and on real hardware it
-was 1.6x, so it has to be re-run per platform rather than carried over.
+The module-loading workload, which this plan predicted would be the
+parallel VM's worst case, is its best: 3.3x, six instances, six clean
+boots.  Channel traffic, predicted to be its best case, gives 1.4x and
+is the one that corrupts memory.
 .IP \(bu
-A second workload that is not chantest.  Channel traffic is the case
-the parallel VM is best at; something allocation-heavy or
-module-loading-heavy would say whether the 4x is the workload or the
-kernel.
+Four processors with the lock are worth eight per cent over one.
 .IP \(bu
-arm64 on real hardware.  virtarm64 has never run anywhere but QEMU on
-this branch, and cloud-port's
-.CW virtarm64cloud
-boots on a t2a, which is the obvious vehicle.
+.CW CHANTEST-OK
+was measuring the serial console, not the kernel \(em four instances
+returned 645 each, one-processor controls returned 645, 648, 645.  Dis
+quanta per tick replaces it everywhere.
+.IP \(bu
+The host-speed calibration loop works: nineteen of twenty instances
+within 0.06 per cent, and it caught the twentieth at 31 per cent slow.
 .PP
-.B Acceptance:
-a consistent gain at four processors across two workloads and two
-architectures, with no panic in the batch, or an honest statement of
-which workloads it does not help.
+.B "So the default stays 0, and the next work is the corruption."
+Three reproductions exist, on hardware, with a named allocator.  What is
+needed is a reproduction that can be iterated faster than a
+fifteen-minute cloud round trip; nested virtualisation was the obvious
+vehicle and does not boot (below).
 .NH 1
 Phase E \- the open correctness items
+.IP \(bu
+.B "The parallelvm memory corruption," above.  This is now the first
+item, not a Phase D footnote.
 .IP \(bu
 .CW stoptheworld()
 waits only for contexts with
@@ -182,17 +196,27 @@ setting
 .CW Pready
 before it links.  The persistence check is in place and has not fired.
 .IP \(bu
+Nested virtualisation hangs at
+.CW schedinit
+with the clock running and no Dis quantum ever executed, on both boot
+paths, at 1, 2 and 4 vCPUs but not 8.  Not a platform this kernel has
+to run on; recorded, not chased.
+.IP \(bu
+.CW _allocb
+carries a comment recording
+.CW msize()
+returning two different values for the same block on a single-vCPU
+harness.  That is the allocator disagreeing with itself, and it is now
+a suspect in the corruption above rather than a curiosity.
+.PP
+.B "Closed since this plan was written:"
 .CW nucleof303
-does not link \(em
-.CW "utflen: span looping !"
-out of
-.CW tl
-\(em and did not before this work.
+links and builds.
 .NH 1
 How to run any of this
 .PP
 .B "Boards."
-.CW "for b in pc64 virtarm64 raspi3b virt virts virt32 virt32s shakti sifiveu spike armv7 mangopi mps2 teensy41; do (cd os/inferno/$b && mk install); done"
+.CW "for b in pc64 virtarm64 raspi3b virt virts virt32 virt32s shakti sifiveu spike armv7 mangopi mps2 teensy41 nucleof303; do (cd os/inferno/$b && mk install); done"
 \(em check the exit status, not the output: the words "not declared"
 and "undefined external" do not contain "rror".
 .PP
