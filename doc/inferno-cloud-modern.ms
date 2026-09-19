@@ -1,0 +1,2788 @@
+.TL
+A cloud system built out of namespaces
+.AU
+.SH
+Abstract
+.PP
+.CW os/inferno/pc64
+boots on Compute Engine, on both of an
+.CW e2-micro 's
+processors, holds state on a persistent disk across a reboot, takes a
+DHCP lease from Google's server and answers a keystroke on the serial
+console.  That is a port, not a system.  This is the plan for what to
+build on top of it, what claim it is meant to test, and what result
+would show the claim to be wrong.
+.PP
+Everything said here about the tree was run.  Everything not yet run is
+marked as such.
+.NH 1
+The claim
+.PP
+An ordinary cloud workload is a Linux virtual machine, containers on
+top of it for namespace isolation, a service mesh above that for naming
+and routing, a provider SDK for each service it touches, and a
+configuration language to tie the parts together.  Four of those five
+layers exist to supply something the operating system does not.
+.PP
+Inferno already has three of them as kernel primitives.  A per-process
+namespace is what a container approximates.  Styx makes a remote
+resource a name you mount rather than an endpoint you call.  Dis is
+portable, so one binary runs on any processor the kernel runs on.
+.PP
+The claim is that putting distribution in the operating system is
+cheaper than assembling it above one.  It is a claim about cost, so it
+is settled by measurement and not by argument, and the measurements do
+not exist.  That is the largest single gap in this plan.
+.NH 1
+What is true today
+.PP
+Verified in this tree, by running it:
+.IP \(bu
+The kernel with its entire root is 8.3 MB; the whole bootable cloud
+image is 2.1 MB compressed, which is smaller than most container base
+layers.
+.IP \(bu
+Both vCPUs of an
+.CW e2-micro
+come up and stay up.  Until the interrupt-return fix, a two-processor
+instance had roughly even odds of panicking before reaching a shell.
+.IP \(bu
+State survives a reboot.
+.CW scripts/check-pc64-disk.sh
+reams a file system onto a raw virtio disk, writes a file, cold-boots
+the kernel and reads it back, with a fresh nonce each run, for both
+.CW disk/kfs
+and
+.CW disk/kfs64 .
+.IP \(bu
+The network works: virtio-net, a DHCP lease from the provider's own
+server, and the loader's
+.CW *e820
+path through UEFI.
+.IP \(bu
+Console input works, which is the only way in without a network
+service.
+.NH 1
+What is missing
+.PP
+Stated plainly, because the plan below is mostly about closing these:
+.IP \(bu
+No HTTP client.
+.CW appl/lib/url.b
+parses a URL and nothing speaks the protocol.
+.IP \(bu
+No TLS on this branch.  It exists on
+.CW inferno-rio
+as
+.CW tls12(2)
+and
+.CW https(2) ,
+with a frozen CA bundle, and it is Limbo over
+.CW libkeyring ,
+which the native kernel already links.
+.IP \(bu
+No object storage client.
+.CW s3.b
+and
+.CW awsv4.b
+exist on
+.CW inferno-rio .
+.IP \(bu
+No network service in the kernel root.
+.CW styxlisten.dis
+is built and simply not listed in
+.CW os/inferno/pc64/pc64 .
+.IP \(bu
+No measurements of anything: not latency, not boot time, not memory
+floor.
+.IP \(bu
+No supervision, no log or metric story, and no notion of a fleet.  One
+image is one machine.
+.NH 1
+The plan
+.NH 2
+Phase 1: credentials and reach
+.PP
+Everything else needs these, and they are small.
+.IP "1." 5
+An HTTP/1.1 client in Limbo.  The metadata service is plain HTTP on a
+link-local address, so this is needed before TLS and is useful without
+it.
+.IP "2." 5
+.CW /cloud
+as a namespace: the provider's metadata served as a file tree by a
+.CW styxservers
+program \(em instance identity, zone, machine type, attributes, and the
+service-account token.  End state:
+.CW "cat /cloud/token"
+instead of an SDK.  This is the seed of the whole idea, because every
+cloud SDK's first act is exactly this fetch.
+.IP "3." 5
+.CW tls12
+and
+.CW https
+carried across from
+.CW inferno-rio .
+.IP "4." 5
+A GCS client.  Google's authentication is a bearer token in a header
+with no request signing, so with 2 and 3 done this is small.  End
+state: durable storage that survives the zone, not just the instance.
+.CW s3.b
+and
+.CW awsv4.b
+then give AWS, and GCS's S3-compatible endpoint gives a second route.
+.NH 2
+Phase 2: the fleet as a namespace
+.IP "5." 5
+.CW styxlisten
+in the kernel root, and a service that exports a namespace.
+.IP "6." 5
+Two instances on the provider's internal network: one exports
+.CW /dis
+and a work directory, the other mounts it and runs a program out of it.
+Nothing is installed on the second machine.  End state: a distributed
+system assembled from
+.CW bind
+and
+.CW mount .
+.IP "7." 5
+Authentication between them:
+.CW factotum
+with a secret fetched from the metadata service or from object storage,
+so that two machines that have never met can agree on who they are.
+.NH 2
+Phase 3: measure the claim
+.PP
+This is the part that produces knowledge rather than software, and it is
+the part most likely to be skipped.
+.IP "8." 5
+Styx round-trip between two instances against raw TCP on the same pair,
+and against a conventional RPC on Linux on the same instance shape.  If
+mounting a remote namespace costs three times a direct call, that is an
+argument against the whole design and should be published as one.  If
+it costs a tenth more, that is a much more interesting result.  Nobody
+has this number for a real cloud network.
+.IP "9." 5
+Boot to shell, against a minimal Linux image on the same shape.  A
+2.1 MB image with its root compiled in is a different point in the
+cold-start design space and the difference should be a number.
+.IP "10." 5
+The memory floor: the smallest instance the kernel will run useful work
+on.  Density is what cloud economics is made of.
+.IP "11." 5
+The same Dis binary, unmodified, on an amd64 instance and an arm64
+instance, sharing one namespace.  GCE rents both, and this tree already
+boots arm64 under UEFI \(em the disk script does not yet emit a GCE
+tarball, which is the only gap.  Migrating between processor families
+is a live and expensive industry problem that is normally solved by
+recompiling and re-qualifying an entire stack; here there is nothing to
+recompile, and that is worth demonstrating rather than asserting.
+.NH 2
+Phase 4: what a service actually needs
+.IP "12." 5
+Supervision: notice a failed process and restart it.
+.CW /prog
+already exposes every process as files, so this is a program and not a
+kernel change.
+.IP "13." 5
+Logs and metrics as a mountable file tree, so that observing a machine
+is the same operation as reading one.
+.IP "14." 5
+Update: republish the image and recreate the instance, or mount a new
+.CW /dis
+and restart.  The second is the interesting one, because it is a
+deployment with no image build.
+.NH 1
+Principles to hold to
+.PP
+These are what would make the result modern rather than a revival.
+.IP \(bu
+The provider's control plane is a namespace, not an SDK.
+.IP \(bu
+The unit of deployment is a namespace, not a container image.
+.IP \(bu
+Code is mounted, not installed.  A small immutable image plus a mounted
+.CW /dis
+is the shape.
+.IP \(bu
+Heterogeneous processors are free, because Dis is portable.  Do not
+spend that advantage on native code.
+.IP \(bu
+Publish the measurements even when they are bad.  The claim in section
+1 is falsifiable and should be treated that way.
+.NH 1
+Non-goals
+.PP
+This is not a replacement for a container orchestrator, and saying so
+early is cheaper than being asked later.  It has no multi-tenancy
+story: namespace isolation protects a process from mistakes, not a
+tenant from an adversary, and nothing here has been examined by anyone
+looking for a way through.  It is not ready to carry production
+traffic, and will not be until at minimum TLS, supervision and the
+Phase 3 numbers exist.
+.NH 1
+What would falsify the claim
+.PP
+Three results would sink it, and all three are cheap to obtain.  If
+Styx round-trips cost several times a conventional RPC on the same
+network, the file abstraction is too expensive for the thing it is
+meant to replace.  If the kernel cannot hold a useful working set in
+the memory of the smallest rentable instance, the density argument goes
+with it.  And if a namespace mounted across two machines turns out to
+need a supervisor, a retry policy and a naming service to be usable in
+practice, then the four layers have been reinvented rather than
+removed, and the honest conclusion is that they were load-bearing all
+along.
+.NH 2
+Phase 2: one Inferno mounts another, and the line that stopped it
+.LP
+Item 5 is
+.CW styxlisten
+in the root and a service that exports a namespace; item 6 is a second
+machine mounting it.  Both work now:
+.DS
+.CW
+(kernel)  cloudinit; styxlisten -A -s tcp!*!6666 export /
+(client)  mount -A tcp!127.0.0.1!PORT /n/remote
+          ls /n/remote
+          /n/remote/chan  /n/remote/dev  /n/remote/dis  /n/remote/net
+          /n/remote/prog  /n/remote/proc ...
+.DE
+That is a hosted
+.CW emu
+reading the whole namespace of a kernel on the other side of a TCP
+connection, on two processors, with nothing installed on either side
+for the purpose.
+.PP
+Underneath it, the listening half of the stack is now proved and has a
+regression test.  Nothing this branch had written for the cloud ever
+listened \(em
+.CW hget ,
+.CW gcs ,
+.CW cloudfs
+and
+.CW cloudinit
+all dial out \(em so
+.CW announce()
+and
+.CW accept()
+had never run on a native kernel.
+.CW tcpserve (1)
+and
+.CW scripts/check-pc64-tcp.sh
+run them.
+.PP
+.B "What stopped it was one missing line in qlock()."
+A client mount killed the kernel with
+.DS
+.CW
+RDY: pid 21 state 8 r 0xe696698 from 0x29df11
+e696698 e696698 2
+panic: wakeup: state
+.DE
+.CW qlock()
+appends
+.CW up
+to the queue and sets
+.CW up->eql ,
+.CW up->state
+and
+.CW up->qpc
+\(em but never
+.CW up->qnext .
+It is the only enqueue in
+.CW os/inferno/port/qlock.c
+that did not:
+.CW eqlock ,
+.CW rlock
+and
+.CW wlock
+all clear it, and so does
+.CW os/9front/port/qlock.c ,
+which this came from.
+.PP
+So the tail of the queue kept whatever
+.CW qnext
+that process had the last time it was queued anywhere, and
+.CW qunlock 's
+.DS
+.CW
+q->head = p->qnext;
+.DE
+walked off into that stale value and installed a process that had long
+since moved on as the queue head.  A later
+.CW qunlock
+then readied it wherever it was \(em caught above readying pid 21 in
+state 8
+.CW ( Wakeme )
+with its
+.CW Rendez
+still set, from
+.CW qunlock+0x6f ,
+one instruction before
+.CW wakeup()
+found
+.CW r->p
+naming a process that was
+.CW Ready
+rather than
+.CW Wakeme
+and panicked.
+.PP
+Exporting a namespace is what exposed it:
+.CW exportfs 's
+slaves queue on one
+.CW QLock
+and sleep on one
+.CW Rendez ,
+which is the combination that turns a stale link into a wakeup of the
+wrong process.  It is not an SMP race \(em it happens with one
+processor \(em and it was in the port for every board, not just this
+one.
+.NH 2
+Phase 3 begun: the first measurement, and why its number does not count
+.LP
+Section "measure the claim" above says the claim this plan rests on is
+about cost, that it is settled by measurement rather than argument, and
+that the measurements do not exist.  The first of them now half exists.
+.PP
+.CW styxbench (1)
+times the same exchange three ways against one server: a write and read
+on a bare TCP connection, sequential reads of a file on a mounted
+namespace, and reads of that file at offsets a megabyte apart so the
+mount driver's readahead cannot answer one from another.
+.CW tcpserve (1)
+gained an echo mode to be the raw half's other end.
+.PP
+.B "The number it produces is not usable, and the reason is the useful part."
+Across three runs of 3000 iterations it reports Styx at 0.4 times the
+cost of raw TCP, stable to one decimal.  An abstraction cannot cost
+less than the transport it is carried on, and that is how the flaw was
+found rather than published: the Styx half is answered by the kernel,
+.CW exportfs
+reading
+.CW /dev/zero
+in C, while the raw half is answered by
+.CW tcpserve ,
+a Limbo program paying Dis interpretation on every exchange.  The ratio
+measures which language the server is written in.
+.PP
+A sound version needs both halves answered by the same kind of server:
+a raw echo served by the kernel, which does not exist, or the Styx half
+served by a Limbo file server so that both pay Dis.  That is the next
+piece of work on this item.
+.PP
+Two smaller results are sound and worth keeping.  The transport here is
+QEMU's user-mode networking and it is jittery: at 300 iterations the
+ratio ranged from 0.3 to 1.3 across runs and only settled at 3000, so
+any version of this experiment needs its iteration count justified
+rather than assumed.  And the gap between sequential and jumping reads
+is the mount driver's readahead, which is real and is what the file
+abstraction buys back on a sequential caller \(em that part of the
+comparison is between like and like, because both halves of it are
+Styx.
+.NH 2
+The first sound number: a Styx round trip costs 1.2 to 1.5 times a TCP exchange
+.LP
+The measurement above was rejected because its two halves were answered
+by different kinds of server.
+.CW zerofs (1)
+fixes that: a file server written in Limbo, serving one file of zeros,
+so that the Styx half pays Dis interpretation exactly as
+.CW tcpserve
+.CW -e
+does on the raw half.  Both ends are then the same kind of program, the
+same client drives both, and what is left between them is the protocol.
+.PP
+Three runs of 3000 iterations of 64 bytes, client a hosted
+.CW emu ,
+server a native kernel, transport QEMU user-mode networking:
+.TS
+center;
+l r r r.
+_
+	raw tcp	styx seq	styx jumping
+_
+run 1	2040 us	2439 us (1.1x)	2611 us (1.2x)
+run 2	1446 us	1902 us (1.3x)	2257 us (1.5x)
+run 3	1057 us	1214 us (1.1x)	1680 us (1.5x)
+_
+.TE
+.PP
+.B "A Styx round trip costs about 1.2 to 1.5 times a bare TCP exchange"
+on this path.  The absolute figures swing by a factor of two between
+runs, which is the transport and not the protocol; the ratio is what
+holds, and the ratio is what should be quoted.
+.PP
+Section "what would falsify this" names the threshold: if Styx
+round-trips cost several times a conventional call, the file
+abstraction is too expensive for the thing it replaces.  One and a half
+times is not several times.  On this evidence the cost objection does
+not sink the design \(em with three caveats that keep it from being the
+final word.  The transport is a NAT on one host, not a network.  The
+comparison is against a raw TCP exchange, not against a conventional
+RPC with its own framing and serialisation, which would be a fairer
+stand-in for what the design replaces and would very likely narrow the
+gap further.  And client and server are not two like machines.  The
+plan's own version \(em two instances on a real network \(em is still
+the one that settles it.
+.PP
+The readahead result stands separately and is like-for-like, both
+halves of it being Styx: sequential reads cost consistently less than
+reads at offsets a megabyte apart, which is the mount driver answering
+from a buffer rather than from the wire.  That is what the file
+abstraction buys back on a caller that reads in order.
+.NH 2
+The experiment this plan actually specified: two instances, real network
+.LP
+Section "measure the claim" asks for the Styx round trip between two
+instances, not between a hosted client and a guest through a NAT.  Two
+Compute Engine
+.CW e2-micro
+instances, both running this kernel, on the provider's internal network
+\(em
+.CW inferno-bench-a
+at 10.128.0.29 serving
+.CW zerofs
+and
+.CW "tcpserve -e" ,
+.CW inferno-bench-b
+at 10.128.0.30 mounting and measuring:
+.TS
+center;
+l r r r.
+_
+size	raw tcp	styx seq	styx jumping
+_
+64	440 us	373 us (0.8x)	393 us (0.8x)
+64	397 us	367 us (0.9x)	367 us (0.9x)
+64	367 us	470 us (1.2x)	397 us (1.0x)
+512	327 us	387 us (1.1x)	433 us (1.3x)
+_
+.TE
+.PP
+.B "On a real network a Styx round trip costs about what a raw TCP"
+.B "request and reply costs"
+\(em 0.8 to 1.3 times it across these samples, which is parity within
+the run-to-run spread, with a little more cost at the larger payload.
+The absolute figures are also four to five times better than the QEMU
+ones, and far steadier, which says most of what the earlier numbers
+measured was the NAT.
+.PP
+.B "What the comparison still is not."
+Both sides are one network round trip, so the transport dominates and
+what separates them is implementation.  On the Styx side the client is
+the kernel's mount driver, in C, and the whole exchange is one system
+call.  On the raw side the client is a Limbo program making two \(em a
+write and a read \(em and paying Dis for the loop between them.  That
+asymmetry cannot be removed while comparing "read a file" with "send a
+request and wait for a reply", because the first genuinely is one
+operation and the second genuinely is two.  It is arguably the
+design's advantage rather than a flaw in the measurement, but it is not
+a measurement of the protocol in isolation and should not be quoted as
+one.
+.PP
+The earlier figure of 1.2 to 1.5 times, from the QEMU pair, used a
+hosted
+.CW emu
+as the client, whose mount driver is emu's own C rather than a
+kernel's.  Both numbers are kept above; the two-instance one is the
+one this plan asked for.
+.PP
+So the cost objection in "what would falsify this" is answered as far
+as this experiment can answer it: a mounted namespace is not several
+times more expensive than the raw exchange it replaces.  It costs about
+the same.  What remains untested is the comparison against a
+conventional RPC with its own framing and serialisation, which is the
+thing a real service would otherwise use, and which would carry costs
+Styx does not.
+.NH 2
+Merging the multicore branch
+.PP
+The
+.CW multicore
+branch carries arm64 SMP and a parallel Dis VM.  An earlier note in
+this document said the two branches had forked architecturally over the
+per-Dis-word-size generated headers
+.CW ( libinterp/w4 ,
+.CW libinterp/w8 ),
+and that the fork needed a decision.  That was wrong, and wrong in the
+direction that makes it worth recording: it was
+.I multicore
+that tracked those 22 headers and this branch that did not, and the
+generation rules in the two mkfiles are byte-identical.  The claim came
+from reading a
+.CW "git ls-tree"
+diff in the wrong direction.  There was no fork, only ordinary merge
+work, and this section is what that work turned out to be.
+.PP
+.B "What was taken."
+The Dis VM wholesale \(em
+.CW libinterp/xec.c ,
+.CW heap.c ,
+.CW gc.c
+and
+.CW include/interp.h ,
+which carries the
+.CW Prog.R
+to
+.CW Prog.reg
+rename, the
+.CW disreg.h
+context register and the
+.CW trackpoint
+declaration \(em together with
+.CW os/inferno/port/dis.c ,
+the two
+.CW utils/6c
+files that reserve the register it needs, and
+.CW libkern/ainc-aarch64.s .
+The parallel VM is board-independent, so every board gets it.
+.PP
+.B "What was not taken: the arm64 secondary bring-up."
+Both branches wrote it, in different files.  This one has
+.CW os/inferno/virtarm64/startcpu.c
+driven from
+.CW main.c 's
+.CW startcpus() ;
+multicore has no
+.CW startcpu.c
+at all and does the work inline in
+.CW main.c ,
+with its own
+.CW _secondary
+in
+.CW l.s .
+Taking either side discards a working implementation, and neither is a
+verified baseline: this branch's secondaries answer, report their
+MPIDRs and then idle at
+.CW "conf.nmach 1" ,
+and multicore's are switched off because one boot in ten shows Dis heap
+corruption.  So
+.CW os/inferno/virtarm64
+is left exactly as this branch had it \(em which is the configuration
+that passes UEFI 10/10,
+.CW "-smp 4"
+and
+.CW "-smp 17"
+to an interactive shell, and
+.CW ARM64-DISK-OK .
+Reconciling the two designs is the arm64 session's call, not a merge
+conflict to be resolved by picking a side.
+.PP
+That also keeps the fix this branch made to that board.  Its trap
+return does not reload
+.CW up
+and
+.CW m
+from the saved
+.CW Ureg
+.CW ( 2f640d0f ),
+and multicore's still does \(em
+.CW "MOV UR_R26(RSP), R26"
+and
+.CW UR_R27 .
+On one processor that is harmless.  Once cpu1 runs processes it is the
+arm64 twin of the
+.CW "POPQ R14; POPQ R15"
+that was the whole of pc64's SMP corruption, where the fix took 4-of-4
+boots faulting to 20-of-20 clean.  It is therefore the first thing to
+try against multicore's one-in-ten, and it is a live bug there rather
+than a latent one.
+.PP
+.B "Four things the merge broke that the build caught, and one it did not."
+Taking a side wholesale lost real work each time, and only reading the
+removed lines found it.  Taking multicore's
+.CW pc64/l.s
+dropped this branch's PVH entry point, the direct-boot ABI Xen,
+Firecracker and Cloud Hypervisor use.  Taking its
+.CW pc64/trap.c
+dropped the
+.CW #GP
+recovery for
+.CW rdmsr / wrmsr
+.CW ( 761f7bbb ),
+without which
+.CW devarch.c 's
+"returns \-1 if it trapped" contract does not exist \(em one of the two
+bugs only real hardware found.  Both were spliced back onto multicore's
+files rather than resolved by picking a side.  Going the other way,
+multicore's
+.CW devprog.c
+called a
+.CW disracepid
+probe whose other half this branch had deliberately retired, and its
+.CW xec.c
+calls
+.CW printfreehist() ,
+whose ring this branch removed because its per-caller print hung
+riscv64 permanently in five boots of five; that one gets a stub saying
+there is no record, the way
+.CW emu/port/alloc.c
+already does, because silence is indistinguishable from "no".
+.PP
+The one the build did not catch:
+.CW libinterp/gc.c
+carried a temporary probe comparing a type's
+.CW mark
+pointer against
+.CW etext ,
+which the host linker does not define \(em
+.CW libinterp.a
+is built once and shared by
+.CW emu
+and every kernel, so there is no
+.CW -DEMU
+to key it on, and a host stand-in would make the bound wrong and the
+aborts false.  It is dropped.  The other 23 probes multicore is
+carrying were audited rather than assumed: none of them aborts on a
+correct
+.CW parallelvm=0
+run \(em they print once under a rare guard, or run only inside
+.CW panic() ,
+or are silent counters.  Two that printed on every boot
+.CW ( probenewtype ,
+.CW probearrtype )
+are gated behind a flag rather than deleted, because they belong to a
+hunt that is still open and a serial log this branch reads to verify a
+boot is not the place for them.
+.PP
+.B "parallelvm stays 0."
+At 0 the VM lock is taken as before and the merged VM should behave
+exactly as the old one.  Turning it to 1 in the same change would make
+any failure unattributable between the merge and the parallel VM, and
+would throw away the control arm every other result in this document
+rests on.
+.PP
+.B "A gitignore rule that was quietly eating source."
+Untracking build outputs left a rule,
+.CW /os/inferno/*/i[a-z0-9]* ,
+meant for linked kernels \(em they are named for their board, as in
+.CW os/inferno/pc64/ipc64 .
+No glob can say "named for its own directory", and every attempt to
+approximate it took source with it:
+.CW os/inferno/init/init.b
+(hand-written Limbo, a sibling of
+.CW bootinit.b ),
+then
+.CW os/inferno/port/inferno.c
+(16K of kernel C), then
+.CW pcidb.acid
+and
+.CW sd53c8xx.i ,
+then the whole of
+.CW os/inferno/virt/icons ,
+because a directory named
+.CW icons
+matches too.  Excepting every dotted name in turn un-ignored 104
+.CW .7
+objects and every generated
+.CW .root.[sch] .
+The rule is now a list, one line per board: a list cannot over-match,
+and a board added later shows up as an untracked kernel, which is
+visible, rather than quietly untracking that board's source, which is
+not.  Separately, the object-suffix rules covered
+.CW .j ,
+.CW .z ,
+.CW .t ,
+.CW .0
+and
+.CW .2
+but not
+.CW .5 ,
+.CW .6 ,
+.CW .7 ,
+.CW .8 ,
+.CW .q
+or
+.CW .v ,
+so every amd64 and aarch64 kernel object counted as source \(em 151 of
+them.
+.PP
+.B "The merge did not boot, and the reason was the compiler."
+With everything resolved and every board linking, pc64 panicked
+.CW "vmachine: error \(dqillegal dis instruction\(dq with no current prog"
+immediately after the device binds, deterministically, on one processor
+and on two.  The same
+.CW disinit.dis
+ran past that point under hosted
+.CW emu ,
+which shares the same
+.CW libinterp ,
+and
+.CW libinterp/optab.h
+and
+.CW include/isa.h
+are byte-identical on both branches \(em so it was not an opcode table
+and not SMP.
+.PP
+The difference between the two is
+.CW -DDISCTXREG ,
+which puts the Dis context
+.CW curP
+in an external register (R13 on amd64) for the kernel and leaves it an
+ordinary global for
+.CW emu .
+multicore's
+.CW utils/6c
+reserves four external registers instead of two so that no compiled
+file uses R13 or R12 as scratch.  But
+.CW MacOSX/arm64/bin/6c
+is a checked-in host binary, and it was four days older than the
+.CW utils/6c
+sources the merge brought in.  Every amd64 object was therefore
+compiled by a
+.CW 6c
+that reserved two registers, while
+.CW libinterp
+kept the Dis context in the third \(em so ordinary C code used R13 as
+scratch and
+.CW curP
+was whatever the last expression left there.  Rebuilding the toolchain
+and every
+.CW .6
+from scratch gives 0 panics on one processor and 0 on two.
+.PP
+Two lessons, and the second is the one that cost the time.
+.B "Merging a branch that changes the compiler means rebuilding the compiler" ,
+and then rebuilding everything it compiled \(em a kernel that links is
+not evidence that its objects agree.  And the cleanup
+.CW rm
+that should have forced that rebuild silently did not run at all: under
+.CW zsh
+a glob matching nothing aborts the whole command, so one
+.CW libmp/*.6
+with no matches cancelled the
+.CW rm
+of eleven other directories, and the build that followed looked clean
+because it had nothing to do.  The command printed its error; it was
+read as a warning.
+.PP
+.B "One real bug this exposed."
+.CW os/inferno/pc64/main.c 's
+.CW userinit()
+did
+.CW "strcpy(p->text, \(dq*init*\(dq)" .
+.CW Proc.text
+is a
+.CW char* ,
+nothing has set it for that process yet, and so this wrote through a
+nil pointer into physical address 0, which is mapped here and took the
+write without complaining.  It was harmless for as long as nothing read
+a pointer back out of address 0; with
+.CW curP
+clobbered, something did, and the fault came back with CR2
+.CW 0x2a74696e692a ,
+which is
+.CW *init*
+in little-endian ASCII.  The other eleven boards in this tree all say
+.CW "kstrdup(&p->text, \(dqinterp\(dq)" ;
+pc64 was the only one that did not.  Fixed.
+.PP
+.B "check-pc64-tcp.sh has always exited 1 on success."
+It prints
+.CW "ok \-\- the kernel accepted an inbound connection"
+and then returns 1, so every previous "pass" of it was read from its
+text and not from its status.  The script runs under
+.CW "set -e" ,
+and its
+.CW EXIT
+trap calls
+.CW pkill ,
+which returns 1 when it matches nothing \(em the normal case once the
+guest is already gone.  That aborted the trap before the shell could
+restore the status.  The trap now latches
+.CW $?
+first, makes every cleanup command succeed, and exits with the latched
+value; the same pattern is applied to
+.CW check-pc64-disk.sh
+and
+.CW check-pc64-smp.sh ,
+which had the shorter form of the same trap.
+.PP
+.B "And check-pc64-disk.sh was reporting a harness timeout as a broken write path."
+It failed with "nothing reached the disk image on the host", which
+reads as the kernel not writing.  The kernel writes.
+.CW type-at-console.py
+leaves the guest running for fourteen seconds after it types the
+command \(em right for a command that prints and exits, and wrong for
+this one, because
+.CW kfs 's
+ream of a 64M file system runs well over a minute on a loaded machine.
+The guest was being killed in the middle of the ream.  Given a longer
+window the nonce is on the image and both file servers pass,
+.CW disk/kfs
+and
+.CW disk/kfs64 .
+The hold is now an environment variable
+.CW ( INFERNO_CONSOLE_HOLD ,
+default 14 so existing callers are unchanged) and the disk check asks
+for 150 seconds.
+.PP
+That is three harness bugs in one session \(em a status lost to
+.CW "set -e" ,
+a hold too short, and an
+.CW rm
+cancelled by a zsh glob \(em each of which presented as a failure of
+the thing under test.  Two of them would have been caught by asking
+what a passing run looks like before trusting a failing one.
+.NH 2
+The parallel Dis VM does not work on pc64 yet
+.PP
+.CW scripts/check-pc64-parallelvm.sh
+boots
+.CW ipc64dev
+on a two-processor machine at
+.CW *parallelvm=1
+and at
+.CW *parallelvm=0 ,
+from one kernel and one ISO recipe \(em
+.CW main.c
+reads the option at boot, so nothing is rebuilt between the arms.
+.PP
+It engages.  At
+.CW *parallelvm=1
+the log says
+.CW "nvm: 2 hold the vm" ,
+and
+.CW "nvm: 3"
+and
+.CW "nvm: 4"
+in other runs, so more than one interpreter really is inside
+.CW xec()
+at once, which is the whole point of the change.  At
+.CW *parallelvm=0
+that count never exceeds 1.
+.PP
+And it is broken.
+.CW dis.c 's
+own consistency check \(em
+.CW "runq: 2 linked + 0 global but 1 in Pready \-\- the counts disagree"
+\(em fired on
+.B every
+.CW parallelvm=1
+boot measured, six of six, including the boots that completed, and on
+.B none
+of the eleven
+.CW parallelvm=0
+boots.  Separately, most
+.CW parallelvm=1
+boots never reach
+.CW "DEVTEST: done" ,
+while
+.CW parallelvm=0
+reached it 26 times in 26.  Nothing panics in either arm; the failure
+is silent.
+.PP
+.B "The rate is not worth quoting and the difference is."
+Runs of this gave 8-of-10, then 5-of-6, then 2-of-6 not finishing,
+which is host load rather than three different phenomena.  The first
+of those numbers was worse than the truth for a reason worth recording:
+each boot was given 45 seconds, and
+.CW parallelvm=1
+does more work per boot, so a slower boot that would have finished was
+counted as a failure.  That is the same mistake as the disk check's
+fourteen-second hold, made again within the hour, which is why the
+per-boot window is a variable now and why the script reports the
+count-disagreement as well \(em that signal fires on a boot that
+completes as readily as on one that does not, so it separates the arms
+without any judgement about how long a boot should take.
+.PP
+.B "What this says, and what it does not."
+It says the parallel VM is not ready on pc64 and that the first thing
+to look at is the run queue bookkeeping, not the collector: the counts
+disagree on runs that otherwise finish normally, so it is not a
+stop-the-world failure.  It does not say the design is wrong, and it is
+not a measurement of multicore's own tree \(em that branch has arm64
+work and instrumentation this one deliberately did not take, and its
+own report is of Dis heap corruption on arm64 rather than of this.
+.CW parallelvm
+stays 0 here, which is what it was set to when the VM was merged.
+.NH 2
+Phase 3 item 10: the memory floor
+.PP
+.CW scripts/check-pc64-memfloor.sh
+bisects the smallest
+.CW -m
+this kernel runs on.  Two thresholds, because a kernel that boots and
+then cannot run anything is not a machine anyone can rent: the smallest
+that reaches the end of the bind list, and the smallest that runs a
+typed command and answers.
+.PP
+.B "Boot is 66 MiB."
+Below that the kernel says what is wrong rather than wandering: 65 MiB
+gives
+.CW "panic: no memory"
+and 64 MiB gives
+.CW "panic: cannot allocate 125 procs (0MB)" ,
+which is the proc table sized from what is left.
+.PP
+.B "This section first said both thresholds were 66 MiB, and that was wrong."
+The way it was wrong is worth more than the number.
+The second arm typed a command at the console and looked for its output
+with
+.CW "grep -q WORK-OK" .
+A console
+.I echoes
+what is typed at it, so the token was in the log whether or not anything
+ran: the check was answering "were the characters delivered".  It has to
+be
+.CW "grep -qx" ,
+an exact line, which only execution can produce.
+.PP
+Underneath that, the harness waited for
+.CW "bound #S"
+before typing, and pc64 prints that well before
+.CW /dis/sh.dis
+is reading.  Characters typed then are echoed by the console driver and
+lost, and the shell starts afterwards and prints its first prompt
+.I below
+the echo.  Proved by writing explicitly to
+.CW /dev/cons
+and getting nothing; with the shell's prompt as the token the same
+kernel prints
+.CW WORKOK
+and
+.CW /dev/time 's
+four fields.  The token must be
+.CW "\en; "
+and not
+.CW ";" ,
+because the firmware's ANSI
+.CW ( [01;01H )
+carries a semicolon in the first line of every boot.
+.PP
+Two arms of a measurement agreeing exactly is a reason to check the
+predicate, not a result.
+.PP
+.B "Corrected, the two thresholds differ \(em and the boundary is not sharp."
+Bisecting 56\-128 gives 66 MiB to boot and 68 MiB to run a command.
+Bisecting 66\-68 immediately afterwards gives 67 for both.  That is not
+a third answer: the predicate near the boundary is not deterministic, a
+bisect assumes the property is monotone, and over a noisy predicate it
+returns an arbitrary point inside the noisy band while looking exact.
+The script takes
+.CW REPS
+now and sweeps with repeats instead, which is the only honest way to
+say where the edge is.  Three runs at each size:
+.PP
+.TS
+center box tab(;);
+c | c | c
+n | c | c .
+MiB;boots;runs a command
+_
+65;0/3;0/3
+66;3/3;0/3
+67;3/3;2/3
+68;3/3;3/3
+69;3/3;3/3
+.TE
+.PP
+So the boot floor is sharp at 66 MiB and the useful-work floor is 68,
+with 67 the band where it depends on the run.  Two megabytes separate
+"reaches a shell" from "can run a program in it", and a number quoted
+from a single bisect would have landed anywhere in that gap.
+.PP
+.B "The floor is mostly the image."
+The kernel is 9.19 MB with its root compiled in and reserves memory up
+to
+.CW "MemMin 0xa93000" ,
+about 11.1 MB, before any of it is available.  A smaller root moves this
+number and a bigger one moves it the other way; 66 MiB is a fact about
+this kernel, not about Inferno.
+.PP
+.B "And it is a fact about one virtual machine."
+The first version of this measurement had the two arms on different
+hardware without noticing: one passed
+.CW "-netdev user -device virtio-net"
+and the other let QEMU attach its default e1000e.  With the e1000e the
+boot stalls just after
+.CW "link up"
+at 68 MiB and needs 80 MiB, where the virtio machine runs at 66.  So the
+driver is worth more than 10 MiB of the floor, which is a real result,
+and "two floors measured on two machines" was not one.  The script now
+defines the machine once and both arms use it.
+.PP
+.B "What it says about density."
+Nothing rentable is this small \(em Compute Engine's smallest shapes are
+around 0.6 to 1 GB \(em so the number does not buy a cheaper instance
+today.  What it measures is headroom: on the smallest shape GCE rents,
+this kernel uses under a tenth of the memory before the workload starts.
+The cloud-economics claim in item 10 needs the other half, which is how
+many useful processes fit in what is left, and that is not measured
+here.
+.NH 2
+Phase 4 items 12 and 13: supervision, and metrics as files
+.PP
+.B "supervise(1)"
+keeps a set of commands running.  Item 12 says this should be a program
+and not a kernel change because
+.CW /prog
+already exposes every process as files, and it is: it opens its own
+.CW /prog/ pid /wait
+before it spawns anything and blocks reading it.
+.CW dis.c 's
+.CW newprog()
+gives each new process a pointer to its parent's wait queue and
+.CW delprog()
+posts
+.CW "pid \(dqmodule\(dq:cause"
+there when it ends.  Nothing is polled.
+.PP
+Only direct children appear, because a grandchild posts to its own
+parent's queue, which is empty unless that parent also opened its wait
+file.  That is what makes it a supervisor of the things it started.  It
+also has a consequence worth stating rather than hiding: a service given
+as a shell command line is supervised as the shell running it, so when
+that shell's child is killed the service restarts but the cause reported
+is the shell's
+.CW exited ,
+not the child's
+.CW killed .
+The console shows
+.CW "5 \(dqSleep\(dq:killed"
+while
+.CW supervise
+reports pid 4 exited.
+.PP
+.B "metricfs(4)"
+serves the machine's own numbers as one file per measurement.  Item 13
+asks for logs and metrics as a mountable file tree "so that observing a
+machine is the same operation as reading one", and that is the whole
+design: no scrape endpoint, no exposition format, no metrics protocol at
+all.  Each leaf is one column of a file the kernel already keeps \(em
+.CW /dev/sysstat ,
+.CW /dev/memory ,
+.CW /dev/time ,
+.CW /dev/kmesg ,
+.CW /prog
+\(em named, so that a reader does not have to know that
+.CW /dev/memory 's
+third column is the high-water mark.
+.PP
+.B "Demonstrated between two machines."
+A pc64 kernel under QEMU mounted it, exported it with
+.CW "styxlisten -A tcp!*!6666 export /n" ,
+and a separate Inferno mounted that over TCP and read the remote
+machine's numbers as files:
+.CW uptime
+83,
+.CW cpu/0/intr
+11183,
+.CW mem/main/used
+3804032.  Both processors appear as
+.CW /n/cpu/0
+and
+.CW /n/cpu/1 .
+The reading side is
+.CW cat .
+.PP
+.B "A file is offered only if it can be measured."
+A leaf exists only when its source can be read, so the tree is smaller
+on some machines than others.  A metrics tree that answers 0 for
+something it cannot measure is worse than one that omits the file,
+because the zero is indistinguishable from a reading.  Under
+.CW emu
+there is no
+.CW /dev/sysstat ,
+no
+.CW /dev/osversion
+and no
+.CW /dev/kmesg ,
+so those are absent; and there is no uptime, because
+.CW emu 's
+.CW /dev/msec
+reads 0 forever and its
+.CW /dev/time
+is a wall-clock microsecond count that says nothing about when the
+machine started.  The source is chosen by its value, not by whether the
+file opens \(em which is a distinction this document has had to learn
+twice today.
+.NH 2
+Phase 4 item 14: deployment with no image build
+.PP
+Item 14 offers two ways to update a machine \(em republish the image and
+recreate the instance, or mount a new
+.CW /dis
+and restart \(em and says the second is the interesting one.
+.CW scripts/check-pc64-redeploy.sh
+is the second, in the sharpest form available: the program it runs is
+not in the kernel, not in the kernel's compiled-in root, and never
+touches the machine's disk.  It is fetched over Styx from another
+machine at the moment it is run.
+.PP
+The deployment side is a directory and
+.CW styxlisten .
+There is no package format, no image registry and no agent on the
+target.  The target does
+.IP
+.EX
+mount -A tcp!host!port /n/remote
+bind -a /n/remote /dis
+hello
+.EE
+.PP
+and the next command resolves there.  Then
+.CW "supervise -n 2 hello"
+runs it twice more, which is the "and restart" half: a supervisor that
+has never seen the program either keeps it running.  The check requires
+all three runs.
+.PP
+.B "With a negative control, because the alternative is believing it."
+Run with the deployment server not started, the same check fails.  That
+is what makes the passing run evidence that the mount did the work
+rather than something in the image.
+.PP
+Two details that cost a run each, and both are about the harness rather
+than the system.
+.CW "bind -b"
+puts the remote directory
+.I before
+.CW /dis ,
+so every lookup of every other program asks a server that holds one
+file, and the console fills with
+.CW "mountrpc: Rerror file does not exist" .
+.CW "bind -a"
+searches the local
+.CW /dis
+first and is both quieter and the right meaning for "add programs this
+machine does not have".
+.PP
+And the test could not use an exact-line match for its token, which is
+the opposite of the correction two sections above.  The kernel prints
+mount diagnostics with no trailing newline, so a program's output can
+share a line with them.  A substring match is safe
+.I here
+for the reason the exact match was needed
+.I there :
+the token
+.CW HELLO-FROM-REMOTE-DIS
+does not appear in the command, which says
+.CW hello ,
+so only the program can produce it.  The rule is not "always use
+.CW -x ";
+it is that the predicate must be something only the thing under test can
+satisfy.
+.NH 2
+Phase 2 item 7: two machines that have never met
+.PP
+Item 7 asks for authentication between instances "with a secret fetched
+from the metadata service or from object storage, so that two machines
+that have never met can agree on who they are".
+.PP
+Inferno's authentication already has the shape the cloud needs.  It is
+mutual and certificate-based: each side holds an
+.CW Authinfo
+signed by a common signer, exchanges it, and verifies the other against
+the signer's public key that its own certificate carries.  Neither side
+has to have met the other, and \(em this is the part that matters here
+\(em neither has to reach an authentication server while they talk.  On
+a provider the instance that has just booted may be the only one
+running, and an auth server that must be up before anything else is a
+dependency the design does not need.
+.PP
+So the whole problem is the bootstrap, and the provider already solves
+it.  An instance is created with metadata only it can read, served on a
+link-local address that asks for no credential of its own.
+.CW cloudauth(1)
+fetches a certificate from there \(em or from a signed object-storage
+URL, or from a file served by
+.CW cloudfs(4)
+\(em and installs it.
+.PP
+.B "Demonstrated, with the control that makes it mean something."
+.CW scripts/check-cloudauth.sh
+generates one signer and two certificates, serves them over HTTP, and
+has each party fetch its own with
+.CW cloudauth
+before doing anything else.  The server runs
+.CW styxlisten
+and the client
+.CW mount ,
+neither with
+.CW -A .
+The client reads the file.
+.PP
+Then a third party fetches a certificate from a
+.I different
+signer and is refused:
+.CW "mount: authentication failed: pk doesn't match certificate" .
+That arm is not decoration.  "The mount worked" is also exactly what it
+looks like when authentication is not happening at all, and without a
+party that must fail, a passing run is evidence of nothing.
+.PP
+.B "Where the identity lives on a kernel."
+The root is compiled into the image and read-only, so
+.CW /usr/inferno/keyring
+cannot be written until something writable is bound over it.  On an
+instance that is
+.CW memfs ,
+verified on the booted kernel:
+.CW "memfs /usr/inferno/keyring"
+and the directory takes writes.  The certificate then lives in memory
+and is gone at reboot, which is the right shape \(em the instance takes
+its identity from the provider every time it starts, so revoking it is
+a metadata change rather than a visit to the machine.
+.CW cloudauth ,
+.CW memfs
+and
+.CW styxlib
+are in the pc64 root now, with a
+.CW /usr/inferno/keyring
+to bind over.
+.PP
+.B "What is trusted."
+The certificate carries a private key, so it is exactly as secret as a
+password, and putting it in instance metadata makes the provider's
+access control the thing protecting it.  That is the same trust the
+instance already places in the provider to boot the right image, but it
+should be said rather than assumed: anything that can read the
+instance's metadata can be that instance.
+.PP
+.B "Two bugs found getting here, and neither was in the protocol."
+Nothing in this tree could generate a signer key at all on a 64-bit
+host:
+.CW libsec/dsaprimes.c 's
+.CW Hrand()
+wrote five
+.CW ulong s
+into a 20-byte seed, which is 20 bytes where
+.CW ulong
+is 32 bits and 40 where it is 64, and the stack protector aborted
+.CW emu
+silently.  And
+.CW auth/mkauthinfo
+computed the output file named in its own usage line and then ignored
+it, writing every certificate to standard output.  Both are fixed;
+neither is cryptography.
+.NH 2
+Phase 3 item 8 completed: Styx against a conventional RPC
+.PP
+The section above left this open in as many words: "what remains
+untested is the comparison against a conventional RPC with its own
+framing and serialisation, which is the thing a real service would
+otherwise use".  It is tested now.
+.PP
+.CW rpcserve (1)
+answers a length-prefixed request that has to be formatted and parsed
+on both sides \(em
+.CW "GET <offset> <count>"
+in, a
+.CW "OK <n>"
+header and
+.CW n
+bytes back \(em which is what most hand-rolled RPCs and every
+JSON-over-TCP service amount to.
+.CW styxbench 's
+.CW -r
+arm drives it over
+.B "one connection, reused" ,
+exactly as the Styx and raw arms are.  That detail decides the result:
+.CW httpclient (2)
+here sends
+.CW "Connection: close" ,
+so measuring against it would have charged the RPC a new TCP connection
+per request while Styx read an already-open fid, and flattered Styx by a
+whole connection setup instead of comparing protocols.
+.PP
+The arm to compare is
+.CW jumping ,
+not
+.CW seq :
+it strides far enough that readahead cannot answer one read from
+another, so each iteration is a real
+.CW Tread
+on the wire, which is what an RPC call is.
+.PP
+.B "On the kernel, Styx is slightly cheaper than the RPC."
+Three runs of 300 iterations, pc64 under QEMU serving all three arms,
+a hosted client:
+.PP
+.TS
+center box tab(;);
+c | c | c | c
+n | n | n | c .
+raw tcp;styx jumping;rpc framed;styx/rpc
+_
+7477 us;14010 us;14447 us;0.9
+7873 us;14150 us;15077 us;0.9
+10050 us;16417 us;18500 us;0.8
+.TE
+.PP
+Hosted, two
+.CW emu s
+over loopback, the ratio runs the other way and is noisier \(em 1.0,
+1.4, 1.3, 1.2 across four runs \(em which is what one would expect when
+the Styx server is a Limbo program rather than the kernel's own
+.CW exportfs .
+Taken together: a Styx round trip and a conventional framed RPC cost
+about the same, within a factor of about one and a half in either
+direction, and on the kernel Styx is the cheaper of the two.
+.PP
+.B "This settles the first of the three falsification criteria."
+The claim was that "if Styx round-trips cost several times a
+conventional RPC on the same network, the file abstraction is too
+expensive for the thing it is meant to replace".  They do not.  They
+cost about the same thing, and the mounted namespace is had for free.
+.PP
+.B "What this measurement is not."
+The absolute numbers are QEMU user-mode networking and mean nothing
+outside it; only the ratios are claimed, and both arms cross the same
+path in the same run.  Both ends are Inferno, so this is not "Styx
+versus a service on Linux" \(em it isolates protocol cost with the
+runtime held constant, which is the narrower and more answerable
+question.  The cross-stack comparison item 8 also asks for still wants
+two rented instances.
+.NH 2
+Phase 3 item 9 begun: where a cold start actually goes
+.PP
+Item 9 wants boot-to-shell against a minimal Linux image on the same
+instance shape.  The comparison needs two rented instances and a Linux
+image; what can be had now is the Inferno half, measured properly, and
+it turned out to be worth having on its own.
+.PP
+.B "The guest cannot time its own boot."
+The obvious method \(em read
+.CW /dev/time
+at the prompt \(em is wrong here.  pc64's tick counter runs from machine
+reset, so it counts the firmware as uptime.  Measured rather than
+assumed: the kernel's uptime at the prompt agrees with the host's own
+clock from the moment QEMU was launched, to within the harness's settle.
+So the timing has to come from outside, and
+.CW scripts/boot-profile.py
+does it \(em every console line stamped with seconds since launch and
+the gap since the previous line, so a stall is one large gap rather than
+something inferred from a total.
+.PP
+.B "Half the kernel's boot was a test."
+The largest single gap in the profile was 6.4 seconds in
+.CW regtorture ,
+a register torture test, on a boot whose entire kernel half was 14.6.
+It was written for the interrupt heisenbug that
+.CW _intrcommon 's
+.CW AX=0
+turned out to be; that is fixed, and the instrument had been running on
+every boot since.  Its own comment said two million iterations "cost
+under two" seconds, which was true when written and is not now \(em a
+number in a comment that nothing re-checked.
+.PP
+It is now behind
+.CW *regtorture=1
+in plan9.ini rather than deleted: it is the reproducer for a class of
+bug that cost this branch weeks, and keeping it costs nothing when it
+is not asked for.  Verified both ways \(em with the flag it reports
+"12 registers survived 2M iterations over 479 ticks, control clean" and
+costs 6.47 seconds; without it, it does not run at all.
+.PP
+.B "The numbers."
+Three runs each, one machine, OVMF firmware:
+.PP
+.TS
+center box tab(;);
+c | c | c | c
+l | n | n | n .
+;firmware;kernel+init;total
+_
+before;6.4\-7.5 s;14.6\-15.1 s;21.0\-22.6 s
+after;7.1\-8.8 s;10.1\-11.0 s;17.4\-19.8 s
+.TE
+.PP
+The firmware half is OVMF and is not this tree's to improve; it is
+reported separately for that reason, and because a cloud instance runs
+different firmware and will not pay the same.  What remains on the
+kernel side after
+.CW regtorture
+is 4.5 seconds around Dis start-up, where the profile shows
+interpreters queueing on the VM lock, and 1.8 seconds at
+.CW "Initial Dis" .
+Those are the next things to look at and have not been.
+.PP
+.B "And the premise has drifted."
+Item 9 says "a 2.1 MB image with its root compiled in".  The kernel is
+9.2 MB now, because this branch's own work \(em TLS, the cloud
+commands, metricfs, supervise, cloudauth \(em is in that root.  The
+cold-start argument is still a real one, but it should be made about
+the image that exists rather than the one the plan was written about.
+.PP
+.B "Where the rest of it goes, and why the local number cannot be quoted."
+Markers in
+.CW /dis/init ,
+built into a kernel and profiled, place the remaining time exactly:
+.CW "load std"
+costs 0.10 s and
+.CW "mount {mntgen} /n"
+0.07 s, and then
+.B "4.94 seconds passes defining six shell functions"
+before the next statement runs.
+.PP
+That is not a slow parser.  The same six definitions under hosted
+.CW emu
+take 0.12 s with the JIT on and 0.30 s with it off \(em and the kernel
+is a further sixteen times slower than that, which is QEMU's TCG
+emulating x86-64 on an ARM host.  The interpreted-versus-compiled gap
+is real and measurable on its own (0.12, 0.14, 0.12 s for 6, 12 and 24
+functions compiled; 0.30, 0.51, 0.88 s interpreted), but the factor of
+sixteen on top of it is the emulator.
+.PP
+So the honest conclusion about this whole section is that
+.B "the local cold-start numbers are mostly TCG"
+and a native instance would be several times faster.  The
+.CW regtorture
+finding survives that \(em 6.4 seconds of pure waste is waste whatever
+the multiplier, and it was a test nobody meant to keep running \(em but
+"Inferno reaches a shell in 17 seconds" is a statement about this
+laptop emulating a foreign architecture, not about a cloud instance.
+Item 9's number still needs the rented machine.
+.PP
+.B "And the JIT is not the lever it looks like."
+.CW cflag
+is 0 on every native board and
+.CW comp-amd64.c
+is not linked into pc64 at all.  It should stay that way: the code
+generators bake
+.CW (uintptr)&R
+into the code they emit, and under the per-executor
+.CW curP
+the merge brought in, that address belongs to one executor rather than
+being a constant \(em a JIT built this way is wrong the moment a second
+context runs.
+.CW include/interp.h
+says so where the macro is defined.  Compiling Dis on a native board is
+a real piece of work and not a switch.
+.NH 2
+The density half of the second falsification criterion
+.PP
+The second thing that would sink this is "if the kernel cannot hold a
+useful working set in the memory of the smallest rentable instance".
+The memory floor above is half of that; the other half is what a
+working set costs, and it was not measured.
+.PP
+The unit measured is an idle
+.CW rpcserve (1)
+\(em a real Styx-era process that has announced a port and is blocked
+in
+.CW listen ,
+which is what a service on an idle machine is.  Counted with
+.CW metricfs ,
+reading
+.CW mem/main/used
+and
+.CW procs
+before and after:
+.PP
+.TS
+center box tab(;);
+c | c | c
+l | n | n .
+servers;pool growth;each
+_
+30;2 430 976 B;79.1 KiB
+60;4 800 896 B;78.1 KiB
+.TE
+.PP
+.B "About 78 KiB per service, and linear."
+Against the floor of 68 MiB that leaves roughly 7 000 such services on
+a 614 MB instance and 12 500 on a 1 GB one.  Memory is not the binding
+constraint, and the density half of the criterion is answered: it
+holds.
+.PP
+.B "What binds first is the Dis context pool, and it is not a failure."
+At 60 servers the kernel says
+.CW "claimctx: pool of 64 exhausted, sharing" .
+.CW MAXPCTX
+is 64 and beyond it interpreters share a register file.  The run
+completes and is correct: with the VM lock held, sharing is the
+behaviour every board had before
+.CW curP
+was made per-executor.  It is a ceiling on
+.I parallelism ,
+not on how many services a machine can hold.
+.PP
+That message used to read
+.CW "sharing (unsafe while parallelvm=0)" ,
+printing the value where a condition belongs, so it announced danger in
+exactly the case its own comment three lines above calls correct.  Read
+on a live run it stops the reader dead \(em it stopped this one \(em so
+it now says which case it is in.
+.PP
+.B "A measurement that lied, twice, the same way."
+The first run of this reported that 150 servers started and the machine
+survived, on the strength of
+.CW "grep -c DENSDONE" .
+The console echoes the command, the command ends in
+.CW "echo DENSDONE" ,
+and the count of one was the echo.  The run had not finished at all.
+This is the third time in this document that a substring match has
+found a token in the console's echo of the command that contains it,
+and the rule earned by now is: when the predicate can appear in the
+input, it must be
+.CW "grep -x" ,
+and when it cannot be, say why.
+.NH 2
+The third falsification criterion: what the namespace actually needs
+.PP
+The third thing that would sink this: "if a namespace mounted across two
+machines turns out to need a supervisor, a retry policy and a naming
+service to be usable in practice, then the four layers have been
+reinvented rather than removed, and the honest conclusion is that they
+were load-bearing all along."
+.PP
+.CW scripts/check-discovery-retry.sh
+tests two of the three.  The answers are not the same answer.
+.PP
+.B "Retry: the criterion is right, and this had to be measured to admit it."
+A mount does not survive its server.  With the server killed the read
+fails
+.CW "mount rpc error" ,
+and \(em this is the part worth knowing \(em when the server comes back
+on the same port
+.B "the mount does not recover on its own" .
+Something has to notice and mount again.  There is a retry policy in any
+honest version of this design, and saying otherwise would have been
+wrong.
+.PP
+.B "What the criterion gets wrong is the weight."
+The whole policy is
+.IP
+.EX
+fn get {
+	if { ! cat /n/client/file } {
+		mount -A $addr /n/client
+		cat /n/client/file
+	}
+}
+.EE
+.PP
+because re-establishing is the same operation as establishing.  There is
+no session to rebuild, no connection pool to drain, no client object to
+reconstruct, no backoff state machine: the thing that failed is a mount,
+and the repair is the mount.  Four lines, and they are in the check.
+.PP
+.B "Naming: not a new layer."
+The client in that check is told one thing, where a registry is.  It
+finds the file server by attribute \(em
+.CW "proto styx"
+\(em and mounts whatever address comes back.
+.CW registry (4)
+is itself a file server: a service registers by writing a line to
+.CW /mnt/registry/new
+and a client searches by writing a filter to
+.CW find
+and reading the matches.  Discovery is the same mechanism pointed at the
+problem of locating things, not a fifth thing bolted on.
+.PP
+.B "Supervision: needed, but not by the namespace."
+Nothing about a mount needs supervising.  Services need supervising, and
+that is true of every system ever built;
+.CW supervise (1)
+is that, and it is 200 lines reading
+.CW /prog/<pid>/wait .
+.PP
+.B "The verdict, stated as narrowly as the evidence allows."
+The criterion is not met: the four layers have not been reinvented.  But
+it is not simply refuted either, and the retry clause is a real cost
+that this document should not have been able to describe as free.  The
+defensible claim is narrower than the original one and is this: what a
+mounted namespace needs beyond the mount is four lines of retry, and
+discovery and supervision are had from mechanisms the system already
+has for other reasons.
+.PP
+.B "A directory that did not exist."
+.CW registry (4)'s
+manual page gives exactly one example,
+.CW "mount {ndb/registry} /mnt/registry" ,
+and it fails:
+.CW /mnt/registry
+is not there.
+.CW lib/emptydirs
+is a manifest of the directories the system expects \(em git cannot
+track an empty one \(em and nothing in the build applied it: 61 of the
+303 listed were absent.
+.CW scripts/mkemptydirs.sh
+applies it now.  A missing mount point reads as a broken service, which
+is how this one presented.
+.NH 2
+The merge verified across every board
+.PP
+The multicore merge replaced
+.CW os/inferno/port
+wholesale, which every board links.  Sixteen kernels build from it \(em
+.CW pc64 ,
+.CW pc64dev ,
+.CW virtarm64
+and the thirteen others \(em and the boards with a test to run pass it.
+.PP
+.B "One near-miss worth recording, because it would have read as a regression."
+Booted with
+.CW -kernel ,
+virtarm64 reaches a shell on any
+.CW -smp
+and starts
+.I no
+secondary processors.  That is not the merge.
+.CW startcpus()
+enumerates processors from the ACPI MADT, and
+.CW -kernel
+hands the kernel no ACPI at all; the boot says so, as
+.CW "ARM64-ACPI-NONE no loader configuration" ,
+which is easy to read past.  Booted from the UEFI disk, where the
+firmware provides ACPI, the same kernel gives
+.PP
+.EX
+cpu: 3 started, 3 answered in 1ms, 3 mpidrs match, 3 own machnos
+cpu: machnos 1 2 3
+cpu: ticks in 300ms: cpu0 25 cpu1 25 cpu2 25 cpu3 25
+.EE
+.PP
+and at
+.CW "-smp 17" ,
+.CW "9 more processors than MAXMACH (8); the rest are left alone"
+with seven secondaries started and all eight ticking \(em matching what
+this board did before the merge, line for line.
+.PP
+.CW scripts/check-arm64-smp.sh
+does it the right way and says in its own header why the obvious way is
+wrong.  A test that silently measures the wrong configuration is worse
+than no test, and this one had every opportunity to: it would have
+reported an SMP regression immediately after a merge that touched the
+shared scheduler, which is the worst possible moment to be misled.
+.PP
+.B "Two mount-point gaps, one real and one not."
+The note that
+.CW /cloud
+was missing from the kernel root turns out to be stale:
+.CW /dis/init
+mounts
+.CW mntgen
+on
+.CW /n ,
+so
+.CW /n/cloud
+and every other name under
+.CW /n
+appears on demand.  Verified on the booted kernel \(em
+.CW "mount {metricfs} /n/cloud"
+works and reads back.
+.PP
+The real gap was
+.CW /mnt .
+It was not in the root at all, and neither was
+.CW ndb/registry ,
+so the discovery this section leans on could be demonstrated under
+.CW emu
+and not on the thing that actually ships.  Both are in the pc64 root
+now \(em every library
+.CW registry
+needs was already there \(em and the kernel grew by 12 KB, to 8.81 MB.
+Verified on the booted kernel: the registry mounts at
+.CW /mnt/registry ,
+a service registers, and
+.CW index
+lists it.
+.NH 1
+Where this stands
+.PP
+.TS
+center box tab(;);
+c | c | l
+n | l | l .
+item;state;note
+_
+1\-4;done;Phase 1, credentials and reach
+5;done;styxlisten in the root, a service exporting a namespace
+6;done;two instances, one mounting the other
+7;done;cloudauth(1), checked with a wrong-signer control
+8;done;Styx costs about what a framed RPC costs
+9;done;measured against Debian 12 on the same e2-micro
+10;done;66 MiB to boot, 68 to work, ~78 KiB a service
+11;done;two rented instances, one namespace, one binary on both
+12;done;supervise(1), out of /prog/<pid>/wait
+13;done;metricfs(4), read across a mount
+14;done;check-pc64-redeploy.sh, with a no-server control
+.TE
+.PP
+.B "The three things that would have sunk it."
+Styx round trips do not cost several times a conventional RPC; they cost
+about the same, and on the kernel slightly less.  The kernel holds a
+useful working set in the smallest rentable instance with room to spare:
+about 78 KiB a service against a 68 MiB floor.  And the four layers have
+not been reinvented \(em though a retry is genuinely needed, it is four
+lines, because re-establishing a mount is the same operation as
+establishing one.
+.PP
+.B "What was left needed a rented machine, and got one."
+Both remaining items were finished on rented instances on 17 September
+2026 and are written up at the end of this paper: item 9 against
+Debian 12 on the same
+.CW e2-micro ,
+and item 11 across an amd64 instance and an arm64 one sharing a
+namespace.  The arm64 half needed a driver first \(em a Compute Engine
+t2a offers gVNIC and refuses virtio \(em and, for a while, would not
+boot on a single-vCPU t2a; that turned out to be a kernel stack this
+board left 8 modulo 16, and is fixed.
+.PP
+.B "And one thing that is known broken."
+The parallel Dis VM does not work on pc64:
+.CW "*parallelvm=1"
+engages, and
+.CW dis.c 's
+own consistency check reports disagreeing run-queue counts on every boot
+including the ones that complete.
+.CW parallelvm
+stays 0.
+.CW scripts/check-pc64-parallelvm.sh
+is in
+.CW check-all.sh 's
+slow tier and is expected to fail; it is there to notice the day it
+stops failing.
+.NH 2
+An arm64 image that can do what the amd64 one does
+.PP
+Item 11 wants the same Dis binary on an amd64 and an arm64 instance
+sharing one namespace.  Checking what was actually there first: the
+virtarm64 root carried
+.CW mount
+and nothing else of the cloud work \(em no
+.CW cloudinit ,
+no
+.CW styxlisten ,
+no
+.CW export ,
+no
+.CW metricfs .
+The arm64 half of item 11 could not have run.
+.PP
+.CW os/inferno/virtarm64/virtarm64cloud
+is a second configuration in that directory, the way
+.CW pc64dev
+is beside
+.CW pc64 .
+The plain
+.CW virtarm64
+config is untouched, because the arm64 board is another session's work
+and a list of file names is exactly the kind of change that collides for
+no reason.
+.PP
+Verified on the booted image: it mounts
+.CW metricfs
+and reads
+.CW procs ,
+mounts
+.CW ndb/registry
+at
+.CW /mnt/registry ,
+and gets a writable
+.CW /usr/inferno/keyring
+from
+.CW memfs ,
+which is what
+.CW cloudauth
+needs.  The Compute Engine tarball builds from it \(em a 1 GiB disk to a
+2.0 MB archive.
+.PP
+.B "Two numbers worth having before the instances are rented."
+The image is
+.B 2.18 MB
+against pc64's 8.81, and it reaches a shell in
+.B 9.5 seconds
+against pc64's 17 to 20 on the same host.  Some of that gap is the
+emulator rather than the kernel \(em this host is arm64, so
+.CW qemu-system-aarch64
+is much closer to native than
+.CW qemu-system-x86_64
+emulating a foreign architecture \(em and the rest is that the pc64 root
+has grown to carry everything this branch has built.  It does mean item
+9's premise, "a 2.1 MB image with its root compiled in", is still true
+of one of the two images.
+.PP
+.B "One gap left, and it is in the init rather than the image."
+.CW virtarm64init
+does not mount
+.CW mntgen
+on
+.CW /n ,
+which pc64's
+.CW /dis/init
+does, so names under
+.CW /n
+do not appear on demand and a mount wants
+.CW "mount {mntgen} /n"
+first.  Noted rather than fixed: the init is shared with the plain
+configuration and belongs to the other session's board.
+.NH 2
+Item 11 demonstrated: one Dis binary, two processor families
+.PP
+Item 11 asks for the same Dis binary, unmodified, on an amd64 instance
+and an arm64 instance sharing one namespace, on the grounds that
+"migrating between processor families is a live and expensive industry
+problem that is normally solved by recompiling and re-qualifying an
+entire stack; here there is nothing to recompile, and that is worth
+demonstrating rather than asserting".
+.PP
+The rented instances are still wanted.  But the claim does not need
+them: it needs two processor families, and QEMU has both.
+.CW scripts/check-crossarch.sh
+compiles one
+.CW crossarch.dis ,
+serves it from one directory, and has a pc64 guest under
+.CW qemu-system-x86_64
+and a virtarm64 guest under
+.CW qemu-system-aarch64
+each mount it and run it out of the mount.  Both print
+.CW CROSSARCH-RAN .
+.PP
+.EX
+md5 f39e82bf8cfd31a8cb484ed779b94d6c  crossarch.dis
+.EE
+.PP
+Three things keep that from being a demonstration of nothing.  The
+program is in
+.I neither
+kernel image, and the check refuses to run if it finds the name in one
+\(em otherwise finding it would prove nothing about the mount.  The
+token
+.CW CROSSARCH-RAN
+does not appear in the command, which says
+.CW crossarch ,
+so only the program can have printed it.  And the checksum is reported
+so that "the same binary" is a fact about bytes and not a turn of
+phrase.
+.PP
+.B "What the instances would still add."
+A real network between two real machines rather than one host emulating
+both, and the cloud's own cost for the mount.  What they would not add
+is the part that was in question: nothing was recompiled, nothing was
+re-qualified, and the file that ran on the amd64 machine is byte for
+byte the file that ran on the arm64 one.
+.NH 2
+Item 11 on rented machines: both kernels boot, one cannot reach the network
+.PP
+An arm64 image went to a
+.CW t2a-standard-1
+instance and an amd64 one to an
+.CW e2-small ,
+and both reached an interactive shell.  Two things stood between the
+arm64 kernel and that shell, and a third is between it and item 11.
+.PP
+.B "The ramfb probe."
+The first arm64 instance printed 92 lines and stopped at
+.CW procinit .
+The configuration linked
+.CW screenarm ,
+which drives QEMU's ramfb through fw_cfg at the fixed address
+.CW 0x9020000 .
+That is where QEMU's
+.CW virt
+machine puts fw_cfg and nowhere else promises to.
+.CW virtarm64cloud
+now links
+.CW screennone
+and no draw devices; a cloud instance has no display to drive.  With
+that change the t2a boots through to
+.CW "ARM64-DISK-OK /dev/sdN0/data read 512 bytes, sig 55aa"
+off the NVMe boot disk and an interactive
+.CW sh .
+The ACPI reader agrees with
+.CW mem.h
+on the GIC distributor, redistributor and PL011 \(em Compute Engine's
+arm64 machine is laid out like QEMU's
+.CW virt
+there \(em and disagrees on the PCIe ECAM window, which the firmware puts
+at
+.CW 0x3f000000 ;
+the kernel already takes that one from the table.
+.PP
+.B "The boot is slow to watch, not slow."
+A serial log fetched a minute after creation ended inside
+.CW poolsize ,
+and looked like a hang in the first large allocation on a 4 GiB
+machine.  Fetched again it ran to the prompt.  The same kernel under
+QEMU with
+.CW "-m 4096"
+passes the same point at once.  Read a Compute Engine serial log twice
+before calling a stop.
+.PP
+.B "No network card this kernel can drive."
+The t2a's PCI bus holds three functions:
+.CW 1ae0/0042
+(Google's gVNIC),
+.CW 1af4/1005
+(a virtio entropy source) and
+.CW 1ae0/001f
+(NVMe).  Asking for a virtio NIC is refused:
+.CW "Only [[GVNIC, UNSPECIFIED_NIC_TYPE]] nic types are allowed at index 0" .
+So item 11's arm64 half cannot mount anything until there is a gVNIC
+driver, and that is the next piece of work.
+.PP
+.CW scripts/gce-console.py
+types at an instance's serial console, which is the only way into an
+Inferno image on a rented machine.
+.NH 2
+A gVNIC driver, because a t2a has no other network card
+.PP
+.CW os/inferno/port/ethergve.c
+drives Google's virtual NIC (PCI
+.CW 1ae0:0042 )
+in the GQI queue format with queue page lists.  It is written from
+FreeBSD's
+.CW sys/dev/gve ,
+which is the reference for every layout and sequence in it.  Without it
+the arm64 cloud kernel has no network at all on Compute Engine: a t2a
+instance offers gVNIC, a virtio entropy source and an NVMe disk, and
+asking for a virtio NIC is refused outright.
+.PP
+.B "What is real, and where."
+On a rented
+.CW t2a-standard-2 ,
+this kernel takes a DHCP lease from Google's server on its real address
+and reads the metadata service over TCP:
+.CW "cloudinit" ,
+then
+.CW "mount {cloudfs} /mnt" ,
+then
+.CW "cat /mnt/zone"
+prints
+.CW projects/232418375880/zones/us-central1-a
+and
+.CW /mnt/hostname
+prints the instance's own name.  That is the whole path \(em transmit,
+receive, ARP, DHCP, TCP \(em through this driver.
+.PP
+.B "No interrupts: it polls."
+gVNIC signals only through MSI-X, and MSI-X on this board needs a GICv3
+ITS that this kernel does not drive
+.CW ( "msix: this machine has an ITS and no v2m frame" ).
+Nothing is lost by polling, because every completion is a DMA write the
+driver can read at any time \(em a receive descriptor's sequence number,
+a transmit event counter \(em and the interrupt doorbells only mask and
+acknowledge.  Each queue has a kernel process that polls, busily while
+there is work and once a tick while there is none.  The cost is latency,
+up to a tick on an idle link, and it is the first thing to replace when
+the ITS is driven.
+.PP
+.B "Two board bugs found on the way, both invisible under QEMU."
+.CW va2pa()
+returned
+.CW ulong ,
+which is 32 bits under
+.CW 7c ,
+so every DMA address above 4 GiB was truncated by exactly 4 GiB and the
+device wrote into whatever kernel memory sat at the low address.  RAM
+starts at 1 GiB on this board, so it takes a machine with more than
+3 GiB to reach that address at all; every QEMU run here had 1 or 2, and
+a t2a has 4 or 8.  The build had been saying
+.CW "conversion of pointer to shorter integer"
+at that line all along.  And the clock is now the EL1 virtual timer
+rather than the physical one: a kernel at EL1 is a guest, and the
+virtual timer is the one a hypervisor is required to give a guest.  That
+second one is not the repair of an observed failure \(em both timers were
+watched ticking on a t2a \(em it is the one a guest is entitled to.
+.NH 2
+Fixed: a kernel stack that was not 16-byte aligned
+.PP
+On a
+.CW t2a-standard-1 ,
+one vCPU and 4 GiB, a kernel with the gVNIC driver used to stop during
+.CW /dis/init ,
+pegged at
+.B 100%
+of its vCPU (Cloud Monitoring said so; a healthy instance sits at 0.4%)
+and printing nothing.  The same image on a
+.CW t2a-standard-2
+booted and did everything.  It is fixed, and the driver was not at
+fault.
+.PP
+.B "What the bisect said, and what it cost to believe it."
+Three one-vCPU instances differing only by a
+.CW plan9.ini
+line put the trigger at the driver's two polling kernel processes and
+not at its queues or their DMA: the device identified with no queues
+booted, all queues with no processes booted, and either variant with
+processes stalled.  Replacing the bodies of those processes with a
+heartbeat that touches no device, no timer and no lock \(em
+.CW delay ()
+spins on the counter and
+.CW iprint ()
+writes the UART directly \(em stalled just the same, and the heartbeat
+never printed its first line.  One such process was enough; none was
+fine.  So the driver's code was out of it, and what was left was the
+act of creating a kernel process.
+.PP
+.B "The scheduler said the rest."
+A print before
+.CW gotolabel ()
+showed the last switch of the machine's life:
+.IP
+.EX
+sched: -> rxmitproc pid 4 pc 0x40003648 sp 0x408f0898 kstack 0x408e88a8
+.EE
+.PP
+.CW 0x40003648
+is
+.CW linkproc ,
+where a new kernel process begins, so that process was being started
+for the first time \(em and its own first statement, an
+.CW iprint ,
+never ran.  The stack pointer is the answer:
+.CW 0x408f0898
+is 8 modulo 16, because
+.CW 0x408e88a8
+is.  AArch64 requires SP itself to be 16-byte aligned, and with
+.CW SCTLR_EL1.SA
+set the first SP-relative access after a misaligned SP is loaded
+raises an alignment fault \(em whose handler builds its own frame on
+that same SP and faults again, forever, silently, at full speed.
+.PP
+.CW p->kstack
+is a plain
+.CW malloc (),
+and a pool block's data pointer is the block start past a header, so
+it can be 8 modulo 16.  Rounding the block
+.I size
+up to the pool quanta does not align the
+.I pointer ,
+which is the reasoning that let this stand earlier in this hunt \(em
+one of three wrong ideas here that were argued rather than measured,
+along with the 1460-byte MTU and the entropy pool.  The fix is one
+expression, used at both places this board sets a new stack:
+.IP
+.EX
+#define KSTACKTOP(p)	((((uintptr)(p)->kstack + KSTACK) & ~(uintptr)15) - 16)
+.EE
+.PP
+With it the one-vCPU t2a boots to a shell, reads its NVMe disk, takes
+a DHCP lease over gVNIC and fetches over https.  Whether it bit at all
+depended on where the allocator happened to put one stack, which is
+why a 4 GiB instance hung, an 8 GiB one did not, and QEMU never did.
+.PP
+.B "The same expression belongs on raspi3b."
+.CW os/inferno/raspi3b/main.c
+sets
+.CW sched.sp
+the same unaligned way and is the other AArch64 board in this tree.  It
+is another session's board and is not touched here; the 32-bit ARM and
+RISC-V boards are not exposed, since they require 8.
+.NH 2
+Item 11 on two rented machines
+.PP
+.CW item11-amd
+is an
+.CW e2-small
+running the amd64 kernel on virtio;
+.CW item11-arm
+is a
+.CW t2a-standard-2
+running the arm64 kernel on gVNIC.  Both take their own DHCP lease.  The
+amd64 one serves its
+.CW /dis
+over a real network:
+.IP
+.EX
+; styxlisten -A 'tcp!*!17010' export /dis
+.EE
+.PP
+and the arm64 one mounts it and runs a program out of it.  The program
+is
+.CW ip/ping ,
+which is in the amd64 image and
+.I not
+in the arm64 one \(em the control is run first and says so:
+.IP
+.EX
+; ls /dis/ip
+ls: /dis/ip: file does not exist
+; mount -A tcp!10.128.0.58!17010 /mnt
+; ls -l /mnt/ip/ping.dis
+\-\-r--r--r-- M 2 inferno inferno 4889 Sep 17 16:00 /mnt/ip/ping.dis
+; bind -a /mnt /dis
+; ip/ping -n 3 10.128.0.58
+sending 3 64 byte messages 1000 ms apart
+0: rtt 0 \(*ms, avg rtt 0 \(*ms, ttl = 255
+1: rtt 0 \(*ms, avg rtt 0 \(*ms, ttl = 255
+2: rtt 0 \(*ms, avg rtt 0 \(*ms, ttl = 255
+; 9660srv
+usage: 9660srv [-rabc] [-9JR] [-s] cd_device dir
+.EE
+.PP
+An amd64 Dis binary, unmodified, doing real work on an arm64 machine:
+it pings the machine it came from.  The same file runs natively on the
+amd64 instance, and
+.CW 9660srv ,
+also absent from the arm64 image, prints its own usage from the same
+mount.  Nothing was recompiled and nothing was re-qualified.
+.PP
+.B "Where this is weaker than the local check, and why."
+.CW scripts/check-crossarch.sh
+compiles a program that is in
+.I neither
+kernel image and has both guests mount it from a third place.  On the
+rented pair the program is in one of the two images, because putting a
+freshly compiled file on an instance wants either a storage fetch \(em
+which needs TLS, and TLS does not work on these instances, see below \(em
+or a server of my own inside the network, which was not built.  So the
+local check keeps the stricter claim about the bytes and the rented pair
+adds what only real machines can: two of them, two processor families,
+a real network between them, and the cloud's own cost for the mount.
+.PP
+.B "Three things found doing it."
+.CW gcs
+over TLS fails on these instances while plain HTTP works: it dies with
+.CW "tls: record write: wrote -1/6: Hangup" ,
+the first write of the handshake, with or without
+.CW -A ,
+while
+.CW hget
+over
+.CW http
+to the same host returns a 404 from Google's own server \(em so DNS,
+routing and TCP are all fine.  It is not TLS in general:
+.CW scripts/check-tls.sh
+boots the same pc64 kernel under QEMU and fetches the same URL twice,
+once each way, and both succeed \(em the https one takes minutes, which
+is bignum arithmetic under TCG and is why a shorter hold first looked
+like a hang.
+.PP
+.B "Found, and it was not the network at all."
+The control was then run on an instance: a plain
+.CW "hget https://example.com/"
+hangs there too, with no error, while
+.CW http
+to the same host returns the page.  Two guesses were tested and
+neither held \(em Compute Engine's 1460-byte MTU (setting
+.CW "mtu 1460"
+on the interface changes nothing) and entropy
+.CW ( /dev/random
+returns at once on the same kernel under QEMU on one processor and on
+two; the instance-side test that looked like a block was
+.CW "cat /dev/random" ,
+which never ends by design and had merely wedged the shell).
+.PP
+Printing a timestamp at each step of the handshake settled it.  The
+connection is made, the ClientHello goes out, the ServerHello comes
+back \(em 30 ms \(em and then the client spends
+.B a hundred seconds
+on the certificates before it writes another byte.  The server hangs up
+long before that, which is why the next write failed with
+.CW Hangup
+and why it looked like a broken connection.  Two things cost that time,
+and both are now fixed:
+.TS
+box, tab(;);
+l l l.
+;before;after
+_
+read the trust bundle;52.5 s;0.06 s
+verify the chain;194.2 s;8.0 s
+whole handshake;247 s;9.6 s
+.TE
+(QEMU, which is about fifteen times slower than the instance.)
+.PP
+.B "Verification decoded every root, every time."
+.CW verify_chain_host
+began by decoding the whole trust bundle \(em 121 certificates \(em
+before walking the chain, and the caller cached only the bundle's raw
+bytes, so every handshake paid it again.  Nothing in the walk needs a
+decoded root until one of them turns out to be the issuer, and that is
+at most one of them.  A root's subject is now compared as raw DER,
+which is a handful of tag/length reads, and only the matching root is
+decoded and its signature checked.  Same verdict, 25 times quicker:
+.CW chainbench (1)
+reports 15 s falling to 0.6 s interpreted, on four real chains
+(example.com, google.com, github.com, debian.org), each with its four
+controls still failing.
+.PP
+.B "The bundle is read as DER."
+What was left was the PEM: 2950 lines through
+.IR bufio (2)
+and 182 KB of base64, 1.5 s and 1.7 s of interpreted Dis.  A DER
+certificate is self-delimiting, so
+.CW lib/tls/ca-bundle.der
+is simply those certificates end to end, and reading it is one read and
+a walk down the tag/length headers.
+.CW tls12 (2)
+prefers it and falls back to the PEM, which stays the readable
+original;
+.CW scripts/mkcabundle.sh
+makes one from the other and
+.CW scripts/check-cabundle.sh
+checks they hold the same certificates, because a DER that quietly
+dropped a root would narrow what this system trusts and nothing else
+would notice.
+.PP
+.B "What it was not."
+Not P-256, which
+.CW p256test (1)
+puts at 103 ms a verification interpreted.  Not the interpreter's
+per-instruction trace either, though that was worth fixing while
+looking: it took the remainder four times per Dis instruction, and a
+signed remainder is a division on this compiler.  Masking instead \(em
+the ring is 256 entries \(em is worth about 8%.
+.PP
+.B "Confirmed on the instance."
+.CW "hget https://example.com/"
+returns the page, and
+.CW "gcs -t /mnt/token ls"
+lists a real bucket with the instance's own credential.  The arm64
+kernel does it too, on a t2a over gVNIC, with the DER bundle in its
+root: same fetch, same page.  Locally,
+.CW scripts/check-tls.sh
+now passes rather than depending on how patient the server feels; it is
+in
+.CW check-all.sh 's
+boot tier, with
+.CW check-cabundle
+in the quick one.
+.PP
+.B "One number that is not a measurement."
+.CW ping
+reports
+.CW "rtt 0"
+on both kernels, in both directions.  That is its own timing on a
+native kernel, not the network.
+.NH 2
+Item 9: against a conventional system on the same instance
+.PP
+Item 9 asks how Inferno's boot and footprint compare with a
+conventional system's on the same instance shape.  Both sides are an
+.CW e2-micro
+in
+.CW us-central1-a
+with a 10 GB disk, both boot through Compute Engine's UEFI firmware,
+and both are timed from the same line \(em the one the firmware prints
+handing control to the boot loader \(em so the firmware is excluded from
+both and the loader onwards is counted.
+.PP
+.B "The instrument, and the one it replaces."
+.CW scripts/gce-boot-stamp.py
+holds the live console stream open, resets the instance, and stamps
+every line with the local clock.
+.CW scripts/gce-boot-race.py
+polls
+.CW get-serial-port-output
+instead, and is kept only for coarse work: the API returns the log in
+bursts, so a fast boot's first and last markers arrive in one poll and
+the answer comes out as
+.B 0
+seconds.  It also returns a window rather than the whole log, so
+counting occurrences of a marker goes
+.I down
+on a talkative guest; the polling version now reads by byte offset.
+.PP
+.B "Boot, three runs each."
+.TS
+box, tab(;);
+l l l.
+system;marker;seconds from the loader
+_
+Inferno;an interactive shell;4.0  2.4  9.5
+Debian 12;a login prompt;15.1  5.9  17.5
+Debian 12;systemd "Startup finished";18.7  9.2  20.3
+.TE
+Inferno is about three times quicker to something a person can type at,
+and the ranges overlap, because an
+.CW e2-micro
+is a shared-core burstable shape and a good part of this spread is the
+machine rather than the software.  Debian's own accounting of the same
+boots says 2.5 s of kernel and 9 to 13 s of userspace.  It is not a
+like-for-like comparison of equivalent function: Debian spends that
+userspace on cloud-init, ssh host keys, logging and guest agents, none
+of which Inferno does at all.  What it compares is what each system
+does by default on the same machine.
+.PP
+.B "Footprint, on the same machine."
+.TS
+box, tab(;);
+l l l.
+;Inferno;Debian 12
+_
+image archive;2.39 MB;\(em
+kernel;9.24 MB;14.2 MB (vmlinuz)
+disk in use;about 9 MB;2.1 GB
+memory in use at rest;8.7 MB of pool;288 MB used, 681 MB available
+.TE
+Inferno's memory figure is
+.CW /dev/memory
+at an idle shell on the instance: 8.67 MB of the main pool and 0.38 MB
+of heap.  That is pool memory, not the whole footprint \(em the kernel
+image and its fixed structures are outside it, and item 10's floor
+measurement, 66 MiB to boot and 68 to work, is the number to quote for
+how small a machine it needs.
+.NH 2
+Interrupts for the network at last: a GICv3 ITS
+.PP
+The gVNIC driver polled, because gVNIC signals only through MSI-X and
+this board could not receive one: a GICv2 machine turns an MSI into an
+interrupt with a v2m frame, which
+.CW msivirtarm64.c
+drives, and a GICv3 machine uses an ITS instead, which it did not.  A
+Compute Engine t2a is the second kind, so the driver's two kernel
+processes woke on a timer and a packet could wait a tick.
+.PP
+.CW os/inferno/virtarm64/itsvirtarm64.c
+drives the ITS.  Three things have to be built and none of them
+implies the others: the redistributor's LPI tables, one byte of
+configuration and one bit of pending state per LPI, and
+.CW GICR_CTLR.EnableLPIs ;
+the ITS's own device and collection tables and its command queue; and
+per device an interrupt translation table, with MAPD, MAPC, MAPTI, INV
+and SYNC to map device and event to an LPI.  An LPI is numbered from
+8192 up and is not an SPI, so
+.CW trap.c
+dispatches it out of its own table rather than
+.CW irqhandler[] .
+.PP
+.B "Verified on both kinds of machine."
+Under QEMU with
+.CW gic-version=3 ,
+NVMe takes two vectors and both deliver
+.CW ( "nvme: msix vector 0 delivered" ,
+then vector 1), and with
+.CW gic-version=2
+the v2m path still does the same, which is the control that says this
+did not break the machine it was not written for.  On a rented
+.CW t2a-standard-1
+the network driver reports
+.CW "interrupts msi-x rx 27 tx 1"
+against 27 packets received: every packet arrived as an interrupt
+rather than on the poll.
+.PP
+.B "What the interrupts are worth, measured."
+.CW *gvepoll
+in
+.CW plan9.ini
+forces the polling path on a machine that could interrupt, so the two
+can be compared on the same image and the same shape.  Two
+.CW t2a-standard-1
+instances, one each way, pinged 40 times from a third instance in the
+same zone \(em so the round trip is the network this is about and not
+the internet:
+.TS
+box, tab(;);
+l l l l.
+;min;avg;max
+_
+interrupts;1.13 ms;1.42 ms;2.37 ms
+polling;3.01 ms;3.20 ms;3.95 ms
+.TE
+The floor moves by 1.9 ms and the average by 1.8, which is a packet
+waiting for a timer rather than for the wire.  Measured from outside
+the cloud the same difference is there and is not worth quoting: 54 ms
+against 58 ms with a 23 ms standard deviation, which is the internet
+and not the driver.
+.PP
+.B "The page size is the hardware's to choose."
+.CW GITS_BASER
+takes a requested page size and returns the one it will use.  Asking
+for 4 KiB and not reading the answer is how this spent three rented
+instances delivering nothing: the t2a returns 64 KiB, after which the
+size field means sixteen 64 KiB pages rather than sixteen 4 KiB ones,
+and the ITS reads a device table that is not the table that was
+allocated.  Nothing reports it \(em commands are accepted, mappings are
+made, and no interrupt is ever translated.  The driver now asks, reads
+the answer, and then allocates; the same read-back catches an ITS that
+will not take a cacheable attribute, and the tables are cleaned to
+memory by hand when it will not.
+.PP
+.B "And the device ids are the firmware's to give."
+A PCI function's device id at the ITS is normally its requester id, and
+assuming that is the same class of mistake, so
+.CW acpi.c
+reads the IORT and translates.  Both machines here happen to map
+identity; the assumption was still wrong to make.
+.PP
+.B "Programming a vector is not receiving one."
+The driver polls at a tick until an interrupt has actually arrived and
+only then lengthens its timeout to a backstop.  That is not caution for
+its own sake: on the t2a every vector was accepted, unmasked and
+pointed at the right doorbell for three images running, and not one
+interrupt was delivered.  A driver that believed the programming would
+have gone from polling every tick to polling every second.
+.NH 2
+A BAR is moved with the device's decoders off
+.PP
+NVMe's MSI-X table would not answer on a t2a.  Its table is 64 bytes in
+BAR4, and it read back all ones wherever this kernel put it, while
+gve's, in the same page, read back what was written.  The controller's
+own registers worked and the disk was read, because
+.CW sdnvme.c
+polls its completion queue on a timer, so the machine looked healthy
+and one device simply had no interrupts.
+.PP
+Four things were eliminated by measurement before the cause turned up.
+The device id was not it: Linux's own
+.CW /proc/interrupts
+on the same shape shows NVMe taking ITS MSIs, and the IORT maps
+identity.  The address was not it: moving the BAR to another page
+changed nothing, and sharing a page with two other devices was not it
+either.  The command register said memory decoding was on, and the BAR
+in configuration space held exactly what this kernel had written.
+.PP
+And that last pair is the answer.  PCI says the effect of writing a
+base address while the device is decoding is undefined, and this
+machine takes it at its word: the firmware had booted from that NVMe
+disk and left it enabled, so the controller kept answering at the
+address the firmware gave it while its configuration register showed
+ours.  The network card, which the firmware never touched and left
+disabled, took its new address without complaint \(em which is why one
+device worked and the other did not, on the same bus, with the same
+code.
+.PP
+.CW pcibusmap ()
+now turns the decoders off before it places anything and restores them
+exactly as it found them afterwards.  With that, the NVMe table reads
+back what is written on a t2a and both its vectors deliver:
+.CW "nvme: msix vector 0 delivered" ,
+then vector 1.
+.PP
+.B "And a cache that hid it."
+.CW pcienable ()
+decided whether to enable a device from
+.CW p->pcr ,
+a copy of the command register taken when the bus was walked.  With the
+decoders turned off after that copy was made, it saw bits it believed
+were already set and wrote nothing, and the disk went dark \(em the same
+kernel that had just been fixed now failed to read its own root.  It
+reads the register.
+.PP
+This is not a Compute Engine quirk.  Any machine whose firmware leaves
+a device enabled \(em which is every machine that boots from one \(em
+has been getting undefined behaviour out of this code, and getting away
+with it because the devices in question tolerated it.
+.NH 2
+A faster curve that was slower: Jacobian coordinates
+.PP
+.CW p256 (2)
+works in affine coordinates and takes a modular inverse per point
+operation, which its own comment calls the obvious-correctness choice
+over the fast one.  A scalar multiplication is a few hundred of those
+inversions, and certificate verification is what a handshake spends its
+time on, so the textbook improvement \(em Jacobian coordinates, which
+carry the denominator along and invert once at the end \(em looked like
+the next thing to do.
+.PP
+It was written, it was correct against every OpenSSL vector and every
+control in
+.CW p256test (1),
+and it was
+.B slower :
+169 ms a verification against 97, and 84 ms an ECDH against 49.  It was
+reverted.  (Those two figures were taken together in one sitting; the
+same affine code measures 83 ms elsewhere in this paper, because the
+absolute numbers move with what else the machine is running.  The
+comparison is between the pair, not across the page.)
+.PP
+The reason is where the work actually is.  A field operation here is
+not an instruction, it is a call out of interpreted Dis into
+.CW libmp :
+.CW fmul ()
+is
+.CW mul ()
+then
+.CW mod () ,
+two crossings, and there is no modular multiply in
+.CW keyring (2)
+to make it one.  An inversion, by contrast, is a single crossing into a
+C routine that does the whole extended Euclid.  Counting crossings
+rather than multiplications, affine doubling costs about ten field
+operations and one inversion; the Jacobian formulas cost twice that and
+save the inversion, which was never the expensive part.
+.PP
+The asymptotics are right and the arithmetic is right and it is still
+the wrong change, which is worth leaving written down: the cost model
+that makes Jacobian coordinates faster assumes field multiplications
+are cheap relative to inversion, and in interpreted Dis over
+.CW IPint
+they are not.  What would change the answer is a
+.CW mulmod
+builtin, which would take a crossing off every field multiply and is
+the thing to try before any curve algebra.  The section below is that
+builtin, and it settles the ratio by measurement rather than by
+counting: an inversion costs about three modular multiplies here, so
+even with the crossings halved the trade Jacobian coordinates make
+\(em several multiplies for one inversion \(em is a bad one, and
+.CW p256 (2)
+stays affine.
+.NH 2
+Modular arithmetic in one crossing
+.PP
+A field operation in
+.CW p256 (2)
+was written the way the module allowed:
+.CW x.mul(y).mod(p) ,
+.CW x.add(y).mod(p) ,
+.CW x.sub(y).mod(p) .
+Each of those is two calls out of interpreted Dis into
+.CW libmp
+and one intermediate \(em an unreduced product or a negative
+difference \(em that nobody looks at.  Since the section above found
+that the crossing and not the arithmetic is what a field operation
+costs, the fix is to do both halves on the far side of one call.
+.PP
+The
+.CW IPint
+adt in
+.CW keyring (2)
+gained
+.CW mulmod ,
+.CW addmod
+and
+.CW submod :
+one C routine parameterised by the operation, reducing through
+.CW mpmod ,
+so a subtraction that goes negative comes back positive.
+.CW p256test (1)
+now prices the operations and checks each new one against the form it
+replaces.
+.PP
+.TS
+center box tab(;);
+c | c | c
+l | n | n .
+operation;two calls;one call
+_
+256-bit multiply;\(em;7.00 \(*ms
+multiply and reduce;11.25 \(*ms;8.00 \(*ms
+subtract and reduce;10.75 \(*ms;7.50 \(*ms
+invert;\(em;20.50 \(*ms
+.TE
+.PP
+Best of five passes of four thousand calls each, interpreted.  The
+absolute figures move with whatever else the machine is doing \(em an
+idle laptop gives 5.00, 10.25, 6.00 and 19.00 for the same four \(em
+so what is worth reading is the differences, which do not.  A crossing
+costs three to four microseconds and the 256-bit multiply behind it
+about the same, which is the finding: at this size the call costs as
+much as the arithmetic.
+.PP
+What it buys, measured with the same binary either side of the change,
+interpreted:
+.TS
+center box tab(;);
+c | c | c
+l | n | n .
+;before;after
+_
+ECDSA P-256 verification;83 ms;58 ms
+ECDH agreement;44 ms;30 ms
+a three-certificate chain;530 ms;417 ms
+.TE
+.PP
+A third off the curve arithmetic and a fifth off chain verification,
+for a change of spelling in three one-line functions.  The chain does
+not improve by as much because the rest of it is DER parsing, which
+this did not touch.
+.PP
+.B "And the ratio that was assumed."
+The reason to price
+.CW invert
+beside
+.CW mulmod
+is that the textbook case for Jacobian coordinates rests on an
+inversion costing thirty to a hundred multiplies, which is true of
+field arithmetic written in assembly over a Mersenne-like prime.  Here
+it costs between two and a half and three: both are single crossings,
+and
+.CW mpinvert 's
+extended Euclid over 256 bits is genuinely not much slower than
+.CW mpmul
+plus
+.CW mpdiv .
+Affine coordinates are the right shape for this machine for the same
+reason they were before the builtins, and now there is a number for it
+rather than an argument.
+.NH 2
+One line of Limbo could stop the machine
+.PP
+Adding those three builtins meant reading the ones beside them, and
+they have a hole.
+.CW libmp
+answers a division by zero with
+.CW sysfatal :
+.PP
+.DS
+.CW
+five := IPint.inttoip(5);
+zero := IPint.inttoip(0);
+r := five.mod(zero);        # inside an exception handler
+.DE
+.PP
+run under hosted
+.CW emu :
+.DS
+.CW
+about to take 5 mod 0
+emu-g: mpdiv: divide by zero
+.DE
+.PP
+That is the hosted emulator dying.  On a native kernel
+.CW sysfatal
+is a panic, so the same line stops a booted machine \(em and the
+arguments that reach it are not necessarily a caller's mistake.  A
+modulus arrives from a certificate, an exponent from a key file, and a
+base that shares a factor with the modulus is something arithmetic
+produces.  Four calls were fatal this way:
+.CW mod
+and
+.CW div
+by zero,
+.CW expmod
+with a negative exponent, and
+.CW invert
+of a base with no inverse.
+.PP
+They now raise.  Zero divisors and moduli raise the interpreter's own
+.CW "zero divide" ,
+the two cases libmp names on its own raise
+.CW "negative exponent"
+and
+.CW "no inverse" ,
+and a Limbo program can catch any of them.
+.CW invert
+does its extended gcd in
+.CW ipint.c
+rather than calling
+.CW mpinvert ,
+because the fatal test is inside
+.CW mpinvert
+itself.
+.PP
+.CW ipinttest (1)
+is the check: nine calls that end the process without the guards \(em
+the six that were fatal before this change, and the three new modular
+operations, which would have been had they been written as an
+operation followed by a
+.CW mod
+\(em each run inside a handler, and eight working calls beside them
+with their answers, so a build that raised for everything would fail
+rather than pass.  It is in
+.CW check-all.sh 's
+quick tier: it takes under a second, and what it protects is invisible
+until someone edits
+.CW ipint.c .
+.PP
+This was not on any list.  It was found by reading the neighbours of
+the code being changed, which is the argument for doing that.
+.NH 2
+The same measurement on a rented machine
+.PP
+Everything above was measured on a laptop, interpreted, which is the
+right shape for a native kernel but not the machine anyone would run
+one on.  So the two instruments went into the
+.CW pc64
+root \(em about 20 KB against a 66 MiB boot floor \(em and an
+.CW e2-small
+was rented to run them.
+.PP
+.TS
+center box tab(;);
+c | c | c
+l | n | n .
+operation;two calls;one call
+_
+256-bit multiply;\(em;32.50 \(*ms
+multiply and reduce;52.50 \(*ms;37.50 \(*ms
+subtract and reduce;50.00 \(*ms;35.00 \(*ms
+invert;\(em;107.50 \(*ms
+.TE
+.PP
+An instance is four to six times slower per operation than interpreted
+Dis on the laptop \(em the range rather than a figure, because the
+laptop's own column moves by that much depending on what else it is
+running \(em and the two ratios that the argument rests on come out the
+same on both: a crossing costs about as much as the multiply
+behind it (15 \(*ms against 32.5 here), and an inversion costs 2.9
+modular multiplies.  The case against Jacobian coordinates was made on
+a laptop and holds on the hardware.
+.PP
+A P-256 verification on that instance takes about 300 ms and an ECDH
+agreement about 150 (296 and 152 in the run above, one pass of five
+rather than the best of five the field costs get, so the field table
+is what carries the argument).  The before-and-after for those is the pair of
+columns above, measured in the same run on the same machine: the
+two-call spelling is what the curve code used before this change, and
+it is 40 percent dearer for a multiply and 43 percent for a subtract.
+.PP
+.B "What a handshake costs there."
+Timed from outside, by typing a compound line at the serial console so
+that the guest prints its own markers either side of the fetch:
+.DS
+.CW
+  2.63 ; echo PLAIN-BEGIN; hget http://example.com/ >/dev/null; echo PLAIN-END
+  2.67 PLAIN-BEGIN
+  2.84 PLAIN-END
+ 65.96 TLS-BEGIN
+ 69.20 TLS-END
+132.37 TLS2-BEGIN
+135.51 TLS2-END
+.DE
+.PP
+0.17 s in the clear, 3.24 and 3.14 s over TLS, on the same instance to
+the same host.  So the handshake costs about three seconds of
+processor.  It is worth being careful about what that replaces: the
+hundred seconds reported earlier in this paper was the
+.I "certificate work"
+inside a handshake, timed step by step, and there was no end-to-end
+figure to compare it against because the fetch never finished \(em the
+server hung up first.  Three seconds is the first completed
+measurement of the whole thing on an instance.
+.PP
+.B "And the panics are gone on the hardware."
+.CW ipinttest (1)
+ran there first, and all nine of the formerly fatal calls raised and
+were caught.  That is the demonstration a hosted
+.CW emu
+cannot give: on a kernel,
+.CW sysfatal
+is a panic, so the machine that went on to run the benchmark is the
+evidence.
+.NH 2
+Two things the instance's console said about the harness
+.PP
+The boot log of both rented machines carried this, forty seconds in:
+.DS
+.CW
+dis: global runq: 0 put, 0 got, 0 now, bound 64
+dis: parked for work: proc 19 dis
+dis: proc 1 *init* Wakeme type 2 vmheld 0 iprog 0x1b36d7c0 ...
+.DE
+.PP
+and, during each fetch, a line every time the VM-lock queue reached a
+new depth.  That is the multicore merge's instrumentation, which
+.CW portclock.c
+called unconditionally at
+.CW 40*HZ
+on every board.  On a laptop with a scrollback it is a debugging aid.
+On an instance the serial console is the entire interface \(em there is
+no ssh and no agent \(em and it was filling with kernel internals while
+someone was trying to read a DHCP lease off it.
+.PP
+It is behind
+.CW *disdump=1
+now, read where
+.CW *parallelvm
+is read, on both cloud boards.  The counters still run; only the
+reporting is optional, so the VM-lock figures quoted earlier in this
+paper are still obtainable \(em by asking.
+.CW scripts/check-disdump.sh
+boots both ways, because "no dump appeared" is also what a kernel that
+died before the fortieth second prints: the
+.CW *disdump=1
+arm is the control that says the silence was chosen.
+.PP
+.B "And the check that was testing an eight-day-old kernel."
+Writing that control meant reading the boot checks, and
+.CW check-pc64-timers.sh
+did not build its image.  It booted
+.CW .qemu/inferno-efi.iso ,
+whatever that was \(em and it was from the tenth of September while the
+kernel it was supposed to be checking had been rebuilt a dozen times.
+It reported
+.CW ok
+throughout.  Every other check in the suite builds its own image from
+the kernel in the tree; this one now does too, with an argument for
+the deliberate case.
+.PP
+A stale image passes a boot test perfectly well.  That is the whole
+trouble with it: the check was green, the suite was green, and the
+thing being asserted had not been tested since the date on the file.

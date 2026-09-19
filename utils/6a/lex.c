@@ -1076,8 +1076,15 @@ zaddr(Gen *a, int s)
 		t |= T_INDEX;
 	if(a->offset != 0) {
 		t |= T_OFFSET;
-		l = a->offset;
-		if((vlong)l != a->offset)
+		/*
+		 * Same bug 7a's zaddr() had, and the same fix: the test was
+		 * "l = a->offset; if((vlong)l != a->offset)" with l declared
+		 * long, which assumes a 32-bit long.  On the 64-bit hosts
+		 * these tools are built on it is always false, so T_64 was
+		 * never set and any offset above 32 bits was written as its
+		 * low word.  See AGENTS.md on long being 32 bits.
+		 */
+		if((vlong)(s32int)a->offset != a->offset)
 			t |= T_64;
 	}
 	if(s != 0)

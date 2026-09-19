@@ -3,6 +3,7 @@
 9srvfs 9srvfs
 acme acme
 archfs archfs
+cloudfs cloudfs
 cpu grid-cpu
 dbfs dbfs
 dossrv dossrv
@@ -21,13 +22,16 @@ kfs kfs
 lockfs lockfs
 logfile logfile
 memfs memfs
+metricfs metricfs
 mntgen mntgen
 namespace namespace
 palmsrv palmsrv
 pinboard pinboard
 ramfile ramfile
 rawdbfs dbfs
+register regndb
 registry registry
+regndb regndb
 regquery registry
 spree spree
 tarfs tarfs

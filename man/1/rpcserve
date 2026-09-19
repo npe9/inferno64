@@ -1,0 +1,64 @@
+.TH RPCSERVE 1
+.SH NAME
+rpcserve \- a conventional RPC server, for comparison against Styx
+.SH SYNOPSIS
+.B rpcserve
+[
+.B -v
+]
+[
+.I address
+]
+.SH DESCRIPTION
+.I Rpcserve
+answers a small request-response protocol on
+.I address
+.RB ( tcp!*!6667
+by default).  It exists to be measured against, by
+.IR styxbench (1)'s
+.B -r
+arm.
+.PP
+.B doc/inferno-cloud-modern.ms
+item 8 asks what a Styx round trip costs "against a conventional RPC
+with its own framing and serialisation, which is the thing a real
+service would otherwise use".  Raw TCP \(em a write and a read with no
+protocol at all \(em is the floor, and is not what anyone would deploy.
+This is the other point of comparison.
+.PP
+The protocol is deliberately small and ordinary:
+.IP
+.EX
+request:  4-byte big-endian length, then "GET <offset> <count>\en"
+reply:    4-byte big-endian length, then "OK <n>\en" then n bytes
+.EE
+.PP
+A length prefix and a text header is what most hand-rolled RPCs and
+every JSON-over-TCP service amount to.  What is being measured is
+having to produce and parse them on both sides.
+.I Offset
+is accepted and ignored: the payload is generated rather than read from
+anywhere, because reading a disk on one side only would measure the
+disk.  It is in the protocol so that a request has more than one field
+to parse, which is the point.
+.PP
+One connection is served at a time, to completion, because the
+measurement it exists for uses one.
+.SH SOURCE
+.B /appl/cmd/rpcserve.b
+.SH SEE ALSO
+.IR styxbench (1),
+.IR tcpserve (1),
+.IR styxlisten (1)
+.SH BUGS
+It is not a general-purpose RPC server and should not be used as one:
+there is one method, no authentication, no concurrency and no attempt
+at a schema.
+.PP
+It is not HTTP, on purpose.
+.IR httpclient (2)
+here sends
+.BR "Connection: close" ,
+so measuring against it would cost a new TCP connection per request
+while the Styx arm reads an already-open fid \(em which would flatter
+Styx by a whole connection setup rather than comparing protocols.

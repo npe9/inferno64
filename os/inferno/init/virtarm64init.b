@@ -36,11 +36,29 @@ init()
 	sys->bind("#I", "/net", Sys->MAFTER);	# ip
 	sys->print("** Inferno/arm64 virt **\n");
 	sys->print("VIRTARM64-OK\n");
+
+	#
+	# What the boot loader passed, if there was one.  A UEFI boot
+	# through os/inferno/boot/efi/bootaa64.efi leaves plan9.ini's
+	# lines and the ACPI RSDP here; QEMU's -kernel path leaves
+	# nothing, and prints the second line instead.  See
+	# doc/inferno-cloud-plan.ms.
+	#
+	# ksetenv() puts a name beginning with '*' only in the
+	# configuration environment, #ec, not in #e -- see
+	# os/inferno/port/devenv.c.
+	acpi := rf("#ec/*acpi");
+	if(acpi != nil)
+		sys->print("ARM64-ACPI-OK *acpi=%s\n", acpi);
+	else
+		sys->print("ARM64-ACPI-NONE no loader configuration\n");
 	sys->bind("#S", "/dev", Sys->MAFTER);	# storage (nvme/virtio)
 	for(l := "/dev/sdN0/data" :: "/dev/sdF0/data" :: nil; l != nil; l = tl l){
 		dfd := sys->open(hd l, Sys->OREAD);
-		if(dfd == nil)
+		if(dfd == nil){
+			sys->print("ARM64-DISK-NONE %s: %r\n", hd l);
 			continue;
+		}
 		sec := array[512] of byte;
 		n := sys->read(dfd, sec, len sec);
 		if(n == 512)
@@ -61,4 +79,19 @@ init()
 	sys->print("VIRTARM64-FAIL: sh exited\n");
 	for(;;)
 		sys->sleep(10000);
+}
+
+#
+# read a whole small file, or nil
+#
+rf(name: string): string
+{
+	fd := sys->open(name, Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	buf := array[256] of byte;
+	n := sys->read(fd, buf, len buf);
+	if(n <= 0)
+		return nil;
+	return string buf[0:n];
 }

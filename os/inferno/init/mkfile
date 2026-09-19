@@ -2,6 +2,7 @@
 
 OBJ=\
 	disinit.dis\
+	fpinit.dis\
 	wminit.dis\
 
 all:V:	$OBJ

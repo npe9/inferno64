@@ -334,7 +334,19 @@ asmout(Prog *p, Optab *o)
 		r = p->to.reg;
 		if(r == NREG)
 			r = o->param;
-		if(v < 0){	/* unscaled 9-bit signed */
+		/*
+		 * The scaled 12-bit form can only carry an offset that is a
+		 * multiple of the access width.  A small positive one that
+		 * is not -- an unaligned field of a packed on-disk structure,
+		 * which is where this first bit: os/inferno/boot/efi/iso.c
+		 * reading an ISO9660 directory record -- goes through the
+		 * unscaled 9-bit signed form, the same one a negative offset
+		 * already used.
+		 */
+		if(v < 0 || (v & ((1<<offsetscale(o->a3))-1)) != 0){
+			if(v < -256 || v > 255)
+				diag("offset %lld needs the scaled form but is not a multiple of %d\n%P",
+					v, 1<<offsetscale(o->a3), p);
 			o1 = olsr9s(opstr9(p->as), v, r, p->from.reg);
 		}else{
 			v = offsetshift(v, o->a3);
@@ -347,7 +359,10 @@ asmout(Prog *p, Optab *o)
 		r = p->from.reg;
 		if(r == NREG)
 			r = o->param;
-		if(v < 0){	/* unscaled 9-bit signed */
+		if(v < 0 || (v & ((1<<offsetscale(o->a1))-1)) != 0){	/* unscaled 9-bit signed */
+			if(v < -256 || v > 255)
+				diag("offset %lld needs the scaled form but is not a multiple of %d\n%P",
+					v, 1<<offsetscale(o->a1), p);
 			o1 = olsr9s(opldr9(p->as), v, r, p->to.reg);
 		}else{
 			v = offsetshift(v, o->a1);
@@ -1441,7 +1456,16 @@ opload(int a)
 	case ALDAXP:	return LDSTX(3,0,1,1,1);
 	case ALDAXPW:	return LDSTX(2,0,1,1,1);
 	case ALDAXR:	return LDSTX(3,0,1,0,1) | 0x1F<<10;
-	case ALDAXRW:	return LDSTX(2,1,1,0,1) | 0x1F<<10;
+	/*
+	 * o2 is 0 for an exclusive access and 1 only for the ordered,
+	 * non-exclusive LDLAR/STLLR family.  This row had o2 = 1, copied
+	 * from ALDARW two lines up, which encodes LDLARW -- a load that
+	 * does not take the exclusive monitor at all, so the STLXRW
+	 * pairing with it would never succeed and every compare-and-swap
+	 * built on the pair would spin forever.  Compare ALDAXR, the
+	 * 64-bit form of this same instruction, which was already right.
+	 */
+	case ALDAXRW:	return LDSTX(2,0,1,0,1) | 0x1F<<10;
 	case ALDAXRB:	return LDSTX(0,0,1,0,1) | 0x1F<<10;
 	case ALDAXRH:	return LDSTX(1,0,1,0,1) | 0x1F<<10;
 	case ALDXR:		return LDSTX(3,0,1,0,0) | 0x1F<<10;
@@ -1467,8 +1491,13 @@ opstore(int a)
 	case ASTLP:		return LDSTX(3,0,0,1,1);
 	case ASTLPW:		return LDSTX(2,0,0,1,1);
 	case ASTLRW:		return LDSTX(2,1,0,0,1) | 0x1F<<10;
-	case ASTLXP:		return LDSTX(2,0,0,1,1);
-	case ASTLXPW:		return LDSTX(3,0,0,1,1);
+	/*
+	 * These two were swapped: for a pair instruction the size field
+	 * is 3 for the 64-bit form and 2 for the 32-bit one, which is
+	 * how ASTXP/ASTXPW below and ALDAXP/ALDAXPW above have it.
+	 */
+	case ASTLXP:		return LDSTX(3,0,0,1,1);
+	case ASTLXPW:		return LDSTX(2,0,0,1,1);
 	case ASTLXR:		return LDSTX(3,0,0,0,1) | 0x1F<<10;
 	case ASTLXRB:		return LDSTX(0,0,0,0,1) | 0x1F<<10;
 	case ASTLXRH:		return LDSTX(1,0,0,0,1) | 0x1F<<10;
@@ -1613,7 +1642,6 @@ omovlit(int as, Prog *p, Adr *a, int dr)
 
 	if(p->cond == nil){	/* not in literal pool */
 		aclass(a);
-fprint(2, "omovlit add %lld (%#llux)\n", instoffset, instoffset);
 		/* TO DO: could be clever, and use general constant builder */
 		o1 = opirr(AADD);
 		v = instoffset;

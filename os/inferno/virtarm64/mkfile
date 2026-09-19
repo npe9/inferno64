@@ -3,7 +3,7 @@
 #Configurable parameters
 
 CONF=virtarm64
-CONFLIST=virtarm64
+CONFLIST=virtarm64 virtarm64ndb
 
 SYSTARG=$OSTARG
 OBJTYPE=aarch64
@@ -26,7 +26,12 @@ KTZERO=0x40000000
 
 OBJ=\
 	l.$O\
+	acpi.$O\
 	auth.$O\
+	bootargs.$O\
+	startcpu.$O\
+	msivirtarm64.$O\
+	itsvirtarm64.$O\
 	clock.$O\
 	main.$O\
 	mmu.$O\

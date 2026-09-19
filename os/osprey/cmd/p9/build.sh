@@ -20,7 +20,7 @@ OBJ="os/osprey/pc64/init9.6"
 for f in $P/main.c $P/p9shim.c os/osprey/port/chan.c os/osprey/port/dev.c \
          os/osprey/port/pgrp.c os/osprey/port/devroot.c \
          os/osprey/port/devenv.c os/osprey/port/qio.c os/osprey/port/devmnt.c os/osprey/port/devpipe.c os/osprey/port/devsrv.c \
-         $P/dev9ploop.c $P/p9file.c $P/p9srv.c $P/p9buddy.c $P/p9linuxfile.c $P/devlfs.c $P/pipfsrv.c $P/p9ip.c $P/p9sched.c $P/p9kbd.c $P/devcache.c \
+         $P/dev9ploop.c $P/p9file.c $P/p9srv.c $P/p9buddy.c $P/p9linuxfile.c $P/devlfs.c $P/pipfsrv.c $P/p9ip.c $P/p9sched.c $P/p9kbd.c $P/devcache.c $P/devtime.c $P/devnote.c $P/devinput.c $P/p9proc.c \
          os/osprey/port/netif.c os/osprey/port/parse.c \
          os/osprey/ip/ip.c os/osprey/ip/ipaux.c os/osprey/ip/iproute.c os/osprey/ip/ipifc.c \
          os/osprey/ip/netlog.c os/osprey/ip/ipmux.c os/osprey/ip/arp.c os/osprey/ip/icmp.c \
@@ -40,7 +40,13 @@ for f in parseip ptclbsum ipaux classmask eipfmt; do
 done
 # libc members the host linker can't read, supplied from lib9 source
 SUP=""
-for m in utfnlen convM2D convD2M convS2M convM2S fcallfmt vsnprint dofmt vfprint; do
+# fmtquote is here for %q, which namelenerror() uses to name the file an
+# error is about: without it every "... does not exist" and "permission
+# denied" from the name space came out with a literal %q in it, and the
+# draw server's postsrv failure said "Eperm: %q" instead of naming /srv.
+# runestrlen comes with it: fmtquote calls it, and it is one of the 34
+# members of the prebuilt archive this linker cannot read.
+for m in utfnlen convM2D convD2M convS2M convM2S fcallfmt vsnprint dofmt vfprint fmtquote runestrlen; do
 	6c $LIBINC -o /tmp/p9_$m.6 lib9/$m.c
 	SUP="$SUP /tmp/p9_$m.6"
 done
@@ -50,6 +56,11 @@ done
 OBJ="$OBJ /tmp/p9_ring9p.6"
 6c $LIBINC -o /tmp/p9_p9pairsrv.6 $P/p9pairsrv.c
 OBJ="$OBJ /tmp/p9_p9pairsrv.6"
+# the library operating system's own loader: it reads a program through
+# the name space and calls it, so it needs libc's segattach, not the
+# name space's segattach - the user headers, as above
+6c $LIBINC -I os/osprey/pc64 -o /tmp/p9_p9exec.6 $P/p9exec.c	# prog2.i is generated there
+OBJ="$OBJ /tmp/p9_p9exec.6"
 6c $LIBINC -o /tmp/p9_blkvirtio.6 $P/blkvirtio.c
 OBJ="$OBJ /tmp/p9_blkvirtio.6"
 6c $LIBINC -o /tmp/p9_netvirtio.6 $P/netvirtio.c

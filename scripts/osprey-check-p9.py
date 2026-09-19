@@ -21,7 +21,10 @@ directory was read through it, a second device was mounted and a
 name resolved across the mount table into it, a 9P server
 mounted over the microkernel ring - the server a container of its
 own - its file read back across #M, and both a local file and the
-server's file opened and read by file descriptor, with no panic.
+server's file opened and read by file descriptor, with no panic --
+and then that a program loaded beside the personality can start other
+programs and wait for them, so a shell runs a script with a pipeline in
+it, two programs alive at once in the one address space.
 
 usage: scripts/osprey-check-p9.py [-k]
 """
@@ -93,6 +96,50 @@ def main():
                     'posted the personality' in t and m4 is not None and int(m4.group(1)) >= 10))
     results.append(("and it duplicates a descriptor, the two sharing one channel and offset (what a shell redirects with)",
                     'the rest on its dup fd 2: " from the 9P server' in t))
+    results.append(("and it loads a second program and runs it: the personality reads /boot/prog2 through the name space it built, asks the kernel only for the address space, lays the binary in it and calls its entry - the loading a library operating system does for itself",
+                    re.search(r'osprey user: \d+ bytes of address space at 0x1000000 for a program the caller loads itself', t) is not None
+                    and re.search(r'p9 exec: /boot/prog2: text \d+, data \d+, bss \d+; \d+ bytes of address space at 0x1000000, entry 0x1000028', t) is not None
+                    and 'prog2: I am the second program on the library-OS personality, loaded into its address space and called by it' in t))
+    results.append(("and that program reaches the file system by calling the personality, not by trapping: it opens and reads /greeting through the entry points it was handed, in its own address space",
+                    'prog2: opened and read /greeting by calling the personality, no trap and no ring: "hello osprey"' in t))
+    results.append(("and the name space under it is the one the first program built, still live: the second program creates a file in it and the first reads that file back afterwards, the personality never reloaded",
+                    'prog2: created #e/fromprog2 through the same name space and wrote it' in t
+                    and 'p9 exec: /boot/prog2 returned; the personality is still here, its name space never reloaded' in t
+                    and 'p9: read what the second program wrote, through the same name space: "written by the second program"' in t))
+    results.append(("and a real command runs on it: /boot/libcat is catp9.c, the same source as the cat that runs under the buddy on the server personality with no line changed, linked against the personality instead of against a kernel's system calls - it takes an argument vector, grows a heap, opens a file, dups the descriptor, asks its path and reads it, and every one of those is a call in its own address space",
+                    'cat: started with 2 arguments; argv[0] = /boot/libcat' in t
+                    and re.search(r'cat: sbrk grew the heap \d+ bytes at [0-9a-f]+, now to [0-9a-f]+; \d+ bytes written and read back, 0 wrong', t) is not None
+                    and re.search(r"cat: dup'd descriptor \d+ to \d+ through the buddy; /hello through the duplicate ->", t) is not None
+                    and re.search(r'cat: descriptor \d+ is /hello, by fd2path', t) is not None))
+    results.append(("and the file it reads is the 9P server's, across the ring: the command names /hello with no device in it and the personality resolves it through its own mount, so a program with no kernel personality under it reads a file another container holds",
+                    'hello from the 9P server, a container across the ring' in t
+                    and 'cat: <- end of /hello through the duplicate' in t))
+    results.append(("and the command exits into the personality that loaded it, not out of the task: exit is a call to the loader here, so the operating system outlives the program it ran",
+                    'p9 exec: /boot/libcat exited with status "", into the personality that loaded it, not out of the task' in t
+                    and 'p9 exec: /boot/libcat returned; the personality is still here, its name space never reloaded' in t))
+    results.append(("and a shell runs on it, with processes under it: the personality starts a program on a flow of control of its own - a kproc with a descriptor table of its own, built empty and holding only what it was handed - and the shell waits for it and reads its status, which is what a library operating system has instead of fork and exec (a library cannot split its caller's C stack, so spawn is the two fused)",
+                    re.search(r'libsh: \d+ bytes of script, read by calling the personality beside me', t) is not None
+                    and re.search(r'p9 spawn: /boot/libcat runs as \d+ at 0x1400000, with its own descriptor table \(-1 -1 -1\)', t) is not None
+                    and 'libsh: /boot/libcat ended, status ""' in t))
+    results.append(("and it runs a pipeline: two spawned programs at two addresses, each with its own descriptor table, the first's standard output and the second's standard input the two ends of one pipe of the personality's - and the shell closes its own copies, which is the only reason the far end ever sees end of file",
+                    re.search(r'p9 spawn: /boot/libcat runs as \d+ at 0x1400000, with its own descriptor table \(-1 0 -1\)', t) is not None
+                    and re.search(r'p9 spawn: /boot/libwc runs as \d+ at 0x1800000, with its own descriptor table \(0 -1 -1\)', t) is not None
+                    and 'libwc: 8 lines 79 words 454 bytes off the pipe, read as a call into the personality' in t))
+    results.append(("and the two stages are alive at once, not one after the other: 200000 bytes cross a pipe that holds 32768, so the writer blocks and the reader must run to drain it - six times over - and every byte arrives, counted at the far end",
+                    'p9: a pipe holds 32768 bytes before its writer waits for its reader' in t
+                    and re.search(r'p9 spawn: /boot/libgen runs as \d+ at 0x2000000', t) is not None
+                    and 'libwc: 3125 lines 3125 words 200000 bytes off the pipe' in t
+                    and 'libgen: the write failed' not in t))
+    results.append(("and the limit it documents is enforced, not merely written down: the last line of the script asks for two of one image at once and the second is refused by name, because a program is at the address it was linked for and nothing here relocates it - the two would be the one image sharing its one data segment, descriptor table and heap - and the shell carries on",
+                    'p9 exec: /boot/libcat is already running at 0x1400000; it is one image and cannot be two programs' in t
+                    and 'libsh: /boot/libcat: cannot start it' in t))
+    results.append(("and a spawned program that fails ends with the failure as its status: the stage that was started writes into a pipe whose reader never arrived, which the personality raises rather than short-counts, and the error label a spawned program runs under turns that into a wait status instead of an unwind off the top of a fresh kproc's stack",
+                    re.search(r'p9 spawn: /boot/libcat \(\d+\) failed: Ehungup', t) is not None
+                    and 'libsh: /boot/libcat ended, status "Ehungup"' in t
+                    and 'libsh: the script is done, and the personality that started me is still here' in t))
+    results.append(("and the shell ends into the personality that loaded it, having run its script, with the name space it and its programs shared still the one the personality built",
+                    'libsh: the script is done, and the personality that started me is still here' in t
+                    and 'p9 exec: /boot/libsh returned; the personality is still here, its name space never reloaded' in t))
     results.append(("and it exits through the microkernel's minimal syscall interface, no in-kernel personality",
                     'the program exited' in t and 'panic' not in t))
 

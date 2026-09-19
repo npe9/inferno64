@@ -19,6 +19,11 @@
 #include	"linuxprog.i"
 #include	"legacyprog.i"
 #include	"catprog.i"
+#include	"execprog.i"
+#include	"shprog.i"
+#include	"kbdsrvprog.i"
+#include	"drawsrvprog.i"
+#include	"rioprog.i"
 
 void
 p9linuxfile(void)
@@ -26,4 +31,15 @@ p9linuxfile(void)
 	addbootfile("linux", linuxprog, sizeof linuxprog);
 	addbootfile("legacy", legacyprog, sizeof legacyprog);
 	addbootfile("cat", catprog, sizeof catprog);
+	addbootfile("exec", execprog, sizeof execprog);
+	addbootfile("sh", shprog, sizeof shprog);
+	/*
+	 * And one the tree did not write: the keyboard server of
+	 * os/osprey/cmd/draw, linked against the 9front libraries built
+	 * from source in 9front/src.  It is here to be exec'd like any
+	 * other binary the buddy lays out.
+	 */
+	addbootfile("kbdsrv", kbdsrvprog, sizeof kbdsrvprog);
+	addbootfile("drawsrv", drawsrvprog, sizeof drawsrvprog);
+	addbootfile("rio", rioprog, sizeof rioprog);
 }

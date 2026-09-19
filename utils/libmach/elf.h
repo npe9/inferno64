@@ -1,14 +1,19 @@
 /*
  *	Definitions needed for  accessing Irix ELF headers
+ *
+ *	Every field below is a fixed-width word in the file, so none of
+ *	them may be `ulong': that is eight bytes on the hosts these
+ *	tools are built on and four in the record.  See AGENTS.md on
+ *	`long' is 32 bits.
  */
 typedef struct {
 	uchar	ident[16];	/* ident bytes */
 	ushort	type;		/* file type */
 	ushort	machine;	/* target machine */
 	int	version;	/* file version */
-	ulong	elfentry;	/* start address */
-	ulong	phoff;		/* phdr file offset */
-	ulong	shoff;		/* shdr file offset */
+	u32	elfentry;	/* start address */
+	u32	phoff;		/* phdr file offset */
+	u32	shoff;		/* shdr file offset */
 	int	flags;		/* file flags */
 	ushort	ehsize;		/* sizeof ehdr */
 	ushort	phentsize;	/* sizeof phdr */
@@ -20,26 +25,62 @@ typedef struct {
 
 typedef struct {
 	int	type;		/* entry type */
-	ulong	offset;		/* file offset */
-	ulong	vaddr;		/* virtual address */
-	ulong	paddr;		/* physical address */
+	u32	offset;		/* file offset */
+	u32	vaddr;		/* virtual address */
+	u32	paddr;		/* physical address */
 	int	filesz;		/* file size */
-	ulong	memsz;		/* memory size */
+	u32	memsz;		/* memory size */
 	int	flags;		/* entry flags */
 	int	align;		/* memory/file alignment */
 } Phdr;
 
+/*
+ * The 64-bit forms.  Same fields, wider: an ELF64 header is 64 bytes
+ * and a program header 56, against 52 and 32.  Every board in this
+ * tree but pc64 and armv7 links its kernel as ELF64, with the Plan 9
+ * symbol table in a PT_NULL program header exactly as the 32-bit
+ * loaders write it, so this is what lets libmach say anything at all
+ * about them.
+ */
 typedef struct {
-	ulong	name;		/* section name */
-	ulong	type;		/* SHT_... */
-	ulong	flags;		/* SHF_... */
-	ulong	addr;		/* virtual address */
-	ulong	offset;		/* file offset */
-	ulong	size;		/* section size */
-	ulong	link;		/* misc info */
-	ulong	info;		/* misc info */
-	ulong	addralign;	/* memory alignment */
-	ulong	entsize;	/* entry size if table */
+	uchar	ident[16];	/* ident bytes */
+	ushort	type;		/* file type */
+	ushort	machine;	/* target machine */
+	u32	version;	/* file version */
+	uvlong	elfentry;	/* start address */
+	uvlong	phoff;		/* phdr file offset */
+	uvlong	shoff;		/* shdr file offset */
+	u32	flags;		/* file flags */
+	ushort	ehsize;		/* sizeof ehdr */
+	ushort	phentsize;	/* sizeof phdr */
+	ushort	phnum;		/* number phdrs */
+	ushort	shentsize;	/* sizeof shdr */
+	ushort	shnum;		/* number shdrs */
+	ushort	shstrndx;	/* shdr string index */
+} Ehdr64;
+
+typedef struct {
+	u32	type;		/* entry type */
+	u32	flags;		/* entry flags */
+	uvlong	offset;		/* file offset */
+	uvlong	vaddr;		/* virtual address */
+	uvlong	paddr;		/* physical address */
+	uvlong	filesz;		/* file size */
+	uvlong	memsz;		/* memory size */
+	uvlong	align;		/* memory/file alignment */
+} Phdr64;
+
+typedef struct {
+	u32	name;		/* section name */
+	u32	type;		/* SHT_... */
+	u32	flags;		/* SHF_... */
+	u32	addr;		/* virtual address */
+	u32	offset;		/* file offset */
+	u32	size;		/* section size */
+	u32	link;		/* misc info */
+	u32	info;		/* misc info */
+	u32	addralign;	/* memory alignment */
+	u32	entsize;	/* entry size if table */
 } Shdr;
 
 enum {
@@ -84,6 +125,7 @@ enum {
 	ARM = 40,		/* ARM */
 	AMD64 = 62,		/* Amd64 */
 	ARM64 = 183,		/* ARM64 */
+	RISCV = 243,		/* RISC-V */
 
 	NO_VERSION = 0,		/* version, ident[VERSION] */
 	CURRENT = 1,

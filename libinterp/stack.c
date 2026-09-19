@@ -131,13 +131,7 @@ extend(void)
 	R.EX = ns->stack;
 	R.TS = ns->stack + l;
 	R.SP = ns->reg.tos.fu + t->size;
-	/*
-	 * f->t itself is left nil here (unextend() below reads the type
-	 * back from ns->reg.TR, not f->t, for exactly this reason) -- so
-	 * ns->reg.TR, not &f->t, is the field that actually changes when
-	 * this memory is later reused, and the one to validate against.
-	 */
-	initmemtt(t, f, &ns->reg.TR);
+	initmem(t, f);
 }
 
 void
@@ -147,25 +141,6 @@ unextend(Frame *f)
 	Type *t;
 
 	sx = SEXTYPE(f);
-	/*
-	 * The extent about to be freed is exactly [R.EX, R.TS) as they
-	 * stand right now -- extend() set R.EX to (uchar*)sx itself
-	 * (stack[] and reg overlap at offset 0 of the union) and R.TS to
-	 * its end, and neither has been touched since unless this frame
-	 * is the current top of stack.  free(sx) below hands this range
-	 * back to mainmem, where smalloc()/mallocz() can recycle it for
-	 * a plain kernel allocation that never calls initmemtt() -- the
-	 * "freed and recycled by something that never registers" channel
-	 * heap.c's own comment already named as still open even after
-	 * the typetagp validation fix, because typetagp only reliably
-	 * catches reuse that happens to overwrite the exact word it
-	 * points at, and a small allocation landing elsewhere in this
-	 * extent leaves the stale registration intact and validated.
-	 * Clearing here, at free time, closes it outright instead of
-	 * hoping the next occupant's shape catches it.  pc64-only,
-	 * temporary tracker plumbing.  See doc/inferno-ports.ms.
-	 */
-	trackclear(R.EX, (uchar*)R.TS - (uchar*)R.EX);
 	R.SP = sx->reg.SP;
 	R.TS = sx->reg.TS;
 	R.EX = sx->reg.EX;
@@ -193,7 +168,6 @@ unframe(void)
 	if(f->t == nil) {
 		sx = SEXTYPE(f);
 		/* see unextend()'s comment above -- same free-time clear */
-		trackclear(R.EX, (uchar*)R.TS - (uchar*)R.EX);
 		R.TS = sx->reg.TS;
 		R.EX = sx->reg.EX;
 		free(sx);

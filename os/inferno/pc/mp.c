@@ -559,10 +559,45 @@ msiirqdisable(Vctl *v, int)
 }
 
 static int
+msixirqenable(Vctl *v, int)
+{
+	Pcidev *pci = v->aux;
+	int r, vec;
+
+	/* a caller that named no vector gets entry 0, the way it always did */
+	vec = v->msixvec < 0 ? 0 : v->msixvec;
+	r = pcimsixenable(pci, vec, 0xFEE00000ULL | (v->cpu << 12),
+		v->vno | (1<<14));
+	/* said out loud because *msix is an opt-in: without it there is no
+	 * way to tell from a boot log whether a device took MSI-X or fell
+	 * back to MSI, and the two look identical from the driver.
+	 */
+	print("msix: %s tbdf %uX msixvec %d vector %d cpu %d: %s\n",
+		v->name, pci->tbdf, vec, v->vno, v->cpu,
+		r < 0 ? "failed" : "enabled");
+	return r;
+}
+
+/*
+ * One vector of a device that may have several in use: mask this
+ * entry and leave the capability alone.  Only a handler registered
+ * the old way, which owns the whole device, turns MSI-X off.
+ */
+static int
+msixirqdisable(Vctl *v, int)
+{
+	Pcidev *pci = v->aux;
+
+	if(v->msixvec >= 0)
+		return pcimsixmask(pci, v->msixvec, 1);
+	return pcimsixdisable(pci);
+}
+
+static int
 msiintrenable(Vctl *v)
 {
 	Pcidev *pci;
-	int tbdf;
+	int tbdf, usemsix;
 
 	if(getconf("*nomsi") != nil)
 		return -1;
@@ -577,7 +612,32 @@ msiintrenable(Vctl *v)
 	}
 	if(htmsienable(pci) < 0)
 		return -1;
-	if(pcimsidisable(pci) < 0)
+
+	/*
+	 * MSI-X only when *msix asks for it.  It is not the default, and
+	 * the reason is virtio: a legacy virtio-pci device moves its
+	 * queue and configuration registers by four bytes the moment
+	 * MSI-X is enabled, and sends no interrupt at all until the
+	 * driver has written a vector into its queue_msix_vector
+	 * register.  Turning MSI-X on underneath a driver that knows
+	 * nothing about it therefore silences the device rather than
+	 * speeding it up.  What MSI-X is for here is the parts that have
+	 * no INTx pin and no MSI capability -- ENA, and the current Intel
+	 * and Mellanox ones -- and those want a driver written against
+	 * pcimsixcount() and pcimsixenable() directly, one vector per
+	 * queue.  This flag is how the plumbing gets exercised until such
+	 * a driver exists.
+	 */
+	/*
+	 * A caller that named a vector -- msixintrenable() in ../pc/irq.c
+	 * -- has asked for MSI-X and knows the device's table; the flag
+	 * is only for the drivers that did not ask.
+	 */
+	usemsix = v->msixvec >= 0
+		|| (getconf("*msix") != nil && pcimsixcount(pci) > 0);
+	if(usemsix)
+		pcimsidisable(pci);
+	else if(pcimsidisable(pci) < 0)
 		return -1;
 
 	v->vno = allocvector();
@@ -586,8 +646,13 @@ msiintrenable(Vctl *v)
 	v->eoi = lapiceoi;
 
 	v->aux = pci;
-	v->enable = msiirqenable;
-	v->disable = msiirqdisable;
+	if(usemsix){
+		v->enable = msixirqenable;
+		v->disable = msixirqdisable;
+	} else {
+		v->enable = msiirqenable;
+		v->disable = msiirqdisable;
+	}
 
 	return v->vno;
 }

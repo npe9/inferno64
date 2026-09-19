@@ -1,0 +1,228 @@
+# virtarm64 - QEMU -M virt, 64-bit AArch64 (cortex-a72)
+#
+# The 64-bit analogue of os/inferno/armv7: one privilege level (EL1),
+# MMU off, the same QEMU virt machine (confirmed address-for-address
+# identical to armv7's board via -machine dumpdtb regardless of
+# -cpu cortex-a15 vs cortex-a72 -- see mem.h).  Genuinely 64-bit: a
+# real 7c/7l LP64 compiler, not a 32-bit core the way armv7 is, and
+# DISWORD is the tree default (8), the same word size riscv64/virt's
+# own Dis modules already use -- so this board's root file list
+# reuses /dis (not /dis32) and INIT=virtinit (riscv64's own init
+# program) directly, unlike virt32/armv7 which each needed a fresh
+# init module for their own 4-byte Dis word.
+
+dev
+	root
+	cons
+	prog
+	dup
+	pipe
+	mnt
+	srv
+	uart
+	env
+	ether		netif
+	usb
+	sd
+	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
+	ssl
+	cap
+	kprof
+
+ip
+	tcp
+	udp
+	ipifc
+	icmp
+	icmp6
+
+lib
+	interp
+	keyring
+	sec
+	mp
+	math
+	kern
+# Framebuffer display via QEMU ramfb (screenarm.c): the draw device,
+# memdraw/memlayer/draw, the software cursor and the pointer, over a
+# 640x480 ramfb the host scans out.  Needs -device ramfb on the QEMU
+# command line.
+
+link
+	ethervirtiommio
+	ethervirtio10	pci
+	ethergve	pci
+	usbxhcipci	usbxhci
+	ethermedium
+	loopbackmedium
+
+port
+	alarm
+	alloc
+	allocb
+	bo
+	chan
+	dev
+	dial
+	dis
+	discall
+	exception
+	exportfs
+	inferno
+	latin1
+	nocache
+	nodynld
+	parse
+	pgrp
+	print
+	proc
+	qio
+	qlock
+	sysfile
+	taslock
+	xalloc
+
+	archvirtarm64
+
+misc
+	uartvirtarm64
+	pci	pciecam
+	sdvirtio10	pci sdscsi virtio10mem
+	sdnvme	pci
+# screennone, not screenarm.  screenarm drives QEMU's ramfb through
+# fw_cfg at the hardcoded address 0x9020000, which is where the arm64
+# "virt" machine puts it and is not fw_cfg anywhere else.  On a real
+# Compute Engine t2a instance this kernel reached procinit and then
+# stopped dead -- 92 lines of serial output, no banner, no shell -- and
+# that probe is the first thing after it that touches a fixed MMIO
+# address the machine need not have.  A cloud instance has no display
+# to drive anyway.
+	screennone
+	randomvirtarm64
+
+mod
+	sys
+	keyring
+	crypt
+
+init
+	virtarm64init
+
+code
+	int main_pool_pcnt = 20;
+	int heap_pool_pcnt = 20;
+	int image_pool_pcnt = 20;
+	int cflag = 0;
+	int consoleprint = 1;
+	int panicreset = 0;
+
+root
+	/chan	/
+	/dev	/
+	/dis
+	/env	/
+	/fd	/
+	/n	/
+	/net	/
+	/net.alt	/
+	/nvfs	/
+	/prog	/
+	/tmp	/
+	/proc	/
+	/dis/lib
+	/dis/svc
+	/dis/wm
+	/osinit.dis
+	/dis/init
+	/dis/shutdown
+	/dis/basename.dis
+	/dis/bind.dis
+	/dis/cat.dis
+	/dis/cd.dis
+	/dis/echo.dis
+	/dis/grep.dis
+	/dis/ls.dis
+	/dis/mntgen.dis
+	/dis/mount.dis
+	/dis/ns.dis
+	/dis/ps.dis
+	/dis/pwd.dis
+	/dis/read.dis
+	/dis/sh.dis
+	/dis/sh/std.dis
+	/dis/unmount.dis
+	/dis/lib/arg.dis
+	/dis/lib/bufio.dis
+	/dis/lib/daytime.dis
+	/dis/lib/env.dis
+	/dis/lib/filepat.dis
+	/dis/lib/names.dis
+	/dis/lib/nametree.dis
+	/dis/lib/readdir.dis
+	/dis/lib/regex.dis
+	/dis/lib/string.dis
+	/dis/lib/styx.dis
+	/dis/lib/styxconv/new2old.dis
+	/dis/lib/styxconv/ostyx.dis
+	/dis/lib/styxservers.dis
+	/dis/lib/workdir.dis
+
+
+# --- cloud additions (this config only; virtarm64 is untouched) ---
+# doc/inferno-cloud-modern.ms item 11 wants the same Dis binary running
+# on an amd64 and an arm64 instance sharing one namespace.  That needs
+# an arm64 image that can do what the pc64 one does: configure its
+# network, take an identity, mount and export a namespace, and serve
+# its own numbers.  This config is that image; the plain virtarm64 one
+# is left alone because the arm64 board is another session's work.
+	/mnt	/
+	/mnt/registry	/
+	/usr	/
+	/usr/inferno	/
+	/usr/inferno/keyring	/
+	/dis/cloudinit.dis
+	/dis/cloudfs.dis
+	/dis/cloudauth.dis
+	/dis/gcs.dis
+	/dis/hget.dis
+	/dis/metricfs.dis
+	/dis/supervise.dis
+	/dis/memfs.dis
+	/dis/zerofs.dis
+	/dis/rpcserve.dis
+	/dis/tcpserve.dis
+	/dis/styxbench.dis
+	/dis/styxlisten.dis
+	/dis/export.dis
+	/dis/ndb
+	/dis/ndb/cs.dis
+	/dis/ndb/dns.dis
+	/dis/ndb/registry.dis
+	/dis/ndb/regquery.dis
+	/dis/lib/httpclient.dis
+	/dis/lib/url.dis
+	/dis/lib/attrdb.dis
+	/dis/lib/ipattr.dis
+	/dis/lib/asn1.dis
+	/dis/lib/auth.dis
+	/dis/lib/dhcpclient.dis
+	/dis/lib/dial.dis
+	/dis/lib/disks.dis
+	/dis/lib/factotum.dis
+	/dis/lib/ip.dis
+	/dis/lib/rand.dis
+	/dis/lib/random.dis
+	/dis/lib/ssl.dis
+	/dis/lib/styxlib.dis
+	/dis/lib/styxpersist.dis
+	/dis/lib/timers.dis
+	/dis/lib/crypt
+	/dis/lib/crypt/tls12.dis
+	/dis/lib/crypt/x509.dis
+	/dis/lib/crypt/pkcs.dis
+	/dis/lib/crypt/p256.dis
+	/dis/lib/encoding
+	/dis/lib/encoding/base64.dis
+	/lib/tls
+	/lib/tls/ca-bundle.pem
+	/lib/tls/ca-bundle.der

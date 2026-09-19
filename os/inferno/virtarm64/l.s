@@ -12,12 +12,12 @@
 #define	D_ESR_EL1	SYSARG5(3,0,5,2,0)
 #define	D_FAR_EL1	SYSARG5(3,0,6,0,0)
 #define	D_CPACR_EL1	SYSARG5(3,0,1,0,2)
-#define	D_CTR_EL0	SYSARG5(3,3,0,0,1)
-#define	D_MPIDR_EL1	SYSARG5(3,0,0,0,5)
-#define	D_TPIDR_EL1	SYSARG5(3,0,13,0,4)
 #define	D_CNTFRQ_EL0	SYSARG5(3,3,14,0,0)
 #define	D_CNTPCT_EL0	SYSARG5(3,3,14,0,1)
 #define	D_CNTP_CTL_EL0	SYSARG5(3,3,14,2,1)
+#define	D_CNTVCT_EL0	SYSARG5(3,3,14,0,2)
+#define	D_CNTV_CTL_EL0	SYSARG5(3,3,14,3,1)
+#define	D_CNTV_CVAL_EL0	SYSARG5(3,3,14,3,2)
 #define	D_ICC_SRE_EL1	SYSARG5(3,0,12,12,5)
 #define	D_ICC_PMR_EL1	SYSARG5(3,0,4,6,0)
 #define	D_ICC_BPR1_EL1	SYSARG5(3,0,12,12,3)
@@ -26,7 +26,18 @@
 #define	D_ICC_IAR1_EL1	SYSARG5(3,0,12,12,0)
 #define	D_ICC_EOIR1_EL1	SYSARG5(3,0,12,12,1)
 #define	D_ID_AA64PFR0_EL1	SYSARG5(3,0,0,4,0)
+#define	D_ID_AA64MMFR0_EL1	SYSARG5(3,0,0,7,0)
 #define	D_CNTP_CVAL_EL0	SYSARG5(3,3,14,2,2)
+#define	D_MPIDR_EL1	SYSARG5(3,0,0,0,5)
+#define	D_TPIDR_EL1	SYSARG5(3,0,13,0,4)
+#define	D_MAIR_EL1	SYSARG5(3,0,10,2,0)
+#define	D_TCR_EL1	SYSARG5(3,0,2,0,2)
+#define	D_TTBR0_EL1	SYSARG5(3,0,2,0,0)
+#define	D_SCTLR_EL1	SYSARG5(3,0,1,0,0)
+#define	D_CLIDR_EL1	SYSARG5(3,1,0,0,1)
+#define	D_CCSIDR_EL1	SYSARG5(3,1,0,0,0)
+#define	D_CSSELR_EL1	SYSARG5(3,2,0,0,0)
+#define	D_CTR_EL0	SYSARG5(3,3,0,0,1)
 
 /*
  * QEMU -M virt, AArch64 (cortex-a72), single privilege level (EL1),
@@ -126,69 +137,39 @@ TEXT	_main(SB), 1, $-4
 	 */
 	MOV	$setSB(SB), R28
 	/*
-	 * m is a register (dat.h).  Establish it before any C runs, not in
-	 * machinit(), because everything from here on may use it.
+	 * m and up are extern registers (see dat.h): R27 and R26.  The
+	 * first C code to run reads m->, so R27 must point at a Mach
+	 * before main() is called rather than inside it, and up must be
+	 * nil rather than whatever the firmware left.
 	 */
 	MOV	$mach0(SB), R27
-	MOV	$0, R26			/* up: no process yet */
+	MOV	$0, R26
 	MOV	R0, dtbptr(SB)		/* x0 holds the DTB physical address at boot */
+	/*
+	 * x1 is reserved zero by the AArch64 Linux boot protocol, which
+	 * QEMU's -kernel path honours, so a loader can use it without
+	 * disturbing that path.  os/inferno/boot/efi/aa64.s's jump()
+	 * puts the configuration block there; bootargs.c copies it.
+	 */
+	MOV	R1, confptr(SB)
 	BL	main(SB)
 dead:
 	B	dead
 
-/*
- * Secondary-processor entry, for PSCI CPU_ON.  QEMU virt starts a
- * secondary at the same exception level as the primary with the MMU
- * off, and this board never turns the MMU on (mmu.c: "identity/
- * physical addressing throughout"), so there are no page tables to
- * build and the entry address is its own physical address.  That is
- * most of what makes arm64 bring-up hard elsewhere and it simply does
- * not arise here.
- *
- * Deliberately minimal: its own stack, the static base register, then
- * C.  It does not touch Mach, the GIC or the scheduler -- MAXMACH is
- * still 1 and this is only the proof that the processor starts and
- * executes.
- */
-TEXT	_secondary(SB), 1, $-4
-	MOV	$setSB(SB), R28
-	/*
-	 * Stage markers, stored before each thing that could fail.  This
-	 * processor has whatever VBAR_EL1 reset left it -- trapinit() only
-	 * ever ran on cpu0 -- so a fault here disappears into an unknown
-	 * vector with nothing to report it, and the last marker cpu0 can
-	 * see is the only evidence of how far this got.
-	 */
-	MOV	$1, R1
-	MOV	R1, secalive(SB)
-	DSB	$15
-	/*
-	 * The stack top comes from C, already rounded down to 16, because
-	 * AArch64 faults on a misaligned SP as soon as anything uses it as
-	 * a base and a GLOBL's address carries no such guarantee.
-	 */
-	MOV	secstacktop(SB), R2
-	MOV	R2, RSP
-	MOV	R2, secsp(SB)
-	MOV	$2, R1
-	MOV	R1, secalive(SB)
-	DSB	$15
-	MOV	secmach(SB), R1		/* this processor's own Mach */
-	MSR	R1, SPR(D_TPIDR_EL1)
-	ISB	$15
-	MOV	R1, R27			/* ... and m, which is a register */
-	MOV	$0, R26			/* up: this processor runs no process */
-	MOV	$3, R1
-	MOV	R1, secalive(SB)
-	DSB	$15
-	BL	secmain(SB)
-	/* secmain() does not return; if it ever does, stop here quietly */
-secdead:
-	B	secdead
-
 GLOBL	dtbptr(SB), $8
+GLOBL	confptr(SB), $8
 GLOBL	stack(SB), $KSTACK
 GLOBL	mach0(SB), $(4*1024)
+
+/*
+ * The static base this kernel was linked with, so startcpu.c can hand
+ * it to a processor that has to load R28 before it can run any C.
+ * $setSB(SB) is the linker's own symbol for it and there is no way to
+ * name it from C.
+ */
+TEXT	getsb(SB), 1, $-4
+	MOV	$setSB(SB), R0
+	RET	R30
 
 TEXT	getcallerpc(SB), 1, $-4
 	MOV	0(RSP), R0
@@ -228,32 +209,117 @@ TEXT	getcallerpc(SB), 1, $-4
  * storing the real new value (R2, "1") instead of the stale R1.
  */
 /*
- * psci(fn, a1, a2, a3): a PSCI call through HVC, QEMU virt's conduit.
- * The four args are already in R0-R3 (x0-x3) where SMCCC wants them;
- * HVC #0 uses them and returns the result in x0.
+ * A PSCI call.  SMCCC wants the function number in x0 and the three
+ * arguments in x1-x3, and returns in x0.
+ *
+ * Only x0 arrives that way on its own.  7c passes the first argument
+ * in a register (REGARG is 0, see utils/7c/txt.c's curarg==0 case) and
+ * every argument after it on the stack, so x1-x3 hold whatever the
+ * caller last had in them unless they are loaded here.  This was
+ * written the other way first, on the assumption that a four-argument
+ * call arrives in x0-x3, and nothing caught it because the only PSCI
+ * calls this kernel made were SYSTEM_OFF and SYSTEM_RESET, which take
+ * no arguments at all -- both of which are now known to complete, see
+ * archvirtarm64.c.  CPU_ON, which takes three, answered
+ * INVALID_PARAMETERS every time.  The frame offsets below are the same
+ * ones os/inferno/boot/efi/aa64.s's eficall uses: the slot at 0(FP) is
+ * reserved for the register-passed first argument and never written,
+ * so the second argument is at 8(FP).
+ *
+ * Which instruction reaches PSCI is firmware's to say: a guest running
+ * at EL1 under a hypervisor reaches it with HVC, a machine whose
+ * firmware sits at EL3 reaches it with SMC.  The FADT's ARM Boot
+ * Architecture Flags carry the answer and archvirtarm64.c's psci()
+ * picks between these two on it.
  */
-TEXT	psci(SB), 1, $-4
-	/*
-	 * Load the four SMCCC arguments from the caller's frame.  They are
-	 * NOT already in R0-R3: 7c passes arguments on the stack here, and
-	 * an argument probe (arg0..arg3 stubs returning R0..R3 for a call
-	 * of 0x11,0x22,0x33,0x44) reads back 0x11, 0x1a, 0x22, 0x44 -- the
-	 * first happens to be in R0 and the rest are leftovers from
-	 * materialising the constants.
-	 *
-	 * This stub used to assume R0-R3 and say so in a comment.  It
-	 * worked anyway for every caller it had, because SYSTEM_RESET and
-	 * SYSTEM_OFF take no argument past the function ID in R0.  It
-	 * fails for everything that does: CPU_ON returned INVALID_PARAMS,
-	 * and AFFINITY_INFO answered 0 for every target including nonsense
-	 * ones, which is what pointed at the arguments rather than at the
-	 * PSCI implementation.
-	 */
+TEXT	pscihvc(SB), 1, $-4
 	MOV	a1+8(FP), R1
 	MOV	a2+16(FP), R2
 	MOV	a3+24(FP), R3
 	HVC	$0
 	RET	R30
+
+TEXT	pscismc(SB), 1, $-4
+	MOV	a1+8(FP), R1
+	MOV	a2+16(FP), R2
+	MOV	a3+24(FP), R3
+	SMC	$0
+	RET	R30
+
+/*
+ * getmpidr(): this processor's own affinity, the one value MPIDR_EL1
+ * can give and the MADT cannot -- MPIDR_EL1 reads only the processor
+ * executing it, which is how startcpu.c tells its own entry in the
+ * MADT's list from the others.
+ */
+TEXT	gettpidr(SB), 1, $-4
+	MRS	SPR(D_TPIDR_EL1), R0
+	RET	R30
+
+TEXT	settpidr(SB), 1, $-4
+	MSR	R0, SPR(D_TPIDR_EL1)
+	ISB	$15
+	RET	R30
+
+TEXT	getmpidr(SB), 1, $-4
+	MRS	SPR(D_MPIDR_EL1), R0
+	RET	R30
+
+/*
+ * Where PSCI CPU_ON lands a processor this kernel has just started.
+ * It runs with the MMU and caches off, at EL1, on no stack and with
+ * no SB set, so it must not touch a global by name and must not call
+ * anything: x0 holds whatever was handed to CPU_ON as its context id,
+ * and startcpu.c hands it the address of that processor's own slot.
+ * Writing its MPIDR there is the whole of what it does -- the value
+ * comes from the processor's own register, not from the caller, so a
+ * slot that fills in is a processor that really is the one the MADT
+ * named.  Then it parks: WFE in a loop, waking on any event and going
+ * straight back, touching nothing further.
+ */
+/*
+ * _secondary(record): where a processor started by PSCI's CPU_ON
+ * arrives.  R0 holds the context id CPU_ON was given, which is the
+ * address of that processor's own Secboot record; the MMU is off, so
+ * the address is physical as it stands and every access is to memory
+ * rather than to a cache.  startcpu.c cleaned the record, the Mach and
+ * the stack to the point of coherency before making the call, which is
+ * what the AArch64 boot protocol requires of whoever starts a
+ * processor ("the address range corresponding to the loaded kernel
+ * image must be cleaned to the PoC", and those requirements "apply to
+ * all CPUs").
+ *
+ * Nothing is written from here.  Every write this processor makes
+ * happens in secondary() below, with the MMU on and the memory Normal
+ * inner-shareable, so the primary reading it back is reading coherent
+ * memory rather than polling a location two agents touch with
+ * different cacheability -- which is the arrangement that works under
+ * an emulator with no cache and fails on a core with one.
+ *
+ * Secboot offsets; keep in sync with startcpu.c.
+ */
+#define	SB_MPIDR	0
+#define	SB_STACK	8
+#define	SB_SB		16
+#define	SB_MACH		24
+#define	SB_L0		32
+#define	SB_TCR		40
+
+TEXT	_secondary(SB), 1, $-4
+	MOV	R0, R19			/* the record; R19 survives mmuon */
+	MOV	SB_STACK(R19), R1
+	MOV	R1, RSP
+	MOV	SB_SB(R19), R28		/* SB, before any C */
+	MOV	SB_MACH(R19), R27	/* m */
+	MOV	$0, R26			/* up */
+	MOV	SB_L0(R19), R0
+	MOV	SB_TCR(R19), R1
+	BL	mmuon(SB)
+	MOV	R19, R0
+	BL	secondary(SB)
+_secondarypark:
+	WFE
+	B	_secondarypark
 
 /*
  * GICv3 CPU-interface accessors.  On a GICv3 the per-CPU interface is
@@ -306,65 +372,240 @@ TEXT	getpfr0(SB), 1, $-4
 	MRS	SPR(D_ID_AA64PFR0_EL1), R0
 	RET	R30
 
+/*
+ * ID_AA64MMFR0_EL1.PARange (bits 3:0): the physical address size this
+ * core implements, in the same encoding TCR_EL1.IPS uses -- 0 is 32
+ * bits, 1 is 36, 2 is 40, 3 is 42, 4 is 44, 5 is 48.  mmuinit() reads
+ * it because writing an IPS larger than PARange is CONSTRAINED
+ * UNPREDICTABLE, and the value that was there was a constant 4 chosen
+ * for no reason beyond covering the map: correct on a core with 44-bit
+ * addressing and unspecified on one with less.
+ */
+TEXT	getmmfr0(SB), 1, $-4
+	MRS	SPR(D_ID_AA64MMFR0_EL1), R0
+	RET	R30
+
 TEXT	seticceoir(SB), 1, $-4
 	MSR	R0, SPR(D_ICC_EOIR1_EL1)
 	RET	R30
 
 /*
- * Cache maintenance, for segflush().  Encodings taken from
- * os/inferno/raspi3b/l.s, which records verifying them byte-for-byte
- * against 7l -a: DC CVAC,X0 == 0xd50b7a20 and IC IALLU == 0xd508751f.
- * DC and IC are SYS aliases and 7a has no optab row for the mnemonics,
- * so they are written as SYS with the address in R0.
+ * _tas, cmpswap, ainc and adec: the four primitives everything above
+ * them assumes are atomic.  They were spl-masked C in
+ * archvirtarm64.c, which is correct on one processor and silently
+ * wrong on two -- masking interrupts on this processor says nothing
+ * about what another one is doing to the same word -- so they are
+ * exclusive-monitor loops here before a second processor is allowed
+ * to run any portable code.
  *
- * getctr() gives CTR_EL0 so the C side can stride by the smallest
- * cache line present (DminLine, bits 19:16, bytes = 4<<field) rather
- * than assuming one.  On a big.LITTLE part the clusters need not agree,
- * which is exactly why the minimum is the one to use.
+ * The acquire and release halves are not decoration.  LDAXRW gives
+ * the acquire side, so nothing the caller does after taking a lock
+ * can be observed before the lock is taken, and STLXRW gives the
+ * release side on the way out.  os/inferno's own history has the
+ * counter-example: emu's unlock() had no release barrier and the
+ * scheduler deadlocked once in every couple of runs, with a signature
+ * ("a list changed between two locked operations") that reads as a
+ * lock bug and is a memory-ordering one.
+ *
+ * All four take a word (32-bit) rather than a doubleword: Lock.key,
+ * Ref.ref and Heap.ref are all int.
+ *
+ * Where the emulator is more forgiving than hardware, and it is here:
+ * this board runs with SCTLR_EL1.M clear (see mmu.c), so every data
+ * access is Device-nGnRnE, and LDXR/STXR on Device memory is
+ * CONSTRAINED UNPREDICTABLE -- the architecture does not promise the
+ * exclusive monitor works at all.  QEMU's TCG implements a global
+ * monitor regardless of memory type, so these loops behave correctly
+ * under it and would not necessarily behave correctly on a core.  The
+ * guarantee arrives when the MMU does, with RAM mapped Normal
+ * write-back inner-shareable the way os/inferno/raspi3b/mmu.c maps it;
+ * until then this code is right and its verification is emulator-only.
  */
-/*
- * TPIDR_EL1 is the per-processor scratch register the architecture
- * reserves for exactly this: somewhere for a kernel to keep "which
- * processor am I".  It is what an arm64 port uses where pc64 uses the
- * GS base, and it is the piece a shared "Mach *m" global cannot
- * provide once there is more than one processor.
- */
-TEXT	settpidr(SB), 1, $-4
-	MSR	R0, SPR(D_TPIDR_EL1)
-	ISB	$15
-	RET	R30
-
-TEXT	gettpidr(SB), 1, $-4
-	MRS	SPR(D_TPIDR_EL1), R0
-	RET	R30
-
-TEXT	getmpidr(SB), 1, $-4
-	MRS	SPR(D_MPIDR_EL1), R0
-	RET	R30
-
-TEXT	getctr(SB), 1, $-4
-	MRS	SPR(D_CTR_EL0), R0
-	RET	R30
-
-TEXT	dccvac(SB), 1, $-4		/* clean the D-line at R0 to PoC */
-	SYS	R0, $SYSARG5(0,3,7,10,1)
-	RET	R30
-
-TEXT	cacheiinv(SB), 1, $-4		/* IC IALLU, then make it stick */
-	SYS	$SYSARG5(0,0,7,5,0)
-	DSB	$15
-	ISB	$15
-	RET	R30
-
 TEXT	_tas(SB), 1, $-4
 	MOV	R0, R3
-tas1:
-	LDXRW	(R3), R1
 	MOV	$1, R2
-	STXRW	R4, R2, (R3)
+tas1:
+	LDAXRW	(R3), R1
+	STLXRW	R4, R2, (R3)
 	CBNZW	R4, tas1
-	DSB	$15
 	MOV	R1, R0
+	RET	R30
+
+/*
+ * cmpswap(int *addr, int old, int new): store new only if *addr is
+ * still old, and say whether it was.  A failed compare clears the
+ * monitor with CLREX rather than leaving it set for whatever runs
+ * next -- an abandoned exclusive monitor is not a correctness bug on
+ * its own, but leaving one behind on every failed compare is the kind
+ * of thing that makes an unrelated STLXR fail spuriously and forever.
+ */
+TEXT	cmpswap(SB), 1, $-4
+	MOV	R0, R3
+	MOVW	arg1+8(FP), R1
+	MOVW	arg2+16(FP), R2
+cas1:
+	LDAXRW	(R3), R4
+	CMPW	R4, R1
+	BNE	cas2
+	STLXRW	R5, R2, (R3)
+	CBNZW	R5, cas1
+	MOVW	$1, R0
+	RET	R30
+cas2:
+	CLREX	$0
+	MOVW	$0, R0
+	RET	R30
+
+/*
+ * ainc/adec: libinterp's Dis reference-counting primitives (AINC/ADEC
+ * in include/interp.h), which return the new value.  Nothing in
+ * os/inferno provides these for the aarch64 objtype but this file.
+ */
+TEXT	dcinvalidate(SB), 1, $-4
+	DSB	$15
+	MRS	SPR(D_CLIDR_EL1), R0
+	AND	$0x7000000, R0, R3	/* LoC << 24 */
+	LSR	$23, R3, R3		/* LoC * 2 */
+	CBZ	R3, dcidone
+	MOV	$0, R10			/* R10 = level * 2 */
+dcilevel:
+	ADD	R10, R10, R2
+	LSR	R2, R0, R12
+	AND	$7, R12, R12		/* cache type at this level */
+	CMP	$2, R12
+	BLT	dcinext			/* no data or unified cache here */
+
+	MSR	R10, SPR(D_CSSELR_EL1)	/* select level, data cache */
+	ISB	$15
+	MRS	SPR(D_CCSIDR_EL1), R1
+
+	AND	$7, R1, R2
+	ADD	$4, R2, R2		/* R2 = log2(line bytes) */
+	LSR	$3, R1, R4
+	AND	$0x3FF, R4, R4		/* R4 = assoc - 1 */
+	LSR	$13, R1, R5
+	AND	$0x7FFF, R5, R5		/* R5 = sets - 1 */
+
+	/* R6 = 32 - log2(assoc rounded up), the way shift */
+	CLZW	R4, R6
+
+dciset:
+	MOV	R4, R7			/* way counter */
+dciway:
+	LSL	R6, R7, R8
+	LSL	R2, R5, R9
+	ORR	R9, R8, R8
+	ORR	R10, R8, R8
+	SYS	R8, $SYSARG5(0,0,7,6,2)	/* DC ISW, R8 */
+	SUB	$1, R7, R7
+	CMP	$0, R7
+	BGE	dciway
+	SUB	$1, R5, R5
+	CMP	$0, R5
+	BGE	dciset
+
+dcinext:
+	ADD	$2, R10, R10
+	CMP	R3, R10
+	BLT	dcilevel
+dcidone:
+	MOV	$0, R0
+	MSR	R0, SPR(D_CSSELR_EL1)
+	DSB	$15
+	ISB	$15
+	RET	R30
+
+/*
+ * mmuenable(l0, tcr): 48-bit virtual addresses, four levels, 4 KiB
+ * granule, TTBR0 only.  T0SZ = 16 gives the full 48 bits, which is
+ * what reaches this machine's high PCIe window at 0x8000000000;
+ * raspi3b's T0SZ = 25 would stop at 512 GiB.  EPD1 disables the TTBR1
+ * half, which this kernel does not use -- there is one address space
+ * and Dis is the isolation boundary.
+ *
+ * The TCR_EL1 value itself is built by mmuinit(), because its IPS
+ * field is not a constant: see Tcrbase there.
+ */
+TEXT	mmuenable(SB), 1, $-4
+	/*
+	 * R0 is the table pointer and R30 the return address, and
+	 * dcinvalidate() destroys both -- it reads CLIDR_EL1 into R0 and
+	 * is reached by BL.  Losing R0 here is not a fault at the call:
+	 * it is a TTBR0_EL1 loaded with whatever CLIDR left behind, and
+	 * the machine dies silently at the SCTLR write two instructions
+	 * later, with a correct set of page tables sitting in memory
+	 * that nothing is pointing at.
+	 */
+	MOV	R0, R19
+	MOV	R30, R20
+	MOV	tcr+8(FP), R21		/* before the call, for the same reason */
+	BL	dcinvalidate(SB)
+	MOV	R19, R0
+	MOV	R21, R1
+	BL	mmuon(SB)
+	MOV	R20, R30
+	RET	R30
+
+/*
+ * mmuon(l0, tcr): the switch itself, with no cache maintenance in it,
+ * so that a secondary can use it too.  A processor started by CPU_ON
+ * comes out of a power-on reset with its caches invalid -- which is
+ * why it does not repeat mmuenable()'s set/way walk, and why it must
+ * not: that walk on a core whose outer level is shared with a running
+ * processor would discard the other one's dirty lines.  Nothing here
+ * touches memory, so it is callable before there is a usable stack,
+ * and it uses only R0, R1, R2, R3 and R30.
+ */
+TEXT	mmuon(SB), 1, $-4
+	MOV	$0xff00, R2		/* MAIR: attr1=Normal(ff), attr0=Device(00) */
+	MSR	R2, SPR(D_MAIR_EL1)
+	MSR	R1, SPR(D_TCR_EL1)
+	MSR	R0, SPR(D_TTBR0_EL1)
+	ISB	$15
+	SYS	$SYSARG5(0,0,8,7,0)	/* TLBI VMALLE1 */
+	DSB	$15
+	ISB	$15
+	SYS	$SYSARG5(0,0,7,5,0)	/* IC IALLU: invalidate I-cache */
+	DSB	$15
+	ISB	$15
+	MRS	SPR(D_SCTLR_EL1), R2
+	MOV	$0x1005, R3		/* M(0) | C(2) | I(12) */
+	ORR	R3, R2, R2
+	MSR	R2, SPR(D_SCTLR_EL1)
+	ISB	$15
+	RET	R30
+
+/*
+ * dccleanrange(p, n): clean [p, p+n) to the point of coherency, by
+ * virtual address, so that a processor reading it with its MMU off
+ * sees what this one wrote through its cache.  That is the whole of
+ * what starting a processor requires of the one that starts it.
+ *
+ * By VA and not by set/way: a set/way walk cleans whatever happens to
+ * be in the cache, which is not the same set of addresses and is not
+ * safe on a shared level.  The line size is CTR_EL0.DminLine, in words,
+ * and is read rather than assumed -- it is 64 bytes on the cores this
+ * has run on and 128 on some.
+ *
+ * Under TCG this is exercised and not tested: an emulator with no
+ * cache cannot tell a kernel that omits it from one that does not.
+ */
+TEXT	dccleanrange(SB), 1, $-4
+	MOVW	n+8(FP), R1
+	ADD	R0, R1, R1		/* end */
+	MRS	SPR(D_CTR_EL0), R2
+	LSR	$16, R2, R2
+	AND	$0xf, R2, R2		/* DminLine: log2 of the line in words */
+	MOV	$4, R3
+	LSL	R2, R3, R3		/* line size in bytes */
+	SUB	$1, R3, R4
+	BIC	R4, R0, R0		/* down to the line the range starts in */
+dcclean1:
+	SYS	R0, $SYSARG5(0,3,7,10,1)	/* DC CVAC, R0 */
+	ADD	R3, R0, R0
+	CMP	R1, R0
+	BLO	dcclean1
+	DSB	$15
 	RET	R30
 
 TEXT	setlabel(SB), 1, $-4
@@ -412,11 +653,20 @@ dead0:
  * machno is 0 already; on cpu1 it renamed the processor to 0 the first
  * time interrupts were unmasked.
  */
+/*
+ * m->splpc through R27, which is m, and not through $mach0(SB), which
+ * is processor 0's Mach.  With one Mach the two were the same address
+ * and the difference did not exist; with a Mach per processor, a
+ * secondary taking a trap would have recorded its splpc in processor
+ * 0's Mach -- writing the first word of a structure another processor
+ * is using.  splpc is the first field for exactly this reason, and
+ * dat.h says so.
+ */
 TEXT	splhi(SB), 1, $-4
 	MRS	DAIF, R0
 	AND	$0x80, R0, R1		/* previous I-bit, for the return value */
 	MSR	$2, DAIFSet		/* imm bit1 = IRQ */
-	MOV	R30, 0(R27)		/* m->splpc, this processor's */
+	MOV	R30, 0(R27)		/* m->splpc */
 	MOV	R1, R0
 	RET	R30
 
@@ -428,7 +678,7 @@ TEXT	spllo(SB), 1, $-4
 	RET	R30
 
 TEXT	splx(SB), 1, $-4
-	MOV	R30, 0(R27)		/* m->splpc, this processor's */
+	MOV	R30, 0(R27)		/* m->splpc; see splhi above */
 	CMP	$0, R0
 	BEQ	splxlo
 	MSR	$2, DAIFSet
@@ -467,24 +717,37 @@ TEXT	coherence(SB), 1, $-4
 	RET	R30
 
 /*
+ * The clock is the EL1 VIRTUAL timer -- CNTVCT, CNTV_CVAL, CNTV_CTL --
+ * and not the physical one this board first used.  A kernel at EL1 is
+ * a guest, and the virtual timer is the one a hypervisor is required
+ * to give a guest; the physical timer is the hypervisor's to trap and
+ * emulate, or not.  Linux uses the virtual timer in a guest for that
+ * reason.  This is not the repair of an observed failure: the
+ * physical timer works under QEMU and on a Compute Engine t2a, where
+ * both were watched ticking with a counter printed from clockintr.
+ * It is the one a guest is entitled to.  The virtual counter is the
+ * physical one less a fixed offset, so everything built on cycles()
+ * is unchanged, and both GIC versions were booted under QEMU and on
+ * a rented t2a after the change.
+ *
  * cycles(uvlong*): genuinely 64-bit here (real X registers), unlike
  * armv7's mrrc-into-two-32-bit-halves.  Still an out-param, matching
  * fns.h/io.h's shared declaration across every board -- nothing in
  * this tree has needed to risk a bare uvlong return yet.
  */
 TEXT	cycles(SB), 1, $-4
-	MRS	SPR(D_CNTPCT_EL0), R1
+	MRS	SPR(D_CNTVCT_EL0), R1
 	MOV	R1, 0(R0)
 	RET	R30
 
 /*
- * hwtimerset(uvlong *whenp): CNTP_CVAL_EL0 = *whenp, matching the
+ * hwtimerset(uvlong *whenp): CNTV_CVAL_EL0 = *whenp, matching the
  * absolute "when" semantics os/inferno/virt's clock.c already
  * assumes from riscv64's mtimecmp and armv7's CNTP_CVAL.
  */
 TEXT	hwtimerset(SB), 1, $-4
 	MOV	0(R0), R1
-	MSR	R1, SPR(D_CNTP_CVAL_EL0)
+	MSR	R1, SPR(D_CNTV_CVAL_EL0)
 	RET	R30
 
 TEXT	cntfrq(SB), 1, $-4
@@ -492,9 +755,17 @@ TEXT	cntfrq(SB), 1, $-4
 	MOV	R1, 0(R0)
 	RET	R30
 
+/*
+ * timerie(): enable the virtual timer, and make sure the physical one
+ * the firmware may have left running is off -- its PPI is not enabled
+ * at the GIC, but nothing should be counting down behind the clock's
+ * back.
+ */
 TEXT	timerie(SB), 1, $-4
-	MOV	$1, R0
+	MOV	$0, R0
 	MSR	R0, SPR(D_CNTP_CTL_EL0)
+	MOV	$1, R0
+	MSR	R0, SPR(D_CNTV_CTL_EL0)
 	RET	R30
 
 /*
@@ -645,8 +916,35 @@ TEXT	vectrap(SB), 1, $-4
 	MOV	UR_R23(RSP), R23
 	MOV	UR_R24(RSP), R24
 	MOV	UR_R25(RSP), R25
-	MOV	UR_R26(RSP), R26
-	MOV	UR_R27(RSP), R27
+	/*
+	 * R26 (up) and R27 (m) are NOT restored from the frame.
+	 *
+	 * They belong to the processor and to the scheduler, not to the
+	 * interrupted code.  What was here restored both, which is
+	 * harmless on one processor -- the frame was built by this
+	 * processor, so the m it holds is this processor's -- and is the
+	 * whole of the SMP fault as soon as there is a second.  A
+	 * process interrupted on cpu0 carries a frame on its kernel
+	 * stack naming cpu0's Mach; when the scheduler resumes that
+	 * process on cpu1 and it returns through here, cpu1's m becomes
+	 * cpu0's Mach, and cpu1's own entirely correct ilock()/iunlock()
+	 * then count cpu0's m->ilockdepth.  up comes back wrong by the
+	 * same instruction.
+	 *
+	 * That is not a guess about this board: it is what the identical
+	 * "POPQ R14; POPQ R15" did in os/inferno/pc64/l.s, measured
+	 * there -- 4 of 4 two-processor runs faulting before, 20 of 20
+	 * clean after -- and os/9front/pc64/l.s guards it with a test on
+	 * the saved CS for exactly this reason.  This board needs no
+	 * such test: os/inferno/virtarm64/trap.c records that the kernel
+	 * "never itself enters EL0", so every exception here is EL1 to
+	 * EL1 and the reload was always the nested case.  If EL0 is ever
+	 * introduced, the reload comes back guarded on the saved SPSR's
+	 * mode field at UR_STATUS, the way pc64 guards on CS.
+	 *
+	 * The entry stub still saves both, so a register dump is
+	 * unchanged.
+	 */
 	MOV	UR_R28(RSP), R28
 	MOV	UR_R29(RSP), R29
 	MOV	UR_R30(RSP), R30

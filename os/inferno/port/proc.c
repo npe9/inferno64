@@ -158,6 +158,28 @@ schedinit(void)		/* never returns */
  * is the user's code segment. We use the same segment for
  * the kernel and the user. Hence, return !Proc.kp. Proc.kp
  * is true for a kernel process.
+ *
+ * It returned Proc.kp, the opposite of what the paragraph above says,
+ * from the day it was written.  Every kernel process's trap was
+ * therefore classified as coming from user mode, so kenter() published
+ * a Ureg sitting on a kernel stack as up->dbgreg and os/inferno/pc64's
+ * trap() ran notify() and kexit() over it; and the one process
+ * newproc() makes without kp was classified as a kernel trap, so it
+ * never got the user tail it should have had.  Seen directly on this
+ * branch with a probe in trap(): "pid 1 kp 0 userureg 0" and "pid 2
+ * kp 1 userureg 1", both backwards, and both the right way round
+ * after this.  The multicore branch found it and caught the
+ * consequence in the act on pc64 -- a general protection fault on the
+ * IRETQ in _intrr, a probe watching the frame's SS word change under
+ * a newly created kproc's first interrupt.
+ *
+ * Only os/inferno/pc64 calls this; every other board here traps
+ * without kenter(), kexit() or notify(), so nothing else changes.
+ *
+ * What this does not settle: on a port where kernel and user share a
+ * code segment, whether any frame should be called a user frame is a
+ * real question and "always 0" may be the right answer.  This makes
+ * the function do what it says, no more.
  */
 int
 userureg(Ureg *ur)
@@ -315,16 +337,26 @@ void
 sched(void)
 {
 	Proc *p;
-	int s;
+	int s, d;
 
 	kstackcheck("sched");
-	if(m->ilockdepth != 0)
-		panic("cpu%d: ilockdepth %d, last lock %#p at %#p, sched called from %#p",
+	/*
+	 * d, not m->ilockdepth, in the message.  The test and the print
+	 * are not one operation -- panic()'s own formatting runs between
+	 * them, and an interrupt landing in that window can change the
+	 * counter, which is how this panic came to report "ilockdepth 0"
+	 * when sched() only panics for a depth that is not zero.  d is
+	 * the value that actually tripped it.
+	 */
+	d = m->ilockdepth;
+	if(d != 0){
+		panic("cpu%d: ilockdepth %d (now %d), last lock %#p at %#p, sched called from %#p",
 			m->machno,
-			m->ilockdepth,
+			d, m->ilockdepth,
 			up != nil ? up->lastilock: nil,
 			(up != nil && up->lastilock != nil) ? up->lastilock->pc: 0,
 			getcallerpc(&p+2));
+	}
 	if(up != nil) {
 		/*
 		 * Delay the sched until the process gives up the locks

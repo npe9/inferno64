@@ -1,0 +1,48 @@
+.TH CHAINBENCH 1
+.SH NAME
+chainbench \- time certificate chain verification, with controls
+.SH SYNOPSIS
+.B chainbench
+[
+.BI -n " reps"
+]
+.I host
+.I cert.der ...
+.SH DESCRIPTION
+.I Chainbench
+reads the trust bundle, verifies a saved certificate chain against it
+with
+.IR x509 (2),
+and prints how long each part took.  The certificates are DER, leaf
+first, in the order a server sends them; openssl's
+.B s_client -showcerts
+produces them.
+.PP
+It needs no network and no server, so it can be run over and over on
+the same chain, which is what makes it useful for working on the
+speed: a handshake against a live server cannot be timed twice the same
+way, and a server that loses patience hangs up in the middle of the
+measurement.
+.PP
+After the timed runs it verifies four things that must fail: the same
+chain against the wrong host name, the leaf with its issuers removed,
+the chain with a byte changed in the leaf's signature, and the chain
+with no trust roots at all.  A verifier that says yes to those is not
+verifying, so
+.I chainbench
+exits with an error unless the chain verifies and all four fail.
+.SH EXAMPLE
+Save a chain and time it:
+.IP
+.EX
+openssl s_client -connect example.com:443 -showcerts </dev/null |
+	awk '/BEGIN CERT/,/END CERT/' >chain.pem
+.I "(split chain.pem into DER certificates)"
+chainbench -n 3 example.com c0.der c1.der c2.der
+.EE
+.SH SOURCE
+.B /appl/cmd/chainbench.b
+.SH SEE ALSO
+.IR p256test (1),
+.IR x509 (2),
+.IR tls12 (2)

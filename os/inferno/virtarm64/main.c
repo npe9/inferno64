@@ -8,6 +8,7 @@
 #include "version.h"
 
 extern Mach mach0;
+Mach *machp[MAXMACH];
 Conf conf;
 
 extern ulong kerndate;
@@ -25,183 +26,21 @@ extern int image_pool_pcnt;
  * core, never mind several.  Was a no-op; see doc/dis-numa-survey.ms.
  */
 /*
- * Bring-up probe for a second processor.  secmain() runs on the
- * secondary with a stack and nothing else: no Mach, so no up/m, which
- * means no print() and no lock -- it may only touch these two words.
- * cpu0 polls them.
+ * The bring-up that used to live here -- secmain(), smpprobe() and the
+ * globals they passed through -- is gone into startcpu.c, which is
+ * where the cloud side had already written it and where it belongs:
+ * that version hands each processor a record rather than a set of
+ * globals, so they can start at once, and it turns the MMU on over
+ * there, which this board did not have when the first version was
+ * written.  What came across with it is the part this branch cared
+ * about: the secondary enters the scheduler, conf.nmach counts
+ * processors that arrive, and PSCI discovers them when there is no
+ * ACPI to ask.  See doc/multicore-plan.ms.
  */
-/*
- * volatile: cpu0 polls these in a loop and the secondary is the only
- * writer.  One set of them, not one per processor, because the
- * secondaries are started ONE AT A TIME: _secondary reads secmach and
- * secstacktop as globals, so two starting at once would land on the
- * same stack with the same Mach.  Sequential bring-up costs a few
- * milliseconds once a boot and no assembly.
- */
-static uvlong	secstackbuf[MAXMACH][KSTACK/sizeof(uvlong)];
-uintptr		secstacktop;
-Mach		machs[MAXMACH];		/* each secondary's own Mach */
-Mach*		machp[MAXMACH];
-uintptr		secmach;	/* the one being started, read by _secondary */
-volatile uintptr	secsp;
-volatile uintptr	seccflag;	/* set only by C on cpu1 */
-int		secgic = -1;
-/*
- * On.  The secondary enters the scheduler, picks processes and
- * interprets Dis.
- *
- * This comment used to say the opposite -- that cpu1 corrupted the Dis
- * heap about one boot in ten -- and that was three bugs, all of them
- * now fixed and none of them the scheduler:
- *
- *	curP, the per-executor Dis context, was a plain global on
- *	arm64 (no DISCTXREG), so both processors shared one;
- *
- *	gicenable()'s GICv2 path never wrote GICD_ITARGETSR, which
- *	resets to no target, so with a second processor present every
- *	SPI went to nobody and the console interrupt was lost;
- *
- *	splhi stored eight bytes into Mach.splpc, four bytes wide, and
- *	cleared Mach.machno behind it -- invisible on cpu0, whose
- *	number is 0 anyway, and on cpu1 it renamed the processor to 0
- *	the first time interrupts were unmasked.
- *
- * Measured after those: eight boots at parallelvm=0 and eight at
- * parallelvm=1, -smp 2, no panic, an interactive shell every time, and
- * "first Dis quantum on cpu1" every time.  *secsched=0 on the boot line
- * keeps the secondary out of the scheduler, which is what every table
- * in doc/multicore-plan.ms before this was measured on.
- */
-int		secsched = 1;
-volatile uintptr	secalive;
-volatile uintptr	seccount;
-
-void
-secmain(void)
-{
-	Mach *mm;
-	extern void *vectab;
-	extern void vectorinit(void*);
-	extern int gicsecondary(void);
-
-	mm = (Mach*)gettpidr();
-	seccflag = (uintptr)mm;
-	USED(mm);
-	if(vectab != nil)
-		vectorinit(vectab);
-	secgic = gicsecondary();
-	if(secgic == 0)
-		clockinit();		/* this processor's own generic timer */
-	secalive = 5;
-	iprint("smp: cpu%d up: gic %d, secsched %d\n", m->machno, secgic, secsched);
-	spllo();			/* take interrupts on this processor */
-	/*
-	 * Into the scheduler.  The portable run queue is already locked
-	 * (Schedq embeds a Lock and proc.c takes it), which is the Plan 9
-	 * heritage this kernel kept, so the question is whether anything
-	 * else in the path assumes cpu0 -- which is what this is finding
-	 * out.  schedinit() does not return.
-	 */
-	active.machs[m->machno] = 1;
-	coherence();
-#ifdef DISCTXREG
-	disctxinit();		/* curP is a register: this processor needs its own */
-#endif
-	if(secsched)
-		schedinit();
-	for(;;){
-		seccount = mm->ticks;
-		coherence();
-		idle();
-	}
-}
-
-/*
- * PSCI CPU_ON (SMC64 0xc4000003): target, entry point, context.  QEMU
- * virt's conduit is HVC, which psci() in l.s already uses for
- * SYSTEM_RESET and SYSTEM_OFF.  Returns the PSCI status: 0 success,
- * -2 invalid parameters, -4 already on, -3 denied.
- */
-void
-smpprobe(void)
-{
-	extern void _secondary(void), _main(void);
-	vlong r;
-	int i, cpu, started;
-	uvlong c0;
-
-	print("smp: PSCI %#llux\n", psci(0x84000000ULL, 0, 0, 0));
-	settpidr((uintptr)m);		/* cpu0 takes its own slot too */
-	machp[0] = m;
-	started = 1;
-	/*
-	 * One at a time, and only as far as MAXMACH: machp[] and
-	 * active.machs[] are that long, and the QEMU command line is not
-	 * ours to trust.  PSCI answers the "how many processors are
-	 * there" question by itself -- CPU_ON for one that does not exist
-	 * returns INVALID_PARAMETERS -- so nothing here needs a device
-	 * tree, which this board is not given at all under -kernel.
-	 */
-	for(cpu = 1; cpu < MAXMACH; cpu++){
-		memset(&machs[cpu], 0, sizeof machs[cpu]);
-		machs[cpu].machno = cpu;
-		machp[cpu] = &machs[cpu];
-		secmach = (uintptr)&machs[cpu];
-		secstacktop = ((uintptr)secstackbuf[cpu]
-			+ sizeof secstackbuf[cpu]) & ~(uintptr)15;
-		secalive = 0;
-		seccflag = 0;
-		coherence();
-		r = psci(0xc4000003ULL, cpu, (uintptr)_secondary, 0);
-		if(r != 0){
-			print("smp: cpu%d CPU_ON -> %lld, stopping there\n",
-				cpu, r);
-			machp[cpu] = nil;
-			break;
-		}
-		/*
-		 * Wait for it to reach C and say so.  secmain() sets
-		 * secalive to 5 once it has its vectors, its GIC and its
-		 * timer; stage 1, 2 and 3 are l.s's markers on the way.  A
-		 * processor that never gets there is not counted, because
-		 * conf.nmach is what the interpreter ceiling and the
-		 * per-processor counters are sized by -- claiming a
-		 * processor that did not arrive loosens the ceiling
-		 * silently.
-		 */
-		for(i = 0; i < 200 && secalive != 5; i++)
-			delay(10);
-		if(secalive != 5){
-			print("smp: cpu%d stopped at stage %llud\n",
-				cpu, (uvlong)secalive);
-			machp[cpu] = nil;
-			break;
-		}
-		started++;
-		conf.nmach = started;
-		print("smp: cpu%d up (tpidr %#llux, Mach %#llux), %d processors\n",
-			cpu, (uvlong)seccflag, (uvlong)(uintptr)&machs[cpu],
-			started);
-	}
-	conf.nmach = started;
-	/*
-	 * seccount is incremented by the last secondary in its idle loop
-	 * when secsched is off, so two reads a moment apart say whether it
-	 * is still going; with secsched on it is in the scheduler instead
-	 * and this reads zero, which is the point of the counter beside it.
-	 */
-	c0 = seccount;
-	delay(50);
-	print("smp: %lud processors, gic %d, last one's ticks %llud -> %llud"
-		" in 50ms\n",
-		(ulong)conf.nmach, secgic, (uvlong)c0, (uvlong)seccount);
-}
-
 int
 segflush(void *p, ulong l)
 {
-	cacheflush(p, l);
-	cacheiinv();
+	USED(p, l);
 	return 1;
 }
 
@@ -229,65 +68,6 @@ enum {
 extern int fwcfgdma(u32int, void*, u32int);
 extern int fwcfgfile(char*, u32int*);
 
-static char bootargs[512];
-
-void
-bootargsinit(void)
-{
-	u32int n;
-
-	u32int sz;
-	int sel;
-
-	/*
-	 * FW_CFG_CMDLINE is empty for a bare ELF -- measured, fw_cfg says 0
-	 * bytes -- so the options come from a named item instead:
-	 *	-fw_cfg name=opt/bootargs,string='*parallelvm=1'
-	 */
-	sz = 0;
-	if((sel = fwcfgfile("opt/bootargs", &sz)) < 0 || sz == 0)
-		return;
-	n = sz;
-	if(n >= sizeof bootargs)
-		n = sizeof bootargs - 1;
-	if(fwcfgdma(((u32int)sel<<16) | FwCfgDmaSelect | FwCfgDmaRead,
-	    bootargs, n) < 0){
-		bootargs[0] = 0;
-		return;
-	}
-	bootargs[n] = 0;
-	print("bootargs: %s\n", bootargs);
-}
-
-/*
- * "name=value", space separated.  Returns a pointer into a static
- * buffer, valid until the next call -- the same contract pc64's has,
- * and every caller copies or converts immediately.
- */
-char*
-getconf(char *name)
-{
-	static char val[128];
-	char *p, *e;
-	int n;
-
-	n = strlen(name);
-	for(p = bootargs; (p = strstr(p, name)) != nil; p += n){
-		if(p != bootargs && p[-1] != ' ')
-			continue;
-		if(p[n] != '=')
-			continue;
-		p += n + 1;
-		for(e = p; *e != 0 && *e != ' '; e++)
-			;
-		if(e - p >= sizeof val)
-			return nil;
-		memmove(val, p, e - p);
-		val[e - p] = 0;
-		return val;
-	}
-	return nil;
-}
 
 static void
 poolsizeinit(void)
@@ -315,24 +95,15 @@ halt(void)
 		idle();
 }
 
+/*
+ * All of it is archconfinit()'s now: a UEFI machine's memory is not
+ * one run from the end of the kernel to a constant, and building
+ * conf.mem[] from the firmware's map is where that has to be decided.
+ */
 void
 confinit(void)
 {
-	ulong base;
-
 	archconfinit();
-
-	base = PGROUND((uintptr)end);
-	conf.base0 = base;
-	conf.base1 = 0;
-	conf.npage1 = 0;
-	conf.npage0 = (conf.topofmem - base)/BY2PG;
-	conf.npage = conf.npage0 + conf.npage1;
-	conf.mem[0].base = base;
-	conf.mem[0].npage = conf.npage0;
-	conf.ialloc = (ulong)(((((uvlong)conf.npage*main_pool_pcnt)/100)/2)*BY2PG);
-	conf.nproc = 200;
-	conf.nmach = 1;
 }
 
 void
@@ -356,6 +127,13 @@ main(void)
 	while(p < ep)
 		*p++ = 0;
 
+	/*
+	 * First, because the block it copies lives in the loader's
+	 * memory and nothing has reserved that: see
+	 * os/inferno/virtarm64/bootargs.c.
+	 */
+	bootargsinit();
+
 	machinit();
 #ifdef DISCTXREG
 	/*
@@ -371,10 +149,21 @@ main(void)
 	confinit();
 	fpinit();
 
+	/*
+	 * Before anything touches the UART.  acpitables() only reads;
+	 * spcrconsole() puts the console where the firmware says it is,
+	 * silently, because there is nowhere to print yet.  acpiinit()
+	 * below reports what both of them found.
+	 */
+	acpitables();
+	spcrconsole();
+
 	serialputs("Inferno/arm64 virt\n", -1);
 
 	uartconsole();
 	archconsole();
+	showconf();
+	archmemreport();
 
 	xinit();
 	poolinit();
@@ -391,6 +180,26 @@ main(void)
 	quotefmtinstall();
 	printinit();
 
+	atomiccheck();
+	memspeed();
+
+	/* prints what acpitables() found, and acts on the rest of it */
+	acpiinit();
+	startcpus();
+
+	/*
+	 * *disdump=1 on the boot line asks for the multicore
+	 * instrumentation's dump; see os/inferno/port/dis.c.  Read here
+	 * rather than defaulted on, because this board's console on a
+	 * rented instance is a serial line and nothing else.
+	 */
+	{
+		extern int disdumpon;		/* os/inferno/port/dis.c */
+		char *p;
+
+		if((p = getconf("*disdump")) != nil)
+			disdumpon = strtol(p, nil, 0);
+	}
 	procinit();
 	links();
 	screeninit();
@@ -402,7 +211,14 @@ main(void)
 		extern void fdtinit(void*);
 		fdtinit(dtbptr);
 	}
-	bootargsinit();
+	/*
+	 * NOT a second bootargsinit() here.  fw_cfg is device memory and
+	 * the MMU is on by this point, so the read traps; the first call,
+	 * before mmuinit(), is where that has to happen.  Under -kernel
+	 * the boot options therefore need fw_cfg read early or mapped
+	 * late, which is the next piece of work -- see
+	 * doc/multicore-bare-metal-plan.ms.
+	 */
 	{	/* the same options pc64 takes; see doc/multicore-plan.ms */
 		char *p;
 
@@ -443,7 +259,6 @@ main(void)
 
 	print("\nInferno %s\n", VERSION);
 	print("conf %s (%lud) jit %d\n\n", conffile, kerndate, cflag);
-	smpprobe();
 
 	userinit();
 	schedinit();
@@ -459,6 +274,14 @@ init0(void)
 	if(waserror())
 		panic("init0 %r");
 
+	/*
+	 * Here and not in main(): this is the first point at which
+	 * processor 0 is itself taking interrupts, and a report that
+	 * compared the others against a processor 0 still at splhi would
+	 * read as the failure it is looking for.
+	 */
+	cpuintrreport();
+
 	o = up->env;
 	o->pgrp->slash = namec("#/", Atodir, 0, 0);
 	pathclose(o->pgrp->slash->path);
@@ -470,9 +293,38 @@ init0(void)
 	up->egrp = o->egrp;
 
 	chandevinit();
+
+	/*
+	 * Put the loader's configuration in /env, the way pc64's init0
+	 * does, so a boot under UEFI can be told things -- bootfile,
+	 * console, *acpi -- rather than only compiled ones.  Harmless
+	 * when there was no loader: bootargsinit() left it empty.
+	 */
+	setconfenv();
+
 	poperror();
 	disinit("/osinit.dis");
 }
+
+/*
+ * The top of a kernel stack, 16-byte aligned, which AArch64 requires
+ * of SP itself: with SCTLR_EL1.SA set, the first SP-relative access
+ * after a misaligned SP is loaded raises an alignment fault -- and
+ * the fault handler builds its own frame on that same SP, so it
+ * faults again, and again, silently, at 100% of the processor.
+ *
+ * p->kstack is a plain malloc(), and a pool block's data pointer is
+ * the block start past a header: it can be, and on a Compute Engine
+ * t2a with 4 GiB regularly is, 8 modulo 16.  Rounding the size up to
+ * the pool quanta does not make the pointer aligned, which is the
+ * reasoning that let this stand -- measured instead: the scheduler
+ * was seen jumping into a new process with sp 0x408f0898 from kstack
+ * 0x408e88a8, both 8 modulo 16, and the machine spun there with no
+ * output.  It depends on where the allocator put that one stack, so
+ * it came and went with the machine's memory size: a 4 GiB instance
+ * hung, an 8 GiB one did not, and QEMU never did.
+ */
+#define	KSTACKTOP(p)	((((uintptr)(p)->kstack + KSTACK) & ~(uintptr)15) - 16)
 
 void
 userinit(void)
@@ -503,7 +355,7 @@ userinit(void)
 	kstrdup(&p->text, "interp");
 	p->fpstate = FPINIT;
 	p->sched.pc = (uintptr)init0entry;
-	p->sched.sp = (uintptr)p->kstack+KSTACK-16;
+	p->sched.sp = KSTACKTOP(p);
 	ready(p);
 }
 
@@ -520,6 +372,7 @@ exit(int inpanic)
 	archreboot();
 }
 
+
 static void
 linkproc(void)
 {
@@ -535,7 +388,7 @@ void
 kprocchild(Proc *p, void (*func)(void*), void *arg)
 {
 	p->sched.pc = (uintptr)linkproc;
-	p->sched.sp = (uintptr)p->kstack+KSTACK-16;
+	p->sched.sp = KSTACKTOP(p);
 	p->kpfun = func;
 	p->kparg = arg;
 }
@@ -564,38 +417,17 @@ fpurestore(int x)
 	USED(x);
 }
 
-ulong
+/*
+ * uintptr, not ulong: ulong is 32 bits under 7c, and this used to
+ * truncate every address above 4 GiB (the build said "conversion of
+ * pointer to shorter integer" here).  Memory starts at 1 GiB on this
+ * board, so a machine with more than 3 GiB has RAM above 4 GiB, and a
+ * DMA address for it came out 4 GiB too low -- the device then wrote
+ * into whatever kernel memory was there.  A Compute Engine t2a has
+ * 4 GiB; every QEMU run here had 1 or 2.
+ */
+uintptr
 va2pa(void *v)
 {
-	return (ulong)v;
-}
-
-/*
- * Smallest data-cache line in bytes, from CTR_EL0.DminLine (bits 19:16,
- * log2 of the line size in 4-byte words).  DC by VA must stride by the
- * minimum line present or it skips lines; on a big.LITTLE part the
- * clusters need not report the same geometry, which is exactly why the
- * minimum is the one to use.
- */
-static usize
-dlinesz(void)
-{
-	static usize ls;
-
-	if(ls == 0)
-		ls = 4UL << ((getctr() >> 16) & 0xf);
-	return ls;
-}
-
-void
-cacheflush(void *va, usize len)
-{
-	uintptr a, e, ls;
-
-	ls = dlinesz();
-	a = (uintptr)va & ~(ls - 1);
-	e = (uintptr)va + len;
-	for(; a < e; a += ls)
-		dccvac(a);
-	coherence();
+	return (uintptr)v;
 }

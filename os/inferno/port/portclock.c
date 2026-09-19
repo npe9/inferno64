@@ -140,6 +140,8 @@ timerdel(Timer *dt)
 			sched();
 }
 
+extern int disdumpon;	/* os/inferno/port/dis.c; *disdump=1 */
+
 void
 hzclock(Ureg *ur)
 {
@@ -162,7 +164,6 @@ hzclock(Ureg *ur)
 	if(m->machno == 0)
 		checkalarms();
 
-	/* MULTICORE INSTRUMENTATION - temporary: one dump once a stall has set in */
 	/*
 	 * Silent unless it finds something.  Three sweeps a boot of a
 	 * handful of arenas; see poolcheckoverlap() in port/alloc.c for
@@ -172,7 +173,11 @@ hzclock(Ureg *ur)
 		extern void poolcheckoverlap(char*);
 		poolcheckoverlap("clock");
 	}
-	if(m->machno == 0 && m->ticks == 40*HZ){
+	/*
+	 * MULTICORE INSTRUMENTATION - temporary: one dump once a stall has
+	 * set in, and only when *disdump=1 asked for it.  See dis.c.
+	 */
+	if(m->machno == 0 && m->ticks == 40*HZ && disdumpon){
 		extern void disdump(void);
 		extern uintptr kstackmin;
 		extern char *kstackminproc;

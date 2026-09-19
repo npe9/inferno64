@@ -87,6 +87,7 @@ TARG=\
 	idea.dis\
 	import.dis\
 	iostats.dis\
+	ipinttest.dis\
 	itest.dis\
 	itreplay.dis\
 	kill.dis\
@@ -105,6 +106,14 @@ TARG=\
 	memfs.dis\
 	metamorph.dis\
 	mkdir.dis\
+	p256test.dis\
+	chainbench.dis\
+	cloudauth.dis\
+	cloudfs.dis\
+	cloudinit.dis\
+	gcs.dis\
+	hget.dis\
+	metricfs.dis\
 	mntgen.dis\
 	mount.dis\
 	mouse.dis\
@@ -149,6 +158,11 @@ TARG=\
 	styxchat.dis\
 	styxmon.dis\
 	styxlisten.dis\
+	supervise.dis\
+	rpcserve.dis\
+	styxbench.dis\
+	zerofs.dis\
+	tcpserve.dis\
 	sum.dis\
 	tac.dis\
 	tail.dis\

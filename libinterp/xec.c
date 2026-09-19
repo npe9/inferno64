@@ -698,12 +698,22 @@ OP(movmp)
  * Bufio allocates more than one type, and any of them answers the
  * same question.  See doc/inferno-ports.ms.
  */
+/*
+ * multicore's two one-shot type probes below (probenewtype, probearrtype)
+ * print on every boot of every kernel and every emu run, which lands in
+ * the GCE serial log this branch reads to verify a boot and in the output
+ * of every script that parses it.  The code is kept intact -- it is the
+ * other session's live instrument and belongs to a hunt still open -- and
+ * only the printing is gated.  Set to 1 to get it back.
+ */
+static int probetypes = 0;
+
 static int probednewtype;
 
 static void
 probenewtype(Type *t)
 {
-	if(probednewtype || strcmp(R.M->m->name, "Bufio") != 0)
+	if(!probetypes || probednewtype || strcmp(R.M->m->name, "Bufio") != 0)
 		return;
 	probednewtype = 1;
 	print("new: type size %d np %d map", t->size, t->np);
@@ -859,7 +869,7 @@ static int probedarrtype;
 static void
 probearrtype(Type *t, int sz)
 {
-	if(probedarrtype || t->size != 40 || strcmp(R.M->m->name, "Sh") != 0)
+	if(!probetypes || probedarrtype || t->size != 40 || strcmp(R.M->m->name, "Sh") != 0)
 		return;
 	probedarrtype = 1;
 	print("newa: array of type size %d np %d map", t->size, t->np);
@@ -2601,7 +2611,7 @@ ulong regstale, regstaletold, regstalesrc[8];	/* INSTRUMENTATION - temporary */
 void
 xec(Prog *p)
 {
-	int op;
+	int op, wi;
 
 	R = p->reg;
 	REGSYNCED();
@@ -2676,19 +2686,28 @@ xec(Prog *p)
 		 * is exactly what we want to see what this proc was actually
 		 * doing right before the fault. Recorded on p itself so it
 		 * survives yields/thread migration - see wmtracedump(). */
-		{
-			int wn = nelem(p->wmtrace);
-			p->wmtrace[p->wmtracei].pc = R.PC - R.M->prog;
-			p->wmtrace[p->wmtracei].op = R.PC->op;
-			p->wmtrace[p->wmtracei].fp = R.FP;
-			p->wmtrace[p->wmtracei].mp = (void*)R.M;
-			p->wmtracei = (p->wmtracei+1) % wn;
-			p->wmtracen++;
-		}
+		/*
+		 * The ring is a power of two, so this masks rather than
+		 * divides.  It used to take the remainder four times per
+		 * Dis instruction -- once here and once for each of the
+		 * three fields written after the dispatch, each of those
+		 * recomputing the index -- and a signed remainder is a
+		 * division on this compiler, tens of cycles against an
+		 * interpreted instruction that costs a few.  Same trace,
+		 * same contents; see wmtracedump(), whose own arithmetic
+		 * still holds because wmtracei stays inside the ring.
+		 */
+		wi = p->wmtracei & (nelem(p->wmtrace)-1);
+		p->wmtrace[wi].pc = R.PC - R.M->prog;
+		p->wmtrace[wi].op = R.PC->op;
+		p->wmtrace[wi].fp = R.FP;
+		p->wmtrace[wi].mp = (void*)R.M;
+		p->wmtracei = (wi+1) & (nelem(p->wmtrace)-1);
+		p->wmtracen++;
 		dec[R.PC->add]();
-		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].d = R.d;
-		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].s = R.s;
-		p->wmtrace[(p->wmtracei-1+nelem(p->wmtrace)) % nelem(p->wmtrace)].m = R.m;
+		p->wmtrace[wi].d = R.d;
+		p->wmtrace[wi].s = R.s;
+		p->wmtrace[wi].m = R.m;
 		op = R.PC->op;
 		R.PC++;
 		/*

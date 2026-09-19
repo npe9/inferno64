@@ -71,6 +71,23 @@ static void gput(Prog*);	/* defined below */
 
 extern int parallelvm;		/* defined below, with stoptheworld() */
 
+/*
+ * *disdump=1 on the boot line turns the multicore instrumentation's
+ * reporting on.  It is off by default because it is not silent: a dump
+ * of every process, every run queue and every VM waiter, once a boot,
+ * plus a line each time the VM-lock queue, the run queue or the number
+ * of VM holders reaches a new maximum.  The consistency checks beside
+ * them -- runq counts that disagree, a waiter not Queueing, a Prog
+ * with no usable xec -- are not behind it: those report a fault
+ * rather than a measurement, and something is wrong if they print.  That
+ * was written for a laptop with a scrollback; on a rented instance the
+ * serial console is the only interface there is, and forty seconds
+ * into every boot it filled with kernel internals.  The counters run
+ * either way -- they cost an increment -- so asking for the dump is
+ * all that is behind the flag.
+ */
+int disdumpon;
+
 static Pctx pctxpool[MAXPCTX];
 static int npctxused;
 int ctxcap = MAXPCTX;	/* how many to hand out; *ctxcap=64 is the old pool */
@@ -117,10 +134,15 @@ claimctx(void)
 		 * line is the warning that the pool needs to be bigger or
 		 * that contexts need releasing when an interpreter blocks.
 		 */
-		if(said++ == 0)
-			print("claimctx: pool of %d exhausted, sharing"
-				" (unsafe while parallelvm=%d)\n",
-				ctxcap, parallelvm);
+		if(said++ == 0){
+			if(parallelvm)
+				print("claimctx: pool of %d exhausted, sharing"
+					" -- UNSAFE at parallelvm=1\n", ctxcap);
+			else
+				print("claimctx: pool of %d exhausted, sharing"
+					" (correct while the VM lock is held;"
+					" the pool wants to be bigger)\n", ctxcap);
+		}
 		unlock(&isched.l);
 		return pctxs[0];
 	}
@@ -1147,8 +1169,9 @@ vmacquire(void)
 			int n = ainc(&nvm);
 			if(n > maxnvm){
 				maxnvm = n;
-				print("nvm: %d hold the vm, cpu%d %s\n",
-					n, m->machno, up->text);
+				if(disdumpon)
+					print("nvm: %d hold the vm, cpu%d %s\n",
+						n, m->machno, up->text);
 			}
 		}
 	}
@@ -1196,25 +1219,6 @@ vmrelease(void)
 	}
 }
 static Prog*	proghash[64];
-
-/*
- * delprog() release()s the interpreter token while it closes p's
- * pgrp/fgrp/egrp/sigs, but does not unlink p from proghash[]/isched
- * until it reacquires -- so p is still reachable by pid through
- * progpid() during that window, while o->pgrp etc may already be
- * freed.  disracepid names the pid currently inside that window (-1
- * when none is); devprog.c's progpid()-based read paths report a hit
- * if they find it, and delprog itself reports whether the GC was
- * blocked from running (via gchalt/gchalted, see include/interp.h and
- * libinterp/gc.c) during the same window.  Diagnostic only, capped;
- * see doc/inferno-ports.ms.
- */
-int	disracepid = -1;
-int	disracehits;
-int	disracewindows;	/* delprog windows opened, total */
-int	disraceoverlaps;	/* windows opened while another was already open */
-extern ulong gchalted;
-
 
 static Progs*	delgrp(Prog*);
 static void	addgrp(Prog*, Prog*);
@@ -1381,7 +1385,16 @@ newprog(Prog *p, Modlink *m)
 
 	ph = pidlook(n->pid);
 	if(*ph != nil)
-		panic("dup pid");
+		/*
+		 * Seen once in twelve boots, at the very first Dis process
+		 * ("Initial Dis: /osinit.dis"), where proghash cannot
+		 * legitimately hold anything yet -- l.s's _clearbss does
+		 * clear edata..end, so it is not an unzeroed table.  Say
+		 * what is in the way rather than only that something is.
+		 * pc64-only, temporary.  See doc/inferno-cloud-plan.ms.
+		 */
+		panic("dup pid %d: pidnum %d, slot %#p holds prog %#p pid %d",
+			n->pid, pidnum, ph, *ph, (*ph)->pid);
 	n->pidlink = nil;
 	*ph = n;
 	unlock(&isched.l);
@@ -1452,31 +1465,12 @@ delprog(Prog *p, char *msg)
 	tellsomeone(p, msg);	/* call before being removed from prog list */
 
 	o = p->osenv;
-	{
-		ulong gcbefore;
-
-		gcbefore = gchalted;
-		disracewindows++;
-		if(disracepid != -1) {
-			disraceoverlaps++;
-			if(disraceoverlaps <= 8)
-				print("delprog: pid %d opening window while pid %d's was still open (overlap %d)\n",
-					p->pid, disracepid, disraceoverlaps);
-		}
-		disracepid = p->pid;
-		release();
-		closepgrp(o->pgrp);
-		closefgrp(o->fgrp);
-		closeegrp(o->egrp);
-		closesigs(o->sigs);
-		acquire();
-		disracepid = -1;
-		if(disracehits < 8 && gchalted != gcbefore) {
-			disracehits++;
-			print("delprog: pid %d gchalted %lud->%lud during close window\n",
-				p->pid, gcbefore, gchalted);
-		}
-	}
+	release();
+	closepgrp(o->pgrp);
+	closefgrp(o->fgrp);
+	closeegrp(o->egrp);
+	closesigs(o->sigs);
+	acquire();
 
 	delgrp(p);
 
@@ -1535,7 +1529,7 @@ delprog(Prog *p, char *msg)
 		 * program running in it has been freed.
 		 *
 		 * delprog() releases and reacquires the interpreter while it
-		 * closes p's groups (see the comment above disracepid), and
+		 * closes p's groups while p is still reachable by pid, and
 		 * acquire()'s irestore() re-opens a quantum on a Prog that is
 		 * about to be destroyed.  Nothing afterwards closes it:
 		 * vmachine()'s handler cleared inxec before progexit() ran,
@@ -2980,7 +2974,9 @@ vmachine(void*)
 			}
 			if(d > maxvmq) {
 				maxvmq = d;
-				print("vmq: %d interpreters blocked on the vm lock at once\n", d);
+				if(disdumpon)
+					print("vmq: %d interpreters blocked on"
+						" the vm lock at once\n", d);
 			}
 		}
 
@@ -3042,8 +3038,10 @@ vmachine(void*)
 						n += pctxs[i]->nlocal;
 				if(n > maxnrunq){
 					maxnrunq = n;
-					print("runq: %d dis programs ready at once,"
-						" cpu%d\n", n, m->machno);
+					if(disdumpon)
+						print("runq: %d dis programs ready"
+							" at once, cpu%d\n",
+							n, m->machno);
 				}
 				/*
 				 * The control that used to live here -- the

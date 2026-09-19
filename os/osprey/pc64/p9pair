@@ -217,8 +217,33 @@ port
 		buf = va_arg(list, char*);
 		len = va_arg(list, long);
 		off = va_arg(list, vlong);
-		if(fd >= 3 && ospreybuddyhas())	/* a file descriptor: the buddy holds the file, not the console */
+		/*
+		 * A legacy program that has dup'd something onto 0, 1 or 2 - a
+		 * shell redirecting a pipeline's stage - writes that descriptor
+		 * to the buddy, which holds the pipe.  Deciding by the number
+		 * alone put a pipeline's first stage on the console and left
+		 * the second reading an empty pipe; routing every write to the
+		 * buddy instead would fix that too, but it turns every legacy
+		 * print into a ring round trip and so into a call a note can
+		 * interrupt, which the note criteria showed.  So the kernel
+		 * keeps the mark: it sees every dup and close a legacy program
+		 * makes, and only a redirected descriptor leaves the console
+		 * path.
+		 */
+		/*
+		 * A write that goes out to the buddy hands it the error
+		 * string too, the same as any other forwarded call: see
+		 * ospreysyscallout below for why up->errstr is cleared on
+		 * the way out.
+		 */
+		if(fd >= 0 && fd < 3 && (up->buddyredir & (1 << fd)) != 0 && ospreybuddyhas()){
+			up->errstr[0] = 0;
 			return ospreybuddyforward(51, (uintptr*)up->s.args);	/* PWRITE */
+		}
+		if(fd >= 3 && ospreybuddyhas()){	/* a file descriptor: the buddy holds the file, not the console */
+			up->errstr[0] = 0;
+			return ospreybuddyforward(51, (uintptr*)up->s.args);	/* PWRITE */
+		}
 		USED(fd, off);
 		if(len <= 0)
 			return 0;
@@ -285,10 +310,56 @@ port
 			return (uintptr)ospreybuddybrk(addr);
 		return ibrk(addr, BSEG);
 	}
+	/*
+	 * exec(2): the program replaces itself with another.  This is the
+	 * exec a shell makes after it forks, as against the exec request a
+	 * container puts on the ring to start a program beside it - the
+	 * same buddy lays the binary out, but the address space it lands in
+	 * is the caller's own, and the caller's descriptors survive it.
+	 * Only a legacy program the buddy loaded has an image to replace.
+	 */
+	uintptr xexec(va_list list)
+	{
+		char *name = va_arg(list, char*);
+		char **argv = va_arg(list, char**);
+
+		if(!up->buddyimage)
+			return (uintptr)-1;
+		return (uintptr)ospreyexecself(name, argv);
+	}
+	/*
+	 * exits(2).  The status is a string: nil, or the empty string, is
+	 * success and anything else is a failure whose text is the reason.
+	 * This threw the string away and always exited 0, so a program that
+	 * died in sysfatal was reaped by its parent as having succeeded -
+	 * every "exited with status 0" in a log said nothing at all.  The
+	 * string is copied out and printed, and a non-empty one is a
+	 * non-zero status.
+	 */
 	uintptr xexits(va_list list)
 	{
-		USED(list);
-		ospreyexits(0);	/* the boot program idles; one exec started ends */
+		char *status;
+		char ks[ERRMAX];
+		int i;
+
+		status = va_arg(list, char*);
+		ks[0] = 0;
+		if(status != nil){
+			if(waserror())
+				strcpy(ks, "exits: unreadable status");	/* not a success */
+			else{
+				validaddr((uintptr)status, 1, 0);
+				for(i = 0; i < (int)sizeof ks - 1 && status[i] != 0; i++)
+					ks[i] = status[i];
+				ks[i] = 0;
+				poperror();
+			}
+		}
+		if(ks[0] != 0){
+			print("osprey exec: the program exited with the status \"%s\"\n", ks);
+			ospreyexits(1);
+		} else
+			ospreyexits(0);	/* the boot program idles; one exec started ends */
 		return 0;
 	}
 	/*
@@ -314,6 +385,14 @@ port
 		for(i = 0; i < (int)sizeof kn - 1 && name[i] != 0; i++)
 			kn[i] = name[i];
 		kn[i] = 0;
+		/*
+		 * "code": not a named segment of the container's but a region
+		 * the caller may write a program into and then run - what a
+		 * library operating system needs when it loads a program
+		 * itself.  The address-space service keeps its one call.
+		 */
+		if(strcmp(kn, "code") == 0)
+			return ospreysegcode(va, len);
 		if(len == 0)
 			len = ospreyslicesize();	/* the whole slice */
 		{
@@ -427,8 +506,88 @@ port
 		return 0;
 	}
 
+	/*
+	 * alarm(ms): the process asks to be sent an "alarm" note that many
+	 * milliseconds from now, 0 to cancel, and gets back what was left of
+	 * any alarm already set.  It is the kernel's, not the buddy's: the
+	 * clock and the note are both here, and alarm.c is linked into this
+	 * configuration whole - only sysproc.c, which held the two-line
+	 * wrapper, is cut.
+	 */
+	uintptr xalarm(va_list list)
+	{
+		return (uintptr)procalarm(va_arg(list, ulong));
+	}
+
+	/*
+	 * _nsec(): nanoseconds since the epoch.  On a 64-bit machine libc's
+	 * nsec(2) takes the answer in the return register and passes no
+	 * pointer, which is what the port's own sys_nsec does; the same is
+	 * done here rather than forwarded, because the time of day is the
+	 * machine's and the buddy has no better one.
+	 */
+	uintptr xnsec(va_list list)
+	{
+		USED(list);
+		return (uintptr)todget(nil, nil);
+	}
+
+	/*
+	 * rendezvous(tag, value): two processes sharing an address space
+	 * meet on a tag and swap a word, the first to arrive sleeping until
+	 * the second comes.  This is libthread's proccreate handing a new
+	 * proc its argument, and it is the one call of the nine that is not
+	 * a file, a time or a note: it is a place to block, and the place is
+	 * the address space, so the kernel answers it.
+	 *
+	 * The body is Plan 9's sysrendezvous, which is in sysproc.c and cut
+	 * from this configuration; what is not cut is the machinery it uses
+	 * - the Rgrp and its hash in portdat.h, the Rendezvous process state
+	 * proc.c already unwinds when a note arrives, and newrgrp in proc.c.
+	 * The group itself is made on the first RFMEM fork (devosprey.c) so
+	 * that a thread and the process that made it are in one, and a
+	 * process that has none is alone and can only wait to be joined.
+	 */
+	uintptr xrendezvous(va_list list)
+	{
+		uintptr tag, val, new;
+		Proc *p, **l;
+
+		tag = va_arg(list, uintptr);
+		new = va_arg(list, uintptr);
+		if(up->rgrp == nil)
+			up->rgrp = newrgrp();
+		l = &REND(up->rgrp, tag);
+
+		lock(up->rgrp);
+		for(p = *l; p != nil; p = p->rendhash){
+			if(p->rendtag == tag){
+				*l = p->rendhash;
+				val = p->rendval;
+				p->rendval = new;
+				unlock(up->rgrp);
+				ready(p);
+				return val;
+			}
+			l = &p->rendhash;
+		}
+
+		/* nobody there yet: sleep on the tag until the other one comes */
+		up->rendtag = tag;
+		up->rendval = new;
+		up->rendhash = *l;
+		*l = up;
+		up->state = Rendezvous;
+		unlock(up->rgrp);
+
+		sched();
+
+		return up->rendval;
+	}
+
 	Xsyscall *systab[] = {
 		[5]	xselect,	/* DUP number reused: select over arms */
+		[7]	xexec,		/* EXEC: the program replaces itself, its descriptors kept */
 		[8]	xexits,		/* EXITS */
 		[28]	xnotify,	/* NOTIFY: register a note handler */
 		[29]	xnoted,		/* NOTED: the handler returns; NCONT resumes */
@@ -436,9 +595,53 @@ port
 		[24]	xbrk,		/* BRK_: heap growth, the address-space service */
 		[30]	xsegattach,	/* SEGATTACH */
 		[51]	xpwrite,	/* PWRITE */
+		[6]	xalarm,		/* ALARM: a note this many milliseconds from now */
+		[34]	xrendezvous,	/* RENDEZVOUS: two processes of one address space meet */
+		[53]	xnsec,		/* _NSEC: nanoseconds, the machine's clock */
 		[60]	ospreyxcall,	/* above the Plan 9 table, which a legacy binary uses whole: a request of the task's own, answered now */
 	};
 	int nsyscall = nelem(systab);
+
+	/*
+	 * A call the buddy answers, and the one exception.
+	 *
+	 * errstr(2) is a call like any other and the buddy answers it out
+	 * of the error string it keeps per container, which is right for
+	 * every call the buddy served and wrong for the ones this kernel
+	 * served itself: the buddy never saw those fail and has nothing to
+	 * say about them.  A program that asks segattach for a segment
+	 * this machine does not have gets -1 and then an empty %r, which
+	 * is how the keyboard server's "segattach kbdring: " came to end
+	 * in a colon and nothing.
+	 *
+	 * up->errstr is both the message and the flag.  A call sent out to
+	 * the buddy clears it, because from then on the buddy owns the
+	 * answer; a kernel-served call that fails leaves its message
+	 * there through error(); and errstr(2) is answered here whenever
+	 * there is one to answer with, and forwarded when there is not.
+	 */
+	uintptr ospreysyscallout(ulong scallnr)
+	{
+		enum { ERRSTR = 41 };
+		uintptr *a;
+		char *buf;
+		long n, m;
+
+		a = (uintptr*)up->s.args;
+		if(scallnr == ERRSTR && up->errstr[0] != 0){
+			buf = (char*)a[0];
+			n = (long)a[1];
+			if(n <= 0)
+				return (uintptr)-1;
+			validaddr((uintptr)buf, n, 1);
+			for(m = 0; m < n - 1 && up->errstr[m] != 0; m++)
+				buf[m] = up->errstr[m];
+			buf[m] = 0;
+			return (uintptr)(m + 1);
+		}
+		up->errstr[0] = 0;
+		return (uintptr)ospreybuddyforward(scallnr, a);
+	}
 
 	int dosyscall(ulong scallnr, Sargs *args, uintptr *retp)
 	{
@@ -456,7 +659,7 @@ port
 			else if(scallnr < (ulong)nsyscall && systab[scallnr] != nil)
 				*retp = systab[scallnr]((va_list)up->s.args);
 			else if(ospreybuddyhas())	/* a Plan 9 program exec started: its server answers */
-				*retp = (uintptr)ospreybuddyforward(scallnr, (uintptr*)up->s.args);
+				*retp = (uintptr)ospreysyscallout(scallnr);
 			else {
 				print("osprey user: unimplemented syscall %uld\n", scallnr);
 				*retp = (uintptr)-1;

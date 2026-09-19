@@ -215,7 +215,10 @@ userinit.$O:	initcode.i userprog.i p9prog.i
 # libc members the host linker cannot read, and truncate to
 # header+text+data.  The generic %.i:D:%.out rule would instead run od
 # over a kernel-header build with none of that, so give them explicit
-# rules that run the scripts.  init9.$O is the shared entry both embed.
+# rules that run the scripts.  init9.$O is the entry a flat-loaded
+# program takes (one read-only text segment, no libc data to store into);
+# init9prog.$O is the entry a program with a data segment of its own
+# takes, which also gives libc its Tos and its private words.
 userprog.i:	init9.$O $ROOT/os/osprey/cmd/p9/buildserver.sh \
 		$ROOT/os/osprey/cmd/p9/srv9p.c $ROOT/os/osprey/cmd/p9/srv9p.h \
 		$ROOT/os/osprey/port/userprog.c
@@ -226,14 +229,69 @@ p9prog.i:	init9.$O $ROOT/os/osprey/cmd/p9/build.sh \
 		$ROOT/os/osprey/cmd/p9/dev9ploop.c $ROOT/os/osprey/cmd/p9/ring9p.c $ROOT/os/osprey/cmd/p9/p9pairsrv.c \
 		$ROOT/os/osprey/cmd/p9/p9file.c $ROOT/os/osprey/cmd/p9/p9srv.c $ROOT/os/osprey/cmd/p9/p9buddy.c \
 		$ROOT/os/osprey/port/devpipe.c $ROOT/os/osprey/port/devsrv.c $ROOT/os/osprey/cmd/p9/nsdat.h $ROOT/os/osprey/cmd/p9/dat.h \
-		$ROOT/os/osprey/cmd/p9/p9linuxfile.c linuxprog.i legacyprog.i catprog.i $ROOT/os/osprey/cmd/p9/blkvirtio.c $ROOT/os/osprey/cmd/p9/devlfs.c $ROOT/os/osprey/cmd/p9/xcall.s $ROOT/os/osprey/cmd/p9/pipfsrv.c $ROOT/os/osprey/cmd/p9/p9ip.c $ROOT/os/osprey/cmd/p9/p9sched.c $ROOT/os/osprey/cmd/p9/p9kbd.c $ROOT/os/osprey/ip/loopbackmedium.c $ROOT/os/osprey/ip/ospreymedium.c
+		$ROOT/os/osprey/cmd/p9/p9linuxfile.c linuxprog.i legacyprog.i catprog.i execprog.i shprog.i kbdsrvprog.i drawsrvprog.i rioprog.i prog2.i libcatprog.i libwcprog.i libshprog.i libgenprog.i $ROOT/os/osprey/cmd/p9/p9exec.c $ROOT/os/osprey/cmd/p9/devtime.c $ROOT/os/osprey/cmd/p9/devnote.c $ROOT/os/osprey/cmd/p9/devinput.c $ROOT/os/osprey/cmd/p9/p9proc.c $ROOT/os/osprey/cmd/p9/p9lib.h $ROOT/os/osprey/cmd/p9/blkvirtio.c $ROOT/os/osprey/cmd/p9/devlfs.c $ROOT/os/osprey/cmd/p9/xcall.s $ROOT/os/osprey/cmd/p9/pipfsrv.c $ROOT/os/osprey/cmd/p9/p9ip.c $ROOT/os/osprey/cmd/p9/p9sched.c $ROOT/os/osprey/cmd/p9/p9kbd.c $ROOT/os/osprey/ip/loopbackmedium.c $ROOT/os/osprey/ip/ospreymedium.c
 	sh $ROOT/os/osprey/cmd/p9/build.sh
 
-catprog.i:	init9.$O $ROOT/os/osprey/cmd/p9/buildcat.sh \
+# The four legacy programs link libc9.a - the C library this tree builds
+# itself from the 9front source vendored in 9front/src, with its own 6c.
+# The import is pinned and does not change under us, so the script that
+# builds the ten libraries is the prerequisite.
+$ROOT/9front/amd64/lib-src/libc9.a:	$ROOT/os/osprey/cmd/p9/build9front.sh
+	sh $ROOT/os/osprey/cmd/p9/build9front.sh
+
+catprog.i:	init9prog.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a $ROOT/os/osprey/cmd/p9/buildcat.sh \
 		$ROOT/os/osprey/cmd/p9/catp9.c
 	sh $ROOT/os/osprey/cmd/p9/buildcat.sh
 
-legacyprog.i:	init9.$O $ROOT/os/osprey/cmd/p9/buildlegacy.sh \
+execprog.i:	init9prog.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a $ROOT/os/osprey/cmd/p9/buildexec.sh \
+		$ROOT/os/osprey/cmd/p9/execp9.c
+	sh $ROOT/os/osprey/cmd/p9/buildexec.sh
+
+shprog.i:	init9prog.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a $ROOT/os/osprey/cmd/p9/buildsh.sh \
+		$ROOT/os/osprey/cmd/p9/shp9.c
+	sh $ROOT/os/osprey/cmd/p9/buildsh.sh
+
+prog2.i:	$ROOT/os/osprey/cmd/p9/buildprog2.sh \
+		$ROOT/os/osprey/cmd/p9/prog2p9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildprog2.sh
+
+libcatprog.i:	$ROOT/os/osprey/cmd/p9/buildlibcat.sh \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/catp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildlibcat.sh
+
+libwcprog.i:	$ROOT/os/osprey/cmd/p9/buildlibwc.sh \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/wcp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildlibwc.sh
+
+libshprog.i:	$ROOT/os/osprey/cmd/p9/buildlibsh.sh \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/shlib.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildlibsh.sh
+
+libgenprog.i:	$ROOT/os/osprey/cmd/p9/buildlibgen.sh \
+		$ROOT/os/osprey/cmd/p9/p9crt.c $ROOT/os/osprey/cmd/p9/genp9.c $ROOT/os/osprey/cmd/p9/p9lib.h
+	sh $ROOT/os/osprey/cmd/p9/buildlibgen.sh
+
+# The servers this tree builds itself, as boot files.  Their binaries
+# come from build9bin.sh, which links them against the source-built
+# 9front libraries; init9main.$O is their entry, an ordinary main().
+kbdsrvprog.i:	init9main.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a \
+		$ROOT/os/osprey/cmd/p9/build9bin.sh $ROOT/os/osprey/cmd/p9/build9prog.sh \
+		$ROOT/os/osprey/cmd/draw/kbd.c
+	sh $ROOT/os/osprey/cmd/p9/build9prog.sh kbdsrv
+
+rioprog.i:	init9main.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a \
+		$ROOT/os/osprey/cmd/p9/build9bin.sh $ROOT/os/osprey/cmd/p9/build9prog.sh \
+		$ROOT/9front/src/cmd/rio/rio.c $ROOT/9front/src/cmd/rio/wind.c \
+		$ROOT/9front/src/cmd/rio/fsys.c $ROOT/9front/src/cmd/rio/xfid.c
+	sh $ROOT/os/osprey/cmd/p9/build9prog.sh rio
+
+drawsrvprog.i:	init9main.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a \
+		$ROOT/os/osprey/cmd/p9/build9bin.sh $ROOT/os/osprey/cmd/p9/build9prog.sh \
+		$ROOT/os/osprey/cmd/draw/main.c $ROOT/os/osprey/cmd/draw/devdraw.c \
+		$ROOT/os/osprey/cmd/draw/kshim.c $ROOT/os/osprey/cmd/draw/cursor.c
+	sh $ROOT/os/osprey/cmd/p9/build9prog.sh drawsrv
+
+legacyprog.i:	init9prog.$O init9tos.$O $ROOT/9front/amd64/lib-src/libc9.a $ROOT/os/osprey/cmd/p9/buildlegacy.sh \
 		$ROOT/os/osprey/cmd/p9/legacyp9.c
 	sh $ROOT/os/osprey/cmd/p9/buildlegacy.sh
 

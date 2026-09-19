@@ -61,11 +61,31 @@ startboot(char *argv0, char **argv)
 	for(argc = 0; argv[argc] != nil; argc++)
 		;
 	print("cat: started with %d arguments; argv[0] = %s\n", argc, argv[0]);
-	heap();
 	if(argc < 2){
-		print("cat: no file named; usage: cat file...\n");
-		exits("usage");
+		/*
+		 * No file named: read the standard input and write it out, as
+		 * cat does.  This is the far end of a pipeline - the shell dups
+		 * the pipe onto descriptor 0 before it execs this - and the byte
+		 * count says what crossed.
+		 */
+		char buf[512];
+		long n, tot;
+
+		tot = 0;
+		while((n = read(0, buf, sizeof buf)) > 0){
+			write(1, buf, n);
+			tot += n;
+		}
+		/*
+		 * How the reading ended matters as much as how much was read: 0
+		 * is the writer's end closing, which is what a pipeline means,
+		 * and -1 would be the call giving up - the two are the same
+		 * byte count and only this line tells them apart.
+		 */
+		print("\ncat: %ld bytes read from my standard input and written to my standard output; the read ended with %ld (0 is end of file, the writer gone)\n", tot, n);
+		exits(nil);
 	}
+	heap();
 	for(i = 1; i < argc; i++){
 		print("cat: opening %s (argument %d), served by the buddy\n", argv[i], i);
 		fd = open(argv[i], OREAD);

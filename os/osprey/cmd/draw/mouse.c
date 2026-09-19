@@ -158,6 +158,10 @@ main(int argc, char **argv)
 		sysfatal("alloctree: %r");
 	if(createfile(mousesrv.tree->root, "mouse", "glenda", 0666, nil) == nil)
 		sysfatal("createfile: %r");
-	postmountsrv(&mousesrv, nil, mtpt, MBEFORE);
+	/*
+	 * Posted under a name, so that the name outlives this process and
+	 * a container that never had the mount - rio's - can find it.
+	 */
+	postmountsrv(&mousesrv, "mouse", mtpt, MBEFORE);
 	exits(nil);
 }

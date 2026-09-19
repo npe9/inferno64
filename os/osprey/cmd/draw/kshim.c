@@ -348,6 +348,25 @@ void	mouseresize(void){}
 void	blankscreen(int){}
 void	flushmemscreen(Rectangle){ /* the screen data IS the frame buffer */ }
 
+/*
+ * Map the frame buffer now, before anything forks.  segattach adds a
+ * segment to the address space of the process that calls it, and RFMEM
+ * shares only the segments that exist at the fork: a server that let
+ * its 9P child attach the screen left the parent holding the pointer
+ * with nothing mapped under it, and the parent faulted the first time
+ * it read a pixel back.  The screen belongs to the program, so the
+ * program attaches it before it has more than one process.
+ */
+void
+ospreyfbattach(void)
+{
+	Rectangle r;
+	ulong chan;
+	int depth, width, soft;
+
+	attachscreen(&r, &chan, &depth, &width, &soft);
+}
+
 Memdata*
 attachscreen(Rectangle *r, ulong *chan, int *depth, int *width, int *softscreen)
 {
@@ -362,6 +381,15 @@ attachscreen(Rectangle *r, ulong *chan, int *depth, int *width, int *softscreen)
 			if(fb == (ulong*)-1)
 				return nil;
 			ospreyfb = fb;
+			/*
+			 * Where the kernel put it, and where this program's
+			 * heap had got to.  A segment the kernel places for
+			 * a program that asked for no address in particular
+			 * has to be placed clear of the break, and saying
+			 * both is how that is checked rather than assumed.
+			 */
+			fprint(2, "draw: the frame buffer is mapped at %#p, %lud bytes; the break is at %#p\n",
+				fb, (ulong)Wid*Hgt*4, sbrk(0));
 		}
 		md.base = fb;
 		md.bdata = (uchar*)fb;

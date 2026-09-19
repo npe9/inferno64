@@ -803,9 +803,21 @@ zaddr(Gen *a, int s)
 	char *n;
 	Ieee e;
 
+	/*
+	 * A constant that does not fit in 32 bits has to be written as a
+	 * D_DCONST, because the D_CONST case below writes four bytes and
+	 * nothing more.  The test used to be "l = a->offset; if((vlong)l
+	 * != a->offset)", with l declared long -- which is the Plan 9
+	 * assumption that long is 32 bits.  These tools are built by the
+	 * host cc, where it is 64, so the comparison was always false and
+	 * every constant above 32 bits was silently truncated to its low
+	 * word on the way into the object file.  MOV $0x400803510, R1
+	 * assembled as MOV $0x00803510, and the only sign was the wrong
+	 * value at run time: os/inferno/virtarm64's TCR_EL1 lost its IPS
+	 * field that way.  See AGENTS.md on long being 32 bits.
+	 */
 	if(a->type == D_CONST){
-		l = a->offset;
-		if((vlong)l != a->offset)
+		if((vlong)(s32int)a->offset != a->offset)
 			a->type = D_DCONST;
 	}
 	Bputc(&obuf, a->type);

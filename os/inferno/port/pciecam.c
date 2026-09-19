@@ -29,6 +29,16 @@ static Pcidev *pciroot;
  */
 static uvlong Ecambase = PCIECAM;
 
+/*
+ * Set by a board that can find the window at run time rather than
+ * only in mem.h: os/inferno/virtarm64/acpi.c points this at its MCFG
+ * reader.  Nil on a board with no firmware description, which is every
+ * RISC-V one here, and then Ecambase stays what mem.h said.  Same
+ * shape and the same name as os/inferno/pc/pcipc.c's, which
+ * archacpi.c sets from the PC's MCFG.
+ */
+uvlong (*pciecam)(int*, int*);
+
 static uintptr
 ecamaddr(int tbdf, int rno)
 {
@@ -103,9 +113,24 @@ pciinit(void)
 	Pcidev *p;
 	uvlong mema;
 	ulong ioa;
+	int i;
 
 	fmtinstall('T', tbdffmt);
 	pcimaxdno = 31;
+
+	if(pciecam != nil){
+		uvlong pa;
+		int b0, b1;
+
+		b0 = 0;
+		b1 = 255;
+		if((pa = (*pciecam)(&b0, &b1)) != 0){
+			if(pa != Ecambase)
+				print("pci: ecam %#llux from the firmware, mem.h says %#llux\n",
+					pa, (uvlong)Ecambase);
+			Ecambase = pa;
+		}
+	}
 	pciscan(0, &pciroot, nil);
 	if(pciroot == nil){
 		print("pci ecam %#llux: no devices\n", (uvlong)Ecambase);
@@ -119,5 +144,24 @@ pciinit(void)
 		p->intl = pciintx(p);
 		print("pci %T: %.4ux/%.4ux class %.6lux irq %d\n",
 			p->tbdf, p->vid, p->did, p->ccrb<<16|p->ccru<<8|p->ccrp, p->intl);
+		/*
+		 * A bar above 4 GiB, and only that.  On a board that maps
+		 * its address space rather than running flat, where the
+		 * firmware put the windows decides how wide the virtual
+		 * addresses have to be: QEMU's arm64 virt has a high PCIe
+		 * MMIO window at 0x8000000000, which a 39-bit VA cannot
+		 * reach at all, and virtarm64's mmuinit() carries a fourth
+		 * table level for it.  This printed every bar while that
+		 * question was open and the answer here was that none is
+		 * high; the question stays open for a machine with more
+		 * devices than QEMU's, so what is left is the line that
+		 * would say so, on the boot where it first happens.
+		 */
+		for(i = 0; i < nelem(p->mem); i++)
+			if(p->mem[i].size != 0
+			&& ((uvlong)p->mem[i].bar & ~0xFULL) >= 0x100000000ULL)
+				print("\tbar%d %#llux size %#llux: above 4G\n", i,
+					(uvlong)p->mem[i].bar & ~0xFULL,
+					(uvlong)p->mem[i].size);
 	}
 }

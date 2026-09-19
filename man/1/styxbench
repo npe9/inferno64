@@ -1,0 +1,95 @@
+.TH STYXBENCH 1
+.SH NAME
+styxbench \- time a Styx round trip against a raw TCP exchange
+.SH SYNOPSIS
+.B styxbench
+[
+.BI -n " count"
+]
+[
+.BI -s " size"
+]
+[
+.BI -r " rpcaddr"
+]
+.I rawaddr file
+.SH DESCRIPTION
+.I Styxbench
+times
+.I count
+exchanges of
+.I size
+bytes several ways against the same server, and prints microseconds each
+and the ratios: a write-and-read on a bare TCP connection to
+.IR rawaddr ;
+sequential reads of
+.IR file ,
+which is on a mounted namespace; and reads of
+.I file
+at offsets a megabyte apart, so that the mount driver's readahead
+cannot answer one from another.
+.PP
+It exists for the section of
+.B doc/inferno-cloud-modern.ms
+that proposes to measure the claim the rest of the plan rests on: that
+distribution in the operating system is cheaper than distribution
+assembled above one.  A namespace mounted across a network is the form
+that claim takes, and a Styx round trip is its price.
+.PP
+Both halves must be answered by the same kind of server or the ratio
+measures the server and not the protocol.  Use
+.IR zerofs (1)
+on the Styx side against
+.IR tcpserve (1)
+.B -e
+on the raw side: both are then Limbo, and both pay Dis interpretation
+per exchange..PP
+With
+.BR -r ,
+a further arm: a conventional RPC against
+.IR rpcserve (1)
+at
+.IR rpcaddr .
+Each iteration formats a length-prefixed request, sends it, reads the
+reply's length, parses its header line and checks that the announced
+payload length agrees.  That is the arm
+.B doc/inferno-cloud-modern.ms
+item 8 asks for \(em raw TCP is the floor, with no protocol at all, and
+is not what anyone would deploy.
+.PP
+It runs over one connection, reused, exactly as the Styx and raw arms
+do.  Using
+.IR httpclient (2)
+instead would have measured a new TCP connection for every request,
+because it sends
+.BR "Connection: close" ,
+and charged Styx nothing for the connection it already holds.
+.PP
+The
+.B jumping
+arm is the one to compare against
+.BR rpc :
+it strides far enough that the mount driver's readahead cannot answer
+one read from another, so each iteration is a real
+.B Tread
+on the wire, which is what an RPC call is.  The sequential arm is
+cheaper than either because readahead answers most of it, and that is a
+property of the file abstraction rather than of the protocol.
+
+.SH BUGS
+The transport matters and is not controlled.  Measured through QEMU's
+user-mode networking the absolute figures swing by a factor of two
+between runs \(em raw exchanges from 1056 to 2040 microseconds \(em
+while the ratio holds.  Quote the ratio, not the microseconds, and say
+what the transport was.
+.PP
+At 300 iterations the ratio itself is noise: it ranged from 0.3 to 1.3
+across runs and only settled at 3000.  An iteration count here has to
+be justified rather than assumed.
+.PP
+The client is a hosted
+.IR emu (1)
+and the server a native kernel.  That asymmetry cancels, because both
+halves use the same client, but it means these are not two like
+machines and the plan's own version of the experiment \(em two
+instances on a real network \(em has not been run.

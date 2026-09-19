@@ -116,6 +116,11 @@ misc
 	cga
 	uarti8250
 
+# the IDE controller a Xen HVM domain's device model presents, and
+# what QEMU gives without -device ahci.  9front's driver, taken
+# unchanged: os/inferno/pc/sdata.c is this tree's own but was
+# written against the older SDifc, and the sd.h here is 9front's.
+	sdide	pci sdscsi
 	sdiahci	pci sdscsi led
 	sdvirtio	pci sdscsi
 	sdvirtio10	pci sdscsi virtio10pc
@@ -228,6 +233,11 @@ root
 	/fd	/
 	/forth
 	/n	/
+	/mnt	/
+	/mnt/registry	/
+	/usr	/
+	/usr/inferno	/
+	/usr/inferno/keyring	/
 	/net	/
 	/net.alt	/
 	/nvfs	/
@@ -280,10 +290,69 @@ root
 	/dis/ip/dhcp.dis
 	/dis/ip/ping.dis
 	/dis/auth/factotum.dis
+# the provider's control plane as a namespace, and the http client under it
+	/dis/cloudfs.dis
+	/dis/cloudinit.dis
+	/dis/gcs.dis
+# export a namespace over a connection, and answer one: the pair that
+# makes a second instance able to mount this one's files
+	/dis/styxbench.dis
+	/dis/rpcserve.dis
+	/dis/tcpserve.dis
+	/dis/metricfs.dis
+	/dis/supervise.dis
+	/dis/cloudauth.dis
+	/dis/memfs.dis
+	/dis/zerofs.dis
+	/dis/styxlisten.dis
+	/dis/export.dis
+	/dis/hget.dis
+	/dis/lib/httpclient.dis
+	/dis/lib/url.dis
+# tls12, so an https url works: the crypto is Limbo over libkeyring's
+# builtins, and the trust roots are a file the image has to carry
+# name resolution: ndb/cs answers dial(2)'s translation requests and
+# ndb/dns resolves what it cannot.  Both load Srv conditionally --
+# "hosted Inferno only" -- and guard every use of it, so they run here
+# with the host-resolver fallback simply absent.
+	/dis/ndb
+	/dis/ndb/cs.dis
+	/dis/ndb/dns.dis
+	/dis/ndb/dnsquery.dis
+	/dis/ndb/csquery.dis
+	/dis/ndb/registry.dis
+	/dis/ndb/regquery.dis
+	/dis/lib/attrdb.dis
+	/dis/lib/ipattr.dis
+	/lib/ndb	/
+	/lib/ndb/local
+	/lib/ndb/common
+	/lib/ndb/dns
+	/lib/ndb/services
+	/dis/lib/crypt/tls12.dis
+	/dis/lib/crypt/x509.dis
+	/dis/lib/crypt/pkcs.dis
+	/dis/lib/crypt/p256.dis
+# the two instruments for that crypto.  They are here because the
+# numbers that matter are the ones this kernel produces on the machine
+# it is rented on: p256test(1) prices a verification and the field
+# operations under it, ipinttest(1) shows that the arithmetic which
+# used to end in sysfatal raises instead -- and sysfatal here is a
+# panic, which is exactly what cannot be demonstrated under a hosted
+# emu.  About 20 KB against a 66 MiB boot floor.
+	/dis/p256test.dis
+	/dis/ipinttest.dis
+	/dis/lib/asn1.dis
+	/dis/lib/encoding
+	/dis/lib/encoding/base64.dis
+	/lib/tls	/
+	/lib/tls/ca-bundle.pem
+	/lib/tls/ca-bundle.der
 # libraries for the above commands
 	/dis/disk/calc.tab.dis
 	/dis/disk/pedit.dis
 	/dis/lib/arg.dis
+	/dis/lib/styxlib.dis
 	/dis/lib/auth.dis
 	/dis/lib/bufio.dis
 	/dis/lib/daytime.dis

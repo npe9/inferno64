@@ -203,6 +203,8 @@ struct Pcidev
 
 	int	pmrb;			/* power management register block */
 	int	msi;			/* MSI capability register block */
+	int	msix;			/* MSI-X capability register block */
+	void*	msixtbl;		/* its vector table, vmap()ed */
 };
 
 enum {
@@ -258,6 +260,12 @@ extern int pcienumcaps(Pcidev *p, int (*fmatch)(Pcidev*, int, int, int), int arg
 
 extern int pcimsienable(Pcidev *p, uvlong addr, ulong data);
 extern int pcimsidisable(Pcidev *p);
+extern int pcimsixcount(Pcidev *p);
+extern int pcimsixenable(Pcidev *p, int vec, uvlong addr, ulong data);
+extern int pcimsixdisable(Pcidev *p);
+extern int pcimsixmask(Pcidev *p, int vec, int mask);
+extern void (*pcimsixintrenable)(Pcidev*, int, void (*)(Ureg*, void*), void*, char*);
+extern void (*pcimsixintrdisable)(Pcidev*, int, void (*)(Ureg*, void*), void*, char*);
 
 extern int pcigetpms(Pcidev* p);
 extern int pcisetpms(Pcidev* p, int state);

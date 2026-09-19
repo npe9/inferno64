@@ -13,6 +13,25 @@ long cumilockcycles;
 uintptr maxlockpc;
 uintptr maxilockpc;
 
+/*
+ * What is left of the instruments this file carried while the pc64 SMP
+ * fault was open.  The fault is fixed -- os/inferno/pc64/l.s's
+ * _intrestore was reloading m and up out of the interrupted frame, so a
+ * process resumed on another processor made that processor's m point at
+ * the first one's Mach, and its own correct ilock/iunlock then counted
+ * the other processor's depth -- so the per-level holder array, the
+ * shadow counter kept outside Mach and the machno-collision detector
+ * are gone with it; they cost two array writes on every ilock and their
+ * question is answered.
+ *
+ * The three checks below stay because they are invariants rather than
+ * instruments, they cost a compare each, and one of them could not fire
+ * at all until pc64's Mach stopped shadowing PMach's ilockdepth with an
+ * unsigned field.  A depth that goes negative is the signature the
+ * whole hunt turned on, and it is worth catching where it happens
+ * rather than at the next sched().
+ */
+
 struct
 {
 	ulong	locks;
@@ -251,12 +270,56 @@ iunlock(Lock *l)
 	if(islo())
 		print("iunlock(%#p) while lo: pc %#p, held by %#p\n", l, getcallerpc(&l), l->pc);
 
+	/*
+	 * Released on a different processor than took it.  ilock()
+	 * records MACHP(m->machno) in l->m and this is the only place
+	 * that can compare the two, which makes it the direct test of
+	 * the one story that fits everything seen so far: a balanced
+	 * pair whose halves ran on different processors leaves one
+	 * Mach's depth up by one and the other's down by one, and each
+	 * half looks correct where it stands.
+	 */
+	if(l->m != nil && l->m != MACHP(m->machno))
+		iprint("iunlock(%#p): locked on m %#p, released on m %#p (cpu%d), pc %#p, lock pc %#p\n",
+			l, l->m, MACHP(m->machno), m->machno, getcallerpc(&l), l->pc);
 	sr = l->sr;
 	l->m = nil;
 	coherence();
 	l->key = 0;
 	m->ilockdepth--;
+	/*
+	 * Caught here rather than at the next sched(), which is where
+	 * proc.c notices and which is too late to say who did it: by
+	 * then the caller has returned and getcallerpc() names the
+	 * scheduler.  The three prints above cover an iunlock of a lock
+	 * that is not held, is not an ilock, or is unlocked with
+	 * interrupts enabled; none of them covers a depth that has gone
+	 * negative while every individual unlock looked correct, which
+	 * is what a Compute Engine e2-micro does with ipc64dev and this
+	 * laptop does not.
+	 */
+	if(m->ilockdepth < 0)
+		iprint("iunlock(%#p): cpu%d ilockdepth %d, pc %#p, lock pc %#p, m %#p\n",
+			l, m->machno, m->ilockdepth,
+			getcallerpc(&l), l->pc, m);
 	if(up)
 		up->lastilock = nil;
 	splx(sr);
+	/*
+	 * The question this answers: something re-enables interrupts
+	 * while an ilock is still held, and there is no other way to see
+	 * it.  A lock that is simply leaked leaves interrupts masked --
+	 * ilock() begins with splhi(), which on pc64 really is CLI --
+	 * so no clock interrupt could arrive to trip sched()'s
+	 * ilockdepth panic at all.  Yet that panic happens, repeatedly,
+	 * with uartkick's tlock recorded as held.  So the enabling is
+	 * the bug, not the holding, and this is where it becomes
+	 * visible: an iunlock whose saved spl says "interrupts were on"
+	 * running while an outer ilock is still held, which is an
+	 * out-of-order release.
+	 */
+	if(m->ilockdepth > 0 && islo()){
+		iprint("iunlock: interrupts on at ilockdepth %d, pc %#p, lock pc %#p\n",
+			m->ilockdepth, getcallerpc(&l), l->pc);
+	}
 }

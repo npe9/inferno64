@@ -215,6 +215,45 @@ addpool(Prog *p, Adr *a)
 	switch(c) {
 	default:
 		t.to = *a;
+		/*
+		 * How wide the pool entry is has to follow the constant,
+		 * not the mnemonic.  This was decided by "p->as == AMOV"
+		 * alone, so every other instruction taking a literal --
+		 * CMP, ADD, SUB, AND, the whole of asmout's case 13 -- got
+		 * a four-byte pool word and a 32-bit LDR to read it back,
+		 * and a constant wider than 32 bits lost its top half with
+		 * no diagnostic.  "if(x >= 0x100000000ULL)" in C compiled
+		 * to CMP $4294967296,R2 and assembled to a comparison
+		 * against zero, which is true for every x.  That is how it
+		 * was found: in os/inferno/port/pciecam.c, where the test
+		 * was meant to name a PCI bar above 4 GiB and named every
+		 * bar on the machine.
+		 *
+		 * A value whose top word is 0 or -1 still fits in four
+		 * bytes, because omovlit() zero-extends the load, or
+		 * sign-extends it when the pooled offset is negative.  It
+		 * is only the rest that need eight, and taking eight when
+		 * four will do would move every literal in the pool for
+		 * nothing.
+		 */
+		if(t.as == AWORD && t.to.type == D_CONST
+		&& (t.to.offset>>32) != 0 && (t.to.offset>>32) != -1) {
+			t.as = ADWORD;
+			sz = 8;
+		}
+		break;
+
+	/*
+	 * $auto(SP) -- the address of a local -- has no encoding as a
+	 * pool word: what asmout's case 34 wants is the offset, which it
+	 * loads into REGTMP and adds SP to.  Without this the pool got
+	 * "DWORD ,$name-8(SP)" and asmout rejected it as an illegal
+	 * combination, which is what stopped os/inferno/boot/efi's
+	 * efi.c from linking for arm64 (&mapsize passed to eficall).
+	 */
+	case C_LACON:
+		t.to.type = D_CONST;
+		t.to.offset = instoffset;
 		break;
 
 	case C_PSAUTO:
@@ -422,20 +461,34 @@ constclass(vlong l)
  * return the offset value to use in the instruction,
  * scaled if necessary
  */
+/*
+ * How far the scaled 12-bit unsigned form shifts an offset for class
+ * c: 0 for a byte access, 1 halfword, 2 word, 3 doubleword.  An offset
+ * that is not a multiple of that cannot use the scaled encoding at all
+ * -- see asmout's cases 20 and 21, which fall back to the unscaled
+ * 9-bit signed form.
+ */
+int
+offsetscale(int c)
+{
+	static int shifts[] = {0, 1, 2, 3, 4};
+
+	if(c >= C_SEXT1 && c <= C_SEXT16)
+		return shifts[c-C_SEXT1];
+	if(c >= C_UAUTO4K && c <= C_UAUTO64K)
+		return shifts[c-C_UAUTO4K];
+	if(c >= C_UOREG4K && c <= C_UOREG64K)
+		return shifts[c-C_UOREG4K];
+	return 0;
+}
+
 vlong
 offsetshift(vlong v, int c)
 {
 	vlong vs;
 	int s;
-	static int shifts[] = {0, 1, 2, 3, 4};
 
-	s = 0;
-	if(c >= C_SEXT1 && c <= C_SEXT16)
-		s = shifts[c-C_SEXT1];
-	else if(c >= C_UAUTO4K && c <= C_UAUTO64K)
-		s = shifts[c-C_UAUTO4K];
-	else if(c >= C_UOREG4K && c <= C_UOREG64K)
-		s = shifts[c-C_UOREG4K];
+	s = offsetscale(c);
 	vs = v>>s;
 	if(vs<<s != v)
 		diag("odd offset: %lld\n%P", v, curp);
@@ -1265,21 +1318,44 @@ buildop(void)
 		case AMSR:
 			break;
 
+		/*
+		 * The acquire/release forms take the same operands as the
+		 * plain exclusive ones -- LDAXR is LDXR with o0 set, STLXR
+		 * is STXR with o0 set -- and opload()/opstore() below
+		 * already encode all of them.  What was missing was the
+		 * oprange entry, so 7a accepted the mnemonic and 7l then
+		 * said "illegal combination LDAXRW NONE NONE REG" and
+		 * refused to encode it.  Without them a port has the
+		 * exclusive monitor but no way to spell the barriers that
+		 * make a lock a lock.
+		 */
 		case ALDXR:
 			oprange[ALDXRB] = t;
 			oprange[ALDXRH] = t;
 			oprange[ALDXRW] = t;
+			oprange[ALDAXR] = t;
+			oprange[ALDAXRB] = t;
+			oprange[ALDAXRH] = t;
+			oprange[ALDAXRW] = t;
 			break;
 		case ALDXP:
 			oprange[ALDXPW] = t;
+			oprange[ALDAXP] = t;
+			oprange[ALDAXPW] = t;
 			break;
 		case ASTXR:
 			oprange[ASTXRB] = t;
 			oprange[ASTXRH] = t;
 			oprange[ASTXRW] = t;
+			oprange[ASTLXR] = t;
+			oprange[ASTLXRB] = t;
+			oprange[ASTLXRH] = t;
+			oprange[ASTLXRW] = t;
 			break;
 		case ASTXP:
 			oprange[ASTXPW] = t;
+			oprange[ASTLXP] = t;
+			oprange[ASTLXPW] = t;
 			break;
 
 		case AAESD:

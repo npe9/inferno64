@@ -70,19 +70,6 @@ clockintr(Ureg *u)
 		kproftick((ulong)u->pc);
 
 	m->ticks++;
-	/*
-	 * checkalarms() and timercheck() walk queues shared by the whole
-	 * machine and are not safe to run from a second processor yet, and
-	 * the clock0link list below is the same.  A secondary takes its
-	 * own timer interrupt, counts it in its own Mach, rearms its own
-	 * timer and returns; that is all it is entitled to do until the
-	 * scheduler and those queues are locked.
-	 */
-	if(m->machno != 0){
-		uvlong nn = now() + m->cpuhz/HZ;
-		hwtimerset(&nn);
-		return;
-	}
 	checkalarms();
 	timercheck(u);
 	/*
@@ -122,6 +109,24 @@ clockintr(Ureg *u)
 				lp->clock();
 		unlock(&clock0lock);
 	}
+}
+
+/*
+ * A processor that is not in the scheduler, on its own timer.  It
+ * re-arms and counts and does nothing else: clockintr()'s
+ * checkalarms() and timercheck() belong to the scheduler, and the
+ * clock0link list is one list for the machine.  m->ticks is per-Mach,
+ * so this is the counter that says whether this processor's own
+ * redistributor, its own PPI and its own generic timer are alive.
+ */
+void
+clocksecondary(void)
+{
+	uvlong when;
+
+	when = now() + m->cpuhz/HZ;
+	hwtimerset(&when);
+	m->ticks++;
 }
 
 void

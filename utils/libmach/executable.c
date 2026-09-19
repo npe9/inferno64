@@ -17,6 +17,7 @@ typedef struct {
 			uvlong hdr[1];
 		} exechdr64;
 		Ehdr elfhdr32;			/* elf.h */
+		Ehdr64 elfhdr64;		/* elf.h */
 		struct mipsexec mips;	/* bootexec.h */
 		struct mips4kexec mips4k;	/* bootexec.h */
 		struct sparcexec sparc;	/* bootexec.h */
@@ -33,11 +34,12 @@ static	int	common(int, Fhdr*, ExecHdr*);
 static	int	commonllp64(int, Fhdr*, ExecHdr*);
 static	int	adotout(int, Fhdr*, ExecHdr*);
 static	int	elfdotout(int, Fhdr*, ExecHdr*);
+static	int	elf64dotout(int, Fhdr*, ExecHdr*);
 static	int	armdotout(int, Fhdr*, ExecHdr*);
 static	void	setsym(Fhdr*, long, long, long, vlong);
 static	void	setdata(Fhdr*, uvlong, long, vlong, long);
 static	void	settext(Fhdr*, uvlong, uvlong, long, vlong);
-static	void	hswal(void*, int, ulong(*)(ulong));
+static	void	hswal(void*, int, ulong(*)(ulong));	/* n counts u32s */
 static	uvlong	_round(uvlong, ulong);
 
 /*
@@ -65,6 +67,7 @@ extern	Mach	mamd64;
 extern	Mach	marm;
 extern	Mach	mpower;
 extern	Mach	mpower64;
+extern	Mach	marm64;
 extern	Mach	mriscv64;
 
 ExecTable exectab[] =
@@ -195,6 +198,15 @@ ExecTable exectab[] =
 		sizeof(Exec),
 		beswal,
 		common },
+	{ R_MAGIC,			/* arm64 7.out & boot image */
+		"arm64 plan 9 executable",
+		"arm64 plan 9 dlm",
+		FARM64,
+		1,
+		&marm64,
+		sizeof(Exec)+8,
+		nil,
+		commonllp64 },
 	{ Y_MAGIC,			/* riscv64 j.out */
 		"riscv64 plan 9 executable",
 		"riscv64 plan 9 dlm",
@@ -289,10 +301,18 @@ crackhdr(int fd, Fhdr *fp)
 		fp->hdrsz = mp->hsize;		/* will be zero on bootables */
 		fp->_magic = mp->_magic;
 		fp->magic = magic;
+		/*
+		 * The default, which an hparse may override: an a.out
+		 * whose magic carries HDR_MAGIC has eight-byte symbol
+		 * values, anything else four.  That rule is about the
+		 * a.out header and says nothing about an ELF file, so
+		 * elf64dotout sets this itself.
+		 */
+		fp->symwidth = (mp->_magic && (magic & HDR_MAGIC)) ? 8 : 4;
 
 		mach = mp->mach;
 		if(mp->swal != nil)
-			hswal(&d, sizeof(d.e)/sizeof(ulong), mp->swal);
+			hswal(&d, sizeof(d.e)/sizeof(u32), mp->swal);
 		ret = mp->hparse(fd, fp, &d);
 		seek(fd, mp->hsize, 0);		/* seek to end of header */
 		break;
@@ -303,15 +323,22 @@ crackhdr(int fd, Fhdr *fp)
 }
 
 /*
- * Convert header to canonical form
+ * Convert header to canonical form.
+ *
+ * The headers this walks are sequences of 32-bit big-endian words in
+ * the file.  This stepped a `ulong*', which is eight bytes on the
+ * hosts these tools are built on, so it swapped every other word and
+ * wrote each result into a slot twice the width of the field it came
+ * from.  n now counts u32s, and every caller counts in u32s too.  See
+ * AGENTS.md on `long' is 32 bits.
  */
 static void
 hswal(void *v, int n, ulong (*swap)(ulong))
 {
-	ulong *ulp;
+	u32 *up;
 
-	for(ulp = v; n--; ulp++)
-		*ulp = (*swap)(*ulp);
+	for(up = v; n--; up++)
+		*up = (*swap)(*up);
 }
 
 /*
@@ -367,6 +394,20 @@ commonboot(Fhdr *fp)
 		fp->name = "amd64 plan 9 boot image";
 		fp->dataddr = _round(fp->txtaddr+fp->txtsz, mach->pgsize);
 		break;
+	/*
+	 * Untested: no arm64 board in this tree maps its kernel high, so
+	 * commonboot()'s test above is false for all of them and this
+	 * case is never reached.  It is here because leaving arm64 out
+	 * would silently fall to default and misreport a high-mapped
+	 * kernel as an ordinary executable, which is how the others
+	 * behave and what the next arm64 board with an MMU will want.
+	 */
+	case FARM64:
+		fp->type = FARM64B;
+		fp->txtaddr = fp->entry;
+		fp->name = "arm64 plan 9 boot image";
+		fp->dataddr = _round(fp->txtaddr+fp->txtsz, mach->pgsize);
+		break;
 	default:
 		return;
 	}
@@ -398,7 +439,7 @@ commonllp64(int fd, Fhdr *fp, ExecHdr *hp)
 	uvlong entry;
 
 	USED(fd);
-	hswal(&hp->e, sizeof(Exec)/sizeof(long), beswal);
+	hswal(&hp->e, sizeof(Exec)/sizeof(u32), beswal);
 	if(!(hp->e.exec.magic & HDR_MAGIC))
 		return 0;
 
@@ -519,6 +560,148 @@ nextboot(int fd, Fhdr *fp, ExecHdr *hp)
 }
 
 /*
+ * Elf64 binaries.
+ *
+ * Every board in this tree but pc64 and armv7 links its kernel as
+ * ELF64, and libmach read the header only to reject it -- "bad ELF
+ * class - not 32 bit" -- so inm, acid and srclist could say nothing
+ * whatever about ten of the fifteen.  Worse than nothing, in
+ * srclist's case: it printed that on standard error, exited 0 with an
+ * empty list, and every board's i$CONF.acid came out one line long
+ * with mk reporting success.
+ *
+ * The layout the Plan 9 loaders write is the same at both widths: one
+ * LOAD segment with R|X for text, one with R|W for data, and the
+ * symbol table in a PT_NULL segment whose filesz is the symbol table
+ * and whose memsz is the pc/line table.  So this is the 32-bit
+ * routine with the wider header and no SPARC64 special case, which
+ * was a 32-bit hack and cannot arise here.
+ */
+static int
+elf64dotout(int fd, Fhdr *fp, ExecHdr *hp)
+{
+	ulong (*swal)(ulong);
+	ushort (*swab)(ushort);
+	uvlong (*swav)(uvlong);
+	Ehdr64 *ep;
+	Phdr64 *ph;
+	int i, it, id, is, phsz;
+
+	ep = &hp->e.elfhdr64;
+	if(ep->ident[DATA] == ELFDATA2LSB) {
+		swab = leswab;
+		swal = leswal;
+		swav = leswav;
+	} else if(ep->ident[DATA] == ELFDATA2MSB) {
+		swab = beswab;
+		swal = beswal;
+		swav = beswav;
+	} else {
+		werrstr("bad ELF encoding - not big or little endian");
+		return 0;
+	}
+
+	ep->type = swab(ep->type);
+	ep->machine = swab(ep->machine);
+	ep->version = swal(ep->version);
+	ep->elfentry = swav(ep->elfentry);
+	ep->phoff = swav(ep->phoff);
+	ep->shoff = swav(ep->shoff);
+	ep->flags = swal(ep->flags);
+	ep->ehsize = swab(ep->ehsize);
+	ep->phentsize = swab(ep->phentsize);
+	ep->phnum = swab(ep->phnum);
+	ep->shentsize = swab(ep->shentsize);
+	ep->shnum = swab(ep->shnum);
+	ep->shstrndx = swab(ep->shstrndx);
+	if(ep->type != EXEC || ep->version != CURRENT)
+		return 0;
+
+	fp->magic = ELF_MAG;
+	fp->hdrsz = (ep->ehsize+ep->phnum*ep->phentsize+16)&~15;
+	switch(ep->machine) {
+	/*
+	 * symwidth is a property of the loader that wrote the file, not
+	 * of the ELF class.  utils/7l/span.c's putsymb writes eight-byte
+	 * values only for HEADTYPE 2, the Plan 9 a.out, and four for its
+	 * ELF output; utils/6l does the same.  utils/jl's writes eight
+	 * unconditionally -- "if(thechar == 'j')" -- so a riscv ELF has
+	 * eight-byte values where an arm64 one has four.  Read with the
+	 * wrong width the table decodes into nonsense that still looks
+	 * like a symbol table, which is how it was found.
+	 */
+	case AMD64:
+		mach = &mamd64;
+		fp->type = FAMD64;
+		fp->symwidth = 4;
+		break;
+	case ARM64:
+		mach = &marm64;
+		fp->type = FARM64;
+		fp->symwidth = 4;
+		break;
+	case RISCV:
+		mach = &mriscv64;
+		fp->type = FRISCV64;
+		fp->symwidth = 8;
+		break;
+	default:
+		werrstr("unsupported ELF64 machine %d", ep->machine);
+		return 0;
+	}
+
+	if(ep->phentsize != sizeof(Phdr64)) {
+		werrstr("bad ELF64 program header size");
+		return 0;
+	}
+	phsz = sizeof(Phdr64)*ep->phnum;
+	ph = malloc(phsz);
+	if(ph == nil)
+		return 0;
+	seek(fd, ep->phoff, 0);
+	if(read(fd, ph, phsz) != phsz) {
+		free(ph);
+		werrstr("can't read ELF64 program headers");
+		return 0;
+	}
+	for(i = 0; i < ep->phnum; i++) {
+		ph[i].type = swal(ph[i].type);
+		ph[i].flags = swal(ph[i].flags);
+		ph[i].offset = swav(ph[i].offset);
+		ph[i].vaddr = swav(ph[i].vaddr);
+		ph[i].paddr = swav(ph[i].paddr);
+		ph[i].filesz = swav(ph[i].filesz);
+		ph[i].memsz = swav(ph[i].memsz);
+		ph[i].align = swav(ph[i].align);
+	}
+
+	it = id = is = -1;
+	for(i = 0; i < ep->phnum; i++) {
+		if(ph[i].type == LOAD
+		&& (ph[i].flags & (R|X)) == (R|X) && it == -1)
+			it = i;
+		else if(ph[i].type == LOAD
+		&& (ph[i].flags & (R|W)) == (R|W) && id == -1)
+			id = i;
+		else if(ph[i].type == NOPTYPE && is == -1)
+			is = i;
+	}
+	if(it == -1 || id == -1) {
+		werrstr("No TEXT or DATA sections");
+		free(ph);
+		return 0;
+	}
+
+	settext(fp, ep->elfentry, ph[it].vaddr, ph[it].memsz, ph[it].offset);
+	setdata(fp, ph[id].vaddr, ph[id].filesz, ph[id].offset,
+		ph[id].memsz - ph[id].filesz);
+	if(is != -1)
+		setsym(fp, ph[is].filesz, 0, ph[is].memsz, ph[is].offset);
+	free(ph);
+	return 1;
+}
+
+/*
  * Elf32 binaries.
  */
 static int
@@ -533,8 +716,10 @@ elfdotout(int fd, Fhdr *fp, ExecHdr *hp)
 
 	/* bitswap the header according to the DATA format */
 	ep = &hp->e.elfhdr32;
+	if(ep->ident[CLASS] == ELFCLASS64)
+		return elf64dotout(fd, fp, hp);
 	if(ep->ident[CLASS] != ELFCLASS32) {
-		werrstr("bad ELF class - not 32 bit");
+		werrstr("bad ELF class - neither 32 nor 64 bit");
 		return 0;
 	}
 	if(ep->ident[DATA] == ELFDATA2LSB) {
@@ -561,8 +746,11 @@ elfdotout(int fd, Fhdr *fp, ExecHdr *hp)
 	ep->shentsize = swab(ep->shentsize);
 	ep->shnum = swab(ep->shnum);
 	ep->shstrndx = swab(ep->shstrndx);
-	if(ep->type != EXEC || ep->version != CURRENT)
+	if(ep->type != EXEC || ep->version != CURRENT) {
+		werrstr("ELF32 type %d version %ld, want EXEC and CURRENT",
+			ep->type, (long)ep->version);
 		return 0;
+	}
 
 	/* we could definitely support a lot more machines here */
 	fp->magic = ELF_MAG;
@@ -577,6 +765,7 @@ elfdotout(int fd, Fhdr *fp, ExecHdr *hp)
 		fp->type = FMIPS;
 		break;
 	case SPARC64:
+		werrstr("ELF32 sparc64 is not supported");
 		return 0;
 	case POWER:
 		mach = &mpower;
@@ -591,6 +780,15 @@ elfdotout(int fd, Fhdr *fp, ExecHdr *hp)
 		fp->type = FARM;
 		break;
 	default:
+		/*
+		 * Say which machine.  This returned 0 with no errstr set,
+		 * so a caller printing %r printed "Undefined error: 0" and
+		 * a reader was left guessing whether the file was corrupt
+		 * or merely of a kind libmach has no table for.  The 32-bit
+		 * RISC-V boards (virt32, virt32s) land here: machine 243
+		 * with ELFCLASS32, wanting an mriscv32 that does not exist.
+		 */
+		werrstr("unsupported ELF32 machine %d", ep->machine);
 		return 0;
 	}
 
@@ -607,7 +805,7 @@ elfdotout(int fd, Fhdr *fp, ExecHdr *hp)
 		free(ph);
 		return 0;
 	}
-	hswal(ph, phsz/sizeof(ulong), swal);
+	hswal(ph, phsz/sizeof(u32), swal);
 
 	/* find text, data and symbols and install them */
 	it = id = is = -1;

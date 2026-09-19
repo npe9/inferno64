@@ -37,6 +37,7 @@ void	i8042auxenable(void (*)(int, int));
 int i8042auxdetect(void);
 void	i8042reset(void);
 void	i8250console(void);
+void	i8250spcrconsole(void);
 void	i8253enable(void);
 void	i8253init(void);
 void	i8253link(void);
@@ -159,7 +160,7 @@ ulong	kzeromap(ulong, ulong, int);
 void	nmiscreen(void);
 int	kbdinready(void);
 
-#define	waserror()	(up->nerrlab++, setlabel(&up->errlab[up->nerrlab-1]))
+/* waserror() is os/inferno/port/portfns.h's now; this had its own copy */
 #define getcallerpc(x)	(((uintptr*)(x))[-1])
 #define KADDR(a)	((void*)((uintptr)(a)|KZERO))
 #define PADDR(a)	((uintptr)(a)&~KZERO)

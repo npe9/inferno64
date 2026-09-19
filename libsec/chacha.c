@@ -8,17 +8,17 @@ and including the changes to block number and nonce defined in RFC7539
 */
 
 #include "os.h"
-#include <libsec.h>
+#include "libsec.h"
 
 /* from chachablock.$O */
-extern void _chachablock(u32int x[16], int rounds);
+extern void _chachablock(u32 x[16], int rounds);
 
 /* little-endian data order */
 #define	GET4(p)		((p)[0]|((p)[1]<<8)|((p)[2]<<16)|((p)[3]<<24))
 #define	PUT4(p,v)	(p)[0]=(v);(p)[1]=(v)>>8;(p)[2]=(v)>>16;(p)[3]=(v)>>24
 
 #define ENCRYPT(s, x, y, d) {\
-	u32int v; \
+	u32 v; \
 	v = GET4(s); \
 	v ^= (x)+(y); \
 	PUT4(d, v); \
@@ -28,7 +28,7 @@ static uchar sigma[16] = "expand 32-byte k";
 static uchar tau[16] = "expand 16-byte k";
 
 static void
-load(u32int *d, uchar *s, int nw)
+load(u32 *d, uchar *s, int nw)
 {
 	int i;
 
@@ -77,7 +77,7 @@ setupChachastate(Chachastate *s, uchar *key, u32 keylen, uchar *iv, u32 ivlen, i
 static void
 hchachablock(uchar h[32], Chachastate *s)
 {
-	u32int x[16];
+	u32 x[16];
 
 	x[0] = s->input[0];
 	x[1] = s->input[1];
@@ -113,7 +113,7 @@ chacha_setiv(Chachastate *s, uchar *iv)
 {
 	if(s->ivwords == 192/32){
 		/* xchacha with 192-bit iv */
-		u32int counter[2];
+		u32 counter[2];
 		uchar h[32];
 
 		s->input[4] = s->xkey[0];
@@ -144,7 +144,7 @@ chacha_setiv(Chachastate *s, uchar *iv)
 }
 
 void
-chacha_setblock(Chachastate *s, u64int blockno)
+chacha_setblock(Chachastate *s, u64 blockno)
 {
 	s->input[12] = blockno;
 	if(s->ivwords != 3)
@@ -154,7 +154,7 @@ chacha_setblock(Chachastate *s, u64int blockno)
 static void
 encryptblock(Chachastate *s, uchar *src, uchar *dst)
 {
-	u32int x[16];
+	u32 x[16];
 	int i;
 
 	x[0] = s->input[0];

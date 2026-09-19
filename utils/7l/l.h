@@ -276,6 +276,7 @@ int	movcon(vlong);
 void	names(void);
 void	nocache(Prog*);
 void	nuxiinit(void);
+int	offsetscale(int);
 vlong	offsetshift(vlong, int);
 Optab*	oplook(Prog*);
 int	pseudo(Prog*);

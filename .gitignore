@@ -7,6 +7,8 @@
 # had no effect; it would have bitten whoever next removed and re-added
 # one.
 !/fonts/**
+!/os/*/*/fonts/**
+!/emu/*/fonts/**
 *.obj
 [8qkv965o].out
 [8qkv965o].emu
@@ -395,15 +397,10 @@ os/pc64/forth.h
 # Dis bytecode and symbol files anywhere, not just under /appl
 *.dis
 *.sbl
-# kernel binaries: os/inferno/<board>/i<board>, os/*/pc64/9pc64 etc.
-os/inferno/*/i[a-z]*[0-9a-z]
-# ...which also matches the directory os/inferno/<board>/icons, and an
-# excluded directory cannot have its contents re-included, so the whole
-# icons tree was ignored.  Re-include the directory itself; the files
-# under it are then judged normally.
-!os/inferno/*/icons/
-!os/inferno/*/i*.[ch]
-!os/inferno/*/i*.s
+# kernel binaries.  The os/inferno ones are enumerated further down,
+# one line per board -- see the comment there for why a glob cannot do
+# this job.  The exceptions this rule used to need (icons/, i*.[ch],
+# i*.s) went with it.
 os/*/pc64/9pc64
 os/*/pc64/9upc64
 os/*/pc64/ipc64
@@ -455,6 +452,118 @@ os/inferno/shakti/shakti.c
 # generated config C for the raspi3b board
 os/inferno/raspi3b/raspi3b.c
 
+# --- 9front userland built from the source in 9front/src (added 2026-09-06) ---
+/9front/amd64/lib-src/
+/9front/amd64/bin-src/
+
+# python byte-code from the check scripts importing one another
+/scripts/__pycache__/
+
+# EFI loader and boot-image artifacts
+/.qemu/
+os/inferno/boot/efi/bootx64.efi
+os/inferno/boot/efi/bootx64.out
+tools/aout2efi
+tools/aout2imxrt
+libinterp/w8/
+libinterp/w4/
+os/inferno/pc64/apbootstrap.i
+os/inferno/pc64/apbootstrap.out
+os/inferno/pc64/rebootcode.i
+os/inferno/pc64/rebootcode.out
+tools/aout2elf
+Inferno/amd64/ipc64.elf
+os/inferno/pc64/ipc64.elf
+
+# built kernels and loaders that the board directories keep instead
+/Inferno/*/ipc64dev
+/Inferno/*/ipc64dev.elf
+/Inferno/*/ipc64fp
+/Inferno/*/ipc64fp.elf
+os/inferno/boot/efi/boot*.efi
+os/inferno/boot/efi/boot*.out
+os/inferno/boot/pc/mbr
+os/inferno/boot/pc/pbs
+
+# --- build output that was tracked, untracked 2026-09-11 ---
+#
+# Merging another branch of this tree meant resolving 187 conflicted
+# files, and 167 of them were these: riscv64 objects, generated root
+# images, kernel binaries.  None of it is source, all of it is rebuilt
+# by mk, and every one of those conflicts was noise standing between
+# the reader and the twenty real ones.
+#
+# Left tracked on purpose: MacOSX/*/bin/ holds the host toolchain
+# (6c, 6l, limbo, mk) that bootstraps a build, so a fresh clone needs
+# it; (*.i under os/inferno/pc64 was described here as source, on the
+# grounds that nothing generated rebootcode.i; the mkfile does, with an
+# od/awk rule, so it is untracked with the rest.)
+
+# riscv64 objects ("O= j" in mkfiles/mkfile-{os,Inferno}-riscv64)
+*.j
+
+# Kernel objects, one suffix per architecture: the "O=" line in
+# mkfiles/mkfile-Inferno-<arch>.  *.j, *.z, *.t, *.0 and *.2 were
+# already listed above; these are the rest, and without them every
+# amd64 (.6) and aarch64 (.7) kernel object counted as source -- 104
+# of them on virtarm64 alone.
+/os/inferno/*/*.[5678qv]
+/os/9front/*/*.[5678qv]
+
+# kernel root images, built by ../port/mkroot from the config file
+/os/inferno/*/*.root.[sch]
+
+# Linked kernels and the raw images made from them.
+#
+# Enumerated, not globbed.  A linked kernel is named for its own
+# directory -- os/inferno/pc64/ipc64 -- and no glob can say that, so
+# every attempt to approximate it with "i" + anything swallowed real
+# source: os/inferno/init/init.b (hand-written Limbo), then
+# os/inferno/port/inferno.c (16K of kernel C), then os/inferno/pc's
+# pcidb.acid and sd53c8xx.i, then the whole of os/inferno/virt/icons
+# (a directory called "icons" matches "i" + [a-z0-9] + "*").
+# Excepting dotted names in turn un-ignored 104 .7 objects and every
+# generated .root.[sch].  A list cannot over-match, and a board added
+# later shows up as an untracked kernel, which is visible, rather than
+# quietly untracking that board's source, which is not.
+#
+# The trailing * catches the extra configs a board may have (pc64dev
+# links ipc64dev) and the .acid/.elf the linker writes beside them.
+/os/inferno/armv7/iarmv7*
+/os/inferno/mangopi/imangopi*
+/os/inferno/mps2/imps2*
+/os/inferno/nucleof303/inucleof303*
+/os/inferno/pc/ipc*
+/os/inferno/pc64/ipc64*
+/os/inferno/raspi3b/iraspi3b*
+/os/inferno/shakti/ishakti*
+/os/inferno/sifiveu/isifiveu*
+/os/inferno/spike/ispike*
+/os/inferno/teensy41/iteensy41*
+/os/inferno/virt/ivirt*
+/os/inferno/virt32/ivirt32*
+/os/inferno/virt32s/ivirt32s*
+/os/inferno/virtarm64/ivirtarm64*
+/os/inferno/virts/ivirts*
+/os/inferno/*/*.bin
+/os/inferno/*/*.dis
+/os/inferno/*/*.sbl
+/os/inferno/*/*.out
+/os/inferno/*/*.bin
+/os/inferno/pc64/[0-9].apbootstrap
+/os/inferno/pc64/[0-9].rebootcode
+/os/inferno/pc64/*.out
+
+# compiled Limbo that lives outside /appl
+/os/inferno/init/*.dis
+/os/inferno/init/*.sbl
+/dis/**/*.sbl
+/*.dis
+/*.sbl
+
+# emu objects and its generated root
+/emu/*/o.emu*
+/emu/*/*.root.c
 # p9sym.py is imported by ad-hoc analysis scripts
 utils/__pycache__/
 
@@ -497,3 +606,5 @@ __pycache__/
 *.0
 *.2
 !/fonts/**
+!/os/*/*/fonts/**
+!/emu/*/fonts/**

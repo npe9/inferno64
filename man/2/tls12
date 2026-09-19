@@ -1,0 +1,176 @@
+.TH TLS12 2
+.SH NAME
+tls12: client, prf, Session \- TLS 1.2 client
+.SH SYNOPSIS
+.EX
+include "sys.m";
+include "keyring.m";
+include "tls12.m";
+tls12 := load TLS12 TLS12->PATH;
+Session: import tls12;
+
+init:      fn(): string;
+prf:       fn(secret: array of byte, label: string,
+              seed: array of byte, n: int): array of byte;
+client:    fn(fd: ref Sys->FD, hostname: string,
+              suites: list of int): (ref Session, string);
+loadroots: fn(path: string): (list of array of byte, string);
+CAPATH:    con "/lib/tls/ca-bundle.pem";
+
+Session: adt {
+    cipher: int;
+    certs:  list of array of byte;
+    err:    string;
+    write:  fn(s: self ref Session, buf: array of byte, n: int): int;
+    read:   fn(s: self ref Session, buf: array of byte, n: int): int;
+    close:  fn(s: self ref Session);
+};
+.EE
+.SH DESCRIPTION
+.B Tls12
+is a TLS 1.2 client, built because
+.IR ssl3 (2)'s
+module speaks only SSLv3 and cannot complete a handshake with any
+modern HTTPS host. Its scope is exactly what
+.I doc/ssl-modernization-plan.md
+measured as sufficient for its real targets, since extended to reach
+the ECDSA hosts that make up much of the modern web: TLS 1.2, key
+exchange over X25519 or NIST P-256 (secp256r1), server authentication
+by RSA or ECDSA (P-256) certificate, and AES-128-GCM or
+ChaCha20-Poly1305 AEAD record protection \(em the four cipher suites
+.B TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+(16rC02F),
+.B TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+(16rCCA8),
+.B TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+(16rC02B) and
+.B TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
+(16rCCA9). The ECDSA/P-256 arithmetic is
+.IR p256 (2).
+There is still no TLS 1.3, no CBC suite, no session resumption, no
+renegotiation and no client certificate support; requests for any of
+those fail cleanly rather than negotiating something outside scope.
+.PP
+The handshake flow, secret derivation and AEAD record construction
+are ported from 9front
+.RB ( tlshand.c
+for the handshake,
+.B devtls.c
+for the record layer 9front keeps in its kernel), on top of the
+primitives
+.IR keyring (2)
+gained for this plan: HMAC-SHA256, X25519, AES-GCM and
+ChaCha20-Poly1305.
+.PP
+.B Init
+must be called once before anything else and returns nil on success
+or a diagnostic.
+.PP
+.B Client
+runs a full client handshake over
+.IR fd ,
+an already-connected TCP stream (normally to port 443), sending
+.I hostname
+in the SNI extension.
+.I Suites
+lists the cipher suites to offer in preference order; nil offers both
+of the suites above. It returns
+.BI (\fIsession\fP,\ nil)
+on success or
+.BI (nil,\ \fIdiagnostic\fP) .
+.PP
+The server is authenticated before any secret is derived: its
+certificate chain must verify against the trust roots at
+.B CAPATH
+and name
+.I hostname
+(via
+.IR x509 (2)'s
+.BR verify_chain_host ,
+which checks issuer/subject chaining, validity dates, intermediates'
+CA bit, subjectAltName dNSNames, and every RSA signature), and the
+ServerKeyExchange parameters must carry a valid signature by the leaf
+certificate's key over both hello randoms \(em tying this key
+exchange to this connection and this server. Either failing aborts
+the handshake.
+.B CAPATH
+is a frozen copy of Mozilla's root-CA bundle shipped in the tree;
+refresh it from
+.B https://curl.se/ca/cacert.pem
+when it ages.
+.B Loadroots
+parses such a PEM bundle into the DER certificate list
+.B verify_chain_host
+takes (nil path means
+.BR CAPATH );
+.B client
+calls it once and caches the result.
+.PP
+An established
+.B Session
+carries the negotiated
+.B cipher
+and the server's (verified) certificate chain in
+.B certs
+(DER, leaf first, exactly as received).
+.B Write
+encrypts and sends
+.I n
+bytes of application data, returning
+.I n
+or \-1;
+.B read
+returns up to
+.I n
+decrypted bytes, 0 at a clean close (the peer's
+.B close_notify
+alert), or \-1 on error. After any \-1,
+.B err
+holds a sticky diagnostic and the session is dead.
+.B Close
+sends a
+.B close_notify
+alert; closing the file descriptor itself remains the caller's job,
+as does dialling (see
+.IR dial (2)
+\(em and note the connection server gap recorded in
+.IR dialtest (1):
+in this emu instance names do not resolve, so callers dial literal
+IPs while SNI carries the hostname string).
+.PP
+.B Prf
+is RFC 5246 section 5's pseudorandom function (P_SHA256 over
+HMAC-SHA256), returning
+.I n
+bytes derived from
+.IR secret ,
+.I label
+and
+.IR seed .
+The handshake uses it internally; it stays exported for
+.IR tls12prftest (1)
+and any other protocol code needing the TLS 1.2 KDF.
+.SH SOURCE
+.B /appl/lib/crypt/tls12.b
+.br
+.B /module/tls12.m
+.SH SEE ALSO
+.IR tls12test (1),
+.IR tls12prftest (1),
+.IR keyring (2),
+.IR ssl3 (2),
+.IR dial (2),
+.I doc/ssl-modernization-plan.md
+in the source tree.
+.SH BUGS
+There is no revocation checking of any kind \(em no CRLs, no OCSP \(em
+so a compromised-and-revoked certificate verifies here until it
+expires. Name constraints and certificate policies are not processed.
+Trust is only as fresh as the frozen bundle at
+.BR CAPATH ;
+nothing updates it automatically, and a stale bundle eventually means
+spurious verification failures (missing new roots) rather than
+anything unsafe. Certificate keys may be RSA
+(sha1/256/384/512WithRSAEncryption) or ECDSA on P-256
+(ecdsa-with-SHA256/384/512); other curves and key types fail cleanly.
+The system clock is trusted for validity periods.

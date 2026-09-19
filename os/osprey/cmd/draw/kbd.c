@@ -148,26 +148,40 @@ static Srv kbdsrv = {
 void
 usage(void)
 {
-	fprint(2, "usage: kbd [-m mtpt]\n");
+	fprint(2, "usage: kbd [-m mtpt] [-s segment]\n");
 	exits("usage");
 }
 
 void
 main(int argc, char **argv)
 {
-	char *mtpt;
+	char *mtpt, *seg;
 	void *v;
 
 	mtpt = "/dev";
+	/*
+	 * The segment is named rather than fixed so that the checks have a
+	 * negative control for the error path: a kernel-served call that
+	 * fails, whose reason errstr(2) must answer locally because the
+	 * buddy never saw it fail, and whose reason exits(2) must carry out
+	 * as the container's status.  A name no kernel has is the only way
+	 * left to ask for that once every configuration that runs this
+	 * program exposes the real ring.
+	 */
+	seg = "kbdring";
 	ARGBEGIN{
 	case 'm':
 		mtpt = EARGF(usage());
+		break;
+	case 's':
+		seg = EARGF(usage());
+		break;
 	}ARGEND;
 	USED(argc, argv);
 
-	v = segattach(0, "kbdring", 0, Kbdn+16);
+	v = segattach(0, seg, 0, Kbdn+16);
 	if(v == (void*)-1)
-		sysfatal("segattach kbdring: %r");
+		sysfatal("segattach %s: %r", seg);
 	ring = v;
 	rp = *(uvlong*)ring;
 
@@ -176,6 +190,10 @@ main(int argc, char **argv)
 		sysfatal("alloctree: %r");
 	if(createfile(kbdsrv.tree->root, "kbd", "glenda", 0666, nil) == nil)
 		sysfatal("createfile: %r");
-	postmountsrv(&kbdsrv, nil, mtpt, MBEFORE);
+	/*
+	 * Posted under a name, so that the name outlives this process and
+	 * a container that never had the mount - rio's - can find it.
+	 */
+	postmountsrv(&kbdsrv, "kbd", mtpt, MBEFORE);
 	exits(nil);
 }

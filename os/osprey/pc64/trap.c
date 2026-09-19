@@ -417,6 +417,8 @@ unexpected(Ureg* ureg, void*)
 static void
 faultamd64(Ureg* ureg, void*)
 {
+	int (*conswrite)(char*, ...);
+	extern int ospreyisconsoleproc(void);
 	uintptr addr;
 	int read, user;
 
@@ -489,7 +491,22 @@ faultamd64(Ureg* ureg, void*)
 			dumpregs(ureg);
 			panic("kernel fault: %s addr=%#p", read? "read": "write", addr);
 		}
-		iprint("user fault: %s addr=%#llux pc=%#llux sp=%#llux, pid %lud %s\n", read? "read": "write", (uvlong)addr, (uvlong)ureg->pc, (uvlong)ureg->sp, up->pid, up->text);
+		/*
+		 * print, not iprint - except for the console task itself,
+		 * whose fault would otherwise go into the queue only it can
+		 * drain.  A user fault here is not a panic - the
+		 * program may have a handler and go on, and two of the
+		 * demonstrations fault on purpose - so this is ordinary
+		 * output and belongs in the console task's queue with
+		 * everything else.  iprint writes the port directly, which is
+		 * right when the machine is going down and wrong here: it
+		 * crosses whatever a task is pushing at that moment and cuts
+		 * a line in half, and a check criterion that matches a whole
+		 * sentence then fails on a sentence with a register dump
+		 * spliced into it.
+		 */
+		conswrite = ospreyisconsoleproc() ? iprint : print;
+		(*conswrite)("user fault: %s addr=%#llux pc=%#llux sp=%#llux, pid %lud %s\n", read? "read": "write", (uvlong)addr, (uvlong)ureg->pc, (uvlong)ureg->sp, up->pid, up->text);
 		if(!waserror()){
 			uvlong *w = (uvlong*)ureg->sp;
 			validaddr(ureg->sp, 8*sizeof(uvlong), 0);
@@ -498,11 +515,11 @@ faultamd64(Ureg* ureg, void*)
 				int i;
 				for(i = 0; i < 16; i += 4)
 					if(okaddr((uintptr)(w + i), 32, 0))
-						iprint("user fault: below sp %#p: %#llux %#llux %#llux %#llux\n", w + i, w[i], w[i+1], w[i+2], w[i+3]);
-				iprint("user fault: ax %#llux bx %#llux cx %#llux dx %#llux si %#llux di %#llux bp %#llux r12 %#llux r13 %#llux\n",
+						(*conswrite)("user fault: below sp %#p: %#llux %#llux %#llux %#llux\n", w + i, w[i], w[i+1], w[i+2], w[i+3]);
+				(*conswrite)("user fault: ax %#llux bx %#llux cx %#llux dx %#llux si %#llux di %#llux bp %#llux r12 %#llux r13 %#llux\n",
 					ureg->ax, ureg->bx, ureg->cx, ureg->dx, ureg->si, ureg->di, ureg->bp, ureg->r12, ureg->r13);
 			}
-			iprint("user fault: stack %#llux %#llux %#llux %#llux %#llux %#llux %#llux %#llux\n",
+			(*conswrite)("user fault: stack %#llux %#llux %#llux %#llux %#llux %#llux %#llux %#llux\n",
 				w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
 			poperror();
 		}

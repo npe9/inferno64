@@ -1,0 +1,52 @@
+.TH SCORESTORE 2
+.SH NAME
+scorestore: loadint, loadreal, saveint, savereal \- persistent high scores
+.SH SYNOPSIS
+.EX
+include "scorestore.m";
+scorestore := load Scorestore Scorestore->PATH;
+
+loadint:  fn(name: string, dflt: int):  int;
+loadreal: fn(name: string, dflt: real): real;
+saveint:  fn(name: string, value: int):  int;
+savereal: fn(name: string, value: real): int;
+.EE
+.SH DESCRIPTION
+.B Scorestore
+keeps one number per
+.I name
+under
+.BR /lib/scores ,
+so that a game remembers a best score between runs.
+.PP
+.B Loadint
+and
+.B loadreal
+return the stored value for
+.IR name ,
+or
+.I dflt
+if there is none or it cannot be read.
+.B Saveint
+and
+.B savereal
+write
+.I value
+and return 0, or \-1 if it could not be written.
+.PP
+A
+.I name
+is a single flat file name: one containing a slash, a backslash or a
+NUL is rejected rather than resolved, so a caller cannot write outside
+the score directory.
+.SH FILES
+.TP
+.B /lib/scores/ name
+one file per stored score.
+.SH SOURCE
+.B /appl/lib/scorestore.b
+.SH BUGS
+A failed save is reported only by the return value.
+.PP
+Nothing locks the file, so two programs storing the same score at once
+can lose one of the values.

@@ -11,6 +11,7 @@ extern void exits(char*);
 extern void p9clientnet(void);		/* p9ip.c: the client container's own stack, over the ring wire */
 void p9server(char *arg);
 void p9paircli(void);
+int p9riodemo;		/* *riodemo= in plan9.ini: also exec rio and leave it running */
 void p9server(char *arg);
 void p9setup(void);
 
@@ -31,6 +32,14 @@ void
 p9setup(void)
 {
 	p9init();
+	/*
+	 * How much a pipe holds before its writer waits for its reader.
+	 * Nothing set this, so it was zero: every write filled the queue by
+	 * definition and the writer slept until the far end drained it, which
+	 * worked but is not what a pipe is.  This is the size Plan 9 uses.
+	 */
+	conf.pipeqsize = 32*1024;
+	print("p9: a pipe holds %lud bytes before its writer waits for its reader\n", conf.pipeqsize);
 	chandevreset();
 	up->pgrp = newpgrp();
 	up->egrp = smalloc(sizeof(Egrp));
@@ -42,8 +51,81 @@ p9setup(void)
 	up->slash->path = newpath("/");
 	up->dot = cclone(up->slash);
 	chandevinit();
+	quotefmtinstall();		/* %q, which namelenerror() names files with */
+	/*
+	 * The time device onto /dev, so that a program's nsec(2) - which is
+	 * a read of /dev/bintime and not a system call - finds the file.
+	 * The name space a legacy program runs in is this one, so the file
+	 * has to be here for the buddy to answer an open of it.
+	 */
+	if(!waserror()){
+		p9bind("#T", "/dev", MAFTER);
+		poperror();
+		print("p9: #T bound onto /dev; nsec(2) reads /dev/bintime, the kernel's clock\n");
+	} else
+		print("p9: could not bind #T onto /dev: %s\n", up->errstr);
+	/*
+	 * The environment onto /env, where a program's getenv(2) and
+	 * putenv(2) look for it: both are opens of /env/<name>, not system
+	 * calls, so the device has to be under that name in the name space
+	 * a container's calls are resolved in.  rio puts the name of the
+	 * pipe it posted in /srv there, under wsys, which is how a command
+	 * in a window finds the window system that started it.
+	 */
+	if(!waserror()){
+		p9bind("#e", "/env", MREPL|MCREATE);
+		poperror();
+		print("p9: #e bound onto /env; getenv(2) and putenv(2) are opens of /env/<name>\n");
+	} else
+		print("p9: could not bind #e onto /env: %s\n", up->errstr);
+	/*
+	 * The input device onto /dev, so that a program's /dev/kbd and
+	 * /dev/mouse are the keyboard and mouse this personality's own
+	 * user-space i8042 driver is reading.  rio wants both, and both
+	 * are files here rather than a segment because on this
+	 * configuration the microkernel hands the controller to this
+	 * container as two interrupt notifications, not as the polled
+	 * rings the full personality exposes - see devinput.c.
+	 */
+	if(!waserror()){
+		p9bind("#m", "/dev", MAFTER);
+		poperror();
+		print("p9: #m bound onto /dev; /dev/kbd and /dev/mouse are the i8042 driver's, in user space\n");
+	} else
+		print("p9: could not bind #m onto /dev: %s\n", up->errstr);
+	/*
+	 * And the note tree onto /proc, for the same reason: postnote(2) is
+	 * a write to /proc/n/note, not a system call, so the file has to be
+	 * in the name space a legacy program runs in.
+	 */
+	if(!waserror()){
+		p9bind("#p", "/proc", MAFTER);
+		poperror();
+		print("p9: #p bound onto /proc; postnote(2) writes /proc/n/note, and the kernel posts it\n");
+	} else
+		print("p9: could not bind #p onto /proc: %s\n", up->errstr);
+	/*
+	 * And the service registry onto /srv.  The personality reaches it
+	 * as #s and never needed the name, but a program does: lib9p's
+	 * postsrv creates /srv/<name> and hands the pipe to whatever opens
+	 * it, which is how a server started in one container is reachable
+	 * from another.  Without the bind the create landed on the root
+	 * device, which refuses it, and the draw server's postmountsrv
+	 * failed with Eperm.  MCREATE, because a mount point without it is
+	 * not a place a file may be made, which is the next thing the same
+	 * create said: Enocreate.
+	 */
+	if(!waserror()){
+		p9bind("#s", "/srv", MREPL|MCREATE);
+		poperror();
+		print("p9: #s bound onto /srv; a server posts its pipe there by name and another container mounts it\n");
+	} else
+		print("p9: could not bind #s onto /srv: %s\n", up->errstr);
 	print("p9: name space up, root attached\n");
 }
+
+extern void p9execfile(void);	/* p9exec.c: the second program, as /boot/prog2 */
+extern int p9exec(char *name, char **argv);	/* p9exec.c: read it through the name space and run it */
 
 void
 p9main(void)
@@ -57,6 +139,7 @@ p9main(void)
 		print("p9: error: %s\n", up->errstr);
 		exits("error");
 	}
+	p9execfile();		/* the second program, a file in this personality's own file system */
 	p9setup();
 
 	c = namec("/", Aopen, OREAD, 0);
@@ -421,6 +504,87 @@ p9main(void)
 		p9close(fd2);
 	}
 
+	/*
+	 * And a second program, run by this one: the personality reads
+	 * /boot/prog2 through the name space it built, lays it in its own
+	 * address space and calls it, handing it the table of its own entry
+	 * points.  The program opens and reads a file by calling this
+	 * personality - an ordinary call, no trap and no ring - and creates
+	 * one of its own, which is read back here afterwards: proof that the
+	 * name space under it is this one and that it is still here.
+	 */
+	p9exec("/boot/prog2", nil);
+	{
+		int fd;
+		long m;
+
+		fd = p9open("/fromprog2", OREAD);
+		if(fd < 0)
+			fd = p9open("#e/fromprog2", OREAD);
+		if(fd >= 0){
+			m = p9read(fd, buf, sizeof buf - 1);
+			buf[m < 0 ? 0 : m] = 0;
+			print("p9: read what the second program wrote, through the same name space: \"%s\"\n", (char*)buf);
+			p9close(fd);
+		} else
+			print("p9: the second program left nothing to read\n");
+	}
+
+	/*
+	 * And a real command: /boot/libcat is catp9.c, the same source as
+	 * the cat that runs under the buddy on the server personality, with
+	 * no line changed.  What differs is the link - against p9crt.c,
+	 * which is this personality standing in for libc's system calls -
+	 * so its open, read, close, dup, fd2path and sbrk are calls into
+	 * the file system in its own address space, not traps.  One program,
+	 * two arrangements: a process boundary there, none here.
+	 */
+	{
+		char *catargv[3];
+
+		catargv[0] = "/boot/libcat";
+		catargv[1] = "/hello";
+		catargv[2] = nil;
+		p9exec("/boot/libcat", catargv);
+	}
+
+	/*
+	 * And a shell, with processes under it.  The personality now starts
+	 * a program on a flow of control of its own - a kproc with a
+	 * descriptor table of its own - so a program can start other
+	 * programs and wait for them, which is what a shell is (p9proc.c).
+	 * The script's second line is a pipeline, so cat's bytes reach wc
+	 * through a pipe of this personality's, in this one address space,
+	 * with no process boundary anywhere and no trap but the console.
+	 *
+	 * The shell is not shp9.c, the server personality's shell, and the
+	 * reason is written down in shlib.c: fork and exec are not things a
+	 * library operating system can offer its caller.  The commands are
+	 * the same source on both, which is the claim that was earned.
+	 */
+	{
+		char *shargv[3];
+		char *script =
+			"/boot/libcat /hello\n"
+			"/boot/libcat /hello | /boot/libwc\n"
+			"/boot/libgen 200000 | /boot/libwc\n"
+			"/boot/libcat /hello | /boot/libcat\n";
+		int fd;
+
+		fd = p9create("#e/script", OWRITE, 0666);
+		if(fd < 0)
+			print("p9: cannot write the script for the shell\n");
+		else {
+			p9write(fd, script, strlen(script));
+			p9close(fd);
+			print("p9: wrote a script of four lines, the last three pipelines\n");
+			shargv[0] = "/boot/libsh";
+			shargv[1] = "#e/script";
+			shargv[2] = nil;
+			p9exec("/boot/libsh", shargv);
+		}
+	}
+
 	poperror();
 	exits(nil);
 }
@@ -635,6 +799,30 @@ p9paircli(void)
 			} else
 				print("p9: pair-client: create /n/clientmade over 9P: %s\n", up->errstr);
 
+			/*
+			 * The shell's script, on the server's disk: the shell is a
+			 * legacy binary, so the file its calls reach is the buddy's,
+			 * and the buddy's /n is this store.  Written here over 9P
+			 * the same way /n/hello is.
+			 */
+			names[0] = "n";
+			if(!waserror()){
+				static char scr[] =
+					"# a script the shell runs on the server personality\n"
+					"/boot/cat /n/hello\n"
+					"/boot/cat /n/hello | /boot/cat\n";
+
+				hc = cclone(root);
+				if(walk(&hc, names, 1, 1, nil) < 0)
+					error("no /n at the server");
+				hc = devtab[hc->type]->create(hc, "script", ORDWR, 0666);
+				devtab[hc->type]->write(hc, scr, sizeof scr - 1, 0);
+				cclose(hc);
+				poperror();
+				print("p9: pair-client: wrote /n/script over 9P, two lines, the second a pipeline\n");
+			} else
+				print("p9: pair-client: create /n/script over 9P: %s\n", up->errstr);
+
 			names[0] = "n"; names[1] = "clientmade";
 			if(!waserror()){
 				hc = cclone(root);
@@ -710,6 +898,182 @@ p9paircli(void)
 			print("p9: pair-client: exec /boot/cat /n/hello with an argument vector started container %ld\n", id);
 			if(id >= 0 && ring_wait(&st) == 0)
 				print("p9: pair-client: wait: /boot/cat (container %ld) exited with status %ld - it read /n/hello through the buddy and wrote it out\n", id, st);
+		}
+		/*
+		 * exec(2) in place: /boot/exec replaces itself twenty times over
+		 * in the one container this starts, keeping the descriptor it
+		 * opened before the first exec, and is refused an exec of a name
+		 * that is not there without dying of it.  This is the exec a
+		 * shell makes after it forks, as against the ring request just
+		 * above, which starts a program in a container of its own.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *exargv[2];
+
+			exargv[0] = "/boot/exec";
+			exargv[1] = nil;
+			id = ring_execv(exargv);
+			print("p9: pair-client: exec /boot/exec started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/exec (container %ld) exited with status %ld - it exec'd itself in place twenty times\n", id, st);
+		}
+		/*
+		 * A shell.  /boot/sh is an ordinary Plan 9 program that reads a
+		 * script and, for each line, forks a process for each stage,
+		 * makes a pipe between them, execs each child in place and
+		 * waits for it - fork, exec, pipe and wait, all four answered
+		 * by a peer container over the ring.  The script's second line
+		 * is a pipeline, so the bytes of /n/hello cross a pipe from one
+		 * legacy process to another.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *shargv[3];
+
+			shargv[0] = "/boot/sh";
+			shargv[1] = "/n/script";
+			shargv[2] = nil;
+			id = ring_execv(shargv);
+			print("p9: pair-client: exec /boot/sh /n/script started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/sh (container %ld) exited with status %ld - it ran a script with a pipeline in it\n", id, st);
+		}
+		/*
+		 * And a program this tree did not write: /boot/kbdsrv is
+		 * os/osprey/cmd/draw/kbd.c linked against the 9front
+		 * libraries built from source in 9front/src - libthread and
+		 * lib9p above the source-built libc, three segments and a
+		 * hundred kilobytes of image, where every legacy program
+		 * before it was a few tens.  It takes an argument, asks the
+		 * kernel for the keyboard ring as a segment and serves
+		 * /dev/kbd from it.  What this settles is that a binary of
+		 * that shape lays out, is entered through init9main.c and
+		 * runs its libc on the server personality.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *kargv[3];
+
+			kargv[0] = "/boot/kbdsrv";
+			kargv[1] = "-m/dev";
+			kargv[2] = nil;
+			id = ring_execv(kargv);
+			print("p9: pair-client: exec /boot/kbdsrv started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/kbdsrv (container %ld) exited with status %ld\n", id, st);
+		}
+		/*
+		 * The negative control for the error path, and the reason
+		 * kbd.c names its segment rather than fixing it: the same
+		 * binary asked for a segment this kernel does not have.  The
+		 * call fails in the kernel, which the buddy never saw, so
+		 * errstr(2) must be answered here and exits(2) must carry the
+		 * reason out as the container's status.  Both were broken
+		 * once and neither would be noticed again without a call that
+		 * still fails.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *nargv[3];
+
+			nargv[0] = "/boot/kbdsrv";
+			nargv[1] = "-snosuchring";
+			nargv[2] = nil;
+			id = ring_execv(nargv);
+			print("p9: pair-client: exec /boot/kbdsrv -snosuchring started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/kbdsrv -snosuchring (container %ld) exited with status %ld\n", id, st);
+		}
+		/*
+		 * And the draw server, which is the one of the four that can
+		 * do its work here: it wants the frame buffer, which this
+		 * kernel exposes as a segment, and nothing else - its cursor
+		 * gives up quietly when there is no mouse ring.  It is also
+		 * the first program in this tree to reach the allocator of
+		 * the source-built libc: memimageinit and the memdraw layer
+		 * are malloc and pool.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *dargv[3];
+
+			dargv[0] = "/boot/drawsrv";
+			dargv[1] = "-m/dev";
+			dargv[2] = nil;
+			id = ring_execv(dargv);
+			print("p9: pair-client: exec /boot/drawsrv started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/drawsrv (container %ld) exited with status %ld\n", id, st);
+		}
+		/*
+		 * And the same binary again as nothing but a client, in a
+		 * container of its own.  The mount the server made lives in
+		 * the name space of the process that made it, and that
+		 * process has gone; this one finds the server the way rio
+		 * will, by the name postmountsrv posted in /srv, and mounts
+		 * it for itself.
+		 */
+		{
+			extern long ring_execv(char**);
+			char *cargv[4];
+
+			cargv[0] = "/boot/drawsrv";
+			cargv[1] = "-c";
+			cargv[2] = nil;		/* /dev is the default mount point */
+			cargv[3] = nil;
+			id = ring_execv(cargv);
+			print("p9: pair-client: exec /boot/drawsrv -c started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/drawsrv -c (container %ld) exited with status %ld\n", id, st);
+		}
+		/*
+		 * And rio.  It is 9front's own window system, 6407 lines this
+		 * tree now builds itself, and nothing about it was written or
+		 * changed for this machine.  It is started through the same
+		 * draw binary with -x: that container mounts /srv/draw at
+		 * /dev and execs rio in place, so rio opens /dev/draw and
+		 * finds the screen where a window system expects it.  It is
+		 * not waited for - a window system does not exit - so what it
+		 * did is read off the screen afterwards.
+		 */
+		if(p9riodemo){
+			extern long ring_execv(char**);
+			char *rargv[3];
+
+			rargv[0] = "/boot/drawsrv";
+			rargv[1] = "-x/boot/rio";
+			rargv[2] = nil;
+			id = ring_execv(rargv);
+			print("p9: pair-client: exec /boot/rio started container %ld\n", id);
+		}
+		/*
+		 * And what is on the screen now.  A container of its own,
+		 * which draws nothing: it maps the frame buffer the kernel
+		 * exposes and reads it.
+		 */
+		if(p9riodemo){
+			extern long ring_execv(char**);
+			char *pargv[3];
+
+			/*
+			 * The waiting is the probe's, in its own container.
+			 * The client cannot wait: this personality's
+			 * cooperative scheduler has no idle - if every proc
+			 * of it is in a timed sleep, nothing advances the
+			 * clock that would wake them, and sched() panics
+			 * with "no runnable proc (deadlock), tick 0".  A
+			 * tsleep here to let rio paint did exactly that.
+			 * sleep(2) in a container is the kernel's, and the
+			 * kernel has a clock.
+			 */
+			pargv[0] = "/boot/drawsrv";
+			pargv[1] = "-P6000";
+			pargv[2] = nil;
+			id = ring_execv(pargv);
+			print("p9: pair-client: exec /boot/drawsrv -P started container %ld\n", id);
+			if(id >= 0 && ring_wait(&st) == 0)
+				print("p9: pair-client: wait: /boot/drawsrv -P (container %ld) exited with status %ld\n", id, st);
 		}
 	}
 	/*
@@ -887,6 +1251,8 @@ startboot(char *argv0, char **argv)
 		exits(nil);
 	}
 	if(argv0 != nil && argv0[0] == 'c'){
+		/* "c rio": the kernel was configured to start a window system */
+		p9riodemo = strstr(argv0, "rio") != nil;
 		p9paircli();		/* the buddy's client: mount it and read its files */
 		exits(nil);
 	}

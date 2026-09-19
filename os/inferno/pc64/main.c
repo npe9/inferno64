@@ -182,6 +182,13 @@ main(void)
 	meminit0();			/* builds the memmap */
 	doc("archinit");
 	archinit();
+	/*
+	 * archinit() maps the ACPI tables, so this is the first moment
+	 * the console ACPI names can be reached.  See i8250spcrconsole()
+	 * in ../pc/uarti8250.c.
+	 */
+	doc("i8250spcrconsole");
+	i8250spcrconsole();
 	doc("arch->clockinit");
 	if(arch->clockinit)
 		arch->clockinit();
@@ -216,6 +223,30 @@ main(void)
 	}
 	doc("timersinit");
 	timersinit();
+	{
+		/*
+		 * Seed the wall clock from the CMOS RTC.
+		 *
+		 * Nothing on this board ever did, so the calendar began at
+		 * the epoch on every boot: files were created in January
+		 * 1970 and, more to the point, every TLS handshake failed
+		 * with "leaf certificate expired or not yet valid",
+		 * because a certificate valid now is not yet valid then.
+		 * The clock is a prerequisite for talking to anything that
+		 * authenticates itself, which on a cloud machine is
+		 * everything.
+		 *
+		 * os/inferno/pc/devrtc.c has had rtctime() all along and
+		 * os/inferno/virtarm64/main.c has done exactly this with
+		 * its PL031 since that board was written; pc64 was the odd
+		 * one out.  A machine with a dead cell reads 0 and is left
+		 * at the epoch rather than being moved somewhere worse.
+		 */
+		extern vlong rtctime(void);
+		vlong t = rtctime();
+		if(t > 0)
+			todset(t, 0, 0);
+	}
 	doc("mathinit");
 	mathinit();
 	if(arch->clockenable){
@@ -232,10 +263,13 @@ main(void)
 	 */
 	{
 		extern int parallelvm;		/* os/inferno/port/dis.c */
+		extern int disdumpon;		/* likewise */
 		char *p;
 
 		if((p = getconf("*parallelvm")) != nil)
 			parallelvm = strtol(p, nil, 0);
+		if((p = getconf("*disdump")) != nil)
+			disdumpon = strtol(p, nil, 0);
 	}
 	{	/* BISECTION, temporary: *chanlock=0 keeps the restructuring
 		 * (cqfill, isendx/irecvx, the deferral) but drops the lock,
@@ -366,7 +400,9 @@ machinit(void)
 	 * cpu0 through mach0init() and on each AP through squidboy(),
 	 * which is every executor there is.
 	 */
+#ifdef DISCTXREG
 	disctxinit();
+#endif
 #endif
 }
 
@@ -434,6 +470,68 @@ init0(void)
 	kproc("alarm", alarmkproc, 0, 0);
 
 	/*
+	 * Run with interrupts on and before any Dis runs:
+	 * os/inferno/pc64/regtorture.s says whether an interrupt on this
+	 * machine gives every register back.  See doc/inferno-cloud-plan.ms.
+	 *
+	 * Off unless *regtorture=1 is set in plan9.ini.  It was written
+	 * for the interrupt heisenbug that _intrcommon's AX=0 turned out
+	 * to be, and that is fixed; what it costs is not small.  Measured
+	 * with scripts/boot-profile.py: 6.4 seconds, on a boot whose whole
+	 * kernel half is 14.6 -- the single largest gap in the profile and
+	 * getting on for half the time this image takes to reach a shell.
+	 * The comment below still says two million iterations "cost under
+	 * two", which was true when it was written and is not now.
+	 *
+	 * Kept rather than deleted because it is the reproducer for a
+	 * class of bug that cost this branch weeks, and a cloud image
+	 * whose entire argument is cold start should not pay for it on
+	 * every boot to keep it.
+	 */
+	if(getconf("*regtorture") != nil){
+		extern int regtorture(int);
+		extern int regtorturecli(int);
+		extern uvlong regtorturebad;
+		ulong t0, dt;
+		int r, rc;
+
+		/*
+		 * Two things this must not be able to say, both of which
+		 * the osprey-port branch pointed out after porting the
+		 * file: "the registers survived" when no interrupt ever
+		 * arrived, and "the registers survived" when the loop
+		 * never ran.  So report how many clock ticks the run
+		 * spanned and call it inconclusive at zero, and require
+		 * the interrupts-off control -- the identical loop, which
+		 * must come back clean -- in the same boot.
+		 *
+		 * The loop is bounded by iterations rather than by ticks.
+		 * Spinning until the tick counter moves is the more
+		 * obvious way to guarantee coverage and it is far too dear
+		 * here: this guest's clock advances in bursts under QEMU,
+		 * so waiting for four ticks cost about thirty seconds of
+		 * wall time before the shell came up, where two million
+		 * iterations cost under two and span ticks anyway.
+		 */
+		rc = regtorturecli(10*1000);
+		t0 = m->ticks;
+		r = regtorture(2*1000*1000);
+		dt = m->ticks - t0;
+		if(r != 0)
+			print("regtorture: interrupts on: REGISTER %d became %#llux\n",
+				r, regtorturebad);
+		else if(rc != 0)
+			print("regtorture: INCONCLUSIVE: the interrupts-off control failed\n");
+		else if(dt == 0)
+			print("regtorture: INCONCLUSIVE: no clock tick during the run\n");
+		else
+			/* no semicolon in this line: the console prompt is
+			 * "; " and a batch that greps for it must not
+			 * match our own output */
+			print("regtorture: 12 registers survived 2M iterations over %lud ticks, control clean\n", dt);
+	}
+
+	/*
 	 * This kernel came from 9ferno (github.com/gophone2015), whose
 	 * own userland is a Forth interpreter -- goforth(up->fmem) ran
 	 * init.f, this board's equivalent of init.rc, from here, and
@@ -493,7 +591,22 @@ userinit(void)
 	kstrdup(&p->user, eve);
 	kstrdup(&p->env->user, eve);
 
-	strcpy(p->text, "*init*");
+	/*
+	 * kstrdup, not strcpy.  Proc.text is a char* (portdat.h), not a
+	 * buffer, and nothing has set it for this process yet -- newproc()
+	 * does not, and only kproc() does, with kstrdup.  So this wrote
+	 * "*init*" through a nil pointer, into physical address 0, which
+	 * is mapped here and so took the write without complaining.
+	 *
+	 * It sat harmless for as long as nothing read a pointer back out
+	 * of address 0.  The parallel-VM merge made something do: with
+	 * curP nil on this path, curP->field reads from 0+offset, picked
+	 * up the bytes of the string, and dereferenced them -- a page
+	 * fault at CR2 0x2a74696e692a, which is "*init*" in little-endian
+	 * ASCII.  The other eleven boards in this tree all say
+	 * kstrdup(&p->text, "interp"); pc64 was the only one that did not.
+	 */
+	kstrdup(&p->text, "*init*");
 	/*
 	 * Kernel Stack
 	 *

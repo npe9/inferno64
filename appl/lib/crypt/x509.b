@@ -31,6 +31,9 @@ include "daytime.m";
 include "pkcs.m";
 	pkcs				: PKCS;
 
+include "p256.m";
+	p256				: P256;
+
 include "x509.m";
 
 X509_DEBUG 				: con 0;
@@ -97,6 +100,11 @@ objIdTab = array [] of {
 # 	id_mr_certificateListMatch =>	Oid(array [] of {2,5,?,39}),
 # 	id_mr_algorithmidentifierMatch =>
 #					Oid(array [] of {2,5,?,40})
+	id_ecPublicKey =>	Oid(array [] of {1,2,840,10045,2,1}),
+	id_prime256v1 =>	Oid(array [] of {1,2,840,10045,3,1,7}),
+	id_ecdsaWithSHA256 =>	Oid(array [] of {1,2,840,10045,4,3,2}),
+	id_ecdsaWithSHA384 =>	Oid(array [] of {1,2,840,10045,4,3,3}),
+	id_ecdsaWithSHA512 =>	Oid(array [] of {1,2,840,10045,4,3,4})
 };
 
 # [public]
@@ -130,6 +138,12 @@ init(): string
 		return sys->sprint("load %s: %r", PKCS->PATH);
 	if((e := pkcs->init()) != nil)
 		return sys->sprint("pkcs: %s", e);
+
+	# ECDSA certificate verification (modern chains); optional - if
+	# p256 is unavailable, only RSA chains verify
+	p256 = load P256 P256->PATH;
+	if(p256 != nil && p256->init() != nil)
+		p256 = nil;
 
 	return nil;
 }
@@ -1328,11 +1342,14 @@ parse:
 			break parse;
 		ext.oid = oid; 
 		el = tl el;
-		# BOOLEAN DEFAULT FALSE
+		# BOOLEAN DEFAULT FALSE; DER TRUE is 16rFF, and the
+		# criticality checks downstream compare against 1, so
+		# normalize here
 		(ok, ext.critical) = (hd el).is_int();
-		if(ok)
+		if(ok){
 			el = tl el;
-		else
+			ext.critical = ext.critical != 0;
+		}else
 			ext.critical = 0;
 		if (len el != 1) {
 			break parse;
@@ -1639,6 +1656,404 @@ verify_certpath(sc: list of (ref Signed, ref Certificate)): (int, string)
 	}
 
 	return (1, "");
+}
+
+# [public]
+# TLS-style chain verification: chain is DER certs leaf FIRST (wire
+# order), roots is a set of trusted DER certs (a CA bundle). See the
+# module file for the contract. Unlike verify_certchain above, this
+# anchors at an out-of-chain trust root, checks the leaf against a
+# hostname, checks the CA bit of every intermediate, and verifies the
+# actual signatures with the actual (SHA-family RSA) algorithms real
+# chains use today.
+
+# [private]
+# One DER tag/length at off: (tag, contents offset, contents length).
+# Returns a negative tag when the encoding is not one this needs to
+# understand -- indefinite lengths, or a length that runs off the end.
+dertlv(b: array of byte, off: int): (int, int, int)
+{
+	if(b == nil || off < 0 || off+2 > len b)
+		return (-1, 0, 0);
+	tag := int b[off];
+	i := off+1;
+	n := int b[i++];
+	if(n == 16r80)
+		return (-1, 0, 0);		# indefinite: not DER
+	if(n & 16r80){
+		k := n & 16r7F;
+		if(k > 4 || i+k > len b)
+			return (-1, 0, 0);
+		n = 0;
+		while(k-- > 0)
+			n = (n<<8) | int b[i++];
+	}
+	if(n < 0 || i+n > len b)
+		return (-1, 0, 0);
+	return (tag, i, n);
+}
+
+# [private]
+# The DER of a Certificate's issuer or subject Name, without decoding
+# the certificate.  tbsCertificate is
+#	[0] version OPTIONAL, serialNumber, signature,
+#	issuer, validity, subject, ...
+# so this walks in and counts fields.  which is 0 for issuer, 1 for
+# subject.  nil if the shape is not what a certificate must be.
+namederat(cert: array of byte, which: int): array of byte
+{
+	(tag, off, n) := dertlv(cert, 0);	# Certificate ::= SEQUENCE
+	if(tag != 16r30)
+		return nil;
+	(tag, off, n) = dertlv(cert, off);	# tbsCertificate ::= SEQUENCE
+	if(tag != 16r30)
+		return nil;
+	end := off + n;
+	i := off;
+	(tag, nil, nil) = dertlv(cert, i);
+	if(tag == 16rA0)			# [0] version, optional
+		i = skip(cert, i);
+	i = skip(cert, i);			# serialNumber
+	i = skip(cert, i);			# signature (AlgorithmIdentifier)
+	if(which != 0){
+		i = skip(cert, i);		# issuer
+		i = skip(cert, i);		# validity
+	}
+	if(i < 0 || i >= end)
+		return nil;
+	(tag, off, n) = dertlv(cert, i);
+	if(tag != 16r30)			# Name ::= SEQUENCE
+		return nil;
+	return cert[i:off+n];			# tag, length and contents
+}
+
+# [private]
+skip(b: array of byte, off: int): int
+{
+	(tag, coff, n) := dertlv(b, off);
+	if(tag < 0)
+		return -1;
+	return coff + n;
+}
+
+# [private]
+subjectder(cert: array of byte): array of byte
+{
+	return namederat(cert, 1);
+}
+
+# [private]
+issuerder(tbs: array of byte): array of byte
+{
+	# tbs here is the tobe_signed bytes, i.e. the tbsCertificate
+	# SEQUENCE itself rather than the whole certificate, so wrap the
+	# walk by hand: skip version/serial/signature and take issuer.
+	(tag, off, n) := dertlv(tbs, 0);
+	if(tag != 16r30)
+		return nil;
+	end := off + n;
+	i := off;
+	(tag, nil, nil) = dertlv(tbs, i);
+	if(tag == 16rA0)
+		i = skip(tbs, i);
+	i = skip(tbs, i);			# serialNumber
+	i = skip(tbs, i);			# signature
+	if(i < 0 || i >= end)
+		return nil;
+	(tag, off, n) = dertlv(tbs, i);
+	if(tag != 16r30)
+		return nil;
+	return tbs[i:off+n];
+}
+
+# [private]
+dereq(a, b: array of byte): int
+{
+	if(a == nil || b == nil || len a != len b)
+		return 0;
+	for(i := 0; i < len a; i++)
+		if(a[i] != b[i])
+			return 0;
+	return 1;
+}
+
+verify_chain_host(chain: list of array of byte, host: string,
+		roots: list of array of byte): (int, string)
+{
+	if(chain == nil)
+		return (0, "empty certificate chain");
+
+	# parse the chain, keeping wire (leaf-first) order
+	rl: list of (ref Signed, ref Certificate);
+	for(l := chain; l != nil; l = tl l) {
+		(err, s) := Signed.decode(hd l);
+		if(err != "")
+			return (0, "chain: "+err);
+		c: ref Certificate;
+		(err, c) = Certificate.decode(s.tobe_signed);
+		if(err != "")
+			return (0, "chain: "+err);
+		rl = (s, c) :: rl;
+	}
+	sc: list of (ref Signed, ref Certificate);
+	for(; rl != nil; rl = tl rl)
+		sc = (hd rl) :: sc;
+
+	# The roots are NOT decoded here.  A bundle is the whole of
+	# Mozilla's list - 121 certificates in the one this tree ships -
+	# and decoding every one of them took about fifteen seconds of
+	# interpreted Dis on a fast machine, per handshake, which is
+	# longer than a server will hold a connection open waiting for
+	# the client's next flight.  Nothing in the walk below needs a
+	# decoded root until one of them turns out to be the issuer, and
+	# that is at most one of them.  So a root's subject is compared
+	# as raw DER, a handful of tag/length reads (subjectder below),
+	# and only the root that matches is decoded and its signature
+	# checked.  Same answer, and the answer arrives.
+	nroots := 0;
+	for(l = roots; l != nil; l = tl l)
+		if(subjectder(hd l) != nil)
+			nroots++;
+	if(nroots == 0)
+		return (0, "no usable trust roots");
+
+	# leaf: valid now, and actually names the host
+	(nil, leafc) := hd sc;
+	if(!is_validtime(leafc.validity))
+		return (0, "leaf certificate expired or not yet valid");
+	herr := certnameshost(leafc, host);
+	if(herr != nil)
+		return (0, herr);
+
+	# walk: at each link, first try to anchor at a trust root; else
+	# step to the next chain cert
+	(curs, curc) := hd sc;
+	rest := tl sc;
+	depth := 0;
+	for(;;) {
+		iss := issuerder(curs.tobe_signed);
+		for(tr := roots; tr != nil; tr = tl tr) {
+			rsub := subjectder(hd tr);
+			if(rsub == nil || !dereq(iss, rsub))
+				continue;
+			(rerr, rs) := Signed.decode(hd tr);
+			if(rerr != "")
+				continue;
+			rc: ref Certificate;
+			(rerr, rc) = Certificate.decode(rs.tobe_signed);
+			if(rerr != "")
+				continue;
+			if(!curc.issuer.equal(rc.subject))
+				continue;	# DER said yes, the decoded names say no
+			if(checksig(curs, rc) != nil)
+				continue;	# same subject, different root key: keep looking
+			if(!is_validtime(rc.validity))
+				return (0, "trust root expired");
+			return (1, "");
+		}
+		if(rest == nil)
+			return (0, "certificate chain does not reach a trusted root");
+		if(++depth > 8)
+			return (0, "certificate chain too long");
+		(ns, nc) := hd rest;
+		rest = tl rest;
+		if(!nc.subject.equal(curc.issuer))
+			return (0, "broken issuer/subject chain");
+		if(!is_validtime(nc.validity))
+			return (0, "intermediate certificate expired or not yet valid");
+		if(!certisca(nc))
+			return (0, "intermediate certificate is not a CA");
+		serr := checksig(curs, nc);
+		if(serr != nil)
+			return (0, serr);
+		(curs, curc) = (ns, nc);
+	}
+}
+
+# [private]
+# verify signed's signature using the public key of issuer
+
+checksig(signed: ref Signed, issuer: ref Certificate): string
+{
+	# ECDSA signature algorithms live in x509's own objIdTab
+	ecalgid := asn1->oid_lookup(signed.alg.oid, objIdTab);
+	case ecalgid {
+	id_ecdsaWithSHA256 or id_ecdsaWithSHA384 or id_ecdsaWithSHA512 =>
+		return ecdsa_checksig(signed, issuer, ecalgid);
+	}
+
+	algid := asn1->oid_lookup(signed.alg.oid, pkcs->objIdTab);
+	halg := -1;
+	case algid {
+	PKCS->id_pkcs_sha1WithRSAEncryption =>
+		halg = PKCS->SHA1_WithRSAEncryption;
+	PKCS->id_pkcs_sha256WithRSAEncryption =>
+		halg = PKCS->SHA256_WithRSAEncryption;
+	PKCS->id_pkcs_sha384WithRSAEncryption =>
+		halg = PKCS->SHA384_WithRSAEncryption;
+	PKCS->id_pkcs_sha512WithRSAEncryption =>
+		halg = PKCS->SHA512_WithRSAEncryption;
+	* =>
+		return "unsupported signature algorithm " + signed.alg.tostring();
+	}
+	(err, nil, pk) := issuer.subject_pkinfo.getPublicKey();
+	if(err != "")
+		return err;
+	pick k := pk {
+	RSA =>
+		if(pkcs->rsa_verify(signed.tobe_signed, signed.signature, k.pk, halg))
+			return nil;
+		return "certificate signature verification failed";
+	* =>
+		;
+	}
+	return "unsupported issuer public key type";
+}
+
+# [private]
+# verify an ECDSA-with-SHA* certificate signature: the issuer's key
+# must be an id-ecPublicKey point (P-256 here), the signature a DER
+# SEQUENCE { r INTEGER, s INTEGER }, over the SHA-hash of tobe_signed.
+ecdsa_checksig(signed: ref Signed, issuer: ref Certificate, ecalgid: int): string
+{
+	if(p256 == nil)
+		return "ECDSA certificate, but p256(2) is not available";
+	# issuer's public key must be an EC point
+	if(asn1->oid_lookup(issuer.subject_pkinfo.alg_id.oid, objIdTab) != id_ecPublicKey)
+		return "ECDSA signature but issuer key is not an EC key";
+	pub := issuer.subject_pkinfo.subject_pk;	# raw uncompressed point
+	# P-256 (65) or P-384 (97) - intermediates are commonly P-384 even
+	# over a P-256 leaf; p256->ecdsa_verify picks the curve by size
+	if((len pub != 65 && len pub != 97) || int pub[0] != 16r04)
+		return "unsupported EC public key format (not an uncompressed P-256/P-384 point)";
+
+	# hash tobe_signed with the algorithm the signature names
+	hash: array of byte;
+	case ecalgid {
+	id_ecdsaWithSHA256 =>
+		hash = array[Keyring->SHA256dlen] of byte;
+		keyring->sha256(signed.tobe_signed, len signed.tobe_signed, hash, nil);
+	id_ecdsaWithSHA384 =>
+		hash = array[Keyring->SHA384dlen] of byte;
+		keyring->sha384(signed.tobe_signed, len signed.tobe_signed, hash, nil);
+	id_ecdsaWithSHA512 =>
+		hash = array[Keyring->SHA512dlen] of byte;
+		keyring->sha512(signed.tobe_signed, len signed.tobe_signed, hash, nil);
+	}
+
+	# the certificate signature is a BIT STRING: its content is a
+	# leading "unused bits" octet (0 for a byte-aligned signature)
+	# followed by the DER ECDSA-Sig-Value. Strip that octet before
+	# parsing (the RSA path tolerates it as a leading zero in the
+	# signature magnitude; the DER parser does not).
+	sig := signed.signature;
+	if(len sig > 0 && int sig[0] == 0)
+		sig = sig[1:];
+	(r, s, perr) := parseecdsasig(sig);
+	if(perr != nil)
+		return perr;
+	if(p256->ecdsa_verify(hash, r, s, pub))
+		return nil;
+	return "certificate signature verification failed";
+}
+
+# [private]
+# ECDSA-Sig-Value ::= SEQUENCE { r INTEGER, s INTEGER }, big-endian
+parseecdsasig(sig: array of byte): (array of byte, array of byte, string)
+{
+	(err, e) := asn1->decode(sig);
+	if(err != "")
+		return (nil, nil, "ECDSA signature: "+err);
+	(ok, el) := e.is_seq();
+	if(!ok || len el != 2)
+		return (nil, nil, "ECDSA signature: not a two-element sequence");
+	(okr, r) := (hd el).is_bigint();
+	(oks, s) := (hd tl el).is_bigint();
+	if(!okr || !oks)
+		return (nil, nil, "ECDSA signature: r/s not integers");
+	return (r, s, nil);
+}
+
+# [private]
+# does the certificate's subjectAltName name host? dNSName entries
+# only; no CN fallback (matching what today's browsers accept)
+
+certnameshost(c: ref Certificate, host: string): string
+{
+	for(el := c.exts; el != nil; el = tl el) {
+		e := hd el;
+		if(asn1->oid_lookup(e.oid, objIdTab) != id_ce_subjectAltName)
+			continue;
+		(err, ec) := ExtClass.decode(e);
+		if(err != "")
+			return "subjectAltName: "+err;
+		pick sa := ec {
+		SubjectAltName =>
+			for(gl := sa.alias; gl != nil; gl = tl gl) {
+				pick g := hd gl {
+				dNSName =>
+					if(dnsnamematch(g.str, host))
+						return nil;
+				* =>
+					;
+				}
+			}
+		* =>
+			;
+		}
+		return sys->sprint("certificate does not name %s", host);
+	}
+	return "certificate has no subjectAltName";
+}
+
+# [private]
+# case-insensitive DNS name match; a leading "*." matches exactly one
+# extra label (RFC 6125's usual profile - no partial-label wildcards)
+
+dnsnamematch(pat, host: string): int
+{
+	pat = str_tolower(pat);
+	host = str_tolower(host);
+	if(len pat > 2 && pat[0:2] == "*.") {
+		for(i := 0; i < len host; i++)
+			if(host[i] == '.')
+				return host[i+1:] == pat[2:];
+		return 0;
+	}
+	return pat == host;
+}
+
+# [private]
+
+str_tolower(s: string): string
+{
+	for(i := 0; i < len s; i++)
+		if(s[i] >= 'A' && s[i] <= 'Z')
+			s[i] += 'a' - 'A';
+	return s;
+}
+
+# [private]
+# does the certificate carry basicConstraints cA=TRUE?
+
+certisca(c: ref Certificate): int
+{
+	for(el := c.exts; el != nil; el = tl el) {
+		e := hd el;
+		if(asn1->oid_lookup(e.oid, objIdTab) != id_ce_basicConstraints)
+			continue;
+		(err, ec) := ExtClass.decode(e);
+		if(err != "")
+			return 0;
+		pick bc := ec {
+		BasicConstraints =>
+			return bc.isca;
+		* =>
+			;
+		}
+		return 0;
+	}
+	return 0;
 }
 
 # [public]
@@ -2277,8 +2692,9 @@ ExtClass.tostring(et: self ref ExtClass): string
 	SubjectKeyIdentifier =>
 		s = "Subject Key Identifier ";
 		s += "\n\tid = " + bastr(t.id);
-	BasicConstraints =>	
+	BasicConstraints =>
 		s = "Basic Constraints: ";
+		s += "\n\tcA = " + string t.isca;
 		s += "\n\tdepth = " + string t.depth;
 	KeyUsage =>
 		s = "Key Usage: ";
@@ -2482,23 +2898,37 @@ encode_subjectKeyIdentifier(c: ref ExtClass.SubjectKeyIdentifier): (string, arra
 
 decode_basicConstraints(ext: ref Extension): (string, ref ExtClass)
 {
+	# BasicConstraints ::= SEQUENCE {
+	#	cA			BOOLEAN DEFAULT FALSE,
+	#	pathLenConstraint	INTEGER OPTIONAL }
+	# both fields really are omitted in the wild (every end-entity
+	# certificate omits both; most roots omit pathLenConstraint), so
+	# unlike the original decoder this accepts 0, 1 or 2 elements
 parse:
 	for(;;) {
 		(err, all) := asn1->decode(ext.value);
 		if(err != "")
 			break parse;
 		(ok, el) := all.is_seq();
-		if(!ok || len el != 2)
+		if(!ok || len el > 2)
 			break parse;
-		ca: int;
-		(ok, ca) = (hd el).is_int(); # boolean
-		if(!ok || ca != 1)
-			break parse;
-		path: int;
-		(ok, path) = (hd tl el).is_int(); # integer
-		if(!ok || path < 0)
-			break parse;		
-		return ("", ref ExtClass.BasicConstraints(path));
+		ca := 0;
+		path := -1;
+		if(el != nil) {
+			e := hd el;
+			if(e.tag.class == Universal && e.tag.num == BOOLEAN) {
+				(ok, ca) = e.is_int();
+				if(!ok)
+					break parse;
+				el = tl el;
+			}
+		}
+		if(el != nil) {
+			(ok, path) = (hd el).is_int();
+			if(!ok || path < 0 || tl el != nil)
+				break parse;
+		}
+		return ("", ref ExtClass.BasicConstraints(ca != 0, path));
 	}
 	return ("basic constraints: syntax error", nil);
 }
@@ -2508,8 +2938,10 @@ parse:
 encode_basicConstraints(c: ref ExtClass.BasicConstraints): (string, array of byte)
 {
 	el: list of ref Elem;
-	el = ref Elem(Tag(Universal, INTEGER, 0), ref Value.Int(c.depth)) :: nil;
-	el = ref Elem(Tag(Universal, BOOLEAN, 0), ref Value.Bool(1)) :: el;
+	if(c.depth >= 0)
+		el = ref Elem(Tag(Universal, INTEGER, 0), ref Value.Int(c.depth)) :: nil;
+	if(c.isca)
+		el = ref Elem(Tag(Universal, BOOLEAN, 0), ref Value.Bool(1)) :: el;
 	e := ref Elem(Tag(Universal, SEQUENCE, 1), ref Value.Seq(el));
 	return asn1->encode(e);
 }
@@ -3753,6 +4185,37 @@ DistrPoint.tostring(dp: self ref DistrPoint): string
 
 # [private]
 
+# an IMPLICITLY tagged primitive: the context tag replaced the real
+# one, so the element's own octets are the value - no nested TLV
+
+context_octets(e: ref Elem, num: int): (int, array of byte)
+{
+	if(e.tag.class == ASN1->Context && e.tag.num == num) {
+		pick v := e.val {
+		Octets =>
+			return (1, v.bytes);
+		* =>
+			;
+		}
+	}
+	return (0, nil);
+}
+
+# [private]
+
+context_string(e: ref Elem, num: int): (int, string)
+{
+	(ok, b) := context_octets(e, num);
+	if(!ok)
+		return (0, nil);
+	s := "";
+	for(i := 0; i < len b; i++)
+		s[len s] = int b[i];
+	return (1, s);
+}
+
+# [private]
+
 is_context(e: ref Elem, num: int): (int, ref Elem)
 {
 	if(e.tag.class == ASN1->Context && e.tag.num == num) {
@@ -3842,20 +4305,20 @@ parse:
 				break parse;
 			g = ref GeneralName.otherName(str);
 		1 =>
-			(ok, e) = is_context(e, 1);
+			# [1] IMPLICIT IA5String - the context tag replaces
+			# the string tag, so the octets ARE the string (the
+			# original is_context+is_string here expected a
+			# nested TLV and never parsed a real certificate)
+			str: string;
+			(ok, str) = context_string(e, 1);
 			if(!ok)
 				break parse;
-			str: string;
-			(ok, str) = e.is_string();
-			if(!ok)
-				break parse;			
 			g = ref GeneralName.rfc822Name(str);
 		2 =>
-			(ok, e) = is_context(e, 2);
-			if(!ok)
-				break parse;
+			# [2] IMPLICIT IA5String, as above - every real
+			# subjectAltName dNSName has this shape
 			str: string;
-			(ok, str) = e.is_string();
+			(ok, str) = context_string(e, 2);
 			if(!ok)
 				break parse;
 			g = ref GeneralName.dNSName(str);
@@ -3903,20 +4366,17 @@ parse:
 			}
 			g = ref GeneralName.ediPartyName(na, pn);
 		6 =>
-			(ok, e) = is_context(e, 6);
-			if(!ok)
-				break parse;
+			# [6] IMPLICIT IA5String, same shape as [1]/[2]
 			str: string;
-			(ok, str) = e.is_string();
+			(ok, str) = context_string(e, 6);
 			if(!ok)
 				break parse;
 			g = ref GeneralName.uniformResourceIdentifier(str);
 		7 =>
-			(ok, e) = is_context(e, 7);
-			if(!ok)
-				break parse;
+			# [7] IMPLICIT OCTET STRING - the octets are the
+			# address bytes themselves
 			ip: array of byte;
-			(ok, ip) = e.is_octetstring();
+			(ok, ip) = context_octets(e, 7);
 			if(!ok)
 				break parse;
 			g = ref GeneralName.iPAddress(ip);

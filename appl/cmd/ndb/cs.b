@@ -185,6 +185,27 @@ refresh()
 			ndb = ndb2;
 	}else
 		ndb.reopen();
+	# Re-reading the database is only half of it: every answer in the
+	# cache was derived from the version just replaced, and xlate()
+	# consults the cache before it consults ndb at all.  With a static
+	# /lib/ndb/local that only meant a stale answer for the 120 seconds
+	# a cache entry lives; with ndb/regndb rendering a registry(4), an
+	# entry disappears the moment a machine leaves and the whole point
+	# of the refresh is that the next query must miss.  Measured: it
+	# did not -- cs went on translating joiner3 to 10.42.0.10!564 after
+	# the registering process was killed and the rendered file had gone
+	# back to zero entries.  See doc/inferno-ndb.ms.
+	for(i := 0; i < len cache; i++)
+		cache[i] = nil;
+	nextcache = 0;
+}
+
+# a trailing newline, as `echo refresh > /net/cs' writes
+trimnl(s: string): string
+{
+	while(s != nil && (s[len s - 1] == '\n' || s[len s - 1] == '\r'))
+		s = s[0:len s - 1];
+	return s;
 }
 
 sysname(): string
@@ -244,7 +265,10 @@ cs(file: ref Sys->FileIO)
 			if(wc != nil){
 				nbytes := len buf;
 				query := string buf;
-				if(query == "refresh"){
+				# a control write is how a machine is told the
+				# fleet changed, and it usually arrives from a
+				# shell, so it usually has a newline on it.
+				if(trimnl(query) == "refresh"){
 					refresh();
 					wc <-= (nbytes, nil);
 					break;

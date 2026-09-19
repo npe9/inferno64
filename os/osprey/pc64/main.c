@@ -162,10 +162,34 @@ init0(void)
 		poperror();
 	}
 	kproc("alarm", alarmkproc, 0);
+	/*
+	 * The stack initcode is entered on.  The user entry (init9.c's
+	 * _main) is handed the argument vector itself - the first argument
+	 * register, which touser leaves holding the stack pointer, is the
+	 * nil-terminated array of argument strings - so the stack pointer
+	 * is that array: argv[0] and a nil, with the name's bytes above
+	 * them where the program's own frame cannot reach.
+	 *
+	 * It used to be the other shape, the one 9front has: the vector
+	 * made out of the parameter slot itself, argv0 at sp[1] and the nil
+	 * that ends it at sp[2].  When exec grew an argument vector
+	 * (phase 2.1) _main was changed to take the array and every
+	 * microkernel path was given it, and this one - the full
+	 * personality's, the only caller of init0 - was not.  argv[0] was
+	 * then the nil at sp[0], and initcode's exec of /boot/boot was
+	 * refused with "bad arg in system call" before any of the boot file
+	 * system was reached.  Both entries lay the vector out the one way
+	 * now (ospreyenteruservec in userinit.c is the other).
+	 *
+	 * sp[0] was the nil that touser leaves where a return address would
+	 * be, and is argv[0] now.  Nothing returns through it: startboot
+	 * ends by _exits, as it does on the microkernel entry, which has
+	 * had this same shape since 2.1.
+	 */
 	sp = (char**)(USTKTOP - sizeof(Tos) - 8 - sizeof(sp[0])*4);
-	sp[3] = sp[2] = nil;
-	strcpy(sp[1] = (char*)&sp[4], "boot");
-	sp[0] = nil;
+	strcpy((char*)&sp[2], "boot");
+	sp[0] = (char*)&sp[2];		/* argv[0] */
+	sp[1] = nil;			/* and the vector ends */
 
 	splhi();
 	fpukexit(nil);

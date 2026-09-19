@@ -888,8 +888,17 @@ setid(char *name, int owner)
 	u = name2user(uidmap, name, newuname);
 	if(u == nil){
 		qunlock(&idl);
-		up->env->uid = -1;
-		up->env->gid = -1;
+		/*
+		 * the Inferno user has no host account (the default "inferno"
+		 * when there is no /usr/$LOGNAME under the root -- see
+		 * libinit).  running as nobody (-1) made fsperm() refuse every
+		 * create and write in a directory the host user owns, i.e.
+		 * nearly everything: a hosted emu acts for the host user that
+		 * started it, and the host enforces that user's real
+		 * permissions at open() regardless, so use those ids.
+		 */
+		up->env->uid = getuid();
+		up->env->gid = getgid();
 		return;
 	}
 

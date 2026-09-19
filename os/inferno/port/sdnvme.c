@@ -14,6 +14,7 @@ typedef struct WS WS;
 typedef struct CQ CQ;
 typedef struct SQ SQ;
 typedef struct Ctlr Ctlr;
+typedef struct Ivec Ivec;
 
 struct WS
 {
@@ -44,6 +45,20 @@ struct SQ
 	Lock;
 };
 
+/*
+ * NVMe puts the admin completion queue on interrupt vector 0 and lets
+ * the Create I/O Completion Queue command name the vector for each
+ * other queue.  With MSI-X that is a vector per queue; this driver
+ * takes two -- the admin queue's and the shared I/O queue's -- which
+ * is the smallest arrangement that actually exercises more than one.
+ */
+struct Ivec
+{
+	Ctlr	*ctlr;
+	int	vec;
+	uint	n;		/* interrupts delivered on this vector */
+};
+
 struct Ctlr
 {
 	QLock;
@@ -65,6 +80,15 @@ struct Ctlr
 	u32int	dstrd;
 
 	u32int	nsq;
+
+	/*
+	 * One Ivec per MSI-X vector taken.  nivec is 0 when the
+	 * controller is on INTx or single-vector MSI, in which case
+	 * nvmeintr() is registered with the Ctlr itself, the way it
+	 * always was.
+	 */
+	Ivec	ivec[2];
+	int	nivec;
 
 	CQ	cq[1+1];
 	SQ	sq[1+MAXMACH];
@@ -193,6 +217,70 @@ nvmeintr(Ureg *, void *arg)
 	}
 	ctlr->reg[IntMc] = ctlr->ints;
 	iunlock(&ctlr->intr);
+}
+
+/*
+ * The handler each MSI-X vector is registered with.  The completion
+ * scan above already looks at every queue, so what this adds is the
+ * count -- and the one line that says a vector has delivered at all,
+ * which is the only way to tell from a boot log that a second vector
+ * is live rather than the first one doing all the work.
+ */
+static void
+nvmemsixintr(Ureg *ur, void *arg)
+{
+	Ivec *iv = arg;
+
+	if(iv->n++ == 0)
+		iprint("nvme: msix vector %d delivered\n", iv->vec);
+	nvmeintr(ur, iv->ctlr);
+}
+
+/*
+ * Take a vector per queue when the board can deliver MSI-X and the
+ * device's table is big enough, and fall back to whatever
+ * intrenable() chooses otherwise.  pcimsixintrenable is nil on a
+ * board with no MSI-X plumbing at all, which is every board but
+ * pc64 today.
+ */
+static void
+nvmeintrenable(Ctlr *ctlr, char *name)
+{
+	int i, n;
+
+	ctlr->nivec = 0;
+	if(pcimsixintrenable != nil
+	&& (n = pcimsixcount(ctlr->pci)) >= nelem(ctlr->ivec)){
+		for(i = 0; i < nelem(ctlr->ivec); i++){
+			ctlr->ivec[i].ctlr = ctlr;
+			ctlr->ivec[i].vec = i;
+			ctlr->ivec[i].n = 0;
+			(*pcimsixintrenable)(ctlr->pci, i, nvmemsixintr,
+				&ctlr->ivec[i], name);
+		}
+		ctlr->nivec = nelem(ctlr->ivec);
+		print("%s: msix, %d of %d vectors\n", name, ctlr->nivec, n);
+		return;
+	}
+	intrenable(ctlr->pci->intl, nvmeintr, ctlr, ctlr->pci->tbdf, name);
+}
+
+static void
+nvmeintrdisable(Ctlr *ctlr, char *name)
+{
+	int i;
+
+	if(ctlr->nivec > 0){
+		for(i = 0; i < ctlr->nivec; i++){
+			(*pcimsixintrdisable)(ctlr->pci, i, nvmemsixintr,
+				&ctlr->ivec[i], name);
+			print("%s: msix vector %d delivered %ud\n", name,
+				ctlr->ivec[i].vec, ctlr->ivec[i].n);
+		}
+		ctlr->nivec = 0;
+		return;
+	}
+	intrdisable(ctlr->pci->intl, nvmeintr, ctlr, ctlr->pci->tbdf, name);
 }
 
 static int
@@ -511,7 +599,8 @@ setupqueues(Ctlr *ctlr)
 	cqalloc(ctlr, cq, lgcqsize);
 	e = qcmd(&ws, ctlr, 1, 0x05, 0, cq->base, 1<<lgcqsize);
 	e[10] = (cq - ctlr->cq) | cq->mask<<16;
-	e[11] = 3; /* IEN | PC */
+	/* IV<<16 | IEN | PC: vector 1 when there is one, else the admin queue's */
+	e[11] = (ctlr->nivec > 1 ? 1 : 0)<<16 | 3;
 	checkstatus(wcmd(&ws, e), "create completion queue");
 
 	st = 0;
@@ -604,7 +693,7 @@ nvmedisable(SDev *sd)
 	}
 
 	snprint(name, sizeof(name), "%s (%s)", sd->name, sd->ifc->name);
-	intrdisable(ctlr->pci->intl, nvmeintr, ctlr, ctlr->pci->tbdf, name);
+	nvmeintrdisable(ctlr, name);
 
 	pciclrbme(ctlr->pci);	/* dma disable */
 
@@ -638,7 +727,7 @@ nvmeenable(SDev *sd)
 	ctlr = sd->ctlr;
 
 	snprint(name, sizeof(name), "%s (%s)", sd->name, sd->ifc->name);
-	intrenable(ctlr->pci->intl, nvmeintr, ctlr, ctlr->pci->tbdf, name);
+	nvmeintrenable(ctlr, name);
 
 	if(waserror()){
 		print("%s: %s\n", name, up->errstr);

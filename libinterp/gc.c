@@ -698,127 +698,18 @@ rootset(Prog *root)
 				if(t == nil){
 					t = sx->reg.TR;
 				}
-				{	/* INSTRUMENTATION - temporary */
-					extern uchar etext[];
-					static int badtold;
-
-					/*
-					 * The two failures in ninety-six boots
-					 * are a jump into the Dis heap reached
-					 * from here: this is rootset+0x112, and
-					 * t->mark is the indirect call.
-					 *
-					 * What is not yet known is whether t is
-					 * a freed Type or whether the frame
-					 * itself is corrupt and t was never a
-					 * Type at all.  freetype() was asked
-					 * and answered no -- it frees nothing
-					 * under a collection in twenty boots --
-					 * so this asks the frame instead, and
-					 * prints what it found rather than
-					 * jumping through it.
-					 */
-					/*
-					 * t->mark is a function pointer and
-					 * function pointers are not aligned:
-					 * markheap sits at 0x2f4139 in this
-					 * build.  An alignment check on it
-					 * rejected every correct Type and
-					 * reported 41 faults that were the
-					 * check's own.  What can be said about
-					 * a code pointer is that it is inside
-					 * the text segment, so that is what is
-					 * asked.
-					 */
-					if(((uintptr)t & 7) != 0
-					|| (uintptr)t < 0x100000
-					|| (uintptr)t->mark < 0x200000
-					|| (uintptr)t->mark >= (uintptr)etext){
-						if(badtold++ == 0){
-							uchar *q;
-							Type *qt;
-							Frame *qf;
-							int qn;
-
-							print("rootset: bad frame"
-								" type t %#p mark %#p"
-								" size %d f %#p"
-								" f->t %#p TR %#p"
-								" pid %d\n",
-								t, t->mark,
-								t->size, f, f->t,
-								sx->reg.TR,
-								root->pid);
-							/*
-							 * The same stack read two
-							 * ways.  The walk tiles up
-							 * from tos.fu; the chain is
-							 * what the frames say they
-							 * are.  Where they part is
-							 * the question, and one
-							 * list beside the other is
-							 * the only way to see it.
-							 */
-							print("rootset: EX %#p TS %#p"
-								" FP %#p SP %#p walk sp %#p;"
-								" this extent %#p..%#p,"
-								" prior EX %#p, TR %#p\n",
-								rr->EX, rr->TS, rr->FP,
-								rr->SP, sp, (uchar*)sx,
-								sx->reg.TS, sx->reg.EX,
-								sx->reg.TR);
-							print("rootset: tiled from %#p:",
-								sx->reg.tos.fu);
-							for(q = sx->reg.tos.fu, qn = 0;
-							    q < sp && qn < 12; qn++){
-								qt = ((Frame*)q)->t;
-								if(qt == nil)
-									qt = sx->reg.TR;
-								if(qt == nil
-								|| ((uintptr)qt & 7) != 0
-								|| (uintptr)qt < 0x100000
-								|| qt->size <= 0){
-									print(" %#p t %#p BAD",
-										q, qt);
-									break;
-								}
-								print(" %#p t %#p sz %d",
-									q, qt, qt->size);
-								q += qt->size;
-							}
-							print("\n");
-							print("rootset: chain from %#p:",
-								rr->FP);
-							for(q = rr->FP, qn = 0;
-							    qn < 12 && q >= sx->reg.tos.fu
-							    && q < sp; qn++){
-								qf = (Frame*)q;
-								qt = qf->t;
-								print(" %#p t %#p sz %d",
-									q, qt,
-									(qt != nil
-									 && ((uintptr)qt & 7) == 0
-									 && (uintptr)qt >= 0x100000)
-									  ? qt->size : -1);
-								q = qf->fp;
-								if(q == nil)
-									break;
-							}
-							print("\n");
-						}
-						/*
-						 * Report and stop walking this
-						 * extent rather than abort.
-						 * Aborting here pre-empted the
-						 * tile report below on the same
-						 * boot -- the two could never
-						 * both be seen, which is why
-						 * "do not tile" read 0 of 40
-						 * while a bad frame read 1.
-						 */
-						break;
-					}
-				}
+				/*
+				 * multicore's temporary probe here (a bad-frame-type
+				 * check that abort()ed) is not carried across.  It
+				 * compares t->mark against etext, which the host
+				 * linker does not define -- libinterp.a is built once
+				 * and shared by emu and every kernel, so there is no
+				 * -DEMU to key it on, and a host stand-in for etext
+				 * would make the bound wrong and the aborts false.
+				 * The condition it watches is a *parallelvm=1 failure
+				 * and parallelvm is 0 here.  The t == nil fallback
+				 * above is kept: that one is a real change.
+				 */
 				fp += t->size;
 				t->mark(t, f);
 				ml = f->mr;

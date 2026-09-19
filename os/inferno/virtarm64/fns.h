@@ -13,13 +13,6 @@ uvlong	timersoon(void);
 uvlong	fastticks(uvlong*);
 ulong	tk2ms(ulong);
 void	coherence(void);
-void	settpidr(uintptr);
-uintptr	gettpidr(void);
-uvlong	getmpidr(void);
-u32	getctr(void);			/* CTR_EL0, for the cache line sizes */
-void	dccvac(uintptr);		/* clean one D-line to PoC */
-void	cacheiinv(void);		/* invalidate the whole I-cache */
-void	cacheflush(void*, usize);	/* clean a D-cache range to PoC */
 void	delay(int);
 void	dumpstack(void);
 void	fpinit(void);
@@ -28,7 +21,25 @@ void	fpurestore(int);
 ulong	getcallerpc(void*);
 ulong	getfcr(void);
 ulong	getfsr(void);
+void	acpiinit(void);
+int	acpitables(void);
+void	msiinit(void);
+int	itsinit(void);
+int	acpiitsdevid(int, u32int*);
+uvlong	getmpidr(void);
+void	startcpus(void);
+int	spcrconsole(void);
+char*	spcrwhy(void);
+extern int spcrstate;
+extern uvlong spcrwas;
+void	gicenable(int);
+void	gicedge(int);
+extern int timerirq;
+void	_secondary(void);
+void	bootargsinit(void);
 char*	getconf(char*);
+void	setconfenv(void);
+void	showconf(void);
 void	idle(void);
 void	idlehands(void);
 void	init0entry(void);
@@ -40,11 +51,18 @@ void	screeninit(void);
 void	links(void);
 void	microdelay(int);
 void	mmuinit(void);
+void	mmuparams(uvlong*, uvlong*);
+uvlong	getsb(void);
+void	dccleanrange(void*, int);
 void	setfcr(ulong);
 void	setfsr(ulong);
 void	trap(Ureg*);
 void	trapinit(void);
 void	vectorinit(void*);
+void	vectorinstall(void);
+void	giccpuinit(void);
+void	cpuintrreport(void);
+void	clocksecondary(void);
 void	gicinit(void);
 void	timerie(void);
 void	uartconsole(void);
@@ -52,7 +70,7 @@ void	uartconsolesetup(void);
 void	serialputc(int);
 void	serialputs(char*, int);
 void	(*screenputs)(char*, int);
-ulong	va2pa(void*);
+uintptr	va2pa(void*);
 
 #define procsave(p)
 #define procrestore(p)
@@ -64,9 +82,16 @@ ulong	va2pa(void*);
 #define PADDR(v)	va2pa((void*)(v))
 
 int	cmpswap(s32*, s32, s32);
+int	ainc(int*);		/* l.s; interp.h's AINC */
+int	adec(int*);		/* l.s; interp.h's ADEC */
+void	atomiccheck(void);
+void	archmemreport(void);
+int	archfwrun(int, uvlong*, uvlong*, int*);
+void	memspeed(void);
 long	archkprofmicrosecondspertick(void);
 void	archkprofenable(int);
 int	isaconfig(char*, int, void*);
+void	blankscreen(int);
 void	cycles(uvlong*);		/* also in io.h; proc.c includes fns.h, not io.h */
 
 /*
@@ -83,3 +108,8 @@ extern int	(*pcicfgrw8)(int, int, int, int);
 extern int	(*pcicfgrw16)(int, int, int, int);
 extern int	(*pcicfgrw32)(int, int, int, int);
 uvlong	psci(uvlong, uvlong, uvlong, uvlong);
+uvlong	pscihvc(uvlong, uvlong, uvlong, uvlong);
+uvlong	pscismc(uvlong, uvlong, uvlong, uvlong);
+extern int pscismcconduit;
+uintptr	gettpidr(void);
+void	settpidr(uintptr);

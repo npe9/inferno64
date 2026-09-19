@@ -2470,6 +2470,7 @@ enum {
 	Bwrite = 20, Bpwrite = 51, Bseek = 39, Boseek = 16,
 	Bcreate = 22, Bremove = 25, Bfstat = 43, Bstat = 42, Berrstr = 41, Bpipe = 21,
 	Brfork = 19, Bbind = 2, Bmount = 46, Bawait = 47, Bfd2path = 23,
+	Bchdir = 3, Bunmount = 35,
 	/*
 	 * Not system calls: what the kernel asks the buddy on a legacy
 	 * process's behalf beyond its traps.  exec has the buddy lay a
@@ -2480,6 +2481,20 @@ enum {
 	 */
 	Bexec = 100, Bpage = 101, Bmappage = 102, Bforkfds = 103, Bdupfd = 104,
 	Bdup = 5,
+	/*
+	 * The wait for a forwarded call is not bounded by a count.  It was
+	 * fifteen thousand two-millisecond sleeps - thirty seconds - and a
+	 * call that had not been answered by then returned -1 with no
+	 * reason.  A read of a keyboard is answered when a key is pressed
+	 * and not before, and a window system's is not pressed for as long
+	 * as nobody is at the machine: rio's keyboard reader took the -1
+	 * thirty seconds in, ended its loop and shut rio down, and its
+	 * mouse reader did the same.  A call that blocks is not a call that
+	 * failed.  What ends the wait instead is the two things that mean
+	 * no answer is coming: the server is gone, or a note is pending for
+	 * this process - which is how Plan 9 interrupts a blocked call.
+	 */
+	Bsyscalltries = 0,	/* no count: see ospreybuddycall */
 	Bargoff = Odbuddyarg, Bnameoff = Odbuddyname, Bdataoff = Odbuddydata,
 	Reqsyscall = 15,	/* above every request in policy/syscall.h; the same number in cmd/p9 */
 };
@@ -2488,25 +2503,61 @@ enum {
  * Put one request to the buddy and wait for its answer: submit on the
  * legacy container's ring so the delegation carries it to the buddy,
  * service and sleep until the buddy's task has replied, and hand back
- * the reply's value.  tries bounds the wait, in 2 ms sleeps.
+ * the reply's value.  A positive tries bounds the wait in 2 ms sleeps,
+ * for a call the kernel makes on its own account and must not hang on;
+ * zero waits for as long as there is a server to answer and no note to
+ * interrupt it, which is what a blocking read needs.
  */
 static long
 ospreybuddycall(Ospreyproc *p, int tries)
 {
 	uvlong sarg[Ospreynarg], rop, rarg[Ospreynarg];
 	long status;
-	int i;
+	int i, nogone;
 
 	memset(sarg, 0, sizeof sarg);
 	sarg[0] = ospreyindex(p);	/* which slot this container's slice is: the server maps that one */
 	if(ospreysubmit(p, Reqsyscall, sarg) < 0)
 		return -1;
 	status = -1;
-	for(i = 0; i < tries; i++){
+	nogone = 0;
+	for(i = 0; tries <= 0 || i < tries; i++){
 		ospreyservicecaller();
 		if(ospreycollect(p, &rop, &status, rarg) == 0)
 			return status;
-		tsleep(&up->sleep, return0, nil, 2);
+		if(tries > 0){
+			tsleep(&up->sleep, return0, nil, 2);
+			continue;
+		}
+		/*
+		 * An unbounded wait sleeps on the container's own reply
+		 * rendezvous, which the server's routing wakes when a reply
+		 * for this container lands, and not on a two-millisecond
+		 * timer.  The timer is what the first cut used, and a caller
+		 * that blocks for as long as rio's keyboard reader does then
+		 * wakes five hundred times a second for ever: three of those
+		 * drove the server loop through a hundred and ninety thousand
+		 * requests in one boot and ended in "ilock ... key 0xdeaddead"
+		 * with timerdel waiting on the timer list that timerintr was
+		 * holding.  Twenty milliseconds is only the backstop for a
+		 * reply that arrives by some path that does not wake it.
+		 *
+		 * The only thing that ends the wait is that there is nobody
+		 * left to answer it, and even that is not decided on one
+		 * look: a container carried over the wire has its delegation
+		 * taken down and put up again, and a call in flight then sees
+		 * no server for a moment.  A note does not end it either -
+		 * interrupting a blocked call on up->notepending is what Plan
+		 * 9 does and is wrong here, because migration posts a note to
+		 * park a process and the call it is making must still finish
+		 * on the way out.
+		 */
+		if(ospreyserverof(p) == nil){
+			if(++nogone > 50)
+				return -1;
+		} else
+			nogone = 0;
+		ospreyawaitreply(20);
 	}
 	return -1;
 }
@@ -2522,6 +2573,8 @@ ospreybuddycall(Ospreyproc *p, int tries)
  */
 static long ospreymovekern(Ospreyproc*, uvlong*, int);
 static long ospreymigcall(int op, uvlong *arg, uvlong *ubuf);
+static int ospreystartedby(Ospreyproc*, Ospreyproc*);
+static int ospreynotecontainer(Ospreyproc*, char*, int);
 uintptr
 #define ReqIoport 20	/* xcall op: grant I/O ports (above ReqPip 18) */
 #define ReqKbdnotify 21	/* xcall op: route IRQ1 to the caller as a notification */
@@ -2539,6 +2592,8 @@ uintptr
 #define ReqKick 33	/* xcall op: a server has put work on a container's output queue in memory; wake that container's select */
 #define ReqCheckticket 34	/* xcall op: a ticket in the caller's data area at arg[0]; the kernel says whom it names, or no */
 #define ReqTicket 35	/* xcall op: a ticket for the name at arg[0] in the caller's data area, for the caller's container, good arg[1] seconds */
+#define ReqNsec 36	/* xcall op: the kernel's clock in nanoseconds, which the personality serves as /dev/bintime */
+#define ReqPostnote 37	/* xcall op: post a note to a container the caller serves, on behalf of one it also serves */
 ospreyxcall(va_list list)
 {
 	uvlong op, *ubuf, arg[Ospreynarg];
@@ -2651,6 +2706,81 @@ ospreyxcall(va_list list)
 		ubuf[3] = ospreyhz;
 		return 0;
 	}
+	if(op == ReqPostnote){
+		/*
+		 * postnote(2), which is not a system call: libc writes
+		 * /proc/n/note or /proc/n/notepg, and it is the personality
+		 * that holds a program's name space, so the write arrives at
+		 * the personality and the personality asks here.  The note
+		 * itself is the kernel's to post - it is the kernel that holds
+		 * the processes - so this is where the two meet.
+		 *
+		 * arg[0] is the container to post to, arg[1] the container
+		 * asking (which is not the caller: the caller is the
+		 * personality, speaking for one of the containers it serves),
+		 * and arg[2] is non-zero for the group form.  The note's text
+		 * is at Odnote in the caller's data area, a fixed place both
+		 * sides read out of ospreydata.h: a request carries three
+		 * words and no more (Ospreynarg), so an offset would have cost
+		 * the slot the group flag needs.
+		 *
+		 * Authority is two questions and both are asked.  May this
+		 * personality speak for the asking container - is it one this
+		 * caller serves?  And may that container post to the target -
+		 * is the target itself, or a container it started?  A
+		 * container may interrupt what it started and nothing else,
+		 * which is the least that lets a window system stop the
+		 * command in a window, and is not "any container may note any
+		 * other".
+		 */
+		Ospreyproc *target, *asking;
+		char note[Odnotelen];
+		uchar *nd;
+		int i;
+
+		if((target = ospreylookup(arg[0])) == nil){
+			print("osprey: a note was asked for container %llud, which is not a container\n", arg[0]);
+			return -1;
+		}
+		if((asking = ospreylookup(arg[1])) == nil || ospreyserverof(asking) != up->osprey){
+			print("osprey: container %llud asked to note on behalf of %llud, which it does not serve\n",
+				up->osprey != nil ? ospreyid(up->osprey) : 0, arg[1]);
+			return -1;		/* the caller does not serve the container it speaks for */
+		}
+		if(target != asking && !ospreystartedby(asking, target)){
+			print("osprey: container %llud asked to note container %llud and was refused: it did not start it\n",
+				ospreyid(asking), ospreyid(target));
+			return -1;
+		}
+		if((nd = ospreydata(up->osprey, Odnote, Odnotelen)) == nil){
+			print("osprey: the note window is outside container %llud's data area\n",
+				up->osprey != nil ? ospreyid(up->osprey) : 0);
+			return -1;
+		}
+		for(i = 0; i < Odnotelen - 1 && nd[i] != 0; i++)
+			note[i] = nd[i];
+		note[i] = 0;
+		i = ospreynotecontainer(target, note, arg[2] != 0);
+		if(i <= 0){
+			print("osprey: container %llud has no process to give the note \"%s\" to\n", ospreyid(target), note);
+			return -1;
+		}
+		ubuf[0] = i;
+		return 0;
+	}
+	if(op == ReqNsec){
+		/*
+		 * The clock, read.  ReqSettime is how a task sets it; this is
+		 * how one reads it, and it is here rather than left to the
+		 * personality because the personality has no clock of its own
+		 * - p9shim.c's seconds() answers 0.  What a program actually
+		 * calls is nsec(2), and 9front's nsec(2) is not a system call
+		 * at all: it reads /dev/bintime.  So the personality serves
+		 * that file (devtime.c) out of this.
+		 */
+		ubuf[0] = (uvlong)todget(nil, nil);
+		return 0;
+	}
 	if(op == ReqNote){
 		/*
 		 * A note by request: delivered on the way back to user mode
@@ -2722,18 +2852,57 @@ ospreybuddydup(int oldfd, int newfd)
 {
 	extern long ospreybuddyforward(ulong, uintptr*);
 	uintptr a[2];
+	long r;
 
 	if(!ospreybuddyhas())
 		return -1;
 	a[0] = (uintptr)oldfd;
 	a[1] = (uintptr)newfd;
-	return (long)ospreybuddyforward(Bdup, a);
+	r = (long)ospreybuddyforward(Bdup, a);
+	/*
+	 * A dup onto 0, 1 or 2 is a shell redirecting: that descriptor is no
+	 * longer this personality's console but a file or a pipe the buddy
+	 * holds, so writes to it must go to the buddy from now on.  The
+	 * kernel sees every dup a legacy program makes (the config routes
+	 * them here), which is what lets it keep the console fast path for
+	 * every program that has not redirected - a legacy program's print
+	 * stays one call and does not become a ring round trip.
+	 */
+	if(r >= 0 && r < 3)
+		up->buddyredir |= 1 << r;
+	return r;
 }
 
 int
 ospreybuddyhas(void)
 {
 	return up->osprey != nil && ospreyserverof(up->osprey) != nil;
+}
+
+/*
+ * Touch every page of a user range, so that the faults it needs are
+ * taken before a forwarded call is built rather than in the middle of
+ * building one.  A page fault taken while a call is half built makes
+ * the kernel forward a page request of its own, and that request uses
+ * the same argument block in the same container's slice; the call that
+ * was being built is then submitted carrying the page request's op and
+ * arguments.  What that looked like from inside a container was its
+ * very first open(2) failing, whatever it named, with no error string
+ * set anywhere and the buddy having been asked for page 0.
+ */
+static void
+ospreytouch(uintptr va, ulong max)
+{
+	uintptr a, e;
+
+	if(max == 0)
+		return;
+	e = va + max;
+	for(a = va; a < e; a = (a + BY2PG) & ~(uintptr)(BY2PG-1))
+		if(okaddr(a, 1, 0))
+			USED(*(volatile uchar*)a);
+		else
+			return;
 }
 
 static long ospreyforkkern(Ospreyproc*, ulong);
@@ -2792,7 +2961,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		case 0:  scallnr = Bread;  break;	/* read */
 		case 2:  scallnr = Bopen;  break;	/* open */
 		case 3:  scallnr = Bclose; break;	/* close */
-		case 8:  scallnr = Bseek;  break;	/* lseek */
+		case 8:  scallnr = Boseek; break;	/* lseek(fd, off, whence): the argument shape Plan 9's oseek has, not seek's, whose answer goes through a pointer Linux does not pass */
 		case 1:  scallnr = Bwrite; break;	/* write */
 		default: return -1;
 		}
@@ -2801,7 +2970,34 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	ab = (uvlong*)ospreydata(p, Bargoff, 4*sizeof(uvlong));
 	if(ab == nil)
 		return -1;
-	ab[0] = scallnr;
+	/*
+	 * The call's own number goes in below, after everything that can
+	 * fault has faulted, and not here: a page fault taken while the
+	 * call is being built forwards a page request through this same
+	 * argument block, and a number written before that would be gone
+	 * by the time the call was submitted.  See ospreytouch above.
+	 */
+
+	/*
+	 * A Plan 9 system call's arguments arrive one to an eight-byte slot,
+	 * but an int fills only four of its slot and the other four are
+	 * whatever the caller's stack held there - 0xfefefefe, as it turns
+	 * out, the fill a fresh stack carries.  The kernel's own va_arg
+	 * reads the four (u.h); the slots are indexed here instead, so every
+	 * int argument has to be cut to four bytes or the buddy is handed a
+	 * descriptor, a mode or a flag with rubbish in its top half.  It had
+	 * been working by luck: what found it was a legacy program whose
+	 * seek worked or failed by what happened to lie on its stack.
+	 *
+	 * The mask, and not a cast: this tree's 6c drops a narrowing cast to
+	 * an unsigned type from a 64-bit value.  (uint)x and (ulong)x of a
+	 * uvlong both compile to the whole eight bytes, no truncation
+	 * emitted at all, while (int)x compiles to MOVLQSX and is right.  So
+	 * the first cut of this fix changed nothing, and the instrumentation
+	 * that showed 0xfefefefe00000003 arriving at the buddy after it
+	 * showed it too.
+	 */
+#define Aint(x)	((uvlong)(x) & 0xffffffffULL)
 
 	switch(scallnr){
 	case Bopen:				/* open(name, mode) */
@@ -2810,30 +3006,54 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
 		}
-		ab[1] = 0; ab[2] = a[1]; ab[3] = 0;
+		ab[1] = 0; ab[2] = Aint(a[1]); ab[3] = 0;
 		break;
-	case Bclose:
-		ab[1] = a[0]; ab[2] = 0; ab[3] = 0;
+	case Bclose:				/* close(fd) */
+		ab[1] = Aint(a[0]); ab[2] = 0; ab[3] = 0;
+		/* the buddy puts a closed 0, 1 or 2 back to the console, so the redirect is off */
+		if((long)a[0] >= 0 && (long)a[0] < 3)
+			up->buddyredir &= ~(1 << (int)a[0]);
 		break;
-	case Bread: case Bpread:		/* read(fd,buf,n) / pread(fd,buf,n,off) */
-		ab[1] = a[0];
+	case Bread: case Bpread:		/* read(fd,buf,n) / pread(fd,buf,n,off): n is a long, its slot whole */
+		ab[1] = Aint(a[0]);
 		ab[2] = a[2];
 		ab[3] = scallnr == Bpread ? a[3] : (uvlong)-1;
 		break;
 	case Bwrite: case Bpwrite:		/* the data must already be at Bdataoff */
+		/*
+		 * Fault the caller's buffer in before the slice is filled,
+		 * and only as much of it as can go: ospreydata below refuses
+		 * a count past the data block, and walking a quarter of a
+		 * million pages of a segment first, to be told no, is not
+		 * work worth doing.
+		 */
+		ospreytouch(a[1], a[2] > Odbuddydatalen ? Odbuddydatalen : (ulong)a[2]);
 		dd = ospreydata(p, Bdataoff, a[2]);
 		if(dd != nil)
 			for(i = 0; i < (long)a[2]; i++)
 				dd[i] = ((uchar*)a[1])[i];
-		ab[1] = a[0]; ab[2] = a[2];
+		ab[1] = Aint(a[0]); ab[2] = a[2];
 		ab[3] = scallnr == Bpwrite ? a[3] : (uvlong)-1;
 		break;
-	case Bseek: case Boseek:
-		ab[1] = a[0]; ab[2] = a[1]; ab[3] = a[2];
+	case Bseek:
+		/*
+		 * seek(vlong *ret, fd, n, type).  Plan 9's seek(2) yields its
+		 * answer through a pointer, which libc passes as the first
+		 * argument and whose slot the fd was being read from here: a
+		 * legacy program's every seek was of a descriptor made from an
+		 * address, and failed.  What found it was a program that read a
+		 * file twice, seeking back between - the second read went on
+		 * where the first stopped instead of at the start.
+		 */
+		ab[1] = Aint(a[1]); ab[2] = a[2]; ab[3] = Aint(a[3]);
+		break;
+	case Boseek:				/* oseek(fd, n, type): the old form, its answer the call's own */
+		ab[1] = Aint(a[0]); ab[2] = a[1]; ab[3] = Aint(a[2]);
 		break;
 	case Bcreate:				/* create(name, mode, perm) */
 		nd = ospreydata(p, Bnameoff, 256);
@@ -2841,11 +3061,12 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
 		}
-		ab[1] = 0; ab[2] = a[1]; ab[3] = a[2];	/* mode, perm */
+		ab[1] = 0; ab[2] = Aint(a[1]); ab[3] = Aint(a[2]);	/* mode, perm */
 		break;
 	case Bremove:				/* remove(name) */
 		nd = ospreydata(p, Bnameoff, 256);
@@ -2853,6 +3074,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -2860,10 +3082,10 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 		ab[1] = 0; ab[2] = 0; ab[3] = 0;
 		break;
 	case Bfstat:				/* fstat(fd, edir, nedir): message back at Bdataoff */
-		ab[1] = a[0]; ab[2] = a[2]; ab[3] = 0;
+		ab[1] = Aint(a[0]); ab[2] = Aint(a[2]); ab[3] = 0;
 		break;
 	case Bfd2path:				/* fd2path(fd, buf, nbuf): the path back at Bdataoff */
-		ab[1] = a[0]; ab[2] = a[2]; ab[3] = 0;
+		ab[1] = Aint(a[0]); ab[2] = Aint(a[2]); ab[3] = 0;
 		break;
 	case Bstat:				/* stat(name, edir, nedir): name at Bnameoff, message back at Bdataoff */
 		nd = ospreydata(p, Bnameoff, 256);
@@ -2871,20 +3093,21 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
 			for(i = 0; i < 255 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
 		}
-		ab[1] = 0; ab[2] = a[2]; ab[3] = 0;
+		ab[1] = 0; ab[2] = Aint(a[2]); ab[3] = 0;
 		break;
 	case Berrstr:				/* errstr(buf, nbuf): text back at Bdataoff */
-		ab[1] = 0; ab[2] = a[1]; ab[3] = 0;
+		ab[1] = 0; ab[2] = Aint(a[1]); ab[3] = 0;
 		break;
 	case Bpipe:				/* pipe(fd[2]): two ints back at Bdataoff */
 		ab[1] = 0; ab[2] = 0; ab[3] = 0;
 		break;
 	case Brfork:				/* rfork(flags) */
-		ab[1] = a[0]; ab[2] = 0; ab[3] = 0;
+		ab[1] = Aint(a[0]); ab[2] = 0; ab[3] = 0;
 		break;
 	case Bbind:				/* bind(name, old, flag): name at Bnameoff, old just past it */
 		nd = ospreydata(p, Bnameoff, 512);
@@ -2892,6 +3115,8 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *name = (char*)a[0], *old = (char*)a[1];
+			ospreytouch(a[0], 256);
+			ospreytouch(a[1], 256);
 			for(i = 0; i < 127 && name[i] != 0; i++)
 				nd[i] = name[i];
 			nd[i] = 0;
@@ -2899,7 +3124,7 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 				nd[128+i] = old[i];
 			nd[128+i] = 0;
 		}
-		ab[1] = a[2]; ab[2] = 0; ab[3] = 0;	/* the flag */
+		ab[1] = Aint(a[2]); ab[2] = 0; ab[3] = 0;	/* the flag */
 		break;
 	case Bmount:				/* mount(fd, afd, old, flag, spec): old at Bnameoff, spec just past it */
 		nd = ospreydata(p, Bnameoff, 512);
@@ -2907,6 +3132,8 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 			return -1;
 		{
 			char *old = (char*)a[2], *spec = (char*)a[4];
+			ospreytouch(a[2], 256);
+			ospreytouch(a[4], 256);
 			for(i = 0; i < 127 && old[i] != 0; i++)
 				nd[i] = old[i];
 			nd[i] = 0;
@@ -2914,19 +3141,79 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 				nd[128+i] = spec[i];
 			nd[128+i] = 0;
 		}
-		ab[1] = a[0]; ab[2] = a[3]; ab[3] = 0;	/* fd, flag */
+		ab[1] = Aint(a[0]); ab[2] = Aint(a[3]); ab[3] = 0;	/* fd, flag */
+		break;
+	case Bchdir:				/* chdir(name): name at Bnameoff */
+		nd = ospreydata(p, Bnameoff, 256);
+		if(nd == nil)
+			return -1;
+		{
+			char *name = (char*)a[0];
+			ospreytouch(a[0], 256);
+			for(i = 0; i < 255 && name[i] != 0; i++)
+				nd[i] = name[i];
+			nd[i] = 0;
+		}
+		ab[1] = 0; ab[2] = 0; ab[3] = 0;
+		break;
+	case Bunmount:				/* unmount(name, old): name at Bnameoff, old just past it */
+		nd = ospreydata(p, Bnameoff, 512);
+		if(nd == nil)
+			return -1;
+		{
+			/*
+			 * name may be nil, which is Plan 9's "everything mounted
+			 * on old": it crosses as an empty string, since what the
+			 * buddy reads is a byte at a fixed offset and there is no
+			 * nil to send.
+			 */
+			char *name = (char*)a[0], *old = (char*)a[1];
+			ospreytouch(a[0], 256);
+			ospreytouch(a[1], 256);
+			if(name == nil)
+				nd[0] = 0;
+			else {
+				for(i = 0; i < 127 && name[i] != 0; i++)
+					nd[i] = name[i];
+				nd[i] = 0;
+			}
+			for(i = 0; i < 127 && old[i] != 0; i++)
+				nd[128+i] = old[i];
+			nd[128+i] = 0;
+		}
+		ab[1] = 0; ab[2] = 0; ab[3] = 0;
 		break;
 	default:
 		return -1;			/* a trap the buddy does not emulate */
 	}
+#undef Aint
 
-	status = ospreybuddycall(p, 400);
+	/*
+	 * A forwarded system call may legitimately take a long time - a read
+	 * of a pipe waits for whoever writes it, which is another process
+	 * entirely and may not have run yet - so it is given far longer than
+	 * the kernel's own asks of the buddy (a page, a descriptor clone),
+	 * which either answer at once or have gone wrong.  Thirty seconds:
+	 * past it the call is -1 to the program, which for a read is an
+	 * error and not an end of file, so a pipeline that outran it would
+	 * say so rather than quietly read short.
+	 */
+	ab[0] = scallnr;		/* last, for the reason above */
+	status = ospreybuddycall(p, Bsyscalltries);
 	if(status < 0)
 		return -1;
 
 	if((scallnr == Bread || scallnr == Bpread || scallnr == Bfstat || scallnr == Bstat || scallnr == Berrstr || scallnr == Bfd2path) && status > 0){
 		/* read/fstat/stat/fd2path return their bytes in a[1]; errstr in a[0] */
 		uchar *dst = (uchar*)(scallnr == Berrstr ? a[0] : a[1]);
+		/*
+		 * The buffer is the program's, and these calls never went
+		 * through sysfile.c, which is where a Plan 9 kernel checks a
+		 * user pointer.  Check it here: a bad one is the program's
+		 * error, and errors out of the call, not a kernel write to an
+		 * address the program does not own.
+		 */
+		validaddr((uintptr)dst, status, 1);
 		dd = ospreydata(p, Bdataoff, status);
 		if(dd != nil)
 			for(i = 0; i < status; i++)
@@ -2940,8 +3227,18 @@ ospreybuddyforward(ulong scallnr, uintptr *a)
 	 */
 	if(scallnr == Bfd2path && status > 0)
 		return 0;
+	/*
+	 * seek(2) likewise: the new offset goes to the caller's vlong and
+	 * the call itself yields 0, which is what its libc stub checks.
+	 */
+	if(scallnr == Bseek && status >= 0){
+		validaddr(a[0], sizeof(vlong), 1);
+		*(vlong*)a[0] = status;
+		return 0;
+	}
 	if(scallnr == Bpipe && status == 0){
 		/* the two descriptors, two ints, back into the process's fd[2] */
+		validaddr(a[0], 2*sizeof(int), 1);
 		dd = ospreydata(p, Bdataoff, 2*sizeof(int));
 		if(dd != nil)
 			for(i = 0; i < (long)(2*sizeof(int)); i++)
@@ -3159,7 +3456,18 @@ uvlong kdebugputsbytes;		/* main.c counts what went out through the bare console
  * queue cannot yet.  Only the FIFO itself overflowing - the task sixteen
  * kilobytes behind - or a panic goes to the port.
  */
-enum { Consfifo = 16*1024 };
+/*
+ * The FIFO the console task drains.  When it fills, the caller writes
+ * the port itself instead of queueing - which is right for a panic and
+ * wrong for everything else: the task is pushing queued bytes at the
+ * same moment, so the two writers cross and a line comes out cut in
+ * half.  That is what the check transients were, every one of them: a
+ * criterion matching a whole sentence, and the sentence split by a
+ * kernel print that went round the queue.  128K rather than 16K, so a
+ * burst is queued rather than overtaking; the count of what still went
+ * direct is printed at the end of a run, and it is the number to watch.
+ */
+enum { Consfifo = 128*1024 };
 static char consfifo[Consfifo];
 static ulong consin, consout;		/* under ospreyconslock; consin - consout is what waits */
 static ulong consslotsum[Nconsslot];	/* a checksum of each slot as filled, checked when the task starts to push it */
@@ -3283,6 +3591,20 @@ ospreyconsdrained(Ospreyproc *p)
 	iunlock(&ospreyconslock);
 	if(consout != consin && (x = ospreyindex(p)) >= 0 && x < nelem(ospreyselrend))
 		wakeup(&ospreyselrend[x]);
+}
+
+/*
+ * Is the running process the console task's own?  A fault it takes must
+ * not be printed into the queue it is itself supposed to drain: those
+ * bytes would sit there until it ran again, which is exactly what a
+ * faulting task may not do.  trap.c asks this and writes the port
+ * directly for that one process, and goes through the queue - in order
+ * with everything else - for every other.
+ */
+int
+ospreyisconsoleproc(void)
+{
+	return up != nil && up->osprey != nil && up->osprey == ospreyconsproc;
 }
 
 /* a task's write to the console: through the console task, or the port when there is none */
@@ -3438,6 +3760,64 @@ enum {
 	Xreplydone = 1,		/* device does not include; the adapter checks the same values */
 };
 static uvlong ospreynextid = 100;	/* container identities for programs exec starts */
+
+/*
+ * Did this container start that one?  The child table is what records
+ * it: exec puts an entry there and so does the kernel's own fork, and
+ * the entry is what a wait is answered from.  Authority to post a note
+ * is asked of the same table, so a container may interrupt exactly what
+ * it started.
+ */
+static int
+ospreystartedby(Ospreyproc *parent, Ospreyproc *child)
+{
+	Ospreychild *e;
+	int yes = 0;
+
+	qlock(&ospreylock);
+	for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++)
+		if(e->used && e->parent == parent && e->child == child){
+			yes = 1;
+			break;
+		}
+	qunlock(&ospreylock);
+	return yes;
+}
+
+/*
+ * Post a note to a container's process, and for the group form to every
+ * container it started as well - which is what a process group is here:
+ * a container and what came out of it.  Returns how many processes were
+ * given the note, so that a personality can tell "nobody" from "one".
+ */
+static int
+ospreynotecontainer(Ospreyproc *c, char *note, int group)
+{
+	Ospreychild *e;
+	Proc *q;
+	int x, n;
+
+	n = 0;
+	if(group){
+		qlock(&ospreylock);
+		for(e = ospreychildren; e < &ospreychildren[nelem(ospreychildren)]; e++){
+			if(!e->used || e->parent != c || e->done)
+				continue;
+			x = ospreyindex(e->child);
+			if(x >= 0 && x < nelem(ospreyprocs) && (q = ospreyprocs[x]) != nil){
+				postnote(q, 1, note, NUser);
+				n++;
+			}
+		}
+		qunlock(&ospreylock);
+	}
+	x = ospreyindex(c);
+	if(x >= 0 && x < nelem(ospreyprocs) && (q = ospreyprocs[x]) != nil){
+		postnote(q, 1, note, NUser);
+		n++;
+	}
+	return n;
+}
 
 static void
 ospreyexecproc(void *a)
@@ -3595,6 +3975,24 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	if(p->pgrp != nil)
 		incref(p->pgrp);
 	/*
+	 * The rendezvous group.  Two processes that share an address space
+	 * (RFMEM) are what rendezvous(2) is for - it is how libthread's
+	 * proccreate hands a new proc its argument and how the two then
+	 * synchronise - so they must be in one group, and a plain fork's
+	 * child must not be, or an unrelated program's tag could meet this
+	 * one's.  The group is made here on the parent when it has none,
+	 * because it has to exist before there is anyone to share it with;
+	 * pgrp.c, which is where a full kernel makes it, is cut from every
+	 * configuration this path serves.
+	 */
+	if(flag & RFMEM){
+		if(up->rgrp == nil)
+			up->rgrp = newrgrp();
+		p->rgrp = up->rgrp;
+		incref(p->rgrp);
+	} else
+		p->rgrp = nil;
+	/*
 	 * Craft the child's return frame: it pops out of the scheduler in
 	 * user mode at the parent's fork point, with the return register 0.
 	 */
@@ -3654,6 +4052,7 @@ ospreyforkkern(Ospreyproc *parent, ulong flag)
 	/* the child runs the buddy's image the same way the parent does */
 	p->osprey = c;
 	p->buddyimage = up->buddyimage;
+	p->buddyredir = up->buddyredir;	/* its descriptors are cloned from this one's, redirections and all */
 	p->oslinux = up->oslinux;
 	p->linuxheap = up->linuxheap;
 	p->linuxbrk = up->linuxbrk;
@@ -4031,6 +4430,7 @@ ospreymigcall(int op, uvlong *arg, uvlong *ubuf)
 		p->kp = 0;
 		p->oslinux = 0;
 		p->buddyimage = (flags & Migimage) != 0;
+		p->buddyredir = 0;		/* the far buddy reopens its descriptors; 0, 1 and 2 are the console there */
 		/*
 		 * The heap comes with the header: the segment it grows is one
 		 * of the carried ones, named by the index the sender wrote, so
@@ -4280,6 +4680,7 @@ ospreymoveproc(Proc *q, Ospreyproc *c, Segment **shared, Proc *sharer)
 
 	p->osprey = c;
 	p->buddyimage = q->buddyimage;
+	p->buddyredir = q->buddyredir;
 	p->oslinux = q->oslinux;
 	p->linuxheap = q->linuxheap;
 	p->linuxbrk = q->linuxbrk;
@@ -4666,6 +5067,7 @@ ospreymovekern(Ospreyproc *old, uvlong *ubuf, int group)
 
 	p->osprey = c;
 	p->buddyimage = up->buddyimage;
+	p->buddyredir = up->buddyredir;	/* its descriptors are cloned from this one's, redirections and all */
 	p->oslinux = up->oslinux;
 	p->linuxheap = up->linuxheap;
 	p->linuxbrk = up->linuxbrk;
@@ -5383,8 +5785,16 @@ ospreyinit(void)
 	 */
 	if(ospreyp9)
 		ospreysetsize("data", 2*BY2PG, 0);
-		ospreysetsize("pktbuf", 32, 0);	/* the user-space network driver's receive ring of 16, and room for more */
-		ospreysetsize("txbuf", 16, 0);	/* and its transmit ring */
+	/*
+	 * These two are every configuration's and not the personality's.
+	 * They were written under the branch above and indented as if they
+	 * belonged to it, which they never did - the if has no braces - and
+	 * the network checks depend on their being unconditional, so they
+	 * are set out here rather than left reading as a branch they are
+	 * not part of.
+	 */
+	ospreysetsize("pktbuf", 32, 0);	/* the user-space network driver's receive ring of 16, and room for more */
+	ospreysetsize("txbuf", 16, 0);	/* and its transmit ring */
 	for(i = 0; i < nelem(ospreysizeconf); i++){
 		if((cf = getconf(ospreysizeconf[i].conf)) == nil)
 			continue;

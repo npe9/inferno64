@@ -146,6 +146,7 @@ struct Mach
 
 	Lock	alarmlock;
 	void	*alarm;
+	uintptr	gicr;			/* this cpu's GICv3 redistributor RD_base */
 	ulong	cpuhz;
 	ulong	delayloop;
 
@@ -162,25 +163,28 @@ struct
 }active;
 
 /*
- * A real array, not a stub returning cpu0.  It used to be
- *
- *	#define MACHP(n)	((Mach*)(void*)&mach0)
- *
- * which ignores n -- correct only while there is one processor, and
- * silently wrong once there is not: os/inferno/port/devcons.c walks
- * active.machs[] and calls MACHP(id) for each, and would have reported
- * cpu0's numbers for every one of them.
+ * MACHP(n) was a macro that ignored n and returned the one Mach there
+ * was.  It is an array now, filled by machinit() for machno 0 and by
+ * startcpus() for each processor it starts, and nil for a slot no
+ * processor occupies.  Every MACHP() in the portable code that walks
+ * to MAXMACH is guarded by active.machs[], which is why nil is safe:
+ * see the comment in startcpus() about why a parked processor does
+ * not set it.
  */
-extern Mach*	machp[MAXMACH];
 #define	MACHP(n)	(machp[n])
 
 extern Mach mach0;
+extern Mach *machp[MAXMACH];
+
 /*
- * m lives in a machine register, not in memory, so that each processor
- * has its own.  This is what pc64 does with R15 (see its dat.h) and it
- * is the only way a shared kernel image can give every processor a
- * different Mach: 7c honours "extern register" and turns every m->x
- * into a register-relative access with no load of the pointer at all.
+ * m and up are registers rather than globals, which is what makes them
+ * per-processor at all: on a machine with more than one processor
+ * every one of them needs its own "which Mach am I" and "which Proc am
+ * I running", and a global has exactly one of each.  7c reserves R27
+ * and R26 for this (REGEXT and REGEXT-1 in utils/7c/7.out.h) and never
+ * allocates them for anything else, in any translation unit, whether
+ * or not it has seen this declaration -- so libinterp, libsec and the
+ * rest, none of which include this header, are unaffected.
  *
  * The register is R27.  It is not touched by libinterp/comp-arm64.c,
  * whose JIT uses R0-R5 and R20-R22, and l.s's trap path already saves

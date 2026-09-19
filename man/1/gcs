@@ -1,0 +1,125 @@
+.TH GCS 1
+.SH NAME
+gcs \- Google Cloud Storage from an instance's own credential
+.SH SYNOPSIS
+.B gcs
+[
+.BI -A " addr"
+]
+[
+.BI -t " tokenfile"
+]
+.B ls
+.I bucket
+[
+.I prefix
+]
+.br
+.B gcs
+[ ... ]
+.B get
+.I bucket object
+.br
+.B gcs
+[ ... ]
+.B put
+.I bucket object file
+.SH DESCRIPTION
+.I Gcs
+lists, reads and writes objects in a Google Cloud Storage bucket.
+.B Get
+writes the object to standard output;
+.B put
+sends the contents of
+.I file
+and reports the size.
+.PP
+The credential is the one
+.IR cloudfs (4)
+already serves.
+.I Gcs
+reads
+.B /cloud/token
+\(em the metadata service's reply, from which it takes
+.B access_token
+\(em and sends it as an
+.B Authorization: Bearer
+header over TLS.  Nothing is stored on the machine and nothing is
+signed, which is why this is the route to prefer on an instance.  A
+file holding only the token is accepted too.
+.PP
+Options:
+.TP
+.BI -A " addr"
+Dial
+.I addr
+rather than resolving
+.BR storage.googleapis.com .
+The host is still what is named in SNI and required of the
+certificate.  Needed because nothing in this tree resolves names yet.
+.TP
+.BI -t " tokenfile"
+Read the credential from
+.I tokenfile
+instead of
+.BR /cloud/token .
+.SH EXAMPLE
+.IP
+.EX
+cloudinit
+mount {cloudfs} /cloud
+gcs ls my-bucket
+gcs get my-bucket hello.txt
+.EE
+.SH SOURCE
+.B /appl/cmd/gcs.b
+.SH SEE ALSO
+.IR cloudfs (4),
+.IR cloudinit (1),
+.IR httpclient (2),
+.IR awsv4 (2)
+.SH BUGS
+The instance's service account must have a storage scope; the default
+Compute Engine account is read-only unless the instance was created
+otherwise, and a
+.B put
+then fails with 403.
+.PP
+The XML API is used, and the listing is scanned for
+.B <Key>
+elements rather than parsed.
+.PP
+Continuation is implemented: a reply carrying
+.B <IsTruncated>true</IsTruncated>
+is followed by another request with the
+.B <NextContinuationToken>
+it returns, percent-encoded, until the listing ends.  A truncated reply
+with no token raises an error rather than returning a short listing as
+though it were whole \(em which is what this did before, and a listing
+that is silently short is the worst way for one to be wrong, because
+the output looks like a complete answer.
+.PP
+The continuation
+.I loop
+has not been run against a bucket with more than one page of objects;
+that needs an instance with storage credentials.  The parsing and the
+encoding it depends on are tested: a token containing
+.BR = ,
+.B +
+and
+.B /
+survives extraction and comes back as
+.BR %3D ,
+.B %2B
+and
+.BR %2F ,
+and a final page with
+.B <IsTruncated>false</IsTruncated>
+ends the loop.
+.PP
+The other route is not wired up:
+.B storage.googleapis.com
+also speaks S3's API with SigV4 and interoperability keys, which
+.IR awsv4 (2)
+is in the tree for, and which is what a machine outside Google \(em or
+one talking to S3 itself \(em would need.

@@ -17,6 +17,16 @@
  * legacy binary is the body: ordinary Plan 9 open/create/write/read/
  * fstat/remove/close/print.
  */
+/* set by the note handler when alarm(2)'s note arrives */
+static volatile int galarm;
+
+/*
+ * Who this process is, for the note handler to say.  A fork copies it,
+ * so each process of the demonstration names itself and a note posted
+ * to a whole group can be told apart in the log.
+ */
+static char *gwho = "legacy";
+
 /*
  * A note handler: the ordinary Plan 9 kind, registered with notify(2).
  * When the program faults, the microkernel delivers the note here (the
@@ -27,6 +37,17 @@ static void
 nhandler(void *ureg, char *msg)
 {
 	USED(ureg);
+	if(strncmp(msg, "alarm", 5) == 0){
+		/* alarm(2)'s note: the kernel's clock, not a fault and not the buddy's */
+		galarm = 1;
+		print("legacy: my note handler got the alarm note I asked for: \"%s\"; noted(NCONT)\n", msg);
+		noted(NCONT);
+	}
+	if(strncmp(msg, "interrupt", 9) == 0){
+		/* postnote(2)'s note, from the process that started this one */
+		print("%s: my note handler got the note posted to it: \"%s\"; exiting on it\n", gwho, msg);
+		exits("interrupted");
+	}
 	if(strncmp(msg, "osprey:", 7) == 0){
 		/* not a fault: continue where the note interrupted */
 		print("legacy: my note handler got a note that is not a fault: \"%s\"; noted(NCONT)\n", msg);
@@ -38,6 +59,7 @@ nhandler(void *ureg, char *msg)
 
 /* shared with a thread made by rfork(RFPROC|RFMEM): in the data segment, so both see it */
 static volatile int gshared, gstop;
+static char *gheap;		/* a buffer on the heap, for the RFMEM sharing check */
 
 /* forty pages of the bss, each written before the crossing: pages that differ from the image, which is what a crossing carries */
 enum { Ndirty = 40 };
@@ -169,12 +191,189 @@ startboot(char *argv0, char **argv)
 					close(hfd);
 					print("legacy: mounted #X at /mnt and read /mnt/n/hello over 9P: \"%s\"\n", buf);
 				}
+				/*
+				 * And take it off again.  unmount(nil, "/mnt")
+				 * is Plan 9's "everything mounted there": the
+				 * name space is this container's own, so what
+				 * goes is this container's mount and no other's,
+				 * and the proof is that the file reachable a
+				 * moment ago is not reachable now.
+				 */
+				if(unmount(nil, "/mnt") < 0)
+					print("legacy: unmount /mnt failed\n");
+				else if(open("/mnt/n/hello", OREAD) >= 0)
+					print("legacy: BUG: /mnt/n/hello still readable after unmount\n");
+				else
+					print("legacy: unmounted /mnt; /mnt/n/hello is no longer reachable, which is what unmount means\n");
 			}
 			close(fd);
 		}
 	}
 
 	print("legacy: the buddy answered every trap\n");
+
+	/*
+	 * The four calls beyond the file traps, which rio's libc uses and
+	 * this program had never asked for.  Two of them are the buddy's,
+	 * because a working directory is a name-space thing; two are the
+	 * kernel's, because a clock and a place to block are not files.
+	 */
+	{
+		vlong t0, t1;
+		int rfd, i;
+
+		/*
+		 * chdir(2): the buddy's, and the container's own.  After it, a
+		 * relative name resolves against /n here and against whatever
+		 * directory another container chose there - which is why the
+		 * buddy keeps a working directory per container rather than
+		 * setting its worker's.
+		 */
+		if(chdir("/n") < 0)
+			print("legacy: chdir /n failed\n");
+		else if((rfd = open("hello", OREAD)) < 0)
+			print("legacy: chdir'd to /n but the relative name hello did not open\n");
+		else {
+			n = read(rfd, buf, sizeof buf - 1);
+			if(n < 0)
+				n = 0;
+			buf[n] = 0;
+			close(rfd);
+			print("legacy: chdir'd to /n and opened the relative name hello, which reads: \"%s\"\n", buf);
+		}
+
+		/*
+		 * And the working directory is the container's, not the
+		 * buddy's worker's.  A fork inherits it - the child opens the
+		 * same relative name and gets the same file - and then the
+		 * child chdirs somewhere else of its own, which must not move
+		 * the parent: the two run their calls on the same four shared
+		 * workers, so if the directory were the worker's the second
+		 * open here would resolve wherever the child last went.
+		 */
+		{
+			int pid, cfd;
+			char abuf[128];
+
+			pid = rfork(RFPROC);
+			if(pid == 0){
+				cfd = open("hello", OREAD);
+				if(cfd < 0)
+					print("legacy: BUG: the forked child did not inherit the working directory - hello did not open\n");
+				else {
+					close(cfd);
+					print("legacy: the forked child inherited the working directory: it opened the relative name hello too\n");
+				}
+				if(chdir("/") < 0)
+					print("legacy: the forked child could not chdir to /\n");
+				else if((cfd = open("n/hello", OREAD)) < 0)
+					print("legacy: BUG: the child chdir'd to / but n/hello did not open\n");
+				else {
+					close(cfd);
+					print("legacy: and the child chdir'd to / on its own, where the relative name is n/hello\n");
+				}
+				_exits(nil);
+			}
+			if(pid > 0){
+				if((n = await(abuf, sizeof abuf - 1)) > 0)
+					abuf[n] = 0;
+				if((cfd = open("hello", OREAD)) < 0)
+					print("legacy: BUG: my working directory moved when my child chdir'd - hello no longer opens\n");
+				else {
+					close(cfd);
+					print("legacy: and my own working directory did not move when my child chdir'd: hello still opens here\n");
+				}
+			}
+		}
+
+		/*
+		 * nsec(2): the machine's clock, answered in the kernel.  Two
+		 * readings around a sleep, so that what is shown is the clock
+		 * running and not a constant.
+		 */
+		t0 = nsec();
+		sleep(50);
+		t1 = nsec();
+		if(t1 > t0)
+			print("legacy: nsec() ran forward %lld milliseconds over a 50 millisecond sleep\n", (t1 - t0)/1000000);
+		else
+			print("legacy: BUG: nsec() did not run forward (%lld then %lld)\n", t0, t1);
+
+		/*
+		 * alarm(2): ask the kernel for a note in 150 milliseconds and
+		 * wait for it.  The note is delivered to the handler, which
+		 * continues with noted(NCONT), and the flag it set is what this
+		 * sees.  The wait is a bounded number of short sleeps rather
+		 * than one long one, so a lost note ends the wait rather than
+		 * hanging the boot.
+		 */
+		notify(nhandler);
+		galarm = 0;
+		alarm(150);
+		for(i = 0; i < 40 && !galarm; i++)
+			sleep(20);
+		alarm(0);
+		if(galarm)
+			print("legacy: alarm(150) delivered its note and I woke to it\n");
+		else
+			print("legacy: BUG: alarm(150) never delivered a note\n");
+
+		/*
+		 * rendezvous(2): the one call of the four that needs two
+		 * processes in one address space.  A thread is forked with
+		 * RFMEM and meets this one on a tag, each handing the other a
+		 * word; libthread's proccreate is this, and rio's six
+		 * proccreate calls are why it is here.
+		 */
+		{
+			int tid;
+			void *got;
+
+			/*
+			 * And the part of "one address space" that the bss
+			 * check further down does not reach: the heap.  A
+			 * buffer this process allocated before the fork -
+			 * memory sbrk grew, not memory the program was loaded
+			 * with - is written by the thread and read back here.
+			 * The allocator of a program that forks this way keeps
+			 * its arena there, so if that memory were copied
+			 * rather than shared, two processes would each be
+			 * allocating out of what they both believed was
+			 * theirs.
+			 */
+			if(gheap == nil)
+				gheap = malloc(64);
+			if(gheap != nil)
+				strcpy(gheap, "written by the parent");
+			tid = rfork(RFPROC|RFMEM);
+			if(tid < 0)
+				print("legacy: rfork(RFPROC|RFMEM) for the rendezvous failed\n");
+			else if(tid == 0){
+				if(gheap != nil)
+					strcpy(gheap, "written by the thread, in the address space they share");
+				rendezvous((void*)0x9001, (void*)0x1234);
+				_exits(nil);
+			} else {
+				char abuf[128];
+
+				got = rendezvous((void*)0x9001, (void*)0x5678);
+				if(got == (void*)0x1234)
+					print("legacy: rendezvous on tag 0x9001 met my thread and took the word it left: %#p\n", got);
+				else
+					print("legacy: BUG: rendezvous returned %#p, not the word my thread left\n", got);
+				if((n = await(abuf, sizeof abuf - 1)) > 0){
+					abuf[n] = 0;
+					print("legacy: reaped the thread I rendezvoused with\n");
+				}
+				if(gheap != nil){
+					if(strcmp(gheap, "written by the thread, in the address space they share") == 0)
+						print("legacy: and the heap is shared too: what my thread wrote into a buffer malloc gave me reads back here as \"%s\"\n", gheap);
+					else
+						print("legacy: BUG: the heap buffer still reads \"%s\" - sbrk memory is not shared across RFMEM\n", gheap);
+				}
+			}
+		}
+	}
 
 	/*
 	 * rfork(RFPROC): fork the process itself.  The buddy cannot do this -
@@ -234,6 +433,108 @@ startboot(char *argv0, char **argv)
 		}
 		if(ffd >= 0)
 			close(ffd);
+	}
+
+	/*
+	 * postnote(2): the last of the calls rio's libc uses that this
+	 * personality did not answer, and it is not a system call - libc
+	 * opens /proc/<pid>/note and writes the note's text.  So it is a
+	 * file, served here by the personality that holds this program's
+	 * name space, and the write turns into one request to the kernel,
+	 * which holds the processes.  This is what a window system does to
+	 * the command in a window when the delete key is struck.
+	 */
+	{
+		int pid, n2, k;
+		char abuf[128];
+
+		pid = rfork(RFPROC);
+		if(pid == 0){
+			/*
+			 * The child: a note handler of its own, then it waits
+			 * to be interrupted.  The handler is nhandler, which
+			 * this program registers below - registered here too,
+			 * since a fork's child inherits the handler only if
+			 * the parent had one already, and this one is first.
+			 */
+			gwho = "legacy child";
+			notify(nhandler);
+			for(k = 0; k < 200; k++)
+				sleep(20);
+			print("legacy: BUG: the child was never interrupted\n");
+			_exits(nil);
+		}
+		if(pid < 0)
+			print("legacy: rfork(RFPROC) for the note test failed\n");
+		else {
+			sleep(100);		/* let it reach its handler-registered wait */
+			if(postnote(PNPROC, pid, "interrupt") < 0){
+				char eb[ERRMAX];
+
+				eb[0] = 0;
+				errstr(eb, sizeof eb);
+				print("legacy: BUG: postnote to my own child %d was refused: %s\n", pid, eb);
+			}
+			else
+				print("legacy: posted the note \"interrupt\" to the child I started, container %d, by writing /proc/%d/note\n", pid, pid);
+			/*
+			 * And a container this one did not start: the client,
+			 * container 1, which is not a child of this one.  The
+			 * kernel refuses it - a container may interrupt what it
+			 * started and nothing else.
+			 */
+			if(postnote(PNPROC, 1, "interrupt") < 0)
+				print("legacy: and posting a note to container 1, which I did not start, was refused - authority for a note is having started it\n");
+			else
+				print("legacy: BUG: I was allowed to note a container I did not start\n");
+			if((n2 = await(abuf, sizeof abuf - 1)) > 0){
+				abuf[n2] = 0;
+				print("legacy: reaped the child I interrupted; its wait message: \"%s\"\n", abuf);
+			} else
+				print("legacy: await() after the note returned nothing\n");
+		}
+
+		/*
+		 * And the group form, which is the one rio uses: a note to a
+		 * container and to everything that container started.  The
+		 * child here starts one of its own first, so the walk has
+		 * something to find - a window's command with something under
+		 * it, which is the shape a window system interrupts.
+		 */
+		pid = rfork(RFPROC);
+		if(pid == 0){
+			int gk;
+
+			gwho = "legacy child";
+			notify(nhandler);
+			gk = rfork(RFPROC);
+			if(gk == 0){
+				gwho = "legacy grandchild";
+				notify(nhandler);
+				for(k = 0; k < 200; k++)
+					sleep(20);
+				print("legacy: BUG: the grandchild was never interrupted\n");
+				_exits(nil);
+			}
+			for(k = 0; k < 200; k++)
+				sleep(20);
+			print("legacy: BUG: the child of the group was never interrupted\n");
+			_exits(nil);
+		}
+		if(pid < 0)
+			print("legacy: rfork(RFPROC) for the group note test failed\n");
+		else {
+			sleep(300);	/* let the child fork its own and both reach their handlers */
+			if(postnote(PNGROUP, pid, "interrupt the group") < 0)
+				print("legacy: BUG: postnote to the group of container %d was refused\n", pid);
+			else
+				print("legacy: posted the note \"interrupt the group\" to container %d and everything it started, by writing /proc/%d/notepg\n", pid, pid);
+			if((n2 = await(abuf, sizeof abuf - 1)) > 0){
+				abuf[n2] = 0;
+				print("legacy: reaped the group's head; its wait message: \"%s\"\n", abuf);
+			} else
+				print("legacy: await() after the group note returned nothing\n");
+		}
 	}
 
 	/*

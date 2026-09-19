@@ -1804,6 +1804,7 @@ main(int argc, char *argv[])
 	 * and -W says how wide a Dis word is.
 	 */
 	typeinit();
+	precastinit();		/* needs tint and treal, which typeinit makes */
 
 	if((root = getroot()) != nil){
 		char *r;

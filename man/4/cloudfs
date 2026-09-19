@@ -1,0 +1,75 @@
+.TH CLOUDFS 4
+.SH NAME
+cloudfs \- serve a cloud provider's metadata service as a file tree
+.SH SYNOPSIS
+.B mount {cloudfs
+[
+.BI -a " baseurl"
+]
+[
+.BI -H " 'name: value'"
+]
+.BI } " dir"
+.SH DESCRIPTION
+.I Cloudfs
+serves 9P on its standard input, presenting a flat directory of
+read-only files, each of which is one entry of the instance metadata
+service.  Reading a file makes the HTTP request and returns what the
+service said.
+.PP
+The files are
+.BR id ,
+.BR name ,
+.BR hostname ,
+.BR zone ,
+.BR machine-type ,
+.BR project ,
+.B ip
+and
+.BR token .
+.PP
+Options:
+.TP
+.BI -a " baseurl"
+The metadata service's base URL.  The default is
+.B http://169.254.169.254/
+which is where both Compute Engine and EC2 answer.
+.TP
+.BI -H " 'name: value'"
+The header the service demands.  The default is
+.BR "Metadata-Flavor: Google" .
+.PP
+Every read is a fresh request, made when the file is opened.  The
+token this instance is issued expires, so a cached one is a bug that
+waits an hour to appear.
+.PP
+The point is that the provider's control plane becomes part of the name
+space rather than a library to link against.
+.B Cat
+.B /cloud/token
+replaces an SDK, and nothing in the program that consumes it knows
+which provider it is running on.  See
+.B doc/inferno-cloud-modern.ms
+for what this is the first piece of.
+.SH EXAMPLE
+.IP
+.EX
+cloudinit
+mount {cloudfs} /cloud
+cat /cloud/zone
+.EE
+.SH SOURCE
+.B /appl/cmd/cloudfs.b
+.SH SEE ALSO
+.IR cloudinit (1),
+.IR hget (1),
+.IR httpclient (2)
+.SH BUGS
+The file names and the paths behind them are Compute Engine's.  Another
+provider is another table in the source and the same program, but that
+table is not written yet.
+.PP
+A read fails, rather than returning nothing, when the service cannot be
+reached.  On Compute Engine that is what happens without the host route
+.IR cloudinit (1)
+installs.

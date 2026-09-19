@@ -262,16 +262,92 @@ uartconsole(void)
 	uart->console = 1;
 }
 
+/*
+ * Move the console to the UART ACPI's SPCR names, the way
+ * os/inferno/pc/uarti8250.c's i8250spcrconsole() does on the PC.  A
+ * server does not put its console where this board's mem.h says, and
+ * the SPCR is the only place that says where it is.
+ *
+ * Only the base moves.  The register layout does not: interface type 3
+ * is a PL011 and 0x0D and 0x0E are the SBSA generic UART, which is a
+ * PL011 with the modem and DMA parts removed and is register
+ * compatible over everything this driver touches.  Anything else -- a
+ * 16550, say -- this board has no driver for, so it leaves the console
+ * where it is rather than writing PL011 registers at a 16550.
+ *
+ * Called from main() before uartconsole(), so it prints nothing: there
+ * is no console yet, which is the whole point.  It records what it did
+ * and acpiinit() prints that later.  Doing it the other way round --
+ * reading the SPCR at acpiinit() time, after uartconsole() has already
+ * programmed the UART -- cannot work on the machine it exists for: a
+ * wrong base means uartconsole() faults before trapinit() has
+ * installed a handler, the firmware's own handler takes it, and the
+ * kernel never reaches acpiinit().
+ */
+int spcrstate;			/* see the strings in spcrwhy() */
+uvlong spcrwas;			/* base before the move */
+
+char*
+spcrwhy(void)
+{
+	switch(spcrstate){
+	case 0:	return "no SPCR";
+	case 1:	return "console already where the SPCR says";
+	case 2:	return "console moved to the SPCR's address";
+	case 3:	return "SPCR address is not in system memory";
+	case 4:	return "SPCR interface type is not a pl011";
+	}
+	return "unknown";
+}
+
+int
+spcrconsole(void)
+{
+	Ctlr *c;
+
+	spcrstate = 0;
+	if(acpiuart == 0)
+		return 0;
+	if(acpiuartspace != 0){		/* not system memory */
+		spcrstate = 3;
+		return 0;
+	}
+	if(acpiuartiface != 3 && acpiuartiface != 0x0D && acpiuartiface != 0x0E){
+		spcrstate = 4;
+		return 0;
+	}
+	c = &virtarm64ctlr;
+	spcrwas = (uvlong)(uintptr)c->base;
+	if(spcrwas == acpiuart){
+		spcrstate = 1;
+		return 0;
+	}
+	c->base = (u32*)(uintptr)acpiuart;
+	spcrstate = 2;
+	return 1;
+}
+
 void
 uartconsolesetup(void)
 {
 	Ctlr *c;
+	int irq;
 
 	if(consuart == nil)
 		return;
 	consuart->putc = consolerx;
-	/* pl011@9000000's SPI is 1 -> GIC IRQ 33 */
-	intrenable(33, uartintr, consuart, 0, "uart0");
+	/*
+	 * pl011@9000000's SPI is 1 -> GIC IRQ 33 is what the device tree
+	 * says and what this board used before there was any ACPI; the
+	 * SPCR's global system interrupt is what a server says.
+	 */
+	irq = 33;
+	if(acpiuartgsi != 0 && acpiuartgsi != irq){
+		print("spcr: console irq %d from the firmware, board says %d\n",
+			acpiuartgsi, irq);
+		irq = acpiuartgsi;
+	}
+	intrenable(irq, uartintr, consuart, 0, "uart0");
 	c = consuart->regs;
 	csr32w(c, UartIMSC, UartIMSCRX);
 }

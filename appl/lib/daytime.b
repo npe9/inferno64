@@ -72,8 +72,29 @@ now(): int
 	if(n < 0)
 		return 0;
 
-	t := (big string buf[0:n]) / big 1000000;
-	return int t;
+	#
+	# Two formats, because there are two kinds of /dev/time.
+	#
+	# emu's (emu/port/devcons.c) is a single number: microseconds
+	# since the epoch, which is what the division below was written
+	# for.  A native kernel's (os/inferno/port/devcons.c, readtime)
+	# is Plan 9's four fields -- seconds, nanoseconds, ticks and the
+	# fast-clock frequency -- and its first field is already
+	# seconds.
+	#
+	# Dividing that first field by a million is how the whole tree
+	# came to think it was January 1970 on every native kernel: now()
+	# returned 1789 for a clock reading 1789139261.  It is not only
+	# cosmetic.  x509(2)'s is_validtime() calls this, so every TLS
+	# handshake on a kernel failed with "leaf certificate expired or
+	# not yet valid" no matter how well the clock was set.
+	#
+	(nf, flds) := sys->tokenize(string buf[0:n], " \t\n");
+	if(nf >= 2)
+		return int (big hd flds);
+	if(nf == 1)
+		return int ((big hd flds) / big 1000000);
+	return 0;
 }
 
 time(): string

@@ -96,12 +96,115 @@ multibootargs(void)
 	*cp = 0;
 }
 
+/*
+ * struct hvm_start_info, from the x86/HVM direct boot ABI: what a PVH
+ * loader leaves for the kernel in place of a multiboot information
+ * structure.  Read as 32-bit words because the two 64-bit fields this
+ * wants are the only ones that need joining, and l.s records the
+ * pointer as a physical address in pvhptr.
+ *
+ *	 0 magic	 4 version	 8 flags	12 nr_modules
+ *	16 modlist	24 cmdline	32 rsdp		40 memmap
+ *	48 memmap_entries
+ *
+ * A memory-map entry is addr, size, type, reserved: 8+8+4+4 bytes, and
+ * the type is already an E820 type, which is what *e820= carries.
+ */
+enum {
+	Pvhmagic	= 0x336ec578,	/* xEn3 */
+};
+
+static void
+pvhargs(void)
+{
+	extern ulong pvhptr;
+	u32int *si, nment, i;
+	uvlong cmdline, rsdp, memmap, base, end, pbase, pend;
+	uchar *m;
+	char *cp, *ep;
+	int type, ptype;
+
+	if(pvhptr == 0 || pvhptr >= MemMin)
+		return;
+	si = (u32int*)KADDR((uintptr)pvhptr);
+	if(si[0] != Pvhmagic)
+		return;
+
+	cmdline = (uvlong)si[6] | (uvlong)si[7]<<32;
+	rsdp = (uvlong)si[8] | (uvlong)si[9]<<32;
+	memmap = (uvlong)si[10] | (uvlong)si[11]<<32;
+	nment = si[1] >= 1 ? si[12] : 0;
+
+	cp = BOOTARGS;
+	ep = cp + BOOTARGSLEN-1;
+
+	/*
+	 * Adjacent entries of the same type become one, and the line
+	 * stops at an entry boundary if it will not all fit: the same
+	 * two reasons os/inferno/boot/efi/efi.c's memconf does it, since
+	 * BOOTARGSLEN is the same 3520 bytes here and a hypervisor's map
+	 * is no smaller than a firmware's.
+	 */
+	ptype = 0;
+	pbase = pend = 0;
+	for(i = 0; i <= nment; i++){
+		if(i < nment){
+			m = (uchar*)KADDR((uintptr)memmap) + i*24;
+			base = *(uvlong*)(m+0);
+			end = base + *(uvlong*)(m+8);
+			type = *(u32int*)(m+16);
+			if(type <= 0 || base >= end)
+				continue;
+			if(type == ptype && base == pend){
+				pend = end;
+				continue;
+			}
+		} else
+			type = base = end = 0;
+
+		if(ptype != 0){
+			if(cp + 40 >= ep)
+				break;
+			if(cp == BOOTARGS)
+				cp = seprint(cp, ep, "*e820=");
+			cp = seprint(cp, ep, "%.1ux %.16llux %.16llux ",
+				ptype, pbase, pend);
+		}
+		if(i >= nment)
+			break;
+		ptype = type;
+		pbase = base;
+		pend = end;
+	}
+	if(cp > BOOTARGS)
+		cp[-1] = '\n';
+
+	/*
+	 * The RSDP address, because a PVH guest has no BIOS area to scan
+	 * for it -- os/inferno/pc/archacpi.c reads *acpi when it is there.
+	 */
+	if(rsdp != 0)
+		cp = seprint(cp, ep, "*acpi=%#llux\n", rsdp);
+
+	/* the command line, one configuration line per word */
+	if(cmdline != 0){
+		int nc, j;
+
+		nc = tokenize(KADDR((uintptr)cmdline), confval, MAXCONF);
+		for(j = 0; j < nc; j++)
+			cp = seprint(cp, ep, "%s\n", confval[j]);
+	}
+
+	*cp = 0;
+}
+
 void
 bootargsinit(void)
 {
 	int i, j, n;
 	char *cp, *line[MAXCONF], *p, *q;
 
+	pvhargs();
 	multibootargs();
 
 	/*

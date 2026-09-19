@@ -28,6 +28,7 @@ extern int ospreyp9pair;
 extern int ospreyp9buddy;
 extern int ospreyp9linux;
 extern void touserat(char*);
+extern void touserv(char*, char*);
 extern int ospreyuserprep(void);
 extern int ospreyframebuffer(void);
 
@@ -184,6 +185,19 @@ enum {
 int
 ospreyexecbuddy(char *name)
 {
+	return ospreyexecbuddy1(name, 0);
+}
+
+/*
+ * The same, with replace saying the caller already has an address space
+ * that this image is to take the place of - exec(2) in place, as against
+ * the fresh process the exec request starts.  The old segments go only
+ * after the buddy has laid the new binary out, so a name it will not lay
+ * out leaves the caller running on the image it had.
+ */
+int
+ospreyexecbuddy1(char *name, int replace)
+{
 	Ospreybuddyseg segs[8];
 	uvlong entry, segva, segend, top;
 	int n, i, seg, npg, kind;
@@ -191,8 +205,36 @@ ospreyexecbuddy(char *name)
 	n = ospreybuddyexec(name, &entry, segs, nelem(segs), &kind);
 	if(n < 0)
 		return -1;
+	if(replace){
+		/*
+		 * Now, and not before: the new image is known, so the old
+		 * address space can go.  Every segment, the stack included -
+		 * exec keeps no memory, and what a process holds across it is
+		 * its descriptors, which are the buddy's and untouched.  A note
+		 * handler is code in the text that is going, so it goes too;
+		 * the mapped-file records are of an address space that no
+		 * longer exists.
+		 */
+		qlock(&up->seglock);
+		for(i = 0; i < NSEG; i++)
+			if(up->seg[i] != nil){
+				putseg(up->seg[i]);
+				up->seg[i] = nil;
+			}
+		qunlock(&up->seglock);
+		flushmmu();
+		for(i = 0; i < nelem(up->linuxmap); i++)
+			up->linuxmap[i].len = 0;
+		up->notify = nil;
+		up->notified = 0;
+		up->nnote = 0;
+		up->notepending = 0;
+		up->lastnote = nil;
+	}
 	up->oslinux = kind == 0;	/* an ELF is a Linux process; an a.out a Plan 9 one */
 	up->buddyimage = 1;		/* either way its pages are the buddy's */
+	if(!replace)
+		up->buddyredir = 0;	/* a program the exec request started: 0, 1 and 2 are the console the buddy gives it.  An exec in place keeps them, as it keeps the descriptors */
 	ospreyuserentry = entry;
 	up->seg[SSEG] = newseg(SG_STACK | SG_NOEXEC, USTKTOP-USTKSIZE, USTKSIZE/BY2PG);
 	seg = TSEG;
@@ -291,6 +333,49 @@ ospreybuddybrk(uintptr addr)
 	poperror();
 	up->linuxbrk = addr;
 	return 0;
+}
+
+/*
+ * A region of the caller's address space it may write a program into and
+ * then run: the one thing a library operating system has to ask a kernel
+ * for when it loads a program itself.  Demand-zero, so nothing is
+ * carried until it is touched; writable, because the loader writes the
+ * program in; and executable, because the program then runs there -
+ * which is what flushme means to fault(), the same mark exec puts on a
+ * text segment.  A real text segment would not do: SG_TEXT is mapped
+ * read-only and pages from an image, and this memory has no file behind
+ * it, only the loader's copy.
+ *
+ * Reached by segattach with the name "code", so the microkernel's
+ * address-space service keeps the one call it had rather than growing
+ * another number.
+ */
+uintptr
+ospreysegcode(uintptr va, ulong len)
+{
+	Segment *s;
+	int sno;
+
+	if(va == 0 || (va & (BY2PG-1)) != 0 || len == 0)
+		return (uintptr)-1;
+	len = PGROUND(len);
+	if(va + len >= USTKTOP-USTKSIZE || isoverlap(va, len) != nil)
+		return (uintptr)-1;
+	for(sno = 0; sno < NSEG; sno++)
+		if(up->seg[sno] == nil && sno != ESEG)
+			break;
+	if(sno == NSEG)
+		return (uintptr)-1;
+	if(waserror())
+		return (uintptr)-1;
+	s = newseg(SG_BSS, va, len/BY2PG);
+	poperror();
+	if(s == nil)
+		return (uintptr)-1;
+	s->flushme = 1;			/* code is fetched from it: fault() maps it executable */
+	up->seg[sno] = s;
+	print("osprey user: %lud bytes of address space at %#llux for a program the caller loads itself\n", (ulong)len, (uvlong)va);
+	return va;
 }
 
 uintptr
@@ -549,19 +634,55 @@ ospreyenteruservec(char **argv, int argc)
 			memmove((void*)sp, argv[i], n);
 			straddr[i] = sp;
 		}
-		/* the pointer array, 16-aligned, below the strings */
+		/*
+		 * The pointer array, 16-aligned, below the strings:
+		 * argv[0]..argv[argc-1], the nil that ends the vector, and
+		 * one word past the nil holding the address of the Tos.
+		 *
+		 * That last word is this kernel's own, and it is here because
+		 * a program entered this way never runs libc's _main.  On
+		 * Plan 9 the kernel leaves the Tos in AX and main9.s stores
+		 * it in _tos; here AX carries the argument vector instead, so
+		 * the pointer has to travel somewhere, and the end of the
+		 * vector is the one place the entry can find it without a
+		 * second convention.  init9.c reads it.  Without a Tos, libc
+		 * faults the first time a program asks the time: nsec(2)
+		 * reads /dev/bintime and keeps its descriptor in a private,
+		 * and the private it keeps is indexed by _tos->pid.
+		 */
 		sp &= ~(uintptr)15;
-		sp -= (uintptr)(argc + 1) * sizeof(uintptr);
+		sp -= (uintptr)(argc + 2) * sizeof(uintptr);
 		sp &= ~(uintptr)15;
 		uargv = (uintptr*)sp;
 		for(i = 0; i < argc; i++)
 			uargv[i] = straddr[i];
 		uargv[argc] = 0;
+		uargv[argc+1] = USTKTOP - sizeof(Tos);
+	}
+
+	/*
+	 * And fill it.  Only what a program actually reads is set: the pid,
+	 * which libc's getpid(2) and its per-process privates use, and the
+	 * cycle frequency, which is 0 when the machine has no counter and
+	 * is read as "do not use cycles" rather than as a rate.
+	 */
+	{
+		Tos *tos = (Tos*)(USTKTOP - sizeof(Tos));
+
+		memset(tos, 0, sizeof *tos);
+		tos->pid = up->pid;
+		tos->cyclefreq = m->cyclefreq;
 	}
 
 	splhi();
 	fpukexit(nil);
-	touser((char*)sp);		/* the first argument register holds argv */
+	/*
+	 * The argument register holds the vector; the stack starts two
+	 * words below it, which is where the entry spills that register
+	 * (see touserv in pc64/l.s).  Without the gap the spill lands on
+	 * argv[1].
+	 */
+	touserv((char*)sp, (char*)(sp - 2*sizeof(uintptr)));
 }
 
 void
@@ -596,6 +717,77 @@ ospreyenteruserargs(char *packed)
 }
 
 /*
+ * exec(2) in place, for a legacy process the buddy loaded.  The exec
+ * request (devosprey.c) starts a program in a container of its own; this
+ * is the other exec, the one a program makes for itself - what a shell
+ * does after it forks, and what the personality could not offer before.
+ *
+ * It is in two parts, and the order between them is the whole of it.
+ * First everything that can fail, while the process is still whole: the
+ * name and the argument vector are copied out of the address space that
+ * is about to go (they live in it, and ospreyenteruservec reads them
+ * after the mapping has changed, so kernel copies are not tidiness but
+ * necessity), and the buddy is asked to lay the new binary out.  Either
+ * can refuse, and a refusal returns -1 to a process that goes on running
+ * - the buddy commits nothing of its image record until the new binary
+ * has parsed.  Only then the second part, which cannot fail into
+ * anything the caller could survive: the old segments go, the new ones
+ * are made, and the process enters the new program.  It does not return.
+ */
+int
+ospreyexecself(char *uname, char **uargv)
+{
+	char name[128], packed[512];
+	char *p;
+	int i, n, np;
+
+	validaddr((uintptr)uname, 1, 0);
+	for(n = 0; n < (int)sizeof name - 1; n++){
+		validaddr((uintptr)&uname[n], 1, 0);
+		if((name[n] = uname[n]) == 0)
+			break;
+	}
+	name[n] = 0;
+	np = 0;
+	if(uargv != nil)
+		for(i = 0; i < 32; i++){
+			validaddr((uintptr)&uargv[i], sizeof(char*), 0);
+			if((p = uargv[i]) == nil)
+				break;
+			while(np < (int)sizeof packed - 2){
+				validaddr((uintptr)p, 1, 0);
+				if((packed[np] = *p++) == 0)
+					break;
+				np++;
+			}
+			packed[np++] = 0;
+		}
+	if(np == 0){			/* no vector at all: the program's own name is argv[0] */
+		for(i = 0; i <= n; i++)
+			packed[np++] = name[i];
+	}
+	packed[np] = 0;			/* the double nul ospreyenteruserargs ends on */
+
+	if(ospreyexecbuddy1(name, 1) < 0)
+		return -1;
+	kstrdup(&up->text, name);
+	/*
+	 * The system call's own bookkeeping, which the entry below walks out
+	 * of rather than returning through.  insyscall and the error label
+	 * dosyscall pushed would otherwise be left standing, and the label
+	 * is the one that bites quietly: it is not an error the first time
+	 * or the tenth, it is an overflow after enough execs, which is why
+	 * the check execs twenty times over.
+	 */
+	up->insyscall = 0;
+	up->nerrlab = 0;
+	if(up->oslinux)
+		ospreyenteruserat();	/* an ELF: at its entry, the Linux way */
+	ospreyenteruserargs(packed);	/* an a.out: the Plan 9 way, with its vector */
+	return -1;			/* neither returns */
+}
+
+/*
  * The first process kernel process starts here.
  */
 static void
@@ -616,6 +808,16 @@ proc0(void*)
 		 * calls for it reaches through the syscall interface, not
 		 * through a name space the kernel set up.
 		 */
+		/*
+		 * The alarm kproc, which the full personality starts in
+		 * init0 and this path never did.  alarm(2) posts a note when
+		 * a process's time comes, and the posting is this kproc's:
+		 * without it procalarm records the deadline and nothing ever
+		 * reads it, so a legacy program that sets an alarm waits for
+		 * a note that cannot arrive.  checkalarms, on the clock tick,
+		 * is what wakes it.
+		 */
+		kproc("alarm", alarmkproc, 0);
 		ospreyuserprep();
 		ospreyframebuffer();
 		if(ospreyp9linux){
@@ -650,8 +852,19 @@ proc0(void*)
 			 * The paired personality: this task is the client, its
 			 * buddy the server it delegates to.  Enter as the pair
 			 * client, which mounts the buddy over the ring.
+			 *
+			 * A machine starts a window system because it was
+			 * configured to, and this one is no different: with
+			 * *riodemo= in plan9.ini the client also execs rio and
+			 * leaves it running, and without it the machine is the
+			 * machine every check that is not about rio was written
+			 * against.  A window system is a standing load - three
+			 * readers blocked on files, a draw server answering
+			 * them - and the two-machine checks, which run two of
+			 * these at once and carry processes between them, are
+			 * not the place to put one.
 			 */
-			ospreyenteruser("c");
+			ospreyenteruser(getconf("*riodemo") != nil ? "c rio" : "c");
 			panic("ospreyenteruser returned");
 		}
 		up->kp = 0;

@@ -6094,10 +6094,171 @@ are answered by the config
 with two pair criteria over them \- a note that is not a fault,
 delivered to the program's handler and resumed from with
 .CW noted(NCONT) ,
-and a declined fault the program catches itself.  What is left of 2.2 is
-the shell.
+and a declined fault the program catches itself.
 .PP
-All of this is the
+.B "2.2c: exec(2) in place."
+Done.  A shell forks and then execs, and the exec it makes is not the
+one the personality had: the exec request
+.CW ( ring_execv )
+starts a program in a container of its own, while this one replaces the
+caller's own program in the caller's own container, keeping its
+descriptors.  It is in two parts and the order between them is the whole
+of it.  Everything that can fail happens first, while the process is
+still whole: the name and the argument vector are copied out of the
+address space that is about to go \- they live in it, and the entry path
+reads them after the mapping has changed \- and the buddy is asked to lay
+the new binary out.  Either can refuse, and a refusal is
+.CW \-1
+to a process that goes on running.  Only then does the second part run,
+which cannot fail into anything the caller could survive: the old
+segments go, the new ones are made, and the process enters the new
+program without returning through the system call
+.CW ( ospreyexecself ,
+the config's
+.CW xexec ).
+.PP
+The buddy had to change with it.  Its
+.CW EXEC
+closed the running image's file before it knew whether the new binary
+would parse, so an exec of a name that is not there left a process that
+could no longer fault a page \- a shell's mistyped command would have
+killed the shell rather than printed an error.  It now reads the new
+binary into locals and commits the image record only when it has parsed,
+which is what makes the refusal a refusal.  And leaving the kernel by
+the entry path rather than by the system call's return leaves the call's
+error label standing unless it is dropped: not an error the first time
+or the tenth, an overflow after enough execs, which is why
+.CW /boot/exec
+execs twenty times over and reads through the descriptor it opened
+before the first every time.
+.PP
+Two bugs fell out of it, and the second is worth the space.  The first:
+Plan 9's
+.CW seek (2)
+yields its answer through a pointer libc passes as the first argument
+.CW ( "seek(vlong *ret, fd, n, type)" ,
+as
+.CW sysseek
+has it), and the buddy's marshalling read the descriptor out of that
+pointer's slot, so a legacy program's every seek had been of a descriptor
+made from an address.  The second is underneath it: a Plan 9 system
+call's arguments arrive one to an eight-byte slot, but an
+.CW int
+fills four of its slot and the other four are whatever the stack held \-
+.CW 0xfefefefe ,
+the fill a fresh stack carries \- so the descriptor, mode and flag
+arguments were reaching the buddy with rubbish in their top halves, and
+had been working by whatever happened to lie there.  The seek was
+failing or not by the same luck, which is what made it visible at all.
+.PP
+The cut to four bytes has to be a mask.  This tree's
+.CW 6c
+does not emit a narrowing cast to an unsigned type from a 64-bit value:
+.CW (uint)x
+and
+.CW (ulong)x
+of a
+.CW uvlong
+compile to the whole eight bytes with no truncation at all, while
+.CW (int)x
+compiles to
+.CW MOVLQSX
+and is right.  So the first cut of the fix changed nothing, and the
+instrumentation that showed
+.CW 0xfefefefe00000003
+arriving at the buddy showed it arriving there after the fix too.
+.CW "& 0xffffffffULL"
+is what the code uses, and the reason is written beside it.
+.PP
+.B "2.2d: the shell."
+Done.
+.CW /boot/sh
+is an ordinary Plan 9 program - one command a line, words at blanks,
+stages at
+.CW | ,
+.CW #
+a comment; no quoting, no variables, no redirection to a file, a shell
+for the demonstration and not one to live in.  It is the smallest
+program that needs all four of the things a shell needs: it forks a
+process for each stage, execs it in place, makes a pipe and dups one end
+onto each stage's standard descriptor, and waits for each and reads its
+exit status.  It reads its script from a file the client wrote to the
+disk over 9P, so the script is a file in the buddy's name space like any
+other, and every one of its calls is answered by a peer container over
+the ring.  Proof: the script's first line runs a command, its second is
+a pipeline, and the four hundred and eighty-five bytes of
+.CW /n/hello
+cross the pipe from one legacy process to another and are counted at the
+far end.
+.PP
+Two things had to change under it, and both are about the shape of the
+personality rather than about the shell.
+.PP
+The first: a forwarded system call is served on a kproc now, not in the
+service loop's own call stack.  Serving inline is fine while every call
+answers at once, and a pipe is the first that does not - the pipeline's
+second stage reads a pipe its first stage has not written yet, the read
+blocks in the buddy, and blocking there blocks the loop that would have
+carried the first stage's write.  The whole personality stopped and its
+cooperative scheduler said exactly what had happened
+.CW ( "no runnable proc" ).
+This is the same shape item 12 found on the pi-p server, and it has the
+same answer.  A pool of four workers, not a kproc for each container: a
+kproc costs a 32K stack and a slot in the scheduler's table, and a
+container that never blocks would spend both for the whole boot; with
+all four busy the call is served inline as before, which is no worse
+than it was.  Every write to the reply queue stays in the service loop,
+so two workers finishing at once cannot cross there - item 9's lesson,
+applied before it could be relearned.  A call that does not block still
+finishes in the pass that dispatched it, since
+.CW runkprocs
+runs the worker at once rather than at the next tick; the kernel's wait
+for a forwarded call is thirty seconds now rather than the eight hundred
+milliseconds its own asks of the buddy get, because a read of a pipe
+waits on another process and not on the buddy.
+.PP
+The second is where a write goes.  A legacy program's writes to 0, 1 and
+2 went straight to the console, by the number, which is right until a
+shell dups a pipe onto 1: the first stage's output then went to the
+console and the second stage read an empty pipe.  Routing every write to
+the buddy instead fixes that - the buddy holds the descriptor table and
+prints the console ones itself - and it was tried, and it broke the two
+note criteria: it turns every legacy
+.CW print
+into a ring round trip, and so into a call a note can interrupt, and an
+interrupted call and the one the note handler makes share the
+container's one data area, so a line was lost and another printed twice.
+What is in the tree instead keeps the console path and marks the
+exception: the kernel sees every
+.CW dup
+and
+.CW close
+a legacy program makes, so it knows which of 0, 1 and 2 have had
+something else put on them
+.CW ( up->buddyredir ,
+carried across fork and across an exec in place, cleared for a program
+the exec request starts), and only a redirected descriptor leaves the
+console path.  The interrupted-call hazard is still there for a
+forwarded call a note interrupts; it is now reached only by a program
+that redirects, and it is written down here rather than papered over.
+.PP
+One more bug was under the pipeline, and it is worth saying how it was
+caught rather than only what it was.  When a container went, the buddy
+closed its descriptors from three upward, which is right only while
+nothing has redirected: a shell puts the pipe's write end on descriptor
+one, so the write end outlived the process that held it and the reader
+at the other end never saw end of file.  What made this hard to see is
+that the pipeline worked anyway - every byte crossed, the count at the
+far end was the whole of the first stage's output, and the second stage
+finished - because the forwarded call's own thirty-second bound
+eventually gave up and the program read
+.CW \-1
+where it expected 0.  The two are the same byte count.  So the program
+says which it got, and the criterion asserts the 0: without that line
+the test passed while the pipe was broken, for thirty-five seconds a
+run, and would have gone on passing.
+.PP
+Phase 2.2 is done, and all of it is the
 .CW p9pair
 configuration, whose check runs the legacy program with a full buddy
 beside it; the
@@ -6105,8 +6266,53 @@ beside it; the
 and
 .CW p9linux
 configurations carry neither the dup branch nor
-.CW xbrk ,
-and their legacy demonstrations do not reach for either.
+.CW xbrk
+nor
+.CW xexec ,
+and their legacy demonstrations do not reach for any of them.  What the
+buddy answers is now open, read, write, close, create, remove, stat,
+fstat, seek, fd2path, dup, pipe, bind, mount, errstr, rfork, await and
+exec, with brk in the kernel beside them - enough for a shell, and named
+here so that what rio will want beyond it can be measured against it.
+.NH 2
+Three things the checks turned up, and what they were
+.PP
+Five phases in one run of work left three checks failing once each and
+passing on retry \- the note criterion, a pair criterion, two wire
+criteria \- and a "transient" recorded three times is a finding, not
+noise.  All three were the same thing, and the evidence is a line in a
+wire log:
+.CW "\&...it opened /n/hello thuser fault: read addr=0x0..." .
+The sentence the criterion matched was cut in half by a kernel print.
+.PP
+Both writers already go through the console task's FIFO
+.CW ( putstrn0
+routes the kernel's print there when a task is running, and the
+personality's write reaches the same
+.CW ospreyconsput
+under the same lock), so the order is one queue \- until the queue
+fills.  A full FIFO makes the caller write the port itself, which is
+right for a panic and wrong for everything else: the task is pushing
+queued bytes at that moment and the two writers cross.  The FIFO was
+sixteen kilobytes and a run put a kilobyte and a half round it.  It is a
+hundred and twenty-eight now, and three wire runs in a row are clean
+where single runs had been failing; the count of what still went direct
+is printed at the end of a run and is the number to watch.
+.PP
+Two real faults were under those runs as well.  The personality's arena
+\- a bump allocator that never frees \- ended a two-machine run at
+4183184 of 4194304 bytes used and panicked in
+.CW kproc
+for want of a stack.  What ate it is kprocs: every one costs a 32K stack
+out of the arena and none is given back, a kproc per pi-p connection and
+four more for the workers of 2.2d.  Twelve megabytes now, which costs no
+memory until touched \- the arena is bss, and the kernel fills a bss
+page only when it is first written.  And the pi-p wire's connect had one
+try: the two machines boot independently and neither waits, so a connect
+that arrived before the far end was listening failed both ticket
+criteria together for a reason that had nothing to do with tickets.  It
+retries now, the same wait the migration path already makes for the same
+reason.
 .PP
 .B "Phase 2.3: rio."
 rio is 9front source this tree does not carry, so its binary is built on
@@ -6121,6 +6327,1778 @@ served by the user-level drivers already built.  Proof: rio draws its
 menu and sweeps a window on the server personality, as it does on
 .CW pc64 ,
 but with its system calls answered by a peer container over the ring.
+.PP
+.B "What 2.3 costs, measured before building it."
+One clause of the paragraph above is wrong and the rest is right for a
+reason already written down higher up: the section on the draw server
+records that this host's linker cannot read the prebuilt 9front
+libraries, and that building on the disk is what that costs.  What
+follows is the same fact counted, and the ABI measured against it.
+.PP
+The wrong clause is that rio is source the tree cannot have.  It is twelve files \-
+.CW rio.c ,
+.CW data.c ,
+.CW fsys.c ,
+.CW scrl.c ,
+.CW time.c ,
+.CW util.c ,
+.CW wctl.c ,
+.CW wind.c ,
+.CW xfid.c ,
+.CW dat.h ,
+.CW fns.h ,
+.CW mkfile
+\- 6407 lines at 9front revision
+.CW a0a079f4054f88eabcb2c2e6d20f3ee4a1908b78 ,
+and its mkfile names five libraries:
+.CW libdraw ,
+.CW libframe ,
+.CW libthread ,
+.CW libplumb ,
+.CW libc .
+The tree already carries all five, built, in
+.CW 9front/amd64/lib ,
+with their headers in
+.CW 9front/include ,
+and the tree's own
+.CW 6c
+compiles all nine of rio's C files against those headers with no
+warnings, and compiles the four libraries' own sources too \- 63 of
+.CW libdraw ,
+9 of
+.CW libframe ,
+25 of
+.CW libthread ,
+3 of
+.CW libplumb .
+The compiler is not the problem.
+.PP
+The linker is, and the count is the part that is new.  Nothing in this
+tree has ever linked
+.CW 9front/amd64/lib ,
+and the reason is that it cannot:
+.CW 6l
+here reads 228 of the 262 members of
+.CW libc.a
+and rejects the other 34 with
+.CW "opcode out of range 665" ,
+and rejects one member of
+.CW libdraw.a
+the same way.  Those archives were built by 9front's own
+.CW 6c ,
+which emits instructions past the end of this linker's table.  The
+tree has a workaround for this already, without naming it as one:
+.CW buildsh.sh
+compiles four modules out of
+.CW lib9/
+and links them ahead of the archive, and all four \-
+.CW utfnlen ,
+.CW vsnprint ,
+.CW dofmt ,
+.CW vfprint
+\- are in the 34.  It works for a program that formats a little.  It
+does not scale to rio, which reaches the allocator
+.CW ( pool ,
+.CW malloc ),
+the rune formatter and the Dir conversions, and the archive's own
+decomposition is not 9front's source decomposition \- 57 of its members
+have no same-named source file at that revision, which are the
+generated system-call stubs and the Unicode tables.  Building a libc
+here from source would mean generating those stubs, and
+.CW sys/src/libc/9syscall
+carries only a
+.CW mkfile
+and
+.CW sys.h ;
+the numbers would have to come from this kernel's table, not 9front's.
+So rio's binary is built where the toolchain matches the archives \-
+which is the disk, as the paragraph above said, but for the linker's
+reason and not for want of source.
+.PP
+That last step is wrong.  It was committed, it stood for two phases,
+and 2.3c below is what replaced it, so it is worth saying exactly where
+the reasoning went off.  The stubs never needed generating, because the
+stubs were never the part this linker cannot read.  Counted this time
+rather than carried forward: 31 of the 34 unreadable members have a
+same-named source file at that revision, 58 members have no same-named
+source in the import, and 55 of those 58 read fine.  Two of that 58 are
+there by choice rather than by absence:
+.CW main9
+and
+.CW main9p
+do exist at that revision and were deliberately not taken, because this
+tree enters a program through its own glue.  Counted against 9front
+rather than against the import, then: 33 of the 34 unreadable members
+have source at that revision, and the one that does not is
+.CW runenorm ,
+a generated table nothing here reaches.  The claim the composition
+rests on is narrower and it holds: not one of the 34 is a system-call
+stub, so the stubs \- the members with no source at all \- are every one
+of them readable.  So the two halves compose:
+build from source what the linker rejects, keep the archive for what it
+is the only source of, and put the source-built archive first on the
+link line.  I did not try it because I had concluded it was impossible;
+the conclusion was one unchecked step long.
+.PP
+The other cost is the one to size before starting.  What rio and its
+four libraries ask of the kernel, counted over their sources at that
+revision:
+.CW alarm ,
+.CW bind ,
+.CW chdir ,
+.CW close ,
+.CW create ,
+.CW dup ,
+.CW errstr ,
+.CW exec ,
+.CW mount ,
+.CW noted ,
+.CW notify ,
+.CW open ,
+.CW pipe ,
+.CW pread ,
+.CW read ,
+.CW write ,
+.CW remove ,
+.CW rendezvous ,
+.CW rfork ,
+.CW seek ,
+.CW sleep ,
+.CW stat ,
+.CW fstat ,
+.CW unmount ,
+.CW nsec ,
+and
+.CW postnote ,
+which is not a system call but a write to
+.CW /proc/n/note ,
+with the process id in it.
+The buddy answers open, read, write, close, create, remove, stat,
+fstat, seek, fd2path, dup, pipe, bind, mount, errstr, rfork, await and
+exec.  The gap is
+.CW alarm ,
+.CW chdir ,
+.CW notify ,
+.CW noted ,
+.CW postnote ,
+.CW rendezvous ,
+.CW sleep ,
+.CW nsec
+and
+.CW unmount
+\- nine.  Seven of them are not file operations, which is the shape one
+would want: the buddy is a file personality and those seven are time,
+notes, and a place to block.  The other two are files, which is the
+opposite of what this counting assumed and is the first thing the
+section after this one records.  All nine are answered now, three of
+them before this measurement was taken; 2.3a and 2.3b below are where
+the other six were built, and what is left of 2.3 is the binary.
+.PP
+One of the nine looked like it would end the phase and does not.
+rio calls
+.CW proccreate
+six times, which is
+.CW rfork(RFPROC|RFMEM)
+\- a second kernel process in the same address space \- and two
+containers sharing an address space is not what a process boundary
+between a program and its operating system means.  But the address
+space is the microkernel's to give, not the buddy's, the way
+.CW brk
+already is, and
+.CW legacyp9.c
+already asks for
+.CW rfork(RFPROC|RFMEM)
+twice and gets it.  So
+.CW proccreate
+is answered where it belongs and the file half still crosses the ring.
+.PP
+And rio is not the only binary to carry.  The
+.CW p9pair
+container has no 9front userland at all, so
+.CW /dev/draw ,
+.CW /dev/mouse
+and
+.CW /dev/kbd
+have to be served inside it, which means the draw server and the mouse
+and keyboard servers come in beside rio, or the personality serves them
+itself.  On
+.CW pc64
+those are built natively on the disk by
+.CW riorun.rc ;
+they are four more binaries, not one.
+.PP
+.B "2.3a: the calls beyond the files, and the two that were files."
+Six of the nine were genuinely missing.
+.CW sleep ,
+.CW notify
+and
+.CW noted
+were already in, as the plan said.  All six are in now, each answered
+where it belongs, and two of them turned out to be files rather than
+calls.
+.PP
+.CW chdir (2)
+and
+.CW unmount (2)
+are the buddy's, because a working directory and a mount point are name
+space and the buddy is the name space.  The working directory is the
+.I container's ,
+not the worker's: the buddy answers a call on one of four shared worker
+processes, so setting
+.CW up->dot
+would put whichever container chdir'd last in front of every other.  It
+is kept beside the container's
+.CW Pgrp
+and swapped in around its calls the same way, and swapped back with a
+flag rather than with a nil test, since a worker's own dot may be nil
+and nil would then mean both "nothing saved" and "put nil back".  It
+crosses a fork with the name space, as Plan 9's does: the child of a
+container that had chdir'd would otherwise start with none and fall
+back to the worker's, which is the buddy's own root, and its relative
+names would resolve somewhere its parent had never been.  It does not
+cross a migration, and that is a limit and not an oversight: a crossing
+rebuilds the private name space by replaying the binds recorded for it,
+and the working directory has no such record in the wire form.  A
+container that chdirs and then moves is at the buddy's root on the far
+side \- and since a move carries a group, a parent that chdir'd, forked
+and then moved loses it on both sides, the child's inherited directory
+with it.  Carrying it wants a record in the migration's wire form
+beside the binds, which is a change to a layout two machines read and
+is not made here.
+.CW unmount
+is
+.CW sysunmount 's
+body, which this configuration cuts: the mount point is named with
+.CW Amount
+and what is taken off it with
+.CW Aunmount ,
+and
+.CW cunmount
+takes the mount point first.  Written the other way round it
+dereferences a nil at
+.CW mnt->umh
+and takes the buddy down, which is what the first run did.
+.PP
+.CW alarm (2)
+and
+.CW rendezvous (2)
+are the kernel's, because a clock and a place to block are not files.
+.CW alarm
+is two lines over
+.CW procalarm ,
+and the two lines were not the work: nothing on this path had ever
+started the alarm kproc.
+.CW init0
+starts it for the full personality;
+.CW proc0 's
+microkernel branch did not, so
+.CW procalarm
+recorded the deadline and no process ever read it - an alarm set was an
+alarm that could not arrive.
+.CW rendezvous
+is Plan 9's
+.CW sysrendezvous ,
+also cut with sysproc.c, over machinery that is not cut: the
+.CW Rgrp
+and its hash, the
+.CW Rendezvous
+process state proc.c already unwinds when a note arrives, and
+.CW newrgrp .
+The group is made on the first
+.CW rfork(RFPROC|RFMEM)
+and shared with the child, so a thread and the process that made it can
+meet and a plain fork's child cannot meet a stranger's tag.  This is
+what
+.CW proccreate
+is built on, and rio makes six of them.
+.PP
+.B "nsec(2) is not a system call, and neither is postnote."
+The measurement above counted names in the sources and called all of
+them calls.  Two are not.  9front's
+.CW nsec (2)
+reads
+.CW /dev/bintime
+and takes the first eight bytes of it, big-endian; the
+.CW _NSEC
+trap is there for binary compatibility and no current libc uses it.  So
+a program asking the time is asking its
+.I name space ,
+and the file has to be in it.  It is now:
+.CW devtime.c ,
+one file, bound as
+.CW #T
+onto
+.CW /dev ,
+in the personality that holds a legacy program's name space.  The clock
+behind it is not the personality's - this is a user task and
+.CW p9shim.c 's
+.CW seconds ()
+answers 0 - so each read asks the kernel (a new request,
+.CW ReqNsec ,
+beside the
+.CW ReqSettime
+that sets it) rather than caching a value that would be stale by the
+next read.
+.CW _NSEC
+is answered too, in the kernel beside it, for a program whose libc is
+old enough to use it.
+.PP
+That left a program still dying on its first
+.CW nsec ,
+and the reason is worth keeping.  libc's
+.CW nsec
+keeps its
+.CW /dev/bintime
+descriptor in a
+.I private
+\- one word per process, from
+.CW privalloc (2)
+\- and its callers do not check what
+.CW privalloc
+returns.  It returns nil when there are no privates, and there were
+none: the block is set up by
+.CW _callmain ,
+which runs from libc's own
+.CW _main ,
+which is a member of the archive this host's linker cannot read, and
+.CW init9.c
+is the entry instead.  So every legacy program this tree builds had no
+privates and no Tos at all, and the first call that wanted either stored
+through a nil.  Both are
+.CW init9.c 's
+now, since it is what stands in for
+.CW _main :
+the privates are an array on its own
+.I frame ,
+not in the bss, because
+.CW rfork(RFPROC|RFMEM)
+copies the stack and shares the bss and a private has to be per process;
+and the Tos is filled by the kernel and its address passed one word past
+the argument vector's nil, because the first argument register carries
+the vector where Plan 9 would have carried the Tos.
+.CW ospreyenteruservec
+lays it out, which is where
+.CW ospreyenteruserargs
+and so every exec goes as well.
+.PP
+There are two entries now, and the reason is a segment.
+.CW init9.c
+is the entry a flat-loaded program takes: the file server of the
+microkernel configurations is loaded by
+.CW ospreyloadprog
+as one
+.CW "SG_TEXT | SG_RONLY"
+segment, its strings on the stack and no data segment at all, so it
+cannot store into libc's data - and setting
+.CW _privates
+is exactly that store.  The first sweep with one entry showed it at
+once: every microkernel configuration faulted writing an address in its
+own image four instructions into the program.
+.CW init9prog.c
+is the entry for a program that has a data segment of its own, which is
+every legacy binary the buddy lays out, and it is the one that takes the
+Tos and gives libc its privates.  The two differ in nothing else, and
+the word past the vector's nil is there for both: one reads it, one
+ignores it.
+.PP
+.B "postnote, the sixth, and where the authority for a note lives."
+.CW postnote (PNGROUP, ...)
+is how rio interrupts what it started
+.CW ( wind.c 's
+.CW interruptproc ),
+and libc's postnote is not a call either: it writes
+.CW /proc/n/notepg ,
+with the process id in the name.  It is the only one of the six whose
+answer was not already written somewhere:
+.CW chdir
+and
+.CW unmount
+had bodies in
+.CW sysfile.c
+to port,
+.CW alarm
+and
+.CW rendezvous
+had bodies in
+.CW sysproc.c
+over machinery this kernel still links, and this had neither.
+.PP
+.CW devnote.c
+is the file tree, bound as
+.CW #p
+onto
+.CW /proc ,
+and it holds two files under any number:
+.CW note
+and
+.CW notepg .
+The number is a container's identity, which is what a legacy program has
+for a process id \-
+.CW rfork (2)
+returns it and
+.CW await (2)
+reports it \- and any number walks, because this personality does not
+hold the kernel's table of containers and a listing it invented would be
+a listing of nothing real.  Nothing lists there, and the code says so
+rather than papering over it.
+.PP
+The write is where the two halves meet.  The personality serves the
+file, because a name space is the personality's; the kernel posts the
+note, because the processes are the kernel's.  So the write becomes one
+request
+.CW ( ReqPostnote ),
+and the request carries three words, which is all a request carries
+.CW ( Ospreynarg ):
+the container to post to, the container asking, and whether it is the
+group form, with the text at a fixed window in the caller's data area
+.CW ( Odnote )
+rather than at an offset, because an offset would have cost the word the
+group flag needs.  A count above three is refused by the call with no
+word about why, which is how the first version failed \- silently, and
+looking like an authority refusal.
+.PP
+Authority is the part worth stating, and it is two questions, both
+asked.  The caller is the personality and not the program, so the first
+is whether this personality may speak for the container it names: is
+that container one it serves?  The second is the program's own: may that
+container post to the target \- is the target itself, or a container it
+started?  The child table the kernel already keeps for
+.CW await
+is what answers it, so a container may interrupt exactly what it
+started.  That is the least that lets a window system stop the command
+in a window, and it is not "any container may note any other": the
+program's note to container 1, which it did not start, is refused, and
+the refusal is the kernel's, the personality only saying who is asking.
+.PP
+The group form is the one rio uses, and it is the one worth exercising
+rather than merely writing: a note to a container reaches every
+container that one started, so the demonstration's child forks one of
+its own before it waits, which is a window's command with something
+under it.  One write to
+.CW /proc/n/notepg
+and both the child and the grandchild take the note and end on it.  One
+thing that demonstration leaves behind is worth writing down: the
+grandchild's entry in the kernel's child table is never reclaimed.  The
+table is freed only by a successful
+.CW await ,
+its parent ends on the same note, and nobody waits for it, so a group
+noted this way costs an entry of the eight for the rest of the boot.
+The demonstration leaks one and the run is clean; a program that
+interrupted groups all day would fill it, and the failure then is
+.CW rfork
+returning \-1 somewhere else entirely.
+.PP
+What does not cross is the exit status.  A container's wait message is
+.CW "0 0 0 ''"
+whatever it exited with, which is older than this work and is not
+claimed here: the criteria are that the note arrived at the handler and
+the program ended on it, which is what the log shows.
+.PP
+One ordering fault came out of the runs.  The user-fault dump in
+.CW trap.c
+was
+.CW iprint ,
+which writes the port directly.  That is right when the machine is going
+down and wrong for a fault a program survives \- two of the
+demonstrations fault on purpose \- because it crosses whatever the
+console task is pushing and cuts a line in half, and a criterion that
+matches a whole sentence then fails on a sentence with a register dump
+spliced through it.  It goes through the console queue now, in order
+with everything else, except for a fault taken by the console task
+itself: that one still writes the port, because the queue it would go
+into is the one only that task drains.
+.PP
+The three kernel-side entries are
+.CW p9pair 's
+alone, as
+.CW xbrk
+and
+.CW xexec
+already were:
+.CW p9buddy
+and
+.CW p9linux
+carry neither the alarm nor the rendezvous nor the
+.CW _NSEC
+entry, and their demonstrations do not reach for them.  What is shared
+by every configuration is the rest of it \-
+.CW init9.c ,
+.CW ospreyenteruservec ,
+the buddy, the request the clock is read through, and the console
+ordering.
+.PP
+Ten criteria of the pair check hold the six calls, the fork's working
+directory and the Tos apart, and the pair check is 81 where it was 71.
+.PP
+.B "2.3c: the userland this tree builds itself."
+The correction above is what made 2.3c worth trying, and the trying
+took an afternoon.
+.CW 9front/src
+holds 471 files imported from 9front at
+.CW a0a079f4054f88eabcb2c2e6d20f3ee4a1908b78 ,
+the revision this work has been reading all along: 52 headers, 220
+files of
+.CW libc
+.CW ( port ,
+.CW fmt ,
+.CW 9sys ,
+.CW amd64 ),
+63 of
+.CW libdraw ,
+35 of
+.CW libthread ,
+25 of
+.CW lib9p ,
+21 of
+.CW libmemdraw ,
+17 of
+.CW libauth ,
+13 of
+.CW libmemlayer ,
+9 of
+.CW libframe ,
+3 of
+.CW libplumb ,
+1 of
+.CW libcomplete ,
+and the 12 of
+.CW cmd/rio .
+.CW 9front/src/README
+records the revision, what was left out and why, and that there are no
+local changes to any of it \- the import is verbatim, and the two files
+deliberately not taken are
+.CW main9.s
+and
+.CW main9p.s ,
+whose job this tree's own entry glue does.
+.PP
+.CW os/osprey/cmd/p9/build9front.sh
+compiles the ten libraries with this tree's
+.CW 6c
+into
+.CW 9front/amd64/lib-src :
+.CW libc9.a
+is 524102 bytes,
+.CW libdraw.a
+376296,
+.CW libmemdraw.a
+320356, and the rest smaller.
+.CW build9bin.sh
+links four binaries into
+.CW 9front/amd64/bin-src
+against them and the prebuilt archive behind them: rio at 369713 bytes,
+and the draw, mouse and keyboard servers of
+.CW os/osprey/cmd/draw
+at 298081, 158217 and 158893.  Two link lines, not one, because rio
+brings its own
+.CW main
+and
+.CW lib9p
+brings another.
+.PP
+The part that matters more than the four binaries is what the same
+archive did to the programs that already boot.
+.CW buildcat.sh ,
+.CW buildexec.sh ,
+.CW buildsh.sh
+and
+.CW buildlegacy.sh
+each used to compile four modules out of
+.CW lib9/
+and link them ahead of
+.CW Osprey/amd64/lib/libc.a :
+.CW utfnlen ,
+.CW vsnprint ,
+.CW dofmt ,
+.CW vfprint ,
+the workaround named in the paragraphs above.  All four are gone.  The
+line is now
+.CW libc9.a
+first and the prebuilt archive behind it, and the archive is there for
+one thing only \- the generated system-call stubs, which are the part
+no source at that revision contains.  So the source-built C library is
+not an artifact off to the side that was linked once and measured: it
+is in the boot image, and the criteria of the pair check are what say
+it runs.
+.PP
+What exactly it runs is worth being exact about, because the check
+cannot say it and I had to ask the linker.  Removing
+.CW libc9.a
+and adding back one member at a time until the link is clean names the
+members each program actually requires from the unreadable 34, and for
+all four programs it is the same three:
+.CW vfprint ,
+.CW dofmt ,
+.CW vsnprint .
+Every line those programs print \- which is every criterion the pair
+check matches \- goes through formatting code compiled here from
+source.  The fourth module the old workaround carried,
+.CW utfnlen ,
+was never required at all; it was linked because it was named on the
+command line.  What the criteria do
+.I not
+reach is
+.CW pool ,
+.CW malloc
+and the Dir conversions: those are in
+.CW libc9.a ,
+they build, and nothing that boots calls them yet.  That is not a
+weakness of the arrangement, it is the same observation as before from
+the other side \- they are exactly what rio reaches and these four
+programs do not.
+.PP
+.B "What the switch found: the entry spilled its argument onto the vector."
+The first sweep after the four programs were pointed at
+.CW libc9.a
+failed 25 of the 81 pair criteria, and the console says where: the
+legacy program printed its working-directory lines and then
+.CW "user fault: read addr=0x40 pc=0x201b1a" .
+The linker's own listing
+.CW ( 6l
+.CW -a )
+names that instruction
+.CW "MOVL 64(CX),CX" ,
+two instructions after
+.CW "MOVQ _tos+0(SB),CX" ,
+and the register dump has
+.CW "cx 0x0" .
+Offset 0x40 of a
+.CW Tos
+is
+.CW pid ,
+and the line is
+.CW nsec.c 's
+.CW "*pidp == _tos->pid" .
+So
+.CW _tos
+was nil, and nsec(2) was simply the first code this tree has ever run
+that dereferences it.
+.PP
+It was nil because the entry overwrote the vector it was given.  6c on
+amd64 passes a function's first argument in
+.CW RARG
+and gives that register a home in the caller's frame at
+.CW 8(SP) ;
+a function that wants the argument after a call spills it there.  The
+kernel entered a program with
+.CW SP
+equal to the argument vector, so that home is the vector's own second
+word.  For a program with an argument it is
+.CW argv[1] ;
+for a program with none it is the nil that ends the vector, and the
+entry's walk to that nil then runs off into whatever is above and reads
+the word past the end - the address of the Tos - from the wrong place.
+.CW touserv
+in
+.CW pc64/l.s
+is the fix: it sets the stack two words below the vector and leaves
+.CW RARG
+naming the vector, which is the only thing the two ever had to agree
+about.
+.PP
+The archive switch did not cause this and it is worth being exact about
+what did, because the two arrived in the same sweep.
+.CW init9prog.6
+is not built any differently by it.  The spill arrived with
+.CW init9tos.c ,
+the factoring that put a call between receiving the vector and using
+it; before that
+.CW _main
+had no call in between and 6c had no reason to spill.
+.CW 6c
+.CW -S
+shows it plainly:
+.CW init9.c ,
+the flat-loaded entry, compiles to no such store, which is why
+.CW pc64 ,
+whose
+.CW init0
+enters that one, was never affected and stays on
+.CW touser ;
+.CW init9prog.c ,
+which the four legacy programs take, and
+.CW init9main.c ,
+which so far only the four graphics binaries take and nothing has run,
+both open with
+.CW "MOVQ BP,argv+0(FP)" .
+This is the first sweep since that factoring, and it caught both halves
+of the clobber at once: the nil-terminator half in the program with no
+arguments, and the
+.CW argv[1]
+half in
+.CW /boot/cat ,
+which is given a file to print.  Nothing latent shipped -
+.CW init9tos.c
+is part of this same piece of work and was never committed broken - but
+the ordering is worth keeping: the factoring was written, tested against
+the check it was written for, and the sweep that would have caught it
+was the one this section is about.
+.PP
+The switch found one more, in the build script rather than the kernel.
+.CW iar
+.CW vu
+replaces a member only if the new one is newer, and
+.CW libc/amd64
+is compiled seconds after
+.CW libc/port
+in the same run: fourteen of 9front's amd64 implementations \-
+.CW memmove.s ,
+.CW strcpy.s ,
+.CW getcallerpc.s
+and eleven others \- were losing to the portable C they are meant to
+replace, which is not what 9front's own build does.  It is
+.CW iar
+.CW rvc
+now, and the set of source files each of the four programs is built
+from is the set the old link had, exactly, less
+.CW utfnlen.c ,
+which the old link carried because it was named on the command line and
+which nothing needs.  This was not the cause of the 25 failures; it was
+found looking for it.
+.PP
+.CW scripts/osprey-check-userland.sh
+is the twelfth check, and it is a build check, which is the honest
+name for it: it asserts that the ten libraries build, that the four
+binaries link, and that each is a Plan 9 amd64
+.CW a.out
+with the 40-byte header and the entry at
+.CW UTZERO+0x28
+where the loader enters one.  Rio and the three servers have not been
+run.  Nothing yet carries them into a container; that is 2.3d, and the
+size to know before starting it is that the four binaries come to
+984904 bytes, which at the five bytes of C an
+.CW .i
+array spends per byte of program is about 5.0 megabytes of source on
+top of the 3428634 that
+.CW p9prog.i
+already is.
+.PP
+.B "2.3d: the first of the four, run."
+The four binaries of 2.3c built and had not been run, so the next step
+was to run one, and the one to pick was the smallest: the keyboard
+server,
+.CW os/osprey/cmd/draw/kbd.c ,
+a hundred kilobytes of image where every legacy program before it was a
+few tens.
+.CW build9prog.sh
+turns it into
+.CW kbdsrvprog.i
+and the personality carries it as
+.CW /boot/kbdsrv ;
+the pair client execs it with an argument.  What the log says, in order:
+the buddy laid it out
+.CW ( "a Plan 9 a.out, text 74648 data 26224 bss 1400" ),
+the kernel demand-paged its five pages from the buddy, it was entered at
+.CW 0x200028
+through
+.CW os/osprey/pc/init9main.c
+\- the entry nothing had run until now \-
+.CW ARGBEGIN
+parsed the
+.CW -m/dev
+it was given, it asked for the segment it needs, said why it could not
+have it, and exited 0 to a client that reaped it.  So a program of that
+shape runs: three segments, its own
+.CW main () ,
+.CW libthread
+and
+.CW lib9p
+above the source-built libc.  The pair check is 83 at this point.
+.PP
+It could only fail, and that is the point of it: this machine has no
+keyboard ring to attach.  What it found on the way is that it could not
+say so.  The line was
+.CW "segattach kbdring: " ,
+a colon and nothing, because
+.CW errstr (2)
+is a call like any other and the buddy answers it out of the error
+string it keeps per container \- which is right for every call the buddy
+served and empty for the ones this kernel served itself, which the buddy
+never saw fail.
+.CW up->errstr
+is now both the message and the flag: a call forwarded to the buddy
+clears it, because from then on the buddy owns the answer; a
+kernel-served call that fails leaves its message there through
+.CW error ();
+and
+.CW errstr (2)
+is answered in the kernel whenever there is one to answer with, and
+forwarded when there is not.  The line is
+.CW "/boot/kbdsrv: segattach kbdring: bad arg in system call"
+now, and that is a criterion.
+.CW p9buddy
+has the same arrangement for the same reason.
+.CW p9linux
+does not and should not: a Linux binary has no
+.CW errstr (2)
+to ask.
+.PP
+The limit is worth writing down rather than leaving to be discovered.
+The invariant is only "a forwarded call clears it", so a kernel-served
+call that
+.I succeeds
+between the failure and the
+.CW errstr (2)
+leaves the older message standing.  Plan 9 has that hazard too and for
+the same reason, and what makes the keyboard server's line right is that
+.CW sysfatal 's
+own write to descriptor 2 is kernel-served and does not clear it.
+.PP
+I expected the frame buffer to be what stood in the way of the other
+three, and the same log says it does not.  The
+.CW p9pair
+kernel carries
+.CW headless
+and its check boots QEMU with no display, so I read the draw server's
+.CW segattach(0, ""framebuffer"", ...)
+as unanswerable there.  Line 65 of the boot says otherwise:
+.CW "osprey fb: exposed 1280x800x32 at pa 0x80000000 size 4992000 as \(dqframebuffer\(dq" .
+The EFI loader writes
+.CW *bootscreen
+into
+.CW plan9.ini
+by itself, and
+.CW ospreyframebuffer ()
+in the microkernel boot path reads it, so a container on this
+personality can map the screen today.  What the pair personality really
+does not have is the keyboard and mouse rings, and that is deliberate
+rather than missing:
+.CW ospreymouseexpose ()
+is called only where the kernel is the full personality, and the
+library-OS boot arms the same interrupt into a container instead.
+.PP
+So the next of the four is the draw server, which wants the frame
+buffer and nothing else \-
+.CW oscursorstart ()
+returns quietly when there is no mouse ring \- and which is also the
+first thing in this tree that will reach
+.CW malloc
+and
+.CW pool
+out of
+.CW libc9.a ,
+the members 2.3c could only say were built.
+.PP
+.B "2.3e: the draw server, and the compiler bug under it."
+The draw server is the second of the four and the first thing in this
+tree to call
+.CW malloc
+in a container.  It ran, and it panicked:
+.CW "bad magic" ,
+out of
+.CW blockcheck ()
+in libc's
+.CW pool.c ,
+on the very first block the program allocated.
+.PP
+The block was not corrupt.
+.CW panicblock ()
+dumps what it rejected, and every field of the dump was right: the
+magic was
+.CW 0x0A110C09 ,
+which is
+.CW ALLOC_MAGIC ;
+the size was 96, which is the header, the two words
+.CW malloc
+puts in front for its tags, sixty-four bytes of data and the tail; the
+tail's two magic bytes were
+.CW 0xBE
+and
+.CW 0xEF ,
+its back pointer reached the header again, and the four guard bytes
+past the end of the data were the
+.CW datamagic
+pattern for their addresses.  The string the program had just written
+was there to read.  So the value the
+.CW switch
+had read and the value the dump printed were not the same value, and
+that is not something memory does between two instructions of one
+thread.
+.PP
+It was the compiler.
+.CW blockcheck ()
+switches on
+.CW b->magic ,
+a
+.CW ulong ,
+with six cases, and six is enough that
+.CW swit1 ()
+compiles a binary search rather than a chain of tests.
+.CW "6c -S"
+shows the pivot:
+.CW "CMPL AX,$-894431969"
+then
+.CW JGT ,
+a
+.I signed
+branch \-
+.CW UNALLOC_MAGIC ,
+and the half it selects holds
+.CW DEAD_MAGIC
+and
+.CW ARENATAIL_MAGIC
+only.
+.CW "6c -K"
+shows the table it was searching, and it was sorted
+.I unsigned :
+.CW ALLOC_MAGIC
+first, because
+.CW 0x0A110C09
+is the smallest of the six as an unsigned number and the largest as a
+signed one.  Sorted one way, searched the other.  Every allocated block
+in the program fell through to
+.CW default ,
+which is
+.CW "bad magic" .
+.PP
+The front end is where it comes from, and the comment two lines above
+the fault says what was intended.
+.CW gen ()
+in
+.CW utils/cc/pgen.c
+coerces a switch expression to
+.CW long
+and writes
+.CW "/* always signed */" ,
+so every backend's pivot branch is signed on purpose; and
+.CW doswit ()
+in
+.CW utils/cc/pswt.c
+wrote
+.CW "q->val = (long)c->val" ,
+with a comment saying the cast is what gets a 32-bit switch right on a
+64-bit machine.  It is \- on Plan 9, where
+.CW long
+is 32 bits and the cast sign-extends.  These compilers are built by the
+host's own C compiler, where
+.CW long
+is 64 bits and the cast does nothing at all, so a case value with the
+top bit set stayed positive and sorted above every other.  The fix is
+to sign-extend from 32 bits without naming a type whose width can move
+again.  It is in the front end, where the table is built, so every
+backend that takes its cases from
+.CW doswit ()
+is fixed at once rather than eleven times; the pivot branch was read
+back out of
+.CW "6c -S"
+for
+.CW 6c ,
+.CW 8c ,
+.CW 7c
+and
+.CW 5c ,
+which are the four this tree builds kernels with.
+.PP
+How far it reached is a question worth answering rather than assuming,
+and the answer is measurable: build the old compiler beside the new one
+and compile every file twice.  Of the 9front userland \- libc,
+libthread, libdraw, libframe, libplumb, libcomplete, libmemdraw,
+libmemlayer, lib9p, libauth, rio and the four servers \- exactly one
+file's code changed, and it is
+.CW pool.c .
+Of the 59 files the
+.CW p9pair
+configuration compiles for itself, none.  That sweep did not recompile
+the libraries the kernel links \-
+.CW libospreykern ,
+.CW libosprey ,
+.CW libaml ,
+.CW libkern ,
+.CW libsec ,
+.CW libmp
+and
+.CW libfis
+\- so nothing is claimed about them beyond the shape of the bug: a
+switch of five cases or more on an unsigned value, one of whose case
+constants has bit 31 set.  A grep is more alarming than the truth here:
+.CW date.c ,
+.CW rio.c
+and
+.CW wctl.c
+all switch on a value with
+.CW "case -1:"
+among small positives, which looks like the same shape, but a negative
+constant was stored as a negative number by the old front end too, so
+those tables were always sorted and searched the same way.  What was
+wrong was only the unsigned constant with bit 31 set, and in this whole
+userland only
+.CW pool.c
+has one.
+.PP
+Two build traps came out of the same afternoon and are fixed with it.
+.CW utils/mkfile
+listed neither
+.CW 6a/6c/6l ,
+the amd64 toolchain every kernel in this branch is built with, nor
+.CW 0a/0c/0l ,
+the riscv one: they had been built once by hand and never again, so
+.CW "mk install"
+in
+.CW utils
+rebuilt ten compilers and quietly not those six.  They are in the list
+now.  And
+.CW build9prog.sh
+linked its program only
+.I "if the binary was missing" ,
+so a boot ran a drawsrv from an earlier build and reported symptoms
+that had already been fixed.  mk decides when that script runs, from
+the sources the
+.CW pc64
+mkfile names; the script now always links.
+.PP
+With the compiler right, the draw server runs.
+.CW memimageinit ()
+sets up memdraw's shared images, the device's own
+.CW reset ()
+and
+.CW init ()
+run,
+.CW oscursorstart ()
+returns quietly because there is no mouse ring on this personality, and
+.CW postmountsrv ()
+forks a container that answers 9P on a pipe and mounts it at
+.CW /dev .
+The screen is the frame buffer the microkernel exposed: 1280x800,
+.CW x8r8g8b8 ,
+4096000 bytes, the same one
+.CW "osprey fb: exposed"
+names at boot.
+.PP
+The mount is only half an answer, so the program is its own first
+client.  It opens
+.CW /dev/draw/new
+through the mount it just made, reads back from the ctl file the client
+number and the screen's channel and rectangle, and writes five draw
+messages to the data file beside it: three
+.CW b 's
+to allocate a blue pixel, a green pixel and a one-bit mask of ones, and
+two
+.CW d 's
+to fill the screen with the blue and put a 300x200 box of green in it.
+That is what libdraw does, written out by hand so the demonstration is
+the protocol and not a second library.  Every one of those opens, reads
+and writes crosses the pipe to the other container.
+.PP
+And then it reads the frame buffer back, because a return code is not a
+picture.  The word inside the box is
+.CW 0x00ff00
+and the word outside it
+.CW 0x0000ff ,
+which are the two colours asked for, in the order
+.CW x8r8g8b8
+puts them in memory.  Those are checked as numbers in the check, not
+matched as text.  The pair check is 87.
+.PP
+Getting there cost one more finding, and it is about the shape of a
+program rather than about draw.
+.CW segattach (2)
+adds a segment to the address space of the process that calls it, and
+.CW RFMEM
+shares the segments that exist at the fork.  The server attached the
+screen lazily, on the first client's attach \- which happens in the
+9P child, after the fork \- so the parent held the pointer with nothing
+mapped under it and faulted the first time it read a pixel.  The screen
+belongs to the program, not to one of its processes, so it is attached
+before the program has more than one:
+.CW ospreyfbattach ()
+in
+.CW kshim.c ,
+called from
+.CW main ()
+ahead of
+.CW postmountsrv .
+.PP
+That fault also showed up a defect in the personality itself worth
+fixing on the way.
+.CW panic ()
+in
+.CW p9shim.c
+was
+.CW "USED(fmt); print(\(dqp9: panic: %s\(dq, fmt)" ,
+so every panic printed its format string and threw its arguments away:
+the line that came out was
+.CW "no runnable proc (deadlock), tick %lud" ,
+literally.  It formats now.
+.PP
+One property the draw server leans on was worth proving on its own,
+so the legacy demonstration proves it: the fork
+.CW postmountsrv
+makes is
+.CW RFMEM ,
+and what that shares has to include the heap, or the parent and the
+9P child would each be allocating out of what they both believed was
+their own arena.  The
+.CW rfork (RFPROC|RFMEM)
+in
+.CW legacyp9.c
+now writes into a buffer
+.CW malloc
+gave the parent before the fork and the parent reads it back after, so
+"one address space" is checked for
+.CW sbrk
+memory and not only for the bss the migration test already covered.
+That is one more criterion, and it is what lets one
+.CW mainmem
+serve both halves of a lib9p server.
+.PP
+The honest limit of 2.3e was the name space: the mount lived in the
+name space of the process that made it, and that process exits.  2.3f
+below lifts it.
+.PP
+.B "2.3f: the server reached from another container."
+The limit above was the name space: the draw server mounted itself in
+the name space of the process that started it, and that process exits.
+.CW postsrv ()
+already knows how to do better \- given a name it creates
+.CW /srv/<name>
+and writes the pipe's end into it, which is how a Plan 9 server is
+found by anything else on the machine \- so the draw server posts as
+.CW draw ,
+and the pair client execs the same binary a second time with
+.CW -c ,
+in a container of its own, as nothing but a client.  It opens
+.CW /srv/draw ,
+mounts it at
+.CW /dev
+for itself, is given a client number of its own on the same
+1280x800 screen, and draws a box of red inside the green one the first
+client drew.  Then it reads the frame buffer back: inside its own box
+the word is
+.CW 0x00ff0000 ,
+and inside the first client's box but outside its own it is still
+.CW 0x0000ff00 .
+One screen, two containers, one server between them.  The pair check is
+89.
+.PP
+Five things were in the way, and each was a real defect rather than a
+missing feature.
+.PP
+First,
+.CW /srv
+was not in any name space.  The personality reaches the service
+registry as
+.CW #s
+and had never needed the name; a program does, because
+.CW postsrv
+creates by path.  The create landed on the root device, which refuses
+it, and
+.CW postmountsrv
+failed with
+.CW Eperm .
+.CW #s
+is bound onto
+.CW /srv
+now, in the name space at boot, which is the one containers share
+until they rfork one of their own.  It is bound
+.CW MREPL|MCREATE :
+without
+.CW MCREATE
+the same create said
+.CW Enocreate ,
+because a mount point that does not permit creation is not a place a
+file may be made.
+.PP
+Second, the descriptor a container posts is the container's.
+.CW postsrv
+writes the number of one of its own descriptors into the file it made
+in
+.CW /srv ,
+and the srv device resolves that number in the file table of whoever
+writes \- which for a forwarded call is the buddy's worker, not the
+container.  So
+.CW /srv/draw
+held whatever channel the worker happened to have at that number, and
+mounting it spoke 9P at an unrelated device, which answered
+.CW "unknown control request" .
+The buddy translates now: a write to a file of the srv device has its
+decimal descriptor rewritten from the container's table to the
+worker's, and the count the caller wrote is what it is told it wrote.
+.PP
+Third, the personality could not say what was wrong.
+.CW namelenerror ()
+in the name space names the file an error is about with
+.CW "%s: %#q" ,
+and
+.CW %q
+is a verb
+.CW quotefmtinstall ()
+adds \- which nothing here had called, and whose
+.CW fmtquote.c
+was not linked.  Every error from the name space came out with a
+literal
+.CW %q
+in it; the draw server's failure read
+.CW "Eperm: %q" ,
+which named neither the file nor, therefore, the missing bind.
+.CW fmtquote
+is linked now, with
+.CW runestrlen ,
+which it calls and which is one of the 34 members of the prebuilt
+archive this linker cannot read, and
+.CW quotefmtinstall ()
+is called where the name space is set up.
+.PP
+Fourth, and worst,
+.CW exits (2)
+threw its status away.  The handler was
+.CW "USED(list); ospreyexits(0)" ,
+so every program that died \- in
+.CW sysfatal ,
+say \- was reaped by its parent as having succeeded, and every "exited
+with status 0" in every log said nothing whatever.  The status string
+is copied out, printed, and a non-empty one is a non-zero exit; an
+unreadable status pointer is a failure too, and not a success by
+default.  Two criteria had to be corrected rather than kept: the
+keyboard server, which
+.I sysfatal s
+on the ring it has not got, exits 1 and says so, and the moved legacy
+process, which ends by catching the fault it was given, exits with the
+status
+.CW "note handled" .
+Both were asserting 0, and both were only ever true because the status
+was discarded.
+.PP
+Fifth, and the one that took the most boots to see: a container's
+forwarded call failed whenever the page holding the name it was called
+with was not yet resident.  The first
+.CW open (2)
+a fresh container made returned \-1 with no error string set anywhere,
+and the second of the same name succeeded; opening one directory twice
+showed it, and naming a different directory first moved the failure to
+that one.  That made it look like a property of the first call, and it
+is not.  The first open of a string faults its page in and every later
+open of the same string finds it there, so what the ordering was
+showing is resident or not, not first or not.  That is also why
+.CW /boot/cat ,
+.CW /boot/sh
+and
+.CW /boot/kbdsrv
+never tripped it: nothing they opened faulted in the middle of being
+copied.
+.PP
+Three plausible causes were tried first and each was disproved by its
+own instrumentation never firing: the request queue was ready
+.CW ( ospreysubmit
+never failed), the container's data area was mapped
+.CW ( ospreydata
+never returned nil), and the buddy was delegated
+.CW ( ospreyserverof
+was not nil).  Each of those three fixes was taken back out, because a
+retry loop on the path of every forwarded call in every configuration
+is not something to leave behind on a hunch.
+.PP
+The kernel log said the rest, in order: the call reaches
+.CW ospreybuddyforward ()
+with a good name pointer \-
+.CW 0x22ff62 ,
+the string in the program's own data \- the page holding it faults and
+is supplied by the buddy from the program's file, and then there is a
+request for the page at address
+.CW 0 ,
+which the buddy declines because no segment of the program covers it,
+and
+.CW "container 123's call 101 gave \-1: no reason set" .
+101 is the page request's own operation, not the open's.  The call
+being submitted was the page request, with the page request's
+arguments, a second time.
+.PP
+.CW ospreybuddyforward ()
+packs a forwarded call into the argument block the container shares
+with the buddy, and it wrote the operation number into the first word
+of that block
+.I before
+the switch that copies the rest.  Copying a name out of the container's
+address space is what faults, and the fault is served by a nested
+request to the same buddy through the same argument block; when that
+returns, the first word and the arguments under it are the page
+request's.  The outer call was then submitted carrying them.  The
+operation number is written last now, immediately before the submit,
+and the pages a call will read are faulted in before the block is
+filled at all:
+.CW ospreytouch ()
+reads one byte of each page of a name or of a write buffer, so the
+fault happens with nothing packed rather than half way through packing.
+The touch is bounded by the length of the data block, because the
+copy below it refuses a longer count anyway and walking a segment to be
+told no is not work worth doing.
+.PP
+This is not a regression.  It predates every phase here \- it is on the
+path of every forwarded call in every configuration with a buddy, and
+has been since the forwarder was written.  What is new is that a
+program finally opened a file whose name had not been touched yet.
+.PP
+.B "2.3g: the keyboard and the mouse, as the two files rio reads."
+rio reads three files:
+.CW /dev/draw ,
+.CW /dev/mouse
+and
+.CW /dev/kbd .
+2.3f put the first of them in a container's name space.  The other two
+are there now, and the container that has all three started none of
+them.
+.PP
+The plan said the keyboard and mouse rings the pair personality does
+not arm are what stands in the way, and that was wrong twice over.  It
+does arm them \- 
+.CW ospreyuserprep ()
+calls
+.CW ospreykbdenable ,
+.CW ospreymouseenable
+and
+.CW ospreyinputarm
+on every microkernel configuration \- and what it arms is not the
+polled physical segments
+.CW kbdring
+and
+.CW mousering
+that the full personality exposes and that
+.CW kbd.c
+and
+.CW mouse.c
+segattach.  It arms the other mechanism: the two interrupts as bare
+notifications to the container, with the i8042's ports granted to it,
+so that
+.CW p9kbd.c
+\- a driver in this personality, in user space \- owns the whole
+controller and reads every byte off port
+.CW 0x60
+with its own
+.CW inb .
+.PP
+The two cannot both run, and trying it hangs the boot.  Exposing the
+rings arms the kernel's own handler on IRQ1; the driver's command-byte
+handshake then spins for a reply the kernel's handler has already
+drained off
+.CW 0x60 ,
+in the unbounded
+.CW "while(!(inb(Kbdstat) & Kbdready));"
+that
+.CW ospreykbdenable
+opens with.  The boot stops between the input print and the console
+hand-off, which is what a single added print bisected it to.  The
+comment above
+.CW ospreyinputarm
+had said exactly this would happen, about arming one device while the
+other's command byte is being written; the same hazard holds for the
+two mechanisms.
+.PP
+So the driver stays where the configuration put it, and what was
+missing was never a ring: it was that
+.CW p9kbd.c
+printed what it read.  It decodes the scancodes and it assembles the
+three-byte PS/2 packets already; the whole gap was between that and a
+file.
+.CW devinput.c
+is that file \-
+.CW #m ,
+two entries,
+.CW kbd
+and
+.CW mouse .
+The driver hands it each rune it has translated (the keymap and the
+shift and control state are
+.CW kbd.c 's,
+unchanged, because there is one keyboard whichever driver reads it) and
+each mouse packet as it decoded it; the device keeps the queue and the
+absolute position, and answers reads in the two forms a Plan 9 program
+expects \-
+.CW c
+and the rune,
+.CW m
+and four twelve-column fields.  A write of
+.CW "m x y"
+moves the pointer, which is how a window system warps it.
+.PP
+Which means the driver is where it should be and the file is where it
+should be: a container asks its name space for
+.CW /dev/mouse ,
+the call is forwarded to the buddy, and the buddy is the personality
+that holds the driver.  Nothing new was asked of the kernel \- no
+segment, no second owner of the controller.  The check has the pair
+client's second draw container mount
+.CW /srv/draw
+at
+.CW /dev
+as before and then read
+.CW /dev/mouse
+and open
+.CW /dev/kbd
+beside it: one container, three files, and the mouse record is checked
+as four numbers on the 1280x800 screen rather than matched as a string.
+The pair check is 91.
+.PP
+That much is the plumbing, and the plumbing is not the decode: nothing
+moves a mouse in that check, so the position it reads back is the
+centre the device seeded, and no key is pressed, so the queue is never
+filled.  The keyboard check is where a key and a movement actually
+arrive \- it injects both over QMP - and it had been checking only that
+the driver printed what it read off the port.  It checks the other half
+now: that the scancodes became the runes
+.CW a ,
+.CW b ,
+.CW c
+and space in
+.CW /dev/kbd 's
+queue, translated through the keymap, and that the packets moved
+.CW /dev/mouse 's
+position off the centre it was seeded at.  The device says both, for
+the first eight of each and no more, because a keyboard in use is not a
+log.  That check is 8.
+.PP
+Two things found on the way.
+.CW #I
+is
+.I devip 's
+letter, so the bind of an input device by that name succeeded, put the
+IP stack's files on
+.CW /dev ,
+and left the open of
+.CW /dev/mouse
+saying only that it did not exist \- a letter collision reads exactly
+like a missing file.  It is
+.CW #m
+now, which is where Plan 9 keeps
+.CW /dev/mouse ;
+.CW /dev/kbd
+is on the console device there and is here too, because here it is one
+driver reading one controller and one letter cannot be two.
+.PP
+And a read of either file waits on a buddy worker, because that is
+where a forwarded call runs, and there are four of them.  rio will park
+two for as long as it runs.  That is not a problem yet and it is
+written down here so that the fifth blocking reader is not a surprise.
+.PP
+What
+.CW kbd.c
+and
+.CW mouse.c
+are for is unchanged: they are the full personality's drivers, on the
+configurations where the kernel exposes the rings.  Both post their
+service under a name now, so that a container which never had their
+mount can find them, and
+.CW kbd.c
+takes the segment to attach as an argument \- which is what the check's
+negative control for the error path uses, a name no kernel has, rather
+than depending on the real ring being absent from this configuration.
+.PP
+.B "2.3h: rio runs."
+9front's window system runs on the server personality, its system calls
+answered by a peer container over the ring.  It is the 6407 lines of
+.CW 9front/src/cmd/rio
+this tree builds itself, and not a line of it was written or changed for
+this machine.  It opens
+.CW /dev/draw ,
+takes the whole 1280x800 screen, allocates a screen of its own on it,
+paints it with its own background \- so the frame buffer word at the
+centre and at four points inside the corners is
+.CW 0x00777777 ,
+read back by a container that drew nothing \- brings up its 9P file
+server, forks its libthread procs, and is still running, all of it, when
+the machine idles at the end of the boot.  The pair check is 94.
+.PP
+It is started by the draw binary again, with
+.CW -x :
+that container mounts
+.CW /srv/draw
+at
+.CW /dev
+and execs rio in place, so rio opens
+.CW /dev/draw
+and finds the screen where a window system expects it.  A program that
+only opens the file cannot find a server posted in
+.CW /srv
+by itself, and on a real machine it is whatever starts the window system
+that puts the screen in its name space.  Here that is the exec, and the
+mount stays under the program it becomes.
+.PP
+Six things were in the way, and rio named five of them itself \- its
+startup is a fixed sequence and each step has its own message, so the
+log said which.
+.PP
+.CW /mnt/temp
+did not exist.  rio's
+.CW cexecpipe
+binds the pipe device onto it, opens the two ends through it and
+unmounts it again, and a bind whose mount point does not exist fails:
+.CW "rio: can't create file system server: Enonexist: '/mnt/temp'" .
+On a real Plan 9 machine the root a program sees is the file server's
+and that directory is in it; here the root device is the root, so the
+mount point has to be there.  The root device holds one level of
+directories and now holds two, with
+.CW temp
+in
+.CW /mnt .
+.PP
+The environment was not in the name space.
+.CW getenv (2)
+and
+.CW putenv (2)
+are opens of
+.CW /env/<name> ,
+not system calls, so
+.CW #e
+is bound onto
+.CW /env
+now; rio puts the name of the pipe it posted in
+.CW /srv
+there, under
+.CW wsys ,
+which is how a command in a window finds the window system that started
+it.
+.PP
+.CW /dev/time
+was not there.  It is devcons's text form \- seconds, nanoseconds, the
+fast-tick counter, its frequency and the monotonic clock, in devcons's
+own column widths \- and rio reads its first field as the time it stamps
+its own files with.  A program that opens it and gets nothing stamps them
+from whatever was on its stack.  It is a second file of
+.CW #T
+now, beside
+.CW bintime .
+.PP
+.CW /dev/cons
+and
+.CW /dev/consctl
+were not there either, and rio will not believe it has a keyboard
+without them: its keyboard proc opens both and gives up if either fails,
+and only then looks for
+.CW /dev/kbd
+and prefers it.  Both are files of
+.CW #m
+now, beside the two 2.3g added:
+.CW cons
+is the same runes as
+.CW kbd
+without the leading
+.CW c ,
+which is what cons is on a Plan 9 machine, and
+.CW consctl
+takes
+.CW rawon
+and
+.CW rawoff
+and does nothing with them, because nothing here is cooked \- this
+device never echoes and never assembles a line.
+.PP
+Then the one that was not rio's to name.  A forwarded call waited
+fifteen thousand two-millisecond sleeps \- thirty seconds \- and then
+returned \-1 with no reason.  A read of a keyboard is answered when a key
+is pressed and not before, and nobody is at this machine's keyboard, so
+rio's keyboard reader took that \-1 thirty seconds in, ended its loop and
+shut rio down; its mouse reader did the same.  The screen was already
+grey by then, which is why the pixels alone do not tell a window system
+that started from one that runs, and why the criterion is the kernel's
+last dump of what is running instead.  A call that blocks is not a call
+that failed.  The wait is not bounded by a count now; what ends it is
+the two things that mean no answer is coming \- the server is gone, or a
+note is pending for this process, which is how Plan 9 interrupts a
+blocked call and which now sets
+.CW interrupted
+as the reason.
+.PP
+The first cut of that wait was a poll, and the poll took the machine
+down.  A blocked caller woke every two milliseconds, serviced its ring
+and looked for the reply, for as long as it stayed blocked; rio parks
+three readers, so three kernel processes woke five hundred times a
+second for as long as rio ran.  The server loop was driven through a
+hundred and ninety-two thousand requests in one boot of the two-machine
+check, and that boot ended in
+.CW "panic: ilock ... key 0xdeaddead ... held by pc ..." ,
+which is
+.CW timerdel
+spinning a million times on the timer list that
+.CW timerintr
+was holding \- the same signature, and the same cause, as the flood of
+frames recorded higher up in this document.  The symbols came out of the
+kernel's own table:
+.CW 0xdeaddead
+is not freed memory, it is what
+.CW tas
+writes into a lock word, so the panic says only that a lock was held too
+long.
+.PP
+So the wait is not a poll.  It sleeps on the container's own reply
+rendezvous \-
+.CW ospreyawaitreply (),
+which the server's routing wakes when a reply for that container lands,
+and which was already there and had no caller \- with twenty
+milliseconds as the backstop for a reply arriving by some path that does
+not wake it.  The same boot now serves a third of the requests it did,
+and fewer per tick.  Two other ways of ending the wait were tried and
+taken out: a note pending for the process, which is what Plan 9 does and
+is wrong here because migration posts a note to park a process and the
+call it is making must still finish on the way out; and a single look at
+whether the server is gone, which failed six of the migration criteria
+in one run in four, because a container carried over the wire has its
+delegation taken down and put up again and a call in flight sees no
+server for a moment.  Fifty consecutive looks with no server is what
+ends it now.
+.PP
+And the buddy's workers went from four to twelve.  A forwarded call runs
+on a worker and a blocking read holds one for as long as it blocks: rio
+parks one on
+.CW /dev/kbd ,
+one on
+.CW /dev/mouse
+and one on its own 9P pipe, and holds them for as long as it runs.  Four
+left one worker for everything else.
+.PP
+Two things found on the way and written down rather than fixed.
+.PP
+The client personality's cooperative scheduler has no idle.  A first cut
+had the pair client
+.CW tsleep
+for six seconds to let rio paint, and the machine died with
+.CW "p9sched: no runnable proc (deadlock), tick 0" :
+if every proc of that personality is in a timed sleep, nothing advances
+the clock that would wake them, and
+.CW sched ()
+panics rather than waiting.  The waiting belongs in a container \-
+.CW sleep (2)
+there is the kernel's, and the kernel has a clock \- so the probe that
+reads the screen waits six seconds itself, in a container of its own,
+and the client does not sleep at all.  That the personality's scheduler
+cannot idle is still true, and is a thing to fix rather than to route
+around twice.
+.PP
+And a note is addressed by a number that means two things.  rio's
+.CW killprocs
+writes
+.CW /proc/<pid>/note
+with the pid
+.CW getpid (2)
+gave it, and the kernel resolves that number as a container id:
+.CW "osprey: a note was asked for container 32, which is not a container"
+while the container whose pid is 32 is container 124.  It does not fire
+while rio stays up, and it is what breaks first when a window tries to
+kill the command in it.
+.PP
+And a window system is a standing load, which is why rio is started
+because the machine was configured to start one:
+.CW *riodemo=
+in
+.CW plan9.ini ,
+which the pair check and the rio check set and nothing else does.  The
+two-machine check boots the same kernel, so it had been running two
+window systems while carrying processes between them; with rio off it
+is clean three runs in a row, and a check that is not about rio boots
+the machine it was written against.
+.PP
+What those runs turned up before the gate is worth having.  Two of them
+ended in
+.CW "panic: ilock ... key 0xdeaddead ... held by pc ..." ,
+and the kernel's own symbol table says the waiter was
+.CW timerdel
+and the holder
+.CW timeradd ,
+on the timer list \- two short critical sections that walk a list and
+program a clock, and cannot take long.  What
+.CW ilock
+does when a lock is held is spin a million turns of a load and then
+panic, and a million turns of a load on an emulated processor is about
+ten milliseconds.  Ten milliseconds is not a deadlock: it is what
+happens when the host takes away the virtual processor that holds the
+lock and runs something else, which two of these machines and a build
+on the same host will do.  The bound is wall time now \- ten seconds.
+.PP
+Which clock measures it is the whole of the care in that change.  The
+obvious one,
+.CW fastticks ,
+is wrong: it goes through
+.CW arch\->fastclock ,
+and on a machine without a usable cycle counter that is
+.CW i8253read ,
+which takes an
+.CW ilock
+of its own.  A processor spinning for the i8253's lock would have
+called the very thing it was waiting for, and spun inside its own spin
+until the stack ran out.  So the spin reads
+.CW spinticks ,
+which is the cycle counter and nothing else \- a register read, no lock
+\- and which returns a zero frequency when there is no cycle counter to
+read, in which case the count is what the panic is on, as it always
+was.  On the machine these checks boot,
+.CW spinticks
+answers 999220880 ticks a second \- measured with a probe put in
+.CW timersinit
+for one boot and taken out again, since nothing in the tree prints it
+\- so it is the wall-clock bound that is in force here and not the
+fallback.
+.PP
+One more care, of the same kind.  The lock is not held while this
+spins, so nothing pins the proc to a processor:
+.CW splx
+at the top of each turn lets it be preempted and come back on another
+one, whose cycle counter is a different counter and can read lower.
+Subtracting one processor's ticks from another's is an unsigned wrap
+and an instant false panic, so the machine number is kept beside the
+start and the measurement begins again when it changes.  QEMU
+synchronises the counters it presents, so nothing here would ever have
+shown it.
+.PP
+One more thing the sweep turned up, and it is not rio's.  The two
+criteria about pi-p across the cable failed in one sweep in three and
+passed in the others, and this document's own standard is that a
+transient recorded three times is a finding.  It is one: the two-machine
+check gave each machine four minutes, and a machine that had done the
+whole migration exchange - every process carried both ways with its
+pages, its descriptors and its name space - was sometimes still paging
+.CW /boot/cat
+in when its time ran out.  Both kept logs ended mid-boot, six hundred
+lines short of where a passing run ends, and the ticket lines the two
+criteria match had simply not been printed yet.  The failure was for
+want of a boot, not for want of a ticket.  Seven minutes now: the
+deadline is not part of what is being checked, and it is set where load
+cannot reach it.
+.PP
+.B "2.3i: rio hears the button."
+Painting the screen is not listening to a mouse: a window system that
+started and then sat deaf would leave the same pixels.  So the button is
+pressed at it.
+.CW scripts/osprey-check-rio.py
+boots the machine twice, moves the mouse the same way in both, and holds
+button 3 down in one of them; QEMU dumps the screen it is scanning out
+at the end of each, and the two are compared.  They differ by a block of
+pixels the size of a menu, where the pointer is, every one of which was
+the background before, and most of what they became is
+.CW 0xeaffea
+and
+.CW 0x448844
+\- DPalegreygreen and DGreygreen, the colours
+.CW data.c
+asks for - with black text on them.  rio's menu, in rio's own colours,
+because a button was pressed.
+.PP
+What that press crossed, in order: QEMU's PS/2 controller, the IRQ12 the
+microkernel routes to the personality's container as a bare
+notification, the user-space i8042 driver that reads port
+.CW 0x60
+with its own
+.CW inb ,
+.CW devinput.c 's
+decode of the three-byte packet into a position and a button mask,
+.CW /dev/mouse ,
+a forwarded read answered by the buddy over the ring, rio's mouse proc,
+and then back the other way through
+.CW /dev/draw
+to the draw server in a container of its own, which wrote the frame
+buffer the emulator then dumped.  Nothing on that path is a stub.
+.PP
+The first cut of the check looked for white, because rio's
+.CW cols[BACK]
+is white, and found none: the menu is not drawn in
+.CW cols[BACK] .
+Comparing the two screens rather than counting one colour is what
+turned "no white" into a bounding box and a histogram, and the
+histogram named the colours.
+.PP
+What is not claimed.  No window has been made and none swept: that wants
+a mouse button, and nothing on this machine presses one yet.  There is
+no pointer on the screen either \- the arrow is drawn by the draw
+server's cursor out of the mouse ring, and this configuration exposes no
+mouse ring, so the position
+.CW /dev/mouse
+reports is right and there is nothing drawn at it.
 .NH 2
 Track three: the library-OS personality execs a program, then rio
 .PP
@@ -6134,6 +8112,263 @@ personality library part of the new binary as of the old.  Proof: the
 library-OS task execs a second library-OS program that prints and exits,
 the name space it built still under it.
 .PP
+.B "Done, and the plan as phrased is not what was built."
+The two halves of that sentence cannot both hold, and the link map says
+why.  The personality's live state \-
+.CW up ,
+the arena's cursor, the cooperative scheduler's run queue, the ring
+mappings, the IP stack's route generations \- is in the
+.I data
+segment, not the bss:
+.CW 6l
+puts a file-scope scalar there whether it is initialised or not, and of
+the three hundred and forty-one named data symbols in the linked
+personality, those are among them, while
+.CW arena
+itself and
+.CW slices
+are in the bss.  Replace the data segment, as an exec in place would,
+and the name space's roots go with it \- the arena's bytes survive in
+the bss with nothing pointing at them, which is worse than losing them.
+Keep the data segment and the new binary has none of its own, its string
+constants included, since
+.CW 6c
+emits those as data.  There is no cut between the two, so "lays its
+segments over the current address space" and "the name space it built
+still under it" name different programs.
+.PP
+What is built keeps the half that was the point.  The personality is not
+reloaded; the program is loaded.
+.CW /boot/prog2
+is a separately linked binary, at
+.CW 0x1000000
+\- above the personality's image, which ends near seven megabytes, and
+well below the stack \- read through the name space the first program
+built, laid into the address space beside it, and called at its entry
+with a table of the personality's own entry points
+.CW ( p9lib.h ).
+It opens
+.CW /greeting
+and reads it by
+.I calling
+the personality, an ordinary call in its own address space with no trap
+and no ring, which is what track three of the plan is for; and it
+creates a file of its own that the first program reads back afterwards,
+so the name space under it is not merely of the same kind but the same
+one, still live, never rebuilt.  Three criteria of the
+.CW p964
+check (twenty now) hold the three claims apart: that it was loaded and
+entered, that it reached the file system by call, and that the name
+space survived.
+.PP
+The one thing it asks a kernel for is the address space, and that is the
+whole of what a library operating system should have to ask.
+.CW segattach
+with the name
+.CW code
+is a region the caller may write a program into and then run
+.CW ( ospreysegcode ):
+demand-zero, so nothing is carried until it is touched, writable because
+the loader writes the program in, and executable because the program
+then runs there \-
+.CW flushme
+on the segment, the same mark exec puts on a text segment, which is what
+.CW fault ()
+reads to leave
+.CW PTENOEXEC
+off.  A real
+.CW SG_TEXT
+segment will not do: it is mapped read-only and pages from an image, and
+this memory has no file behind it, only the loader's copy.  The
+microkernel's address-space service keeps its one call rather than
+growing another number; every configuration that offers
+.CW segattach
+offers it.
+.PP
+.B "3.2a: a real command, its operating system a library in its own address space.  Done."
+.CW /boot/libcat
+is
+.CW catp9.c
+\- the same source as the cat that runs under the buddy on the server
+personality, with no line changed.  What differs is the link.  It is
+linked against
+.CW p9crt.c ,
+which defines
+.CW open ,
+.CW create ,
+.CW read ,
+.CW write ,
+.CW close ,
+.CW seek ,
+.CW dup ,
+.CW fd2path ,
+.CW sbrk
+and
+.CW exits
+itself, so the linker never pulls libc's system-call stub for any of
+them: those calls go to the personality in the program's own address
+space instead.  One program, two arrangements \- a process boundary and
+a ring on the server personality, and here none at all.  It takes an
+argument vector, grows a heap, opens
+.CW /hello ,
+dups the descriptor, asks its path and reads the file, and the file it
+reads is one the 9P server holds across the ring, named with no device
+in it and resolved through the personality's own mount.  Then it exits,
+and exit is a call to the loader: the operating system outlives the
+program it ran.
+.PP
+Two things the program needed that a kernel would otherwise have given
+it.  Its descriptors are its own: the personality hands out whatever
+number is free, which may be 0, 1 or 2, and for a program those three
+are the console, which the personality does not hold \- so
+.CW p9crt.c
+keeps a table, as the buddy keeps one for the legacy binary it serves,
+and numbers the program's files from three up.  Without it a program
+that opened a file and got 1 would write its output into that file, or
+to the console, by luck rather than by meaning.  And its heap is its
+own, a megabyte in its own bss, because
+.CW brk
+on this address space is the personality's business \- the personality's
+segments are laid out around the program, not below it \- so a loaded
+program brings its heap rather than asking the kernel for one.
+.PP
+.B "3.2b: processes, and a shell that uses them.  Done."
+3.2a left one thing named as what a shell would need: the library-OS
+task had no processes to give a program, its own concurrency being the
+cooperative kprocs of
+.CW p9sched.c ,
+which are threads of the personality.  That is now what a program can
+ask for, and it is asked for in the shape the arrangement allows rather
+than in Plan 9's.
+.PP
+fork is not a thing a library operating system can offer.
+.CW rfork(RFPROC)
+splits a flow of control inside one address space, and a library cannot
+split its caller's C stack \- not without copying it, pointers into it
+and all.  So the primitive is the one a shell was using fork and exec
+together for, fused.
+.CW spawn
+loads a program, gives it a kproc of its own and a descriptor table of
+its own, and answers with a number;
+.CW wait
+blocks until that number ends and yields its status;
+.CW pipe
+is the personality's own.  The three are new entries in the table a
+loaded program is handed
+.CW ( p9lib.h ,
+version 3), and the program's standard descriptors come with it: a
+loaded program is entered as
+.CW "p9start(P9lib *lib, char **argv, int *std)" ,
+where each of
+.CW std[0..2]
+is a descriptor of the personality's or \-1 for the machine's console,
+which the personality does not hold.
+.PP
+Two things a spawned program gets that the personality's own kprocs do
+not.  Its own
+.CW Fgrp :
+.CW kproc ()
+shares the creating proc's descriptor table by pointer, which is right
+for the stack's read kprocs and wrong for a program, because a pipeline
+only reaches end of file when every copy of the write end is closed.  So
+the child's table is built empty \-
+.CW dupfgrp(nil)
+\- and only the descriptors
+.CW spawn
+was handed are put in it, referenced again so that the parent closing
+its own copies does not take the child's away.  And its own exit: a
+program the personality runs to completion ends by longjmp back into
+.CW p9exec ,
+a spawned one by ending its kproc, and
+.CW p9anyexits
+decides which from the flow of control it is called on, so both kinds of
+program are handed the same table.
+.PP
+.CW /boot/libsh
+is that shell.  It is
+.I not
+.CW shp9.c ,
+the shell that runs on the server personality, and the reason is the
+arrangement rather than an omission: that shell forks and execs, and
+neither is a thing this one can do.  The claim 3.2a earned \- one
+program, two arrangements \- is a claim about commands, and it still
+holds:
+.CW catp9.c
+is the same source on both.  It is not a claim about shells, and the
+source says so rather than pretending.  What both shells understand is
+the same script: one command a line, words on blanks, stages on
+.CW | ,
+.CW #
+to end of line a comment.
+.PP
+The script the personality writes and runs has four lines.
+.CW "/boot/libcat /hello"
+runs a command on a spawned process and the shell waits for its status.
+.CW "/boot/libcat /hello | /boot/libwc"
+is a pipeline: two programs at two addresses, each with a descriptor
+table of its own, the first's standard output and the second's standard
+input the two ends of one pipe of the personality's, and the shell
+closing its own copies of both.  The third,
+.CW "/boot/libgen 200000 | /boot/libwc" ,
+is there because the second proves less than it looks: 454 bytes fit in
+a pipe, so nothing had to block and "a pipeline ran" would only mean the
+writer finished before the reader started.  200000 bytes do not fit in
+32768, so the writer blocks and the reader must run to drain it, six
+times over, and the far end counts all 200000 \- the two stages are
+alive at once, in one address space, with no process boundary and no
+trap but the console.  The fourth,
+.CW "/boot/libcat /hello | /boot/libcat" ,
+asks for two of one image at once, and is there so that the limit below
+is a thing that happens rather than a thing written down.
+.PP
+The honest limit is the link map.  A program is at the address it was
+linked for and nothing here relocates it, so two of the same program
+cannot run at once: they would be the one image, sharing its one data
+segment, and each program's descriptor table and heap live in that
+segment.
+.CW p9spawn
+refuses that by name \- the fourth script line asks for it and is told
+no, and the shell carries on \- rather than letting two instances
+quietly corrupt each other, and each program that may run beside another
+is linked at a base of its own \- prog2 at 16M, libcat at 20M, libwc at 24M, libsh at 28M,
+libgen at 32M.  A program run twice in succession is fine: the loader
+zeroes the region before laying the file in it again, so its bss starts
+empty the second time as it did the first.  Lifting the limit wants
+either relocation or every mutable thing in a program's image reached
+through a per-process pointer, and neither is here.
+.PP
+There are three ways out of a loaded program, and the third was nearly
+missed: a raise.  A fresh kproc has no error label of its own, and the
+personality's entry points do raise \- a write into a pipe whose reader
+has gone is an error and not a short count, and
+.CW p9write 's
+own handler ends in
+.CW nexterror ().
+Without a label in
+.CW procstart
+that raise would unwind off the top of a spawned program's stack into
+nothing.  The fourth script line is what shows it: the stage that was
+started writes into a pipe whose reader was refused, and the error
+becomes that program's wait status,
+.CW Ehungup ,
+which the shell prints before finishing its script.
+.PP
+One thing the checks turned up on the way.
+.CW conf.pipeqsize
+was never set, so it was zero and every pipe write filled its queue by
+definition: the writer slept until the far end drained it, every time.
+That worked, and hid what a pipeline does \- there was no size to
+exceed.  It is 32K now, which is Plan 9's, and the third script line is
+what proves the flow control is real.
+.PP
+What is left of 3.2 is rio.  It wants
+.CW /dev/draw ,
+.CW /dev/mouse
+and
+.CW /dev/kbd ,
+which the user-level drivers already built serve, and a name space that
+holds them.
+.PP
 .B "Phase 3.2: a real program, then rio, linked with the library."
 A real program \- a command, then a shell, then rio \- is linked with
 the personality library into one microkernel task and run by the exec of
@@ -6143,3 +8378,75 @@ the draw server holds.  This is the exokernel end of the paper: rio with
 its operating system a library in its own address space, on the
 microkernel, no process boundary and no kernel personality.  It is the
 longest of the phases, and honestly named as the last.
+.NH 1
+Checking, all of it
+.PP
+There are twelve checks in
+.CW scripts/ ,
+one for each thing that boots, one for each pair of machines, and one
+for the userland this tree builds from source, and for most of this
+work I was running eight of them.  The three I was not
+running were
+.CW osprey-check.py ,
+which boots the full 9front personality on
+.CW pc64 ,
+.CW osprey-check-net.py
+and
+.CW osprey-check-wire.py .
+That is how
+.CW pc64
+came to be broken for four commits.  Phase 2.1 gave a loaded program an
+argument vector by changing what
+.CW _main
+in
+.CW os/osprey/pc/init9.c
+takes \- the name of the program became the whole vector \- and every
+path that enters a program through
+.CW ospreyenteruservec
+was given the matching stack in the same commit.
+.CW init0 ()
+in
+.CW os/osprey/pc64/main.c
+was not, because it is the one caller that does not go through that
+vector: it is the full personality's own path, the one configuration of
+the seven that takes neither
+.CW ospreyuser
+nor
+.CW ospreymicro .
+It went on building the 9front layout, in which the top word of the
+stack is the nil return PC and the vector starts above it, so
+.CW argv[0]
+was that nil and
+.CW sysexec
+refused it:
+.CW "boot process died: bad arg in system call" .
+It builds the vector now, and the slot that held the return PC holds
+.CW argv[0] ,
+which nothing returns through because
+.CW startboot
+ends in
+.CW _exits .
+.PP
+The general shape is worth keeping: a calling convention was changed
+and tested against the callers that the same commit changed.
+.CW scripts/osprey-check-all.sh
+is the answer \- seven configuration builds, then all twelve checks in
+order, with
+.CW -w
+to repeat the two-machine check, which is the one that had been flaky.
+The tally as this is written, every configuration building and every
+check clean, the two-machine check run once:
+.CW pc64
+61,
+.CW p9pair
+83,
+.CW p9buddy
+5,
+.CW p9linux
+12,
+.CW p964
+29, keyboard 6, micro 7, user 10, net 13, wire 14, two-machine 20, the
+six criteria of the userland the tree builds itself, and two portable
+builds.  A criterion is a sentence a booted kernel printed
+in answer to a command typed at its prompt, so a clean check is also
+the prompt having been reached.

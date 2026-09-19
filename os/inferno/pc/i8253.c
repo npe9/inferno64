@@ -77,6 +77,20 @@ i8253init(void)
 {
 	int loops, x;
 
+	/*
+	 * A secondary takes processor 0's answer rather than measuring
+	 * again, the way hpetinit() does: the frequency is the
+	 * machine's, and a second measurement would only be a second
+	 * chance to get it wrong.
+	 */
+	if(m->machno != 0){
+		m->cpuhz = MACHP(0)->cpuhz;
+		m->cpumhz = MACHP(0)->cpumhz;
+		m->cyclefreq = MACHP(0)->cyclefreq;
+		m->loopconst = MACHP(0)->loopconst;
+		return;
+	}
+
 	ioalloc(T0cntr, 4, 0, "i8253");
 	ioalloc(T2ctl, 1, 0, "i8253.cntr2ctl");
 
@@ -113,6 +127,37 @@ i8253init(void)
 		x = inb(T0cntr);
 		x |= inb(T0cntr)<<8;
 	}
+
+	/*
+	 * And the processor's own frequency, which this did not do.
+	 *
+	 * guesscpuhz() has been in this file, declared in both fns.h,
+	 * and called from nowhere in the tree.  hpetinit() -- the other
+	 * arch->clockinit -- measures cpuhz, cpumhz, cyclefreq and
+	 * loopconst; os/9front/pc/i8253.c's i8253init() does the same
+	 * through i8253cpufreq().  Ours programmed the counters and
+	 * stopped, so on any machine that took this path m->cpuhz stayed
+	 * zero for the life of the boot.
+	 *
+	 * Which machines take it is the reason this went unseen:
+	 * archacpi.c sets clockinit to hpetinit when ACPI describes an
+	 * HPET, and QEMU always does.  A Compute Engine e2-micro does
+	 * not, so it took this path, printed "cpu0: 0MHz", and died in
+	 * lapictimerinit()'s assert(v >= (100*HZ)) -- which calibrates
+	 * the local APIC against fastticks(&hz) and so, with hz zero,
+	 * measured nothing over a delay loop that returned at once.
+	 *
+	 * The argument is the cost in cycles of one aamloop() iteration.
+	 * It is inherited from when that loop was AAM+LOOP; on amd64
+	 * there is no AAM and the body is a bare LOOP.  It scales
+	 * loopconst, which is delay()'s calibration, and it does not
+	 * enter cpuhz at all on a machine with a TSC -- which is every
+	 * machine this port targets, and where cpuhz comes from the TSC
+	 * delta instead.  hpetinit() measures the same quantity at run
+	 * time rather than being told it; that this one is a constant is
+	 * a real difference between the two paths and not a tidy one.
+	 */
+	guesscpuhz(3);
 }
 
 void
@@ -181,6 +226,24 @@ guesscpuhz(int aalcycles)
 		 */
 		m->cpumhz = (cpufreq + cpufreq/200)/1000000;
 		m->cpuhz = cpufreq;
+	}
+
+	/*
+	 * Said out loud when the answer is not usable, because the place
+	 * it is noticed otherwise is four subsystems away.  A Compute
+	 * Engine e2-micro reported "cpu0: 0MHz" here and then panicked in
+	 * lapictimerinit()'s "assert(v >= (100*HZ))", which measures the
+	 * local APIC against a frequency this had already decided was
+	 * zero: with hz zero its hundred-millisecond delay loop returns
+	 * at once, the APIC counter does not move, and the assert is the
+	 * first thing to complain.  The numbers this prints are the ones
+	 * needed to tell which of the two clocks it read is the broken
+	 * one -- the PIT delta x, or the TSC delta.
+	 */
+	if(m->cpuhz < 1000000){
+		print("i8253: implausible cpuhz %llud: loops %d pit-delta %d "
+			"tsc-delta %llud aalcycles %d havetsc %d\n",
+			(uvlong)m->cpuhz, loops, x, b, aalcycles, m->havetsc);
 	}
 
 	i8253.hz = Freq<<Tickshift;

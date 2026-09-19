@@ -104,7 +104,7 @@ mod
 	draw
 
 init
-	virtinit
+	virtarm64init
 
 code
 	int main_pool_pcnt = 20;
@@ -136,7 +136,6 @@ root
 	/dis/basename.dis
 	/dis/bind.dis
 	/dis/cat.dis
-	/dis/chantest.dis
 	/dis/cd.dis
 	/dis/echo.dis
 	/dis/grep.dis

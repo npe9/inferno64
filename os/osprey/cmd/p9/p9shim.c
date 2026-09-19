@@ -212,11 +212,21 @@ freeb(Block *b)
 	}
 }
 
+/*
+ * A panic used to print its format string and throw the arguments away,
+ * so every panic in this personality read as literal %lud and said
+ * nothing about why.
+ */
 _Noreturn void
 panic(char *fmt, ...)
 {
-	USED(fmt);
-	print("p9: panic: %s\n", fmt);
+	char buf[256];
+	va_list a;
+
+	va_start(a, fmt);
+	vseprint(buf, buf+sizeof buf, fmt, a);
+	va_end(a);
+	print("p9: panic: %s\n", buf);
 	exits("panic");
 }
 
@@ -235,7 +245,10 @@ extern Dev srvdevtab;
 extern Dev lfsdevtab;
 extern Dev ipdevtab;
 extern Dev cachedevtab;
-Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, &srvdevtab, &lfsdevtab, &ipdevtab, &cachedevtab, nil };
+extern Dev timedevtab;
+extern Dev notedevtab;
+extern Dev inputdevtab;
+Dev *devtab[] = { &rootdevtab, &envdevtab, &mntdevtab, &looploopdevtab, &expdevtab, &pipedevtab, &srvdevtab, &lfsdevtab, &ipdevtab, &cachedevtab, &timedevtab, &notedevtab, &inputdevtab, nil };
 
 long	kerndate = 0;
 
@@ -268,10 +281,19 @@ openmode(ulong o)
  * allocb/freeb below (allocb re-zeroes, so a reused Block is as good as
  * fresh), so sustained traffic no longer grows the arena.  The old 1MB with
  * no reclaim overran once two IP stacks ran (their packet Blocks piling up),
- * malloc returned nil, and the unchecked nil corrupted memory; 4MB now, with
- * the churn reclaimed, is comfortable headroom for the persistent structures.
+ * malloc returned nil, and the unchecked nil corrupted memory.
+ *
+ * 4MB was comfortable while the persistent structures were the name space
+ * and the conversations.  What ate the rest of it was kprocs: every one
+ * costs a 32K stack out of here and none is ever given back - a kproc per
+ * pi-p connection, and four more for the workers that serve a forwarded
+ * system call.  The two-machine wire run, the longest of the checks, ended
+ * at 4183184 of 4194304 used and then panicked in kproc for want of a
+ * stack.  12MB now.  It costs no memory until it is touched: the arena is
+ * bss, and the kernel fills a bss page only when the personality first
+ * writes it.
  */
-static char	arena[4*1024*1024];
+static char	arena[12*1024*1024];
 static ulong	arenap;
 enum { AHDR = 16 };
 void*

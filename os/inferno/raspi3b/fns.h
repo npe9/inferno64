@@ -84,3 +84,5 @@ extern int	(*pcicfgrw8)(int, int, int, int);
 extern int	(*pcicfgrw16)(int, int, int, int);
 extern int	(*pcicfgrw32)(int, int, int, int);
 uvlong	psci(uvlong, uvlong, uvlong, uvlong);
+
+void	blankscreen(int);		/* the board's screen*.c */

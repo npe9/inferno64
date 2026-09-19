@@ -84,22 +84,6 @@ mklinkmod(Module *m, int n)
 	ml->compiled = m->compiled;
 	ml->MP = H;
 	ml->data = nil;
-	/*
-	 * Probe: ml->MP has been observed holding exactly 0x18 --
-	 * H2D(t,0), computing the Heap-header-plus offset on a plain nil
-	 * instead of H -- stably, across dozens of GC epochs, in a live,
-	 * correctly-typed, correctly-refcounted Modlink object (see
-	 * doc/inferno-ports.ms, "Two shapes, one checker").  Every H2D()
-	 * call site that can write ml->MP looked properly guarded on
-	 * reading -- this validates the write itself, right where it
-	 * happens, to catch it at the source if the write is ever wrong
-	 * rather than the value going bad sometime after a correct write.
-	 * pc64-only, temporary.
-	 */
-	if(ml->MP != H && (uintptr)ml->MP < 0x1000)
-		print("mklinkmod: bad ml->MP %#p right after assignment, ml %#p\n",
-			ml->MP, ml);
-
 	return ml;
 }
 /* Create a Modlink which connects

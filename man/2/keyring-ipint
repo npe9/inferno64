@@ -26,6 +26,9 @@ IPint: adt
   sub:  fn(i1: self ref IPint, i2: ref IPint): ref IPint;
   neg:  fn(i: self ref IPint): ref IPint;
   mul:  fn(i1: self ref IPint, i2: ref IPint): ref IPint;
+  mulmod: fn(i1: self ref IPint, i2, m: ref IPint): ref IPint;
+  addmod: fn(i1: self ref IPint, i2, m: ref IPint): ref IPint;
+  submod: fn(i1: self ref IPint, i2, m: ref IPint): ref IPint;
   div:  fn(i1: self ref IPint, i2: ref IPint): (ref IPint, ref IPint);
   eq:   fn(i1:  self ref IPint, i2: ref IPint): int;
   cmp:  fn(i1: self ref IPint, i2: ref IPint): int;
@@ -126,6 +129,36 @@ Returns
 Returns
 .IR i1*i2 .
 .TP
+.IB i1 .mulmod ( "i2 , m" )
+.TP
+.IB i1 .addmod ( "i2 , m" )
+.TP
+.IB i1 .submod ( "i2 , m" )
+Return
+.IR i1*i2 ,
+.RI ( i1 + i2 )
+and
+.RI ( i1 - i2 ),
+each reduced modulo
+.IR m .
+The result is in the range
+.RI [0, m ),
+so a subtraction that goes negative comes back positive.
+.IP
+They exist because the two-call form costs twice.  Every one of these
+is a call out of interpreted Dis into the C library, and the crossing
+is most of the price of a small operation: measured by
+.IR p256test (1),
+a 256-bit multiply and reduction costs about three microseconds more
+written as
+.BI i1 .mul( i2 ).mod( m )
+than as
+.BI i1 .mulmod( "i2 , m" )
+\(em 10 against 6 on an idle machine, both rising together when it is
+busy.  Curve arithmetic does nothing else, so
+.IR p256 (2)
+runs a third faster for the change of spelling.
+.TP
 .IB i1 .div ( i2 )
 Returns
 .RI ( i1 / i2,
@@ -178,3 +211,37 @@ bitwise ones-complement
 Returns
 .IR i ^ n ,
 bitwise exclusive-OR
+.TP
+.IB base .invert( mod )
+Returns the multiplicative inverse of
+.I base
+modulo
+.IR mod .
+.SH DIAGNOSTICS
+.B IPint
+raises an exception where the library underneath it would end the
+process: a zero divisor or modulus in
+.BR mod ,
+.BR div ,
+.BR mulmod ,
+.BR addmod ,
+.BR submod ,
+.B expmod
+or
+.B invert
+raises
+.BR "zero divide" ,
+a negative exponent in
+.B expmod
+raises
+.BR "negative exponent" ,
+and
+.B invert
+of a base sharing a factor with the modulus raises
+.BR "no inverse" .
+None of those is necessarily a fault in the calling program \(em a
+modulus can arrive from a certificate and an exponent from a key file
+\(em and on a native kernel the alternative is a panic, so they are
+catchable.
+.IR Ipinttest (1)
+checks each one, with a working call beside it.

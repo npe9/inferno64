@@ -356,6 +356,25 @@ pcibusmap(Pcidev *root, uvlong *pmema, ulong *pioa, int wrreg)
 	}
 
 	/*
+	 * A BAR is moved with the device's decoders off.  PCI says the
+	 * effect of writing a base address while the device is decoding
+	 * is undefined, and a machine really does take it that way: on a
+	 * Compute Engine t2a the NVMe controller -- which the firmware
+	 * had used to boot, and had left enabled -- kept answering at the
+	 * address the firmware gave it, so its MSI-X table read back all
+	 * ones wherever this code put it, and its interrupts could not be
+	 * programmed at all.  The network card, which the firmware never
+	 * touched and left disabled, took its new address without
+	 * complaint.  pcienable() below turns the decoders back on.
+	 */
+	if(wrreg){
+		for(p = root; p != nil; p = p->link){
+			p->pcr = pcicfgr16(p, PciPCR);
+			pcicfgw16(p, PciPCR, p->pcr & ~(IOen|MEMen));
+		}
+	}
+
+	/*
 	 * Sort both tables IO smallest first, Memory largest
 	 */
 	qsort(table, itb-table, sizeof(Pcisiz), pcisizcmp);
@@ -420,6 +439,10 @@ pcibusmap(Pcidev *root, uvlong *pmema, ulong *pioa, int wrreg)
 
 	if(wrreg == 0)
 		return;
+
+	/* the decoders come back on, exactly as they were found */
+	for(p = root; p != nil; p = p->link)
+		pcicfgw16(p, PciPCR, p->pcr);
 
 	/*
 	 * Finally set all the bridge addresses & registers
@@ -1022,15 +1045,129 @@ pcimsidisable(Pcidev *p)
 }
 
 enum {
-	MSIXCtrl = 0x02,
+	MSIXCtrl	= 0x02,	/* message control (16 bit) */
+	MSIXTbl		= 0x04,	/* table offset, and BIR in its low 3 bits */
+
+	MSIXEnable	= 1<<15,
+	MSIXFuncMask	= 1<<14,
+	MSIXSizeMask	= 0x7FF,
+
+	MSIXEntSize	= 16,	/* addr lo, addr hi, data, vector control */
+	MSIXEntMask	= 1,	/* bit 0 of a vector's control word */
 };
 
+/*
+ * A driver that wants a vector per queue calls these rather than
+ * intrenable(), because intrenable()'s irq argument cannot say which
+ * of a device's MSI-X vectors is meant.  They stay nil on a board
+ * whose interrupt controller cannot deliver MSI-X; a driver must test
+ * before using them and fall back to intrenable().  os/inferno/pc's
+ * irqinit() sets them.
+ */
+void (*pcimsixintrenable)(Pcidev*, int, void (*)(Ureg*, void*), void*, char*);
+void (*pcimsixintrdisable)(Pcidev*, int, void (*)(Ureg*, void*), void*, char*);
+
 static int
+pcigetmsix(Pcidev *p)
+{
+	if(p->msix != 0)
+		return p->msix;
+	return p->msix = pcicap(p, PciCapMSIX);
+}
+
+/*
+ * How many vectors the device's table holds, or -1 if it has no MSI-X
+ * capability.  A driver that wants a queue per vector asks this first.
+ */
+int
+pcimsixcount(Pcidev *p)
+{
+	int off;
+
+	if((off = pcigetmsix(p)) < 0)
+		return -1;
+	return (pcicfgr16(p, off + MSIXCtrl) & MSIXSizeMask) + 1;
+}
+
+/*
+ * MSI-X differs from MSI in where the message lives: not in
+ * configuration space but in a table in one of the device's own BARs,
+ * one 16-byte entry per vector, which is why this needs vmap() and MSI
+ * does not.  Parts that carry no INTx pin at all -- Amazon's ENA, and
+ * the current Intel and Mellanox 100G parts -- can be interrupted no
+ * other way.
+ */
+int
+pcimsixenable(Pcidev *p, int vec, uvlong addr, ulong data)
+{
+	int off, nvec, bir;
+	uvlong base;
+	u32int tbl;
+	uchar *e;
+
+	if((off = pcigetmsix(p)) < 0)
+		return -1;
+	nvec = (pcicfgr16(p, off + MSIXCtrl) & MSIXSizeMask) + 1;
+	if(vec < 0 || vec >= nvec)
+		return -1;
+
+	if(p->msixtbl == nil){
+		tbl = pcicfgr32(p, off + MSIXTbl);
+		bir = tbl & 7;
+		if(bir >= nelem(p->mem))
+			return -1;
+		base = p->mem[bir].bar;
+		if(base == 0 || (base & 1) != 0)	/* must be a memory bar */
+			return -1;
+		base &= ~0xFULL;
+		p->msixtbl = vmap(base + (tbl & ~7), nvec*MSIXEntSize);
+		if(p->msixtbl == nil)
+			return -1;
+	}
+
+	/* the vector stays masked while its address and data change */
+	e = (uchar*)p->msixtbl + vec*MSIXEntSize;
+	*(u32int*)(e+12) = MSIXEntMask;
+	coherence();
+	*(u32int*)(e+0) = addr;
+	*(u32int*)(e+4) = addr>>32;
+	*(u32int*)(e+8) = data;
+	coherence();
+	*(u32int*)(e+12) = 0;
+
+	pcicfgw16(p, off + MSIXCtrl,
+		(pcicfgr16(p, off + MSIXCtrl) & ~MSIXFuncMask) | MSIXEnable);
+	return 0;
+}
+
+/*
+ * Mask or unmask one vector, leaving the rest of the table and the
+ * capability alone.  Disabling a single queue's interrupt on a device
+ * whose other queues are still running is this, not pcimsixdisable().
+ */
+int
+pcimsixmask(Pcidev *p, int vec, int mask)
+{
+	int off, nvec;
+	uchar *e;
+
+	if((off = pcigetmsix(p)) < 0 || p->msixtbl == nil)
+		return -1;
+	nvec = (pcicfgr16(p, off + MSIXCtrl) & MSIXSizeMask) + 1;
+	if(vec < 0 || vec >= nvec)
+		return -1;
+	e = (uchar*)p->msixtbl + vec*MSIXEntSize;
+	*(u32int*)(e+12) = mask ? MSIXEntMask : 0;
+	coherence();
+	return 0;
+}
+
+int
 pcimsixdisable(Pcidev *p)
 {
 	int off;
 
-	if((off = pcicap(p, PciCapMSIX)) < 0)
+	if((off = pcigetmsix(p)) < 0)
 		return -1;
 	pcicfgw16(p, off + MSIXCtrl, 0);
 	return 0;
@@ -1164,6 +1301,13 @@ pcienable(Pcidev *p)
 		}
 	}
 
+	/*
+	 * From the register, not from the copy taken when the bus was
+	 * walked: anything that has moved a BAR since has had to turn
+	 * the decoders off to do it, and a stale copy here would decide
+	 * they were already on and leave the device dark.
+	 */
+	p->pcr = pcicfgr16(p, PciPCR);
 	if((p->pcr & pcr) != pcr){
 		print("pcienable %T: pcr %ux->%ux\n", p->tbdf, p->pcr, p->pcr|pcr);
 		p->pcr |= pcr;

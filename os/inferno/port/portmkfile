@@ -36,13 +36,36 @@ i$CONF.acid:V: $SHELLTYPE-i$CONF.acid
 
 LIBHDIRS= -I$ROOT/libmp/port -I$ROOT/libsec/port
 
+#
+# The acid rules below compile every source that went into the kernel,
+# and that is not only the kernel's own: srclist names libinterp's,
+# libsec's and libmp's too, and they are all compiled with the board's
+# CFLAGS, which begin with the board directory.  Two headers collide
+# between $ROOT/include and the kernel directories, ip.h and mp.h, so
+# libinterp/keyring.c's `#include <mp.h>' found os/inferno/pc64/mp.h,
+# the MP/APIC table header, instead of the multiple-precision one:
+# "mp.h:182 keyring.c:5 syntax error, last name: Lock".  Putting
+# $ROOT/include first fixes those and breaks the kernel's own sources
+# instead -- the generated $CONF.c says `#include "ip.h"' and has no
+# ip.h beside it, so it needs ../ip to win.  Each file therefore gets
+# the include path of the tree it came from: kernel sources as before,
+# everything else with $ROOT/include ahead of the board.
+#
+# None of this was reachable until utils/libmach was repaired: srclist
+# could not read these kernels at all, so the loop had no files and the
+# acid file was one line long.
+#
+
 
 rc-i$CONF.acid nt-i$CONF.acid:V: i$CONF
 	{
 		x=i$CONF; test -e i$CONF.p9 && x=i$CONF.p9
 		for (i in `{srclist -ec -r $ROOT/ $x}) {
 			echo '//FILE: ' $i
-			$CC -I. $CFLAGS $LIBHDIRS '-DKERNDATE='$KERNDATE -a $i
+			if(~ $i $ROOT/os/*)
+				$CC -I. $CFLAGS $LIBHDIRS '-DKERNDATE='$KERNDATE -a $i
+			if not
+				$CC -I$ROOT/include -I. $CFLAGS $LIBHDIRS '-DKERNDATE='$KERNDATE -a $i
 		}
 		echo 'include ("'$ROOT'/lib/acid/9ferno");'
 	} >i$CONF.acid
@@ -52,7 +75,11 @@ sh-i$CONF.acid:V: i$CONF
 	for i in `srclist -ec -r $ROOT/ $x`
 	do
 		echo '//FILE: ' $i
-		$CC -I. $CFLAGS $LIBHDIRS '-DKERNDATE='$KERNDATE -a $i
+		case "$i" in
+		$ROOT/os/*)	ACIDHDIRS= ;;
+		*)		ACIDHDIRS=-I$ROOT/include ;;
+		esac
+		$CC $ACIDHDIRS -I. $CFLAGS $LIBHDIRS '-DKERNDATE='$KERNDATE -a $i
 	done >i$CONF.acid
 	echo 'include ("inferno");' >> i$CONF.acid
 

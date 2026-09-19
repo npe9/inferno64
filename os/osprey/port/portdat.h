@@ -792,6 +792,7 @@ struct Proc
 	Sargs	s;		/* syscall arguments */
 	int	oslinux;	/* a Linux legacy process: Linux syscall ABI */
 	int	buddyimage;	/* its image is the buddy's: page faults go there first */
+	int	buddyredir;	/* a bit per standard descriptor a legacy program has dup'd something else onto: those writes go to the buddy, not the console */
 	int	linuxheap;	/* the segment slot brk grows, or -1 */
 	uintptr	linuxbrk;	/* the break as the process last set it */
 	uintptr	linuxmmapnext;	/* where the next anonymous mmap goes */

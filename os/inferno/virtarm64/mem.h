@@ -23,7 +23,16 @@
 #define	MIN(a, b)	((a) < (b)? (a): (b))
 #define	MAX(a, b)	((a) > (b)? (a): (b))
 
-#define	MAXMACH		4			/* cpu0 plus the secondaries PSCI can start */
+/*
+ * MAXMACH is how many Mach structures may exist, not how many
+ * processors schedule: conf.nmach is still 1 and only machno 0 runs
+ * anything.  It bounds machp[] in dat.h and active.machs[], and it is
+ * 8 because that is more than QEMU's virt is usually asked for and
+ * each unused slot costs one nil pointer.  A machine with more
+ * processors than this gets the first MAXMACH of them; startcpus()
+ * says so when it clips.
+ */
+#define	MAXMACH		8
 #define	HZ		100
 #define	KSTACK		(32*1024)
 

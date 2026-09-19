@@ -60,6 +60,7 @@ typedef struct Vctl {
 
 	int	irq;
 	int	tbdf;
+	int	msixvec;		/* MSI-X table index, -1 if not MSI-X */
 	int	vno;
 	int	cpu;
 	int	local;

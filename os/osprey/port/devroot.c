@@ -9,9 +9,11 @@ enum
 {
 	Qdir = 0,
 	Qboot = 0x1000,
+	Qmnt = 0x2000,
 
 	Nrootfiles = 32,
 	Nbootfiles = 32,
+	Nmntfiles = 8,
 };
 
 typedef struct Dirlist Dirlist;
@@ -36,6 +38,29 @@ static Dirlist rootlist =
 	rootdata,
 	2,
 	Nrootfiles
+};
+
+/*
+ * /mnt has directories in it.  On a real Plan 9 machine the root a
+ * program sees is the file server's, and /mnt/temp is a directory in
+ * it; here the root device is the root, so a mount point that a
+ * program expects to find has to be here.  rio needs this one: its
+ * cexecpipe binds the pipe device onto /mnt/temp, opens the two ends
+ * through it and unmounts it again, and a bind whose mount point does
+ * not exist fails - which is what "can't create file system server"
+ * came out as.
+ */
+static Dirtab mntdir[Nmntfiles] = {
+	"mnt",		{Qmnt, 0, QTDIR},	0,		DMDIR|0555,
+};
+static uchar *mntdata[Nmntfiles];
+static Dirlist mntlist =
+{
+	Qmnt,
+	mntdir,
+	mntdata,
+	1,
+	Nmntfiles
 };
 
 static Dirtab bootdir[Nbootfiles] = {
@@ -93,6 +118,13 @@ addrootdir(char *name)
 	addlist(&rootlist, name, nil, 0, DMDIR|0555);
 }
 
+/* a directory inside /mnt, for a program that binds onto one */
+static void
+addmntdir(char *name)
+{
+	addlist(&mntlist, name, nil, 0, DMDIR|0555);
+}
+
 static void
 rootreset(void)
 {
@@ -101,6 +133,8 @@ rootreset(void)
 	addrootdir("env");
 	addrootdir("fd");
 	addrootdir("mnt");
+	rootdir[rootlist.ndir-1].qid.path = Qmnt;	/* walking into it reaches mntlist */
+	addmntdir("temp");
 	addrootdir("n");
 	addrootdir("net");
 	addrootdir("net.alt");
@@ -137,12 +171,20 @@ rootgen(Chan *c, char *name, Dirtab*, int, int s, Dir *dp)
 			return 1;
 		}
 		return devgen(c, name, bootlist.dir, bootlist.ndir, s, dp);
+	case Qmnt:
+		if(s == DEVDOTDOT){
+			devdir(c, (Qid){Qdir, 0, QTDIR}, "#/", 0, eve, 0555, dp);
+			return 1;
+		}
+		return devgen(c, name, mntlist.dir, mntlist.ndir, s, dp);
 	default:
 		if(s == DEVDOTDOT){
 			if((int)c->qid.path < Qboot)
 				devdir(c, (Qid){Qdir, 0, QTDIR}, "#/", 0, eve, 0555, dp);
-			else
+			else if((int)c->qid.path < Qmnt)
 				devdir(c, (Qid){Qboot, 0, QTDIR}, "#/", 0, eve, 0555, dp);
+			else
+				devdir(c, (Qid){Qmnt, 0, QTDIR}, "#/", 0, eve, 0555, dp);
 			return 1;
 		}
 		if(s != 0)
@@ -150,9 +192,12 @@ rootgen(Chan *c, char *name, Dirtab*, int, int s, Dir *dp)
 		if((int)c->qid.path < Qboot){
 			t = c->qid.path-1;
 			l = &rootlist;
-		}else{
+		}else if((int)c->qid.path < Qmnt){
 			t = c->qid.path - Qboot - 1;
 			l = &bootlist;
+		}else{
+			t = c->qid.path - Qmnt - 1;
+			l = &mntlist;
 		}
 		if(t >= l->ndir)
 			return -1;
@@ -205,14 +250,18 @@ rootread(Chan *c, void *buf, long n, vlong off)
 	switch(t){
 	case Qdir:
 	case Qboot:
+	case Qmnt:
 		return devdirread(c, buf, n, nil, 0, rootgen);
 	}
 
 	if(t<Qboot)
 		l = &rootlist;
-	else{
+	else if(t<Qmnt){
 		t -= Qboot;
 		l = &bootlist;
+	}else{
+		t -= Qmnt;
+		l = &mntlist;
 	}
 
 	t--;

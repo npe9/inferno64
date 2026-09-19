@@ -47,6 +47,8 @@ enum {
 	BIND	= 2,
 	MOUNT	= 46,
 	FD2PATH	= 23,
+	CHDIR	= 3,
+	UNMOUNT	= 35,
 	/* rfork flags (portdat.h), which the shim headers here do not carry */
 	RFNAMEG	 = (1<<0),
 	RFPROC	 = (1<<4),
@@ -94,11 +96,19 @@ struct Img {
 	} ph[Maxph];
 	char	err[ERRMAX];		/* the last error, for the process's errstr(2) */
 	Pgrp	*pgrp;			/* its own name space once it rforks RFNAMEG; nil = the buddy's shared one */
+	Chan	*dot;			/* its own working directory once it chdirs; nil = the buddy's own */
 	int	nsforked;		/* it rforked a private name space (RFNAMEG) */
 	int	nbind;			/* path binds it made in that name space, recorded so migration can replay them */
 	struct { char new[80], old[80]; int flag; } bind[8];
 };
-enum { Nimg = 8 };
+/*
+ * A record per container the buddy answers for, freed when the kernel
+ * says the container is gone (p9buddy_gone, on ReqGone).  Eight was
+ * enough while one program ran at a time; a shell running a two-stage
+ * pipeline holds two at once beside whatever else the boot is running,
+ * so there is room for more of them now.
+ */
+enum { Nimg = 32 };
 static Img imgs[Nimg];
 
 /* the image of a container, making one when told to */
@@ -170,30 +180,39 @@ readat(int fd, vlong off, uchar *buf, long n)
  * ELF header and the program headers, keep the loadable ones, and write
  * the layout for the kernel at out: entry, the count, then each
  * segment's address, memory size and flags.  Returns the count, or -1.
+ *
+ * Nothing of the container's current image is touched until the new one
+ * has parsed.  A process that execs is running on the image this record
+ * describes, and it goes on faulting pages out of it: an exec that fails
+ * - a name that is not there, a file that is neither an ELF nor an amd64
+ * a.out - must leave the process able to run, so the new file is opened
+ * and read into locals and only then committed here.  Before this, a
+ * failed exec closed the running image's file and left the process
+ * unpageable, which is not a refusal but a killing.
  */
 static long
 p9buddy_exec(uvlong container, char *name, uchar *out)
 {
 	Img *img;
 	uchar hdr[64], ph[56];
-	uvlong phoff, *d;
-	int phentsize, phnum, i;
+	uvlong phoff, *d, nentry;
+	int phentsize, phnum, i, nfd, nkind, nnph;
+	struct { uvlong off, va, filesz, memsz, flags; } nphs[Maxph];
 
 	if((img = imgof(container, 1)) == nil)
 		return -1;
-	if(img->fd >= 0){
-		p9close(img->fd);
-		img->fd = -1;
-	}
 	if(waserror()){
 		print("buddy: exec %s: %s\n", name, up->errstr);
 		return -1;
 	}
-	img->fd = p9open(name, 0);
+	nfd = p9open(name, 0);
 	poperror();
-	kstrcpy(img->name, name, sizeof img->name);
-	if(readat(img->fd, 0, hdr, sizeof hdr) < 0)
+	if(nfd < 0)
 		return -1;
+	if(readat(nfd, 0, hdr, sizeof hdr) < 0){
+		p9close(nfd);
+		return -1;
+	}
 	if(hdr[0] != 0x7f || hdr[1] != 'E'){
 		/*
 		 * A Plan 9 a.out: eight big-endian words - magic, text, data,
@@ -212,6 +231,7 @@ p9buddy_exec(uvlong container, char *name, uchar *out)
 		magic = be(hdr, 4);
 		if((magic & 0xffff) != 0x8a97){	/* amd64's magic */
 			print("buddy: exec %s: neither an ELF nor an amd64 a.out\n", name);
+			p9close(nfd);
 			return -1;
 		}
 		textsz = be(hdr+4, 4);
@@ -222,42 +242,59 @@ p9buddy_exec(uvlong container, char *name, uchar *out)
 		adata = (Utzero + tseg + Pagesz-1) & ~(uvlong)(Pagesz-1);
 		abss = (adata + datasz + Pagesz-1) & ~(uvlong)(Pagesz-1);
 		ebss = (adata + datasz + bsssz + Pagesz-1) & ~(uvlong)(Pagesz-1);
-		img->kind = 1;
-		img->entry = Utzero + hdrsz;
-		img->nph = 3;
-		img->ph[0].flags = 5; img->ph[0].off = 0;    img->ph[0].va = Utzero; img->ph[0].filesz = tseg;   img->ph[0].memsz = tseg;
-		img->ph[1].flags = 6; img->ph[1].off = tseg; img->ph[1].va = adata;  img->ph[1].filesz = datasz; img->ph[1].memsz = datasz;
-		img->ph[2].flags = 6; img->ph[2].off = 0;    img->ph[2].va = abss;   img->ph[2].filesz = 0;      img->ph[2].memsz = ebss - abss;
-		d = (uvlong*)out;
-		d[0] = img->entry;
-		d[1] = img->kind;
-		for(i = 0; i < img->nph; i++){
-			d[2+3*i] = img->ph[i].va;
-			d[3+3*i] = img->ph[i].memsz;
-			d[4+3*i] = img->ph[i].flags;
-		}
+		nkind = 1;
+		nentry = Utzero + hdrsz;
+		nnph = 3;
+		nphs[0].flags = 5; nphs[0].off = 0;    nphs[0].va = Utzero; nphs[0].filesz = tseg;   nphs[0].memsz = tseg;
+		nphs[1].flags = 6; nphs[1].off = tseg; nphs[1].va = adata;  nphs[1].filesz = datasz; nphs[1].memsz = datasz;
+		nphs[2].flags = 6; nphs[2].off = 0;    nphs[2].va = abss;   nphs[2].filesz = 0;      nphs[2].memsz = ebss - abss;
 		print("buddy: exec %s for container %llud: a Plan 9 a.out, text %llud data %llud bss %llud\n",
 			name, container, textsz, datasz, bsssz);
-		return img->nph;
+	} else {
+		nkind = 0;
+		nentry = le(hdr+24, 8);
+		phoff = le(hdr+32, 8);
+		phentsize = le(hdr+54, 2);
+		phnum = le(hdr+56, 2);
+		nnph = 0;
+		for(i = 0; i < phnum && nnph < Maxph; i++){
+			if(readat(nfd, phoff + (uvlong)i*phentsize, ph, sizeof ph) < 0){
+				p9close(nfd);
+				return -1;
+			}
+			if(le(ph, 4) != 1)		/* PT_LOAD */
+				continue;
+			nphs[nnph].flags = le(ph+4, 4);
+			nphs[nnph].off = le(ph+8, 8);
+			nphs[nnph].va = le(ph+16, 8);
+			nphs[nnph].filesz = le(ph+32, 8);
+			nphs[nnph].memsz = le(ph+40, 8);
+			nnph++;
+		}
+		print("buddy: exec %s for container %llud: entry %#llux, %d loadable segments\n",
+			name, container, nentry, nnph);
 	}
-	img->kind = 0;
-	img->entry = le(hdr+24, 8);
-	phoff = le(hdr+32, 8);
-	phentsize = le(hdr+54, 2);
-	phnum = le(hdr+56, 2);
-	img->nph = 0;
-	for(i = 0; i < phnum && img->nph < Maxph; i++){
-		if(readat(img->fd, phoff + (uvlong)i*phentsize, ph, sizeof ph) < 0)
-			return -1;
-		if(le(ph, 4) != 1)		/* PT_LOAD */
-			continue;
-		img->ph[img->nph].flags = le(ph+4, 4);
-		img->ph[img->nph].off = le(ph+8, 8);
-		img->ph[img->nph].va = le(ph+16, 8);
-		img->ph[img->nph].filesz = le(ph+32, 8);
-		img->ph[img->nph].memsz = le(ph+40, 8);
-		img->nph++;
+
+	/*
+	 * Committed: the new binary parsed, so the old image's file is
+	 * closed and this one takes its place.  Up to here nothing of the
+	 * running image had changed, which is what lets a failed exec
+	 * return -1 to a process that goes on running.
+	 */
+	if(img->fd >= 0)
+		p9close(img->fd);
+	img->fd = nfd;
+	img->kind = nkind;
+	img->entry = nentry;
+	img->nph = nnph;
+	for(i = 0; i < nnph; i++){
+		img->ph[i].off = nphs[i].off;
+		img->ph[i].va = nphs[i].va;
+		img->ph[i].filesz = nphs[i].filesz;
+		img->ph[i].memsz = nphs[i].memsz;
+		img->ph[i].flags = nphs[i].flags;
 	}
+	kstrcpy(img->name, name, sizeof img->name);
 	d = (uvlong*)out;
 	d[0] = img->entry;
 	d[1] = img->kind;
@@ -266,8 +303,6 @@ p9buddy_exec(uvlong container, char *name, uchar *out)
 		d[3+3*i] = img->ph[i].memsz;
 		d[4+3*i] = img->ph[i].flags;
 	}
-	print("buddy: exec %s for container %llud: entry %#llux, %d loadable segments\n",
-		name, container, img->entry, img->nph);
 	return img->nph;
 }
 
@@ -321,11 +356,23 @@ p9buddy_gone(uvlong container)
 		return;
 	if(img->fd >= 0)
 		p9close(img->fd);
-	for(i = 3; i < Nfd; i++)
+	/*
+	 * Every descriptor, 0, 1 and 2 included: the console sentinel is
+	 * negative and passes over, but a shell that redirected a stage put
+	 * a real one there, and a pipe's write end left open outlives the
+	 * process that held it - the reader at the other end then never sees
+	 * end of file.  Starting at 3 was right only while nothing redirected;
+	 * what it cost was a pipeline whose second stage read every byte and
+	 * then waited for the call's own bound to give up, with the same byte
+	 * count to show for it either way.
+	 */
+	for(i = 0; i < Nfd; i++)
 		if(img->fds[i] >= 0)
 			p9close(img->fds[i]);
 	if(img->pgrp != nil)
 		closepgrp(img->pgrp);		/* the container's own name space, if it rforked one */
+	if(img->dot != nil)
+		cclose(img->dot);		/* and its own working directory, if it chdir'd */
 	memset(img, 0, sizeof *img);
 }
 
@@ -342,6 +389,32 @@ fdof(Img *img, uvlong fd)
 	if(img == nil || fd >= Nfd)
 		return -1;
 	return img->fds[fd];
+}
+
+/*
+ * Is this descriptor of the buddy's open on a file of the srv device?
+ * A container that posts a service writes the number of one of its own
+ * descriptors into a file it created in /srv, and the srv device
+ * resolves that number in the file table of whoever writes - which here
+ * is the buddy's worker, not the container.  Without a translation the
+ * name in /srv ends up holding whatever channel the worker happened to
+ * have at that number: lib9p's postsrv posted the draw server that way,
+ * and mounting the result spoke 9P at an unrelated device, which
+ * answered "unknown control request".
+ */
+static int
+issrvchan(int bfd)
+{
+	Chan *c;
+	int is;
+
+	if(waserror())
+		return 0;
+	c = fdtochan(bfd, -1, 0, 1);
+	is = devtab[c->type]->dc == 's';
+	cclose(c);
+	poperror();
+	return is;
 }
 
 static long
@@ -553,6 +626,15 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	long r;
 	int bfd;
 	Pgrp *savedpgrp = nil;
+	Chan *saveddot = nil;
+	/*
+	 * A separate flag, not saveddot != nil: a worker's dot may itself
+	 * be nil, and then nil cannot mean both "nothing saved" and "put
+	 * nil back".  Skipping the restore would leave a container's own
+	 * directory installed on a shared worker, which is the thing the
+	 * swap exists to prevent.
+	 */
+	int dotsaved = 0;
 
 	img = imgof(container, 1);
 
@@ -578,6 +660,17 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		savedpgrp = up->pgrp;
 		up->pgrp = img->pgrp;
 	}
+	/*
+	 * And its own working directory, for the same reason and swapped the
+	 * same way: a relative name a container opens has to resolve against
+	 * the directory that container chdir'd to, not the worker's, which is
+	 * the buddy's own and shared by every container at once.
+	 */
+	if(img != nil && img->dot != nil){
+		saveddot = up->dot;
+		dotsaved = 1;
+		up->dot = img->dot;
+	}
 
 	/*
 	 * Any file trap that raises an error is answered -1, and the error
@@ -587,6 +680,8 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	if(waserror()){
 		if(savedpgrp != nil)
 			up->pgrp = savedpgrp;
+		if(dotsaved)
+			up->dot = saveddot;
 		if(img != nil)
 			kstrcpy(img->err, up->errstr, sizeof img->err);
 		return -1;
@@ -655,6 +750,20 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 			cimg->nsforked = img->nsforked;	/* the child holds the same private ns, and its record of the binds that made it, for its own migration */
 			cimg->nbind = img->nbind;
 			memmove(cimg->bind, img->bind, sizeof cimg->bind);
+		}
+		/*
+		 * And the working directory, which a fork inherits on Plan 9.
+		 * Without this a child of a container that had chdir'd starts
+		 * with none and falls back to the worker's - the buddy's own
+		 * root - so its relative names resolve somewhere its parent
+		 * never was.  The channel is referenced again, since each
+		 * container closes its own on the way out.
+		 */
+		if(img->dot != nil){
+			if(cimg->dot != nil)
+				cclose(cimg->dot);
+			cimg->dot = img->dot;
+			incref(cimg->dot);
 		}
 		r = 0;
 		break;
@@ -733,9 +842,33 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		} else if(bfd < 0)
 			r = -1;
 		else {
+			uchar *wp = cdata + Dataoff;
+			long wn = (long)a1;
+			char sbuf[32];
+			int translated = 0;
+
+			/*
+			 * A descriptor number written to a srv file is the
+			 * container's; the srv device wants the worker's.
+			 */
+			if(issrvchan(bfd)){
+				long cfd, i;
+
+				for(cfd = 0, i = 0; i < wn && wp[i] >= '0' && wp[i] <= '9'; i++)
+					cfd = cfd*10 + (wp[i] - '0');
+				if(i == 0 || fdof(img, cfd) < 0){
+					r = -1;
+					break;
+				}
+				wn = snprint(sbuf, sizeof sbuf, "%d", fdof(img, cfd));
+				wp = (uchar*)sbuf;
+				translated = 1;
+			}
 			if(scallnr == PWRITE && (vlong)a2 >= 0)
 				p9seek(bfd, (vlong)a2, 0);
-			r = p9write(bfd, cdata + Dataoff, (long)a1);
+			r = p9write(bfd, wp, wn);
+			if(translated && r >= 0)
+				r = (long)a1;	/* the count the caller wrote */
 		}
 		break;
 
@@ -846,6 +979,41 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 		r = bfd < 0 ? -1 : p9mount(bfd, (char*)(cdata + Nameoff), (int)a1, (char*)(cdata + Nameoff + 128));
 		break;
 
+	case CHDIR:
+	{
+		/*
+		 * chdir(name): name at Nameoff.  The container's working
+		 * directory is its own, kept here beside its name space, so
+		 * that two containers can be in two directories at once - which
+		 * they could not be if this set the worker's dot, since the
+		 * worker is shared and the next call would run in whatever
+		 * directory the last container chose.
+		 */
+		Chan *nc = p9chdirchan((char*)(cdata + Nameoff));
+
+		if(img == nil){
+			cclose(nc);
+			r = -1;
+			break;
+		}
+		if(img->dot != nil)
+			cclose(img->dot);
+		img->dot = nc;
+		if(!dotsaved){
+			saveddot = up->dot;
+			dotsaved = 1;
+		}
+		up->dot = nc;		/* the rest of this call runs there too */
+		r = 0;
+		break;
+	}
+
+	case UNMOUNT:
+		/* unmount(name, old): name at Nameoff, old at Nameoff+128; an
+		 * empty name means everything mounted on old */
+		r = p9unmount((char*)(cdata + Nameoff), (char*)(cdata + Nameoff + 128));
+		break;
+
 	default:
 		r = -1;		/* a trap this buddy does not emulate */
 		break;
@@ -853,6 +1021,8 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
 	poperror();
 	if(savedpgrp != nil)
 		up->pgrp = savedpgrp;
+	if(dotsaved)
+		up->dot = saveddot;
 	return r;
 }
 
@@ -861,11 +1031,185 @@ p9buddy_syscall(uvlong container, uvlong scallnr, uvlong a0, uvlong a1, uvlong a
  * forwarded call's number and scalar arguments as a block of uvlongs at
  * cdata[Argoff]: number, then the three scalars.
  */
+/*
+ * Which container is this process serving right now?
+ *
+ * A device the personality serves - the note tree below /proc - has to
+ * know whose call it is answering, and devtab->write is handed only a
+ * Chan.  The buddy serves one call at a time on each of its worker
+ * processes, so the answer is a property of the running process, and it
+ * is recorded here around the call rather than in one global that four
+ * workers would overwrite each other in.
+ */
+enum { Nserving = 8 };
+static struct {
+	Proc	*p;
+	uvlong	container;
+} serving[Nserving];
+
+static void
+p9serving(uvlong container)
+{
+	int i, free;
+
+	free = -1;
+	for(i = 0; i < Nserving; i++){
+		if(serving[i].p == up){
+			/*
+			 * container 0 gives the slot back rather than storing
+			 * a zero in it.  A Proc comes out of a pool and is
+			 * reused, so a slot left standing on a dead one would
+			 * hand its container to whatever process took that
+			 * Proc next - and that container is the ASKER in the
+			 * note's authority check, so a stale slot is authority
+			 * given to the wrong container.
+			 */
+			if(container == 0)
+				serving[i].p = nil;
+			serving[i].container = container;
+			return;
+		}
+		if(serving[i].p == nil && free < 0)
+			free = i;
+	}
+	if(container == 0 || free < 0)
+		return;			/* nothing to give back, or more servers than slots: the device asks and is told nobody */
+	serving[free].p = up;
+	serving[free].container = container;
+}
+
+/* the container the running process is answering for, or 0 for none */
+uvlong
+p9servingcontainer(void)
+{
+	int i;
+
+	for(i = 0; i < Nserving; i++)
+		if(serving[i].p == up)
+			return serving[i].container;
+	return 0;
+}
+
 long
 p9buddy_serve(uchar *cdata, uvlong container)
 {
 	uvlong *ab;
+	long r;
 
 	ab = (uvlong*)(cdata + Argoff);
-	return p9buddy_syscall(container, ab[0], ab[1], ab[2], ab[3], cdata);
+	p9serving(container);
+	r = p9buddy_syscall(container, ab[0], ab[1], ab[2], ab[3], cdata);
+	p9serving(0);			/* the slot goes back before this process serves anything else */
+	return r;
+}
+
+/*
+ * The workers that serve a forwarded system call, so that one which
+ * blocks does not block the service loop.  A pipe is what makes this
+ * necessary: a shell's second stage reads a pipe its first stage has not
+ * written yet, and the read waits for a process the same loop would have
+ * had to carry.  The pool lives here rather than in the ring loop
+ * because a kproc and a Rendez are kernel-header things and that loop is
+ * compiled against the user headers; what crosses is three plain-typed
+ * calls.
+ *
+ * A pool of four, not a kproc per container: a kproc costs a 32K stack
+ * and a slot in the scheduler's table, and a container that never blocks
+ * would spend both for the whole boot.  With all four busy the caller
+ * serves the call itself, as it always did, which is no worse than
+ * before.  The workers are started from the service task so they inherit
+ * its name space, which is the buddy's own - the one a container without
+ * a private name space runs its calls in; a container with one has it
+ * swapped in and out around the call, on the worker's own Proc, so two
+ * workers cannot restore over each other.
+ */
+/*
+ * Twelve, not four.  A forwarded call runs on a worker and a blocking
+ * read holds one for as long as it blocks: rio parks one on /dev/kbd,
+ * one on /dev/mouse and one on its own 9P pipe, and holds them for as
+ * long as it runs.  Four left one worker for everything else.
+ */
+enum { Nworker = 12 };
+typedef struct Job Job;
+struct Job {
+	int	busy;			/* a worker holds it */
+	/*
+	 * Written by the worker, read by the service loop, with no barrier
+	 * and no lock: this scheduler is cooperative and nothing else runs
+	 * personality code, so a switch happens only where a proc sleeps and
+	 * the two never touch this word at once.  A preemptive tick here
+	 * would break that quietly.
+	 */
+	int	done;			/* it has an answer waiting to be posted */
+	uvlong	container, sequence;	/* whose call, and which, so the reply can be addressed */
+	uchar	*cdata;			/* the caller's data area, where its arguments are */
+	long	result;
+	Rendez	r;
+};
+static Job jobs[Nworker];
+
+static int
+havework(void *a)
+{
+	Job *j = a;
+
+	return j->busy && !j->done;
+}
+
+static void
+buddyworker(void *a)
+{
+	Job *j = a;
+
+	for(;;){
+		ksleep(&j->r, havework, j);
+		j->result = p9buddy_serve(j->cdata, j->container);
+		j->done = 1;
+	}
+}
+
+int
+p9buddy_workers(void)
+{
+	int w;
+
+	for(w = 0; w < Nworker; w++)
+		kproc("p9-buddyworker", buddyworker, &jobs[w]);
+	return 1;
+}
+
+int
+p9buddy_dispatch(uchar *cdata, uvlong container, uvlong sequence)
+{
+	Job *j;
+
+	for(j = jobs; j < jobs + Nworker; j++)
+		if(!j->busy){
+			j->container = container;
+			j->sequence = sequence;
+			j->cdata = cdata;
+			j->result = -1;
+			j->done = 0;
+			j->busy = 1;
+			wakeup(&j->r);
+			return 1;
+		}
+	return 0;
+}
+
+int
+p9buddy_reap(uvlong *container, uvlong *sequence, long *result)
+{
+	Job *j;
+
+	for(j = jobs; j < jobs + Nworker; j++)
+		if(j->busy && j->done){
+			*container = j->container;
+			*sequence = j->sequence;
+			*result = j->result;
+			j->busy = 0;
+			j->done = 0;
+			return 1;
+		}
+	return 0;
 }

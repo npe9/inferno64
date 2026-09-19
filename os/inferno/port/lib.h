@@ -8,15 +8,18 @@ extern	int	enc16(char*, int, uchar*, int);
 extern	int	tsmemcmp(void*, void*, ulong);	/* libkern/tsmemcmp.c, constant time */
 #define offsetof(s, m)	(u32)(&(((s*)0)->m))
 /*
- * assert() expands to _assert(), so this header has to declare it.  It
- * did not: _assert is declared in include/kern.h, which a file reaching
- * this header through Inferno/$OBJTYPE/include/libc.h does not include.
- * Any such file using assert() failed with "function not declared:
- * _assert" -- libaml/aml.c does, which only showed once every object
- * was deleted for an unrelated rebuild, because libaml.a predated it.
- * A macro that names a function is responsible for declaring it.
+ * The macro's own header declares what it calls, so a library built
+ * against this header alone -- libaml, reaching it through
+ * Inferno/<arch>/include/libc.h -- sees a prototype rather than an
+ * undeclared function.  All four of those headers (amd64, aarch64,
+ * riscv32, riscv64) include this one, which is why the declaration
+ * belongs here and not in any of them: put it in one and the same
+ * library breaks identically for the other three, with the error
+ * pointing at the library rather than at the header, and a fix already
+ * in the tree that appears not to work.  The inferno-bt branch made
+ * that mistake and reverted it.
  */
-extern	void	_assert(char*);
+extern	void	_assert(char*);		/* ../port/devcons.c */
 #define assert(x)	if(x){}else _assert("x")
 
 #define	DBG	if(debug)print

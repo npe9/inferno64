@@ -1,0 +1,180 @@
+/*
+ * A shell for the library operating system.
+ *
+ * The server personality's shell (shp9.c) forks and execs: it runs on a
+ * legacy binary's container, and fork and exec are what its kernel and
+ * its buddy give it.  This one cannot be that source, and the reason is
+ * the arrangement, not an omission.  A library operating system is one
+ * address space; rfork(RFPROC) would have to split this program's own C
+ * stack, which no library can do for its caller, and exec would have to
+ * lay a new binary over the personality that is running the shell.  So
+ * this shell starts programs instead of forking into them: spawn is the
+ * fused fork-and-exec the library offers (p9lib.h), and the shell was
+ * only ever using fork and exec together anyway.
+ *
+ * The claim earned in 3.2a - one program, two arrangements - is a claim
+ * about commands, and it still holds: cat is the same source on both
+ * personalities.  It is not a claim about shells, and this file says so
+ * rather than pretending.
+ *
+ * What it understands is a script: one command a line, words separated
+ * by blanks, stages separated by |, # to end of line a comment.  That is
+ * what shp9.c understands too, so the same script runs on both.
+ */
+#include <u.h>
+#include <libc.h>
+
+extern int spawn(char *name, char **argv, int in, int out);
+extern int awaitpid(int pid, char *status, int nstatus);
+
+enum {
+	Nstage	= 4,		/* stages in a pipeline */
+	Narg	= 8,		/* words in a stage */
+	Nline	= 512,
+	Nscript	= 8192,
+};
+
+/* split s on any of the separators, in place; returns the count */
+static int
+split(char *s, char **out, int max, char sep)
+{
+	int n;
+
+	n = 0;
+	for(;;){
+		while(*s == ' ' || *s == '\t')
+			s++;
+		if(*s == 0)
+			break;
+		if(n >= max)
+			return -1;
+		out[n++] = s;
+		while(*s != 0 && *s != sep)
+			s++;
+		if(*s == 0)
+			break;
+		*s++ = 0;
+	}
+	/* trim trailing blanks off each piece */
+	for(max = 0; max < n; max++){
+		char *e;
+
+		e = out[max] + strlen(out[max]);
+		while(e > out[max] && (e[-1] == ' ' || e[-1] == '\t'))
+			*--e = 0;
+	}
+	return n;
+}
+
+static void
+runline(char *line)
+{
+	char *stage[Nstage];
+	char *av[Nstage][Narg+1];
+	int pid[Nstage];
+	char status[64];
+	int ns, na, i, in, out, p[2], npid;
+
+	ns = split(line, stage, Nstage, '|');
+	if(ns <= 0){
+		if(ns < 0)
+			print("libsh: too many stages in a pipeline\n");
+		return;
+	}
+	for(i = 0; i < ns; i++){
+		na = split(stage[i], av[i], Narg, ' ');
+		if(na <= 0){
+			print("libsh: an empty stage in a pipeline\n");
+			return;
+		}
+		av[i][na] = nil;
+	}
+
+	in = -1;
+	npid = 0;
+	for(i = 0; i < ns; i++){
+		out = -1;
+		p[0] = p[1] = -1;
+		if(i < ns-1){
+			if(pipe(p) < 0){
+				print("libsh: no pipe\n");
+				break;
+			}
+			out = p[1];
+		}
+		pid[i] = spawn(av[i][0], av[i], in, out);
+		/*
+		 * The shell's own ends go now.  The child was given its own
+		 * copies when it was started, so closing here does not take
+		 * them away - and not closing here is what would stop the far
+		 * end of the pipe from ever seeing end of file.
+		 */
+		if(in >= 0)
+			close(in);
+		if(out >= 0)
+			close(out);
+		in = p[0];
+		if(pid[i] < 0){
+			print("libsh: %s: cannot start it\n", av[i][0]);
+			break;
+		}
+		npid++;
+	}
+	if(in >= 0)
+		close(in);
+	for(i = 0; i < npid; i++){
+		status[0] = 0;
+		if(awaitpid(pid[i], status, sizeof status) < 0)
+			print("libsh: no such program to wait for\n");
+		else
+			print("libsh: %s ended, status \"%s\"\n", av[i][0], status);
+	}
+}
+
+void
+startboot(char *argv0, char **argv)
+{
+	static char script[Nscript];
+	char line[Nline];
+	char *p, *e, *nl;
+	int fd;
+	long n, got;
+
+	USED(argv0);
+	if(argv == nil || argv[1] == nil){
+		print("libsh: usage: libsh script\n");
+		exits("usage");
+	}
+	if((fd = open(argv[1], OREAD)) < 0){
+		print("libsh: cannot open %s\n", argv[1]);
+		exits("open");
+	}
+	for(got = 0; got < Nscript-1; got += n){
+		n = read(fd, script+got, Nscript-1-got);
+		if(n <= 0)
+			break;
+	}
+	script[got < 0 ? 0 : got] = 0;
+	close(fd);
+	print("libsh: %ld bytes of script, read by calling the personality beside me\n", got);
+
+	p = script;
+	e = script + strlen(script);
+	while(p < e){
+		nl = strchr(p, '\n');
+		if(nl != nil)
+			*nl = 0;
+		strncpy(line, p, sizeof line - 1);
+		line[sizeof line - 1] = 0;
+		p = nl == nil ? e : nl+1;
+		nl = strchr(line, '#');
+		if(nl != nil)
+			*nl = 0;
+		if(line[0] == 0)
+			continue;
+		print("libsh: %s\n", line);
+		runline(line);
+	}
+	print("libsh: the script is done, and the personality that started me is still here\n");
+	exits(nil);
+}
