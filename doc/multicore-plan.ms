@@ -8335,3 +8335,50 @@ beginning is 4x on four processors for this workload, of which roughly
 1.7x is the lock's own overhead and roughly 2.2x is the second, third
 and fourth processor doing work.  Both halves are real and neither was
 visible from a laptop.
+.NH 1
+Large pages, and why they stay off
+.PP
+The pc64 kernel can map kernel memory with 2 MiB pages.  It is correct:
+.CW mmuwalk
+splits a large entry when something asks for a 4 KiB mapping inside it,
+.CW meminit
+stops at the first unmapped page rather than assuming a limit,
+.CW mapkzero
+no longer refuses above 1 GiB, and a 16 GiB boot runs with the pool
+overlap checker silent.  The bug that made large pages look impossible
+\(em heap blocks with
+.CW "magic 0x2103" ,
+which is a page table entry \(em was
+.CW mmuwalk
+walking into a 2 MiB entry as though it were a table.
+.PP
+.B "It is off by default anyway."
+Six Compute Engine instances, four real Xeons each, the soak workload
+cut at the same guest tick:
+.IP
+.nf
+4 KiB pages   78 78 78 78 78
+2 MiB pages   57 60 63 78 78 81
+.fi
+.PP
+The small-page kernel returns the same number every time.  The
+large-page kernel does not: it averages about a tenth less work, and
+once beat every small-page run.  The spread is not in the mapping \(em
+two instances that both reported 7936 large pages, 231024 small pages
+and the same
+.CW conf.npage
+returned 78 and 60.  What large pages certainly buy is 38 times fewer
+entries and about 71 MiB of page tables handed back on a 16 GiB machine,
+which is 0.4 per cent of memory against a possible 10 per cent of
+throughput.  So the mapping ships, the flag ships,
+.CW *pmaplarge=1
+turns it on, and the default is 4 KiB.
+.PP
+.B "The next question is memory typing."
+A 2 MiB page that straddles an MTRR boundary can be demoted to uncached
+for its whole extent.  This kernel calls
+.CW mtrrexclude(MemRAM, \(dqwb\(dq) ,
+so mixed types inside a mapped range are possible, and an uncached 2 MiB
+window would cost far more than the TLB saves while producing exactly
+the bimodal result above.  Reading the MTRRs and refusing a large page
+that spans a type change is the experiment that settles it.
