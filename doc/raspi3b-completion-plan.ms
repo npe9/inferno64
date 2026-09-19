@@ -4359,6 +4359,107 @@ scheduler latency, which is a stale subtraction and not a fact about
 anything.  Clearing it when the channel is armed is what makes the
 number mean what it says.
 .NH 2
+The rename that loses a file, and how to pick it up cold
+.PP
+This is the top of the list and it is the only thing on it that has
+cost a working board.  A kernel installed over the network has twice
+come back with whole 32KB chunks holding the previous kernel's bytes,
+and the board did not boot; the card had to come out and be read on the
+host to find out why.
+.PP
+.B "It reproduces without the Pi, and that is the whole of the good news."
+.CW "sh tests/dossrv-stress.sh card"
+builds a 2400MB FAT32 image with 64 sectors to a cluster \(em 32KB, the
+card's own shape, which none of the other four cases comes near \(em
+and runs
+.CW fatstress
+against it under
+.CW emu .
+The first run of it failed in seconds:
+.P1
+=== card (FAT32, 64 sector(s) per cluster, 0MB filler)
+FATSTRESS-FAIL open /n/t/k.img: '/n/t/k.img' does not exist
+.P2
+That is round 0 of
+.CW kupdaterehearsal
+in
+.CW appl/cmd/fatstress.b :
+write 1.5MB as
+.CW k.new ,
+remove
+.CW k.bak ,
+rename
+.CW k.new
+to
+.CW k.img ,
+and read it back.  The rename returned success and the file is not
+there.  It is the sequence
+.CW kupdate()
+performs on the board, at the cluster size the board uses.
+.PP
+.B "What is known."
+.IP \(bu
+It is intermittent.  The second run passed.  A rate is the first thing
+to establish and a loop over
+.CW "sh tests/dossrv-stress.sh card"
+is how.
+.IP \(bu
+It is not the SD driver.  The board reports
+.CW "errors 0"
+in
+.CW /dev/sdM0/ctl ,
+so
+.CW emmcbio
+never refused a block, nothing short ever reached
+.CW devwrite ,
+and the
+.CW twrite
+failure path fixed in
+.CW 4ba7ee59
+\(em real, and worth having \(em is not this.
+.IP \(bu
+It is cluster-size dependent.  The other four cases use 512-byte,
+512-byte, 4KB and 512-byte clusters and have never shown it.
+.IP \(bu
+On the board the symptom is different and may or may not be the same
+fault: there the file exists at the right size and some of its clusters
+were never written.  Here the file is gone.  Both follow a rename of a
+large file.
+.PP
+.B "Where to go next, in order."
+.IP 1.
+Shrink it.
+.CW ROUNDS=1
+.CW FILES=1
+cuts the case to one round, and
+.CW kupdaterehearsal
+still runs.  A failing sequence that takes seconds is worth more than
+an explanation.
+.IP 2.
+.CW dossrv
+has
+.CW iodebug
+and
+.CW chat ;
+turn them on for the failing round and watch the directory entry and
+the FAT chain across the rename.
+.CW rwstat
+is the rename, and this tree has already fixed two bugs in that
+neighbourhood \(em
+.CW doremove
+deleting a neighbouring file's long-name entries, and
+.CW rwstat
+aliasing the sector window instead of copying the length \(em so the
+third is likely to be near them.
+.IP 3.
+Ask whether the shape matters rather than the size: 32KB is 64 sectors,
+and
+.CW sect2trk
+comes from the BPB's sectors-per-track, not from the cluster size.  A
+directory that is one cluster, a cluster that spans several tracks, and
+a track that spans several clusters are three different arithmetics and
+only one of them is exercised by the existing cases.
+.NH 2
 Stage one: making the clock scheduling actually work
 .PP
 The tick is wired up and the interpreter yields on request, and that is
@@ -4931,6 +5032,32 @@ promise, which is why it comes first.
 .NH 2
 Suggested order
 .PP
+.B "First, the rename that loses a file on a 32KB cluster."
+It destroys kernels, it has done so twice, and until it is fixed every
+cycle on this board carries the risk of ending with the card in a
+reader.  It is also the cheapest thing on this list to work on now that
+.CW "tests/dossrv-stress.sh card"
+reproduces it in emu in seconds: write 1.5MB as
+.CW k.new ,
+rename it to
+.CW k.img ,
+open it, and find nothing there, with the rename having returned
+success.  Intermittent, so the first job is a rate and a smaller
+sequence that still shows it; the second is
+.CW iodebug
+on the failing round.  Nothing about it needs the Pi.
+.PP
+.B "Second, what the board said about it."
+.CW "cat /dev/sdM0/ctl"
+reports
+.CW "errors 0" .
+The driver never refused a write, so the data was never offered to it
+\(em which rules out the SD driver and the
+.CW twrite
+failure path both, and points the whole question at
+.CW dossrv .
+.PP
+Then the rest, in the order it was in.
 The transmit-queue fix is confirmed on the board and kernel updates
 come over the network.  Next, then:
 the peripheral checks that fail on silicon and pass on the models \(em
