@@ -339,13 +339,28 @@ takes interrupts, the kernel-stack alignment fix, and the image recipe.
 That is the vehicle for "arm64 on real hardware", and it is one script
 invocation away.
 .PP
-.B "The second workload, with a baseline."
+.B "The second workload, with a baseline, and now countable."
 .CW p256test (1)
 and
 .CW chainbench (1)
 are in the
 .CW pc64
-root and run natively.  They are allocation- and module-heavy where
+root and run natively, and
+.CW "p256test -s "
+.I secs
+now repeats the arithmetic as a workload instead of measuring it once:
+.CW P256-CYCLE
+a pass, between
+.CW P256-SOAK-START
+and
+.CW P256-SOAK-END ,
+which a serial log can count the way their harness counts
+.CW CHANTEST-OK .
+The correctness controls stay inside the loop, so a pass that stops
+verifying fails the command rather than being counted as work.  Hosted
+and interpreted here it manages 69 cycles in six seconds; on an
+.CW e2-small
+a cycle is about 450 ms of the numbers below.  They are allocation- and module-heavy where
 .CW chantest
 is channel-heavy, which is the difference their plan asks for, and they
 already have numbers on an

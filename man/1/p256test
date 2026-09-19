@@ -4,6 +4,10 @@ p256test \- check p256(2) against another library, and time it
 .SH SYNOPSIS
 .B p256test
 [
+.B -s
+.I secs
+]
+[
 .I reps
 ]
 .SH DESCRIPTION
@@ -62,6 +66,26 @@ and
 .B submod
 agree with the two-call forms, including a subtraction that goes
 negative before it is reduced.
+.PP
+.B -s
+turns the command into a workload as well as a test.  After the checks
+it repeats a verification and an agreement for
+.I secs
+seconds, printing
+.B P256-CYCLE
+with each pass's cost, between
+.B P256-SOAK-START
+and
+.BR P256-SOAK-END .
+A serial log taken from outside can count the cycles, which is what
+makes this usable as the non-chantest workload
+.IR doc/merge-parallelvm-cloud.ms
+asks for: channel traffic is the case a parallel interpreter is best
+at, and this is allocation and module calls instead.  The controls stay
+inside the loop \(em a pass whose verification stops verifying, or whose
+agreement stops matching the vector, fails the command rather than
+being counted.  Hosted and interpreted on an Apple laptop it manages
+about 69 cycles in six seconds.
 .SH SOURCE
 .B /appl/cmd/p256test.b
 .SH SEE ALSO

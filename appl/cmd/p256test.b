@@ -67,9 +67,27 @@ init(nil: ref Draw->Context, argv: list of string)
 		sys->print("p256test: init: %s\n", err);
 		raise "fail:init";
 	}
+	# -s turns this into a workload rather than a test: it repeats the
+	# curve arithmetic for a number of seconds, printing a countable
+	# marker a pass.  doc/merge-parallelvm-cloud.ms asks for a soak
+	# workload that is not chantest -- chantest is channel traffic,
+	# which is the case the parallel VM is best at, while this is
+	# allocation and module calls -- and a log reader counts
+	# P256-CYCLE lines the way it counts CHANTEST-OK.
 	reps := 1;
-	if(tl argv != nil)
-		reps = int hd tl argv;
+	soak := 0;
+	argv = tl argv;
+	if(argv != nil && hd argv == "-s"){
+		argv = tl argv;
+		if(argv == nil){
+			sys->print("usage: p256test [-s secs] [reps]\n");
+			raise "fail:usage";
+		}
+		soak = int hd argv;
+		argv = tl argv;
+	}
+	if(argv != nil)
+		reps = int hd argv;
 
 	kr = load Keyring Keyring->PATH;
 	if(kr == nil){
@@ -81,6 +99,8 @@ init(nil: ref Draw->Context, argv: list of string)
 	ecdsa();
 	timing(reps);
 	fieldcosts();
+	if(soak > 0)
+		soakloop(soak);
 
 	if(nfail != 0){
 		sys->print("p256test: %d FAILED\n", nfail);
@@ -203,6 +223,50 @@ timing(reps: int)
 	t1 = sys->millisec();
 	sys->print("\t%d ECDH agreements in %d ms (%d ms each)\n",
 		reps, t1-t0, (t1-t0)/reps);
+}
+
+# The workload form.  Every pass does the same arithmetic the timing
+# section does, and prints what it cost, so a serial log taken from
+# outside can count passes per minute without a clock in the guest.
+# The controls are the same ones as ever: a pass whose verification
+# stops verifying, or whose agreement stops agreeing, fails the command
+# rather than being counted.
+soakloop(secs: int)
+{
+	pub := unhex(A256PUB);
+	h := unhex(HASH256);
+	r := unhex(R256);
+	s := unhex(S256);
+	apriv := unhex(A256PRIV);
+	bpub := unhex(B256PUB);
+	want := unhex(SHARED256);
+
+	sys->print("P256-SOAK-START %d seconds\n", secs);
+	t0 := sys->millisec();
+	deadline := t0 + secs*1000;
+	n := 0;
+	for(;;){
+		a := sys->millisec();
+		if(a >= deadline)
+			break;
+		if(p256->ecdsa_verify(h, r, s, pub) != 1){
+			sys->print("P256-SOAK-FAIL verification in pass %d\n", n);
+			nfail++;
+			return;
+		}
+		b := sys->millisec();
+		z := p256->ecdh_shared(apriv, bpub);
+		if(z == nil || hex(z) != hex(want)){
+			sys->print("P256-SOAK-FAIL agreement in pass %d\n", n);
+			nfail++;
+			return;
+		}
+		c := sys->millisec();
+		n++;
+		sys->print("P256-CYCLE %d verify %d ms ecdh %d ms\n", n, b-a, c-b);
+	}
+	el := sys->millisec() - t0;
+	sys->print("P256-SOAK-END %d cycles in %d ms\n", n, el);
 }
 
 # What a field operation costs, which is the thing that decides which
