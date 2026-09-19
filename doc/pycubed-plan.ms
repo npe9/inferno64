@@ -702,6 +702,241 @@ Its library modules are
 .CW "lib/daytime      4778     8508     276   880"
 .DE
 .NH 1
+What Inferno already answers, so it is not in the budget
+.PP
+Read against the tree rather than against the plan, a good deal of what
+the beepsat example spends lines on is a thing Inferno has a mechanism
+for, and some of those mechanisms are already linked into the
+.CW mps2
+kernel that boots here.  Those are not work.  What follows separates
+them from what is, because the previous sections costed all of it.
+.NH 2
+The ground link, which is the large one
+.PP
+From
+.CW advanced/cdh.py
+and
+.CW advanced/Tasks/beacon_task.py ,
+read today: a ground packet is a four-byte authorisation code
+.CW "b'p\exba\exb8C'" ,
+then a two-byte command, then arguments.  Five commands:
+.CW no-op ,
+.CW hreset ,
+.CW shutdown ,
+.CW query
+and
+.CW exec_cmd .
+.CW shutdown
+checks a second four-byte constant,
+.CW "b'\ex0b\exfdI\exec'" .
+.CW query
+is
+.CW eval ()
+of the argument and
+.CW exec_cmd
+is
+.CW exec ()
+of it.  The satellite listens for ten seconds after every beacon.
+.PP
+Both constants go over the air in clear, so one received packet is
+enough to send any of the five, and two of the five run arbitrary Python
+on the spacecraft.  That is not a criticism of a demonstration; it is
+the reason the authentication question is worth answering with a
+mechanism rather than with a constant.
+.PP
+Inferno's answer is not a better passcode.  It is that the link carries
+Styx, that the link is authenticated and encrypted before any Styx
+message crosses it, and that there is then no command table at all \-
+the ground reads and writes files in a namespace the satellite chose to
+export.
+.CW hreset
+is
+.CW "echo reboot > /dev/reboot" ,
+.CW query
+is
+.I cat
+of the file that holds the reading, and
+.CW exec_cmd
+has no counterpart because what the ground may do is exactly what was
+exported.  The authenticating step and the limiting step are the same
+step.
+.PP
+The pieces are in this tree and in this kernel:
+.DS
+.CW "  keyring->auth(fd, info, setid)   module/keyring.m:242"
+.CW "  ssl->connect(fd)                 man/2/security-ssl"
+.CW "  #D/n/ctl: fd m                   man/3/ssl"
+.CW "  exportfs, devmnt, devsrv         linked into mps2"
+.CW "  $Keyring, $Crypt                 mod section; modchk(1)"
+.CW "  libkeyring, libsec, libmp        lib section"
+.CW "  /dis/lib/{ssl,auth,factotum}.dis  in the root"
+.CW "  /dis/lib/styxservers.dis          in the root"
+.CW "  /dis/auth/factotum.dis            in the root"
+.DE
+The load-bearing detail is that none of it requires IP.
+.IR Ssl (3)
+is attached with
+.CW "fd m" ,
+a file descriptor number, and
+.CW ssl->connect ()
+takes a
+.CW "ref Sys->FD" .
+The device is a filter over whatever that descriptor is.  So a radio
+that presents a file is enough: authenticate over it, push
+.I ssl
+onto it, serve the namespace through it.  No Ethernet medium, no IP
+stack, no
+.CW devip .
+.CW $Keyring
+and
+.CW $Crypt
+are already built into the
+.CW mps2
+kernel and
+.IR modchk (1)
+says on a booted board that they answer, so the cost of this is a
+.CW /dev/radio
+and the mission code that opens it.
+.NH 2
+What that leaves not free
+.PP
+One thing, and it is real.  Styx assumes an ordered, reliable transport
+and an RFM9x does not provide one: it is a framed packet radio with a
+payload of a couple of hundred bytes, no retransmission and no ordering.
+.IR Ssl (3)
+delimits messages and digests them \- it will refuse a corrupted read \-
+but it does not resend one.  So something under Styx has to retry, and
+that is either a small reliable-datagram layer over the radio device or
+the tree's IP stack over a Medium, which is
+.CW devether.c
+with
+.CW ethermedium.c
+and
+.CW pktmedium.c
+as the shapes to copy.  This is the piece to cost, and it is much
+smaller than the thing it replaces: a retry-and-sequence layer is not a
+command table, a packet format, an authorisation scheme and an
+.CW exec ()
+.
+.PP
+Also not free, and unchanged from the earlier sections: the four bus
+drivers, and the LED, burn wires and ADC, for which Inferno has no
+device class \- which is what
+.CW #P
+and
+.CW addarchfile ()
+are now here for.
+.NH 2
+The rest of it, briefly
+.PP
+Each of these is a thing the Python spends lines on and Inferno spends
+none.
+.IP \(bu
+.B "Task discovery."
+.CW main.py
+does
+.CW "os.listdir('Tasks')"
+and then
+.CW exec ()
+and
+.CW eval ()
+to import and instantiate each one.  Already not ported: the tasks are
+named in the source, so a typo is a compile error rather than a task
+that silently never runs.
+.IP \(bu
+.B "The scheduler."
+.CW lib/tasko ,
+536 lines plus 327 of tests, is a cooperative event loop with a
+managed-resource lock and a managed-SPI wrapper, and it exists because
+CircuitPython is single threaded.  Already removed: processes and
+channels.
+.IP \(bu
+.B "Telemetry format."
+The example beacons a string and would otherwise pack bytes by hand.
+Here a reading is a file \-
+.CW /dev/battery
+answers
+.CW 3960 ,
+.CW /dev/imu
+answers three lines \- and the ground reads the same files over the same
+link, so there is no wire format to define, version, or keep in step
+between the flight and ground software.  That much is already running.
+.IP \(bu
+.B "NVM flags."
+.CW lib/bitflags.py
+packs boot counters and flags into single NVM bytes with masks and
+shifts, because the registers are scarce.  Over 8K of NVM a file per
+flag is the Inferno idiom, and
+.CW #F
+.CW devflash
+and
+.CW devflashfs
+with
+.CW utils/mkflashfs
+are in the tree.  The bit twiddling is not the mission's problem.
+.IP \(bu
+.B "Logging."
+.CW lib/pycubed.py
+mounts a
+.CW VfsFat
+at
+.CW /sd ,
+writes timestamped lines and makes numbered files.  The filesystem half
+is
+.CW #S
+.CW devsd
+with
+.CW sdmmc.c
+and
+.CW /dis/dossrv.dis ,
+which is already in
+.CW mps2 's
+root, and
+.CW /dis/lib/bufio.dis
+buffers.  What is free that is not obvious: the ground reads the logs
+through the same authenticated namespace, so there is no
+.I download
+command and no file-transfer protocol.
+.IP \(bu
+.B "Time."
+.CW #r
+.CW devrtc ,
+.CW /dev/time ,
+.CW /dis/lib/daytime.dis
+and
+.CW timers.dis .
+The GPS discipline of the clock remains mission code; the clock does
+not.
+.IP \(bu
+.B "Reset."
+.CW timeout_handler ()
+counts timeouts in NVM and soft-resets at 255.  The reset is
+.CW /dev/reboot
+in
+.CW devcons ;
+the counting stays mission code.
+.PP
+Software update is worth naming because it is the one place two of this
+document's own answers pull against each other.  In Inferno the ground
+writes a new
+.CW .dis
+into the satellite's file system over the authenticated link and the
+next load picks it up \- no updater, no protocol.  But the whole point
+of phase 3 is that a module's decoded
+.CW Inst
+array is laid out at build time and read in flash, so an uploaded module
+is one that has to be decoded into SRAM instead, at the 1.76 ratio
+measured in
+.CW doc/xip.ms .
+Uploading is therefore cheap and uploading
+.I without
+losing execute in place means re-packing the flash image, which is
+.CW utils/mkflashfs
+and
+.CW utils/dis2s
+run on the ground and the result written whole.  Neither is written
+here; both are the tools that already exist, run somewhere else.
+.NH 1
 What execute in place is worth, in bytes
 .PP
 The whole point of the plan, so it gets its own arithmetic.  SRAM is the
