@@ -6,27 +6,76 @@ radio \- packet radio
 .PP
 .B /dev/radio0/data
 .br
+.B /dev/radio0/pkt
+.br
 .B /dev/radio0/ctl
 .br
-.B /dev/radio0/stat
+.B /dev/radio0/stats
 .SH DESCRIPTION
 The
 .I radio
 device serves a directory per radio interface, each holding
 .BR data ,
+.BR pkt ,
 .B ctl
 and
-.BR stat .
+.BR stats .
 The driver behind it is for the Semtech SX127x family in LoRa mode \- the
 part an HopeRF RFM9x module is built around \- reached over SPI.
+.PP
+This is the frame layer and nothing above it.  It carries atomic
+packets, the radio's configuration, and what was known about a packet
+when it arrived.  It has no addresses, no ports, no acknowledgement, no
+retry, no routing and no fragmentation; those belong to whatever speaks
+through it, the way IP belongs above
+.I ether (3)
+rather than inside it.  A packet written here goes out exactly as
+written and a packet read here is exactly what the modem demodulated.
 .PP
 .B Data
 is message-delimited.  One write is one packet on the air; one read is
 one packet received, blocking until there is one.  It is not a byte
 stream, because a radio is not one and because what is layered above
 depends on the boundary surviving:
-.IR ssl (3)
+.I ssl (3)
 is a filter over a file descriptor, and Styx is a request and a reply.
+.PP
+.B Pkt
+is
+.B data
+with its ancillary information, and exists because a packet radio has
+per-packet facts that a stream has nowhere to put.  A read returns
+twelve bytes of
+.PP
+.EX
+	len[2] rssi[2] snr[2] flags[2] tick[4]
+.EE
+.PP
+little-endian, with
+.B rssi
+and
+.B snr
+signed, followed by the payload.  The signal strength is in dBm and the
+signal-to-noise ratio in dB, both measured on that packet rather than on
+whatever arrived most recently;
+.B tick
+is the kernel tick it landed on; the only flag defined is
+.B 1
+for a packet whose CRC did not check.
+.PP
+Header and payload come out of one read on purpose.  A second file would
+race: two readers, or one reader and two packets, could pair the wrong
+header with the wrong payload, and the pairing is the whole value of the
+header.  This is the shape
+.I recvmsg (2)
+uses on a system that has one, for the same reason.  A reader that does
+not care about any of it opens
+.B data
+instead and the header is skipped for it; the two files read the same
+queue, so a packet is delivered to whichever asks first and once.
+.PP
+A packet whose CRC failed is queued with the flag set rather than
+discarded, because a receiver counting them is measuring its link.
 .PP
 Two things are refused rather than accommodated.
 .TP
@@ -34,7 +83,7 @@ Two things are refused rather than accommodated.
 A read whose buffer is smaller than the waiting packet fails, naming the
 size the packet needs, and the packet stays queued for a read that fits.
 It is not truncated.
-.IR Ssl (3)
+.I Ssl (3)
 states the contract this inherits \- as long as reads specify buffers of
 equal or greater length than the writes at the other end, one write
 corresponds to one read \- and a device that quietly returned the first
@@ -51,11 +100,15 @@ The
 .B iounit
 of
 .B data
-is that budget, which is 251 bytes: 255 of FIFO less the four-byte
-RadioHead header.  That matters beyond documentation, because
+is that budget, which is 255 bytes, the whole of the part's FIFO,
+because this device adds nothing to what is written.  That matters
+beyond documentation, because
 .I exportfs
 adopts a transport's iounit when negotiating a Styx message size, so a
 server over this settles on a radio-sized message without being told.
+The iounit of
+.B pkt
+is twelve more.
 .PP
 .B Ctl
 takes one command per write:
@@ -75,24 +128,15 @@ Bandwidth; one of the values the part has, 7800 through 500000.
 .BI cr " n"
 Coding rate denominator, 5 to 8.
 .TP
-.BI node " n"
-This station's RadioHead address.
-.TP
-.BI dest " n"
-The default destination address; 255 is broadcast.
-.TP
 .B reset
 Put the part back in sleep and reapply the settings.
-.TP
-.BI ack " on|off"
-Send reliably and acknowledge what arrives.  Off by default, because a
-link with one end acknowledging and the other not is worse than neither.
-.TP
-.BI retries " n"
-How many times a reliable send is attempted before it gives up.
-.TP
-.BI acktimeout " ms"
-How long to wait for each acknowledgement.
+.PP
+Those are the modem's parameters and nothing else, which is the point:
+there is no
+.B node
+or
+.B dest
+here because there is no address here.
 .PP
 .B Ctl 's
 .B sf
@@ -101,57 +145,26 @@ whenever a symbol lasts longer than 16ms \- SF11 and SF12 at 125kHz.
 It is mandatory rather than advisory, because the receiver has to agree:
 a link with one end setting it and the other not does not work.
 .PP
-With
-.B ack
-on, a write is a reliable datagram in the manner of
-.IR lib/pycubed_rfm9x.py 's
-.B send_with_ack ,
-because that is what the other end of a PyCubed link speaks: the
-header's identifier byte carries a sequence number, the sender waits for
-a packet with the ACK flag and the same identifier, and a
-retransmission sets the RETRY flag.  A receiver replies to anything
-addressed to it that is not itself an acknowledgement, with the payload
-.B !
-and the sender's identifier, and it does so from a separate process
-because a reply is a transmit and a transmit sleeps.  A broadcast is
-neither acknowledged nor waited for.
-.PP
-A write returns the number of bytes sent, or fails, and with
-.B ack
-on it fails only after every retry has been tried.  That is the
-difference between this and an unacknowledged write, which cannot fail
-for any reason the other end would know about.
-.PP
 A transmit waits for the time the packet will really be on the air,
 computed from the spreading factor, bandwidth, coding rate and length,
 and not for a constant.  At 125kHz a 20-byte packet is 57ms at SF7 and
 1319ms at SF12, so a constant is either wrong at one end or pointlessly
 long at the other.
 .PP
-.B Stat
+.B Stats
 returns the parameters in force, the RSSI and SNR of the last packet
-received, and counters for packets sent and received, CRC errors,
-oversize writes, packets heard but addressed elsewhere
-.RB ( notours )
-packets too short to carry a header
-.RB ( runt ),
+received, and counters for packets sent and received
+.RB ( sent ,
+.BR received ),
+packets that arrived with a bad CRC
+.RB ( crcerrors ),
+writes refused for being past the payload
+.RB ( toobig ),
 transmits that never reported done
-.RB ( txtimeout )
-the computed airtime of a 20-byte packet in the current configuration
-.RB ( airtime-20B-ms ),
-and, when
-.B ack
-is on, acknowledgements sent and received
-.RB ( acksent ,
-.BR ackrecv ),
-retransmissions
-.RB ( retried )
-and sends that gave up
-.RB ( sendfail ).
-The last two matter more than they look.  A sender that does not speak
-the RadioHead header \- a bare LoRa transmitter, which Semtech's own
-driver is \- is heard and dropped, and without a counter that is
-indistinguishable from a dead link: received stays 0 either way.
+.RB ( txtimeout ),
+and the computed airtime of a 20-byte packet in the current
+configuration
+.RB ( airtime-20B-ms ).
 .SH SOURCE
 .B /os/inferno/radio/devradio.c
 .br
@@ -170,19 +183,14 @@ or
 .B 0xff
 and those are worth telling apart from a different chip.
 .SH BUGS
-A reliable send holds the part for the whole exchange, so an
-acknowledgement this station owes somebody else waits until it finishes.
-On a link with one conversation at a time that is invisible; on a busier
-one it would cost retransmissions at the other end.
-.PP
-Duplicate suppression is not implemented.  A retransmission whose
-acknowledgement was lost is delivered twice, where
-.I lib/pycubed_rfm9x.py
-has the beginnings of a seen-identifier table for the same case, also
-unfinished.
-.PP
 Only one interface exists.  A PyCubed has two radio sockets on one SPI
 bus, RF1 and RF2; this drives the first.
+.PP
+Nothing arbitrates the air.  There is no carrier sense, no backoff and
+no duty-cycle accounting, so a write transmits whenever it is called
+and two stations that write at once collide.  On the ISM bands duty
+cycle is a legal limit and not a courtesy, which makes this the next
+thing the device owes and not a nicety.
 .PP
 Two boards run this, both under a QEMU patched to model an SX1276:
 .B mps2
@@ -219,5 +227,5 @@ its own half \- the controller, the chip select, which pin the interrupt
 arrived on \- and that is the part thrown away when the machine
 changes.
 .SH SEE ALSO
-.IR radiochk (1),
-.IR ssl (3)
+.I radiochk (1),
+.I ssl (3)

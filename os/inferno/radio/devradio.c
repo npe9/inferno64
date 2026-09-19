@@ -10,16 +10,39 @@
  * #W, a packet radio.
  *
  *	/dev/radio0/data	one write is one packet, one read is one
- *	/dev/radio0/ctl		text: freq, power, sf, bw, cr, node, dest
- *	/dev/radio0/stat	text: parameters, RSSI, SNR, counters
+ *	/dev/radio0/pkt		a read is one packet and what was known
+ *				about it when it arrived
+ *	/dev/radio0/ctl		text: freq, power, sf, bw, cr, ...
+ *	/dev/radio0/stats	text: parameters, RSSI, SNR, counters
  *
  * The shape is the one #D ssl, #l ether and #u usb already use: a
  * numbered directory per interface with data, ctl and a status file.
+ *
+ * This is the frame layer and nothing above it.  It carries atomic
+ * packets, the radio's configuration, and the receive metadata; it has
+ * no addresses, no ports, no acknowledgement, no retry, no routing and
+ * no fragmentation.  Those belong to whatever speaks through it, the
+ * way IP belongs above #l ether rather than inside it.  A packet
+ * written here goes out exactly as written, and a packet read here is
+ * exactly what the modem demodulated.
  *
  * data is message-delimited and that is the whole design.  A radio is
  * not a byte stream, and everything that would be layered on this
  * depends on the boundary surviving: ssl(3) is a filter over a file
  * descriptor, and Styx is a request and a reply.
+ *
+ * pkt is data with its ancillary information, and exists because a
+ * packet radio has per-packet facts a stream has nowhere to put: the
+ * signal strength and signal-to-noise ratio it arrived at, whether its
+ * CRC checked, and when it landed.  A second file would race -- two
+ * readers, or one reader and two packets, could pair the wrong header
+ * with the wrong payload -- so the two come out of one read, in the
+ * order recvmsg(2) uses: Pkthdrlen bytes of
+ *
+ *	len[2] rssi[2] snr[2] flags[2] tick[4]
+ *
+ * little-endian, rssi and snr signed, then the payload.  A reader that
+ * does not care opens data instead and the header is skipped for it.
  *
  * Two things are refused rather than accommodated, because a device
  * that quietly did either would hide the problem somewhere it could not
@@ -47,12 +70,12 @@ enum {
 	Qdir,
 	Qradiodir,
 	Qdata,
+	Qpkt,
 	Qctl,
-	Qstat,
+	Qstats,
 
 	Nradio		= 1,		/* sockets this kernel knows about */
 	Statlen		= 512,
-	Maxwrite	= Maxpayload - Rhhdrlen,
 };
 
 #define TYPE(q)		((ulong)(q).path & 0x0f)
@@ -98,8 +121,9 @@ radiogen(Chan *c, char *unused, Dirtab *d, int nd, int s, Dir *dp)
 
 	case Qradiodir:
 	case Qdata:
+	case Qpkt:
 	case Qctl:
-	case Qstat:
+	case Qstats:
 		n = NUM(c->qid);
 		switch(s){
 		case 0:
@@ -107,12 +131,16 @@ radiogen(Chan *c, char *unused, Dirtab *d, int nd, int s, Dir *dp)
 			devdir(c, q, "data", 0, eve, 0660, dp);
 			return 1;
 		case 1:
+			mkqid(&q, QID(n, Qpkt), 0, QTFILE);
+			devdir(c, q, "pkt", 0, eve, 0440, dp);
+			return 1;
+		case 2:
 			mkqid(&q, QID(n, Qctl), 0, QTFILE);
 			devdir(c, q, "ctl", 0, eve, 0660, dp);
 			return 1;
-		case 2:
-			mkqid(&q, QID(n, Qstat), 0, QTFILE);
-			devdir(c, q, "stat", 0, eve, 0444, dp);
+		case 3:
+			mkqid(&q, QID(n, Qstats), 0, QTFILE);
+			devdir(c, q, "stats", 0, eve, 0444, dp);
 			return 1;
 		}
 		return -1;
@@ -150,7 +178,9 @@ radioopen(Chan *c, u32 omode)
 			error(Enonexist);
 	c = devopen(c, omode, nil, 0, radiogen);
 	if(TYPE(c->qid) == Qdata)
-		c->iounit = Maxwrite;
+		c->iounit = Maxpayload;
+	else if(TYPE(c->qid) == Qpkt)
+		c->iounit = Pkthdrlen + Maxpayload;
 	return c;
 }
 
@@ -165,7 +195,7 @@ radioread(Chan *c, void *a, s32 n, s64 offset)
 	Radio *rr;
 	Block *b;
 	char *buf;
-	int rv;
+	int rv, off;
 
 	if(c->qid.type & QTDIR)
 		return devdirread(c, a, n, nil, 0, radiogen);
@@ -176,6 +206,7 @@ radioread(Chan *c, void *a, s32 n, s64 offset)
 
 	switch(TYPE(c->qid)){
 	case Qdata:
+	case Qpkt:
 		/*
 		 * Ask for a whole packet, not for what the caller's buffer
 		 * happens to hold.  qbread() on a Qmsg queue hands back n
@@ -184,25 +215,36 @@ radioread(Chan *c, void *a, s32 n, s64 offset)
 		 * so take the packet, and if it does not fit, put it back
 		 * and say so.  The packet is still there for a read that
 		 * is big enough.
+		 *
+		 * A queue entry is the ancillary data then the payload.
+		 * data skips the first and pkt returns both, out of the
+		 * same entry, so a reader of pkt gets the packet and what
+		 * was known about it together and races nobody.
 		 */
-		b = qbread(rr->rq, Maxpayload);
+		b = qbread(rr->rq, Pkthdrlen + Maxpayload);
 		if(b == nil)
 			return 0;
 		rv = BLEN(b);
+		off = TYPE(c->qid) == Qdata ? Pkthdrlen : 0;
+		if(rv < Pkthdrlen){
+			freeb(b);
+			error("radio: short queue entry");
+		}
+		rv -= off;
 		if(rv > n){
 			ilock((Lock*)rr->rq);
 			qputback(rr->rq, b);
 			iunlock((Lock*)rr->rq);
 			snprint(up->genbuf, sizeof up->genbuf,
-				"radio: %d byte packet needs a %d byte read",
-				rv, rv);
+				"radio: %d byte packet needs a read that big",
+				rv);
 			error(up->genbuf);
 		}
 		if(waserror()){
 			freeb(b);
 			nexterror();
 		}
-		memmove(a, b->rp, rv);
+		memmove(a, b->rp + off, rv);
 		poperror();
 		freeb(b);
 		return rv;
@@ -212,7 +254,7 @@ radioread(Chan *c, void *a, s32 n, s64 offset)
 			NUM(c->qid));
 		return readstr(offset, a, n, up->genbuf);
 
-	case Qstat:
+	case Qstats:
 		buf = malloc(Statlen);
 		if(buf == nil)
 			error(Enomem);
@@ -241,10 +283,10 @@ radiowrite(Chan *c, void *a, s32 n, s64)
 
 	switch(TYPE(c->qid)){
 	case Qdata:
-		if(n > Maxwrite){
+		if(n > Maxpayload){
 			snprint(up->genbuf, sizeof up->genbuf,
 				"radio: %d bytes is past the %d byte payload",
-				n, Maxwrite);
+				n, Maxpayload);
 			error(up->genbuf);
 		}
 		if(sx127xsend(rr, a, n) < 0)

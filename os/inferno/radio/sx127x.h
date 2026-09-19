@@ -27,7 +27,24 @@ struct Spidev
 
 enum {
 	Maxpayload	= 255,		/* what the FIFO holds */
-	Rhhdrlen	= 4,		/* RadioHead: to, from, id, flags */
+
+	/*
+	 * What a read of #W/radio0/pkt returns in front of the payload.
+	 * recvmsg() rather than recv(): the things LoRa knows about a
+	 * packet that the packet does not contain -- how strong it was,
+	 * how clean, whether its CRC checked, when it arrived -- handed
+	 * over with it, out of the same queue entry, so that nothing is
+	 * looked up afterwards and nothing races.  None of it goes on
+	 * the air.
+	 *
+	 *	uchar	len[2]		payload bytes following
+	 *	uchar	rssi[2]		dBm, signed
+	 *	uchar	snr[2]		dB, signed
+	 *	uchar	flags[2]	Pcrcerr
+	 *	uchar	tick[4]		arrival, in clock ticks
+	 */
+	Pkthdrlen	= 12,
+	Pcrcerr		= 1<<0,
 };
 
 struct Radio
@@ -42,11 +59,6 @@ struct Radio
 	int	sf;			/* spreading factor 6..12 */
 	u32	bw;			/* Hz */
 	int	cr;			/* coding rate denominator 5..8 */
-	int	node;			/* RadioHead: this station */
-	int	dest;			/* RadioHead: default destination */
-	int	ackon;			/* send reliably, and acknowledge */
-	int	acktries;		/* how many times before giving up */
-	int	ackwait;		/* ms to wait for one */
 
 	/* what the last received packet looked like */
 	int	rssi;
@@ -57,33 +69,18 @@ struct Radio
 	u32	nrecv;
 	u32	ncrcerr;
 	u32	ntoobig;
-	u32	nnotours;		/* heard, addressed to someone else */
 	u32	ntxtimeout;		/* transmits that never reported done */
-	u32	nacksent;
-	u32	nackrecv;
-	u32	nretry;			/* retransmissions */
-	u32	nsendfail;		/* gave up after all the retries */
-	u32	nrunt;			/* heard, too short to be a packet */
 
 	QLock	qlock;			/* one user of the part at a time */
 	Rendez	r;			/* a packet arrived */
 	Rendez	txr;			/* the last one went */
 	int	txdone;
-	Rendez	ackr;			/* an acknowledgement arrived */
-	int	gotack;
-	uchar	seq;			/* RadioHead identifier, per packet */
-	uchar	waitid;			/* the one being waited for */
-	int	waiting;
-
-	/* an acknowledgement the receive path owes somebody */
-	Rendez	owed;
-	int	oweack;
-	uchar	oweto, oweid, oweflags;
 	Queue	*rq;			/* received packets, one block each */
 };
 
 Radio*	sx127xinit(Spidev*, int irq);
 int	sx127xsend(Radio*, uchar*, int);
+Block*	sx127xrecv(Radio*, int);
 int	sx127xctl(Radio*, char*, int);
 int	sx127xstat(Radio*, char*, int);
 void	sx127xinterrupt(Radio*);

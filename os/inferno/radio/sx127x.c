@@ -68,13 +68,6 @@ enum {
 
 	Sx1276version	= 0x12,
 
-	/*
-	 * RadioHead header flags, which lib/pycubed_rfm9x.py uses and
-	 * which therefore are not ours to choose.
-	 */
-	Fack		= 0x80,
-	Fretry		= 0x40,
-	Bcast		= 0xff,
 
 	/*
 	 * RegFrf counts in steps of the 32MHz crystal over 2^19, which is
@@ -270,254 +263,123 @@ txdone(void *a)
 }
 
 /*
- * One packet on the air, with the header given.  The caller holds
- * rr->qlock; this takes and drops the bus lock around each burst
- * because nothing may sleep while that is held.
- */
-static int
-sendraw(Radio *rr, uchar to, uchar id, uchar flags, uchar *p, int n)
-{
-	uchar hdr[Rhhdrlen];
-	int ms;
-
-	rr->spi->lock(rr->spi);
-	setmode(rr, Mstdby);
-	wr(rr, Sxirqflags, 0xff);
-	wr(rr, Sxfifotxbase, 0x00);
-	wr(rr, Sxfifoaddrptr, 0x00);
-
-	hdr[0] = to;
-	hdr[1] = rr->node;
-	hdr[2] = id;
-	hdr[3] = flags;
-	wrburst(rr, Sxfifo, hdr, Rhhdrlen);
-	if(n > 0)
-		wrburst(rr, Sxfifo, p, n);
-	wr(rr, Sxpayloadlength, n + Rhhdrlen);
-
-	rr->txdone = 0;
-	wr(rr, Sxdiomapping1, 0x40);		/* DIO0 = TxDone */
-	setmode(rr, Mtx);
-	rr->spi->unlock(rr->spi);
-
-	ms = timeonair(rr, n + Rhhdrlen);
-	tsleep(&rr->txr, txdone, rr, ms + ms/2 + 50);
-	if(!rr->txdone){
-		rr->ntxtimeout++;
-		print("sx127x %s: no TxDone in %dms for a %dms packet\n",
-			rr->spi->name, ms + ms/2 + 50, ms);
-	}
-
-	rr->spi->lock(rr->spi);
-	listen(rr);
-	rr->spi->unlock(rr->spi);
-	return rr->txdone ? n : -1;
-}
-
-static int
-gotack(void *a)
-{
-	Radio *rr = a;
-
-	return rr->gotack;
-}
-
-/*
- * Reliable datagram, the way lib/pycubed_rfm9x.py's send_with_ack does
- * it, because that is what the other end of a PyCubed link speaks: a
- * sequence number in the header's identifier byte, a wait for a packet
- * with the ACK flag and the same identifier, and a retransmission with
- * the RETRY flag set.  A broadcast is not acknowledged and is not
- * waited for, which is also their rule.
+ * One packet on the air, exactly as given.  No header: this is the
+ * medium, and who a packet is for is not its business.  See
+ * doc/radio-interface.ms.
  */
 int
 sx127xsend(Radio *rr, uchar *p, int n)
 {
-	int try, rv, flags;
+	int ms;
 
-	if(n <= 0 || n > Maxpayload - Rhhdrlen){
+	if(n <= 0 || n > Maxpayload){
 		rr->ntoobig++;
 		return -1;
 	}
 
 	qlock(&rr->qlock);
 	if(waserror()){
-		rr->waiting = 0;
 		qunlock(&rr->qlock);
 		nexterror();
 	}
 
-	if(!rr->ackon || rr->dest == Bcast){
-		rv = sendraw(rr, rr->dest, ++rr->seq, 0, p, n);
-		if(rv > 0)
-			rr->nsent++;
-		poperror();
-		qunlock(&rr->qlock);
-		return rv;
-	}
+	rr->spi->lock(rr->spi);
+	setmode(rr, Mstdby);
+	wr(rr, Sxirqflags, 0xff);
+	wr(rr, Sxfifotxbase, 0x00);
+	wr(rr, Sxfifoaddrptr, 0x00);
+	wrburst(rr, Sxfifo, p, n);
+	wr(rr, Sxpayloadlength, n);
 
-	rr->seq++;
-	flags = 0;
-	rv = -1;
-	for(try = 0; try < rr->acktries; try++){
-		if(try > 0){
-			rr->nretry++;
-			flags |= Fretry;
-		}
-		rr->gotack = 0;
-		rr->waitid = rr->seq;
-		rr->waiting = 1;
-		if(sendraw(rr, rr->dest, rr->seq, flags, p, n) < 0)
-			continue;
+	rr->txdone = 0;
+	wr(rr, Sxdiomapping1, 0x40);		/* DIO0 = TxDone */
+	setmode(rr, Mtx);
+	rr->spi->unlock(rr->spi);
+
+	ms = timeonair(rr, n);
+	tsleep(&rr->txr, txdone, rr, ms + ms/2 + 50);
+	if(!rr->txdone){
+		rr->ntxtimeout++;
+		print("sx127x %s: no TxDone in %dms for a %dms packet\n",
+			rr->spi->name, ms + ms/2 + 50, ms);
+	}else
 		rr->nsent++;
-		tsleep(&rr->ackr, gotack, rr, rr->ackwait);
-		rr->waiting = 0;
-		if(rr->gotack){
-			rv = n;
-			break;
-		}
-	}
-	if(rv < 0)
-		rr->nsendfail++;
+
+	rr->spi->lock(rr->spi);
+	listen(rr);
+	rr->spi->unlock(rr->spi);
 
 	poperror();
 	qunlock(&rr->qlock);
-	return rv;
+	return rr->txdone ? n : -1;
 }
 
 /*
- * The acknowledgements the receive path owes.  A separate process
- * because an interrupt handler cannot transmit -- a transmit sleeps --
- * and because the reply has to wait its turn behind whatever else is
- * using the part.
- */
-static int
-owed(void *a)
-{
-	Radio *rr = a;
-
-	return rr->oweack;
-}
-
-static void
-ackproc(void *a)
-{
-	Radio *rr = a;
-	uchar to, id, flags;
-
-	for(;;){
-		tsleep(&rr->owed, owed, rr, 1000);
-		if(!rr->oweack)
-			continue;
-		to = rr->oweto;
-		id = rr->oweid;
-		flags = rr->oweflags;
-		rr->oweack = 0;
-
-		qlock(&rr->qlock);
-		if(!waserror()){
-			/* payload "!", which is what RadioHead sends */
-			sendraw(rr, to, id, flags | Fack, (uchar*)"!", 1);
-			rr->nacksent++;
-			poperror();
-		}
-		qunlock(&rr->qlock);
-	}
-}
-
-/*
- * DIO0 fired.  Read whatever arrived into a block and queue it whole:
- * the device above hands out one packet per read, so a packet has to
- * stay one thing all the way up.
+ * DIO0 fired.  Take whatever arrived, put the ancillary data in front
+ * of it, and queue the two as one block: recvmsg() rather than recv(),
+ * so that a reader gets the packet and what was known about it out of
+ * the same queue entry and nothing is looked up afterwards.  #W's data
+ * file skips the header, its pkt file returns it.  None of it was on
+ * the air.
+ *
+ * No addressing here, and no acknowledgement.  This is the medium; see
+ * doc/radio-interface.ms.
  */
 void
 sx127xinterrupt(Radio *rr)
 {
 	uchar buf[Maxpayload];
 	Block *b;
-	int flags, n;
+	int flags, n, rssi, snr, pf;
+	u32 tick;
 
 	rr->spi->lock(rr->spi);
 	flags = rd(rr, Sxirqflags);
 
 	if(flags & Irxdone){
 		n = rd(rr, Sxrxnbbytes);
+		pf = 0;
 		if(flags & Icrcerror){
 			rr->ncrcerr++;
-		}else if(n <= Rhhdrlen || n > Maxpayload){
-			/*
-			 * Shorter than a RadioHead header, so it is not one
-			 * of ours however well it was received.
-			 */
-			rr->nrunt++;
-		}else{
+			pf |= Pcrcerr;
+		}
+		if(n > 0 && n <= Maxpayload){
 			wr(rr, Sxfifoaddrptr, rd(rr, Sxfiforxcurrent));
 			rdburst(rr, Sxfifo, buf, n);
-			rr->rssi = rd(rr, Sxpktrssi) - 157;
-			rr->snr = (schar)rd(rr, Sxpktsnr) / 4;
+			rssi = rd(rr, Sxpktrssi) - 157;
+			snr = (schar)rd(rr, Sxpktsnr) / 4;
+			rr->rssi = rssi;
+			rr->snr = snr;
+			tick = MACHP(0)->ticks;
+
 			/*
-			 * Strip the RadioHead header and keep the payload.
-			 * A packet not addressed to this station or to the
-			 * broadcast address is not ours.
+			 * A packet whose CRC failed is queued with the flag
+			 * set rather than thrown away: a receiver counting
+			 * them is measuring its link, and a receiver that
+			 * does not care ignores the flag.
 			 */
-			if(buf[0] == rr->node || buf[0] == Bcast){
-				if(buf[3] & Fack){
-					/*
-					 * Somebody acknowledging us.  It is
-					 * not data and does not go up; it
-					 * only counts if it is the one being
-					 * waited for.
-					 */
-					rr->nackrecv++;
-					if(rr->waiting && buf[2] == rr->waitid){
-						rr->gotack = 1;
-						wakeup(&rr->ackr);
-					}
-				}else{
-					b = iallocb(n - Rhhdrlen);
-					if(b != nil){
-						memmove(b->wp, buf + Rhhdrlen,
-							n - Rhhdrlen);
-						b->wp += n - Rhhdrlen;
-						qpass(rr->rq, b);
-						rr->nrecv++;
-					}
-					/*
-					 * Owe the sender an acknowledgement,
-					 * unless this was a broadcast, which
-					 * nobody acknowledges.  The reply is
-					 * a transmit and a transmit sleeps,
-					 * so it is left to ackproc().
-					 */
-					if(rr->ackon && buf[0] != Bcast){
-						rr->oweto = buf[1];
-						rr->oweid = buf[2];
-						rr->oweflags = buf[3];
-						rr->oweack = 1;
-						wakeup(&rr->owed);
-					}
-				}
-			}else{
-				/*
-				 * Counted rather than merely dropped.  A
-				 * packet from a sender that does not speak
-				 * the RadioHead header -- a bare LoRa
-				 * transmitter, which Semtech's own driver
-				 * is -- lands here, and without a counter
-				 * it looks exactly like a dead link.  That
-				 * is not a distinction to make an operator
-				 * guess at from the ground.
-				 */
-				rr->nnotours++;
+			b = iallocb(Pkthdrlen + n);
+			if(b != nil){
+				b->wp[0] = n;
+				b->wp[1] = n >> 8;
+				b->wp[2] = rssi;
+				b->wp[3] = rssi >> 8;
+				b->wp[4] = snr;
+				b->wp[5] = snr >> 8;
+				b->wp[6] = pf;
+				b->wp[7] = pf >> 8;
+				b->wp[8] = tick;
+				b->wp[9] = tick >> 8;
+				b->wp[10] = tick >> 16;
+				b->wp[11] = tick >> 24;
+				memmove(b->wp + Pkthdrlen, buf, n);
+				b->wp += Pkthdrlen + n;
+				qpass(rr->rq, b);
+				rr->nrecv++;
 			}
 		}
 	}
 
-	/*
-	 * Clear exactly the bits that were read, not everything: a flag
-	 * that set between the read and the write would otherwise be
-	 * thrown away without anyone having looked at it.
-	 */
 	wr(rr, Sxirqflags, flags);
 	rr->spi->unlock(rr->spi);
 
@@ -540,12 +402,7 @@ sx127xctl(Radio *rr, char *a, int n)
 		{ 3,	"sf",		2 },
 		{ 4,	"bw",		2 },
 		{ 5,	"cr",		2 },
-		{ 6,	"node",		2 },
-		{ 7,	"dest",		2 },
 		{ 8,	"reset",	1 },
-		{ 9,	"ack",		2 },
-		{ 10,	"retries",	2 },
-		{ 11,	"acktimeout",	2 },
 	};
 	int v;
 
@@ -567,8 +424,6 @@ sx127xctl(Radio *rr, char *a, int n)
 	 * that with an ilock held would leave it held for ever.
 	 */
 	v = cb->nf > 1 ? atoi(cb->f[1]) : 0;
-	if(ct->index == 9)
-		v = strcmp(cb->f[1], "on") == 0;
 	switch(ct->index){
 	case 3:
 		if(v < 6 || v > 12)
@@ -581,14 +436,6 @@ sx127xctl(Radio *rr, char *a, int n)
 	case 5:
 		if(v < 5 || v > 8)
 			error("coding rate is 5 to 8");
-		break;
-	case 10:
-		if(v < 1)
-			error("retries is at least 1");
-		break;
-	case 11:
-		if(v < 1)
-			error("acktimeout is in milliseconds, at least 1");
 		break;
 	}
 
@@ -611,25 +458,6 @@ sx127xctl(Radio *rr, char *a, int n)
 	case 5:
 		rr->cr = v;
 		setmodem(rr);
-		break;
-	case 6:
-		rr->node = v & 0xff;
-		break;
-	case 7:
-		rr->dest = v & 0xff;
-		break;
-	case 9:
-		rr->ackon = v;
-		break;
-	case 10:
-		if(v < 1)
-			error("retries is at least 1");
-		rr->acktries = v;
-		break;
-	case 11:
-		if(v < 1)
-			error("acktimeout is in milliseconds, at least 1");
-		rr->ackwait = v;
 		break;
 	case 8:
 		setmode(rr, Msleep);
@@ -663,25 +491,14 @@ sx127xstat(Radio *rr, char *a, int n)
 	p = seprint(p, e, "sf %d\n", rr->sf);
 	p = seprint(p, e, "bw %ud\n", rr->bw);
 	p = seprint(p, e, "cr %d\n", rr->cr);
-	p = seprint(p, e, "node %d\n", rr->node);
-	p = seprint(p, e, "dest %d\n", rr->dest);
 	p = seprint(p, e, "rssi %d\n", rr->rssi);
 	p = seprint(p, e, "snr %d\n", rr->snr);
 	p = seprint(p, e, "sent %ud\n", rr->nsent);
 	p = seprint(p, e, "received %ud\n", rr->nrecv);
 	p = seprint(p, e, "crcerrors %ud\n", rr->ncrcerr);
 	p = seprint(p, e, "toobig %ud\n", rr->ntoobig);
-	p = seprint(p, e, "notours %ud\n", rr->nnotours);
 	p = seprint(p, e, "txtimeout %ud\n", rr->ntxtimeout);
-	p = seprint(p, e, "ack %s\n", rr->ackon? "on": "off");
-	p = seprint(p, e, "retries %d\n", rr->acktries);
-	p = seprint(p, e, "acktimeout %d\n", rr->ackwait);
-	p = seprint(p, e, "acksent %ud\n", rr->nacksent);
-	p = seprint(p, e, "ackrecv %ud\n", rr->nackrecv);
-	p = seprint(p, e, "retried %ud\n", rr->nretry);
-	p = seprint(p, e, "sendfail %ud\n", rr->nsendfail);
 	p = seprint(p, e, "airtime-20B-ms %d\n", timeonair(rr, 20));
-	p = seprint(p, e, "runt %ud\n", rr->nrunt);
 	return p - a;
 }
 
@@ -729,16 +546,6 @@ sx127xinit(Spidev *s, int irq)
 	rr->sf = 7;
 	rr->bw = 125000;
 	rr->cr = 5;
-	rr->node = 1;
-	rr->dest = 0xff;
-	/*
-	 * lib/pycubed_rfm9x.py's own defaults: five tries, half a second
-	 * apart.  Off until asked for, because a link with one end
-	 * acknowledging and the other not is worse than neither.
-	 */
-	rr->ackon = 0;
-	rr->acktries = 5;
-	rr->ackwait = 500;
 
 	setfreq(rr, rr->freq);
 	setmodem(rr);
@@ -750,8 +557,6 @@ sx127xinit(Spidev *s, int irq)
 	wr(rr, Sxirqflags, 0xff);
 	listen(rr);
 	s->unlock(s);
-
-	kproc("radioack", ackproc, rr, 0);
 
 	print("sx127x %s: SX1276, %ud Hz, sf%d, bw %ud\n",
 		s->name, rr->freq, rr->sf, rr->bw);
