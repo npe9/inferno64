@@ -54,6 +54,20 @@ if [ -n "$list" ]; then
 	exit 0
 fi
 
+# mkconfig carries an absolute ROOT, and this repository has thirty
+# worktrees.  A tree whose ROOT names a different one installs its
+# libraries and host binaries into that other tree -- silently, with no
+# error anywhere -- and then this suite measures a mixture of the two.
+# It has already happened once in each direction across the cloud-port
+# and multicore worktrees, each time by a merge carrying the other's
+# line across.  Refuse instead.
+cfgroot=`sed -n 's/^ROOT=//p' "$ROOT/mkconfig" | head -1`
+if [ "$cfgroot" != "$ROOT" ]; then
+	echo "check-all: mkconfig says ROOT=$cfgroot but this tree is $ROOT" >&2
+	echo "check-all: fix mkconfig before building or checking anything here" >&2
+	exit 1
+fi
+
 # Built kernels are a precondition, not something to discover halfway
 # through a half-hour run.
 missing=

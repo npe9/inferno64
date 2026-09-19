@@ -117,6 +117,29 @@ strings only \(em so it would pass a kernel that prints
 .CW soak:
 lines down an instance's serial console for the life of the machine.
 The gate has to grow before it can hold, and that is step 0 below.
+.PP
+.B "3. mkconfig carries an absolute ROOT, and adoption would point it at
+the other worktree."
+.CW 225c058c 's
+.CW mkconfig
+says
+.CW ROOT=/Users/npe/src/inferno64-branches/multicore ,
+so the fast-forward replaces this tree's line with theirs and the next
+.CW "mk install"
+here installs its libraries and host binaries
+.I "into that worktree" .
+Nothing errors.  Their own notes record the same thing happening to
+them in the other direction when their merge carried our line across.
+.PP
+This one is now caught rather than remembered:
+.CW check-all.sh
+refuses to run when
+.CW mkconfig 's
+.CW ROOT
+is not the tree it is running in.  Verified both ways \(em with the line
+edited to a wrong path it exits 1 and names both paths; restored, it
+runs.  The repository has thirty worktrees, so this is a standing
+hazard and not a one-off of this merge.
 .NH 1
 What the two names should mean
 .PP
@@ -206,22 +229,34 @@ wrong, not the queues.  Whichever way it comes out, this paper and
 .CW check-all.sh 's
 comment change.
 .PP
-G1 fails on the current tip, for the reason in section 2.  That is the
-gate working.
+G1 fails on the current tip, and it has been shown failing rather than
+predicted: their kernel prints 43
+.CW stall:
+lines on a default boot.  That is the gate working.
 .NH 1
 The procedure
 .PP
 .IP "0." 5
-Extend
-.CW check-disdump.sh
-so the quiet arm asserts the absence of
+.B Done .
+.CW check-disdump.sh 's
+quiet arm now asserts the absence of
 .CW soak: ,
 .CW stall: ,
 .CW nvm: ,
-.CW audit:
-and the run-queue watermark as well as the dump, and check it still
-passes here.  This is in this branch's own lane and does not wait for
-anybody.
+.CW audit: ,
+the run-queue watermark and the vm-lock depth as well as the dump, and
+still passes here.  Their kernel, built from their working tree and
+booted under this one's QEMU with no
+.CW *disdump ,
+reaches a shell and prints
+.B "43 stall: lines" ,
+which is the prediction from reading
+.CW hzclock()
+confirmed by a boot.  And
+.CW check-all.sh
+refuses a tree whose
+.CW mkconfig
+names another worktree.
 .IP "1." 5
 Pin a SHA \(em not "the tip", which moves: that session committed six
 minutes before this was written and has uncommitted
