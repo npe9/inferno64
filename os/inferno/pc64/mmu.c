@@ -197,44 +197,38 @@ return 0;
  */
 static uvlong vmaplimit;
 /*
- * 2 MiB pages in pmap(), off.
+ * 2 MiB pages in pmap(), on.  *pmaplarge=0 turns them off.
  *
- * Turning them on maps the same memory in eight thousand entries
- * instead of four million, and that is the right shape for a machine
- * with tens of gibibytes -- at a terabyte, 4 KiB entries are two
- * gibibytes of page tables and the question stops being a preference.
- * It is off because it is not correct yet, and the evidence is exact:
- * with it on, the pool overlap checker in os/inferno/port/alloc.c --
- * which had never fired in this tree -- reported the image pool's
- * chain leader holding "magic 0x2103", a page-table entry with flags
- * 0x103 written over MAGIC_E within a second of boot.
+ * Sixteen gibibytes in 4 KiB entries is four million of them and about
+ * thirty-two mebibytes of page tables; in 2 MiB entries it is eight
+ * thousand.  Measured on a 16 GiB guest: 7942 large pages and 229543
+ * small ones, where the small-page kernel built 4.1 million.  At a
+ * terabyte the 4 KiB arithmetic stops being a preference.
  *
- * The reason is mmuwalk() below: given a page-directory entry with
- * PTESIZE it follows the entry as though it named a table, reads the
- * memory the large page maps as though those bytes were entries, and
- * with create set writes new ones into somebody's heap.  The split
- * that handles that is written above and did NOT stop the corruption
- * when it was tried, so it is not to be trusted on the strength of
- * reading it.
+ * Three things had to be true first, and each was found by being
+ * wrong:
  *
- * What has to be true before this goes on, in order:
- *	mmuwalk() returns the large entry when asked at its own level
- *	and either refuses or correctly splits when asked below it;
- *	every caller that assumes a level 0 entry exists is checked --
- *	kernelro(), vmap(), vunmap(), mmuphysaddr() (which already
- *	knows), and the page table dumps;
- *	a split after the secondaries are running needs a shootdown,
- *	or large pages are confined to ranges nothing walks below;
- *	and the overlap checker stays silent for a boot at -m 16384,
- *	which is the test that caught it.
+ *	mmuwalk() must not follow a large entry as though it named a
+ *	table.  It did, read the mapped memory as entries and wrote new
+ *	ones into it; the pool overlap checker in port/alloc.c caught
+ *	the image pool's chain leader holding "magic 0x2103", a PTE
+ *	with flags 0x103 where MAGIC_E belongs.  It splits now.
  *
- * None of that was needed to use the machine's memory: 4 KiB entries
- * map all 16 GiB, and the worry that motivated mapkzero()'s old 1 GiB
- * limit -- four million entries out of the early allocator -- does not
- * bite.  This is a performance and scale change and wants a
- * measurement of its own before it is worth the risk.
+ *	The split has to trigger at the right level.  The first version
+ *	tested i > level, and a 2 MiB entry is read at i == level == 0,
+ *	so it never ran and the corruption was unchanged.
+ *
+ *	Mapping a range twice has to be free.  meminit() maps each bank
+ *	before taking it, so the second pass fell through to the 4 KiB
+ *	path, whose walk split the very page it was about to rebuild:
+ *	eight thousand splits and a TLB flush apiece, which is a boot
+ *	that stops in meminit with nothing printed.
+ *
+ * The check that says it is right is a boot at -m 16384 with the
+ * overlap checker silent, and 512 MiB and 4 GiB boots beside it.
  */
-int pmaplarge = 0;
+int pmaplarge = 1;	/* *pmaplarge=0 turns 2 MiB pages off */
+ulong npmaplarge, npmapsmall, npmapsplit;	/* what pmap() built */
 
 static void
 vmaplimitinit(void)
@@ -328,40 +322,60 @@ mmuwalk(uintptr* table, uintptr pa, int level, int create)
 		pte = table[x];
 		if(pte & PTEVALID){
 			/*
-			 * A large page is not a table, and following it as
-			 * one walks into the memory it maps: the entries
-			 * read back are whatever the data happens to be, and
-			 * with create set this writes page-table entries
-			 * into somebody's heap.  That is not hypothetical --
-			 * it is what pmap()'s 2 MiB pages did to the image
-			 * pool's chain leader, "magic 0x2103", which is a
-			 * PTE with flags 0x103 sitting where MAGIC_E should
-			 * be, found by the overlap checker in port/alloc.c
-			 * that had never fired before.
+			 * A large page is not a table.  Following one as
+			 * though it were walks into the memory it maps: the
+			 * entries read back are whatever those bytes happen
+			 * to be, and with create set this writes page-table
+			 * entries into somebody's heap.  Measured, not
+			 * feared -- the pool overlap checker in
+			 * os/inferno/port/alloc.c caught the image pool's
+			 * chain leader holding "magic 0x2103", a PTE with
+			 * flags 0x103 where MAGIC_E belongs.
 			 *
-			 * Descending below one means splitting it into the
-			 * 4 KiB table it stands for, with the same physical
-			 * range and the same flags, so every mapping the
-			 * large page provided still holds afterwards.
+			 * The entry read at iteration i maps PGLSZ(i+1) and
+			 * stands for 512 entries of PGLSZ(i), so descending
+			 * below it means writing those out and putting the
+			 * table in its place.  Same physical range, same
+			 * flags: every mapping the large page provided still
+			 * holds when this returns, which is what makes the
+			 * split safe to do underneath a caller that knows
+			 * nothing about it.
+			 *
+			 * The level-0 entries are ordinary pages and must
+			 * NOT carry PTESIZE; at any higher level the pieces
+			 * are themselves large pages and must.  Getting that
+			 * boundary wrong is how the first attempt at this
+			 * failed -- it tested i > level, so the 2 MiB case,
+			 * which is read at i == level == 0, never split at
+			 * all and the corruption stayed exactly as it was.
 			 */
-			if(i > level && (pte & PTESIZE) != 0){
-				uintptr *split, base, flags, off;
+			if((pte & PTESIZE) != 0){
+				uintptr *split, base, pflags, off;
 
 				if(!create)
 					return 0;
 				base = PPN(pte);
-				flags = pte & ~(PPN(pte) | PTESIZE);
+				pflags = pte & ~(PPN(pte) | PTESIZE);
 				split = (uintptr*)rampage();
 				for(off = 0; off < (1<<PTSHIFT); off++)
-					split[off] = (base + off*PGLSZ(i-1)) | flags
-						| (i-1 > 0 ? PTESIZE : 0);
+					split[off] = (base + off*PGLSZ(i))
+						| pflags | (i > 0 ? PTESIZE : 0);
 				table[x] = PADDR(split) | PTEWRITE|PTEVALID;
+				npmapsplit++;
+				/*
+				 * The old entry may be in this processor's
+				 * TLB as one large translation; the new ones
+				 * are not the same entry.  Cheap here and
+				 * correct: a split during boot has no other
+				 * processor to tell, and one after does --
+				 * see the note at pmaplarge.
+				 */
+				mmuflushtlb();
 				table = split;
-				x = PTLX(pa, i-1);
-				continue;
+			} else {
+				pte = PPN(pte);
+				table = (void*)pte;
 			}
-			pte = PPN(pte);
-			table = (void*)pte;
 		} else {
 			if(!create)
 				return 0;
@@ -434,6 +448,25 @@ pmap(uintptr pa, u64 flags, s64 size)
 			pte = mmuwalk(m->pml4, pa, 1, 1);
 			if(pte != nil && (*pte & PTEVALID) == 0){
 				*pte = pa | flags | PTESIZE;
+				npmaplarge++;
+				pa += PGLSZ(1);
+				size -= PGLSZ(1);
+				continue;
+			}
+			/*
+			 * Already a large page for this very address: mapping
+			 * a range twice has to be free.  Without this the
+			 * second call falls through to the 4 KiB path, whose
+			 * walk splits the page it is about to re-create --
+			 * eight thousand splits, eight thousand pages out of
+			 * rampage() and a TLB flush apiece, for a bank of
+			 * thirteen gibibytes.  meminit() maps each bank
+			 * before it takes it, so every bank is mapped twice
+			 * and that is exactly what it did: the boot stopped
+			 * in meminit with no message.
+			 */
+			if(pte != nil && (*pte & PTESIZE) != 0
+			&& PPN(*pte) == pa){
 				pa += PGLSZ(1);
 				size -= PGLSZ(1);
 				continue;
@@ -445,6 +478,7 @@ pmap(uintptr pa, u64 flags, s64 size)
 		}
 		ptee = pte + ptecount(pa, l);
 		while(size > 0 && pte < ptee){
+			npmapsmall++;
 			*pte++ = pa | flags;
 			pa += z;
 			size -= z;

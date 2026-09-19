@@ -57,6 +57,37 @@ rampage(void)
 	return (void*)pa;
 }
 
+
+/*
+ * Is this address mapped, by a page of any size?
+ *
+ * Asking mmuwalk() at level 0 is not the same question once pmap()
+ * uses 2 MiB entries: a large page has no level 0 entry, and the walk
+ * correctly refuses to invent one, so a level-0 answer of "no" means
+ * "not by a 4 KiB page" rather than "not mapped".  Reading that as
+ * unmapped is what made meminit() crawl backwards a page at a time
+ * through thirteen gibibytes and never finish.
+ *
+ * So look from the top: a valid entry with PTESIZE at level 2 or 1 is
+ * a 1 GiB or 2 MiB page and covers this address; otherwise keep
+ * descending; a valid entry at level 0 is an ordinary page.
+ */
+static int
+ismapped(uintptr va)
+{
+	uintptr *pte;
+	int l;
+
+	for(l = 2; l >= 0; l--){
+		pte = mmuwalk((uintptr*)PML4ADDR, va, l, 0);
+		if(pte == nil || (*pte & PTEVALID) == 0)
+			return 0;
+		if(l > 0 && (*pte & PTESIZE) != 0)
+			return 1;
+	}
+	return 1;
+}
+
 /* maps page tables for the kernel to run */
 static void
 mapkzero(uintptr base, uintptr len, int type)
@@ -807,7 +838,7 @@ meminit(void)
 		 * again whatever mapkzero() decides to do.
 		 */
 		{
-			uintptr *pte, last;
+			uintptr last;
 
 			/*
 			 * Map it here rather than hope e820scan() did.  That
@@ -820,13 +851,24 @@ meminit(void)
 			 * walk and nothing else.
 			 */
 			mapkzero(pa, size, MemRAM);
-			while(size >= BY2PG){
+			/*
+			 * Back off by 2 MiB at a time, not by a page: on a
+			 * bank of thirteen gibibytes the page-at-a-time loop
+			 * is three million walks, which is a hang rather
+			 * than a check.  Banks come from the firmware map
+			 * and are 2 MiB aligned in practice; anything left
+			 * over at the end is rounded off, which costs at
+			 * most two mebibytes of a machine that has sixteen
+			 * thousand of them.
+			 */
+			while(size >= (uintptr)PGLSZ(1)){
 				last = pa + size - BY2PG;
-				pte = mmuwalk((uintptr*)PML4ADDR, last, 0, 0);
-				if(pte != nil && (*pte & PTEVALID) != 0)
+				if(ismapped(last))
 					break;
-				size -= BY2PG;
+				size -= PGLSZ(1);
 			}
+			if(size < (uintptr)PGLSZ(1))
+				size = ismapped(pa) ? size & ~(BY2PG-1) : 0;
 			if(size == 0){
 				print("meminit: 0x%p is not mapped; skipped\n",
 					(void*)pa);
@@ -837,6 +879,12 @@ meminit(void)
 		cm->npage = size/BY2PG;
 		DP("	cm->base 0x%zx cm->npage 0x%zux %zud\n", cm->base, cm->npage, cm->npage);
 		cm++;
+	}
+	{
+		extern ulong npmaplarge, npmapsmall, npmapsplit;
+
+		print("meminit: pmap built %lud 2 MiB pages, %lud 4 KiB, %lud splits\n",
+			npmaplarge, npmapsmall, npmapsplit);
 	}
 	print("meminit: conf.mem entries\n");
 	for(i = 0; i < nelem(conf.mem); i++)
