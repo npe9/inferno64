@@ -243,10 +243,42 @@ checkbl(Block *b, char *msg, intptr pc)
 static void
 badb(Block *b, char *msg, int which)
 {
+	uintptr *w;
+	int i;
+
 	iprint("checkb %d %s: b %#p base %#p lim %#p rp %#p wp %#p\n",
 		which, msg, b, b->base, b->lim, b->rp, b->wp);
 	iprint("checkb %d %s: next %#p flag %#ux malloctag %#p\n",
 		which, msg, b->next, b->flag, (void*)getmalloctag(b));
+	/*
+	 * Which processor, and which process, found it.  A Block that goes
+	 * bad only when four processors run Dis at once is a concurrency
+	 * bug, and the first thing to know about a concurrency bug is who
+	 * was standing where.
+	 */
+	iprint("checkb %d %s: cpu%d pid %d \"%s\"\n", which, msg,
+		m->machno, up != nil ? up->pid : -1,
+		up != nil ? up->text : "none");
+	/*
+	 * The header as raw words, and the two words in front of it.
+	 *
+	 * The first capture of this bug -- "checkb 4 qconsume 1", a
+	 * console block whose wp had passed its lim -- showed rp, base
+	 * and lim all exactly as _allocb() had set them, next pointing at
+	 * a plausible neighbour, and only wp wrong.  One eight-byte field
+	 * in the middle of five correct ones is not a bulk overwrite and
+	 * it is not freeb(), which poisons every field with Bdead and
+	 * which checkb tests for first.  So the question is what wrote
+	 * those eight bytes, and the answer is most likely visible in what
+	 * the rest of the block and its pool header now contain: a live
+	 * Bhdr magic in front of a block that is still queued would mean
+	 * the allocator handed this memory out twice.
+	 */
+	w = (uintptr*)b;
+	iprint("checkb %d %s: pool hdr %#p %#p\n", which, msg, w[-2], w[-1]);
+	for(i = 0; i < 8; i += 4)
+		iprint("checkb %d %s: +%.2x %#p %#p %#p %#p\n", which, msg,
+			i*(int)sizeof(uintptr), w[i], w[i+1], w[i+2], w[i+3]);
 }
 
 void

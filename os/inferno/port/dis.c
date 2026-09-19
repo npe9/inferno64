@@ -1492,6 +1492,75 @@ newprog(Prog *p, Modlink *m)
 	return n;
 }
 
+
+/*
+ * Quarantine for freed Progs, and the reason it exists.
+ *
+ * A soak run at eight processors with parallelvm=1 died in the
+ * allocator: "poolfree:badhdr ... pool main CORRUPT: bad size at
+ * 1b223398'3(magic=a110c)".  The block header was otherwise intact --
+ * a live MAGIC_A and a plausible allocating pc -- with only the size
+ * field holding 3, which is not a size.  The allocating pc resolved to
+ * newprog+0x72, so the block was a Prog, and 3 is the sort of number a
+ * small enum holds.  That is a write through a Prog pointer whose Prog
+ * had already been freed, landing on whatever the allocator had since
+ * put there.
+ *
+ * Freeing immediately makes that invisible: by the time anything
+ * notices, the memory belongs to someone else and the evidence is the
+ * damage rather than its cause.  So with *progquar=1 a freed Prog is
+ * filled with a position-dependent poison and held for Nquar more
+ * frees before it goes back.  When it does go back the poison is
+ * checked, and a word that changed names its own offset -- and an
+ * offset into Prog names a field, and a field names the code that
+ * writes it.
+ *
+ * Off by default; it holds memory and costs a fill per exit.
+ */
+enum {
+	Nquar		= 256,
+	Progpoison	= 0x5150524F47444541ULL,	/* "QPROGDEA" */
+};
+
+int progquar;				/* *progquar=1 */
+static Prog *quarbuf[Nquar];
+static int quarhd;
+static Lock quarl;
+static ulong nquarbad;
+
+static void
+quarantine(Prog *p)
+{
+	Prog *old;
+	uintptr *w;
+	int i, n;
+
+	n = (sizeof(Prog)+sizeof(Osenv))/sizeof(uintptr);
+	w = (uintptr*)p;
+	for(i = 0; i < n; i++)
+		w[i] = (uintptr)(Progpoison + i);
+	ilock(&quarl);
+	old = quarbuf[quarhd];
+	quarbuf[quarhd] = p;
+	quarhd = (quarhd+1) % Nquar;
+	iunlock(&quarl);
+	if(old == nil)
+		return;
+	w = (uintptr*)old;
+	for(i = 0; i < n; i++)
+		if(w[i] != (uintptr)(Progpoison + i)){
+			nquarbad++;
+			if(nquarbad < 20)
+				print("progquar: freed Prog %#p word %d offset %#ux:"
+					" expected %#p, found %#p (%lud bad so far)\n",
+					old, i, (int)(i*sizeof(uintptr)),
+					(void*)(uintptr)(Progpoison+i), (void*)w[i],
+					nquarbad);
+			break;
+		}
+	free(old);
+}
+
 void
 delprog(Prog *p, char *msg)
 {
@@ -1587,7 +1656,10 @@ delprog(Prog *p, char *msg)
 	free(o->user);
 	free(p->killstr);
 	free(p->exstr);
-	free(p);
+	if(progquar)
+		quarantine(p);
+	else
+		free(p);
 }
 
 void
