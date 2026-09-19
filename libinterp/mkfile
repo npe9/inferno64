@@ -44,6 +44,7 @@ OFILES=\
 HFILES=\
 	$ROOT/include/interp.h\
 	$ROOT/include/isa.h\
+	$ROOT/include/pool.h\
 	$DISH/runt.h\
 	tab.h\
 

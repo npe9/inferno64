@@ -40,17 +40,16 @@ struct Pool
 
 void*	initbrk(ulong);
 void	setmalloctag(void*, uintptr);
-void	setrealloctag(void*, uintptr);
 uintptr getmalloctag(void*);
-uintptr getrealloctag(void*);
 
 /* keep the quanta above the size of 5 pointers and 2 longs else the next block
 	will be getting overwritten by the header -- starts a corruption hunt
 	when pointer size = 8 bytes, then 63 = 2^q -1
 		for 4 bytes, 31
 	TODO make this a macro?
-	for allocpc and reallocpc, 2 * 8 = 16 bytes get added
-	so, minimum size = 2*4 + 2*8 + 5*8 = 64, using 127 to satisfy 2^q -1
+	for allocpc, 8 bytes get added -- there was a reallocpc beside it
+	until nothing turned out to read it; see include/pool.h
+	so, minimum size = 2*4 + 8 + 5*8 = 56, using 127 to satisfy 2^q -1
  */
 struct
 {
@@ -613,7 +612,6 @@ smalloc(uintptr size)
 		osleave();
 	}
 	setmalloctag(v, getcallerpc(&size));
-	setrealloctag(v, 0);
 	return v;
 }
 
@@ -626,7 +624,6 @@ kmalloc(uintptr size)
 	if(v != nil){
 		ML(v, size, getcallerpc(&size));
 		setmalloctag(v, getcallerpc(&size));
-		setrealloctag(v, 0);
 		memset(v, 0, size);
 		MM(0, getcallerpc(&size), v, size);
 	}
@@ -643,7 +640,6 @@ __wrap_malloc(ulong size)
 	if(v != nil){
 		ML(v, size, getcallerpc(&size));
 		setmalloctag(v, getcallerpc(&size));
-		setrealloctag(v, 0);
 		memset(v, 0, size);
 		MM(0, getcallerpc(&size), v, size);
 	} else 
@@ -661,7 +657,6 @@ __wrap_mallocz(ulong size, int clr)
 	if(v != nil){
 		ML(v, size, getcallerpc(&size));
 		setmalloctag(v, getcallerpc(&size));
-		setrealloctag(v, 0);
 		if(clr)
 			memset(v, 0, size);
 		MM(0, getcallerpc(&size), v, size);
@@ -695,7 +690,6 @@ __wrap_realloc(void *v, ulong size)
 	ML(v, 0, 0);
 	ML(nv, size, getcallerpc(&v));
 	if(nv != nil) {
-		setrealloctag(nv, getcallerpc(&v));
 		if(v == nil)
 			setmalloctag(v, getcallerpc(&v));
 	} else 
@@ -725,27 +719,7 @@ getmalloctag(void *v)
 	return b->allocpc;
 }
 
-void
-setrealloctag(void *v, uintptr pc)
-{
-	Bhdr *b;
 
-	if(v != nil){
-		D2B(b, v);
-		b->reallocpc = pc;
-	}
-}
-
-uintptr
-getrealloctag(void *v)
-{
-	Bhdr *b;
-
-	if(v == nil)
-		abort();
-	D2B(b, v);
-	return b->reallocpc;
-}
 
 ulong
 msize(void *v)

@@ -100,9 +100,7 @@ extern	ulong	msize(void*);
 extern	void*	calloc(ulong, ulong);
 extern	void*	realloc(void*, ulong);
 extern	void		setmalloctag(void*, uintptr);
-extern	void		setrealloctag(void*, uintptr);
 extern	uintptr	getmalloctag(void*);
-extern	uintptr	getrealloctag(void*);
 extern	void*	malloctopoolblock(void*);
 
 /*

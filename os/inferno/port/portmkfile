@@ -160,4 +160,10 @@ $CONF.root.s $CONF.root.h: $CONF $INITDIR/$INIT.dis $PORTDIR/mkroot $ROOTFILES
 		awk '{for(i = 1; i <= NF; i++) printf "0x%s,", $i; print ""}'
 	  echo '};'; } > $target
 
-%.$O:	$ROOT/Inferno/$OBJTYPE/include/u.h $PORTDIR/lib.h mem.h dat.h fns.h io.h $PORTDIR/error.h $PORTDIR/portdat.h $PORTDIR/portfns.h
+# pool.h is here because portdat.h includes it and because its contents
+# reach into object code rather than staying in the allocator: D2B and
+# BHDRSIZE are macros, so every file that frees or sizes a block bakes
+# the header layout in.  Left off this line, a change to Bhdr rebuilds
+# alloc.c alone and the rest of the kernel goes on computing the old
+# offset, which boots as far as the first free and then faults in D2B.
+%.$O:	$ROOT/Inferno/$OBJTYPE/include/u.h $PORTDIR/lib.h mem.h dat.h fns.h io.h $PORTDIR/error.h $PORTDIR/portdat.h $PORTDIR/portfns.h $ROOT/include/pool.h

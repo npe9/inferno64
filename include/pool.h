@@ -21,7 +21,6 @@ struct Bhdr
 	u32	magic;
 	uintptr	size;
 	intptr	allocpc;
-	intptr	reallocpc;
 	union {
 		uchar data[1];
 		struct {
@@ -66,6 +65,17 @@ struct Balign
 
 #define B2LIMIT(b)	((Bhdr*)((uchar*)b + b->csize))
 
+/*
+ * Every block in every pool pays this.  It held a reallocpc beside the
+ * allocpc until it was noticed that setrealloctag() wrote it and only
+ * getrealloctag() read it, and nothing in the tree calls that -- one
+ * pointer per block, and on a 32-bit board the difference between a
+ * 20-byte header and a 16-byte one, which is a whole pool quantum for
+ * the requests that sit just over a boundary.  os/osprey and os/9front
+ * are not affected: they have their own pool, Plan 9's, in
+ * Osprey/include/pool.h and 9front/src/include/pool.h, which shares no
+ * structure with this one.
+ */
 #define BHDRSIZE	((uintptr)(((Bhdr*)0)->u.data)+sizeof(Btail))
 
 extern	void	(*poolfault)(void *, char *, uintptr);

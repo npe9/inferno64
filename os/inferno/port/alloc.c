@@ -1016,7 +1016,6 @@ malloc(ulong size)
 	v = poolalloc(mainmem, size);
 	if(v != nil){
 		setmalloctag(v, getcallerpc(&size));
-		setrealloctag(v, 0);
 		memset(v, 0, size);
 	}
 	return v;
@@ -1061,7 +1060,6 @@ smalloc(uintptr size)
 		tsleep(&up->sleep, return0, 0, 100);
 	}
 	setmalloctag(v, getcallerpc(&size));
-	setrealloctag(v, 0);
 	memset(v, 0, size);
 	return v;
 }
@@ -1074,7 +1072,6 @@ mallocz(ulong size, int clr)
 	v = poolalloc(mainmem, size);
 	if(v != nil){
 		setmalloctag(v, getcallerpc(&size));
-		setrealloctag(v, 0);
 		if(clr)
 			memset(v, 0, size);
 	}
@@ -1239,7 +1236,6 @@ realloc(void *v, ulong size)
 	nv = poolrealloc(mainmem, v, size);
 	if(nv != nil) {
 		nv = (uintptr*)nv;
-		setrealloctag(nv, getcallerpc(&v));
 		if(v == nil)
 			setmalloctag(v, getcallerpc(&v));
 	}
@@ -1268,27 +1264,7 @@ getmalloctag(void *v)
 	return b->allocpc;
 }
 
-void
-setrealloctag(void *v, uintptr pc)
-{
-	Bhdr *b;
 
-	if(v != nil){
-		D2BPC(b, v, getcallerpc(&v), "alloc:D2B:setrealloctag");
-		b->reallocpc = pc;
-	}
-}
-
-uintptr
-getrealloctag(void *v)
-{
-	Bhdr *b;
-
-	if(v == nil)
-		return ~0;
-	D2BPC(b, v, getcallerpc(&v), "alloc:D2B:getrealloctag");
-	return b->reallocpc;
-}
 
 ulong
 msize(void *v)

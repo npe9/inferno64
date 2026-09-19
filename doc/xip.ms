@@ -2706,18 +2706,18 @@ the tree as it is now.
 .CW "                        was        is    saved"
 .CW "kernel data + bss    162904     62344   100560"
 .CW "Proc array           175360     38720   136640"
-.CW "main pool            367104     76544   290560"
-.CW "heap pool             73728     56576    17152"
+.CW "main pool            367104     76352   290752"
+.CW "heap pool             73728     54912    18816"
 .CW "                     ------    ------   ------"
-.CW "                     779096    234184   544912"
+.CW "                     779096    232328   546768"
 .DE
 The two pool rows were re-measured for this revision, from
 .CW "#c/memory" 's
 first column with a shell and an
 .I ls (1)
 loaded; the main pool row read 113472 when this table was first
-written, and 20800 of the fall since is the link-name change described
-under
+written; 20800 of the fall since is the link-name change and 1856 the
+block header, both described under
 .I "What gates any of it: the kernel pool, itemised" .
 The other two rows are as first measured.
 .CW "kernel text"
@@ -2865,29 +2865,137 @@ separate from the
 .CW Type
 one and why it is not attempted here on the strength of an estimate that
 measurement does not support.
+.NH 2
+The dead field in every block header
 .PP
-One more thing found while looking:
 .CW reallocpc
 in
 .CW Bhdr
 .CW ( include/pool.h )
-is written by
+was written by
 .CW setrealloctag
 and read only by
 .CW getrealloctag ,
-which nothing in this tree calls.  It is four bytes in every block
-header, and dropping it would take
-.CW BHDRSIZE
-from 20 to 16 and let about one request in sixteen fall into a smaller
-quantum \- roughly 4800 bytes on
-.CW mps2 .
-It is not done, because
+which nothing in this tree calls.  Four bytes in every block header.
+.PP
+This document said it was not done because
 .CW include/pool.h
 is shared with
 .CW os/osprey
 and
-.CW os/9front ,
-and neither can be booted from here to check it.
+.CW os/9front
+and neither can be booted from here.  Both halves of that were wrong.
+.CW os/osprey
+and
+.CW os/9front
+do not use this header at all: they have Plan 9's pool, in
+.CW Osprey/include/pool.h
+and
+.CW 9front/src/include/pool.h ,
+which shares no structure with the Inferno tree allocator \- a
+.CW "struct Pool { char *name; ... }"
+against this one's
+.CW Bhdr
+chain.  And
+.CW scripts/osprey-check-all.sh
+boots seven Osprey configurations from this tree; the other document in
+this directory is a tally of them.  So the field is gone, and with it
+.CW setrealloctag ,
+.CW getrealloctag ,
+their declarations in
+.CW include/kern.h
+and the four calls in each of
+.CW os/inferno/port/alloc.c
+and
+.CW emu/port/alloc.c .
+.CW BHDRSIZE
+is computed from the struct, so it fell from 20 to 16 on a 32-bit
+target on its own.
+.PP
+The estimate here was 4800 bytes on
+.CW mps2 .
+Measured, with the same shell and
+.I ls (1)
+as everything else in this section:
+.DS
+.CW "                   was       is    saved"
+.CW "main pool live   76544    76352      192"
+.CW "  of which hdrs  10180     8144"
+.CW "heap pool live   56576    54912     1664"
+.CW "  of which hdrs   7060     5648"
+.DE
+1856, not 4800.  The reason is the pool quantum.
+.CW poolalloc ()
+rounds
+.CW "request + BHDRSIZE"
+up to 64 bytes on a 32-bit target, so four bytes off the header shrinks
+a block only when that sum was within four of a boundary: 3 blocks of
+509 in the main pool and 26 of 353 in the heap, 29 of 862 in all, one
+quantum each.  The estimate assumed one in sixteen, which is what a
+uniform distribution of request sizes would give and is not what a
+kernel allocates.  The header line falls by the full 4 bytes a block
+either way \- that is arithmetic, not a saving, since the headers are
+inside the live figure rather than beside it.
+.PP
+Worth having anyway: it is 1856 bytes, it is a field nothing read, and
+finding out cost a build.
+.NH 2
+A trap this found in the build
+.PP
+The first kernel built with the smaller header booted to
+.CW "Initial Dis"
+and then took
+.CW "alloc:D2B:destroy-entry"
+inside
+.CW $Sys ,
+which is a pool fault: the block header was not where the code looked
+for it.  The cause was not the change.
+.CW pool.h
+is included by
+.CW ../port/portdat.h ,
+and
+.CW os/inferno/port/portmkfile 's
+dependency line named
+.CW portdat.h
+and not
+.CW pool.h ,
+so changing
+.CW Bhdr
+rebuilt
+.CW alloc.c
+alone.
+.CW D2B
+and
+.CW BHDRSIZE
+are macros; every file that frees or sizes a block has the header
+layout compiled into it.  Fifty-odd objects went on computing the old
+offset.
+.PP
+That is worth more than the incident.  A header whose contents reach
+into object code and which is not on the dependency line does not
+produce a build error, it produces a kernel that boots and then faults
+somewhere else entirely \- and the obvious next move, reading the
+allocator, is looking at the one file that was right.  Both
+.CW os/inferno/port/portmkfile
+and
+.CW libinterp/mkfile
+name
+.CW pool.h
+now; touching it rebuilds 48 kernel objects and the whole of
+.CW libinterp ,
+which is what it should always have done.
+.PP
+It then happened a second time, while building a before-and-after pair
+to check the change on a 64-bit kernel.  Reverting the six files to get
+the "before" reverted the dependency line with them, so
+.CW libinterp
+kept the objects it had just built with the new header and the kernel
+was compiled with the old one.  That kernel reached
+.CW "Initial Dis"
+and took an exception in the interpreter.  The lesson is the same one
+twice: a header that decides a struct layout has to be on the
+dependency line, and a mixed build of it does not look like a build
+error.  The true baseline needed the objects deleted by hand.
 .NH 2
 What gates any of it: the kernel pool, itemised
 .PP
