@@ -1,0 +1,84 @@
+.TH RADIOSSL 1
+.SH NAME
+radiossl \- push ssl(3) onto the radio and exchange a message
+.SH SYNOPSIS
+.B radiossl
+.B recv
+.RI [ secret ]
+.br
+.B radiossl
+.B send
+.RI [ text
+.RI [ secret ]]
+.SH DESCRIPTION
+.I Radiossl
+opens
+.BR /dev/radio0/data ,
+hands that file descriptor to
+.IR ssl (3),
+sets a shared secret and a SHA1 digest, and writes or reads one message
+through the result.
+.PP
+It exists to run a claim the rest of this tree rests on and which
+nothing had run: that an encrypted, integrity-checked link over this
+radio needs no IP stack under it, because
+.IR ssl (3)
+is a filter over a file descriptor \-
+.B "fd m"
+on its control file, and
+.B ssl->connect()
+taking a
+.B "ref Sys->FD"
+\- rather than something that lives on a network.  The whole of the
+demonstration is that the descriptor happens to be a radio.
+.PP
+The secret defaults to a constant and can be given, so that the
+interesting half can be run: a receiver with a different secret must
+fail, and does, with
+.BR "bad digest" .
+Without that, a message crossing proves only that bytes moved.
+.SH SOURCE
+.B /appl/cmd/radiossl.b
+.SH EXAMPLE
+Two boards on one socket, as in
+.IR radiochk (1).
+On the receiver
+.IP
+.EX
+echo -n node 2 > /dev/radio0/ctl
+radiossl recv
+.EE
+.PP
+and on the sender
+.IP
+.EX
+echo -n node 1 > /dev/radio0/ctl
+echo -n dest 2 > /dev/radio0/ctl
+radiossl send
+.EE
+.PP
+which reports
+.B RADIOSSL-GOT
+and the text.  Run the receiver as
+.B "radiossl recv wrong-key"
+for the other result.
+.SH BUGS
+It does not authenticate.
+.IR keyring (2)'s
+.B auth
+wants a signer and certificates; this writes the same constant into both
+ends instead, which demonstrates the transport and not the
+authentication.  A constant in a program is exactly what
+.B doc/pycubed-plan.ms
+criticises
+.B cdh.py
+for, and it is here for the same reason that one is: to show the shape
+without the ceremony.  What is shown is that
+.IR ssl (3)
+attaches to a radio and that its digest rejects a message that did not
+come from the other end.  What is not shown is any of
+.IR keyring (2).
+.SH SEE ALSO
+.IR radio (3),
+.IR ssl (3),
+.IR radiochk (1)

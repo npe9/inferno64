@@ -171,6 +171,7 @@ root
 	/dis/cvtchk.dis	/dis32/cvtchk.dis
 	/dis/modchk.dis	/dis32/modchk.dis
 	/dis/radiochk.dis	/dis32/radiochk.dis
+	/dis/radiossl.dis	/dis32/radiossl.dis
 	/dis/pycubed/beepsat.dis	/dis32/pycubed/beepsat.dis
 	/dis/pycubed/sat.dis	/dis32/pycubed/sat.dis
 	/dis/pycubed/hw.dis	/dis32/pycubed/hw.dis
