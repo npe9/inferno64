@@ -3998,6 +3998,73 @@ The instrumentation is in the file, off by default:
 aggregates how many waits there were, how many of them slept, and what
 they cost, which is what a change here should be measured with.
 .NH 2
+The wedge was one missing line in qlock
+.PP
+This board has wedged all day \(em the console still echoing every
+character typed, no program running again \(em and panicked in two
+different places on the way there,
+.CW "panic: pexit"
+and
+.CW "panic: wakeup: state" .
+They are one bug.
+.PP
+.CW qlock()
+never set
+.CW up->qnext
+to nil.
+.CW eqlock ,
+.CW rlock ,
+.CW wlock
+and the Plan 9
+.CW qlock
+this came from all do; only this one lost it.  So a process joining a
+lock's queue carried whatever
+.CW qnext
+it had from the last time it waited for anything, and when the lock was
+handed over,
+.CW qunlock 's
+.CW "q->head = p->qnext"
+pointed the queue at a process that was not waiting for that lock at
+all \(em and readied it.
+.PP
+That is both symptoms.  Readying a process that is asleep on a Rendez
+leaves
+.CW r->p
+pointing at a running process, and the next wakeup on it panics.
+Readying one that is dying gets it scheduled again after
+.CW schedinit
+has freed it, and
+.CW pexit
+panics because
+.CW sched()
+came back.  And the process that really was waiting for the lock is no
+longer on the queue to be handed it, so it waits for ever holding
+whatever it holds: the wedge.
+.PP
+.B "How it was found, since each step was built for the one before."
+.CW ^\e
+on the console dumps every process from a kproc, because a kproc still
+runs when the Dis scheduler does not.
+.CW ready()
+reports a process readied while still attached to a Rendez, and names
+the caller's pc.
+.CW tools/ksym
+turns that pc into a name from a
+.CW "7l -a"
+listing of the same build.  The board then printed
+.IP
+.EX
+ready dis 18 still on rendez 0x696e18 from pc 0x15bda8
+panic: wakeup: state
+.EE
+.PP
+and
+.CW 0x15bda8
+is
+.CW qunlock+0x9c .
+The diagnostic that caught it was committed eleven minutes before it
+fired.
+.NH 2
 Suggested order
 .PP
 The transmit-queue fix is confirmed on the board and kernel updates
