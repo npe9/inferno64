@@ -1664,10 +1664,6 @@ main(int argc, char *argv[])
 	fmtinstall('V', expconv);		/* src expression in '' */
 	lexinit();
 	optabinit();
-	/*
-	 * precastinit() is NOT called here with the rest of optabinit.
-	 * See below, after typeinit.
-	 */
 
 	gendis = 1;
 	asmsym = 0;
@@ -1808,29 +1804,7 @@ main(int argc, char *argv[])
 	 * and -W says how wide a Dis word is.
 	 */
 	typeinit();
-
-	/*
-	 * And this has to follow typeinit, because it is the one part of
-	 * optabinit that stores types rather than opcodes.
-	 *
-	 * It used to be inside optabinit, which runs above, before the
-	 * flags -- and before typeinit, once typeinit moved down here for
-	 * -W.  So every "precasttab[a][b] = tint" stored a nil, and the
-	 * casts that need a step through int stopped getting one.  The
-	 * 0xff in casttab is a sentinel meaning "there is no single
-	 * instruction for this pair, use the precast", and with the
-	 * precast gone it was emitted as an instruction: opcode 255, no
-	 * optab entry, badop, "illegal dis instruction".
-	 *
-	 * Every conversion between byte and big, real, string or fix went
-	 * that way, in every program compiled by this branch.  disk/format
-	 * is where it was found -- "big b[DB_NFATS]" in the boot sector
-	 * code -- and disk/format has therefore never run here.  A cast
-	 * written out by hand, "big (int b[0])", worked, which is what
-	 * makes the failure look like a strange one in one program rather
-	 * than the compiler.
-	 */
-	precastinit();
+	precastinit();		/* needs tint and treal, which typeinit makes */
 
 	if((root = getroot()) != nil){
 		char *r;

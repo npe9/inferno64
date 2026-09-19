@@ -103,16 +103,28 @@ optabinit(void)
 }
 
 /*
- * The type half of the table above, which cannot be filled in until the
- * built-in types exist.  optabinit() runs before the command line is
- * parsed; typeinit() runs after it, because -W sets how wide a Dis word
- * is and the built-in types are sized from that.  This used to sit in
- * optabinit and so stored nil in every entry.  See the comment at the
- * call site in limbo.y.
+ * The half of optabinit() that needs the built-in types to exist.
  *
- * Every pair here is one that casttab marks 0xff -- no single
- * instruction converts them, so the cast is done in two, through the
- * type named here.
+ * These entries are Type* -- tint and treal -- and typeinit() is what
+ * creates those.  optabinit() runs from limbo.y before the argument
+ * loop, because it fills tables the flags do not affect; typeinit()
+ * runs after it, because -W says how wide a Dis word is and the type
+ * sizes depend on that.  So every one of these assignments used to
+ * read a nil tint and store nil.
+ *
+ * What that cost: precasttab is how a cast with no single Dis
+ * instruction gets split in two.  casttab holds an explicit 0xff
+ * placeholder for each such pair -- byte to big, byte to real, byte to
+ * string, fix to big, fix to string and their inverses -- and
+ * rewrite()'s Ocast case only splits the cast when
+ * precasttab[from][to] is not nil.  With the whole table nil, nothing
+ * split, and the 0xff went out as an opcode.  The compiler emitted an
+ * unexecutable Dis file, silently, with no diagnostic: the program
+ * died at run time with "illegal dis instruction" the first time it
+ * reached the cast.  disk/kfs64 and disdump were two of the casualties
+ * in this tree, which is how it was found.
+ *
+ * Called from limbo.y immediately after typeinit().
  */
 void
 precastinit(void)
