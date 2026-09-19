@@ -742,6 +742,7 @@ struct Proc
 	Mach	*wired;
 	Mach	*mp;		/* machine this process last ran on */
 	int	nlocks;		/* number of locks held by proc */
+	uintptr	readypc;	/* who last put it on the run queue */
 	u32	delaysched;
 	u32	priority;	/* priority level */
 	u32	basepri;	/* base priority level */

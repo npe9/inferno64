@@ -934,6 +934,10 @@ fatbig()
 	for(i := 0; i < len b; i++)
 		b[i] = byte (i*7+1);
 	n := 0;
+	# timed, because this is the board's storage speed and nothing
+	# here has ever said what it is: 1.5MB through dossrv, the SD
+	# driver and the card, which is also what a kernel update costs
+	t0 := sys->millisec();
 	while(n < Bigsize){
 		if(sys->write(fd, b, len b) != len b){
 			sys->print("FAT-BIG-FAIL write at %d: %r\n", n);
@@ -951,7 +955,12 @@ fatbig()
 	if(fatbigcheck("/n/dos/bigfile2.bin", n, b) < 0)
 		return;
 	sys->remove("/n/dos/bigfile2.bin");
-	sys->print("FAT-BIG-OK %d bytes written, read back and renamed\n", n);
+	ms := sys->millisec() - t0;
+	kbs := 0;
+	if(ms > 0)
+		kbs = (n/1024)*1000/ms;
+	sys->print("FAT-BIG-OK %d bytes written, read back and renamed, %d ms (%d KB/s)\n",
+		n, ms, kbs);
 }
 
 fatbigcheck(name: string, n: int, b: array of byte): int

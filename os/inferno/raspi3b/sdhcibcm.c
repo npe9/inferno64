@@ -113,6 +113,7 @@ enum {
 	Fnhispeed	= 1,	/* group 1 function number for high speed */
 	Timeout		= 1000000,	/* bounded register polls */
 	Intrms		= 50,		/* one wait; a block is a millisecond */
+	Intrspins	= 200,		/* microseconds spun before that wait */
 	Sdhciirq	= 62,		/* GPU IRQ: the Arasan controller */
 };
 
@@ -187,18 +188,52 @@ sdhciintr(Ureg*, void *a)
 	wakeup(&c->r_);
 }
 
+/*
+ * How many waits to time, and off by default.  The USB driver's version
+ * of this is what found that its transfers were waiting for the run
+ * queue and not for the device; the same question is worth asking here,
+ * where a 1.5MB write measured 86 KB/s.
+ */
+static int sdtrace = 20;
+
 static int
 awaitintr(Ctlr *c, u32 bits)
 {
 	u32 *r = c->r;
 	int i;
+	vlong t0, t1, t2;
+
+	t0 = t1 = t2 = 0;
 
 	if(!c->armed || c->nointr || up == nil || !islo())
 		return awaitbit(&r[Interrupt], bits, 1);
+	if(sdtrace > 0)
+		t0 = todget(nil);
 	c->want = bits;
 	r[Irpten] = bits;
+	/*
+	 * Spin briefly before sleeping, for the reason usbdwc's chanwait
+	 * does: a completion that arrives in microseconds costs a whole
+	 * trip round the run queue if it is slept on, and on this board
+	 * that trip has measured 2.7 to 142 milliseconds.  Sleeping is
+	 * for the transfers that really are slow -- a card that has to
+	 * erase a block before writing it -- not for the common one.
+	 */
+	for(i = 0; i < Intrspins; i++){
+		if(r[Interrupt] & bits)
+			break;
+		microdelay(1);
+	}
+	if(sdtrace > 0)
+		t1 = todget(nil);
 	if((r[Interrupt] & bits) == 0)
 		tsleep(&c->r_, intrready, c, Intrms);
+	if(sdtrace > 0){
+		t2 = todget(nil);
+		sdtrace--;
+		print("sdhci: wait %#ux: %lld us spun, %lld us slept\n",
+			bits, (t1-t0)/1000, (t2-t1)/1000);
+	}
 	r[Irpten] = 0;
 	if(r[Interrupt] & bits)
 		return 0;
@@ -211,7 +246,6 @@ awaitintr(Ctlr *c, u32 bits)
 	 */
 	c->nointr = 1;
 	print("SDHCI-NOINTR the controller's interrupt did not arrive; polling\n");
-	USED(i);
 	return awaitbit(&r[Interrupt], bits, 1);
 }
 

@@ -567,6 +567,7 @@ ready(Proc *p)
 	pri = reprioritize(p);
 	p->priority = pri;
 	rq = &runq[pri];
+	p->readypc = getcallerpc(&p);
 	p->state = Ready;
 	queueproc(rq, p);
 	pt = proctrace;
@@ -1343,7 +1344,16 @@ pexit(char *exitstr, int freemem)
 	edfstop(up);
 	up->state = Moribund;
 	sched();
-	panic("pexit");
+	/*
+	 * sched() does not return for a Moribund process: schedinit sees
+	 * the state and frees it.  If it comes back, something put this
+	 * process on the run queue while it was dying, and the only
+	 * useful thing to say is what state it is in now and who queued
+	 * it last -- ready() records its caller in readypc for exactly
+	 * this line.  tools/ksym turns that into a name.
+	 */
+	panic("pexit: state %s readypc %#p nlocks %d",
+		statename[up->state], up->readypc, up->nlocks);
 }
 
 static int
