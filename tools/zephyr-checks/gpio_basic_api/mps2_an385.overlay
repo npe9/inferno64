@@ -1,0 +1,21 @@
+/*
+ * Copyright (c) 2026 Noah Evans
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * gpio0 pin 2 strapped to pin 3.  Under QEMU that strap is made by the
+ * machine, with -machine mps2-an385,gpio-loopback=on; see
+ * tools/qemu-patches in the inferno64 xip tree.  On a real MPS2 it is a
+ * wire between two header pins.
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	resources {
+		compatible = "test-gpio-basic-api";
+		status = "okay";
+		out-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+		in-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
+	};
+};

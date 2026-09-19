@@ -1,0 +1,101 @@
+From aea284707478125e5e242d0e6a6dd354b4d9e927 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sat, 19 Sep 2026 06:09:00 -0400
+Subject: [PATCH] hw/arm/mps2: an optional strap between two GPIO pins
+
+Connects gpio0 output 2 to gpio0 input 3 with -machine
+gpio-loopback=on, off by default.
+
+An MPS2 has expansion headers and what is on them is whatever someone
+plugged in; a wire between two pins is the most ordinary thing that can
+be.  This exists because Zephyr's tests/drivers/gpio/gpio_basic_api is a
+two-pin test -- its README says a board without two GPIOs wired together
+fails with "output pin not wired to input pin?" -- and 2 and 3 are the
+pins its own overlays use.
+
+That test is how the CMSDK GPIO model in the preceding patch was checked
+against a driver nobody here wrote: the model's register map was taken
+from Zephyr's own gpio_cmsdk_ahb.h, so running Zephyr's driver against
+it closes the loop.  On mps2/an385 it reports
+
+    SUITE PASS [gpio_port]:         pass = 1
+    SUITE PASS [gpio_port_cb_mgmt]: pass = 3
+    SUITE PASS [gpio_port_cb_vari]: pass = 1
+    PROJECT EXECUTION SUCCESSFUL
+
+on a patched binary, and on a stock v10.1.3
+
+    FATAL output pin not wired to input pin? (out high => in low)
+
+which is what an unimplemented GPIO looks like from the other side.
+---
+ hw/arm/mps2.c | 35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/hw/arm/mps2.c b/hw/arm/mps2.c
+index e91ed1d..e17a529 100644
+--- a/hw/arm/mps2.c
++++ b/hw/arm/mps2.c
+@@ -96,6 +96,8 @@ struct MPS2MachineState {
+     Clock *refclk;
+     /* An SX1276 on the Shield0 SPI, present only with -machine radio=on. */
+     bool radio;
++    /* gpio0 pin 2 strapped to pin 3, with -machine gpio-loopback=on. */
++    bool gpio_loopback;
+ };
+ 
+ #define TYPE_MPS2_MACHINE "mps2"
+@@ -389,6 +391,19 @@ static void mps2_common_init(MachineState *machine)
+                            qdev_get_gpio_in(armv7m, gpioirq[i]));
+     }
+ 
++    /*
++     * A strap between gpio0 pin 2 and pin 3.  An MPS2 has headers, and
++     * what is on them is whatever someone plugged in; a wire between two
++     * pins is the most ordinary thing that can be.  This exists because
++     * Zephyr's tests/drivers/gpio/gpio_basic_api needs two GPIOs wired
++     * together -- it is a two-pin test and says so -- and those are the
++     * pins its own overlays use.  Off by default.
++     */
++    if (mms->gpio_loopback) {
++        qdev_connect_gpio_out(DEVICE(&mms->gpio[0]), 2,
++                              qdev_get_gpio_in(DEVICE(&mms->gpio[0]), 3));
++    }
++
+     /* CMSDK APB subsystem */
+     for (i = 0; i < ARRAY_SIZE(mms->timer); i++) {
+         g_autofree char *name = g_strdup_printf("timer%d", i);
+@@ -542,10 +557,30 @@ static void mps2_set_radio(Object *obj, bool value, Error **errp)
+     mms->radio = value;
+ }
+ 
++static bool mps2_get_gpio_loopback(Object *obj, Error **errp)
++{
++    MPS2MachineState *mms = MPS2_MACHINE(obj);
++
++    return mms->gpio_loopback;
++}
++
++static void mps2_set_gpio_loopback(Object *obj, bool value, Error **errp)
++{
++    MPS2MachineState *mms = MPS2_MACHINE(obj);
++
++    mms->gpio_loopback = value;
++}
++
+ static void mps2_class_init(ObjectClass *oc, const void *data)
+ {
+     MachineClass *mc = MACHINE_CLASS(oc);
+ 
++    object_class_property_add_bool(oc, "gpio-loopback",
++                                   mps2_get_gpio_loopback,
++                                   mps2_set_gpio_loopback);
++    object_class_property_set_description(oc, "gpio-loopback",
++        "Strap gpio0 pin 2 to pin 3, for two-pin GPIO tests");
++
+     object_class_property_add_bool(oc, "radio",
+                                    mps2_get_radio, mps2_set_radio);
+     object_class_property_set_description(oc, "radio",
+-- 
+2.51.0
+

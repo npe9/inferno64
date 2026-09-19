@@ -7,8 +7,16 @@ modelled in a way that cannot exercise the guest driver: without them
 the corresponding kernel code is written blind.
 
 0001-0026 are the Raspberry Pi 3B and 4B, which is what this series
-started as.  0027-0029 are the MPS2, for the PyCubed radio work in
+started as.  0027-0030 are the MPS2, for the PyCubed radio work in
 doc/radio-plan.ms.
+
+0027 has since been driven by a driver nobody here wrote.  Zephyr's
+tests/drivers/gpio/gpio_basic_api passes five tests against it on
+mps2/an385 -- including the three callback suites, which exercise the
+edge and level interrupt logic -- and fails on a stock v10.1.3 with
+"output pin not wired to input pin?".  tools/zephyr-checks has the
+recipe and the output.  That moves the GPIO model off the weakest tier
+below: the thing agreeing with it is no longer ours.
 
 To apply and build:
 
@@ -1129,3 +1137,13 @@ attached, a default kernel prints:
 	register, FIFO and interrupt sequencing are right and says nothing
 	about the real board's bus.  Off by default, so no existing MPS2
 	configuration moves.
+
+0030 hw/arm/mps2: an optional strap between two GPIO pins.
+	gpio0 output 2 to gpio0 input 3 with -machine gpio-loopback=on,
+	off by default.  An MPS2 has expansion headers and what is on
+	them is whatever someone plugged in; a wire between two pins is
+	the most ordinary thing that can be.  It exists because Zephyr's
+	gpio_basic_api is a two-pin test and those are the pins its own
+	overlays use, and it is what made the check on 0027 above
+	possible.  The strap is a fixture; the driver at the other end
+	of it is not.

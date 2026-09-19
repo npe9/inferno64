@@ -1,0 +1,119 @@
+Checking the QEMU device models against drivers nobody here wrote
+=================================================================
+
+tools/qemu-patches has device models for parts this tree's kernels
+drive.  Both halves of such a model are ours -- the model and the
+Inferno driver that talks to it -- so a passing test can mean the model
+implements the driver's mistake.  The README there calls that out and
+sets qemu+patch as the weakest of its three evidence tiers.
+
+These are the checks that break the circle: somebody else's driver,
+against our model.  Zephyr is used as a tool and is not a dependency of
+anything in this tree.  Nothing here is built by mk, and no Inferno
+source refers to it.
+
+Setting it up, measured on macOS/arm64 in September 2026:
+
+	python3 -m venv zvenv
+	./zvenv/bin/pip install west
+	./zvenv/bin/west init -m \
+		https://github.com/zephyrproject-rtos/zephyr --mr v4.1.0 zp
+	cd zp && ../zvenv/bin/west update --narrow -o=--depth=1
+	../zvenv/bin/pip install -r zephyr/scripts/requirements-base.txt
+
+No Zephyr SDK is needed.  boards/arm/mps2/mps2_an385.yaml lists
+gnuarmemb beside zephyr under toolchain, so an ordinary ARM GNU
+toolchain builds this board:
+
+	export ZEPHYR_TOOLCHAIN_VARIANT=gnuarmemb
+	export GNUARMEMB_TOOLCHAIN_PATH=/opt/homebrew
+
+west's own "west build -t run" would use whatever qemu it can find.  Do
+not use it.  Build the ELF and run it by explicit path under the qemu
+built from tools/qemu-patches, which is the whole point.
+
+
+E1.  The CMSDK AHB GPIO, patch 0027
+-----------------------------------
+
+The register map in 0027 was written from the CMSDK documentation and
+checked against Zephyr's include/zephyr/drivers/gpio/gpio_cmsdk_ahb.h,
+which agrees offset for offset.  So Zephyr's own driver is the right
+thing to make drive it.
+
+tests/drivers/gpio/gpio_basic_api is a two-pin test: its README says a
+board without two GPIOs wired together fails with "output pin not wired
+to input pin?".  Patch 0030 straps gpio0 pin 2 to pin 3 behind
+-machine gpio-loopback=on, which are the pins the test's own overlays
+use.  gpio_basic_api/mps2_an385.overlay here names them; copy it to
+
+	zp/zephyr/tests/drivers/gpio/gpio_basic_api/boards/
+
+then
+
+	cd zp
+	west build -p -b mps2/an385 \
+		zephyr/tests/drivers/gpio/gpio_basic_api
+	<qemu>/qemu-system-arm -M mps2-an385,gpio-loopback=on \
+		-nographic -kernel build/zephyr/zephyr.elf
+
+Result, 19 September 2026, qemu v10.1.3 plus 0027 and 0030, Zephyr
+v4.1.0, arm-none-eabi-gcc 14.3.1:
+
+	SUITE PASS - 100.00% [gpio_port]:         pass = 1
+	SUITE PASS - 100.00% [gpio_port_cb_mgmt]: pass = 3
+	SUITE PASS - 100.00% [gpio_port_cb_vari]: pass = 1
+	PROJECT EXECUTION SUCCESSFUL
+
+Five tests, no failures.  The three callback suites are the ones worth
+having: they exercise the edge and level interrupt logic, the polarity
+registers and the per-pin masks, all written from documentation and
+never before driven by anything but our own code.
+
+Run it on a stock v10.1.3 as well, because the negative result is half
+the evidence.  There it reaches the same point and stops:
+
+	Check gpio@40010000 output 2 connected to gpio@40010000 input 3
+	NOTE: cannot configure pin as disconnected; trying as input
+	NOTE: pull-up not supported; trying as output high
+	FATAL output pin not wired to input pin? (out high => in low)
+
+which is what an unimplemented GPIO looks like from the other side, and
+which mps2_an385.yaml has been claiming works under qemu all along --
+it lists gpio under supported and qemu under simulation, and with the
+block created by create_unimplemented_device() that cannot have been
+true.  0027 is an upstream fix, not a local convenience.
+
+The two skipped tests in after_flash_gpio_config_trigger are skipped on
+this board for reasons of their own and were skipped before any of this.
+
+
+E2.  The SX1276, patch 0028.  Not yet run
+-----------------------------------------
+
+Zephyr carries drivers/lora/loramac-node/sx127x.c, which is Semtech's.
+Two things were checked before planning it, and both make it smaller
+than it looked:
+
+  - dts/bindings/lora/semtech,sx127x-base.yaml requires dio-gpios and
+    describes "up to six pins", but the driver takes the count from the
+    devicetree and guards everything past the first with
+    "#if SX127X_DIO_GPIO_LEN(0) >= 2".  One DIO line is a legal
+    binding, and the model already has DIO0.
+
+  - reset-gpios is not guarded.  sx127x.c configures it and drives a
+    reset sequence before anything else, and the model has no reset
+    input.  That is the one thing 0028 must grow.
+
+Then an overlay with an arm,pl022 at 0x40026000 -- Zephyr has
+drivers/spi/spi_pl022.c, so that half is theirs too -- carrying an
+sx127x child with cs-gpios on gpio0 pin 0, dio-gpios on gpio0 pin 1
+where DIO0 already lands, and reset-gpios on whatever pin the board
+patch wires to the new reset input.  Then samples/drivers/lora/send.
+
+The outcome of E2 is a list, not a verdict: their driver is
+LoRaWAN-oriented and will reach for registers, DIO mappings and modes
+this model does not carry, and every such reach is a place where
+os/inferno/port/sx127x.c has been agreeing with a model that agreed
+with it.  See doc/radio-evidence.ms for what follows if that list
+cannot be worked through honestly.
