@@ -298,6 +298,24 @@ driver, not ours.  Only R3 reaches
 .CW hardware ,
 and only for the 515 lines that deserve to.
 .NH 1
+How, as opposed to whether
+.PP
+.CW doc/radio-evidence-howto.ms
+is the operational half of this: the commands, the overlays, and the
+four unknowns that decided whether E1 and E2 were a day or a fortnight,
+all four checked on this machine.  Two of its findings change the sizing
+above.  There is no Zephyr toolchain here and none is needed, because
+.CW mps2_an385.yaml
+lists
+.CW gnuarmemb
+and
+.CW arm-none-eabi-gcc
+is installed; and Semtech's driver needs one DIO line rather than six,
+because it takes the count from the devicetree and guards everything
+past the first with
+.CW "#if SX127X_DIO_GPIO_LEN(0) >= 2" .
+E2's cost to the model is a reset input and nothing else.
+.NH 1
 Order
 .PP
 E1, then E2, because E2 can invalidate everything downstream and is
