@@ -8336,10 +8336,10 @@ beginning is 4x on four processors for this workload, of which roughly
 and fourth processor doing work.  Both halves are real and neither was
 visible from a laptop.
 .NH 1
-Large pages, and the number that was measuring the host
+Large pages, and a normaliser that could not see what it was normalising
 .PP
-The pc64 kernel maps kernel memory with 2 MiB pages, and it is on by
-default.  Getting there took four fixes:
+The pc64 kernel can map kernel memory with 2 MiB pages.  Getting there
+took four fixes:
 .CW mmuwalk
 splits a large entry when something asks for a 4 KiB mapping inside it,
 .CW pmap
@@ -8353,47 +8353,78 @@ impossible \(em heap blocks with
 .CW "magic 0x2103" ,
 which is a page table entry \(em was
 .CW mmuwalk
-walking into a 2 MiB entry as though it were a table.
+walking into a 2 MiB entry as though it were a table.  It is correct: a
+16 GiB boot runs with the pool overlap checker silent, and 512 MiB and
+4 GiB boots run beside it.
 .PP
-.B "The measurement was wrong for a while, and that is the interesting part."
+.B "It is off by default, and the question is open."
 Eight Compute Engine instances, four Cascade Lake Xeons each, the soak
-workload cut at the same guest tick:
+workload run for the same number of guest ticks.  Throughput is Dis
+quanta per tick:
 .IP
 .nf
-4 KiB   78 78 78 78
-2 MiB   78 81 63 57
+4 KiB   645218  641568  643699  656055
+2 MiB   651979  663286  511658  471310
 .fi
 .PP
-Read as it stands that says large pages cost about a tenth of the
-throughput, and that is what this document said for one commit.  It is
-not what happened.  The two low runs also did proportionally fewer
-quanta and proportionally fewer collections \(em 511,658 quanta against
-651,979, 18.0 million collections against 21.9 million, the same ratio
-in all three.  The whole kernel ran slower against the clock, uniformly.
-A TLB does not do that; a host handing the guest fewer cycles per tick
-does.  All eight instances reported the same processor, the same
-stepping and the same clock to within three per cent, so it was not the
-silicon either.
+The small-page runs are 2.3 per cent apart.  Two large-page runs sit at
+or just above all of them and two sit a quarter below.  All eight
+instances reported the same processor, the same stepping and the same
+clock to within three per cent, and all four large-page runs built
+exactly 7936 large and 231024 small pages, so neither the silicon nor
+the mapping is what varies.
+.NH 2
+The mistake, which is the part worth keeping
 .PP
-.B "Divide the work by the quanta it took and the host drops out."
+This document said, for one commit, that the two arms were
+indistinguishable.  The argument was that dividing work by the quanta it
+took removes the host, and that so divided all eight runs fell inside a
+3.5 per cent band:
 .IP
 .nf
 4 KiB   120.9  121.6  121.2  118.9   chantest per million quanta
 2 MiB   119.6  122.1  123.1  120.9
 .fi
 .PP
-Eight runs inside a 3.5 per cent band with the arms interleaved, and the
-three runs that looked worst per tick are among the best per quantum.
-The two arms cannot be told apart on throughput.  What large pages
-certainly buy is 38 times fewer entries and about 71 MiB of page tables
-handed back on a 16 GiB machine, so they ship on, with
-.CW *pmaplarge=0
-to turn them off.
+The band is real and it means nothing.  A Dis quantum is a slice of Dis
+work and chantest does a fixed amount of Dis work, so chantest per
+quantum is a property of the program.  It is near-constant by
+construction, and what it is constant against includes the machine.  The
+normaliser divided out exactly the quantity that a TLB improvement would
+move.
 .PP
-.B "Memory typing was a false lead, and the kernel now says so."
+.B "Shown rather than argued."
+The same kernel, the same workload, booted twice: once on an idle
+laptop, once on the same laptop with ten busy loops running against its
+sixteen processors.
+.IP
+.nf
+              quanta/tick   chantest per million quanta
+idle              35.9              557.10
+loaded            19.5              551.47
+.fi
+.PP
+Machine speed fell 46 per cent.  The normalised figure moved one per
+cent.  An instrument that cannot see a halving of the machine cannot be
+used to certify that two kernels perform alike, and the 3.5 per cent
+band is withdrawn.
+.NH 2
+The experiment that would settle it
+.PP
+Pair within an instance.  Alternate
+.CW *pmaplarge=0
+and
+.CW *pmaplarge=1
+boots on a single machine, so host speed is common to both halves of
+each pair, and compare quanta per tick.  A difference that follows the
+flag inside a pair is the kernel; unpaired arms on separate instances
+cannot tell that from a slow host at this sample size, which is the
+whole trouble with the eight runs above.
+.PP
+.B "Memory typing is cleared, though it was the obvious suspect."
 A 2 MiB page straddling an MTRR boundary can be demoted to uncached for
-its whole extent, which would have explained a bimodal result.  It does
-not arise:
+its whole extent, which would have explained a bimodal result exactly.
+It does not arise:
 .CW e820scan
 calls
 .CW "mtrrexclude(MemRAM, \(dqwb\(dq)"
@@ -8404,16 +8435,15 @@ so what
 .CW pmap
 is handed is uniform by construction.
 .CW pmap
-checks anyway and
+checks anyway, and
 .CW meminit
-prints the count together with whether the MTRRs were readable, because
-a refusal count of zero from an unreadable register file is not
-evidence.  A 16 GiB boot says
+prints the refusal count together with whether the MTRRs were readable
+at all \(em because zero refusals from an unreadable register file is
+not evidence of anything.  A 16 GiB boot says
 .CW "0 mixed-type (mtrr at 1M wb to 0xc0000000)" :
-readable, and nothing to refuse.
+readable, and nothing to refuse.  Whatever the two slow runs were, it
+was not cache attributes.
 .PP
-.B "The lesson is worth more than the default."
-A per-tick number taken on a machine you do not own measures the
-machine.  Normalise by something the guest counts for itself \(em
-quanta, instructions, collections \(em before believing any difference,
-and check that the normaliser and the result move together.
+.B "What large pages certainly buy," and what makes this worth settling:
+38 times fewer entries and about 71 MiB of page tables given back on a
+16 GiB machine.

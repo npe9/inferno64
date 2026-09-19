@@ -227,32 +227,45 @@ static uvlong vmaplimit;
  * The check that says it is right is a boot at -m 16384 with the
  * overlap checker silent, and 512 MiB and 4 GiB boots beside it.
  *
- * On by default, and the reason is measurement.  Eight Compute Engine
- * instances, four Cascade Lake Xeons each, the soak workload cut at the
- * same guest tick.  Counted per tick the large-page arm looks worse:
+ * Off by default, and the question is open rather than settled.
  *
- *	4 KiB   78 78 78 78
- *	2 MiB   78 81 63 57
+ * Eight Compute Engine instances, four Cascade Lake Xeons each, the
+ * soak workload run for the same number of guest ticks.  Throughput is
+ * Dis quanta per tick:
  *
- * It is not.  The two low runs did proportionally fewer quanta and
- * proportionally fewer collections as well -- the whole kernel ran
- * slower against the clock, uniformly, which is a host handing the
- * guest fewer cycles per tick and not anything a TLB can do.  Dividing
- * the work by the quanta it took removes the host:
+ *	4 KiB   645218 641568 643699 656055   (2.3 per cent apart)
+ *	2 MiB   651979 663286 511658 471310
  *
- *	4 KiB   120.9 121.6 121.2 118.9 chantest per million quanta
- *	2 MiB   119.6 122.1 123.1 120.9
+ * Two large-page runs at or just above every small-page run, and two a
+ * quarter below.  Every instance reported the same processor, stepping
+ * and clock to within three per cent, and all four large-page runs
+ * built exactly 7936 large and 231024 small pages, so neither the
+ * silicon nor the mapping varies.
  *
- * Eight runs inside a 3.5 per cent band with the arms interleaved.  The
- * two arms are indistinguishable on throughput, and 2 MiB pages are
- * free: 38 times fewer entries and about 71 MiB of page tables given
- * back on a 16 GiB machine.
+ * An earlier version of this comment divided the work by the quanta it
+ * took, got eight runs inside a 3.5 per cent band, and concluded the
+ * two arms were indistinguishable.  That was wrong, and wrong in a way
+ * worth recording: a Dis quantum is a slice of Dis work and chantest
+ * does a fixed amount of it, so chantest-per-quantum is a constant of
+ * the program and cannot move with machine speed.  Booting the same
+ * kernel on an idle laptop and then on a deliberately loaded one:
+ * quanta per tick fell from 35.9 to 19.5, a 46 per cent drop, while
+ * chantest per million quanta went 557.10 to 551.47, one per cent.  The
+ * normaliser divided out precisely the quantity large pages would
+ * change.
  *
- * The lesson is worth as much as the default.  A per-tick number on a
- * shared machine measures the machine; normalise by something the guest
- * counts itself before believing a difference.
+ * So the default stays where the unnormalised evidence puts it, and the
+ * experiment that settles it is a paired one: alternate *pmaplarge=0
+ * and *pmaplarge=1 boots on a single instance, so that host speed is
+ * common to both halves of each pair and a difference that follows the
+ * flag is the kernel.  Unpaired arms on separate instances cannot tell
+ * those apart at this sample size.
+ *
+ * What large pages certainly buy, and what makes the question worth
+ * settling: 38 times fewer entries and about 71 MiB of page tables
+ * given back on a 16 GiB machine.
  */
-int pmaplarge = 1;	/* *pmaplarge=0 turns 2 MiB pages off; see above */
+int pmaplarge = 0;	/* *pmaplarge=1 turns 2 MiB pages on; see above */
 ulong npmaplarge, npmapsmall, npmapsplit, npmapmixed;	/* what pmap() built */
 
 /*

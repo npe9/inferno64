@@ -141,6 +141,7 @@ timerdel(Timer *dt)
 }
 
 extern int disdumpon;	/* os/inferno/port/dis.c; *disdump=1 */
+extern int soakon;	/* os/inferno/port/dis.c; *soak=... */
 
 void
 hzclock(Ureg *ur)
@@ -187,7 +188,7 @@ hzclock(Ureg *ur)
 			kstackmin, KSTACK, kstackminproc);
 		disdump();
 	}
-	if(disdumpon && m->machno == 0 && m->ticks > 0 && (m->ticks % (120*HZ)) == 0){
+	if((disdumpon || soakon) && m->machno == 0 && m->ticks > 0 && (m->ticks % (120*HZ)) == 0){
 		extern void soakline(void);
 
 		soakline();	/* MULTICORE INSTRUMENTATION - temporary */

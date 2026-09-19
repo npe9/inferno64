@@ -317,8 +317,12 @@ init0(void)
 		 * reason pc64/main.c gives: ksetenv() writes through
 		 * up->egrp, and up is nil while the options are read.
 		 */
-		if((sk = getconf("*soak")) != nil)
+		if((sk = getconf("*soak")) != nil){
+			extern int soakon;
+
 			ksetenv("soak", sk, 0);
+			soakon = 1;	/* soakline() follows the workload */
+		}
 	}
 
 	poperror();

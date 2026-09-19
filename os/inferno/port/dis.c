@@ -89,6 +89,16 @@ extern int parallelvm;		/* defined below, with stoptheworld() */
 int disdumpon;
 
 /*
+ * soakline() is a measurement, not a debugging dump, and it is the only
+ * way to divide work done by the quanta it took.  That division is what
+ * separates a kernel change from a host that handed the guest fewer
+ * cycles per tick, so a measurement boot must be able to have it
+ * without also turning on the stall dumps whose cost it would then be
+ * measuring.  *soak=... sets this; the line follows the workload.
+ */
+int soakon;
+
+/*
  * The instrumentation's own print.  Everything this branch added to
  * find its way -- the stall dumps, the soak line, the run-queue
  * watermark, the VM-lock counts, the stopped-world audit -- says what
@@ -3679,18 +3689,18 @@ soakline(void)
 			*e = 0;
 	}else
 		p = pbuf;
-	dprint("soak: %lud ticks, gcnruns %lud, gchalt %d, npctx %d, pools %s\n",
+	print("soak: %lud ticks, gcnruns %lud, gchalt %d, npctx %d, pools %s\n",
 		(ulong)MACHP(0)->ticks, gcnruns, gchalt, npctx, p);
 	/*
 	 * Here as well as in stalldump(), because on a board whose console
 	 * tail is unreliable a long dump loses its last lines and this one
 	 * line does not.  MULTICORE INSTRUMENTATION - temporary.
 	 */
-	dprint("soak: interpreters %lud, blocked %d, idle %d, woken %d, nmach %d,"
+	print("soak: interpreters %lud, blocked %d, idle %d, woken %d, nmach %d,"
 		" spawncap %d\n",
 		nvmprocs, isched.nblocked, isched.nidle, isched.nwoken,
 		conf.nmach, spawncap);
-	dprint("soak: stopped-world audits %lud, bad %lud, a Prog queued twice"
+	print("soak: stopped-world audits %lud, bad %lud, a Prog queued twice"
 		" %lud (its own %lud), queued but not listed %lud, placeholders"
 		" skipped %lud, ready and unqueued twice running %lud; quanta",
 		nrunqaudits, nrunqauditbad, nrunqauditdup, nrunqauditself,

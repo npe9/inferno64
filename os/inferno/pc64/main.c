@@ -490,8 +490,12 @@ init0(void)
 		 * Every table in doc/multicore-plan.ms is a 90-second boot of
 		 * the one-shot workload, so the default stays exactly that.
 		 */
-		if((sk = getconf("*soak")) != nil)
+		if((sk = getconf("*soak")) != nil){
+			extern int soakon;
+
 			ksetenv("soak", sk, 0);
+			soakon = 1;	/* soakline() follows the workload */
+		}
 		ksetenv("cputype", "am64", 0);
 		//snprint(buf, sizeof(buf), "amd64 %s", conffile);
 		//ksetenv("terminal", buf, 0);
