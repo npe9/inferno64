@@ -1,0 +1,127 @@
+From 2996b0e52aae1c0160af12e178f3152819be8f71 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sat, 19 Sep 2026 09:24:49 -0400
+Subject: [PATCH] hw/arm/raspi: an SX1276 on SPI0, with -machine radio=on
+
+Fits the transceiver of patch 0028 to the Pi's SPI0 bus, which
+hw/ssi/bcm2835_spi.c already creates and calls "spi".  Chip select on
+GPIO8, DIO0 on GPIO24 and NRESET on GPIO25 -- the three signals that are
+not the bus, on ordinary GPIOs, which is where they go on any board
+where the radio is a module rather than a fitted part, and which needed
+patch 0035 before they could be anything.
+
+Those three pin numbers are a choice and said to be one, as on the MPS2.
+They are the ones Adafruit's wiring guide suggests for their breakout
+and the ones os/inferno/raspi3b/spipiradio.c drives.
+
+Off by default, so no existing Pi configuration moves.
+---
+ hw/arm/Kconfig |  1 +
+ hw/arm/raspi.c | 58 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 59 insertions(+)
+
+diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
+index d2a1636..e3d2d83 100644
+--- a/hw/arm/Kconfig
++++ b/hw/arm/Kconfig
+@@ -383,6 +383,7 @@ config RASPI
+     select SDHCI
+     select USB_DWC2
+     select BCM2835_SPI
++    select SX1276
+     select BCM2835_I2C
+ 
+ config STM32F100_SOC
+diff --git a/hw/arm/raspi.c b/hw/arm/raspi.c
+index 9d9af63..73b8c66 100644
+--- a/hw/arm/raspi.c
++++ b/hw/arm/raspi.c
+@@ -20,6 +20,9 @@
+ #include "hw/arm/bcm2836.h"
+ #include "hw/arm/bcm2838.h"
+ #include "hw/arm/raspi_platform.h"
++#include "hw/ssi/ssi.h"
++#include "hw/ssi/sx1276.h"
++#include "net/net.h"
+ #include "hw/registerfields.h"
+ #include "qemu/error-report.h"
+ #include "hw/boards.h"
+@@ -42,6 +45,8 @@ struct RaspiMachineState {
+     RaspiBaseMachineState parent_obj;
+     /*< public >*/
+     BCM283XState soc;
++    /* An SX1276 on SPI0, present only with -machine radio=on. */
++    bool radio;
+ };
+ 
+ /*
+@@ -313,6 +318,55 @@ void raspi_machine_init(MachineState *machine)
+     object_initialize_child(OBJECT(machine), "soc", soc,
+                             board_soc_type(mc->board_rev));
+     raspi_base_machine_init(machine, &soc->parent_obj);
++
++    /*
++     * An RFM9x on the SPI0 header, which is where one goes on a Pi:
++     * MOSI/MISO/SCLK on GPIO 10, 9 and 11, and the three signals that
++     * are not the bus on ordinary GPIOs -- chip select on 8, DIO0 on
++     * 24, NRESET on 25.  Those three are a choice, as they are on any
++     * board where the radio is a module and not a fitted part; they are
++     * the ones the Inferno driver in os/inferno/raspi3b uses and the
++     * ones Adafruit's own wiring guide suggests.
++     *
++     * Off by default, so no existing Pi configuration moves.
++     */
++    if (s->radio) {
++        BCM283XBaseState *bs = &soc->parent_obj;
++        BCM2835PeripheralState *ps =
++            BCM2835_PERIPHERALS(object_resolve_path_component(OBJECT(bs),
++                                                              "peripherals"));
++        DeviceState *spi, *gpio, *radio;
++        SSIBus *bus;
++
++        spi = DEVICE(object_resolve_path_component(OBJECT(ps), "bcm2835-spi0"));
++        gpio = DEVICE(object_resolve_path_component(OBJECT(ps), "gpio"));
++        bus = (SSIBus *)qdev_get_child_bus(spi, "spi");
++
++        radio = qdev_new(TYPE_SX1276);
++        qemu_configure_nic_device(radio, false, "sx1276");
++        qdev_realize_and_unref(radio, BUS(bus), &error_fatal);
++
++        qdev_connect_gpio_out(gpio, 8,
++                              qdev_get_gpio_in_named(radio, SSI_GPIO_CS, 0));
++        qdev_connect_gpio_out_named(radio, "dio0", 0,
++                                    qdev_get_gpio_in(gpio, 24));
++        qdev_connect_gpio_out(gpio, 25,
++                              qdev_get_gpio_in_named(radio, "nreset", 0));
++    }
++}
++
++static bool raspi_get_radio(Object *obj, Error **errp)
++{
++    RaspiMachineState *s = RASPI_MACHINE(obj);
++
++    return s->radio;
++}
++
++static void raspi_set_radio(Object *obj, bool value, Error **errp)
++{
++    RaspiMachineState *s = RASPI_MACHINE(obj);
++
++    s->radio = value;
+ }
+ 
+ void raspi_machine_class_common_init(MachineClass *mc,
+@@ -335,6 +389,10 @@ static void raspi_machine_class_init(MachineClass *mc,
+ {
+     raspi_machine_class_common_init(mc, board_rev);
+     mc->init = raspi_machine_init;
++    object_class_property_add_bool(OBJECT_CLASS(mc), "radio",
++                                   raspi_get_radio, raspi_set_radio);
++    object_class_property_set_description(OBJECT_CLASS(mc), "radio",
++        "Fit an SX1276 LoRa transceiver to SPI0");
+ };
+ 
+ static void raspi0_machine_class_init(ObjectClass *oc, const void *data)
+-- 
+2.51.0
+

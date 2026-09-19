@@ -24,6 +24,10 @@ dev
 	pointer
 	usb
 	ether		netif
+# A packet radio at #W/radio0.  Real only when qemu is given
+# "-machine raspi3b,radio=on", which fits an SX1276 to SPI0; on a real
+# Pi it is whatever is wired to the header.  See doc/radio-plan.ms.
+	radio
 	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 
 
@@ -39,6 +43,11 @@ link
 	usbdwc
 	ethermedium
 	loopbackmedium
+# spipiradio brings up SPI0 and the three GPIOs the radio uses, then
+# asks sx127x.c whether a part is there.  Here rather than in port
+# because links() runs after poolinit() and trapinit(), which a driver
+# that allocates and takes an interrupt needs.
+	spipiradio
 
 lib
 	interp
@@ -95,6 +104,7 @@ misc
 	armtmrbcm
 	i2sbcm
 	auxspibcm
+	sx127x
 	smibcm
 	bscslbcm
 
@@ -140,6 +150,7 @@ root
 	/dis/basename.dis
 	/dis/bind.dis
 	/dis/cat.dis
+	/dis/radiochk.dis
 	/dis/cd.dis
 	/dis/echo.dis
 	/dis/grep.dis

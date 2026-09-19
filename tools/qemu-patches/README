@@ -8,8 +8,8 @@ the corresponding kernel code is written blind.
 
 0001-0026 are the Raspberry Pi 3B and 4B, which is what this series
 started as.  0027-0034 are the MPS2, for the PyCubed radio work in
-doc/radio-plan.ms, and 0035 is the Pi again, for the same work reaching
-real hardware.
+doc/radio-plan.ms, and 0035-0036 are the Pi again, for the same work
+reaching real hardware.
 
 0031-0033 came out of that check and the one after it, and each names
 what found it.  0027 and 0028 have since been driven by drivers nobody
@@ -1195,3 +1195,13 @@ attached, a default kernel prints:
 	detection samples faster than the system clock, which an emulator
 	does not have, so a guest that sets them is told nothing rather
 	than told a lie.
+
+0036 hw/arm/raspi: an SX1276 on SPI0, with -machine radio=on.
+	The transceiver of 0028 on the bus hw/ssi/bcm2835_spi.c already
+	creates and calls "spi".  Chip select on GPIO8, DIO0 on GPIO24,
+	NRESET on GPIO25 -- the signals that are not the bus, on ordinary
+	GPIOs, which is where they go on any board where the radio is a
+	module rather than a fitted part, and which needed 0035 before
+	they could be anything.  Those three numbers are a choice and
+	said to be one; they are Adafruit's suggested wiring and what
+	os/inferno/raspi3b/spipiradio.c drives.  Off by default.

@@ -1323,6 +1323,8 @@ init()
 	# #m is the pointer device; without it usbd's mouse reader dies on
 	# its first open of /dev/pointer.
 	sys->bind("#m", "/dev", sys->MAFTER);
+	# A packet radio, if one is fitted: /dev/radio0/{data,ctl,stat}.
+	sys->bind("#W", "/dev", sys->MAFTER);
 	sys->bind("#e", "/env", sys->MREPL|sys->MCREATE);
 	sys->print("RASPI3B-OK\n");
 
