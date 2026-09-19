@@ -54,6 +54,8 @@ struct Radio
 	u32	nrecv;
 	u32	ncrcerr;
 	u32	ntoobig;
+	u32	nnotours;		/* heard, addressed to someone else */
+	u32	nrunt;			/* heard, too short to be a packet */
 
 	QLock	qlock;			/* one user of the part at a time */
 	Rendez	r;			/* a packet arrived */

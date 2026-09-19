@@ -86,8 +86,15 @@ Put the part back in sleep and reapply the settings.
 .PP
 .B Stat
 returns the parameters in force, the RSSI and SNR of the last packet
-received, and counters for packets sent and received, CRC errors and
-oversize writes.
+received, and counters for packets sent and received, CRC errors,
+oversize writes, packets heard but addressed elsewhere
+.RB ( notours )
+and packets too short to carry a header
+.RB ( runt ).
+The last two matter more than they look.  A sender that does not speak
+the RadioHead header \- a bare LoRa transmitter, which Semtech's own
+driver is \- is heard and dropped, and without a counter that is
+indistinguishable from a dead link: received stays 0 either way.
 .SH SOURCE
 .B /os/inferno/port/devradio.c
 .br

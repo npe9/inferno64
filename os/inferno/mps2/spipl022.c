@@ -58,6 +58,7 @@ enum {
 	 */
 	Rfcspin		= 0,
 	Rfdio0pin	= 1,
+	Rfresetpin	= 4,
 };
 
 static Radio *radio0;
@@ -131,6 +132,22 @@ static Spidev shield0spi = {
 	pl022unlock,
 };
 
+/*
+ * Wait n microseconds by the clock rather than by counting
+ * instructions.  fastticks() reads SysTick and reports its frequency,
+ * so this is a real interval on hardware and under an emulator alike.
+ */
+static void
+usdelay(int n)
+{
+	uvlong hz, now, end;
+
+	now = fastticks(&hz);
+	end = now + ((hz / 1000000) * n);
+	while(fastticks(nil) < end)
+		;
+}
+
 static void
 rfinterrupt(Ureg*, void *a)
 {
@@ -161,6 +178,9 @@ spipl022link(void)
 	/* chip select idles high, so drive it before enabling the output */
 	p->gpio[Gpiodataout/4] |= 1 << Rfcspin;
 	p->gpio[Gpiooutenset/4] = 1 << Rfcspin;
+	/* NRESET idles high too */
+	p->gpio[Gpiodataout/4] |= 1 << Rfresetpin;
+	p->gpio[Gpiooutenset/4] = 1 << Rfresetpin;
 	/* DIO0 is an input, rising edge */
 	p->gpio[Gpiooutenclr/4] = 1 << Rfdio0pin;
 	p->gpio[Gpiointtypeset/4] = 1 << Rfdio0pin;	/* edge */
@@ -170,6 +190,24 @@ spipl022link(void)
 	p->ssp[Sspcpsr/4] = 2;			/* the minimum even divisor */
 	p->ssp[Sspcr0/4] = Dss8bit | Frfspi;
 	p->ssp[Sspcr1/4] = Sspenable;
+
+	/*
+	 * Reset the part before talking to it.  NRESET is active low and
+	 * the datasheet (7.2.2) wants it held at least 100us, with the
+	 * part left alone for 5ms after it is released.
+	 *
+	 * Not microdelay(): os/inferno/armv7m/clock.c computes a loop
+	 * count from m->cpuhz and assumes four cycles an iteration, which
+	 * is an instruction count and not a time.  Under QEMU it is out by
+	 * a factor of seventeen -- a delay(1) for the hold above measured
+	 * 58us against the 1000us it was asked for, which the model said
+	 * so in as many words.  usdelay() below waits on SysTick instead,
+	 * which is a clock either way.
+	 */
+	p->gpio[Gpiodataout/4] &= ~(1 << Rfresetpin);
+	usdelay(200);
+	p->gpio[Gpiodataout/4] |= 1 << Rfresetpin;
+	usdelay(5000);
 
 	radio0 = sx127xinit(&shield0spi, GPIO0IRQ);
 	if(radio0 == nil)

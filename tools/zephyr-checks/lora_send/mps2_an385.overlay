@@ -1,0 +1,45 @@
+/*
+ * Copyright (c) 2026 Noah Evans
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * An SX1276 on the MPS2's Shield0 SPI header, as QEMU fits one with
+ * -machine mps2-an385,radio=on.  See tools/qemu-patches 0028 and 0029
+ * in the inferno64 xip tree.
+ *
+ * Pin assignment is that machine's, not an MPS2 document's: the board
+ * has an expansion header and no radio on it, so a shield's pinout is
+ * whatever the shield is.  gpio0 pin 0 is chip select, pin 1 is DIO0,
+ * pin 4 is NRESET.
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	aliases {
+		lora0 = &lora0;
+	};
+
+	soc {
+		spi0: spi@40026000 {
+			compatible = "arm,pl022";
+			reg = <0x40026000 0x1000>;
+			clocks = <&sysclk>;
+			clock-frequency = <25000000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+			cs-gpios = <&gpio0 0 GPIO_ACTIVE_LOW>;
+
+			lora0: sx1276@0 {
+				compatible = "semtech,sx1276";
+				reg = <0>;
+				spi-max-frequency = <1000000>;
+				reset-gpios = <&gpio0 4 GPIO_ACTIVE_LOW>;
+				dio-gpios = <&gpio0 1 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+				power-amplifier-output = "pa-boost";
+				status = "okay";
+			};
+		};
+	};
+};

@@ -88,8 +88,95 @@ The two skipped tests in after_flash_gpio_config_trigger are skipped on
 this board for reasons of their own and were skipped before any of this.
 
 
-E2.  The SX1276, patch 0028.  Not yet run
------------------------------------------
+E2.  The SX1276, patch 0028
+---------------------------
+
+Run, and it found two faults in the model and one in the driver beside
+it.  Zephyr carries drivers/lora/loramac-node/sx127x.c, which is
+Semtech's.
+
+lora_send/ here has the overlay and the extra config.  Copy the overlay
+to samples/drivers/lora/send/boards/ and
+
+	cd zp
+	west build -p -d build-lora -b mps2/an385 \
+		zephyr/samples/drivers/lora/send \
+		-- -DEXTRA_CONF_FILE=<path>/lora_send/prj.conf
+	<qemu>/qemu-system-arm -M mps2-an385,radio=on \
+		-nographic -d guest_errors \
+		-kernel build-lora/zephyr/zephyr.elf
+
+Result, 19 September 2026, with 0027-0033:
+
+	<inf> sx127x: SX127x version 0x12 found
+	<inf> lora_send: Data sent!
+
+every second, and no guest-error output at all.  Their driver finds the
+part over our PL022 and our GPIO chip select, resets it, configures the
+modem and transmits.
+
+One deviation, and it is not in the part under test.  Zephyr's
+drivers/spi/spi_pl022.c declares a pclk in its config struct and never
+initialises it from the devicetree, so without CONFIG_CLOCK_CONTROL it
+is zero and every frequency is rejected with "Frequency is up to 0 in
+controller mode."  Turning clock control on breaks this board's own UART
+and GPIO, which reference &sysclk in a way that does not survive it
+becoming a device.  So one line was added to their SPI instance macro,
+.pclk = DT_INST_PROP_OR(idx, clock_frequency, 0), and clock-frequency
+put in the overlay.  sx127x.c itself is untouched, which is what the
+independence claim is about.
+
+WHAT IT FOUND, which is the point of running it:
+
+  - The model called being in FSK an error.  It is not: the part sits
+    there out of reset, LongRangeMode only changes in sleep, and so
+    every driver that wants LoRa passes through FSK sleep to get there.
+    Semtech's did it five times in one boot.  Patch 0033.
+
+  - The model applied LoRa's read-only registers on both pages.  0x1a is
+    RegPktRssiValue in LoRa and RegAfcFei in FSK, which their init
+    writes as part of a register table.  Patch 0033.  Neither fault was
+    reachable by the Inferno driver this model was written beside,
+    because that driver only ever uses the LoRa page -- which is exactly
+    the circularity these checks are for.
+
+  - Wiring the reset line at all exposed a third, in the GPIO model:
+    it drove every pin whether output-enabled or not, and drove them all
+    low at reset, so an active-low NRESET on an unconfigured pin was
+    asserted from power-on and the part answered 0x00 to everything.
+    Patch 0031.
+
+  - And the NRESET timing check added for E2 immediately caught this
+    tree's own driver holding reset for 58us where it had asked for
+    1000, because os/inferno/armv7m/clock.c's microdelay counts
+    instructions and not time.
+
+
+E3.  Cross-implementation, partly done
+--------------------------------------
+
+Semtech's driver transmitting, an Inferno kernel receiving, the two
+linked by -nic socket,listen=/connect=:
+
+	ZEPHYR SENT: 24
+	received 0
+	notours 24
+
+All 24 arrive.  All 24 are rejected, correctly: Semtech's driver sends
+bare LoRa payloads, and os/inferno/port/sx127x.c speaks the
+RadioHead-compatible four-byte header that lib/pycubed_rfm9x.py speaks,
+so it filters on a destination byte the other end never sent.  That is
+the right behaviour for a RadioHead network and it is what a PyCubed is.
+
+The finding is the counter.  Before this, a filtered packet and a dead
+link looked identical from /dev/radio0/stat -- received stayed 0 either
+way.  notours and runt exist now, because that is not a distinction to
+make an operator guess at from the ground.
+
+What is still not done is the other direction with a peer that does
+speak RadioHead, which is E3 proper: a host program on the same socket
+running RadioHead's framing from RadioHead's source, and send_with_ack,
+which this driver still does not implement.
 
 Zephyr carries drivers/lora/loramac-node/sx127x.c, which is Semtech's.
 Two things were checked before planning it, and both make it smaller

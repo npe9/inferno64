@@ -293,7 +293,13 @@ sx127xinterrupt(Radio *rr)
 		n = rd(rr, Sxrxnbbytes);
 		if(flags & Icrcerror){
 			rr->ncrcerr++;
-		}else if(n > Rhhdrlen && n <= Maxpayload){
+		}else if(n <= Rhhdrlen || n > Maxpayload){
+			/*
+			 * Shorter than a RadioHead header, so it is not one
+			 * of ours however well it was received.
+			 */
+			rr->nrunt++;
+		}else{
 			wr(rr, Sxfifoaddrptr, rd(rr, Sxfiforxcurrent));
 			rdburst(rr, Sxfifo, buf, n);
 			rr->rssi = rd(rr, Sxpktrssi) - 157;
@@ -312,6 +318,18 @@ sx127xinterrupt(Radio *rr)
 					qpass(rr->rq, b);
 					rr->nrecv++;
 				}
+			}else{
+				/*
+				 * Counted rather than merely dropped.  A
+				 * packet from a sender that does not speak
+				 * the RadioHead header -- a bare LoRa
+				 * transmitter, which Semtech's own driver
+				 * is -- lands here, and without a counter
+				 * it looks exactly like a dead link.  That
+				 * is not a distinction to make an operator
+				 * guess at from the ground.
+				 */
+				rr->nnotours++;
 			}
 		}
 	}
@@ -448,6 +466,8 @@ sx127xstat(Radio *rr, char *a, int n)
 	p = seprint(p, e, "received %ud\n", rr->nrecv);
 	p = seprint(p, e, "crcerrors %ud\n", rr->ncrcerr);
 	p = seprint(p, e, "toobig %ud\n", rr->ntoobig);
+	p = seprint(p, e, "notours %ud\n", rr->nnotours);
+	p = seprint(p, e, "runt %ud\n", rr->nrunt);
 	return p - a;
 }
 

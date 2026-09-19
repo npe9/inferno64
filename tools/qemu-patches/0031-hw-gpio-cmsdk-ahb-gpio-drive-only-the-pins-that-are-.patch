@@ -1,0 +1,72 @@
+From 90bd6eb40a5abe0c5cd86757dd8a8689ae855867 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sat, 19 Sep 2026 06:59:16 -0400
+Subject: [PATCH 31/33] hw/gpio/cmsdk-ahb-gpio: drive only the pins that are
+ outputs
+
+A pin whose OUTENABLE bit is clear is an input and the pad is not
+driven, so what is on the other end of it is somebody else's business --
+a pull resistor, or another device's output.  This drove every pin,
+enabled or not, and drove them all low at reset.
+
+That silently asserts every active-low signal on the board.  It surfaced
+the moment a device was attached to a pin nobody had configured: an
+SX1276's NRESET on gpio0 pin 4 was held asserted from power-on and the
+part answered 0x00 to every register read, which looks like a fault
+anywhere in the SPI path and is nowhere near it.
+
+Reset no longer drives anything either, since after reset no pin is an
+output.  Zephyr's tests/drivers/gpio/gpio_basic_api still passes all
+five tests on mps2/an385.
+---
+ hw/gpio/cmsdk-ahb-gpio.c | 21 +++++++++++++++++----
+ 1 file changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/hw/gpio/cmsdk-ahb-gpio.c b/hw/gpio/cmsdk-ahb-gpio.c
+index 944286d..1ccae26 100644
+--- a/hw/gpio/cmsdk-ahb-gpio.c
++++ b/hw/gpio/cmsdk-ahb-gpio.c
+@@ -86,13 +86,25 @@ static void cmsdk_ahb_gpio_update_levels(CMSDKAHBGPIO *s)
+     cmsdk_ahb_gpio_update_irq(s);
+ }
+ 
++/*
++ * Drive only the pins the block is actually driving.  A pin whose
++ * OUTENABLE bit is clear is an input and the pad is not driven, so what
++ * is on the other end of it is somebody else's business -- a pull
++ * resistor, or another device's output.  Driving such a pin low, which
++ * is what this did at first, silently asserts every active-low signal
++ * on the board: an SX1276's NRESET on a pin nobody had configured was
++ * held asserted from reset, and the part answered 0x00 to every
++ * register read for a reason that was nowhere near the SPI.
++ */
+ static void cmsdk_ahb_gpio_update_outputs(CMSDKAHBGPIO *s, uint32_t changed)
+ {
+     int i;
+ 
+     for (i = 0; i < CMSDK_AHB_GPIO_NPINS; i++) {
+-        if (changed & (1u << i)) {
+-            qemu_set_irq(s->out[i], !!(s->dataout & s->outenable & (1u << i)));
++        uint32_t bit = 1u << i;
++
++        if ((changed & bit) && (s->outenable & bit)) {
++            qemu_set_irq(s->out[i], !!(s->dataout & bit));
+         }
+     }
+ }
+@@ -283,9 +295,10 @@ static void cmsdk_ahb_gpio_reset(DeviceState *dev)
+     s->intpol = 0;
+     s->intstatus = 0;
+     /* s->inputs is what the outside world is driving; reset does not
+-     * change what someone else's output pin is doing.
++     * change what someone else's output pin is doing.  Nor does it
++     * drive anything: every pin is an input after reset, so the block
++     * is driving none of them.
+      */
+-    cmsdk_ahb_gpio_update_outputs(s, PINMASK);
+     cmsdk_ahb_gpio_update_irq(s);
+ }
+ 
+-- 
+2.51.0
+

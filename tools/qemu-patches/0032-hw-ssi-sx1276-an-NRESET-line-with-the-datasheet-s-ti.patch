@@ -1,0 +1,151 @@
+From 7fedb67c97d5762333345cac9a696897e820e396 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sat, 19 Sep 2026 06:59:16 -0400
+Subject: [PATCH 32/33] hw/ssi/sx1276: an NRESET line, with the datasheet's
+ timing checked
+
+Semtech's own driver configures reset and drives a reset sequence before
+it reads anything -- drivers/lora/loramac-node/sx127x.c does it
+unconditionally, where every DIO line past the first is behind
+'#if SX127X_DIO_GPIO_LEN(0) >= 2' -- so a model without a reset input
+cannot be driven by it at all.
+
+The line is active low and checked rather than merely accepted.  The
+datasheet (7.2.2) holds NRESET low for at least 100us; a release sooner
+than that is LOG_GUEST_ERROR, and an SPI access while the line is
+asserted is another.  A driver that hurries either works against a model
+that does not care and fails against silicon that does, which is the
+failure this fixture exists to avoid.
+
+It caught one immediately, in this tree's own driver: a 1ms hold written
+as delay(1) measured 58us, because os/inferno/armv7m/clock.c computes a
+loop count from m->cpuhz assuming four cycles an iteration, which is an
+instruction count and not a time.  Under TCG it is out by a factor of
+seventeen.
+
+hw/arm/mps2 wires it to gpio0 pin 4, beside the chip select on 0 and
+DIO0 on 1.  A shield's reset is a GPIO on every board that has one; a
+PyCubed drives RF1_RST from PB00.
+---
+ hw/arm/mps2.c   | 10 ++++++++++
+ hw/ssi/sx1276.c | 48 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 58 insertions(+)
+
+diff --git a/hw/arm/mps2.c b/hw/arm/mps2.c
+index e17a529..258bc05 100644
+--- a/hw/arm/mps2.c
++++ b/hw/arm/mps2.c
+@@ -510,6 +510,16 @@ static void mps2_common_init(MachineState *machine)
+                 qdev_connect_gpio_out_named(radio, "dio0", 0,
+                                             qdev_get_gpio_in(
+                                                 DEVICE(&mms->gpio[0]), 1));
++                /*
++                 * NRESET on gpio0 pin 4.  A shield's reset line is a
++                 * GPIO on every board that has one -- a PyCubed drives
++                 * RF1_RST from PB00 -- and the part cannot be brought
++                 * up without it: Semtech's own driver configures reset
++                 * and drives a reset sequence before it reads anything.
++                 */
++                qdev_connect_gpio_out(DEVICE(&mms->gpio[0]), 4,
++                                      qdev_get_gpio_in_named(radio,
++                                                             "nreset", 0));
+             }
+         }
+     }
+diff --git a/hw/ssi/sx1276.c b/hw/ssi/sx1276.c
+index 4bc1314..df54d78 100644
+--- a/hw/ssi/sx1276.c
++++ b/hw/ssi/sx1276.c
+@@ -35,6 +35,7 @@
+ #include "hw/ssi/ssi.h"
+ #include "migration/vmstate.h"
+ #include "net/net.h"
++#include "qemu/timer.h"
+ #include "qom/object.h"
+ #include "hw/ssi/sx1276.h"
+ 
+@@ -115,6 +116,10 @@ struct SX1276State {
+     qemu_irq dio0;
+     qemu_irq dio4;
+ 
++    /* NRESET, active low.  See sx1276_nreset(). */
++    bool in_reset;
++    int64_t reset_fell_ns;
++
+     NICState *nic;
+     NICConf conf;
+ 
+@@ -286,6 +291,12 @@ static uint32_t sx1276_transfer(SSIPeripheral *dev, uint32_t val)
+     uint8_t byte = val & 0xff;
+     uint8_t out;
+ 
++    if (s->in_reset) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "sx1276: SPI access while NRESET is asserted\n");
++        return 0;
++    }
++
+     if (!s->have_addr) {
+         s->writing = !!(byte & 0x80);
+         s->addr = byte & 0x7f;
+@@ -322,6 +333,38 @@ static int sx1276_set_cs(SSIPeripheral *dev, bool select)
+     return 0;
+ }
+ 
++/*
++ * NRESET.  The datasheet (7.2.2, manual reset) says the line is held low
++ * for at least 100us and the part is ready 5ms after it is released.
++ * Both are checked rather than assumed: a driver that hurries either one
++ * works against a model that does not care and fails against silicon
++ * that does, which is the failure this whole fixture exists to avoid.
++ */
++static void sx1276_nreset(void *opaque, int line, int level)
++{
++    SX1276State *s = opaque;
++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++
++    if (!level) {
++        if (!s->in_reset) {
++            s->in_reset = true;
++            s->reset_fell_ns = now;
++        }
++        return;
++    }
++
++    if (!s->in_reset) {
++        return;
++    }
++    if (now - s->reset_fell_ns < 100 * 1000) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "sx1276: NRESET held for %" PRId64 "ns, datasheet "
++                      "wants 100us\n", now - s->reset_fell_ns);
++    }
++    s->in_reset = false;
++    device_cold_reset(DEVICE(s));
++}
++
+ static bool sx1276_can_receive(NetClientState *nc)
+ {
+     SX1276State *s = qemu_get_nic_opaque(nc);
+@@ -397,6 +440,10 @@ static void sx1276_reset(DeviceState *dev)
+     s->have_addr = false;
+     s->writing = false;
+     s->addr = 0;
++    /* in_reset and reset_fell_ns belong to the line, not to the state
++     * the line resets, so device_cold_reset() from sx1276_nreset() must
++     * not touch them.
++     */
+ 
+     /* Datasheet reset values for the ones a driver checks. */
+     s->regs[R_VERSION] = SX1276_VERSION;
+@@ -430,6 +477,7 @@ static void sx1276_realize(SSIPeripheral *d, Error **errp)
+ 
+     qdev_init_gpio_out_named(dev, &s->dio0, "dio0", 1);
+     qdev_init_gpio_out_named(dev, &s->dio4, "dio4", 1);
++    qdev_init_gpio_in_named(dev, sx1276_nreset, "nreset", 1);
+ 
+     qemu_macaddr_default_if_unset(&s->conf.macaddr);
+     s->nic = qemu_new_nic(&net_sx1276_info, &s->conf,
+-- 
+2.51.0
+
