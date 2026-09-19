@@ -196,6 +196,45 @@ return 0;
  * any of them and a machine's physical address width does not change.
  */
 static uvlong vmaplimit;
+/*
+ * 2 MiB pages in pmap(), off.
+ *
+ * Turning them on maps the same memory in eight thousand entries
+ * instead of four million, and that is the right shape for a machine
+ * with tens of gibibytes -- at a terabyte, 4 KiB entries are two
+ * gibibytes of page tables and the question stops being a preference.
+ * It is off because it is not correct yet, and the evidence is exact:
+ * with it on, the pool overlap checker in os/inferno/port/alloc.c --
+ * which had never fired in this tree -- reported the image pool's
+ * chain leader holding "magic 0x2103", a page-table entry with flags
+ * 0x103 written over MAGIC_E within a second of boot.
+ *
+ * The reason is mmuwalk() below: given a page-directory entry with
+ * PTESIZE it follows the entry as though it named a table, reads the
+ * memory the large page maps as though those bytes were entries, and
+ * with create set writes new ones into somebody's heap.  The split
+ * that handles that is written above and did NOT stop the corruption
+ * when it was tried, so it is not to be trusted on the strength of
+ * reading it.
+ *
+ * What has to be true before this goes on, in order:
+ *	mmuwalk() returns the large entry when asked at its own level
+ *	and either refuses or correctly splits when asked below it;
+ *	every caller that assumes a level 0 entry exists is checked --
+ *	kernelro(), vmap(), vunmap(), mmuphysaddr() (which already
+ *	knows), and the page table dumps;
+ *	a split after the secondaries are running needs a shootdown,
+ *	or large pages are confined to ranges nothing walks below;
+ *	and the overlap checker stays silent for a boot at -m 16384,
+ *	which is the test that caught it.
+ *
+ * None of that was needed to use the machine's memory: 4 KiB entries
+ * map all 16 GiB, and the worry that motivated mapkzero()'s old 1 GiB
+ * limit -- four million entries out of the early allocator -- does not
+ * bite.  This is a performance and scale change and wants a
+ * measurement of its own before it is worth the risk.
+ */
+int pmaplarge = 0;
 
 static void
 vmaplimitinit(void)
@@ -288,6 +327,39 @@ mmuwalk(uintptr* table, uintptr pa, int level, int create)
 	for(i = 2; i >= level; i--){
 		pte = table[x];
 		if(pte & PTEVALID){
+			/*
+			 * A large page is not a table, and following it as
+			 * one walks into the memory it maps: the entries
+			 * read back are whatever the data happens to be, and
+			 * with create set this writes page-table entries
+			 * into somebody's heap.  That is not hypothetical --
+			 * it is what pmap()'s 2 MiB pages did to the image
+			 * pool's chain leader, "magic 0x2103", which is a
+			 * PTE with flags 0x103 sitting where MAGIC_E should
+			 * be, found by the overlap checker in port/alloc.c
+			 * that had never fired before.
+			 *
+			 * Descending below one means splitting it into the
+			 * 4 KiB table it stands for, with the same physical
+			 * range and the same flags, so every mapping the
+			 * large page provided still holds afterwards.
+			 */
+			if(i > level && (pte & PTESIZE) != 0){
+				uintptr *split, base, flags, off;
+
+				if(!create)
+					return 0;
+				base = PPN(pte);
+				flags = pte & ~(PPN(pte) | PTESIZE);
+				split = (uintptr*)rampage();
+				for(off = 0; off < (1<<PTSHIFT); off++)
+					split[off] = (base + off*PGLSZ(i-1)) | flags
+						| (i-1 > 0 ? PTESIZE : 0);
+				table[x] = PADDR(split) | PTEWRITE|PTEVALID;
+				table = split;
+				x = PTLX(pa, i-1);
+				continue;
+			}
 			pte = PPN(pte);
 			table = (void*)pte;
 		} else {
@@ -358,7 +430,7 @@ pmap(uintptr pa, u64 flags, s64 size)
 		 */
 		l = 0;
 		z = PGLSZ(0);
-		if((pa & (PGLSZ(1)-1)) == 0 && size >= (s64)PGLSZ(1)){
+		if(pmaplarge && (pa & (PGLSZ(1)-1)) == 0 && size >= (s64)PGLSZ(1)){
 			pte = mmuwalk(m->pml4, pa, 1, 1);
 			if(pte != nil && (*pte & PTEVALID) == 0){
 				*pte = pa | flags | PTESIZE;
