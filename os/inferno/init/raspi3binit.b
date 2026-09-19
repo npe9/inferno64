@@ -1498,6 +1498,60 @@ dnsstart()
 	spawn dnscheck();
 }
 
+#
+# The translation a program actually asks for.
+#
+# DNS-OK says the resolver resolves.  It does not say that ndb/cs can
+# reach it, and for a whole boot it could not: cs had forked its
+# namespace before /net/dns existed, so every name it was asked for
+# came back "unknown host" while DNS-OK printed beside it.  That is two
+# checks that are each true and a board on which "ip/ping google.com"
+# does not work.
+#
+# So ask cs, the way dial(2) does -- write "tcp!name!port", read back
+# the clone file and the translated address -- and require an address
+# that is not the name.  This is the last link, and nothing above it
+# tests it.
+#
+csnamecheck()
+{
+	name := "example.com";
+	fd := sys->open("/net/cs", Sys->ORDWR);
+	if(fd == nil){
+		sys->print("CS-NAME-FAIL open /net/cs: %r\n");
+		return;
+	}
+	q := array of byte ("tcp!" + name + "!80");
+	if(sys->write(fd, q, len q) != len q){
+		sys->print("CS-NAME-FAIL cs cannot translate %s: %r\n", name);
+		return;
+	}
+	sys->seek(fd, big 0, 0);
+	b := array[256] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0){
+		sys->print("CS-NAME-FAIL no answer for %s: %r\n", name);
+		return;
+	}
+	# "/net/tcp/clone 1.2.3.4!80"
+	(nf, f) := sys->tokenize(string b[0:n], " \t\n");
+	if(nf < 2){
+		sys->print("CS-NAME-FAIL cs answered %q\n", string b[0:n]);
+		return;
+	}
+	addr := hd tl f;
+	for(i := 0; i < len addr; i++)
+		if(addr[i] == '!'){
+			addr = addr[0:i];
+			break;
+		}
+	if(addr == name){
+		sys->print("CS-NAME-FAIL %s came back untranslated\n", name);
+		return;
+	}
+	sys->print("CS-NAME-OK cs translates %s to %s\n", name, addr);
+}
+
 dnscheck()
 {
 	#
@@ -1549,8 +1603,29 @@ dnscheck()
 
 timecheck(gw: string)
 {
-	csstart();
+	#
+	# The resolver first, and the order is the whole of it.
+	#
+	# ndb/cs mounts /net/cs into its caller's namespace and then
+	# forks its own with pctl(NEWPGRP) -- a copy, taken at that
+	# moment.  Anything mounted into /net afterwards is not in the
+	# copy, so a cs started before ndb/dns cannot see /net/dns for as
+	# long as it runs, and every name it is asked for comes back
+	# "unknown host".
+	#
+	# That is what it did, and the error printed was not that one.
+	# dial() tries /net and then /net.alt; this board binds the
+	# ethernet device at /net.alt, which has no cs at all, so the
+	# second attempt took nettrans's "no connection server, don't
+	# translate" path and handed the literal name to the kernel --
+	# and dial keeps the second error unless it mentions "translate"
+	# or "does not exist".  So "ip/ping google.com" reported "bad ip
+	# address syntax" from a network that was never the problem, and
+	# the real failure was discarded.
+	#
 	dnsstart();
+	csstart();
+	spawn csnamecheck();
 	sntp := load Command "/dis/ip/sntp.dis";
 	if(sntp == nil){
 		sys->print("TIME-NONE load sntp: %r\n");
