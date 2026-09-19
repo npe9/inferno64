@@ -95,6 +95,22 @@ qlock(QLock *q)
 	else
 		p->qnext = up;
 	q->tail = up;
+	/*
+	 * The end of the queue, and say so.
+	 *
+	 * This line was missing here and is present in eqlock, rlock,
+	 * wlock and in the Plan 9 qlock this came from.  Without it a
+	 * process joins the queue carrying whatever qnext it had from the
+	 * last time it waited, so when it is handed the lock,
+	 * qunlock's "q->head = p->qnext" points the queue at a process
+	 * that is not waiting for anything -- and readies it.  On this
+	 * board that process was asleep on a Rendez, and the next wakeup
+	 * on that Rendez found it Ready and panicked: "wakeup: state",
+	 * with ready() naming qunlock as the caller.  It is also the
+	 * shape of the wedges, since the process that really was waiting
+	 * for the lock is no longer on the queue to be handed it.
+	 */
+	up->qnext = nil;
 	up->eql = nil;
 	up->qwaitq = q;
 	up->state = Queueing;
