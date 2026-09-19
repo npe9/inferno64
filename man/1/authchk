@@ -1,0 +1,95 @@
+.TH AUTHCHK 1
+.SH NAME
+authchk \- run keyring authentication and say whether it fits
+.SH SYNOPSIS
+.B authchk
+.br
+.B authchk fd
+.I n
+.RI [ ground ]
+.SH DESCRIPTION
+.I Authchk
+runs
+.IR keyring (2)'s
+.B auth
+between two certified identities and reports what it cost.
+.PP
+With no argument both ends run in one kernel over a
+.IR pipe (2),
+which is the form that answers the question everything else rests on:
+whether the protocol runs at all on the target core.
+.B Auth
+is a Diffie-Hellman exchange and a signature check over 1024-bit
+numbers on a board whose whole heap is measured in tens of kilobytes,
+and no argument settles that.  If it does not fit over a pipe it will
+not fit over a radio, and the radio would have been the expensive way
+to find out.
+.PP
+With
+.B fd
+.I n
+it runs one end over an already-open file descriptor, which is how it
+reaches a link.  The identity used is the satellite's unless
+.B ground
+follows.
+.PP
+The identities come from
+.B /keys/ground
+and
+.BR /keys/satellite ,
+made by
+.IR mkradiokeys (1)
+on a host and built into the boot image.  The signer's own key is not
+on the board and must never be: a satellite that could mint identities
+is a satellite that can be made to trust anything.
+.PP
+.IR Keyring (2)'s
+.B auth
+returns the identity the other end proved, or, when it proved nothing,
+the reason.  The two are told apart by the secret and not by the
+string:
+.B libinterp/keyring.c
+puts the peer's name in the first element and the shared secret in the
+second on success, and leaves the second nil otherwise.  Reading the
+first as an error reports
+.B satellite
+as a failure, which is what this program did until it was run.
+.SH EXAMPLE
+On
+.BR mps2-an386 :
+.PP
+.EX
+	; authchk
+	ground-key-read ok
+	satellite-key-read ok
+	ground-side ok
+	satellite-side ok
+	same-length ok
+	ground-learned-satellite ok
+	satellite-learned-ground ok
+	auth took 910 ms
+	main in use 90176 before, 97152 after
+	7 checks, 0 failed
+	AUTHCHK-OK
+.EE
+.PP
+910 milliseconds and 6976 bytes on a Cortex-M4, and each end learned
+which certified identity the other holds without being told.
+.SH SOURCE
+.B /appl/cmd/authchk.b
+.SH SEE ALSO
+.I mkradiokeys (1),
+.I radiossl (1),
+.I lora (3)
+.SH BUGS
+The two identities are signed by a signer whose key is not in the
+repository, but the identities themselves are, so they are secret from
+nobody.  What is demonstrated is that the protocol runs and what it
+costs, not that these particular keys are worth anything.
+.PP
+Both ends in one kernel share a pool, so the figure for memory is the
+cost of two ends and not of one.
+.PP
+.B Setid
+is passed 0.  Changing the user id on the strength of the exchange is
+what a server would do and is not tried here.

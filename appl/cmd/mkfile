@@ -122,6 +122,8 @@ TARG=\
 	plumb.dis\
 	plumber.dis\
 	prof.dis\
+	authchk.dis\
+	mkradiokeys.dis\
 	lorachk.dis\
 	loraraw.dis\
 	radiochk.dis\

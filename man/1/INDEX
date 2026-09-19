@@ -20,6 +20,7 @@ asciiorgan asciiorgan
 asm asm
 auhdr auplay
 auplay auplay
+authchk authchk
 autoconvert sh-alphabet
 autodeclare sh-alphabet
 avr avr
@@ -377,6 +378,7 @@ miniterm miniterm
 mk mk
 mkdir mkdir
 mklist sh-sexprs
+mkradiokeys mkradiokeys
 mktext sh-sexprs
 mktextlist sh-sexprs
 mload sh-mload

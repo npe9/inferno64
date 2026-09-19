@@ -70,7 +70,11 @@ in place of
 .BR /dev/radio0/data ,
 with 251 bytes of payload in place of 255.
 .SH BUGS
-It does not authenticate.
+It does not authenticate.  Since
+.IR authchk (1)
+that is a gap and no longer an open question: the exchange runs on the
+target core in 910 milliseconds and 6976 bytes, so what is missing here
+is the plumbing and not the budget.
 .IR keyring (2)'s
 .B auth
 wants a signer and certificates; this writes the same constant into both

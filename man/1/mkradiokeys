@@ -1,0 +1,75 @@
+.TH MKRADIOKEYS 1
+.SH NAME
+mkradiokeys \- make a signer and certified identities under it
+.SH SYNOPSIS
+.B mkradiokeys
+.I dir signer user ...
+.SH DESCRIPTION
+.I Mkradiokeys
+writes an
+.B Authinfo
+file per name into
+.IR dir :
+one self-signed signer, and one identity for each
+.I user
+certified by it, in the format
+.IR keyring (2)'s
+.B readauthinfo
+expects.
+.PP
+Run it on a host and never on a board.  A satellite that holds a signer
+key is a satellite that can mint identities, and therefore one that can
+be made to trust anything; what belongs on the board is its own
+identity and the signer's public key, which is what the certified
+.B Authinfo
+carries.
+.PP
+The keys are 1024 bits and the Diffie-Hellman parameters are the NIST
+DSA primes, which is what
+.B keyring->dhparams
+gives at that size.  Generating them takes minutes.
+.SH EXAMPLE
+Under a host
+.IR emu ,
+rooted at the tree:
+.PP
+.EX
+	; mkradiokeys /keys radio-signer ground satellite
+	signer radio-signer
+	user ground
+	user satellite
+	MKRADIOKEYS-OK
+.EE
+.PP
+.B /keys/ground
+and
+.B /keys/satellite
+then go into a boot image's root section;
+.B /keys/radio-signer
+stays on the host.
+.SH SOURCE
+.B /appl/cmd/mkradiokeys.b
+.SH SEE ALSO
+.I authchk (1),
+.I keyring (2)
+.SH BUGS
+.I Emu
+writes as the user named in
+.BR /dev/user ,
+which is
+.B inferno
+unless
+.BI /usr/ $user
+exists under the root, so a host user with no such directory cannot
+write the keys it has just generated.  Make the directory first.
+.PP
+The certificates do not expire.
+.SH HISTORY
+Writing this found that
+.B keyring->dhparams
+could not be called at all on a 64-bit host:
+.B DSAprimes
+filled a 20-byte seed with five writes through a
+.B ulong
+pointer, which is 40 bytes where a ulong is 64 bits.  See
+.BR libsec/dsaprimes.c .

@@ -175,6 +175,13 @@ root
 	/dis/fptest.dis	/dis32/fptest.dis
 	/dis/cvtchk.dis	/dis32/cvtchk.dis
 	/dis/modchk.dis	/dis32/modchk.dis
+	/dis/authchk.dis	/dis32/authchk.dis
+# Two certified identities under one signer, made on a host by
+# mkradiokeys(1).  The signer's own key is not here and must never be:
+# a satellite that could mint identities is a satellite that can be
+# made to trust anything.  See man/1/authchk.
+	/keys/ground		/keys/ground
+	/keys/satellite		/keys/satellite
 	/dis/lorachk.dis	/dis32/lorachk.dis
 	/dis/loraraw.dis	/dis32/loraraw.dis
 	/dis/radiochk.dis	/dis32/radiochk.dis
