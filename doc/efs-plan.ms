@@ -91,6 +91,117 @@ and reads the partial sector), so byte-offset I/O works.  It is still
 whole blocks that make transfers cheap on a polled controller, and the
 format should never issue anything smaller than a block.
 .NH 1
+Why this is kinder to the card than kfs is
+.PP
+Everything above is about sectors, which is the fiction the card sells.
+Underneath is NAND behind a controller nobody here can see: erase blocks
+far larger than a sector, a translation layer with its own map, and its
+own idea of where a given sector lives this minute.  Three consequences
+follow, none of them visible from a driver, and together they are the
+other half of the argument for replacing
+.I kfs
+\(em the first half being what happens when the power goes.
+.IP \(bu
+.B "A small write is not a small write."
+Changing 512 bytes inside an erase block costs the controller a read, a
+merge, a write of the whole block somewhere else, and a map update.  The
+cost is set by the erase block, not by what was asked for.
+.IP \(bu
+.B "The same address written over and over is the worst case there is."
+Every rewrite is another erase-block cycle and another map update, and
+the translation layer has nowhere to hide it.  A format with one hot
+block is a format that wears one region of the card out and stalls on it
+meanwhile.
+.IP \(bu
+.B "Large, aligned, sequential writes are what the part is built for."
+An SD card is specified with an allocation unit, and writing whole
+aligned units in order is the case its firmware is tuned for.  Anything
+else is the slow path.
+.PP
+.B "Kfs is on the wrong side of all three, and the code says so."
+.CW sdfs()
+in
+.CW os/inferno/init/raspi3binit.b
+reams with no
+.CW -b ,
+so the
+.CW "bufsize := 1024"
+default at
+.CW appl/cmd/disk/kfs.b:388
+stands and the unit of every transfer is two sectors.  That alone is a
+small-write format.  What makes it a hot-block format is
+.CW "SUPERADDR = 1"
+together with
+.CW "sb.fbuf = p.iobuf[Super1size:]"
+in
+.CW superream :
+the head of the free list lives
+.I inside
+the superblock's own buffer, so
+.CW balloc
+and
+.CW addfree
+dirty block 1 on every single allocation and every single free.  A run
+that allocates a thousand blocks rewrites the same 1KB at the same
+address a thousand times.
+.PP
+.B "FAT is not much better, and the card's own shape makes it legible."
+A 512-byte FAT sector holds 128 FAT32 entries, and at 64 sectors to a
+cluster each entry covers 32KB, so one FAT sector describes 4MB of file.
+The 1536000-byte kernel that
+.CW kupdate
+writes is 47 clusters \(em all of them in one FAT sector, which the
+allocation therefore walks 47 times.  Whether those reach the card as 47
+writes or as one is a property of
+.I dossrv 's
+sector cache and not of the format; the format's part is that it gave
+the allocator no choice but to keep going back to the same place.
+.PP
+.B "What efs does instead falls out of the commit rule."
+Copy on write means no metadata block is ever updated in place: a change
+writes new blocks into space nothing else is using and ends in a new
+root.  There is no block 1, because there is no structure that every
+allocation has to go back and edit.  Blocks are 4KB or 8KB and nothing
+smaller is ever issued, so the card is never asked to merge a partial
+one.  And a commit's writes are a batch that can be issued in address
+order, which is the sequential case, rather than a scatter of updates
+interleaved with the data.
+.PP
+One hot spot remains and should be stated rather than glossed: the
+superblocks.  They are at fixed offsets and one of them is written on
+every commit.  That is bounded at one block per commit instead of one
+per allocation, and alternating between the two halves it again, but it
+is the place where
+.I efs
+still writes the same address repeatedly and it is where to look first
+if the card ever develops a slow region.
+.PP
+.B "Alignment, and one number that is already right."
+The partition this plan picks starts at sector 1064960, which is
+545259520 bytes, 520MB from the start of the card.  That is exactly 130
+units of 4MB and 65 of 8MB, and it is
+.I not
+a multiple of 16MB.  So for the allocation-unit sizes these cards
+usually carry, the partition begins on a unit boundary and a
+power-of-two block size keeps every block inside one \(em which is worth
+knowing before the number is chosen rather than after, because a
+partition start that is off by a sector makes every aligned write in the
+filesystem unaligned on the card.
+.PP
+.B "And one number nobody here has asked the card for."
+The card will say.  ACMD13 returns a 64-byte SD Status whose AU_SIZE
+field names the allocation unit the card wants writes aligned to, and it
+is a data transfer like any other block read.
+.CW os/inferno/raspi3b/sdemmcbcm.c
+sends ten commands in all, and its only CMD55 \(em the escape that makes
+the next one an application command \(em is the one prefixing ACMD41 in
+the power-up loop.  So the board has never asked: every sentence above
+about 4MB is about what such cards usually are and not about this one.  Reading SD Status and
+printing it at boot beside the capacity is a small addition to a driver
+that already does block reads, and it is what the block-size question at
+the end of this plan should be decided against.  Until then the honest
+statement is that the alignment arithmetic is right for an assumed unit.
+.NH 1
 Shape: a Limbo Styx server, not a kernel device
 .PP
 .I Efs
@@ -344,7 +455,9 @@ Open questions
 Block size.  4KB is eight sectors and a comfortable B-tree node; 8KB
 halves the tree depth and doubles the write amplification of a small
 change.  Decide by measuring on the board, with the polled controller,
-not on the host.
+not on the host \(em and ask the card its allocation unit first (ACMD13,
+above), since tree depth is the smaller of the two considerations and
+the one this plan originally stated alone.
 .IP \(bu
 Whether the free map is a bitmap or a log.  A 29GB partition of 4KB
 blocks is about 7.6M blocks, so a bitmap is about a megabyte \(em small

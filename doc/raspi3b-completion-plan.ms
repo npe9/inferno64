@@ -3026,7 +3026,18 @@ Nothing here turns the card into the board's own filesystem yet.  The
 kfs create deadlock that used to block it was the SP-alignment fault,
 and kfs now reams and serves a partition carved from the card's
 unallocated gap; what is missing is a boot that mounts it as the root
-rather than as a test.
+rather than as a test.  The answer is not to mount kfs, though: kfs is
+the wrong shape for an SD card in two separate ways \(em its recovery
+story is a check pass on a board whose way out of
+.CW exit()
+is the watchdog, and its I/O is 1KB blocks with the free list living
+inside the superblock, so every allocation rewrites the same address.
+.I Efs ,
+planned in
+.CW doc/efs-plan.ms ,
+is the replacement: a copy-on-write Styx server whose recovery is a
+superblock flip and whose commits are batched aligned writes.  Nothing
+of it is implemented.
 .NH 2
 Ethernet on silicon: what was wrong and what fixed it
 .PP
@@ -5056,6 +5067,56 @@ The driver never refused a write, so the data was never offered to it
 .CW twrite
 failure path both, and points the whole question at
 .CW dossrv .
+.PP
+.B "Third, a filesystem for the card that is not kfs."
+.CW doc/efs-plan.ms
+has the whole of it; what belongs here is why it sits this high and
+what it does not displace.  It does not displace the rename fix: the
+firmware reads the FAT partition and
+.I dossrv
+stays the tool for it no matter what else the card grows, so a bug that
+empties a kernel there has to be fixed there.  What
+.I efs
+replaces is
+.I kfs ,
+and the case against
+.I kfs
+is that it is wrong for this machine twice over.  Its recovery story is
+a check pass that walks the filesystem, on a board whose ordinary way
+out of
+.CW exit()
+is the PM watchdog and whose power was pulled mid-write dozens of times
+a day during bring-up.  And its I/O is the pattern an SD card handles
+worst: the board reams it with the default 1KB block, two sectors, and
+the free list lives inside the superblock's own buffer, so
+.CW balloc
+and
+.CW addfree
+rewrite block 1 on every allocation and every free \(em the same
+kilobyte at the same address, thousands of times, in front of a
+translation layer whose erase blocks are megabytes.
+.I Efs
+is copy on write: no metadata is edited in place, so there is no block
+1, recovery is which of two superblocks checksums and has the higher
+generation, and a commit is a batch of aligned whole-block writes.
+.PP
+It sits behind the rename bug and ahead of the peripheral work for one
+practical reason rather than an architectural one: like the rename bug
+and unlike everything below, none of it needs the Pi.  Milestones 1-6
+are a format document, a mkfs, a dump, a server and a crash harness,
+all of them run under
+.I emu
+against an image on the build host, which is where every
+.I dossrv
+bug in this port was actually found.  Only milestone 7 wants the board.
+So it proceeds alongside the silicon work rather than blocking on a
+slot in it.  Milestone 5 \(em mount after a write-failure injection
+gives back exactly the last commit \(em is the one that decides whether
+the project was worth doing; if it does not hold,
+.I efs
+is not better than
+.I kfs
+and should not replace it.
 .PP
 Then the rest, in the order it was in.
 The transmit-queue fix is confirmed on the board and kernel updates
