@@ -36,11 +36,18 @@ connect(fd: ref Sys->FD): (string, ref Sys->Connection)
 	(c, err) := sslclone();
 	if(c == nil)
 		return (err, nil);
+	# Push the descriptor before opening data, not after.  ssl(3)
+	# works out what one message can carry from the transport
+	# underneath, and it can only do that once it has been given
+	# one; opening data first meant the budget was computed against
+	# nothing and the file reported no limit at all.  Over a packet
+	# radio that is the difference between a Styx server settling on
+	# a message size the link can carry and one settling on 8192.
+	if(sys->fprint(c.cfd, "fd %d", fd.fd) < 0)
+		return (sys->sprint("cannot push fd: %r"), nil);
 	c.dfd = sys->open(c.dir + "/data", Sys->ORDWR);
 	if(c.dfd == nil)
 		return (sys->sprint("cannot open data: %r"), nil);
-	if(sys->fprint(c.cfd, "fd %d", fd.fd) < 0)
-		return (sys->sprint("cannot push fd: %r"), nil);
 	return (nil, c);
 }
 

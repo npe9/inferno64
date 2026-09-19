@@ -43,6 +43,16 @@ enum
 };
 
 typedef struct Dstate Dstate;
+/*
+ * The most this device adds to one message: a three-byte SSLv2 count
+ * when there is padding, the longest digest hashtab offers (SHA1, 20),
+ * and up to blocklen-1 of padding for the widest block cipher (DES, 8).
+ * See sslopen() and sslbwrite().
+ */
+enum {
+	Maxsslhdr = 3 + 20 + 7,
+};
+
 struct Dstate
 {
 	Chan	*c;			/* io channel */
@@ -284,6 +294,31 @@ sslopen(Chan *c, u32 omode)
 		}
 		unlock(&dslock);
 		poperror();
+
+		/*
+		 * What one write to the data file can carry.
+		 *
+		 * This device delimits messages: one write is one record on
+		 * the transport underneath, with a header and a digest added
+		 * to it.  So a caller writing more than that transport can
+		 * carry in one go is refused by the transport, not split --
+		 * and over a packet radio, where the transport's budget is a
+		 * couple of hundred bytes, that is the difference between a
+		 * Styx server negotiating a message size the link can carry
+		 * and one negotiating 8192 and failing on the first large
+		 * reply.  iounit is how such a budget is published, and this
+		 * device published none, so the budget stopped here.
+		 *
+		 * Deliberately the worst case this device can impose -- a
+		 * three-byte header, the longest digest it offers, and a
+		 * block cipher's padding -- because the algorithm may be
+		 * chosen after this file has been opened, and an iounit is a
+		 * promise rather than an estimate.  A transport that
+		 * publishes no budget of its own still gets none from here.
+		 */
+		if(TYPE(c->qid) == Qdata && s != nil && s->c != nil
+		   && s->c->iounit > Maxsslhdr)
+			c->iounit = s->c->iounit - Maxsslhdr;
 		break;
 	case Qencalgs:
 	case Qhashalgs:
