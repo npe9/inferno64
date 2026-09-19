@@ -3952,6 +3952,52 @@ bought nothing, and it has been put back.  The timing is still in the driver, of
 names how many transfers to time \(em because the next person to wonder
 where a USB transfer went should not have to guess twice first.
 .NH 2
+The card is 86 KB/s, and which driver that is
+.PP
+.CW FAT-BIG-OK
+now prints what the boot's 1.5MB write cost:
+.CW "17420 ms (86 KB/s)" .
+That is the number to beat, and finding where it goes cost a wrong turn
+worth writing down.
+.PP
+.B "There are two drivers for one controller."
+.CW sdhcibcm.c
+and
+.CW sdemmcbcm.c
+both drive the Arasan SDHCI at 0x3f300000, and the board's card is
+served by the second \(em its line is the
+.CW "emmc: card rca 0x1234"
+on every boot.  An afternoon's work went into making the first one wait
+on the controller's interrupt instead of spinning before that was
+noticed, and it has been taken out again: an unused driver arming IRQ
+62 on the same controller the used one is polling is a hazard, not an
+improvement.  Whichever of the two is kept, this is a thing to settle
+before either grows an interrupt handler.
+.PP
+.B "The active driver busy-waits."
+.CW awaitirq
+spins a hundred thousand status reads and then calls
+.CW delay(1)
+in a loop, so the processor is held for as long as the card takes \(em
+and a card programming a block takes milliseconds.  Yielding there with
+.CW "tsleep(&up->sleep, return0, 0, 1)"
+was tried and panicked the board in
+.CW wakeup() :
+.CW "696d68 696d68 2" ,
+the same Rendez with the process already Ready, so something else
+readies a process sleeping that way.  Sleeping on
+.CW up->sleep
+with a condition that is never true is not how to wait for hardware
+anyway.  What the driver wants is the controller's own interrupt and a
+Rendez of its own, spinning briefly first for the same reason
+.CW chanwait
+does.
+.PP
+The instrumentation is in the file, off by default:
+.CW emmctrace
+aggregates how many waits there were, how many of them slept, and what
+they cost, which is what a change here should be measured with.
+.NH 2
 Suggested order
 .PP
 The transmit-queue fix is confirmed on the board and kernel updates

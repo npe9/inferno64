@@ -88,6 +88,7 @@ enum {
 
 	Maxblocks	= 64,		/* blocks in one multi-block command */
 	Waitms		= 3000,		/* how long a card may take over one transfer */
+	Spinreads	= 2000,		/* status reads before yielding: ~200us */
 	Idclock		= 400000,
 	Datclock	= 25000000,
 	Secsize		= 512,
@@ -113,11 +114,24 @@ extern SDifc sdemmcbcmifc;
  * Wait for a bit in the interrupt-status register, clearing it and any
  * error bits.  Returns 0, or -1 with the status in *stsp.
  */
+/*
+ * How many waits to report, and off by default.  The board's 1.5MB FAT
+ * write measured 86 KB/s and this is where a block transfer waits, so
+ * the question is whether the card is slow or this is.
+ */
+static int emmctrace = 0;
+static ulong emmcnwait, emmcnslept;
+static uvlong emmcus;
+
 static int
 awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 {
 	u32 sts;
 	int i, ms;
+	vlong t0;
+
+	ms = 0;
+	t0 = emmctrace? todget(nil): 0;
 
 	/*
 	 * Spin first, because the common case answers within a few reads,
@@ -130,12 +144,26 @@ awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 	 * the loop ran out, and dossrv took it as a hardware failure and
 	 * panicked.
 	 */
-	for(i = 0; i < 100000; i++){
+	for(i = 0; i < Spinreads; i++){
 		sts = r[Rinterrupt];
 		if((sts & (want|Ierr)) != 0)
 			goto done;
 	}
 	for(ms = 0; ms < Waitms; ms++){
+		/*
+		 * A busy wait, still.
+		 *
+		 * Yielding here with tsleep(&up->sleep, return0, 0, 1) was
+		 * tried and panicked the board in wakeup(): "696d68 696d68
+		 * 2" -- the same Rendez, the process already Ready -- so
+		 * something else readies this process while it sleeps that
+		 * way, and sleeping on up->sleep with a condition that is
+		 * never true is not the way to wait for hardware anyway.
+		 * What this wants is the controller's own interrupt and a
+		 * Rendez of its own, which is written down in
+		 * doc/raspi3b-completion-plan.ms rather than half-done
+		 * here.
+		 */
 		delay(1);
 		sts = r[Rinterrupt];
 		if((sts & (want|Ierr)) != 0)
@@ -145,6 +173,16 @@ awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 		*stsp = r[Rinterrupt];
 	return -1;
 done:
+	if(emmctrace){
+		emmcnwait++;
+		if(ms > 0)
+			emmcnslept++;
+		emmcus += (todget(nil) - t0)/1000;
+		if(emmcnwait % 2000 == 0)
+			print("emmc: %lud waits, %lud slept, %llud us total, "
+				"%llud us each\n", emmcnwait, emmcnslept,
+				emmcus, emmcus/emmcnwait);
+	}
 	r[Rinterrupt] = sts & (want|Ierr|0xffff0000);
 	if(stsp != nil)
 		*stsp = sts;

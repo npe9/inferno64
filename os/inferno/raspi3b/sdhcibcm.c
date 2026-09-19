@@ -112,9 +112,6 @@ enum {
 	Hispeedmhz	= 50,	/* what CMD6's high-speed function allows */
 	Fnhispeed	= 1,	/* group 1 function number for high speed */
 	Timeout		= 1000000,	/* bounded register polls */
-	Intrms		= 50,		/* one wait; a block is a millisecond */
-	Intrspins	= 200,		/* microseconds spun before that wait */
-	Sdhciirq	= 62,		/* GPU IRQ: the Arasan controller */
 };
 
 typedef struct Ctlr Ctlr;
@@ -125,10 +122,6 @@ struct Ctlr {
 	int	byteaddr;
 	int	inited;
 	uint	rca;
-	Rendez	r_;		/* woken by the controller's interrupt */
-	u32	want;		/* the Interrupt bits being waited for */
-	int	armed;		/* the handler is registered */
-	int	nointr;		/* and it does not arrive; poll instead */
 };
 
 static Ctlr sdhcictlr;
@@ -149,104 +142,6 @@ awaitbit(u32 *reg, u32 bit, int want)
 		if((int)((*reg & bit) != 0) == want)
 			return 0;
 	return -1;
-}
-
-/*
- * Wait for one of the Interrupt bits by sleeping, not by spinning.
- *
- * A block transfer is mostly the card thinking, and this driver spent
- * that time in awaitbit() with the processor.  On a board where USB
- * enumeration is a Dis program waiting for completion interrupts, that
- * is not a slow driver, it is a driver that stops everything else: a
- * single USB control transfer measured 20 to 93 milliseconds while the
- * card was busy, and 8 microseconds when it was not.  Both of the
- * systems this port learns from wait rather than spin -- 9front's
- * bcm/emmc.c sleeps on datadone, Linux's bcm2835 driver is
- * interrupt-driven throughout.
- *
- * The interrupt is enabled only for the wait and disabled by the
- * handler, which is what stops a level-triggered status bit from
- * asserting again before the waiter has read it.  Anything that runs
- * before there are processes to sleep -- identification, and the reset
- * paths -- keeps polling: the fallback is the old behaviour, so a
- * controller whose interrupt never arrives is slow and not broken.
- */
-static int
-intrready(void *v)
-{
-	Ctlr *c = v;
-
-	return (c->r[Interrupt] & c->want) != 0;
-}
-
-static void
-sdhciintr(Ureg*, void *a)
-{
-	Ctlr *c = a;
-
-	c->r[Irpten] = 0;	/* disarm; the waiter re-arms what it needs */
-	wakeup(&c->r_);
-}
-
-/*
- * How many waits to time, and off by default.  The USB driver's version
- * of this is what found that its transfers were waiting for the run
- * queue and not for the device; the same question is worth asking here,
- * where a 1.5MB write measured 86 KB/s.
- */
-static int sdtrace = 20;
-
-static int
-awaitintr(Ctlr *c, u32 bits)
-{
-	u32 *r = c->r;
-	int i;
-	vlong t0, t1, t2;
-
-	t0 = t1 = t2 = 0;
-
-	if(!c->armed || c->nointr || up == nil || !islo())
-		return awaitbit(&r[Interrupt], bits, 1);
-	if(sdtrace > 0)
-		t0 = todget(nil);
-	c->want = bits;
-	r[Irpten] = bits;
-	/*
-	 * Spin briefly before sleeping, for the reason usbdwc's chanwait
-	 * does: a completion that arrives in microseconds costs a whole
-	 * trip round the run queue if it is slept on, and on this board
-	 * that trip has measured 2.7 to 142 milliseconds.  Sleeping is
-	 * for the transfers that really are slow -- a card that has to
-	 * erase a block before writing it -- not for the common one.
-	 */
-	for(i = 0; i < Intrspins; i++){
-		if(r[Interrupt] & bits)
-			break;
-		microdelay(1);
-	}
-	if(sdtrace > 0)
-		t1 = todget(nil);
-	if((r[Interrupt] & bits) == 0)
-		tsleep(&c->r_, intrready, c, Intrms);
-	if(sdtrace > 0){
-		t2 = todget(nil);
-		sdtrace--;
-		print("sdhci: wait %#ux: %lld us spun, %lld us slept\n",
-			bits, (t1-t0)/1000, (t2-t1)/1000);
-	}
-	r[Irpten] = 0;
-	if(r[Interrupt] & bits)
-		return 0;
-	/*
-	 * It did not come.  Poll for it as before, and stop sleeping for
-	 * this controller: a wait that always times out first would make
-	 * every block cost its timeout, which is far worse than the spin
-	 * this replaces.  Said once, because it is a fact about the board
-	 * and not about this transfer.
-	 */
-	c->nointr = 1;
-	print("SDHCI-NOINTR the controller's interrupt did not arrive; polling\n");
-	return awaitbit(&r[Interrupt], bits, 1);
 }
 
 /*
@@ -978,19 +873,6 @@ sdhcionline(SDunit *u)
 		c->inited = 1;
 		sdhcicardinit(c);	/* leaves c->sectors 0 if no card */
 		first = 1;
-		/*
-		 * And arm the interrupt, now that identification is done
-		 * and there are processes to sleep.  Irpten stays 0 until
-		 * a wait asks for a bit, so the handler is only ever
-		 * entered for something somebody is waiting on -- an
-		 * interrupt armed at the controller with nothing waiting
-		 * for it is the quiet fault that cost this port its
-		 * console once.
-		 */
-		if(c->sectors != 0 && !c->armed){
-			intrenable(Sdhciirq, sdhciintr, c, 0, "sdhci");
-			c->armed = 1;
-		}
 	}
 	if(c->sectors == 0)
 		return 0;		/* no media -- SDHOST may hold the pins */
@@ -1048,7 +930,7 @@ sdhcibio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		}
 		for(i = 0; i < nb; i++){
 			if(write){
-				if(awaitintr(c, Writeready) < 0)
+				if(awaitbit(&r[Interrupt], Writeready, 1) < 0)
 					break;
 				r[Interrupt] = Writeready;
 				for(j = 0; j < Secsize; j += 4){
@@ -1057,7 +939,7 @@ sdhcibio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					p += 4;
 				}
 			}else{
-				if(awaitintr(c, Readready) < 0)
+				if(awaitbit(&r[Interrupt], Readready, 1) < 0)
 					break;
 				r[Interrupt] = Readready;
 				for(j = 0; j < Secsize; j += 4){
@@ -1079,7 +961,7 @@ sdhcibio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		 * reporting nothing.  Any break above therefore counts the
 		 * same as the completion timeout below.
 		 */
-		if(i < nb || awaitintr(c, Datadone) < 0)
+		if(i < nb || awaitbit(&r[Interrupt], Datadone, 1) < 0)
 			i = 0;
 		r[Interrupt] = Datadone;
 		qunlock(c);
@@ -1093,7 +975,7 @@ sdhcibio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		if(write){
 			if(sdhcicmd(c, 24, arg, flags) < 0)	/* WRITE_BLOCK */
 				break;
-			if(awaitintr(c, Writeready) < 0)
+			if(awaitbit(&r[Interrupt], Writeready, 1) < 0)
 				break;
 			r[Interrupt] = Writeready;
 			for(j = 0; j < Secsize; j += 4){
@@ -1104,7 +986,7 @@ sdhcibio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		}else{
 			if(sdhcicmd(c, 17, arg, flags|Tmdatdirread) < 0)	/* READ_BLOCK */
 				break;
-			if(awaitintr(c, Readready) < 0)
+			if(awaitbit(&r[Interrupt], Readready, 1) < 0)
 				break;
 			r[Interrupt] = Readready;
 			for(j = 0; j < Secsize; j += 4){
@@ -1116,7 +998,7 @@ sdhcibio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				p += 4;
 			}
 		}
-		if(awaitintr(c, Datadone) < 0)
+		if(awaitbit(&r[Interrupt], Datadone, 1) < 0)
 			break;
 		r[Interrupt] = Datadone;
 	}
