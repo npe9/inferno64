@@ -900,6 +900,44 @@ told.  And
 has no floor at all \- it takes the smaller of the two msizes and
 returns it.
 .PP
+.B Measured ,
+since this was written.
+.CW os/inferno/port/devradio.c
+reports an
+.CW iounit
+of 251 \- 255 of FIFO less the four-byte RadioHead header \- and a
+ground station asking for 8192 gets
+.DS
+.CW "RADIOSTYX-MSIZE 251 version 9P2000"
+.CW "RADIOSTYX-READ '3960"
+.CW "'"
+.DE
+which is
+.CW /dev/battery
+read off a satellite over the radio, with the message size settled by
+the transport and nobody told to do it.  See
+.I radiostyx (1).
+.PP
+Two corrections the measurement forced, neither of them on this list.
+It did not work at first:
+.CW exportfs.c 's
+.CW exreadmsg ()
+read the four-byte size field and then the rest, which is a byte-stream
+reader, and a device that hands out one packet per read is right to
+refuse a four-byte one.  It asks for a whole message first now.  And the
+adoption does not survive
+.I ssl (3):
+.CW exportfs
+reads the iounit of the file it was handed, which with
+.I ssl
+pushed on is the
+.I ssl
+device's and not the radio's, so the same exchange settles on 8192.
+Styx over
+.I ssl
+over the radio does work, but the ground has to ask for a size the link
+can carry rather than having one arrived at for it.
+.PP
 Which means the satellite needs no change.  The ground is the side that
 has to give, and the ground is a workstation with none of the
 constraints: either it speaks Styx from Limbo over
