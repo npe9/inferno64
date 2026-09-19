@@ -8447,3 +8447,108 @@ was not cache attributes.
 .B "What large pages certainly buy," and what makes this worth settling:
 38 times fewer entries and about 71 MiB of page tables given back on a
 16 GiB machine.
+.NH 1
+Phase D on real hardware: the parallel VM is not ready to be the default
+.PP
+Twenty Compute Engine instances, four Xeons each, booted from a UEFI
+disk \(em not
+.CW -kernel
+\(em and left to run the soak workload for 48,000 guest ticks.  Four
+arms of the channel workload, two of the module-loading workload, and a
+one-processor control for each.
+.NH 2
+First, two instruments that had to be fixed before any of it counted
+.PP
+.B "The workload counter was measuring the console."
+.CW CHANTEST-OK
+is a line printed to the serial port, and on a cloud instance that port
+is slow and serialised.  Four
+.CW *parallelvm=0
+instances returned 645, 645, 645 and 645; three one-processor controls
+returned 645, 648 and 645.  A number that does not move between one
+processor and four, with and without the VM lock, is not measuring the
+kernel.  Dis quanta per tick, which the kernel counts for itself and
+prints once every 120 seconds, is the throughput figure used below.
+.PP
+.B "The host-speed control works, and earned its place immediately."
+Every instance now runs a fixed register-only loop timed with the cycle
+counter.  Nineteen of the twenty returned between 329,430 and 329,620
+cycles \(em a spread of 0.06 per cent, which is what "the same machine"
+looks like.  The twentieth returned 431,218, 31 per cent slower, and its
+throughput was low to match.  That is the instrument the eight-instance
+large-page measurement did not have, doing exactly the job it was built
+for.
+.NH 2
+The result
+.IP
+.nf
+                                     Dis quanta per tick
+channel workload, 4 cpu, lock on     41  42  43  43
+channel workload, 4 cpu, lock off    55  59  64        (3 of 4 panicked)
+channel workload, 1 cpu, lock on     38  39  73
+module loading,   4 cpu, lock on     3.6 3.7 3.7
+module loading,   4 cpu, lock off    11.4 12.4 13.4
+.fi
+.PP
+.B "The second workload turned the expectation around."
+The plan predicted that module loading and allocation would be the case
+the parallel VM was worst at, and that the channel workload was the one
+it was best at.  It is the other way round: 3.3x on module loading
+against 1.4x on channel traffic, and the module-loading arm ran six
+instances for six clean boots.
+.PP
+.B "And four processors with the lock are worth eight per cent."
+One processor with the lock does 38 to 39 quanta per tick; four
+processors with the lock do 41 to 43.  That is the global lock doing
+what a global lock does, measured on real hardware this time rather than
+inferred.
+.NH 2
+The blocker
+.PP
+.B "Three of four channel-workload instances panicked with the lock off."
+Three different faults:
+.IP
+.nf
+d-pvm1-1   panic: page fault                 in proc 13 "dis"
+d-pvm1-3   panic: page fault                 in proc 14 "dis"
+d-pvm1-4   panic: checkb 4 qconsume 1        block 0x5928cd0, wp past lim
+.fi
+.PP
+The third is the informative one:
+.CW checkb
+found a queue block whose write pointer had gone past its limit, with a
+live
+.CW malloctag ,
+which is memory corruption rather than a lost wakeup.  None of these
+appeared in any QEMU batch on this branch, at any width, over many
+boots.  This is precisely the reason for running on hardware: the
+emulator serialises enough that the window never opens.
+.PP
+.B "So the answer to Phase D is no, and it is a useful no."
+.CW "parallelvm = 1"
+cannot be the default while a four-processor channel workload corrupts
+memory three times in four on real hardware.  The one-processor arms
+did not panic, the module-loading arms did not panic in six boots, and
+the lock-on arms did not panic in seven.  The fault is in the
+interaction of the lock-free VM with channel traffic at width, and that
+is now a bug with three reproductions rather than a suspicion.
+.NH 2
+A boot path that hangs, written down and set aside
+.PP
+Separately, and not on the path above: booting this kernel with QEMU's
+.CW -kernel
+under
+.CW -enable-kvm
+on a nested-virtualisation host reaches
+.CW schedinit
+and stops, spinning at 100 per cent, with no Dis quantum ever run.  The
+clock is alive \(em with
+.CW *disdump=1
+the stall dump fires 24 times, which means
+.CW m->ticks
+passed 7000 \(em so this is the scheduler and not the timer.  It is not
+a function of processor count in any simple way (seen at 1, 2 and 4
+vCPUs, absent at 8) and the rate varies between batches.  The UEFI
+disk path, which is what every measurement above used and what a real
+machine uses, does not show it in twenty boots.  Recorded here rather
+than chased.
