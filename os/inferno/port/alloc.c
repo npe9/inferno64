@@ -221,10 +221,26 @@ poolcheckoverlap(char *where)
 				continue;
 			bs = (uintptr)b;
 			be = bs + b->csize;
-			if(as < be && bs < ae)
-				print("pooloverlap(%s): %s [%#p,%#p) overlaps %s [%#p,%#p)\n",
-					where, table.pool[i].name, (void*)as, (void*)ae,
-					table.pool[j].name, (void*)bs, (void*)be);
+			if(as < be && bs < ae){
+				static int told;
+
+				/*
+				 * A chain is leaders only, linked by clink,
+				 * and clink/csize share a union with the tree
+				 * fields and with the block's own data: read
+				 * one from a block that is not a leader and
+				 * the walk is off into nothing.  So say which
+				 * this is -- MAGIC_E is a leader -- rather
+				 * than only that two ranges overlap.
+				 */
+				if(told++ < 4)
+					print("pooloverlap(%s): %s [%#p,%#p) magic %#ux"
+						" overlaps %s [%#p,%#p) magic %#ux\n",
+						where, table.pool[i].name,
+						(void*)as, (void*)ae, a->magic,
+						table.pool[j].name,
+						(void*)bs, (void*)be, b->magic);
+			}
 		}
 	}
 }

@@ -239,3 +239,74 @@ Every strong number produced today without a control was measuring
 something other than what it appeared to: the run-queue check, the
 stopped-world audit, "leaks seen 63", the 7 per cent, the first 4x.
 Build the control first.
+.NH 1
+Phase B, as it landed \(em and what it uncovered
+.PP
+.B "The 16 GiB fault was a 32-bit size, not the mapping."
+.CW Pool.chunk
+in
+.CW os/inferno/port/alloc.c
+was an
+.CW int .
+.CW poolsize()
+sets it to what is left of the pool \(em 3.4 GiB on a 16 GiB machine \(em
+and
+.CW poolalloc()
+takes it as a
+.CW uintptr :
+negative as an int, sign-extended on the way in, and the size
+arithmetic wrapped.  The block was built at the address
+.CW xalloc()
+correctly returned, with a nonsense length, and the first write through
+its tail landed in the PCI hole below 4 GiB.  Printing the sizes named
+it \(em
+.CW "size -875209856"
+\(em after two rounds of treating it as a mapping bug.
+.PP
+The mapping work stands anyway:
+.CW pmap()
+uses a 2 MiB entry where the addresses and the remaining size allow one
+and the page-directory entry is empty,
+.CW mapkzero()
+no longer refuses RAM above 1 GiB, and
+.CW meminit()
+maps each bank before taking it.
+.PP
+.B Acceptance, met:
+.CW "qemu -m 16384"
+reports
+.CW "conf.npage 4179631" ,
+skips no bank, allocates and frees the 3.4 GiB chunk and reaches Dis on
+two processors.  On an
+.CW n2-standard-4 :
+.CW "conf.npage 4177338" ,
+the same chunk allocated and freed, four Xeons, a Dis quantum, no
+panic.  It was 462 MiB of that machine before.
+.NH 2
+New, and the first item of Phase E
+.PP
+.B "The pool overlap checker fires on a large machine, for the first time."
+Its comment says it had never fired.  With the whole machine in use it
+reports, from the clock:
+.IP
+.nf
+pooloverlap(clock): image [0x100000010,0x200007113) magic 0x2103
+	overlaps image [0x100006103,0x100006103) magic 0x0
+.fi
+.PP
+0x100000010 is exactly what
+.CW xalloc()
+returned for the 3.4 GiB chunk, so the chain head points where it
+should \(em and the magic there reads 0x2103 rather than
+.CW MAGIC_E ,
+with the second entry unaligned, zero-length and magic 0.  A chain is
+leaders only and
+.CW clink / csize
+share a union with the block's own data, so this is either a leader
+that has been overwritten or a chain that has walked into data.  The
+checker names the magic now, which is how this much is known.
+.PP
+It does not panic and the kernel reaches a shell and runs Dis, so it is
+a corruption signal rather than a failure, and it is only visible on a
+machine with memory above 4 GiB \(em which is every cloud machine.  It
+is the first thing to chase, ahead of the rest of Phase E.
