@@ -110,7 +110,8 @@ struct Ctlr {
 	Rendez	irq;		/* woken by the controller's interrupt */
 	u32	want;		/* the status bits a wait is for */
 	int	armed;		/* the handler is registered */
-	int	nointr;		/* and it does not arrive: poll instead */
+	int	fired;		/* and it has actually run at least once */
+	int	nointr;		/* or it has not: poll instead */
 };
 
 static Ctlr emmcctlr;
@@ -126,6 +127,23 @@ extern SDifc sdemmcbcmifc;
  * the question is whether the card is slow or this is.
  */
 static int emmctrace = 0;
+
+/*
+ * Whether to sleep for the controller's interrupt, and off.
+ *
+ * The interrupt works: the handler runs, EMMC-NOINTR never prints.
+ * Sleeping for it is still twelve times slower than spinning -- the
+ * board's 1.5MB write measured 86 KB/s spinning and 6 KB/s sleeping --
+ * because a woken process on this kernel waits tens of milliseconds to
+ * be scheduled, and a block transfer waits once per block.  The same
+ * latency is why usbdwc spins 200us for a completion that arrives in 4.
+ *
+ * So the code stays and the switch is off: what makes sleeping here
+ * worth having is fixing the wake-up latency, which is its own piece of
+ * work and is written down in doc/raspi3b-completion-plan.ms.  Turning
+ * this on is how that fix gets measured.
+ */
+static int emmcsleep = 0;
 static ulong emmcnwait, emmcnslept;
 static uvlong emmcus;
 
@@ -164,6 +182,7 @@ emmcintr(Ureg*, void *a)
 {
 	Ctlr *c = a;
 
+	c->fired = 1;
 	c->r[Rirpten] = 0;	/* disarm; the waiter re-arms what it needs */
 	wakeup(&c->irq);
 }
@@ -198,20 +217,37 @@ awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 	 * Sleep for it, if the interrupt works here.  The spin above has
 	 * already covered everything the card answers quickly.
 	 */
-	if(emmcctlr.armed && !emmcctlr.nointr && up != nil && islo()){
+	if(emmcsleep && emmcctlr.armed && !emmcctlr.nointr && up != nil && islo()){
 		emmcctlr.want = want;
 		r[Rirpten] = want|Ierr;
 		for(ms = 0; ms < Waitms/Sleepms; ms++){
 			if((r[Rinterrupt] & (want|Ierr)) != 0)
 				break;
 			tsleep(&emmcctlr.irq, irqready, &emmcctlr, Sleepms);
+			/*
+			 * One sleep is enough to tell.  If the handler has
+			 * never run, the wait above ended on its timeout
+			 * and every wait after it will too: that is 20ms a
+			 * block, and the board measured 7 KB/s doing it --
+			 * twelve times slower than the spin it replaced,
+			 * with no EMMC-NOINTR printed because the status
+			 * bit did eventually set.  The question is not
+			 * whether the bit arrives, it is whether the
+			 * interrupt does.
+			 */
+			if(!emmcctlr.fired)
+				break;
 		}
 		r[Rirpten] = 0;
 		sts = r[Rinterrupt];
+		if(emmcctlr.fired && (sts & (want|Ierr)) != 0)
+			goto done;
+		if(!emmcctlr.fired){
+			emmcctlr.nointr = 1;
+			print("EMMC-NOINTR the controller's interrupt never ran; polling\n");
+		}
 		if((sts & (want|Ierr)) != 0)
 			goto done;
-		emmcctlr.nointr = 1;
-		print("EMMC-NOINTR the controller's interrupt did not arrive; polling\n");
 	}
 	for(ms = 0; ms < Waitms; ms++){
 		/*

@@ -4065,6 +4065,52 @@ is
 The diagnostic that caught it was committed eleven minutes before it
 fired.
 .NH 2
+What a woken process waits for, which is the next thing to fix
+.PP
+Two drivers have now been measured into the same wall.
+.PP
+.CW usbdwc :
+3 or 4 microseconds from arming a channel to the completion interrupt,
+and then 2.7 to 142 milliseconds before the waiting process ran.
+Spinning 200 microseconds for the completion took
+.CW ETHERUSB-SETUP
+from 9620ms to 2280ms, because at that length the sleep never happens.
+.PP
+.CW sdemmcbcm :
+the controller's interrupt works, the handler runs,
+.CW EMMC-NOINTR
+never prints \(em and sleeping for it measured
+.CW "6 KB/s"
+against
+.CW "86 KB/s"
+for the busy wait it replaced.  A card takes milliseconds over a block,
+which is past any sensible spin, so this driver pays the wake-up
+latency once per block and there is no way to dodge it from inside the
+driver.  The interrupt path is kept and switched off:
+.CW emmcsleep
+in
+.CW sdemmcbcm.c
+turns it on, which is how a fix to the latency gets measured.
+.PP
+.B "So the thing to fix is the latency itself."
+A process readied from an interrupt handler goes to the back of its
+priority's run queue, and this kernel ticks at 100Hz, so it waits for
+the running process's quantum and for everything queued ahead of it.
+At boot, with the Dis VM, kfs, dossrv, usbd and etherusb all runnable,
+that is the tens of milliseconds measured.  Where to look:
+.CW ready()
+sets
+.CW m->readied
+as a hint but nothing preempts on it;
+.CW sched()
+only reschedules at a quantum boundary or when a process blocks; and
+.CW HZ
+is 100, so the boundary is 10ms.  9front carries the same design and
+does not feel it here because its Pi is not reaming a kfs and writing
+1.5MB while it enumerates USB; Linux does not have it at all, because
+its completions run in the handler and the next transfer is submitted
+from there rather than by a process that has to be scheduled first.
+.NH 2
 Suggested order
 .PP
 The transmit-queue fix is confirmed on the board and kernel updates
