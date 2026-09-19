@@ -177,6 +177,7 @@ Six of six clean and 2.5x at the median, against 1.4x before \(em which
 was being dragged down by the runs on their way to dying.
 .PP
 .B "What is still missing before the default can be flipped."
+Only one thing, and it is not the VM:
 .IP \(bu
 arm64.  Five
 .CW t2a-standard-4
@@ -185,11 +186,13 @@ without panicking, and then four of the five stop producing console
 output.  It is a board-level fault, not the VM \(em one of the two
 lock-on controls stopped too \(em but until it is fixed there is no
 arm64 throughput measurement.
-.IP \(bu
-The module-loading workload, re-measured.  Its 3.3x was taken on the
-kernel before the lock.  That arm never panicked in six boots, so the
-number is probably still good, but it is not a measurement of the
-kernel that would ship.
+.PP
+.B "The second workload is done."
+Module loading re-measured on the fixed kernel over six instances and
+108,000 ticks: 3.2, 3.2, 3.2 against 11.0, 12.3, 12.6, which is 3.7x.
+That makes twelve
+.CW parallelvm=1
+instances across two workloads with no panic on any of them.
 .PP
 .B "Two instrument lessons that the plan should carry forward."
 .CW CHANTEST-OK
