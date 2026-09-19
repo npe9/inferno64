@@ -88,6 +88,8 @@ enum {
 
 	Maxblocks	= 64,		/* blocks in one multi-block command */
 	Waitms		= 3000,		/* how long a card may take over one transfer */
+	Sleepms		= 20,		/* one sleep waiting for the interrupt */
+	Emmcirq		= 62,		/* GPU IRQ: this controller */
 	Spinreads	= 2000,		/* status reads before yielding: ~200us */
 	Idclock		= 400000,
 	Datclock	= 25000000,
@@ -105,6 +107,10 @@ struct Ctlr {
 	int	errors;
 	ulong	fclk;
 	uint	rca;
+	Rendez	irq;		/* woken by the controller's interrupt */
+	u32	want;		/* the status bits a wait is for */
+	int	armed;		/* the handler is registered */
+	int	nointr;		/* and it does not arrive: poll instead */
 };
 
 static Ctlr emmcctlr;
@@ -122,6 +128,45 @@ extern SDifc sdemmcbcmifc;
 static int emmctrace = 0;
 static ulong emmcnwait, emmcnslept;
 static uvlong emmcus;
+
+/*
+ * The controller's interrupt, and the wait that uses it.
+ *
+ * A block transfer is mostly the card thinking: this driver spun a
+ * hundred thousand status reads and then busy-waited a millisecond at a
+ * time, so the processor was held for the whole of it, and the board's
+ * 1.5MB FAT write measured 86 KB/s while everything else on the machine
+ * stopped.  Both of the systems this port learns from wait instead --
+ * 9front's bcm/emmc.c sleeps on datadone, Linux's bcm2835 driver is
+ * interrupt-driven throughout.
+ *
+ * Its own Rendez and its own condition: an earlier attempt slept on
+ * up->sleep with a condition that is never true, which is a way of
+ * asking for a tick rather than for the hardware, and it panicked the
+ * board in wakeup() when something else readied the process.
+ *
+ * Enabled only for the bits a wait asks for and disabled by the
+ * handler, which is what stops a level-triggered status bit asserting
+ * again before the waiter has read it.  A controller whose interrupt
+ * never arrives is slow rather than broken: the first wait that times
+ * out says so once and the driver goes back to polling for good.
+ */
+static int
+irqready(void *v)
+{
+	Ctlr *c = v;
+
+	return (c->r[Rinterrupt] & (c->want|Ierr)) != 0;
+}
+
+static void
+emmcintr(Ureg*, void *a)
+{
+	Ctlr *c = a;
+
+	c->r[Rirpten] = 0;	/* disarm; the waiter re-arms what it needs */
+	wakeup(&c->irq);
+}
 
 static int
 awaitirq(volatile u32 *r, u32 want, u32 *stsp)
@@ -149,20 +194,31 @@ awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 		if((sts & (want|Ierr)) != 0)
 			goto done;
 	}
+	/*
+	 * Sleep for it, if the interrupt works here.  The spin above has
+	 * already covered everything the card answers quickly.
+	 */
+	if(emmcctlr.armed && !emmcctlr.nointr && up != nil && islo()){
+		emmcctlr.want = want;
+		r[Rirpten] = want|Ierr;
+		for(ms = 0; ms < Waitms/Sleepms; ms++){
+			if((r[Rinterrupt] & (want|Ierr)) != 0)
+				break;
+			tsleep(&emmcctlr.irq, irqready, &emmcctlr, Sleepms);
+		}
+		r[Rirpten] = 0;
+		sts = r[Rinterrupt];
+		if((sts & (want|Ierr)) != 0)
+			goto done;
+		emmcctlr.nointr = 1;
+		print("EMMC-NOINTR the controller's interrupt did not arrive; polling\n");
+	}
 	for(ms = 0; ms < Waitms; ms++){
 		/*
-		 * A busy wait, still.
+		 * A busy wait, for a controller whose interrupt does not
+		 * come and for anything early enough to have no process to
+		 * sleep.
 		 *
-		 * Yielding here with tsleep(&up->sleep, return0, 0, 1) was
-		 * tried and panicked the board in wakeup(): "696d68 696d68
-		 * 2" -- the same Rendez, the process already Ready -- so
-		 * something else readies this process while it sleeps that
-		 * way, and sleeping on up->sleep with a condition that is
-		 * never true is not the way to wait for hardware anyway.
-		 * What this wants is the controller's own interrupt and a
-		 * Rendez of its own, which is written down in
-		 * doc/raspi3b-completion-plan.ms rather than half-done
-		 * here.
 		 */
 		delay(1);
 		sts = r[Rinterrupt];
@@ -419,6 +475,16 @@ emmconline(SDunit *u)
 	}
 	if(c->sectors == 0)
 		return 0;			/* no media */
+	if(!c->armed){
+		/*
+		 * After identification, which runs before there are
+		 * processes to sleep, and only for a controller with a
+		 * card: an interrupt armed with nothing waiting on it is
+		 * the quiet fault that cost this port its console once.
+		 */
+		intrenable(Emmcirq, emmcintr, c, 0, "emmc");
+		c->armed = 1;
+	}
 	u->sectors = c->sectors;
 	u->secsize = Secsize;
 	return first? 2: 1;

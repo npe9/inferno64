@@ -554,6 +554,20 @@ ready(Proc *p)
 		return;
 	}
 
+	/*
+	 * A process that is still attached to a Rendez has not been taken
+	 * off it, and readying it leaves r->p pointing at a process that
+	 * is running: the next wakeup on that Rendez finds it Ready and
+	 * panics, "wakeup: state", which this board does.  postnote is
+	 * not this case -- it clears p->r and r->p under both locks
+	 * before it readies -- so anything this catches is a caller that
+	 * did not.  Reported, not refused: what is broken is the caller,
+	 * and dropping the wakeup would only turn a panic into a hang.
+	 */
+	if(p->state == Wakeme && p->r != nil)
+		print("ready %s %ud still on rendez %#p from pc %#p\n",
+			p->text, p->pid, p->r, getcallerpc(&p));
+
 	s = splhi();
 	if(edfready(p)){
 		splx(s);
