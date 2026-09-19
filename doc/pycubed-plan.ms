@@ -817,7 +817,7 @@ says on a booted board that they answer, so the cost of this is a
 .CW /dev/radio
 and the mission code that opens it.
 .NH 2
-What that leaves not free, which is four bytes
+What that leaves not free, which is a message size
 .PP
 Styx assumes an ordered, reliable transport.
 .I Ssl (3)
@@ -841,34 +841,86 @@ and
 Retransmission, ordering and addressing are there and are part of what
 phase 2 ports to C anyway.
 .PP
-What is left is a size.  That header leaves, in the driver's own words,
-252 bytes of payload.  And
-.CW os/inferno/port/devmnt.c:195
+What is left is a size, and the first telling of it here was wrong.  It
+said the gap was four bytes.  It is not, and the conclusion is different
+too.
+.PP
+The RadioHead header leaves, in the driver's own words, 252 bytes of
+payload.
+.I Ssl (3)
+then takes its own cut, which the first telling forgot:
+.CW os/inferno/port/devssl.c:648
 is
+.CW "h = s.s->diglen + 2" ,
+an SSLv2 record header of two bytes plus the digest, and
+.CW ":654"
+adds a third byte and padding when the cipher has a block length.  A
+stream cipher does not \-
+.CW encrypttab
+gives
+.CW rc4_256
+a
+.CW blocklen
+of 1 against 8 for every DES variant \- so the honest figure for
+.CW rc4_256
+with
+.CW sha1
+is 2 + 20 = 22 bytes a message, and a packet carries 230 bytes of Styx.
+.CW md5
+would make it 234.  Dropping RadioHead for the SX127x's own framing
+buys 3.  None of those reaches 256.
+.PP
+So the floor has to be dealt with rather than dodged \- and it turns out
+to sit on only one side.
+.CW os/inferno/port/devmnt.c:195
+refuses an
+.CW msize
+below 256:
 .DS
 .CW "if(f.msize<256 || f.msize>1024*1024)"
 .CW "	error(\(dqnonsense value of msize in fversion\(dq);"
 .DE
-so the smallest Styx message size a mount will negotiate is 256.  Four
-bytes over.  That is the whole of the gap between what the radio carries
-and what Styx needs, and it has three answers rather than a project:
-drop the RadioHead header and use the SX127x's own framing, which gives
-255; segment a Styx message across two packets in the radio device; or
-lower that floor, which is a constant with no derivation behind it in a
-kernel where
-.CW IOHDRSZ
-is 24, so a 256-byte message carries 232 bytes of data and a 240-byte
-one would carry 216.  Deciding which needs the board.  None of them is
-a command table, a packet format, an authorisation scheme and an
-.CW exec () .
+That is
+.I mount (2),
+the kernel client.  The server does not agree with it.
+.CW os/inferno/port/exportfs.c:808
+refuses only below 64, and
+.CW ":806"
+is better than that:
+.DS
+.CW "if(iounit != 0 && iounit > 64 && iounit < r->msize)"
+.CW "	r->msize = iounit;"
+.DE
+so a radio device reporting an
+.CW iounit
+of 230 makes the satellite's own server negotiate 230 without being
+told.  And
+.CW appl/lib/styx.b 's
+.CW compatible ()
+has no floor at all \- it takes the smaller of the two msizes and
+returns it.
 .PP
-Also not free, and unchanged from the earlier sections: the four bus
-drivers, and the LED, burn wires and ADC, for which Inferno has no
-device class \- which is what
-.CW #P
+Which means the satellite needs no change.  The ground is the side that
+has to give, and the ground is a workstation with none of the
+constraints: either it speaks Styx from Limbo over
+.CW styx.m
 and
-.CW addarchfile ()
-are now here for.
+.CW styxservers.m ,
+where there is no floor to hit, or its own
+.CW devmnt
+floor moves.  Neither is work on the spacecraft.
+.PP
+One caveat that comes with a 230-byte msize and is worth knowing before
+it surprises someone: not every Styx message fits in it.  A
+.CW Rstat
+carries a
+.CW Dir
+with four strings in it and a
+.CW Twalk
+up to sixteen path elements, so long names and deep walks will not fit
+and must be refused or split by the client.  Short names in the exported
+namespace, and walking a few elements at a time, are the price of a
+radio-sized message.
 .NH 2
 The rest of it, briefly
 .PP
