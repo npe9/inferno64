@@ -1901,6 +1901,127 @@ kbdsaw(s: string, want: string): int
 	return 0;
 }
 
+#
+# Does a process woken by the clock run while a Limbo loop is running?
+#
+# This is the whole of what the scheduler work changes, asked directly,
+# with nothing but the board.  Before it, nothing in this kernel ever
+# took the processor away from a running process: hzsched() and
+# accounttime() were compiled into every kernel here and called by
+# none, so the processor changed hands only when a process blocked of
+# its own accord.  A Limbo program that makes no system call held it
+# until it made one, and a process the clock woke waited exactly that
+# long.
+#
+# So: sleep 50ms ten times and record the overshoot, then start a loop
+# that never makes a system call and do it again.  The difference is
+# the answer.  Measuring the loaded figure alone would not be: a 50ms
+# sleep overshoots on an idle board too, by the tick granularity (10ms
+# here), by the emulator when this runs under one, and by the host's
+# own scheduler underneath that.  None of those is this kernel's doing
+# and all of them are in both figures, so the idle run calibrates them
+# away.
+#
+# The loop must not make a system call, or it is not the thing being
+# tested -- a system call releases the interpreter and hands the
+# processor over by the path that always worked.  A bare arithmetic
+# loop in Limbo is exactly the case that used to be unpreemptible.
+#
+schedhog(pidc: chan of int)
+{
+	pidc <-= sys->pctl(0, nil);
+	n := 0;
+	for(;;)
+		n++;
+}
+
+schedsleeps(n: int, ms: int): array of int
+{
+	a := array[n] of int;
+	for(i := 0; i < n; i++){
+		t0 := sys->millisec();
+		sys->sleep(ms);
+		d := sys->millisec() - t0 - ms;
+		if(d < 0)
+			d = 0;
+		a[i] = d;
+	}
+	return a;
+}
+
+#
+# Sorted, because the median is what says whether the scheduler works
+# and the worst is what says what else is going on.  Ten samples, so
+# an insertion sort is the whole of it.
+#
+schedsort(a: array of int)
+{
+	for(i := 1; i < len a; i++){
+		v := a[i];
+		j := i - 1;
+		while(j >= 0 && a[j] > v){
+			a[j+1] = a[j];
+			j--;
+		}
+		a[j+1] = v;
+	}
+}
+
+schedlat()
+{
+	Nsleep: con 10;
+	Ms: con 50;
+
+	sysctl := sys->open("/dev/sysctl", Sys->OWRITE);
+	idle := schedsleeps(Nsleep, Ms);
+
+	pidc := chan[1] of int;
+	if(sysctl != nil)
+		sys->fprint(sysctl, "ilock on");
+	spawn schedhog(pidc);
+	hog := <-pidc;
+	busy := schedsleeps(Nsleep, Ms);
+	fd := sys->open("/prog/" + string hog + "/ctl", Sys->OWRITE);
+	if(fd != nil)
+		sys->fprint(fd, "kill");
+	fd = nil;
+	# the interrupt-masked window over exactly this interval, then off
+	# again: it costs two counter reads on every ilock in the kernel
+	if(sysctl != nil){
+		sys->fprint(sysctl, "ilock");
+		sys->fprint(sysctl, "ilock off");
+		sys->fprint(sysctl, "sched");
+	}
+
+	schedsort(idle);
+	schedsort(busy);
+	im := idle[Nsleep/2];
+	lm := busy[Nsleep/2];
+
+	#
+	# The median is the verdict and the worst is in the line beside
+	# it, because they answer different questions and hiding either
+	# one would be the point of the check going missing.  The median
+	# says whether a process the clock wakes gets the processor while
+	# a Limbo loop is running: before this kernel had a scheduler
+	# clock at all it did not, and the overshoot was however long the
+	# loop took to reach its next system call.  The worst says what
+	# else was happening -- on this board it is one wait of about 670
+	# milliseconds on the first sleep after a second interpreter
+	# process appears, which is not explained yet and is written down
+	# in doc/raspi3b-completion-plan.ms rather than averaged away.
+	#
+	# Three ticks, because the sleep itself rounds to a tick and so
+	# does millisec(), and one more for the yield.
+	#
+	if(lm - im > 30)
+		sys->print("SCHED-LAT-FAIL %dms sleeps overshoot by %d ms against a Limbo loop and %d without (worst %d and %d)\n",
+			Ms, lm, im, busy[Nsleep-1], idle[Nsleep-1]);
+	else
+		sys->print("SCHED-LAT-OK %dms sleeps overshoot by %d ms against a Limbo loop and %d without (worst %d and %d)\n",
+			Ms, lm, im, busy[Nsleep-1], idle[Nsleep-1]);
+}
+
 init()
 {
 	shell: Shell;
@@ -1929,6 +2050,11 @@ init()
 	# first word to it, mntgen exited on the malformed message, and the
 	# shell ran the rest -- "echo hi > /tmp/x" became "sh: hi: file does
 	# not exist" and an empty /tmp/x.
+	# Before the storage and network checks start, because it is a
+	# timing measurement and the point of it is a Limbo loop against
+	# an otherwise quiet board -- SD and USB running underneath would
+	# be measuring them as well.
+	schedlat();
 	rngcheck();
 	sys->bind("#S", "/dev", sys->MAFTER);
 	sdcheck();

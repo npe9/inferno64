@@ -4359,56 +4359,216 @@ scheduler latency, which is a stale subtraction and not a fact about
 anything.  Clearing it when the channel is armed is what makes the
 number mean what it says.
 .NH 2
-Hard and soft real time
+Stage one: making the clock scheduling actually work
 .PP
-The scheduler clock is the thing that was standing in the way of this,
-and it is worth saying what "this" is, because the two halves are not
-the same piece of work and only one of them is mostly written already.
+The tick is wired up and the interpreter yields on request, and that is
+not the same as working.  What was written is a mechanism with four
+links in it, and the thing about a chain of four is that three of them
+working looks exactly like none.  So stage one was not more design: it
+was making each link report, separately, whether it did its job.  Both
+of the bugs below were found that way and neither was where the design
+said to look.
+.PP
+.B "The counters."
+.CW "echo sched >/dev/sysctl"
+prints them.
+.CW hzschedcalls
+says the tick reaches
+.CW hzsched()
+at all \(em it is called only when a process is Running, so on an idle
+board it is not called and nothing would otherwise say so.
+.CW reschedraised
+says the gate opened;
+.CW reschedtaken
+says
+.CW vmachine()
+acted on it.  Raised much larger than taken would mean the process
+holding the processor is not the interpreter, and the safe point is in
+the wrong place \(em the one link in the chain that was reasoned rather
+than measured.  It is not: raised and taken track each other.
+.PP
+.B "The check."
+.CW SCHED-LAT ,
+in
+.CW raspi3binit.b ,
+and it needs nothing but the board.  Sleep 50ms ten times and record
+the overshoot; spawn a Limbo loop that never makes a system call and do
+it again.  The difference is the whole of what this work changes, and
+it is self-calibrating: a 50ms sleep overshoots on an idle board too,
+by the tick granularity, by the emulator, and by the host underneath
+it, and all of that is in both figures.  The median is the verdict and
+the worst is printed beside it, because they answer different questions
+and averaging either away would be the point of the check going
+missing.
+.PP
+.B "What it found first: a priority boost with no matching restore."
+.CW canlock()
+in
+.CW port/taslock.c
+raised its caller to
+.CW PriLock ,
+the top of the ordinary range, and saved what it had in
+.CW l->priority .
+Nothing ever put it back.
+.CW l->priority
+is written there and read nowhere in the tree,
+.CW unlock()
+does not touch the priority, and
+.CW lock()
+never did any of this \(em so a successful
+.CW canlock()
+pinned its caller at 20 until the next
+.CW sched()
+recomputed it from
+.CW basepri .
+.PP
+That is not abstract.
+.CW clockintr()
+ends with
+.CW "if(canlock(&clock0lock))" ,
+in interrupt context, where
+.CW up
+is whatever process was interrupted, so
+.B "every clock tick left the running process at priority 20."
+Counted on this board with a Limbo loop running:
+.CW up->priority
+was 14 or above on 138 of 256 ticks, and
+.CW anyhigher() ,
+which asks whether anything strictly above the runner is ready, was
+therefore true on 22 of them.
+.PP
+.B "That is the whole of the \(lq33 times in 10000\(rq"
+this document recorded two sections above as a fact about every process
+here being a kproc at
+.CW PriKproc .
+It was a fact about one line.  The boost is removed rather than
+repaired, because what it was for \(em do not reschedule a process
+holding a spin lock \(em is
+.CW up->nlocks ,
+which
+.CW lock() ,
+.CW canlock()
+and
+.CW unlock()
+maintain symmetrically and which
+.CW sched()
+already honours.  A lock holder is running, not queued, so its queue
+priority does not arise until it has let go.
+.PP
+.B "And what it found second: anyhigher() is still the wrong gate."
+With the boost gone,
+.CW anyhigher()
+works \(em it fired on 91 ticks out of 220 rather than 22.  It is still
+worse than asking the cheaper question.  Measured both ways, the total
+run-queue wait over ten 50ms sleeps against a Limbo loop was 160 ticks
+with
+.CW anyhigher()
+and 68 with
+.CW anyready() ,
+and the trace says why:
+.CW reprioritize()
+lowers the woken process to the interpreter's own level as soon as it
+has run for a while, so "strictly higher" stops seeing it.
+.PP
+Plan 9 asks the strict question because switching away from a user
+process to ask is not free.  Here what is yielded to is a Dis
+instruction boundary, where giving the processor up costs a context
+switch and nothing else, so "somebody else could run" is a good enough
+reason and being wrong about it costs microseconds.  Both
+.CW hzsched()
+and
+.CW wantsched()
+use
+.CW anyready() .
+.PP
+.B "ioboost is a dead end, and the counters say why."
+It was written to give a process woken from a sleep one priority level,
+so that it would outrank whatever had been computing.  Every kproc in
+this kernel sleeps, so every kproc gets the boost: with it on, the
+running process was itself at 14 or above on 221 of 266 ticks.  A boost
+everyone has is not a boost.  It is committed, set to 0, and kept for
+the measurement.
+.PP
+.B "Where it stands."
+.CW SCHED-LAT-OK
+on all four QEMU configurations: a 50ms sleep against a Limbo loop
+overshoots by a median of 0ms, the same as idle.  Before this work the
+loaded figure was not a few ticks worse, it was unbounded \(em a Dis
+program that makes no system call held the processor until it made one.
+.PP
+.B "And one thing that is not explained."
+The worst of the ten is 670 milliseconds, every time, on the first
+sleep after the second interpreter kproc appears \(em and only that
+one; the other nine are at zero.  Over that wait the interpreter
+yielded on every tick, 67 raised and 67 taken, and the process stayed
+on a run queue anyway.  It is not the garbage collector: the busy pass
+is timed now and totals zero ticks, and the idle pass has not run since
+boot.  Part of it is the console: with the interrupt-masked window
+measured over exactly this interval,
+.CW ILOCK-MAX
+is 46 milliseconds in
+.CW uartkick ,
+which is one call.  That is a stage-two term arriving early and it does
+not account for all of 670.  It is written here rather than averaged
+out of the check.
+.PP
+.B "And one check that can only fail."
+.CW acquire()
+panics if
+.CW sched()
+returns without having switched.  That path was reasoned to be
+unreachable; it has not fired.
+.PP
+.B "What stage one does not do, deliberately."
+Three kinds of process remain unpreemptible and each is a decision
+rather than an omission, and each has to be written down here because
+stage two has to add them up.
+.IP 1.
+A kproc in a C loop.  The driver that spins on a device register is the
+point of the design, but the same is true of any kproc that computes:
+.CW usbd ,
+the ethernet reader, the GC when it runs outside the interpreter.
+.IP 2.
+A Dis process inside a system call, between
+.CW release()
+and
+.CW acquire() .
+It does not hold the token and it is about to block, so there is
+nothing to take \(em unless the system call is a long computation in C,
+which
+.CW sysfile 's
+large reads and the FAT server's sector walks can be.
+.IP 3.
+The interrupt handler itself, which is upstream of all of this and is
+stage two's first term.
+.NH 2
+Stage two: soft real time, which is turning a latency into a bound
 .PP
 .B "Soft real time is a bound you can measure."
 A process woken by a device runs within some time, and the time has a
 number on it rather than a hope.  With nothing preempting, that number
 was 142 milliseconds and it was not a bound at all \(em it was however
 long the running Limbo program took to reach its next system call, so
-it was unbounded in principle and merely finite in practice.  With the
-tick running and vmachine() yielding on request, the bound has three
-terms: the Dis instruction the interpreter is in the middle of, up to
-.CW PQUANTA
-more of them before the loop comes round, and the run queue walk.  All
-three are small and the first two are countable.
-.CW USB-WAKE
-measures the sum.
-.PP
-Three things stand between that and a bound worth quoting, each of
-which is a measurement this board can take:
+it was unbounded in principle and merely finite in practice.  With
+stage one proved, the bound is a sum of terms, and stage two is
+measuring each term and then measuring the sum under load to see
+whether the two agree.
 .IP 1.
-.B "The drivers that spin."
-.CW usbdwc
-spins 200 microseconds for a completion and
-.CW sdemmcbcm
-polls its data register for a whole block, both deliberately, both
-bought with latency for throughput \(em 86 KB/s spinning against 6
-sleeping.  A spin in a kproc is not preemptible under this scheme, by
-design, so every such spin is an addend in the worst case.  They have
-to be counted and named, not removed.
-.IP 2.
-.B "The ilock regions."
-Interrupts are masked inside them, so the worst one is a term in the
-interrupt latency, which is upstream of everything here.  Nothing in
-this tree had measured them; now
+.B "Interrupt latency."
+How long the kernel keeps interrupts masked, which every other term
+sits on top of.
 .CW port/taslock.c
-does.
+measures it now:
 .CW "echo ilock on >/dev/sysctl"
 starts counting,
 .CW "echo ilock >/dev/sysctl"
-prints the longest window in microseconds, the kernel address that
-took the lock, and the mean over every ilock since, and resets \(em so
-the number can be taken over a named interval, a
+prints the longest window in microseconds, the kernel address that took
+the lock, and the mean over every ilock since, and resets \(em so the
+number can be taken over a named interval, a
 .CW fatstress
 run or a USB enumeration, rather than over whatever happened since
 boot.  It is off until asked because it costs two counter reads on
-every ilock in the kernel, which is every interrupt and every queue
-operation; off it is one predictable branch.  The
+every ilock in the kernel; off it is one predictable branch.  The
 .CW Lock
 field it needs and
 .CW lcycles()
@@ -4416,14 +4576,78 @@ exist only on this board, so
 .CW -DILOCKTRACE
 is in the raspi3b mkfile and the other boards compile past it
 unchanged.
+.IP
+First reading, over stage one's
+.CW SCHED-LAT
+interval: 46 milliseconds, in
+.CW uartkick ,
+in one call.  That is the console, and it is far and away the largest
+thing found so far \(em
+.CW pl011_kick
+fills the FIFO and stops when interrupts are on, but when they are
+already off it drains the whole queue, spinning per byte, which is the
+path
+.CW print()
+from inside a handler takes.  Four ticks of interrupt latency from one
+line of output is a real number and it is the first thing stage two has
+to deal with.
+.IP
+Not yet measured, and part of the same term: the masked windows that
+are not ilocks \(em
+.CW splhi()
+in
+.CW sched() ,
+the trap prologue before the handler is reached, and whatever a handler
+does before it returns.
+.IP 2.
+.B "The spins the drivers keep on purpose."
+.CW usbdwc
+spins 200 microseconds for a completion and
+.CW sdemmcbcm
+polls its data register for a whole block, both deliberately, both
+bought with latency for throughput \(em 86 KB/s spinning against 6
+sleeping.  A spin in a kproc is not preemptible under this design, so
+every such spin is an addend in the worst case.  They have to be
+counted and named, not removed.  The SD one is the large one and it is
+a whole block, not a fixed number of microseconds, so it has to be
+measured rather than read off a constant.
 .IP 3.
 .B "The garbage collector."
 .CW rungc()
 runs inside the interpreter's own loop, in the same kproc, between Dis
-instructions.  Whatever its longest pass costs is added to every wake
-that lands behind it.
+instructions, and the resched check is at the top of that loop \(em so
+whatever a pass costs is added to every wake that lands behind it.
+Timed now, and reported with the other counters: the busy pass
+.CW vmachine()
+runs every 256 iterations totals zero ticks over a boot, and the idle
+pass in
+.CW execatidle()
+has a worst of 137 ticks, 1.4 seconds.  The idle one only runs when
+nothing else is runnable, which is why it does not show up in
+.CW SCHED-LAT ,
+but it is 1.4 seconds of a kproc that yields only every 256 passes and
+it is the term to attack first if a wake ever lands behind it.
+.IP 4.
+.B "The scheduler itself."
+.CW runproc() 's
+walk of the run queues, and the context switch.  Small, and the only
+term that is bounded by construction rather than by measurement.
 .PP
-.B "Hard real time is admission control, and Plan 9's is already here."
+Then the sum, against the parts.  Run
+.CW fatstress
+and the ethernet and a USB enumeration at once, take
+.CW USB-WAKE
+and
+.CW ILOCK-MAX
+over that interval, and see whether the worst wake is explained by the
+terms or exceeds them.  A worst case larger than the sum of its parts
+means a term is missing, and that is the finding worth having.  What
+this stage publishes is a number with the conditions it was taken
+under, not a guarantee.
+.NH 2
+Stage three: hard real time, which is admission control
+.PP
+.B "Plan 9's is already here."
 .CW os/inferno/port/edf.c
 is the earliest-deadline-first scheduler from the Plan 9 real-time work
 \(em 679 lines, with release timers, cost budgets, deadline notes and
@@ -4453,7 +4677,14 @@ is not linked.
 supplies six empty functions with the comment "EDF scheduler optional
 \(em classic Inferno ready queue only", and every board here does the
 same.  Linking the real one is a line in the mkfile and deleting the
-stubs.
+stubs.  It must be done
+.I after
+stage two's ilock number is taken, not before:
+.CW taslock.c
+has an EDF branch in
+.CW lock() ,
+so the two changes touch the same path and a number that moved would
+not say which one moved it.
 .IP 2.
 Nothing can admit a process.  Plan 9 writes
 .CW admit ,
@@ -4498,18 +4729,22 @@ its budget, which is exactly what a deadline means and exactly what
 .CW release()
 were not written to express.
 .PP
-The order is: measure the three soft-real-time terms first, because
-they bound what any hard guarantee can promise \(em an admitted process
-cannot beat the worst ilock \(em then link
-.CW edf.c ,
-then the
-.CW /prog
-verbs, then the kproc-per-admitted-Prog question.  A test that proves
-it: a Limbo program admitted at a 10ms period and a 2ms cost, driven by
-one of this board's real timers, holding its deadline while
+.B "The test that proves it."
+A Limbo program admitted at a 10ms period and a 2ms cost, released by
+one of this board's real timers, printing the distance between each
+deadline and the moment it finished that period's work \(em while
 .CW fatstress
-reams the card and the ethernet runs.  That is a number, and this board
-can print it.
+reams the card and the ethernet runs.  A missed deadline is a number,
+not an impression, and admission control that never refuses anything
+has not been tested: the same test has to include a set that
+.I "should not"
+be admitted and check that it is not.
+.PP
+And the honest limit, which belongs in the same paragraph as the claim:
+an admitted process cannot beat the worst interrupt-masked window,
+because that window is time in which the release timer itself cannot be
+taken.  Stage two's number is the ceiling on anything stage three can
+promise, which is why it comes first.
 .NH 2
 Suggested order
 .PP
@@ -4522,13 +4757,12 @@ keyboard on the board; then the
 SD/Wi-Fi controller question; then DMA for SD; then the peripherals
 nothing is currently attached to.
 .PP
-Real time runs alongside that rather than after it, because its first
-three steps are measurements and the board takes them while it is
-doing everything else: the longest ilock, the longest GC pass, and the
-spins the drivers keep on purpose.  Those give the soft bound a number.
-Linking
-.CW edf.c ,
-the
-.CW /prog
-admission verbs and the kproc-per-admitted-Prog question follow, and
-that is the hard half.
+Stage one of the scheduling work comes before all of it, because it is
+one boot: the counters, the
+.CW SCHED-LAT
+check, and reading them off the board.  Until that is done every other
+number on this board is being taken on a scheduler nobody has watched
+work.  Stage two runs alongside the peripheral work rather than after
+it, because its terms are measurements the board takes while it is
+doing everything else.  Stage three is its own piece and waits for
+stage two's ceiling.

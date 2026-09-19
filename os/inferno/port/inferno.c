@@ -697,25 +697,80 @@ Sys_listen(void *fp)
 	retstr(dir, &f->ret->t1.dir);
 }
 
+extern ulong sleepacqticks, sleepacqn, sleepacqmax;	/* port/proc.c */
+extern ulong sleeptsticks, sleeptsmax, sleeprelticks;
+extern ulong sleeprqticks, sleeprqmax;
+extern ulong reschedraised, reschedtaken, lastuppri, lastuppid, lastrunvec;
+extern char *lastupname;
+int sleeptrace = 0;
+
 void
 Sys_sleep(void *fp)
 {
 	F_Sys_sleep *f;
 	int period;
+	ulong t0, nr, rt, rr;
 
 	f = fp;
 	/* Limbo int in a WORD slot; high half may be junk (see emu/port). */
 	period = (int)f->period;
+	t0 = m->ticks;
 	release();
+	sleeprelticks += m->ticks - t0;
 	if(period > 0){
 		if(waserror()){
 			acquire();
 			error("");
 		}
+		t0 = m->ticks;
+		nr = up->nready;
+		rt = reschedtaken;
+		rr = reschedraised;
 		tsleep(&up->sleep, return0, 0, period);
+		if(sleeptrace > 0){
+			sleeptrace--;
+			print("sleep %d ms: start %lud ready %lud now %lud, %lud readyings, pri %d, raised %lud taken %lud\n",
+				period, t0, up->readytick, m->ticks,
+				up->nready - nr, up->priority,
+				reschedraised - rr, reschedtaken - rt);
+			print("  last tick ran %s %lud at pri %lud, runvec %#lux, my pri %d\n",
+				lastupname, lastuppid, lastuppri, lastrunvec,
+				up->priority);
+
+		}
+		/*
+		 * Two halves again.  up->readytick is when ready() put
+		 * this process on a run queue -- the timer's doing -- and
+		 * m->ticks is when it got the processor.  A timer that
+		 * fires late and a run queue that is not reached are the
+		 * same overshoot from Limbo and different bugs here.
+		 */
+		sleeprqticks += m->ticks - up->readytick;
+		if(m->ticks - up->readytick > sleeprqmax)
+			sleeprqmax = m->ticks - up->readytick;
+		t0 = m->ticks - t0;
+		sleeptsticks += t0;
+		if(t0 > sleeptsmax)
+			sleeptsmax = t0;
 		poperror();
 	}
+	/*
+	 * Two waits, not one, and only the second belongs to this call.
+	 * tsleep above returns when the timer says so; acquire() below
+	 * returns when whoever holds the Dis interpreter hands it over,
+	 * and a Limbo program cannot resume without it.  A sleep that
+	 * overshoots is one or the other, and telling them apart from
+	 * Limbo is impossible -- so count the second here.  Ticks, which
+	 * is coarse, because it is the difference between nothing and a
+	 * whole quantum that matters.  Read with "echo sched >/dev/sysctl".
+	 */
+	t0 = m->ticks;
 	acquire();
+	t0 = m->ticks - t0;
+	sleepacqticks += t0;
+	sleepacqn++;
+	if(t0 > sleepacqmax)
+		sleepacqmax = t0;
 	*f->ret = 0;
 }
 

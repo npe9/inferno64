@@ -51,6 +51,9 @@ static Prog*	proghash[64];
  * libinterp/gc.c) during the same window.  Diagnostic only, capped;
  * see doc/inferno-ports.ms.
  */
+extern ulong reschedtaken;	/* port/proc.c */
+extern ulong gcticks, gcpasses, gcmax, idlegcticks, idlegcmax;
+static ulong idlegct0;
 int	disracepid = -1;
 int	disracehits;
 int	disracewindows;	/* delprog windows opened, total */
@@ -146,6 +149,10 @@ execatidle(void)
 
 	up->type = Interp;
 	delrunq(up->prog);
+	idlegct0 = m->ticks - idlegct0;
+	idlegcticks += idlegct0;
+	if(idlegct0 > idlegcmax)
+		idlegcmax = idlegct0;
 }
 
 Prog*
@@ -1223,6 +1230,7 @@ vmachine(void*)
 		 */
 		if(up->resched){
 			up->resched = 0;
+			reschedtaken++;
 			sched();
 		}
 
@@ -1276,10 +1284,31 @@ vmachine(void*)
 		if((++gccounter & 0xFF) == 0){
 			r = (Prog*)up->prog;
 			if(r != nil && r->addrun == nil){
+				ulong t0;
+
 				gcbusy++;
 				up->type = BusyGC;
 				pushrun(r);
+				/*
+				 * The third term in the latency bound, and
+				 * the only one that had never been timed.
+				 * This runs in the interpreter's own kproc,
+				 * between two Dis instructions, and the
+				 * resched check is at the top of the loop --
+				 * so however long a pass takes is added to
+				 * every wake that lands behind it.  Ticks,
+				 * because what was wanted first was the
+				 * order of magnitude: a 50ms sleep on this
+				 * board overshot by 670ms exactly once, on
+				 * the first pass after a Limbo loop started.
+				 */
+				t0 = m->ticks;
 				rungc(isched.head);
+				t0 = m->ticks - t0;
+				gcticks += t0;
+				gcpasses++;
+				if(t0 > gcmax)
+					gcmax = t0;
 				up->type = Interp;
 				delrunq(r);
 			}

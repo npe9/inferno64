@@ -16,6 +16,7 @@ static Clock0link *clock0link;
 static Lock clock0lock;
 
 extern void	timercheck(Ureg*);
+extern ulong	ticknoup, ticknotrun, tickrun;
 extern void	(*kproftick)(ulong);
 
 static uvlong
@@ -104,6 +105,12 @@ clockintr(Ureg *u)
 	 * process has had its 100ms or when something better is ready;
 	 * vmachine() acts on that at the next Dis instruction boundary.
 	 */
+	if(up == nil)
+		ticknoup++;
+	else if(up->state != Running)
+		ticknotrun++;
+	else
+		tickrun++;
 	if(up != nil && up->state == Running)
 		hzsched();
 

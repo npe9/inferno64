@@ -29,7 +29,39 @@ ulong	preempts;
  * priorities the processes actually have.
  */
 int	preempttrace = 0;
-int	ioboost = 0;		/* wake from a sleep one priority level up */
+int	ioboost = 0;		/* a boost everyone gets is not a boost; see hzsched() */
+/*
+ * The four links of the preemption chain, each counted separately,
+ * because three of them working looks exactly like none.  hzschedcalls
+ * says the tick reaches hzsched() at all -- it is called only when a
+ * process is Running, so on an idle board it is not called and nothing
+ * would otherwise say so.  reschedraised says anyhigher() opened the
+ * gate, which is the link that has already been measured and already
+ * been wrong once: 33 in 10000 with ioboost off, 5501 with it on.
+ * reschedtaken says vmachine() acted on the request; raised without
+ * taken means the process holding the processor is not the
+ * interpreter, and the safe point is in the wrong place.  Read them
+ * with "echo sched >/dev/sysctl"; see doc/raspi3b-completion-plan.ms.
+ */
+ulong	hzschedcalls;
+ulong	reschedraised;
+ulong	reschedtaken;
+/*
+ * And the other half of a sleep: how long the woken process then waits
+ * for the Dis interpreter, in ticks.  port/inferno.c's Sys_sleep keeps
+ * it, because a sleep that overshoots is either a late timer or a held
+ * token and the two are indistinguishable from Limbo.
+ */
+ulong	sleepacqticks, sleepacqn, sleepacqmax;
+ulong	sleeptsticks, sleeptsmax, sleeprelticks;
+ulong	sleeprqticks, sleeprqmax;
+ulong	reschedhigher, reschedquantum;
+ulong	ticknoup, ticknotrun, tickrun;
+ulong	tickhipri, tickuphi, tickanyhi;
+ulong	gcticks, gcpasses, gcmax, idlegcticks, idlegcmax;
+ulong	lastuppid;
+char	*lastupname = "none";
+ulong	lastuppri, lastrunvec, wokepri;
 ulong	pload;
 s32	prevpid;
 
@@ -317,9 +349,59 @@ hzsched(void)
 		rebalance();
 
 	/* unless preempted, get to run for at least 100ms */
-	if(anyhigher()
-	|| (!up->fixedpri && (long)(m->ticks - m->schedticks) > 0 && anyready())){
+	hzschedcalls++;
+	if(runvec & ~((1<<14)-1))
+		tickhipri++;
+	if(up->priority >= 14)
+		tickuphi++;
+	if(runvec & ~((1<<(up->priority+1))-1))
+		tickanyhi++;
+	if(anyhigher())
+		reschedhigher++;
+	else if(!up->fixedpri && (long)(m->ticks - m->schedticks) > 0 && anyready())
+		reschedquantum++;
+	lastuppri = up->priority;
+	lastrunvec = runvec;
+	lastuppid = up->pid;
+	lastupname = up->text;
+	/*
+	 * anyready(), not anyhigher(), and the measurement that forced it
+	 * is worth keeping.  Plan 9 asks whether something strictly more
+	 * important is waiting, because switching away from a user
+	 * process to ask is not free and most of what is ready is not
+	 * more important.  Here it discriminates nothing: every process
+	 * is a kernel process and they all start at PriKproc, so the
+	 * question is almost always no.  Counted on this board with a
+	 * Limbo loop running and a process sleeping 50ms at a time:
+	 * anyhigher() was true on 17 ticks out of 380 and the quantum
+	 * clause fired on 96, so the sleeper waited for the quantum --
+	 * exactly five ticks every time, half of HZ/10 -- and a 50ms
+	 * sleep took 100ms.
+	 *
+	 * ioboost was written to fix this by giving a process woken from
+	 * a sleep one priority level, and it does not, for the same
+	 * reason: every kproc here sleeps, so every kproc gets the boost
+	 * and the running process was itself at 14 or above on 221 of
+	 * those 266 ticks.  A boost everyone has is not a boost.
+	 *
+	 * So ask the cheaper question.  What this yields to is the top of
+	 * vmachine()'s loop, a Dis instruction boundary, where giving the
+	 * processor up costs a context switch and nothing else -- so
+	 * "somebody else could run" is a good enough reason, and being
+	 * wrong about it costs microseconds rather than a wedge.
+	 *
+	 * Measured both ways after the canlock() priority bug below was
+	 * fixed, which is when anyhigher() first had a chance to work:
+	 * with anyhigher(), the total run-queue wait over ten 50ms
+	 * sleeps against a Limbo loop was 160 ticks; with anyready(), 68.
+	 * The reason is in the same trace -- reprioritize() lowers the
+	 * sleeper to the interpreter's own level as soon as it has run
+	 * for a while, so "strictly higher" stops seeing it.
+	 */
+	if(anyready()
+	|| (!up->fixedpri && (long)(m->ticks - m->schedticks) > 0)){
 		m->readied = nil;	/* avoid cooperative scheduling */
+		reschedraised++;
 		/*
 		 * Plan 9 raises up->delaysched here and consumes it from
 		 * preempted() on the same tick.  This kernel consumes it
@@ -415,8 +497,19 @@ wantsched(void)
 {
 	if(up == nil || up->state != Running || active.exiting)
 		return;
-	if(anyhigher())
+	/*
+	 * anyready(), for the reason hzsched() above gives at length: a
+	 * strictly-higher gate discriminates nothing in a kernel where
+	 * every process is a kproc, and what this yields to is a Dis
+	 * instruction boundary, which is cheap enough that an unnecessary
+	 * yield is not worth avoiding.  This is the I/O path -- a device
+	 * interrupt that readied its waiter -- and it is the one where
+	 * the latency was measured in milliseconds.
+	 */
+	if(anyready()){
 		up->resched = 1;
+		reschedraised++;
+	}
 }
 
 /*
@@ -684,9 +777,13 @@ ready(Proc *p)
 	 */
 	if(ioboost && p->state == Wakeme && pri < Npriq-1)
 		pri++;
+	if(p->state == Wakeme)
+		wokepri = pri;
 	p->priority = pri;
 	rq = &runq[pri];
 	p->readypc = getcallerpc(&p);
+	p->readytick = m->ticks;
+	p->nready++;
 	p->state = Ready;
 	queueproc(rq, p);
 	pt = proctrace;

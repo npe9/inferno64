@@ -57,6 +57,18 @@ static int	readbintime(char*, int);
 static int	writetime(char*, int);
 static int	writebintime(char*, int);
 
+extern ulong	hzschedcalls, reschedraised, reschedtaken;	/* proc.c */
+extern ulong	sleepacqticks, sleepacqn, sleepacqmax;
+extern ulong	sleeptsticks, sleeptsmax, sleeprelticks;
+extern ulong	sleeprqticks, sleeprqmax;
+extern ulong	reschedhigher, reschedquantum, lastuppri, lastrunvec, wokepri;
+extern int	sleeptrace;
+extern ulong	ticknoup, ticknotrun, tickrun;
+extern ulong	tickhipri, tickuphi, tickanyhi;
+extern ulong	gcticks, gcpasses, gcmax, idlegcticks, idlegcmax;
+extern ulong	delayedscheds;
+extern int	ioboost;
+
 extern int	ilocktrace;		/* taslock.c */
 extern ulong	nilocktraced;
 extern long	maxilockcycles, cumilockcycles;
@@ -73,6 +85,7 @@ enum
 	CMrdb,
 	CMprocdump,
 	CMilock,
+	CMsched,
 };
 
 /*
@@ -176,6 +189,7 @@ static Cmdtab sysctlcmd[] =
 	CMrdb,		"rdb",		0,
 	CMprocdump,	"procdump",	0,
 	CMilock,	"ilock",	0,
+	CMsched,	"sched",	0,
 };
 
 Cmdtab rebootmsg[] =
@@ -1238,6 +1252,39 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 			 * wedged kproc is otherwise invisible from the shell.
 			 */
 			kstackdump();
+			break;
+		case CMsched:
+			/*
+			 * The preemption chain, one counter per link, so
+			 * that a chain with one broken link does not read
+			 * as a design that does not work.  ticks should be
+			 * HZ per second of uptime; hzsched calls fewer,
+			 * because the tick only counts when a process is
+			 * Running; raised is anyhigher() opening the gate;
+			 * taken is vmachine() giving the processor up at a
+			 * Dis instruction boundary.  Raised much larger
+			 * than taken means whatever holds the processor is
+			 * not the interpreter.
+			 */
+			print("SCHED-COUNTS ticks %lud hzsched %lud raised %lud "
+				"taken %lud delayed %lud ioboost %d "
+				"sleepacq %lud/%lud max %lud, tsleep %lud max %lud, runq %lud max %lud, rel %lud ticks; "
+				"higher %lud quantum %lud uppri %lud runvec %#lux wokepri %lud; "
+				"ticks noup %lud notrun %lud run %lud hipri %lud uphi %lud anyhi %lud; "
+				"gc %lud/%lud max %lud, idlegc %lud max %lud ticks\n",
+				m->ticks, hzschedcalls, reschedraised,
+				reschedtaken, delayedscheds, ioboost,
+				sleepacqticks, sleepacqn, sleepacqmax,
+				sleeptsticks, sleeptsmax,
+				sleeprqticks, sleeprqmax, sleeprelticks,
+				reschedhigher, reschedquantum, lastuppri,
+				lastrunvec, wokepri, ticknoup, ticknotrun, tickrun,
+				tickhipri, tickuphi, tickanyhi,
+				gcticks, gcpasses, gcmax, idlegcticks, idlegcmax);
+			if(cb->nf > 2 && strcmp(cb->f[1], "ioboost") == 0)
+				ioboost = atoi(cb->f[2]);
+			if(cb->nf > 2 && strcmp(cb->f[1], "sleeptrace") == 0)
+				sleeptrace = atoi(cb->f[2]);
 			break;
 		case CMilock:
 			/*

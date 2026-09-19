@@ -203,11 +203,34 @@ canlock(Lock *l)
 		return 0;
 	}
 
-	if(up){
+	if(up)
 		up->lastlock = l;
-		l->priority = up->priority;
-		up->priority = PriLock;
-	}
+	/*
+	 * This used to raise the caller to PriLock, the top of the
+	 * ordinary range, and save what it had in l->priority.  Nothing
+	 * ever put it back: l->priority is written here and read
+	 * nowhere in the tree, unlock() does not touch the priority, and
+	 * lock() never did any of this -- so a successful canlock()
+	 * pinned its caller at 20 until the next sched() recomputed it
+	 * from basepri.
+	 *
+	 * That is not an abstract leak.  clockintr() ends with
+	 * "if(canlock(&clock0lock))", in interrupt context, where up is
+	 * whatever process was interrupted -- so every clock tick left
+	 * the running process at priority 20.  Counted on this board:
+	 * up->priority was 14 or above on 138 of 256 ticks, and
+	 * anyhigher(), which asks whether anything strictly above the
+	 * runner is ready, was therefore true on 22.  That is the whole
+	 * of the "33 times in 10000" this tree recorded as a fact about
+	 * kprocs all sharing PriKproc.  It was a fact about this line.
+	 *
+	 * Removed rather than repaired, because what it was for --
+	 * do not reschedule a process holding a spin lock -- is
+	 * up->nlocks, which lock(), canlock() and unlock() maintain
+	 * symmetrically and which sched() already honours.  A lock
+	 * holder is running, not queued, so its queue priority does not
+	 * arise until it has let go.
+	 */
 	l->pc = getcallerpc(&l);
 	l->p = up;
 	l->m = MACHP(m->machno);

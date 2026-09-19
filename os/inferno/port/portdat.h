@@ -745,6 +745,8 @@ struct Proc
 	uintptr	readypc;	/* who last put it on the run queue */
 	u32	delaysched;
 	int	resched;	/* a reschedule was asked for; see wantsched() */
+	ulong	readytick;	/* m->ticks when ready() queued it */
+	ulong	nready;		/* times ready() has queued it */
 	u32	priority;	/* priority level */
 	u32	basepri;	/* base priority level */
 	uchar	fixedpri;	/* priority level deson't change */
