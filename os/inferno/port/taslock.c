@@ -24,6 +24,12 @@ long maxilockcycles;
  * is one predictable branch.  The Lock carries the start time, so a
  * lock taken before tracing was switched on has lockcycles >= 0 and is
  * skipped rather than reported as an interval since the epoch.
+ *
+ * ILOCKTRACE is defined in a board's mkfile, and a board that defines
+ * it owes two things: a "long lockcycles" in its dat.h Lock, and an
+ * lcycles() returning a cheap monotonic count (raspi3b/clock.c reads
+ * CNTPCT).  Without them this does not compile, which is the intended
+ * way to find out.
  */
 int ilocktrace;
 ulong nilocktraced;

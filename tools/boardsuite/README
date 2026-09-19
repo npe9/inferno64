@@ -969,3 +969,15 @@ nothing there, so a source in a shared directory is only counted when
 the matching object exists.  Tested both ways: touching
 os/inferno/port/acpi.c fails virtarm64 and does not fail raspi3b, and
 "mk install" in os/inferno/virtarm64 clears it.
+
+A LINE THAT IS NOT A MARKER IS NOT COUNTED, ON PURPOSE.  markers() takes
+[A-Z][A-Z0-9]+(-[A-Z0-9]+)*-(OK|NONE|FAIL|ACCEPTED), so a boot line has
+to end in one of those four words to move a baseline.  That is the seam
+a measurement wants to be on the other side of: usbdwc's USB-WAKE and
+devcons's ILOCK-MAX report numbers that differ from boot to boot and
+from host to host, and a baseline that moved with them would say a
+board regressed every time the machine was busy.  They are still read
+out of the same logs -- grep for them by name -- they just are not
+evidence of anything passing.  If you add an informational line and
+wonder why the count did not change, this is why, and it is the answer
+you wanted.
