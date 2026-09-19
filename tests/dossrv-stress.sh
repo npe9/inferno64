@@ -98,7 +98,21 @@ mkfs() {	# $1 image, $2 MB, $3 fat bits, $4 sectors/cluster, $5 filler MB
 	hdiutil detach "$dev" >/dev/null 2>&1
 }
 
+#
+# Named cases, because there are five of them now and the slow ones are
+# slow: "dossrv-stress.sh card" runs that one and nothing else.  It
+# used to take arguments and ignore them, which is worse than refusing
+# them -- a run asked for one case, silently did all five starting with
+# the 32MB fat16 image, and the log read as though the case that was
+# asked for had produced fat16's numbers.
+#
 run() {		# $1 name, $2 image, $3 MB, $4 fat bits, $5 spc, $6 filler
+	if [ -n "$CASES" ]; then
+		case " $CASES " in
+		*" $1 "*)	;;
+		*)		return 0;;
+		esac
+	fi
 	if [ "$1" = busy ]; then
 		echo "=== busy (FAT32, 512-byte clusters, a Pi boot partition's shape)"
 		mkbusy "$ROOT/tmp/stress.img"
@@ -179,6 +193,7 @@ SH
 	fi
 }
 
+CASES="$*"
 run fat16 "$ROOT/tmp/stress.img" 32 16 1 0
 run fat32 "$ROOT/tmp/stress.img" 64 32 1 34
 # 512MB, not 256: with 4KB clusters a 256MB filesystem has just under
