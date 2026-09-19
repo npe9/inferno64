@@ -150,6 +150,32 @@ static uvlong emmcwakeus;
 static uvlong emmcus;
 
 /*
+ * The paragraph above is from before the scheduling work, and it names
+ * the thing that work went and fixed: "a woken process on this kernel
+ * waits tens of milliseconds to be scheduled".  Stage one found why --
+ * clockintr() ends in canlock(), canlock() raised its caller to PriLock
+ * and nothing ever put it back, so every tick pinned whatever was
+ * running at the top of the ordinary range, which is precisely what a
+ * process woken from the tsleep below then had to outrank.  That is
+ * removed, and SCHED-LAT on silicon says a woken process now gets the
+ * processor at once.  So the measurement this comment asks for is worth
+ * taking again, and "echo emmc sleep 1 >/dev/sdM0/ctl" is how, without
+ * a kernel to build and install first.
+ *
+ * And the spin is measured rather than argued about.  It is the largest
+ * thing in this kernel that holds the processor without yielding: not a
+ * fixed number of microseconds but a whole block, which is why the plan
+ * asks for it as a measurement.  Two todget() calls per awaitirq, and
+ * awaitirq runs a few hundred times a second at this board's rate, so
+ * the instrument is always on -- an instrument that has to be switched
+ * on is one nobody has the number from.
+ */
+static ulong emmcspinn;		/* windows held without yielding */
+static uvlong emmcspinus;	/* microseconds held, in total */
+static ulong emmcspinmax;	/* the longest single window */
+static u32 emmcspinwant;	/* what that one was waiting for */
+
+/*
  * The controller's interrupt, and the wait that uses it.
  *
  * A block transfer is mostly the card thinking: this driver spun a
@@ -190,15 +216,44 @@ emmcintr(Ureg*, void *a)
 	wakeup(&c->irq);
 }
 
+static void
+emmcspinaccount(uvlong held, u32 want)
+{
+	emmcspinn++;
+	emmcspinus += held;
+	if(held > emmcspinmax){
+		emmcspinmax = held;
+		emmcspinwant = want;
+	}
+}
+
+/*
+ * Close the currently open non-preemptible window and add it to the
+ * total.  A window is any stretch of awaitirq that does not yield: the
+ * status spin at the top and the delay(1) loop at the bottom.  The
+ * tsleep in between is not one, which is the whole point of it.
+ */
+static void
+spinclose(vlong *hs, uvlong *held)
+{
+	if(*hs != 0){
+		*held += (todget(nil) - *hs)/1000;
+		*hs = 0;
+	}
+}
+
 static int
 awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 {
 	u32 sts;
 	int i, ms;
-	vlong t0;
+	vlong t0, hs;
+	uvlong held;
 
 	ms = 0;
 	t0 = emmctrace? todget(nil): 0;
+	held = 0;
+	hs = todget(nil);
 
 	/*
 	 * Spin first, because the common case answers within a few reads,
@@ -220,6 +275,7 @@ awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 	 * Sleep for it, if the interrupt works here.  The spin above has
 	 * already covered everything the card answers quickly.
 	 */
+	spinclose(&hs, &held);	/* the spin above is all this call has held */
 	if(emmcsleep && emmcctlr.armed && !emmcctlr.nointr && up != nil && islo()){
 		emmcctlr.want = want;
 		r[Rirpten] = want|Ierr;
@@ -264,6 +320,7 @@ awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 		if((sts & (want|Ierr)) != 0)
 			goto done;
 	}
+	hs = todget(nil);	/* and the busy wait below is another window */
 	for(ms = 0; ms < Waitms; ms++){
 		/*
 		 * A busy wait, for a controller whose interrupt does not
@@ -276,10 +333,14 @@ awaitirq(volatile u32 *r, u32 want, u32 *stsp)
 		if((sts & (want|Ierr)) != 0)
 			goto done;
 	}
+	spinclose(&hs, &held);
+	emmcspinaccount(held, want);
 	if(stsp != nil)
 		*stsp = r[Rinterrupt];
 	return -1;
 done:
+	spinclose(&hs, &held);
+	emmcspinaccount(held, want);
 	if(emmctrace){
 		emmcnwait++;
 		if(ms > 0)
@@ -666,6 +727,47 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	long n;
 	char buf[3*32+1], buf2[3*16+1], *q;
 
+	/*
+	 * The two switches and the number they are judged by.
+	 *
+	 *	echo emmc sleep 1 >/dev/sdM0/ctl	sleep for the interrupt
+	 *	echo emmc trace 1 >/dev/sdM0/ctl	per-wait timing
+	 *	echo emmc spin >/dev/sdM0/ctl		report and reset
+	 *
+	 * "spin" is the term stage two of the scheduling plan asks for:
+	 * the longest the SD driver has held the processor in one go
+	 * without yielding, which on this board is a whole block and is
+	 * the largest such window in the kernel.  It prints the total and
+	 * the mean beside it because a large worst case that happens once
+	 * and a large mean are different problems.
+	 */
+	if(strcmp(cb->f[0], "sleep") == 0 && cb->nf == 2){
+		emmcsleep = atoi(cb->f[1]);
+		print("emmc: sleep %d\n", emmcsleep);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "trace") == 0 && cb->nf == 2){
+		emmctrace = atoi(cb->f[1]);
+		print("emmc: trace %d\n", emmctrace);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "spin") == 0){
+		print("EMMC-SPIN max %lud us (want %#ux), mean %llud us over %lud waits; "
+			"sleep %d: %lud slept, %lud woken by the interrupt, %lud timed out, "
+			"%llud us interrupt to running\n",
+			emmcspinmax, emmcspinwant,
+			emmcspinn? emmcspinus/emmcspinn: 0ULL, emmcspinn,
+			emmcsleep, emmcnwait, emmcwoke, emmctimeout,
+			emmcwoke? emmcwakeus/emmcwoke: 0ULL);
+		emmcspinn = 0;
+		emmcspinus = 0;
+		emmcspinmax = 0;
+		emmcspinwant = 0;
+		emmcnwait = emmcnslept = emmcwoke = emmctimeout = 0;
+		emmcwakeus = 0;
+		emmcus = 0;
+		return 0;
+	}
 	if(strcmp(cb->f[0], "reinit") == 0){
 		qlock(c);
 		c->inited = 0;
