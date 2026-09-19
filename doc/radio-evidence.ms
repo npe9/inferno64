@@ -370,10 +370,22 @@ that makes it mean something \- a receiver with a different secret gets
 No IP, no ether, no medium.  Authentication is still not run, and
 .I radiossl (1)
 says so.
+.IP \(bu
+.B C2 .
+Styx over the radio, and the number:
+.CW "RADIOSTYX-MSIZE 251" ,
+arrived at by the satellite's own
+.CW exportfs
+from the transport's iounit, and then
+.CW /dev/battery
+read off the satellite.  It needed a portable-kernel fix first \(em
+.CW exreadmsg ()
+was a byte-stream reader and a packet device is right to refuse its
+four-byte read \(em and it found that the adoption does not survive
+.I ssl (3),
+where the iounit is the wrong device's.
 .PP
-Still not run: C2, Styx over that link with the message size actually
-watched, which is the one that turns an argument into a printed number;
-R3, real silicon; and
+Still not run: R3, real silicon, and
 .CW keyring (2)
 over the radio, which is the other half of C1.
 .NH 1
