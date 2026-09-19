@@ -51,6 +51,93 @@ and
 So all three halves are missing: the emulated part, the driver, and the
 file interface.  Taking them in that order is what makes each step
 testable by the one before it.
+.NH 1
+One processor, two radio sockets, one bus
+.PP
+Asked whether this is a distributed system and whether two emulated
+machines should be wired together.  Read from the board sources rather
+than assumed, and the answer is no for the reason that matters: there is
+only one processor to wire.
+.PP
+.CW pycubedv05_build/mpconfigboard.mk
+is
+.CW "CHIP_VARIANT = SAMD51J19A"
+and
+.CW "CHIP_FAMILY = samd51" ;
+.CW mpconfigboard.h
+is
+.CW "MICROPY_HW_MCU_NAME \(dqsamd51j19\(dq" .
+One MCU.  And the radio is not a second one: an RFM9x is a bare Semtech
+SX1276 with its matching network and crystal, a register file on SPI
+with no processor in it and no firmware of its own.  Everything
+RadioHead does \- the header, the sequence number, the acknowledgement,
+the retry \- runs on the host, in
+.CW lib/pycubed_rfm9x.py
+today and in the C driver of R2.2 tomorrow.  There is nothing on this
+board for two machines to be.
+.PP
+What the pin map does say, and what this plan did not have before, is
+that there are
+.I two
+radio sockets on one bus.  From
+.CW pycubedv05_build/pins.c :
+.DS
+.CW "  RF1_CS   PB30    RF2_CS   PB09"
+.CW "  RF1_RST  PB00    RF2_RST  PB14"
+.CW "  RF1_IO0  PB05    RF2_IO0  PB06"
+.CW "  RF1_IO4  PB04    RF2_IO4  PB07"
+.CW "  EN_RF    PA04    SD_CS    PA27"
+.DE
+with one SPI \-
+.CW "SCK PA13, MOSI PA12, MISO PA14"
+\- carrying both radios
+.I and
+the SD card.
+.CW lib/pycubed.py:92
+takes a single
+.CW board.SPI ()
+and line 113 says "always init SD before anything else on spi bus".  The
+example populates
+.CW radio1
+only;
+.CW radio2
+appears in its power-down path, so the second socket is a board feature
+this software does not drive.
+.PP
+Three consequences for the design below, all of which it survives.
+.IP \(bu
+.CW #W
+is numbered per interface already, so two sockets are
+.CW radio0
+and
+.CW radio1
+and nothing changes.
+.IP \(bu
+The bus is shared with storage, so the driver needs arbitration rather
+than assuming it owns the controller.  That is what
+.CW lib/tasko/managed_spi.py
+was for, and
+.CW doc/pycubed-plan.ms
+records it as deleted because Inferno has locks \- which is true and is
+also a promise this driver has to keep.
+.IP \(bu
+.CW EN_RF
+gates power to the radios and
+.CW RF1_RST
+resets one, so
+.CW ctl
+needs
+.CW enable
+and
+.CW reset ,
+and DIO0 and DIO4 are two interrupt lines per socket, not one.
+.PP
+So the distributed system here is not inside the spacecraft.  It is the
+spacecraft and the ground, which is exactly the pair R1.3 wires together
+over a multicast group and exactly what the namespace-over-Styx argument
+in
+.CW doc/pycubed-plan.ms
+is about.
 .NH 2
 A board that already exists, and why this does not use it
 .PP
@@ -66,6 +153,24 @@ is 65 lines that instantiate an
 SoC and nothing else \- its own commit message calls it "a placeholder
 for the upsat comms board" \- and there is no device model for a
 transceiver anywhere in it.
+.PP
+It is also worth being exact about what QEMU has, because it changes the
+answer: upstream
+.CW v10.1.3
+models the STM32F100, F205 and F405, and the
+.CW STM32F407VGTX
+is
+.I local
+to that checkout \- it appears in its diff against
+.CW v6.2.0
+alongside a modified
+.CW hw/ssi/stm32f2xx_spi.c
+and
+.CW hw/gpio/stm32f2xx_gpio.c .
+It is there because UPSAT genuinely is a two-board satellite, an OBC and
+a COMMS subsystem each with its own STM32 and its own firmware.  Wiring
+two of those together would be modelling UPSAT's architecture.  A
+PyCubed does not have one.
 .PP
 This plan does not build on it, for three reasons, none of them a
 judgement on the work.  It is based on
