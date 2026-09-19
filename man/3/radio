@@ -83,6 +83,16 @@ The default destination address; 255 is broadcast.
 .TP
 .B reset
 Put the part back in sleep and reapply the settings.
+.TP
+.BI ack " on|off"
+Send reliably and acknowledge what arrives.  Off by default, because a
+link with one end acknowledging and the other not is worse than neither.
+.TP
+.BI retries " n"
+How many times a reliable send is attempted before it gives up.
+.TP
+.BI acktimeout " ms"
+How long to wait for each acknowledgement.
 .PP
 .B Ctl 's
 .B sf
@@ -90,6 +100,27 @@ also sets LowDataRateOptimize, which the datasheet (4.1.1.6) requires
 whenever a symbol lasts longer than 16ms \- SF11 and SF12 at 125kHz.
 It is mandatory rather than advisory, because the receiver has to agree:
 a link with one end setting it and the other not does not work.
+.PP
+With
+.B ack
+on, a write is a reliable datagram in the manner of
+.IR lib/pycubed_rfm9x.py 's
+.B send_with_ack ,
+because that is what the other end of a PyCubed link speaks: the
+header's identifier byte carries a sequence number, the sender waits for
+a packet with the ACK flag and the same identifier, and a
+retransmission sets the RETRY flag.  A receiver replies to anything
+addressed to it that is not itself an acknowledgement, with the payload
+.B !
+and the sender's identifier, and it does so from a separate process
+because a reply is a transmit and a transmit sleeps.  A broadcast is
+neither acknowledged nor waited for.
+.PP
+A write returns the number of bytes sent, or fails, and with
+.B ack
+on it fails only after every retry has been tried.  That is the
+difference between this and an unacknowledged write, which cannot fail
+for any reason the other end would know about.
 .PP
 A transmit waits for the time the packet will really be on the air,
 computed from the spreading factor, bandwidth, coding rate and length,
@@ -106,9 +137,17 @@ packets too short to carry a header
 .RB ( runt ),
 transmits that never reported done
 .RB ( txtimeout )
-and the computed airtime of a 20-byte packet in the current
-configuration
-.RB ( airtime-20B-ms ).
+the computed airtime of a 20-byte packet in the current configuration
+.RB ( airtime-20B-ms ),
+and, when
+.B ack
+is on, acknowledgements sent and received
+.RB ( acksent ,
+.BR ackrecv ),
+retransmissions
+.RB ( retried )
+and sends that gave up
+.RB ( sendfail ).
 The last two matter more than they look.  A sender that does not speak
 the RadioHead header \- a bare LoRa transmitter, which Semtech's own
 driver is \- is heard and dropped, and without a counter that is
@@ -129,11 +168,16 @@ or
 .B 0xff
 and those are worth telling apart from a different chip.
 .SH BUGS
-Acknowledgement and retry are not implemented.  The RadioHead four-byte
-header is sent and parsed, and a packet not addressed to this station or
-to the broadcast address is dropped, but
-.B _RH_FLAGS_ACK
-is never set or waited for, so a lost packet stays lost.
+A reliable send holds the part for the whole exchange, so an
+acknowledgement this station owes somebody else waits until it finishes.
+On a link with one conversation at a time that is invisible; on a busier
+one it would cost retransmissions at the other end.
+.PP
+Duplicate suppression is not implemented.  A retransmission whose
+acknowledgement was lost is delivered twice, where
+.I lib/pycubed_rfm9x.py
+has the beginnings of a seen-identifier table for the same case, also
+unfinished.
 .PP
 Only one interface exists.  A PyCubed has two radio sockets on one SPI
 bus, RF1 and RF2; this drives the first.

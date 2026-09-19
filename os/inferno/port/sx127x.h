@@ -44,6 +44,9 @@ struct Radio
 	int	cr;			/* coding rate denominator 5..8 */
 	int	node;			/* RadioHead: this station */
 	int	dest;			/* RadioHead: default destination */
+	int	ackon;			/* send reliably, and acknowledge */
+	int	acktries;		/* how many times before giving up */
+	int	ackwait;		/* ms to wait for one */
 
 	/* what the last received packet looked like */
 	int	rssi;
@@ -56,12 +59,26 @@ struct Radio
 	u32	ntoobig;
 	u32	nnotours;		/* heard, addressed to someone else */
 	u32	ntxtimeout;		/* transmits that never reported done */
+	u32	nacksent;
+	u32	nackrecv;
+	u32	nretry;			/* retransmissions */
+	u32	nsendfail;		/* gave up after all the retries */
 	u32	nrunt;			/* heard, too short to be a packet */
 
 	QLock	qlock;			/* one user of the part at a time */
 	Rendez	r;			/* a packet arrived */
 	Rendez	txr;			/* the last one went */
 	int	txdone;
+	Rendez	ackr;			/* an acknowledgement arrived */
+	int	gotack;
+	uchar	seq;			/* RadioHead identifier, per packet */
+	uchar	waitid;			/* the one being waited for */
+	int	waiting;
+
+	/* an acknowledgement the receive path owes somebody */
+	Rendez	owed;
+	int	oweack;
+	uchar	oweto, oweid, oweflags;
 	Queue	*rq;			/* received packets, one block each */
 };
 
