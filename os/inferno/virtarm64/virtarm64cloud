@@ -221,6 +221,14 @@ root
 	/dis/lib/crypt/x509.dis
 	/dis/lib/crypt/pkcs.dis
 	/dis/lib/crypt/p256.dis
+# the two instruments for that crypto, as the pc64 root carries them:
+# p256test(1) prices a verification and the field operations under it
+# and, with -s, repeats them as a countable workload; ipinttest(1) shows
+# that the arithmetic which used to end in sysfatal raises instead --
+# and sysfatal on a kernel is a panic, so the demonstration only means
+# anything on a booted one.  About 20 KB.
+	/dis/p256test.dis
+	/dis/ipinttest.dis
 	/dis/lib/encoding
 	/dis/lib/encoding/base64.dis
 	/lib/tls

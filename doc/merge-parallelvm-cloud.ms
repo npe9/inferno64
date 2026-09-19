@@ -330,14 +330,27 @@ Their plan says
 needs a second workload and a second architecture before it can be a
 default.  Both exist here already.
 .PP
-.B "The second architecture."
+.B "The second architecture, now run rather than offered."
 .CW virtarm64cloud
 boots on a
 .CW t2a :
 gVNIC because that machine takes no other card, a GICv3 ITS so the card
 takes interrupts, the kernel-stack alignment fix, and the image recipe.
-That is the vehicle for "arm64 on real hardware", and it is one script
-invocation away.
+That is the vehicle for "arm64 on real hardware", and it has now been
+driven: the instruments are in that root, and a
+.CW t2a-standard-1
+runs
+.CW ipinttest
+clean and
+.CW "p256test -s 60"
+at 94 cycles in 60.4 seconds, 430 ms a verification and 220 ms an
+agreement, with the field costs and both ratios in
+.I "The same arithmetic on the other processor family"
+in the cloud paper.  What remains for Phase D is the same thing on four
+processors with their kernel \(em a
+.CW t2a-standard-4
+and
+.CW "*parallelvm=1" .
 .PP
 .B "The second workload, with a baseline, and now countable."
 .CW p256test (1)

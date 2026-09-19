@@ -2786,3 +2786,59 @@ the deliberate case.
 A stale image passes a boot test perfectly well.  That is the whole
 trouble with it: the check was green, the suite was green, and the
 thing being asserted had not been tested since the date on the file.
+.NH 2
+The same arithmetic on the other processor family
+.PP
+The
+.CW e2-small
+numbers above are amd64.  The instruments are in the
+.CW virtarm64cloud
+root now as well, so a
+.CW t2a-standard-1
+\(em Ampere, one vCPU, gVNIC, the ITS delivering its interrupts \(em was
+rented to run the same two commands.
+.PP
+.TS
+center box tab(;);
+c | c | c
+l | n | n .
+operation;e2-small;t2a
+_
+256-bit multiply;32.50 \(*ms;47.50 \(*ms
+multiply and reduce, two calls;52.50 \(*ms;77.50 \(*ms
+multiply and reduce, one call;37.50 \(*ms;55.00 \(*ms
+subtract and reduce, two calls;50.00 \(*ms;72.50 \(*ms
+subtract and reduce, one call;35.00 \(*ms;50.00 \(*ms
+invert;107.50 \(*ms;150.00 \(*ms
+ECDSA P-256 verification;296 ms;430 ms
+ECDH agreement;152 ms;220 ms
+.TE
+.PP
+The Ampere is about 1.4 times slower per field operation than the Xeon,
+uniformly, and the two ratios the curve argument rests on come out the
+same on it as on the other two machines: a crossing costs 22.5 \(*ms
+against a 47.50 \(*ms multiply, and an inversion costs 2.7 modular
+multiplies.  Three machines, two processor families, one conclusion \(em
+.CW p256 (2)
+stays in affine coordinates.
+.PP
+.B "And the panics are gone there too."
+.CW ipinttest (1)
+runs on the arm64 kernel as it does on the amd64 one: all nine
+formerly fatal calls raise and are caught, on a machine where
+.CW sysfatal
+would have been a panic.  The exception path is the architecture's own,
+so this is a second demonstration rather than the same one twice.
+.PP
+.B "The workload form."
+.CW "p256test -s 60"
+on that instance did
+.B "94 cycles in 60.4 seconds" ,
+a cycle being a verification and an agreement, and the spread across
+those 94 is 410 to 430 ms of verification and 220 to 230 of agreement.
+That is the baseline for the second workload the scheduler work needs:
+allocation and module calls rather than channel traffic, on arm64
+hardware, at
+.CW parallelvm=0 .
+See
+.CW doc/merge-parallelvm-cloud.ms .
