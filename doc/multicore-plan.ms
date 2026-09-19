@@ -8175,3 +8175,17 @@ and
 The split is lopsided and varies from boot to boot, which is what a
 shared queue with no affinity does; the useful claim is the one these
 are counts of, that every processor brought up runs Dis.
+.NH 2
+The throughput question moves to real hardware
+.LP
+The open item this document has carried \(em whether
+.CW parallelvm=1
+buys throughput \(em cannot be settled on a shared laptop under TCG,
+for the reasons in the section above.
+.CW cloud-port
+already boots this kernel on Compute Engine through a UEFI loader it
+built for the purpose.  The plan for getting the multicore scheduler
+onto that path, in two routes with a step-by-step for the first, is
+.CW doc/multicore-bare-metal-plan.ms .
+Nothing in this document's event counts depends on it; everything in
+its wall-clock tables does.
