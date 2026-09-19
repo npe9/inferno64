@@ -1,0 +1,330 @@
+From c407758c3460751d8be9da04c4f10bd3f49e3130 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Sat, 19 Sep 2026 08:53:16 -0400
+Subject: [PATCH] hw/gpio/bcm2835_gpio: event detection, inputs, and the
+ interrupt lines
+
+The block answered 0 for GPEDS, GPREN, GPFEN, GPHEN, GPLEN and the rest
+-- all marked "Not implemented" -- had no sysbus_init_irq at all, and
+declared 54 outputs and no inputs.  So nothing could drive a pin into
+the Pi, a guest could not ask to be told about a pin, and there was no
+line for it to be told on.  Any SPI peripheral with an interrupt was
+unreachable except by polling, which is most of them: an RFM9x raises
+DIO0, a CC-series part raises its own.
+
+Now: GPREN/GPFEN latch edges and GPHEN/GPLEN latch levels into GPEDS,
+which is write-one-to-clear, so an edge arriving while a handler runs is
+not lost.  qdev_init_gpio_in() gives the 54 pins an input side.  Four
+interrupt lines go to INTERRUPT_GPIO0..3, wired in
+bcm2835_peripherals.c, which had never connected them.
+
+GPEDS watches the pin and not its direction, so a pin the guest drives
+itself latches too.  That is what the datasheet describes and it is also
+what makes the block testable without a wire between two pins:
+os/inferno/raspi3b/gpiobcm.c arms pin 21 for a rising edge, drives it,
+and reads GPEDS back.
+
+GPAREN and GPAFEN stay unimplemented and say why: asynchronous detection
+samples faster than the system clock, which an emulator does not have,
+so a guest that set them is told nothing rather than told a lie.
+---
+ hw/arm/bcm2835_peripherals.c   |  14 +++
+ hw/gpio/bcm2835_gpio.c         | 162 +++++++++++++++++++++++++++++++++
+ include/hw/gpio/bcm2835_gpio.h |   8 ++
+ 3 files changed, 184 insertions(+)
+
+diff --git a/hw/arm/bcm2835_peripherals.c b/hw/arm/bcm2835_peripherals.c
+index 8a1e72d..c90690d 100644
+--- a/hw/arm/bcm2835_peripherals.c
++++ b/hw/arm/bcm2835_peripherals.c
+@@ -244,6 +244,20 @@ static void bcm2835_peripherals_realize(DeviceState *dev, Error **errp)
+         sysbus_mmio_get_region(SYS_BUS_DEVICE(&s->gpio), 0));
+ 
+     object_property_add_alias(OBJECT(s), "sd-bus", OBJECT(&s->gpio), "sd-bus");
++
++    /*
++     * The GPIO block's four interrupt lines, which were not wired at
++     * all: hw/gpio/bcm2835_gpio.c had no sysbus_init_irq and answered 0
++     * for every edge-detect register, so a guest could neither ask to be
++     * told about a pin nor be told.  Any SPI peripheral with an
++     * interrupt line -- which is most of them -- was unreachable except
++     * by polling.
++     */
++    for (n = 0; n < 4; n++) {
++        sysbus_connect_irq(SYS_BUS_DEVICE(&s->gpio), n,
++                qdev_get_gpio_in_named(DEVICE(&s_base->ic), BCM2835_IC_GPU_IRQ,
++                                       INTERRUPT_GPIO0 + n));
++    }
+ }
+ 
+ void bcm_soc_peripherals_common_realize(DeviceState *dev, Error **errp)
+diff --git a/hw/gpio/bcm2835_gpio.c b/hw/gpio/bcm2835_gpio.c
+index dfb5d5c..f6e3edf 100644
+--- a/hw/gpio/bcm2835_gpio.c
++++ b/hw/gpio/bcm2835_gpio.c
+@@ -110,6 +110,9 @@ static int gpfsel_is_out(BCM2835GpioState *s, int index)
+     return 0;
+ }
+ 
++static void bcm2835_gpio_detect(BCM2835GpioState *s, int index,
++                                bool was, bool now);
++
+ static void gpset(BCM2835GpioState *s,
+         uint32_t val, uint8_t start, uint8_t count, uint32_t *lev)
+ {
+@@ -125,6 +128,17 @@ static void gpset(BCM2835GpioState *s,
+     }
+ 
+     *lev |= val;
++    /*
++     * GPEDS watches the pin, not the direction, so a pin the guest
++     * drives itself latches too.  That is what the datasheet describes
++     * and it is also what makes the block testable without a wire
++     * between two pins.
++     */
++    for (i = 0; i < count; i++) {
++        if (changes & (1u << i)) {
++            bcm2835_gpio_detect(s, start + i, false, true);
++        }
++    }
+ }
+ 
+ static void gpclr(BCM2835GpioState *s,
+@@ -142,6 +156,99 @@ static void gpclr(BCM2835GpioState *s,
+     }
+ 
+     *lev &= ~val;
++    for (i = 0; i < count; i++) {
++        if (changes & (1u << i)) {
++            bcm2835_gpio_detect(s, start + i, true, false);
++        }
++    }
++}
++
++static void bcm2835_gpio_recheck_levels(BCM2835GpioState *s);
++
++/*
++ * The four GPIO interrupt lines.  A BCM2835 gives the interrupt
++ * controller one per bank-of-a-sort plus a common one; Linux and
++ * 9front both take GPIO0, so that is where the whole of GPEDS is
++ * reported here and the other three stay quiet.  Anything more
++ * would be inventing a distribution the datasheet does not make
++ * plain.
++ */
++static void bcm2835_gpio_update_irq(BCM2835GpioState *s)
++{
++    qemu_set_irq(s->irq[0], (s->eds0 | s->eds1) != 0);
++}
++
++/*
++ * A pin changed, or is sitting at a level somebody asked to be told
++ * about.  GPEDS latches and stays latched until the guest writes a one
++ * to clear it, which is what the datasheet says and what a driver
++ * expects: an edge that arrives while the handler is running is not
++ * lost.
++ */
++static void bcm2835_gpio_detect(BCM2835GpioState *s, int index,
++                                bool was, bool now)
++{
++    uint32_t bit;
++    uint32_t *eds, ren, fen, hen, len;
++
++    if (index < 32) {
++        bit = 1u << index;
++        eds = &s->eds0;
++        ren = s->ren0; fen = s->fen0; hen = s->hen0; len = s->len0;
++    } else {
++        bit = 1u << (index - 32);
++        eds = &s->eds1;
++        ren = s->ren1; fen = s->fen1; hen = s->hen1; len = s->len1;
++    }
++
++    if (!was && now && (ren & bit)) {
++        *eds |= bit;
++    }
++    if (was && !now && (fen & bit)) {
++        *eds |= bit;
++    }
++    if (now && (hen & bit)) {
++        *eds |= bit;
++    }
++    if (!now && (len & bit)) {
++        *eds |= bit;
++    }
++    bcm2835_gpio_update_irq(s);
++}
++
++/* Level detection latches for as long as the level is there. */
++static void bcm2835_gpio_recheck_levels(BCM2835GpioState *s)
++{
++    s->eds0 |= (s->lev0 & s->hen0) | (~s->lev0 & s->len0);
++    s->eds1 |= (s->lev1 & s->hen1) | (~s->lev1 & s->len1);
++    bcm2835_gpio_update_irq(s);
++}
++
++/*
++ * A pin driven from outside -- a radio's DIO0, a button.  The model had
++ * no way to do this at all: it declared 54 outputs and no inputs, so
++ * nothing could tell the Pi that anything had happened.
++ */
++static void bcm2835_gpio_set(void *opaque, int index, int level)
++{
++    BCM2835GpioState *s = opaque;
++    uint32_t *lev, bit;
++    bool was;
++
++    if (index < 32) {
++        lev = &s->lev0;
++        bit = 1u << index;
++    } else {
++        lev = &s->lev1;
++        bit = 1u << (index - 32);
++    }
++    was = (*lev & bit) != 0;
++    if (level) {
++        *lev |= bit;
++    } else {
++        *lev &= ~bit;
++    }
++    bcm2835_gpio_detect(s, index, was, !!level);
+ }
+ 
+ static uint64_t bcm2835_gpio_read(void *opaque, hwaddr offset,
+@@ -170,19 +277,35 @@ static uint64_t bcm2835_gpio_read(void *opaque, hwaddr offset,
+     case GPLEV1:
+         return s->lev1;
+     case GPEDS0:
++        return s->eds0;
+     case GPEDS1:
++        return s->eds1;
+     case GPREN0:
++        return s->ren0;
+     case GPREN1:
++        return s->ren1;
+     case GPFEN0:
++        return s->fen0;
+     case GPFEN1:
++        return s->fen1;
+     case GPHEN0:
++        return s->hen0;
+     case GPHEN1:
++        return s->hen1;
+     case GPLEN0:
++        return s->len0;
+     case GPLEN1:
++        return s->len1;
+     case GPAREN0:
+     case GPAREN1:
+     case GPAFEN0:
+     case GPAFEN1:
++        /*
++         * Asynchronous detection samples faster than the system clock,
++         * which is not a thing an emulator has; a guest that set these
++         * would be told nothing rather than told a lie.
++         */
++        return 0;
+     case GPPUD:
+     case GPPUDCLK0:
+     case GPPUDCLK1:
+@@ -228,19 +351,48 @@ static void bcm2835_gpio_write(void *opaque, hwaddr offset,
+         /* Read Only */
+         break;
+     case GPEDS0:
++        /* write one to clear */
++        s->eds0 &= ~(uint32_t)value;
++        bcm2835_gpio_update_irq(s);
++        break;
+     case GPEDS1:
++        s->eds1 &= ~(uint32_t)value;
++        bcm2835_gpio_update_irq(s);
++        break;
+     case GPREN0:
++        s->ren0 = value;
++        break;
+     case GPREN1:
++        s->ren1 = value;
++        break;
+     case GPFEN0:
++        s->fen0 = value;
++        break;
+     case GPFEN1:
++        s->fen1 = value;
++        break;
+     case GPHEN0:
++        s->hen0 = value;
++        bcm2835_gpio_recheck_levels(s);
++        break;
+     case GPHEN1:
++        s->hen1 = value;
++        bcm2835_gpio_recheck_levels(s);
++        break;
+     case GPLEN0:
++        s->len0 = value;
++        bcm2835_gpio_recheck_levels(s);
++        break;
+     case GPLEN1:
++        s->len1 = value;
++        bcm2835_gpio_recheck_levels(s);
++        break;
+     case GPAREN0:
+     case GPAREN1:
+     case GPAFEN0:
+     case GPAFEN1:
++        /* asynchronous detection: see the read side */
++        break;
+     case GPPUD:
+     case GPPUDCLK0:
+     case GPPUDCLK1:
+@@ -270,6 +422,11 @@ static void bcm2835_gpio_reset(DeviceState *dev)
+     /* SDHCI is selected by default */
+     sdbus_reparent_card(&s->sdbus, s->sdbus_sdhci);
+ 
++    s->eds0 = s->eds1 = 0;
++    s->ren0 = s->ren1 = 0;
++    s->fen0 = s->fen1 = 0;
++    s->hen0 = s->hen1 = 0;
++    s->len0 = s->len1 = 0;
+     s->lev0 = 0;
+     s->lev1 = 0;
+ }
+@@ -298,6 +455,7 @@ static void bcm2835_gpio_init(Object *obj)
+     BCM2835GpioState *s = BCM2835_GPIO(obj);
+     DeviceState *dev = DEVICE(obj);
+     SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
++    int i;
+ 
+     qbus_init(&s->sdbus, sizeof(s->sdbus), TYPE_SD_BUS, DEVICE(s), "sd-bus");
+ 
+@@ -305,6 +463,10 @@ static void bcm2835_gpio_init(Object *obj)
+             &bcm2835_gpio_ops, s, "bcm2835_gpio", 0x1000);
+     sysbus_init_mmio(sbd, &s->iomem);
+     qdev_init_gpio_out(dev, s->out, 54);
++    qdev_init_gpio_in(dev, bcm2835_gpio_set, 54);
++    for (i = 0; i < 4; i++) {
++        sysbus_init_irq(sbd, &s->irq[i]);
++    }
+ }
+ 
+ static void bcm2835_gpio_realize(DeviceState *dev, Error **errp)
+diff --git a/include/hw/gpio/bcm2835_gpio.h b/include/hw/gpio/bcm2835_gpio.h
+index 1c53a05..1c8bf50 100644
+--- a/include/hw/gpio/bcm2835_gpio.h
++++ b/include/hw/gpio/bcm2835_gpio.h
+@@ -32,6 +32,14 @@ struct BCM2835GpioState {
+     uint32_t lev0, lev1;
+     uint8_t sd_fsel;
+     qemu_irq out[54];
++
++    /* edge and level detection, GPEDS/GPREN/GPFEN/GPHEN/GPLEN */
++    uint32_t eds0, eds1;
++    uint32_t ren0, ren1;
++    uint32_t fen0, fen1;
++    uint32_t hen0, hen1;
++    uint32_t len0, len1;
++    qemu_irq irq[4];
+ };
+ 
+ #define TYPE_BCM2835_GPIO "bcm2835_gpio"
+-- 
+2.51.0
+

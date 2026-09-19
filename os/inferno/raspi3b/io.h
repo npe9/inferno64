@@ -100,6 +100,23 @@ enum {
 	 * virtio and no GIC.)
 	 */
 	GicIRQMax	= 72,
+
+	/*
+	 * The GPIO block's event-detect interrupts.  Four of them, one
+	 * per bank as the controller groups them; every other system
+	 * takes the first and so does this.
+	 */
+	IRQgpio0	= 49,
+	IRQgpio1	= 50,
+	IRQgpio2	= 51,
+	IRQgpio3	= 52,
+
+	/* gpiodetect() */
+	Gnone		= 0,
+	Grise,
+	Gfall,
+	Ghigh,
+	Glow,
 	GicSpiBase	= 32,
 	GicPPITimer	= 30,		/* non-secure physical timer, from the DTB */
 };

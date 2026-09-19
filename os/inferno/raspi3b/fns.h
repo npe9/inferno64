@@ -39,6 +39,9 @@ void	idle(void);
 void	idlehands(void);
 void	init0entry(void);
 void	intrdisable(int, void (*)(Ureg*, void*), void*, int, char*);
+void	gpiodetect(int, int);
+int	gpioevent(int);
+void	gpioeventclear(int);
 void	intrenable(int, void (*)(Ureg*, void*), void*, int, char*);	/* (irq, handler, arg, tbdf, name): the portable order */
 int	islo(void);
 void	kbdinit(void);

@@ -7,8 +7,9 @@ modelled in a way that cannot exercise the guest driver: without them
 the corresponding kernel code is written blind.
 
 0001-0026 are the Raspberry Pi 3B and 4B, which is what this series
-started as.  0027-0033 are the MPS2, for the PyCubed radio work in
-doc/radio-plan.ms.
+started as.  0027-0034 are the MPS2, for the PyCubed radio work in
+doc/radio-plan.ms, and 0035 is the Pi again, for the same work reaching
+real hardware.
 
 0031-0033 came out of that check and the one after it, and each names
 what found it.  0027 and 0028 have since been driven by drivers nobody
@@ -1178,3 +1179,19 @@ attached, a default kernel prints:
 	was reachable by the Inferno driver this model was written
 	beside, because that driver only uses the LoRa page, which is
 	the circularity tools/zephyr-checks exists to break.
+
+0035 hw/gpio/bcm2835_gpio: event detection, inputs, and the interrupt
+	lines.  The block answered 0 for GPEDS, GPREN, GPFEN, GPHEN and
+	GPLEN -- all marked "Not implemented" -- had no sysbus_init_irq,
+	and declared 54 outputs and no inputs.  So nothing could drive a
+	pin into the Pi, a guest could not ask to be told about a pin,
+	and there was no line to be told on; any SPI peripheral with an
+	interrupt was reachable only by polling, which is most of them.
+	Edges and levels latch into GPEDS, which is write-one-to-clear so
+	an edge arriving during a handler is not lost; the pins gain an
+	input side; and the four interrupt lines go to INTERRUPT_GPIO0..3
+	in bcm2835_peripherals.c, which had never connected them.
+	GPAREN and GPAFEN stay unimplemented and say why: asynchronous
+	detection samples faster than the system clock, which an emulator
+	does not have, so a guest that sets them is told nothing rather
+	than told a lie.
