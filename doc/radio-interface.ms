@@ -194,14 +194,24 @@ overhead and republish or the number stops.
 .CW mps2-an386 :
 .DS
 .CW "  SX1276 FIFO, LoRa explicit header   255"
-.CW "  less the link header                  4"
-.CW "  /dev/radio0/data                    251"
+.CW "  /dev/radio0/data                    255"
 .CW "  less ssl(3) header, digest, padding  30"
-.CW "  #D/n/data                           221"
-.CW "  Styx msize, adopted from it         221"
+.CW "  #D/n/data                           225"
+.CW "  Styx msize, adopted from it         225"
 .CW "  less IOHDRSZ                         24"
-.CW "  one Tread                           197"
+.CW "  one Tread                           201"
 .DE
+.PP
+The first subtraction in that table used to be four bytes for the
+RadioHead header, and it is gone because the header is: a packet
+device that adds nothing to what is written hands the whole FIFO to
+whatever is above it, and the four bytes are charged to
+.CW /net/lora
+instead, where they are spent.  Two stations measured
+.CW "RADIOSTYX-MSIZE 255"
+without
+.I ssl (3)
+and 225 with it, which is the same chain with one fewer link in it.
 Two of those subtractions were not being done until this week.
 .IP \(bu
 .CW os/inferno/port/exportfs.c:806
@@ -237,6 +247,7 @@ it may write as much as it likes, by something that has no idea.
 .NH 1
 What to do
 .IP 1. 4
+.B Done .
 Take the link layer out of the part.  The RadioHead header, the address
 filter, and acknowledgement and retry come out of
 .CW os/inferno/radio/sx127x.c ,
@@ -251,18 +262,31 @@ come out of its
 .CW ctl .
 What is left is a packet radio.
 .IP 2. 4
-Put them back above it.  Either a
+Put them back above it, as a
 .CW /net/lora
 device with
 .CW clone
 and a directory per conversation, which is
 .CW devether 's
-shape, or a Limbo library over
-.CW /dev/radio0 ,
-which is cheaper and is where the mission code already lives.  The
-protocol is the same either way and the choice is about who else needs
-it.
+shape.  A Limbo library over
+.CW /dev/radio0
+would be cheaper, and the protocol is the same either way, but it
+cannot be that: what sits on top of this link is
+.I ssl (3)
+and
+.CW sys->export (),
+and both of those are filters over a file descriptor.  A library has
+no file descriptor to give them.  The device attaches to a packet
+device the way
+.CW devssl
+attaches to anything \(em a file descriptor written to its
+.CW ctl
+\(em so it is not welded to
+.CW #W
+and can be driven over a pipe, which is the only honest negative
+control for it.
 .IP 3. 4
+.B Done .
 .CW pkt ,
 with ancillary data, and
 .CW stats
