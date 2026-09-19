@@ -8268,3 +8268,70 @@ is the argument for
 stated in data rather than in expectation: the question needs a machine
 whose processors are real.  The control is what turned a clean 4x into
 a question, and it cost two boots.
+.NH 1
+The parallel VM on real processors
+.PP
+Everything above was measured under TCG on a shared laptop, and the
+last section of it ends by saying the question needs a machine whose
+processors are real.  This is that machine: Compute Engine
+.CW n2-standard-4 ,
+four 2792MHz Xeons, one instance per arm so neither has a neighbour,
+the same image but for one line of
+.CW plan9.ini ,
+and a seven-minute window measured from
+.CW SOAK-START .
+.PP
+.B "The four numbers."
+.IP
+.nf
+                chantest  cycles     quanta
+  1 cpu pvm=0      24        7       143489
+  1 cpu pvm=1      39       12       262752
+  4 cpu pvm=0      21        7       147715
+  4 cpu pvm=1      87       28       587739
+.fi
+.PP
+No panics in any of the four.  The
+.CW *ncpu=1
+arms are the control the laptop's numbers demanded, and they are on the
+same hardware as the others \(em the kernel takes that option, and the
+serial log confirms no
+.CW cpu1
+line appears.
+.PP
+.B "What it decomposes into."
+.IP
+.nf
+lock off, one processor     1.62x chantest  1.71x cycles  1.83x quanta
+lock on, one to four        0.88x chantest  1.00x cycles  1.03x quanta
+lock off, one to four       2.23x chantest  2.33x cycles  2.24x quanta
+total at four processors    4.14x chantest  4.00x cycles  3.98x quanta
+.fi
+.PP
+.B "The middle line is the result."
+With the VM lock in place, four processors do what one processor does:
+21 chantest runs against 24, seven cycles against seven, three per cent
+more quanta.  That is what a global lock predicts and it has never been
+shown on this branch before \(em it could not be, because the emulator
+made more processors slower for reasons of its own.  A kernel that
+brings up four processors and gets nothing from them is the thing
+.CW parallelvm
+exists to fix, and here it is, measured.
+.PP
+.B "And the honest split of the rest."
+Removing the lock is worth 1.6 to 1.8x on a single processor, where
+there is nothing to parallelise: that is
+.CW vmlock
+and the queueing through the scheduler that goes with it, paid whatever
+the width of the machine.  The laptop said 2.7x for the same effect and
+was wrong about the size, which is its own lesson.  What parallelism
+adds on top is 2.2 to 2.3x going from one processor to four \(em
+sublinear, about 56 per cent efficiency, and the remaining serialisation
+is where the next work is: the collector's stopped world, the shared run
+queue, the allocator.
+.PP
+So the answer to the question this branch has carried since the
+beginning is 4x on four processors for this workload, of which roughly
+1.7x is the lock's own overhead and roughly 2.2x is the second, third
+and fourth processor doing work.  Both halves are real and neither was
+visible from a laptop.

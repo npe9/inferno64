@@ -20,7 +20,12 @@ mount {mntgen} /n
 # the workload is exactly what every table in doc/multicore-plan.ms was
 # measured on.
 bind -a '#e' /env >[2] /dev/null
-if {! ~ $soak ()} {
+# $"soak, not $soak: with the variable unset the bare form expands to no
+# words at all and sh says "usage: ~ word [pattern...]", which is how
+# /dis/init failed on a Compute Engine boot that had no *soak on its
+# boot line.  The quoted form is one word, empty or not, and is the
+# idiom the rest of this file already uses.
+if {! ~ $"soak ''} {
 	echo SOAK-START $soak
 	while {~ 1 1} {
 		chantest 25 &
