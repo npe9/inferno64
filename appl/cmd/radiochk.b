@@ -167,7 +167,12 @@ init(nil: ref Draw->Context, argv: list of string)
 		return;
 	}
 
-	fd := sys->open(Data, Sys->ORDWR);
+	# The write side only writes, and opening for reading would claim
+	# the radio's receive path from whoever has it.
+	omode := Sys->OWRITE;
+	if(mode == "recv")
+		omode = Sys->OREAD;
+	fd := sys->open(Data, omode);
 	if(fd == nil){
 		sys->print("radiochk: %s: %r\n", Data);
 		return;

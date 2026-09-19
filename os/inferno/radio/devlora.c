@@ -357,22 +357,29 @@ lorareader(void*)
 			continue;
 		}
 		cv = convfor(from);
-		if(cv == nil){
-			lora.nnoconv++;
-			freeb(b);
-			continue;
-		}
 
 		/*
 		 * A retransmission of something already delivered means
 		 * the acknowledgement was lost, not the packet.  Say so
 		 * again and do not deliver it twice.
+		 *
+		 * This is asked before whether anybody wants the packet,
+		 * because being a duplicate is a fact about the link and
+		 * not about a conversation: a retransmission that arrived
+		 * after its reader went away is still a retransmission,
+		 * and counting it as unclaimed instead would put the
+		 * wrong number in front of whoever is reading stats.
 		 */
 		if((flags & Fretry) && lora.seen[from] == id){
 			lora.ndup++;
 			freeb(b);
-			if(cv->ackon && to != Bcast)
+			if(cv != nil && cv->ackon && to != Bcast)
 				oweack(from, id, 0);
+			continue;
+		}
+		if(cv == nil){
+			lora.nnoconv++;
+			freeb(b);
 			continue;
 		}
 		lora.seen[from] = id;

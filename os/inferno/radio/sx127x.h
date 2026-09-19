@@ -65,6 +65,9 @@ struct Radio
 	int	rssi;
 	int	snr;
 
+	Lock	rl;			/* the claim on the receive path */
+	int	reading;		/* somebody has it */
+
 	/* duty cycle */
 	uvlong	airms;			/* time on the air, total */
 	uvlong	nextok;			/* ms when a transmit is allowed */

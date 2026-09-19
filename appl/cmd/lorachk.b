@@ -131,7 +131,7 @@ setup(addr: int)
 		sys->sprint("error was %q", e));
 }
 
-send(dest: int, text: string, acked, count: int)
+send(dest: int, text: string, acked, count, padto: int)
 {
 	c := clone();
 	if(c == nil)
@@ -152,7 +152,18 @@ send(dest: int, text: string, acked, count: int)
 	}
 	t0 := sys->millisec();
 	for(i := 0; i < count; i++){
+		# padto makes the packet long, which is how the duty
+		# cycle is made to bite: the acknowledgement is one byte
+		# whatever this is, so the two ends owe very different
+		# amounts of silence.
 		b := array of byte sys->sprint("%s-%d", text, i);
+		if(padto > len b){
+			pad := array[padto] of byte;
+			pad[0:] = b;
+			for(j := len b; j < padto; j++)
+				pad[j] = byte 'z';
+			b = pad;
+		}
 		n := sys->write(c.dfd, b, len b);
 		if(acked)
 			ck(sys->sprint("acked-write-%d", i), n == len b,
@@ -220,6 +231,13 @@ stats(): string
 	return string b[0:m];
 }
 
+pad(l: list of string): int
+{
+	if(l == nil || tl l == nil)
+		return 0;
+	return int hd tl l;
+}
+
 count(l: list of string): int
 {
 	if(l == nil)
@@ -256,15 +274,17 @@ init(nil: ref Draw->Context, argv: list of string)
 	"send" =>
 		if(argv == nil || tl argv == nil)
 			return;
-		send(int hd argv, hd tl argv, 0, count(tl tl argv));
+		send(int hd argv, hd tl argv, 0, count(tl tl argv),
+			pad(tl tl argv));
 	"ack" =>
 		if(argv == nil || tl argv == nil)
 			return;
-		send(int hd argv, hd tl argv, 1, count(tl tl argv));
+		send(int hd argv, hd tl argv, 1, count(tl tl argv),
+			pad(tl tl argv));
 	"elsewhere" =>
 		if(argv == nil)
 			return;
-		send(int hd argv, "not-for-you", 0, 1);
+		send(int hd argv, "not-for-you", 0, 1, 0);
 	"recv" =>
 		recv(0, count(argv));
 	"ackrecv" =>

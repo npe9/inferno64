@@ -170,13 +170,60 @@ radiostat(Chan *c, uchar *db, s32 n)
 	return devstat(c, db, n, nil, 0, radiogen);
 }
 
+/*
+ * data and pkt are one queue, so a second reader is not a second
+ * stream: it is two processes taking alternate packets and each
+ * missing the other's.  #L's reader kproc holds the radio for the life
+ * of a boot, and a program that opened data afterwards would block for
+ * ever on packets that had already gone somewhere else.
+ *
+ * So the read side is claimed, once, and a second claim is refused
+ * naming what has it.  A silent hang is exactly what this device
+ * refuses to do everywhere else, and there is no reason for the one
+ * case that is hardest to diagnose to be the exception.  A writer is
+ * not a claimant: transmitting is serialised in the part and two
+ * processes may do it.
+ */
+static int
+claimsread(int omode)
+{
+	return (omode & 3) != OWRITE;
+}
+
 static Chan*
 radioopen(Chan *c, u32 omode)
 {
-	if(TYPE(c->qid) != Qdir && TYPE(c->qid) != Qradiodir)
-		if(radioget(NUM(c->qid)) == nil)
+	Radio *rr;
+	int claimed, t;
+
+	t = TYPE(c->qid);
+	rr = nil;
+	if(t != Qdir && t != Qradiodir){
+		rr = radioget(NUM(c->qid));
+		if(rr == nil)
 			error(Enonexist);
+	}
+
+	claimed = 0;
+	if((t == Qdata || t == Qpkt) && claimsread(omode)){
+		lock(&rr->rl);
+		if(rr->reading){
+			unlock(&rr->rl);
+			error("radio: the receive path is already open; "
+				"#L holds it once a packet device is attached");
+		}
+		rr->reading = 1;
+		unlock(&rr->rl);
+		claimed = 1;
+	}
+	if(waserror()){
+		if(claimed)
+			rr->reading = 0;
+		nexterror();
+	}
 	c = devopen(c, omode, nil, 0, radiogen);
+	poperror();
+
 	if(TYPE(c->qid) == Qdata)
 		c->iounit = Maxpayload;
 	else if(TYPE(c->qid) == Qpkt)
@@ -185,8 +232,24 @@ radioopen(Chan *c, u32 omode)
 }
 
 static void
-radioclose(Chan*)
+radioclose(Chan *c)
 {
+	Radio *rr;
+	int t;
+
+	if((c->flag & COPEN) == 0)
+		return;
+	t = TYPE(c->qid);
+	if(t != Qdata && t != Qpkt)
+		return;
+	if(!claimsread(c->mode))
+		return;
+	rr = radioget(NUM(c->qid));
+	if(rr == nil)
+		return;
+	lock(&rr->rl);
+	rr->reading = 0;
+	unlock(&rr->rl);
 }
 
 static s32

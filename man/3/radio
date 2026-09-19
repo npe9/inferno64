@@ -77,6 +77,21 @@ queue, so a packet is delivered to whichever asks first and once.
 A packet whose CRC failed is queued with the flag set rather than
 discarded, because a receiver counting them is measuring its link.
 .PP
+.B Data
+and
+.B pkt
+are one queue and therefore one claim.  Opening either for reading
+takes the radio's receive path, and a second open for reading fails
+naming what has it; a second open for writing does not, because
+transmitting is serialised in the part and two processes may do it.
+Without that a program opening
+.B data
+after
+.I lora (3)
+had attached would block for ever on packets that had already gone to
+somebody else, which is the one failure this device is least able to
+explain.
+.PP
 Two things are refused rather than accommodated.
 .TP
 .B "a short read"

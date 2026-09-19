@@ -71,7 +71,16 @@ takes:
 Attach the packet device open on file descriptor
 .IR n .
 The device keeps its own reference, so the process that wrote this may
-close the descriptor and exit.  Once only.
+close the descriptor and exit.  Once only, and for the life of the
+boot: there is no detach, and the reader process this starts holds the
+packet device's receive path from then on.  On
+.I radio (3)
+that is a claim, so
+.B radiochk recv
+and anything else that reads
+.B /dev/radio0/data
+directly is refused with a message saying why rather than blocking on
+packets it will never see.
 .TP
 .BI addr " n"
 This station's address, 0 to 254.
@@ -152,7 +161,31 @@ neither acknowledged nor waited for.
 A retransmission of something already delivered means the
 acknowledgement was lost rather than the packet, so it is acknowledged
 again and not delivered again.  The last identifier from each address is
-kept for that, flat, 512 bytes, as RadioHead keeps it.
+kept for that, flat, 512 bytes, as RadioHead keeps it.  Being a
+duplicate is decided before anybody is looked for to receive it,
+because it is a fact about the link and not about a conversation.
+.PP
+.B Timeout
+has to be longer than the other station owes its duty cycle, and
+nothing here can work that out.  A station that has just spent
+.I A
+milliseconds on the air, at a duty cycle of
+.I D
+per cent, cannot answer anything for
+.I "A (100 - D) / D"
+afterwards, however little the acknowledgement itself costs.  One-way
+traffic composes without thinking about it, because an acknowledgement
+is much shorter than the packet it answers and the sender's own gap
+covers it; two-way traffic does not.  Measured at 5 per cent, a
+station that sent a 200-byte packet of its own 2 seconds earlier could
+not acknowledge for six, a 4-second
+.B timeout
+expired, and the sender retransmitted and was acknowledged on the
+second attempt:
+.B "sent 2, retried 1, ackrecv 1"
+at one end and
+.B "duplicate 1, acksent 1"
+at the other.
 .PP
 A write returns the number of bytes sent, or fails, and with
 .B ack
@@ -199,12 +232,22 @@ each.
 .PP
 Four conversations, which is a constant.
 .PP
-Nothing here arbitrates the air, because nothing below it does either;
-see the same entry in
+Nothing here arbitrates the air between stations, because nothing below
+it does either; see the same entry in
 .IR radio (3).
 Acknowledgement and retry make that worse rather than better, since a
 lost acknowledgement puts a second copy of a packet on a band that was
 already busy.
+.PP
+.B Timeout
+is a constant with a default of two seconds, and by the paragraph above
+it should be derived from what the other station owes.  Deriving it
+would mean this layer knowing the modem's parameters, which is the
+coupling it exists to avoid, so it is left to whoever sets it and
+written down here instead.
+.PP
+There is no detach.  A packet device attached to this is attached until
+the next boot.
 .PP
 The address is a byte, which is RadioHead's and therefore a PyCubed's.
 It is not a name, there is no way to learn one, and two stations
