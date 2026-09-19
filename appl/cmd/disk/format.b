@@ -68,6 +68,51 @@ DB_LABELSIZE	: con 11;
 DB_TYPESIZE	: con 8;
 DB_SIZE		: con 62;
 
+#
+# FAT32's boot sector, which is not the one above with fields added.
+#
+# From offset 36 on it is a different layout: the 16-bit sectors-per-FAT
+# at DB_FATSIZE and the root-entry count at DB_ROOTSIZE are both written
+# as zero and the real values live here, and the whole extended block --
+# drive number, boot signature, volume id, label, type string -- moves
+# from 36 to 64.  Writing a FAT32 with the extended block still at 36 is
+# the mistake that produces a filesystem which looks complete, has every
+# field, and is refused by everything, because each one is in the place
+# the other format uses.
+#
+DB32_FATSIZE	: con 36;	# 32-bit sectors per FAT
+DB32_EXTFLAGS	: con 40;	# mirroring; 0 means all FATs are live
+DB32_FSVERSION	: con 42;	# 0.0
+DB32_ROOTCLUST	: con 44;	# root directory's first cluster
+DB32_FSINFO	: con 48;	# sector number of FSInfo
+DB32_BACKUP	: con 50;	# sector number of the backup boot sector
+DB32_DRIVENO	: con 64;
+DB32_RESERVED0	: con 65;
+DB32_BOOTSIG	: con 66;
+DB32_VOLID	: con 67;
+DB32_LABEL	: con 71;
+DB32_TYPE	: con 82;
+DB32_SIZE	: con 90;
+
+FSINFOSEC	: con 1;	# where this writes FSInfo
+BACKUPSEC	: con 6;	# and the backup boot sector
+#
+# Written as shifts rather than as literals: limbo gives a hexadecimal
+# constant with bit 31 set the type big, and int is 64 bits at runtime
+# here, so "int 16rAA550000" is a sign-extended negative that compares
+# equal to nothing one would expect.  A shifted int stays an int.
+#
+FSI_LEADSIG	: con 16r41615252;
+FSI_STRUCTSIG	: con 16r61417272;
+FSI_TRAILSIG	: con 16rAA55<<16;
+FSI_UNKNOWN	: con (16rFFFF<<16)|16rFFFF;	# free count / next free: not maintained
+
+FAT32MASK	: con 16r0FFFFFFF;	# the top four bits are reserved
+FAT32TOP	: con 16rF<<28;		# and this is them
+FAT32EOF	: con 16r0FFFFFFF;
+MINFAT32	: con 65525;	# a volume with this many clusters IS FAT32
+ROOTCLUST	: con 2;
+
 # offsets in DOS directory
 DD_NAME	: con 0;
 DD_EXT		: con 8;
@@ -388,7 +433,7 @@ dosfs(dofat: int, dopbs: int, disk: ref Disk, label: array of byte, arg: list of
 		fatal(sys->sprint("reading boot sector: %r"));
 
 	if(dofat)
-		memset(buf, 0, DB_SIZE);
+		memset(buf, 0, DB32_SIZE);	# covers DB_SIZE too
 
 	#
 	# Jump instruction and OEM name
@@ -442,6 +487,22 @@ dosfs(dofat: int, dopbs: int, disk: ref Disk, label: array of byte, arg: list of
 		# over after you subtract out the space taken up by the fat tables.
 		# try both.  what a crock.
 		#
+		#
+		# Try 12 bits, then 16, then 32, and stop at the first width
+		# that can address what the volume turns out to hold.  The
+		# third pass is new; before it, a volume of 65527 clusters or
+		# more was refused outright with "disk too big; implement
+		# fat32", so this tree could read a FAT32 and never make one.
+		#
+		# The boundaries are the specification's and not round
+		# numbers: 4085 clusters is the most a FAT12 can hold and
+		# 65524 the most a FAT16 can, so a volume is FAT16 at 4085
+		# and FAT32 at 65525.  The old code broke out of FAT12 at
+		# 4087 and refused at 65527, both two out, which put volumes
+		# of 4085, 4086, 65525 and 65526 clusters into the wrong
+		# format -- and those are exactly the sizes every other
+		# system treats as the next one up.
+		#
 		for(fatbits = 12;;){
 	 		volsecs = int (length/big secsize);
 			#
@@ -450,43 +511,100 @@ dosfs(dofat: int, dopbs: int, disk: ref Disk, label: array of byte, arg: list of
 			# but of course we don't know yet.  maybe iterating will get us there.
 			# or maybe it will cycle.
 			#
-			clusters = 0;
-			for(i=0;; i++){
-			 	fatsecs = (fatbits*clusters + 8*secsize - 1)/(8*secsize);
-			 	rootsecs = volsecs/200;
-			 	rootfiles = rootsecs * (secsize/DD_SIZE);
+			#
+			# Size the FAT and the data area together.
+			#
+			# They depend on each other: a bigger FAT leaves fewer
+			# sectors for clusters, and fewer clusters need a
+			# smaller FAT.  This used to be iterated from an
+			# initial guess of zero clusters and gave up after ten
+			# rounds -- "can't decide how many clusters to use" --
+			# which is what any volume needing a FAT of more than
+			# a few hundred sectors does, because the iteration
+			# settles into a two-cycle between adjacent values
+			# rather than a fixed point.  So the width was never
+			# chosen for such a volume at all.
+			#
+			# Growing the FAT instead converges, and in one
+			# direction: each step shrinks the data area, which
+			# shrinks the entry count, which can only shrink what
+			# the FAT needs.  Stop when the FAT is big enough for
+			# every entry the data area can ask for -- which is
+			# the invariant fsck_msdos checks, and the one the old
+			# arithmetic could satisfy only by accident: it sized
+			# the FAT for the cluster count it had computed and
+			# then left the data area holding two more.
+			#
+			rootdirsecs := 0;
+			if(fatbits == 32){
+				#
+				# fat32 has no fixed root directory: it is an
+				# ordinary cluster chain starting at cluster 2,
+				# so it costs nothing here and the entry count
+				# in the BPB is written as zero.
+				#
+				rootsecs = 0;
+				rootfiles = 0;
+			} else {
+				rootsecs = volsecs/200;
+				rootfiles = rootsecs * (secsize/DD_SIZE);
 				if(rootfiles > 512){
 					rootfiles = 512;
 					rootsecs = rootfiles/(secsize/DD_SIZE);
 				}
-				data := nresrv + 2*fatsecs + (rootfiles*DD_SIZE + secsize-1)/secsize;
-				newclusters := 2 + (volsecs - data)/clustersize;
-				if(newclusters == clusters)
-					break;
-				clusters = newclusters;
-				if(i > 10)
-					fatal(sys->sprint("can't decide how many clusters to use (%d? %d?)", clusters, newclusters));
-if(chatty) sys->print("clusters %d\n", clusters);
-if(clusters <= 1) raise "trap";
+				rootdirsecs = (rootfiles*DD_SIZE + secsize-1)/secsize;
 			}
+			fatsecs = 0;
+			for(i = 0;; i++){
+				data := nresrv + 2*fatsecs + rootdirsecs;
+				if(data >= volsecs)
+					fatal(sys->sprint("%d sectors is too small for a filesystem", volsecs));
+				fit := 2 + (volsecs - data)/clustersize;
+				need := (fatbits*fit + 8*secsize - 1)/(8*secsize);
+				if(need <= fatsecs)
+					break;
+				fatsecs = need;
+				if(i > 100)
+					fatal("can't decide how big the fat should be");
+			}
+			clusters = 2 + (volsecs - (nresrv + 2*fatsecs + rootdirsecs))/clustersize;
+if(chatty) sys->print("clusters %d, fat %d sectors\n", clusters, fatsecs);
 
 if(chatty) sys->print("try %d fatbits => %d clusters of %d\n", fatbits, clusters, clustersize);
-			if(clusters < 4087 || fatbits > 12)
-				break;
-			fatbits = 16;
+			if(fatbits == 12 && clusters >= 4085){
+				fatbits = 16;
+				continue;
+			}
+			if(fatbits == 16 && clusters >= MINFAT32){
+				#
+				# FAT32 wants room in the reserved area for the
+				# FSInfo sector and the backup boot sector, which
+				# the 1-sector default does not give.  32 is what
+				# every other formatter uses.
+				#
+				if(nresrv <= BACKUPSEC+1)
+					nresrv = 32;
+				fatbits = 32;
+				continue;
+			}
+			break;
 		}
-		if(clusters >= 65527)
-			fatal("disk too big; implement fat32");
+		if(fatbits == 32 && clusters < MINFAT32)
+			fatal(sys->sprint("%d clusters is too few for fat32 (needs %d); use a smaller -c",
+				clusters, MINFAT32));
 
 		putshort(b[DB_SECTSIZE: ], secsize);
 		b[DB_CLUSTSIZE] = byte clustersize;
 		putshort(b[DB_NRESRV: ], nresrv);
 		b[DB_NFATS] = byte 2;
-		putshort(b[DB_ROOTSIZE: ], rootfiles);
+		putshort(b[DB_ROOTSIZE: ], rootfiles);	# zero on fat32
 		if(volsecs < (1<<16))
 			putshort(b[DB_VOLSIZE: ], volsecs);
 		b[DB_MEDIADESC] = byte t.media;
-		putshort(b[DB_FATSIZE: ], fatsecs);
+		if(fatbits == 32)
+			putshort(b[DB_FATSIZE: ], 0);	# the 16-bit field must be zero
+		else
+			putshort(b[DB_FATSIZE: ], fatsecs);
 		putshort(b[DB_TRKSIZE: ], t.sectors);
 		putshort(b[DB_NHEADS: ], t.heads);
 		putlong(b[DB_NHIDDEN: ], int disk.offset);
@@ -500,16 +618,34 @@ if(chatty) sys->print("try %d fatbits => %d clusters of %d\n", fatbits, clusters
 		else
 			dno = 0;
 if(chatty) sys->print("driveno = %ux\n", dno);
-		b[DB_DRIVENO] = byte dno;
-		b[DB_BOOTSIG] = byte 16r29;
 		x := int (disk.offset + big b[DB_NFATS]*big fatsecs + big nresrv);
-		putlong(b[DB_VOLID:], x);
-if(chatty) sys->print("volid = %ux\n", x);
-		b[DB_LABEL:] = label;
 		r := sys->aprint("FAT%d    ", fatbits);
 		if(len r > DB_TYPESIZE)
 			r = r[0:DB_TYPESIZE];
-		b[DB_TYPE:] = r;
+		if(fatbits == 32){
+			#
+			# The fat32 block, and then the extended block at 64
+			# rather than 36.  See the offsets at the top.
+			#
+			putlong(b[DB32_FATSIZE: ], fatsecs);
+			putshort(b[DB32_EXTFLAGS: ], 0);	# both FATs live and mirrored
+			putshort(b[DB32_FSVERSION: ], 0);
+			putlong(b[DB32_ROOTCLUST: ], ROOTCLUST);
+			putshort(b[DB32_FSINFO: ], FSINFOSEC);
+			putshort(b[DB32_BACKUP: ], BACKUPSEC);
+			b[DB32_DRIVENO] = byte dno;
+			b[DB32_BOOTSIG] = byte 16r29;
+			putlong(b[DB32_VOLID:], x);
+			b[DB32_LABEL:] = label;
+			b[DB32_TYPE:] = r;
+		} else {
+			b[DB_DRIVENO] = byte dno;
+			b[DB_BOOTSIG] = byte 16r29;
+			putlong(b[DB_VOLID:], x);
+			b[DB_LABEL:] = label;
+			b[DB_TYPE:] = r;
+		}
+if(chatty) sys->print("volid = %ux\n", x);
 	}
 
 	b[secsize-2] = byte Disks->Magic0;
@@ -520,6 +656,8 @@ if(chatty) sys->print("volid = %ux\n", x);
 			fatal(sys->sprint("seek to boot sector: %r\n"));
 		if(sys->write(disk.wfd, b, secsize) != secsize)
 			fatal(sys->sprint("writing to boot sector: %r"));
+		if(dofat && fatbits == 32)
+			writefsinfo(disk, b, secsize);
 	}
 
 	#
@@ -537,12 +675,30 @@ if(chatty) sys->print("fat @%buX\n", sys->seek(disk.wfd, big 0, 1));
 	fat = array[fatsecs*secsize] of {* => byte 0};
 	if(fat == nil)
 		fatal("out of memory");
+	#
+	# Entry 0 is the media descriptor with every other bit set, entry 1
+	# is an end-of-chain: the same convention at all three widths, just
+	# wider each time.  On fat32 the top four bits of every entry are
+	# reserved and must be left zero, which is why entry 1 is 0FFFFFFF
+	# and not FFFFFFFF.
+	#
 	fat[0] = byte t.media;
 	fat[1] = byte 16rff;
 	fat[2] = byte 16rff;
 	if(fatbits == 16)
 		fat[3] = byte 16rff;
-	fatlast = 1;
+	if(fatbits == 32){
+		fat[3] = byte 16r0f;
+		putlong(fat[4:], FAT32EOF);	# entry 1
+		#
+		# On fat32 the root directory is a cluster chain like any
+		# other and it starts at cluster 2, so cluster 2 is allocated
+		# here, before any file gets one, and ends its own chain.
+		#
+		putlong(fat[4*ROOTCLUST:], FAT32EOF);
+		fatlast = ROOTCLUST;
+	} else
+		fatlast = 1;
 	if(sys->seek(disk.wfd, big (2*fatsecs*secsize), 1) < big 0)	# 2 fats
 		fatal(sys->sprint("seek to root: %r"));
 if(chatty) sys->print("root @%buX\n", sys->seek(disk.wfd, big 0, 1));
@@ -550,6 +706,12 @@ if(chatty) sys->print("root @%buX\n", sys->seek(disk.wfd, big 0, 1));
 	#
 	#  allocate an in memory root
 	#
+	# On fat32 the root is one cluster in the data area rather than a
+	# fixed run of sectors before it, so it is the size of a cluster and
+	# the file area starts after it rather than after rootsecs.
+	#
+	if(fatbits == 32)
+		rootsecs = clustersize;
 	root = array[rootsecs*secsize] of {* => byte 0};
 	if(sys->seek(disk.wfd, big (rootsecs*secsize), 1) < big 0)		# rootsecs
 		fatal(sys->sprint("seek to files: %r"));
@@ -641,6 +803,45 @@ sys->fprint(sys->fildes(2), "add %s at clust %ux\n", d.name, x);
 }
 
 #
+# The two sectors a fat32 has that the earlier formats do not.
+#
+# FSInfo is a hint and nothing more: the free-cluster count and the
+# next-free cluster may both be written as "unknown", and that is what
+# goes here, because this program does not maintain them afterwards and
+# dossrv does not either.  A wrong count is worse than no count -- it is
+# what fsck_msdos reports as "Free space in FSInfo block not correct",
+# and it is a real complaint about a real filesystem, whereas "is unset"
+# is a statement that nobody has claimed to know.
+#
+# The backup boot sector is a verbatim copy at sector 6, which is where
+# the BPB says to look for it, and the FSInfo copy follows it.  A volume
+# whose first sector is damaged is recoverable from these and from
+# nothing else.
+#
+writefsinfo(disk: ref Disks->Disk, boot: array of byte, secsize: int)
+{
+	fsi := array[secsize] of {* => byte 0};
+
+	putlong(fsi[0:], FSI_LEADSIG);
+	putlong(fsi[484:], FSI_STRUCTSIG);
+	putlong(fsi[488:], FSI_UNKNOWN);	# free count
+	putlong(fsi[492:], FSI_UNKNOWN);	# next free
+	putlong(fsi[508:], FSI_TRAILSIG);
+
+	if(sys->seek(disk.wfd, big (FSINFOSEC*secsize), 0) < big 0)
+		fatal(sys->sprint("seek to fsinfo: %r"));
+	if(sys->write(disk.wfd, fsi, secsize) != secsize)
+		fatal(sys->sprint("writing fsinfo: %r"));
+
+	if(sys->seek(disk.wfd, big (BACKUPSEC*secsize), 0) < big 0)
+		fatal(sys->sprint("seek to backup boot sector: %r"));
+	if(sys->write(disk.wfd, boot, secsize) != secsize)
+		fatal(sys->sprint("writing backup boot sector: %r"));
+	if(sys->write(disk.wfd, fsi, secsize) != secsize)
+		fatal(sys->sprint("writing backup fsinfo: %r"));
+}
+
+#
 #  allocate a cluster
 #
 clustalloc(flag: int): int
@@ -649,7 +850,7 @@ clustalloc(flag: int): int
 
 	if(flag != Sof){
 		if (flag == Eof)
-			x =16rffff;
+			x = 16rffff;
 		else
 			x = fatlast+1;
 		if(fatbits == 12){
@@ -662,6 +863,20 @@ clustalloc(flag: int): int
 				fat[o] = byte x;
 				fat[o+1] = byte ((int fat[o+1] & 16rf0) | ((x>>8) & 16r0F));
 			}
+		} else if(fatbits == 32){
+			#
+			# 28 bits, not 32: the top four are reserved and are
+			# left as they were found.  End of chain is 0FFFFFFF,
+			# not the 16rffff the other widths use -- writing that
+			# would name cluster 65535, which on a fat32 large
+			# enough to exist is an ordinary cluster somebody else
+			# owns.
+			#
+			if(flag == Eof)
+				x = FAT32EOF;
+			o = 4*fatlast;
+			v := (getlong(fat[o:]) & FAT32TOP) | (x & FAT32MASK);
+			putlong(fat[o:], v);
 		} else {
 			o = 2*fatlast;
 			fat[o] = byte x;
@@ -752,4 +967,14 @@ putlong(b: array of byte, v: int)
 {
 	putshort(b, v);
 	putshort(b[2: ], v>>16);
+}
+
+#
+# Four bytes little-endian, as an unsigned value.  int is 64 bits at
+# runtime here, so this never comes back negative and a mask against it
+# is written out in full rather than as ~something.
+#
+getlong(b: array of byte): int
+{
+	return int b[0] | (int b[1]<<8) | (int b[2]<<16) | (int b[3]<<24);
 }
