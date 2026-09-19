@@ -350,13 +350,50 @@ and not from a constant in the test.  The path is refused while
 is open, so the number is exact rather than a worst case.
 .RE
 .IP 2. 4
+.B Done .
 SABM, UA, DISC, DM, and the state machine with no data in it.
 .IP 3. 4
+.B Done .
 I, RR, REJ, and the sequence numbers.
 .IP 4. 4
+.B Done .
 RNR, and the window.
+.RS
+.PP
+Steps two to four are one state machine and were built as one.
+.B Measured ,
+two
+.CW mps2-an386
+over a socket pair: SABM to UA in 110ms; ten information frames through
+a window of four, delivered in order, with V(S) and V(A) both at 2 and
+V(R) at 2 at the other end, which is ten modulo eight; no
+retransmissions and no rejects; DISC and UA at the end.  Eleven frames
+out of the caller and four in \(em one UA and three RRs.
+.PP
+.B "T2 is what made that work,"
+and leaving it out is the finding worth writing down.  The first
+version acknowledged an information frame the moment it arrived.  A
+station that has just been sent a burst is very likely still
+transmitting the rest of it, so every one of those acknowledgements
+landed on a deaf receiver: three frames out, three RRs back, none heard,
+and the sender retransmitted to N2 and declared the link dead while the
+receiver sat happily connected with all three frames delivered.  A
+half-duplex radio is not a detail the data link can be innocent of.
+T2 is the specification's answer and it pays twice, because one RR after
+a burst acknowledges the whole burst \(em three receptions for ten
+frames rather than ten.
+.PP
+Two smaller things the same run found.  A frame whose N(S) is one this
+end has already taken is a retransmission whose acknowledgement was
+lost, and the answer to it is an RR saying how far we have got; sending
+a REJ asks for frames we already have.  And a U frame has no PID, so a
+minimum frame is an address field and a control byte, not two: asking
+for the larger counted every SABM as a runt, which is a link that is
+silent for a reason nothing prints.
+.RE
 .IP 5. 4
-Digipeaters.
+Digipeaters.  The path is carried, and a frame with a hop still to go
+is recognised and not delivered, but nothing repeats one.
 .PP
 Each of those is a thing a TNC on the other end can be pointed at, which
 is the reason for that order rather than any other.

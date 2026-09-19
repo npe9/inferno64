@@ -21,6 +21,8 @@ ax25 \- AX.25 over a packet device
 .BI /net/ax25/ n /remote
 .br
 .BI /net/ax25/ n /status
+.br
+.BI /net/ax25/ n /listen
 .SH DESCRIPTION
 The
 .I ax25
@@ -89,18 +91,86 @@ Take frames from any station no other conversation has claimed.
 The digipeater path on its own, at most two, which is what AX.25 2.2
 allows.
 .TP
+.B disconnect
+DISC, and wait for the answer.
+.TP
 .BI pid " n"
 The protocol identifier byte; 0xf0, no layer 3, by default.
 .TP
-.B ui on
-Connectionless.  It is the only mode, and
-.B ui off
-is refused rather than ignored.
+.BI ui " onPorB off"
+Connectionless.  Off by default, so
+.B connect
+means what it says.  The mode cannot change under a connection.
+.TP
+.BI window " k"
+Frames outstanding, 1 to 7, modulo 8.  Four by default, which is what
+the specification suggests.
+.TP
+.BI n2 " n"
+Tries before the link is declared gone.
+.TP
+.BI t1 " ms"
+The retransmission timer.
+.TP
+.BI t2 " ms"
+How long to wait before acknowledging.
+.TP
+.BI t3 " ms"
+How long a silent link may stay silent before it is checked.
+.TP
+.BI busy " onPorB off"
+Say RNR, and RR to release it.
+.PP
+.B Connect
+sends SABM and does not return until the other end has answered or N2
+tries have gone unanswered.  A connect that returned early would let
+the next write fail for a reason belonging to this one.
+.PP
+Opening
+.B listen
+on an announced conversation waits for somebody to send a SABM, and
+returns that connection's
+.B ctl
+\- a different conversation, whose number is its first read.  That is
+.I ip (3)'s
+shape, and it is what makes the protocol expressible: a connection is
+per peer, so a second station calling one server has to become a second
+conversation.
+.I Lora (3)
+has
+.B announce
+and no
+.BR listen ,
+and carries that as a bug.
+.PP
+.B T2
+is not a refinement.  A station that has just been sent a burst is
+very likely still transmitting the rest of it, so an acknowledgement
+sent the instant a frame arrives lands on a deaf receiver and is lost:
+measured, before this timer existed, three I frames went out, three RRs
+came back, the sender heard none of them and retransmitted to N2.  With
+T2 at a second, ten frames through a window of four cost the sender
+eleven transmissions and four receptions \- one UA and three RRs \-
+with no retransmissions at all, because one RR after a burst
+acknowledges the whole burst.
+.PP
+.B T1
+is a number this cannot compute.
+.I Lora (3)
+found that a station which has just transmitted cannot answer until it
+has served its duty cycle, so a timeout shorter than that debt expires
+before the reply can go out; working it out means knowing the modem's
+parameters, which is the coupling this layering exists to avoid.  So T1
+is set, and
+.B status
+reports it.
 .PP
 .B Data
 is one information field per read and one per write, inheriting both of
 .IR radio (3)'s
-refusals.
+refusals.  In connected mode a write waits for room in the window
+rather than failing, which is what a file interface says instead of
+EWOULDBLOCK, and a read returns 0 when the link goes down.
 .B QST
 and
 .B CQ
@@ -130,13 +200,11 @@ this link but a property of it, and it is this number.
 .SH SOURCE
 .B /os/inferno/radio/devax25.c
 .SH BUGS
-Connected mode is not implemented.  SABM, UA, DISC, DM, I, RR, RNR, REJ
-and the sequence numbers are steps two to four of
-.BR doc/ax25-plan.ms ;
-a control field that is not UI is counted under
-.B notui
-and dropped, because answering a SABM this cannot honour would promise
-a connection that does not exist.
+SREJ, SABME and XID are not implemented, and neither is the 2.2
+segmenter.  All four are optional in 2.2 and negotiated or absent, so a
+station that never offers them is never sent one; the argument is in
+.BR doc/ax25-plan.ms .
+FRMR is not sent either, which 2.2 prefers.
 .PP
 This does not digipeat.  A frame with a hop still to go is counted
 under

@@ -13,10 +13,12 @@ implement Ax25chk;
 # doc/radio-interface.ms records against appl/lib/ssl.b.
 #
 #	ax25chk setup CALL-n	attach, set the callsign, check the sizes
-#	ax25chk send CALL text [count]
-#	ax25chk sendvia CALL d1,d2 text
+#	ax25chk send CALL text [count]		connectionless
+#	ax25chk sendvia CALL d1,d2 text		connectionless
 #	ax25chk beacon text	a UI frame to QST, which is what a beacon is
-#	ax25chk recv [count]
+#	ax25chk recv [count]	connectionless
+#	ax25chk call CALL text [count]		connected: SABM, I, DISC
+#	ax25chk listen [count]	connected: announce, listen, read
 #	ax25chk stats
 #
 
@@ -110,7 +112,8 @@ setup(call: string)
 	c := clone();
 	if(c == nil)
 		return;
-	if(sys->fprint(c.cfd, "connect N0CALL-1") < 0){
+	if(sys->fprint(c.cfd, "ui on") < 0 ||
+	   sys->fprint(c.cfd, "connect N0CALL-1") < 0){
 		ck("connect-accepted", 0, sys->sprint("%r"));
 		return;
 	}
@@ -136,7 +139,8 @@ setup(call: string)
 	d := clone();
 	if(d == nil)
 		return;
-	if(sys->fprint(d.cfd, "connect N0CALL-1 via WIDE1-1,WIDE2-1") < 0){
+	if(sys->fprint(d.cfd, "ui on") < 0 ||
+	   sys->fprint(d.cfd, "connect N0CALL-1 via WIDE1-1,WIDE2-1") < 0){
 		ck("connect-via-accepted", 0, sys->sprint("%r"));
 		return;
 	}
@@ -156,6 +160,10 @@ send(dest, via, text: string, count: int)
 	c := clone();
 	if(c == nil)
 		return;
+	if(sys->fprint(c.cfd, "ui on") < 0){
+		sys->print("ax25chk: ui on: %r\n");
+		return;
+	}
 	cmd := sys->sprint("connect %s", dest);
 	if(via != "")
 		cmd += sys->sprint(" via %s", via);
@@ -179,6 +187,10 @@ recv(count: int)
 	c := clone();
 	if(c == nil)
 		return;
+	if(sys->fprint(c.cfd, "ui on") < 0){
+		sys->print("ax25chk: ui on: %r\n");
+		return;
+	}
 	if(sys->fprint(c.cfd, "announce") < 0){
 		sys->print("ax25chk: announce: %r\n");
 		return;
@@ -198,6 +210,84 @@ recv(count: int)
 			sys->print("info %q\n", string b[0:n]);
 	}
 	sys->print("%s\n", status(c.n));
+}
+
+# A connected conversation: SABM, some I frames, then DISC.  The
+# connect write does not return until the peer has answered, so a
+# failure here is a failure to connect and not a failure to write.
+call(dest, text: string, count: int)
+{
+	c := clone();
+	if(c == nil)
+		return;
+	t0 := sys->millisec();
+	if(sys->fprint(c.cfd, "connect %s", dest) < 0){
+		ck("connect", 0, sys->sprint("%r"));
+		return;
+	}
+	ck("connect", 1, "");
+	sys->print("connected in %d ms\n", sys->millisec() - t0);
+	if(opendata(c) < 0)
+		return;
+	for(i := 0; i < count; i++){
+		b := array of byte sys->sprint("%s-%d", text, i);
+		n := sys->write(c.dfd, b, len b);
+		ck(sys->sprint("write-%d", i), n == len b,
+			sys->sprint("%d %r", n));
+	}
+	# Let the acknowledgements come back before looking: an
+	# acknowledgement that has not arrived yet is not a missing one.
+	sys->sleep(3000);
+	sys->print("%s\n", status(c.n));
+	sys->print("%s", slurp(Astats));
+	ck("disconnect", sys->fprint(c.cfd, "disconnect") > 0,
+		sys->sprint("%r"));
+	sys->print("%s\n", status(c.n));
+}
+
+# The server half: announce, then open listen, which blocks until
+# somebody sends a SABM and comes back holding that connection.
+listen(count: int)
+{
+	c := clone();
+	if(c == nil)
+		return;
+	if(sys->fprint(c.cfd, "announce") < 0){
+		ck("announce", 0, sys->sprint("%r"));
+		return;
+	}
+	ck("announce", 1, "");
+	lfd := sys->open(sys->sprint("#a/%d/listen", c.n), Sys->ORDWR);
+	if(lfd == nil){
+		ck("listen", 0, sys->sprint("%r"));
+		return;
+	}
+	b := array[32] of byte;
+	n := sys->read(lfd, b, len b);
+	if(n <= 0){
+		ck("listen", 0, sys->sprint("%r"));
+		return;
+	}
+	num := int string b[0:n];
+	ck("listen", num != c.n, sys->sprint("same conversation %d", num));
+	sys->print("accepted on #a/%d\n", num);
+	d := ref Conv(num, lfd, nil);
+	if(opendata(d) < 0)
+		return;
+	buf := array[Nodigi] of byte;
+	for(i := 0; i < count; i++){
+		n = sys->read(d.dfd, buf, len buf);
+		ck(sys->sprint("read-%d", i), n > 0, sys->sprint("%d %r", n));
+		if(n > 0)
+			sys->print("info %q\n", string buf[0:n]);
+	}
+	sys->print("%s\n", status(num));
+	# Stay up long enough for the other end to disconnect first.
+	# Exiting here closes the conversation, which sends DISC, and
+	# the caller would be reported as dropped when it was hung up
+	# on -- which is correct behaviour and a useless measurement.
+	sys->sleep(12000);
+	sys->print("%s\n", status(num));
 }
 
 status(n: int): string
@@ -238,7 +328,7 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	argv = tl argv;
 	if(argv == nil){
-		sys->print("usage: ax25chk setup|send|sendvia|beacon|recv|stats\n");
+		sys->print("usage: ax25chk setup|send|sendvia|beacon|recv|call|listen|stats\n");
 		return;
 	}
 	mode := hd argv;
@@ -246,10 +336,10 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	case mode {
 	"setup" =>
-		call := "N0CALL";
+		mycall := "N0CALL";
 		if(argv != nil)
-			call = hd argv;
-		setup(call);
+			mycall = hd argv;
+		setup(mycall);
 	"send" =>
 		if(argv == nil || tl argv == nil)
 			return;
@@ -263,6 +353,12 @@ init(nil: ref Draw->Context, argv: list of string)
 		if(argv == nil || tl argv == nil || tl tl argv == nil)
 			return;
 		send(hd argv, hd tl argv, hd tl tl argv, 1);
+	"call" =>
+		if(argv == nil || tl argv == nil)
+			return;
+		call(hd argv, hd tl argv, count(tl tl argv));
+	"listen" =>
+		listen(count(argv));
 	"recv" =>
 		recv(count(argv));
 	"stats" =>

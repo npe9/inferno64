@@ -91,6 +91,38 @@ get(b: array of byte, off: int): Call
 	return c;
 }
 
+# The control field, modulo 8.  Bit 0 clear is I; 01 in the low two
+# bits is supervisory; 11 is unnumbered.  Written from the
+# specification, which is the point of this program.
+name(ctl: int): (string, int)
+{
+	pf := "";
+	if((ctl & Cpf) != 0)
+		pf = "+P";
+	if((ctl & 1) == 0)
+		return (sys->sprint("I ns %d nr %d%s",
+			(ctl >> 1) & 7, (ctl >> 5) & 7, pf), 1);
+	if((ctl & 3) == 1){
+		s := sys->sprint("S%#.2x", ctl & 16r0f);
+		case ctl & 16r0f {
+		16r01 => s = "RR";
+		16r05 => s = "RNR";
+		16r09 => s = "REJ";
+		}
+		return (sys->sprint("%s nr %d%s", s, (ctl >> 5) & 7, pf), 0);
+	}
+	case ctl & 16ref {
+	16r03 => return ("UI" + pf, 1);
+	16r2f => return ("SABM" + pf, 0);
+	16r43 => return ("DISC" + pf, 0);
+	16r0f => return ("DM" + pf, 0);
+	16r63 => return ("UA" + pf, 0);
+	16re3 => return ("TEST" + pf, 0);
+	16r87 => return ("FRMR" + pf, 0);
+	}
+	return (sys->sprint("U%#.2x", ctl), 0);
+}
+
 hear(count: int)
 {
 	b := array[255] of byte;
@@ -100,7 +132,7 @@ hear(count: int)
 			sys->print("ax25raw: read: %r\n");
 			return;
 		}
-		if(n < 2*Addrlen + 2){
+		if(n < 2*Addrlen + 1){
 			sys->print("ax25raw: RUNT %d bytes\n", n);
 			continue;
 		}
@@ -127,20 +159,24 @@ hear(count: int)
 					break;
 			}
 		}
-		if(off + 2 > n){
+		if(off + 1 > n){
 			sys->print("ax25raw: RUNT after address\n");
 			continue;
 		}
 		ctl := int b[off];
-		pid := int b[off+1];
-		kind := sys->sprint("ctl %#.2x", ctl);
-		if((ctl & ~Cpf) == Cui)
-			kind = "UI";
 		if(via != "")
 			via = " via " + via;
-		sys->print("RAW %s>%s%s %s pid %#.2x info %q\n",
-			text(src), text(dest), via, kind, pid,
-			string b[off+2:n]);
+		# Only I and UI carry a PID and an information field.
+		# Everything else is the control byte and nothing more,
+		# which is why the length check above asks for one byte
+		# and not two.
+		(kind, haspid) := name(ctl);
+		rest := "";
+		if(haspid && off + 2 <= n)
+			rest = sys->sprint(" pid %#.2x info %q",
+				int b[off+1], string b[off+2:n]);
+		sys->print("RAW %s>%s%s %s%s\n",
+			text(src), text(dest), via, kind, rest);
 	}
 }
 
