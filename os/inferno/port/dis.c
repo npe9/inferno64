@@ -1522,27 +1522,120 @@ enum {
 	Progpoison	= 0x5150524F47444541ULL,	/* "QPROGDEA" */
 };
 
+/*
+ * The process-group lists, and what they were relying on.
+ *
+ * addgrp() and delgrp() thread Progs onto a doubly-linked group list
+ * and keep g->head and g->tail.  Neither has ever taken a lock.  They
+ * did not need one: newprog() calls addgrp() after it has released
+ * isched.l, delprog() calls delgrp() before it takes it, and both run
+ * with the interpreter acquired -- which, while one global vmlock
+ * existed, meant one executor at a time and nothing to race with.
+ *
+ * parallelvm=1 removes exactly that.  Two executors then run addgrp()
+ * and delgrp() on the same group at once, the doubly-linked list tears,
+ * and g->tail is left naming a Prog that delprog() has since freed.
+ * The next addgrp() to that group does
+ *
+ *	g->tail->grpnext = n;
+ *
+ * which writes a Prog pointer into freed memory at offset 0x110 -- and
+ * that is precisely what the quarantine caught, repeatedly, word 34 of
+ * a poisoned Prog holding a live Prog address.  From there it is the
+ * allocator's problem: "pool main CORRUPT: bad size", or a page fault,
+ * or a queue block with an impossible wp, depending on what the pool
+ * had put in that memory.
+ *
+ * So the lists get their own lock.  Not isched.l: delgrp() ends by
+ * freeing empty parent groups and free() takes the pool's ilock, and
+ * keeping that nesting separate from the scheduler's list lock is
+ * worth a second lock.  The walks in killgrp(), printgrp() and
+ * tellsomeone() call killprog() and exprog() from inside the loop and
+ * so cannot hold a spin lock; they are not fixed here, and what
+ * protects them for now is that a Prog is unlinked under this lock
+ * before it is freed.
+ */
+static Lock grpl;
+
 int progquar;				/* *progquar=1 */
 static Prog *quarbuf[Nquar];
 static int quarhd;
 static Lock quarl;
-static ulong nquarbad;
+static ulong nquarbad, nquarheld;
+
+/*
+ * Name the field an offset lands in, from the compiler rather than from
+ * arithmetic on the header.  The first capture was read by hand as
+ * "0x110 is grpnext, 0x118 is exval", which was a guess about padding
+ * and alignment made away from the compiler that did the padding.
+ */
+static struct {
+	char	*name;
+	int	off;
+} progfield[] = {
+	{"reg",		(int)(uintptr)&((Prog*)0)->reg},
+	{"xecby",	(int)(uintptr)&((Prog*)0)->xecby},
+	{"lastfp",	(int)(uintptr)&((Prog*)0)->lastfp},
+	{"link",	(int)(uintptr)&((Prog*)0)->link},
+	{"chan",	(int)(uintptr)&((Prog*)0)->chan},
+	{"ptr",		(int)(uintptr)&((Prog*)0)->ptr},
+	{"state",	(int)(uintptr)&((Prog*)0)->state},
+	{"kill",	(int)(uintptr)&((Prog*)0)->kill},
+	{"killstr",	(int)(uintptr)&((Prog*)0)->killstr},
+	{"pid",		(int)(uintptr)&((Prog*)0)->pid},
+	{"prev",	(int)(uintptr)&((Prog*)0)->prev},
+	{"next",	(int)(uintptr)&((Prog*)0)->next},
+	{"pidlink",	(int)(uintptr)&((Prog*)0)->pidlink},
+	{"group",	(int)(uintptr)&((Prog*)0)->group},
+	{"grpprev",	(int)(uintptr)&((Prog*)0)->grpprev},
+	{"grpnext",	(int)(uintptr)&((Prog*)0)->grpnext},
+	{"exval",	(int)(uintptr)&((Prog*)0)->exval},
+	{"exstr",	(int)(uintptr)&((Prog*)0)->exstr},
+	{"addrun",	(int)(uintptr)&((Prog*)0)->addrun},
+	{"xec",		(int)(uintptr)&((Prog*)0)->xec},
+	{"osenv",	(int)(uintptr)&((Prog*)0)->osenv},
+	{"wmtrace",	(int)(uintptr)&((Prog*)0)->wmtrace},
+};
+
+static char*
+progfieldat(int off)
+{
+	int i, best;
+
+	best = -1;
+	for(i = 0; i < nelem(progfield); i++)
+		if(progfield[i].off <= off
+		&& (best < 0 || progfield[i].off > progfield[best].off))
+			best = i;
+	return best < 0 ? "?" : progfield[best].name;
+}
 
 static void
 quarantine(Prog *p)
 {
 	Prog *old;
 	uintptr *w;
-	int i, n;
+	int i, n, nq;
 
 	n = (sizeof(Prog)+sizeof(Osenv))/sizeof(uintptr);
 	w = (uintptr*)p;
 	for(i = 0; i < n; i++)
 		w[i] = (uintptr)(Progpoison + i);
+	/*
+	 * The ring is as deep as the flag says, because a ring that never
+	 * wraps is an instrument that cannot fail: hold 256 Progs on a
+	 * workload that frees 40 and nothing is ever checked, and the
+	 * clean result looks exactly like a clean kernel.  *progquar=16
+	 * turns it over quickly and is the setting to start with.
+	 */
+	nq = progquar;
+	if(nq < 1 || nq > Nquar)
+		nq = Nquar;
 	ilock(&quarl);
 	old = quarbuf[quarhd];
 	quarbuf[quarhd] = p;
-	quarhd = (quarhd+1) % Nquar;
+	quarhd = (quarhd+1) % nq;
+	nquarheld++;
 	iunlock(&quarl);
 	if(old == nil)
 		return;
@@ -1550,12 +1643,31 @@ quarantine(Prog *p)
 	for(i = 0; i < n; i++)
 		if(w[i] != (uintptr)(Progpoison + i)){
 			nquarbad++;
-			if(nquarbad < 20)
-				print("progquar: freed Prog %#p word %d offset %#ux:"
-					" expected %#p, found %#p (%lud bad so far)\n",
+			if(nquarbad < 20){
+				int j;
+
+				print("progquar: freed Prog %#p word %d offset %#ux"
+					" (field %s): expected %#p, found %#p"
+					" (%lud bad of %lud held)\n",
 					old, i, (int)(i*sizeof(uintptr)),
+					progfieldat((int)(i*sizeof(uintptr))),
 					(void*)(uintptr)(Progpoison+i), (void*)w[i],
-					nquarbad);
+					nquarbad, nquarheld);
+				/*
+				 * And who still has a name for it.  delprog()
+				 * clears curprog only when the Prog being
+				 * destroyed is the one THIS context is running;
+				 * with parallelvm=1 there are several contexts
+				 * and any of them may hold the same pointer,
+				 * with nothing to clear it.  If one does, that
+				 * is the cause and not just the damage.
+				 */
+				for(j = 0; j < npctx; j++)
+					if(pctxs[j] != nil && pctxs[j]->curprog == old)
+						print("progquar: ctx %d still names"
+							" the freed Prog %#p, inxec %d\n",
+							j, old, pctxs[j]->inxec);
+			}
 			break;
 		}
 	free(old);
@@ -1923,7 +2035,8 @@ newgrp(Prog *p)
 	g->id = p->pid;
 	g->flags = 0;
 	g->child = nil;
-	pg = delgrp(p);
+	pg = delgrp(p);		/* takes grpl itself */
+	lock(&grpl);
 	g->head = g->tail = p;
 	p->group = g;
 	if(pg != nil){
@@ -1931,6 +2044,7 @@ newgrp(Prog *p)
 		pg->child = g;
 	}
 	g->parent = pg;
+	unlock(&grpl);
 }
 
 static void
@@ -1938,6 +2052,7 @@ addgrp(Prog *n, Prog *p)
 {
 	Progs *g;
 
+	lock(&grpl);
 	n->group = p->group;
 	if((g = n->group) != nil){
 		n->grpnext = nil;
@@ -1950,6 +2065,7 @@ addgrp(Prog *n, Prog *p)
 		}
 		g->tail = n;
 	}
+	unlock(&grpl);
 }
 
 static Progs*
@@ -1957,9 +2073,12 @@ delgrp(Prog *p)
 {
 	Progs *g, *pg, *cg, **l;
 
+	lock(&grpl);
 	g = p->group;
-	if(g == nil)
+	if(g == nil){
+		unlock(&grpl);
 		return nil;
+	}
 	if(p->grpprev)
 		p->grpprev->grpnext = p->grpnext;
 	else
@@ -1992,6 +2111,7 @@ delgrp(Prog *p)
 			free(g);
 		}while((g = pg) != nil && g->head == nil);
 	}
+	unlock(&grpl);
 	return g;
 }
 
