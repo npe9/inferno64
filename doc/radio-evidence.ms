@@ -247,6 +247,29 @@ setting, so testing the driver does not need 433 \(em buy 868 or 915 for
 where that is the ISM band, and keep 433 for talking to an actual
 PyCubed under whatever licence that needs.
 .PP
+.B "A TI CC-series part is not a substitute, and is still useful."
+.PP
+Said because one is to hand.  A CC1101, CC1200 or CC2520 is not an
+SX127x: different register map, and no TI part demodulates LoRa at all,
+which is a proprietary Semtech chirp modulation rather than a mode
+anyone else implements.  So such a part cannot exercise
+.CW os/inferno/port/sx127x.c
+and cannot talk to a PyCubed's RFM9x.  For R3 as written it is the
+wrong chip.
+.PP
+It is the right chip for two things R3 depends on and nothing has
+tested.  The first is the bus: SPI and a GPIO interrupt on real
+hardware, which is the blocker below and which no radio of any kind can
+do without.  The second is a claim this work has made and never
+checked \(em that
+.CW sx127x.c
+is portable because everything it touches goes through a
+.CW Spidev .
+A second driver, for a different chip, sharing that interface is the
+only thing that can show the split is real rather than asserted, and a
+chip that is nothing like an SX127x is a better test of it than another
+one that is.
+.PP
 .B "The second station is the point."
 Two Pis would be this driver talking to itself on real RF, which is
 worth something but is not an interop test.  An Adafruit Feather M0
