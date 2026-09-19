@@ -170,6 +170,23 @@ main(void)
 
 	mach0init();
 	bootargsinit();
+	{
+		char *p;
+
+		/*
+		 * Here, not with the other boot options further down: the
+		 * page tables are built by meminit0() and meminit(), both
+		 * of which run long before those are read, so a flag that
+		 * governs the mapping has to be read as soon as there is a
+		 * configuration to read it from.  Placed after meminit() it
+		 * changed nothing, and both arms of the measurement came
+		 * out identical -- which is how that was noticed.
+		 */
+		if((p = getconf("*pmaplarge")) != nil){
+			extern int pmaplarge;
+			pmaplarge = strtol(p, nil, 0);
+		}
+	}
 	trapinit0();			/* set up idt, check notes on why so early */
 	ioinit();
 	i8250console();
@@ -192,6 +209,16 @@ main(void)
 	doc("arch->clockinit");
 	if(arch->clockinit)
 		arch->clockinit();
+	{
+		char *p;
+
+		/*
+		 * Before meminit(), because that is where the mapping is
+		 * built: read later it would arrive after the decision it
+		 * governs.  The rest of the boot options are read further
+		 * down, where the devices they concern are set up.
+		 */
+	}
 	doc("meminit");
 	meminit();			/* builds the conf.mem entries */
 	doc("confinit");
@@ -300,6 +327,10 @@ main(void)
 		if((p = getconf("*spawncap")) != nil){
 			extern int spawncap;
 			spawncap = strtol(p, nil, 0);
+		}
+		if((p = getconf("*pmaplarge")) != nil){
+			extern int pmaplarge;
+			pmaplarge = strtol(p, nil, 0);
 		}
 		if((p = getconf("*runqaudit")) != nil){
 			extern int runqaudit;
