@@ -247,7 +247,7 @@ call(dest, text: string, count: int)
 
 # The server half: announce, then open listen, which blocks until
 # somebody sends a SABM and comes back holding that connection.
-listen(count: int)
+listen(count, delay: int)
 {
 	c := clone();
 	if(c == nil)
@@ -257,6 +257,12 @@ listen(count: int)
 		return;
 	}
 	ck("announce", 1, "");
+	# Announce, then wait before taking anything.  Connections that
+	# arrive meanwhile are accepted and queued, so a second caller
+	# is still on the queue when this program takes the first and
+	# exits -- which is the case that leaked.
+	if(delay > 0)
+		sys->sleep(delay);
 	lfd := sys->open(sys->sprint("#a/%d/listen", c.n), Sys->ORDWR);
 	if(lfd == nil){
 		ck("listen", 0, sys->sprint("%r"));
@@ -315,6 +321,13 @@ strstr(s, sub: string): int
 	return -1;
 }
 
+second(l: list of string): int
+{
+	if(l == nil || tl l == nil)
+		return 0;
+	return int hd tl l;
+}
+
 count(l: list of string): int
 {
 	if(l == nil)
@@ -328,7 +341,7 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	argv = tl argv;
 	if(argv == nil){
-		sys->print("usage: ax25chk setup|send|sendvia|beacon|recv|call|listen|stats\n");
+		sys->print("usage: ax25chk setup|send|sendvia|beacon|recv|call|listen|convs|stats\n");
 		return;
 	}
 	mode := hd argv;
@@ -358,9 +371,15 @@ init(nil: ref Draw->Context, argv: list of string)
 			return;
 		call(hd argv, hd tl argv, count(tl tl argv));
 	"listen" =>
-		listen(count(argv));
+		listen(count(argv), second(argv));
 	"recv" =>
 		recv(count(argv));
+	"convs" =>
+		# Every conversation's state, which is how a leak shows:
+		# one that reads open with nobody attached to it.
+		for(i := 0; i < 4; i++)
+			sys->print("%s", slurp(sys->sprint("#a/%d/status", i)));
+		return;
 	"stats" =>
 		sys->print("%s", slurp(Astats));
 		return;

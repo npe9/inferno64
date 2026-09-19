@@ -224,7 +224,18 @@ is somebody else is counted under
 and dropped, separately from a frame for another station, because the
 two mean different things about a link.
 .PP
-Four conversations, which is a constant.
+Four conversations, which is a constant.  An announcer that closes
+takes its unclaimed connections with it, telling each one DM, because
+nothing else will ever close them and four is not many.
+.PP
+The defaults compose with a duty cycle but have not been chosen for
+one.  Measured at 5 per cent on both ends, four frames through a
+window of four cost no retransmissions and no dropped control frames;
+at 1 per cent and SF12 a transmit is over two minutes, T2's second is
+then meaningless beside it, and T1 would have to be minutes.  The
+numbers are settable for that reason and
+.I radio (3)
+holds the arithmetic.
 .PP
 Nothing here identifies the station periodically.  Most jurisdictions
 require identification at an interval as well as on each transmission,

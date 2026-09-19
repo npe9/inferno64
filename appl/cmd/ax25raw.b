@@ -16,6 +16,7 @@ implement Ax25raw;
 # end-of-address bit on the last address only.  UI is control 0x03 and
 # "no layer 3" is PID 0xf0.
 #
+#	ax25raw sabm dest src		a connection request, by hand
 #	ax25raw hear [n]		decode n frames
 #	ax25raw poke dest src text [via d1,d2]
 #					one frame, exactly as given
@@ -37,6 +38,7 @@ Aend:	con 16r01;
 Acmd:	con 16r80;
 Arsvd:	con 16r60;
 Cui:	con 16r03;
+Csabm:	con 16r2f;
 Cpf:	con 16r10;
 Pidnol3:	con 16rf0;
 
@@ -245,6 +247,21 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 
 	case mode {
+	"sabm" =>
+		if(argv == nil || tl argv == nil){
+			sys->print("usage: ax25raw sabm dest src\n");
+			return;
+		}
+		d := parse(hd argv);
+		sr := parse(hd tl argv);
+		b := array[2*Addrlen + 1] of byte;
+		put(b, 0, d, Acmd, 0);
+		put(b, Addrlen, sr, 0, 1);
+		b[2*Addrlen] = byte (Csabm | Cpf);
+		if(sys->write(fd, b, len b) != len b)
+			sys->print("ax25raw: write: %r\n");
+		else
+			sys->print("RAWSABM %s>%s\n", text(sr), text(d));
 	"hear" =>
 		n := 1;
 		if(argv != nil)

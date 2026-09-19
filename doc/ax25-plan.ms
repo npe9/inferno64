@@ -419,6 +419,19 @@ counted
 and
 .CW "todigi 0" .
 .PP
+Two more measurements, after the fact rather than before it.  With
+.CW "duty 5"
+on both ends, four frames through a window of four cost no
+retransmissions and dropped no control frames, so the defaults compose
+with a duty cycle \(em though they were not chosen for one, and at
+1 per cent and SF12 a transmit is over two minutes and T1 would have
+to be minutes too.  And two hand-built SABMs from different callsigns
+were both accepted and queued on one announcer; the program took one
+and exited, and all four conversations came back closed.  Before that
+was written the unclaimed one stayed marked in use for the rest of the
+boot, which with four conversations is a device that stops working
+after a few cycles of a thing it is meant to do.
+.PP
 Matching is on the callsign and nothing else.  No WIDE1-1, no generic
 paths: those are APRS conventions rather than AX.25, and a station
 that answered to a name it was not given would repeat traffic nobody

@@ -1261,6 +1261,7 @@ ax25open(Chan *c, u32 omode)
 		cv = ann->pending;
 		ann->pending = cv->nextpend;
 		cv->nextpend = nil;
+		cv->owner = nil;
 		ann->listening--;
 		poperror();
 		qunlock(&ann->l);
@@ -1289,10 +1290,12 @@ ax25open(Chan *c, u32 omode)
 	return c;
 }
 
+static void dropconv(Conv*);
+
 static void
 ax25close(Chan *c)
 {
-	Conv *cv;
+	Conv *cv, *pend, *next;
 
 	if((c->flag & COPEN) == 0)
 		return;
@@ -1319,9 +1322,51 @@ ax25close(Chan *c)
 	cv->announced = 0;
 	cv->haveremote = 0;
 	cv->ndigi = 0;
+	/*
+	 * An announcer that closes takes its unclaimed connections with
+	 * it.  They were accepted and acknowledged and never handed to
+	 * anybody, so nothing else will ever close them, and with four
+	 * conversations in the device that is a leak that ends the
+	 * boot.  Detached under this lock and released outside it,
+	 * because releasing one takes its own.
+	 */
+	pend = cv->pending;
+	cv->pending = nil;
 	if(cv->rq != nil)
 		qhangup(cv->rq, nil);
 	wakeup(&cv->r);
+	wakeup(&cv->lr);
+	qunlock(&cv->l);
+
+	while(pend != nil){
+		next = pend->nextpend;
+		dropconv(pend);
+		pend = next;
+	}
+}
+
+/*
+ * Let go of a connection that was accepted and never taken.  The other
+ * end has had a UA and believes it is connected, so it is told DM
+ * rather than simply abandoned: a station left talking to nobody
+ * spends N2 retries finding out, on a band where every one of them
+ * costs air.
+ */
+static void
+dropconv(Conv *cv)
+{
+	qlock(&cv->l);
+	if(cv->state == Sconn)
+		sendu(cv, 0, Cdm|Cpf);
+	clearlink(cv);
+	cv->state = Sdisc;
+	cv->inuse = 0;
+	cv->haveremote = 0;
+	cv->announced = 0;
+	cv->owner = nil;
+	cv->nextpend = nil;
+	if(cv->rq != nil)
+		qhangup(cv->rq, nil);
 	qunlock(&cv->l);
 }
 
