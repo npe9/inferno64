@@ -4178,10 +4178,156 @@ in
 .CW proc.c
 \(em with the spin back in
 .CW usbdwc
-holding the line at 2280ms.  Answering the interpreter question is worth
-it: it is the difference between 203 microseconds and 142 milliseconds
-on every device wait this board makes, and it is what stands between the
-SD driver and being able to sleep at all.
+holding the line at 2280ms.
+.NH 2
+There was no scheduler clock
+.PP
+Before the question about the interpreter could be answered, a smaller
+one turned out to have a wrong answer in this document.  The section
+above says a woken process "waits for the running process's quantum".
+There is no quantum.
+.PP
+.CW hzsched()
+is in
+.CW os/inferno/port/proc.c .
+It is what raises
+.CW up->delaysched
+when a process has had its 100ms or when something better is ready, and
+in Plan 9 the clock interrupt calls it on every tick.  It is compiled
+into this kernel; it is in the link line;
+.CW iraspi3b.listing
+has it at
+.CW 00155f14 .
+.B "Nothing calls it."
+Not
+.CW raspi3b/clock.c ,
+not
+.CW raspi4 ,
+not
+.CW virtarm64 ,
+not the RISC-V boards \(em
+.CW "grep -l hzsched os/inferno/*/clock.c"
+returns nothing at all.
+.CW accounttime()
+is dead in exactly the same way, which is why
+.CW /prog/ * /status
+never showed a process using any time.
+.PP
+So this kernel does not preempt.  It has never preempted.  The
+processor changes hands when a process blocks of its own accord \(em
+.CW sleep() ,
+.CW qlock() ,
+or the
+.CW release()
+that brackets a blocking Dis system call \(em and at no other moment.  A
+Limbo program in a loop holds the processor until it makes a system
+call, and a process a device interrupt readied waits precisely that
+long.  That is the 2.7 to 142 milliseconds, and it is not a queue
+depth, a priority, or a tick: it is the absence of the mechanism
+entirely.  The
+.CW 142411
+microseconds in the trace above is one Limbo loop between two system
+calls.
+.NH 2
+Asking for the processor instead of taking it
+.PP
+Which leaves the question the wedge asked: where, in a kernel with no
+user mode, is it safe to take the processor away?
+.PP
+Plan 9 answers with the hardware.  A process it preempts is in user
+mode, or in a system call written to be abandoned anywhere, and
+.CW up->nlocks
+covers the rest.  Native Inferno has no user mode.  Every process here
+is a kernel process running C, so "preempt whoever is running" means
+"switch away from arbitrary kernel code", and
+.CW nlocks
+counts spin locks and nothing else.  It does not count the Dis
+interpreter's hand-off token, which is neither a
+.CW Lock
+nor a
+.CW QLock ;
+it does not count a
+.CW waserror()
+frame half built.  That is why the board wedged with every process in
+.CW acquire() ,
+and it is why no guard on
+.CW preempted()
+was going to be enough: the scheme wants an invariant this kernel does
+not have.
+.PP
+But it has one place where the invariant holds exactly.  At the top of
+.CW vmachine() 's
+loop, control is between two Dis instructions.  The whole machine is
+.CW R
+and the heap, both of which
+.CW xec()
+has just written back into the
+.CW Prog .
+No C invariant is half written, no lock is held, no error label is in
+flight.  It is what user mode is in Plan 9, and a CPU-bound Limbo loop
+reaches it every
+.CW PQUANTA
+\(em 2048 \(em instructions whatever it is doing, because that is how
+the interpreter already slices between
+.CW Prog s.
+.PP
+So interrupts ask and the interpreter gives:
+.IP \(bu
+.CW raspi3b/clock.c
+calls
+.CW accounttime()
+and
+.CW hzsched() ,
+which is the tick this kernel was missing.
+.IP \(bu
+.CW wantsched()
+in
+.CW port/proc.c
+is what a device interrupt calls at the end of
+.CW trap() .
+It adds one to
+.CW up->delaysched
+and returns.  It switches nothing, so it needs no guards at all \(em it
+is safe at any interrupt depth, holding anything.
+.IP \(bu
+.CW vmachine()
+begins each pass with
+.CW "if(up->delaysched) sched();" .
+.CW sched()
+clears the flag and puts the process on the back of its run queue,
+which is what a quantum expiry does in Plan 9.
+.PP
+Everything that is not the interpreter is left alone, and that is the
+design and not an omission.  A driver kproc either blocks by itself, in
+which case there is nothing to take, or it is spinning on a device
+register, in which case taking the processor from it is the wrong
+answer \(em
+.CW sdemmcbcm
+measured 86 KB/s spinning against 6 KB/s sleeping for the same
+interrupt.  The only process that can hold the processor for an
+unbounded time without blocking is the one running Limbo, and that is
+the one this reaches.
+.PP
+One more line came out of the same reading.
+.CW acquire()
+calls
+.CW sched()
+and assumes it switched;
+.CW sched()
+makes no such promise, returning without switching while the process
+holds a spin lock, up to twenty times in a row.  Had that ever happened
+there, the process would have fallen through and run the interpreter
+without the token while still linked on
+.CW isched.vmq
+for
+.CW release()
+to hand the token to \(em and the token would be gone, with every other
+process queued in
+.CW acquire()
+behind a VM nobody is running.  That is the shape of the wedge, so
+.CW acquire()
+now panics instead of hanging.  It costs nothing and it names the fault
+if it is ever reached.
 .NH 2
 Suggested order
 .PP

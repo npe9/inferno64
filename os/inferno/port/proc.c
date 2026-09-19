@@ -320,7 +320,20 @@ hzsched(void)
 	if(anyhigher()
 	|| (!up->fixedpri && (long)(m->ticks - m->schedticks) > 0 && anyready())){
 		m->readied = nil;	/* avoid cooperative scheduling */
-		up->delaysched++;
+		/*
+		 * Plan 9 raises up->delaysched here and consumes it from
+		 * preempted() on the same tick.  This kernel consumes it
+		 * somewhere else entirely -- vmachine(), and only when the
+		 * running process is the interpreter -- so a process that
+		 * never reaches that point would carry the count upward
+		 * for ever, and sched() reads the same field to decide
+		 * whether it has refused to switch for a lock holder
+		 * twenty times.  Past twenty it switches anyway, which on
+		 * a uniprocessor is every other process spinning on that
+		 * lock for good.  So the request gets its own bit and
+		 * delaysched keeps its one meaning.
+		 */
+		up->resched = 1;
 	}
 }
 
@@ -355,6 +368,55 @@ preempted(void)
 		return 1;
 	}
 	return 0;
+}
+
+/*
+ *  Ask for a reschedule without taking one.
+ *
+ *  preempted() above switches processes from inside the interrupt that
+ *  readied the winner, which is what Plan 9 does and what this kernel
+ *  cannot do.  Plan 9 preempts a process that is in user mode, or in a
+ *  system call written to be abandoned at any instruction; native
+ *  Inferno has no user mode at all.  Every process here is a kernel
+ *  process running C, so "preempt whoever is running" means "switch
+ *  away from arbitrary kernel code", and the only thing standing
+ *  between that and disaster is up->nlocks -- which counts spin locks
+ *  and nothing else.  It does not count the Dis interpreter's own
+ *  hand-off token, which is neither a Lock nor a QLock, and it does not
+ *  count a waserror() frame half built.  Switched on, the board wedged
+ *  with every process in acquire() waiting for a VM nobody was running.
+ *
+ *  So: raise a flag, and let the one process that has a safe point act
+ *  on it there.  That process is the Dis interpreter, and the safe
+ *  point is the top of vmachine()'s loop -- a Dis instruction boundary,
+ *  where the whole machine is R and the heap, no C invariant is half
+ *  written, no lock is held and no error label is in flight.  It is the
+ *  nearest thing this kernel has to user mode, and it is reached every
+ *  PQUANTA instructions whatever the program is doing.
+ *
+ *  Everything else is left alone on purpose.  A driver kproc either
+ *  blocks by itself, in which case there is nothing to take, or it is
+ *  spinning on a device register, in which case taking the processor
+ *  away from it is the wrong answer: sdemmcbcm measured 86 KB/s
+ *  spinning against 6 KB/s sleeping for the same interrupt.
+ *
+ *  This is safe from any interrupt, at any depth, holding anything,
+ *  because all it does is set a bit.  It is deliberately not
+ *  up->delaysched: sched() reads that field to decide whether it has
+ *  already refused to switch for a lock holder twenty times, and past
+ *  twenty it switches anyway.  A request raised here and consumed
+ *  somewhere else entirely would drive that count up under a process
+ *  that never reaches the consumer, and switching away from a spin
+ *  lock holder on a uniprocessor is every other process spinning on it
+ *  for good.
+ */
+void
+wantsched(void)
+{
+	if(up == nil || up->state != Running || active.exiting)
+		return;
+	if(anyhigher())
+		up->resched = 1;
 }
 
 /*
@@ -787,6 +849,7 @@ newproc(void)
 	p->nerrlab = 0;
 	p->nlocks = 0;
 	p->delaysched = 0;
+	p->resched = 0;
 	p->trace = 0;
 
 	kstrdup(&p->user, "*nouser");

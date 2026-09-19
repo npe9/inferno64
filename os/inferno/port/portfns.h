@@ -250,6 +250,7 @@ void		poolsize(Pool *, uintptr, int);
 int		postnote(Proc *, int, char *, int);
 int		pprint(char*, ...);
 int		preempted(void);
+void		wantsched(void);
 int		preemption(int);
 void		printinit(void);
 void		procctl(void);

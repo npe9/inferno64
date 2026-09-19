@@ -366,53 +366,35 @@ trap(Ureg *ur)
 				f(ur, irqarg[v]);
 		}
 		/*
-		 * And let a process a handler just readied have the
-		 * processor, which is what preempted() is for and what
-		 * nothing in this kernel called.  Off by default: it
-		 * wedges this board, and the wedge is not the nlocks one
-		 * below.  ^\ on a wedged board shows every process in
-		 * acquire() -- the Dis interpreter's own hand-off queue,
-		 * not a QLock -- waiting for a VM that nobody is running
-		 * to release.  Preempting a process that holds the
-		 * interpreter is legitimate on its face, and something
-		 * about it is not; that is the open question, and
-		 * doc/raspi3b-completion-plan.ms carries it with the
-		 * numbers that make it worth answering.
+		 * And ask for the processor on behalf of a process a
+		 * handler just readied.  Ask, not take: wantsched() sets
+		 * up->resched and returns, and vmachine() gives the
+		 * processor up at its next Dis instruction boundary.
+		 * port/proc.c and port/dis.c carry the argument for why
+		 * that is the right place in a kernel with no user mode.
 		 *
-		 * Plan 9's trap() ends every non-clock interrupt with
-		 * exactly this, under the same two guards.  Without it a
-		 * process woken by a device waits for the clock path --
-		 * hzsched raising delaysched, then sched() at a quantum
-		 * boundary -- so at HZ=100 an I/O completion costs up to
-		 * a tick before its waiter runs, and longer behind
-		 * anything queued at the same priority.  Measured in
-		 * usbdwc: 3 or 4 microseconds from arming a channel to
-		 * the interrupt, then 2.7 to 142 milliseconds to be
-		 * scheduled.
+		 * Taking it here instead is what intrpreempt does, and it
+		 * is Plan 9's own scheme: trap() ends every non-clock
+		 * interrupt with preempted(), under these same two guards.
+		 * It wedges this board.  ^\ on a wedged board shows every
+		 * process in acquire() -- the Dis interpreter's hand-off
+		 * queue, which is neither a Lock nor a QLock and so is
+		 * invisible to the nlocks guard -- waiting for a VM that
+		 * nobody is running to release.  Kept off, and kept here,
+		 * because it is the measurement the flag is judged
+		 * against: 203 microseconds from interrupt to waiter with
+		 * it on, against 2.7 to 142 milliseconds with neither.
 		 *
-		 * The guards matter, and nlocks is the one that is not
-		 * obvious.  sched() delays a reschedule while the process
-		 * holds locks -- but only twenty times, and then goes
-		 * anyway, "to avoid a missing unlock hanging the entire
-		 * kernel".  Called once a tick that escape hatch is never
-		 * reached; called on every device interrupt it is reached
-		 * in milliseconds, and switching away from a process that
-		 * holds a spin lock on a uniprocessor is every other
-		 * process spinning on it for ever.  The board wedged
-		 * exactly that way, and ^\ said so: every process in
-		 * acquire(), the Dis interpreter's lock, and nobody
-		 * running.
-		 */
-		/*
-		 * Not islo(): interrupts are masked inside the handler,
-		 * so a guard on them never lets this run -- which is what
+		 * Not islo(): interrupts are masked inside the handler, so
+		 * a guard on them never lets this run -- which is what
 		 * happened, and the counters in preempted() stayed at
-		 * zero.  Plan 9's trap() guards on up and ilockdepth
-		 * alone, and sched() panics by itself if it is ever
-		 * entered holding an ilock.
+		 * zero.
 		 */
-		if(intrpreempt && up != nil && m->ilockdepth == 0 && up->nlocks == 0)
-			preempted();
+		if(intrpreempt){
+			if(up != nil && m->ilockdepth == 0 && up->nlocks == 0)
+				preempted();
+		} else
+			wantsched();
 		return;
 	default:
 		/*

@@ -925,6 +925,20 @@ acquire(void)
 		if(empty)
 			wakeup(&isched.irend);
 		sched();
+		/*
+		 * acquire() treats sched() as a promise it does not make.
+		 * sched() returns without switching when the process holds
+		 * a spin lock, up to twenty times in a row; if that ever
+		 * happened here this process would fall through and run
+		 * the interpreter without the token, while still linked on
+		 * isched.vmq for release() to hand the token to -- and the
+		 * token would be gone, with every other process queued in
+		 * acquire() behind a VM nobody is running.  That is the
+		 * shape of the wedge, so say so here rather than hang.
+		 */
+		if(up->state == Queueing)
+			panic("acquire: sched returned queueing, nlocks %d delaysched %d",
+				up->nlocks, up->delaysched);
 	}
 
 	if(up->type == Interp) {
@@ -1178,6 +1192,40 @@ vmachine(void*)
 
 	cycles = 0;
 	for(;;) {
+		/*
+		 * The safe point.
+		 *
+		 * Nothing else in this kernel ever takes the processor away
+		 * from a running process.  There is no user mode to preempt
+		 * from -- every process is a kernel process running C -- so
+		 * the processor changes hands only when a process blocks of
+		 * its own accord: sleep(), qlock(), or the release() that
+		 * brackets a blocking Dis system call.  A CPU-bound Dis
+		 * program therefore runs until it makes a system call, and a
+		 * process a device interrupt just readied waits that long.
+		 * Measured in usbdwc: three or four microseconds from arming
+		 * a channel to the interrupt, and then 2.7 to 142
+		 * milliseconds before the waiter ran.
+		 *
+		 * Here is the one place where giving it up is free of
+		 * consequence.  Control is between two Dis instructions: the
+		 * whole machine is R and the heap, both of which xec() has
+		 * just written back into the Prog, no C invariant is half
+		 * built, no lock is held, no waserror() label is in flight.
+		 * It is what user mode is in Plan 9, and it comes round every
+		 * PQUANTA instructions however tight the Limbo loop is.
+		 *
+		 * So interrupts do not call sched(); they call wantsched(),
+		 * which sets this bit and returns (port/proc.c says why at
+		 * length), as does hzsched() when the quantum is up.  The
+		 * sched() below puts this process on the back of its run
+		 * queue, exactly as a quantum expiry does in Plan 9.
+		 */
+		if(up->resched){
+			up->resched = 0;
+			sched();
+		}
+
 		/*
 		 * Keep the clock moving under CPU-bound Dis (Bounce tk update).
 		 * On virt, soft timers used to advance only via idlehands→WFI→

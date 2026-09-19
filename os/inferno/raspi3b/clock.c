@@ -70,8 +70,27 @@ clockintr(Ureg *u)
 		kproftick((ulong)u->pc);
 
 	m->ticks++;
+	accounttime();
 	checkalarms();
 	timercheck(u);
+
+	/*
+	 * The scheduler's clock, which no native Inferno board in this
+	 * tree was wiring up.  hzsched() and accounttime() are both
+	 * compiled into every one of these kernels -- they are in
+	 * port/proc.c, they are in the link -- and nothing called either
+	 * of them, so a process's priority never decayed with the time it
+	 * used and its quantum never ended.  That is not a Raspberry Pi
+	 * quirk; it is every board here, and it is why a process a device
+	 * woke could wait milliseconds behind a Limbo loop.
+	 *
+	 * hzsched() does not switch anything.  It rebalances the run
+	 * queues once a second and sets up->resched when the running
+	 * process has had its 100ms or when something better is ready;
+	 * vmachine() acts on that at the next Dis instruction boundary.
+	 */
+	if(up != nil && up->state == Running)
+		hzsched();
 
 	n = now();
 	hznext = n + m->cpuhz/HZ;
