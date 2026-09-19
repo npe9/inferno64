@@ -16,6 +16,7 @@ static Clock0link *clock0link;
 static Lock clock0lock;
 
 extern void	timercheck(Ureg*);
+extern int	disdumpon;	/* dis.c: *disdump=1 asks for the counters */
 extern void	(*kproftick)(ulong);
 
 static uvlong
@@ -85,12 +86,12 @@ clockintr(Ureg *u)
 	 * part worth having.  Under TCG 120 guest seconds is several
 	 * hundred wall seconds, so the first one is at 55.
 	 */
-	if(m->ticks == 55*HZ || m->ticks % (120*HZ) == 0){
+	if(disdumpon && (m->ticks == 55*HZ || m->ticks % (120*HZ) == 0)){
 		extern void soakline(void);
 
 		soakline();
 	}
-	if(m->ticks == 60*HZ || m->ticks == 70*HZ){
+	if(disdumpon && (m->ticks == 60*HZ || m->ticks == 70*HZ)){
 		extern void stalldump(void);
 
 		stalldump();

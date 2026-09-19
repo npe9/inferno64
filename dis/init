@@ -9,16 +9,11 @@
 load std
 mount {mntgen} /n
 
-# The stress workload runs only when the boot line asks for it.  The
-# ungated copy that used to sit here ran chantest on every boot, which
-# is right for a QEMU measurement and wrong for a machine that has to
-# come up and do something else.
-# TEMPORARY: the long run.  *soak=1 on the boot line puts "soak" in the
-# environment (see main.c); with it set, the workload above repeats
-# until the guest is killed, so a boot can be measured over tens of
-# minutes rather than ninety seconds.  Without it nothing here runs and
-# the workload is exactly what every table in doc/multicore-plan.ms was
-# measured on.
+# The stress workload runs only when the boot line asks for it: *soak=1
+# puts "soak" in the environment (see main.c) and this repeats the
+# workload until the guest is killed, so a boot can be measured over
+# tens of minutes.  Without it nothing here runs and init does what
+# init does.  *soak=1 on the boot line puts "soak" in the
 bind -a '#e' /env >[2] /dev/null
 # $"soak, not $soak: with the variable unset the bare form expands to no
 # words at all and sh says "usage: ~ word [pattern...]", which is how

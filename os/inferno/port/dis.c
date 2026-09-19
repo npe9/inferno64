@@ -88,6 +88,35 @@ extern int parallelvm;		/* defined below, with stoptheworld() */
  */
 int disdumpon;
 
+/*
+ * The instrumentation's own print.  Everything this branch added to
+ * find its way -- the stall dumps, the soak line, the run-queue
+ * watermark, the VM-lock counts, the stopped-world audit -- says what
+ * it has to say through here, and says nothing unless *disdump=1 asked
+ * for it.  A kernel that prints its own diary at a customer is not a
+ * kernel anybody ships, and the counters are worth keeping for the
+ * next hunt, so the switch is the answer rather than deletion.
+ *
+ * Panics, real errors and the boot's own lines still use print().
+ */
+int
+dprint(char *fmt, ...)
+{
+	int n;
+	va_list arg;
+	char buf[PRINTSIZE];
+
+	if(!disdumpon)
+		return 0;
+	va_start(arg, fmt);
+	n = vseprint(buf, buf+sizeof(buf), fmt, arg) - buf;
+	va_end(arg);
+	putstrn(buf, n);
+	return n;
+}
+
+
+
 static Pctx pctxpool[MAXPCTX];
 static int npctxused;
 int ctxcap = MAXPCTX;	/* how many to hand out; *ctxcap=64 is the old pool */
@@ -136,10 +165,10 @@ claimctx(void)
 		 */
 		if(said++ == 0){
 			if(parallelvm)
-				print("claimctx: pool of %d exhausted, sharing"
+				dprint("claimctx: pool of %d exhausted, sharing"
 					" -- UNSAFE at parallelvm=1\n", ctxcap);
 			else
-				print("claimctx: pool of %d exhausted, sharing"
+				dprint("claimctx: pool of %d exhausted, sharing"
 					" (correct while the VM lock is held;"
 					" the pool wants to be bigger)\n", ctxcap);
 		}
@@ -512,7 +541,7 @@ stoptheworld(void)
 		if((ulong)(MACHP(0)->ticks - start) > HZ/4){
 			releaseworld();	/* let them run; collect next time */
 			if(stwgaveup++ == 0)
-				print("stw: gave up after %d tries, %lud ticks,"
+				dprint("stw: gave up after %d tries, %lud ticks,"
 					" cpu%d %s\n", tries,
 					(ulong)(MACHP(0)->ticks - start),
 					m->machno, up->text);
@@ -557,7 +586,7 @@ stoptheworld(void)
 
 		if(stwparks >= said){
 			said = said != 0 ? said*10 : 1;
-			print("stw: %lud parks, %lud wakes, %d waits,"
+			dprint("stw: %lud parks, %lud wakes, %d waits,"
 				" %d gave up\n",
 				stwparks, stwwakes, stwwaits, stwgaveup);
 		}
@@ -659,7 +688,7 @@ auditrunq(void)
 		if(j == nq || j == nelem(seen)){
 			if(p->pid == unqueuedpid && unqueuedpid != 0){
 				if(nrunqauditstuck++ == 0)
-					print("audit: prog %d was ready and unqueued"
+					dprint("audit: prog %d was ready and unqueued"
 						" at two audits running\n", p->pid);
 			}
 			nextunqueued = p->pid;
@@ -681,7 +710,7 @@ auditrunq(void)
 			notlisted++;
 			if(nrunqauditsaid < 4){
 				nrunqauditsaid++;
-				print("audit: queued prog %d state %d is not on"
+				dprint("audit: queued prog %d state %d is not on"
 					" isched.head (curprog %d, up->prog %d)\n",
 					seen[j]->pid, seen[j]->state,
 					curP->curprog != nil ? curP->curprog->pid : -1,
@@ -698,7 +727,7 @@ auditrunq(void)
 		nrunqauditself++;
 	if((ready != nq && ready != nq - dup) || badstate != 0){
 		if(nrunqauditbad++ == 0)
-			print("audit: %d queued (%d not ready, %d twice, %d of"
+			dprint("audit: %d queued (%d not ready, %d twice, %d of"
 				" them this interpreter's own) but %d in Pready"
 				" -- the stopped world disagrees\n",
 				nq, badstate, dup, self, ready);
@@ -1170,7 +1199,7 @@ vmacquire(void)
 			if(n > maxnvm){
 				maxnvm = n;
 				if(disdumpon)
-					print("nvm: %d hold the vm, cpu%d %s\n",
+					dprint("nvm: %d hold the vm, cpu%d %s\n",
 						n, m->machno, up->text);
 			}
 		}
@@ -2155,7 +2184,7 @@ chanlock(void)
 		 * direction of under-reporting, which is the safe one.
 		 */
 		if(chanl.key != 0 && chancontend++ == 0)
-			print("chanlock: first contention: two executors in a"
+			dprint("chanlock: first contention: two executors in a"
 				" channel operation at once\n");
 		lock(&chanl);		/* lock() bumps up->nlocks: no preemption */
 	}
@@ -2204,14 +2233,14 @@ chandeferfn(void *vh)
 		return 0;
 	if(curP->nchpend >= nelem(curP->chpend)){
 		if(chanpendfull++ == 0)
-			print("chanlock: chpend full, channel left to the collector\n");
+			dprint("chanlock: chpend full, channel left to the collector\n");
 		return 1;
 	}
 	h = vh;
 	AINC(&h->ref);		/* first: a count of zero is sweepable */
 	curP->chpend[curP->nchpend++] = H2D(void*, h);
 	if(chandeferred++ == 0)
-		print("chanlock: first channel free deferred past the region\n");
+		dprint("chanlock: first channel free deferred past the region\n");
 	return 1;
 }
 
@@ -2518,7 +2547,7 @@ release(void)
 			static int told;
 
 			if(curP->runhd != (Prog*)up->prog && told++ < 4)
-				print("release: GC proc %d type %d, head is prog %d not its own"
+				dprint("release: GC proc %d type %d, head is prog %d not its own"
 					" (ownctx %d nlocal %d gcworldheld %d) from %#p\n",
 					up->pid, up->type,
 					curP->runhd != nil ? curP->runhd->pid : -1,
@@ -2746,7 +2775,7 @@ vmachine(void*)
 			unwound = gcunwound - unwound;
 			if(unwound != 0){
 				if(gcleaktold++ < 6)
-					print("vmachine: gave back %lud gclock(s)"
+					dprint("vmachine: gave back %lud gclock(s)"
 						" at the handler, gcdepth %d, site %s,"
 						" err \"%s\"\n",
 						unwound, GCDEPTH,
@@ -2799,7 +2828,7 @@ vmachine(void*)
 				unsynced++;
 				was->unsyncedmark = 1;
 				if(unsyncedtold++ < 6)
-					print("vmachine: prog %d left xec without"
+					dprint("vmachine: prog %d left xec without"
 						" syncing after %d instructions,"
 						" state %d, iprog pid %d, currun pid"
 						" %d, err \"%s\"\n",
@@ -2968,14 +2997,14 @@ vmachine(void*)
 			for(w = vmlock.head; w != nil && d < 64; w = w->qnext) {
 				d++;
 				if(w->state != Queueing && vmqbad++ == 0)
-					print("vmq: waiter %d %s state %d, not Queueing"
+					dprint("vmq: waiter %d %s state %d, not Queueing"
 						" -- vmlock.head is not the wait queue\n",
 						w->pid, w->text, w->state);
 			}
 			if(d > maxvmq) {
 				maxvmq = d;
 				if(disdumpon)
-					print("vmq: %d interpreters blocked on"
+					dprint("vmq: %d interpreters blocked on"
 						" the vm lock at once\n", d);
 			}
 		}
@@ -3019,10 +3048,17 @@ vmachine(void*)
 
 		r = curP->runhd;
 		if(r != nil) {
-			{	/* MULTICORE INSTRUMENTATION - temporary */
+			if(disdumpon){	/* MULTICORE INSTRUMENTATION - temporary */
 				Prog *q;
 				int i, n = 0;
 
+				/*
+				 * Behind the flag, not merely quiet behind
+				 * it: this walks the local queue and every
+				 * context's nlocal on every quantum, and a
+				 * measurement that costs something on a
+				 * kernel nobody is measuring is a bug.
+				 */
 				for(q = r; q != nil && n < Runqcap; q = q->link)
 					n++;
 				/*
@@ -3039,7 +3075,7 @@ vmachine(void*)
 				if(n > maxnrunq){
 					maxnrunq = n;
 					if(disdumpon)
-						print("runq: %d dis programs ready"
+						dprint("runq: %d dis programs ready"
 							" at once, cpu%d\n",
 							n, m->machno);
 				}
@@ -3096,7 +3132,7 @@ vmachine(void*)
 				 * from a second placeholder class.
 				 */
 				if(r->xec != xec && r->xec != idlexec && told++ < 6)
-					print("vmachine: prog %#p xec %#p"
+					dprint("vmachine: prog %#p xec %#p"
 						" state %#x pid %d link %#p"
 						" osenv %#p ctx %#p cpu%d\n",
 						r, r->xec, r->state, r->pid,
@@ -3125,7 +3161,7 @@ vmachine(void*)
 					&& r->reg.SP < r->lastsp)
 						spregress++;
 					if(regmovedtold++ < 4)
-						print("vmachine: prog %d resumes"
+						dprint("vmachine: prog %d resumes"
 							" with FP %#p SP %#p EX %#p,"
 							" left with %#p %#p %#p,"
 							" state %d regsrc %d\n",
@@ -3138,7 +3174,7 @@ vmachine(void*)
 					r->unsyncedmark = 0;
 					unsyncedran++;
 					if(unsyncedrantold++ < 4)
-						print("vmachine: prog %d runs again"
+						dprint("vmachine: prog %d runs again"
 							" after leaving xec unsynced,"
 							" %d instructions behind,"
 							" state %d\n", r->pid,
@@ -3149,7 +3185,7 @@ vmachine(void*)
 				if(r->chainok0 == 2){
 					r->chainok0 = 1;
 					if(shortran++ < 4)
-						print("vmachine: a prog the"
+						dprint("vmachine: a prog the"
 							" collector saw short (pid"
 							" %d) is running again,"
 							" chain %s\n", r->pid,
@@ -3157,7 +3193,7 @@ vmachine(void*)
 				}
 				if(!okin)
 					if(chainin++ < 3)
-						print("vmachine: prog %d entered a"
+						dprint("vmachine: prog %d entered a"
 							" quantum with a broken chain,"
 							" state %d, ctx %d\n",
 							r->pid, r->state, curP->idx);
@@ -3165,7 +3201,7 @@ vmachine(void*)
 				was = r->onctx;
 				if(was != 0 && was != curP->idx + 1){
 					if(twoctx++ < 4)
-						print("vmachine: prog %d picked by"
+						dprint("vmachine: prog %d picked by"
 							" ctx %d while running on"
 							" ctx %d, state %d\n",
 							r->pid, curP->idx,
@@ -3183,7 +3219,7 @@ vmachine(void*)
 			 */
 			if((uint)m->machno < nelem(disquanta)){
 				if(disquanta[m->machno]++ == 0)
-					print("dis: first Dis quantum on cpu%d\n",
+					dprint("dis: first Dis quantum on cpu%d\n",
 						m->machno);
 			}
 			fpurestore(up->env->fpuostate);
@@ -3195,7 +3231,7 @@ vmachine(void*)
 			r->lastex = r->reg.EX;
 			if(r->chainwasok && !chainok(r))
 				if(chainout++ < 3)
-					print("vmachine: prog %d left a quantum"
+					dprint("vmachine: prog %d left a quantum"
 						" with a broken chain, state %d,"
 						" ctx %d\n",
 						r->pid, r->state, curP->idx);
@@ -3218,7 +3254,7 @@ vmachine(void*)
 						continue;
 					q->chainok0 = 0;
 					if(quantumbroke++ < 4)
-						print("vmachine: prog %d broken"
+						dprint("vmachine: prog %d broken"
 							" during a quantum of pid"
 							" %d (%s inst %ld), state"
 							" %d, ctx %d\n",
@@ -3409,11 +3445,11 @@ disdump(void)
 			print(" cpu%d %lud", mi, disquanta[mi]);
 		print("\n");
 	}
-	print("dis: vmlocked %d nidle %d creating %d runhd %#p runtl %#p\n",
+	dprint("dis: vmlocked %d nidle %d creating %d runhd %#p runtl %#p\n",
 		vmlock.locked, isched.nidle, isched.creating,
 		curP->runhd, curP->runtl);
 	/* MULTICORE INSTRUMENTATION - temporary */
-	print("dis: maxrunq %d, %llud of %llud scheduler passes had an "
+	dprint("dis: maxrunq %d, %llud of %llud scheduler passes had an "
 		"interpreter blocked on the vm lock\n",
 		maxnrunq, vmblocked, vmpasses);
 	/* MULTICORE INSTRUMENTATION - temporary */
@@ -3492,12 +3528,12 @@ stalldump(void)
 	Mach *mm;
 	int i;
 
-	print("stall: fastticks %lld nrdy %d\n", (vlong)fastticks(nil), nrdy);
+	dprint("stall: fastticks %lld nrdy %d\n", (vlong)fastticks(nil), nrdy);
 	for(i = 0; i < conf.nmach; i++){
 		mm = MACHP(i);
 		if(mm == nil)
 			continue;
-		print("stall: cpu%d ticks %lud proc %d\n", i, (ulong)mm->ticks,
+		dprint("stall: cpu%d ticks %lud proc %d\n", i, (ulong)mm->ticks,
 			mm->proc != nil ? mm->proc->pid : -1);
 	}
 	/*
@@ -3512,10 +3548,10 @@ stalldump(void)
 
 		pn = poolread(pbuf, sizeof pbuf - 1, 0);
 		pbuf[pn] = 0;
-		print("stall: pools (cursize maxsize hw nalloc nfree nbrk max name)\n%s\n",
+		dprint("stall: pools (cursize maxsize hw nalloc nfree nbrk max name)\n%s\n",
 			pbuf);
 	}
-	print("stall: gcsema locked %d head %d gcstw %d by %d npctx %d"
+	dprint("stall: gcsema locked %d head %d gcstw %d by %d npctx %d"
 		" phase %d\n",
 		gcsema.locked, gcsema.head != nil ? gcsema.head->pid : -1,
 		gcstw, gcstwproc != nil ? gcstwproc->pid : -1, npctx, gcphase);
@@ -3523,7 +3559,7 @@ stalldump(void)
 		extern ulong gcnruns, gcranheld;
 		extern int gchalt, gcdepth;
 
-		print("stall: gcnruns %lud stwwaits %d gcidlepass %llud"
+		dprint("stall: gcnruns %lud stwwaits %d gcidlepass %llud"
 			" gcpartial %llud gaveup %d idlegaveup %d idlebusy %d,"
 			" gchalt %d gcdepth %d, gclocks given back %lud, site %s,"
 			" collections inside a gclock %lud\n",
@@ -3534,7 +3570,7 @@ stalldump(void)
 	{
 		extern ulong regstale, handlerbroke, regstalesrc[8];
 
-		print("stall: quanta resumed at an FP the Prog had left %lud"
+		dprint("stall: quanta resumed at an FP the Prog had left %lud"
 			" (by regsrc %lud %lud %lud %lud %lud),"
 			" handlers leaving a short chain %lud,"
 			" longjmps leaving a Prog unsynced %lud (of which ran"
@@ -3549,7 +3585,7 @@ stalldump(void)
 		extern ulong shortringok, shortringshort, shortnoring;
 		int si;
 
-		print("stall: stacks walked %lud, chain short of tos.fu %lud,"
+		dprint("stall: stacks walked %lud, chain short of tos.fu %lud,"
 			" progs picked while running %d, quanta entered broken"
 			" %lud, left broken %lud, readied broken %lud;"
 			" broken during a quantum %lud, short ones that ran"
@@ -3561,7 +3597,7 @@ stalldump(void)
 			shortran, regmoved, regmovedsrc[0], regmovedsrc[1],
 			regmovedsrc[2], regmovedsrc[3], regmovedsrc[4],
 			spregress);
-		print("stall: short by state:");
+		dprint("stall: short by state:");
 		for(si = 0; si < 8; si++)
 			print(" %lud", shortstate[si]);
 		print("; walked from where it last ran: whole %lud, short %lud,"
@@ -3569,13 +3605,13 @@ stalldump(void)
 			shortringok, shortringshort, shortnoring);
 	}
 	{
-		print("stall: stopped-world audits %lud, bad %lud,"
+		dprint("stall: stopped-world audits %lud, bad %lud,"
 			" a Prog queued twice %lud (its own %lud), queued but not"
 			" listed %lud, placeholders skipped %lud, ready and"
 			" unqueued twice running %lud\n",
 			nrunqaudits, nrunqauditbad, nrunqauditdup, nrunqauditself,
 			nrunqauditnotlisted, nrunqauditplace, nrunqauditstuck);
-		print("stall: freeFD %lud, in the stopped world %lud, deferred %lud,"
+		dprint("stall: freeFD %lud, in the stopped world %lud, deferred %lud,"
 			" fddefer %d, nwoken %d, interpreters spawned %lud"
 			" (by type %lud %lud %lud %lud %lud)\n",
 			freefds, freefdstw, fdclosedeferred, fddefer,
@@ -3585,7 +3621,7 @@ stalldump(void)
 	}
 	for(i = 0; i < npctx; i++)
 		if(pctxs[i]->gcheld != 0 || pctxs[i]->inxec || pctxs[i]->nlocal)
-			print("stall: ctx %d owner %d (%s) inxec %d inchan %d"
+			dprint("stall: ctx %d owner %d (%s) inxec %d inchan %d"
 				" nlocal %d gcheld %d\n",
 				i, pctxs[i]->owner != nil ? ((Proc*)pctxs[i]->owner)->pid : -1,
 				pctxs[i]->owner != nil ? ((Proc*)pctxs[i]->owner)->text : "?",
@@ -3596,14 +3632,14 @@ stalldump(void)
 
 		for(i = 0; i < npctx; i++)
 			held += pctxs[i]->gcheld;
-		print("stall: gchalt %d, held by contexts %d, defpctx %d\n",
+		dprint("stall: gchalt %d, held by contexts %d, defpctx %d\n",
 			gchalt, held, defpctx->gcheld);
 	}
 	for(i = 0; i < conf.nproc; i++){
 		q = proctab(i);
 		if(q->state == Dead)
 			continue;
-		print("stall: proc %d %s %s type %d mach %d mp %d wired %d"
+		dprint("stall: proc %d %s %s type %d mach %d mp %d wired %d"
 			" tt %d twhen %lld tf %#p pc %#p qpc %#p\n",
 			q->pid, q->text, statename[q->state], q->type,
 			q->mach != nil ? q->mach->machno : -1,
@@ -3643,18 +3679,18 @@ soakline(void)
 			*e = 0;
 	}else
 		p = pbuf;
-	print("soak: %lud ticks, gcnruns %lud, gchalt %d, npctx %d, pools %s\n",
+	dprint("soak: %lud ticks, gcnruns %lud, gchalt %d, npctx %d, pools %s\n",
 		(ulong)MACHP(0)->ticks, gcnruns, gchalt, npctx, p);
 	/*
 	 * Here as well as in stalldump(), because on a board whose console
 	 * tail is unreliable a long dump loses its last lines and this one
 	 * line does not.  MULTICORE INSTRUMENTATION - temporary.
 	 */
-	print("soak: interpreters %lud, blocked %d, idle %d, woken %d, nmach %d,"
+	dprint("soak: interpreters %lud, blocked %d, idle %d, woken %d, nmach %d,"
 		" spawncap %d\n",
 		nvmprocs, isched.nblocked, isched.nidle, isched.nwoken,
 		conf.nmach, spawncap);
-	print("soak: stopped-world audits %lud, bad %lud, a Prog queued twice"
+	dprint("soak: stopped-world audits %lud, bad %lud, a Prog queued twice"
 		" %lud (its own %lud), queued but not listed %lud, placeholders"
 		" skipped %lud, ready and unqueued twice running %lud; quanta",
 		nrunqaudits, nrunqauditbad, nrunqauditdup, nrunqauditself,

@@ -226,8 +226,29 @@ static uvlong vmaplimit;
  *
  * The check that says it is right is a boot at -m 16384 with the
  * overlap checker silent, and 512 MiB and 4 GiB boots beside it.
+ *
+ * Off by default, and the reason is measurement rather than doubt about
+ * correctness.  Six Compute Engine instances, four real Xeons each, the
+ * soak workload cut at the same guest tick:
+ *
+ *	4 KiB pages   78 78 78 78 78      (the same number every time)
+ *	2 MiB pages   57 60 63 78 78 81
+ *
+ * The small-page kernel is deterministic; the large-page kernel is not,
+ * and averages about a tenth less work while once beating everything.
+ * Two instances that mapped identically -- 7936 large pages, 231024
+ * small, same conf.npage -- returned 78 and 60, so the spread is not in
+ * the mapping.  What it buys is certain: 38 times fewer entries and
+ * about 71 MiB of page tables given back on a 16 GiB machine.
+ *
+ * The next question is memory typing.  A 2 MiB page that spans an MTRR
+ * boundary can be demoted to uncached for its whole extent, and this
+ * kernel calls mtrrexclude(MemRAM, "wb"), so mixed types in a mapped
+ * range are possible; that would cost far more than the TLB saves and
+ * would explain a bimodal result.  Until that is answered a flag that
+ * defaults off is the honest place for this.
  */
-int pmaplarge = 1;	/* *pmaplarge=0 turns 2 MiB pages off */
+int pmaplarge = 0;	/* *pmaplarge=1 turns 2 MiB pages on; see above */
 ulong npmaplarge, npmapsmall, npmapsplit;	/* what pmap() built */
 
 static void

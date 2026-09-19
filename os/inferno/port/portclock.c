@@ -169,7 +169,8 @@ hzclock(Ureg *ur)
 	 * handful of arenas; see poolcheckoverlap() in port/alloc.c for
 	 * what it is looking for and why it has so far never fired.
 	 */
-	if(m->machno == 0 && (m->ticks == 1*HZ || m->ticks == 3*HZ || m->ticks == 10*HZ)){
+	if(disdumpon && m->machno == 0
+	&& (m->ticks == 1*HZ || m->ticks == 3*HZ || m->ticks == 10*HZ)){
 		extern void poolcheckoverlap(char*);
 		poolcheckoverlap("clock");
 	}
@@ -186,12 +187,12 @@ hzclock(Ureg *ur)
 			kstackmin, KSTACK, kstackminproc);
 		disdump();
 	}
-	if(m->machno == 0 && m->ticks > 0 && (m->ticks % (120*HZ)) == 0){
+	if(disdumpon && m->machno == 0 && m->ticks > 0 && (m->ticks % (120*HZ)) == 0){
 		extern void soakline(void);
 
 		soakline();	/* MULTICORE INSTRUMENTATION - temporary */
 	}
-	if(m->machno == 0 && (m->ticks == 60*HZ || m->ticks == 70*HZ)){
+	if(disdumpon && m->machno == 0 && (m->ticks == 60*HZ || m->ticks == 70*HZ)){
 		extern void stalldump(void);
 
 		stalldump();	/* MULTICORE INSTRUMENTATION - temporary */
