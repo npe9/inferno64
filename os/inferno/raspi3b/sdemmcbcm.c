@@ -66,6 +66,7 @@ enum {
 	C1clkstable	= 1<<1,
 	C1clken		= 1<<2,		/* clock to the card */
 	C1srsthost	= 1<<24,
+	C1srstcmd	= 1<<25,
 	C1srstdata	= 1<<26,
 	C1toutshift	= 16,
 
@@ -772,16 +773,56 @@ bioerror(Ctlr *c, int write, uvlong bno, u32 sts)
 	 * was never in a transaction there is nothing to stop -- so its
 	 * result is deliberately not checked.
 	 */
+	/*
+	 * The order matters and the first attempt had it wrong.  Clear
+	 * the status BEFORE the abort, so CMD12's own completion is the
+	 * only thing in it; send the abort; reset both lines, not just
+	 * the data one; then clear again.
+	 *
+	 * Getting that wrong showed up as the retry failing with
+	 * "interrupt 0x2 status 0x1ff0000" -- Idatadone, no error bit,
+	 * against an idle controller.  That is not a fault at all: it is
+	 * the aborted transfer's completion still sitting in the status
+	 * register and being consumed by the next command's wait.
+	 */
+	r[Rinterrupt] = r[Rinterrupt];
 	if(write || (r[Rstatus] & Sdatinhibit))
 		cmd(c, 12, 0, Cmdresp48busy|Cmdcrcchk|Cmdixchk, nil);
-	r[Rinterrupt] = r[Rinterrupt];
-	r[Rcontrol1] |= C1srstdata;
+	r[Rcontrol1] |= C1srstcmd | C1srstdata;
 	for(i = 0; i < 100000; i++)
-		if((r[Rcontrol1] & C1srstdata) == 0)
+		if((r[Rcontrol1] & (C1srstcmd|C1srstdata)) == 0)
 			break;
-	if(r[Rcontrol1] & C1srstdata)
-		print("emmc: data line will not reset (control1 %#lux)\n",
+	if(r[Rcontrol1] & (C1srstcmd|C1srstdata))
+		print("emmc: cmd/data lines will not reset (control1 %#lux)\n",
 			(ulong)r[Rcontrol1]);
+	r[Rinterrupt] = r[Rinterrupt];
+
+	/*
+	 * And wait for the card to finish what it was doing.
+	 *
+	 * Stopping the transfer and resetting the host does not make the
+	 * card ready: it has taken some of a multi-block write and has to
+	 * program what it has before it will accept another command.
+	 * Reissuing immediately gets a command that never completes, and
+	 * the console said exactly that -- the retry failing with
+	 * "interrupt 0x2 status 0x1ff0000", which is awaitirq's TIMEOUT
+	 * path returning whatever was in the interrupt register, against
+	 * a controller that is idle and a card that is not listening yet.
+	 *
+	 * CMD13 is SEND_STATUS and bit 8 of its response is
+	 * READY_FOR_DATA.  Poll it rather than guessing at a delay: how
+	 * long a card takes to program is a property of the card.
+	 */
+	for(i = 0; i < 1000; i++){
+		if(cmd(c, 13, (u32)c->rca<<16, Cmdresp48|Cmdcrcchk|Cmdixchk, nil) < 0)
+			break;
+		if(r[Rresp0] & (1<<8))		/* READY_FOR_DATA */
+			break;
+		microdelay(1000);
+	}
+	if(i >= 1000)
+		print("emmc: card did not become ready after an abort\n");
+	r[Rinterrupt] = r[Rinterrupt];
 }
 
 static long
