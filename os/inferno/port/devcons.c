@@ -173,7 +173,30 @@ int
 consdebugchar(int ch)
 {
 	extern void consinterrupt(void);
+	extern void archreboot(void);
 
+	if(ch == 0x12){		/* ^R: reboot, from here, now */
+		/*
+		 * The last resort, and it exists because the other two are
+		 * not enough.  ^C kills what the console is running but
+		 * spares the shell, so a shell that is itself stuck -- in
+		 * a mount whose server has panicked, which is what a dosfs
+		 * panic leaves behind -- keeps echoing and never runs
+		 * another command.  "echo reboot >/dev/sysctl" needs that
+		 * same shell.  So the machine could only be recovered by
+		 * pulling its power, and on this board that has twice
+		 * meant pulling the card as well.
+		 *
+		 * This is not a clean shutdown and does not pretend to be:
+		 * nothing is flushed, no server is told.  It is the reset
+		 * the watchdog drives, taken directly from the console's
+		 * receive path, which is the one piece of this machine
+		 * still running when everything above it has stopped.
+		 */
+		iprint("\n^R: reboot\n");
+		archreboot();
+		return 1;
+	}
 	if(ch == 0x03){		/* ^C: kill what the console is running */
 		consinterrupt();
 		return 1;

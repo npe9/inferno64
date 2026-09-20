@@ -152,6 +152,13 @@ root
 	/dis/ps.dis
 	/dis/pwd.dis
 	/dis/read.dis
+	/dis/rm.dis
+	/dis/mkdir.dis
+	/dis/sleep.dis
+	/dis/cp.dis
+	/dis/cmp.dis
+	/dis/dd.dis
+	/dis/fatstress.dis
 	/dis/sh.dis
 	/dis/sh/std.dis
 	/dis/usb/usbd.dis

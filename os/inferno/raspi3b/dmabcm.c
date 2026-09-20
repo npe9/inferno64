@@ -73,6 +73,7 @@ enum {
 	Sinc		= 1<<8,
 	Swidth128	= 1<<9,
 	Sdreq		= 1<<10,
+	Permapshift	= 16,		/* which peripheral paces the transfer */
 
 	Enablereg	= 0xff0/4,	/* global per-channel enable bits */
 
@@ -170,6 +171,139 @@ dmacopy(int c, Cb *cb, void *dst, void *src, ulong len)
 }
 
 /*
+ * The channel dmainit() claimed and proved, or -1.  Drivers take it
+ * from here rather than picking their own: the firmware owns some of
+ * the sixteen, and two drivers choosing independently would eventually
+ * choose the same one.
+ */
+int dmachannel = -1;
+
+/*
+ * Move len bytes between memory and a peripheral's data register,
+ * paced by that peripheral's DREQ line.
+ *
+ * This is the other half of what this engine is for, and the half the
+ * SD controller needs.  dmacopy() above is memory to memory and runs
+ * flat out; a peripheral has a FIFO, and the engine has to be told to
+ * wait for it.  That is the DREQ: the peripheral raises it when its
+ * FIFO can take (or supply) more, the engine transfers only while it
+ * is raised, and PERMAP in the transfer-info word says which of the
+ * SoC's peripherals is doing the raising.
+ *
+ * Two asymmetries matter and both are in the transfer-info word.  The
+ * peripheral side does not increment -- every word goes to or comes
+ * from the same register -- so only the memory side gets Sinc or Dinc.
+ * And the DREQ flag goes on the peripheral's side: Ddreq when writing
+ * to it, Sdreq when reading from it.  Getting either the wrong way
+ * round gives a transfer that completes and moved the wrong bytes.
+ *
+ * pbus is the peripheral register's address as a bus master sees it
+ * (0x7e......), not the ARM's 0x3f...... mapping.
+ */
+int
+dmaperiph(int c, Cb *cb, void *mem, u32 pbus, ulong len, int dreq, int tomem)
+{
+	u32 *r = dmachan(c);
+	u32 *g = (u32*)DMA0;
+	int i;
+
+	if(((uintptr)cb & 31) != 0)
+		return -1;
+
+	cb->ti = Waitresp | (u32)dreq<<Permapshift;
+	if(tomem){
+		cb->ti |= Sdreq | Dinc;
+		cb->source = pbus;
+		cb->dest = busaddr(mem);
+	}else{
+		cb->ti |= Ddreq | Sinc;
+		cb->source = busaddr(mem);
+		cb->dest = pbus;
+	}
+	cb->len = len;
+	cb->stride = 0;
+	cb->next = 0;
+
+	/*
+	 * The engine reads the control block and one side of the data
+	 * through the uncached alias, so both have to be in memory
+	 * before it starts.  On a read the destination is cleaned as
+	 * well as invalidated, so no dirty line can be written back
+	 * over what the engine puts there.
+	 */
+	cacheflush(cb, sizeof *cb);
+	if(tomem)
+		cacheflushinv(mem, len);
+	else
+		cacheflush(mem, len);
+
+	g[Enablereg] |= 1 << c;
+	r[Cs] = Reset;
+	for(i = 0; i < Timeout; i++)
+		if((r[Cs] & Reset) == 0)
+			break;
+	if(i == Timeout){
+		print("dma: channel %d will not come out of reset (cs %#lux)\n",
+			c, (ulong)r[Cs]);
+		return -1;
+	}
+
+	r[Cs] = Endflag | Interrupt | Error;	/* clear stale status, w1c */
+	r[Conblkad] = busaddr(cb);
+	r[Cs] = Active;
+
+	for(i = 0; i < Timeout; i++){
+		if(r[Cs] & Error)
+			break;
+		if((r[Cs] & Active) == 0)
+			break;
+	}
+	/*
+	 * Say which of the ways it can fail actually happened, and what
+	 * the engine had in hand when it did.  One -1 covering a reset
+	 * that would not take, an error flag and a transfer that never
+	 * finished is three different bugs wearing the same face, and
+	 * the difference is the whole diagnosis: still Active with the
+	 * length unmoved means the peripheral never raised its DREQ,
+	 * while Error means the engine tried and the bus refused.
+	 */
+	if(i == Timeout || (r[Cs] & Error)){
+		print("dma: channel %d %s: cs %#lux debug %#lux "
+			"ti %#lux src %#lux dst %#lux len %lud left %lud\n",
+			c, (r[Cs] & Error)? "error": "never finished",
+			(ulong)r[Cs], (ulong)r[Debug], (ulong)r[Ti],
+			(ulong)r[Sourcead], (ulong)r[Destad],
+			len, (ulong)r[Txfrlen]);
+		return -1;
+	}
+
+	if(tomem)
+		cacheinval(mem, len);
+	return 0;
+}
+
+/*
+ * What a driver calls: the channel and the control block are ours, the
+ * caller supplies only its buffer and which peripheral paces it.
+ *
+ * One static control block, so one transfer at a time.  Every caller so
+ * far holds its own qlock across the transfer, which is what makes that
+ * safe; a second user would have to either take the same lock or bring
+ * its own block to dmaperiph() above.
+ */
+int
+dmaxfer(void *mem, u32 pbus, ulong len, int dreq, int tomem)
+{
+	static uchar raw[sizeof(Cb) + 32];
+	Cb *cb;
+
+	if(dmachannel < 0)
+		return -1;
+	cb = (Cb*)(((uintptr)raw + 31) & ~(uintptr)31);
+	return dmaperiph(dmachannel, cb, mem, pbus, len, dreq, tomem);
+}
+
+/*
  * Choose a channel the firmware says is ours.
  *
  * This used to be channel 0, on the reasoning that it always exists.
@@ -254,6 +388,7 @@ dmainit(void)
 		}
 	print("dma: channel %d at %#p copied %d bytes by control block "
 		"(firmware offers %#ux)\n", c, dmachan(c), (int)sizeof src, mask);
+	dmachannel = c;
 	print("DMA-OK control block fetched on a channel the firmware gave us, "
 		"transfer completed and verified\n");
 }

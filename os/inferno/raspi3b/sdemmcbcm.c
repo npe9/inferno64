@@ -27,6 +27,7 @@
 #include "../port/sd.h"
 
 extern void gpiofsel(int, int);		/* gpiobcm.c */
+extern int dmaxfer(void*, u32, ulong, int, int);	/* dmabcm.c */
 extern int mboxgetclock(int, u32*);	/* mailbox.c */
 extern int mboxsetpower(int, int);
 
@@ -72,7 +73,6 @@ enum {
 	/* Rinterrupt and its masks */
 	Icmddone	= 1<<0,
 	Idatadone	= 1<<1,
-	Idmairq		= 1<<3,		/* SDMA reached a buffer boundary */
 	Iwriterdy	= 1<<4,
 	Ireadrdy	= 1<<5,
 	Ierr		= 1<<15,
@@ -80,7 +80,6 @@ enum {
 	Iall		= 0x017f7137,
 
 	/* Rcmdtm flags */
-	Tdma		= 1<<0,		/* transfer mode: use SDMA */
 	Trdata		= 1<<4,		/* transfer is card to host */
 	Tmulti		= 1<<5,		/* more than one block */
 	Tautocmd12	= 1<<2,		/* the controller sends the stop itself */
@@ -94,16 +93,21 @@ enum {
 
 	Maxblocks	= 64,		/* blocks in one multi-block command */
 	/*
-	 * SDMA's buffer boundary, as Rblksizecnt bits 14:12: the value is
-	 * log2(size)-12, so 7 is 512KB.  The controller stops at each
-	 * boundary and raises Idmairq, and the driver answers by writing
-	 * the next address.  Maxblocks*Secsize is 32KB, so with 512KB the
-	 * boundary is never reached inside one command and the interrupt
-	 * never fires -- which is the arrangement here, chosen so the DMA
-	 * path has one completion to wait for and not two kinds.
+	 * This controller cannot do SDHCI's own SDMA.  Its capabilities
+	 * register reads 0x0 0x0 on the board -- not a bit set anywhere,
+	 * which is the Arasan on this SoC declining to describe itself --
+	 * and a transfer set up the SDMA way starts and never completes:
+	 *
+	 *	emmc: read block 61798 failed: interrupt 0x0 status 0x1ff0206
+	 *
+	 * So the data moves the other way this SoC provides: the general
+	 * DMA engine, paced by the EMMC's own DREQ line, reading or
+	 * writing the data register while the controller raises it.  That
+	 * is what dmabcm.c is for and what its header says the SD
+	 * controller uses on a real Pi.
 	 */
-	Dmaboundary	= 7<<12,
-	Busalias	= 0xC0000000,	/* bus-master view of ARM RAM */
+	Emmcdreq	= 11,		/* the DREQ this peripheral raises */
+	Emmcdatabus	= 0x7e300020,	/* Rdata, as a bus master sees it */
 	Waitms		= 3000,		/* how long a card may take over one transfer */
 	Sleepms		= 20,		/* one sleep waiting for the interrupt */
 	Emmcirq		= 62,		/* GPU IRQ: this controller */
@@ -722,34 +726,30 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		if(nthis > 1)
 			flags |= Tmulti|Tautocmd12;
 		dma = emmcdma;
-		if(dma){
-			/*
-			 * The controller is a bus master: it sees RAM
-			 * through the 0xC0000000 uncached alias and not
-			 * through the CPU's caches, exactly as the DMA
-			 * engine and the VideoCore do.  So the address it
-			 * gets is the bus one, and the caches have to be
-			 * put in order first -- clean before a write, so
-			 * what it reads is what we wrote; clean and
-			 * invalidate before a read, so no dirty line is
-			 * left to be written back over what it puts there
-			 * and nothing stale is read afterwards.
-			 */
-			if(write)
-				cacheflush(p, nthis*Secsize);
-			else
-				cacheflushinv(p, nthis*Secsize);
-			r[Rblksizecnt] = (u32)nthis<<16 | Dmaboundary | Secsize;
-			r[Rarg2] = (u32)((uintptr)p | Busalias);
-			flags |= Tdma;
-		}
 		/* READ/WRITE_SINGLE_BLOCK, or the MULTIPLE_BLOCK pair */
 		if(cmd(c, write? (nthis > 1? 25: 24): (nthis > 1? 18: 17),
 		    arg, flags, &sts) < 0){
 			bioerror(c, write, bno+i, sts);
 			break;
 		}
-		if(!dma){
+		if(dma){
+			/*
+			 * The engine moves the whole run while the
+			 * controller's DREQ paces it, so there is no
+			 * per-block ready to wait for -- only the transfer
+			 * done at the end.  dmabcm.c does the cache work,
+			 * because it is the one that knows which side the
+			 * engine reads and which it writes.
+			 */
+			if(dmaxfer(p, Emmcdatabus, nthis*Secsize,
+			    Emmcdreq, !write) < 0){
+				print("emmc: dma %s of %ld blocks at %llud failed\n",
+					write? "write": "read", nthis, bno+i);
+				bioerror(c, write, bno+i, r[Rinterrupt]);
+				goto out;
+			}
+			p += nthis*Secsize;
+		}else{
 			for(k = 0; k < nthis; k++){
 				if(awaitirq(r, write? Iwriterdy: Ireadrdy, &sts) < 0){
 					bioerror(c, write, bno+i+k, sts);
@@ -776,19 +776,6 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		if(awaitirq(r, Idatadone, &sts) < 0){
 			bioerror(c, write, bno+i, sts);
 			break;
-		}
-		if(dma){
-			/*
-			 * The engine wrote through the uncached alias while
-			 * the CPU may have speculated the old contents into
-			 * a line, so drop them before anyone reads.  The
-			 * buffer pointer is advanced here because the
-			 * per-word loop above, which normally does it, did
-			 * not run.
-			 */
-			if(!write)
-				cacheinval(p, nthis*Secsize);
-			p += nthis*Secsize;
 		}
 		i += nthis;
 	}
