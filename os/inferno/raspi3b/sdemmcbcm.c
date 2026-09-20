@@ -753,14 +753,27 @@ bioerror(Ctlr *c, int write, uvlong bno, u32 sts)
 		print("emmc: %s block %llud failed: interrupt %#lux status %#lux\n",
 			write? "write": "read", bno, (ulong)sts, (ulong)r[Rstatus]);
 	/*
-	 * Leave the controller usable.  A transfer that ends this way ends
-	 * with the data line still claimed - the status after the failed
-	 * FAT write read back with the transfer active and the line
-	 * inhibited - and every later command would then wait for a line
-	 * that is never released.  Reset the data circuit and clear what
-	 * is pending, so the failure costs one request rather than the
-	 * card.
+	 * Stop the card first, then the controller.
+	 *
+	 * A multi-block write that ends this way leaves the CARD still in
+	 * the transaction: it was told to take nine blocks by CMD25, it
+	 * has had some of them, and it is waiting for the rest.  The
+	 * controller can be reset all day and the card will not care.
+	 * The next command then times out against a card that is not
+	 * listening -- which is exactly what the console showed, the
+	 * retry after a failed DMA write coming back with interrupt
+	 * 0x18000, Ierr|Ictoerr, a command timeout.
+	 *
+	 * CMD12 is STOP_TRANSMISSION and it is what ends an open
+	 * multi-block transfer.  The controller sends it itself on a
+	 * transfer that completes (Tautocmd12 above); on one that does
+	 * not complete, nobody does, and it has to be sent by hand before
+	 * anything else will work.  It is allowed to fail -- if the card
+	 * was never in a transaction there is nothing to stop -- so its
+	 * result is deliberately not checked.
 	 */
+	if(write || (r[Rstatus] & Sdatinhibit))
+		cmd(c, 12, 0, Cmdresp48busy|Cmdcrcchk|Cmdixchk, nil);
 	r[Rinterrupt] = r[Rinterrupt];
 	r[Rcontrol1] |= C1srstdata;
 	for(i = 0; i < 100000; i++)
