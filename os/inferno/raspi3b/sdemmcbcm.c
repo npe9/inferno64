@@ -242,7 +242,36 @@ static struct {
 	ulong	emmcstatus;
 } dmapre;
 
-static int emmcdmaclearirq = 0;
+/*
+ * Acknowledge the controller's interrupt status before arming a DMA
+ * transfer.  ON, and this is the fix for the stall.
+ *
+ * The failure: a DMA write of nine blocks moved exactly three and
+ * stopped, every time, with the engine still ACTIVE waiting for a DREQ
+ * and the controller's Iwriterdy set -- it had room and was not asking.
+ * Deterministic, and only through the filesystem; sixteen variations
+ * of transfer size, repetition, sustained traffic, mixed direction,
+ * interrupt sleeping and 500 back-to-back in-kernel transfers were all
+ * clean.
+ *
+ * What the pre-transfer capture showed, which is the half nobody had
+ * looked at: "BEFORE: emmc interrupt 0x10".  Iwriterdy was ALREADY set
+ * when the transfer was armed.  cmd() clears the interrupt register,
+ * the command runs, and the controller then raises Iwriterdy because
+ * it really is ready -- so by the time the engine is started the bit
+ * is standing, and the DREQ machinery is waiting for a transition that
+ * has already happened.  Writing the status back (it is
+ * write-one-to-clear) makes the controller assert it afresh, and the
+ * edge arrives.
+ *
+ * Measured both ways in one session, which is the only reason to
+ * believe it: with this on, 1.25MB through dossrv with DMA is clean;
+ * with it off, the very next attempt fails at the third block with the
+ * same registers to the bit.  "echo dmaclearirq 0 >/dev/sdM0/ctl" puts
+ * the failure back, because a fix that cannot be turned off cannot be
+ * shown to be the fix.
+ */
+static int emmcdmaclearirq = 1;
 static int emmcdmareset = 0;
 static int emmcdmadatareset = 0;
 static int emmcdmadelay = 0;
