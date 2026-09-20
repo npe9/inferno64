@@ -24,3 +24,33 @@ enable_uart=1
 # Pin the core clock so the UART baud is stable (and don't let the firmware
 # downclock when idle, which would move the baud divisor under us).
 core_freq=250
+
+# JTAG on the header, GPIO 22-27 in ALT4.
+#
+# Two days of bring-up went like this: build a kernel, write 1.9MB to
+# the card through a filesystem server that is itself one of the things
+# under test, read it all back to verify, reboot, and hope.  Three
+# minutes when it worked; twice it silently installed the wrong bytes,
+# and twice more the card came out and went into a reader.  A debugger
+# that loads straight into RAM at 0x80000 never touches the card at
+# all, so that whole class of failure stops existing.
+#
+# It is also the instrument this port keeps wanting and not having.
+# The SD DMA stall was diagnosed by adding a print, rebuilding,
+# installing and rebooting once per question; with a halt-and-inspect
+# debugger the controller's registers at the moment of the stall are a
+# read, not a release cycle.
+#
+# The pins, which are the 40-pin header's own:
+#
+#	GPIO22  TRST  pin 15
+#	GPIO23  RTCK  pin 16
+#	GPIO24  TDO   pin 18
+#	GPIO25  TCK   pin 22
+#	GPIO26  TDI   pin 37
+#	GPIO27  TMS   pin 13
+#
+# This costs nothing when no adapter is attached: the firmware sets the
+# alt function and the pins sit idle.  It does take GPIO 22-27 away
+# from anything else that wants them, and nothing on this board does.
+enable_jtag_gpio=1

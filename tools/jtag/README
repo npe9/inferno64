@@ -1,0 +1,65 @@
+JTAG on the Raspberry Pi 3B
+===========================
+
+	config.txt		enable_jtag_gpio=1   (already set)
+	tools/jtag/raspi3b.cfg	OpenOCD for the BCM2837
+
+WHY.  Two days of bring-up went: build a kernel, write 1.9MB to the
+card through a filesystem server that is itself one of the things under
+test, read it all back to verify, reboot, hope.  Three to six minutes
+when it worked.  Twice it silently installed the wrong bytes -- once a
+kernel truncated to 8192, once one whose first 256KB were the previous
+kernel's -- and each of those cost an hour and a card carried to
+another machine.  Loading over JTAG never touches the card, so that
+whole class of failure stops existing.
+
+And it is the instrument this port keeps needing.  The SD DMA write
+stall was found by adding a print, rebuilding, installing and
+rebooting, once per question, for a day.  The thing that actually
+cracked it was capturing the controller's registers at the moment of
+the stall -- which with a debugger is a read, not a release cycle.
+
+WIRING.  The pins are the 40-pin header's own, and the firmware puts
+them in ALT4 when enable_jtag_gpio=1 is set:
+
+	signal	GPIO	header pin
+	TRST	22	15
+	TMS	27	13
+	TCK	25	22
+	TDI	26	37
+	TDO	24	18
+	RTCK	23	16
+	GND	-	6, 9, 14, 20, 25, 30, 34, 39
+
+Ground to any of the ground pins, and use a short lead: this is a
+2.5MHz-ish signal on jumper wire, and a long ground return is the usual
+reason a chain that should enumerate does not.
+
+RUNNING IT.  The adapter is deliberately not named in the config,
+because that is the part that depends on what is on the desk:
+
+	openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg \
+		-c 'adapter speed 1000' \
+		-f tools/jtag/raspi3b.cfg
+
+Start at 1MHz.  The A53s come out of reset slow and a fast adapter will
+not see them; raise it once something answers.
+
+	telnet localhost 4444
+	> halt
+	> load_inferno
+	> resume
+
+load_inferno is in the config: halt, load kernel8.img at 0x80000, set
+the pc.  0x80000 is where the kernel is linked (-T$KTZERO in the board
+mkfile) and where the firmware would have put it.
+
+WHAT IT WILL NOT DO.  It does not reset the machine, on purpose: a
+reset hands control back to the VideoCore firmware, which loads
+whatever is on the card and undoes the point.  And it does not replace
+the serial console -- the kernel's own prints still go out the PL011,
+and that is still the fastest way to see what it thinks it is doing.
+
+Only core 0 is examined at startup.  The kernel parks cores 1-3 at WFE
+in l.s before anything else runs, because the SoC starts all four at
+0x80000; a parked core has a debug interface but nothing to say.
