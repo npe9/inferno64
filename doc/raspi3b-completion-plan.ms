@@ -5608,6 +5608,19 @@ is not better than
 .I kfs
 and should not replace it.
 .PP
+.B "Before any of it, the board has to stay up."
+It wedged five times over two days, twice costing a card swap, and the
+cause was not any of the four things it was believed to be \(em not the
+network (it pings during the stall), not the styx server (it answers the
+host), not the out-of-order RST (tcp.c closes on it), and not emu's
+missing release barrier (this board's unlock does have one).  Caught
+with ^\\ at the moment of the stall it is the Dis interpreter's
+hand-off: thirteen processes Queueing for the VM, three Ready, and
+nobody running them.  doc/raspi3b-stability-plan.ms has what was
+measured, what it rules out, and the order to fix it in.  Nothing else
+on this list can be worked on honestly from a machine that needs
+rescuing by hand every half hour.
+.PP
 .B "Alongside it, FAT32 in disk/format -- DONE 19 September 2026."
 It was wanted for the obvious safe experiment: a scratch FAT32 on the
 card's unallocated 29GB, at the card's own geometry, where
