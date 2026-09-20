@@ -4471,6 +4471,139 @@ directory that is one cluster, a cluster that spans several tracks, and
 a track that spans several clusters are three different arithmetics and
 only one of them is exercised by the existing cases.
 .NH 2
+The kernel that came back stale, 20 September 2026 -- the bug, measured
+.PP
+.B "It is not fixed, and the reason four checks said it was is the finding."
+The section above ends by recording that the rename failure did not
+reproduce in 60 host runs or in a full stress run on the board, and
+that the likely reading was that it no longer existed.  That was wrong.
+.PP
+The card came out of the board with a
+.CW kernel8.img
+of exactly the right length \(em 1918040 bytes, to the byte \(em and
+213075 wrong ones.  Compared against the build it came from, and
+against the kernel it replaced:
+.P1
+stale region: bytes 40..262143 = 262144 bytes = 256KB
+              = 512 sectors = 64 of this card's 4KB clusters
+bytes after 262143 that are wrong: 0
+of the 213075 differing bytes, 213075 match kernel8.bak
+.P2
+So the first 256KB of the file was never written, what stands in its
+place is the previous kernel's content, and everything past that point
+is correct.  The board booted 8KB of a kernel and wedged.
+.PP
+.B "Every instrument aimed at this ran through the thing under test."
+.CW kupdate
+printed
+.CW "KUPDATE-VERIFY 1918040 bytes read back identical"
+about that file.  It reads the file back through the
+.I dossrv
+that has just written it, so the sector cache answers with the bytes it
+is still holding and the sum agrees with itself.
+.CW fsck_msdos
+passed on the same card, because the chains, the directories and the
+free count were all correct \(em it is an outside opinion about the
+.I structure ,
+and nothing was checking the contents.
+.CW fatstress
+reads back the same way
+.I dossrv
+wrote.  And the copy I made by hand, and the
+.CW cmp
+that pronounced it identical, both went over a styx mount that had hung
+up: the same dead channel reported the write and then confirmed it.
+.PP
+That is the lesson worth keeping, and it is the one in
+.CW blind-instrument-rule :
+a check that reaches its answer through the path it is checking cannot
+fail.  Four of them agreed, and all four were the same check.
+.NH 2
+The check that does not, and what it has ruled out
+.PP
+.CW tests/dossrv-outside.sh .
+.I Dossrv
+writes the file under
+.I emu ,
+.I emu
+exits, and macOS mounts the image and compares the bytes.  Two
+filesystem implementations with no cache in common, and the one doing
+the checking has never heard of the one being checked.  It performs
+.CW kupdate 's
+sequence rather than a plain write \(em write
+.CW kernel8.new ,
+rename
+.CW kernel8.img
+to
+.CW kernel8.bak ,
+rename
+.CW kernel8.new
+into place \(em over several rounds, so the clusters of the previous
+file are freed and handed straight back out as they are on the board,
+and it checks
+.CW kernel8.bak
+as well.  Where the bytes differ it prints the differing runs, because
+a stale prefix and a scatter are different faults.
+.PP
+.B "It does not reproduce it, and that is information."
+Three arrangements have now passed, each adding what the one before it
+lacked:
+.IP \(bu
+One write and one rename into an empty filesystem: clean.
+.IP \(bu
+Four rounds of the full
+.CW kupdate
+sequence, so every round writes over clusters the previous round
+freed: clean.
+.IP \(bu
+The same, with
+.CW "fatstress -n 12 -f 8"
+running against the same
+.I dossrv
+at the same time \(em which is the board's own arrangement, where
+.CW kupdate
+is spawned on purpose so the fetch and the FAT checks proceed together
+and share one server and one cache: clean.
+.PP
+So it is not the sequence, not cluster recycling, and not a second
+client competing for the cache.  What is left that the host does not
+have is the medium: on the board these writes go through
+.CW devsd
+and
+.CW sdemmcbcm
+to a real card, and under
+.I emu
+they go to a file.  Which is where the plan said to look for a
+different reason, and is now where it should be looked at.
+.PP
+.B "What to do on the board, in order."
+.IP 1.
+Make
+.CW kupdate 's
+verify mean something.  Reading the file back through the server that
+wrote it will always agree; reading it through a
+.I dossrv
+that has just been started will not, because its cache is empty.  The
+cheapest honest verify is to take the mount down and put it back up
+before reading.  Until that is done the board cannot tell a good
+install from this one.
+.IP 2.
+Find where the early writes went.  The bytes are not merely missing:
+the file's first 64 clusters hold the
+.I previous
+file's content, which means either those clusters were never written,
+or what was written for them landed somewhere else.  Reading the raw
+partition and following the chain by hand says which, and the board can
+do it now that
+.CW dd
+is in its root.
+.IP 3.
+Ask whether 256KB is a number in this system.  It is 512 sectors, 64
+clusters, and 8 of the SD driver's 64-block transfers; it is not 20
+tracks of 9 sectors, which is what
+.I dossrv
+caches.  A boundary that exact belongs to something.
+.NH 2
 What the card's boot partition actually is, 19 September 2026
 .PP
 The section above rests on a premise, and the premise is wrong.  It says
@@ -4493,6 +4626,19 @@ sectors/FAT32 8066   total sectors 1048572   sectors/track 63
 clusters 1032408
 oem "mkfs.fat"   label "bootfs"   hidden sectors 16384   sig 55 aa
 .P2
+.B "Corrected again, 20 September: the card was rebuilt and is now 4KB
+clusters."
+The partition was reformatted from the reader \(em same start, same
+size, hid=16384 and bsec=1048576 unchanged \(em and
+.CW newfs_msdos
+chose 8 sectors to a cluster.  That is kept: it is one eighth the FAT,
+1022 sectors instead of 8066, so far fewer FAT sector rewrites per
+file, which is the argument
+.CW doc/efs-plan.ms
+makes about flash.  The board reads the BPB at runtime and adapts.  The
+paragraph below describes what the card was before that, and the 256KB
+stale region in the section above is 64 of the new 4KB clusters.
+.PP
 .B "One sector to a cluster."
 512-byte clusters, a million of them, and the partition really is the
 one the firmware boots from \(em hidden sectors 16384 is its start, the
