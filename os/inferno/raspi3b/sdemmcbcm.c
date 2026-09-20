@@ -743,10 +743,29 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			 */
 			if(dmaxfer(p, Emmcdatabus, nthis*Secsize,
 			    Emmcdreq, !write) < 0){
-				print("emmc: dma %s of %ld blocks at %llud failed\n",
+				/*
+				 * Fall back rather than fail.  A DMA path
+				 * being wrong is a reason to stop using
+				 * it, not a reason to lose the transfer:
+				 * the caller here is a file server, and
+				 * an error returned to it panics it and
+				 * takes the machine's shell with it --
+				 * which is how every failed experiment
+				 * with this switch has ended so far, in a
+				 * wedged board and a card in a reader.
+				 *
+				 * bioerror() resets the data circuit,
+				 * which is exactly what makes the retry
+				 * legal: the command is reissued from the
+				 * top of the loop with dma off.
+				 */
+				print("emmc: dma %s of %ld blocks at %llud "
+					"failed; falling back to pio and "
+					"turning dma off\n",
 					write? "write": "read", nthis, bno+i);
 				bioerror(c, write, bno+i, r[Rinterrupt]);
-				goto out;
+				emmcdma = 0;
+				continue;	/* same i: do it again, in pio */
 			}
 			p += nthis*Secsize;
 		}else{
