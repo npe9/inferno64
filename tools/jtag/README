@@ -101,6 +101,124 @@ testing it means writing that register on a live machine.
 	> emmcregs
 	> resume
 
+INSPECTION, AND RESTART.  halt, read, resume against a running kernel
+is solid and is what this was wanted for:
+
+	> halt
+	> emmcregs
+	> resume
+
+Loading a kernel needs more than replacing memory, and the way the
+first attempt failed is the reason:
+
+	kstack524904 esr fffb7fb9 pc 00080000 lr 00080264
+
+A kernel entry assumes the machine the firmware hands over.  A halted
+running kernel has the MMU on, its page tables live, VBAR pointing at
+its own vectors and the TLBs full, so 0x80000 faults on the first
+instruction.  jtagrestart therefore enters through a trampoline that
+converts one into the other:
+
+	> jtagrestart
+	> resume
+
+THE JTAG BOOT ABI.  What l.s's jtagstub guarantees, and all that the
+kernel's entry code may assume when entered this way:
+
+	EL		EL1
+	MMU		off (SCTLR_EL1.M clear)
+	D-cache		off (SCTLR_EL1.C clear)
+	I-cache		off (SCTLR_EL1.I clear)
+	DAIF		masked (D, A, I, F)
+	TLBs		invalidated (VMALLE1)
+	TTBR0_EL1	0
+	TTBR1_EL1	0
+	VBAR_EL1	0
+	secondaries	halted by the debugger, not running
+	x0		0x4a544147 ("JTAG") -- entered warm
+	pc		0x80000
+
+x0 is the part worth keeping.  A cold firmware boot and a warm JTAG
+restart differ in what the SoC peripherals are doing: DMA channels may
+be active, the eMMC may be mid-transaction, USB, the timers and the
+interrupt controller are all as the previous kernel left them, and
+none of that is reset by a trampoline that only normalises the CPU.
+A kernel that knows which way it was entered can quiesce them; one
+that does not will find them warm and be surprised.
+
+WHERE THE TRAMPOLINE LIVES.  0x70000, below the 0x80000 load address,
+so an image cannot overwrite the code about to enter it.  The kernel
+copies it there at boot and says so:
+
+	JTAG-STUB <n> bytes at 0x70000
+
+It is copied after mmuinit and cleaned to the point of coherency,
+because the CPU fetches it with the caches off.
+
+ALL FOUR CORES ARE HALTED.  Cores 1-3 are parked at WFE inside the
+kernel's own text, and that text is about to be overwritten; a halted
+core executes nothing, which is what makes the overwrite safe.  Only
+cpu0 is resumed.
+
+WHAT IS STILL NOT SOLVED.  The trampoline normalises the CPU and
+nothing else.  Peripheral state survives it, and on this board that is
+not academic -- the SD controller can be left mid-transaction by
+exactly the DMA failure this JTAG setup was built to investigate.  The
+kernel does not yet act on x0.
+
+WHAT AN UNWIRED ADAPTER LOOKS LIKE.  This, and it is worth knowing so
+it is not mistaken for a broken config:
+
+	Error: JTAG scan chain interrogation failed: all ones
+	Error: bcm2837.cpu: IR capture error; saw 0x0f not 0x01
+	Error: Invalid ACK (7) in DAP response
+
+"All ones" is an idle TDO line with nothing driving it.  A chain that
+is wired but wrong usually reads all zeros or a plausible-looking but
+unexpected id; all ones means the adapter is talking to nobody.  The
+first thing to check is that the card in the board has
+enable_jtag_gpio=1 in its config.txt -- without it the firmware never
+puts GPIO 22-27 into ALT4 and those pins are ordinary inputs.
+
+WHAT IT LOOKS LIKE WORKING.  First session, 20 September 2026:
+
+	Info : JTAG tap: bcm2837.cpu tap/device found: 0x4ba00477
+	       (mfg: 0x23b (ARM Ltd), part: 0xba00, ver: 0x4)
+	Info : bcm2837.cpu0: hardware has 6 breakpoints, 4 watchpoints
+	...cpu1, cpu2, cpu3 the same
+
+and then, against a kernel that was running at the time:
+
+	> halt
+	bcm2837.cpu0 halted in AArch64 state, current mode: EL1H
+	cpsr: 0x60000345  pc: 0xa770c
+	MMU: enabled, D-Cache: enabled, I-Cache: enabled
+	> emmcregs
+	status     0x01ff0000     interrupt   0x00000000
+	irpt_mask  0x017f7137     irpt_en     0x00000000
+	control0   0x00000100     control1    0x000e0407
+	blksizecnt 0x00000200
+	> resume
+
+Those seven registers are the ones the SD DMA stall was diagnosed from.
+Getting them before this meant editing the driver to print them,
+rebuilding, writing 1.9MB to the card, rebooting, and provoking the
+failure again -- once per question, several minutes each, and twice the
+install silently wrote the wrong bytes.  Here it is one line against a
+machine that is already running, and "resume" puts it back.
+
+Worth noticing in that very first dump: irpt_en is 0.  The driver arms
+it only when it is about to sleep.  If this controller gates its DMA
+request on the interrupt ENABLE rather than the status, that would
+explain a stall with Iwriterdy set in the status and no request being
+raised -- a hypothesis that had no way of being tested before, because
+testing it means writing that register on a live machine.
+
+	telnet localhost 4444
+	> halt
+	> emmcregs
+	> resume
+
 INSPECTION WORKS; LOADING DOES NOT, YET.  halt, read, resume against a
 running kernel is solid and is what this was wanted for.
 

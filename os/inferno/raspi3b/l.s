@@ -9,6 +9,7 @@
  */
 #define	SYSARG5(op0,op1,Cn,Cm,op2)	((op0)<<19|(op1)<<16|(Cn)<<12|(Cm)<<8|(op2)<<5)
 #define	D_VBAR_EL1	SYSARG5(3,0,12,0,0)
+#define	D_TTBR1_EL1	SYSARG5(3,0,2,0,1)
 #define	D_ESR_EL1	SYSARG5(3,0,5,2,0)
 #define	D_FAR_EL1	SYSARG5(3,0,6,0,0)
 #define	D_CPACR_EL1	SYSARG5(3,0,1,0,2)
@@ -589,6 +590,116 @@ TEXT	mmuenable(SB), 1, $-4
 	ORR	R2, R1, R1
 	MSR	R1, SPR(D_SCTLR_EL1)
 	ISB	$15
+	RET	R30
+
+/*
+ * jtagstub: the JTAG restart trampoline.
+ *
+ * JTAG replaces memory; it does not recreate the architectural reset
+ * state.  Halting a running kernel, loading an image at KTZERO and
+ * setting the pc there jumps into entry code that assumes the machine
+ * the firmware hands over -- MMU off, caches off, nothing mapped --
+ * while SCTLR_EL1 still has M, C and I set, TTBR0_EL1 still points at
+ * the old tables, VBAR_EL1 at the old vectors, and the TLBs are full
+ * of the old address space.  It faults on the first instruction, and
+ * did: esr fffb7fb9, pc 00080000.
+ *
+ * So the pc goes here instead, and this undoes it.  The contract this
+ * establishes -- the one _main may then assume -- is written down in
+ * tools/jtag/README as the JTAG boot ABI: EL1, MMU off, D-cache off,
+ * I-cache off, DAIF masked, TTBR0/1 and VBAR cleared, TLBs invalid,
+ * secondary cores not running, pc at KTZERO.
+ *
+ * Two things make this simpler here than it would be elsewhere.  The
+ * kernel's map is flat -- mmu.c builds VA == PA for everything -- so
+ * this code executes at the same address before and after translation
+ * is turned off, and needs no identity-mapped window of its own.  And
+ * the secondary cores are parked at WFE by _main and never released,
+ * so there is no SMP shootdown to do; the JTAG side halts all four
+ * anyway, which is what makes it safe to overwrite the text they are
+ * parked in.
+ *
+ * It is copied to Jtagstub (below KTZERO, outside any image loaded at
+ * KTZERO) at boot, because a trampoline living inside the image it is
+ * meant to replace would be overwritten by the load.
+ */
+TEXT	jtagstub(SB), 1, $-4
+	/*
+	 * MSR DAIFSet, #0xf -- mask D, A, I and F.  As a WORD because
+	 * 7l refuses the PSTATE-field immediate form ("illegal PSTATE
+	 * field for immediate move"), the same reason the DC/IC ops
+	 * above are written as SYS.  Encoding checked by hand against
+	 * the MSR (immediate) layout: op1=3, CRm=0xf, op2=6.
+	 */
+	WORD	$0xd5034fdf
+	DSB	$15
+	ISB	$15
+
+	/*
+	 * Clean and invalidate the range a loaded image can occupy,
+	 * before the mappings that describe it are destroyed.
+	 *
+	 * By VA, not set/way.  cachebcm.c makes the same choice and says
+	 * why: the CLIDR/CCSIDR level walk is logic no emulator here can
+	 * exercise, and shipping it unvalidated would only discredit the
+	 * ops that ARE validated.  The range is what matters anyway --
+	 * the hazard is a dirty line from the OLD kernel being written
+	 * back over the NEW image after the caches are off, and the new
+	 * image lives in exactly this range.
+	 *
+	 * KTZERO for 8MB, at 64 bytes a line.  The A53's line is 64; a
+	 * smaller stride would be wasted work and a larger one would
+	 * skip lines.
+	 */
+	MOV	$0x80000, R1		/* KTZERO; mem.h casts it, 7a cannot */
+	MOV	$0x800000, R2		/* 8MB, more than any image here */
+	ADD	R1, R2, R2		/* end */
+jtagcl:
+	SYS	R1, $SYSARG5(0,3,7,14,1)	/* DC CIVAC */
+	ADD	$64, R1, R1
+	CMP	R2, R1
+	BLT	jtagcl
+	DSB	$15
+	ISB	$15
+
+	/*
+	 * Translation off.  From the next instruction this code is
+	 * running at its physical address, which is where it already
+	 * was: the map is flat.
+	 */
+	MRS	SPR(D_SCTLR_EL1), R1
+	MOV	$0x1005, R2		/* M(0) | C(2) | I(12) */
+	BIC	R2, R1, R1
+	MSR	R1, SPR(D_SCTLR_EL1)
+	ISB	$15
+
+	SYS	$SYSARG5(0,0,8,7,0)	/* TLBI VMALLE1 */
+	DSB	$15
+	ISB	$15
+	SYS	$SYSARG5(0,0,7,5,0)	/* IC IALLU */
+	DSB	$15
+	ISB	$15
+
+	/*
+	 * And the registers the entry code is entitled to find clear.
+	 */
+	MOV	$0, R0
+	MSR	R0, SPR(D_TTBR0_EL1)
+	MSR	R0, SPR(D_TTBR1_EL1)
+	MSR	R0, SPR(D_VBAR_EL1)
+	ISB	$15
+
+	/*
+	 * x0 says how the kernel was entered, so platforminit can tell a
+	 * warm JTAG restart from a cold firmware boot and quiesce the
+	 * peripherals -- DMA, eMMC, USB, the interrupt controller --
+	 * that a reset would have cleared and this did not.
+	 */
+	MOV	$0x4a544147, R0		/* "JTAG" */
+	MOV	$0x80000, R1		/* KTZERO */
+	B	(R1)
+
+TEXT	jtagstubend(SB), 1, $-4
 	RET	R30
 
 /*

@@ -28,6 +28,15 @@
 #define	KZERO		PHYSDRAM
 #define	KTZERO		((uintptr)0x80000)
 
+/*
+ * Where the JTAG restart trampoline lives: below KTZERO, so an image
+ * loaded at KTZERO cannot overwrite the code that is about to jump to
+ * it.  The firmware's own stub occupied this region and has no further
+ * use for it once the ARM is running.  l.s's jtagstub is copied here
+ * at boot; tools/jtag/README has the boot ABI it establishes.
+ */
+#define	Jtagstub	((uintptr)0x70000)
+
 #define	UART0		((uintptr)0x3f201000)	/* PL011 */
 #define	AUX0		((uintptr)0x3f215000)	/* BCM2835 AUX: mini UART (UART1) */
 #define	PM0		((uintptr)0x3f100000)	/* BCM2835 power manager / watchdog */

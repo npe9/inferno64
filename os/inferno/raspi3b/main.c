@@ -142,6 +142,36 @@ clear:
 		c[i] = 0;
 }
 
+/*
+ * Put the JTAG restart trampoline where a loaded image cannot reach it.
+ *
+ * l.s's jtagstub undoes what a running kernel has done to the machine
+ * -- MMU, caches, TTBRs, VBAR, TLBs -- so that a kernel loaded over
+ * JTAG can be entered at KTZERO with the state its entry code assumes.
+ * It cannot live in the image it is replacing, so it is copied below
+ * KTZERO, into the region the firmware's own stub used and has no
+ * further use for.
+ *
+ * Copied after mmuinit(), because it is cleaned to the point of
+ * coherency: the CPU will fetch it with the caches off, so it has to
+ * be in memory and not only in a dirty line.
+ */
+static void
+jtagstubinstall(void)
+{
+	extern void jtagstub(void), jtagstubend(void);
+	usize n;
+
+	n = (uchar*)jtagstubend - (uchar*)jtagstub;
+	if(n == 0 || n > 4096){
+		print("jtagstub: %lud bytes is not a sane stub; not installed\n", (ulong)n);
+		return;
+	}
+	memmove((void*)Jtagstub, (void*)jtagstub, n);
+	cacheflush((void*)Jtagstub, n);
+	print("JTAG-STUB %lud bytes at %#p\n", (ulong)n, (void*)Jtagstub);
+}
+
 void
 main(void)
 {
@@ -180,6 +210,7 @@ main(void)
 	 * Establish the identity map before the first kernel lock.
 	 */
 	mmuinit();
+	jtagstubinstall();
 	xinit();
 	poolinit();
 	poolsizeinit();
