@@ -27,7 +27,6 @@
 #include "../port/sd.h"
 
 extern void gpiofsel(int, int);		/* gpiobcm.c */
-extern int dmaxfer(void*, u32, ulong, int, int);	/* dmabcm.c */
 extern int mboxgetclock(int, u32*);	/* mailbox.c */
 extern int mboxsetpower(int, int);
 
@@ -206,6 +205,14 @@ static int emmcsleep = 1;
  * on the strength of it compiling.
  */
 static int emmcdma = 0;
+
+/*
+ * Freeze on a DMA failure instead of recovering from it.  Off, because
+ * a board in use should keep going; on, for a board being debugged,
+ * where the reset that makes recovery possible is also what destroys
+ * the evidence.
+ */
+static int emmcdmafreeze = 0;
 static ulong emmcnwait, emmcnslept, emmcwoke, emmctimeout;
 static uvlong emmcwakeus;
 static uvlong emmcus;
@@ -743,6 +750,57 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			 */
 			if(dmaxfer(p, Emmcdatabus, nthis*Secsize,
 			    Emmcdreq, !write) < 0){
+				ulong moved = dmafail.len - dmafail.left;
+
+				/*
+				 * The peripheral's registers FIRST, before
+				 * anything is reset.  The engine's side
+				 * alone says a transfer stopped; it cannot
+				 * say why, and the why is in the
+				 * controller that was supposed to keep
+				 * raising DREQ.  bioerror() below resets
+				 * the data circuit and takes that state
+				 * with it, which is how the first of these
+				 * was lost.
+				 */
+				print("emmc: DMA %s FAILURE\n"
+					"    start block     %llud\n"
+					"    requested       %ld blocks / %lud bytes\n"
+					"    DMA transferred %lud blocks / %lud bytes\n"
+					"    DMA remaining   %lud blocks / %lud bytes\n"
+					"    dma cs %#lux debug %#lux ti %#lux\n"
+					"    dma src %#lux dst %#lux %s\n"
+					"    emmc status %#lux interrupt %#lux\n"
+					"    emmc control0 %#lux control1 %#lux blksizecnt %#lux\n",
+					write? "WRITE": "READ", bno+i,
+					nthis, (ulong)(nthis*Secsize),
+					moved/Secsize, moved,
+					dmafail.left/Secsize, dmafail.left,
+					dmafail.cs, dmafail.debug, dmafail.ti,
+					dmafail.src, dmafail.dst,
+					dmafail.err? "(engine reported an error)":
+						"(engine still active)",
+					(ulong)r[Rstatus], (ulong)r[Rinterrupt],
+					(ulong)r[Rcontrol0], (ulong)r[Rcontrol1],
+					(ulong)r[Rblksizecnt]);
+				/*
+				 * And stop here if asked.  A half-finished
+				 * multi-block write cannot be resumed by
+				 * changing which side of the FIFO the CPU
+				 * is on: the card still believes it is in
+				 * the middle of the CMD25 it was given, and
+				 * the engine may still own the FIFO.  The
+				 * fallback below is right for a machine
+				 * that must keep running and wrong for one
+				 * being debugged, so it answers to a
+				 * switch: "echo dmafreeze 1 >/dev/sdM0/ctl".
+				 */
+				if(emmcdmafreeze){
+					print("emmc: frozen (dmafreeze); "
+						"no reset, no retry\n");
+					qunlock(c);
+					return i * Secsize;
+				}
 				/*
 				 * Fall back rather than fail.  A DMA path
 				 * being wrong is a reason to stop using
@@ -759,10 +817,6 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				 * legal: the command is reissued from the
 				 * top of the loop with dma off.
 				 */
-				print("emmc: dma %s of %ld blocks at %llud "
-					"failed; falling back to pio and "
-					"turning dma off\n",
-					write? "write": "read", nthis, bno+i);
 				bioerror(c, write, bno+i, r[Rinterrupt]);
 				emmcdma = 0;
 				continue;	/* same i: do it again, in pio */
@@ -854,6 +908,11 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	if(strcmp(cb->f[0], "sleep") == 0 && cb->nf == 2){
 		emmcsleep = atoi(cb->f[1]);
 		print("emmc: sleep %d\n", emmcsleep);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "dmafreeze") == 0 && cb->nf == 2){
+		emmcdmafreeze = atoi(cb->f[1]);
+		print("emmc: dmafreeze %d\n", emmcdmafreeze);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "dma") == 0 && cb->nf == 2){

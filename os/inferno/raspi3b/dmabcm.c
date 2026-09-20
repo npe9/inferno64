@@ -179,6 +179,13 @@ dmacopy(int c, Cb *cb, void *dst, void *src, ulong len)
 int dmachannel = -1;
 
 /*
+ * Where the last failed transfer stopped.  Kept rather than printed
+ * here, so the driver that owns the peripheral can print its own
+ * registers beside these before anything is reset.
+ */
+Dmafail dmafail;
+
+/*
  * Move len bytes between memory and a peripheral's data register,
  * paced by that peripheral's DREQ line.
  *
@@ -268,12 +275,27 @@ dmaperiph(int c, Cb *cb, void *mem, u32 pbus, ulong len, int dreq, int tomem)
 	 * while Error means the engine tried and the bus refused.
 	 */
 	if(i == Timeout || (r[Cs] & Error)){
-		print("dma: channel %d %s: cs %#lux debug %#lux "
-			"ti %#lux src %#lux dst %#lux len %lud left %lud\n",
-			c, (r[Cs] & Error)? "error": "never finished",
-			(ulong)r[Cs], (ulong)r[Debug], (ulong)r[Ti],
-			(ulong)r[Sourcead], (ulong)r[Destad],
-			len, (ulong)r[Txfrlen]);
+		/*
+		 * Record and do not touch.  The channel is left exactly as
+		 * it stopped -- not reset, not aborted -- because the
+		 * caller's first job is to read the peripheral this engine
+		 * was waiting on, and a reset here would take the DREQ
+		 * state with it.  dmaxferstate() hands these back.
+		 *
+		 * Txfrlen counts DOWN as the transfer proceeds, so
+		 * len-left is what actually moved, and that number is the
+		 * diagnosis: an engine that moved nothing never saw a
+		 * DREQ at all, while one that moved part of the transfer
+		 * and stopped was being paced and then stopped being fed.
+		 */
+		dmafail.cs = r[Cs];
+		dmafail.debug = r[Debug];
+		dmafail.ti = r[Ti];
+		dmafail.src = r[Sourcead];
+		dmafail.dst = r[Destad];
+		dmafail.len = len;
+		dmafail.left = r[Txfrlen];
+		dmafail.err = (r[Cs] & Error) != 0;
 		return -1;
 	}
 

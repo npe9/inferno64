@@ -99,7 +99,7 @@ enum
  * sleeping; a 7l -a listing of the same build turns the numbers into
  * names.
  */
-static void
+void
 kstackdump(void)
 {
 	extern char etext[];
@@ -748,6 +748,17 @@ consinit(void)
 	 * aid becomes the second fault.
 	 */
 	kproc("consdump", consdumpproc, nil, 0);
+	/*
+	 * And the one that does not need anybody watching.  Five wedges
+	 * in two days were all found late or not at all, because ^\
+	 * has to be typed by a person who notices.  dis.c says what it
+	 * watches and why it only reports.
+	 */
+	{
+		extern void diswatchproc(void*);
+
+		kproc("diswatch", diswatchproc, nil, 0);
+	}
 	/*
 	 * And one for ^C, for the same reason and with the same shape:
 	 * killing a Dis program needs the interpreter acquired, which the

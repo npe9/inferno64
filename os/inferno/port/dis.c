@@ -654,6 +654,78 @@ printgrp(Prog *p, char *v)
 }
 
 /*
+ * The hang watchdog.
+ *
+ * This board wedges: the interpreter stops handing over, and a dump
+ * taken with ^\ at that moment shows processes Queueing for the VM and
+ * others Ready with nobody running them.  Five of those in two days,
+ * and every one was diagnosed late or not at all, because ^\ has to be
+ * typed by somebody who is watching and who notices in time.  Two were
+ * diagnosed from dumps of a board that had already recovered, which is
+ * worth nothing -- a healthy machine's processes are all asleep too,
+ * and the difference only shows in the counts.
+ *
+ * So the board watches itself.  disbeat is incremented once per turn of
+ * vmachine's loop, which is the one place every running Dis program
+ * passes through; if it has not moved for Wedgesecs while there is
+ * still work queued for the VM, the machine is not idle, it is stuck,
+ * and this prints the same dump ^\ would have.
+ *
+ * It prints once per wedge, not once per second, because a wedged board
+ * with a console full of repeated dumps has lost the evidence of what
+ * happened first.  And it only reports: rebooting on its own would
+ * destroy the state somebody may be about to look at, and ^R is one
+ * keystroke away for whoever does.
+ */
+enum {
+	Wedgesecs = 15,	/* silence this long, with work queued, is a wedge */
+};
+
+ulong	disbeat;
+extern void kstackdump(void);		/* devcons.c */
+
+void
+diswatchproc(void*)
+{
+	ulong last, lastticks;
+	int quiet, reported;
+
+	last = disbeat;
+	lastticks = 0;
+	quiet = 0;
+	reported = 0;
+	for(;;){
+		tsleep(&up->sleep, return0, nil, 1000);
+		if(disbeat != last){
+			last = disbeat;
+			quiet = 0;
+			reported = 0;
+			continue;
+		}
+		/*
+		 * The interpreter has not moved.  That is only a wedge if
+		 * something was waiting for it: an idle board with nothing
+		 * to run sits here legitimately for as long as it likes.
+		 */
+		if(isched.vmq == nil && isched.runhd == nil){
+			quiet = 0;
+			continue;
+		}
+		if(++quiet < Wedgesecs || reported)
+			continue;
+		reported = 1;
+		iprint("\nDIS-WEDGED: no interpreter progress for %d s, "
+			"beat %lud, vmq %s, runhd %s, ticks %lud\n",
+			quiet, disbeat,
+			isched.vmq != nil? "waiting": "empty",
+			isched.runhd != nil? "ready": "empty",
+			m->ticks);
+		USED(lastticks);
+		kstackdump();
+	}
+}
+
+/*
  * ^C on the console: kill whatever is holding it.
  *
  * Same principle as ^\ in devcons.c, and for the same reason.  A
@@ -1303,6 +1375,7 @@ vmachine(void*)
 
 	cycles = 0;
 	for(;;) {
+		disbeat++;	/* the hang watchdog's heartbeat; see diswatchproc */
 		/*
 		 * The safe point.
 		 *

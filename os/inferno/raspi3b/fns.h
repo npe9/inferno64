@@ -13,6 +13,26 @@ uvlong	timersoon(void);
 uvlong	fastticks(uvlong*);
 ulong	tk2ms(ulong);
 void	coherence(void);
+
+/*
+ * Where a DMA transfer stopped, for the driver that owns the
+ * peripheral to print beside its own registers.  len is what was
+ * asked for and left is what the engine still had to do, so len-left
+ * is what actually moved.
+ */
+typedef struct Dmafail Dmafail;
+struct Dmafail {
+	ulong	cs;
+	ulong	debug;
+	ulong	ti;
+	ulong	src;
+	ulong	dst;
+	ulong	len;
+	ulong	left;
+	int	err;
+};
+extern Dmafail dmafail;
+int	dmaxfer(void*, u32, ulong, int, int);
 u32	getctr(void);			/* CTR_EL0, for the cache line sizes */
 u32	getclidr(void);			/* CLIDR_EL1 */
 u32	getccsidr(void);		/* CCSIDR_EL1 selected by CSSELR_EL1 */
