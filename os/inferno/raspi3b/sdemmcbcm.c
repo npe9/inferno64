@@ -264,14 +264,25 @@ static struct {
  * write-one-to-clear) makes the controller assert it afresh, and the
  * edge arrives.
  *
- * Measured both ways in one session, which is the only reason to
- * believe it: with this on, 1.25MB through dossrv with DMA is clean;
- * with it off, the very next attempt fails at the third block with the
- * same registers to the bit.  "echo dmaclearirq 0 >/dev/sdM0/ctl" puts
- * the failure back, because a fix that cannot be turned off cannot be
- * shown to be the fix.
+ * IT IS NOT THE FIX, and the way that was established is the point.
+ *
+ * One run with it on was clean and the very next with it off failed at
+ * the third block, which looked like a clean falsification and was
+ * written up as one.  It was a single pair.  Repeating the SAME
+ * workload three times with it on gives ok, FAIL, FAIL -- the failure
+ * rate is about two in three, and at that rate one pass and one
+ * failure carry no information at all.
+ *
+ * That is the same mistake this port keeps paying for, made by the
+ * person who had spent the day writing the rule down: the emu
+ * scheduler barrier was believed only after 60 runs against 60, and
+ * this was believed after one against one.
+ *
+ * So it stays off and stays switchable, and what it is really worth
+ * needs a rate: the same workload N times with it on and N with it
+ * off, on one boot, before anything is claimed.
  */
-static int emmcdmaclearirq = 1;
+static int emmcdmaclearirq = 0;
 static int emmcdmareset = 0;
 static int emmcdmadatareset = 0;
 static int emmcdmadelay = 0;
