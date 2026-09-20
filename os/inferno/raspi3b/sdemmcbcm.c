@@ -213,6 +213,39 @@ static int emmcdma = 0;
  * the evidence.
  */
 static int emmcdmafreeze = 0;
+
+/*
+ * Localisation switches for the DMA write stall, each one a question
+ * rather than a fix.  The stall is deterministic -- three blocks of
+ * nine, every time, with the engine waiting for a DREQ and the
+ * controller's Iwriterdy set -- and what is not known is which side
+ * carries the state that makes the fourth block never come.
+ *
+ *	dmaclearirq  acknowledge every eMMC interrupt status bit before
+ *	             arming a transfer.  If this cures it, the readiness
+ *	             event is latched across transactions and the DREQ
+ *	             machinery wants a transition it is not getting.
+ *	dmareset     reset the DMA channel before every transfer.  If
+ *	             this cures it, the engine carries the state.
+ *	dmadatareset reset the eMMC data circuit before every transfer.
+ *	             If this cures it and the other two do not, it is the
+ *	             controller's own data/DMA state machine.
+ *	dmadelay     microseconds to wait between transfers.  A failure
+ *	             rate that moves sharply with this is a boundary
+ *	             race rather than a programming error.
+ */
+static struct {
+	ulong	cs;		/* the DMA channel's state before we armed it */
+	ulong	emmcirq;	/* and the controller's, which is the half
+				 * that has never been looked at before a
+				 * transfer rather than after one */
+	ulong	emmcstatus;
+} dmapre;
+
+static int emmcdmaclearirq = 0;
+static int emmcdmareset = 0;
+static int emmcdmadatareset = 0;
+static int emmcdmadelay = 0;
 static ulong emmcnwait, emmcnslept, emmcwoke, emmctimeout;
 static uvlong emmcwakeus;
 static uvlong emmcus;
@@ -748,6 +781,29 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			 * because it is the one that knows which side the
 			 * engine reads and which it writes.
 			 */
+			if(emmcdmaclearirq)
+				r[Rinterrupt] = r[Rinterrupt];
+			if(emmcdmadatareset){
+				/*
+				 * The controller's data circuit put back to
+				 * a known state before each transfer, which
+				 * is the heaviest of the three and the one
+				 * that would say the eMMC carries the
+				 * state.  It costs a reset per transfer, so
+				 * it is a question and not a setting.
+				 */
+				r[Rcontrol1] |= C1srstdata;
+				for(j = 0; j < 100000; j++)
+					if((r[Rcontrol1] & C1srstdata) == 0)
+						break;
+			}
+			if(emmcdmareset)
+				dmachanreset();
+			if(emmcdmadelay)
+				microdelay(emmcdmadelay);
+			dmapre.cs = dmachanstate();
+			dmapre.emmcirq = r[Rinterrupt];
+			dmapre.emmcstatus = r[Rstatus];
 			if(dmaxfer(p, Emmcdatabus, nthis*Secsize,
 			    Emmcdreq, !write) < 0){
 				ulong moved = dmafail.len - dmafail.left;
@@ -770,6 +826,7 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					"    DMA remaining   %lud blocks / %lud bytes\n"
 					"    dma cs %#lux debug %#lux ti %#lux\n"
 					"    dma src %#lux dst %#lux %s\n"
+					"    BEFORE: dma cs %#lux emmc interrupt %#lux status %#lux\n"
 					"    emmc status %#lux interrupt %#lux\n"
 					"    emmc control0 %#lux control1 %#lux blksizecnt %#lux\n",
 					write? "WRITE": "READ", bno+i,
@@ -780,6 +837,7 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					dmafail.src, dmafail.dst,
 					dmafail.err? "(engine reported an error)":
 						"(engine still active)",
+					dmapre.cs, dmapre.emmcirq, dmapre.emmcstatus,
 					(ulong)r[Rstatus], (ulong)r[Rinterrupt],
 					(ulong)r[Rcontrol0], (ulong)r[Rcontrol1],
 					(ulong)r[Rblksizecnt]);
@@ -795,6 +853,19 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				 * being debugged, so it answers to a
 				 * switch: "echo dmafreeze 1 >/dev/sdM0/ctl".
 				 */
+				/*
+				 * The transfer-info word said out loud.
+				 * Hex hides whether the request is on the
+				 * side it should be on, and that is the
+				 * one field this failure is about.
+				 */
+				print("    ti decode: permap %lud%s%s%s%s%s\n",
+					(dmafail.ti>>16) & 0x1f,
+					(dmafail.ti & (1<<6))? " destdreq": "",
+					(dmafail.ti & (1<<10))? " srcdreq": "",
+					(dmafail.ti & (1<<4))? " destinc": "",
+					(dmafail.ti & (1<<8))? " srcinc": "",
+					(dmafail.ti & (1<<3))? " waitresp": "");
 				if(emmcdmafreeze){
 					print("emmc: frozen (dmafreeze); "
 						"no reset, no retry\n");
@@ -908,6 +979,96 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	if(strcmp(cb->f[0], "sleep") == 0 && cb->nf == 2){
 		emmcsleep = atoi(cb->f[1]);
 		print("emmc: sleep %d\n", emmcsleep);
+		return 0;
+	}
+	/*
+	 * "dmatest nblocks count": write the same shape over and over
+	 * and say which one breaks.
+	 *
+	 * The sweeps done from the shell could only ask "does one
+	 * transfer of this size work", one process invocation each, and
+	 * the answer was always yes.  What that cannot test is state
+	 * carried ACROSS transactions, which is the only thing left
+	 * standing after size, repetition, sustained traffic, mixed
+	 * direction and interrupt sleeping were each ruled out.  So this
+	 * runs them back to back inside the kernel with nothing in
+	 * between, and reports the sequence number, which none of the
+	 * shell tests could.
+	 *
+	 * It writes into the kfstest gap -- sectors 2048 to 16383, the
+	 * unallocated space below the firmware's partition -- because a
+	 * test that can damage the filesystem it is run from cannot be
+	 * run often.
+	 */
+	if(strcmp(cb->f[0], "dmatest") == 0 && (cb->nf == 3 || cb->nf == 4)){
+		int nb = atoi(cb->f[1]), cnt = atoi(cb->f[2]), k;
+		int off = cb->nf == 4? atoi(cb->f[3]): 0;
+		uvlong bno;
+		uchar *buf;
+		long got;
+
+		if(nb < 1 || nb > Maxblocks)
+			nb = 9;
+		if(cnt < 1)
+			cnt = 100;
+		/*
+		 * The buffer, optionally pushed off a cache line.
+		 *
+		 * dmatest's malloc'd buffer is aligned and has never
+		 * failed; what arrives from the styx path is somebody
+		 * else's block, at whatever offset that path leaves it.
+		 * If a misaligned source is what stalls the engine three
+		 * blocks in, this is the one parameter that says so, and
+		 * it costs a sweep of thirty-two runs to find out.
+		 */
+		if(off < 0 || off > 63)
+			off = 0;
+		if((buf = malloc(nb*Secsize + 64)) == nil)
+			error(Enomem);
+		if(waserror()){
+			free(buf);
+			nexterror();
+		}
+		memset(buf, 0x5a, nb*Secsize + 64);
+		print("emmc: dmatest %d blocks x %d off %d (buf %#p), dma %d "
+			"clearirq %d reset %d datareset %d delay %dus\n",
+			nb, cnt, off, buf+off, emmcdma, emmcdmaclearirq,
+			emmcdmareset, emmcdmadatareset, emmcdmadelay);
+		for(k = 0; k < cnt; k++){
+			bno = 2048 + (uvlong)(k % 1000)*nb;
+			got = emmcbio(u, 0, 1, buf+off, nb, bno);
+			if(got != nb*Secsize){
+				print("emmc: dmatest FAILED at transfer %d "
+					"of %d, block %llud: wrote %ld of %d\n",
+					k, cnt, bno, got, nb*Secsize);
+				break;
+			}
+		}
+		if(k == cnt)
+			print("emmc: dmatest %d transfers of %d blocks, all clean\n",
+				cnt, nb);
+		poperror();
+		free(buf);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "dmaclearirq") == 0 && cb->nf == 2){
+		emmcdmaclearirq = atoi(cb->f[1]);
+		print("emmc: dmaclearirq %d\n", emmcdmaclearirq);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "dmareset") == 0 && cb->nf == 2){
+		emmcdmareset = atoi(cb->f[1]);
+		print("emmc: dmareset %d\n", emmcdmareset);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "dmadatareset") == 0 && cb->nf == 2){
+		emmcdmadatareset = atoi(cb->f[1]);
+		print("emmc: dmadatareset %d\n", emmcdmadatareset);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "dmadelay") == 0 && cb->nf == 2){
+		emmcdmadelay = atoi(cb->f[1]);
+		print("emmc: dmadelay %dus\n", emmcdmadelay);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "dmafreeze") == 0 && cb->nf == 2){

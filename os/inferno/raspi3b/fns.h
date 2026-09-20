@@ -33,6 +33,8 @@ struct Dmafail {
 };
 extern Dmafail dmafail;
 int	dmaxfer(void*, u32, ulong, int, int);
+ulong	dmachanstate(void);
+void	dmachanreset(void);
 u32	getctr(void);			/* CTR_EL0, for the cache line sizes */
 u32	getclidr(void);			/* CLIDR_EL1 */
 u32	getccsidr(void);		/* CCSIDR_EL1 selected by CSSELR_EL1 */

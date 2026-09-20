@@ -313,6 +313,40 @@ dmaperiph(int c, Cb *cb, void *mem, u32 pbus, ulong len, int dreq, int tomem)
  * safe; a second user would have to either take the same lock or bring
  * its own block to dmaperiph() above.
  */
+/*
+ * The channel's status word, for a caller that wants to know what
+ * state the engine was in BEFORE it armed a transfer.  Every capture
+ * so far has been of the wreck; this is for the moments before.
+ */
+/*
+ * Put the channel back to rest before it is armed again.  A question,
+ * not a fix: if resetting between transfers cures the stall, the state
+ * that survives one is the engine's own.
+ */
+void
+dmachanreset(void)
+{
+	u32 *r;
+	int i;
+
+	if(dmachannel < 0)
+		return;
+	r = dmachan(dmachannel);
+	r[Cs] = Reset;
+	for(i = 0; i < Timeout; i++)
+		if((r[Cs] & Reset) == 0)
+			break;
+	r[Cs] = Endflag | Interrupt | Error;
+}
+
+ulong
+dmachanstate(void)
+{
+	if(dmachannel < 0)
+		return ~0UL;
+	return dmachan(dmachannel)[Cs];
+}
+
 int
 dmaxfer(void *mem, u32 pbus, ulong len, int dreq, int tomem)
 {
