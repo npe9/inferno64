@@ -62,8 +62,39 @@ first thing to check is that the card in the board has
 enable_jtag_gpio=1 in its config.txt -- without it the firmware never
 puts GPIO 22-27 into ALT4 and those pins are ordinary inputs.
 
-WHAT IT SHOULD LOOK LIKE.  A TAP id of 0x4ba00477, four cores found,
-and cpu0 haltable.
+WHAT IT LOOKS LIKE WORKING.  First session, 20 September 2026:
+
+	Info : JTAG tap: bcm2837.cpu tap/device found: 0x4ba00477
+	       (mfg: 0x23b (ARM Ltd), part: 0xba00, ver: 0x4)
+	Info : bcm2837.cpu0: hardware has 6 breakpoints, 4 watchpoints
+	...cpu1, cpu2, cpu3 the same
+
+and then, against a kernel that was running at the time:
+
+	> halt
+	bcm2837.cpu0 halted in AArch64 state, current mode: EL1H
+	cpsr: 0x60000345  pc: 0xa770c
+	MMU: enabled, D-Cache: enabled, I-Cache: enabled
+	> emmcregs
+	status     0x01ff0000     interrupt   0x00000000
+	irpt_mask  0x017f7137     irpt_en     0x00000000
+	control0   0x00000100     control1    0x000e0407
+	blksizecnt 0x00000200
+	> resume
+
+Those seven registers are the ones the SD DMA stall was diagnosed from.
+Getting them before this meant editing the driver to print them,
+rebuilding, writing 1.9MB to the card, rebooting, and provoking the
+failure again -- once per question, several minutes each, and twice the
+install silently wrote the wrong bytes.  Here it is one line against a
+machine that is already running, and "resume" puts it back.
+
+Worth noticing in that very first dump: irpt_en is 0.  The driver arms
+it only when it is about to sleep.  If this controller gates its DMA
+request on the interrupt ENABLE rather than the status, that would
+explain a stall with Iwriterdy set in the status and no request being
+raised -- a hypothesis that had no way of being tested before, because
+testing it means writing that register on a live machine.
 
 	telnet localhost 4444
 	> halt
