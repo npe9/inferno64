@@ -36,14 +36,34 @@ Ground to any of the ground pins, and use a short lead: this is a
 reason a chain that should enumerate does not.
 
 RUNNING IT.  The adapter is deliberately not named in the config,
-because that is the part that depends on what is on the desk:
+because that is the part that depends on what is on the desk.  The one
+here is an Olimex ARM-USB-TINY-H, which OpenOCD ships a file for:
 
 	openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg \
-		-c 'adapter speed 1000' \
 		-f tools/jtag/raspi3b.cfg
 
-Start at 1MHz.  The A53s come out of reset slow and a fast adapter will
-not see them; raise it once something answers.
+The speed is set inside raspi3b.cfg, at 1MHz, and it has to be: giving
+"-c 'adapter speed 1000'" BEFORE the -f does nothing, because
+target/bcm2837.cfg sets 4000 when it is read and the last writer wins.
+1MHz because the A53s come out of reset slow and this is jumper wire to
+a header; raise it once the chain answers.
+
+WHAT AN UNWIRED ADAPTER LOOKS LIKE.  This, and it is worth knowing so
+it is not mistaken for a broken config:
+
+	Error: JTAG scan chain interrogation failed: all ones
+	Error: bcm2837.cpu: IR capture error; saw 0x0f not 0x01
+	Error: Invalid ACK (7) in DAP response
+
+"All ones" is an idle TDO line with nothing driving it.  A chain that
+is wired but wrong usually reads all zeros or a plausible-looking but
+unexpected id; all ones means the adapter is talking to nobody.  The
+first thing to check is that the card in the board has
+enable_jtag_gpio=1 in its config.txt -- without it the firmware never
+puts GPIO 22-27 into ALT4 and those pins are ordinary inputs.
+
+WHAT IT SHOULD LOOK LIKE.  A TAP id of 0x4ba00477, four cores found,
+and cpu0 haltable.
 
 	telnet localhost 4444
 	> halt
