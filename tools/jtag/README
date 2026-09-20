@@ -98,12 +98,25 @@ testing it means writing that register on a live machine.
 
 	telnet localhost 4444
 	> halt
-	> load_inferno
+	> emmcregs
 	> resume
 
-load_inferno is in the config: halt, load kernel8.img at 0x80000, set
-the pc.  0x80000 is where the kernel is linked (-T$KTZERO in the board
-mkfile) and where the firmware would have put it.
+INSPECTION WORKS; LOADING DOES NOT, YET.  halt, read, resume against a
+running kernel is solid and is what this was wanted for.
+
+load_inferno -- halt, load kernel8.img at 0x80000, set the pc -- does
+not work, and the config says why at length.  A kernel entry expects
+the machine as the firmware leaves it: MMU off, caches off, nothing
+mapped.  Halting a live Inferno leaves the MMU on and its page tables
+live, so the jump faults on the first instruction (esr fffb7fb9, pc
+00080000).  Making it work means clearing SCTLR_EL1's M/C/I bits
+first, which OpenOCD's aarch64 target does not expose through "reg".
+
+And a Pi cannot be reset over JTAG into a waiting state: reset_config
+is trst_only, TRST resets the TAP and not the SoC, and anything that
+does reset the SoC hands control back to the VideoCore firmware, which
+loads whatever is on the card.  So installing a kernel still means the
+card, for now.
 
 WHAT IT WILL NOT DO.  It does not reset the machine, on purpose: a
 reset hands control back to the VideoCore firmware, which loads
