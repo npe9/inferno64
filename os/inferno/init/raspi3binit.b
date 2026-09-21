@@ -186,7 +186,14 @@ kfsproc(pfd: ref Sys->FD)
 # is the point: a controller that only ever sees scratch reads has not
 # been tested.
 #
-SDDEV: con "/dev/sdN0";
+# The default is the Arasan.  Its PIO path works and serves /n/dos and
+# kupdate; SDHOST's does not yet -- its transfers fail at block 0 with
+# the command completing and no data phase starting -- so a card
+# carrying an sdN0 kernel boots with no filesystem and no way to
+# update itself except over JTAG.  Point this at sdN0 for an SDHOST
+# experiment and load THAT kernel with tools/jtag, which is how it was
+# tested; do not write it to the card.
+SDDEV: con "/dev/sdM0";
 KFSPART: con SDDEV + "/kfstest";
 
 # the IP interface's control fd, held so the interface outlives the
