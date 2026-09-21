@@ -6727,3 +6727,89 @@ session were drawn from a single run and all three were wrong.  A
 failing arm disproves a fix whatever the base rate, because a fix
 cannot be active while the thing it fixes happens.  A passing arm says
 nothing until it is repeated.
+.NH 2
+TODO, revised: there IS a precedent, and it does the opposite of what was planned
+.PP
+The claim above that no production driver pairs the Arasan with the
+external engine is too strong.
+.CW drivers/mmc/host/bcm2835-mmc.c
+in the Raspberry Pi kernel \(em
+.CW "brcm,bcm2835-mmc" ,
+a different binding from
+.CW "brcm,bcm2835-sdhci"
+\(em takes a dmaengine channel and drives this controller with it.  It
+is also the path with field reports of DMA hangs, and of people
+switching to the SDHCI driver to get a stable interface, which is its
+own kind of corroboration.
+.PP
+.B "What it does that this driver does not."
+Before every transfer it sets the interrupt registers according to
+whether that transfer is DMA:
+.P1
+u32 pio_irqs = SDHCI_INT_DATA_AVAIL | SDHCI_INT_SPACE_AVAIL;
+u32 dma_irqs = SDHCI_INT_DMA_END | SDHCI_INT_ADMA_ERROR;
+
+if (host->use_dma)
+        host->ier = (host->ier & ~pio_irqs) | dma_irqs;
+else
+        host->ier = (host->ier & ~dma_irqs) | pio_irqs;
+
+writel(host->ier, SDHCI_INT_ENABLE);       /* 0x34 */
+writel(host->ier, SDHCI_SIGNAL_ENABLE);    /* 0x38 */
+.P2
+.CW SDHCI_INT_SPACE_AVAIL
+is write-buffer-ready, which is
+.CW Iwriterdy
+here, and
+.CW SDHCI_INT_DATA_AVAIL
+is
+.CW Ireadrdy .
+For a DMA transfer it clears both of them from
+.B both
+.CW SDHCI_INT_ENABLE
+(0x34, this driver's
+.CW Rirptmask )
+and
+.CW SDHCI_SIGNAL_ENABLE
+(0x38,
+.CW Rirpten ).
+.PP
+This driver sets
+.CW irpt_mask
+to
+.CW Iall ,
+.CW 0x017f7137 ,
+which has both bits in it, and leaves it there for the whole of a DMA
+transfer.  The failure dumps say so:
+.CW "irpt_mask 0x017f7137" ,
+and
+.CW Iwriterdy
+duly latched in the status register before the channel is even armed.
+.PP
+.B "So the hypothesis written into the TODO above is backwards."
+It proposed setting
+.CW Ireadrdy|Iwriterdy
+in
+.CW Rirpten
+.CW ( dmairqen ),
+on the reasoning that the DREQ might be gated on the enable.  The
+production driver clears them, from the mask as well.  What
+.CW dmairqen
+would have tested is the opposite of what works elsewhere, and the
+.CW dmaunstick
+probe \(em acknowledging the latched bit at the stall \(em is aimed at
+a bit that driver arranges never to latch in the first place.
+.PP
+.B "The experiment to run first if this resumes"
+is therefore: clear
+.CW Ireadrdy|Iwriterdy
+from
+.CW Rirptmask
+(and
+.CW Rirpten )
+for the duration of a DMA transfer and restore them after, exactly as
+.CW bcm2835_mmc_set_transfer_irqs
+does.  It is a few lines, it has a production precedent on this
+controller, and it is the only proposed change so far that is a
+difference from a driver known to work rather than a guess about the
+hardware.
