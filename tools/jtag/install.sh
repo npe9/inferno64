@@ -33,81 +33,94 @@ SESS=${SESS:-37971.ttys006}
 IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
 REMOTE=${REMOTE:-/n/remote/os/inferno/raspi3b/kernel8.img}
 
+#
+# The build stamp, not the size, is what identifies a kernel.
+#
+# Two successive builds differing only in a comment came out the same
+# number of bytes, and an install that matched "KUPDATE-OK <size>"
+# found the PREVIOUS install's line and reported success without
+# anything having happened.  The board then booted the old kernel and
+# the test that followed measured the wrong thing.
+#
+# kerndate is a global in the image; ksyms finds its address and the
+# value is read straight out of the file.  It is exactly what the
+# boot banner prints, so the check is "did the kernel I built come
+# up", which is the thing actually wanted.
+#
 size=`stat -f%z "$IMG"`
-echo "installing $IMG ($size bytes)"
+stamp=`python3 - "$ROOT" <<'PYEOF'
+import subprocess, sys
+root = sys.argv[1]
+elf = root + "/os/inferno/raspi3b/iraspi3b"
+img = root + "/os/inferno/raspi3b/kernel8.img"
+out = subprocess.run(["python3", root + "/tools/jtag/ksyms", elf, "-g", "kerndate"],
+                     capture_output=True, text=True).stdout
+addr = None
+for l in out.splitlines():
+    f = l.split()
+    if len(f) == 3 and f[2] == "kerndate":
+        addr = int(f[0], 16)
+if addr is None:
+    sys.exit("no kerndate symbol")
+d = open(img, "rb").read()
+print(int.from_bytes(d[addr-0x80000:addr-0x80000+4], "little"))
+PYEOF`
+if [ -z "$stamp" ]; then
+	echo "install: cannot read the build stamp out of $IMG" >&2
+	exit 1
+fi
+echo "installing $IMG ($size bytes, build $stamp)"
 
 snap() { screen -S "$SESS" -X hardcopy -h "$1" 2>/dev/null; sleep 1; }
 
-# Note the ".*" in the size checks below.  ls -l puts the date between
-# the size and the name --
 #
-#	--rw-r--r-- M 8 npe staff 1923416 Sep 21 10:36 /n/remote/...
+# kupdate does the copy and nothing here types while it runs; see the
+# note at the top.  The loop is because kupdate starts some minutes
+# after boot rather than at boot, so one reboot writes the card and
+# the next one runs what was written.
 #
-# -- so "$size /n/remote" matches nothing, ever.  The first run of
-# this script reported "the mount does not show 1923416 bytes" and
-# printed, directly underneath, the line showing exactly that.
-
 #
-# kupdate does the copy.  Nothing here types anything while it runs.
+# The banner stamp is the ONLY signal used.
 #
-# Two earlier attempts did the copy by hand, and both collided with
-# kupdate doing the same copy at the same time -- two writers to one
-# FAT file through one dossrv, which hung the shell until the next
-# reboot.  kupdate is a board-side process on its own schedule; it
-# cannot be told to stand aside, so the only safe move is to let it be
-# the one writer.
+# Waiting for "KUPDATE-OK" first looks sensible and is not: after a
+# reboot the boot output is long, so an old KUPDATE-OK from the
+# previous install is still inside any window small enough to be
+# current, the wait returns immediately, and the reboot that follows
+# runs the kernel that was already there.  That is the third place in
+# this directory where matching a marker in a saturated console buffer
+# has given a confident wrong answer.
 #
-# It is also safe to run against an unchanged build: it fetches and
-# installs unconditionally, with no size or content comparison, so a
-# kernel that differs only in content still lands.  It makes its own
-# mount to the host and takes it down afterwards, so it does not
-# depend on /n/remote being healthy either -- which matters, because
-# after a dossrv panic that mount hangs and every command touching it
-# blocks for ever.
+# kupdate runs a few minutes after boot, so the loop is: let it run,
+# reboot, look at the banner.  Nothing else is believed.
 #
-# It runs some minutes after boot rather than at boot, which is why
-# the timeout here is long.  An earlier version gave up after six
-# minutes and reported "the card may already hold this build", when in
-# fact kupdate simply had not started yet.
-#
-snap "$S/in-pre.txt"
-before=`LC_ALL=C grep -ac "KUPDATE-OK $size" "$S/in-pre.txt" || true`
-echo "  ^R, then waiting for kupdate (several minutes; nothing typed)"
-screen -S "$SESS" -X stuff "$(printf '\022')" 2>/dev/null
-i=0
-while [ $i -lt 150 ]; do
-	snap "$S/in-ku.txt"
-	now=`LC_ALL=C grep -ac "KUPDATE-OK $size" "$S/in-ku.txt" || true`
-	[ "$now" -gt "$before" ] && break
-	if LC_ALL=C grep -aq 'KUPDATE-FAIL' "$S/in-ku.txt"; then
-		echo "  kupdate failed:"
-		LC_ALL=C grep -a 'KUPDATE-FAIL' "$S/in-ku.txt" | tail -2
-		exit 1
-	fi
-	sleep 6
-	i=`expr $i + 1`
-done
-if [ $i -ge 150 ]; then
-	echo "  kupdate never reported KUPDATE-OK $size in 15 minutes"
-	LC_ALL=C grep -a 'KUPDATE' "$S/in-ku.txt" | tail -3
-	exit 1
-fi
-echo "  written to the card, $size bytes"
-
-snap "$S/in-mid.txt"
-before=`LC_ALL=C grep -ac 'raspi3b build' "$S/in-mid.txt" || true`
-echo "  ^R: booting it"
-screen -S "$SESS" -X stuff "$(printf '\022')" 2>/dev/null
-i=0
-while [ $i -lt 40 ]; do
-	snap "$S/in-boot.txt"
-	now=`LC_ALL=C grep -ac 'raspi3b build' "$S/in-boot.txt" || true`
-	if [ "$now" -gt "$before" ]; then
-		LC_ALL=C grep -a 'raspi3b build' "$S/in-boot.txt" | tail -1
+try=1
+while [ $try -le 4 ]; do
+	snap "$S/in-b.txt"
+	if LC_ALL=C tail -400 "$S/in-b.txt" | \
+	    LC_ALL=C grep -aq "raspi3b build $stamp"; then
+		echo "  running build $stamp"
 		exit 0
 	fi
-	sleep 5
-	i=`expr $i + 1`
+	echo "  attempt $try: letting kupdate run, then rebooting"
+	i=0
+	while [ $i -lt 50 ]; do	    # ~5 minutes for kupdate to fetch
+		sleep 6
+		i=`expr $i + 1`
+	done
+	screen -S "$SESS" -X stuff "$(printf '\022')" 2>/dev/null
+	i=0
+	while [ $i -lt 40 ]; do
+		snap "$S/in-b.txt"
+		if LC_ALL=C tail -400 "$S/in-b.txt" | \
+		    LC_ALL=C grep -aq "raspi3b build $stamp"; then
+			echo "  running build $stamp"
+			exit 0
+		fi
+		sleep 5
+		i=`expr $i + 1`
+	done
+	try=`expr $try + 1`
 done
-echo "  board did not come back"
+echo "  never came up as build $stamp"
+LC_ALL=C grep -a 'raspi3b build' "$S/in-b.txt" | tail -1
 exit 1
