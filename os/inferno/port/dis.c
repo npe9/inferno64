@@ -1823,6 +1823,20 @@ renameproguser(char *old, char *new)
 	release();
 }
 
+/*
+ * A full wait queue is a normal thing under load, and saying so on
+ * every occurrence is not a diagnostic, it is a console flood.
+ *
+ * Measured on a t2a: this one line was most of the output the arm64
+ * soak produced, and the parallelvm=1 arm -- which exits more programs
+ * per second -- generated about six times the console traffic of the
+ * lock-on control.  The arm that drowns its console is the arm whose
+ * console dies, which made a uart bug look like a scheduler one.  Four
+ * lines and then a count, which is the convention the rest of this
+ * file already uses.
+ */
+ulong nwaitqfull, nchildqfull;
+
 void
 tellsomeone(Prog *p, char *buf)
 {
@@ -1837,15 +1851,17 @@ tellsomeone(Prog *p, char *buf)
 		ret = qproduce(o->childq, buf, strlen(buf));
 		if(ret == strlen(buf))
 			woke = 1;
-		else if(ret != strlen(buf))
-			print("tellsomeone childq %d/%lud\n", ret, (ulong)strlen(buf));
+		else if(nchildqfull++ < 4)
+			print("tellsomeone childq %d/%lud (%lud so far)\n",
+				ret, (ulong)strlen(buf), nchildqfull);
 	}
 	if(o->waitq != nil){
 		ret = qproduce(o->waitq, buf, strlen(buf));
 		if(ret == strlen(buf))
 			woke = 1;
-		else
-			print("tellsomeone waitq %d/%lud\n", ret, (ulong)strlen(buf));
+		else if(nwaitqfull++ < 4)
+			print("tellsomeone waitq %d/%lud (%lud so far)\n",
+				ret, (ulong)strlen(buf), nwaitqfull);
 	}
 	poperror();
 	/*
@@ -4055,9 +4071,9 @@ soakline(void)
 	 * line does not.  MULTICORE INSTRUMENTATION - temporary.
 	 */
 	print("soak: interpreters %lud, blocked %d, idle %d, woken %d, nmach %d,"
-		" spawncap %d\n",
+		" spawncap %d, waitq full %lud, childq full %lud\n",
 		nvmprocs, isched.nblocked, isched.nidle, isched.nwoken,
-		conf.nmach, spawncap);
+		conf.nmach, spawncap, nwaitqfull, nchildqfull);
 	print("soak: stopped-world audits %lud, bad %lud, a Prog queued twice"
 		" %lud (its own %lud), queued but not listed %lud, placeholders"
 		" skipped %lud, ready and unqueued twice running %lud; quanta",
