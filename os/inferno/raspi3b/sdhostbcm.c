@@ -89,6 +89,26 @@ enum {
 	Edmwrthreshsh = 9,
 	Edmthreshmask = 0x1f,
 
+	/*
+	 * The external DMA engine, which is what this controller is
+	 * meant to be driven with.
+	 *
+	 * Linux runs the Pi 3's OTHER SD controller, the Arasan at
+	 * 0x3f300000, in PIO: sdhci-iproc.c gives it missing_caps and
+	 * supplies capabilities with neither CAN_DO_SDMA nor
+	 * CAN_DO_ADMA2.  The engine is what it uses HERE --
+	 * bcm2835-sdhost.c takes a dmaengine channel -- and the device
+	 * tree says which line:
+	 *
+	 *	&sdhost { dmas = <&dma (13|(1<<29))>; };
+	 *
+	 * so DREQ 13, against SDDATA as a bus master sees it.  The FIFO
+	 * thresholds sdhostinit already programs, 4 and 4, are the same
+	 * FIFO_READ_THRESHOLD and FIFO_WRITE_THRESHOLD that driver uses.
+	 */
+	Sdhostdreq = 13,		/* the DREQ this controller raises */
+	Sddatabus = 0x7e202040,		/* SDDATA, as a bus master sees it */
+
 	Idclock	= 400000,	/* card identification clock */
 	Datclock = 25000000,	/* after identification */
 	Cdivmax	= 0x7ff,
@@ -258,6 +278,20 @@ fifofill(volatile u32 *r)
 {
 	return (r[SDEDM] >> Fifofillsh) & Fifofillmask;
 }
+
+/*
+ * Whether to let the engine move the data.  Off until it is measured
+ * on the board beside the loop it replaces, the same way every other
+ * switch in this port starts: "echo dma 1 >/dev/sdH0/ctl".
+ *
+ * Reads are only offered when the controller is handing over whole
+ * words.  On real silicon it does not -- c->bytemode, where successive
+ * reads return the same 32-bit window shifted by one byte -- and a
+ * 32-bit DMA read from a register behaving that way would collect the
+ * shifted windows, not the sector.  So bytemode reads stay on the byte
+ * loop that was written for them.
+ */
+static int sdhostdma = 0;
 
 static int
 fifospace(volatile u32 *r)			/* wait until the FIFO can take a word */
@@ -564,7 +598,31 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			bioerror(c, write, bno+i, r[SDHSTS]);
 			break;
 		}
-		if(write){
+		if(write && sdhostdma){
+			if(dmaxfer(p, Sddatabus, Secsize, Sdhostdreq, 0) < 0){
+				print("sdhost: DMA WRITE FAILURE block %llud: "
+					"sdhsts %#lux sdedm %#lux fifo %d\n",
+					bno+i, (ulong)r[SDHSTS],
+					(ulong)r[SDEDM], fifofill(r));
+				dmachanreset();
+				bioerror(c, write, bno+i, r[SDHSTS]);
+				sdhostdma = 0;	/* fall back, do not lose it */
+				goto out;
+			}
+			p += Secsize;
+		}else if(!write && sdhostdma && !c->bytemode){
+			if(dmaxfer(p, Sddatabus, Secsize, Sdhostdreq, 1) < 0){
+				print("sdhost: DMA READ FAILURE block %llud: "
+					"sdhsts %#lux sdedm %#lux fifo %d\n",
+					bno+i, (ulong)r[SDHSTS],
+					(ulong)r[SDEDM], fifofill(r));
+				dmachanreset();
+				bioerror(c, write, bno+i, r[SDHSTS]);
+				sdhostdma = 0;
+				goto out;
+			}
+			p += Secsize;
+		}else if(write){
 			for(j = 0; j < Secsize; j += 4){
 				w = p[0] | p[1]<<8 | p[2]<<16 | p[3]<<24;
 				if(!fifospace(r)){	/* wait for FIFO room */
@@ -636,6 +694,7 @@ sdhostrctl(SDunit *u, char *p, char *e)
 	p = seprint(p, e, "sdhost rca %#ux %s sectors %llud coreclock %lud cdiv %lud\n",
 		c->rca, c->byteaddr? "byteaddr": "blockaddr", c->sectors,
 		c->fclk, (ulong)r[SDCDIV]);
+	p = seprint(p, e, "sdhost dma %d dreq %d\n", sdhostdma, Sdhostdreq);
 	p = seprint(p, e, "sdhost sdcmd %#lux sdhsts %#lux sdedm %#lux sdhcfg %#lux errors %d\n",
 		(ulong)r[SDCMD], (ulong)r[SDHSTS], (ulong)r[SDEDM],
 		(ulong)r[SDHCFG], c->errors);
@@ -659,6 +718,11 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 		i = sdcardinit(c);
 		qunlock(c);
 		print("sdhost: reinit %s\n", i? "ok": "failed");
+		return 0;
+	}
+	if(strcmp(cb->f[0], "dma") == 0 && cb->nf == 2){
+		sdhostdma = atoi(cb->f[1]);
+		print("sdhost: dma %d\n", sdhostdma);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "clock") == 0 && cb->nf == 2){
