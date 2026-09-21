@@ -458,6 +458,19 @@ had said plainly that no part of
 .I keyring (2)
 had ever been run here.
 .PP
+And then the whole of it together, which is what the argument was for:
+.CW "radiostyx get dev/battery lora auth"
+prints
+.CW "peer satellite" ,
+a 128-byte secret,
+.CW "#D/0" ,
+.CW "msize 221"
+and the satellite's battery reading.  The satellite prints
+.CW "peer ground" .
+A file read off a satellite over a link that is authenticated and
+encrypted, with no IP stack anywhere in it, and a message size neither
+end was told.
+.PP
 What stopped it was not the budget, which
 .I authchk (1)
 had already settled at 910ms and 6976 bytes over a pipe.  It was

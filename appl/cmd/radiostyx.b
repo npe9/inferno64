@@ -15,6 +15,13 @@ implement Radiostyx;
 # the client and the client is a workstation.  appl/lib/styx.b has no
 # floor, so this speaks Styx directly.
 #
+# With "auth" the key ssl(3) is given is the one keyring->auth() just
+# derived over that same link, rather than a constant written into this
+# file, and each end has proved to the other which certified identity
+# it holds.  That is the whole of what doc/pycubed-plan.ms argues for:
+# an authenticated, encrypted file system over a radio, with no IP
+# anywhere in it.
+#
 # With "lora" it goes through #L rather than straight at #W, which is
 # the same link with a RadioHead header, an address filter and
 # acknowledgement on it.  The four bytes that header costs come off the
@@ -29,7 +36,9 @@ implement Radiostyx;
 include "sys.m";
 	sys: Sys;
 include "draw.m";
+include "ipints.m";
 include "keyring.m";
+	kr: Keyring;
 include "security.m";
 	ssl: SSL;
 include "styx.m";
@@ -95,8 +104,11 @@ loraconv(serving: int): ref Sys->FD
 		return nil;
 	}
 	me := 1;
-	if(serving)
+	peer := 2;
+	if(serving){
 		me = 2;
+		peer = 1;
+	}
 	if(sys->fprint(lfd, "addr %d", me) < 0){
 		sys->print("radiostyx: addr: %r\n");
 		return nil;
@@ -117,10 +129,11 @@ loraconv(serving: int): ref Sys->FD
 		return nil;
 	}
 	num := int string b[0:n];
-	if(serving)
-		n = sys->fprint(cfd, "announce");
-	else
-		n = sys->fprint(cfd, "connect 2");
+	# Both ends connect; neither announces.  keyring->auth() is
+	# symmetric -- each end sends before either has received -- and
+	# an announced conversation has nobody to send to until it has
+	# been spoken to.  See authchk(1).
+	n = sys->fprint(cfd, "connect %d", peer);
 	if(n < 0){
 		sys->print("radiostyx: conversation ctl: %r\n");
 		return nil;
@@ -155,7 +168,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	path := "dev/battery";
 	if(tl argv != nil && tl tl argv != nil){
 		p3 := hd tl tl argv;
-		if(p3 != "ssl" && p3 != "lora")
+		if(p3 != "ssl" && p3 != "lora" && p3 != "auth")
 			path = p3;
 	}
 
@@ -186,9 +199,13 @@ init(nil: ref Draw->Context, argv: list of string)
 	# ssl(3) delimits its messages too, so exportfs reads them whole
 	# exactly as it reads the radio whole.
 	usessl := 0;
-	for(l := argv; l != nil; l = tl l)
+	useauth := 0;
+	for(l := argv; l != nil; l = tl l){
 		if(hd l == "ssl")
 			usessl = 1;
+		if(hd l == "auth")
+			useauth = usessl = 1;
+	}
 	if(usessl){
 		ssl = load SSL SSL->PATH;
 		if(ssl == nil){
@@ -201,6 +218,30 @@ init(nil: ref Draw->Context, argv: list of string)
 			return;
 		}
 		secret := array of byte "not-a-real-key-see-radiossl";
+		if(useauth){
+			kr = load Keyring Keyring->PATH;
+			if(kr == nil){
+				sys->print("radiostyx: load %s: %r\n",
+					Keyring->PATH);
+				return;
+			}
+			who := "satellite";
+			if(mode != "serve")
+				who = "ground";
+			info := kr->readauthinfo("/keys/" + who);
+			if(info == nil){
+				sys->print("radiostyx: /keys/%s: %r\n", who);
+				return;
+			}
+			(peer, derived) := kr->auth(fd, info, 0);
+			if(derived == nil){
+				sys->print("radiostyx: auth: %s\n", peer);
+				return;
+			}
+			sys->print("RADIOSTYX-AUTH peer %q secret %d\n",
+				peer, len derived);
+			secret = derived;
+		}
 		serr = ssl->secret(c, secret, secret);
 		if(serr != nil){
 			sys->print("radiostyx: ssl secret: %s\n", serr);

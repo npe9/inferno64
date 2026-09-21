@@ -6,12 +6,14 @@ radiostyx \- Styx over the radio, and the message size it settles on
 .B serve
 .RB [ lora ]
 .RB [ ssl ]
+.RB [ auth ]
 .br
 .B radiostyx
 .B get
 .RI [ path
 .RB [ lora ]
-.RB [ ssl ]]
+.RB [ ssl ]
+.RB [ auth ]]
 .SH DESCRIPTION
 .B Serve
 exports the namespace over the radio.
@@ -28,7 +30,15 @@ packet device; with
 .B ssl
 both push
 .IR ssl (3)
-on top of whichever that was.
+on top of whichever that was; with
+.B auth
+the key
+.I ssl (3)
+is given is the one
+.IR keyring (2)'s
+.B auth
+has just derived over that same link, and each end has proved to the
+other which certified identity it holds.
 .PP
 It exists to run the argument in
 .B doc/pycubed-plan.ms
@@ -73,6 +83,7 @@ being told.  Four measurements, two stations, both
 	lora               251
 	ssl                225
 	lora ssl           221
+	lora auth          221
 .EE
 .PP
 Every step of that is a subtraction somebody has to do and publish.
@@ -84,6 +95,28 @@ the rest; and
 .B exportfs
 adopts whatever it is handed.  Nothing in the chain is told there is a
 radio at the bottom of it.
+.PP
+With
+.BR auth ,
+the same two stations print
+.PP
+.EX
+	RADIOSTYX-LORA #L/0 addr 1
+	RADIOSTYX-PAYLOAD 251
+	RADIOSTYX-AUTH peer satellite secret 128
+	RADIOSTYX-SSL #D/0
+	RADIOSTYX-MSIZE 221 version 9P2000
+	RADIOSTYX-READ '3960
+	'
+.EE
+.PP
+and the satellite prints
+.B "peer ground"
+for the same exchange.  That is the whole of what
+.B doc/pycubed-plan.ms
+argues for: a file read off a satellite over a link that is
+authenticated and encrypted, with no IP stack anywhere in it, and a
+message size neither end was told.
 .SH BUGS
 The client is one exchange deep: one walk, one open, one read, no
 clunk, and no second read for a file longer than one reply.  It is a

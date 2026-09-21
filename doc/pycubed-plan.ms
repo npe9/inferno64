@@ -816,6 +816,40 @@ kernel and
 says on a booted board that they answer, so the cost of this is a
 .CW /dev/radio
 and the mission code that opens it.
+.PP
+.B "This paragraph has now been run rather than argued."
+Two
+.CW mps2-an386
+over a socket pair, with
+.CW "radiostyx get dev/battery lora auth" :
+.DS
+.CW "  RADIOSTYX-LORA #L/0 addr 1"
+.CW "  RADIOSTYX-PAYLOAD 251"
+.CW "  RADIOSTYX-AUTH peer satellite secret 128"
+.CW "  RADIOSTYX-SSL #D/0"
+.CW "  RADIOSTYX-MSIZE 221 version 9P2000"
+.CW "  RADIOSTYX-READ '3960"
+.CW "  '"
+.DE
+and the satellite printing
+.CW "peer ground"
+for the same exchange.
+.I Keyring (2)
+proved each identity to the other over the radio and derived the key
+.I ssl (3)
+was given \(em not a constant in a program \(em and
+.CW exportfs
+settled on a message size nobody told it.  There is no
+.CW devip
+in that kernel.
+.PP
+The one thing that had to be fixed to get there was not in this tree.
+The SX1276 model stopped its peer's queue the first time two stations
+transmitted at once and never restarted it, so a symmetric protocol
+could not get past its first exchange; see
+.CW tools/qemu-patches/0037 .
+Three changes were made to the guest to work around that before
+anybody looked at the model, and all three were measuring it.
 .NH 2
 What that leaves not free, which is a message size
 .PP
