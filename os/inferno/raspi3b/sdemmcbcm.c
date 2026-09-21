@@ -1266,6 +1266,7 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 		 * at all, so it was not ruled out.
 		 */
 		int rw = cb->nf == 5? atoi(cb->f[4]): 0;
+		int dirty = rw >= 10;	/* rw 10, 11, 12: also re-dirty */
 		uvlong bno;
 		uchar *buf, *p;
 		long got;
@@ -1318,7 +1319,30 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 			emmcdmareset, emmcdmadatareset, emmcdmadelay);
 		for(k = 0; k < cnt; k++){
 			bno = 2048 + (uvlong)(k % 1000)*nb;
-			if(rw == 2 && (k & 1)){
+			/*
+			 * Dirty the buffer again before every transfer,
+			 * which is what the real path does and this test
+			 * did not.
+			 *
+			 * devsd's sdbio takes the caller's buffer directly
+			 * only when it is a page-aligned kernel address;
+			 * a write from a Dis process is neither, so it
+			 * allocates one with sdmalloc and memmoves into it
+			 * for every call.  The engine therefore always
+			 * reads a buffer the CPU has just written, with
+			 * every line of it dirty in the D-cache.  dmatest
+			 * memset its buffer once and then handed the same
+			 * clean lines to the engine two hundred times.
+			 *
+			 * That is the last difference between a path that
+			 * fails about two writes in three and one that has
+			 * never failed in a thousand transfers, and the
+			 * engine's 64-byte read-ahead -- exactly one cache
+			 * line -- is why it is worth suspecting.
+			 */
+			if(dirty)
+				memset(p, 0x5a + k, nb*Secsize);
+			if((rw % 10) == 2 && (k & 1)){
 				/*
 				 * A SINGLE-block read at a low block, then
 				 * the multi-block write -- which is what
@@ -1342,7 +1366,7 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 				}
 				continue;
 			}
-			if(rw == 1 && (k & 1)){
+			if((rw % 10) == 1 && (k & 1)){
 				got = emmcbio(u, 0, 0, p, nb, bno);
 				if(got != nb*Secsize){
 					print("emmc: dmatest FAILED reading at "
