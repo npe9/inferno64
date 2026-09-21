@@ -359,6 +359,22 @@ static int emmcdmaclearirq = 0;
  * irpten.  An intervention that is assumed to have happened is not an
  * experiment, and this one would have read as a clean negative.
  */
+/*
+ * Print every emmcbio call: direction, blocks, block number, buffer.
+ *
+ * Five things have now been eliminated by asking the kernel to do the
+ * transfer itself -- page offset, direction alternation, the
+ * one-block-read-then-nine-block-write shape dossrv uses, repetition,
+ * and transfer size -- and in-kernel transfers simply do not fail:
+ * 500 clean, 100 clean, 50 clean.  Through dossrv the same card fails
+ * about two writes in three.
+ *
+ * So the trigger is not the shape of a transfer, and guessing at what
+ * else differs has produced five wrong guesses.  This prints what
+ * dossrv ACTUALLY asks for, so the two sequences can be compared
+ * rather than imagined.
+ */
+static int emmcbiotrace = 0;
 static int emmcdmairqen = 0;
 static int emmcdmareset = 0;
 static int emmcdmadatareset = 0;
@@ -912,6 +928,9 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	u32 arg, w, sts, flags;
 
 	USED(lun);
+	if(emmcbiotrace)
+		print("bio %s nb %ld bno %llud buf %#p pid %d\n",
+			write? "w": "r", nb, bno, a, up? up->pid: 0);
 	qlock(c);
 	/*
 	 * As many blocks per command as the controller's block count allows.
@@ -1352,6 +1371,11 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	if(strcmp(cb->f[0], "dmaclearirq") == 0 && cb->nf == 2){
 		emmcdmaclearirq = atoi(cb->f[1]);
 		print("emmc: dmaclearirq %d\n", emmcdmaclearirq);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "biotrace") == 0 && cb->nf == 2){
+		emmcbiotrace = atoi(cb->f[1]);
+		print("emmc: biotrace %d\n", emmcbiotrace);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "dmairqen") == 0 && cb->nf == 2){
