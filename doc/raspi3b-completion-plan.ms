@@ -6944,3 +6944,52 @@ needs beyond
 \(em it currently reads
 .CW 0x8 ,
 and Linux sets rather more than that.
+.NH 2
+The unstick probe: acknowledging the interrupt does not release the transfer
+.PP
+The hypothesis was that
+.CW Iwriterdy
+is latched, that nothing clears it during a DMA transfer, and that the
+controller might only re-assert DREQ once it is acknowledged.  It was
+the best remaining candidate and the reason the dig was worth one more
+build.  Run with the probe armed and the stall provoked by two
+concurrent writers:
+.P1
+emmc: DMA WRITE FAILURE
+    DMA transferred 3 blocks / 1536 bytes
+    DMA remaining   6 blocks / 3072 bytes
+emmc: UNSTICK ack Iwriterdy: remaining 3072 -> 3072 after 20100 us,
+      cs 0x21 (no change)
+.P2
+.CW Rinterrupt
+was written with
+.CW Iwriterdy ,
+and the engine's live
+.CW TXFR_LEN
+was then read every 100us for twenty milliseconds.  It did not move by
+one byte, and
+.CW cs
+stayed
+.CW 0x21 .
+.PP
+.B "Ninth eliminated, and this one closes the line of enquiry."
+The stall is not a latched-interrupt acknowledgement problem.
+Whatever stops the controller asserting DREQ, writing back the status
+bit does not restart it.
+.PP
+So the Arasan runs in PIO, which is what Linux does with this
+controller, and the DMA switch there stays off.  The remaining
+observations \(em that concurrency is the only thing that moves the
+rate, that the failing path is always
+.I devsd 's,
+that in-kernel transfers never fail in over a thousand attempts \(em
+are recorded above for anyone who returns to it, but it is closed as
+an active question.
+.PP
+One correction to carry forward, because it has been restated three
+times and keeps reappearing in reasoning about this bug: the stall
+position is not fixed and is not a page boundary.  Twenty-eight of
+twenty-nine dumps stop at three blocks, 1536 bytes; exactly one
+stopped at eight blocks, 4096.  The invariant across both is that the
+controller holds exactly one block, which is flow control working and
+then never resuming.
