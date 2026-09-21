@@ -9123,3 +9123,71 @@ that gained least, 2.5x against module loading's 3.7x, and this is why.
 Threads against cores, and nodes against sockets.  Nothing in the
 kernel distinguishes a sibling thread from a separate core, so a
 four-way machine and a four-thread pair look identical to it.
+.NH 1
+Which lock is actually hot, measured
+.PP
+The survey and the parallel plan both put allocation next:
+.CW doc/dis-numa-survey.ms
+says "every allocation and every free on every processor goes through
+the same word" and Phase 3 of
+.CW doc/dis-parallel-plan.ms
+is the per-processor caches that would fix it.  That is an assertion
+about a bottleneck, and this branch has paid enough for assertions
+about bottlenecks.
+.PP
+.CW *poolstat=1
+counts, for each lock, how often it was taken and how often it was
+already held when a processor arrived.  A racy read of the key, which
+can only under-report.  On Compute Engine, the channel workload, the
+parallel VM on:
+.IP
+.nf
+                     4 processors    16 processors
+                    (contended arrivals per thousand)
+allocator, main           3                8
+allocator, heap           0                2
+scheduler (isched.l)      3               24
+channel (chanl)          15               20
+.fi
+.PP
+.B "The allocator is the least contended thing measured, at both
+widths."
+Phase 3 would be work against the number that is already smallest.  The
+channel lock is five times hotter at four processors, and the scheduler
+lock overtakes everything by sixteen.
+.PP
+That also explains the throughput table.  Channel traffic gained 2.5x
+and module loading 3.7x, and the channel workload is the one whose
+single global lock is hit fifteen to twenty times per thousand
+operations.  The two measurements agree, which is the reason to believe
+either.
+.PP
+.B "So the order changes."
+Phase 4 \(em a lock per
+.CW Channel ,
+with
+.CW alt
+taking them in address order \(em moves ahead of Phase 3, and per-P run
+queues with it, because
+.CW isched.l
+is what grows fastest with width: three per thousand at four
+processors and twenty-four at sixteen, an eightfold rise where the
+allocator not quite trebled.  Per-processor allocator caches remain
+worth doing eventually, and are no longer the thing to do next.
+.NH 2
+And the instrument had to be rebuilt once, for the usual reason
+.PP
+The first version timed each acquisition with
+.CW cycles()
+either side.  At one processor \(em where there is no contention by
+construction \(em it reported 244 and 321 cycles per acquisition, which
+is two
+.CW rdtsc
+under TCG.  At four processors it reported 276 and 316: the same
+number, saying nothing.  A test whose floor is its own cost cannot see
+a difference smaller than that cost.
+.PP
+Counting arrivals that find the lock held costs one load, cannot be
+confused with its own overhead, and has the control the timer lacked:
+at one processor it reports exactly zero out of 189,431 and 121,331,
+which is what must happen and is how the instrument is known to work.

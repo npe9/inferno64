@@ -89,6 +89,32 @@ extern int parallelvm;		/* defined below, with stoptheworld() */
 int disdumpon;
 
 /*
+ * The scheduler lock, counted the way chanlock() counts itself.
+ *
+ * With the allocator measured and not the bottleneck -- 8 contended
+ * arrivals per thousand at sixteen processors on real hardware -- the
+ * next candidates are this lock and the channel lock, and the honest
+ * way to choose between them is to count rather than to argue.  The
+ * read of the key is racy and can only under-report, which is the safe
+ * direction.  Gated on *poolstat, which is now the switch for "measure
+ * the locks" generally rather than the pools alone.
+ */
+ulong schedlocks, schedcontend;
+
+static void
+schedlock(void)
+{
+	extern int poolstat;
+
+	if(poolstat){
+		schedlocks++;
+		if(isched.l.key != 0)
+			schedcontend++;
+	}
+	lock(&isched.l);
+}
+
+/*
  * soakline() is a measurement, not a debugging dump, and it is the only
  * way to divide work done by the quanta it took.  That division is what
  * separates a kernel change from a host that handed the guest fewer
@@ -138,7 +164,7 @@ claimctx(void)
 {
 	Pctx *c;
 
-	lock(&isched.l);
+	schedlock();
 	/*
 	 * The first interpreter takes the context that already exists.
 	 * xec.c's _pctx is what curP has pointed at since boot, and the
@@ -1117,7 +1143,7 @@ ulong disquanta[MAXMACH];	/* quanta run, per processor; likewise */
 static void
 gput(Prog *p)
 {
-	lock(&isched.l);
+	schedlock();
 	p->link = nil;
 	if(isched.gtail != nil)
 		isched.gtail->link = p;
@@ -1134,7 +1160,7 @@ gget(void)
 {
 	Prog *p;
 
-	lock(&isched.l);
+	schedlock();
 	p = isched.ghead;
 	if(p != nil){
 		isched.ghead = p->link;
@@ -1154,7 +1180,7 @@ gdel(Prog *p)
 {
 	Prog *f, *prev;
 
-	lock(&isched.l);
+	schedlock();
 	prev = nil;
 	for(f = isched.ghead; f != nil; f = f->link){
 		if(f == p)
@@ -1288,7 +1314,7 @@ wakeidle(void)
 {
 	Proc *p;
 
-	lock(&isched.l);
+	schedlock();
 	p = isched.idlevmq;
 	if(p != nil){
 		isched.idlevmq = p->vmnext;
@@ -1462,7 +1488,7 @@ newprog(Prog *p, Modlink *m)
 	 * isched.l is the lock the global run queue and claimctx() already
 	 * use.  Nothing in here sleeps, which a Lock requires.
 	 */
-	lock(&isched.l);
+	schedlock();
 	n->pid = ++pidnum;
 	if(n->pid <= 0)
 		panic("no pids");
@@ -1749,7 +1775,7 @@ delprog(Prog *p, char *msg)
 
 	delgrp(p);
 
-	lock(&isched.l);	/* see newprog(); the same list */
+	schedlock();	/* see newprog(); the same list */
 	if(p->prev)
 		p->prev->next = p->next;
 	else
@@ -2494,6 +2520,16 @@ static Lock chanl;
 int chanlockon = 1;		/* *chanlock=0 on the boot line; see main.c */
 ulong	chandeferred;		/* channel frees moved out of the region */
 static ulong chanpendfull;	/* chpend[] was not big enough */
+/*
+ * The scheduler lock, counted the same way chanlock() counts itself.
+ *
+ * With the allocator measured and not the bottleneck -- 8 contended
+ * arrivals per thousand at sixteen processors on real hardware -- the
+ * next candidates are this and the channel lock, and the honest way to
+ * choose between them is to count rather than to argue.  Racy reads of
+ * the key, which can only under-report.
+ */
+
 static ulong chanregions;	/* channel operations run */
 static ulong chancontend;	/* found another executor already inside one */
 
@@ -2828,7 +2864,7 @@ acquire(void)
 	vmacquire();
 
 	if(up->type == Interp) {
-		lock(&isched.l);
+		schedlock();
 		if(isched.nblocked > 0)
 			isched.nblocked--;	/* see spawncap */
 		unlock(&isched.l);
@@ -2894,7 +2930,7 @@ release(void)
 	 * kernel spawns "dis" processes at all.  isched.creating keeps two
 	 * releases in a row from making two.
 	 */
-	lock(&isched.l);
+	schedlock();
 	spawn = 0;
 	if(up->type == Interp)
 		isched.nblocked++;	/* see spawncap */
@@ -2946,7 +2982,7 @@ startup(void)
 	up->type = Interp;
 	up->iprog = nil;
 
-	lock(&isched.l);
+	schedlock();
 	isched.creating = 0;
 	unlock(&isched.l);
 
@@ -3060,7 +3096,7 @@ vmachine(void*)
 
 	if(up->pctx == nil)
 		up->pctx = claimctx();
-	lock(&isched.l);
+	schedlock();
 	nvmprocs++;		/* this interpreter exists from here; see spawncap */
 	unlock(&isched.l);
 	startup();
@@ -3265,7 +3301,7 @@ vmachine(void*)
 			 */
 			execatidle();
 			vmrelease();
-			lock(&isched.l);
+			schedlock();
 			if(tready(nil) == 0){
 				/*
 				 * Re-checked under isched.l: the VM was given
@@ -3280,7 +3316,7 @@ vmachine(void*)
 				up->pc = getcallerpc(&r);
 				unlock(&isched.l);
 				sched();
-				lock(&isched.l);
+				schedlock();
 				if(isched.nwoken > 0)	/* running again; see release() */
 					isched.nwoken--;
 				unlock(&isched.l);
@@ -3827,6 +3863,8 @@ disdump(void)
 		npctx, MAXPCTX, curP, parallelvm, stwwaits);
 	print("dis: stw waits %d, parks %lud, wakes %lud, gave up %d\n",
 		stwwaits, stwparks, stwwakes, stwgaveup);
+	print("dis: sched lock taken %lud, held on arrival %lud\n",
+		schedlocks, schedcontend);
 	print("dis: chan regions %lud, contended %lud, frees deferred %lud,"
 		" pending overflow %lud, lock %s\n",
 		chanregions, chancontend, chandeferred, chanpendfull,
@@ -4137,6 +4175,13 @@ soakline(void)
 		extern void poolstatline(void);
 
 		poolstatline();
+		if(schedlocks != 0)
+			print("soak: sched lock taken %lud times, held on"
+				" arrival %lud (%lud per thousand);"
+				" chan regions %lud, contended %lud\n",
+				schedlocks, schedcontend,
+				(schedcontend * 1000) / schedlocks,
+				chanregions, chancontend);
 	}
 	print("soak: stopped-world audits %lud, bad %lud, a Prog queued twice"
 		" %lud (its own %lud), queued but not listed %lud, placeholders"
