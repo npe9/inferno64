@@ -188,11 +188,43 @@ reboot() {
 	return 1
 }
 
+#
+# Is /n/dos alive?  Checked with DMA still off, so this cannot be the
+# thing that breaks it.
+#
+# Arm 1 of the first run was lost for want of this.  The DMA failure
+# fired the instant "dma 1" was written -- on whatever the boot was
+# still doing to the card -- and panicked dosfs before the arm's own
+# write ever ran, so the arm reported "neither completed nor failed"
+# and the pair read as "only dmaclearirq 0 failed".  That reads as the
+# acknowledge fixing it, which is exactly the claim 72d107da
+# retracted.  A precondition that is not checked is an assumption.
+#
+dosalive() {
+	m=`mark`
+	pi 'echo alive > /n/dos/ablive.dat' 6
+	since "$m" >"$S/ab-live.txt"
+	if LC_ALL=C grep -aq 'panic\|error\|does not exist' "$S/ab-live.txt"; then
+		return 1
+	fi
+	pi 'rm /n/dos/ablive.dat' 4
+	return 0
+}
+
+#
+# ORDER MATTERS.  dmaclearirq first, dma last.
+#
+# The first run set dma before dmaclearirq, and the failure fired
+# between the two: the dump it produced was taken with the acknowledge
+# at its default, not at the value the arm was supposed to be testing.
+# Turning DMA on is what arms the thing under test, so everything the
+# arm wants in place has to be in place before it.
+#
 arm() {		# $1 = dmaclearirq
 	m=`mark`
-	pi 'echo dma 1 > /dev/sdM0/ctl' 5
-	pi 'echo dmafreeze 1 > /dev/sdM0/ctl' 5
 	pi "echo dmaclearirq $1 > /dev/sdM0/ctl" 5
+	pi 'echo dmafreeze 1 > /dev/sdM0/ctl' 5
+	pi 'echo dma 1 > /dev/sdM0/ctl' 5
 	since "$m" >"$S/ab-armed.txt"
 	if ! LC_ALL=C grep -aq "emmc: dmaclearirq $1" "$S/ab-armed.txt"; then
 		echo "  the board never acknowledged dmaclearirq $1"
@@ -202,12 +234,24 @@ arm() {		# $1 = dmaclearirq
 		echo "  the board never acknowledged dmafreeze 1"
 		return 1
 	fi
+	if ! LC_ALL=C grep -aq 'emmc: dma 1' "$S/ab-armed.txt"; then
+		echo "  the board never acknowledged dma 1"
+		return 1
+	fi
+	if LC_ALL=C grep -aq 'dosfs: panic' "$S/ab-armed.txt"; then
+		echo "  dosfs panicked while arming; this arm is void"
+		return 1
+	fi
 	return 0
 }
 
 run() {		# $1 = dmaclearirq; leaves the dump in $OUT-$1.txt
 	echo "=== dmaclearirq $1"
 	reboot || return 1
+	if ! dosalive; then
+		echo "  /n/dos is not writable before the test; arm is void"
+		return 1
+	fi
 	arm "$1" || return 1
 	m=`mark`				# so the dump stands alone
 	pi "dd -if /dev/zero -of /n/dos/ab$1.dat -bs $BS -count $COUNT" 2
@@ -226,8 +270,10 @@ run() {		# $1 = dmaclearirq; leaves the dump in $OUT-$1.txt
 		LC_ALL=C grep -a -A 9 'DMA WRITE FAILURE' "$OUT-$1.txt" | head -10
 	elif LC_ALL=C grep -aq 'records out' "$OUT-$1.txt"; then
 		echo "  completed, no DMA failure"
+	elif LC_ALL=C grep -aq 'dosfs: panic' "$OUT-$1.txt"; then
+		echo "  dosfs panicked; the write never ran -- VOID, not a pass"
 	else
-		echo "  neither completed nor failed in ~90s"
+		echo "  neither completed nor failed in ~90s -- VOID, not a pass"
 	fi
 }
 
