@@ -9019,3 +9019,107 @@ It defaulted to 0 for a long time and was right to: the first run of
 this same measurement panicked on three instances in four, and the
 cause was a real one.  Turning it on is only honest because that cause
 was found, named and fixed.
+.NH 1
+What modernisation is left, and the machines it is for
+.NH 2
+The cloud nodes are not NUMA at the size that was measured
+.PP
+Asked directly of Compute Engine, with
+.CW lscpu
+and
+.CW numactl -H
+on the same shapes the kernel ran on:
+.IP
+.nf
+n2-standard-4    Xeon 2.80GHz   1 socket   1 NUMA node   cpus 0-3
+t2a-standard-4   Neoverse-N1    1 socket   1 NUMA node   cpus 0-3
+n2-standard-64   Xeon 2.80GHz   2 sockets  2 NUMA nodes  0-15,32-47 / 16-31,48-63
+.fi
+.PP
+So every figure on this branch was taken on a single node, and none of
+them is a NUMA result \(em nor does any of them say anything about how
+this kernel would behave on two.  The 64-vCPU shape reports node
+distances of 10 and 20, so remote memory is nominally twice the cost,
+and it also exposes threads as well as cores: node 0 is
+.CW 0-15,32-47 ,
+which is sixteen cores and their siblings.  The scheduler knows about
+neither.
+.PP
+.CW doc/dis-numa-survey.ms
+already sorts what that would take, and its ordering still holds: there
+is no affinity, node or locality concept anywhere in the runtime, and
+allocation is three pools each behind one lock in front of one free
+list.  Per-processor caches are worth doing for the lock contention
+alone on a plain SMP machine, and a per-node policy is a later
+refinement of the same mechanism rather than a separate one.  That is
+Phase 3 of
+.CW doc/dis-parallel-plan.ms ,
+and it is the next thing with a measurable payoff.
+.NH 2
+The code generators are the correctness item, not a speed one
+.PP
+The reference count is emitted inline by the code generator, and of the
+twelve in
+.CW libinterp
+only
+.CW comp-arm64.c
+updates it atomically.
+.CW comp-amd64.c
+and
+.CW comp-386.c
+emit a plain
+.CW Oincrm / Odecrm
+on
+.CW Heap.ref
+with not one
+.CW LOCK
+prefix between them.
+.PP
+That was safe while one global
+.CW vmlock
+meant one executor at a time.  It is not safe now, and it is the one
+place where flipping the default created a hazard rather than inheriting
+one \(em so
+.CW disinit()
+refuses the combination and turns the JIT off, and each generator
+declares
+.CW jitrefsatomic
+for itself.
+.PP
+Two things are worth saying plainly about that.  Every kernel board in
+this tree ships
+.CW cflag=0 ,
+so no measurement on this branch has ever run compiled code.  And on
+pc64,
+.CW "*cflag=1 *parallelvm=0"
+panics with "invalid opcode" during
+.CW *init*
+\(em VM lock held, no second executor anywhere \(em so the amd64
+generator is broken on its own account and before any of this.  Fixing
+it is Phase 6, and it is a bigger job than the five refcount sites,
+because the generator does not currently work at all.
+.NH 2
+The rest, in the order the payoff argues for
+.IP \(bu
+.B "Phase 3, per-processor allocator caches."
+One lock in front of one free list per pool, with the lock word in the
+middle of the statistics it protects, so every acquisition dirties the
+line every other processor is spinning on.  This is the contention the
+2.5x to 4.1x is leaving on the table.
+.IP \(bu
+.B "Parallel marking."
+The collector is still a serial marker behind a stopped world.  The
+stop is cheap \(em over 99.98 per cent of collections happen at idle
+\(em but the mark is one processor's work whatever the machine.
+.IP \(bu
+.B "Phase 4, a lock per channel."
+.CW alt
+taking them in address order, and
+.CW addrun
+learning which queue to wake onto.  Channel traffic is the workload
+that gained least, 2.5x against module loading's 3.7x, and this is why.
+.IP \(bu
+.B "Topology at all."
+Threads against cores, and nodes against sockets.  Nothing in the
+kernel distinguishes a sibling thread from a separate core, so a
+four-way machine and a four-thread pair look identical to it.
