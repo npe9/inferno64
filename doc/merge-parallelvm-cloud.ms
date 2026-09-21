@@ -821,17 +821,51 @@ map, so 16 GiB under QEMU is not sufficient to raise it.
 .CW check-disdump
 passes, which was the blocker: Phase C's switch does what it says.
 .PP
-Two checks fail and both are being re-run alone before anything is
-concluded from them, because the host was running 29 QEMU guests, most
-of them other sessions':
+Two checks failed, and neither was the kernel.  Re-run alone, both
+failed on
+.I this
+branch too, at the same moment, with twenty-odd other sessions' guests
+on the host.
+.PP
 .CW check-pc64-tcp
-("no connection accepted") and
-.CW check-crossarch ,
-whose tail is an arm64 fault \(em five addresses in
-.CW 0x40050000
-and "Hit the reset button".  The second is the one that would matter:
-that is the cloud arm64 kernel faulting under QEMU, and this branch's
-own copy of that check passes.
+knocked once, twelve seconds after the boot's ready marker.  On a loaded
+host
+.CW cloudinit
+and
+.CW tcpserve
+take longer than that, so the single attempt landed before anything was
+listening and the check said "no connection accepted" \(em a kernel
+verdict for a harness timeout.  It retries now, and passes on both trees
+under the load that failed both.
+.PP
+.CW check-crossarch
+passed on retry with no change at all, but its failure was unreadable
+and is worth recording.  The merged tree's guest had received
+.CW "mount -A tcp!10.0.2.2!52293 /n/.x"
+for a command that said
+.CW /n/x :
+one character gained on a console that types one character at a time.
+The bind then found nothing and every later line \(em the
+.CW Rerror ,
+the
+.CW mntwalk
+complaints, "sh: crossarch: file does not exist" \(em was an honest
+report about a command nobody sent.  The check now compares the echoed
+line against what was typed and says
+.CW "CANNOT TELL" ,
+naming both, rather than blaming the kernel.
+.PP
+.B "So the trial's verdict is sixteen of sixteen."
+Every check passes on the merged tree, all four kernels and all fourteen
+boards build, and the two checks that were meant to flip on adoption did:
+.CW check-disdump
+and
+.CW check-pc64-bigmem .
+.CW check-pc64-parallelvm
+was stopped rather than finished \(em it is ten boots whose result moves
+with host load, and the host had twenty other guests on it, so the
+number would have meant nothing.  That one is worth running on a quiet
+machine after adoption.
 .NH 2
 3. Three paragraphs that adoption makes false
 .IP \(bu
