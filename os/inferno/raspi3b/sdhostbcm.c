@@ -117,6 +117,7 @@ enum {
 	Datclock = 25000000,	/* after identification */
 	Cdivmax	= 0x7ff,
 
+	Maxretry = 4,		/* re-issues of a command that never started */
 	Pioburst = 8,		/* words written between SDEDM reads */
 	Fifofillsh = 4,		/* SDEDM bits 8:4: words currently in the FIFO */
 	Fifofillmask = 0x1f,
@@ -734,11 +735,12 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	volatile u32 *r = c->r;
 	uchar *p = a;
 	long i;
-	int j;
+	int j, retries;
 	u32 arg, w, err;
 
 	USED(lun);
 	qlock(c);
+	retries = Maxretry;
 	for(i = 0; i < nb; i++){
 		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
 		/*
@@ -963,6 +965,34 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			 */
 			for(j = 0; j < Secsize; j++){
 				if(!fifodata(r)){	/* wait for data */
+					/*
+					 * If the data phase never began --
+					 * FSM still in DATAMODE, no error
+					 * bit, nothing in the FIFO -- then
+					 * nothing was transferred and the
+					 * card, asked, is idle in TRAN.
+					 * Re-issuing the command is safe,
+					 * and it is what turns an
+					 * intermittent abort into a pause.
+					 *
+					 * This happens under sustained load
+					 * despite the 1ms first-poll delay
+					 * (block 36864 of the 1.5MB test),
+					 * so that delay is necessary and not
+					 * sufficient, and the race it papers
+					 * over is still unexplained.  A
+					 * bounded retry is honest recovery
+					 * from a command that demonstrably
+					 * did not take effect; it is not a
+					 * substitute for knowing why.
+					 */
+					if((r[SDHSTS] & Hstserror) == 0 &&
+					    (r[SDEDM] & Edmfsmmask) == Fsmdata &&
+					    retries-- > 0){
+						r[SDHSTS] = Hstsclear;
+						i--;
+						goto again;
+					}
 					bioerror(c, write, bno+i, r[SDHSTS]);
 					goto out;
 				}
@@ -989,6 +1019,8 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			break;
 		}
 		r[SDHSTS] = Hstsclear;
+		retries = Maxretry;		/* this block is done; reset */
+	again:	;
 	}
 out:
 	qunlock(c);

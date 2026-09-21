@@ -7337,3 +7337,67 @@ The controller is not reporting a fault, it has simply stopped.  That
 is the same shape as the Arasan's DMA stall -- flow control engaging
 correctly and never disengaging -- on a completely different
 controller, which is interesting and may not be a coincidence.
+.NH 2
+SDHOST works: the whole suite, zero failures
+.P1
+SD-READ-OK
+SD-MULTI-OK 32768 bytes, last block matches it read alone (eb589042)
+SD-CAP-OK sector 30228479 reads and 30228480 does not
+SD-OK
+FAT-OK /n/dos/kernel8.img is 1938696 bytes
+SD-FS-CREATE-OK
+KUPDATE fetched 1938696 bytes
+KUPDATE-VERIFY 1938696 bytes read back identical
+KUPDATE-OK 1938696 bytes installed
+FAT-WRITE-OK /n/dos/inferno.txt holds 29 bytes
+FAT-RENAME-OK 29 bytes, contents intact across a rename
+FAT-CLOBBER-OK refused, and the source is whole
+FAT-HELD-OK 26 bytes across a rename with the file open
+FAT-BIG-OK 1536000 bytes written, read back and renamed, 60220 ms
+.P2
+with the card on SDHOST, the Arasan never opened, and
+.B "zero"
+.CW "sdhost: ... failed"
+lines in the boot.  kfs makes a filesystem, dosfs does the lot, and
+kupdate writes a 1.9MB kernel and reads it back identical.
+.PP
+Three things had to be right, and each hid the ones behind it.
+.IP 1.
+.B "The first read of SDHSTS waits 1ms after the command."
+Below that the data phase aborts with
+.CW Hstsfifo
+and
+.CW Failflag .
+Found because a debug print made every read pass.
+.IP 2.
+.B "The data register moves ONE BYTE per access, both ways."
+Reading is documented in this driver and the switch defaulted off, so
+reads returned the same word smeared.  Writing is not documented
+anywhere and the loop wrote words: 128 of them, which the controller
+counted as 128
+.I bytes
+.CW ( sdhbct
+512 to 384), so three quarters of every block never arrived.
+.IP 3.
+.B "A command whose data phase never starts is re-issued."
+The 1ms is necessary and not sufficient \(em block 36864 of the
+sustained test still aborted.  When the FSM is still in DATAMODE with
+no error bit and an empty FIFO, nothing was transferred and the card
+is idle in TRAN, so re-issuing is safe.  Four attempts a block.
+.PP
+.B "What this cost, and the lesson in it."
+The write loop was rewritten three times before the arithmetic was
+done \(em per-word polling to bursts, then the interrupt-enable bit
+Linux uses for writes \(em each a faithful port of
+.CW bcm2835-sdhost ,
+none of which could have worked, because they all changed WHEN the
+words went and the fault was that each carried a quarter of what it
+looked like.  The number was in the first dump:
+.CW "sdhbct 384"
+against 128 words written.
+.PP
+.B "And it is slow."
+24 KB/s against the Arasan's 50, because a byte per register access is
+four times the MMIO for the same data.  That is what the DMA path on
+this controller is for, and it is written and waiting behind
+.CW "echo dma 1" .
