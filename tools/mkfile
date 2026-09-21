@@ -20,6 +20,7 @@ HOSTCC=cc
 TOOLS=\
 	aout2efi\
 	aout2imxrt\
+	bin2ihex\
 
 <$ROOT/mkfiles/mksubdirs
 
@@ -28,6 +29,9 @@ install:V: $TOOLS
 
 aout2efi:	aout2efi.c
 	$HOSTCC -o $target aout2efi.c
+
+bin2ihex:	bin2ihex.c
+	$HOSTCC -o $target bin2ihex.c
 
 aout2imxrt:	aout2imxrt.c
 	$HOSTCC -o $target aout2imxrt.c

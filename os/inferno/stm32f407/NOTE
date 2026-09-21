@@ -161,11 +161,47 @@ bootloader already in its flash, reached by pressing Reset and
 connecting within five seconds, and that the two remaining ways in --
 mikroProg and ST-Link V2 -- both go through CN3, of which it says "2x5
 headers should be first soldered on the CN3 connector pads".  So on a
-stock board the programming header is not fitted.  Soldering it is the
-one job that opens the only path of the three this tree can drive:
-mikroBootloader is a Windows program that takes Intel HEX and would
-want the kernel linked above whatever the bootloader occupies, which
-the manual does not say.
+stock board the programming header is not fitted, and soldering it is
+what opens the probe paths.
+
+The bootloader path needs no soldering and no probe, and it does not
+need Windows either.  mikroe-uhb (github.com/thotypous/mikroe-uhb, MIT)
+is a client for the same USB HID protocol, reverse engineered from
+captures of the original, and it handles STM32F4XX.  It wants Intel
+hex, which is what i$CONF.hex beside the kernel is:
+
+	mikroe-uhb -v istm32f407.hex		# then press Reset
+
+It is written for Python 2 -- implicit relative imports, xrange,
+iteritems, dict.itervalues, a bare tuple after "in", and
+file.xreadlines in the hex reader.  Its own test suite passes once
+those are fixed: 4 of 4 in tests.device, including STM32Program, which
+replays a capture of a real STM32 devkit being programmed and checks
+the client emits the same USB traffic byte for byte; and every STM32
+case in tests.devkit and tests.bootinfo.  The one that does not is
+RandomBootInfo, which shells out to gcc -m32 to generate structs.
+
+What that client says about the flash layout answers the question the
+manual does not.  STM32DevKit lays the F4 out as 4 blocks of 16K, one
+of 64K and 6 of 128K and asserts the total equals BootStart, so on a
+1M part the bootloader is the last 128K sector, 0x080e0000 upward, and
+the application begins at 0x08000000 -- where this kernel is already
+linked.  Nothing has to move.  Loading istm32f407.hex into that model
+fills 10 blocks up to 0xa0000, a quarter of a megabyte below the
+bootloader.
+
+It does change two things in the image, and both are expected.  The
+reset vector at offset 4 becomes BootStart|1, so the part starts in
+the bootloader and waits its five seconds; and a twenty-byte Thumb stub
+is written just below BootStart which restores what was there.  Run on
+this kernel, the first two words go from
+
+	fc740020 c1010008    ->    fc740020 01000e00
+
+and the stub assembles to movw/movt r0, #0x200074fc; mov sp, r0;
+movw/movt r0, #0x080001c1; bx r0 -- this kernel's own initial stack
+pointer and its own reset vector, thumb bit and all.  The stack pointer
+in word 0 is never touched.
 
 CN3 is full JTAG and not only SWD, which matters because it means an
 ordinary 20-pin ARM JTAG probe drives it with jumper wires and no

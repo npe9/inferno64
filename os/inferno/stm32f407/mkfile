@@ -95,10 +95,14 @@ default:V: i$CONF
 install:V: i$CONF
 	cp i$CONF $INSTALLDIR/i$CONF
 
-i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
+i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES $ROOT/tools/bin2ihex
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
 	$LD $LDFLAGS -o $target -H4 -T$KTZERO -D$KDATA -R0 -l $OBJ $CONF.$O $LIBFILES
-	cp $target $INSTALLDIR/$target
+	$ROOT/tools/bin2ihex $target $KTZERO i$CONF.hex
+	cp $target i$CONF.hex $INSTALLDIR
+
+$ROOT/tools/bin2ihex:
+	cd $ROOT/tools; mk bin2ihex
 
 # Every module the root carries, and osinit with them.  A module whose
 # decoded array is not here still loads, out of the root and into the
@@ -135,7 +139,7 @@ $CONF.prog.s $CONF.xipmod.c: $INITDIR/$INIT.dis $XIPDISFILES
 <../port/portmkfile
 
 # After the include: portmkfile sets CLEANEXTRA empty.
-CLEANEXTRA=$CONF.prog.s $CONF.xipmod.c
+CLEANEXTRA=$CONF.prog.s $CONF.xipmod.c i$CONF.hex
 
 ../init/$INIT.dis:	../init/$INIT.b
 	cd ../init; mk 'DISWORD='$DISWORD $INIT.dis
@@ -169,7 +173,14 @@ devuart.$O:	../port/devuart.c
 	$CC $CFLAGS ../port/devuart.c
 
 # -H4 output is a raw vector image, so it is what a probe or a ROM
-# bootloader wants at 0x08000000 with no conversion.  With a probe:
+# bootloader wants at 0x08000000 with no conversion, and i$CONF.hex is
+# the same bytes as Intel hex for loaders that want that instead.
+#
+# Through the USB HID bootloader a MikroElektronika board already has
+# in its flash, which needs no probe and no soldering (mikroe-uhb is
+# the cross-platform client; see NOTE):
+#	mikroe-uhb -v istm32f407.hex
+# With a probe:
 #	openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
 #		-c "program istm32f407 0x08000000 verify reset exit"
 # On a bare F407, with none, holding BOOT0 high over a reset:
