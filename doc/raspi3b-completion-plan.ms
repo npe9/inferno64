@@ -6416,3 +6416,76 @@ The general fault is the one this document keeps recording: a
 conclusion drawn from a console buffer without establishing that what
 was read belonged to the event being asked about.  That is now four
 times.
+.NH 2
+Not timing either, and a note on how that was nearly concluded
+.PP
+One run with
+.CW biotrace
+on \(em a console print per block-device call, milliseconds each, on
+every transfer \(em produced no failure in 160 transfers, where the
+identical concurrent pair without it had just failed.  That looks like
+a timing sensitivity and was written down as one.
+.PP
+Repeated three times each way it is nothing:
+.P1
+biotrace 1:  3 of 3 runs had a failure
+biotrace 0:  2 of 3 runs had a failure
+.P2
+The one clean run was the base rate not firing.  A 50us delay before
+arming the channel
+.CW ( dmadelay )
+is the same story: 1 of 3 against 2 of 3, which at this n is not a
+difference.  Seventh candidate out, and the only reason it did not
+join the plan as a finding is that it was repeated before it was
+believed.
+.PP
+.B "That is three conclusions in one session drawn from a single run,"
+and
+.CW dmaab.sh
+prints "ONE pass each; say so, do not conclude" in its own output
+precisely because of the first one.  The rule that survives: an arm
+that fails disproves a fix whatever the base rate, because a fix
+cannot be active while the thing it fixes happens; an arm that passes
+says nothing until it has been repeated.
+.NH 2
+What is actually known about the trigger
+.PP
+.B "Concurrency is the only thing that has ever changed the rate."
+Two processes writing the raw device at
+.CW bs=4608
+fail in two or three runs of three.  One process writing the same
+blocks, the same sizes, the same patterns, through the kernel, does
+not fail in over a thousand transfers \(em and in a run where a
+.I dmatest
+loop and a background
+.CW dd
+were going at once, the
+.CW dd
+failed and the
+.I dmatest
+did not.
+.PP
+So the failing path is
+.CW devsd 's,
+and a second process raises the rate.  Seven things have been ruled
+out with the intervention shown active: the stale eMMC interrupt,
+stale DMA channel state, the buffer's page offset, direction
+alternation,
+.I dossrv 's
+read-then-write shape, a buffer the CPU has just dirtied, and delay.
+.PP
+What has not been looked at is what
+.CW devsd
+does around the call that
+.CW dmatest
+does not: it holds
+.CW qlock(&unit->ctl)
+across the whole of
+.CW sdbio ,
+allocates and frees a transfer buffer per call, and copies into it.
+The allocation is the one with a mechanism behind it \(em two
+processes allocating and freeing transfer buffers around a DMA the
+engine is still reading from is a shape worth checking, and before the
+channel reset landed, a stalled engine stayed ACTIVE while
+.CW sdbio
+went on to free the buffer underneath it.
