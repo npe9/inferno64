@@ -1121,18 +1121,37 @@ fatcheck()
 		if(ok == 0){
 			sys->print("FAT-OK /n/dos/kernel8.img is %bd bytes\n", d.length);
 			#
-			# The update first, and in its own process.
+			# The update first, and ALONE.
 			#
 			# It used to run after the checks below, which is
 			# fine until one of them is what the new kernel
 			# fixes: a kernel that wedges during FAT-BIG never
 			# reaches kupdate, so the board cannot replace it
 			# and the card has to be carried to another machine.
-			# That happened three times today.  Spawned, so the
-			# checks and the fetch proceed together -- dossrv
+			# That happened three times.  So it was spawned, to
+			# run alongside them, on the reasoning that dossrv
 			# serialises what they both touch.
 			#
-			spawn kupdate();
+			# It does not serialise it usefully.  fatwrite()
+			# writes 1.5MB while kupdate writes 1.9MB, through
+			# one dossrv, to two different files, and the
+			# kernel that comes out of it is a mixture: 14 of
+			# 57 chunks holding the previous kernel's bytes,
+			# once; a file differing from its source at byte 42
+			# after three consecutive installs, today.  Each
+			# time KUPDATE-VERIFY called it identical, because
+			# that reads back through the same dossrv and gets
+			# what was written rather than what reached the
+			# card.
+			#
+			# Running it first and by itself keeps the reason it
+			# was moved -- it still happens before anything that
+			# can wedge -- and removes the second writer.  The
+			# checks then run after, which is where they were
+			# and where they belong: they are checks, and the
+			# update is the thing the board cannot do without.
+			#
+			kupdate();
 			fatwrite();
 			return;
 		}
