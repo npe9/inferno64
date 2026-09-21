@@ -3652,6 +3652,45 @@ disinit(void *a)
 	 * killcomm() -> chanlock() is a Lock taken twice by its own holder.
 	 */
 	chandefer = chandeferfn;
+	/*
+	 * The JIT and the parallel VM together need the code generator to
+	 * update Heap.ref atomically, and of the twelve in libinterp only
+	 * comp-arm64.c does: it uses LDXRW/STXRW retry loops at all four
+	 * sites.  comp-amd64.c and comp-386.c emit a plain Oincrm/Odecrm
+	 * on the count -- not one LOCK prefix between them -- and the
+	 * others were never audited.
+	 *
+	 * With one global vmlock that was fine, because only one executor
+	 * ran Dis at a time.  parallelvm defaults to 1 now, so it is not,
+	 * and the failure is silent: a lost decrement frees an object that
+	 * is still referenced, a lost increment leaks one, and neither
+	 * says anything at the time.
+	 *
+	 * Every kernel board in this tree ships cflag=0, so this cannot
+	 * fire by default.  It exists because *cflag=1 on a boot line is
+	 * one word, and the person typing it should be told rather than
+	 * handed a corrupted heap.  The JIT is what gets turned off: it is
+	 * a speed option, and running interpreted is slower while running
+	 * with a torn reference count is wrong.
+	 *
+	 * And do not read this as "*parallelvm=0 gets you the JIT".  On
+	 * pc64 it does not: "*cflag=1 *parallelvm=0" panics with "invalid
+	 * opcode" during *init*, with the VM lock held and no second
+	 * executor anywhere, so the amd64 generator is broken on its own
+	 * account and before any of this.  That is presumably why every
+	 * board ships cflag=0 and why nobody noticed the refcounts.
+	 */
+	{
+		extern int cflag, jitrefsatomic;
+
+		if(cflag != 0 && parallelvm != 0 && jitrefsatomic == 0){
+			print("dis: this code generator updates Heap.ref"
+				" without atomics, and *parallelvm=1 would\n");
+			print("dis: lose counts through it -- JIT disabled."
+				"  See disinit() before turning it back on.\n");
+			cflag = 0;
+		}
+	}
 	kproc("fdclose", fdcloseproc, nil, KPDUP);	/* see deferfdclose() */
 	atsafepoint = safepoint;	/* see stoptheworld() */
 	progchainok = progchainokfn;	/* INSTRUMENTATION - temporary */
