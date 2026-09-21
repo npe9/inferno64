@@ -91,6 +91,19 @@ clockintr(Ureg *u)
 		extern void soakline(void);
 
 		soakline();
+		{
+			extern ulong uarttxsaved;
+
+			/*
+			 * Board-local, and on the soak line's own schedule so
+			 * it costs nothing when nobody is measuring.  A
+			 * nonzero count is the transmit-interrupt hang that
+			 * uartvirtarm64.c's kick used to walk into; see the
+			 * comment there.
+			 */
+			print("soak: uart tx kept alive %lud times\n",
+				uarttxsaved);
+		}
 	}
 	if(disdumpon && (m->ticks == 60*HZ || m->ticks == 70*HZ)){
 		extern void stalldump(void);

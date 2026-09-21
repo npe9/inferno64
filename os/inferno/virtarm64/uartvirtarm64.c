@@ -51,7 +51,33 @@ uartintr(Ureg*, void *arg)
 		ch = csr32r(c, UartDR) & 0xff;
 		uartrecv(uart, ch);
 	}
-	csr32w(c, UartICR, UartICRALL);
+	/*
+	 * Clear what was actually seen, not everything.
+	 *
+	 * This said UartICRALL, and with a console that receives as well
+	 * as sends that is a transmit interrupt thrown away unhandled.
+	 * The receive loop above runs until the receive fifo is empty or
+	 * 128 characters have gone by, so under steady input it always
+	 * runs its full bound -- and the transmit interrupt that asserted
+	 * during those 128 characters is not in the mis sampled before
+	 * the loop, so it is not serviced here, and UartICRALL then
+	 * clears it anyway.  The PL011 raises TXI on the transition of
+	 * the fifo level past its trigger; with the fifo already below
+	 * the trigger there is no further transition, so it never asserts
+	 * again.  Output stops for good and the kernel runs on.
+	 *
+	 * Writing mis back clears exactly the causes this pass is about
+	 * to handle and leaves anything raised since, which the next
+	 * interrupt will pick up.
+	 *
+	 * Reproduced rather than reasoned: the same kernel and workload
+	 * for 400 seconds, once with serial input and once without.
+	 * Without input the console produced 197,736 bytes; with input it
+	 * produced 7,353 and stopped during boot.  Four t2a instances in
+	 * five went quiet the same way and a Compute Engine serial
+	 * console always has input.
+	 */
+	csr32w(c, UartICR, mis);
 	/*
 	 * Transmit side.  Without this the driver only ever pushed what
 	 * fitted in the fifo at the moment something called kick, and
@@ -84,6 +110,14 @@ virtarm64_disable(Uart *uart)
 	csr32w(c, UartIMSC, 0);
 }
 
+/*
+ * How many times the transmit interrupt was kept enabled because the
+ * QUEUE still had output although the staging buffer did not.  Each one
+ * of these is a console that would have stopped for good before this
+ * test looked past the staging buffer.
+ */
+ulong uarttxsaved;
+
 static void
 virtarm64_kick(Uart *uart)
 {
@@ -105,10 +139,31 @@ virtarm64_kick(Uart *uart)
 	 * which on a quiet console is a storm; leaving it disabled is the
 	 * bug this fixes.  uartintr() calls uartkick() when it fires, and
 	 * that comes back here to push the rest or take the request away.
+	 *
+	 * "Output remains" means anywhere -- the staging buffer OR the
+	 * queue behind it -- and testing only the staging buffer is how
+	 * this driver lost a console for good.
+	 *
+	 * The loop above is bounded at 128 writes.  uartstageoutput()
+	 * stages up to Stagesize, which is 1024, so op meets oe on every
+	 * eighth full pass, and a pass runs to its bound whenever the fifo
+	 * drains as fast as it is filled -- which is what a virtual serial
+	 * port does.  Exit at the bound with op == oe and the old test
+	 * said "nothing left" while blocks were still queued, so TXIM went
+	 * off and nothing would ever turn it back on: a writer only kicks
+	 * when Qstarve is set, and qconsume() sets Qstarve only when it
+	 * finds the queue EMPTY, which it is not.  The console stops for
+	 * good and the kernel runs on.
+	 *
+	 * That is exactly what four t2a instances in five did, on both
+	 * *parallelvm arms, with the instances still RUNNING and Compute
+	 * Engine's serial API reporting a frozen byte offset.
 	 */
-	if(uart->op < uart->oe)
+	if(uart->op < uart->oe || qlen(uart->oq) > 0){
+		if(uart->op >= uart->oe)
+			uarttxsaved++;	/* a hang avoided; see clock.c */
 		csr32w(c, UartIMSC, UartIMSCRX|UartIMSCTX);
-	else
+	}else
 		csr32w(c, UartIMSC, UartIMSCRX);
 }
 
