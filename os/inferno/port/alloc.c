@@ -45,7 +45,37 @@ struct Pool
 	intptr	lastfree;
 	int	warn;
 	void	(*move)(void*, void*);
+	/*
+	 * What the pool lock costs, per pool.  *poolstat=1 turns this on.
+	 *
+	 * doc/dis-numa-survey.ms says allocation is "three pools, each one
+	 * lock in front of one free list, and every allocation and every
+	 * free on every processor goes through the same word", and Phase 3
+	 * of doc/dis-parallel-plan.ms is the per-processor caches that
+	 * would fix it.  That is an assertion about a bottleneck, and this
+	 * branch has spent enough on assertions about bottlenecks.  These
+	 * two counters turn it into a measurement: how often the lock was
+	 * taken, and how often it was already held when we arrived.
+	 *
+	 * The first version timed the acquisition with cycles() either
+	 * side, and it measured itself.  At one processor, where there is
+	 * no contention by construction, it reported 244 and 321 cycles
+	 * per acquisition -- two rdtsc under TCG -- and at four processors
+	 * it reported 276 and 316, which is the same number and says
+	 * nothing.  A test whose floor is its own cost cannot see a
+	 * difference smaller than that cost.
+	 *
+	 * Reading l.key before taking the lock costs one load, cannot be
+	 * confused with its own overhead, and is exactly the question: if
+	 * the lock is held when we arrive, this processor is about to
+	 * queue.  The read is racy and does not need not to be -- it is a
+	 * rate, not an audit.
+	 */
+	uvlong	ncontend;
+	uvlong	nlock;
 };
+
+int poolstat;		/* *poolstat=1 */
 
 /* keep the quanta above the size of 5 pointers and 2 longs else the next block
 	will be getting overwritten by the header -- starts a corruption hunt
@@ -385,6 +415,50 @@ poolsummary(void)
 	print("\n");
 }
 
+
+/*
+ * ilock(&p->l), counting arrivals that find it already held when
+ * *poolstat asks.  Off it is the bare ilock plus one predictable
+ * branch; on it costs one extra load.
+ */
+static void
+poolilock(Pool *p)
+{
+	if(!poolstat){
+		ilock(&p->l);
+		return;
+	}
+	if(p->l.key != 0)
+		p->ncontend++;
+	p->nlock++;
+	ilock(&p->l);
+}
+
+
+/*
+ * One line per pool: how much of the machine the allocator's lock is
+ * taking.  Called from soakline(); silent unless *poolstat=1, because
+ * the counters are only collected then.
+ */
+void
+poolstatline(void)
+{
+	int i;
+	Pool *p;
+
+	if(!poolstat)
+		return;
+	for(i = 0; i < table.n; i++){
+		p = &table.pool[i];
+		if(p->nlock == 0)
+			continue;
+		print("soak: pool %s lock taken %llud times, held on arrival"
+			" %llud (%llud per thousand)\n",
+			p->name, p->nlock, p->ncontend,
+			(p->ncontend * 1000) / p->nlock);
+	}
+}
+
 void*
 poolalloc(Pool *p, uintptr asize)
 {
@@ -420,7 +494,7 @@ poolalloc(Pool *p, uintptr asize)
 			"BHDRSIZE %zud quanta %#zux pc=%#p",
 			osize, size, (uintptr)BHDRSIZE, p->quanta, getcallerpc(&p));
 
-	ilock(&p->l);
+	poolilock(p);
 	p->nalloc++;
 
 	t = p->root;
@@ -631,7 +705,7 @@ poolfree(Pool *p, void *v)
 	   b->size <= 0 || (b->size & p->quanta))
 		poolfault(v, "poolfree:badhdr", getcallerpc(&p));
 
-	ilock(&p->l);
+	poolilock(p);
 	p->nfree++;
 	p->cursize -= b->size;
 
@@ -710,7 +784,7 @@ poolmsize(Pool *p, void *v)
 
 	if(v == nil)
 		return 0;
-	ilock(&p->l);
+	poolilock(p);
 	D2BPC(b, v, getcallerpc(&p), "alloc:D2B:poolmsize");
 	size = b->size - BHDRSIZE;
 	iunlock(&p->l);

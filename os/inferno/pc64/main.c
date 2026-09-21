@@ -490,6 +490,11 @@ init0(void)
 		 * Every table in doc/multicore-plan.ms is a 90-second boot of
 		 * the one-shot workload, so the default stays exactly that.
 		 */
+		if((sk = getconf("*poolstat")) != nil){
+			extern int poolstat;
+
+			poolstat = strtol(sk, nil, 0);
+		}
 		if((sk = getconf("*progquar")) != nil){
 			extern int progquar;
 

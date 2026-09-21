@@ -317,6 +317,11 @@ init0(void)
 		 * reason pc64/main.c gives: ksetenv() writes through
 		 * up->egrp, and up is nil while the options are read.
 		 */
+		if((sk = getconf("*poolstat")) != nil){
+			extern int poolstat;
+
+			poolstat = strtol(sk, nil, 0);
+		}
 		if((sk = getconf("*progquar")) != nil){
 			extern int progquar;
 

@@ -4133,6 +4133,11 @@ soakline(void)
 		" spawncap %d, waitq full %lud, childq full %lud\n",
 		nvmprocs, isched.nblocked, isched.nidle, isched.nwoken,
 		conf.nmach, spawncap, nwaitqfull, nchildqfull);
+	{
+		extern void poolstatline(void);
+
+		poolstatline();
+	}
 	print("soak: stopped-world audits %lud, bad %lud, a Prog queued twice"
 		" %lud (its own %lud), queued but not listed %lud, placeholders"
 		" skipped %lud, ready and unqueued twice running %lud; quanta",
