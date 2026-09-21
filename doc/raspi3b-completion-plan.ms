@@ -6649,3 +6649,81 @@ That is the arrangement with a working precedent.
 with the interrupt-acknowledgement hypothesis as the current
 candidate.  Worth doing only if DMA on this particular controller is
 itself the point.
+.NH 1
+TODO: the Arasan DMA write stall
+.PP
+Parked, not abandoned, and parked for a reason: Linux runs this
+controller in PIO and uses the external engine on SDHOST instead, so
+the stall lives in a configuration with no production precedent.  The
+board loses nothing by leaving it \(em
+.CW emmcdma
+is 0 by default, the PIO path is what every transfer takes, and a
+stall is no longer fatal since the channel reset landed.
+.PP
+.B "What is known, so none of it has to be found again."
+The failure is a nine-block DMA write that stops with the engine
+ACTIVE and DREQ_STOPS_DMA set, the DREQ line clear, and the controller
+still reporting room in its status.
+.CW blksizecnt
+says the controller holds exactly one block whichever position it
+stops at \(em three blocks in, twenty-eight times, and eight blocks in
+once \(em so it is flow control behaving correctly and never
+resuming.
+.CW "dma src"
+is the engine's live source pointer, delivered plus one 64-byte burst
+of read-ahead, not a property of the buffer.
+.PP
+.B "Eight things are eliminated, each with the intervention shown
+.B "active in the dump or the test shown running:"
+the stale eMMC interrupt
+.CW ( dmaclearirq ),
+stale DMA channel state
+.CW ( dmareset ),
+the source buffer's page offset, direction alternation,
+.I dossrv 's
+single-block-read-then-nine-block-write shape, a buffer the CPU has
+just dirtied, delay
+.CW ( dmadelay
+and a console print per call), and allocating the buffer per transfer
+as
+.CW sdbio
+does.  In-kernel transfers do not fail in over a thousand attempts;
+.I devsd 's
+do, two or three runs in three, and in one run a
+.CW dmatest
+loop came through clean while a concurrent
+.I devsd
+transfer stalled beside it.
+.PP
+.B "The hypothesis to test if it resumes, and the switch to test it with."
+.CW Iwriterdy
+is a latched status bit, cleared only by writing it back, and nothing
+clears it during a DMA transfer \(em the driver acknowledges it only
+in the PIO path inside
+.CW awaitirq .
+If the controller re-asserts DREQ when its buffer goes from full to
+having room, and that re-assertion needs the latched bit acknowledged,
+the first time the card goes busy long enough for the buffer to fill
+DREQ drops and never returns.  That also explains why
+.CW dmaclearirq
+changed nothing: it clears the register once BEFORE arming, and the
+re-assertion in question happens three blocks in.
+.PP
+.CW "echo dmaunstick 1"
+is the experiment, already in the driver and off.  At the stall it
+acknowledges
+.CW Iwriterdy
+and watches the engine's live
+.CW TXFR_LEN
+.CW ( dmachanleft() ).
+If the remaining count moves, the mechanism is proved and the fix is
+to acknowledge during the transfer rather than after it.  If it does
+not, the hypothesis is dead and the dump says so.
+.PP
+.B "And one rule for whoever picks it up."
+Of the eight eliminations the only ones worth anything are those where
+the dump showed the intervention active; three conclusions in one
+session were drawn from a single run and all three were wrong.  A
+failing arm disproves a fix whatever the base rate, because a fix
+cannot be active while the thing it fixes happens.  A passing arm says
+nothing until it is repeated.
