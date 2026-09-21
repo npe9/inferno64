@@ -6875,3 +6875,72 @@ and
 are set immediately before
 .CW cardready() .
 Only then is there a PIO baseline to measure DMA against.
+.NH 2
+SDHOST PIO: one real bug fixed, and where it stops now
+.PP
+.B "Fixed: the status poll was issued with the block registers armed."
+.CW SDHBCT
+and
+.CW SDHBLC
+are how this controller is told that the next command carries a data
+phase.  The transfer loop set them and then called
+.CW cardready() ,
+which issues CMD13 \(em a command with no data phase.  The controller
+waited for a phase that never came and
+.CW NEW_FLAG
+never cleared, so every transfer failed before any data command was
+issued at all:
+.P1
+sdhost: read block 0 failed: sdhsts 0x1 sdcmd 0x800d sdedm 0x10803
+.P2
+.CW 0x800d
+is
+.CW NEW_FLAG
+still set on command 13, with the FSM in WRITEDATA on a read.  Linux's
+.CW bcm2835-sdhost
+sets those registers from
+.CW prepare_data() ,
+which runs only for commands that carry data.  Two other paths in this
+same file already polled before arming; only the transfer loop had it
+backwards.
+.PP
+Moving the poll ahead of the registers changes the failure completely,
+which is what says it was a real bug:
+.P1
+before:  sdhsts 0x1  sdcmd 0x800d  sdedm 0x10803
+after:   sdhsts 0x0  sdcmd 0x51    sdedm 0x10801
+.P2
+.CW 0x51
+is CMD17 with
+.CW READ_CMD
+set and
+.CW NEW_FLAG
+clear: the command was issued and completed, with no error.
+.PP
+.B "Where it stops now: the command completes and no data phase starts."
+.CW sdedm
+reads FSM 1, DATAMODE, where a read should take it to 2, READDATA, and
+.CW sdhsts
+is 0 \(em no data, no error.  The block registers are armed before the
+command, the read flag is set, the card was in TRAN when asked.
+Setting
+.CW "bytemode 1" ,
+which switches to the byte-per-read loop written for real silicon,
+makes no difference: the same
+.CW fifodata()
+wait times out, so it is not the loop variant.
+.PP
+So the controller accepts a read command and declines to start the
+transfer.  That is a much narrower question than the one this started
+with, and it is where the next session picks up.  Worth checking
+first: whether anything between
+.CW cardready()
+and
+.CW sdcmdstart()
+disturbs the armed registers, and what
+.CW SDHCFG
+needs beyond
+.CW Cfgslowcard
+\(em it currently reads
+.CW 0x8 ,
+and Linux sets rather more than that.

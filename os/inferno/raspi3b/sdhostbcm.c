@@ -579,6 +579,30 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	qlock(c);
 	for(i = 0; i < nb; i++){
 		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
+		/*
+		 * The card's status FIRST, and only then the block
+		 * registers.
+		 *
+		 * SDHBCT and SDHBLC are how this controller is told that
+		 * the next command carries a data phase.  Armed, it waits
+		 * for that phase; CMD13 does not have one, so the status
+		 * poll below never completed and NEW_FLAG stayed set --
+		 *
+		 *	sdhost: read block 0 failed:
+		 *	    sdhsts 0x1 sdcmd 0x800d sdedm 0x10803
+		 *
+		 * 0x800d being NEW_FLAG still set on command 13, with the
+		 * FSM sitting in WRITEDATA on a read.  Every transfer
+		 * failed this way, in both directions, with DMA off, so
+		 * it was never the data path at all.
+		 *
+		 * Linux's bcm2835-sdhost sets these from prepare_data(),
+		 * which runs only for commands that carry data.
+		 */
+		if(!cardready(c)){
+			bioerror(c, write, bno+i, r[SDHSTS]);
+			break;
+		}
 		r[SDHBCT] = Secsize;
 		r[SDHBLC] = 1;
 		/*
@@ -590,10 +614,6 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		 * deadlocked every transfer after the first.
 		 */
 		err = 0;
-		if(!cardready(c)){
-			bioerror(c, write, bno+i, r[SDHSTS]);
-			break;
-		}
 		if(sdcmdstart(r, write? 24: 17, arg, write? Writecmd: Readcmd) < 0){
 			bioerror(c, write, bno+i, r[SDHSTS]);
 			break;
