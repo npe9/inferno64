@@ -15,7 +15,6 @@ Proc *up;
 Conf conf;
 
 extern ulong kerndate;
-extern uintptr bootx0;		/* x0 as entered: DTB pointer, or Jtagmagic */
 extern int cflag;
 extern int consoleprint;
 extern int main_pool_pcnt;

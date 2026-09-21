@@ -28,7 +28,7 @@
 # dmafreeze is ON for both arms.  A failed transfer then prints the
 # engine's state and the controller's registers and stops, without the
 # reset that would destroy them.  It wedges the board, and that used
-# to be the reason not to do it; a wedge now costs one jtagrestart.
+# to be the reason not to do it; a wedge now costs one ^R reboot.
 #
 set -u
 HERE=`dirname "$0"`
@@ -139,54 +139,52 @@ waitshell() {
 	return 1
 }
 
-restart() {
+#
+# Reboot with ^R, not with jtagrestart.
+#
+# jtagrestart loads a kernel and is what this whole directory is for,
+# but it is NOT the way to cycle a board in a loop.  A warm restart
+# leaves every SoC peripheral as the previous kernel had it, and twice
+# now that boot has hung in schedinit() -- and when it hangs there the
+# debugger goes with it: every injected instruction fails with
+# DSCR.ERR=1, including a bare DSB, on all four cores, and "aarch64
+# dbginit" does not clear it.  The JTAG chain still enumerates, so it
+# looks like a dead board rather than an unreachable one.  TRST resets
+# the TAP and not the SoC, so the only way out is a power cycle, by
+# hand, by a person.  Two of those have been spent that way.
+#
+# ^R goes through the kernel's own archreboot(), which drives the
+# BCM2835 watchdog and resets the SoC properly: the firmware runs, the
+# card is read, and the machine comes up cold with every peripheral in
+# its reset state.  It is taken from the console receive path, so it
+# works even when the shell is stuck behind a dead file server --
+# which is precisely the state a failed DMA write leaves.
+#
+# The cost is that the kernel under test is the one on the card.  That
+# is fine here: the card holds a build with the dma, dmafreeze and
+# dmaclearirq switches, and this experiment changes none of the
+# kernel.  Use jtagrestart to put a NEW kernel on the board; use ^R to
+# cycle it.
+#
+reboot() {
 	snap "$S/ab-pre.txt"
-	before=`LC_ALL=C grep -ac 'entered over JTAG' "$S/ab-pre.txt" || true`
-	#
-	# At most two attempts, and none at all once the debugger reports
-	# DSCR.ERR.
-	#
-	# Retrying a restart against a board that is not coming back is
-	# how this script cost a power cycle.  It re-halted and reloaded
-	# repeatedly until cpu0 ended up stopped before fpinit() had run,
-	# at which point OpenOCD faults reading FPCR -- "Opcode
-	# 0xd53b4500, DSCR.ERR=1" -- and then could not execute even a
-	# DSB on the core.  There is no way out of that over JTAG: TRST
-	# resets the TAP, not the SoC.
-	#
-	# DSCR.ERR is that state's signature, so it is a reason to stop,
-	# not to try harder.
-	#
-	try=1
-	while [ $try -le 2 ]; do
-		echo "  booting a fresh kernel over JTAG (attempt $try)"
-		( cd "$ROOT" && timeout 180 openocd -f "$ADAPTER" \
-			-f tools/jtag/raspi3b.cfg \
-			-c 'init; jtagrestart; resume; exit' ) >"$S/ab-ocd.txt" 2>&1
-		if LC_ALL=C grep -aq 'DSCR.ERR' "$S/ab-ocd.txt"; then
-			echo "  the debugger cannot drive cpu0 (DSCR.ERR)."
-			echo "  The board needs a power cycle; not retrying."
-			return 1
+	before=`LC_ALL=C grep -ac 'raspi3b build' "$S/ab-pre.txt" || true`
+	echo "  rebooting with ^R"
+	screen -S "$SESS" -X stuff "$(printf '\022')" 2>/dev/null
+	i=0
+	while [ $i -lt 30 ]; do
+		snap "$S/ab-boot.txt"
+		now=`LC_ALL=C grep -ac 'raspi3b build' "$S/ab-boot.txt" || true`
+		if [ "$now" -gt "$before" ]; then
+			echo "  booted; waiting for the shell"
+			waitshell || return 1
+			echo "  shell is free"
+			return 0
 		fi
-		i=0
-		while [ $i -lt 15 ]; do
-			snap "$S/ab-boot.txt"
-			# The warm banner is printed only on a JTAG entry, and
-			# the log was just emptied, so any match is this boot.
-			now=`LC_ALL=C grep -ac 'entered over JTAG' "$S/ab-boot.txt" || true`
-			if [ "$now" -gt "$before" ]; then
-				echo "  booted; waiting for the shell"
-				waitshell || return 1
-				echo "  shell is free"
-				return 0
-			fi
-			sleep 6
-			i=`expr $i + 1`
-		done
-		try=`expr $try + 1`
+		sleep 5
+		i=`expr $i + 1`
 	done
-	echo "  board did not come back after 2 attempts; stopping rather"
-	echo "  than hammering it into a state only a power cycle fixes"
+	echo "  board did not reboot; it may need a power cycle"
 	return 1
 }
 
@@ -209,7 +207,7 @@ arm() {		# $1 = dmaclearirq
 
 run() {		# $1 = dmaclearirq; leaves the dump in $OUT-$1.txt
 	echo "=== dmaclearirq $1"
-	restart || return 1
+	reboot || return 1
 	arm "$1" || return 1
 	m=`mark`				# so the dump stands alone
 	pi "dd -if /dev/zero -of /n/dos/ab$1.dat -bs $BS -count $COUNT" 2

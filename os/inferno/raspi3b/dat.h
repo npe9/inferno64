@@ -168,3 +168,14 @@ struct
 extern Mach mach0;
 extern Mach *m;
 extern Proc *up;
+
+/*
+ * x0 as the kernel was entered: the firmware's DTB pointer on a cold
+ * boot, Jtagmagic (mem.h) on a warm restart through l.s's jtagstub.
+ * Set in boot1 before anything else runs.  Anything that infers the
+ * machine's state from what it finds -- peripheral registers, pin
+ * functions -- has to check this first, because on a warm restart
+ * what it finds is the previous kernel's leavings and not a decision
+ * anyone made.  See tools/jtag/README.
+ */
+extern uintptr bootx0;
