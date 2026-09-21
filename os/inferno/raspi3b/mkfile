@@ -88,8 +88,16 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES $LIBFILES
 # ELF wrapper down to the loadable segments at their link addresses.  See
 # README.hardware.  (7l -H6 packs segments contiguously and would put .data
 # at the wrong address, so lay them out from the ELF program headers.)
-kernel8.img: i$CONF mkrawimg.py
+#
+# checkstub runs here rather than as its own target because the thing
+# it checks is a property of the linked image, and because a stub that
+# fails it is silently useless: it assembles, it links, the kernel
+# prints JTAG-STUB, and the trampoline jumps to garbage.  The build is
+# the only place that failure can still be cheap.
+#
+kernel8.img: i$CONF mkrawimg.py ../../../tools/jtag/checkstub
 	python3 mkrawimg.py i$CONF kernel8.img $KTZERO
+	python3 ../../../tools/jtag/checkstub kernel8.img $KTZERO
 
 boot:V: kernel8.img
 	echo 'kernel8.img + config.txt are ready for the Pi FAT boot partition'

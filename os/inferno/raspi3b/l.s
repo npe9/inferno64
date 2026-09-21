@@ -651,8 +651,32 @@ TEXT	jtagstub(SB), 1, $-4
 	 * smaller stride would be wasted work and a larger one would
 	 * skip lines.
 	 */
-	MOV	$0x80000, R1		/* KTZERO; mem.h casts it, 7a cannot */
-	MOV	$0x800000, R2		/* 8MB, more than any image here */
+	/*
+	 * MOVZ, not MOV.  This is the whole reason the first version of
+	 * this trampoline could not work, and it failed silently.
+	 *
+	 * 7a assembles "MOV $0x80000, R1" as a PC-relative load from a
+	 * literal pool, and 7l puts that pool where it likes -- here,
+	 * 0x2f8c bytes past the end of the stub.  The stub is 124 bytes
+	 * and gets copied to Jtagstub; the pool does not come with it,
+	 * so at 0x70000 that load reads 0x72f8c, which is not the
+	 * constant and not even kernel memory.  R1 would come back
+	 * garbage, the clean loop would walk from garbage, and the final
+	 * branch would jump to garbage.
+	 *
+	 * Nothing warns about this.  It assembles, it links, the kernel
+	 * prints JTAG-STUB, and the trampoline is scrap.  Note that
+	 * $0x1005 below DOES assemble inline, because it fits in a bare
+	 * MOVZ and 7a takes that path -- so two constants three
+	 * instructions apart are compiled two different ways, and only
+	 * one of them survives being copied.
+	 *
+	 * MOVZ/MOVK is the only form guaranteed to carry its operand in
+	 * the instruction.  Every constant this stub needs is written
+	 * that way, and tools/jtag/checkstub proves it stayed that way.
+	 */
+	MOVZ	$8<<16, R1		/* KTZERO, 0x80000 */
+	MOVZ	$0x80<<16, R2		/* 8MB, more than any image here */
 	ADD	R1, R2, R2		/* end */
 jtagcl:
 	SYS	R1, $SYSARG5(0,3,7,14,1)	/* DC CIVAC */
@@ -695,8 +719,9 @@ jtagcl:
 	 * peripherals -- DMA, eMMC, USB, the interrupt controller --
 	 * that a reset would have cleared and this did not.
 	 */
-	MOV	$0x4a544147, R0		/* "JTAG" */
-	MOV	$0x80000, R1		/* KTZERO */
+	MOVZ	$0x4147, R0		/* "JTAG", low half */
+	MOVK	$0x4a54<<16, R0		/* and high; see the MOVZ note above */
+	MOVZ	$8<<16, R1		/* KTZERO, 0x80000 */
 	B	(R1)
 
 TEXT	jtagstubend(SB), 1, $-4

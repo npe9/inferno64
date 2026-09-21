@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+#
+# checkstub kernel8.img [ktzero]
+#
+# Prove that l.s's jtagstub survives being copied.
+#
+# The trampoline is assembled at its link address inside the kernel
+# and then memmove()d to Jtagstub (0x70000) by jtagstubinstall(),
+# because the address it runs from is about to be overwritten by the
+# image it exists to enter.  Everything it does must therefore be
+# position-independent: an instruction that reaches outside the bytes
+# that were copied reads whatever happens to be at the same offset
+# from 0x70000, which is not kernel memory at all.
+#
+# This is not a hypothetical.  The first version of the stub was
+# written with "MOV $0x80000, R1", which 7a assembles as a load from a
+# literal pool that 7l placed 0x2f8c bytes past the end of the stub.
+# It assembled, it linked, the kernel printed "JTAG-STUB 124 bytes at
+# 0x70000", and the trampoline was scrap: R1 came back as whatever sat
+# at 0x72f8c.  Nothing in the toolchain says a word about it, and the
+# failure mode on the board is a jump to a garbage address -- which
+# looks exactly like the ordinary difficulty of bringing up a
+# trampoline, and cost a debugging session to tell apart.
+#
+# So the check is mechanical and runs at build time.  A relative
+# branch is fine if it lands inside the stub; an ADR, an ADRP or a
+# literal load is never fine.
+#
+import sys
+
+MSR_DAIFSET_F = 0xD5034FDF      # the stub's first instruction
+RET_R30       = 0xD65F03C0      # jtagstubend
+
+def classify(w):
+	"""(kind, pcrel_byte_offset) for the PC-relative forms, else (None, 0)."""
+	if (w & 0x1F000000) == 0x10000000:
+		imm = ((w >> 5) & 0x7FFFF) | ((w >> 29) & 3) << 19
+		if imm & (1 << 20): imm -= (1 << 21)
+		return ('ADRP' if w & 0x80000000 else 'ADR', imm)
+	if (w & 0x3B000000) == 0x18000000:
+		return ('LDR (literal)', sx(w >> 5 & 0x7FFFF, 19) * 4)
+	if (w & 0x3B000000) == 0x1C000000:
+		return ('LDR (literal, SIMD)', sx(w >> 5 & 0x7FFFF, 19) * 4)
+	if (w & 0x7C000000) == 0x14000000:
+		return ('B/BL', sx(w & 0x3FFFFFF, 26) * 4)
+	if (w & 0xFF000010) == 0x54000000:
+		return ('B.cond', sx(w >> 5 & 0x7FFFF, 19) * 4)
+	if (w & 0x7E000000) == 0x34000000:
+		return ('CBZ/CBNZ', sx(w >> 5 & 0x7FFFF, 19) * 4)
+	if (w & 0x7E000000) == 0x36000000:
+		return ('TBZ/TBNZ', sx(w >> 5 & 0x3FFF, 14) * 4)
+	return (None, 0)
+
+def sx(v, bits):
+	return v - (1 << bits) if v & (1 << (bits - 1)) else v
+
+def main():
+	img = open(sys.argv[1], 'rb').read()
+	ktzero = int(sys.argv[2], 0) if len(sys.argv) > 2 else 0x80000
+
+	pat = MSR_DAIFSET_F.to_bytes(4, 'little')
+	hits, i = [], 0
+	while True:
+		j = img.find(pat, i)
+		if j < 0: break
+		if j % 4 == 0: hits.append(j)
+		i = j + 1
+	if len(hits) != 1:
+		# The stub is found by its first instruction because 7l strips
+		# the symbol table out of the ELF it emits, so there is no
+		# jtagstub symbol to look up.  That only works while the
+		# encoding is unique in the image.
+		print("checkstub: expected 1 MSR DAIFSet,#0xf in %s, found %d" %
+			(sys.argv[1], len(hits)), file=sys.stderr)
+		return 2
+	start = hits[0]
+
+	end = start
+	while end < len(img) - 4:
+		if int.from_bytes(img[end:end+4], 'little') == RET_R30:
+			break
+		end += 4
+	else:
+		print("checkstub: no jtagstubend after the stub", file=sys.stderr)
+		return 2
+
+	n = end - start
+	bad = []
+	for off in range(0, n, 4):
+		w = int.from_bytes(img[start+off:start+off+4], 'little')
+		kind, delta = classify(w)
+		if kind is None:
+			continue
+		if kind in ('ADR', 'ADRP', 'LDR (literal)', 'LDR (literal, SIMD)'):
+			bad.append((off, w, kind, delta, 'reaches outside the copy'))
+			continue
+		tgt = off + delta		# branches: relative, so fine if internal
+		if not (0 <= tgt < n):
+			bad.append((off, w, kind, delta, 'branches to %+d, outside the stub' % delta))
+
+	if bad:
+		print("checkstub: jtagstub is not position-independent "
+		      "(%d byte stub at image+%#x, vaddr %#x):" %
+		      (n, start, ktzero + start), file=sys.stderr)
+		for off, w, kind, delta, why in bad:
+			print("  +%#05x  %08x  %-20s %s" % (off, w, kind, why),
+				file=sys.stderr)
+		print("  Copying it to Jtagstub leaves these reading the wrong "
+		      "memory.\n  Use MOVZ/MOVK to put the constant in the "
+		      "instruction; see l.s.", file=sys.stderr)
+		return 1
+
+	print("checkstub: jtagstub %d bytes at %#x, position-independent" %
+		(n, ktzero + start))
+	return 0
+
+if __name__ == '__main__':
+	sys.exit(main())
