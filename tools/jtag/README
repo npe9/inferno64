@@ -3,6 +3,7 @@ JTAG on the Raspberry Pi 3B
 
 	config.txt		enable_jtag_gpio=1   (already set)
 	tools/jtag/raspi3b.cfg	OpenOCD for the BCM2837
+	tools/jtag/checkstub	build-time check on the trampoline
 
 WHY.  Two days of bring-up went: build a kernel, write 1.9MB to the
 card through a filesystem server that is itself one of the things under
@@ -96,20 +97,16 @@ explain a stall with Iwriterdy set in the status and no request being
 raised -- a hypothesis that had no way of being tested before, because
 testing it means writing that register on a live machine.
 
+INSPECTION.  halt, read, resume against a running kernel is solid, and
+is what this was wanted for:
+
 	telnet localhost 4444
 	> halt
 	> emmcregs
 	> resume
 
-INSPECTION, AND RESTART.  halt, read, resume against a running kernel
-is solid and is what this was wanted for:
-
-	> halt
-	> emmcregs
-	> resume
-
-Loading a kernel needs more than replacing memory, and the way the
-first attempt failed is the reason:
+RESTART.  Loading a kernel needs more than replacing memory, and the
+way the first attempt failed is the reason:
 
 	kstack524904 esr fffb7fb9 pc 00080000 lr 00080264
 
@@ -119,8 +116,19 @@ its own vectors and the TLBs full, so 0x80000 faults on the first
 instruction.  jtagrestart therefore enters through a trampoline that
 converts one into the other:
 
-	> jtagrestart
+	> jtagrestart		load kernel8.img, then the trampoline
 	> resume
+
+	> jtagbounce		the trampoline only, no image load
+	> resume
+
+	> jtagprobe		which stub is resident at 0x70000
+
+jtagbounce is the one to reach for first.  It replaces no memory, so
+0x80000 still holds the text of the kernel that is running, and a
+successful resume reboots the board into the kernel already in RAM and
+prints its banner.  That separates "the trampoline works" from "the
+image I loaded is good" -- one shot at both conflates them, and did.
 
 THE JTAG BOOT ABI.  What l.s's jtagstub guarantees, and all that the
 kernel's entry code may assume when entered this way:
@@ -144,104 +152,64 @@ be active, the eMMC may be mid-transaction, USB, the timers and the
 interrupt controller are all as the previous kernel left them, and
 none of that is reset by a trampoline that only normalises the CPU.
 A kernel that knows which way it was entered can quiesce them; one
-that does not will find them warm and be surprised.
+that does not will find them warm and be surprised.  The kernel does
+not yet act on x0.
 
-WHERE THE TRAMPOLINE LIVES.  0x70000, below the 0x80000 load address,
-so an image cannot overwrite the code about to enter it.  The kernel
-copies it there at boot and says so:
+THE TRAMPOLINE MUST BE POSITION-INDEPENDENT, and the first one was
+not.  It is assembled at its link address inside the kernel and run
+from 0x70000, below the load address so an image cannot overwrite the
+code about to enter it.  7a assembles "MOV $0x80000, R1" as a load
+from a literal pool, and 7l put that pool 0x2f8c bytes past the end of
+the stub; four instructions were such loads.  Copied to 0x70000 they
+read 0x72f8c, which is not the constant and not kernel memory.
 
-	JTAG-STUB <n> bytes at 0x70000
+Nothing in the toolchain says a word about it.  It assembles, it
+links, the kernel prints "JTAG-STUB 124 bytes at 0x70000", and the
+trampoline is scrap.  $0x1005 three instructions later DOES assemble
+inline, because it fits a bare MOVZ and 7a takes that path -- so two
+constants a few instructions apart compile two different ways and only
+one survives the copy.  MOVZ/MOVK is the only form guaranteed to carry
+its operand in the instruction, and tools/jtag/checkstub rejects any
+ADR, ADRP or literal load in the stub, and any branch leaving it, when
+kernel8.img is built.
 
-It is copied after mmuinit and cleaned to the point of coherency,
-because the CPU fetches it with the caches off.
-
-ALL FOUR CORES ARE HALTED.  Cores 1-3 are parked at WFE inside the
-kernel's own text, and that text is about to be overwritten; a halted
-core executes nothing, which is what makes the overwrite safe.  Only
-cpu0 is resumed.
-
-WHAT IS STILL NOT SOLVED.  The trampoline normalises the CPU and
-nothing else.  Peripheral state survives it, and on this board that is
-not academic -- the SD controller can be left mid-transaction by
-exactly the DMA failure this JTAG setup was built to investigate.  The
-kernel does not yet act on x0.
-
-WHAT AN UNWIRED ADAPTER LOOKS LIKE.  This, and it is worth knowing so
-it is not mistaken for a broken config:
-
-	Error: JTAG scan chain interrogation failed: all ones
-	Error: bcm2837.cpu: IR capture error; saw 0x0f not 0x01
-	Error: Invalid ACK (7) in DAP response
-
-"All ones" is an idle TDO line with nothing driving it.  A chain that
-is wired but wrong usually reads all zeros or a plausible-looking but
-unexpected id; all ones means the adapter is talking to nobody.  The
-first thing to check is that the card in the board has
-enable_jtag_gpio=1 in its config.txt -- without it the firmware never
-puts GPIO 22-27 into ALT4 and those pins are ordinary inputs.
-
-WHAT IT LOOKS LIKE WORKING.  First session, 20 September 2026:
-
-	Info : JTAG tap: bcm2837.cpu tap/device found: 0x4ba00477
-	       (mfg: 0x23b (ARM Ltd), part: 0xba00, ver: 0x4)
-	Info : bcm2837.cpu0: hardware has 6 breakpoints, 4 watchpoints
-	...cpu1, cpu2, cpu3 the same
-
-and then, against a kernel that was running at the time:
-
-	> halt
-	bcm2837.cpu0 halted in AArch64 state, current mode: EL1H
-	cpsr: 0x60000345  pc: 0xa770c
-	MMU: enabled, D-Cache: enabled, I-Cache: enabled
-	> emmcregs
-	status     0x01ff0000     interrupt   0x00000000
-	irpt_mask  0x017f7137     irpt_en     0x00000000
-	control0   0x00000100     control1    0x000e0407
-	blksizecnt 0x00000200
-	> resume
-
-Those seven registers are the ones the SD DMA stall was diagnosed from.
-Getting them before this meant editing the driver to print them,
-rebuilding, writing 1.9MB to the card, rebooting, and provoking the
-failure again -- once per question, several minutes each, and twice the
-install silently wrote the wrong bytes.  Here it is one line against a
-machine that is already running, and "resume" puts it back.
-
-Worth noticing in that very first dump: irpt_en is 0.  The driver arms
-it only when it is about to sleep.  If this controller gates its DMA
-request on the interrupt ENABLE rather than the status, that would
-explain a stall with Iwriterdy set in the status and no request being
-raised -- a hypothesis that had no way of being tested before, because
-testing it means writing that register on a live machine.
-
-	telnet localhost 4444
-	> halt
-	> emmcregs
-	> resume
-
-INSPECTION WORKS; LOADING DOES NOT, YET.  halt, read, resume against a
-running kernel is solid and is what this was wanted for.
-
-load_inferno -- halt, load kernel8.img at 0x80000, set the pc -- does
-not work, and the config says why at length.  A kernel entry expects
-the machine as the firmware leaves it: MMU off, caches off, nothing
-mapped.  Halting a live Inferno leaves the MMU on and its page tables
-live, so the jump faults on the first instruction (esr fffb7fb9, pc
-00080000).  Making it work means clearing SCTLR_EL1's M/C/I bits
-first, which OpenOCD's aarch64 target does not expose through "reg".
-
-And a Pi cannot be reset over JTAG into a waiting state: reset_config
-is trst_only, TRST resets the TAP and not the SoC, and anything that
-does reset the SoC hands control back to the VideoCore firmware, which
-loads whatever is on the card.  So installing a kernel still means the
-card, for now.
+WHO INSTALLS THE STUB.  OpenOCD does, from jtagstub.bin, which
+checkstub cuts out of the same linked image.  The kernel also copies
+it to 0x70000 at boot and says so, but that copy belongs to whichever
+kernel is running -- against a board booted from an older card it is
+an older stub, and against a kernel that wedged before
+jtagstubinstall ran it is not there at all.  A debugger that needs the
+program it is debugging to have installed the debugger's own entry
+code has the dependency backwards, and it fails in exactly the case
+the debugger exists for.  jtagprobe reads what is resident, which is
+also the only check there has ever been that the kernel's memmove and
+cacheflush put the right bytes there.
 
 WHAT IT WILL NOT DO.  It does not reset the machine, on purpose: a
 reset hands control back to the VideoCore firmware, which loads
-whatever is on the card and undoes the point.  And it does not replace
-the serial console -- the kernel's own prints still go out the PL011,
-and that is still the fastest way to see what it thinks it is doing.
+whatever is on the card and undoes the point.  reset_config is
+trst_only in any case -- TRST resets the TAP, not the SoC.  And it
+does not replace the serial console: the kernel's own prints still go
+out the PL011, and that is still the fastest way to see what it thinks
+it is doing.
 
-Only core 0 is examined at startup.  The kernel parks cores 1-3 at WFE
-in l.s before anything else runs, because the SoC starts all four at
-0x80000; a parked core has a debug interface but nothing to say.
+A NOTE ON THE OTHER CORES.  Cores 2 and 3 halt at EL2H, pc 0x7c, with
+the MMU off -- the VideoCore firmware's spin table.  They are not in
+kernel text and never have been, because this kernel starts no
+secondaries; an earlier version of this file said they park at WFE
+inside the kernel, which was wrong.  Halting them costs nothing and
+means no core is executing while memory is replaced.
+
+AND A WARNING ABOUT load_image.  Loading an image over a running
+kernel replaces its data section with that section's boot-time
+contents, so every live pointer, list and counter in it becomes a
+constant from the past.  The board may keep answering the console
+afterwards and be thoroughly corrupt; one such load produced
+
+	TRAP type 0 esr 96000004 far b900080152b00169
+
+whose "faulting address" is two AArch64 instruction encodings, i.e. a
+pointer read out of memory that had been overwritten with code.  That
+is fine when the next thing to run is the trampoline, which reinitialises
+everything.  It is not fine to take a measurement afterwards, and
+numbers from such a boot should be thrown away.

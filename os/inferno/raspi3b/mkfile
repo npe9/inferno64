@@ -97,7 +97,7 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES $LIBFILES
 #
 kernel8.img: i$CONF mkrawimg.py ../../../tools/jtag/checkstub
 	python3 mkrawimg.py i$CONF kernel8.img $KTZERO
-	python3 ../../../tools/jtag/checkstub kernel8.img $KTZERO
+	python3 ../../../tools/jtag/checkstub kernel8.img $KTZERO jtagstub.bin
 
 boot:V: kernel8.img
 	echo 'kernel8.img + config.txt are ready for the Pi FAT boot partition'

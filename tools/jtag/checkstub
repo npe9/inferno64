@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 #
-# checkstub kernel8.img [ktzero]
+# checkstub kernel8.img [ktzero [jtagstub.bin]]
 #
-# Prove that l.s's jtagstub survives being copied.
+# Prove that l.s's jtagstub survives being copied, and cut it out of
+# the image so the debugger can install it itself.
 #
 # The trampoline is assembled at its link address inside the kernel
 # and then memmove()d to Jtagstub (0x70000) by jtagstubinstall(),
@@ -25,6 +26,17 @@
 # So the check is mechanical and runs at build time.  A relative
 # branch is fine if it lands inside the stub; an ADR, an ADRP or a
 # literal load is never fine.
+#
+# Writing the stub out as its own file is the other half.  The kernel
+# copies it to Jtagstub at boot, but that copy belongs to whichever
+# kernel is running -- so jtagrestart against a board booted from an
+# old card would enter an old stub, and against a wedged kernel that
+# never reached jtagstubinstall it would enter nothing at all.  A
+# debugger that depends on the program it is debugging having
+# correctly installed the debugger's own entry code has the
+# dependency backwards, and it fails exactly when it is needed.  So
+# raspi3b.cfg writes these bytes itself, and they come from here
+# because this already knows where the stub is.
 #
 import sys
 
@@ -110,8 +122,12 @@ def main():
 		      "instruction; see l.s.", file=sys.stderr)
 		return 1
 
-	print("checkstub: jtagstub %d bytes at %#x, position-independent" %
-		(n, ktzero + start))
+	out = sys.argv[3] if len(sys.argv) > 3 else None
+	if out:
+		with open(out, 'wb') as f:
+			f.write(img[start:end])
+	print("checkstub: jtagstub %d bytes at %#x, position-independent%s" %
+		(n, ktzero + start, (" -> " + out) if out else ""))
 	return 0
 
 if __name__ == '__main__':
