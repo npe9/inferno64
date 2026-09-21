@@ -124,6 +124,41 @@ converts one into the other:
 
 	> jtagprobe		which stub is resident at 0x70000
 
+This works end to end.  21 September 2026, against a board that was
+dead at the time -- "WILDSP type 1" with every register zero, the case
+that used to mean carrying the card to another machine:
+
+	> jtagrestart
+	stub at 0x70000, image 'os/inferno/raspi3b/kernel8.img',
+	    pc (/64): 0x0000000000070000
+	> resume
+
+	Inferno/arm64 raspi3b build 1789977800
+	JTAG-STUB 128 bytes at 0x70000
+	...
+	RASPI3B-OK
+	FAT-OK /n/dos/kernel8.img is 1923336 bytes
+	SD-FS-CREATE-OK
+	ETHER-DHCP-OK ip=192.168.8.105 gw=192.168.8.1
+	;
+
+Twenty-eight seconds from command to banner, and a shell at the end of
+it.  Both numbers in that banner are the falsifiable part: the card
+holds build 1789932392 with a 124-byte stub, and what ran is build
+1789977800 with the 128-byte one.  It is the host's kernel, not the
+card's.
+
+Entry was confirmed directly as well, with a hardware breakpoint:
+
+	> jtagbounce
+	> bp 0x80000 4 hw
+	> resume
+	bcm2837.cpu0 halted ... due to breakpoint, current mode: EL1H
+	> reg pc     0x0000000000080000
+	> reg x0     0x000000004a544147
+
+which is the boot ABI below, arriving as specified.
+
 jtagbounce is the one to reach for first.  It replaces no memory, so
 0x80000 still holds the text of the kernel that is running, and a
 successful resume reboots the board into the kernel already in RAM and

@@ -5678,3 +5678,161 @@ Stage two runs alongside the peripheral work rather than after it,
 because its terms are measurements the board takes while it is doing
 everything else.  Stage three is its own piece and waits for stage
 two's ceiling.
+.NH 1
+The development loop changed: a kernel now loads over JTAG
+.PP
+Everything above was built through one loop: compile a kernel, write
+1.9MB to the card through
+.I dossrv
+\(em which is itself one of the things under test \(em read it back to
+verify, reboot, hope.  Three to six minutes when it worked.  Twice it
+silently installed the wrong bytes, once a kernel truncated to 8192
+and once one whose first 256KB were the previous kernel's, and each of
+those cost an hour and a card carried to another machine.  Every
+question asked of a driver cost one of these cycles.
+.PP
+On 21 September that loop was replaced.  A kernel built on the host
+now goes into the board over JTAG and runs, without the card being
+touched:
+.P1
+openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg \e
+        -f tools/jtag/raspi3b.cfg -c 'init; jtagrestart; resume; exit'
+.P2
+Twenty-eight seconds, and the class of failure where the install
+silently writes the wrong bytes stops existing, because nothing is
+installed.  The board it was first done to was dead at the time \(em
+.CW "WILDSP type 1"
+with every register zero \(em which is the case that used to mean
+carrying the card to another machine.
+.PP
+.B "How it works, and the one thing that makes it necessary."
+JTAG replaces memory; it does not recreate the architectural reset
+state.  A kernel entry assumes the machine the firmware hands over,
+and a halted running kernel has none of it: the MMU is on, its page
+tables are live,
+.CW VBAR_EL1
+points at its own vectors, the TLBs are full.  Jumping straight to
+.CW KTZERO
+faults on the first instruction, and did.  So the pc goes to a
+trampoline instead \(em
+.CW jtagstub
+in
+.CW l.s ,
+which masks exceptions, cleans the image range to the point of
+coherency, turns off the MMU and caches, invalidates the TLBs, clears
+.CW TTBR0/1_EL1
+and
+.CW VBAR_EL1 ,
+and branches to
+.CW KTZERO
+with
+.CW x0
+= 0x4a544147 ("JTAG") so the kernel can tell a warm restart from a
+cold boot.  That ABI is written down in
+.CW tools/jtag/README .
+Confirmed on the board with a hardware breakpoint at
+.CW KTZERO :
+it arrives, with
+.CW x0
+holding the magic.
+.PP
+.B "The trampoline must be position-independent, and the first one was not."
+It is assembled at its link address and run from 0x70000, below the
+load address so an image cannot overwrite the code about to enter it.
+7a assembles
+.CW "MOV $0x80000, R1"
+as a load from a literal pool, and 7l put that pool 0x2f8c bytes past
+the end of the stub; four of the stub's instructions were such loads.
+Copied to 0x70000 they read 0x72f8c, which is not the constant and not
+kernel memory.
+.PP
+Nothing in the toolchain says a word about this.  It assembles, it
+links, the kernel prints
+.CW "JTAG-STUB 124 bytes at 0x70000" ,
+and the trampoline is scrap.
+.CW $0x1005
+three instructions later
+.I does
+assemble inline, because it fits a bare
+.CW MOVZ
+and 7a takes that path \(em so two constants a few instructions apart
+compile two different ways and only one survives being copied.  The
+board said so itself, in the crumb the next boot printed:
+.P1
+CRUMB previous boot: exceptions 17339, last type 1
+    esr 7dd80500 elr 0000000000070000 spsr 345
+.P2
+17339 exceptions with
+.CW elr
+at 0x70000 is the old stub faulting at the trampoline, in a loop.
+.CW MOVZ/MOVK
+is the only form guaranteed to carry its operand in the instruction,
+and
+.CW tools/jtag/checkstub
+now rejects any
+.CW ADR ,
+.CW ADRP
+or literal load in the stub, and any branch leaving it, when
+.CW kernel8.img
+is built.
+.PP
+.B "The debugger installs the stub, not the kernel."
+The kernel does copy it to 0x70000 at boot and says so, and that copy
+was verified correct by reading it back over JTAG \(em the only check
+there has ever been that its
+.CW memmove
+and
+.CW cacheflush
+do what they say.  But that copy belongs to whichever kernel is
+running: against a board booted from an older card it is an older
+stub, and against a kernel that wedged before
+.CW jtagstubinstall
+ran it is not there at all.  A debugger that needs the program it is
+debugging to have installed the debugger's own entry code has the
+dependency backwards, and it fails in exactly the case the debugger
+exists for.  So
+.CW checkstub
+cuts the stub out of the linked image as
+.CW jtagstub.bin
+and
+.CW jtagrestart
+writes those bytes itself.
+.PP
+.B "What this does to the rest of the plan."
+Every open item above is gated on asking the board a question and
+getting an answer back.  The SD DMA write stall was characterised by
+adding a print, rebuilding, installing and rebooting, once per
+question, for a day; the thing that actually cracked it was capturing
+the controller's registers at the moment of the stall, which with a
+debugger is a read rather than a release cycle
+.CW ( emmcregs
+does exactly that).  The stale-kernel corruption is a question about
+what reached the medium, and the medium is no longer in the loop at
+all.  Nothing below is finished, but the cost of each attempt at it
+has gone from minutes to seconds, and the failure mode where the
+instrument corrupts the experiment has gone.
+.PP
+Two cautions, both learned the same day.
+.CW load_image
+over a running kernel replaces its data section with that section's
+boot-time contents, so every live pointer, list and counter in it
+becomes a constant from the past; the board can keep answering the
+console afterwards and be thoroughly corrupt.  One such load produced
+a fault whose reported faulting address,
+.CW b900080152b00169 ,
+is two AArch64 instruction encodings \(em a pointer read out of memory
+that had been overwritten with code.  Numbers taken from a boot like
+that are void.  And
+.CW jtagbounce ,
+which enters the trampoline without loading an image, is the way to
+test the trampoline alone: it reached a banner from a board whose
+console had gone silent, then panicked in
+.CW poolsize
+because
+.CW .data
+still held the previous run's pool bookkeeping.  Reaching
+.CW KTZERO
+is the pass condition for the trampoline; a clean boot needs the image
+load, which restores
+.CW .data ,
+and does.
