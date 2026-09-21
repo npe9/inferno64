@@ -928,27 +928,36 @@ lorawrite(Chan *c, void *a, s32 n, s64)
 			cv->waiting = 1;
 			xmit(cv->remote, id, flags, a, n);
 			cv->nsent++;
+			tsleep(&cv->ackr, gotack, cv, cv->ackwait);
+
 			/*
-			 * Back off by a random interval in [T/2, 3T/2)
-			 * rather than by T exactly.  A radio is half
-			 * duplex, so two stations that transmit at the
-			 * same moment hear nothing at all, and a fixed
-			 * retry gives two of them that collided once no
-			 * reason to stop colliding.  That is the standard
-			 * answer to a shared medium and it costs three
+			 * timeout is how long an acknowledgement is
+			 * allowed to take, and means exactly what
+			 * lora(3) says.  What follows is the backoff,
+			 * which is a separate thing: a radio is half
+			 * duplex, so two stations that collided once
+			 * have no reason to stop unless one of them
+			 * waits differently.  That is the standard
+			 * answer to a shared medium and it costs two
 			 * lines.
 			 *
-			 * It is not, though, what fixed the failure it
-			 * was written during: that was a stalled queue in
-			 * the SX1276 model, which dropped the link
-			 * permanently at the first collision.  See
-			 * tools/qemu-patches/0037.  Nothing measured here
-			 * needed this, and /dev/random on two boards
-			 * running one image does give different answers,
-			 * so the spread is real.
+			 * It is not what fixed the failure it was
+			 * written during -- that was a stalled queue in
+			 * the SX1276 model, tools/qemu-patches/0037,
+			 * which dropped the link at the first collision
+			 * rather than the frame -- and nothing measured
+			 * here has needed it.
+			 *
+			 * The wait is on the same rendezvous as the
+			 * timeout, so an acknowledgement arriving during
+			 * the backoff still ends the send.  Sleeping on
+			 * anything else counts that acknowledgement and
+			 * then retransmits anyway, which is what this
+			 * did for one run.
 			 */
-			tsleep(&cv->ackr, gotack, cv,
-				cv->ackwait/2 + nrand(cv->ackwait));
+			if(!cv->gotack && try + 1 < cv->retries)
+				tsleep(&cv->ackr, gotack, cv,
+					nrand(cv->ackwait/2) + 1);
 			cv->waiting = 0;
 			if(cv->gotack){
 				rv = n;

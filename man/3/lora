@@ -120,7 +120,10 @@ link with one end acknowledging and the other not is worse than neither.
 How many times a reliable send is attempted before it gives up.
 .TP
 .BI timeout " ms"
-How long to wait for each acknowledgement.
+How long to wait for each acknowledgement.  A retransmission follows a
+random backoff of up to half that again, so two stations that collided
+once do not collide identically for ever; an acknowledgement arriving
+during the backoff still ends the send.
 .PP
 .B Data
 is one packet per read and one per write, inheriting both of
@@ -176,16 +179,17 @@ per cent, cannot answer anything for
 afterwards, however little the acknowledgement itself costs.  One-way
 traffic composes without thinking about it, because an acknowledgement
 is much shorter than the packet it answers and the sender's own gap
-covers it; two-way traffic does not.  Measured at 5 per cent, a
-station that sent a 200-byte packet of its own 2 seconds earlier could
-not acknowledge for six, a 4-second
+covers it; two-way traffic does not.  Measured, with the answering
+station at 2 per cent and the sender at 5: a station that had just put
+a 200-byte packet of its own on the air owed about sixteen seconds of
+silence, the sender's four-second
 .B timeout
-expired, and the sender retransmitted and was acknowledged on the
-second attempt:
-.B "sent 2, retried 1, ackrecv 1"
+expired twice, and the acknowledgement arrived on the third attempt.
+.B "sent 3, retried 2, ackrecv 1"
 at one end and
-.B "duplicate 1, acksent 1"
-at the other.
+.B "duplicate 2, acksent 1"
+at the other \- the two retransmissions recognised and not delivered
+twice \- and the write took fourteen seconds to return.
 .PP
 A write returns the number of bytes sent, or fails, and with
 .B ack
