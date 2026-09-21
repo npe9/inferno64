@@ -390,7 +390,7 @@ What each step moves
 .CW "RadioHead header interop   E3     qemu+patch  run"
 .CW "retry under loss           R1+R2  qemu+patch  run"
 .CW "Styx msize negotiation     C2     qemu+patch  run"
-.CW "ssl over the link          C1     qemu+patch  run, not authed"
+.CW "ssl over the link          C1     qemu+patch  run, authed"
 .CW "the chip driver            R3     qemu+patch  not started"
 .CW "a third station            C3     untestable  not started"
 .DE
@@ -438,6 +438,38 @@ Semtech transmitting, Inferno receiving: 24 sent, 24 arrive, 24
 correctly rejected for not carrying a RadioHead header.  The finding
 was that a rejected packet and a dead link looked identical from
 .CW stat .
+.IP \(bu
+.B "C1, the other half."
+.CW keyring->auth ()
+over
+.CW #L
+over the radio, between two certified identities made on a host by
+.I mkradiokeys (1)
+and built into the boot image.  Each end learns which identity the
+other holds \(em
+.CW "peer satellite"
+at one end and
+.CW "peer ground"
+at the other \(em and derives the same 128-byte secret: 12 frames
+each way, unacknowledged, no retries.  It had been asserted since this
+document was written and
+.I radiossl (1)
+had said plainly that no part of
+.I keyring (2)
+had ever been run here.
+.PP
+What stopped it was not the budget, which
+.I authchk (1)
+had already settled at 910ms and 6976 bytes over a pipe.  It was
+.CW tools/qemu-patches/0037 :
+the SX1276 model stopped its peer's queue the first time two stations
+transmitted at once and never restarted it, so a symmetric protocol
+could not get past its first exchange.  Three changes were made to the
+guest to work around that before anybody looked at the model, and all
+three were measuring it.  That is the failure mode this document was
+written about, arriving from the one direction it did not anticipate:
+not a model that agrees with its driver, but a model that is wrong in
+a way no driver can see.
 .IP \(bu
 .B "E3, the rest."
 The peer is

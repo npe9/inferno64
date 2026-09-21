@@ -764,7 +764,13 @@ input(Conv *cv, Block *b, uchar *p, uchar *e, int cmd)
 		 * A poll is different: P=1 asks for an answer now, and
 		 * the station that sent it has stopped to listen for one.
 		 */
-		if(pf){
+		if(pf || cv->t2ms == 0){
+			/*
+			 * A poll asks for an answer now, and the station
+			 * that sent it has stopped to listen for one.  So
+			 * does t2 of zero, which is how the timer is
+			 * turned off to measure what it is worth.
+			 */
 			cv->t2 = 0;
 			cv->ackpending = 0;
 			sends(cv, 0, cv->ownbusy ? Crnr : Crr, 1);

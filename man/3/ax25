@@ -153,16 +153,26 @@ and no
 and carries that as a bug.
 .PP
 .B T2
-is not a refinement.  A station that has just been sent a burst is
-very likely still transmitting the rest of it, so an acknowledgement
-sent the instant a frame arrives lands on a deaf receiver and is lost:
-measured, before this timer existed, three I frames went out, three RRs
-came back, the sender heard none of them and retransmitted to N2.  With
-T2 at a second, ten frames through a window of four cost the sender
-eleven transmissions and four receptions \- one UA and three RRs \-
-with no retransmissions at all, because one RR after a burst
-acknowledges the whole burst.
+delays an acknowledgement so that a station which has just been sent a
+burst is not answered while it is still transmitting the rest of it.
+That is a real property of a half-duplex radio, and it is what the
+specification has the timer for.
 .PP
+What it is worth here is not known.  It was believed to be what made
+connected mode work at all, on the strength of a link that failed
+without it; the cause turned out to be a stalled queue in the SX1276
+model, which dropped the link at the first overlap rather than the
+frame (see
+.BR tools/qemu-patches/0037 ).
+Measured again with that fixed, ten frames through a window of four
+cost the same with
+.B t2
+at 0 as at 1000: no retransmissions, no rejects, twelve frames in and
+five out at the receiver.
+.PP
+.B T2
+of zero acknowledges at once, which is how that was measured.
+.PP.PP
 .B T1
 is a number this cannot compute.
 .I Lora (3)

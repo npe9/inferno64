@@ -289,6 +289,26 @@ init(nil: ref Draw->Context, argv: list of string)
 		recv(0, count(argv));
 	"ackrecv" =>
 		recv(1, count(argv));
+	"rand" =>
+		# Four bytes of /dev/random, printed.  Two boards running
+		# one image should not agree, and whether they do decides
+		# whether a randomised backoff can separate them at all.
+		fd := sys->open("#c/random", Sys->OREAD);
+		if(fd == nil){
+			sys->print("lorachk: #c/random: %r\n");
+			return;
+		}
+		rb := array[8] of byte;
+		rn := sys->read(fd, rb, len rb);
+		if(rn <= 0){
+			sys->print("lorachk: read: %r\n");
+			return;
+		}
+		sys->print("RAND");
+		for(ri := 0; ri < rn; ri++)
+			sys->print(" %.2x", int rb[ri]);
+		sys->print("\n");
+		return;
 	"stats" =>
 		sys->print("%s", stats());
 		return;

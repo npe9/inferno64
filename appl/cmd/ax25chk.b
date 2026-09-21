@@ -215,11 +215,15 @@ recv(count: int)
 # A connected conversation: SABM, some I frames, then DISC.  The
 # connect write does not return until the peer has answered, so a
 # failure here is a failure to connect and not a failure to write.
-call(dest, text: string, count: int)
+call(dest, text: string, count, t2: int)
 {
 	c := clone();
 	if(c == nil)
 		return;
+	if(t2 >= 0 && sys->fprint(c.cfd, "t2 %d", t2) < 0){
+		ck("t2", 0, sys->sprint("%r"));
+		return;
+	}
 	t0 := sys->millisec();
 	if(sys->fprint(c.cfd, "connect %s", dest) < 0){
 		ck("connect", 0, sys->sprint("%r"));
@@ -369,7 +373,8 @@ init(nil: ref Draw->Context, argv: list of string)
 	"call" =>
 		if(argv == nil || tl argv == nil)
 			return;
-		call(hd argv, hd tl argv, count(tl tl argv));
+		call(hd argv, hd tl argv, count(tl tl argv),
+			second(tl tl argv) - 1);
 	"listen" =>
 		listen(count(argv), second(argv));
 	"recv" =>

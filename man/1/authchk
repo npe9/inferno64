@@ -7,6 +7,10 @@ authchk \- run keyring authentication and say whether it fits
 .B authchk fd
 .I n
 .RI [ ground ]
+.br
+.B authchk lora
+.BR ground | satellite
+.RB [ noack ]
 .SH DESCRIPTION
 .I Authchk
 runs
@@ -32,6 +36,28 @@ it runs one end over an already-open file descriptor, which is how it
 reaches a link.  The identity used is the satellite's unless
 .B ground
 follows.
+.PP
+.B Lora
+runs one end over a
+.I lora (3)
+conversation on
+.BR /dev/radio0 ,
+which is the same exchange with a radio underneath.  Both ends
+.B connect
+and neither announces, and that is not a detail: the exchange is
+symmetric, each end sending before either has received, so an
+announced conversation \- which has nobody to send to until it has
+been spoken to \- cannot be one end of it.
+.PP
+Measured, two
+.B mps2-an386
+over a socket pair: 12 frames each way, unacknowledged, no retries,
+and each end learning the other's identity.  With
+.B ack
+on it takes 28 frames and also works; the acknowledgement is not
+needed, and
+.B noack
+is how that was found out.
 .PP
 The identities come from
 .B /keys/ground
@@ -89,6 +115,16 @@ costs, not that these particular keys are worth anything.
 .PP
 Both ends in one kernel share a pool, so the figure for memory is the
 cost of two ends and not of one.
+.PP
+When a send fails,
+.IR keyring (2)'s
+.B auth
+does not return.
+.B libinterp/keyring.c:1836
+goes on to send an error and then loops reading a reply, so a link
+that cannot carry the first message produces a hang with nothing
+printed rather than the error it has in hand.  That is worth knowing
+before pointing this at a transport that might not work.
 .PP
 .B Setid
 is passed 0.  Changing the user id on the strength of the exchange is

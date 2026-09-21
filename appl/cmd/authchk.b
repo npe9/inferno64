@@ -18,15 +18,18 @@ implement Authchk;
 # would have been spent finding that out.
 #
 #	authchk			over a pipe, both ends here
-#	authchk fd n		over an open file descriptor, one end
+#	authchk fd n [ground]	over an open file descriptor, one end
+#	authchk lora ground [noack]	over a /net/lora conversation
+#	authchk lora satellite [noack]	over one, the other end
 #
-# The second form is the same exchange over whatever a caller has open,
-# which is how it reaches a radio.
+# The second form is the same exchange over whatever a caller has open.
+# The third is that with the radio underneath, which is the claim
+# doc/radio-evidence.ms calls C1 and has never run: ssl(3) over the
+# link is measured, and the authentication under it is not.
 #
 
 include "sys.m";
 	sys: Sys;
-include "draw.m";
 include "ipints.m";
 include "keyring.m";
 	kr: Keyring;
@@ -36,8 +39,13 @@ Authchk: module
 	init:	fn(nil: ref Draw->Context, argv: list of string);
 };
 
+include "draw.m";
+
 Ground:	con "/keys/ground";
 Sat:	con "/keys/satellite";
+Radio:	con "/dev/radio0/data";
+Lctl:	con "#L/ctl";
+Clone:	con "#L/clone";
 
 nrun, nfail: int;
 
@@ -94,6 +102,77 @@ inuse(s, name: string): int
 # is easy and wrong -- it reports "satellite" as a failure -- so this
 # asks the secret.
 #
+#
+# A conversation on #L over the packet device.  Both ends connect;
+# neither announces, and that is not a detail.  keyring->auth() is
+# symmetric: each end sends its version message before either has
+# received anything, so an announced conversation -- which has nobody
+# to send to until it has been spoken to -- cannot be one end of it.
+# Worse, when that first write fails, libinterp/keyring.c:1836 goes on
+# to send an error and then loops reading a reply that cannot come, so
+# what should be an immediate failure is a hang with nothing printed.
+#
+# The conversation's ctl has to stay open for as long as its data is
+# used, so it is returned alongside.
+#
+loraconv(announcing, ack: int): (ref Sys->FD, ref Sys->FD)
+{
+	rfd := sys->open(Radio, Sys->ORDWR);
+	if(rfd == nil){
+		sys->print("authchk: %s: %r\n", Radio);
+		return (nil, nil);
+	}
+	lfd := sys->open(Lctl, Sys->ORDWR);
+	if(lfd == nil){
+		sys->print("authchk: %s: %r\n", Lctl);
+		return (nil, nil);
+	}
+	me := 1;
+	if(announcing)
+		me = 2;
+	if(sys->fprint(lfd, "addr %d", me) < 0 ||
+	   sys->fprint(lfd, "fd %d", rfd.fd) < 0){
+		sys->print("authchk: attach: %r\n");
+		return (nil, nil);
+	}
+	cfd := sys->open(Clone, Sys->ORDWR);
+	if(cfd == nil){
+		sys->print("authchk: %s: %r\n", Clone);
+		return (nil, nil);
+	}
+	b := array[32] of byte;
+	n := sys->read(cfd, b, len b);
+	if(n <= 0){
+		sys->print("authchk: read clone: %r\n");
+		return (nil, nil);
+	}
+	num := int string b[0:n];
+	peer := 2;
+	if(announcing)
+		peer = 1;
+	n = sys->fprint(cfd, "connect %d", peer);
+	# Acknowledgement and retry by default, because the exchange
+	# above is symmetric and a half-duplex radio loses whatever two
+	# stations say at once.  Settable, so what it is worth can be
+	# measured rather than assumed.
+	if(n >= 0 && ack)
+		n = sys->fprint(cfd, "ack on");
+	if(n >= 0 && ack)
+		n = sys->fprint(cfd, "retries 8");
+	if(n < 0){
+		sys->print("authchk: conversation ctl: %r\n");
+		return (nil, nil);
+	}
+	dfd := sys->open(sys->sprint("#L/%d/data", num), Sys->ORDWR);
+	if(dfd == nil){
+		sys->print("authchk: #L/%d/data: %r\n", num);
+		return (nil, nil);
+	}
+	sys->print("AUTHCHK-LORA #L/%d addr %d iounit %d\n",
+		num, me, sys->iounit(dfd));
+	return (dfd, cfd);
+}
+
 child(fd: ref Sys->FD, info: ref Keyring->Authinfo, c: chan of (string, int))
 {
 	(who, secret) := kr->auth(fd, info, 0);
@@ -122,6 +201,39 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 
 	argv = tl argv;
+	if(argv != nil && hd argv == "lora"){
+		which := si;
+		announcing := 1;
+		if(tl argv != nil && hd tl argv == "ground"){
+			which = gi;
+			announcing = 0;
+		}
+		ack := 1;
+		for(a1 := argv; a1 != nil; a1 = tl a1)
+			if(hd a1 == "noack")
+				ack = 0;
+		(dfd, cfd) := loraconv(announcing, ack);
+		if(dfd == nil)
+			return;
+		if(tl argv != nil && tl tl argv != nil &&
+		   hd tl tl argv == "probe"){
+			pb := array of byte "probe";
+			pn := sys->write(dfd, pb, len pb);
+			sys->print("PROBE write %d %r\n", pn);
+			return;
+		}
+		t0 := sys->millisec();
+		(who, secret) := kr->auth(dfd, which, 0);
+		ms := sys->millisec() - t0;
+		ck("auth-over-lora", secret != nil, who);
+		if(secret != nil)
+			sys->print("peer %q, secret %d bytes in %d ms\n",
+				who, len secret, ms);
+		if(cfd == nil)
+			sys->print("authchk: no conversation ctl\n");
+		verdict();
+		return;
+	}
 	if(argv != nil && hd argv == "fd"){
 		if(tl argv == nil){
 			sys->print("usage: authchk fd n\n");

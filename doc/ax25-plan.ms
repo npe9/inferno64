@@ -379,18 +379,32 @@ V(R) at 2 at the other end, which is ten modulo eight; no
 retransmissions and no rejects; DISC and UA at the end.  Eleven frames
 out of the caller and four in \(em one UA and three RRs.
 .PP
-.B "T2 is what made that work,"
-and leaving it out is the finding worth writing down.  The first
-version acknowledged an information frame the moment it arrived.  A
-station that has just been sent a burst is very likely still
-transmitting the rest of it, so every one of those acknowledgements
-landed on a deaf receiver: three frames out, three RRs back, none heard,
-and the sender retransmitted to N2 and declared the link dead while the
-receiver sat happily connected with all three frames delivered.  A
-half-duplex radio is not a detail the data link can be innocent of.
-T2 is the specification's answer and it pays twice, because one RR after
-a burst acknowledges the whole burst \(em three receptions for ten
-frames rather than ten.
+.B "T2 was thought to be what made that work, and was not."
+The first version acknowledged an information frame the moment it
+arrived, and the link failed: three frames out, three RRs back, none
+heard, and the sender retransmitted to N2 and declared the link dead
+while the receiver sat happily connected with all three frames
+delivered.  Adding T2 fixed it, and the reasoning was that a station
+which has just been sent a burst is still transmitting the rest of it,
+so an acknowledgement sent at once lands on a deaf receiver.
+.PP
+That reasoning is right about a half-duplex radio and wrong about what
+was happening here.  The SX1276 model stopped its peer's queue at the
+first collision and never restarted it \(em
+.CW tools/qemu-patches/0037
+\(em so the first acknowledgement that overlapped a transmission did
+not merely get lost, it took the link with it.  T2 helped by keeping
+the two ends from ever overlapping.
+.B "Measured again with the model fixed:"
+ten frames through a window of four, with
+.CW "t2 0"
+and with
+.CW "t2 1000" ,
+give the same answer \(em no retransmissions, no rejects, twelve
+frames in and five out at the receiver in both cases.  T2 stays,
+because the specification has it and because a real half-duplex radio
+is a real half-duplex radio, but nothing here has yet shown what it
+is worth.
 .PP
 Two smaller things the same run found.  A frame whose N(S) is one this
 end has already taken is a retransmission whose acknowledgement was
