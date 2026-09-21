@@ -6542,3 +6542,38 @@ is the check
 .CW kuverify
 cannot make and should be made to approximate \(em by reading the
 blocks the FAT says the file occupies rather than reading the file.
+.NH 2
+Eighth out: allocating the buffer per transfer is not it either
+.PP
+.CW sdbio
+will only hand the engine the caller's own buffer when it is a
+page-aligned kernel address, which a Dis process's buffer is not, so
+it takes one from
+.CW sdmalloc
+for every write and returns it afterwards.
+.CW dmatest
+had always held one buffer for a whole run.  That was the last
+structural difference between the two paths, and it had a mechanism
+behind it: two processes taking and returning page-aligned transfer
+buffers around a DMA the engine is reading from.
+.P1
+emmc: dmatest 200 transfers of 9 blocks, all clean (a fresh buffer each time)
+.P2
+The parenthesis is deliberate.  The first run of this test reported
+"all clean" with a banner that said "re-dirtied each time", which is
+what the previous mode prints, so the output did not show whether the
+allocation under test had happened at all.  Of the eight things now
+eliminated, the ones worth anything are the ones where the dump showed
+the intervention active.
+.PP
+.B "And in the same window, something else failed."
+A
+.CW "DMA WRITE FAILURE"
+landed while those 200 transfers were clean, from a
+.I devsd
+writer running alongside.  That is the third time a
+.CW dmatest
+loop has come through untouched while a concurrent
+.I devsd
+transfer stalled, and it is the most reliable thing known about the
+trigger: it is not the transfer, it is the path.
