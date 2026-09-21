@@ -1071,6 +1071,35 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				 * legal: the command is reissued from the
 				 * top of the loop with dma off.
 				 */
+				/*
+				 * Stop the ENGINE before stopping the card.
+				 *
+				 * The dump this failure prints ends with
+				 * "(engine still active)" and nothing acted
+				 * on it: bioerror() resets the command and
+				 * data circuits and sends CMD12, and never
+				 * touches the DMA channel, so the channel is
+				 * left ACTIVE and still armed against this
+				 * peripheral's DREQ.
+				 *
+				 * That is why the fallback has never worked.
+				 * The PIO retry of the very same block fails,
+				 * and so does a plain PIO write to a
+				 * completely different block afterwards --
+				 * measured, two dd runs, the second with DMA
+				 * already switched off by this line below:
+				 *
+				 *	emmc: write block 1200006 failed
+				 *	emmc: write block 2053 failed
+				 *
+				 * One DMA failure poisoned every write that
+				 * followed it, which is why a single stall
+				 * panics dossrv and leaves the board looking
+				 * hung.  Resetting the controller while the
+				 * engine is still holding the other end of
+				 * the handshake cannot work.
+				 */
+				dmachanreset();
 				bioerror(c, write, bno+i, r[Rinterrupt]);
 				emmcdma = 0;
 				continue;	/* same i: do it again, in pio */
@@ -1185,9 +1214,9 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	 */
 	if(strcmp(cb->f[0], "dmatest") == 0 && (cb->nf == 3 || cb->nf == 4)){
 		int nb = atoi(cb->f[1]), cnt = atoi(cb->f[2]), k;
-		int off = cb->nf == 4? atoi(cb->f[3]): 0;
+		int off = cb->nf == 4? (int)strtol(cb->f[3], nil, 0): 0;
 		uvlong bno;
-		uchar *buf;
+		uchar *buf, *p;
 		long got;
 
 		if(nb < 1 || nb > Maxblocks)
@@ -1195,31 +1224,49 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 		if(cnt < 1)
 			cnt = 100;
 		/*
-		 * The buffer, optionally pushed off a cache line.
+		 * The buffer, placed at a chosen PAGE offset.
 		 *
-		 * dmatest's malloc'd buffer is aligned and has never
-		 * failed; what arrives from the styx path is somebody
-		 * else's block, at whatever offset that path leaves it.
-		 * If a misaligned source is what stalls the engine three
-		 * blocks in, this is the one parameter that says so, and
-		 * it costs a sweep of thirty-two runs to find out.
+		 * This used to clamp the offset to 0..63 and call it
+		 * "pushed off a cache line", which was the wrong
+		 * parameter and is why this test has never reproduced
+		 * anything.  Seven failures collected over three days
+		 * all report the same thing:
+		 *
+		 *	dma src 0xc3bb6640  0xc3f2e640  0xc3f3b640
+		 *	        0xc3f84640  0xc3f87640  0xc3f9b640
+		 *	        0xc3fb2640
+		 *
+		 * Seven for seven at page offset 0x640.  That is
+		 * dossrv's buffer: 64-byte aligned, so a cache-line
+		 * sweep could never have moved it, but neither
+		 * 512-aligned nor page-aligned.  malloc's own alignment
+		 * then decided the page offset of every run of this
+		 * test, and nobody chose it or printed it.
+		 *
+		 * So: align up to a page, add the offset asked for, and
+		 * say what the buffer's page offset actually is, because
+		 * that is the number the failures have in common.
 		 */
-		if(off < 0 || off > 63)
+		if(off < 0 || off > BY2PG-1)
 			off = 0;
-		if((buf = malloc(nb*Secsize + 64)) == nil)
+		if((buf = malloc(nb*Secsize + 2*BY2PG)) == nil)
 			error(Enomem);
 		if(waserror()){
 			free(buf);
 			nexterror();
 		}
-		memset(buf, 0x5a, nb*Secsize + 64);
-		print("emmc: dmatest %d blocks x %d off %d (buf %#p), dma %d "
-			"clearirq %d reset %d datareset %d delay %dus\n",
-			nb, cnt, off, buf+off, emmcdma, emmcdmaclearirq,
+		p = (uchar*)(((uintptr)buf + BY2PG-1) & ~((uintptr)BY2PG-1));
+		p += off;
+		memset(p, 0x5a, nb*Secsize);
+		print("emmc: dmatest %d blocks x %d, buf %#p page offset %#lux, "
+			"dma %d clearirq %d irqen %d reset %d datareset %d "
+			"delay %dus\n",
+			nb, cnt, p, (ulong)((uintptr)p & (BY2PG-1)),
+			emmcdma, emmcdmaclearirq, emmcdmairqen,
 			emmcdmareset, emmcdmadatareset, emmcdmadelay);
 		for(k = 0; k < cnt; k++){
 			bno = 2048 + (uvlong)(k % 1000)*nb;
-			got = emmcbio(u, 0, 1, buf+off, nb, bno);
+			got = emmcbio(u, 0, 1, p, nb, bno);
 			if(got != nb*Secsize){
 				print("emmc: dmatest FAILED at transfer %d "
 					"of %d, block %llud: wrote %ld of %d\n",
