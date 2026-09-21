@@ -674,7 +674,7 @@ with no panic.  Their plan has one acceptance item left and it is arm64.
 This is what remains here, and the order is by dependency rather than by
 importance.
 .NH 2
-1. Two checks that need nothing from anybody
+1. Two checks that need nothing from anybody \(em done
 .PP
 .B "1a. Root parity between the two configurations of one board."
 .CW virtarm64
@@ -702,6 +702,17 @@ lists and reports what one has and the other lacks, against a short
 allow-list of the differences that are deliberate, would have caught
 both in a second.
 .PP
+.CW scripts/check-rootparity.sh
+is that script, in the quick tier.  The invariant it encodes is the one
+that actually holds on both branches: the cloud root is a
+.I superset
+of the plain one \(em 49 entries of the plain root, plus 53 of its own
+\(em so what it fails on is an entry the plain configuration has and the
+cloud one lacks, which is exactly the shape of both incidents.
+Directory entries are compared too, since a missing mount point is as
+much a failure as a missing file.  Controlled: one line removed from the
+cloud root, and it names that line and exits 1.
+.PP
 .B "1b. A boot with more than 4 GiB."
 Their first Phase E item is the pool overlap checker firing for the
 first time, on a machine with memory above 4 GiB \(em which is every
@@ -716,6 +727,22 @@ that boots pc64 that way and fails on
 .CW pooloverlap
 costs one boot.  It also gives them a reproduction that is free rather
 than rented.
+.PP
+.CW scripts/check-pc64-bigmem.sh
+is that check, and running it settled something this branch had only
+inferred:
+.B "pc64 here does not boot a 16 GiB machine at all."
+The 1 GiB control reaches a shell; at 16 GiB the kernel counts 4179427
+pages, which is the memory, and then panics with a page fault.  That is
+the fault their
+.CW 131bce57
+fixed \(em a 32-bit chunk size, not the mapping \(em so the check fails
+here on purpose, in the slow tier beside
+.CW check-pc64-parallelvm ,
+and flips to passing on adoption.
+.PP
+It is also the sharpest argument for adopting.  Every machine worth
+renting has more than 4 GiB; this branch cannot boot one.
 .PP
 .B "1c. Housekeeping."
 61 test images and 165 MiB of tarballs in the project, no instances
