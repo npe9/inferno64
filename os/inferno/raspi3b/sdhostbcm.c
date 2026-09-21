@@ -771,8 +771,28 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		 * set_transfer_irqs does: DATA and BUSY for the polled
 		 * path, BUSY alone when the engine has it.
 		 */
+		/*
+		 * Reads take the DATA interrupt, writes the BLOCK one.
+		 *
+		 * bcm2835-sdhost makes exactly this distinction, with the
+		 * comment "use the block interrupt for writes": it clears
+		 * DATA_IRPT_EN and sets BLOCK_IRPT_EN before pushing a
+		 * write, where a read runs with DATA_IRPT_EN.  This
+		 * driver used DATA for both.
+		 *
+		 * These bits are named as interrupt enables and this
+		 * driver polls, so they ought not to matter -- except the
+		 * read side has already shown that touching the status
+		 * registers changes what the controller does, so "ought
+		 * not to matter" is not evidence.  Writes stall 128 bytes
+		 * in with the FSM in WRITEDATA, the card idle in TRAN and
+		 * ready, and no error bit anywhere; the host side of the
+		 * FIFO has been rewritten twice with no effect.  This is
+		 * the one register difference from a driver that works.
+		 */
 		r[SDHCFG] = (r[SDHCFG] & ~(u32)(Cfgdataint|Cfgblockint)) |
-			Cfgbusyint | (sdhostdma? 0: Cfgdataint);
+			Cfgbusyint |
+			(sdhostdma? 0: (write? Cfgblockint: Cfgdataint));
 		r[SDHBCT] = Secsize;
 		r[SDHBLC] = 1;
 		/*
@@ -876,7 +896,27 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			{
 			int words, burst, k, tries;
 
-			j = Secsize/4;			/* words to write */
+			/*
+			 * In bytemode the data register takes ONE BYTE per
+			 * write, exactly as it gives one byte per read.
+			 *
+			 * The arithmetic is what says so.  The word loop
+			 * wrote Secsize/4 = 128 words and the controller
+			 * counted 128 BYTES: sdhbct went 512 -> 384, and
+			 * 384 is what remains when 128 of 512 have
+			 * arrived.  So every 32-bit write delivered a
+			 * single byte, the loop ran out of data with three
+			 * quarters of the block still wanted, and the
+			 * transfer stalled with the FSM in WRITEDATA and
+			 * the card sitting in TRAN wondering where the
+			 * rest was.
+			 *
+			 * That also explains why nothing on the host side
+			 * helped: bursting, pacing and delaying all change
+			 * WHEN the words go, and the problem was that each
+			 * one carried a quarter of what it looked like.
+			 */
+			j = c->bytemode? Secsize: Secsize/4;
 			tries = 0;
 			while(j > 0){
 				words = Fifodepth -
@@ -897,11 +937,15 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				tries = 0;
 				if(words > j)
 					words = j;
-				for(k = 0; k < words; k++){
-					r[SDDATA] = p[0] | p[1]<<8 |
-						p[2]<<16 | p[3]<<24;
-					p += 4;
-				}
+				if(c->bytemode)
+					for(k = 0; k < words; k++)
+						r[SDDATA] = *p++;
+				else
+					for(k = 0; k < words; k++){
+						r[SDDATA] = p[0] | p[1]<<8 |
+							p[2]<<16 | p[3]<<24;
+						p += 4;
+					}
 				j -= words;
 			}
 			}
