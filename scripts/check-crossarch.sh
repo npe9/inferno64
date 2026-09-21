@@ -109,13 +109,33 @@ timeout 480 python3 "$ROOT/scripts/type-at-console.py" "$WORK/pa" 300 "$CMD" \
 
 # "CROSSARCH-RAN" does not appear in the command, which says "crossarch",
 # so only the program can have printed it.
+#
+# A failure says which of two things happened, because they want
+# different people.  The console types a character at a time and the
+# guest can still lose or gain one -- a mount point typed as /n/x has
+# arrived as /n/.x on a loaded host, after which the bind finds nothing
+# and every later line is an honest report of a command that was never
+# sent.  So the echoed line is compared against what was typed first,
+# and only if it came through intact is "did not run it" a statement
+# about the kernel.
+verdict() {
+	arch=$1; log=$2
+	if grep -q 'CROSSARCH-RAN' "$log"; then
+		return 0
+	fi
+	if grep -q "mount -A tcp!10.0.2.2!$PORT /n/x;" "$log"; then
+		echo "check-crossarch: FAIL -- $arch did not run it" >&2
+	else
+		echo "check-crossarch: CANNOT TELL -- the console mangled the command on $arch:" >&2
+		grep -a 'mount -A' "$log" | tail -1 | sed 's/^/    | /' >&2
+		echo "    | expected: ...mount -A tcp!10.0.2.2!$PORT /n/x; ..." >&2
+	fi
+	sed -n '/mount -A/,$p' "$log" | tail -8 >&2
+	return 1
+}
 ok=1
-grep -q 'CROSSARCH-RAN' "$WORK/x86.log" || {
-	echo "check-crossarch: FAIL -- amd64 did not run it" >&2
-	sed -n '/mount -A/,$p' "$WORK/x86.log" | tail -8 >&2; ok=0; }
-grep -q 'CROSSARCH-RAN' "$WORK/arm.log" || {
-	echo "check-crossarch: FAIL -- arm64 did not run it" >&2
-	sed -n '/mount -A/,$p' "$WORK/arm.log" | tail -8 >&2; ok=0; }
+verdict amd64 "$WORK/x86.log" || ok=0
+verdict arm64 "$WORK/arm.log" || ok=0
 [ $ok = 1 ] || exit 1
 
 echo "check-crossarch: ok -- one Dis binary ran on two processor families"

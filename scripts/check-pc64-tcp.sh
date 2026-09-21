@@ -41,15 +41,32 @@ python3 "$ROOT/scripts/serve-and-hold.py" "$WORK/p" 50 60 "$WORK/log" \
 QPID=$!
 n=0
 while [ ! -f "$WORK/p.ready" ] && [ $n -lt 40 ]; do sleep 3; n=`expr $n + 1`; done
-sleep 12
+# Then keep trying rather than knocking once.  The old version slept
+# twelve seconds after the ready marker and made a single attempt, which
+# is fine on an idle laptop and not on one running twenty other guests:
+# the boot reaches the marker, cloudinit and tcpserve take longer than
+# the grace period, the one attempt lands before anything is listening,
+# and the check reports "no connection accepted" -- a kernel verdict for
+# a harness timeout.  Measured on a loaded host: failing on this branch
+# and on the merged tree at the same moment, and passing on both once
+# the attempts were spread out.
 if python3 -c "
-import socket,sys
-try:
-    s=socket.create_connection(('127.0.0.1',$PORT),timeout=10)
-    d=s.recv(100).decode(errors='replace')
-    sys.exit(0 if 'INFERNO-ACCEPTED' in d else 1)
-except Exception:
-    sys.exit(1)
+import socket,sys,time
+deadline = time.time() + ${TCPWAIT:-120}
+last = ''
+while time.time() < deadline:
+    try:
+        s=socket.create_connection(('127.0.0.1',$PORT),timeout=5)
+        d=s.recv(100).decode(errors='replace')
+        s.close()
+        if 'INFERNO-ACCEPTED' in d:
+            sys.exit(0)
+        last = 'connected but said %r' % d
+    except Exception as e:
+        last = str(e)
+    time.sleep(2)
+sys.stderr.write('check-pc64-tcp: last attempt: %s\n' % last)
+sys.exit(1)
 "; then
 	echo "check-pc64-tcp: ok -- the kernel accepted an inbound connection"
 	exit 0
