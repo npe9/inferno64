@@ -6577,3 +6577,75 @@ loop has come through untouched while a concurrent
 .I devsd
 transfer stalled, and it is the most reliable thing known about the
 trigger: it is not the transfer, it is the path.
+.NH 2
+What Linux does with this controller, checked against the source
+.PP
+.CW drivers/mmc/host/sdhci-iproc.c ,
+fetched and read rather than recalled.  The Pi 3's Arasan is
+.CW "brcm,bcm2835-sdhci" ,
+which maps to
+.CW bcm2835_data :
+.P1
+static const struct sdhci_iproc_data bcm2835_data = {
+        .pdata = &sdhci_bcm2835_pltfm_data,
+        .caps = ((0x1 << SDHCI_MAX_BLOCK_SHIFT) & SDHCI_MAX_BLOCK_MASK) |
+                SDHCI_CAN_VDD_330 |
+                SDHCI_CAN_DO_HISPD,
+        .caps1 = SDHCI_DRIVER_TYPE_A | SDHCI_DRIVER_TYPE_C,
+        .missing_caps = true,
+};
+.P2
+Two things follow, and both matter here.
+.IP \(bu
+.B "The capabilities register really is broken."
+.CW "missing_caps = true"
+makes the driver ignore the hardware register and supply those values
+itself.  This driver's own note \(em that
+.CW caps
+reads
+.CW "0x0 0x0"
+on the board \(em was not a misread and was not a mistake in the
+initialisation order.  Linux found the same thing and works around it.
+.IP \(bu
+.B "Linux does not DMA this controller at all."
+The caps it supplies contain no
+.CW SDHCI_CAN_DO_SDMA
+and no
+.CW SDHCI_CAN_DO_ADMA2 ;
+the entries in that file which do claim them are the Cygnus and iProc
+parts, not the Pi.  With neither capability advertised, sdhci runs the
+Pi 3's eMMC in PIO.
+.PP
+.B "And the external DMA engine is what it uses on the OTHER controller."
+.CW drivers/mmc/host/bcm2835-sdhost.c
+pulls in
+.CW <linux/dmaengine.h>
+and takes a channel for SDHOST.  So the two arrangements Linux ships
+are: Arasan by PIO, SDHOST by external DMA.
+.PP
+.B "This driver does neither."
+It drives the Arasan with the external engine on DREQ 11, which is a
+pairing no production driver here uses.  The hardware nominally
+provides that DREQ, and reads work and are byte-correct, so it is not
+obviously wrong \(em but the stall has now survived eight eliminations
+in a configuration with no precedent, and that is worth weighing
+before a ninth.
+.PP
+Three ways forward, and the choice is a judgement about what the board
+is for rather than another experiment:
+.IP 1.
+.B "Keep the Arasan on PIO,"
+as Linux does, and stop treating DMA here as a goal.  The stall
+becomes irrelevant rather than fixed.  Throughput stays where PIO puts
+it.
+.IP 2.
+.B "Put the DMA work on SDHOST" ,
+which is the controller Linux drives with this same engine, and which
+already has a driver in
+.CW sdhostbcm.c .
+That is the arrangement with a working precedent.
+.IP 3.
+.B "Continue on the Arasan" ,
+with the interrupt-acknowledgement hypothesis as the current
+candidate.  Worth doing only if DMA on this particular controller is
+itself the point.
