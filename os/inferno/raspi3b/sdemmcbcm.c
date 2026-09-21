@@ -1299,7 +1299,31 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 			emmcdmareset, emmcdmadatareset, emmcdmadelay);
 		for(k = 0; k < cnt; k++){
 			bno = 2048 + (uvlong)(k % 1000)*nb;
-			if(rw && (k & 1)){
+			if(rw == 2 && (k & 1)){
+				/*
+				 * A SINGLE-block read at a low block, then
+				 * the multi-block write -- which is what
+				 * dossrv actually does: it reads a FAT
+				 * sector and writes nine blocks of data.
+				 *
+				 * rw=1 alternates same-size, same-block
+				 * transfers and 500 of those are clean, so
+				 * direction alone is not it.  What is left
+				 * between that and dossrv is the SHAPE of
+				 * the alternation: one block versus nine,
+				 * and a single-block command carries
+				 * neither Tmulti nor Tautocmd12.
+				 */
+				got = emmcbio(u, 0, 0, p, 1, (uvlong)2048 + (k % 64));
+				if(got != Secsize){
+					print("emmc: dmatest FAILED on the "
+						"1-block read at transfer %d of "
+						"%d: got %ld\n", k, cnt, got);
+					break;
+				}
+				continue;
+			}
+			if(rw == 1 && (k & 1)){
 				got = emmcbio(u, 0, 0, p, nb, bno);
 				if(got != nb*Secsize){
 					print("emmc: dmatest FAILED reading at "
