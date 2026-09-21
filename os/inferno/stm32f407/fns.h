@@ -44,6 +44,7 @@ void	setfsr(ulong);
 void	trap(Ureg*);
 void	trapinit(void);
 void	uartboardinit(void);
+void	otherusarts(void);
 void	uartconsole(void);
 void	uartconsolesetup(void);
 void	serialputc(int);

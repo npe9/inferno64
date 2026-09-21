@@ -104,6 +104,58 @@ uartboardinit(void)
 	coherence();
 }
 
+/*
+ * TEMPORARY: bring up the three USARTs a clicker 2 brings out and
+ * write one line to each, so that a board whose UART click is in the
+ * other socket is not mistaken for a board that never booted.  Each is
+ * alternate function 7 except UART4 on PA0/PA1, which is AF8.  Removed
+ * once the socket is known; see the NOTE.
+ */
+static void
+rawuart(ulong base, ulong port, int tx, int afr, int af, ulong hz, char *s)
+{
+	volatile ulong *r;
+	ulong v;
+	int i;
+
+	v = *(volatile ulong*)(port+GPIO_MODER);
+	v &= ~(3UL << (2*tx));
+	v |= 2UL << (2*tx);
+	*(volatile ulong*)(port+GPIO_MODER) = v;
+	v = *(volatile ulong*)(port+afr);
+	v &= ~(0xfUL << (4*(tx%8)));
+	v |= (ulong)af << (4*(tx%8));
+	*(volatile ulong*)(port+afr) = v;
+
+	r = (volatile ulong*)base;
+	r[UartCr1/4] = 0;
+	r[UartCr2/4] = 0;
+	r[UartCr3/4] = 0;
+	r[UartBrr/4] = (hz + UARTBAUD/2) / UARTBAUD;
+	r[UartCr1/4] = UartUe|UartTe;
+	coherence();
+	for(; *s; s++){
+		for(i = 0; i < 100000; i++)
+			if(r[UartSr/4] & UartTxe)
+				break;
+		r[UartDr/4] = *s & 0xff;
+	}
+}
+
+void
+otherusarts(void)
+{
+	/* mikroBUS 1: USART2 TX on PD5, AF7, APB1 */
+	rawuart(0x40004400, GPIOD, 5, GPIO_AFRL, 7, apb1hz,
+		"\r\nInferno on USART2, PD5: mikroBUS 1\r\n");
+	/* mikroBUS 2: USART3 TX on PD8, AF7, APB1 */
+	rawuart(0x40004800, GPIOD, 8, GPIO_AFRH, 7, apb1hz,
+		"\r\nInferno on USART3, PD8: mikroBUS 2\r\n");
+	/* the 2x26 pad: UART4 TX on PA0, AF8, APB1 */
+	rawuart(0x40004c00, GPIOA, 0, GPIO_AFRL, 8, apb1hz,
+		"\r\nInferno on UART4, PA0: the pad\r\n");
+}
+
 static Uart*
 stm32f4_pnp(void)
 {

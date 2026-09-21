@@ -23,6 +23,7 @@
 #define	    CfgrSwHsi	(0<<0)
 #define	    CfgrSwPll	(2<<0)
 #define	    CfgrSwsMask	(3<<2)
+#define	    CfgrSwsHsi	(0<<2)
 #define	    CfgrSwsPll	(2<<2)
 #define	    CfgrHpreDiv1 (0<<4)
 #define	    CfgrPpre1Div1 (0<<10)
@@ -38,6 +39,7 @@
 #define	  RCC_APB1ENR	(RCC+0x40)
 #define	    Apb1Usart2	(1<<17)
 #define	    Apb1Usart3	(1<<18)
+#define	    Apb1Uart4	(1<<19)
 #define	  RCC_APB2ENR	(RCC+0x44)
 #define	    Apb2Usart1	(1<<4)
 
@@ -61,6 +63,7 @@
 #define	GPIOE		0x40021000
 #define	  GPIO_MODER	0x00
 #define	  GPIO_OSPEEDR	0x08
+#define	  GPIO_ODR	0x14
 #define	  GPIO_AFRL	0x20		/* pins 0 to 7 */
 #define	  GPIO_AFRH	0x24		/* pins 8 to 15 */
 
