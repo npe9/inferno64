@@ -7058,3 +7058,64 @@ onto SDHOST.  Loading that kernel over JTAG rather than through
 .CW kupdate
 avoids the circularity.  Until then the SDHOST results above stand
 only as "not obviously fixed by this", not as eliminations.
+.NH 2
+SDHOST, on a card nobody else touches: SDHBCT does not hold what it is given
+.PP
+The confound is gone.
+.CW raspi3binit.b
+now reaches the card through one constant,
+.CW SDDEV ,
+pointed at
+.CW /dev/sdN0 ,
+so SDHOST owns the pins from boot and the Arasan never opens it.  On
+such a boot the read still fails identically:
+.P1
+sdhost: read block 0 failed: sdhsts 0x0 sdcmd 0x51 sdedm 0x10801
+.P2
+which is worth having on its own \(em it means the failure is the
+SDHOST path and not contention, and it restores the
+.CW SDHCFG
+and
+.CW SDTOUT
+results to real eliminations.
+.PP
+.B "And the failure report, asked for more, says this:"
+.P1
+sdhost: read block 0 failed: sdhsts 0x0 sdcmd 0x51 sdedm 0x10801
+    (fsm 1 fill 0) sdhbct 6 sdhblc 1 sdhcfg 0x418
+.P2
+.CW sdhblc
+is 1, as written.
+.CW sdhbct
+is
+.B 6 .
+The driver writes
+.CW Secsize ,
+512.
+.PP
+.B "The register does hold writes,"
+which is the part that makes this a lead rather than a puzzle.  Asked
+directly over JTAG, with the kernel halted:
+.P1
+SDHBCT before  0x6
+SDHBCT written 512, reads 0x200
+SDHBLC written 1,   reads 0x1
+.P2
+So 0x3c is the right offset, the register is writable, it retains what
+it is given, and by the time the transfer has failed it holds 6
+instead of 512.  Something between the driver writing it and the wait
+timing out changes it, and with
+.CW fill
+0 and
+.CW sdhsts
+0 nothing has moved through the FIFO to explain a count being
+consumed.
+.PP
+Linux calls this register "Host byte count (debug)", which may mean it
+is not a plain latch during a transfer.  The next measurement is the
+one this build was for and which has not run yet: print
+.CW SDHBCT
+immediately after the command is issued, before any wait, so "the data
+phase never started" can be told apart from "it started and stopped".
+The trace is written and committed; the board wants a restart to run
+it.

@@ -72,6 +72,10 @@ enum {
 	Hstserror = Hstsrewtout|Hstscmdtout|Hstscrc16|Hstscrc7|Hstsfifo,
 
 	/* SDHCFG */
+	Cfgbusyint = 1<<10,	/* SDHCFG interrupt enables */
+	Cfgblockint = 1<<8,
+	Cfgsdioint = 1<<5,
+	Cfgdataint = 1<<4,
 	Cfgslowcard = 1<<3,
 	Cfgwideext = 1<<2,
 	Cfgwideint = 1<<1,
@@ -258,7 +262,24 @@ sdhostreset(volatile u32 *r, ulong fclk)
 	delay(20);
 	r[SDVDD] = 1;				/* power on */
 	delay(20);
-	r[SDHCFG] = Cfgslowcard;
+	/*
+	 * SLOW_CARD, and the two interrupt enables Linux keeps set.
+	 *
+	 * This driver polls, so "interrupt enable" reads like something
+	 * it does not need -- and that reasoning is what left SDHCFG at
+	 * 0x8 while every transfer failed with the command completing
+	 * and no data phase starting, fifodata() timing out on Hstsdata
+	 * that never set.  bcm2835-sdhost keeps SDHCFG_DATA_IRPT_EN and
+	 * SDHCFG_BUSY_IRPT_EN set for PIO and drops only DATA_IRPT_EN
+	 * for DMA, which is not the shape of a bit that merely routes an
+	 * interrupt to the CPU.
+	 *
+	 * The Arasan taught the same lesson one register along: its
+	 * irpt_mask gates whether a condition reaches the status
+	 * register at all, so polling a status bit whose mask is clear
+	 * waits for ever.
+	 */
+	r[SDHCFG] = Cfgslowcard | Cfgdataint | Cfgbusyint;
 	sdhostclock(r, fclk, Idclock);
 	delay(20);
 }
@@ -292,6 +313,7 @@ fifofill(volatile u32 *r)
  * loop that was written for them.
  */
 static int sdhostdma = 0;
+static int sdhosttrace = 1;	/* print the state at command issue */
 
 static int
 fifospace(volatile u32 *r)			/* wait until the FIFO can take a word */
@@ -560,9 +582,23 @@ bioerror(Ctlr *c, int write, uvlong bno, u32 sts)
 {
 	if(c->errors++ > 5)
 		return;
-	print("sdhost: %s block %llud failed: sdhsts %#lux sdcmd %#lux sdedm %#lux\n",
+	/*
+	 * The block registers too, because the failure is that the
+	 * command completes and no data phase starts, and "SDHBLC was
+	 * armed" has so far been an assumption rather than a reading.
+	 * SDEDM's FSM and fill are broken out for the same reason: 1 is
+	 * DATAMODE, 2 READDATA, 3 WRITEDATA, and a read that never
+	 * leaves DATAMODE never began.
+	 */
+	print("sdhost: %s block %llud failed: sdhsts %#lux sdcmd %#lux "
+		"sdedm %#lux (fsm %lud fill %lud) sdhbct %lud sdhblc %lud "
+		"sdhcfg %#lux\n",
 		write? "write": "read", bno, (ulong)sts, (ulong)c->r[SDCMD],
-		(ulong)c->r[SDEDM]);
+		(ulong)c->r[SDEDM],
+		(ulong)(c->r[SDEDM] & Edmfsmmask),
+		(ulong)((c->r[SDEDM] >> Fifofillsh) & Fifofillmask),
+		(ulong)c->r[SDHBCT], (ulong)c->r[SDHBLC],
+		(ulong)c->r[SDHCFG]);
 }
 
 static long
@@ -603,6 +639,14 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			bioerror(c, write, bno+i, r[SDHSTS]);
 			break;
 		}
+		/*
+		 * Which of the data interrupts are enabled depends on who
+		 * is moving the data, exactly as bcm2835-sdhost's
+		 * set_transfer_irqs does: DATA and BUSY for the polled
+		 * path, BUSY alone when the engine has it.
+		 */
+		r[SDHCFG] = (r[SDHCFG] & ~(u32)(Cfgdataint|Cfgblockint)) |
+			Cfgbusyint | (sdhostdma? 0: Cfgdataint);
 		r[SDHBCT] = Secsize;
 		r[SDHBLC] = 1;
 		/*
@@ -618,6 +662,25 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			bioerror(c, write, bno+i, r[SDHSTS]);
 			break;
 		}
+		/*
+		 * The state the instant the command is away, before any
+		 * wait, because the failure report is taken after a
+		 * timeout and cannot tell "the data phase never started"
+		 * from "it started and stopped".  SDHBCT is written 512
+		 * here and reads 6 by the time of the failure -- and the
+		 * register does hold writes, checked by writing it over
+		 * JTAG and reading 0x200 back -- so something between
+		 * these two points changes it.
+		 */
+		if(c->errors <= 3 && sdhosttrace)
+			print("sdhost: issued %d blk %llud: sdcmd %#lux "
+				"sdhsts %#lux sdedm %#lux (fsm %lud fill %lud) "
+				"sdhbct %lud sdhblc %lud\n",
+				write? 24: 17, bno+i, (ulong)r[SDCMD],
+				(ulong)r[SDHSTS], (ulong)r[SDEDM],
+				(ulong)(r[SDEDM] & Edmfsmmask),
+				(ulong)((r[SDEDM] >> Fifofillsh) & Fifofillmask),
+				(ulong)r[SDHBCT], (ulong)r[SDHBLC]);
 		if(write && sdhostdma){
 			if(dmaxfer(p, Sddatabus, Secsize, Sdhostdreq, 0) < 0){
 				print("sdhost: DMA WRITE FAILURE block %llud: "
@@ -738,6 +801,11 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 		i = sdcardinit(c);
 		qunlock(c);
 		print("sdhost: reinit %s\n", i? "ok": "failed");
+		return 0;
+	}
+	if(strcmp(cb->f[0], "trace") == 0 && cb->nf == 2){
+		sdhosttrace = atoi(cb->f[1]);
+		print("sdhost: trace %d\n", sdhosttrace);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "dma") == 0 && cb->nf == 2){
