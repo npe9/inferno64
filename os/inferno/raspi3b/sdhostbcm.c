@@ -134,6 +134,7 @@ struct Ctlr {
 	int	inited;
 	int	errors;
 	int	bytemode;	/* the data register hands over a byte per read */
+	int	bmset;		/* ... and bytemode has been decided */
 	ulong	fclk;
 	uint	rca;
 };
@@ -449,6 +450,44 @@ waitxfer(volatile u32 *r)
  * Native SD bring-up.  Returns 1 with the card selected and sized, or 0
  * if no card responds.
  */
+/*
+ * On real silicon this controller hands the data register over one
+ * byte at a time.  Read block 0 both ways and let the MBR signature
+ * settle it, rather than defaulting to a guess.
+ *
+ * The word loop collects the same 32-bit window shifted a byte at a
+ * time.  Block 0 of this card, taken both ways:
+ *
+ *   word: faaa5500b8faaa5500b8faaa1000b8fa8e1000b8d08e1000bcd08e1000bcd08e
+ *   byte: fab800108ed0bc00b0b800008ed88ec0fbbe007cbf0006b90002f3a4ea210600
+ *
+ * The second is an x86 boot sector and ends 55 aa at 510; the first is
+ * the same bytes smeared.  QEMU's model hands over whole words, so
+ * both are needed and neither can be assumed.
+ */
+static long sdhostbio(SDunit*, int, int, void*, long, uvlong);
+
+static void
+pickbytemode(SDunit *u, Ctlr *c)
+{
+	uchar b[Secsize];
+	int m;
+
+	c->bmset = 1;			/* before the probing reads, not after */
+	for(m = 1; m >= 0; m--){
+		c->bytemode = m;
+		memset(b, 0, sizeof b);
+		if(sdhostbio(u, 0, 0, b, 1, 0) == Secsize &&
+		    b[Secsize-2] == 0x55 && b[Secsize-1] == 0xaa){
+			c->bmset = 1;
+			print("sdhost: bytemode %d (block 0 ends 55 aa)\n", m);
+			return;
+		}
+	}
+	c->bytemode = 1;		/* silicon's way; QEMU tolerates it */
+	print("sdhost: bytemode 1 by default; block 0 had no 55 aa either way\n");
+}
+
 static int
 sdcardinit(Ctlr *c)
 {
@@ -594,6 +633,13 @@ sdhostonline(SDunit *u)
 	 */
 	u->secsize = Secsize;
 	u->sectors = c->sectors;
+	/*
+	 * Decide how the data register hands words over, now that there
+	 * is a unit to read through and before anything reads for real.
+	 * Not from sdhostbio: that holds the qlock this would re-enter.
+	 */
+	if(!c->bmset)
+		pickbytemode(u, c);
 	return first? 2: 1;
 }
 

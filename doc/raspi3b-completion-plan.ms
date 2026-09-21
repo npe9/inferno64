@@ -7190,3 +7190,68 @@ after a failed transfer, and writing it directly over JTAG with the
 kernel halted reads 0x200 straight back \(em so the "sdhbct 6"
 recorded earlier was the controller consuming it, not the driver
 failing to set it.
+.NH 2
+SDHOST PIO reads work
+.P1
+sdhost: bytemode 1 (block 0 ends 55 aa)
+SD-READ-OK
+SD-MULTI-OK 32768 bytes, last block matches it read alone (eb589042)
+SD-CAP-OK sector 30228479 reads and 30228480 does not; the claimed
+          capacity is the real one
+SD-OK
+.P2
+with the card on SDHOST and the Arasan never opened.  Two things had
+to be true at once.
+.IP 1.
+.B "The first read of SDHSTS waits 1ms after the command,"
+or the data phase aborts with
+.CW Hstsfifo
+and
+.CW Failflag .
+Measured threshold, above.
+.IP 2.
+.B "The data register hands over one byte per read."
+This is in the driver's own comments and the switch for it defaulted
+to off, so every read collected the same 32-bit window smeared a byte
+at a time.  Block 0 of this card, both ways:
+.P1
+word: faaa5500b8faaa5500b8faaa1000b8fa8e1000b8d08e1000bcd08e1000bcd08e
+byte: fab800108ed0bc00b0b800008ed88ec0fbbe007cbf0006b90002f3a4ea210600
+.P2
+The second is an x86 boot sector and ends
+.CW "55 aa"
+at 510.  The first is the same bytes smeared, with
+.CW "fa b8 00 10 8e d0 bc"
+visible marching through it.
+.PP
+It is now detected rather than assumed:
+.CW pickbytemode()
+reads block 0 each way at online time and takes the one whose last two
+bytes are
+.CW "55 aa" .
+QEMU's model hands over whole words and silicon does not, so neither
+can be the default and a guess would be wrong on one of them.
+.NH 2
+SDHOST writes do not, yet
+.P1
+sdhost: write block 2049 failed: sdhsts 0x1 sdcmd 0x800d
+    sdedm 0x10803 (fsm 3 fill 0) sdhbct 384 sdhblc 1
+.P2
+.CW sdhbct
+384 of 512 means 128 bytes went and the rest did not; the FSM is left
+in WRITEDATA (3); and the
+.CW "sdcmd 0x800d"
+is the NEXT command, CMD13 from
+.CW cardready() ,
+unable to start against a controller still mid-transfer.  So the
+visible symptom is the same stuck-CMD13 as before but the cause is
+downstream of it this time.
+.PP
+The write path waits with
+.CW fifospace() ,
+which polls
+.CW SDEDM 's
+fill level, where the read path waits on
+.CW SDHSTS 's
+data flag.  The 1ms delay is applied to both, so whatever writes need
+is not simply more of that.  That is the next thing.
