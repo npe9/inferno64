@@ -6993,3 +6993,68 @@ twenty-nine dumps stop at three blocks, 1536 bytes; exactly one
 stopped at eight blocks, 4096.  The invariant across both is that the
 controller holds exactly one block, which is flow control working and
 then never resuming.
+.NH 2
+SDHOST: two more eliminated, and a confound that invalidates the rest
+.PP
+.B "Not SDHCFG."
+Linux keeps
+.CW SDHCFG_DATA_IRPT_EN
+and
+.CW SDHCFG_BUSY_IRPT_EN
+set for PIO and drops only the data one for DMA, which does not look
+like a bit that merely routes an interrupt to a CPU \(em and this
+driver had
+.CW SDHCFG
+at
+.CW 0x8 ,
+.CW Cfgslowcard
+alone.  Setting both enables, and mirroring Linux's per-transfer
+choice, changes nothing:
+.CW "sdhsts 0x0 sdcmd 0x51 sdedm 0x10801" ,
+the same failure.
+.PP
+.B "Not the data timeout either."
+.CW SDTOUT
+is already
+.CW 0xf00000 ,
+the value
+.CW bcm2835-sdhost
+writes at init.
+.PP
+.B "But none of these tests were clean, and this is the finding."
+One card, two controllers, and the boot opens
+.CW /dev/sdM0
+for
+.CW /n/dos
+before anything touches SDHOST.  The Arasan therefore initialises the
+card and holds the pins; opening
+.CW /dev/sdN0
+makes SDHOST take them and re-identify the card underneath a mounted
+filesystem.  The console says so plainly:
+.P1
+sdhost: reinit ok
+emmc: write block 19606 failed: interrupt 0x38100 status 0xf0001
+dosfs: panic: write
+.P2
+SDHOST re-identified the card successfully and the Arasan's very next
+write failed, taking
+.I dossrv
+with it.  So every SDHOST transfer measured so far ran against a card
+another driver was still using, and a failure cannot be attributed to
+the SDHOST path.
+.PP
+.B "The next step is a boot where only SDHOST touches the card."
+That means
+.CW raspi3binit.b
+opening
+.CW /dev/sdN0
+rather than
+.CW /dev/sdM0
+\(em which also moves
+.CW /n/dos ,
+and therefore
+.CW kupdate ,
+onto SDHOST.  Loading that kernel over JTAG rather than through
+.CW kupdate
+avoids the circularity.  Until then the SDHOST results above stand
+only as "not obviously fixed by this", not as eliminations.
