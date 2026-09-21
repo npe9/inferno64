@@ -6317,3 +6317,53 @@ moved ahead of the command, but no run since has produced a failure
 with
 .CW dmairqen
 on to show whether it now takes.
+.NH 2
+The stale kernel is live, and KUPDATE-VERIFY cannot see it
+.PP
+Three installs in a row reported
+.P1
+KUPDATE fetched 1923672 bytes
+KUPDATE-VERIFY 1923672 bytes read back identical
+KUPDATE-OK 1923672 bytes installed
+.P2
+and the board rebooted into the previous kernel every time \(em
+checked by build stamp, not by size, because two builds differing only
+in a comment came out the same length.  Then, from the board:
+.P1
+cmp /n/dos/kernel8.img /n/remote/os/inferno/raspi3b/kernel8.img
+/n/dos/kernel8.img /n/remote/...: differ: char 42
+.P2
+.B "The file on the card is not the file that was fetched,"
+and the verify that had just called them identical read it back
+through the same
+.I dossrv
+that wrote it.  That is the blind instrument this document warns
+about, in the one place where it costs the most: the mechanism whose
+entire purpose is to avoid a bad kernel reaching the card is the one
+that cannot tell when one has.
+.PP
+This also explains a day of confusion.  Between installs nothing about
+the board changed, so experiments that looked like they were testing a
+new kernel were testing the old one, and the negative results from
+those runs are worth nothing.  A build stamp read out of the image
+with
+.CW ksyms
+and matched against the boot banner is now the only thing
+.CW install.sh
+believes.
+.PP
+.B "What to do about it."
+.CW kuverify
+reads back through the file server.  It has to read through something
+else \(em the raw partition under the file, or a reopened
+.I dossrv
+\(em or the check is a formality.  The cheap version is to compare
+against the host over the styx mount, which is what
+.CW cmp
+just did and what caught this; the honest version is to read the
+blocks the FAT says the file occupies and compare those, which is the
+only form that sees the medium.
+.PP
+It sits above the DMA work now.  Every kernel change under
+investigation has to reach the board to be tested, and at the moment
+they do not reliably arrive.
