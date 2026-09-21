@@ -1267,6 +1267,26 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 		 */
 		int rw = cb->nf == 5? atoi(cb->f[4]): 0;
 		int dirty = rw >= 10;	/* rw 10, 11, 12: also re-dirty */
+		/*
+		 * rw >= 20: allocate and free the buffer per transfer,
+		 * exactly as devsd's sdbio does.
+		 *
+		 * sdmalloc is mallocalign(n, BY2PG, 0, 0) and sdbio calls
+		 * it for every write from a Dis process, then sdfree after
+		 * -- because it will only use the caller's own buffer when
+		 * that is a page-aligned kernel address, which a Dis
+		 * buffer is not.  dmatest has always held one buffer for
+		 * the whole run.
+		 *
+		 * This is the last structural difference between a path
+		 * that fails two or three runs in three and one that has
+		 * not failed in a thousand transfers, and it is the one
+		 * with a mechanism behind it: two processes taking and
+		 * returning page-aligned transfer buffers around a DMA
+		 * the engine is reading from.
+		 */
+		int perxfer = rw >= 20;
+		uchar *q;
 		uvlong bno;
 		uchar *buf, *p;
 		long got;
@@ -1341,7 +1361,13 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 			 * engine's 64-byte read-ahead -- exactly one cache
 			 * line -- is why it is worth suspecting.
 			 */
-			if(dirty)
+			q = nil;
+			if(perxfer){
+				while((q = mallocalign(nb*Secsize, BY2PG, 0, 0)) == nil)
+					resrcwait("no memory for dmatest");
+				p = q;
+				memset(p, 0x5a + k, nb*Secsize);
+			}else if(dirty)
 				memset(p, 0x5a + k, nb*Secsize);
 			if((rw % 10) == 2 && (k & 1)){
 				/*
@@ -1359,6 +1385,8 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 				 * neither Tmulti nor Tautocmd12.
 				 */
 				got = emmcbio(u, 0, 0, p, 1, (uvlong)2048 + (k % 64));
+				if(q != nil)
+					free(q);
 				if(got != Secsize){
 					print("emmc: dmatest FAILED on the "
 						"1-block read at transfer %d of "
@@ -1369,6 +1397,8 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 			}
 			if((rw % 10) == 1 && (k & 1)){
 				got = emmcbio(u, 0, 0, p, nb, bno);
+				if(q != nil)
+					free(q);
 				if(got != nb*Secsize){
 					print("emmc: dmatest FAILED reading at "
 						"transfer %d of %d, block %llud: "
@@ -1379,6 +1409,8 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 				continue;
 			}
 			got = emmcbio(u, 0, 1, p, nb, bno);
+			if(q != nil)
+				free(q);
 			if(got != nb*Secsize){
 				print("emmc: dmatest FAILED at transfer %d "
 					"of %d, block %llud: wrote %ld of %d\n",
