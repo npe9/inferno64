@@ -8,8 +8,8 @@
 #include "../port/error.h"
 
 /*
- * The USART of an STM32F4, on PA2 and PA3.  A byte at a time in and
- * out, and a receive interrupt.
+ * The USART of an STM32F4.  A byte at a time in and out, and a receive
+ * interrupt.
  *
  * Not the F3's, which is why this is a second file rather than an
  * argument to the first: the F3 has ISR, RDR and TDR where this has
@@ -17,10 +17,10 @@
  * overrun through an ICR this does not have.  The two parts share a
  * name and a manufacturer and not a register map.
  *
- * PA2 and PA3 on alternate function 7 are USART2, which is the
- * ST-Link virtual port on a NUCLEO-F407 and the first serial chardev
- * of qemu's netduinoplus2.  A board that brings the console out
- * somewhere else changes this and UART0 in mem.h and nothing more.
+ * Which USART, and so which pins and which APB, comes from CONSUSART1
+ * in mem.h.  USART1 is PA9 and PA10 and hangs off APB2; USART2 is PA2 and
+ * PA3 and hangs off APB1.  Both are alternate function 7, and the pins
+ * of the first are in AFRH because they are above 7.
  */
 
 extern PhysUart stm32f4physuart;
@@ -35,6 +35,28 @@ static Ctlr stm32f4ctlr = {
 	.base	= (ulong*)UART0,
 	.irq	= UART0IRQ,
 };
+
+enum {
+#ifdef CONSUSART1
+	Tx	= 9,
+	Rx	= 10,
+	Afr	= GPIO_AFRH,
+#else
+	Tx	= 2,
+	Rx	= 3,
+	Afr	= GPIO_AFRL,
+#endif
+};
+
+static ulong
+uarthz(void)
+{
+#ifdef CONSUSART1
+	return apb2hz;
+#else
+	return apb1hz;
+#endif
+}
 
 static Uart stm32f4uart = {
 	.regs	= &stm32f4ctlr,
@@ -58,20 +80,23 @@ uartboardinit(void)
 	ulong v;
 
 	/*
-	 * PA2 and PA3 to alternate function 7, which is USART2, at the
-	 * fastest slew the pin will do.
+	 * The two pins to alternate function 7, at the fastest slew the
+	 * pin will do.  MODER and OSPEEDR are two bits a pin over all
+	 * sixteen; the alternate function is four bits a pin, in AFRL
+	 * for pins 0 to 7 and AFRH for 8 to 15, indexed within the
+	 * register.
 	 */
 	v = *(volatile ulong*)(GPIOA+GPIO_MODER);
-	v &= ~((3UL<<(2*2)) | (3UL<<(2*3)));
-	v |= (2UL<<(2*2)) | (2UL<<(2*3));		/* alternate function */
+	v &= ~((3UL<<(2*Tx)) | (3UL<<(2*Rx)));
+	v |= (2UL<<(2*Tx)) | (2UL<<(2*Rx));		/* alternate function */
 	*(volatile ulong*)(GPIOA+GPIO_MODER) = v;
 	v = *(volatile ulong*)(GPIOA+GPIO_OSPEEDR);
-	v |= (3UL<<(2*2)) | (3UL<<(2*3));
+	v |= (3UL<<(2*Tx)) | (3UL<<(2*Rx));
 	*(volatile ulong*)(GPIOA+GPIO_OSPEEDR) = v;
-	v = *(volatile ulong*)(GPIOA+GPIO_AFRL);
-	v &= ~((0xfUL<<(4*2)) | (0xfUL<<(4*3)));
-	v |= (7UL<<(4*2)) | (7UL<<(4*3));		/* AF7 */
-	*(volatile ulong*)(GPIOA+GPIO_AFRL) = v;
+	v = *(volatile ulong*)(GPIOA+Afr);
+	v &= ~((0xfUL<<(4*(Tx%8))) | (0xfUL<<(4*(Rx%8))));
+	v |= (7UL<<(4*(Tx%8))) | (7UL<<(4*(Rx%8)));	/* AF7 */
+	*(volatile ulong*)(GPIOA+Afr) = v;
 
 	c = &stm32f4ctlr;
 	csrw(c, UartCr1, 0);			/* the rate cannot be set
@@ -79,14 +104,15 @@ uartboardinit(void)
 	csrw(c, UartCr2, 0);
 	csrw(c, UartCr3, 0);
 	/*
-	 * The divisor comes from apb1hz, which archstm32f407.c sets to
-	 * whatever clock the boot actually settled on.  A kernel that
-	 * assumed the PLL had come up and had it not would have a
-	 * console at a tenth of the baud it meant, which looks like a
-	 * dead board rather than a clock that did not start.
+	 * The divisor comes from the APB this USART is on, which
+	 * archstm32f407.c sets to whatever clock the boot actually
+	 * settled on.  A kernel that assumed the PLL had come up and
+	 * had it not would have a console at a fraction of the baud it
+	 * meant, which looks like a dead board rather than a clock that
+	 * did not start.
 	 */
-	stm32f4uart.freq = apb1hz;
-	csrw(c, UartBrr, (apb1hz + UARTBAUD/2) / UARTBAUD);
+	stm32f4uart.freq = uarthz();
+	csrw(c, UartBrr, (uarthz() + UARTBAUD/2) / UARTBAUD);
 	csrw(c, UartCr1, UartUe|UartTe|UartRe);
 	coherence();
 }
@@ -167,7 +193,7 @@ stm32f4_baud(Uart *uart, int baud)
 	c = uart->regs;
 	cr1 = csrr(c, UartCr1);
 	csrw(c, UartCr1, 0);
-	csrw(c, UartBrr, (apb1hz + baud/2) / baud);
+	csrw(c, UartBrr, (uarthz() + baud/2) / baud);
 	csrw(c, UartCr1, cr1);
 	uart->baud = baud;
 	return 0;

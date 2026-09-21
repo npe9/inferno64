@@ -19,6 +19,7 @@
 extern char bdata[];
 
 ulong apb1hz = CPUHZ;			/* until the clock is settled */
+ulong apb2hz = CPUHZ;
 
 static ulong
 rd(ulong a)
@@ -68,7 +69,32 @@ waitfor(ulong reg, ulong bit)
  * the wrong baud and a clock out by a factor of ten -- which is a
  * board that looks broken in a way that has nothing to do with the
  * fault.
+ *
+ * setclock() is below hsionly(), which is the fallback it takes.
  */
+
+/*
+ * Go back to the reset state and stay there: the HSI undivided, no
+ * wait states, the PLL off.  The APB dividers matter as much as the
+ * switch back to the HSI does, and are easy to leave behind -- they
+ * are written before the PLL is known to have locked, because CFGR
+ * has to be right before the switch, and a fallback that clears only
+ * SW leaves HCLK at 16MHz with APB1 divided by four and APB2 by two.
+ * The console divisor is computed from those, so the board would come
+ * up at a quarter of the baud it meant.
+ */
+static ulong
+hsionly(void)
+{
+	wr(RCC_CFGR, CfgrHpreDiv1|CfgrPpre1Div1|CfgrPpre2Div1|CfgrSwHsi);
+	wr(RCC_CR, rd(RCC_CR) & ~CrPllon);
+	wr(FLASH_ACR, AcrPrften|AcrIcen|AcrDcen);
+	coherence();
+	apb1hz = CPUHZ;
+	apb2hz = CPUHZ;
+	return CPUHZ;
+}
+
 static ulong
 setclock(void)
 {
@@ -81,20 +107,14 @@ setclock(void)
 	wr(RCC_PLLCFGR, 8 | (168<<6) | (0<<16) | PllsrcHsi);
 	wr(RCC_CFGR, CfgrHpreDiv1|CfgrPpre1Div4|CfgrPpre2Div2);
 	wr(RCC_CR, rd(RCC_CR) | CrPllon);
-	if(!waitfor(RCC_CR, CrPllrdy)){
-		/* stay on the HSI, and say so by the number returned */
-		wr(RCC_CR, rd(RCC_CR) & ~CrPllon);
-		wr(FLASH_ACR, AcrPrften|AcrIcen|AcrDcen);
-		apb1hz = CPUHZ;
-		return CPUHZ;
-	}
+	if(!waitfor(RCC_CR, CrPllrdy))
+		return hsionly();
 	wr(RCC_CFGR, rd(RCC_CFGR) | CfgrSwPll);
-	if(!waitfor(RCC_CFGR, CfgrSwsPll)){
-		apb1hz = CPUHZ;
-		return CPUHZ;
-	}
+	if(!waitfor(RCC_CFGR, CfgrSwsPll))
+		return hsionly();
 	coherence();
 	apb1hz = 168000000/4;
+	apb2hz = 168000000/2;
 	return 168000000;
 }
 
@@ -107,7 +127,11 @@ archreset(void)
 	if(m != nil)
 		m->cpuhz = hz;
 	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | Ahb1Gpioa);
+#ifdef CONSUSART1
+	wr(RCC_APB2ENR, rd(RCC_APB2ENR) | Apb2Usart1);
+#else
 	wr(RCC_APB1ENR, rd(RCC_APB1ENR) | Apb1Usart2);
+#endif
 	coherence();
 	uartboardinit();
 }

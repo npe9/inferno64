@@ -25,12 +25,16 @@
 #define	    CfgrSwsMask	(3<<2)
 #define	    CfgrSwsPll	(2<<2)
 #define	    CfgrHpreDiv1 (0<<4)
+#define	    CfgrPpre1Div1 (0<<10)
+#define	    CfgrPpre2Div1 (0<<13)
 #define	    CfgrPpre1Div4 (5<<10)	/* APB1 is 42MHz at most */
 #define	    CfgrPpre2Div2 (4<<13)	/* APB2 is 84MHz at most */
 #define	  RCC_AHB1ENR	(RCC+0x30)
 #define	    Ahb1Gpioa	(1<<0)
 #define	  RCC_APB1ENR	(RCC+0x40)
 #define	    Apb1Usart2	(1<<17)
+#define	  RCC_APB2ENR	(RCC+0x44)
+#define	    Apb2Usart1	(1<<4)
 
 #define	FLASHIF		0x40023c00
 #define	  FLASH_ACR	(FLASHIF+0x00)
@@ -42,7 +46,8 @@
 #define	GPIOA		0x40020000
 #define	  GPIO_MODER	0x00
 #define	  GPIO_OSPEEDR	0x08
-#define	  GPIO_AFRL	0x20
+#define	  GPIO_AFRL	0x20		/* pins 0 to 7 */
+#define	  GPIO_AFRH	0x24		/* pins 8 to 15 */
 
 /*
  * USART.  The F4's is the one with SR and DR; a byte at a time in and
@@ -66,8 +71,9 @@ enum {
 };
 
 /*
- * USART2 hangs off APB1.  What that is depends on which clock the boot
- * settled on, so uartboardinit() asks rather than assuming; see
- * archstm32f407.c.
+ * USART1 hangs off APB2 and USART2 off APB1.  What either is depends
+ * on which clock the boot settled on, so uartboardinit() asks rather
+ * than assuming; see archstm32f407.c.
  */
 extern ulong apb1hz;
+extern ulong apb2hz;

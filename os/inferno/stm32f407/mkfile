@@ -168,11 +168,16 @@ fpiarmv7m.$O:	$ARCHDIR/fpiarmv7m.c $ARCHDIR/fpi.h
 devuart.$O:	../port/devuart.c
 	$CC $CFLAGS ../port/devuart.c
 
-# On hardware:
-#	st-flash write istm32f407 0x08000000
-# or, with a probe openocd knows:
+# On hardware, with no probe at all: every STM32F4 has a bootloader in
+# ROM on USART1, which is this board's console, entered by holding BOOT0
+# high over a reset.  -H4 output is a raw vector image, which is what it
+# wants at 0x08000000.
+#	stm32flash -w istm32f407 -v -g 0x08000000 /dev/cu.SERIALPORT
+# Then BOOT0 to ground, reset, and the shell comes out of the same pins
+# at 115200.  With a probe openocd knows:
 #	openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
 #		-c "program istm32f407 0x08000000 verify reset exit"
 #
-# Under qemu, which models an STM32F405 -- the same die family:
+# Under qemu, which models an STM32F405 -- the same die family, and
+# gives serial_hd(0) to USART1:
 #	qemu-system-arm -M netduinoplus2 -nographic -kernel istm32f407

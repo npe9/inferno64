@@ -14,13 +14,13 @@ What was measured
 Under qemu, which models an STM32F405 as -M netduinoplus2 -- the same
 die family, and the same CCM, SRAM and flash geometry:
 
-	qemu-system-arm -M netduinoplus2 -nographic \
-		-serial null -serial mon:stdio -kernel istm32f407
+	qemu-system-arm -M netduinoplus2 -nographic -kernel istm32f407
 
-The two -serial arguments are not decoration.  qemu gives serial_hd(0)
-to USART1 and this board's console is USART2, so a plain -nographic
-leaves the console attached to a port the kernel never writes to and
-the board looks dead.
+qemu gives serial_hd(0) to USART1, which is this board's console, so
+-nographic connects it and nothing else is needed.  A kernel built with
+CONSUART at 2 wants -serial null -serial mon:stdio instead; with a
+plain -nographic its console is attached to a port the kernel never
+writes to and the board looks dead.
 
 What that run does, typed at the prompt and answered:
 
@@ -86,27 +86,51 @@ shell, which prints it and carries on.  The pool percentages in the
 configuration beside this file were chosen by measurement for that
 behaviour and the comment there says what the alternatives did.
 
-Nothing here has been run on silicon.  The board is on the end of an
-Olimex ARM-USB-TINY-H, and openocd reaches a DAP -- JTAG tap
-0x4ba00477, and the debug and system power-up handshakes in DP
-CTRL/STAT both acknowledged, 0xf0000001 -- but the only access port on
-it reads IDR 0x24770002, which is an APB-AP.  An STM32F4 answers
-0x24770011, an AHB-AP, at the same index, and openocd cannot read
-0xe000ed00 through what is there.  Whatever is on the end of that cable
-is not answering as an STM32F4, so no image has been written to a part.
+Nothing here has been run on silicon.
+
+A probe is not needed to put it there.  Every STM32F4 has a bootloader
+in ROM that speaks a serial protocol on USART1 -- PA9 and PA10 -- and
+is entered by holding BOOT0 high over a reset, so two wires and a USB
+serial adapter both write the kernel and carry its shell:
+
+	# BOOT0 high, then reset
+	stm32flash -w istm32f407 -v -g 0x08000000 /dev/cu.SERIALPORT
+	# BOOT0 back to ground, then reset
+	screen /dev/cu.SERIALPORT 115200
+
+The linker's -H4 output is a raw image whose first two words are the
+initial stack pointer and the reset vector -- 0x200074fc and
+0x080001c1, which is why qemu's -kernel takes it -- and that is exactly
+what the ROM bootloader wants written at 0x08000000.  That is the
+reason CONSUART in mem.h is USART1 and not the USART2 an ST-Link
+virtual port would use: the console is on the pins that flash the
+board, so the wire does not have to move.  There is no semihosting
+console in this tree, so the UART is not optional either way: without
+it a booted kernel has nowhere to say anything.
+
+A probe would be the other way, and the one here does not reach this
+part.  The board is on the end of an Olimex ARM-USB-TINY-H, and openocd
+reaches a DAP -- JTAG tap 0x4ba00477, and the debug and system power-up
+handshakes in DP CTRL/STAT both acknowledged, 0xf0000001 -- but the
+only access port on it reads IDR 0x24770002, which is an APB-AP.  An
+STM32F4 answers 0x24770011, an AHB-AP, at the same index, and openocd
+cannot read 0xe000ed00 through what is there.  Whatever is on the end
+of that cable is not answering as an STM32F4.  With a probe that does:
 
 	openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg \
 		-f target/stm32f4x.cfg \
 		-c "program istm32f407 0x08000000 verify reset exit"
 
-is the command once that is sorted out, and the console is USART2 on
-PA2 and PA3 at 115200 -- a wire to a USB serial adapter, since this
-board has no ST-Link virtual port of its own.  There is no semihosting
-console in this tree, so the UART is not optional: without it a booted
-kernel has nowhere to say anything.
-
 What is here
 ------------
+
+USART1 is on APB2 and USART2 on APB1, which is not a detail: the baud
+divisor comes from whichever, and hsionly() in archstm32f407.c puts
+both APB dividers back to one when the PLL does not lock.  Without
+that, a fallback left HCLK at 16MHz with APB1 divided by four and APB2
+by two -- because CFGR has to be written before the PLL is known to
+have locked -- and the console would have come up at a fraction of the
+baud it meant.
 
 archstm32f407.c takes the clock tree as far as the part will let it and
 no further.  setclock() tries HSI, then the PLL, and waits for each
@@ -126,10 +150,12 @@ ISR, RDR and TDR, the enable bit at 13 rather than 0, and an overrun
 cleared by reading SR and then DR rather than through an ICR this part
 does not have.
 
-UART0IRQ is 38, the NVIC interrupt number, not 38-16.  os/inferno/
+UART0IRQ is the NVIC interrupt number -- 37 for USART1, 38 for USART2
+-- and not that minus 16.  os/inferno/
 armv7m/trap.c dispatches on IPSR minus Excirq and intrenable() uses its
 argument as an NVIC ISER bit, so both want the number RM0090 calls
-position 38.  With the -16 the port transmitted and never received a
-character.  nucleof303/mem.h had the same -16 and now has 38; that
+position 37 or 38.  With the -16 the port transmitted and never
+received a character.  nucleof303/mem.h had the same -16 and now has
+38, which is its USART2; that
 board has no userland to type at, so the correction there is by reading
 and not by measurement.

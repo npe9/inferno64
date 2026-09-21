@@ -111,11 +111,32 @@
 #define	MACHADDR	0
 
 /*
- * USART2.  It is the ST-Link virtual port on a NUCLEO-F407 and the
- * first serial chardev of qemu's netduinoplus2; on a board where it is
- * neither, this and the pin multiplexing in archstm32f407.c are the
- * two things to change.
+ * Which USART is the console.  The register block, the NVIC number,
+ * the pins and the APB the baud divisor is computed from all follow
+ * from this one definition; see uartstm32f4.c.  It is #define and not
+ * a number because os/inferno/armv7m/l.s includes this file and 5a's
+ * preprocessor knows #ifdef and not #if.
+ *
+ * USART1, on PA9 and PA10, because that is the pair the part's own ROM
+ * bootloader speaks.  A board with no ST-Link is programmed by holding
+ * BOOT0 high and talking to that bootloader over a serial adapter
+ * (stm32flash(1) does it), and with the console on the same pins the
+ * one pair of wires both writes the kernel and carries its shell.
+ * USART1 is also serial_hd(0) under qemu's netduinoplus2, which is
+ * what plain -nographic connects.
+ *
+ * USART2, on PA2 and PA3, is the ST-Link virtual port on a
+ * NUCLEO-F407.  A board wired that way comments the line below out and
+ * needs a probe, or a wire moved to PA9 and PA10 to flash and back
+ * again to watch.
  */
-#define	UART0		0x40004400
+#define	CONSUSART1
+
+#ifdef CONSUSART1
+#define	UART0		0x40011000	/* USART1 */
+#define	UART0IRQ	37		/* USART1's NVIC interrupt number */
+#else
+#define	UART0		0x40004400	/* USART2 */
 #define	UART0IRQ	38		/* USART2's NVIC interrupt number */
+#endif
 #define	UARTBAUD	115200
