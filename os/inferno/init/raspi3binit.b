@@ -81,13 +81,13 @@ rngcheck()
 	sys->print("RANDOM-OK %s\n", s);
 }
 
-# Read the SD card exposed by devsd (#S) as /dev/sdM0/data - the Arasan
+# Read the SD card exposed by devsd (#S) as SDDEV/data - the controller
 # SDHCI (sdemmcbcm.c), which is the path that works on the board.  Normal boot must not modify the firmware card.
 sdcheck()
 {
-	fd := sys->open("/dev/sdM0/data", Sys->OREAD);
+	fd := sys->open(SDDEV + "/data", Sys->OREAD);
 	if(fd == nil){
-		sys->print("SD-NONE (no /dev/sdM0/data: %r)\n");
+		sys->print("SD-NONE (no %s/data: %r)\n", SDDEV);
 		return;
 	}
 	buf := array[512] of byte;
@@ -131,13 +131,13 @@ sdcheck()
 
 	# the geometry the driver derived from the card's CSD, checked at
 	# its only observable edge; both reads, nothing written
-	cfd := sys->open("/dev/sdM0/ctl", Sys->OREAD);
+	cfd := sys->open(SDDEV + "/ctl", Sys->OREAD);
 	cbuf := array[512] of byte;
 	cn := 0;
 	if(cfd != nil)
 		cn = sys->read(cfd, cbuf, len cbuf);
 	if(cn <= 0){
-		sys->print("SD-CAP-NONE cannot read /dev/sdM0/ctl: %r\n");
+		sys->print("SD-CAP-NONE cannot read %s/ctl: %r\n", SDDEV);
 		return;
 	}
 	if(capcheck("SD", fd, string cbuf[0:cn]) == 0)
@@ -162,7 +162,32 @@ kfsproc(pfd: ref Sys->FD)
 	kfs->init(nil, "kfs" :: "-r" :: KFSPART :: nil);
 }
 
-KFSPART: con "/dev/sdM0/kfstest";
+#
+# Which controller holds the SD card.
+#
+# The SoC wires the slot to either the Arasan ("sdM0", sdemmcbcm.c) or
+# the BCM2835's own SDHOST ("sdN0", sdhostbcm.c), and GPIO 48-53's alt
+# function decides: each driver routes the pins in its own online(),
+# so whichever unit is opened FIRST takes the card and the other then
+# finds no media.
+#
+# That is not a preference, it is an exclusion, and mixing the two
+# corrupts things.  Opening sdN0 on a board that had already given the
+# card to sdM0 made SDHOST re-identify it underneath a mounted
+# filesystem, and the Arasan's very next write failed and panicked
+# dossrv:
+#
+#	sdhost: reinit ok
+#	emmc: write block 19606 failed: interrupt 0x38100 status 0xf0001
+#	dosfs: panic: write
+#
+# So everything here goes through one name, and changing it is how the
+# other controller gets tested -- including /n/dos and kupdate, which
+# is the point: a controller that only ever sees scratch reads has not
+# been tested.
+#
+SDDEV: con "/dev/sdN0";
+KFSPART: con SDDEV + "/kfstest";
 
 # the IP interface's control fd, held so the interface outlives the
 # function that made it
@@ -173,7 +198,7 @@ ipctl: ref Sys->FD;
 # the card holds the firmware and the kernel that booted it.
 fatpart(): (int, int)
 {
-	fd := sys->open("/dev/sdM0/data", Sys->OREAD);
+	fd := sys->open(SDDEV + "/data", Sys->OREAD);
 	if(fd == nil)
 		return (0, 0);
 	mbr := array[512] of byte;
@@ -1119,7 +1144,7 @@ fatcheck()
 		return;
 	}
 	sys->print("FAT partition at %d, %d sectors\n", start, nsec);
-	cfd := sys->open("/dev/sdM0/ctl", Sys->ORDWR);
+	cfd := sys->open(SDDEV + "/ctl", Sys->ORDWR);
 	if(cfd == nil || sys->fprint(cfd, "part dos %d %d", start, start+nsec) < 0){
 		sys->print("FAT-FAIL part: %r\n");
 		return;
@@ -1130,7 +1155,7 @@ fatcheck()
 		sys->print("FAT-FAIL load dossrv: %r\n");
 		return;
 	}
-	spawn dos->init(nil, "dossrv" :: "-f" :: "/dev/sdM0/dos" :: "-m" :: "/n/dos" :: nil);
+	spawn dos->init(nil, "dossrv" :: "-f" :: SDDEV + "/dos" :: "-m" :: "/n/dos" :: nil);
 	for(i := 0; i < 100; i++){
 		(ok, d) := sys->stat("/n/dos/kernel8.img");
 		if(ok == 0){
@@ -1199,7 +1224,7 @@ sdfs()
 			fstart);
 		return;
 	}
-	cfd := sys->open("/dev/sdM0/ctl", Sys->ORDWR);
+	cfd := sys->open(SDDEV + "/ctl", Sys->ORDWR);
 	if(cfd == nil || sys->fprint(cfd, "part kfstest 2048 %d", fstart-1) < 0){
 		sys->print("SD-FS part: %r\n");
 		return;
