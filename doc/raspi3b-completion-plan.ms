@@ -6211,3 +6211,109 @@ set.  It has room, it says so in two registers, and it is not raising
 the line.  Either it stops asserting DREQ when it should not, or it is
 waiting for something this driver never does \(em and item 3 is the
 only named candidate for the second.
+.NH 2
+Where the DMA stall investigation actually stands
+.PP
+.B "Eliminated, each with the intervention shown active in the dump or
+.B "the test shown running:"
+the stale eMMC interrupt
+.CW ( dmaclearirq :
+.CW "interrupt 0x00"
+against
+.CW 0x10 ,
+stall unchanged); stale DMA channel state
+.CW ( dmareset :
+.CW "cs 0x8"
+against
+.CW 0xa ,
+stall unchanged); the source buffer's page offset (50 clean at
+.CW 0x640 ,
+the offset every recorded failure has); direction alternation (500
+alternating 9-block transfers clean); and the exact shape
+.I dossrv
+uses, a single-block read followed by a nine-block write (100 clean).
+.PP
+.B "The in-kernel path does not fail at all."
+Five hundred transfers, a hundred, fifty, at two page offsets, in
+three patterns \(em every one clean.  Through
+.I dossrv
+the same card fails about two writes in three.  So the trigger is not
+the shape of a transfer, and five successive guesses at what else
+might differ have all been wrong.
+.NH 2
+What biotrace shows, and the lead it dissolves
+.PP
+.CW "echo biotrace 1 >/dev/sdM0/ctl"
+prints every
+.CW emmcbio
+call.  Over 310 calls during writes through
+.I dossrv :
+.P1
+bio w nb 9 bno 53644 buf 0x3f89000 pid 20
+bio r nb 9 bno 53671 buf 0x3f89000 pid 17
+bio w nb 9 bno 53671 buf 0x3f89000 pid 17
+bio r nb 9 bno 53680 buf 0x3f89000 pid 15
+.P2
+Every call is nine blocks, every one uses the same buffer, and that
+buffer is
+.B page-aligned .
+Three different processes issue them, read-modify-write, interleaved.
+.PP
+.B "Which means the 0x640 lead was arithmetic, not alignment."
+Every recorded failure reports
+.CW "dma src"
+ending in
+.CW 0x640 ,
+and that was written up as
+.I dossrv 's
+buffer being 64-byte but not 512-byte aligned.  The trace says the
+buffer is page-aligned, and 0x640 is 1600 bytes, which is not a
+multiple of 512 and so cannot be a page-aligned buffer plus any whole
+number of blocks.  The likely reading is that
+.CW dma
+.CW src
+is the engine's
+.I current
+source pointer, read after the stall: 1536 bytes delivered
+.CW ( 0x600 ,
+the three blocks the dump also reports) plus one 64-byte burst the
+engine has read ahead into its own FIFO and not yet handed over.  That
+is consistent with every failure and with the page-offset test finding
+nothing, but it has not been confirmed by matching a traced buffer to
+a failure in the same run \(em the attempt to do so read an older
+failure out of the scrollback, which is the fourth time that buffer
+has produced a wrong answer here.
+.NH 2
+What is left
+.PP
+.B "Concurrency."
+It is the one difference between the two paths that has not been
+tested: the trace shows three processes interleaving block I/O, and
+.CW dmatest
+is a single call from a single process with nothing else running.
+.IP 1.
+Confirm the source-pointer reading by capturing a failure and its own
+.CW bio
+line in one marked window, rather than grepping a saturated buffer.
+If
+.CW "src == buf + 0x640"
+then the alignment lead is closed for good and the 64-byte read-ahead
+is a fact about the engine worth knowing.
+.IP 2.
+Run block I/O from two processes at once against the raw device and
+see whether that alone reproduces it.  If it does, the investigation
+moves to what
+.CW emmcbio 's
+.CW qlock
+does and does not cover \(em it serialises calls, but the DMA channel
+and the controller are global and the abort path is the only place
+anything is reset.
+.IP 3.
+Only then the interrupt-enable question, which is still untested: the
+write to
+.CW Rirpten
+was being dropped between the command and the transfer and has been
+moved ahead of the command, but no run since has produced a failure
+with
+.CW dmairqen
+on to show whether it now takes.
