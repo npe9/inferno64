@@ -5911,3 +5911,72 @@ was still on screen for all of them.  All three counting bugs in that
 script have been the same bug \(em reading a console buffer for
 evidence of an event without first establishing that anything in the
 buffer is new.
+.NH 2
+Settled: the eMMC interrupt acknowledge is not the fix
+.PP
+.CW 72d107da
+retracted a DMA fix claimed on one pass against one failure, and said
+what the honest form would be: N transfers with the acknowledge on and
+N with it off.  That measurement was owed for two days and lost five
+times, four of them to a wedged board and once to a harness that
+scored writes which never ran.
+.PP
+It was also the wrong instrument.  A rate answers a question about a
+random failure, and this failure is deterministic.  So:
+.CW tools/jtag/dmaab.sh
+reboots the board with
+.CW ^R ,
+sets
+.CW dmaclearirq
+one way, does one write, keeps the dump; reboots, sets it the other
+way, does one write; and diffs the two.  Two boots, four minutes.
+.PP
+.B "Both arms failed, and the dumps differ in three lines."
+Two are incidental \(em the start block and the DMA source address,
+both of which follow from where the file landed.  The third is the
+only thing the switch controls:
+.P1
+off:  BEFORE: dma cs 0xa emmc interrupt 0x10 status 0x1ff0506
+on:   BEFORE: dma cs 0xa emmc interrupt 0x00 status 0x1ff0506
+.P2
+The switch does exactly what it claims.
+.CW Iwriterdy
+is set when the channel is armed with it off and clear with it on, and
+the transfer stalls in precisely the same place either way \(em three
+blocks of nine,
+.CW "cs 0x21" ,
+.CW "ti 0xb0148" ,
+.CW "blksizecnt 0x70200" ,
+the same registers afterwards.  The stale interrupt is not what the
+stall is about.
+.PP
+That is as clean a negative as this port has produced: the mechanism
+was real, the intervention demonstrably worked, and the outcome did
+not move.  It is worth more than the rate would have been, because a
+rate could only ever have said "about as often either way".
+.PP
+.B "What is still uncleared, identically in both arms, is the DMA
+.B "channel's own CS."
+.CW "dma cs 0xa"
+before arming is END and DREQ left by the previous transfer, and
+nothing clears it between transfers.  That is the next thing to
+suspect and it is now cheap to test the same way \(em which is the
+real change here.  The question that took two days to fail to answer
+now costs four minutes to answer properly.
+.PP
+Three harness bugs were found getting there, and all three were the
+same bug: reading the console for evidence of an event without first
+establishing that anything in the buffer was new.  Counting across a
+saturated scrollback compared two sliding windows; clearing the
+history left the display, so one failure report was scored four more
+times; and both of those were fixed by the wrong thing before the
+right one, which is to type a marker and read only what follows it.
+A fourth was an ordering mistake with the same shape: the first run
+set
+.CW dma
+before
+.CW dmaclearirq ,
+so the failure fired between them and arm 1's dump was taken with the
+acknowledge still at its default \(em the arm reported neither a
+completion nor a failure, and the pair read as "only the off arm
+failed", which is the retracted claim all over again.

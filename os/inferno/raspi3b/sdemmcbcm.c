@@ -282,6 +282,31 @@ static struct {
  * So it stays off and stays switchable, and what it is really worth
  * needs a rate: the same workload N times with it on and N with it
  * off, on one boot, before anything is claimed.
+ *
+ * SETTLED, 21 September 2026, and it is worth nothing.  Not by a rate
+ * in the end -- the failure turned out to be deterministic, so a
+ * frequency was the wrong instrument.  tools/jtag/dmaab.sh boots
+ * clean, sets this one way, does one write, keeps the dump; reboots,
+ * sets it the other way, does one write; diffs the two.  Both failed,
+ * and the dumps differ in three lines: the start block, the source
+ * address, and this:
+ *
+ *	off:  BEFORE: dma cs 0xa emmc interrupt 0x10 status 0x1ff0506
+ *	on:   BEFORE: dma cs 0xa emmc interrupt 0x00 status 0x1ff0506
+ *
+ * The switch does exactly what it claims.  Iwriterdy is set when the
+ * channel is armed with it off, and clear with it on.  The transfer
+ * then stalls in precisely the same place either way -- three blocks
+ * of nine, cs 0x21, ti 0xb0148, blksizecnt 0x70200 -- so the stale
+ * interrupt is not what the stall is about.  That is as clean a
+ * negative as this port has had: the mechanism was real, the
+ * intervention worked, and the outcome did not move.
+ *
+ * What the same dumps show still uncleared, identically in both arms,
+ * is the DMA channel's own CS: "dma cs 0xa" is END|DREQ left by the
+ * previous transfer, and nothing clears it between transfers.  That
+ * is the next thing to suspect, and it is now cheap to test the same
+ * way.
  */
 static int emmcdmaclearirq = 0;
 static int emmcdmareset = 0;
