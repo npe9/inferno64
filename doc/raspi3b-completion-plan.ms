@@ -6813,3 +6813,65 @@ does.  It is a few lines, it has a production precedent on this
 controller, and it is the only proposed change so far that is a
 difference from a driver known to work rather than a guess about the
 hardware.
+.NH 2
+SDHOST: the DMA is written, and it sits on a data path that does not work
+.PP
+.B "sdhostbcm.c was never in the kernel."
+The board config listed
+.CW sdemmcbcm
+and not
+.CW sdhostbcm ,
+so the file had no
+.CW .7
+and had never been through the compiler at all.  A build after editing
+it reported no errors because nothing compiled it \(em which is the
+failure this port already has a note about, grepping build output for
+a filename rather than for diagnostics.  It is in the config now,
+compiles clean, and probes:
+.P1
+sdhost: card rca 0x1234 block 30228480 sectors, core clock 250000000 Hz
+sdhost dma 0 dreq 13
+.P2
+Same card, same capacity the Arasan reports, and the DMA switch is
+live.
+.PP
+.B "The data path fails in both directions, with DMA off."
+.P1
+dd -of /dev/sdN0/data -bs 4608 ... dma 1
+  sdhost: write block 4999996 failed: sdhsts 0x1 sdcmd 0x800d sdedm 0x10803
+dd -of /dev/sdN0/data -bs 4608 ... dma 0
+  sdhost: write block 4999995 failed: sdhsts 0x1 sdcmd 0x800d sdedm 0x10803
+dd -if /dev/sdN0/data ...          dma 0
+  sdhost: read  block 0       failed: sdhsts 0x1 sdcmd 0x800d sdedm 0x10803
+.P2
+Identical every time, and the PIO control is what matters: this is not
+the DMA path.  It is also not the data phase.
+.CW "sdcmd 0x800d"
+is NEW_FLAG still set on command
+.B 13 ,
+SEND_STATUS \(em the
+.CW cardready()
+poll at the top of the transfer loop, which never completes, before
+any data command is issued.
+.CW sdedm
+reads FSM 3, WRITEDATA, on a read as well as a write, which is another
+sign the controller is not where the driver thinks it is.
+.PP
+So the identification path works on real silicon and the transfer path
+has never run there.  That is not surprising \(em the driver was
+written against QEMU and then left out of the kernel \(em but it means
+the DMA work cannot be assessed until CMD13 completes.
+.PP
+.B "Next, in order."
+Find why
+.CW cardready() 's
+CMD13 leaves NEW_FLAG set.  The identification sequence issues
+commands successfully, so the difference is in what the transfer loop
+does before it \(em block count and length registers written while the
+previous command is still pending is the first thing to look at, since
+.CW SDHBCT
+and
+.CW SDHBLC
+are set immediately before
+.CW cardready() .
+Only then is there a PIO baseline to measure DMA against.

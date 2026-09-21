@@ -86,6 +86,7 @@ misc
 	screenbcm
 	randombcm
 	sdemmcbcm
+	sdhostbcm
 	rngbcm
 	pmbcm
 	pwmbcm
