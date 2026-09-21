@@ -221,11 +221,53 @@ recycling and cache contention, and what is left is the medium.
 .IP \(bu
 .B "DMA."
 Reads work and are byte-correct against a PIO read of the same region.
-Writes work raw, at dossrv's own transfer size, and for 1.5MB through
-the filesystem \(em but one write failed once, and an intermittent DMA
-failure is worse than a consistent one.  It stays off, it falls back to
-PIO rather than returning an error, and it needs a loop that runs it
-until it fails with the diagnosis armed.
+.PP
+This entry used to say writes work raw and that only the filesystem
+path fails.  Both were wrong, and wrong the same way: every raw test
+used
+.CW "bs=32768" ,
+sixty-four blocks at a time, and the failure needs nine \(em
+.I dossrv 's
+transfer size.  With
+.CW "bs=4608"
+it reproduces on the raw device immediately, no file server involved.
+Every experiment that "ruled out" size, repetition, sustained traffic
+or mixed direction was run at the wrong transfer size and ruled out
+nothing.
+.PP
+.B "The stall itself is not fixed."
+A nine-block DMA write still stops after three blocks with the engine
+waiting on a DREQ the controller has stopped raising, while that
+controller's status says it has room.  Eliminated so far, each with
+the intervention shown active in the dump: the stale eMMC interrupt
+.CW ( dmaclearirq ),
+stale DMA channel state
+.CW ( dmareset ),
+and the source buffer's page offset \(em all seven collected failures
+were at offset 0x640, which turned out to be where
+.I dossrv 's
+buffer sits and not a cause: fifty nine-block transfers from that
+exact offset are as clean as fifty from zero.
+.PP
+.B "It is no longer fatal, and that is what mattered for this plan."
+The failure used to poison every subsequent write \(em the PIO retry
+of the same block failed, and so did a plain PIO write to an unrelated
+block afterwards \(em so one stall panicked
+.I dossrv
+and every write after it blocked for ever on a mount with no server.
+That is the "hung board" this whole document is about.  The cause was
+in the last line of the driver's own dump,
+.CW "(engine still active)" :
+.CW bioerror()
+stopped the card and reset the controller and never touched the DMA
+channel, which was left armed against the peripheral's DREQ.
+Resetting one end of a handshake while the other end holds it cannot
+work.  With
+.CW dmachanreset()
+called first, 640KB through
+.I dossrv
+with DMA on takes a stall at block 59395, recovers, and finishes, and
+the server is still there afterwards.
 .NH 1
 How this gets judged
 .PP
