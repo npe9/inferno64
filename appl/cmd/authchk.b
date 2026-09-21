@@ -21,6 +21,8 @@ implement Authchk;
 #	authchk fd n [ground]	over an open file descriptor, one end
 #	authchk lora ground [noack]	over a /net/lora conversation
 #	authchk lora satellite [noack]	over one, the other end
+#	authchk lora ... announce	announce instead of connecting,
+#					which cannot work and must say so
 #
 # The second form is the same exchange over whatever a caller has open.
 # The third is that with the radio underneath, which is the claim
@@ -115,7 +117,7 @@ inuse(s, name: string): int
 # The conversation's ctl has to stay open for as long as its data is
 # used, so it is returned alongside.
 #
-loraconv(announcing, ack: int): (ref Sys->FD, ref Sys->FD)
+loraconv(announcing, ack, bare: int): (ref Sys->FD, ref Sys->FD)
 {
 	rfd := sys->open(Radio, Sys->ORDWR);
 	if(rfd == nil){
@@ -150,7 +152,15 @@ loraconv(announcing, ack: int): (ref Sys->FD, ref Sys->FD)
 	peer := 2;
 	if(announcing)
 		peer = 1;
-	n = sys->fprint(cfd, "connect %d", peer);
+	if(bare){
+		# announce rather than connect, which is the case that
+		# cannot work: keyring->auth() sends before it has
+		# received anything, and an announced conversation has
+		# nobody to send to until it has been spoken to.  Here to
+		# check that it now says so rather than hanging.
+		n = sys->fprint(cfd, "announce");
+	}else
+		n = sys->fprint(cfd, "connect %d", peer);
 	# Acknowledgement and retry by default, because the exchange
 	# above is symmetric and a half-duplex radio loses whatever two
 	# stations say at once.  Settable, so what it is worth can be
@@ -209,10 +219,14 @@ init(nil: ref Draw->Context, argv: list of string)
 			announcing = 0;
 		}
 		ack := 1;
-		for(a1 := argv; a1 != nil; a1 = tl a1)
+		bare := 0;
+		for(a1 := argv; a1 != nil; a1 = tl a1){
 			if(hd a1 == "noack")
 				ack = 0;
-		(dfd, cfd) := loraconv(announcing, ack);
+			if(hd a1 == "announce")
+				bare = 1;
+		}
+		(dfd, cfd) := loraconv(announcing, ack, bare);
 		if(dfd == nil)
 			return;
 		if(tl argv != nil && tl tl argv != nil &&

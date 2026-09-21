@@ -1606,7 +1606,7 @@ Keyring_auth(void *fp)
 	Certificate *cert, *hiscert, *alphacert;
 	char *buf, *err;
 	uchar *cvb;
-	int n, fd, version;
+	int n, fd, version, told;
 	long now;
 
 	hispk = H;
@@ -1834,17 +1834,26 @@ if(0)print("Y");
 	free(cvb);
 
 out:
-	/* return status */
+	/*
+	 * Tell the other end how it went, and remember whether that
+	 * could be said at all.  What follows waits for its reply, and
+	 * a reply cannot come from somebody who did not hear the
+	 * question: on a link that has already refused a write -- a
+	 * radio with a message too big for a packet, or a conversation
+	 * with nowhere to send -- this used to block for ever holding
+	 * the error it was about to return, so a transport that failed
+	 * immediately looked like one that had hung.
+	 */
 	if(f->ret->t0 == H){
 		if(err == buf)
-			senderr(fd, "missing your authentication data", 1);
+			told = senderr(fd, "missing your authentication data", 1);
 		else
-			senderr(fd, err, 1);
+			told = senderr(fd, err, 1);
 	}else
-		sendmsg(fd, "OK", 2);
+		told = sendmsg(fd, "OK", 2);
 
 	/* read responses */
-	if(err != buf){
+	if(err != buf && told > 0){
 		for(;;){
 			n = getmsg(fd, buf, Maxbuf-1);
 			if(n < 0){

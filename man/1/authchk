@@ -129,15 +129,12 @@ none of them came near that; a larger key, or an owner name long
 enough to matter, would not fit, and what happens then is the entry
 below.
 .PP
-When a send fails,
-.IR keyring (2)'s
-.B auth
-does not return.
-.B libinterp/keyring.c:1836
-goes on to send an error and then loops reading a reply, so a link
-that cannot carry the first message produces a hang with nothing
-printed rather than the error it has in hand.  That is worth knowing
-before pointing this at a transport that might not work.
+.B Announce
+makes the conversation announce rather than connect, which cannot
+work and is here to check that it says so: it reports
+.B "input or format error"
+at once, where it used to hang with nothing printed.  See
+.IR keyring (2).
 .PP
 .B Setid
 is passed 0.  Changing the user id on the strength of the exchange is
