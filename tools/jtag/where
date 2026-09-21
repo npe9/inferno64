@@ -1,0 +1,59 @@
+#!/bin/sh
+#
+# where [-r]
+#
+# What is the board doing right now?  Halts every core, names the pc
+# it is sitting at, and resumes.  -r leaves it halted.
+#
+#	$ tools/jtag/where
+#	cpu0  0x00000000000a770c  sched+0x1c
+#	cpu1  0x000000000000007c  below the first symbol
+#	...
+#	(resumed)
+#
+# This is the question the port has kept asking and kept answering
+# badly.  A wedged board used to be diagnosed by typing ^\ at it and
+# reading a dump -- which needs somebody watching, needs the console
+# to still be working, and has twice been taken from a board that had
+# already recovered, so the stacks were of a healthy machine.  Here
+# the board does not have to be cooperating at all.
+#
+# The names come from tools/jtag/ksyms, because 7l puts a Plan 9
+# symbol table in the ELF and nothing on a Unix host can read it.
+# Without that every line of this would be a bare hex number, which is
+# what made "TRAP ... pc 0015b008" a dead end this morning; it is
+# accounttime+0xc, called from clockintr+0x48.
+#
+# Cores 1-3 normally sit at 0x7c, in the VideoCore firmware's spin
+# table, because this kernel starts no secondaries.  That is not a
+# fault, and "below the first symbol" is the correct answer for it.
+#
+set -u
+HERE=`dirname "$0"`
+ROOT=`cd "$HERE/../.." && pwd`
+KERNEL=${KERNEL:-$ROOT/os/inferno/raspi3b/iraspi3b}
+ADAPTER=${ADAPTER:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
+TMP=${TMPDIR:-/tmp}/jtag-where.$$
+trap 'rm -f "$TMP"' 0 1 2 15
+
+tail_cmd='resume;'
+[ "${1:-}" = "-r" ] && tail_cmd=''
+
+( cd "$ROOT" && timeout 90 openocd -f "$ADAPTER" -f tools/jtag/raspi3b.cfg \
+	-c "init; halt; \
+	    foreach c {0 1 2 3} { \
+		catch { targets bcm2837.cpu\$c ; echo \"WHERE cpu\$c [reg pc]\" } \
+	    }; targets bcm2837.cpu0; $tail_cmd exit" ) >"$TMP" 2>&1
+
+if ! grep -aq WHERE "$TMP"; then
+	echo "where: the debugger did not answer; is the adapter attached?" >&2
+	grep -a 'Error' "$TMP" | head -3 >&2
+	exit 1
+fi
+
+grep -a WHERE "$TMP" | while read -r _ cpu _ _ pc; do
+	name=`python3 "$HERE/ksyms" "$KERNEL" "$pc" 2>/dev/null | \
+		sed -e 's/^[^ ]*  *//'`
+	printf '%-5s %s  %s\n' "$cpu" "$pc" "${name:-?}"
+done
+[ -n "$tail_cmd" ] && echo "(resumed)" || echo "(left halted; 'resume' to go)"

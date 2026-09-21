@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+#
+# ksyms iraspi3b [addr ...]
+#
+# Print the kernel's symbol table, or name the addresses given.
+#
+#	ksyms iraspi3b			the whole table, sorted
+#	ksyms iraspi3b 0x15b008		-> trap+0x38, or whatever it is
+#	ksyms iraspi3b -g conf		addresses of data symbols matching
+#
+# WHY THIS EXISTS.  7l emits a Plan 9 symbol table into the ELF it
+# produces, but not an ELF .symtab, so file(1) calls the kernel
+# "stripped" and nm(1) shows nothing.  utils/nm cannot read it either
+# ("Can't read header"), because that nm expects a Plan 9 a.out and
+# this is -H7.  The result was that every address the board printed --
+# every "TRAP ... pc 0015b008", every pc read over JTAG -- was a bare
+# number, and answering "what is that" meant guessing.
+#
+# The format, from utils/7l/asm.c putsymb(), for HEADTYPE 7:
+#
+#	4 bytes		value, big-endian
+#	1 byte		type | 0x80, lowercase meaning "static"
+#	n bytes		name, NUL-terminated
+#
+# Types 'z' and 'Z' are the history/line-number records and carry a
+# different, doubly-NUL-terminated payload; they are skipped here.
+#
+# Types 'a' and 'p' are a function's automatics and parameters, and
+# their "value" is a frame offset, not an address.  There are
+# thousands of them and they share names with globals -- a listing of
+# "m" produces a hundred entries reading 0x8, 0x10, 0x20 before the
+# one that is the kernel's Mach pointer.  They are dropped unless -l
+# asks for them, because mixing frame offsets into a table of
+# addresses is how a lookup silently answers the wrong question.
+#
+# The four-byte value is not a truncation problem on this board: the
+# kernel links at 0x80000 and is under 2MB.  It would be on anything
+# mapped high, and this says so rather than silently misreporting.
+#
+import sys, struct
+
+def loadend(d):
+	"""End of the last PT_LOAD in the file: where the symbols start."""
+	if d[:4] != b'\x7fELF':
+		return None
+	is64 = d[4] == 2
+	if not is64:
+		return None
+	e_phoff, = struct.unpack_from('<Q', d, 0x20)
+	e_phentsize, e_phnum = struct.unpack_from('<HH', d, 0x36)
+	end = 0
+	for i in range(e_phnum):
+		o = e_phoff + i * e_phentsize
+		p_type, = struct.unpack_from('<I', d, o)
+		if p_type != 1:			# PT_LOAD
+			continue
+		p_offset, = struct.unpack_from('<Q', d, o + 0x08)
+		p_filesz, = struct.unpack_from('<Q', d, o + 0x20)
+		end = max(end, p_offset + p_filesz)
+	return end
+
+def symbols(path):
+	d = open(path, 'rb').read()
+	i = loadend(d)
+	if i is None:
+		sys.exit("ksyms: %s is not a 64-bit ELF" % path)
+	out = []
+	while i + 5 < len(d):
+		v = int.from_bytes(d[i:i+4], 'big')
+		t = d[i+4]
+		if not (t & 0x80):		# not a record: table has ended
+			break
+		c = chr(t & 0x7f)
+		if not c.isalpha():
+			break
+		i += 5
+		if c in 'zZ':
+			# doubly-NUL-terminated; skip without interpreting
+			j = i + 1
+			while j + 1 < len(d) and not (d[j] == 0 and d[j+1] == 0):
+				j += 2
+			i = j + 2
+			continue
+		j = d.find(b'\x00', i)
+		if j < 0:
+			break
+		name = d[i:j].decode('utf-8', 'replace')
+		i = j + 1
+		if name:
+			out.append((v, c, name))
+	return out
+
+def globals_only(syms):
+	"""Drop automatics and parameters: frame offsets, not addresses."""
+	return [t for t in syms if t[1] not in 'ap']
+
+def main():
+	if len(sys.argv) < 2:
+		sys.exit(__doc__)
+	path = sys.argv[1]
+	args = sys.argv[2:]
+	syms = symbols(path)
+	if args and args[0] == '-l':
+		args = args[1:]
+	else:
+		syms = globals_only(syms)
+	if not syms:
+		sys.exit("ksyms: no symbol table in %s (linked with -s?)" % path)
+
+	if args and args[0] == '-g':
+		pat = args[1]
+		for v, c, n in sorted(syms):
+			if pat in n:
+				print("%#010x %s %s" % (v, c, n))
+		return
+
+	if not args:
+		for v, c, n in sorted(syms):
+			print("%#010x %s %s" % (v, c, n))
+		return
+
+	# Name addresses.  Only text symbols bound an address range; data
+	# and bss are reported by exact match or nearest below, and said
+	# to be such, because a data symbol's size is not in this table.
+	text = sorted((v, n) for v, c, n in syms if c.upper() in 'TL')
+	alls = sorted((v, n) for v, c, n in syms)
+	for a in args:
+		x = int(a, 0)
+		best = None
+		for v, n in text:
+			if v <= x:
+				best = (v, n)
+			else:
+				break
+		if best and x - best[0] < 0x10000:
+			print("%#x  %s+%#x" % (x, best[1], x - best[0]))
+			continue
+		best = None
+		for v, n in alls:
+			if v <= x:
+				best = (v, n)
+			else:
+				break
+		if best:
+			print("%#x  %s+%#x (nearest symbol, not necessarily "
+			      "inside it)" % (x, best[1], x - best[0]))
+		else:
+			print("%#x  below the first symbol" % x)
+
+if __name__ == '__main__':
+	main()
