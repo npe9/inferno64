@@ -6367,3 +6367,52 @@ only form that sees the medium.
 It sits above the DMA work now.  Every kernel change under
 investigation has to reach the board to be tested, and at the moment
 they do not reliably arrive.
+.NH 2
+Correction: the stale kernel was not reproduced, and a sixth candidate is out
+.PP
+.B "The dirty buffer is not the trigger."
+.CW devsd
+will not hand the engine a Dis process's buffer directly, so it
+.CW sdmalloc s
+one and
+.CW memmove s
+into it for every call \(em the engine always reads lines the CPU has
+just written, where
+.CW dmatest
+handed over the same clean lines a thousand times.  With the engine's
+64-byte read-ahead being exactly one cache line, that was worth
+asking.  Two hundred transfers from a buffer re-dirtied before every
+one of them are as clean as two hundred from a buffer left alone.
+Sixth candidate eliminated.
+.PP
+.B "And the section above overstates what was seen."
+It says the stale kernel is live, on three installs that reported
+success while the board kept booting the previous kernel, and a
+.CW cmp
+saying the card's file differed from its source at byte 42.  The board
+has since booted the build those installs were carrying.  So they were
+landing, and what went wrong was timing: kupdate starts some minutes
+after boot, the reboots checking on it kept arriving first, and the
+.CW cmp
+was most likely taken while kupdate was part way through writing.
+.PP
+.B "What survives that correction, and what does not."
+The reasoning about
+.CW fatcheck
+stands on its own: it ran kupdate's 1.9MB write concurrently with
+.CW fatwrite() 's
+1.5MB one, through a single
+.I dossrv ,
+and the 14-of-57-chunks corruption recorded earlier in this document
+is real and was found the hard way.  Removing the second writer is
+right whether or not it was the cause today.
+.CW kuverify
+reading back through the server that just wrote is a blind check,
+also independently.  But "reproduced today" was wrong, and the three
+failed installs are explained by a race with kupdate's schedule rather
+than by corruption.
+.PP
+The general fault is the one this document keeps recording: a
+conclusion drawn from a console buffer without establishing that what
+was read belonged to the event being asked about.  That is now four
+times.

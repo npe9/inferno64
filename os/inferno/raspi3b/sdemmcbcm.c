@@ -1313,7 +1313,8 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 		print("emmc: dmatest %d blocks x %d%s, buf %#p page offset %#lux, "
 			"dma %d clearirq %d irqen %d reset %d datareset %d "
 			"delay %dus\n",
-			nb, cnt, rw? " alternating read/write": "",
+			nb, cnt, (rw % 10)? " alternating read/write":
+				(dirty? " re-dirtied each time": ""),
 			p, (ulong)((uintptr)p & (BY2PG-1)),
 			emmcdma, emmcdmaclearirq, emmcdmairqen,
 			emmcdmareset, emmcdmadatareset, emmcdmadelay);
