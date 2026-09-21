@@ -6060,3 +6060,154 @@ line prints
 .CW irpten .
 An intervention assumed to have happened is not an experiment, and
 this one would have been filed as an answer.
+.NH 1
+Plan: how to fix the SD DMA write stall
+.PP
+Ordered by value rather than by curiosity.  The first item is worth
+doing whatever the cause turns out to be, and the second is what makes
+every item after it cheap.
+.NH 2
+1.  Make the failure survivable, before making it rare
+.PP
+The driver already means to do this \(em the comment at the fallback
+says a DMA path being wrong "is a reason to stop using it, not a
+reason to lose the transfer" \(em and it does not work.  What actually
+happens:
+.P1
+emmc: DMA WRITE FAILURE ...
+emmc: write block 30946 failed: interrupt 0x10 status 0x1ef0106
+emmc: write block 30954 failed: interrupt 0x2 status 0x1ff0000
+dosfs: panic: write
+.P2
+.CW bioerror()
+runs, DMA is switched off, the block is retried in PIO \(em and the
+retry fails too, eight blocks later the ninth fails as well, the write
+returns short, and
+.I dossrv
+panics.  After that every write to
+.CW /n/dos
+blocks for ever on a mount whose server is gone, which is the "hung
+board" of the last three days.  The kernel is fine throughout:
+.CW tools/jtag/where
+puts cpu0 at
+.CW idle+0x4 .
+.PP
+So the abort is not putting the controller and the card back into a
+state a retry can use.  It sends CMD12, resets the command and data
+circuits and polls CMD13 for READY_FOR_DATA, and none of those steps
+is checked for having worked.  The work is to check each one and say
+which fails:
+.IP \(bu
+Did CMD12 complete, or did it go into a controller with
+.CW Sdatinhibit
+still set and get swallowed the way the
+.CW Rirpten
+write did?
+.IP \(bu
+Did the data-circuit reset finish, or did the timeout loop expire?
+.IP \(bu
+Did the card come back to TRAN, and how long did it take?
+.PP
+And if the abort cannot be completed, stop retrying that block and
+fall back for the whole rest of the transfer, so the caller always
+gets its bytes.  A driver that cannot recover from its own DMA failure
+is worse than one with no DMA at all, and this is independent of why
+the stall happens.
+.NH 2
+2.  Get a reproducer off the filesystem path
+.PP
+Every experiment so far has cost a boot, a
+.I dossrv
+panic and a
+.CW ^R ,
+because the only way to provoke the failure has been to write a file.
+.PP
+.B "The reason it has never been reproduced raw is probably in the dumps,"
+and it is the one field nobody was reading.  Seven failures collected
+over three days, and every one of them:
+.P1
+dma src 0xc3bb6640   0xc3f2e640   0xc3f3b640   0xc3f84640
+     0xc3f87640   0xc3f9b640   0xc3fb2640
+.P2
+Seven for seven at page offset
+.CW 0x640 .
+That is
+.I dossrv 's
+buffer \(em 64-byte aligned, which is one cache line, but not
+512-aligned and not page-aligned.  Raw
+.CW dd
+hands the driver something else entirely, and raw has never failed.
+.PP
+.B "And the sweep that supposedly ruled size out did not."
+.CW tools/jtag/dmasizes.sh
+tried 1, 2, 3, 4, 8, 9 and 16 blocks and found nothing \(em against
+.CW /dev/sdM0/kfstest ,
+the raw device, which is the path that never fails.  It could only
+ever have returned "clean".  Size, repetition, sustained traffic and
+mixed direction were all "ruled out" the same way and none of them
+is.
+.PP
+So: a ctl command that does one 9-block DMA write, in the kernel, from
+a buffer at a chosen page offset, to a scratch block.  Then two
+questions, neither of which needs a file server:
+.IP 1.
+Offset
+.CW 0x640 ,
+9 blocks.  Does it fail?
+.IP 2.
+Offset 0, 9 blocks.  Does it fail?
+.PP
+If the first fails and the second does not, the trigger is the buffer
+and the fix is a bounce buffer for anything not suitably aligned \(em
+and the whole investigation moves to a path where a failure costs
+nothing and can be repeated fifty times in one boot.  If both fail,
+the filesystem is not special and the raw sweep was simply asking the
+wrong sizes.  If neither fails, the buffer is not it either, and what
+is left is the surrounding command pattern.
+.NH 2
+3.  Ask the interrupt-enable question properly
+.PP
+Untested, not disproved: the write to
+.CW Rirpten
+is dropped because it happens between the command and the transfer,
+with
+.CW Sdatinhibit
+set.  Move it before the command is issued.  The
+.CW BEFORE
+line prints
+.CW irpten
+now, so the arm shows whether the intervention took \(em and no
+conclusion may be drawn from an arm whose dump says
+.CW "irpten 0x0" .
+.PP
+This is the last hypothesis that fits the shape of the failure without
+inventing anything: the engine is waiting correctly with DREQ clear,
+and the controller is holding
+.CW Iwriterdy
+set, saying it has room, while not asking.
+.NH 2
+4.  Repeats, because the base rate is not one
+.PP
+One boot per arm was enough to disprove two fixes, because in both
+experiments both arms failed and a fix cannot be active while the
+thing it fixes happens.  It is not enough to confirm anything: an arm
+that passes is what a high-but-not-one base rate produces sometimes
+anyway.  Once item 2 gives an in-kernel reproducer, N is free \(em
+fifty transfers in one boot, counted, with the intervention shown
+active in the dump.
+.NH 2
+What the evidence says the answer will look like
+.PP
+At the stall the engine is ACTIVE with DREQ_STOPS_DMA set and the DREQ
+bit clear: it is waiting, correctly, for a request that is not coming.
+The controller has retired two blocks to the card, holds one in its
+buffer,
+.CW blksizecnt
+says seven of nine remain, its status has
+.CW Swritetransfer
+set and its interrupt register has
+.CW Iwriterdy
+set.  It has room, it says so in two registers, and it is not raising
+the line.  Either it stops asserting DREQ when it should not, or it is
+waiting for something this driver never does \(em and item 3 is the
+only named candidate for the second.
