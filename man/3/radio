@@ -237,6 +237,23 @@ and how many writes have had to wait for that
 .br
 .B /os/inferno/raspi3b/spipiradio.c
 .SH DIAGNOSTICS
+A board that hangs at boot between
+.B procinit
+and the driver's first word was, until this was found, spinning in the
+MPS2 half's microsecond delay.
+.B fastticks
+on an ARMv7-M is a counter plus however far SysTick has counted down,
+and the counter only moves when somebody notices SysTick has wrapped;
+.B clockpoll
+is what notices, and
+.B links
+runs before interrupts are on.  A delay that began near the end of a
+SysTick period asked for a time that arrived only after a wrap nobody
+counted.  The spin polls the clock now.  A Raspberry Pi was never
+affected: its
+.B fastticks
+reads a free-running counter.
+.PP
 A kernel with no radio fitted serves an empty
 .B #W
 directory; the driver says so on the console at boot, naming the

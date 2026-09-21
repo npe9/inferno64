@@ -136,6 +136,17 @@ static Spidev shield0spi = {
  * Wait n microseconds by the clock rather than by counting
  * instructions.  fastticks() reads SysTick and reports its frequency,
  * so this is a real interval on hardware and under an emulator alike.
+ *
+ * clockpoll() inside the spin, and not for tidiness.  fastticks() is
+ * fastcount plus however far SysTick has counted down, and fastcount
+ * only moves when somebody notices the counter has wrapped --
+ * clockpoll() is what notices, and os/inferno/armv7m/clock.c says it
+ * is for "the boot path before spllo", which is where links() runs.
+ * Spinning on fastticks() alone, a delay that begins near the end of a
+ * SysTick period asks for a time the counter reaches only after a wrap
+ * that is never counted, and the loop never ends.  That is an
+ * intermittent hang at boot, between "procinit" and the first word
+ * from the radio, which is a hard thing to be told anything about.
  */
 static void
 usdelay(int n)
@@ -145,7 +156,7 @@ usdelay(int n)
 	now = fastticks(&hz);
 	end = now + ((hz / 1000000) * n);
 	while(fastticks(nil) < end)
-		;
+		clockpoll();
 }
 
 static void
