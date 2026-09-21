@@ -936,6 +936,20 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		if(nthis > 1)
 			flags |= Tmulti|Tautocmd12;
 		dma = emmcdma;
+		/*
+		 * The interrupt enable, if it is being asked about, goes
+		 * HERE -- after the wait for Sdatinhibit to clear and
+		 * before the command, which is the only window in which
+		 * this controller takes it.
+		 *
+		 * The first attempt set it between the command and the
+		 * transfer and the write was silently dropped: the dump
+		 * read back "irpten 0x0" three instructions later, with
+		 * Rstatus 0x1ff0506, Sdatinhibit set.  The arm failed and
+		 * would have been filed as a third clean negative.
+		 */
+		if(dma && emmcdmairqen)
+			r[Rirpten] |= Ireadrdy|Iwriterdy;
 		/* READ/WRITE_SINGLE_BLOCK, or the MULTIPLE_BLOCK pair */
 		if(cmd(c, write? (nthis > 1? 25: 24): (nthis > 1? 18: 17),
 		    arg, flags, &sts) < 0){
@@ -969,8 +983,6 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			}
 			if(emmcdmareset)
 				dmachanreset();
-			if(emmcdmairqen)
-				r[Rirpten] |= Ireadrdy|Iwriterdy;
 			if(emmcdmadelay)
 				microdelay(emmcdmadelay);
 			dmapre.cs = dmachanstate();
