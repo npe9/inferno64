@@ -1,7 +1,16 @@
 #!/bin/sh
 #
-# Does clearing the eMMC interrupt before arming the DMA channel change
-# whether the write stalls?
+# Does $SWITCH change whether the SD DMA write stalls?
+#
+#	sh tools/jtag/dmaab.sh			  vary dmaclearirq
+#	SWITCH=dmareset sh tools/jtag/dmaab.sh	  vary the channel reset
+#
+# Any /dev/sdM0/ctl switch that takes 0 or 1 and prints "emmc: <name>
+# <value>" works.  The first question it answered was the eMMC
+# interrupt acknowledge; the answer was no, and the next question --
+# the DMA channel'"'"'s own CS, which the dumps show carrying END|DREQ
+# from the previous transfer in both arms -- is the same experiment
+# with a different name.
 #
 # TWO BOOTS, NOT TWENTY-FOUR WRITES.  The measurement this replaces
 # was designed when the failure looked random: N writes with the
@@ -35,7 +44,8 @@ HERE=`dirname "$0"`
 ROOT=`cd "$HERE/../.." && pwd`
 S=${S:-/private/tmp/claude-501/-Users-npe-src-inferno64-branches-raspi3b-port/2675f84d-d333-4a0e-ba1f-4ef786fc52b7/scratchpad}
 SESS=${SESS:-37971.ttys006}
-OUT=${OUT:-$S/dmaab}
+SWITCH=${SWITCH:-dmaclearirq}	# which /dev/sdM0/ctl switch to vary
+OUT=${OUT:-$S/dmaab-$SWITCH}
 ADAPTER=${ADAPTER:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
 BS=${BS:-32768}
 COUNT=${COUNT:-20}
@@ -220,14 +230,14 @@ dosalive() {
 # Turning DMA on is what arms the thing under test, so everything the
 # arm wants in place has to be in place before it.
 #
-arm() {		# $1 = dmaclearirq
+arm() {		# $1 = the value for $SWITCH
 	m=`mark`
-	pi "echo dmaclearirq $1 > /dev/sdM0/ctl" 5
+	pi "echo $SWITCH $1 > /dev/sdM0/ctl" 5
 	pi 'echo dmafreeze 1 > /dev/sdM0/ctl' 5
 	pi 'echo dma 1 > /dev/sdM0/ctl' 5
 	since "$m" >"$S/ab-armed.txt"
-	if ! LC_ALL=C grep -aq "emmc: dmaclearirq $1" "$S/ab-armed.txt"; then
-		echo "  the board never acknowledged dmaclearirq $1"
+	if ! LC_ALL=C grep -aq "emmc: $SWITCH $1" "$S/ab-armed.txt"; then
+		echo "  the board never acknowledged $SWITCH $1"
 		return 1
 	fi
 	if ! LC_ALL=C grep -aq 'emmc: dmafreeze 1' "$S/ab-armed.txt"; then
@@ -246,7 +256,7 @@ arm() {		# $1 = dmaclearirq
 }
 
 run() {		# $1 = dmaclearirq; leaves the dump in $OUT-$1.txt
-	echo "=== dmaclearirq $1"
+	echo "=== $SWITCH $1"
 	reboot || return 1
 	if ! dosalive; then
 		echo "  /n/dos is not writable before the test; arm is void"
@@ -290,12 +300,12 @@ for a in 0 1; do
 done
 if [ -s "$OUT-0.dump" ] && [ -s "$OUT-1.dump" ]; then
 	if diff "$OUT-0.dump" "$OUT-1.dump"; then
-		echo "(identical -- the acknowledge changes nothing)"
+		echo "(identical apart from incidentals -- $SWITCH changes nothing)"
 	fi
 elif [ -s "$OUT-0.dump" ]; then
-	echo "(only dmaclearirq 0 failed)"
+	echo "(only $SWITCH 0 failed -- ONE pass each; say so, do not conclude)"
 elif [ -s "$OUT-1.dump" ]; then
-	echo "(only dmaclearirq 1 failed)"
+	echo "(only $SWITCH 1 failed -- ONE pass each; say so, do not conclude)"
 else
 	echo "(neither arm failed -- it did not reproduce this time)"
 fi
