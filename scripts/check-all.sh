@@ -1,7 +1,7 @@
 #!/bin/sh
 # Run this branch's checks and say which ones failed.
 #
-# There are fifteen of them now and nothing ran them together, so a
+# There are sixteen of them now and nothing ran them together, so a
 # change to the shared port code -- which every board links -- was
 # verified by whichever checks came to mind.  This runs them all.
 #
@@ -25,7 +25,7 @@ export PATH ROOT
 cd "$ROOT"
 
 # Fast, and each asserts something specific.
-QUICK="check-man-pages check-config-portlines check-cabundle check-cloudauth check-discovery-retry check-ipint"
+QUICK="check-man-pages check-config-portlines check-cabundle check-cloudauth check-discovery-retry check-ipint check-rootparity"
 # Boot a kernel; minutes each.
 # check-tls wants the host's own network: it fetches one URL over http
 # and over https from a booted kernel, and says "cannot tell" rather
