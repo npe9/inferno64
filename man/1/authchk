@@ -116,6 +116,19 @@ costs, not that these particular keys are worth anything.
 Both ends in one kernel share a pool, so the figure for memory is the
 cost of two ends and not of one.
 .PP
+Nothing checks that an authentication message fits in a packet.
+.IR Keyring (2)
+writes a five-byte length and then the message, and
+.B libinterp/keyring.c 's
+.B nreadn
+reads until it has the whole of it \- which on a message-delimited
+device works only while each message is one packet.  Measured over
+.I lora (3)
+at 251 bytes of payload, the exchange is six messages each way and
+none of them came near that; a larger key, or an owner name long
+enough to matter, would not fit, and what happens then is the entry
+below.
+.PP
 When a send fails,
 .IR keyring (2)'s
 .B auth

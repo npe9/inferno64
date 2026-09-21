@@ -124,10 +124,14 @@ demonstration of the transport, not a file system client.
 .PP
 With
 .B lora
-the addresses are 1 for the ground and 2 for the satellite, written
-into the program, and the satellite announces rather than connecting.
-Two stations is what the demonstration needs; three would need
-somewhere to say which.
+the addresses are 1 for the ground and 2 for the satellite, and both
+ends connect.  With
+.B auth
+the identity each end presents follows from which of the two it is
+running as, so what the exchange proves is which side of this test the
+other end is, and not which station.  Both are written into the
+program; two stations is what the demonstration needs, and three would
+need somewhere to say which is which.
 .SH SOURCE
 .B /appl/cmd/radiostyx.b
 .SH SEE ALSO
