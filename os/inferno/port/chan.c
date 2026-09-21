@@ -241,8 +241,36 @@ chandevshutdown(void)
 	 * console dead, network gone, and no clue which device it was in.
 	 */
 	for(i--; i >= 0; i--){
-		iprint("shutdown #%C\n", devtab[i]->dc);
-		devtab[i]->shutdown();
+		Dev *d = devtab[i];
+
+		/*
+		 * Check the entry before calling through it.
+		 *
+		 * The loop above is sound -- it stops at the nil
+		 * terminator -- so a device letter that is not a letter
+		 * means the entry itself is corrupt, and the next line
+		 * calls a function pointer out of that same corruption.
+		 * On the Pi that turned a panic into a second, worse
+		 * trap: the walk printed
+		 *
+		 *	shutdown #I ... #K #<non-ascii byte>
+		 *
+		 * and then took an instruction abort at 0x02694070, an
+		 * address with no mapping, which is what calling a
+		 * garbage shutdown() looks like.  The original fault was
+		 * then buried under a fault in the reporting of it.
+		 *
+		 * So say which entry is bad and keep going.  The other
+		 * devices still get their chance to stop, and the panic
+		 * that started this stays the thing on the screen.
+		 */
+		if(d == nil || d->shutdown == nil || d->dc < ' ' || d->dc > '~'){
+			iprint("shutdown: devtab[%d] is corrupt (%#p), skipped\n",
+				i, d);
+			continue;
+		}
+		iprint("shutdown #%C\n", d->dc);
+		d->shutdown();
 	}
 	iprint("shutdown done\n");
 }
