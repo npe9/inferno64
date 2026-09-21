@@ -248,19 +248,20 @@ Three of those deserve an argument rather than an assertion.
 .IP \(bu
 .B Listen .
 .CW #L
-has
+had
 .CW announce
 and no
 .CW listen ,
-and
-.I lora (3)
-carries that as a bug: an announced conversation latches onto whoever
-spoke last, so two stations talking to one server interleave.  Under
-AX.25 that is not a wart, it is impossible \(em a connection is per
-peer, SABM arrives from a particular callsign, and the answer has to be
-a new conversation.  So
+and an announced conversation latched onto whoever spoke last, so two
+stations talking to one server interleaved.  Under AX.25 that is not a
+wart, it is impossible \(em a connection is per peer, SABM arrives from
+a particular callsign, and the answer has to be a new conversation.  So
 .CW listen
 is not an extra, it is what makes the protocol expressible.
+.CW #L
+has it now too, for the same reason arrived at from the other
+direction: a datagram from an unclaimed station is that station's, and
+nothing about being connectionless said otherwise.
 .IP \(bu
 .B "ui on."
 A UI frame is connectionless, so a conversation in

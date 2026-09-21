@@ -177,34 +177,66 @@ send(dest: int, text: string, acked, count, padto: int)
 	sys->print("%s\n", status(c.n));
 }
 
+#
+# Announce, then take whoever speaks first through listen.  An
+# announced conversation does not receive anything itself: a packet
+# from a station nobody has claimed makes a new conversation bound to
+# that station, which is what stops two stations talking to one server
+# from interleaving.  That is ip(3)'s shape and ax25(3)'s.
+#
 recv(acked, count: int)
 {
 	c := clone();
 	if(c == nil)
 		return;
 	if(sys->fprint(c.cfd, "announce") < 0){
-		sys->print("lorachk: announce: %r\n");
+		ck("announce", 0, sys->sprint("%r"));
 		return;
 	}
+	ck("announce", 1, "");
 	if(acked && sys->fprint(c.cfd, "ack on") < 0){
 		sys->print("lorachk: ack on: %r\n");
+		return;
+	}
+
+	lfd := sys->open(sys->sprint("#L/%d/listen", c.n), Sys->ORDWR);
+	if(lfd == nil){
+		ck("listen", 0, sys->sprint("%r"));
+		return;
+	}
+	nb := array[32] of byte;
+	n := sys->read(lfd, nb, len nb);
+	if(n <= 0){
+		ck("listen", 0, sys->sprint("%r"));
+		return;
+	}
+	num := int string nb[0:n];
+	ck("listen", num != c.n, sys->sprint("same conversation %d", num));
+	sys->print("accepted on #L/%d\n", num);
+
+	dfd := sys->open(sys->sprint("#L/%d/data", num), Sys->ORDWR);
+	if(dfd == nil){
+		ck("accepted-data", 0, sys->sprint("%r"));
 		return;
 	}
 
 	# The same refusal the packet device makes: a buffer smaller than
 	# the packet is an error and the packet stays.
 	one := array[1] of byte;
-	n := sys->read(c.dfd, one, len one);
+	n = sys->read(dfd, one, len one);
 	ck("short-read-refused", n < 0, sys->sprint("read %d", n));
 
 	b := array[251] of byte;
 	for(i := 0; i < count; i++){
-		n = sys->read(c.dfd, b, len b);
+		n = sys->read(dfd, b, len b);
 		ck(sys->sprint("read-%d", i), n > 0, sys->sprint("%d %r", n));
 		if(n > 0)
 			sys->print("payload %q\n", string b[0:n]);
 	}
-	sys->print("%s\n", status(c.n));
+	sys->print("%s\n", status(num));
+	# Stay up so the other end can finish before the announcer
+	# closes and takes anything unclaimed with it.
+	sys->sleep(8000);
 }
 
 status(n: int): string

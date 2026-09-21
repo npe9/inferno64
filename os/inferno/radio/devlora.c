@@ -59,6 +59,7 @@ enum {
 	Qlocal,
 	Qremote,
 	Qstatus,
+	Qllisten,
 
 	Nconv		= 4,	/* conversations at once */
 	Rhhdrlen	= 4,	/* to, from, id, flags */
@@ -99,6 +100,12 @@ struct Conv
 	int	gotack;
 	Rendez	ackr;
 
+	/* listen */
+	int	listening;
+	Conv	*pending;	/* taken from the air and not yet handed out */
+	Conv	*nextpend;
+	Rendez	lr;
+
 	u32	nsent;
 	u32	nrecv;
 	u32	nretry;
@@ -125,6 +132,7 @@ static struct
 	u32	nrunt;		/* too short to carry a header */
 	u32	nacksent;
 	u32	nnoconv;	/* for us, and nobody had announced */
+	u32	naccept;	/* conversations made for a new station */
 	u32	ndup;		/* a retransmission already delivered */
 	u32	nowedlost;	/* an acknowledgement dropped for want of room */
 
@@ -276,32 +284,77 @@ loraackproc(void*)
  * it heard from, so a reply has somewhere to go.
  */
 static Conv*
-convfor(int from)
+convfor(int from, Conv **ann)
 {
-	Conv *cv, *e, *ann;
+	Conv *cv, *e;
 
-	ann = nil;
+	*ann = nil;
 	e = &lora.conv[Nconv];
 	for(cv = lora.conv; cv < e; cv++){
 		if(!cv->inuse)
 			continue;
 		if(cv->remote == from && !cv->announced)
 			return cv;
-		if(cv->announced && ann == nil)
-			ann = cv;
-	}
-	if(ann != nil){
-		ann->remote = from;
-		return ann;
+		if(cv->announced && *ann == nil)
+			*ann = cv;
 	}
 	return nil;
+}
+
+static Conv* newconv(void);
+
+/*
+ * A packet from a station nobody has claimed, and somebody announced.
+ * Make a conversation bound to that station and leave it on the
+ * announcer's queue for whoever reads listen.
+ *
+ * The announcer used to take the packet itself, setting its remote to
+ * whoever spoke last.  Two stations talking to one server then
+ * interleaved, and each saw the other's replies: lora(3) carried that
+ * as a bug and ax25(3) does not have it, because a connection there is
+ * per peer and could not be expressed any other way.  It is per peer
+ * here too; nothing about a datagram said so.
+ *
+ * newconv() locks each conversation in turn looking for a free one,
+ * and the announcer is one of them, so this must not be called with
+ * the announcer's lock held -- it would wait for itself, in the reader
+ * process, and the link would simply go quiet.  devax25.c says the
+ * same thing beside the same code, having found it the hard way.
+ */
+static Conv*
+accept(Conv *ann, int from)
+{
+	Conv *cv, **pp;
+
+	cv = newconv();
+	if(cv == nil)
+		return nil;
+	qlock(&ann->l);
+	if(!ann->inuse || !ann->announced){
+		qunlock(&ann->l);
+		qlock(&cv->l);
+		cv->inuse = 0;
+		qunlock(&cv->l);
+		return nil;
+	}
+	cv->remote = from;
+	cv->ackon = ann->ackon;
+	cv->retries = ann->retries;
+	cv->ackwait = ann->ackwait;
+	for(pp = &ann->pending; *pp != nil; pp = &(*pp)->nextpend)
+		;
+	*pp = cv;
+	lora.naccept++;
+	qunlock(&ann->l);
+	wakeup(&ann->lr);
+	return cv;
 }
 
 static void
 lorareader(void*)
 {
 	Block *b;
-	Conv *cv;
+	Conv *cv, *ann;
 	Chan *c;
 	int to, from, id, flags, n;
 
@@ -345,7 +398,7 @@ lorareader(void*)
 			continue;
 		}
 		if(flags & Fack){
-			cv = convfor(from);
+			cv = convfor(from, &ann);
 			if(cv != nil){
 				cv->nackrecv++;
 				if(cv->waiting && cv->waitid == id){
@@ -356,7 +409,7 @@ lorareader(void*)
 			freeb(b);
 			continue;
 		}
-		cv = convfor(from);
+		cv = convfor(from, &ann);
 
 		/*
 		 * A retransmission of something already delivered means
@@ -378,9 +431,23 @@ lorareader(void*)
 			continue;
 		}
 		if(cv == nil){
-			lora.nnoconv++;
-			freeb(b);
-			continue;
+			/*
+			 * Nobody has this station.  If somebody
+			 * announced, make a conversation for it and let
+			 * this packet be its first; otherwise there is
+			 * nowhere for it to go.
+			 */
+			if(ann == nil){
+				lora.nnoconv++;
+				freeb(b);
+				continue;
+			}
+			cv = accept(ann, from);
+			if(cv == nil){
+				lora.nnoconv++;
+				freeb(b);
+				continue;
+			}
 		}
 		lora.seen[from] = id;
 
@@ -477,6 +544,7 @@ loragen(Chan *c, char *unused, Dirtab *d, int nd, int s, Dir *dp)
 	case Qlocal:
 	case Qremote:
 	case Qstatus:
+	case Qllisten:
 		n = NUM(c->qid);
 		cv = &lora.conv[n];
 		USED(cv);
@@ -500,6 +568,10 @@ loragen(Chan *c, char *unused, Dirtab *d, int nd, int s, Dir *dp)
 		case 4:
 			mkqid(&q, QID(n, Qstatus), 0, QTFILE);
 			devdir(c, q, "status", 0, eve, 0444, dp);
+			return 1;
+		case 5:
+			mkqid(&q, QID(n, Qllisten), 0, QTFILE);
+			devdir(c, q, "listen", 0, eve, 0666, dp);
 			return 1;
 		}
 		return -1;
@@ -552,6 +624,9 @@ newconv(void)
 			cv->ackon = 0;
 			cv->retries = Defretries;
 			cv->ackwait = Defackwait;
+			cv->listening = 0;
+			cv->pending = nil;
+			cv->nextpend = nil;
 			cv->nsent = cv->nrecv = cv->nretry = 0;
 			cv->nsendfail = cv->nackrecv = 0;
 			qunlock(&cv->l);
@@ -562,15 +637,62 @@ newconv(void)
 	return nil;
 }
 
+static int
+haspending(void *a)
+{
+	Conv *ann = a;
+
+	return ann->pending != nil || !ann->inuse;
+}
+
 static Chan*
 loraopen(Chan *c, u32 omode)
 {
-	Conv *cv;
+	Conv *cv, *ann;
 
 	if(TYPE(c->qid) == Qclone){
 		cv = newconv();
 		if(cv == nil)
 			error("no free lora conversations");
+		mkqid(&c->qid, QID(cv->x, Qcctl), 0, QTFILE);
+	}
+
+	/*
+	 * Opening listen waits for a station nobody has claimed to say
+	 * something, and hands back that conversation's ctl -- which is
+	 * ip(3)'s shape and ax25(3)'s.  An announcer that took the
+	 * packet itself would be a different station's conversation
+	 * every time somebody else spoke.
+	 */
+	if(TYPE(c->qid) == Qllisten){
+		ann = &lora.conv[NUM(c->qid)];
+		if(!ann->announced)
+			error("listen wants a conversation that announced");
+		qlock(&ann->l);
+		if(waserror()){
+			ann->listening--;
+			qunlock(&ann->l);
+			nexterror();
+		}
+		ann->listening++;
+		while(ann->pending == nil){
+			qunlock(&ann->l);
+			if(waserror()){
+				qlock(&ann->l);
+				nexterror();
+			}
+			sleep(&ann->lr, haspending, ann);
+			poperror();
+			qlock(&ann->l);
+			if(!ann->inuse)
+				error("the announcing conversation closed");
+		}
+		cv = ann->pending;
+		ann->pending = cv->nextpend;
+		cv->nextpend = nil;
+		ann->listening--;
+		poperror();
+		qunlock(&ann->l);
 		mkqid(&c->qid, QID(cv->x, Qcctl), 0, QTFILE);
 	}
 
@@ -585,9 +707,22 @@ loraopen(Chan *c, u32 omode)
 }
 
 static void
+dropconv(Conv *cv)
+{
+	qlock(&cv->l);
+	cv->inuse = 0;
+	cv->announced = 0;
+	cv->remote = Noaddr;
+	cv->nextpend = nil;
+	if(cv->rq != nil)
+		qhangup(cv->rq, nil);
+	qunlock(&cv->l);
+}
+
+static void
 loraclose(Chan *c)
 {
-	Conv *cv;
+	Conv *cv, *pend, *next;
 
 	if(TYPE(c->qid) != Qcctl)
 		return;
@@ -598,9 +733,26 @@ loraclose(Chan *c)
 	cv->inuse = 0;
 	cv->announced = 0;
 	cv->remote = Noaddr;
+	/*
+	 * An announcer that closes takes its unclaimed conversations
+	 * with it: they were made from the air and handed to nobody, so
+	 * nothing else will ever close them, and with four in the
+	 * device that is a leak that ends the boot.  Detached under
+	 * this lock and released outside it, because releasing one
+	 * takes its own.
+	 */
+	pend = cv->pending;
+	cv->pending = nil;
 	if(cv->rq != nil)
 		qhangup(cv->rq, nil);
+	wakeup(&cv->lr);
 	qunlock(&cv->l);
+
+	while(pend != nil){
+		next = pend->nextpend;
+		dropconv(pend);
+		pend = next;
+	}
 }
 
 static int
@@ -638,8 +790,8 @@ lorastats(char *buf, int len)
 	p = seprint(p, e, "in %ud\nout %ud\n", lora.nin, lora.nout);
 	p = seprint(p, e, "notours %ud\nrunt %ud\n",
 		lora.nnotours, lora.nrunt);
-	p = seprint(p, e, "acksent %ud\nnoconv %ud\n",
-		lora.nacksent, lora.nnoconv);
+	p = seprint(p, e, "acksent %ud\nnoconv %ud\naccepted %ud\n",
+		lora.nacksent, lora.nnoconv, lora.naccept);
 	p = seprint(p, e, "duplicate %ud\nackdropped %ud\n",
 		lora.ndup, lora.nowedlost);
 	return p - buf;
@@ -680,6 +832,7 @@ loraread(Chan *c, void *a, s32 n, s64 offset)
 		return rv;
 
 	case Qcctl:
+	case Qllisten:
 		snprint(up->genbuf, sizeof up->genbuf, "%ld\n", NUM(c->qid));
 		return readstr(offset, a, n, up->genbuf);
 

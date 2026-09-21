@@ -21,6 +21,8 @@ lora \- addressed, acknowledged packets over a packet device
 .BI /net/lora/ n /remote
 .br
 .BI /net/lora/ n /status
+.br
+.BI /net/lora/ n /listen
 .SH DESCRIPTION
 The
 .I lora
@@ -108,8 +110,10 @@ Send to address
 and take packets from it.
 .TP
 .B announce
-Take packets from any address no other conversation has claimed, and
-remember the last one heard from so a reply has somewhere to go.
+Take packets from any address no other conversation has claimed.  An
+announced conversation does not carry any itself; see
+.B listen
+below.
 .TP
 .B ack on
 .RB | off
@@ -124,6 +128,20 @@ How long to wait for each acknowledgement.  A retransmission follows a
 random backoff of up to half that again, so two stations that collided
 once do not collide identically for ever; an acknowledgement arriving
 during the backoff still ends the send.
+.PP
+Opening
+.B listen
+on an announced conversation waits for a station nobody has claimed to
+say something, and hands back that station's conversation \- a
+different one, whose number is its first read, with the packet that
+made it already queued.  That is
+.I ip (3)'s
+shape and
+.I ax25 (3)'s,
+and it is what makes two stations talking to one server two
+conversations rather than one whose remote address changes under the
+reader.  An announcer that closes takes with it any conversation it
+made and nobody took.
 .PP
 .B Data
 is one packet per read and one per write, inheriting both of
@@ -208,6 +226,8 @@ too short to carry a header,
 for this station with no conversation to take them,
 .RB ( acksent )
 acknowledgements sent,
+.RB ( accepted )
+conversations made for a station nobody had claimed,
 .RB ( duplicate )
 retransmissions recognised and not delivered twice, and
 .RB ( ackdropped )
