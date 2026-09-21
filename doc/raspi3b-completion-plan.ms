@@ -5836,3 +5836,78 @@ is the pass condition for the trampoline; a clean boot needs the image
 load, which restores
 .CW .data ,
 and does.
+.NH 1
+The SD DMA write failure is deterministic
+.PP
+It has been treated as an intermittent race since
+.CW 72d107da
+retracted a fix claimed on one pass against one failure.  It is not
+intermittent.  Two independent occurrences, on the filesystem path,
+were identical in every field the driver prints:
+.P1
+start block     30946
+requested       9 blocks / 4608 bytes
+DMA transferred 3 blocks / 1536 bytes
+DMA remaining   6 blocks / 3072 bytes
+dma cs 0x21 debug 0x4808000 ti 0xb0148
+dma src 0xc3f3b640 dst 0x7e300020 (engine still active)
+BEFORE: dma cs 0xa emmc interrupt 0x10 status 0x1ff0506
+.P2
+Same block, same three of nine, same channel state, same eMMC state
+before arming, same source address.  And it reproduces on demand,
+which it never has before: with
+.CW dmaclearirq
+0 it failed on the first write of a fresh boot, repeatedly.
+.PP
+Two things in that dump are new and neither had been visible before,
+because before this the failure could not be provoked to order.
+.IP \(bu
+.B "Iwriterdy is already set before the channel is armed."
+.CW BEFORE
+shows
+.CW "emmc interrupt 0x10" ,
+bit 4, left over from the previous transfer.  The driver arms a
+DMA channel against a controller that is already asserting write-ready.
+.IP \(bu
+.B "The channel's own CS still holds END and DREQ."
+.CW "dma cs 0xa"
+is the state the previous transfer left.  Nothing clears it between
+transfers.
+.PP
+.B "The raw device cannot see any of this,"
+which is why it has stayed open so long.  Raw writes have never failed
+\(em 500 in-kernel transfers clean, and writes work raw at
+.I dossrv 's
+own transfer size \(em so a measurement pointed at
+.CW /dev/sdM0/kfstest
+returns zero failures and reads as "there is no problem here".  The
+first version of the rate harness did exactly that and would have
+reported the acknowledge as making no difference.  A test that is
+exact because the term vanishes cannot see that term.
+.PP
+.B "The failure kills the file server, and that is the wedge."
+.CW "dosfs: panic: write"
+follows it, and every write to
+.CW /n/dos
+afterwards blocks for ever on a mount whose server is gone \(em
+.CW devmnt.c
+waits with no timeout, which section 3 of
+.CW doc/raspi3b-stability-plan.ms
+describes.  The board is not spinning when this happens:
+.CW tools/jtag/where
+puts cpu0 at
+.CW idle+0x4 .
+The kernel is fine and idle; it is the namespace that is dead.  So
+"the board wedged" and "the DMA write failed" have been one event, at
+least this time.
+.PP
+The rate measurement this run was meant to produce is still owed.  It
+was lost a fifth time, to a harness bug rather than to the board: five
+writes were scored as failures when the server had already panicked
+and they never ran, because
+.CW "screen -X scrollback 0"
+empties the history and not the display, so the first failure's report
+was still on screen for all of them.  All three counting bugs in that
+script have been the same bug \(em reading a console buffer for
+evidence of an event without first establishing that anything in the
+buffer is new.
