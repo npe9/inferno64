@@ -313,7 +313,25 @@ fifofill(volatile u32 *r)
  * loop that was written for them.
  */
 static int sdhostdma = 0;
-static int sdhosttrace = 1;	/* print the state at command issue */
+static int sdhosttrace = 0;	/* print the state at command issue */
+/*
+ * Microseconds between issuing a data command and the FIRST read of
+ * SDHSTS.  1000 because that is where the threshold is, measured:
+ *
+ *	delay 0us:    read block 0 failed (sdhsts 0x8, Failflag)
+ *	delay 200us:  read block 0 failed
+ *	delay 1000us: 10+0 records out
+ *	delay 5000us: 10+0 records out
+ *
+ * It is the first read that matters, not the rate of reading: pacing
+ * the poll loop at one microsecond a read still reads at t=0 and
+ * still fails, while waiting 1ms and then polling flat out works.
+ * Something about touching that register while the data phase is
+ * starting aborts it, and this is a characterisation rather than an
+ * explanation -- 1ms a block caps this path around 500KB/s, so it
+ * wants replacing with a wait for whatever the real condition is.
+ */
+static int sdhostdelay = 1000;	/* us before the first poll of SDHSTS */
 
 static int
 fifospace(volatile u32 *r)			/* wait until the FIFO can take a word */
@@ -340,12 +358,62 @@ fifodata(volatile u32 *r)
 	u32 edm;
 	int i;
 
-	for(i = 0; i < 1000000; i++){
+	/*
+	 * Do NOT force data mode from the fast path.
+	 *
+	 * This loop used to read SDEDM every iteration and, whenever it
+	 * saw READWAIT, write FORCE_DATA_MODE back.  That is a write
+	 * into the controller's state machine thousands of times a
+	 * microsecond while a transfer is starting, and it broke every
+	 * read: the command came back with Failflag set and SDHSTS
+	 * reporting a FIFO error --
+	 *
+	 *	sdhost: read block 0 failed: sdhsts 0x8 sdcmd 0x4051
+	 *
+	 * 0x8 being Hstsfifo and 0x4000 Failflag.  It was found by
+	 * accident: a trace print between issuing the command and
+	 * entering this loop made every read succeed, and toggling only
+	 * that print, in one boot, is the whole experiment --
+	 *
+	 *	trace 1:  10+0 records out
+	 *	trace 0:  read block 0 failed, 0+0 records out
+	 *
+	 * The print was not fixing anything; it was delaying this loop
+	 * until the FSM had left READWAIT, so the force never fired.
+	 *
+	 * Linux's bcm2835-sdhost uses FORCE_DATA_MODE only in specific
+	 * recovery, never in a poll.  So: poll the status bit, and only
+	 * if the FSM is still stuck in READWAIT after a long wait
+	 * nudge it once, which is what the bit is for.
+	 */
+	/*
+	 * PACE THE POLL.  Reading SDHSTS flat out is what broke reads.
+	 *
+	 * A delay before this loop made reads work and the threshold is
+	 * sharp -- 0 and 200us fail, 1000us and 5000us pass -- but a
+	 * delay cannot be the explanation on its own, because this loop
+	 * already spends far longer than that spinning.  Waiting 1ms
+	 * here and waiting 1ms before getting here differ in exactly one
+	 * thing: whether the status register is being read a few million
+	 * times while it happens.
+	 *
+	 * So the reads are the problem, not the time.  Hammering SDHSTS
+	 * during the data phase produced Hstsfifo and Failflag --
+	 *
+	 *	sdhost: read block 0 failed: sdhsts 0x8 sdcmd 0x4051
+	 *
+	 * and pausing between reads is the fix that follows from that,
+	 * rather than padding the front with a blind millisecond.
+	 */
+	for(i = 0; i < 20000; i++){
 		if((r[SDHSTS] & Hstsdata) != 0)
 			return 1;
-		edm = r[SDEDM];
-		if((edm & Edmfsmmask) == Fsmreadwait)	/* stalled: let it run on */
-			r[SDEDM] = edm | Edmforcedata;
+		microdelay(1);
+		if(i == 2000){			/* genuinely stuck, not starting */
+			edm = r[SDEDM];
+			if((edm & Edmfsmmask) == Fsmreadwait)
+				r[SDEDM] = edm | Edmforcedata;
+		}
 	}
 	return 0;
 }
@@ -672,6 +740,26 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		 * JTAG and reading 0x200 back -- so something between
 		 * these two points changes it.
 		 */
+		/*
+		 * A pause between issuing the command and polling.
+		 *
+		 * Not a workaround dressed as a setting: it is the whole
+		 * of what made reads work.  A trace print here -- a
+		 * console write, milliseconds -- turned every failing
+		 * read into a passing one, and toggling only that print
+		 * in one boot is the experiment:
+		 *
+		 *	trace 1:  10+0 records out
+		 *	trace 0:  read block 0 failed, 0+0 records out
+		 *
+		 * The print fixes nothing; it delays the poll.  Removing
+		 * the FORCE_DATA_MODE write from that poll did NOT help,
+		 * so it is the waiting and not what the loop does while
+		 * it waits.  This makes the delay explicit and tunable so
+		 * the claim can be tested rather than inherited.
+		 */
+		if(sdhostdelay)
+			microdelay(sdhostdelay);
 		if(c->errors <= 3 && sdhosttrace)
 			print("sdhost: issued %d blk %llud: sdcmd %#lux "
 				"sdhsts %#lux sdedm %#lux (fsm %lud fill %lud) "
@@ -801,6 +889,11 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 		i = sdcardinit(c);
 		qunlock(c);
 		print("sdhost: reinit %s\n", i? "ok": "failed");
+		return 0;
+	}
+	if(strcmp(cb->f[0], "delay") == 0 && cb->nf == 2){
+		sdhostdelay = atoi(cb->f[1]);
+		print("sdhost: delay %dus\n", sdhostdelay);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "trace") == 0 && cb->nf == 2){

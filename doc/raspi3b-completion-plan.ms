@@ -7119,3 +7119,74 @@ immediately after the command is issued, before any wait, so "the data
 phase never started" can be told apart from "it started and stopped".
 The trace is written and committed; the board wants a restart to run
 it.
+.NH 2
+SDHOST PIO: reads stop aborting, and the threshold that makes them
+.PP
+.B "The first read of SDHSTS must not happen for about a millisecond
+.B "after the command."
+Found by accident \(em a trace print between issuing the command and
+entering the poll loop turned every failing read into a passing one,
+and toggling only that print in one boot is the whole experiment:
+.P1
+trace 1:  10+0 records out
+trace 0:  read block 0 failed, 0+0 records out
+.P2
+The print fixed nothing; it delayed the poll.  Made explicit and
+swept:
+.P1
+delay 0us:    read block 0 failed (sdhsts 0x8, Failflag set)
+delay 200us:  read block 0 failed
+delay 1000us: 10+0 records out
+delay 5000us: 10+0 records out
+.P2
+.CW sdhsts
+.CW 0x8
+is
+.CW Hstsfifo ,
+a FIFO error, with
+.CW Failflag
+in
+.CW sdcmd :
+touching that register while the data phase is starting aborts it.
+.PP
+.B "It is the first read, not the rate of reading."
+Pacing the poll loop at one microsecond a read still reads at t=0, and
+still fails; waiting 1ms and then polling flat out works.  Two
+hypotheses died on the way to that \(em that the
+.CW FORCE_DATA_MODE
+write in the poll loop was corrupting the transfer (removing it
+changed nothing), and that hammering the register was (pacing changed
+nothing).
+.PP
+With
+.CW sdhostdelay
+at 1000 the read aborts are gone: a boot with SDHOST holding the card
+prints
+.CW SD-READ-OK
+and no failures at all, where every read failed before.
+.PP
+.B "What is still wrong: the data is not right."
+.P1
+SD-MULTI-FAIL byte 1 of the last block: 00 not d7
+SD-FS skipped: no partition table to find a gap in
+.P2
+Reads now complete without error and return wrong content \(em the
+last block of a run reads as zeros, and block 0 does not look like an
+MBR.  So the transfer starts and finishes and something about how the
+words are taken out of the FIFO is wrong, which is a different
+question from the one just answered and is where this picks up.
+.PP
+.B "And the delay is a characterisation, not a fix."
+A millisecond a block caps this path near 500KB/s before anything else
+is counted.  It wants replacing by a wait for whatever the real
+condition is; what that condition is remains unknown, and
+.CW SDEDM 's
+FSM stays in DATAMODE throughout, so it is not that.
+.PP
+One thing settled along the way:
+.CW SDHBCT
+is a live counter, not a latch.  It reads 512 at command issue and 6
+after a failed transfer, and writing it directly over JTAG with the
+kernel halted reads 0x200 straight back \(em so the "sdhbct 6"
+recorded earlier was the controller consuming it, not the driver
+failing to set it.
