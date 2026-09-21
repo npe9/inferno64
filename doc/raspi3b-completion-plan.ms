@@ -7300,3 +7300,40 @@ still unknown, and the next thing to look at is what the card is doing
 -- CMD13's status at the point of the stall, and whether the write
 command was accepted at all -- rather than anything on the host side
 of the FIFO, which has now been rewritten twice to no effect.
+.NH 2
+The card is not the problem
+.P1
+sdhost: write block 2049 failed: sdhsts 0x1 sdcmd 0x800d
+    sdedm 0x10803 (fsm 3 fill 0) sdhbct 384 sdhblc 1
+sdhost:   card rsp 0x900 (state 4, ready for data)
+.P2
+.CW 0x900
+is state 4 -- TRAN -- with READY_FOR_DATA set and no error bit
+anywhere.  The card accepted the command and is sitting there willing.
+.PP
+So the two ends disagree.  The controller's FSM is 3, WRITEDATA, with
+.CW sdhbct
+saying 384 of 512 bytes still expected; the card says it is idle in
+TRAN and ready.  Nothing is being refused and nothing has errored:
+one side is mid-transfer and the other has nothing to do.
+.PP
+That rules the card out and puts the fault between the FIFO and the SD
+bus.  It also rules out everything tried so far, all of which was on
+the host side of the FIFO: writing a word at a time with a poll
+between each, writing eight at a time with one poll per burst, and
+delaying the first poll by a millisecond.  The controller takes 128
+bytes -- two FIFOs of 16 words -- and stops clocking them out.
+.PP
+Worth noting what is NOT set:
+.CW sdhsts
+is
+.CW 0x1 ,
+.CW Hstsdata
+alone.  No
+.CW Hstsrewtout
+(read/write timeout), no CRC error, no
+.CW Hstsfifo .
+The controller is not reporting a fault, it has simply stopped.  That
+is the same shape as the Arasan's DMA stall -- flow control engaging
+correctly and never disengaging -- on a completely different
+controller, which is interesting and may not be a coincidence.

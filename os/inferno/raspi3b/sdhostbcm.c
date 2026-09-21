@@ -714,6 +714,17 @@ bioerror(Ctlr *c, int write, uvlong bno, u32 sts)
 		(ulong)((c->r[SDEDM] >> Fifofillsh) & Fifofillmask),
 		(ulong)c->r[SDHBCT], (ulong)c->r[SDHBLC],
 		(ulong)c->r[SDHCFG]);
+	/*
+	 * And the card's side of it.  SDRSP0 holds the R1 response to
+	 * the command that is running, whose bits 12:9 are the card's
+	 * state (4 is TRAN, 6 is RCV -- receiving data for a write) and
+	 * bit 8 is READY_FOR_DATA.  The host side of the FIFO has been
+	 * rewritten twice with no effect on the write stall, so the
+	 * question is whether the card ever agreed to receive.
+	 */
+	print("sdhost:   card rsp %#lux (state %lud%s)\n",
+		(ulong)c->r[SDRSP0], (ulong)((c->r[SDRSP0] >> 9) & 0xf),
+		(c->r[SDRSP0] & (1<<8))? ", ready for data": "");
 }
 
 static long
