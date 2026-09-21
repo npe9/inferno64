@@ -347,6 +347,21 @@ dmachanstate(void)
 	return dmachan(dmachannel)[Cs];
 }
 
+/*
+ * Bytes the channel still has to move, read live from TXFR_LEN.
+ *
+ * dmafail.left is a snapshot taken when the wait gave up; this is the
+ * engine's own counter now, which is what says whether a stalled
+ * transfer has started moving again.
+ */
+ulong
+dmachanleft(void)
+{
+	if(dmachannel < 0)
+		return 0;
+	return dmachan(dmachannel)[Txfrlen];
+}
+
 int
 dmaxfer(void *mem, u32 pbus, ulong len, int dreq, int tomem)
 {

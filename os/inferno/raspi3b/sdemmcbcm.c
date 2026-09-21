@@ -375,6 +375,7 @@ static int emmcdmaclearirq = 0;
  * rather than imagined.
  */
 static int emmcbiotrace = 0;
+static int emmcdmaunstick = 0;
 static int emmcdmairqen = 0;
 static int emmcdmareset = 0;
 static int emmcdmadatareset = 0;
@@ -1103,6 +1104,55 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				 * top of the loop with dma off.
 				 */
 				/*
+				 * Before anything is reset: can the stall
+				 * be UNSTUCK by acknowledging Iwriterdy?
+				 *
+				 * Iwriterdy is a latched status bit -- it
+				 * stays set until written back -- and
+				 * nothing clears it during a DMA transfer.
+				 * The driver only ever acknowledges it in
+				 * the PIO path, inside awaitirq.  If the
+				 * controller re-asserts DREQ when its
+				 * buffer goes from full to having room, and
+				 * that re-assertion needs the latched bit
+				 * acknowledged, then the first time the
+				 * card goes busy long enough for the buffer
+				 * to fill, DREQ drops and never returns --
+				 * which is exactly this stall, with the
+				 * status still reporting room.
+				 *
+				 * It also explains why dmaclearirq changed
+				 * nothing: that clears the register ONCE
+				 * BEFORE arming, and the re-assertion this
+				 * is about happens three blocks in.
+				 *
+				 * So: acknowledge it, wait, and look at the
+				 * engine again.  If the remaining count
+				 * moves, the mechanism is proved and the
+				 * fix is to acknowledge during the transfer
+				 * rather than after it.  If it does not,
+				 * the hypothesis is dead and this says so.
+				 */
+				if(emmcdmaunstick){
+					ulong was = dmafail.left, now;
+
+					r[Rinterrupt] = Iwriterdy;
+					for(j = 0; j < 200; j++){
+						microdelay(100);
+						now = dmachanleft();
+						if(now != was)
+							break;
+					}
+					now = dmachanleft();
+					print("emmc: UNSTICK ack Iwriterdy: "
+						"remaining %lud -> %lud after "
+						"%d us, cs %#lux%s\n",
+						was, now, (j+1)*100,
+						dmachanstate(),
+						now != was? "  *** IT MOVED ***":
+							" (no change)");
+				}
+				/*
 				 * Stop the ENGINE before stopping the card.
 				 *
 				 * The dump this failure prints ends with
@@ -1572,6 +1622,11 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	if(strcmp(cb->f[0], "biotrace") == 0 && cb->nf == 2){
 		emmcbiotrace = atoi(cb->f[1]);
 		print("emmc: biotrace %d\n", emmcbiotrace);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "dmaunstick") == 0 && cb->nf == 2){
+		emmcdmaunstick = atoi(cb->f[1]);
+		print("emmc: dmaunstick %d\n", emmcdmaunstick);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "dmairqen") == 0 && cb->nf == 2){
