@@ -1224,9 +1224,29 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	 * test that can damage the filesystem it is run from cannot be
 	 * run often.
 	 */
-	if(strcmp(cb->f[0], "dmatest") == 0 && (cb->nf == 3 || cb->nf == 4)){
+	if(strcmp(cb->f[0], "dmatest") == 0 && cb->nf >= 3 && cb->nf <= 5){
 		int nb = atoi(cb->f[1]), cnt = atoi(cb->f[2]), k;
-		int off = cb->nf == 4? (int)strtol(cb->f[3], nil, 0): 0;
+		int off = cb->nf >= 4? (int)strtol(cb->f[3], nil, 0): 0;
+		/*
+		 * "dmatest nb count pageoff 1" alternates a read and a
+		 * write instead of writing throughout.
+		 *
+		 * The filesystem path fails about two writes in three and
+		 * the raw path almost never does, and the clearest thing
+		 * that separates them is that dossrv interleaves FAT
+		 * reads with its writes while dd only writes.  The DMA
+		 * channel is programmed one way for a read -- source the
+		 * data register, DREQ on the source -- and the other way
+		 * for a write; if anything of the first survives into the
+		 * second, the first write after a read is where it would
+		 * show.
+		 *
+		 * "Mixed direction" is written down as already ruled out.
+		 * It was ruled out on the raw path at bs=32768, sixty-four
+		 * blocks, which is a transfer size that has never failed
+		 * at all, so it was not ruled out.
+		 */
+		int rw = cb->nf == 5? atoi(cb->f[4]): 0;
 		uvlong bno;
 		uchar *buf, *p;
 		long got;
@@ -1270,14 +1290,26 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 		p = (uchar*)(((uintptr)buf + BY2PG-1) & ~((uintptr)BY2PG-1));
 		p += off;
 		memset(p, 0x5a, nb*Secsize);
-		print("emmc: dmatest %d blocks x %d, buf %#p page offset %#lux, "
+		print("emmc: dmatest %d blocks x %d%s, buf %#p page offset %#lux, "
 			"dma %d clearirq %d irqen %d reset %d datareset %d "
 			"delay %dus\n",
-			nb, cnt, p, (ulong)((uintptr)p & (BY2PG-1)),
+			nb, cnt, rw? " alternating read/write": "",
+			p, (ulong)((uintptr)p & (BY2PG-1)),
 			emmcdma, emmcdmaclearirq, emmcdmairqen,
 			emmcdmareset, emmcdmadatareset, emmcdmadelay);
 		for(k = 0; k < cnt; k++){
 			bno = 2048 + (uvlong)(k % 1000)*nb;
+			if(rw && (k & 1)){
+				got = emmcbio(u, 0, 0, p, nb, bno);
+				if(got != nb*Secsize){
+					print("emmc: dmatest FAILED reading at "
+						"transfer %d of %d, block %llud: "
+						"got %ld of %d\n",
+						k, cnt, bno, got, nb*Secsize);
+					break;
+				}
+				continue;
+			}
 			got = emmcbio(u, 0, 1, p, nb, bno);
 			if(got != nb*Secsize){
 				print("emmc: dmatest FAILED at transfer %d "
