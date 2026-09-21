@@ -660,3 +660,189 @@ scheduler are worth more together than apart.
 is a separate question and a later one.  It sits 95 commits plus this
 whole line behind, and merging to it is a decision about the tree, not
 about these two branches.
+.NH 1
+What is left, in order, as of 21 September
+.PP
+Their side has moved: Phases A to D landed on the 19th, the
+instrumentation is behind one switch, pc64 maps large pages, the
+.CW parallelvm=1
+corruption turned out to be
+.CW "addgrp() and delgrp()"
+keeping the process-group list with no lock, and Phase D now reads 2.5x
+on the channel workload and 3.7x on module loading over twelve instances
+with no panic.  Their plan has one acceptance item left and it is arm64.
+This is what remains here, and the order is by dependency rather than by
+importance.
+.NH 2
+1. Two checks that need nothing from anybody
+.PP
+.B "1a. Root parity between the two configurations of one board."
+.CW virtarm64
+and
+.CW virtarm64cloud
+are 176 and 237 lines and genuinely different products \(em one has the
+draw stack and
+.CW screenarm ,
+the other
+.CW ethergve ,
+.CW screennone
+and the cloud userland \(em so they are not collapsible.  What is
+collapsible is the cost of that: every addition has to be made twice and
+twice it was not.
+.CW chantest
+went into
+.CW virtarm64
+and not the cloud one, which made an arm64 measurement print "file does
+not exist" three times a cycle for ten minutes; the same shape put
+.CW fw_cfg
+inside
+.CW screenarm.c
+and broke the cloud board's link.  A script that compares the two root
+lists and reports what one has and the other lacks, against a short
+allow-list of the differences that are deliberate, would have caught
+both in a second.
+.PP
+.B "1b. A boot with more than 4 GiB."
+Their first Phase E item is the pool overlap checker firing for the
+first time, on a machine with memory above 4 GiB \(em which is every
+cloud machine and no local test.  It reports a chain head whose magic
+reads 0x2103 rather than
+.CW MAGIC_E ,
+with the next entry unaligned and zero-length; it does not panic and the
+kernel runs Dis, so it is a corruption signal rather than a failure.
+.CW "qemu -m 16384"
+is how the last big-memory fault was reproduced locally, and a check
+that boots pc64 that way and fails on
+.CW pooloverlap
+costs one boot.  It also gives them a reproduction that is free rather
+than rented.
+.PP
+.B "1c. Housekeeping."
+61 test images and 165 MiB of tarballs in the project, no instances
+running.  They are disposable and reproducible in minutes; a sweep needs
+saying out loud because it is 61 irreversible deletes.
+.NH 2
+2. Adopt, which needs permission
+.PP
+The merge is two files: this paper's section 1 for
+.CW mkconfig
+and, in
+.CW os/inferno/virtarm64/virtarm64cloud ,
+their
+.CW chantest
+line against this branch's two instruments \(em keep all three.  Then the
+procedure in
+.I "The procedure"
+above, and the gate: fifteen checks, fourteen boards on exit status, a
+first Dis quantum at
+.CW parallelvm=0 ,
+two rented instances, and
+.CW check-pc64-parallelvm
+run so its verdict is on the record.
+.CW "git merge"
+into this branch was refused as a shared-resource change and is the one
+step here that is not mine to take.
+.NH 2
+3. Three paragraphs that adoption makes false
+.IP \(bu
+.I "Where this stands" 's
+"one thing that is known broken" rests on the run-queue count
+disagreement, which was the check and not the kernel, and on
+.CW parallelvm
+being broken on pc64, which their twelve instances contradict.
+.IP \(bu
+The 462 MiB ceiling on a big machine: large pages landed.
+.IP \(bu
+.CW check-all.sh 's
+comment that
+.CW check-pc64-parallelvm
+is expected to fail.  Whichever way the run comes out, the comment has
+to say what is true.
+.NH 2
+4. The arm64 console fault, which is this branch's board
+.PP
+Five
+.CW t2a-standard-4
+instances bring up four processors and run the parallel VM without
+panicking, and then four of them stop producing console output and never
+resume \(em the serial API's byte offset frozen while the instance stays
+.CW RUNNING ,
+and one of the two
+.CW parallelvm=0
+controls did it too, so it is the board rather than the scheduler.
+.PP
+It cannot be chased from this branch as it stands, and that is worth
+knowing before anyone tries: the transmit-interrupt fix is on their side
+only.  Here,
+.CW virtarm64_kick()
+still leaves
+.CW UartIMSC
+at RX alone and
+.CW uartintr()
+never calls
+.CW uartkick() ,
+which is the older bug that loses the tail of every log.  Reproducing on
+this tree would reproduce the wrong fault.  So this item follows
+adoption, not the other way round.
+.PP
+Then the discriminators, cheapest first, each of which separates two
+causes rather than confirming a guess:
+.IP \(bu
+Is the kernel still generating output?  A kproc that
+.CW iprint s
+a counter every few seconds bypasses the queue.  If
+.CW iprint
+still reaches the wire while
+.CW print
+does not, it is the queue or the transmit path; if neither does, it is
+the UART, the routing, or a lock held forever.
+.IP \(bu
+Is the transmit interrupt still arriving?  Count entries to
+.CW uartintr
+and its TX branch in globals and report them from that same
+.CW iprint .
+.IP \(bu
+Is the console lock held?  Their
+.CW putstrn
+takes a best-effort lock with a short spin; record the holder's
+processor and pc and dump it.
+.IP \(bu
+Is the interrupt stuck active?  Read
+.CW GICD_IROUTER
+for the uart SPI and its
+.CW ISPENDR / ISACTIVER
+bits.  An SPI left active means an EOI that never happened, which would
+explain permanent silence on a running machine.
+.IP \(bu
+The width control:
+.CW *ncpu=1
+on the same instance shape.  Their data has the fault at
+.CW parallelvm=0
+but not at one processor, and that is the arm the conclusion needs.
+.NH 2
+5. The pool overlap signal
+.PP
+After 1b has a local reproduction, or after it does not \(em if 16 GiB
+under QEMU does not fire it, the signal is about the hardware's memory
+map rather than the size, and that is itself the finding.  The allocator
+is their region; the reproduction and the check are this branch's.
+.NH 2
+6. What the default flip needs, and whose call it is
+.PP
+Items 4 and 5 answered, the arm64 throughput measurement Phase D lacks
+can be taken \(em
+.CW t2a-standard-4 ,
+.CW "*parallelvm=1"
+against
+.CW "*parallelvm=0" ,
+Dis quanta per tick rather than console prints, which is the instrument
+lesson their plan already paid for.  Then
+.CW parallelvm=1
+as a default is a decision on their plan, with this branch supplying the
+hardware arm and the second workload.
+.PP
+.CW "p256test -s"
+is still unexercised at four processors: their second workload was
+module loading.  It is the cheaper of the two to run and the one with a
+baseline on both architectures, so it is worth carrying into item 6
+rather than being left as a thing that was built and never used.
