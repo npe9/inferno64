@@ -71,6 +71,15 @@ LOG=${LOG:-$S/dmarate-console.log}
 clearlog() {
 	snap "$S/dr-keep.txt"
 	cat "$S/dr-keep.txt" >>"$LOG" 2>/dev/null || true
+	# "clear" empties the DISPLAY, "scrollback 0" empties the
+	# HISTORY, and both are needed.  Resetting the scrollback alone
+	# leaves the last screenful visible, so a hardcopy still shows
+	# it -- which is how a DMA WRITE FAILURE from write 1 was still
+	# on screen for writes 2, 3, 4 and 5 and scored each of them as
+	# a failure, when in fact the server had panicked and those
+	# writes never ran at all.
+	screen -S "$SESS" -X clear 2>/dev/null
+	sleep 1
 	screen -S "$SESS" -X scrollback 0 2>/dev/null
 	sleep 1
 	screen -S "$SESS" -X scrollback 10000 2>/dev/null
@@ -96,12 +105,23 @@ clearlog() {
 #
 restart() {	# fresh kernel over JTAG, then wait for the shell
 	clearlog
-	echo "  ... loading a fresh kernel over JTAG"
+	#
+	# Retried, because jtagrestart does not always take.  Observed:
+	# a run that reported "stub at 0x70000 ... pc 0x70000", resumed,
+	# and left the board still running its old kernel at
+	# clockpoll+0x20 with no banner.  It worked on the next attempt
+	# with nothing changed.  Until that is understood, the restart
+	# checks whether the board actually came back rather than
+	# assuming a clean exit means a clean boot.
+	#
+	try=1
+	while [ $try -le 3 ]; do
+	echo "  ... loading a fresh kernel over JTAG (attempt $try)"
 	( cd "$ROOT" && timeout 180 openocd -f "$ADAPTER" \
 		-f tools/jtag/raspi3b.cfg \
 		-c 'init; jtagrestart; resume; exit' ) >/dev/null 2>&1
 	i=0
-	while [ $i -lt 40 ]; do
+	while [ $i -lt 12 ]; do
 		snap "$S/dr-boot.txt"
 		now=`LC_ALL=C grep -ac 'entered over JTAG' "$S/dr-boot.txt" || true`
 		if [ "$now" -gt 0 ]; then
@@ -111,7 +131,10 @@ restart() {	# fresh kernel over JTAG, then wait for the shell
 		sleep 6
 		i=`expr $i + 1`
 	done
-	echo "  ... board did not come back; abandoning this arm"
+	try=`expr $try + 1`
+	clearlog
+	done
+	echo "  ... board did not come back after 3 attempts; abandoning this arm"
 	return 1
 }
 
