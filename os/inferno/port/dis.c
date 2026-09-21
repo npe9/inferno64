@@ -250,13 +250,33 @@ flushlocal(void)
  * which is the same reasoning Go uses to avoid waiting on an M in a
  * syscall.
  *
- * parallelvm is the switch.  At 0 the VM lock is taken as before and
- * this is inert -- nothing else can be running, so stopping the world
- * stops nothing.  At 1 the lock is not taken and this is what keeps the
- * collector correct.  It defaults to 0 because that is the tested
- * configuration, and the other one is turned on to test it.
+ * parallelvm is the switch.  At 1 the VM lock is not taken and this is
+ * what keeps the collector correct.  At 0 the lock is taken as before
+ * and this is inert -- nothing else can be running, so stopping the
+ * world stops nothing.
+ *
+ * It defaults to 1.  The evidence, all of it on rented hardware rather
+ * than an emulator, is in doc/multicore-plan.ms:
+ *
+ *	channel traffic, amd64, 4 Xeons       2.5x   6 instances
+ *	module loading, amd64, 4 Xeons        3.7x   6 instances
+ *	channel traffic, arm64, 4 Neoverse    4.1x   6 instances
+ *
+ * Eighteen instances with it on, no panic on any of them, and the
+ * lock-on controls returning the same numbers they always have.  The
+ * arm64 figures are the tightest of the three -- 21.1, 21.7, 22.5
+ * against 88.2, 88.7, 89.1 Dis quanta per tick -- which is half a per
+ * cent of spread inside each arm.
+ *
+ * It defaulted to 0 for a long time and was right to.  The first run of
+ * this same measurement panicked on three instances of four, and the
+ * cause was real: addgrp() and delgrp() maintained the process-group
+ * list with no lock, because a global vmlock had always meant one
+ * executor at a time.  Turning this on is only honest now because that
+ * is found and fixed, and because *parallelvm=0 still selects the old
+ * behaviour for anyone who needs it.
  */
-int parallelvm = 0;	/* MULTICORE: 1 = no VM lock, stop-the-world GC */
+int parallelvm = 1;	/* MULTICORE: 1 = no VM lock, stop-the-world GC */
 int gcstw;		/* a collection wants every other context stopped */
 int stwwaits;		/* MULTICORE INSTRUMENTATION - temporary: turns round
 			 * the wait loop.  It used to count sched() spins and

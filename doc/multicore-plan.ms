@@ -8906,3 +8906,116 @@ boots, brings up four processors and runs without panicking on a
 and then the console goes quiet on four instances in five \(em including
 one of the two lock-on controls.  That is a board-level fault to find
 before arm64 can produce a throughput number at all.
+.NH 1
+arm64 measured, and the default flipped
+.PP
+The console that went quiet on four t2a instances in five was two bugs
+in the PL011 driver and one line of scheduler instrumentation, and none
+of them was the parallel VM.
+.NH 2
+The uart
+.PP
+.B "Clearing every interrupt cause, including one never handled."
+.CW uartintr()
+sampled
+.CW UartMIS ,
+drained the receive fifo, and wrote
+.CW UartICRALL .
+The receive loop runs until the fifo is empty or 128 characters have
+gone by, so under steady input it always runs its full bound \(em and a
+transmit interrupt that asserts during those 128 characters is not in
+the sampled
+.CW mis ,
+is not serviced, and is then cleared anyway.  The PL011 raises TXI on
+the transition of the fifo level past its trigger, so with the fifo
+already below the trigger it never asserts again.  Output stops for
+good and the kernel runs on.
+.PP
+Reproduced rather than reasoned, and the reproduction is what had been
+missing: a serial port with input on it.  The same kernel and workload
+for 400 seconds, twice \(em without input the console produced 197,736
+bytes, with input 7,353 and it died during boot.  Every local test
+before this had run with
+.CW </dev/null
+on stdin, which is why five months of QEMU never showed it and a cloud
+console did.  The fix writes
+.CW mis
+back to
+.CW ICR ,
+clearing exactly what this pass handles.
+.PP
+.B "And a transmit interrupt disabled with output still queued."
+.CW virtarm64_kick()
+decided whether to keep TXIM enabled from
+.CW "uart->op < uart->oe"
+\(em the staging buffer alone.  The write loop is bounded at 128 and
+.CW uartstageoutput()
+stages up to 1024, so
+.CW op
+meets
+.CW oe
+on every eighth full pass, and exiting at the bound with
+.CW "op == oe"
+says "nothing left" while blocks are still queued.  Nothing would turn
+TXIM back on: a writer only kicks when
+.CW Qstarve
+is set, and
+.CW qconsume()
+sets
+.CW Qstarve
+only when the queue is EMPTY.
+.PP
+This one was committed as reasoned, with no observed instance \(em seven
+minutes under QEMU produced none.  Compute Engine produced 92, 56 and 9
+on three
+.CW parallelvm=1
+instances and zero on both lock-on controls, so it is real, it is load
+dependent, and the counter that records it earned its place.
+.NH 2
+The instrumentation that drowned the console
+.PP
+.CW tellsomeone()
+printed a line every time
+.CW qproduce()
+could not fit an exit message into the parent.  Under the soak workload
+that is most of the console output: 8,232 occurrences in a five-minute
+boot.  Four lines and then a count, and the same boot goes from 327 KiB
+of console output to 45 KiB for the same work.
+.PP
+That is why the fault looked like a scheduler bug.  The
+.CW parallelvm=1
+arm exits more programs per second and so produced about six times the
+console traffic of its control \(em so the arm that drowns its console
+is the arm whose console dies.
+.NH 2
+arm64 on a t2a, six instances
+.IP
+.nf
+                        panics   Dis quanta per tick
+lock on  (parallelvm=0)   0/3    21.1  21.7  22.5
+lock off (parallelvm=1)   0/3    88.2  88.7  89.1
+.fi
+.PP
+4.1x at four Neoverse processors, half a per cent of spread inside each
+arm, every console still growing at the end of the run.  This is the
+tightest measurement on the branch.
+.NH 2
+So the default is 1
+.IP
+.nf
+                                 gain   instances
+channel traffic, amd64            2.5x      6
+module loading, amd64             3.7x      6
+channel traffic, arm64            4.1x      6
+.fi
+.PP
+Eighteen instances with the parallel VM on, no panic on any of them,
+across two workloads and two architectures, which is exactly what Phase
+D's acceptance asked for.
+.CW *parallelvm=0
+still selects the old behaviour.
+.PP
+It defaulted to 0 for a long time and was right to: the first run of
+this same measurement panicked on three instances in four, and the
+cause was a real one.  Turning it on is only honest because that cause
+was found, named and fixed.
