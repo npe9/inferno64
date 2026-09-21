@@ -241,6 +241,7 @@ static struct {
 				 * that has never been looked at before a
 				 * transfer rather than after one */
 	ulong	emmcstatus;
+	ulong	emmcirpten;	/* whether the request was enabled at all */
 } dmapre;
 
 /*
@@ -309,6 +310,37 @@ static struct {
  * way.
  */
 static int emmcdmaclearirq = 0;
+/*
+ * Does the controller gate its DMA request on the interrupt ENABLE
+ * register rather than on the status?
+ *
+ * Noticed in the first register dump ever taken over JTAG, and written
+ * down in tools/jtag/README at the time as untestable without a way to
+ * write that register on a live machine: irpt_en is 0.  This driver
+ * arms it only when it is about to sleep, so for a DMA transfer it
+ * stays zero throughout.
+ *
+ * Two experiments since have made it the best remaining explanation by
+ * eliminating the others.  The stale eMMC interrupt is not it
+ * (dmaclearirq clears Iwriterdy before arming; the stall is
+ * unchanged).  Stale DMA channel state is not it (dmareset clears END;
+ * the stall is unchanged, and the DREQ bit that remains is the live
+ * line, not a leftover).  What the failure dumps say is that at the
+ * stall the engine is ACTIVE with DREQ_STOPS_DMA set and the DREQ bit
+ * CLEAR -- the engine is waiting correctly and the controller has
+ * stopped asking -- while that same controller's status still has
+ * Iwriterdy set.  It has room, it says so in the status, and it is not
+ * raising the request.
+ *
+ * So: set Ireadrdy|Iwriterdy in Rirpten for the transfer and take them
+ * out again afterwards.  If the stall goes, the request was gated on
+ * the enable.  If it does not, that is a third mechanism eliminated
+ * and the answer is somewhere else entirely.
+ *
+ * A question, not a setting, and off by default until it has been
+ * asked properly -- the same way both of the others were asked.
+ */
+static int emmcdmairqen = 0;
 static int emmcdmareset = 0;
 static int emmcdmadatareset = 0;
 static int emmcdmadelay = 0;
@@ -857,7 +889,7 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	volatile u32 *r = c->r;
 	uchar *p = a;
 	long i, nthis;
-	int j, k, dma;
+	int j, k, dma, dmarv;
 	u32 arg, w, sts, flags;
 
 	USED(lun);
@@ -918,13 +950,25 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			}
 			if(emmcdmareset)
 				dmachanreset();
+			if(emmcdmairqen)
+				r[Rirpten] |= Ireadrdy|Iwriterdy;
 			if(emmcdmadelay)
 				microdelay(emmcdmadelay);
 			dmapre.cs = dmachanstate();
 			dmapre.emmcirq = r[Rinterrupt];
 			dmapre.emmcstatus = r[Rstatus];
-			if(dmaxfer(p, Emmcdatabus, nthis*Secsize,
-			    Emmcdreq, !write) < 0){
+			dmapre.emmcirpten = r[Rirpten];
+			dmarv = dmaxfer(p, Emmcdatabus, nthis*Secsize,
+			    Emmcdreq, !write);
+			/*
+			 * Put Rirpten back whatever happened.  These bits
+			 * are the sleeping path's to manage, and leaving
+			 * them set would hand it interrupts it did not ask
+			 * for.
+			 */
+			if(emmcdmairqen)
+				r[Rirpten] &= ~(Ireadrdy|Iwriterdy);
+			if(dmarv < 0){
 				ulong moved = dmafail.len - dmafail.left;
 
 				/*
@@ -945,7 +989,7 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					"    DMA remaining   %lud blocks / %lud bytes\n"
 					"    dma cs %#lux debug %#lux ti %#lux\n"
 					"    dma src %#lux dst %#lux %s\n"
-					"    BEFORE: dma cs %#lux emmc interrupt %#lux status %#lux\n"
+					"    BEFORE: dma cs %#lux emmc interrupt %#lux status %#lux irpten %#lux\n"
 					"    emmc status %#lux interrupt %#lux\n"
 					"    emmc control0 %#lux control1 %#lux blksizecnt %#lux\n",
 					write? "WRITE": "READ", bno+i,
@@ -957,6 +1001,7 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					dmafail.err? "(engine reported an error)":
 						"(engine still active)",
 					dmapre.cs, dmapre.emmcirq, dmapre.emmcstatus,
+					dmapre.emmcirpten,
 					(ulong)r[Rstatus], (ulong)r[Rinterrupt],
 					(ulong)r[Rcontrol0], (ulong)r[Rcontrol1],
 					(ulong)r[Rblksizecnt]);
@@ -1173,6 +1218,11 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	if(strcmp(cb->f[0], "dmaclearirq") == 0 && cb->nf == 2){
 		emmcdmaclearirq = atoi(cb->f[1]);
 		print("emmc: dmaclearirq %d\n", emmcdmaclearirq);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "dmairqen") == 0 && cb->nf == 2){
+		emmcdmairqen = atoi(cb->f[1]);
+		print("emmc: dmairqen %d\n", emmcdmairqen);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "dmareset") == 0 && cb->nf == 2){
