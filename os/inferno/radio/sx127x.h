@@ -10,47 +10,25 @@
  * That split is the point.  The controller under this changes with the
  * machine (an MPS2 shield is a PL022, a PyCubed is a SAMD51 SERCOM) and
  * is thrown away with it; this file is what carries over.
+ *
+ * os/inferno/radio/radio.h has the part #W sees: a Radio begins with
+ * its driver's operations and its receive queue, and everything below
+ * is this driver's and is declared here.
  */
 
-typedef struct Spidev Spidev;
-typedef struct Radio Radio;
+#include "../radio/radio.h"
 
-struct Spidev
-{
-	char	*name;
-	void	*aux;			/* the board's own */
-	void	(*select)(Spidev*, int);	/* chip select: 1 asserted, 0 not */
-	int	(*byte)(Spidev*, int);	/* clock one byte out, return the one in */
-	void	(*lock)(Spidev*);	/* the bus is shared with storage */
-	void	(*unlock)(Spidev*);
-};
+typedef struct Sx127x Sx127x;
 
 enum {
 	Maxpayload	= 255,		/* what the FIFO holds */
 	Carriertries	= 8,		/* listens before going anyway */
 	Carrierwait	= 20,		/* ms between them, plus as much again */
-
-	/*
-	 * What a read of #W/radio0/pkt returns in front of the payload.
-	 * recvmsg() rather than recv(): the things LoRa knows about a
-	 * packet that the packet does not contain -- how strong it was,
-	 * how clean, whether its CRC checked, when it arrived -- handed
-	 * over with it, out of the same queue entry, so that nothing is
-	 * looked up afterwards and nothing races.  None of it goes on
-	 * the air.
-	 *
-	 *	uchar	len[2]		payload bytes following
-	 *	uchar	rssi[2]		dBm, signed
-	 *	uchar	snr[2]		dB, signed
-	 *	uchar	flags[2]	Pcrcerr
-	 *	uchar	tick[4]		arrival, in clock ticks
-	 */
-	Pkthdrlen	= 12,
-	Pcrcerr		= 1<<0,
 };
 
-struct Radio
+struct Sx127x
 {
+	Radio;				/* dev, rq: what #W sees */
 	Spidev	*spi;
 	int	version;		/* RegVersion, 0x12 for an SX1276 */
 	int	present;
@@ -67,9 +45,6 @@ struct Radio
 	/* what the last received packet looked like */
 	int	rssi;
 	int	snr;
-
-	Lock	rl;			/* the claim on the receive path */
-	int	reading;		/* somebody has it */
 
 	/* duty cycle */
 	uvlong	airms;			/* time on the air, total */
@@ -89,12 +64,7 @@ struct Radio
 	Rendez	r;			/* a packet arrived */
 	Rendez	txr;			/* the last one went */
 	int	txdone;
-	Queue	*rq;			/* received packets, one block each */
 };
 
 Radio*	sx127xinit(Spidev*, int irq);
-int	sx127xsend(Radio*, uchar*, int);
-Block*	sx127xrecv(Radio*, int);
-int	sx127xctl(Radio*, char*, int);
-int	sx127xstat(Radio*, char*, int);
 void	sx127xinterrupt(Radio*);

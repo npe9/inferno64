@@ -85,7 +85,7 @@ enum {
 };
 
 static void
-wr(Radio *rr, int addr, int val)
+wr(Sx127x *rr, int addr, int val)
 {
 	Spidev *s = rr->spi;
 
@@ -96,7 +96,7 @@ wr(Radio *rr, int addr, int val)
 }
 
 static int
-rd(Radio *rr, int addr)
+rd(Sx127x *rr, int addr)
 {
 	Spidev *s = rr->spi;
 	int v;
@@ -109,7 +109,7 @@ rd(Radio *rr, int addr)
 }
 
 static void
-wrburst(Radio *rr, int addr, uchar *p, int n)
+wrburst(Sx127x *rr, int addr, uchar *p, int n)
 {
 	Spidev *s = rr->spi;
 	int i;
@@ -122,7 +122,7 @@ wrburst(Radio *rr, int addr, uchar *p, int n)
 }
 
 static void
-rdburst(Radio *rr, int addr, uchar *p, int n)
+rdburst(Sx127x *rr, int addr, uchar *p, int n)
 {
 	Spidev *s = rr->spi;
 	int i;
@@ -135,7 +135,7 @@ rdburst(Radio *rr, int addr, uchar *p, int n)
 }
 
 static void
-setmode(Radio *rr, int mode)
+setmode(Sx127x *rr, int mode)
 {
 	int v;
 
@@ -144,7 +144,7 @@ setmode(Radio *rr, int mode)
 }
 
 static void
-setfreq(Radio *rr, u32 hz)
+setfreq(Sx127x *rr, u32 hz)
 {
 	uvlong frf;
 
@@ -180,7 +180,7 @@ bwcode(u32 bw)
  * both of them matter -- see lowdatarate() and timeonair().
  */
 static u32
-symbolus(Radio *rr)
+symbolus(Sx127x *rr)
 {
 	if(rr->bw == 0)
 		return 0;
@@ -188,7 +188,7 @@ symbolus(Radio *rr)
 }
 
 static void
-setmodem(Radio *rr)
+setmodem(Sx127x *rr)
 {
 	int c, ldro;
 
@@ -234,7 +234,7 @@ nowms(void)
  * the duty cycle is off or the silence has already been served.
  */
 static vlong
-dutyowed(Radio *rr)
+dutyowed(Sx127x *rr)
 {
 	vlong owed;
 
@@ -245,7 +245,7 @@ dutyowed(Radio *rr)
 }
 
 static int
-timeonair(Radio *rr, int n)
+timeonair(Sx127x *rr, int n)
 {
 	uvlong ts, total;
 	int num, den, nsym, ldro;
@@ -266,7 +266,7 @@ timeonair(Radio *rr, int n)
 }
 
 static void
-setpower(Radio *rr, int dbm)
+setpower(Sx127x *rr, int dbm)
 {
 	if(dbm < 2)
 		dbm = 2;
@@ -278,7 +278,7 @@ setpower(Radio *rr, int dbm)
 }
 
 static void
-listen(Radio *rr)
+listen(Sx127x *rr)
 {
 	wr(rr, Sxdiomapping1, 0x00);		/* DIO0 = RxDone */
 	setmode(rr, Mrxcont);
@@ -287,7 +287,7 @@ listen(Radio *rr)
 static int
 txdone(void *a)
 {
-	Radio *rr = a;
+	Sx127x *rr = a;
 
 	return rr->txdone;
 }
@@ -297,9 +297,11 @@ txdone(void *a)
  * medium, and who a packet is for is not its business.  See
  * doc/radio-interface.ms.
  */
-int
-sx127xsend(Radio *rr, uchar *p, int n)
+static int
+sx127xsend(Radio *r, uchar *p, int n)
 {
+	Sx127x *rr = (Sx127x*)r;
+
 	int ms, i, busy;
 	vlong owed;
 
@@ -418,8 +420,10 @@ sx127xsend(Radio *rr, uchar *p, int n)
  * doc/radio-interface.ms.
  */
 void
-sx127xinterrupt(Radio *rr)
+sx127xinterrupt(Radio *r)
 {
+	Sx127x *rr = (Sx127x*)r;
+
 	uchar buf[Maxpayload];
 	Block *b;
 	int flags, n, rssi, snr, pf;
@@ -483,9 +487,11 @@ sx127xinterrupt(Radio *rr)
 		wakeup(&rr->r);
 }
 
-int
-sx127xctl(Radio *rr, char *a, int n)
+static int
+sx127xctl(Radio *r, char *a, int n)
 {
+	Sx127x *rr = (Sx127x*)r;
+
 	Cmdbuf *cb;
 	Cmdtab *ct;
 	static Cmdtab ctltab[] = {
@@ -583,9 +589,11 @@ sx127xctl(Radio *rr, char *a, int n)
 	return n;
 }
 
-int
-sx127xstat(Radio *rr, char *a, int n)
+static int
+sx127xstat(Radio *r, char *a, int n)
 {
+	Sx127x *rr = (Sx127x*)r;
+
 	char *p, *e;
 
 	p = a;
@@ -617,15 +625,29 @@ sx127xstat(Radio *rr, char *a, int n)
 	return p - a;
 }
 
+/*
+ * What #W calls through.  Its three entry points take a Radio and the
+ * driver casts, which is the whole of the separation: #W has no
+ * declaration for anything below the first two fields.
+ */
+static Radiodev sx127xdev = {
+	"SX1276",
+	Maxpayload,
+	sx127xsend,
+	sx127xctl,
+	sx127xstat,
+};
+
 Radio*
 sx127xinit(Spidev *s, int irq)
 {
-	Radio *rr;
+	Sx127x *rr;
 
 	USED(irq);
-	rr = malloc(sizeof(Radio));
+	rr = malloc(sizeof(Sx127x));
 	if(rr == nil)
 		return nil;
+	rr->dev = &sx127xdev;
 	rr->spi = s;
 
 	s->lock(s);
@@ -675,5 +697,5 @@ sx127xinit(Spidev *s, int irq)
 
 	print("sx127x %s: SX1276, %ud Hz, sf%d, bw %ud\n",
 		s->name, rr->freq, rr->sf, rr->bw);
-	return rr;
+	return (Radio*)rr;
 }

@@ -237,7 +237,21 @@ transmits that found the air busy
 .RB ( busywaits )
 and those that went out over it after eight tries
 .RB ( sentanyway ).
+.PP
+The part behind
+.B #W
+is reached through a table of operations it fills in \- send, ctl,
+stat, and how much one packet carries \- and the device dereferences
+nothing else of it.  A second kind of part is a second driver and no
+change here; the layers above,
+.I lora (3)
+and
+.I ax25 (3),
+attach to a packet device by file descriptor and never knew which part
+it was.
 .SH SOURCE
+.B /os/inferno/radio/radio.h
+.br
 .B /os/inferno/radio/devradio.c
 .br
 .B /os/inferno/radio/sx127x.c

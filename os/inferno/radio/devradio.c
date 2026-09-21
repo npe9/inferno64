@@ -4,7 +4,7 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"../port/error.h"
-#include	"../radio/sx127x.h"
+#include	"../radio/radio.h"
 
 /*
  * #W, a packet radio.
@@ -231,9 +231,9 @@ radioopen(Chan *c, u32 omode)
 	poperror();
 
 	if(TYPE(c->qid) == Qdata)
-		c->iounit = Maxpayload;
+		c->iounit = rr->dev->maxpayload;
 	else if(TYPE(c->qid) == Qpkt)
-		c->iounit = Pkthdrlen + Maxpayload;
+		c->iounit = Pkthdrlen + rr->dev->maxpayload;
 	return c;
 }
 
@@ -290,7 +290,7 @@ radioread(Chan *c, void *a, s32 n, s64 offset)
 		 * same entry, so a reader of pkt gets the packet and what
 		 * was known about it together and races nobody.
 		 */
-		b = qbread(rr->rq, Pkthdrlen + Maxpayload);
+		b = qbread(rr->rq, Pkthdrlen + rr->dev->maxpayload);
 		if(b == nil)
 			return 0;
 		rv = BLEN(b);
@@ -331,7 +331,7 @@ radioread(Chan *c, void *a, s32 n, s64 offset)
 			free(buf);
 			nexterror();
 		}
-		sx127xstat(rr, buf, Statlen);
+		rr->dev->stat(rr, buf, Statlen);
 		rv = readstr(offset, a, n, buf);
 		poperror();
 		free(buf);
@@ -352,18 +352,18 @@ radiowrite(Chan *c, void *a, s32 n, s64)
 
 	switch(TYPE(c->qid)){
 	case Qdata:
-		if(n > Maxpayload){
+		if(n > rr->dev->maxpayload){
 			snprint(up->genbuf, sizeof up->genbuf,
 				"radio: %d bytes is past the %d byte payload",
-				n, Maxpayload);
+				n, rr->dev->maxpayload);
 			error(up->genbuf);
 		}
-		if(sx127xsend(rr, a, n) < 0)
+		if(rr->dev->send(rr, a, n) < 0)
 			error("radio: transmit refused");
 		return n;
 
 	case Qctl:
-		return sx127xctl(rr, a, n);
+		return rr->dev->ctl(rr, a, n);
 	}
 	error(Egreg);
 	return 0;
