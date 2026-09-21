@@ -760,6 +760,21 @@ kupdate()
 		total);
 }
 
+#
+# The card's two big writers, in the order they must not overlap.
+#
+# 1.9MB of kernel and 1.5MB of test data through one dossrv at the
+# same time produced a kernel whose first 208KB were the previous
+# kernel's bytes -- measured off the card in a reader, after it
+# refused to boot.  One after the other, in one process, is all that
+# is needed to stop that.
+#
+kuthenfat()
+{
+	kupdate();
+	fatwrite();
+}
+
 unmountremote()
 {
 	sys->unmount(nil, "/n/remote");
@@ -1146,13 +1161,18 @@ fatcheck()
 			#
 			# Running it first and by itself keeps the reason it
 			# was moved -- it still happens before anything that
-			# can wedge -- and removes the second writer.  The
-			# checks then run after, which is where they were
-			# and where they belong: they are checks, and the
-			# update is the thing the board cannot do without.
+			# can wedge -- and removes the second writer.
 			#
-			kupdate();
-			fatwrite();
+			# But not on this process.  kupdate waits up to five
+			# minutes for the IP stack to have an address, and
+			# calling it here blocks fatcheck for the whole of
+			# that wait, so FAT-BIG never runs at all -- which is
+			# exactly what the first attempt at this did.  The
+			# pair goes into one spawned process instead: the two
+			# writers are serialised with each other, and neither
+			# is on the boot's timeline.
+			#
+			spawn kuthenfat();
 			return;
 		}
 		sys->sleep(100);
