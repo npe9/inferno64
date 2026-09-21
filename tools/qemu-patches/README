@@ -1205,3 +1205,24 @@ attached, a default kernel prints:
 	they could be anything.  Those three numbers are a choice and
 	said to be one; they are Adafruit's suggested wiring and what
 	os/inferno/raspi3b/spipiradio.c drives.  Off by default.
+
+0037 hw/ssi/sx1276: say when the part can hear again.
+	can_receive() returning false does not only drop the frame in
+	hand: qemu stops the peer's queue at that point and does not
+	start it again until qemu_flush_queued_packets() is called, and
+	0028 never called it.  A radio is deaf while it transmits, so
+	the first time two stations talk at once the queue stops and
+	the link then carries nothing at all, for ever, with no flag,
+	no counter and nothing in any log to say why.
+	Any protocol where both ends speak before either has listened
+	hits it immediately.  keyring->auth() is one, and could not be
+	run over this radio at all: two Inferno stations counted 21
+	frames out and 1 in, and the time went into the guest, which
+	was innocent.  Three separate guest-side changes were made to
+	work around it and all three were measuring this.
+	With the flush, keyring->auth() completes over two SX1276s on
+	one socket -- 12 frames each way, no retries, each end learning
+	the other's certified identity and deriving the same 128-byte
+	secret -- and AX.25 connected mode delivers ten frames through
+	a window of four with or without T2, which is what said the T2
+	measurement had been measuring this too.

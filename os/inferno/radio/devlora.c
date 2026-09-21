@@ -928,7 +928,27 @@ lorawrite(Chan *c, void *a, s32 n, s64)
 			cv->waiting = 1;
 			xmit(cv->remote, id, flags, a, n);
 			cv->nsent++;
-			tsleep(&cv->ackr, gotack, cv, cv->ackwait);
+			/*
+			 * Back off by a random interval in [T/2, 3T/2)
+			 * rather than by T exactly.  A radio is half
+			 * duplex, so two stations that transmit at the
+			 * same moment hear nothing at all, and a fixed
+			 * retry gives two of them that collided once no
+			 * reason to stop colliding.  That is the standard
+			 * answer to a shared medium and it costs three
+			 * lines.
+			 *
+			 * It is not, though, what fixed the failure it
+			 * was written during: that was a stalled queue in
+			 * the SX1276 model, which dropped the link
+			 * permanently at the first collision.  See
+			 * tools/qemu-patches/0037.  Nothing measured here
+			 * needed this, and /dev/random on two boards
+			 * running one image does give different answers,
+			 * so the spread is real.
+			 */
+			tsleep(&cv->ackr, gotack, cv,
+				cv->ackwait/2 + nrand(cv->ackwait));
 			cv->waiting = 0;
 			if(cv->gotack){
 				rv = n;

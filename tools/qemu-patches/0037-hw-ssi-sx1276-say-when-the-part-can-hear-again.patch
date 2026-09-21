@@ -1,0 +1,52 @@
+From: Inferno RIO
+Subject: [PATCH] hw/ssi/sx1276: say when the part can hear again
+
+can_receive() returning false does not only drop the frame in hand.
+qemu stops the peer's queue at that point and does not start it again
+until somebody calls qemu_flush_queued_packets(); this model never
+did.  A radio is deaf while it transmits, so the first time two
+stations talk at once the queue stops -- and the link then carries
+nothing at all, for ever, with no flag, no counter and no log line
+anywhere to say why.
+
+It is not a rare case.  Any protocol where both ends speak before
+either has listened hits it immediately: keyring->auth() is one, and
+it could not be run over this radio at all.  What the guest sees is a
+receiver that stops for no reason it can name, which is where an
+afternoon goes; two Inferno stations counted 21 frames out and 1 in
+and both blamed their own driver.
+
+Flush when the part enters a receiving mode, which is the only moment
+at which the answer to can_receive() changes from false to true.
+
+With this, keyring->auth() completes over two SX1276s on one socket:
+12 frames each way, no retries, each end learning the other's
+certified identity and deriving the same 128-byte secret.
+---
+diff --git a/hw/ssi/sx1276.c b/hw/ssi/sx1276.c
+index c5a54f3..fefb50c 100644
+--- a/hw/ssi/sx1276.c
++++ b/hw/ssi/sx1276.c
+@@ -309,6 +309,22 @@ static void sx1276_set_opmode(SX1276State *s, uint8_t val)
+         }
+         sx1276_transmit(s);
+     }
++
++    /*
++     * Tell the net layer the part can hear again.
++     *
++     * can_receive() returning false does not only drop the frame in
++     * hand: qemu stops the peer's queue and does not restart it until
++     * somebody flushes.  A radio is deaf while it transmits, so the
++     * first time two stations talk at once this happens -- and without
++     * this call the link never carries anything again.  The guest sees
++     * a receiver that stops for no reason it can name, which is where
++     * an afternoon goes.
++     */
++    if ((now == MODE_RXCONTINUOUS || now == MODE_RXSINGLE) &&
++        was != now && s->nic) {
++        qemu_flush_queued_packets(qemu_get_queue(s->nic));
++    }
+ }
+ 
+ static void sx1276_reg_write(SX1276State *s, uint8_t addr, uint8_t val)
