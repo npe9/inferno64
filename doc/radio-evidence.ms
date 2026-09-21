@@ -450,8 +450,12 @@ other holds \(em
 .CW "peer satellite"
 at one end and
 .CW "peer ground"
-at the other \(em and derives the same 128-byte secret: 12 frames
-each way, unacknowledged, no retries.  It had been asserted since this
+at the other \(em and derives the same 128-byte secret: twelve
+messages each way, costing 15 and 17 transmissions with 3 and 5
+retries.  The retries are the point: both ends send before either has
+received, so their first transmissions overlap and neither hears the
+other, and carrier sense cannot help two stations that start in the
+same instant.  Retransmission can.  It had been asserted since this
 document was written and
 .I radiossl (1)
 had said plainly that no part of

@@ -843,6 +843,14 @@ settled on a message size nobody told it.  There is no
 .CW devip
 in that kernel.
 .PP
+Acknowledgement and retry are on for that, and have to be.  Both ends
+of
+.CW keyring->auth ()
+send before either has received, so on a half-duplex radio their first
+transmissions overlap and neither hears the other; carrier sense
+cannot help two stations that start in the same instant.  It costs 15
+and 17 transmissions for twelve messages.
+.PP
 The one thing that had to be fixed to get there was not in this tree.
 The SX1276 model stopped its peer's queue the first time two stations
 transmitted at once and never restarted it, so a symmetric protocol

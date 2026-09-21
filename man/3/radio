@@ -143,6 +143,9 @@ Bandwidth; one of the values the part has, 7800 through 500000.
 .BI cr " n"
 Coding rate denominator, 5 to 8.
 .TP
+.BI carrier " onPorB off"
+Listen before transmitting.  Off by default.
+.TP
 .BI duty " percent"
 The share of the air this radio may use, 0 to 100.  Zero is off and is
 the default.
@@ -227,7 +230,13 @@ all the air this radio has used since boot
 how long until it may transmit again
 .RB ( airtime-owed-ms )
 and how many writes have had to wait for that
-.RB ( dutywaits ).
+.RB ( dutywaits ),
+whether carrier sense is on
+.RB ( carrier ),
+transmits that found the air busy
+.RB ( busywaits )
+and those that went out over it after eight tries
+.RB ( sentanyway ).
 .SH SOURCE
 .B /os/inferno/radio/devradio.c
 .br
@@ -266,11 +275,30 @@ and those are worth telling apart from a different chip.
 Only one interface exists.  A PyCubed has two radio sockets on one SPI
 bus, RF1 and RF2; this drives the first.
 .PP
-Nothing arbitrates the air between stations.  There is no carrier
-sense and no backoff, so two stations that write at once collide;
-.B duty
-limits what one radio spends and says nothing about what it spends it
-on top of.
+.B Carrier
+is the smallest thing that arbitrates the air.  RegModemStat's
+signal-detected bit is what a part in receive says about the channel,
+and with
+.B carrier
+on a transmit waits while it is set, up to eight times with a
+randomised pause, and then goes out anyway.  Bounded on purpose: a
+radio that refuses to transmit while anyone else is talking cannot
+finish a conversation on a busy channel, and a silent satellite is
+worse than a collision.
+.PP
+Off by default, because a station that defers is a station that can be
+talked over indefinitely, and which of the two is wanted depends on
+the band rather than on the driver.
+.PP
+.B Measured ,
+two stations each writing ten packets at the same moment.  Without it
+they hear 1 and 0 of the other's ten; with it, 6 and 7, having
+deferred 1 and 9 times, with one transmission going out over a busy
+channel after eight tries, and the ten writes taking 520 and 810ms
+rather than 480.  It does not make the channel orderly, it makes it
+usable: what is left is the case where both defer and then both go,
+which is what the randomised pause is for and what a real backoff
+after a collision would address.
 .PP
 .B Duty
 is a number somebody has to know.  The band, the sub-band and the

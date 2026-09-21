@@ -1226,3 +1226,25 @@ attached, a default kernel prints:
 	secret -- and AX.25 connected mode delivers ten frames through
 	a window of four with or without T2, which is what said the T2
 	measurement had been measuring this too.
+
+0038 hw/ssi/sx1276: a packet takes time to arrive, and two at once
+	collide.  The model put a frame on the peer at the end of the
+	sender's airtime, so a receiver never saw a transmission in
+	progress: the channel was either silent or the packet had
+	already arrived.  Nothing could be asked whether the air was
+	busy, so carrier sense had nothing to sense, and a collision
+	was whether the receiver happened to be in TX at one instant
+	rather than two signals overlapping.
+	The frame now goes on the air when the transmission starts and
+	the receiver holds it for its own computed airtime before
+	raising RxDone, so a packet still arrives one airtime after it
+	was asked for; what changes is that the channel is busy in
+	between.  RegModemStat (0x18) is modelled for that.  A second
+	frame arriving during the first loses both, which is what a
+	receiver locked to the first preamble does with the second.
+	Measured, two Inferno stations each writing ten packets at the
+	same moment: without carrier sense they hear 1 and 0 of the
+	other's ten; with it, 6 and 7, having deferred 1 and 9 times,
+	and ten writes take 520 and 810ms rather than 480.
+	The patch file carries 0037 as well, which is in the same
+	function and was not worth separating.

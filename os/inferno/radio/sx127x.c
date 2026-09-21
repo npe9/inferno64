@@ -53,6 +53,10 @@ enum {
 	  Ifhss		= 0x02,
 	  Icaddetected	= 0x01,
 	Sxrxnbbytes	= 0x13,
+	Sxmodemstat	= 0x18,
+	  Msigdet	= 0x01,		/* a signal is on the channel */
+	  Msigsync	= 0x02,
+	  Mhdrvalid	= 0x08,
 	Sxpktsnr		= 0x19,
 	Sxpktrssi	= 0x1a,
 	Sxrssi		= 0x1b,
@@ -296,12 +300,42 @@ txdone(void *a)
 int
 sx127xsend(Radio *rr, uchar *p, int n)
 {
-	int ms;
+	int ms, i, busy;
 	vlong owed;
 
 	if(n <= 0 || n > Maxpayload){
 		rr->ntoobig++;
 		return -1;
+	}
+
+	/*
+	 * Listen before transmitting, if asked to.  RegModemStat's
+	 * signal-detected bit is what a part in receive says about the
+	 * channel, and it is the only thing a station has to go on: the
+	 * radio(3) rule is that nothing arbitrates the air, and this is
+	 * the smallest thing that does.  It is off by default, because
+	 * a station that defers is a station that can be talked over
+	 * indefinitely, and which of the two is wanted depends on the
+	 * band and not on the driver.
+	 *
+	 * Bounded: after Carriertries the packet goes out anyway.  A
+	 * radio that refuses to transmit while anyone else is talking
+	 * has no way to finish a conversation on a busy channel, and a
+	 * silent satellite is worse than a collision.
+	 */
+	if(rr->carrier){
+		for(i = 0; i < Carriertries; i++){
+			rr->spi->lock(rr->spi);
+			busy = rd(rr, Sxmodemstat) & Msigdet;
+			rr->spi->unlock(rr->spi);
+			if(!busy)
+				break;
+			rr->nbusy++;
+			tsleep(&up->sleep, return0, 0,
+				Carrierwait + nrand(Carrierwait));
+		}
+		if(i >= Carriertries)
+			rr->ngaveup++;
 	}
 
 	/*
@@ -461,6 +495,7 @@ sx127xctl(Radio *rr, char *a, int n)
 		{ 4,	"bw",		2 },
 		{ 5,	"cr",		2 },
 		{ 6,	"duty",		2 },
+		{ 7,	"carrier",	2 },
 		{ 8,	"reset",	1 },
 	};
 	int v;
@@ -526,6 +561,9 @@ sx127xctl(Radio *rr, char *a, int n)
 		rr->duty = v;
 		rr->nextok = 0;
 		break;
+	case 7:
+		rr->carrier = strcmp(cb->f[1], "on") == 0;
+		break;
 	case 8:
 		setmode(rr, Msleep);
 		wr(rr, Sxopmode, Olongrange | Msleep);
@@ -573,6 +611,9 @@ sx127xstat(Radio *rr, char *a, int n)
 	p = seprint(p, e, "airtime-total-ms %llud\n", rr->airms);
 	p = seprint(p, e, "airtime-owed-ms %lld\n", dutyowed(rr));
 	p = seprint(p, e, "dutywaits %ud\n", rr->nwaited);
+	p = seprint(p, e, "carrier %s\n", rr->carrier ? "on" : "off");
+	p = seprint(p, e, "busywaits %ud\nsentanyway %ud\n",
+		rr->nbusy, rr->ngaveup);
 	return p - a;
 }
 

@@ -27,6 +27,8 @@ struct Spidev
 
 enum {
 	Maxpayload	= 255,		/* what the FIFO holds */
+	Carriertries	= 8,		/* listens before going anyway */
+	Carrierwait	= 20,		/* ms between them, plus as much again */
 
 	/*
 	 * What a read of #W/radio0/pkt returns in front of the payload.
@@ -60,6 +62,7 @@ struct Radio
 	u32	bw;			/* Hz */
 	int	cr;			/* coding rate denominator 5..8 */
 	int	duty;			/* per cent of air permitted, 0 off */
+	int	carrier;		/* listen before transmitting */
 
 	/* what the last received packet looked like */
 	int	rssi;
@@ -72,6 +75,8 @@ struct Radio
 	uvlong	airms;			/* time on the air, total */
 	uvlong	nextok;			/* ms when a transmit is allowed */
 	u32	nwaited;		/* transmits made to wait for it */
+	u32	nbusy;			/* transmits that found the air busy */
+	u32	ngaveup;		/* and went out over it anyway */
 
 	/* counters */
 	u32	nsent;

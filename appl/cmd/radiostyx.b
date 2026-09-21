@@ -134,6 +134,16 @@ loraconv(serving: int): ref Sys->FD
 	# an announced conversation has nobody to send to until it has
 	# been spoken to.  See authchk(1).
 	n = sys->fprint(cfd, "connect %d", peer);
+	# Acknowledgement and retry.  Both ends of keyring->auth() send
+	# before either has received, so on a half-duplex radio their
+	# first transmissions collide and neither hears the other;
+	# carrier sense cannot help two stations that start in the same
+	# instant.  Retransmission with a randomised backoff can, and
+	# does: measured, 12 messages cost 15 and 17 transmissions.
+	if(n >= 0)
+		n = sys->fprint(cfd, "ack on");
+	if(n >= 0)
+		n = sys->fprint(cfd, "retries 8");
 	if(n < 0){
 		sys->print("radiostyx: conversation ctl: %r\n");
 		return nil;

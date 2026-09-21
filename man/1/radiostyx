@@ -124,8 +124,10 @@ demonstration of the transport, not a file system client.
 .PP
 With
 .B lora
-the addresses are 1 for the ground and 2 for the satellite, and both
-ends connect.  With
+the addresses are 1 for the ground and 2 for the satellite, both ends
+connect, and acknowledgement and retry are on: the authentication
+exchange is symmetric and its first transmissions collide, so without
+retransmission it does not complete.  With
 .B auth
 the identity each end presents follows from which of the two it is
 running as, so what the exchange proves is which side of this test the

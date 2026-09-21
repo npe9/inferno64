@@ -1,0 +1,259 @@
+From: Inferno RIO
+Subject: [PATCH] hw/ssi/sx1276: a packet takes time to arrive, and two at once collide
+
+The model put a frame on the peer at the end of the sender's airtime,
+so a receiver never saw a transmission in progress: the channel was
+either silent or the packet had already arrived.  Nothing could be
+asked whether the air was busy, so carrier sense had nothing to sense
+and a collision was whether the receiver happened to be in TX at one
+instant rather than a fact about two signals overlapping.
+
+Now the frame goes on the air when the transmission starts and the
+receiver holds it for its own computed airtime before raising RxDone,
+so the packet still arrives one airtime after it was asked for -- what
+changes is that in between the channel is busy and a station can tell.
+RegModemStat (0x18) is modelled for that: signal detected, signal
+synchronised, header valid, set while a packet is arriving.
+
+A second frame arriving during the first is a collision and both are
+lost, which is what a receiver locked to the first preamble does with
+the second signal.  It says nothing about either, as the part does.
+
+Measured with two Inferno stations each writing ten packets at the
+same moment: without carrier sense they receive 1 and 0 of the other's
+ten; with it, 6 and 7, having deferred 1 and 9 times, and the ten
+writes take 520 and 810ms rather than 480.
+
+This diff also carries 0037, which is in the same function and was not
+worth separating.
+---
+diff --git a/hw/ssi/sx1276.c b/hw/ssi/sx1276.c
+index c5a54f3..7c323ce 100644
+--- a/hw/ssi/sx1276.c
++++ b/hw/ssi/sx1276.c
+@@ -55,6 +55,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(SX1276State, SX1276)
+ #define R_IRQFLAGSMASK      0x11
+ #define R_IRQFLAGS          0x12
+ #define R_RXNBBYTES         0x13
++#define R_MODEMSTAT         0x18
+ #define R_PKTSNRVALUE       0x19
+ #define R_PKTRSSIVALUE      0x1a
+ #define R_RSSIVALUE         0x1b
+@@ -79,6 +80,10 @@ OBJECT_DECLARE_SIMPLE_TYPE(SX1276State, SX1276)
+ #define MODE_SLEEP          0
+ #define MODE_STDBY          1
+ #define MODE_FSTX           2
++#define MODEMSTAT_SIGDET    0x01
++#define MODEMSTAT_SIGSYNC   0x02
++#define MODEMSTAT_HDRVALID  0x08
++
+ #define MODE_TX             3
+ #define MODE_FSRX           4
+ #define MODE_RXCONTINUOUS   5
+@@ -129,7 +134,23 @@ struct SX1276State {
+     uint8_t tx_buf[FIFOSZ];
+     int tx_len;
+ 
++    /*
++     * A frame in the air.  A receiver hears the preamble at the start
++     * of a transmission and the packet at the end of it, and in
++     * between RegModemStat says the channel is busy -- which is the
++     * only thing a station can look at to decide whether to transmit.
++     * Without this the frame appeared at the receiver in an instant
++     * and the channel was never busy, so carrier sense had nothing to
++     * sense and a collision was a coin toss rather than a fact.
++     */
++    QEMUTimer *rx_timer;
++    uint8_t rx_buf[FIFOSZ];
++    int rx_len;
++    bool rx_busy;
++    int64_t rx_end_ns;
++
+     uint32_t drop_pct;
++    uint32_t collisions;
+     uint32_t drop_seed;
+     GRand *rand;
+ };
+@@ -221,7 +242,6 @@ static void sx1276_tx_done(void *opaque)
+ {
+     SX1276State *s = opaque;
+ 
+-    qemu_send_packet(qemu_get_queue(s->nic), s->tx_buf, s->tx_len);
+     s->regs[R_IRQFLAGS] |= IRQ_TXDONE;
+     /* The part drops to standby when the packet has gone. */
+     s->regs[R_OPMODE] = (s->regs[R_OPMODE] & ~OPMODE_MODE) | MODE_STDBY;
+@@ -260,11 +280,58 @@ static void sx1276_transmit(SX1276State *s)
+      */
+     memcpy(s->tx_buf, buf, len);
+     s->tx_len = len;
++
++    /*
++     * On the air now, and TxDone when it has all gone out.  The
++     * receiver holds it for the same time and raises RxDone at the
++     * end, so the packet still arrives one airtime after it was asked
++     * for -- what changes is that the channel is busy in between and
++     * a station can tell.
++     */
++    qemu_send_packet(qemu_get_queue(s->nic), s->tx_buf, s->tx_len);
+     timer_mod_ns(s->tx_timer,
+                  qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+                  sx1276_time_on_air_ns(s, len));
+ }
+ 
++static bool sx1276_can_receive(NetClientState *nc);
++
++/* the packet has finished arriving */
++static void sx1276_rx_done(void *opaque)
++{
++    SX1276State *s = opaque;
++    uint8_t base = s->regs[R_FIFORXBASEADDR];
++    int i;
++
++    s->rx_busy = false;
++    s->regs[R_MODEMSTAT] &= ~(MODEMSTAT_SIGDET | MODEMSTAT_SIGSYNC |
++                              MODEMSTAT_HDRVALID);
++
++    if (!sx1276_can_receive(qemu_get_queue(s->nic))) {
++        /* went deaf while it was arriving; a real part loses it */
++        return;
++    }
++
++    for (i = 0; i < s->rx_len; i++) {
++        s->fifo[(base + i) & (FIFOSZ - 1)] = s->rx_buf[i];
++    }
++    s->regs[R_FIFORXCURRENTADDR] = base;
++    s->regs[R_FIFOADDRPTR] = base;
++    s->regs[R_RXNBBYTES] = s->rx_len;
++    /* Numbers a receiver would see.  Invented, and flat: this model has
++     * no notion of distance, so they do not vary.
++     */
++    s->regs[R_PKTRSSIVALUE] = 90;       /* -157 + 90 = -67 dBm */
++    s->regs[R_PKTSNRVALUE] = 40;        /* 40/4 = +10 dB */
++    s->regs[R_RSSIVALUE] = 90;
++    s->regs[R_IRQFLAGS] |= IRQ_RXDONE | IRQ_VALIDHEADER;
++
++    if (sx1276_mode(s) == MODE_RXSINGLE) {
++        s->regs[R_OPMODE] = (s->regs[R_OPMODE] & ~OPMODE_MODE) | MODE_STDBY;
++    }
++    sx1276_update_irq(s);
++}
++
+ static void sx1276_set_opmode(SX1276State *s, uint8_t val)
+ {
+     int was = sx1276_mode(s);
+@@ -309,6 +376,22 @@ static void sx1276_set_opmode(SX1276State *s, uint8_t val)
+         }
+         sx1276_transmit(s);
+     }
++
++    /*
++     * Tell the net layer the part can hear again.
++     *
++     * can_receive() returning false does not only drop the frame in
++     * hand: qemu stops the peer's queue and does not restart it until
++     * somebody flushes.  A radio is deaf while it transmits, so the
++     * first time two stations talk at once this happens -- and without
++     * this call the link never carries anything again.  The guest sees
++     * a receiver that stops for no reason it can name, which is where
++     * an afternoon goes.
++     */
++    if ((now == MODE_RXCONTINUOUS || now == MODE_RXSINGLE) &&
++        was != now && s->nic) {
++        qemu_flush_queued_packets(qemu_get_queue(s->nic));
++    }
+ }
+ 
+ static void sx1276_reg_write(SX1276State *s, uint8_t addr, uint8_t val)
+@@ -478,7 +561,6 @@ static ssize_t sx1276_receive(NetClientState *nc, const uint8_t *buf,
+                               size_t size)
+ {
+     SX1276State *s = qemu_get_nic_opaque(nc);
+-    uint8_t base = s->regs[R_FIFORXBASEADDR];
+     size_t i;
+ 
+     if (!sx1276_can_receive(nc)) {
+@@ -502,25 +584,50 @@ static ssize_t sx1276_receive(NetClientState *nc, const uint8_t *buf,
+         return size;
+     }
+ 
+-    for (i = 0; i < size; i++) {
+-        s->fifo[(base + i) & (FIFOSZ - 1)] = buf[i];
++    /*
++     * Two at once is a collision, and a real receiver loses both: it
++     * is locked to the first preamble and the second arrives as
++     * noise.  Say nothing about either, which is what the part does.
++     */
++    /*
++     * A frame whose last symbol has arrived is not still in the air,
++     * even if its timer has not run yet.  Two transmissions back to
++     * back from one station end and begin at the same nanosecond, and
++     * treating that as an overlap made a sender collide with itself.
++     */
++    if (s->rx_busy &&
++        qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) >= s->rx_end_ns) {
++        timer_del(s->rx_timer);
++        sx1276_rx_done(s);
+     }
+ 
+-    s->regs[R_FIFORXCURRENTADDR] = base;
+-    s->regs[R_FIFOADDRPTR] = base;
+-    s->regs[R_RXNBBYTES] = size;
+-    /* Numbers a receiver would see.  Invented, and flat: this model has
+-     * no notion of distance, so they do not vary.
+-     */
+-    s->regs[R_PKTRSSIVALUE] = 90;       /* -157 + 90 = -67 dBm */
+-    s->regs[R_PKTSNRVALUE] = 40;        /* 40/4 = +10 dB */
+-    s->regs[R_RSSIVALUE] = 90;
+-    s->regs[R_IRQFLAGS] |= IRQ_RXDONE | IRQ_VALIDHEADER;
++    if (s->rx_busy) {
++        timer_del(s->rx_timer);
++        s->rx_busy = false;
++        s->regs[R_MODEMSTAT] &= ~(MODEMSTAT_SIGDET | MODEMSTAT_SIGSYNC |
++                                  MODEMSTAT_HDRVALID);
++        s->collisions++;
++        return size;
++    }
+ 
+-    if (sx1276_mode(s) == MODE_RXSINGLE) {
+-        s->regs[R_OPMODE] = (s->regs[R_OPMODE] & ~OPMODE_MODE) | MODE_STDBY;
++    /*
++     * The preamble is here now and the packet will be complete one
++     * airtime from now.  In between the channel is busy, which is
++     * what RegModemStat is for and the only thing carrier sense can
++     * look at.  The airtime is computed from this part's own settings
++     * because two stations that do not agree on them are not on the
++     * same link.
++     */
++    for (i = 0; i < size; i++) {
++        s->rx_buf[i] = buf[i];
+     }
+-    sx1276_update_irq(s);
++    s->rx_len = size;
++    s->rx_busy = true;
++    s->regs[R_MODEMSTAT] |= MODEMSTAT_SIGDET | MODEMSTAT_SIGSYNC |
++                            MODEMSTAT_HDRVALID;
++    s->rx_end_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
++                   sx1276_time_on_air_ns(s, size);
++    timer_mod_ns(s->rx_timer, s->rx_end_ns);
+     return size;
+ }
+ 
+@@ -562,6 +669,10 @@ static void sx1276_reset(DeviceState *dev)
+     s->regs[R_PREAMBLEMSB] = 0x00;
+     s->regs[R_PREAMBLELSB] = 0x08;      /* 8 symbols */
+ 
++    if (s->rx_timer) {
++        timer_del(s->rx_timer);
++    }
++    s->rx_busy = false;
+     if (s->tx_timer) {
+         timer_del(s->tx_timer);
+     }
+@@ -581,6 +692,7 @@ static void sx1276_realize(SSIPeripheral *d, Error **errp)
+     }
+     s->rand = g_rand_new_with_seed(s->drop_seed);
+     s->tx_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, sx1276_tx_done, s);
++    s->rx_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, sx1276_rx_done, s);
+ 
+     qdev_init_gpio_out_named(dev, &s->dio0, "dio0", 1);
+     qdev_init_gpio_out_named(dev, &s->dio4, "dio4", 1);
