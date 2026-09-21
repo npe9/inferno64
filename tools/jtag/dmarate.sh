@@ -25,15 +25,18 @@
 # the measurement on the path that actually fails is what the JTAG work
 # was for.
 #
-# EACH TRANSFER IS SCORED WHILE ITS OUTPUT IS FRESH.  The console
-# scrollback is capped at 10100 lines and is saturated before the first
-# transfer, because every arm begins with a full boot and boot suite.
-# So a failure count taken as a difference between two snapshots is a
+# EACH TRANSFER IS SCORED IN A FRESHLY EMPTIED CONSOLE.  The scrollback
+# is capped at 10100 lines and is saturated before the first transfer,
+# because every arm begins with a full boot and boot suite.  A failure
+# count taken as a difference between two snapshots is therefore a
 # difference between two sliding windows, with the earlier arm's
-# failures scrolling out of the later arm's baseline.  Instead the poll
-# loop that waits for "records out" also watches the tail for a failure
-# report, giving N binary outcomes per arm, each read while it is still
-# on screen.
+# failures scrolling out of the later arm's baseline -- the first
+# version of this script did that, and every count it produced would
+# have been uninterpretable.  So the history is flushed before each
+# write (and kept, in $LOG), and anything matching afterwards belongs
+# to that write.  Verified that the flush works: a marker present
+# before is gone after.  The result is N binary outcomes per arm
+# rather than one aggregate.
 #
 set -u
 HERE=`dirname "$0"`
@@ -48,7 +51,51 @@ ADAPTER=${ADAPTER:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
 pi() { sh "$S/pi.sh" -w "${2:-3}" "$1" >/dev/null 2>&1; }
 snap() { screen -S "$SESS" -X hardcopy -h "$1" 2>/dev/null; sleep 1; }
 
+#
+# Flush the console history, keeping a copy.
+#
+# Everything this script reads is a hardcopy of a scrollback capped at
+# 10100 lines and saturated long before the first transfer, so every
+# grep competes with output from previous boots and previous arms.
+# Counting occurrences across the whole buffer does not fix that on
+# its own: as new lines arrive old matches scroll off, so a count can
+# stay flat through an event that did happen.  Emptying the buffer
+# first makes every match unambiguous -- anything present afterwards
+# arrived afterwards.
+#
+# The history is appended to a log rather than dropped, because the
+# console is the only record of what the board said and throwing it
+# away to make a measurement easier would be the wrong trade.
+#
+LOG=${LOG:-$S/dmarate-console.log}
+clearlog() {
+	snap "$S/dr-keep.txt"
+	cat "$S/dr-keep.txt" >>"$LOG" 2>/dev/null || true
+	screen -S "$SESS" -X scrollback 0 2>/dev/null
+	sleep 1
+	screen -S "$SESS" -X scrollback 10000 2>/dev/null
+	sleep 1
+}
+
+#
+# Wait for the board by COUNTING a marker, not by tailing for one.
+#
+# The obvious form -- tail -40 | grep RASPI3B-OK -- cannot work, and
+# hung the first run of this script for ten minutes before it was
+# noticed.  The boot suite prints thirty or forty lines after
+# RASPI3B-OK, so by the time anything looks, the marker it is waiting
+# for has already scrolled out of the window.  Widening the window
+# does not fix it either: the scrollback is capped and saturated, so
+# the marker from the PREVIOUS boot is also in view, and a wide grep
+# matches immediately and returns before the board has done anything.
+#
+# Counting occurrences over the whole hardcopy is immune to both.  The
+# marker is "(warm, entered over JTAG)", which the kernel prints in
+# its banner and which a cold boot from the card never prints, so a
+# count that goes up means this restart specifically.
+#
 restart() {	# fresh kernel over JTAG, then wait for the shell
+	clearlog
 	echo "  ... loading a fresh kernel over JTAG"
 	( cd "$ROOT" && timeout 180 openocd -f "$ADAPTER" \
 		-f tools/jtag/raspi3b.cfg \
@@ -56,9 +103,9 @@ restart() {	# fresh kernel over JTAG, then wait for the shell
 	i=0
 	while [ $i -lt 40 ]; do
 		snap "$S/dr-boot.txt"
-		if LC_ALL=C tail -40 "$S/dr-boot.txt" | \
-		    LC_ALL=C grep -aq 'RASPI3B-OK'; then
-			sleep 30	# let the boot suite finish talking
+		now=`LC_ALL=C grep -ac 'entered over JTAG' "$S/dr-boot.txt" || true`
+		if [ "$now" -gt 0 ]; then
+			sleep 40	# let the boot suite finish talking
 			return 0
 		fi
 		sleep 6
@@ -81,13 +128,14 @@ setflags() {	# $1 = dmaclearirq setting; confirm the board took it
 
 # one transfer; echoes ok | FAIL | WEDGE, and KUPDATE if contaminated
 transfer() {	# $1 = file name
+	clearlog
 	pi "dd -if /dev/zero -of /n/dos/$1 -bs $BS -count $COUNT" 2
 	j=0
 	saw_fail=no
 	saw_kupdate=no
 	while [ $j -lt 30 ]; do
 		snap "$S/dr-w.txt"
-		t=`LC_ALL=C tail -40 "$S/dr-w.txt"`
+		t=`LC_ALL=C cat "$S/dr-w.txt"`
 		printf %s "$t" | LC_ALL=C grep -aq 'DMA WRITE FAILURE' && \
 			saw_fail=yes
 		printf %s "$t" | LC_ALL=C grep -aq 'KUPDATE' && \

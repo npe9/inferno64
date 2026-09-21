@@ -229,6 +229,62 @@ the debugger exists for.  jtagprobe reads what is resident, which is
 also the only check there has ever been that the kernel's memmove and
 cacheflush put the right bytes there.
 
+MEMORY READS ARE NOT COHERENT WITH THE D-CACHE.  This is the most
+important limitation here and it is invisible until it fools you.
+OpenOCD reads this target's memory over the bus, not through the
+core's L1, so what comes back is RAM -- and a value the kernel wrote
+recently is still in the cache, not in RAM.
+
+Measured, because the obvious checks do not show it.  Reading the
+kernel's "m" gives 0 on a machine that is running perfectly, which
+looks exactly like a serious bug.  Reading "kerndate" gives the right
+answer and proves nothing, because kerndate is initialised data that
+is never written: its RAM copy and its live value are identical either
+way.  splpc read the same three times, which is only weak evidence,
+since an idle board can genuinely take the same spl call site three
+times running.
+
+The test that settles it is a counter that must move.  mach0.ticks is
+incremented by the timer interrupt at 100Hz whatever else is
+happening:
+
+	t1 ticks=7011      t2 ticks=7011      t3 ticks=7011
+
+six seconds apart, when it had to have advanced by six hundred.  It is
+not zero either -- it is a real value from about seventy seconds into
+the boot, which is when that line last reached RAM.  (disbeat is no
+good for this: it only counts while the Dis VM is running, and at a
+shell prompt the VM is blocked.)
+
+So:
+
+	core registers		live -- they come from the core's own
+				register file, not the bus
+	device registers	live -- peripheral space is not cached,
+				which is why emmcregs works
+	breakpoints, stepping	live
+	kernel variables	NOT live; you are reading RAM
+	loading an image	fine -- RAM is what the trampoline
+				makes authoritative
+
+To ask what a kernel variable holds, have the kernel print it.  To ask
+what the machine is doing, use the registers: tools/jtag/where, a
+breakpoint, the pc.  A hardware breakpoint at the function and a look
+at the register holding the pointer answers "what is this pointer" and
+a memory read does not.
+
+One consequence worth writing next to the ABI table: load_image writes
+land in RAM, while the trampoline's DC CIVAC over the image range
+cleans dirty lines back out to RAM -- the wrong direction for bytes
+that were just loaded.  The old kernel's data and bss lie inside that
+range, so such lines exist.  It demonstrably works, repeatedly and
+with the right build number, so this is not a change being proposed on
+an argument; it is the hazard to suspect first if a JTAG-loaded kernel
+ever misbehaves in a way that looks like corruption at repeatable
+addresses.  The fix, if it is ever needed, is to invalidate that range
+rather than clean it, because after a load RAM is authoritative and a
+dirty line is by definition the previous kernel's.
+
 WHAT IT WILL NOT DO.  It does not reset the machine, on purpose: a
 reset hands control back to the VideoCore firmware, which loads
 whatever is on the card and undoes the point.  reset_config is

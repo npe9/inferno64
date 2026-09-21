@@ -39,6 +39,22 @@
 #
 import sys, struct
 
+def loadbase(d):
+	"""Lowest PT_LOAD vaddr: the link address, below which no symbol
+	can name kernel code or data."""
+	if d[:4] != b'\x7fELF' or d[4] != 2:
+		return None
+	e_phoff, = struct.unpack_from('<Q', d, 0x20)
+	e_phentsize, e_phnum = struct.unpack_from('<HH', d, 0x36)
+	lo = None
+	for i in range(e_phnum):
+		o = e_phoff + i * e_phentsize
+		if struct.unpack_from('<I', d, o)[0] != 1:
+			continue
+		v, = struct.unpack_from('<Q', d, o + 0x10)
+		lo = v if lo is None else min(lo, v)
+	return lo
+
 def loadend(d):
 	"""End of the last PT_LOAD in the file: where the symbols start."""
 	if d[:4] != b'\x7fELF':
@@ -94,6 +110,19 @@ def globals_only(syms):
 	"""Drop automatics and parameters: frame offsets, not addresses."""
 	return [t for t in syms if t[1] not in 'ap']
 
+def addressable(syms):
+	"""Symbols that actually name a location.
+
+	'f' records are source file-name components and their value is an
+	index into the file table, not an address -- there are a few
+	hundred of them clustered at 0, 1, 2 ..., so an address below the
+	kernel resolves to whichever .c file happens to sort there.  The
+	first version of this printed "0x7c  xalloc.c+0x0" for a core
+	sitting in the VideoCore firmware's spin table, which is not
+	wrong in a small way, it is meaningless.
+	"""
+	return [t for t in syms if t[1] not in 'apf']
+
 def main():
 	if len(sys.argv) < 2:
 		sys.exit(__doc__)
@@ -122,10 +151,28 @@ def main():
 	# Name addresses.  Only text symbols bound an address range; data
 	# and bss are reported by exact match or nearest below, and said
 	# to be such, because a data symbol's size is not in this table.
+	#
+	# Only symbols at or above the link address can name kernel code
+	# or data.  Everything below is a pseudo-record -- file names,
+	# .frame, frame offsets -- whose "value" is an index or a size,
+	# and letting those into the table is how an address in the
+	# firmware resolved to "xalloc.c+0x0" and then ".frame+0xc".
+	# Taking the bound from the ELF rather than a constant means this
+	# stays right if KTZERO moves.
+	#
+	base = loadbase(open(path, 'rb').read()) or 0
+	syms = [t for t in addressable(syms) if t[0] >= base]
 	text = sorted((v, n) for v, c, n in syms if c.upper() in 'TL')
 	alls = sorted((v, n) for v, c, n in syms)
+	lowest = base
 	for a in args:
 		x = int(a, 0)
+		if x < lowest:
+			# Below the kernel entirely.  On this board that is
+			# where cores 1-3 sit, in the firmware's spin table.
+			print("%#x  below the kernel's link address %#x "
+			      "(firmware, not kernel text)" % (x, base))
+			continue
 		best = None
 		for v, n in text:
 			if v <= x:
