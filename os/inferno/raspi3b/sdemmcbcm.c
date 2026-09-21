@@ -339,6 +339,25 @@ static int emmcdmaclearirq = 0;
  *
  * A question, not a setting, and off by default until it has been
  * asked properly -- the same way both of the others were asked.
+ *
+ * ASKED, AND THE QUESTION DID NOT GET THROUGH.  First run, 21
+ * September: the arm with this on failed, and its own dump says why
+ * that means nothing --
+ *
+ *	BEFORE: dma cs 0xa emmc interrupt 0x10 status 0x1ff0506 irpten 0x0
+ *
+ * irpten reads 0 at the moment the channel is armed, three
+ * instructions after "r[Rirpten] |= Ireadrdy|Iwriterdy".  The write is
+ * being dropped.  Rstatus is 0x1ff0506 there, which has Sdatinhibit
+ * set: the command is issued and the data circuit is live, and this
+ * controller appears not to take that register then.  So the
+ * hypothesis is untested, not disproved, and the enable has to be set
+ * before the command rather than between the command and the
+ * transfer.
+ *
+ * That the dump could say so at all is why the BEFORE line prints
+ * irpten.  An intervention that is assumed to have happened is not an
+ * experiment, and this one would have read as a clean negative.
  */
 static int emmcdmairqen = 0;
 static int emmcdmareset = 0;

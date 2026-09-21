@@ -5980,3 +5980,83 @@ so the failure fired between them and arm 1's dump was taken with the
 acknowledge still at its default \(em the arm reported neither a
 completion nor a failure, and the pair read as "only the off arm
 failed", which is the retracted claim all over again.
+.NH 2
+Two negatives, one non-result, and a correction
+.PP
+.B "The correction first, because it changes how the other two read."
+The section above called the DMA write failure deterministic, on the
+strength of dumps that matched in every field across several
+occurrences.  It is not.  On 21 September an arm completed with no
+failure at all \(em the first write in the whole sequence to do so
+\(em so the base rate is high but not one.
+.PP
+That does not disturb the two negatives, because of their shape.
+.CW dmaclearirq
+and
+.CW dmareset
+were each tested with one boot per arm, and in both experiments
+.I both
+arms failed.  An intervention that prevents the stall cannot be
+present while the stall happens, so a single failure with the
+intervention demonstrably active disproves "this fixes it" whatever
+the base rate is.  Both dumps show the intervention active
+\(em
+.CW "emmc interrupt 0x00"
+against
+.CW 0x10 ,
+.CW "dma cs 0x8"
+against
+.CW 0xa
+\(em and the stall unchanged in every other field.  Those stand.
+.PP
+What the correction does disturb is the other direction.  An arm that
+.I passes
+says nothing on one boot, because a pass is what a high-but-not-one
+base rate produces sometimes anyway.  So a one-sided result is not a
+result, and
+.CW dmaab.sh
+now says so in its own output rather than leaving it to be read
+charitably.
+.NH 2
+The interrupt-enable question is untested, not answered
+.PP
+The best remaining hypothesis was the one
+.CW tools/jtag/README
+wrote down the first time registers were ever read over JTAG: the
+controller may gate its DMA request on
+.CW irpt_en
+rather than on the status, and this driver leaves that register at 0
+through a transfer.  It fits what the failure looks like \(em the
+engine waiting correctly with DREQ clear, the controller holding
+.CW Iwriterdy
+set and not asking.
+.PP
+.CW dmairqen
+sets
+.CW Ireadrdy|Iwriterdy
+in
+.CW Rirpten
+for the transfer.  The arm with it on failed, which would read as a
+third clean negative.  It is not one, and the dump says so:
+.P1
+BEFORE: dma cs 0xa emmc interrupt 0x10 status 0x1ff0506 irpten 0x0
+.P2
+.CW irpten
+reads 0 at the moment the channel is armed, three instructions after
+the register was written.  The write is being dropped.
+.CW Rstatus
+is
+.CW 0x1ff0506
+there, which has
+.CW Sdatinhibit
+set \(em the command is issued and the data circuit is live \(em and
+this controller appears not to accept that register then.  The enable
+has to be set before the command, not between the command and the
+transfer.
+.PP
+That the dump could say this at all is the reason the
+.CW BEFORE
+line prints
+.CW irpten .
+An intervention assumed to have happened is not an experiment, and
+this one would have been filed as an answer.
