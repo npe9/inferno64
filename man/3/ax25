@@ -247,10 +247,18 @@ numbers are settable for that reason and
 .I radio (3)
 holds the arithmetic.
 .PP
-Nothing here identifies the station periodically.  Most jurisdictions
-require identification at an interval as well as on each transmission,
-and every frame does carry the source callsign, but nothing sends a
-beacon on its own.
+.B Id
+is not a beacon and does not tell anybody where the station is or what
+it is doing: it is a UI frame with an empty information field, whose
+whole content is the source callsign in the address field.  That is
+what identification is in AX.25, and every frame carries it already \-
+what
+.B id
+adds is that a station which has been transmitting says so at an
+interval, which is the other half of what most jurisdictions ask for.
+A station that has transmitted nothing sends nothing, and an
+identification does not count as traffic needing another, so a quiet
+station is silent.
 .PP
 .B #L
 and

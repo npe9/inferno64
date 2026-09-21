@@ -116,6 +116,7 @@ enum {
 	Deft1		= 4000,	/* ms; see the note on T1 above */
 	Deft2		= 1000,	/* ms to wait before acknowledging */
 	Deft3		= 300000,
+	Defid		= 540000,	/* ms; ten minutes less a margin */
 	Tick		= 100,	/* ms the ticker sleeps */
 
 	Aend		= 0x01,	/* end of address field */
@@ -210,6 +211,22 @@ static struct
 	int	haveaddr;
 	int	started;
 	int	digipeat;	/* repeat frames addressed through us */
+
+	/*
+	 * Periodic identification.  Every frame this sends carries the
+	 * source callsign, so a station that is talking is identified;
+	 * what the rules also want is that it says so at an interval
+	 * while it is talking, and a station whose traffic is all I
+	 * frames in one direction can go a long time without a gap.
+	 * So: when anything has been transmitted since the last
+	 * identification and idms has passed, send one.  A station that
+	 * has transmitted nothing has nothing to identify.
+	 */
+	int	idms;		/* 0 is off */
+	int	idleft;
+	int	spoken;		/* transmitted since the last one */
+	Call	iddest;
+	u32	nid;
 
 	QLock	tx;
 	Queue	*oq;		/* frames waiting for the air */
@@ -377,6 +394,8 @@ sendctl(Block *b)
 	}
 	if(qpass(ax25.oq, b) < 0)	/* qpass frees what it refuses */
 		ax25.noqdrop++;
+	else
+		ax25.spoken = 1;
 }
 
 static void
@@ -387,6 +406,7 @@ senddata(Block *b)
 		error(Enotattached);
 	}
 	qbwrite(ax25.oq, b);
+	ax25.spoken = 1;
 }
 
 static void
@@ -518,6 +538,31 @@ settled(void *a)
 }
 
 /*
+ * A UI frame to the identification destination carrying nothing but
+ * the source callsign, which the address field already holds.  Sent
+ * from the ticker, which is a process and may transmit.
+ */
+static void
+sendid(void)
+{
+	Conv id;
+
+	memset(&id, 0, sizeof id);
+	id.remote = ax25.iddest;
+	id.pid = Pidnol3;
+	sendctl(mkframe(&id, 1, Cui, Pidnol3, nil, 0));
+	ax25.nid++;
+	/*
+	 * After, not before: sendctl() marks the station as having
+	 * spoken, and an identification is not traffic that needs
+	 * identifying.  Marking it in the sender process instead made
+	 * a station that had said nothing else identify itself for
+	 * ever, every interval, which is the opposite of the point.
+	 */
+	ax25.spoken = 0;
+}
+
+/*
  * The ticker: T1 is the retransmission timer and T3 says the link has
  * been idle long enough to be worth checking.  One process for every
  * conversation, because four timers are not worth four processes and
@@ -531,6 +576,18 @@ ax25ticker(void*)
 	e = &ax25.conv[Nconv];
 	for(;;){
 		tsleep(&up->sleep, return0, 0, Tick);
+
+		if(ax25.idms > 0 && ax25.haveaddr){
+			ax25.idleft -= Tick;
+			if(ax25.idleft <= 0){
+				ax25.idleft = ax25.idms;
+				if(ax25.spoken && !waserror()){
+					sendid();
+					poperror();
+				}
+			}
+		}
+
 		for(cv = ax25.conv; cv < e; cv++){
 			if(!cv->inuse || cv->ui)
 				continue;
@@ -1429,6 +1486,12 @@ ax25stats(char *buf, int len)
 	}else
 		p = seprint(p, e, "addr none\n");
 	p = seprint(p, e, "digipeat %s\n", ax25.digipeat ? "on" : "off");
+	if(ax25.idms > 0){
+		callfmt(&ax25.iddest, cb, sizeof cb);
+		p = seprint(p, e, "id %d to %s\nidentified %ud\n",
+			ax25.idms, cb, ax25.nid);
+	}else
+		p = seprint(p, e, "id off\n");
 	p = seprint(p, e, "iounit %d\npayload %d\n",
 		ax25.iounit, ax25.iounit - Minhdr);
 	p = seprint(p, e, "in %ud\nout %ud\n", ax25.nin, ax25.nout);
@@ -1650,6 +1713,19 @@ ax25write(Chan *c, void *a, s32 n, s64)
 			if(cb->nf != 2)
 				error(Ebadarg);
 			ax25.digipeat = strcmp(cb->f[1], "on") == 0;
+		}else if(strcmp(p, "id") == 0){
+			if(cb->nf != 2 && cb->nf != 3)
+				error(Ebadarg);
+			v = atoi(cb->f[1]);
+			if(v < 0 || v > 3600000)
+				error("id is 0 to 3600000 ms; 0 is off");
+			if(cb->nf == 3)
+				parsecall(cb->f[2], &tmp);
+			else
+				parsecall("ID", &tmp);
+			ax25.iddest = tmp;
+			ax25.idms = v;
+			ax25.idleft = v;
 		}else
 			error(Ebadarg);
 		poperror();
