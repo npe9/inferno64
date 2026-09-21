@@ -477,7 +477,12 @@ static s32
 kisswrite(Chan *c, void *a, s32 n, s64)
 {
 	Cmdbuf *cb;
-	uchar v;
+	/*
+	 * v is set in every arm below and the last one calls error(),
+	 * which does not return -- but a compiler that cannot know
+	 * that warns, so say it here rather than argue.
+	 */
+	uchar v = Cdata, b;
 	char *p;
 	int i;
 
@@ -523,11 +528,8 @@ kisswrite(Chan *c, void *a, s32 n, s64)
 				error(Ebadarg);
 			if(i < 0 || i > 255)
 				error("a KISS parameter is one byte");
-			v = v;
-			{
-				uchar b = i;
-				kissput(v, &b, 1);
-			}
+			b = i;
+			kissput(v, &b, 1);
 		}
 		poperror();
 		free(cb);

@@ -36,6 +36,10 @@ dev
 # AX.25 over the same packet device, at #a served on /net/ax25.  See
 # doc/ax25-plan.ms and os/inferno/radio/devax25.c.
 	ax25
+# KISS over a byte stream, at #k served on /net/kiss: a TNC on a serial
+# line, which is how this reaches a real amateur station.  See
+# os/inferno/radio/devkiss.c.
+	kiss
 	ip	ip ipv6 ipaux ptclbsum parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium nat
 
 
@@ -158,8 +162,10 @@ root
 	/dis/basename.dis
 	/dis/bind.dis
 	/dis/cat.dis
+	/dis/aprs.dis
 	/dis/ax25chk.dis
 	/dis/ax25raw.dis
+	/dis/kisschk.dis
 	/dis/lorachk.dis
 	/dis/loraraw.dis
 	/dis/radiochk.dis
