@@ -226,8 +226,18 @@ unlock(Lock *l)
 	}
 }
 
+/*
+ * A ring of the program counters of the ilocks that were held longest,
+ * written only by the LOCKCYCLES code below and read only by a
+ * debugger.  Outside that ifdef it is 1024 bytes of initialised data
+ * -- in the image and in RAM -- that nothing ever touches, which is
+ * nothing on a machine with megabytes and most of one per cent of a
+ * board like os/inferno/stm32f407.  It follows the code it belongs to.
+ */
+#ifdef LOCKCYCLES
 uintptr ilockpcs[0x100] = { [0xff] = 1 };
 static int n;
+#endif
 
 void
 iunlock(Lock *l)

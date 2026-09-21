@@ -9,7 +9,19 @@
 enum
 {
 	Chunk		= 64*1024,
+	/*
+	 * How many disjoint runs of free memory xalloc can keep track
+	 * of.  The table is a static array of Hole, so 128 of them is
+	 * 2048 bytes of a board's RAM spent on describing memory it has
+	 * not got: a machine whose conf.mem holds two banks can never
+	 * have more than a handful of holes.  A board says so in its
+	 * mem.h.  Measured on os/inferno/stm32f407.
+	 */
+#ifndef NHOLE
 	Nhole		= 128,
+#else
+	Nhole		= NHOLE,
+#endif
 	Magichole	= 0xDeadBabe,
 };
 

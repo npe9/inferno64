@@ -38,7 +38,21 @@ enum
 {
 	TAGSHIFT = 5,
 	TAGMASK = (1<<TAGSHIFT)-1,
-	NMASK = (64*1024)>>TAGSHIFT,
+	/*
+	 * How many 9P tags may be outstanding at once, as a bitmap in
+	 * mntalloc.  A tag is 16 bits, so the portable default reserves
+	 * one bit for every tag the protocol can express: 8192 bytes of
+	 * bss, which is right on a machine with megabytes and is 5 per
+	 * cent of the whole memory of a board like os/inferno/stm32f407,
+	 * where it was measured.  Nothing that board can do will have a
+	 * thousand RPCs in flight, and a board that knows that says so
+	 * in its mem.h.  Running out is not a corruption: alloctag()
+	 * returns NOTAG and the mount rpc fails with "out of tags".
+	 */
+#ifndef NMNTTAG
+	NMNTTAG = 64*1024,
+#endif
+	NMASK = NMNTTAG>>TAGSHIFT,
 };
 
 static struct Mntalloc

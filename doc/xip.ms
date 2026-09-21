@@ -3652,6 +3652,194 @@ difference from it is the FPU.  So the one thing that blocks this board
 is the one thing the emulated board cannot test.  That, and not the
 driver count, is why nothing is started here.
 .NH 1
+A board where the decoded array does not fit at all
+.PP
+This document's answer to its own question was
+"the file, yes; the decoded program, no, and not on this board",
+and the board it was measured on was a Raspberry Pi 3 with a gigabyte.
+.CW os/inferno/stm32f407
+is the other end of that range: a Cortex-M4 with 128K of SRAM at
+0x20000000 and 64K of core coupled memory at 0x10000000, 163840 bytes
+of which are left to the pools after the kernel.
+.PP
+.CW /dis/sh.dis
+is 41631 bytes on disc and its
+.CW Inst
+array is 73536: 6128 instructions at twelve bytes each, a Dis word
+being four here.  Asked for that in one piece, the main pool refused it
+\- the first capture was
+.P1
+arena too large: main size 73332 cursize 33347 arenasize 51846
+	maxsize 103180, alloc = 73536
+init: load sh: unknown device in # filename
+.P2
+\- and no arrangement of the three pool percentages helps, because
+73536 plus the 33K the kernel is already holding plus a Dis heap does
+not fit in 147456 whichever way it is divided.  On this board the
+prebuilt array is not a saving, it is the only way the shell exists.
+With
+.CW XIPMODS=1
+in the mkfile and
+.CW utils/dis2s
+laying every module the root carries out as a RODATA symbol, the same
+kernel reaches a prompt and answers at it.
+.NH 2
+Four portable sizes chosen for a machine with megabytes
+.PP
+.CW confinit()
+sets
+.CW conf.base0
+to
+.CW PGROUND(end) ,
+so whatever the kernel's data and bss come to is charged to the pools
+rounded up to a whole 4096-byte page.  Relinking the kernel with
+.CW -H2
+instead of
+.CW -H4 ,
+which keeps the symbol table, and differencing consecutive symbol
+addresses across the data and bss range gives a per-symbol bill.  Four
+entries on it were sized for a different kind of machine:
+.IP \(bu
+.CW mntalloc.tagmask
+in
+.CW os/inferno/port/devmnt.c ,
+8192 bytes: one bit for each of the 65536 tags 9P can express.  A board
+with six processes and nothing mounted over a network will not have a
+thousand RPCs outstanding, and running out is not a corruption \-
+.CW alloctag()
+returns
+.CW NOTAG
+and the rpc fails with
+.CW "out of tags" .
+Now
+.CW NMNTTAG ,
+1024 here.
+.IP \(bu
+.CW Uart.istage
+and
+.CW Uart.ostage
+in
+.CW os/inferno/port/portdat.h ,
+2048 each: arrays in the struct, not pointers, so a board pays for them
+per Uart whether or not it has a serial line.  Now
+.CW STAGESIZE ,
+256 here.
+.IP \(bu
+.CW xlists.hole
+in
+.CW os/inferno/port/xalloc.c ,
+128 runs of free memory at twenty bytes each.  This board's
+.CW conf.mem
+has two banks.  Now
+.CW NHOLE ,
+16 here.
+.IP \(bu
+.CW ilockpcs
+in
+.CW os/inferno/port/taslock.c ,
+1024 bytes of initialised data holding the program counters of the
+ilocks that were held longest.  It is written only inside
+.CW #ifdef
+.CW LOCKCYCLES
+and read only by a debugger, and outside that ifdef nothing touches
+it.  It now follows the code it belongs to.
+.PP
+With
+.CW KMESGSIZE
+at 512 as well, data and bss went from 48736 bytes to 32280 and the
+board from 147456 free to 163840.  The last 512 of that were worth a
+whole page on their own: at
+.CW KMESGSIZE
+1024 the kernel ended 24 bytes into a ninth page.
+.NH 2
+What chunk is for
+.PP
+.CW poolsize()
+now clamps
+.CW Pool.chunk ,
+which is what
+.CW poolalloc()
+asks
+.CW xalloc()
+for when it needs to grow.  The table in
+.CW os/inferno/port/alloc.c
+sets it to 512K, which is larger than this board's entire memory: the
+first
+.CW malloc()
+returned nil and what the console showed was
+.CW "addclock0link: too many links"
+and a panic in
+.CW userinit
+with a hundred kilobytes free, naming neither the cause nor the number.
+.PP
+The fraction chosen is a thirty-second, and the reason it has to be
+small is not obvious.
+.CW Pool.arenasize
+is every chunk the pool has ever taken from
+.CW xalloc()
+and does not shrink when a block inside one is freed, and a block
+cannot span two arenas, so a coarse chunk spends the pool's ceiling on
+arenas that are mostly empty.  Measured on this board at the point
+where the shell fails to load
+.CW ls(1) ,
+.CW arenasize
+minus
+.CW cursize
+over main and heap together was 38912 bytes with a quarter, 23104 with
+an eighth, 19968 with a sixteenth and 17600 with a thirty-second.
+.PP
+The clamp also has to round down to a multiple of the quantum.
+.CW poolalloc()
+uses
+.CW chunk
+as the size of the arena it asks for and then carves the caller's
+quantum-aligned block off the front, so an unaligned chunk leaves an
+unaligned remainder and every block split off that one afterwards is
+unaligned too.  The tail pointer then lands somewhere that is not a
+tail.  The first cut of this used
+.CW max/16
+of 128238, which is 8014, and the board answered
+.P1
+poolfree:badhdr(1000dda4): pool main CORRUPT: bad size at 1000dd98'142
+.P2
+\- 142 not being a multiple of 64.  The code below it that clamps
+.CW ns
+against
+.CW maxsize
+already did the same masking, for the same reason.
+.NH 2
+What it still cannot do
+.PP
+.CW ls(1)
+runs on a freshly booted board and does not run after another command
+has run first.  At the prompt main holds about 70K of the 163840 and
+the Dis heap about 50K, and the largest single thing the heap is asked
+for is the 8192-byte buffer
+.CW bufio(2)
+makes for each open file; whether one exists depends on where the
+previous command left its holes.  Neither
+.CW mainmem
+nor
+.CW heapmem
+has a
+.CW move
+function, so
+.CW poolcompact()
+cannot help them \- only
+.CW imagmem
+has one wired up.  The failure is at least honest:
+.CW "out of memory: heap"
+is raised into the shell, which prints it and carries on.
+.PP
+The three pool percentages were chosen by measurement rather than by
+taste, and the choice is not monotonic, which is what fragmentation
+looks like: 50/49/1 runs
+.CW ls
+and survives a command that runs out afterwards, 56/43/1 runs
+.CW ls
+but the same failure kills the shell, and 52/47/1 does not run it at
+all.
+.NH 1
 Unrelated breakage found on the way
 .PP
 Two things in the tree are broken independently of this work, found while

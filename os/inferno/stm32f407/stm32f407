@@ -1,0 +1,159 @@
+# stm32f407 - an STM32F407: a Cortex-M4 with a megabyte of flash and
+# 192K of RAM in two pieces.
+#
+# The core is an ARMv7-M like the ones os/inferno/mps2 and
+# os/inferno/teensy41 run on, so os/inferno/armv7m is shared.  What is
+# only here is the board: its clock tree and a USART.
+#
+# It is beside os/inferno/nucleof303 and not a variant of it.  That
+# board is an F303 with 80K of RAM and its NOTE records that it cannot
+# run Limbo -- the kernel's own pool floor is about 97000 bytes before
+# anything is loaded.  This has 128K of SRAM and 64K of core coupled
+# memory, which clears it, so this configuration carries a root file
+# system and a Limbo userland and the other does not.  The two share
+# the core and nothing of the part: RCC, FLASH and GPIO are at
+# different addresses and the USART is a different register map.
+#
+# qemu models an STM32F405 as netduinoplus2, which is the same die
+# family, so this is developable without the board.  What it does not
+# model is GPIO -- and the SX1276 and CC1120 both need a chip select
+# and an interrupt pin, so a radio here wants that written first, as
+# tools/qemu-patches/0027 did for the MPS2.
+
+dev
+	root
+	cons
+	prog
+	dup
+	pipe
+	mnt
+	srv
+	uart
+	env
+
+# the order matters: a library with an undefined symbol at the end
+# makes the loader complain
+lib
+	interp
+	keyring
+	sec
+	mp
+	math
+	kern
+
+# the portable kernel this board takes, and its own code beside it.
+# archstm32f407 and the rest are objects and nothing more; naming them
+# under misc would have mkdevc build a PCArch table for them, which is
+# the PC's abstraction and not this board's.
+port
+	alarm
+	alloc
+	allocb
+# the board has its own auth.c, named in the mkfile
+	chan
+	dev
+	dis
+	discall
+# edf wants a microsecond clock this board does not export
+	dial
+	exception
+	exportfs
+	inferno
+	latin1
+	nocache
+	nodynld
+	parse
+	pgrp
+	print
+	proc
+	qio
+	qlock
+# randomarmv7m is the entropy these boards have; the portable random.c
+# wants a libsec newer than the one this tree shares
+	sysfile
+	taslock
+	xalloc
+
+	archstm32f407
+	randomarmv7m
+	screenarmv7m
+
+# uartstm32f4 is this board's PhysUart -- mkdevc turns a misc name
+# beginning uart into <rest>physuart, so uartstm32f4 gives
+# stm32f4physuart.
+misc
+	uartstm32f4
+
+mod
+	sys
+
+init
+	armv7minit
+
+# Percentages of the memory left after the kernel, so they are ceilings
+# and not reservations -- except that poolsize() asks the image pool for
+# its whole arena contiguously at boot and panics if it cannot get it.
+#
+# 163840 bytes are left after the kernel here, and at a shell prompt
+# main holds about 70K and the Dis heap about 50K, so the two ceilings
+# are near enough the whole of it and the split decides which pool
+# fails first rather than how much there is.  These three were chosen
+# by measurement and not by taste: with 50/49/1 a freshly booted board
+# runs ls(1) over /dis, and a command that runs out afterwards raises
+# "out of memory: heap" into the shell, which prints it and carries on.
+# 56/43/1 also runs ls, but the same failure kills the shell; 52/47/1
+# does not run it at all.  Fragmentation is why the middle of the range
+# is the worst: the largest single thing the heap is asked for is the
+# 8192-byte buffer bufio(2) makes for each open file, and whether one
+# exists depends on where the previous command left its holes.
+#
+# image is 1 and not 0.  Nothing on this board has ever allocated from
+# it -- no draw device, no segments -- and 1637 bytes is real memory
+# held for nothing.  But poolsize(imagmem, 0, 1) leaves a pool whose
+# maxsize is 0, and the first allocation against it would take the
+# arena-extend path in poolalloc() with maxsize-arenasize going
+# negative.  It fails safely there today, because ns is a signed
+# intptr; 1637 bytes is not worth resting on that.  See doc/xip.ms.
+code
+	int main_pool_pcnt = 50;
+	int heap_pool_pcnt = 49;
+	int image_pool_pcnt = 1;
+	int cflag = 0;
+	int consoleprint = 1;
+	int panicreset = 0;
+
+root
+# Enough of a userland to have a shell, which is what 192K of RAM buys
+# over the F303's 80K.  See the NOTE beside this file for what has
+# actually been measured.
+	/chan	/
+	/dev	/
+	/dis
+	/env	/
+	/fd	/
+	/n	/
+	/prog	/
+	/tmp	/
+	/proc	/
+	/osinit.dis
+#
+# A shell and enough beside it to look at the board.  What fits is a
+# question of RAM and not of flash: the kernel is about 300K of a
+# megabyte, and every one of these is small, but the pool has 147456
+# bytes to hold the modules and everything they allocate.  See the
+# NOTE beside this file for what was measured.
+#
+	/dis/lib
+	/dis/sh.dis		/dis32/sh.dis
+	/dis/sh/std.dis		/dis32/sh/std.dis
+	/dis/lib/arg.dis	/dis32/lib/arg.dis
+	/dis/lib/bufio.dis	/dis32/lib/bufio.dis
+	/dis/lib/string.dis	/dis32/lib/string.dis
+	/dis/lib/readdir.dis	/dis32/lib/readdir.dis
+	/dis/lib/filepat.dis	/dis32/lib/filepat.dis
+	/dis/lib/daytime.dis	/dis32/lib/daytime.dis
+	/dis/lib/env.dis	/dis32/lib/env.dis
+	/dis/echo.dis		/dis32/echo.dis
+	/dis/cat.dis		/dis32/cat.dis
+	/dis/ls.dis		/dis32/ls.dis
+	/dis/bind.dis		/dis32/bind.dis

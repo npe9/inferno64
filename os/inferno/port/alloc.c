@@ -1372,6 +1372,48 @@ poolsize(Pool *p, uintptr max, int contig)
 
 	print("poolsize max %zud contig %d\n", max, contig);
 	p->maxsize = max;
+
+	/*
+	 * A pool may not ask the system for more than it is allowed to
+	 * hold.  chunk is what poolalloc() asks xalloc() for when it
+	 * needs more memory, and the table above sets it to 512K --
+	 * which is right on a machine with megabytes and fatal on a
+	 * board whose whole memory is smaller than that.  The first
+	 * malloc() then returns nil, and what the console shows is
+	 * "addclock0link: too many links" and a panic in userinit with
+	 * a hundred kilobytes free, naming neither the cause nor the
+	 * number.
+	 *
+	 * A thirty-second of the pool, and never below the quantum.
+	 * The fraction has to be small for a second reason: arenasize
+	 * is every chunk this pool has ever taken from xalloc() and
+	 * does not shrink when a block inside one is freed, and a
+	 * block cannot span two arenas, so a coarse chunk spends the
+	 * pool's ceiling on arenas that are mostly empty.  Measured on
+	 * stm32f407 at the point where the shell fails to load ls(1),
+	 * arenasize minus cursize over main and heap together was
+	 * 38912 bytes with a quarter, 23104 with an eighth, 19968 with
+	 * a sixteenth and 17600 with a thirty-second.  Every board
+	 * with room for the old value keeps it.  Found on
+	 * os/inferno/stm32f407, which has 192K of RAM.
+	 *
+	 * Rounded down to a multiple of the quantum, and not for
+	 * tidiness: poolalloc() uses chunk as the size of the arena it
+	 * asks xalloc() for and then carves the caller's (quantum-
+	 * aligned) block off the front of it, so an unaligned chunk
+	 * leaves an unaligned remainder, and every block split off
+	 * that one afterwards is unaligned too.  The tail pointer then
+	 * lands somewhere that is not a tail, and what the console
+	 * shows is "pool main CORRUPT: bad size", which is where the
+	 * first cut of this landed with a chunk of 8014.  The code
+	 * below that clamps ns against maxsize does the same masking
+	 * for the same reason.
+	 */
+	if(max > 0 && p->chunk > max/32){
+		p->chunk = (max/32) & ~p->quanta;
+		if(p->chunk < p->quanta + 1)
+			p->chunk = p->quanta + 1;
+	}
 	if(max == 0)
 		p->ressize = max;
 	else if(max < RESERVED)

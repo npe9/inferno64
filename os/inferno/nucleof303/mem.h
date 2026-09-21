@@ -62,5 +62,5 @@
 #define	MACHADDR	0
 
 #define	UART0		0x40004400	/* USART2, the ST-LINK virtual port */
-#define	UART0IRQ	(38-16)		/* interrupt 38; NVIC counts from 16 */
+#define	UART0IRQ	38		/* USART2's NVIC interrupt number */
 #define	UARTBAUD	115200

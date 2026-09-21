@@ -1,0 +1,135 @@
+STM32F407
+=========
+
+A Cortex-M4 with 1M of flash, 128K of SRAM at 0x20000000 and 64K of
+core coupled memory at 0x10000000, and a floating point extension that
+is single precision only.  The same part family as the NUCLEO-F303RE
+beside it, with four times the RAM and eight times the flash, and that
+is the whole difference that matters: this board runs Limbo and that
+one does not.
+
+What was measured
+-----------------
+
+Under qemu, which models an STM32F405 as -M netduinoplus2 -- the same
+die family, and the same CCM, SRAM and flash geometry:
+
+	qemu-system-arm -M netduinoplus2 -nographic \
+		-serial null -serial mon:stdio -kernel istm32f407
+
+The two -serial arguments are not decoration.  qemu gives serial_hd(0)
+to USART1 and this board's console is USART2, so a plain -nographic
+leaves the console attached to a port the kernel never writes to and
+the board looks dead.
+
+What that run does, typed at the prompt and answered:
+
+	; ls /dis
+	/dis/bind.dis
+	/dis/cat.dis
+	/dis/echo.dis
+	/dis/lib
+	/dis/ls.dis
+	/dis/sh
+	/dis/sh.dis
+	; cat /dev/time
+	         95           95356402154            1525862433              16000000
+	; echo hello world
+	hello world
+
+and the FPREG, FPREG-S2 and TRAPREG checks the armv7m kernel prints at
+boot all pass.
+
+Where the memory went
+---------------------
+
+163840 bytes are left after the kernel.  Loading /dis/sh.dis asks
+malloc for 73536 bytes for its decoded instruction array alone -- 6128
+instructions at 12 bytes an Inst -- and on this board that is not an
+optimisation question, it is the difference between having a shell and
+not.  The mkfile beside this file sets XIPMODS=1, so utils/dis2s lays
+every module's Inst array out at build time as a RODATA symbol in the
+text segment, and the array costs flash instead of RAM.  The kernel
+image is 537816 bytes of the megabyte.
+
+Getting from 147456 bytes free to 163840 took four portable sizes that
+were chosen for a machine with megabytes.  conf.base0 is PGROUND(end),
+so the kernel's data and bss are charged to the pools in whole 4096-
+byte pages, and each of these was measured from the linker's symbol
+table:
+
+	mntalloc.tagmask	8192	a bit for each of the 65536 tags
+				9P can express (NMNTTAG, 1024 here)
+	Uart.istage/ostage	4096	2048 each way in every Uart
+				(STAGESIZE, 256 here)
+	xlists.hole		2240	128 free-memory runs; this board
+				has two banks (NHOLE, 16 here)
+	kmesg			1536	the console log (KMESGSIZE)
+	ilockpcs		1024	a debug ring nothing writes
+				unless LOCKCYCLES is defined
+
+Data and bss went from 48736 bytes to 32280, which is nine pages to
+eight.  The last of those was worth a whole page on its own: at
+KMESGSIZE 1024 the kernel ended 24 bytes into the ninth page.
+
+What is not done
+----------------
+
+ls(1) runs on a freshly booted board and does not run after another
+command has run first.  This is not a bug with a fix in this
+directory.  The largest single thing the Dis heap is asked for is the
+8192-byte buffer bufio(2) makes for each open file, and whether one
+exists depends on where the previous command left its holes; at the
+prompt main holds about 70K and the heap about 50K of the 163840, and
+the failure is honest -- "out of memory: heap" is raised into the
+shell, which prints it and carries on.  The pool percentages in the
+configuration beside this file were chosen by measurement for that
+behaviour and the comment there says what the alternatives did.
+
+Nothing here has been run on silicon.  The board is on the end of an
+Olimex ARM-USB-TINY-H, and openocd reaches a DAP -- JTAG tap
+0x4ba00477, and the debug and system power-up handshakes in DP
+CTRL/STAT both acknowledged, 0xf0000001 -- but the only access port on
+it reads IDR 0x24770002, which is an APB-AP.  An STM32F4 answers
+0x24770011, an AHB-AP, at the same index, and openocd cannot read
+0xe000ed00 through what is there.  Whatever is on the end of that cable
+is not answering as an STM32F4, so no image has been written to a part.
+
+	openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg \
+		-f target/stm32f4x.cfg \
+		-c "program istm32f407 0x08000000 verify reset exit"
+
+is the command once that is sorted out, and the console is USART2 on
+PA2 and PA3 at 115200 -- a wire to a USB serial adapter, since this
+board has no ST-Link virtual port of its own.  There is no semihosting
+console in this tree, so the UART is not optional: without it a booted
+kernel has nowhere to say anything.
+
+What is here
+------------
+
+archstm32f407.c takes the clock tree as far as the part will let it and
+no further.  setclock() tries HSI, then the PLL, and waits for each
+ready bit with a bounded spin rather than forever, because qemu's
+hw/misc/stm32_rcc.c is a plain register file that never sets HSIRDY or
+PLLRDY: a kernel that waited for them would hang before its first
+print.  It falls back to the 16MHz internal oscillator and sets apb1hz
+to whatever it settled on, and uartstm32f4.c takes its divisor from
+that, so a board whose PLL does not start has a console at the right
+baud rather than at a tenth of it.  On silicon that fallback has never
+been exercised either way.
+
+uartstm32f4.c is a second file rather than an argument to
+nucleof303/uartstm32.c because the F3 and the F4 share a name and a
+manufacturer and not a register map: SR and DR here against the F3's
+ISR, RDR and TDR, the enable bit at 13 rather than 0, and an overrun
+cleared by reading SR and then DR rather than through an ICR this part
+does not have.
+
+UART0IRQ is 38, the NVIC interrupt number, not 38-16.  os/inferno/
+armv7m/trap.c dispatches on IPSR minus Excirq and intrenable() uses its
+argument as an NVIC ISER bit, so both want the number RM0090 calls
+position 38.  With the -16 the port transmitted and never received a
+character.  nucleof303/mem.h had the same -16 and now has 38; that
+board has no userland to type at, so the correction there is by reading
+and not by measurement.

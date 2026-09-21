@@ -1,0 +1,178 @@
+<../../../mkconfig
+
+#Configurable parameters
+
+CONF=stm32f407
+CONFLIST=stm32f407
+
+SYSTARG=$OSTARG
+OBJTYPE=thumb
+INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
+
+INITDIR=../init
+PORTDIR=../port
+ARCHDIR=../armv7m
+
+#end configurable parameters
+
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+# The built-in root goes in the text segment, not the data segment: this
+# board runs its text from flash (or, on mps2, models one that does), and
+# os/inferno/armv7m/l.s copies the data segment into RAM at boot.  See
+# os/inferno/port/mkroot and utils/data2s/data2s.c.
+ROOTINTEXT=1
+
+# And every module's decoded instruction array with it.  utils/dis2s
+# lays out at build time what libinterp/load.c:/^parsemod would
+# otherwise build in RAM every time a module is loaded, as a RODATA
+# symbol the linker puts in the text segment.  XIPMODS tells
+# os/inferno/port/mkdevc that this board defines xipmods itself, in the
+# file dis2s generates, rather than taking the empty one.
+#
+# This is not an optimisation here, it is the difference between having
+# a shell and not.  Measured: loading /dis/sh.dis asks malloc for 73536
+# bytes for its Inst array alone, against 147456 bytes of RAM in the
+# whole board, and with the array in RAM the main pool reached cursize
+# 115008 and the Dis heap could not get 2560 bytes from xalloc.  See
+# doc/xip.ms.
+XIPMODS=1
+
+<| $SHELLNAME ../port/mkdevlist $CONF
+
+# The text runs out of the flash at the bottom of the address map, where
+# the core reads its initial stack pointer and reset address from the
+# first two words.  The data segment is linked into the SRAM, and
+# os/inferno/armv7m/l.s copies it out of the flash before anything reads
+# a variable.  -R0 stops the linker rounding the data address up and away
+# from the one given here.
+KTZERO=0x08000000
+KDATA=0x20000000
+
+# This core's floating point extension is single precision only, and
+# utils/tl gives every F register a double.  Adding -F to LDFLAGS names
+# every function that cannot run here.  Unlike os/inferno/nucleof303,
+# this board has the RAM to hold a Limbo userland, so the list matters
+# and is not a curiosity; see NOTE beside this file.
+
+OBJ=\
+	l.$O\
+	auth.$O\
+	clock.$O\
+	main.$O\
+	mmu.$O\
+	fpu.$O\
+	fpiarmv7m.$O\
+	fpi.$O\
+	fpimem.$O\
+	trap.$O\
+	tod.$O\
+	mul64fract.$O\
+	stubs.$O\
+	$CONF.root.$O\
+	$CONF.prog.$O\
+	$CONF.xipmod.$O\
+	$DEVS\
+	$LINKS\
+	$PORT\
+	$MISC\
+	$OTHERS\
+
+LIBNAMES=${LIBS:%=lib%.a}
+LIBDIRS=$LIBS
+
+HFILES=\
+	mem.h\
+	dat.h\
+	io.h\
+	$ARCHDIR/armv7m.h\
+
+CFLAGS=-wFV -I. -I$ARCHDIR -I../port -I$ROOT/Inferno/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp/w$DISWORD -I$ROOT/libinterp
+KERNDATE=`{$NDATE}
+
+default:V: i$CONF
+
+install:V: i$CONF
+	cp i$CONF $INSTALLDIR/i$CONF
+
+i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
+	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
+	$LD $LDFLAGS -o $target -H4 -T$KTZERO -D$KDATA -R0 -l $OBJ $CONF.$O $LIBFILES
+	cp $target $INSTALLDIR/$target
+
+# Every module the root carries, and osinit with them.  A module whose
+# decoded array is not here still loads, out of the root and into the
+# pool, at the cost this board cannot pay; a name here that the root
+# does not carry is simply not matched at load time, so the failure mode
+# of getting this list wrong is losing the saving, not running the wrong
+# code.
+XIPDIS=\
+	sh.dis\
+	sh/std.dis\
+	lib/arg.dis\
+	lib/bufio.dis\
+	lib/string.dis\
+	lib/readdir.dis\
+	lib/filepat.dis\
+	lib/daytime.dis\
+	lib/env.dis\
+	echo.dis\
+	cat.dis\
+	ls.dis\
+	bind.dis\
+
+# dis32, not $DISROOT: the root section of the conf beside this file
+# names /dis32 explicitly, because a Dis word is four bytes on this
+# board and a module compiled for eight will not load.  These have to be
+# the same files the root carries.
+XIPDISFILES=${XIPDIS:%=$ROOT/dis32/%}
+
+# dis2s is a host tool, found on the path like data2s and ndate are.
+$CONF.prog.s $CONF.xipmod.c: $INITDIR/$INIT.dis $XIPDISFILES
+	$DIS2S -o $CONF.prog -c $CONF.xipmod -r $ROOT/dis32 -p /dis \
+		/osinit.dis=$INITDIR/$INIT.dis $XIPDIS
+
+<../port/portmkfile
+
+# After the include: portmkfile sets CLEANEXTRA empty.
+CLEANEXTRA=$CONF.prog.s $CONF.xipmod.c
+
+../init/$INIT.dis:	../init/$INIT.b
+	cd ../init; mk 'DISWORD='$DISWORD $INIT.dis
+
+clock.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+main.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+trap.$O:	$ROOT/Inferno/$OBJTYPE/include/ureg.h
+
+l.$O:	$ARCHDIR/l.s mem.h $ARCHDIR/armv7m.h
+	$AS $ASFLAGS -I. $ARCHDIR/l.s
+
+%.$O:	$ARCHDIR/%.c
+	$CC $CFLAGS $ARCHDIR/$stem.c
+
+tod.$O:	../port/tod.c
+	$CC $CFLAGS ../port/tod.c
+
+mul64fract.$O:	../port/mul64fract.c
+	$CC $CFLAGS ../port/mul64fract.c
+
+# software floating point, for the Cortex-M4 double precision emulation
+fpi.$O:	../port/fpi.c $ARCHDIR/fpi.h
+	$CC $CFLAGS ../port/fpi.c
+
+fpimem.$O:	../port/fpimem.c $ARCHDIR/fpi.h
+	$CC $CFLAGS ../port/fpimem.c
+
+fpiarmv7m.$O:	$ARCHDIR/fpiarmv7m.c $ARCHDIR/fpi.h
+
+devuart.$O:	../port/devuart.c
+	$CC $CFLAGS ../port/devuart.c
+
+# On hardware:
+#	st-flash write istm32f407 0x08000000
+# or, with a probe openocd knows:
+#	openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
+#		-c "program istm32f407 0x08000000 verify reset exit"
+#
+# Under qemu, which models an STM32F405 -- the same die family:
+#	qemu-system-arm -M netduinoplus2 -nographic -kernel istm32f407

@@ -940,8 +940,21 @@ struct PhysUart
 	void	(*putc)(Uart*, int);
 };
 
+/*
+ * The console's staging buffers, one each way, in every Uart -- and
+ * they are arrays in the struct, not pointers, so a board pays for
+ * them whether or not it has a serial line.  2048 apiece is the
+ * portable default and right on a machine with megabytes; a board
+ * whose whole memory is smaller than a megabyte says so in its mem.h.
+ * Measured on os/inferno/stm32f407, where the one Uart was 4416 bytes
+ * of a 147456-byte board.
+ */
 enum {
+#ifndef STAGESIZE
 	Stagesize=	2048
+#else
+	Stagesize=	STAGESIZE
+#endif
 };
 
 /*
