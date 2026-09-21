@@ -1,0 +1,46 @@
+Programming a MikroElektronika board without a probe
+====================================================
+
+A patch against mikroe-uhb (https://github.com/thotypous/mikroe-uhb,
+MIT), which is an open client for the USB HID bootloader MikroElektronika
+ships in the flash of its development boards.  It is here for the same
+reason tools/qemu-patches is: without it a board in this tree cannot be
+reached at all.
+
+os/inferno/stm32f407 is brought up on a clicker 2 for STM32, whose
+manual offers three ways in.  Two of them -- mikroProg and ST-Link V2 --
+go through CN3, of which it says "2x5 headers should be first soldered
+on the CN3 connector pads", so on a stock board the programming header
+is not fitted.  The third is the bootloader that is already there,
+reached by pressing Reset and connecting within five seconds, and
+MikroElektronika's own client for it is a Windows program.  mikroe-uhb
+is the same protocol, reverse engineered from USB captures, and it
+handles STM32F4XX.  It is written for Python 2; this makes it run on 3.
+
+	curl -L https://github.com/thotypous/mikroe-uhb/archive/master.tar.gz \
+		| tar xz
+	cd mikroe-uhb-master
+	patch -p1 < /path/to/tools/mikroe-uhb-patches/0001-run-on-Python-3.patch
+	pip install hidapi			# not needed on Linux
+	python3 mikroe-uhb -v /path/to/istm32f407.hex
+
+and press Reset on the board within five seconds.  On Linux the client
+opens the hidraw device itself and conf/51-mikroe-uhb.rules in the same
+tree says how to let it; elsewhere it goes through hidapi.
+
+To check the patch rather than trust it:
+
+	python3 -m unittest -v mikroeuhb.tests.device
+
+STM32Program there replays a capture of a real STM32 devkit being
+programmed and asserts the client emits the same USB traffic byte for
+byte.  tests.devkit and tests.bootinfo pass too, except RandomBootInfo,
+which shells out to gcc -m32.
+
+What the client knows about the flash layout is worth having even if it
+is never run: STM32DevKit lays an F4 out as 4 blocks of 16K, one of 64K
+and 6 of 128K and asserts the total equals BootStart, so on a 1M part
+the bootloader is the last 128K sector from 0x080e0000 and the
+application starts at 0x08000000.  os/inferno/stm32f407/NOTE has the
+rest, including what the client rewrites in the image and why that is
+harmless.
