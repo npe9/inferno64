@@ -189,18 +189,23 @@ kfsproc(pfd: ref Sys->FD)
 # The default is the Arasan.  Its PIO path works and serves /n/dos and
 # kupdate.
 #
-# SDHOST reads correctly now -- SD-OK, SD-MULTI-OK, SD-CAP-OK with the
-# card on sdN0 -- but its WRITES stall 128 bytes in, so pointing this
-# at sdN0 gives a board whose filesystems panic the moment anything
-# writes: both kfs and dosfs go down, there is no /n/dos, and kupdate
-# cannot replace the kernel either.  That is a raw-SD test rig, not a
-# system.
+# SDHOST now reads AND writes: on sdN0 it passes SD-OK, FAT-OK,
+# SD-FS-CREATE-OK, FAT-WRITE-OK, FAT-RENAME-OK, FAT-CLOBBER-OK and
+# FAT-HELD-OK, so kfs makes a filesystem and dosfs reads, writes and
+# renames on it.  It is not the default yet for one reason: a read
+# still fails intermittently under the 1.5MB sustained test --
 #
-# So: point this at sdN0 to work on SDHOST, load THAT kernel with
-# tools/jtag, and expect the filesystems to die.  Do not write it to
-# the card -- the card needs a kernel that can boot the board back to
-# a shell.
-SDDEV: con "/dev/sdN0";	# LOCAL: SDHOST experiment, not for the card
+#   sdhost: read block 36864 failed: sdhsts 0x0 sdcmd 0x51 sdedm 0x10801
+#
+# the "data phase never started" abort that the 1ms first-poll delay
+# is supposed to prevent, so that delay is not always enough.  The
+# Arasan has no such gap, and the card needs a kernel that can boot
+# the board back to a shell.
+#
+# Point this at sdN0 to work on SDHOST and load THAT kernel with
+# tools/jtag.  Take care committing it: this line was accidentally
+# committed as sdN0 once, from a local edit left in the tree.
+SDDEV: con "/dev/sdM0";
 KFSPART: con SDDEV + "/kfstest";
 
 # the IP interface's control fd, held so the interface outlives the
