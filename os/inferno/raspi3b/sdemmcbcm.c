@@ -1243,6 +1243,141 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	 * test that can damage the filesystem it is run from cannot be
 	 * run often.
 	 */
+
+	/*
+	 * "sdverify nblocks count [pageoff]": write known patterns,
+	 * read them back, and say which blocks actually landed.
+	 *
+	 * Every check in this investigation so far has been of the
+	 * driver's own accounting -- did the engine say it moved
+	 * everything, did the controller say it was done.  None of them
+	 * asks the only question that matters, which is whether the
+	 * bytes are on the card.  A DMA that reports 3 of 9 blocks moved
+	 * may still have put 3, or 2, or 9 blocks of something onto the
+	 * medium, and the PIO fallback then rewrites the lot, so the
+	 * file can be correct while the transfer was not -- or the
+	 * reverse, which is worse and is what nobody has looked for.
+	 *
+	 * Each 512-byte block is filled with a word per 4 bytes:
+	 *
+	 *	(iteration<<24) | (block<<16) | offset
+	 *
+	 * so a block that reads back wrong says which iteration and
+	 * which block its contents came from, rather than merely that it
+	 * differs.  Stale data from the previous pass is therefore
+	 * distinguishable from garbage.
+	 *
+	 * Guards of 0xAA and 0x55 sit either side of the buffer and are
+	 * checked after every transfer, which separates "the engine
+	 * stopped early" from "the engine wrote outside its buffer".
+	 */
+	if(strcmp(cb->f[0], "sdverify") == 0 && (cb->nf == 3 || cb->nf == 4)){
+		int nb = atoi(cb->f[1]), cnt = atoi(cb->f[2]);
+		int off = cb->nf == 4? (int)strtol(cb->f[3], nil, 0): 0;
+		int k, b, j, bad, guardbad, firstbad;
+		uchar *raw, *w, *rd;
+		u32 want, got32;
+		uvlong bno;
+		long n;
+
+		if(nb < 1 || nb > Maxblocks)
+			nb = 9;
+		if(cnt < 1)
+			cnt = 20;
+		if(off < 0 || off > BY2PG-1)
+			off = 0;
+		if((raw = malloc(nb*Secsize + 4*BY2PG)) == nil)
+			error(Enomem);
+		if((rd = malloc(nb*Secsize + BY2PG)) == nil){
+			free(raw);
+			error(Enomem);
+		}
+		if(waserror()){
+			free(raw);
+			free(rd);
+			nexterror();
+		}
+		w = (uchar*)(((uintptr)raw + BY2PG-1) & ~((uintptr)BY2PG-1));
+		w += BY2PG;			/* room for the leading guard */
+		w += off;
+		print("emmc: sdverify %d blocks x %d, buf %#p page offset %#lux, "
+			"dma %d\n", nb, cnt, w,
+			(ulong)((uintptr)w & (BY2PG-1)), emmcdma);
+		bad = guardbad = 0;
+		for(k = 0; k < cnt; k++){
+			bno = (uvlong)2048 + (uvlong)(k % 200)*nb;
+			for(b = 0; b < nb; b++)
+				for(j = 0; j < Secsize; j += 4){
+					want = (u32)((k&0xff)<<24) |
+						(u32)((b&0xff)<<16) | (u32)j;
+					w[b*Secsize+j+0] = want;
+					w[b*Secsize+j+1] = want>>8;
+					w[b*Secsize+j+2] = want>>16;
+					w[b*Secsize+j+3] = want>>24;
+				}
+			memset(w - 64, 0xAA, 64);
+			memset(w + nb*Secsize, 0x55, 64);
+
+			n = emmcbio(u, 0, 1, w, nb, bno);
+
+			for(j = 0; j < 64; j++)
+				if(w[-64+j] != 0xAA || w[nb*Secsize+j] != 0x55){
+					print("emmc: sdverify GUARD broken at "
+						"transfer %d (%s guard)\n", k,
+						w[-64+j] != 0xAA? "leading":
+							"trailing");
+					guardbad++;
+					break;
+				}
+			if(n != nb*Secsize){
+				print("emmc: sdverify write %d returned %ld of %d\n",
+					k, n, nb*Secsize);
+				bad++;
+				continue;
+			}
+			memset(rd, 0, nb*Secsize);
+			n = emmcbio(u, 0, 0, rd, nb, bno);
+			if(n != nb*Secsize){
+				print("emmc: sdverify read %d returned %ld of %d\n",
+					k, n, nb*Secsize);
+				bad++;
+				continue;
+			}
+			firstbad = -1;
+			want = got32 = 0;	/* kencc cannot see the
+						 * break-then-use below */
+			for(b = 0; b < nb; b++){
+				for(j = 0; j < Secsize; j += 4){
+					want = (u32)((k&0xff)<<24) |
+						(u32)((b&0xff)<<16) | (u32)j;
+					got32 = rd[b*Secsize+j] |
+						rd[b*Secsize+j+1]<<8 |
+						rd[b*Secsize+j+2]<<16 |
+						(u32)rd[b*Secsize+j+3]<<24;
+					if(got32 != want)
+						break;
+				}
+				if(j < Secsize){
+					if(firstbad < 0)
+						firstbad = b;
+					print("emmc: sdverify MISMATCH transfer %d "
+						"block %d (abs %llud) at byte %d: "
+						"want %#ux got %#ux "
+						"(that content is iteration %d "
+						"block %d)\n",
+						k, b, bno+b, j, want, got32,
+						(got32>>24)&0xff, (got32>>16)&0xff);
+					bad++;
+				}
+			}
+		}
+		print("emmc: sdverify done: %d transfers, %d block mismatches, "
+			"%d guard failures\n", cnt, bad, guardbad);
+		poperror();
+		free(raw);
+		free(rd);
+		return 0;
+	}
 	if(strcmp(cb->f[0], "dmatest") == 0 && cb->nf >= 3 && cb->nf <= 5){
 		int nb = atoi(cb->f[1]), cnt = atoi(cb->f[2]), k;
 		int off = cb->nf >= 4? (int)strtol(cb->f[3], nil, 0): 0;
@@ -1308,12 +1443,14 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 		 *	        0xc3f84640  0xc3f87640  0xc3f9b640
 		 *	        0xc3fb2640
 		 *
-		 * Seven for seven at page offset 0x640.  That is
-		 * dossrv's buffer: 64-byte aligned, so a cache-line
-		 * sweep could never have moved it, but neither
-		 * 512-aligned nor page-aligned.  malloc's own alignment
-		 * then decided the page offset of every run of this
-		 * test, and nobody chose it or printed it.
+		 * Seven for seven at page offset 0x640, which looked like
+		 * dossrv handing the engine a 64-byte-aligned buffer.
+		 * It is not: biotrace shows that buffer is PAGE aligned,
+		 * and 0x640 is arithmetic -- dma src is read after the
+		 * stall and is the engine's current source pointer,
+		 * 0x600 delivered plus one 64-byte burst read ahead into
+		 * its FIFO.  The rule holds on the one dump that stalled
+		 * elsewhere too: 4096 delivered, src at buf+0x1040.
 		 *
 		 * So: align up to a page, add the offset asked for, and
 		 * say what the buffer's page offset actually is, because
