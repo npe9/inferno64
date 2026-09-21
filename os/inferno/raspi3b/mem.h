@@ -37,6 +37,15 @@
  */
 #define	Jtagstub	((uintptr)0x70000)
 
+/*
+ * What the trampoline leaves in x0, so the kernel can tell a warm
+ * JTAG restart from a cold firmware boot.  Uncast, because l.s reads
+ * this header too and 7a cannot parse the cast Jtagstub uses.  The
+ * stub itself has to build the value with MOVZ/MOVK rather than name
+ * it -- see the note there about literal pools.
+ */
+#define	Jtagmagic	0x4a544147		/* "JTAG" */
+
 #define	UART0		((uintptr)0x3f201000)	/* PL011 */
 #define	AUX0		((uintptr)0x3f215000)	/* BCM2835 AUX: mini UART (UART1) */
 #define	PM0		((uintptr)0x3f100000)	/* BCM2835 power manager / watchdog */

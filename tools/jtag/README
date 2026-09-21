@@ -190,6 +190,15 @@ A kernel that knows which way it was entered can quiesce them; one
 that does not will find them warm and be surprised.  The kernel does
 not yet act on x0.
 
+And x0 is overloaded: on a cold firmware boot it is the DTB pointer,
+and boot1 in l.s stores it into dtbptr unconditionally.  So after a
+JTAG restart dtbptr holds 0x4a544147, which is not a device tree and
+is not even inside RAM.  Nothing on this board reads it today -- it
+boots to a shell with dtbptr set to the magic -- but anything that
+later enables fdt code here will chase a pointer into nowhere, and the
+symptom will be nothing like "the debugger did it".  boot1 should
+treat the JTAG magic as "no DTB" before that happens.
+
 THE TRAMPOLINE MUST BE POSITION-INDEPENDENT, and the first one was
 not.  It is assembled at its link address inside the kernel and run
 from 0x70000, below the load address so an image cannot overwrite the

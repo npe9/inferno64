@@ -221,6 +221,23 @@ TEXT	boot1(SB), 1, $-4
 	MOV	R2, RSP
 	MOV	$setSB(SB), R28
 	MOV	R19, R0
+	/*
+	 * x0 is overloaded.  The firmware passes the DTB pointer in it;
+	 * the JTAG trampoline passes 0x4a544147 ("JTAG") so the kernel
+	 * can tell a warm restart from a cold boot (tools/jtag/README).
+	 * Keep both, but do not let the second be mistaken for the
+	 * first: fdtinit() dereferences its argument as soon as it is
+	 * not nil, and 0x4a544147 is past the end of this board's 1GB.
+	 * It happens not to fault today, which is luck and not a
+	 * reason.
+	 */
+	MOV	R0, bootx0(SB)		/* how we were entered */
+	MOVZ	$0x4147, R1
+	MOVK	$0x4a54<<16, R1
+	CMP	R1, R0
+	BNE	haveadtb
+	MOV	$0, R0			/* the magic is not a device tree */
+haveadtb:
 	MOV	R0, dtbptr(SB)
 	BL	main(SB)
 deadb:
@@ -243,6 +260,7 @@ TEXT	getdaif(SB), 1, $-4
 	RET	R30
 
 GLOBL	dtbptr(SB), $8
+GLOBL	bootx0(SB), $8		/* x0 as entered: DTB, or the JTAG magic */
 GLOBL	stack(SB), $KSTACK
 GLOBL	mach0(SB), $(4*1024)
 GLOBL	wildstack(SB), $(16*1024)

@@ -15,6 +15,7 @@ Proc *up;
 Conf conf;
 
 extern ulong kerndate;
+extern uintptr bootx0;		/* x0 as entered: DTB pointer, or Jtagmagic */
 extern int cflag;
 extern int consoleprint;
 extern int main_pool_pcnt;
@@ -197,6 +198,23 @@ main(void)
 	 */
 	serialputs("Inferno/arm64 raspi3b build ", -1);
 	serialputdec(kerndate);
+	/*
+	 * And how we got here.  The JTAG trampoline enters with x0 =
+	 * "JTAG" (tools/jtag/README); the firmware passes a DTB pointer.
+	 * Printing it makes the boot ABI something the console shows
+	 * rather than something the documentation asserts -- the first
+	 * restart over JTAG was diagnosed by reading registers through
+	 * the debugger precisely because the kernel said nothing about
+	 * which way it had been entered.
+	 *
+	 * It matters beyond bookkeeping: a warm restart leaves the SoC
+	 * peripherals as the previous kernel had them -- DMA channels
+	 * possibly active, the eMMC possibly mid-transaction, USB and
+	 * the interrupt controller untouched -- and none of that is
+	 * reset by a trampoline that only normalises the CPU.
+	 */
+	if(bootx0 == Jtagmagic)
+		serialputs(" (warm, entered over JTAG)", -1);
 	serialputs("\n", -1);
 	crumbdump();
 
