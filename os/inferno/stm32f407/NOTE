@@ -14,13 +14,15 @@ What was measured
 Under qemu, which models an STM32F405 as -M netduinoplus2 -- the same
 die family, and the same CCM, SRAM and flash geometry:
 
-	qemu-system-arm -M netduinoplus2 -nographic -kernel istm32f407
+	qemu-system-arm -M netduinoplus2 -nographic \
+		-serial null -serial mon:stdio -kernel istm32f407
 
-qemu gives serial_hd(0) to USART1, which is this board's console, so
--nographic connects it and nothing else is needed.  A kernel built with
-CONSUART at 2 wants -serial null -serial mon:stdio instead; with a
-plain -nographic its console is attached to a port the kernel never
-writes to and the board looks dead.
+The two -serial arguments follow from CONSUSART.  qemu gives
+serial_hd(0) to USART1, serial_hd(1) to USART2 and serial_hd(2) to
+USART3, so a console on USART2 needs one -serial null before the real
+one and a console on USART3 needs two.  Get it wrong and the console is
+attached to a port the kernel never writes to, and the board looks
+dead.
 
 What that run does, typed at the prompt and answered:
 
@@ -88,27 +90,28 @@ behaviour and the comment there says what the alternatives did.
 
 Nothing here has been run on silicon.
 
-A probe is not needed to put it there.  Every STM32F4 has a bootloader
-in ROM that speaks a serial protocol on USART1 -- PA9 and PA10 -- and
-is entered by holding BOOT0 high over a reset, so two wires and a USB
-serial adapter both write the kernel and carry its shell:
+The linker's -H4 output is a raw image whose first two words are the
+initial stack pointer and the reset vector -- 0x200074fc and
+0x080001c1, which is why qemu's -kernel takes it -- so it is also what
+a ROM bootloader or a probe wants written at 0x08000000, with no
+conversion.  There is no semihosting console in this tree, so a serial
+line is not optional whichever way the image gets there: without one a
+booted kernel has nowhere to say anything.
+
+On a bare F407 the part's own ROM bootloader is the shortest way in.
+It speaks a serial protocol on USART1 -- PA9 and PA10 -- entered by
+holding BOOT0 high over a reset, so two wires and a USB serial adapter
+both write the kernel and carry its shell:
 
 	# BOOT0 high, then reset
 	stm32flash -w istm32f407 -v -g 0x08000000 /dev/cu.SERIALPORT
 	# BOOT0 back to ground, then reset
 	screen /dev/cu.SERIALPORT 115200
 
-The linker's -H4 output is a raw image whose first two words are the
-initial stack pointer and the reset vector -- 0x200074fc and
-0x080001c1, which is why qemu's -kernel takes it -- and that is exactly
-what the ROM bootloader wants written at 0x08000000.  That is the
-reason CONSUART in mem.h is USART1 and not the USART2 an ST-Link
-virtual port would use: the console is on the pins that flash the
-board, so the wire does not have to move.  There is no semihosting
-console in this tree, so the UART is not optional either way: without
-it a booted kernel has nowhere to say anything.
+On a clicker 2 that does not work, and the reason is in the next
+section.
 
-A probe would be the other way, and the one here does not reach this
+A probe is the other way, and the one to hand does not reach this
 part.  The board is on the end of an Olimex ARM-USB-TINY-H, and openocd
 reaches a DAP -- JTAG tap 0x4ba00477, and the debug and system power-up
 handshakes in DP CTRL/STAT both acknowledged, 0xf0000001 -- but the
@@ -121,10 +124,69 @@ of that cable is not answering as an STM32F4.  With a probe that does:
 		-f target/stm32f4x.cfg \
 		-c "program istm32f407 0x08000000 verify reset exit"
 
+The board this is aimed at
+--------------------------
+
+A MikroElektronika clicker 2 for STM32: an STM32F407VGT6, two mikroBUS
+sockets, a USB Mini-B, two buttons and two LEDs.  From its manual
+(clicker2-stm32-manual-v100.pdf) and the schematic in it, which is
+where every pin below comes from:
+
+	                  mikroBUS 1        mikroBUS 2
+	AN                PA2               PA3
+	RST               PE7               PE13
+	CS                PE8               PE11
+	SCK               PC10  (SPI3)      PB13  (SPI2)
+	MISO              PC11  (SPI3)      PB14  (SPI2)
+	MOSI              PC12  (SPI3)      PB15  (SPI2)
+	PWM               PE9               PD12
+	INT               PE10              PE14
+	RX                PD6   (USART2)    PD9   (USART3)
+	TX                PD5   (USART2)    PD8   (USART3)
+	SCL               PA8   (I2C3)      PB10  (I2C2)
+	SDA               PC9   (I2C3)      PB11  (I2C2)
+
+	LD1 PE12   LD2 PE15   button T2 PE0   button T3 PA10
+
+That table is why CONSUSART is CONSUSART2 rather than CONSUSART1.  PA9
+and PA10 are not brought out on this board at all -- PA10 is button T3
+and PA9 is the USB VBUS sense -- so the ROM bootloader's USART1 pins do
+not exist here.  Its other pair, USART3 on PB10 and PB11, is mikroBUS
+2's SCL and SDA and is reachable, and so is PC10/PC11 on mikroBUS 1's
+SCK and MISO; but BOOT0 is on none of the headers or the 2x26 pad, so
+the ROM bootloader cannot be entered without a wire to the part.
+
+What the manual does say is that the board ships with a USB HID
+bootloader already in its flash, reached by pressing Reset and
+connecting within five seconds, and that the two remaining ways in --
+mikroProg and ST-Link V2 -- both go through CN3, of which it says "2x5
+headers should be first soldered on the CN3 connector pads".  So on a
+stock board the programming header is not fitted.  Soldering it is the
+one job that opens the only path of the three this tree can drive:
+mikroBootloader is a Windows program that takes Intel HEX and would
+want the kernel linked above whatever the bootloader occupies, which
+the manual does not say.
+
+CN3 is full JTAG and not only SWD, which matters because it means an
+ordinary 20-pin ARM JTAG probe drives it with jumper wires and no
+adapter board.  Figure 3-13 of the manual gives the odd column as
+VCC-3.3V, grounds and TRST, and the even column as
+
+	2  TMS       4  TCK       6  TDO       8  TDI      10  RESET#
+
+which is the ARM 20-pin signal set less the ground returns.
+
+A ccRF 2 or ccRF 3 click carries the CC1120 and uses AN for its GPIO0,
+RST for its reset, CS/SCK/MISO/MOSI for SPI, PWM for GPIO2 and INT for
+GPIO3.  In mikroBUS 2 that is GPIO0 PA3, reset PE13, CS PE11, SPI2 on
+PB13/PB14/PB15, GPIO2 PD12, GPIO3 PE14 -- which is the wiring a board
+half here would fill a Spidev in with.  Nothing of that is written yet.
+
 What is here
 ------------
 
-USART1 is on APB2 and USART2 on APB1, which is not a detail: the baud
+USART1 is on APB2 and USART2 and USART3 on APB1, which is not a
+detail: the baud
 divisor comes from whichever, and hsionly() in archstm32f407.c puts
 both APB dividers back to one when the PLL does not lock.  Without
 that, a fallback left HCLK at 16MHz with APB1 divided by four and APB2
@@ -150,11 +212,11 @@ ISR, RDR and TDR, the enable bit at 13 rather than 0, and an overrun
 cleared by reading SR and then DR rather than through an ICR this part
 does not have.
 
-UART0IRQ is the NVIC interrupt number -- 37 for USART1, 38 for USART2
--- and not that minus 16.  os/inferno/
+UART0IRQ is the NVIC interrupt number -- 37 for USART1, 38 for USART2,
+39 for USART3 -- and not that minus 16.  os/inferno/
 armv7m/trap.c dispatches on IPSR minus Excirq and intrenable() uses its
 argument as an NVIC ISER bit, so both want the number RM0090 calls
-position 37 or 38.  With the -16 the port transmitted and never
+position 37, 38 or 39.  With the -16 the port transmitted and never
 received a character.  nucleof303/mem.h had the same -16 and now has
 38, which is its USART2; that
 board has no userland to type at, so the correction there is by reading

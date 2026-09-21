@@ -111,32 +111,33 @@
 #define	MACHADDR	0
 
 /*
- * Which USART is the console.  The register block, the NVIC number,
- * the pins and the APB the baud divisor is computed from all follow
- * from this one definition; see uartstm32f4.c.  It is #define and not
- * a number because os/inferno/armv7m/l.s includes this file and 5a's
- * preprocessor knows #ifdef and not #if.
+ * Which USART is the console, and on which pins: define exactly one of
+ * these, and io.h turns it into a register block, an NVIC number, a
+ * port, two pins and two clock gates.
  *
- * USART1, on PA9 and PA10, because that is the pair the part's own ROM
- * bootloader speaks.  A board with no ST-Link is programmed by holding
- * BOOT0 high and talking to that bootloader over a serial adapter
- * (stm32flash(1) does it), and with the console on the same pins the
- * one pair of wires both writes the kernel and carries its shell.
- * USART1 is also serial_hd(0) under qemu's netduinoplus2, which is
- * what plain -nographic connects.
+ *	CONSUSART1	USART1, PA9 and PA10.  The pins the part's own
+ *			ROM bootloader speaks, and the usual pair on a
+ *			bare F407.
+ *	CONSUSART2	USART2, PD5 and PD6.  mikroBUS 1 on a MikroE
+ *			clicker 2 for STM32.
+ *	CONSUSART3	USART3, PD8 and PD9.  mikroBUS 2 on the same.
+ *	CONSUSART3C	USART3, PC10 and PC11.  The ROM bootloader's
+ *			other pair; on a clicker 2 they are mikroBUS 1's
+ *			SCK and MISO.
+ *	CONSUSART2A	USART2, PA2 and PA3.  The ST-Link virtual port
+ *			on a NUCLEO-F407.
  *
- * USART2, on PA2 and PA3, is the ST-Link virtual port on a
- * NUCLEO-F407.  A board wired that way comments the line below out and
- * needs a probe, or a wire moved to PA9 and PA10 to flash and back
- * again to watch.
+ * CONSUSART2, because the board this is being brought up on is a
+ * clicker 2 for STM32 with a USB UART click in mikroBUS 1 and the
+ * radio in mikroBUS 2.  A clicker 2 brings PA9 and PA10 out nowhere --
+ * PA10 is one of its two buttons and PA9 is the USB VBUS sense -- so
+ * CONSUSART1 is not an option there, whatever it is on a bare part.
+ *
+ * Under qemu's netduinoplus2 USART1 is serial_hd(0), USART2 is
+ * serial_hd(1) and USART3 is serial_hd(2), so CONSUSART2 wants
+ *	-serial null -serial mon:stdio
+ * and the USART3 ones want another -serial null before that.
  */
-#define	CONSUSART1
+#define	CONSUSART2
 
-#ifdef CONSUSART1
-#define	UART0		0x40011000	/* USART1 */
-#define	UART0IRQ	37		/* USART1's NVIC interrupt number */
-#else
-#define	UART0		0x40004400	/* USART2 */
-#define	UART0IRQ	38		/* USART2's NVIC interrupt number */
-#endif
 #define	UARTBAUD	115200

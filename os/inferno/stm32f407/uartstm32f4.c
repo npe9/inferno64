@@ -17,10 +17,9 @@
  * overrun through an ICR this does not have.  The two parts share a
  * name and a manufacturer and not a register map.
  *
- * Which USART, and so which pins and which APB, comes from CONSUSART1
- * in mem.h.  USART1 is PA9 and PA10 and hangs off APB2; USART2 is PA2 and
- * PA3 and hangs off APB1.  Both are alternate function 7, and the pins
- * of the first are in AFRH because they are above 7.
+ * Which USART, on which pins, off which APB: all of it comes from
+ * CONSUSART in mem.h, through the table in io.h.  Every pin any of
+ * them can use here is alternate function 7.
  */
 
 extern PhysUart stm32f4physuart;
@@ -37,25 +36,16 @@ static Ctlr stm32f4ctlr = {
 };
 
 enum {
-#ifdef CONSUSART1
-	Tx	= 9,
-	Rx	= 10,
-	Afr	= GPIO_AFRH,
-#else
-	Tx	= 2,
-	Rx	= 3,
-	Afr	= GPIO_AFRL,
-#endif
+	Tx	= UARTTX,
+	Rx	= UARTRX,
+	Afr	= UARTAFR,
+	Port	= UARTPORT,
 };
 
 static ulong
 uarthz(void)
 {
-#ifdef CONSUSART1
-	return apb2hz;
-#else
-	return apb1hz;
-#endif
+	return UARTHZ;
 }
 
 static Uart stm32f4uart = {
@@ -81,22 +71,19 @@ uartboardinit(void)
 
 	/*
 	 * The two pins to alternate function 7, at the fastest slew the
-	 * pin will do.  MODER and OSPEEDR are two bits a pin over all
-	 * sixteen; the alternate function is four bits a pin, in AFRL
-	 * for pins 0 to 7 and AFRH for 8 to 15, indexed within the
-	 * register.
+	 * pin will do.
 	 */
-	v = *(volatile ulong*)(GPIOA+GPIO_MODER);
+	v = *(volatile ulong*)(Port+GPIO_MODER);
 	v &= ~((3UL<<(2*Tx)) | (3UL<<(2*Rx)));
 	v |= (2UL<<(2*Tx)) | (2UL<<(2*Rx));		/* alternate function */
-	*(volatile ulong*)(GPIOA+GPIO_MODER) = v;
-	v = *(volatile ulong*)(GPIOA+GPIO_OSPEEDR);
+	*(volatile ulong*)(Port+GPIO_MODER) = v;
+	v = *(volatile ulong*)(Port+GPIO_OSPEEDR);
 	v |= (3UL<<(2*Tx)) | (3UL<<(2*Rx));
-	*(volatile ulong*)(GPIOA+GPIO_OSPEEDR) = v;
-	v = *(volatile ulong*)(GPIOA+Afr);
+	*(volatile ulong*)(Port+GPIO_OSPEEDR) = v;
+	v = *(volatile ulong*)(Port+Afr);
 	v &= ~((0xfUL<<(4*(Tx%8))) | (0xfUL<<(4*(Rx%8))));
 	v |= (7UL<<(4*(Tx%8))) | (7UL<<(4*(Rx%8)));	/* AF7 */
-	*(volatile ulong*)(GPIOA+Afr) = v;
+	*(volatile ulong*)(Port+Afr) = v;
 
 	c = &stm32f4ctlr;
 	csrw(c, UartCr1, 0);			/* the rate cannot be set

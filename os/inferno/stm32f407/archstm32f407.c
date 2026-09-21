@@ -126,12 +126,8 @@ archreset(void)
 	hz = setclock();
 	if(m != nil)
 		m->cpuhz = hz;
-	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | Ahb1Gpioa);
-#ifdef CONSUSART1
-	wr(RCC_APB2ENR, rd(RCC_APB2ENR) | Apb2Usart1);
-#else
-	wr(RCC_APB1ENR, rd(RCC_APB1ENR) | Apb1Usart2);
-#endif
+	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | UARTGPIOEN);
+	wr(UARTAPBENR, rd(UARTAPBENR) | UARTAPBBIT);
 	coherence();
 	uartboardinit();
 }
