@@ -45,6 +45,7 @@ void	trap(Ureg*);
 void	trapinit(void);
 void	uartboardinit(void);
 void	otherusarts(void);
+void	bangallpins(void);
 void	uartconsole(void);
 void	uartconsolesetup(void);
 void	serialputc(int);

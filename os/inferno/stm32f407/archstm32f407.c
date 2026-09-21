@@ -265,6 +265,8 @@ idlehands(void)
 		 * from.
 		 */
 		otherusarts();
+		if(on)
+			bangallpins();	/* TEMPORARY: once a second */
 	}
 	idle();
 }

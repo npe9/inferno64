@@ -142,6 +142,85 @@ rawuart(ulong base, ulong port, int tx, int afr, int af, ulong hz, char *s)
 	}
 }
 
+/*
+ * TEMPORARY, and the reason for it: everything above assumes that the
+ * USART's transmit pin is the one wired to the click, and that the
+ * alternate-function mux put the USART on it.  Neither has been
+ * observed, only derived.  This drives the same pins as plain GPIO and
+ * shifts a byte out by hand, so a pin that shows nothing here is not
+ * connected to anything listening, whatever the USART thinks.
+ *
+ * 9600 rather than 115200: a bit is 104us instead of 8.7us, which is
+ * far enough from the SysTick period that an interrupt landing in the
+ * middle of a frame costs one character rather than all of them, and
+ * splhi() keeps most of them out anyway.  The timing is taken from
+ * fastticks(), which reports its own rate, so it is a real interval
+ * whatever the clock turned out to be -- which is the point, since the
+ * clock is one of the things in doubt.
+ */
+static void
+bitdelay(uvlong ticksperbit)
+{
+	uvlong end;
+
+	end = fastticks(nil) + ticksperbit;
+	while(fastticks(nil) < end)
+		clockpoll();
+}
+
+static void
+bitbang(ulong port, int pin, char *s)
+{
+	uvlong hz, tpb;
+	ulong v;
+	int i, b, sp;
+
+	v = *(volatile ulong*)(port+GPIO_MODER);
+	v &= ~(3UL << (2*pin));
+	v |= 1UL << (2*pin);			/* plain output */
+	*(volatile ulong*)(port+GPIO_MODER) = v;
+	*(volatile ulong*)(port+GPIO_ODR) |= 1UL << pin;	/* idle high */
+
+	fastticks(&hz);
+	tpb = hz / 9600;
+	if(tpb == 0)
+		return;
+	for(; *s; s++){
+		sp = splhi();
+		b = *s & 0xff;
+		*(volatile ulong*)(port+GPIO_ODR) &= ~(1UL << pin);
+		bitdelay(tpb);				/* start bit */
+		for(i = 0; i < 8; i++){
+			if(b & 1)
+				*(volatile ulong*)(port+GPIO_ODR) |= 1UL << pin;
+			else
+				*(volatile ulong*)(port+GPIO_ODR) &= ~(1UL << pin);
+			b >>= 1;
+			bitdelay(tpb);
+		}
+		*(volatile ulong*)(port+GPIO_ODR) |= 1UL << pin;
+		bitdelay(tpb);				/* stop bit */
+		bitdelay(tpb);
+		splx(sp);
+	}
+}
+
+/*
+ * Every pin either socket's UART reaches, transmit and receive alike,
+ * because a click that had them the other way round would look exactly
+ * like a click that is not connected.
+ */
+void
+bangallpins(void)
+{
+	bitbang(GPIOD, 5, "PD5 mikroBUS1 TX\r\n");
+	bitbang(GPIOD, 6, "PD6 mikroBUS1 RX\r\n");
+	bitbang(GPIOD, 8, "PD8 mikroBUS2 TX\r\n");
+	bitbang(GPIOD, 9, "PD9 mikroBUS2 RX\r\n");
+	bitbang(GPIOA, 0, "PA0 pad UART4 TX\r\n");
+	bitbang(GPIOA, 1, "PA1 pad UART4 RX\r\n");
+}
+
 void
 otherusarts(void)
 {
