@@ -96,6 +96,18 @@ Send to that station, by that path, and take frames from it.
 .B announce
 Take frames from any station no other conversation has claimed.
 .TP
+.B monitor on
+.RB | off
+Take unnumbered frames addressed to anybody, not only to this station.
+A station that could hear only what was addressed to it could not
+monitor, and monitoring is most of what an AX.25 station does: a TNC
+in monitor mode prints every frame on the channel.  It is also the only
+way to hear APRS, whose destination is a tocall naming software rather
+than a station \- nobody answers to
+.BR APZINF .
+Connectionless only, because a numbered frame belongs to a connection
+and a connection is between two named stations.
+.TP
 .BI via " CALL\fP-\fIn\fP[,\fICALL\fP-\fIn\fP]"
 The digipeater path on its own, at most two, which is what AX.25 2.2
 allows.

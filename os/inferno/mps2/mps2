@@ -181,6 +181,7 @@ root
 	/dis/cvtchk.dis	/dis32/cvtchk.dis
 	/dis/modchk.dis	/dis32/modchk.dis
 	/dis/authchk.dis	/dis32/authchk.dis
+	/dis/aprs.dis		/dis32/aprs.dis
 	/dis/ax25chk.dis	/dis32/ax25chk.dis
 	/dis/ax25raw.dis	/dis32/ax25raw.dis
 # Two certified identities under one signer, made on a host by

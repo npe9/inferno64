@@ -158,6 +158,7 @@ struct Conv
 	int	x;
 	int	inuse;
 	int	announced;
+	int	monitor;	/* take frames addressed to anybody */
 	int	dataopen;
 	int	haveremote;
 	Call	remote;
@@ -242,6 +243,7 @@ static struct
 	u32	nnoconv;	/* for us, and nobody had announced */
 	u32	ndigi;		/* for a digipeater we are not */
 	u32	nrepeat;	/* and for one we are */
+	u32	nmonitor;	/* heard for somebody else and taken anyway */
 	u32	noqdrop;	/* a control frame with no room to queue */
 } ax25;
 
@@ -1030,14 +1032,43 @@ ax25reader(void*)
 			freeb(b);
 			continue;
 		}
+		ctl = *p;
+		cv = convfor(&src, &ann);
+
+		/*
+		 * A frame addressed to somebody else.  A station that
+		 * could only hear what was addressed to it could not
+		 * monitor, and monitoring is most of what an AX.25
+		 * station does -- a TNC in monitor mode prints every
+		 * frame on the channel.  It is also the only way to hear
+		 * APRS at all, whose destination is a tocall that names
+		 * software rather than a station: APZINF is not QST and
+		 * nobody answers to it.
+		 *
+		 * So a conversation that asked to monitor takes it,
+		 * unnumbered frames only, because a numbered frame
+		 * belongs to a connection and a connection is between
+		 * two named stations.  Anything else is counted and
+		 * dropped, as before.
+		 */
 		if(!samecall(&dest, &ax25.me) && !isbcast(&dest)){
-			ax25.nnotours++;
-			freeb(b);
+			if(ann == nil || !ann->monitor || (ctl & 3) != 3){
+				ax25.nnotours++;
+				freeb(b);
+				continue;
+			}
+			ax25.nmonitor++;
+			qlock(&ann->l);
+			if(!waserror()){
+				ann->remote = src;
+				ann->haveremote = 1;
+				input(ann, b, p, e, cmd);
+				poperror();
+			}
+			qunlock(&ann->l);
 			continue;
 		}
 
-		ctl = *p;
-		cv = convfor(&src, &ann);
 		if(cv == nil){
 			/*
 			 * Nobody is connected to this station.  A SABM
@@ -1243,6 +1274,7 @@ newconv(void)
 			qreopen(cv->rq);
 			cv->inuse = 1;
 			cv->announced = 0;
+			cv->monitor = 0;
 			cv->haveremote = 0;
 			cv->ndigi = 0;
 			cv->dataopen = 0;
@@ -1444,6 +1476,8 @@ convstatus(Conv *cv, char *buf, int len)
 	p = seprint(p, e, "%d %s", cv->x, cv->inuse ? "open" : "closed");
 	if(cv->announced)
 		p = seprint(p, e, " announced");
+	if(cv->monitor)
+		p = seprint(p, e, " monitor");
 	if(cv->haveremote){
 		callfmt(&cv->remote, cb, sizeof cb);
 		p = seprint(p, e, " remote %s", cb);
@@ -1499,7 +1533,8 @@ ax25stats(char *buf, int len)
 		ax25.nnotours, ax25.nrunt, ax25.nbad);
 	p = seprint(p, e, "notui %ud\nnoconv %ud\ntodigi %ud\n",
 		ax25.nnotui, ax25.nnoconv, ax25.ndigi);
-	p = seprint(p, e, "repeated %ud\n", ax25.nrepeat);
+	p = seprint(p, e, "repeated %ud\nmonitored %ud\n",
+		ax25.nrepeat, ax25.nmonitor);
 	p = seprint(p, e, "ctldropped %ud\n", ax25.noqdrop);
 	return p - buf;
 }
@@ -1835,6 +1870,13 @@ ax25write(Chan *c, void *a, s32 n, s64)
 		}else if(strcmp(p, "announce") == 0){
 			cv->announced = 1;
 			cv->haveremote = 0;
+		}else if(strcmp(p, "monitor") == 0){
+			if(cb->nf != 2)
+				error(Ebadarg);
+			if(!cv->ui)
+				error("monitoring is connectionless: ui on "
+					"first");
+			cv->monitor = strcmp(cb->f[1], "on") == 0;
 		}else if(strcmp(p, "via") == 0){
 			if(cb->nf != 2)
 				error(Ebadarg);

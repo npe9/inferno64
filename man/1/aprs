@@ -1,0 +1,142 @@
+.TH APRS 1
+.SH NAME
+aprs \- APRS over AX.25
+.SH SYNOPSIS
+.B aprs setup
+.I call
+.RI [ path ]
+.br
+.B aprs pos
+.I lat lon sym
+.RI [ text ]
+.br
+.B aprs status
+.I text
+.br
+.B aprs tlm
+.I seq v1 v2 v3
+.br
+.B aprs msg
+.I tocall text
+.br
+.B aprs hear
+.RI [ n ]
+.SH DESCRIPTION
+APRS is not a protocol under AX.25, it is a format carried in one: an
+unnumbered information frame, control
+.BR 0x03 ,
+PID
+.BR 0xf0 ,
+to a destination that is not a station, with a text information field
+whose first character says what the rest is.
+.I Ax25 (3)
+already sends that frame, carries a digipeater path and repeats one, so
+what is left is the text, and that is all this is.
+.PP
+.B Setup
+attaches
+.B /dev/radio0/data
+to
+.B #a
+and sets this station's callsign, and turns identification on at ten
+minutes, which is what a station transmitting on an amateur band is
+required to do.
+.PP
+.B Pos
+sends a position report with no timestamp:
+.B !
+then eight characters of latitude, the symbol table, nine of longitude,
+the symbol code, and free text.
+.B "5130.10N"
+is 51 degrees 30.10 minutes north and
+.B "00005.20W"
+is 0 degrees 5.20 minutes west.  Coordinates are given in that form
+rather than in degrees because that is the form; converting from
+decimal degrees is arithmetic somebody else can do, and getting the
+field widths wrong is the mistake that makes a beacon unreadable.
+.B S
+on the
+.B /
+table is the satellite symbol.
+.PP
+.B Status
+sends
+.BR > text .
+.B Tlm
+sends a sequence number and five analogue values as
+.BR T#ddd,ddd,... ,
+clamped to 0 through 255 and wrapping at 1000, which is the format and
+not a choice.
+.B Msg
+sends
+.BI : addressee : text
+with the addressee padded to exactly nine characters, which is also not
+negotiable: a message whose addressee field is short is addressed to
+somebody else.
+.PP
+.B Hear
+announces, turns
+.I ax25 (3)'s
+.B monitor
+on and decodes what arrives, printing the frame in the form every APRS
+tool reads,
+.IB source > destination : information\fR,
+and then what the first character says it is.
+.PP
+The destination is
+.BR APZINF .
+.B APZ
+is the prefix reserved for software with no allocated tocall and the
+rest is what the software calls itself.
+.SH EXAMPLE
+On the satellite:
+.PP
+.EX
+	aprs setup GB1SAT-3
+	aprs pos 5130.10N 00005.20W S ok
+	aprs status in-orbit
+	aprs tlm 7 214 33 98
+.EE
+.PP
+and on the ground,
+.BR "aprs setup W1AW-2" ,
+.BR "aprs hear 3" :
+.PP
+.EX
+	APRS GB1SAT-3>APZINF:!5130.10N/00005.20WSok
+	APRS-KIND position
+	APRS GB1SAT-3>APZINF:>in-orbit
+	APRS-KIND status
+	APRS GB1SAT-3>APZINF:T#007,214,033,098,000,000,00000000
+	APRS-KIND telemetry
+.EE
+.SH SOURCE
+.B /appl/cmd/aprs.b
+.SH SEE ALSO
+.I ax25 (3),
+.I ax25raw (1),
+.I radio (3)
+.SH BUGS
+The source callsign is read from
+.BI #a/ n /remote
+after the frame, not handed over with it, so on a channel with more
+than one station talking it can be the wrong one.
+.I Radio (3)
+makes exactly this argument about
+.B pkt
+and solves it by putting the ancillary data in the same queue entry;
+.I ax25 (3)
+has no equivalent yet.
+.PP
+This will not be heard by the APRS network.  What goes on the air here
+is an AX.25 frame without HDLC: no flags, no bit stuffing, no NRZI and
+no frame check sequence, because the LoRa PHY delimits the packet and
+checks it.  A TNC expects HDLC \- 1200 baud AFSK, or 9600 baud with
+G3RUH's scrambler \- and will hear nothing.  Two stations running this
+hear each other perfectly and nobody else.
+.PP
+Only the formats above are generated, and
+.B hear
+names the kind of a frame rather than parsing it.  Position reports
+with timestamps, compressed positions, objects, items and queries are
+recognised and not decoded.
