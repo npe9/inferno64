@@ -7255,3 +7255,48 @@ fill level, where the read path waits on
 .CW SDHSTS 's
 data flag.  The 1ms delay is applied to both, so whatever writes need
 is not simply more of that.  That is the next thing.
+.NH 2
+Writes: bursting is not the answer either
+.PP
+The read side was fixed by not touching the status register while the
+data phase starts, so the write side was rewritten the same way:
+.CW bcm2835-sdhost
+reads
+.CW SDEDM
+once per burst of eight words and, when there is no room, waits a time
+proportional to the shortfall instead of spinning.  This driver had
+been calling
+.CW fifospace()
+-- itself a spin on
+.CW SDEDM
+-- before every single word.
+.PP
+Ported faithfully, and it changes nothing.  A stamp-verified boot of
+the bursting build:
+.P1
+SD-READ-OK
+SD-MULTI-OK 32768 bytes, last block matches it read alone (eb589042)
+SD-CAP-OK ... the claimed capacity is the real one
+SD-OK
+sdhost: write block 2049 failed: sdhsts 0x1 sdcmd 0x800d
+    sdedm 0x10803 (fsm 3 fill 0) sdhbct 384 sdhblc 1
+.P2
+Byte for byte the failure it replaced:
+.CW sdhbct
+384 of 512, so 128 bytes went and no more, the FSM left in WRITEDATA,
+and the
+.CW "sdcmd 0x800d"
+that follows is the next command's CMD13 unable to start against it.
+.PP
+.B "128 bytes is 32 words, and the FIFO is 16."
+The controller accepts two FIFOs' worth and then stops draining to the
+card, whether the words arrive one at a time with a poll between each
+or eight at a time with one poll per burst.  So it is not the rate of
+writing and not the rate of polling.
+.PP
+Kept anyway, because it matches the reference implementation and is no
+worse, but it should not be mistaken for a fix.  What writes need is
+still unknown, and the next thing to look at is what the card is doing
+-- CMD13's status at the point of the stall, and whether the write
+command was accepted at all -- rather than anything on the host side
+of the FIFO, which has now been rewritten twice to no effect.

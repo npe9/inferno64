@@ -117,6 +117,7 @@ enum {
 	Datclock = 25000000,	/* after identification */
 	Cdivmax	= 0x7ff,
 
+	Pioburst = 8,		/* words written between SDEDM reads */
 	Fifofillsh = 4,		/* SDEDM bits 8:4: words currently in the FIFO */
 	Fifofillmask = 0x1f,
 	Fifodepth = 16,		/* BCM2835 SDHOST data FIFO is 16 words deep */
@@ -840,14 +841,58 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			}
 			p += Secsize;
 		}else if(write){
-			for(j = 0; j < Secsize; j += 4){
-				w = p[0] | p[1]<<8 | p[2]<<16 | p[3]<<24;
-				if(!fifospace(r)){	/* wait for FIFO room */
-					bioerror(c, write, bno+i, r[SDHSTS]);
-					goto out;
+			/*
+			 * Write in bursts, reading SDEDM once per burst.
+			 *
+			 * This used to call fifospace() -- which spins on
+			 * SDEDM -- before every single word, and writes
+			 * stalled 128 bytes in with the FSM left in
+			 * WRITEDATA and the next command unable to start:
+			 *
+			 *	sdhost: write block 2049 failed: sdhsts 0x1
+			 *	    sdedm 0x10803 (fsm 3 fill 0) sdhbct 384
+			 *
+			 * The read side taught the same lesson: touching
+			 * the status registers during the data phase
+			 * disturbs the transfer, and reads only worked
+			 * once the first poll was held off.
+			 *
+			 * bcm2835-sdhost reads SDEDM once per burst of
+			 * eight words and, when there is not room, waits a
+			 * time proportional to the shortfall rather than
+			 * spinning.  That is what this does.
+			 */
+			{
+			int words, burst, k, tries;
+
+			j = Secsize/4;			/* words to write */
+			tries = 0;
+			while(j > 0){
+				words = Fifodepth -
+					(int)((r[SDEDM] >> Fifofillsh) &
+					      Fifofillmask);
+				burst = Pioburst;
+				if(burst > j)
+					burst = j;
+				if(words < burst){
+					if(++tries > 20000){
+						bioerror(c, write, bno+i,
+							r[SDHSTS]);
+						goto out;
+					}
+					microdelay(burst - words);
+					continue;
 				}
-				r[SDDATA] = w;
-				p += 4;
+				tries = 0;
+				if(words > j)
+					words = j;
+				for(k = 0; k < words; k++){
+					r[SDDATA] = p[0] | p[1]<<8 |
+						p[2]<<16 | p[3]<<24;
+					p += 4;
+				}
+				j -= words;
+			}
 			}
 		}else if(c->bytemode){
 			/*
