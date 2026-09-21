@@ -21,8 +21,8 @@ handles STM32F4XX.  It is written for Python 2; this makes it run on 3.
 		| tar xz
 	cd mikroe-uhb-master
 	patch -p1 < /path/to/tools/mikroe-uhb-patches/0001-run-on-Python-3.patch
-	pip install hidapi			# not needed on Linux
-	python3 mikroe-uhb -v /path/to/istm32f407.hex
+	python3 -m venv venv && venv/bin/pip install hidapi   # not on Linux
+	venv/bin/python mikroe-uhb -v /path/to/istm32f407.hex
 
 and press Reset on the board within five seconds.  On Linux the client
 opens the hidraw device itself and conf/51-mikroe-uhb.rules in the same
@@ -36,6 +36,20 @@ STM32Program there replays a capture of a real STM32 devkit being
 programmed and asserts the client emits the same USB traffic byte for
 byte.  tests.devkit and tests.bootinfo pass too, except RandomBootInfo,
 which shells out to gcc -m32.
+
+The suite is not enough on its own.  One of the Python 2 dict
+iterators is in BootInfo.__repr__, which nothing in the suite calls and
+which is the first thing a real board makes the program run: with the
+device answering, the client printed the INFO reply and then died on
+it.  What the board says, once it can be printed:
+
+	McuType: 'STM32F4XX'
+	EraseBlock: 0x4000
+	WriteBlock: 0x4
+	BootRev: 0x1310
+	BootStart: 0xe0000
+	DevDsc: b'clicker 2 for STM32'
+	McuSize: 0x100000
 
 What the client knows about the flash layout is worth having even if it
 is never run: STM32DevKit lays an F4 out as 4 blocks of 16K, one of 64K
