@@ -31,10 +31,14 @@ QUICK="check-man-pages check-config-portlines check-cabundle check-cloudauth che
 # and over https from a booted kernel, and says "cannot tell" rather
 # than failing when the plain fetch does not finish.
 BOOT="check-pc64-timers check-pc64-tcp check-pc64-disk check-pc64-redeploy check-arm64-smp check-crossarch check-tls check-pc64-smp check-disdump"
-# Bisect or sweep; tens of minutes.  Measurements rather than pass/fail
-# -- check-pc64-parallelvm FAILS on purpose, because the parallel VM is
-# broken and the check says so; it is here to detect the day that changes.
-SLOW="check-pc64-memfloor check-pc64-parallelvm"
+# Bisect or sweep; tens of minutes.  Measurements rather than pass/fail,
+# and two of them FAIL on purpose, each to notice the day it stops:
+# check-pc64-parallelvm, because the parallel VM is broken on pc64 here
+# (the multicore branch has it working and measured, which adoption will
+# bring), and check-pc64-bigmem, because pc64 page-faults on a machine
+# with more than 4 GiB -- which is every cloud machine, and whose fix is
+# on that same branch.  See doc/merge-parallelvm-cloud.ms.
+SLOW="check-pc64-memfloor check-pc64-parallelvm check-pc64-bigmem"
 
 list=; all=
 while [ $# -gt 0 ]; do
