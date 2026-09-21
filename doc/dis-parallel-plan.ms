@@ -1221,6 +1221,30 @@ section 5.
 .NH 2
 Phase 3 \- allocation
 .PP
+.B "Measured, and it is not next."
+This phase is ordered before Phase 4 below on the reasoning that
+allocation is one lock every processor goes through.  It is, and it is
+the least contended lock in the system.  Counted on Compute Engine with
+.CW *poolstat=1 ,
+contended arrivals per thousand:
+.IP
+.nf
+                     4 processors    16 processors
+allocator, main           3                8
+allocator, heap           0                2
+scheduler (isched.l)      3               24
+channel (chanl)          15               20
+.fi
+.PP
+So Phase 4 goes first, and per-P run queues with it:
+.CW isched.l
+is what grows fastest with width.  The rest of this section stands as
+written; only its place in the order changes.  See
+.CW doc/multicore-plan.ms ,
+"Which lock is actually hot, measured".
+.PP
+The original text follows.
+.PP
 Per-P caches over
 .CW os/inferno/port/alloc.c ,
 on the
