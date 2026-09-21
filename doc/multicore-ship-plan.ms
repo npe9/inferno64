@@ -138,70 +138,44 @@ it prints them all.  And the number that matters for a product, which
 nobody has yet: the throughput difference between the flag off and on,
 measured the way Phase D measures everything else.
 .NH 1
-Phase D \- answered twice, and the second answer is different
+Phase D \- done, and the default is flipped
 .PP
-Full numbers and the instrument fixes are in
+Full numbers and the bug hunts are in
 .CW doc/multicore-plan.ms .
-.PP
-.B "First answer: no."
-Twenty Compute Engine instances, four Xeons each, UEFI disk boot.  Three
-of four channel-workload instances panicked at four processors with
-.CW "parallelvm = 1"
-\(em two page faults inside
-.CW dis
-processes and one
-.CW "checkb 4 qconsume" ,
-memory corruption.  No QEMU batch on this branch had ever produced any
-of these at any width.
-.PP
-.B "The cause, found and fixed."
-.CW addgrp()
-and
-.CW delgrp()
-maintained the process-group list with no lock, because the global
-.CW vmlock
-used to mean one executor at a time.  Details in the plan; the
-instrument that named it is
-.CW *progquar=N .
-.PP
-.B "Second answer: yes on amd64, not yet on arm64."
-Nine instances with the fix, 84,000 guest ticks:
 .IP
 .nf
-                        panics   Dis quanta per tick
-lock on  (parallelvm=0)   0/3    42.6  43.0  43.3
-lock off (parallelvm=1)   0/6    86.3  110.1  110.2  111.5
+                                 gain   instances   panics
+channel traffic, amd64            2.5x      6         0
+module loading, amd64             3.7x      6         0
+channel traffic, arm64            4.1x      6         0
 .fi
 .PP
-Six of six clean and 2.5x at the median, against 1.4x before \(em which
-was being dragged down by the runs on their way to dying.
+.CW "parallelvm = 1"
+is the default.
+.CW *parallelvm=0
+still selects the old behaviour.
 .PP
-.B "What is still missing before the default can be flipped."
-Only one thing, and it is not the VM:
-.IP \(bu
-arm64.  Five
-.CW t2a-standard-4
-instances boot, bring up four processors and run the parallel VM
-without panicking, and then four of the five stop producing console
-output.  It is a board-level fault, not the VM \(em one of the two
-lock-on controls stopped too \(em but until it is fixed there is no
-arm64 throughput measurement.
+.B "Three bugs stood in the way and all three are fixed."
+The process-group lists had no lock, which corrupted memory on three
+amd64 instances in four;
+.CW uartintr()
+cleared every interrupt cause including a transmit interrupt it never
+handled, which killed the arm64 console; and
+.CW virtarm64_kick()
+disabled the transmit interrupt while output was still queued.  The
+first was found with
+.CW *progquar=N ,
+the second by running QEMU with something on stdin for the first time,
+and the third by a counter that read zero locally and 92 on hardware.
 .PP
-.B "The second workload is done."
-Module loading re-measured on the fixed kernel over six instances and
-108,000 ticks: 3.2, 3.2, 3.2 against 11.0, 12.3, 12.6, which is 3.7x.
-That makes twelve
-.CW parallelvm=1
-instances across two workloads with no panic on any of them.
-.PP
-.B "Two instrument lessons that the plan should carry forward."
+.B "Two instrument lessons the plan carries forward."
 .CW CHANTEST-OK
 is a serial-console print and measures the console: four instances
 returned exactly 645, and so did the one-processor controls.  Use Dis
 quanta per tick.  And do not divide work by Dis quanta to remove host
 speed \(em a quantum is a slice of Dis work, so the ratio is a constant
-of the program.  Proved: loading a host cut quanta per tick from 35.9 to
-19.5 while the ratio moved one per cent.
+of the program.  Proved: loading a host cut quanta per tick from 35.9
+to 19.5 while the ratio moved one per cent.
 .NH 1
 Phase E \- the open correctness items
 .IP \(bu
