@@ -630,23 +630,7 @@ uartconsole(void)
 	 * Leaving the PL011 alone when the firmware kept it for Bluetooth
 	 * is also what makes Bluetooth possible later: it is that UART.
 	 */
-	/*
-	 * ... but only when there IS a firmware choice to follow.
-	 *
-	 * On a warm restart over JTAG the firmware did not run, so GPIO
-	 * 14's function is not the firmware's arrangement -- it is
-	 * whatever the previous kernel left, and this kernel's own
-	 * Bluetooth driver moves those pins ("bt: pins" in the boot
-	 * log).  So a warm boot read Altmini and announced "console:
-	 * mini uart, the firmware's choice" when nothing of the sort had
-	 * been chosen.
-	 *
-	 * That is the same situation as having no firmware at all, which
-	 * the paragraph above already answers for QEMU: the PL011 is the
-	 * one that is wired, so take its pins.  Reading a pin to discover
-	 * an intention only works if someone with an intention set it.
-	 */
-	if(bootx0 != Jtagmagic && gpiofselget(14) == Altmini){
+	if(gpiofselget(14) == Altmini){
 		uart = &miniuart;
 		consfrom = "mini uart, the firmware's choice";
 	} else {
