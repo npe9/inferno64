@@ -1,0 +1,166 @@
+From: Inferno RIO
+Subject: [PATCH] hw/arm/mps2: a second SX1276 on the same SPI, with -machine radio2=on
+
+A PyCubed has two radio sockets on one bus, RF1 and RF2, told apart by
+chip select and by nothing else, and a guest that can only ever see
+one cannot be pointed at a board that has two.  This fits a second
+part on Shield0's PL022 beside the first, off by default so nothing
+existing moves.
+
+Its chip select, DIO0 and NRESET are gpio0 pins 6, 7 and 8, avoiding 2
+and 3 which 0030's loopback strap uses.  Those numbers are this
+model's, like the first socket's: the board has a header and no radio
+on it, so a shield's pinout is whatever the shield is.
+
+The two are separate NICs and want a -nic each, which is right: two
+sockets on one board are two channels, and on a PyCubed they are
+different bands.
+
+The chip select index has to be set, or the two collide before either
+is realized: "CS index '0x0' in use by a sx1276 device".
+
+Measured with an Inferno kernel that probes both: one -nic and
+radio=on gives "shield0.rf1: SX1276" and "shield0.rf2: RegVersion
+0x00, not an SX1276", serving /dev/radio0 alone; radio2=on and two
+-nic give both parts, /dev/radio0 and /dev/radio1, and a write to
+radio1 reaches the peer on the second socket while the peer on the
+first hears nothing.
+---
+diff --git a/hw/arm/mps2.c b/hw/arm/mps2.c
+index 258bc05..fb93608 100644
+--- a/hw/arm/mps2.c
++++ b/hw/arm/mps2.c
+@@ -96,6 +96,8 @@ struct MPS2MachineState {
+     Clock *refclk;
+     /* An SX1276 on the Shield0 SPI, present only with -machine radio=on. */
+     bool radio;
++    /* A second one beside it, with -machine radio2=on. */
++    bool radio2;
+     /* gpio0 pin 2 strapped to pin 3, with -machine gpio-loopback=on. */
+     bool gpio_loopback;
+ };
+@@ -141,6 +143,45 @@ static void make_ram_alias(MemoryRegion *mr, const char *name,
+     memory_region_add_subregion(get_system_memory(), base, mr);
+ }
+ 
++/*
++ * One SX1276 on a bus, with its chip select, DIO0 and NRESET on the
++ * given gpio0 pins.  Those numbers are this model's and not an MPS2
++ * document's: the board has a header and no radio on it, so a
++ * shield's pinout is whatever the shield is.  A PyCubed wires the
++ * same signals to a SAMD51 SERCOM and its own GPIOs (RF1_CS PB30,
++ * RF1_IO0 PB05, RF1_RST PB00), which is a different machine again.
++ */
++static void mps2_fit_radio(MPS2MachineState *mms, SSIBus *ssi, int csindex,
++                           int cs, int dio0, int nreset)
++{
++    DeviceState *radio = qdev_new(TYPE_SX1276);
++
++    /*
++     * The bus tells its peripherals apart by this, and two of them
++     * left at the default collide before either is realized.
++     */
++    qdev_prop_set_uint8(radio, "cs", csindex);
++
++    /*
++     * match_default false: this is not the board's ethernet and a
++     * bare "-net nic" should not land on it.  Ask for it by name, as
++     * -nic socket,model=sx1276,mcast=...
++     */
++    qemu_configure_nic_device(radio, false, "sx1276");
++    qdev_realize_and_unref(radio, BUS(ssi), &error_fatal);
++    qdev_connect_gpio_out(DEVICE(&mms->gpio[0]), cs,
++                          qdev_get_gpio_in_named(radio, SSI_GPIO_CS, 0));
++    qdev_connect_gpio_out_named(radio, "dio0", 0,
++                                qdev_get_gpio_in(DEVICE(&mms->gpio[0]), dio0));
++    /*
++     * A shield's reset line is a GPIO on every board that has one,
++     * and the part cannot be brought up without it: Semtech's own
++     * driver drives a reset sequence before it reads anything.
++     */
++    qdev_connect_gpio_out(DEVICE(&mms->gpio[0]), nreset,
++                          qdev_get_gpio_in_named(radio, "nreset", 0));
++}
++
+ static void mps2_common_init(MachineState *machine)
+ {
+     MPS2MachineState *mms = MPS2_MACHINE(machine);
+@@ -493,33 +534,23 @@ static void mps2_common_init(MachineState *machine)
+              * machine again.
+              */
+             if (mms->radio && spibase[2 * i + j] == 0x40026000) {
+-                DeviceState *radio;
+                 SSIBus *ssi = (SSIBus *)qdev_get_child_bus(spi, "ssi");
+ 
+-                radio = qdev_new(TYPE_SX1276);
++                mps2_fit_radio(mms, ssi, 0, 0, 1, 4);
+                 /*
+-                 * match_default false: this is not the board's ethernet
+-                 * and a bare "-net nic" should not land on it.  Ask for
+-                 * it by name, as -nic socket,model=sx1276,mcast=...
++                 * A second socket on the same bus, off by default.
++                 * Two parts on one SPI is what a PyCubed has -- RF1
++                 * and RF2, told apart by chip select and by nothing
++                 * else -- and a board half that cannot say "two"
++                 * cannot be pointed at one.  Its pins avoid 2 and 3,
++                 * which 0030's loopback strap uses.  It is a separate
++                 * NIC, so it wants its own -nic: two sockets on one
++                 * board are two channels, which is what RF1 and RF2
++                 * are for.
+                  */
+-                qemu_configure_nic_device(radio, false, "sx1276");
+-                qdev_realize_and_unref(radio, BUS(ssi), &error_fatal);
+-                qdev_connect_gpio_out(DEVICE(&mms->gpio[0]), 0,
+-                                      qdev_get_gpio_in_named(radio,
+-                                                             SSI_GPIO_CS, 0));
+-                qdev_connect_gpio_out_named(radio, "dio0", 0,
+-                                            qdev_get_gpio_in(
+-                                                DEVICE(&mms->gpio[0]), 1));
+-                /*
+-                 * NRESET on gpio0 pin 4.  A shield's reset line is a
+-                 * GPIO on every board that has one -- a PyCubed drives
+-                 * RF1_RST from PB00 -- and the part cannot be brought
+-                 * up without it: Semtech's own driver configures reset
+-                 * and drives a reset sequence before it reads anything.
+-                 */
+-                qdev_connect_gpio_out(DEVICE(&mms->gpio[0]), 4,
+-                                      qdev_get_gpio_in_named(radio,
+-                                                             "nreset", 0));
++                if (mms->radio2) {
++                    mps2_fit_radio(mms, ssi, 1, 6, 7, 8);
++                }
+             }
+         }
+     }
+@@ -553,6 +584,20 @@ static void mps2_common_init(MachineState *machine)
+                        0, 0x400000);
+ }
+ 
++static bool mps2_get_radio2(Object *obj, Error **errp)
++{
++    MPS2MachineState *mms = MPS2_MACHINE(obj);
++
++    return mms->radio2;
++}
++
++static void mps2_set_radio2(Object *obj, bool value, Error **errp)
++{
++    MPS2MachineState *mms = MPS2_MACHINE(obj);
++
++    mms->radio2 = value;
++}
++
+ static bool mps2_get_radio(Object *obj, Error **errp)
+ {
+     MPS2MachineState *mms = MPS2_MACHINE(obj);
+@@ -591,6 +636,10 @@ static void mps2_class_init(ObjectClass *oc, const void *data)
+     object_class_property_set_description(oc, "gpio-loopback",
+         "Strap gpio0 pin 2 to pin 3, for two-pin GPIO tests");
+ 
++    object_class_property_add_bool(oc, "radio2",
++                                   mps2_get_radio2, mps2_set_radio2);
++    object_class_property_set_description(oc, "radio2",
++                                          "Fit a second SX1276 on Shield0 SPI");
+     object_class_property_add_bool(oc, "radio",
+                                    mps2_get_radio, mps2_set_radio);
+     object_class_property_set_description(oc, "radio",

@@ -1248,3 +1248,19 @@ attached, a default kernel prints:
 	and ten writes take 520 and 810ms rather than 480.
 	The patch file carries 0037 as well, which is in the same
 	function and was not worth separating.
+
+0039 hw/arm/mps2: a second SX1276 on the same SPI, with -machine
+	radio2=on.  A PyCubed has two radio sockets on one bus, RF1
+	and RF2, told apart by chip select and by nothing else, and a
+	guest that can only ever see one cannot be pointed at a board
+	that has two.  Off by default, so nothing existing moves; its
+	chip select, DIO0 and NRESET are gpio0 pins 6, 7 and 8,
+	avoiding the two 0030's loopback strap uses.  The two are
+	separate NICs and want a -nic each, which is right: two
+	sockets on one board are two channels, and on a PyCubed they
+	are different bands.  The chip select index has to be set or
+	the two collide before either is realized.
+	Measured: one -nic and radio=on gives one part and
+	/dev/radio0; radio2=on and two -nic give both, and a write to
+	/dev/radio1 reaches the peer on the second socket while the
+	peer on the first hears nothing.

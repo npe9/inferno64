@@ -270,10 +270,22 @@ RegVersion it read, because a bus that is not reaching the part reads
 .B 0x00
 or
 .B 0xff
-and those are worth telling apart from a different chip.
+and those are worth telling apart from a different chip.  Each socket
+is probed and reported separately, so a board with one part fitted
+prints a line for the part and a line for the empty socket.
 .SH BUGS
-Only one interface exists.  A PyCubed has two radio sockets on one SPI
-bus, RF1 and RF2; this drives the first.
+Two sockets, which is a constant.  A board fits as many as it has and
+a directory appears for each part that answered, so a kernel on a
+board with one radio serves
+.B /dev/radio0
+and nothing else.
+.B Mps2
+has two on Shield0's PL022 with
+.B "-machine radio2=on"
+and
+.B raspi3b
+has two on SPI0, the second on CE1 with DIO0 on GPIO23 and NRESET on
+GPIO22.  Neither second socket has been driven by a real part.
 .PP
 .B Carrier
 is the smallest thing that arbitrates the air.  RegModemStat's

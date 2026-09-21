@@ -53,44 +53,58 @@ enum {
 	/*
 	 * The shield's wiring, which is this board's invention: an MPS2
 	 * header has no radio on it, so which pin is chip select and
-	 * which is DIO0 is whatever the shield says it is.  These two
-	 * match tools/qemu-patches/0029.  A PyCubed uses PB30 and PB05.
+	 * which is DIO0 is whatever the shield says it is.  The first
+	 * socket's three match tools/qemu-patches/0029; the second's
+	 * match 0039 and avoid pins 2 and 3, which 0030's loopback
+	 * strap uses.  A PyCubed wires RF1 to PB30/PB05/PB00 and has a
+	 * second socket beside it, which is the whole reason a board
+	 * half should be able to say "two".
 	 */
-	Rfcspin		= 0,
-	Rfdio0pin	= 1,
-	Rfresetpin	= 4,
+	Nsocket		= 2,
 };
 
-static Radio *radio0;
-
-typedef struct Pl022 Pl022;
-struct Pl022
+typedef struct Socket Socket;
+struct Socket
 {
-	u32	*ssp;
-	u32	*gpio;
+	char	*name;
 	int	cspin;
-	Lock	l;			/* the bus is shared with storage */
+	int	dio0pin;
+	int	resetpin;
+	Spidev	spi;
+	Radio	*radio;
 };
 
-static Pl022 shield0;
+/*
+ * One PL022 and one GPIO block, shared by every socket on the header,
+ * with one lock over the pair.  Two parts on one bus is what a PyCubed
+ * has and is the only arrangement in which a second socket means
+ * anything: they are told apart by chip select and by nothing else.
+ */
+static u32 *ssp;
+static u32 *gpio;
+static Lock buslock;			/* the bus is shared with storage */
+
+static Socket socket[Nsocket] = {
+	{ "shield0.rf1", 0, 1, 4 },
+	{ "shield0.rf2", 6, 7, 8 },
+};
 
 static void
 pl022select(Spidev *s, int on)
 {
-	Pl022 *p = s->aux;
+	Socket *sk = s->aux;
 
 	/* chip select is active low, and it is a GPIO, not the PL022's */
 	if(on)
-		p->gpio[Gpiodataout/4] &= ~(1 << p->cspin);
+		gpio[Gpiodataout/4] &= ~(1 << sk->cspin);
 	else
-		p->gpio[Gpiodataout/4] |= 1 << p->cspin;
+		gpio[Gpiodataout/4] |= 1 << sk->cspin;
 }
 
 static int
-pl022byte(Spidev *s, int out)
+pl022byte(Spidev *, int out)
 {
-	Pl022 *p = s->aux;
-	u32 *r = p->ssp;
+	u32 *r = ssp;
 
 	while((r[Sspsr/4] & Ssptnf) == 0)
 		;
@@ -108,29 +122,16 @@ pl022byte(Spidev *s, int out)
  * wait rather than holding it across one.
  */
 static void
-pl022lock(Spidev *s)
+pl022lock(Spidev*)
 {
-	Pl022 *p = s->aux;
-
-	ilock(&p->l);
+	ilock(&buslock);
 }
 
 static void
-pl022unlock(Spidev *s)
+pl022unlock(Spidev*)
 {
-	Pl022 *p = s->aux;
-
-	iunlock(&p->l);
+	iunlock(&buslock);
 }
-
-static Spidev shield0spi = {
-	"shield0",
-	&shield0,
-	pl022select,
-	pl022byte,
-	pl022lock,
-	pl022unlock,
-};
 
 /*
  * Wait n microseconds by the clock rather than by counting
@@ -162,13 +163,25 @@ usdelay(int n)
 static void
 rfinterrupt(Ureg*, void *a)
 {
-	Pl022 *p = &shield0;
+	Socket *sk;
+	u32 st;
+	int i;
 
 	USED(a);
-	/* write one to clear, then let the chip driver look */
-	p->gpio[Gpiointstatus/4] = 1 << Rfdio0pin;
-	if(radio0 != nil)
-		sx127xinterrupt(radio0);
+	/*
+	 * One interrupt line for the whole GPIO block, so the status
+	 * register says which pins raised it and every socket whose
+	 * DIO0 is among them is asked to look.  Write one to clear
+	 * first, so an edge arriving during the handler is not lost.
+	 */
+	st = gpio[Gpiointstatus/4];
+	for(i = 0; i < Nsocket; i++){
+		sk = &socket[i];
+		if(sk->radio == nil || (st & (1 << sk->dio0pin)) == 0)
+			continue;
+		gpio[Gpiointstatus/4] = 1 << sk->dio0pin;
+		sx127xinterrupt(sk->radio);
+	}
 }
 
 /*
@@ -180,58 +193,72 @@ rfinterrupt(Ureg*, void *a)
 void
 spipl022link(void)
 {
-	Pl022 *p = &shield0;
+	Socket *sk;
+	int i, n;
 
-	p->ssp = (u32*)SPISHIELD0;
-	p->gpio = (u32*)GPIO0;
-	p->cspin = Rfcspin;
+	ssp = (u32*)SPISHIELD0;
+	gpio = (u32*)GPIO0;
 
-	/* chip select idles high, so drive it before enabling the output */
-	p->gpio[Gpiodataout/4] |= 1 << Rfcspin;
-	p->gpio[Gpiooutenset/4] = 1 << Rfcspin;
-	/* NRESET idles high too */
-	p->gpio[Gpiodataout/4] |= 1 << Rfresetpin;
-	p->gpio[Gpiooutenset/4] = 1 << Rfresetpin;
-	/* DIO0 is an input, rising edge */
-	p->gpio[Gpiooutenclr/4] = 1 << Rfdio0pin;
-	p->gpio[Gpiointtypeset/4] = 1 << Rfdio0pin;	/* edge */
-	p->gpio[Gpiointpolset/4] = 1 << Rfdio0pin;	/* rising */
-	p->gpio[Gpiointstatus/4] = 1 << Rfdio0pin;	/* clear any stale one */
+	ssp[Sspcpsr/4] = 2;			/* the minimum even divisor */
+	ssp[Sspcr0/4] = Dss8bit | Frfspi;
+	ssp[Sspcr1/4] = Sspenable;
 
-	p->ssp[Sspcpsr/4] = 2;			/* the minimum even divisor */
-	p->ssp[Sspcr0/4] = Dss8bit | Frfspi;
-	p->ssp[Sspcr1/4] = Sspenable;
+	n = 0;
+	for(i = 0; i < Nsocket; i++){
+		sk = &socket[i];
+		sk->spi.name = sk->name;
+		sk->spi.aux = sk;
+		sk->spi.select = pl022select;
+		sk->spi.byte = pl022byte;
+		sk->spi.lock = pl022lock;
+		sk->spi.unlock = pl022unlock;
 
-	/*
-	 * Reset the part before talking to it.  NRESET is active low and
-	 * the datasheet (7.2.2) wants it held at least 100us, with the
-	 * part left alone for 5ms after it is released.
-	 *
-	 * Not microdelay(): os/inferno/armv7m/clock.c computes a loop
-	 * count from m->cpuhz and assumes four cycles an iteration, which
-	 * is an instruction count and not a time.  Under QEMU it is out by
-	 * a factor of seventeen -- a delay(1) for the hold above measured
-	 * 58us against the 1000us it was asked for, which the model said
-	 * so in as many words.  usdelay() below waits on SysTick instead,
-	 * which is a clock either way.
-	 */
-	p->gpio[Gpiodataout/4] &= ~(1 << Rfresetpin);
-	usdelay(200);
-	p->gpio[Gpiodataout/4] |= 1 << Rfresetpin;
-	usdelay(5000);
+		/* chip select idles high, so drive it before enabling */
+		gpio[Gpiodataout/4] |= 1 << sk->cspin;
+		gpio[Gpiooutenset/4] = 1 << sk->cspin;
+		/* NRESET idles high too */
+		gpio[Gpiodataout/4] |= 1 << sk->resetpin;
+		gpio[Gpiooutenset/4] = 1 << sk->resetpin;
+		/* DIO0 is an input, rising edge */
+		gpio[Gpiooutenclr/4] = 1 << sk->dio0pin;
+		gpio[Gpiointtypeset/4] = 1 << sk->dio0pin;
+		gpio[Gpiointpolset/4] = 1 << sk->dio0pin;
+		gpio[Gpiointstatus/4] = 1 << sk->dio0pin;
 
-	radio0 = sx127xinit(&shield0spi, GPIO0IRQ);
-	if(radio0 == nil)
-		return;
+		/*
+		 * Reset the part before talking to it.  NRESET is active
+		 * low and the datasheet (7.2.2) wants it held at least
+		 * 100us, with the part left alone for 5ms after it is
+		 * released.
+		 *
+		 * Not microdelay(): os/inferno/armv7m/clock.c computes a
+		 * loop count from m->cpuhz and assumes four cycles an
+		 * iteration, which is an instruction count and not a
+		 * time.  Under QEMU it is out by a factor of seventeen --
+		 * a delay(1) for the hold above measured 58us against
+		 * the 1000us it was asked for, which the model said so in
+		 * as many words.  usdelay() waits on SysTick instead,
+		 * which is a clock either way.
+		 */
+		gpio[Gpiodataout/4] &= ~(1 << sk->resetpin);
+		usdelay(200);
+		gpio[Gpiodataout/4] |= 1 << sk->resetpin;
+		usdelay(5000);
 
-	p->gpio[Gpiointenset/4] = 1 << Rfdio0pin;
-	intrenable(GPIO0IRQ, rfinterrupt, nil, 0, "rf0");
+		sk->radio = sx127xinit(&sk->spi, GPIO0IRQ);
+		if(sk->radio == nil)
+			continue;
+		gpio[Gpiointenset/4] = 1 << sk->dio0pin;
+		n++;
+	}
+	if(n > 0)
+		intrenable(GPIO0IRQ, rfinterrupt, nil, 0, "rf");
 }
 
 Radio*
 radioget(int i)
 {
-	if(i != 0)
+	if(i < 0 || i >= Nsocket)
 		return nil;
-	return radio0;
+	return socket[i].radio;
 }

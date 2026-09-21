@@ -74,7 +74,13 @@ enum {
 	Qctl,
 	Qstats,
 
-	Nradio		= 1,		/* sockets this kernel knows about */
+	/*
+	 * Sockets this kernel will serve.  A board fits as many as it
+	 * has and radioget() answers nil for the rest, so a directory
+	 * appears only for a part that was actually found.  A PyCubed
+	 * has two on one SPI bus, RF1 and RF2.
+	 */
+	Nradio		= 2,
 	Statlen		= 512,
 };
 

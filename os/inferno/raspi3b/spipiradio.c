@@ -20,11 +20,16 @@
  * fitted part is a choice and not a datasheet:
  *
  *	MOSI  GPIO10   MISO GPIO9   SCLK GPIO11   (SPI0, alt0)
- *	CS    GPIO8    DIO0 GPIO24  NRESET GPIO25
+ *	RF1: CS GPIO8   DIO0 GPIO24  NRESET GPIO25
+ *	RF2: CS GPIO7   DIO0 GPIO23  NRESET GPIO22
  *
- * The same three that tools/qemu-patches 0036 fits under
+ * RF1's three are the ones tools/qemu-patches 0036 fits under
  * "-machine raspi3b,radio=on", and the ones Adafruit's wiring guide
- * suggests for their breakout.
+ * suggests for their breakout.  RF2 is a second socket on the same
+ * bus, told apart by chip select and by nothing else, which is what a
+ * PyCubed has and what a Pi can have: GPIO7 is SPI0's other native
+ * chip select, CE1, and the header brings it out beside CE0.  It is
+ * probed like the first and is simply absent if nothing answers.
  */
 
 enum {
@@ -36,23 +41,30 @@ enum {
 	ClearTx	= 1<<4,
 	ClearRx	= 1<<5,
 
-	Cspin	= 8,
-	Dio0pin	= 24,
-	Resetpin = 25,
-
 	Alt0	= 4,		/* GPFSEL: SPI0 function */
+
+	Nsocket	= 2,
 };
 
-static Radio *radio0;
-
-typedef struct Pibus Pibus;
-struct Pibus
+typedef struct Socket Socket;
+struct Socket
 {
-	u32	*spi;
-	Lock	l;
+	char	*name;
+	int	cspin;
+	int	dio0pin;
+	int	resetpin;
+	Spidev	spi;
+	Radio	*radio;
 };
 
-static Pibus bus0;
+/* one SPI0 and one lock, shared by every socket on the header */
+static u32 *spi;
+static Lock buslock;
+
+static Socket socket[Nsocket] = {
+	{ "spi0.rf1", 8, 24, 25 },
+	{ "spi0.rf2", 7, 23, 22 },
+};
 
 /*
  * Chip select is a GPIO and not the controller's, because the part
@@ -63,59 +75,54 @@ static Pibus bus0;
 static void
 piselect(Spidev *s, int on)
 {
-	Pibus *p = s->aux;
+	Socket *sk = s->aux;
 
 	if(on){
-		p->spi[SpiCs] = ClearTx|ClearRx|CsTa;
-		gpioout(Cspin, 0);
+		spi[SpiCs] = ClearTx|ClearRx|CsTa;
+		gpioout(sk->cspin, 0);
 	}else{
-		gpioout(Cspin, 1);
-		p->spi[SpiCs] = 0;
+		gpioout(sk->cspin, 1);
+		spi[SpiCs] = 0;
 	}
 }
 
 static int
-pibyte(Spidev *s, int out)
+pibyte(Spidev *, int out)
 {
-	Pibus *p = s->aux;
-
-	p->spi[SpiFifo] = out & 0xff;
-	return p->spi[SpiFifo] & 0xff;
+	spi[SpiFifo] = out & 0xff;
+	return spi[SpiFifo] & 0xff;
 }
 
 static void
-pilock(Spidev *s)
+pilock(Spidev*)
 {
-	Pibus *p = s->aux;
-
-	ilock(&p->l);
+	ilock(&buslock);
 }
 
 static void
-piunlock(Spidev *s)
+piunlock(Spidev*)
 {
-	Pibus *p = s->aux;
-
-	iunlock(&p->l);
+	iunlock(&buslock);
 }
-
-static Spidev spi0radio = {
-	"spi0",
-	&bus0,
-	piselect,
-	pibyte,
-	pilock,
-	piunlock,
-};
 
 static void
 rfinterrupt(Ureg*, void*)
 {
-	if(!gpioevent(Dio0pin))
-		return;			/* somebody else's pin on this line */
-	gpioeventclear(Dio0pin);
-	if(radio0 != nil)
-		sx127xinterrupt(radio0);
+	Socket *sk;
+	int i;
+
+	/*
+	 * One line for a bank of pins, so every socket whose DIO0 has
+	 * an event is asked to look and a line raised by somebody
+	 * else's pin is left alone.
+	 */
+	for(i = 0; i < Nsocket; i++){
+		sk = &socket[i];
+		if(sk->radio == nil || !gpioevent(sk->dio0pin))
+			continue;
+		gpioeventclear(sk->dio0pin);
+		sx127xinterrupt(sk->radio);
+	}
 }
 
 static void
@@ -131,47 +138,60 @@ usdelay(int n)
 void
 spipiradiolink(void)
 {
-	Pibus *p = &bus0;
+	Socket *sk;
+	int i, n;
 
-	p->spi = (u32*)SPI0;
+	spi = (u32*)SPI0;
 
 	/* the three bus pins to their alternate function */
 	gpiofsel(10, Alt0);
 	gpiofsel(9, Alt0);
 	gpiofsel(11, Alt0);
 
-	/* chip select and reset idle high, as outputs */
-	gpiofsel(Cspin, 1);
-	gpioout(Cspin, 1);
-	gpiofsel(Resetpin, 1);
-	gpioout(Resetpin, 1);
-	/* DIO0 an input, rising edge */
-	gpiofsel(Dio0pin, 0);
-	gpiodetect(Dio0pin, Grise);
+	spi[SpiClk] = 8;
 
-	p->spi[SpiClk] = 8;
+	n = 0;
+	for(i = 0; i < Nsocket; i++){
+		sk = &socket[i];
+		sk->spi.name = sk->name;
+		sk->spi.aux = sk;
+		sk->spi.select = piselect;
+		sk->spi.byte = pibyte;
+		sk->spi.lock = pilock;
+		sk->spi.unlock = piunlock;
 
-	/*
-	 * Reset, held for the datasheet's 100us with 5ms after.  Not
-	 * microdelay(): the same instruction-counted loop that measured
-	 * 58us for a millisecond on the other board.
-	 */
-	gpioout(Resetpin, 0);
-	usdelay(200);
-	gpioout(Resetpin, 1);
-	usdelay(5000);
+		/* chip select and reset idle high, as outputs */
+		gpiofsel(sk->cspin, 1);
+		gpioout(sk->cspin, 1);
+		gpiofsel(sk->resetpin, 1);
+		gpioout(sk->resetpin, 1);
+		/* DIO0 an input, rising edge */
+		gpiofsel(sk->dio0pin, 0);
+		gpiodetect(sk->dio0pin, Grise);
 
-	radio0 = sx127xinit(&spi0radio, IRQgpio0);
-	if(radio0 == nil)
-		return;
+		/*
+		 * Reset, held for the datasheet's 100us with 5ms after.
+		 * Not microdelay(): the same instruction-counted loop
+		 * that measured 58us for a millisecond on the other
+		 * board.
+		 */
+		gpioout(sk->resetpin, 0);
+		usdelay(200);
+		gpioout(sk->resetpin, 1);
+		usdelay(5000);
 
-	intrenable(IRQgpio0, rfinterrupt, nil, 0, "rf0");
+		sk->radio = sx127xinit(&sk->spi, IRQgpio0);
+		if(sk->radio != nil)
+			n++;
+	}
+	if(n > 0)
+		intrenable(IRQgpio0, rfinterrupt, nil, 0, "rf");
 }
 
 Radio*
 radioget(int i)
 {
-	if(i != 0)
+	if(i < 0 || i >= Nsocket)
 		return nil;
-	return radio0;
+	return socket[i].radio;
 }
