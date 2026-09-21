@@ -142,12 +142,32 @@ waitshell() {
 restart() {
 	snap "$S/ab-pre.txt"
 	before=`LC_ALL=C grep -ac 'entered over JTAG' "$S/ab-pre.txt" || true`
+	#
+	# At most two attempts, and none at all once the debugger reports
+	# DSCR.ERR.
+	#
+	# Retrying a restart against a board that is not coming back is
+	# how this script cost a power cycle.  It re-halted and reloaded
+	# repeatedly until cpu0 ended up stopped before fpinit() had run,
+	# at which point OpenOCD faults reading FPCR -- "Opcode
+	# 0xd53b4500, DSCR.ERR=1" -- and then could not execute even a
+	# DSB on the core.  There is no way out of that over JTAG: TRST
+	# resets the TAP, not the SoC.
+	#
+	# DSCR.ERR is that state's signature, so it is a reason to stop,
+	# not to try harder.
+	#
 	try=1
-	while [ $try -le 3 ]; do
+	while [ $try -le 2 ]; do
 		echo "  booting a fresh kernel over JTAG (attempt $try)"
 		( cd "$ROOT" && timeout 180 openocd -f "$ADAPTER" \
 			-f tools/jtag/raspi3b.cfg \
-			-c 'init; jtagrestart; resume; exit' ) >/dev/null 2>&1
+			-c 'init; jtagrestart; resume; exit' ) >"$S/ab-ocd.txt" 2>&1
+		if LC_ALL=C grep -aq 'DSCR.ERR' "$S/ab-ocd.txt"; then
+			echo "  the debugger cannot drive cpu0 (DSCR.ERR)."
+			echo "  The board needs a power cycle; not retrying."
+			return 1
+		fi
 		i=0
 		while [ $i -lt 15 ]; do
 			snap "$S/ab-boot.txt"
@@ -165,7 +185,8 @@ restart() {
 		done
 		try=`expr $try + 1`
 	done
-	echo "  board did not come back after 3 attempts"
+	echo "  board did not come back after 2 attempts; stopping rather"
+	echo "  than hammering it into a state only a power cycle fixes"
 	return 1
 }
 
