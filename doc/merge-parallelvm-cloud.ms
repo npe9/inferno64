@@ -769,6 +769,69 @@ run so its verdict is on the record.
 .CW "git merge"
 into this branch was refused as a shared-resource change and is the one
 step here that is not mine to take.
+.PP
+.B "So it was done in a worktree instead, and the merge is clean."
+.CW /tmp/adopt ,
+detached, short path.  Git reports no conflict at all: their
+.CW mkconfig
+hunk and this branch's are in different places, and so are the two root
+additions.  All three
+.CW virtarm64cloud
+entries survive \(em
+.CW chantest ,
+.CW p256test ,
+.CW ipinttest
+\(em and
+.CW check-rootparity
+passes on the result.
+.PP
+.B "And that is the problem with it."
+A clean merge takes
+.I their
+.CW ROOT
+line, so the merged
+.CW mkconfig
+names the other worktree and the first
+.CW "mk install"
+afterwards would install into it.  Nothing in git says a word about it.
+.CW check-all 's
+guard catches it, which is why that guard exists, but the resolution
+belongs in the merge commit rather than in a later fix: set
+.CW ROOT
+back to this tree, keep
+.CW SYSMODULES= .
+.PP
+.B "Everything builds."
+The tree, the host tools, all four kernels \(em including
+.CW virtarm64cloud ,
+which their
+.CW fwcfg.c
+fixes \(em the 32-bit Dis tree, and all fourteen boards, in four minutes
+on a quiet machine.
+.PP
+.B "The gate: fourteen of sixteen, plus the one that was meant to flip."
+.CW check-pc64-bigmem
+.B passes
+on the merged tree: 16 GiB reaches a shell with 4171621 pages counted,
+where this branch page-faults.  The pool overlap checker did
+.I not
+fire there, which is a finding about the reproduction rather than about
+the bug \(em their instance saw it on hardware with a different memory
+map, so 16 GiB under QEMU is not sufficient to raise it.
+.CW check-disdump
+passes, which was the blocker: Phase C's switch does what it says.
+.PP
+Two checks fail and both are being re-run alone before anything is
+concluded from them, because the host was running 29 QEMU guests, most
+of them other sessions':
+.CW check-pc64-tcp
+("no connection accepted") and
+.CW check-crossarch ,
+whose tail is an arm64 fault \(em five addresses in
+.CW 0x40050000
+and "Hit the reset button".  The second is the one that would matter:
+that is the cloud arm64 kernel faulting under QEMU, and this branch's
+own copy of that check passes.
 .NH 2
 3. Three paragraphs that adoption makes false
 .IP \(bu
