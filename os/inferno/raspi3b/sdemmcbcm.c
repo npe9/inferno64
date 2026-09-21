@@ -1333,8 +1333,9 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 		print("emmc: dmatest %d blocks x %d%s, buf %#p page offset %#lux, "
 			"dma %d clearirq %d irqen %d reset %d datareset %d "
 			"delay %dus\n",
-			nb, cnt, (rw % 10)? " alternating read/write":
-				(dirty? " re-dirtied each time": ""),
+			nb, cnt, perxfer? " buffer allocated and freed per transfer":
+				((rw % 10)? " alternating read/write":
+				 (dirty? " re-dirtied each time": "")),
 			p, (ulong)((uintptr)p & (BY2PG-1)),
 			emmcdma, emmcdmaclearirq, emmcdmairqen,
 			emmcdmareset, emmcdmadatareset, emmcdmadelay);
@@ -1419,8 +1420,9 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 			}
 		}
 		if(k == cnt)
-			print("emmc: dmatest %d transfers of %d blocks, all clean\n",
-				cnt, nb);
+			print("emmc: dmatest %d transfers of %d blocks, all clean"
+				"%s\n", cnt, nb,
+				perxfer? " (a fresh buffer each time)": "");
 		poperror();
 		free(buf);
 		return 0;
