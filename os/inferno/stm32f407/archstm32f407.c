@@ -193,7 +193,8 @@ archreset(void)
 	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | UARTGPIOEN);
 	wr(UARTAPBENR, rd(UARTAPBENR) | UARTAPBBIT);
 	/* TEMPORARY, for otherusarts(): ports A and D, USART2/3 and UART4 */
-	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | Ahb1Gpioa | Ahb1Gpiod);
+	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | Ahb1Gpioa | Ahb1Gpiob |
+		Ahb1Gpioc | Ahb1Gpiod | Ahb1Gpioe);
 	wr(RCC_APB1ENR, rd(RCC_APB1ENR) | Apb1Usart2 | Apb1Usart3 | Apb1Uart4);
 	coherence();
 	uartboardinit();

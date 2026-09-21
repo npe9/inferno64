@@ -206,19 +206,65 @@ bitbang(ulong port, int pin, char *s)
 }
 
 /*
- * Every pin either socket's UART reaches, transmit and receive alike,
- * because a click that had them the other way round would look exactly
- * like a click that is not connected.
+ * Every pin the part brings out, one at a time, each saying its own
+ * name.  The six the mikroBUS sockets' UARTs use produced nothing and
+ * did not so much as flicker the click's receive LED, which rules out
+ * the baud, the alternate-function mux and the USART together and
+ * leaves only the pin table -- which was read out of a manual and
+ * never measured.  This does not assume it.
+ *
+ * Skipped, and why: PA11 and PA12 are USB D- and D+, which is how the
+ * part is programmed; PA13 and PA14 are SWD, which is the other way in
+ * if this goes wrong; PE12 and PE15 are the LEDs that are the only
+ * thing still reporting.  And the six pins a click drives itself --
+ * each socket's AN, MISO and INT -- because driving against a click's
+ * output is a short through whatever is in the socket.
  */
+static int
+skip(int port, int pin)
+{
+	switch(port){
+	case 0:					/* A */
+		return pin==11 || pin==12 || pin==13 || pin==14
+			|| pin==2 || pin==3;	/* AN of both sockets */
+	case 1:					/* B */
+		return pin==14;			/* mikroBUS 2 MISO */
+	case 2:					/* C */
+		return pin==11;			/* mikroBUS 1 MISO */
+	case 4:					/* E */
+		return pin==12 || pin==15	/* the LEDs */
+			|| pin==10 || pin==14;	/* INT of both sockets */
+	}
+	return 0;
+}
+
 void
 bangallpins(void)
 {
-	bitbang(GPIOD, 5, "PD5 mikroBUS1 TX\r\n");
-	bitbang(GPIOD, 6, "PD6 mikroBUS1 RX\r\n");
-	bitbang(GPIOD, 8, "PD8 mikroBUS2 TX\r\n");
-	bitbang(GPIOD, 9, "PD9 mikroBUS2 RX\r\n");
-	bitbang(GPIOA, 0, "PA0 pad UART4 TX\r\n");
-	bitbang(GPIOA, 1, "PA1 pad UART4 RX\r\n");
+	static ulong base[5] = { GPIOA, GPIOB, GPIOC, GPIOD, GPIOE };
+	char buf[8];
+	int port, pin;
+
+	for(port = 0; port < 5; port++)
+		for(pin = 0; pin < 16; pin++){
+			if(skip(port, pin))
+				continue;
+			buf[0] = 'P';
+			buf[1] = 'A' + port;
+			if(pin < 10){
+				buf[2] = '0' + pin;
+				buf[3] = '\r';
+				buf[4] = '\n';
+				buf[5] = 0;
+			} else {
+				buf[2] = '1';
+				buf[3] = '0' + pin - 10;
+				buf[4] = '\r';
+				buf[5] = '\n';
+				buf[6] = 0;
+			}
+			bitbang(base[port], pin, buf);
+		}
 }
 
 void
