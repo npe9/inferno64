@@ -6489,3 +6489,56 @@ engine is still reading from is a shape worth checking, and before the
 channel reset landed, a stalled engine stayed ACTIVE while
 .CW sdbio
 went on to free the buffer underneath it.
+.NH 2
+The stale kernel, measured from outside the board at last
+.PP
+It bricked the board.  The card came out, went into a reader, and for
+the first time the file could be compared against something other than
+the server that wrote it:
+.P1
+card kernel8.img  1923688 bytes
+card kernel8.bak  1923672 bytes
+32KB chunks compared: 59
+  identical to the PREVIOUS kernel: 6
+  differing (actually new):        53
+  first differing byte at 0x34000 (212992)
+.P2
+.B "The first 208KB of the installed kernel are the previous kernel's
+.B "bytes,"
+and everything after it is the new one.  Old entry code, new body,
+which is why it did not boot.  That is the same signature as the
+earlier occurrence recorded in this document \(em "14 of its 57 32KB
+chunks, the first 448KB and one more" \(em and it is now a
+measurement rather than an inference, because nothing in the path
+between the card and the comparison belonged to the board.
+.PP
+.B "An earlier section in this document retracts this finding.  That
+.B "retraction was wrong."
+It reasoned that three installs reporting success while the board
+booted the old kernel were a race with kupdate's schedule, because the
+board later came up on one of those builds.  It did come up on one of
+them; that did not make the others sound.  The retraction was drawn
+from the same kind of evidence as the claim it withdrew, and the way
+to tell them apart existed the whole time and was not used: take the
+card out.
+.PP
+.B "The mechanism is confirmed by which kernel was running."
+The board that produced this image was running a build whose
+.CW fatcheck
+still did
+.CW "spawn kupdate()"
+followed immediately by
+.CW fatwrite() :
+1.9MB and 1.5MB written concurrently, through one
+.I dossrv ,
+to two files.  The fix that removes the second writer had been
+committed but never reached the board \(em which is the whole
+difficulty in one sentence, since the mechanism that installs kernels
+is the mechanism that was broken.
+.PP
+The card was repaired by writing the image to it directly from the
+host and comparing SHA-256 both ways: 1923720 bytes, identical.  That
+is the check
+.CW kuverify
+cannot make and should be made to approximate \(em by reading the
+blocks the FAT says the file occupies rather than reading the file.
