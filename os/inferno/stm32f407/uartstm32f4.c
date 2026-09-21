@@ -147,13 +147,13 @@ otherusarts(void)
 {
 	/* mikroBUS 1: USART2 TX on PD5, AF7, APB1 */
 	rawuart(0x40004400, GPIOD, 5, GPIO_AFRL, 7, apb1hz,
-		"\r\nInferno on USART2, PD5: mikroBUS 1\r\n");
+		"UUUUUUUU\r\nInferno on USART2, PD5: mikroBUS 1\r\n");
 	/* mikroBUS 2: USART3 TX on PD8, AF7, APB1 */
 	rawuart(0x40004800, GPIOD, 8, GPIO_AFRH, 7, apb1hz,
-		"\r\nInferno on USART3, PD8: mikroBUS 2\r\n");
+		"UUUUUUUU\r\nInferno on USART3, PD8: mikroBUS 2\r\n");
 	/* the 2x26 pad: UART4 TX on PA0, AF8, APB1 */
 	rawuart(0x40004c00, GPIOA, 0, GPIO_AFRL, 8, apb1hz,
-		"\r\nInferno on UART4, PA0: the pad\r\n");
+		"UUUUUUUU\r\nInferno on UART4, PA0: the pad\r\n");
 }
 
 static Uart*

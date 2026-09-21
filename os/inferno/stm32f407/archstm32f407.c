@@ -253,6 +253,18 @@ idlehands(void)
 		last = m->ticks/50;
 		on = !on;
 		led(15, on);
+		/*
+		 * TEMPORARY, with the rest.  otherusarts() writes its
+		 * lines once, in archreset(), microseconds after reset
+		 * and before any host could have opened the port --
+		 * which is indistinguishable from a port that is not
+		 * connected at all.  Saying it again twice a second
+		 * removes that doubt, and each line begins with a run
+		 * of 0x55, which is the one byte whose framing a
+		 * listener at the wrong baud can still be measured
+		 * from.
+		 */
+		otherusarts();
 	}
 	idle();
 }
