@@ -1,0 +1,75 @@
+.TH KISSCHK 1
+.SH NAME
+kisschk \- check the kiss device, and the stack above it
+.SH SYNOPSIS
+.B kisschk frame
+.br
+.B kisschk ax25
+.br
+.B kisschk far
+.RI [ n ]
+.SH DESCRIPTION
+.I Kisschk
+makes a
+.IR pipe (2),
+gives one end to
+.IR kiss (3)
+and keeps the other, and speaks KISS on it by hand \- assembling and
+reading the bytes from the specification rather than from
+.B devkiss.c
+\- so the device is checked against something that shares none of its
+code, and the whole stack above it runs in one kernel with no radio
+fitted.
+.PP
+.B Frame
+checks the framing: that a payload containing both FEND and FESC
+survives being escaped in each direction, that the
+.B iounit
+is what
+.I kiss (3)
+says, and that a frame which is not a data frame is dropped rather
+than delivered.
+.PP
+.B Ax25
+attaches
+.I ax25 (3)
+to the device, sends one UI frame, and decodes what comes out of the
+pipe: the destination and source callsigns out of the address field,
+the control byte, the PID and the information.  That is what a TNC
+would be handed.
+.PP
+.B Far
+holds the far end and prints what arrives, so another program \-
+.IR aprs (1),
+say \- can send through the stack while this reads it.  Run it with
+.BR & .
+.SH EXAMPLE
+.EX
+	; kisschk ax25
+	ax25-iounit ok
+	destination ok
+	source ok
+	control-is-ui ok
+	pid-is-no-layer-3 ok
+	KISS GB1SAT-3>APZINF:>over a pipe
+.EE
+.PP
+and with
+.IR aprs (1):
+.PP
+.EX
+	; kisschk far 3 &
+	; aprs setup GB1SAT-3 '#k/kiss0/data'
+	; aprs status in-orbit
+	KISS-FAR GB1SAT-3>APZINF:>in-orbit
+.EE
+.SH SOURCE
+.B /appl/cmd/kisschk.b
+.SH SEE ALSO
+.I kiss (3),
+.I ax25 (3),
+.I aprs (1)
+.SH BUGS
+The pipe is made by this program and goes away when it exits, so
+.B far
+must outlive whatever is sending through the device.

@@ -124,6 +124,7 @@ TARG=\
 	prof.dis\
 	authchk.dis\
 	aprs.dis\
+	kisschk.dis\
 	ax25chk.dis\
 	ax25raw.dis\
 	mkradiokeys.dis\

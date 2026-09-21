@@ -10,7 +10,9 @@ implement Aprs;
 # already sends exactly that frame, carries a digipeater path and
 # repeats one, so what is left is the text, which is this file.
 #
-#	aprs setup CALL-n [path]	attach the radio, set the callsign
+#	aprs kissline DEVICE		give #k a serial line to a TNC
+#	aprs setup CALL-n [DEVICE]	attach a packet device, set the
+#					callsign
 #	aprs pos LAT LON SYM [text]	a position report
 #	aprs status TEXT		a status report
 #	aprs tlm N V1 V2 V3		telemetry
@@ -35,6 +37,7 @@ Aprs: module
 };
 
 Radio:	con "/dev/radio0/data";
+Kissctl:	con "#k/kiss0/ctl";
 Actl:	con "#a/ctl";
 Clone:	con "#a/clone";
 
@@ -267,13 +270,37 @@ slurp(f: string): string
 	return string b[0:n];
 }
 
-setup(call, path: string)
+#
+# Hand #k a serial line.  On a board with a TNC on it that is a UART;
+# the device keeps its own reference to the channel, so this may exit
+# and the line stays attached until the next boot.
+#
+kissline(dev: string)
 {
-	rfd := sys->open(Radio, Sys->ORDWR);
-	if(rfd == nil){
-		sys->print("aprs: %s: %r\n", Radio);
+	lfd := sys->open(dev, Sys->ORDWR);
+	if(lfd == nil){
+		sys->print("aprs: %s: %r\n", dev);
 		return;
 	}
+	kfd := sys->open(Kissctl, Sys->ORDWR);
+	if(kfd == nil){
+		sys->print("aprs: %s: %r\n", Kissctl);
+		return;
+	}
+	ck("kiss-attached", sys->fprint(kfd, "fd %d", lfd.fd) > 0,
+		sys->sprint("%r"));
+}
+
+setup(call, dev: string)
+{
+	if(dev == "")
+		dev = Radio;
+	rfd := sys->open(dev, Sys->ORDWR);
+	if(rfd == nil){
+		sys->print("aprs: %s: %r\n", dev);
+		return;
+	}
+	sys->print("APRS-DEVICE %s\n", dev);
 	afd := sys->open(Actl, Sys->ORDWR);
 	if(afd == nil){
 		sys->print("aprs: %s: %r\n", Actl);
@@ -287,8 +314,6 @@ setup(call, path: string)
 	# which is what ax25(3)'s id is for and what a beacon on an
 	# amateur band is required to do.
 	ck("identify", sys->fprint(afd, "id 600000") > 0, sys->sprint("%r"));
-	if(path != "")
-		sys->print("APRS-PATH %s\n", path);
 }
 
 thepath(l: list of string): string
@@ -304,7 +329,7 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	argv = tl argv;
 	if(argv == nil){
-		sys->print("usage: aprs setup|pos|status|tlm|msg|hear ...\n");
+		sys->print("usage: aprs kissline|setup|pos|status|tlm|msg|hear\n");
 		return;
 	}
 	mode := hd argv;
@@ -317,9 +342,15 @@ init(nil: ref Draw->Context, argv: list of string)
 	info := "";
 
 	case mode {
+	"kissline" =>
+		if(argv == nil){
+			sys->print("usage: aprs kissline DEVICE\n");
+			return;
+		}
+		kissline(hd argv);
 	"setup" =>
 		if(argv == nil){
-			sys->print("usage: aprs setup CALL-n [path]\n");
+			sys->print("usage: aprs setup CALL-n [DEVICE]\n");
 			return;
 		}
 		setup(hd argv, thepath(tl argv));

@@ -335,9 +335,26 @@ publish an
 A pipe does neither:
 .CW os/inferno/port/devpipe.c:73
 opens its queues as byte streams.  So the obvious negative control
-\(em run the link layer over a pipe with no radio in the room \(em is
-not available, and the only transport in the tree that satisfies both
-conditions is a packet device.  The decoupling that can be shown is
+\(em run the link layer over a pipe with no radio in the room \(em was
+not available when this was written.
+.PP
+It is now, and by supplying the missing thing rather than by relaxing
+the requirement.
+.CW os/inferno/radio/devkiss.c
+is
+.CW #k ,
+which puts KISS's boundary on a byte stream and publishes an
+.CW iounit ,
+so a pipe with it on one end is a packet device.
+.I Ax25 (3)
+and
+.I aprs (1)
+run over it in one kernel with nothing else fitted, and what comes out
+of the far end of the pipe is what a TNC would be handed.  That is
+also how this tree reaches a real amateur station: a KISS frame
+carries exactly the bytes
+.CW #a
+builds, and the TNC does the HDLC.  The decoupling that can be shown is
 structural: it compiles, links and runs without
 .CW sx127x.h ,
 and every number it uses comes out of the

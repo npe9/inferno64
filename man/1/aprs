@@ -2,9 +2,12 @@
 .SH NAME
 aprs \- APRS over AX.25
 .SH SYNOPSIS
+.B aprs kissline
+.I device
+.br
 .B aprs setup
 .I call
-.RI [ path ]
+.RI [ device ]
 .br
 .B aprs pos
 .I lat lon sym
@@ -34,10 +37,11 @@ already sends that frame, carries a digipeater path and repeats one, so
 what is left is the text, and that is all this is.
 .PP
 .B Setup
-attaches
-.B /dev/radio0/data
-to
+attaches a packet device to
 .B #a
+\-
+.B /dev/radio0/data
+unless another is given
 and sets this station's callsign, and turns identification on at ten
 minutes, which is what a station transmitting on an amateur band is
 required to do.
@@ -128,12 +132,28 @@ and solves it by putting the ancillary data in the same queue entry;
 .I ax25 (3)
 has no equivalent yet.
 .PP
-This will not be heard by the APRS network.  What goes on the air here
-is an AX.25 frame without HDLC: no flags, no bit stuffing, no NRZI and
-no frame check sequence, because the LoRa PHY delimits the packet and
-checks it.  A TNC expects HDLC \- 1200 baud AFSK, or 9600 baud with
-G3RUH's scrambler \- and will hear nothing.  Two stations running this
-hear each other perfectly and nobody else.
+Over a radio this will not be heard by the APRS network.  What goes on
+the air is an AX.25 frame without HDLC: no flags, no bit stuffing, no
+NRZI and no frame check sequence, because the LoRa PHY delimits the
+packet and checks it.  A receiver expecting HDLC \- 1200 baud AFSK, or
+9600 with G3RUH's scrambler \- hears nothing.  Two stations running
+this hear each other perfectly and nobody else.
+.PP
+That is what
+.B kissline
+is for.  A KISS data frame carries exactly the bytes
+.I ax25 (3)
+builds, so a TNC on a serial line will put them on the air as HDLC and
+the network will hear them:
+.PP
+.EX
+	aprs kissline /dev/eia1
+	aprs setup GB1SAT-3 '#k/kiss0/data'
+.EE
+.PP
+Measured through a pipe rather than a TNC, which is as far as that has
+been taken; see
+.IR kiss (3).
 .PP
 Only the formats above are generated, and
 .B hear

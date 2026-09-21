@@ -1,0 +1,134 @@
+.TH KISS 3
+.SH NAME
+kiss \- a packet device over a byte stream
+.SH SYNOPSIS
+.B bind '#k' /net/kiss
+.PP
+.B /net/kiss/kiss0/ctl
+.br
+.B /net/kiss/kiss0/data
+.br
+.B /net/kiss/kiss0/stats
+.SH DESCRIPTION
+The
+.I kiss
+device puts a message boundary on a byte stream, so that what is on the
+other side of a serial line can be a packet device.
+.PP
+A TNC speaks KISS, and a KISS data frame carries exactly what
+.I ax25 (3)
+builds: the address field, the control byte, the PID and the
+information, with no flags, no bit stuffing and no frame check
+sequence, because the TNC puts those on the air itself.  So this is the
+shortest path from this tree to a real amateur station.
+.B #a
+attaches to a file descriptor,
+.B #k
+is one, and the hardware beyond the serial line does the HDLC and the
+modulation that
+.I ax25 (3)
+says it does not do.
+.PP
+It is also the only honest way to drive the link layers with no radio.
+.B doc/radio-interface.ms
+records that
+.I lora (3)
+could not be run over a
+.IR pipe (2)
+because a pipe is a byte stream and keeps no message boundary.  KISS is
+precisely the framing that was missing, so a pipe with this on one end
+is a packet device and the whole stack above runs in one kernel with
+nothing else fitted.
+.PP
+The framing is SLIP's, from the KISS specification:
+.PP
+.EX
+	FEND  0xc0	frame delimiter
+	FESC  0xdb	escape
+	TFEND 0xdc	FEND, escaped
+	TFESC 0xdd	FESC, escaped
+.EE
+.PP
+A frame is FEND, a type byte, the data, FEND, with FEND and FESC
+escaped inside.  The type byte's low four bits are the command and the
+high four the TNC port; 0 is a data frame and the rest configure the
+TNC.  Nothing is acknowledged and nothing is retried: KISS puts a
+boundary on a byte stream and claims to be nothing else.
+.PP
+.B Ctl
+takes:
+.TP
+.BI fd " n"
+Attach the byte stream open on file descriptor
+.IR n .
+The device keeps its own reference, so the process that wrote this may
+exit.  Once only.
+.TP
+.BI txdelay " n"
+.TP
+.BI persist " n"
+.TP
+.BI slottime " n"
+.TP
+.BI txtail " n"
+.TP
+.BI duplex " on\fPor\fB off"
+Sent to the TNC as command frames.  What they mean is the TNC's
+business \- txdelay and txtail are tens of milliseconds of transmitter
+keying, persist and slottime its channel access \- and nothing here
+interprets them.  A TNC that ignores one says nothing about it.
+.PP
+.B Data
+is one frame per read and one per write, and inherits
+.IR radio (3)'s
+refusals: a read whose buffer is smaller than the frame fails and the
+frame waits, and a write past the frame size fails naming it.
+.PP
+The
+.B iounit
+is 272.  AX.25 2.2's
+.B N1
+defaults to 256 bytes of information, and an address field with two
+digipeaters, a control byte and a PID is 30 more, so 272 is the number
+at which a conversation on
+.I ax25 (3)
+lands on the specification's own default with no path and a little
+under it with one.  A TNC's own buffer is usually larger; this is the
+promise this device makes and not the far end's.
+.PP
+A frame that is not a data frame is counted under
+.B notdata
+and dropped, because a TNC sends those back on some hardware and they
+are not packets.  A FESC followed by neither TFEND nor TFESC drops the
+frame rather than guessing: a byte taken as data there is a byte in the
+middle of somebody's address field.
+.SH SOURCE
+.B /os/inferno/radio/devkiss.c
+.SH BUGS
+One interface, which is a constant, and one TNC port: the type byte's
+high four bits are written as zero and are not looked at on the way in.
+.PP
+Nothing asks the byte stream for an
+.BR iounit ,
+unlike
+.I lora (3)
+and
+.I ax25 (3)
+of what is under them.  What is under this is a byte stream, which
+carries no messages and has no size to publish.
+.PP
+This has not been run against a TNC.  The framing is checked in both
+directions against
+.IR kisschk (1),
+which assembles and reads the bytes from the specification, and the
+whole of
+.I ax25 (3)
+and
+.I aprs (1)
+runs over it through a pipe; what has not happened is a serial line
+with hardware on the end of it.
+.SH SEE ALSO
+.I kisschk (1),
+.I ax25 (3),
+.I aprs (1),
+.I radio (3)

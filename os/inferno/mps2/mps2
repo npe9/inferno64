@@ -57,6 +57,12 @@ dev
 # band an unidentified transmission is not permitted.  See
 # doc/ax25-plan.ms and os/inferno/radio/devax25.c.
 	ax25
+# KISS over a byte stream, at #k served on /net/kiss.  A TNC speaks it
+# over a serial line and a KISS data frame carries exactly what #a
+# builds, so #a over #k over a UART is this tree talking to a real
+# amateur station.  It is also the only way to drive the link layers
+# with no radio: a pipe with #k on one end is a packet device.
+	kiss
 
 # the order matters: a library with an undefined symbol at the end
 # makes the loader complain
@@ -182,6 +188,7 @@ root
 	/dis/modchk.dis	/dis32/modchk.dis
 	/dis/authchk.dis	/dis32/authchk.dis
 	/dis/aprs.dis		/dis32/aprs.dis
+	/dis/kisschk.dis	/dis32/kisschk.dis
 	/dis/ax25chk.dis	/dis32/ax25chk.dis
 	/dis/ax25raw.dis	/dis32/ax25raw.dis
 # Two certified identities under one signer, made on a host by
