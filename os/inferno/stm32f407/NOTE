@@ -845,3 +845,25 @@ being sent, and the part then transmitted them and said so: marc 0x40,
 
 So the transmitter has worked the whole time.  What was wrong was one
 number in one enum, and then a check that could not see it.
+
+Driving the console from the host
+---------------------------------
+
+tools/f407/console.py opens the board's UART and types at it, which is
+worth having for the same reason tools/tinysa exists: an experiment
+that needs a person to retype six commands is an experiment that gets
+run once.
+
+It enforces the two things this board cannot do, rather than letting
+them be rediscovered.  A line longer than about fifty characters loses
+its tail, so a longer one is refused instead of being sent and
+silently truncated.  And the board spawns one process for a
+redirection and no more, so a session that writes many lines to one
+file opens it once:
+
+	tools/f407/console.py ctl /dev/radio0/ctl 'reg 0x28' 'txtest 4'
+
+The second "cat >file" of a boot wedges the board hard enough that
+character echo stops -- which is worse than the silent hang already
+recorded, since echo happens in the interrupt handler and survives a
+blocked shell.  Whatever that is, it needs the reset button.
