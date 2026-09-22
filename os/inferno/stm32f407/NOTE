@@ -617,3 +617,48 @@ answer.  cc1120init() now sets it to -90dBm, twenty decibels above the
 floor this sweep measured, and "echo csthr <dBm> >/dev/radio0/ctl"
 changes it.  The stats print it, so the threshold a "carrier" was or
 was not measured against is never invisible.
+
+What two sweeps said, and what the sweep does now
+-------------------------------------------------
+
+The band was swept twice from the same place, minutes apart.  The
+second run: minimum -121, maximum -105, median -111, mean -112.3.
+Against the first (-123 to -101, median -110, mean -109.9) that looks
+like the same band.  It is not the same band; it is the same noise.
+
+	Pearson r between the two sweeps, step for step: -0.062
+	Per-step difference: mean -2.4dB, sd 6.1, range -13 to +13
+
+An r of zero means no step's reading in one sweep predicts anything
+about the same step in the other.  Every feature in either sweep --
+the -123 at 913MHz, the -101 at 868MHz, the twenty decibels between
+the quietest and loudest steps -- was the variance of a single sample
+of thermal noise.  868.000 happened to read highest in both, which is
+where the European SRD band starts and is the one detail that
+survives, but with 61 steps that coincidence is a one in sixty event
+and not a detection.
+
+There is nothing above about -105dBm to be heard from this bench, and
+a single instantaneous sample per step could not have found it if
+there were: anything that transmits in bursts is absent from most of
+any second.
+
+So the sweep dwells now.  Each step waits for the estimate to go
+valid, then samples for a hundred milliseconds -- about a hundred
+readings -- and reports the peak, the mean, the floor and how many
+samples they are of, with "carrier" if carrier sense asserted at any
+point during the dwell:
+
+	scan 868000000 -108 -110 -112 100
+
+Sixty-one steps is about seven seconds.  "scan lo hi step ms" sets
+the dwell, though the console will not carry a line that long.  The
+part's own moving average is lengthened as well: AGC_CFG0's
+RSSI_VALID_CNT goes from the reset 2 internal estimates to 9, which
+is the maximum and is a quieter number for the same signal.
+
+Checked on the emulator with tools/qemu-patches/0048, which gives the
+model an RSSI it never had: the peak, mean and floor come out as
+three different numbers, and with the threshold moved below the
+modelled floor the stats say "carrier" -- the whole path from the ctl
+file through AGC_CS_THR to RSSI0 and back.

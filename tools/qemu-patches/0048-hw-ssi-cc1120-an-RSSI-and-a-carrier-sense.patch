@@ -1,0 +1,171 @@
+From 50aadd9260bd847fb61fc84ece5e45ddf2ef922d Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 22 Sep 2026 11:18:29 -0400
+Subject: [PATCH] hw/ssi/cc1120: an RSSI and a carrier sense
+
+The model had no RSSI at all, so every RSSI path in a guest driver
+was untestable: a band sweep read "invalid" on every step, and a
+carrier sense threshold could be written and never compared against
+anything.
+
+RSSI1 and RSSI0 are computed when they are read.  Outside RX the
+value is the -128 SWRU295E defines as invalid and RSSI_VALID stays
+clear, which is the part's own behaviour.  In RX there are two
+levels -- a quiet band, and a loud one while a peer's packet is
+waiting in the RX FIFO, which is the one moment this model knows a
+carrier was present -- plus whatever the guest put in
+AGC_GAIN_ADJUST, which is the only way a guest can find out it wrote
+that register.  Carrier sense compares the same number against
+AGC_CS_THR and sets RSSI0's CS and CS_VALID.
+
+This is not a channel model and there is no propagation in it.  With
+the -102 offset TI's examples use, quiet reads about -110dBm and a
+packet about -50, so a threshold anywhere sensible between them does
+what a driver expects.  The +-2 wobble is there for one reason: a
+sweep that reports a peak, a mean and a floor cannot be seen to
+compute three different things if the part hands it the same number
+every time.
+
+Verified with Inferno's #W on a netduinoplus2: a 61-step sweep of 868
+to 928MHz reports peak -108, mean -110, floor -112 over 100 samples a
+step where it used to report "invalid", and with the threshold moved
+to -120 -- below the modelled floor -- the stats say "carrier", which
+is the whole comparison path from the ctl file to RSSI0 and back.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/ssi/cc1120.c | 78 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 78 insertions(+)
+
+diff --git a/hw/ssi/cc1120.c b/hw/ssi/cc1120.c
+index c91ce88..ca67cec 100644
+--- a/hw/ssi/cc1120.c
++++ b/hw/ssi/cc1120.c
+@@ -86,11 +86,15 @@ enum {
+     R_IOCFG2  = 0x01,
+     R_IOCFG1  = 0x02,
+     R_IOCFG0  = 0x03,
++    R_AGC_CS_THR      = 0x18,
++    R_AGC_GAIN_ADJUST = 0x19,
+ 
+     /* extended registers, SWRU295E table 5 */
+     X_PARTNUMBER  = 0x8f,
+     X_PARTVERSION = 0x90,
+     X_MARC_STATUS1 = 0x94,
++    X_RSSI1 = 0x71,
++    X_RSSI0 = 0x72,
+     X_NUM_TXBYTES = 0xd6,
+     X_NUM_RXBYTES = 0xd7,
+ 
+@@ -104,6 +108,33 @@ enum {
+      */
+     GPIO_PKT_SYNC_RXTX = 0x06,
+     GPIO_HIGHZ         = 0x30,
++
++    /*
++     * RSSI0's bits, SWRU295E 6.10.
++     */
++    RSSI0_VALID    = 1 << 0,
++    RSSI0_CS_VALID = 1 << 1,
++    RSSI0_CS       = 1 << 2,
++    RSSI1_INVALID  = 0x80,      /* -128 */
++
++    /*
++     * What the receiver hears, before AGC_GAIN_ADJUST is added.
++     *
++     * This is not a channel model and there is no propagation in it.
++     * There are two levels: a quiet band, and a band with a peer's
++     * packet sitting in the RX FIFO, which is the one moment this
++     * model knows a carrier was present.  With the -102 offset TI's
++     * examples use, the first reads about -110dBm and the second
++     * about -50, so a driver's carrier sense threshold set anywhere
++     * sensible between them does what it is supposed to.
++     *
++     * The +-2 wobble exists for one reason: a sweep that reports a
++     * peak, a mean and a floor of a band cannot be seen to compute
++     * three different things if the part hands it the same number
++     * every time.
++     */
++    RSSI_RAW_QUIET  = -8,
++    RSSI_RAW_SIGNAL = 52,
+ };
+ 
+ struct CC1120State {
+@@ -116,6 +147,7 @@ struct CC1120State {
+     int txlen;
+     uint8_t rxfifo[FIFOSZ];
+     int rxlen, rxpos;
++    uint32_t rssitick;
+ 
+     /*
+      * SPI transaction state.  The first byte after CS falls is the
+@@ -180,6 +212,48 @@ static void cc1120_signal(CC1120State *s, uint8_t func, bool level)
+     }
+ }
+ 
++/*
++ * RSSI1 and RSSI0, computed when they are read rather than stored.
++ *
++ * An RSSI is only meaningful while the receiver is on, so outside RX
++ * this reports the -128 that SWRU295E defines as invalid and leaves
++ * RSSI_VALID clear.  In RX the level is the quiet band, or the loud
++ * one while a peer's packet is waiting in the FIFO, plus the offset
++ * the guest programmed into AGC_GAIN_ADJUST -- which is the whole
++ * point of that register and the only way a guest can find out it
++ * wrote it.  Carrier sense compares the same number against
++ * AGC_CS_THR, as the part does.
++ */
++static uint8_t cc1120_rssi(CC1120State *s, uint8_t which)
++{
++    int raw, dbm, thr;
++    uint8_t v;
++
++    if (s->in_reset || s->state != ST_RX) {
++        return which == X_RSSI1 ? RSSI1_INVALID : 0;
++    }
++
++    raw = s->rxpos < s->rxlen ? RSSI_RAW_SIGNAL : RSSI_RAW_QUIET;
++    raw += (int)(s->rssitick++ % 5) - 2;
++    dbm = raw + (int8_t)s->regs[R_AGC_GAIN_ADJUST];
++    if (dbm < -127) {
++        dbm = -127;
++    } else if (dbm > 127) {
++        dbm = 127;
++    }
++
++    if (which == X_RSSI1) {
++        return (uint8_t)(int8_t)dbm;
++    }
++
++    thr = (int8_t)s->regs[R_AGC_CS_THR];
++    v = RSSI0_VALID | RSSI0_CS_VALID;
++    if (dbm > thr) {
++        v |= RSSI0_CS;
++    }
++    return v;
++}
++
+ static void cc1120_update_counts(CC1120State *s)
+ {
+     s->ext[X_NUM_TXBYTES] = s->txlen;
+@@ -320,6 +394,9 @@ static uint8_t cc1120_read_reg(CC1120State *s)
+         return 0;
+     }
+     if (s->addr == A_EXT) {
++        if (s->extaddr == X_RSSI1 || s->extaddr == X_RSSI0) {
++            return cc1120_rssi(s, s->extaddr);
++        }
+         return s->ext[s->extaddr];
+     }
+     return s->addr < NREG ? s->regs[s->addr] : 0;
+@@ -511,6 +588,7 @@ static const VMStateDescription vmstate_cc1120 = {
+     .minimum_version_id = 1,
+     .fields = (const VMStateField[]) {
+         VMSTATE_SSI_PERIPHERAL(parent_obj, CC1120State),
++        VMSTATE_UINT32(rssitick, CC1120State),
+         VMSTATE_UINT8_ARRAY(regs, CC1120State, NREG),
+         VMSTATE_UINT8_ARRAY(ext, CC1120State, NEXTREG),
+         VMSTATE_UINT8_ARRAY(txfifo, CC1120State, FIFOSZ),
+-- 
+2.51.0
+

@@ -54,6 +54,17 @@ says so, but a fictional value can still tell one conversion from the
 next and one channel from another, so the channel now appears in the
 top bits.  Found by writing #P/adc for os/inferno/stm32f407.
 
+0048 gives the CC1120 model an RSSI and a carrier sense, which it had
+never had: a band sweep read "invalid" on every step and a threshold
+could be written and never compared against anything.  Two levels, a
+quiet band and a loud one while a peer's packet is in the FIFO, plus
+whatever the guest put in AGC_GAIN_ADJUST -- which is the only way a
+guest can discover it wrote that register.  Not a channel model and
+no propagation.  The small wobble on the value is deliberate: a sweep
+that reports a peak, a mean and a floor cannot be seen to compute
+three different things if the part hands it the same number every
+time.
+
 0031-0033 came out of that check and the one after it, and each names
 what found it.  0027 and 0028 have since been driven by drivers nobody
 here wrote.  Zephyr's

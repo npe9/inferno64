@@ -41,6 +41,8 @@ enum {
 	Riocfg0		= 0x03,
 	Rsynccfg1	= 0x08,
 	Ragccsthr	= 0x18,		/* carrier sense threshold */
+	Ragccfg0	= 0x1d,
+	  Agccfg0init	= 0xcf,		/* reset 0xc3, RSSI_VALID_CNT 9 */
 	Ragcgainadjust	= 0x19,		/* the RSSI offset */
 	Rpktcfg0	= 0x1c,
 	  Lenvariable	= 0x20,		/* PKT_CFG0.LENGTH_CONFIG = 01 */
@@ -151,6 +153,14 @@ enum {
 	 * and the stats say what it is.
 	 */
 	Csthr		= -90,
+
+	/*
+	 * How long a band sweep sits on each step, in milliseconds.
+	 * Sixty-one steps at a tenth of a second is about seven
+	 * seconds for the default 868 to 928MHz sweep, which is worth
+	 * it for a hundred samples a step instead of one.
+	 */
+	Dwellms		= 100,
 };
 
 static int
@@ -459,7 +469,7 @@ cc1120ctl(Radio *r, char *buf, int n)
 {
 	Cc1120 *rr;
 	Spidev *s;
-	char *f[4], cbuf[64];
+	char *f[5], cbuf[64];
 	uvlong hz;
 	int nf;
 
@@ -488,20 +498,23 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 * depends on AGC_CFG0.RSSI_VALID_CNT, which is a
 		 * setting and not a constant.
 		 */
-		ulong lo, hi, step;
-		int r1, r0, i;
-
-		r0 = 0;			/* Rssitries could be zero */
+		ulong lo, hi, step, dwell;
+		int r1, r0, i, j;
+		int peak, floor, nsamp, cs;
+		long sum;
 
 		lo = 868000000;
 		hi = 928000000;
 		step = 1000000;
+		dwell = Dwellms;
 		if(nf >= 4){
 			lo = strtoul(f[1], nil, 0);
 			hi = strtoul(f[2], nil, 0);
 			step = strtoul(f[3], nil, 0);
 		}
-		if(step == 0 || lo > hi)
+		if(nf >= 5)
+			dwell = strtoul(f[4], nil, 0);
+		if(step == 0 || lo > hi || dwell > 10000)
 			error(Ebadctl);
 		for(hz = lo; hz <= hi; hz += step){
 			s->lock(s);
@@ -511,11 +524,58 @@ cc1120ctl(Radio *r, char *buf, int n)
 				if(r0 & Rssivalid)
 					break;
 			}
-			r1 = (schar)rdx(rr, Xrssi1);
 			s->unlock(s);
-			print("scan %lud %d%s%s\n", (ulong)hz, r1,
-				(r0 & Rssivalid)? "": " invalid",
-				(r0 & Carriersense)? " carrier": "");
+
+			/*
+			 * Dwell.  One sample the instant the estimate
+			 * first goes valid is not a measurement of a
+			 * band: two sweeps taken that way over 868 to
+			 * 928MHz correlated at r = -0.06, which is to
+			 * say not at all -- every feature in either of
+			 * them was the variance of a single sample of
+			 * thermal noise.  And a transmitter that sends
+			 * in bursts is not there for most of any
+			 * second, so the peak over a dwell is what
+			 * finds one and the mean is what describes the
+			 * floor.  The lock is taken per sample and not
+			 * held across the dwell: it is an ilock, and a
+			 * tenth of a second at splhi would lose the
+			 * console and the radio's own interrupt.
+			 */
+			peak = -128;
+			floor = 127;
+			sum = 0;
+			nsamp = 0;
+			cs = 0;
+			for(j = 0; j < dwell; j++){
+				s->lock(s);
+				r0 = rdx(rr, Xrssi0);
+				r1 = (schar)rdx(rr, Xrssi1);
+				s->unlock(s);
+				if(r0 & Rssivalid){
+					if(r1 > peak)
+						peak = r1;
+					if(r1 < floor)
+						floor = r1;
+					sum += r1;
+					nsamp++;
+				}
+				if((r0 & Csvalid) && (r0 & Carriersense))
+					cs = 1;
+				delay(1);
+			}
+			if(nsamp == 0){
+				print("scan %lud invalid\n", (ulong)hz);
+				continue;
+			}
+			/*
+			 * peak, mean, floor, and how many samples they
+			 * are of.  The mean is truncated toward zero,
+			 * so it reads up to a decibel high.
+			 */
+			print("scan %lud %d %d %d %d%s\n", (ulong)hz,
+				peak, (int)(sum/nsamp), floor, nsamp,
+				cs? " carrier": "");
 		}
 		return n;
 	}
@@ -686,6 +746,16 @@ cc1120init(Spidev *s, int irq)
 	wr(rr, Ragcgainadjust, rr->rssioffset & 0xff);
 	rr->csthr = Csthr;
 	wr(rr, Ragccsthr, rr->csthr & 0xff);
+	/*
+	 * RSSI_VALID_CNT: how many internal estimates the moving
+	 * average takes before it updates the RSSI.  Reset is two and
+	 * the maximum is nine, which is a quieter number for the same
+	 * signal, at the cost of updating less often.  Carrier sense
+	 * is compared against the same filtered value, so it steadies
+	 * too (SWRU295E 6.10).  Nothing here gates reception on
+	 * carrier sense, so a slower update costs nothing else.
+	 */
+	wr(rr, Ragccfg0, Agccfg0init);
 	wr(rr, Riocfg3, Gpktsyncrxtx);
 	wr(rr, Riocfg2, Ghighz);
 	wr(rr, Riocfg1, Ghighz);
