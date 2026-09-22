@@ -45,6 +45,7 @@ enum {
 	  Agccfg0init	= 0xcf,		/* reset 0xc3, RSSI_VALID_CNT 9 */
 	Ragcgainadjust	= 0x19,		/* the RSSI offset */
 	Rpktcfg0	= 0x1c,
+	  Lenfixed	= 0x00,		/* PKT_CFG0.LENGTH_CONFIG = 00 */
 	  Lenvariable	= 0x20,		/* PKT_CFG0.LENGTH_CONFIG = 01 */
 	Rrfendcfg1	= 0x1e,
 	Rrfendcfg0	= 0x1f,
@@ -360,7 +361,8 @@ cc1120send(Radio *r, uchar *p, int n)
 
 	s->select(s, 1);
 	s->byte(s, Rfifo | Hburst);
-	s->byte(s, n);
+	if(!rr->fixedlen)
+		s->byte(s, n);		/* variable: the length leads */
 	for(i = 0; i < n; i++)
 		s->byte(s, p[i]);
 	s->select(s, 0);
@@ -699,6 +701,60 @@ cc1120ctl(Radio *r, char *buf, int n)
 
 			dwell1(rr, "scan", dwell);
 		}
+		return n;
+	}
+	if(strcmp(f[0], "txmode") == 0 && nf == 2){
+		/*
+		 * Fixed or variable packet length, changed at a prompt,
+		 * so the two can be compared on one board without a
+		 * flash cycle between them.  In fixed mode the part
+		 * sends PKT_LEN bytes and no length byte goes in the
+		 * FIFO; in variable mode the length leads and PKT_LEN
+		 * is only a maximum.
+		 */
+		if(strcmp(f[1], "fixed") == 0)
+			rr->fixedlen = 1;
+		else if(strcmp(f[1], "var") == 0)
+			rr->fixedlen = 0;
+		else
+			error(Ebadctl);
+		s->lock(s);
+		wr(rr, Rpktcfg0, rr->fixedlen? Lenfixed: Lenvariable);
+		if(!rr->fixedlen)
+			wr(rr, Rpktlen, Ccmaxpayload);
+		s->unlock(s);
+		return n;
+	}
+	if(strcmp(f[0], "txtest") == 0){
+		/*
+		 * Send a packet of a given length and print what the
+		 * part did with it, rather than leaving it in the stats
+		 * to be read afterwards -- the console can hold one
+		 * redirection at a time on this board, so a bench that
+		 * reports as it goes is a bench that can be used.
+		 */
+		uchar buf[Ccmaxpayload];
+		int len, j;
+
+		len = 4;
+		if(nf >= 2)
+			len = atoi(f[1]);
+		if(len < 1 || len > Ccmaxpayload)
+			error(Ebadctl);
+		for(j = 0; j < len; j++)
+			buf[j] = 'a' + j % 26;
+		if(rr->fixedlen){
+			s->lock(s);
+			wr(rr, Rpktlen, len);
+			s->unlock(s);
+		}
+		cc1120send(r, buf, len);
+		print("txtest %d %s staged %d trace %d %d %d %d %d %d"
+			" left %d marc 0x%.2x\n",
+			len, rr->fixedlen? "fixed": "var", rr->txstaged,
+			rr->txtrace[0], rr->txtrace[1], rr->txtrace[2],
+			rr->txtrace[3], rr->txtrace[4], rr->txtrace[5],
+			rr->txleft, rr->txmarc);
 		return n;
 	}
 	if(strcmp(f[0], "watch") == 0){

@@ -38,6 +38,7 @@ struct Cc1120
 	int	txmarc;			/* MARC_STATUS1 after the transmit */
 	uchar	txtrace[6];		/* state through the last transmit */
 	int	txleft;			/* NUM_TXBYTES after it went wrong */
+	int	fixedlen;		/* fixed packet length, not variable */
 	int	present;
 
 	/* what the last received packet looked like */
