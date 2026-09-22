@@ -88,7 +88,94 @@ shell, which prints it and carries on.  The pool percentages in the
 configuration beside this file were chosen by measurement for that
 behaviour and the comment there says what the alternatives did.
 
-Nothing here has been run on silicon.
+What ran on silicon
+-------------------
+
+It boots to a shell on the part.  Captured from the USB UART click in
+mikroBUS 1, with the port held open across a reset -- which matters,
+because the log is printed once in the first milliseconds and every
+listen opened afterwards sees a board sitting silently at its prompt:
+
+	Inferno/stm32f407
+	14 holes free
+	10000000 10010000 65536
+	20008000 20020000 98304
+	163840 bytes free
+	poolsize max 81900 contig 0
+	poolsize max 80262 contig 0
+	poolsize max 1638 contig 1
+	FPREG-OK all 32 single-precision registers round-tripped
+	FPREG-S2-OK VLDMIA reaches S2
+	procinit conf.nproc 5
+
+	Inferno Fourth Edition (20151010)
+	conf stm32f407 (1790040366) jit 0
+
+	TRAPREG-OK R1 survives an exception
+	Initial Dis: "/osinit.dis"
+	armv7m init
+	ARMV7M-INIT-OK
+	;
+
+The memory figures are the same on the part as under qemu, and the PLL
+locks: apb1hz reads 42000000 and cpuhz 168000000, so the 168MHz from
+the internal oscillator is real and the console divisor came from a
+clock the kernel actually has.  Commands run.  ls(1) still fails on the
+Dis heap, which is what the section below already said it would.
+
+It was programmed with no probe and nothing soldered, over the USB HID
+bootloader already in its flash, using the client in
+tools/mikroe-uhb-patches.
+
+Two faults only silicon found
+-----------------------------
+
+The console stopped after exactly 408 bytes, four into "Inferno Fourth
+Edition", on every boot -- and the kernel carried on past it.  LD2
+blinks from idlehands(), so it had reached the scheduler and was
+idling: never hung, just talking into a queue nothing emptied.
+putstrn0() writes straight to uartputs() only while serialoq is nil,
+devuart.c points serialoq at the uart's output queue as soon as one
+becomes the console, and stm32f4_kick() then broke out of its loop the
+moment TXE was clear -- one byte into the register and the rest
+abandoned, with no transmit interrupt to come back for them.  408 bytes
+is what fits before that changeover.
+
+And uartintr() returned without reading DR when RXNE was clear.  On
+this part RXNEIE raises the interrupt for an overrun too, and ORE
+clears only by reading SR and then DR, so a handler that checks RXNE,
+finds it clear and returns has cleared nothing and is re-entered for
+ever.  That one is latent -- it was not what stopped the console -- but
+it is provoked by anything sending while nothing reads.
+
+Neither shows under qemu.  The first needs a console that has been
+enabled as one, the second needs bytes arriving unread.
+
+What could not be found from software
+-------------------------------------
+
+The click was seated the wrong way round.  A mikroBUS click reversed
+lines its pins up against the opposite header, so its receive and
+transmit land on power, ground or an analogue input, and everything
+measured through it agrees with everything else and is about a
+connection that does not exist: silence on the six UART pins, silence
+on every pin of every port driven by hand at every rate from 300 to
+921600, and a receive LED that never flickered.  Reseating it was the
+fix, and no instrument here was going to say so.
+
+Two of the instruments were wrong in their own right, which is worth
+remembering before trusting the next one.  A pin hunt that made every
+pin an input and reported the first one to change named PA9, because an
+input with no pull-up floats and floating CMOS toggles by itself; it
+would have said the same with nothing attached.  Rebuilt with pull-ups
+and a transition count, it then reported nothing, because three of the
+five GPIO ports had no clock and read zero for ever.  Both looked like
+findings.
+
+The LEDs are what carried the bring-up.  LD1 lit as the first thing
+archreset() does and LD2 blinking from the scheduler are the difference
+between a board that is not running and a board that is running and
+cannot be heard, and for hours that was the only fixed point there was.
 
 The linker's -H4 output is a raw image whose first two words are the
 initial stack pointer and the reset vector -- 0x200074fc and
@@ -124,8 +211,8 @@ of that cable is not answering as an STM32F4.  With a probe that does:
 		-f target/stm32f4x.cfg \
 		-c "program istm32f407 0x08000000 verify reset exit"
 
-The board this is aimed at
---------------------------
+The board
+---------
 
 A MikroElektronika clicker 2 for STM32: an STM32F407VGT6, two mikroBUS
 sockets, a USB Mini-B, two buttons and two LEDs.  From its manual
