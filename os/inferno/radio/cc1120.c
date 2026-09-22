@@ -40,6 +40,19 @@ enum {
 	Riocfg1		= 0x02,
 	Riocfg0		= 0x03,
 	Rsynccfg1	= 0x08,
+	Rdcfiltcfg	= 0x0c,
+	Riqic		= 0x10,
+	Rchanbw		= 0x11,
+	Rmdmcfg0	= 0x13,
+	Ragcref		= 0x17,
+	Ragccfg1	= 0x1c,
+	Rfifocfg	= 0x1e,
+	Rsettlingcfg	= 0x20,
+	Rfscfg		= 0x21,
+	Rpktcfg1	= 0x27,
+	Rpacfg2		= 0x2b,
+	Rpacfg1		= 0x2c,
+	Rpacfg0		= 0x2d,
 	Ragccsthr	= 0x18,		/* carrier sense threshold */
 	Ragccfg0	= 0x1d,
 	  Agccfg0init	= 0xcf,		/* reset 0xc3, RSSI_VALID_CNT 9 */
@@ -57,9 +70,24 @@ enum {
 
 	/* the extended space, reached through 0x2f */
 	Rext		= 0x2f,
+	Xifmixcfg	= 0x00,
+	Xfreqoffcfg	= 0x01,
 	Xfreq2		= 0x0c,
 	Xfreq1		= 0x0d,
 	Xfreq0		= 0x0e,
+	Xfsdig1		= 0x12,
+	Xfsdig0		= 0x13,
+	Xfscal0		= 0x17,
+	Xfsdivtwo	= 0x19,
+	Xfsdsm0		= 0x1b,
+	Xfsdvc0		= 0x1d,
+	Xfspfd		= 0x1f,
+	Xfspre		= 0x20,
+	Xfsregdivcml	= 0x21,
+	Xfsspare	= 0x22,
+	Xxosc5		= 0x32,
+	Xxosc3		= 0x34,
+	Xxosc1		= 0x36,
 	Xpartnumber	= 0x8f,
 	Xpartversion	= 0x90,
 	Xmarcstatus1	= 0x94,
@@ -220,6 +248,83 @@ strobe(Cc1120 *rr, int cmd)
 	s->select(s, 0);
 	return st;
 }
+
+
+/*
+ * The register settings a CC1120 needs before it is a radio.
+ *
+ * Taken from TI's own cc112x_easy_link_reg_config.h for 868.000000MHz
+ * 2-FSK, in SWRC253 -- the export SmartRF Studio produces and the one
+ * every TI example for this part begins with.  They are not
+ * optimisations.  SWRU295E 9.16 says "one should always use SmartRF
+ * Studio to get the correct settings for a specific frequency before
+ * doing a calibration", and a dozen fields in this part's register map
+ * carry the words "For test purposes only, use values from SmartRF
+ * Studio" against their reset values.
+ *
+ * What running without them looks like, measured on a clicker 2 with a
+ * ccRF click and a Pulse W3312 on it, against a tinySA:
+ *
+ *	the synthesiser reports locked, FSCAL_CTRL.LOCK = 1
+ *	FREQ reads 6c 80 00, which is 868.000000MHz exactly
+ *	PA_CFG2 reads 0x7f, which is +14dBm
+ *	and the only thing on the air is 755.902MHz at -31dBm,
+ *	48dB over the floor, in the same bin whether the part is
+ *	told 868, 902 or 830, with the broadband floor 11dB up
+ *
+ * An output that does not move when the frequency register does is not
+ * coming through the transmit chain.  Sixteen of the registers below
+ * -- FS_DIG1 and FS_DIG0, FS_CAL0, FS_DIVTWO, FS_DSM0, FS_DVC0,
+ * FS_PFD, FS_PRE, FS_REG_DIV_CML, FS_SPARE, XOSC5, XOSC3, XOSC1,
+ * PA_CFG1 and PA_CFG0 -- are the synthesiser's and the amplifier's
+ * analogue settings, and this driver had never written one of them.
+ *
+ * Four entries are deliberately left out of this table and written
+ * afterwards, because this board wants something else: IOCFG3, which
+ * TI parks and the click wires to an interrupt; PKT_LEN, which is this
+ * driver's payload maximum rather than 255; and AGC_CS_THR with
+ * AGC_GAIN_ADJUST, which carry the RSSI offset and carrier sense
+ * threshold worked out for this board.
+ */
+static const uchar cc1120cfg[] = {
+	Riocfg2,	0x06,
+	Riocfg1,	0xb0,
+	Riocfg0,	0xb0,
+	Rsynccfg1,	0x0b,
+	Rdcfiltcfg,	0x1c,
+	Riqic,		0xc6,
+	Rchanbw,	0x08,
+	Rmdmcfg0,	0x05,
+	Ragcref,	0x20,
+	Ragccfg1,	0xa9,
+	Ragccfg0,	0xcf,
+	Rfifocfg,	0x00,
+	Rsettlingcfg,	0x03,
+	Rfscfg,		0x12,
+	Rpktcfg1,	0x05,
+	Rpktcfg0,	Lenvariable,
+	Rpacfg2,	0x4f,
+	Rpacfg1,	0x56,
+	Rpacfg0,	0x1c,
+};
+
+static const uchar cc1120cfgx[] = {
+	Xifmixcfg,	0x00,
+	Xfreqoffcfg,	0x22,
+	Xfsdig1,	0x00,
+	Xfsdig0,	0x5f,
+	Xfscal0,	0x0e,
+	Xfsdivtwo,	0x03,
+	Xfsdsm0,	0x33,
+	Xfsdvc0,	0x17,
+	Xfspfd,		0x50,
+	Xfspre,		0x6e,
+	Xfsregdivcml,	0x14,
+	Xfsspare,	0xac,
+	Xxosc5,		0x0e,
+	Xxosc3,		0xc7,
+	Xxosc1,		0x07,
+};
 
 /*
  * Wait for the part to be able to answer.
@@ -1064,6 +1169,7 @@ Radio*
 cc1120init(Spidev *s, int irq)
 {
 	Cc1120 *rr;
+	int i;
 
 	USED(irq);
 	rr = malloc(sizeof(Cc1120));
@@ -1115,7 +1221,16 @@ cc1120init(Spidev *s, int irq)
 	 * The other three are parked at high impedance so a board that
 	 * wired them to something is not surprised.
 	 */
-	wr(rr, Rpktcfg0, Lenvariable);
+	/*
+	 * TI's settings first, then this board's over the top of them.
+	 * See the tables above for where they come from and what this
+	 * part does without them.
+	 */
+	for(i = 0; i < nelem(cc1120cfg); i += 2)
+		wr(rr, cc1120cfg[i], cc1120cfg[i+1]);
+	for(i = 0; i < nelem(cc1120cfgx); i += 2)
+		wrx(rr, cc1120cfgx[i], cc1120cfgx[i+1]);
+
 	wr(rr, Rpktlen, Ccmaxpayload);
 	rr->rssioffset = Rssioffset;
 	wr(rr, Ragcgainadjust, rr->rssioffset & 0xff);
