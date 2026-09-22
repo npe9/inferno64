@@ -256,16 +256,6 @@ idlehands(void)
 		on = !on;
 		ledpin(15, on);
 		/*
-		 * TEMPORARY, with the rest.  otherusarts() writes its
-		 * lines once, in archreset(), microseconds after reset
-		 * and before any host could have opened the port --
-		 * which is indistinguishable from a port that is not
-		 * connected at all.  Saying it again twice a second
-		 * removes that doubt, and each line begins with a run
-		 * of 0x55, which is the one byte whose framing a
-		 * listener at the wrong baud can still be measured
-		 * from.
-		 */
 		/*
 		 * TEMPORARY: both orientations of the click have now
 		 * been tried and neither gave a console, so stop
@@ -276,6 +266,33 @@ idlehands(void)
 		otherusarts();
 		if(on)
 			bangallpins();
+	}
+
+	/*
+	 * TEMPORARY, and it checks the checker.  Every bit-banged
+	 * result so far rests on fastticks(), which has never been
+	 * verified on this part: if bitdelay() returns at once the bit
+	 * rate is megahertz, which is above every rate those sweeps
+	 * were listened for, and "drove every pin and heard nothing"
+	 * would mean nothing at all.  m->ticks is known good -- it is
+	 * what the blink above runs on, and the blink is right.  So
+	 * drive LD1 from fastticks at the same half second and compare
+	 * the two by eye: in step means fastticks can be trusted, and
+	 * anything else means none of those sweeps counted.
+	 */
+	if(m != nil){
+		static uvlong next;
+		static int fon;
+		uvlong hz, now;
+
+		now = fastticks(&hz);
+		if(next == 0)
+			next = now + hz/2;
+		if(now >= next){
+			next = now + hz/2;
+			fon = !fon;
+			ledpin(12, fon);
+		}
 	}
 	idle();
 }
