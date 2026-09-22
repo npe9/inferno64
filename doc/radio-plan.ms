@@ -675,14 +675,37 @@ board's own band sweep agrees with that instrument about where the
 find and the quiet above 890 that they used to disagree about.  What
 follows is in the order the dependencies run, not in order of
 interest.
-.IP "1.  The RSSI scale." 6
+.IP "1.  The RSSI scale.  Found, not yet fixed." 6
 Everything else that reads the air depends on it.  Carrier sense, the
 sweep, a link budget and any decision about whether a channel is
-clear are all that number.  It is about a hundred decibels high since
-TI's register set went in, and the ctl file now reads AGC_GAIN_ADJUST
-out of the part rather than reporting what the driver believes it
-wrote, so one reading says whether the offset is reaching the
-register or no longer means what it did.
+clear are all that number.  It is about a hundred decibels high, and
+the reason is now known: AGC_GAIN_ADJUST is 0 on the part and not the
+\-102 the driver writes.
+.PP
+It is not that register.  On silicon, after a boot, every register in
+TI's table holds its table value and every register written after the
+table holds its
+.I reset
+value \- PKT_LEN 3 where 125 was written, AGC_CS_THR and
+AGC_GAIN_ADJUST 0, IOCFG1 and IOCFG2 still the table's rather than the
+high-impedance the board wants.  The call after all of them,
+setfreq(), plainly worked: the part is on 868 and a tinySA has seen it
+there.  So a run of writes between two things that worked did not
+reach the part.
+.PP
+None of it reproduces at a shell prompt.  Written by hand through the
+ctl file the same registers take and read back; a plain write straight
+after an extended write is fine, and so is one straight after the
+three XOSC writes that end the extended table.  What a prompt cannot
+reproduce is the timing, since at boot these run back to back at bus
+speed and at a prompt they are a tenth of a second apart.  Nor does
+the qemu model reproduce it, which is worth knowing before anyone
+tries to debug this without the board.
+.PP
+So cc1120init() reads back six of the registers it writes and says
+which disagree, and the boot line says SETTINGS NOT APPLIED when one
+does.  That kernel is built and needs a flash cycle to run, which on
+this board is a reset pressed while mikroe-uhb waits.
 .IP "2.  Calibrate it against a source, not a datasheet." 6
 \-102 is the figure TI's examples use and it is not a measurement of
 this board.  The tinySA has a signal generator in it \- "mode output"
