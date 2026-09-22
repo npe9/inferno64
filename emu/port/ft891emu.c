@@ -60,15 +60,30 @@ hpunlock(Serialport *p)
 	qunlock(&((Hostport*)p)->l);
 }
 
+/*
+ * Write, and wait for it to leave.
+ *
+ * tcdrain is not politeness.  The port is opened non-blocking, and a
+ * close with bytes still in the tty's output queue discards them: a
+ * twelve-character CAT command at 4800 baud is twenty-five
+ * milliseconds on the wire, and a probe that wrote and closed inside
+ * that lost every command it sent while reporting it had written
+ * twelve bytes of twelve.  An hour went on believing a radio was
+ * ignoring commands that had never been sent to it.
+ */
 static int
 hpwrite(Serialport *p, void *buf, int n)
 {
 	Hostport *h;
+	int rv;
 
 	h = (Hostport*)p;
 	if(h->fd < 0)
 		return -1;
-	return write(h->fd, buf, n);
+	rv = write(h->fd, buf, n);
+	if(rv > 0)
+		tcdrain(h->fd);
+	return rv;
 }
 
 /*
@@ -196,7 +211,12 @@ radiolink(void)
 {
 	hostport.p.name = "host";
 	hostport.fd = -1;
-	hostport.rate = 38400;
+	/*
+	 * 4800 is this set's factory CAT rate and what the one on this
+	 * bench answers at; menu 05-06 changes it.  The "rate" command
+	 * on the ctl file follows the radio.
+	 */
+	hostport.rate = 4800;
 	hostport.p.write = hpwrite;
 	hostport.p.read = hpread;
 	hostport.p.lock = hplock;
