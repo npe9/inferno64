@@ -8379,3 +8379,43 @@ zeroing it does not quiesce anything \(em it moves the next kernel's
 timer off the clock it expects.  Measured immediately: warm restarts
 went from failing about half the time to four attempts in a row, none
 of which came up.  Disable the enables; leave the wiring alone.
+.NH 2
+m is never nil now, and the warm restart is still not measured
+.PP
+.B "The fault is fixed at its source."
+.CW "Mach *m = &mach0;"
+\(em an initialised pointer, because
+.CW m
+is in the data segment and an uninitialised one puts 0 in the image,
+which a warm restart then loads back over a running kernel.  Checked
+in the built image rather than assumed: the eight bytes at
+.CW m 's
+address read 0x269cb0, which is
+.CW mach0 .
+So there is no longer an instant in which
+.CW m
+is nil for a pending timer interrupt to find.
+.PP
+.B "The success rate is still not measured, and the last attempt to
+.B "measure it produced false data."
+.CW boot.sh
+decides whether a kernel came up by counting banners in the screen
+session's scrollback.  The session went away part way through the run.
+.CW "screen -X hardcopy"
+then fails
+.I quietly ,
+the count stays at zero, and every attempt is recorded as "did not
+come up" \(em so a run of four failures was logged for a board that
+may well have booted every time.  The first run, taken while the
+console was alive, came up on attempt 1, which is the only datum in
+that log worth keeping and is one sample.
+.PP
+.CW boot.sh
+and
+.CW install.sh
+now refuse to run at all without a console rather than returning an
+answer they cannot support.  An instrument that cannot see must say
+so.  This is the third time in this port that a quiet failure in the
+measuring apparatus has been mistaken for a result, and the other two
+are written up above; the pattern is worth more than any of the
+individual cases.

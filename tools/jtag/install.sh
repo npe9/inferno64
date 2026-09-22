@@ -39,6 +39,24 @@ S=${S:-/private/tmp/claude-501/-Users-npe-src-inferno64-branches-raspi3b-port/26
 # attached session on a tty instead, and let SESS override it.
 #
 SESS=${SESS:-`screen -ls | awk '/ttys/{print $1; exit}'`}
+
+#
+# Refuse to run without a console, instead of reporting a false
+# failure.
+#
+# This script decides whether a kernel came up by counting banners in
+# the screen session's scrollback.  With no session, "screen -X
+# hardcopy" fails quietly, the count stays 0, and every attempt is
+# reported as "did not come up" -- a board that booted perfectly,
+# recorded as four failures in a row.  That happened, and the results
+# were believed for a while.  An instrument that cannot see must say
+# so, not return a value.
+#
+if [ -z "$SESS" ] || ! screen -S "$SESS" -X select . >/dev/null 2>&1; then
+	echo "boot: no screen session on the board's console." >&2
+	echo "boot: cannot tell whether a kernel came up; refusing to guess." >&2
+	exit 3
+fi
 IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
 REMOTE=${REMOTE:-/n/remote/os/inferno/raspi3b/kernel8.img}
 
