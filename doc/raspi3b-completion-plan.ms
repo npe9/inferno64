@@ -8118,3 +8118,42 @@ now, which assembles to
 It does not reach
 .CW proc
 at offset 8, so it is not the accounttime fault.
+.NH 2
+jtagreboot: the device cleanup that works, because the silicon does it
+.PP
+The right answer to "quiesce every device before a warm load" turned
+out to be: do not warm load.  The BCM2835 watchdog's full-reset mode
+resets
+.I every
+peripheral, not the ones a script remembered, and it can be armed from
+the debugger \(em two register writes at 0x3f100000 with 0x5a000000 in
+the top byte, WRCFG set to full reset, and a count of ten 65536ths of
+a second.  The board goes down and comes back from the card as if
+power-cycled.
+.P1
+proc jtagreboot { }
+    ... write PM_WDOG, write PM_RSTC, resume
+.P2
+OpenOCD reports
+.CW "Invalid ACK (7)"
+and a sticky DAP error when it does this, which is not a failure: the
+chip resets out from under the debugger mid-transaction.  The console
+says what actually happened \(em a fresh banner and a clean SD suite.
+.PP
+.B "It is also the way out of a board that is blocked rather than
+.B "crashed."
+That distinction was invisible until JTAG made it: a board that looked
+hung, ignoring the console entirely, had cpu0 sitting at one address
+across five samples fifteen seconds apart, and the instruction there,
+read out of the board's own memory rather than guessed from a symbol
+table belonging to a different build, was
+.CW d503207f
+\(em
+.CW WFI .
+The kernel was idle with every process asleep, which from the console
+is indistinguishable from a crash and wants the opposite response.
+.PP
+Before this the only ways back were
+.CW jtagrestart ,
+which fails about half the time and replaces the kernel rather than
+restarting the one on the card, and asking for the power to be pulled.
