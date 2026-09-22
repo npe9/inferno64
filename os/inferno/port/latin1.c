@@ -4,6 +4,12 @@
  * The code makes two assumptions: strlen(ld) is 1 or 2; latintab[i].ld can be a
  * prefix of latintab[j].ld only when j<i.
  */
+/*
+ * The compose sequences, read by latin1() and written by nothing:
+ * text segment, so flash and not RAM on a board that runs from flash.
+ */
+#pragma	rodata	latintab
+
 struct cvlist
 {
 	char	*ld;		/* must be seen before using this conversion */

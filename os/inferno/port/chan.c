@@ -1894,6 +1894,14 @@ skipslash(char *name)
 	return name;
 }
 
+/*
+ * Which byte values may not appear in a file name.  Read by validname()
+ * and written by nothing, so it belongs in the text segment; on a board
+ * that runs its text from flash that is 256 bytes of flash rather than
+ * of RAM.
+ */
+#pragma	rodata	isfrog
+
 char isfrog[256]={
 	/*NUL*/	1, 1, 1, 1, 1, 1, 1, 1,
 	/*BKS*/	1, 1, 1, 1, 1, 1, 1, 1,

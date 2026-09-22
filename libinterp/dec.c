@@ -1550,6 +1550,13 @@ DFF(void)
 {
 }
 
+/*
+ * The decode dispatch, one entry an opcode, written by nothing.
+ * rodata puts it in the text segment: flash rather than RAM on a board
+ * that runs its text from flash.  See the note on keywds in tab.h.
+ */
+#pragma	rodata	dec
+
 void	(*dec[])(void) =
 {
 	D00,

@@ -1467,6 +1467,15 @@ cpushutdown(void)
  * The codes at 0x79 and 0x81 are produed by the PFU Happy Hacking keyboard.
  * A 'standard' keyboard doesn't produce anything above 0x58.
  */
+/*
+ * The AT scancode maps, read only by kbdprocesschar(), which is called
+ * from a PC keyboard interrupt.  On a board that has no such thing they
+ * are 1536 bytes of RAM that nothing can reach, and everywhere else
+ * they are still read-only tables.  rodata puts all three in the text
+ * segment.
+ */
+#pragma	rodata	kbtab kbtabshift kbtabesc1
+
 Rune kbtab[] = 
 {
 [0x00]	No,	0x1b,	'1',	'2',	'3',	'4',	'5',	'6',

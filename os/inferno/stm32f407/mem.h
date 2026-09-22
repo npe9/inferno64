@@ -57,7 +57,8 @@
  *			below has been run with.
  *	NHOLE		os/inferno/port/xalloc.c; 128 free-memory runs
  *			at 20 bytes each.  This board's conf.mem has
- *			two banks.
+ *			two banks, so eight is four more than it can
+ *			ever need.
  *	NMNTTAG		os/inferno/port/devmnt.c; a bit for each of the
  *			65536 tags 9P can express, 8192 bytes of bss.
  *			This board mounts nothing over a network and has
@@ -74,7 +75,7 @@
  * here can usefully be given.
  */
 #define	NCONSLINE	256
-#define	NHOLE		16
+#define	NHOLE		8
 #define	NMNTTAG		1024
 
 #define	MAXMACH		1
