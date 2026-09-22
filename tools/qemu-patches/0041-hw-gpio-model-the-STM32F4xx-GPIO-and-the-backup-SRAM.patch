@@ -1,0 +1,788 @@
+From b8b5f88b40f0364d1f5da12df81a8f569da2ebec Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 22 Sep 2026 07:18:08 -0400
+Subject: [PATCH 41/41] hw/gpio: model the STM32F4xx GPIO, and the backup SRAM
+ with it
+
+The F405 SoC mapped its nine GPIO ports as unimplemented devices, so a
+guest could not drive a chip select, a reset line or an interrupt pin --
+which is most of what a board does with a radio on SPI.
+
+The block is the same ST peripheral the L4x5 has, less the two
+registers the F4 has not got: BRR at 0x28 and ASCR at 0x2c.  So this is
+adapted from hw/gpio/stm32l4x5_gpio.c rather than written afresh, since
+two models of one thing would drift apart.  Reset values from RM0090
+8.4: only ports A and B come out of reset with anything in them, and
+for the same reason in both cases -- PA13-15 and PB3-4 are the debug
+port, alive before any software runs.
+
+It does not require its clk input, as the L4 model does.  The L4 SoC
+has an RCC with a clock output per port; the F405's is
+hw/misc/stm32_rcc.c, a plain register file, so requiring it would mean
+no port could ever realize.  Modelling the block is what is claimed
+here, not the clock tree.
+
+Every pin is wired to the system configuration controller, which
+already declared 16 * 9 inputs for exactly this and passes the selected
+one to EXTI.
+
+And the backup SRAM: 4K at 0x40024000, the "+4" in the datasheet's
+"192+4 KB", ordinary memory to the core once BKPSRAMEN is set.  A
+guest that used it as memory found nothing there and took a bus fault.
+
+Signed-off-by: Noah Evans <noah.evans@gmail.com>
+---
+ hw/arm/stm32f405_soc.c           |  69 ++++-
+ hw/gpio/meson.build              |   1 +
+ hw/gpio/stm32f4xx_gpio.c         | 468 +++++++++++++++++++++++++++++++
+ hw/gpio/trace-events             |   6 +
+ include/hw/arm/stm32f405_soc.h   |  15 +
+ include/hw/gpio/stm32f4xx_gpio.h |  75 +++++
+ 6 files changed, 625 insertions(+), 9 deletions(-)
+ create mode 100644 hw/gpio/stm32f4xx_gpio.c
+ create mode 100644 include/hw/gpio/stm32f4xx_gpio.h
+
+diff --git a/hw/arm/stm32f405_soc.c b/hw/arm/stm32f405_soc.c
+index c8684e2..3083223 100644
+--- a/hw/arm/stm32f405_soc.c
++++ b/hw/arm/stm32f405_soc.c
+@@ -27,6 +27,7 @@
+ #include "system/address-spaces.h"
+ #include "system/system.h"
+ #include "hw/arm/stm32f405_soc.h"
++#include "hw/gpio/stm32f4xx_gpio.h"
+ #include "hw/qdev-clock.h"
+ #include "hw/misc/unimp.h"
+ 
+@@ -49,6 +50,30 @@ static const int usart_irq[] = { 37, 38, 39, 52, 53, 71, 82, 83 };
+ static const int timer_irq[] = { 28, 29, 30, 50 };
+ #define ADC_IRQ 18
+ static const int spi_irq[] =   { 35, 36, 51, 0, 0, 0 };
++
++/*
++ * The nine GPIO ports, a kilobyte apart from 0x40020000.  Only A and B
++ * come out of reset with anything in them, and for the same reason in
++ * both cases: PA13-15 and PB3-4 are the debug port, which is alive
++ * before any software runs (RM0090 8.4).
++ */
++static const struct {
++    hwaddr addr;
++    const char *name;
++    uint32_t moder_reset;
++    uint32_t ospeedr_reset;
++    uint32_t pupdr_reset;
++} gpio_cfg[STM_NUM_GPIOS] = {
++    { 0x40020000, "A", 0xa8000000, 0x00000000, 0x64000000 },
++    { 0x40020400, "B", 0x00000280, 0x000000c0, 0x00000100 },
++    { 0x40020800, "C", 0x00000000, 0x00000000, 0x00000000 },
++    { 0x40020c00, "D", 0x00000000, 0x00000000, 0x00000000 },
++    { 0x40021000, "E", 0x00000000, 0x00000000, 0x00000000 },
++    { 0x40021400, "F", 0x00000000, 0x00000000, 0x00000000 },
++    { 0x40021800, "G", 0x00000000, 0x00000000, 0x00000000 },
++    { 0x40021c00, "H", 0x00000000, 0x00000000, 0x00000000 },
++    { 0x40022000, "I", 0x00000000, 0x00000000, 0x00000000 },
++};
+ static const int exti_irq[] =  { 6, 7, 8, 9, 10, 23, 23, 23, 23, 23, 40,
+                                  40, 40, 40, 40, 40} ;
+ 
+@@ -82,6 +107,11 @@ static void stm32f405_soc_initfn(Object *obj)
+         object_initialize_child(obj, "spi[*]", &s->spi[i], TYPE_STM32F2XX_SPI);
+     }
+ 
++    for (i = 0; i < STM_NUM_GPIOS; i++) {
++        object_initialize_child(obj, "gpio[*]", &s->gpio[i],
++                                TYPE_STM32F4XX_GPIO);
++    }
++
+     object_initialize_child(obj, "exti", &s->exti, TYPE_STM32F4XX_EXTI);
+ 
+     s->sysclk = qdev_init_clock_in(DEVICE(s), "sysclk", NULL, NULL, 0);
+@@ -150,6 +180,14 @@ static void stm32f405_soc_realize(DeviceState *dev_soc, Error **errp)
+     }
+     memory_region_add_subregion(system_memory, CCM_BASE_ADDRESS, &s->ccm);
+ 
++    memory_region_init_ram(&s->bkpsram, NULL, "STM32F405.bkpsram", BKPSRAM_SIZE,
++                           &err);
++    if (err != NULL) {
++        error_propagate(errp, err);
++        return;
++    }
++    memory_region_add_subregion(system_memory, BKPSRAM_BASE_ADDRESS, &s->bkpsram);
++
+     armv7m = DEVICE(&s->armv7m);
+     qdev_prop_set_uint32(armv7m, "num-irq", 96);
+     qdev_prop_set_uint8(armv7m, "num-prio-bits", 4);
+@@ -241,6 +279,28 @@ static void stm32f405_soc_realize(DeviceState *dev_soc, Error **errp)
+     }
+ 
+     /* EXTI device */
++    for (i = 0; i < STM_NUM_GPIOS; i++) {
++        dev = DEVICE(&s->gpio[i]);
++        qdev_prop_set_string(dev, "name", gpio_cfg[i].name);
++        qdev_prop_set_uint32(dev, "mode-reset", gpio_cfg[i].moder_reset);
++        qdev_prop_set_uint32(dev, "ospeed-reset", gpio_cfg[i].ospeedr_reset);
++        qdev_prop_set_uint32(dev, "pupd-reset", gpio_cfg[i].pupdr_reset);
++        busdev = SYS_BUS_DEVICE(dev);
++        if (!sysbus_realize(busdev, errp)) {
++            return;
++        }
++        sysbus_mmio_map(busdev, 0, gpio_cfg[i].addr);
++        /*
++         * Every pin to the system configuration controller, which
++         * already declares 16 * 9 inputs for exactly this and passes
++         * the selected one on to EXTI.
++         */
++        for (int j = 0; j < 16; j++) {
++            qdev_connect_gpio_out(dev, j,
++                qdev_get_gpio_in(DEVICE(&s->syscfg), i * 16 + j));
++        }
++    }
++
+     dev = DEVICE(&s->exti);
+     if (!sysbus_realize(SYS_BUS_DEVICE(&s->exti), errp)) {
+         return;
+@@ -277,15 +337,6 @@ static void stm32f405_soc_realize(DeviceState *dev_soc, Error **errp)
+     create_unimplemented_device("timer[9]",    0x40014000, 0x400);
+     create_unimplemented_device("timer[10]",   0x40014400, 0x400);
+     create_unimplemented_device("timer[11]",   0x40014800, 0x400);
+-    create_unimplemented_device("GPIOA",       0x40020000, 0x400);
+-    create_unimplemented_device("GPIOB",       0x40020400, 0x400);
+-    create_unimplemented_device("GPIOC",       0x40020800, 0x400);
+-    create_unimplemented_device("GPIOD",       0x40020C00, 0x400);
+-    create_unimplemented_device("GPIOE",       0x40021000, 0x400);
+-    create_unimplemented_device("GPIOF",       0x40021400, 0x400);
+-    create_unimplemented_device("GPIOG",       0x40021800, 0x400);
+-    create_unimplemented_device("GPIOH",       0x40021C00, 0x400);
+-    create_unimplemented_device("GPIOI",       0x40022000, 0x400);
+     create_unimplemented_device("CRC",         0x40023000, 0x400);
+     create_unimplemented_device("Flash Int",   0x40023C00, 0x400);
+     create_unimplemented_device("BKPSRAM",     0x40024000, 0x400);
+diff --git a/hw/gpio/meson.build b/hw/gpio/meson.build
+index 5205741..5ebc4fb 100644
+--- a/hw/gpio/meson.build
++++ b/hw/gpio/meson.build
+@@ -16,6 +16,7 @@ system_ss.add(when: 'CONFIG_RASPI', if_true: files(
+     'bcm2838_gpio.c'
+ ))
+ system_ss.add(when: 'CONFIG_STM32L4X5_SOC', if_true: files('stm32l4x5_gpio.c'))
++system_ss.add(when: 'CONFIG_STM32F405_SOC', if_true: files('stm32f4xx_gpio.c'))
+ system_ss.add(when: 'CONFIG_ASPEED_SOC', if_true: files('aspeed_gpio.c'))
+ system_ss.add(when: 'CONFIG_SIFIVE_GPIO', if_true: files('sifive_gpio.c'))
+ system_ss.add(when: 'CONFIG_PCF8574', if_true: files('pcf8574.c'))
+diff --git a/hw/gpio/stm32f4xx_gpio.c b/hw/gpio/stm32f4xx_gpio.c
+new file mode 100644
+index 0000000..2714302
+--- /dev/null
++++ b/hw/gpio/stm32f4xx_gpio.c
+@@ -0,0 +1,468 @@
++/*
++ * STM32F4xx GPIO
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 or
++ * (at your option) any later version.
++ *
++ * The same block as the STM32L4x5's, less the two registers the F4 has
++ * not got: BRR at 0x28, which clears bits in ODR, and ASCR at 0x2c,
++ * which is the L4's analogue switch.  Adapted from
++ * hw/gpio/stm32l4x5_gpio.c because it is the same ST peripheral and
++ * two models of one thing would drift apart.  Register map and reset
++ * values from RM0090.
++ */
++
++/*
++ * The reference used is the STMicroElectronics RM0351 Reference manual
++ * for STM32L4x5 and STM32L4x6 advanced Arm ® -based 32-bit MCUs.
++ * https://www.st.com/en/microcontrollers-microprocessors/stm32f4xx/documentation.html
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "hw/gpio/stm32f4xx_gpio.h"
++#include "hw/irq.h"
++#include "hw/clock.h"
++#include "hw/qdev-clock.h"
++#include "hw/qdev-properties.h"
++#include "qapi/visitor.h"
++#include "qapi/error.h"
++#include "migration/vmstate.h"
++#include "trace.h"
++
++#define GPIO_MODER 0x00
++#define GPIO_OTYPER 0x04
++#define GPIO_OSPEEDR 0x08
++#define GPIO_PUPDR 0x0C
++#define GPIO_IDR 0x10
++#define GPIO_ODR 0x14
++#define GPIO_BSRR 0x18
++#define GPIO_LCKR 0x1C
++#define GPIO_AFRL 0x20
++#define GPIO_AFRH 0x24
++
++/* 0b11111111_11111111_00000000_00000000 */
++#define RESERVED_BITS_MASK 0xFFFF0000
++
++static void update_gpio_idr(Stm32f4xxGpioState *s);
++
++static bool is_pull_up(Stm32f4xxGpioState *s, unsigned pin)
++{
++    return extract32(s->pupdr, 2 * pin, 2) == 1;
++}
++
++static bool is_pull_down(Stm32f4xxGpioState *s, unsigned pin)
++{
++    return extract32(s->pupdr, 2 * pin, 2) == 2;
++}
++
++static bool is_output(Stm32f4xxGpioState *s, unsigned pin)
++{
++    return extract32(s->moder, 2 * pin, 2) == 1;
++}
++
++static bool is_open_drain(Stm32f4xxGpioState *s, unsigned pin)
++{
++    return extract32(s->otyper, pin, 1) == 1;
++}
++
++static bool is_push_pull(Stm32f4xxGpioState *s, unsigned pin)
++{
++    return extract32(s->otyper, pin, 1) == 0;
++}
++
++static void stm32f4xx_gpio_reset_hold(Object *obj, ResetType type)
++{
++    Stm32f4xxGpioState *s = STM32F4XX_GPIO(obj);
++
++    s->moder = s->moder_reset;
++    s->otyper = 0x00000000;
++    s->ospeedr = s->ospeedr_reset;
++    s->pupdr = s->pupdr_reset;
++    s->idr = 0x00000000;
++    s->odr = 0x00000000;
++    s->lckr = 0x00000000;
++    s->afrl = 0x00000000;
++    s->afrh = 0x00000000;
++
++    s->disconnected_pins = 0xFFFF;
++    s->pins_connected_high = 0x0000;
++    update_gpio_idr(s);
++}
++
++static void stm32f4xx_gpio_set(void *opaque, int line, int level)
++{
++    Stm32f4xxGpioState *s = opaque;
++    /*
++     * The pin isn't set if line is configured in output mode
++     * except if level is 0 and the output is open-drain.
++     * This way there will be no short-circuit prone situations.
++     */
++    if (is_output(s, line) && !(is_open_drain(s, line) && (level == 0))) {
++        qemu_log_mask(LOG_GUEST_ERROR, "Line %d can't be driven externally\n",
++                      line);
++        return;
++    }
++
++    s->disconnected_pins &= ~(1 << line);
++    if (level) {
++        s->pins_connected_high |= (1 << line);
++    } else {
++        s->pins_connected_high &= ~(1 << line);
++    }
++    trace_stm32f4xx_gpio_pins(s->name, s->disconnected_pins,
++                              s->pins_connected_high);
++    update_gpio_idr(s);
++}
++
++
++static void update_gpio_idr(Stm32f4xxGpioState *s)
++{
++    uint32_t new_idr_mask = 0;
++    uint32_t new_idr = s->odr;
++    uint32_t old_idr = s->idr;
++    int new_pin_state, old_pin_state;
++
++    for (int i = 0; i < GPIO_NUM_PINS; i++) {
++        if (is_output(s, i)) {
++            if (is_push_pull(s, i)) {
++                new_idr_mask |= (1 << i);
++            } else if (!(s->odr & (1 << i))) {
++                /* open-drain ODR 0 */
++                new_idr_mask |= (1 << i);
++            /* open-drain ODR 1 */
++            } else if (!(s->disconnected_pins & (1 << i)) &&
++                       !(s->pins_connected_high & (1 << i))) {
++                /* open-drain ODR 1 with pin connected low */
++                new_idr_mask |= (1 << i);
++                new_idr &= ~(1 << i);
++            /* open-drain ODR 1 with unactive pin */
++            } else if (is_pull_up(s, i)) {
++                new_idr_mask |= (1 << i);
++            } else if (is_pull_down(s, i)) {
++                new_idr_mask |= (1 << i);
++                new_idr &= ~(1 << i);
++            }
++            /*
++             * The only case left is for open-drain ODR 1
++             * with unactive pin without pull-up or pull-down :
++             * the value is floating.
++             */
++        /* input or analog mode with connected pin */
++        } else if (!(s->disconnected_pins & (1 << i))) {
++            if (s->pins_connected_high & (1 << i)) {
++                /* pin high */
++                new_idr_mask |= (1 << i);
++                new_idr |= (1 << i);
++            } else {
++                /* pin low */
++                new_idr_mask |= (1 << i);
++                new_idr &= ~(1 << i);
++            }
++        /* input or analog mode with disconnected pin */
++        } else {
++            if (is_pull_up(s, i)) {
++                /* pull-up */
++                new_idr_mask |= (1 << i);
++                new_idr |= (1 << i);
++            } else if (is_pull_down(s, i)) {
++                /* pull-down */
++                new_idr_mask |= (1 << i);
++                new_idr &= ~(1 << i);
++            }
++            /*
++             * The only case left is for a disconnected pin
++             * without pull-up or pull-down :
++             * the value is floating.
++             */
++        }
++    }
++
++    s->idr = (old_idr & ~new_idr_mask) | (new_idr & new_idr_mask);
++    trace_stm32f4xx_gpio_update_idr(s->name, old_idr, s->idr);
++
++    for (int i = 0; i < GPIO_NUM_PINS; i++) {
++        if (new_idr_mask & (1 << i)) {
++            new_pin_state = (new_idr & (1 << i)) > 0;
++            old_pin_state = (old_idr & (1 << i)) > 0;
++            if (new_pin_state > old_pin_state) {
++                qemu_irq_raise(s->pin[i]);
++            } else if (new_pin_state < old_pin_state) {
++                qemu_irq_lower(s->pin[i]);
++            }
++        }
++    }
++}
++
++/*
++ * Return mask of pins that are both configured in output
++ * mode and externally driven (except pins in open-drain
++ * mode externally set to 0).
++ */
++static uint32_t get_gpio_pinmask_to_disconnect(Stm32f4xxGpioState *s)
++{
++    uint32_t pins_to_disconnect = 0;
++    for (int i = 0; i < GPIO_NUM_PINS; i++) {
++        /* for each connected pin in output mode */
++        if (!(s->disconnected_pins & (1 << i)) && is_output(s, i)) {
++            /* if either push-pull or high level */
++            if (is_push_pull(s, i) || s->pins_connected_high & (1 << i)) {
++                pins_to_disconnect |= (1 << i);
++                qemu_log_mask(LOG_GUEST_ERROR,
++                              "Line %d can't be driven externally\n",
++                              i);
++            }
++        }
++    }
++    return pins_to_disconnect;
++}
++
++/*
++ * Set field `disconnected_pins` and call `update_gpio_idr()`
++ */
++static void disconnect_gpio_pins(Stm32f4xxGpioState *s, uint16_t lines)
++{
++    s->disconnected_pins |= lines;
++    trace_stm32f4xx_gpio_pins(s->name, s->disconnected_pins,
++                              s->pins_connected_high);
++    update_gpio_idr(s);
++}
++
++static void disconnected_pins_set(Object *obj, Visitor *v,
++    const char *name, void *opaque, Error **errp)
++{
++    Stm32f4xxGpioState *s = STM32F4XX_GPIO(obj);
++    uint16_t value;
++    if (!visit_type_uint16(v, name, &value, errp)) {
++        return;
++    }
++    disconnect_gpio_pins(s, value);
++}
++
++static void disconnected_pins_get(Object *obj, Visitor *v,
++    const char *name, void *opaque, Error **errp)
++{
++    visit_type_uint16(v, name, (uint16_t *)opaque, errp);
++}
++
++static void clock_freq_get(Object *obj, Visitor *v,
++    const char *name, void *opaque, Error **errp)
++{
++    Stm32f4xxGpioState *s = STM32F4XX_GPIO(obj);
++    uint32_t clock_freq_hz = clock_get_hz(s->clk);
++    visit_type_uint32(v, name, &clock_freq_hz, errp);
++}
++
++static void stm32f4xx_gpio_write(void *opaque, hwaddr addr,
++                                 uint64_t val64, unsigned int size)
++{
++    Stm32f4xxGpioState *s = opaque;
++
++    uint32_t value = val64;
++    trace_stm32f4xx_gpio_write(s->name, addr, val64);
++
++    switch (addr) {
++    case GPIO_MODER:
++        s->moder = value;
++        disconnect_gpio_pins(s, get_gpio_pinmask_to_disconnect(s));
++        qemu_log_mask(LOG_UNIMP,
++                      "%s: Analog and AF modes aren't supported\n\
++                       Analog and AF mode behave like input mode\n",
++                      __func__);
++        return;
++    case GPIO_OTYPER:
++        s->otyper = value & ~RESERVED_BITS_MASK;
++        disconnect_gpio_pins(s, get_gpio_pinmask_to_disconnect(s));
++        return;
++    case GPIO_OSPEEDR:
++        qemu_log_mask(LOG_UNIMP,
++                      "%s: Changing I/O output speed isn't supported\n\
++                       I/O speed is already maximal\n",
++                      __func__);
++        s->ospeedr = value;
++        return;
++    case GPIO_PUPDR:
++        s->pupdr = value;
++        update_gpio_idr(s);
++        return;
++    case GPIO_IDR:
++        qemu_log_mask(LOG_UNIMP,
++                      "%s: GPIO->IDR is read-only\n",
++                      __func__);
++        return;
++    case GPIO_ODR:
++        s->odr = value & ~RESERVED_BITS_MASK;
++        update_gpio_idr(s);
++        return;
++    case GPIO_BSRR: {
++        uint32_t bits_to_reset = (value & RESERVED_BITS_MASK) >> GPIO_NUM_PINS;
++        uint32_t bits_to_set = value & ~RESERVED_BITS_MASK;
++        /* If both BSx and BRx are set, BSx has priority.*/
++        s->odr &= ~bits_to_reset;
++        s->odr |= bits_to_set;
++        update_gpio_idr(s);
++        return;
++    }
++    case GPIO_LCKR:
++        qemu_log_mask(LOG_UNIMP,
++                      "%s: Locking port bits configuration isn't supported\n",
++                      __func__);
++        s->lckr = value & ~RESERVED_BITS_MASK;
++        return;
++    case GPIO_AFRL:
++        qemu_log_mask(LOG_UNIMP,
++                      "%s: Alternate functions aren't supported\n",
++                      __func__);
++        s->afrl = value;
++        return;
++    case GPIO_AFRH:
++        qemu_log_mask(LOG_UNIMP,
++                      "%s: Alternate functions aren't supported\n",
++                      __func__);
++        s->afrh = value;
++        return;
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: Bad offset 0x%" HWADDR_PRIx "\n", __func__, addr);
++    }
++}
++
++static uint64_t stm32f4xx_gpio_read(void *opaque, hwaddr addr,
++                                    unsigned int size)
++{
++    Stm32f4xxGpioState *s = opaque;
++
++    trace_stm32f4xx_gpio_read(s->name, addr);
++
++    switch (addr) {
++    case GPIO_MODER:
++        return s->moder;
++    case GPIO_OTYPER:
++        return s->otyper;
++    case GPIO_OSPEEDR:
++        return s->ospeedr;
++    case GPIO_PUPDR:
++        return s->pupdr;
++    case GPIO_IDR:
++        return s->idr;
++    case GPIO_ODR:
++        return s->odr;
++    case GPIO_BSRR:
++        return 0;
++    case GPIO_LCKR:
++        return s->lckr;
++    case GPIO_AFRL:
++        return s->afrl;
++    case GPIO_AFRH:
++        return s->afrh;
++        return 0;
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: Bad offset 0x%" HWADDR_PRIx "\n", __func__, addr);
++        return 0;
++    }
++}
++
++static const MemoryRegionOps stm32f4xx_gpio_ops = {
++    .read = stm32f4xx_gpio_read,
++    .write = stm32f4xx_gpio_write,
++    .endianness = DEVICE_NATIVE_ENDIAN,
++    .impl = {
++        .min_access_size = 4,
++        .max_access_size = 4,
++        .unaligned = false,
++    },
++    .valid = {
++        .min_access_size = 4,
++        .max_access_size = 4,
++        .unaligned = false,
++    },
++};
++
++static void stm32f4xx_gpio_init(Object *obj)
++{
++    Stm32f4xxGpioState *s = STM32F4XX_GPIO(obj);
++
++    memory_region_init_io(&s->mmio, obj, &stm32f4xx_gpio_ops, s,
++                          TYPE_STM32F4XX_GPIO, 0x400);
++
++    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->mmio);
++
++    qdev_init_gpio_out(DEVICE(obj), s->pin, GPIO_NUM_PINS);
++    qdev_init_gpio_in(DEVICE(obj), stm32f4xx_gpio_set, GPIO_NUM_PINS);
++
++    s->clk = qdev_init_clock_in(DEVICE(s), "clk", NULL, s, 0);
++
++    object_property_add(obj, "disconnected-pins", "uint16",
++                        disconnected_pins_get, disconnected_pins_set,
++                        NULL, &s->disconnected_pins);
++    object_property_add(obj, "clock-freq-hz", "uint32",
++                        clock_freq_get, NULL, NULL, NULL);
++}
++
++static void stm32f4xx_gpio_realize(DeviceState *dev, Error **errp)
++{
++    /*
++     * The L4 model this came from requires its clk input, because the
++     * L4 SoC has an RCC model with a clock output per port.  The F405
++     * SoC has no such thing -- its RCC is hw/misc/stm32_rcc.c, a plain
++     * register file -- so a guest that enables a port in AHB1ENR gets
++     * no clock here and would fail to realize.  Not requiring it is
++     * the difference between modelling the block and modelling the
++     * clock tree, and only the first is being claimed.
++     */
++}
++
++static const VMStateDescription vmstate_stm32f4xx_gpio = {
++    .name = TYPE_STM32F4XX_GPIO,
++    .version_id = 2,
++    .minimum_version_id = 2,
++    .fields = (VMStateField[]){
++        VMSTATE_UINT32(moder, Stm32f4xxGpioState),
++        VMSTATE_UINT32(otyper, Stm32f4xxGpioState),
++        VMSTATE_UINT32(ospeedr, Stm32f4xxGpioState),
++        VMSTATE_UINT32(pupdr, Stm32f4xxGpioState),
++        VMSTATE_UINT32(idr, Stm32f4xxGpioState),
++        VMSTATE_UINT32(odr, Stm32f4xxGpioState),
++        VMSTATE_UINT32(lckr, Stm32f4xxGpioState),
++        VMSTATE_UINT32(afrl, Stm32f4xxGpioState),
++        VMSTATE_UINT32(afrh, Stm32f4xxGpioState),
++        VMSTATE_UINT16(disconnected_pins, Stm32f4xxGpioState),
++        VMSTATE_UINT16(pins_connected_high, Stm32f4xxGpioState),
++        VMSTATE_CLOCK(clk, Stm32f4xxGpioState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static const Property stm32f4xx_gpio_properties[] = {
++    DEFINE_PROP_STRING("name", Stm32f4xxGpioState, name),
++    DEFINE_PROP_UINT32("mode-reset", Stm32f4xxGpioState, moder_reset, 0),
++    DEFINE_PROP_UINT32("ospeed-reset", Stm32f4xxGpioState, ospeedr_reset, 0),
++    DEFINE_PROP_UINT32("pupd-reset", Stm32f4xxGpioState, pupdr_reset, 0),
++};
++
++static void stm32f4xx_gpio_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    ResettableClass *rc = RESETTABLE_CLASS(klass);
++
++    device_class_set_props(dc, stm32f4xx_gpio_properties);
++    dc->vmsd = &vmstate_stm32f4xx_gpio;
++    dc->realize = stm32f4xx_gpio_realize;
++    rc->phases.hold = stm32f4xx_gpio_reset_hold;
++}
++
++static const TypeInfo stm32f4xx_gpio_types[] = {
++    {
++        .name = TYPE_STM32F4XX_GPIO,
++        .parent = TYPE_SYS_BUS_DEVICE,
++        .instance_size = sizeof(Stm32f4xxGpioState),
++        .instance_init = stm32f4xx_gpio_init,
++        .class_init = stm32f4xx_gpio_class_init,
++    },
++};
++
++DEFINE_TYPES(stm32f4xx_gpio_types)
+diff --git a/hw/gpio/trace-events b/hw/gpio/trace-events
+index cea896b..6051075 100644
+--- a/hw/gpio/trace-events
++++ b/hw/gpio/trace-events
+@@ -46,3 +46,9 @@ stm32l4x5_gpio_read(char *gpio, uint64_t addr) "GPIO%s addr: 0x%" PRIx64 " "
+ stm32l4x5_gpio_write(char *gpio, uint64_t addr, uint64_t data) "GPIO%s addr: 0x%" PRIx64 " val: 0x%" PRIx64 ""
+ stm32l4x5_gpio_update_idr(char *gpio, uint32_t old_idr, uint32_t new_idr) "GPIO%s from: 0x%x to: 0x%x"
+ stm32l4x5_gpio_pins(char *gpio, uint16_t disconnected, uint16_t high) "GPIO%s disconnected pins: 0x%x levels: 0x%x"
++
++# stm32f4xx_gpio.c
++stm32f4xx_gpio_read(char *gpio, uint64_t addr) "GPIO%s addr: 0x%" PRIx64 " "
++stm32f4xx_gpio_write(char *gpio, uint64_t addr, uint64_t data) "GPIO%s addr: 0x%" PRIx64 " val: 0x%" PRIx64 ""
++stm32f4xx_gpio_update_idr(char *gpio, uint32_t old_idr, uint32_t new_idr) "GPIO%s from: 0x%x to: 0x%x"
++stm32f4xx_gpio_pins(char *gpio, uint16_t disconnected, uint16_t high) "GPIO%s disconnected pins: 0x%x levels: 0x%x"
+diff --git a/include/hw/arm/stm32f405_soc.h b/include/hw/arm/stm32f405_soc.h
+index 2eeada6..ba59dee 100644
+--- a/include/hw/arm/stm32f405_soc.h
++++ b/include/hw/arm/stm32f405_soc.h
+@@ -27,6 +27,7 @@
+ 
+ #include "hw/misc/stm32_rcc.h"
+ #include "hw/misc/stm32f4xx_syscfg.h"
++#include "hw/gpio/stm32f4xx_gpio.h"
+ #include "hw/timer/stm32f2xx_timer.h"
+ #include "hw/char/stm32f2xx_usart.h"
+ #include "hw/adc/stm32f2xx_adc.h"
+@@ -43,6 +44,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(STM32F405State, STM32F405_SOC)
+ #define STM_NUM_TIMERS 4
+ #define STM_NUM_ADCS 6
+ #define STM_NUM_SPIS 6
++#define STM_NUM_GPIOS 9
+ 
+ #define FLASH_BASE_ADDRESS 0x08000000
+ #define FLASH_SIZE (1024 * 1024)
+@@ -50,6 +52,16 @@ OBJECT_DECLARE_SIMPLE_TYPE(STM32F405State, STM32F405_SOC)
+ #define SRAM_SIZE (128 * 1024)
+ #define CCM_BASE_ADDRESS 0x10000000
+ #define CCM_SIZE (64 * 1024)
++/*
++ * The backup SRAM: the "+4" in the datasheet's "192+4 KB".  It is
++ * ordinary memory to the core once RCC_AHB1ENR's BKPSRAMEN is set --
++ * what makes it "backup" is that it can be held alive from VBAT across
++ * a power cycle, which is a power-domain property and not an access
++ * one.  A guest that treats it as memory and finds nothing there takes
++ * a bus fault.
++ */
++#define BKPSRAM_BASE_ADDRESS 0x40024000
++#define BKPSRAM_SIZE (4 * 1024)
+ 
+ struct STM32F405State {
+     SysBusDevice parent_obj;
+@@ -65,7 +77,10 @@ struct STM32F405State {
+     STM32F2XXADCState adc[STM_NUM_ADCS];
+     STM32F2XXSPIState spi[STM_NUM_SPIS];
+ 
++    Stm32f4xxGpioState gpio[STM_NUM_GPIOS];
++
+     MemoryRegion ccm;
++    MemoryRegion bkpsram;
+     MemoryRegion sram;
+     MemoryRegion flash;
+     MemoryRegion flash_alias;
+diff --git a/include/hw/gpio/stm32f4xx_gpio.h b/include/hw/gpio/stm32f4xx_gpio.h
+new file mode 100644
+index 0000000..00e894e
+--- /dev/null
++++ b/include/hw/gpio/stm32f4xx_gpio.h
+@@ -0,0 +1,75 @@
++/*
++ * STM32F4xx GPIO
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 or
++ * (at your option) any later version.
++ *
++ * The same block as the STM32L4x5's, which QEMU already models, less
++ * the two registers the F4 has not got: BRR at 0x28 and ASCR at 0x2c.
++ * Adapted from hw/gpio/stm32l4x5_gpio.c rather than written afresh,
++ * because it is the same ST peripheral and pretending otherwise would
++ * mean two models of one thing drifting apart.  Register map and reset
++ * values from RM0090.
++ */
++
++/*
++ * The reference used is the STMicroElectronics RM0351 Reference manual
++ * for STM32L4x5 and STM32L4x6 advanced Arm ® -based 32-bit MCUs.
++ * https://www.st.com/resource/en/reference_manual/rm0090.pdf
++ */
++
++#ifndef HW_STM32F4XX_GPIO_H
++#define HW_STM32F4XX_GPIO_H
++
++#include "hw/sysbus.h"
++#include "qom/object.h"
++
++#define TYPE_STM32F4XX_GPIO "stm32f4xx-gpio"
++OBJECT_DECLARE_SIMPLE_TYPE(Stm32f4xxGpioState, STM32F4XX_GPIO)
++
++#define NUM_GPIOS 9
++#define GPIO_NUM_PINS 16
++
++struct Stm32f4xxGpioState {
++    SysBusDevice parent_obj;
++
++    MemoryRegion mmio;
++
++    /* GPIO registers */
++    uint32_t moder;
++    uint32_t otyper;
++    uint32_t ospeedr;
++    uint32_t pupdr;
++    uint32_t idr;
++    uint32_t odr;
++    uint32_t lckr;
++    uint32_t afrl;
++    uint32_t afrh;
++
++    /* GPIO registers reset values */
++    uint32_t moder_reset;
++    uint32_t ospeedr_reset;
++    uint32_t pupdr_reset;
++
++    /*
++     * External driving of pins.
++     * The pins can be set externally through the device
++     * anonymous input GPIOs lines under certain conditions.
++     * The pin must not be in push-pull output mode,
++     * and can't be set high in open-drain mode.
++     * Pins driven externally and configured to
++     * output mode will in general be "disconnected"
++     * (see `get_gpio_pinmask_to_disconnect()`)
++     */
++    uint16_t disconnected_pins;
++    uint16_t pins_connected_high;
++
++    char *name;
++    Clock *clk;
++    qemu_irq pin[GPIO_NUM_PINS];
++};
++
++#endif

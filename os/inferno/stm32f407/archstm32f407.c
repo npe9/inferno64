@@ -219,7 +219,7 @@ archconfinit(void)
 	 * far: "hard fault ... bfar 40024400".  The part has the
 	 * region; the model does not.
 	 *
-	 * tools/qemu-patches/0040 adds it.  Until that is what this is
+	 * tools/qemu-patches/0041 adds it.  Until that is what this is
 	 * tested against, agreeing with the emulator is worth more than
 	 * 4096 bytes: set npage2 from BKPSRAMSIZE and the board has
 	 * 176128 rather than 167936.

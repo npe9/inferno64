@@ -11,6 +11,16 @@ started as.  0027-0034 are the MPS2, for the PyCubed radio work in
 doc/radio-plan.ms, and 0035-0036 are the Pi again, for the same work
 reaching real hardware.
 
+0040 and 0041 are the STM32F4, for os/inferno/stm32f407: the GPIO
+block, which qemu mapped as an unimplemented device so that nothing
+could drive a chip select, a reset line or an interrupt pin, and the
+backup SRAM, which it did not map at all.  0040 is a bug in qemu's own
+STM32F4 system configuration controller, found by being the first to
+connect anything to it -- it declares 16 * 9 GPIO inputs and then
+indexed its four EXTICR registers by the raw input number, so every
+port above A tripped an assertion.  It had been unreachable since there
+was no GPIO model to drive it.
+
 0031-0033 came out of that check and the one after it, and each names
 what found it.  0027 and 0028 have since been driven by drivers nobody
 here wrote.  Zephyr's

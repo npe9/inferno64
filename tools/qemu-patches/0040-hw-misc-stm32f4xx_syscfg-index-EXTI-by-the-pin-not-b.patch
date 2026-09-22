@@ -1,0 +1,67 @@
+From 6b34916e27629c75c5a8ba6ff4c3ee80e21dd181 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 22 Sep 2026 07:18:08 -0400
+Subject: [PATCH 40/41] hw/misc/stm32f4xx_syscfg: index EXTI by the pin, not by
+ the input line
+
+This device asks qdev_init_gpio_in() for 16 * 9 inputs -- a GPIO port
+and a pin -- and then derived the EXTICR register, the nibble within it
+and the output to pulse from the raw input number.  Anything above port
+A therefore indexed past the four EXTICR registers and tripped the
+assertion.
+
+The EXTI line is the pin, so everything but the port comparison is
+indexed by irq % 16.
+
+Nothing had ever driven it: qemu models no GPIO for this family, so all
+144 inputs were unconnected and the bug was unreachable.  Found by
+connecting them.
+
+Signed-off-by: Noah Evans <noah.evans@gmail.com>
+---
+ hw/misc/stm32f4xx_syscfg.c | 26 +++++++++++++++++++++-----
+ 1 file changed, 21 insertions(+), 5 deletions(-)
+
+diff --git a/hw/misc/stm32f4xx_syscfg.c b/hw/misc/stm32f4xx_syscfg.c
+index addfb03..30f97d7 100644
+--- a/hw/misc/stm32f4xx_syscfg.c
++++ b/hw/misc/stm32f4xx_syscfg.c
+@@ -45,17 +45,33 @@ static void stm32f4xx_syscfg_reset(DeviceState *dev)
+ static void stm32f4xx_syscfg_set_irq(void *opaque, int irq, int level)
+ {
+     STM32F4xxSyscfgState *s = opaque;
+-    int icrreg = irq / 4;
+-    int startbit = (irq & 3) * 4;
++    /*
++     * The input lines are GPIO port * 16 + pin, which is what this
++     * device asks qdev_init_gpio_in() for: 16 * 9 of them.  The EXTI
++     * line is the pin, and everything here is indexed by that -- which
++     * register of EXTICR selects the port for it, which nibble of that
++     * register, and which of the sixteen outputs to pulse.  The port is
++     * what that nibble is compared against.
++     *
++     * This used to take icrreg, startbit and the output index from the
++     * raw input number, so anything above port A indexed past the four
++     * EXTICR registers and tripped the assertion below.  Nothing had
++     * ever driven it: qemu models no GPIO for this family, so every
++     * one of these 144 inputs was unconnected.  Found by connecting
++     * them.
++     */
++    int line = irq % 16;
++    int icrreg = line / 4;
++    int startbit = (line & 3) * 4;
+     uint8_t config = irq / 16;
+ 
+-    trace_stm32f4xx_syscfg_set_irq(irq / 16, irq % 16, level);
++    trace_stm32f4xx_syscfg_set_irq(config, line, level);
+ 
+     g_assert(icrreg < SYSCFG_NUM_EXTICR);
+ 
+     if (extract32(s->syscfg_exticr[icrreg], startbit, 4) == config) {
+-        qemu_set_irq(s->gpio_out[irq], level);
+-        trace_stm32f4xx_pulse_exti(irq);
++        qemu_set_irq(s->gpio_out[line], level);
++        trace_stm32f4xx_pulse_exti(line);
+    }
+ }
+ 
