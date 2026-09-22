@@ -8579,3 +8579,29 @@ that path is now reliable \(em ten warm restarts out of ten.  The card
 only needs writing when the board must boot standalone.  So this is
 logged rather than chased: it is a host-side emu bug, it wants its own
 investigation, and nothing on the board is waiting for it.
+.PP
+.B "A local reproducer was claimed and does not hold up."
+A 9P client on the host
+.CW ( styxread.py ,
+.CW styxabort.py
+in the scratch directory) reads the same 1.9MB file the board fetches.
+It does not wedge the server:
+.IP \(bu
+one connection reading the whole file: 239 reads, instant;
+.IP \(bu
+four concurrent connections reading it: all four clean;
+.IP \(bu
+six connections dropped abruptly mid-read (SO_LINGER 0, so a reset
+rather than a clean close, which is what an unmount mid-fetch looks
+like): the server stopped answering \(em ONCE.  Repeated twice more
+against a freshly started server, it survived six drops both times,
+and survived eight sequential drops with a probe between each.
+.PP
+So the abrupt-drop theory was announced on a single observation and
+the repeat killed it.  That is the same error this document records
+being made three times already, made again: a failing arm is not a
+reproduction until it repeats, exactly as a passing arm is not a fix.
+The one thing the client does establish is that size, concurrency and
+reset-mid-read are each individually survivable, which is more than
+was known before, and it is a fast harness for the next attempt \(em
+seconds per trial, no board, no JTAG.
