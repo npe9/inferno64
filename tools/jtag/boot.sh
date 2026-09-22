@@ -54,7 +54,13 @@ PYEOF`
 banners() {
 	screen -S "$SESS" -X hardcopy -h "$S/boot.txt" 2>/dev/null
 	sleep 1
-	LC_ALL=C grep -ac "raspi3b build $stamp" "$S/boot.txt" 2>/dev/null || echo 0
+	#
+	# grep -c PRINTS 0 and EXITS 1 when nothing matches, so a
+	# "|| echo 0" appends a second zero and the caller sees "0\n0",
+	# which [ -gt ] rejects as not an integer.  Take the count and
+	# ignore the status.
+	#
+	LC_ALL=C grep -ac "raspi3b build $stamp" "$S/boot.txt" 2>/dev/null | head -1
 }
 
 try=1
@@ -62,7 +68,27 @@ while [ $try -le 4 ]; do
 	was=`banners`
 	timeout 180 openocd -f "$IFACE" -f "$ROOT/tools/jtag/raspi3b.cfg" \
 		-c init -c "jtagrestart $IMG" -c resume -c shutdown \
-		2>&1 | grep -i 'stub at\|Error:'
+		>"$S/openocd.txt" 2>&1
+	LC_ALL=C grep -i 'stub at\|Error:' "$S/openocd.txt" | head -5
+	#
+	# Stop on a wedged debug interface rather than retrying into it.
+	#
+	# DSCR.ERR=1 is sticky state in the CORE's debug logic, not in
+	# the TAP, and it survives everything reachable from here: TRST
+	# resets the TAP and does not touch it, and openocd's own init
+	# fails during target examine, so no command that could write
+	# EDRCR.CSE ever gets to run.  It wants the board power-cycled.
+	#
+	# Retrying into it is worse than useless -- hammering a
+	# non-responding board is how this state gets created -- and it
+	# buries the one line that says what is wrong under several
+	# hundred identical errors.
+	#
+	if LC_ALL=C grep -q 'DSCR.ERR=1' "$S/openocd.txt"; then
+		echo "boot: the debug interface is wedged (DSCR.ERR=1)." >&2
+		echo "boot: this needs the Pi POWER CYCLED; not retrying." >&2
+		exit 2
+	fi
 	i=0
 	while [ $i -lt 30 ]; do
 		sleep 6
