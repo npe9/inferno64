@@ -286,6 +286,7 @@ strobe(Cc1120 *rr, int cmd)
  * AGC_GAIN_ADJUST, which carry the RSSI offset and carrier sense
  * threshold worked out for this board.
  */
+
 static const uchar cc1120cfg[] = {
 	Riocfg2,	0x06,
 	Riocfg1,	0xb0,
@@ -1203,6 +1204,23 @@ cc1120txtest(Radio *r, char *p, int n)
 }
 
 /*
+ * Write a register and say so if the part disagrees.  Returns 1 for a
+ * register that did not take, so a caller can count them.
+ */
+static int
+verify(Cc1120 *rr, int addr, int val)
+{
+	int got;
+
+	got = rd(rr, addr);
+	if(got == (val & 0xff))
+		return 0;
+	print("cc1120: reg 0x%.2x wrote 0x%.2x, reads 0x%.2x\n",
+		addr, val & 0xff, got);
+	return 1;
+}
+
+/*
  * What this part is set to and what it will accept, which #W serves
  * as the ctl file's read.  The bands are the synthesiser's, from
  * ccbands[] above, and are the same list setfreq() refuses a
@@ -1269,7 +1287,7 @@ Radio*
 cc1120init(Spidev *s, int irq)
 {
 	Cc1120 *rr;
-	int i;
+	int i, nbad;
 
 	USED(irq);
 	rr = malloc(sizeof(Cc1120));
@@ -1337,6 +1355,21 @@ cc1120init(Spidev *s, int irq)
 	rr->csthr = Csthr;
 	wr(rr, Ragccsthr, rr->csthr & 0xff);
 	/*
+	 * Read back what was just written.
+	 *
+	 * This driver has twice now been wrong about what it had put in
+	 * a register -- once because the constant named the wrong
+	 * register, and once because a whole run of writes did not
+	 * reach the part while the table before them did -- and both
+	 * times it was found days later by an instrument, not by the
+	 * board.  A register write is a thing the part can be asked
+	 * about, so ask.  Six reads at boot.
+	 */
+	nbad = 0;
+	nbad += verify(rr, Rpktlen, Ccmaxpayload);
+	nbad += verify(rr, Ragcgainadjust, rr->rssioffset & 0xff);
+	nbad += verify(rr, Ragccsthr, rr->csthr & 0xff);
+	/*
 	 * RSSI_VALID_CNT: how many internal estimates the moving
 	 * average takes before it updates the RSSI.  Reset is two and
 	 * the maximum is nine, which is a quieter number for the same
@@ -1350,10 +1383,14 @@ cc1120init(Spidev *s, int irq)
 	wr(rr, Riocfg2, Ghighz);
 	wr(rr, Riocfg1, Ghighz);
 	wr(rr, Riocfg0, Ghighz);
+	nbad += verify(rr, Ragccfg0, Agccfg0init);
+	nbad += verify(rr, Riocfg3, Gpktsyncrxtx);
+	nbad += verify(rr, Riocfg2, Ghighz);
 	setfreq(rr, Deffreq);		/* calibrates and goes to RX */
 	s->unlock(s);
 
-	print("cc1120 %s: CC1120 rev 0x%.2x, listening\n",
-		s->name, rr->partversion);
+	print("cc1120 %s: CC1120 rev 0x%.2x, listening%s\n",
+		s->name, rr->partversion,
+		nbad == 0? "": " (SETTINGS NOT APPLIED, see above)");
 	return rr;
 }
