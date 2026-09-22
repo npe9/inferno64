@@ -675,7 +675,7 @@ board's own band sweep agrees with that instrument about where the
 find and the quiet above 890 that they used to disagree about.  What
 follows is in the order the dependencies run, not in order of
 interest.
-.IP "1.  The RSSI scale.  Found, not yet fixed." 6
+.IP "1.  The RSSI scale.  Done." 6
 Everything else that reads the air depends on it.  Carrier sense, the
 sweep, a link budget and any decision about whether a channel is
 clear are all that number.  It is about a hundred decibels high, and
@@ -713,11 +713,24 @@ oscillator down and back up and is not answering meanwhile.  So
 cc1120init() waits for CHIP_RDYn after the tables, as it already does
 after SRES and for the same reason.
 .PP
-That is a diagnosis and not yet a demonstration.  cc1120init() also
-reads back six of the registers it writes and the boot line says
-SETTINGS NOT APPLIED when any disagree, which is what will confirm or
-refute it.  The kernel is built; running it needs a flash cycle, which
-on this board is a reset pressed while mikroe-uhb waits.
+It was the right diagnosis.  With the wait in, on the board:
+.PP
+.EX
+	cc1120 mikrobus2: CC1120 rev 0x21, listening
+	; cat /dev/radio0/stats
+	rssi -110 offset -102 csthr -90 last 0
+	pktcfg0 0x20 pktlen 125
+.EE
+.PP
+\- no SETTINGS NOT APPLIED on the boot line, where the six read-backs
+would have named any register that disagreed, and every one of the
+eight writes in the part itself: AGC_GAIN_ADJUST 0x9a and AGC_CS_THR
+0xa6 where both were 0x00, IOCFG1 and IOCFG2 0x30 where they still
+held the table's 0xb0 and 0x06, PKT_LEN 0x7d where it held its reset
+value of 3.  The RSSI reads \-110dBm where it read \-9.
+.PP
+So the number is no longer a hundred decibels out.  It is not yet
+calibrated, which is item 2.
 .IP "2.  Calibrate it against a source, not a datasheet." 6
 \-102 is the figure TI's examples use and it is not a measurement of
 this board.  The tinySA has a signal generator in it \- "mode output"
