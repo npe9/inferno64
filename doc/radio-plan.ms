@@ -731,12 +731,41 @@ value of 3.  The RSSI reads \-110dBm where it read \-9.
 .PP
 So the number is no longer a hundred decibels out.  It is not yet
 calibrated, which is item 2.
-.IP "2.  Calibrate it against a source, not a datasheet." 6
+.IP "2.  Calibrate it against a source, not a datasheet.  Blocked on a connector." 6
 \-102 is the figure TI's examples use and it is not a measurement of
-this board.  The tinySA has a signal generator in it \- "mode output"
-\- so a known level at a known frequency into the click's antenna
-gives the offset this board actually wants.  That is the difference
-between an RSSI and a number.
+this board.  The tinySA has a signal generator in it, so a known level
+at a known frequency into the click's antenna gives the offset this
+board actually wants.  That is the difference between an RSSI and a
+number.
+.PP
+The generator does not reach the board.  At 868 it cannot: a tinySA
+ULTRA's output is the low path, which stops at 800MHz.  At 433.92,
+which both parts cover, the board's floor does not move between
+.CW "level -76"
+and
+.CW "level -6"
+\- the top of its range \- and the \-89dBm bursts that do appear are
+there with the output off as well, which is 433.92 being the busiest
+frequency in the ISM bands and not the generator.
+.PP
+The path between the two is not the problem, and the proof is in the
+other direction: with the board holding a carrier, the tinySA on its
+fitted antenna sees 868.004454MHz at \-35.1dBm against a \-106dBm
+median, 71dB of margin.  So the antenna is on the tinySA's input
+connector and the generator comes out of the other one.  Moving it, or
+better a cable and a known attenuator between the two, is what this
+needs; over the air the path loss is an unknown that cannot be
+separated from the receiver's error, so it would be a comparison and
+not a calibration.
+.PP
+What can be said without it, from both instruments sweeping 868-890 at
+the same time: the board now reads 2 to 16dB below the tinySA, mean
+about 9, where before item 1 it was about a hundred out.  That is a
+sanity check and not a measurement \- different antennas, different
+positions, different detectors, and the signals up there are bursts
+that the two instruments are not looking at in the same instant \- but
+it is the difference between a number that is wrong by the width of
+the scale and one that is wrong by the width of an antenna.
 .IP "3.  Receive a packet that somebody else sent." 6
 The transmitter is proven against an instrument and the receiver is
 proven against an instrument, and neither has yet carried a packet on
