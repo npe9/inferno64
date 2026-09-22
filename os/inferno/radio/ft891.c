@@ -269,12 +269,69 @@ ft891stat(Radio *r, char *p, int n)
 		f->watts);
 }
 
+/*
+ * The set's bands, from the FT-891 manual's specifications: it
+ * receives 30kHz to 56MHz continuously and transmits in the amateur
+ * allocations inside that.  The power is 5 to 100W, which is +37 to
+ * +50dBm.
+ *
+ * These are the set's, not this driver's: nothing here has asked an
+ * FT-891 what it has, and a radio that has been modified or is sold
+ * to a different administration has different ones.  Hamlib solves
+ * that with a table per model; this is one model.
+ */
+static struct {
+	uvlong	lo;
+	uvlong	hi;
+} ft891tx[] = {
+	{  1800000ULL,   2000000ULL },
+	{  3500000ULL,   4000000ULL },
+	{  5330500ULL,   5403500ULL },
+	{  7000000ULL,   7300000ULL },
+	{ 10100000ULL,  10150000ULL },
+	{ 14000000ULL,  14350000ULL },
+	{ 18068000ULL,  18168000ULL },
+	{ 21000000ULL,  21450000ULL },
+	{ 24890000ULL,  24990000ULL },
+	{ 28000000ULL,  29700000ULL },
+	{ 50000000ULL,  54000000ULL },
+};
+
+static int
+ft891caps(Radio *r, char *p, int n)
+{
+	Ft891 *f;
+	char *e, *q;
+	int i;
+
+	f = (Ft891*)r;
+	q = p;
+	e = p + n;
+	q = seprint(q, e, "freq %llud\n", f->hz);
+	q = seprint(q, e, "mode %s\n",
+		f->mode > 0? ft891modename[f->mode]: "unset");
+	q = seprint(q, e, "ptt %s\n", f->ptt? "on": "off");
+	q = seprint(q, e, "band rx 30000 56000000\n");
+	for(i = 0; i < nelem(ft891tx); i++)
+		q = seprint(q, e, "band tx %llud %llud 37 50\n",
+			ft891tx[i].lo, ft891tx[i].hi);
+	q = seprint(q, e, "modes");
+	for(i = 1; i < nelem(ft891modename); i++)
+		if(ft891modename[i] != nil)
+			q = seprint(q, e, " %s", ft891modename[i]);
+	q = seprint(q, e, "\n");
+	q = seprint(q, e, "levels strength rfpower\n");
+	return q - p;
+}
+
 static Radiodev ft891dev = {
 	"FT-891",
 	0,				/* no packets: see radio.h */
 	nil,				/* and so no send */
 	ft891ctl,
 	ft891stat,
+	nil,				/* no bench: it is not our radio */
+	ft891caps,
 };
 
 Radio*

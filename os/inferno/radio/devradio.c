@@ -344,9 +344,28 @@ radioread(Chan *c, void *a, s32 n, s64 offset)
 		return rv;
 
 	case Qctl:
-		snprint(up->genbuf, sizeof up->genbuf, "radio%ld\n",
-			NUM(c->qid));
-		return readstr(offset, a, n, up->genbuf);
+		/*
+		 * Reading a ctl file gives what may be written to it.
+		 * A driver that has nothing to say gives its name, as
+		 * this always did.
+		 */
+		if(rr->dev->caps == nil){
+			snprint(up->genbuf, sizeof up->genbuf, "radio%ld\n",
+				NUM(c->qid));
+			return readstr(offset, a, n, up->genbuf);
+		}
+		buf = malloc(Statlen);
+		if(buf == nil)
+			error(Enomem);
+		if(waserror()){
+			free(buf);
+			nexterror();
+		}
+		rr->dev->caps(rr, buf, Statlen);
+		rv = readstr(offset, a, n, buf);
+		poperror();
+		free(buf);
+		return rv;
 
 	case Qstats:
 	case Qtxtest:

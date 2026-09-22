@@ -1202,6 +1202,44 @@ cc1120txtest(Radio *r, char *p, int n)
 		rr->txleft, rr->txmarc);
 }
 
+/*
+ * What this part is set to and what it will accept, which #W serves
+ * as the ctl file's read.  The bands are the synthesiser's, from
+ * ccbands[] above, and are the same list setfreq() refuses a
+ * frequency against -- so what the file says and what the driver will
+ * accept cannot drift apart.
+ *
+ * The power range is the PA's: PA_POWER_RAMP 3 to 63 is -16 to
+ * +14dBm by the equation in SWRU295E.  A ccRF 2 click is matched for
+ * 868 to 928 and will radiate poorly outside it; that is the board's
+ * business, not the chip's, so it is not narrowed here.
+ */
+static int
+cc1120caps(Radio *r, char *p, int n)
+{
+	Cc1120 *rr;
+	char *e, *q;
+	int i;
+
+	rr = (Cc1120*)r;
+	q = p;
+	e = p + n;
+	q = seprint(q, e, "freq %llud\n", rr->hz);
+	q = seprint(q, e, "mode 2fsk\n");
+	q = seprint(q, e, "csthr %d\n", rr->csthr);
+	q = seprint(q, e, "rssioffset %d\n", rr->rssioffset);
+	for(i = 0; i < nelem(ccbands); i++)
+		q = seprint(q, e, "band rx %llud %llud\n",
+			ccbands[i].lo, ccbands[i].hi);
+	for(i = 0; i < nelem(ccbands); i++)
+		q = seprint(q, e, "band tx %llud %llud -16 14\n",
+			ccbands[i].lo, ccbands[i].hi);
+	q = seprint(q, e, "modes 2fsk 4fsk msk ook\n");
+	q = seprint(q, e, "levels strength rfpower csthr rssioffset\n");
+	q = seprint(q, e, "funcs carrier\n");
+	return q - p;
+}
+
 static Radiodev cc1120dev = {
 	"CC1120",
 	Ccmaxpayload,
@@ -1209,6 +1247,7 @@ static Radiodev cc1120dev = {
 	cc1120ctl,
 	cc1120stat,
 	cc1120txtest,
+	cc1120caps,
 };
 
 Radio*

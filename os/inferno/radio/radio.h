@@ -58,6 +58,53 @@
  *	idle		neither.
  *	reset		start again.
  *
+ * WHAT A RADIO CAN DO, AND SAYING SO.  Reading the ctl file gives the
+ * settings that can be written to it, in the syntax they are written
+ * in, and then what the radio will accept.  That is this system's
+ * answer and not a new one: devvga's ctl, devaudio's audioctl and
+ * devsd's ctl all read back what may be written, and devsd's reports
+ * the geometry it will not let you set beside the partition table it
+ * will.
+ *
+ * The other half of the question is answered by the directory.  A
+ * radio with data and pkt in it carries packets and one without does
+ * not; ls is the capability query, and that is why those two files
+ * are conditional.
+ *
+ * The vocabulary is Hamlib's where Hamlib has one -- its rig_caps,
+ * rx_range_list and tx_range_list, its RIG_LEVEL_* and RIG_FUNC_* --
+ * because that is the accumulated answer across a couple of hundred
+ * radios and there is no reason to invent a worse one.  What is not
+ * taken is its shape: a bitmask of levels in a C structure is a
+ * library's answer.
+ *
+ * Singular keys are settings and can be written back.  Plural keys
+ * are what the radio has and cannot:
+ *
+ *	freq <hz>		tuned here
+ *	mode <name>		doing this
+ *	power <dBm>		transmitting at this
+ *	ptt on|off
+ *	band rx <lo> <hi>	a band it can receive, in hertz
+ *	band tx <lo> <hi> <lo dBm> <hi dBm>
+ *				a band it can transmit in, and how hard
+ *	modes <name>...		the modes it has
+ *	levels <name>...	what "level" can read or set
+ *	funcs <name>...		what "func" can switch
+ *
+ * LEVELS AND FUNCS.  Hamlib's distinction and worth keeping: a level
+ * has a value, a func is on or off.
+ *
+ *	level <name>		report it
+ *	level <name> <value>	set it
+ *	func <name>		report it
+ *	func <name> on|off	switch it
+ *
+ * The names are Hamlib's where Hamlib has one -- strength, rfpower,
+ * sql, swr, att, preamp -- so that a bridge to rigctl is a
+ * translation and not an interpretation.  A part's own knobs keep
+ * their own names beside those.
+ *
  * THE STAT FORMAT.  Lines of "name value...", the first four common to
  * every radio so that a reader can say something about one it has
  * never heard of, the rest the driver's own:
@@ -124,6 +171,13 @@ struct Radiodev
 	 * runs cat in its own process.  nil if the driver has no bench.
 	 */
 	int	(*txtest)(Radio*, char*, int);
+	/*
+	 * What this radio is set to and what it will accept, in the
+	 * format above; #W serves it as the ctl file's read.
+	 * Optional -- a driver without one reads back only its name,
+	 * as it always did.
+	 */
+	int	(*caps)(Radio*, char*, int);
 };
 
 /*
