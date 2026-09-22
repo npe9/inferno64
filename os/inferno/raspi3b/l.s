@@ -444,7 +444,17 @@ TEXT	splhi(SB), 1, $-4
 	AND	$0x80, R0, R1		/* previous I-bit, for the return value */
 	MSR	$2, DAIFSet		/* imm bit1 = IRQ */
 	MOV	$mach0(SB), R2
-	MOV	R30, 0(R2)		/* m->splpc */
+	/*
+	 * MOVW, not MOV: m->splpc is a ulong, which is FOUR bytes here,
+	 * and MOV of an X register stores eight.  This assembled to
+	 * "str x30, [x2]" and so wrote the next field of the Mach --
+	 * machno at offset 4 -- on every splhi() and every splx().  It
+	 * has been harmless only because the high half of a kernel
+	 * return address is zero and machno is supposed to be zero on a
+	 * one-processor board, which is the kind of accident that stops
+	 * being harmless the moment the struct is reordered.
+	 */
+	MOVW	R30, 0(R2)		/* m->splpc */
 	MOV	R1, R0
 	RET	R30
 
@@ -457,7 +467,7 @@ TEXT	spllo(SB), 1, $-4
 
 TEXT	splx(SB), 1, $-4
 	MOV	$mach0(SB), R2
-	MOV	R30, 0(R2)
+	MOVW	R30, 0(R2)		/* m->splpc, four bytes; see splhi */
 	CMP	$0, R0
 	BEQ	splxlo
 	MSR	$2, DAIFSet

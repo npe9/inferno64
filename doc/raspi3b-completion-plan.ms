@@ -8013,3 +8013,108 @@ prints
 and
 .CW ticks ,
 straight to the UART before anything that can take a lock.
+.NH 2
+Chasing the accounttime trap: what is established
+.PP
+.B "Where it faults, exactly."
+.CW accounttime+0x24
+disassembles to
+.P1
+ldr   x9, [x28, #264]     ; m
+ldr   x9, [x9, #8]        ; m->proc
+...
+ldrsw x5, [x9, #360]      ; p->insyscall   <- faults
+.P2
+so the faulting address is
+.CW m->proc
++ 360, and with
+.CW far
+.CW b900080152b00169
+that makes
+.CW m->proc
+=
+.CW 0xb900080152b00001 .
+.PP
+.B "What that rules out."
+It is not stale BSS from a warm entry:
+.CW main()
+zeroes
+.CW edata..end
+on the way in, and the fault has happened after a kernel booted
+cleanly through the whole peripheral suite and the network tests \(em
+so the Mach is being corrupted while running, not left dirty by the
+load.  It is not the CRUMB area overlapping the Mach either: CRUMB is
+0x20000000 and
+.CW mach0
+is 0x2696b0.  And the value is not a byte pattern found anywhere in
+the kernel's text, so "something copied code over it" does not hold up
+as stated.
+.PP
+The
+.CW sp
+differs between occurrences (0x675dd0, 0x676fe0, 0x677160, 0x3cf3610)
+while
+.CW far
+is identical, which says the fault is not tied to one process but the
+bad value is not random either \(em the same constant is arriving at
+.CW mach0+8
+every time.
+.PP
+.B "The instrument, since the debugger cannot be relied on for this."
+The trap report now prints
+.CW m ,
+.CW MACHP(0) ,
+and the Mach's
+.CW splpc ,
+.CW machno ,
+.CW proc
+and
+.CW ticks ,
+on the UART before anything that can take a lock.  That distinguishes
+.CW m
+pointing somewhere wrong from
+.CW m
+pointing correctly at a Mach that was overwritten, which is the fork
+in the road and has never been answered.
+.NH 2
+A real bug found on the way: splhi wrote eight bytes into a four-byte field
+.PP
+.CW splhi()
+and
+.CW splx()
+both do
+.P1
+MOV	$mach0(SB), R2
+MOV	R30, 0(R2)		/* m->splpc */
+.P2
+and
+.CW m->splpc
+is a
+.CW ulong ,
+which is
+.B four
+bytes in this compiler.
+.CW MOV
+of an X register stores eight, and the image confirms it:
+.CW "str x30, [x2]" .
+So every
+.CW splhi
+and every
+.CW splx
+\(em which is to say, constantly \(em also wrote the next field of the
+Mach,
+.CW machno
+at offset 4.
+.PP
+It has been harmless, and only by accident: the high half of a kernel
+return address is zero, and
+.CW machno
+is supposed to be zero on a one-processor board, so the wrong store
+happened to write the right value.  That stops being true the moment
+the struct is reordered or a second processor exists.
+.CW MOVW
+now, which assembles to
+.CW "str w30, [x2]" .
+It does not reach
+.CW proc
+at offset 8, so it is not the accounttime fault.
