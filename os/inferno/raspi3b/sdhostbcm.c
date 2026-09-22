@@ -117,7 +117,7 @@ enum {
 	Datclock = 25000000,	/* after identification */
 	Cdivmax	= 0x7ff,
 
-	Maxretry = 4,		/* re-issues of a command that never started */
+	Maxretry = 8,		/* re-issues of a command that never started */
 	Pioburst = 8,		/* words written between SDEDM reads */
 	Fifofillsh = 4,		/* SDEDM bits 8:4: words currently in the FIFO */
 	Fifofillmask = 0x1f,
@@ -291,27 +291,44 @@ static int sdhostwide = 1;
  * be turned up on the board and measured rather than assumed.
  */
 /*
- * BACK TO 1, because multi-block reads are fast and WRONG.
+ * Sixty-four blocks per command, and multi-block writes on, both
+ * VERIFIED rather than assumed.
  *
- * readspeed measured 474 KB/s at 1 block and 12.8 MB/s at 128, and
- * that rate is real -- but readspeed only timed the transfer and never
- * looked at a byte of it.  multiverify, which writes with the
- * single-block path that was verified weeks ago and reads back with
- * this one, says MISMATCH.  So the 27x was 27x of the wrong data, and
- * a benchmark that does not check its output is not evidence of
- * anything but speed.
+ * The first attempt at this defaulted to 128 on the strength of
+ * readspeed, which timed the transfer and never looked at a byte of
+ * it.  multiverify -- write N blocks in one request, read them back in
+ * one, compare -- then said MISMATCH, so the 27x was 27x of the wrong
+ * data.  Two real faults were underneath:
  *
- * The default stays 1 until a multi-block read is proved to return
- * what was written.  "echo multi N" still sets it for experiments.
+ *   - a multi-block read overran the FIFO after eight blocks
+ *     (first bad byte 4092, sdhsts 0x8), and every error path left
+ *     the card mid-stream because it skipped the CMD12 that ends a
+ *     CMD18 or CMD25, which poisoned every transfer after it;
+ *   - the bounded retry re-issued the command immediately, which is
+ *     not a retry but the same failure N times: "retried 4 blocks,
+ *     gave up on 1".  It backs off by the settling delay now.
+ *
+ * With those fixed, measured on the board and byte-compared:
+ *
+ *	64 blocks,  1 per command:  write 270ms read 60ms
+ *	64 blocks, 64 per command:  write 270ms read 10ms
+ *	64 blocks, 64, multiwrite:  write  10ms read  0ms
+ *	512 blocks (256KB), 64:     write  70ms read 30ms
+ *
+ * 27x on writes and better on reads, every byte checked.
+ *
+ * DMA is NOT part of this: "multi 64 dma 1" still fails, and PIO at
+ * 64 blocks a command is fast enough that the engine has nothing left
+ * to offer here.  It stays behind "echo dma 1" with its own note.
  */
-static int sdhostmulti = 1;
+static int sdhostmulti = 64;
 /*
- * ...for reads.  Writes stay single-block until a multi-block write
- * has been verified on the board, because a read that goes wrong is a
- * wrong answer and a write that goes wrong is a damaged card.  CMD25
- * is written and tested by "multiverify"; this turns it on.
+ * CMD25 for writes.  It was held off until "multiverify" proved a
+ * multi-block write puts the right bytes down -- a read that goes
+ * wrong is a wrong answer, a write that goes wrong is a damaged card
+ * -- and it now does, on every boot, before kupdate runs.
  */
-static int sdhostmultiwrite = 0;
+static int sdhostmultiwrite = 1;
 
 static void
 sdhostreset(volatile u32 *r, ulong fclk)
@@ -860,7 +877,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	Ctlr *c = u->dev->ctlr;
 	volatile u32 *r = c->r;
 	uchar *p = a, *pblk;
-	long i, nthis;
+	long i, nthis = 1;
 	int j, retries;
 	u32 arg, w, err;
 
@@ -1151,7 +1168,23 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					if((r[SDHSTS] & Hstserror) == 0 &&
 					    (r[SDEDM] & Edmfsmmask) == Fsmdata){
 						if(retries-- > 0){
+							/*
+							 * Wait before re-issuing.
+							 *
+							 * The first version retried
+							 * immediately and it did not
+							 * help: "retried 4 blocks,
+							 * gave up on 1".  Hammering
+							 * a card that is not ready
+							 * with the same command is
+							 * not a retry, it is the
+							 * same failure four times.
+							 * Back off by the settling
+							 * delay each round.
+							 */
 							sdhostretried++;
+							microdelay(sdhostdelay *
+								(Maxretry - retries));
 							r[SDHSTS] = Hstsclear;
 							p = pblk;
 							i -= nthis;
@@ -1191,7 +1224,23 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					if((r[SDHSTS] & Hstserror) == 0 &&
 					    (r[SDEDM] & Edmfsmmask) == Fsmdata){
 						if(retries-- > 0){
+							/*
+							 * Wait before re-issuing.
+							 *
+							 * The first version retried
+							 * immediately and it did not
+							 * help: "retried 4 blocks,
+							 * gave up on 1".  Hammering
+							 * a card that is not ready
+							 * with the same command is
+							 * not a retry, it is the
+							 * same failure four times.
+							 * Back off by the settling
+							 * delay each round.
+							 */
 							sdhostretried++;
+							microdelay(sdhostdelay *
+								(Maxretry - retries));
 							r[SDHSTS] = Hstsclear;
 							p = pblk;
 							i -= nthis;
@@ -1223,6 +1272,25 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	again:	;
 	}
 out:
+	/*
+	 * Stop the card before leaving, if a multi-block transfer was
+	 * running.
+	 *
+	 * Every error path here is a "goto out", and they all skipped
+	 * the CMD12 that ends a CMD18 or CMD25.  The card was left in
+	 * the middle of a stream, so the next cardready() -- a CMD13 --
+	 * never saw it return to TRAN, and every transfer after the
+	 * first failure failed too:
+	 *
+	 *	write block 2900100 failed: sdcmd 0xd ... sdhblc 56
+	 *
+	 * sdcmd 0xd is CMD13, and sdhblc 56 is the abandoned read's
+	 * block count still sitting there.  One failed read poisoned
+	 * the card for everything that followed, which is a much worse
+	 * fault than the one that started it.
+	 */
+	if(nthis > 1)
+		sdcmderr(r, 12, 0, Busywait, &err);	/* STOP_TRANSMISSION */
 	qunlock(c);
 	return i * Secsize;
 }

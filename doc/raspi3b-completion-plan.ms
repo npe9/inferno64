@@ -8721,3 +8721,50 @@ which waits for kupdate, and kupdate is slow precisely because its
 write side is still single-block.  That circle wants breaking with a
 kernel whose boot script runs the check before kupdate, and it is the
 next thing to do.
+.NH 2
+Multi-block, verified this time, and the stall it uncovered
+.PP
+.B "Two real faults were hiding under the speedup."
+.IP 1.
+A multi-block read overran the FIFO after eight blocks \(em first bad
+byte 4092, sdhsts 0x8 \(em because the card streams continuously once
+CMD18 starts and a per-word polling loop cannot drain it.  Worse, every
+error path did "goto out" and skipped the CMD12 that ends a CMD18 or
+CMD25, so the card was left mid-stream and the next cardready()
+\(em a CMD13 \(em never saw TRAN again.  One failed read poisoned every
+transfer after it, which is a far worse fault than the one that
+started it.  CMD12 now runs on every exit.
+.IP 2.
+.B "The bounded retry was not a retry."
+It re-issued the command immediately, and the counters said so:
+.CW "retried 4 blocks, gave up on 1" .
+Hammering a card that is not ready with the same command is the same
+failure four times.  It backs off by the settling delay each round
+now, and Maxretry is 8.  That alone turned the single-block case from
+MISMATCH to OK \(em so this fixed the intermittent read stall this
+document has carried unexplained since the SDHOST work began.
+.PP
+.B "Measured, and byte-compared, with those fixed:"
+.P1
+64 blocks,  1 per command:  write 270ms  read 60ms
+64 blocks, 64 per command:  write 270ms  read 10ms
+64 blocks, 64 + multiwrite: write  10ms  read  0ms
+512 blocks (256KB), 64:     write  70ms  read 30ms
+.P2
+27x on writes, and every byte checked against what was written.  The
+defaults are now 64 blocks a command with multi-block writes on.
+.PP
+.B "DMA is not part of it."
+.CW "multi 64 dma 1"
+still fails, and PIO at 64 blocks a command is fast enough that the
+engine has nothing left to offer on this controller.  It stays behind
+.CW "echo dma 1" .
+.PP
+.B "And the check runs on every boot, before kupdate."
+.CW multiblockcheck()
+in the SD suite runs single-block first so a failure says which arm
+broke.  It was first written into
+.CW board.cmd ,
+which cannot work: that waits for kupdate, and kupdate was slow
+precisely because of the thing being checked.  A test that cannot run
+until the bug is fixed is no test.

@@ -173,13 +173,29 @@ multiblockcheck()
 		return;
 	}
 	# single-block first, so a failure says which arm broke
+	# PIO first, then DMA.  A multi-block read overran the FIFO at
+	# 4092 bytes -- eight blocks -- because the card streams
+	# continuously once CMD18 starts and a per-word polling loop
+	# cannot drain 12MB/s.  DMA is the reason this controller has a
+	# DMA path at all, so the pairing is the experiment.
+	sys->fprint(cfd, "multi 1");
 	sys->fprint(cfd, "multiwrite 0");
 	sys->fprint(cfd, "multiverify 2900000 64");
-	sys->fprint(cfd, "multiwrite 1");
+	sys->fprint(cfd, "multi 64");
 	sys->fprint(cfd, "multiverify 2900100 64");
-	sys->fprint(cfd, "multiverify 2900300 512");
-	# and leave it off: the driver's default stands until the
-	# MULTIVERIFY-OK lines above are believed.
+	# multi-block WRITES, in PIO: the half that can damage a card
+	sys->fprint(cfd, "multiwrite 1");
+	sys->fprint(cfd, "multiverify 2900300 64");
+	sys->fprint(cfd, "multiverify 2900500 512");
+	sys->fprint(cfd, "multiwrite 0");
+	# and the DMA pairing, which is still wrong
+	sys->fprint(cfd, "dma 1");
+	sys->fprint(cfd, "multiverify 2900700 64");
+	sys->fprint(cfd, "dma 0");
+	sys->fprint(cfd, "multi 1");
+	# and leave everything at the driver's safe default: one block
+	# per command, no DMA, until the MULTIVERIFY-OK lines above are
+	# believed.
 	sys->fprint(cfd, "multiwrite 0");
 }
 
