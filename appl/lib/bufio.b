@@ -7,7 +7,22 @@ include "bufio.m";
 
 UTFself:	con 16r80;	# ascii and UTF sequences are the same (<)
 Maxrune:	con 8;	# could probably be Sys->UTFmax
-Bufsize:	con Sys->ATOMICIO;
+#
+# The buffer every open Iobuf carries.  Sys->ATOMICIO, 8192, is what
+# this was and is right where memory is plentiful: it is the kernel's
+# iounit, so a full buffer is one read(2).
+#
+# 4096 because of the boards at the other end.  On
+# os/inferno/stm32f407 this array is the largest single thing the Dis
+# heap is ever asked for, and the heap has to find it in one piece: the
+# part's 192K is two disjoint banks, 128K of SRAM and 64K of core
+# coupled memory, so the largest contiguous run is 96K after the kernel
+# and no allocation can span the gap.  ls(1) there could open a
+# directory on a freshly booted board and not after another command had
+# run first, purely because 8192 contiguous bytes had stopped existing.
+# The cost of halving it is one more read(2) per 4096 bytes of file.
+#
+Bufsize:	con 4096;
 
 Filler: adt
 {
