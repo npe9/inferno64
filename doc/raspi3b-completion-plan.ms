@@ -8768,3 +8768,22 @@ broke.  It was first written into
 which cannot work: that waits for kupdate, and kupdate was slow
 precisely because of the thing being checked.  A test that cannot run
 until the bug is fixed is no test.
+.PP
+.B "One loose end, recorded rather than waved away."
+A
+.CW multiverify
+run from
+.CW board.cmd
+\(em concurrent with the boot's own kfs and dosfs, rather than from the
+SD suite \(em failed at 256 blocks with
+.CW "first bad byte 0" ,
+single block per command, the write reporting success.  Every byte
+wrong with a write that claimed to work is a different shape of fault
+from anything above, and it happened only on the concurrent path.  The
+boot-suite check, which is the authoritative one and runs with the
+card to itself, passes all four PIO arms on every boot.  Whether that
+concurrent failure is a real driver bug or the test racing the
+filesystems over the same controller is not known, and it is the next
+thing to settle: run the same check while a dd is running against
+.CW /dev/sdN0/data
+and see whether it reproduces.

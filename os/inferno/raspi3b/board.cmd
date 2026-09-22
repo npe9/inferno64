@@ -1,1 +1,1 @@
-echo multiwrite 1 > /dev/sdN0/ctl; echo multiverify 2900000 256 > /dev/sdN0/ctl; echo multiverify 2910000 1024 > /dev/sdN0/ctl; echo multiwrite 0 > /dev/sdN0/ctl; echo multiverify 2920000 256 > /dev/sdN0/ctl
+cat /dev/sdN0/ctl
