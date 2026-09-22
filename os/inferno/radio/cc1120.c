@@ -251,6 +251,7 @@ cc1120interrupt(Radio *r)
 	Cc1120 *rr;
 	Spidev *s;
 	Block *b;
+	ulong tick;
 	int n, i, st;
 
 	rr = (Cc1120*)r;
@@ -284,7 +285,22 @@ cc1120interrupt(Radio *r)
 		s->unlock(s);
 		return;
 	}
-	b = iallocb(n);
+	/*
+	 * Every block on the queue begins with #W's twelve-byte header:
+	 * length, rssi, snr, flags and arrival tick, in that order.  It
+	 * is the device's format and not the part's -- see the note on
+	 * Pkthdrlen in radio.h -- and #W/data hands out what follows it
+	 * while #W/pkt hands out the whole thing.  A driver that queues
+	 * a bare payload does not fail; it loses the first twelve bytes
+	 * of every packet to a reader of data, which is a long way to
+	 * look for a short header.
+	 *
+	 * snr is zero: the part reports a link quality indicator rather
+	 * than a signal-to-noise ratio, and a number in the wrong units
+	 * is worse than none.  rssi is read after the packet, from the
+	 * extended space.
+	 */
+	b = iallocb(Pkthdrlen + n);
 	if(b == nil){
 		s->select(s, 0);
 		strobe(rr, Sfrx);
@@ -293,13 +309,28 @@ cc1120interrupt(Radio *r)
 		return;
 	}
 	for(i = 0; i < n; i++)
-		b->wp[i] = s->byte(s, 0);
-	b->wp += n;
+		b->wp[Pkthdrlen + i] = s->byte(s, 0);
 	s->select(s, 0);
 
 	rr->rssi = (schar)rdx(rr, Xrssi1);
+	rr->lqi = 0;
 	strobe(rr, Srx);
 	s->unlock(s);
+
+	tick = fastticks(nil);
+	b->wp[0] = n;
+	b->wp[1] = n >> 8;
+	b->wp[2] = rr->rssi;
+	b->wp[3] = rr->rssi >> 8;
+	b->wp[4] = 0;
+	b->wp[5] = 0;
+	b->wp[6] = 0;
+	b->wp[7] = 0;
+	b->wp[8] = tick;
+	b->wp[9] = tick >> 8;
+	b->wp[10] = tick >> 16;
+	b->wp[11] = tick >> 24;
+	b->wp += Pkthdrlen + n;
 
 	rr->nrecv++;
 	qpass(rr->rq, b);

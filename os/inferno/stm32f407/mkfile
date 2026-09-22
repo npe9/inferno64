@@ -142,6 +142,8 @@ XIPDIS=\
 	lib/string.dis\
 	lib/workdir.dis\
 	echo.dis\
+	ax25raw.dis\
+	ax25chk.dis\
 	export.dis\
 	ed.dis\
 	sed.dis\

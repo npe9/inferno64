@@ -1,0 +1,29 @@
+From f02f41eaf79a9493d52efd6f3318300c3c7b9b18 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 22 Sep 2026 08:27:23 -0400
+Subject: [PATCH] hw/ssi/cc1120: NUM_RXBYTES must fall as the FIFO is read
+
+It was updated when a packet arrived and when the FIFO was flushed, and
+not when bytes were taken out of it, so a driver that had just drained
+the FIFO still read 20 bytes waiting.  Nothing depended on it yet --
+the driver reads the length byte and trusts it -- but a driver that
+polled NUM_RXBYTES instead of taking an interrupt would have looped for
+ever on a FIFO it had already emptied.
+
+Signed-off-by: Noah Evans <noah.evans@gmail.com>
+---
+ hw/ssi/cc1120.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/ssi/cc1120.c b/hw/ssi/cc1120.c
+index de28c58..c91ce88 100644
+--- a/hw/ssi/cc1120.c
++++ b/hw/ssi/cc1120.c
+@@ -309,6 +309,7 @@ static uint8_t cc1120_read_reg(CC1120State *s)
+     if (s->addr == A_FIFO) {
+         if (s->rxpos < s->rxlen) {
+             uint8_t v = s->rxfifo[s->rxpos++];
++            cc1120_update_counts(s);
+             if (s->rxpos >= s->rxlen) {
+                 /* drained: there is room for another packet now */
+                 qemu_flush_queued_packets(qemu_get_queue(s->nic));
