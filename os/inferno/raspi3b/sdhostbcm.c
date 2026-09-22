@@ -242,6 +242,31 @@ sdhostclock(volatile u32 *r, ulong fclk, ulong want)
  * before identification: FIFO thresholds, power off, config and divisor
  * while it is down, then power on.  QEMU needs none of this.
  */
+/*
+ * Extra SDHCFG bits held across every write of that register: the
+ * bus-width bits, set from ctl.  See sdhostreset().
+ */
+static u32 sdhostcfg = 0;
+/*
+ * Four data lines, and the two SDHCFG bits that go with them.
+ *
+ * This is what makes the controller hand over whole words.  With one
+ * line and the bits clear, every access to SDDATA moves a single byte
+ * however wide the access is -- reads returned the same 32-bit window
+ * smeared a byte at a time, writes delivered a quarter of a block and
+ * stalled, and DMA, which can only do 32-bit accesses, moved 128 bytes
+ * of every 512.  A whole bytemode was built around that.
+ *
+ * Setting WIDE_INT_BUS by itself does not fix it; it stops the data
+ * phase entirely (SDHBCT untouched at 512, FIFO empty, no error bit),
+ * which a host-side width bit could not do.  The three go together:
+ * ACMD6 tells the CARD to use four lines, WIDE_EXT_BUS tells the
+ * controller the same about DAT1-3, and WIDE_INT_BUS widens the path
+ * to SDDATA.  With all three the bytemode probe comes back 0 -- block
+ * 0 read 32 bits at a time ends 55 aa -- and DMA works.
+ */
+static int sdhostwide = 1;
+
 static void
 sdhostreset(volatile u32 *r, ulong fclk)
 {
@@ -282,7 +307,32 @@ sdhostreset(volatile u32 *r, ulong fclk)
 	 * register at all, so polling a status bit whose mask is clear
 	 * waits for ever.
 	 */
-	r[SDHCFG] = Cfgslowcard | Cfgdataint | Cfgbusyint;
+	/*
+	 * The bus-width bits, and what is known about them.
+	 *
+	 * bcm2835-sdhost sets WIDE_INT_BUS unconditionally in set_ios
+	 * and WIDE_EXT_BUS only for a 4-bit card, so the obvious first
+	 * experiment was WIDE_INT_BUS alone.  It was run, on the board,
+	 * and it did not do what the name suggests:
+	 *
+	 *	sdhcfg 0x41a, read block 0 failed, sdhsts 0x0
+	 *	sdcmd 0x51 sdedm 0x10801 (fsm 1 fill 0) sdhbct 512
+	 *
+	 * SDHBCT untouched at 512 with the FIFO empty and no error bit
+	 * means nothing arrived from the CARD at all.  A bit that only
+	 * set the width of a host-side SDDATA access could not do that:
+	 * the data would still have come and merely been read wrong,
+	 * and SDHBCT would have counted down.  So WIDE_INT_BUS alone
+	 * stops the data phase, and the one-byte-per-access behaviour
+	 * this driver works around is not simply its absence.
+	 *
+	 * Both bits are therefore runtime, off by default, so that the
+	 * combination Linux actually reaches -- ACMD6 telling the card
+	 * to use four lines, and then both bits together -- can be
+	 * tried on a booted kernel without a rebuild, and so a failed
+	 * experiment does not cost the boot.
+	 */
+	r[SDHCFG] = Cfgslowcard | Cfgdataint | Cfgbusyint | sdhostcfg;
 	sdhostclock(r, fclk, Idclock);
 	delay(20);
 }
@@ -473,10 +523,18 @@ static void
 pickbytemode(SDunit *u, Ctlr *c)
 {
 	uchar b[Secsize];
-	int m;
+	int m, i, first;
 
+	/*
+	 * Try the mode the configuration implies first.  On four lines
+	 * with the SDHCFG width bits set the data register hands over
+	 * whole words, so probing bytemode first only prints a failed
+	 * read that means nothing.
+	 */
 	c->bmset = 1;			/* before the probing reads, not after */
-	for(m = 1; m >= 0; m--){
+	first = sdhostcfg? 0: 1;
+	for(i = 0; i < 2; i++){
+		m = i? !first: first;
 		c->bytemode = m;
 		memset(b, 0, sizeof b);
 		if(sdhostbio(u, 0, 0, b, 1, 0) == Secsize &&
@@ -486,8 +544,9 @@ pickbytemode(SDunit *u, Ctlr *c)
 			return;
 		}
 	}
-	c->bytemode = 1;		/* silicon's way; QEMU tolerates it */
-	print("sdhost: bytemode 1 by default; block 0 had no 55 aa either way\n");
+	c->bytemode = first;
+	print("sdhost: bytemode %d by default; block 0 had no 55 aa either way\n",
+		first);
 }
 
 static int
@@ -582,9 +641,28 @@ sdcardinit(Ctlr *c)
 		print("sdhost: CMD16 failed, sdhsts %#lux\n", (ulong)err);
 		return 0;
 	}
+	/*
+	 * Four lines, once the card is selected.  ACMD6 first, then the
+	 * controller, and never one without the other: a card on four
+	 * lines talking to a controller expecting one is unreadable, and
+	 * so is the reverse.  If the card refuses, stay on one line
+	 * rather than leave the two disagreeing.
+	 */
+	sdhostcfg = 0;
+	if(sdhostwide){
+		if(sdcmderr(r, 55, c->rca<<16, 0, &err) < 0 ||
+		    sdcmderr(r, 6, 2, 0, &err) < 0)
+			print("sdhost: ACMD6 4-bit refused, sdhsts %#lux;"
+				" staying on one line\n", (ulong)err);
+		else
+			sdhostcfg = Cfgwideext|Cfgwideint;
+	}
+	r[SDHCFG] = Cfgslowcard | Cfgdataint | Cfgbusyint | sdhostcfg;
 	sdhostclock(r, fclk, Datclock);		/* identification done: speed up */
-	print("sdhost: card rca %#ux %s %llud sectors, core clock %lud Hz\n",
-		c->rca, c->byteaddr? "byte": "block", c->sectors, fclk);
+	print("sdhost: card rca %#ux %s %llud sectors, core clock %lud Hz,"
+		" %d-bit, sdhcfg %#lux\n",
+		c->rca, c->byteaddr? "byte": "block", c->sectors, fclk,
+		sdhostcfg? 4: 1, (ulong)r[SDHCFG]);
 	return 1;
 }
 
@@ -733,7 +811,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 {
 	Ctlr *c = u->dev->ctlr;
 	volatile u32 *r = c->r;
-	uchar *p = a;
+	uchar *p = a, *pblk;
 	long i;
 	int j, retries;
 	u32 arg, w, err;
@@ -742,6 +820,24 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	qlock(c);
 	retries = Maxretry;
 	for(i = 0; i < nb; i++){
+		/*
+		 * Where this block's data starts, so a retry can put it
+		 * back.
+		 *
+		 * The retry below rewinds the block index and re-issues
+		 * the command, and for a long time it did not rewind p.
+		 * A first attempt that moved some bytes and then stalled
+		 * therefore left p advanced, and the second attempt wrote
+		 * a whole further block from there.  With Maxretry = 4
+		 * that is up to 2560 bytes into a caller's 512-byte
+		 * buffer, and pickbytemode's buffer is on the stack eight
+		 * bytes below its caller's saved arguments: the overrun
+		 * landed on the SDunit* and the next call through it took
+		 * a translation fault on an address made of instruction
+		 * bytes.  That crash only appeared once a probing read
+		 * started failing, which is why it sat here unseen.
+		 */
+		pblk = p;
 		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
 		/*
 		 * The card's status FIRST, and only then the block
@@ -793,7 +889,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		 * the one register difference from a driver that works.
 		 */
 		r[SDHCFG] = (r[SDHCFG] & ~(u32)(Cfgdataint|Cfgblockint)) |
-			Cfgbusyint |
+			Cfgbusyint | sdhostcfg |
 			(sdhostdma? 0: (write? Cfgblockint: Cfgdataint));
 		r[SDHBCT] = Secsize;
 		r[SDHBLC] = 1;
@@ -990,6 +1086,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					    (r[SDEDM] & Edmfsmmask) == Fsmdata &&
 					    retries-- > 0){
 						r[SDHSTS] = Hstsclear;
+						p = pblk;
 						i--;
 						goto again;
 					}
@@ -1093,7 +1190,9 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 		cmd = atoi(cb->f[1]);
 		arg = cb->nf > 2? strtoul(cb->f[2], nil, 0): 0;
 		flags = cb->nf > 3? strtoul(cb->f[3], nil, 0): 0;
+		qlock(c);
 		i = sdcmderr(r, cmd, arg, flags, &err);
+		qunlock(c);
 		print("sdhost: cmd %d arg %#lux -> %d rsp %#lux sdhsts %#lux sdcmd %#lux sdedm %#lux\n",
 			cmd, (ulong)arg, i, (ulong)r[SDRSP0], (ulong)err,
 			(ulong)r[SDCMD], (ulong)r[SDEDM]);
@@ -1107,6 +1206,164 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 		edm |= (strtoul(cb->f[2], nil, 0) & Edmthreshmask) << Edmwrthreshsh;
 		r[SDEDM] = edm;
 		print("sdhost: sdedm %#lux\n", (ulong)r[SDEDM]);
+		return 0;
+	}
+	/*
+	 * The card's bus width and the controller's, together.
+	 *
+	 * "wide 1" is ACMD6 SET_BUS_WIDTH(4) to the card followed by
+	 * WIDE_EXT_BUS|WIDE_INT_BUS in SDHCFG; "wide 0" puts both back
+	 * to one line.  They go together on purpose: the controller and
+	 * the card have to agree about how many DAT lines carry the
+	 * data, and setting either alone is what made the first attempt
+	 * at this unreadable.
+	 */
+	if(strcmp(cb->f[0], "wide") == 0 && cb->nf == 2){
+		i = atoi(cb->f[1]);
+		/*
+		 * Under the qlock, because the card is in use.
+		 *
+		 * The first version of this took no lock and CMD55 came
+		 * back with a command timeout every time, while the same
+		 * command from the driver's own cardready() -- which
+		 * retries -- worked.  A filesystem was reading the card
+		 * throughout; two senders on one command register is a
+		 * collision, not a card that needs coaxing.  Every ctl
+		 * command that touches the controller wants this.
+		 */
+		qlock(c);
+		if(!cardready(c)){
+			qunlock(c);
+			print("sdhost: card not ready\n");
+			return 0;
+		}
+		if(sdcmderr(r, 55, c->rca<<16, 0, &err) < 0){
+			qunlock(c);
+			print("sdhost: CMD55 failed, sdhsts %#lux\n", (ulong)err);
+			return 0;
+		}
+		if(sdcmderr(r, 6, i? 2: 0, 0, &err) < 0){
+			qunlock(c);
+			print("sdhost: ACMD6 failed, sdhsts %#lux\n", (ulong)err);
+			return 0;
+		}
+		sdhostcfg = i? Cfgwideext|Cfgwideint: 0;
+		r[SDHCFG] = (r[SDHCFG] & ~(u32)(Cfgwideext|Cfgwideint)) | sdhostcfg;
+		c->bmset = 0;		/* the probe has to run again */
+		print("sdhost: wide %d, card rsp %#lux, sdhcfg %#lux\n",
+			i, (ulong)r[SDRSP0], (ulong)r[SDHCFG]);
+		qunlock(c);
+		return 0;
+	}
+	/*
+	 * SDHCFG's extra bits by hand, for trying one at a time.  They
+	 * are held and reapplied before every transfer, so a value set
+	 * here survives the driver's own writes to that register.
+	 */
+	if(strcmp(cb->f[0], "hcfg") == 0 && cb->nf == 2){
+		sdhostcfg = strtoul(cb->f[1], nil, 0);
+		qlock(c);
+		r[SDHCFG] = Cfgslowcard | Cfgdataint | Cfgbusyint | sdhostcfg;
+		qunlock(c);
+		c->bmset = 0;
+		print("sdhost: sdhcfg %#lux\n", (ulong)r[SDHCFG]);
+		return 0;
+	}
+	/* re-run the bytemode probe with whatever is set now */
+	if(strcmp(cb->f[0], "probe") == 0 && cb->nf == 1){
+		c->bmset = 0;
+		pickbytemode(u, c);
+		return 0;
+	}
+	/*
+	 * Write blocks and read them back, with no filesystem anywhere
+	 * near it.
+	 *
+	 *	wrverify <blk> <n> [wdma rdma]
+	 *
+	 * The first attempt to test DMA writes went through /tmp, which
+	 * on this board is kfs on the kfstest partition -- so the raw
+	 * write under test destroyed the filesystem the verification
+	 * was going to read through, and the check could not run at
+	 * all.  This writes a pattern built from the block number,
+	 * reads it back with the DMA switch set independently for the
+	 * two directions, and compares in the kernel, so a DMA write
+	 * can be checked against a PIO read and the other way round.
+	 *
+	 * It writes to the card.  Give it blocks inside kfstest
+	 * (2048..16383), never the DOS partition that holds the kernel.
+	 */
+	if(strcmp(cb->f[0], "wrverify") == 0 && (cb->nf == 3 || cb->nf == 5)){
+		uvlong bno = strtoull(cb->f[1], nil, 0), b;
+		long nb = strtol(cb->f[2], nil, 0), n;
+		int wdma = cb->nf == 5? atoi(cb->f[3]): 1;
+		int rdma = cb->nf == 5? atoi(cb->f[4]): 0;
+		int k, pat, bad = 0, save = sdhostdma;
+		ulong t0;
+
+		/*
+		 * The pattern is masked, not cast.
+		 *
+		 * It was written (uchar)(k*7 + (bno+b)*13 + (k>>8)), and
+		 * bno is a uvlong, so the sum is 64 bits -- and this
+		 * compiler emits no truncation for a narrowing cast of a
+		 * 64-bit value.  The comparison therefore held a byte
+		 * from the card against a full 64-bit number and failed
+		 * on the first byte of every block, while the print,
+		 * which shows two hex digits of each, said "is bc want
+		 * bc".  An explicit mask is the fix, tree-wide.
+		 */
+		t0 = TK2MS(m->ticks);
+		for(b = 0; b < (uvlong)nb; b++){
+			for(k = 0; k < Secsize; k++)
+				blk[k] = (k*7 + (int)(bno+b)*13 + (k>>8)) & 0xff;
+			sdhostdma = wdma;
+			n = sdhostbio(u, 0, 1, blk, 1, bno+b);
+			if(n != Secsize){
+				print("sdhost: wrverify write %llud -> %ld\n",
+					bno+b, n);
+				bad++;
+				break;
+			}
+			memset(blk, 0, sizeof blk);
+			sdhostdma = rdma;
+			n = sdhostbio(u, 0, 0, blk, 1, bno+b);
+			if(n != Secsize){
+				print("sdhost: wrverify read %llud -> %ld\n",
+					bno+b, n);
+				bad++;
+				break;
+			}
+			for(k = 0; k < Secsize; k++){
+				pat = (k*7 + (int)(bno+b)*13 + (k>>8)) & 0xff;
+				if(blk[k] != pat){
+					print("sdhost: wrverify %llud byte %d"
+						" is %.2ux want %.2ux\n",
+						bno+b, k, blk[k], pat);
+					bad++;
+					break;
+				}
+			}
+			if(bad)
+				break;
+		}
+		sdhostdma = save;
+		print("sdhost: WRVERIFY-%s %ld blocks at %llud,"
+			" write dma %d read dma %d, %lud ms\n",
+			bad? "FAIL": "OK", nb, bno, wdma, rdma, TK2MS(m->ticks)-t0);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "wide") == 0 && cb->nf == 3){
+		/* force both halves apart, for testing: wide <card> <ctlr> */
+		sdhostcfg = atoi(cb->f[2])? Cfgwideext|Cfgwideint: 0;
+		qlock(c);
+		if(cardready(c) && sdcmderr(r, 55, c->rca<<16, 0, &err) == 0)
+			sdcmderr(r, 6, atoi(cb->f[1])? 2: 0, 0, &err);
+		r[SDHCFG] = (r[SDHCFG] & ~(u32)(Cfgwideext|Cfgwideint)) | sdhostcfg;
+		c->bmset = 0;
+		qunlock(c);
+		print("sdhost: card %s-bit, sdhcfg %#lux\n",
+			atoi(cb->f[1])? "4": "1", (ulong)r[SDHCFG]);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "bytemode") == 0 && cb->nf == 2){

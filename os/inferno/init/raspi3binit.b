@@ -202,10 +202,19 @@ kfsproc(pfd: ref Sys->FD)
 # Arasan has no such gap, and the card needs a kernel that can boot
 # the board back to a shell.
 #
-# Point this at sdN0 to work on SDHOST and load THAT kernel with
-# tools/jtag.  Take care committing it: this line was accidentally
-# committed as sdN0 once, from a local edit left in the tree.
-SDDEV: con "/dev/sdM0";
+# SDHOST (sdN0), not the Arasan (sdM0).
+#
+# It is the controller a real Pi 3B wants -- the Arasan has the Wi-Fi
+# function -- and since the card and the controller were both put on
+# four lines it is the one that works: whole-word transfers, a DMA
+# path verified in both directions, and the read, write, FAT and
+# kupdate suite passing with no failures.  The Arasan's DMA write
+# stall is still unexplained and it runs in PIO.
+#
+# Point this back at sdM0 to work on the Arasan.  Take care committing
+# it either way: this line was accidentally committed as sdN0 once,
+# from a local edit left in the tree.
+SDDEV: con "/dev/sdN0";
 KFSPART: con SDDEV + "/kfstest";
 
 # the IP interface's control fd, held so the interface outlives the

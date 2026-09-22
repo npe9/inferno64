@@ -7401,3 +7401,133 @@ against 128 words written.
 four times the MMIO for the same data.  That is what the DMA path on
 this controller is for, and it is written and waiting behind
 .CW "echo dma 1" .
+.NH 2
+The byte-at-a-time data register was a card on one wire
+.PP
+.B "The one-byte-per-access behaviour is not a property of this silicon."
+It is what an SDHOST does when the card is talking on one DAT line and
+.CW SDHCFG
+has its two bus-width bits clear.  Three things set the width and all
+three have to agree: ACMD6 tells the
+.I card
+to use four lines,
+.CW WIDE_EXT_BUS
+tells the controller the same about DAT1-3, and
+.CW WIDE_INT_BUS
+widens the path between the controller and
+.CW SDDATA .
+This driver did none of them.  Its constants
+.CW Cfgwideext
+and
+.CW Cfgwideint
+had been defined and never used, and the board reported
+.CW "sdhcfg 0x408"
+through every one of the failures in the section above.
+.PP
+.B "Setting WIDE_INT_BUS alone does not fix it; it stops the transfer."
+That was the obvious first experiment, because
+.CW bcm2835-sdhost
+sets that bit unconditionally in
+.CW set_ios
+and the other only for a 4-bit card.  On the board:
+.P1
+sdhcfg 0x41a, read block 0 failed, sdhsts 0x0
+sdcmd 0x51 sdedm 0x10801 (fsm 1 fill 0) sdhbct 512
+.P2
+.CW SDHBCT
+untouched at 512 with an empty FIFO and no error bit means nothing
+arrived from the
+.I card
+at all.  A bit that only set the width of a host-side register access
+could not do that \(em the data would still have come and merely been
+read wrong, and
+.CW SDHBCT
+would have counted down.  So the name is not the whole story, and the
+bit is not simply the absence of the bug.
+.PP
+.B "All three together, and the probe comes back the other way."
+.CW sdcardinit()
+now sends ACMD6 once the card is selected and then sets both bits, and
+.CW pickbytemode()
+tries the mode the configuration implies first:
+.P1
+sdhost: card rca 0x1234 block 30228480 sectors,
+    core clock 250000000 Hz, 4-bit, sdhcfg 0x41e
+sdhost: bytemode 0 (block 0 ends 55 aa)
+SD-READ-OK
+SD-MULTI-OK 32768 bytes, last block matches it read alone
+SD-CAP-OK sector 30228479 reads and 30228480 does not
+SD-OK
+SD-FS-CREATE-OK
+.P2
+Block 0 read 32 bits at a time ends 55 aa.  The whole bytemode path
+stays, because it is what an unconfigured controller does and a card
+that refuses ACMD6 lands back on it, but on this board it is no longer
+the path taken.
+.NH 2
+SDHOST DMA works, in both directions, and is not faster
+.PP
+With the register handing over whole words the DMA engine's 32-bit
+accesses carry four bytes each, and both directions work.  Verified
+with a new
+.CW ctl
+command that touches no filesystem:
+.P1
+echo wrverify <blk> <n> <writedma> <readdma> >/dev/sdN0/ctl
+.P2
+It fills a buffer with a pattern made from the block number, writes,
+reads back with the DMA switch set independently for the two
+directions, and compares in the kernel.  All four combinations, 64
+blocks each, on blocks past every partition:
+.P1
+WRVERIFY-OK 64 blocks, write dma 0 read dma 0, 350 ms
+WRVERIFY-OK 64 blocks, write dma 1 read dma 0, 420 ms
+WRVERIFY-OK 64 blocks, write dma 0 read dma 1, 370 ms
+WRVERIFY-OK 64 blocks, write dma 1 read dma 1, 360 ms
+.P2
+and 200KB read by DMA to a file compared byte-identical against the
+same read by PIO.
+.PP
+.B "It buys nothing measurable."
+1024 blocks written and read back, alternating, is 6580, 6330 and 5660
+ms with DMA against 7970, 5400 and 7530 without.  The spread inside
+each is larger than the gap between them.  DMA on this controller is
+correct, not fast: every block is its own CMD24 or CMD17 with a CMD13
+poll in front of it, and that is where the time goes, not in moving
+512 bytes across the bus.  So it stays behind
+.CW "echo dma 1"
+rather than becoming the default, and the claim in the section above
+\(em that a byte per access was four times the MMIO and DMA was what
+that path was for \(em was wrong about the remedy.  Four lines fixed
+the width; the engine did not fix the rate.
+.PP
+.B "Two bugs of this driver's own, found by the failures above."
+The first is why a failing probe crashed the kernel.  The bounded
+retry rewound the block index and re-issued the command but did not
+rewind
+.CW p ,
+so an attempt that moved some bytes and stalled left the pointer
+advanced and the next attempt wrote a further block from there \(em up
+to 2560 bytes into a 512-byte buffer.
+.CW pickbytemode() 's
+buffer is on the stack eight bytes below its caller's saved arguments,
+so the overrun landed on the
+.CW SDunit*
+and the next call through it took a translation fault on an address
+made of instruction bytes.  It had sat there since the retry was
+written, invisible while the first probe always succeeded.
+.PP
+The second was in the verifier, not the driver, and is the tree's
+standing kencc trap: the pattern was written
+.CW "(uchar)(k*7 + (bno+b)*13 + (k>>8))"
+with
+.CW bno
+a
+.CW uvlong ,
+and this compiler emits no truncation for a narrowing cast of a
+64-bit value.  Every block failed on byte 0 with the print saying
+.CW "is bc want bc" ,
+because
+.CW %.2ux
+showed two hex digits of each while the comparison held a byte from
+the card against a full 64-bit number.  Mask, do not cast.
