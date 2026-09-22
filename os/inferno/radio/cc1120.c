@@ -123,6 +123,7 @@ enum {
 	 * that starts in a few milliseconds.
 	 */
 	Readytries	= 2000,		/* spins waiting for CHIP_RDYn */
+	Idlewaitus	= 2000,		/* strobes waiting to reach IDLE */
 
 	/*
 	 * The RSSI offset, in dB, written to AGC_GAIN_ADJUST.
@@ -339,8 +340,23 @@ cc1120send(Radio *r, uchar *p, int n)
 
 	s = rr->spi;
 	s->lock(s);
+	/*
+	 * SIDLE is a request, not an act: leaving RX means shutting the
+	 * receiver down, and the part is in SETTLING until it has.
+	 * SWRU295E's own sequence is idle, flush, fill, strobe, and
+	 * flushing or filling a part that has not arrived in IDLE yet
+	 * is not the same thing as doing it to one that has.  Bounded,
+	 * because a part that never reaches IDLE is a fault and not a
+	 * reason to spin.
+	 */
+	rr->txtrace[0] = state(rr) >> 4;
 	strobe(rr, Sidle);
+	for(i = 0; i < Idlewaitus; i++)
+		if(state(rr) == Stidle)
+			break;
+	rr->txtrace[1] = state(rr) >> 4;
 	strobe(rr, Sftx);
+	rr->txtrace[2] = state(rr) >> 4;
 
 	s->select(s, 1);
 	s->byte(s, Rfifo | Hburst);
@@ -360,6 +376,7 @@ cc1120send(Radio *r, uchar *p, int n)
 	 */
 	rr->txstaged = rdx(rr, Xnumtxbytes);
 	strobe(rr, Stx);
+	rr->txtrace[3] = state(rr) >> 4;
 	s->unlock(s);
 
 	/*
@@ -386,6 +403,7 @@ cc1120send(Radio *r, uchar *p, int n)
 	 * Reading it clears it, so it is read once and kept.
 	 */
 	rr->txmarc = rdx(rr, Xmarcstatus1);
+	rr->txtrace[4] = state(rr) >> 4;
 	if(state(rr) == Sttxerr){
 		rr->ntxunderflow++;
 		strobe(rr, Sftx);
@@ -774,6 +792,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"fifo rx %d tx %d\n"
 		"lasttx staged %d marc 0x%.2x\n"
 		"pktcfg0 0x%.2x pktlen %d\n"
+		"txtrace %d %d %d %d %d\n"
 		"sent %ud recv %ud\n"
 		"crcerr %ud toobig %ud txtimeout %ud\n"
 		"rxoverflow %ud txunderflow %ud\n",
@@ -786,6 +805,8 @@ cc1120stat(Radio *r, char *p, int n)
 		nrx, ntx,
 		rr->txstaged, rr->txmarc,
 		pktcfg0, pktlen,
+		rr->txtrace[0], rr->txtrace[1], rr->txtrace[2],
+		rr->txtrace[3], rr->txtrace[4],
 		rr->nsent, rr->nrecv,
 		rr->ncrcerr, rr->ntoobig, rr->ntxtimeout,
 		rr->nrxoverflow, rr->ntxunderflow);
