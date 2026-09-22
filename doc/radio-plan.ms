@@ -735,13 +735,32 @@ Nothing else in the device, and nothing in
 or
 .I kiss (3),
 knew the difference.
-.IP "5.  The one redirection." 6
-This board spawns one process for a shell redirection in a boot and
-wedges on the second, which is why every experiment above costs a
-reset and why there is a host tool to type at the console.  It is
-smalloc()'s unbounded retry over a pool that cannot give a 4096-byte
-kernel stack.  Fixing it makes everything above cheaper, which is why
-it is worth doing even though nothing depends on it.
+.IP "5.  The one redirection.  Done." 6
+This board spawned one process for a shell redirection in a boot and
+wedged on the second, which is why every experiment above cost a reset
+and why there is a host tool to type at the console.
+.PP
+The diagnosis written here before was wrong, and worth recording as
+wrong: it said smalloc()'s unbounded retry over a pool that could not
+give a 4096-byte kernel stack.  Under qemu with the CC1120 model
+fitted, what actually happens is that the first redirection forks
+twice and gets two stacks, and the third fork faults with SP at
+0x0ffffd90 \- below the bottom of CCM \- after which the fault handler
+faults on the same stack and the core locks up saying nothing.  The
+retry loop is real and was reached only when KSTACK was raised to 8192
+and no stack could be had at all.
+.PP
+Nothing frees a kernel stack: a dead proc goes back on the free list
+with its stack attached.  So the total is the same however they are
+allocated, and the only thing that varies is whether the request is
+made late, out of a fragmented pool, at a fork \- which is where the
+shell is when it opens a file with ">".  They are all taken at boot
+now, in one piece, before the pools exist.  Five redirections and two
+reads in one boot, measured.
+.PP
+The pool split went back to 50/49/1 with it.  53/46 existed only to
+make that one fork work and cost ls(1) and a worse out-of-memory to do
+it.
 .PP
 Two things are deliberately not on this list.  Making the CC1120 talk
 to an amateur station is not possible with this part \- it does 2-FSK
