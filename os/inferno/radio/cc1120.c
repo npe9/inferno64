@@ -49,6 +49,7 @@ enum {
 	  Fmtrandom	= 0x06,		/* PKT_FORMAT 10: random data, TX only */
 	Rpktcfg0	= 0x28,
 	  Lenfixed	= 0x00,		/* PKT_CFG0.LENGTH_CONFIG = 00 */
+	  Leninfinite	= 0x40,		/* PKT_CFG0.LENGTH_CONFIG = 10 */
 	  Lenvariable	= 0x20,		/* PKT_CFG0.LENGTH_CONFIG = 01 */
 	Rrfendcfg1	= 0x29,
 	Rrfendcfg0	= 0x2a,
@@ -737,6 +738,18 @@ cc1120ctl(Radio *r, char *buf, int n)
 			for(i = 0; i < Idlewaitus; i++)
 				if(state(rr) == Stidle)
 					break;
+			/*
+			 * Infinite packet length as well as random
+			 * data.  Random mode still ends the packet
+			 * when the length is reached -- the first
+			 * attempt put one byte in the FIFO, the part
+			 * read 0x55 as a length of 85, transmitted for
+			 * the 567ms that is at 1200 baud and went back
+			 * to IDLE before an instrument was pointed at
+			 * it.  A carrier that stops before it can be
+			 * looked at answers nothing.
+			 */
+			wr(rr, Rpktcfg0, Leninfinite);
 			wr(rr, Rpktcfg2, Fmtrandom);
 			/*
 			 * "Set TXLAST != TXFIRST before strobing STX"
@@ -758,6 +771,7 @@ cc1120ctl(Radio *r, char *buf, int n)
 				if(state(rr) == Stidle)
 					break;
 			wr(rr, Rpktcfg2, Fmtnormal);
+			wr(rr, Rpktcfg0, rr->fixedlen? Lenfixed: Lenvariable);
 			strobe(rr, Sfrx);
 			strobe(rr, Sftx);
 			strobe(rr, Srx);
