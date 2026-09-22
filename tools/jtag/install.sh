@@ -56,6 +56,16 @@ REMOTE=${REMOTE:-/n/remote/os/inferno/raspi3b/kernel8.img}
 # boot banner prints, so the check is "did the kernel I built come
 # up", which is the thing actually wanted.
 #
+#
+# The board fetches over a styx mount to a server on this host, and
+# that server wedges -- listening, accepting connections, answering no
+# Styx at all.  When it does, kupdate blocks in its mount and prints
+# nothing, which from the console is indistinguishable from a board
+# that has hung.  Prove the server answers before believing anything
+# this script reports about the board.
+#
+sh "$ROOT/tools/jtag/styxd.sh" || exit 1
+
 size=`stat -f%z "$IMG"`
 stamp=`python3 - "$ROOT" <<'PYEOF'
 import subprocess, sys
