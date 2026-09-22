@@ -40,6 +40,7 @@ enum {
 	Riocfg1		= 0x02,
 	Riocfg0		= 0x03,
 	Rsynccfg1	= 0x08,
+	Ragcgainadjust	= 0x19,		/* the RSSI offset */
 	Rpktcfg0	= 0x1c,
 	  Lenvariable	= 0x20,		/* PKT_CFG0.LENGTH_CONFIG = 01 */
 	Rrfendcfg1	= 0x1e,
@@ -101,6 +102,29 @@ enum {
 	 * that starts in a few milliseconds.
 	 */
 	Readytries	= 2000,		/* spins waiting for CHIP_RDYn */
+
+	/*
+	 * The RSSI offset, in dB, written to AGC_GAIN_ADJUST.
+	 *
+	 * RSSI[11:0] out of reset is the level before the front end's
+	 * gain is taken off it, so it reads about a hundred decibels
+	 * high: this board, in a room, with no antenna, reported -6dBm
+	 * on 868MHz, which would be a transmitter in the same hand.
+	 * SWRU295E 6.10 says to add a calibrated offset and gives the
+	 * worked example -102, which is the figure every TI example
+	 * for this part uses.
+	 *
+	 * -102 IS NOT A MEASUREMENT OF THIS BOARD.  The offset is
+	 * properly found by putting a signal of known strength into
+	 * the antenna with the register at zero and subtracting, and
+	 * nothing here has done that.  It is the manufacturer's
+	 * reference figure, it puts a quiet 868MHz band at about
+	 * -108dBm where it belongs rather than at -6, and the "offset"
+	 * field in the stats says which number is in the part so that
+	 * a reading is never mistaken for a calibrated one.  The
+	 * "rssioffset" ctl changes it.
+	 */
+	Rssioffset	= -102,
 };
 
 static int
@@ -469,6 +493,18 @@ cc1120ctl(Radio *r, char *buf, int n)
 		}
 		return n;
 	}
+	if(strcmp(f[0], "rssioffset") == 0 && nf == 2){
+		int off;
+
+		off = atoi(f[1]);
+		if(off < -128 || off > 127)
+			error(Ebadctl);
+		s->lock(s);
+		rr->rssioffset = off;
+		wr(rr, Ragcgainadjust, off & 0xff);
+		s->unlock(s);
+		return n;
+	}
 	if(strcmp(f[0], "freq") == 0 && nf == 2){
 		/*
 		 * FREQ is a 24-bit word, the RF frequency divided by the
@@ -527,14 +563,16 @@ cc1120stat(Radio *r, char *p, int n)
 	return snprint(p, n,
 		"part CC1120 0x%.2x rev 0x%.2x\n"
 		"state 0x%.2x\n"
-		"rssi %d last %d%s\n"
+		"rssi %d%s offset %d last %d%s\n"
 		"fifo rx %d tx %d\n"
 		"sent %ud recv %ud\n"
 		"crcerr %ud toobig %ud txtimeout %ud\n"
 		"rxoverflow %ud txunderflow %ud\n",
 		rr->partnum, rr->partversion,
 		st >> 4,
-		live, rr->rssi, (cs & Carriersense)? " carrier": "",
+		live, (cs & Rssivalid)? "": " invalid",
+		rr->rssioffset, rr->rssi,
+		(cs & Carriersense)? " carrier": "",
 		nrx, ntx,
 		rr->nsent, rr->nrecv,
 		rr->ncrcerr, rr->ntoobig, rr->ntxtimeout,
@@ -606,6 +644,8 @@ cc1120init(Spidev *s, int irq)
 	 */
 	wr(rr, Rpktcfg0, Lenvariable);
 	wr(rr, Rpktlen, Ccmaxpayload);
+	rr->rssioffset = Rssioffset;
+	wr(rr, Ragcgainadjust, rr->rssioffset & 0xff);
 	wr(rr, Riocfg3, Gpktsyncrxtx);
 	wr(rr, Riocfg2, Ghighz);
 	wr(rr, Riocfg1, Ghighz);

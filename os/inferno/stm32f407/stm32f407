@@ -132,18 +132,44 @@ init
 # and not reservations -- except that poolsize() asks the image pool for
 # its whole arena contiguously at boot and panics if it cannot get it.
 #
-# 163840 bytes are left after the kernel here, and at a shell prompt
-# main holds about 70K and the Dis heap about 50K, so the two ceilings
+# 167936 bytes are left after the kernel here, and at a shell prompt
+# main holds about 75K and the Dis heap the rest, so the two ceilings
 # are near enough the whole of it and the split decides which pool
-# fails first rather than how much there is.  These three were chosen
-# by measurement and not by taste: with 50/49/1 a freshly booted board
+# fails first rather than how much there is.  These are measurements
+# and not taste, and the measurement changed when the radio did.
+#
+# It was 50/49/1, chosen when nothing was registered on the SPI: that
 # runs ls(1) over /dis, and a command that runs out afterwards raises
-# "out of memory: heap" into the shell, which prints it and carries on.
-# 56/43/1 also runs ls, but the same failure kills the shell; 52/47/1
-# does not run it at all.  Fragmentation is why the middle of the range
-# is the worst: the largest single thing the heap is asked for is the
-# 8192-byte buffer bufio(2) makes for each open file, and whether one
-# exists depends on where the previous command left its holes.
+# "out of memory: heap" into the shell, which prints it and carries
+# on.  With a CC1120 actually answering -- which it began to do only
+# when cc1120init() learned to wait for CHIP_RDYn -- 50/49 can no
+# longer fork:
+#
+#	; echo rssioffset -90 >/dev/radio0/ctl
+#	arena too large: main size 4096 cursize 74816 arenasize 80128
+#		maxsize 81900, alloc = 4288
+#	no procs for kproc
+#
+# The 4288 is a new process's kernel stack, wanted because the shell
+# forks for a ">" redirection, and every ctl file on this board is
+# written that way.  There are 5312 bytes free and not 4096 of them in
+# one piece, so the pool tries to extend an arena that is already
+# within 1772 bytes of its ceiling.  A radio that cannot be told
+# anything is not a radio.
+#
+# At 53/46/1 the redirection works and the sweep runs.  ls(1) does not
+# run in either split once a radio is registered -- it fails on the
+# heap at 50/49 and on main at 53/46 -- so nothing that worked was
+# given up for it.  Without a click in the socket, 50/49 still runs
+# ls and 53/46 still does not, which is the trade, written down here
+# rather than rediscovered.  56/43/1 runs the redirection too, but an
+# out-of-memory there kills the shell rather than being reported to
+# it, which is the worse failure of the two.
+#
+# Fragmentation is why the middle of the range is the worst: the
+# largest single thing the heap is asked for is the buffer bufio(2)
+# makes for each open file, and whether one exists depends on where
+# the previous command left its holes.
 #
 # image is 1 and not 0.  Nothing on this board has ever allocated from
 # it -- no draw device, no segments -- and 1637 bytes is real memory
@@ -153,8 +179,8 @@ init
 # negative.  It fails safely there today, because ns is a signed
 # intptr; 1637 bytes is not worth resting on that.  See doc/xip.ms.
 code
-	int main_pool_pcnt = 50;
-	int heap_pool_pcnt = 49;
+	int main_pool_pcnt = 53;
+	int heap_pool_pcnt = 46;
 	int image_pool_pcnt = 1;
 	int cflag = 0;
 	int consoleprint = 1;

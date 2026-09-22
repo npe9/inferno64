@@ -518,3 +518,51 @@ go low after CSn, in the form a Spidev can express, since it has no
 way to read the MISO pin.  This is the one kind of fault an emulator
 cannot have: a model that is ready the instant it is reset cannot fail
 to be ready.
+
+The RSSI the board first reported
+---------------------------------
+
+With the CC1120 finally registered, its stats read
+
+	part CC1120 0x48 rev 0x21
+	state 0x01
+	rssi -6 last 0
+
+-6dBm on 868MHz, in a room, on a click with no antenna, would be a
+transmitter in the same hand.  It is the uncalibrated reading:
+RSSI[11:0] out of reset is the level before the front end's gain has
+been taken off it.  SWRU295E 6.10 says to add a calibrated offset,
+which is found by putting a signal of known strength into the antenna
+with AGC_GAIN_ADJUST at zero, and gives the worked example -102 --
+the figure every TI example for this part uses.  -6 with that offset
+is -108dBm, which is where a quiet 868MHz band belongs.
+
+cc1120init() now writes -102 into AGC_GAIN_ADJUST so the register
+reads dBm directly, and the stats carry the offset beside the reading:
+
+	rssi -108 offset -102 last 0
+
+That -102 is not a measurement of this board and the file says so in
+both places.  "echo rssioffset <dB> >/dev/radio0/ctl" changes it, for
+when there is a signal generator to calibrate against.
+
+The stats also say "invalid" when RSSI_VALID is clear, which is what
+qemu always shows, because the model has no RSSI at all.
+
+What the radio cost in memory
+-----------------------------
+
+A registered radio is the difference between a board that can fork and
+one that cannot.  At the 50/49/1 pool split this board had before,
+with a CC1120 answering:
+
+	; echo rssioffset -90 >/dev/radio0/ctl
+	arena too large: main size 4096 cursize 74816 arenasize 80128
+		maxsize 81900, alloc = 4288
+	no procs for kproc
+
+The 4288 is a new process's kernel stack: the shell forks for a ">"
+redirection, and every ctl file on this board is written that way.
+The split is 53/46/1 now and the conf beside this file has the
+measurements.  ls(1) does not run with a radio registered at either
+split, so nothing that worked was given up.
