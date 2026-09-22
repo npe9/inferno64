@@ -74,7 +74,7 @@ optional SSID of 0 to 15.  A refused callsign leaves the one in force
 alone: a station transmitting under a callsign nobody asked for is the
 one mistake this device must not make.
 .TP
-.BI digipeat " onPorB off"
+.BI digipeat " on|off"
 Repeat frames whose next unrepeated hop is this station, with the
 has-been-repeated bit set on that address and nothing else touched.
 Off by default: repeating costs air this station is accountable for,
@@ -118,7 +118,7 @@ DISC, and wait for the answer.
 .BI pid " n"
 The protocol identifier byte; 0xf0, no layer 3, by default.
 .TP
-.BI ui " onPorB off"
+.BI ui " on|off"
 Connectionless.  Off by default, so
 .B connect
 means what it says.  The mode cannot change under a connection.
@@ -139,7 +139,7 @@ How long to wait before acknowledging.
 .BI t3 " ms"
 How long a silent link may stay silent before it is checked.
 .TP
-.BI busy " onPorB off"
+.BI busy " on|off"
 Say RNR, and RR to release it.
 .PP
 .B Connect

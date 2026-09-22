@@ -1,6 +1,6 @@
 .TH RADIO 3
 .SH NAME
-radio \- packet radio
+radio \- packet radios, transceivers and transmitters
 .SH SYNOPSIS
 .B bind -a '#W' /dev
 .PP
@@ -11,19 +11,49 @@ radio \- packet radio
 .B /dev/radio0/ctl
 .br
 .B /dev/radio0/stats
+.PP
+.B FT891PORT=\fIdevice\fB emu
 .SH DESCRIPTION
 The
 .I radio
 device serves a directory per radio interface, each holding
-.BR data ,
-.BR pkt ,
 .B ctl
 and
-.BR stats .
-The driver behind it is for the Semtech SX127x family in LoRa mode \- the
-part an HopeRF RFM9x module is built around \- reached over SPI.
+.BR stats ,
+and
+.B data
+and
+.B pkt
+as well when the radio carries packets.
 .PP
-This is the frame layer and nothing above it.  It carries atomic
+Three drivers answer it.
+.B Sx127x
+is the Semtech SX127x family in LoRa mode, the part an HopeRF RFM9x
+module is built around;
+.B cc1120
+is a TI CC1120 narrowband transceiver, which is what a MikroElektronika
+ccRF click carries; both are reached over SPI.
+.B Ft891
+is a Yaesu FT-891 over a serial port, speaking the set's CAT protocol,
+and has no packets at all.  Which files a directory holds follows from
+that and not from a flag: a driver declares how much one packet carries,
+and a driver that declares zero gets no
+.B data
+and no
+.BR pkt .
+An FT-891 has a microphone socket, not a payload, and
+.I lora (3),
+.I ax25 (3)
+and
+.I kiss (3)
+attach to
+.B data
+by file descriptor and so cannot run over one.  That is the correct
+answer and not a limitation to be worked around.
+.PP
+Everything from here to
+.B "RADIOS WITH NO PACKETS"
+is the packet case.  This is the frame layer and nothing above it.  It carries atomic
 packets, the radio's configuration, and what was known about a packet
 when it arrived.  It has no addresses, no ports, no acknowledgement, no
 retry, no routing and no fragmentation; those belong to whatever speaks
@@ -143,7 +173,7 @@ Bandwidth; one of the values the part has, 7800 through 500000.
 .BI cr " n"
 Coding rate denominator, 5 to 8.
 .TP
-.BI carrier " onPorB off"
+.BI carrier " on|off"
 Listen before transmitting.  Off by default.
 .TP
 .BI duty " percent"
@@ -249,6 +279,128 @@ and
 .I ax25 (3),
 attach to a packet device by file descriptor and never knew which part
 it was.
+.SH "RADIOS WITH NO PACKETS"
+An HF transceiver is a radio and is not a packet device.  It has a
+frequency, a mode, a transmit key and a meter, and its audio goes to a
+socket on the back panel rather than through any file here.  The
+question this device was made to answer is whether
+.B #W 's
+idea of a radio was a radio's or one chip's, and the answer is that it
+needed one change: a driver that carries no packets serves no
+.B data
+and no
+.BR pkt .
+.PP
+For such a radio
+.B ctl
+takes:
+.TP
+.BI freq " hz"
+Frequency, in hertz, as an integer.
+.TP
+.BI mode " name"
+One of the modes the set has.
+.B Ctl 's
+read lists them.
+.TP
+.BI power " dbm"
+Transmit power.  The vocabulary here is dBm because that is what the
+rest of
+.B #W
+uses; a set whose own control is in watts converts, coarsely and on
+purpose \- an HF power control is a knob, not a calibration.
+.TP
+.BI ptt " on|off"
+Key and unkey the transmitter.
+.TP
+.B rx
+.TP
+.B idle
+Stop transmitting.
+.TP
+.BI cat " string"
+Send one CAT command literally and print what comes back.  The bench
+door, as
+.B reg
+is on a chip driver: a set with a hundred commands should not need a
+kernel change to answer one of them.
+.PP
+A serial-attached radio also sits on a port, and a port has settings
+that are the transport's and not the radio's.  A command the radio does
+not recognise is offered to the port before it is an error, so
+.TP
+.BI port " device"
+.TP
+.BI rate " baud"
+reach the host serial layer.  This is why
+.B ctl
+has to exist before the radio is known to be there: it is how you say
+where to look.
+.PP
+A read of
+.B ctl
+returns what may be written to it, in the syntax that would be written,
+which is the arrangement
+.I vga (3)
+and
+.I audio (3)
+use and is how a program asks what a radio can do without a table of
+models compiled into it.  From an FT-891:
+.PP
+.EX
+	freq 14074000
+	mode data-u
+	ptt off
+	power 100
+	band rx 30000 56000000
+	band tx 1800000 2000000 37 50
+	...
+	modes lsb usb cw fm am rtty-l cw-r data-l
+	  rtty-u data-fm fm-n data-u am-n c4fm
+	levels strength rfpower
+.EE
+.PP
+.B Band
+lines are receive and transmit ranges in hertz, transmit with the power
+limits in dBm.
+.B Modes
+and
+.B levels
+are the vocabulary that the rest of the file uses.  The settable values
+at the top are read from the set and not remembered by the driver,
+because a transceiver has a knob and a driver that reports its own last
+command is reporting the past; a read followed by a write of the same
+text has to leave the radio where it was.
+.PP
+.B "What has been run."
+An FT-891 on its own USB port \- a CP2105's Enhanced Com Port at 4800
+8N2 \- driven from
+.I emu
+on a Mac.  It answers
+.B ID0650;
+to
+.BR ID; ,
+and
+.PP
+.EX
+	; echo freq 14074000 >'#W/radio0/ctl'
+	; echo mode data-u >'#W/radio0/ctl'
+	; cat '#W/radio0/stats'
+	part FT-891 cat
+	freq 14074000
+	mode data-u
+	state 1
+	smeter -106
+	power 100
+.EE
+.PP
+puts the set on 14.074 in DATA-U, which is FT8, and reads it back out
+of the radio.  What has not been run is transmit: nothing here has
+keyed that set, and
+.B ptt
+and
+.B power
+are what the manual says they are.
 .SH SOURCE
 .B /os/inferno/radio/radio.h
 .br
@@ -256,9 +408,19 @@ it was.
 .br
 .B /os/inferno/radio/sx127x.c
 .br
+.B /os/inferno/radio/cc1120.c
+.br
+.B /os/inferno/radio/ft891.c
+.br
 .B /os/inferno/mps2/spipl022.c
 .br
 .B /os/inferno/raspi3b/spipiradio.c
+.br
+.B /os/inferno/stm32f407/spistm32f4.c
+.br
+.B /emu/port/devradio.c
+.br
+.B /emu/port/ft891emu.c
 .SH DIAGNOSTICS
 A board that hangs at boot between
 .B procinit
@@ -287,6 +449,38 @@ or
 and those are worth telling apart from a different chip.  Each socket
 is probed and reported separately, so a board with one part fitted
 prints a line for the part and a line for the empty socket.
+.PP
+A Yaesu that takes every command and answers none of them is not
+broken and neither is the driver.  The FT-891's menu 05-08
+.B "CAT RTS"
+is ENABLE from the factory, and what it means is that the set will not
+send a reply while the PC asserts RTS.  The VFO moves, the mode
+changes, and every query times out, which reads exactly like replies
+being lost in the host.  They are not being sent.
+.PP
+.EX
+	; echo 'cat EX05080;' >'#W/radio0/ctl'
+.EE
+.PP
+turns it off, after which the modem lines do not matter at all; that
+was checked over the four combinations of RTS and DTR.
+.PP
+Under
+.IR emu ,
+.B FT891PORT
+in the host environment names the serial device, so that the port is
+open before the first command rather than being the first command, and
+.B FT891DEBUG
+prints every byte written and read.  The trace is there because from
+above a write into a dead port and a correct write to a radio that
+never answers are the same silence, and nothing else in the stack can
+tell them apart:
+.PP
+.EX
+	ft891: /dev/cu.usbserial-00906F050 at 4800 baud
+	ft891: -> ID; (3 of 3)
+	ft891 host: no answer to ID;
+.EE
 .SH BUGS
 Two sockets, which is a constant.  A board fits as many as it has and
 a directory appears for each part that answered, so a kernel on a
