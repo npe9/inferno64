@@ -1218,16 +1218,31 @@ static int
 cc1120caps(Radio *r, char *p, int n)
 {
 	Cc1120 *rr;
+	Spidev *s2;
 	char *e, *q;
-	int i;
+	int i, gain, thr, raw;
 
 	rr = (Cc1120*)r;
 	q = p;
 	e = p + n;
+	/*
+	 * Read back, do not report what was written.  The two differed
+	 * for as long as PKT_CFG0 was being written to AGC_CFG1's
+	 * address, and a ctl file that reports the driver's belief
+	 * cannot show that.  These come out of the part.
+	 */
+	s2 = rr->spi;
+	s2->lock(s2);
+	gain = (schar)rd(rr, Ragcgainadjust);
+	thr = (schar)rd(rr, Ragccsthr);
+	raw = (schar)rdx(rr, Xrssi1);
+	s2->unlock(s2);
+
 	q = seprint(q, e, "freq %llud\n", rr->hz);
 	q = seprint(q, e, "mode 2fsk\n");
-	q = seprint(q, e, "csthr %d\n", rr->csthr);
-	q = seprint(q, e, "rssioffset %d\n", rr->rssioffset);
+	q = seprint(q, e, "csthr %d\n", thr);
+	q = seprint(q, e, "rssioffset %d\n", gain);
+	q = seprint(q, e, "strength %d\n", raw);
 	for(i = 0; i < nelem(ccbands); i++)
 		q = seprint(q, e, "band rx %llud %llud\n",
 			ccbands[i].lo, ccbands[i].hi);
