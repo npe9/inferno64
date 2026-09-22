@@ -94,6 +94,7 @@ extern Radio* radioget(int);
 static int
 radiogen(Chan *c, char *unused, Dirtab *d, int nd, int s, Dir *dp)
 {
+	Radio *rr;
 	Qid q;
 	int n;
 
@@ -133,12 +134,26 @@ radiogen(Chan *c, char *unused, Dirtab *d, int nd, int s, Dir *dp)
 	case Qstats:
 	case Qtxtest:
 		n = NUM(c->qid);
+		/*
+		 * data and pkt exist only on a radio that carries
+		 * packets.  A transceiver with a microphone socket and
+		 * a CAT port has a frequency and a mode and no payload
+		 * at all, and a directory that offers it a packet queue
+		 * is lying about what it is.  maxpayload says which.
+		 */
+		rr = radioget(n);
+		if(rr == nil)
+			return -1;
 		switch(s){
 		case 0:
+			if(rr->dev->maxpayload == 0)
+				return 0;
 			mkqid(&q, QID(n, Qdata), 0, QTFILE);
 			devdir(c, q, "data", 0, eve, 0660, dp);
 			return 1;
 		case 1:
+			if(rr->dev->maxpayload == 0)
+				return 0;
 			mkqid(&q, QID(n, Qpkt), 0, QTFILE);
 			devdir(c, q, "pkt", 0, eve, 0440, dp);
 			return 1;
@@ -151,7 +166,7 @@ radiogen(Chan *c, char *unused, Dirtab *d, int nd, int s, Dir *dp)
 			devdir(c, q, "stats", 0, eve, 0444, dp);
 			return 1;
 		case 4:
-			if(radioget(n) == nil || radioget(n)->dev->txtest == nil)
+			if(rr->dev->txtest == nil)
 				return 0;
 			mkqid(&q, QID(n, Qtxtest), 0, QTFILE);
 			devdir(c, q, "txtest", 0, eve, 0440, dp);
@@ -219,6 +234,8 @@ radioopen(Chan *c, u32 omode)
 	}
 
 	claimed = 0;
+	if((t == Qdata || t == Qpkt) && rr->dev->maxpayload == 0)
+		error(Enonexist);
 	if((t == Qdata || t == Qpkt) && claimsread(omode)){
 		lock(&rr->rl);
 		if(rr->reading){

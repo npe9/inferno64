@@ -660,12 +660,46 @@ cc1120interrupt(Radio *r)
  * scaled by 2^16 over the crystal.  The 820-960MHz band divides by 4,
  * and a ccRF 2 click has a 32MHz crystal.
  */
-static void
+/*
+ * The bands this part has, and the LO divider each one uses.  The VCO
+ * runs at the RF times the divider and covers about 3.2 to 3.9GHz;
+ * everything outside these ranges is a frequency the synthesiser
+ * cannot make, whatever is written to FREQ.
+ *
+ * setfreq() used to write FREQ and leave FS_CFG alone, so a board
+ * asked for 434MHz kept the divider of 4 that 868 needs, asked the
+ * VCO for 1736MHz, and said nothing about it.  A radio that tunes
+ * somewhere other than where it was told is worse than one that
+ * refuses.
+ */
+static struct {
+	uvlong	lo;
+	uvlong	hi;
+	int	sel;			/* FS_CFG.FSD_BANDSELECT */
+	int	div;
+} ccbands[] = {
+	{ 820000000ULL, 960000000ULL, 0x2,  4 },
+	{ 410000000ULL, 480000000ULL, 0x4,  8 },
+	{ 273300000ULL, 320000000ULL, 0x6, 12 },
+	{ 205000000ULL, 240000000ULL, 0x8, 16 },
+	{ 164000000ULL, 192000000ULL, 0xa, 20 },
+	{ 136700000ULL, 160000000ULL, 0xb, 24 },
+};
+
+static int
 setfreq(Cc1120 *rr, uvlong hz)
 {
 	u32 v;
+	int i, fscfg;
 
-	v = (u32)((hz * 4 * 65536) / 32000000);
+	for(i = 0; i < nelem(ccbands); i++)
+		if(hz >= ccbands[i].lo && hz <= ccbands[i].hi)
+			break;
+	if(i >= nelem(ccbands))
+		return -1;
+	fscfg = (rd(rr, Rfscfg) & ~0xf) | ccbands[i].sel;
+	wr(rr, Rfscfg, fscfg);
+	v = (u32)((hz * ccbands[i].div * 65536) / 32000000);
 	rr->hz = hz;
 	strobe(rr, Sidle);
 	wrx(rr, Xfreq2, (v>>16) & 0xff);
@@ -673,6 +707,7 @@ setfreq(Cc1120 *rr, uvlong hz)
 	wrx(rr, Xfreq0, v & 0xff);
 	strobe(rr, Scal);
 	strobe(rr, Srx);
+	return 0;
 }
 
 /*
@@ -796,8 +831,12 @@ cc1120ctl(Radio *r, char *buf, int n)
 			error(Ebadctl);
 		for(hz = lo; hz <= hi; hz += step){
 			s->lock(s);
-			setfreq(rr, hz);
+			i = setfreq(rr, hz);
 			s->unlock(s);
+			if(i < 0){
+				print("scan %lud noband\n", (ulong)hz);
+				continue;
+			}
 			/*
 			 * Let the estimate settle before the dwell
 			 * starts, taking the lock for each look rather
@@ -1045,15 +1084,22 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 * FREQ is a 24-bit word, the RF frequency divided by the
 		 * frequency-synthesiser resolution: f * 2^16 / fxosc,
 		 * with a 32MHz crystal and the LO divider for the band.
-		 * The 820-960MHz band divides by 4, which is the only
-		 * one a ccRF 2 click is matched for.
+		 * Which band, and so which divider, setfreq() picks from
+		 * the frequency itself.  It refuses one the synthesiser
+		 * cannot make, and that refusal arrives here rather
+		 * than being swallowed.
+		 *
+		 * The part reaches six bands; a ccRF 2 click is matched
+		 * for 868 to 928 and will radiate poorly outside it,
+		 * which is a property of the board and not of the chip,
+		 * so it is not enforced here.
 		 */
 		hz = strtoul(f[1], nil, 0);
-		if(hz < 820000000 || hz > 960000000)
-			error("frequency outside the band this click is matched for");
 		s->lock(s);
-		setfreq(rr, hz);
+		i = setfreq(rr, hz);
 		s->unlock(s);
+		if(i < 0)
+			error("radio: no band for that frequency");
 		return n;
 	}
 	if(strcmp(f[0], "idle") == 0){

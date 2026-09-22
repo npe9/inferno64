@@ -1,5 +1,5 @@
 /*
- * A packet radio, as #W sees one.
+ * A radio, as #W sees one.
  *
  * os/inferno/radio/devradio.c called sx127xsend(), sx127xctl() and
  * sx127xstat() by name, so "the chip driver is separable from the
@@ -14,13 +14,63 @@
  * include none of this.  It is only the device itself that knew which
  * part it was talking to.
  *
- * A board fills in a Spidev and hands it to a driver's init; everything
- * below the Spidev -- which controller, which chip select, which pin an
- * interrupt arrived on -- is the board's business, and a board may have
- * more than one socket on one bus.
+ * A board fills in a transport and hands it to a driver's init;
+ * everything below it -- which controller, which chip select, which pin
+ * an interrupt arrived on, which uart -- is the board's business, and a
+ * board may have more than one socket on one bus.
+ *
+ * WHAT A RADIO IS HERE.  Not a packet transceiver.  A CC1120 on a
+ * clicker 2 and a Yaesu FT-891 on a serial line have nothing in common
+ * except what this file says they do: a frequency, a mode, a transmit
+ * key, and something to say about how strong what it hears is.  A
+ * packet radio has more -- a payload size, a queue of received frames
+ * -- and those are optional, because a transceiver with a microphone
+ * socket has none of them.
+ *
+ *	maxpayload	0 if the radio does not carry packets.  #W then
+ *			serves no data and no pkt file, allocates no
+ *			receive queue, and the exclusive-reader claim
+ *			never applies.  lora(3), ax25(3) and kiss(3)
+ *			attach to data by file descriptor, so a radio
+ *			without it cannot carry them.
+ *	send		nil unless maxpayload is non-zero.
+ *	ctl, stat	every radio has these.
+ *	txtest		optional bench; see below.
+ *
+ * THE CTL VOCABULARY.  A driver is free to add its own, and every one
+ * of these that applies to the part must mean the same thing on every
+ * part:
+ *
+ *	freq <hz>	tune.  A driver that cannot reach a frequency
+ *			must refuse it rather than tune somewhere else:
+ *			os/inferno/radio/cc1120.c did the latter for a
+ *			while by leaving FS_CFG's band select alone, so
+ *			"freq 434000000" asked the synthesiser for a
+ *			frequency it has no divider for and said nothing.
+ *	mode <name>	fsk, msk, ook, cw, usb, lsb, am, fm ... what
+ *			the part does.  A driver refuses a mode it has
+ *			not got.
+ *	power <dBm>	transmit power.
+ *	ptt on|off	key the transmitter.  On a part that keys
+ *			itself per packet this is a carrier, for
+ *			tuning; on an HF set it is the PTT line.
+ *	rx		receive.
+ *	idle		neither.
+ *	reset		start again.
+ *
+ * THE STAT FORMAT.  Lines of "name value...", the first four common to
+ * every radio so that a reader can say something about one it has
+ * never heard of, the rest the driver's own:
+ *
+ *	part <name> ...		what it is
+ *	freq <hz>		where it is tuned
+ *	mode <name>		what it is doing
+ *	state <n>		0 idle, 1 rx, 2 tx, and the driver's
+ *				own numbers above that
  */
 
 typedef struct Spidev Spidev;
+typedef struct Serialport Serialport;
 typedef struct Radio Radio;
 typedef struct Radiodev Radiodev;
 
@@ -34,11 +84,33 @@ struct Spidev
 	void	(*unlock)(Spidev*);
 };
 
+/*
+ * A radio on a serial line rather than a bus: an HF set with a CAT
+ * port, a TNC, a modem.  The driver above is written to this and does
+ * not know whether the other end is a board uart, a USB adaptor or a
+ * pipe -- which is the point, because an FT-891 is the same radio
+ * whichever of those it is plugged into.
+ *
+ * read() returns what arrived within ms milliseconds, which may be
+ * less than n and may be none: a CAT reply is a line ending in ';' and
+ * a radio that is off answers nothing at all.  A driver must treat
+ * silence as an answer rather than waiting for ever.
+ */
+struct Serialport
+{
+	char	*name;
+	void	*aux;			/* the board's own */
+	int	(*write)(Serialport*, void*, int);
+	int	(*read)(Serialport*, void*, int, int);	/* n, ms */
+	void	(*lock)(Serialport*);
+	void	(*unlock)(Serialport*);
+};
+
 struct Radiodev
 {
 	char	*name;			/* the part, for a console line */
-	int	maxpayload;		/* what one packet may carry */
-	int	(*send)(Radio*, uchar*, int);
+	int	maxpayload;		/* 0 if it does not carry packets */
+	int	(*send)(Radio*, uchar*, int);	/* nil if no packets */
 	int	(*ctl)(Radio*, char*, int);
 	int	(*stat)(Radio*, char*, int);
 	/*
