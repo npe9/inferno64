@@ -698,13 +698,43 @@ the second: it is what this chip family exists for, TI publishes the
 register set for mode T and mode C, and a meter is a transmitter that
 does not need arranging.  The band survey says whether one is in
 range before any of it is written.
-.IP "4.  An FT-891, or anything with a CAT port." 6
-os/inferno/radio/ft891.c is written and has never been spoken to a
-radio.  It needs a serial line: the clicker 2's second uart comes out
-on the socket the radio click occupies, so this wants another board,
-or emu with a host port, or the Pi.  Until then it is a compiled
-argument that #W's idea of a radio is not a CC1120's, which is worth
-something but is not a radio being driven.
+.IP "4.  An FT-891, or anything with a CAT port.  Done, for receive." 6
+This is no longer a compiled argument.  The set is driven from emu
+over its own USB port \- a CP2105's Enhanced Com Port, 4800 8N2 \-
+through
+.CW #W/radio0/ctl ,
+and
+.CW #W/radio0/stats
+reads the frequency, mode, transmit state, S meter and power back out
+of the radio rather than out of the driver.  14.074MHz in DATA-U, set
+from a shell and confirmed by the set's own display and its own CAT
+replies.  What has not been done is keying it: nothing here has put
+that radio on the air, so
+.CW ptt
+and
+.CW power
+are still only what the manual says.
+.PP
+It cost an afternoon to a thing that is worth stating once more here
+because it is invisible from every layer above: the FT-891's menu
+05-08 CAT RTS is ENABLE from the factory, and the set then refuses to
+send replies while the PC asserts RTS.  Commands work throughout \-
+the VFO follows every one of them \- so the symptom is a radio that
+obeys and never speaks, which reads as a broken host driver.  It is
+not.
+.PP
+What this settles is the question the file was written to ask.  #W
+needed exactly one change to carry a radio that is not a CC1120: a
+driver declaring no payload serves no
+.CW data
+and no
+.CW pkt .
+Nothing else in the device, and nothing in
+.I lora (3),
+.I ax25 (3)
+or
+.I kiss (3),
+knew the difference.
 .IP "5.  The one redirection." 6
 This board spawns one process for a shell redirection in a boot and
 wedges on the second, which is why every experiment above costs a
@@ -716,7 +746,10 @@ it is worth doing even though nothing depends on it.
 Two things are deliberately not on this list.  Making the CC1120 talk
 to an amateur station is not possible with this part \- it does 2-FSK
 and the bands stop at 960MHz, so APRS on 144MHz and anything on HF
-need the FT-891 or a different click.  And decoding what is in
+need a different click; the FT-891 reaches HF but has no payload file,
+because the audio is on a socket at the back of the set and not in
+this device.  What would carry data over it is a modem on that audio,
+which is a different piece of work and is not pretended at here.  And decoding what is in
 870-889MHz is not a goal: the survey found it, both instruments agree
 it is there, and identifying a TDMA system at a few hundred
 microseconds a burst is a different project from making a radio work.
