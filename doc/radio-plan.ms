@@ -702,10 +702,22 @@ speed and at a prompt they are a tenth of a second apart.  Nor does
 the qemu model reproduce it, which is worth knowing before anyone
 tries to debug this without the board.
 .PP
-So cc1120init() reads back six of the registers it writes and says
-which disagree, and the boot line says SETTINGS NOT APPLIED when one
-does.  That kernel is built and needs a flash cycle to run, which on
-this board is a reset pressed while mikroe-uhb waits.
+What the part's own FREQ registers say settles where the boundary is.
+They read 0x6c8000, which is setfreq()'s arithmetic for 868MHz, so the
+lost run is bounded on both sides by runs that worked and is exactly
+the eight writes that follow the extended table.  That table ends with
+XOSC5, XOSC3 and XOSC1, the crystal oscillator's own configuration,
+and eight two-byte writes at this bus rate is on the order of a
+hundred microseconds \- the shape of a part that has taken its
+oscillator down and back up and is not answering meanwhile.  So
+cc1120init() waits for CHIP_RDYn after the tables, as it already does
+after SRES and for the same reason.
+.PP
+That is a diagnosis and not yet a demonstration.  cc1120init() also
+reads back six of the registers it writes and the boot line says
+SETTINGS NOT APPLIED when any disagree, which is what will confirm or
+refute it.  The kernel is built; running it needs a flash cycle, which
+on this board is a reset pressed while mikroe-uhb waits.
 .IP "2.  Calibrate it against a source, not a datasheet." 6
 \-102 is the figure TI's examples use and it is not a measurement of
 this board.  The tinySA has a signal generator in it \- "mode output"
