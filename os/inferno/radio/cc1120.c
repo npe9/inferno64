@@ -1349,6 +1349,35 @@ cc1120init(Spidev *s, int irq)
 	for(i = 0; i < nelem(cc1120cfgx); i += 2)
 		wrx(rr, cc1120cfgx[i], cc1120cfgx[i+1]);
 
+	/*
+	 * Wait for the part again before writing anything else.
+	 *
+	 * The last three entries of the extended table are XOSC5, XOSC3
+	 * and XOSC1 -- the crystal oscillator's own configuration -- and
+	 * on silicon the eight writes that used to follow them did not
+	 * reach the part while everything before them and everything
+	 * from setfreq() onward did.  Measured after a boot: PKT_LEN 3
+	 * where 125 was written, AGC_CS_THR and AGC_GAIN_ADJUST 0 where
+	 * -90 and -102 were, IOCFG1 and IOCFG2 still the table's, and
+	 * FREQ holding 0x6c8000, which is setfreq()'s own arithmetic for
+	 * 868MHz.  Eight two-byte writes is on the order of a hundred
+	 * microseconds, which is the shape of a part that has taken its
+	 * oscillator down and back up and is not answering meanwhile.
+	 *
+	 * None of it reproduces at a shell prompt, where the same writes
+	 * are a tenth of a second apart and all take, which is the same
+	 * evidence from the other side.
+	 *
+	 * CHIP_RDYn in the status byte is what the part says about this,
+	 * and cc1120init() already waits on it after SRES for the same
+	 * reason -- a PARTNUMBER of 0x00 read before the part was
+	 * awake.  This is the second time on this chip that the answer
+	 * was "ask whether it is ready".
+	 */
+	if(chipready(rr) < 0)
+		print("cc1120 %s: not ready after the register tables\n",
+			s->name);
+
 	wr(rr, Rpktlen, Ccmaxpayload);
 	rr->rssioffset = Rssioffset;
 	wr(rr, Ragcgainadjust, rr->rssioffset & 0xff);
@@ -1365,10 +1394,7 @@ cc1120init(Spidev *s, int irq)
 	 * board.  A register write is a thing the part can be asked
 	 * about, so ask.  Six reads at boot.
 	 */
-	nbad = 0;
-	nbad += verify(rr, Rpktlen, Ccmaxpayload);
-	nbad += verify(rr, Ragcgainadjust, rr->rssioffset & 0xff);
-	nbad += verify(rr, Ragccsthr, rr->csthr & 0xff);
+
 	/*
 	 * RSSI_VALID_CNT: how many internal estimates the moving
 	 * average takes before it updates the RSSI.  Reset is two and
@@ -1383,6 +1409,17 @@ cc1120init(Spidev *s, int irq)
 	wr(rr, Riocfg2, Ghighz);
 	wr(rr, Riocfg1, Ghighz);
 	wr(rr, Riocfg0, Ghighz);
+	/*
+	 * All six read back here and not beside their writes: a read is
+	 * a bus transaction too, and three of them in the middle of the
+	 * run would give the second half of it a lead-in the
+	 * uninstrumented kernel does not have.  An instrument that
+	 * changes what it measures answers a different question.
+	 */
+	nbad = 0;
+	nbad += verify(rr, Rpktlen, Ccmaxpayload);
+	nbad += verify(rr, Ragcgainadjust, rr->rssioffset & 0xff);
+	nbad += verify(rr, Ragccsthr, rr->csthr & 0xff);
 	nbad += verify(rr, Ragccfg0, Agccfg0init);
 	nbad += verify(rr, Riocfg3, Gpktsyncrxtx);
 	nbad += verify(rr, Riocfg2, Ghighz);
