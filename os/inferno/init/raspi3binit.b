@@ -192,11 +192,22 @@ multiblockcheck()
 	sys->fprint(cfd, "dma 1");
 	sys->fprint(cfd, "multiverify 2900700 64");
 	sys->fprint(cfd, "dma 0");
-	sys->fprint(cfd, "multi 1");
-	# and leave everything at the driver's safe default: one block
-	# per command, no DMA, until the MULTIVERIFY-OK lines above are
-	# believed.
-	sys->fprint(cfd, "multiwrite 0");
+	#
+	# Put the switches back to the DRIVER's defaults, not to some
+	# other value.
+	#
+	# This used to end with "multi 1; multiwrite 0", which is not
+	# restoring anything -- it is imposing the old slow settings on
+	# every boot and silently undoing the defaults the driver
+	# declares.  Worse, while board.cmd was also writing these,
+	# two agents were changing shared switches with no
+	# synchronisation and a transfer's report could name a
+	# configuration it had not run under.  The driver samples them
+	# once per transfer now; this just leaves them alone.
+	#
+	sys->fprint(cfd, "multi 64");
+	sys->fprint(cfd, "multiwrite 1");
+	sys->fprint(cfd, "dma 0");
 }
 
 kfsproc(pfd: ref Sys->FD)

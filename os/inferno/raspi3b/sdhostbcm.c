@@ -878,11 +878,29 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	volatile u32 *r = c->r;
 	uchar *p = a, *pblk;
 	long i, nthis = 1;
-	int j, retries;
+	int j, retries, multi, multiwrite, usedma;
 	u32 arg, w, err;
 
 	USED(lun);
 	qlock(c);
+	/*
+	 * Sample the switches ONCE, here, under the lock.
+	 *
+	 * sdhostmulti, sdhostmultiwrite and sdhostdma are globals that
+	 * "echo ... >ctl" writes at any moment, and this loop read them
+	 * fresh on every block.  So a transfer could start single-block
+	 * and finish multi-block, or start in PIO and finish in DMA,
+	 * and the failure report printed whatever the globals held by
+	 * the time it ran rather than what the transfer actually did --
+	 * which is how a run came to be logged as "multi 1" when the
+	 * write had gone out at 128.  A result that cannot say what
+	 * configuration produced it is not a result.
+	 *
+	 * One read each, into locals, and the report prints the locals.
+	 */
+	multi = sdhostmulti;
+	multiwrite = sdhostmultiwrite;
+	usedma = sdhostdma;
 	retries = Maxretry;
 	for(i = 0; i < nb; i += nthis){
 		/*
@@ -904,9 +922,9 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		 */
 		pblk = p;
 		nthis = nb - i;
-		if(nthis > sdhostmulti)
-			nthis = sdhostmulti;
-		if(write && !sdhostmultiwrite)
+		if(nthis > multi)
+			nthis = multi;
+		if(write && !multiwrite)
 			nthis = 1;
 		if(nthis < 1)
 			nthis = 1;
@@ -962,7 +980,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		 */
 		r[SDHCFG] = (r[SDHCFG] & ~(u32)(Cfgdataint|Cfgblockint)) |
 			Cfgbusyint | sdhostcfg |
-			(sdhostdma? 0: (write? Cfgblockint: Cfgdataint));
+			(usedma? 0: (write? Cfgblockint: Cfgdataint));
 		r[SDHBCT] = Secsize;
 		r[SDHBLC] = nthis;
 		/*
@@ -1018,7 +1036,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				(ulong)(r[SDEDM] & Edmfsmmask),
 				(ulong)((r[SDEDM] >> Fifofillsh) & Fifofillmask),
 				(ulong)r[SDHBCT], (ulong)r[SDHBLC]);
-		if(write && sdhostdma){
+		if(write && usedma){
 			if(dmaxfer(p, Sddatabus, Secsize, Sdhostdreq, 0) < 0){
 				print("sdhost: DMA WRITE FAILURE block %llud: "
 					"sdhsts %#lux sdedm %#lux fifo %d\n",
@@ -1030,7 +1048,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				goto out;
 			}
 			p += Secsize;
-		}else if(!write && sdhostdma && !c->bytemode){
+		}else if(!write && usedma && !c->bytemode){
 			if(dmaxfer(p, Sddatabus, Secsize, Sdhostdreq, 1) < 0){
 				print("sdhost: DMA READ FAILURE block %llud: "
 					"sdhsts %#lux sdedm %#lux fifo %d\n",

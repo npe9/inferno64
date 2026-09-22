@@ -1,1 +1,1 @@
-cat /dev/sdN0/ctl
+{ dd -if /dev/sdN0/data -of /dev/null -bs 8192 -count 2000 } & { echo multiverify 2920000 256 > /dev/sdN0/ctl; echo multiverify 2930000 256 > /dev/sdN0/ctl; echo multiverify 2940000 256 > /dev/sdN0/ctl }

@@ -8787,3 +8787,50 @@ filesystems over the same controller is not known, and it is the next
 thing to settle: run the same check while a dd is running against
 .CW /dev/sdN0/data
 and see whether it reproduces.
+.NH 2
+How the concurrent failure gets fixed
+.PP
+.B "First, by noticing it was not interpretable."
+Two agents were driving the card at once and BOTH were writing the
+driver's global switches: the boot suite's
+.CW multiblockcheck
+and
+.CW board.cmd .
+The report even named a configuration the transfer had not run under
+\(em logged "multi 1" for a write that went out at 128 \(em because
+the print read the globals after the fact.  A result that cannot say
+what produced it is not a result, and no amount of staring at that run
+would have been worth anything.
+.PP
+.B "Then by fixing the real bug underneath it."
+.CW sdhostmulti ,
+.CW sdhostmultiwrite
+and
+.CW sdhostdma
+were read fresh on every block of every transfer, so an
+.CW "echo ... >ctl"
+from anywhere could change a transfer's behaviour half way through: a
+request could start single-block and finish multi-block, or start in
+PIO and finish in DMA.  They are sampled ONCE now, into locals, under
+the qlock that already serialises transfers.  That is a correctness
+fix independent of any test: a driver whose behaviour can change
+mid-request has no defined behaviour.
+.PP
+.B "And by making the check restore rather than impose."
+.CW multiblockcheck
+ended with "multi 1; multiwrite 0", which is not restoring the
+driver's defaults \(em it is quietly overriding them on every boot
+with the old slow settings.  It puts them back to what the driver
+declares.
+.PP
+.B "What is still owed."
+The deliberate version of the experiment: one agent, no switch
+writing,
+.CW multiverify
+running while a
+.CW dd
+works the same controller.  It is written into
+.CW board.cmd
+and has not yet produced a result, so whether there is any concurrent
+fault left is still unknown.  What can be said is that the run which
+raised the question could not have answered it either way.
