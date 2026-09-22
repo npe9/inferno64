@@ -19,8 +19,20 @@
 #	rbw 100			resolution bandwidth in kHz
 #	attenuate 0		input attenuator in dB
 #	sweep <start> <stop>	the range, in Hz
+#	resume / wait / pause	run one sweep and stop at the end of it
 #	frequencies		the frequency of every point of a sweep
 #	data 0			the levels, in dBm, one per line
+#
+# The resume/wait/pause around every trace is not decoration.  The
+# tinySA stops sweeping while it serves commands on this line, and
+# "data 0" hands back whatever is in the trace buffer -- which, if
+# nothing has swept since, is the previous sweep, or the sweep of
+# whatever span the thing was showing before the range was set.  Read
+# that way it looks like a measurement and repeats perfectly: three
+# consecutive reads here agreed to the last digit, r = 1.000 between
+# each pair, 0 of 450 points differing.  Which is how it was caught.
+# A real repeat of a real sweep of thermal noise agrees at r = 0.2 to
+# 0.6 and no two points alike.
 #
 # No pyserial: the port is a tty, so termios raw and a read loop is
 # the whole of it, and the tree gains no dependency.
@@ -39,6 +51,15 @@ import os, re, select, sys, termios, time
 
 PORT = "/dev/cu.usbmodem4001"
 FLOAT = re.compile(r"^-?\d+\.\d+e[+-]\d+$")
+# The tinySA's own formatter, at exactly -100.0dBm.  ':' is the
+# character after '9': a mantissa that rounded up to 10.0 was printed
+# a digit at a time and carried off the end of the digit set, so
+# -1.000000e+02 comes out as "-:.000000e+01".  Reproducible on every
+# read of a trace that contains that level, and not a serial fault --
+# which is worth knowing, because dropping the line silently leaves a
+# hole in the sweep exactly where the quietest bins are.  Read as
+# written it is -10.000000e+01, which is the value it meant.
+CARRY = re.compile(r"^(-?):\.(\d+e[+-]\d+)$")
 PROMPT = b"ch> "
 
 
@@ -73,10 +94,16 @@ def cmd(fd, s, timeout=10.0):
     return buf.decode("utf-8", "replace")
 
 
+def fixcarry(x):
+    m = CARRY.match(x)
+    return "%s10.%s" % (m.group(1), m.group(2)) if m else x
+
+
 def numbers(fd, what, tries=4, want=None):
     for _ in range(tries):
         d = cmd(fd, what, timeout=30).replace("\r", "")
-        v = [x.strip() for x in d.splitlines() if FLOAT.match(x.strip())
+        v = [fixcarry(x.strip()) for x in d.splitlines()
+             if FLOAT.match(x.strip()) or CARRY.match(x.strip())
              or x.strip().isdigit()]
         if want is None or len(v) == want:
             return v
@@ -84,12 +111,20 @@ def numbers(fd, what, tries=4, want=None):
     return None
 
 
-def sweep(fd, start, stop, settle=1.4):
+def onesweep(fd):
+    """Run exactly one sweep and stop at the end of it."""
+    cmd(fd, "resume")
+    cmd(fd, "wait", timeout=30)
+    cmd(fd, "pause")
+
+
+def sweep(fd, start, stop):
     cmd(fd, "sweep %d %d" % (start, stop))
+    onesweep(fd)
     freqs = numbers(fd, "frequencies")
     if freqs is None:
         return None
-    time.sleep(settle)
+    onesweep(fd)
     levels = numbers(fd, "data 0", want=len(freqs))
     if levels is None:
         return None

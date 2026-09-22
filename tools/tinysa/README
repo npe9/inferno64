@@ -11,7 +11,7 @@ calibration and its own reasons to be wrong.
 	tools/tinysa/tinysa.py sweep 868000000 928000000 >tsa.txt
 	tools/tinysa/tinysa.py cmd version rbw attenuate
 
-and on the board, with the same band:
+and on the board, over the same band:
 
 	; echo scan >/dev/radio0/ctl
 
@@ -20,47 +20,86 @@ not measure the same thing and are not expected to agree in absolute
 terms: a tinySA ULTRA at 100kHz resolution bandwidth and no input
 attenuation is a calibrated receiver, while the CC1120's RSSI is its
 own AGC's estimate with the manufacturer's reference offset applied
-and no calibration of this board at all (see the RSSI offset note in
-os/inferno/radio/cc1120.c).  What is worth comparing is where the
-energy is, not how much of it there is.
+and no calibration of this board at all.  What is worth comparing is
+where the energy is and whether it stays there, not how much of it
+there is.
+
+The reference instrument needs checking too
+-------------------------------------------
+
+The first thing this tool measured was nothing at all, convincingly.
+
+The tinySA stops sweeping while it serves commands on the serial line,
+and "data 0" hands back whatever is in the trace buffer.  If nothing
+has swept since, that is the previous sweep -- or the sweep of
+whatever span the thing was showing before the range was set.  Read
+that way it looks exactly like a measurement.  Three consecutive reads
+agreed to the last digit: r = 1.000 between every pair, 0 of 450
+points differing, a confident plateau at 868.13 to 868.80MHz at -71 to
+-77dBm.
+
+None of which was in the band it appeared to be in, because the trace
+predated the "sweep 868000000 928000000" that was supposed to have
+produced it.
+
+What caught it was the same test the board's own sweeps had to pass: a
+repeat.  Thermal noise measured twice does not agree at r = 1.000.
+Every trace is now taken with resume, wait, pause around it, which
+runs exactly one sweep and stops at the end of it, and two sweeps of
+the same quiet band through the tool now read r = 0.287 with 35 of 450
+points alike, which is what a repeat is supposed to look like.
+
+There is a lesson in that worth more than the measurement: an
+instrument brought in to check another instrument is not automatically
+the more trustworthy of the two.
+
+The tinySA's own formatter, at -100.0dBm exactly
+------------------------------------------------
+
+A trace containing a level of exactly -100.0dBm has a line reading
+
+	-:.000000e+01
+
+in it.  ':' is the character after '9': the mantissa rounded up to
+10.0 and the digit carried off the end of the digit set.  It is
+reproducible on every read of such a trace and is not a serial fault,
+which matters, because a reader that drops malformed lines silently
+loses a point from the sweep exactly where the quietest bins are.
+Read as written it is -10.000000e+01, which is the value it meant, and
+tinysa.py reads it that way.
 
 What was measured, 22 September 2026
 ------------------------------------
 
-The tinySA was on the bus for about a minute before it dropped off it,
-which is long enough for its settings, its frequency axis and one
-sweep, and not long enough for the repeat that would have made it
-evidence.  What it gave:
+Six sweeps of 868 to 928MHz, 450 points each, 100kHz resolution
+bandwidth, no input attenuation, taken minutes after the board's own
+sweeps of the same band from the same bench.
 
-	tinySA4, firmware tinySA4_v1.4-141-gf753dbf, HW V0.4.5.1.1
-	rbw 100kHz, attenuate 0, sweeptime 1.153s
-	450 points from 868.000 to 928.000MHz
+	Floor: -100.4dBm, the median of all 2700 points.
+	No bin anywhere in the band is above -90dBm in all six sweeps.
+	59 of the 450 bins are above -88dBm in at least one sweep.
+	No bin is above it in more than two of the six.
+	Each sweep's loudest point is between -69 and -80dBm, and is
+	at a different frequency every time: 886.17, 873.75, 871.61,
+	886.17, 885.11, 869.60MHz.
+	The 59 bins run from 869.47 to 889.38MHz and stop there; the
+	upper half of the band, 890 to 928, has none.
 
-The first twenty of those 450 points:
+So: a quiet band with short bursts in it, scattered in frequency,
+never twice in the same place, and confined to the lower half.
 
-	868.000  -97.6      869.337  -85.0
-	868.134  -74.1      869.470  -99.0
-	868.267  -75.6      869.604  -90.5
-	868.401  -71.5      869.738  -82.0
-	868.535  -71.5      869.871  -80.5
-	868.668  -72.5      870.005  -98.0
-	868.802  -77.5      870.139  -82.5
-	868.936  -89.5      870.272  -96.5
-	869.069  -90.5      870.406  -85.5
-	869.203  -94.5      870.539  -81.0
+The board said the same thing.  Its sweep of the same band found 15
+steps of 61 with a peak 28dB above a flat floor and carrier sense
+asserted, and the next sweep minutes later found none of them, with
+the peak of every step landing at a random point in its dwell rather
+than at the start.  Two receivers with nothing in common but the
+antenna port they are pointed at -- different front ends, different
+calibration, different sweep mechanics, different software by
+different people -- both report a quiet floor with intermittent
+bursts at scattered frequencies.
 
-A plateau from 868.13 to 868.80MHz at -71 to -77dBm, fifteen to
-twenty-five decibels above the bins on either side of it.  That is the
-European SRD band, 868.0 to 868.6MHz, with something in it.
-
-The board's own sweeps, taken minutes earlier, read their highest
-value of all 61 steps at 868.000MHz in both runs: -101dBm in the
-first, -105 in the second, against a median of -110 and -111.  Two
-receivers, one of them not ours, putting the loudest thing in the band
-in the same place.
-
-That is corroboration and it is not a measurement.  One tinySA sweep
-is one sweep; the tree's own rule is that a single sample is not
-evidence, and it applies to the reference instrument as much as to the
-board.  The comparison to make when the tinySA is on the bus again is
-several sweeps of each, at the same time, with the same band.
+That is as much as either can say.  Neither can identify what is
+transmitting, and this is not a survey: six sweeps of a minute's
+worth of time from one bench.  What it is good for is the thing it was
+brought in for -- the board's radio is measuring the room, not
+reporting its own imagination.
