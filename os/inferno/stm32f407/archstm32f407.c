@@ -190,7 +190,17 @@ archreset(void)
 	hz = setclock();
 	if(m != nil)
 		m->cpuhz = hz;
-	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | UARTGPIOEN);
+	/*
+	 * TEMPORARY: every GPIO port, not just the console's.  The pin
+	 * hunt in uartstm32f4.c reads all five, and a port whose clock
+	 * is off reads zero for ever -- which it cannot tell from a pin
+	 * that nothing is driving.  That is exactly what happened when
+	 * the banner code that used to enable these went away with the
+	 * move to USART1: the hunt then covered ports A and E and
+	 * reported, correctly for what it could see, that nothing moved.
+	 */
+	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | UARTGPIOEN | Ahb1Gpioa |
+		Ahb1Gpiob | Ahb1Gpioc | Ahb1Gpiod | Ahb1Gpioe);
 	wr(UARTAPBENR, rd(UARTAPBENR) | UARTAPBBIT);
 	coherence();
 	uartboardinit();
