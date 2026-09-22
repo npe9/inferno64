@@ -899,3 +899,53 @@ row, with a tinySA sweeping 858 to 878MHz beside the board, produced
 nothing above the -79dBm the room was already making.  The part says
 it is in TX -- state 2, with bytes still to send -- and nothing comes
 out that an instrument a hand's width away can hear.
+
+The CC1120 transmits, and where the hour went
+----------------------------------------------
+
+Measured with a tinySA ULTRA, its own antenna, beside the board:
+
+	866-870MHz, 30kHz rbw:  -34.9dBm at 868.00445MHz,
+	                        69dB over a -103.9 floor
+	600-1000MHz, 300kHz:    868.151 at -34.9, next thing 23dB down
+	FSCAL_CTRL              0x09, bit 0 set: locked, read in TX
+	state                   0x02, TX, at freq 868000000
+
+868.00445 against a commanded 868.000000 is 4.4kHz, about 5ppm, which
+is what a crystal costs.  So the radio transmits, on frequency, from
+Inferno, on silicon, confirmed by an instrument that is not ours.
+
+The hour before that was spent measuring with the lid on.  A tinySA
+ULTRA's low path stops at 800MHz and anything above needs "ultra"
+mode; with it off the high end is not missing but twenty-odd decibels
+down, which reads as a weak signal rather than as an instrument that
+cannot see.  It was never checked.  Everything above 800MHz -- which
+is to say every measurement of this radio's own band -- was taken
+through that.
+
+What was visible through it was 767.7MHz, which is 24 times the part's
+32MHz crystal radiated by an enabled amplifier.  Real, below 800MHz,
+and therefore the one honest number in the sweep, which made it look
+like the only thing on the air.  Three conclusions were built on it in
+turn -- that the synthesiser was unlocked, that the amplifier was
+oscillating into a mismatched antenna, that the output ignored the
+frequency register -- and each was tested and dropped on its own
+merits before the instrument itself was suspected.  The lock bit said
+locked.  The antenna turned out to be a Pulse W3312, which is an
+863-928MHz part and correct.  And the output did not move with the
+frequency register because the thing being watched was a crystal
+harmonic, which has no reason to.
+
+Two real faults were found on the way and both are fixed: PKT_CFG0 was
+being written to 0x1c, which is AGC_CFG1, so the part sat in fixed
+packet length mode; and the driver had never written the register set
+SWRU295E says a CC1120 needs before it is a radio.  Whether the second
+was necessary for the carrier is untested -- the carrier was not
+looked for correctly before it went in.
+
+Two remain.  setfreq() writes FREQ and never FS_CFG's band select, so
+this driver can only reach the 820-960MHz band; commanding 434MHz
+leaves the divider at 4 and asks the VCO for 1736MHz, which it cannot
+do.  And TI's register table sets PA_CFG2 to 0x4f, which is -10dBm;
+the part's own reset value is 0x7f, +14dBm.  The 24dB is there for the
+asking and this driver should be asking.
