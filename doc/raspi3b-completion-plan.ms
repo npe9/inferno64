@@ -8370,3 +8370,12 @@ attempt to find the corruption failed \(em there was none.
 now clears the per-core timer and mailbox enables for all four cores
 and the local control register, and reports them before and after so
 the claim is checkable.
+.PP
+.B "And one correction, measured: do not touch the local control
+.B "register."
+The first version of this cleared 0x40000000 as well as the per-core
+enables.  That register selects the core timer's clock source, so
+zeroing it does not quiesce anything \(em it moves the next kernel's
+timer off the clock it expects.  Measured immediately: warm restarts
+went from failing about half the time to four attempts in a row, none
+of which came up.  Disable the enables; leave the wiring alone.
