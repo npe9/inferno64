@@ -8297,3 +8297,76 @@ printed nothing about updating, and sat there.  One line,
 is cheaper than telling those two apart from outside \(em and the
 general rule is the one this port keeps rediscovering, that an absence
 is the worst kind of evidence.
+.NH 2
+The accounttime fault: m is nil, and the clock was still armed
+.PP
+.B "The trap report answers it in one line."
+.P1
+TRAP type 0 esr 96000004 pc 0015f328 lr 00168194
+    far b900080152b00169 sp 00677790
+  m = 0000000000000000 mach0 0000000000269cb0
+.P2
+.CW m
+is
+.I nil .
+Not a Mach whose contents were overwritten \(em the global pointer
+itself is zero, while
+.CW MACHP(0)
+is 0x269cb0 where it should be.  Every earlier guess in this document
+about what was writing into the Mach was looking at the wrong object.
+.PP
+.B "And it is not corrupted while the kernel runs."
+A write watchpoint on the global
+.CW m
+at 0x171108, armed over JTAG on a freshly booted board and left for
+eight minutes, never fired;
+.CW m
+read 0x269cb0 throughout.  So nothing scribbles on it.  It is
+.I zero
+because
+.CW m
+lives in the DATA segment with an initial value of 0 \(em the symbol
+table says
+.CW "D m"
+\(em and a warm restart loads a new image over the running kernel,
+which puts that 0 back.
+.PP
+.B "What fires into that window: the per-core interrupt controller."
+Disabling the legacy controller at 0x3f00b200 is not disabling the
+interrupts.  On a BCM2836/2837 the ARM generic timer and the core
+mailboxes go to a separate block at 0x40000000, and the kernel's clock
+.I is
+the generic timer.  Read on a running board, and printed by
+.CW quiesce
+now:
+.P1
+quiesce: core timer irq control on entry: 0x2 0 0 0
+quiesce: core0 irq source 0x2
+.P2
+Bit 1 is CNTPNSIRQ: enabled, and already
+.I pending .
+So the sequence is: the image load resets
+.CW m
+to 0, that armed and pending timer interrupt survives into the new
+kernel, and if it is taken before
+.CW main()
+reaches
+.CW machinit() ,
+.CW clockintr
+calls
+.CW accounttime ,
+which does
+.CW "p->time[p->insyscall]++"
+with
+.CW "p = m->proc"
+and
+.CW m
+nil.
+.PP
+That is why it has never once happened on a kernel booted from the
+card: a cold boot has no pending anything.  And it is why every
+attempt to find the corruption failed \(em there was none.
+.CW quiesce
+now clears the per-core timer and mailbox enables for all four cores
+and the local control register, and reports them before and after so
+the claim is checkable.
