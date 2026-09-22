@@ -102,6 +102,15 @@ def main():
     if sys.argv[1] == "ctl":
         print(send(fd, "cat >" + sys.argv[2], 2.0), end="")
         for line in sys.argv[3:]:
+            # "!sleep N" waits without typing, so one ctl session can
+            # hold a state while something else measures it.  This
+            # board spawns one process per boot for a redirection, so
+            # a session that has to be left open is the only way to
+            # change a setting, look at it, and change it again
+            # without a reset between each.
+            if line.startswith("!sleep "):
+                time.sleep(float(line.split()[1]))
+                continue
             print(send(fd, line, 3.0), end="")
         os.write(fd, b"\004")           # end the cat
         time.sleep(CHARDELAY)
