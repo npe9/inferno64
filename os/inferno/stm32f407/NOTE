@@ -566,3 +566,14 @@ redirection, and every ctl file on this board is written that way.
 The split is 53/46/1 now and the conf beside this file has the
 measurements.  ls(1) does not run with a radio registered at either
 split, so nothing that worked was given up.
+
+The other way out of that was a smaller kernel stack -- the 4096 is
+what the 4288 is asking for -- and it was measured and rejected.
+KSTACKWATCH reported a high water of 2476 across everything this board
+had done, which makes 3072 look comfortable; with the radio actually
+registered and taking interrupts the same watch reported 2548.  A
+figure that moves by 72 bytes when a driver starts working is not a
+figure to leave 524 bytes of headroom on, and a kernel stack that
+overflows does not report, it corrupts whatever is under it.  The pool
+split fails safely and a stack does not, so the pool split is what
+moved.
