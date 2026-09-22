@@ -8466,3 +8466,66 @@ adapter wedges, and the screen session died mid-run twice, which turns
 was fine.  Two whole runs were thrown away to that before the
 instrument was moved off it.  The rule this keeps proving: measure
 through the most reliable thing available, not the most convenient.
+.NH 2
+The console is now optional in both directions
+.PP
+The serial console is the least reliable part of this rig.  The
+adapter wedges, the screen session has died three times in a day, and
+every one of those looked from outside exactly like a board that had
+crashed.  So none of the instruments depend on it any more.
+.IP \(bu
+.CW tools/jtag/kmesg
+reads the kernel's own 16K console ring
+.CW ( "struct { Lock lk; uint n; char buf[16384]; } kmesg"
+in devcons.c) over JTAG.  The whole boot is in RAM whether or not
+anything was listening to the UART.
+.IP \(bu
+.CW tools/jtag/alive
+reads
+.CW m->ticks
+over JTAG: advancing means a kernel is clocking, a low count means it
+booted recently.
+.IP \(bu
+.CW board.cmd
+carries a command in over the styx mount and
+.CW board.out
+carries the answer back out.  Proven end to end with nothing attached
+to the UART:
+.P1
+RCMD 1: cat /dev/sdN0/ctl
+inquiry
+geometry 30228480 512
+sdhost rca 0x1234 blockaddr sectors 30228480 coreclock 250000000 cdiv 8
+sdhost dma 0 dreq 13 retried 0 gaveup 0
+part data 0 30228480
+.P2
+.PP
+.B "Three things had to be fixed to get the last of those working, and
+.B "two were mine."
+.IP 1.
+.CW sys->create
+on the host returned
+.I "permission denied" .
+emu's
+.CW setid()
+gave the process uid and gid \-1 whenever the Inferno user had no host
+account, so
+.CW fsperm()
+refused every create and write in a directory the host user owns.
+Fixed on another branch months ago and never carried here;
+cherry-picked.  The chan.c half of that commit was already present.
+.IP 2.
+.CW runremote()
+unmounted only on the path where the create SUCCEEDED, so a refused
+create left
+.CW /n/remote
+mounted, the next pass mounted over it, and the mounts piled up until
+the loop stopped making progress \(em one command ran and then nothing
+ever did.  That is the same mistake kupdate's own comments warn about,
+made again two hundred lines away.
+.IP 3.
+.CW jtagreboot
+cold-boots whatever is on the CARD;
+.CW jtagrestart
+loads the image just built.  Half an hour went into testing a fix
+against a kernel that did not contain it.

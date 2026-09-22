@@ -2506,6 +2506,7 @@ init()
 # last command for ever.
 #
 Cmdfile: con "/n/remote/os/inferno/raspi3b/board.cmd";
+Outfile: con "/n/remote/os/inferno/raspi3b/board.out";
 
 remotecmd()
 {
@@ -2516,6 +2517,18 @@ remotecmd()
 	# and it must never be what makes a boot fail.  Sixty seconds
 	# also keeps it clear of kupdate, which uses the same mount
 	# point and takes it down on its way out.
+	#
+	# A private set of file descriptors before anything is
+	# redirected.
+	#
+	# The command's output is sent to a file on the host, which
+	# means dup()ing over descriptors 1 and 2 -- and spawn shares
+	# the descriptor group, so without this the whole board's
+	# console output would follow it there and the console would go
+	# quiet for good reason and look like the several bad reasons it
+	# has gone quiet before.  NEWFD, not FORKFD.
+	#
+	sys->pctl(Sys->NEWFD, 0 :: 1 :: 2 :: nil);
 	sys->sleep(60000);
 	addrs := remoteaddrs();
 	if(addrs == nil)
@@ -2533,14 +2546,89 @@ remotecmd()
 			sys->print("RCMD-FAIL load sh: %r\n");
 			continue;
 		}
-		{
-			sh->init(nil, "sh" :: "-c" :: cmd :: nil);
-		}exception e{
-		"*" =>
-			sys->print("RCMD-EXCEPTION %s\n", e);
-		}
+		runremote(sh, cmd, seq, addrs);
 		sys->print("RCMD-END %d\n", seq);
 	}
+}
+
+#
+# Run one command with its output going to the HOST, not the console.
+#
+# The console on this rig is the least reliable thing about it: the
+# USB-serial adapter wedges, and the screen session has died three
+# times in a day.  A board that can be given work but whose answers
+# only come out of a console is no better off than one that cannot be
+# given work at all, so the answers go back the way the question came
+# -- board.out beside board.cmd in the worktree.
+#
+# The console still gets the markers, which is why the redirection is
+# put back before returning: a boot log that shows RCMD-BEGIN and
+# RCMD-END with the body written elsewhere is still readable, and if
+# the mount fails the output simply stays on the console.
+#
+runremote(sh: Shell, cmd: string, seq: int, addrs: list of string)
+{
+	# sys->dup returns a descriptor NUMBER; wrap it in a ref FD so
+	# the saved copies are closed when this returns rather than
+	# leaked once per command.
+	save1 := sys->fildes(sys->dup(1, -1));
+	save2 := sys->fildes(sys->dup(2, -1));
+	out: ref Sys->FD;
+	#
+	# Unmount on EVERY way out, including the one where the mount
+	# worked and the create did not.
+	#
+	# The first version only unmounted inside "if(out != nil)", so a
+	# failed create left /n/remote mounted; the next pass mounted
+	# again over it, and the mounts piled up until the loop stopped
+	# making progress.  One command ran and then nothing ever did.
+	# This is the same shape of mistake kupdate's comments warn
+	# about, made again two hundred lines away.
+	#
+	mounted := remotemounted(addrs);
+	if(mounted){
+		out = sys->create(Outfile, Sys->OWRITE, 8r666);
+		if(out == nil)
+			sys->print("RCMD-NOOUT create %s: %r\n", Outfile);
+	}
+	if(out != nil){
+		sys->fprint(out, "RCMD %d: %s\n", seq, cmd);
+		sys->dup(out.fd, 1);
+		sys->dup(out.fd, 2);
+	}
+	{
+		sh->init(nil, "sh" :: "-c" :: cmd :: nil);
+	}exception e{
+	"*" =>
+		sys->print("RCMD-EXCEPTION %s\n", e);
+	}
+	if(out != nil){
+		out = nil;
+		sys->dup(save1.fd, 1);
+		sys->dup(save2.fd, 2);
+	}
+	if(mounted)
+		unmountremote();
+}
+
+#
+# Dial and mount, leaving the mount up for the caller to use and take
+# down.  readcmdfile() does its own because it unmounts immediately.
+#
+remotemounted(addrs: list of string): int
+{
+	ok := -1;
+	c: Sys->Connection;
+	for(l := addrs; l != nil; l = tl l){
+		(ok, c) = sys->dial(hd l, nil);
+		if(ok >= 0)
+			break;
+	}
+	if(ok < 0)
+		return 0;
+	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL, "") < 0)
+		return 0;
+	return 1;
 }
 
 #

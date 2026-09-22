@@ -984,11 +984,23 @@ Chan*
 namec(char *aname, int amode, int omode, ulong perm)
 {
 	int n, prefix, len, t, nomount, npath;
-	Chan *volatile c, *volatile cnew;
+	/*
+	 * c, cnew and m are assigned between a waserror() and the
+	 * error() that unwinds to it, and read again in the handler:
+	 * without volatile the host compiler keeps them in callee-saved
+	 * registers, which longjmp restores to their values at the
+	 * setjmp -- so a failed create closed the stale, pre-cunique()
+	 * channel a second time (the directory's own channel), freeing
+	 * it while still in use, and the next open panicked "cclose"
+	 * on the freed channel.  reproducible with any create refused
+	 * by fsperm().
+	 */
+	Chan * volatile c;
+	Chan * volatile cnew;
 	Cname *cname;
 	Elemlist e;
 	Rune r;
-	Mhead *m;
+	Mhead * volatile m;
 	char *createerr, tmperrbuf[ERRMAX];
 	char *name;
 

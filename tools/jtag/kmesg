@@ -1,0 +1,45 @@
+#!/bin/sh
+#
+# The kernel's console log, read over JTAG.  No serial console needed.
+#
+#	sh tools/jtag/kmesg [lines]
+#
+# devcons.c keeps every console write in a 16K ring, "struct { Lock lk;
+# uint n; char buf[16384]; } kmesg", so the whole boot is still in RAM
+# whether or not anything was listening to the UART.  This dumps it.
+#
+# It exists because the console on this rig fails more often than the
+# board does: the USB-serial adapter wedges, and the screen session has
+# died three times in a day.  Losing the console used to mean losing
+# all visibility, which is how a healthy board came to look hung for an
+# afternoon.  It does not any more.
+#
+set -u
+ROOT=`cd \`dirname "$0"\`/../.. && pwd`
+N=${1:-40}
+ELF=$ROOT/os/inferno/raspi3b/iraspi3b
+OUT=${OUT:-/tmp/kmesg.bin}
+
+K=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" 2>/dev/null | awk '$3=="kmesg"{print $1}'`
+[ -n "$K" ] || { echo "kmesg: no kmesg symbol in $ELF" >&2; exit 2; }
+
+rm -f "$OUT"
+timeout 300 openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg \
+	-f "$ROOT/tools/jtag/raspi3b.cfg" \
+	-c init -c 'targets bcm2837.cpu0' -c halt \
+	-c "dump_image $OUT $K 16400" \
+	-c resume -c shutdown >/dev/null 2>&1
+[ -s "$OUT" ] || { echo "kmesg: nothing came back from the debugger" >&2; exit 1; }
+
+# The Lock and the count come first; the text is whatever is printable
+# after them.  Rather than hardcode sizeof(Lock), which is per-arch,
+# find where the printable run starts.
+python3 - "$OUT" "$N" <<'PYEOF'
+import re, sys
+d = open(sys.argv[1], 'rb').read()
+n = int(sys.argv[2])
+txt = ''.join(chr(b) if 32 <= b < 127 or b == 10 else '\n' for b in d)
+lines = [l for l in txt.split('\n') if len(l.strip()) > 2]
+for l in lines[-n:]:
+    print(l)
+PYEOF

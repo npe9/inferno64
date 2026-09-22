@@ -49,12 +49,12 @@ fi
 echo "styxd: not answering Styx; restarting"
 pkill -f "styxlisten -A 'tcp!\*!$PORT'" 2>/dev/null
 pkill -f "emu -r $ROOT" 2>/dev/null
-sleep 3
+sleep 8			# the old emu can hold the port briefly
 nohup "$ROOT/MacOSX/arm64/bin/emu" -r "$ROOT" sh -c \
 	"styxlisten -A 'tcp!*!$PORT' export / ; sleep 2000000" \
 	>/dev/null 2>&1 &
 i=0
-while [ $i -lt 20 ]; do
+while [ $i -lt 40 ]; do
 	sleep 1
 	if handshake; then
 		echo "styxd: restarted and serving on $PORT"
