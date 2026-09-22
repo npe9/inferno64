@@ -241,7 +241,7 @@ dmaperiph(int c, Cb *cb, void *mem, u32 pbus, ulong len, int dreq, int tomem)
 {
 	u32 *r = dmachan(c);
 	u32 *g = (u32*)DMA0;
-	int i;
+	int i, timedout;
 
 	if(((uintptr)cb & 31) != 0)
 		return -1;
@@ -325,16 +325,32 @@ dmaperiph(int c, Cb *cb, void *mem, u32 pbus, ulong len, int dreq, int tomem)
 	 * has its time.  The engine is still ACTIVE and correctly
 	 * waiting; there is nothing to gain by giving up sooner.
 	 */
+	/*
+	 * A flag, not a sentinel value in i.
+	 *
+	 * The first version of this wait set "i = Timeout" to signal the
+	 * deadline and then tested "i == Timeout" below, which was safe
+	 * only while the loop was bounded by Timeout.  It is not any
+	 * more: i free-runs for up to a second of MMIO reads, several
+	 * million of them, so a transfer that SUCCEEDED could break out
+	 * with i sitting at exactly 1000000 and be reported as a
+	 * timeout.  Rare per transfer; not rare over a card's life.
+	 *
+	 * systmrread() is safe to difference: it composes CHI and CLO
+	 * with the re-read dance and returns a true 64-bit microsecond
+	 * count, so it does not wrap at 32 bits under this subtraction.
+	 */
+	timedout = 0;
 	{
 		uvlong t0 = systmrread();
 
-		for(i = 0;; i++){
+		for(;;){
 			if(r[Cs] & Error)
 				break;
 			if((r[Cs] & Active) == 0)
 				break;
 			if(systmrread() - t0 > (uvlong)dmaxferus){
-				i = Timeout;
+				timedout = 1;
 				break;
 			}
 		}
@@ -348,7 +364,7 @@ dmaperiph(int c, Cb *cb, void *mem, u32 pbus, ulong len, int dreq, int tomem)
 	 * length unmoved means the peripheral never raised its DREQ,
 	 * while Error means the engine tried and the bus refused.
 	 */
-	if(i == Timeout || (r[Cs] & Error)){
+	if(timedout || (r[Cs] & Error)){
 		/*
 		 * Record and do not touch.  The channel is left exactly as
 		 * it stopped -- not reset, not aborted -- because the

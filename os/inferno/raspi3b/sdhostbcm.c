@@ -1346,8 +1346,12 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 	 * two directions, and compares in the kernel, so a DMA write
 	 * can be checked against a PIO read and the other way round.
 	 *
-	 * It writes to the card.  Give it blocks inside kfstest
-	 * (2048..16383), never the DOS partition that holds the kernel.
+	 * IT WRITES TO THE CARD, and it range-checks nothing.  Give it
+	 * blocks past every partition -- 2000000 and up on this card,
+	 * which ends at 30228480.  NOT kfstest (2048..16383): that is
+	 * where kfs lives, and /tmp with it, which is precisely the
+	 * mistake above.  NOT the DOS partition (16384..1064960), which
+	 * holds the kernel the board boots.
 	 */
 	if(strcmp(cb->f[0], "wrverify") == 0 && (cb->nf == 3 || cb->nf == 5)){
 		uvlong bno = strtoull(cb->f[1], nil, 0), b;

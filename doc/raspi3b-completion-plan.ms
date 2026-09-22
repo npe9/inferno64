@@ -7885,3 +7885,27 @@ garbled \(em the open item below.  The fix is a strictly longer wait
 on the same code path the watch instrumented, so the claim here is
 "measured cause, fix follows, end-to-end demonstration outstanding",
 not "fixed".
+.PP
+.B "Two corrections to the wait itself, from review."
+The first version signalled the deadline by setting
+.CW "i = Timeout"
+and testing
+.CW "i == Timeout"
+afterwards.  That was safe only while the loop was bounded by
+.CW Timeout ,
+and it is not any more:
+.CW i
+now free-runs for up to a second of MMIO reads, several million of
+them, so a transfer that SUCCEEDED could break out with
+.CW i
+at exactly 1000000 and be reported as a timeout.  A separate flag,
+not a sentinel the loop can reach on its own.
+.PP
+The second is a hazard that turned out not to exist, checked rather
+than assumed: differencing
+.CW systmrread()
+is only correct if it does not wrap under the subtraction.  It reads
+CHI and CLO with the re-read dance and returns a true 64-bit
+microsecond count, so it does not.  Both re-verified on the board:
+full suite, and 2000 blocks written and read back by DMA and
+byte-compared against a concurrent 8MB reader.
