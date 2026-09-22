@@ -8605,3 +8605,67 @@ The one thing the client does establish is that size, concurrency and
 reset-mid-read are each individually survivable, which is more than
 was known before, and it is a fast harness for the next attempt \(em
 seconds per trial, no board, no JTAG.
+.NH 2
+The styx server wedge, characterised: it stops accepting
+.PP
+.B "It is not a deadlock, and it is not the file service."
+A
+.CW sample
+of the wedged emu says so.  Every Dis thread is idle:
+.P1
+7  __psynch_cvwait     (osblock -- blocked Dis processes)
+1  __accept            (styxlisten, waiting for a connection)
+1  __sigsuspend, 1 __semwait_signal, 2 mach_msg (Cocoa)
+.P2
+The
+.CW exslave
+processes are in
+.CW "Sleep(&exq.rwait, exwork)" ,
+which is their normal idle state waiting for work, and no thread holds
+a lock.  Nothing is blocked reading a socket either.  So the file
+service is fine and nobody is deadlocked; the work simply never
+arrives.
+.PP
+.B "What is arriving, and not being taken."
+With the server wedged, a fresh connection to port 6666 completes at
+the OS level and then sits there:
+.P1
+tcp4  127.0.0.1.6666  127.0.0.1.59357  ESTABLISHED
+tcp4  *.6666          *.*              LISTEN
+.P2
+while
+.CW styxlisten
+is blocked in
+.CW accept() .
+A completed connection is in the backlog and the accept never returns.
+That is the whole failure in one line: the server stops accepting, so
+every later mount hangs, which on the board looks like kupdate freezing
+with no message at all.
+.PP
+.B "Eliminated."
+Not descriptor exhaustion \(em 23 open files against a limit of a
+million, one IPv4 socket.  Not the scheduler hang this tree knows
+about \(em
+.CW unlock()
+has its release store and
+.CW qlock() 's
+pre-
+.CW osblock()
+window cannot lose a wakeup because the semaphore counts.  Not
+.CW exslave 's
+locking, which was read line by line on suspicion and releases
+.CW exq.l
+on both paths.  Not the devfs-posix change: the first wedge predates it
+by hours.  And not anything a local 9P client can provoke \(em reads of
+the same 1.9MB file, four concurrent readers, resets mid-read and
+create-then-write all leave the server healthy.
+.PP
+.B "The hypothesis to test next."
+An accept blocked on a stale listening descriptor: if devip recreates
+the listening socket after an error and the accept still refers to the
+old one, connections to the current listener would complete and never
+be taken, which is exactly what is observed.  That is a guess and is
+labelled as one; what is established is everything above it.  The next
+step is to find which host descriptor that
+.CW __accept
+is waiting on and compare it with the socket the OS is queueing to.
