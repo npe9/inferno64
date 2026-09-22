@@ -8419,3 +8419,50 @@ so.  This is the third time in this port that a quiet failure in the
 measuring apparatus has been mistaken for a result, and the other two
 are written up above; the pattern is worth more than any of the
 individual cases.
+.NH 2
+The warm restart is reliable, and it is measured without the console
+.PP
+.B "Ten out of ten."
+.P1
+restart 1: OK (alive 11497)   restart 6:  OK (alive 11568)
+restart 2: OK (alive 11575)   restart 7:  OK (alive 11601)
+restart 3: OK (alive 11551)   restart 8:  OK (alive 11586)
+restart 4: OK (alive 11537)   restart 9:  OK (alive 11515)
+restart 5: OK (alive 11481)   restart 10: OK (alive 11575)
+TOTAL: 10 up, 0 down out of 10
+.P2
+against "about half the time" before.  Every tick count is near 11500,
+which at HZ is 115 seconds -- the age of a kernel that has just
+finished booting, not one that was already running.
+.PP
+Two changes could account for it and this run cannot separate them:
+the static initialiser on
+.CW m ,
+which removes the nil-pointer window the pending clock fell into, and
+.CW quiesce
+clearing the per-core timer and mailbox enables, which removes the
+pending clock.  Each is independently justified by a measurement, so
+neither is a reason to drop the other, but the split between them is
+not known.
+.PP
+.B "And the measurement does not go through the console, which is why
+.B "it exists."
+.CW tools/jtag/alive
+reads
+.CW m->ticks
+at
+.CW mach0 +0x28
+over JTAG, twice, three seconds apart: advancing means a kernel is
+alive and clocking, and a low count means it booted recently rather
+than being the one that was already there.
+.CW mach0 's
+address comes from the symbol table, because it moves with every
+build.
+.PP
+Every previous attempt at this number went through the serial console,
+and the console is the least reliable part of this rig \(em the
+adapter wedges, and the screen session died mid-run twice, which turns
+"cannot see" into "did not boot" and invents failures for a board that
+was fine.  Two whole runs were thrown away to that before the
+instrument was moved off it.  The rule this keeps proving: measure
+through the most reliable thing available, not the most convenient.

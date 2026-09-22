@@ -1,0 +1,57 @@
+#!/bin/sh
+#
+# Is a kernel running, and has it booted recently?  No console needed.
+#
+#	sh tools/jtag/alive [maxticks]
+#
+# Prints "alive <ticks>" and exits 0 if the clock is advancing, "dead"
+# and exits 1 if it is not.  With maxticks, also requires the tick
+# count to be below it, which distinguishes a kernel that has just
+# booted from the one that was already running.
+#
+# Why this exists: every way of telling whether the board came up went
+# through the serial console, and the console is the least reliable
+# part of this rig -- the adapter wedges, and the screen session has
+# died mid-measurement twice, which silently turns "cannot see" into
+# "did not boot" and invents failures for a board that was fine.
+#
+# m->ticks is at mach0+0x28 and is incremented by clockintr, so it
+# advances at HZ on any kernel that is alive and clocking, and it
+# starts again from zero on every boot.  mach0's address comes from
+# the symbol table rather than being written down, because it moves
+# with every build.
+#
+set -u
+ROOT=`cd \`dirname "$0"\`/../.. && pwd`
+MAX=${1:-0}
+ELF=$ROOT/os/inferno/raspi3b/iraspi3b
+
+MACH0=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" 2>/dev/null |
+	awk '$3=="mach0"{print $1}'`
+[ -n "$MACH0" ] || { echo "alive: no mach0 symbol in $ELF" >&2; exit 2; }
+TICKS=`python3 -c "print(hex(int('$MACH0',16)+0x28))"`
+
+read_ticks() {
+	timeout 90 openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg \
+		-f "$ROOT/tools/jtag/raspi3b.cfg" \
+		-c init -c 'targets bcm2837.cpu0' -c halt \
+		-c "mdw $TICKS 1" -c resume -c shutdown 2>&1 |
+	awk -F': ' '/^0x/{print $2; exit}' | awk '{print $1}'
+}
+
+a=`read_ticks`
+sleep 3
+b=`read_ticks`
+[ -n "$a" ] && [ -n "$b" ] || { echo "alive: no answer from the debugger" >&2; exit 2; }
+da=`python3 -c "print(int('$a',16))"`
+db=`python3 -c "print(int('$b',16))"`
+if [ "$db" -le "$da" ]; then
+	echo "dead (ticks $da -> $db, not advancing)"
+	exit 1
+fi
+if [ "$MAX" -gt 0 ] && [ "$db" -gt "$MAX" ]; then
+	echo "alive but OLD (ticks $db > $MAX): this is not a fresh boot"
+	exit 1
+fi
+echo "alive $db (was $da)"
+exit 0
