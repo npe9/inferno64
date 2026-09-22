@@ -36,7 +36,8 @@ struct Cc1120
 	int	csthr;			/* dBm, in AGC_CS_THR */
 	int	txstaged;		/* NUM_TXBYTES after the FIFO write */
 	int	txmarc;			/* MARC_STATUS1 after the transmit */
-	uchar	txtrace[5];		/* state through the last transmit */
+	uchar	txtrace[6];		/* state through the last transmit */
+	int	txleft;			/* NUM_TXBYTES after it went wrong */
 	int	present;
 
 	/* what the last received packet looked like */

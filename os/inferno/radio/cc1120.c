@@ -377,6 +377,22 @@ cc1120send(Radio *r, uchar *p, int n)
 	rr->txstaged = rdx(rr, Xnumtxbytes);
 	strobe(rr, Stx);
 	rr->txtrace[3] = state(rr) >> 4;
+	/*
+	 * The part goes through SETTLING on its way into TX.  Watch
+	 * for what it settles into, tightly, because the whole thing
+	 * is over in less than the millisecond the wait below looks
+	 * at: on this board the state a millisecond after STX is
+	 * already TX FIFO error, so whether TX was ever reached is
+	 * not visible there.
+	 */
+	rr->txtrace[4] = 0xf;
+	for(i = 0; i < Idlewaitus; i++){
+		st = state(rr);
+		if(st != Stsettle){
+			rr->txtrace[4] = st >> 4;
+			break;
+		}
+	}
 	s->unlock(s);
 
 	/*
@@ -403,7 +419,15 @@ cc1120send(Radio *r, uchar *p, int n)
 	 * Reading it clears it, so it is read once and kept.
 	 */
 	rr->txmarc = rdx(rr, Xmarcstatus1);
-	rr->txtrace[4] = state(rr) >> 4;
+	rr->txtrace[5] = state(rr) >> 4;
+	/*
+	 * And what is left in the TX FIFO.  This is the number that
+	 * says which fault it is: nothing left means the part read the
+	 * packet out and then wanted more than the length byte
+	 * promised, and everything still there means it never read the
+	 * FIFO at all and errored for some other reason.
+	 */
+	rr->txleft = rdx(rr, Xnumtxbytes);
 	if(state(rr) == Sttxerr){
 		rr->ntxunderflow++;
 		strobe(rr, Sftx);
@@ -792,7 +816,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"fifo rx %d tx %d\n"
 		"lasttx staged %d marc 0x%.2x\n"
 		"pktcfg0 0x%.2x pktlen %d\n"
-		"txtrace %d %d %d %d %d\n"
+		"txtrace %d %d %d %d %d %d left %d\n"
 		"sent %ud recv %ud\n"
 		"crcerr %ud toobig %ud txtimeout %ud\n"
 		"rxoverflow %ud txunderflow %ud\n",
@@ -806,7 +830,7 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->txstaged, rr->txmarc,
 		pktcfg0, pktlen,
 		rr->txtrace[0], rr->txtrace[1], rr->txtrace[2],
-		rr->txtrace[3], rr->txtrace[4],
+		rr->txtrace[3], rr->txtrace[4], rr->txtrace[5], rr->txleft,
 		rr->nsent, rr->nrecv,
 		rr->ncrcerr, rr->ntoobig, rr->ntxtimeout,
 		rr->nrxoverflow, rr->ntxunderflow);
