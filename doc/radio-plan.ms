@@ -770,11 +770,40 @@ the scale and one that is wrong by the width of an antenna.
 The transmitter is proven against an instrument and the receiver is
 proven against an instrument, and neither has yet carried a packet on
 silicon.  There is one CC1120 here, so this needs either a second one
-or a transmitter already on the air.  Wireless M-Bus at 868.95MHz is
-the second: it is what this chip family exists for, TI publishes the
-register set for mode T and mode C, and a meter is a transmitter that
-does not need arranging.  The band survey says whether one is in
-range before any of it is written.
+or a transmitter already on the air.
+.PP
+Wireless M-Bus at 868.95MHz was the candidate named here, on the
+grounds that it is what this chip family exists for and that a meter
+is a transmitter that does not need arranging.  It is not a candidate
+on this bench: 868.95 is a European allocation, and
+.I tools/tinysa/survey.py
+finds nothing there.  What it does find, twenty sweeps at 3.8ms a bin,
+is worth writing down because it is the first measurement of this air
+that distinguishes a transmitter from the noise:
+.PP
+.EX
+	868-890   bursty across 869-884, 50kHz to 1.9MHz wide,
+	          peaks -75 to -85, never in more than 6 of 20
+	902-928   narrowband bursts 58-116kHz wide, peaks -64 to
+	          -85, each seen in one sweep of twelve
+	433-435   weak narrow bursts 4 to 18kHz wide, peaks -96
+	          to -102, one sweep in twenty
+.EE
+.PP
+The 902-928 signals hop.  Four runs put the strongest bin at 922.33,
+913.23, 918.56 and 917.63MHz, each 58 to 116kHz wide and each seen
+once, which is one hopping transmitter and not four fixed ones; and
+922.33 reads \-64.4dBm in 58kHz bins and \-90 in 3kHz bins on a
+different bin, which is the same fact from the other side.  A CC1120
+can demodulate one hop and cannot follow a sequence it does not know.
+.PP
+So there is no standard FSK packet format on this air to lock a sync
+word onto, and that changes what this item is.  It is not a register
+table for somebody else's protocol; it is raw capture \- the part's
+infinite packet length, or its serial mode with the demodulated bits
+on a GPIO \- and then looking at timing in Limbo.  That is a piece of
+work rather than a setting, and it is the honest next move now that
+the air has actually been measured.
 .IP "4.  An FT-891, or anything with a CAT port.  Done, for receive." 6
 This is no longer a compiled argument.  The set is driven from emu
 over its own USB port \- a CP2105's Enhanced Com Port, 4800 8N2 \-
