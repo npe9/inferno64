@@ -243,6 +243,13 @@ multiblockcheck()
 	# seen once with two agents BOTH writing the driver's globals,
 	# which could not be interpreted; this arm can be.
 	#
+	# the DMA arm BEFORE the concurrent ones, deliberately: it fails,
+	# and the question is whether its failure still breaks the next
+	# request now that the write waits by the clock
+	sys->fprint(cfd, "dma 1");
+	sys->fprint(cfd, "multiverify 2900700 64");
+	sys->fprint(cfd, "dma 0");
+
 	stop := chan of int;
 	spawn hammer(stop);
 	sys->fprint(cfd, "multiverify 2920000 256");
@@ -268,9 +275,7 @@ multiblockcheck()
 	# the ones describing the configuration the board actually
 	# ships.
 	#
-	sys->fprint(cfd, "dma 1");
-	sys->fprint(cfd, "multiverify 2900700 64");
-	sys->fprint(cfd, "dma 0");
+
 }
 
 kfsproc(pfd: ref Sys->FD)

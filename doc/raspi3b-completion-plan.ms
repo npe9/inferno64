@@ -8880,6 +8880,25 @@ MULTIVERIFY-OK 256 blocks at 2920000: write  60ms read 10ms
 MULTIVERIFY-OK 256 blocks at 2930000: write 530ms read 10ms
 .P2
 128KB written and read back byte-correct, twice, under load.  Every
-PIO arm of the boot check now passes; the DMA arm still fails and runs
-last, because a failed DMA transfer leaves the next request unusable
-and that is its own open bug.
+PIO arm of the boot check now passes.
+.PP
+.B "And it closed a second bug that looked separate."
+A failed DMA transfer appeared to leave the next request unusable: run
+the DMA arm in the middle and the transfer after it came back "write 0
+of 131072".  That was written down as its own open bug.  It was not \(em
+it was this one.  A failed DMA leaves the card busy, and the next
+write then had 160ms to wait out a card that is allowed 250ms.  With
+the clock-based wait, the DMA arm still fails and the transfer after
+it passes:
+.P1
+MULTIVERIFY-FAIL 64 blocks at 2900700 (multi 64 dma 1) MISMATCH
+MULTIVERIFY-OK 256 blocks at 2920000: write 1370ms read 10ms
+MULTIVERIFY-OK 256 blocks at 2930000: write  550ms read 20ms
+.P2
+1370ms is the recovery being waited out rather than given up on.  Two
+symptoms, one cause, and the second would have been chased separately
+if the arm had been left running last where it could not be seen.
+.PP
+What remains is narrow: DMA paired with multi-block returns wrong data.
+DMA is off by default, PIO at 64 blocks a command is fast, and the
+failure no longer harms anything around it.
