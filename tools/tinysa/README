@@ -197,3 +197,58 @@ tinysa.py now sets "ultra on" before any sweep that reaches past
 check another instrument has settings of its own, and the first thing
 to establish about any measurement is whether the thing making it was
 able to see what was being measured.
+
+
+survey.py: what is on a band, rather than what was on it once
+=============================================================
+
+A sweep is a snapshot.  With the instrument's default timing a 22MHz
+span at 450 points takes 250ms, so each bin is listened to for about
+half a millisecond, and a transmitter that sends a 10ms burst once a
+minute appears in roughly one sweep in ten thousand.  Sweeping once
+and printing the peaks measures the noise and whatever happened to be
+talking, and does not tell them apart.  Every "that band is quiet"
+verdict in this tree's earlier radio work was reached that way.
+
+survey.py sweeps many times and keeps peak, mean and a count of the
+sweeps in which each bin was above the floor.  The three together are
+a classifier: a continuous carrier is high in all of them and its peak
+and mean are close; a burst transmitter has a high peak, a mean at the
+floor and a low count; noise has a peak a few dB up and a mean at the
+floor.  Per-bin dwell is bought with "sweeptime" -- measured, one
+sweep of a 22MHz span takes 0.99s, 1.61s and 3.64s at settings of
+0.25, 1 and 3 -- and the header prints the dwell and the sweep count
+so the sensitivity of a negative result is on the page with it.
+
+	survey.py 902000000 928000000 20 1
+
+What it found on this bench, 20 sweeps of 3.8ms a bin:
+
+	868-890   bursty across 869-884, 50kHz to 1.9MHz wide,
+	          peaks -75 to -85, never in more than 6 sweeps of 20
+	902-928   narrowband bursts 58-116kHz wide, peaks -64 to -85,
+	          each seen in one sweep of twelve
+	433-435   weak narrow bursts 4 to 18kHz wide, peaks -96 to
+	          -102, one sweep in twenty
+
+The 902-928 signals hop.  Four runs put the strongest bin at 922.33,
+913.23, 918.56 and 917.63MHz, each 58 to 116kHz wide and each seen
+once -- which is frequency hopping and not four different
+transmitters.  Zooming in confirms it from the other side: 922.33 read
+-64.4dBm in 58kHz bins and the same place reads -90 in 3kHz bins, on a
+different bin, because the thing is rarely there.  A CC1120 can
+demodulate one hop and cannot follow the sequence without knowing it.
+
+The accumulation is done in the tool and not in the instrument.  The
+tinySA has "calc maxh" and "calc aver", which run at the sweep rate
+rather than over a serial line and would be the better way if their
+trace semantics could be established.  They could not be: "data 0" is
+the live sweep and the accumulation appears in "data 1", but "calc
+off" does not clear trace 1, an average started after a max hold
+decays out of it for tens of seconds instead of converging on the
+floor, and a trace read after "calc off" sits 5dB above the live sweep
+for no reason that was found.  The first version of this tool used
+them and reported a floor of -87.1dBm where the floor is -100.5,
+because the average it was reading was still draining a max hold from
+the previous run.  Numbers whose meaning is not known are worse than
+fewer numbers that are.
