@@ -430,3 +430,43 @@ is patient now and says how long an answer took; the restart waits for
 the port and surfaces an announce failure instead of hiding it.  The
 next real wedge will be met with instruments that do not lie, which is
 more than this session started with.
+.NH 1
+The best evidence yet, with the instruments fixed
+.PP
+Everything above was taken with a five-second probe and sometimes with
+two emu instances running.  This was not: one instance, started and
+pinned by
+.CW styxd.sh ,
+and a probe that tries three times with a thirty-second timeout.
+.PP
+.B "The server stops reading."
+With the board's kupdate in progress and the probe failing all three
+tries \\(em ninety seconds \\(em the host shows:
+.P1
+tcp4  28  0  192.168.8.233.6666  192.168.8.105.54016  ESTABLISHED
+tcp4  23  0  192.168.8.233.6666  192.168.8.105.65304  ESTABLISHED
+.P2
+Two connections from the board, both ESTABLISHED, both with bytes
+sitting UNREAD in the server's receive queue \\(em 28 and 23.  That is
+not a busy server and it is not a slow one: the data has arrived, the
+kernel has it, and nothing in emu is taking it.  A restart cured it,
+as it has every time.
+.PP
+.B "Why this reading is worth more than the earlier ones."
+A timeout says only that no answer came within N seconds, and a busy
+server can fail that honestly \\(em which is how most of this
+document's earlier wedges turned out to be nothing.  Unread bytes in
+the receive queue say something stronger and independent of any
+timeout: the request is there and the server is not reading it.  This
+is the first observation in the whole investigation that a slow server
+cannot produce.
+.PP
+.B "What it does not yet say."
+Whether the reader for those connections died, never started, or is
+blocked elsewhere.  The instrumentation in
+.CW devip.c
+reports accepts and opens; it says nothing about the export's read
+loop.  The next step is to instrument that \\(em or simply to sample
+the process while it is in this state, with the pid pinned, and look
+for a thread in the export's reader rather than in
+.CW __accept .
