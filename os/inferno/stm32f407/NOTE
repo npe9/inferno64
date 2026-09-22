@@ -498,8 +498,23 @@ reads
 	status 0x10 partnumber 0x48 partversion 0x21 miso 0
 
 so the file is known to report a part when there is one to report.
-0x00 everywhere means SO never went high while the part number was
-being clocked out; 0xff everywhere would mean nothing is driving SO at
-all.  Which of those the board shows is the next thing worth knowing,
-and the numbers say which of chip select, clock, MISO or the part
-itself to look at.
+
+The board answered:
+
+	; cat /dev/spi2
+	status 0x0f partnumber 0x48 partversion 0x21 miso 1
+
+A CC1120, awake -- CHIP_RDYn clear -- and idle.  The part was there
+all along and the bus was reaching it; what was wrong was when
+cc1120init() asked.  It strobed SRES and read PARTNUMBER immediately
+after, and CHIP_RDYn stays high until the crystal is running, which is
+milliseconds on a real part and instant in qemu's model.  So the
+driver read 0x00 on every boot of the board and 0x48 on every boot of
+the emulator, and had done since it was written.
+
+cc1120.c now polls SNOP for CHIP_RDYn after the reset before reading
+anything -- which is the handshake SWRU295E describes as watching SO
+go low after CSn, in the form a Spidev can express, since it has no
+way to read the MISO pin.  This is the one kind of fault an emulator
+cannot have: a model that is ready the instant it is reset cannot fail
+to be ready.

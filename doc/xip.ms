@@ -4289,11 +4289,29 @@ prints the raw bytes, and
 .CW "echo reset >/dev/spi2"
 pulses RESET_N.  Under qemu with a part fitted it reads
 .CW "status 0x10 partnumber 0x48 partversion 0x21" ,
-so it is known to report one when there is one; on the board it reads
-zeros.  All zeros means SO never went high while the part number was
-clocked out, and 0xff would mean nothing is driving SO at all \- which
-is the difference between a part that is not ready and a socket that
-is empty, and it is the next thing to find out.
+so it is known to report one when there is one.  On the board:
+.P1
+; cat /dev/spi2
+status 0x0f partnumber 0x48 partversion 0x21 miso 1
+.P2
+A CC1120, awake, idle.  The part was there the whole time and the bus
+was reaching it.  What was wrong was when the driver asked: it strobed
+SRES and read PARTNUMBER immediately after, and CHIP_RDYn \- the top
+bit of the status byte \- stays high until the crystal is running,
+which is milliseconds on a part and instant in a model.  So this
+driver read 0x00 on every boot of the board and 0x48 on every boot of
+the emulator, and had done since the day it was written.
+.PP
+That is the second fault in two days that only silicon could produce,
+and it is a sharper one than the VBAT divider.  A wrong constant is a
+wrong constant and someone reading the manual again would have caught
+it.  This one cannot be caught by reading, and cannot be caught by any
+emulator, because a model that is ready the instant it is reset cannot
+fail to be ready.  The only way to find it is to have the part refuse
+to answer and then ask it again a second later \- which is what
+.CW #P/spi2
+is for, and why a driver that declines to register a device should
+leave something behind that says why.
 .NH 1
 Unrelated breakage found on the way
 .PP

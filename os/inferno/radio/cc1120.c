@@ -95,6 +95,12 @@ enum {
 
 	Txtries		= 100000,	/* spins waiting for a transmit */
 	Rssitries	= 200000,	/* spins waiting for RSSI_VALID */
+	/*
+	 * Each try is a whole SPI byte -- 48us at this board's clock --
+	 * so two thousand is a tenth of a second, against a crystal
+	 * that starts in a few milliseconds.
+	 */
+	Readytries	= 2000,		/* spins waiting for CHIP_RDYn */
 };
 
 static int
@@ -108,6 +114,43 @@ strobe(Cc1120 *rr, int cmd)
 	st = s->byte(s, cmd);
 	s->select(s, 0);
 	return st;
+}
+
+/*
+ * Wait for the part to be able to answer.
+ *
+ * CHIP_RDYn, the top bit of the status byte every transaction returns,
+ * is high until the crystal oscillator is running and the part is
+ * ready (SWRU295E 3.1.1).  After a reset -- the RESET_N pin or the
+ * SRES strobe -- it stays high for as long as the crystal takes to
+ * start, which is milliseconds on a real part and depends on the
+ * crystal, not on the radio.
+ *
+ * This is the one thing in this driver that an emulator cannot fail
+ * on and a board cannot pass without.  qemu's model is ready the
+ * instant it is reset, so reading PARTNUMBER straight after SRES
+ * worked there for as long as this driver has existed; on a clicker 2
+ * with a ccRF click in it the same sequence read 0x00 and the kernel
+ * reported no CC1120 in a socket with a CC1120 in it, every boot.
+ * Asked again a second later through #P/spi2, the same part answered
+ * 0x48.  Nothing was wrong with the bus.
+ *
+ * Polling SNOP for the bit is the handshake the user's guide
+ * describes as watching SO go low after CSn: it is the same signal,
+ * and it needs no way to read the MISO pin, which a Spidev does not
+ * have.  Returns the status byte, or -1.
+ */
+static int
+chipready(Cc1120 *rr)
+{
+	int i, st;
+
+	for(i = 0; i < Readytries; i++){
+		st = strobe(rr, Snop);
+		if((st & Stchiprdyn) == 0)
+			return st;
+	}
+	return -1;
 }
 
 static int
@@ -398,6 +441,8 @@ cc1120ctl(Radio *r, char *buf, int n)
 		ulong lo, hi, step;
 		int r1, r0, i;
 
+		r0 = 0;			/* Rssitries could be zero */
+
 		lo = 868000000;
 		hi = 928000000;
 		step = 1000000;
@@ -484,9 +529,9 @@ cc1120stat(Radio *r, char *p, int n)
 		"state 0x%.2x\n"
 		"rssi %d last %d%s\n"
 		"fifo rx %d tx %d\n"
-		"sent %lud recv %lud\n"
-		"crcerr %lud toobig %lud txtimeout %lud\n"
-		"rxoverflow %lud txunderflow %lud\n",
+		"sent %ud recv %ud\n"
+		"crcerr %ud toobig %ud txtimeout %ud\n"
+		"rxoverflow %ud txunderflow %ud\n",
 		rr->partnum, rr->partversion,
 		st >> 4,
 		live, rr->rssi, (cs & Carriersense)? " carrier": "",
@@ -518,9 +563,17 @@ cc1120init(Spidev *s, int irq)
 
 	s->lock(s);
 	strobe(rr, Sres);
+	rr->ready = chipready(rr);
 	rr->partnum = rdx(rr, Xpartnumber);
 	rr->partversion = rdx(rr, Xpartversion);
 	s->unlock(s);
+
+	if(rr->ready < 0){
+		print("cc1120 %s: not ready after reset, status stays 0x%.2x\n",
+			s->name, strobe(rr, Snop));
+		free(rr);
+		return nil;
+	}
 
 	if(rr->partnum != Partcc1120){
 		/*

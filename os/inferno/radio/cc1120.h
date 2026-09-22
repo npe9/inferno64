@@ -31,6 +31,7 @@ struct Cc1120
 	Spidev	*spi;
 	int	partnum;		/* PARTNUMBER, 0x48 for a CC1120 */
 	int	partversion;
+	int	ready;			/* status byte once CHIP_RDYn cleared */
 	int	present;
 
 	/* what the last received packet looked like */
