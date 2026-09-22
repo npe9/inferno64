@@ -49,15 +49,26 @@
  * 6 RTTY-LSB, 7 CW-R, 8 DATA-LSB, 9 RTTY-USB, A DATA-FM, B FM-N,
  * C DATA-USB, D AM-N, E C4FM.
  *
- * WHAT HAS BEEN RUN, AND WHAT HAS NOT.  Nothing here has been spoken
- * to a radio.  There is no FT-891 on this bench and no serial port
- * free on the board that has the CC1120 in it -- a clicker 2's second
- * uart is mikroBUS 2's and the radio click is in that socket.  What is
- * tested is that it compiles, that the command strings are built and
- * parsed as the manual describes them, and that #W serves a radio with
- * no packet files without complaint.  A CAT string is exactly the kind
- * of thing that looks right and is not, so read anything below about
- * what a radio "answers" as what the manual says it answers.
+ * WHAT HAS BEEN RUN.  This has been spoken to an FT-891, over its own
+ * USB port -- a CP2105's Enhanced Com Port, 4800 8N2 -- from emu on a
+ * Mac.  The set answers ID0650; to ID;, its VFO follows FA, and FA;
+ * reads back what was set.  See the emu #W notes in
+ * emu/port/ft891emu.c for the host side.
+ *
+ * One trap cost an afternoon and is worth writing down, because from
+ * above it looks exactly like a driver bug.  The FT-891's menu 05-08
+ * CAT RTS defaults to ENABLE, and what that means is that the set
+ * will not send a reply unless the PC has its RTS line deasserted.
+ * Commands work perfectly -- the VFO moves, the mode changes -- and
+ * every query is met with silence, so the natural conclusion is that
+ * the replies are being lost somewhere in the host.  They are not
+ * being sent.  Either set the line the way the set wants it or turn
+ * the menu item off:
+ *
+ *	; echo 'cat EX05080;' >'#W/radio0/ctl'
+ *
+ * After that the modem lines do not matter at all, which was
+ * confirmed over the four combinations of RTS and DTR.
  */
 
 enum {
@@ -104,6 +115,16 @@ cat(Ft891 *f, char *cmd, char *reply, int n)
 
 	p = f->port;
 	p->lock(p);
+	/*
+	 * Anything still in the port is the tail of an earlier
+	 * exchange -- a reply that arrived after its caller gave up,
+	 * or the set volunteering something.  Left there it would be
+	 * read as the answer to this command, and every answer after
+	 * it would be one behind.
+	 */
+	if(reply != nil)
+		while(p->read(p, &c, 1, 0) == 1)
+			;
 	if(p->write(p, cmd, strlen(cmd)) < 0){
 		p->unlock(p);
 		return -1;
@@ -122,6 +143,91 @@ cat(Ft891 *f, char *cmd, char *reply, int n)
 	p->unlock(p);
 	reply[i] = 0;
 	return i;
+}
+
+/*
+ * Ask, and give back the body of the answer: everything between the
+ * echoed command name and the ';'.  nil if the set said nothing or
+ * said something else, which is not an error -- a set that is
+ * switched off is a normal state of a radio, and the caller falls
+ * back on what it last set.
+ */
+static char*
+ft891ask(Ft891 *f, char *cmd, char *buf, int n)
+{
+	int i, ncmd;
+
+	if(cat(f, cmd, buf, n) <= 0)
+		return nil;
+	for(ncmd = 0; cmd[ncmd] != 0 && cmd[ncmd] != ';'; ncmd++)
+		;
+	if(strncmp(buf, cmd, ncmd) != 0)
+		return nil;
+	for(i = ncmd; buf[i] != 0; i++)
+		if(buf[i] == ';'){
+			buf[i] = 0;
+			break;
+		}
+	return buf + ncmd;
+}
+
+/*
+ * What the set is doing now, as against what it was last told.  They
+ * are not the same thing: an FT-891 has a knob, and a driver that
+ * reports its own last command is reporting the past.
+ */
+static uvlong
+ft891askfreq(Ft891 *f)
+{
+	char buf[Catlen], *v;
+
+	v = ft891ask(f, "FA;", buf, sizeof buf);
+	if(v == nil || *v == 0)
+		return f->hz;
+	f->hz = strtoul(v, nil, 10);
+	return f->hz;
+}
+
+static int
+ft891askmode(Ft891 *f)
+{
+	char buf[Catlen], *v;
+	int i;
+
+	v = ft891ask(f, "MD0;", buf, sizeof buf);
+	if(v == nil || *v == 0)
+		return f->mode;
+	for(i = 1; i < nelem(ft891modes) && ft891modes[i] != 0; i++)
+		if(ft891modes[i] == v[0]){
+			f->mode = i;
+			break;
+		}
+	return f->mode;
+}
+
+static int
+ft891askptt(Ft891 *f)
+{
+	char buf[Catlen], *v;
+
+	v = ft891ask(f, "TX;", buf, sizeof buf);
+	if(v == nil || *v == 0)
+		return f->ptt;
+	/* 0 receiving, 1 transmitting by CAT, 2 transmitting by PTT */
+	f->ptt = v[0] != '0';
+	return f->ptt;
+}
+
+static int
+ft891askpower(Ft891 *f)
+{
+	char buf[Catlen], *v;
+
+	v = ft891ask(f, "PC;", buf, sizeof buf);
+	if(v == nil || *v == 0)
+		return f->watts;
+	f->watts = atoi(v);
+	return f->watts;
 }
 
 static int
@@ -274,13 +380,13 @@ static int
 ft891stat(Radio *r, char *p, int n)
 {
 	Ft891 *f;
-	char buf[Catlen];
 	uvlong hz;
+	int mode, ptt;
 
 	f = (Ft891*)r;
-	hz = f->hz;
-	if(cat(f, "FA;", buf, sizeof buf) > 3)
-		hz = strtoul(buf+2, nil, 10);
+	hz = ft891askfreq(f);
+	mode = ft891askmode(f);
+	ptt = ft891askptt(f);
 
 	return snprint(p, n,
 		"part FT-891 cat\n"
@@ -290,10 +396,10 @@ ft891stat(Radio *r, char *p, int n)
 		"smeter %d\n"
 		"power %d\n",
 		hz,
-		f->mode > 0? ft891modename[f->mode]: "unset",
-		f->ptt? 2: 1,
+		mode > 0? ft891modename[mode]: "unset",
+		ptt? 2: 1,
 		ft891smeter(f),
-		f->watts);
+		ft891askpower(f));
 }
 
 /*
@@ -334,10 +440,18 @@ ft891caps(Radio *r, char *p, int n)
 	f = (Ft891*)r;
 	q = p;
 	e = p + n;
-	q = seprint(q, e, "freq %llud\n", f->hz);
-	q = seprint(q, e, "mode %s\n",
-		f->mode > 0? ft891modename[f->mode]: "unset");
-	q = seprint(q, e, "ptt %s\n", f->ptt? "on": "off");
+	/*
+	 * The settable part is read from the set and not from this
+	 * struct.  devvga and devaudio answer a ctl read with what may
+	 * be written to it, and what may be written here is what the
+	 * set is doing -- so "cat ctl >ctl" has to be the identity, and
+	 * it is not if the knob has been turned since.
+	 */
+	q = seprint(q, e, "freq %llud\n", ft891askfreq(f));
+	i = ft891askmode(f);
+	q = seprint(q, e, "mode %s\n", i > 0? ft891modename[i]: "unset");
+	q = seprint(q, e, "ptt %s\n", ft891askptt(f)? "on": "off");
+	q = seprint(q, e, "power %d\n", ft891askpower(f));
 	q = seprint(q, e, "band rx 30000 56000000\n");
 	for(i = 0; i < nelem(ft891tx); i++)
 		q = seprint(q, e, "band tx %llud %llud 37 50\n",

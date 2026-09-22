@@ -22,8 +22,21 @@ $ROOT/$SYSTARG/$OBJTYPE/lib/lib%.a:N:	lib%.a
 %.$O:	%.c
 	$CC $CFLAGS $stem.c
 
+# A radio driver and radio.h are shared with the board kernels rather
+# than copied here.  A copy of a contract is a contract that drifts:
+# radio.h describes what #W and a driver promise each other, and the
+# whole claim ft891.c makes is that it is the same file in both
+# kernels.  Two files that begin identical and are edited separately
+# make that claim false without anything failing to build.
+RADIODIR=../../os/inferno/radio
+
 %.$O:		../port/%.c
-		$CC $CFLAGS -I. ../port/$stem.c
+		$CC $CFLAGS -I. -I$RADIODIR ../port/$stem.c
+
+ft891.$O:	$RADIODIR/ft891.c $RADIODIR/radio.h
+		$CC $CFLAGS -I. -I$RADIODIR $RADIODIR/ft891.c
+
+devradio.$O ft891emu.$O:	$RADIODIR/radio.h
 
 %.$O:		../ip/%.c
 		$CC $CFLAGS -I. ../ip/$stem.c

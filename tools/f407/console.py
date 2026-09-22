@@ -92,13 +92,41 @@ def send(fd, line, wait=2.0, check=True):
     return out
 
 
+def waitprompt(fd, timeout=30.0):
+    """Wait for a quiet console showing a shell prompt.
+
+    Typing into a board that is still printing its boot banner gets
+    the banner back where the echo should be, which the check in
+    send() reports as lost characters -- correctly, in that what came
+    back was not the echo, and uselessly, in that nothing was wrong.
+    Wait for the prompt and the quiet after it instead.
+    """
+    end = time.time() + timeout
+    seen = ""
+    while time.time() < end:
+        d = drain(fd, 1.0)
+        seen += d
+        if d != "":
+            continue                    # still talking; let it finish
+        if seen.rstrip().endswith(";"):
+            return True
+        # Quiet, and no prompt in what came back.  A board sitting at a
+        # prompt says nothing until spoken to, so ask: a bare newline
+        # costs nothing and a shell answers it with a prompt.  A board
+        # that does not answer is busy or wedged, which is worth
+        # knowing before a script types a session into it.
+        os.write(fd, b"\n")
+        time.sleep(0.3)
+        seen = ""
+    return False
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit("usage: console.py cmd <line>... | ctl <file> <line>...")
     fd = open_port()
-    print(drain(fd, 0.5), end="")
-    os.write(fd, b"\n")
-    print(drain(fd, 1.0), end="")
+    if not waitprompt(fd):
+        sys.exit("console: no shell prompt; the board is busy or wedged")
     if sys.argv[1] == "ctl":
         print(send(fd, "cat >" + sys.argv[2], 2.0), end="")
         for line in sys.argv[3:]:
