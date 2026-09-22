@@ -804,3 +804,44 @@ part's own MARC_STATUS1 afterwards -- 0x40 for a transmit that
 finished, 0x08 for one that underflowed.  Between them those three
 numbers say whether a failed transmit was given too little, given
 nothing at all, or asked for too much.
+
+The register fix that was never applied
+----------------------------------------
+
+The PKT_CFG0 correction described above was committed and did not
+happen.  The edit that was meant to change
+
+	Rpktcfg0	= 0x1c,
+
+matched nothing, because another constant sits between it and the two
+lines the edit expected after it, and a replacement that matches
+nothing changes nothing and says nothing.  Then it was "verified" by
+reading the register back -- through the same wrong constant.  A
+read-back proves the write and the read agree with each other.  It
+says nothing whatever about which register they agree about.  0x1c is
+AGC_CFG1, and "pktcfg0 0x20" in the stats was AGC_CFG1 handing back
+what had just been put in it.
+
+What the board was really saying, all along:
+
+	txtest 4   var  staged   5  trace 1 0 0 5 4 7  left 0  marc 0x08
+	txtest 40  var  staged  41  trace 1 0 0 5 4 7  left 0  marc 0x08
+	txtest 100 var  staged 101  trace 1 0 0 5 4 2  left 9  marc 0x00
+	txtest 4   fixed staged  4  trace 1 0 0 5 4 0  left 0  marc 0x40
+	txtest 40  fixed staged 40  trace 1 0 0 5 4 0  left 0  marc 0x40
+
+PKT_CFG0 was never written, so it held its reset value of 0x00, which
+is fixed packet length, with PKT_LEN at 125.  Every "variable" packet
+therefore asked the part for 125 bytes: five staged starved after
+five, forty-one after forty-one, and a hundred and one was still
+transmitting -- state 2, TX, nine bytes left -- when the five hundred
+millisecond wait gave up on it, which is the txtimeout in the stats
+and not a fault of the part's.
+
+And "txmode fixed" worked because the part was already in fixed mode.
+All that command really did was set PKT_LEN to the number of bytes
+being sent, and the part then transmitted them and said so: marc 0x40,
+"TX finished successfully", three times out of three.
+
+So the transmitter has worked the whole time.  What was wrong was one
+number in one enum, and then a check that could not see it.

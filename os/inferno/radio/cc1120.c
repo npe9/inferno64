@@ -44,11 +44,11 @@ enum {
 	Ragccfg0	= 0x1d,
 	  Agccfg0init	= 0xcf,		/* reset 0xc3, RSSI_VALID_CNT 9 */
 	Ragcgainadjust	= 0x19,		/* the RSSI offset */
-	Rpktcfg0	= 0x1c,
+	Rpktcfg0	= 0x28,
 	  Lenfixed	= 0x00,		/* PKT_CFG0.LENGTH_CONFIG = 00 */
 	  Lenvariable	= 0x20,		/* PKT_CFG0.LENGTH_CONFIG = 01 */
-	Rrfendcfg1	= 0x1e,
-	Rrfendcfg0	= 0x1f,
+	Rrfendcfg1	= 0x29,
+	Rrfendcfg0	= 0x2a,
 	Rpktlen		= 0x2e,
 
 	/* the extended space, reached through 0x2f */
@@ -701,6 +701,58 @@ cc1120ctl(Radio *r, char *buf, int n)
 
 			dwell1(rr, "scan", dwell);
 		}
+		return n;
+	}
+	if(strcmp(f[0], "reg") == 0 || strcmp(f[0], "regx") == 0){
+		/*
+		 * Read or write one of the part's registers by number,
+		 * in the normal space or the extended one.
+		 *
+		 * A bench, not an interface.  Every question asked of
+		 * this part so far has cost a flash cycle and a reset,
+		 * and the answers have been narrowing on something that
+		 * one register read would settle.  With this the board
+		 * answers at a prompt:
+		 *
+		 *	; cat >/dev/radio0/ctl
+		 *	reg 0x28		PKT_CFG0
+		 *	reg 0x28 0x20		set it
+		 *	regx 0x8f		PARTNUMBER
+		 *
+		 * It can obviously be used to put the part into a state
+		 * the driver above it does not expect.  That is the
+		 * point of a bench.
+		 */
+		int ext, addr, val;
+
+		ext = f[0][3] == 'x';
+		if(nf < 2)
+			error(Ebadctl);
+		addr = strtoul(f[1], nil, 0);
+		if(addr < 0 || addr > 0xff || (!ext && addr > 0x2e))
+			error(Ebadctl);
+		s->lock(s);
+		if(nf >= 3){
+			val = strtoul(f[2], nil, 0);
+			if(ext)
+				wrx(rr, addr, val);
+			else
+				wr(rr, addr, val);
+		}
+		val = ext? rdx(rr, addr): rd(rr, addr);
+		s->unlock(s);
+		print("%s 0x%.2x 0x%.2x\n", ext? "regx": "reg", addr, val);
+		return n;
+	}
+	if(strcmp(f[0], "pktlen") == 0 && nf == 2){
+		int len;
+
+		len = atoi(f[1]);
+		if(len < 1 || len > 255)
+			error(Ebadctl);
+		s->lock(s);
+		wr(rr, Rpktlen, len);
+		s->unlock(s);
 		return n;
 	}
 	if(strcmp(f[0], "txmode") == 0 && nf == 2){
