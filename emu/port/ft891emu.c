@@ -48,6 +48,15 @@ struct Hostport
 static Hostport hostport;
 static Radio *theradio;
 
+/*
+ * FT891DEBUG in the host environment prints every byte that goes to
+ * the port and every one that comes back.  A CAT link that is writing
+ * into a dead port and one that is writing correctly to a radio that
+ * never answers look identical from above, and this is the only place
+ * in the stack that can tell them apart.
+ */
+static int hpdebug;
+
 static void
 hplock(Serialport *p)
 {
@@ -78,11 +87,16 @@ hpwrite(Serialport *p, void *buf, int n)
 	int rv;
 
 	h = (Hostport*)p;
-	if(h->fd < 0)
+	if(h->fd < 0){
+		if(hpdebug)
+			print("ft891: write with no port open\n");
 		return -1;
+	}
 	rv = write(h->fd, buf, n);
 	if(rv > 0)
 		tcdrain(h->fd);
+	if(hpdebug)
+		print("ft891: -> %.*s (%d of %d)\n", n, (char*)buf, rv, n);
 	return rv;
 }
 
@@ -112,6 +126,8 @@ hpread(Serialport *p, void *buf, int n, int ms)
 	if(rv <= 0)
 		return 0;
 	rv = read(h->fd, buf, n);
+	if(rv > 0 && hpdebug)
+		print("ft891: <- %.*s\n", rv, (char*)buf);
 	return rv < 0? 0: rv;
 }
 
@@ -209,6 +225,8 @@ radioget(int i)
 void
 radiolink(void)
 {
+	char *e;
+
 	hostport.p.name = "host";
 	hostport.fd = -1;
 	/*
@@ -222,5 +240,27 @@ radiolink(void)
 	hostport.p.lock = hplock;
 	hostport.p.unlock = hpunlock;
 	hostport.p.ctl = hpctl;
+
+	/*
+	 * The port may be named in the environment, which matters for
+	 * more than convenience: emu in this tree falls over after a
+	 * command or two, so a session that has to set the port and
+	 * then use it may never reach the second half.  With this, one
+	 * command does something:
+	 *
+	 *	FT891PORT=/dev/cu.usbserial-00906F050 \
+	 *		emu sh -c "echo freq 14074000 >'#W/radio0/ctl'"
+	 *
+	 * The ctl file still takes "port" for the ordinary case.
+	 */
+	hpdebug = getenv("FT891DEBUG") != nil;
+	e = getenv("FT891PORT");
+	if(e != nil && *e != 0){
+		if(hpopen(&hostport, e, hostport.rate) < 0)
+			print("ft891: cannot open %s\n", e);
+		else
+			print("ft891: %s at %d baud\n", e, hostport.rate);
+	}
+
 	theradio = ft891init(&hostport.p);
 }
