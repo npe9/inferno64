@@ -363,6 +363,51 @@ reportmovingpin(void)
 		clockpoll();
 }
 
+/*
+ * TEMPORARY.  The sweep proved PD5 reaches the click -- bit-banged as
+ * a plain GPIO it arrives -- and the USART driving the same pin
+ * arrives not at all.  So the pin and the wire are not in question and
+ * the peripheral is.  Report its registers, and the clocks and the mux
+ * it depends on, over the channel that does work.
+ */
+static char *
+puthex(char *p, char *name, ulong v)
+{
+	static char hex[] = "0123456789abcdef";
+	int i;
+
+	while(*name)
+		*p++ = *name++;
+	*p++ = '=';
+	for(i = 28; i >= 0; i -= 4)
+		*p++ = hex[(v>>i) & 0xf];
+	*p++ = ' ';
+	return p;
+}
+
+void
+bangregs(void)
+{
+	char buf[160], *p;
+	Ctlr *c;
+
+	c = &stm32f4ctlr;
+	p = buf;
+	p = puthex(p, "apb1en", *(volatile ulong*)RCC_APB1ENR);
+	p = puthex(p, "ahb1en", *(volatile ulong*)RCC_AHB1ENR);
+	p = puthex(p, "moder", *(volatile ulong*)(GPIOD+GPIO_MODER));
+	p = puthex(p, "afrl", *(volatile ulong*)(GPIOD+GPIO_AFRL));
+	*p++ = '\r'; *p++ = '\n';
+	p = puthex(p, "brr", csrr(c, UartBrr));
+	p = puthex(p, "cr1", csrr(c, UartCr1));
+	p = puthex(p, "sr", csrr(c, UartSr));
+	p = puthex(p, "apb1hz", uarthz());
+	p = puthex(p, "cpuhz", m != nil? m->cpuhz: 0);
+	*p++ = '\r'; *p++ = '\n';
+	*p = 0;
+	bitbang(GPIOD, 5, buf);
+}
+
 void
 bangallpins(void)
 {

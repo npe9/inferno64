@@ -46,6 +46,7 @@ void	trapinit(void);
 void	uartboardinit(void);
 void	otherusarts(void);
 void	bangallpins(void);
+void	bangregs(void);
 void	ledpin(int, int);
 void	findmovingpin(void);
 void	reportmovingpin(void);
