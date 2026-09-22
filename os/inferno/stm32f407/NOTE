@@ -422,7 +422,37 @@ at VREF+ = 3.3V, which is what a clicker 2 ties it to; then, for the
 two channels where more can be said, degrees and the battery's own
 millivolts.
 
-Those numbers are from qemu and none of them is a voltage.  What they
+(Those are the board's own numbers; what qemu prints is below.)
+
+On silicon, and this is the first thing on this board that produced a
+physical measurement rather than a register read:
+
+	temp 944 760 25.0	the die, at room temperature
+	vref 1516 1221		the 1.21V reference, so VREF+ is 3.27V
+	vbat 2045 1647 3294	the 3.3V rail, through the divider
+	an1 438 352		mikroBUS 1's AN, floating: an empty socket
+	an2 0 0			mikroBUS 2's AN, held low by the CC1120
+
+vref is the one that validates the rest.  1221mV read against a
+datasheet typical of 1.21V says VREF+ is 3.27V, within a percent of
+the 3.3V this file assumes, so every other millivolt figure is good to
+about that.  And the temperature landing on 25.0 with uncalibrated
+constants is luck as much as anything, but it is the right order.
+
+vbat is where the board corrected the driver.  It first read 6588,
+which is not a voltage this board has: an F405 or an F407 halves VBAT
+before the converter, and it is an F427 or an F429 that quarters it.
+With VBAT tied to the 3.3V rail the pin reads 1647mV, which is half.
+The file said four, and no emulator could have caught it, because
+under qemu the count is synthetic and four times a synthetic number is
+just as synthetic.
+
+an2 reading exactly zero rather than floating is itself information:
+mikroBUS 2's AN is the click's GPIO0, and a CC1120 sitting in that
+socket drives it.  An analogue input on a socket with a part in it is
+an output belonging to something else.
+
+Those other numbers are from qemu and none of them is a voltage.  What they
 do show is the thing software can get wrong: 263 is channel 2 in the
 top bits with a counter of 7 in the rest, 398 is channel 3 with 14,
 and so on up to channel 18 with 35 -- so each conversion went to the
@@ -440,3 +470,36 @@ honest way to get the true VREF+ and is in the file for that.
 On silicon: not run.  #P is bound into /dev by os/inferno/init/
 armv7minit.b, which this board already did for the arch files it did
 not have until now.
+
+The radio, on silicon: not there
+--------------------------------
+
+This board's first boot with the radio in it serves an empty #W:
+
+	; ls '#W'
+	; echo scan >/dev/radio0/ctl
+	sh: cannot open /dev/radio0/ctl: file does not exist
+
+which means cc1120init() read a PARTNUMBER that was not 0x48 and
+declined to register a radio, exactly as it is meant to.  Everything
+demonstrated for the CC1120 so far -- the packet path, the AX.25 UI
+frame, the band sweep -- was between two qemu kernels.  The part in
+mikroBUS 2 has never answered.
+
+So #P/spi2 exists to ask again without a reboot:
+
+	; cat /dev/spi2
+	status 0x00 partnumber 0x00 partversion 0x00 miso 0
+
+and "echo reset >/dev/spi2" pulses RESET_N and leaves the part to
+start.  Under qemu with -machine netduinoplus2,radio=on the same file
+reads
+
+	status 0x10 partnumber 0x48 partversion 0x21 miso 0
+
+so the file is known to report a part when there is one to report.
+0x00 everywhere means SO never went high while the part number was
+being clocked out; 0xff everywhere would mean nothing is driving SO at
+all.  Which of those the board shows is the next thing worth knowing,
+and the numbers say which of chip select, clock, MISO or the part
+itself to look at.

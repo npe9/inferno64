@@ -4230,6 +4230,70 @@ it is the part software gets wrong.  The millivolts and the 387.8
 degrees are arithmetic over fiction and are left visible rather than
 suppressed, because a file that hides its units on the emulator grows
 a different bug on the board.
+.NH 2
+And then the board read four volts too many
+.PP
+The first thing this port has done that was a physical measurement
+rather than a register read:
+.P1
+temp 944 760 25.0
+vref 1516 1221
+vbat 2045 1647 6588
+an1 438 352
+an2 0 0
+.P2
+Three of those are right and one is impossible.  The internal
+reference reading 1221mV against a datasheet typical of 1.21V says
+VREF+ is 3.27V, within a percent of the 3.3V the file assumes, which
+makes every other millivolt figure good to about that; the die at 25.0
+degrees is the right order for a bench.  an1 is an empty socket's
+floating pin and means nothing, and an2 reading exactly zero rather
+than floating is information in itself \- mikroBUS 2's AN is the
+click's GPIO0, and the CC1120 in that socket drives it.  An analogue
+input on a socket with a part in it is an output belonging to
+something else.
+.PP
+vbat said 6588 millivolts, and this board has no six volt rail.  An
+F405 or an F407 halves VBAT before the converter; it is an F427 or an
+F429 that quarters it, and the file had taken the wrong one of those
+two.  With VBAT tied to the 3.3V rail the pin reads 1647mV, which is
+half, and the correct figure is 3294.
+.PP
+No emulator could have caught that.  Under qemu the count is invented,
+and four times an invented number is exactly as plausible as twice
+one.  It is the first thing on this board that only the board could
+say, which is the whole argument for putting a kernel on silicon
+rather than being satisfied with a model of it \- and it was one
+constant, in a file that had been read twice by then.
+.NH 2
+The radio is not there
+.PP
+The same boot serves an empty
+.CW #W :
+.P1
+; ls '#W'
+; echo scan >/dev/radio0/ctl
+sh: cannot open /dev/radio0/ctl: file does not exist
+.P2
+.CW cc1120init()
+read a part number that was not 0x48 and declined to register a radio,
+which is what it is written to do.  Everything demonstrated for the
+CC1120 so far \- the packet path, the AX.25 frame, the band sweep \-
+was between two qemu kernels, and the part in mikroBUS 2 has never
+answered.  That is worth stating plainly because the amount of working
+software above it might otherwise suggest that it had.
+.PP
+.CW #P/spi2
+exists to ask again without a reboot: it repeats the transaction and
+prints the raw bytes, and
+.CW "echo reset >/dev/spi2"
+pulses RESET_N.  Under qemu with a part fitted it reads
+.CW "status 0x10 partnumber 0x48 partversion 0x21" ,
+so it is known to report one when there is one; on the board it reads
+zeros.  All zeros means SO never went high while the part number was
+clocked out, and 0xff would mean nothing is driving SO at all \- which
+is the difference between a part that is not ready and a socket that
+is empty, and it is the next thing to find out.
 .NH 1
 Unrelated breakage found on the way
 .PP

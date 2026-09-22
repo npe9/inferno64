@@ -21,17 +21,25 @@
  * Reading /dev/adc converts each of the five, in one pass, and gives a
  * line per channel:
  *
- *	an1 2047 1650
- *	an2 2047 1650
- *	temp 890 717 -1.0
- *	vref 1500 1209
- *	vbat 2000 1612 6448
+ *	an1 438 352
+ *	an2 0 0
+ *	temp 944 760 25.0
+ *	vref 1516 1221
+ *	vbat 2045 1647 3294
  *
  * The raw count first, because that is what the part actually said,
  * then millivolts, then for the two channels where more can be said,
  * the thing being measured: degrees for the temperature sensor and the
  * battery's own millivolts for VBAT, which reaches the converter
- * through an internal divider by four.
+ * through an internal divider.
+ *
+ * That is a real board's reading.  an2 is zero because mikroBUS 2's AN
+ * is the click's GPIO0 and a CC1120 is sitting in that socket driving
+ * it low -- the pin is an output belonging to something else, which is
+ * what an analogue input on a socket with a part in it looks like.
+ * an1 is an empty socket's floating pin and means nothing.  vref at
+ * 1221mV against the 1.21V the datasheet gives says VREF+ is 3.27V, so
+ * the 3300 below is good to within a percent.
  *
  * The millivolts assume VREF+ is 3.3V, which is what a clicker 2 ties
  * it to, and the temperature uses the datasheet's typical V25 of 760mV
@@ -76,6 +84,18 @@ enum {
 	Vrefmv	= 3300,			/* VREF+ on a clicker 2 */
 	V25	= 760,			/* datasheet typical, millivolts */
 	Slopeq	= 25,			/* 2.5mV per degree, in tenths */
+	/*
+	 * VBAT does not reach the converter directly: an F405 or F407
+	 * halves it first.  An F427 or F429 quarters it instead, and
+	 * puts it on channel 18 shared with the temperature sensor, so
+	 * this constant and the channel above it are both part-specific
+	 * and not family-specific.  Measured here, and that is how the
+	 * four this file had first was found: with VBAT tied to the
+	 * 3.3V rail the pin read 1647mV, which is half and not a
+	 * quarter, and the file was reporting a 6.6V battery on a board
+	 * that has no such rail.
+	 */
+	Vbatdiv	= 2,
 
 	Spins	= 100000,
 };
@@ -201,7 +221,7 @@ adcread(Chan*, void *a, s32 n, s64 offset)
 			p = seprint(p, e, " %d.%d", t/10, t < 0? -t%10: t%10);
 			break;
 		case 18:
-			p = seprint(p, e, " %d", 4*mv);	/* internal /4 */
+			p = seprint(p, e, " %d", Vbatdiv*mv);
 			break;
 		}
 		p = seprint(p, e, "\n");

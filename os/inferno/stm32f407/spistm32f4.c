@@ -4,6 +4,7 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"io.h"
+#include	"../port/error.h"
 #include	"../radio/cc1120.h"
 
 /*
@@ -58,6 +59,9 @@ enum {
 static u32 *spi;
 static Lock buslock;
 static Radio *radio;
+
+static s32 spi2read(Chan*, void*, s32, s64);
+static s32 spi2write(Chan*, void*, s32, s64);
 
 static void
 gpioout(ulong port, int pin)
@@ -242,6 +246,13 @@ spistm32f4link(void)
 	gpioset(GPIOE, Rstpin, 1);
 	usdelay(5000);
 
+	/*
+	 * Before the part is looked for, not after: when it is not
+	 * found this function returns, and that is exactly when a file
+	 * that says what the bus read is worth having.
+	 */
+	addarchfile("spi2", 0664, spi2read, spi2write);
+
 	radio = cc1120init(&spidev, EXTI15_10IRQ);
 	if(radio == nil)
 		return;
@@ -275,3 +286,90 @@ radioget(int i)
 		return nil;
 	return radio;
 }
+
+/*
+ * What the bus says right now, at #P/spi2.
+ *
+ * When cc1120init() finds no part, #W serves an empty directory and
+ * the only account of why is a line printed at boot, which on a board
+ * has usually scrolled away by the time anybody wants it.  This does
+ * the same transaction again on demand and reports the raw bytes, so
+ * the question "is the click there" can be asked at a shell prompt.
+ *
+ * What the numbers mean:
+ *	0x00 everywhere -- SO is low the whole time.  Either the part
+ *	is holding it low because it is not ready, or MISO is not
+ *	reaching this pin at all.  The miso field distinguishes them:
+ *	it is the pin read directly, and a floating input with nothing
+ *	driving it reads whatever it last saw.
+ *	0xff everywhere -- nothing is driving SO and it is pulled up,
+ *	which is what an empty socket looks like.
+ *	partnumber 0x48 -- a CC1120.  0x40 is a CC1121 and 0x58 a
+ *	CC1125, which are the same interface and a different radio.
+ *
+ * status is the byte the part returns while the header is going out:
+ * bit 7 is CHIP_RDYn, so a zero there means the part is awake, and
+ * bits 6 to 4 are its state (SWRU295E 3.1.2).
+ */
+static int
+extrd(int addr)
+{
+	int v;
+
+	spilock(&spidev);
+	spiselect(&spidev, 1);
+	spibyte(&spidev, 0x80|0x2f);		/* read, extended space */
+	spibyte(&spidev, addr);
+	v = spibyte(&spidev, 0);
+	spiselect(&spidev, 0);
+	spiunlock(&spidev);
+	return v;
+}
+
+static s32
+spi2read(Chan*, void *a, s32 n, s64 offset)
+{
+	char buf[128];
+	int st, pn, pv, miso;
+
+	spilock(&spidev);
+	spiselect(&spidev, 1);
+	st = spibyte(&spidev, 0x3d);		/* SNOP: returns the status */
+	spiselect(&spidev, 0);
+	spiunlock(&spidev);
+
+	pn = extrd(0x8f);			/* PARTNUMBER */
+	pv = extrd(0x90);			/* PARTVERSION */
+	miso = (*(volatile ulong*)(GPIOB+GPIO_IDR) >> 14) & 1;
+
+	snprint(buf, sizeof buf,
+		"status 0x%.2x partnumber 0x%.2x partversion 0x%.2x miso %d\n",
+		st, pn, pv, miso);
+	return readstr(offset, a, n, buf);
+}
+
+/*
+ * Pulse RESET_N and say what the part looks like afterwards: the only
+ * thing that can be done to a part that is not answering, short of
+ * moving it to the other socket.
+ */
+static s32
+spi2write(Chan *c, void *a, s32 n, s64 offset)
+{
+	char buf[32];
+
+	if(n <= 0 || n >= sizeof buf)
+		error(Ebadarg);
+	memmove(buf, a, n);
+	buf[n] = 0;
+	if(strncmp(buf, "reset", 5) != 0)
+		error(Ebadctl);
+	gpioset(GPIOE, Rstpin, 0);
+	usdelay(200);
+	gpioset(GPIOE, Rstpin, 1);
+	usdelay(5000);
+	USED(c); USED(offset);
+	return n;
+}
+
+
