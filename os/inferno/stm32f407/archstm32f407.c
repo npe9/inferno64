@@ -161,8 +161,8 @@ setclock(void)
  * kernel is running at all, or running and talking to the wrong pins.
  * LD1 before the clock is touched, LD2 once the console is up.
  */
-static void
-led(int pin, int on)
+void
+ledpin(int pin, int on)
 {
 	ulong v;
 
@@ -185,7 +185,7 @@ archreset(void)
 
 	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | Ahb1Gpioe);
 	coherence();
-	led(12, 1);				/* TEMPORARY: reached main */
+	ledpin(12, 1);				/* TEMPORARY: reached main */
 
 	hz = setclock();
 	if(m != nil)
@@ -207,7 +207,7 @@ archreset(void)
 	 * the one CONSUSART should name.
 	 */
 	otherusarts();
-	led(15, 1);				/* TEMPORARY: console is up;
+	ledpin(15, 1);				/* TEMPORARY: console is up;
 						 * idlehands() blinks it from
 						 * here on */
 }
@@ -253,7 +253,7 @@ idlehands(void)
 	if(m != nil && m->ticks/50 != last){
 		last = m->ticks/50;
 		on = !on;
-		led(15, on);
+		ledpin(15, on);
 		/*
 		 * TEMPORARY, with the rest.  otherusarts() writes its
 		 * lines once, in archreset(), microseconds after reset
@@ -265,9 +265,12 @@ idlehands(void)
 		 * listener at the wrong baud can still be measured
 		 * from.
 		 */
-		otherusarts();
-		if(on)
-			bangallpins();	/* TEMPORARY: once a second */
+		/*
+		 * TEMPORARY: find the pin the click is on, then say
+		 * which it is on the LEDs, over and over.
+		 */
+		findmovingpin();
+		reportmovingpin();
 	}
 	idle();
 }

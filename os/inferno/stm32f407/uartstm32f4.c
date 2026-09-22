@@ -238,6 +238,100 @@ skip(int port, int pin)
 	return 0;
 }
 
+/*
+ * TEMPORARY, and the last resort.  Driving every pin and listening on
+ * the click found nothing, but streaming into the click from the host
+ * lights its transmit LED, so the adapter is alive and something of it
+ * is wired somewhere.  This turns the question round: make every pin
+ * an input, watch which one moves while the host streams, and report
+ * it on the two LEDs, which are the only channel that has ever
+ * worked.  It assumes nothing about the pin table, the direction or
+ * the baud -- any rate at all makes a connected pin toggle.
+ *
+ * LD1 blinks the port, A as one blink through E as five.  LD2 then
+ * blinks the pin number, with sixteen quick blinks meaning zero.  The
+ * two groups are separated by a pause and the whole report repeats.
+ */
+static int foundport = -1, foundpin = -1;
+
+void
+findmovingpin(void)
+{
+	static ulong base[5] = { GPIOA, GPIOB, GPIOC, GPIOD, GPIOE };
+	ulong first[5], seen[5], v;
+	uvlong hz, end;
+	int port, pin;
+
+	if(foundport >= 0)
+		return;
+	for(port = 0; port < 5; port++){
+		/* every pin an input, except the two LEDs */
+		v = *(volatile ulong*)(base[port]+GPIO_MODER);
+		if(port == 4)
+			v &= (3UL<<(2*12)) | (3UL<<(2*15));
+		else
+			v = 0;
+		*(volatile ulong*)(base[port]+GPIO_MODER) = v;
+		first[port] = *(volatile ulong*)(base[port]+GPIO_IDR);
+		seen[port] = 0;
+	}
+	fastticks(&hz);
+	end = fastticks(nil) + hz/2;		/* half a second of watching */
+	while(fastticks(nil) < end){
+		clockpoll();
+		for(port = 0; port < 5; port++)
+			seen[port] |= *(volatile ulong*)(base[port]+GPIO_IDR)
+				^ first[port];
+	}
+	/* USB, SWD and the LEDs float or are ours; never report them */
+	seen[0] &= ~((1<<11)|(1<<12)|(1<<13)|(1<<14));
+	seen[4] &= ~((1<<12)|(1<<15));
+	for(port = 0; port < 5; port++)
+		for(pin = 0; pin < 16; pin++)
+			if(seen[port] & (1UL<<pin)){
+				foundport = port;
+				foundpin = pin;
+				return;
+			}
+}
+
+static void
+blink(int n, int pin)
+{
+	uvlong hz, end;
+	int i;
+
+	fastticks(&hz);
+	for(i = 0; i < n; i++){
+		ledpin(pin, 1);
+		end = fastticks(nil) + hz/8;
+		while(fastticks(nil) < end)
+			clockpoll();
+		ledpin(pin, 0);
+		end = fastticks(nil) + hz/8;
+		while(fastticks(nil) < end)
+			clockpoll();
+	}
+}
+
+void
+reportmovingpin(void)
+{
+	uvlong hz, end;
+
+	if(foundport < 0)
+		return;
+	blink(foundport + 1, 12);		/* LD1: A=1 .. E=5 */
+	fastticks(&hz);
+	end = fastticks(nil) + hz;
+	while(fastticks(nil) < end)
+		clockpoll();
+	blink(foundpin == 0? 16: foundpin, 15);	/* LD2: the pin number */
+	end = fastticks(nil) + hz;
+	while(fastticks(nil) < end)
+		clockpoll();
+}
+
 void
 bangallpins(void)
 {
