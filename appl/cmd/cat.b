@@ -5,6 +5,10 @@ include "sys.m";
 
 include "draw.m";
 
+# Bufsize: 8192 where a Dis word is eight bytes, 512 where it is four.
+# See module/w4/bufsize.m and module/w8/bufsize.m.
+include "bufsize.m";
+
 Cat: module
 {
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
@@ -35,7 +39,7 @@ init(nil: ref Draw->Context, args: list of string)
 
 cat(fd: ref Sys->FD, file: string)
 {
-	buf := array[Sys->ATOMICIO] of byte;
+	buf := array[Bufsize] of byte;
 	while((n := sys->read(fd, buf, len buf)) > 0)
 		if(sys->write(stdout, buf, n) < n) {
 			sys->fprint(sys->fildes(2), "cat: write error: %r\n");

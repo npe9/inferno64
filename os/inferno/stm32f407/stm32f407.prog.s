@@ -37872,7 +37872,7 @@ DATA	_dis_cat_dis+600(SB)/4, $0x1b0c
 DATA	_dis_cat_dis+604(SB)/4, $0x0
 DATA	_dis_cat_dis+608(SB)/4, $0x0
 DATA	_dis_cat_dis+612(SB)/4, $0x1519d
-DATA	_dis_cat_dis+616(SB)/4, $0x2000
+DATA	_dis_cat_dis+616(SB)/4, $0x200
 DATA	_dis_cat_dis+620(SB)/4, $0x30
 DATA	_dis_cat_dis+624(SB)/4, $0x3410b
 DATA	_dis_cat_dis+628(SB)/4, $0x2c

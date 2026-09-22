@@ -49,10 +49,28 @@ poolsizeinit(void)
 	poolsize(imagmem, (nb/100)*image_pool_pcnt, 1);
 }
 
+/*
+ * A real reset, which is what /dev/reboot is for.  This used to call
+ * exit(0), and exit() on this architecture prints "Hit the reset
+ * button" and spins -- so the one thing the file exists to do was the
+ * one thing it did not.
+ *
+ * SYSRESETREQ in AIRCR is the architecture's own reset and needs no
+ * help from the board: every Cortex-M has it, at the same address,
+ * behind the same write key.  On a part whose flash holds a bootloader
+ * it lands back in that bootloader, which means a board can be
+ * reprogrammed without anyone touching it -- and on
+ * os/inferno/stm32f407 that is the difference between a development
+ * cycle and a trip across the room.
+ */
 void
 reboot(void)
 {
-	exit(0);
+	chandevshutdown();
+	*(ulong*)SCB_AIRCR = (0x5faUL<<16) | (1<<2);	/* VECTKEY, SYSRESETREQ */
+	coherence();
+	for(;;)
+		;
 }
 
 void

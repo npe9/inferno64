@@ -47,7 +47,7 @@ static Xipmod tab[] = {
 	{ "/dis/lib/daytime.dis", 4778, 709, _dis_lib_daytime_dis, 23, _dis_lib_daytime_distype },
 	{ "/dis/lib/env.dis", 968, 146, _dis_lib_env_dis, 8, _dis_lib_env_distype },
 	{ "/dis/echo.dis", 433, 56, _dis_echo_dis, 3, _dis_echo_distype },
-	{ "/dis/cat.dis", 707, 92, _dis_cat_dis, 6, _dis_cat_distype },
+	{ "/dis/cat.dis", 705, 92, _dis_cat_dis, 6, _dis_cat_distype },
 	{ "/dis/ls.dis", 3906, 527, _dis_ls_dis, 18, _dis_ls_distype },
 	{ "/dis/bind.dis", 855, 102, _dis_bind_dis, 7, _dis_bind_distype },
 	{ nil, 0, 0, nil, 0, nil },
