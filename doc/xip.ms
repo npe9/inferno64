@@ -3840,6 +3840,112 @@ and survives a command that runs out afterwards, 56/43/1 runs
 but the same failure kills the shell, and 52/47/1 does not run it at
 all.
 .NH 1
+Ahead of time, not just ahead of load
+.PP
+XIP as this document has it stops at the
+.CW Inst
+array: the decode that
+.CW parsemod
+would do at load time is done at build time instead, and the array
+lands in flash.  That is a large saving \- 73536 bytes for
+.CW /dis/sh.dis
+alone, on a board with 176128 \- and it leaves two costs untouched.
+.PP
+The first is the array itself.  Twelve bytes an instruction on a
+four-byte Dis word, and it is in flash rather than RAM, but a megabyte
+of flash is not unlimited either: the kernel for
+.CW os/inferno/stm32f407
+is 541K of 1M and about 124K of that is decoded arrays.  Adding much
+more userland runs out of flash rather than RAM.
+.PP
+The second is the interpreter.  Every instruction costs a dispatch
+through
+.CW optab
+plus the operand decode that
+.CW xec
+does from
+.CW Inst.add ,
+on a 168MHz part with no cache.  The JIT exists for exactly this and
+cannot be used here: it compiles into RAM, and RAM is the thing there
+is none of.
+.CW cflag
+is 0 in this board's configuration for that reason and not by oversight.
+.NH 2
+What an ahead-of-time compiler would replace
+.PP
+Compile Dis to Thumb at build time, lay the native code in the text
+segment the way
+.CW utils/dis2s
+lays the
+.CW Inst
+array, and neither cost survives.  There is no array to hold, decoded
+or otherwise, and no dispatch: the module's code is code.
+.PP
+The code generator already exists.
+.CW libinterp/comp-thumb.c
+is the JIT's Thumb back end, one of twelve in that directory, and it
+already knows how to turn a
+.CW Prog 's
+instructions into instructions for this instruction set.  What it does
+not do is emit them anywhere but into memory it has just allocated.
+.NH 2
+What is actually hard
+.PP
+Three things, and none of them is the code generation.
+.IP \(bu
+.B Addresses.
+The JIT emits code knowing where the module's data segment and frame
+pointer are, because it runs after the module is loaded.  A build-time
+compiler knows neither.  The code has to reach
+.CW R.MP
+and
+.CW R.FP
+through the register convention the interpreter already keeps them in,
+which
+.CW comp-thumb.c
+mostly does, and anything it resolves as a constant address at compile
+time becomes a relocation for the linker or a fixup at load.
+.IP \(bu
+.B The garbage collector.
+Dis is a garbage-collected machine and the collector finds pointers by
+walking frames against their type descriptors.  Those descriptors are
+per-instruction-range, and a compiled frame has to present the same map
+at the same points, which means the compiler emits metadata beside the
+code and the collector learns to read it.  This is where an AOT compiler
+for a GC'd bytecode is different in kind from one for C.
+.IP \(bu
+.B What still has to be interpreted.
+.CW load ,
+.CW mcall ,
+channel operations and the rest go through the interpreter's own
+machinery whatever the arithmetic compiles to.  A module compiled ahead
+of time is not a module that has left Dis behind; it is one whose
+straight-line code is native and whose everything else still calls into
+.CW libinterp .
+.NH 2
+What it is worth, and how to find out cheaply
+.PP
+The measurement to make first costs nothing and settles whether the rest
+is worth attempting: compile one module with the existing JIT on a
+machine with memory,
+.CW mps2
+or
+.CW pc64 ,
+and compare the size of the generated Thumb against the size of the
+.CW Inst
+array it replaces.  If native code for
+.CW sh.dis
+is smaller than its 73536 bytes of
+.CW Inst ,
+an AOT compiler saves flash as well as time and the case is easy.  If it
+is larger \- which it may well be, since an
+.CW Inst
+is a compact three-address form and Thumb is not \- then the saving is
+speed and RAM only, and the flash cost has to be weighed against how
+much userland a board wants.
+.PP
+That number is not known.  It should be, before anything is built.
+.NH 1
 Unrelated breakage found on the way
 .PP
 Two things in the tree are broken independently of this work, found while
