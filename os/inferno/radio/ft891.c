@@ -484,6 +484,14 @@ ft891init(Serialport *p)
 	f = malloc(sizeof(Ft891));
 	if(f == nil)
 		return nil;
+	/*
+	 * Zeroed, and not only for tidiness: mode indexes
+	 * ft891modename, and a driver that has not yet been told a mode
+	 * would read past the end of it on whatever malloc left behind.
+	 * emu's malloc happens to zero and a board kernel's does not
+	 * have to.
+	 */
+	memset(f, 0, sizeof(Ft891));
 	f->r.dev = &ft891dev;
 	f->port = p;
 

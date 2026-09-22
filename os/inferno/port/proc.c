@@ -685,6 +685,11 @@ newproc(void)
 
 	lock(&procalloc);
 	p = procalloc.free;
+	/*
+	 * The malloc here is the late one KSTACKPREALLOC exists to
+	 * avoid; see procinit().  A board that preallocates never
+	 * reaches it.
+	 */
 	if(p == nil || (p->kstack == nil && (p->kstack = malloc(KSTACK)) == nil)){
 		unlock(&procalloc);
 		return nil;
@@ -817,6 +822,63 @@ procinit(void)
 	for(i=0; i<conf.nproc-1; i++,p++)
 		p->qnext = p+1;
 	p->qnext = 0;
+
+#ifdef KSTACKPREALLOC
+	/*
+	 * Every kernel stack, here, once, out of xalloc.
+	 *
+	 * newproc() otherwise mallocs one the first time each Proc is
+	 * used and keeps it for ever after -- procs go back on the free
+	 * list with their stacks attached, and nothing frees one.  So
+	 * the total is the same either way; what differs is when it is
+	 * asked for and out of what.  Asked for later, out of the main
+	 * pool, alongside everything a running system has allocated, a
+	 * 4096-byte request fails when the pool is merely fragmented,
+	 * and it fails at a fork -- which is where a shell is when it
+	 * opens a file with ">", so on a board with 167936 bytes and a
+	 * radio registered the failure is "the second command of a
+	 * boot".  Measured under qemu: two stacks can be had after boot
+	 * and the third fork faults with SP below the bottom of CCM.
+	 *
+	 * A kernel stack is the easiest allocation in the system to get
+	 * right: they are all the same size, there are conf.nproc of
+	 * them, and the number never grows.  Taken in one piece before
+	 * the pools exist they cannot fragment and cannot fail late.
+	 *
+	 * It is a small-machine strategy and is enabled per board,
+	 * because conf.nproc * KSTACK is held from boot whether or not
+	 * the procs are ever used: 5 * 4096 here is 20480 bytes of
+	 * 167936, and a port with conf.nproc in the thousands would be
+	 * reserving megabytes against a peak it never reaches.
+	 */
+	{
+		uchar *k;
+
+		k = xalloc(conf.nproc*KSTACK);
+		if(k == nil){
+			xsummary();
+			panic("cannot allocate %d kernel stacks (%dK)",
+				(int)conf.nproc, (int)(conf.nproc*KSTACK/1024));
+		}
+		for(i = 0, p = procalloc.arena; i < conf.nproc; i++, p++){
+			p->kstack = (char*)(k + i*KSTACK);
+#ifdef KSTACKWATCH
+			/*
+			 * The same pattern newproc() lays down, and for
+			 * the same reader.  kstackused() skips a proc
+			 * whose kstack is nil, which used to be every
+			 * proc that had not run; now they all have one,
+			 * so a stack that has never been used has to
+			 * look untouched or the high-water mark reads
+			 * KSTACK of KSTACK and means nothing.
+			 */
+			memset(p->kstack, 0xbe, KSTACK-64);
+#endif
+		}
+		print("procinit %d kernel stacks of %d at %#p\n",
+			(int)conf.nproc, KSTACK, k);
+	}
+#endif
 
 	pidinit();
 	/* debugkey('p', "processes", procdump, 0); */

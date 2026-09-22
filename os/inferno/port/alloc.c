@@ -1025,6 +1025,7 @@ void*
 smalloc(uintptr size)
 {
 	void *v;
+	int tries;
 
 	/*
 	 * A live "arena too large: main size 4178666939 ... cursize
@@ -1053,10 +1054,23 @@ smalloc(uintptr size)
 	if(size > mainmem->maxsize)
 		panic("smalloc: size %zud > mainmem maxsize %zud, pc=%#p",
 			size, mainmem->maxsize, getcallerpc(&size));
-	for(;;) {
+	/*
+	 * And say so if it is not coming.  This loop waits for ever by
+	 * design -- the caller cannot be told no -- but a kernel that
+	 * waits for ever in silence is indistinguishable from one that
+	 * has crashed, and on a small machine the two are reached by
+	 * the same command.  A second of waiting is already pathological
+	 * on any of these ports, so one line naming the size and the
+	 * caller turns a dead console into a diagnosis.  It prints once
+	 * per call and not once per retry.
+	 */
+	for(tries = 0;; tries++) {
 		v = poolalloc(mainmem, size);
 		if(v != nil)
 			break;
+		if(tries == 10)
+			print("smalloc: %zud not available, waiting; pc=%#p\n",
+				size, getcallerpc(&size));
 		tsleep(&up->sleep, return0, 0, 100);
 	}
 	setmalloctag(v, getcallerpc(&size));

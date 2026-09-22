@@ -62,8 +62,8 @@ PhysUart* physuart[] = {
 	nil,
 };
 
-	int main_pool_pcnt = 53;
-	int heap_pool_pcnt = 46;
+	int main_pool_pcnt = 50;
+	int heap_pool_pcnt = 49;
 	int image_pool_pcnt = 1;
 	int cflag = 0;
 	int consoleprint = 1;

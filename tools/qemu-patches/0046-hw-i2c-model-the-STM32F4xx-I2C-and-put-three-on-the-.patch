@@ -48,8 +48,9 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
  hw/i2c/Kconfig                 |   4 +
  hw/i2c/meson.build             |   1 +
  hw/i2c/stm32f4xx_i2c.c         | 469 +++++++++++++++++++++++++++++++++
+ include/hw/arm/stm32f405_soc.h |   3 +
  include/hw/i2c/stm32f4xx_i2c.h |  81 ++++++
- 6 files changed, 582 insertions(+), 3 deletions(-)
+ 7 files changed, 585 insertions(+), 3 deletions(-)
  create mode 100644 hw/i2c/stm32f4xx_i2c.c
  create mode 100644 include/hw/i2c/stm32f4xx_i2c.h
 
@@ -642,6 +643,34 @@ index 0000000..03e6f26
 +}
 +
 +type_init(stm32f4xx_i2c_register_types)
+diff --git a/include/hw/arm/stm32f405_soc.h b/include/hw/arm/stm32f405_soc.h
+index ba59dee..ae5abff 100644
+--- a/include/hw/arm/stm32f405_soc.h
++++ b/include/hw/arm/stm32f405_soc.h
+@@ -34,6 +34,7 @@
+ #include "hw/misc/stm32f4xx_exti.h"
+ #include "hw/or-irq.h"
+ #include "hw/ssi/stm32f2xx_spi.h"
++#include "hw/i2c/stm32f4xx_i2c.h"
+ #include "hw/arm/armv7m.h"
+ #include "qom/object.h"
+ 
+@@ -45,6 +46,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(STM32F405State, STM32F405_SOC)
+ #define STM_NUM_ADCS 6
+ #define STM_NUM_SPIS 6
+ #define STM_NUM_GPIOS 9
++#define STM_NUM_I2CS 3
+ 
+ #define FLASH_BASE_ADDRESS 0x08000000
+ #define FLASH_SIZE (1024 * 1024)
+@@ -78,6 +80,7 @@ struct STM32F405State {
+     STM32F2XXSPIState spi[STM_NUM_SPIS];
+ 
+     Stm32f4xxGpioState gpio[STM_NUM_GPIOS];
++    STM32F4xxI2CState i2c[STM_NUM_I2CS];
+ 
+     MemoryRegion ccm;
+     MemoryRegion bkpsram;
 diff --git a/include/hw/i2c/stm32f4xx_i2c.h b/include/hw/i2c/stm32f4xx_i2c.h
 new file mode 100644
 index 0000000..ae6ff78

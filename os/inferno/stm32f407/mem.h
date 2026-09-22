@@ -90,7 +90,8 @@
 #define	MAXMACH		1
 #define	HZ		100
 /*
- * The kernel stack, one per proc, malloc(KSTACK) out of main.
+ * The kernel stack, one per proc, xalloc'd at boot; see
+ * KSTACKPREALLOC below.
  *
  * 4096 is inherited and 2476 is the deepest any proc here has actually
  * gone -- measured, not guessed, by KSTACKWATCH below: newproc() fills
@@ -106,6 +107,16 @@
  * and can be watched.
  */
 #define	KSTACK		(4*1024)
+/*
+ * Take all conf.nproc stacks from xalloc at boot rather than letting
+ * newproc() malloc each one the first time its Proc is used.  Nothing
+ * frees a kernel stack -- a dead proc goes back on the free list with
+ * its stack attached -- so the total is the same either way; what
+ * differs is that a late 4096-byte request out of a fragmented main
+ * pool fails, and it fails at a fork, which is where the shell is
+ * when it opens a file with ">".  See os/inferno/port/proc.c.
+ */
+#define	KSTACKPREALLOC	1
 #define	KSTACKWATCH	1	/* measure it; see os/inferno/port/proc.c */
 #define	NPROC		5
 #define	CONFNAME	"stm32f407"

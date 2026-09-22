@@ -26,8 +26,8 @@ extern Inst _dis_lib_arg_dis[];
 extern Type* _dis_lib_arg_distype[];
 
 static Xipmod tab[] = {
-	{ "/osinit.dis", 591, 67, _osinit_dis, 3, _osinit_distype },
-	{ "/dis/sh.dis", 41631, 6111, _dis_sh_dis, 118, _dis_sh_distype },
+	{ "/osinit.dis", 715, 85, _osinit_dis, 3, _osinit_distype },
+	{ "/dis/sh.dis", 41629, 6111, _dis_sh_dis, 118, _dis_sh_distype },
 	{ "/dis/ls.dis", 3906, 527, _dis_ls_dis, 18, _dis_ls_distype },
 	{ "/dis/lib/string.dis", 5259, 941, _dis_lib_string_dis, 19, _dis_lib_string_distype },
 	{ "/dis/lib/bufio.dis", 4514, 779, _dis_lib_bufio_dis, 23, _dis_lib_bufio_distype },

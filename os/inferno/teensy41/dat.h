@@ -27,10 +27,20 @@ struct Conf
 	ulong	nproc;
 	ulong	npage0;
 	ulong	npage1;
+	/*
+	 * A third bank, for parts that have one.  This board
+	 * has two and leaves these zero; the field is here
+	 * because os/inferno/armv7m/main.c is shared and reads
+	 * it, and a Conf that is missing it does not fail to
+	 * build somewhere harmless -- the whole configuration
+	 * stops building.
+	 */
+	ulong	npage2;
 	uintptr	topofmem;
 	ulong	npage;
 	uintptr	base0;
 	uintptr	base1;
+	uintptr	base2;
 	ulong	ialloc;
 	ulong	cpuspeed;
 	ulong	monitor;
