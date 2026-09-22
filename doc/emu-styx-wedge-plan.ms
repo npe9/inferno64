@@ -247,3 +247,111 @@ then refuses \(em
 .CW "nc == 0"
 closes it and errors, and whether that path can be entered often
 enough to matter.
+.NH 1
+Phase 1 results: both suspects dead, and a confound in the method
+.PP
+.B "The instrumentation."
+.CW emu/port/devip.c
+now reports, unconditionally because each is rare and each is the kind
+of thing worth never missing: a socket closed while an accept is in
+flight on it
+.CW ( "CLOSE UNDER ACCEPT" ),
+a
+.CW protoclone
+that runs out of conversations, an accepted connection refused for want
+of one, a
+.CW Qdata / Qctl
+open refused on permissions, and every successful accept with its
+descriptor and conversation.  Per-socket tracing of
+.CW so_socket
+and
+.CW so_close
+sits behind
+.CW ipsockdebug ,
+off by default.
+.PP
+.B "Both hypotheses are falsified."
+Across wedges provoked by the board in twenty seconds:
+.IP \(bu
+.B "no" CLOSE UNDER ACCEPT,
+ever.  The mechanism this plan was built around \(em a listening
+descriptor closed under a blocked accept and its number reused \(em
+does not happen.
+.IP \(bu
+no conversation exhaustion and no refused accept.  MAXCONV is 4096 and
+the server never grew past its initial allocation.
+.IP \(bu
+no permission refusal on the accepted connection's data or ctl file.
+.IP \(bu
+.B "exactly one accept, ever:"
+.CW "accepted fd 4 as conv 1, owner inferno" ,
+which was served correctly.  Nothing after it.
+.PP
+Also eliminated on inspection rather than by measurement:
+.CW protoclone 's
+locking is balanced \(em every path, including both
+.CW newconv
+paths, returns with
+.CW c->l
+held and the single trailing
+.CW qunlock
+matches \(em and
+.CW so_bind
+sets
+.CW SO_REUSEADDR
+only, not
+.CW SO_REUSEPORT ,
+so two sockets cannot both be bound and listening on the port with the
+kernel dividing connections between them.
+.NH 2
+The observation that changes the shape of the problem
+.PP
+In the last run the server did not wedge: it
+.B exited .
+Connections were refused, nothing was listening at all, and the log
+stopped after the single accept with no error, no panic and no
+diagnostic.  That is not the same failure as the one sampled earlier,
+where the process was alive with a thread in
+.CW __accept
+and a completed connection sitting unaccepted in the backlog.
+.PP
+.B "Which means the method has a confound, and it is mine."
+Several
+.CW emu
+instances were started and killed over the session.  A stale one can
+hold the port while the instance being probed has exited, so
+"the server is wedged, and here is a sample of it" may in some cases
+have been a sample of a
+.I different
+process from the one refusing to answer.  Every conclusion above that
+rests on a sample rather than on the
+.CW ipdebug
+log should be treated as provisional until it is repeated with exactly
+one instance running and its pid pinned.
+.NH 2
+What the next session should do first
+.IP 1.
+Pin the pid.  Start one server, record its pid, and make every probe,
+sample and
+.CW lsof
+assert that pid.  Refuse to draw a conclusion if a second
+.CW emu
+exists.
+.IP 2.
+Find out why it exits.  A silent exit after one connection is a
+stronger lead than the wedge, because a process that dies leaves a
+reason somewhere: run it in the foreground, check for a Dis exception
+reaching the top, and see whether
+.CW styxlisten 's
+.CW listener()
+\(em which calls
+.CW error()
+on a failed
+.CW listen ,
+and which silently ignores a nil return from
+.CW "dial->accept" ,
+leaving the connection open and unserved \(em is the process that
+dies.
+.IP 3.
+Only then return to the blocked-accept observation, with one pid, and
+settle whether it is real.

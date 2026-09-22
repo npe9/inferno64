@@ -73,6 +73,7 @@ struct Conv
 	char*	owner;	/* protections */
 	int	perm;
 	int	inuse;	/* opens of listen/data/ctl */
+	int	accepting;	/* so_accept calls in flight on sfd (diagnostic) */
 	int	state;
 
 	/* udp specific */
@@ -138,6 +139,15 @@ static	char* ipstates[] = {
 static	Conv*	protoclone(Proto*, char*, int);
 static	Conv*	newconv(Proto*, Conv **);
 static	void	setladdr(Conv*);
+
+/*
+ * Diagnostic for the styx server wedge (doc/emu-styx-wedge-plan.ms).
+ * The server stops accepting; the suspicion is a listening descriptor
+ * closed while an accept blocks on it, whose number is then reused.
+ * The "CLOSE UNDER ACCEPT" report below is unconditional because it is
+ * the one thing worth never missing; the rest is behind this flag.
+ */
+int ipsockdebug = 0;
 
 static int
 ip3gen(Chan *c, int i, Dir *dp)
@@ -432,10 +442,18 @@ ipopen(Chan *c, int omode)
 			nexterror();
 		}
 		if((perm & (cv->perm>>6)) != perm) {
-			if(strcmp(up->env->user, cv->owner) != 0)
+			if(strcmp(up->env->user, cv->owner) != 0){
+				print("ipdebug: conv %d %s open refused: user %s "
+					"owner %s perm %#o want %#o\n", cv->x,
+					TYPE(c->qid)==Qdata? "data": "ctl",
+					up->env->user, cv->owner, cv->perm, perm);
 				error(Eperm);
-			if((perm & cv->perm) != perm)
+			}
+			if((perm & cv->perm) != perm){
+				print("ipdebug: conv %d open refused on perm "
+					"%#o want %#o\n", cv->x, cv->perm, perm);
 				error(Eperm);
+			}
 		}
 		cv->inuse++;
 		if(cv->inuse == 1) {
@@ -463,14 +481,26 @@ ipopen(Chan *c, int omode)
 
 		qlock(&cv->listenq);
 		if(waserror()){
+			if(cv->accepting > 0)
+				cv->accepting--;
+			print("ipdebug: conv %d accept FAILED: %s\n",
+				cv->x, up->env->errstr);
 			qunlock(&cv->listenq);
 			nexterror();
 		}
 
+		if(ipsockdebug)
+			print("ipdebug: conv %d accept begins on fd %d (inuse %d)\n",
+				cv->x, cv->sfd, cv->inuse);
+		cv->accepting++;
 		sfd = so_accept(cv->sfd, raddr, &rport);
+		cv->accepting--;
+		if(ipsockdebug)
+			print("ipdebug: conv %d accept returns fd %d\n", cv->x, sfd);
 
 		nc = protoclone(p, up->env->user, sfd);
 		if(nc == 0) {
+			print("ipdebug: no conv for accepted fd %d; refusing\n", sfd);
 			so_close(sfd);
 			error(Enodev);
 		}
@@ -478,6 +508,8 @@ ipopen(Chan *c, int omode)
 		nc->rport = rport;
 		setladdr(nc);
 		nc->state = Connected;
+		print("ipdebug: accepted fd %d as conv %d, owner %s\n",
+			sfd, nc->x, nc->owner);
 		mkqid(&c->qid, QID(PROTO(c->qid), nc->x, Qctl), 0, QTFILE);
 
 		poperror();
@@ -513,8 +545,15 @@ closeconv(Conv *cv)
 	cv->restricted = 0;
 	fd = cv->sfd;
 	cv->sfd = -1;
-	if(fd >= 0)
+	if(fd >= 0){
+		if(cv->accepting > 0)
+			print("ipdebug: CLOSE UNDER ACCEPT: conv %d fd %d, "
+				"%d accept(s) in flight\n",
+				cv->x, fd, cv->accepting);
+		else if(ipsockdebug)
+			print("ipdebug: conv %d closes fd %d\n", cv->x, fd);
 		so_close(fd);
+	}
 	poperror();
 	qunlock(&cv->l);
 }
@@ -985,10 +1024,14 @@ protoclone(Proto *p, char *user, int nfd)
 	}
 	if(pp >= ep) {
 		if(p->nc >= MAXCONV) {
+			print("ipdebug: protoclone EXHAUSTED: %s has %d convs, "
+				"all in use\n", p->name, p->nc);
 			qunlock(&p->l);
 			poperror();
 			return 0;
 		}
+		print("ipdebug: protoclone grows %s from %d convs\n",
+			p->name, p->nc);
 		maxconv = 2 * p->nc;
 		if(maxconv > MAXCONV)
 			maxconv = MAXCONV;

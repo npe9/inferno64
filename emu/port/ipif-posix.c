@@ -50,6 +50,11 @@ so_socket(int type)
 	fd = socket(AF_INET, type, 0);
 	if(fd < 0)
 		oserror();
+	{
+		extern int ipsockdebug;
+		if(ipsockdebug)
+			print("ipdebug: so_socket -> fd %d\n", fd);
+	}
 	if(type == SOCK_DGRAM){
 		one = 1;
 		setsockopt(fd, SOL_SOCKET, SO_BROADCAST, (char*)&one, sizeof(one));
@@ -156,6 +161,10 @@ so_recv(int sock, void *va, int len, void *hdr, int hdrlen)
 void
 so_close(int sock)
 {
+	extern int ipsockdebug;
+
+	if(ipsockdebug)
+		print("ipdebug: so_close fd %d\n", sock);
 	close(sock);
 }
 
