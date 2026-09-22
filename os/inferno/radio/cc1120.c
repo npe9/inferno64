@@ -500,7 +500,7 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 */
 		ulong lo, hi, step, dwell;
 		int r1, r0, i, j;
-		int peak, floor, nsamp, cs;
+		int peak, floor, nsamp, cs, peakat;
 		long sum;
 
 		lo = 868000000;
@@ -547,14 +547,17 @@ cc1120ctl(Radio *r, char *buf, int n)
 			sum = 0;
 			nsamp = 0;
 			cs = 0;
+			peakat = -1;
 			for(j = 0; j < dwell; j++){
 				s->lock(s);
 				r0 = rdx(rr, Xrssi0);
 				r1 = (schar)rdx(rr, Xrssi1);
 				s->unlock(s);
 				if(r0 & Rssivalid){
-					if(r1 > peak)
+					if(r1 > peak){
 						peak = r1;
+						peakat = nsamp;
+					}
 					if(r1 < floor)
 						floor = r1;
 					sum += r1;
@@ -569,13 +572,25 @@ cc1120ctl(Radio *r, char *buf, int n)
 				continue;
 			}
 			/*
-			 * peak, mean, floor, and how many samples they
-			 * are of.  The mean is truncated toward zero,
-			 * so it reads up to a decibel high.
+			 * peak, mean, floor, how many samples they are
+			 * of, and which sample the peak was.  The mean
+			 * is truncated toward zero, so it reads up to a
+			 * decibel high.
+			 *
+			 * The index is there to answer one question
+			 * that a peak alone cannot: whether the loud
+			 * sample was something on the air or this
+			 * sweep hearing its own retune.  setfreq()
+			 * strobes SIDLE, SCAL and SRX, and the first
+			 * valid estimate after the AGC restarts can be
+			 * a settling artefact.  A signal arrives when
+			 * it arrives and its index is scattered; an
+			 * artefact of tuning is always at the
+			 * beginning.
 			 */
-			print("scan %lud %d %d %d %d%s\n", (ulong)hz,
+			print("scan %lud %d %d %d %d at %d%s\n", (ulong)hz,
 				peak, (int)(sum/nsamp), floor, nsamp,
-				cs? " carrier": "");
+				peakat, cs? " carrier": "");
 		}
 		return n;
 	}
