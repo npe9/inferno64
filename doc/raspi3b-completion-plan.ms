@@ -7937,3 +7937,79 @@ So both SD controllers on this board now have a working, verified DMA
 path, and the difference between them is what it should be: SDHOST is
 the one the card is on because that is what a Pi 3B wants, and the
 Arasan is there for the SDIO function.
+.NH 2
+Warm entry: halting the CPU does not stop a bus master
+.PP
+.B "The USB controller is running while the image is loaded, and it
+.B "has been all along."
+Halting the cores stops the cores.  It does not stop the DWC OTG core
+at 0x3f980000, which is a bus master: it writes received packet data
+straight into the kernel's buffers, continuously, whether or not
+anything is plugged in \(em this board says so every two seconds,
+.CW "usbdwc: ep3.1 re-armed" .
+So the debugger halts a kernel, loads a new one over it, and the USB
+core carries on writing packets into buffers belonging to the kernel
+that is no longer there, which are now inside the image just loaded.
+.PP
+The old
+.CW quiesce
+stopped the DMA engines, the eMMC and the interrupt controller, and
+never touched USB.  Proof that it was live, from the first run of the
+new one:
+.P1
+quiesce: USB host channels STILL ENABLED on entry:
+quiesce: usb ahbcfg 0x21 -> 0, ahbidle 1, soft reset took
+quiesce: after -- 0 DMA channels active, ..., 0 USB channels enabled
+.P2
+.CW "ahbcfg 0x21"
+is DMA enable and the global interrupt, both on, at the moment of the
+halt.
+.PP
+.CW quiesce
+now halts each host channel with
+.CW Chdis
+(polled and bounded \(em it is asynchronous on this part), clears the
+channel interrupts and masks, turns off DMA and the global interrupt
+in
+.CW gahbcfg ,
+waits for the core to go AHB-idle, soft-resets it, and reports the
+count of channels still enabled afterwards so the claim is checkable.
+That leaves the core mastering nothing, which is the state a cold boot
+hands over.
+.PP
+.B "It fits every symptom, and it is not yet shown to be the cause."
+Garbled console, corrupt devtab at
+.CW chandevreset ,
+a hang in the peripheral suite, and a data abort at
+.CW accounttime+0x24
+are all "memory is not what the kernel thinks"; they happen about half
+the time, which is how often a transfer lands somewhere that matters;
+and they have never happened on a kernel booted from the card, where
+nothing masters the bus during a load.  What is missing is a measured
+success rate with the new quiesce, over enough restarts to tell half
+from nearly-all.  That run is outstanding: the debug interface went
+into
+.CW DSCR.ERR=1
+part way through it and wants a power cycle.
+.PP
+.B "And the trap report now says which of two things m is doing."
+.CW accounttime+0x24
+is
+.CW "p->time[p->insyscall]++"
+with
+.CW "p = m->proc" ,
+and the report has never distinguished
+.CW m
+pointing somewhere wrong from
+.CW m
+pointing correctly at a Mach whose contents were overwritten.  It now
+prints
+.CW m ,
+.CW MACHP(0)
+\(em the address it is supposed to hold \(em and
+.CW splpc ,
+.CW machno ,
+.CW proc
+and
+.CW ticks ,
+straight to the UART before anything that can take a lock.

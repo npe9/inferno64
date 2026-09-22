@@ -424,6 +424,30 @@ trap(Ureg *ur)
 		serialputreg("sp", ur->sp, 8);
 		serialputs("\n", -1);
 		/*
+		 * Who m is, and what it holds.
+		 *
+		 * This board takes a data abort at accounttime+0x24 --
+		 * "p->time[p->insyscall]++" with p = m->proc -- on
+		 * warm-restarted kernels, with the identical far across
+		 * builds.  Two very different things produce that: m
+		 * pointing somewhere it should not, or m pointing
+		 * correctly at a Mach whose contents have been
+		 * overwritten.  The report has never said which, so it
+		 * says now, on the UART, before anything that can take a
+		 * lock.  mach0 is the address m is supposed to hold;
+		 * splpc, machno and proc are the first three fields.
+		 */
+		serialputs("  m", -1);
+		serialputreg("=", (uintptr)m, 16);
+		serialputreg("mach0", (uintptr)MACHP(0), 16);
+		if(m != nil){
+			serialputreg("splpc", m->splpc, 8);
+			serialputreg("machno", m->machno, 8);
+			serialputreg("proc", (uintptr)m->proc, 16);
+			serialputreg("ticks", m->ticks, 8);
+		}
+		serialputs("\n", -1);
+		/*
 		 * iprint(), not print(): print() takes kmesg.lk, and a fault
 		 * inside code holding it (poolfree() under the print lock, seen
 		 * here) made this report deadlock instead of appearing.
