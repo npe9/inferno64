@@ -274,6 +274,30 @@ static u32 sdhostcfg = 0;
  * 0 read 32 bits at a time ends 55 aa -- and DMA works.
  */
 static int sdhostwide = 1;
+/*
+ * Blocks per command.
+ *
+ * This driver issued one CMD17 or CMD24 per 512-byte block, each with
+ * a CMD13 status poll in front of it and a 1ms settling delay after
+ * it.  That delay alone caps the path near 500KB/s, and measured it
+ * ran at 170KB/s raw and 25KB/s through dosfs -- so copying a 1.9MB
+ * kernel took minutes.  A card at this clock on four lines should do
+ * megabytes a second; the transfer was never the cost, the per-block
+ * ceremony was.
+ *
+ * CMD18 and CMD25 carry as many blocks as SDHBLC says in ONE data
+ * phase, with one command, one poll and one delay, finished with a
+ * CMD12.  Default 1, which is exactly the old behaviour, so this can
+ * be turned up on the board and measured rather than assumed.
+ */
+static int sdhostmulti = 128;
+/*
+ * ...for reads.  Writes stay single-block until a multi-block write
+ * has been verified on the board, because a read that goes wrong is a
+ * wrong answer and a write that goes wrong is a damaged card.  CMD25
+ * is written and tested by "multiverify"; this turns it on.
+ */
+static int sdhostmultiwrite = 0;
 
 static void
 sdhostreset(volatile u32 *r, ulong fclk)
@@ -822,14 +846,14 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	Ctlr *c = u->dev->ctlr;
 	volatile u32 *r = c->r;
 	uchar *p = a, *pblk;
-	long i;
+	long i, nthis;
 	int j, retries;
 	u32 arg, w, err;
 
 	USED(lun);
 	qlock(c);
 	retries = Maxretry;
-	for(i = 0; i < nb; i++){
+	for(i = 0; i < nb; i += nthis){
 		/*
 		 * Where this block's data starts, so a retry can put it
 		 * back.
@@ -848,6 +872,13 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		 * started failing, which is why it sat here unseen.
 		 */
 		pblk = p;
+		nthis = nb - i;
+		if(nthis > sdhostmulti)
+			nthis = sdhostmulti;
+		if(write && !sdhostmultiwrite)
+			nthis = 1;
+		if(nthis < 1)
+			nthis = 1;
 		arg = c->byteaddr? (u32)((bno+i)*Secsize): (u32)(bno+i);
 		/*
 		 * The card's status FIRST, and only then the block
@@ -902,7 +933,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			Cfgbusyint | sdhostcfg |
 			(sdhostdma? 0: (write? Cfgblockint: Cfgdataint));
 		r[SDHBCT] = Secsize;
-		r[SDHBLC] = 1;
+		r[SDHBLC] = nthis;
 		/*
 		 * WRITE_SINGLE_BLOCK / READ_SINGLE_BLOCK.  A data command is
 		 * only started here, not waited for: on the Pi the controller
@@ -912,7 +943,8 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		 * deadlocked every transfer after the first.
 		 */
 		err = 0;
-		if(sdcmdstart(r, write? 24: 17, arg, write? Writecmd: Readcmd) < 0){
+		if(sdcmdstart(r, nthis > 1? (write? 25: 18): (write? 24: 17),
+		    arg, write? Writecmd: Readcmd) < 0){
 			bioerror(c, write, bno+i, r[SDHSTS]);
 			break;
 		}
@@ -1024,7 +1056,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			 * WHEN the words go, and the problem was that each
 			 * one carried a quarter of what it looked like.
 			 */
-			j = c->bytemode? Secsize: Secsize/4;
+			j = (c->bytemode? Secsize: Secsize/4) * nthis;
 			tries = 0;
 			while(j > 0){
 				words = Fifodepth -
@@ -1041,7 +1073,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 							sdhostretried++;
 							r[SDHSTS] = Hstsclear;
 							p = pblk;
-							i--;
+							i -= nthis;
 							goto again;
 						}
 						sdhostgaveup++;
@@ -1079,7 +1111,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			 * is what the silicon actually offers; SDEDM's fill
 			 * level stays 0 throughout and cannot pace it.
 			 */
-			for(j = 0; j < Secsize; j++){
+			for(j = 0; j < Secsize*nthis; j++){
 				if(!fifodata(r)){	/* wait for data */
 					/*
 					 * If the data phase never began --
@@ -1108,7 +1140,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 							sdhostretried++;
 							r[SDHSTS] = Hstsclear;
 							p = pblk;
-							i--;
+							i -= nthis;
 							goto again;
 						}
 						sdhostgaveup++;
@@ -1119,7 +1151,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				*p++ = r[SDDATA];
 			}
 		}else{
-			for(j = 0; j < Secsize; j += 4){
+			for(j = 0; j < Secsize*nthis; j += 4){
 				if(!fifodata(r)){	/* wait for a word */
 					/*
 					 * The same bounded retry the byte
@@ -1148,7 +1180,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 							sdhostretried++;
 							r[SDHSTS] = Hstsclear;
 							p = pblk;
-							i--;
+							i -= nthis;
 							goto again;
 						}
 						sdhostgaveup++;
@@ -1170,8 +1202,10 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			r[SDHSTS] = Hstsclear;
 			break;
 		}
+		if(nthis > 1)
+			sdcmderr(r, 12, 0, Busywait, &err);	/* STOP_TRANSMISSION */
 		r[SDHSTS] = Hstsclear;
-		retries = Maxretry;		/* this block is done; reset */
+		retries = Maxretry;		/* this run is done; reset */
 	again:	;
 	}
 out:
@@ -1195,8 +1229,9 @@ sdhostrctl(SDunit *u, char *p, char *e)
 	p = seprint(p, e, "sdhost rca %#ux %s sectors %llud coreclock %lud cdiv %lud\n",
 		c->rca, c->byteaddr? "byteaddr": "blockaddr", c->sectors,
 		c->fclk, (ulong)r[SDCDIV]);
-	p = seprint(p, e, "sdhost dma %d dreq %d retried %lud gaveup %lud\n",
-		sdhostdma, Sdhostdreq, sdhostretried, sdhostgaveup);
+	p = seprint(p, e, "sdhost dma %d dreq %d multi %d multiwrite %d retried %lud gaveup %lud\n",
+		sdhostdma, Sdhostdreq, sdhostmulti, sdhostmultiwrite,
+		sdhostretried, sdhostgaveup);
 	p = seprint(p, e, "sdhost sdcmd %#lux sdhsts %#lux sdedm %#lux sdhcfg %#lux errors %d\n",
 		(ulong)r[SDCMD], (ulong)r[SDHSTS], (ulong)r[SDEDM],
 		(ulong)r[SDHCFG], c->errors);
@@ -1230,6 +1265,111 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 	if(strcmp(cb->f[0], "trace") == 0 && cb->nf == 2){
 		sdhosttrace = atoi(cb->f[1]);
 		print("sdhost: trace %d\n", sdhosttrace);
+		return 0;
+	}
+	/*
+	 * Throughput of ONE multi-block request.
+	 *
+	 *	readspeed <blk> <nblocks>
+	 *
+	 * wrverify cannot measure this: it calls sdhostbio once per
+	 * block, so "multi" never engages and the numbers come out the
+	 * same however it is set -- which they duly did, 3850ms against
+	 * 3200ms against 3970ms for 1, 16 and 64 blocks per command,
+	 * and meant nothing.  A test that cannot see the thing it is
+	 * varying will report that the thing does not matter.
+	 */
+	/*
+	 * Write nblocks in ONE request, read them back in one, compare.
+	 *
+	 *	multiverify <blk> <nblocks>
+	 *
+	 * readspeed only reads, and a multi-block WRITE is the half that
+	 * can corrupt a card rather than merely be slow.  It is not
+	 * enough to know CMD25 is faster; it has to be known to put the
+	 * right bytes down.  Writes past every partition; see wrverify.
+	 */
+	if(strcmp(cb->f[0], "multiverify") == 0 && cb->nf == 3){
+		uvlong bno = strtoull(cb->f[1], nil, 0);
+		long nb = strtol(cb->f[2], nil, 0), n;
+		uchar *buf;
+		ulong t0, wms, rms;
+		int k, bad;
+
+		if(nb < 1 || nb > 4096){
+			print("sdhost: multiverify wants 1..4096 blocks\n");
+			return 0;
+		}
+		if((buf = malloc(nb*Secsize)) == nil){
+			print("sdhost: multiverify no memory\n");
+			return 0;
+		}
+		for(k = 0; k < nb*Secsize; k++)
+			buf[k] = (k*7 + (int)bno*13 + (k>>11)) & 0xff;
+		t0 = TK2MS(m->ticks);
+		n = sdhostbio(u, 0, 1, buf, nb, bno);
+		wms = TK2MS(m->ticks) - t0;
+		if(n != nb*Secsize){
+			print("sdhost: MULTIVERIFY-FAIL write %ld of %ld\n",
+				n, nb*Secsize);
+			free(buf);
+			return 0;
+		}
+		memset(buf, 0, nb*Secsize);
+		t0 = TK2MS(m->ticks);
+		n = sdhostbio(u, 0, 0, buf, nb, bno);
+		rms = TK2MS(m->ticks) - t0;
+		bad = -1;
+		for(k = 0; k < nb*Secsize; k++)
+			if(buf[k] != ((k*7 + (int)bno*13 + (k>>11)) & 0xff)){
+				bad = k;
+				break;
+			}
+		print("sdhost: MULTIVERIFY-%s %ld blocks at %llud:"
+			" write %lud ms read %lud ms (multi %d dma %d)%s\n",
+			bad < 0 && n == nb*Secsize? "OK": "FAIL", nb, bno,
+			wms, rms, sdhostmulti, sdhostdma,
+			bad < 0? "": " MISMATCH");
+		if(bad >= 0)
+			print("sdhost:   first bad byte %d\n", bad);
+		free(buf);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "readspeed") == 0 && cb->nf == 3){
+		uvlong bno = strtoull(cb->f[1], nil, 0);
+		long nb = strtol(cb->f[2], nil, 0), n;
+		uchar *buf;
+		ulong t0, ms;
+
+		if(nb < 1 || nb > 4096){
+			print("sdhost: readspeed wants 1..4096 blocks\n");
+			return 0;
+		}
+		if((buf = malloc(nb*Secsize)) == nil){
+			print("sdhost: readspeed no memory for %ld blocks\n", nb);
+			return 0;
+		}
+		t0 = TK2MS(m->ticks);
+		n = sdhostbio(u, 0, 0, buf, nb, bno);
+		ms = TK2MS(m->ticks) - t0;
+		print("sdhost: READSPEED %ld of %ld blocks in %lud ms"
+			" = %lud KB/s (multi %d, dma %d)\n",
+			n/Secsize, nb, ms,
+			ms? (ulong)(n/1024*1000/ms): 0, sdhostmulti, sdhostdma);
+		free(buf);
+		return 0;
+	}
+	/* blocks per command: 1 is the old one-CMD17-per-block behaviour */
+	if(strcmp(cb->f[0], "multiwrite") == 0 && cb->nf == 2){
+		sdhostmultiwrite = atoi(cb->f[1]);
+		print("sdhost: multiwrite %d\n", sdhostmultiwrite);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "multi") == 0 && cb->nf == 2){
+		sdhostmulti = atoi(cb->f[1]);
+		if(sdhostmulti < 1)
+			sdhostmulti = 1;
+		print("sdhost: multi %d blocks per command\n", sdhostmulti);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "dma") == 0 && cb->nf == 2){

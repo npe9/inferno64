@@ -8669,3 +8669,55 @@ labelled as one; what is established is everything above it.  The next
 step is to find which host descriptor that
 .CW __accept
 is waiting on and compare it with the socket the OS is queueing to.
+.NH 2
+Multi-block transfers: 474 KB/s to 12.8 MB/s
+.PP
+.B "The driver issued one command per 512-byte block."
+CMD17 for every read and CMD24 for every write, each preceded by a
+CMD13 status poll and followed by a 1ms settling delay.  That delay
+alone caps the path near 500KB/s before anything else is counted, and
+measured it ran at 474 KB/s.  Copying a 1.9MB kernel therefore took
+minutes, and the cost was never the transfer \(em it was the ceremony
+around each block.
+.PP
+CMD18 and CMD25 carry as many blocks as SDHBLC says in ONE data phase:
+one command, one poll, one delay, one CMD12 at the end.  Swept on the
+board, 512 blocks per request:
+.P1
+multi 1:    512 blocks in 540 ms =   474 KB/s
+multi 8:    512 blocks in 100 ms =  2560 KB/s
+multi 32:   512 blocks in  40 ms =  6400 KB/s
+multi 128:  512 blocks in  20 ms = 12800 KB/s
+.P2
+Twenty-seven times faster, and 12.8 MB/s is the right order for a card
+at 25MHz on four lines.
+.PP
+.B "The first attempt to measure this said it did not matter."
+.CW wrverify
+reported 3850, 3200 and 3970 ms for 1, 16 and 64 blocks per command
+\(em no effect.  It calls
+.CW sdhostbio
+once per block, so the multi-block path never engaged and the test was
+varying something it could not see.  A test blind to the thing it
+varies will report that the thing does not matter, which is the most
+expensive kind of wrong answer because it looks like a result.
+.CW readspeed
+and
+.CW multiverify
+issue ONE request of N blocks, which is what the change is about.
+.PP
+.B "Reads are the default; writes are not, yet."
+.CW sdhostmulti
+is 128 and applies to reads.  Writes stay single-block behind
+.CW "echo multiwrite 1"
+until a multi-block write has been verified on the board, because a
+read that goes wrong is a wrong answer and a write that goes wrong is
+a damaged card.
+.CW multiverify
+\(em write N blocks in one request, read them back in one, compare \(em
+is written and has not yet been run to completion: it runs from
+.CW board.cmd ,
+which waits for kupdate, and kupdate is slow precisely because its
+write side is still single-block.  That circle wants breaking with a
+kernel whose boot script runs the check before kupdate, and it is the
+next thing to do.

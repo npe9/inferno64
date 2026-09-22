@@ -72,8 +72,17 @@ sys.exit(1)
 PYEOF
 }
 
+#
+# Only a LISTEN blocks a new listener.
+#
+# The first version matched any socket on the port, so the board's
+# lingering FIN_WAIT_2 connections -- which cannot stop a bind -- made
+# it refuse to start the server at all, for sixty seconds, and then
+# give up.  A check that is too strict fails as surely as one that is
+# too lax; this one asks the question that matters.
+#
 portbusy() {
-	netstat -an 2>/dev/null | grep -q "\.$PORT "
+	netstat -an 2>/dev/null | grep "\.$PORT " | grep -q LISTEN
 }
 
 if handshake; then

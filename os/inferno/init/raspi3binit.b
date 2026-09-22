@@ -2561,8 +2561,19 @@ remotecmd()
 	addrs := remoteaddrs();
 	if(addrs == nil)
 		return;			# no kupdate.txt: nothing to talk to
+	#
+	# Fifteen seconds, not three.
+	#
+	# Each pass is a full dial, mount, read and unmount, and at three
+	# seconds that is enough load to keep the host's server busy all
+	# the time: a new connection to it took 4 to 7 seconds to be
+	# answered, which a five-second health check on the host read as
+	# "the server has wedged".  Hours went into chasing a wedge that
+	# was this poll.  A convenience should not be the heaviest thing
+	# talking to the server it depends on.
+	#
 	for(;;){
-		sys->sleep(3000);
+		sys->sleep(15000);
 		cmd := readcmdfile(addrs);
 		if(cmd == nil || cmd == last)
 			continue;
