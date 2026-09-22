@@ -8264,3 +8264,36 @@ had the session name written into it, so after the session was
 restarted they all typed into nothing and the board looked
 unresponsive while nobody was speaking to it.  They find the session
 now instead of remembering it.
+.NH 2
+Driving the board from the host, and what the silence cost
+.PP
+.B "It works, on the board."
+With the styx server proved healthy first,
+.CW board.cmd
+in the worktree runs on the Pi:
+.P1
+RCMD-BEGIN 1 cat /dev/sdN0/ctl
+sdhost rca 0x1234 blockaddr sectors 30228480 coreclock 250000000 cdiv 8
+sdhost dma 0 dreq 13 retried 0 gaveup 0
+sdhost sdcmd 0x98 sdhsts 0x0 sdedm 0x10801 sdhcfg 0x50e errors 0
+part data 0 30228480
+...
+KUPDATE fetched 1945288 bytes
+KUPDATE-VERIFY 1945288 bytes read back identical
+KUPDATE-OK 1945288 bytes installed
+.P2
+Nothing was typed to produce that.  A board whose console is
+one-directional \(em which is how this one spent an afternoon \(em can
+still be driven and still be read.
+.PP
+.B "And kupdate no longer returns in silence."
+Its one quiet path was "cannot open /n/dos/kupdate.txt within sixty
+seconds", deliberately silent so a board with no
+.CW kupdate.txt
+would not nag.  That silence is what made a wedged host server
+indistinguishable from a board that had hung: the board booted,
+printed nothing about updating, and sat there.  One line,
+.CW KUPDATE-NONE ,
+is cheaper than telling those two apart from outside \(em and the
+general rule is the one this port keeps rediscovering, that an absence
+is the worst kind of evidence.

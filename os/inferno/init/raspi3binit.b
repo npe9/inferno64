@@ -664,8 +664,20 @@ kupdate()
 			break;
 		sys->sleep(1000);
 	}
-	if(cfg == nil)
-		return;			# nothing asked for; say nothing
+	if(cfg == nil){
+		#
+		# Say so.  This used to return in silence, on the
+		# reasoning that a board with no kupdate.txt should not
+		# nag -- and that silence then cost most of a day.  The
+		# board booted, printed nothing about updating, and
+		# looked exactly like a board whose kupdate had hung,
+		# which is a completely different fault with a
+		# completely different cause.  A single line is cheaper
+		# than telling those two apart from outside.
+		#
+		sys->print("KUPDATE-NONE cannot open /n/dos/kupdate.txt: %r\n");
+		return;
+	}
 	b := array[256] of byte;
 	n := sys->read(cfg, b, len b);
 	cfg = nil;
