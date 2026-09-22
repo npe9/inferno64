@@ -21,6 +21,15 @@ indexed its four EXTICR registers by the raw input number, so every
 port above A tripped an assertion.  It had been unreachable since there
 was no GPIO model to drive it.
 
+0042 is the CC1120, the part on a ccRF click, written from the
+CC112x/CC1175 user's guide (SWRU295E).  It models the interface and not
+the radio: the command/address byte, the extended register space
+through 0x2F, the strobes, the FIFOs and the status byte, which is what
+a driver gets wrong, while two of them on one netdev simply exchange
+whole packets.  netduinoplus2 gains -machine radio=on, fitting one on
+SPI2 with chip select on PE11, reset on PE13 and GPIO3 on PE14 -- a
+clicker 2 for STM32 with the click in mikroBUS 2.
+
 0031-0033 came out of that check and the one after it, and each names
 what found it.  0027 and 0028 have since been driven by drivers nobody
 here wrote.  Zephyr's

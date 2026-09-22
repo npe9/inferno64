@@ -1,0 +1,796 @@
+From 389b5fad9c38b4c3ba6745c11cccf0aae0d7ff8d Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 22 Sep 2026 07:34:06 -0400
+Subject: [PATCH] hw/ssi: model the TI CC1120, and put one on the netduinoplus2
+
+Written from the CC112x/CC1175 user's guide (SWRU295E) for the SPI map,
+the command strobes, the status byte and the FIFOs, and from the CC1120
+data sheet for what the part is.  Not from any guest driver: a model
+that agrees with the driver it is meant to check is worth nothing.
+
+What it models is the interface, because that is what a driver gets
+wrong: the command/address byte with its read and burst bits, the
+extended register space reached through 0x2F and its second address
+byte, the fourteen command strobes at 0x30 to 0x3D, the FIFO at 0x3F,
+and the chip status byte returned on every clocked byte.  The details
+that cost a driver an afternoon are all there -- that the extended
+address byte returns zeros rather than status, that a burst read of the
+register space stops incrementing at 0x2E, that the FIFO does not
+advance the address at all, that an empty RX FIFO read or an
+oversubscribed TX FIFO puts the part in a FIFO error state that only
+SFRX or SFTX clears.  PARTNUMBER reads 0x48.
+
+What it does not model is the radio: two of these on one netdev
+exchange whole packets, the way hw/ssi/sx1276.c does, with no
+modulation and no propagation.  Where the model is deliberately kinder
+than the part -- CHIP_RDYn low the instant reset is released, TXOFF_MODE
+and RXOFF_MODE not honoured -- it says so at the point it happens.
+
+netduinoplus2 gains -machine radio=on, which fits one on SPI2 with chip
+select on PE11, reset on PE13 and the click's GPIO3 on PE14: a
+MikroElektronika clicker 2 for STM32 with a ccRF click in mikroBUS 2,
+which is the board os/inferno/stm32f407 is being brought up on.  The two
+pins that drive the radio are split rather than reassigned, because
+every GPIO pin already reaches the system configuration controller --
+on this part any pin can be an EXTI source -- and that must stay true of
+a pin with a radio on it.
+
+Signed-off-by: Noah Evans <noah.evans@gmail.com>
+---
+ hw/arm/Kconfig          |   2 +
+ hw/arm/netduinoplus2.c  | 107 +++++++-
+ hw/ssi/Kconfig          |   4 +
+ hw/ssi/cc1120.c         | 545 ++++++++++++++++++++++++++++++++++++++++
+ hw/ssi/meson.build      |   1 +
+ include/hw/ssi/cc1120.h |  16 ++
+ 6 files changed, 674 insertions(+), 1 deletion(-)
+ create mode 100644 hw/ssi/cc1120.c
+ create mode 100644 include/hw/ssi/cc1120.h
+
+diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
+index d2a1636..cdca611 100644
+--- a/hw/arm/Kconfig
++++ b/hw/arm/Kconfig
+@@ -408,6 +408,8 @@ config STM32F405_SOC
+     select STM32_RCC
+     select STM32F4XX_SYSCFG
+     select STM32F4XX_EXTI
++    select CC1120
++    select SPLIT_IRQ
+ 
+ config B_L475E_IOT01A
+     bool
+diff --git a/hw/arm/netduinoplus2.c b/hw/arm/netduinoplus2.c
+index 81b6334..0c7d023 100644
+--- a/hw/arm/netduinoplus2.c
++++ b/hw/arm/netduinoplus2.c
+@@ -29,11 +29,84 @@
+ #include "hw/qdev-clock.h"
+ #include "qemu/error-report.h"
+ #include "hw/arm/stm32f405_soc.h"
++#include "hw/ssi/ssi.h"
++#include "hw/ssi/cc1120.h"
++#include "hw/irq.h"
++#include "hw/core/split-irq.h"
++#include "hw/qdev-properties.h"
++#include "net/net.h"
++#include "qom/object.h"
+ #include "hw/arm/boot.h"
+ 
++struct NetduinoPlus2MachineState {
++    MachineState parent_obj;
++    bool radio;
++};
++typedef struct NetduinoPlus2MachineState NetduinoPlus2MachineState;
++
++#define TYPE_NETDUINOPLUS2_MACHINE MACHINE_TYPE_NAME("netduinoplus2")
++DECLARE_INSTANCE_CHECKER(NetduinoPlus2MachineState, NETDUINOPLUS2_MACHINE,
++                         TYPE_NETDUINOPLUS2_MACHINE)
++
+ /* Main SYSCLK frequency in Hz (168MHz) */
+ #define SYSCLK_FRQ 168000000ULL
+ 
++/*
++ * A CC1120 on SPI2, with -machine radio=on.
++ *
++ * Where its lines go is a board's business and not the SoC's, and the
++ * board being modelled is a MikroElektronika clicker 2 for STM32 with a
++ * ccRF click in mikroBUS 2: chip select on PE11, reset on PE13, and the
++ * click's GPIO3 -- the pin a driver watches for a packet -- on the
++ * socket's INT line, PE14.  A netduinoplus2 has no mikroBUS socket, but
++ * it is the STM32F405 machine qemu has and os/inferno/stm32f407 is
++ * tested on it.
++ *
++ * The two pins that drive the radio are split rather than reassigned.
++ * Every GPIO pin already goes to the system configuration controller,
++ * because on this part every pin can be an EXTI source, and that has to
++ * stay true of a pin that also has a radio hanging off it.
++ */
++static void netduinoplus2_radio(DeviceState *soc)
++{
++    static const struct { int pin; const char *in; } wire[] = {
++        { 11, SSI_GPIO_CS },
++        { 13, "reset_n" },
++    };
++    DeviceState *spi, *porte, *syscfg, *radio;
++    SSIBus *ssi;
++    int i;
++
++    spi = DEVICE(object_resolve_path_component(OBJECT(soc), "spi[1]"));
++    porte = DEVICE(object_resolve_path_component(OBJECT(soc), "gpio[4]"));
++    syscfg = DEVICE(object_resolve_path_component(OBJECT(soc), "syscfg"));
++    g_assert(spi && porte && syscfg);
++
++    ssi = (SSIBus *)qdev_get_child_bus(spi, "ssi");
++    radio = qdev_new(TYPE_CC1120);
++    /*
++     * match_default false: this is not an ethernet, and a bare
++     * "-net nic" should not land on it.  Ask for it by name, as
++     * -nic socket,model=cc1120,mcast=...
++     */
++    qemu_configure_nic_device(radio, false, "cc1120");
++    qdev_realize_and_unref(radio, BUS(ssi), &error_fatal);
++
++    for (i = 0; i < (int)ARRAY_SIZE(wire); i++) {
++        DeviceState *split = qdev_new(TYPE_SPLIT_IRQ);
++
++        qdev_prop_set_uint16(split, "num-lines", 2);
++        qdev_realize_and_unref(split, NULL, &error_fatal);
++        qdev_connect_gpio_out(split, 0,
++                              qdev_get_gpio_in(syscfg, 4 * 16 + wire[i].pin));
++        qdev_connect_gpio_out(split, 1,
++                              qdev_get_gpio_in_named(radio, wire[i].in, 0));
++        qdev_connect_gpio_out(porte, wire[i].pin, qdev_get_gpio_in(split, 0));
++    }
++    qdev_connect_gpio_out_named(radio, "gpio", 3,
++                                qdev_get_gpio_in(porte, 14));
++}
++
+ static void netduinoplus2_init(MachineState *machine)
+ {
+     DeviceState *dev;
+@@ -48,6 +121,10 @@ static void netduinoplus2_init(MachineState *machine)
+     qdev_connect_clock_in(dev, "sysclk", sysclk);
+     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+ 
++    if (NETDUINOPLUS2_MACHINE(machine)->radio) {
++        netduinoplus2_radio(dev);
++    }
++
+     armv7m_load_kernel(STM32F405_SOC(dev)->armv7m.cpu,
+                        machine->kernel_filename,
+                        0, FLASH_SIZE);
+@@ -65,4 +142,32 @@ static void netduinoplus2_machine_init(MachineClass *mc)
+     mc->valid_cpu_types = valid_cpu_types;
+ }
+ 
+-DEFINE_MACHINE("netduinoplus2", netduinoplus2_machine_init)
++static bool netduinoplus2_get_radio(Object *obj, Error **errp)
++{
++    return NETDUINOPLUS2_MACHINE(obj)->radio;
++}
++
++static void netduinoplus2_set_radio(Object *obj, bool value, Error **errp)
++{
++    NETDUINOPLUS2_MACHINE(obj)->radio = value;
++}
++
++static void netduinoplus2_machine_class_init(ObjectClass *oc, const void *data)
++{
++    netduinoplus2_machine_init(MACHINE_CLASS(oc));
++    object_class_property_add_bool(oc, "radio", netduinoplus2_get_radio,
++                                   netduinoplus2_set_radio);
++    object_class_property_set_description(oc, "radio",
++        "Fit a CC1120 on SPI2, wired as a ccRF click in mikroBUS 2");
++}
++
++static const TypeInfo netduinoplus2_machine_types[] = {
++    {
++        .name           = TYPE_NETDUINOPLUS2_MACHINE,
++        .parent         = TYPE_MACHINE,
++        .instance_size  = sizeof(NetduinoPlus2MachineState),
++        .class_init     = netduinoplus2_machine_class_init,
++    },
++};
++
++DEFINE_TYPES(netduinoplus2_machine_types)
+diff --git a/hw/ssi/Kconfig b/hw/ssi/Kconfig
+index 00126d1..70a7987 100644
+--- a/hw/ssi/Kconfig
++++ b/hw/ssi/Kconfig
+@@ -13,6 +13,10 @@ config SX1276
+     bool
+     select SSI
+ 
++config CC1120
++    bool
++    select SSI
++
+ config XILINX_SPI
+     bool
+     select SSI
+diff --git a/hw/ssi/cc1120.c b/hw/ssi/cc1120.c
+new file mode 100644
+index 0000000..05db8d2
+--- /dev/null
++++ b/hw/ssi/cc1120.c
+@@ -0,0 +1,545 @@
++/*
++ * TI CC1120 narrowband RF transceiver
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 or
++ * (at your option) any later version.
++ *
++ * Written from the CC112x/CC1175 user's guide (SWRU295E) for the SPI
++ * map, the command strobes, the status byte and the FIFOs, and from
++ * the CC1120 data sheet for what the part is.  Not from any guest
++ * driver: the point of a model is to disagree with a driver that is
++ * wrong.
++ *
++ * Two of these on one netdev talk to each other, the same way
++ * hw/ssi/sx1276.c does.  That is the whole radio channel: no
++ * modulation, no propagation, and a packet either arrives whole or is
++ * dropped.  What it does model is the part's interface -- the SPI
++ * framing a driver has to get right, the state machine the strobes
++ * move through, and the FIFOs -- because those are what a driver is
++ * wrong about.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "qapi/error.h"
++#include "hw/irq.h"
++#include "hw/qdev-properties.h"
++#include "hw/ssi/ssi.h"
++#include "migration/vmstate.h"
++#include "net/net.h"
++#include "qemu/timer.h"
++#include "qom/object.h"
++
++#include "hw/ssi/cc1120.h"
++
++OBJECT_DECLARE_SIMPLE_TYPE(CC1120State, CC1120)
++
++enum {
++    NREG      = 0x2f,       /* primary register space, 0x00 to 0x2e */
++    NEXTREG   = 0x100,      /* extended space, one byte of address */
++    FIFOSZ    = 128,        /* "two 128 byte FIFOs", SWRU295E 3.1 */
++
++    /* the command/address byte */
++    HDR_READ  = 0x80,
++    HDR_BURST = 0x40,
++    HDR_ADDR  = 0x3f,
++
++    A_EXT     = 0x2f,       /* extended register space */
++    A_STROBE0 = 0x30,       /* 0x30 to 0x3d are command strobes */
++    A_STROBE1 = 0x3d,
++    A_DIRECT  = 0x3e,       /* direct memory access */
++    A_FIFO    = 0x3f,       /* TX FIFO on write, RX FIFO on read */
++
++    /* strobes, SWRU295E table 4 */
++    SRES      = 0x30,
++    SFSTXON   = 0x31,
++    SXOFF     = 0x32,
++    SCAL      = 0x33,
++    SRX       = 0x34,
++    STX       = 0x35,
++    SIDLE     = 0x36,
++    SAFC      = 0x37,
++    SWOR      = 0x38,
++    SPWD      = 0x39,
++    SFRX      = 0x3a,
++    SFTX      = 0x3b,
++    SWORRST   = 0x3c,
++    SNOP      = 0x3d,
++
++    /* status byte, SWRU295E table 2 */
++    ST_RDYN   = 0x80,
++    ST_IDLE   = 0 << 4,
++    ST_RX     = 1 << 4,
++    ST_TX     = 2 << 4,
++    ST_FSTXON = 3 << 4,
++    ST_CAL    = 4 << 4,
++    ST_SETTLE = 5 << 4,
++    ST_RXERR  = 6 << 4,
++    ST_TXERR  = 7 << 4,
++
++    /* primary registers this model has an opinion about */
++    R_IOCFG3  = 0x00,
++    R_IOCFG2  = 0x01,
++    R_IOCFG1  = 0x02,
++    R_IOCFG0  = 0x03,
++
++    /* extended registers, SWRU295E table 5 */
++    X_PARTNUMBER  = 0x8f,
++    X_PARTVERSION = 0x90,
++    X_MARC_STATUS1 = 0x94,
++    X_NUM_TXBYTES = 0xd6,
++    X_NUM_RXBYTES = 0xd7,
++
++    PARTNUM_CC1120 = 0x48,      /* SWRU295E, PARTNUMBER */
++
++    /*
++     * What an IOCFGn may be set to that this model drives.  A driver
++     * asks for one of these on the pin it watches; everything else is
++     * accepted, recorded and never asserted, which is what an
++     * unmodelled function should look like.
++     */
++    GPIO_PKT_SYNC_RXTX = 0x06,
++    GPIO_HIGHZ         = 0x30,
++};
++
++struct CC1120State {
++    SSIPeripheral parent_obj;
++
++    uint8_t regs[NREG];
++    uint8_t ext[NEXTREG];
++
++    uint8_t txfifo[FIFOSZ];
++    int txlen;
++    uint8_t rxfifo[FIFOSZ];
++    int rxlen, rxpos;
++
++    /*
++     * SPI transaction state.  The first byte after CS falls is the
++     * command/address; in the extended space the one after that is the
++     * extended address, and only then does data flow.
++     */
++    int phase;                  /* 0 header, 1 extended address, 2 data */
++    bool reading;
++    bool burst;
++    uint8_t addr;
++    uint8_t extaddr;
++
++    uint8_t state;              /* one of ST_*, already shifted */
++
++    qemu_irq gpio[4];
++    bool gpio_level[4];
++
++    /* RESET_N, active low */
++    bool in_reset;
++
++    NICState *nic;
++    NICConf conf;
++
++    uint32_t drop_pct;
++    uint32_t drop_seed;
++    GRand *rand;
++};
++
++static uint8_t cc1120_status(CC1120State *s)
++{
++    /*
++     * CHIP_RDYn low means the crystal is stable, which it is the
++     * instant RESET_N is released here: this model has no crystal to
++     * be unstable.  A driver that polls for it therefore sees it
++     * immediately, which is the one thing about the status byte that
++     * is friendlier than the part.
++     */
++    return s->in_reset ? ST_RDYN : s->state;
++}
++
++static void cc1120_set_gpio(CC1120State *s, int n, bool level)
++{
++    if (s->gpio_level[n] != level) {
++        s->gpio_level[n] = level;
++        qemu_set_irq(s->gpio[n], level);
++    }
++}
++
++/*
++ * Drive whichever pins are configured for the function named.  IOCFG3
++ * is register 0x00 and IOCFG0 is 0x03, so the register index runs the
++ * opposite way to the pin number.
++ */
++static void cc1120_signal(CC1120State *s, uint8_t func, bool level)
++{
++    int i;
++
++    for (i = 0; i < 4; i++) {
++        if ((s->regs[R_IOCFG3 + i] & 0x3f) == func) {
++            cc1120_set_gpio(s, 3 - i, level);
++        }
++    }
++}
++
++static void cc1120_update_counts(CC1120State *s)
++{
++    s->ext[X_NUM_TXBYTES] = s->txlen;
++    s->ext[X_NUM_RXBYTES] = s->rxlen - s->rxpos;
++}
++
++static void cc1120_reset_state(CC1120State *s)
++{
++    memset(s->regs, 0, sizeof(s->regs));
++    memset(s->ext, 0, sizeof(s->ext));
++    s->txlen = s->rxlen = s->rxpos = 0;
++    s->phase = 0;
++    s->state = ST_IDLE;
++    /*
++     * An IOCFG comes out of reset selecting a real function, not
++     * high-Z, so a pin is driven before a driver has said anything.
++     * The reset values in SWRU295E are IOCFG3 0x06, IOCFG2 0x07,
++     * IOCFG1 0x30, IOCFG0 0x3c.
++     */
++    s->regs[R_IOCFG3] = 0x06;
++    s->regs[R_IOCFG2] = 0x07;
++    s->regs[R_IOCFG1] = 0x30;
++    s->regs[R_IOCFG0] = 0x3c;
++    s->ext[X_PARTNUMBER] = PARTNUM_CC1120;
++    s->ext[X_PARTVERSION] = 0x21;
++    cc1120_update_counts(s);
++    cc1120_signal(s, GPIO_PKT_SYNC_RXTX, false);
++}
++
++static void cc1120_transmit(CC1120State *s)
++{
++    int len;
++
++    if (s->txlen < 1) {
++        /* STX with nothing staged: the part underflows */
++        s->state = ST_TXERR;
++        return;
++    }
++    /*
++     * Variable packet length, which is what a driver that has a
++     * length to send uses: the first byte in the FIFO is the length
++     * and is not itself counted.  A FIFO holding less than it claims
++     * is an underflow and the part says so rather than sending short.
++     */
++    len = s->txfifo[0];
++    if (len + 1 > s->txlen) {
++        s->state = ST_TXERR;
++        return;
++    }
++    if (s->drop_pct == 0 ||
++        g_rand_int_range(s->rand, 0, 100) >= (int)s->drop_pct) {
++        qemu_send_packet(qemu_get_queue(s->nic), s->txfifo, len + 1);
++    }
++    s->txlen = 0;
++    cc1120_update_counts(s);
++    /*
++     * Back to IDLE.  TXOFF_MODE can say otherwise and is not modelled;
++     * a driver that relies on it would see this model go idle and the
++     * part not, which is the safe direction for a disagreement.
++     */
++    s->state = ST_IDLE;
++    cc1120_signal(s, GPIO_PKT_SYNC_RXTX, true);
++    cc1120_signal(s, GPIO_PKT_SYNC_RXTX, false);
++}
++
++static void cc1120_strobe(CC1120State *s, uint8_t cmd)
++{
++    switch (cmd) {
++    case SRES:
++        cc1120_reset_state(s);
++        break;
++    case SIDLE:
++        s->state = ST_IDLE;
++        break;
++    case SRX:
++        s->state = ST_RX;
++        break;
++    case STX:
++        cc1120_transmit(s);
++        break;
++    case SFSTXON:
++        s->state = ST_FSTXON;
++        break;
++    case SCAL:
++        s->state = ST_IDLE;     /* calibration is instant here */
++        break;
++    case SFRX:
++        s->rxlen = s->rxpos = 0;
++        if (s->state == ST_RXERR) {
++            s->state = ST_IDLE;
++        }
++        cc1120_update_counts(s);
++        break;
++    case SFTX:
++        s->txlen = 0;
++        if (s->state == ST_TXERR) {
++            s->state = ST_IDLE;
++        }
++        cc1120_update_counts(s);
++        break;
++    case SXOFF:
++    case SPWD:
++        s->state = ST_IDLE;
++        break;
++    case SNOP:
++    case SAFC:
++    case SWOR:
++    case SWORRST:
++        break;
++    default:
++        qemu_log_mask(LOG_UNIMP, "cc1120: strobe 0x%02x\n", cmd);
++        break;
++    }
++}
++
++static uint8_t cc1120_read_reg(CC1120State *s)
++{
++    if (s->addr == A_FIFO) {
++        if (s->rxpos < s->rxlen) {
++            return s->rxfifo[s->rxpos++];
++        }
++        s->state = ST_RXERR;    /* reading an empty RX FIFO underflows */
++        return 0;
++    }
++    if (s->addr == A_EXT) {
++        return s->ext[s->extaddr];
++    }
++    return s->addr < NREG ? s->regs[s->addr] : 0;
++}
++
++static void cc1120_write_reg(CC1120State *s, uint8_t val)
++{
++    if (s->addr == A_FIFO) {
++        if (s->txlen < FIFOSZ) {
++            s->txfifo[s->txlen++] = val;
++            cc1120_update_counts(s);
++        } else {
++            s->state = ST_TXERR;
++        }
++        return;
++    }
++    if (s->addr == A_EXT) {
++        switch (s->extaddr) {
++        case X_PARTNUMBER:
++        case X_PARTVERSION:
++        case X_NUM_TXBYTES:
++        case X_NUM_RXBYTES:
++            break;              /* read only */
++        default:
++            s->ext[s->extaddr] = val;
++            break;
++        }
++        return;
++    }
++    if (s->addr < NREG) {
++        s->regs[s->addr] = val;
++    }
++}
++
++static void cc1120_advance(CC1120State *s)
++{
++    if (!s->burst) {
++        return;
++    }
++    if (s->addr == A_EXT) {
++        if (s->extaddr < 0xff) {
++            s->extaddr++;
++        }
++        return;
++    }
++    if (s->addr == A_FIFO) {
++        return;                 /* the FIFO stays put; its pointer moves */
++    }
++    /*
++     * "If the internal address counter reaches address 0x2E (last byte
++     * in register space) the counter will not increment anymore"
++     * (SWRU295E, burst register access).
++     */
++    if (s->addr < NREG - 1) {
++        s->addr++;
++    }
++}
++
++static uint32_t cc1120_transfer(SSIPeripheral *dev, uint32_t val)
++{
++    CC1120State *s = CC1120(dev);
++    uint8_t byte = val & 0xff;
++    uint8_t out;
++
++    if (s->in_reset) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "cc1120: SPI access while RESET_N is asserted\n");
++        return 0;
++    }
++
++    switch (s->phase) {
++    case 0:
++        s->reading = !!(byte & HDR_READ);
++        s->burst = !!(byte & HDR_BURST);
++        s->addr = byte & HDR_ADDR;
++        if (!s->burst && s->addr >= A_STROBE0 && s->addr <= A_STROBE1) {
++            cc1120_strobe(s, s->addr);
++            s->phase = 0;       /* a strobe is the whole transaction */
++            return cc1120_status(s);
++        }
++        s->phase = (s->addr == A_EXT) ? 1 : 2;
++        return cc1120_status(s);
++
++    case 1:
++        /*
++         * The extended address.  "When the extended address is sent on
++         * the SI line, SO will return all zeros" (SWRU295E).
++         */
++        s->extaddr = byte;
++        s->phase = 2;
++        return 0;
++
++    default:
++        if (s->reading) {
++            out = cc1120_read_reg(s);
++        } else {
++            cc1120_write_reg(s, byte);
++            out = cc1120_status(s);
++        }
++        cc1120_advance(s);
++        return out;
++    }
++}
++
++static int cc1120_set_cs(SSIPeripheral *dev, bool select)
++{
++    CC1120State *s = CC1120(dev);
++
++    /* active low, so a high line ends the transaction */
++    if (select) {
++        s->phase = 0;
++    }
++    return 0;
++}
++
++static void cc1120_reset_n(void *opaque, int line, int level)
++{
++    CC1120State *s = opaque;
++
++    s->in_reset = !level;
++    if (!s->in_reset) {
++        cc1120_reset_state(s);
++    }
++}
++
++static bool cc1120_can_receive(NetClientState *nc)
++{
++    CC1120State *s = qemu_get_nic_opaque(nc);
++
++    /*
++     * Only in RX, and only with the FIFO drained.  Saying no here
++     * leaves the packet queued rather than dropping it, so the peer
++     * must be flushed when this becomes true again -- see
++     * cc1120_strobe()'s SFRX and the SRX case.
++     */
++    return !s->in_reset && s->state == ST_RX && s->rxpos >= s->rxlen;
++}
++
++static ssize_t cc1120_receive(NetClientState *nc, const uint8_t *buf,
++                              size_t size)
++{
++    CC1120State *s = qemu_get_nic_opaque(nc);
++
++    if (size < 1 || size > FIFOSZ) {
++        return size;
++    }
++    memcpy(s->rxfifo, buf, size);
++    s->rxlen = size;
++    s->rxpos = 0;
++    cc1120_update_counts(s);
++    s->state = ST_IDLE;         /* RXOFF_MODE is not modelled; see above */
++    cc1120_signal(s, GPIO_PKT_SYNC_RXTX, true);
++    return size;
++}
++
++static NetClientInfo net_cc1120_info = {
++    .type = NET_CLIENT_DRIVER_NIC,
++    .size = sizeof(NICState),
++    .can_receive = cc1120_can_receive,
++    .receive = cc1120_receive,
++};
++
++static void cc1120_reset(DeviceState *dev)
++{
++    CC1120State *s = CC1120(dev);
++
++    s->in_reset = false;
++    cc1120_reset_state(s);
++}
++
++static void cc1120_realize(SSIPeripheral *d, Error **errp)
++{
++    DeviceState *dev = DEVICE(d);
++    CC1120State *s = CC1120(d);
++
++    s->rand = g_rand_new_with_seed(s->drop_seed);
++    qdev_init_gpio_out_named(dev, s->gpio, "gpio", 4);
++    qdev_init_gpio_in_named(dev, cc1120_reset_n, "reset_n", 1);
++
++    qemu_macaddr_default_if_unset(&s->conf.macaddr);
++    s->nic = qemu_new_nic(&net_cc1120_info, &s->conf,
++                          object_get_typename(OBJECT(dev)), dev->id,
++                          &dev->mem_reentrancy_guard, s);
++}
++
++static const VMStateDescription vmstate_cc1120 = {
++    .name = "cc1120",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_SSI_PERIPHERAL(parent_obj, CC1120State),
++        VMSTATE_UINT8_ARRAY(regs, CC1120State, NREG),
++        VMSTATE_UINT8_ARRAY(ext, CC1120State, NEXTREG),
++        VMSTATE_UINT8_ARRAY(txfifo, CC1120State, FIFOSZ),
++        VMSTATE_UINT8_ARRAY(rxfifo, CC1120State, FIFOSZ),
++        VMSTATE_INT32(txlen, CC1120State),
++        VMSTATE_INT32(rxlen, CC1120State),
++        VMSTATE_INT32(rxpos, CC1120State),
++        VMSTATE_UINT8(state, CC1120State),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static const Property cc1120_properties[] = {
++    DEFINE_NIC_PROPERTIES(CC1120State, conf),
++    DEFINE_PROP_UINT32("drop-pct", CC1120State, drop_pct, 0),
++    DEFINE_PROP_UINT32("drop-seed", CC1120State, drop_seed, 1),
++};
++
++static void cc1120_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    SSIPeripheralClass *k = SSI_PERIPHERAL_CLASS(klass);
++
++    k->realize = cc1120_realize;
++    k->transfer = cc1120_transfer;
++    k->set_cs = cc1120_set_cs;
++    k->cs_polarity = SSI_CS_LOW;
++    device_class_set_legacy_reset(dc, cc1120_reset);
++    dc->vmsd = &vmstate_cc1120;
++    device_class_set_props(dc, cc1120_properties);
++    dc->desc = "TI CC1120 narrowband RF transceiver";
++    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
++}
++
++static const TypeInfo cc1120_info = {
++    .name          = TYPE_CC1120,
++    .parent        = TYPE_SSI_PERIPHERAL,
++    .instance_size = sizeof(CC1120State),
++    .class_init    = cc1120_class_init,
++};
++
++static void cc1120_register_types(void)
++{
++    type_register_static(&cc1120_info);
++}
++
++type_init(cc1120_register_types)
+diff --git a/hw/ssi/meson.build b/hw/ssi/meson.build
+index bb38c09..2dcab50 100644
+--- a/hw/ssi/meson.build
++++ b/hw/ssi/meson.build
+@@ -6,6 +6,7 @@ system_ss.add(when: 'CONFIG_PL022', if_true: files('pl022.c'))
+ system_ss.add(when: 'CONFIG_SIFIVE_SPI', if_true: files('sifive_spi.c'))
+ system_ss.add(when: 'CONFIG_SSI', if_true: files('ssi.c'))
+ system_ss.add(when: 'CONFIG_SX1276', if_true: files('sx1276.c'))
++system_ss.add(when: 'CONFIG_CC1120', if_true: files('cc1120.c'))
+ system_ss.add(when: 'CONFIG_STM32F2XX_SPI', if_true: files('stm32f2xx_spi.c'))
+ system_ss.add(when: 'CONFIG_XILINX_SPI', if_true: files('xilinx_spi.c'))
+ system_ss.add(when: 'CONFIG_XILINX_SPIPS', if_true: files('xilinx_spips.c'))
+diff --git a/include/hw/ssi/cc1120.h b/include/hw/ssi/cc1120.h
+new file mode 100644
+index 0000000..7e3fe47
+--- /dev/null
++++ b/include/hw/ssi/cc1120.h
+@@ -0,0 +1,16 @@
++/*
++ * TI CC1120 narrowband RF transceiver
++ *
++ * Copyright (c) 2026 Noah Evans
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 or
++ * (at your option) any later version.
++ */
++
++#ifndef HW_SSI_CC1120_H
++#define HW_SSI_CC1120_H
++
++#define TYPE_CC1120 "cc1120"
++
++#endif
