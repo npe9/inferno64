@@ -74,6 +74,19 @@ enum {
 	Swidth128	= 1<<9,
 	Sdreq		= 1<<10,
 	Permapshift	= 16,		/* which peripheral paces the transfer */
+	/*
+	 * How hard the engine is allowed to hammer the far side.
+	 *
+	 * WAITS inserts that many wait cycles between transfers, and
+	 * NO_WIDE_BURSTS stops it writing a wide burst as two beats
+	 * back to back.  Both are zero here and always have been, and
+	 * the Arasan is the block Linux wraps in a minimum delay
+	 * between consecutive register writes -- a CPU-side workaround
+	 * an external engine knows nothing about.  See the plan.
+	 */
+	Waitsshift	= 21,		/* TI wait cycles, 5 bits */
+	Waitsmask	= 0x1f,
+	Nowidebursts	= 1<<26,
 
 	Enablereg	= 0xff0/4,	/* global per-channel enable bits */
 
@@ -81,6 +94,22 @@ enum {
 
 	Timeout		= 1000000,
 };
+/*
+ * Pacing, from ctl, because the two candidates are one bit each and
+ * the only way to tell is on the board.  Zero is what this port has
+ * always used.
+ */
+int dmawaits = 0;
+int dmanowide = 0;
+/*
+ * How long a peripheral-paced transfer may take, in microseconds.  An
+ * SD card is allowed 250ms to program a block; this gives it a second.
+ * See the wait in dmaperiph().
+ */
+int dmaxferus = 1000000;
+
+extern uvlong systmrread(void);		/* systmrbcm.c, 1MHz */
+
 
 /*
  * A control block, in the layout the engine reads.  Nothing here may
@@ -217,7 +246,9 @@ dmaperiph(int c, Cb *cb, void *mem, u32 pbus, ulong len, int dreq, int tomem)
 	if(((uintptr)cb & 31) != 0)
 		return -1;
 
-	cb->ti = Waitresp | (u32)dreq<<Permapshift;
+	cb->ti = Waitresp | (u32)dreq<<Permapshift |
+		(u32)(dmawaits & Waitsmask)<<Waitsshift |
+		(dmanowide? Nowidebursts: 0);
 	if(tomem){
 		cb->ti |= Sdreq | Dinc;
 		cb->source = pbus;
@@ -259,11 +290,54 @@ dmaperiph(int c, Cb *cb, void *mem, u32 pbus, ulong len, int dreq, int tomem)
 	r[Conblkad] = busaddr(cb);
 	r[Cs] = Active;
 
-	for(i = 0; i < Timeout; i++){
-		if(r[Cs] & Error)
-			break;
-		if((r[Cs] & Active) == 0)
-			break;
+	/*
+	 * Wait by the clock, not by a spin count, and wait long enough
+	 * for a CARD.
+	 *
+	 * This is the whole of the Arasan "DMA write stall", and there
+	 * was never a stall.  A peripheral-paced transfer runs at the
+	 * peripheral's speed, and an SD card part way through a
+	 * multi-block write fills its internal buffer, holds DAT0 low
+	 * and programs.  The SD specification allows 250ms for that.
+	 * This loop was a bare count of 1000000 uncached reads of Cs,
+	 * which on this board expires well inside that, so the driver
+	 * declared failure over a card that was working.
+	 *
+	 * Measured, by watching all three parties through one of these
+	 * "stalls" for two seconds:
+	 *
+	 *	WATCH 2000ms: dat0 high at 2473, bufwren at 2422,
+	 *	    dma moved at 815 (x100us)
+	 *	status 0x1ef0106 -> 0x1ff0000 interrupt 0x12
+	 *	    remaining 3072 -> 0 cs 0x2
+	 *
+	 * The engine resumed at 81ms, the host buffer had room again at
+	 * 242ms, the card released DAT0 at 247ms, and the transfer
+	 * COMPLETED -- nothing remaining, END flag set, Idataend and
+	 * Iwriterdy raised.  Every party behaved correctly throughout.
+	 *
+	 * That is also why nine separate eliminations in the plan found
+	 * nothing: none of them was about how long this waited.  And it
+	 * is why PIO never showed it -- the PIO path waits per block in
+	 * awaitirq, which has a real timeout.
+	 *
+	 * A second, so a card at the specification's limit and then some
+	 * has its time.  The engine is still ACTIVE and correctly
+	 * waiting; there is nothing to gain by giving up sooner.
+	 */
+	{
+		uvlong t0 = systmrread();
+
+		for(i = 0;; i++){
+			if(r[Cs] & Error)
+				break;
+			if((r[Cs] & Active) == 0)
+				break;
+			if(systmrread() - t0 > (uvlong)dmaxferus){
+				i = Timeout;
+				break;
+			}
+		}
 	}
 	/*
 	 * Say which of the ways it can fail actually happened, and what

@@ -7735,3 +7735,136 @@ been set here.  Unlike the last hypothesis this one predicts the
 specific thing observed \(em a failure that appears only once enough
 writes have gone back to back, and only on the path with no
 per-block pause.
+.NH 2
+The Arasan DMA write stall: there was never a stall
+.PP
+.B "It is a timeout, and the timeout was a spin count."
+.CW dmaperiph()
+waited for the engine with
+.P1
+for(i = 0; i < Timeout; i++){ ... }
+.P2
+and
+.CW Timeout
+is 1000000 \(em a bare count of uncached reads of the channel's
+.CW Cs
+register, worth something like a tenth of a second on this board and
+nothing in particular on any other.  A peripheral-paced transfer runs
+at the peripheral's speed, and an SD card part way through a
+multi-block write fills its internal buffer, holds DAT0 low and
+programs; the specification allows it 250ms to do that.  So the driver
+declared failure over a card that was working, and everything built on
+top of that \(em nine eliminations, a DREQ hypothesis, a latched-bit
+hypothesis \(em was explaining a fault that did not exist.
+.PP
+.B "Measured, by watching all three parties through one stall."
+.CW "echo dmawatch 2000"
+samples the card's DAT0 level, the host's BUFFER_WRITE_ENABLE and the
+engine's remaining count every 100us for two seconds at the moment the
+old code gave up:
+.P1
+emmc: WATCH 2000ms: dat0 high at 2473, bufwren at 2422,
+    dma moved at 815 (x100us; -1 never)
+emmc:   status 0x1ef0106 -> 0x1ff0000 interrupt 0x12
+    remaining 3072 -> 0 cs 0x2
+.P2
+The engine resumed at 81ms, the host buffer had room again at 242ms,
+the card released DAT0 at 247ms \(em and the transfer
+.B completed:
+nothing remaining, the END flag set,
+.CW Idataend
+and
+.CW Iwriterdy
+raised.  At 50ms none of the three had moved, which is why a shorter
+watch looked like a hang and reinforced the wrong story.
+.PP
+.B "A correction to the section above, because the wrong reading
+.B "pointed at the wrong bug."
+That section says the bit which clears in
+.CW status
+is
+.CW WRITE_TRANSFER_ACTIVE .
+It is not.  0x400 is bit 10,
+.CW BUFFER_WRITE_ENABLE ;
+bit 8,
+.CW WRITE_TRANSFER_ACTIVE ,
+stays set throughout.  So nothing at the stall was in a broken state
+at all: the transfer was active, the host's buffer was correctly full,
+DREQ was correctly dropped, DAT0 was correctly low.  Every party was
+behaving, which is exactly what should have been suspicious.
+.PP
+.B "The fix."
+Wait by the clock and wait long enough for a card:
+.CW systmrread()
+is a 1MHz counter, and
+.CW dmaxferus
+gives a peripheral-paced transfer one second \(em the
+specification's limit and then some.  The engine is still ACTIVE and
+still correctly waiting; there is nothing to gain by giving up sooner.
+And the pacing hypothesis from the previous section is dead too:
+.CW "dmawaits 31"
+put
+.CW WAITS
+at its maximum, confirmed live in the control block as
+.CW "ti 0x3eb0148" ,
+and the transfer stopped at the same three blocks of nine.
+.PP
+.B "Why every earlier elimination found nothing, and the lesson."
+None of them was about how long the code waited.  Stale interrupts,
+stale channel state, page offset, direction alternation, buffer
+dirtiness, delay, per-transfer allocation \(em all nine were about
+.I what
+was configured, and the fault was
+.I when
+the driver stopped listening.  PIO never showed it because the PIO
+path waits per block in
+.CW awaitirq ,
+which has a real timeout.  In-kernel
+.CW dmatest
+never showed it because it does not write enough consecutive blocks to
+make the card program mid-transfer.  A spin count is not a timeout: it
+is a timeout whose length is a property of the machine, the compiler
+and the bus, and this one was shorter than the hardware it was waiting
+for.
+.NH 2
+Open: warm JTAG entry is unreliable, and its three faces are one fault
+.PP
+About half of
+.CW jtagrestart 's
+attempts produce one of three things, and they are almost certainly
+the same underlying fault \(em memory that is not what the kernel
+thinks it is:
+.IP \(bu
+a garbled console from the first byte, and a panic in
+.CW chandevreset
+with
+.CW "devtab[11] is corrupt" ;
+.IP \(bu
+a hang part way through the peripheral suite \(em twice at
+.CW "i2c: bsc0 ... up," ;
+.IP \(bu
+a data abort at
+.CW accounttime+0x24
+from
+.CW clockintr ,
+which is
+.CW "p->time[p->insyscall]++"
+with
+.CW m->proc
+holding eight bytes read out of kernel text
+.CW ( far
+.CW b900080152b00169 ,
+which decodes as
+.CW "MOVZ W9, #0x800B, LSL #16"
+and
+.CW "STR W1, [X0, #8]" ).
+.PP
+The identical
+.CW far
+across four different builds is what says these are systematic rather
+than a stray pointer.  None of them has ever been seen on a kernel
+booted from the card: the two card boots in this session ran the whole
+suite clean.  The cause is open.
+.CW tools/jtag/boot.sh
+works around it by retrying and by proving which kernel is running,
+which is enough to keep working, and is not a fix.

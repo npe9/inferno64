@@ -376,6 +376,7 @@ static int emmcdmaclearirq = 0;
  */
 static int emmcbiotrace = 0;
 static int emmcdmaunstick = 0;
+static int emmcdmawatch = 0;
 static int emmcdmairqen = 0;
 static int emmcdmareset = 0;
 static int emmcdmadatareset = 0;
@@ -1153,6 +1154,63 @@ emmcbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 							" (no change)");
 				}
 				/*
+				 * Does the CARD ever finish?
+				 *
+				 * The earlier decode of this stall was wrong
+				 * and worth correcting here, because the
+				 * wrong reading pointed at the wrong bug.
+				 * The status bit that clears is 0x400, which
+				 * is bit 10, BUFFER_WRITE_ENABLE -- not bit
+				 * 8, WRITE_TRANSFER_ACTIVE, which is still
+				 * set.  So nothing at the stall is in a
+				 * broken state at all: the transfer is
+				 * active, the host's buffer is full so it
+				 * correctly has no room, DREQ is correctly
+				 * dropped, and DAT0 is low because the card
+				 * is programming.  Every part is behaving.
+				 *
+				 * Which makes the question narrow: when the
+				 * card releases DAT0, does the buffer drain
+				 * and DREQ come back?  So watch all three
+				 * for 50ms and say what moved and when.
+				 * "It did not resume" and "the card never
+				 * finished" are different bugs and the dump
+				 * has never distinguished them.
+				 */
+				if(emmcdmawatch){
+					u32 st0 = r[Rstatus], st, in;
+					ulong left0 = dmachanleft(), left;
+					int dat0up = -1, bwe = -1, moved = -1;
+
+					for(j = 0; j < emmcdmawatch*10; j++){
+						microdelay(100);
+						st = r[Rstatus];
+						left = dmachanleft();
+						if(dat0up < 0 &&
+						    (st & (1<<20)) != 0 &&
+						    (st0 & (1<<20)) == 0)
+							dat0up = j;
+						if(bwe < 0 && (st & (1<<10)) != 0)
+							bwe = j;
+						if(moved < 0 && left != left0)
+							moved = j;
+					}
+					st = r[Rstatus];
+					in = r[Rinterrupt];
+					print("emmc: WATCH %dms: dat0 high at "
+						"%d, bufwren at %d, dma moved "
+						"at %d (x100us; -1 never)\n",
+						emmcdmawatch, dat0up, bwe,
+						moved);
+					print("emmc:   status %#lux -> %#lux "
+						"interrupt %#lux remaining "
+						"%lud -> %lud cs %#lux\n",
+						(ulong)st0, (ulong)st,
+						(ulong)in, left0,
+						dmachanleft(),
+						dmachanstate());
+				}
+				/*
 				 * Stop the ENGINE before stopping the card.
 				 *
 				 * The dump this failure prints ends with
@@ -1622,6 +1680,33 @@ emmcwctl(SDunit *u, Cmdbuf *cb)
 	if(strcmp(cb->f[0], "biotrace") == 0 && cb->nf == 2){
 		emmcbiotrace = atoi(cb->f[1]);
 		print("emmc: biotrace %d\n", emmcbiotrace);
+		return 0;
+	}
+	/*
+	 * TI.WAITS and TI.NO_WIDE_BURSTS on the shared engine, live.
+	 * The stall's dump says the controller drops the write transfer
+	 * while the card is busy, and this Arasan is the block Linux
+	 * will not let the CPU write faster than about 8 SD clocks --
+	 * which an external engine at bus speed ignores.
+	 */
+	/* dmawatch <ms>: how long to watch the stall before giving up */
+	if(strcmp(cb->f[0], "dmawatch") == 0 && cb->nf == 2){
+		emmcdmawatch = atoi(cb->f[1]);
+		print("emmc: dmawatch %d ms\n", emmcdmawatch);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "dmawaits") == 0 && cb->nf == 2){
+		extern int dmawaits;
+
+		dmawaits = atoi(cb->f[1]);
+		print("emmc: dmawaits %d\n", dmawaits);
+		return 0;
+	}
+	if(strcmp(cb->f[0], "dmanowide") == 0 && cb->nf == 2){
+		extern int dmanowide;
+
+		dmanowide = atoi(cb->f[1]);
+		print("emmc: dmanowide %d\n", dmanowide);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "dmaunstick") == 0 && cb->nf == 2){
