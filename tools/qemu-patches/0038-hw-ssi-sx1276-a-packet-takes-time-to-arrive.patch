@@ -1,4 +1,6 @@
-From: Inferno RIO
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Mon, 21 Sep 2026 06:16:38 -0400
 Subject: [PATCH] hw/ssi/sx1276: a packet takes time to arrive, and two at once collide
 
 The model put a frame on the peer at the end of the sender's airtime,

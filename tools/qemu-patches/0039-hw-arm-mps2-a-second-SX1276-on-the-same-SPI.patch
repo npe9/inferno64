@@ -1,4 +1,6 @@
-From: Inferno RIO
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Mon, 21 Sep 2026 06:37:04 -0400
 Subject: [PATCH] hw/arm/mps2: a second SX1276 on the same SPI, with -machine radio2=on
 
 A PyCubed has two radio sockets on one bus, RF1 and RF2, told apart by

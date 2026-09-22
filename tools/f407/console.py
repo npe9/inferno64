@@ -103,6 +103,7 @@ def waitprompt(fd, timeout=30.0):
     """
     end = time.time() + timeout
     seen = ""
+    asked = 0
     while time.time() < end:
         d = drain(fd, 1.0)
         seen += d
@@ -115,7 +116,17 @@ def waitprompt(fd, timeout=30.0):
         # costs nothing and a shell answers it with a prompt.  A board
         # that does not answer is busy or wedged, which is worth
         # knowing before a script types a session into it.
+        #
+        # Except that one of the ways to be quiet without a prompt is
+        # to be inside a "cat >file" that an earlier run left open --
+        # this tool's own wreckage.  A newline there is a blank write
+        # to a ctl file, not a question, and no prompt ever comes.  So
+        # end any such cat once before deciding the board is wedged;
+        # an end-of-file typed at a shell prompt is harmless.
+        if asked == 1:
+            os.write(fd, b"\004")
         os.write(fd, b"\n")
+        asked += 1
         time.sleep(0.3)
         seen = ""
     return False
@@ -128,25 +139,36 @@ def main():
     if not waitprompt(fd):
         sys.exit("console: no shell prompt; the board is busy or wedged")
     if sys.argv[1] == "ctl":
-        print(send(fd, "cat >" + sys.argv[2], 2.0), end="")
-        for line in sys.argv[3:]:
-            # "!sleep N" waits without typing, so one ctl session can
-            # hold a state while something else measures it.  This
-            # board spawns one process per boot for a redirection, so
-            # a session that has to be left open is the only way to
-            # change a setting, look at it, and change it again
-            # without a reset between each.
-            if line.startswith("!sleep "):
-                time.sleep(float(line.split()[1]))
-                continue
-            print(send(fd, line, 3.0), end="")
-        os.write(fd, b"\004")           # end the cat
-        time.sleep(CHARDELAY)
-        print(drain(fd, 2.0), end="")
+        # The cat is ended whatever happens.  A session that stops on a
+        # lost character used to leave the board inside it: the next run
+        # found no prompt, called the board wedged, and cost the reset
+        # this tool exists to save.  A failure should cost what it is
+        # about and nothing else.
+        try:
+            ctlsession(fd, sys.argv[2], sys.argv[3:])
+        finally:
+            os.write(fd, b"\004")      # end the cat
+            time.sleep(CHARDELAY)
+            print(drain(fd, 2.0), end="")
     else:
         for line in sys.argv[2:]:
             print(send(fd, line, 3.0), end="")
     os.close(fd)
+
+
+def ctlsession(fd, path, lines):
+    print(send(fd, "cat >" + path, 2.0), end="")
+    for line in lines:
+        # "!sleep N" waits without typing, so one ctl session can
+        # hold a state while something else measures it.  This
+        # board spawns one process per boot for a redirection, so
+        # a session that has to be left open is the only way to
+        # change a setting, look at it, and change it again
+        # without a reset between each.
+        if line.startswith("!sleep "):
+            time.sleep(float(line.split()[1]))
+            continue
+        print(send(fd, line, 3.0), end="")
 
 
 if __name__ == "__main__":
