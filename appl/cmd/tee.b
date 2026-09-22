@@ -7,6 +7,10 @@ include "draw.m";
 
 include "arg.m";
 
+# Bufsize: 8192 where a Dis word is eight bytes, 512 where it is
+# four.  See module/w4/bufsize.m and module/w8/bufsize.m.
+include "bufsize.m";
+
 Tee: module
 {
 	init:	fn(nil: ref Draw->Context, nil: list of string);
@@ -62,7 +66,7 @@ init(nil: ref Draw->Context, args: list of string)
 		files[nf++] = ref File(fd, f);
 	}
 	files[nf++] = ref File(sys->fildes(1), "standard output");
-	buf := array[Sys->ATOMICIO] of byte;
+	buf := array[Bufsize] of byte;
 	while((n := sys->read(fd0, buf, len buf)) > 0){
 		for(i := 0; i < nf; i++)
 			if(sys->write(files[i].fd, buf, n) != n)

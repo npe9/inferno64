@@ -6,6 +6,10 @@ include "sys.m";
 include "draw.m";
 
 include "keyring.m";
+
+# Bufsize: 8192 where a Dis word is eight bytes, 512 where it is
+# four.  See module/w4/bufsize.m and module/w8/bufsize.m.
+include "bufsize.m";
 	kr: Keyring;
 
 MD5sum: module
@@ -41,7 +45,7 @@ init(nil: ref Draw->Context, argv: list of string)
 md5sum(fd: ref Sys->FD, file: string): int
 {
 	err := 0;
-	buf := array[Sys->ATOMICIO] of byte;
+	buf := array[Bufsize] of byte;
 	state: ref Keyring->DigestState = nil;
 	nbytes := big 0;
 	while((nr := sys->read(fd, buf, len buf)) > 0){

@@ -3,6 +3,10 @@ include "sys.m";
 	sys: Sys;
 include "draw.m";
 
+# Bufsize: 8192 where a Dis word is eight bytes, 512 where it is
+# four.  See module/w4/bufsize.m and module/w8/bufsize.m.
+include "bufsize.m";
+
 Read: module {
 	init: fn(nil: ref Draw->Context, argv: list of string);
 };

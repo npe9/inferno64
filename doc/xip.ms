@@ -3946,6 +3946,104 @@ much userland a board wants.
 .PP
 That number is not known.  It should be, before anything is built.
 .NH 1
+A board that can change itself
+.PP
+The board runs a shell and thirty-odd commands and cannot alter a byte
+of any of them.  Its root filesystem is
+.CW devroot ,
+which is read only, and there is no writable filesystem of any kind:
+.CW /tmp
+is an empty directory in a read-only tree.  So
+.CW ed
+is on the board and has nowhere to write, and the file commands \-
+.CW cp ,
+.CW mv ,
+.CW rm ,
+.CW mkdir ,
+.CW touch
+\- were taken out again because there was nothing for them to act on.
+That is the next thing to fix, and it divides into three questions of
+increasing difficulty.
+.NH 2
+Somewhere to write
+.PP
+.CW memfs
+is the obvious answer and costs too much:
+.CW dis32/memfs.dis
+loads
+.CW styx.dis
+and
+.CW styxlib.dis ,
+and the Styx family \- styx at 15698 bytes,
+.CW styxconv/ostyx
+at 12929,
+.CW styxpersist
+at 10783 \- put the image 111K over what the flash has room for when it
+was tried.  A file server that speaks Styx to itself is the wrong shape
+for a part with 176128 bytes of RAM.
+.PP
+What fits is a filesystem in the kernel, as a device: a
+.CW #r -style
+ramfs of a few kilobytes with no protocol between it and its user.  It
+is far less general than
+.CW memfs
+and it is what makes
+.CW ed
+and
+.CW cp
+mean something.
+.NH 2
+Compiling on the board
+.PP
+.CW dis32/limbo.dis
+is 332664 bytes.  Its decoded
+.CW Inst
+array would be of the order of 570K, which is more than this part's
+whole application space \- 917504 bytes, the bootloader owning the
+sector above \- and loading it into a 176128-byte heap is not close to
+possible.  Self-hosting is not a tuning problem here; the compiler is
+larger than the machine.
+.PP
+Two ways out, neither attempted.  The compiler could be cut down to
+something that compiles the subset a board would be programmed in,
+which is a fork of
+.CW limbo
+and a maintenance burden for ever.  Or the board grows: an STM32F429 or
+F439 has 256K of RAM and 2M of flash in the same package, and a part
+with external SDRAM has as much as it likes.  The second is the honest
+answer, and the first is the interesting one.
+.NH 2
+Keeping what it compiles
+.PP
+Suppose the board can compile.  A module compiled on it is decoded into
+.CW Inst
+in the heap, which is the cost XIP exists to avoid, and it is lost at
+reboot.
+.PP
+Putting it in flash instead is not out of reach.  The part's flash
+controller can erase and program its own sectors from code running in
+it, which is how the bootloader in the sector above got there.  So the
+pieces are a device for the internal flash, a filesystem over it \-
+.CW utils/mkflashfs
+and
+.CW mps2.flash.s
+already show the read-only half of this, a filesystem packed into a
+memory-mapped window \- and a change in
+.CW parsemod
+to place a freshly decoded array in that window rather than in the heap,
+after which it is XIP by the same mechanism as a built-in module.
+.PP
+Then
+.CW Xipmod
+stops being a build-time table and becomes something the board writes,
+and a module compiled once costs no RAM ever again.  Two cautions: the
+F4's flash endures of the order of ten thousand erase cycles a sector,
+so this is for installing and not for scratch space; and the decoded
+array contains pointers patched at load time, so what is written has to
+be position-independent or relocated on the way in \- which is the same
+problem the ahead-of-time compiler above has, and the reason these two
+sections belong next to each other.
+.NH 1
 Unrelated breakage found on the way
 .PP
 Two things in the tree are broken independently of this work, found while

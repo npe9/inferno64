@@ -15,6 +15,10 @@ include "env.m";
 include "arg.m";
 	argm: Arg;
 include "sh.m";
+
+# Bufsize: 8192 where a Dis word is eight bytes, 512 where it is
+# four.  See module/w4/bufsize.m and module/w8/bufsize.m.
+include "bufsize.m";
 	myself: Sh;
 	myselfbuiltin: Shellbuiltin;
 
@@ -586,7 +590,7 @@ subsbuiltin(ctxt: ref Context, n: ref Node): list of ref Listnode
 
 getbq(nil: ref Context, fd: ref Sys->FD, seps: string): list of ref Listnode
 {
-	buf := array[Sys->ATOMICIO] of byte;
+	buf := array[Bufsize] of byte;
 	buflen := 0;
 	while ((n := sys->read(fd, buf[buflen:], len buf - buflen)) > 0) {
 		buflen += n;

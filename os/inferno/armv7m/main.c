@@ -5,6 +5,7 @@
 #include "fns.h"
 #include "../port/error.h"
 #include "io.h"
+#include "armv7m.h"
 #include "version.h"
 
 /*

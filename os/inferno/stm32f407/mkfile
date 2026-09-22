@@ -99,31 +99,77 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES $ROOT/tools/bin2ihex
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
 	$LD $LDFLAGS -o $target -H4 -T$KTZERO -D$KDATA -R0 -l $OBJ $CONF.$O $LIBFILES
 	$ROOT/tools/bin2ihex $target $KTZERO i$CONF.hex
+	# The USB HID bootloader already in this part's flash occupies
+	# the last 128K sector, from 0x080e0000, and reports BootStart
+	# 0xe0000 when asked.  An image past that cannot be written --
+	# mikroe-uhb refuses rather than overwriting the only way in --
+	# so fail here instead of at the far end of a flash cycle.
+	@{ s=`{ls -l $target | awk '{print $5}'}
+	   if(test $s -gt 917504){
+		echo 'i'$CONF' is '$s' bytes; the bootloader starts at 917504' >[1=2]
+		exit toobig
+	   } }
 	cp $target i$CONF.hex $INSTALLDIR
 
 $ROOT/tools/bin2ihex:
 	cd $ROOT/tools; mk bin2ihex
 
-# Every module the root carries, and osinit with them.  A module whose
-# decoded array is not here still loads, out of the root and into the
-# pool, at the cost this board cannot pay; a name here that the root
-# does not carry is simply not matched at load time, so the failure mode
-# of getting this list wrong is losing the saving, not running the wrong
-# code.
+# Every module the root carries.
+#
+# A module's decoded array costs flash for ever and saves RAM only
+# while the module is loaded, so which way that trades depends on which
+# is scarce.  On this part flash is 917504 usable -- the bootloader owns
+# the sector above -- and RAM is 176128, and it is main that runs out:
+# a pipeline as small as "ls /dis | wc -l" builds two Inst arrays in it
+# and failed at cursize 80768 of 88050 with the commands left out of
+# here.  In flash they cost nothing at run time.
+#
+# sh is the extreme case and the reason any of this exists: 73536 bytes
+# of Inst against 176128 of RAM, so without XIP there is no shell.
 XIPDIS=\
 	sh.dis\
 	sh/std.dis\
 	lib/arg.dis\
 	lib/bufio.dis\
-	lib/string.dis\
-	lib/readdir.dis\
-	lib/filepat.dis\
 	lib/daytime.dis\
 	lib/env.dis\
+	lib/filepat.dis\
+	lib/names.dis\
+	lib/rand.dis\
+	lib/readdir.dis\
+	lib/regex.dis\
+	lib/string.dis\
+	lib/workdir.dis\
 	echo.dis\
+	ed.dis\
+	sed.dis\
 	cat.dis\
 	ls.dis\
 	bind.dis\
+	pwd.dis\
+	cd.dis\
+	grep.dis\
+	wc.dis\
+	date.dis\
+	sleep.dis\
+	ps.dis\
+	basename.dis\
+	cleanname.dis\
+	sort.dis\
+	uniq.dis\
+	tee.dis\
+	tr.dis\
+	test.dis\
+	time.dis\
+	kill.dis\
+	read.dis\
+	env.dis\
+	md5sum.dis\
+	strings.dis\
+	xd.dis\
+	seq.dis\
+
+
 
 # dis32, not $DISROOT: the root section of the conf beside this file
 # names /dis32 explicitly, because a Dis word is four bytes on this

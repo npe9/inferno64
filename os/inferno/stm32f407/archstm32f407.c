@@ -211,8 +211,21 @@ archconfinit(void)
 	conf.topofmem = TOPOFMEM;
 	conf.base1 = CCMRAM;
 	conf.npage1 = CCMRAMSIZE/BY2PG;
+	/*
+	 * The third bank is declared and not used.  qemu's
+	 * stm32f405_soc.c maps flash, SRAM and CCM and not the backup
+	 * SRAM, so a guest that allocates out of 0x40024000 there takes
+	 * a bus fault -- reached, once the root grew enough to get that
+	 * far: "hard fault ... bfar 40024400".  The part has the
+	 * region; the model does not.
+	 *
+	 * tools/qemu-patches/0040 adds it.  Until that is what this is
+	 * tested against, agreeing with the emulator is worth more than
+	 * 4096 bytes: set npage2 from BKPSRAMSIZE and the board has
+	 * 176128 rather than 167936.
+	 */
 	conf.base2 = BKPSRAM;
-	conf.npage2 = BKPSRAMSIZE/BY2PG;
+	conf.npage2 = 0;
 	USED(bdata);
 }
 
