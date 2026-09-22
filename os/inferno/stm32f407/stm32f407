@@ -158,6 +158,7 @@ root
 	/dis/lib/string.dis	/dis32/lib/string.dis
 	/dis/lib/workdir.dis	/dis32/lib/workdir.dis
 	/dis/echo.dis		/dis32/echo.dis
+	/dis/export.dis		/dis32/export.dis
 	/dis/sed.dis		/dis32/sed.dis
 	/dis/ed.dis		/dis32/ed.dis
 	/dis/cat.dis		/dis32/cat.dis

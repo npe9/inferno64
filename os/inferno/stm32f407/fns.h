@@ -48,6 +48,7 @@ void	otherusarts(void);
 void	bangallpins(void);
 void	bangregs(void);
 void	ledpin(int, int);
+int	kstackused(void);
 void	findmovingpin(void);
 void	reportmovingpin(void);
 void	uartconsole(void);

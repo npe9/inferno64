@@ -256,6 +256,18 @@ idlehands(void)
 		last = m->ticks/50;
 		on = !on;
 		ledpin(15, on);
+#ifdef KSTACKWATCH
+		{
+			static int worst;
+			int n;
+
+			if((n = kstackused()) > worst){
+				worst = n;
+				print("kstack high water %d of %d\n",
+					n, KSTACK);
+			}
+		}
+#endif
 	}
 	idle();
 }

@@ -693,6 +693,19 @@ newproc(void)
 	p->qnext = nil;
 	unlock(&procalloc);
 
+	/*
+	 * KSTACKWATCH: fill the stack with a pattern so its high-water
+	 * mark can be read back.  KSTACK is 4096 on the armv7m boards
+	 * and is malloc'd per proc out of main, so on a part with
+	 * 167936 bytes it is the largest thing standing between this
+	 * board and a shell pipeline -- and 4096 is an inherited number
+	 * that nothing here has ever measured.  Reported by
+	 * kstackused() below.
+	 */
+#ifdef KSTACKWATCH
+	if(p->kstack != nil)
+		memset(p->kstack, 0xbe, KSTACK-64);
+#endif
 	p->psstate = "New";
 	p->fpstate = FPinit;
 	p->procctl = 0;
@@ -2104,3 +2117,34 @@ pidfree(Proc *p)
 
 	p->pid = p->noteid = p->parentpid = 0;
 }
+
+#ifdef KSTACKWATCH
+/*
+ * How much of any proc's kernel stack has ever been written, counted
+ * from the far end of the 0xbe pattern newproc() laid down.  The stack
+ * grows down from kstack+KSTACK, so the untouched bytes are at the
+ * bottom and what is returned is the deepest any proc has gone.
+ */
+int
+kstackused(void)
+{
+	Proc *p;
+	uchar *q, *e;
+	int i, deep, n;
+
+	deep = 0;
+	for(i = 0; i < conf.nproc; i++){
+		p = &procalloc.arena[i];
+		if(p->kstack == nil)
+			continue;
+		q = (uchar*)p->kstack;
+		e = q + KSTACK - 64;
+		while(q < e && *q == 0xbe)
+			q++;
+		n = KSTACK - (q - (uchar*)p->kstack);
+		if(n > deep)
+			deep = n;
+	}
+	return deep;
+}
+#endif

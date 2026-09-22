@@ -80,7 +80,24 @@
 
 #define	MAXMACH		1
 #define	HZ		100
+/*
+ * The kernel stack, one per proc, malloc(KSTACK) out of main.
+ *
+ * 4096 is inherited and 2476 is the deepest any proc here has actually
+ * gone -- measured, not guessed, by KSTACKWATCH below: newproc() fills
+ * a new stack with 0xbe and kstackused() reads back how far the
+ * pattern has been eaten.  That was over a boot, the floating point
+ * register tests, ls(1) of /dev, grep(1), cat(1) and ps(1).
+ *
+ * It stays at 4096 all the same.  3072 was tried, and the workload
+ * that would justify it -- a shell pipeline -- cannot run on this
+ * board for an unrelated reason, so the deep paths are exactly the
+ * ones unmeasured.  A stack overflow on an untested path is a poor
+ * trade for 1024 bytes a proc.  Worth revisiting when a pipeline runs
+ * and can be watched.
+ */
 #define	KSTACK		(4*1024)
+#define	KSTACKWATCH	1	/* measure it; see os/inferno/port/proc.c */
 #define	NPROC		5
 #define	CONFNAME	"stm32f407"
 

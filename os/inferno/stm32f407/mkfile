@@ -141,6 +141,7 @@ XIPDIS=\
 	lib/string.dis\
 	lib/workdir.dis\
 	echo.dis\
+	export.dis\
 	ed.dis\
 	sed.dis\
 	cat.dis\
