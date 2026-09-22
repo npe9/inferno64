@@ -95,7 +95,24 @@ enum {
 	 * has two on one SPI bus, RF1 and RF2.
 	 */
 	Nradio		= 2,
-	Statlen		= 512,
+	/*
+	 * The buffer stat, txtest and caps are given.
+	 *
+	 * It was 512 and the capability read did not fit in it.
+	 * Measured: a CC1120 emits 542 bytes -- five settings, twelve
+	 * band lines, the mode list, the level list and the function
+	 * list -- and a reader got 511 of them, ending mid-word in
+	 * "funcs", with nothing anywhere saying it had been cut.  An
+	 * FT-891 is 514 and was two bytes over.  A file that answers
+	 * "what can this radio do" and quietly stops partway is worse
+	 * than one that refuses, because the answer still parses.
+	 *
+	 * 2048 is getting on for four times either of them, and the
+	 * read below says so on the console if a driver ever fills it,
+	 * so the next radio with a longer band table is not found out
+	 * by somebody reading half a mode list.
+	 */
+	Statlen		= 2048,
 };
 
 #define TYPE(q)		((ulong)(q).path & 0x0f)
@@ -394,7 +411,10 @@ radioread(Chan *c, void *a, long n, vlong offset)
 			free(buf);
 			nexterror();
 		}
-		rr->dev->caps(rr, buf, Statlen);
+		rv = rr->dev->caps(rr, buf, Statlen);
+		if(rv >= Statlen-1)
+			print("radio%ld: ctl read filled %d bytes, "
+				"the answer is cut\n", NUM(c->qid), Statlen);
 		rv = readstr(offset, a, n, buf);
 		poperror();
 		free(buf);
