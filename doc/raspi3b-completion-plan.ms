@@ -7909,3 +7909,31 @@ CHI and CLO with the re-read dance and returns a true 64-bit
 microsecond count, so it does not.  Both re-verified on the board:
 full suite, and 2000 blocks written and read back by DMA and
 byte-compared against a concurrent 8MB reader.
+.NH 2
+The Arasan write runs clean: what was owed is paid
+.PP
+On an Arasan kernel with the card routed to it, the write that used to
+stall, twice:
+.P1
+; echo dma 1 >/dev/sdM0/ctl
+; dd -if /dev/sdM0/data -of /n/dos/d1.tmp -bs 4608 -count 400
+400+0 records out
+emmc status 0x1ff0000 ... interrupt 0x10 ... errors 0
+; dd -if /dev/sdM0/data -of /n/dos/d2.tmp -bs 4608 -count 400
+400+0 records out
+emmc: dmatest 9 blocks x 100, ... dma 1 ...
+emmc: dmatest 100 transfers of 9 blocks, all clean
+.P2
+1.84MB through
+.I dossrv
+at 4608 bytes a time, twice, with the engine doing the writing.  The
+proof that nothing failed is not the absence of a message: it is that
+.CW dma
+still reads 1 afterwards, because the failure path sets
+.CW emmcdma
+to 0 on the way out.  The controller's own error count is 0.
+.PP
+So both SD controllers on this board now have a working, verified DMA
+path, and the difference between them is what it should be: SDHOST is
+the one the card is on because that is what a Pi 3B wants, and the
+Arasan is there for the SDIO function.
