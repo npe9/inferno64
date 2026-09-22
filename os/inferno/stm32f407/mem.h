@@ -127,21 +127,21 @@
  *	CONSUSART2A	USART2, PA2 and PA3.  The ST-Link virtual port
  *			on a NUCLEO-F407.
  *
- * CONSUSART1, measured rather than read.  The clicker 2 manual's
- * schematic net list says PA9 is the USB VBUS sense and PA10 is button
- * T3, and on that basis this was CONSUSART2 for a while and the board
- * was silent on every pin of every port at every rate from 300 to
- * 921600.  Asking the part instead settled it: with every pin made an
- * input and the host streaming into the USB UART click, the pin that
- * moved was in port A at 9 or 10.  That is USART1, and it is where the
- * click is.  The manual is wrong about this board, or about which
- * board it describes.
+ * CONSUSART2, for a USB UART click in mikroBUS 1 and the radio in
+ * mikroBUS 2.  The manual is right about this board after all: the
+ * hours spent doubting it were a click seated the wrong way round,
+ * which lines its pins up against the opposite header and puts its
+ * receive and transmit on whatever happens to be there.  Every
+ * measurement taken while it was reversed agreed with every other and
+ * all of them were about a click that was not connected to what it
+ * appeared to be connected to.  otherusarts() below says which socket
+ * is speaking, so the choice here is checked and not assumed.
  *
  * Under qemu's netduinoplus2 USART1 is serial_hd(0), USART2 is
  * serial_hd(1) and USART3 is serial_hd(2), so CONSUSART2 wants
  *	-serial null -serial mon:stdio
  * and the USART3 ones want another -serial null before that.
  */
-#define	CONSUSART1
+#define	CONSUSART2
 
 #define	UARTBAUD	115200

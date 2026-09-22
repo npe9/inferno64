@@ -203,7 +203,11 @@ archreset(void)
 		Ahb1Gpiob | Ahb1Gpioc | Ahb1Gpiod | Ahb1Gpioe);
 	wr(UARTAPBENR, rd(UARTAPBENR) | UARTAPBBIT);
 	coherence();
+	/* TEMPORARY, for otherusarts(): USART2, USART3 and UART4 */
+	wr(RCC_APB1ENR, rd(RCC_APB1ENR) | Apb1Usart2 | Apb1Usart3 | Apb1Uart4);
+	coherence();
 	uartboardinit();
+	otherusarts();
 	ledpin(15, 1);				/* TEMPORARY: console is up;
 						 * idlehands() blinks it from
 						 * here on */
@@ -262,9 +266,12 @@ idlehands(void)
 		 * listener at the wrong baud can still be measured
 		 * from.
 		 */
-		/* TEMPORARY: the pin hunt, done properly this time */
-		findmovingpin();
-		reportmovingpin();
+		/*
+		 * TEMPORARY: name the socket, twice a second, until
+		 * CONSUSART is known to be right.  The pin hunt that
+		 * was here has served its purpose.
+		 */
+		otherusarts();
 	}
 	idle();
 }
