@@ -1,3 +1,18 @@
+/*
+ * The opcode names and their operand shapes, indexed by opcode.  Read
+ * only -- by Dconv() in conv.c, which formats an instruction into an
+ * error message, and by opname() in os/inferno/port/devbench.c -- and
+ * nothing writes it.
+ *
+ * rodata puts it in the text segment, which on a board that runs its
+ * text from flash means it costs flash and not RAM.  It is 176 entries
+ * of twelve bytes, 2112, and os/inferno/stm32f407 has 192K of RAM in
+ * two disjoint banks; a table of mnemonics is not what that should be
+ * spent on.  The same pragma is how libinterp's module tables get
+ * there (libinterp/w4/sysmod.h and the rest).
+ */
+#pragma	rodata	keywds
+
 struct
 {
 	char*	name;

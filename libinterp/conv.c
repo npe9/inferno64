@@ -23,7 +23,6 @@ struct Addr
 
 #pragma	varargck	type	"a"	Addr*
 
-char*	opnam[256];
 int	iconv(Fmt*);
 int	aconv(Fmt*);
 
@@ -49,16 +48,20 @@ aconv(Fmt *f)
 int
 Dconv(Fmt *f)
 {
-	int j;
 	Inst *i;
 	Addr s, d;
 	char buf[128];
 	static int init;
 
 	if(init == 0) {
-		for(j = 0; keywds[j].name != nil; j++)
-			opnam[keywds[j].op] = keywds[j].name;
-
+		/*
+		 * There used to be an opnam[256] built here, mapping
+		 * opcode to name.  keywds is already indexed by opcode
+		 * -- the switch below reads keywds[i->op].terminal --
+		 * so that loop was copying each name to the index it
+		 * was already at, into 1024 bytes of bss that need not
+		 * exist.  See the note in tab.h.
+		 */
 		fmtinstall('a', aconv);
 		init = 1;
 	}
@@ -69,12 +72,12 @@ Dconv(Fmt *f)
 
 	switch(keywds[i->op].terminal) {
 	case TOKI0:
-		sprint(buf, "%s", opnam[i->op]);
+		sprint(buf, "%s", keywds[i->op].name);
 		break;
 	case TOKI1:
 		d.a = i->d;
 		d.mode = UDST(i->add);
-		sprint(buf, "%s\t%a", opnam[i->op], &d);
+		sprint(buf, "%s\t%a", keywds[i->op].name, &d);
 		break;
 	case TOKI3:
 		d.a = i->d;
@@ -83,16 +86,16 @@ Dconv(Fmt *f)
 		s.mode = USRC(i->add);
 		switch(i->add&ARM) {
 		default:
-			sprint(buf, "%s\t%a, %a", opnam[i->op], &s, &d);
+			sprint(buf, "%s\t%a, %a", keywds[i->op].name, &s, &d);
 			break;
 		case AXIMM:
-			sprint(buf, "%s\t%a, $%d, %a", opnam[i->op], &s, i->reg, &d);
+			sprint(buf, "%s\t%a, $%d, %a", keywds[i->op].name, &s, i->reg, &d);
 			break;
 		case AXINF:
-			sprint(buf, "%s\t%a, %d(fp), %a", opnam[i->op], &s, i->reg, &d);
+			sprint(buf, "%s\t%a, %d(fp), %a", keywds[i->op].name, &s, i->reg, &d);
 			break;
 		case AXINM:
-			sprint(buf, "%s\t%a, %d(mp), %a", opnam[i->op], &s, i->reg, &d);
+			sprint(buf, "%s\t%a, %d(mp), %a", keywds[i->op].name, &s, i->reg, &d);
 			break;
 		}
 		break;
@@ -101,7 +104,7 @@ Dconv(Fmt *f)
 		d.mode = UDST(i->add);
 		s.a = i->s;
 		s.mode = USRC(i->add);
-		sprint(buf, "%s\t%a, %a", opnam[i->op], &s, &d);
+		sprint(buf, "%s\t%a, %a", keywds[i->op].name, &s, &d);
 		break;
 	}
 

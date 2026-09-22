@@ -40,7 +40,16 @@ static struct
         int     kbdr;           /* number of open reads to the keyboard */
         int     scan;           /* true if reading raw scancodes */
         int     x;              /* index into line */
-        char    line[1024];     /* current input line */
+        /*
+         * One line of console input.  1024 is the portable default;
+         * a board with a serial console and kilobytes rather than
+         * megabytes of RAM says so in its mem.h, the way NERR and
+         * KMESGSIZE are said.
+         */
+#ifndef NCONSLINE
+#define NCONSLINE 1024
+#endif
+        char    line[NCONSLINE]; /* current input line */
 
         char    c;
         int     count;

@@ -68,6 +68,12 @@
  * that cannot.
  */
 #define	STAGESIZE	256
+/*
+ * One line of console input, os/inferno/port/devcons.c; 1024 is the
+ * portable default.  256 is four times the longest command anything
+ * here can usefully be given.
+ */
+#define	NCONSLINE	256
 #define	NHOLE		16
 #define	NMNTTAG		1024
 
