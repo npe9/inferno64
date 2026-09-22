@@ -103,3 +103,63 @@ transmitting, and this is not a survey: six sweeps of a minute's
 worth of time from one bench.  What it is good for is the thing it was
 brought in for -- the board's radio is measuring the room, not
 reporting its own imagination.
+
+An activity map, and what it does not say
+-----------------------------------------
+
+A sweep visits a frequency for a moment and leaves, so it finds a
+transmitter only if the transmitter is on while it is there.  Stepped
+zero span does not have that problem: it stays on one frequency and
+watches it in the time domain, and a burst anywhere in the window is
+seen.  120ms of listening at each of 1 or 2MHz, 300kHz resolution
+bandwidth, counting everything more than 12dB over the floor:
+
+	868           silent, peak -91.5
+	869           6 bursts
+	870 - 878     14 to 49 bursts, peaks -62 to -70, duty 2.5 to 12%
+	879, 880      silent, peaks -90.5 and -92.0
+	881 - 889     15 to 154 bursts, peaks -67 to -72, duty 1.3 to 27%
+	890 - 894     silent, peaks -91 to -92
+	894 - 930     silent but for one burst at 912
+	820 - 866     silent but for isolated bursts at 820, 822, 824,
+	              854, 856
+
+Two blocks eight or nine megahertz wide with hard edges and a two
+megahertz gap between them, and nothing else for fifty megahertz
+either side.  Transmissions respect allocation edges; noise does not.
+
+At 886MHz the bursts are 400 to 533us long -- six to eight samples of
+66.7us -- with a second population at or below one sample, and start
+to start gaps with a mode near 200 to 800us and structure out to 5ms.
+
+What has been ruled out.  The tinySA's own spur removal does not
+remove them: with "spur on" the floor drops four decibels, as the
+feature is meant to, and the bursts and their levels stay.  The input
+attenuator could not be used to test them -- "attenuate 10" reads back
+as 0 on this instrument in this mode, and neither the peak nor the
+noise floor moved when it was set, which is a test that did not run
+rather than a test that passed.
+
+What is not established.  Nothing here identifies what is
+transmitting.  The band edges are suggestive of an allocation and the
+burst lengths of a TDMA system, but two candidate readings were tried
+and both were refuted by measurement: a 45MHz FDD pairing would put a
+partner block at 825-844 or 915-934 and both are quiet, and a US ISM
+reading would put traffic in 902-928 and there is none.
+
+And one disagreement with the board is worth stating.  os/inferno's
+sweep found carrier sense asserted at 892, 895, 906, 911, 914, 917,
+918, 923, 925 and 928MHz.  The tinySA, dwelling a comparable time at
+each of those frequencies, finds nothing there at all.  The two agree
+about 870 to 889 and disagree about everything above 890, which makes
+the board's hits up there its own -- an image or a spurious response
+in the CC1120's front end is the obvious candidate and is not yet
+tested.  A receiver that agrees with a second instrument in one half
+of a band and not the other has been caught being a receiver, which is
+the whole reason for having the second instrument.
+
+listen.py stays on one frequency and prints every burst it hears, for
+the two questions a sweep cannot answer -- how long, and how often --
+and for watching a frequency while something known is transmitted into
+it.  Note its duty: serial round trips mean it is actually listening
+for about three percent of the wall clock.
