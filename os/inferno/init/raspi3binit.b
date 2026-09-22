@@ -142,7 +142,45 @@ sdcheck()
 	}
 	if(capcheck("SD", fd, string cbuf[0:cn]) == 0)
 		return;
+	multiblockcheck();
 	sys->print("SD-OK\n");
+}
+
+#
+# Prove a multi-block WRITE puts the right bytes down, before anything
+# on this board relies on one.
+#
+# CMD25 makes the card 27 times faster -- 474 KB/s to 12.8 MB/s,
+# measured -- and a read that goes wrong is a wrong answer while a
+# write that goes wrong is a damaged card.  So the driver keeps
+# multi-block writes off until something checks them, and this is that
+# something: the driver's own multiverify, which writes N blocks in ONE
+# request, reads them back in one, and compares.
+#
+# Here, in the SD suite, because it has to run BEFORE kupdate.  Putting
+# it in board.cmd did not work: that waits for kupdate to finish with
+# the mount, and kupdate is slow precisely because its write side is
+# the thing being checked.  A test that cannot run until the bug is
+# fixed is no test.
+#
+# Blocks 2900000 and up, well past data, kfstest and dos on this card.
+#
+multiblockcheck()
+{
+	cfd := sys->open(SDDEV + "/ctl", Sys->OWRITE);
+	if(cfd == nil){
+		sys->print("SD-MULTIW-NONE cannot open %s/ctl: %r\n", SDDEV);
+		return;
+	}
+	# single-block first, so a failure says which arm broke
+	sys->fprint(cfd, "multiwrite 0");
+	sys->fprint(cfd, "multiverify 2900000 64");
+	sys->fprint(cfd, "multiwrite 1");
+	sys->fprint(cfd, "multiverify 2900100 64");
+	sys->fprint(cfd, "multiverify 2900300 512");
+	# and leave it off: the driver's default stands until the
+	# MULTIVERIFY-OK lines above are believed.
+	sys->fprint(cfd, "multiwrite 0");
 }
 
 kfsproc(pfd: ref Sys->FD)

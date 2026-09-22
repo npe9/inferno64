@@ -290,7 +290,21 @@ static int sdhostwide = 1;
  * CMD12.  Default 1, which is exactly the old behaviour, so this can
  * be turned up on the board and measured rather than assumed.
  */
-static int sdhostmulti = 128;
+/*
+ * BACK TO 1, because multi-block reads are fast and WRONG.
+ *
+ * readspeed measured 474 KB/s at 1 block and 12.8 MB/s at 128, and
+ * that rate is real -- but readspeed only timed the transfer and never
+ * looked at a byte of it.  multiverify, which writes with the
+ * single-block path that was verified weeks ago and reads back with
+ * this one, says MISMATCH.  So the 27x was 27x of the wrong data, and
+ * a benchmark that does not check its output is not evidence of
+ * anything but speed.
+ *
+ * The default stays 1 until a multi-block read is proved to return
+ * what was written.  "echo multi N" still sets it for experiments.
+ */
+static int sdhostmulti = 1;
 /*
  * ...for reads.  Writes stay single-block until a multi-block write
  * has been verified on the board, because a read that goes wrong is a
