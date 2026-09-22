@@ -649,7 +649,18 @@ readings -- and reports the peak, the mean, the floor and how many
 samples they are of, with "carrier" if carrier sense asserted at any
 point during the dwell:
 
-	scan 868000000 -108 -110 -112 100
+	scan 868000000 -108 -110 -112 100 4
+
+six fields and then the word "carrier" or nothing, so awk(1) can have
+it:
+
+	awk '$1=="scan" && $7=="carrier" {print $2, $3}'
+
+frequency, peak, mean, floor, sample count, and which sample the peak
+was.  That last one is there to answer the question a peak alone
+cannot -- whether a loud sample was something on the air or the sweep
+hearing its own retune, which is always at the beginning of a dwell
+while a signal is scattered through it
 
 Sixty-one steps is about seven seconds.  "scan lo hi step ms" sets
 the dwell, though the console will not carry a line that long.  The

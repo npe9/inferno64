@@ -572,10 +572,12 @@ cc1120ctl(Radio *r, char *buf, int n)
 				continue;
 			}
 			/*
-			 * peak, mean, floor, how many samples they are
-			 * of, and which sample the peak was.  The mean
-			 * is truncated toward zero, so it reads up to a
-			 * decibel high.
+			 * Fields, and nothing but fields, so awk(1) can
+			 * have it: frequency, peak, mean, floor, sample
+			 * count, and which sample the peak was, with
+			 * the word "carrier" on the end or nothing.
+			 * The mean is truncated toward zero, so it
+			 * reads up to a decibel high.
 			 *
 			 * The index is there to answer one question
 			 * that a peak alone cannot: whether the loud
@@ -588,7 +590,7 @@ cc1120ctl(Radio *r, char *buf, int n)
 			 * artefact of tuning is always at the
 			 * beginning.
 			 */
-			print("scan %lud %d %d %d %d at %d%s\n", (ulong)hz,
+			print("scan %lud %d %d %d %d %d%s\n", (ulong)hz,
 				peak, (int)(sum/nsamp), floor, nsamp,
 				peakat, cs? " carrier": "");
 		}
