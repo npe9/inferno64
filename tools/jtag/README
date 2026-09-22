@@ -20,6 +20,29 @@ rebooting, once per question, for a day.  The thing that actually
 cracked it was capturing the controller's registers at the moment of
 the stall -- which with a debugger is a read, not a release cycle.
 
+NEVER OPEN THE SERIAL DEVICE FROM A SCRIPT.  screen owns it.  Type and
+read through the session and nothing else:
+
+	SESS=`screen -ls | awk '/ttys/{print $1; exit}'`
+	screen -S "$SESS" -X stuff "<command>\r"
+	screen -S "$SESS" -X hardcopy -h <file>
+
+Opening /dev/cu.* a second time while screen holds it, and killing
+processes that hold it mid-transfer, wedges the adapter.  It carries
+on driving the line idle-high -- so the pin measures connected and
+rock steady -- and stops transmitting altogether.  The board still
+prints and no longer hears anything, which from outside is
+indistinguishable from a board that has hung.  The only cure is
+unplugging the USB adapter, which needs a person at the desk.
+
+That was worked out the expensive way, over most of a day, chasing a
+board that was perfectly healthy the whole time.  If input stops,
+reach for JTAG (tools/jtag/where, and read AUX_MU_LSR and AUX_MU_STAT
+-- never AUX_MU_IO, which pops the receive FIFO and destroys the
+evidence), or drive the board from the host instead by writing
+os/inferno/raspi3b/board.cmd.
+
+
 WIRING.  The pins are the 40-pin header's own, and the firmware puts
 them in ALT4 when enable_jtag_gpio=1 is set:
 
