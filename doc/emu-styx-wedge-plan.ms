@@ -355,3 +355,78 @@ dies.
 .IP 3.
 Only then return to the blocked-accept observation, with one pid, and
 settle whether it is real.
+.NH 1
+The instrument was wrong, and most of the wedges were not wedges
+.PP
+.B "The health check gave up after five seconds."
+That is not long enough.  A server busy handing the board a 1.9MB
+kernel does not answer a
+.I new
+connection promptly, and the check reported every such moment as
+"WEDGED".  Measured, with the timeout raised:
+.P1
+styxd: answered after 6.6s (slow, not dead)
+.P2
+and a server declared wedged minutes earlier answered normally when
+asked again.  So a large part of what this document calls a wedge is
+the detector timing out on a busy server.
+.PP
+.B "What survives the correction."
+.IP \(bu
+The
+.I first
+wedge is real: a server up three and a half days that never answered a
+Styx message across repeated tries, and a restart cured it.
+.IP \(bu
+The
+.CW ipdebug
+log is real evidence, because it records what the server actually did
+rather than what a probe concluded: one accept, one data open, nothing
+after.
+.IP \(bu
+.CW "styxlisten: cannot announce ... Address already in use"
+is real and is its own fault, distinct from any wedge: after a kill,
+a connection the previous instance accepted and never served sits in
+CLOSE_WAIT holding the address, styxlisten fails to announce, and emu
+stays up regardless because the shell runs on to its sleep.  A live
+emu, no listener, and no error unless stderr was kept.  That was
+mistaken for a wedge repeatedly.
+.IP \(bu
+.CW kupdate
+reporting
+.CW Hangup
+is real, but it happened when the server was
+.I killed
+\(em by the restart logic reacting to a false wedge.
+.PP
+.B "What does not survive."
+Every "wedged after N seconds" in this session that rests on the
+five-second probe, which is most of them.  The blocked-accept
+observation \(em a thread in
+.CW __accept
+with a connection unaccepted in the backlog \(em was taken while a
+second emu instance was running and is doubly suspect: wrong process,
+and possibly just a busy one.
+.PP
+.B "The lesson, for the fourth time in this port."
+A measuring apparatus that can fail quietly will be believed.  The
+stale-kernel check, the marker in a saturated console buffer, the
+banner count with no screen session, and now a five-second timeout on
+a busy server: four instruments, four confident wrong answers, each
+found only by checking the instrument rather than the result.  The
+standing rule this suggests is to make every check report
+.I how
+it succeeded \(em the latency, the line it matched, the pid it asked
+\(em so that a degenerate success is visible as one.
+.NH 2
+Where this leaves the emu question
+.PP
+Open, and smaller than it looked.  There is one confirmed instance of
+a server that genuinely stopped answering, on a very long-lived
+process, and no reproduction of it.  The
+.CW ipdebug
+instrumentation is in place for the next occurrence; the health check
+is patient now and says how long an answer took; the restart waits for
+the port and surfaces an announce failure instead of hiding it.  The
+next real wedge will be met with instruments that do not lie, which is
+more than this session started with.

@@ -9,58 +9,122 @@
 #
 #	emu -r <worktree> sh -c "styxlisten -A 'tcp!*!6666' export /"
 #
-# and that server wedges.  Twice in one day it sat there LISTENING,
-# accepting TCP connections and never answering a single Styx
-# Tversion, at 0% CPU.  The board's side of that is invisible and
-# looks nothing like a server fault: kupdate blocks in its mount, the
-# process spawned for it never prints, every later open of /n/remote
-# blocks behind the dead mount, and the board goes quiet with every
-# process asleep and cpu0 in WFI.  An afternoon went into "why is the
-# board hung" for a board that was fine.
+# A listening socket is not evidence that it works, and neither is a
+# running emu.  Three separate things can leave the board unable to
+# fetch, and all three look identical from the board -- kupdate simply
+# blocks with no message:
 #
-# A listening socket is therefore not evidence.  The check is a real
-# Styx handshake, and the only cure found is a restart.
+#   1. the server genuinely stops answering Styx (seen once, on a
+#      server that had been up three and a half days);
+#   2. styxlisten cannot announce because the port is still held from
+#      the previous instance, and emu keeps running anyway because the
+#      shell goes on to its sleep -- so there is a live emu, no
+#      listener, and no visible error unless stderr was kept;
+#   3. the emu exits and something else holds the port.
+#
+# Case 2 was mistaken for case 1 repeatedly across a long session, and
+# cost hours.  The fixes are: wait for the port to be FREE before
+# starting, keep stderr, look in it for the announce failure, and
+# finish with a real Styx handshake.
 #
 set -u
 ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 PORT=${PORT:-6666}
+LOG=${LOG:-/tmp/styxd.log}
 
+#
+# Patient, and it has to be.
+#
+# The first version gave up after five seconds and its failures were
+# read as "the server has wedged".  They were not: a server busy
+# serving the board a 1.9MB kernel does not answer a new connection
+# promptly, and one that had been declared wedged answered normally
+# when asked again a minute later.  Several conclusions in
+# doc/emu-styx-wedge-plan.ms were drawn from that and are marked
+# accordingly.
+#
+# Three tries, thirty seconds each, and it prints how long the answer
+# took so that "slow" and "dead" stop looking alike.
+#
 handshake() {
 	python3 - "$PORT" <<'PYEOF'
-import socket, struct, sys
+import socket, struct, sys, time
 port = int(sys.argv[1])
-try:
-    s = socket.create_connection(('127.0.0.1', port), timeout=5)
-    v = b'9P2000'
-    body = struct.pack('<IH', 8192, len(v)) + v
-    s.sendall(struct.pack('<IBH', 4+1+2+len(body), 100, 0xffff) + body)
-    s.settimeout(5)
-    d = s.recv(64)
-    sys.exit(0 if d and d[4] == 101 else 1)   # Rversion
-except Exception:
-    sys.exit(1)
+for attempt in range(3):
+    t0 = time.time()
+    try:
+        s = socket.create_connection(('127.0.0.1', port), timeout=30)
+        v = b'9P2000'
+        body = struct.pack('<IH', 8192, len(v)) + v
+        s.sendall(struct.pack('<IBH', 4+1+2+len(body), 100, 0xffff) + body)
+        s.settimeout(30)
+        d = s.recv(64)
+        s.close()
+        if d and d[4] == 101:
+            dt = time.time() - t0
+            if dt > 1.0:
+                print("styxd: answered after %.1fs (slow, not dead)" % dt)
+            sys.exit(0)
+    except Exception:
+        pass
+    time.sleep(2)
+sys.exit(1)
 PYEOF
+}
+
+portbusy() {
+	netstat -an 2>/dev/null | grep -q "\.$PORT "
 }
 
 if handshake; then
 	echo "styxd: serving on $PORT (Rversion answered)"
 	exit 0
 fi
+
 echo "styxd: not answering Styx; restarting"
-pkill -f "styxlisten -A 'tcp!\*!$PORT'" 2>/dev/null
+#
+# Only THIS worktree's emu.  "pkill -f 'emu -r'" also matches every
+# other worktree's server and would kill other people's work.
+#
 pkill -f "emu -r $ROOT" 2>/dev/null
-sleep 8			# the old emu can hold the port briefly
+
+#
+# Wait for the port to be genuinely free.  Killing the process is not
+# enough: a connection it had accepted and never served sits in
+# CLOSE_WAIT and keeps the address busy, and styxlisten then fails with
+# "announce writing /net/tcp/clone: Address already in use" -- into a
+# log nobody was reading, while emu stayed up and looked healthy.
+#
+i=0
+while portbusy && [ $i -lt 60 ]; do
+	sleep 1
+	i=`expr $i + 1`
+done
+if portbusy; then
+	echo "styxd: port $PORT still busy after ${i}s:" >&2
+	netstat -an 2>/dev/null | grep "\.$PORT " >&2
+	exit 1
+fi
+
+: > "$LOG"
 nohup "$ROOT/MacOSX/arm64/bin/emu" -r "$ROOT" sh -c \
 	"styxlisten -A 'tcp!*!$PORT' export / ; sleep 2000000" \
-	>/dev/null 2>&1 &
+	>"$LOG" 2>&1 &
+
 i=0
 while [ $i -lt 40 ]; do
 	sleep 1
 	if handshake; then
-		echo "styxd: restarted and serving on $PORT"
+		echo "styxd: restarted and serving on $PORT (waited ${i}s for the port)"
 		exit 0
+	fi
+	if grep -q 'cannot announce' "$LOG" 2>/dev/null; then
+		echo "styxd: styxlisten could not announce:" >&2
+		grep 'cannot announce' "$LOG" >&2
+		exit 1
 	fi
 	i=`expr $i + 1`
 done
-echo "styxd: restarted but still not answering Styx" >&2
+echo "styxd: restarted but still not answering Styx; its output:" >&2
+tail -5 "$LOG" >&2
 exit 1
