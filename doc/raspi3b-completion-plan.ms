@@ -8231,3 +8231,36 @@ output and the corrupt devtab are real and are on the output side, so
 those stand.  The hangs are less certain than they were written down
 as being, and the measured success rate that is still owed should be
 taken with a console known to be working in both directions.
+.PP
+.B "Resolved: the adapter, not the wire and not the board."
+Reseating the USB-serial adapter fixed it, and the measurements say
+exactly why that worked.  GPIO15 switched to a plain input read
+.CW 0x2347c1ff
+eight times in a row \(em bit 15 high, rock steady \(em which is a
+transmitter actively holding a UART line at idle, not a floating pin,
+which would have read differently each time.  So the wire was
+connected throughout and this document's earlier conclusion that it
+was not is wrong.  The adapter was driving idle and never transmitting
+a bit: with the CPU HALTED over JTAG so nothing could drain the FIFO,
+eight bytes sent twenty seconds later left
+.CW LSR
+at 0x60 and the FIFO empty.
+.PP
+Two instrument faults made this take far longer than it should have.
+The first: reading
+.CW AUX_MU_IO
+to check for data POPS the receive FIFO, so the diagnostic destroys
+what it is looking for \(em
+.CW LSR
+and
+.CW STAT
+are the registers to read.  The second, and the expensive one:
+.CW "screen -X"
+against a session that has been killed and restarted fails
+.I quietly .
+Every script in
+.CW tools/jtag
+had the session name written into it, so after the session was
+restarted they all typed into nothing and the board looked
+unresponsive while nobody was speaking to it.  They find the session
+now instead of remembering it.

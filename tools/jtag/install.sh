@@ -29,7 +29,16 @@ set -u
 HERE=`dirname "$0"`
 ROOT=`cd "$HERE/../.." && pwd`
 S=${S:-/private/tmp/claude-501/-Users-npe-src-inferno64-branches-raspi3b-port/2675f84d-d333-4a0e-ba1f-4ef786fc52b7/scratchpad}
-SESS=${SESS:-37971.ttys006}
+#
+# Which screen session, found rather than remembered.
+#
+# This was a hardcoded session name, and when the session was killed
+# and restarted every script here silently typed into nothing: screen
+# -X against a dead session fails quietly, so the board looked
+# unresponsive when in fact nobody was speaking to it.  Take the first
+# attached session on a tty instead, and let SESS override it.
+#
+SESS=${SESS:-`screen -ls | awk '/ttys/{print $1; exit}'`}
 IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
 REMOTE=${REMOTE:-/n/remote/os/inferno/raspi3b/kernel8.img}
 
