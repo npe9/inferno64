@@ -349,6 +349,16 @@ cc1120send(Radio *r, uchar *p, int n)
 		s->byte(s, p[i]);
 	s->select(s, 0);
 
+	/*
+	 * What went into the FIFO, before the part is told to send it.
+	 * A transmit that underflows has either been given less than
+	 * it was told to send or has not been given anything at all,
+	 * and those are different faults: the first is a driver that
+	 * has miscounted, the second a burst write that never reached
+	 * the part.  One number tells them apart and it can only be
+	 * read here, between the write and the strobe.
+	 */
+	rr->txstaged = rdx(rr, Xnumtxbytes);
 	strobe(rr, Stx);
 	s->unlock(s);
 
@@ -369,6 +379,13 @@ cc1120send(Radio *r, uchar *p, int n)
 		rr->ntxtimeout++;
 
 	s->lock(s);
+	/*
+	 * MARC_STATUS1 is the part's own account of why it stopped:
+	 * 0x40 finished the transmit, 0x07 overflowed the TX FIFO,
+	 * 0x08 underflowed it, and so on (SWRU295E, MARC_STATUS1).
+	 * Reading it clears it, so it is read once and kept.
+	 */
+	rr->txmarc = rdx(rr, Xmarcstatus1);
 	if(state(rr) == Sttxerr){
 		rr->ntxunderflow++;
 		strobe(rr, Sftx);
@@ -730,12 +747,19 @@ cc1120stat(Radio *r, char *p, int n)
 {
 	Cc1120 *rr;
 	Spidev *s;
-	int st, nrx, ntx, live, cs;
+	int st, nrx, ntx, live, cs, pktcfg0, pktlen;
 
 	rr = (Cc1120*)r;
 	s = rr->spi;
 	s->lock(s);
 	st = state(rr);
+	/*
+	 * Read back what the part actually holds rather than what this
+	 * driver believes it wrote.  The two differed for as long as
+	 * this file has existed.
+	 */
+	pktcfg0 = rd(rr, Rpktcfg0);
+	pktlen = rd(rr, Rpktlen);
 	nrx = rdx(rr, Xnumrxbytes);
 	ntx = rdx(rr, Xnumtxbytes);
 	live = (schar)rdx(rr, Xrssi1);
@@ -748,6 +772,8 @@ cc1120stat(Radio *r, char *p, int n)
 		"freq %lud\n"
 		"rssi %d%s offset %d csthr %d last %d%s\n"
 		"fifo rx %d tx %d\n"
+		"lasttx staged %d marc 0x%.2x\n"
+		"pktcfg0 0x%.2x pktlen %d\n"
 		"sent %ud recv %ud\n"
 		"crcerr %ud toobig %ud txtimeout %ud\n"
 		"rxoverflow %ud txunderflow %ud\n",
@@ -758,6 +784,8 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->rssioffset, rr->csthr, rr->rssi,
 		(cs & Carriersense)? " carrier": "",
 		nrx, ntx,
+		rr->txstaged, rr->txmarc,
+		pktcfg0, pktlen,
 		rr->nsent, rr->nrecv,
 		rr->ncrcerr, rr->ntoobig, rr->ntxtimeout,
 		rr->nrxoverflow, rr->ntxunderflow);

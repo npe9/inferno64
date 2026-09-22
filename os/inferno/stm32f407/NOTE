@@ -764,3 +764,43 @@ One open, one process, a packet per line, for as many as you like.
 Five lines gives "sent 5" and the stats afterwards still read.  Any
 file that takes a write can be driven this way, which is the way
 round this board's ceiling until the ceiling moves.
+
+Five packets sent, five TX FIFO underflows
+-------------------------------------------
+
+The board's answer after transmitting five lines through
+"cat >/dev/radio0/data":
+
+	sent 5 recv 0
+	crcerr 0 toobig 0 txtimeout 0
+	rxoverflow 0 txunderflow 5
+
+Every transmit started and then ran out of data, which means the part
+was told to send more bytes than it was given.  It was: PKT_CFG0 is
+register 0x28 and this driver had it at 0x1c, which is AGC_CFG1.  So
+the write that was meant to select variable packet length went into
+the automatic gain control's configuration, PKT_CFG0 kept its reset
+value of 0x00 -- fixed packet length -- and the part dutifully tried
+to send PKT_LEN bytes, which is 125, for a packet of eight.
+
+qemu reported five clean transmits for the same code, because its
+model does not implement packet length modes: it sends whatever is in
+the FIFO.  A model cannot catch a driver writing to the wrong
+register when it does not implement the right one either, and this is
+the second time in a day that a fault has been invisible in the
+emulator and obvious on the board -- the first being cc1120init()
+reading PARTNUMBER before the crystal was running.
+
+Two constants beside it were also wrong and had done no harm:
+RFEND_CFG1 and RFEND_CFG0 were 0x1e and 0x1f, which are FIFO_CFG and
+DEV_ADDR, and nothing writes them.  Corrected rather than deleted,
+since a wrong constant that is merely unused is a trap set for
+whoever uses it next.
+
+The stats now read PKT_CFG0 and PKT_LEN back out of the part rather
+than reporting what the driver believes it wrote, and carry the
+number of bytes staged in the TX FIFO before the last STX and the
+part's own MARC_STATUS1 afterwards -- 0x40 for a transmit that
+finished, 0x08 for one that underflowed.  Between them those three
+numbers say whether a failed transmit was given too little, given
+nothing at all, or asked for too much.

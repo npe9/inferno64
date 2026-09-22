@@ -34,6 +34,8 @@ struct Cc1120
 	int	ready;			/* status byte once CHIP_RDYn cleared */
 	int	rssioffset;		/* dB, in AGC_GAIN_ADJUST */
 	int	csthr;			/* dBm, in AGC_CS_THR */
+	int	txstaged;		/* NUM_TXBYTES after the FIFO write */
+	int	txmarc;			/* MARC_STATUS1 after the transmit */
 	int	present;
 
 	/* what the last received packet looked like */
