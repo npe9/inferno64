@@ -181,6 +181,13 @@ enum {
 	 * it for a hundred samples a step instead of one.
 	 */
 	Dwellms		= 100,
+	/*
+	 * How many bytes "cat /dev/radio0/txtest" sends.  At the
+	 * 1200 baud this part comes up at, 125 bytes is most of a
+	 * second on the air, which is what an instrument watching for
+	 * it needs.
+	 */
+	Txtestlen	= 125,
 
 	/*
 	 * Where the part is tuned when nothing has said otherwise.
@@ -944,12 +951,39 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->nrxoverflow, rr->ntxunderflow);
 }
 
+/*
+ * The bench, as a read: send a packet and say what the part did with
+ * it.  Same numbers the "txtest" ctl prints, in a buffer instead of on
+ * the console, so it can be had from "cat /dev/radio0/txtest" without
+ * the redirection a ctl write needs.
+ */
+static int
+cc1120txtest(Radio *r, char *p, int n)
+{
+	Cc1120 *rr;
+	uchar buf[Txtestlen];
+	int i;
+
+	rr = (Cc1120*)r;
+	for(i = 0; i < Txtestlen; i++)
+		buf[i] = 'a' + i % 26;
+	cc1120send(r, buf, Txtestlen);
+	return snprint(p, n,
+		"txtest %d %s staged %d trace %d %d %d %d %d %d"
+		" left %d marc 0x%.2x\n",
+		Txtestlen, rr->fixedlen? "fixed": "var", rr->txstaged,
+		rr->txtrace[0], rr->txtrace[1], rr->txtrace[2],
+		rr->txtrace[3], rr->txtrace[4], rr->txtrace[5],
+		rr->txleft, rr->txmarc);
+}
+
 static Radiodev cc1120dev = {
 	"CC1120",
 	Ccmaxpayload,
 	cc1120send,
 	cc1120ctl,
 	cc1120stat,
+	cc1120txtest,
 };
 
 Radio*

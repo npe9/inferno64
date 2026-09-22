@@ -41,6 +41,17 @@ struct Radiodev
 	int	(*send)(Radio*, uchar*, int);
 	int	(*ctl)(Radio*, char*, int);
 	int	(*stat)(Radio*, char*, int);
+	/*
+	 * Optional: transmit a test packet and report what the part did
+	 * with it, as a read rather than a write.
+	 *
+	 * A write to a ctl file needs a redirection and a redirection
+	 * needs a process, and os/inferno/stm32f407 can spawn exactly
+	 * one of those in a boot -- so a bench driven through ctl costs
+	 * a reset for every session.  A read costs nothing: the shell
+	 * runs cat in its own process.  nil if the driver has no bench.
+	 */
+	int	(*txtest)(Radio*, char*, int);
 };
 
 /*

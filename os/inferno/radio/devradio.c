@@ -73,6 +73,7 @@ enum {
 	Qpkt,
 	Qctl,
 	Qstats,
+	Qtxtest,
 
 	/*
 	 * Sockets this kernel will serve.  A board fits as many as it
@@ -130,6 +131,7 @@ radiogen(Chan *c, char *unused, Dirtab *d, int nd, int s, Dir *dp)
 	case Qpkt:
 	case Qctl:
 	case Qstats:
+	case Qtxtest:
 		n = NUM(c->qid);
 		switch(s){
 		case 0:
@@ -147,6 +149,12 @@ radiogen(Chan *c, char *unused, Dirtab *d, int nd, int s, Dir *dp)
 		case 3:
 			mkqid(&q, QID(n, Qstats), 0, QTFILE);
 			devdir(c, q, "stats", 0, eve, 0444, dp);
+			return 1;
+		case 4:
+			if(radioget(n) == nil || radioget(n)->dev->txtest == nil)
+				return 0;
+			mkqid(&q, QID(n, Qtxtest), 0, QTFILE);
+			devdir(c, q, "txtest", 0, eve, 0440, dp);
 			return 1;
 		}
 		return -1;
@@ -324,6 +332,25 @@ radioread(Chan *c, void *a, s32 n, s64 offset)
 		return readstr(offset, a, n, up->genbuf);
 
 	case Qstats:
+	case Qtxtest:
+		/*
+		 * txtest transmits.  A read with a side effect is not
+		 * something to do lightly, and this one is deliberate:
+		 * writing a ctl file needs a redirection, a redirection
+		 * needs a process, and a board that can spawn one
+		 * process in a boot can therefore run one bench session
+		 * between resets.  A read costs nothing, so the bench
+		 * can be driven as often as it takes.  It only exists
+		 * on a driver that offers it, and the file is 0440.
+		 *
+		 * offset is ignored for the transmit itself: every open
+		 * and read sends one packet, and a reader that comes
+		 * back for a second bufferful of the same report would
+		 * otherwise send another.  readstr sees the whole
+		 * report, so a short read still gets a consistent one.
+		 */
+		if(TYPE(c->qid) == Qtxtest && rr->dev->txtest == nil)
+			error(Egreg);
 		buf = malloc(Statlen);
 		if(buf == nil)
 			error(Enomem);
@@ -331,7 +358,13 @@ radioread(Chan *c, void *a, s32 n, s64 offset)
 			free(buf);
 			nexterror();
 		}
-		rr->dev->stat(rr, buf, Statlen);
+		if(TYPE(c->qid) == Qtxtest){
+			if(offset == 0)
+				rr->dev->txtest(rr, buf, Statlen);
+			else
+				buf[0] = 0;
+		}else
+			rr->dev->stat(rr, buf, Statlen);
 		rv = readstr(offset, a, n, buf);
 		poperror();
 		free(buf);

@@ -867,3 +867,35 @@ The second "cat >file" of a boot wedges the board hard enough that
 character echo stops -- which is worse than the silent hang already
 recorded, since echo happens in the interrupt handler and survives a
 blocked shell.  Whatever that is, it needs the reset button.
+
+A bench that survives this board's one process
+-----------------------------------------------
+
+Writing a ctl file needs a redirection, a redirection needs a process,
+and this board spawns one process in a boot.  So a bench driven
+through ctl costs a reset for every session, and the second session of
+a boot does not fail, it wedges the board hard enough to stop
+character echo.
+
+	; cat /dev/radio0/txtest
+	txtest 125 var staged 126 trace 1 0 0 5 4 2 left 35 marc 0x00
+
+A read costs nothing -- the shell runs cat in its own process -- so
+the bench is a read now.  Each one sends a packet and reports what the
+part did with it.  A read with a side effect is not something to do
+lightly and this one is deliberate; it exists only on a driver that
+offers it and the file is 0440.
+
+What the board's registers say, read at the prompt with "reg":
+
+	PA_CFG2      0x7f   power ramp 0x3f, which is +14dBm
+	FS_CFG       0x02   820-960MHz band, LO divider 4
+	FREQ2:0  6c 80 00   7110656, which is 868.000000MHz exactly
+	SYMBOL_RATE  43 a9 2a   1200 baud
+
+So the part is tuned where it was asked, at full power, and a 125 byte
+packet at 1200 baud is most of a second on the air.  Six of those in a
+row, with a tinySA sweeping 858 to 878MHz beside the board, produced
+nothing above the -79dBm the room was already making.  The part says
+it is in TX -- state 2, with bytes still to send -- and nothing comes
+out that an instrument a hand's width away can hear.
