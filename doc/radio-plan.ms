@@ -664,3 +664,59 @@ that the model will not spend.
 What it will tell anyone is whether the register sequencing, the
 interrupt path, the file interface and everything Limbo does above them
 are right, which is the part that is written blind today.
+
+.NH 1
+What is left, after the first silicon
+.PP
+The radio transmits and receives on a board.  A tinySA beside it
+measured the carrier at 868.00445MHz, 69dB over the floor, and the
+board's own band sweep agrees with that instrument about where the
+868 to 928MHz band is busy \- including the gap at 879MHz that both
+find and the quiet above 890 that they used to disagree about.  What
+follows is in the order the dependencies run, not in order of
+interest.
+.IP "1.  The RSSI scale." 6
+Everything else that reads the air depends on it.  Carrier sense, the
+sweep, a link budget and any decision about whether a channel is
+clear are all that number.  It is about a hundred decibels high since
+TI's register set went in, and the ctl file now reads AGC_GAIN_ADJUST
+out of the part rather than reporting what the driver believes it
+wrote, so one reading says whether the offset is reaching the
+register or no longer means what it did.
+.IP "2.  Calibrate it against a source, not a datasheet." 6
+\-102 is the figure TI's examples use and it is not a measurement of
+this board.  The tinySA has a signal generator in it \- "mode output"
+\- so a known level at a known frequency into the click's antenna
+gives the offset this board actually wants.  That is the difference
+between an RSSI and a number.
+.IP "3.  Receive a packet that somebody else sent." 6
+The transmitter is proven against an instrument and the receiver is
+proven against an instrument, and neither has yet carried a packet on
+silicon.  There is one CC1120 here, so this needs either a second one
+or a transmitter already on the air.  Wireless M-Bus at 868.95MHz is
+the second: it is what this chip family exists for, TI publishes the
+register set for mode T and mode C, and a meter is a transmitter that
+does not need arranging.  The band survey says whether one is in
+range before any of it is written.
+.IP "4.  An FT-891, or anything with a CAT port." 6
+os/inferno/radio/ft891.c is written and has never been spoken to a
+radio.  It needs a serial line: the clicker 2's second uart comes out
+on the socket the radio click occupies, so this wants another board,
+or emu with a host port, or the Pi.  Until then it is a compiled
+argument that #W's idea of a radio is not a CC1120's, which is worth
+something but is not a radio being driven.
+.IP "5.  The one redirection." 6
+This board spawns one process for a shell redirection in a boot and
+wedges on the second, which is why every experiment above costs a
+reset and why there is a host tool to type at the console.  It is
+smalloc()'s unbounded retry over a pool that cannot give a 4096-byte
+kernel stack.  Fixing it makes everything above cheaper, which is why
+it is worth doing even though nothing depends on it.
+.PP
+Two things are deliberately not on this list.  Making the CC1120 talk
+to an amateur station is not possible with this part \- it does 2-FSK
+and the bands stop at 960MHz, so APRS on 144MHz and anything on HF
+need the FT-891 or a different click.  And decoding what is in
+870-889MHz is not a goal: the survey found it, both instruments agree
+it is there, and identifying a TDMA system at a few hundred
+microseconds a burst is a different project from making a radio work.
