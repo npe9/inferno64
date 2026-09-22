@@ -224,8 +224,20 @@ chandevshutdown(void)
 	/* shutdown in reverse order */
 	for(i=0; devtab[i] != nil; i++)
 		;
-	for(i--; i >= 0; i--)
+	for(i--; i >= 0; i--){
+		/*
+		 * Named before it runs, not after.  A device whose
+		 * shutdown does not return takes the machine with it and
+		 * leaves nothing on the console to say which one it was
+		 * -- which is what writing "reboot" to /dev/reboot does
+		 * on os/inferno/stm32f407: the board hangs instead of
+		 * resetting, while the same kernel under qemu reboots
+		 * cleanly, so it is a real peripheral and not the path.
+		 */
+		print("shutdown #%C\n", devtab[i]->dc);
 		devtab[i]->shutdown();
+	}
+	print("shutdown done\n");
 }
 
 void
