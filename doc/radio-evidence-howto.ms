@@ -249,10 +249,47 @@ being for somebody else \- and it was, because the callsign in it was
 wrong before it was ever transmitted.  Nothing in the kernel was at
 fault and nothing in it could have said so.
 .PP
-The cause is a UART with a one-byte receive register and no flow
-control, driven by a host that writes a whole line at once while the
-guest runs under TCG.  It is a real property of the board and not an
-emulator artifact; a real MPS2 typed at by hand would never see it.
+The cause was taken to be a UART with a one-byte receive register and
+no flow control, driven by a host that writes a whole line at once
+while the guest runs under TCG \- a real property of the board rather
+than an emulator artifact, which a real MPS2 typed at by hand would
+never see.
+.PP
+The same fault is on
+.CW stm32f407 ,
+and what was measured there does not fit that explanation.  Lines of
+46, 48, 50 and 52 characters are taken and run; at 54 the shell goes
+quiet, and what it was going to say arrives only when something else
+is typed.  Typing
+.CW zz
+and 51 digits \- a command that does not exist, so the answer is one
+short line \- echoed
+.I forty-one
+of the digits and then a newline, and printed nothing; the error came
+out after the next line was typed.  Characters are going missing from
+the
+.I echo
+while the newline that follows them arrives, which is not what a
+receive register overrunning looks like.  And qemu's
+.CW hw/char/stm32f2xx_usart.c
+cannot overrun: its
+.CW can_receive
+returns zero while RXNE is set, so the chardev holds the byte rather
+than dropping it.
+.PP
+What both boards have in common is a main pool that is nearly full
+once the shell is loaded, and a console echo path
+.CW ( devcons.c:/^echo
+through
+.CW putstrn0
+to
+.CW qiwrite )
+that allocates a Block per character and, when
+.CW iallocb
+returns nil, drops the character and says nothing.  That is a
+hypothesis and not a measurement: it has not been instrumented, and
+until it is, the rule below stands for the reason the rule has always
+stood.
 .PP
 So: keep a typed command under about forty characters, and where a test
 needs a long argument, give the program a shorter way to say it.
