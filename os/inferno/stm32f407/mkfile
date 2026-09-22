@@ -12,6 +12,7 @@ INSTALLDIR=$ROOT/Inferno/$OBJTYPE/bin
 INITDIR=../init
 PORTDIR=../port
 ARCHDIR=../armv7m
+RADIODIR=../radio
 
 #end configurable parameters
 
@@ -215,6 +216,16 @@ fpimem.$O:	../port/fpimem.c $ARCHDIR/fpi.h
 	$CC $CFLAGS ../port/fpimem.c
 
 fpiarmv7m.$O:	$ARCHDIR/fpiarmv7m.c $ARCHDIR/fpi.h
+
+# radio.h carries what #W and a chip driver share, and cc1120.h what
+# the chip driver and this board share, so a change to either has to
+# rebuild all of them.  Said explicitly because the catch-all %.$O rule
+# in $PORTDIR/portmkfile lists the headers every object has and not the
+# ones a particular driver includes -- and a struct that grows a field
+# while one of its users keeps the old layout does not fail to build,
+# it reads a different member at run time.
+devradio.$O devax25.$O devkiss.$O cc1120.$O spistm32f4.$O: $RADIODIR/radio.h
+cc1120.$O spistm32f4.$O:	$RADIODIR/cc1120.h
 
 devuart.$O:	../port/devuart.c
 	$CC $CFLAGS ../port/devuart.c

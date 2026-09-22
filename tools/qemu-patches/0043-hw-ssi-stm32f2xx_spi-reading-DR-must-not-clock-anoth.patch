@@ -1,0 +1,45 @@
+From 09a723d83e2c37fc49937f68a515ec757fac239a Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 22 Sep 2026 07:36:28 -0400
+Subject: [PATCH] hw/ssi/stm32f2xx_spi: reading DR must not clock another byte
+
+The transfer belongs to the write: DR written, byte goes out, byte
+comes back, RXNE set.  Reading DR takes what arrived and clears RXNE.
+
+This model transferred on the read as well, so the ordinary sequence --
+write DR, wait for RXNE, read DR -- clocked two bytes for every one the
+driver meant, returned the second of them, and left the peripheral one
+byte out of step for the remainder of the transaction.  Any slave with
+an address-then-data protocol is unusable that way, which is most of
+them.
+
+Signed-off-by: Noah Evans <noah.evans@gmail.com>
+---
+ hw/ssi/stm32f2xx_spi.c | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/hw/ssi/stm32f2xx_spi.c b/hw/ssi/stm32f2xx_spi.c
+index 871d573..ed8bdff 100644
+--- a/hw/ssi/stm32f2xx_spi.c
++++ b/hw/ssi/stm32f2xx_spi.c
+@@ -82,7 +82,19 @@ static uint64_t stm32f2xx_spi_read(void *opaque, hwaddr addr,
+     case STM_SPI_SR:
+         return s->spi_sr;
+     case STM_SPI_DR:
+-        stm32f2xx_spi_transfer(s);
++        /*
++         * Reading DR takes the byte that has already arrived and
++         * clears RXNE.  It does not clock anything: the transfer
++         * happens when DR is written, which is what the write path
++         * does and what the part does.
++         *
++         * This used to transfer here as well, so the ordinary sequence
++         * -- write DR, wait for RXNE, read DR -- clocked two bytes for
++         * every one the driver meant, returned the second, and left
++         * the peripheral one byte out of step for the rest of the
++         * transaction.  A slave with an address-then-data protocol
++         * cannot survive that.
++         */
+         s->spi_sr &= ~STM_SPI_SR_RXNE;
+         return s->spi_dr;
+     case STM_SPI_CRCPR:

@@ -180,3 +180,6 @@
 #define	CONSUSART2
 
 #define	UARTBAUD	115200
+
+/* EXTI lines 10 to 15 share one NVIC interrupt, RM0090 table 62 */
+#define	EXTI15_10IRQ	40

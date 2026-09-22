@@ -9,7 +9,7 @@
 
 #include "stm32f407.root.h"
 
-ulong ndevs = 17;
+ulong ndevs = 20;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -18,8 +18,11 @@ extern Dev pipedevtab;
 extern Dev mntdevtab;
 extern Dev srvdevtab;
 extern Dev uartdevtab;
+extern Dev radiodevtab;
+extern Dev ax25devtab;
+extern Dev kissdevtab;
 extern Dev envdevtab;
-Dev* devtab[17]={
+Dev* devtab[20]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -28,11 +31,16 @@ Dev* devtab[17]={
 	&mntdevtab,
 	&srvdevtab,
 	&uartdevtab,
+	&radiodevtab,
+	&ax25devtab,
+	&kissdevtab,
 	&envdevtab,
 	nil,
 };
 
+extern void spistm32f4link(void);
 void links(void){
+	spistm32f4link();
 }
 
 extern void sysmodinit(void);

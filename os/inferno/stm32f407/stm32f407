@@ -29,6 +29,21 @@ dev
 	mnt
 	srv
 	uart
+# A packet radio at #W/radio0.  Real only when qemu is given
+# "-machine radio=on", which fits a CC1120 to SPI2 with the pinout of a
+# ccRF click in a clicker 2's mikroBUS 2; without it cc1120init() finds
+# no part and the device serves an empty directory.  See
+# tools/qemu-patches/0042.
+	radio
+# AX.25 over that packet device, at #a served on /net/ax25.  A CC1120
+# does 2-FSK and not the 1200-baud AFSK on an FM carrier an APRS
+# handheld wants, and its bands stop at 164MHz, so this is a
+# radio-to-radio link on 868 and not a way onto the amateur network.
+# See doc/ax25-plan.ms and os/inferno/radio/devax25.c.
+	ax25
+# And KISS, at #k, so the whole stack above can be run over a pipe with
+# no radio at all.  See os/inferno/radio/devkiss.c.
+	kiss
 	env
 
 # the order matters: a library with an undefined symbol at the end
@@ -77,12 +92,20 @@ port
 	archstm32f407
 	randomarmv7m
 	screenarmv7m
+	cc1120
 
 # uartstm32f4 is this board's PhysUart -- mkdevc turns a misc name
 # beginning uart into <rest>physuart, so uartstm32f4 gives
 # stm32f4physuart.
 misc
 	uartstm32f4
+
+# spistm32f4 brings up SPI2 and the GPIO pins a mikroBUS socket uses,
+# then asks cc1120.c whether a part is there.  It is in link rather
+# than port because links() runs after poolinit() and trapinit(), which
+# is what a driver that allocates and takes an interrupt needs.
+link
+	spistm32f4
 
 mod
 	sys

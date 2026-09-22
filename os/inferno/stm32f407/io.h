@@ -41,8 +41,27 @@
 #define	    Apb1Usart2	(1<<17)
 #define	    Apb1Usart3	(1<<18)
 #define	    Apb1Uart4	(1<<19)
+#define	    Apb1Spi2	(1<<14)
 #define	  RCC_APB2ENR	(RCC+0x44)
 #define	    Apb2Usart1	(1<<4)
+#define	    Apb2Syscfg	(1<<14)
+
+/*
+ * SPI2, and the external interrupt controller with the system
+ * configuration controller that points it at a port.  RM0090 12.3 and
+ * 9.2: EXTICR4 covers lines 12 to 15, four bits each, and the value is
+ * the port, A being 0.
+ */
+#define	SPI2		0x40003800
+#define	SPI3		0x40003c00
+
+#define	SYSCFG		0x40013800
+#define	  SYSCFG_EXTICR4 (SYSCFG+0x14)
+
+#define	EXTI		0x40013c00
+#define	  EXTI_IMR	(EXTI+0x00)
+#define	  EXTI_RTSR	(EXTI+0x08)
+#define	  EXTI_PR	(EXTI+0x14)
 
 #define	FLASHIF		0x40023c00
 #define	  FLASH_ACR	(FLASHIF+0x00)

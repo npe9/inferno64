@@ -37,6 +37,9 @@ init()
 	sys->bind("#P", "/dev", sys->MAFTER);
 	# A packet radio, if one is fitted: /dev/radio0/{data,ctl,stat}.
 	sys->bind("#W", "/dev", sys->MAFTER);
+	# AX.25 and KISS, if this kernel has them.
+	sys->bind("#a", "/net", sys->MREPL|sys->MCREATE);
+	sys->bind("#k", "/net", sys->MAFTER);
 
 	shell = load Shell "/dis/sh.dis";
 	if(shell == nil){
