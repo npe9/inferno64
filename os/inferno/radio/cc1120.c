@@ -161,6 +161,20 @@ enum {
 	 * it for a hundred samples a step instead of one.
 	 */
 	Dwellms		= 100,
+
+	/*
+	 * Where the part is tuned when nothing has said otherwise.
+	 *
+	 * It had been left at whatever the FREQ registers hold out of
+	 * reset, which is not a documented frequency and not the same
+	 * question as "what band is this part for".  Two boards talked
+	 * to each other only because both were undefined in the same
+	 * way, and the stats reported "freq 0" because nothing had
+	 * ever tuned it.  868MHz is the European SRD band and inside
+	 * the 820-960MHz range a ccRF click's matching network is cut
+	 * for.
+	 */
+	Deffreq		= 868000000,
 };
 
 static int
@@ -456,12 +470,82 @@ setfreq(Cc1120 *rr, uvlong hz)
 	u32 v;
 
 	v = (u32)((hz * 4 * 65536) / 32000000);
+	rr->hz = hz;
 	strobe(rr, Sidle);
 	wrx(rr, Xfreq2, (v>>16) & 0xff);
 	wrx(rr, Xfreq1, (v>>8) & 0xff);
 	wrx(rr, Xfreq0, v & 0xff);
 	strobe(rr, Scal);
 	strobe(rr, Srx);
+}
+
+/*
+ * Sample the RSSI for ms milliseconds at whatever the part is tuned
+ * to, and print one line of it.
+ *
+ * Fields, and nothing but fields, so awk(1) can have it: the tag, the
+ * frequency, the peak, the mean, the floor, how many samples they are
+ * of, and which sample the peak was, with the word "carrier" on the
+ * end or nothing.  The mean is truncated toward zero, so it reads up
+ * to a decibel high.
+ *
+ * The index is there to answer the question a peak alone cannot:
+ * whether a loud sample was something on the air or the sweep hearing
+ * its own retune.  setfreq() strobes SIDLE, SCAL and SRX, and the
+ * first valid estimate after the AGC restarts could be a settling
+ * artefact -- which would land at the beginning of every dwell, where
+ * a signal is scattered through it.  Measured on a board: the indices
+ * come out uniform across the dwell and the loud samples come and go
+ * between sweeps, so they are not the tuning.
+ *
+ * One sample is not a measurement of anything.  Two sweeps of 868 to
+ * 928MHz taken a sample a step correlated at r = -0.062, which is to
+ * say not at all.
+ *
+ * The lock is taken per sample and not held across the dwell: it is
+ * an ilock, and a tenth of a second at splhi would lose the console
+ * and the radio's own interrupt.
+ */
+static void
+dwell1(Cc1120 *rr, char *tag, ulong ms)
+{
+	Spidev *s;
+	int r0, r1, j, peak, floor, nsamp, cs, peakat;
+	long sum;
+
+	s = rr->spi;
+	peak = -128;
+	floor = 127;
+	sum = 0;
+	nsamp = 0;
+	cs = 0;
+	peakat = -1;
+	for(j = 0; j < ms; j++){
+		s->lock(s);
+		r0 = rdx(rr, Xrssi0);
+		r1 = (schar)rdx(rr, Xrssi1);
+		s->unlock(s);
+		if(r0 & Rssivalid){
+			if(r1 > peak){
+				peak = r1;
+				peakat = nsamp;
+			}
+			if(r1 < floor)
+				floor = r1;
+			sum += r1;
+			nsamp++;
+		}
+		if((r0 & Csvalid) && (r0 & Carriersense))
+			cs = 1;
+		delay(1);
+	}
+	if(nsamp == 0){
+		print("%s %lud invalid\n", tag, (ulong)rr->hz);
+		return;
+	}
+	print("%s %lud %d %d %d %d %d%s\n", tag, (ulong)rr->hz,
+		peak, (int)(sum/nsamp), floor, nsamp, peakat,
+		cs? " carrier": "");
 }
 
 static int
@@ -499,9 +583,7 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 * setting and not a constant.
 		 */
 		ulong lo, hi, step, dwell;
-		int r1, r0, i, j;
-		int peak, floor, nsamp, cs, peakat;
-		long sum;
+		int r0, i;
 
 		lo = 868000000;
 		hi = 928000000;
@@ -526,74 +608,29 @@ cc1120ctl(Radio *r, char *buf, int n)
 			}
 			s->unlock(s);
 
-			/*
-			 * Dwell.  One sample the instant the estimate
-			 * first goes valid is not a measurement of a
-			 * band: two sweeps taken that way over 868 to
-			 * 928MHz correlated at r = -0.06, which is to
-			 * say not at all -- every feature in either of
-			 * them was the variance of a single sample of
-			 * thermal noise.  And a transmitter that sends
-			 * in bursts is not there for most of any
-			 * second, so the peak over a dwell is what
-			 * finds one and the mean is what describes the
-			 * floor.  The lock is taken per sample and not
-			 * held across the dwell: it is an ilock, and a
-			 * tenth of a second at splhi would lose the
-			 * console and the radio's own interrupt.
-			 */
-			peak = -128;
-			floor = 127;
-			sum = 0;
-			nsamp = 0;
-			cs = 0;
-			peakat = -1;
-			for(j = 0; j < dwell; j++){
-				s->lock(s);
-				r0 = rdx(rr, Xrssi0);
-				r1 = (schar)rdx(rr, Xrssi1);
-				s->unlock(s);
-				if(r0 & Rssivalid){
-					if(r1 > peak){
-						peak = r1;
-						peakat = nsamp;
-					}
-					if(r1 < floor)
-						floor = r1;
-					sum += r1;
-					nsamp++;
-				}
-				if((r0 & Csvalid) && (r0 & Carriersense))
-					cs = 1;
-				delay(1);
-			}
-			if(nsamp == 0){
-				print("scan %lud invalid\n", (ulong)hz);
-				continue;
-			}
-			/*
-			 * Fields, and nothing but fields, so awk(1) can
-			 * have it: frequency, peak, mean, floor, sample
-			 * count, and which sample the peak was, with
-			 * the word "carrier" on the end or nothing.
-			 * The mean is truncated toward zero, so it
-			 * reads up to a decibel high.
-			 *
-			 * The index is there to answer one question
-			 * that a peak alone cannot: whether the loud
-			 * sample was something on the air or this
-			 * sweep hearing its own retune.  setfreq()
-			 * strobes SIDLE, SCAL and SRX, and the first
-			 * valid estimate after the AGC restarts can be
-			 * a settling artefact.  A signal arrives when
-			 * it arrives and its index is scattered; an
-			 * artefact of tuning is always at the
-			 * beginning.
-			 */
-			print("scan %lud %d %d %d %d %d%s\n", (ulong)hz,
-				peak, (int)(sum/nsamp), floor, nsamp,
-				peakat, cs? " carrier": "");
+			dwell1(rr, "scan", dwell);
 		}
+		return n;
+	}
+	if(strcmp(f[0], "watch") == 0){
+		/*
+		 * Stay where the part is tuned and report a line every
+		 * dwell, for as long as asked.  A sweep says what the
+		 * band looked like once; this says what one frequency
+		 * does over time, which is the only way to tell a
+		 * transmitter that comes and goes from one that was
+		 * never there.  It is what found nothing twice and
+		 * something once at 100ms a step.
+		 */
+		ulong secs, i;
+
+		secs = 10;
+		if(nf >= 2)
+			secs = strtoul(f[1], nil, 0);
+		if(secs == 0 || secs > 600)
+			error(Ebadctl);
+		for(i = 0; i < secs*1000/Dwellms; i++)
+			dwell1(rr, "watch", Dwellms);
 		return n;
 	}
 	if(strcmp(f[0], "csthr") == 0 && nf == 2){
@@ -678,6 +715,7 @@ cc1120stat(Radio *r, char *p, int n)
 	return snprint(p, n,
 		"part CC1120 0x%.2x rev 0x%.2x\n"
 		"state 0x%.2x\n"
+		"freq %lud\n"
 		"rssi %d%s offset %d csthr %d last %d%s\n"
 		"fifo rx %d tx %d\n"
 		"sent %ud recv %ud\n"
@@ -685,6 +723,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"rxoverflow %ud txunderflow %ud\n",
 		rr->partnum, rr->partversion,
 		st >> 4,
+		(ulong)rr->hz,
 		live, (cs & Rssivalid)? "": " invalid",
 		rr->rssioffset, rr->csthr, rr->rssi,
 		(cs & Carriersense)? " carrier": "",
@@ -777,8 +816,7 @@ cc1120init(Spidev *s, int irq)
 	wr(rr, Riocfg2, Ghighz);
 	wr(rr, Riocfg1, Ghighz);
 	wr(rr, Riocfg0, Ghighz);
-	strobe(rr, Scal);
-	strobe(rr, Srx);
+	setfreq(rr, Deffreq);		/* calibrates and goes to RX */
 	s->unlock(s);
 
 	print("cc1120 %s: CC1120 rev 0x%.2x, listening\n",

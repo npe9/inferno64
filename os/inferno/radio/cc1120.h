@@ -38,6 +38,7 @@ struct Cc1120
 
 	/* what the last received packet looked like */
 	int	rssi;
+	uvlong	hz;			/* what setfreq() last tuned to */
 	int	lqi;
 
 	/* counters */

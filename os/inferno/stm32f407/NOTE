@@ -673,3 +673,54 @@ model an RSSI it never had: the peak, mean and floor come out as
 three different numbers, and with the threshold moved below the
 modelled floor the stats say "carrier" -- the whole path from the ctl
 file through AGC_CS_THR to RSSI0 and back.
+
+What the dwelling sweep found, and what it was not
+--------------------------------------------------
+
+The first sweep with a hundred-millisecond dwell:
+
+	scan 868000000 -110 -114 -118 98
+	...
+	scan 872000000  -84 -114 -118 98 carrier
+	...
+
+Flat mean of -113 to -114dBm on every one of 61 steps and a floor at
+-118 -- which is what averaging a hundred samples is supposed to look
+like, against the 20dB of scatter a single sample gave -- and on 15
+of those steps a peak near -85, 28dB above the floor, each with
+carrier sense asserted.  Scattered from 872 to 928 with no
+clustering, which is not the shape of one transmitter.
+
+Two explanations, and they are not distinguishable from a peak: a
+real emitter that comes and goes, or this sweep hearing its own
+retune, since setfreq() strobes SIDLE, SCAL and SRX and the first
+valid estimate after the AGC restarts could be a settling artefact.
+So the sweep says which sample the peak was.  A signal arrives when
+it arrives; an artefact of tuning is always at the beginning.
+
+The next sweep answered it, and the answer was not the one the
+instrument was suspected of:
+
+	scan 868000000 -106 -108 -113 98 16
+	scan 869000000 -105 -109 -114 98 56
+	...
+
+No carrier anywhere, no peak above -104, and the peak indices
+uniform from 0 to 86 -- the maximum of 98 samples of noise, landing
+where chance puts it.  A retune artefact would have been at index 0
+or 1 in every line of every sweep.  It was not there at all.
+
+So the loud samples were external and intermittent: something was
+transmitting across that band during one sweep and not during the
+next.  That is as far as a sweep can take it, because a sweep spends
+a tenth of a second on each frequency and then leaves.  "echo watch
+>/dev/radio0/ctl" stays where the part is tuned and reports a line
+every dwell for ten seconds, which is what says whether a frequency
+is busy or was busy once.
+
+Also from that: the part had never been tuned to a defined frequency.
+cc1120init() left the FREQ registers at their reset value, which is
+not a documented frequency, and the stats said "freq 0" because
+nothing had called setfreq().  Two boards talked to each other only
+because both were undefined in the same way.  It comes up on 868MHz
+now.
