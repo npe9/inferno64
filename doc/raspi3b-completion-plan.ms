@@ -8157,3 +8157,77 @@ Before this the only ways back were
 .CW jtagrestart ,
 which fails about half the time and replaces the kernel rather than
 restarting the one on the card, and asking for the power to be pulled.
+.NH 2
+A board that looks hung, and is not: two host-side faults
+.PP
+.B "The kernel was idle, not stuck."
+JTAG settled it in one reading.  cpu0 sat at the same address across
+five samples fifteen seconds apart, and the instruction there \(em
+read out of the board's own memory rather than resolved against a
+symbol table belonging to a different build, which would have been a
+guess \(em was
+.CW d503207f ,
+.CW WFI .
+Every process was asleep.  From the console that is indistinguishable
+from a crash and wants the opposite response.
+.PP
+.B "First fault: the host's styx server had wedged."
+.CW kupdate
+printed nothing at all, on boot after boot, and neither did
+.CW fatwrite
+\(em which runs after it in the same spawned process, so the pair was
+blocked inside
+.CW kupdate .
+It dials the host and mounts
+.CW /n/remote ,
+and the server there had been up three and a half days:
+.P1
+emu -r .../raspi3b-port sh -c styxlisten -A 'tcp!*!6666' export /
+.P2
+It still accepted the TCP connection and never answered a Styx
+.CW Tversion .
+A handshake by hand from the host timed out; a fresh server replies in
+milliseconds.  Every process that touched the mount went to sleep
+behind it, which is why the whole board went quiet.
+.PP
+.B "Second fault: nothing the host types reaches the board."
+.CW ^R
+is handled by the kernel's console driver, not by any program, and it
+did not reboot.  So the question was whether the kernel was failing to
+read the UART or the UART was getting nothing, and the registers
+answer it \(em taking care to read
+.CW AUX_MU_LSR
+and
+.CW AUX_MU_STAT
+and NOT
+.CW AUX_MU_IO ,
+because reading the IO register pops the receive FIFO and the
+diagnostic would eat the very byte it was looking for:
+.P1
+before:            LSR 0x60  STAT 0x34e  AUX_IRQ 0
+type 40 characters
+after:             LSR 0x60  STAT 0x34e  AUX_IRQ 0
+.P2
+Identical.  No data ready, receiver idle, FIFO empty, no interrupt
+pending.  And the board's side is configured correctly:
+.CW GPFSEL1
+reads
+.CW 0x1b6d2000 ,
+which decodes to GPIO14 and GPIO15 both in ALT5 \(em the mini UART's
+TX and RX \(em the mini UART is enabled in
+.CW AUX_ENABLES ,
+its receive interrupt is on in
+.CW AUX_MU_IER ,
+and IRQ 29 is enabled in the interrupt controller.  Transmit works
+throughout.  So the serial line from host to board carries nothing,
+and the adapter's device node was re-created at 08:03 while the screen
+session has held a file descriptor to it since long before.
+.PP
+.B "And a caution about what was blamed on the warm restart."
+Some of what this document calls a warm-entry hang may have been this:
+a board that booted perfectly and could not be spoken to.  The
+.I garbled
+output and the corrupt devtab are real and are on the output side, so
+those stand.  The hangs are less certain than they were written down
+as being, and the measured success rate that is still owed should be
+taken with a console known to be working in both directions.
