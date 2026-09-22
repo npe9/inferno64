@@ -54,7 +54,12 @@ enum {
 	Xpartnumber	= 0x8f,
 	Xpartversion	= 0x90,
 	Xmarcstatus1	= 0x94,
-	Xrssi1		= 0x71,
+	Xrssi1		= 0x71,		/* 8 MSB of RSSI[11:0], dBm */
+	Xrssi0		= 0x72,
+	  Rssivalid	= 1<<0,
+	  Csvalid	= 1<<1,
+	  Carriersense	= 1<<2,
+	Rssiinvalid	= -128,		/* what RSSI1 reads when it is not */
 	Xnumtxbytes	= 0xd6,
 	Xnumrxbytes	= 0xd7,
 
@@ -89,6 +94,7 @@ enum {
 	Ghighz		= 0x30,
 
 	Txtries		= 100000,	/* spins waiting for a transmit */
+	Rssitries	= 200000,	/* spins waiting for RSSI_VALID */
 };
 
 static int
@@ -336,6 +342,25 @@ cc1120interrupt(Radio *r)
 	qpass(rr->rq, b);
 }
 
+/*
+ * FREQ is a 24-bit word: the RF frequency times the LO divider,
+ * scaled by 2^16 over the crystal.  The 820-960MHz band divides by 4,
+ * and a ccRF 2 click has a 32MHz crystal.
+ */
+static void
+setfreq(Cc1120 *rr, uvlong hz)
+{
+	u32 v;
+
+	v = (u32)((hz * 4 * 65536) / 32000000);
+	strobe(rr, Sidle);
+	wrx(rr, Xfreq2, (v>>16) & 0xff);
+	wrx(rr, Xfreq1, (v>>8) & 0xff);
+	wrx(rr, Xfreq0, v & 0xff);
+	strobe(rr, Scal);
+	strobe(rr, Srx);
+}
+
 static int
 cc1120ctl(Radio *r, char *buf, int n)
 {
@@ -343,7 +368,6 @@ cc1120ctl(Radio *r, char *buf, int n)
 	Spidev *s;
 	char *f[4], cbuf[64];
 	uvlong hz;
-	u32 v;
 	int nf;
 
 	rr = (Cc1120*)r;
@@ -356,6 +380,50 @@ cc1120ctl(Radio *r, char *buf, int n)
 		error(Ebadctl);
 
 	s = rr->spi;
+	if(strcmp(f[0], "scan") == 0){
+		/*
+		 * Sweep the band and report what the receiver hears.
+		 *
+		 * RSSI[11:0] is two's complement dBm with 0.0625dB
+		 * resolution, so the eight bits of RSSI1 are whole dBm,
+		 * and -128 means the value is not valid yet (SWRU295E,
+		 * RSSI1).  RSSI0 carries RSSI_VALID and a carrier sense
+		 * that the part computes against its own threshold.
+		 *
+		 * Waiting for RSSI_VALID at each step rather than
+		 * sleeping a fixed time: how long the estimate takes
+		 * depends on AGC_CFG0.RSSI_VALID_CNT, which is a
+		 * setting and not a constant.
+		 */
+		ulong lo, hi, step;
+		int r1, r0, i;
+
+		lo = 868000000;
+		hi = 928000000;
+		step = 1000000;
+		if(nf >= 4){
+			lo = strtoul(f[1], nil, 0);
+			hi = strtoul(f[2], nil, 0);
+			step = strtoul(f[3], nil, 0);
+		}
+		if(step == 0 || lo > hi)
+			error(Ebadctl);
+		for(hz = lo; hz <= hi; hz += step){
+			s->lock(s);
+			setfreq(rr, hz);
+			for(i = 0; i < Rssitries; i++){
+				r0 = rdx(rr, Xrssi0);
+				if(r0 & Rssivalid)
+					break;
+			}
+			r1 = (schar)rdx(rr, Xrssi1);
+			s->unlock(s);
+			print("scan %lud %d%s%s\n", (ulong)hz, r1,
+				(r0 & Rssivalid)? "": " invalid",
+				(r0 & Carriersense)? " carrier": "");
+		}
+		return n;
+	}
 	if(strcmp(f[0], "freq") == 0 && nf == 2){
 		/*
 		 * FREQ is a 24-bit word, the RF frequency divided by the
@@ -367,14 +435,8 @@ cc1120ctl(Radio *r, char *buf, int n)
 		hz = strtoul(f[1], nil, 0);
 		if(hz < 820000000 || hz > 960000000)
 			error("frequency outside the band this click is matched for");
-		v = (u32)((hz * 4 * 65536) / 32000000);
 		s->lock(s);
-		strobe(rr, Sidle);
-		wrx(rr, Xfreq2, (v>>16) & 0xff);
-		wrx(rr, Xfreq1, (v>>8) & 0xff);
-		wrx(rr, Xfreq0, v & 0xff);
-		strobe(rr, Scal);
-		strobe(rr, Srx);
+		setfreq(rr, hz);
 		s->unlock(s);
 		return n;
 	}
@@ -405,7 +467,7 @@ cc1120stat(Radio *r, char *p, int n)
 {
 	Cc1120 *rr;
 	Spidev *s;
-	int st, nrx, ntx;
+	int st, nrx, ntx, live, cs;
 
 	rr = (Cc1120*)r;
 	s = rr->spi;
@@ -413,19 +475,21 @@ cc1120stat(Radio *r, char *p, int n)
 	st = state(rr);
 	nrx = rdx(rr, Xnumrxbytes);
 	ntx = rdx(rr, Xnumtxbytes);
+	live = (schar)rdx(rr, Xrssi1);
+	cs = rdx(rr, Xrssi0);
 	s->unlock(s);
 
 	return snprint(p, n,
 		"part CC1120 0x%.2x rev 0x%.2x\n"
 		"state 0x%.2x\n"
-		"rssi %d\n"
+		"rssi %d last %d%s\n"
 		"fifo rx %d tx %d\n"
 		"sent %lud recv %lud\n"
 		"crcerr %lud toobig %lud txtimeout %lud\n"
 		"rxoverflow %lud txunderflow %lud\n",
 		rr->partnum, rr->partversion,
 		st >> 4,
-		rr->rssi,
+		live, rr->rssi, (cs & Carriersense)? " carrier": "",
 		nrx, ntx,
 		rr->nsent, rr->nrecv,
 		rr->ncrcerr, rr->ntoobig, rr->ntxtimeout,
