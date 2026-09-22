@@ -63,7 +63,31 @@ CARRY = re.compile(r"^(-?):\.(\d+e[+-]\d+)$")
 PROMPT = b"ch> "
 
 
-def open_port(path=PORT):
+def waitport(path=PORT, timeout=60.0, quiet=False):
+    """Wait for the port to exist.
+
+    This instrument leaves the USB bus on its own: twice in one
+    session it enumerated, answered for a minute or two and vanished,
+    through two different cables.  A tool that dies with a traceback
+    when that happens loses whatever it was in the middle of
+    measuring, and -- worse -- a tool started before the drop prints
+    nothing and looks like an instrument hearing nothing.
+    """
+    end = time.time() + timeout
+    said = False
+    while time.time() < end:
+        if os.path.exists(path):
+            return True
+        if not said and not quiet:
+            sys.stderr.write("# waiting for %s\n" % path)
+            said = True
+        time.sleep(1.0)
+    return False
+
+
+def open_port(path=PORT, wait=60.0):
+    if not os.path.exists(path) and not waitport(path, wait):
+        raise SystemExit("tinysa: %s never appeared" % path)
     fd = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
     a = termios.tcgetattr(fd)
     a[0] = a[1] = a[3] = 0              # iflag, oflag, lflag: raw
