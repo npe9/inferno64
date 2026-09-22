@@ -2468,5 +2468,141 @@ init()
 		sys->dup(cons.fd, 2);
 	}
 	sys->print("RASPI3B-SH-OK\n");
+	spawn remotecmd();
 	shell->init(nil, "sh" :: "-i" :: "-n" :: nil);
+}
+
+#
+# Take commands from the host, because the board cannot always be typed
+# at.
+#
+# The mini UART's receive path died on this desk and the board looked
+# hung for an afternoon.  It was not: the registers said so -- LSR 0x60,
+# STAT 0x34e, receive FIFO empty, identical before and after forty
+# characters were typed, with GPIO14 and GPIO15 both in ALT5 and
+# transmit working throughout.  A board that boots perfectly and cannot
+# be spoken to is indistinguishable from a crashed one, and every
+# instrument this port has is on the OUTPUT side.
+#
+# So the input comes the other way.  The styx mount to the host is
+# already there for kupdate; write os/inferno/raspi3b/board.cmd in the
+# worktree and the board runs it and prints the output between markers.
+# Nothing is typed, and it works over a console that is deaf.
+#
+# The file's CONTENTS are the key, not its mtime: a rebuild rewrites
+# mtimes all over the tree, and an mtime-driven loop would re-run the
+# last command for ever.
+#
+Cmdfile: con "/n/remote/os/inferno/raspi3b/board.cmd";
+
+remotecmd()
+{
+	last := "-";
+	seq := 0;
+
+	# Let the boot's own work finish first; this is a convenience,
+	# and it must never be what makes a boot fail.  Sixty seconds
+	# also keeps it clear of kupdate, which uses the same mount
+	# point and takes it down on its way out.
+	sys->sleep(60000);
+	addrs := remoteaddrs();
+	if(addrs == nil)
+		return;			# no kupdate.txt: nothing to talk to
+	for(;;){
+		sys->sleep(3000);
+		cmd := readcmdfile(addrs);
+		if(cmd == nil || cmd == last)
+			continue;
+		last = cmd;
+		seq++;
+		sys->print("RCMD-BEGIN %d %s\n", seq, cmd);
+		sh := load Shell "/dis/sh.dis";
+		if(sh == nil){
+			sys->print("RCMD-FAIL load sh: %r\n");
+			continue;
+		}
+		{
+			sh->init(nil, "sh" :: "-c" :: cmd :: nil);
+		}exception e{
+		"*" =>
+			sys->print("RCMD-EXCEPTION %s\n", e);
+		}
+		sys->print("RCMD-END %d\n", seq);
+	}
+}
+
+#
+# The mount is taken down after every read.  kupdate does the same and
+# for the same reason: a mount whose far end has gone stays in the
+# namespace and every later open blocks on it, which is precisely the
+# failure this whole mechanism is here to route around -- the host's
+# styx server was once up for three days, still accepting connections
+# and never answering a Tversion, and every process that touched
+# /n/remote went to sleep behind it.
+#
+#
+# The addresses kupdate.txt names, read once.
+#
+# Once, because this runs every three seconds and /n/dos is a FAT
+# filesystem served by a dossrv that the rest of the board is also
+# using; re-reading a config file on it forever to learn something
+# that cannot change is a good way to turn a convenience into a
+# source of load.
+#
+remoteaddrs(): list of string
+{
+	cfg := sys->open("/n/dos/kupdate.txt", Sys->OREAD);
+	if(cfg == nil)
+		return nil;
+	b := array[256] of byte;
+	n := sys->read(cfg, b, len b);
+	cfg = nil;
+	if(n <= 0)
+		return nil;
+	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
+	if(nf < 2)
+		return nil;
+	rev: list of string;
+	for(l := f; l != nil; l = tl l)
+		if(tl l != nil)			# the last field is the path
+			rev = hd l :: rev;
+	addrs: list of string;
+	for(l = rev; l != nil; l = tl l)
+		addrs = hd l :: addrs;
+	return addrs;
+}
+
+readcmdfile(addrs: list of string): string
+{
+	ok := -1;
+	c: Sys->Connection;
+	for(l := addrs; l != nil; l = tl l){
+		(ok, c) = sys->dial(hd l, nil);
+		if(ok >= 0)
+			break;
+	}
+	if(ok < 0)
+		return nil;
+	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL, "") < 0)
+		return nil;
+	fd := sys->open(Cmdfile, Sys->OREAD);
+	if(fd == nil){
+		unmountremote();
+		return nil;
+	}
+	b := array[1024] of byte;
+	n := sys->read(fd, b, len b);
+	fd = nil;
+	unmountremote();
+	if(n <= 0)
+		return nil;
+	s := string b[0:n];
+	# trim trailing newlines so a file rewritten identically but for
+	# whitespace does not count as a new command
+	while(len s > 0 && (s[len s - 1] == '\n' || s[len s - 1] == '\r' ||
+	    s[len s - 1] == ' ' || s[len s - 1] == '\t'))
+		s = s[0:len s - 1];
+	if(len s == 0)
+		return nil;
+	return s;
 }
