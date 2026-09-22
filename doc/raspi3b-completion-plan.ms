@@ -8834,3 +8834,52 @@ works the same controller.  It is written into
 and has not yet produced a result, so whether there is any concurrent
 fault left is still unknown.  What can be said is that the run which
 raised the question could not have answered it either way.
+.NH 2
+The concurrent fault was real, and it was another spin count
+.PP
+.B "The experiment finally ran, because it stopped needing the network."
+It lived in
+.CW board.cmd ,
+which needs the styx mount, which needs kupdate, which needs the host
+\(em so a test of the CARD kept not running for reasons that had
+nothing to do with the card.  Moved into the SD suite it needs nothing
+but the board: spawn a process reading the raw device in a loop, run
+.CW multiverify
+against it, stop the reader.
+.PP
+.B "It failed immediately, twice, and said why."
+.P1
+write block 2920000 failed: sdhsts 0x0 sdcmd 0x99
+    sdedm 0x10907 (fsm 7 fill 16) sdhblc 64
+retried 0 blocks, gave up on 1
+MULTIVERIFY-FAIL write 0 of 131072
+.P2
+FSM 7 is WRITEWAIT1, fill 16 is a FULL FIFO, and there is no error bit
+anywhere: the card was busy programming and had not drained yet.  The
+whole 128KB request was refused.  And
+.CW "retried 0"
+says the retry never even fired, because its guard wants the FSM in
+DATAMODE and this one was not.
+.PP
+.B "The cause: a bounded spin standing in for a timeout, again."
+The write waited for FIFO room with
+.CW "if(++tries > 20000)" ,
+about 160ms of 8us delays, and the SD specification allows a card
+250ms to program a block.  Under contention it needs it.  That is the
+same fault as the DMA engine's
+.CW Timeout ,
+found and fixed in the same week, in a different file, by the same
+reasoning: a spin count is a timeout whose length is a property of the
+machine rather than of the hardware it waits for.  It waits by the
+1MHz counter now, up to a second, and restarts the clock whenever
+progress is made.
+.PP
+.B "Result, with a reader hammering the same controller throughout:"
+.P1
+MULTIVERIFY-OK 256 blocks at 2920000: write  60ms read 10ms
+MULTIVERIFY-OK 256 blocks at 2930000: write 530ms read 10ms
+.P2
+128KB written and read back byte-correct, twice, under load.  Every
+PIO arm of the boot check now passes; the DMA arm still fails and runs
+last, because a failed DMA transfer leaves the next request unusable
+and that is its own open bug.

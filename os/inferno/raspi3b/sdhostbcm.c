@@ -118,6 +118,7 @@ enum {
 	Cdivmax	= 0x7ff,
 
 	Maxretry = 8,		/* re-issues of a command that never started */
+	Piowaitus = 1000000,	/* how long a PIO write may wait for FIFO room */
 	Pioburst = 8,		/* words written between SDEDM reads */
 	Fifofillsh = 4,		/* SDEDM bits 8:4: words currently in the FIFO */
 	Fifofillmask = 0x1f,
@@ -879,6 +880,8 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	uchar *p = a, *pblk;
 	long i, nthis = 1;
 	int j, retries, multi, multiwrite, usedma;
+	uvlong t0;
+	extern uvlong systmrread(void);		/* systmrbcm.c, 1MHz */
 	u32 arg, w, err;
 
 	USED(lun);
@@ -1083,7 +1086,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			 * spinning.  That is what this does.
 			 */
 			{
-			int words, burst, k, tries;
+			int words, burst, k;
 
 			/*
 			 * In bytemode the data register takes ONE BYTE per
@@ -1105,8 +1108,35 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			 * WHEN the words go, and the problem was that each
 			 * one carried a quarter of what it looked like.
 			 */
+			/*
+			 * Wait for FIFO space by the CLOCK, not by a
+			 * spin count.
+			 *
+			 * This gave up after 20000 rounds of an ~8us
+			 * delay -- about 160ms -- and under contention
+			 * that is not enough.  With another process
+			 * reading the same card, a multi-block write
+			 * stalled with the FIFO full and the FSM in
+			 * WRITEWAIT1:
+			 *
+			 *	sdhsts 0x0 sdedm 0x10907 (fsm 7 fill 16)
+			 *
+			 * No error bit anywhere: the card was simply
+			 * busy programming and had not drained yet, and
+			 * the SD specification allows it 250ms to do
+			 * that.  The whole 128KB request was refused,
+			 * "write 0 of 131072", on both concurrent runs.
+			 *
+			 * This is the same fault as the DMA engine's
+			 * Timeout, found and fixed in the same week: a
+			 * bounded spin standing in for a timeout, whose
+			 * length is a property of the machine rather
+			 * than of the hardware it waits for, and shorter
+			 * than a card's legal program time.  A second,
+			 * by the 1MHz counter.
+			 */
 			j = (c->bytemode? Secsize: Secsize/4) * nthis;
-			tries = 0;
+			t0 = systmrread();
 			while(j > 0){
 				words = Fifodepth -
 					(int)((r[SDEDM] >> Fifofillsh) &
@@ -1115,7 +1145,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				if(burst > j)
 					burst = j;
 				if(words < burst){
-					if(++tries > 20000){
+					if(systmrread() - t0 > Piowaitus){
 						if((r[SDHSTS] & Hstserror) == 0 &&
 						    (r[SDEDM] & Edmfsmmask) == Fsmdata &&
 						    retries-- > 0){
@@ -1133,7 +1163,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					microdelay(burst - words);
 					continue;
 				}
-				tries = 0;
+				t0 = systmrread();	/* progress: restart the clock */
 				if(words > j)
 					words = j;
 				if(c->bytemode)

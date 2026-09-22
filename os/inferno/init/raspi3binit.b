@@ -165,6 +165,30 @@ sdcheck()
 #
 # Blocks 2900000 and up, well past data, kfstest and dos on this card.
 #
+#
+# Read the raw device in a loop until told to stop, to give the
+# multi-block check something to contend with.
+#
+hammer(stop: chan of int)
+{
+	fd := sys->open(SDDEV + "/data", Sys->OREAD);
+	if(fd == nil)
+		return;
+	buf := array[8192] of byte;
+	off := big 4000000 * big 512;
+	for(;;){
+		alt {
+		<-stop =>
+			return;
+		* =>
+			sys->pread(fd, buf, len buf, off);
+			off += big (len buf);
+			if(off > big 5000000 * big 512)
+				off = big 4000000 * big 512;
+		}
+	}
+}
+
 multiblockcheck()
 {
 	cfd := sys->open(SDDEV + "/ctl", Sys->OWRITE);
@@ -188,10 +212,6 @@ multiblockcheck()
 	sys->fprint(cfd, "multiverify 2900300 64");
 	sys->fprint(cfd, "multiverify 2900500 512");
 	sys->fprint(cfd, "multiwrite 0");
-	# and the DMA pairing, which is still wrong
-	sys->fprint(cfd, "dma 1");
-	sys->fprint(cfd, "multiverify 2900700 64");
-	sys->fprint(cfd, "dma 0");
 	#
 	# Put the switches back to the DRIVER's defaults, not to some
 	# other value.
@@ -207,6 +227,49 @@ multiblockcheck()
 	#
 	sys->fprint(cfd, "multi 64");
 	sys->fprint(cfd, "multiwrite 1");
+	sys->fprint(cfd, "dma 0");
+
+	#
+	# And the same check with someone else hammering the controller.
+	#
+	# This is the experiment that was owed and kept not happening,
+	# because it lived in board.cmd -- which needs the styx mount,
+	# which needs kupdate, which needs the network and the host's
+	# server.  A test of the CARD should not depend on any of that.
+	# Here it needs nothing but the board.
+	#
+	# One agent sets the switches (this function, before the spawn);
+	# the hammer only reads.  The failure this is looking for was
+	# seen once with two agents BOTH writing the driver's globals,
+	# which could not be interpreted; this arm can be.
+	#
+	stop := chan of int;
+	spawn hammer(stop);
+	sys->fprint(cfd, "multiverify 2920000 256");
+	sys->fprint(cfd, "multiverify 2930000 256");
+	stop <-= 1;
+
+	#
+	# The DMA pairing LAST, because it fails and its failure
+	# poisons whatever runs next.
+	#
+	# It used to sit in the middle, and the transfer after it came
+	# back "write 0 of 131072" -- the whole request refused --
+	# while the one after that passed.  So a failed DMA transfer
+	# leaves the card or the controller in a state the next
+	# transfer cannot use, even though the error path now resets
+	# the DMA channel, reports, falls back to PIO and sends the
+	# CMD12 that ends a multi-block command.  That recovery is
+	# still not enough, and it is its own bug: a driver should not
+	# be able to break the next request.
+	#
+	# Running it last keeps the information -- the arm still
+	# reports -- without corrupting the arms that matter, which are
+	# the ones describing the configuration the board actually
+	# ships.
+	#
+	sys->fprint(cfd, "dma 1");
+	sys->fprint(cfd, "multiverify 2900700 64");
 	sys->fprint(cfd, "dma 0");
 }
 
