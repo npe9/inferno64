@@ -724,3 +724,43 @@ not a documented frequency, and the stats said "freq 0" because
 nothing had called setfreq().  Two boards talked to each other only
 because both were undefined in the same way.  It comes up on 868MHz
 now.
+
+One redirection, and how to transmit anyway
+--------------------------------------------
+
+This board can run exactly one "echo x >file" after boot.  The second
+one hangs, in silence, whatever it is redirected to -- to the radio,
+to a ctl file, anywhere.  It looks like a radio fault and is not one:
+under qemu the first "echo hi >/dev/radio0/data" sends, "sent 1" in
+the stats, the part back in RX with no timeout, and the second never
+reaches the driver at all.
+
+The shell spawns a process for a redirection and the process needs a
+4096-byte kernel stack out of main, and main has not got a second one
+to give.  Neither NPROC 8 nor a bigger KSTACK helps: 8 processes fail
+in the same place, and KSTACK 8192 fails on the first redirection
+rather than the second, because the stacks are what is eating the
+pool.
+
+It hangs rather than failing because os/inferno/port/alloc.c's
+smalloc() retries for ever -- "for(;;) { poolalloc; tsleep(100) }" --
+with no escape and nothing printed.  The comment above it already
+records that as a known silent hang from an earlier hunt.  Making it
+give up and raise Enomem was tried here and is worse: smalloc's
+callers hold locks across it without a waserror() in sight, and the
+board died with a stack pointer of 0x0ffffd90 -- 624 bytes below the
+bottom of a kernel stack in CCM -- and "can't escalate 3 to
+HardFault".  Left as it was, and written down.
+
+What works, and is what to use:
+
+	; cat >/dev/radio0/data
+	hello1
+	hello2
+	hello3
+	(control-D)
+
+One open, one process, a packet per line, for as many as you like.
+Five lines gives "sent 5" and the stats afterwards still read.  Any
+file that takes a write can be driven this way, which is the way
+round this board's ceiling until the ceiling moves.

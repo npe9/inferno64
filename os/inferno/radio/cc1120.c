@@ -97,8 +97,26 @@ enum {
 	Gpktsyncrxtx	= 0x06,
 	Ghighz		= 0x30,
 
-	Txtries		= 100000,	/* spins waiting for a transmit */
-	Rssitries	= 200000,	/* spins waiting for RSSI_VALID */
+	/*
+	 * Waits, in milliseconds, checked once a millisecond.
+	 *
+	 * These were spin counts -- 100000 turns of a loop whose body
+	 * is an SPI strobe.  A strobe is one byte, and this board
+	 * clocks the CC1120 at 164kHz, so a turn is 49us and the
+	 * "bounded" wait after a transmit was four and nine tenths
+	 * seconds of hammering the bus at splhi for half of it.  Typed
+	 * at a shell that is a hang, and it was reported as one.
+	 *
+	 * A bound belongs in the unit the thing being waited for is
+	 * measured in.  A packet of a hundred bytes at the slowest
+	 * symbol rate this part will do is tens of milliseconds, so
+	 * half a second is generous for a transmit and a tenth is
+	 * generous for an RSSI estimate, whose own filter is nine
+	 * internal estimates long.  A millisecond between looks costs
+	 * one SPI byte instead of twenty.
+	 */
+	Txwaitms	= 500,		/* for a transmit to finish */
+	Rssiwaitms	= 100,		/* for RSSI_VALID */
 	/*
 	 * Each try is a whole SPI byte -- 48us at this board's clock --
 	 * so two thousand is a tenth of a second, against a crystal
@@ -339,14 +357,15 @@ cc1120send(Radio *r, uchar *p, int n)
 	 * runs out: a transmit that never completes is a fault worth a
 	 * number in the stat file rather than a process stuck for ever.
 	 */
-	for(i = 0; i < Txtries; i++){
+	for(i = 0; i < Txwaitms; i++){
 		s->lock(s);
 		st = state(rr);
 		s->unlock(s);
 		if(st != Sttx && st != Stsettle && st != Stcal)
 			break;
+		delay(1);
 	}
-	if(i >= Txtries)
+	if(i >= Txwaitms)
 		rr->ntxtimeout++;
 
 	s->lock(s);
@@ -601,12 +620,23 @@ cc1120ctl(Radio *r, char *buf, int n)
 		for(hz = lo; hz <= hi; hz += step){
 			s->lock(s);
 			setfreq(rr, hz);
-			for(i = 0; i < Rssitries; i++){
+			s->unlock(s);
+			/*
+			 * Let the estimate settle before the dwell
+			 * starts, taking the lock for each look rather
+			 * than holding it across the wait: it is an
+			 * ilock, and the delay below would otherwise be
+			 * a tenth of a second at splhi with no console
+			 * and no interrupt from the radio.
+			 */
+			for(i = 0; i < Rssiwaitms; i++){
+				s->lock(s);
 				r0 = rdx(rr, Xrssi0);
+				s->unlock(s);
 				if(r0 & Rssivalid)
 					break;
+				delay(1);
 			}
-			s->unlock(s);
 
 			dwell1(rr, "scan", dwell);
 		}
