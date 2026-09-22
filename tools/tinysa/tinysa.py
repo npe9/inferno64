@@ -98,6 +98,35 @@ def open_port(path=PORT, wait=60.0):
     return fd
 
 
+def alive(fd, tries=3):
+    """Is anything answering at the other end?
+
+    The port existing is not the instrument working.  This one wedges:
+    it keeps its USB device open, keeps /dev/cu.usbmodem4001 in place,
+    and answers nothing at all -- seen after a session that changed
+    its mode several times and left it in zero span.  A tool that does
+    not check goes on to numbers(), which retries four times at a
+    thirty second timeout, so the first symptom is two minutes of
+    silence and no output, which reads as a long measurement rather
+    than as a dead instrument.
+
+    Recovering it needs its power cycled, and nothing this side of the
+    cable can do that, so the only useful thing a tool can do is say
+    so quickly.
+    """
+    for _ in range(tries):
+        if PROMPT.decode() in cmd(fd, "", timeout=1.5):
+            return True
+    return False
+
+
+def needalive(fd):
+    if not alive(fd):
+        raise SystemExit("tinysa: the port is there and nothing is "
+                         "answering on it -- the instrument is wedged "
+                         "and needs its power cycled")
+
+
 def cmd(fd, s, timeout=10.0):
     os.write(fd, (s + "\r").encode())
     buf = b""

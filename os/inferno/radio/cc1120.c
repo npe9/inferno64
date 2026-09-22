@@ -214,6 +214,13 @@ enum {
 	 */
 	Dwellms		= 100,
 	/*
+	 * How many runs a "capture" keeps.  512 shorts of bss,
+	 * because the kernel stack here is 4096 bytes in total
+	 * and a ctl write already has a shell and a device
+	 * underneath it.
+	 */
+	Ncaprun		= 256,
+	/*
 	 * How many bytes "cat /dev/radio0/txtest" sends.  At the
 	 * 1200 baud this part comes up at, 125 bytes is most of a
 	 * second on the air, which is what an instrument watching for
@@ -1113,6 +1120,122 @@ cc1120ctl(Radio *r, char *buf, int n)
 		s->lock(s);
 		strobe(rr, Srx);
 		s->unlock(s);
+		return n;
+	}
+	if(strcmp(f[0], "capture") == 0){
+		/*
+		 * Record the envelope, as run lengths.
+		 *
+		 * dwell1() above samples once a millisecond and keeps
+		 * the peak, the mean and the floor, which says how loud
+		 * a frequency is and nothing about when.  Everything on
+		 * this air is bursts -- tools/tinysa/survey.py puts the
+		 * duty cycle of the busiest thing in the 868 band at
+		 * about a sixth -- and the shape of a burst in time is
+		 * the first thing about an unknown transmitter that can
+		 * be read without knowing its modulation.  An on-off
+		 * keyed remote is its envelope, and even for an FSK
+		 * burst the envelope gives the packet length and the
+		 * gap between packets.
+		 *
+		 * So: sample RSSI as fast as the bus allows, compare
+		 * against a threshold, and print how long each run above
+		 * and below it lasted.  The sample rate is measured over
+		 * the capture and printed rather than assumed, because
+		 * it is a property of the SPI clock and the loop and not
+		 * a number this can know.
+		 *
+		 *	capture 200		200ms at the carrier
+		 *				sense threshold
+		 *	capture 200 -95		and at -95dBm
+		 */
+		static ushort runs[Ncaprun];	/* bss, not the 4K kstack */
+		uvlong t0, t1, tickhz;
+		ulong ms, us;
+		int thresh, above, cur, nrun, nsamp, nvalid, agc0;
+		int r0, r1, first;
+
+		ms = 200;
+		thresh = rr->csthr;
+		if(nf >= 2)
+			ms = strtoul(f[1], nil, 0);
+		if(nf >= 3)
+			thresh = atoi(f[2]);
+		if(ms < 1 || ms > 2000)
+			error(Ebadctl);
+
+		/*
+		 * RSSI_VALID_CNT back to its reset value for the
+		 * duration.  This driver sets it to nine estimates so
+		 * that a level reading is steady, which is right for
+		 * measuring a level and wrong for watching an edge: the
+		 * moving average is exactly what a capture is trying to
+		 * see through.
+		 */
+		s->lock(s);
+		agc0 = rd(rr, Ragccfg0);
+		wr(rr, Ragccfg0, agc0 & ~0x0c);
+		s->unlock(s);
+
+		nrun = nsamp = nvalid = 0;
+		cur = -1;
+		t0 = fastticks(&tickhz);
+		t1 = t0 + (tickhz/1000) * ms;
+		while(fastticks(nil) < t1){
+			s->lock(s);
+			r0 = rdx(rr, Xrssi0);
+			r1 = (schar)rdx(rr, Xrssi1);
+			s->unlock(s);
+			nsamp++;
+			if((r0 & Rssivalid) == 0)
+				continue;
+			nvalid++;
+			above = r1 > thresh;
+			if(cur < 0){
+				cur = above;
+				runs[0] = 1;
+				nrun = 1;
+				continue;
+			}
+			if(above != cur){
+				if(nrun >= Ncaprun)
+					break;
+				cur = above;
+				runs[nrun++] = 1;
+			}else if(runs[nrun-1] < 0xffff)
+				runs[nrun-1]++;
+		}
+		us = (ulong)(((fastticks(nil) - t0) * 1000000) / tickhz);
+
+		s->lock(s);
+		wr(rr, Ragccfg0, agc0);
+		s->unlock(s);
+
+		if(nvalid == 0){
+			print("capture %lud invalid\n", (ulong)rr->hz);
+			return n;
+		}
+		/*
+		 * The run lengths are in samples.  One sample is
+		 * us/nsamp microseconds, which is printed with them so
+		 * the numbers can be turned into time without knowing
+		 * anything about this board's SPI.
+		 */
+		/*
+		 * Runs alternate, so the first one's polarity follows
+		 * from the last one's and how many there were.
+		 */
+		first = cur ^ ((nrun - 1) & 1);
+		print("capture %lud thresh %d us %lud samples %d valid %d "
+			"runs %d first %s\n", (ulong)rr->hz, thresh, us,
+			nsamp, nvalid, nrun, first? "high": "low");
+		for(i = 0; i < nrun; i++){
+			print(" %ud", runs[i]);
+			if((i % 16) == 15)
+				print("\n");
+		}
+		if((nrun % 16) != 0)
+			print("\n");
 		return n;
 	}
 	if(strcmp(f[0], "reset") == 0){

@@ -105,16 +105,104 @@ def group(freqs, peak, mean, seen, floor, span):
     return out
 
 
+def runs(levels, thresh):
+    """Run lengths of levels above and below thresh, and the first state."""
+    out, cur, k = [], levels[0] > thresh, 1
+    for v in levels[1:]:
+        a = v > thresh
+        if a != cur:
+            out.append(k)
+            cur, k = a, 1
+        else:
+            k += 1
+    out.append(k)
+    return out, levels[0] > thresh
+
+
+def zerospan(fd, hz, stime, npass):
+    """Amplitude against time at one frequency.
+
+    Setting start == stop makes the tinySA sweep nothing and fill the
+    trace with successive samples of the one frequency, so the 450
+    points become 450 instants covering whatever sweeptime is set to.
+    That is the measurement that says what a burst transmitter is
+    doing: how long it talks, how long it waits, and what fraction of
+    the air it uses.  A frequency sweep cannot answer any of those --
+    it visits each bin once and leaves.
+    """
+    tinysa.cmd(fd, "calc off")
+    if hz > 800000000:
+        tinysa.cmd(fd, "ultra on")
+    tinysa.cmd(fd, "sweep %d %d" % (hz, hz))
+    tinysa.cmd(fd, "sweeptime %s" % stime)
+    tinysa.onesweep(fd)
+    f = tinysa.numbers(fd, "frequencies")
+    if f is None:
+        return None
+    npt = len(f)
+    got = []
+    for _ in range(npass):
+        t0 = time.time()
+        tinysa.onesweep(fd)
+        dt = time.time() - t0
+        v = tinysa.numbers(fd, "data 0", want=npt)
+        if v is not None:
+            got.append(([float(x) for x in v], dt))
+    return got
+
+
+def dozero(fd, hz, stime, npass):
+    got = zerospan(fd, hz, stime, npass)
+    if not got:
+        sys.exit("survey: no readable trace")
+    npt = len(got[0][0])
+    # The trace covers the sweep time; the wall clock includes the
+    # serial read, so the sweep time setting is what scales it and the
+    # wall clock is printed beside it as a check.
+    per = float(stime) / npt
+    flat = [v for lv, _ in got for v in lv]
+    floor = median(flat)
+    thresh = floor + MARGIN
+    print("%.6f MHz, zero span: %d points over %ss, %.0f us a point"
+          % (hz/1e6, npt, stime, per*1e6))
+    print("floor %.1f dBm, calling anything over %.1f a burst"
+          % (floor, thresh))
+    print()
+    for lv, dt in got:
+        rl, first = runs(lv, thresh)
+        hi = sum(r for i, r in enumerate(rl) if (i % 2 == 0) == first)
+        nb = sum(1 for i, r in enumerate(rl) if (i % 2 == 0) == first)
+        print("peak %6.1f  duty %5.1f%%  %2d bursts  (sweep %.2fs wall)"
+              % (max(lv), 100.0*hi/npt, nb, dt))
+        if nb:
+            bl = [r for i, r in enumerate(rl) if (i % 2 == 0) == first]
+            gl = [r for i, r in enumerate(rl) if (i % 2 == 0) != first]
+            print("   burst ms: %s" %
+                  " ".join("%.2f" % (b*per*1e3) for b in bl[:12]))
+            print("   gap   ms: %s" %
+                  " ".join("%.2f" % (g*per*1e3) for g in gl[:12]))
+
+
 def main():
+    if len(sys.argv) >= 3 and sys.argv[1] == "zero":
+        fd = tinysa.open_port()
+        time.sleep(0.3)
+        tinysa.needalive(fd)
+        dozero(fd, int(sys.argv[2]),
+               sys.argv[3] if len(sys.argv) > 3 else "0.1",
+               int(sys.argv[4]) if len(sys.argv) > 4 else 5)
+        os.close(fd)
+        return
     if len(sys.argv) < 3:
-        sys.exit("usage: survey.py <start Hz> <stop Hz> [sweeps] [sweeptime s]")
+        sys.exit("usage: survey.py <start Hz> <stop Hz> [sweeps] [sweeptime s]\n"
+                 "       survey.py zero <Hz> [sweeptime s] [traces]")
     start, stop = int(sys.argv[1]), int(sys.argv[2])
     npass = int(sys.argv[3]) if len(sys.argv) > 3 else 20
     stime = sys.argv[4] if len(sys.argv) > 4 else None
 
     fd = tinysa.open_port()
     time.sleep(0.3)
-    tinysa.cmd(fd, "")
+    tinysa.needalive(fd)
     # calc leaves an accumulation in the traces that outlives the
     # command that set it; this reads data 0, but turn it off so the
     # instrument's own display agrees with what is printed here.
