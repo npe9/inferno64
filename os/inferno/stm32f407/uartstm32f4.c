@@ -473,20 +473,40 @@ uartintr(Ureg*, void *arg)
 {
 	Uart *uart;
 	Ctlr *c;
-	int i;
+	ulong sr;
+	int i, ch;
 
 	uart = arg;
 	c = uart->regs;
 	/*
-	 * An overrun is cleared by reading SR and then DR, which is
-	 * what the loop below does anyway; the F3's separate ICR does
-	 * not exist here.
+	 * DR has to be read whenever either RXNE or ORE is set, and not
+	 * only when RXNE is.
+	 *
+	 * An overrun asserts this interrupt by itself -- on this part
+	 * RXNEIE covers RXNE and ORE alike -- and ORE is cleared only
+	 * by reading SR and then DR.  A handler that checks RXNE, finds
+	 * it clear and returns has cleared nothing, so it is re-entered
+	 * the instant it leaves, for ever.  The core then makes no
+	 * progress at all.
+	 *
+	 * What that looks like is not a broken console.  It is a kernel
+	 * that stops in the middle of a print: on os/inferno/stm32f407
+	 * it stopped four bytes into "Inferno Fourth Edition",
+	 * reproducibly, at exactly the same byte twice -- because
+	 * uartconsolesetup() enables this interrupt a few lines earlier
+	 * and the host had been sending while nothing was reading.
+	 * Everything before that point came out perfectly, which is
+	 * what made it look like a wiring fault for hours.
 	 */
-	USED(i);
 	for(i = 0; i < 64; i++){
-		if(!(csrr(c, UartSr) & UartRxne))
+		sr = csrr(c, UartSr);
+		if((sr & (UartRxne|UartOre)) == 0)
 			break;
-		uartrecv(uart, csrr(c, UartDr) & 0xff);
+		if(sr & UartOre)
+			uart->oerr++;
+		ch = csrr(c, UartDr) & 0xff;	/* clears RXNE and ORE */
+		if(sr & UartRxne)
+			uartrecv(uart, ch);
 	}
 }
 
