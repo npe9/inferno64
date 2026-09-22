@@ -47,6 +47,9 @@
 #define	    Apb1I2c3	(1<<23)
 #define	  RCC_APB2ENR	(RCC+0x44)
 #define	    Apb2Usart1	(1<<4)
+#define	    Apb2Adc1	(1<<8)
+#define	    Apb2Adc2	(1<<9)
+#define	    Apb2Adc3	(1<<10)
 #define	    Apb2Syscfg	(1<<14)
 
 /*
@@ -63,6 +66,16 @@
  * PB10 and PB11; mikroBUS 1's are I2C3 on PA8 and PC9.  I2C1 comes out
  * on no socket of a clicker 2 and is here for completeness.
  */
+/*
+ * The analogue to digital converters.  Three of them share the common
+ * block at 0x40012300, which is where the prescaler and the switches
+ * for the temperature sensor and the backup battery live.
+ */
+#define	ADC1		0x40012000
+#define	ADC2		0x40012100
+#define	ADC3		0x40012200
+#define	ADCCOMMON	0x40012300
+
 #define	I2C1		0x40005400
 #define	I2C2		0x40005800
 #define	I2C3		0x40005c00

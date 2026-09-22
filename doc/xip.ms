@@ -4183,6 +4183,53 @@ and carried on.  It is now an argument to
 which is C and runs under either shell.  A guard in the wrong language
 is worse than no guard: it reads, in the build log, exactly like one
 that passed.
+.NH 2
+The analogue one, which returns a number
+.PP
+The last line of a mikroBUS socket worth having is AN, and it is the
+only one that carries a number rather than a protocol \- which on a
+flight computer is where the battery, the current shunt and the sun
+sensor are.
+.CW adcstm32f4.c
+converts it on both sockets, and with it the part's own temperature
+sensor, internal reference and backup battery, into one file:
+.P1
+; cat /dev/adc
+an1 263 211
+an2 398 320
+temp 2069 1667 387.8
+vref 2204 1776
+vbat 2339 1884 7536
+.P2
+That goes under
+.CW #P ,
+which
+.CW os/inferno/armv7m/devarch.c
+has had since the MPS2 work and this board had never turned on.
+.PP
+None of those numbers is a voltage, and the interesting thing is what
+they are instead.  qemu's ADC model invents a value, as it always
+did \- there is nothing on the other end of the converter \- but it
+invented the same value for every channel, which meant a driver that
+converted the wrong one could not be told from a driver that converted
+the right one.  Worse, it never raised EOC, so the sequence RM0090
+13.3.1 gives \- select the channel, start, wait for EOC, read DR \-
+waited for ever, while a driver that skipped the wait worked.  A model
+that fails the correct driver and passes the incorrect one is worse
+than no model at all, so
+.CW tools/qemu-patches/0047
+fixes both: EOC rises with the conversion, and the channel appears in
+the top bits of the invented value.
+.PP
+Read the numbers above with that in mind and they say something real.
+263 is channel 2 with a counter of 7; 398 is channel 3 with 14; 2069,
+2204 and 2339 are channels 16, 17 and 18 with 21, 28 and 35.  Every
+conversion went to the channel it was asked for, and every one was
+fresh.  That is the whole of what can be checked without a part, and
+it is the part software gets wrong.  The millivolts and the 387.8
+degrees are arithmetic over fiction and are left visible rather than
+suppressed, because a file that hides its units on the emulator grows
+a different bug on the board.
 .NH 1
 Unrelated breakage found on the way
 .PP

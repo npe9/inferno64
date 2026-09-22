@@ -1,0 +1,140 @@
+From bbba3f53dde6a6e420c6531fe38867d4995bcd71 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 22 Sep 2026 10:18:18 -0400
+Subject: [PATCH] hw/adc/stm32f2xx_adc: raise EOC, and let one channel differ
+ from another
+
+Two things kept this model from being able to check a driver.
+
+It never set EOC.  A driver written the way RM0090 13.3.1 says to --
+select the channel, set SWSTART, wait for EOC, read DR -- waits for
+ever here, while one that skips the wait and reads DR works.  That is
+a model that fails the right driver and passes the wrong one, which is
+worse than no model.  A conversion is instantaneous in this file, so
+the end of one is the start of one: SWSTART with ADON set now raises
+STRT and EOC together, and reading DR clears EOC, as the manual says.
+
+And every channel read the same ramp, because SQR3 was ignored.  The
+value here is fiction and always was -- there is nothing on the other
+end of this converter -- but a fictional value can still tell one
+conversion from the next and one channel from another.  The channel
+SQ1 selects now goes in the top bits and the counter in the low seven,
+so a guest that converts the wrong channel reads a different number
+rather than the same one.  The shape is deliberately not a plausible
+voltage: nobody should mistake 2069 on the temperature sensor for a
+temperature.
+
+Verified with Inferno's #P/adc on a netduinoplus2: five channels in
+one pass read 263, 398, 2069, 2204, 2339 -- channels 2, 3, 16, 17 and
+18 in the top bits with the counter advancing by seven each time --
+and the next read gives the next five, so each is a fresh conversion.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/adc/stm32f2xx_adc.c         | 44 +++++++++++++++++++++++++++-------
+ include/hw/adc/stm32f2xx_adc.h |  3 +++
+ 2 files changed, 39 insertions(+), 8 deletions(-)
+
+diff --git a/hw/adc/stm32f2xx_adc.c b/hw/adc/stm32f2xx_adc.c
+index a490ae6..0023dbf 100644
+--- a/hw/adc/stm32f2xx_adc.c
++++ b/hw/adc/stm32f2xx_adc.c
+@@ -69,31 +69,45 @@ static void stm32f2xx_adc_reset(DeviceState *dev)
+ 
+ static uint32_t stm32f2xx_adc_generate_value(STM32F2XXADCState *s)
+ {
+-    /* Attempts to fake some ADC values */
+-    s->adc_dr = s->adc_dr + 7;
++    uint32_t chan, value;
++
++    /*
++     * Fiction, and always was: there is nothing on the other end of
++     * this converter.  What a fictional value can still be good for is
++     * telling one conversion from the next and one channel from
++     * another, so the channel SQR3's SQ1 selects goes in the top bits
++     * and a counter that moves every conversion in the low seven.  A
++     * guest that converts the wrong channel now reads a different
++     * number rather than the same one, which is the only thing about
++     * channel selection that can be checked without a part.  The shape
++     * is deliberately not a plausible voltage.
++     */
++    chan = s->adc_sqr3 & 0x1F;
++    s->adc_dr = (s->adc_dr + 7) & 0x7F;
++    value = (chan << 7) | s->adc_dr;
+ 
+     switch ((s->adc_cr1 & ADC_CR1_RES) >> 24) {
+     case 0:
+         /* 12-bit */
+-        s->adc_dr &= 0xFFF;
++        value &= 0xFFF;
+         break;
+     case 1:
+         /* 10-bit */
+-        s->adc_dr &= 0x3FF;
++        value &= 0x3FF;
+         break;
+     case 2:
+         /* 8-bit */
+-        s->adc_dr &= 0xFF;
++        value &= 0xFF;
+         break;
+     default:
+         /* 6-bit */
+-        s->adc_dr &= 0x3F;
++        value &= 0x3F;
+     }
+ 
+     if (s->adc_cr2 & ADC_CR2_ALIGN) {
+-        return (s->adc_dr << 1) & 0xFFF0;
++        return (value << 1) & 0xFFF0;
+     } else {
+-        return s->adc_dr;
++        return value;
+     }
+ }
+ 
+@@ -155,6 +169,8 @@ static uint64_t stm32f2xx_adc_read(void *opaque, hwaddr addr,
+     case ADC_DR:
+         if ((s->adc_cr2 & ADC_CR2_ADON) && (s->adc_cr2 & ADC_CR2_SWSTART)) {
+             s->adc_cr2 ^= ADC_CR2_SWSTART;
++            /* RM0090 13.8.1: reading DR clears EOC */
++            s->adc_sr &= ~ADC_SR_EOC;
+             return stm32f2xx_adc_generate_value(s);
+         } else {
+             return 0;
+@@ -190,6 +206,18 @@ static void stm32f2xx_adc_write(void *opaque, hwaddr addr,
+         break;
+     case ADC_CR2:
+         s->adc_cr2 = value;
++        /*
++         * A conversion is instantaneous here, so the end of one is the
++         * start of one: setting SWSTART with the converter on raises
++         * STRT and EOC together.  Without this the status register
++         * never moves, and a driver written the way RM0090 13.3.1 says
++         * to -- start, wait for EOC, read DR -- waits for ever, while
++         * one that skips the wait and reads DR works.  That is a model
++         * that passes the wrong driver and fails the right one.
++         */
++        if ((value & ADC_CR2_ADON) && (value & ADC_CR2_SWSTART)) {
++            s->adc_sr |= ADC_SR_STRT | ADC_SR_EOC;
++        }
+         break;
+     case ADC_SMPR1:
+         s->adc_smpr1 = value;
+diff --git a/include/hw/adc/stm32f2xx_adc.h b/include/hw/adc/stm32f2xx_adc.h
+index 42b4898..b3915ed 100644
+--- a/include/hw/adc/stm32f2xx_adc.h
++++ b/include/hw/adc/stm32f2xx_adc.h
+@@ -49,6 +49,9 @@
+ #define ADC_JDR4  0x48
+ #define ADC_DR    0x4C
+ 
++#define ADC_SR_EOC      0x02
++#define ADC_SR_STRT     0x10
++
+ #define ADC_CR2_ADON    0x01
+ #define ADC_CR2_CONT    0x02
+ #define ADC_CR2_ALIGN   0x800
+-- 
+2.51.0
+

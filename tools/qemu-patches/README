@@ -45,6 +45,15 @@ driver that hangs on silicon, which is the only failure worth
 guarding against here.  Each controller names its bus, so a part is
 fitted with -device ds1338,bus=i2c2,address=0x68.
 
+0047 is qemu's own STM32F2/F4 ADC, which had two faults that only
+show when something drives it.  It never set EOC, so the driver
+RM0090 13.3.1 describes -- start, wait for EOC, read DR -- waits for
+ever, while one that skips the wait works; and it ignored SQR3, so
+every channel read the same ramp.  The value it returns is fiction and
+says so, but a fictional value can still tell one conversion from the
+next and one channel from another, so the channel now appears in the
+top bits.  Found by writing #P/adc for os/inferno/stm32f407.
+
 0031-0033 came out of that check and the one after it, and each names
 what found it.  0027 and 0028 have since been driven by drivers nobody
 here wrote.  Zephyr's

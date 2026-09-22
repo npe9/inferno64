@@ -400,3 +400,43 @@ and this host builds with sh, so it had never run -- it failed with
 "unexpected EOF while looking for matching `" and mk carried on.  It
 is now an argument to tools/bin2ihex, which is C and runs under either
 shell.
+
+The analogue input
+------------------
+
+adcstm32f4.c converts the two mikroBUS AN pins -- PA2 and PA3, which
+are ADC123_IN2 and IN3 -- and the part's own three internal channels:
+the temperature sensor on IN16, the internal reference on IN17 and the
+backup battery through its divider on IN18.  One read of /dev/adc
+converts all five in one pass and gives a line each:
+
+	; cat /dev/adc
+	an1 263 211
+	an2 398 320
+	temp 2069 1667 387.8
+	vref 2204 1776
+	vbat 2339 1884 7536
+
+Raw count first, because that is what the part said; then millivolts
+at VREF+ = 3.3V, which is what a clicker 2 ties it to; then, for the
+two channels where more can be said, degrees and the battery's own
+millivolts.
+
+Those numbers are from qemu and none of them is a voltage.  What they
+do show is the thing software can get wrong: 263 is channel 2 in the
+top bits with a counter of 7 in the rest, 398 is channel 3 with 14,
+and so on up to channel 18 with 35 -- so each conversion went to the
+channel it was asked for and each was a fresh conversion.  A second
+read gives the next five counts.  See tools/qemu-patches/0047 for why
+the model says that and not a voltage, and why it now raises EOC at
+all.
+
+The temperature is the datasheet's typical V25 of 760mV and slope of
+2.5mV per degree.  An F407 carries no factory calibration for it in
+flash, unlike an F0 or an L4, so on silicon that reading is worth a
+degree or two and not better; VREFINT against its 1.21V typical is the
+honest way to get the true VREF+ and is in the file for that.
+
+On silicon: not run.  #P is bound into /dev by os/inferno/init/
+armv7minit.b, which this board already did for the arch files it did
+not have until now.
