@@ -21,6 +21,25 @@ import os, sys, termios, select, time
 PORT = "/dev/cu.usbserial-AQ02DK34"
 MAXLINE = 50            # what the console carries; see NOTE
 
+# Seconds between characters.
+#
+# This console echoes from the interrupt handler and the echo goes out
+# through a spin that waits for the transmit register, about 87us a
+# byte at 115200.  A character arriving every 87us -- which is what
+# 115200 means -- therefore lands while the last one is still being
+# echoed, and the one-byte receive register overruns.  A host writing a
+# line in one go does exactly that: "cat >/dev/radio0/ctl" arrived as
+# "cat >/dev/radio0/l", losing two characters from the middle of
+# twenty, and the shell dutifully opened the wrong file.
+#
+# So type like a person.  Five milliseconds a character is fifty times
+# the echo and costs a tenth of a second for a twenty-character line,
+# which is nothing next to rerunning an experiment that quietly ran the
+# wrong command.  This is the same fault as the lost characters
+# doc/radio-evidence-howto.ms records; the difference here is that the
+# host controls the rate and can simply not do it.
+CHARDELAY = 0.005
+
 
 def open_port(path=PORT):
     fd = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
@@ -49,12 +68,28 @@ def drain(fd, secs):
     return buf.decode("utf-8", "replace")
 
 
-def send(fd, line, wait=2.0):
+def send(fd, line, wait=2.0, check=True):
+    """Type a line and give back what the board said.
+
+    The echo is checked against what was sent.  This console drops
+    characters when typed at faster than it echoes, and a dropped
+    character does not produce an error -- it produces a different
+    command.  "cat >/dev/radio0/ctl" arrived here as
+    "cat >/dev/radio0/l" and the shell opened that instead, wedged
+    itself, and cost a boot.  A line that did not arrive whole is
+    worth stopping for.
+    """
     if len(line) > MAXLINE:
         raise SystemExit("console: %d characters is past the %d this "
                          "console carries: %r" % (len(line), MAXLINE, line))
-    os.write(fd, (line + "\n").encode())
-    return drain(fd, wait)
+    for c in (line + "\n").encode():
+        os.write(fd, bytes([c]))
+        time.sleep(CHARDELAY)
+    out = drain(fd, wait)
+    if check and line and line not in out:
+        raise SystemExit("console: sent %r, board echoed %r -- characters "
+                         "were lost; nothing further sent" % (line, out))
+    return out
 
 
 def main():
@@ -69,6 +104,7 @@ def main():
         for line in sys.argv[3:]:
             print(send(fd, line, 3.0), end="")
         os.write(fd, b"\004")           # end the cat
+        time.sleep(CHARDELAY)
         print(drain(fd, 2.0), end="")
     else:
         for line in sys.argv[2:]:
