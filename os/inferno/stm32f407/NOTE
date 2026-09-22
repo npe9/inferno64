@@ -577,3 +577,43 @@ figure to leave 524 bytes of headroom on, and a kernel stack that
 overflows does not report, it corrupts whatever is under it.  The pool
 split fails safely and a stack does not, so the pool split is what
 moved.
+
+The first band sweep off an antenna
+-----------------------------------
+
+61 steps, 868 to 928MHz, every one valid -- the RSSI_VALID wait in the
+sweep does what it was written to do on a real part, where under qemu
+it could only ever time out:
+
+	; echo scan >/dev/radio0/ctl
+	scan 868000000 -101
+	scan 869000000 -108
+	...
+	scan 928000000 -107
+
+Minimum -123, maximum -101, median -110, mean -109.9dBm.  The five
+highest steps are 868.0 (-101), 887.0 (-102), 882.0 and 924.0 (-103)
+and 909.0 (-104).
+
+What that is and is not.  It is a real measurement of what reaches
+this click's antenna port, taken by the part's own receiver with the
+manufacturer's reference RSSI offset applied, and a floor near -110 is
+what an unmatched CC1120 in a room should read.  It is not a spectrum
+survey: each step is one sample taken the moment RSSI_VALID first
+asserts, not an average, so the 22dB spread between the quietest and
+loudest steps is sample variance as much as it is the band.  868.000
+being the highest reading is suggestive -- the European SRD band that
+meters and LoRa gateways sit in starts there -- and one sample at one
+instant is not evidence of it.  Running the sweep twice and comparing
+is what separates a feature of the band from a feature of the sample,
+and costs nothing but the command.
+
+The sweep also found a fault in this driver rather than in the band:
+not one of the 61 lines said "carrier", and none of them could have.
+AGC_CS_THR resets to 0x00, and with the RSSI offset programmed that
+is a carrier sense threshold of 0dBm.  The stats and every sweep line
+were reporting a condition that cannot occur, which reads like an
+answer.  cc1120init() now sets it to -90dBm, twenty decibels above the
+floor this sweep measured, and "echo csthr <dBm> >/dev/radio0/ctl"
+changes it.  The stats print it, so the threshold a "carrier" was or
+was not measured against is never invisible.

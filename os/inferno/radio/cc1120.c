@@ -40,6 +40,7 @@ enum {
 	Riocfg1		= 0x02,
 	Riocfg0		= 0x03,
 	Rsynccfg1	= 0x08,
+	Ragccsthr	= 0x18,		/* carrier sense threshold */
 	Ragcgainadjust	= 0x19,		/* the RSSI offset */
 	Rpktcfg0	= 0x1c,
 	  Lenvariable	= 0x20,		/* PKT_CFG0.LENGTH_CONFIG = 01 */
@@ -125,6 +126,31 @@ enum {
 	 * "rssioffset" ctl changes it.
 	 */
 	Rssioffset	= -102,
+
+	/*
+	 * The carrier sense threshold, in the same dBm the RSSI is in
+	 * once the offset above is programmed.  SWRU295E 6.9.1: CS is
+	 * asserted while RSSI is above it, and it "should be set high
+	 * enough so that CS is de-asserted when only background noise
+	 * is present and low enough so that CS is asserted when a
+	 * wanted signal is present".
+	 *
+	 * It resets to 0x00, which is 0dBm, which nothing this part
+	 * will ever hear exceeds -- so out of reset the carrier sense
+	 * this driver reports in its stats and in every line of a band
+	 * sweep cannot assert at all.  That is worse than not
+	 * reporting it: a field that always says no reads like an
+	 * answer.  Found by sweeping 868 to 928MHz on a real board and
+	 * getting sixty-one valid readings and not one "carrier".
+	 *
+	 * -90 is twenty decibels above the floor that sweep measured,
+	 * which ran -101 to -123dBm with a median near -109.  High
+	 * enough that thermal noise does not trip it, low enough that
+	 * anything worth calling a signal does.  Like the offset it is
+	 * a starting point and not a calibration; "csthr" changes it
+	 * and the stats say what it is.
+	 */
+	Csthr		= -90,
 };
 
 static int
@@ -493,6 +519,18 @@ cc1120ctl(Radio *r, char *buf, int n)
 		}
 		return n;
 	}
+	if(strcmp(f[0], "csthr") == 0 && nf == 2){
+		int thr;
+
+		thr = atoi(f[1]);
+		if(thr < -128 || thr > 127)
+			error(Ebadctl);
+		s->lock(s);
+		rr->csthr = thr;
+		wr(rr, Ragccsthr, thr & 0xff);
+		s->unlock(s);
+		return n;
+	}
 	if(strcmp(f[0], "rssioffset") == 0 && nf == 2){
 		int off;
 
@@ -563,7 +601,7 @@ cc1120stat(Radio *r, char *p, int n)
 	return snprint(p, n,
 		"part CC1120 0x%.2x rev 0x%.2x\n"
 		"state 0x%.2x\n"
-		"rssi %d%s offset %d last %d%s\n"
+		"rssi %d%s offset %d csthr %d last %d%s\n"
 		"fifo rx %d tx %d\n"
 		"sent %ud recv %ud\n"
 		"crcerr %ud toobig %ud txtimeout %ud\n"
@@ -571,7 +609,7 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->partnum, rr->partversion,
 		st >> 4,
 		live, (cs & Rssivalid)? "": " invalid",
-		rr->rssioffset, rr->rssi,
+		rr->rssioffset, rr->csthr, rr->rssi,
 		(cs & Carriersense)? " carrier": "",
 		nrx, ntx,
 		rr->nsent, rr->nrecv,
@@ -646,6 +684,8 @@ cc1120init(Spidev *s, int irq)
 	wr(rr, Rpktlen, Ccmaxpayload);
 	rr->rssioffset = Rssioffset;
 	wr(rr, Ragcgainadjust, rr->rssioffset & 0xff);
+	rr->csthr = Csthr;
+	wr(rr, Ragccsthr, rr->csthr & 0xff);
 	wr(rr, Riocfg3, Gpktsyncrxtx);
 	wr(rr, Riocfg2, Ghighz);
 	wr(rr, Riocfg1, Ghighz);

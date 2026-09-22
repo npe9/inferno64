@@ -33,6 +33,7 @@ struct Cc1120
 	int	partversion;
 	int	ready;			/* status byte once CHIP_RDYn cleared */
 	int	rssioffset;		/* dB, in AGC_GAIN_ADJUST */
+	int	csthr;			/* dBm, in AGC_CS_THR */
 	int	present;
 
 	/* what the last received packet looked like */
