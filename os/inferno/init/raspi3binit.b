@@ -834,10 +834,28 @@ kupdate()
 # refused to boot.  One after the other, in one process, is all that
 # is needed to stop that.
 #
+#
+# Set when kupdate and fatwrite have finished with /n/remote.
+#
+# Both they and remotecmd mount the host on the SAME mount point, and
+# remotecmd polls every three seconds -- so it was mounting and, worse,
+# UNMOUNTING /n/remote underneath a kupdate that was part way through
+# fetching 1.9MB.  kupdate simply stopped: no KUPDATE-OK, no failure
+# message, nothing, because its fetch was reading through a mount that
+# had been taken away.  One convenience quietly disabled the mechanism
+# the board is actually updated by.
+#
+# kupdate runs once per boot, so waiting for it is enough and needs no
+# lock: this flag only ever goes from 0 to 1, and only remotecmd reads
+# it.
+#
+kudone := 0;
+
 kuthenfat()
 {
 	kupdate();
 	fatwrite();
+	kudone = 1;
 }
 
 unmountremote()
@@ -2529,7 +2547,17 @@ remotecmd()
 	# has gone quiet before.  NEWFD, not FORKFD.
 	#
 	sys->pctl(Sys->NEWFD, 0 :: 1 :: 2 :: nil);
-	sys->sleep(60000);
+	#
+	# Wait for kupdate to be done with /n/remote before touching it.
+	# Ten minutes is not a guess at how long it takes; it is longer
+	# than it can take, so that a slow fetch is waited out and a
+	# kupdate that never runs at all does not disable this for ever.
+	#
+	for(w := 0; w < 600; w++){
+		if(kudone)
+			break;
+		sys->sleep(1000);
+	}
 	addrs := remoteaddrs();
 	if(addrs == nil)
 		return;			# no kupdate.txt: nothing to talk to

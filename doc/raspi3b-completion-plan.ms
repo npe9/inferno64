@@ -8529,3 +8529,53 @@ cold-boots whatever is on the CARD;
 .CW jtagrestart
 loads the image just built.  Half an hour went into testing a fix
 against a kernel that did not contain it.
+.NH 2
+Open: the host's styx server wedges during a large read
+.PP
+.B "Reproducible, and it is the blocker for the card-install path."
+.CW kupdate
+fetches a 1.9MB kernel over
+.P1
+emu -r <worktree> sh -c "styxlisten -A 'tcp!*!6666' export /"
+.P2
+and part way through that read the server stops answering.  It keeps
+LISTENING and keeps accepting connections; it just never replies to
+another Styx message, at 0% CPU.  The board's side reports it
+correctly once the server is killed:
+.P1
+KUPDATE-FAIL read /os/inferno/raspi3b/kernel8.img: Hangup
+.P2
+It has happened on every fetch attempt this session bar one, and it is
+not age \(em a server started seconds earlier wedges the same way.
+.PP
+.B "What has been eliminated."
+The scheduler hang this tree already knows about is not it:
+.CW emu/port/lock.c
+has the release store in
+.CW unlock()
+.CW ( "__atomic_store_n(&l->val, 0, __ATOMIC_RELEASE)" ),
+and the lost-wakeup race in
+.CW qlock() 's
+window between
+.CW unlock(&q->use)
+and
+.CW osblock()
+cannot bite because the semaphore counts \(em
+.CW osready()
+does
+.CW sem->v++
+and
+.CW osblock()
+waits on
+.CW "while(sem->v == 0)" ,
+so a wakeup that arrives early is kept.  Nor is it the devfs-posix
+change cherry-picked today: the first wedge of the day predates it by
+hours.
+.PP
+.B "The workaround, and why it is not urgent."
+.CW jtagrestart
+puts a kernel in RAM without going near the server or the card, and
+that path is now reliable \(em ten warm restarts out of ten.  The card
+only needs writing when the board must boot standalone.  So this is
+logged rather than chased: it is a host-side emu bug, it wants its own
+investigation, and nothing on the board is waiting for it.
