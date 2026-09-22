@@ -74,12 +74,23 @@ confinit(void)
 	base = PGROUND((uintptr)end);
 	conf.base0 = base;
 	conf.npage0 = (conf.topofmem - base)/BY2PG;
-	conf.npage = conf.npage0 + conf.npage1;
+	conf.npage = conf.npage0 + conf.npage1 + conf.npage2;
 	conf.mem[0].base = base;
 	conf.mem[0].npage = conf.npage0;
 	if(conf.npage1 != 0){
 		conf.mem[1].base = conf.base1;
 		conf.mem[1].npage = conf.npage1;
+	}
+	/*
+	 * A third bank, for parts that have one.  An STM32F407 does: its
+	 * SRAM is 128K, its core coupled memory 64K, and there are 4K of
+	 * backup SRAM on top of that -- the "192+4 KB" of the datasheet,
+	 * of which the 4 was going unused.  On a board with 172032 bytes
+	 * to spend, 4096 is a page and worth having.
+	 */
+	if(conf.npage2 != 0){
+		conf.mem[2].base = conf.base2;
+		conf.mem[2].npage = conf.npage2;
 	}
 	conf.ialloc = (((conf.npage*main_pool_pcnt)/100)/2)*BY2PG;
 	conf.nproc = NPROC;

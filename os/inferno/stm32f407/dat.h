@@ -27,10 +27,12 @@ struct Conf
 	ulong	nproc;
 	ulong	npage0;
 	ulong	npage1;
+	ulong	npage2;
 	uintptr	topofmem;
 	ulong	npage;
 	uintptr	base0;
 	uintptr	base1;
+	uintptr	base2;
 	ulong	ialloc;
 	ulong	cpuspeed;
 	ulong	monitor;

@@ -60,6 +60,8 @@ enum
 /*
  * must be in same order as enum
  */
+#pragma	rodata	progdir
+
 Dirtab progdir[] =
 {
 	"ctl",		{Qctl},		0,			0200,

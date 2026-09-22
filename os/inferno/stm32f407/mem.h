@@ -110,6 +110,17 @@
  */
 #define	CCMRAMSIZE	(64*1024)
 
+/*
+ * And 4K of backup SRAM, which is the "+4" in the datasheet's "192+4
+ * KB".  It is ordinary memory to the core once RCC_AHB1ENR's BKPSRAMEN
+ * is set; what makes it "backup" is that it can be kept alive from VBAT
+ * across a power cycle, which needs PWR_CR's DBP and PWR_CSR's BRE and
+ * which nothing here asks for.  A third bank of one page, on a board
+ * where a page is worth going after.
+ */
+#define	BKPSRAM		0x40024000
+#define	BKPSRAMSIZE	(4*1024)
+
 #define	KZERO		FLASHBASE
 #define	KTZERO		FLASHBASE	/* link address: the vector table */
 #define	KDZERO		SRAM

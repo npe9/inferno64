@@ -508,6 +508,8 @@ enum
 	VLNUMSIZE=	22,
 };
 
+#pragma	rodata	consdir
+
 static Dirtab consdir[]=
 {
 	".",	{Qdir, 0, QTDIR},	0,		DMDIR|0555,

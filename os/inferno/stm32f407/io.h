@@ -36,6 +36,7 @@
 #define	    Ahb1Gpioc	(1<<2)
 #define	    Ahb1Gpiod	(1<<3)
 #define	    Ahb1Gpioe	(1<<4)
+#define	    Ahb1Bkpsram	(1<<18)
 #define	  RCC_APB1ENR	(RCC+0x40)
 #define	    Apb1Usart2	(1<<17)
 #define	    Apb1Usart3	(1<<18)

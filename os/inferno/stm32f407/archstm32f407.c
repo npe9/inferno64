@@ -183,7 +183,7 @@ archreset(void)
 {
 	ulong hz;
 
-	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | Ahb1Gpioe);
+	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | Ahb1Gpioe | Ahb1Bkpsram);
 	coherence();
 	ledpin(12, 1);				/* LD1: the kernel is running */
 
@@ -211,6 +211,8 @@ archconfinit(void)
 	conf.topofmem = TOPOFMEM;
 	conf.base1 = CCMRAM;
 	conf.npage1 = CCMRAMSIZE/BY2PG;
+	conf.base2 = BKPSRAM;
+	conf.npage2 = BKPSRAMSIZE/BY2PG;
 	USED(bdata);
 }
 
