@@ -1,0 +1,734 @@
+From 0f95a035ef721d03336c31542f7b31482d506da0 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 22 Sep 2026 09:47:16 -0400
+Subject: [PATCH] hw/i2c: model the STM32F4xx I2C and put three on the
+ netduinoplus2
+
+The F4's I2C is the one peripheral on this part whose registers can
+all be right and whose driver still hangs, because three of its flags
+are cleared by reading one register and then touching another, in that
+order and no other: SB by reading SR1 then writing DR, ADDR by reading
+SR1 then SR2.  Until ADDR is cleared the part stretches SCL, so a
+receive begins when SR2 is read and not when the address is
+acknowledged -- which is why ACK and POS have to be arranged before
+that read, and why there are three receive procedures in RM0090 27.3.3
+and not one.
+
+This models those rules rather than assuming them.  A DR write without
+the SR1 read leaves SB set and sends nothing, as silicon does.  The
+receive shift register behind DR is modelled too, so BTF means what it
+means: DR and the shift register both full.  Without it the two-byte
+and three-from-the-end procedures are ceremony around a register file
+and a driver that skipped them would pass here and hang on a board.
+
+ACK is applied when a byte arrives, not when the guest reads it, and
+POS moves that decision on by one byte, which is the whole reason the
+two-byte procedure exists.  A NAKed byte is the last one.
+
+Each controller names its bus after itself, so a part goes on one of
+them by name:
+
+	-device ds1338,bus=i2c2,address=0x68
+
+The three unimplemented-device stubs at 0x40005400, 0x40005800 and
+0x40005c00 go, and ds1338 is implied by the machine so it can be
+fitted.  Master mode, seven-bit addressing; slave mode, ten-bit
+addressing, SMBus, PEC, DMA and the clock rate are not modelled --
+CCR, TRISE and FREQ are stored and nothing is timed by them.
+
+Verified with Inferno's #J on a netduinoplus2 and a ds1338 on I2C2:
+the bus probe finds 0x68 and nothing on I2C3, and seven bytes written
+into the NVRAM at offset 8 read back byte for byte, one, two and three
+at a time -- which is each of the three receive procedures in turn.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/arm/Kconfig                 |   2 +
+ hw/arm/stm32f405_soc.c         |  28 +-
+ hw/i2c/Kconfig                 |   4 +
+ hw/i2c/meson.build             |   1 +
+ hw/i2c/stm32f4xx_i2c.c         | 469 +++++++++++++++++++++++++++++++++
+ include/hw/i2c/stm32f4xx_i2c.h |  81 ++++++
+ 6 files changed, 582 insertions(+), 3 deletions(-)
+ create mode 100644 hw/i2c/stm32f4xx_i2c.c
+ create mode 100644 include/hw/i2c/stm32f4xx_i2c.h
+
+diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
+index cdca611..28e665e 100644
+--- a/hw/arm/Kconfig
++++ b/hw/arm/Kconfig
+@@ -144,6 +144,7 @@ config NETDUINOPLUS2
+     default y
+     depends on TCG && ARM
+     select STM32F405_SOC
++    imply DS1338
+ 
+ config OLIMEX_STM32_H405
+     bool
+@@ -410,6 +411,7 @@ config STM32F405_SOC
+     select STM32F4XX_EXTI
+     select CC1120
+     select SPLIT_IRQ
++    select STM32F4XX_I2C
+ 
+ config B_L475E_IOT01A
+     bool
+diff --git a/hw/arm/stm32f405_soc.c b/hw/arm/stm32f405_soc.c
+index 3083223..fa281d2 100644
+--- a/hw/arm/stm32f405_soc.c
++++ b/hw/arm/stm32f405_soc.c
+@@ -43,6 +43,7 @@ static const uint32_t adc_addr[] = { 0x40012000, 0x40012100, 0x40012200,
+                                      0x40012300, 0x40012400, 0x40012500 };
+ static const uint32_t spi_addr[] =   { 0x40013000, 0x40003800, 0x40003C00,
+                                        0x40013400, 0x40015000, 0x40015400 };
++static const uint32_t i2c_addr[] =   { 0x40005400, 0x40005800, 0x40005C00 };
+ #define EXTI_ADDR                      0x40013C00
+ 
+ #define SYSCFG_IRQ               71
+@@ -50,6 +51,9 @@ static const int usart_irq[] = { 37, 38, 39, 52, 53, 71, 82, 83 };
+ static const int timer_irq[] = { 28, 29, 30, 50 };
+ #define ADC_IRQ 18
+ static const int spi_irq[] =   { 35, 36, 51, 0, 0, 0 };
++/* each I2C has two: event, then error */
++static const int i2c_irq[][2] = { {31, 32}, {33, 34}, {72, 73} };
++static const char *i2c_name[] = { "i2c1", "i2c2", "i2c3" };
+ 
+ /*
+  * The nine GPIO ports, a kilobyte apart from 0x40020000.  Only A and B
+@@ -107,6 +111,10 @@ static void stm32f405_soc_initfn(Object *obj)
+         object_initialize_child(obj, "spi[*]", &s->spi[i], TYPE_STM32F2XX_SPI);
+     }
+ 
++    for (i = 0; i < STM_NUM_I2CS; i++) {
++        object_initialize_child(obj, "i2c[*]", &s->i2c[i], TYPE_STM32F4XX_I2C);
++    }
++
+     for (i = 0; i < STM_NUM_GPIOS; i++) {
+         object_initialize_child(obj, "gpio[*]", &s->gpio[i],
+                                 TYPE_STM32F4XX_GPIO);
+@@ -278,6 +286,23 @@ static void stm32f405_soc_realize(DeviceState *dev_soc, Error **errp)
+         sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(armv7m, spi_irq[i]));
+     }
+ 
++    /*
++     * I2C controllers.  Each names its bus after itself, so a part
++     * is fitted to one of them by that name: a ds1338 on I2C2 is
++     *   -device ds1338,bus=i2c2,address=0x68
++     */
++    for (i = 0; i < STM_NUM_I2CS; i++) {
++        dev = DEVICE(&(s->i2c[i]));
++        qdev_prop_set_string(dev, "name", i2c_name[i]);
++        if (!sysbus_realize(SYS_BUS_DEVICE(&s->i2c[i]), errp)) {
++            return;
++        }
++        busdev = SYS_BUS_DEVICE(dev);
++        sysbus_mmio_map(busdev, 0, i2c_addr[i]);
++        sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(armv7m, i2c_irq[i][0]));
++        sysbus_connect_irq(busdev, 1, qdev_get_gpio_in(armv7m, i2c_irq[i][1]));
++    }
++
+     /* EXTI device */
+     for (i = 0; i < STM_NUM_GPIOS; i++) {
+         dev = DEVICE(&s->gpio[i]);
+@@ -324,9 +349,6 @@ static void stm32f405_soc_realize(DeviceState *dev_soc, Error **errp)
+     create_unimplemented_device("IWDG",        0x40003000, 0x400);
+     create_unimplemented_device("I2S2ext",     0x40003000, 0x400);
+     create_unimplemented_device("I2S3ext",     0x40004000, 0x400);
+-    create_unimplemented_device("I2C1",        0x40005400, 0x400);
+-    create_unimplemented_device("I2C2",        0x40005800, 0x400);
+-    create_unimplemented_device("I2C3",        0x40005C00, 0x400);
+     create_unimplemented_device("CAN1",        0x40006400, 0x400);
+     create_unimplemented_device("CAN2",        0x40006800, 0x400);
+     create_unimplemented_device("PWR",         0x40007000, 0x400);
+diff --git a/hw/i2c/Kconfig b/hw/i2c/Kconfig
+index 596a7a3..0e69e5f 100644
+--- a/hw/i2c/Kconfig
++++ b/hw/i2c/Kconfig
+@@ -46,6 +46,10 @@ config PMBUS
+     bool
+     select SMBUS
+ 
++config STM32F4XX_I2C
++    bool
++    select I2C
++
+ config BCM2835_I2C
+     bool
+     select I2C
+diff --git a/hw/i2c/meson.build b/hw/i2c/meson.build
+index 2e32909..32e797a 100644
+--- a/hw/i2c/meson.build
++++ b/hw/i2c/meson.build
+@@ -17,6 +17,7 @@ i2c_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_i2c.c'))
+ i2c_ss.add(when: 'CONFIG_PPC4XX', if_true: files('ppc4xx_i2c.c'))
+ i2c_ss.add(when: 'CONFIG_PCA954X', if_true: files('i2c_mux_pca954x.c'))
+ i2c_ss.add(when: 'CONFIG_PMBUS', if_true: files('pmbus_device.c'))
++i2c_ss.add(when: 'CONFIG_STM32F4XX_I2C', if_true: files('stm32f4xx_i2c.c'))
+ i2c_ss.add(when: 'CONFIG_BCM2835_I2C', if_true: files('bcm2835_i2c.c'))
+ i2c_ss.add(when: 'CONFIG_BCM2835_I2C', if_true: files('bcm2835_bscsl.c'))
+ system_ss.add_all(when: 'CONFIG_I2C', if_true: i2c_ss)
+diff --git a/hw/i2c/stm32f4xx_i2c.c b/hw/i2c/stm32f4xx_i2c.c
+new file mode 100644
+index 0000000..03e6f26
+--- /dev/null
++++ b/hw/i2c/stm32f4xx_i2c.c
+@@ -0,0 +1,469 @@
++/*
++ * STM32F4xx I2C controller
++ *
++ * Copyright (c) 2026 Inferno RIO <noah.evans@gmail.com>
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this software and associated documentation files (the "Software"), to deal
++ * in the Software without restriction, including without limitation the rights
++ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++ * copies of the Software, and to permit persons to whom the Software is
++ * furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
++ * THE SOFTWARE.
++ *
++ * Master mode only, seven-bit addressing, written from RM0090 rev 21
++ * section 27 -- in particular the event table (EV5 to EV8_2) in 27.3.3,
++ * which is the part of this peripheral a driver gets wrong.
++ *
++ * The three rules that table states, and that this model enforces
++ * rather than assumes, because a model that ignores them lets a driver
++ * that would hang on silicon pass here:
++ *
++ *  - SB is cleared by reading SR1 and then writing DR.  A DR write
++ *    without the SR1 read does not send the address and leaves SB set.
++ *  - ADDR is cleared by reading SR1 and then SR2, in that order, and
++ *    nothing happens on the bus until it is: the part stretches the
++ *    clock.  So reception starts when SR2 is read, not when the
++ *    address is acknowledged.
++ *  - There is a shift register behind DR.  RxNE says DR is full; BTF
++ *    says DR and the shift register both are.  The two-byte and
++ *    three-byte-from-the-end receive procedures are written in terms
++ *    of BTF and are meaningless without it, so it is modelled: a
++ *    transfer moves bytes on demand, but through two stages.
++ *
++ * ACK is applied when a byte is received, not when the driver gets
++ * round to reading it, and POS moves that decision on by one byte --
++ * which is the whole of why the two-byte receive procedure exists.
++ *
++ * Not modelled: slave mode, ten-bit addressing, SMBus, PEC, DMA,
++ * arbitration loss and bus errors, and clock rate -- CCR, TRISE, FREQ
++ * and FLTR are stored and read back and nothing is timed by them.
++ */
++
++#include "qemu/osdep.h"
++#include "hw/i2c/stm32f4xx_i2c.h"
++#include "hw/irq.h"
++#include "hw/qdev-properties.h"
++#include "migration/vmstate.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++
++#define CR1_PE          (1 << 0)
++#define CR1_START       (1 << 8)
++#define CR1_STOP        (1 << 9)
++#define CR1_ACK         (1 << 10)
++#define CR1_POS         (1 << 11)
++#define CR1_SWRST       (1 << 15)
++
++#define CR2_ITERREN     (1 << 8)
++#define CR2_ITEVTEN     (1 << 9)
++#define CR2_ITBUFEN     (1 << 10)
++
++#define SR1_SB          (1 << 0)
++#define SR1_ADDR        (1 << 1)
++#define SR1_BTF         (1 << 2)
++#define SR1_ADD10       (1 << 3)
++#define SR1_STOPF       (1 << 4)
++#define SR1_RXNE        (1 << 6)
++#define SR1_TXE         (1 << 7)
++#define SR1_BERR        (1 << 8)
++#define SR1_ARLO        (1 << 9)
++#define SR1_AF          (1 << 10)
++#define SR1_OVR         (1 << 11)
++#define SR1_PECERR      (1 << 12)
++#define SR1_TIMEOUT     (1 << 14)
++#define SR1_SMBALERT    (1 << 15)
++
++#define SR1_EVENTS      (SR1_SB | SR1_ADDR | SR1_ADD10 | SR1_STOPF | SR1_BTF)
++#define SR1_BUFEVENTS   (SR1_RXNE | SR1_TXE)
++#define SR1_ERRORS      (SR1_BERR | SR1_ARLO | SR1_AF | SR1_OVR | \
++                         SR1_PECERR | SR1_TIMEOUT | SR1_SMBALERT)
++
++/* the bits of SR1 a driver may clear by writing zero to them */
++#define SR1_WRITABLE    SR1_ERRORS
++
++#define SR2_MSL         (1 << 0)
++#define SR2_BUSY        (1 << 1)
++#define SR2_TRA         (1 << 2)
++
++static void stm32f4xx_i2c_update_irq(STM32F4xxI2CState *s)
++{
++    int evt, err;
++
++    evt = (s->cr2 & CR2_ITEVTEN) &&
++          ((s->sr1 & SR1_EVENTS) ||
++           ((s->cr2 & CR2_ITBUFEN) && (s->sr1 & SR1_BUFEVENTS)));
++    err = (s->cr2 & CR2_ITERREN) && (s->sr1 & SR1_ERRORS);
++
++    qemu_set_irq(s->evt_irq, !!evt);
++    qemu_set_irq(s->err_irq, !!err);
++}
++
++/* abandon whatever is on the bus and go back to idle */
++static void stm32f4xx_i2c_idle(STM32F4xxI2CState *s)
++{
++    if (s->xfer) {
++        i2c_end_transfer(s->bus);
++    }
++    s->xfer = false;
++    s->recv = false;
++    s->rxdone = false;
++    s->rxcnt = 0;
++    s->shift_full = false;
++    s->sr1_read = false;
++    s->sr2 = 0;
++}
++
++static void stm32f4xx_i2c_reset_regs(STM32F4xxI2CState *s)
++{
++    s->cr1 = 0;
++    s->cr2 = 0;
++    s->oar1 = 0;
++    s->oar2 = 0;
++    s->dr = 0;
++    s->sr1 = 0;
++    s->sr2 = 0;
++    s->ccr = 0;
++    s->trise = 2;
++    s->fltr = 0;
++    s->shift = 0;
++    stm32f4xx_i2c_idle(s);
++}
++
++/*
++ * Pull bytes in while there is room for them.  A byte is acknowledged
++ * if ACK is set when it arrives; with POS the ACK bit applies to the
++ * byte after the one in DR, which is how the two-byte procedure NAKs
++ * the second byte while the first is still being received.  A NAKed
++ * byte is the last one: the master has said so on the wire.
++ */
++static void stm32f4xx_i2c_rxfill(STM32F4xxI2CState *s)
++{
++    bool nak;
++
++    while (s->xfer && s->recv && !s->rxdone) {
++        if (!(s->sr1 & SR1_RXNE)) {
++            s->dr = i2c_recv(s->bus);
++            s->sr1 |= SR1_RXNE;
++        } else if (!s->shift_full) {
++            s->shift = i2c_recv(s->bus);
++            s->shift_full = true;
++            s->sr1 |= SR1_BTF;
++        } else {
++            break;
++        }
++
++        nak = !(s->cr1 & CR1_ACK) &&
++              (!(s->cr1 & CR1_POS) || s->rxcnt >= 1);
++        s->rxcnt++;
++        if (nak) {
++            i2c_nack(s->bus);
++            s->rxdone = true;
++        }
++    }
++}
++
++static void stm32f4xx_i2c_start(STM32F4xxI2CState *s)
++{
++    /*
++     * A repeated START is a START while a transfer is in progress; the
++     * bus is not released, so the transfer is left alone here and the
++     * address that follows re-addresses the part.
++     */
++    s->sr1 |= SR1_SB;
++    s->sr2 |= SR2_MSL | SR2_BUSY;
++    s->sr1_read = false;
++}
++
++static void stm32f4xx_i2c_stop(STM32F4xxI2CState *s)
++{
++    /*
++     * The data already received stays readable: DR and the shift
++     * register are not touched, only the bus is.
++     */
++    if (s->xfer) {
++        i2c_end_transfer(s->bus);
++        s->xfer = false;
++    }
++    s->recv = false;
++    s->rxdone = false;
++    s->rxcnt = 0;
++    s->sr1 &= ~(SR1_TXE | SR1_SB | SR1_ADDR);
++    s->sr2 &= ~(SR2_MSL | SR2_BUSY | SR2_TRA);
++    s->sr1_read = false;
++}
++
++static void stm32f4xx_i2c_send_addr(STM32F4xxI2CState *s, uint8_t byte)
++{
++    bool recv = byte & 1;
++
++    s->sr1 &= ~SR1_SB;
++    s->sr1_read = false;
++
++    if (i2c_start_transfer(s->bus, byte >> 1, recv)) {
++        /* nothing answered: AF, and the driver sends a STOP */
++        s->sr1 |= SR1_AF;
++        s->xfer = false;
++        return;
++    }
++
++    s->xfer = true;
++    s->recv = recv;
++    s->rxdone = false;
++    s->rxcnt = 0;
++    s->shift_full = false;
++    s->sr1 &= ~(SR1_TXE | SR1_BTF | SR1_RXNE);
++    s->sr1 |= SR1_ADDR;
++    s->sr2 = SR2_MSL | SR2_BUSY | (recv ? 0 : SR2_TRA);
++}
++
++static void stm32f4xx_i2c_send_data(STM32F4xxI2CState *s, uint8_t byte)
++{
++    s->dr = byte;
++    if (i2c_send(s->bus, byte)) {
++        s->sr1 |= SR1_AF;
++        s->sr1 &= ~(SR1_TXE | SR1_BTF);
++        return;
++    }
++    /* the byte is gone: DR and the shift register are both empty */
++    s->sr1 |= SR1_TXE | SR1_BTF;
++}
++
++static uint64_t stm32f4xx_i2c_read(void *opaque, hwaddr addr, unsigned size)
++{
++    STM32F4xxI2CState *s = opaque;
++    uint32_t v;
++
++    switch (addr) {
++    case STM32F4XX_I2C_CR1:
++        return s->cr1;
++    case STM32F4XX_I2C_CR2:
++        return s->cr2;
++    case STM32F4XX_I2C_OAR1:
++        return s->oar1;
++    case STM32F4XX_I2C_OAR2:
++        return s->oar2;
++    case STM32F4XX_I2C_DR:
++        v = s->dr;
++        if (s->sr1 & SR1_RXNE) {
++            s->sr1 &= ~SR1_RXNE;
++            if (s->shift_full) {
++                s->dr = s->shift;
++                s->shift_full = false;
++                s->sr1 &= ~SR1_BTF;
++                s->sr1 |= SR1_RXNE;
++            }
++            stm32f4xx_i2c_rxfill(s);
++            stm32f4xx_i2c_update_irq(s);
++        }
++        return v;
++    case STM32F4XX_I2C_SR1:
++        s->sr1_read = true;
++        return s->sr1;
++    case STM32F4XX_I2C_SR2:
++        /*
++         * EV6: ADDR is cleared here, by the second read of the pair,
++         * and only then does the part let the transfer go on.
++         */
++        if (s->sr1_read && (s->sr1 & SR1_ADDR)) {
++            s->sr1 &= ~SR1_ADDR;
++            s->sr1_read = false;
++            if (s->recv) {
++                stm32f4xx_i2c_rxfill(s);
++            } else {
++                s->sr1 |= SR1_TXE;
++            }
++            stm32f4xx_i2c_update_irq(s);
++        }
++        return s->sr2;
++    case STM32F4XX_I2C_CCR:
++        return s->ccr;
++    case STM32F4XX_I2C_TRISE:
++        return s->trise;
++    case STM32F4XX_I2C_FLTR:
++        return s->fltr;
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: bad offset 0x%" HWADDR_PRIx "\n", __func__, addr);
++        return 0;
++    }
++}
++
++static void stm32f4xx_i2c_write(void *opaque, hwaddr addr, uint64_t val64,
++                                unsigned size)
++{
++    STM32F4xxI2CState *s = opaque;
++    uint32_t val = val64;
++
++    switch (addr) {
++    case STM32F4XX_I2C_CR1:
++        if (val & CR1_SWRST) {
++            stm32f4xx_i2c_reset_regs(s);
++            s->cr1 = val & ~CR1_SWRST;
++            break;
++        }
++        s->cr1 = val & ~(CR1_START | CR1_STOP);
++        if (!(val & CR1_PE)) {
++            stm32f4xx_i2c_idle(s);
++            s->sr1 = 0;
++            break;
++        }
++        if (val & CR1_STOP) {
++            stm32f4xx_i2c_stop(s);
++        }
++        if (val & CR1_START) {
++            stm32f4xx_i2c_start(s);
++        }
++        break;
++    case STM32F4XX_I2C_CR2:
++        s->cr2 = val;
++        break;
++    case STM32F4XX_I2C_OAR1:
++        s->oar1 = val;
++        break;
++    case STM32F4XX_I2C_OAR2:
++        s->oar2 = val;
++        break;
++    case STM32F4XX_I2C_DR:
++        if (s->sr1 & SR1_SB) {
++            /*
++             * EV5: the address.  Without the SR1 read that goes with
++             * it this write does not start anything -- SB stays set
++             * and the part waits, which is what silicon does.
++             */
++            if (s->sr1_read) {
++                stm32f4xx_i2c_send_addr(s, val);
++            } else {
++                s->dr = val;
++            }
++        } else if (s->xfer && !s->recv) {
++            stm32f4xx_i2c_send_data(s, val);
++        } else {
++            s->dr = val;
++        }
++        break;
++    case STM32F4XX_I2C_SR1:
++        /* the error bits are write-zero-to-clear; the rest are read-only */
++        s->sr1 &= val | ~SR1_WRITABLE;
++        break;
++    case STM32F4XX_I2C_SR2:
++        break;                          /* read-only */
++    case STM32F4XX_I2C_CCR:
++        s->ccr = val;
++        break;
++    case STM32F4XX_I2C_TRISE:
++        s->trise = val;
++        break;
++    case STM32F4XX_I2C_FLTR:
++        s->fltr = val;
++        break;
++    default:
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: bad offset 0x%" HWADDR_PRIx "\n", __func__, addr);
++        return;
++    }
++    stm32f4xx_i2c_update_irq(s);
++}
++
++static const MemoryRegionOps stm32f4xx_i2c_ops = {
++    .read = stm32f4xx_i2c_read,
++    .write = stm32f4xx_i2c_write,
++    .endianness = DEVICE_NATIVE_ENDIAN,
++    .valid.min_access_size = 1,
++    .valid.max_access_size = 4,
++};
++
++static void stm32f4xx_i2c_reset(DeviceState *dev)
++{
++    stm32f4xx_i2c_reset_regs(STM32F4XX_I2C(dev));
++}
++
++static void stm32f4xx_i2c_init(Object *obj)
++{
++    STM32F4xxI2CState *s = STM32F4XX_I2C(obj);
++    SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
++
++    memory_region_init_io(&s->mmio, obj, &stm32f4xx_i2c_ops, s,
++                          TYPE_STM32F4XX_I2C, 0x400);
++    sysbus_init_mmio(sbd, &s->mmio);
++    sysbus_init_irq(sbd, &s->evt_irq);
++    sysbus_init_irq(sbd, &s->err_irq);
++}
++
++/*
++ * The bus is created here rather than in instance_init so that it can
++ * carry the controller's name.  A machine with three of these has
++ * three busses, and -device ...,bus=i2c2 can only pick one of them out
++ * if they are not all called the same thing.
++ */
++static void stm32f4xx_i2c_realize(DeviceState *dev, Error **errp)
++{
++    STM32F4xxI2CState *s = STM32F4XX_I2C(dev);
++
++    s->bus = i2c_init_bus(dev, s->name ?: "i2c");
++}
++
++static const Property stm32f4xx_i2c_properties[] = {
++    DEFINE_PROP_STRING("name", STM32F4xxI2CState, name),
++};
++
++static const VMStateDescription vmstate_stm32f4xx_i2c = {
++    .name = TYPE_STM32F4XX_I2C,
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32(cr1, STM32F4xxI2CState),
++        VMSTATE_UINT32(cr2, STM32F4xxI2CState),
++        VMSTATE_UINT32(oar1, STM32F4xxI2CState),
++        VMSTATE_UINT32(oar2, STM32F4xxI2CState),
++        VMSTATE_UINT32(dr, STM32F4xxI2CState),
++        VMSTATE_UINT32(sr1, STM32F4xxI2CState),
++        VMSTATE_UINT32(sr2, STM32F4xxI2CState),
++        VMSTATE_UINT32(ccr, STM32F4xxI2CState),
++        VMSTATE_UINT32(trise, STM32F4xxI2CState),
++        VMSTATE_UINT32(fltr, STM32F4xxI2CState),
++        VMSTATE_BOOL(sr1_read, STM32F4xxI2CState),
++        VMSTATE_UINT8(shift, STM32F4xxI2CState),
++        VMSTATE_BOOL(shift_full, STM32F4xxI2CState),
++        VMSTATE_BOOL(xfer, STM32F4xxI2CState),
++        VMSTATE_BOOL(recv, STM32F4xxI2CState),
++        VMSTATE_BOOL(rxdone, STM32F4xxI2CState),
++        VMSTATE_UINT32(rxcnt, STM32F4xxI2CState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void stm32f4xx_i2c_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    device_class_set_legacy_reset(dc, stm32f4xx_i2c_reset);
++    dc->realize = stm32f4xx_i2c_realize;
++    dc->vmsd = &vmstate_stm32f4xx_i2c;
++    device_class_set_props(dc, stm32f4xx_i2c_properties);
++}
++
++static const TypeInfo stm32f4xx_i2c_info = {
++    .name          = TYPE_STM32F4XX_I2C,
++    .parent        = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(STM32F4xxI2CState),
++    .instance_init = stm32f4xx_i2c_init,
++    .class_init    = stm32f4xx_i2c_class_init,
++};
++
++static void stm32f4xx_i2c_register_types(void)
++{
++    type_register_static(&stm32f4xx_i2c_info);
++}
++
++type_init(stm32f4xx_i2c_register_types)
+diff --git a/include/hw/i2c/stm32f4xx_i2c.h b/include/hw/i2c/stm32f4xx_i2c.h
+new file mode 100644
+index 0000000..ae6ff78
+--- /dev/null
++++ b/include/hw/i2c/stm32f4xx_i2c.h
+@@ -0,0 +1,81 @@
++/*
++ * STM32F4xx I2C controller
++ *
++ * Copyright (c) 2026 Inferno RIO <noah.evans@gmail.com>
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this software and associated documentation files (the "Software"), to deal
++ * in the Software without restriction, including without limitation the rights
++ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++ * copies of the Software, and to permit persons to whom the Software is
++ * furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
++ * THE SOFTWARE.
++ */
++
++#ifndef HW_STM32F4XX_I2C_H
++#define HW_STM32F4XX_I2C_H
++
++#include "hw/sysbus.h"
++#include "hw/i2c/i2c.h"
++#include "qom/object.h"
++
++#define STM32F4XX_I2C_CR1     0x00
++#define STM32F4XX_I2C_CR2     0x04
++#define STM32F4XX_I2C_OAR1    0x08
++#define STM32F4XX_I2C_OAR2    0x0c
++#define STM32F4XX_I2C_DR      0x10
++#define STM32F4XX_I2C_SR1     0x14
++#define STM32F4XX_I2C_SR2     0x18
++#define STM32F4XX_I2C_CCR     0x1c
++#define STM32F4XX_I2C_TRISE   0x20
++#define STM32F4XX_I2C_FLTR    0x24
++
++#define TYPE_STM32F4XX_I2C "stm32f4xx-i2c"
++OBJECT_DECLARE_SIMPLE_TYPE(STM32F4xxI2CState, STM32F4XX_I2C)
++
++struct STM32F4xxI2CState {
++    SysBusDevice parent_obj;
++
++    MemoryRegion mmio;
++    I2CBus *bus;
++    char *name;
++    qemu_irq evt_irq;
++    qemu_irq err_irq;
++
++    uint32_t cr1;
++    uint32_t cr2;
++    uint32_t oar1;
++    uint32_t oar2;
++    uint32_t dr;
++    uint32_t sr1;
++    uint32_t sr2;
++    uint32_t ccr;
++    uint32_t trise;
++    uint32_t fltr;
++
++    /*
++     * State the register file does not hold.  sr1_read is the first
++     * half of the two-register clearing sequences; shift is the
++     * receive shift register behind DR, which is what makes BTF mean
++     * anything.
++     */
++    bool sr1_read;
++    uint8_t shift;
++    bool shift_full;
++    bool xfer;
++    bool recv;
++    bool rxdone;
++    uint32_t rxcnt;
++};
++
++#endif /* HW_STM32F4XX_I2C_H */
+-- 
+2.51.0
+

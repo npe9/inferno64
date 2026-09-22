@@ -302,8 +302,8 @@ which is the ARM 20-pin signal set less the ground returns.
 A ccRF 2 or ccRF 3 click carries the CC1120 and uses AN for its GPIO0,
 RST for its reset, CS/SCK/MISO/MOSI for SPI, PWM for GPIO2 and INT for
 GPIO3.  In mikroBUS 2 that is GPIO0 PA3, reset PE13, CS PE11, SPI2 on
-PB13/PB14/PB15, GPIO2 PD12, GPIO3 PE14 -- which is the wiring a board
-half here would fill a Spidev in with.  Nothing of that is written yet.
+PB13/PB14/PB15, GPIO2 PD12, GPIO3 PE14 -- which is the wiring
+spistm32f4.c fills a Spidev in with.
 
 What is here
 ------------
@@ -344,3 +344,59 @@ received a character.  nucleof303/mem.h had the same -16 and now has
 38, which is its USART2; that
 board has no userland to type at, so the correction there is by reading
 and not by measurement.
+
+I2C
+---
+
+i2cstm32f4.c registers both controllers a clicker 2 brings out -- I2C2
+on mikroBUS 2's SCL and SDA, I2C3 on mikroBUS 1's -- and #J
+(os/inferno/port/devi2c.c, the Osprey bus driver with its table sizes
+made board tunables) serves them as /dev/i2c2 and /dev/i2c3.  Nothing
+is clocked and no pin is driven until something opens #J, so a board
+with nothing in a socket never touches the wires.
+
+What has been run, and where:
+
+Under qemu, with tools/qemu-patches/0046 and a ds1338 fitted to I2C2
+(-device ds1338,bus=i2c2,address=0x68), on a booted kernel:
+
+	; echo subaddress 1 >/dev/i2c2/i2c.68.ctl
+	; bind /dev/i2c2 /n
+	; dd -if /dev/user -of /n/i2c.68.data -bs 1 -seek 8
+	7+0 records in
+	7+0 records out
+	; read -o 8 1 /n/i2c.68.data
+	i
+	; read -o 9 2 /n/i2c.68.data
+	nf
+	; read -o 11 3 /n/i2c.68.data
+	ern
+
+The probe finds 0x68 on i2c2 and nothing on i2c3, which is the truth
+of that machine.  Seven bytes go into the part's NVRAM through
+combined write transfers and come back through combined reads with a
+repeated START, one, two and three at a time -- which is each of
+RM0090's three master-receiver procedures in turn, the one-byte and
+two-byte special cases included.
+
+On silicon: nothing.  The two clicks to hand are a CC1120 radio and a
+USB UART, neither of which is an I2C part, so the board half has never
+addressed anything.  What is on the board is the emulated half's
+opposite number and no more tested than that makes it.
+
+Two things this turned up that are not I2C:
+
+The portable devi2c.c has a 1024-entry device table and a 16-entry bus
+table, 4160 bytes of bss.  On a part with 167936 bytes of pool that is
+enough to turn a working shell into one that cannot fork: the first
+"echo something >file" after boot wants a 4096-byte kernel stack for
+the redirection's process and the arena has no room for it.  mem.h
+sets NI2CDEV to 8 and NI2CBUS to 2 and the board has its memory back.
+This is the third portable table this board has had to size for
+itself, after NMNTTAG and STAGESIZE.
+
+The ceiling check on the image size was written in rc in the mkfile
+and this host builds with sh, so it had never run -- it failed with
+"unexpected EOF while looking for matching `" and mk carried on.  It
+is now an argument to tools/bin2ihex, which is C and runs under either
+shell.

@@ -4044,6 +4044,146 @@ be position-independent or relocated on the way in \- which is the same
 problem the ahead-of-time compiler above has, and the reason these two
 sections belong next to each other.
 .NH 1
+The other two buses: what a socket is for
+.PP
+A mikroBUS socket carries SPI, a UART, I2C, an analogue input, a PWM
+output, an interrupt line and a reset, and a board that can only drive
+one of them can only take the clicks that use that one.  The radio work
+above brought up SPI and the six GPIO lines around it.  This section is
+I2C, which is the other bus a click can be on and the one with a real
+trap in it.
+.PP
+The kernel side was already written and had never been compiled: 
+.CW os/inferno/port/devi2c.c
+was the Vita Nuova
+.CW #J ,
+which calls
+.CW i2csetup ,
+.CW i2crecv
+and
+.CW i2csend
+and expects a board to define an
+.CW I2Cdev
+\- and no board in
+.CW os/inferno
+defines one, so the file cannot build anywhere.  The Osprey source has
+a better one: a bus layer, where a controller registers an
+.CW I2Cbus
+with an
+.CW io
+method and every address that answers a probe becomes a pair of files.
+That is what is here now, with its table sizes made board tunables,
+and
+.CW os/inferno/stm32f407/i2cstm32f4.c
+underneath it registering the two controllers a clicker 2 brings out
+on its sockets.
+.NH 2
+Three flags that are not cleared by writing to them
+.PP
+The F4's I2C is the peripheral on this part whose registers can all be
+written correctly and whose driver still hangs.  SB is cleared by
+reading SR1 and then writing DR; ADDR by reading SR1 and then SR2, in
+that order and no other; and until ADDR is cleared the part holds SCL
+low.  So a receive does not begin when the address is acknowledged, it
+begins when SR2 is read \- and everything that decides how the read
+ends has to be arranged before that read happens.
+.PP
+That is why RM0090 27.3.3 has three master-receiver procedures and not
+one.  For a single byte, ACK must already be off and STOP must follow
+immediately.  For two, POS says \*Qthe ACK bit means the next byte, not
+this one\*U, which is the only way to refuse the second byte while the
+first is still arriving.  For more, the last three are taken with the
+shift register kept one ahead, and the code has to know that BTF means
+DR and the shift register are both full.  A driver that treats this
+peripheral as one-byte-in-one-byte-out reads one byte too many, or
+acknowledges a byte it meant to refuse and leaves the part holding the
+bus \- a hang at the
+.I next
+transfer, not at this one.
+.PP
+Which makes the emulator the place this could have gone quietly wrong.
+QEMU has no STM32 I2C model at all, so one had to be written
+.CW ( tools/qemu-patches/0046 ),
+and a model written from the same understanding as the driver proves
+nothing.  So the model enforces the orderings rather than assuming
+them: a DR write without the SR1 read before it leaves SB set and
+sends nothing, exactly as the silicon does, and the receive shift
+register behind DR is modelled so that BTF is a fact about two
+registers and not a bit the model sets when convenient.  A driver that
+skipped the procedures would fail under this model rather than pass.
+That is the whole reason to model at this level of detail; everything
+else about the peripheral \- the clock rate, CCR, TRISE, FREQ \- is
+stored and read back and times nothing.
+.NH 2
+What it does, measured
+.PP
+With a DS1338 fitted to I2C2 on a booted kernel, seven bytes into the
+part's NVRAM and back out one, two and three at a time \- which is
+each of the three receive procedures in turn:
+.P1
+; echo subaddress 1 >/dev/i2c2/i2c.68.ctl
+; bind /dev/i2c2 /n
+; dd -if /dev/user -of /n/i2c.68.data -bs 1 -seek 8
+7+0 records in
+7+0 records out
+; read -o 8 1 /n/i2c.68.data
+i
+; read -o 9 2 /n/i2c.68.data
+nf
+; read -o 11 3 /n/i2c.68.data
+ern
+.P2
+The probe finds 0x68 on
+.CW i2c2
+and nothing on
+.CW i2c3 ,
+which is the truth of that machine.  On silicon this has run not at
+all: the two clicks to hand are a radio and a USB UART, and neither is
+an I2C part.
+.NH 2
+Two things it cost, both of them about size
+.PP
+The portable
+.CW devi2c.c
+keeps a 1024-entry device table and a 16-entry bus table \- 4160 bytes
+of bss.  On a board with 167936 bytes of pool that is enough to turn a
+working shell into one that cannot fork: the first
+.CW "echo something >file"
+after boot wants a 4096-byte kernel stack for the redirection's
+process, and the arena has no room for it.  The failure does not look
+like a table being too big, it looks like
+.CW "arena too large ... alloc = 4288"
+followed by
+.CW "no procs for kproc" ,
+and it arrives at whatever command happens to be first.
+.CW mem.h
+now sets
+.CW NI2CDEV
+to 8 and
+.CW NI2CBUS
+to 2.  That is the third portable table this board has had to size for
+itself, after
+.CW NMNTTAG
+and
+.CW STAGESIZE ,
+and the pattern is worth naming: a table sized for a machine with
+memory is a bug on a machine without it, and it never fails where it
+is.
+.PP
+The other is a check that had never run.  The image-size ceiling \- the
+one that stops a build that would not fit under the bootloader \- was
+written as an
+.CW rc
+block in the board's mkfile, and this host builds with
+.CW sh ,
+so every build of this board since it was added had printed
+.CW "unexpected EOF while looking for matching `"
+and carried on.  It is now an argument to
+.CW tools/bin2ihex ,
+which is C and runs under either shell.  A guard in the wrong language
+is worse than no guard: it reads, in the build log, exactly like one
+that passed.
+.NH 1
 Unrelated breakage found on the way
 .PP
 Two things in the tree are broken independently of this work, found while

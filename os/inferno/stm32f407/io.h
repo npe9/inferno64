@@ -42,6 +42,9 @@
 #define	    Apb1Usart3	(1<<18)
 #define	    Apb1Uart4	(1<<19)
 #define	    Apb1Spi2	(1<<14)
+#define	    Apb1I2c1	(1<<21)
+#define	    Apb1I2c2	(1<<22)
+#define	    Apb1I2c3	(1<<23)
 #define	  RCC_APB2ENR	(RCC+0x44)
 #define	    Apb2Usart1	(1<<4)
 #define	    Apb2Syscfg	(1<<14)
@@ -54,6 +57,15 @@
  */
 #define	SPI2		0x40003800
 #define	SPI3		0x40003c00
+
+/*
+ * The three I2C controllers.  mikroBUS 2's SCL and SDA are I2C2 on
+ * PB10 and PB11; mikroBUS 1's are I2C3 on PA8 and PC9.  I2C1 comes out
+ * on no socket of a clicker 2 and is here for completeness.
+ */
+#define	I2C1		0x40005400
+#define	I2C2		0x40005800
+#define	I2C3		0x40005c00
 
 #define	SYSCFG		0x40013800
 #define	  SYSCFG_EXTICR4 (SYSCFG+0x14)
@@ -82,6 +94,7 @@
 #define	GPIOD		0x40020c00
 #define	GPIOE		0x40021000
 #define	  GPIO_MODER	0x00
+#define	  GPIO_OTYPER	0x04		/* 0 push-pull, 1 open drain */
 #define	  GPIO_OSPEEDR	0x08
 #define	  GPIO_PUPDR	0x0c
 #define	  GPIO_IDR	0x10

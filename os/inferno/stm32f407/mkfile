@@ -99,17 +99,13 @@ install:V: i$CONF
 i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES $ROOT/tools/bin2ihex
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
 	$LD $LDFLAGS -o $target -H4 -T$KTZERO -D$KDATA -R0 -l $OBJ $CONF.$O $LIBFILES
-	$ROOT/tools/bin2ihex $target $KTZERO i$CONF.hex
 	# The USB HID bootloader already in this part's flash occupies
 	# the last 128K sector, from 0x080e0000, and reports BootStart
 	# 0xe0000 when asked.  An image past that cannot be written --
 	# mikroe-uhb refuses rather than overwriting the only way in --
-	# so fail here instead of at the far end of a flash cycle.
-	@{ s=`{ls -l $target | awk '{print $5}'}
-	   if(test $s -gt 917504){
-		echo 'i'$CONF' is '$s' bytes; the bootloader starts at 917504' >[1=2]
-		exit toobig
-	   } }
+	# so bin2ihex is given that as a ceiling and fails here instead
+	# of at the far end of a flash cycle.
+	$ROOT/tools/bin2ihex $target $KTZERO i$CONF.hex 917504
 	cp $target i$CONF.hex $INSTALLDIR
 
 $ROOT/tools/bin2ihex:
@@ -148,6 +144,7 @@ XIPDIS=\
 	ed.dis\
 	sed.dis\
 	cat.dis\
+	dd.dis\
 	ls.dis\
 	bind.dis\
 	pwd.dis\

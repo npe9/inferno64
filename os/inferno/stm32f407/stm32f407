@@ -44,6 +44,11 @@ dev
 # And KISS, at #k, so the whole stack above can be run over a pipe with
 # no radio at all.  See os/inferno/radio/devkiss.c.
 	kiss
+# I2C at #J: a directory per controller, and in it a data and a ctl
+# file for every address that answered a probe.  The controllers are
+# registered by i2cstm32f4 in the link section below; nothing is
+# clocked and no pin is driven until something opens #J.
+	i2c
 	env
 
 # the order matters: a library with an undefined symbol at the end
@@ -106,6 +111,10 @@ misc
 # is what a driver that allocates and takes an interrupt needs.
 link
 	spistm32f4
+# i2cstm32f4 registers the two controllers a clicker 2 brings out on
+# its mikroBUS sockets.  Here rather than in port for the same reason
+# as spistm32f4: it is a board fact, not a portable one.
+	i2cstm32f4
 
 mod
 	sys
@@ -187,6 +196,7 @@ root
 	/dis/sed.dis		/dis32/sed.dis
 	/dis/ed.dis		/dis32/ed.dis
 	/dis/cat.dis		/dis32/cat.dis
+	/dis/dd.dis		/dis32/dd.dis
 	/dis/ls.dis		/dis32/ls.dis
 	/dis/bind.dis		/dis32/bind.dis
 	/dis/pwd.dis	/dis32/pwd.dis

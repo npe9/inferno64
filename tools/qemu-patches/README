@@ -30,6 +30,21 @@ whole packets.  netduinoplus2 gains -machine radio=on, fitting one on
 SPI2 with chip select on PE11, reset on PE13 and GPIO3 on PE14 -- a
 clicker 2 for STM32 with the click in mikroBUS 2.
 
+0046 is the STM32F4's I2C, for the same board.  qemu had all three
+controllers as unimplemented devices, so #J had nothing to talk to.
+This peripheral is the one on the part whose registers can all be
+written correctly and whose driver still hangs, because SB and ADDR
+are cleared by reading one register and then touching another in a
+fixed order, and the part stretches SCL until ADDR goes -- so a
+receive starts when SR2 is read, and everything about how it ends has
+to be set up before that.  The model enforces those orderings and
+models the receive shift register behind DR, so BTF means what RM0090
+means by it and the two-byte and three-from-the-end receive
+procedures are not ceremony.  A model that skipped this would pass a
+driver that hangs on silicon, which is the only failure worth
+guarding against here.  Each controller names its bus, so a part is
+fitted with -device ds1338,bus=i2c2,address=0x68.
+
 0031-0033 came out of that check and the one after it, and each names
 what found it.  0027 and 0028 have since been driven by drivers nobody
 here wrote.  Zephyr's

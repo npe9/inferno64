@@ -78,6 +78,15 @@
 #define	NHOLE		8
 #define	NMNTTAG		1024
 
+/*
+ * I2C: how many controllers and how many addresses #J will remember.
+ * The portable default is 16 and 1024, which is 4160 bytes of bss --
+ * a fortieth of this board's RAM for a bus that has two controllers
+ * and, on a clicker 2, at most one part in each socket.
+ */
+#define	NI2CBUS		2
+#define	NI2CDEV		8
+
 #define	MAXMACH		1
 #define	HZ		100
 /*

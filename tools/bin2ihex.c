@@ -8,6 +8,14 @@
  * USB HID bootloader, for one, which is the only way into a stock
  * clicker 2 for STM32 without soldering a programming header on.
  *
+ * The optional fourth argument is a ceiling: the number of bytes the
+ * image may not exceed, which for a board whose only way in is a
+ * bootloader sitting in its own flash is where that bootloader starts.
+ * It is checked here rather than in a mkfile recipe because a recipe
+ * is written in whichever shell the host build uses -- rc on Plan 9
+ * and 9front, sh elsewhere -- and one written in the wrong one fails
+ * at the point it was meant to guard.  This runs anywhere.
+ *
  * The hex writer is the one in aout2imxrt.c, which needs it for the
  * same reason and has nothing else in common with this.  Built with the
  * host's own compiler, like the rest of tools: nothing here is Inferno.
@@ -57,7 +65,7 @@ writehex(FILE *f, const unsigned char *image, uint32_t n, uint32_t base)
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: bin2ihex image address out.hex\n");
+	fprintf(stderr, "usage: bin2ihex image address out.hex [maxbytes]\n");
 	exit(2);
 }
 
@@ -68,13 +76,20 @@ main(int argc, char **argv)
 	unsigned char *image;
 	long n;
 	uint32_t base;
+	unsigned long max;
 	char *e;
 
-	if(argc != 4)
+	if(argc != 4 && argc != 5)
 		usage();
 	base = (uint32_t)strtoul(argv[2], &e, 0);
 	if(*e != '\0')
 		usage();
+	max = 0;
+	if(argc == 5){
+		max = strtoul(argv[4], &e, 0);
+		if(*e != '\0')
+			usage();
+	}
 
 	in = fopen(argv[1], "rb");
 	if(in == NULL){
@@ -92,6 +107,12 @@ main(int argc, char **argv)
 		return 1;
 	}
 	fclose(in);
+
+	if(max != 0 && (unsigned long)n > max){
+		fprintf(stderr, "bin2ihex: %s is %ld bytes; the limit is %lu\n",
+			argv[1], n, max);
+		return 1;
+	}
 
 	out = fopen(argv[3], "wb");
 	if(out == NULL){
