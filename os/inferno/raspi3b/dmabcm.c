@@ -362,16 +362,36 @@ dmachanleft(void)
 	return dmachan(dmachannel)[Txfrlen];
 }
 
+/*
+ * One channel and one control block, so one caller at a time.
+ *
+ * Both SD drivers call this, each holding its own controller's qlock,
+ * which serialises neither against the other.  For most of this port
+ * that was theoretical -- sdhostbcm.c was not even compiled in -- but
+ * SDHOST has a DMA path now, and two transfers sharing the static
+ * control block below would each rewrite it while the engine was
+ * reading the other's, with no error from anything.  The engine is
+ * the shared resource; the lock belongs here and not in the drivers.
+ *
+ * A QLock and not a Lock: dmaperiph() spins waiting for the transfer,
+ * and it is always called from process context.
+ */
+static QLock dmalock;
+
 int
 dmaxfer(void *mem, u32 pbus, ulong len, int dreq, int tomem)
 {
 	static uchar raw[sizeof(Cb) + 32];
 	Cb *cb;
+	int rv;
 
 	if(dmachannel < 0)
 		return -1;
 	cb = (Cb*)(((uintptr)raw + 31) & ~(uintptr)31);
-	return dmaperiph(dmachannel, cb, mem, pbus, len, dreq, tomem);
+	qlock(&dmalock);
+	rv = dmaperiph(dmachannel, cb, mem, pbus, len, dreq, tomem);
+	qunlock(&dmalock);
+	return rv;
 }
 
 /*

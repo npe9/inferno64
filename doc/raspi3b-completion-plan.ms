@@ -7579,3 +7579,68 @@ from the raw device concurrently.  No failures, and
 at 24-25 KB/s.  The intermittent read stall that started this has not
 recurred; the honest statement is that it is now recovered from, not
 that it is understood.
+.NH 2
+One DMA engine, two drivers, no lock
+.PP
+.CW dmaxfer()
+holds the channel number and the control block in file statics:
+.P1
+static uchar raw[sizeof(Cb) + 32];
+.P2
+one block, one channel, and until now one caller \(em
+.CW sdhostbcm.c
+was not even in the build.  It is now, with a DMA path of its own, and
+each driver calls
+.CW dmaxfer
+under its own controller's
+.CW qlock ,
+which serialises neither against the other.  Two transfers would each
+rewrite that control block while the engine read the other's, and
+nothing anywhere would report an error.  The engine is the shared
+resource, so the lock goes in
+.CW dmabcm.c
+and not in the drivers \(em a
+.CW QLock ,
+because
+.CW dmaperiph()
+spins for the transfer and is always called from process context.
+.PP
+Verified after the change: 3000 blocks written and read back by DMA
+and byte-compared, while a second process read 12MB from the raw
+device, and
+.CW "retried 0 gaveup 0"
+afterwards.
+.NH 2
+The warm restart fails about half the time, and it is not understood
+.PP
+.CW jtagrestart
+comes up garbled and panics in
+.CW chandevreset
+with a devtab full of rubbish roughly every other attempt:
+.P1
+reset #/
+reset #
+0 x 8a000000 0019bca2 i 0014b764 ... panic:
+shutdown: devtab[11] is corrupt (0x1dab40), skipped
+.P2
+A retry works, so
+.CW tools/jtag/boot.sh
+retries up to four times and, more to the point, proves which kernel
+is running rather than assuming.  The cause is open.  The obvious
+theory \(em that OpenOCD writes the image to RAM while the CPU holds
+dirty lines over it, and the stub's clean then writes them back over
+the new image \(em does not hold up: OpenOCD writes aarch64 memory by
+executing loads and stores on the halted core, so the image is in the
+same cache the stub cleans.
+.PP
+.B "And the harness bug the first version of boot.sh had, because it
+.B "is the same one this directory keeps making."
+It typed
+.CW "echo ==MARK=="
+to the board and waited for the build stamp to appear after it.  That
+cannot work: the marker goes to the OLD kernel's shell, and the reason
+for restarting is usually that the old kernel has panicked and has no
+shell.  Two attempts were reported as failures with no evidence either
+way.  The reference point has to be something the board is not asked
+to produce \(em so it counts how many times this build's banner is
+already in the buffer and waits for one more.
