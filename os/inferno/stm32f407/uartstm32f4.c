@@ -395,12 +395,23 @@ bangallpins(void)
 void
 otherusarts(void)
 {
+	/*
+	 * Never the console's own USART: rawuart() writes CR1 from
+	 * scratch, which drops the receive enable and the receive
+	 * interrupt, and the console would go deaf twice a second.  It
+	 * has nothing to prove anyway -- everything the kernel says
+	 * comes out of it.
+	 */
 	/* mikroBUS 1: USART2 TX on PD5, AF7, APB1 */
+#ifndef CONSUSART2
 	rawuart(0x40004400, GPIOD, 5, GPIO_AFRL, 7, apb1hz,
 		"UUUUUUUU\r\nInferno on USART2, PD5: mikroBUS 1\r\n");
+#endif
 	/* mikroBUS 2: USART3 TX on PD8, AF7, APB1 */
+#ifndef CONSUSART3
 	rawuart(0x40004800, GPIOD, 8, GPIO_AFRH, 7, apb1hz,
 		"UUUUUUUU\r\nInferno on USART3, PD8: mikroBUS 2\r\n");
+#endif
 	/* the 2x26 pad: UART4 TX on PA0, AF8, APB1 */
 	rawuart(0x40004c00, GPIOA, 0, GPIO_AFRL, 8, apb1hz,
 		"UUUUUUUU\r\nInferno on UART4, PA0: the pad\r\n");
