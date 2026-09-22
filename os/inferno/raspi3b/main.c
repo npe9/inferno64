@@ -10,7 +10,27 @@
 extern int distrack;		/* libinterp/heap.c: the Dis heap watchdog */
 
 extern Mach mach0;
-Mach *m;
+/*
+ * Initialised, so that m is never nil -- not even for the instant
+ * between a JTAG image load and machinit().
+ *
+ * m lives in the data segment, so it has a value in the image, and an
+ * uninitialised "Mach *m;" makes that value 0.  A warm restart loads
+ * the image over a running kernel and therefore puts that 0 back.
+ * If the ARM generic timer interrupt is still armed and pending at the
+ * per-core controller when control reaches this kernel -- and it is,
+ * measured: core timer irq control 0x2, core0 irq source 0x2 -- then
+ * clockintr runs before machinit() has set m, calls accounttime, and
+ * takes a data abort on "p->time[p->insyscall]++" with p = m->proc.
+ * That is the fault this board has taken in every build, and the trap
+ * report says so in as many words: "m = 0000000000000000".
+ *
+ * &mach0 is a link-time constant, so the image now carries the right
+ * pointer and the window does not exist.  machinit() still assigns it,
+ * which is where the Mach is actually cleared and made valid; this is
+ * only about the pointer never being nil.
+ */
+Mach *m = &mach0;
 Proc *up;
 Conf conf;
 
