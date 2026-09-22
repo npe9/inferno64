@@ -63,6 +63,7 @@
 #define	GPIOE		0x40021000
 #define	  GPIO_MODER	0x00
 #define	  GPIO_OSPEEDR	0x08
+#define	  GPIO_PUPDR	0x0c
 #define	  GPIO_IDR	0x10
 #define	  GPIO_ODR	0x14
 #define	  GPIO_AFRL	0x20		/* pins 0 to 7 */

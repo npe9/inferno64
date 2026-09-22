@@ -252,13 +252,9 @@ idlehands(void)
 		 * listener at the wrong baud can still be measured
 		 * from.
 		 */
-		/*
-		 * The blink stays: it is what proved this kernel runs
-		 * on the part at all, and it costs two instructions a
-		 * tick.  The pin hunt that was here is gone -- it made
-		 * every pin an input, which would take the console's
-		 * own pins away from the USART.
-		 */
+		/* TEMPORARY: the pin hunt, done properly this time */
+		findmovingpin();
+		reportmovingpin();
 	}
 	idle();
 }

@@ -254,44 +254,75 @@ skip(int port, int pin)
  */
 static int foundport = -1, foundpin = -1;
 
+/*
+ * Which pin is the click actually driving?
+ *
+ * The first cut of this made every pin an input and reported the first
+ * one that changed over half a second.  It reported PA9, which is a
+ * USART1 pin and so looked like an answer, and it was noise: an input
+ * with no pull-up floats, and floating CMOS inputs toggle on their
+ * own.  The board stayed silent on USART1 afterwards, which is what
+ * said so.
+ *
+ * Two changes make it mean something.  Every pin gets a pull-up, so a
+ * pin with nothing on it reads a steady one; and transitions are
+ * counted over a whole second rather than noticed once, so the pin
+ * with a host streaming into it wins by orders of magnitude rather
+ * than by being first in the scan.  A pin must move at least Minmoves
+ * times to be reported at all.
+ */
+enum { Minmoves = 50 };
+
 void
 findmovingpin(void)
 {
 	static ulong base[5] = { GPIOA, GPIOB, GPIOC, GPIOD, GPIOE };
-	ulong first[5], seen[5], v;
+	static ushort count[5][16];
+	ulong prev[5], now, ch, v;
 	uvlong hz, end;
-	int port, pin;
+	int port, pin, best;
 
 	if(foundport >= 0)
 		return;
 	for(port = 0; port < 5; port++){
-		/* every pin an input, except the two LEDs */
 		v = *(volatile ulong*)(base[port]+GPIO_MODER);
 		if(port == 4)
 			v &= (3UL<<(2*12)) | (3UL<<(2*15));
 		else
 			v = 0;
 		*(volatile ulong*)(base[port]+GPIO_MODER) = v;
-		first[port] = *(volatile ulong*)(base[port]+GPIO_IDR);
-		seen[port] = 0;
+		/* a pull-up on every pin, so nothing floats */
+		*(volatile ulong*)(base[port]+GPIO_PUPDR) = 0x55555555;
+		for(pin = 0; pin < 16; pin++)
+			count[port][pin] = 0;
+		prev[port] = *(volatile ulong*)(base[port]+GPIO_IDR);
 	}
 	fastticks(&hz);
-	end = fastticks(nil) + hz/2;		/* half a second of watching */
+	end = fastticks(nil) + hz;		/* a whole second */
 	while(fastticks(nil) < end){
 		clockpoll();
-		for(port = 0; port < 5; port++)
-			seen[port] |= *(volatile ulong*)(base[port]+GPIO_IDR)
-				^ first[port];
+		for(port = 0; port < 5; port++){
+			now = *(volatile ulong*)(base[port]+GPIO_IDR);
+			ch = now ^ prev[port];
+			prev[port] = now;
+			if(ch == 0)
+				continue;
+			for(pin = 0; pin < 16; pin++)
+				if((ch & (1UL<<pin)) && count[port][pin] < 60000)
+					count[port][pin]++;
+		}
 	}
-	/* USB, SWD and the LEDs float or are ours; never report them */
-	seen[0] &= ~((1<<11)|(1<<12)|(1<<13)|(1<<14));
-	seen[4] &= ~((1<<12)|(1<<15));
+	/* USB, SWD and the LEDs are ours or float whatever we do */
+	count[0][11] = count[0][12] = count[0][13] = count[0][14] = 0;
+	count[4][12] = count[4][15] = 0;
+
+	best = Minmoves;
 	for(port = 0; port < 5; port++)
 		for(pin = 0; pin < 16; pin++)
-			if(seen[port] & (1UL<<pin)){
+			if(count[port][pin] > best){
+				best = count[port][pin];
 				foundport = port;
 				foundpin = pin;
-				return;
 			}
 }
 
