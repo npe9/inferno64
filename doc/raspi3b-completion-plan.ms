@@ -7644,3 +7644,94 @@ shell.  Two attempts were reported as failures with no evidence either
 way.  The reference point has to be something the board is not asked
 to produce \(em so it counts how many times this build's banner is
 already in the buffer and waits for one more.
+.NH 2
+The Arasan stall: the latched-Iwriterdy hypothesis is dead
+.PP
+The experiment the TODO above asked for has been run, on the board,
+with the stall captured in the same window as its own dump.  The
+answer is no:
+.P1
+    requested       9 blocks / 4608 bytes
+    DMA transferred 3 blocks / 1536 bytes
+    DMA remaining   6 blocks / 3072 bytes
+    dma cs 0x21 debug 0x4808000 ti 0xb0148
+    dma src 0xc3bb2640 dst 0x7e300020 (engine still active)
+    BEFORE: dma cs 0xa emmc interrupt 0x10 status 0x1ff0506
+    emmc status 0x1ef0106 interrupt 0x10
+    emmc control0 0x100 control1 0xe0407 blksizecnt 0x70200
+emmc: UNSTICK ack Iwriterdy: remaining 3072 -> 3072
+    after 20100 us, cs 0x21 (no change)
+.P2
+Acknowledging
+.CW Iwriterdy
+and waiting 20ms moved nothing.  If DREQ re-assertion needed that
+latched bit cleared, it would have moved.  It did not, so that is not
+the mechanism, and the fix it implied \(em acknowledge during the
+transfer rather than after it \(em would not have worked.
+.PP
+.B "What the dump says instead, and it is new."
+Two readings in it were not in any earlier capture, and they change
+the shape of the problem.
+.IP 1.
+.B "The controller has ENDED the write transfer."
+.CW status
+goes
+.CW 0x1ff0506
+before to
+.CW 0x1ef0106
+at the stall, and the bit that cleared is 0x400,
+.CW WRITE_TRANSFER_ACTIVE .
+With
+.CW blksizecnt 0x70200
+\(em seven blocks of 512 still outstanding \(em the controller is
+saying it is not in a write transfer any more.  That explains DREQ
+being clear in
+.CW "cs 0x21"
+.CW ( ACTIVE | DREQ_STOPS_DMA ,
+and bit 3 DREQ low): there is no transfer for it to request data for.
+The question was "why does DREQ not come back"; it is now "why did the
+controller drop the transfer with seven blocks to go".
+.IP 2.
+.B "The card is busy."
+The DAT line levels in
+.CW status
+bits 20-23 go from
+.CW 0xf
+before to
+.CW 0xe
+at the stall \(em DAT0 held low, which is how a card says it is
+programming.  So the sequence is: the card goes busy part way through
+a multi-block write, the controller drops
+.CW WRITE_TRANSFER_ACTIVE
+and its DREQ, and neither comes back when the card finishes.
+.PP
+.B "The next hypothesis, and why it is worth more than the last one."
+This Arasan is the block Linux wraps in a minimum delay between
+consecutive register writes \(em
+.CW sdhci-bcm2835.c
+carried a
+.CW writel
+that busy-waits so two writes cannot land closer than about 8 SD
+clocks.  That is a CPU-side workaround, and an external DMA engine
+writing
+.CW 0x7e300020
+knows nothing about it: it writes the data register back to back at
+bus speed with
+.CW WAITS
+zero in
+.CW ti 0xb0148 .
+A PIO loop is slower and stops at every block for
+.CW awaitirq ,
+which is why PIO has never shown this.
+.PP
+It is directly testable: the BCM2835 DMA
+.CW TI
+register has a
+.CW WAITS
+field, bits 21-25, that inserts wait cycles between transfers, and a
+.CW NO_WIDE_BURSTS
+bit at 26.  Both are one bit of configuration and neither has ever
+been set here.  Unlike the last hypothesis this one predicts the
+specific thing observed \(em a failure that appears only once enough
+writes have gone back to back, and only on the path with no
+per-block pause.
