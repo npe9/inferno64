@@ -267,11 +267,15 @@ idlehands(void)
 		 * from.
 		 */
 		/*
-		 * TEMPORARY: name the socket, twice a second, until
-		 * CONSUSART is known to be right.  The pin hunt that
-		 * was here has served its purpose.
+		 * TEMPORARY: both orientations of the click have now
+		 * been tried and neither gave a console, so stop
+		 * naming sockets and name pins instead.  Every pin of
+		 * every port, each saying which it is, once a second.
+		 * This time all five ports are clocked.
 		 */
 		otherusarts();
+		if(on)
+			bangallpins();
 	}
 	idle();
 }
