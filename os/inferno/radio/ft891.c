@@ -1,3 +1,14 @@
+/*
+ * The same file under emu and under a board kernel.  Only the
+ * headers differ, and only because emu's are named differently; the
+ * driver below is identical, which is the whole claim radio.h makes.
+ */
+#ifdef EMU
+#include	"dat.h"
+#include	"fns.h"
+#include	"error.h"
+#include	"radio.h"
+#else
 #include	"u.h"
 #include	"../port/lib.h"
 #include	"mem.h"
@@ -5,6 +16,7 @@
 #include	"fns.h"
 #include	"../port/error.h"
 #include	"radio.h"
+#endif
 
 /*
  * A Yaesu FT-891, or anything else that speaks Yaesu CAT, as a #W
@@ -56,7 +68,14 @@ enum {
 typedef struct Ft891 Ft891;
 struct Ft891
 {
-	Radio;
+	/*
+	 * Named, not anonymous.  Plan 9 C would let this be "Radio;"
+	 * and cc1120.c does exactly that, but this file is compiled by
+	 * the host's compiler for emu as well, and ISO C has no
+	 * anonymous member of a named type.  First, so that a Ft891*
+	 * is a Radio*, which is what #W holds.
+	 */
+	Radio	r;
 	Serialport *port;
 	uvlong	hz;
 	int	mode;			/* the manual's digit, as a char */
@@ -239,6 +258,14 @@ ft891ctl(Radio *r, char *buf, int n)
 		print("cat %s %s\n", fl[1], reply);
 		return n;
 	}
+	/*
+	 * Not a radio's verb.  A serial-attached radio sits on a port
+	 * that has settings of its own -- which device, what rate --
+	 * and those belong to the transport, not to the set.  If it
+	 * has a ctl, it gets the chance before this is an error.
+	 */
+	if(f->port->ctl != nil)
+		return f->port->ctl(f->port, buf, n);
 	error(Ebadctl);
 	return 0;
 }
@@ -343,7 +370,7 @@ ft891init(Serialport *p)
 	f = malloc(sizeof(Ft891));
 	if(f == nil)
 		return nil;
-	f->dev = &ft891dev;
+	f->r.dev = &ft891dev;
 	f->port = p;
 
 	/*

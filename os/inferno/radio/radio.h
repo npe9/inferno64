@@ -151,7 +151,16 @@ struct Serialport
 	int	(*read)(Serialport*, void*, int, int);	/* n, ms */
 	void	(*lock)(Serialport*);
 	void	(*unlock)(Serialport*);
+	/*
+	 * Optional.  Settings that belong to the line rather than to
+	 * the radio -- which device, what rate -- reach it here, after
+	 * the driver has failed to recognise them.  A radio does not
+	 * know what a serial port is and should not have to.
+	 */
+	int	(*ctl)(Serialport*, char*, int);
 };
+
+extern Radio* ft891init(Serialport*);
 
 struct Radiodev
 {

@@ -22,6 +22,9 @@ dev
 	eia
 	audio	audio-cocoa
 	mem
+# #W, a radio.  os/inferno/radio/ft891.c is the same driver the board
+# kernels use; ft891emu is the host serial port underneath it.
+	radio	ft891 ft891emu
 
 lib
 	interp
