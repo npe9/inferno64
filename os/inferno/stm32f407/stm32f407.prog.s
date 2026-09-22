@@ -27006,7 +27006,7 @@ DATA	_dis_lib_bufio_dis+168(SB)/4, $0xd29
 DATA	_dis_lib_bufio_dis+172(SB)/4, $0x30
 DATA	_dis_lib_bufio_dis+176(SB)/4, $0x34
 DATA	_dis_lib_bufio_dis+180(SB)/4, $0x1559d
-DATA	_dis_lib_bufio_dis+184(SB)/4, $0x1008
+DATA	_dis_lib_bufio_dis+184(SB)/4, $0x208
 DATA	_dis_lib_bufio_dis+188(SB)/4, $0x40034
 DATA	_dis_lib_bufio_dis+192(SB)/4, $0x152d
 DATA	_dis_lib_bufio_dis+196(SB)/4, $0x0
@@ -27081,7 +27081,7 @@ DATA	_dis_lib_bufio_dis+468(SB)/4, $0xd29
 DATA	_dis_lib_bufio_dis+472(SB)/4, $0x2c
 DATA	_dis_lib_bufio_dis+476(SB)/4, $0x30
 DATA	_dis_lib_bufio_dis+480(SB)/4, $0x1559d
-DATA	_dis_lib_bufio_dis+484(SB)/4, $0x1008
+DATA	_dis_lib_bufio_dis+484(SB)/4, $0x208
 DATA	_dis_lib_bufio_dis+488(SB)/4, $0x40030
 DATA	_dis_lib_bufio_dis+492(SB)/4, $0x152d
 DATA	_dis_lib_bufio_dis+496(SB)/4, $0x0
@@ -27129,7 +27129,7 @@ DATA	_dis_lib_bufio_dis+660(SB)/4, $0xd29
 DATA	_dis_lib_bufio_dis+664(SB)/4, $0x20
 DATA	_dis_lib_bufio_dis+668(SB)/4, $0x2c
 DATA	_dis_lib_bufio_dis+672(SB)/4, $0x1559d
-DATA	_dis_lib_bufio_dis+676(SB)/4, $0x1008
+DATA	_dis_lib_bufio_dis+676(SB)/4, $0x208
 DATA	_dis_lib_bufio_dis+680(SB)/4, $0x4002c
 DATA	_dis_lib_bufio_dis+684(SB)/4, $0x152d
 DATA	_dis_lib_bufio_dis+688(SB)/4, $0x0
@@ -27348,10 +27348,10 @@ DATA	_dis_lib_bufio_dis+1536(SB)/4, $0x24913d
 DATA	_dis_lib_bufio_dis+1540(SB)/4, $0x1
 DATA	_dis_lib_bufio_dis+1544(SB)/4, $0x30
 DATA	_dis_lib_bufio_dis+1548(SB)/4, $0x309262
-DATA	_dis_lib_bufio_dis+1552(SB)/4, $0x1000
+DATA	_dis_lib_bufio_dis+1552(SB)/4, $0x200
 DATA	_dis_lib_bufio_dis+1556(SB)/4, $_dis_lib_bufio_dis+1572(SB)
 DATA	_dis_lib_bufio_dis+1560(SB)/4, $0x112d
-DATA	_dis_lib_bufio_dis+1564(SB)/4, $0x1000
+DATA	_dis_lib_bufio_dis+1564(SB)/4, $0x200
 DATA	_dis_lib_bufio_dis+1568(SB)/4, $0x30
 DATA	_dis_lib_bufio_dis+1572(SB)/4, $0x4410b
 DATA	_dis_lib_bufio_dis+1576(SB)/4, $0x34
@@ -27467,11 +27467,11 @@ DATA	_dis_lib_bufio_dis+2012(SB)/4, $0x24
 DATA	_dis_lib_bufio_dis+2016(SB)/4, $0x92d
 DATA	_dis_lib_bufio_dis+2020(SB)/4, $0x24
 DATA	_dis_lib_bufio_dis+2024(SB)/4, $0x2c
-DATA	_dis_lib_bufio_dis+2028(SB)/4, $0x10004a60
+DATA	_dis_lib_bufio_dis+2028(SB)/4, $0x2004a60
 DATA	_dis_lib_bufio_dis+2032(SB)/4, $0x2c
 DATA	_dis_lib_bufio_dis+2036(SB)/4, $_dis_lib_bufio_dis+2052(SB)
 DATA	_dis_lib_bufio_dis+2040(SB)/4, $0x112d
-DATA	_dis_lib_bufio_dis+2044(SB)/4, $0x1000
+DATA	_dis_lib_bufio_dis+2044(SB)/4, $0x200
 DATA	_dis_lib_bufio_dis+2048(SB)/4, $0x24
 DATA	_dis_lib_bufio_dis+2052(SB)/4, $0x7410b
 DATA	_dis_lib_bufio_dis+2056(SB)/4, $0x34
@@ -27512,14 +27512,14 @@ DATA	_dis_lib_bufio_dis+2192(SB)/4, $_dis_lib_bufio_dis+2280(SB)
 DATA	_dis_lib_bufio_dis+2196(SB)/4, $0x152d
 DATA	_dis_lib_bufio_dis+2200(SB)/4, $0x1
 DATA	_dis_lib_bufio_dis+2204(SB)/4, $0x100020
-DATA	_dis_lib_bufio_dis+2208(SB)/4, $0x1000693a
+DATA	_dis_lib_bufio_dis+2208(SB)/4, $0x200693a
 DATA	_dis_lib_bufio_dis+2212(SB)/4, $0xc0020
 DATA	_dis_lib_bufio_dis+2216(SB)/4, $0x30
 DATA	_dis_lib_bufio_dis+2220(SB)/4, $0x2929
 DATA	_dis_lib_bufio_dis+2224(SB)/4, $0x40020
 DATA	_dis_lib_bufio_dis+2228(SB)/4, $0x34
 DATA	_dis_lib_bufio_dis+2232(SB)/4, $0x30916f
-DATA	_dis_lib_bufio_dis+2236(SB)/4, $0x1000
+DATA	_dis_lib_bufio_dis+2236(SB)/4, $0x200
 DATA	_dis_lib_bufio_dis+2240(SB)/4, $0x34
 DATA	_dis_lib_bufio_dis+2244(SB)/4, $0x4d70
 DATA	_dis_lib_bufio_dis+2248(SB)/4, $0x34
@@ -28766,7 +28766,7 @@ DATA	_dis_lib_bufio_dis+7208(SB)/4, $0x30
 DATA	_dis_lib_bufio_dis+7212(SB)/4, $0x309262
 DATA	_dis_lib_bufio_dis+7216(SB)/4, $0x0
 DATA	_dis_lib_bufio_dis+7220(SB)/4, $_dis_lib_bufio_dis+7512(SB)
-DATA	_dis_lib_bufio_dis+7224(SB)/4, $0x1000693d
+DATA	_dis_lib_bufio_dis+7224(SB)/4, $0x200693d
 DATA	_dis_lib_bufio_dis+7228(SB)/4, $0x80020
 DATA	_dis_lib_bufio_dis+7232(SB)/4, $0x2c
 DATA	_dis_lib_bufio_dis+7236(SB)/4, $0x308a60
@@ -28814,7 +28814,7 @@ DATA	_dis_lib_bufio_dis+7400(SB)/4, $0xc0020
 DATA	_dis_lib_bufio_dis+7404(SB)/4, $0x152d
 DATA	_dis_lib_bufio_dis+7408(SB)/4, $0x1
 DATA	_dis_lib_bufio_dis+7412(SB)/4, $0x100020
-DATA	_dis_lib_bufio_dis+7416(SB)/4, $0x10006a5e
+DATA	_dis_lib_bufio_dis+7416(SB)/4, $0x2006a5e
 DATA	_dis_lib_bufio_dis+7420(SB)/4, $0xc0020
 DATA	_dis_lib_bufio_dis+7424(SB)/4, $_dis_lib_bufio_dis+7212(SB)
 DATA	_dis_lib_bufio_dis+7428(SB)/4, $0x1105
@@ -28889,7 +28889,7 @@ DATA	_dis_lib_bufio_dis+7700(SB)/4, $0xc0020
 DATA	_dis_lib_bufio_dis+7704(SB)/4, $0x152d
 DATA	_dis_lib_bufio_dis+7708(SB)/4, $0x1
 DATA	_dis_lib_bufio_dis+7712(SB)/4, $0x100020
-DATA	_dis_lib_bufio_dis+7716(SB)/4, $0x10006a5f
+DATA	_dis_lib_bufio_dis+7716(SB)/4, $0x2006a5f
 DATA	_dis_lib_bufio_dis+7720(SB)/4, $0xc0020
 DATA	_dis_lib_bufio_dis+7724(SB)/4, $_dis_lib_bufio_dis+7848(SB)
 DATA	_dis_lib_bufio_dis+7728(SB)/4, $0x30ea5e
@@ -29000,7 +29000,7 @@ DATA	_dis_lib_bufio_dis+8144(SB)/4, $0xc0020
 DATA	_dis_lib_bufio_dis+8148(SB)/4, $0x152d
 DATA	_dis_lib_bufio_dis+8152(SB)/4, $0x1
 DATA	_dis_lib_bufio_dis+8156(SB)/4, $0x100020
-DATA	_dis_lib_bufio_dis+8160(SB)/4, $0x10006a5f
+DATA	_dis_lib_bufio_dis+8160(SB)/4, $0x2006a5f
 DATA	_dis_lib_bufio_dis+8164(SB)/4, $0xc0020
 DATA	_dis_lib_bufio_dis+8168(SB)/4, $_dis_lib_bufio_dis+8256(SB)
 DATA	_dis_lib_bufio_dis+8172(SB)/4, $0x1105
@@ -29118,7 +29118,7 @@ DATA	_dis_lib_bufio_dis+8616(SB)/4, $0x93a
 DATA	_dis_lib_bufio_dis+8620(SB)/4, $0x2c
 DATA	_dis_lib_bufio_dis+8624(SB)/4, $0x28
 DATA	_dis_lib_bufio_dis+8628(SB)/4, $0x289261
-DATA	_dis_lib_bufio_dis+8632(SB)/4, $0x1000
+DATA	_dis_lib_bufio_dis+8632(SB)/4, $0x200
 DATA	_dis_lib_bufio_dis+8636(SB)/4, $_dis_lib_bufio_dis+8784(SB)
 DATA	_dis_lib_bufio_dis+8640(SB)/4, $0xd2d
 DATA	_dis_lib_bufio_dis+8644(SB)/4, $0x28

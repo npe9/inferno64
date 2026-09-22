@@ -19,7 +19,15 @@ SYS_MODULE=${SYSMODULES:%=$MODDIR/%}
 #	-- 20/25 boots, identical address every time). See doc/inferno-
 #	ports.ms.
 #
-LIMBOFLAGS=-I$MODDIR -W $DISWORD -z
+#
+#	-I$MODDIR/w$DISWORD first, so a module can have a constant that
+#	differs between the two Dis word sizes the way libinterp/w4 and
+#	libinterp/w8 hold the generated tables for each.  A Dis word
+#	follows the size of a pointer, so in this tree DISWORD=4 means a
+#	board and DISWORD=8 means a machine; bufio's buffer is sized from
+#	that (module/w4/bufsize.m and module/w8/bufsize.m).
+#
+LIMBOFLAGS=-I$MODDIR/w$DISWORD -I$MODDIR -W $DISWORD -z
 
 #
 #	A module compiled for one Dis word size is not the module for the
