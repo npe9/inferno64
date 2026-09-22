@@ -192,21 +192,8 @@ archreset(void)
 		m->cpuhz = hz;
 	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | UARTGPIOEN);
 	wr(UARTAPBENR, rd(UARTAPBENR) | UARTAPBBIT);
-	/* TEMPORARY, for otherusarts(): ports A and D, USART2/3 and UART4 */
-	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | Ahb1Gpioa | Ahb1Gpiob |
-		Ahb1Gpioc | Ahb1Gpiod | Ahb1Gpioe);
-	wr(RCC_APB1ENR, rd(RCC_APB1ENR) | Apb1Usart2 | Apb1Usart3 | Apb1Uart4);
 	coherence();
 	uartboardinit();
-	/*
-	 * TEMPORARY, with the LEDs above: say the same thing on every
-	 * USART a clicker 2 brings out, because which socket the USB
-	 * UART click is in is not knowable from here.  mikroBUS 1 is
-	 * USART2 on PD5/PD6, mikroBUS 2 is USART3 on PD8/PD9, and the
-	 * 2x26 pad is UART4 on PA0/PA1.  Whichever shows the line is
-	 * the one CONSUSART should name.
-	 */
-	otherusarts();
 	ledpin(15, 1);				/* TEMPORARY: console is up;
 						 * idlehands() blinks it from
 						 * here on */
@@ -266,11 +253,12 @@ idlehands(void)
 		 * from.
 		 */
 		/*
-		 * TEMPORARY: find the pin the click is on, then say
-		 * which it is on the LEDs, over and over.
+		 * The blink stays: it is what proved this kernel runs
+		 * on the part at all, and it costs two instructions a
+		 * tick.  The pin hunt that was here is gone -- it made
+		 * every pin an input, which would take the console's
+		 * own pins away from the USART.
 		 */
-		findmovingpin();
-		reportmovingpin();
 	}
 	idle();
 }
