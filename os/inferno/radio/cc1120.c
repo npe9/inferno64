@@ -44,6 +44,9 @@ enum {
 	Ragccfg0	= 0x1d,
 	  Agccfg0init	= 0xcf,		/* reset 0xc3, RSSI_VALID_CNT 9 */
 	Ragcgainadjust	= 0x19,		/* the RSSI offset */
+	Rpktcfg2	= 0x26,
+	  Fmtnormal	= 0x04,		/* CCA_MODE 001, PKT_FORMAT 00 */
+	  Fmtrandom	= 0x06,		/* PKT_FORMAT 10: random data, TX only */
 	Rpktcfg0	= 0x28,
 	  Lenfixed	= 0x00,		/* PKT_CFG0.LENGTH_CONFIG = 00 */
 	  Lenvariable	= 0x20,		/* PKT_CFG0.LENGTH_CONFIG = 01 */
@@ -642,7 +645,7 @@ cc1120ctl(Radio *r, char *buf, int n)
 	Spidev *s;
 	char *f[5], cbuf[64];
 	uvlong hz;
-	int nf;
+	int nf, i;
 
 	rr = (Cc1120*)r;
 	if(n >= sizeof cbuf)
@@ -708,6 +711,63 @@ cc1120ctl(Radio *r, char *buf, int n)
 
 			dwell1(rr, "scan", dwell);
 		}
+		return n;
+	}
+	if(strcmp(f[0], "carrier") == 0 && nf == 2){
+		/*
+		 * Transmit continuously, or stop.
+		 *
+		 * PKT_CFG2.PKT_FORMAT = 10 is the part's random mode: in
+		 * TX it modulates pseudo-random data for as long as it
+		 * is in TX and never looks at the FIFO, so there is
+		 * nothing to run out of and nothing to underflow.  That
+		 * makes it the one test that separates "this driver
+		 * cannot build a packet" from "nothing leaves this
+		 * chip": a carrier either appears on an instrument or it
+		 * does not, and no part of the packet engine is involved
+		 * in the answer.
+		 *
+		 * It occupies the channel for as long as it is left on,
+		 * which is why it is a command and not a mode anything
+		 * enters by itself.
+		 */
+		s->lock(s);
+		if(strcmp(f[1], "on") == 0){
+			strobe(rr, Sidle);
+			for(i = 0; i < Idlewaitus; i++)
+				if(state(rr) == Stidle)
+					break;
+			wr(rr, Rpktcfg2, Fmtrandom);
+			/*
+			 * "Set TXLAST != TXFIRST before strobing STX"
+			 * (SWRU295E, PKT_CFG2.PKT_FORMAT): the random
+			 * generator feeds the modulator, but the part
+			 * still wants the FIFO to be non-empty before
+			 * it will leave IDLE.  One byte is enough and
+			 * none of it goes on the air.
+			 */
+			strobe(rr, Sftx);
+			s->select(s, 1);
+			s->byte(s, Rfifo | Hburst);
+			s->byte(s, 0x55);
+			s->select(s, 0);
+			strobe(rr, Stx);
+		}else if(strcmp(f[1], "off") == 0){
+			strobe(rr, Sidle);
+			for(i = 0; i < Idlewaitus; i++)
+				if(state(rr) == Stidle)
+					break;
+			wr(rr, Rpktcfg2, Fmtnormal);
+			strobe(rr, Sfrx);
+			strobe(rr, Sftx);
+			strobe(rr, Srx);
+		}else{
+			s->unlock(s);
+			error(Ebadctl);
+		}
+		i = state(rr) >> 4;
+		s->unlock(s);
+		print("carrier %s state %d\n", f[1], i);
 		return n;
 	}
 	if(strcmp(f[0], "reg") == 0 || strcmp(f[0], "regx") == 0){
