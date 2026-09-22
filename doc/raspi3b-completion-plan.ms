@@ -7868,3 +7868,20 @@ suite clean.  The cause is open.
 .CW tools/jtag/boot.sh
 works around it by retrying and by proving which kernel is running,
 which is enough to keep working, and is not a fix.
+.PP
+.B "What is proven and what is owed."
+Proven on the board: the mechanism, by the two-second watch above \(em
+the transfer completes at 247ms on a path the old code abandoned at
+roughly 100ms.  Proven on the committed tree: the clock-based wait
+does not disturb what already worked, with the full suite passing and
+2000 blocks written and read back by SDHOST DMA and byte-compared
+while a second process read 8MB.  Owed: the same 4608-byte
+.I dossrv
+write that used to stall, run to completion with
+.CW "emmc dma 1"
+on an Arasan kernel.  That needs the card routed to the Arasan, which
+needs a JTAG boot, and four warm entries in a row came up hung or
+garbled \(em the open item below.  The fix is a strictly longer wait
+on the same code path the watch instrumented, so the claim here is
+"measured cause, fix follows, end-to-end demonstration outstanding",
+not "fixed".
