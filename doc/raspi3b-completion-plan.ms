@@ -7531,3 +7531,51 @@ because
 .CW %.2ux
 showed two hex digits of each while the comparison held a byte from
 the card against a full 64-bit number.  Mask, do not cast.
+.NH 2
+The word read loop had no retry, because it had never run
+.PP
+The first sustained test with the card on four lines failed:
+.P1
+sdhost: read block 39811 failed: sdhsts 0x0 sdcmd 0x51
+    sdedm 0x10801 (fsm 1 fill 0) sdhbct 6 sdhblc 1 sdhcfg 0x41e
+sdhost:   card rsp 0x900 (state 4, ready for data)
+FAT-BIG-FAIL read at 0: mount rpc error
+.P2
+.CW "sdhbct 6"
+is six bytes short of the block, with the FSM back in DATAMODE, the
+FIFO empty, no error bit and the card idle in TRAN \(em exactly the
+condition the bounded retry was written for, and exactly the condition
+that had been re-issuing commands successfully for weeks.
+.PP
+It was in the
+.I byte
+read loop only.  The word loop called
+.CW bioerror
+and gave up, and nobody noticed, because until the bus width was set
+that loop was never the one taken on real silicon: every transfer on
+this board went down the byte path.  Putting the card on four lines
+moved all of them to a path that could not recover, and the first
+1.5MB transfer found it.  The write loop's 20000-try give-up had the
+same hole.  Both now retry the same way, and the retry rewinds
+.CW p
+\(em see the stack overrun above, which is the bug that rewind fixes.
+.PP
+.B "And a census, because a failure report has to distinguish two cases."
+.CW "retried N gaveup M"
+in
+.CW /dev/sdN0/ctl
+and in every failure print.  Without it a report cannot tell "the
+retry never fired" from "it fired four times and the block still
+would not come", and those want opposite fixes \(em which is precisely
+the mistake that let this sit: the failure above looks identical to a
+retry that ran out.
+.PP
+.B "What it survives now."
+The kernel booted from the card with no debugger and ran the whole
+suite, then 3000 blocks written and verified in PIO and 4000 in DMA
+both ways \(em 2MB each way \(em each while a second process read 16MB
+from the raw device concurrently.  No failures, and
+.CW FAT-BIG-OK
+at 24-25 KB/s.  The intermittent read stall that started this has not
+recurred; the honest statement is that it is now recovered from, not
+that it is understood.

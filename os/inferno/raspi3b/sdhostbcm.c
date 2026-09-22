@@ -246,6 +246,14 @@ sdhostclock(volatile u32 *r, ulong fclk, ulong want)
  * Extra SDHCFG bits held across every write of that register: the
  * bus-width bits, set from ctl.  See sdhostreset().
  */
+/*
+ * How many blocks the retry below has had to re-issue, and how many
+ * were abandoned after Maxretry attempts.  A failure report that does
+ * not say this cannot tell "the retry never fired" from "it fired four
+ * times and the block still would not come", and those want opposite
+ * fixes.
+ */
+static ulong sdhostretried, sdhostgaveup;
 static u32 sdhostcfg = 0;
 /*
  * Four data lines, and the two SDHCFG bits that go with them.
@@ -804,6 +812,8 @@ bioerror(Ctlr *c, int write, uvlong bno, u32 sts)
 	print("sdhost:   card rsp %#lux (state %lud%s)\n",
 		(ulong)c->r[SDRSP0], (ulong)((c->r[SDRSP0] >> 9) & 0xf),
 		(c->r[SDRSP0] & (1<<8))? ", ready for data": "");
+	print("sdhost:   retried %lud blocks, gave up on %lud\n",
+		sdhostretried, sdhostgaveup);
 }
 
 static long
@@ -1025,6 +1035,16 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					burst = j;
 				if(words < burst){
 					if(++tries > 20000){
+						if((r[SDHSTS] & Hstserror) == 0 &&
+						    (r[SDEDM] & Edmfsmmask) == Fsmdata &&
+						    retries-- > 0){
+							sdhostretried++;
+							r[SDHSTS] = Hstsclear;
+							p = pblk;
+							i--;
+							goto again;
+						}
+						sdhostgaveup++;
 						bioerror(c, write, bno+i,
 							r[SDHSTS]);
 						goto out;
@@ -1083,12 +1103,15 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					 * substitute for knowing why.
 					 */
 					if((r[SDHSTS] & Hstserror) == 0 &&
-					    (r[SDEDM] & Edmfsmmask) == Fsmdata &&
-					    retries-- > 0){
-						r[SDHSTS] = Hstsclear;
-						p = pblk;
-						i--;
-						goto again;
+					    (r[SDEDM] & Edmfsmmask) == Fsmdata){
+						if(retries-- > 0){
+							sdhostretried++;
+							r[SDHSTS] = Hstsclear;
+							p = pblk;
+							i--;
+							goto again;
+						}
+						sdhostgaveup++;
 					}
 					bioerror(c, write, bno+i, r[SDHSTS]);
 					goto out;
@@ -1098,6 +1121,38 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		}else{
 			for(j = 0; j < Secsize; j += 4){
 				if(!fifodata(r)){	/* wait for a word */
+					/*
+					 * The same bounded retry the byte
+					 * loop has had all along, and it
+					 * was missing here.
+					 *
+					 * That went unnoticed because
+					 * until the card was put on four
+					 * lines this loop was never the
+					 * one taken -- every transfer on
+					 * real silicon went down the byte
+					 * path.  The first sustained test
+					 * in word mode found it at once:
+					 * a 1.5MB write stalled on a read
+					 * of block 39811 with sdhbct 6,
+					 * six bytes short of the block,
+					 * the FSM back in DATAMODE and
+					 * the card idle in TRAN -- a
+					 * stall the byte loop would have
+					 * re-issued and this one gave up
+					 * on.
+					 */
+					if((r[SDHSTS] & Hstserror) == 0 &&
+					    (r[SDEDM] & Edmfsmmask) == Fsmdata){
+						if(retries-- > 0){
+							sdhostretried++;
+							r[SDHSTS] = Hstsclear;
+							p = pblk;
+							i--;
+							goto again;
+						}
+						sdhostgaveup++;
+					}
 					bioerror(c, write, bno+i, r[SDHSTS]);
 					goto out;
 				}
@@ -1140,7 +1195,8 @@ sdhostrctl(SDunit *u, char *p, char *e)
 	p = seprint(p, e, "sdhost rca %#ux %s sectors %llud coreclock %lud cdiv %lud\n",
 		c->rca, c->byteaddr? "byteaddr": "blockaddr", c->sectors,
 		c->fclk, (ulong)r[SDCDIV]);
-	p = seprint(p, e, "sdhost dma %d dreq %d\n", sdhostdma, Sdhostdreq);
+	p = seprint(p, e, "sdhost dma %d dreq %d retried %lud gaveup %lud\n",
+		sdhostdma, Sdhostdreq, sdhostretried, sdhostgaveup);
 	p = seprint(p, e, "sdhost sdcmd %#lux sdhsts %#lux sdedm %#lux sdhcfg %#lux errors %d\n",
 		(ulong)r[SDCMD], (ulong)r[SDHSTS], (ulong)r[SDEDM],
 		(ulong)r[SDHCFG], c->errors);
