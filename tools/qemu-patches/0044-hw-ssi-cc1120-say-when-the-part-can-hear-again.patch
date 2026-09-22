@@ -1,0 +1,61 @@
+From d365182a7f47c0b64e395891e8794213b8bff62b Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Tue, 22 Sep 2026 08:18:42 -0400
+Subject: [PATCH] hw/ssi/cc1120: say when the part can hear again
+
+can_receive() refuses a packet unless the part is in RX with its FIFO
+drained, and a queue that has been refused stays stopped until it is
+flushed -- it is not polled again.  So the first packet a station was
+not ready for was the last one it would ever see.
+
+Flushed on SRX, on SFRX, and when the last byte is read out of the RX
+FIFO, which are the three moments room appears.  The same fault and the
+same fix as tools/qemu-patches/0037 for the SX1276; this model
+inherited the shape and the bug with it.
+
+Signed-off-by: Noah Evans <noah.evans@gmail.com>
+---
+ hw/ssi/cc1120.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/hw/ssi/cc1120.c b/hw/ssi/cc1120.c
+index 05db8d2..de28c58 100644
+--- a/hw/ssi/cc1120.c
++++ b/hw/ssi/cc1120.c
+@@ -256,6 +256,14 @@ static void cc1120_strobe(CC1120State *s, uint8_t cmd)
+         break;
+     case SRX:
+         s->state = ST_RX;
++        /*
++         * The part can hear again, so the peer's queue has to be told.
++         * can_receive() said no while this was not RX, and a queue
++         * that has been refused stays stopped until it is flushed --
++         * it is not polled.  Without this the first packet a station
++         * misses is the last one it ever sees.
++         */
++        qemu_flush_queued_packets(qemu_get_queue(s->nic));
+         break;
+     case STX:
+         cc1120_transmit(s);
+@@ -272,6 +280,7 @@ static void cc1120_strobe(CC1120State *s, uint8_t cmd)
+             s->state = ST_IDLE;
+         }
+         cc1120_update_counts(s);
++        qemu_flush_queued_packets(qemu_get_queue(s->nic));
+         break;
+     case SFTX:
+         s->txlen = 0;
+@@ -299,7 +308,12 @@ static uint8_t cc1120_read_reg(CC1120State *s)
+ {
+     if (s->addr == A_FIFO) {
+         if (s->rxpos < s->rxlen) {
+-            return s->rxfifo[s->rxpos++];
++            uint8_t v = s->rxfifo[s->rxpos++];
++            if (s->rxpos >= s->rxlen) {
++                /* drained: there is room for another packet now */
++                qemu_flush_queued_packets(qemu_get_queue(s->nic));
++            }
++            return v;
+         }
+         s->state = ST_RXERR;    /* reading an empty RX FIFO underflows */
+         return 0;
