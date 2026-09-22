@@ -185,30 +185,16 @@ archreset(void)
 
 	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | Ahb1Gpioe);
 	coherence();
-	ledpin(12, 1);				/* TEMPORARY: reached main */
+	ledpin(12, 1);				/* LD1: the kernel is running */
 
 	hz = setclock();
 	if(m != nil)
 		m->cpuhz = hz;
-	/*
-	 * TEMPORARY: every GPIO port, not just the console's.  The pin
-	 * hunt in uartstm32f4.c reads all five, and a port whose clock
-	 * is off reads zero for ever -- which it cannot tell from a pin
-	 * that nothing is driving.  That is exactly what happened when
-	 * the banner code that used to enable these went away with the
-	 * move to USART1: the hunt then covered ports A and E and
-	 * reported, correctly for what it could see, that nothing moved.
-	 */
-	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | UARTGPIOEN | Ahb1Gpioa |
-		Ahb1Gpiob | Ahb1Gpioc | Ahb1Gpiod | Ahb1Gpioe);
+	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | UARTGPIOEN);
 	wr(UARTAPBENR, rd(UARTAPBENR) | UARTAPBBIT);
 	coherence();
-	/* TEMPORARY, for otherusarts(): USART2, USART3 and UART4 */
-	wr(RCC_APB1ENR, rd(RCC_APB1ENR) | Apb1Usart2 | Apb1Usart3 | Apb1Uart4);
-	coherence();
 	uartboardinit();
-	otherusarts();
-	ledpin(15, 1);				/* TEMPORARY: console is up;
+	ledpin(15, 1);				/* LD2: the console is up;
 						 * idlehands() blinks it from
 						 * here on */
 }
@@ -255,44 +241,6 @@ idlehands(void)
 		last = m->ticks/50;
 		on = !on;
 		ledpin(15, on);
-		/*
-		/*
-		 * TEMPORARY: both orientations of the click have now
-		 * been tried and neither gave a console, so stop
-		 * naming sockets and name pins instead.  Every pin of
-		 * every port, each saying which it is, once a second.
-		 * This time all five ports are clocked.
-		 */
-		otherusarts();
-		if(on)
-			bangallpins();
-	}
-
-	/*
-	 * TEMPORARY, and it checks the checker.  Every bit-banged
-	 * result so far rests on fastticks(), which has never been
-	 * verified on this part: if bitdelay() returns at once the bit
-	 * rate is megahertz, which is above every rate those sweeps
-	 * were listened for, and "drove every pin and heard nothing"
-	 * would mean nothing at all.  m->ticks is known good -- it is
-	 * what the blink above runs on, and the blink is right.  So
-	 * drive LD1 from fastticks at the same half second and compare
-	 * the two by eye: in step means fastticks can be trusted, and
-	 * anything else means none of those sweeps counted.
-	 */
-	if(m != nil){
-		static uvlong next;
-		static int fon;
-		uvlong hz, now;
-
-		now = fastticks(&hz);
-		if(next == 0)
-			next = now + hz/2;
-		if(now >= next){
-			next = now + hz/2;
-			fon = !fon;
-			ledpin(12, fon);
-		}
 	}
 	idle();
 }
