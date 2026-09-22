@@ -143,6 +143,12 @@ def onesweep(fd):
 
 
 def sweep(fd, start, stop):
+    # A tinySA ULTRA's low path stops at 800MHz and anything above it
+    # needs ultra mode.  With it off the high end is not missing, it is
+    # twenty-odd decibels down, which reads as a weak signal rather
+    # than as an instrument that cannot see.  See the README.
+    if stop > 800000000:
+        cmd(fd, "ultra on")
     cmd(fd, "sweep %d %d" % (start, stop))
     onesweep(fd)
     freqs = numbers(fd, "frequencies")

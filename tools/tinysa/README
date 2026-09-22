@@ -163,3 +163,37 @@ the two questions a sweep cannot answer -- how long, and how often --
 and for watching a frequency while something known is transmitted into
 it.  Note its duty: serial round trips mean it is actually listening
 for about three percent of the wall clock.
+
+Ultra mode, and an hour spent measuring with the lid on
+--------------------------------------------------------
+
+A tinySA ULTRA's low path stops at 800MHz.  Above that it needs
+"ultra" mode, and if that is off, everything higher is received badly
+or not at all -- not absent, which would be obvious, but attenuated by
+twenty-odd decibels, which looks exactly like a weak signal.
+
+That was not checked here until an hour of measurements had been built
+on it.  The CC1120 under test transmits at 868MHz.  With ultra off:
+
+	866-870MHz   floor -92    nothing above -84
+	600-1000MHz  strongest thing on the air: 767.7MHz at -33
+
+With "ultra on", the same board in the same state:
+
+	866-870MHz   peak -34.9 at 868.00445MHz, 69dB over the floor
+	600-1000MHz  868.151 at -34.9; the 767MHz spurs 23dB down
+
+The 767.7MHz emission was real -- it is 24 times the part's 32MHz
+crystal, radiated by an enabled amplifier -- and it is below 800MHz,
+so it was the one thing being measured properly.  Being the only
+honest number in the sweep made it look like the whole story, and a
+chain of reasoning was built on its back: that the synthesiser was
+unlocked, that the amplifier was oscillating, that the output ignored
+the frequency register.  All of it followed from an instrument that
+was not measuring the band in question.
+
+tinysa.py now sets "ultra on" before any sweep that reaches past
+800MHz.  The rule the episode is worth: an instrument brought in to
+check another instrument has settings of its own, and the first thing
+to establish about any measurement is whether the thing making it was
+able to see what was being measured.
