@@ -1,0 +1,66 @@
+A tinySA, as a second opinion
+=============================
+
+tinysa.py reads a tinySA over its USB serial line.  It is here for one
+reason: os/inferno/radio/cc1120.c and the qemu model it was developed
+against were written by the same hand, and a receiver reporting its
+own signal strength is a board agreeing with itself.  A tinySA is an
+instrument somebody else built, with its own front end, its own
+calibration and its own reasons to be wrong.
+
+	tools/tinysa/tinysa.py sweep 868000000 928000000 >tsa.txt
+	tools/tinysa/tinysa.py cmd version rbw attenuate
+
+and on the board, with the same band:
+
+	; echo scan >/dev/radio0/ctl
+
+Both are frequency-and-level, so the comparison is awk(1).  The two do
+not measure the same thing and are not expected to agree in absolute
+terms: a tinySA ULTRA at 100kHz resolution bandwidth and no input
+attenuation is a calibrated receiver, while the CC1120's RSSI is its
+own AGC's estimate with the manufacturer's reference offset applied
+and no calibration of this board at all (see the RSSI offset note in
+os/inferno/radio/cc1120.c).  What is worth comparing is where the
+energy is, not how much of it there is.
+
+What was measured, 22 September 2026
+------------------------------------
+
+The tinySA was on the bus for about a minute before it dropped off it,
+which is long enough for its settings, its frequency axis and one
+sweep, and not long enough for the repeat that would have made it
+evidence.  What it gave:
+
+	tinySA4, firmware tinySA4_v1.4-141-gf753dbf, HW V0.4.5.1.1
+	rbw 100kHz, attenuate 0, sweeptime 1.153s
+	450 points from 868.000 to 928.000MHz
+
+The first twenty of those 450 points:
+
+	868.000  -97.6      869.337  -85.0
+	868.134  -74.1      869.470  -99.0
+	868.267  -75.6      869.604  -90.5
+	868.401  -71.5      869.738  -82.0
+	868.535  -71.5      869.871  -80.5
+	868.668  -72.5      870.005  -98.0
+	868.802  -77.5      870.139  -82.5
+	868.936  -89.5      870.272  -96.5
+	869.069  -90.5      870.406  -85.5
+	869.203  -94.5      870.539  -81.0
+
+A plateau from 868.13 to 868.80MHz at -71 to -77dBm, fifteen to
+twenty-five decibels above the bins on either side of it.  That is the
+European SRD band, 868.0 to 868.6MHz, with something in it.
+
+The board's own sweeps, taken minutes earlier, read their highest
+value of all 61 steps at 868.000MHz in both runs: -101dBm in the
+first, -105 in the second, against a median of -110 and -111.  Two
+receivers, one of them not ours, putting the loudest thing in the band
+in the same place.
+
+That is corroboration and it is not a measurement.  One tinySA sweep
+is one sweep; the tree's own rule is that a single sample is not
+evidence, and it applies to the reference instrument as much as to the
+board.  The comparison to make when the tinySA is on the bus again is
+several sweeps of each, at the same time, with the same band.
