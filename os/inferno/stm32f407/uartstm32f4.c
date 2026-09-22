@@ -532,12 +532,37 @@ stm32f4_kick(Uart *uart)
 	Ctlr *c;
 	int i;
 
+	/*
+	 * Drain everything staged, waiting for room rather than giving
+	 * up when there is none.
+	 *
+	 * This used to break out of the loop the moment TXE was clear,
+	 * which puts one byte in the register and abandons the rest --
+	 * and nothing ever comes back for them, because this driver
+	 * enables no transmit interrupt.  While serialoq is nil that
+	 * does not show: putstrn0() in os/inferno/port/devcons.c sends
+	 * straight to uartputs().  devuart.c sets serialoq as soon as a
+	 * uart is enabled as the console, and from that line on every
+	 * print goes through the queue and through here.
+	 *
+	 * On os/inferno/stm32f407 the console stopped after exactly 408
+	 * bytes, four into "Inferno Fourth Edition", on every boot --
+	 * while the kernel carried on and reached the scheduler, which
+	 * is what the blinking LED was saying all along.  It looked for
+	 * hours like a board that had stopped, and it was a board
+	 * talking into a queue nothing emptied.
+	 *
+	 * A bounded spin per byte and not TXEIE: 87us a byte at 115200,
+	 * so a full console line is some seven milliseconds inside a
+	 * qwrite from a process.  A transmit interrupt would be better
+	 * and is more machinery than a board with one serial line and
+	 * five processes needs.
+	 */
 	c = uart->regs;
-	for(i = 0; i < 128; i++){
-		if(!(csrr(c, UartSr) & UartTxe))
-			break;
-		if(uart->op >= uart->oe && uartstageoutput(uart) == 0)
-			break;
+	while(uart->op < uart->oe || uartstageoutput(uart) != 0){
+		for(i = 0; i < 100000; i++)
+			if(csrr(c, UartSr) & UartTxe)
+				break;
 		csrw(c, UartDr, *uart->op++);
 	}
 }
