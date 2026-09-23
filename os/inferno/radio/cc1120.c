@@ -1691,7 +1691,7 @@ cc1120ctl(Radio *r, char *buf, int n)
 		ulong ms, us, hi, lo, nb, nsamp, nsper;
 		ulong run, bmin, bmax, gmin, gmax;
 		int floor, peak, r0, r1, thr, oldthr, oldsel;
-		int cur, first, oldagc, weak;
+		int cur, first, weak;
 
 		if(s->gpio == nil)
 			error("radio: this board does not wire the part's GPIO");
@@ -1700,38 +1700,38 @@ cc1120ctl(Radio *r, char *buf, int n)
 		if(ms < 10 || ms > 2000)
 			error(Ebadctl);
 		/*
-		 * RSSI_VALID_CNT down to two estimates for the
-		 * measurement, which is what decides the finest event
-		 * this can see.  Carrier sense cannot assert for less
-		 * than one RSSI update, an update is that many
-		 * estimates, and an estimate is 0.309ms on this board
-		 * -- so nine estimates, which is what this driver runs
-		 * for a steady level reading, puts a floor of 2.8ms
-		 * under every burst and every gap reported here.  It
-		 * showed: a sweep of five channels came back with a
-		 * shortest burst of 2.88 to 2.91ms on every one of
-		 * them, which is not five transmitters agreeing, it is
-		 * the receiver.  At two estimates the floor is 0.62ms.
+		 * AGC_CFG0 is not touched, and this is a retreat.
 		 *
-		 * From IDLE, because AGC_CFG0 written during receive
-		 * leaves the AGC somewhere the RSSI does not come back
-		 * from, and put back the same way afterwards.
+		 * Dropping RSSI_VALID_CNT to two estimates takes the
+		 * finest event this can see from 2.8ms to 0.62ms, which
+		 * is worth having, and at 868MHz it worked.  Outside
+		 * that band it does not: the first measurement at
+		 * 446MHz came back with a floor of -128, which is the
+		 * part's "not valid" value, and the next with a peak of
+		 * +127, which is 0x7f and not a level -- while watch,
+		 * which never writes this register, read the same
+		 * frequency as a clean -123dBm floor in the same minute.
+		 * Writing it after the tune rather than before did not
+		 * help.
+		 *
+		 * That is the third time this register has produced
+		 * nonsense here, and a measurement that silently reports
+		 * +127dBm is worse than one with a coarse floor.  So
+		 * this leaves it alone, and the shortest event it
+		 * resolves is however many RSSI updates AGC_CFG0
+		 * happens to be set to.  Set it by hand, from IDLE, if
+		 * the finer floor is wanted:
+		 *
+		 *	idle
+		 *	reg 0x1d 0xc3
+		 *	freq 868000000
+		 *	probe 868000000 2000
 		 */
 		s->lock(s);
-		strobe(rr, Sidle);
-		for(i = 0; i < Idlewaitus; i++)
-			if(state(rr) == Stidle)
-				break;
-		oldagc = rd(rr, Ragccfg0);
-		wr(rr, Ragccfg0, oldagc & ~0x0c);
 		i = setfreq(rr, hz);
 		s->unlock(s);
-		if(i < 0){
-			s->lock(s);
-			wr(rr, Ragccfg0, oldagc);
-			s->unlock(s);
+		if(i < 0)
 			error("radio: outside this part's bands");
-		}
 
 		/*
 		 * What the channel sounds like before anything is
@@ -1836,12 +1836,6 @@ cc1120ctl(Radio *r, char *buf, int n)
 		s->lock(s);
 		wr(rr, Riocfg3, oldsel);
 		wr(rr, Ragccsthr, oldthr & 0xff);
-		strobe(rr, Sidle);
-		for(i = 0; i < Idlewaitus; i++)
-			if(state(rr) == Stidle)
-				break;
-		wr(rr, Ragccfg0, oldagc);
-		setfreq(rr, rr->hz);		/* and back to listening */
 		s->unlock(s);
 		if(s->irq != nil)
 			s->irq(s, 1);
