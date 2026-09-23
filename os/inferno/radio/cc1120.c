@@ -43,6 +43,10 @@ enum {
 	Rdcfiltcfg	= 0x0c,
 	Riqic		= 0x10,
 	Rchanbw		= 0x11,
+	Rdrate2		= 0x14,		/* DRATE_E in 7:4, DRATE_M's top 4 in 3:0 */
+	Rdrate1		= 0x15,
+	Rdrate0		= 0x16,
+	  Fxosc		= 32000000,	/* the crystal these boards fit */
 	Rmdmcfg0	= 0x13,
 	Ragcref		= 0x17,
 	Ragccfg1	= 0x1c,
@@ -723,6 +727,31 @@ static struct {
 	{ 164000000ULL, 192000000ULL, 0xa, 20 },
 	{ 136700000ULL, 160000000ULL, 0xb, 24 },
 };
+
+/*
+ * The symbol rate the part is actually set to, from its own
+ * registers, by SWRU295E's formula:
+ *
+ *	R = (2^20 + DRATE_M) * 2^DRATE_E * fxosc / 2^39
+ *
+ * Read rather than remembered.  What is in these registers at boot is
+ * TI's easy-link table and not anything this driver chose, and a
+ * driver that reports the rate it meant to set is the same mistake as
+ * one that reports the register it meant to write.
+ */
+static ulong
+readrate(Cc1120 *rr)
+{
+	uvlong x;
+	int e;
+
+	e = rd(rr, Rdrate2);
+	x = ((uvlong)(e & 0xf) << 16) | (rd(rr, Rdrate1) << 8) | rd(rr, Rdrate0);
+	e >>= 4;
+	x = ((x + (1UL<<20)) << e);
+	/* rounded, not truncated: 38400 set reads back 38399 otherwise */
+	return (ulong)(((x * Fxosc) + (1ULL<<38)) >> 39);
+}
 
 static int
 setfreq(Cc1120 *rr, uvlong hz)
@@ -1513,6 +1542,59 @@ cc1120ctl(Radio *r, char *buf, int n)
 			s->irq(s, 1);
 		return n;
 	}
+	if(strcmp(f[0], "rate") == 0 && nf == 2){
+		/*
+		 * The symbol rate, in symbols a second.
+		 *
+		 * SWRU295E gives it as
+		 *
+		 *	R = (2^20 + DRATE_M) * 2^DRATE_E * fxosc / 2^39
+		 *
+		 * with DRATE_M twenty bits across DRATE2[3:0], DRATE1
+		 * and DRATE0, and DRATE_E four bits in DRATE2[7:4].
+		 * Inverting it: X = R * 2^39 / fxosc, then the exponent
+		 * is whatever shift brings X into [2^20, 2^21) and the
+		 * mantissa is what is left over.
+		 *
+		 * This driver has never written these registers.  What
+		 * is in them is TI's easy-link table, which reads back
+		 * as exactly 1200 symbols a second -- a demonstration
+		 * value, not a choice, and the first thing that has to
+		 * match a transmitter somebody else built.  A radio
+		 * whose data rate is whatever the example used is not a
+		 * radio that can be pointed at anything.
+		 *
+		 * Written from IDLE.  AGC_CFG0 taught that lesson
+		 * expensively, and the modem registers are the same
+		 * kind of thing; setfreq() below puts it back in RX.
+		 */
+		uvlong x;
+		ulong sym;
+		int e;
+
+		sym = strtoul(f[1], nil, 0);
+		if(sym < 10 || sym > 250000)
+			error("radio: outside this part's symbol rates");
+		x = ((uvlong)sym << 39) / Fxosc;
+		for(e = 0; e < 16; e++)
+			if((x >> e) < (1UL<<21))
+				break;
+		if(e >= 16 || (x >> e) < (1UL<<20))
+			error("radio: no exponent fits that rate");
+		x = (x >> e) - (1UL<<20);
+		s->lock(s);
+		strobe(rr, Sidle);
+		for(i = 0; i < Idlewaitus; i++)
+			if(state(rr) == Stidle)
+				break;
+		wr(rr, Rdrate2, (e<<4) | ((x>>16) & 0xf));
+		wr(rr, Rdrate1, (x>>8) & 0xff);
+		wr(rr, Rdrate0, x & 0xff);
+		s->unlock(s);
+		setfreq(rr, rr->hz);		/* recalibrate and listen */
+		rr->symrate = sym;
+		return n;
+	}
 	if(strcmp(f[0], "reset") == 0){
 		s->lock(s);
 		strobe(rr, Sres);
@@ -1551,6 +1633,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"part CC1120 0x%.2x rev 0x%.2x\n"
 		"state 0x%.2x\n"
 		"freq %lud\n"
+		"rate %lud\n"
 		"rssi %d%s offset %d csthr %d last %d%s\n"
 		"fifo rx %d tx %d\n"
 		"lasttx staged %d marc 0x%.2x\n"
@@ -1561,7 +1644,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"rxoverflow %ud txunderflow %ud\n",
 		rr->partnum, rr->partversion,
 		st >> 4,
-		(ulong)rr->hz,
+		(ulong)rr->hz, readrate(rr),
 		live, (cs & Rssivalid)? "": " invalid",
 		rr->rssioffset, rr->csthr, rr->rssi,
 		(cs & Carriersense)? " carrier": "",
@@ -1656,6 +1739,7 @@ cc1120caps(Radio *r, char *p, int n)
 
 	q = seprint(q, e, "freq %llud\n", rr->hz);
 	q = seprint(q, e, "mode 2fsk\n");
+	q = seprint(q, e, "rate %lud\n", readrate(rr));
 	q = seprint(q, e, "csthr %d\n", thr);
 	q = seprint(q, e, "rssioffset %d\n", gain);
 	q = seprint(q, e, "strength %d\n", raw);
@@ -1814,6 +1898,7 @@ cc1120init(Spidev *s, int irq)
 	 * uninstrumented kernel does not have.  An instrument that
 	 * changes what it measures answers a different question.
 	 */
+	rr->symrate = readrate(rr);
 	nbad = 0;
 	nbad += verify(rr, Rpktlen, Ccmaxpayload);
 	nbad += verify(rr, Ragcgainadjust, rr->rssioffset & 0xff);

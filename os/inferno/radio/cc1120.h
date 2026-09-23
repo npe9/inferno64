@@ -44,6 +44,7 @@ struct Cc1120
 	/* what the last received packet looked like */
 	int	rssi;
 	uvlong	hz;			/* what setfreq() last tuned to */
+	ulong	symrate;		/* symbols a second, read from DRATE */
 	int	lqi;
 
 	/* counters */
