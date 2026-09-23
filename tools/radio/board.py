@@ -147,14 +147,23 @@ class Console:
     def ctl(self, lines, wait=60.0, file="/dev/radio0/ctl"):
         """Run ctl commands with the file held open, and read back fresh.
 
-        Two constraints meet here.  The board's console loses the tail
-        of a line longer than about fifty characters, so a ctl command
-        cannot be sent as "echo <verb and its arguments> >file" once
-        the verb has more than a couple of arguments; it has to go
-        into a held-open cat, where the verb alone is short.  And the
-        reply has to be told from whatever the window held before,
-        which needs a marker -- but a marker typed inside the cat
-        would be written to the ctl file rather than echoed.
+        Two constraints meet here, and the first one is not what it
+        was thought to be.  It was recorded as "the console loses the
+        tail of a line longer than about fifty characters", which is
+        why a ctl command goes into a held-open cat where the verb
+        alone is short rather than being sent as "echo <verb and its
+        arguments> >file".  Measured since, with a digit ruler at 30,
+        40, 50, 60, 80 and 100 characters: nothing is lost in either
+        direction, and a 105-character command line carrying a
+        100-character argument was parsed and printed back whole.  The
+        one observation behind the claim was a command that arrived as
+        "/dev/radioecho", and whatever that was it was not a length
+        limit.
+
+        The held-open cat stays, because the second constraint is
+        real: the reply has to be told from whatever the window held
+        before, which needs a marker -- and a marker typed inside the
+        cat would be written to the ctl file rather than echoed.
 
         So the marker goes first, at the prompt, and the cat is opened
         after it.  Everything the window gains from that point is this

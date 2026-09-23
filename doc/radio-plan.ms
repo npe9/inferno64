@@ -1143,6 +1143,19 @@ chunk of zero and went on or printed 614 and stopped inside the line,
 which are different faults.  The value comes before the prose now, so
 a cut line still carries the number.
 .PP
+That line was blamed on the console, and the console did not do it.
+This bench had it written down that the board loses the tail of a line
+longer than about fifty characters; measured with a digit ruler at 30,
+40, 50, 60, 80 and 100 characters, nothing is lost in either
+direction, and a 105-character command carrying a 100-character
+argument came back whole.  So the reset did stop after exactly
+"poolsize: poolalloc() contig chunk 0" \- one character into a
+five-character number \- and whatever that is, it is inside
+.IR print .
+The same format prints correctly under qemu.  Unexplained, and one of
+the two reasons the fixed trace is worth having: the next wedge will
+say whether the number arrives.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
