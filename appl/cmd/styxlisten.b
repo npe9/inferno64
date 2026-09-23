@@ -23,6 +23,7 @@ badmodule(p: string)
 
 verbose := 0;
 timing := 0;
+perconn := 0;
 passhostnames := 0;
 
 init(ctxt: ref Draw->Context, argv: list of string)
@@ -45,7 +46,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		badmodule(Arg->PATH);
 
 	arg->init(argv);
-	arg->setusage("styxlisten [-a alg]... [-Atsv] [-k keyfile] address cmd [arg...]");
+	arg->setusage("styxlisten [-a alg]... [-APtsv] [-k keyfile] address cmd [arg...]");
 
 	algs: list of string;
 	doauth := 1;
@@ -55,6 +56,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 
 	while ((opt := arg->opt()) != 0) {
 		case opt {
+		'P' =>
+			perconn = 1;
 		'T' =>
 			timing = 1;
 		'v' =>
@@ -111,14 +114,33 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		# become none?
 	}
 
+	#
+	# -P starts the command once per connection instead of sharing one.
+	#
+	# Shared, every client mounts the SAME pipe to the SAME `export /',
+	# so every byte any client reads goes through one styx hop that all
+	# of them queue on.  One board pulling a kernel across took a new
+	# client's handshake from 0.01s to 1.23s -- the new client's mount is
+	# a few small messages stuck behind megabytes of somebody else's.
+	# With -P each connection gets its own server and its own pipe, and
+	# they stop contending.
+	#
+	# It is a flag and not the default because it only means the same
+	# thing for a command that serves a namespace, like `export /'.  For
+	# a command holding state that clients are meant to share, one per
+	# connection is a different program.
+	#
 	lsync := chan[1] of int;
+	mfd: ref Sys->FD;
+	if(!perconn)
+		mfd = popen(ctxt, cmd, lsync);
 	if(synchronous)
-		listener(c, popen(ctxt, cmd, lsync), authinfo, algs, lsync);
+		listener(c, mfd, authinfo, algs, lsync, ctxt, cmd);
 	else
-		spawn listener(c, popen(ctxt, cmd, lsync), authinfo, algs, lsync);
+		spawn listener(c, mfd, authinfo, algs, lsync, ctxt, cmd);
 }
 
-listener(c: ref Dial->Connection, mfd: ref Sys->FD, authinfo: ref Keyring->Authinfo, algs: list of string, lsync: chan of int)
+listener(c: ref Dial->Connection, mfd: ref Sys->FD, authinfo: ref Keyring->Authinfo, algs: list of string, lsync: chan of int, ctxt: ref Draw->Context, cmd: list of string)
 {
 	lsync <-= sys->pctl(0, nil);
 	for (;;) {
@@ -151,12 +173,17 @@ listener(c: ref Dial->Connection, mfd: ref Sys->FD, authinfo: ref Keyring->Authi
 				if(hostname != nil)
 					hostname = hostname[0:len hostname - 1];
 			}
+			cfd := mfd;
+			if(perconn){
+				csync := chan[1] of int;
+				cfd = popen(ctxt, cmd, csync);
+			}
 			if (algs == nil) {
 				sync := chan of int;
-				spawn exportproc(sync, mfd, nil, hostname, dfd);
+				spawn exportproc(sync, cfd, nil, hostname, dfd);
 				<-sync;
 			} else
-				spawn authenticator(dfd, authinfo, mfd, algs, hostname);
+				spawn authenticator(dfd, authinfo, cfd, algs, hostname);
 		}
 	}
 }

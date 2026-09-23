@@ -30,7 +30,16 @@
 set -u
 ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 PORT=${PORT:-6666}
-STYXFLAGS=${STYXFLAGS:-}
+#
+# -P by default: one `export /' per connection rather than one shared.
+#
+# Shared, every client mounts the same pipe to the same server, so all of
+# their traffic queues on one styx hop.  One board pulling a kernel took a
+# new client's handshake from 0.01s to 1.23s; per connection it stays at
+# 0.03s under the same load.  For `export /' the two are semantically
+# identical -- it serves a namespace and holds no state clients share.
+#
+STYXFLAGS=${STYXFLAGS:--P}
 LOG=${LOG:-/tmp/styxd.log}
 
 #

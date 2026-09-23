@@ -405,3 +405,46 @@ rather than left out.
 The latencies are better but not good: seconds still appear.  That is
 the remaining work, and it is now a performance question rather than a
 hang.
+.NH 2
+One shared server made every client queue behind the busiest
+.PP
+.B "The shape."
+.CW styxlisten
+runs its command ONCE and gives every connection a mount of that one
+pipe, so every byte any client reads crosses a single styx hop that all
+of them share:
+.P1
+board -> TCP -> its exportfs -> mount -> ONE pipe -> ONE `export /'
+.P2
+A new client's mount is a handful of small messages, and it queues
+behind megabytes of somebody else's.  Measured with the board reading a
+kernel in the background, twelve handshakes each:
+.P1
+shared            0.01 0.06 0.11 0.31 0.11 0.41 0.99 1.23 ... worst 1.23s
+per connection    0.00 0.01 0.02 0.00 0.03 0.01 0.03 0.02 ... worst 0.03s
+.P2
+Forty times better at the worst, and the spread is gone.
+.PP
+.CW "styxlisten -P"
+starts the command once per connection instead.  It is a flag rather
+than the default because it only means the same thing for a command that
+serves a namespace, as
+.CW "export /"
+does; for a command holding state that clients are meant to share, one
+per connection is a different program.
+.CW styxd.sh
+passes it by default, where the command is always
+.CW "export /" .
+.PP
+.B "It does NOT make the board faster, and the first measurement said it did."
+One 1MB read came back in 4s against the usual 23s, which looked like a
+result.  Repeated: 4s, 30s, 30s.  The 4s was an outlier and throughput is
+unchanged.  What changed is isolation between connections, which is a
+different and smaller claim than the one the first sample invited \(em the
+third time in this document that a single measurement has had to be
+withdrawn.
+.PP
+Board throughput remains about 30s for 1MB, which the frame-count
+measurements already explain: 6.4ms for a round trip carrying one
+Ethernet frame and 4.6ms for each frame after it.  That is the board's
+network path, not the server, and it is still the open item.
