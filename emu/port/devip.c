@@ -455,6 +455,9 @@ ipopen(Chan *c, int omode)
 				error(Eperm);
 			}
 		}
+		if(ipsockdebug)
+			print("ipdebug: conv %d %s opened (inuse now %d)\n", cv->x,
+				TYPE(c->qid)==Qdata? "data": "ctl", cv->inuse+1);
 		cv->inuse++;
 		if(cv->inuse == 1) {
 			kstrdup(&cv->owner, up->env->user);
@@ -508,8 +511,9 @@ ipopen(Chan *c, int omode)
 		nc->rport = rport;
 		setladdr(nc);
 		nc->state = Connected;
-		print("ipdebug: accepted fd %d as conv %d, owner %s\n",
-			sfd, nc->x, nc->owner);
+		if(ipsockdebug)
+			print("ipdebug: accepted fd %d as conv %d, owner %s\n",
+				sfd, nc->x, nc->owner);
 		mkqid(&c->qid, QID(PROTO(c->qid), nc->x, Qctl), 0, QTFILE);
 
 		poperror();
@@ -574,7 +578,7 @@ ipclose(Chan *c)
 }
 
 static long
-ipread(Chan *ch, void *a, long n, vlong off)
+ipread(Chan *ch, void *a, long n, vlong off)	/* traced below for Qctl */
 {
 	int r;
 	Conv *c;

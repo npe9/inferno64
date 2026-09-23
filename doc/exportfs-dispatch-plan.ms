@@ -334,3 +334,85 @@ The tree is reverted, because that file is shared by every emu here
 and a server that dies on teardown is not an improvement on a server
 that is slow.  The patch is worth finishing: a 1700-fold latency
 improvement is sitting behind one reference-counting bug.
+.NH 1
+Done: both crashes were one bug, and it was in the borrow
+.PP
+.B "The fault was the borrowed process groups, on the paths that
+.B "return."
+.CW exdispatch
+installs the connection's pgrp, egrp and fgrp into the running
+process by plain assignment and takes no reference.  The old
+.CW exslave
+got away with it because it was a dedicated process that looped for
+ever and never exited.  Both callers in the new design are different:
+a worker exits after one request, and the INLINE caller is the
+connection's own reader, whose environment has to survive the call.
+Either way the groups were still installed at exit,
+.CW pexit
+closed three groups the process had never referenced,
+.CW exfree
+closed the same three when the Export went, and the second close
+panicked.
+.PP
+Restoring inside
+.CW exdispatch ,
+wrapped in
+.CW waserror
+so it happens on the error unwind too, fixes it: what borrows, returns.
+.PP
+.B "And it was the nil dereference as well."
+The earlier conclusion \(em that the nil fault was a race between two
+workers of one connection, because it stopped at
+.CW Maxconnproc
+1 \(em was wrong.  Both symptoms were this single bug.  With the borrow
+fixed,
+.CW Maxconnproc
+4 survives six runs of half a gigabyte each with no fault of either
+kind.  That is a useful reminder that a knob which makes a symptom go
+away has not thereby explained it.
+.NH 2
+What made it findable: getcallerpc was broken on arm64
+.PP
+.CW "panic: decref, pc=0x..."
+had been naming nobody, because
+.CW lib9/getcallerpc-MacOSX-arm64.c
+used
+.CW __builtin_return_address(0)
+where the amd64 file beside it uses
+.CW (1) .
+Zero is the return address of
+.CW getcallerpc
+itself, so every panic reported an address inside the REPORTING
+function.  The proof was arithmetic: the panic printed
+.CW pc=0x102a03a2c
+and
+.CW decref=0x1029ffd28 ,
+and the difference is 0x3c \(em inside
+.CW decref .
+.PP
+With
+.CW (1) ,
+the same panic resolves immediately to
+.CW "closefgrp (pgrp.c:201)" ,
+which is the whole diagnosis.  This affects every
+.CW getcallerpc
+user on Apple Silicon, including
+.CW poolfault
+in
+.CW include/pool.h ,
+so every allocator fault on this platform has been pointing at the
+allocator rather than at whoever corrupted it.  It is the second time
+in this session that the instrument, not the system, was the thing
+that was wrong.
+.NH 2
+Measured, with the load proven
+.P1
+                       median    p90     max
+baseline (queue)         4.53s  52.03s  66.56s   164MB, 3 readers
+after, Maxconnproc 4:
+  0 readers                 0s   0.01s   0.01s
+  1 reader  (1589MB)     0.01s   0.03s   0.04s
+  3 readers ( 500MB/run) 0.01s   0.03s   0.05s
+.P2
+Six consecutive three-reader runs at half a gigabyte each, no panic
+and no fault.  p90 improves by a factor of about 1700.

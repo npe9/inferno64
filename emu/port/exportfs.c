@@ -20,6 +20,7 @@ struct Export
 {
 	Lock	l;
 	Ref	r;
+	int	nproc;		/* workers running on THIS connection */
 	Exq*	work;
 	Lock	fidlock;
 	Fid*	fid[Nfidhash];
@@ -65,19 +66,42 @@ struct Exq
 	int	bsize;
 };
 
+/*
+ * No work queue: a worker per request, spawned by the connection that
+ * read it.  See doc/exportfs-dispatch-plan.ms.  Bounds are explicit;
+ * over the limit the reader serves the request itself, so backpressure
+ * lands on the connection generating the load.
+ */
+enum
+{
+	/*
+	 * Workers one connection may have at once.
+	 *
+	 * This is a CORRECTNESS bound today, not only a resource one.
+	 * At 4 the redesign faulted on a nil dereference under load; at
+	 * 1 it did not, which is how the fault was localised to two
+	 * workers of the same connection running together -- something
+	 * the old design never permitted, so nothing in Exfid, fs->fid[]
+	 * or the reply path was ever required to tolerate it.  Raising
+	 * it needs that audit first.
+	 */
+	Maxconnproc	= 4,
+	Maxproc		= 64,
+};
+
 struct
 {
 	Lock	l;
-	QLock	qwait;
-	Rendez	rwait;
-	Exq	*head;		/* work waiting for a slave */
-	Exq	*tail;
+	int	nproc;
 }exq;
 
 static void	exshutdown(Export*);
 static int	exflushed(Export*, Exq*);
-static void	exslave(void*);
-static void	exfree(Export*);
+static void	exdispatch(Exq*);
+static void	exworker(void*);
+static void	exworkerdone(Export*);
+static void	exfreel(Export*, int);
+#define exfree(fs)	exfreel(fs, __LINE__)
 static void	exfreeq(Exq*);
 static void	exportproc(void*);
 static void	exreply(Exq*, char*);
@@ -242,7 +266,7 @@ exportproc(void *a)
 {
 	Exq *q;
 	int async, msize;
-	int n, type;
+	int n, type, spawned;
 	Export *fs = a;
 
 	exportinit();
@@ -324,17 +348,22 @@ exportproc(void *a)
 			continue;
 		}
 
-		lock(&exq.l);
-		if(exq.head == nil)
-			exq.head = q;
-		else
-			exq.tail->next = q;
 		q->next = nil;
-		exq.tail = q;
+		spawned = 0;
+		lock(&exq.l);
+		lock(&fs->l);
+		if(fs->nproc < Maxconnproc && exq.nproc < Maxproc){
+			fs->nproc++;
+			exq.nproc++;
+			spawned = 1;
+		}
+		unlock(&fs->l);
 		unlock(&exq.l);
-		if(exq.qwait.head == nil)
-			kproc("exslave", exslave, nil, 0);
-		Wakeup(&exq.rwait);
+		if(spawned){
+			incref(&fs->r);		/* the worker holds one */
+			kproc("exwork", exworker, q, 0);
+		}else
+			exdispatch(q);
 	}
 
 	if(exdebug){
@@ -359,17 +388,8 @@ exflushed(Export *fs, Exq *fq)
 	Exq *q, **last;
 	ulong pid;
 
-	/* not yet started? */
-	lock(&exq.l);
-	for(last = &exq.head; (q = *last) != nil; last = &q->next)
-		if(q->export == fs && q->in.tag == fq->in.oldtag){
-			*last = q->next;
-			unlock(&exq.l);
-			/* not yet started: discard, and Rflush */
-			exfreeq(q);
-			return 1;
-		}
-	unlock(&exq.l);
+	/* no unstarted work: there is no queue */
+	USED(last);
 
 	/* tricky case: in progress */
 	lock(&fs->l);
@@ -424,17 +444,10 @@ exshutdown(Export *fs)
 {
 	Exq *q, **last;
 
-	/* work not started */
-	lock(&exq.l);
-	for(last = &exq.head; (q = *last) != nil;)
-		if(q->export == fs){
-			*last = q->next;
-			exfreeq(q);
-		}else
-			last = &q->next;
-	unlock(&exq.l);
+	/* no unstarted work to discard */
+	USED(last);
 
-	/* tell slaves to abandon work in progress */
+	/* tell workers to abandon work in progress */
 	lock(&fs->l);
 	while((q = fs->work) != nil){
 		fs->work = q->next;
@@ -468,10 +481,21 @@ exfreefids(Export *fs)
 }
 
 static void
-exfree(Export *fs)
+exfreel(Export *fs, int line)
 {
 	if(exdebug)
 		print("export p/s %d free %p ref %ld\n", up->pid, fs, fs->r.ref);
+	/*
+	 * Name the site of the decref that is one too many.
+	 *
+	 * "panic: decref" says only that some Ref went below zero, which
+	 * in a file with three references per request and four callers
+	 * is not a lead.  Checking here costs one compare and prints the
+	 * LINE that over-released, which is the whole diagnosis.
+	 */
+	if(fs->r.ref <= 0)
+		panic("exfree from line %d: Export %p ref already %ld",
+			line, fs, fs->r.ref);
 	if(decref(&fs->r) != 0)
 		return;
 	closepgrp(fs->pgrp);
@@ -484,132 +508,204 @@ exfree(Export *fs)
 	free(fs);
 }
 
-static int
-exwork(void *a)
-{
-	USED(a);
-	return exq.head != nil;
-}
-
+/*
+ * Serve one request, then return.  Called on a worker spawned for this
+ * message, or on the connection's own reader when at the bound.
+ */
 static void
-exslave(void *a)
+exdispatch(Exq *q)
 {
 	Export *fs;
-	Exq *q, *t, *fq, **last;
+	Exq *t, *fq, **last;
 	char *err;
+	Pgrp *opg;
+	Egrp *oeg;
+	Fgrp *ofg;
 
-	USED(a);
+	/*
+	 * Assertions, because this faulted on a nil and the plan
+	 * (doc/emu-exportfs-nil-plan.ms, H2 and H3) says to check the
+	 * pointers it assumes before assuming them.  Cheap, once per
+	 * request, and each names exactly which assumption broke.
+	 */
+	if(q == nil)
+		panic("exdispatch: nil q");
+	if(q->export == nil)
+		panic("exdispatch: nil q->export");
+	if(q->buf == nil)
+		panic("exdispatch: nil q->buf");
+	if(up == nil || up->env == nil)
+		panic("exdispatch: nil up->env");
+	fs = q->export;
+	if(fs->user == nil)
+		panic("exdispatch: nil fs->user");
 
-	for(;;){
-		qlock(&exq.qwait);
-		if(waserror()){
-			qunlock(&exq.qwait);
-			continue;
-		}
-		Sleep(&exq.rwait, exwork, nil);
-		poperror();
+	notkilled();
+	q->slave = up;
+	q->busy = 1;
+	lock(&fs->l);
+	q->next = fs->work;
+	fs->work = q;
+	unlock(&fs->l);
 
-		lock(&exq.l);
-		q = exq.head;
-		if(q == nil) {
-			unlock(&exq.l);
-			qunlock(&exq.qwait);
-			continue;
-		}
-		exq.head = q->next;
+	/*
+	 * Borrow the connection's groups, and give them back on EVERY
+	 * exit -- normal, error, or killed.
+	 *
+	 * These are installed by plain assignment with no reference
+	 * taken, so whoever runs this must not still be holding them
+	 * when it exits: pexit would close three groups it never
+	 * referenced, exfree closes the same three when the Export goes,
+	 * and the second close panics "decref" from closefgrp.
+	 *
+	 * The old exslave got away with never restoring because it was a
+	 * dedicated process that looped for ever.  Both callers here are
+	 * different: a worker exits after one request, and the INLINE
+	 * caller is the connection's own reader, whose env must survive
+	 * the call.  Restoring inside exdispatch, which is what did the
+	 * borrowing, covers both without either caller having to know.
+	 */
+	opg = up->env->pgrp;
+	oeg = up->env->egrp;
+	ofg = up->env->fgrp;
+	if(waserror()){
+		up->env->pgrp = opg;
+		up->env->egrp = oeg;
+		up->env->fgrp = ofg;
+		nexterror();
+	}
 
-		qunlock(&exq.qwait);
+	up->env->pgrp = fs->pgrp;
+	up->env->egrp = fs->egrp;
+	up->env->fgrp = fs->fgrp;
+	up->env->uid = fs->uid;
+	up->env->gid = fs->gid;
+	kstrdup(&up->env->user, fs->user);
 
-		/*
-		 * put the job on the work queue before it's
-		 * visible as off of the head queue, so it's always
-		 * findable for flushes and shutdown
-		 */
-		notkilled();
-		q->slave = up;
-		q->busy = 1;	/* fcall in progress: interruptible */
-		fs = q->export;
-		lock(&fs->l);
-		q->next = fs->work;
-		fs->work = q;
-		unlock(&fs->l);
-		unlock(&exq.l);
+	if(exdebug > 1)
+		print("exdispatch %d %F\n", up->pid, &q->in);
 
-		up->env->pgrp = q->export->pgrp;
-		up->env->egrp = q->export->egrp;
-		up->env->fgrp = q->export->fgrp;
-		up->env->uid = q->export->uid;
-		up->env->gid = q->export->gid;
-		kstrdup(&up->env->user, q->export->user);
-
-		if(exdebug > 1)
-			print("exslave %d dispatch %F\n", up->pid, &q->in);
-
-		if(waserror()){
-			print("exslave %d err %s\n", up->pid, up->env->errstr);	/* shouldn't happen */
-			err = up->env->errstr;
+	if(waserror()){
+		print("exdispatch %d err %s\n", up->pid, up->env->errstr);
+		err = up->env->errstr;
+	}else{
+		if(q->in.type >= Tmax || !fcalls[q->in.type]){
+			snprint(up->genbuf, sizeof(up->genbuf), "unknown message: %F", &q->in);
+			err = up->genbuf;
 		}else{
-			if(q->in.type >= Tmax || !fcalls[q->in.type]){
-				snprint(up->genbuf, sizeof(up->genbuf), "unknown message: %F", &q->in);
-				err = up->genbuf;
-			}else{
-				switch(q->in.type){
-				case Tread:
-					q->out.data = (char*)q->buf + IOHDRSZ;
-					break;
-				case Tstat:
-					q->out.stat = q->buf + MSGHDRSZ + BIT16SZ;	/* leaves it just where we want it */
-					q->out.nstat = q->bsize-(MSGHDRSZ+BIT16SZ);
-					break;
-				}
-				err = (*fcalls[q->in.type])(fs, &q->in, &q->out);
-			}
-			poperror();
-		}
-
-		/*
-		 * if the fcall completed without error we must reply,
-		 * even if a flush is pending (because the underlying server
-		 * might have changed state), unless the export has shut down completely.
-		 * must also reply to each flush in order, and only after the original reply (if sent).
-		 */
-		lock(&q->l);
-		notkilled();
-		q->busy = 0;	/* operation complete */
-		if(!q->shut){
-			if(q->flush == nil || err == nil){
-				unlock(&q->l);
-				q->out.type = q->in.type+1;
-				q->out.tag = q->in.tag;
-				if(err){
-					q->out.type = Rerror;
-					q->out.ename = err;
-				}
-				exreply(q, "exslave");
-				lock(&q->l);
-			}
-			while((fq = q->flush) != nil && !q->shut){
-				q->flush = fq->next;
-				unlock(&q->l);
-				exreply(fq, "exslave");
-				exfreeq(fq);
-				lock(&q->l);
-			}
-		}
-		q->finished = 1;	/* promise not to send any more */
-		unlock(&q->l);
-
-		lock(&fs->l);
-		for(last = &fs->work; (t = *last) != nil; last = &t->next)
-			if(t == q){
-				*last = q->next;
+			switch(q->in.type){
+			case Tread:
+				q->out.data = (char*)q->buf + IOHDRSZ;
+				break;
+			case Tstat:
+				q->out.stat = q->buf + MSGHDRSZ + BIT16SZ;
+				q->out.nstat = q->bsize-(MSGHDRSZ+BIT16SZ);
 				break;
 			}
-		unlock(&fs->l);
-
-		notkilled();
-		exfreeq(q);
+			err = (*fcalls[q->in.type])(fs, &q->in, &q->out);
+		}
+		poperror();
 	}
+
+	lock(&q->l);
+	notkilled();
+	q->busy = 0;
+	if(!q->shut){
+		if(q->flush == nil || err == nil){
+			unlock(&q->l);
+			q->out.type = q->in.type+1;
+			q->out.tag = q->in.tag;
+			if(err){
+				q->out.type = Rerror;
+				q->out.ename = err;
+			}
+			exreply(q, "exdispatch");
+			lock(&q->l);
+		}
+		while((fq = q->flush) != nil && !q->shut){
+			q->flush = fq->next;
+			unlock(&q->l);
+			exreply(fq, "exdispatch");
+			exfreeq(fq);
+			lock(&q->l);
+		}
+	}
+	q->finished = 1;
+	unlock(&q->l);
+
+	lock(&fs->l);
+	for(last = &fs->work; (t = *last) != nil; last = &t->next)
+		if(t == q){
+			*last = q->next;
+			break;
+		}
+	unlock(&fs->l);
+
+	notkilled();
+	poperror();
+	up->env->pgrp = opg;
+	up->env->egrp = oeg;
+	up->env->fgrp = ofg;
+	exfreeq(q);
+}
+
+/*
+ * A worker spawned for exactly one request.  It holds a reference to
+ * the Export for its lifetime, and puts its OWN process groups back
+ * before exiting -- exdispatch borrows the connection's by plain
+ * assignment without referencing them, which was survivable for a
+ * slave that looped for ever and panics "decref" for a worker that
+ * exits after one request.
+ */
+static void
+exworker(void *a)
+{
+	Exq *q = a;
+	Export *fs = q->export;
+
+	/*
+	 * exdispatch borrows and returns the groups itself now, so this
+	 * only has to make sure the counts and the Export reference are
+	 * released however the call ends.
+	 *
+	 * Restore on EVERY way out, including the error unwind.
+	 *
+	 * exdispatch borrows the connection's pgrp, egrp and fgrp by
+	 * plain assignment and takes no reference on them.  A plain
+	 * return put them back; an error() inside exdispatch -- from
+	 * exreply writing a closed connection, or a swiproc from
+	 * exshutdown killing this worker mid-request -- unwound STRAIGHT
+	 * PAST the restore to the kproc trampoline, and pexit then
+	 * closed three groups this process had never referenced.  The
+	 * first one to reach zero took the next decref below it with
+	 * "panic: decref", from a Ref that had nothing to do with the
+	 * Export, which is why instrumenting exfree found nothing.
+	 *
+	 * The counts and the Export reference have to be released on
+	 * both paths too, or a worker killed at shutdown leaks the
+	 * connection for ever.
+	 */
+	if(waserror()){
+		exworkerdone(fs);
+		pexit("", 0);
+	}
+	exdispatch(q);
+	poperror();
+	exworkerdone(fs);
+	pexit("", 0);
+}
+
+/* release what a worker holds: its concurrency slots and its Export */
+static void
+exworkerdone(Export *fs)
+{
+	lock(&fs->l);
+	fs->nproc--;
+	unlock(&fs->l);
+	lock(&exq.l);
+	exq.nproc--;
+	unlock(&exq.l);
+	exfree(fs);
 }
 
 static void

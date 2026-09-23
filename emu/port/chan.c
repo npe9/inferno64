@@ -67,7 +67,15 @@ decref(Ref *r)
 	x = --r->ref;
 	unlock(&r->lk);
 	if(x < 0) 
-		panic("decref, pc=0x%lux", getcallerpc(&r));
+		/*
+		 * Print a known symbol's RUNTIME address beside the
+		 * caller pc, so the caller can actually be resolved.
+		 * macOS slides the image, so "pc=0x..." alone cannot be
+		 * fed to atos and the panic names nobody.  With
+		 * decref's own address the slide is one subtraction.
+		 */
+		panic("decref, pc=0x%lux decref=0x%lux ref=%ld",
+			getcallerpc(&r), (ulong)(uintptr)decref, r->ref);
 
 	return x;
 }
