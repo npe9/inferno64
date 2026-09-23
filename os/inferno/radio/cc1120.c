@@ -1377,6 +1377,9 @@ cc1120ctl(Radio *r, char *buf, int n)
 		if(sel >= 0)
 			wr(rr, Riocfg3, sel);
 		s->unlock(s);
+		/* see gsweep: a fast pin is an interrupt storm here */
+		if(s->irq != nil)
+			s->irq(s, 0);
 
 		nrun = nsamp = 0;
 		cur = -1;
@@ -1401,6 +1404,8 @@ cc1120ctl(Radio *r, char *buf, int n)
 		}
 		us = (ulong)(((fastticks(nil) - t0) * 1000000) / tickhz);
 
+		if(s->irq != nil)
+			s->irq(s, 1);
 		s->lock(s);
 		wr(rr, Riocfg3, old);
 		s->unlock(s);
@@ -1417,6 +1422,87 @@ cc1120ctl(Radio *r, char *buf, int n)
 		}
 		if((nrun % 16) != 0)
 			print("\n");
+		return n;
+	}
+	if(strcmp(f[0], "gsweep") == 0){
+		/*
+		 * Every GPIO selection, one line each.
+		 *
+		 * Finding which value of IOCFG3 carries which signal is
+		 * a sweep, and done a command at a time over a console
+		 * that types at five milliseconds a character it is
+		 * sixty round trips and five minutes.  The part can do
+		 * it in a third of a second.  That is the difference
+		 * between asking the question once and asking it
+		 * whenever the answer might have changed -- and it does
+		 * change, because most of these signals only assert in
+		 * a particular packet format or receive state, which is
+		 * exactly what makes a table in a datasheet hard to use
+		 * and a sweep easy.
+		 *
+		 * "runs" is how many times the pin changed in the
+		 * window: 1 is a pin sitting still, and the interesting
+		 * ones are everything else.
+		 */
+		ulong ms;
+		int sel, oldsel, cur, v, nrun, nsamp;
+		uvlong t0, t1, tickhz;
+
+		if(s->gpio == nil)
+			error("radio: this board does not wire the part's GPIO");
+		ms = 5;
+		if(nf >= 2)
+			ms = strtoul(f[1], nil, 0);
+		if(ms < 1 || ms > 200)
+			error(Ebadctl);
+
+		s->lock(s);
+		oldsel = rd(rr, Riocfg3);
+		s->unlock(s);
+		/*
+		 * With the interrupt masked for the whole sweep.
+		 *
+		 * This board takes a rising edge on the pin as "a
+		 * packet happened", and some of the selections below
+		 * change fast.  Without the mask the sweep reached
+		 * 0x27, printed that line, and the machine stopped: no
+		 * prompt, no echo, nothing, because every instruction
+		 * it might have run was an interrupt handler for a
+		 * signal that was never a packet.  Not recoverable by
+		 * ^R^R either, that being a keystroke and there being
+		 * no room left to service the uart.  It cost the reset
+		 * button, which is the one thing this tree has spent
+		 * the day removing from the loop.
+		 */
+		if(s->irq != nil)
+			s->irq(s, 0);
+		for(sel = 0; sel < 0x40; sel++){
+			s->lock(s);
+			wr(rr, Riocfg3, sel);
+			s->unlock(s);
+			nrun = 1;
+			nsamp = 0;
+			cur = -1;
+			t0 = fastticks(&tickhz);
+			t1 = t0 + (tickhz/1000) * ms;
+			while(fastticks(nil) < t1){
+				v = s->gpio(s);
+				nsamp++;
+				if(cur < 0)
+					cur = v;
+				else if(v != cur){
+					cur = v;
+					nrun++;
+				}
+			}
+			print("gsweep 0x%.2x runs %d samples %d now %s\n",
+				sel, nrun, nsamp, cur? "high": "low");
+		}
+		s->lock(s);
+		wr(rr, Riocfg3, oldsel);
+		s->unlock(s);
+		if(s->irq != nil)
+			s->irq(s, 1);
 		return n;
 	}
 	if(strcmp(f[0], "reset") == 0){

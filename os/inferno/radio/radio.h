@@ -140,6 +140,16 @@ struct Spidev
 	 * nil on a board that does not wire it.
 	 */
 	int	(*gpio)(Spidev*);
+	/*
+	 * Enable or disable the interrupt that pin raises, if the board
+	 * wires one.  A driver that asks the part to put a fast signal
+	 * on a pin the board has an edge-triggered interrupt on has
+	 * armed an interrupt storm: the machine stops making progress
+	 * and does not come back, which is not a thing the driver can
+	 * detect afterwards because there is no afterwards.  nil if the
+	 * board has no interrupt to mask.
+	 */
+	void	(*irq)(Spidev*, int);
 };
 
 /*

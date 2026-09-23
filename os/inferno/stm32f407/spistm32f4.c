@@ -168,6 +168,24 @@ spigpio(Spidev*)
 	return (*(volatile ulong*)(GPIOE+GPIO_IDR) >> Intpin) & 1;
 }
 
+/*
+ * Mask or unmask the EXTI line PE14 raises.
+ *
+ * The pending bit is cleared before unmasking: a signal that changed
+ * while the line was masked leaves EXTI_PR set, and unmasking would
+ * take an interrupt for an edge that belongs to whatever the pin was
+ * doing meanwhile rather than to a packet.
+ */
+static void
+spiirq(Spidev*, int on)
+{
+	if(on){
+		*(volatile ulong*)EXTI_PR = 1UL << Intpin;
+		*(volatile ulong*)EXTI_IMR |= 1UL << Intpin;
+	}else
+		*(volatile ulong*)EXTI_IMR &= ~(1UL << Intpin);
+}
+
 static Spidev spidev = {
 	.name	= "mikrobus2",
 	.select	= spiselect,
@@ -175,6 +193,7 @@ static Spidev spidev = {
 	.lock	= spilock,
 	.unlock	= spiunlock,
 	.gpio	= spigpio,
+	.irq	= spiirq,
 };
 
 /*
