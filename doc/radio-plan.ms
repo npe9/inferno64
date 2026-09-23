@@ -1092,27 +1092,56 @@ silicon samples at 1.37us against the model's nine and takes its bits
 from the air, so neither limit is the method's.  Silicon has not yet
 shown a pile of any length, which is the next thing to find out.
 .PP
-Three other cheap things the POCSAG negative did not rule out, each
-one ctl line.  The other rates, 512 and 2400 for POCSAG and 1600
-two-level for FLEX.  And the complement of the sync word, 0x832DEA27,
-because if the on-air sense is inverted relative to what the part
-compares against then every bit is flipped and 0x7CD215D8 can never
-match.
+Two of the cheap things the POCSAG negative did not rule out are now
+ruled out, by
+.I tools/radio/pocsagmatrix.py :
+the rate, since only 1200 of POCSAG's 512, 1200 and 2400 had been
+tried, and the polarity, since the part compares the demodulated bits
+against the sync word as written and an inverted on-air sense would
+flip every one of them so that 0x7CD215D8 could never match however
+much POCSAG was on the channel.  Six windows of 45 seconds on 929.630
+\- three rates, the word and its complement 0x832DEA27 \- received
+nothing.
 .PP
-And a bench note that cost this session the board.  A warm reset on
+No CRC errors either, in any of the six, and that is the part worth
+reading.  A receiver sync-matching on noise reports packets that fail
+their CRC; a receiver whose sync word never matches reports neither.
+So nothing matched at all, which is consistent with there being no
+POCSAG on that carrier and equally consistent with this part's 32-bit
+sync path not working on silicon \- and those cannot be separated from
+here, because the sync path has never been shown to give a positive on
+silicon.  The
+.B serial
+verb is what breaks that tie, since it needs no sync word to match,
+and the kernel carrying it is built and cannot be flashed: the clicker
+2's own USB, which is how the bootloader is reached, is not connected
+to this host.  The serial console is a separate FT232 and cannot
+program anything.
+.PP
+And a bench note, with what it is not.  A warm reset on
 os/inferno/stm32f407 \- the ^R^R at the console, which is
 .IR exit (0)
 from the uart interrupt handler \- stopped after the poolsize contig
-print and never reached a shell, three times out of three, with the
-console left showing a line the board had cut short.  The same reset
-is clean under qemu, which cannot reproduce it: qemu reloads the
-kernel image on every reset, so its .data is fresh where a board's is
-not.  What the log could not say was whether the board printed a chunk
-of zero and went on or printed 614 and stopped inside the line, and
-that ambiguity is now fixed at the source \- the value comes before the
-prose, so a cut line still carries the number.  Diagnosing it needs a
-board that boots, and this one wants a press of its reset button
-first.
+print and never reached a shell, three times running, with the console
+left showing a line the board had cut short.  A later warm reset, from
+a freshly booted machine, came back to a prompt.  So it is not
+deterministic and it is not the reset path as such: it depends on the
+state the machine was in when the reset arrived, and all three wedges
+followed a shell that had died with "out of memory: heap".  That is
+the shape of something left held \- except that
+.I _start
+copies .data out of flash and zeroes .bss before
+.I main
+runs, so nothing in the allocator's own structures can survive to be
+held.  Unexplained, and written down as unexplained.
+.PP
+qemu cannot reproduce it and cannot be made to: it reloads the kernel
+image on every reset, so its .data is fresh where a board's is
+re-copied by code that has to run first.  The one thing fixed at the
+source is the ambiguity the log had \- whether the board printed a
+chunk of zero and went on or printed 614 and stopped inside the line,
+which are different faults.  The value comes before the prose now, so
+a cut line still carries the number.
 .PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
