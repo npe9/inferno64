@@ -55,7 +55,26 @@ enum {
 	Rpacfg0		= 0x2d,
 	Ragccsthr	= 0x18,		/* carrier sense threshold */
 	Ragccfg0	= 0x1d,
-	  Agccfg0init	= 0xcf,		/* reset 0xc3, RSSI_VALID_CNT 9 */
+	/*
+	 * AGC_CFG0.  0xcf, and what bits 3:2 actually are is not known.
+	 *
+	 * This said "reset 0xc3, RSSI_VALID_CNT 9", taking the field to
+	 * be how many internal estimates the RSSI averages.  On the
+	 * part that is not what changing it does.  At 881MHz, with
+	 * nothing else altered: 0xcf gives a peak of -101dBm and a
+	 * floor of -119, 0xcb and 0xc7 give -84 and -106 -- the same
+	 * shape about 17dB higher -- and 0xc3, which the old comment
+	 * called the reset value, gives a peak of +78dBm and a floor of
+	 * +48.  Positive dBm from an antenna in a room is not a
+	 * reading, so whatever those bits select, clearing them stops
+	 * the RSSI meaning anything.
+	 *
+	 * 0xcf is kept because it is the value whose numbers agree best
+	 * with an instrument beside the board.  The name is removed
+	 * rather than corrected, because the honest state of it is that
+	 * this driver does not know.
+	 */
+	  Agccfg0init	= 0xcf,
 	Ragcgainadjust	= 0x19,		/* the RSSI offset */
 	Rpktcfg2	= 0x26,
 	  Fmtnormal	= 0x04,		/* CCA_MODE 001, PKT_FORMAT 00 */
@@ -1140,7 +1159,36 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 *
 		 * So: sample RSSI as fast as the bus allows, compare
 		 * against a threshold, and print how long each run above
-		 * and below it lasted.  The sample rate is measured over
+		 * and below it lasted.
+		 *
+		 * AND THE BUS IS IN THE MEASUREMENT.  Polling this way
+		 * desensitises the part it is polling.  Measured at
+		 * 893MHz, where nothing is transmitting and "watch"
+		 * reports a floor of -118dBm and a mean of -115: a
+		 * capture at 27us a sample crosses -106 after 124
+		 * samples, about 3.3ms, and stays above it for the rest
+		 * of the run.  Same kernel, same bus clock, same
+		 * frequency -- what differs is that watch samples once a
+		 * millisecond and this samples continuously, so it is
+		 * the duty of the SPI and not its speed.  The 3.3ms is
+		 * the AGC settling to the new noise.
+		 *
+		 * So a capture reads about 15 to 20dB hot and its floor
+		 * is this loop.  It still shows structure that is real
+		 * -- at 881MHz it crosses a threshold that it never
+		 * crosses at 893, which is the control -- but the levels
+		 * are not the levels, and a threshold has to be chosen
+		 * against a capture of a quiet frequency rather than
+		 * against what watch says.
+		 *
+		 * The way out is not a faster bus: it is not to use the
+		 * bus.  This part can put its demodulated data or its
+		 * carrier sense on a GPIO, and GPIO3 is already wired to
+		 * this board's interrupt pin, so the envelope can be
+		 * read with no SPI traffic at all and at the resolution
+		 * of a timer rather than of a register read.  That is
+		 * the next piece of work and it is why this one is
+		 * called a bench verb.  The sample rate is measured over
 		 * the capture and printed rather than assumed, because
 		 * it is a property of the SPI clock and the loop and not
 		 * a number this can know.
@@ -1152,7 +1200,7 @@ cc1120ctl(Radio *r, char *buf, int n)
 		static ushort runs[Ncaprun];	/* bss, not the 4K kstack */
 		uvlong t0, t1, tickhz;
 		ulong ms, us;
-		int thresh, above, cur, nrun, nsamp, nvalid, agc0;
+		int thresh, above, cur, nrun, nsamp, nvalid;
 		int r0, r1, first;
 
 		ms = 200;
@@ -1165,18 +1213,24 @@ cc1120ctl(Radio *r, char *buf, int n)
 			error(Ebadctl);
 
 		/*
-		 * RSSI_VALID_CNT back to its reset value for the
-		 * duration.  This driver sets it to nine estimates so
-		 * that a level reading is steady, which is right for
-		 * measuring a level and wrong for watching an edge: the
-		 * moving average is exactly what a capture is trying to
-		 * see through.
+		 * AGC_CFG0 is left alone.
+		 *
+		 * This used to put RSSI_VALID_CNT back to its reset
+		 * value for the duration, reasoning that this driver
+		 * sets it to nine estimates for a steady level reading
+		 * and that a moving average is what a capture is trying
+		 * to see through.  The reasoning was fine and the
+		 * register does not do what the driver's comment says:
+		 * with 0xcf the part reports sensible dBm, and with
+		 * 0xc3 -- which the same comment calls the reset value
+		 * -- "watch" at 881MHz reports a peak of +78dBm and a
+		 * floor of +48.  Positive dBm from an antenna in a
+		 * room, so the reading is not a reading.  Whatever bits
+		 * 3:2 of AGC_CFG0 are, clearing them breaks RSSI on
+		 * this part, and the first capture on silicon said
+		 * every sample of 200ms was above -85dBm while watch
+		 * on the same frequency said the peak was -101.
 		 */
-		s->lock(s);
-		agc0 = rd(rr, Ragccfg0);
-		wr(rr, Ragccfg0, agc0 & ~0x0c);
-		s->unlock(s);
-
 		nrun = nsamp = nvalid = 0;
 		cur = -1;
 		t0 = fastticks(&tickhz);
@@ -1206,10 +1260,6 @@ cc1120ctl(Radio *r, char *buf, int n)
 				runs[nrun-1]++;
 		}
 		us = (ulong)(((fastticks(nil) - t0) * 1000000) / tickhz);
-
-		s->lock(s);
-		wr(rr, Ragccfg0, agc0);
-		s->unlock(s);
 
 		if(nvalid == 0){
 			print("capture %lud invalid\n", (ulong)rr->hz);

@@ -226,10 +226,25 @@ spistm32f4link(void)
 	/*
 	 * Master, software chip select -- the CS line is a GPIO, so the
 	 * SPI's own NSS must be held high or the part drops out of
-	 * master mode -- and the slowest divisor, which is fast enough:
-	 * APB1 is 42MHz and the CC1120 will take 10.
+	 * master mode -- and APB1/16, which is 2.6MHz.
+	 *
+	 * This was APB1/256, the slowest the part has, with a comment
+	 * saying it was fast enough because the CC1120 will take 10MHz.
+	 * That was true of everything the driver did at the time, which
+	 * was register writes at boot and a packet now and then, and it
+	 * stopped being true the moment anything wanted to sample.
+	 * 42MHz/256 is 164kHz, a byte is 49us, and the six bytes of the
+	 * two extended reads that make up one RSSI sample are 293us --
+	 * which is exactly the 296us per sample the "capture" verb
+	 * measured for itself on the board.  So the resolution of every
+	 * envelope this board can record was set by this line, and the
+	 * bursts at 881MHz are under a millisecond.
+	 *
+	 * 16 rather than 4 because nothing here needs 10MHz and a
+	 * mikroBUS socket is a connector and a cable; this is the
+	 * smallest change that stops the bus being the limit.
 	 */
-	spi[Spicr1/4] = Mstr | Ssm | Ssi | (7 * Br0);
+	spi[Spicr1/4] = Mstr | Ssm | Ssi | (3 * Br0);
 	spi[Spicr2/4] = 0;
 	spi[Spicr1/4] |= Spe;
 	coherence();
