@@ -95,6 +95,66 @@ This is the shape every modern server converges on \(em per-connection
 state with bounded concurrency \(em and it is what the original design
 was reaching for with one queue and a heuristic.
 .NH 1
+What Go does, and why it points somewhere simpler
+.PP
+Go's answer to this problem is to not have a pool.  The canonical
+server is
+.P1
+for { c, _ := l.Accept(); go serve(c) }
+.P2
+with another goroutine per request where the protocol allows
+concurrent requests \(em which 9P does, through tags.  The application
+never sizes a worker set, because the runtime does that job: cheap
+growable stacks, and an M:N scheduler that multiplexes goroutines onto
+GOMAXPROCS threads.  The thing exportfs hand-rolls is exactly what Go
+pushed down into the runtime so no application has to get the
+heuristic right.
+.PP
+Three of its choices bear directly on the faults above.
+.IP \(bu
+.B "Per-P run queues, not one global queue."
+A processor takes work from its own queue first, then STEALS from
+others, and only checks the global queue every 61 ticks \(em and that
+periodic check exists precisely to stop globally-queued work
+starving.  Fault 1 and fault 2 are that principle stated as a bug: a
+single queue behind a single lock on the dispatch path is a latency
+tail generator.
+.IP \(bu
+.B "A blocking syscall does not consume a slot."
+The runtime hands the P to another thread so other goroutines keep
+running.  In exportfs a slave blocked in a slow read is a slave
+serving nobody, and the pool shrinks under exactly the load that needs
+it.
+.IP \(bu
+.B "Bounds are a counting semaphore, not a heuristic."
+Where a Go program must limit concurrency the idiom is a buffered
+channel used as a semaphore: acquire before the work, release after.
+Explicit, and correct by construction \(em rather than inferring "is
+anyone idle?" from whether a lock has waiters, which is fault 3.
+.PP
+.B "So the design gets simpler, not more elaborate."
+Delete the global queue.
+.CW exportproc
+already reads one message at a time on its own connection; have it
+spawn a worker per request, bounded by a counting semaphore per
+connection and another globally.  No
+.CW exq ,
+no
+.CW qwait ,
+no rendezvous handoff, no spawn heuristic \(em three of the four
+faults stop existing rather than being fixed, and the fourth (bounds)
+becomes the one explicit thing the code does say.
+.PP
+Dis processes are not goroutines \(em
+.CW kproc
+is heavier than
+.CW go
+\(em which is why the semaphore is per connection as well as global,
+and why workers linger briefly before exiting rather than being
+created per message on a chatty connection.  That is the one place
+this design has to be more careful than Go's.
+
+.NH 1
 Staging, because exportfs is shared by everything
 .PP
 Each stage is separately measurable with
@@ -109,10 +169,11 @@ and let slaves wait on the rendezvous WITHOUT holding
 so more than one can be listening.  Small, contained, and it should
 move the tail on its own.  Measure.
 .IP "Stage 2."
-Move the queue into
-.CW Export .
-This is the fairness fix and the one the measurement is really about.
-Measure.
+Remove the global queue: a worker per request, spawned by the
+connection's own
+.CW exportproc ,
+bounded by a per-connection semaphore.  This is the fairness fix and
+the one the measurement is really about.  Measure.
 .IP "Stage 3."
 Bounds and linger:
 .CW Maxconnproc ,
