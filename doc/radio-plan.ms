@@ -1108,12 +1108,13 @@ the rate, since only 1200 of POCSAG's 512, 1200 and 2400 had been
 tried, and the polarity, since the part compares the demodulated bits
 against the sync word as written and an inverted on-air sense would
 flip every one of them so that 0x7CD215D8 could never match however
-much POCSAG was on the channel.  Six windows of 45 seconds on 929.630
-\- three rates, the word and its complement 0x832DEA27 \- received
-nothing.
+much POCSAG was on the channel.  Eighteen windows of 45 seconds \-
+929.630, 928.8196 and 929.840 by three rates by the word and its
+complement 0x832DEA27 \- received nothing.  Thirteen and a half
+minutes of the paging band.
 .PP
-No CRC errors either, in any of the six, and that is the part worth
-reading.  A receiver sync-matching on noise reports packets that fail
+No CRC errors either, in any of the eighteen, and that is the part
+worth reading.  A receiver sync-matching on noise reports packets that fail
 their CRC; a receiver whose sync word never matches reports neither.
 So nothing matched at all, which is consistent with there being no
 POCSAG on that carrier and equally consistent with this part's 32-bit
