@@ -927,6 +927,44 @@ air, and on a real signal it collapses onto a 98.4 microsecond period.
 That is symbol-level structure out of a real transmission, at 1.39
 microseconds a sample, using the receiver's own demodulator.
 .PP
+WHAT IS TALKING, AND WHAT PROTOCOL.  Neither is known, and nothing
+measured here justifies a guess at either.  What there is, is an
+occupancy map.  Parking the receiver on a frequency for two seconds
+and counting how much of it carrier sense is asserted, against
+channels the sweep says are empty as a control:
+.PP
+.EX
+	908.717  duty 95%  bursts to 88ms, gaps 0.6-1.9ms
+	914.160  duty 84%  bursts to 45ms
+	906.980  duty 39%
+	904.500  duty 32%  picked as a control and is not one
+	922.383  duty 26%
+	918.000  duty  1%  14 bursts in two seconds
+	926.000  duty  1%
+.EE
+.PP
+That discriminates, which is the point of the control: 918 and 926 are
+quiet and 908.7 is busy, measured the same way in the same minute.
+The occupied bins in 902-928 fall in clusters three hundred to four
+hundred kilohertz wide at 907.0, 908.6-909.1, 914.0-914.3, 921.2,
+922.3 and 922.9, and the strongest one moves between sweeps, which is
+hopping.
+.PP
+None of that is an identification.  A duty cycle and a burst length
+are consistent with far too much, and the one thing that would settle
+it has not been tried: configure the packet engine for a candidate --
+rate, deviation, receive bandwidth, sync word, CRC -- and count the
+packets that pass CRC.  A CRC-valid packet is proof and nothing short
+of it is.  Of those, only the symbol rate is settable from the ctl
+file today; the rest are still whatever TI's table left.
+.PP
+Trying to measure the occupied bandwidth with the narrow receiver
+instead did not work: a scan across 908.0 to 909.6 at 100kHz steps and
+60ms a step came back flat at \-109 to \-114dBm, because the signal
+is not there most of the time and a single dwell per step catches the
+quiet.  It wants a max hold over many passes, which is what
+survey.py does on the instrument and what the board does not do yet.
+.PP
 What that period means is not established.  It is the receiver's
 recovered symbol rate as much as the transmitter's, and this driver
 has never set the data rate registers, so it is running on whatever
