@@ -1098,8 +1098,32 @@ per cent.  The absolute values are six
 times long and 4800 measures the same period as 1200, both because a
 guest polling a pin in a tight loop and qemu's virtual clock disagree;
 silicon samples at 1.37us against the model's nine and takes its bits
-from the air, so neither limit is the method's.  Silicon has not yet
-shown a pile of any length, which is the next thing to find out.
+from the air, so neither limit is the method's.  Silicon shows nothing at all, and that
+has now been looked into rather than left as "not yet".
+.PP
+What
+.B "serial on"
+does on silicon, measured rather than assumed.  Both registers the mode
+needs are set and read back off the part \- PKT_CFG2 0x07, PKT_FORMAT
+11, and MDMCFG0 0x0d with TRANSPARENT_MODE_EN \- and GPIO3 does not
+move, over half a second and 405000 samples at 1.23us, at all four
+TRANSPARENT_INTFACT settings, with a serial clock configured on another
+pin and without one.
+.PP
+The control is a sweep of all sixty-four IOCFG3 selections with the
+mode off and with it on.  Exactly three move either way and by the same
+amount both times \- 0x28 at 353 and 239 runs, 0x2e at 3011 and 4350,
+0x31 at 38424 and 38375 \- so the instrument works and the mode changes
+nothing observable.  Nor is any of the three the bit stream: 0x2e and
+0x31 run in ones and twos of a sample and are identical at 1200 and
+4800 symbols a second, which is a clock; 0x28's gaps do move with the
+symbol rate but upward as the rate rises, which a symbol period does
+not do.
+.PP
+One thing this board cannot rule out, and it is the likeliest: it wires
+one of the part's four GPIOs, GPIO3 to PE14.  A mode that delivers on
+another pin looks exactly like this from here, and a second wired GPIO
+is a soldering job rather than a software one.
 .PP
 Two of the cheap things the POCSAG negative did not rule out are now
 ruled out, by
@@ -1122,11 +1146,8 @@ sync path not working on silicon \- and those cannot be separated from
 here, because the sync path has never been shown to give a positive on
 silicon.  The
 .B serial
-verb is what breaks that tie, since it needs no sync word to match,
-and the kernel carrying it is built and cannot be flashed: the clicker
-2's own USB, which is how the bootloader is reached, is not connected
-to this host.  The serial console is a separate FT232 and cannot
-program anything.
+verb is what would break that tie, since it needs no sync word to
+match.  It is flashed and it does not work on this board.
 .PP
 And a bench note, with what it is not.  A warm reset on
 os/inferno/stm32f407 \- the ^R^R at the console, which is

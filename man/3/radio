@@ -484,7 +484,35 @@ symbol period: 1953us is 512 symbols a second, 833us is 1200, 625us is
 this page reports a threshold being crossed, and a threshold is the
 receiver's.
 .PP
-Demonstrated under qemu and not yet on the air, by
+Not working on silicon, and this says what was tried, because the verb
+is here and does nothing useful on this board.  Both registers the mode
+needs are set and read back off the part \-
+.B PKT_CFG2
+0x07, which is CCA_MODE 001 and PKT_FORMAT 11, and
+.B MDMCFG0
+0x0d, which has TRANSPARENT_MODE_EN \- and GPIO3 does not move: half a
+second, 405000 samples at 1.23us, one level throughout.  That holds at
+all four TRANSPARENT_INTFACT settings, with SERIAL_CLK configured on
+IOCFG2, and with SERIAL_CLK on IOCFG1 and SERIAL_RX on IOCFG0 as well
+in case the interface wants more than one pin before it runs.
+.PP
+The control is the sweep.  All sixty-four IOCFG3 selections with the
+mode off and with it on: exactly three move either way and by the same
+amount both times \- 0x28 at 353 and 239 runs, 0x2e at 3011 and 4350,
+0x31 at 38424 and 38375.  The instrument works and the mode changes
+nothing.  None of those three is the bit stream either: 0x2e and 0x31
+run in ones and twos of a sample and read identically at 1200 and 4800
+symbols a second, which is a clock; 0x28 pulses for one sample with
+gaps of 32 to 2048 samples whose distribution moves with the symbol
+rate, but
+.I upward
+as the rate rises, which a symbol period does not do.
+.PP
+What this board cannot rule out is the pin.  It wires one of the part's
+four GPIOs, GPIO3 to PE14, and a mode delivering on another pin would
+look exactly like this.
+.PP
+The method is demonstrated under qemu, by
 .IR tools/radio/serialrate.sh .
 The model's
 .B airrate

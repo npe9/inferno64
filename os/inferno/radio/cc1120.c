@@ -55,6 +55,8 @@ enum {
 	Rdrate0		= 0x16,
 	  Fxosc		= 32000000,	/* the crystal these boards fit */
 	Rmdmcfg0	= 0x13,
+	  Transparenten	= 0x08,		/* MDMCFG0.TRANSPARENT_MODE_EN */
+	  Transpintfact	= 0x30,		/* MDMCFG0.TRANSPARENT_INTFACT */
 	Ragcref		= 0x17,
 	Ragccfg1	= 0x1c,
 	Rfifocfg	= 0x1e,
@@ -1026,6 +1028,39 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 * The receiver is left in RX either way, because a mode
 		 * that has to be followed by a strobe to be useful is a
 		 * mode half the callers will get wrong.
+		 *
+		 * NOT DEMONSTRATED ON SILICON, and what was tried.
+		 *
+		 * Both registers the mode needs are set and read back off
+		 * the part: PKT_CFG2 0x07, which is CCA_MODE 001 and
+		 * PKT_FORMAT 11, and MDMCFG0 0x0d, which has
+		 * TRANSPARENT_MODE_EN.  GPIO3 does not move.  Over half a
+		 * second and 405000 samples at 1.23us it stays at one
+		 * level, at every one of the four TRANSPARENT_INTFACT
+		 * settings, and with SERIAL_CLK configured on IOCFG2, and
+		 * again with SERIAL_CLK on IOCFG1 and SERIAL_RX on IOCFG0
+		 * as well, in case the interface needs more than one pin
+		 * before it runs at all.
+		 *
+		 * The control that makes that mean something is the
+		 * sweep.  All sixty-four IOCFG3 selections, with the mode
+		 * off and with it on: exactly three move either way, and
+		 * they move the same amount both times \- 0x28 at 353 and
+		 * 239 runs, 0x2e at 3011 and 4350, 0x31 at 38424 and
+		 * 38375.  So the instrument works, and the mode changes
+		 * nothing observable.
+		 *
+		 * Nor is one of those three the bit stream.  0x2e and
+		 * 0x31 run in ones and twos of a 1.3us sample and are
+		 * identical at 1200 and at 4800 symbols a second, which
+		 * is a clock and not data.  0x28 pulses high for one
+		 * sample with gaps from 32 to 2048, and its gaps do move
+		 * with the symbol rate \- but upward as the rate rises,
+		 * which is not what a symbol period does.
+		 *
+		 * One thing this board cannot rule out: it wires one of
+		 * the part's four GPIOs, GPIO3 to PE14.  A mode that
+		 * delivers on another pin would look exactly like this.
 		 */
 		s->lock(s);
 		strobe(rr, Sidle);
@@ -1035,10 +1070,26 @@ cc1120ctl(Radio *r, char *buf, int n)
 		if(strcmp(f[1], "on") == 0){
 			rr->serial = 1;
 			wr(rr, Rpktcfg2, Fmttransparent);
+			/*
+			 * PKT_FORMAT alone is not the mode.
+			 *
+			 * Setting PKT_CFG2 to 0x07 and IOCFG3 to 0x09 and
+			 * reading both back off the part gave a pin that
+			 * did not move at all, over two seconds and 1.6
+			 * million samples, on a channel where a survey
+			 * had found a carrier.  The registers were right
+			 * and the mode was not on: MDMCFG0 carries
+			 * TRANSPARENT_MODE_EN, TI's table leaves it
+			 * clear, and until it is set the demodulator's
+			 * output does not reach a GPIO however PKT_FORMAT
+			 * is programmed.
+			 */
+			wr(rr, Rmdmcfg0, rd(rr, Rmdmcfg0) | Transparenten);
 			wr(rr, Riocfg3, Gserialrx);
 		}else if(strcmp(f[1], "off") == 0){
 			rr->serial = 0;
 			wr(rr, Rpktcfg2, Fmtnormal);
+			wr(rr, Rmdmcfg0, rd(rr, Rmdmcfg0) & ~Transparenten);
 			wr(rr, Riocfg3, Gcarriersense);
 		}else{
 			s->unlock(s);
