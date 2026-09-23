@@ -401,6 +401,118 @@ keyed that set, and
 and
 .B power
 are what the manual says they are.
+.SH "LOOKING AT A BAND"
+A receiver is an instrument, and this one will say what is on the air
+around it.  These are the CC1120 driver's, on
+.BR ctl ,
+and every one of them has a resolution limit that is worth knowing
+before its numbers are believed.
+.TP
+.BI rate " sym/s"
+.TP
+.BI deviation " hz"
+.TP
+.BI bw " hz"
+.TP
+.BI sync " word [bits]"
+The modem.  These decide what the receiver is listening
+.I for
+and nothing works until they match the transmitter.  What the part
+holds at boot is TI's example table, which is 1200 symbols a second
+with 3997Hz deviation in 25kHz \- a demonstration and not a choice \-
+and each of these reads back from the part rather than from what the
+driver meant to set.
+.TP
+.BI scan " lo hi step ms"
+Tune each step in turn and report the peak, mean and floor of the RSSI
+over
+.I ms
+at each.  One look per step, so for a signal that is on a few per cent
+of the time this measures when the look happened rather than where the
+energy is.
+.TP
+.BI hold " lo hi step ms passes"
+The same sweep repeated, keeping the highest each step ever saw.  What
+.B scan
+cannot do: every step gets enough looks to catch a burst.
+.TP
+.BI probe " hz [ms]"
+One channel, characterised.  It measures the floor and the peak, sets
+carrier sense between them, and reports the duty cycle, how many
+bursts, and the shortest and longest burst and gap.
+.TP
+.BI watch " secs"
+Stay where the part is tuned and print a line per dwell.
+.TP
+.BI capture " ms [dbm]"
+The envelope, by sampling RSSI over the bus and printing the run
+lengths above and below a threshold.
+.TP
+.BI gcapture " ms [iocfg3]"
+The same, off one of the part's own GPIO pins, which costs no bus
+traffic.
+.TP
+.BI ghist " ms [iocfg3]"
+The pin's run lengths as a histogram over the whole window rather than
+a sequence.
+.TP
+.BI gtrig " ms iocfg3"
+Wait for carrier sense, then record the pin through the burst.
+.TP
+.BI gsweep " [ms]"
+Set IOCFG3 to each of the sixty-four selections in turn and say how
+many times the pin changed.  Which value carries which signal is a
+question for the part and not for a table: 0x11 is the carrier sense
+here, found this way.
+.PP
+.B "What each of these can resolve, and why it matters."
+Three separate measurements in one day looked like a transmitter's
+signature and were the receiver.
+.PP
+.B Capture
+and
+.B probe
+read the envelope through the RSSI, and the shortest thing carrier
+sense will assert for is one RSSI update.  That is
+.B AGC_CFG0 's
+RSSI_VALID_CNT estimates, and an estimate is 0.309ms on this board \-
+measured four ways, the shortest burst coming out 0.608, 0.927, 1.568
+and 2.79ms at 2, 3, 5 and 9 estimates.  So every duration these report
+is a small multiple of 0.62ms at best, and six bursts measuring 1341
+to 1343 microseconds is two resolution cells and not a frame.
+.PP
+.B Capture
+also has its own bus in the measurement.  Polling RSSI continuously
+raises this part's floor 15 to 20dB \- at 893MHz, where watch reports
+a floor of \-118dBm, a capture crosses \-106 after three milliseconds
+and stays there \- so its levels are not levels and its threshold has
+to be chosen against a capture of a quiet channel rather than against
+what watch says.
+.B Gcapture
+exists because of that and touches no bus at all.
+.PP
+.B Probe
+says NOISE when its own threshold is the thing it measured.  The first
+pass only catches a burst if one happens while it is looking, and when
+it does not, the threshold sits near the floor and the AGC breathing
+across it is counted: three runs at 918MHz within a minute reported
+the channel 89 per cent busy, then 0, then 0.  Comparing the peak
+against the floor does not separate those \- the bad runs had 14 and
+20dB between them \- but the shape of the result does, because noise
+crossing a line gives bursts and gaps of the same shortest length in
+numbers no transmitter sends.
+.PP
+And the pin itself quantises.
+.B Gtrig
+at 918MHz records a burst as pulses separated by 22, 90, 158, 226 and
+430 samples, varying through the burst, which reads as data; the same
+capture at 926MHz gives the same set of lengths, every one a multiple
+of 9.94 microseconds.  A quantum common to two channels is a clock in
+the receiver.
+.PP
+The rule that caught all three is one command: take the identical
+measurement somewhere the signal is not, and see whether the structure
+survives.
 .SH SOURCE
 .B /os/inferno/radio/radio.h
 .br
@@ -421,6 +533,16 @@ are what the manual says they are.
 .B /emu/port/devradio.c
 .br
 .B /emu/port/ft891emu.c
+.br
+.B /tools/radio/board.py
+.br
+.B /tools/radio/whatsthere.py
+.br
+.B /tools/radio/twoboards.sh
+.br
+.B /tools/tinysa/survey.py
+.br
+.B /tools/f407/flash.sh
 .SH DIAGNOSTICS
 A board that hangs at boot between
 .B procinit
@@ -562,6 +684,28 @@ nor any one machine's directory.  What is in a machine's directory is
 its own half \- the controller, the chip select, which pin the interrupt
 arrived on \- and that is the part thrown away when the machine
 changes.
+.PP
+The instrument and the radio together, in
+.BR /tools/radio :
+.I whatsthere.py
+sweeps a band with a tinySA, takes the strongest candidates and probes
+each with the board, because the two have opposite strengths.  The
+instrument looks at 450 frequencies at once and is the only way to
+find a signal without knowing where it is; it samples each for a
+fraction of a millisecond and can say almost nothing about time.  This
+looks at one frequency through a receive filter a channel wide,
+samples its carrier sense every 1.37 microseconds with no bus traffic
+in the measurement, and will sit there as long as it is asked.
+.PP
+.I twoboards.sh
+is the check that
+.B #W 's
+packet path works at all, two emulated boards exchanging a packet over
+a socket.  It exists because "no packets" on a bench had two
+explanations that could not be told apart -- nothing on the air worth
+hearing, or a driver that had never received anything from anyone --
+and the second was true: TI's register table leaves SYNC_MODE at zero,
+which is no sync word, and this driver shipped that way.
 .SH SEE ALSO
 .I radiochk (1),
 .I ssl (3)
