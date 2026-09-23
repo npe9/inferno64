@@ -30,6 +30,7 @@
 set -u
 ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 PORT=${PORT:-6666}
+STYXFLAGS=${STYXFLAGS:-}
 LOG=${LOG:-/tmp/styxd.log}
 
 #
@@ -116,8 +117,16 @@ if portbusy; then
 fi
 
 : > "$LOG"
+#
+# STYXFLAGS passes extra styxlisten flags (-T times each connection's
+# setup, -v is verbose).  Starting the server by hand instead, to get a
+# flag in, is how "Address already in use" was walked into four times in
+# one session: this script waits for the port and that hand-rolled
+# command does not, so the server silently never announced and the next
+# hour of measurements were of nothing at all.
+#
 nohup "$ROOT/MacOSX/arm64/bin/emu" -r "$ROOT" sh -c \
-	"styxlisten -A 'tcp!*!$PORT' export / ; sleep 2000000" \
+	"styxlisten ${STYXFLAGS:-} -A 'tcp!*!$PORT' export / ; sleep 2000000" \
 	>"$LOG" 2>&1 &
 
 i=0

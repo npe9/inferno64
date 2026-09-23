@@ -340,6 +340,17 @@ newproto(char *name, int type, int maxconv)
 void
 ipinit(void)
 {
+	/*
+	 * Settable without a rebuild.
+	 *
+	 * The server stopping is rare enough that it is never happening
+	 * while a debug build is the one running, and rebuilding emu to
+	 * look costs the state you wanted to look at.  INFERNO_IPDEBUG=1
+	 * turns the traces below on for a normal binary.
+	 */
+	if(getenv("INFERNO_IPDEBUG") != nil)
+		ipsockdebug = 1;
+
 	ipfs[0] = malloc(sizeof(Fs));
 	if(ipfs[0] == nil)
 		panic("no memory for IP stack");
@@ -394,7 +405,7 @@ ipopen(Chan *c, int omode)
 	Proto *p;
 	uchar raddr[IPaddrlen];
 	ushort rport;
-	int perm, sfd;
+	int perm, sfd, lfd;
 	Fs *f;
 
 	perm = m2p[omode&3];
@@ -472,6 +483,8 @@ ipopen(Chan *c, int omode)
 	case Qlisten:
 		p = f->p[PROTO(c->qid)];
 		cv = p->conv[CONV(c->qid)];
+		lfd = -1;
+		USED(lfd);
 		if((perm & (cv->perm>>6)) != perm){
 			if(strcmp(up->env->user, cv->owner) != 0)
 				error(Eperm);
@@ -496,8 +509,13 @@ ipopen(Chan *c, int omode)
 			print("ipdebug: conv %d accept begins on fd %d (inuse %d)\n",
 				cv->x, cv->sfd, cv->inuse);
 		cv->accepting++;
-		sfd = so_accept(cv->sfd, raddr, &rport);
+		lfd = cv->sfd;
+		sfd = so_accept(lfd, raddr, &rport);
 		cv->accepting--;
+		if(ipsockdebug && lfd != cv->sfd)
+			print("ipdebug: conv %d accepted on fd %d but sfd is "
+				"now %d -- the listener moved under the accept\n",
+				cv->x, lfd, cv->sfd);
 		if(ipsockdebug)
 			print("ipdebug: conv %d accept returns fd %d\n", cv->x, sfd);
 

@@ -22,6 +22,7 @@ badmodule(p: string)
 }
 
 verbose := 0;
+timing := 0;
 passhostnames := 0;
 
 init(ctxt: ref Draw->Context, argv: list of string)
@@ -54,6 +55,8 @@ init(ctxt: ref Draw->Context, argv: list of string)
 
 	while ((opt := arg->opt()) != 0) {
 		case opt {
+		'T' =>
+			timing = 1;
 		'v' =>
 			verbose = 1;
 		'a' =>
@@ -178,7 +181,20 @@ authenticator(dfd: ref Sys->FD, authinfo: ref Keyring->Authinfo, mfd: ref Sys->F
 
 exportproc(sync: chan of int, fd: ref Sys->FD, uname, hostname: string, dfd: ref Sys->FD)
 {
+	#
+	# Where the time before a client's first reply goes.
+	#
+	# A client's Tversion is not read until this function reaches
+	# sys->export below, and that took 28 seconds once in six
+	# connections to an idle server -- with every later message on the
+	# same connection answered in under a millisecond.  It looked like
+	# a server that had stopped; it is a server that has not started
+	# this connection yet.  -T prints the three steps so the next
+	# person does not have to guess which one it is.
+	#
+	t0 := sys->millisec();
 	sys->pctl(Sys->NEWFD | Sys->NEWNS, 2 :: fd.fd :: dfd.fd :: nil);
+	t1 := sys->millisec();
 	fd = sys->fildes(fd.fd);
 	dfd = sys->fildes(dfd.fd);
 	sync <-= 1;
@@ -187,6 +203,11 @@ exportproc(sync: chan of int, fd: ref Sys->FD, uname, hostname: string, dfd: ref
 	# the original attach, an inherent shortcoming of this scheme.
 	if (sys->mount(fd, nil, "/", Sys->MREPL|Sys->MCREATE, hostname) == -1)
 		error(sys->sprint("cannot mount for user '%s': %r\n", uname));
+	t2 := sys->millisec();
+	if(timing)
+		sys->fprint(stderr(),
+			"styxlisten: setup pctl %dms mount %dms (total %dms)\n",
+			t1-t0, t2-t1, t2-t0);
 
 	sys->export(dfd, "/", Sys->EXPWAIT);
 }
