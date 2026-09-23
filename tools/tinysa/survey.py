@@ -54,6 +54,7 @@ import os, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tinysa
+from tinysa import cmd
 
 MARGIN = 8.0            # dB over the floor before a bin counts
 
@@ -61,6 +62,22 @@ MARGIN = 8.0            # dB over the floor before a bin counts
 def median(v):
     s = sorted(v)
     return s[len(s)//2]
+
+
+def setup(fd):
+    """Put the settings this tool depends on where it needs them.
+
+    An instrument keeps what it was last told, and what it was last
+    told may have been for something else entirely.  A resolution
+    bandwidth of 3kHz, left behind after measuring an FSK deviation,
+    makes a 26MHz sweep take 73 seconds -- which reads as a hung tool,
+    a hung instrument and a hung serial port in turn, and is none of
+    them.  The README records the same lesson about ultra mode.
+    """
+    cmd(fd, "calc off")
+    cmd(fd, "rbw auto")
+    cmd(fd, "sweeptime auto")
+    cmd(fd, "attenuate auto")
 
 
 def collect(fd, npass):
@@ -206,7 +223,7 @@ def main():
     # calc leaves an accumulation in the traces that outlives the
     # command that set it; this reads data 0, but turn it off so the
     # instrument's own display agrees with what is printed here.
-    tinysa.cmd(fd, "calc off")
+    setup(fd)
     if stop > 800000000:
         tinysa.cmd(fd, "ultra on")
     tinysa.cmd(fd, "sweep %d %d" % (start, stop))

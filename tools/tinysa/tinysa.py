@@ -182,7 +182,14 @@ def cmd(fd, s, timeout=10.0):
     # "frequencies" comes back holding a level in dBm.  Seen: the
     # instrument answering "mode" and "sweep" with trace data, and a
     # tool parsing -9.984375e+01 as a frequency in hertz.
-    drain(fd, 0.2)
+    # Long enough to clear a whole trace.  A sweep of 450 points takes
+    # about thirteen seconds to come over the wire, so a drain capped
+    # at three could never catch up with one that had been abandoned
+    # part way, and every later command then read the tail of it: the
+    # symptom is "resume" answering with the text of "pause", and
+    # "data 0" returning 900 values for a 450-point sweep.  It costs
+    # nothing when there is nothing waiting.
+    drain(fd, 0.3, 20.0)
     os.write(fd, (s + "\r").encode())
     buf = b""
     # A hard deadline as well as the rolling one.  "keep going while

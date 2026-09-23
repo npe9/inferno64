@@ -1892,15 +1892,17 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 *
 		 * Comparing peak against floor does not separate them:
 		 * the bad runs had 14 and 20dB between the two.  What
-		 * does is that noise crossing a line produces bursts and
-		 * gaps of the same shortest length -- both at whatever
-		 * this receiver can resolve -- and in numbers no
-		 * transmitter sends.  A real burst train has a shortest
-		 * gap far longer than its shortest burst.  On every run
-		 * recorded here that rule agrees with which results were
-		 * reproducible and which were not.
+		 * does is that noise crossing a line gives a shortest
+		 * burst and a shortest gap of the same order -- both
+		 * near whatever this receiver can resolve -- in numbers
+		 * no transmitter sends.  A real burst train rests
+		 * between transmissions, so its shortest gap is far
+		 * longer than its shortest burst: 794 against 12953
+		 * microseconds on the one run here that repeated.  The
+		 * noise runs were 637 against 506, 635 against 579, 631
+		 * against 533 and 626 against 627.
 		 */
-		weak = nb > 50 && bmin <= gmin + 1 && gmin <= bmin + 1;
+		weak = nb > 20 && gmin < 2*bmin && bmin < 2*gmin;
 		print("probe %lud floor %d peak %d thr %d%s us %lud "
 			"duty %lud%% bursts %lud", (ulong)hz, floor, peak,
 			thr, weak? " NOISE": "", us, (hi*100)/nsamp, nb);

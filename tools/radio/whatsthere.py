@@ -55,7 +55,7 @@ def main():
     fd = tinysa.open_port()
     time.sleep(0.3)
     tinysa.needalive(fd)
-    tinysa.cmd(fd, "calc off")
+    survey.setup(fd)
     if hi > 800000000:
         tinysa.cmd(fd, "ultra on")
     tinysa.cmd(fd, "sweep %d %d" % (lo, hi))
@@ -72,8 +72,14 @@ def main():
     # previous frequency's.  ask() could not tell those apart, and
     # this printed one frequency's numbers against another's row.
     c = Console(scratch)
-    out = c.ctl(["probe %d 300" % s["at"] for s in found],
-                wait=30.0 + 20.0*len(found)) or ""
+    # Two seconds a channel, not three hundred milliseconds.  The
+    # probe's first pass has to catch a burst to set a threshold worth
+    # anything, and on a channel busy a few per cent of the time a
+    # short window usually misses: every row came back NOISE, which is
+    # the verb correctly refusing to dress up a measurement of its own
+    # threshold.
+    out = c.ctl(["probe %d 2000" % s["at"] for s in found],
+                wait=40.0 + 30.0*len(found)) or ""
     replies = [l.rstrip() for l in out.split("\n")
                if l.startswith("probe ") and " floor " in l]
     print()

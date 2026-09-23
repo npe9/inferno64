@@ -165,14 +165,24 @@ class Console:
         # its scrollback, so a marker that restarts at M1 every time
         # the tool runs has several matches in it.
         mark = "M%d.%d" % (int(time.time()) % 100000, Console.seq)
-        self.send("echo " + mark)
-        end = time.time() + 8.0
-        while time.time() < end:
-            time.sleep(0.5)
-            if self.text().count(mark) >= 2:
-                break
-        else:
-            return None
+        if not self.mark(mark):
+            # No echo: a previous run may have left the board inside a
+            # held-open cat, where the marker is written to the ctl
+            # file rather than run -- the console shows "cat: write
+            # error" and this would wait for ever.  End that cat and
+            # mark again.
+            #
+            # Only then, and never first.  An end-of-file at a shell
+            # prompt is end of input and the shell exits, which leaves
+            # the board with a console and nothing to run commands;
+            # sending one unconditionally "to be safe" killed the
+            # shell and every command after it went nowhere.
+            self.eof()
+            time.sleep(1.0)
+            Console.seq += 1
+            mark = "M%d.%d" % (int(time.time()) % 100000, Console.seq)
+            if not self.mark(mark):
+                return None
         self.send("cat >" + file)
         time.sleep(1.5)
         for l in lines:
@@ -207,6 +217,16 @@ class Console:
         self.eof()
         time.sleep(1.0)
         return since()
+
+    def mark(self, mark, wait=8.0):
+        """Type a marker and wait for the board to echo it back."""
+        self.send("echo " + mark)
+        end = time.time() + wait
+        while time.time() < end:
+            time.sleep(0.5)
+            if self.text().count(mark) >= 2:
+                return True
+        return False
 
     def ask(self, line, match, wait=6.0):
         """Send a line and give back the last reply match() accepts.
