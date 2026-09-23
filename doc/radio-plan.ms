@@ -1017,6 +1017,41 @@ separate measurements in one day \- the 2.8ms carrier sense quantum,
 the 1.34ms burst length, and this \- have now all turned out to be the
 instrument rather than the air.
 .PP
+THE PAGING BAND, which this survey had never looked at.  Every sweep
+here stopped at 928MHz because that is where the ISM band ends, and
+the US paging allocation starts immediately above it.  Twenty sweeps
+of 928 to 932 find nine carriers \- 928.82, 929.38, 929.63, 929.84,
+930.33, 930.54, 930.82, 931.32 and 931.81MHz \- peaking at \-83.8dBm
+against a \-113 floor, 9 to 80kHz wide, on something close to a 25kHz
+grid.  929.63 appeared in six sweeps of twenty, which is the most
+persistent thing this bench has measured.
+.PP
+That is the right target for a first decode and the reason is the
+part.  POCSAG is 2-FSK at 512, 1200 or 2400 bits a second with
+\(+-4.5kHz deviation and a 32-bit frame sync word, 0x7CD215D8, and a
+CC1120 does 2-FSK with 32-bit sync words.  Nothing about it is beyond
+this receiver, which is not true of anything else measured here.
+.PP
+Configured for it \- 929.63MHz, 1200 symbols a second, 4486Hz
+deviation against the 4500 asked, a 12.5kHz filter and that sync word,
+every one read back off the part \- it received nothing in 140
+seconds.  No packets, no CRC errors, no overflow.
+.PP
+The likely reason is the protocol and not the radio.  Most paging in
+the United States is FLEX rather than POCSAG: 1600, 3200 or 6400 bits
+a second, a different sync word, and 4-level as well as 2-level.  The
+next thing to try is FLEX at 1600 two-level, and after that the other
+POCSAG rates; all of them are a ctl line each now.
+.PP
+And FT8 is not a candidate, on any band, which is worth writing down
+because the frequencies are inviting.  Three independent reasons: it
+is 8-FSK and this part does 2 and 4; it is 6.25 symbols a second and
+the slowest this part's rate register expresses is 61; and it is about
+50Hz wide where the narrowest receive filter here is 1984Hz, which is
+16dB of noise added to a signal designed to sit below the noise
+already.  It also wants soft-decision metrics for its LDPC decoder and
+this part hands over hard bits from a slicer.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
