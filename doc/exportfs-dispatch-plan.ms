@@ -192,3 +192,62 @@ whole complaint.
 Acceptance: p90 under 1 second and max under 5 at three readers, with
 no regression in throughput measured by the same client reading a
 1.9MB file.
+.NH 1
+Where the time goes, measured with a harness that proves its own load
+.PP
+.B "The connect is instant.  The service is not."
+Splitting the measurement into TCP connect and the Tversion round
+trip, with three readers and the bytes they actually moved reported:
+.P1
+LOAD ACTUALLY GENERATED: 164.1 MB by 3 readers
+  slow: connect 0.00s  handshake 10.31s
+  slow: connect 0.00s  handshake  1.35s
+median 4.53  p90 52.03  max 66.56
+.P2
+So
+.CW accept
+is not the problem and styxlisten is not the problem: the connection
+is established at once and then waits to be SERVED.  That is
+exportfs's dispatch, which is what this plan is about, and it is the
+first measurement that localises it rather than inferring it.
+.PP
+.B "And the harness had to be fixed first, for the same reason as
+.B "everything else in this port."
+An earlier run of the identical code reported p90 0.03s at three
+readers, which would have said the problem did not exist.  The
+loaders had failed to connect and the harness had no way to say so.
+It now reports the megabytes it actually moved and shouts if a load
+run moved less than one, because a benchmark that cannot prove it
+applied load is not evidence of anything.
+.NH 1
+Status of the implementation
+.PP
+Stage 2 was written \(em global queue removed, a worker spawned per
+request by the connection that read it, inline service at the bound \(em
+and it is NOT committed: it crashes.
+.IP \(bu
+The first crash was
+.CW "panic: decref" ,
+from
+.CW exdispatch
+adopting the connection's pgrp, egrp and fgrp by plain assignment
+without taking a reference.  That was survivable when a slave looped
+forever and never exited; with a worker per request every worker
+exits and closes three groups it never referenced.  Fixed by saving
+and restoring the worker's own groups.
+.IP \(bu
+The second is
+.CW "process exwork faults: dereference of nil"
+inside
+.CW exdispatch ,
+intermittently and only under load.  Not diagnosed.  The candidates
+are the Export being freed under the worker despite the reference
+taken before the spawn, and
+.CW up->env
+not being what a kproc'd process assumes.
+.PP
+It is reverted rather than left in, because
+.CW exportfs.c
+is shared by every emu in the tree and a server that crashes under
+load is worse than one that is slow under load.  The baseline above is
+the number to beat, and the crash above is the next thing to fix.
