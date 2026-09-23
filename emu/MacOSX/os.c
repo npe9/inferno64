@@ -192,14 +192,46 @@ trapFPE(int signo, siginfo_t *si, void *a)
 void
 trapUSR1(int signo)
 {
-    USED(signo);
-    
-    if(up->type != Interp)      /* Used to unblock pending I/O */
-        return;
-    if(up->intwait == 0)        /* Not posted so its a sync error */
-        disfault(nil, Eintr);	/* Should never happen */
-    
-    up->intwait = 0;		/* Clear it so the proc can continue */
+	int intwait;
+
+	USED(signo);
+
+	/*
+	 * Clear intwait FIRST, and for EVERY kind of process.
+	 *
+	 * This used to test up->type before clearing and return early for
+	 * anything that is not an Interp -- so a kproc interrupted out of a
+	 * host syscall was left with intwait set, and osleave()'s
+	 *
+	 *	while(up->intwait)
+	 *		osyield();
+	 *
+	 * then spun on it for ever.  Every other Unix port in this tree
+	 * (DragonFly, NetBSD, Plan9, ...) clears it first and checks the
+	 * type afterwards; only this one had the two the wrong way round.
+	 *
+	 * It stopped the styx server every few hours, and from outside it
+	 * looked like nothing at all: connections accepted, their first
+	 * message never read, the process at 0% CPU.  The three exportfs
+	 * slaves that should have been answering were here --
+	 *
+	 *	exdispatch -> exreply -> ipwrite -> so_send -> osleave
+	 *	    -> cthread_yield -> swtch_pri
+	 *
+	 * -- spinning in that loop, having been interrupted by swiproc()
+	 * from exflushed() to service a Tflush.  exportfs slaves are kprocs,
+	 * so they took the early return every time; a Tflush arriving at the
+	 * wrong moment cost one slave for good, and a few of those stopped
+	 * the server.  The signal exists to unblock pending I/O, which is
+	 * not a thing only Dis processes do.
+	 */
+	intwait = up->intwait;
+	up->intwait = 0;
+
+	if(up->type != Interp)		/* used only to unblock pending I/O */
+		return;
+	if(intwait == 0)		/* not posted, so it is a sync error */
+		disfault(nil, Eintr);	/* should never happen */
 }
 
 /* from geoff collyer's port */

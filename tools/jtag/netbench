@@ -1,0 +1,158 @@
+#!/bin/sh
+#
+# Measure the board's network, honestly.
+#
+#	sh tools/jtag/netbench [repeats]
+#
+# Phase 0 of doc/raspi3b-net-plan.ms.  Four changes were evaluated in
+# one afternoon against single samples; all four were wrong about
+# whether they had helped, and one reading that a whole argument rested
+# on -- "100% loss at eleven frames" -- did not reproduce even once when
+# it was finally repeated.
+#
+# So this reports DISTRIBUTIONS and never a bare average, repeats every
+# point and shows the spread between repeats, refuses to report at all
+# if a precondition fails, and records the build stamp it measured so a
+# number cannot be attributed to the wrong kernel.
+#
+set -u
+ROOT=`cd \`dirname "$0"\`/../.. && pwd`
+S=${S:-/private/tmp/claude-501/-Users-npe-src-inferno64-branches-raspi3b-port/2675f84d-d333-4a0e-ba1f-4ef786fc52b7/scratchpad}
+BOARD=${BOARD:-192.168.8.105}
+HOST=${HOST:-192.168.8.233}
+N=${1:-3}
+SESS=${SESS:-`screen -ls | awk '/ttys/{print $1; exit}'`}
+OUT=$ROOT/os/inferno/raspi3b/board.out
+CMD=$ROOT/os/inferno/raspi3b/board.cmd
+
+say() { echo "netbench: $*"; }
+die() { echo "netbench: $*" >&2; echo "netbench: nothing measured." >&2; exit 2; }
+
+#
+# Preconditions.  Each of these has produced a whole afternoon of wrong
+# numbers at least once.
+#
+say "checking preconditions"
+
+# the styx server must answer, and answer FAST -- a server left with
+# INFERNO_MNTDEBUG set is ~30x slower and looks exactly like the fault
+python3 - "$HOST" <<'PYEOF' || die "the styx server did not answer an Rversion in 1s"
+import socket, struct, sys, time
+def s(x):
+    b = x.encode(); return struct.pack('<H', len(b)) + b
+t0 = time.time()
+try:
+    sk = socket.create_connection(('127.0.0.1', 6666), timeout=5); sk.settimeout(5)
+    sk.sendall(struct.pack('<IBH', 19, 100, 0xffff) + struct.pack('<I', 8192) + s('9P2000'))
+    d = sk.recv(64); sk.close()
+    dt = time.time() - t0
+    if not d or d[4] != 101: sys.exit(1)
+    if dt > 1.0:
+        print("netbench: server answered in %.2fs -- too slow to measure through" % dt)
+        sys.exit(1)
+except Exception:
+    sys.exit(1)
+PYEOF
+
+# and it must not be tracing: that is the 30x, and it is invisible
+if grep -aq '^mnt: ' /tmp/styxd.log 2>/dev/null; then
+	die "the server log has mnt: traces -- restart it without INFERNO_MNTDEBUG"
+fi
+
+ping -c 3 -W 1000 "$BOARD" >/dev/null 2>&1 || die "the board does not answer a ping"
+
+#
+# The build stamp, from the console if there is one and from the
+# kernel's own log ring over JTAG if there is not.
+#
+# The console is the least reliable thing on this rig -- the adapter
+# wedges, the session gets killed, another session takes it -- and a
+# measurement should not be refused because of it.  kmesg reads the ring
+# out of RAM over the debugger and needs nothing of the console.
+#
+STAMP=
+if [ -n "$SESS" ] && screen -S "$SESS" -X select . >/dev/null 2>&1; then
+	screen -S "$SESS" -X hardcopy -h "$S/nb-stamp.txt" 2>/dev/null
+	sleep 1
+	STAMP=`LC_ALL=C grep -ao 'build [0-9]*' "$S/nb-stamp.txt" | tail -1`
+fi
+if [ -z "$STAMP" ]; then
+	say "no console; reading the build stamp over JTAG"
+	STAMP=`sh "$ROOT/tools/jtag/kmesg" 400 2>/dev/null \
+		| LC_ALL=C grep -ao 'build [0-9]*' | tail -1`
+fi
+[ -n "$STAMP" ] || die "no build stamp from the console or from kmesg; cannot say what was measured"
+say "measuring $STAMP, $N repeats"
+echo
+
+#
+# Latency against frame count.  The MINIMUM is the statistic that
+# survives repetition here; the average moved by 6x across one
+# afternoon for the same point, so it is reported but not trusted.
+#
+echo "  latency by frame count (ping, $N rounds of 15)"
+echo "    bytes frames |     min    median       p90       max | loss"
+for sz in 64 1400 4000 8000 16000; do
+	frames=$(( (sz + 1499) / 1500 ))
+	[ $sz -lt 1400 ] && frames=1
+	mins= ; alll= ; loss=0
+	r=0
+	while [ $r -lt $N ]; do
+		o=`ping -c 15 -i 0.25 -s $sz "$BOARD" 2>/dev/null`
+		l=`echo "$o" | grep -o '[0-9.]*% packet loss' | tr -d '%packetlos '`
+		loss=`python3 -c "print(max($loss, float('${l:-100}')))"`
+		v=`echo "$o" | grep -oE 'time=[0-9.]+' | sed 's/time=//' | tr '\n' ' '`
+		alll="$alll $v"
+		r=`expr $r + 1`
+	done
+	python3 - "$sz" "$frames" "$loss" $alll <<'PYEOF'
+import sys
+sz, frames, loss = sys.argv[1], sys.argv[2], sys.argv[3]
+v = sorted(float(x) for x in sys.argv[4:])
+if not v:
+    print("    %5s %6s |  no replies" % (sz, frames)); raise SystemExit
+def q(p): return v[min(len(v)-1, int(len(v)*p))]
+print("    %5s %6s | %7.2f %9.2f %9.2f %9.2f | %s%%"
+      % (sz, frames, v[0], q(.5), q(.9), v[-1], loss))
+PYEOF
+done
+echo
+
+#
+# Throughput, and separately in each direction, which is the question
+# phase 1 of the plan exists to answer.  A styx read is a small request
+# and a large reply; a write is the reverse.
+#
+runboard() {	# runboard <tag> <script>; prints seconds between M0 and M1
+	rm -f "$OUT"
+	printf '%s\n' "$2" > "$CMD"
+	i=0
+	while [ ! -s "$OUT" ] && [ $i -lt 400 ]; do sleep 0.25; i=`expr $i + 1`; done
+	[ -s "$OUT" ] || { echo "-"; return; }
+	i=0
+	while ! grep -q '^M0' "$OUT" 2>/dev/null && [ $i -lt 400 ]; do sleep 0.25; i=`expr $i + 1`; done
+	t0=`python3 -c 'import time; print(time.time())'`
+	i=0
+	while ! grep -q '^M1' "$OUT" 2>/dev/null && [ $i -lt 2400 ]; do sleep 0.25; i=`expr $i + 1`; done
+	grep -q '^M1' "$OUT" 2>/dev/null || { echo "-"; return; }
+	python3 -c "import time; print('%.1f' % (time.time() - $t0))"
+}
+
+K=/n/remote/os/inferno/raspi3b/kernel8.img
+echo "  1MB over styx, $N repeats (seconds)"
+for dir in read write; do
+	case $dir in
+	read)	sc="echo M0; dd -if $K -of /dev/null -bs 8192 -count 128; echo M1";;
+	write)	sc="echo M0; dd -if /dev/zero -of /n/remote/tmp/nbw.bin -bs 8192 -count 128; echo M1";;
+	esac
+	vals=
+	r=0
+	while [ $r -lt $N ]; do
+		# the script must differ each time or remotecmd skips it
+		vals="$vals `runboard $dir \"$sc; echo run$r\"`"
+		r=`expr $r + 1`
+	done
+	printf "    %-6s |%s\n" "$dir" "$vals"
+done
+echo
+say "measured $STAMP"

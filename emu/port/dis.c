@@ -208,6 +208,7 @@ struct
 	Proc*	vmqt;
 	Proc*	idlevmq;	/* queue of procs wanting work */
 	Atidle*	idletasks;
+	ulong	handoffs;	/* times the vm has been taken; vmwatch reads it */
 } isched;
 
 extern	int	bflag;
@@ -1033,6 +1034,8 @@ acquire(void)
 		osblock();
 	}
 
+	isched.handoffs++;
+
 	if(up->type == Interp) {
 		p = up->iprog;
 		up->iprog = nil;
@@ -1048,6 +1051,62 @@ acquire(void)
 		isched.runtl = p;
 
 	strcpy(up->text, "dis");
+}
+
+/*
+ * Say so when the VM has stopped handing itself on.
+ *
+ * The styx server stops answering every few hours: connections are
+ * accepted, their first message is never read, and the process is at
+ * 0% CPU with every exportfs slave asleep, one waiting to re-enter the
+ * VM after a socket write, and one in acquire() -- with nobody running
+ * to hold the lock they are waiting for.  Both this emu and the
+ * multicore branch's do it, identically, so it is not the per-request
+ * worker rewrite and not parallelvm.
+ *
+ * It is invisible from outside and intermittent, which is the worst
+ * combination to debug by hand: by the time anyone looks, the state
+ * that would explain it has usually been restarted away.  This watches
+ * for exactly the signature -- processes queued for the VM, the VM not
+ * idle, and no handoff at all between two samples -- and prints the
+ * scheduler's state once when it sees it.
+ *
+ * Cheap: one wakeup every five seconds and three loads under the lock,
+ * and it says nothing at all while the VM is being handed on.
+ */
+static void
+vmwatch(void *a)
+{
+	ulong last, now;
+	int stalled, said;
+	Proc *q;
+
+	USED(a);
+	last = 0;
+	said = 0;
+	for(;;){
+		osmillisleep(5000);
+		lock(&isched.l);
+		now = isched.handoffs;
+		q = isched.vmq;
+		stalled = q != nil && isched.idle == 0 && now == last;
+		last = now;
+		unlock(&isched.l);
+		if(!stalled){
+			said = 0;
+			continue;
+		}
+		if(said)
+			continue;
+		said = 1;
+		print("dis: SCHEDULER STALLED: idle %d creating %d runhd %s "
+			"handoffs %lud, and these are waiting for the vm:\n",
+			isched.idle, isched.creating,
+			isched.runhd != nil? "set": "nil", now);
+		for(; q != nil; q = q->qnext)
+			print("dis:    %s %d in %s\n",
+				q->text, q->pid, q->text);
+	}
 }
 
 void
@@ -1409,6 +1468,8 @@ disinit(void *a)
 
 	if(vflag)
 		print("Initial Dis: \"%s\"\n", initmod);
+
+	kproc("vmwatch", vmwatch, nil, 0);
 
 	fmtinstall('D', Dconv);
 
