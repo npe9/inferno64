@@ -56,23 +56,34 @@ enum {
 	Ragccsthr	= 0x18,		/* carrier sense threshold */
 	Ragccfg0	= 0x1d,
 	/*
-	 * AGC_CFG0.  0xcf, and what bits 3:2 actually are is not known.
+	 * AGC_CFG0.  Bits 3:2 are RSSI_VALID_CNT: how many internal
+	 * estimates the RSSI averages before it updates, 2, 3, 5 or 9
+	 * for 00, 01, 10 and 11.  Reset is 0xc3 and this is 0xcf, which
+	 * is the slowest and steadiest.
 	 *
-	 * This said "reset 0xc3, RSSI_VALID_CNT 9", taking the field to
-	 * be how many internal estimates the RSSI averages.  On the
-	 * part that is not what changing it does.  At 881MHz, with
-	 * nothing else altered: 0xcf gives a peak of -101dBm and a
-	 * floor of -119, 0xcb and 0xc7 give -84 and -106 -- the same
-	 * shape about 17dB higher -- and 0xc3, which the old comment
-	 * called the reset value, gives a peak of +78dBm and a floor of
-	 * +48.  Positive dBm from an antenna in a room is not a
-	 * reading, so whatever those bits select, clearing them stops
-	 * the RSSI meaning anything.
+	 * That is what the comment here said originally, and for most
+	 * of a day it looked wrong, because writing this register makes
+	 * the part report nonsense: 0xc3 gave a peak of +78dBm and a
+	 * floor of +48 at 881MHz, and 0xcb gave a sane -84dBm once and
+	 * +113dBm an hour later from the same write.  The name was
+	 * taken off the constant on the strength of that.
 	 *
-	 * 0xcf is kept because it is the value whose numbers agree best
-	 * with an instrument beside the board.  The name is removed
-	 * rather than corrected, because the honest state of it is that
-	 * this driver does not know.
+	 * It is not the value, it is the state.  AGC_CFG0 has to be
+	 * written with the part in IDLE; written while it is receiving
+	 * it leaves the AGC somewhere the RSSI does not come back from.
+	 * Written from IDLE and followed by a retune, every one of
+	 * 0xc3, 0xc7, 0xcb and 0xcf reads a sane -93 to -110dBm at
+	 * 881MHz, repeatably.
+	 *
+	 * And then the field measures itself.  The shortest carrier
+	 * sense assertion the part will make is one RSSI update, so
+	 * with "gcapture" at 881MHz the shortest burst is 0.608ms at
+	 * 0xc3, 0.927 at 0xc7, 1.568 at 0xcb and 2.79 at 0xcf --
+	 * ratios of 1.52, 1.69 and 1.78 against the 1.5, 1.67 and 1.8
+	 * that 2, 3, 5 and 9 estimates predict, and 0.304, 0.309,
+	 * 0.314 and 0.310ms an estimate.  So one estimate is 0.309ms
+	 * here, and the datasheet's own numbers came back out of the
+	 * board.
 	 */
 	  Agccfg0init	= 0xcf,
 	Ragcgainadjust	= 0x19,		/* the RSSI offset */
@@ -1216,20 +1227,25 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 * AGC_CFG0 is left alone.
 		 *
 		 * This used to put RSSI_VALID_CNT back to its reset
-		 * value for the duration, reasoning that this driver
-		 * sets it to nine estimates for a steady level reading
-		 * and that a moving average is what a capture is trying
-		 * to see through.  The reasoning was fine and the
-		 * register does not do what the driver's comment says:
-		 * with 0xcf the part reports sensible dBm, and with
-		 * 0xc3 -- which the same comment calls the reset value
-		 * -- "watch" at 881MHz reports a peak of +78dBm and a
-		 * floor of +48.  Positive dBm from an antenna in a
-		 * room, so the reading is not a reading.  Whatever bits
-		 * 3:2 of AGC_CFG0 are, clearing them breaks RSSI on
-		 * this part, and the first capture on silicon said
-		 * every sample of 200ms was above -85dBm while watch
-		 * on the same frequency said the peak was -101.
+		 * value for the duration, reasoning that nine estimates
+		 * is a moving average and a capture is trying to see
+		 * through it.  The reasoning was right and the way it
+		 * was done was wrong: it wrote AGC_CFG0 while the part
+		 * was receiving, which leaves the AGC somewhere the
+		 * RSSI does not come back from, and the first capture
+		 * on silicon reported every sample of 200ms above
+		 * -85dBm while watch on the same frequency said the
+		 * peak was -101.
+		 *
+		 * The register is fine; it has to be written from IDLE.
+		 * Doing that here would mean taking the part out of
+		 * receive to watch it receive, so the verb leaves it
+		 * alone and the ctl file can set it beforehand:
+		 *
+		 *	idle
+		 *	reg 0x1d 0xc3
+		 *	freq 881000000
+		 *	gcapture 500 0x11
 		 */
 		nrun = nsamp = nvalid = 0;
 		cur = -1;
