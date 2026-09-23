@@ -101,6 +101,7 @@ enum {
 	Rpktcfg2	= 0x26,
 	  Fmtnormal	= 0x04,		/* CCA_MODE 001, PKT_FORMAT 00 */
 	  Fmtrandom	= 0x06,		/* PKT_FORMAT 10: random data, TX only */
+	  Fmttransparent = 0x07,	/* PKT_FORMAT 11: the bits, on a pin */
 	Rpktcfg0	= 0x28,
 	  Lenfixed	= 0x00,		/* PKT_CFG0.LENGTH_CONFIG = 00 */
 	  Leninfinite	= 0x40,		/* PKT_CFG0.LENGTH_CONFIG = 10 */
@@ -169,6 +170,7 @@ enum {
 
 	/* what an IOCFG selects */
 	Gpktsyncrxtx	= 0x06,
+	Gserialrx	= 0x09,		/* the demodulated bit stream */
 	Gcarriersense	= 0x11,		/* swept for; see gsweep */
 	Ghighz		= 0x30,
 
@@ -985,6 +987,66 @@ cc1120ctl(Radio *r, char *buf, int n)
 
 			dwell1(rr, "scan", dwell);
 		}
+		return n;
+	}
+	if(strcmp(f[0], "serial") == 0 && nf == 2){
+		/*
+		 * Put the demodulated bit stream on the pin, or take it
+		 * off again.
+		 *
+		 * Everything else this driver can measure is the
+		 * receiver's own opinion of the air: an RSSI, a carrier
+		 * sense, a packet that did or did not pass a sync word
+		 * and a CRC.  Every one of them has a threshold or a
+		 * comparison in it, and this session spent three
+		 * separate measurements discovering that what looked
+		 * like structure on the air was the quantisation of the
+		 * instrument -- 2.8ms because that is nine RSSI
+		 * estimates, 1343us because that is two resolution
+		 * cells, 9.94us because that is the sampling grid.
+		 *
+		 * PKT_CFG2.PKT_FORMAT = 11 is transparent serial mode,
+		 * where the packet engine is out of the path entirely
+		 * and the slicer's output goes straight to a GPIO.  No
+		 * sync word has to match and no CRC has to check, so a
+		 * transmission this radio cannot decode is still a
+		 * transmission it can measure -- and a run length is a
+		 * symbol period, which is a property of what is
+		 * transmitting rather than of what is listening.
+		 *
+		 * That is what makes "ghist" worth pointing at it.  A
+		 * preamble is an alternating pattern at the symbol rate,
+		 * so it arrives as a pile of runs all one length: 833us
+		 * is 1200 symbols a second, 625us is 1600 and 1953us is
+		 * 512.  Noise has no such pile.
+		 *
+		 *	serial on		bits on GPIO3
+		 *	serial off		back to packets
+		 *
+		 * The receiver is left in RX either way, because a mode
+		 * that has to be followed by a strobe to be useful is a
+		 * mode half the callers will get wrong.
+		 */
+		s->lock(s);
+		strobe(rr, Sidle);
+		for(i = 0; i < Idlewaitus; i++)
+			if(state(rr) == Stidle)
+				break;
+		if(strcmp(f[1], "on") == 0){
+			rr->serial = 1;
+			wr(rr, Rpktcfg2, Fmttransparent);
+			wr(rr, Riocfg3, Gserialrx);
+		}else if(strcmp(f[1], "off") == 0){
+			rr->serial = 0;
+			wr(rr, Rpktcfg2, Fmtnormal);
+			wr(rr, Riocfg3, Gcarriersense);
+		}else{
+			s->unlock(s);
+			error(Ebadctl);
+		}
+		strobe(rr, Sfrx);
+		strobe(rr, Srx);
+		s->unlock(s);
 		return n;
 	}
 	if(strcmp(f[0], "carrier") == 0 && nf == 2){

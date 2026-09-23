@@ -1436,13 +1436,29 @@ poolsize(Pool *p, uintptr max, int contig)
 		p->ressize = max-RESERVED;
 	if (contig && max > 0) {
 		p->chunk = max-1024;
-		print("poolsize: poolalloc() contig chunk 0x%zx %zd\n", p->chunk, p->chunk);
+		/*
+		 * The number first, and only one line.
+		 *
+		 * This used to print the chunk at the end of "poolsize:
+		 * poolalloc() contig chunk 0x%zx %zd", and a warm reset
+		 * on os/inferno/stm32f407 stopped with the console
+		 * showing "poolsize: poolalloc() contig chunk 0" -- with
+		 * no way to tell whether the board had printed a chunk
+		 * of zero and gone on, or printed 614 and stopped inside
+		 * the line.  Those are different faults and the log could
+		 * not separate them, which cost the diagnosis.
+		 *
+		 * A value that a truncated line can still carry has to
+		 * come before the prose, and the two prints that bracket
+		 * poolfree() say nothing that "reserved" does not say by
+		 * appearing at all.
+		 */
+		print("poolsize: contig %zd reserving\n", p->chunk);
 		x = poolalloc(p, p->chunk);
 		if(x == nil)
 			panic("poolsize: don't have %d bytes\n", p->chunk);
-		print("poolsize: before poolfree()\n");
 		poolfree(p, x);
-		print("poolsize: after poolfree()\n");
+		print("poolsize: contig %zd reserved\n", p->chunk);
 		p->hw = 0;
 	}
 }

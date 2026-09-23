@@ -1052,6 +1052,68 @@ the slowest this part's rate register expresses is 61; and it is about
 already.  It also wants soft-decision metrics for its LDPC decoder and
 this part hands over hard bits from a slicer.
 .PP
+What to point at it next is a different kind of measurement, and it
+now exists.  Everything this bench could do until today reported a
+threshold being crossed \- an RSSI, a carrier sense, a packet that did
+or did not match a sync word \- and a threshold belongs to the
+receiver.  That is how three separate measurements in one day came
+back as a transmitter's signature and turned out to be the
+instrument's own quantisation.
+.PP
+.B PKT_CFG2 's
+PKT_FORMAT of 11 is transparent serial mode, where the packet engine
+is out of the path entirely and the slicer's output goes to a GPIO.
+Nothing filters it, so no sync word has to match: a transmission this
+radio cannot decode is still one it can measure.  And what it measures
+is a symbol period, which is a property of whatever is transmitting.
+A preamble is an alternating pattern at the symbol rate, so under
+.B ghist
+it arrives as a pile of runs all one length \- 1953us for 512 symbols
+a second, 833 for 1200, 625 for 1600, 417 for 2400 \- and noise has no
+such pile.  The
+.B serial
+verb turns it on.
+.PP
+It has a positive control, which is why it is worth trusting at all,
+and the control is a test rather than a memory:
+.I tools/radio/serialrate.sh .
+The qemu model grew a transparent mode and an
+.B airrate
+property that puts a rate on the channel the guest was never told;
+with the guest configured for 2400 throughout, 300 symbols a second
+measures a symbol period of 21.5ms against 1200's 7.4ms, a ratio of
+2.9 where the rates differ by four, on two runs in a row.  The gap
+between 2.9 and 4 is the histogram: bins a power of two apart locate a
+period to within a factor of two, so the test's band is a factor of
+two either side of four and not tighter.  The absolute values are six
+times long and 4800 measures the same period as 1200, both because a
+guest polling a pin in a tight loop and qemu's virtual clock disagree;
+silicon samples at 1.37us against the model's nine and takes its bits
+from the air, so neither limit is the method's.  Silicon has not yet
+shown a pile of any length, which is the next thing to find out.
+.PP
+Three other cheap things the POCSAG negative did not rule out, each
+one ctl line.  The other rates, 512 and 2400 for POCSAG and 1600
+two-level for FLEX.  And the complement of the sync word, 0x832DEA27,
+because if the on-air sense is inverted relative to what the part
+compares against then every bit is flipped and 0x7CD215D8 can never
+match.
+.PP
+And a bench note that cost this session the board.  A warm reset on
+os/inferno/stm32f407 \- the ^R^R at the console, which is
+.IR exit (0)
+from the uart interrupt handler \- stopped after the poolsize contig
+print and never reached a shell, three times out of three, with the
+console left showing a line the board had cut short.  The same reset
+is clean under qemu, which cannot reproduce it: qemu reloads the
+kernel image on every reset, so its .data is fresh where a board's is
+not.  What the log could not say was whether the board printed a chunk
+of zero and went on or printed 614 and stopped inside the line, and
+that ambiguity is now fixed at the source \- the value comes before the
+prose, so a cut line still carries the number.  Diagnosing it needs a
+board that boots, and this one wants a press of its reset button
+first.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP

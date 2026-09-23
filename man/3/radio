@@ -464,6 +464,52 @@ Set IOCFG3 to each of the sixty-four selections in turn and say how
 many times the pin changed.  Which value carries which signal is a
 question for the part and not for a table: 0x11 is the carrier sense
 here, found this way.
+.TP
+.BI serial " on|off"
+Put the demodulated bit stream on GPIO3, or take it off again.
+.B PKT_CFG2 's
+PKT_FORMAT of 11 is the part's transparent serial mode, in which the
+packet engine is out of the path and the slicer's output goes straight
+to the pin: no sync word has to match and no CRC has to check, so a
+transmission this radio cannot decode is still one it can measure.
+The receiver is left in RX either way.
+.PP
+This is the one measurement here whose answer is a property of what is
+transmitting rather than of what is listening.  A preamble is an
+alternating pattern at the symbol rate, so under
+.B ghist
+it arrives as a pile of runs all one length, and that length is the
+symbol period: 1953us is 512 symbols a second, 833us is 1200, 625us is
+1600 and 417us is 2400.  Noise has no such pile.  Everything else on
+this page reports a threshold being crossed, and a threshold is the
+receiver's.
+.PP
+Demonstrated under qemu and not yet on the air, by
+.IR tools/radio/serialrate.sh .
+The model's
+.B airrate
+property puts a rate on the channel that the guest was never told, and
+with the guest configured for 2400 throughout, 300 symbols a second
+measures a symbol period of 21.5ms against 1200's 7.4ms \- a ratio of
+2.9 where the rates differ by four, repeatably.
+.PP
+That the ratio is 2.9 and not 4.0 is the histogram's resolution and
+has to be read as such.  Its bins are a power of two apart, so it
+locates a period to within a factor of two and a ratio of four to
+within a factor of two either side; the test's band is set there and
+not tighter.  It also takes the run-count-weighted mean of the whole
+distribution rather than the fullest bin, because a period near a bin
+boundary falls either side of it from one window to the next \- the
+first cut read 2048 samples on one run and 4096 on the next at the
+same rate.
+.PP
+Two things there are the model's rather than the method's.  Every
+absolute value is some six times long, and 4800 symbols a second
+measures the same period as 1200, both because a guest polling a pin
+in a tight loop and QEMU's virtual clock do not agree.  On silicon the
+sample period is 1.37us against the model's nine and the bits come
+from the air rather than from a virtual timer.  What silicon has not
+yet shown is a pile of any length.
 .PP
 .B "What each of these can resolve, and why it matters."
 Three separate measurements in one day looked like a transmitter's
@@ -539,6 +585,8 @@ survives.
 .B /tools/radio/whatsthere.py
 .br
 .B /tools/radio/twoboards.sh
+.br
+.B /tools/radio/serialrate.sh
 .br
 .B /tools/tinysa/survey.py
 .br

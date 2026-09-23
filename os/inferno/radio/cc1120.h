@@ -45,6 +45,7 @@ struct Cc1120
 	int	rssi;
 	uvlong	hz;			/* what setfreq() last tuned to */
 	ulong	symrate;		/* symbols a second, read from DRATE */
+	int	serial;		/* transparent mode: bits on GPIO3 */
 	int	lqi;
 
 	/* counters */

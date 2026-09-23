@@ -1,0 +1,289 @@
+From 07e202dcb3467ffa62014990d7579ffe771b78ba Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Wed, 23 Sep 2026 15:10:56 -0400
+Subject: [PATCH] hw/ssi/cc1120: transparent serial mode, and a rate the guest
+ was not told
+
+Every measurement this model could support was the receiver's own
+opinion of the air -- an RSSI, a carrier sense, a packet that did or
+did not match a sync word.  Each has a threshold or a comparison in
+it, and a bench using them spent three separate measurements
+discovering that what looked like structure on the air was the
+quantisation of the instrument.
+
+PKT_CFG2.PKT_FORMAT = 11 is the part's transparent serial mode, where
+the packet engine is out of the path and the slicer's output goes
+straight to a GPIO.  No sync word has to match and no CRC has to
+check, so a transmission the receiver cannot decode is still one it
+can measure.  This models it: a frame arriving at a part in that mode
+is clocked out on whichever pin selects SERIAL_RX, one bit a tick,
+and the RX FIFO is not touched.  The sync word is deliberately not
+checked first, because the packet engine is what checks it and in
+this mode it is not there -- a receiver in transparent mode hears
+frames addressed to words it is not listening for, which is the whole
+value of the mode.
+
+Two properties, and the second is the point.
+
+"preamble" is how many bytes of alternating pattern precede the frame,
+defaulting to the seventy-two POCSAG sends.  A netdev carries bytes
+and the air carries symbols, so the run a real transmitter sends
+before its sync word is not in the frame and has to be synthesised --
+and it is the one part of a transmission a receiver that cannot decode
+the protocol can still measure, because its run length is one symbol
+period and nothing else is so regular.
+
+"airrate" is the rate those bits arrive at.  Unset, the model uses the
+receiver's own DRATE, which is a receiver with perfect knowledge of
+the transmitter: fine for exercising the path and useless as a
+measurement, because a guest that then measures the symbol period has
+measured the number it programmed.  Set, the rate on the air is one
+the guest was never told, and a run-length measurement can be seen to
+have found something rather than echoed something.
+
+Measured through the Inferno driver's "ghist", which bins run lengths
+by powers of two: with the guest configured for 2400 throughout, an
+air rate of 300 puts the pile in the 2048-sample bin and 1200 puts it
+in the 512-sample bin.  A factor of four in the rate, a factor of four
+in the measurement.
+
+Two limits, both this model's rather than the method's.  4800 lands in
+the same bin as 1200, because QEMU cannot deliver a 208us virtual
+timer under a guest that is polling a pin in a tight loop.  And every
+absolute value is some six times long, because that same loop makes
+the guest's own clock and QEMU_CLOCK_VIRTUAL disagree.  The ratio
+survives both; the absolute numbers do not, and want silicon.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/ssi/cc1120.c | 153 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 153 insertions(+)
+
+diff --git a/hw/ssi/cc1120.c b/hw/ssi/cc1120.c
+index c18b35f..5a4044f 100644
+--- a/hw/ssi/cc1120.c
++++ b/hw/ssi/cc1120.c
+@@ -88,6 +88,18 @@ enum {
+     R_IOCFG0  = 0x03,
+     R_AGC_CS_THR      = 0x18,
+     R_AGC_GAIN_ADJUST = 0x19,
++    R_DRATE2 = 0x14,            /* DRATE_E in 7:4, DRATE_M 19:16 in 3:0 */
++    R_DRATE1 = 0x15,
++    R_DRATE0 = 0x16,
++    R_PKT_CFG2 = 0x26,          /* PKT_FORMAT in 1:0 */
++
++    PKT_FORMAT_TRANSPARENT = 0x03,
++    FXOSC = 32000000,           /* the crystal every register formula uses */
++
++    /*
++     * Room for a synthesised preamble plus a frame, in bits.
++     */
++    SERBITS = (256 + FIFOSZ + 4) * 8,
+ 
+     /* extended registers, SWRU295E table 5 */
+     X_PARTNUMBER  = 0x8f,
+@@ -107,6 +119,7 @@ enum {
+      * unmodelled function should look like.
+      */
+     GPIO_PKT_SYNC_RXTX = 0x06,
++    GPIO_SERIAL_RX     = 0x09,
+     GPIO_HIGHZ         = 0x30,
+ 
+     /*
+@@ -168,11 +181,22 @@ struct CC1120State {
+     /* RESET_N, active low */
+     bool in_reset;
+ 
++    /*
++     * Transparent serial mode: the demodulated bit stream on a pin,
++     * clocked at the symbol rate the guest programmed.
++     */
++    QEMUTimer *bitclk;
++    uint8_t serbuf[SERBITS / 8];
++    int nbits, bitpos;
++    int64_t bitns;
++
+     NICState *nic;
+     NICConf conf;
+ 
+     uint32_t drop_pct;
+     uint32_t drop_seed;
++    uint32_t preamble;
++    uint32_t airrate;
+     GRand *rand;
+ };
+ 
+@@ -281,6 +305,10 @@ static void cc1120_reset_state(CC1120State *s)
+     s->ext[X_PARTVERSION] = 0x21;
+     cc1120_update_counts(s);
+     cc1120_signal(s, GPIO_PKT_SYNC_RXTX, false);
++    if (s->bitclk != NULL) {
++        timer_del(s->bitclk);
++    }
++    s->nbits = s->bitpos = 0;
+ }
+ 
+ /*
+@@ -322,6 +350,113 @@ static void cc1120_syncword(CC1120State *s, uint8_t *out, int n)
+     }
+ }
+ 
++/*
++ * The symbol rate the guest programmed, in symbols a second.
++ *
++ * SWRU295E 6.7: rate is (2^20 + DRATE_M) * 2^DRATE_E * f_xosc / 2^39
++ * with a non-zero exponent, and DRATE_M * f_xosc / 2^38 without one.
++ * The driver's "rate" ctl verb computes the registers from this and
++ * reads them back, so a model that disagrees would be caught there.
++ */
++static uint32_t cc1120_symrate(CC1120State *s)
++{
++    uint32_t m;
++    uint64_t r;
++    int e;
++
++    m = ((s->regs[R_DRATE2] & 0x0f) << 16) |
++        (s->regs[R_DRATE1] << 8) | s->regs[R_DRATE0];
++    e = s->regs[R_DRATE2] >> 4;
++    if (e == 0) {
++        r = ((uint64_t)m * FXOSC) >> 38;
++    } else {
++        r = ((((uint64_t)1 << 20) + m) << e) * FXOSC >> 39;
++    }
++    return r ? (uint32_t)r : 1;
++}
++
++/*
++ * Transparent serial mode, PKT_CFG2.PKT_FORMAT = 11.
++ *
++ * In it the packet engine is out of the way entirely: whatever the
++ * demodulator makes of the air appears on a pin, bit by bit, and the
++ * RX FIFO is not used.  Nothing filters it, so no sync word has to
++ * match and no CRC has to check -- which is exactly why it is worth
++ * modelling, because it is the one mode in which a receiver can
++ * measure a transmission it cannot decode.
++ */
++static bool cc1120_transparent(CC1120State *s)
++{
++    return (s->regs[R_PKT_CFG2] & 0x03) == PKT_FORMAT_TRANSPARENT;
++}
++
++/*
++ * One bit per tick, most significant first, and the pin left low when
++ * the frame runs out.
++ */
++static void cc1120_bitclk(void *opaque)
++{
++    CC1120State *s = opaque;
++    int bit;
++
++    if (s->bitpos >= s->nbits) {
++        cc1120_signal(s, GPIO_SERIAL_RX, false);
++        s->nbits = s->bitpos = 0;
++        return;
++    }
++    bit = (s->serbuf[s->bitpos >> 3] >> (7 - (s->bitpos & 7))) & 1;
++    cc1120_signal(s, GPIO_SERIAL_RX, bit);
++    s->bitpos++;
++    timer_mod(s->bitclk, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->bitns);
++}
++
++/*
++ * Put a frame on the pin: a preamble, then the bytes as they came off
++ * the netdev.
++ *
++ * The preamble is synthesised here and that is a modelling decision
++ * worth stating.  A netdev carries bytes and the air carries symbols,
++ * so the alternating run a real transmitter sends before its sync
++ * word is not in the frame -- and it is the part of a transmission
++ * that a receiver which cannot decode the protocol can still
++ * measure, because its run length is one symbol period and nothing
++ * else in the frame is so regular.  Its length is a property,
++ * defaulting to the seventy-two bytes POCSAG sends, because the
++ * number belongs to whatever is transmitting and not to this part.
++ */
++static void cc1120_serialise(CC1120State *s, const uint8_t *buf, size_t size)
++{
++    uint32_t npre = s->preamble;
++    uint32_t rate;
++
++    if (npre + size > sizeof(s->serbuf)) {
++        npre = sizeof(s->serbuf) - size;
++    }
++    memset(s->serbuf, 0xaa, npre);
++    memcpy(s->serbuf + npre, buf, size);
++    s->nbits = (npre + size) * 8;
++    s->bitpos = 0;
++    /*
++     * The rate the bits arrive at, which is a property of whatever
++     * transmitted them.
++     *
++     * With "airrate" unset this uses the receiver's own DRATE, which
++     * is a receiver with perfect knowledge of the transmitter -- fine
++     * for exercising the path, and useless as a measurement, because
++     * a guest that then measures the symbol period has measured the
++     * number it programmed.  Setting the property puts a rate on the
++     * air that the guest was never told, which is the only way a
++     * run-length measurement can be seen to have found something
++     * rather than to have echoed something.
++     */
++    rate = s->airrate ? s->airrate : cc1120_symrate(s);
++    s->bitns = 1000000000LL / rate;
++    if (s->bitns < 1) {
++        s->bitns = 1;
++    }
++    timer_mod(s->bitclk, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->bitns);
++}
++
+ static void cc1120_transmit(CC1120State *s)
+ {
+     int len;
+@@ -576,6 +711,9 @@ static bool cc1120_can_receive(NetClientState *nc)
+      * must be flushed when this becomes true again -- see
+      * cc1120_strobe()'s SFRX and the SRX case.
+      */
++    if (!s->in_reset && s->state == ST_RX && cc1120_transparent(s)) {
++        return s->bitpos >= s->nbits;
++    }
+     return !s->in_reset && s->state == ST_RX && s->rxpos >= s->rxlen;
+ }
+ 
+@@ -597,6 +735,18 @@ static ssize_t cc1120_receive(NetClientState *nc, const uint8_t *buf,
+      * happened: see os/inferno/radio/cc1120.c.
+      */
+     cc1120_syncword(s, want, nsync);
++    /*
++     * Transparent mode first, and before the sync word is looked at.
++     * The packet engine is what checks a sync word, and in this mode
++     * it is not in the path: a receiver in it hears everything on the
++     * channel, including a frame addressed to a word it is not
++     * listening for.  That is the whole value of the mode and a model
++     * that filtered here would not have it.
++     */
++    if (cc1120_transparent(s)) {
++        cc1120_serialise(s, buf, size);
++        return size;
++    }
+     if (size < (size_t)nsync + 1 || memcmp(buf, want, nsync) != 0) {
+         return size;
+     }
+@@ -635,6 +785,7 @@ static void cc1120_realize(SSIPeripheral *d, Error **errp)
+     CC1120State *s = CC1120(d);
+ 
+     s->rand = g_rand_new_with_seed(s->drop_seed);
++    s->bitclk = timer_new_ns(QEMU_CLOCK_VIRTUAL, cc1120_bitclk, s);
+     qdev_init_gpio_out_named(dev, s->gpio, "gpio", 4);
+     qdev_init_gpio_in_named(dev, cc1120_reset_n, "reset_n", 1);
+ 
+@@ -667,6 +818,8 @@ static const Property cc1120_properties[] = {
+     DEFINE_NIC_PROPERTIES(CC1120State, conf),
+     DEFINE_PROP_UINT32("drop-pct", CC1120State, drop_pct, 0),
+     DEFINE_PROP_UINT32("drop-seed", CC1120State, drop_seed, 1),
++    DEFINE_PROP_UINT32("preamble", CC1120State, preamble, 72),
++    DEFINE_PROP_UINT32("airrate", CC1120State, airrate, 0),
+ };
+ 
+ static void cc1120_class_init(ObjectClass *klass, const void *data)
+-- 
+2.51.0
+
