@@ -1690,7 +1690,7 @@ cc1120ctl(Radio *r, char *buf, int n)
 		ulong ms, us, hi, lo, nb, nsamp, nsper;
 		ulong run, bmin, bmax, gmin, gmax;
 		int floor, peak, r0, r1, thr, oldthr, oldsel;
-		int cur, first, oldagc;
+		int cur, first, oldagc, weak;
 
 		if(s->gpio == nil)
 			error("radio: this board does not wire the part's GPIO");
@@ -1779,6 +1779,7 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 */
 		thr = peak - floor > 2*Probemargin?
 			floor + (peak - floor)/2: floor + Probemargin;
+
 
 		s->lock(s);
 		oldthr = (schar)rd(rr, Ragccsthr);
@@ -1875,9 +1876,33 @@ cc1120ctl(Radio *r, char *buf, int n)
 		if(nsamp == 0)
 			nsamp = 1;
 		nsper = (us*1000)/nsamp;
-		print("probe %lud floor %d peak %d thr %d us %lud "
+		/*
+		 * NOISE when the run has the shape threshold-crossing
+		 * noise has rather than the shape transmissions have.
+		 *
+		 * The first pass only catches a burst if one happens
+		 * while it is looking, and on a channel busy a few per
+		 * cent of the time it often does not.  The threshold
+		 * then sits close enough to the floor that the AGC
+		 * breathing across it is counted, and the run reports a
+		 * channel busy half the time with hundreds of bursts.
+		 * Three runs at 918MHz within a minute gave 89%, 0% and
+		 * 0% for that reason alone.
+		 *
+		 * Comparing peak against floor does not separate them:
+		 * the bad runs had 14 and 20dB between the two.  What
+		 * does is that noise crossing a line produces bursts and
+		 * gaps of the same shortest length -- both at whatever
+		 * this receiver can resolve -- and in numbers no
+		 * transmitter sends.  A real burst train has a shortest
+		 * gap far longer than its shortest burst.  On every run
+		 * recorded here that rule agrees with which results were
+		 * reproducible and which were not.
+		 */
+		weak = nb > 50 && bmin <= gmin + 1 && gmin <= bmin + 1;
+		print("probe %lud floor %d peak %d thr %d%s us %lud "
 			"duty %lud%% bursts %lud", (ulong)hz, floor, peak,
-			thr, us, (hi*100)/nsamp, nb);
+			thr, weak? " NOISE": "", us, (hi*100)/nsamp, nb);
 		if(nb > 0)
 			print(" burst %lud..%ludus gap %lud..%ludus",
 				(bmin*nsper)/1000, (bmax*nsper)/1000,

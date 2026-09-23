@@ -950,6 +950,37 @@ hundred kilohertz wide at 907.0, 908.6-909.1, 914.0-914.3, 921.2,
 922.3 and 922.9, and the strongest one moves between sweeps, which is
 hopping.
 .PP
+WHAT THE OCCUPANCY NUMBERS ARE WORTH, measured later and worth putting
+before them.  Three runs of the same probe at 918MHz within a minute
+gave a channel busy 89 per cent of the time, then 0, then 0.  The
+difference is not the air.  The first pass of a probe only catches a
+burst if one happens while it is looking, and on a channel busy a few
+per cent of the time it often does not; the threshold then sits close
+enough to the floor that the AGC breathing across it is counted, and
+the run reports hundreds of bursts.
+.PP
+Comparing the peak against the floor does not separate the good runs
+from the bad \- the bad ones had 14 and 20dB between them.  What does
+is the shape of the result.  Noise crossing a line gives bursts and
+gaps of the same shortest length, both at whatever the receiver can
+resolve, and in numbers no transmitter sends; a real burst train has a
+shortest gap far longer than its shortest burst.  The probe verb says
+NOISE when it sees the first shape, and on every run recorded here
+that rule agrees with which results repeated and which did not.
+.PP
+So the duty cycles in the table above are upper bounds on runs that
+were not checked that way, and the ones that matter \- 918 and 926 at
+1 per cent against 908.7 at 95 \- were reproducible.
+.PP
+And burst lengths from carrier sense are not lengths.  The shortest
+assertion the part will make is one RSSI update, which is 0.62ms at
+the fastest filter setting, so every duration comes out as a small
+multiple of that: 631 to 645 microseconds at 917.4, about 1.35ms at
+908.6 and at 918.  Six bursts measuring 1341 to 1343 microseconds
+looks exactly like a transmitter with a fixed frame and is two
+resolution cells.  Reading a burst length off this needs the
+demodulator pin, not carrier sense.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
