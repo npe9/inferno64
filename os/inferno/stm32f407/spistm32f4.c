@@ -158,12 +158,23 @@ spiunlock(Spidev*)
 	iunlock(&buslock);
 }
 
+/*
+ * The click's GPIO3, on PE14.  It is already an input with an EXTI
+ * rising edge on it for the packet interrupt; this just reads it.
+ */
+static int
+spigpio(Spidev*)
+{
+	return (*(volatile ulong*)(GPIOE+GPIO_IDR) >> Intpin) & 1;
+}
+
 static Spidev spidev = {
 	.name	= "mikrobus2",
 	.select	= spiselect,
 	.byte	= spibyte,
 	.lock	= spilock,
 	.unlock	= spiunlock,
+	.gpio	= spigpio,
 };
 
 /*

@@ -1288,6 +1288,101 @@ cc1120ctl(Radio *r, char *buf, int n)
 			print("\n");
 		return n;
 	}
+	if(strcmp(f[0], "gcapture") == 0){
+		/*
+		 * The same envelope, off the part's own pin.
+		 *
+		 * "capture" above polls RSSI over the SPI, and the bus
+		 * traffic is in the measurement: at 893MHz, where
+		 * nothing transmits, a continuous capture raises the
+		 * part's own floor 15 to 20dB in about three
+		 * milliseconds.  That is not a thing a faster bus fixes.
+		 *
+		 * This part will drive one of its GPIO pins with
+		 * something it knows -- carrier sense, the demodulated
+		 * bit stream, a packet boundary -- and this board wires
+		 * GPIO3 to PE14.  Reading a port register is no bus
+		 * traffic at all, so the receiver is not listening to
+		 * its own controller, and the sample period is a memory
+		 * read rather than six bytes at the SPI clock.
+		 *
+		 *	gcapture 200 0x11	set IOCFG3 to 0x11 for
+		 *				the run and sample the pin
+		 *	gcapture 200		sample it as it is
+		 *
+		 * The selection number is an argument because which
+		 * value of IOCFG3 is carrier sense on this part is a
+		 * question for the bench and not for this file: the one
+		 * selection this driver has ever needed is
+		 * PKT_SYNC_RXTX, which is 0x06 and is what IOCFG3 is
+		 * set to at init, and the rest of the table has never
+		 * been tried here.  Whatever is passed is restored
+		 * afterwards, so the packet interrupt still works after
+		 * a run.
+		 */
+		static ushort gruns[Ncaprun];
+		uvlong t0, t1, tickhz;
+		ulong ms, us;
+		int above, cur, nrun, nsamp, sel, old, first;
+
+		if(s->gpio == nil)
+			error("radio: this board does not wire the part's GPIO");
+		ms = 200;
+		sel = -1;
+		if(nf >= 2)
+			ms = strtoul(f[1], nil, 0);
+		if(nf >= 3)
+			sel = strtoul(f[2], nil, 0);
+		if(ms < 1 || ms > 2000 || sel > 0xff)
+			error(Ebadctl);
+
+		s->lock(s);
+		old = rd(rr, Riocfg3);
+		if(sel >= 0)
+			wr(rr, Riocfg3, sel);
+		s->unlock(s);
+
+		nrun = nsamp = 0;
+		cur = -1;
+		t0 = fastticks(&tickhz);
+		t1 = t0 + (tickhz/1000) * ms;
+		while(fastticks(nil) < t1){
+			above = s->gpio(s);
+			nsamp++;
+			if(cur < 0){
+				cur = above;
+				gruns[0] = 1;
+				nrun = 1;
+				continue;
+			}
+			if(above != cur){
+				if(nrun >= Ncaprun)
+					break;
+				cur = above;
+				gruns[nrun++] = 1;
+			}else if(gruns[nrun-1] < 0xffff)
+				gruns[nrun-1]++;
+		}
+		us = (ulong)(((fastticks(nil) - t0) * 1000000) / tickhz);
+
+		s->lock(s);
+		wr(rr, Riocfg3, old);
+		s->unlock(s);
+
+		first = cur ^ ((nrun - 1) & 1);
+		print("gcapture %lud iocfg3 0x%.2x us %lud samples %d "
+			"runs %d first %s\n", (ulong)rr->hz,
+			sel >= 0? sel: old, us, nsamp, nrun,
+			first? "high": "low");
+		for(i = 0; i < nrun; i++){
+			print(" %ud", gruns[i]);
+			if((i % 16) == 15)
+				print("\n");
+		}
+		if((nrun % 16) != 0)
+			print("\n");
+		return n;
+	}
 	if(strcmp(f[0], "reset") == 0){
 		s->lock(s);
 		strobe(rr, Sres);

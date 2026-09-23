@@ -13,6 +13,7 @@ enum
 	/* soft flow control chars */
 	CTLS= 023,
 	CTLQ= 021,
+	CTLR= 022,
 };
 
 extern Dev uartdevtab;
@@ -702,7 +703,48 @@ uartstageinput(Uart *p)
 void
 uartrecv(Uart *p,  char ch)
 {
+	static int armed;		/* saw one ^R */
 	uchar *next;
+
+	/*
+	 * ^R twice running resets the machine.
+	 *
+	 * This is here, in the receive interrupt, because that is the
+	 * last thing on a wedged machine still working.  Measured on
+	 * os/inferno/stm32f407, twice: the console echoed every
+	 * character typed at it and ran none of them -- the interrupt
+	 * handler was alive and there was no process left to hand a
+	 * line to -- so the machine could be talked to and not asked to
+	 * do anything.  Every kernel after that cost somebody walking
+	 * over to press a button, and on a board whose bootloader is
+	 * entered by reset that is the whole flash cycle.
+	 *
+	 * Twice running, and not once, so that a stray keystroke cannot
+	 * reset a machine; the same reason Plan 9 spells its debug keys
+	 * ^T^T.  Nothing between them: any other character disarms it.
+	 *
+	 * It is not a general rescue.  This runs in an interrupt, so a
+	 * kernel spinning at splhi, or one that has taken a fault with
+	 * interrupts off, is still beyond it.  What it covers is the
+	 * common case -- the scheduler or a process gone and the
+	 * hardware fine.
+	 *
+	 * The state is a static rather than a field because there are
+	 * two definitions of Uart in this tree, in port/uart.h and
+	 * port/portdat.h, and a struct that grows a field in one of
+	 * them and not the other does not fail to build, it reads a
+	 * different member at run time.  One console is enough for what
+	 * this is for.
+	 */
+	if(ch == CTLR){
+		if(armed){
+			armed = 0;
+			iprint("\nconsole reset\n");
+			exit(0);
+		}
+		armed = 1;
+	}else
+		armed = 0;
 
 	/* software flow control */
 	if(p->xonoff){

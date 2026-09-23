@@ -129,6 +129,17 @@ struct Spidev
 	int	(*byte)(Spidev*, int);	/* clock one byte out, return the one in */
 	void	(*lock)(Spidev*);	/* the bus is shared with storage */
 	void	(*unlock)(Spidev*);
+	/*
+	 * The radio's own GPIO pin, if the board brings one out, as 0
+	 * or 1.  A chip driver can ask the part to put something on it
+	 * -- carrier sense, the demodulated bit stream, a packet
+	 * boundary -- and then read it without touching the bus at
+	 * all, which is the only way to watch a signal on a timescale
+	 * shorter than a register read, and the only way to watch one
+	 * without the bus traffic becoming part of what is measured.
+	 * nil on a board that does not wire it.
+	 */
+	int	(*gpio)(Spidev*);
 };
 
 /*

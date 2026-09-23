@@ -269,13 +269,40 @@ userinit(void)
 	ready(p);
 }
 
+/*
+ * A panic stops; anything else resets the machine.
+ *
+ * The reset path does not call chandevshutdown() and that is the
+ * point of this comment.  On these boards /dev/reboot is how a kernel
+ * gets back into a ROM or flash bootloader without anyone pressing
+ * anything, which on os/inferno/stm32f407 is the whole flash cycle --
+ * and with the shutdown in the way it worked once and hung twice.
+ * The once printed every device in chandevshutdown()'s list and
+ * "shutdown done" and came back up; the twice printed nothing at all,
+ * with the console still echoing from the interrupt handler and no
+ * process left to run a command, so it did not even reach the first
+ * print with up set to nil.
+ *
+ * Shutting the devices down first buys nothing here.  SYSRESETREQ
+ * resets every peripheral on the part, so a driver that tidies its
+ * registers is tidying something that is about to be cleared, and
+ * this kernel's root is in flash with no storage under it and nothing
+ * to flush.  What it costs is that the one operation that has to work
+ * depends on every driver's shutdown being correct, which is a lot of
+ * code to be sure of for no gain.
+ *
+ * A panic keeps it, because there the machine is stopping rather than
+ * restarting and whatever a device does on the way out may be the
+ * last useful thing it does.  The message goes out first, so a
+ * shutdown that hangs there costs the shutdown and not the panic.
+ */
 void
 exit(int inpanic)
 {
 	up = 0;
-	chandevshutdown();
 	if(inpanic){
 		print("Hit the reset button\n");
+		chandevshutdown();
 		for(;;)
 			clockpoll();
 	}
