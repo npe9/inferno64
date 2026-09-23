@@ -221,3 +221,51 @@ including reference-counting changes in every compiler back end \(em it is
 not a cherry-pick.  Adopting it to fix a diagnosis that rests on one
 snapshot is the shape of the four failures already recorded here.  Take
 the CPU reading first.
+.NH 2
+Answered: parallelvm does not fix it
+.PP
+It did not need a merge.  The server is only
+.CW "emu -r <root>" ,
+so the
+.CW multicore
+branch's binary can serve THIS worktree unchanged:
+.P1
+nohup .../multicore/MacOSX/arm64/bin/emu -r $PWD \\
+	sh -c "styxlisten -A 'tcp!*!6666' export / ; sleep 2000000"
+.P2
+It served immediately, Rversion in 0.002s.  And it wedges in exactly the
+same way: connections accepted, Tversion unread at 19 bytes, CLOSE_WAIT.
+.PP
+.B "The discriminator reads 0.0%,"
+with 0.70 seconds of CPU total.  Nothing is spinning, so nothing is
+being starved of the VM lock, so parallelvm \(em whose whole purpose is to
+let executors run concurrently \(em cannot be the answer.  The theory is
+retired, and the reading that retires it took one command rather than
+2700 lines of merge.
+.PP
+.B "What the stacks show, identically on both binaries:"
+.P1
+exslave                       blocked
+exslave                       blocked
+exslave                       blocked
+exreply -> ipwrite -> so_send -> osleave
+rmcall  -> acquire            blocked
+.P2
+Every exportfs slave asleep; one that has finished a socket write and is
+waiting to re-enter the VM; one waiting on the VM lock \(em and nobody
+running to hold it.  A process waiting on a lock nobody holds is a lost
+wakeup, but not the one this tree already knows about:
+.CW emu/port/lock.c
+has the release-barrier fix, byte for byte the same as inferno-rio's.
+.PP
+.B "One thing worth keeping from the experiment."
+The multicore emu survived 60 abrupt disconnects with zero mismatches
+\(em although it does NOT have the flush fix made today, and its
+exportfs.c still carries the double reply
+.CW "(q->flush == nil || err == nil)" .
+It survives because it registers work on
+.CW fs->work
+in the READER, not in the worker, so the race that makes the double
+reply reachable cannot happen.  That is precisely the property the
+per-request-worker rewrite broke and today's change restored.  The
+double reply is latent in both and should be fixed on multicore too.
