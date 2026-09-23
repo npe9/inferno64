@@ -86,6 +86,21 @@ portbusy() {
 	netstat -an 2>/dev/null | grep "\.$PORT " | grep -q LISTEN
 }
 
+#
+# Say so, loudly, if the traces are on.
+#
+# INFERNO_MNTDEBUG prints two lines per Styx message and INFERNO_IPDEBUG
+# a few per connection.  A traced server is about thirty times slower --
+# 1MB over loopback went from 0.42s to 17.4s, and a handshake from 0.001s
+# to 5s -- which looks EXACTLY like the fault the traces exist to find.
+# It was left on after a debugging session and the slowness was reported
+# as a regression.
+#
+if [ -n "${INFERNO_MNTDEBUG:-}${INFERNO_IPDEBUG:-}" ]; then
+	echo "styxd: WARNING: tracing is on (INFERNO_MNTDEBUG/INFERNO_IPDEBUG);" >&2
+	echo "styxd: the server will be ~30x slower.  Unset them for real numbers." >&2
+fi
+
 if handshake; then
 	echo "styxd: serving on $PORT (Rversion answered)"
 	exit 0

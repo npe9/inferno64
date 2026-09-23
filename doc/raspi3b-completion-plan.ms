@@ -9234,3 +9234,103 @@ KU-CMP read error
 .CW "sdhost: read block 61213 failed ... gave up on 1" .
 That is the bad media found earlier in this work, reported as an I/O
 error instead of a panic, and it is the next thing in the way.
+.NH 2
+A control card settles it: the old card was bad
+.PP
+A spare 32GB card, formatted FAT32 and given the Pi firmware, our
+config.txt and a kernel, booted first time.  The same suite, same
+kernel, same driver:
+.P1
+                          old card      new card
+first two MULTIVERIFY     FAIL always   pass
+sdhsts 0x8 / retries      routine       none
+MULTIVERIFY writes        360-1370ms    0-110ms
+FAT-BIG 1.5MB             46.8s         16.2s
+DMA + multi-block arm     MISMATCH      MISMATCH
+.P2
+So the intermittent read stalls, the retries, and the long-standing
+"first two MULTIVERIFY arms fail after boot" were the MEDIA, not the
+driver \(em and several of them had been written down here as driver
+mysteries.  The one failure that reproduces identically on both cards
+is DMA paired with multi-block, which is therefore really the driver,
+and is already off by default.
+.PP
+The old card's own story is odder than "dead page".  Blocks
+61216..61222 were unreadable on every attempt across hours and several
+boots, from a clean reinit, with neighbours reading in 0ms and a
+control region far away perfect.  Then, after the files occupying them
+were deleted, a full scan of all 130814 clusters came back clean and
+those same blocks read in 0ms.  Marginal, state-dependent cells rather
+than a cleanly failed page.
+.NH 2
+Handling a bad card, which is a common thing and was not handled at all
+.PP
+FAT has always had a way to say "never allocate this": the reserved
+entry 0xFFFFFF7.  dossrv honoured it without knowing it \(em
+.CW falloc()
+takes only clusters whose entry is 0, so anything else is skipped \(em
+but nothing in this system could WRITE one.  So one dead page was
+handed to whoever wrote next, for ever: deleting the kernel and copying
+it again landed on the same clusters and failed at the same byte,
+1245184, every single time.
+.PP
+Three things now, all in
+.CW dossrv
+rather than beside it, because
+.CW putfat()
+already knows which width the entries are and writes EVERY copy of the
+FAT \(em which is what stops a repair program later "fixing" the
+partition by copying a stale FAT back over the work.  Written as a
+separate tool first, that had to be guessed at twice.
+.IP 1.
+.CW "dossrv -b"
+scans the partition and marks every unreadable cluster bad;
+.CW -B
+reports without changing anything.  A cluster already in use is
+reported and left alone: marking it would cut its file in two and give
+the tail to the next writer, which is worse than an unreadable block
+that announces itself.
+.IP 2.
+.CW falloc()
+verifies a cluster before allocating it, and marks it bad and moves on
+if it cannot be read.  One read per cluster allocated \(em 128 of them
+for a 2MB kernel at 16KB clusters \(em and the filesystem never hands
+out a block the card cannot deliver.
+.CW -A
+turns it off.
+.IP 3.
+A short read is an error and not a panic, and it does NOT drop the
+device; only that one request fails.
+.PP
+And the update itself never removes kernel8.img until a verified
+replacement is on the card.  It did, once, with
+.CW mv
+in the middle \(em and
+.CW mv
+raises "permission denied" on the board although
+.CW /dis/mv.dis
+is present, readable, the right size, and works under the host emu.
+That is unexplained and is why the script uses
+.CW cp
+and a verify instead.
+.NH 2
+Measured, end to end
+.P1
+KU-COPY    ok      1.95MB fetched over styx
+KU-CMP     ok      matches the host byte for byte
+KU-INSTALL ok
+KU-VERIFY  ok      the installed kernel matches the host
+.P2
+286 seconds for the whole cycle, against 35m50s for the attempt that
+failed its verify.
+.PP
+.B "One of those minutes was mine."
+The server was left running with
+.CW INFERNO_MNTDEBUG=1
+after a debugging session.  A traced server prints two lines per Styx
+message and is about thirty times slower \(em 1MB over loopback 0.42s
+becomes 17.4s, a handshake 0.001s becomes 5s \(em which looks exactly
+like the fault the tracing exists to find, and was reported as a
+regression.
+.CW styxd.sh
+now says so, loudly, before it does anything else.

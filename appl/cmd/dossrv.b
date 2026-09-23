@@ -23,12 +23,14 @@ Dossrv: module
 arg0 := "dossrv";
 
 deffile: string;
+badscan := 0;
+badmark := 0;
 pflag := 0;
 debug := 0;
 
 usage(iscmd: int): string
 {
-	sys->fprint(sys->fildes(2), "usage: %s [-v] [-s] [-F] [-c] [-S secpertrack] [-f devicefile] [-m mountpoint]\n", arg0);
+	sys->fprint(sys->fildes(2), "usage: %s [-v] [-s] [-F] [-c] [-bBA] [-S secpertrack] [-f devicefile] [-m mountpoint]\n", arg0);
 	if(iscmd)
 		raise "fail:usage";
 	return "usage";
@@ -99,6 +101,13 @@ init2(nil: ref Draw->Context, args: list of string, iscmd: int): string
 			srvfile = arg->arg();
 			if(srvfile == nil)
 				return usage(iscmd);
+		'A' =>
+			badcheck = 0;	# allocate without checking the cluster reads
+		'b' =>
+			badscan = 1;
+			badmark = 1;
+		'B' =>
+			badscan = 1;
 		'p' =>
 			pflag++;
 		* =>
@@ -121,6 +130,15 @@ init2(nil: ref Draw->Context, args: list of string, iscmd: int): string
 		return nomod(Daytime->PATH);
 
 	iotrackinit(sectors);
+
+	if(badscan){
+		(xf, e) := getxfs(deffile);
+		if(xf == nil)
+			return e;
+		if(dosfs(xf) < 0)
+			return sys->sprint("%s is not a FAT filesystem", deffile);
+		return badblocks(xf, badmark);
+	}
 
 	if(!stdin) {
 		if(sys->pipe(pipefd) < 0)
@@ -2737,12 +2755,147 @@ putfat(xf: ref Xfs, n, val: int)
 	}
 }
 
+#
+# Find unreadable clusters and mark them bad in the FAT.
+#
+#	dossrv -b -f /dev/sdN0/dos      scan and mark
+#	dossrv -B -f /dev/sdN0/dos      scan and report only
+#
+# FAT has always been able to say "never allocate this": the reserved
+# entry 0xFFFFFF7.  falloc() below honours it already without knowing
+# it -- it takes only clusters whose entry is 0, so anything else is
+# skipped -- but nothing here could ever WRITE one.  So a card with one
+# dead flash page kept handing that page to the next file written: on
+# the Pi's card, deleting the kernel and copying it again landed on the
+# same clusters and failed at the same byte, 1245184, every time.
+#
+# This belongs in dossrv and not in a tool beside it.  The geometry is
+# subtle -- which width the entries are, where each copy of the FAT
+# starts -- and putfat() already knows all of it and writes EVERY copy,
+# which is what stops a repair program later "fixing" the partition by
+# copying a stale FAT back over this work.  Written separately, that had
+# to be guessed at twice.
+#
+# A cluster already in use is reported and left alone.  Marking one
+# would cut its file in two and give the tail to the next writer, which
+# is a worse fault than an unreadable block that announces itself.
+#
+badclust(bp: ref Dosbpb): int
+{
+	case bp.fatbits {
+	12 =>	return 16rFF7;
+	16 =>	return 16rFFF7;
+	}
+	return 16r0FFFFFF7;
+}
+
+badblocks(xf: ref Xfs, mark: int): string
+{
+	bp := xf.ptr;
+	buf := array[bp.clustsize*Sectorsize] of byte;
+	nbad := 0;
+	nmark := 0;
+	nused := 0;
+
+	sys->print("dosfs: %d-byte sectors, %d sectors/cluster, fat%d, %d clusters\n",
+		bp.sectsize, bp.clustsize, bp.fatbits, bp.fatclusters);
+	for(cl := FATRESRV; cl < bp.fatclusters; cl++){
+		sect := clust2sect(bp, cl);
+		if(sys->seek(xf.dev, big (xf.offset + sect*Sectorsize), Sys->SEEKSTART) < big 0)
+			return sys->sprint("seek to sector %d: %r", sect);
+		#
+		# A short read is the device reporting a failed transfer;
+		# devsd says so by returning fewer bytes rather than -1,
+		# which is the same thing deverror() above had to learn.
+		#
+		n := sys->readn(xf.dev, buf, len buf);
+		if(n == len buf)
+			continue;
+		nbad++;
+		sys->print("dosfs: cluster %d (sector %d) unreadable: %d of %d bytes\n",
+			cl, sect, n, len buf);
+		cur := getfat(xf, cl);
+		if(cur != 0){
+			nused++;
+			sys->print("dosfs: cluster %d is in use (fat %#x); leaving it\n",
+				cl, cur);
+			continue;
+		}
+		if(!mark){
+			sys->print("dosfs: would mark cluster %d bad\n", cl);
+			nmark++;
+			continue;
+		}
+		putfat(xf, cl, badclust(bp));
+		nmark++;
+		sys->print("dosfs: marked cluster %d bad\n", cl);
+	}
+	if(mark)
+		sync();
+	sys->print("dosfs: %d unreadable cluster(s), %d marked, %d in use\n",
+		nbad, nmark, nused);
+	if(nused != 0)
+		sys->print("dosfs: remove the files using them and scan again\n");
+	return nil;
+}
+
+#
+# Can this cluster be read at all?
+#
+# Bad cards are common, and the only thing worse than one bad cluster
+# is a filesystem that keeps handing it to whoever writes next.  On the
+# Pi's failing card, deleting a file and copying it again put it back on
+# the same dead page and it failed at the same byte -- 1245184 -- every
+# single time, because a free cluster is a free cluster and nothing ever
+# asked whether it worked.
+#
+# So ask, once, when it is about to be allocated.  A cluster that cannot
+# be read is marked bad in the FAT and skipped for good; falloc then
+# carries on to the next one and the write succeeds.  The cost is one
+# read per cluster allocated, off the device rather than through the
+# cache -- for a 2MB kernel at 16KB clusters that is 128 reads of a card
+# that does them in well under a millisecond.
+#
+# Only the read has to fail.  We do not care what the data IS: a free
+# cluster's contents are meaningless, and the cache may even hold
+# something newer.  What is being tested is whether the card can deliver
+# the bytes at all, which is exactly what it stops being able to do.
+#
+badcheck := 1;		# verify a cluster before allocating it
+badbuf: array of byte;
+
+clustok(xf: ref Xfs, n: int): int
+{
+	bp := xf.ptr;
+
+	if(!badcheck)
+		return 1;
+	sz := bp.clustsize*Sectorsize;
+	if(badbuf == nil || len badbuf < sz)
+		badbuf = array[sz] of byte;
+	sect := clust2sect(bp, n);
+	if(sys->seek(xf.dev, big (xf.offset + sect*Sectorsize), Sys->SEEKSTART) < big 0)
+		return 1;	# cannot tell; do not condemn it
+	#
+	# A short read is the device reporting a failed transfer -- devsd
+	# says so by returning fewer bytes rather than -1, the same thing
+	# deverror() had to be taught.
+	#
+	if(sys->readn(xf.dev, badbuf, sz) == sz)
+		return 1;
+	sys->fprint(sys->fildes(2),
+		"dosfs: cluster %d (sector %d) unreadable; marking it bad\n",
+		n, sect);
+	putfat(xf, n, badclust(bp));
+	return 0;
+}
+
 falloc(xf: ref Xfs): int
 {
 	bp := xf.ptr;
 	n := bp.freeptr;
 	for(;;) {
-		if(getfat(xf, n) == 0)
+		if(getfat(xf, n) == 0 && clustok(xf, n))
 			break;
 		if(++n >= bp.fatclusters)
 			n = FATRESRV;

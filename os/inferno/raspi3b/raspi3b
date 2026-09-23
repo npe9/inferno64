@@ -157,6 +157,7 @@ root
 	/dis/mkdir.dis
 	/dis/sleep.dis
 	/dis/cp.dis
+	/dis/mv.dis
 	/dis/cmp.dis
 	/dis/dd.dis
 	/dis/fatstress.dis
