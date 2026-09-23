@@ -1447,6 +1447,22 @@ Dmddo:
 		bp.fsinfo = bytes2short(p.iobuf[48:50]);
 	}
 	bp.fatclusters = FATRESRV+(bp.volsize - bp.dataaddr)/bp.clustsize;
+	#
+	# Say the geometry once, whether or not anyone asked.
+	#
+	# The cluster size and the track size decide how much metadata
+	# work every byte written costs, and nothing printed either of
+	# them: they are read off the disc at mount and then never
+	# mentioned.  When a 1.9MB copy to the Pi's card took 36 minutes
+	# the cluster size was the first thing guessed at and there was
+	# no way to check the guess, so it was believed for an hour.  It
+	# was wrong -- the copy was network-bound, and 1MB to that same
+	# card through this same dossrv takes 7 seconds -- but a number
+	# that decides performance should not have to be guessed at.
+	#
+	sys->fprint(sys->fildes(2),
+		"dosfs: %d-byte sectors, %d sectors/cluster, fat%d, %d clusters, %d-sector track\n",
+		bp.sectsize, bp.clustsize, bp.fatbits, bp.fatclusters, sect2trk);
 	if(bp.isfat32)
 		bp.fatbits = 32;
 	else if(bp.fatclusters < 4087)

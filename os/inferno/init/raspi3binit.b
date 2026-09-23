@@ -2585,12 +2585,33 @@ runremote(sh: Shell, cmd: string, seq: int, addrs: list of string)
 		sys->dup(out.fd, 1);
 		sys->dup(out.fd, 2);
 	}
-	{
-		sh->init(nil, "sh" :: "-c" :: cmd :: nil);
-	}exception e{
-	"*" =>
-		sys->print("RCMD-EXCEPTION %s\n", e);
-	}
+	#
+	# In a CHILD, because sh->init() does not come back.
+	#
+	# sh.b's init(), given -c and not interactive, ends its work with
+	#
+	#	if (status != nil)
+	#		raise "fail:" + status;
+	#	exit;
+	#
+	# and `exit` terminates the process that called init -- this one.
+	# So running a board.cmd script in-process killed remotecmd every
+	# time the script SUCCEEDED, silently and with no exception to
+	# catch.  The console said so on four boots in a row and it was
+	# read as a hang: RCMD-BEGIN 1 always, RCMD-END never, and
+	# board.cmd working exactly once per boot.  A process count told
+	# the difference in the end -- five Init processes before the
+	# script, three after -- because a process that is blocked is
+	# still there and this one was gone.
+	#
+	# The child shares this process's file descriptor group, so it
+	# inherits the redirection to board.out set up above, and its
+	# namespace, so the script sees /n/remote.  Waiting for it to go
+	# is the only thing left to do.
+	#
+	pidch := chan of int;
+	spawn shellproc(sh, cmd, pidch);
+	waitgone(<-pidch);
 	if(out != nil){
 		out = nil;
 		sys->dup(save1.fd, 1);
@@ -2659,6 +2680,41 @@ remoteaddrs(): list of string
 	for(l = rev; l != nil; l = tl l)
 		addrs = hd l :: addrs;
 	return addrs;
+}
+
+#
+# Run one board.cmd script.  Spawned, never called: see runremote.
+#
+shellproc(sh: Shell, cmd: string, pidch: chan of int)
+{
+	pidch <-= sys->pctl(0, nil);
+	{
+		sh->init(nil, "sh" :: "-c" :: cmd :: nil);
+	}exception e{
+	"*" =>
+		sys->print("RCMD-EXCEPTION %s\n", e);
+	}
+}
+
+#
+# Wait for a process to be gone.
+#
+# There is no wait for a plain spawned process the way there is for a
+# command, and the one thing that is certainly true of a process that
+# called exit is that /prog stops listing it.  A pid could in principle
+# be reused inside the polling interval and this would then wait for
+# the wrong process; at one board.cmd every fifteen seconds that is not
+# a risk worth more code than this.
+#
+waitgone(pid: int)
+{
+	path := "/prog/" + string pid + "/status";
+	for(;;){
+		(ok, nil) := sys->stat(path);
+		if(ok < 0)
+			return;
+		sys->sleep(200);
+	}
 }
 
 readcmdfile(addrs: list of string): string

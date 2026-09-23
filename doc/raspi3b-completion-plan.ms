@@ -9001,3 +9001,172 @@ still running looked identical, and it held
 .CW /n/remote
 while it ran \(em shutting the one channel that reports off the board for
 the whole of the operation most likely to hang.
+.NH 2
+Why the kernel update takes half an hour: it is the board's network
+.PP
+.B "The measurement."
+The update copies 1.95MB from the host to the card and took 35m50s.
+Split into its two halves, each measured on its own:
+.P1
+1MB written to the card through dossrv      7 s
+1MB read from the host over styx          419 s
+.P2
+The card is not the bottleneck.  Sixty times over, the cost is the
+board reading from the host.
+.PP
+.B "Client or host?"
+The same host server, the same file, the same 1MB in 8KB reads, from
+this machine over loopback instead of from the board:
+.P1
+host -> its own server, loopback          0.46 s
+board -> same server, USB ethernet         419 s
+.P2
+Nine hundred times.  The host side \(em
+.CW exportfs ,
+the per-request workers, the dispatch rewritten earlier in this work \(em
+is not involved.  The fault is on the board.
+.PP
+.B "What it is not."
+Four mechanisms were proposed and each was killed by a measurement
+rather than by argument:
+.IP \(bu
+.I "The USB bulk-IN watchdog."
+.CW usbdwc
+re-arms a stalled endpoint after two seconds and says so, and three
+seconds a read looked like exactly that.  The re-arm counter did not
+move at all across the slow reads.
+.IP \(bu
+.I "A size threshold."
+Small reads looked a hundred times faster per byte than large ones.
+That never reproduced.  It was an instrument fault: the console timer
+matched a marker at the start of any line, and a long typed command
+wraps, so it was matching the ECHO of the command rather than its
+completion.  The check now requires the marker to be the whole line.
+.IP \(bu
+.I "TCP backpressure."
+The host's socket shows send and receive queues both empty and
+.CW emu
+at 0% CPU throughout \(em it has nothing to send and is waiting to be
+asked.
+.IP \(bu
+.I "A wakeup that any packet would deliver."
+Two hundred pings at 200ms intervals through a stalled read changed
+nothing.
+.PP
+.B "What is left."
+The board stops issuing requests.  The host is idle with empty queues,
+the data that was asked for has arrived, and seconds pass before the
+next Tread goes out.  The strongest remaining signal is that it is
+.I concurrency :
+the console and
+.CW remotecmd
+were both reading through
+.CW /n/remote
+when it stalled hardest, and
+.CW remotecmd
+has now twice failed to print RCMD-END after its script finished \(em it
+does not return from
+.CW runremote ,
+whose only work after the shell exits is closing the output file, two
+dups, and unmounting the mount the script was itself using.
+.PP
+.B "Two things this cost."
+The cluster size was guessed at and believed for an hour.  dossrv now
+prints its geometry at mount, and it says 8 sectors to a cluster, not
+the one that was assumed \(em so the track-size change made on that
+theory was backed out.  And
+.CW cmp
+reported the installed kernel differing from the source at byte 442,
+which was not corruption: the source was rebuilt while
+.CW cp
+had it open.  The card holds a complete 1949000-byte kernel, the size
+of that mid-copy build.  The update path works.
+.NH 2
+The bottleneck is the host's styx server, and it stops accepting
+.PP
+The profile above said the board was slow and the host was fast, and
+that was measured at a moment when the host happened to be healthy.  It
+does not stay healthy.  Fifty minutes later the same loopback read that
+took 0.46s had not finished in 400s, and a bare Styx handshake \(em
+connect, send Tversion, wait \(em timed out three times at twenty
+seconds each.
+.PP
+.B "What the server looks like when it has stopped."
+.P1
+lsof: emu holds ONE socket, *:6666 (LISTEN)
+netstat: two connections ESTABLISHED, recvq=19 each
+sample: a thread inside accept(), via
+        Sys_open -> kopen -> namec -> ipopen -> so_accept
+.P2
+Nineteen bytes is exactly a Tversion.  Both clients completed their TCP
+handshake, sent their first message, and waited.  The server never took
+either connection: it holds no descriptor for them, so they are sitting
+in the kernel's accept backlog \(em while one of its own threads is
+blocked inside
+.CW accept (2)
+on the socket that backlog belongs to.
+.PP
+.B "Proved rather than inferred."
+Open a fresh connection and watch the server's descriptor count:
+.P1
+emu fds before:  1   (the listener)
+connected
+emu fds during:  1   (unchanged)
+.P2
+.CW accept
+does not return.  A restart fixes it completely \(em 1MB over loopback in
+0.54s immediately afterwards, against a read that had hung past 400s
+minutes earlier \(em which is what establishes that the server, not the
+board, is the thing that degrades.
+.PP
+.B "Why every earlier measurement disagreed with the last."
+Every board number in this work \(em the 36-minute copy, 419s for 1MB,
+3.1s a read, the sizes that looked fast and then did not reproduce \(em
+was taken against a server somewhere on its way from healthy to
+stopped.  That is the whole of the variance, and no property of the
+board explains any of it.  The Styx handshake in
+.CW tools/jtag/styxd.sh
+takes under a second on a healthy server and is the honest way to ask
+before believing any number measured through it.
+.NH 2
+board.cmd ran exactly once per boot: sh->init() does not return
+.PP
+Four boots printed RCMD-BEGIN 1 and never RCMD-END, and it was read as
+a hang three times.  It was not a hang \(em the process was gone.  Five
+Init processes before the script, three after; a blocked process is
+still in
+.CW ps
+and this one was not.
+.PP
+.CW sh.b 's
+.CW init() ,
+given
+.CW -c
+and not interactive, finishes its work with
+.P1
+if (status != nil)
+        raise "fail:" + status;
+exit;
+.P2
+and
+.CW exit
+terminates the process that called
+.CW init .
+So
+.CW runremote 's
+.CW "sh->init(nil, \"sh\" :: \"-c\" :: cmd :: nil)"
+killed
+.CW remotecmd
+every time a script SUCCEEDED, silently, with no exception to catch.
+The script itself ran and its output reached
+.CW board.out ,
+which is why this looked like a wedge rather than a death.
+.PP
+The shell runs in a spawned child now, which shares the descriptor
+group (so it inherits the redirection to
+.CW board.out )
+and the namespace (so it sees
+.CW /n/remote ),
+and the parent waits for
+.CW /prog/<pid>
+to go.  RCMD-END 1 now prints and the poller survives its script.
