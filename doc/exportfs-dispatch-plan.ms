@@ -1,6 +1,26 @@
 .TL
 exportfs: a better way to dispatch connections
 .AU
+.SH
+Priority
+.PP
+.B "This is a first-class piece of work, not a side quest."
+Every emu in this tree serves files through
+.CW exportfs ,
+so the 1700-fold latency improvement measured below is not a Pi 3B
+detail \(em it is the file service every hosted Inferno on this
+machine depends on.  On the board it is the difference between
+kupdate appearing to hang and kupdate working, and it cost a day of
+misdiagnosis before it was even localised.
+.PP
+It gets whatever it needs: a dedicated diagnosis plan
+(doc/emu-exportfs-nil-plan.ms), a measurement harness that proves its
+own load, sanitizer work on emu's pool allocator if that is what the
+remaining bug takes, and as many board and host runs as the numbers
+require.  Nothing here is to be left at "probably fine" \(em the one
+reference-counting bug between this and shipping is worth however long
+it takes, because what is behind it is a server that answers in
+milliseconds instead of a minute.
 .NH 1
 The measurement that motivates this
 .PP
