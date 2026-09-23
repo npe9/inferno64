@@ -416,3 +416,29 @@ after, Maxconnproc 4:
 .P2
 Six consecutive three-reader runs at half a gigabyte each, no panic
 and no fault.  p90 improves by a factor of about 1700.
+.NH 2
+Still owed: the board's kupdate
+.PP
+The host side is fixed and measured.  The board is not yet through:
+after a boot with the fixed emu serving it,
+.CW kupdate
+printed NOTHING in twenty-five minutes \(em not even the
+.CW KUPDATE-NONE
+that was added for the silent path, which means it is blocked inside
+the loop that opens
+.CW /n/dos/kupdate.txt
+rather than failing it.  Two connections from the board were open,
+one with 23 bytes unread.
+.PP
+So the remaining question is on the BOARD, not the host: what blocks a
+dossrv open of a small file on a card whose own tests now pass,
+including two 128KB multi-block verifies run concurrently with a dd
+against the same controller.  The SD driver's acceptance is met; this
+is above it.
+.PP
+The other loose end from the same boot: the first two
+.CW MULTIVERIFY
+arms failed and the later ones passed, on a kernel whose SD code had
+not changed since six consecutive clean runs.  First-after-boot, and
+intermittent.  Worth one deliberate look before it is explained away
+as warm-up.
