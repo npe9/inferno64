@@ -162,6 +162,7 @@ enum {
 
 	/* what an IOCFG selects */
 	Gpktsyncrxtx	= 0x06,
+	Gcarriersense	= 0x11,		/* swept for; see gsweep */
 	Ghighz		= 0x30,
 
 	/*
@@ -247,6 +248,7 @@ enum {
 	 * it for a hundred samples a step instead of one.
 	 */
 	Dwellms		= 100,
+	Probemargin	= 6,		/* dB over the measured floor */
 	/*
 	 * How many runs a "capture" keeps.  512 shorts of bss,
 	 * because the kernel stack here is 4096 bytes in total
@@ -1593,6 +1595,232 @@ cc1120ctl(Radio *r, char *buf, int n)
 		s->unlock(s);
 		setfreq(rr, rr->hz);		/* recalibrate and listen */
 		rr->symrate = sym;
+		return n;
+	}
+	if(strcmp(f[0], "probe") == 0 && nf >= 2){
+		/*
+		 * Characterise one channel, in one command.
+		 *
+		 * The division of labour this ends up in: a tinySA
+		 * sweeps a band and says where something is, and this
+		 * says what it is doing there.  The instrument is better
+		 * at finding -- it looks at 450 places at once and this
+		 * looks at one -- and this is better at watching, by two
+		 * orders of magnitude: 1.37us a sample against 111 at
+		 * the instrument's fastest sweep, a receive filter that
+		 * is a channel wide rather than a sweep bin, and no
+		 * 450-point limit on how long it can look.
+		 *
+		 * One command because the console is the expensive
+		 * part.  Typing at five milliseconds a character, a
+		 * frequency's worth of tune, threshold, capture and
+		 * read is half a minute of round trips and a tenth of a
+		 * second of measurement, so the loop belongs here.
+		 *
+		 *	probe 881000000		200ms, threshold picked
+		 *	probe 881000000 500	from the noise it finds
+		 *
+		 * Two passes.  The first samples RSSI a millisecond
+		 * apart -- slowly, because sampling continuously over
+		 * the bus raises this part's own floor 15 to 20dB --
+		 * and takes the floor and the peak.  The second sets
+		 * carrier sense a little over that floor and watches
+		 * the pin, which costs no bus traffic at all.
+		 */
+		uvlong t0, t1, tickhz;
+		ulong ms, us, hi, lo, nb, nsamp, nsper;
+		ulong run, bmin, bmax, gmin, gmax;
+		int floor, peak, r0, r1, thr, oldthr, oldsel;
+		int cur, first, oldagc;
+
+		if(s->gpio == nil)
+			error("radio: this board does not wire the part's GPIO");
+		hz = strtoul(f[1], nil, 0);
+		ms = nf >= 3? strtoul(f[2], nil, 0): 200;
+		if(ms < 10 || ms > 2000)
+			error(Ebadctl);
+		/*
+		 * RSSI_VALID_CNT down to two estimates for the
+		 * measurement, which is what decides the finest event
+		 * this can see.  Carrier sense cannot assert for less
+		 * than one RSSI update, an update is that many
+		 * estimates, and an estimate is 0.309ms on this board
+		 * -- so nine estimates, which is what this driver runs
+		 * for a steady level reading, puts a floor of 2.8ms
+		 * under every burst and every gap reported here.  It
+		 * showed: a sweep of five channels came back with a
+		 * shortest burst of 2.88 to 2.91ms on every one of
+		 * them, which is not five transmitters agreeing, it is
+		 * the receiver.  At two estimates the floor is 0.62ms.
+		 *
+		 * From IDLE, because AGC_CFG0 written during receive
+		 * leaves the AGC somewhere the RSSI does not come back
+		 * from, and put back the same way afterwards.
+		 */
+		s->lock(s);
+		strobe(rr, Sidle);
+		for(i = 0; i < Idlewaitus; i++)
+			if(state(rr) == Stidle)
+				break;
+		oldagc = rd(rr, Ragccfg0);
+		wr(rr, Ragccfg0, oldagc & ~0x0c);
+		i = setfreq(rr, hz);
+		s->unlock(s);
+		if(i < 0){
+			s->lock(s);
+			wr(rr, Ragccfg0, oldagc);
+			s->unlock(s);
+			error("radio: outside this part's bands");
+		}
+
+		/*
+		 * What the channel sounds like before anything is
+		 * decided, over a quarter of the asked-for time rather
+		 * than a fixed forty milliseconds.  These signals come
+		 * and go: a fixed short look at 881MHz gave a floor of
+		 * -111 and a peak of -92 once and -118 and -102 a
+		 * minute later, which moves any threshold derived from
+		 * it by seven decibels.
+		 *
+		 * A millisecond apart, not continuously.  Polling RSSI
+		 * over the bus as fast as it will go raises this part's
+		 * own floor 15 to 20dB -- measured -- so the pass that
+		 * decides the threshold has to be the slow kind.
+		 */
+		floor = 127;
+		peak = -128;
+		for(i = 0; i < ms/4; i++){
+			s->lock(s);
+			r0 = rdx(rr, Xrssi0);
+			r1 = (schar)rdx(rr, Xrssi1);
+			s->unlock(s);
+			if(r0 & Rssivalid){
+				if(r1 > peak)
+					peak = r1;
+				if(r1 < floor)
+					floor = r1;
+			}
+			delay(1);
+		}
+		if(peak == -128){
+			print("probe %lud invalid\n", (ulong)hz);
+			return n;
+		}
+		/*
+		 * Half way between the floor and the peak, but never
+		 * closer to the floor than Probemargin.  A fixed margin
+		 * is wrong in both directions: six decibels over a
+		 * floor that a real signal is twenty above says the
+		 * channel is busy 87% of the time, which is the AGC
+		 * breathing and not a transmitter, and a wide fixed
+		 * margin finds nothing on a weak one.  With no signal
+		 * the peak is near the floor and this falls back to the
+		 * margin, which is what keeps it from triggering on
+		 * noise.
+		 */
+		thr = peak - floor > 2*Probemargin?
+			floor + (peak - floor)/2: floor + Probemargin;
+
+		s->lock(s);
+		oldthr = (schar)rd(rr, Ragccsthr);
+		oldsel = rd(rr, Riocfg3);
+		wr(rr, Ragccsthr, thr & 0xff);
+		s->unlock(s);
+		if(s->irq != nil)
+			s->irq(s, 0);
+		s->lock(s);
+		wr(rr, Riocfg3, Gcarriersense);
+		s->unlock(s);
+
+		hi = lo = nb = 0;
+		bmin = gmin = 0x7fffffff;
+		bmax = gmax = 0;
+		cur = -1;
+		run = 0;
+		first = 0;
+		t0 = fastticks(&tickhz);
+		t1 = t0 + (tickhz/1000) * ms;
+		while(fastticks(nil) < t1){
+			i = s->gpio(s);
+			if(cur < 0){
+				cur = i;
+				first = i;
+				run = 1;
+				continue;
+			}
+			if(i == cur){
+				run++;
+				continue;
+			}
+			/* a run ended: account for it */
+			if(cur){
+				hi += run;
+				nb++;
+				if(run < bmin)
+					bmin = run;
+				if(run > bmax)
+					bmax = run;
+			}else{
+				lo += run;
+				if(run < gmin)
+					gmin = run;
+				if(run > gmax)
+					gmax = run;
+			}
+			cur = i;
+			run = 1;
+		}
+		us = (ulong)(((fastticks(nil) - t0) * 1000000) / tickhz);
+
+		s->lock(s);
+		wr(rr, Riocfg3, oldsel);
+		wr(rr, Ragccsthr, oldthr & 0xff);
+		strobe(rr, Sidle);
+		for(i = 0; i < Idlewaitus; i++)
+			if(state(rr) == Stidle)
+				break;
+		wr(rr, Ragccfg0, oldagc);
+		setfreq(rr, rr->hz);		/* and back to listening */
+		s->unlock(s);
+		if(s->irq != nil)
+			s->irq(s, 1);
+
+		/*
+		 * Run lengths are in samples and the sample period is
+		 * measured over the run, so everything is printed in
+		 * microseconds and nothing here has to know what this
+		 * board's bus does.  The trailing runs are left out of
+		 * the extremes on purpose: the first and last are cut
+		 * off by the window rather than by the signal.
+		 */
+		/*
+		 * Everything in microseconds, through a sample period
+		 * in nanoseconds, and all of it in 32 bits.
+		 *
+		 * The obvious way is (run * us) / samples in 64 bits,
+		 * and 64-bit division is not something to reach for on
+		 * this part: it is a called helper, and the first
+		 * version of this printed four of them and the kernel
+		 * stopped booting -- after the conf line, before the
+		 * first process ran, with the tail of the line still in
+		 * the console queue.  A sample here is about 1.4
+		 * microseconds and a run is at most a couple of million
+		 * of them, so nanoseconds per sample times a run stays
+		 * inside a ulong and needs no helper at all.
+		 */
+		nsamp = hi + lo;
+		if(nsamp == 0)
+			nsamp = 1;
+		nsper = (us*1000)/nsamp;
+		print("probe %lud floor %d peak %d thr %d us %lud "
+			"duty %lud%% bursts %lud", (ulong)hz, floor, peak,
+			thr, us, (hi*100)/nsamp, nb);
+		if(nb > 0)
+			print(" burst %lud..%ludus gap %lud..%ludus",
+				(bmin*nsper)/1000, (bmax*nsper)/1000,
+				gmin == 0x7fffffff? 0UL: (gmin*nsper)/1000,
+				(gmax*nsper)/1000);
+		print(" first %s\n", first? "high": "low");
 		return n;
 	}
 	if(strcmp(f[0], "reset") == 0){
