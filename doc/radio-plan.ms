@@ -1015,6 +1015,37 @@ the deviation, the bandwidth, the rate, or there being nothing there
 bench's control that is on the air rather than on a socket.  A second
 ccRF click is the cheapest.
 .PP
+A RETRACTION, and the method that earned it.  It was written here and
+in a commit that a 64-bit division in a ctl verb that never ran
+stopped this kernel booting \- "after the conf line, before the first
+process, with the tail of that line still in the console queue" \-
+and that it was reproduced three resets each way.  It is not true.
+Put back, the same arithmetic boots on the part and under qemu and
+runs commands at the prompt.
+.PP
+What was really being read was a screen captured while the conf line
+was still printing.  The console is watched through screen(1)'s
+hardcopy, which writes out whatever is in the window at that instant,
+and a boot caught mid-line looks exactly like a boot that stopped
+mid-line.  The same mistake happened again later and was caught that
+time only because the next command's error message gave the machine
+away as alive.  Two false diagnoses of a dead board from the same
+method, and the correction is cheap: ask the machine to do something
+and see whether it answers, rather than looking at what it last
+printed.
+.PP
+The same afternoon produced a real version of that fault and it is
+worth keeping separate.  This board's console drops characters from a
+line typed faster than it echoes, which tools/f407/console.py has
+known about for the real serial port since it cost a boot there.  It
+applies to qemu too, where the host writes a whole line into the pipe
+at once: a 59-character command came back as
+.CW /dev/radioecho ,
+the tail of one line run into the next, and the shell hung on it.
+Every long command sent to either machine has been at risk of that,
+and the fix is the one console.py already uses \- hold the ctl file
+open with cat and type short lines into it.
+.PP
 One more thing that check is worth keeping for.  Run first with
 mcast=, the two instances came up, the sender reported "sent 1", the
 receiver reported "recv 0" and its receive FIFO was empty.  That reads

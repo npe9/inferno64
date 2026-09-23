@@ -263,6 +263,7 @@ enum {
 	 * underneath it.
 	 */
 	Ncaprun		= 256,
+	Nholdstep	= 64,		/* steps a "hold" sweep may have */
 	/*
 	 * How many bytes "cat /dev/radio0/txtest" sends.  At the
 	 * 1200 baud this part comes up at, 125 bytes is most of a
@@ -904,7 +905,14 @@ cc1120ctl(Radio *r, char *buf, int n)
 {
 	Cc1120 *rr;
 	Spidev *s;
-	char *f[5], cbuf[64];
+	/*
+	 * Eight, not five.  tokenize() stops at the size of this array
+	 * and drops the rest without saying so, so a verb with five
+	 * arguments silently got four and used a default for the
+	 * fifth -- which is a hard thing to see when the default is
+	 * reasonable.
+	 */
+	char *f[8], cbuf[64];
 	uvlong hz;
 	int nf, i;
 
@@ -1848,16 +1856,20 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 * Everything in microseconds, through a sample period
 		 * in nanoseconds, and all of it in 32 bits.
 		 *
-		 * The obvious way is (run * us) / samples in 64 bits,
-		 * and 64-bit division is not something to reach for on
-		 * this part: it is a called helper, and the first
-		 * version of this printed four of them and the kernel
-		 * stopped booting -- after the conf line, before the
-		 * first process ran, with the tail of the line still in
-		 * the console queue.  A sample here is about 1.4
-		 * microseconds and a run is at most a couple of million
-		 * of them, so nanoseconds per sample times a run stays
-		 * inside a ulong and needs no helper at all.
+		 * Not because 64-bit division breaks anything.  A
+		 * comment here used to say that the obvious way --
+		 * (run * us) / samples in 64 bits -- stopped the kernel
+		 * booting, and that was wrong: put back, on the part
+		 * and under qemu, the kernel boots and runs commands.
+		 * What was actually being read was a screen captured
+		 * while the conf line was still printing, taken for a
+		 * machine that had stopped.  See the note in
+		 * doc/radio-plan.ms.
+		 *
+		 * It stays in 32 bits because it costs nothing to: a
+		 * sample here is about 1.4 microseconds and a run is at
+		 * most a couple of million of them, so nanoseconds per
+		 * sample times a run fits a ulong and calls no helper.
 		 */
 		nsamp = hi + lo;
 		if(nsamp == 0)
@@ -1992,6 +2004,72 @@ cc1120ctl(Radio *r, char *buf, int n)
 		wr(rr, Rsynccfg1x, (rd(rr, Rsynccfg1x) & 0x1f) | (mode<<5));
 		s->unlock(s);
 		setfreq(rr, rr->hz);
+		return n;
+	}
+	if(strcmp(f[0], "hold") == 0 && nf >= 5){
+		/*
+		 * A sweep that keeps the highest each step ever saw,
+		 * over many passes.
+		 *
+		 * "scan" visits each step once, and for a signal that
+		 * is on a few per cent of the time that measures when
+		 * the visit happened rather than where the energy is.
+		 * Scanning 908.4 to 908.8MHz at 25kHz and half a second
+		 * a step gave a peak of -106dBm at 908.600 and -108 at
+		 * 908.525, which is not a spectrum, it is seventeen
+		 * unrelated half-seconds.  The shape of an intermittent
+		 * signal only appears if every step gets enough looks
+		 * to catch a burst, so this sweeps the range over and
+		 * over and keeps the maximum.
+		 *
+		 *	hold 908400000 908800000 25000 50 12
+		 *
+		 * Twelve passes of fifty milliseconds is the same six
+		 * hundred milliseconds a step as one pass of six
+		 * hundred, spread out over the whole sweep instead of
+		 * spent in one place.
+		 */
+		static schar hold[Nholdstep];
+		ulong lo, hi, step, ms, passes, k;
+		int nstep, r0, r1, nrun;
+
+		lo = strtoul(f[1], nil, 0);
+		hi = strtoul(f[2], nil, 0);
+		step = strtoul(f[3], nil, 0);
+		ms = strtoul(f[4], nil, 0);
+		passes = nf >= 6? strtoul(f[5], nil, 0): 8;
+		if(step == 0 || lo > hi || ms < 1 || ms > 1000 ||
+		   passes < 1 || passes > 100)
+			error(Ebadctl);
+		nstep = (hi - lo)/step + 1;
+		if(nstep > Nholdstep)
+			error("radio: too many steps for one hold");
+		for(i = 0; i < nstep; i++)
+			hold[i] = -128;
+
+		for(k = 0; k < passes; k++)
+			for(i = 0; i < nstep; i++){
+				s->lock(s);
+				if(setfreq(rr, lo + (ulong)i*step) < 0){
+					s->unlock(s);
+					continue;
+				}
+				s->unlock(s);
+				for(nrun = 0; nrun < ms; nrun++){
+					s->lock(s);
+					r0 = rdx(rr, Xrssi0);
+					r1 = (schar)rdx(rr, Xrssi1);
+					s->unlock(s);
+					if((r0 & Rssivalid) && r1 > hold[i])
+						hold[i] = r1;
+					delay(1);
+				}
+			}
+		s->lock(s);
+		setfreq(rr, rr->hz);		/* back where it was */
+		s->unlock(s);
+		for(i = 0; i < nstep; i++)
+			print("hold %lud %d\n", lo + (ulong)i*step, hold[i]);
 		return n;
 	}
 	if(strcmp(f[0], "reset") == 0){
