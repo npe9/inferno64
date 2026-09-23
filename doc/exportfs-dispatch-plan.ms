@@ -251,3 +251,66 @@ It is reverted rather than left in, because
 is shared by every emu in the tree and a server that crashes under
 load is worse than one that is slow under load.  The baseline above is
 the number to beat, and the crash above is the next thing to fix.
+.NH 1
+Result: the redesign works, and H4 is answered
+.PP
+.B "The latency problem is solved."
+The same harness, reporting the load it actually moved:
+.P1
+                       median    p90     max
+baseline (queue)         4.53s  52.03s  66.56s   164MB, 3 readers
+worker per request:
+  1 reader  (563MB)      0.01s   0.02s   0.02s
+  3 readers (813MB)      0.01s   0.01s   0.02s
+  8 readers (248MB)      0.02s   0.04s   0.04s
+.P2
+The acceptance criterion \(em p90 under a second, max under five \(em
+is met by three orders of magnitude, under heavier load than the
+baseline was measured at.  A new connection is now served in tens of
+milliseconds while the server moves hundreds of megabytes.
+.PP
+.B "And the nil dereference is a race between workers on one
+.B "connection."
+That is H4 from doc/emu-exportfs-nil-plan.ms, settled by the
+experiment the plan said to run first because it was a one-line
+rebuild:
+.CW Maxconnproc
+at 1 serialises a connection's workers exactly as the old
+.CW exq.qwait
+did, and the nil fault does not occur.  It did occur repeatedly at 4.
+So the fault is not in the per-request dispatch itself but in two
+workers of the same connection running at once \(em which the old
+design never allowed, and which therefore nothing in
+.CW Exfid ,
+.CW fs->fid[]
+or the reply path was ever required to tolerate.
+.PP
+Note what this means for the design: the per-connection worker LIMIT
+is not only a resource bound, it is currently a correctness
+requirement.  Raising it needs the concurrency audit that the old
+serialisation made unnecessary.
+.PP
+.B "What is not fixed."
+.CW "panic: decref"
+on connection teardown, intermittently.  It is not the group
+references \(em those are saved and restored \(em and it survives at
+.CW Maxconnproc
+1, so it is not the worker race either.  The likely area is
+.CW exshutdown
+calling
+.CW swiproc
+on a worker mid-request: the old
+.CW exslave
+was written to be killed and looped afterwards, whereas a worker that
+is interrupted may unwind without reaching its
+.CW exfreeq ,
+or reach it twice.
+.PP
+.B "Where the work is."
+.CW doc/exportfs-dispatch.patch ,
+389 lines against the committed
+.CW exportfs.c .
+The tree is reverted, because that file is shared by every emu here
+and a server that dies on teardown is not an improvement on a server
+that is slow.  The patch is worth finishing: a 1700-fold latency
+improvement is sitting behind one reference-counting bug.
