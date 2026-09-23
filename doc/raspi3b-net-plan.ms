@@ -177,3 +177,47 @@ is the only end-to-end test that exercises the whole path;
 .IP \(bu
 and each change measured ALONE.  Two of the four failures were
 evaluated with another change still in the tree.
+.NH 1
+Would parallelvm fix the server wedging?
+.PP
+It might, and the evidence to say so does not exist yet.  The one
+snapshot taken of a wedged server shows several threads in
+.CW acquire
+\(em the Dis VM lock \(em with one in
+.CW xec
+running, which is what VM starvation looks like and is also what a
+serialised VM looks like at any instant under any load.  Concluding
+from it would be the exact mistake this document exists to stop.
+.PP
+.B "One measurement decides it, and it is free."
+The next time the server stops answering, before restarting it:
+.P1
+ps -o %cpu -p `pgrep -f styxlisten`
+.P2
+.IP \(bu
+.B "100% :"
+a Dis process is spinning and holding the VM lock, everything else is
+starved, and parallelvm \(em which lets executors run concurrently \(em is
+exactly the right answer.
+.IP \(bu
+.B "0% :"
+nothing is running at all, everything is asleep waiting for something
+that never arrives, and parallelvm is irrelevant to it.
+.PP
+The one reading taken during an earlier wedge was
+.B "0%, with a total of 1.03 seconds of CPU"
+after hours of serving \(em which argues against starvation and so
+against parallelvm being the fix.  But that was a different wedge, before
+the flush bug was found, so it does not settle this one.
+.PP
+.B "And the cost is not small."
+parallelvm lives on the
+.CW multicore
+branch and is 40 files and some 2700 lines across
+.CW emu
+and
+.CW libinterp ,
+including reference-counting changes in every compiler back end \(em it is
+not a cherry-pick.  Adopting it to fix a diagnosis that rests on one
+snapshot is the shape of the four failures already recorded here.  Take
+the CPU reading first.
