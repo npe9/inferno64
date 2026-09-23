@@ -898,8 +898,39 @@ and the two instruments agree for the first time.
 What the transmitter actually does is still not known, because 0.61ms
 is the floor of this method rather than a measurement: the true burst
 is at or below it.  Getting under that means the demodulator's output
-rather than its carrier sense, which is a different pin selection and
-the next thing to try.
+rather than its carrier sense, which is a different pin selection.
+.PP
+Which one was a sweep, and the sweep is now a ctl verb.
+.CW "gsweep <ms>"
+sets IOCFG3 to each of the sixty-four selections in turn and prints
+how many times the pin changed in the window, so the question takes a
+third of a second on the board instead of sixty console round trips.
+Three selections change fast: 0x28 at about 20kHz, 0x2e at 150, and
+0x31 at the sampler's own rate.
+.PP
+Finding them hung the machine twice, which is the part worth
+recording.  This board takes a rising edge on that pin as "a packet
+happened", so a fast selection is an interrupt storm: the first sweep
+printed as far as 0x27 and stopped, with no prompt and no echo, and
+^R^R could not recover it because that is a keystroke and there was no
+room left to service the uart.  Spidev grows irq() and the sweep holds
+the line masked.  Then the capture verb did it again, because it
+masked after writing IOCFG3 and unmasked before restoring it, and the
+window between the two is enough.
+.PP
+0x28 carries the demodulator.  At 881MHz its pulses fall on a 49.2
+microsecond grid and the intervals between them are dominated by two
+grid steps \- 81 of 128 \- while at 893MHz, where nothing transmits,
+the same capture gives 88 of 128 at one step with a tail out to
+seventeen.  So the pin is not a free-running clock: it follows the
+air, and on a real signal it collapses onto a 98.4 microsecond period.
+That is symbol-level structure out of a real transmission, at 1.39
+microseconds a sample, using the receiver's own demodulator.
+.PP
+What that period means is not established.  It is the receiver's
+recovered symbol rate as much as the transmitter's, and this driver
+has never set the data rate registers, so it is running on whatever
+TI's table and the part's reset values leave.
 .IP "4.  An FT-891, or anything with a CAT port.  Done, for receive." 6
 This is no longer a compiled argument.  The set is driven from emu
 over its own USB port \- a CP2105's Enhanced Com Port, 4800 8N2 \-

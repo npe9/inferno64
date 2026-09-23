@@ -1372,14 +1372,22 @@ cc1120ctl(Radio *r, char *buf, int n)
 		if(ms < 1 || ms > 2000 || sel > 0xff)
 			error(Ebadctl);
 
+		/*
+		 * Masked before the selection is changed, and unmasked
+		 * after it is put back.  See gsweep for what a fast pin
+		 * does to this board; the order matters as much as the
+		 * mask, because the window between writing IOCFG3 and
+		 * masking is enough.  The first version of this masked
+		 * second and unmasked first and hung the machine on the
+		 * one selection it was written to look at.
+		 */
+		if(s->irq != nil)
+			s->irq(s, 0);
 		s->lock(s);
 		old = rd(rr, Riocfg3);
 		if(sel >= 0)
 			wr(rr, Riocfg3, sel);
 		s->unlock(s);
-		/* see gsweep: a fast pin is an interrupt storm here */
-		if(s->irq != nil)
-			s->irq(s, 0);
 
 		nrun = nsamp = 0;
 		cur = -1;
@@ -1404,11 +1412,11 @@ cc1120ctl(Radio *r, char *buf, int n)
 		}
 		us = (ulong)(((fastticks(nil) - t0) * 1000000) / tickhz);
 
-		if(s->irq != nil)
-			s->irq(s, 1);
 		s->lock(s);
 		wr(rr, Riocfg3, old);
 		s->unlock(s);
+		if(s->irq != nil)
+			s->irq(s, 1);
 
 		first = cur ^ ((nrun - 1) & 1);
 		print("gcapture %lud iocfg3 0x%.2x us %lud samples %d "
