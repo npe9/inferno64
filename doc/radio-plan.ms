@@ -986,10 +986,42 @@ never received a packet on silicon and could not have, and everything
 else \- the interrupt, the queue, the counters, the two files \- was
 in place and waiting.  It is set to 16 bits at init now.
 .PP
-Which puts a number on what item 3 needs.  A transmitter under this
-bench's control, because a receive path cannot be trusted until it has
-received something known, and the cheapest is a second ccRF click.
-Until then every negative about what is on the air is unreadable.  A duty cycle and a burst length
+A positive control does not have to be hardware, and half of one was
+free.  Two qemu instances, each with a modelled CC1120, joined by a
+socket:
+.PP
+.EX
+	; cat /dev/radio0/data
+	radio-carried-this
+.EE
+.PP
+\- the first packet this device has ever carried, out of
+.CW /dev/radio0/data
+on a machine that did not send it.  It is
+.CW tools/radio/twoboards.sh
+and it passes.
+.PP
+What that settles and what it does not.  It exercises the transmit
+FIFO and strobe, and on the far side the interrupt, NUM_RXBYTES, the
+FIFO read, the header this device prepends, the queue and the
+counters: the whole of #W's packet path.  It does not exercise sync
+word detection or anything else in the radio, because the model hands
+whole packets across a netdev and never reads SYNC_CFG1.
+.PP
+So the silence on the air is now known not to be the interrupt, the
+FIFO, the queue or the counters.  It is the RF half \- the sync word,
+the deviation, the bandwidth, the rate, or there being nothing there
+\- and telling those apart still wants a transmitter under this
+bench's control that is on the air rather than on a socket.  A second
+ccRF click is the cheapest.
+.PP
+One more thing that check is worth keeping for.  Run first with
+mcast=, the two instances came up, the sender reported "sent 1", the
+receiver reported "recv 0" and its receive FIFO was empty.  That reads
+exactly like a driver that cannot receive, and it was two qemu
+instances that had never been connected to each other.  The same shape
+as everything else in this document: an instrument that was not
+measuring what it appeared to be measuring.  A duty cycle and a burst length
 are consistent with far too much, and the one thing that would settle
 it has not been tried: configure the packet engine for a candidate --
 rate, deviation, receive bandwidth, sync word, CRC -- and count the
