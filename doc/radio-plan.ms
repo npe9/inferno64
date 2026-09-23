@@ -799,11 +799,45 @@ can demodulate one hop and cannot follow a sequence it does not know.
 .PP
 So there is no standard FSK packet format on this air to lock a sync
 word onto, and that changes what this item is.  It is not a register
-table for somebody else's protocol; it is raw capture \- the part's
-infinite packet length, or its serial mode with the demodulated bits
-on a GPIO \- and then looking at timing in Limbo.  That is a piece of
-work rather than a setting, and it is the honest next move now that
-the air has actually been measured.
+table for somebody else's protocol; it is raw capture, and then
+looking at timing.
+.PP
+The first half of that is built.  The ctl file takes
+.CW "capture <ms> [dbm]" ,
+which samples RSSI as fast as the bus allows and prints the run
+lengths above and below a threshold, and the tinySA does the same
+measurement from outside with
+.CW "survey.py zero <hz>" ,
+which puts the instrument in zero span so its 450 points become 450
+instants.  Both run.  At 881MHz the instrument sees bursts under a
+millisecond at a duty of 2 to 7 per cent, peaking at \-74dBm, with
+gaps between 13 and 34ms; the board sees a threshold crossed there
+that it never crosses at 893MHz, which is the control.
+.PP
+Two things were learned by doing it, and both are worth more than the
+capture.
+.PP
+The SPI was running at APB1/256, the slowest divisor the part has,
+because a comment said that was fast enough \- and it was, for
+register writes.  164kHz makes one RSSI sample 293us, which is exactly
+the 296us the capture measured for itself, so the time resolution of
+everything this board could ever record was one line in
+spistm32f4.c.  At APB1/16 it is 27us.
+.PP
+And polling the bus desensitises the part being polled.  At 893MHz,
+with nothing transmitting and watch reporting a floor of \-118dBm, a
+capture at 27us a sample crosses \-106 after 3.3ms and stays there.
+Same kernel, same clock, same frequency: watch samples once a
+millisecond and capture samples continuously, so it is the duty of the
+SPI and not its speed, and the 3.3ms is the AGC settling to the noise
+the bus is making.  A capture reads 15 to 20dB hot with its own bus as
+the floor.
+.PP
+Which says what the second half is.  Not a faster bus \- not using the
+bus: this part will put its demodulated data or its carrier sense on a
+GPIO, and GPIO3 is already wired to this board's interrupt pin, so the
+envelope can be read with no SPI traffic at all and at the resolution
+of a timer rather than of a register read.
 .IP "4.  An FT-891, or anything with a CAT port.  Done, for receive." 6
 This is no longer a compiled argument.  The set is driven from emu
 over its own USB port \- a CP2105's Enhanced Com Port, 4800 8N2 \-
