@@ -42,6 +42,13 @@ enum {
 	Rsynccfg1	= 0x08,
 	Rdcfiltcfg	= 0x0c,
 	Riqic		= 0x10,
+	Rsync3		= 0x04,		/* sync word, 3 is the first on air */
+	Rsync2		= 0x05,
+	Rsync1		= 0x06,
+	Rsync0		= 0x07,
+	Rsynccfg1x	= 0x08,		/* SYNC_MODE in 4:0 */
+	Rdeviationm	= 0x0a,
+	Rmodcfgdeve	= 0x0b,		/* DEV_E in 2:0 */
 	Rchanbw		= 0x11,
 	Rdrate2		= 0x14,		/* DRATE_E in 7:4, DRATE_M's top 4 in 3:0 */
 	Rdrate1		= 0x15,
@@ -729,6 +736,50 @@ static struct {
 	{ 164000000ULL, 192000000ULL, 0xa, 20 },
 	{ 136700000ULL, 160000000ULL, 0xb, 24 },
 };
+
+/*
+ * Frequency deviation, in hertz, from the part's own registers:
+ *
+ *	fdev = (256 + DEV_M) * 2^DEV_E * fxosc / 2^24
+ *
+ * Checked against an instrument rather than taken from a note.  With
+ * what TI's table leaves -- DEVIATION_M 0x06, DEV_E 3 -- this says
+ * 3998Hz, so a 2-FSK carrier should show two tones 7996Hz apart; on a
+ * tinySA, with the board transmitting random data at 915MHz, they are
+ * 8.20kHz apart.  Two and a half per cent, which is the instrument's
+ * bin and the crystal, not the formula.
+ */
+static ulong
+readdev(Cc1120 *rr)
+{
+	uvlong x;
+
+	x = (uvlong)(256 + rd(rr, Rdeviationm)) << (rd(rr, Rmodcfgdeve) & 7);
+	return (ulong)((x * Fxosc) >> 24);
+}
+
+/*
+ * Receive filter bandwidth, in hertz:
+ *
+ *	bw = fxosc / (decfact * DEC_M * 8)
+ *
+ * with decfact 20 or 32 by CHAN_BW's top two bits and DEC_M in the
+ * bottom six.  What the table leaves is 0x08, which is 20 and 8, and
+ * 32MHz/(20*8*8) is 25kHz -- the figure TI publishes for this
+ * configuration, which is the check.
+ */
+static ulong
+readbw(Cc1120 *rr)
+{
+	int v, d;
+
+	v = rd(rr, Rchanbw);
+	d = (v >> 6) == 0? 20: 32;
+	v &= 0x3f;
+	if(v == 0)
+		v = 1;
+	return Fxosc / (d * v * 8);
+}
 
 /*
  * The symbol rate the part is actually set to, from its own
@@ -1823,6 +1874,126 @@ cc1120ctl(Radio *r, char *buf, int n)
 		print(" first %s\n", first? "high": "low");
 		return n;
 	}
+	if(strcmp(f[0], "deviation") == 0 && nf == 2){
+		/*
+		 * Inverting the formula in readdev(): x is fdev scaled
+		 * by 2^24/fxosc, and the exponent is whatever shift
+		 * brings it into [256, 512).
+		 *
+		 * The 64-bit divide is by a constant on purpose.  A
+		 * uvlong divided by a variable is a called helper on
+		 * this part, and one of those in a ctl verb that never
+		 * ran stopped the kernel booting; see the probe verb.
+		 */
+		uvlong x;
+		ulong want;
+		int e;
+
+		want = strtoul(f[1], nil, 0);
+		if(want < 100 || want > 200000)
+			error("radio: outside this part's deviations");
+		x = ((uvlong)want << 24) / Fxosc;
+		for(e = 0; e < 8; e++)
+			if((x >> e) < 512)
+				break;
+		if(e >= 8 || (x >> e) < 256)
+			error("radio: no exponent fits that deviation");
+		s->lock(s);
+		strobe(rr, Sidle);
+		for(i = 0; i < Idlewaitus; i++)
+			if(state(rr) == Stidle)
+				break;
+		wr(rr, Rdeviationm, (x >> e) - 256);
+		wr(rr, Rmodcfgdeve, (rd(rr, Rmodcfgdeve) & ~7) | e);
+		s->unlock(s);
+		setfreq(rr, rr->hz);
+		return n;
+	}
+	if(strcmp(f[0], "bw") == 0 && nf == 2){
+		/* the receive filter, as near as its two factors reach */
+		ulong want, dm;
+		int d, m, best, bestd, bestm;
+
+		want = strtoul(f[1], nil, 0);
+		if(want < 8000 || want > 200000)
+			error("radio: outside this part's bandwidths");
+		/*
+		 * best starts negative and not zero.  Zero is a perfect
+		 * match, so a zero sentinel means the first exact hit is
+		 * overwritten by the next candidate that comes along:
+		 * asking for 100kHz, which 20 and 2 give exactly, got
+		 * 125kHz.
+		 */
+		best = -1;
+		bestd = 20;
+		bestm = 1;
+		for(d = 20; d <= 32; d += 12)
+			for(m = 1; m < 64; m++){
+				dm = Fxosc / (d * m * 8);
+				i = dm > want? dm - want: want - dm;
+				if(best < 0 || i < best){
+					best = i;
+					bestd = d;
+					bestm = m;
+				}
+			}
+		s->lock(s);
+		strobe(rr, Sidle);
+		for(i = 0; i < Idlewaitus; i++)
+			if(state(rr) == Stidle)
+				break;
+		wr(rr, Rchanbw, (bestd == 32? 1<<6: 0) | bestm);
+		s->unlock(s);
+		setfreq(rr, rr->hz);
+		return n;
+	}
+	if(strcmp(f[0], "sync") == 0 && nf >= 2){
+		/*
+		 * The sync word, most significant byte on the air
+		 * first, and how many of its bits have to match.
+		 *
+		 *	sync 0x904e 16		802.15.4g's SFD
+		 *	sync 0x930b 16		what the table leaves
+		 *
+		 * SYNC_MODE 5 is 16 bits, 6 is 32.  A wrong sync word
+		 * is the control for any claim made with a right one:
+		 * the same configuration listening for a number nobody
+		 * sends should find nothing, and if it finds as much as
+		 * the real one then what was found was noise.
+		 */
+		ulong w;
+		int bits, mode;
+
+		w = strtoul(f[1], nil, 0);
+		bits = nf >= 3? atoi(f[2]): 16;
+		if(bits != 16 && bits != 32)
+			error("radio: sync is 16 or 32 bits");
+		mode = bits == 16? 2: 5;	/* SYNC_MODE: 16 or 32 bits */
+		s->lock(s);
+		strobe(rr, Sidle);
+		for(i = 0; i < Idlewaitus; i++)
+			if(state(rr) == Stidle)
+				break;
+		if(bits == 16){
+			wr(rr, Rsync3, (w>>8) & 0xff);
+			wr(rr, Rsync2, w & 0xff);
+		}else{
+			wr(rr, Rsync3, (w>>24) & 0xff);
+			wr(rr, Rsync2, (w>>16) & 0xff);
+			wr(rr, Rsync1, (w>>8) & 0xff);
+			wr(rr, Rsync0, w & 0xff);
+		}
+		/*
+		 * SYNC_MODE is bits 7:5 and SYNC_THR is 4:0.  Writing
+		 * the mode into the low bits sets the threshold
+		 * instead and leaves the mode at whatever it was --
+		 * which, here, was zero, meaning no sync word at all.
+		 */
+		wr(rr, Rsynccfg1x, (rd(rr, Rsynccfg1x) & 0x1f) | (mode<<5));
+		s->unlock(s);
+		setfreq(rr, rr->hz);
+		return n;
+	}
 	if(strcmp(f[0], "reset") == 0){
 		s->lock(s);
 		strobe(rr, Sres);
@@ -1862,6 +2033,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"state 0x%.2x\n"
 		"freq %lud\n"
 		"rate %lud\n"
+		"deviation %lud bw %lud\n"
 		"rssi %d%s offset %d csthr %d last %d%s\n"
 		"fifo rx %d tx %d\n"
 		"lasttx staged %d marc 0x%.2x\n"
@@ -1872,7 +2044,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"rxoverflow %ud txunderflow %ud\n",
 		rr->partnum, rr->partversion,
 		st >> 4,
-		(ulong)rr->hz, readrate(rr),
+		(ulong)rr->hz, readrate(rr), readdev(rr), readbw(rr),
 		live, (cs & Rssivalid)? "": " invalid",
 		rr->rssioffset, rr->csthr, rr->rssi,
 		(cs & Carriersense)? " carrier": "",
@@ -1968,6 +2140,8 @@ cc1120caps(Radio *r, char *p, int n)
 	q = seprint(q, e, "freq %llud\n", rr->hz);
 	q = seprint(q, e, "mode 2fsk\n");
 	q = seprint(q, e, "rate %lud\n", readrate(rr));
+	q = seprint(q, e, "deviation %lud\n", readdev(rr));
+	q = seprint(q, e, "bw %lud\n", readbw(rr));
 	q = seprint(q, e, "csthr %d\n", thr);
 	q = seprint(q, e, "rssioffset %d\n", gain);
 	q = seprint(q, e, "strength %d\n", raw);
@@ -2114,6 +2288,24 @@ cc1120init(Spidev *s, int irq)
 	 * too (SWRU295E 6.10).  Nothing here gates reception on
 	 * carrier sense, so a slower update costs nothing else.
 	 */
+	/*
+	 * A sync word, so the part can find the start of a packet.
+	 *
+	 * SYNC_CFG1's top three bits are SYNC_MODE and TI's table
+	 * leaves them zero, which is "no sync word".  With that, the
+	 * packet engine never frames anything: this driver has never
+	 * received a packet on silicon and could not have.  The
+	 * receive path, the interrupt, the queue and the counters were
+	 * all in place and the part was never told what to listen for.
+	 * Found by reading SYNC_CFG1 back off the part while trying to
+	 * identify something on the air -- 0x05, which is SYNC_MODE 0
+	 * and SYNC_THR 5.
+	 *
+	 * 16 bits, keeping the threshold the table chose.  The word
+	 * itself stays at the part's reset value; "sync" on the ctl
+	 * file changes both.
+	 */
+	wr(rr, Rsynccfg1x, (rd(rr, Rsynccfg1x) & 0x1f) | (2<<5));
 	wr(rr, Ragccfg0, Agccfg0init);
 	wr(rr, Riocfg3, Gpktsyncrxtx);
 	wr(rr, Riocfg2, Ghighz);

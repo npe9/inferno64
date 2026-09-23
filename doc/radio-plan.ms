@@ -950,7 +950,46 @@ hundred kilohertz wide at 907.0, 908.6-909.1, 914.0-914.3, 921.2,
 922.3 and 922.9, and the strongest one moves between sweeps, which is
 hopping.
 .PP
-None of that is an identification.  A duty cycle and a burst length
+None of that is an identification, and an attempt at one ran into
+something better worth having.
+.PP
+The modem registers are settable now and their formulas are checked
+rather than copied.  Deviation is
+.I "(256 + DEV_M) 2^DEV_E fxosc / 2^24" ,
+which for what TI's table leaves says 3998Hz \- so a 2-FSK carrier
+should show two tones 7996Hz apart, and on the tinySA, with the board
+sending random data at 915MHz, they are 8.20kHz apart.  Receive
+bandwidth is
+.I "fxosc / (decfact DEC_M 8)" ,
+which for the table's 0x08 gives 25kHz, the figure TI publishes for
+this configuration.  Both read back off the part, beside the symbol
+rate, so nothing here reports what it meant to set.
+.PP
+Then the test: 802.15.4g mode 1 at 908.6MHz \- 50000 symbols a
+second, 12.5kHz deviation, 100kHz bandwidth, sync word 0x904E, which
+is that PHY's start-of-frame delimiter \- chosen because the occupied
+clusters in 902-928 sit near the 902.2 + 0.4n grid that plan uses and
+because a CC1120 is a part built for it.  Nothing.  No packets, no CRC
+errors, and the packet sync pin never once asserted in six seconds.
+.PP
+That result is not usable, because the positive control fails.  Making
+the sync threshold as permissive as the part allows does not produce a
+single assertion either, so there is no demonstration that this
+receiver can detect a sync word from anything at all \- and a
+negative from an instrument that has never been shown to give a
+positive says nothing about the air.
+.PP
+What it did find is why.  SYNC_CFG1's top three bits are SYNC_MODE and
+TI's table leaves them zero, which means no sync word: the packet
+engine was never told what a packet starts with.  This driver has
+never received a packet on silicon and could not have, and everything
+else \- the interrupt, the queue, the counters, the two files \- was
+in place and waiting.  It is set to 16 bits at init now.
+.PP
+Which puts a number on what item 3 needs.  A transmitter under this
+bench's control, because a receive path cannot be trusted until it has
+received something known, and the cheapest is a second ccRF click.
+Until then every negative about what is on the air is unreadable.  A duty cycle and a burst length
 are consistent with far too much, and the one thing that would settle
 it has not been tried: configure the packet engine for a candidate --
 rate, deviation, receive bandwidth, sync word, CRC -- and count the
