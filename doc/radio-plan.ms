@@ -864,13 +864,38 @@ length that repeats to two microseconds across three captures is a
 real quantum of something.
 .PP
 It is not the transmitter's burst length.  The tinySA in zero span at
-the same frequency puts the bursts under 0.89ms, so the pin is giving
-the transmission plus however long carrier sense holds after it, and
-raising csthr by 5dB does not shorten it \- which rules out a simple
-threshold crossing and leaves the part's own hysteresis, which has not
-been characterised.  Two instruments measuring two different things,
-and the difference is the next thing to understand rather than
-something to average away.
+the same frequency puts the bursts under 0.89ms.  Three explanations
+were tried and none of them holds.
+.PP
+Not the threshold.  Raising csthr by 5dB does not shorten the 2.8ms,
+and on the instrument side the burst length does not move either: at
+thresholds from floor+2 to floor+12dB the median stays 0.44ms, which
+is one point, and only the count changes \- 369 bursts down to 113.
+So the two are not disagreeing about where to put a line.
+.PP
+Not the AGC hysteresis.  AGC_CFG0's top two bits are that field and
+this driver sets them to the maximum.  Over all four values the 2.8ms
+survives in three \- 2.846, 3.176, 3.189 at 0x8f, 3.190, 3.188, 2.845
+at 0x4f, 2.803, 2.803, 2.791, 2.789, 2.792 at 0xcf \- and only 0x0f
+loses it, giving 4 to 9.5ms instead.
+.PP
+And the obvious remaining candidate could not be tested at all.
+Carrier sense is compared against the same filtered RSSI as a level
+reading, and this driver sets that filter to nine estimates, which
+would smear a short burst into a fixed minimum length exactly as
+observed.  The field is AGC_CFG0's bits 3:2, and those bits do not
+behave repeatably: 0xcb gave a sane \-84dBm peak earlier in the
+session and, set again after a run of other values, gives +113dBm.  A
+register that answers differently to the same write cannot settle
+anything, and this is the second thing those two bits have made a
+mess of \- the constant beside them used to be named RSSI_VALID_CNT
+and is now named nothing for the same reason.
+.PP
+So the difference between the two instruments is unexplained and is
+written down as unexplained.  What is established is that the board
+measures a real envelope with a real quantum in it, at 1.37
+microseconds and with no bus in the measurement, and that the quantum
+is not the transmitter's.
 .IP "4.  An FT-891, or anything with a CAT port.  Done, for receive." 6
 This is no longer a compiled argument.  The set is driven from emu
 over its own USB port \- a CP2105's Enhanced Com Port, 4800 8N2 \-
