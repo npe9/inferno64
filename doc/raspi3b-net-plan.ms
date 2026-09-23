@@ -269,3 +269,72 @@ in the READER, not in the worker, so the race that makes the double
 reply reachable cannot happen.  That is precisely the property the
 per-request-worker rewrite broke and today's change restored.  The
 double reply is latent in both and should be fixed on multicore too.
+.NH 1
+Root cause: a process tears down while holding the VM, and blocks
+.PP
+.B "The detector earned itself immediately."
+On the first stall after it went in:
+.P1
+dis: SCHEDULER STALLED: idle 0 creating 0 runhd nil handoffs 261,
+     and these are waiting for the vm:
+dis:    acquire 0 in acquire
+.P2
+.CW "idle 0"
+says the VM is held.
+.CW "runhd nil"
+says no Dis process is on the run queue.  Those two together are
+impossible in a healthy system \(em if somebody held the VM to run Dis,
+their prog would be on that queue \(em so the holder is not running Dis
+at all.  It is blocked.
+.PP
+.B "And the stack says where."
+.P1
+progexit -> delprog -> closepgrp -> cclose -> mntclunk
+    -> mountrpc -> mountio -> Sleep -> osblock
+.P2
+A Dis process is exiting.
+.CW progexit
+takes the VM (it calls
+.CW acquire
+if it had released), then runs
+.CW delprog ,
+which closes the process group, which closes its channels, which sends a
+Tclunk over a styx mount \(em and waits for the reply, holding the VM the
+whole time.  Everything else in the emu then queues behind it: 0% CPU,
+every exportfs slave asleep, connections accepted with their first
+message unread.  It is the same outage that has been read as "the
+board's network is slow" all day.
+.PP
+.B "This is a structural fault, not a slow peer."
+Everywhere else in the VM, an operation that can block releases first
+\(em that is what
+.CW release()
+and
+.CW acquire()
+are for, and dis.c calls them around exactly such paths.  Process
+teardown does not, and teardown is precisely when a mount gets clunked.
+Any mount whose far end is slow, busy or gone therefore stops the whole
+interpreter.
+.PP
+.B "Not fixed here, deliberately."
+The repair is to let go of the VM around the blocking part of teardown,
+and
+.CW delprog
+also manipulates the scheduler's own lists and runs under
+.CW gclock \(em
+so a
+.CW release()
+dropped into the middle of it is not a one-line change and is not
+something to attempt at the end of a long session.  It is the next
+piece of work, and it now has a stack rather than a theory.
+.PP
+.B "What was fixed."
+.CW trapUSR1
+left
+.CW intwait
+set for any process that is not an Interp, so a kproc interrupted out of
+a host syscall spun in
+.CW osleave
+for ever.  exportfs slaves are kprocs.  That failure mode is gone \(em
+zero threads in that loop across every sample since \(em and it was a
+second, independent cause of the same symptom.
