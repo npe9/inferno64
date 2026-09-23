@@ -67,22 +67,28 @@ def main():
     if not found:
         return
 
+    # One ctl session for the lot, read through the marker so a
+    # capture that has not moved on is an empty answer rather than the
+    # previous frequency's.  ask() could not tell those apart, and
+    # this printed one frequency's numbers against another's row.
     c = Console(scratch)
-    c.send("cat >/dev/radio0/ctl")
-    time.sleep(1.5)
+    out = c.ctl(["probe %d 300" % s["at"] for s in found],
+                wait=30.0 + 20.0*len(found)) or ""
+    replies = [l.rstrip() for l in out.split("\n")
+               if l.startswith("probe ") and " floor " in l]
     print()
     print("%-13s %7s %7s %6s  %s" %
           ("MHz", "peak", "width", "seen", "what the radio makes of it"))
-    for s in found:
+    for i, s in enumerate(found):
         line = "%13.4f %7.1f %6.0fk %3d/%-2d " % (
             s["at"]/1e6, s["peak"], s["wide"]/1e3, s["seen"], npass)
-        reply = c.ask("probe %d 300" % s["at"],
-                      lambda l: l.startswith("probe ") and " floor " in l,
-                      wait=15.0)
-        if reply:
-            reply = re.sub(r"^probe \d+ ", "", reply)
-        print(line + (reply if reply else "no answer"))
-    c.eof()
+        # matched by frequency, not by position: a probe that found
+        # nothing prints a different line, and counting rows would
+        # then shift every later answer onto the wrong channel.
+        want = "probe %d " % s["at"]
+        got = [r for r in replies if r.startswith(want)]
+        print(line + (re.sub(r"^probe \d+ ", "", got[-1])
+                      if got else "no answer"))
 
 
 if __name__ == "__main__":

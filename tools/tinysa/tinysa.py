@@ -115,23 +115,84 @@ def alive(fd, tries=3):
     so quickly.
     """
     for _ in range(tries):
-        if PROMPT.decode() in cmd(fd, "", timeout=1.5):
+        r = cmd(fd, "", timeout=1.5)
+        # Ends with the prompt, and is short.  "contains the prompt"
+        # is true of a megabyte of streamed trace, because the string
+        # turns up in it somewhere -- which had this reporting a
+        # wedged instrument as alive, after nine seconds of reading.
+        # An empty command's reply is a few bytes.
+        if len(r) < 4096 and r.rstrip().endswith(PROMPT.decode().rstrip()):
             return True
     return False
 
 
 def needalive(fd):
-    if not alive(fd):
-        raise SystemExit("tinysa: the port is there and nothing is "
-                         "answering on it -- the instrument is wedged "
-                         "and needs its power cycled")
+    """Stop early, and say which way it is broken.
+
+    Two states need the same remedy and look nothing alike.  Silent:
+    the port is there, the device holds it, and nothing answers.
+    Streaming: it never stops talking, so every reply is buried in the
+    tail of an earlier trace and a tool reads one answer behind -- the
+    symptom that put a level in dBm where a frequency in hertz should
+    have been.  Seen here at about 1.7 megabytes a second, unmoved by
+    a carriage return, ^C, ESC, "pause" or "abort".
+    """
+    if alive(fd):
+        return
+    if drain(fd, 0.3, 1.5) > 100000:
+        raise SystemExit("tinysa: the instrument is streaming without "
+                         "stopping and will not take a command -- it "
+                         "needs its power cycled")
+    raise SystemExit("tinysa: the port is there and nothing is "
+                     "answering on it -- the instrument is wedged "
+                     "and needs its power cycled")
+
+
+def drain(fd, secs=0.4, cap=3.0):
+    """Throw away anything already waiting, and say how much.
+
+    Two deadlines.  The short one ends the drain once the port has
+    gone quiet, and the long one ends it whatever happens: an
+    instrument mid-trace sends for as long as it likes, and a drain
+    that extends itself on every byte never returns.  That hung this
+    tool outright the first time it was written.
+    """
+    n = 0
+    hard = time.time() + cap
+    end = time.time() + secs
+    while time.time() < end and time.time() < hard:
+        r, _, _ = select.select([fd], [], [], 0.05)
+        if not r:
+            continue
+        try:
+            d = os.read(fd, 65536)
+        except BlockingIOError:
+            continue
+        if d:
+            n += len(d)
+            end = min(time.time() + 0.15, hard)
+    return n
 
 
 def cmd(fd, s, timeout=10.0):
+    # Whatever is already in the port belongs to an earlier question.
+    # A trace is four hundred odd lines and a read that gives up part
+    # way through one leaves the rest to be delivered as the answer to
+    # the next command -- after which every reply is one behind, and
+    # "frequencies" comes back holding a level in dBm.  Seen: the
+    # instrument answering "mode" and "sweep" with trace data, and a
+    # tool parsing -9.984375e+01 as a frequency in hertz.
+    drain(fd, 0.2)
     os.write(fd, (s + "\r").encode())
     buf = b""
+    # A hard deadline as well as the rolling one.  "keep going while
+    # it talks" never stops against an instrument that has got stuck
+    # talking, and that hung every tool here outright -- the wedge
+    # this was meant to report is the one it could not survive.  The
+    # rolling deadline still ends a normal reply promptly.
+    hard = time.time() + timeout + 5.0
     end = time.time() + timeout
-    while time.time() < end:
+    while time.time() < end and time.time() < hard:
         r, _, _ = select.select([fd], [], [], 0.02)
         if not r:
             continue
@@ -141,7 +202,7 @@ def cmd(fd, s, timeout=10.0):
             continue
         if d:
             buf += d
-            end = time.time() + 0.6     # keep going while it talks
+            end = min(time.time() + 0.6, hard)
             if buf.endswith(PROMPT):
                 break
     return buf.decode("utf-8", "replace")
