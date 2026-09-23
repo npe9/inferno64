@@ -209,6 +209,7 @@ struct
 	Proc*	idlevmq;	/* queue of procs wanting work */
 	Atidle*	idletasks;
 	ulong	handoffs;	/* times the vm has been taken; vmwatch reads it */
+	Proc*	holder;		/* who has the vm now, for vmwatch to name */
 } isched;
 
 extern	int	bflag;
@@ -1029,12 +1030,31 @@ acquire(void)
 
 		unlock(&isched.l);
 		strcpy(up->text, "acquire");
-		if(empty)
-			Wakeup(&isched.irend);
+		/*
+		 * Wake the idle VM thread WHENEVER we queue, not only when we
+		 * are the first.
+		 *
+		 * "empty" encodes an assumption -- if somebody else is already
+		 * on vmq then the VM thread has already been told about them
+		 * -- and iyield() breaks it.  iyield takes a waiter off vmq
+		 * and hands it the VM directly, then parks itself on idlevmq;
+		 * the VM thread is no longer the one asleep on irend.  A
+		 * process that queues after that can find vmq non-empty, skip
+		 * the wakeup, and wait for a nudge that never comes.  The
+		 * server stops answering with idle 0, runhd nil, one process
+		 * in acquire and the VM "held" by a thread asleep in the idle
+		 * Sleep below.
+		 *
+		 * A Wakeup on a Rendez with nobody sleeping on it does
+		 * nothing, so the condition bought nothing and cost this.
+		 */
+		USED(empty);
+		Wakeup(&isched.irend);
 		osblock();
 	}
 
 	isched.handoffs++;
+	isched.holder = up;
 
 	if(up->type == Interp) {
 		p = up->iprog;
@@ -1079,7 +1099,7 @@ vmwatch(void *a)
 {
 	ulong last, now;
 	int stalled, said;
-	Proc *q;
+	Proc *q, *h;
 
 	USED(a);
 	last = 0;
@@ -1089,6 +1109,7 @@ vmwatch(void *a)
 		lock(&isched.l);
 		now = isched.handoffs;
 		q = isched.vmq;
+		h = isched.holder;
 		stalled = q != nil && isched.idle == 0 && now == last;
 		last = now;
 		unlock(&isched.l);
@@ -1099,13 +1120,28 @@ vmwatch(void *a)
 		if(said)
 			continue;
 		said = 1;
+		/*
+		 * Name the HOLDER, which is the whole question.
+		 *
+		 * The first firing of this printed only the waiters, and the
+		 * holder had to be guessed at from a sampling profile -- which
+		 * produced a confident wrong answer, because the stack that
+		 * looked like the culprit occupied a tenth of the sample
+		 * window and was merely passing through.  Whoever has the VM
+		 * is recorded now, so the report says it instead of inviting
+		 * an inference.
+		 */
 		print("dis: SCHEDULER STALLED: idle %d creating %d runhd %s "
-			"handoffs %lud, and these are waiting for the vm:\n",
+			"handoffs %lud\n",
 			isched.idle, isched.creating,
 			isched.runhd != nil? "set": "nil", now);
+		if(h != nil)
+			print("dis:    the vm is held by %s pid %d\n",
+				h->text, h->pid);
+		else
+			print("dis:    NOBODY holds the vm\n");
 		for(; q != nil; q = q->qnext)
-			print("dis:    %s %d in %s\n",
-				q->text, q->pid, q->text);
+			print("dis:    waiting: %s pid %d\n", q->text, q->pid);
 	}
 }
 
@@ -1121,6 +1157,8 @@ release(void)
 		delrun(Prelease);
 
 	lock(&isched.l);
+	if(isched.holder == up)
+		isched.holder = nil;
 	if(*(pq = &isched.vmq) == nil && *(pq = &isched.idlevmq) == nil) {
 		isched.idle = 1;
 		f = isched.creating;
@@ -1167,6 +1205,21 @@ iyield(void)
 	strcpy(up->text, "yield");
 	osblock();		/* sleep */
 	strcpy(up->text, "dis");
+	/*
+	 * Resuming here IS a handoff.
+	 *
+	 * The counter used to be bumped only in acquire(), and this path
+	 * never goes through it -- a thread parked on idlevmq is woken
+	 * straight back into the VM loop.  So a perfectly busy server
+	 * could show the counter frozen, and the stall detector below
+	 * fired on it: a false alarm that was then read off a sampling
+	 * profile as a root cause.  An instrument that cannot tell work
+	 * from a stall produces exactly that.
+	 */
+	lock(&isched.l);
+	isched.handoffs++;
+	isched.holder = up;
+	unlock(&isched.l);
 }
 
 void
@@ -1188,6 +1241,10 @@ startup(void)
 	unlock(&isched.l);
 
 	osblock();
+	lock(&isched.l);		/* resuming is a handoff; see iyield */
+	isched.handoffs++;
+	isched.holder = up;
+	unlock(&isched.l);
 }
 
 void

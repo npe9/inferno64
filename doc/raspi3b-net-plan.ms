@@ -338,3 +338,70 @@ a host syscall spun in
 for ever.  exportfs slaves are kprocs.  That failure mode is gone \(em
 zero threads in that loop across every sample since \(em and it was a
 second, independent cause of the same symptom.
+.NH 2
+Correction, and the actual fix
+.PP
+.B "Retracted: delprog is not the problem."
+The section above says a process tears down while holding the VM and
+blocks on a clunk.
+.CW delprog
+already does exactly the right thing:
+.P1
+o = p->osenv;
+release();
+closepgrp(o->pgrp);
+closefgrp(o->fgrp);
+closeegrp(o->egrp);
+closesigs(o->sigs);
+acquire();
+.P2
+It drops the VM around the blocking closes.  The stack that seemed to
+show otherwise occupied 173 samples of a 1775-sample window \(em about a
+tenth, a thread passing through \(em and was read as if it were stuck.
+Twice now a sampling profile has been turned into a root cause by
+looking at one stack and not at its count.
+.PP
+.B "The instrument was wrong too."
+The stall detector counted handoffs only in
+.CW acquire() ,
+and the VM is also handed on by
+.CW iyield()
+and by the idlevmq path in
+.CW release() ,
+neither of which goes through it.  A busy server could therefore show
+the counter frozen and be reported as stalled.  Handoffs are now counted
+wherever a thread resumes the VM.  Its
+.CW holder
+field is still racy \(em it is cleared only if it still names the caller,
+so a stale pointer survives a close handoff \(em and should be read as a
+hint, not as evidence.
+.PP
+.B "The fix:" \f(CWacquire()\fP "woke the idle VM thread only when it was the first to queue."
+.P1
+if(empty)
+	Wakeup(&isched.irend);
+.P2
+That encodes "if somebody else is already on vmq, the VM thread has
+already been told", and
+.CW iyield()
+breaks it: iyield takes a waiter off vmq and hands it the VM directly,
+then parks itself on idlevmq, so the VM thread is no longer the one
+asleep on irend.  A process queueing after that finds vmq non-empty,
+skips the wakeup, and waits for a nudge that never comes.  A Wakeup on a
+Rendez with nobody sleeping on it does nothing, so the condition bought
+nothing and cost the hang.  It is unconditional now.
+.PP
+.B "Measured, same driver either side:"
+.P1
+before   rounds 3, 7 and 8 of ten timed out at 15s; stall reported
+after    30 rounds, 0 timeouts, all under 1.05s, most under 0.2s
+         100 abrupt disconnects survived, worst health 0.54s
+.P2
+One stall was still reported during the thirty, with no timeout beside
+it and the racy holder field naming a process that had already handed
+the VM on \(em so it is most likely the detector, not the VM.  Said here
+rather than left out.
+.PP
+The latencies are better but not good: seconds still appear.  That is
+the remaining work, and it is now a performance question rather than a
+hang.
