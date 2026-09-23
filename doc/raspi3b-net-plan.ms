@@ -448,3 +448,70 @@ Board throughput remains about 30s for 1MB, which the frame-count
 measurements already explain: 6.4ms for a round trip carrying one
 Ethernet frame and 4.6ms for each frame after it.  That is the board's
 network path, not the server, and it is still the open item.
+.NH 2
+A connection pool, and why it does not help here
+.PP
+The obvious middle ground between one shared server (everyone queues)
+and one per connection (nothing is ever reclaimed) is a bounded pool,
+made once and handed out round robin \(em which is what
+.CW "styxlisten -P n"
+now does.  It is bounded, as intended:
+.P1
+threads at start, pool of 4        21
+threads after 12 connections       22
+handshakes, idle                   all under 0.01s
+.P2
+against 139 threads and climbing for one-per-connection.  And under the
+board's load it is the worst of the three:
+.P1
+shared             worst 1.23s
+per connection     worst 0.03s   (but leaks a server per connection)
+pool of 4          two TIMEOUTS, several at 13-14s
+.P2
+.B "Because the VM is serialised."
+This branch has no
+.CW parallelvm ,
+so
+.CW acquire / release
+in dis.c pass a single token and one Dis process runs at a time.  Four
+server processes therefore do not serve four clients at once; they add
+scheduler churn \(em more processes, more handoffs, each syscall a
+release and an acquire \(em without adding any concurrency to pay for it.
+A pool is the right structure for this problem and the wrong one for
+this interpreter.
+.PP
+That is also the honest answer to "would parallelvm help": not for the
+wedge, which was measured and is fixed, but THIS is where it would \(em
+a pool needs real concurrency to be worth its overhead.  The default
+stays one shared server, and
+.CW "-P n"
+stays as a flag with this measurement written next to it.
+.NH 2
+Phase 1 is NOT answered, and nearly was
+.PP
+A styx read is one frame out and six in; a write is the reverse, so
+comparing them should say which direction costs.  The first four samples
+looked decisive \(em 512KB read in 2s and 82s against writes of 164s and
+149s \(em and "transmit is the expensive direction" was written down.
+Then the rest of the run arrived:
+.P1
+1MB read     70s  214s   78s
+1MB write   364s  208s    6s
+512KB read    2s   82s
+512KB write 164s  149s
+.P2
+A six second write and a two second read sit in the same data as a 364
+second write.  Both directions span two orders of magnitude, the
+distributions overlap completely, and nothing can be concluded from
+them.  They were also taken while the server design was being changed
+underneath them, which on its own disqualifies the lot.
+.PP
+So phase 1 stands open, and the reason to write its answer down before
+taking it \(em which the plan says to do \(em is exactly this: four samples
+in, the wrong answer was already on the page.
+.PP
+What is needed is phase 2: counters in the driver, sampled from outside
+across a fixed workload, counting transfers and bytes in each direction.
+No timing in the path, nothing printed during the run, and the frames
+per transfer computed rather than inferred.  Nothing in the transmit
+path should be touched until that exists.

@@ -23,7 +23,7 @@ badmodule(p: string)
 
 verbose := 0;
 timing := 0;
-perconn := 0;
+poolsize := 0;	# 0 = one shared server (the default)
 passhostnames := 0;
 
 init(ctxt: ref Draw->Context, argv: list of string)
@@ -46,7 +46,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		badmodule(Arg->PATH);
 
 	arg->init(argv);
-	arg->setusage("styxlisten [-a alg]... [-APtsv] [-k keyfile] address cmd [arg...]");
+	arg->setusage("styxlisten [-a alg]... [-Atsv] [-P n] [-k keyfile] address cmd [arg...]");
 
 	algs: list of string;
 	doauth := 1;
@@ -57,7 +57,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	while ((opt := arg->opt()) != 0) {
 		case opt {
 		'P' =>
-			perconn = 1;
+			poolsize = int arg->earg();
+			if(poolsize < 1)
+				arg->usage();
 		'T' =>
 			timing = 1;
 		'v' =>
@@ -115,33 +117,50 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 
 	#
-	# -P starts the command once per connection instead of sharing one.
+	# -P n: a POOL of n servers, not one shared and not one each.
 	#
-	# Shared, every client mounts the SAME pipe to the SAME `export /',
-	# so every byte any client reads goes through one styx hop that all
-	# of them queue on.  One board pulling a kernel across took a new
-	# client's handshake from 0.01s to 1.23s -- the new client's mount is
-	# a few small messages stuck behind megabytes of somebody else's.
-	# With -P each connection gets its own server and its own pipe, and
-	# they stop contending.
+	# Shared, every client mounts the same pipe to the same `export /',
+	# so every byte any client reads crosses one styx hop that all of
+	# them queue on: with a board pulling a kernel across, a new client's
+	# handshake went from 0.01s to 1.23s, because its mount is a few
+	# small messages stuck behind megabytes of somebody else's.
+	#
+	# One server per connection fixes that -- 0.03s under the same load --
+	# and does not scale: they are never reclaimed, so a board dialling
+	# every fifteen seconds took the emu to 139 threads with one
+	# connection open, and reads that took 30s took 70s and then 214s.
+	#
+	# So: a fixed pool, made once at startup and handed out round robin.
+	# Bounded like the shared case, concurrent like the per-connection
+	# case, and nothing accumulates because nothing is ever created after
+	# startup.  Four is plenty for a board and a few probes.
 	#
 	# It is a flag and not the default because it only means the same
 	# thing for a command that serves a namespace, like `export /'.  For
-	# a command holding state that clients are meant to share, one per
-	# connection is a different program.
+	# a command holding state that clients are meant to share, several
+	# copies of it is a different program.
 	#
 	lsync := chan[1] of int;
-	mfd: ref Sys->FD;
-	if(!perconn)
-		mfd = popen(ctxt, cmd, lsync);
+	pool: array of ref Sys->FD;
+	if(poolsize <= 1)
+		pool = array[1] of {popen(ctxt, cmd, lsync)};
+	else {
+		pool = array[poolsize] of ref Sys->FD;
+		for(i := 0; i < poolsize; i++){
+			psync := chan[1] of int;
+			pool[i] = popen(ctxt, cmd, psync);
+		}
+	}
 	if(synchronous)
-		listener(c, mfd, authinfo, algs, lsync, ctxt, cmd);
+		listener(c, pool, authinfo, algs, lsync);
 	else
-		spawn listener(c, mfd, authinfo, algs, lsync, ctxt, cmd);
+		spawn listener(c, pool, authinfo, algs, lsync);
 }
 
-listener(c: ref Dial->Connection, mfd: ref Sys->FD, authinfo: ref Keyring->Authinfo, algs: list of string, lsync: chan of int, ctxt: ref Draw->Context, cmd: list of string)
+listener(c: ref Dial->Connection, pool: array of ref Sys->FD, authinfo: ref Keyring->Authinfo, algs: list of string, lsync: chan of int)
 {
+	next := 0;
+
 	lsync <-= sys->pctl(0, nil);
 	for (;;) {
 		nc := dial->listen(c);
@@ -173,11 +192,8 @@ listener(c: ref Dial->Connection, mfd: ref Sys->FD, authinfo: ref Keyring->Authi
 				if(hostname != nil)
 					hostname = hostname[0:len hostname - 1];
 			}
-			cfd := mfd;
-			if(perconn){
-				csync := chan[1] of int;
-				cfd = popen(ctxt, cmd, csync);
-			}
+			cfd := pool[next];
+			next = (next + 1) % len pool;
 			if (algs == nil) {
 				sync := chan of int;
 				spawn exportproc(sync, cfd, nil, hostname, dfd);

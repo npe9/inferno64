@@ -31,15 +31,23 @@ set -u
 ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 PORT=${PORT:-6666}
 #
-# -P by default: one `export /' per connection rather than one shared.
+# About -P: one `export /' per connection rather than one shared.
 #
 # Shared, every client mounts the same pipe to the same server, so all of
-# their traffic queues on one styx hop.  One board pulling a kernel took a
-# new client's handshake from 0.01s to 1.23s; per connection it stays at
-# 0.03s under the same load.  For `export /' the two are semantically
-# identical -- it serves a namespace and holds no state clients share.
+# their traffic queues on one styx hop, and one board pulling a kernel
+# took a new client's handshake from 0.01s to 1.23s; per connection it
+# stayed at 0.03s under the same load.
 #
-STYXFLAGS=${STYXFLAGS:--P}
+# It is NOT the default, because the per-connection servers do not go
+# away: with remotecmd dialling every fifteen seconds the emu reached 139
+# threads with a single connection open, and reads that took 30s took 70s
+# and then 214s.  The isolation is real and the leak is worse.  Use it for
+# a short measurement, not for a server that stays up.
+#
+# NOT -P by default: see below.  It isolates connections beautifully and
+# leaks a server process per connection, which on a board polling every
+# fifteen seconds is worse than the problem.
+STYXFLAGS=${STYXFLAGS:-}
 LOG=${LOG:-/tmp/styxd.log}
 
 #
