@@ -490,8 +490,15 @@ The model's
 .B airrate
 property puts a rate on the channel that the guest was never told, and
 with the guest configured for 2400 throughout, 300 symbols a second
-measures a symbol period of 21.5ms against 1200's 7.4ms \- a ratio of
-2.9 where the rates differ by four, repeatably.
+measures a symbol period of 20 to 21.5ms against 1200's 7.3 to 7.4 \- a
+ratio of 2.7 to 2.9 where the rates differ by four, on three runs.
+.PP
+Shown to be able to fail, which is the part that makes those three
+runs worth anything.  With both rates set to 300 the same test
+measures 20.7 and 21.1ms and prints SERIAL-FAILED at 0.9 \- so it is
+comparing the channel and not something that would agree whatever the
+channel did.  Those two numbers are also the measurement's
+repeatability, 1.5 per cent.
 .PP
 That the ratio is 2.9 and not 4.0 is the histogram's resolution and
 has to be read as such.  Its bins are a power of two apart, so it

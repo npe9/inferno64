@@ -36,10 +36,15 @@ SYNCS = [("normal", "0x7cd215d8"), ("inverted", "0x832dea27")]
 RATES = [512, 1200, 2400]
 DWELL = float(os.environ.get("DWELL", 60))
 
-# The nine carriers a survey of the paging band found, strongest and
-# most persistent first.  A default and not a discovery: re-survey
+# Three of the nine carriers a survey of the paging band found:
+# 929.630 is the most persistent, 928.8196 the strongest, 929.840 a
+# third for comparison.  A default and not a discovery -- re-survey
 # before trusting it, since what transmits when is not a property of
-# the band.
+# the band -- and the other six have not been listened to at all.
+#
+# Neither has FLEX, which is what most US paging actually is: 1600,
+# 3200 or 6400 bits a second, four-level as well as two, and a
+# different sync word.  Nothing in this file covers it.
 CHANS = [929630000, 928819600, 929840000]
 
 

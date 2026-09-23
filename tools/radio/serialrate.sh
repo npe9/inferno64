@@ -39,9 +39,21 @@ trap 'rm -rf "$OUT"' 0
 # The guest is told this, and the air never carries it.
 GUESTRATE=2400
 
+# The two rates put on the air, a factor of four apart.  Overridable
+# so the test can be made to fail on purpose: with LORATE and HIRATE
+# equal the ratio must come out near ten tenths and this must print
+# SERIAL-FAILED.  Measured, with both at 300: 10 tenths, failed.  A
+# control that has only ever passed is not known to be able to fail.
+LORATE=${LORATE:-300}
+HIRATE=${HIRATE:-1200}
+
 run() {
 	rate=$1
 	port=$2
+	# Named by which pass it is and not by the rate, so the negative
+	# control -- both rates the same -- does not have its two runs
+	# write the same file.
+	tag=$3
 	{ sleep 13; printf 'echo rate %d >/dev/radio0/ctl\n' $GUESTRATE
 	  sleep 3;  printf 'echo serial on >/dev/radio0/ctl\n'
 	  sleep 3;  printf 'echo ghist 2000 >/dev/radio0/ctl\n'
@@ -52,7 +64,7 @@ run() {
 		    -global cc1120.airrate=$rate -global cc1120.preamble=320 \
 		    -nic socket,model=cc1120,listen=127.0.0.1:$port \
 		    -nographic -serial null -serial mon:stdio \
-		    -kernel "$K" > "$OUT/r$rate" 2>&1 &
+		    -kernel "$K" > "$OUT/$tag" 2>&1 &
 	rxpid=$!
 	sleep 4
 	# A frame a second, for as long as the receiver is looking.  One
@@ -70,7 +82,7 @@ run() {
 		timeout 45 "$Q" -M netduinoplus2,radio=on \
 		    -nic socket,model=cc1120,connect=127.0.0.1:$port \
 		    -nographic -serial null -serial mon:stdio \
-		    -kernel "$K" > "$OUT/t$rate" 2>&1
+		    -kernel "$K" > "$OUT/t$tag" 2>&1
 	sleep 4
 	kill $rxpid 2>/dev/null
 }
@@ -110,17 +122,17 @@ peak() {
 		}'
 }
 
-run 300 14451
-run 1200 14452
-lo=$(peak "$OUT/r300")
-hi=$(peak "$OUT/r1200")
-echo "air 300 sym/s: measured symbol period ${lo}us"
-echo "air 1200 sym/s: measured symbol period ${hi}us"
+run $LORATE 14451 lo
+run $HIRATE 14452 hi
+lo=$(peak "$OUT/lo")
+hi=$(peak "$OUT/hi")
+echo "air $LORATE sym/s: measured symbol period ${lo}us"
+echo "air $HIRATE sym/s: measured symbol period ${hi}us"
 
 if [ "$lo" -eq 0 ] || [ "$hi" -eq 0 ]; then
 	echo "SERIAL-FAILED: the pin never moved at one of the rates"
-	echo "--- 300"; tr -d '\r' < "$OUT/r300" | grep -E '^ghist|^ [0-9]+:'
-	echo "--- 1200"; tr -d '\r' < "$OUT/r1200" | grep -E '^ghist|^ [0-9]+:'
+	echo "--- $LORATE"; tr -d '\r' < "$OUT/lo" | grep -E '^ghist|^ [0-9]+:'
+	echo "--- $HIRATE"; tr -d '\r' < "$OUT/hi" | grep -E '^ghist|^ [0-9]+:'
 	exit 1
 fi
 
