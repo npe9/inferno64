@@ -9431,3 +9431,50 @@ has nothing armed between the read returning and the next one being
 posted, which is what makes a burst expensive and an eleven frame burst
 fatal.  Keeping several buffers posted is the change that would matter,
 and it is a real piece of work rather than a constant.
+.NH 2
+Correction: there is no cliff, and four attempted fixes all made it worse
+.PP
+.B "Retracted."
+The section above reports 100% loss at eleven frames.  Repeated, that
+does not hold: three tries of a 16000-byte ping, 0% loss every time.
+Whatever produced the total loss was a state the board was in, not a
+property of eleven frames, and it was measured once and believed \(em the
+same mistake this work has made repeatedly and written down twice.
+.PP
+.B "What survives repetition is the MINIMUM."
+Three rounds of fifteen pings each:
+.P1
+             round 1   round 2   round 3
+1400B  (1 frame)  6.32ms    6.43ms    6.55ms
+8000B  (6 frames) 28.8ms    29.9ms    29.3ms
+.P2
+That is stable to a tenth of a millisecond, and it says about 4.6ms per
+additional frame against a 6.4ms floor.  The AVERAGES, which the earlier
+section quoted, ranged from 15ms to 87ms for the same 8000-byte case
+across the afternoon and carry no information at all.
+.PP
+.B "Four fixes, four regressions, all reverted."
+.IP 1.
+.I "64KB Styx messages."
+Eight times fewer round trips on paper.
+.CW ls
+returned "stat buffer too small".
+.IP 2.
+.I "Adaptive backoff in rxproc, yielding."
+8000-byte ping average 47.6ms to 19.3ms, and 1MB of real work 20s to
+42s: the yield starves the VM.
+.IP 3.
+.I "Adaptive backoff, 1ms sleep."
+Within noise on throughput, and one run in three took 200s.
+.IP 4.
+.I "Four receive transfers kept posted."
+The one with a mechanism behind it \(em devusb serialises endpoint reads
+on a FIFO qlock, so a queued reader should issue the instant the last
+completes.  It was the worst of the four: 1400-byte ping 15.1ms to
+33.4ms with eleven of twelve pings LOST, and 8000-byte 47.6ms to 87ms.
+The SMSC bulk-in stream is a packed sequence of status-prefixed frames
+per transfer, and concurrent transfers do not survive it.
+.PP
+The tree is back to where it started on all four.  What is left is a
+real measurement \(em 6.4ms for one frame, 4.6ms for each one after \(em
+and no fix.
