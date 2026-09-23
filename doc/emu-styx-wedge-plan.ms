@@ -470,3 +470,47 @@ loop.  The next step is to instrument that \\(em or simply to sample
 the process while it is in this state, with the pid pinned, and look
 for a thread in the export's reader rather than in
 .CW __accept .
+.NH 1
+There is no wedge.  There is a 48-second tail.
+.PP
+.B "Fifteen connections, all answered."
+One pinned emu, the board working the same server, a 60-second
+timeout, and the latency recorded rather than thresholded:
+.P1
+probe  1: 23.68s   probe  6:  0.20s   probe 11:  0.00s
+probe  2:  0.00s   probe  7:  0.40s   probe 12:  0.24s
+probe  3:  1.60s   probe  8: 47.90s   probe 13:  0.35s
+probe  4: 12.63s   probe  9: 10.05s   probe 14:  1.85s
+probe  5:  0.00s   probe 10:  0.35s   probe 15:  4.63s
+
+min 0.00s  median 0.40s  max 47.90s  over 15 answered
+.P2
+And the server's own log for the same run: 16 accepts, 16 data opens,
+0 accept failures.  Nothing was dropped, nothing was left unserved,
+nothing wedged.
+.PP
+.B "So every wedge in this document was a timeout shorter than that
+.B "tail."
+A median of 0.4s with a maximum of 48s is a distribution that any
+fixed threshold will misread: at five seconds it looks like a server
+that dies and revives, which is exactly the story this investigation
+told itself for a day.  The unread bytes in the receive queue were
+real, and they were a connection waiting its turn rather than one
+nobody would ever serve.  The
+.CW Hangup
+kupdate reported was the restart logic killing a slow server.
+.PP
+.B "The real question, which is a better one."
+Why does emu sometimes take tens of seconds to accept a new connection
+while serving an existing one?  That is a fairness problem in the
+scheduler or in exportfs's slave dispatch, it is reproducible, it is
+measurable as a distribution, and it explains everything this document
+has been chasing under a different name.  None of the code changes
+made along the way are wasted \(em the instrumentation, the patient
+handshake, the port wait, the announce-failure reporting all stand \(em
+but the thing to fix is a latency tail, not a hang.
+.PP
+.B "And the lesson, which is the same one for the fifth time."
+Measure the distribution, not the threshold.  Every instrument in this
+investigation that reported a boolean \(em wedged or not \(em was
+wrong, and the one that reported a number was right immediately.

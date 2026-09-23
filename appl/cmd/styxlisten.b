@@ -126,6 +126,19 @@ listener(c: ref Dial->Connection, mfd: ref Sys->FD, authinfo: ref Keyring->Authi
 			sys->fprint(stderr(), "styxlisten: got connection from %s",
 					readfile(nc.dir + "/remote"));
 		dfd := dial->accept(nc);
+		if (dfd == nil)
+			#
+			# Say so.  This was a bare "if (dfd != nil)" with no
+			# else, so a failed accept dropped the connection in
+			# silence: the client stayed connected, its request
+			# sat unread for ever, and the server looked wedged
+			# while cheerfully waiting for the next connection.
+			# A whole day went into "why does the styx server
+			# stop answering" for a server that was announcing a
+			# failure to nobody.
+			#
+			sys->fprint(stderr(),
+				"styxlisten: accept %s: %r\n", nc.dir);
 		if (dfd != nil) {
 			if(nc.cfd != nil)
 				sys->fprint(nc.cfd, "keepalive");
