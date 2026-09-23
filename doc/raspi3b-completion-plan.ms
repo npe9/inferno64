@@ -8902,3 +8902,102 @@ if the arm had been left running last where it could not be seen.
 What remains is narrow: DMA paired with multi-block returns wrong data.
 DMA is off by default, PIO at 64 blocks a command is fast, and the
 failure no longer harms anything around it.
+.NH 2
+The dosfs panic was a failing card, not a driver bug
+.PP
+.B "The symptom."
+Every boot ended the same way:
+.P1
+sdhost: read block 61213 failed: sdhsts 0x8 ... sdhbct 6 sdhblc 6
+sdhost:   retried 8 blocks, gave up on 1
+dosfs: panic: read
+.P2
+The filesystem died, and with it
+.I /n/dos ,
+the kernel update, and the board's only channel for reporting off
+itself.
+.PP
+.B "Three fixes that did not move it."
+A FIFO error was excluded from the retry guard, so the one error most
+worth retrying was the one never retried; the retry re-issued the
+command without the CMD12 that ends an abandoned CMD18 stream, so the
+card was still in state 5 (DATA) and every retry hit the same wall; and
+.CW fifodata
+waited on a spin count rather than a clock, the last such wait in this
+driver after the DMA engine's and the write side's were converted.
+All three were real, all three are fixed, and the panic happened again
+on the next boot, unchanged.
+.PP
+.B "What it actually was."
+The driver has
+.CW readspeed
+in its ctl interface and the console shell survives the panic, so the
+failing read can be issued by hand instead of by waiting four minutes
+for another boot.  Single blocks, in isolation:
+.P1
+61213  ok      61216  FAIL
+61214  ok      61217  FAIL
+61215  ok      61220  FAIL
+61230  ok
+.P2
+A bad region of about fourteen sectors, inside the FAT partition,
+deterministic across every boot and untouched by every timing change \(em
+which is exactly why three correct fixes moved nothing.
+.PP
+.B "Proof, not inference."
+An SD card remaps a bad block when it is written.  Writing over the
+region and re-reading it:
+.P1
+MULTIVERIFY-OK 8 blocks at 61216: write 10ms read 0ms
+readspeed 61216 1   1 of 1 blocks
+readspeed 61220 1   1 of 1 blocks
+readspeed 61213 6   6 of 6 blocks
+.P2
+The last line is the exact read that had killed dosfs on four
+consecutive boots.  The media was bad; the driver was reporting it
+correctly.
+.PP
+.B "What the session is owed."
+The three driver fixes stay \(em they are right, and a FIFO error from
+a driver-side overrun is still worth retrying.  One number changed
+afterwards: the read wait is now
+.CW Readwaitus ,
+200ms, not the write side's 1s.  A write waits on a card that the
+specification allows 250ms to program; a read waits for data already
+asked for, whose access time is tens of milliseconds.  Waiting a second
+eight times over bought nothing on a sector that could never answer and
+cost nine seconds each time it happened.
+.PP
+.B "Still open."
+Whether this card has more weak sectors elsewhere.  A full surface read
+would say, and the kernel update rewrites 1.9MB of it as a side effect.
+And dosfs panicking on a read error rather than returning one is a real
+fragility \(em one bad sector should not take a filesystem down \(em but
+it was left alone deliberately today, because that panic was the only
+signal the fault had.
+.NH 2
+The kernel update is a shell script now
+.PP
+.CW kupdate() ,
+two hundred lines of Limbo that dialled the host, mounted it, read
+1.9MB in chunks with its own progress counter, checksummed what had
+landed and renamed twice, is gone.
+.CW remotecmd()
+already mounts the host on
+.CW /n/remote
+and redirects a script's output to a file on it, so the update is what
+it always was underneath:
+.P1
+cp $K /n/dos/kernel8.new
+cmp $K /n/dos/kernel8.new
+cp /n/dos/kernel8.new /n/dos/kernel8.img
+cmp $K /n/dos/kernel8.img
+.P2
+.CW cmp
+is the checksum, compared against the source rather than against a
+number derived from it.  The gain is not brevity: the Limbo version
+reported only to the console, so an update that had stopped and one
+still running looked identical, and it held
+.CW /n/remote
+while it ran \(em shutting the one channel that reports off the board for
+the whole of the operation most likely to hang.

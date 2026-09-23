@@ -3554,7 +3554,37 @@ deverror(name: string, xf: ref Xfs, addr,n,nret: int): int
 		chat(sys->sprint("dev %d sector %d, %s: %d, should be %d\n",
 			xf.dev.fd, addr, name, nret, n));
 
-	panic(name);
+	#
+	# A short transfer is a failure, not an impossibility.
+	#
+	# This used to panic, and a panic here takes the whole file
+	# server down -- and with it every namespace mounted through it.
+	# On the Pi that is exactly what happened: one region of the SD
+	# card could not be read, the driver reported the failure the way
+	# devsd reports failures, by returning fewer bytes than were
+	# asked for, and dossrv read that as a broken invariant:
+	#
+	#	sdhost: read block 61213 failed: sdhsts 0x8 ...
+	#	sdhost:   retried 8 blocks, gave up on 1
+	#	dosfs: panic: read
+	#
+	# /n/dos went away, and with it the board's kernel update and its
+	# only channel for reporting off itself -- all from a handful of
+	# bad sectors in one file.  A filesystem that dies on media error
+	# cannot be used to repair the media, which is the one thing most
+	# worth doing at that moment.
+	#
+	# Report it, but do NOT drop the device the way the negative case
+	# above does.  A negative return says the device failed; a short
+	# one says this sector did, and the difference matters: dropping
+	# xf.dev here unmounted the whole filesystem over a handful of
+	# bad sectors in one file, and every later request answered "no
+	# such fid" -- a failure indistinguishable from the panic it
+	# replaced, and just as final.  Fail this read; leave the rest of
+	# the card reachable.
+	#
+	sys->werrstr(sys->sprint("%s error at sector %d: %d of %d bytes",
+		name, addr, nret, n));
 	return -1;
 }
 

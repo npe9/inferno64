@@ -119,6 +119,32 @@ enum {
 
 	Maxretry = 8,		/* re-issues of a command that never started */
 	Piowaitus = 1000000,	/* how long a PIO write may wait for FIFO room */
+	/*
+	 * When to nudge a read that has not started.  The old code did
+	 * this on iteration 2000 of a 20000-iteration spin -- a tenth of
+	 * the way through whatever that spin happened to be worth.  Two
+	 * milliseconds is the same intent stated in time.
+	 */
+	Readnudgeus = 2000,
+	/*
+	 * How long a PIO read may wait for the next data.
+	 *
+	 * Not the same number as Piowaitus, and for a reason.  A write
+	 * waits on the CARD, which the SD specification allows 250ms to
+	 * program a block, so a second there is generous-but-legal.  A
+	 * read waits on data the card has already been told to send;
+	 * its access time is tens of milliseconds at worst.  Waiting a
+	 * second for it buys nothing and costs a great deal when the
+	 * answer is never coming:
+	 *
+	 *	READSPEED 0 of 6 blocks in 9090 ms
+	 *
+	 * -- one second times eight retries, spent on sectors the card
+	 * genuinely could not read.  Two hundred milliseconds is still
+	 * several times any legal access time and turns that nine
+	 * seconds into under two.
+	 */
+	Readwaitus = 200000,
 	Pioburst = 8,		/* words written between SDEDM reads */
 	Fifofillsh = 4,		/* SDEDM bits 8:4: words currently in the FIFO */
 	Fifofillmask = 0x1f,
@@ -450,6 +476,8 @@ static int sdhosttrace = 0;	/* print the state at command issue */
  */
 static int sdhostdelay = 1000;	/* us before the first poll of SDHSTS */
 
+extern uvlong systmrread(void);		/* systmrbcm.c, the 1MHz free counter */
+
 static int
 fifospace(volatile u32 *r)			/* wait until the FIFO can take a word */
 {
@@ -473,7 +501,8 @@ static int
 fifodata(volatile u32 *r)
 {
 	u32 edm;
-	int i;
+	uvlong t0, dt;
+	int nudged;
 
 	/*
 	 * Do NOT force data mode from the fast path.
@@ -522,15 +551,50 @@ fifodata(volatile u32 *r)
 	 * and pausing between reads is the fix that follows from that,
 	 * rather than padding the front with a blind millisecond.
 	 */
-	for(i = 0; i < 20000; i++){
+	/*
+	 * A CLOCK, not a spin count.
+	 *
+	 * This was "for(i = 0; i < 20000; i++) microdelay(1)" -- twenty
+	 * thousand iterations of a delay that is at least a microsecond
+	 * and, with the register read beside it, rather more.  Call it
+	 * twenty to forty milliseconds, and it is a property of this
+	 * kernel's microdelay rather than of anything the card promises.
+	 *
+	 * The card is allowed to pause much longer than that in the
+	 * middle of a read, and under load it does.  The failure is
+	 * unmistakable once the number is read for what it is:
+	 *
+	 *	read block 61213 failed: sdhsts 0x0 ... sdhbct 6 sdhblc 6
+	 *
+	 * SDHBCT counts DOWN, so six is six bytes short of finishing a
+	 * block -- the data phase had been running and stopped, not
+	 * failed to start.  No error bit anywhere, the FSM back in
+	 * DATAMODE, the card idle in TRAN: nobody did anything wrong,
+	 * this end simply stopped waiting first, and then retried eight
+	 * times with the same too-short bound and gave up.  dosfs took
+	 * the short read as a fault and panicked, which is how one
+	 * hesitating card block killed the board's filesystem.
+	 *
+	 * The DMA engine's Timeout and the write side's FIFO wait were
+	 * both this same bug and were both converted to the 1MHz system
+	 * timer; this was the one left counting iterations.
+	 */
+	t0 = systmrread();
+	nudged = 0;
+	for(;;){
 		if((r[SDHSTS] & Hstsdata) != 0)
 			return 1;
 		microdelay(1);
-		if(i == 2000){			/* genuinely stuck, not starting */
+		dt = systmrread() - t0;
+		if(!nudged && dt > Readnudgeus){
+			/* genuinely stuck, not starting */
 			edm = r[SDEDM];
 			if((edm & Edmfsmmask) == Fsmreadwait)
 				r[SDEDM] = edm | Edmforcedata;
+			nudged = 1;
 		}
+		if(dt > Readwaitus)
+			break;
 	}
 	return 0;
 }
@@ -835,6 +899,78 @@ cardready(Ctlr *c)
  * read; say what the controller reported, at most a few times, so the
  * console shows which command and block died and why.
  */
+/*
+ * Put the card back where a retry can start from.
+ *
+ * The three retry sites below used to clear SDHSTS, rewind the buffer
+ * pointer and jump straight back to the command issue.  That cannot
+ * work after a multi-block transfer has begun: CMD18 puts the card into
+ * the DATA state and it stays there, streaming, until a CMD12 stops it.
+ * Re-issuing a read to a card that is still sending the last one fails
+ * exactly the same way, so the retry loop ran its whole budget without a
+ * chance of succeeding:
+ *
+ *	read block 61213 failed: sdhsts 0x0 ... sdhblc 6
+ *	  card rsp 0xb00 (state 5, ready for data)
+ *	  retried 10 blocks, gave up on 1
+ *	dosfs: panic: read
+ *
+ * State 5 is DATA -- the card was still transmitting while the driver
+ * decided it had given up.  The `out:` path had already learned this
+ * lesson ("one failed read poisoned the card for everything that
+ * followed") and sends CMD12; the retry path was never given the same
+ * treatment, which is why more retries only bought more identical
+ * failures.
+ *
+ * Stop the stream, then wait for TRAN before going round again.
+ */
+static void
+exrewind(Ctlr *c, int multi)
+{
+	volatile u32 *r = c->r;
+	u32 err;
+
+	r[SDHSTS] = Hstsclear;
+	if(multi)
+		sdcmderr(r, 12, 0, Busywait, &err);	/* STOP_TRANSMISSION */
+	r[SDHSTS] = Hstsclear;
+	cardready(c);
+}
+
+/*
+ * Is a stalled transfer worth re-issuing?
+ *
+ * It used to demand NO error bit at all, which excluded the one error
+ * that is always safe to retry: Hstsfifo.  A multi-block read streams
+ * continuously once CMD18 starts, and a PIO loop that falls behind
+ * overruns the FIFO -- nothing was delivered to the caller, the card
+ * is still in TRAN, and re-reading the same blocks returns the same
+ * data.  Refusing to retry it cost a filesystem:
+ *
+ *	read block 37309 failed: sdhsts 0x8 ... sdhblc 6
+ *	retried 8 blocks, gave up on 1
+ *	dosfs: panic: read
+ *
+ * sdhsts 0x8 IS Hstsfifo, so the guard was false, the driver gave up
+ * on the first try, and dosfs died on the error -- taking /n/dos and
+ * everything above it with it.
+ *
+ * A CRC or timeout error is a different matter and still is not
+ * retried here: those say the card disagreed, not that this end fell
+ * behind.
+ */
+static int
+exretryable(volatile u32 *r)
+{
+	u32 sts = r[SDHSTS] & Hstserror;
+
+	if((r[SDEDM] & Edmfsmmask) != Fsmdata)
+		return 0;
+	if(sts == 0)
+		return 1;
+	return (sts & ~(u32)Hstsfifo) == 0;	/* FIFO overrun only */
+}
+
 static void
 bioerror(Ctlr *c, int write, uvlong bno, u32 sts)
 {
@@ -1146,11 +1282,11 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					burst = j;
 				if(words < burst){
 					if(systmrread() - t0 > Piowaitus){
-						if((r[SDHSTS] & Hstserror) == 0 &&
-						    (r[SDEDM] & Edmfsmmask) == Fsmdata &&
-						    retries-- > 0){
+						if(exretryable(r) && retries-- > 0){
 							sdhostretried++;
-							r[SDHSTS] = Hstsclear;
+							microdelay(sdhostdelay *
+								(Maxretry - retries));
+							exrewind(c, nthis > 1);
 							p = pblk;
 							i -= nthis;
 							goto again;
@@ -1213,8 +1349,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					 * did not take effect; it is not a
 					 * substitute for knowing why.
 					 */
-					if((r[SDHSTS] & Hstserror) == 0 &&
-					    (r[SDEDM] & Edmfsmmask) == Fsmdata){
+					if(exretryable(r)){
 						if(retries-- > 0){
 							/*
 							 * Wait before re-issuing.
@@ -1233,7 +1368,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 							sdhostretried++;
 							microdelay(sdhostdelay *
 								(Maxretry - retries));
-							r[SDHSTS] = Hstsclear;
+							exrewind(c, nthis > 1);
 							p = pblk;
 							i -= nthis;
 							goto again;
@@ -1269,8 +1404,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 					 * re-issued and this one gave up
 					 * on.
 					 */
-					if((r[SDHSTS] & Hstserror) == 0 &&
-					    (r[SDEDM] & Edmfsmmask) == Fsmdata){
+					if(exretryable(r)){
 						if(retries-- > 0){
 							/*
 							 * Wait before re-issuing.
@@ -1289,7 +1423,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 							sdhostretried++;
 							microdelay(sdhostdelay *
 								(Maxretry - retries));
-							r[SDHSTS] = Hstsclear;
+							exrewind(c, nthis > 1);
 							p = pblk;
 							i -= nthis;
 							goto again;

@@ -737,226 +737,29 @@ kusum(sum: int, b: array of byte, n: int): int
 		sum = sum * 31 + int b[i];
 	return sum;
 }
-
-kuverify(name: string, want: int, sum: int): int
-{
-	fd := sys->open(name, Sys->OREAD);
-	if(fd == nil){
-		sys->print("KUPDATE-VERIFY cannot reopen %s: %r\n", name);
-		return -1;
-	}
-	buf := array[8192] of byte;
-	got := 0;
-	back := 0;
-	for(;;){
-		n := sys->read(fd, buf, len buf);
-		if(n < 0){
-			sys->print("KUPDATE-VERIFY read %s: %r\n", name);
-			return -1;
-		}
-		if(n == 0)
-			break;
-		back = kusum(back, buf, n);
-		got += n;
-	}
-	if(got != want){
-		sys->print("KUPDATE-VERIFY %s is %d bytes, wrote %d\n", name, got, want);
-		return -1;
-	}
-	if(back != sum){
-		sys->print("KUPDATE-VERIFY %s reads back differently (%#x against %#x)\n",
-			name, back, sum);
-		return -1;
-	}
-	sys->print("KUPDATE-VERIFY %d bytes read back identical\n", got);
-	return 0;
-}
-
-kupdate()
-{
-	#
-	# Wait for the card to be mounted before deciding there is
-	# nothing to do.
-	#
-	# This is spawned before the FAT checks, deliberately, so that a
-	# kernel update does not queue behind two minutes of them -- and
-	# that put it ahead of the mount as well.  It read a file that
-	# was not there yet and returned saying nothing, which is
-	# indistinguishable from a board that was never asked to update:
-	# one boot fetched a new kernel and the next, with the same card
-	# and the same file on it, silently did not.  The only symptom is
-	# an absence, which is the worst kind to chase.
-	#
-	# Sixty seconds, because the mount is behind sdcheck() and the
-	# card is slow, and a board with no kupdate.txt at all waits that
-	# long once and then says nothing, as before.
-	#
-	cfg: ref Sys->FD;
-	for(w := 0; w < 60; w++){
-		if((cfg = sys->open("/n/dos/kupdate.txt", Sys->OREAD)) != nil)
-			break;
-		sys->sleep(1000);
-	}
-	if(cfg == nil){
-		#
-		# Say so.  This used to return in silence, on the
-		# reasoning that a board with no kupdate.txt should not
-		# nag -- and that silence then cost most of a day.  The
-		# board booted, printed nothing about updating, and
-		# looked exactly like a board whose kupdate had hung,
-		# which is a completely different fault with a
-		# completely different cause.  A single line is cheaper
-		# than telling those two apart from outside.
-		#
-		sys->print("KUPDATE-NONE cannot open /n/dos/kupdate.txt: %r\n");
-		return;
-	}
-	b := array[256] of byte;
-	n := sys->read(cfg, b, len b);
-	cfg = nil;
-	if(n <= 0){
-		sys->print("KUPDATE-FAIL empty kupdate.txt\n");
-		return;
-	}
-	# "net!addr!port [net!addr!port ...] /path": every field but the last
-	# is somewhere to try.  A router changed under this board once and the
-	# single address it had been given stopped existing, which cost a card
-	# swap to correct - the one thing this whole mechanism exists to avoid.
-	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
-	if(nf < 2){
-		sys->print("KUPDATE-FAIL want \"net!addr!port /path\" in kupdate.txt\n");
-		return;
-	}
-	# built back to front and then reversed, so they are tried in the
-	# order they are written: the first address in the file is the one
-	# the board should be talking to now.
-	rev: list of string;
-	path := "";
-	for(l := f; l != nil; l = tl l){
-		if(tl l == nil)
-			path = hd l;
-		else
-			rev = hd l :: rev;
-	}
-	addrs: list of string;
-	for(l = rev; l != nil; l = tl l)
-		addrs = hd l :: addrs;
-	# Wait for the IP stack to exist and to have an address.  This runs
-	# from a process spawned while the network is still coming up, and
-	# dialling before /net is bound fails with "file does not exist",
-	# which reads like a missing server rather than a missing namespace.
-	# and wait for one.  Thirty seconds was not enough: the interface
-	# has taken more than a minute to appear, and a kernel update that
-	# gives up before the network exists is a board that cannot be
-	# updated at all that boot.  Five minutes, in a process nothing
-	# waits on.
-	for(i := 0; i < 3000; i++){
-		if(hasaddr())
-			break;
-		sys->sleep(100);
-	}
-	ok := -1;
-	c: Sys->Connection;
-	addr := "";
-	for(l = addrs; l != nil; l = tl l){
-		addr = hd l;
-		(ok, c) = sys->dial(addr, nil);
-		if(ok >= 0)
-			break;
-		sys->print("KUPDATE dial %s: %r\n", addr);
-	}
-	if(ok < 0){
-		sys->print("KUPDATE-FAIL nowhere to fetch from\n");
-		return;
-	}
-	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL, "") < 0){
-		sys->print("KUPDATE-FAIL mount %s: %r\n", addr);
-		return;
-	}
-	#
-	# and take the mount down on every way out from here.  The board
-	# fetched a kernel over a link that hung up mid-read -- "read
-	# /os/inferno/raspi3b/kernel8.img: Hangup" -- and this returned
-	# with the dead mount still on /n/remote.  A mount whose far end
-	# is gone is not a file that fails, it is one that waits.
-	#
-	src := sys->open("/n/remote" + path, Sys->OREAD);
-	if(src == nil){
-		sys->print("KUPDATE-FAIL open %s: %r\n", path);
-		unmountremote();
-		return;
-	}
-	dst := sys->create("/n/dos/kernel8.new", Sys->OWRITE, 8r666);
-	if(dst == nil){
-		sys->print("KUPDATE-FAIL create kernel8.new: %r\n");
-		unmountremote();
-		return;
-	}
-	buf := array[8192] of byte;
-	total := 0;
-	sum := 0;
-	for(;;){
-		n = sys->read(src, buf, len buf);
-		if(n < 0){
-			sys->print("KUPDATE-FAIL read %s: %r\n", path);
-			src = nil;
-			dst = nil;
-			unmountremote();
-			return;
-		}
-		if(n == 0)
-			break;
-		if(sys->write(dst, buf[0:n], n) != n){
-			sys->print("KUPDATE-FAIL write kernel8.new: %r\n");
-			src = nil;
-			dst = nil;
-			unmountremote();
-			return;
-		}
-		sum = kusum(sum, buf, n);
-		total += n;
-	}
-	src = nil;
-	dst = nil;
-	unmountremote();
-	if(total == 0){
-		sys->print("KUPDATE-FAIL %s is empty\n", path);
-		return;
-	}
-	sys->print("KUPDATE fetched %d bytes\n", total);
-	#
-	# Read back what was written before installing it.
-	#
-	# Every write above was checked and every one of them said it had
-	# written what it was given, and the kernel that went onto the
-	# card was still wrong: 14 of its 57 32KB chunks, the first 448KB
-	# and one more, held the previous kernel's bytes instead.  The
-	# board then did not boot and the card had to come out, which is
-	# the one thing this whole mechanism exists to avoid.
-	#
-	# So the write's return value is not the evidence.  The file is.
-	# This costs one more pass over 1.8MB through the same slow path
-	# -- tens of seconds -- and it turns a board that does not boot
-	# into a line that says why, with the working kernel still
-	# installed.  That trade is not close.
-	#
-	if((n = kuverify("/n/dos/kernel8.new", total, sum)) < 0){
-		sys->print("KUPDATE-FAIL what was written is not what was fetched; the old kernel is untouched\n");
-		sys->remove("/n/dos/kernel8.new");
-		return;
-	}
-	sys->remove("/n/dos/kernel8.bak");
-	if(rename("/n/dos/kernel8.img", "kernel8.bak") < 0){
-		sys->print("KUPDATE-FAIL keep the old kernel: %r\n");
-		return;
-	}
-	if(rename("/n/dos/kernel8.new", "kernel8.img") < 0){
-		sys->print("KUPDATE-FAIL install the new kernel: %r\n");
-		return;
-	}
-	sys->print("KUPDATE-OK %d bytes installed; the old kernel is kernel8.bak\n",
-		total);
-}
+#
+# The kernel update used to live here: kuverify() and kupdate(), a
+# little over two hundred lines that dialled the host, mounted it,
+# read the new kernel in 8KB chunks with a running byte count,
+# checksummed what had landed on the card and renamed twice.
+#
+# It is a shell script now, in board.cmd, run by remotecmd() with the
+# host already mounted on /n/remote:
+#
+#	cp $K /n/dos/kernel8.new
+#	cmp $K /n/dos/kernel8.new
+#	cp /n/dos/kernel8.new /n/dos/kernel8.img
+#	cmp $K /n/dos/kernel8.img
+#
+# cmp is the checksum, and it compares against the source rather than
+# against a number computed from it.  The script's output goes to
+# board.out on the host, so a failed update says which line failed and
+# says it somewhere that can be read without the board's console --
+# which is the part that mattered.  The Limbo version reported only to
+# the console, and when the console was lost, or another program was
+# printing over it, an update that had stopped was indistinguishable
+# from one still running.
+#
 
 #
 # The card's two big writers, in the order they must not overlap.
@@ -986,7 +789,6 @@ kudone := 0;
 
 kuthenfat()
 {
-	kupdate();
 	fatwrite();
 	kudone = 1;
 }
@@ -2681,12 +2483,27 @@ remotecmd()
 	#
 	sys->pctl(Sys->NEWFD, 0 :: 1 :: 2 :: nil);
 	#
-	# Wait for kupdate to be done with /n/remote before touching it.
-	# Ten minutes is not a guess at how long it takes; it is longer
-	# than it can take, so that a slow fetch is waited out and a
-	# kupdate that never runs at all does not disable this for ever.
+	# Wait for fatwrite to be done with the card, not for a kernel
+	# update: the kernel update IS a board.cmd script now, so waiting
+	# for it here would be waiting for this loop.
 	#
-	for(w := 0; w < 600; w++){
+	# That gate used to be a ten-minute wait on kupdate(), a hundred
+	# and eighty lines of Limbo that dialled the host, mounted it,
+	# read 1.9MB in chunks with its own progress counter, checksummed
+	# what it had written and renamed twice.  Every one of those
+	# steps printed only to the console, so when it stopped -- and it
+	# stopped on a dead mount, on a FIFO error under dossrv, and on
+	# nothing at all -- there was no way to see where.  Worse, while
+	# it held /n/remote nothing else could run, so the one channel
+	# that reports off the board was shut for as long as the thing
+	# most likely to hang was running.
+	#
+	# What it did is "mount the host and copy a file", and sh already
+	# does that in a line, with cp and cmp saying plainly whether it
+	# worked, on a connection this loop has already made and into an
+	# output file on the host.
+	#
+	for(w := 0; w < 120; w++){
 		if(kudone)
 			break;
 		sys->sleep(1000);
