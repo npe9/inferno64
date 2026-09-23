@@ -9370,3 +9370,64 @@ its own
 a hand mount at the console survives five poll cycles, and scripts still
 reach
 .CW /n/dos .
+.NH 2
+Why the board is slow over styx: the MTU, and a cliff at eleven frames
+.PP
+The board reads about 50KB/s from the host while this machine reads the
+same file from the same server in under half a second.  The cost is
+per MESSAGE, not per byte:
+.P1
+256KB as 256 reads of 1024   32s
+256KB as  64 reads of 4096    4s
+256KB as  32 reads of 8192    2s
+.P2
+.B "It is the MTU."
+Ping the board with payloads either side of 1500 bytes and the shape is
+unmistakable:
+.P1
+payload  frames   min RTT   avg RTT
+    64      1      5.6ms     20.3ms
+  1400      1      7.8ms     15.1ms
+  4000      3      9.8ms     20.5ms
+  8000      6     14.6ms     47.6ms
+ 16000     11        --      100% LOSS
+.P2
+One Styx message of 8KB is six Ethernet frames, and six frames cost
+about 48ms \(em which is the per-message cost measured above, arrived at
+from the other direction.  Eleven frames are not delivered at all.  The
+board's receive path degrades with burst length and then falls off a
+cliff.
+.PP
+.B "Which kills the obvious idea."
+emu's exportfs has always been willing to grant up to
+.CW MAXRPCMAX ,
+64KB, and clamps to whatever the client asks; the client
+.CW ( devmnt 's
+.CW MAXRPC )
+never asked for more than 8KB.  Raising it to 64KB looks like an eight
+fold cut in round trips and is not: 64KB is forty four frames, far past
+where this board already loses everything.  It was tried, and
+.CW ls
+came back "stat buffer too small".  Reverted.
+.PP
+.B "And an attempted fix that was not kept."
+.CW rxproc
+in
+.CW etherusb.b
+reads the bulk-in endpoint one transfer at a time, and on an empty read
+\(em which the SMSC chip returns immediately when its FIFO is empty,
+because smscsetup sets Bir \(em it sleeps 10ms.  A request/response
+protocol is idle exactly while it waits for its reply, so that put up to
+10ms in front of every one.  Backing off adaptively instead did improve
+the packet: 8000-byte ping average fell from 47.6ms to 19.3ms.  It made
+the WORK slower \(em 1MB went from 20s to 42s \(em because the yield in
+the fast path starves the rest of the VM.  A 1ms sleep instead split the
+difference and left a 200s outlier in three runs.  None of that is a
+result worth shipping, so it is reverted and written down here instead.
+.PP
+.B "What the next attempt should do."
+Not tune the sleep.  The receive path posts one transfer at a time and
+has nothing armed between the read returning and the next one being
+posted, which is what makes a burst expensive and an eleven frame burst
+fatal.  Keeping several buffers posted is the change that would matter,
+and it is a real piece of work rather than a constant.
