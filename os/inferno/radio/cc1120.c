@@ -1311,14 +1311,34 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 *	gcapture 200		sample it as it is
 		 *
 		 * The selection number is an argument because which
-		 * value of IOCFG3 is carrier sense on this part is a
-		 * question for the bench and not for this file: the one
-		 * selection this driver has ever needed is
-		 * PKT_SYNC_RXTX, which is 0x06 and is what IOCFG3 is
-		 * set to at init, and the rest of the table has never
-		 * been tried here.  Whatever is passed is restored
-		 * afterwards, so the packet interrupt still works after
-		 * a run.
+		 * value of IOCFG3 is which signal was a question for
+		 * the bench rather than for this file.  Answered, by
+		 * sweeping it:
+		 *
+		 * 0x11 is the carrier sense.  It is the only selection
+		 * of the thirty tried that follows the air rather than
+		 * sitting still -- static low over 200ms at 893MHz,
+		 * where nothing transmits, on every run, and toggling
+		 * at 881MHz, where something does -- and it moves with
+		 * AGC_CS_THR exactly as a threshold should: at a csthr
+		 * of -112, which is under the noise, it toggles at both
+		 * frequencies; at -105, which is between the two
+		 * floors, it separates them.
+		 *
+		 * 0x0c, 0x0d, 0x0f and 0x10 read high at both, so they
+		 * are status that is simply always true.  0x00 to 0x0b
+		 * read low at both: FIFO and packet signals, which is
+		 * right, since nothing here is receiving packets.
+		 *
+		 * The read path was checked before any of that was
+		 * believed, using the part rather than reasoning: bit 6
+		 * of IOCFG inverts the output, and 0x06 reads low while
+		 * 0x46 reads high, so the pin and the register both
+		 * work and a selection that does not move is a
+		 * selection that is not asserting.
+		 *
+		 * Whatever is passed is restored afterwards, so the
+		 * packet interrupt still works after a run.
 		 */
 		static ushort gruns[Ncaprun];
 		uvlong t0, t1, tickhz;
