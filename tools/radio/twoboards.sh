@@ -14,10 +14,13 @@
 # read, the header this device prepends, the queue and the counters --
 # the whole of #W's packet path, ending with the payload coming out of
 # /dev/radio0/data on a different machine.  It does not exercise sync
-# word detection or anything else in the radio: the qemu model hands
-# whole packets across a netdev and never looks at SYNC_CFG1.  So a
-# pass here and silence on the air together say the fault is in the RF
-# half, which is worth a great deal more than either alone.
+# word detection unless the qemu model is patched to carry and check
+# sync words; with tools/qemu-patches/0049 it does, and then the
+# second half of this checks that a receiver listening for one word
+# rejects a packet sent with another.  Neither half exercises the
+# radio itself -- deviation, bandwidth, symbol timing -- so a pass
+# here and silence on the air together say the fault is in the RF, in
+# what a real part does with a real signal.
 #
 # Use a socket and not multicast.  With mcast= the two instances came
 # up, the sender reported "sent 1", the receiver reported "recv 0" and
@@ -50,10 +53,43 @@ kill $rxpid 2>/dev/null
 
 # tr: the console ends its lines with a carriage return, so an exact
 # whole-line match fails on text that is plainly there.
-if tr -d '\r' < "$OUT/rx" | grep -qx "$MSG"; then
-	echo "RADIO-RX-OK $MSG arrived on the second board"
-	exit 0
+if ! tr -d '\r' < "$OUT/rx" | grep -qx "$MSG"; then
+	echo "RADIO-RX-FAILED; the receiver said:"
+	grep -v '^$' "$OUT/rx" | tail -6
+	exit 1
 fi
-echo "RADIO-RX-FAILED; the receiver said:"
-grep -v '^$' "$OUT/rx" | tail -6
-exit 1
+echo "RADIO-RX-OK $MSG arrived on the second board"
+
+# And the other half, without which the first says very little.  The
+# same exchange with the receiver listening for a sync word nobody is
+# sending: the packet has to not arrive, and the sender has to still
+# report having sent it, or what was measured was two machines that
+# were never connected.
+{ sleep 14; printf 'echo sync 0x1234 16 >/dev/radio0/ctl\n'; sleep 4
+  printf 'cat /dev/radio0/data\n'; sleep 45; } |
+	"$Q" -M netduinoplus2,radio=on \
+	    -nic socket,model=cc1120,listen=127.0.0.1:$((PORT+1)) \
+	    -nographic -serial null -serial mon:stdio -kernel "$K" \
+	    > "$OUT/rx2" 2>&1 &
+rxpid=$!
+sleep 6
+{ sleep 20; printf "echo $MSG >/dev/radio0/data\n"; sleep 8
+  printf 'cat /dev/radio0/stats\n'; sleep 8; } |
+	timeout 55 "$Q" -M netduinoplus2,radio=on \
+	    -nic socket,model=cc1120,connect=127.0.0.1:$((PORT+1)) \
+	    -nographic -serial null -serial mon:stdio -kernel "$K" \
+	    > "$OUT/tx2" 2>&1
+sleep 28
+kill $rxpid 2>/dev/null
+
+if ! grep -q '^sent 1' "$OUT/tx2"; then
+	echo "RADIO-SYNC-INCONCLUSIVE: the sender never sent"
+	exit 1
+fi
+if tr -d '\r' < "$OUT/rx2" | grep -qx "$MSG"; then
+	echo "RADIO-SYNC-FAILED: a receiver listening for 0x1234 took a"
+	echo "packet sent with a different sync word"
+	exit 1
+fi
+echo "RADIO-SYNC-OK a mismatched sync word is not accepted"
+exit 0

@@ -1,0 +1,127 @@
+From 4848c2ef43b45f25c32caf631491c81f1ec4d92f Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Wed, 23 Sep 2026 09:25:41 -0400
+Subject: [PATCH] hw/ssi/cc1120: carry and check the sync word
+
+The model handed every frame to every part on the netdev whatever
+SYNC_CFG1 said, so a driver that had configured no sync word appeared
+to work here and received nothing from a real part.  That is not
+hypothetical: TI's own easy-link register table leaves SYNC_MODE at
+zero, os/inferno/radio/cc1120.c shipped it that way, and the fault sat
+there through every packet test this model passed.
+
+So a transmitter prepends its sync word and a receiver takes a frame
+only if it begins with the word that receiver is listening for.
+SYNC_CFG1's top three bits give the length: none, sixteen bits or
+thirty-two.
+
+For sixteen bits this takes SYNC3 and SYNC2, which is the convention
+the driver writes them with.  It is a convention and not a reading of
+the part -- what a real CC1120 puts on the air for a 16-bit sync word
+is not established here -- and the comment says so.  The model and the
+driver agreeing is what makes a mismatched-word test mean anything;
+whether either agrees with silicon needs silicon.
+
+Checked both ways with tools/radio/twoboards.sh: matching words carry
+the payload to the other board, and with the receiver listening for
+0x1234 the sender still reports "sent 1" and nothing arrives.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/ssi/cc1120.c | 66 +++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 64 insertions(+), 2 deletions(-)
+
+diff --git a/hw/ssi/cc1120.c b/hw/ssi/cc1120.c
+index ca67cec..c18b35f 100644
+--- a/hw/ssi/cc1120.c
++++ b/hw/ssi/cc1120.c
+@@ -283,6 +283,45 @@ static void cc1120_reset_state(CC1120State *s)
+     cc1120_signal(s, GPIO_PKT_SYNC_RXTX, false);
+ }
+ 
++/*
++ * How many sync word bytes this part sends and expects.  SYNC_CFG1's
++ * top three bits are SYNC_MODE: 0 is no sync word at all, 5 is
++ * thirty-two bits, and everything else is counted as sixteen, which
++ * is enough for a model whose point is that a receiver listening for
++ * one word does not accept another.
++ */
++static int cc1120_synclen(CC1120State *s)
++{
++    switch (s->regs[0x08] >> 5) {
++    case 0:
++        return 0;
++    case 5:
++        return 4;
++    default:
++        return 2;
++    }
++}
++
++/*
++ * The sync word as it goes on the air, SYNC3 first.
++ *
++ * For sixteen bits this takes SYNC3 and SYNC2, which is the
++ * convention os/inferno/radio/cc1120.c writes them with.  It is a
++ * convention and not a reading of the part: what a real CC1120 puts
++ * on the air for a 16-bit sync word is not established here.  The
++ * model and the driver agreeing is what makes a mismatched-word test
++ * mean anything; whether either agrees with silicon is a separate
++ * question that needs silicon.
++ */
++static void cc1120_syncword(CC1120State *s, uint8_t *out, int n)
++{
++    int i;
++
++    for (i = 0; i < n; i++) {
++        out[i] = s->regs[0x04 + i];
++    }
++}
++
+ static void cc1120_transmit(CC1120State *s)
+ {
+     int len;
+@@ -305,7 +344,12 @@ static void cc1120_transmit(CC1120State *s)
+     }
+     if (s->drop_pct == 0 ||
+         g_rand_int_range(s->rand, 0, 100) >= (int)s->drop_pct) {
+-        qemu_send_packet(qemu_get_queue(s->nic), s->txfifo, len + 1);
++        int nsync = cc1120_synclen(s);
++        uint8_t frame[4 + FIFOSZ];
++
++        cc1120_syncword(s, frame, nsync);
++        memcpy(frame + nsync, s->txfifo, len + 1);
++        qemu_send_packet(qemu_get_queue(s->nic), frame, nsync + len + 1);
+     }
+     s->txlen = 0;
+     cc1120_update_counts(s);
+@@ -540,7 +584,25 @@ static ssize_t cc1120_receive(NetClientState *nc, const uint8_t *buf,
+ {
+     CC1120State *s = qemu_get_nic_opaque(nc);
+ 
+-    if (size < 1 || size > FIFOSZ) {
++    int nsync = cc1120_synclen(s);
++    uint8_t want[4];
++
++    /*
++     * A receiver takes a packet only if it begins with the sync word
++     * that receiver is listening for.  Without this the model hands
++     * every frame to every part on the netdev whatever SYNC_CFG1
++     * says, so a driver that has configured no sync word -- which is
++     * what TI's own register table leaves -- appears to work here and
++     * receives nothing from a real part.  That is exactly what
++     * happened: see os/inferno/radio/cc1120.c.
++     */
++    cc1120_syncword(s, want, nsync);
++    if (size < (size_t)nsync + 1 || memcmp(buf, want, nsync) != 0) {
++        return size;
++    }
++    size -= nsync;
++    buf += nsync;
++    if (size > FIFOSZ) {
+         return size;
+     }
+     memcpy(s->rxfifo, buf, size);
+-- 
+2.51.0
+

@@ -21,6 +21,14 @@ indexed its four EXTICR registers by the raw input number, so every
 port above A tripped an assertion.  It had been unreachable since there
 was no GPIO model to drive it.
 
+0049 makes the CC1120 model carry and check a sync word.  Without it
+the model hands every frame to every part on the netdev whatever
+SYNC_CFG1 says, so a driver that has configured no sync word passes
+every test here and receives nothing from a real part -- which is what
+happened, TI's own easy-link table leaving SYNC_MODE at zero and
+os/inferno/radio/cc1120.c shipping it that way.  A model that cannot
+fail the way the hardware fails is not checking the driver.
+
 0042 is the CC1120, the part on a ccRF click, written from the
 CC112x/CC1175 user's guide (SWRU295E).  It models the interface and not
 the radio: the command/address byte, the extended register space
