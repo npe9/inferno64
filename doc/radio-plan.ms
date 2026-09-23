@@ -1081,11 +1081,20 @@ The qemu model grew a transparent mode and an
 .B airrate
 property that puts a rate on the channel the guest was never told;
 with the guest configured for 2400 throughout, 300 symbols a second
-measures a symbol period of 21.5ms against 1200's 7.4ms, a ratio of
-2.9 where the rates differ by four, on two runs in a row.  The gap
-between 2.9 and 4 is the histogram: bins a power of two apart locate a
-period to within a factor of two, so the test's band is a factor of
-two either side of four and not tighter.  The absolute values are six
+measures a symbol period of 20 to 21.5ms against 1200's 7.3 to 7.4, a
+ratio of 2.7 to 2.9 where the rates differ by four, on three runs.
+The gap between that and 4 is the histogram: bins a power of two apart
+locate a period to within a factor of two, so the test's band is a
+factor of two either side of four and not tighter.
+.PP
+And it has been shown to fail, which is what makes those three runs
+worth anything.  With both rates set to 300 the same test measures
+20.7 and 21.1ms and prints SERIAL-FAILED at 0.9, so it is comparing
+the channel and not something that would agree whatever the channel
+did.  A control that has only ever passed is not known to be able to
+fail, and this one is cited in two places as the reason to trust the
+verb.  Those two numbers are also the measurement's repeatability, 1.5
+per cent.  The absolute values are six
 times long and 4800 measures the same period as 1200, both because a
 guest polling a pin in a tight loop and qemu's virtual clock disagree;
 silicon samples at 1.37us against the model's nine and takes its bits
