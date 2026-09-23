@@ -9334,3 +9334,39 @@ like the fault the tracing exists to find, and was reported as a
 regression.
 .CW styxd.sh
 now says so, loudly, before it does anything else.
+.NH 2
+The mount kept going away
+.PP
+A mount made by hand at the console
+.P1
+mount -A tcp!192.168.8.233!6666 /n/remote
+.P2
+succeeded, listed the host's files, and was gone moments later \(em over
+and over.  Baffling from that end, and obvious from the other:
+.CW remotecmd()
+mounts the host on
+.CW /n/remote ,
+reads
+.CW board.cmd ,
+unmounts, and does it again fifteen seconds later, and it was doing all
+of that in the namespace everything else shares.
+.PP
+It has its own now.
+.CW "sys->pctl(Sys->FORKNS, nil)" ,
+placed after the wait for
+.CW kudone
+and not at the top of the function: the copy has to be taken after
+.CW fatcheck
+has mounted
+.CW /n/dos ,
+or every board.cmd script loses the card.  The shell that
+.CW runremote
+spawns shares this namespace and still sees both; the console sees
+neither of the poller's mounts, which is the point.
+.PP
+Verified: the poller still runs (board.out is written, so it still has
+its own
+.CW /n/remote ),
+a hand mount at the console survives five poll cycles, and scripts still
+reach
+.CW /n/dos .

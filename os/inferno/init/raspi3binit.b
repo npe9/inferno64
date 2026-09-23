@@ -2508,6 +2508,32 @@ remotecmd()
 			break;
 		sys->sleep(1000);
 	}
+	#
+	# A PRIVATE namespace, from here on.
+	#
+	# This loop mounts the host on /n/remote, reads board.cmd,
+	# unmounts, and does it again fifteen seconds later -- and it was
+	# doing all of that in the namespace everything else shares.  So
+	# a mount made by hand at the console
+	#
+	#	mount -A tcp!host!6666 /n/remote
+	#
+	# lasted until the next poll and then vanished, repeatedly, which
+	# is baffling from the other end: the mount succeeds, the files
+	# are there, and moments later they are not.
+	#
+	# FORKNS here and not at the top of this function: the copy is
+	# taken now, after the wait above, so that /n/dos -- mounted by
+	# fatcheck, which is what kudone is waiting for -- is in it and
+	# board.cmd scripts can still reach the card.  Taken at entry the
+	# snapshot would predate that mount and every script would lose
+	# the card.
+	#
+	# The shell runremote spawns shares this namespace and so still
+	# sees /n/remote and /n/dos; the console does not see either of
+	# this loop's mounts, which is the point.
+	#
+	sys->pctl(Sys->FORKNS, nil);
 	addrs := remoteaddrs();
 	if(addrs == nil)
 		return;			# no kupdate.txt: nothing to talk to

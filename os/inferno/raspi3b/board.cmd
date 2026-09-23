@@ -1,1 +1,1 @@
-load std; K=/n/remote/os/inferno/raspi3b/kernel8.img; echo KU-BEGIN; rm /n/dos/kernel8.new; cp $K /n/dos/kernel8.new; echo KU-COPY $status; cmp $K /n/dos/kernel8.new; echo KU-CMP $status; and {cmp $K /n/dos/kernel8.new} {cp /n/dos/kernel8.new /n/dos/kernel8.img; echo KU-INSTALL $status; cmp $K /n/dos/kernel8.img; echo KU-VERIFY $status}; echo KU-DONE
+ps
