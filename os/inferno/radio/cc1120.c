@@ -264,6 +264,7 @@ enum {
 	 */
 	Ncaprun		= 256,
 	Nholdstep	= 64,		/* steps a "hold" sweep may have */
+	Nhbin		= 24,		/* powers of two a "ghist" counts to */
 	/*
 	 * How many bytes "cat /dev/radio0/txtest" sends.  At the
 	 * 1200 baud this part comes up at, 125 bytes is most of a
@@ -2095,6 +2096,204 @@ cc1120ctl(Radio *r, char *buf, int n)
 		s->unlock(s);
 		for(i = 0; i < nstep; i++)
 			print("hold %lud %d\n", lo + (ulong)i*step, hold[i]);
+		return n;
+	}
+	if(strcmp(f[0], "ghist") == 0){
+		/*
+		 * How long the pin stays high and low, as a histogram
+		 * over the whole window.
+		 *
+		 * "gcapture" keeps the sequence, and its array fills in
+		 * about twelve milliseconds on a pin that changes at
+		 * twenty kilohertz.  On a channel busy a few per cent of
+		 * the time, twelve milliseconds almost never contains a
+		 * burst, so the one measurement that is not limited by
+		 * the RSSI filter could not be pointed at the channels
+		 * worth pointing it at.
+		 *
+		 * Giving up the order buys the whole window.  Run
+		 * lengths go into buckets a power of two apart, high and
+		 * low kept separately, and two seconds of pin is a
+		 * distribution rather than the first twelve
+		 * milliseconds of one.  The order is what a decoder
+		 * wants and the distribution is what telling signal from
+		 * noise wants, which is the question here.
+		 *
+		 *	ghist 2000 0x28		the demodulator
+		 *	ghist 2000		whatever IOCFG3 is
+		 */
+		static ulong hbin[2][Nhbin];
+		uvlong t0, t1, tickhz;
+		ulong ms, us, run;
+		int sel, oldsel, cur, v, b, nsamp;
+
+		if(s->gpio == nil)
+			error("radio: this board does not wire the part's GPIO");
+		ms = 200;
+		sel = -1;
+		if(nf >= 2)
+			ms = strtoul(f[1], nil, 0);
+		if(nf >= 3)
+			sel = strtoul(f[2], nil, 0);
+		if(ms < 1 || ms > 5000 || sel > 0xff)
+			error(Ebadctl);
+		for(i = 0; i < Nhbin; i++)
+			hbin[0][i] = hbin[1][i] = 0;
+
+		if(s->irq != nil)
+			s->irq(s, 0);
+		s->lock(s);
+		oldsel = rd(rr, Riocfg3);
+		if(sel >= 0)
+			wr(rr, Riocfg3, sel);
+		s->unlock(s);
+
+		cur = -1;
+		run = 0;
+		nsamp = 0;
+		t0 = fastticks(&tickhz);
+		t1 = t0 + (tickhz/1000) * ms;
+		while(fastticks(nil) < t1){
+			v = s->gpio(s);
+			nsamp++;
+			if(cur < 0){
+				cur = v;
+				run = 1;
+				continue;
+			}
+			if(v == cur){
+				run++;
+				continue;
+			}
+			for(b = 0; b < Nhbin-1 && (run >> b) > 1; b++)
+				;
+			hbin[cur][b]++;
+			cur = v;
+			run = 1;
+		}
+		us = (ulong)(((fastticks(nil) - t0) * 1000000) / tickhz);
+
+		s->lock(s);
+		wr(rr, Riocfg3, oldsel);
+		s->unlock(s);
+		if(s->irq != nil)
+			s->irq(s, 1);
+
+		if(nsamp == 0)
+			nsamp = 1;
+		print("ghist %lud iocfg3 0x%.2x us %lud samples %d nsper %lud\n",
+			(ulong)rr->hz, sel >= 0? sel: oldsel, us, nsamp,
+			(us*1000)/nsamp);
+		for(i = 0; i < Nhbin; i++)
+			if(hbin[0][i] || hbin[1][i])
+				print(" %d: low %lud high %lud\n",
+					1<<i, hbin[0][i], hbin[1][i]);
+		return n;
+	}
+	if(strcmp(f[0], "gtrig") == 0 && nf >= 3){
+		/*
+		 * Wait for a burst, then record the pin through it.
+		 *
+		 * Neither of the other two can see a signal that is on
+		 * five per cent of the time.  "gcapture" keeps the
+		 * sequence and fills its array in twelve milliseconds,
+		 * which usually contains no burst at all; "ghist" gives
+		 * up the sequence to cover the whole window and then
+		 * averages the burst away -- 918MHz at five per cent
+		 * duty and 926MHz at one came out the same to within a
+		 * few per cent, because in both cases the great
+		 * majority of what it counted was silence.
+		 *
+		 * So: watch carrier sense until it asserts, switch the
+		 * pin to whatever was asked for, and record from there.
+		 * This board brings out one GPIO, so the trigger and the
+		 * signal have to share it and the switch costs an SPI
+		 * write between them -- twenty microseconds or so, which
+		 * is inside a symbol at any rate this part is likely to
+		 * be set to, and is the price of a board with one pin.
+		 *
+		 *	gtrig 2000 0x28		wait up to 2s for a
+		 *				burst, then the
+		 *				demodulator through it
+		 */
+		static ushort trun[Ncaprun];
+		uvlong t0, t1, tickhz;
+		ulong ms, us;
+		int sel, oldsel, cur, v, nrun, nsamp, first, armed;
+
+		if(s->gpio == nil)
+			error("radio: this board does not wire the part's GPIO");
+		ms = strtoul(f[1], nil, 0);
+		sel = strtoul(f[2], nil, 0);
+		if(ms < 1 || ms > 5000 || sel < 0 || sel > 0xff)
+			error(Ebadctl);
+
+		if(s->irq != nil)
+			s->irq(s, 0);
+		s->lock(s);
+		oldsel = rd(rr, Riocfg3);
+		wr(rr, Riocfg3, Gcarriersense);
+		s->unlock(s);
+
+		armed = 0;
+		t0 = fastticks(&tickhz);
+		t1 = t0 + (tickhz/1000) * ms;
+		while(fastticks(nil) < t1)
+			if(s->gpio(s)){
+				armed = 1;
+				break;
+			}
+		if(!armed){
+			s->lock(s);
+			wr(rr, Riocfg3, oldsel);
+			s->unlock(s);
+			if(s->irq != nil)
+				s->irq(s, 1);
+			print("gtrig %lud no burst in %ludms\n",
+				(ulong)rr->hz, ms);
+			return n;
+		}
+		s->lock(s);
+		wr(rr, Riocfg3, sel);
+		s->unlock(s);
+
+		nrun = nsamp = 0;
+		cur = -1;
+		t0 = fastticks(nil);
+		while(nrun < Ncaprun){
+			v = s->gpio(s);
+			nsamp++;
+			if(cur < 0){
+				cur = v;
+				first = v;
+				trun[0] = 1;
+				nrun = 1;
+				continue;
+			}
+			if(v != cur){
+				cur = v;
+				trun[nrun++] = 1;
+			}else if(trun[nrun-1] < 0xffff)
+				trun[nrun-1]++;
+		}
+		us = (ulong)(((fastticks(nil) - t0) * 1000000) / tickhz);
+
+		s->lock(s);
+		wr(rr, Riocfg3, oldsel);
+		s->unlock(s);
+		if(s->irq != nil)
+			s->irq(s, 1);
+
+		print("gtrig %lud iocfg3 0x%.2x us %lud samples %d runs %d "
+			"first %s\n", (ulong)rr->hz, sel, us, nsamp, nrun,
+			first? "high": "low");
+		for(i = 0; i < nrun; i++){
+			print(" %ud", trun[i]);
+			if((i % 16) == 15)
+				print("\n");
+		}
+		if((nrun % 16) != 0)
+			print("\n");
 		return n;
 	}
 	if(strcmp(f[0], "reset") == 0){

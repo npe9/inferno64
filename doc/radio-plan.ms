@@ -981,6 +981,42 @@ looks exactly like a transmitter with a fixed frame and is two
 resolution cells.  Reading a burst length off this needs the
 demodulator pin, not carrier sense.
 .PP
+THE DEMODULATOR PIN, AND THE THIRD TIME THIS LESSON LANDED.  Carrier
+sense cannot resolve these bursts, so the next thing is IOCFG3 0x28,
+which follows the demodulator and changes every ten microseconds
+rather than every RSSI update.  Two ways of reading it were built and
+neither answered the question.
+.PP
+.CW gcapture
+keeps the sequence and fills its array in twelve milliseconds, which
+on a channel busy five per cent of the time almost never contains a
+burst.
+.CW ghist
+gives up the order to cover the whole window, and then averages the
+burst away: two seconds at 918MHz and two at 926 came out the same to
+within a few per cent, because in both the great majority of what it
+counted was silence.  That result also undercuts an earlier one \- a
+single twelve-millisecond capture at 881 against one at 893 had
+looked like a clear difference, and on this evidence it was a small
+sample.
+.PP
+.CW gtrig
+is the answer to both: watch carrier sense until it asserts, switch
+the pin, and record from there.  It works, and at 918MHz it records a
+burst as narrow pulses separated by gaps of 22, 90, 158, 226, 311 and
+430 samples at 0.44 microseconds a sample.  The sequence varies
+through the burst and between captures, which is what data looks like.
+.PP
+It is not data.  The same capture at 926MHz gives the same set of
+lengths \- 22, 45, 68, 90, 135, 203, 248, 316, 361, 429, every one a
+multiple of about 22.6 samples, or 9.94 microseconds \- with the same
+commonest value and only the tails differing.  A quantum common to two
+channels is the receiver's clock.  So the pin shows when the
+demodulator is doing something and not what it is doing, and three
+separate measurements in one day \- the 2.8ms carrier sense quantum,
+the 1.34ms burst length, and this \- have now all turned out to be the
+instrument rather than the air.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
