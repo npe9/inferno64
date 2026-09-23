@@ -348,7 +348,35 @@ exportproc(void *a)
 			continue;
 		}
 
-		q->next = nil;
+		/*
+		 * On fs->work BEFORE this loop can read another message.
+		 *
+		 * A Tflush is only answerable if the request it names can be
+		 * found, and the only place that is guaranteed is here, on
+		 * the one process that reads this connection.  Registering in
+		 * the worker instead left a window in which a flush for a
+		 * request already handed out saw an empty list, and answering
+		 * Rflush for a request that is still running is the one thing
+		 * the protocol forbids -- the client frees the tag, reuses
+		 * it, and then the real reply arrives against somebody else's
+		 * request:
+		 *
+		 *	-> T116 tag 1     the read
+		 *	-> T108 tag 2     flush it
+		 *	<- R109 tag 2     Rflush: "that reply will never come"
+		 *	-> T104 tag 1     tag reused, correctly
+		 *	<- R117 tag 1     the read's reply, after all
+		 *	mnt: mismatch ... T104 R117
+		 *
+		 * Which desynchronises the session for good; and styxlisten
+		 * gives every client a mount of the SAME pipe, so one client
+		 * doing this stops the server for all of them.
+		 */
+		lock(&fs->l);
+		q->next = fs->work;
+		fs->work = q;
+		unlock(&fs->l);
+
 		spawned = 0;
 		lock(&exq.l);
 		lock(&fs->l);
@@ -541,12 +569,21 @@ exdispatch(Exq *q)
 		panic("exdispatch: nil fs->user");
 
 	notkilled();
+	lock(&q->l);
 	q->slave = up;
 	q->busy = 1;
-	lock(&fs->l);
-	q->next = fs->work;
-	fs->work = q;
-	unlock(&fs->l);
+	unlock(&q->l);
+	/*
+	 * fs->work was joined by exportproc, not here.
+	 *
+	 * Doing it here is a race the flush protocol cannot survive: the
+	 * reader spawns a worker and goes straight back for the next
+	 * message, so a Tflush for the request just handed out arrives
+	 * before the worker has put it on the list.  exflushed() then
+	 * finds nothing, reports "not found", and the reader answers
+	 * Rflush -- while the worker is still running and will answer
+	 * the original too.  See exportproc.
+	 */
 
 	/*
 	 * Borrow the connection's groups, and give them back on EVERY
@@ -611,7 +648,18 @@ exdispatch(Exq *q)
 	notkilled();
 	q->busy = 0;
 	if(!q->shut){
-		if(q->flush == nil || err == nil){
+		/*
+		 * A flushed request gets NO reply of its own.
+		 *
+		 * This read "q->flush == nil || err == nil", so a request
+		 * that had been flushed but happened to succeed was answered
+		 * anyway, and then the Rflush was sent as well.  Two replies
+		 * for one tag, and the client has already been told by the
+		 * Rflush that the tag is free.  Whatever work was done is
+		 * wasted either way; sending it is not a saving, it is a
+		 * protocol violation that costs the whole session.
+		 */
+		if(q->flush == nil){
 			unlock(&q->l);
 			q->out.type = q->in.type+1;
 			q->out.tag = q->in.tag;

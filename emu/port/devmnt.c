@@ -798,6 +798,10 @@ mountio(Mnt *m, Mntrpc *r)
 	n = convS2M(&r->request, r->rpc, m->msize);
 	if(n < 0)
 		panic("bad message type in mountio");
+	if(mntdebug)
+		print("mnt: -> T%d tag %d fid %d (%s %ud)\n",
+			r->request.type, r->request.tag, r->request.fid,
+			up->text, up->pid);
 	if(devtab[m->c->type]->write(m->c, r->rpc, n, 0) != n)
 		error(Emountrpc);
 /*	r->stime = fastticks(nil); */
@@ -818,6 +822,8 @@ mountio(Mnt *m, Mntrpc *r)
 	}
 	m->rip = up;
 	unlock(&m->l);
+	if(mntdebug)
+		print("mnt: reader is now %s %ud\n", up->text, up->pid);
 	while(r->done == 0) {
 		if(mntrpcread(m, r) < 0)
 			error(Emountrpc);
@@ -887,6 +893,10 @@ mntrpcread(Mnt *m, Mntrpc *r)
 		qdiscard(m->q, len);
 		return -1;
 	}
+
+	if(mntdebug)
+		print("mnt: <- R%d tag %d len %d (%s %ud)\n",
+			r->reply.type, r->reply.tag, len, up->text, up->pid);
 
 	/* hang the data off of the fcall struct */
 	l = &r->b;

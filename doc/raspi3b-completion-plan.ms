@@ -9170,3 +9170,67 @@ and the namespace (so it sees
 and the parent waits for
 .CW /prog/<pid>
 to go.  RCMD-END 1 now prints and the poller survives its script.
+.NH 2
+Fixed: a flushed request was answered twice
+.PP
+.B "The sequence, from the server's own trace."
+.CW INFERNO_MNTDEBUG=1
+prints every message on the shared pipe, and the fault is one screen
+long:
+.P1
+-> T116 tag 1 fid 31     the read
+-> T108 tag 2 fid 0      flush it
+<- R109 tag 2            Rflush: "that reply will never come"
+-> T104 tag 1 fid 37     tag 1 reused, correctly
+<- R117 tag 1 len 4107   the read's reply, after all
+mnt: mismatch ... T104 R117
+.P2
+The server answered Rflush and then sent the flushed request's reply
+anyway.  The client had been told the tag was free, reused it, and
+received somebody else's answer.
+.PP
+.B "Two bugs, both in emu/port/exportfs.c."
+.IP 1.
+.I "A registration race."
+A request joined
+.CW fs->work
+inside the WORKER, but the reader spawns a worker and goes straight
+back for the next message.  A Tflush naming a request already handed
+out therefore found an empty list, reported "not found", and the reader
+answered Rflush while the worker was still running.  The request now
+joins the list in the reader, before it can read anything else \(em the
+only place where finding it is guaranteed.
+.IP 2.
+.I "A double reply."
+.CW "if(q->flush == nil || err == nil)"
+sent the original reply whenever the request had SUCCEEDED, even though
+it had been flushed, and then sent the Rflush as well.  Two replies for
+one tag.  Whatever work was done is wasted either way; sending it is
+not a saving.  It is now
+.CW "if(q->flush == nil)" .
+.PP
+.B "Measured."
+.CW tools/jtag/styxabrupt.py ,
+which kills clients mid-read the way the board does on every reboot:
+.P1
+before   DEAD after 5 disconnects
+after    survived 500, worst health 0.030s, 0 mismatches
+.P2
+And nothing else moved: 500 clean connections in 2.0s, 179MB through a
+bulk reader while 200 more connect.  The
+.CW mntfree
+tag-retirement guard added while hunting this now never fires \(em zero
+tags retired in 100 disconnects \(em because no rpc is abandoned
+unanswered any more.  It stays as a check on a real invariant, at no
+cost.
+.PP
+.B "On the board."
+1MB over styx went from 419s to 23s, and the kernel update from 35m50s
+to 160s.  What the update reports now is the truth about the card:
+.P1
+error on /n/dos/kernel8.new after 1245184 bytes
+KU-CMP read error
+.P2
+.CW "sdhost: read block 61213 failed ... gave up on 1" .
+That is the bad media found earlier in this work, reported as an I/O
+error instead of a panic, and it is the next thing in the way.
