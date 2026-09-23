@@ -838,6 +838,39 @@ bus: this part will put its demodulated data or its carrier sense on a
 GPIO, and GPIO3 is already wired to this board's interrupt pin, so the
 envelope can be read with no SPI traffic at all and at the resolution
 of a timer rather than of a register read.
+.PP
+That is
+.CW "gcapture <ms> [iocfg3]" ,
+and it runs: 1.37 microseconds a sample on the board, against 27 for
+the same thing over the bus and 296 before the SPI divisor was
+changed.  Two hundred and fourteen times finer than where this
+started, and no bus traffic to be heard by the receiver.
+.PP
+Which selection of IOCFG3 is the carrier sense was not known and is
+not in this tree's notes, so it was swept.  0x11 is the only one of
+thirty that follows the air: static low over 200ms at 893MHz on every
+run, toggling at 881MHz, and moving with AGC_CS_THR the way a
+threshold should \- at a csthr of \-112, under the noise, it toggles
+at both, and at \-105, between the two floors, it separates them.  The
+read path was checked first by inverting a selection rather than by
+reasoning: bit 6 of IOCFG inverts the output, 0x06 reads low and 0x46
+reads high.
+.PP
+What it sees at 881MHz is carrier present for 2.826, 2.826, 2.826 and
+2.824ms in one run, 2.818, 2.817, 2.818, 2.804, 2.806 and 2.818 in
+the next, and 2.857, 2.855, 2.844, 2.859, 2.859 and 2.858 in a third,
+with longer ones at about twice that and gaps from 6 to 90ms.  A
+length that repeats to two microseconds across three captures is a
+real quantum of something.
+.PP
+It is not the transmitter's burst length.  The tinySA in zero span at
+the same frequency puts the bursts under 0.89ms, so the pin is giving
+the transmission plus however long carrier sense holds after it, and
+raising csthr by 5dB does not shorten it \- which rules out a simple
+threshold crossing and leaves the part's own hysteresis, which has not
+been characterised.  Two instruments measuring two different things,
+and the difference is the next thing to understand rather than
+something to average away.
 .IP "4.  An FT-891, or anything with a CAT port.  Done, for receive." 6
 This is no longer a compiled argument.  The set is driven from emu
 over its own USB port \- a CP2105's Enhanced Com Port, 4800 8N2 \-
