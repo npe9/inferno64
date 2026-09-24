@@ -52,10 +52,22 @@ SESS=${SESS:-`screen -ls | awk '/ttys/{print $1; exit}'`}
 # were believed for a while.  An instrument that cannot see must say
 # so, not return a value.
 #
+#
+# No console?  Ask the kernel's own log ring over JTAG instead.
+#
+# The console dies far more often than the board -- the adapter wedges,
+# the session gets killed, another session takes it -- and refusing to
+# boot because of it is refusing to work.  kmesg reads the ring out of
+# RAM over the debugger.  A freshly loaded kernel zeroes its BSS, so the
+# ring holds only THIS boot's output and the stamp appearing in it at all
+# is proof, with no before-and-after count needed.  That is a better test
+# than the console one it replaces, which had to count banners in a
+# scrollback full of previous boots.
+#
+VIA=console
 if [ -z "$SESS" ] || ! screen -S "$SESS" -X select . >/dev/null 2>&1; then
-	echo "boot: no screen session on the board's console." >&2
-	echo "boot: cannot tell whether a kernel came up; refusing to guess." >&2
-	exit 3
+	VIA=kmesg
+	echo "boot: no console; confirming the boot over JTAG instead" >&2
 fi
 IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
 IFACE=${IFACE:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
@@ -79,6 +91,12 @@ PYEOF`
 [ -n "$stamp" ] || { echo "boot: no build stamp" >&2; exit 1; }
 
 banners() {
+	if [ "$VIA" = kmesg ]; then
+		# the ring is this boot's only; 0 before, 1 after
+		sh "$ROOT/tools/jtag/kmesg" 400 2>/dev/null >"$S/boot.txt"
+		LC_ALL=C grep -ac "raspi3b build $stamp" "$S/boot.txt" 2>/dev/null | head -1
+		return
+	fi
 	screen -S "$SESS" -X hardcopy -h "$S/boot.txt" 2>/dev/null
 	sleep 1
 	#

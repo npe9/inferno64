@@ -862,6 +862,22 @@ openeps(cf: ref Cfg): int
 # receive: one process reads the bulk-in endpoint forever and hands
 # whole frames to the server loop, which owns the conversations
 #
+#
+# Transfers and frames, counted separately in each direction.
+#
+# The cost of a round trip on this board scales with the number of
+# Ethernet frames in it -- 6.4ms for one, about 4.6ms for each one after
+# -- and the question that decides where to look is how many frames ride
+# in one USB transfer.  Receive packs them: Burstcap is 37 512-byte
+# packets, so one read can carry 18.9KB.  Transmit writes one frame per
+# transfer.  These count it rather than assuming it; read them from
+# /net.alt/ether/stats before and after a known workload.
+#
+rxreads := 0;		# bulk-in transfers that returned data
+rxframes := 0;		# ethernet frames pulled out of them
+txwrites := 0;		# bulk-out transfers issued
+txframes := 0;		# ethernet frames handed to them
+
 rxproc(rxc: chan of array of byte)
 {
 	nbuf := 2048;
@@ -894,6 +910,7 @@ rxproc(rxc: chan of array of byte)
 			continue;
 		}
 		nzero = 0;
+		rxreads++;
 		if(kind == Ksmsc)
 			smscrx(buf[0:n], rxc);
 		else if(n >= 14){
@@ -917,6 +934,7 @@ smscrx(b: array of byte, rxc: chan of array of byte)
 		if((sts & Rxerror) == 0 && n - 4 >= 14){
 			f := array[n-4] of byte;	# strip the FCS
 			f[0:] = b[0:n-4];
+			rxframes++;
 			rxc <-= f;
 		}
 		n = (n + 3) & ~3;
@@ -936,6 +954,7 @@ txproc()
 	zlp := array[0] of byte;
 	for(;;){
 		f := <-txc;
+		txframes++;
 		frame0 := f;
 		n := len f;
 		if(kind == Ksmsc){
@@ -962,6 +981,7 @@ txproc()
 		}
 		if(debug)
 			sys->print("etherusb: tx write %d\n", len f);
+		txwrites++;
 		if(sys->write(bout.dfd, f, len f) != len f){
 			nwerr++;
 			lasterr = sys->sprint("%r");
@@ -972,6 +992,7 @@ txproc()
 		if(debug)
 			sys->print("etherusb: tx done %d\n", len f);
 		if(len f % outmaxpkt == 0)
+			txwrites++;
 			sys->write(bout.dfd, zlp, 0);
 	}
 }
@@ -1048,6 +1069,15 @@ handle(gm: ref Tmsg): string
 			ss := sys->sprint(
 				"ntx %d\nnqueued %d\nnwrit %d\nnwerr %d\nndrop %d\nnrx %d rxgap %d\nlasterr %s\n",
 				ntx, nqueued, nwrit, nwerr, ndrop, nrx, rg, lasterr);
+			#
+			# The numbers phase 2 of doc/raspi3b-net-plan.ms asks
+			# for: how many ethernet frames ride in one USB
+			# transfer, each way.  Sample before and after a known
+			# workload and divide; nothing is timed here, because
+			# anything timed in this path moves what it measures.
+			#
+			ss += sys->sprint("usb rxreads %d rxframes %d txwrites %d txframes %d\n",
+				rxreads, rxframes, txwrites, txframes);
 			for(i := 0; i < nconn; i++){
 				c := conns[i];
 				np := 0;

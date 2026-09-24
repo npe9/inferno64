@@ -571,3 +571,62 @@ yet.
 Board throughput did not move: 1MB still takes tens of seconds whichever
 emu serves it.  That was never a server problem, and the frame-count
 measurements say why.
+.NH 1
+The server still wedges, and now it does so in twenty seconds
+.PP
+Five fixes in \(em the flushed request answered twice, the fs->work
+registration, mntfree retiring an abandoned tag, trapUSR1 clearing
+intwait, the unconditional irend wakeup \(em and it still stops
+answering.  The one gain that matters for finding the rest is that it
+now reproduces in twenty seconds of board traffic rather than hours.
+.PP
+.B "The state, captured whole."
+.P1
+listener            in accept(), Sys_open -> ipopen -> so_accept
+LISTEN socket       accept queue EMPTY (rq 0)
+one exportfs        blocked in exreadn on a connection whose
+                    descriptor emu does not hold
+board's connection  ESTABLISHED on 6666, 19 bytes unread, NO owning fd
+emu's descriptors   fd 3, the listener, and nothing else
+cpu                 0.0%
+vmwatch             did not fire, correctly: nothing queued for the VM
+devip               no exhaustion, no "CLOSE UNDER ACCEPT", no errors
+.P2
+.B "Two things there cannot both be true."
+A connection is ESTABLISHED on the port with data waiting and no process
+owning it, while the listening socket's accept queue is empty and the
+listener sits in accept().  Either it was accepted \(em and then its
+descriptor went without the socket being closed, which does not happen
+\(em or it was never accepted, and the kernel should be showing it queued.
+.PP
+.B "And an exportfs is reading a descriptor that is gone."
+That read cannot return.  Whatever closed the connection's fd left its
+server blocked on the chan, which is a second, independent way for a
+connection to be accepted and never served.
+.PP
+.B "What was ruled out here, with the evidence:"
+.IP \(bu
+not VM starvation \(em 0% CPU, and the stall detector is silent because
+nothing is queued;
+.IP \(bu
+not the flush desync \(em zero mismatches in the log;
+.IP \(bu
+not intwait \(em zero threads in the osleave spin;
+.IP \(bu
+not conversation exhaustion \(em protoclone prints that unconditionally
+and did not;
+.IP \(bu
+not parallelvm \(em the multicore emu does the same thing, measured.
+.PP
+.B "Next, and only with the instrument first."
+.CW "styxlisten -T"
+prints a line for every connection that reaches
+.CW sys->export ,
+and in the run that wedged, five connections did and all set up in under
+11ms.  So they are built correctly and then lost.  What is missing is a
+line where a connection's server EXITS, and why: the next step is to say
+so in
+.CW exportproc ,
+and to record which chan an exportfs is reading so that "reading a
+descriptor emu does not hold" can be turned from an inference into a
+name.
