@@ -737,3 +737,87 @@ reasoning about it.
 .PP
 Everything needed to do all three is in place and the fault reproduces in
 under a minute.
+.NH 2
+The instruments, and four hypotheses they killed
+.PP
+The server that stops answering has now cost more retractions than any
+other fault in this tree, and every one of them came from an instrument
+that could not see what it was pointed at.  What follows is what is
+established, what is refuted, and what the instruments are.
+.PP
+.B "Established, measured, repeatable."
+.IP \(bu
+It reproduces under
+.CW tools/jtag/wedgewatch.sh ,
+which connects, attaches, opens, sends a Tread and disconnects without
+waiting for the reply \(em what the board does to the host on every
+reboot.  Between 11 and 92 disconnects, varying widely run to run.
+.IP \(bu
+At the fault: connections are ACCEPTED and their first message is never
+read.  Both a loopback probe and the board show 19 unread bytes \(em a
+whole Tversion \(em sitting in the socket's receive queue.
+.IP \(bu
+The listening descriptor is stable and correct, the accept queue is
+empty, and the listener is blocked in accept waiting for the NEXT
+connection.  Nothing is wrong below emu.
+.IP \(bu
+The process does not die of SIGTERM.  cleanexit runs through the Dis VM,
+so whatever has stopped the VM stops the exit too.
+.IP \(bu
+It RECOVERS.  A server declared wedged has repeatedly answered normally
+a minute later.
+.PP
+.B "Refuted, each after being believed."
+.IP 1.
+.I "A recycled listening descriptor."
+Sequence-numbered accepts show the listener is always called with the
+announced descriptor; only the accepted one is recycled.
+.IP 2.
+.I "A stopped mount multiplexer."
+mntwatch has never once reported a stopped mux \(em but see below: for a
+round of measurements its silence was worthless, because it printed only
+on the fault and so could not be distinguished from a watcher that never
+started.
+.IP 3.
+.I "sys->export failing silently."
+It returns \-1 from two places and styxlisten ignored the result, which
+would leave exactly this symptom.  Both now report; neither has fired.
+.IP 4.
+.I "A worker blocked writing to a client that stopped reading."
+Caught red-handed in a sample:
+.CW "exworker -> exdispatch -> exreply -> ipwrite -> so_send -> write" ,
+blocked for a whole three-second sample.  It is real and worth fixing on
+its own.  It is NOT the cause: with every instrument on at once the
+fault reproduced at 92 disconnects with no write stuck for two seconds,
+no mux stopped, and the reader never once serving a request inline.
+.PP
+.B "The instruments, and what each one is for."
+.IP "\fIprogwatch\fP (INFERNO_PROGWATCH=<seconds>)"
+prints what /prog would say \(em the Dis processes, their state and
+module \(em for a server that cannot be asked, because reaching its
+/prog needs the Styx connection that is the thing not working.
+.IP "\fImntwatch\fP (INFERNO_MNTWATCH=1)"
+reports a mount mux whose queue, reader and tags have not changed for
+three scans, and TICKS every scan when nothing is wrong.
+.IP "\fIexportfs write records\fP"
+name a write that is still stuck, while it is stuck, and say whether the
+far end is a socket or the pipe.
+.PP
+.B "Three rules this fault has taught, at cost."
+.IP 1.
+.I "An instrument that prints only on the fault has no positive control."
+Its silence then means either "all is well" or "I never started", and
+those are not the same sentence.  mntwatch ticks now.
+.IP 2.
+.I "A five-second probe is not a verdict."
+wedgewatch now asks whether the process burns CPU, whether its CPU time
+moves at all, and whether a patient sixty-second probe gets an answer,
+and prints STOPPED or SLOW.
+.IP 3.
+.I "lldb attach kills this emu."
+Twice.  The first time it looked like the server exiting on its own and
+was very nearly written down as a finding.  Use
+.CW sample ,
+and re-parse its whole stack \(em truncating to the last three frames
+threw away the one frame that tells an idle worker from a blocked one,
+and an assertion was built on the difference.
