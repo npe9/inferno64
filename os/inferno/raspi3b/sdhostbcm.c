@@ -1211,7 +1211,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 			p += nthis*Secsize;
 		}else if(!write && usedma && !c->bytemode){
 			if(sdhosttrace)
-				print("sdhost: DMA READ PATH nthis %d len %d\n",
+				print("sdhost: DMA READ PATH nthis %ld len %ld\n",
 					nthis, nthis*Secsize);
 			if(dmaxfer(p, Sddatabus, nthis*Secsize, Sdhostdreq, 1) < 0){
 				print("sdhost: DMA READ FAILURE block %llud: "
@@ -1499,7 +1499,29 @@ out:
 	if(nthis > 1)
 		sdcmderr(r, 12, 0, Busywait, &err);	/* STOP_TRANSMISSION */
 	qunlock(c);
-	return i * Secsize;
+	/*
+	 * What was MOVED, not what the loop intended to move.
+	 *
+	 * This returned i * Secsize -- the block-group index times the
+	 * block size -- so the answer was computed from how far the loop
+	 * got and never from what any data phase actually delivered.
+	 * Nothing below reports a length either: dmaperiph waits for the
+	 * engine to go inactive and returns 0 or -1, success or failure.
+	 * So a transfer that finished without an error but moved fewer
+	 * bytes than the command programmed was undetectable from devsd,
+	 * from dd, and from any filesystem above them.
+	 *
+	 * That is not hypothetical.  The DMA path was moving one sector
+	 * for an nthis-block command (see the branch above), and no
+	 * caller could tell, because this line reported the full length
+	 * either way.
+	 *
+	 * p starts at the caller's buffer, advances by exactly what each
+	 * data phase transferred, and is rewound to pblk by every retry,
+	 * so p - a IS the bytes delivered.  With correct code it equals
+	 * i * Secsize; when it does not, the caller now finds out.
+	 */
+	return p - (uchar*)a;
 }
 
 /*
