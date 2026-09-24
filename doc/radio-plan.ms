@@ -1940,6 +1940,30 @@ for the same power spread wider.  Twenty-two kilohertz measured against
 Carson's 2(6 + 4.8) = 21.6.  The part is a usable narrowband analyser
 as well as a receiver.
 .PP
+AND WITH THE CALIBRATED RECEIVER POINTED AT THE BAND, NOTHING.
+.PP
+A max-hold of 902 to 928 put 927.200MHz seventeen dB over the median,
+which is the shape of a find, and the probe found bursts there: two to
+six milliseconds, one or two in a two-second window, peaking four to
+eight dB over the floor.  The ladder read RSSI valid throughout and
+carrier sense, preamble and sync all dark.
+.PP
+The control settles it.  The same measurement on 925.600, 1.6MHz away
+and chosen for being unremarkable, gives seven bursts over three
+windows against the target's seven, and nine dB over the floor against
+the target's eight.  927.200 is not distinguishable from a quiet
+channel, so its bursts are the threshold crossing noise \- which is what
+this driver's own NOISE rule says of that shape \- and the max-hold's
+\-87 was a rare excursion caught by fourteen passes rather than a
+transmitter.
+.PP
+That is a negative worth having now, which it would not have been
+yesterday.  The instrument that produced it has been shown, on the same
+afternoon, to detect a preamble and match a sync word on a signal
+somebody switched on: so "nothing there" is a statement about the band
+and not about the bench.  What the band wants next is the tinySA's
+antenna, which sees ten to twenty dB more than the click's.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
