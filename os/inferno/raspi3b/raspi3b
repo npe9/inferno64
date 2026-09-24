@@ -87,6 +87,7 @@ misc
 	randombcm
 	sdemmcbcm
 	sdhostbcm
+	sdhcibcm
 	rngbcm
 	pmbcm
 	pwmbcm

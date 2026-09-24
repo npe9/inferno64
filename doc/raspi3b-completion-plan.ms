@@ -9691,3 +9691,70 @@ minutes earlier.  Deliberately the local check and not a second remote
 one: a single compare of this 1.9MB kernel across the styx mount took
 most of ten minutes, and KI-STAGED has already proved the staged file
 against the host.
+.SH
+Wi-Fi on real silicon: what the board actually says
+.PP
+With the board reachable again, the SDIO probe was installed and read.
+Four findings, in the order they were established, each from a probe
+built to separate causes that had been sharing one message.
+.PP
+.B "The radio is already powered, and the earlier ambiguity is gone."
+.CW GET_GPIO_STATE
+(tag 0x00030041) answers for every expander line, and the values are
+coherent rather than a uniform unfilled buffer: 128 BT_ON 1, 129 WL_ON
+1, 130 PWR_LED_OFF 0, 131 GLOBAL_RESET 1.  WL_ON reads 1.  So the
+\fIsleeping radio and an absent radio look alike\fP caveat no longer
+applies \(em the chip has power and still answers nothing.
+.PP
+.B "This firmware has GET_GPIO_STATE but not SET_GPIO_STATE."
+.CW SET
+(tag 0x00038041) comes back with bit 31 of the tag response clear, which
+in this protocol means the firmware did not handle the tag \(em not that
+it handled it and refused.  A malformed request looks the same from
+outside, so two controls were needed.  First: the rest of mailbox.c \(em
+memory, MAC, board revision, serial, OTP, clocks, framebuffer \(em
+answers through the identical request path, and
+.CW mboxsetgpio
+is built field for field like
+.CW mboxsetclock ,
+which works.  Second, and decisive: writing line 130 back the value it
+already reads is refused in exactly the same way.  So it is the tag that
+is missing, not the line that is protected.  Firmware revision
+0x6a0eead5.
+.PP
+.B "The identification clock was out of spec, and that was not the cause."
+.CW sdhcictlrinit
+hardcoded divider 0x80 with a comment claiming it was slow enough from
+any plausible base clock.  The base clock, read from the controller's
+own capabilities, is 200MHz, so 0x80 \(em the 8-bit divided-clock form,
+dividing by 2N \(em was running identification at 781kHz against a
+400kHz ceiling.  Eight bits cannot express what is needed here; SDHCI
+3.0 keeps the top two bits of a 10-bit divider in Control1 bits 6-7.
+It now computes the divider from the base clock and reports it: 250,
+400000 Hz exactly.  A missing post-clock settling delay was added with
+it.
+.PP
+Nothing before CMD5 could ever have exposed this, which is why it
+survived: CMD0 carries no response and therefore cannot fail, so a
+passing CMD0 is not evidence that the bus works.  Say plainly what the
+fix did: it corrected a real out-of-spec clock and it did NOT change the
+outcome.  CMD5 fails identically before and after.
+.PP
+.B "CMD5 times out with the bus idle."
+The controller initialises, CMD0 is accepted, and CMD5 returns
+interrupt 0x18000 \(em Interr plus bit 16, command timeout \(em with
+status 0x1ff0001: card present, and every DAT line and CMD sitting
+high.  Pull-ups are doing their job and nothing is pulling them down.
+The controller drove the command and no device on those pins answered.
+.PP
+.B "So the next step is the firmware on the card, not more driver work."
+The BCM43430 wants its enable toggled to reset it into SDIO mode, and
+with no SET_GPIO_STATE there is no way to toggle it from here.  Every
+remaining driver-side theory \(em pin routing, clock, controller
+setup \(em is now checked or corrected, and the one thing that cannot
+be done at all is the one thing a non-responding radio most wants.  The
+boot partition is writable through
+.CW /n/dos ,
+so replacing start.elf and bootcode.bin with a firmware that carries the
+tag is a real option and should be tried before anything else.  Porting
+ether4330 remains pointless until a chip has answered CMD5.

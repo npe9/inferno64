@@ -621,10 +621,25 @@ mboxsetgpio(int pin, int on)
 	buf[5] = pin;
 	buf[6] = on != 0;
 	buf[7] = 0;			/* end tag */
-	if(mboxprop(buf) < 0)
+	if(mboxprop(buf) < 0){
+		print("mboxsetgpio: pin %d: the mailbox call itself failed\n", pin);
 		return -1;
-	if((buf[4] & 0x80000000) == 0)
+	}
+	if((buf[4] & 0x80000000) == 0){
+		/*
+		 * Say what the firmware said.
+		 *
+		 * "not set" on its own cannot be acted on: a firmware that
+		 * does not carry this tag, one that carries it and refuses
+		 * this line, and a malformed request all look the same from
+		 * outside.  buf[1] is the overall response code
+		 * (0x80000000 success, 0x80000001 partial) and buf[4] is
+		 * the tag's own, so printing both separates them.
+		 */
+		print("mboxsetgpio: pin %d rejected: response %#lux tag %#lux\n",
+			pin, (ulong)buf[1], (ulong)buf[4]);
 		return -1;
+	}
 	return 0;
 }
 
@@ -648,5 +663,35 @@ mboxgetgpio(int pin, int *on)
 	if((buf[4] & 0x80000000) == 0)
 		return -1;
 	*on = buf[6] != 0;
+	return 0;
+}
+
+/*
+ * Which firmware is this?
+ *
+ * Tag 0x00000001, the oldest tag in the property interface, and the
+ * right thing to quote when reporting that some later tag is missing:
+ * "the expander GPIO tags are not in this firmware" is only actionable
+ * with a version beside it.
+ */
+int
+mboxgetfwrev(u32 *rev)
+{
+	static u32 raw[8+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 7 * 4;
+	buf[1] = 0;
+	buf[2] = 0x00000001;		/* tag: get firmware revision */
+	buf[3] = 4;			/* value buffer: revision */
+	buf[4] = 0;			/* request length */
+	buf[5] = 0;
+	buf[6] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	*rev = buf[5];
 	return 0;
 }

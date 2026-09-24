@@ -112,6 +112,7 @@ enum {
 	Hispeedmhz	= 50,	/* what CMD6's high-speed function allows */
 	Fnhispeed	= 1,	/* group 1 function number for high speed */
 	Timeout		= 1000000,	/* bounded register polls */
+	Idhz		= 400000,	/* identification runs at 400kHz or less */
 };
 
 typedef struct Ctlr Ctlr;
@@ -149,22 +150,52 @@ awaitbit(u32 *reg, u32 bit, int want)
  * the controller reported an error or never answered; the response is
  * left in Resp0..3 for the caller.
  */
+/*
+ * Why the last command failed, recorded before the error bits are
+ * cleared.
+ *
+ * "CMD5 got no response" is two different findings wearing one code.
+ * The controller timing out with Interrupt still empty means nothing on
+ * the bus answered at all; the controller raising Interr means it saw a
+ * response and rejected it -- a CRC or a timeout it detected itself --
+ * and those point at different halves of the problem.  sdhcicmd clears
+ * Interrupt on its way out (write-1-to-clear), so the evidence has to
+ * be taken before that or it is gone.
+ */
+static u32 sdhcilastint, sdhcilaststat;
+static char *sdhcilastwhy = "";
+
 static int
 sdhcicmd(Ctlr *c, int cmd, u32 arg, u32 flags)
 {
 	u32 *r = c->r;
 
-	if(awaitbit(&r[Status], Cmdinhibit, 0) < 0)
+	if(awaitbit(&r[Status], Cmdinhibit, 0) < 0){
+		sdhcilastwhy = "the command line never went idle";
+		sdhcilastint = r[Interrupt];
+		sdhcilaststat = r[Status];
 		return -1;
+	}
 	if(flags & Cmdisdata)
-		if(awaitbit(&r[Status], Datinhibit, 0) < 0)
+		if(awaitbit(&r[Status], Datinhibit, 0) < 0){
+			sdhcilastwhy = "the data line never went idle";
+			sdhcilastint = r[Interrupt];
+			sdhcilaststat = r[Status];
 			return -1;
+		}
 	r[Interrupt] = r[Interrupt];		/* clear stale status (w1c) */
 	r[Arg1] = arg;
 	r[Cmdtm] = (cmd << 24) | flags;
-	if(awaitbit(&r[Interrupt], Cmdcomplete|Interr, 1) < 0)
+	if(awaitbit(&r[Interrupt], Cmdcomplete|Interr, 1) < 0){
+		sdhcilastwhy = "nothing answered: no completion and no error";
+		sdhcilastint = r[Interrupt];
+		sdhcilaststat = r[Status];
 		return -1;
+	}
 	if(r[Interrupt] & Interr){
+		sdhcilastwhy = "the controller rejected the response";
+		sdhcilastint = r[Interrupt];
+		sdhcilaststat = r[Status];
 		r[Interrupt] = r[Interrupt];
 		return -1;
 	}
@@ -180,6 +211,8 @@ static int
 sdhcictlrinit(Ctlr *c)
 {
 	u32 *r = c->r;
+	u32 basehz, fwhz;
+	int n;
 
 	r[Control1] = Srsthost;
 	if(awaitbit(&r[Control1], Srsthost, 0) < 0)
@@ -207,10 +240,53 @@ sdhcictlrinit(Ctlr *c)
 	 * field is already at its maximum -- but it is the reason
 	 * sdhcispeed() masks only bits 8-15 and leaves this alone.
 	 */
-	r[Control1] = (0x80 << 8) | (0xe << 16) | Clkintlen;
+	/*
+	 * The identification divider, computed from the base clock rather
+	 * than assumed.
+	 *
+	 * This was 0x80 with a comment saying it was "slow enough from any
+	 * plausible base clock on this part".  It is not.  0x80 is the
+	 * 8-bit divided-clock form, dividing by 2*N = 256, and the BCM2837
+	 * runs this controller from a 250MHz core clock: 977kHz, well over
+	 * the 400kHz ceiling identification has to observe.  A memory card
+	 * tolerated it, which is why it survived -- and CMD0 carries no
+	 * response, so nothing before CMD5 can fail and nothing before
+	 * CMD5 could have shown it.
+	 *
+	 * Eight bits cannot express the divider this needs: 250MHz down to
+	 * 400kHz is a divide of 625, so N is 313, past the 255 the field
+	 * holds.  SDHCI 3.0 keeps the top two bits of a 10-bit divider in
+	 * Control1 bits 6-7, and this controller is 3.0.
+	 *
+	 * If the base clock cannot be established, keep the old 0x80: a
+	 * wrong-but-working card path is better than refusing to start.
+	 */
+	basehz = 0;
+	if(((r[Capabilities] >> 8) & 0xff) != 0)
+		basehz = ((r[Capabilities] >> 8) & 0xff) * 1000000;
+	else if(mboxgetclock(Emmcclkid, &fwhz) == 0)
+		basehz = fwhz;
+	if(basehz == 0){
+		n = 0x80;
+		print("sdhci: no base clock; identification divider left at 0x80\n");
+	}else{
+		for(n = 1; n < 0x400; n++)
+			if(basehz <= 2*n*Idhz)
+				break;
+		print("sdhci: base clock %ud Hz, identification divider %d "
+			"(%ud Hz)\n", basehz, n, basehz/(2*n));
+	}
+	r[Control1] = ((n & 0xff) << 8) | (((n >> 8) & 3) << 6) |
+		(0xe << 16) | Clkintlen;
 	if(awaitbit(&r[Control1], Clkstable, 1) < 0)
 		return -1;
 	r[Control1] |= Clken;
+	/*
+	 * A card must see clock before it is spoken to: the SD spec asks
+	 * for at least 74 cycles, which at the identification rate is
+	 * under a millisecond.  There was no wait here at all.
+	 */
+	delay(2);
 
 	/*
 	 * Status is recorded but no interrupt is enabled: Irptmask lets
@@ -711,10 +787,26 @@ sdioinit(void)
 	for(i = 34; i <= 39; i++)
 		gpiofsel(i, Alt3);
 
-	if(sdhcictlrinit(c) < 0)
+	/*
+	 * Say which step failed.
+	 *
+	 * Five different failures below all returned -1 and the caller
+	 * reported every one of them as "CMD0/CMD5 (no I/O function
+	 * answered)".  A controller that never initialised, a CMD0 that
+	 * was not accepted, a CMD5 with no response, a card reporting
+	 * zero I/O functions and a card that never set its ready bit are
+	 * five different pieces of work, and the one code named the
+	 * wrong one: it named the card, when the controller is just as
+	 * likely.
+	 */
+	if(sdhcictlrinit(c) < 0){
+		print("sdio: controller init failed\n");
 		return -1;
-	if(sdhcicmd(c, 0, 0, Respnone) < 0)		/* GO_IDLE */
+	}
+	if(sdhcicmd(c, 0, 0, Respnone) < 0){		/* GO_IDLE */
+		print("sdio: CMD0 (GO_IDLE) not accepted\n");
 		return -1;
+	}
 
 	/*
 	 * CMD5 with a zero argument asks what the card is; the R4 response
@@ -723,20 +815,33 @@ sdioinit(void)
 	 * that window set waits for bit 31, the ready bit.  R4 has neither
 	 * a CRC nor a command index, so neither is checked.
 	 */
-	if(sdhcicmd(c, 5, 0, Resp48) < 0)
+	if(sdhcicmd(c, 5, 0, Resp48) < 0){
+		print("sdio: CMD5 failed -- %s (interrupt %#lux status %#lux)\n",
+			sdhcilastwhy, (ulong)sdhcilastint, (ulong)sdhcilaststat);
 		return -1;
+	}
 	ocr = r[Resp0];
-	if(((ocr >> 28) & 7) == 0)
-		return -1;				/* no I/O function here */
+	if(((ocr >> 28) & 7) == 0){
+		print("sdio: CMD5 answered r4 %#lux: zero I/O functions\n",
+			(ulong)ocr);
+		return -1;			/* no I/O function here */
+	}
+	print("sdio: CMD5 r4 %#lux: %ld function(s), window %#lux\n",
+		(ulong)ocr, (long)((ocr >> 28) & 7), (ulong)(ocr & 0x00ffffff));
 	for(i = 0; i < 1000; i++){
-		if(sdhcicmd(c, 5, ocr & 0x00ffffff, Resp48) < 0)
+		if(sdhcicmd(c, 5, ocr & 0x00ffffff, Resp48) < 0){
+			print("sdio: CMD5 with the voltage window failed\n");
 			return -1;
+		}
 		ocr = r[Resp0];
 		if(ocr & 0x80000000)
 			break;
 	}
-	if((ocr & 0x80000000) == 0)
+	if((ocr & 0x80000000) == 0){
+		print("sdio: card never set its ready bit (r4 %#lux)\n",
+			(ulong)ocr);
 		return -1;
+	}
 
 	if(sdhcicmd(c, 3, 0, Resp48|Cmdcrcchk|Cmdixchk) < 0)	/* RELATIVE_ADDR */
 		return -2;
@@ -862,6 +967,11 @@ sdhciverify(SDunit *u)
 	return 1;
 }
 
+/*
+ * Drive the card path on this controller?  Off: see sdhcionline().
+ */
+int sdhcicard = 0;
+
 static int
 sdhcionline(SDunit *u)
 {
@@ -871,8 +981,27 @@ sdhcionline(SDunit *u)
 	first = 0;
 	if(!c->inited){
 		c->inited = 1;
-		sdhcicardinit(c);	/* leaves c->sectors 0 if no card */
-		first = 1;
+		/*
+		 * NOT on a Pi 3B, where this controller has the Wi-Fi and
+		 * SDHOST has the card.
+		 *
+		 * sdhcicardinit()'s first act is to route GPIO 48-53 to
+		 * Alt3 unconditionally, which takes the card away from
+		 * SDHOST.  On this board that card is /dev/sdN0, SDDEV in
+		 * raspi3binit.b names it, /n/dos rides on it and
+		 * tools/jtag/kinstall.sh installs kernels through it -- so
+		 * stealing those pins costs the update path, and the
+		 * recovery is a card reader or JTAG.
+		 *
+		 * sdhcicard is 0 by default for that reason.  Set it with
+		 * "echo card 1 >/dev/sdH0/ctl" on a board that really does
+		 * keep its card on this controller; the SDIO path does not
+		 * need it and deliberately goes nowhere near those pins.
+		 */
+		if(sdhcicard){
+			sdhcicardinit(c);	/* leaves c->sectors 0 if no card */
+			first = 1;
+		}
 	}
 	if(c->sectors == 0)
 		return 0;		/* no media -- SDHOST may hold the pins */
@@ -1038,6 +1167,9 @@ SDifc sdhcibcmifc = {
  * Build with -DSDIOTEST.
  */
 #ifdef SDIOTEST
+enum { Wlon = 129 };		/* VideoCore gpio expander: 128 BT_ON, 129 WL_ON */
+extern int mboxsetgpio(int, int);
+
 void
 sdiocheck(void)
 {
@@ -1046,6 +1178,94 @@ sdiocheck(void)
 	int nfn, rev, i, v;
 
 	v = 0;
+
+	/*
+	 * Power the radio first.
+	 *
+	 * The BCM43430's enable is not a SoC pin.  It hangs off the
+	 * VideoCore GPIO expander the ARM cannot reach, line 129 (WL_ON;
+	 * 128 is BT_ON), and the only way to it is to ask the firmware --
+	 * mboxsetgpio() in mailbox.c.  A radio that was never powered
+	 * answers CMD5 exactly the way a radio that is not there does, so
+	 * probing without this cannot tell "no chip" from "chip asleep",
+	 * and that is the one distinction this probe exists to make.
+	 *
+	 * QEMU models no expander and no BCM43430, so this is a no-op
+	 * there and the failure to set it is reported rather than fatal.
+	 */
+	/*
+	 * Before asking why one line was refused, establish whether the
+	 * firmware carries these tags at all.
+	 *
+	 * The first attempt printed "response 0x80000000 tag 0x8": the
+	 * mailbox call itself succeeded and the TAG's response word came
+	 * back with bit 31 clear, which in this protocol means the
+	 * firmware did not handle that tag -- not that it handled it and
+	 * said no.  A request that is simply malformed looks the same
+	 * from outside, so that alone does not name a cause.
+	 *
+	 * The rest of mailbox.c is the control: memory, MAC, board
+	 * revision, serial, OTP, clocks and the framebuffer all answer
+	 * through the identical request path, and mboxsetgpio is built
+	 * field for field like mboxsetclock, which works.  So the request
+	 * shape is not in question and the remaining question is whether
+	 * 0x00030041/0x00038041 exist in THIS firmware.  Reading the
+	 * lines answers it: a GET that is also unhandled means the whole
+	 * expander family is missing and no amount of work on the SET
+	 * will help.
+	 */
+	{
+		extern int mboxgetgpio(int, int*);
+		extern int mboxgetfwrev(u32*);
+		u32 fw;
+		int st;
+
+		if(mboxgetfwrev(&fw) == 0)
+			print("sdio: firmware revision %#lux\n", (ulong)fw);
+		else
+			print("sdio: firmware revision unavailable\n");
+		for(i = 128; i <= 131; i++){
+			st = -1;
+			if(mboxgetgpio(i, &st) < 0)
+				print("sdio: gpio %d: GET unhandled\n", i);
+			else
+				print("sdio: gpio %d reads %d\n", i, st);
+		}
+	}
+
+	/*
+	 * Is SET missing, or is WL_ON refused?
+	 *
+	 * GET (0x00030041) answers for every line and the values are
+	 * coherent -- 128 BT_ON 1, 129 WL_ON 1, 130 PWR_LED_OFF 0, 131
+	 * GLOBAL_RESET 1 -- so the expander tag family is present and the
+	 * request path is right.  Only SET (0x00038041) comes back with
+	 * bit 31 clear.  Two explanations survive that: the firmware does
+	 * not carry the SET tag at all, or it carries it and declines the
+	 * lines it manages itself, of which the Wi-Fi enable would be one.
+	 *
+	 * Writing a DIFFERENT line separates them.  130 is PWR_LED_OFF,
+	 * and writing it back the value it already reads changes nothing
+	 * on the board whichever way the call goes.
+	 */
+	{
+		extern int mboxsetgpio(int, int);
+		int gv;
+
+		gv = 0;
+		if(mboxgetgpio(130, &gv) == 0){
+			if(mboxsetgpio(130, gv) < 0)
+				print("sdio: SET refused for 130 too: the tag is missing\n");
+			else
+				print("sdio: SET works for 130: WL_ON is refused specifically\n");
+		}
+	}
+
+	if(mboxsetgpio(Wlon, 1) < 0)
+		print("sdio: WL_ON (firmware gpio %d) not set: "
+			"a sleeping radio and an absent one look alike\n", Wlon);
+	else
+		delay(150);		/* the chip needs a moment after power */
 
 	nfn = sdioinit();
 	if(nfn < 0){
