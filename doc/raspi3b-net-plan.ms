@@ -946,6 +946,75 @@ run, and five connections are waiting to be served.
 .PP
 That combination is the whole remaining question, and these are ruled
 out as its cause: a recycled listening descriptor; a stopped mount
-multiplexer; sys->export failing; a blocked reply write; conversation
-exhaustion in devip (no growth and no EXHAUSTED line, ever); and the
-listen queue, which stays 0/0/128 throughout.
+multiplexer; sys->export failing; a blocked reply write; and
+conversation exhaustion in devip, which never grew and never printed
+EXHAUSTED.
+.NH 2
+Both states are real, and the second one is the fault
+.PP
+.B "Correction."
+The section above says the listen queue stays empty and that the server
+is slow rather than stopped.  Measured with
+.CW "netstat -anL" ,
+which is the invocation that prints it, that is wrong, and both halves
+of it are wrong in the same direction.
+.PP
+There are two states, not one:
+.IP "ISLOWP"
+the patient probe comes back in 0.02s to 45.91s, the listen queue is
+.CW 0/0/128 ,
+and the server recovers by itself.  A queue with a long tail.
+.IP "ISTOPPEDP"
+no answer in sixty seconds, CPU frozen to the hundredth of a second, the
+stall persisting through minutes of probing, and the listen queue at
+.CW 3/0/128 .
+Connecting one more client took it to
+.CW 4/0/128 .
+.B "accept is not consuming."
+.PP
+The second is the fault.  The first is a queue and may well be nothing
+but load.
+.NH 2
+The scheduler has handed the VM to nobody
+.PP
+In the STOPPED state, from the scheduler's own state rather than a
+stack:
+.P1
+progwatch: 5 dis processes, 0 idle, runhd nil
+progwatch:    1 release Sleep      3 release Sh
+progwatch:    4 release Dial       5 release Export
+progwatch: 5285 release Styxlisten
+.P2
+Every Dis process is in state
+.I release
+\(em each has given up the VM to make a kernel call \(em
+.CW runhd
+is nil, and
+.CW idle
+is 0, meaning the scheduler believes some thread holds the VM.  From a
+sample of the same live process: no host thread is running
+.CW vmachine
+at all.  Three threads are parked in
+.CW iyield
+on idlevmq, one is parked in
+.CW acquire
+on its semaphore, and the listener \(em which had been in accept \(em is
+now among them.  It never calls accept again, which is why the queue
+grows.
+.PP
+So the VM was handed to somebody who never woke, and every process is
+waiting for a VM that nobody is running.
+.PP
+.B "vmwatch cannot see this,"
+because it fires only when
+.CW "isched.vmq != nil" ,
+and the waiter has already been taken off that queue and signalled.  Its
+silence through every stall was never evidence of anything \(em the same
+mistake as mntwatch's, made twice in one session.  progwatch now prints
+.CW holder ,
+.CW vmq ,
+.CW idlevmq ,
+.CW creating
+and the handoff counter, because which of those is wrong cannot be
+inferred from outside and inferring it is what produced the last four
+wrong answers.
