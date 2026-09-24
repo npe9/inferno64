@@ -1361,6 +1361,46 @@ Part 15 levels, and read it on the tinySA \- an antenna that does not
 radiate does not receive either, and that measures the same thing by
 reciprocity.
 .PP
+THE ANTENNA IS CONNECTED, AND THE TWO CLAIMS ABOVE THAT IT WAS NOT ARE
+WITHDRAWN.
+.PP
+The part fitted is a Pulse W3312: a 75 by 15mm flexible PCB antenna for
+863 to 928MHz, 45 per cent efficient, 0.8dBi, on 100mm of 1.13mm coax
+with a U.FL connector, mounted with 3M467 tape.  Its return loss
+resonates near 880MHz at \-16.7dB and does not climb back through the
+\-8dB specification until about 935, so at 930.824 it is around \-8.5dB
+\- two thirds of a dB of mismatch.  Nothing there costs forty dB, and
+the release liner still on the tape costs a fraction of one.
+.PP
+And the receiver hears through it.  A max-hold across 822 to 958MHz at
+the 25kHz bandwidth every other measurement here used is not flat: 874
+reads \-92 and 878 reads \-93, the whole 846 to 890 stretch sits ten to
+fifteen dB above the 894 to 930 region's \-105 to \-107, and that
+elevated stretch is where the cellular allocations are.  A disconnected
+input cannot make fifteen dB of structure that lines up with a band
+plan.  Probed, 874 shows 82 bursts at 18 per cent duty and 878 shows 44
+bursts of 2.9 to 6.3ms at 7 per cent, the latter passing this driver's
+own NOISE rule rather than being flagged by it.
+.PP
+So the comparison that matters can finally be made properly, the
+earlier one at 881 having been noise against noise.  At 878MHz the
+tinySA reads \-92.5 and this receiver \-100, seven and a half dB apart.
+At 930.824 the tinySA reads \-72 and this receiver \-102, thirty apart.
+The chain is about twenty-two dB worse at 930 than at 878.
+.PP
+Which is a band fit and not a fault.  The antenna's specification stops
+at 928 and the ccRF click carries its own matching network and balun for
+the same ISM band; the paging allocation begins where both of them end.
+Twenty-two dB of rolloff between 878 and 930 is more than the antenna's
+return loss explains by itself, so the click's matching is the larger
+half of it, and neither is something a driver can fix.
+.PP
+What that costs, stated plainly: the paging band is at the edge of this
+hardware's reach.  A \-72dBm signal arriving twenty-two dB down is
+\-94 at the demodulator against a \-112 floor, which is eighteen dB and
+ought to be workable \- so the next question is why 930.824 reads \-102
+rather than \-94, and that one is still open.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
