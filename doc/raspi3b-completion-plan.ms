@@ -9983,3 +9983,39 @@ is the beginning of the ether4330 port rather than more probing: set up
 the backplane window through function 1 and read the chip's own ID back.
 That is the first CMD53 whose answer is worth anything on this part, and
 it is what a driver needs first anyway.
+.SH
+The transport is finished: CMD53 works and the chip names itself
+.PP
+The CMD53 question is settled, and the test that settles it is the one
+that was missing all along.  Every earlier attempt used function 1
+offset 0x400, which is plain memory on the QEMU function model and the
+backplane window on silicon, so a failure there said nothing about the
+transport.  The right test reads the SAME four bytes at the SAME address
+by both routes, with CMD52 \(em already proven \(em as the control.
+.PP
+The window is set through function 1's SBADDRLOW/MID/HIGH at 0x1000a-c;
+the low fifteen bits of the backplane address are then the offset inside
+it.  0x18000000 is the SI enumeration space and its first word is the
+chipid register.
+.P1
+sdio: chipid 0x1541a9a6 -> chip 0xa9a6 rev 1, 5 cores
+sdio: CMD53-OK the same four bytes read back identically through CMD53
+.P2
+.PP
+0xa9a6 is 43430 in hex.  That was written down as a prediction before
+the run, so it is a real test of which chip is on the other end and not
+a liveness check that would have accepted anything: a BCM43430A1,
+revision 1, five cores.  And CMD53 returns exactly what CMD52 returns.
+.PP
+So the earlier data CRC error was entirely an artifact of reading an
+address that means nothing on this part.  The transport \(em CMD52,
+CMD53, and the backplane window \(em is done.
+.PP
+.B "Read the kernel log over the network."
+The console screen session vanished mid-session, and none of this needed
+it: devcons already serves /dev/kmesg, so the whole boot log comes back
+through the board.cmd poller with
+.CW "cat /dev/kmesg" .
+The installer no longer depends on the console either \(em it asks the
+board for /dev/osversion \(em so a kernel was built, installed, booted
+and read with the console entirely absent.

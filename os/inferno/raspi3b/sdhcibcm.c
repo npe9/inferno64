@@ -1612,6 +1612,76 @@ sdiocheck(void)
 	i = sdiocmd52(0, 0x11, 0, 0);
 	print("sdio: function 0 block size now %d\n", v | (i << 8));
 
+	/*
+	 * Read the chip's OWN ID through the backplane window -- first
+	 * with CMD52 alone, then the same four bytes with one CMD53.
+	 *
+	 * This is the test that was missing.  Every CMD53 attempt so far
+	 * used function 1 offset 0x400, which is plain memory on the
+	 * QEMU function model and the backplane window on real silicon,
+	 * so a failure there said nothing about the transport.  Here both
+	 * transports read the SAME four bytes at the SAME address, and
+	 * CMD52 is already known to work -- so CMD52 is the control and
+	 * any disagreement is CMD53's.
+	 *
+	 * The window is set through function 1's SBADDRLOW/MID/HIGH
+	 * (0x1000a-c); the low fifteen bits of the backplane address are
+	 * then the offset within the window.  0x18000000 is the SI
+	 * enumeration space, whose first word is the chipid register.
+	 *
+	 * A BCM43430 should say 0xa9a6 in the low sixteen bits -- 43430
+	 * in hex.  That is a falsifiable prediction about which chip is
+	 * on the other end, not just a liveness check.
+	 */
+	{
+		uchar id52[4], id53[4];
+		int bad;
+
+		sdiocmd52(1, 0x1000a, 1, (0x18000000 >> 8) & 0x80);
+		sdiocmd52(1, 0x1000b, 1, (0x18000000 >> 16) & 0xff);
+		sdiocmd52(1, 0x1000c, 1, (0x18000000 >> 24) & 0xff);
+
+		bad = 0;
+		for(i = 0; i < 4; i++){
+			v = sdiocmd52(1, i, 0, 0);
+			if(v < 0){
+				bad = 1;
+				break;
+			}
+			id52[i] = v;
+		}
+		if(bad)
+			print("SDIO-BACKPLANE-FAIL CMD52 read of the chipid "
+				"register\n");
+		else
+			/*
+			 * chipid register: id in bits 0-15, revision in
+			 * 16-19, package in 20-23, core count in 24-27.
+			 * The first version of this printed id52[3]&0xf
+			 * as the revision, which is bits 24-27 -- the
+			 * core count -- and reported "rev 5" for a part
+			 * that is revision 1.
+			 */
+			v = id52[0] | id52[1] << 8 | id52[2] << 16 | id52[3] << 24;
+			print("sdio: chipid %#lux -> chip %#ux rev %d, "
+				"%d cores\n", (ulong)v, v & 0xffff,
+				(v >> 16) & 0xf, (v >> 24) & 0xf);
+
+		memset(id53, 0, sizeof id53);
+		if(sdiocmd53(1, 0, 0, 0, 1, id53, 4) != 4)
+			print("SDIO-CMD53-BACKPLANE-FAIL -- %s "
+				"(interrupt %#lux status %#lux)\n", sdio53why,
+				(ulong)sdio53int, (ulong)sdio53stat);
+		else if(!bad && memcmp(id52, id53, 4) == 0)
+			print("sdio: CMD53-OK the same four bytes read back "
+				"identically through CMD53\n");
+		else
+			print("sdio: CMD53-WRONG read %2.2ux %2.2ux %2.2ux %2.2ux, "
+				"CMD52 said %2.2ux %2.2ux %2.2ux %2.2ux\n",
+				id53[0], id53[1], id53[2], id53[3],
+				id52[0], id52[1], id52[2], id52[3]);
+	}
+
 	for(i = 0; i < sizeof buf; i++)
 		buf[i] = 0xa0 + i;
 	memset(back, 0, sizeof back);
