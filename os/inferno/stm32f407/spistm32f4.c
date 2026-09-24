@@ -162,6 +162,21 @@ spiunlock(Spidev*)
  * The click's GPIO3, on PE14.  It is already an input with an EXTI
  * rising edge on it for the packet interrupt; this just reads it.
  */
+/*
+ * LD1 on PE12, which after boot says only that the kernel started and
+ * goes on saying it.  The radio flips it when a packet arrives, so a
+ * board left receiving on a bench says whether anything is coming in
+ * without anybody watching its console.  LD2 keeps the heartbeat
+ * idlehands() gives it.
+ */
+static void
+spiled(Spidev*, int on)
+{
+	extern void ledpin(int, int);
+
+	ledpin(12, on);
+}
+
 static int
 spigpio(Spidev*)
 {
@@ -194,6 +209,7 @@ static Spidev spidev = {
 	.unlock	= spiunlock,
 	.gpio	= spigpio,
 	.irq	= spiirq,
+	.led		= spiled,
 };
 
 /*

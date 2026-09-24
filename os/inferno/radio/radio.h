@@ -150,6 +150,13 @@ struct Spidev
 	 * board has no interrupt to mask.
 	 */
 	void	(*irq)(Spidev*, int);
+	/*
+	 * A lamp, if the board has one to spare.  Status on a console
+	 * is status somebody has to be looking at a console to see,
+	 * and a receiver is most often left running while nobody is.
+	 * A chip driver flips this when something arrives.
+	 */
+	void	(*led)(Spidev*, int);
 };
 
 /*

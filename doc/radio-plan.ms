@@ -1852,6 +1852,55 @@ which is the right shape, and the board wedged before it produced a
 figure.  The tool is there and the hard part \- a transmitter that is
 certainly transmitting \- is proven.
 .PP
+A TRANSMITTER ON THE BENCH THAT SOMEBODY CAN SWITCH ON.
+.PP
+The tinySA's generator reaches 915MHz and this receiver hears it.  With
+the antenna moved to the generator connector, "mode output", a zero-span
+sweep at the frequency wanted and "output on":
+.DS
+.CW "  generator off   floor -111  peak -106"
+.CW "  generator on    floor  -93  peak  -92"
+.CW "  generator off   floor -111  peak -106"
+.CW "  generator on    floor  -93  peak  -92"
+.DE
+Eighteen dB, twice, on command.  That is the positive control this work
+has been without from its first measurement: every negative in it was
+taken while nothing was known to be transmitting, and a receiver that
+hears nothing when nothing is sent cannot be told from a deaf one.
+.PP
+Two traps in getting there, both worth keeping.  "mode low output" is
+the low-band generator and clamps \- asked for 915MHz it sat at 10, which
+the screen showed and the serial port did not.  And bare "mode", "freq",
+"level" and "output" print their usage rather than their state, so
+nothing can be read back; the sweep setting is the generator's
+frequency and
+.CW frequencies
+does report it.
+.PP
+What this unlocks is the whole ladder over the air rather than on noise.
+.CW "txpin.py link"
+sets the generator to FM at \(+-6kHz with a modulating tone, which to a
+2-FSK demodulator is a preamble at a known rate, and watches PQT,
+PKT_SYNC_RXTX and carrier sense with it on and with it off.  That has
+not produced a positive yet \- the first run predates knowing about
+"mode output" \- and it is now the obvious next thing to run.
+.PP
+And the board grew a lamp.  A clicker 2 has LD1 on PE12 and LD2 on
+PE15; LD2 is the scheduler's heartbeat from idlehands() and LD1 has
+said only "the kernel started" since boot.  Spidev gained a
+.CW led
+member beside
+.CW gpio
+and
+.CW irq ,
+the stm32f407 wires it to LD1, and cc1120.c flips it on every packet
+received.  A flip rather than a flash, because nothing here has a timer
+to put a lamp out again: under traffic it flickers, and after a quiet
+spell it sits where the last packet left it, so "has anything arrived
+since I last looked" has an answer on the board itself.
+.CW "led on|off|blink"
+is there to prove it is wired before anything it says is believed.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP

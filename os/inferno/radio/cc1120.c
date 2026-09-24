@@ -735,6 +735,21 @@ cc1120interrupt(Radio *r)
 	memmove(rr->lastrx, b->wp - n, rr->nlastrx);
 
 	rr->nrecv++;
+	/*
+	 * Flip the lamp, rather than light it.
+	 *
+	 * Lighting it would need something to put it out again, and
+	 * this driver has no timer to do that with.  A toggle needs
+	 * nothing: under traffic it flickers, and after a quiet spell
+	 * it simply sits at whatever the last packet left, so the
+	 * question "has anything arrived since I last looked" has an
+	 * answer on the board itself.  A receiver is most often left
+	 * running while nobody is watching its console.
+	 */
+	if(s->led != nil){
+		rr->ledon = !rr->ledon;
+		s->led(s, rr->ledon);
+	}
 	qpass(rr->rq, b);
 }
 
@@ -2259,6 +2274,34 @@ cc1120ctl(Radio *r, char *buf, int n)
 		s->unlock(s);
 		for(i = 0; i < nstep; i++)
 			print("hold %lud %d\n", lo + (ulong)i*step, hold[i]);
+		return n;
+	}
+	if(strcmp(f[0], "led") == 0 && nf == 2){
+		/*
+		 * The board's lamp, for finding out that it is wired
+		 * before trusting what it says about the air.
+		 *
+		 *	led on		light it
+		 *	led off		put it out
+		 *	led blink	six flips, which a steady pin
+		 *			cannot fake
+		 */
+		if(s->led == nil)
+			error("radio: this board has no lamp to spare");
+		if(strcmp(f[1], "on") == 0){
+			rr->ledon = 1;
+			s->led(s, 1);
+		}else if(strcmp(f[1], "off") == 0){
+			rr->ledon = 0;
+			s->led(s, 0);
+		}else if(strcmp(f[1], "blink") == 0){
+			for(i = 0; i < 6; i++){
+				rr->ledon = !rr->ledon;
+				s->led(s, rr->ledon);
+				delay(200);
+			}
+		}else
+			error(Ebadctl);
 		return n;
 	}
 	if(strcmp(f[0], "lastrx") == 0){
