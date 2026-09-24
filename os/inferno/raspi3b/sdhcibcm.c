@@ -1449,57 +1449,46 @@ sdiocheck(void)
 	}
 
 	/*
-	 * PRIME THE CONTROLLER ON THE CARD PINS FIRST.
+	 * FLIP THE CARD PINS TO ALT3 AND BACK BEFORE BRINGING SDIO UP.
 	 *
 	 * This is the difference between a radio that enumerates and one
-	 * that is silent, and it was found by accident -- a probe written
-	 * to ask whether the CONTROLLER worked changed the thing it was
-	 * measuring.  Without it CMD5 times out on every attempt; with it
-	 * CMD5 answers r4 0x20ffff00 -- two I/O functions -- and CMD52
-	 * reads CCCR revision 0x32.  Reproduced across boots.
+	 * that is silent.  Without it CMD5 times out on every attempt;
+	 * with it CMD5 answers r4 0x20ffff00 -- two I/O functions -- and
+	 * CMD52 reads CCCR revision 0x32.  Reproduced across boots.
 	 *
-	 * Four cheaper explanations were tested on the Wi-Fi pins alone
-	 * and every one of them failed to reproduce it: an extra host
-	 * reset with a 150ms wait; 150ms of RUNNING bus clock before the
-	 * first command; calling sdhcictlrinit() twice; and a full
-	 * bring-up followed by a command that fails and the CMD-line
-	 * reset after it.  What is left, by elimination, is that the
-	 * controller must be brought up while it is connected to the CARD
-	 * pins, once, before it will talk on its own.
+	 * It is two register writes.  It does not initialise the
+	 * controller on the card's pins, does not drive the card's bus
+	 * and does not issue a command: an earlier version did all three,
+	 * and removing them one at a time left this.
 	 *
-	 * WHY IS NOT KNOWN.  That is worth writing down plainly rather
-	 * than dressing up in a plausible mechanism: nothing here
-	 * explains it, and the next person should treat it as an observed
-	 * fact with a reproduction, not as understood behaviour.  It also
-	 * means this must not ship in a real bring-up path as it stands
-	 * -- a Wi-Fi driver has no business touching the card's pins --
-	 * which is why it lives in the probe, behind -DSDIOTEST.
+	 * Five explanations were tested on the Wi-Fi pins alone and every
+	 * one failed to reproduce it: an extra host reset with a 150ms
+	 * wait; 150ms of RUNNING bus clock before the first command;
+	 * calling sdhcictlrinit() twice; a full bring-up followed by a
+	 * command that fails and the CMD-line reset after it; and the
+	 * controller init on the card pins, which turned out not to be
+	 * needed either.
 	 *
-	 * It runs before anything has mounted the card, and the pins go
+	 * WHY IS NOT KNOWN.  Written down as an observed fact with a
+	 * reproduction, not as understood behaviour -- pins 48-53 and pin
+	 * 43 share GPFSEL4, but gpiofsel does a read-modify-write and
+	 * leaves 43 alone, so that is not it.  The next person should
+	 * treat this as a lead, not an explanation.
+	 *
+	 * It runs before anything has mounted the card and the pins go
 	 * straight back to alt0; SD-OK and FAT-OK are unaffected on every
 	 * boot that has run it.
 	 *
-	 * The near miss is the reason this comment is long.  The evidence
-	 * before it pointed hard at "the radio cannot be reset without
-	 * SET_GPIO_STATE, so replace the firmware" -- which is the one
-	 * change on this board that JTAG cannot undo, and it was wrong.
+	 * The near miss is why this comment is long.  Before it was
+	 * found, the evidence pointed hard at "the radio cannot be reset
+	 * without SET_GPIO_STATE, so replace the firmware" -- the one
+	 * change on this board that JTAG cannot undo -- and that was
+	 * wrong.
 	 */
-	{
-		int ok, echoed;
-
-		if(sdhcictlr.r == nil)
-			sdhcictlr.r = (u32*)SDHCI;
-		for(i = 48; i <= 53; i++)
-			gpiofsel(i, Alt3);
-		ok = sdhcictlrinit(&sdhcictlr);
-		echoed = -1;
-		if(ok == 0 && sdhcicmd(&sdhcictlr, 8, 0x1aa, Resp48) == 0)
-			echoed = sdhcictlr.r[Resp0] & 0xfff;
-		for(i = 48; i <= 53; i++)
-			gpiofsel(i, Alt0);		/* give the card back */
-		print("sdio: primed on the card pins (init %d, CMD8 echo %#ux)\n",
-			ok, echoed);
-	}
+	for(i = 48; i <= 53; i++)
+		gpiofsel(i, Alt3);
+	for(i = 48; i <= 53; i++)
+		gpiofsel(i, Alt0);		/* straight back to SDHOST */
 
 	nfn = sdioinit();
 	if(nfn < 0){

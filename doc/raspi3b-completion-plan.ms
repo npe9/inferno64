@@ -9913,3 +9913,18 @@ on those pins.
 CMD53, the block transfer, is now the failing step; CMD52 works.  That
 is the transport ether4330 needs, and it is a bounded piece of work on
 a chip that is finally answering.
+.PP
+.B "Narrowed: it is two register writes."
+The controller init on the card pins turned out not to be needed either.
+Flipping GPIO 48-53 to alt3 and straight back to alt0, with no
+controller bring-up, no command and nothing driving the card's bus, is
+enough on its own \(em the radio enumerates exactly as before.  So the
+count of eliminated explanations is five, not four, and the surviving
+fix touches nothing.
+.PP
+One lead ruled out while writing it down: pins 48-53 and pin 43
+(GPCLK2, the radio's low-power oscillator) share GPFSEL4, so a careless
+write could have disturbed the LPO.  It does not \(em
+.CW gpiofsel
+does a read-modify-write and leaves 43 alone \(em so that is not the
+mechanism.  Still unknown.
