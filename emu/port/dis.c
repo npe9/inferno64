@@ -1178,9 +1178,12 @@ progwatch(void *a)
 		char	mod[28];
 	} snap[64];
 	Prog *p;
+	Proc *q;
 	Modlink *ml;
 	char *mod;
-	int n, i, idle, runhd, more;
+	char holdertxt[64], vmqtxt[128], idletxt[128];
+	ulong handoffs;
+	int n, i, idle, creating, runhd, more;
 
 	USED(a);
 	for(;;){
@@ -1197,7 +1200,21 @@ progwatch(void *a)
 		lock(&isched.l);
 		n = 0;
 		idle = isched.idle;
+		creating = isched.creating;
+		handoffs = isched.handoffs;
 		runhd = isched.runhd != nil;
+		if(isched.holder != nil)
+			snprint(holdertxt, sizeof(holdertxt), "%s pid %d",
+				isched.holder->text, isched.holder->pid);
+		else
+			snprint(holdertxt, sizeof(holdertxt), "NOBODY");
+		vmqtxt[0] = idletxt[0] = 0;
+		for(q = isched.vmq; q != nil; q = q->qnext)
+			snprint(vmqtxt+strlen(vmqtxt), sizeof(vmqtxt)-strlen(vmqtxt),
+				"%s%d", vmqtxt[0]? " ": "", q->pid);
+		for(q = isched.idlevmq; q != nil; q = q->qnext)
+			snprint(idletxt+strlen(idletxt), sizeof(idletxt)-strlen(idletxt),
+				"%s%d", idletxt[0]? " ": "", q->pid);
 		for(p = isched.head; p != nil && n < nelem(snap); p = p->next){
 			ml = p->R.M;
 			mod = "?";
@@ -1212,8 +1229,22 @@ progwatch(void *a)
 		more = p != nil;
 		unlock(&isched.l);
 
-		print("progwatch: %d dis processes%s, %d idle, runhd %s\n",
-			n, more? "+": "", idle, runhd? "set": "nil");
+		print("progwatch: %d dis processes%s, idle %d, creating %d, "
+			"runhd %s, handoffs %lud\n",
+			n, more? "+": "", idle, creating,
+			runhd? "set": "nil", handoffs);
+		/*
+		 * Who holds the VM, and who is queued for it.
+		 *
+		 * The stall shows "idle 0, runhd nil" with every Dis process
+		 * in state release and NO host thread running vmachine: the
+		 * scheduler believes the VM is held and nobody holds it.
+		 * Which of holder, vmq and idlevmq is wrong cannot be
+		 * inferred from the outside, and inferring it is what produced
+		 * the last four wrong answers, so print all three.
+		 */
+		print("progwatch:   holder %s, vmq [%s], idlevmq [%s]\n",
+			holdertxt, vmqtxt, idletxt);
 		for(i = 0; i < n; i++)
 			print("progwatch:  %8d %-8s %s%s\n",
 				snap[i].pid,
