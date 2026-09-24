@@ -1821,6 +1821,37 @@ sits.  The thirty dB deficit measured at 930.8 was on a real signal and
 stands, but the two instruments are not far apart on noise, and any
 future comparison should say which of those it is measuring.
 .PP
+THE ONE EXPERIMENT THAT NEEDS NOBODY ELSE.
+.PP
+Everything above waits on somebody else's transmitter.  This does not:
+a transmitter on the bench, an analyser on the bench, and a number the
+driver computes that has only ever been checked by reading the register
+back.  2-FSK puts two tones on the air 2*dev apart, so keying a carrier
+and sweeping it while the deviation changes checks the arithmetic
+against the air rather than against itself.
+.PP
+.CW "txpin.py spectrum"
+does it, inside the same 902-928 guard and the same carrier-off-in-a-
+finally as the pin test.  It works: at 915MHz the tinySA sees the
+carrier at \-42.8dBm against a \-112 floor, seventy dB of it, so there
+is no doubt the part transmits or that the antenna radiates.
+.PP
+The deviation register is right too, and the way it first looked wrong
+is worth keeping.  Reading DEVIATION_M alone shows 0x47 at every
+setting, which reads as a verb that does nothing; the mantissa lives
+there and the exponent in MODCFG_DEV_E, and the two together give 4989,
+9979, 19958, 39916 and 79833Hz for 5, 10, 20, 40 and 80kHz asked \-
+every one inside 0.3 per cent.  A register read that only covers half a
+field is worse than none.
+.PP
+What is not finished is the tone separation itself.  The first cut
+measured occupied bandwidth above the floor and gave 156, 0, 389, 480
+and 353kHz for a monotonic sweep of deviation, which is not a
+measurement of anything; the second looks for two peaks 2*dev apart,
+which is the right shape, and the board wedged before it produced a
+figure.  The tool is there and the hard part \- a transmitter that is
+certainly transmitting \- is proven.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
