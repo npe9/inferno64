@@ -9566,3 +9566,128 @@ That is the first thing in this whole phase that QEMU cannot tell us.
 .IP 3.
 Only then port ether4330 and find the firmware.  Both are pointless
 until a chip has answered.
+.SH
+What step 1 and 2 actually cost, and the two bugs they uncovered
+.PP
+Steps 1 and 2 above were tried.  The
+.CW sdhcicard
+guard worked: the card survived, /dev/sdN0 read, /n/dos mounted, and the
+kernel reported
+.CW SDIO-NONE
+\(em bring-up stopped at CMD0/CMD5 with WL_ON unset, which is
+inconclusive by design, because an unpowered radio and an absent one
+look alike.
+.PP
+What was not expected is that the board became unreachable.  That kernel
+booted completely \(em card, FAT, USB ethernet, DHCP, DNS, an
+interactive shell \(em and answered nothing.  Recovery was JTAG.  Two
+independent defects were behind it, and neither is about Wi-Fi.
+.PP
+.B "The remote command poller failed silently."
+Every giving-up path in
+.CW remotecmd
+returned nil: no kupdate.txt, dial refused, mount refused, board.cmd
+unreadable, a short read.  The caller cannot tell nil from \fIboard.cmd
+has not changed\fP, so a poller failing every fifteen seconds looked
+exactly like one with nothing to do.  The console has been deaf on this
+desk for months \(em that is why the poller exists \(em so there was no
+second opinion to consult.  It now prints
+.CW RCMD-ON
+with the address it polls,
+.CW RCMD-NOADDR
+naming which step of reading kupdate.txt failed,
+.CW RCMD-DOWN
+on the first failure and every twentieth after it, and
+.CW RCMD-UP
+on recovery.
+.PP
+.B "remotecmd took its private namespace before the network existed."
+.CW remotecmd
+calls
+.CW "sys->pctl(Sys->FORKNS, nil)"
+and dials through that snapshot for the life of the boot.  Taken before
+ethercheck's
+.CW "sys->bind(\"#I\", \"/net\", ...)" ,
+the snapshot has no /net and no later bind can put one there, so every
+poll fails with \fIfile does not exist\fP until reboot.  The bind's own
+comment already warned about that error string, for a different reason.
+.PP
+The race has always been there and usually won.  A kernel that did a
+little extra work early in
+.CW main()
+\(em the SDIO probe \(em was enough to make it lose.  The new
+instrument is what caught it: with the poller reporting, one hardcopy
+showed
+.CW RCMD-ON
+at line 177 and
+.CW ETHERBIND-OK
+at line 179.  Read by line number, never by presence: that scrollback
+holds several boots and any string worth grepping for is already in it.
+.PP
+The fix is a
+.CW netdone
+flag set when an interface has been bound and has an address, which
+remotecmd waits for alongside
+.CW kudone
+before FORKNS, bounded at 180 seconds so a board with no ethernet still
+reaches the code that says why it is unreachable.  Verified by the same
+line-ordering check: ETHERBIND-OK 188, ETHER-DHCP-OK 189, RCMD-ON 192.
+.PP
+.B "kinstall.sh now refuses to install a kernel it has not proved."
+It boots the candidate over JTAG into RAM \(em the card untouched \(em
+requires that build's own stamp, and then requires the board to answer
+a command through the poller.  Only then does it stage, back up and
+write.  It also leaves board.cmd harmless on every exit: it used to
+leave
+.CW "echo reboot > /dev/sysctl"
+there, and remotecmd's memory of the last command does not survive the
+reboot it just performed, so the board came up, saw a command it had no
+record of running, and rebooted again, every fifteen seconds.
+.PP
+Be clear about what that gate does and does not buy.  It catches a
+kernel that is broken.  It does not catch a kernel that \fIraces\fP: a
+JTAG boot into RAM and a boot from the card have different timing, and
+this very race passed the pre-flight and then failed the post-install
+check.  Failing late is better than not failing, and the card still has
+kernel8.bak, but the pre-flight is not a proof of drivability from the
+card.
+.PP
+.B "The install steps are guarded on the board, with sh's \f(CWand\fP."
+.CW "cp a b; cmp a b"
+runs the cmp whether or not the cp worked, and every step of the
+installer used to be that shape: the board ran both unconditionally and
+the host decided afterwards by reading text out of board.out.  A missing
+marker and a failed step were the same observation, and the next
+destructive step went out anyway.
+.PP
+.IR sh-std (1)
+has
+.CW and ,
+which evaluates each command until one returns false, and both commands
+involved report properly:
+.IR cmp (1)
+raises
+.CW fail:differ
+on a difference and
+.CW fail:open
+if it cannot read a side, and
+.IR cp (1)
+counts every warning and raises
+.CW fail:error
+at the end.  So each step is now a chain ending in its own marker, and
+the marker is reached only if every link was true.
+.PP
+Measured on the board, both directions, because a guard that has only
+ever been reasoned about is not a guard: with two files that differ the
+chain stopped and the marker did not print, and the script carried on to
+its next command; with two that match the marker printed.  The end token
+is echoed OUTSIDE the chain, so it prints either way and a failed step
+is seen in seconds instead of at the timeout.
+.PP
+Before the overwrite the board re-checks, itself, that kernel8.bak still
+matches the kernel8.img it is about to replace \(em a verified way back
+must exist at that moment, not merely have existed when the host checked
+minutes earlier.  Deliberately the local check and not a second remote
+one: a single compare of this 1.9MB kernel across the styx mount took
+most of ten minutes, and KI-STAGED has already proved the staged file
+against the host.
