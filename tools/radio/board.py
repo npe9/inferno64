@@ -70,6 +70,18 @@ class Console:
         self.sess = session()
         self.scratch = scratch
         self.fd = None
+        # How many markers in a row have gone unanswered.
+        #
+        # A wedged board still echoes what is typed at it -- the echo
+        # comes from the uart interrupt handler and the shell is not
+        # involved -- so "the characters come back" does not mean
+        # anything is running them.  Without a count of that, a tool
+        # loops: zwatch.py typed markers into a dead shell for several
+        # minutes, each one echoed, none run, and reported nothing.
+        # Three in a row is enough; the board answers the first one in
+        # under a second when it is alive.
+        self.dead = 0
+
         # What the port has said so far, for the no-screen path.
         #
         # text() has to mean the same thing both ways.  Through screen
@@ -283,14 +295,55 @@ class Console:
         i = t.rfind("cat >")
         return i >= 0 and ";" not in t[i:]
 
+    def alive(self):
+        """False once the board has stopped running what is typed at it.
+
+        Checked before typing rather than after, so a caller in a loop
+        stops at the first opportunity instead of at the last.
+        """
+        return self.dead < 3
+
+    def stream(self, file="/dev/radio0/ctl"):
+        """One held-open cat for many commands, instead of one each.
+
+        ctl() opens a cat, writes, and ends it, which is right for a
+        handful of lines and wrong for a loop.  Every call forks twice
+        on a board with five processes and 163840 bytes, and nothing
+        gives the heap back fast enough: a monitor running one probe
+        every two seconds killed the shell in a few minutes, after
+        which it typed markers into a dead console for several more.
+
+        The echo is the marker here and no separate one is needed.
+        This console prints back what is typed at it, so the reply to a
+        command is whatever follows the last copy of that command in
+        the window -- which survives the window scrolling, where a byte
+        offset taken once does not.
+        """
+        return Stream(self, file)
+
     def mark(self, mark, wait=8.0):
-        """Type a marker and wait for the board to echo it back."""
+        """Type a marker and wait for the board to run it, not echo it.
+
+        Two copies, not one: the first is the uart interrupt handler
+        echoing what was typed, which happens whether or not anything is
+        alive behind it, and the second is the shell running the echo.
+        Counting one would call a wedged board healthy.
+        """
+        if not self.alive():
+            return False
         self.send("echo " + mark)
         end = time.time() + wait
         while time.time() < end:
             time.sleep(0.5)
             if self.text().count(mark) >= 2:
+                self.dead = 0
                 return True
+        self.dead += 1
+        if self.dead == 3:
+            sys.stderr.write(
+                "board: three markers echoed and none run -- the shell is "
+                "gone; reset the board (^R^R, or the button if the console "
+                "has stopped echoing too)\n")
         return False
 
     def ask(self, line, match, wait=6.0):
@@ -318,3 +371,63 @@ class Console:
 
 if __name__ == "__main__":
     main()
+
+
+class Stream:
+    """A ctl file held open across many commands.  See Console.stream()."""
+
+    def __init__(self, c, file):
+        self.c = c
+        self.file = file
+        Console.seq += 1
+        mark = "S%d.%d" % (int(time.time()) % 100000, Console.seq)
+        self.silent = 0
+        self.ok = c.mark(mark)
+        if self.ok:
+            c.send("cat >" + file)
+            time.sleep(1.5)
+
+    def send(self, line, wait=25.0):
+        """Write one line and give back what the board said about it."""
+        if not self.ok or not self.c.alive():
+            return None
+        if self.silent >= 3:
+            self.ok = False
+            sys.stderr.write("board: three commands into a held-open cat "
+                             "with no reply; stopping\n")
+            return None
+        self.c.send(line)
+        end = time.time() + wait
+        last = ""
+        while time.time() < end:
+            time.sleep(1.0)
+            t = self.c.text()
+            i = t.rfind(line)
+            after = t[i + len(line):] if i >= 0 else ""
+            # A write the part refused ends the cat, and everything
+            # after would go to the shell instead; stop rather than
+            # type commands at it.
+            if "write error" in after:
+                self.ok = False
+                return after
+            # Stripped, because the echo's own trailing newlines are
+            # non-empty and perfectly stable: the first cut of this
+            # returned "\n\n" a second after sending, before the
+            # command had run, and every caller read that as an empty
+            # reply.  Waiting for text that is not just whitespace
+            # waits for the board instead of for the echo.
+            if after.strip() and after == last:
+                self.silent = 0
+                return after
+            last = after
+        if not last.strip():
+            self.silent += 1
+            return None
+        return last
+
+    def close(self):
+        if self.ok:
+            self.c.eof()
+            time.sleep(1.0)
+            self.ok = False
+
