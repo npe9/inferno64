@@ -47,7 +47,7 @@ def main():
             print("%6.1fs  the board stopped running commands; stopping"
                   % (time.time() - t0))
             break
-        out = st.send("probe %d 2000" % hz, wait=60) or ""
+        out = st.send("probe %d 2000" % hz, wait=60, expect=True) or ""
         line = None
         for l in out.split("\n"):
             s = l.strip()

@@ -1642,6 +1642,30 @@ armed on carrier sense so the reading is taken while a burst is in the
 air, and pointed at 0x0b rather than 0x06, because the preamble is the
 first rung a working receiver would light.
 .PP
+WHY THE BOARD KEEPS NEEDING ITS BUTTON, WHICH IS THE HOST'S FAULT.
+.PP
+It ends at
+.CW "allocb: no memory 4788/40960" ,
+hard enough that ^R^R cannot reach it and only the reset button can.
+The block pool is not leaked by the driver: nothing in
+.I devradio.c
+allocates one, its ctl write goes straight to the driver and its reads
+use malloc.  What fills it is the console queue, and what fills that is
+this host.
+.PP
+Once the shell dies, nothing drains kbdq, and every character typed
+after that allocates a block nobody will free.  So a tool that keeps
+typing at a dead board converts a dead shell into a dead kernel, and
+the difference between them is a walk across the room.
+.PP
+And a held-open cat cannot tell that the shell has died.  The echo
+comes from the uart interrupt handler and keeps coming back long after
+anything is running the commands; a marker cannot be used, because
+inside a cat it would be written to the ctl file rather than run.  What
+can be used is the command itself: probe, ghist, gread and gtrig always
+print something, so an empty reply from one of those is a shell that is
+gone.  Three in a row now stops the session and says so.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP

@@ -84,7 +84,7 @@ def main():
     # Prove the channel is busy before sweeping over it, and print the
     # proof, so a page of "static" can be read as a result rather than
     # as an empty channel.
-    pr = st.send("probe %d 2000" % hz, wait=60) or ""
+    pr = st.send("probe %d 2000" % hz, wait=60, expect=True) or ""
     for l in pr.split("\n"):
         if l.strip().startswith("probe %d" % hz) and "floor" in l:
             print("channel now: %s" % l.strip())
@@ -102,7 +102,7 @@ def main():
             print("the board stopped running commands; stopping")
             break
         st.send("reg 0x%.2x 0x%.2x" % (reg, v), wait=40)
-        out = st.send("ghist 2000 %s" % SYNCPIN, wait=60) or ""
+        out = st.send("ghist 2000 %s" % SYNCPIN, wait=60, expect=True) or ""
         bins = [l.strip() for l in out.split("\n") if re.match(r"^\s+\d+: ", l)]
         if bins:
             hits.append((v, bins))

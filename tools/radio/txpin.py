@@ -41,7 +41,7 @@ PINS = (("0x06", "PKT_SYNC_RXTX"), ("0x07", "CRC_OK"),
 def ladder(st, tag):
     print(tag)
     for sel, name in PINS:
-        out = st.send("gread 200 %s" % sel, wait=40) or ""
+        out = st.send("gread 200 %s" % sel, wait=40, expect=True) or ""
         m = re.search(r"high (\d+) pct (\d+)", out)
         print("   %-6s %-16s %s" % (sel, name,
               "%s%% high" % m.group(2) if m else out.strip()[:60]))

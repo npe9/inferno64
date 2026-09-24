@@ -387,14 +387,31 @@ class Stream:
             c.send("cat >" + file)
             time.sleep(1.5)
 
-    def send(self, line, wait=25.0):
-        """Write one line and give back what the board said about it."""
+    def send(self, line, wait=25.0, expect=False):
+        """Write one line and give back what the board said about it.
+
+        expect says this command always prints something, so an empty
+        reply from it means the shell is not running what is typed.
+        That case cannot be seen any other way from inside a held-open
+        cat: the echo comes from the uart interrupt handler and keeps
+        coming back long after the shell is gone, and a marker cannot
+        be used because inside a cat it would be written to the ctl
+        file rather than run.
+
+        It matters more than a stalled tool.  Nothing drains the
+        console queue once the shell dies, so every character typed
+        after that allocates a block nobody frees, and the board ends
+        at "allocb: no memory 4788/40960" -- hard enough that ^R^R
+        cannot reach it and the reset button is the only way back.
+        The tool typing into a corpse is what exhausts it.
+        """
         if not self.ok or not self.c.alive():
             return None
         if self.silent >= 3:
             self.ok = False
-            sys.stderr.write("board: three commands into a held-open cat "
-                             "with no reply; stopping\n")
+            sys.stderr.write("board: three commands in a row echoed but "
+                             "not answered -- the shell is gone; stopping "
+                             "before the console queue fills\n")
             return None
         self.c.send(line)
         end = time.time() + wait
@@ -427,8 +444,12 @@ class Stream:
         if not seen:
             self.silent += 1
             return None
-        self.silent = 0
-        return last if last is not None else ""
+        reply = last if last is not None else ""
+        if expect and not reply.strip():
+            self.silent += 1
+        else:
+            self.silent = 0
+        return reply
 
     def close(self):
         if self.ok:
