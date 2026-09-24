@@ -1279,3 +1279,47 @@ This document's rule 1 says repeat before reporting, and that was
 obeyed: three readings, 3.5% apart, reported.  It was not enough.  The
 rule wanted is: report the SPREAD, and if the spread of a single arm
 overlaps the difference being claimed, there is no result yet.
+.NH 2
+What the board's throughput actually is, and how to measure it
+.PP
+.B "The number."
+1.86MiB over styx from the host, board's own clock, twenty-two reads
+across two mounts:
+.P1
+steady        5.2 s     ~370 KB/s     2.8 s per MB
+day's range   3.9-5.2 s  370-500 KB/s
+at the start of this work            ~30 s per MB
+.P2
+About eleven times faster than this work began, from two fixed bugs: a
+flushed Styx request answered twice, and macOS App Nap suspending the
+whole emu.
+.PP
+.B "Three claims about the shape of it, all wrong, in order."
+.IP 1.
+.I "A decay within a mount."
+Ten reads came back 5.22 to 17.25 seconds and looked like a 3.3x ramp.
+They were SORTED by the script that printed them.  Never read a spread
+as a trend without the order.
+.IP 2.
+.I "A warm-up, first five reads slow."
+The next run, ordered, went 15.68 14.13 8.01 7.15 12.20 and then flat at
+5.1 \(em so "discard the first five" became the rule.
+.IP 3.
+.I "Per-mount warm-up."
+Falsified immediately: a second run on a NEW mount is flat from read
+one, first-five mean 5.43s against last-five 5.24s.  The slow opening
+was a transient on the host, not a property of mounting, and both of the
+rules above were wrong.
+.PP
+.B "The protocol that survives."
+Ten or more reads, order preserved, printed individually and not
+summarised; then a second run on a fresh mount to see whether anything
+in the first was a transient.  Three reads is not a measurement here:
+every three-read sample taken in a day of this landed somewhere in the
+noise and disagreed with the next one.
+.PP
+.B "And a band that is still unexplained."
+The same kernel measured 3.9s steady in the afternoon and 5.2s in the
+evening.  Thirty per cent, no attributable cause, and it is why the 1.4x
+MCACHE question was never answerable: the effect sought was smaller than
+the drift between one hour and the next.
