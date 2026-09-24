@@ -1794,6 +1794,33 @@ protocol this part can demodulate, close enough and often enough to
 catch \- and the one in the house is a Z-Wave device somebody can
 operate on purpose.
 .PP
+AND THE OTHER INSTRUMENT AGREES THE CHANNEL IS EMPTY.
+.PP
+The receiver took no packets on 908.42 in twelve minutes, which is only
+worth anything if something was transmitting.  A tinySA sweep of the
+same channel in the same minutes, 3kHz bins, fourteen passes:
+.DS
+.CW "  907.8-909.0MHz    908.5697  -102.4dBm  seen 1/14"
+.CW "  919.4-920.6MHz    919.8249   -94.9dBm  seen 1/14"
+.CW "                    920.3007  -101.4dBm  seen 1/14"
+.CW "                    920.2633  -103.4dBm  seen 1/14"
+.DE
+against a \-111.9 floor on both.  The one hit near the Z-Wave channel
+is 150kHz off it, three kilohertz wide and one sweep in fourteen; the
+control band has more in it than the target does.
+.PP
+So nothing is transmitting on 908.42, the receiver's zero is correct
+reporting rather than deafness, and the two instruments agree.  That is
+the measurement this work has wanted from the beginning and could not
+make: an independent witness that the channel is empty, so a negative
+means the air and not the bench.
+.PP
+Worth noting against the antenna section above: over 1.2MHz with 3kHz
+bins the tinySA's floor is \-111.9, which is where this receiver's
+sits.  The thirty dB deficit measured at 930.8 was on a real signal and
+stands, but the two instruments are not far apart on noise, and any
+future comparison should say which of those it is measuring.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
