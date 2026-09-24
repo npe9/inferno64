@@ -113,11 +113,32 @@ struct Exwriting
 	struct {
 		int	used;
 		int	pid;
+		Proc*	p;		/* to interrupt it if it never finishes */
+		int	killed;		/* already given up on */
 		int	type;		/* R-message type */
 		char	dev;		/* devtab dc: 'I' socket, '|' pipe */
 		ulong	since;
 	} w[32];
 }exwriting;
+
+/*
+ * How long a reply may take to go out before the far end is declared
+ * gone.
+ *
+ * The write has no timeout of its own: against a client that asked for
+ * something and then stopped reading -- a board that rebooted, a test
+ * that disconnects without waiting -- it blocks until the host kernel
+ * gives up on the connection, which can be minutes.  Meanwhile it holds
+ * a worker, and when the worker caps are full it is the connection's
+ * READER that is blocked, so that connection is finished.
+ *
+ * Two minutes is deliberately generous.  A slow client is not a gone
+ * client, and the board pulling a kernel over its 10Mb ethernet is the
+ * slowest legitimate reader here by a wide margin: it reads
+ * continuously, so no single reply of a few kilobytes waits anything
+ * like this long.  Anything past two minutes is not slow, it is absent.
+ */
+enum { Exwritemax = 120*1000 };
 
 static int
 exwritestart(int type, int dc)
@@ -129,6 +150,8 @@ exwritestart(int type, int dc)
 		if(!exwriting.w[i].used){
 			exwriting.w[i].used = 1;
 			exwriting.w[i].pid = up->pid;
+			exwriting.w[i].p = up;
+			exwriting.w[i].killed = 0;
 			exwriting.w[i].type = type;
 			exwriting.w[i].dev = dc;
 			exwriting.w[i].since = osmillisec();
@@ -147,6 +170,48 @@ exwriteend(int i)
 	lock(&exwriting.l);
 	exwriting.w[i].used = 0;
 	unlock(&exwriting.l);
+}
+
+/*
+ * Give up on a reply that is never going to be delivered.
+ *
+ * swiproc is what exshutdown already uses to pull a worker out of a
+ * blocked operation, and exworker's error path was made to release the
+ * concurrency slots and the Export reference however the call ends, so
+ * a worker killed here unwinds the same way as one killed at shutdown.
+ * The connection then tears down, which is the right answer: the client
+ * stopped reading a long time ago.
+ */
+static void
+exwritewatch(void *a)
+{
+	int i;
+	ulong now;
+	Proc *p;
+
+	USED(a);
+	for(;;){
+		osmillisleep(5000);
+		now = osmillisec();
+		lock(&exwriting.l);
+		for(i = 0; i < nelem(exwriting.w); i++){
+			if(!exwriting.w[i].used || exwriting.w[i].killed)
+				continue;
+			if(now - exwriting.w[i].since < Exwritemax)
+				continue;
+			p = exwriting.w[i].p;
+			exwriting.w[i].killed = 1;
+			print("exportfs: pid %d has been writing R%d to %s for "
+				"%ldms; giving up on that connection\n",
+				exwriting.w[i].pid, exwriting.w[i].type,
+				exwriting.w[i].dev == '|'? "the pipe": "a socket",
+				now - exwriting.w[i].since);
+			unlock(&exwriting.l);
+			swiproc(p, 0);
+			lock(&exwriting.l);
+		}
+		unlock(&exwriting.l);
+	}
 }
 
 /* called by progwatch: report writes that have been going for a while */
@@ -300,6 +365,7 @@ exportinit(void)
 	fcalls[Tstat] = Exstat;
 	fcalls[Twstat] = Exwstat;
 	unlock(&exq.l);
+	kproc("exwritewatch", exwritewatch, nil, 0);
 }
 
 static int

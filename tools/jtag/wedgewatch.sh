@@ -47,6 +47,15 @@ while [ $n -lt 400 ]; do
 		echo "VERDICT: the server process is GONE"
 		exit 1
 	fi
+	#
+	# Sample NOW, while it is stalled.
+	#
+	# The stall lasts tens of seconds and costs no CPU at all, so the
+	# question is which kernel call every process is parked in -- and
+	# that is only answerable while it is still parked.  Samples taken
+	# after the fact have twice produced confident wrong answers here.
+	#
+	sample $P 3 -f /tmp/wedge-stall.sample >/dev/null 2>&1 &
 	c0=`cpuof`
 	pc=`ps -o %cpu= -p $P | tr -d ' '`
 	sleep 5
