@@ -1018,3 +1018,83 @@ mistake as mntwatch's, made twice in one session.  progwatch now prints
 and the handoff counter, because which of those is wrong cannot be
 inferred from outside and inferring it is what produced the last four
 wrong answers.
+.NH 2
+It was App Nap.  macOS was suspending the emulator
+.PP
+.CW emu
+links Cocoa and creates an
+.CW NSApplication
+even when it is serving Styx from a terminal with no window on screen.
+To macOS that is an app doing nothing visible in the background, and App
+Nap suspends the whole task.
+.PP
+.B "The tell, which was in every sample from the beginning."
+Watchdog kprocs whose only job is a three-second
+.CW nanosleep
+had not fired for three and a half minutes.  Nothing inside a process
+can stop an independent timer.  Only the OS declining to schedule the
+process can.  Every stack in every sample was simply where each thread
+happened to be when the process was frozen, which is why they never
+agreed on a culprit and why four different subsystems each looked guilty
+in turn.
+.PP
+.B "What it looks like from outside,"
+and why it was mistaken for six different bugs: connections complete
+their handshake in the kernel and queue on the listen socket while the
+application never accepts, so
+.CW "netstat -anL"
+climbs 1/0/128, 2/0/128, 3/0/128 \(em and 4/0/128 the moment another
+client is added; a Styx handshake goes unanswered for a minute or more;
+CPU time is frozen; SIGTERM is ignored, because the handler never runs;
+and then it recovers completely, with no explanation.
+.PP
+.B "Two rival explanations, both killed by measurement."
+.IP 1.
+.I "The machine idle-sleeping."
+It did not.
+.CW kern.sleeptime
+and
+.CW kern.waketime
+are from the previous afternoon, the total sleeps since boot is four,
+and
+.CW PreventUserIdleSystemSleep
+was asserted continuously across the whole window.
+.IP 2.
+.I "A Dis scheduler deadlock."
+It is not: progwatch is a kproc that touches nothing the scheduler owns,
+and it stopped too.  The scheduler state that looked so damning \(em
+.CW "idle 0, runhd nil" ,
+every process in
+.I release ,
+the holder asleep in the idle
+.CW Sleep
+\(em is just the last state before the freeze, printed by the last scan
+that ran.
+.PP
+.B "The fix"
+is one call in
+.CW main-cocoa.m :
+.P1
+[[NSProcessInfo processInfo] beginActivityWithOptions:
+    NSActivityUserInitiatedAllowingIdleSystemSleep
+    reason:@"Inferno is an operating system; ..."];
+.P2
+AllowingIdleSystemSleep deliberately: that says "do not nap me", not
+"keep the machine awake".  An emulator has no business holding
+somebody's laptop out of sleep.
+.PP
+.B Measured.
+Eleven runs of
+.CW tools/jtag/wedgewatch.sh
+against the previous binary failed, at 11, 21, 45, 65, 69, 71, 73, 82,
+92, 112 and 115 abrupt disconnects.  The first run with the change
+survived 400 and kept answering, with an empty listen queue and six
+times the CPU time \(em a process that was running rather than
+suspended.
+.PP
+.CW "taskpolicy -B"
+on the live process is NOT the fix and was not evidence for the
+diagnosis either: applied every two seconds it still froze at 82.  A
+single application of it appeared to drain the accept queue, but that is
+indistinguishable from any other command running at that moment, and it
+was nearly written down as proof.
