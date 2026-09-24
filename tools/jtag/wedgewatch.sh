@@ -72,6 +72,20 @@ while [ $n -lt 400 ]; do
 	else
 		echo "VERDICT: STOPPED -- no answer in 60s either"
 	fi
+	#
+	# The listen queue, with the invocation that actually prints it.
+	#
+	# "netstat -L" alone lists pfkey and routing sockets on macOS and
+	# says nothing about tcp, so a grep for the port finds nothing --
+	# which was read as the listening socket having disappeared, and
+	# very nearly written down as a finding.  "netstat -anL" prints
+	# qlen/incqlen/maxqlen per listener, which is the number that
+	# decides this: connections queued while the listener sits in
+	# accept is a fault BELOW emu; an empty queue means emu has taken
+	# them and the fault is above.
+	#
+	echo "--- listen queue (qlen/incqlen/maxqlen):"
+	netstat -anL | grep '\.6666'
 	echo "--- sockets:"
 	netstat -an | grep '\.6666 ' | grep -v TIME_WAIT | head -6
 	exit 0
