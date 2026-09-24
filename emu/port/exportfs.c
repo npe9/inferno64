@@ -97,6 +97,83 @@ struct
 
 static int	exinline;	/* times the reader served a request itself */
 
+/*
+ * Writes that have STARTED and not finished.
+ *
+ * The timing below reports a slow write only once it returns, so at the
+ * moment the server is wedged -- which is exactly when the state is
+ * wanted -- the log is silent about the write that is causing it.  This
+ * records the write before it begins and clears it after, so progwatch
+ * can name what is stuck while it is still stuck, and say whether it is
+ * a socket (one client's problem) or the pipe (every client's).
+ */
+struct Exwriting
+{
+	Lock	l;
+	struct {
+		int	used;
+		int	pid;
+		int	type;		/* R-message type */
+		char	dev;		/* devtab dc: 'I' socket, '|' pipe */
+		ulong	since;
+	} w[32];
+}exwriting;
+
+static int
+exwritestart(int type, int dc)
+{
+	int i;
+
+	lock(&exwriting.l);
+	for(i = 0; i < nelem(exwriting.w); i++)
+		if(!exwriting.w[i].used){
+			exwriting.w[i].used = 1;
+			exwriting.w[i].pid = up->pid;
+			exwriting.w[i].type = type;
+			exwriting.w[i].dev = dc;
+			exwriting.w[i].since = osmillisec();
+			unlock(&exwriting.l);
+			return i;
+		}
+	unlock(&exwriting.l);
+	return -1;
+}
+
+static void
+exwriteend(int i)
+{
+	if(i < 0)
+		return;
+	lock(&exwriting.l);
+	exwriting.w[i].used = 0;
+	unlock(&exwriting.l);
+}
+
+/* called by progwatch: report writes that have been going for a while */
+void
+exwritingreport(void)
+{
+	int i, n;
+	ulong now;
+
+	now = osmillisec();
+	n = 0;
+	lock(&exwriting.l);
+	for(i = 0; i < nelem(exwriting.w); i++)
+		if(exwriting.w[i].used && now - exwriting.w[i].since >= 2000){
+			print("exportfs: pid %d has been writing R%d to %s "
+				"for %ldms -- the far end is not reading\n",
+				exwriting.w[i].pid, exwriting.w[i].type,
+				exwriting.w[i].dev == '|'? "the PIPE (this stops "
+					"every client)": "a socket",
+				now - exwriting.w[i].since);
+			n++;
+		}
+	unlock(&exwriting.l);
+	if(n == 0)
+		print("exportfs: no write has been stuck for 2s\n");
+}
+
 static void	exshutdown(Export*);
 static int	exflushed(Export*, Exq*);
 static void	exdispatch(Exq*);
@@ -821,7 +898,7 @@ exreply(Exq *q, char *who)
 {
 	Export *fs;
 	Fcall *r;
-	int n, dt;
+	int n, dt, slot;
 	ulong t0;
 
 	fs = q->export;
@@ -852,10 +929,12 @@ exreply(Exq *q, char *who)
 	 * for; this one says it.
 	 */
 	t0 = osmillisec();
+	slot = exwritestart(r->type, devtab[fs->io->type]->dc);
 	if(!waserror()){
 		devtab[fs->io->type]->write(fs->io, q->buf, n, 0);
 		poperror();
 	}
+	exwriteend(slot);
 	dt = osmillisec() - t0;
 	if(dt >= 2000)
 		print("exportfs: %s %d: writing R%d took %dms "

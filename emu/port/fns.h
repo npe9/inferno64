@@ -73,6 +73,7 @@ void		errorf(char*, ...);
 void		excinit(void);
 void		exhausted(char*);
 int		export(int, char*, int);
+void		exwritingreport(void);
 Chan*	fdtochan(Fgrp*, int, int, int, int);
 int		findmount(Chan**, Mhead**, int, int, Qid);
 void		freeb(Block*);

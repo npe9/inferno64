@@ -1221,6 +1221,13 @@ progwatch(void *a)
 					progwatchstate[snap[i].state]: "??",
 				snap[i].mod,
 				snap[i].killing? " (kill pending)": "");
+		/*
+		 * And what exportfs is stuck writing, while it is still
+		 * stuck.  exreply can only report a slow write once the
+		 * write returns, so at the moment the server is wedged --
+		 * the moment the state is wanted -- it says nothing.
+		 */
+		exwritingreport();
 	}
 }
 
