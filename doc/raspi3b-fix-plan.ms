@@ -371,3 +371,57 @@ exactly the App Nap case.  Re-test with
 .CW emu-cpu
 BEFORE chasing anything: the 1150-2000 figure may be this and nothing
 else.
+.NH 1
+Closing out: what is done and what is genuinely left
+.PP
+.B "Done, with a control that failed before and passed after."
+The server wedge (App Nap;
+.CW emu-cpu
+links no Cocoa; 2000 abrupt disconnects clean).  mv on the board
+(dossrv rejected every rename and mv silently copied instead; proved
+with FAT start-cluster numbers).  "stat buffer too small" at 64K msize
+(exportfs stored 65551 in a ushort and got 15).  The zero-length packet
+after every transmitted frame.  The console flood from devmnt.  The kfs
+test area.  The racy holder field.  The installer, which could never
+have worked.
+.PP
+.B "Done, but weaker than that, and the commits say so."
+.IP \(bu
+.I "DMA with multi-block."
+The code was moving one sector for an nthis-block command, proved with
+a trace print \(em "DMA READ PATH nthis 64 len 512" against "sdhblc 64"
+\(em and is now consistent with SDHBLC and with the PIO path.  But NO
+user-visible corruption could be reproduced on this card, by four
+different tests, so the recorded symptom stays unexplained and the write
+path stays untested.  See 4b7abca76.
+.IP \(bu
+.I "Throughput."
+2.8 s per MB, about eleven times better than this work began.  The
+read-ahead and Maxconnproc questions are both unanswerable on this rig:
+its variance between hours is larger than the effects, and that is
+measured, not guessed.
+.PP
+.B "Left, and for whoever owns those branches."
+.IP 1.
+.I "multicore, dying after 1150-2000 abrupt disconnects."
+Do NOT chase it before re-testing with a no-Cocoa emu.  That branch's
+emu is a Cocoa binary and it was load-tested headless, which is exactly
+the App Nap case that produced an identical signature here: connections
+accepted, first message unread, CPU frozen, SIGTERM ignored, recovery
+with no explanation.  Build
+.CW "CONF=emu-cpu"
+there and re-run before assuming there is a bug at all.
+.IP 2.
+.I "Why devsd masks a short DMA read."
+Falling out of the DMA work and not chased: a 64-block command whose
+DMA moved 512 bytes still delivered 32768 correct bytes to the caller.
+Something above the driver is re-reading or re-filling.  Worth knowing,
+because it means the SD layer's error reporting cannot presently be
+trusted to surface a partial transfer.
+.IP 3.
+.I "The measurement rig."
+Anything phrased "is X faster" needs ten or more readings per arm, arms
+interleaved, each preceded by a reboot, distributions reported.  About
+an hour of board time per question.  Deterministic questions \(em right
+bytes or wrong bytes, survives or faults \(em cost minutes and are where
+every fix in this document came from.
