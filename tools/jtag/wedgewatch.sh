@@ -84,6 +84,18 @@ while [ $n -lt 400 ]; do
 	# accept is a fault BELOW emu; an empty queue means emu has taken
 	# them and the fault is above.
 	#
+	#
+	# emu's open descriptors.
+	#
+	# emu takes a connection off the kernel's queue when /net/tcp/N/listen
+	# is OPENED, so by the time styxlisten's Limbo side sees it the host
+	# accept has already happened and the listen queue is empty.  A
+	# connection that is accepted but unserved therefore shows up as an
+	# open descriptor in emu with no exportfs behind it, and that is only
+	# visible here.
+	#
+	echo "--- emu descriptors:"
+	lsof -nP -p $P 2>/dev/null | awk '$4 ~ /^[0-9]+[urw]?$/ {print "   fd",$4,$5,$9}'
 	echo "--- listen queue (qlen/incqlen/maxqlen):"
 	netstat -anL | grep '\.6666'
 	echo "--- sockets:"
