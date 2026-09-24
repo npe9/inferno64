@@ -9758,3 +9758,51 @@ boot partition is writable through
 so replacing start.elf and bootcode.bin with a firmware that carries the
 tag is a real option and should be tried before anything else.  Porting
 ether4330 remains pointless until a chip has answered CMD5.
+.PP
+.B "The SET finding, retested, survives."
+The conclusion above rests on tag 0x00038041 coming back unhandled, and
+the control for it \(em writing line 130 \(em shares a possible cause
+with the thing it was meant to rule out: a malformed request.  The
+working call on these lines,
+.CW mboxgetgpio ,
+sends a value-buffer size of 8 with a request length of 4, while
+.CW mboxsetgpio
+sends 8 and 8, so the two differ in exactly the field meaning \fIhow
+many bytes of the value buffer are request data\fP \(em and
+.CW mboxsetclock ,
+the comparison originally used, cannot arbitrate it because its two
+numbers are equal.  Retested on the board with request lengths 0, 4 and
+8: all three unhandled, each returning the tag response exactly as
+written (0x0, 0x4, 0x8), bit 31 never set.  The firmware has no
+SET_GPIO_STATE.  This mattered because replacing the boot firmware is
+the one change here that kinstall cannot pre-flight and kernel8.bak
+does not protect.
+.PP
+.B "The installer asks the board what it is running."
+The post-install check read the console: find the reboot's own RCMD line
+and require the banner below it.  A reference point was needed because
+the pre-flight JTAG boot of the same build has already printed that
+banner into that buffer.  But
+.CW "screen -X hardcopy -h"
+returns about two hundred lines and a full boot is most of that, so the
+reference point scrolls out before the banner arrives, and a board that
+booted perfectly is reported as having failed.  An instrument whose
+window is smaller than the thing it measures is not fixed by waiting
+longer: waiting only guarantees the evidence is gone.
+.PP
+devcons serves /dev/osversion as
+.CW "2000 <kerndate>" ,
+so the board states its own running build, over the poller, inside a
+command tagged with a token no earlier run can have produced.  That
+answer cannot come from scrollback and does not depend on a buffer size.
+.PP
+It needed one more correction to work: /dev/osversion carries no
+trailing newline, so
+.CW "cat /dev/osversion; echo KI-UP"
+prints
+.CW 2000\ 1790273432KI-UP
+on one line and an anchored search for the marker finds nothing \(em
+reporting a healthy board, running exactly the build just written, as
+JTAG-only.  The same merge would have swallowed the end token that
+follows.  The marker goes first and a newline is emitted after the
+version.

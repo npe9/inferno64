@@ -307,9 +307,33 @@ echo "kinstall: kernel8.img on the card matches the host's"
 # for the reboot command, which only this run could have produced, and
 # require the banner below it.
 #
-nonce=KI-REBOOT-`date +%s`
+#
+# ASK THE BOARD WHAT IT IS RUNNING.
+#
+# This used to read the console: find the RCMD line for the reboot, and
+# require "conf raspi3b (<stamp>)" below it.  The reference point was
+# needed because a pre-flight JTAG boot of the SAME build has already
+# printed that exact line into that exact buffer, so a bare grep would
+# match the pre-flight and report a card boot that never happened.
+#
+# But "screen -X hardcopy -h" returns about two hundred lines and a full
+# boot on this board is most of that, so the reference point scrolls out
+# of the buffer before the banner arrives.  Then nothing matches, and a
+# board that booted perfectly is reported as "did not boot from the
+# card" -- which happened, on the run that added this comment.  An
+# instrument whose window is smaller than the thing it measures cannot
+# be fixed by widening the timeout; waiting longer only guarantees the
+# evidence is gone.
+#
+# devcons serves /dev/osversion as "2000 <kerndate>", so the board can
+# state its own running build, over the poller, inside a command tagged
+# with a token no earlier run can have produced.  That answer cannot
+# come from scrollback, cannot come from the pre-flight, and does not
+# depend on a buffer size at all.  It also proves drivability in the
+# same breath, which is the other thing worth knowing.
+#
 echo "kinstall: rebooting (over the network, not the console)"
-printf '%s\n' "load std; echo $nonce; echo reboot > /dev/sysctl" > "$CMD"
+printf '%s\n' "load std; echo KI-REBOOTING; echo reboot > /dev/sysctl" > "$CMD"
 #
 # Put board.cmd back to harmless IMMEDIATELY, before the board is up.
 # The rebooted kernel has no memory of what it last ran, so whatever is
@@ -318,36 +342,39 @@ printf '%s\n' "load std; echo $nonce; echo reboot > /dev/sysctl" > "$CMD"
 #
 sleep 20
 idle
-i=0
-ok=0
-while [ $i -lt 300 ]; do
-	sleep 5
-	i=`expr $i + 5`
-	screen -S "$SESS" -X hardcopy -h "$S/ki-b.txt" 2>/dev/null
-	LC_ALL=C tr -cd '\11\12\40-\176' < "$S/ki-b.txt" > "$S/ki-b.clean" 2>/dev/null
-	if awk -v n="$nonce" -v s="conf raspi3b ($stamp)" '
-		index($0, n) { seen = NR }
-		seen && NR > seen && index($0, s) { found = 1 }
-		END { exit(found ? 0 : 1) }' "$S/ki-b.clean" 2>/dev/null; then
-		ok=1
-		break
-	fi
-done
-if [ $ok = 0 ]; then
-	echo "kinstall: build $stamp did not boot from the card within ${i}s" >&2
-	LC_ALL=C grep -a 'conf raspi3b' "$S/ki-b.clean" 2>/dev/null | tail -1 >&2
-	echo "kinstall: kernel8.bak on the card is the kernel that was working." >&2
-	exit 1
-fi
 
 #
-# Booted from the card.  Now the same question the pre-flight asked:
-# can it be driven?  If not, say so plainly, because the next person to
-# need this board will otherwise find out the hard way.
+# One question, asked once: is the build that was written running, and
+# can the board be driven?  A single command answers both, and if the
+# answer is no it is said plainly, because the next person to need this
+# board will otherwise find out the hard way.
 #
-if runcmd KI-UP 300 "load std; echo KI-UP"; then
-	echo "kinstall: running build $stamp from the card, poller answering"
-	exit 0
+# 600, not 300.  The board has to finish booting, then kuthenfat has to
+# finish with the card, then remotecmd's wait for an interface has to be
+# satisfied -- and ETHERUSB enumeration on this board has been measured
+# anywhere from 10 to 149 seconds.  300 left almost no margin against
+# the slow end of that, and reporting a healthy board as JTAG-only is an
+# expensive false alarm.
+#
+#
+# The marker FIRST, and a newline after the version.
+#
+# /dev/osversion is served without a trailing newline, so
+# "cat /dev/osversion; echo KI-UP" puts the two on one line --
+# "2000 1790273432KI-UP" -- and an anchored grep for the marker finds
+# nothing.  That reported a healthy board, running exactly the build
+# just written, as JTAG-only.  The same merge would swallow runcmd's
+# end token, which is appended after whatever this command prints.
+#
+if runcmd KI-UP 600 "load std; echo KI-UP; cat /dev/osversion; echo ''"; then
+	if grep -q "2000 $stamp" "$S/ki-last.txt"; then
+		echo "kinstall: running build $stamp from the card, poller answering"
+		exit 0
+	fi
+	echo "kinstall: the board answers, but reports a different build:" >&2
+	cat "$S/ki-last.txt" >&2
+	echo "kinstall: kernel8.bak on the card is the kernel that was working." >&2
+	exit 1
 fi
 echo "kinstall: build $stamp booted from the card but its poller does not answer." >&2
 #

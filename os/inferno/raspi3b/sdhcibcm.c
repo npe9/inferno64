@@ -1252,6 +1252,28 @@ sdiocheck(void)
 		extern int mboxsetgpio(int, int);
 		int gv;
 
+		/*
+		 * Try the SET request with each plausible request-length
+		 * field before concluding anything about the firmware.
+		 * The working GET on these same lines sends 4 where this
+		 * sends 8; 0 is what a pure-response tag would carry.
+		 */
+		{
+			extern int mboxsetgpioreq(int, int, int, u32*);
+			u32 tr;
+			int rb;
+
+			for(rb = 0; rb <= 8; rb += 4){
+				tr = 0;
+				if(mboxsetgpioreq(130, 0, rb, &tr) == 0)
+					print("sdio: SET reqlen %d WORKED "
+						"(tag %#lux)\n", rb, (ulong)tr);
+				else
+					print("sdio: SET reqlen %d unhandled "
+						"(tag %#lux)\n", rb, (ulong)tr);
+			}
+		}
+
 		gv = 0;
 		if(mboxgetgpio(130, &gv) == 0){
 			if(mboxsetgpio(130, gv) < 0)

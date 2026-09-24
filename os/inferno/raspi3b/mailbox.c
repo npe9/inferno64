@@ -695,3 +695,45 @@ mboxgetfwrev(u32 *rev)
 	*rev = buf[5];
 	return 0;
 }
+
+/*
+ * SET_GPIO_STATE with the request-length field under control.
+ *
+ * mboxsetgpio sends buf[4] = 8 and the firmware leaves the tag
+ * unhandled.  That was read as "this firmware has no SET_GPIO_STATE",
+ * on the strength of mboxsetclock -- which works -- being built the
+ * same way.  But mboxsetclock has a 12-byte value buffer, and the call
+ * that DOES work on these lines, mboxgetgpio, sends a value-buffer size
+ * of 8 with a request length of 4.  So the working GET and the failing
+ * SET differ in exactly the field whose meaning is "how many bytes of
+ * the value buffer are request data", and mboxsetclock cannot arbitrate
+ * that because its two numbers are equal.
+ *
+ * This lets the caller choose, so the two can be compared on the board
+ * instead of argued about.  It matters: replacing the firmware on the
+ * boot partition is the one change here that kinstall.sh cannot
+ * pre-flight and kernel8.bak does not protect.
+ */
+int
+mboxsetgpioreq(int pin, int on, int reqbytes, u32 *tagresp)
+{
+	static u32 raw[9+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 8 * 4;
+	buf[1] = 0;
+	buf[2] = 0x00038041;		/* tag: set gpio state */
+	buf[3] = 8;			/* value buffer: pin, state */
+	buf[4] = reqbytes;
+	buf[5] = pin;
+	buf[6] = on != 0;
+	buf[7] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	if(tagresp != nil)
+		*tagresp = buf[4];
+	if((buf[4] & 0x80000000) == 0)
+		return -1;
+	return 0;
+}
