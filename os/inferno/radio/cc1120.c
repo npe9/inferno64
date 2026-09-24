@@ -2235,6 +2235,71 @@ cc1120ctl(Radio *r, char *buf, int n)
 			print("hold %lud %d\n", lo + (ulong)i*step, hold[i]);
 		return n;
 	}
+	if(strcmp(f[0], "gread") == 0){
+		/*
+		 * How much of a window the pin spent high, rather than
+		 * how often it changed.
+		 *
+		 * "ghist" bins completed runs, so a pin that goes high
+		 * and stays high for the whole window has no completed
+		 * run in it and reads as "static" -- indistinguishable
+		 * from a pin that never moved at all.  That is exactly
+		 * the case this exists for: PKT_SYNC_RXTX is named for
+		 * both directions and asserts from the sync word to the
+		 * end of a packet, so during a continuous transmission
+		 * it should sit high and ghist would report nothing.
+		 *
+		 *	gread 200 0x06		how much of 200ms was
+		 *				high on PKT_SYNC_RXTX
+		 *	gread 200		whatever IOCFG3 is
+		 */
+		uvlong t0, t1, tickhz;
+		ulong ms, us, high;
+		int sel, oldsel, nsamp;
+
+		if(s->gpio == nil)
+			error("radio: this board does not wire the part's GPIO");
+		ms = 200;
+		sel = -1;
+		if(nf >= 2)
+			ms = strtoul(f[1], nil, 0);
+		if(nf >= 3)
+			sel = strtoul(f[2], nil, 0);
+		if(ms < 1 || ms > 5000 || sel > 0xff)
+			error(Ebadctl);
+
+		if(s->irq != nil)
+			s->irq(s, 0);
+		s->lock(s);
+		oldsel = rd(rr, Riocfg3);
+		if(sel >= 0)
+			wr(rr, Riocfg3, sel);
+		s->unlock(s);
+
+		high = 0;
+		nsamp = 0;
+		t0 = fastticks(&tickhz);
+		t1 = t0 + (tickhz/1000) * ms;
+		while(fastticks(nil) < t1){
+			if(s->gpio(s))
+				high++;
+			nsamp++;
+		}
+		us = (ulong)(((fastticks(nil) - t0) * 1000000) / tickhz);
+
+		s->lock(s);
+		wr(rr, Riocfg3, oldsel);
+		s->unlock(s);
+		if(s->irq != nil)
+			s->irq(s, 1);
+
+		if(nsamp == 0)
+			nsamp = 1;
+		print("gread %lud iocfg3 0x%.2x us %lud samples %d high %lud "
+			"pct %lud\n", (ulong)rr->hz, sel >= 0? sel: oldsel,
+			us, nsamp, high, (high*100)/nsamp);
+		return n;
+	}
 	if(strcmp(f[0], "ghist") == 0){
 		/*
 		 * How long the pin stays high and low, as a histogram

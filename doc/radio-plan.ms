@@ -1536,6 +1536,74 @@ own default power into a 45 per cent efficient antenna is what that
 rule is written for.  Nothing on this bench has ever transmitted, which
 has been deliberate; this is the first measurement that needs it.
 .PP
+WHERE IN THE CHAIN IT STOPS, AND A CONCLUSION WITHDRAWN.
+.PP
+The section above says the receive path does not work on this silicon.
+That is withdrawn, and the thing that withdrew it is a verb that took
+ten minutes to write.
+.PP
+.B ghist
+bins completed runs, so a pin that goes high and stays high has no
+completed run in it and reads as "static" \- indistinguishable from a
+pin that never moved.  Every conclusion above about a pin rests on that
+reading.
+.B gread
+reports instead what fraction of a window the pin spent high, and run
+across the receive chain's own status pins on 874MHz it gives a ladder:
+.DS
+.CW "  0x0d  RSSI_VALID      100% of 500ms high"
+.CW "  0x11  carrier sense    28%"
+.CW "  0x0b  PQT_REACHED       0%"
+.CW "  0x06  PKT_SYNC_RXTX     0%"
+.CW "  0x07  CRC_OK            0%"
+.CW "  0x46  0x06 inverted   100%"
+.DE
+which says where it stops.  RSSI is valid, so the front end is running
+and measuring.  Carrier sense is high twenty-eight per cent of the
+time, so signal is arriving and crossing a threshold.  The inverted
+selection reads full, so the pin and the register both work and a
+selection at zero is one that is not asserting.  And the preamble
+quality detector never fires.
+.PP
+Which is the answer, and it is not a fault.  874MHz is the cellular
+downlink and cellular is GMSK at 270.833 kilobaud; it has no 0xAA
+preamble at 9600 baud for a preamble detector to reach.  The channel
+chosen as a control because it was busy cannot exercise the preamble
+and sync path at all, so six and a half minutes of zeros on it is
+evidence about cellular and not about this receiver.  The reasoning
+that picked it \- any real modulated signal will do, because the
+question is only whether the machinery asserts \- was wrong, and wrong
+in the way this work keeps being wrong: a control that cannot produce
+the positive is not a control.
+.PP
+So the receive path is untested rather than broken, and testing it
+needs a channel carrying 2-FSK with a preamble the part can lock to.
+908.42 is that channel and gives one burst in ten or twenty seconds,
+which is why the ladder has not been run on it yet: it has to be run
+while a burst is in the air.  The instrument for that exists \-
+.B gtrig
+arms on carrier sense and records \- and pointing it at the preamble
+pin rather than the sync pin is the next measurement, because
+PQT_REACHED is the first rung that a real 2-FSK preamble should light
+and the first one that would prove any of this works.
+.PP
+Also found, and it invalidates the earlier silicon listens.  Running
+the configuration silicon was wearing through the qemu model \-
+.I tools/radio/silicfg.sh
+\- no packet arrives, and bisecting the six ctl lines shows why:
+.DS
+.CW "  ARRIVED   nothing changed (control)"
+.CW "  ARRIVED   sync 0xaaaa 16 only"
+.CW "  ARRIVED   rate/dev/bw only"
+.CW "  lost      txmode fixed + pktlen 64 only"
+.DE
+In fixed-length mode the receiver waits for exactly PKT_LEN bytes after
+the sync word, and the test sends seven.  Every silicon listen before
+this was in that mode, so a matched sync could only have completed a
+packet if exactly sixty-four bytes followed it.  Repeated in variable
+length on 874 it still receives nothing, but that is the channel's
+fault rather than the configuration's, per the ladder above.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
