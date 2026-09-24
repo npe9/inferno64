@@ -69,13 +69,26 @@ def holds(c, lo, hi, step, ms, passes):
         if "write error" in out or "refused" in out:
             print(out.strip()[-200:])
             return rows
-        for l in out.split("\n"):
-            # "hold 929000000 -109".  Matched anywhere in the line and
-            # not anchored: the console echoes the command that asked
-            # for this, and the reply lines are the ones with a level.
+        # Scan the whole window and not the marker-sliced reply.
+        #
+        # ctl() returns the text after its marker, which is right for a
+        # verb that prints a line or two and wrong for one that prints
+        # sixty-three: the window scrolls, the marker goes off the top,
+        # the slice comes back empty and the chunk is silently lost.
+        # That is what made a 131-channel sweep report five channels --
+        # the last chunk only -- twice, without appearing to fail.
+        #
+        # Filtering by the range asked for is what makes this safe:
+        # rows from an earlier chunk, or from an earlier run, are
+        # outside it and do not get counted twice.
+        seen = set()
+        for l in (c.text() + "\n" + (out or "")).split("\n"):
             m = re.search(r"\bhold (\d+) (-?\d+)\s*$", l.strip())
             if m:
-                rows.append((int(m.group(1)), int(m.group(2))))
+                hz, db = int(m.group(1)), int(m.group(2))
+                if start <= hz <= end and hz not in seen:
+                    seen.add(hz)
+                    rows.append((hz, db))
         sys.stdout.flush()
         start = end + step
     return rows

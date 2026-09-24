@@ -2002,6 +2002,35 @@ crystal, reaching the other instrument.  So the hopper is intermittent
 over minutes as well as over frequency, and the band is empty between
 whatever it is doing.
 .PP
+RAISING THE ANTENNA, AND THIS RECEIVER FINALLY HEARING THE BAND.
+.PP
+With the click's antenna lifted, a max-hold of 902 to 928 no longer
+finds only 927.2 and its own crystal.  It finds landings scattered
+across the band \- 912.0 at \-93 and 925.6 at \-94, which are within a
+megahertz of where the tinySA saw the hopper in the same minutes, and a
+dozen more from six to nine dB over the median.
+.PP
+And the control holds up, which is what makes it worth writing down.
+The same sweep above the antenna's range against the same sweep inside
+it:
+.DS
+.CW "  934-952 above the band   28 ch, median -111,  0 over median+6"
+.CW "  902-920 in band          28 ch, median -108,  7 over median+6, best +13"
+.DE
+Nothing out of band, seven of twenty-eight in it.  So the structure is
+the air and not the receiver, and this part is now hearing the ISM band
+it could not hear an hour ago for want of an antenna a foot higher.
+.PP
+A tool bug fell out of it, and it had been quietly halving every sweep.
+.I bandhold.py
+reads the reply ctl() slices at its marker, which is right for a verb
+printing a line or two and wrong for one printing sixty-three: the
+window scrolls, the marker leaves the top of it, the slice comes back
+empty and that chunk is lost without any sign of failure.  A 131-channel
+sweep reported five channels \- the last chunk only \- twice, and read
+as a quiet band.  It scans the whole window now and filters by the
+range it asked for, so an earlier chunk cannot be counted twice.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
