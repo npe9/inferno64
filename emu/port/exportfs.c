@@ -748,6 +748,7 @@ exdispatch(Exq *q)
 {
 	Export *fs;
 	Exq *t, *fq, **last;
+	int nstat;
 	char *err;
 	Pgrp *opg;
 	Egrp *oeg;
@@ -838,8 +839,36 @@ exdispatch(Exq *q)
 				q->out.data = (char*)q->buf + IOHDRSZ;
 				break;
 			case Tstat:
+				/*
+				 * Clamp: Fcall.nstat is a ushort.
+				 *
+				 * This was a plain assignment, and it is fine
+				 * while msize is 8K.  Raise msize to 64K and
+				 * bsize-(MSGHDRSZ+BIT16SZ) is 65551, which
+				 * stored in sixteen bits is FIFTEEN.  The
+				 * server then offers a fifteen-byte stat
+				 * buffer, devtab's stat cannot fit a stat in
+				 * it and returns BIT16SZ with the needed size
+				 * patched in, and Exstat's "n <= BIT16SZ"
+				 * turns that into Eshortstat -- which comes
+				 * back to the client as
+				 *
+				 *	ls: /n/t/...: stat buffer too small
+				 *
+				 * and was read for a long time as ls or the
+				 * client being at fault.  Neither: it is one
+				 * unclamped narrowing conversion, invisible in
+				 * the source, and it is the whole reason a
+				 * bigger msize "did not work".
+				 *
+				 * A stat never approaches 64K anyway, so the
+				 * clamp costs nothing.
+				 */
+				nstat = q->bsize-(MSGHDRSZ+BIT16SZ);
+				if(nstat > 0xFFFF)
+					nstat = 0xFFFF;
 				q->out.stat = q->buf + MSGHDRSZ + BIT16SZ;
-				q->out.nstat = q->bsize-(MSGHDRSZ+BIT16SZ);
+				q->out.nstat = nstat;
 				break;
 			}
 			err = (*fcalls[q->in.type])(fs, &q->in, &q->out);
