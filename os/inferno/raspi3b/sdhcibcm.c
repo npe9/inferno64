@@ -163,6 +163,13 @@ awaitbit(u32 *reg, u32 bit, int want)
  * be taken before that or it is gone.
  */
 static u32 sdhcilastint, sdhcilaststat;
+/*
+ * And the same for the data phase of CMD53.  The command completing and
+ * the data arriving are separate events with separate ways to fail, and
+ * "CMD53 read" named neither.
+ */
+static char *sdio53why = "";
+static u32 sdio53int, sdio53stat;
 static char *sdhcilastwhy = "";
 
 /*
@@ -957,8 +964,10 @@ sdiocmd53(int fn, int addr, int write, int blockmode, int incr, void *a, int n)
 	}else{
 		nblk = 1;
 		blksize = n;
-		if(blksize <= 0 || blksize > Secsize)
+		if(blksize <= 0 || blksize > Secsize){
+			sdio53why = "byte-mode length out of range";
 			return -1;
+		}
 	}
 	arg = (write & 1) << 31 | (fn & 7) << 28 | (blockmode & 1) << 27 |
 		(incr & 1) << 26 | (addr & 0x1ffff) << 9 | (n & 0x1ff);
@@ -969,8 +978,10 @@ sdiocmd53(int fn, int addr, int write, int blockmode, int incr, void *a, int n)
 		flags |= Tmdatdirread;
 	if(nblk > 1)
 		flags |= Tmmultiblock;
-	if(sdhcicmd(c, 53, arg, flags) < 0)
+	if(sdhcicmd(c, 53, arg, flags) < 0){
+		sdio53why = sdhcilastwhy;
 		return -1;
+	}
 	/*
 	 * The data port is 32 bits wide, so a byte-mode length that is not
 	 * a multiple of four has a tail to assemble by hand rather than
@@ -978,8 +989,10 @@ sdiocmd53(int fn, int addr, int write, int blockmode, int incr, void *a, int n)
 	 */
 	for(i = 0; i < nblk; i++){
 		if(write){
-			if(awaitbit(&c->r[Interrupt], Writeready, 1) < 0)
+			if(awaitbit(&c->r[Interrupt], Writeready, 1) < 0){
+				sdio53why = "the card never asked for data";
 				return -1;
+			}
 			c->r[Interrupt] = Writeready;
 			for(j = 0; j < blksize; j += 4){
 				u32 w = 0;
@@ -990,8 +1003,12 @@ sdiocmd53(int fn, int addr, int write, int blockmode, int incr, void *a, int n)
 				p += (blksize - j < 4)? blksize - j: 4;
 			}
 		}else{
-			if(awaitbit(&c->r[Interrupt], Readready, 1) < 0)
+			if(awaitbit(&c->r[Interrupt], Readready, 1) < 0){
+				sdio53why = "the card never offered data";
+				sdio53int = c->r[Interrupt];
+				sdio53stat = c->r[Status];
 				return -1;
+			}
 			c->r[Interrupt] = Readready;
 			for(j = 0; j < blksize; j += 4){
 				u32 w = c->r[Data];
@@ -1531,11 +1548,11 @@ sdiocheck(void)
 		buf[i] = 0xa0 + i;
 	memset(back, 0, sizeof back);
 	if(sdiocmd53(1, 0x400, 1, 0, 1, buf, sizeof buf) != sizeof buf){
-		print("SDIO-FAIL CMD53 write\n");
+		print("SDIO-FAIL CMD53 write -- %s (interrupt %#lux status %#lux)\n", sdio53why, (ulong)sdio53int, (ulong)sdio53stat);
 		return;
 	}
 	if(sdiocmd53(1, 0x400, 0, 0, 1, back, sizeof back) != sizeof back){
-		print("SDIO-FAIL CMD53 read\n");
+		print("SDIO-FAIL CMD53 read -- %s (interrupt %#lux status %#lux)\n", sdio53why, (ulong)sdio53int, (ulong)sdio53stat);
 		return;
 	}
 	if(memcmp(buf, back, sizeof buf) != 0){
@@ -1555,11 +1572,11 @@ sdiocheck(void)
 		blkbuf[i] = 0x5a ^ i;
 	memset(blkback, 0, Secsize);
 	if(sdiocmd53(1, 0x800, 1, 1, 1, blkbuf, 1) != 1){
-		print("SDIO-FAIL CMD53 block write\n");
+		print("SDIO-FAIL CMD53 block write -- %s (interrupt %#lux)\n", sdio53why, (ulong)sdio53int);
 		return;
 	}
 	if(sdiocmd53(1, 0x800, 0, 1, 1, blkback, 1) != 1){
-		print("SDIO-FAIL CMD53 block read\n");
+		print("SDIO-FAIL CMD53 block read -- %s (interrupt %#lux)\n", sdio53why, (ulong)sdio53int);
 		return;
 	}
 	if(memcmp(blkbuf, blkback, Secsize) != 0){

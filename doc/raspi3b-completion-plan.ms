@@ -9928,3 +9928,23 @@ write could have disturbed the LPO.  It does not \(em
 .CW gpiofsel
 does a read-modify-write and leaves 43 alone \(em so that is not the
 mechanism.  Still unknown.
+.PP
+.B "CMD53 now fails with a data CRC error, which is progress."
+The data phase had the same one-message problem as everything else \(em
+the command completing and the data arriving are separate events with
+separate ways to fail, and \fICMD53 read\fP named neither.  Split apart,
+it says: \fIthe card never offered data\fP, interrupt 0x208000, status
+0x1ff0202.  Bit 21 of the interrupt register is Data CRC Error.
+.PP
+That is a different kind of failure from everything before it.  Silence
+means nothing is driving the bus; a CRC error means the card IS driving
+it and the bits are not surviving the trip.  CMD52 \(em single-byte
+register access over the same lines \(em works, so the command path and
+the response path are sound and only the data phase is not.
+.PP
+Worth checking in this order: the bus is in 1-bit mode and the card's
+default is 1-bit, which agrees, so width is unlikely but should be
+confirmed rather than assumed; the pad pull-ups on GPIO 34-39 are left
+however the firmware set them, and nothing here programs GPPUD; and the
+data timeout exponent and the clock in force during the data phase have
+not been checked at all.
