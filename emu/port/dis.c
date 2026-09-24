@@ -1065,8 +1065,13 @@ acquire(void)
 
 		unlock(&isched.l);
 		strcpy(up->text, "acquire");
-		if(empty)
-			Wakeup(&isched.irend);
+		/* unconditional: iyield() takes a waiter off vmq without the
+		 * VM thread returning to irend, so "somebody else is queued"
+		 * does not mean "the VM thread has been told".  The comment
+		 * above this function already asserts that EVERY writer of vmq
+		 * wakes irend; this makes the code do it. */
+		USED(empty);
+		Wakeup(&isched.irend);
 		osblock();
 	}
 

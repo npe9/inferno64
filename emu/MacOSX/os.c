@@ -194,12 +194,17 @@ trapUSR1(int signo)
 {
     USED(signo);
     
+    {
+    int intwait;
+    /* clear FIRST and for every process type: a kproc interrupted out of
+     * a host syscall otherwise spins in osleave()'s while(up->intwait). */
+    intwait = up->intwait;
+    up->intwait = 0;
     if(up->type != Interp)      /* Used to unblock pending I/O */
         return;
-    if(up->intwait == 0)        /* Not posted so its a sync error */
-        disfault(nil, Eintr);	/* Should never happen */
-    
-    up->intwait = 0;		/* Clear it so the proc can continue */
+    if(intwait == 0)            /* Not posted so its a sync error */
+        disfault(nil, Eintr);
+    }
 }
 
 /* from geoff collyer's port */
