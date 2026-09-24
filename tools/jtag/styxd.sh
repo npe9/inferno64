@@ -136,7 +136,26 @@ echo "styxd: not answering Styx; restarting"
 # Only THIS worktree's emu.  "pkill -f 'emu -r'" also matches every
 # other worktree's server and would kill other people's work.
 #
+#
+# And ESCALATE.  A wedged emu does not die of SIGTERM: it has handlers
+# installed and whatever has stopped it stops them too.  A plain pkill
+# left the old process alive and holding the port, this script gave up
+# after its sixty seconds, and the run that followed measured the OLD
+# server -- which was already wedged, so it "reproduced the fault in one
+# connection" against a binary that did not even have the new
+# instrumentation in it.
+#
 pkill -f "emu -r $ROOT" 2>/dev/null
+i=0
+while pgrep -f "emu -r $ROOT" >/dev/null 2>&1 && [ $i -lt 5 ]; do
+	sleep 1
+	i=`expr $i + 1`
+done
+if pgrep -f "emu -r $ROOT" >/dev/null 2>&1; then
+	echo "styxd: it ignored SIGTERM (wedged); killing it outright" >&2
+	pkill -9 -f "emu -r $ROOT" 2>/dev/null
+	sleep 1
+fi
 
 #
 # Wait for the port to be genuinely free.  Killing the process is not

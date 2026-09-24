@@ -1145,6 +1145,85 @@ vmwatch(void *a)
 	}
 }
 
+/*
+ * What /prog would say, for a server that cannot be asked.
+ *
+ * When the styx server wedges, every Limbo process in it is asleep and
+ * a sampling profile says only "everything is in osblock" -- which is
+ * equally true of a healthy idle server, so it distinguishes nothing.
+ * The state that DOES distinguish them is the Dis process list: which
+ * processes exist, what each is waiting for, and in which module.  The
+ * server exports that list as /prog, but reaching it needs a working
+ * Styx connection, which is the one thing a wedged server has not got.
+ *
+ * So print it from inside on a timer.  INFERNO_PROGWATCH=<seconds>.
+ * Purely a reader, under isched.l and never acquire(), so it cannot
+ * itself be the thing that stops the VM being handed on -- a watchdog
+ * that takes the lock it is watching proves nothing.
+ */
+static int progwatchsecs;
+
+static char *progwatchstate[] =		/* must match enum ProgState */
+{
+	"alt", "send", "recv", "debug", "ready", "release", "exiting", "broken",
+};
+
+static void
+progwatch(void *a)
+{
+	struct {
+		int	pid;
+		int	state;
+		int	killing;
+		char	mod[28];
+	} snap[64];
+	Prog *p;
+	Modlink *ml;
+	char *mod;
+	int n, i, idle, runhd, more;
+
+	USED(a);
+	for(;;){
+		osmillisleep(progwatchsecs*1000);
+		/*
+		 * Snapshot under the lock, print after releasing it.
+		 *
+		 * print() can block, and isched.l is the lock every handoff
+		 * of the VM goes through: a watchdog that printed while
+		 * holding it could be the very thing that stopped the VM
+		 * being handed on, which is what this is supposed to rule
+		 * out.  It was written the wrong way round first.
+		 */
+		lock(&isched.l);
+		n = 0;
+		idle = isched.idle;
+		runhd = isched.runhd != nil;
+		for(p = isched.head; p != nil && n < nelem(snap); p = p->next){
+			ml = p->R.M;
+			mod = "?";
+			if(ml != H && ml != nil && ml->m != nil && ml->m->name != nil)
+				mod = ml->m->name;
+			snap[n].pid = p->pid;
+			snap[n].state = p->state;
+			snap[n].killing = p->kill != nil;
+			snprint(snap[n].mod, sizeof(snap[n].mod), "%s", mod);
+			n++;
+		}
+		more = p != nil;
+		unlock(&isched.l);
+
+		print("progwatch: %d dis processes%s, %d idle, runhd %s\n",
+			n, more? "+": "", idle, runhd? "set": "nil");
+		for(i = 0; i < n; i++)
+			print("progwatch:  %8d %-8s %s%s\n",
+				snap[i].pid,
+				snap[i].state <= Pbroken?
+					progwatchstate[snap[i].state]: "??",
+				snap[i].mod,
+				snap[i].killing? " (kill pending)": "");
+	}
+}
+
 void
 release(void)
 {
@@ -1518,6 +1597,7 @@ disinit(void *a)
 	Prog *p;
 	Osenv *o;
 	Module *root;
+	char *s;
 	char *initmod = a;
 
 	if(waserror())
@@ -1527,6 +1607,11 @@ disinit(void *a)
 		print("Initial Dis: \"%s\"\n", initmod);
 
 	kproc("vmwatch", vmwatch, nil, 0);
+	if((s = getenv("INFERNO_PROGWATCH")) != nil){
+		progwatchsecs = atoi(s);
+		if(progwatchsecs > 0)
+			kproc("progwatch", progwatch, nil, 0);
+	}
 
 	fmtinstall('D', Dconv);
 

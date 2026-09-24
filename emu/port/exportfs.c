@@ -95,6 +95,8 @@ struct
 	int	nproc;
 }exq;
 
+static int	exinline;	/* times the reader served a request itself */
+
 static void	exshutdown(Export*);
 static int	exflushed(Export*, Exq*);
 static void	exdispatch(Exq*);
@@ -139,12 +141,25 @@ export(int fd, char *dir, int async)
 	Egrp *eg;
 	Export *fs;
 
-	if(waserror())
+	/*
+	 * Say why, on the way out.
+	 *
+	 * Both of these returned a bare -1, and styxlisten does not look
+	 * at what sys->export returns.  So an export that failed here left
+	 * a connection accepted, its Tversion unread, and its serving
+	 * process quietly gone -- with nothing anywhere saying so.  From
+	 * outside that is indistinguishable from a server that has stopped,
+	 * and it was read as one for a long time.
+	 */
+	if(waserror()){
+		print("export: fd %d is not usable: %s\n", fd, up->env->errstr);
 		return -1;
+	}
 	c = fdtochan(up->env->fgrp, fd, ORDWR, 1, 1);
 	poperror();
 
 	if(waserror()){
+		print("export: cannot walk to %s: %s\n", dir, up->env->errstr);
 		cclose(c);
 		return -1;
 	}
@@ -390,8 +405,34 @@ exportproc(void *a)
 		if(spawned){
 			incref(&fs->r);		/* the worker holds one */
 			kproc("exwork", exworker, q, 0);
-		}else
+		}else{
+			/*
+			 * At the cap, so the READER serves this one itself.
+			 *
+			 * Which means the reader is inside exreply, and
+			 * exreply writes the answer to the connection.  A
+			 * client that asked for something and then stopped
+			 * reading -- a board that rebooted, a test that
+			 * disconnects without waiting -- fills the socket's
+			 * send buffer, and that write blocks with no timeout.
+			 * The reader is then not reading, so this connection
+			 * is finished; and because styxlisten gives every
+			 * client a mount of the same pipe, the same thing
+			 * happening on the pipe's export stops every client
+			 * at once.
+			 *
+			 * Say when it happens, so the next wedge can be
+			 * matched against it instead of guessed at.
+			 */
+			if(exinline++ % 16 == 0)
+				print("exportfs: at worker cap (%d/%d on this "
+					"connection, %d/%d total), reader is "
+					"serving T%d inline (%d times)\n",
+					fs->nproc, Maxconnproc,
+					exq.nproc, Maxproc,
+					q->in.type, exinline);
 			exdispatch(q);
+		}
 	}
 
 	if(exdebug){
@@ -780,7 +821,8 @@ exreply(Exq *q, char *who)
 {
 	Export *fs;
 	Fcall *r;
-	int n;
+	int n, dt;
+	ulong t0;
 
 	fs = q->export;
 	r = &q->out;
@@ -798,10 +840,26 @@ exreply(Exq *q, char *who)
 	if(exdebug)
 		print("%s %d -> %F\n", who, up->pid, r);
 
+	/*
+	 * Time it, and say so when it is slow.
+	 *
+	 * This write has no timeout.  Against a client that stopped
+	 * reading it blocks until the kernel gives up on the connection,
+	 * which can be minutes, and whoever is running it -- a worker, or
+	 * the reader itself when the worker caps are full -- does nothing
+	 * else meanwhile.  Every "the server has stopped" report in this
+	 * tree so far has been something not saying what it was waiting
+	 * for; this one says it.
+	 */
+	t0 = osmillisec();
 	if(!waserror()){
 		devtab[fs->io->type]->write(fs->io, q->buf, n, 0);
 		poperror();
 	}
+	dt = osmillisec() - t0;
+	if(dt >= 2000)
+		print("exportfs: %s %d: writing R%d took %dms "
+			"(client is not reading)\n", who, up->pid, r->type, dt);
 }
 
 static int

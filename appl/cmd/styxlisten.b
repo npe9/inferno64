@@ -252,7 +252,20 @@ exportproc(sync: chan of int, fd: ref Sys->FD, uname, hostname: string, dfd: ref
 			"styxlisten: setup pctl %dms mount %dms (total %dms)\n",
 			t1-t0, t2-t1, t2-t0);
 
-	sys->export(dfd, "/", Sys->EXPWAIT);
+	#
+	# Look at what it returns.
+	#
+	# This was a bare call.  When sys->export fails it returns -1 and
+	# this function simply returns, the process exits, and the client
+	# is left connected to nothing: accepted, its Tversion sitting
+	# unread for ever, no message anywhere.  Every connection after the
+	# first failure behaves the same way, so the server looks wedged
+	# while it is in fact refusing each connection in silence -- the
+	# same shape of bug as the missing accept report above, twenty
+	# lines away.
+	#
+	if(sys->export(dfd, "/", Sys->EXPWAIT) < 0)
+		sys->fprint(stderr(), "styxlisten: export failed: %r\n");
 }
 
 error(e: string)

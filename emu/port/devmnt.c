@@ -61,6 +61,7 @@ Mntrpc*	mntflushalloc(Mntrpc*, ulong);
 void	mntflushfree(Mnt*, Mntrpc*);
 void	mntfree(Mntrpc*);
 void	mntgate(Mnt*);
+static void	mntwatchstart(void);
 void	mntpntfree(Mnt*);
 void	mntqrm(Mnt*, Mntrpc*);
 Mntrpc*	mntralloc(Chan*, ulong);
@@ -78,12 +79,183 @@ char Enoversion[] = "version not established for mount channel";
 
 void (*mntstats)(int, Chan*, uvlong, ulong);
 
+/*
+ * Say when a mount's multiplexer has stopped, and say it in terms of
+ * the mux's own state rather than a stack.
+ *
+ * Every rpc on a mount queues on m->queue and exactly one proc at a
+ * time -- m->rip -- reads replies off the wire and hands them out.
+ * When that arrangement breaks, every proc using the mount sleeps and
+ * from outside the emu it looks like a server that has stopped
+ * answering: connections accepted, their first message unread, nothing
+ * burning CPU.  That is precisely the picture a wedged styxlisten
+ * gives, and a sampling profile of it says only "everything is in
+ * osblock", which is true of a healthy idle server too.
+ *
+ * So ask the mux.  Every two seconds, for each mount with something
+ * queued, note the queue.  If the same rpcs are still queued, none of
+ * them done, and the reader has not changed for three scans running,
+ * the mux is not slow, it is stopped -- print who is reading, or that
+ * nobody is, and every tag that is waiting.
+ *
+ * Costs one wakeup every two seconds and a short walk under the lock,
+ * unlike INFERNO_MNTDEBUG which prints two lines per Styx message and
+ * makes the server about thirty times slower -- slow enough to look
+ * like the fault it is meant to find.
+ */
+int mntwatch = 0;
+
+typedef struct Mntseen Mntseen;
+struct Mntseen
+{
+	ulong	id;		/* which mount */
+	ulong	sig;		/* the queue, as a hash of its tags */
+	int	ripid;		/* who was reading it */
+	int	n;		/* how many scans it has looked like this */
+};
+
+static void
+mntwatcher(void *a)
+{
+	static Mntseen seen[32];
+	Mnt *mv[nelem(seen)], *m;
+	Mntseen *s;
+	Mntrpc *r;
+	int i, j, nm, nq, ndone, ripid;
+	ulong sig;
+	Proc *rip;
+
+	USED(a);
+	for(;;){
+		osmillisleep(2000);
+		/*
+		 * Snapshot the mounts under mntalloc.l and let it go before
+		 * touching m->l, so the two locks are never held at once and
+		 * this can never be the thing that deadlocks.
+		 */
+		lock(&mntalloc.l);
+		nm = 0;
+		for(m = mntalloc.list; m != nil && nm < nelem(mv); m = m->list)
+			mv[nm++] = m;
+		unlock(&mntalloc.l);
+
+		/*
+		 * A tick, every scan, even when there is nothing wrong.
+		 *
+		 * Without it this watchdog prints only on the fault, so its
+		 * silence means either "the mux is fine" or "the watcher never
+		 * started" -- and those were indistinguishable for a whole
+		 * round of measurements, during which its silence was written
+		 * down as evidence that the mux was healthy.  An instrument
+		 * that cannot say "I am here and I see nothing" is not an
+		 * instrument.
+		 */
+		print("mntwatch: %d mounts\n", nm);
+
+		for(i = 0; i < nm; i++){
+			m = mv[i];
+			lock(&m->l);
+			nq = ndone = 0;
+			sig = 0;
+			for(r = m->queue; r != nil; r = r->list){
+				nq++;
+				if(r->done)
+					ndone++;
+				sig = sig*31 + r->request.tag;
+			}
+			rip = m->rip;
+			ripid = rip != nil? rip->pid: -1;
+
+			/* find this mount's row, or take a free one */
+			s = nil;
+			for(j = 0; j < nelem(seen); j++)
+				if(seen[j].id == m->id){
+					s = &seen[j];
+					break;
+				}
+			if(s == nil)
+				for(j = 0; j < nelem(seen); j++)
+					if(seen[j].id == 0){
+						s = &seen[j];
+						s->id = m->id;
+						s->sig = ~sig;
+						s->n = 0;
+						break;
+					}
+			if(s == nil){		/* no room; nothing to say */
+				unlock(&m->l);
+				continue;
+			}
+			/*
+			 * Anything moving at all resets the count: a queue
+			 * that empties, a different set of tags, a reply that
+			 * lands, or the reader changing hands.  Only a mux
+			 * that is bit for bit the same three scans running is
+			 * reported, so a merely busy server is never accused.
+			 */
+			if(nq == 0 || ndone != 0 || sig != s->sig || ripid != s->ripid){
+				s->sig = sig;
+				s->ripid = ripid;
+				s->n = nq == 0? 0: 1;
+				unlock(&m->l);
+				continue;
+			}
+			if(++s->n != 3){	/* report once, not every scan */
+				unlock(&m->l);
+				continue;
+			}
+			print("mntwatch: mount %lud MUX STOPPED: %d rpcs queued, "
+				"none done, unchanged for 3 scans\n", m->id, nq);
+			if(rip != nil)
+				print("mntwatch:    reader is %s pid %d\n",
+					rip->text, rip->pid);
+			else
+				print("mntwatch:    NOBODY is reading this mount\n");
+			for(r = m->queue; r != nil; r = r->list)
+				print("mntwatch:    waiting: tag %d T%d fid %d done %d\n",
+					r->request.tag, r->request.type,
+					r->request.fid, r->done);
+			unlock(&m->l);
+		}
+	}
+}
+
+/*
+ * Start the watcher on the first mount, once.
+ *
+ * mntinit cannot do it: it runs from chandevinit, before there is a
+ * scheduler to run a kproc on.
+ */
+static void
+mntwatchstart(void)
+{
+	static int started;
+
+	if(!mntwatch)
+		return;
+	lock(&mntalloc.l);
+	if(started){
+		unlock(&mntalloc.l);
+		return;
+	}
+	started = 1;
+	unlock(&mntalloc.l);
+	kproc("mntwatch", mntwatcher, nil, 0);
+}
+
 static void
 mntinit(void)
 {
 	mntalloc.id = 1;
 	if(getenv("INFERNO_MNTDEBUG") != nil)
 		mntdebug = 1;
+	if(getenv("INFERNO_MNTWATCH") != nil)
+		mntwatch = 1;
+	/*
+	 * The watcher is NOT started here.  mntinit runs from
+	 * chandevinit, before the first kproc, so it starts on the first
+	 * mount instead -- see mntwatchstart.
+	 */
 	mntalloc.tagmask[0] = 1;			/* don't allow 0 as a tag */
 	mntalloc.tagmask[NMASK-1] = 0x80000000UL;	/* don't allow NOTAG */
 	fmtinstall('F', fcallfmt);
@@ -311,6 +483,8 @@ mntattach(char *muxattach)
 		char	*spec;
 		int	flags;
 	}bogus;
+
+	mntwatchstart();
 
 	bogus = *((struct bogus *)muxattach);
 	c = bogus.chan;
