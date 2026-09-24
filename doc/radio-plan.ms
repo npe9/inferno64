@@ -1477,6 +1477,65 @@ one coherent group per configuration and which this driver updates only
 in part when the rate, deviation and bandwidth change.  That is the next
 place to look and it is a bigger job than a register.
 .PP
+THE RECEIVE PATH DOES NOT WORK ON THIS SILICON, AND HERE IS EVERYTHING
+IT IS NOT.
+.PP
+The test bed changed, and that is most of why this is now worth
+stating.  908.42 gives one burst in ten or twenty seconds, so a
+two-second window there measures an empty channel whatever is being
+swept; a six-minute watch found twelve windows with anything in them
+and forty-one without.  874MHz gives 82 bursts of 2.8 to 8.6ms at 18
+per cent duty, repeatably, inside the antenna's band.  Nothing here can
+decode it \- 869 to 894 is the cellular downlink \- but decoding is not
+the question.  Whether the sync machinery asserts at all is, and any
+real modulated signal answers that.
+.PP
+Six and a half minutes on it, with a sixteen-bit sync of 0xaaaa at
+SYNC_THR 0, fixed length, CRC off: no packets, no CRC errors, no
+overflow.  Eighteen per cent of 380 seconds is about 68 seconds of
+signal, which at 9600 baud is six hundred and fifty thousand bits, and
+a sixteen-bit pattern turns up in random data about ten times in that
+\- before allowing for a threshold of zero, which asks the qualifier
+for as little as it can be asked for.  Zero is not a quiet channel.
+.PP
+Excluded, each by measurement rather than by reasoning:
+.IP \(bu
+The sync registers.  Fixed, verified off the part, and
+.I tools/radio/synctest.sh
+now pins the mapping to SWRU295E so it cannot come back.
+.IP \(bu
+The threshold: 0, 4, 8, 16 and 31.
+.IP \(bu
+The modulation index: h from 0.50 to 4.17.
+.IP \(bu
+The preamble gate.  PQT_EN set and cleared, the second time for six
+and a half minutes on the busy channel rather than two seconds on the
+quiet one.
+.IP \(bu
+FREQ_IF_CFG, which the driver never writes and which leaves at 0x40.
+Eleven values across its whole range, all static.
+.IP \(bu
+The state.  MARCSTATE reads 0x6d throughout, whose low five bits are
+0x0d, which is RX.
+.IP \(bu
+The configuration, read back register by register and checked against
+its own arithmetic: MOD_FORMAT 000 is 2-FSK, DEVIATION_M 0x47 with
+DEV_E 5 is 19958Hz, the DRATE triple is 9604 baud, CHAN_BW 0x04 is
+50kHz, MDMCFG1 has FIFO_EN set and Manchester clear.
+.IP \(bu
+The pin and its selection.  IOCFG3 0x06 reads low and 0x46, the same
+selection inverted, reads high; and carrier sense on 0x11 follows the
+air, so ghist can see a pin that moves.
+.PP
+What is left needs the transmitter.  PKT_SYNC_RXTX is named for both
+directions and asserts in TX as well as RX, so keying the part and
+watching that pin separates a selection that is wrong from a receive
+path that is broken \- and it is the only test left that does not need
+a second radio.  915MHz is unlicensed at Part 15 levels and the part's
+own default power into a 45 per cent efficient antenna is what that
+rule is written for.  Nothing on this bench has ever transmitted, which
+has been deliberate; this is the first measurement that needs it.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP

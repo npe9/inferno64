@@ -398,32 +398,37 @@ class Stream:
             return None
         self.c.send(line)
         end = time.time() + wait
-        last = ""
+        last = None
+        seen = False
         while time.time() < end:
             time.sleep(1.0)
             t = self.c.text()
             i = t.rfind(line)
-            after = t[i + len(line):] if i >= 0 else ""
+            if i < 0:
+                continue            # the echo has not come back yet
+            seen = True
+            after = t[i + len(line):]
             # A write the part refused ends the cat, and everything
-            # after would go to the shell instead; stop rather than
-            # type commands at it.
+            # after it would go to the shell instead; stop rather than
+            # type commands at a shell that is about to run them.
             if "write error" in after:
                 self.ok = False
                 return after
-            # Stripped, because the echo's own trailing newlines are
-            # non-empty and perfectly stable: the first cut of this
-            # returned "\n\n" a second after sending, before the
-            # command had run, and every caller read that as an empty
-            # reply.  Waiting for text that is not just whitespace
-            # waits for the board instead of for the echo.
-            if after.strip() and after == last:
+            if after == last:
                 self.silent = 0
                 return after
             last = after
-        if not last.strip():
+        # Two different silences, and telling them apart is the whole
+        # job.  Most ctl verbs -- freq, rate, bw -- print nothing when
+        # they work, so an empty reply is success and returning None
+        # for it made a sweep give up on its first line.  An echo that
+        # never comes back is the board not listening, and that is the
+        # one worth counting.
+        if not seen:
             self.silent += 1
             return None
-        return last
+        self.silent = 0
+        return last if last is not None else ""
 
     def close(self):
         if self.ok:

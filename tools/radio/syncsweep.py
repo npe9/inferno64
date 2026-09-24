@@ -31,10 +31,24 @@
 # moves is not yet a packet, but it is the first positive this path has
 # ever given and everything else is blocked behind it.
 #
-# Point it at a frequency that is actually carrying something: 908.42
-# is the US Z-Wave channel and has given bursts at -77dBm, twenty-nine
-# dB over this receiver's floor.  A sweep over a dead channel proves
-# nothing, which is the rule this work has had to learn four times.
+# Point it at a frequency that is actually carrying something, and be
+# strict about what that means.  908.42 is the US Z-Wave channel and
+# gave a -77dBm burst once, but a six-minute watch found twelve windows
+# with anything at all and forty-one quiet: a one-second look there is
+# measuring an empty channel whatever the register does.
+#
+# 878MHz is the better bench.  It is inside the antenna's 863-928 band,
+# it gives 44 bursts of 2.9 to 6.3ms at 7 per cent duty, repeatably,
+# and it passes this driver's own NOISE rule rather than tripping it.
+# Nothing here can decode it -- 869 to 894 is the cellular downlink --
+# but decoding is not the question.  The question is whether the sync
+# machinery ever asserts at all, and for that any real modulated signal
+# will do: with a permissive sixteen-bit sync at threshold 0 and a
+# signal present seven per cent of the time, a working demodulator
+# should fire on it by chance.
+#
+# A sweep over a dead channel proves nothing, which is the rule this
+# work has had to learn four separate times.
 #
 import os, re, sys
 
@@ -55,25 +69,40 @@ def main():
 
     c = board.Console(os.environ.get("CLAUDE_JOB_DIR", "/tmp") + "/tmp")
     c.run("bind -a '#W' /dev", wait=20)
+    st = c.stream()
+    if not st.ok:
+        sys.exit("syncsweep: the board is not running commands")
     # A permissive sixteen-bit sync on the preamble pattern: whatever is
     # transmitting, its preamble is alternating, and threshold 0 asks
     # the qualifier for as little as it can be asked for.
-    setup = ["freq %d" % hz, "rate 9600", "deviation 20000", "bw 50000",
-             "sync 0xaaaa 16", "reg 0x08 0x40"]
-    if c.ctl(setup, wait=90) is None:
-        sys.exit("syncsweep: the board did not take the configuration")
+    for l in ["freq %d" % hz, "rate 9600", "deviation 20000", "bw 50000",
+              "sync 0xaaaa 16", "reg 0x08 0x40"]:
+        if st.send(l, wait=40) is None:
+            sys.exit("syncsweep: no echo for %r -- the board is not "
+                     "listening" % l)
 
-    old = None
-    out = c.ctl(["reg 0x%.2x" % reg], wait=60) or ""
+    # Prove the channel is busy before sweeping over it, and print the
+    # proof, so a page of "static" can be read as a result rather than
+    # as an empty channel.
+    pr = st.send("probe %d 2000" % hz, wait=60) or ""
+    for l in pr.split("\n"):
+        if l.strip().startswith("probe %d" % hz) and "floor" in l:
+            print("channel now: %s" % l.strip())
+
+    was = None
+    out = st.send("reg 0x%.2x" % reg, wait=40) or ""
     m = re.search(r"reg 0x%.2x (0x[0-9a-f]+)" % reg, out)
     if m:
-        old = m.group(1)
-        print("%s was %s" % (hex(reg), old))
+        was = m.group(1)
+        print("%s was %s" % (hex(reg), was))
 
     hits = []
     for v in range(lo, hi + 1, step):
-        out = c.ctl(["reg 0x%.2x 0x%.2x" % (reg, v),
-                     "ghist 1000 %s" % SYNCPIN], wait=70) or ""
+        if not st.ok or not c.alive():
+            print("the board stopped running commands; stopping")
+            break
+        st.send("reg 0x%.2x 0x%.2x" % (reg, v), wait=40)
+        out = st.send("ghist 2000 %s" % SYNCPIN, wait=60) or ""
         bins = [l.strip() for l in out.split("\n") if re.match(r"^\s+\d+: ", l)]
         if bins:
             hits.append((v, bins))
@@ -82,8 +111,9 @@ def main():
             print("0x%.2x: static" % v)
         sys.stdout.flush()
 
-    if old is not None:
-        c.ctl(["reg 0x%.2x %s" % (reg, old)], wait=60)
+    if was is not None:
+        st.send("reg 0x%.2x %s" % (reg, was), wait=40)
+    st.close()
     print()
     if hits:
         print("%d value(s) moved the sync pin: %s" %
