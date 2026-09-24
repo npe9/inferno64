@@ -1087,10 +1087,15 @@ somebody's laptop out of sleep.
 Eleven runs of
 .CW tools/jtag/wedgewatch.sh
 against the previous binary failed, at 11, 21, 45, 65, 69, 71, 73, 82,
-92, 112 and 115 abrupt disconnects.  The first run with the change
-survived 400 and kept answering, with an empty listen queue and six
-times the CPU time \(em a process that was running rather than
-suspended.
+92, 112 and 115 abrupt disconnects.  With the change, FOUR runs out of
+four survived 400 and kept answering, each with an empty listen queue
+and about thirty seconds of CPU \(em six times what a frozen one
+accumulated, which is what a process that is actually running looks
+like.
+.P1
+before   11 runs, 11 failures at 11 21 45 65 69 71 73 82 92 112 115
+after     4 runs,  0 failures, 400 disconnects each, queue 0/0/128
+.P2
 .PP
 .CW "taskpolicy -B"
 on the live process is NOT the fix and was not evidence for the
