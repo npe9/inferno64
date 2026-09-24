@@ -149,6 +149,31 @@ static	void	setladdr(Conv*);
  */
 int ipsockdebug = 0;
 
+/*
+ * A sequence number and the acting process on every trace line.
+ *
+ * These lines are written by several processes and the order they land
+ * in the log is not the order the events happened -- which matters
+ * exactly here, because the open question is whether a descriptor is
+ * being closed while an accept on it is still in flight.  ipseq() is
+ * taken once per event under its own lock, so the numbers order the
+ * events even when the text does not.
+ */
+static Lock	ipseqlk;
+static ulong	ipseqno;
+
+ulong
+ipseq(void)
+{
+	ulong n;
+
+	lock(&ipseqlk);
+	n = ++ipseqno;
+	unlock(&ipseqlk);
+	return n;
+}
+
+
 static int
 ip3gen(Chan *c, int i, Dir *dp)
 {
@@ -467,7 +492,8 @@ ipopen(Chan *c, int omode)
 			}
 		}
 		if(ipsockdebug)
-			print("ipdebug: conv %d %s opened (inuse now %d)\n", cv->x,
+			print("ipdebug[%lud %s %d]: conv %d %s opened (inuse now %d)\n",
+				ipseq(), up->text, up->pid, cv->x,
 				TYPE(c->qid)==Qdata? "data": "ctl", cv->inuse+1);
 		cv->inuse++;
 		if(cv->inuse == 1) {
@@ -506,8 +532,8 @@ ipopen(Chan *c, int omode)
 		}
 
 		if(ipsockdebug)
-			print("ipdebug: conv %d accept begins on fd %d (inuse %d)\n",
-				cv->x, cv->sfd, cv->inuse);
+			print("ipdebug[%lud %s %d]: conv %d accept BEGINS, called with fd %d (inuse %d)\n",
+				ipseq(), up->text, up->pid, cv->x, cv->sfd, cv->inuse);
 		cv->accepting++;
 		lfd = cv->sfd;
 		sfd = so_accept(lfd, raddr, &rport);
@@ -517,7 +543,8 @@ ipopen(Chan *c, int omode)
 				"now %d -- the listener moved under the accept\n",
 				cv->x, lfd, cv->sfd);
 		if(ipsockdebug)
-			print("ipdebug: conv %d accept returns fd %d\n", cv->x, sfd);
+			print("ipdebug[%lud %s %d]: conv %d accept RETURNS fd %d (was called with fd %d)\n",
+				ipseq(), up->text, up->pid, cv->x, sfd, lfd);
 
 		nc = protoclone(p, up->env->user, sfd);
 		if(nc == 0) {
@@ -530,8 +557,8 @@ ipopen(Chan *c, int omode)
 		setladdr(nc);
 		nc->state = Connected;
 		if(ipsockdebug)
-			print("ipdebug: accepted fd %d as conv %d, owner %s\n",
-				sfd, nc->x, nc->owner);
+			print("ipdebug[%lud %s %d]: accepted fd %d as conv %d, owner %s\n",
+				ipseq(), up->text, up->pid, sfd, nc->x, nc->owner);
 		mkqid(&c->qid, QID(PROTO(c->qid), nc->x, Qctl), 0, QTFILE);
 
 		poperror();
@@ -569,11 +596,12 @@ closeconv(Conv *cv)
 	cv->sfd = -1;
 	if(fd >= 0){
 		if(cv->accepting > 0)
-			print("ipdebug: CLOSE UNDER ACCEPT: conv %d fd %d, "
+			print("ipdebug[%lud %s %d]: CLOSE UNDER ACCEPT: conv %d fd %d, "
 				"%d accept(s) in flight\n",
-				cv->x, fd, cv->accepting);
+				ipseq(), up->text, up->pid, cv->x, fd, cv->accepting);
 		else if(ipsockdebug)
-			print("ipdebug: conv %d closes fd %d\n", cv->x, fd);
+			print("ipdebug[%lud %s %d]: conv %d CLOSES fd %d\n",
+				ipseq(), up->text, up->pid, cv->x, fd);
 		so_close(fd);
 	}
 	poperror();

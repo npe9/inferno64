@@ -682,3 +682,58 @@ it is not the same as any of them.  What has changed is the cost of
 looking: it reproduces in thirty seconds, the trace above is one
 environment variable away, and the state can be read from outside with
 lsof, netstat and sample.
+.NH 2
+Sequenced: the listener is blocked in accept on a queue that is not empty
+.PP
+Step 1 of the plan was to make the interleaving readable rather than
+inferred from the order several processes happened to write lines.  Every
+devip accept and close now carries a sequence number taken under its own
+lock, the acting process, and \(em for an accept \(em the descriptor it was
+CALLED with as well as the one it returned.
+.PP
+.B "That refutes the recycle race."
+Ordered by sequence, every cycle reads:
+.P1
+n+0  conv 0 accept BEGINS, called with fd 3
+n+1  conv 1 CLOSES fd 4
+n+2  so_close fd 4
+n+3  conv 0 accept RETURNS fd 4 (was called with fd 3)
+n+4  accepted fd 4 as conv 1
+.P2
+The LISTENING descriptor is stable at fd 3 throughout; only the accepted
+descriptor is recycled.  The listener is accepting on the right
+descriptor, so the previous section's conclusion \(em that a recycled
+descriptor was the fault \(em is withdrawn.
+.PP
+.B "What is left is stranger, and it is measured three ways."
+At the wedge:
+.P1
+lldb    frame #0 __accept
+        frame #1 so_accept at ipif-posix.c:239
+        frame #3 namec("/net/tcp/0/listen")
+trace   that accept was called with fd 3, the announced listener
+netstat -L   *.6666  qlen 1/0/128, and 2/0/128 after another connect
+.P2
+So a thread is genuinely blocked inside
+.CW accept (2)
+on the listening socket, and that socket's queue of COMPLETED connections
+is not empty and is growing.  Nothing consumes them.  A blocking accept
+on a socket with a completed connection queued must return.
+.PP
+.B "The next three things to try, cheapest first."
+.IP 1.
+Read the descriptor from the blocked thread's registers rather than
+trusting the trace, and do it WITHOUT a timeout on lldb \(em a timeout
+firing while attached kills the debuggee, which happened here and
+briefly looked like the server exiting on its own.
+.IP 2.
+Check for a second, stale accept: record every so_accept entry and exit
+in a small ring with its sequence number, and see whether the count of
+entries exceeds exits by more than one.
+.IP 3.
+Test whether the socket is still the one bound to the port, by calling
+getsockname on the descriptor from inside the watchdog rather than
+reasoning about it.
+.PP
+Everything needed to do all three is in place and the fault reproduces in
+under a minute.

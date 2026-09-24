@@ -53,7 +53,8 @@ so_socket(int type)
 	{
 		extern int ipsockdebug;
 		if(ipsockdebug)
-			print("ipdebug: so_socket -> fd %d\n", fd);
+			print("ipdebug[%lud %s %d]: so_socket -> fd %d\n",
+				ipseq(), up->text, up->pid, fd);
 	}
 	if(type == SOCK_DGRAM){
 		one = 1;
@@ -164,7 +165,8 @@ so_close(int sock)
 	extern int ipsockdebug;
 
 	if(ipsockdebug)
-		print("ipdebug: so_close fd %d\n", sock);
+		print("ipdebug[%lud %s %d]: so_close fd %d\n",
+			ipseq(), up->text, up->pid, sock);
 	close(sock);
 }
 
