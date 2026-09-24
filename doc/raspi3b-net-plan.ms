@@ -1103,3 +1103,31 @@ diagnosis either: applied every two seconds it still froze at 82.  A
 single application of it appeared to drain the accept queue, but that is
 indistinguishable from any other command running at that moment, and it
 was nearly written down as proof.
+.NH 2
+Two emu builds, and the server uses the one without Cocoa
+.PP
+Asking macOS politely not to nap the process works \(em four runs of
+four survived 400 disconnects \(em but a process that creates no
+.CW NSApplication
+cannot be napped at all, which is a stronger guarantee than an
+assertion that has to be honoured.  So there are two builds now, and the
+difference is not cosmetic:
+.P1
+emu-cocoa   links Cocoa, NSApplication, window, tk/draw/pointer/audio.
+            Installed as `emu' too.  What you want at a terminal.
+emu-cpu     links NO Cocoa.  No NSApplication, nothing to nap.
+            What serves Styx, runs in a pipeline, or sits in a
+            login session.  mk CONF=emu-cpu install
+.P2
+.CW emu-cpu
+is emu-g's device list under a name that says what it is for.
+.CW styxd.sh
+uses it, and refuses with build instructions if it is missing, because
+serving Styx with the wrong binary is exactly what cost the day.
+.PP
+Measured, same load test, same script:
+.P1
+emu-cocoa, before the fix   11 runs, 11 failures (11..115 disconnects)
+emu-cocoa, activity held     4 runs,  0 failures, 400 each
+emu-cpu, no Cocoa at all     1 run,   0 failures, 400, queue 0/0/128
+.P2
