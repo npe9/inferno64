@@ -1175,8 +1175,30 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				(ulong)(r[SDEDM] & Edmfsmmask),
 				(ulong)((r[SDEDM] >> Fifofillsh) & Fifofillmask),
 				(ulong)r[SDHBCT], (ulong)r[SDHBLC]);
+		/*
+		 * nthis blocks, not one.
+		 *
+		 * SDHBLC and the command above were set for nthis blocks --
+		 * CMD18/CMD25 when nthis > 1 -- and the controller then
+		 * streams all of them through the data FIFO, pacing the DMA
+		 * with DREQ.  These two calls moved Secsize, ONE sector, and
+		 * advanced p by one, while the loop advanced i by nthis.  So
+		 * with multi at 64, one block in every 64 reached the
+		 * caller's buffer, the other 63 positions kept whatever was
+		 * in them, and the controller was left holding 63 blocks
+		 * nobody collected.
+		 *
+		 * That is the "DMA paired with multi-block returns wrong
+		 * data" in doc/raspi3b-completion-plan.ms.  It reproduces
+		 * identically on a good card and a bad one, which is what
+		 * said it was the driver rather than the medium.
+		 *
+		 * The length is safe: dmachannel() picks a channel below
+		 * Nlite, which is a full engine with a 30-bit TXFR_LEN, and
+		 * the most this can ask for is multi*512.
+		 */
 		if(write && usedma){
-			if(dmaxfer(p, Sddatabus, Secsize, Sdhostdreq, 0) < 0){
+			if(dmaxfer(p, Sddatabus, nthis*Secsize, Sdhostdreq, 0) < 0){
 				print("sdhost: DMA WRITE FAILURE block %llud: "
 					"sdhsts %#lux sdedm %#lux fifo %d\n",
 					bno+i, (ulong)r[SDHSTS],
@@ -1186,9 +1208,12 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				sdhostdma = 0;	/* fall back, do not lose it */
 				goto out;
 			}
-			p += Secsize;
+			p += nthis*Secsize;
 		}else if(!write && usedma && !c->bytemode){
-			if(dmaxfer(p, Sddatabus, Secsize, Sdhostdreq, 1) < 0){
+			if(sdhosttrace)
+				print("sdhost: DMA READ PATH nthis %d len %d\n",
+					nthis, nthis*Secsize);
+			if(dmaxfer(p, Sddatabus, nthis*Secsize, Sdhostdreq, 1) < 0){
 				print("sdhost: DMA READ FAILURE block %llud: "
 					"sdhsts %#lux sdedm %#lux fifo %d\n",
 					bno+i, (ulong)r[SDHSTS],
@@ -1198,7 +1223,7 @@ sdhostbio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 				sdhostdma = 0;
 				goto out;
 			}
-			p += Secsize;
+			p += nthis*Secsize;
 		}else if(write){
 			/*
 			 * Write in bursts, reading SDEDM once per burst.
