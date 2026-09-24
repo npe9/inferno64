@@ -988,21 +988,48 @@ rwstat(t: ref Tmsg.Wstat): ref Rmsg
 	dir := dostat(f);
 	wdir := ref t.stat;
 
-	if(dir.uid != wdir.uid || dir.gid != wdir.gid){
+	#
+	# Honour the "leave this alone" sentinels.
+	#
+	# A wstat that does not mean to change a field sends nil for a
+	# string and ~0 for a number -- that is what Sys->nulldir is, and
+	# what every caller starts from.  mv(1) is the plain case: it sets
+	# nothing but .name.
+	#
+	# None of that was honoured here.  uid and gid were compared
+	# literally, so nil != "dos" and EVERY rename through dossrv
+	# returned Eperm -- "permission denied" on a file the caller owns,
+	# on a filesystem with no uids at all.  That is the mv failure on
+	# the Pi 3B: it is not mv, not the board and not the card; it is
+	# that renaming anything on a FAT filesystem has never worked, and
+	# it only looked board-specific because the host's own files are
+	# not served by dossrv.
+	#
+	# A rename is the atomic way to install a kernel, so the update
+	# path had to copy and verify instead.
+	#
+	if((wdir.uid != nil && dir.uid != wdir.uid)
+	|| (wdir.gid != nil && dir.gid != wdir.gid)){
 		putfile(f);
 		return e(Eperm);
 	}
 
-	if(dir.mtime != wdir.mtime || ((dir.mode^wdir.mode) & 8r777))
+	if(wdir.mtime != ~0 && dir.mtime != wdir.mtime)
+		changes = 1;
+	if(wdir.mode != ~0 && ((dir.mode^wdir.mode) & 8r777))
 		changes = 1;
 
+	# and only vet the mode when one is actually being set: ~0 has
+	# every permission bit lit, which passes this by accident rather
+	# than on purpose.
+	if(wdir.mode != ~0)
 	if((wdir.mode & 7) != ((wdir.mode >> 3) & 7)
 	|| (wdir.mode & 7) != ((wdir.mode >> 6) & 7)){
 		putfile(f);
 		return e(Eperm);
 	}
 
-	if(dir.name != wdir.name){
+	if(wdir.name != nil && dir.name != wdir.name){
 		# temporarily disable this
 		# g.errno = Eperm;
 		# putfile(f);
