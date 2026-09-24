@@ -343,15 +343,23 @@ with read-ahead              2.76 s              (705 KB/s)
 .B "What is left, in order."
 .IP 1.
 .I "More round trips in flight."
-Read-ahead queues eight and the host's exportfs runs at most four per
-connection (Maxconnproc), so the pipeline cannot fill.  Raising it is
-gated on the audit its own comment demands \(em it faulted on a nil
-dereference at 4 and not at 1, and that was never chased.
+DONE and null.  The audit the comment demanded: the fid table is
+correctly ref-counted under fs->fidlock, so the nil dereference it
+blamed on two workers cannot come from there and was almost certainly
+the double-reply bug fixed in 9d152e40.  One real hazard the comment did
+NOT name: f->offset, c->uri and c->dri are read-modify-written without a
+lock on DIRECTORY reads, which our client cannot presently provoke
+because caching is files-only.  At 8 the server survived 2000 abrupt
+disconnects with no fault, and the board measured 3.851s against 3.833s
+at 4 \(em no difference.  Left at 4.
 .IP 2.
 .I "Bigger messages."
-8KB msize is 239 requests for this file.  64KB was tried and broke ls
-with "stat buffer too small", which is a real and separate bug in a
-caller that sizes a stat buffer by a constant rather than by msize.
+8KB msize is 239 requests for this file.  The blocker is GONE: "64KB
+broke ls with stat buffer too small" was not ls and not a caller, it was
+exportfs storing a 65551-byte buffer size in the ushort Fcall.nstat and
+getting 15.  Clamped in 4075fb350, verified by the same ls at the same
+msize.  Whether a bigger msize is faster is still unmeasured, and see
+the note on this rig's variance before trying.
 .IP 3.
 .I "DMA with multi-block returns wrong data."
 Untouched, reproduces on both cards, not urgent: DMA is off by default
