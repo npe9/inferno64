@@ -425,3 +425,35 @@ interleaved, each preceded by a reboot, distributions reported.  About
 an hour of board time per question.  Deterministic questions \(em right
 bytes or wrong bytes, survives or faults \(em cost minutes and are where
 every fix in this document came from.
+.NH 1
+multicore: there is no bug there.  It was App Nap
+.PP
+Tested rather than assumed, because the note above said to.  The
+multicore worktree, clean, its own
+.CW styxlisten "export /" ,
+the same styxabrupt load that produced "dies after 1150-2000 abrupt
+disconnects", 3000 disconnects, two binaries built from the same head:
+.P1
+emu     (links Cocoa)     froze mid-run; cpu 0:02.29 -> 0:02.29 over 6s
+emu-g   (links no Cocoa)  survived 3000, worst health 0.040s, cpu 4.29s
+.P2
+The Cocoa binary's freeze is the signature exactly: alive, answering
+nothing, CPU not moving at all, no panic.  The no-Cocoa binary on the
+same branch, same worktree, same load, does not do it.
+.PP
+.B "So the 1150-2000 figure measured macOS, not the parallel VM."
+Every conclusion drawn from that number is suspect, and the four fixes
+that took it from ~10 to ~1150 were measured the same way \(em they may
+be real, they may be noise, and that has to be re-established before
+any of them is trusted.
+.PP
+.B "What that branch needs."
+A no-Cocoa build for serving, the way this one has
+.CW emu-cpu .
+.CW "mk CONF=emu-g install"
+already produces one there; its checked-in binary was four days stale
+against the head, which is its own trap \(em a stale no-Cocoa binary
+tests old code and looks like a clean result.
+.PP
+The multicore worktree was left exactly as found: the rebuilt emu-g was
+restored, nothing staged, nothing modified.
