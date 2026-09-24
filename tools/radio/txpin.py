@@ -117,7 +117,82 @@ def spectrum(hz, devs):
     st.close()
 
 
+def link(hz, level="-30"):
+    """Put a known alternating pattern on the air and see the receiver find it.
+
+    This is the positive control the whole radio effort has been
+    without.  Every negative in it -- no packets, no sync, no preamble
+    -- was taken while nothing was known to be transmitting, and a
+    receiver that hears nothing when nothing is sent is indis-
+    tinguishable from one that is deaf.
+
+    The tinySA's generator closes that.  In "mode low output" it will
+    FM a carrier by up to 6kHz at a modulating frequency of one's
+    choosing, and an FM carrier swinging between two frequencies at a
+    fixed rate is, to a 2-FSK demodulator, a preamble: an alternating
+    symbol at a known rate.  So the receiver is configured for exactly
+    that deviation and rate, told to hunt for 0xaaaa, and watched with
+    the generator on and with it off.
+
+    Off is not an afterthought here, it is half the measurement.  The
+    detector fires on noise at a loose threshold, so "it asserted with
+    the generator on" means nothing unless it stayed quiet with the
+    generator off, in the same minutes, at the same settings.
+    """
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "..", "tinysa"))
+    import tinysa
+    dev, tone = 6000, 4800          # 2*4800 symbols a second, +-6kHz
+    c = board.Console(os.environ.get("CLAUDE_JOB_DIR", "/tmp") + "/tmp")
+    c.run("bind -a '#W' /dev", wait=20)
+    st = c.stream()
+    if not st.ok:
+        sys.exit("txpin: the board is not running commands")
+    for l in ("freq %d" % hz, "rate %d" % (2 * tone), "deviation %d" % dev,
+              "bw 50000", "txmode var", "reg 0x27 0x01", "sync 0xaaaa 16",
+              "reg 0x0e 0x2a", "reg 0x08 0x4b"):
+        st.send(l, wait=40)
+
+    fd = tinysa.open_port(wait=30)
+    for q in ("mode low output", "freq %d" % hz, "level %s" % level,
+              "modulation fm", "modulation deviation %d" % dev,
+              "modulation freq %d" % tone):
+        tinysa.cmd(fd, q)
+
+    def look(tag):
+        out = {}
+        for sel, name in (("0x0b", "PQT_REACHED"), ("0x06", "PKT_SYNC_RXTX"),
+                          ("0x11", "carrier sense")):
+            r = st.send("gread 1000 %s" % sel, wait=60, expect=True) or ""
+            m = re.search(r"high (\d+) pct (\d+)", r)
+            out[name] = m.group(2) if m else "?"
+        print("   %-18s PQT %3s%%  SYNC %3s%%  CS %3s%%"
+              % (tag, out["PQT_REACHED"], out["PKT_SYNC_RXTX"],
+                 out["carrier sense"]))
+        sys.stdout.flush()
+
+    try:
+        for rnd in range(3):
+            tinysa.cmd(fd, "output off")
+            time.sleep(1.0)
+            look("round %d, off" % rnd)
+            tinysa.cmd(fd, "output on")
+            time.sleep(1.0)
+            look("round %d, ON" % rnd)
+    finally:
+        tinysa.cmd(fd, "output off")
+        tinysa.cmd(fd, "mode low input")
+        print("generator off")
+    st.close()
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "link":
+        hz = int(sys.argv[2]) if len(sys.argv) > 2 else 915000000
+        if not 902000000 <= hz <= 928000000:
+            sys.exit("txpin: %d is outside 902-928MHz" % hz)
+        link(hz)
+        return
     if len(sys.argv) > 1 and sys.argv[1] == "spectrum":
         hz = int(sys.argv[2]) if len(sys.argv) > 2 else 915000000
         if not 902000000 <= hz <= 928000000:
