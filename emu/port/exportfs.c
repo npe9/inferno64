@@ -426,8 +426,27 @@ exflushed(Export *fs, Exq *fq)
 			pid = 0;
 			lock(&q->l);
 			if(q->finished){
-				/* slave replied and emptied its flush queue; we can Rflush now */
+				/*
+				 * Slave replied and emptied its flush queue, so
+				 * we can Rflush now -- and we must let go of
+				 * fs->l on the way out.
+				 *
+				 * This path returned holding it.  fs->l is a
+				 * spinlock, so a Tflush naming a request that
+				 * had just finished wedged the export for good:
+				 * every later exslave and exportproc spins on
+				 * fs->l, the connection's first message is
+				 * never read, and the process sits at 0% CPU
+				 * with nothing queued for the VM -- which is
+				 * why the scheduler's own stall detector stays
+				 * silent for it.  Found by a parallel run on
+				 * the multicore branch, where reverting this
+				 * one line accounted for the whole measured
+				 * difference between surviving 10 abrupt
+				 * disconnects and surviving 2000.
+				 */
 				unlock(&q->l);
+				unlock(&fs->l);
 				return 1;
 			}
 			/* append to slave's flush queue */

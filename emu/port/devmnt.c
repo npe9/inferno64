@@ -1102,6 +1102,17 @@ mntralloc(Chan *c, ulong msize)
 	mntalloc.nrpcused++;
 	unlock(&mntalloc.l);
 	new->c = c;
+	/*
+	 * m, not just done.
+	 *
+	 * A fresh Mntrpc comes from malloc(), not mallocz(), and a
+	 * recycled one still carries the mount it was last used on -- so
+	 * mntfree()'s "sent and never answered" test (r->m != nil &&
+	 * r->done == 0) was reading uninitialised or stale memory and
+	 * deciding whether to retire a tag on it.  mountio() sets r->m
+	 * when it queues the request; until then it must be nil.
+	 */
+	new->m = nil;
 	new->done = 0;
 	new->flushed = nil;
 	new->b = nil;
