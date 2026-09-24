@@ -1642,7 +1642,23 @@ armed on carrier sense so the reading is taken while a burst is in the
 air, and pointed at 0x0b rather than 0x06, because the preamble is the
 first rung a working receiver would light.
 .PP
-WHY THE BOARD KEEPS NEEDING ITS BUTTON, WHICH IS THE HOST'S FAULT.
+WHY THE BOARD KEEPS NEEDING ITS BUTTON.  HALF THE HOST, HALF A KERNEL
+LOOP WITH NO BOUND ON IT \- AND THE KERNEL HALF CAME FIRST.
+.PP
+.B gtrig
+captured with
+.CW "while(nrun < Ncaprun)"
+and nothing else, so it ran until the pin had changed two hundred and
+fifty-six times.  Pointed at a selection that does not assert \-
+PQT_REACHED, which is exactly the one to watch when asking whether a
+preamble is ever detected \- nrun stays at one and the loop never ends.
+Interrupts stay on, so the console goes on echoing and the board looks
+alive while the shell never comes back.  It is bounded by the same
+window the caller already gave for the trigger now, and returns "no
+burst in 3000ms" from the pin that used to hang it.
+.PP
+The rest of this section still holds and is the second half of the
+mechanism rather than the whole of it.
 .PP
 It ends at
 .CW "allocb: no memory 4788/40960" ,

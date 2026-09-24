@@ -2462,7 +2462,30 @@ cc1120ctl(Radio *r, char *buf, int n)
 		nrun = nsamp = 0;
 		cur = -1;
 		t0 = fastticks(nil);
-		while(nrun < Ncaprun){
+		/*
+		 * Bounded by time as well as by runs, and the missing
+		 * bound is what wedged this board over and over.
+		 *
+		 * This used to be "while(nrun < Ncaprun)" and nothing
+		 * else, so it ran until the pin had changed two hundred
+		 * and fifty-six times.  Pointed at a selection that does
+		 * not assert -- PQT_REACHED, which is exactly what one
+		 * wants to watch when asking whether a preamble is ever
+		 * detected -- nrun stays at one and the loop never ends.
+		 * Interrupts stay on, so the console goes on echoing and
+		 * the board looks alive; the shell never comes back, and
+		 * everything typed afterwards queues in a console nobody
+		 * is reading until the kernel reaches "allocb: no
+		 * memory" and only the reset button can help.  Several
+		 * trips across the room went on this.
+		 *
+		 * The same window the caller already gave for the
+		 * trigger serves for the capture: it asked to look for
+		 * this long, and a pin that never moves is an answer
+		 * rather than a reason to wait for ever.
+		 */
+		t1 = t0 + (tickhz/1000) * ms;
+		while(nrun < Ncaprun && fastticks(nil) < t1){
 			v = s->gpio(s);
 			nsamp++;
 			if(cur < 0){

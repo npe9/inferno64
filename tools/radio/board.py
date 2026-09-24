@@ -431,7 +431,17 @@ class Stream:
             if "write error" in after:
                 self.ok = False
                 return after
-            if after == last:
+            # A command that is expected to print is not finished
+            # just because it has printed nothing twice in a row.
+            # gtrig waits up to five seconds for a carrier and says
+            # nothing at all meanwhile, so a stability test that
+            # accepts empty returned instantly -- and the caller typed
+            # the next command into a board still running the last
+            # one.  Nine of those queued hundreds of characters in a
+            # console nobody was reading, one block per character, and
+            # took the kernel to "allocb: no memory".  So when output
+            # is expected, silence is not stability.
+            if after == last and (after.strip() or not expect):
                 self.silent = 0
                 return after
             last = after
