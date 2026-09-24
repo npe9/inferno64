@@ -1053,8 +1053,27 @@ acquire(void)
 		osblock();
 	}
 
+	/*
+	 * Under the lock, like the other two resume paths.
+	 *
+	 * These two were written here unlocked while iyield() and
+	 * startup() write them holding isched.l.  handoffs++ is then a
+	 * lost-update race, so the stall detector's "no handoff between
+	 * two samples" test was reading a counter that could undercount
+	 * exactly when the VM was busiest; and holder was only ever a
+	 * hint, which is why its comment had to say so.  Every write to
+	 * both is locked now, and release() already clears holder under
+	 * the lock and only if it still names the caller, so a close
+	 * handoff cannot leave a stale pointer.
+	 *
+	 * The run queue below stays unlocked deliberately: the invariant
+	 * is that only the thread holding the VM touches it, and this
+	 * thread now holds it.
+	 */
+	lock(&isched.l);
 	isched.handoffs++;
 	isched.holder = up;
+	unlock(&isched.l);
 
 	if(up->type == Interp) {
 		p = up->iprog;
@@ -1076,20 +1095,21 @@ acquire(void)
 /*
  * Say so when the VM has stopped handing itself on.
  *
- * The styx server stops answering every few hours: connections are
- * accepted, their first message is never read, and the process is at
- * 0% CPU with every exportfs slave asleep, one waiting to re-enter the
- * VM after a socket write, and one in acquire() -- with nobody running
- * to hold the lock they are waiting for.  Both this emu and the
- * multicore branch's do it, identically, so it is not the per-request
- * worker rewrite and not parallelvm.
+ * NOT for the fault this was written for.  It was built to catch "the
+ * styx server stops answering": connections accepted, first message
+ * never read, 0% CPU, every exportfs slave asleep and one process in
+ * acquire() with nobody running.  That turned out to be macOS App Nap
+ * SUSPENDING the whole process -- see emu/MacOSX/main-cocoa.m and
+ * emu/MacOSX/emu-cpu -- and no watchdog inside a suspended process can
+ * report anything, which is exactly why this one never fired.
  *
- * It is invisible from outside and intermittent, which is the worst
- * combination to debug by hand: by the time anyone looks, the state
- * that would explain it has usually been restarted away.  This watches
- * for exactly the signature -- processes queued for the VM, the VM not
- * idle, and no handoff at all between two samples -- and prints the
- * scheduler's state once when it sees it.
+ * It is kept because a real scheduler stall would look like this and
+ * nothing else would say so.  The signature it tests is processes
+ * queued for the VM, the VM not idle, and no handoff at all between two
+ * samples.  Note what that CANNOT see: a waiter already taken off vmq
+ * and signalled, because then vmq is empty.  If you are chasing
+ * something and this is silent, that silence is not evidence -- use
+ * INFERNO_PROGWATCH, which prints holder, vmq and idlevmq outright.
  *
  * Cheap: one wakeup every five seconds and three loads under the lock,
  * and it says nothing at all while the VM is being handed on.
