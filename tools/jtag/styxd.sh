@@ -36,7 +36,36 @@ ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 # which is how "does parallelvm fix it?" was answered for the cost of one
 # command rather than 2700 lines.
 #
-EMU=${EMU:-$ROOT/MacOSX/arm64/bin/emu}
+#
+# emu-cpu, NOT emu.
+#
+# There are two emu builds on MacOSX and serving Styx with the wrong one
+# costs a day:
+#
+#	emu		is emu-cocoa -- it links Cocoa and creates an
+#			NSApplication.  That is what you want at a
+#			terminal, and it is the wrong thing here.
+#	emu-cpu		links no Cocoa at all.  No NSApplication, no
+#			window, nothing for macOS to nap.
+#
+# A headless emu-cocoa serving Styx is, to macOS, an app doing nothing
+# visible in the background, and App Nap SUSPENDS the whole task.  From
+# outside that looks like every kind of hang at once: connections
+# completing their handshake in the kernel and queueing unaccepted
+# (netstat -anL climbing past 1/0/128), Styx handshakes unanswered for
+# minutes, CPU time frozen, SIGTERM ignored because the handler never
+# runs, and then recovery with no explanation.  Eleven runs of
+# tools/jtag/wedgewatch.sh against the Cocoa binary failed that way, at
+# 11 to 115 abrupt disconnects.
+#
+# Build it with:	cd emu/MacOSX && mk CONF=emu-cpu install
+#
+EMU=${EMU:-$ROOT/MacOSX/arm64/bin/emu-cpu}
+if [ ! -x "$EMU" ]; then
+	echo "styxd: $EMU is missing; build it with" >&2
+	echo "styxd:     (cd emu/MacOSX && mk CONF=emu-cpu install)" >&2
+	exit 1
+fi
 PORT=${PORT:-6666}
 #
 # About -P: one `export /' per connection rather than one shared.

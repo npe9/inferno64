@@ -28,8 +28,17 @@ COCOAFLAGS=
 
 <mkfile-$OBJTYPE	# arm64 overrides CONF/SYSLIBS/COCOA*
 
-# Console emu-g: drop AppKit main() / Cocoa (mkfile-arm64 defaults).
-<| if [ "$CONF" = emu-g ]; then echo 'COCOAOBJ='; echo 'COCOAFLAGS='; echo 'SYSLIBS=-lm -lpthread -framework CoreFoundation -framework IOKit -framework AudioToolbox'; fi
+#
+# The no-Cocoa configs: emu-g (console) and emu-cpu (the CPU server).
+#
+# These link no AppKit and have no main() from main-cocoa.m, so they
+# create no NSApplication -- which is the point of emu-cpu.  macOS App
+# Nap suspends a Cocoa app with no window on screen, and a headless
+# emu-cocoa serving Styx froze completely and repeatedly because of it.
+# A process with no NSApplication cannot be napped at all, which beats
+# asking not to be.
+#
+<| case "$CONF" in emu-g|emu-cpu) echo 'COCOAOBJ='; echo 'COCOAFLAGS='; echo 'SYSLIBS=-lm -lpthread -framework CoreFoundation -framework IOKit -framework AudioToolbox';; esac
 
 <| $SHELLNAME ../port/mkdevlist $CONF	#sets $IP, $DEVS, $PORT, $LIBS
 
