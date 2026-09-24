@@ -1682,6 +1682,47 @@ can be used is the command itself: probe, ghist, gread and gtrig always
 print something, so an empty reply from one of those is a shell that is
 gone.  Three in a row now stops the session and says so.
 .PP
+THE RECEIVE PATH WORKS.  IT RECEIVED PACKETS.
+.PP
+Everything that said otherwise in this file is superseded by three
+numbers: recv 3, crcerr 3, on silicon, on 920MHz.
+.PP
+What was in the way was SYNC_THR, and specifically the direction of it.
+Every test above set it to 0 and called that "maximally permissive",
+which is the opposite of what the part does.  Swept on a channel where
+the preamble detector reliably fires, PKT_SYNC_RXTX is static at 0, 2,
+4, 8, 12, 16, 24, 26 and 28 and asserts at 30 \- three windows out of
+three at 30 and one of three at 31.  So a higher number accepts more,
+and every "permissive" negative in this work was taken at the strictest
+setting there is.
+.PP
+Which is not a bug in the part and probably not one in the table.  The
+driver's default is 11, and 11 rejecting noise is a sync detector doing
+its job; 30 accepting it is the extreme.  What it cost was every
+negative above, because a detector that correctly refuses noise looks
+exactly like one that does not work when there is nothing else on the
+channel to find.
+.PP
+The channel mattered as much as the number, and the control is what
+found it.  Asking whether PQT_REACHED ever fires gave 24 windows in 33
+on 908.42, which looked like preambles until it was asked of somewhere
+quiet: 6 of 6 on 920MHz, which is in band and empty, and 0 of 6 on
+944MHz, which is above the antenna's 928MHz edge.  So the firings are
+noise arriving through an antenna that is working, and the quiet in-band
+channel is a better bench than the busy one, because it produces a
+preamble detection on demand and the cellular channel never could.
+.PP
+So the ladder is complete and every rung is demonstrated on silicon:
+RSSI valid, carrier sense following the air, preamble detected, sync
+word matched, packet into the FIFO, interrupt taken, counter moved.
+Both ends of it were proven by something the bench could make happen
+rather than by waiting \- the transmitter for the pin, and noise at
+SYNC_THR 30 for the rest.
+.PP
+What remains is ordinary.  Receiving Z-Wave needs its sync word and its
+rate at a threshold that rejects noise, and traffic to arrive while the
+receiver is listening; none of that is blocked on anything now.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
