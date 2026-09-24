@@ -1232,3 +1232,50 @@ Repeating inside one arm is not enough when the whole arm can drift.
 Three readings 1.6% apart were reported as solid and the arm they were
 in moved 40% an hour later.  A/B on this board means interleaved arms,
 each preceded by a reboot, or it means nothing.
+.NH 2
+CORRECTION: the read-ahead result is not established, and the rig is why
+.PP
+The 1.42x from MCACHE was reported twice, withdrawn once, reinstated
+once, and is now withdrawn for good \(em not because it was measured
+against the wrong baseline, but because this board cannot measure a
+1.4x effect three samples at a time.
+.PP
+.B "The number that ends it."
+The SAME no-MCACHE kernel, ONE freshly booted board, three consecutive
+1.9MB reads:
+.P1
+3.173 s   2.759 s   4.904 s
+.P2
+A 78% spread inside one arm, on one boot, with nothing changed between
+the readings.  The MCACHE arm's three readings were 2.711, 2.758 and
+2.807 \(em 3.5% apart \(em and that tightness was luck.  Two arms whose
+within-arm spread is wider than the between-arm difference do not
+support a conclusion in either direction.
+.PP
+.B "What is actually known about this board's read speed."
+.IP \(bu
+It is somewhere between 2.7 and 4.9 seconds for 1.9MB, i.e. 390 to 700
+KB/s, and which end you get is not under the experimenter's control by
+any means found so far.
+.IP \(bu
+A freshly booted board tends to the fast end and a board that has been
+up tends to the slow end, but "tends" is as strong as the data allows.
+.IP \(bu
+Thirty mount/unmount cycles in four seconds puts the very next read at
+15s.  That is transient: one poll cycle later it is back to 3.8s.  It is
+a real effect and it is about concurrent teardown on the server, not
+about the board.
+.PP
+.B "What it would take to settle it."
+Ten or more readings per arm, arms interleaved rather than run in
+blocks, each arm preceded by a reboot, distributions reported rather
+than medians of three.  That is perhaps an hour of board time per
+question and it is the price of an answer here.  Until someone pays it,
+MCACHE stays off: an unproven gain does not justify changing the caching
+semantics of the path the board is driven through.
+.PP
+.B "The rule, restated harder."
+This document's rule 1 says repeat before reporting, and that was
+obeyed: three readings, 3.5% apart, reported.  It was not enough.  The
+rule wanted is: report the SPREAD, and if the spread of a single arm
+overlaps the difference being claimed, there is no result yet.

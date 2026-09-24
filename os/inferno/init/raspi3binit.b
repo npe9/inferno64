@@ -2715,24 +2715,29 @@ remotemounted(addrs: list of string): int
 	if(ok < 0)
 		return 0;
 	#
-	# MCACHE, for the read-ahead behind it.
+	# NOT cached, and the reason is measurement rather than taste.
 	#
-	# devmnt has 9front's read-ahead -- Mntrah, eight rpcs in flight --
-	# and it is reached only through cread(), which needs CCACHE on the
-	# channel, which needs MCACHE on the mount.  Without it every read
-	# is one synchronous Tread waiting for its Rread, and that is the
-	# whole cost of a bulk transfer here: 239 requests for a 1.9MB file
-	# at 16.4ms a round trip.  Removing 40% of the USB transfers under
-	# those requests changed the time by one per cent, so the round
-	# trips are the thing, and eight in flight is the lever that exists.
+	# devmnt carries 9front's read-ahead -- Mntrah, eight rpcs in
+	# flight -- reached only through cread(), which needs CCACHE on the
+	# channel, which needs MCACHE here.  Turning it on looked like a
+	# 1.42x win: 3.914s to 2.758s for a 1.9MB read, three readings each
+	# way and only 3.5% apart.
 	#
-	# This is the mount runremote() uses for the command it runs.  The
-	# poller's own mount, which reads board.cmd, is deliberately NOT
-	# cached: that channel is how the board is driven at all, and a
-	# stale read there would cost the only reliable way of talking to
-	# it.
+	# It does not survive repetition.  The same no-MCACHE kernel, one
+	# freshly booted board, three consecutive reads: 3.173, 2.759 and
+	# 4.904 seconds.  A 78% spread inside ONE arm, which is wider than
+	# the effect being claimed, so those tight triplets were luck and
+	# not precision.  Separately, an aged board measures 3.83s with
+	# MCACHE on -- no better than no-MCACHE fresh -- and there is no
+	# aged measurement from before the change to compare against.
 	#
-	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL|Sys->MCACHE, "") < 0)
+	# So it is off: an unproven gain is not worth a change in caching
+	# semantics on the path the board is driven through.  To establish
+	# it properly would take ten or more readings per arm, arms
+	# interleaved, each preceded by a reboot, with the distribution
+	# reported rather than a median of three.
+	#
+	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL, "") < 0)
 		return 0;
 	return 1;
 }
