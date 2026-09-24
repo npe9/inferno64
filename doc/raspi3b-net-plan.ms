@@ -630,3 +630,55 @@ so in
 and to record which chan an exportfs is reading so that "reading a
 descriptor emu does not hold" can be turned from an inference into a
 name.
+.NH 2
+Narrowed: the accept loop recycles one conversation and one descriptor
+.PP
+With
+.CW INFERNO_IPDEBUG=1
+the healthy cycle is exactly this, and it repeats verbatim for every
+connection:
+.P1
+conv 0 accept returns fd 4
+accepted fd 4 as conv 1, owner inferno
+conv 1 data opened (inuse now 2)
+conv 0 accept begins on fd 3 (inuse 1)    <- listener back in accept
+conv 1 closes fd 4
+so_close fd 4                             <- the OLD fd closed, after
+.P2
+Two things to notice.  Every connection is given the SAME conversation
+(1) and the same descriptor (4), because both are freed and immediately
+reused.  And the close of the old descriptor happens AFTER the next
+accept has already begun \(em the listener is sitting in accept(3) while
+fd 4 is still open, and only then is it closed.
+.PP
+.B "Then it stops."
+On the third connection there is no "accept returns" line, and none ever
+again.  At that moment:
+.P1
+listener    genuinely in so_accept -> __accept on fd 3
+emu owns    fd 3 and nothing else
+port 6666   two connections, 19 bytes unread each, owned by no process
+cpu         0.0%
+.P2
+.B "The shape of it."
+A descriptor and a conversation are being recycled between one accept
+and the next, and the teardown of the old one overlaps the start of the
+new one.  That is a recycle race, and the "CLOSE UNDER ACCEPT" guard
+already in devip cannot see it: that warns when a conversation is closed
+while IT is accepting, and here the closing conversation (1) is never
+the accepting one (0).
+.PP
+.B "What would settle it,"
+and what this has repeatedly shown is necessary before touching
+anything: record, per accept, the descriptor number accept was CALLED
+with and the one it returned, and per close, the conversation and
+descriptor, with a sequence number on each so the interleaving is
+visible rather than inferred from the order lines happen to appear in a
+log written by several processes.  The question is precisely whether the
+descriptor the listener is blocked on is still the one bound to 6666.
+.PP
+Five server fixes are in and each was real; this is the sixth thing and
+it is not the same as any of them.  What has changed is the cost of
+looking: it reproduces in thirty seconds, the trace above is one
+environment variable away, and the state can be read from outside with
+lsof, netstat and sample.
