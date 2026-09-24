@@ -1131,3 +1131,50 @@ emu-cocoa, before the fix   11 runs, 11 failures (11..115 disconnects)
 emu-cocoa, activity held     4 runs,  0 failures, 400 each
 emu-cpu, no Cocoa at all     1 run,   0 failures, 400, queue 0/0/128
 .P2
+.NH 2
+The zero-length packets were real, and removing them changed nothing
+.PP
+The transmit path wrote a zero-length packet after EVERY frame, from an
+unbraced if.  That is a real defect and it is fixed.  Measured on the
+board, same workload, counters either side:
+.P1
+before   bulk-out 779 data + 779 uncounted ZLPs = 1558 transfers
+after    bulk-out 750 transfers, txzlp 0
+total    2028 USB transfers  ->  1225
+.P2
+.B "And the throughput did not move."
+Three reads each way, the board's own clock:
+.P1
+before   3.909  3.933  3.971  3.972 s    median 3.952
+after    3.875  3.992  3.914 s           median 3.914
+.P2
+One percent, inside the spread.  Forty per cent of the USB transfers
+went away and the transfer took exactly as long.
+.PP
+.B "So the model was wrong."
+This plan said "1249 USB transfers in 5.117s is 4.1ms each, which is the
+whole transfer time \(em the USB transfer count IS the bottleneck".
+That was an arithmetic coincidence dressed up as a mechanism, and the
+5.117s it rested on was a single sample; the clean runs either side of
+it are 3.9s.  A single measurement is a hypothesis, which is rule 1 of
+this document, broken by its own author.
+.PP
+.B "What the number actually says."
+1.955MB in 8KB Styx messages is 239 requests, and 3.914s over 239 is
+.B "16.4ms per round trip."
+That is the whole time, it is latency and not bandwidth, and it is not
+sensitive to how many USB transfers each round trip costs.  The levers
+that remain are therefore the ones that reduce ROUND TRIPS, not
+transfers:
+.IP \(bu
+more data per message \(em but 64KB msize was tried and broke ls with
+"stat buffer too small", so whatever is done here has to fix that too;
+.IP \(bu
+more messages in flight \(em read-ahead, so the next Tread is on the wire
+before the current Rread lands.  Nothing in this path pipelines today.
+.PP
+Transmit batching, which this plan proposed as step 2 on the strength of
+"one frame per transfer", is NOT worth doing on this evidence: the
+counters still say 1.00 frames per bulk-out transfer after the fix, and
+the fix proves that making that number better does not make the board
+faster.
