@@ -9478,3 +9478,91 @@ per transfer, and concurrent transfers do not survive it.
 The tree is back to where it started on all four.  What is left is a
 real measurement \(em 6.4ms for one frame, 4.6ms for each one after \(em
 and no fix.
+.NH 1
+Phase 6 on real silicon: what exists, what is missing, and the trap
+.PP
+Surveyed rather than started, because one of the obvious first steps
+would take the board off the network and off its update path.
+.PP
+.B "What already exists, and is better than the plan above implies."
+.IP \(bu
+.CW sdioinit()
+in
+.CW sdhcibcm.c
+\(em a bring-up that is a SEPARATE entry point from
+.CW sdhcicardinit()
+precisely so it never touches the card pins, with the SDIO sequence
+(no CMD8, no ACMD41, no CSD) and GPIO 34-39 in alt3, which is where a
+real Pi puts the Wi-Fi.
+.IP \(bu
+.CW sdiocmd52 / sdiocmd53 ,
+byte and block mode, exercised against the generic
+.CW sd-io
+model in tools/qemu-patches and reported
+.CW SDIO-OK .
+.IP \(bu
+WL_ON.
+.CW mailbox.c
+drives the VideoCore GPIO expander the ARM cannot reach, and names the
+lines: 128 is BT_ON, 129 is WL_ON, the Wi-Fi radio's enable.  A radio
+that is never powered looks exactly like a radio that is not
+answering, and this is what avoids that.
+.PP
+.B "What is missing."
+.IP 1.
+.CW sdhcibcm
+is NOT IN THE BOARD'S KERNEL.  The raspi3b config lists
+.CW sdemmcbcm
+and
+.CW sdhostbcm
+only, so every line of SDIO code above is compiled out on real
+hardware.  That is why nothing about SDIO appears in any boot log.
+.IP 2.
+.CW ether4330
+does not exist in this tree.  Only
+.CW os/9front/boot/ether4330.proto
+is here, which is the firmware MANIFEST, not the driver.
+.IP 3.
+The firmware blob.  That manifest names
+.CW brcmfmac43430-sdio.bin
+for this chip and it is not in the tree either.
+.PP
+.B "THE TRAP, which is why this stops here."
+Adding
+.CW sdhcibcm
+to the config is the obvious first move and it would take the card
+away from SDHOST.
+.CW sdhcionline()
+calls
+.CW sdhcicardinit() ,
+whose first act is
+.P1
+	for(i = 48; i <= 53; i++)
+		gpiofsel(i, Alt3);
+.P2
+unconditionally.  On this board the card is on SDHOST as
+.CW /dev/sdN0 ,
+.CW SDDEV
+in raspi3binit.b names it, /n/dos rides on it, and
+.CW tools/jtag/kinstall.sh
+installs kernels through it.  Stealing those pins costs the update path
+and the recovery would be a card reader or JTAG.
+.PP
+.B "So the order, when this is picked up."
+.IP 1.
+Make the card path in
+.CW sdhcibcm
+not run on this board \(em the driver's own comment says the split
+exists for exactly this \(em so the unit comes up SDIO-only and never
+calls
+.CW sdhcicardinit() .
+Verify /dev/sdN0 still reads before anything else.
+.IP 2.
+Add it to the config; its idno is 'H' and the card's is 'N', so the
+letters do not collide.  Call
+.CW sdioinit()
+and WL_ON, and see whether a BCM43430 answers CMD5 on real silicon.
+That is the first thing in this whole phase that QEMU cannot tell us.
+.IP 3.
+Only then port ether4330 and find the firmware.  Both are pointless
+until a chip has answered.
