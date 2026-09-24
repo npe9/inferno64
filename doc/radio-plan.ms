@@ -1448,14 +1448,34 @@ that silicon would have to settle it.  Silicon settled it.  A model and
 a driver wrong in the same direction pass every test between them,
 which is what the two-board test had been doing.
 .PP
-That is not the whole of it.  With 0xaaaa written by hand into SYNC1 and
-SYNC0, the sync pin still never asserts, at any of the five thresholds
-from 0 to 31, on a channel carrying \-77dBm bursts.  So a second fault
-sits behind the first and is still open.  The likeliest candidate is
-the modulation index: Z-Wave's \(+-20kHz against 9.6kbit/s is h = 4.2,
-and against the 19.2kBaud a Manchester-coded R1 actually puts on the
-air it is still 2.1, where this part's demodulator is specified for
-rather less.
+That is not the whole of it, and the rest is now bounded rather than
+guessed.  With the fix flashed and the sync registers read back correct,
+the sync pin still never asserts.  Ruled out, each by measurement:
+.IP \(bu
+The threshold.  All of SYNC_THR 0, 4, 8, 16 and 31.
+.IP \(bu
+The modulation index, which was the leading suspect because Z-Wave's
+\(+-20kHz against 9.6kbit/s is h = 4.2.  Static at h = 4.17, 2.08, 1.04,
+1.00 and 0.50, an eight to one range.
+.IP \(bu
+The preamble detector gating the sync search, which would produce
+exactly this.  Static with PREAMBLE_CFG0's PQT_EN set and cleared.
+.IP \(bu
+The packet engine being left in transparent mode.  PKT_CFG2 reads 0x04
+and MDMCFG0 0x05.
+.IP \(bu
+The synthesiser.  FSCAL_CTRL reads locked and FS_CFG the 820-960 band at
+every frequency tried.
+.IP \(bu
+The pin.  IOCFG3 0x06 reads low and 0x46, which is the same selection
+inverted, reads high, so the register and the pin both work and a
+selection that does not move is one that is not asserting.
+.PP
+What is left is the demodulator's supporting configuration \- the IF,
+the AGC, the DC filter, the image correction \- which TI's tool sets as
+one coherent group per configuration and which this driver updates only
+in part when the rate, deviation and bandwidth change.  That is the next
+place to look and it is a bigger job than a register.
 .PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
