@@ -378,8 +378,28 @@ exflushed(Export *fs, Exq *fq)
 			pid = 0;
 			lock(&q->l);
 			if(q->finished){
-				/* slave replied and emptied its flush queue; we can Rflush now */
+				/*
+				 * slave replied and emptied its flush queue; we can
+				 * Rflush now -- but give fs->l back first.
+				 *
+				 * This return dropped only q->l, so a Tflush naming a
+				 * request that had just finished left fs->l held for
+				 * ever, and fs->l is a spinlock.  Every later exslave
+				 * wedges on it; the one at the top of the loop is
+				 * holding exq.l while it waits, so exportproc's
+				 * exshutdown wedges behind that, and the server stops
+				 * reading its connections at 0% CPU.  The stacks say
+				 * it exactly:
+				 *
+				 *   exslave exportfs.c:532 -> lock  (holds exq.l)
+				 *   exslave exportfs.c:608 -> lock
+				 *   exportproc             -> lock
+				 *
+				 * Every other exit from this lock already unlocks; this
+				 * one was simply missed.
+				 */
 				unlock(&q->l);
+				unlock(&fs->l);
 				return 1;
 			}
 			/* append to slave's flush queue */
@@ -568,16 +588,22 @@ exslave(void *a)
 		}
 
 		/*
-		 * if the fcall completed without error we must reply,
-		 * even if a flush is pending (because the underlying server
-		 * might have changed state), unless the export has shut down completely.
-		 * must also reply to each flush in order, and only after the original reply (if sent).
+		 * A flushed request gets NO reply of its own.  Each flush is
+		 * answered in order, after the original reply if one is sent.
+		 *
+		 * This read "q->flush == nil || err == nil", so a request
+		 * that had been flushed but happened to succeed was answered
+		 * anyway, and then the Rflush was sent as well.  Two replies
+		 * for one tag, and the client has already been told by the
+		 * Rflush that the tag is free.  Whatever work was done is
+		 * wasted either way; sending it is not a saving, it is a
+		 * protocol violation that costs the whole session.
 		 */
 		lock(&q->l);
 		notkilled();
 		q->busy = 0;	/* operation complete */
 		if(!q->shut){
-			if(q->flush == nil || err == nil){
+			if(q->flush == nil){
 				unlock(&q->l);
 				q->out.type = q->in.type+1;
 				q->out.tag = q->in.tag;

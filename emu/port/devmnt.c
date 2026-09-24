@@ -40,6 +40,12 @@ enum
 	NMASK = (64*1024)>>TAGSHIFT,
 };
 
+/*
+ * Tags retired by mntfree() rather than recycled; dis.c's vmwatch
+ * prints it, so a run can say whether that path was taken at all.
+ */
+int mntretired;
+
 struct Mntalloc
 {
 	Lock	l;
@@ -1089,6 +1095,15 @@ mntralloc(Chan *c, ulong msize)
 	unlock(&mntalloc.l);
 	new->c = c;
 	new->done = 0;
+	/*
+	 * m says "this rpc has been queued for transmission", which is what
+	 * mntfree() tests to decide whether the tag may be recycled.  It was
+	 * never initialised: a fresh Mntrpc comes from malloc, not mallocz,
+	 * and a recycled one still carries the last mount it was sent to.
+	 * So set it, or the test reads uninitialised memory and retires tags
+	 * of rpcs that were never on the wire.
+	 */
+	new->m = nil;
 	new->flushed = nil;
 	new->b = nil;
 	return new;
@@ -1100,6 +1115,41 @@ mntfree(Mntrpc *r)
 	if(r->b != nil)
 		freeblist(r->b);
 	lock(&mntalloc.l);
+	/*
+	 * NEVER recycle an rpc whose reply may still be coming.
+	 *
+	 * This is where a tag is really reused.  mntfree does not free
+	 * the tag -- it puts the whole Mntrpc, tag and all, on
+	 * mntalloc.rpcfree, and mntralloc hands the next caller that
+	 * same struct with that same tag.  So an rpc abandoned with its
+	 * request already on the wire gives its tag to the very next
+	 * request, and when the server finally answers the dead one the
+	 * reply is delivered to the live one:
+	 *
+	 *   mnt: proc released: mismatch ... tag 2 fid 44 T104 R117
+	 *   mnt: proc exwork:   mismatch ... tag 2 fid 33 T120 R105
+	 *
+	 * A Tattach answered by an Rread, a Tclunk answered by an
+	 * Rattach.  After that the session is off by one for good, and
+	 * because styxlisten gives every client a mount of the SAME pipe
+	 * to a single `export /', one client is enough to take the whole
+	 * server down: every later mount fails with "mount rpc error",
+	 * connections are accepted and never served, and from outside
+	 * the server has just stopped answering.
+	 *
+	 * r->m is set when the request is queued for transmission, so
+	 * (m != nil && !done) is exactly "sent, unanswered, abandoned".
+	 * Retire the tag rather than hand it on: 64K tags, a handful
+	 * lost per dead client, against a session that cannot recover.
+	 */
+	if(r->m != nil && r->done == 0){
+		mntretired++;
+		mntalloc.nrpcused--;
+		unlock(&mntalloc.l);
+		free(r->rpc);
+		free(r);
+		return;
+	}
 	if(mntalloc.nrpcfree >= 10){
 		free(r->rpc);
 		freetag(r->request.tag);

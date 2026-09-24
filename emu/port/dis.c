@@ -206,7 +206,16 @@ struct
 	Proc*	vmqt;
 	Proc*	idlevmq;	/* queue of procs wanting work */
 	Atidle*	idletasks;
+	int	handoffs;	/* times the vm has been taken; vmwatch reads it */
+	Proc*	holder;		/* who has the vm now, for vmwatch to name */
 } isched;
+
+/*
+ * Rpcs retired rather than recycled by mntfree(); see devmnt.c.
+ * vmwatch prints it so that a run can say whether that path was taken
+ * at all -- a fix whose code never ran explains nothing.
+ */
+extern	int	mntretired;
 
 /* Three places look at isched.vmq without holding isched.l, and all
  * three are deliberate: tready(), which Sleep() calls as its wakeup
@@ -1075,6 +1084,18 @@ acquire(void)
 		osblock();
 	}
 
+	/*
+	 * Getting here IS the handoff, by either path.
+	 *
+	 * AINC rather than ++: on a parallel VM two threads can leave
+	 * acquire() at once, and a lost increment is exactly the input
+	 * that makes vmwatch below cry stall when the VM was busy.  An
+	 * instrument that cannot tell work from a stall is worse than
+	 * none -- that mistake has already been made once here.
+	 */
+	AINC(&isched.handoffs);
+	isched.holder = up;
+
 	if(up->type == Interp) {
 		p = up->iprog;
 		up->iprog = nil;
@@ -1092,6 +1113,112 @@ acquire(void)
 	strcpy(up->text, "dis");
 }
 
+/*
+ * Say so when the VM has stopped handing itself on.
+ *
+ * The styx server stops answering after a while: connections are
+ * accepted, their first message is never read, and the process is at
+ * 0% CPU with every exportfs slave asleep, one waiting to re-enter the
+ * VM after a socket write, and one in acquire() -- with nobody running
+ * to hold the lock they are waiting for.  Both this emu and the
+ * raspi3b-port one do it, identically, so it is neither the per-request
+ * worker rewrite nor parallelvm.
+ *
+ * It is invisible from outside and intermittent, which is the worst
+ * combination to debug by hand: by the time anyone looks, the state
+ * that would explain it has usually been restarted away.  This watches
+ * for exactly the signature -- processes queued for the VM, the VM not
+ * idle, and no handoff at all between two samples -- and prints the
+ * scheduler's state once when it sees it.
+ *
+ * Cheap: one wakeup every five seconds and three loads under the lock,
+ * and it says nothing at all while the VM is being handed on.
+ *
+ * KNOWN LIMITATION: holder is a hint, not evidence.  It is written
+ * without the lock on the acquire() path and cleared in release() only
+ * if it still names the caller, so under a parallel VM it can name a
+ * thread that has already let go.  Read it as "this is who took it
+ * last", and believe the queue and the counter, which are the
+ * predicate.
+ */
+static void
+vmwatch(void *a)
+{
+	int last, now;
+	int stalled, said, lastretired, first;
+
+	Proc *q, *h;
+
+	USED(a);
+	last = 0;
+	said = 0;
+	first = 1;
+	lastretired = 0;
+	for(;;){
+		osmillisleep(5000);
+		/*
+		 * One line on the first sample, so that a silent run is
+		 * evidence rather than an open question: it says the watcher
+		 * is running and that its prints reach wherever the log goes.
+		 * Without it, "mntretired never printed" could equally have
+		 * meant the printing was broken -- and that ambiguity would
+		 * have been read as a result.
+		 */
+		if(first){
+			first = 0;
+			print("dis: vmwatch running; handoffs %d mntretired %d\n",
+				isched.handoffs, mntretired);
+		}
+		/*
+		 * Say when mntfree() has retired a tag, whether or not
+		 * anything is wrong.  Hanging that number off the stall
+		 * report alone made it unreadable: the report only fires on a
+		 * predicate this failure does not meet, so a run could not
+		 * tell "the fix worked" from "the fix never ran".
+		 */
+		if(mntretired != lastretired){
+			print("dis: mntretired %d\n", mntretired);
+			lastretired = mntretired;
+		}
+
+		lock(&isched.l);
+		now = isched.handoffs;
+		q = isched.vmq;
+		h = isched.holder;
+		stalled = q != nil && isched.idle == 0 && now == last;
+		last = now;
+		unlock(&isched.l);
+		if(!stalled){
+			said = 0;
+			continue;
+		}
+		if(said)
+			continue;
+		said = 1;
+		/*
+		 * Name the HOLDER, which is the whole question.
+		 *
+		 * The first firing of this printed only the waiters, and the
+		 * holder had to be guessed at from a sampling profile -- which
+		 * produced a confident wrong answer, because the stack that
+		 * looked like the culprit occupied a tenth of the sample
+		 * window and was merely passing through.  Whoever took the VM
+		 * is recorded now, so the report says it instead of inviting
+		 * an inference.
+		 */
+		print("dis: SCHEDULER STALLED: idle %d creating %d handoffs %d "
+			"mntretired %d\n",
+			isched.idle, isched.creating, now, mntretired);
+		if(h != nil)
+			print("dis:    the vm was last taken by %s pid %d\n",
+				h->text, h->pid);
+		else
+			print("dis:    NOBODY holds the vm\n");
+		for(; q != nil; q = q->qnext)
+			print("dis:    waiting: %s pid %d\n", q->text, q->pid);
+	}
+}
+
 void
 release(void)
 {
@@ -1104,6 +1231,8 @@ release(void)
 		delrun(Prelease);
 
 	lock(&isched.l);
+	if(isched.holder == up)
+		isched.holder = nil;
 	if(*(pq = &isched.vmq) == nil && *(pq = &isched.idlevmq) == nil) {
 		isched.idle = 1;
 		f = isched.creating;
@@ -1150,6 +1279,21 @@ iyield(void)
 	strcpy(up->text, "yield");
 	osblock();		/* sleep */
 	strcpy(up->text, "dis");
+	/*
+	 * Resuming here IS a handoff.
+	 *
+	 * The counter used to be bumped only in acquire(), and this path
+	 * never goes through it -- a thread parked on idlevmq is woken
+	 * straight back into the VM loop.  So a perfectly busy server
+	 * could show the counter frozen, and the stall detector above
+	 * fired on it: a false alarm that was then read off a sampling
+	 * profile as a root cause.  An instrument that cannot tell work
+	 * from a stall produces exactly that.
+	 */
+	lock(&isched.l);
+	isched.handoffs++;
+	isched.holder = up;
+	unlock(&isched.l);
 }
 
 void
@@ -1171,6 +1315,10 @@ startup(void)
 	unlock(&isched.l);
 
 	osblock();
+	lock(&isched.l);		/* resuming is a handoff; see iyield */
+	isched.handoffs++;
+	isched.holder = up;
+	unlock(&isched.l);
 }
 
 void
@@ -1462,6 +1610,8 @@ disinit(void *a)
 
 	if(vflag)
 		print("Initial Dis: \"%s\"\n", initmod);
+
+	kproc("vmwatch", vmwatch, nil, 0);
 
 	fmtinstall('D', Dconv);
 
