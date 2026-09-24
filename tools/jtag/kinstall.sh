@@ -127,8 +127,24 @@ echo "kinstall: kernel8.img on the card matches the host's"
 #
 # Reboot and look for what the kernel actually prints.
 #
-echo "kinstall: rebooting"
-screen -S "$SESS" -X stuff "$(printf '\022')" 2>/dev/null
+#
+# Reboot THROUGH THE BOARD, not through the console.
+#
+# ^R is handled -- os/inferno/port/devcons.c takes 0x12 straight out of
+# the console receive path and calls archreboot() -- and sending it with
+# "screen -X stuff" did nothing at all, four attempts running.  The
+# board prints and does not hear, which is the known signature of the
+# serial adapter being wedged by a second opener; whatever the cause,
+# the console is not a reliable way to tell this board anything.
+#
+# devcons also accepts "echo reboot >/dev/sysctl", and the board.cmd
+# poller is a shell, so the reboot can be asked for over the network
+# using the same channel that just delivered the kernel.  Measured: the
+# banner appeared fifteen seconds later.
+#
+echo "kinstall: rebooting (over the network, not the console)"
+rm -f "$OUT"
+printf '%s\n' "load std; echo REBOOTING; echo reboot > /dev/sysctl" > "$CMD"
 i=0
 while [ $i -lt 240 ]; do
 	sleep 5
