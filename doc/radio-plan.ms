@@ -739,16 +739,50 @@ board actually wants.  That is the difference between an RSSI and a
 number.
 .PP
 THE CLAIM BELOW IS WRONG AND IS KEPT FOR WHAT IT COST.  The generator
-does reach the board.
-.CW "mode low output"
-is the low path and stops short, which is why 915MHz asked of it came
-out at 10 \- but
+does reach the board \- but not for the reason first written here, and
+the correction is worth more than the claim.
+.PP
+What made it work was the frequency, not the mode.  A generator's
+frequency on this instrument is the
+.B sweep
+setting;
+.CW "freq 915000000"
+does not set it, which is why 915MHz asked for came out at 10 and why
+the screen knew and the serial port did not \- bare
+.CW mode ,
+.CW freq ,
+.CW level
+and
+.CW output
+print their usage rather than their state.
+.PP
 .CW "mode output"
-is the high one and reaches 915 exactly, and its frequency is the
-sweep setting rather than
-.CW freq .
+and
+.CW "mode low output"
+are the same thing on this firmware, measured: at 915MHz and
+.CW "level -60"
+this receiver reads \-76dBm under either.  So the generator is on its
+low path, above the 800MHz that path is specified to, and the first
+version of this section credited a mode change that changed nothing.
+Two things were altered in one step and the wrong one was thanked.
 Measured: generator off, this receiver's floor \-111 and peak \-106;
 generator on, floor \-93 and peak \-92; three times, on command.
+.PP
+And cabled straight into the click, the scale comes out.  Stepping the
+generator from \-52 to \-76dBm in fours, the receiver reads \-68, \-72,
+\-76, \-79, \-83, \-89, \-89, which is a least-squares slope of 0.93 and
+an intercept of \-20.  Above about \-50 it saturates flat at \-65 to
+\-68 however hard it is driven, and with the generator off it reads
+\-119, eight dB quieter than on the antenna, which is the cable
+shielding it and is the best evidence the connection is real.
+.PP
+The slope is the part to keep.  It is a relative measurement and an
+attenuator's steps are accurate whatever its absolute level is doing,
+so 0.93 says this RSSI under-reports a change by seven per cent, and
+that it is linear from \-68 down to at least \-89 and saturates above.
+The intercept is not to be kept: the generator is out of its specified
+band, so how much of \-20 is cable and how much is an uncalibrated
+output cannot be separated here.
 Nothing about a connector was ever in the way, only a word.
 .PP
 What is still not possible is the half that matters.  A known level
