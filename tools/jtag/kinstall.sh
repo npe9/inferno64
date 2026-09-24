@@ -118,9 +118,26 @@ print(int.from_bytes(d[addr-0x80000:addr-0x80000+4], "little"))
 PYEOF`
 [ -n "$stamp" ] || fail "cannot read the build stamp out of $IMG"
 
+#
+# A console is no longer required, and refusing without one was left
+# over from when it was.
+#
+# This check dates from the version that decided whether a kernel had
+# booted by reading the screen session's scrollback.  Nothing here does
+# that any more: the pre-flight boot confirms itself over JTAG when
+# there is no console, and the verdict comes from asking the BOARD for
+# /dev/osversion through the poller.  Meanwhile the console on this desk
+# is deaf, and its screen session has now vanished mid-session more than
+# once -- so refusing to install without it means refusing to work for a
+# reason that stopped applying.
+#
+# Say it is missing, because a live console is still the fastest way to
+# watch a boot, and carry on.
+#
 SESS=${SESS:-`screen -ls | awk '/ttys/{print $1; exit}'`}
 if [ -z "$SESS" ] || ! screen -S "$SESS" -X select . >/dev/null 2>&1; then
-	fail "no screen session on the board's console; cannot tell what booted"
+	echo "kinstall: no console; the board will be asked directly instead" >&2
+	SESS=
 fi
 
 # The server the board fetches through has to answer before any of this
