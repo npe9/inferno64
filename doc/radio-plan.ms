@@ -1901,6 +1901,45 @@ since I last looked" has an answer on the board itself.
 .CW "led on|off|blink"
 is there to prove it is wired before anything it says is believed.
 .PP
+THE WHOLE CHAIN, OVER THE AIR, AGAINST A SIGNAL SOMEBODY SWITCHED ON.
+.PP
+The tinySA's generator FMs a carrier by \(+-6kHz at a tone of one's
+choosing, and to a 2-FSK demodulator that is a preamble: an alternating
+symbol at a known rate.  Put on 915MHz at \-6dBm, with the receiver
+tuned to it and hunting for 0xaaaa:
+.DS
+.CW "  tone 4800 rate 9600  ON    PQT   0%  SYNC  0%  CS 100%"
+.CW "  tone 4800 rate 9600  off   PQT   0%  SYNC  0%  CS   0%"
+.CW "  tone 2400 rate 4800  ON    PQT  81%  SYNC  7%  CS  85%"
+.CW "  tone 2400 rate 4800  off   PQT   0%  SYNC  0%  CS   0%"
+.CW "  tone 1200 rate 2400  ON    PQT  96%  SYNC  2%  CS  98%"
+.CW "  tone 1200 rate 2400  off   PQT   0%  SYNC  0%  CS   0%"
+.DE
+Every off round is zero on every rung.  Every on round at a matched
+rate lights the preamble detector, and the sync detector fires with it.
+.PP
+So the receive path is proven over the air and not on noise: a
+transmission somebody switched on, a preamble found in it, and a sync
+word matched in it, with the control being the same measurement a
+second later with the transmitter off.  That is what every negative in
+this file lacked.
+.PP
+The rate matters and the way it matters is worth keeping.  A 4800Hz
+tone against 9600 baud gives nothing but carrier sense; halve both and
+the preamble detector goes to 81 per cent, halve again and it goes to
+96.  The generator's FM is a tone rather than a square, so its
+instantaneous frequency sweeps rather than switching, and the slicer
+follows it better the more symbol time it is given.  Which also says
+what the modulation index does here: 2*6000 over 2400 is five, and five
+works where 1.25 did not.
+.PP
+And the generator is doing what it claims.  Profiled with this very
+receiver at an 8kHz filter, an unmodulated carrier occupies six 2kHz
+bins and the same carrier under FM occupies twelve, peak five dB lower
+for the same power spread wider.  Twenty-two kilohertz measured against
+Carson's 2(6 + 4.8) = 21.6.  The part is a usable narrowband analyser
+as well as a receiver.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP

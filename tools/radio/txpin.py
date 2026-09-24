@@ -117,7 +117,7 @@ def spectrum(hz, devs):
     st.close()
 
 
-def link(hz, level="-30"):
+def link(hz, level="-10"):
     """Put a known alternating pattern on the air and see the receiver find it.
 
     This is the positive control the whole radio effort has been
@@ -150,24 +150,41 @@ def link(hz, level="-30"):
         sys.exit("txpin: the board is not running commands")
     for l in ("freq %d" % hz, "rate %d" % (2 * tone), "deviation %d" % dev,
               "bw 50000", "txmode var", "reg 0x27 0x01", "sync 0xaaaa 16",
-              "reg 0x0e 0x2a", "reg 0x08 0x4b"):
+              "reg 0x0e 0x2a", "reg 0x08 0x4b",
+              # The generator lands at about -93dBm here and the
+              # carrier sense threshold defaults above that, so
+              # without this the one rung that certainly works
+              # reports nothing and the whole ladder reads dark.
+              "csthr -104"):
         st.send(l, wait=40)
 
     fd = tinysa.open_port(wait=30)
-    for q in ("mode low output", "freq %d" % hz, "level %s" % level,
+    # "mode output", not "mode low output": the latter is the low-band
+    # generator and clamps -- asked for 915MHz it sat at 10, which the
+    # instrument's screen showed and its serial port did not, since
+    # bare mode/freq/level/output print their usage rather than their
+    # state.  And the frequency is the sweep setting, not "freq".
+    for q in ("mode output", "sweep %d %d" % (hz, hz), "level %s" % level,
               "modulation fm", "modulation deviation %d" % dev,
               "modulation freq %d" % tone):
         tinysa.cmd(fd, q)
+    print("generator: %s" % (tinysa.cmd(fd, "sweep") or "").replace("\r", " ")[:60])
 
     def look(tag):
         out = {}
+        r = st.send("probe %d 800" % hz, wait=60, expect=True) or ""
+        lvl = "?"
+        for l in r.split("\n"):
+            m2 = re.search(r"floor (-?\d+) peak (-?\d+)", l)
+            if m2:
+                lvl = "%s/%s" % (m2.group(1), m2.group(2))
         for sel, name in (("0x0b", "PQT_REACHED"), ("0x06", "PKT_SYNC_RXTX"),
                           ("0x11", "carrier sense")):
             r = st.send("gread 1000 %s" % sel, wait=60, expect=True) or ""
             m = re.search(r"high (\d+) pct (\d+)", r)
             out[name] = m.group(2) if m else "?"
-        print("   %-18s PQT %3s%%  SYNC %3s%%  CS %3s%%"
-              % (tag, out["PQT_REACHED"], out["PKT_SYNC_RXTX"],
+        print("   %-18s floor/peak %-9s PQT %3s%%  SYNC %3s%%  CS %3s%%"
+              % (tag, lvl, out["PQT_REACHED"], out["PKT_SYNC_RXTX"],
                  out["carrier sense"]))
         sys.stdout.flush()
 
@@ -182,7 +199,7 @@ def link(hz, level="-30"):
     finally:
         tinysa.cmd(fd, "output off")
         tinysa.cmd(fd, "mode low input")
-        print("generator off")
+        print("generator off, instrument back to input")
     st.close()
 
 
