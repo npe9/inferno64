@@ -9806,3 +9806,54 @@ reporting a healthy board, running exactly the build just written, as
 JTAG-only.  The same merge would have swallowed the end token that
 follows.  The marker goes first and a newline is emitted after the
 version.
+.PP
+.B "A command failure used to wedge the controller for good."
+Retrying CMD5 exposed it: attempt 0 fails with a command timeout and
+attempts 1, 2 and 3 all fail with \fIthe command line never went
+idle\fP.  A command that errors leaves Cmdinhibit set and the Simplified
+Spec is explicit that software must reset the CMD line to clear it.
+This driver never did, so the first failure wedged the controller for
+the life of the boot.
+.PP
+That is not cosmetic, and it undermined the finding it was hiding
+behind: one CMD5 timeout was the entire basis for \fIno I/O function
+answered\fP, because the retries after it could not reach the bus
+whatever was on the far end.  On the card path a single transient error
+would have taken the disk away and never given it back.  With the reset
+in place all four attempts reach the bus and all four return a genuine
+command timeout, and SD-OK and FAT-OK are unchanged.
+.PP
+.B "The preconditions are all satisfied and the chip still does not answer."
+Board revision 0xa02082 is a Pi 3 Model B rev 1.2, which carries a
+BCM43438, so \fIthere is no chip\fP is not available as an explanation.
+GPIO 43 is in alt0 (GPCLK2) with GP2CTL 0x291 \(em enabled, sourced
+from the oscillator \(em and GP2DIV 0x249f00, which is DIVI 585 and DIVF
+3840: 19.2MHz over 585.9375 is 32768Hz exactly, so the radio's low-power
+oscillator is running.  All six SDIO pins are read BACK as alt3 rather
+than merely written.  The bus clock is 400kHz.  WL_ON reads 1.  Four
+CMD5s time out with the controller never seeing a response start bit,
+which is not a CRC complaint \(em nothing drives CMD at all.
+.PP
+.B "One caveat on \(lqthe radio is powered\(rq."
+That rests on GET_GPIO_STATE, and the same firmware has no
+SET_GPIO_STATE.  A firmware with a stubbed expander implementation could
+return plausible defaults from GET and implement nothing, and the
+coherence of the four values is suggestive but not proof.  It cannot be
+settled from here: the one line whose state is externally visible is
+PWR_LED_OFF, and checking it means looking at the board.
+.PP
+.B "Why the next step is not more driver work."
+Linux resets this part by driving its enable low and then high \(em
+mmc-pwrseq-simple with an active-low reset on expander line 1 \(em and
+with no SET_GPIO_STATE that cannot be done from here at all.  Every
+other explanation has now been checked and eliminated or corrected.
+.PP
+Replacing start.elf and bootcode.bin is the obvious remedy and it is
+also the one change on this board that nothing here protects.  kinstall
+guards the kernel with a JTAG pre-flight and kernel8.bak; neither
+applies to the firmware, and the failure mode is worse than a bad
+kernel.  A bad kernel leaves the ARM running something JTAG can reach.
+A bad start.elf means the firmware never releases the ARM, so there is
+nothing for JTAG to halt and the card has to come out of the board.
+That is a decision with a physical recovery, and it should be taken
+deliberately rather than as the next automatic step.

@@ -165,6 +165,35 @@ awaitbit(u32 *reg, u32 bit, int want)
 static u32 sdhcilastint, sdhcilaststat;
 static char *sdhcilastwhy = "";
 
+/*
+ * Clear the command line after a failed command.
+ *
+ * A command that errors or times out leaves Cmdinhibit set, and the
+ * Simplified Spec is explicit that software must reset the CMD line to
+ * clear it.  This driver never did, so the FIRST failure wedged the
+ * controller: every command after it stopped at "the command line never
+ * went idle", for the life of the boot.
+ *
+ * That is not a cosmetic bug.  It meant one CMD5 timeout was the whole
+ * basis for "no I/O function answered" -- the three retries after it
+ * could not have reached the bus whatever was on the far end -- and on
+ * the card path a single transient error would take the disk away and
+ * never give it back.
+ */
+static void
+sdhcirecover(Ctlr *c, u32 flags)
+{
+	u32 *r = c->r;
+	u32 rst;
+
+	rst = Srstcmd;
+	if(flags & Cmdisdata)
+		rst |= Srstdata;
+	r[Control1] |= rst;
+	awaitbit(&r[Control1], rst, 0);
+	r[Interrupt] = r[Interrupt];
+}
+
 static int
 sdhcicmd(Ctlr *c, int cmd, u32 arg, u32 flags)
 {
@@ -190,6 +219,7 @@ sdhcicmd(Ctlr *c, int cmd, u32 arg, u32 flags)
 		sdhcilastwhy = "nothing answered: no completion and no error";
 		sdhcilastint = r[Interrupt];
 		sdhcilaststat = r[Status];
+		sdhcirecover(c, flags);
 		return -1;
 	}
 	if(r[Interrupt] & Interr){
@@ -197,6 +227,7 @@ sdhcicmd(Ctlr *c, int cmd, u32 arg, u32 flags)
 		sdhcilastint = r[Interrupt];
 		sdhcilaststat = r[Status];
 		r[Interrupt] = r[Interrupt];
+		sdhcirecover(c, flags);
 		return -1;
 	}
 	r[Interrupt] = Cmdcomplete;
@@ -815,11 +846,26 @@ sdioinit(void)
 	 * that window set waits for bit 31, the ready bit.  R4 has neither
 	 * a CRC nor a command index, so neither is checked.
 	 */
-	if(sdhcicmd(c, 5, 0, Resp48) < 0){
-		print("sdio: CMD5 failed -- %s (interrupt %#lux status %#lux)\n",
-			sdhcilastwhy, (ulong)sdhcilastint, (ulong)sdhcilaststat);
-		return -1;
+	/*
+	 * Ask more than once before concluding nothing is there.
+	 *
+	 * A chip that is awake but slow to settle and a chip that is
+	 * absent give the same answer to a single CMD5, and one attempt
+	 * has been the whole basis of "no I/O function" so far.  Four
+	 * tries with a wait between them costs milliseconds and
+	 * distinguishes them.
+	 */
+	for(i = 0; i < 4; i++){
+		if(sdhcicmd(c, 5, 0, Resp48) == 0)
+			break;
+		print("sdio: CMD5 attempt %d failed -- %s "
+			"(interrupt %#lux status %#lux)\n",
+			i, sdhcilastwhy, (ulong)sdhcilastint,
+			(ulong)sdhcilaststat);
+		delay(100);
 	}
+	if(i == 4)
+		return -1;
 	ocr = r[Resp0];
 	if(((ocr >> 28) & 7) == 0){
 		print("sdio: CMD5 answered r4 %#lux: zero I/O functions\n",
@@ -1288,6 +1334,72 @@ sdiocheck(void)
 			"a sleeping radio and an absent one look alike\n", Wlon);
 	else
 		delay(150);		/* the chip needs a moment after power */
+
+	/*
+	 * Two preconditions the radio needs before CMD5 can mean
+	 * anything, both read-only, both free.
+	 *
+	 * The BCM43438 wants a 32.768kHz low-power oscillator, and on this
+	 * board it comes from the SoC: GPCLK2 on GPIO 43, set up by the
+	 * firmware before the kernel runs.  A radio with no LPO never
+	 * brings its SDIO interface up, and the symptom is exactly what is
+	 * seen here -- an enable line that reads high and a CMD5 that
+	 * times out with the bus idle.  Nothing in this kernel programs
+	 * GPCLK2, so the question is whether the firmware left it running
+	 * and whether anything since has disturbed it.
+	 *
+	 * And read the SDIO pins BACK.  sdioinit writes Alt3 to 34-39 and
+	 * has never once checked that it took; a mux that did not move
+	 * would produce this same silence, and "I wrote the register" is
+	 * not the same claim as "the pin is in that function".
+	 */
+	{
+		extern int gpiofselget(int);
+		volatile u32 *cm = (volatile u32*)(BCMPERIPH + 0x101000);
+		u32 ctl, div;
+		int f;
+
+		f = gpiofselget(43);
+		ctl = cm[0x80/4];
+		div = cm[0x84/4];
+		print("sdio: gpio43 fsel %d (4 = alt0 = GPCLK2), "
+			"GP2CTL %#lux GP2DIV %#lux\n",
+			f, (ulong)ctl, (ulong)div);
+		if((ctl & (1<<4)) == 0)
+			print("sdio: GPCLK2 IS NOT ENABLED -- the radio has no "
+				"32kHz LPO and cannot answer CMD5\n");
+		for(i = 34; i <= 39; i++)
+			gpiofsel(i, Alt3);
+		for(i = 34; i <= 39; i++)
+			if(gpiofselget(i) != Alt3)
+				print("sdio: gpio%d did NOT take Alt3 "
+					"(reads %d)\n", i, gpiofselget(i));
+	}
+
+	/*
+	 * Which board is this, exactly?
+	 *
+	 * Everything on the SoC side now checks out -- pins routed and
+	 * read back, LPO running at exactly 32768Hz, enable high, bus
+	 * clock legal -- and nothing answers.  Two hypotheses are left:
+	 * the chip needs a reset that cannot be performed without
+	 * SET_GPIO_STATE, or there is no chip on those pins.  The board
+	 * revision settles the second, and it costs one mailbox call.
+	 * It also decides which firmware and which .bin a port of
+	 * ether4330 would need, so it is worth having written down
+	 * either way: a 3B carries a BCM43438, a 3B+ a BCM43455.
+	 */
+	{
+		extern int mboxgetrevserial(u32*, uvlong*);
+		u32 brev;
+		uvlong ser;
+
+		if(mboxgetrevserial(&brev, &ser) == 0)
+			print("sdio: board revision %#lux serial %llux\n",
+				(ulong)brev, ser);
+		else
+			print("sdio: board revision unavailable\n");
+	}
 
 	nfn = sdioinit();
 	if(nfn < 0){
