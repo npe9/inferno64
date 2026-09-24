@@ -877,6 +877,7 @@ rxreads := 0;		# bulk-in transfers that returned data
 rxframes := 0;		# ethernet frames pulled out of them
 txwrites := 0;		# bulk-out transfers issued
 txframes := 0;		# ethernet frames handed to them
+txzlp := 0;		# zero-length packets sent to delimit an exact multiple
 
 rxproc(rxc: chan of array of byte)
 {
@@ -1015,6 +1016,7 @@ txproc()
 		#
 		if(len f % outmaxpkt == 0){
 			txwrites++;
+			txzlp++;
 			sys->write(bout.dfd, zlp, 0);
 		}
 	}
@@ -1099,8 +1101,8 @@ handle(gm: ref Tmsg): string
 			# workload and divide; nothing is timed here, because
 			# anything timed in this path moves what it measures.
 			#
-			ss += sys->sprint("usb rxreads %d rxframes %d txwrites %d txframes %d\n",
-				rxreads, rxframes, txwrites, txframes);
+			ss += sys->sprint("usb rxreads %d rxframes %d txwrites %d txframes %d txzlp %d\n",
+				rxreads, rxframes, txwrites, txframes, txzlp);
 			for(i := 0; i < nconn; i++){
 				c := conns[i];
 				np := 0;
