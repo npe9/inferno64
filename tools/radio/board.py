@@ -197,6 +197,19 @@ class Console:
         for l in lines:
             self.send(l)
             time.sleep(1.0)
+            # A rejected ctl line kills the cat, and then every line
+            # after it is typed at a shell prompt instead of into the
+            # file.  That is how "pktlen fixed" -- which is spelt
+            # "txmode fixed" -- turned the six lines behind it into six
+            # shell commands, one of which the shell reported as a
+            # missing file and none of which reached the radio.  Worse
+            # than useless: it looks like the radio refusing eight
+            # things rather than one.
+            t = self.text()
+            i = t.rfind(mark)
+            if i >= 0 and "write error" in t[i:]:
+                return "ctl: the part refused %r; stopped there\n%s" % (
+                    l, t[i:])
         # Sliced at the marker every time, not at a byte offset taken
         # once: the window scrolls as output arrives, so an offset
         # captured before the command names a different place after

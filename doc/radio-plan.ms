@@ -1187,6 +1187,78 @@ The same format prints correctly under qemu.  Unexplained, and one of
 the two reasons the fixed trace is worth having: the next wedge will
 say whether the number arrives.
 .PP
+THE THREE STRONGEST CARRIERS THIS RECEIVER CAN FIND ARE ITS OWN.
+.PP
+Asked, on a later day, what in the band might actually be decodable,
+and the first thing to do was look rather than remember.  A max-hold of
+928 to 932MHz \-
+.I tools/radio/bandhold.py ,
+which splits a span into the 64 steps the
+.B hold
+verb takes and reports what stands above the median of its own span \-
+put every one of the nine paging carriers within a few dB of a \-109
+floor, and found two things above it: 929.600 and 929.625 at \-102, and
+928.000 at \-86, twenty-three dB up.
+.PP
+928.000 looked like the find of the session.  Continuous, narrow,
+strong, and sitting exactly where the Part 15 band ends and the fixed
+point-to-point allocation begins \- 928 to 929MHz is Multiple Address
+System territory, SCADA and utility telemetry on 12.5kHz channels,
+which commonly run 2-FSK or 4-FSK at a few kilobits and would be this
+part's home ground.  A sweep of 926 to 928.5 found nothing else at all,
+so it was not energy leaking up from the ISM soup.  Narrowing the
+filter to the 8kHz minimum the part accepts gave a flat top from
+927.998 to 928.004 and eight dB down at two kilohertz either side,
+which is the filter's own shape: the signal is narrower than 8kHz.
+.PP
+It is the crystal.  28, 29 and 30 times 32.000000MHz are 896, 928 and
+960, and all three are there \- \-86dBm at 896.000, \-86 at 928.000,
+\-88 at 960.000, the same flat-topped shape at each, against floors of
+\-110.  A 32MHz harmonic is always on, exactly on a round number,
+strong because it is internal, and narrower than any filter the part
+has.  Everything that made 928.000 convincing is a property of the
+receiver.
+.PP
+.I bandhold.py
+names them now rather than leaving it to whoever reads the output, and
+says so when every candidate in a span is one.  That is the fourth time
+in this work that structure turned out to be the instrument, and the
+first time it was caught before it was claimed.
+.PP
+So, to the question.  Nothing in this band is decodable by this
+receiver as it currently stands, and the reasons are specific rather
+than general.
+.IP \(bu
+The three strongest carriers are the crystal.
+.IP \(bu
+The most active real signal is around 881MHz at 42 per cent duty, and
+869 to 894 is the cellular downlink \- a base station, GMSK at 270.8
+kilobaud or OFDM, in channels wider than the 200kHz this part's filter
+reaches.  Undecodable in principle and not a near miss.
+.IP \(bu
+The paging carriers are the right target, for the allocation reason and
+not for a hopeful one, and they are not there at the moment.  929.600
+at 7dB over the floor is the only trace, which also means the eighteen
+POCSAG windows may have been taken against dead air and cannot be read
+as evidence about POCSAG.
+.IP \(bu
+And classifying 2-FSK against 4-FSK, which is what would tell FLEX from
+POCSAG from telemetry, needs either the raw bit stream \- the serial pin
+does not work on this board \- or a filter narrow enough to resolve the
+deviation pair.  At \(+-4.8kHz the humps are 9.6kHz apart and the part's
+narrowest filter is 8kHz, so that measurement is at the edge of
+possible even with a signal present.
+.PP
+What would change it, cheapest first.  An antenna: the tinySA measured
+\-83.8dBm where this receiver now reads \-102 to \-110, and twenty dB is
+the single likeliest explanation for all of the above.  Then a
+presence-triggered measurement instead of fixed windows, so the
+receiver looks while something is transmitting rather than on a
+schedule \- 
+.B gtrig
+armed on carrier sense over hours.  Then a second wired GPIO, which is
+a soldering job.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
