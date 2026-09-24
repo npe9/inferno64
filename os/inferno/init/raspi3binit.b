@@ -1198,6 +1198,32 @@ fatcheck()
 	sys->print("FAT-FAIL no /n/dos/kernel8.img: %r\n");
 }
 
+# Smallest gap worth handing to kfs: 512 sectors, a quarter of a
+# megabyte.  The test writes one file, so this is about kfs having room
+# for a superblock and a free list, not about capacity.
+Minkfs: con 512;
+
+# Does the gap read as zeros?  Checked in whole sectors, at both ends
+# and in the middle rather than all through: this runs on every boot and
+# a megabyte of reads through the SD driver is not free.
+gapisclear(first, last: int): int
+{
+	fd := sys->open(SDDEV + "/data", Sys->OREAD);
+	if(fd == nil)
+		return 0;
+	buf := array[512] of byte;
+	probes := list of {first, (first+last)/2, last};
+	for(; probes != nil; probes = tl probes){
+		sec := hd probes;
+		if(sys->pread(fd, buf, len buf, big sec * big 512) != len buf)
+			return 0;
+		for(i := 0; i < len buf; i++)
+			if(buf[i] != byte 0)
+				return 0;
+	}
+	return 1;
+}
+
 sdfs()
 {
 	p := array[2] of ref Sys->FD;
@@ -1212,13 +1238,39 @@ sdfs()
 		sys->print("SD-FS skipped: no partition table to find a gap in\n");
 		return;
 	}
-	if(fstart < 2048+2048){
-		sys->print("SD-FS skipped: no room below the first partition at %d\n",
-			fstart);
+	#
+	# Use the gap that is actually there, and prove it is empty first.
+	#
+	# This asked for sectors 2048 to fstart-1 and refused unless fstart
+	# was at least 4096.  That fits the old card, whose filesystem began
+	# well up the device, and not the new one, whose filesystem begins
+	# at 2048 -- so the range was inverted and the test simply stopped
+	# running, reporting "no room below the first partition at 2048" on
+	# every boot.  The gap on that card is real, it is just BELOW 2048
+	# rather than above it.
+	#
+	# Sector 0 is the master boot record and is left alone.  kfs is
+	# given "-r", which reams what it is handed, so what it is handed
+	# had better not be anybody's data: the sectors are read and checked
+	# to be zero before the partition is made.  The old code asserted
+	# that in a comment -- "unallocated and reads as zeros on this card"
+	# -- about one particular card, which is exactly the kind of thing
+	# that stops being true when the card is swapped.
+	#
+	kstart := 1;
+	kend := fstart - 1;		# last sector of the gap
+	if(kend - kstart + 1 < Minkfs){
+		sys->print("SD-FS skipped: gap below the partition at %d is %d sectors, need %d\n",
+			fstart, kend - kstart + 1, Minkfs);
+		return;
+	}
+	if(!gapisclear(kstart, kend)){
+		sys->print("SD-FS skipped: sectors %d-%d are not empty; not reaming them\n",
+			kstart, kend);
 		return;
 	}
 	cfd := sys->open(SDDEV + "/ctl", Sys->ORDWR);
-	if(cfd == nil || sys->fprint(cfd, "part kfstest 2048 %d", fstart-1) < 0){
+	if(cfd == nil || sys->fprint(cfd, "part kfstest %d %d", kstart, kend) < 0){
 		sys->print("SD-FS part: %r\n");
 		return;
 	}
