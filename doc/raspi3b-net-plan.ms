@@ -881,3 +881,71 @@ reproducible, and independent of the above.  Caught in a sample as
 exportfs.c records that 4 is a CORRECTNESS bound, not merely a resource
 one: the redesign faulted on a nil dereference at 4 and not at 1.  That
 audit comes first.
+.NH 2
+Latency as a distribution, and what it does to the shared-hop story
+.PP
+Measured with
+.CW tools/jtag/styxlat.py ,
+which reports a distribution and names which step failed \(em connect,
+send or reply \(em rather than answering yes or no:
+.P1
+idle                40 samples, 40 answered, 0 failed
+                    median 0.001s  p90 0.011s  max 0.016s
+board cadence       probes at 0.011s, 0.007s, 0.002s on a fresh server
+under the hammer    short probe fails; the patient probe has come back
+                    at 0.02s, 0.77s, 2.07s, 34.90s and 45.91s
+.P2
+An idle server answers in a millisecond and a board-paced one in
+single-digit milliseconds.  Whatever this is, it is not present until
+connections churn.
+.PP
+.B "The shared-hop explanation is NOT established, and the previous
+section overstated it."
+One A/B trial of
+.CW "styxlisten -P 4"
+against the shared default gave 112 disconnects to failure shared and
+98 with the pool \(em if anything slightly worse, certainly not the
+fourfold improvement four independent hops should give if queueing on
+one hop were the cause.  One trial is not a result either, but it is
+enough to stop asserting the conclusion.
+.PP
+The 0.02s patient answer is the sharper objection to it.  A server that
+answers a fresh connection in twenty milliseconds was never busy; that
+probe failed at
+.I connect ,
+not at reply, and a connect failure has nothing to do with the shared
+pipe.  So the "failures" counted under the hammer are at least two
+different events with two different mechanisms, and attributing the
+common one's frequency to the rare one's mechanism is how the last three
+wrong answers were reached.
+.NH 2
+What the fault looks like at LOW load, which is the case that matters
+.PP
+The board dials once every fifteen seconds.  Measured: one accept in
+twenty seconds, 0.05/s.  A run of
+.CW styxabrupt.py
+is one connection, and the hammer does about a hundred as fast as python
+manages \(em two orders of magnitude more than the board, and a load
+generator that produces a failure the board cannot produce will keep
+pointing away from the board's problem.
+.PP
+.B "It reproduces at 0.7 connections per second."
+With one probe every 1.5 seconds and an abrupt disconnect every 15, a
+server forty-one seconds old reached a state where a fresh connection
+completed in ONE MILLISECOND and then got no Styx reply in ten seconds,
+with five connections \(em four loopback and the board \(em each holding
+an unread nineteen-byte Tversion, and the process at 0% CPU.
+.PP
+At that moment, from a sample: exactly one exportfs exists and it is the
+pipe's; the listener is in accept; and the Dis scheduler has NOTHING
+ready to run.  The threads parked in
+.CW iyield
+are not processes waiting for the VM \(em iyield parks the OUTGOING VM
+thread after handing over, so those are the idle pool.  Nothing wants to
+run, and five connections are waiting to be served.
+.PP
+That combination is the whole remaining question, and these are ruled
+out as its cause: a recycled listening descriptor; a stopped mount
+multiplexer; sys->export failing; a blocked reply write; conversation
+exhaustion in devip (no growth and no EXHAUSTED line, ever); and the
+listen queue, which stays 0/0/128 throughout.
