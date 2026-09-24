@@ -457,3 +457,45 @@ tests old code and looks like a clean result.
 .PP
 The multicore worktree was left exactly as found: the rebuilt emu-g was
 restored, nothing staged, nothing modified.
+.NH 1
+Why a short SD transfer is invisible: nothing counts bytes
+.PP
+The open question was why devsd masked a DMA read that moved 512 bytes
+of a 32768-byte command.  It does not mask it.  Nothing anywhere counts
+the bytes, so there is no layer that could have noticed.
+.IP \(bu
+.CW dmaperiph
+waits for the engine to go inactive and returns 0 or \-1.  It reports
+success or failure, never a length, so the driver cannot learn that the
+engine moved less than it asked for \(em and it did not ask for less,
+it programmed
+.CW cb->len
+correctly for the length it passed.
+.IP \(bu
+.CW sdhostbio
+ends with
+.CW "return i * Secsize" ,
+where i is the loop's block-group index.  It reports what it INTENDED
+to move, computed from how far the loop got, never what any data phase
+actually delivered.
+.PP
+So a transfer that completes without the engine raising an error but
+moves fewer bytes than the command programmed is undetectable from
+devsd, from dd, and from any filesystem above them.  Errors ARE
+surfaced \(em a failed group does not advance i, so the return is short
+\(em but a silent partial is not, by construction.
+.PP
+.B "That is worth fixing on its own,"
+independently of whether any driver currently produces one: an SD layer
+whose success return is derived from its own loop counter cannot report
+a short read, and "the bytes arrived" is the one thing a block device is
+for.
+.PP
+.B "Still open, and stated as open."
+Why the DATA was nevertheless correct.  With the unfixed driver a
+64-block DMA read moved 512 bytes and the caller still got 32768 correct
+bytes, with the buffer poisoned by a different region first and the DMA
+read taken before the PIO one.  Something filled the rest and it is not
+the DMA control block, which is bounded, and not a PIO drain, which the
+else-chain skips.  Not chased further; it needs the unfixed arithmetic
+back on the board and a print of the buffer either side of the transfer.
