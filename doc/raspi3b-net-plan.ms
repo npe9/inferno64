@@ -1178,3 +1178,57 @@ Transmit batching, which this plan proposed as step 2 on the strength of
 counters still say 1.00 frames per bulk-out transfer after the fix, and
 the fix proves that making that number better does not make the board
 faster.
+.NH 2
+The board gets 40% slower the longer it has been up
+.PP
+Found by a control run that was meant to be a formality, and it
+invalidated one conclusion and rescued another.
+.PP
+.B "The measurements, with board state as a column,"
+which is the column that was missing:
+.P1
+config                              board       median
+no MCACHE                           fresh boot  3.914 s
+MCACHE                              fresh boot  2.758 s
+MCACHE, Maxconnproc 8               up a while  3.851 s
+MCACHE, Maxconnproc 4               up a while  3.833 s
+MCACHE, Maxconnproc 4               fresh boot  2.711 s
+.P2
+.IP \(bu
+.B "The read-ahead result stands."
+3.914 to 2.758, both arms on a freshly booted board.  It was withdrawn
+for one turn on the strength of an aged-board control and that
+withdrawal was itself wrong.
+.IP \(bu
+.B "The Maxconnproc result is void and its replacement is a null."
+Eight was measured on an aged board and compared against four on a fresh
+one, which is not a comparison.  Aged eight against aged four is 3.851
+against 3.833: raising the server's per-connection worker cap changes
+NOTHING measurable.  It was reverted to 4 for the reason that it buys
+nothing, not the reason first given.
+.IP \(bu
+.B "Uptime costs 40%."
+Same kernel, same settings, same host, same file: 2.71s freshly booted
+and 3.83s after some tens of minutes of polling and a few measurement
+runs.  That is larger than every deliberate change measured on this
+board today put together.
+.PP
+.B "What it is not."
+Not the host: the server was restarted between the two and it made no
+difference either way.  Not the kernel: the build stamp is identical
+across all five rows.  Not the file: same 1955864 bytes.
+.PP
+.B "Where to look."
+The poller mounts and unmounts /n/remote every fifteen seconds, and the
+board has done hundreds of those by the time it is slow.  Suspects in
+order of cheapness to test: the mount cache accumulating across mounts
+(cache.c keeps Mntcache entries keyed by qid and they are not obviously
+dropped on unmount); allocation fragmentation in the kernel pool; and
+the dwcotg endpoint state, which already re-arms itself after stalls and
+prints when it does.
+.PP
+.B "The rule this cost."
+Repeating inside one arm is not enough when the whole arm can drift.
+Three readings 1.6% apart were reported as solid and the arm they were
+in moved 40% an hour later.  A/B on this board means interleaved arms,
+each preceded by a reboot, or it means nothing.
