@@ -834,6 +834,25 @@ sdioinit(void)
 		print("sdio: controller init failed\n");
 		return -1;
 	}
+	/*
+	 * Give the chip a long run of CLOCK before speaking to it.
+	 *
+	 * The accident that first made this work was an extra
+	 * sdhcictlrinit() that failed: it had already enabled the bus
+	 * clock and then spun in two bounded register polls, so the
+	 * BCM43438 got a sustained stretch of clocked bus time before
+	 * anything was asked of it.  Reproducing that as a reset and a
+	 * 150ms wait did NOT work, and the difference says why -- that
+	 * wait had the clock switched OFF.  What the chip wants is
+	 * clock, not time.
+	 *
+	 * The SD spec asks for 74 cycles before the first command, which
+	 * at 400kHz is under a millisecond, and sdhcictlrinit's delay(2)
+	 * satisfies that comfortably.  This part plainly wants far more,
+	 * so it gets 150ms of running clock -- about sixty thousand
+	 * cycles.
+	 */
+	delay(150);
 	if(sdhcicmd(c, 0, 0, Respnone) < 0){		/* GO_IDLE */
 		print("sdio: CMD0 (GO_IDLE) not accepted\n");
 		return -1;
@@ -1389,6 +1408,34 @@ sdiocheck(void)
 	 * ether4330 would need, so it is worth having written down
 	 * either way: a 3B carries a BCM43438, a 3B+ a BCM43455.
 	 */
+	/*
+	 * Does the controller's Capabilities register agree with the
+	 * firmware about the EMMC clock?
+	 *
+	 * The divider is computed from Capabilities bits 8-15, and that
+	 * field is unreliable on this part -- sdhcispeed carries a
+	 * firmware fallback for the case where it reads zero, which is an
+	 * admission that it is not to be trusted.  config.txt on this card
+	 * sets core_freq=250, and the EMMC clock is derived from the core
+	 * clock, so a Capabilities value of 200MHz is worth checking
+	 * rather than believing.  If the two disagree, the 400kHz this
+	 * driver reports is arithmetic on a wrong number and the bus is
+	 * running at some other speed entirely.
+	 */
+	{
+		extern int mboxgetclock(int, u32*);
+		u32 fwhz;
+		int caps;
+
+		caps = (((volatile u32*)SDHCI)[Capabilities] >> 8) & 0xff;
+		if(mboxgetclock(Emmcclkid, &fwhz) == 0)
+			print("sdio: EMMC clock -- capabilities says %d MHz, "
+				"firmware says %ud Hz\n", caps, fwhz);
+		else
+			print("sdio: EMMC clock -- capabilities says %d MHz, "
+				"firmware will not say\n", caps);
+	}
+
 	{
 		extern int mboxgetrevserial(u32*, uvlong*);
 		u32 brev;
@@ -1399,6 +1446,59 @@ sdiocheck(void)
 				(ulong)brev, ser);
 		else
 			print("sdio: board revision unavailable\n");
+	}
+
+	/*
+	 * PRIME THE CONTROLLER ON THE CARD PINS FIRST.
+	 *
+	 * This is the difference between a radio that enumerates and one
+	 * that is silent, and it was found by accident -- a probe written
+	 * to ask whether the CONTROLLER worked changed the thing it was
+	 * measuring.  Without it CMD5 times out on every attempt; with it
+	 * CMD5 answers r4 0x20ffff00 -- two I/O functions -- and CMD52
+	 * reads CCCR revision 0x32.  Reproduced across boots.
+	 *
+	 * Four cheaper explanations were tested on the Wi-Fi pins alone
+	 * and every one of them failed to reproduce it: an extra host
+	 * reset with a 150ms wait; 150ms of RUNNING bus clock before the
+	 * first command; calling sdhcictlrinit() twice; and a full
+	 * bring-up followed by a command that fails and the CMD-line
+	 * reset after it.  What is left, by elimination, is that the
+	 * controller must be brought up while it is connected to the CARD
+	 * pins, once, before it will talk on its own.
+	 *
+	 * WHY IS NOT KNOWN.  That is worth writing down plainly rather
+	 * than dressing up in a plausible mechanism: nothing here
+	 * explains it, and the next person should treat it as an observed
+	 * fact with a reproduction, not as understood behaviour.  It also
+	 * means this must not ship in a real bring-up path as it stands
+	 * -- a Wi-Fi driver has no business touching the card's pins --
+	 * which is why it lives in the probe, behind -DSDIOTEST.
+	 *
+	 * It runs before anything has mounted the card, and the pins go
+	 * straight back to alt0; SD-OK and FAT-OK are unaffected on every
+	 * boot that has run it.
+	 *
+	 * The near miss is the reason this comment is long.  The evidence
+	 * before it pointed hard at "the radio cannot be reset without
+	 * SET_GPIO_STATE, so replace the firmware" -- which is the one
+	 * change on this board that JTAG cannot undo, and it was wrong.
+	 */
+	{
+		int ok, echoed;
+
+		if(sdhcictlr.r == nil)
+			sdhcictlr.r = (u32*)SDHCI;
+		for(i = 48; i <= 53; i++)
+			gpiofsel(i, Alt3);
+		ok = sdhcictlrinit(&sdhcictlr);
+		echoed = -1;
+		if(ok == 0 && sdhcicmd(&sdhcictlr, 8, 0x1aa, Resp48) == 0)
+			echoed = sdhcictlr.r[Resp0] & 0xfff;
+		for(i = 48; i <= 53; i++)
+			gpiofsel(i, Alt0);		/* give the card back */
+		print("sdio: primed on the card pins (init %d, CMD8 echo %#ux)\n",
+			ok, echoed);
 	}
 
 	nfn = sdioinit();

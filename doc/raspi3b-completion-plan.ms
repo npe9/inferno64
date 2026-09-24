@@ -9857,3 +9857,59 @@ A bad start.elf means the firmware never releases the ARM, so there is
 nothing for JTAG to halt and the card has to come out of the board.
 That is a decision with a physical recovery, and it should be taken
 deliberately rather than as the next automatic step.
+.SH
+The radio answers \(em and the firmware conclusion above was wrong
+.PP
+.B "Correction."
+The section above concludes that the BCM43438 cannot be reset without
+SET_GPIO_STATE and that the next step is replacing start.elf.  That is
+wrong, and it is left standing above rather than quietly edited because
+the reasoning that produced it was sound at every step and still reached
+the wrong place.  Every precondition had been checked, every
+driver-side theory eliminated or corrected, and what remained looked
+like the only possibility.  It was not; it was the only possibility
+\fIthat had been thought of\fP.
+.PP
+Replacing the firmware is also the one change on this board that nothing
+protects: a bad kernel leaves the ARM running something JTAG can reach,
+a bad start.elf means the ARM is never released and the card has to come
+out.  The wrong conclusion was one step from an irreversible action.
+.PP
+.B "What the radio actually says."
+.P1
+sdio: CMD5 r4 0x20ffff00: 2 function(s), window 0xffff00
+sdio: 2 I/O function(s), rca 0x1
+sdio: CCCR revision 0x32
+.P2
+Two I/O functions, a relative address assigned, and CMD52 reading the
+card common control registers.  Reproduced over three boots, with SD-OK
+and FAT-OK unaffected on every one.
+.PP
+.B "What makes the difference, and what does not."
+The controller must be brought up once while it is connected to the
+CARD pins \(em GPIO 48-53 in alt3 \(em before it will talk on its own
+pins at all.  That was found by accident: a probe written to ask
+whether the CONTROLLER worked changed the thing it was measuring, and
+the change is what found the bug.
+.PP
+Four cheaper explanations were then tested on the Wi-Fi pins alone and
+every one failed to reproduce it: an extra host reset with a 150ms wait;
+150ms of \fIrunning\fP bus clock before the first command; calling
+.CW sdhcictlrinit()
+twice; and a full bring-up followed by a command that fails and the
+CMD-line reset after it.  Each was a reasonable mechanism and each is
+now excluded by measurement rather than by argument.
+.PP
+.B "Why it works is not known."
+Nothing here explains it, and it is recorded as an observed fact with a
+reproduction rather than as understood behaviour.  It also must not ship
+in a real bring-up path as it stands \(em a Wi-Fi driver has no business
+touching the card's pins \(em so it lives in the probe, behind
+-DSDIOTEST, until the mechanism is understood.  A first thing to try is
+whether the pin round trip alone suffices, without the controller init
+on those pins.
+.PP
+.B "Next."
+CMD53, the block transfer, is now the failing step; CMD52 works.  That
+is the transport ether4330 needs, and it is a bounded piece of work on
+a chip that is finally answering.
