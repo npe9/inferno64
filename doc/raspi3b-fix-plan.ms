@@ -225,3 +225,72 @@ a serial VM it is actively worse.  It stays a flag.
 .PP
 .B "Do not tune the rxproc sleep again."
 Three variants, three regressions.
+.NH 1
+REVISION: item 1 is closed, and it was not any of the suspects
+.PP
+The server never wedged.  macOS App Nap was SUSPENDING the process:
+.CW emu
+links Cocoa and creates an
+.CW NSApplication
+even with no window on screen, and macOS suspends the whole task.  The
+tell was in every sample from the start \(em watchdog kprocs whose only
+job is a three-second
+.CW nanosleep
+had not fired for three and a half minutes.  Nothing inside a process
+can stop an independent timer.
+.PP
+Fixed twice, deliberately: an activity declaration in
+.CW main-cocoa.m
+(hardening, since the GUI binary is sometimes run headless), and a
+second build,
+.CW emu-cpu ,
+that links no Cocoa at all and is what
+.CW styxd.sh
+now serves with.  A process with no
+.CW NSApplication
+cannot be napped, which beats asking not to be.
+.P1
+emu-cocoa before   11 runs, 11 failures at 11..115 disconnects
+emu-cocoa + activity 4 runs, 0 failures, 400 each
+emu-cpu, no Cocoa   1 run,  0 failures, 400, queue 0/0/128
+.P2
+.PP
+.B "And item 3 is unblocked and already half answered."
+With a server that does not freeze, the board reads its own 1.955MB
+kernel over Styx in 3.909, 3.933, 3.971 and 3.972 seconds \(em
+.B "481 KB/s, 1MB in 2.1s" ,
+timed by the board's own clock with the units proved by a five-second
+calibration that measured 5.022s.  The figure this plan was written
+against was thirty seconds a megabyte.
+.NH 1
+What is left, in order, after that
+.IP 1.
+.B "Close item 1 formally."
+Its stated acceptance is styxabrupt surviving 2000.  Five runs of 400
+have passed; run the 2000.
+.IP 2.
+.B "Item 3 step 1: read the ether counters."
+.CW etherusb
+counts bulk-in and bulk-out transfers and frames separately into
+.CW /net.alt/ether/stats .
+Sample either side of a fixed workload and compute frames per transfer
+each way.  If transmit is one frame per transfer and receive is six or
+more, the direction is settled and step 2 is batching transmit.
+.IP 3.
+.B "Item 5's small ones."
+The racy
+.CW holder
+field is ours and should be made exact or dropped;
+.CW mv
+on the board; the kfs test area that no longer fits the new card.
+.IP 4.
+.B "Item 4: DMA with multi-block returns wrong data."
+Real, reproduces on both cards, not urgent because DMA is off by default
+and PIO at 64 blocks is fast.
+.IP 5.
+.B "Item 2: multicore."
+Its emu is a Cocoa binary too, and it was being load-tested headless in
+exactly the way that triggers this.  Re-test it with
+.CW emu-cpu
+BEFORE chasing anything there: the 1150-2000 figure may be this same
+fault and nothing else.
