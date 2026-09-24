@@ -10056,3 +10056,67 @@ Proving multi-block needs a span of real memory, which means chip RAM,
 which means bringing the SOCRAM core up first.  That is step one of the
 driver anyway, so the remaining transport question and the next piece of
 work are the same piece of work.
+.SH
+The GPIO mystery is solved, and where the transport actually stands
+.PP
+.B "The unexplained flip was the Arasan still wired to the card."
+9front's
+.CW sdioinit
+opens with a line and a comment that answer it outright:
+.P1
+/* disconnect emmc from SD card (connect sdhost instead) */
+for(i = 48; i <= 53; i++)
+	gpiosel(i, Alt0);
+.P2
+The VideoCore firmware boots off the SD card through this very
+controller, so it hands the kernel a machine with GPIO 48-53 still in
+alt3 \(em the card wired to the Arasan.  Bringing SDIO up on 34-39
+without undoing that leaves the controller attached to two sets of pads
+and it answers on neither.  The "flip to alt3 and straight back" that
+was found by accident was never a flip: the final write of alt0 was the
+whole of it, and it is now done as one deliberate line that says why.
+So the one piece of this work that had to be marked \fImechanism
+unknown\fP no longer is.
+.PP
+.B "The card is now configured the way a driver for this part does it."
+High speed and a four-bit bus through CCCR 0x13 and 0x07, the host moved
+to match, each function's block size written to its own FBR \(em 64 for
+function 1, 512 for function 2, which is not the same register as CCCR
+0x10/0x11 \(em function 1 enabled, card interrupts off.  Identification
+still runs at 400kHz because that is what identification is for; this
+chip is not a memory card and moves to 25MHz once selected.
+.PP
+.B "A second recovery bug, and why the earlier numbers lied."
+sdhcirecover was only ever called from sdhcicmd, so a failure in
+sdiocmd53's own data-phase wait left Datinhibit set and every transfer
+afterwards reported \fIthe data line never went idle\fP.  One bad read
+poisoned the rest of the run, which is why two blocks failed one way and
+four and eight failed another.  With the DAT line reset on that path
+too, the measurements became stable and said something quite different.
+.PP
+.B "Where bulk transfer stands: it does not work, and this is unfinished."
+Measured, with recovery working: one 64-byte block at window offset 0
+reads correctly and agrees with CMD52.  Two blocks fail.  Eight blocks
+with the address held STILL succeed.  Issuing each block as its own
+CMD53 does not help, which localises it further \(em the second
+single-block read, at window offset 0x40, fails while offset 0 works.
+So it is the ADDRESS, not the transfer size.
+.PP
+Mapping the window offsets says block reads succeed only at 0.  Setting
+the backplane window before every access, as
+.CW sbmem
+does, changed the CMD52 controls \(em several offsets began returning
+0x18, which is exactly the byte just written to SBADDRHIGH \(em and that
+is not understood either.  It suggests the window registers are not
+being driven the way this chip expects, but that is a hypothesis with no
+evidence behind it yet.
+.PP
+.B "So: not close to working Wi-Fi, and the estimate given earlier was optimistic."
+Firmware upload is 399344 bytes and needs bulk transfer; SDPCM needs it;
+everything downstream needs it.  Nothing further should be built on top
+until a 512-byte read of chip memory can be shown to match a byte-wise
+control.  The firmware itself is no longer a blocker \(em
+brcmfmac43430-sdio.bin and its nvram are fetched and staged \(em and
+9front's ether4330.c is available as the reference for the port.  The
+one thing in the way is the thing that has been in the way all along,
+and it is smaller and better described than it was, but it is not done.

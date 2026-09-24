@@ -42,6 +42,9 @@
 
 extern void gpiofsel(int, int);		/* gpiobcm.c */
 extern void gpiopull(int, int);		/* gpiobcm.c: 0 none, 1 down, 2 up */
+extern int mboxgetgpio(int, int*);	/* mailbox.c */
+int sdiocmd52(int, int, int, int);	/* defined below; sdioinit configures the card with it */
+extern int mboxsetgpio(int, int);	/* mailbox.c */
 
 extern int mboxgetclock(int, u32*);	/* mailbox.c: firmware clock rate */
 
@@ -114,6 +117,19 @@ enum {
 	Fnhispeed	= 1,	/* group 1 function number for high speed */
 	Timeout		= 1000000,	/* bounded register polls */
 	Idhz		= 400000,	/* identification runs at 400kHz or less */
+	Sb32bit		= 0x8000,	/* backplane: ask for 32-bit access */
+	Hctlhsen	= 1<<2,		/* Control0: high speed */
+	Ccccbusifc	= 0x07,		/* CCCR: bus interface control */
+	Ccchighspeed	= 0x13,		/* CCCR: high speed */
+	Cccioenable	= 0x02,
+	Cccioready	= 0x03,
+	Cccintenable	= 0x04,
+	Fbr1		= 0x100,	/* function 1 base register block */
+	Fbr2		= 0x200,
+	Fbrblksize	= 0x10,		/* offset of block size within an FBR */
+	Sbwsize		= 0x8000,	/* backplane window size */
+	Sbaddr		= 0x1000a,	/* fn1: backplane window address, 3 bytes */
+	Enumbase	= 0x18000000,	/* SI enumeration space */
 };
 
 typedef struct Ctlr Ctlr;
@@ -830,6 +846,27 @@ sdioinit(void)
 		c->r = (u32*)SDHCI;
 	r = c->r;
 
+	/*
+	 * DISCONNECT THIS CONTROLLER FROM THE CARD PINS FIRST.
+	 *
+	 * The VideoCore firmware boots off the SD card through this very
+	 * controller, so it hands the kernel a machine with GPIO 48-53
+	 * still in alt3 -- the card wired to the Arasan.  Bringing SDIO up
+	 * on 34-39 without undoing that leaves the controller attached to
+	 * two sets of pads at once, and it answers on neither: CMD5 times
+	 * out with the bus idle, every time.
+	 *
+	 * This was found the hard way, as an unexplained "flip 48-53 to
+	 * alt3 and straight back" that made the radio enumerate and which
+	 * nothing here could account for.  The flip was irrelevant; the
+	 * final write of alt0 was the whole of it.  9front does the same
+	 * thing in one line and says why -- "disconnect emmc from SD card
+	 * (connect sdhost instead)" -- which is also the answer to why
+	 * SDHOST is unaffected: alt0 is where the card belongs anyway.
+	 */
+	for(i = 48; i <= 53; i++)
+		gpiofsel(i, Alt0);
+
 	for(i = 34; i <= 39; i++)
 		gpiofsel(i, Alt3);
 	/*
@@ -947,6 +984,38 @@ sdioinit(void)
 	c->rca = r[Resp0] >> 16;
 	if(sdhcicmd(c, 7, c->rca<<16, Resp48busy|Cmdcrcchk|Cmdixchk) < 0)
 		return -3;				/* SELECT */
+
+	/*
+	 * Now configure the card the way a driver for this part does.
+	 *
+	 * High speed and a four-bit bus, then the same on the host side,
+	 * then each function's block size in its FBR -- 64 for function
+	 * 1, 512 for function 2 -- and function 1 enabled.  Identification
+	 * ran at 400kHz because that is what identification is for; this
+	 * chip is not a memory card and runs at 25MHz once selected.
+	 *
+	 * The block size goes in the FUNCTION's FBR, not just CCCR
+	 * 0x10/0x11: 0x10 is function 0's own size and says nothing about
+	 * what function 1 will send.
+	 */
+	sdiocmd52(0, Ccchighspeed, 1, sdiocmd52(0, Ccchighspeed, 0, 0) | 2);
+	sdiocmd52(0, Ccccbusifc, 1, 2);			/* four-bit bus */
+	r[Control0] |= Hcdatawidth4 | Hctlhsen;
+	sdhcispeed(c, Maxspeedmhz);
+
+	sdiocmd52(0, Fbr1 + Fbrblksize, 1, 64);
+	sdiocmd52(0, Fbr1 + Fbrblksize + 1, 1, 0);
+	sdiocmd52(0, Fbr2 + Fbrblksize, 1, 512 & 0xff);
+	sdiocmd52(0, Fbr2 + Fbrblksize + 1, 1, 512 >> 8);
+	sdioblksize = 64;
+
+	sdiocmd52(0, Cccioenable, 1, sdiocmd52(0, Cccioenable, 0, 0) | 1<<1);
+	sdiocmd52(0, Cccintenable, 1, 0);
+	for(i = 0; i < 100; i++){
+		if(sdiocmd52(0, Cccioready, 0, 0) & 1<<1)
+			break;
+		delay(10);
+	}
 	return (ocr >> 28) & 7;
 }
 
@@ -1015,6 +1084,47 @@ sdiocmd53(int fn, int addr, int write, int blockmode, int incr, void *a, int n)
 			return -1;
 		}
 	}
+	/*
+	 * ONE BLOCK PER COMMAND.
+	 *
+	 * Multi-block with an incrementing address does not work on this
+	 * controller and the reason is not known.  Measured, with the
+	 * error recovery working so the numbers mean something: one block
+	 * reads correctly; two, four and eight all fail with a data CRC;
+	 * and eight blocks with the address held STILL succeed.  The host
+	 * code is byte-identical in the failing and succeeding cases --
+	 * only the incr bit in the command argument differs -- so it is
+	 * not the transfer loop, and matching 9front's card setup (high
+	 * speed, four-bit bus, the FBR block sizes) did not change it
+	 * either.
+	 *
+	 * 9front reads 512 bytes as 8x64 with incr set, in corescan, and
+	 * it works there, so this is a difference between that driver's
+	 * data path and this one rather than something the chip forbids.
+	 * The likely remaining difference is DMA: emmc.c streams the whole
+	 * transfer, this drives PIO a block at a time.
+	 *
+	 * Rather than leave the transport broken for anything larger than
+	 * 64 bytes, issue each block as its own CMD53.  Single block is
+	 * measured good, the firmware upload is then correct if slow --
+	 * 399344 bytes in 6240 commands -- and the fast path can come back
+	 * once the cause is understood.  Correct and slow beats fast and
+	 * wrong, and this is on the boot path once per boot.
+	 */
+	if(blockmode && nblk > 1){
+		int done, k;
+
+		for(done = 0; done < nblk; done++){
+			k = sdiocmd53(fn, addr, write, 1, incr, p, 1);
+			if(k != 1)
+				return -1;
+			p += blksize;
+			if(incr)
+				addr += blksize;
+		}
+		return nblk;
+	}
+
 	arg = (write & 1) << 31 | (fn & 7) << 28 | (blockmode & 1) << 27 |
 		(incr & 1) << 26 | (addr & 0x1ffff) << 9 | (n & 0x1ff);
 
@@ -1037,6 +1147,9 @@ sdiocmd53(int fn, int addr, int write, int blockmode, int incr, void *a, int n)
 		if(write){
 			if(awaitbit(&c->r[Interrupt], Writeready, 1) < 0){
 				sdio53why = "the card never asked for data";
+				sdio53int = c->r[Interrupt];
+				sdio53stat = c->r[Status];
+				sdhcirecover(c, flags);
 				return -1;
 			}
 			c->r[Interrupt] = Writeready;
@@ -1053,6 +1166,19 @@ sdiocmd53(int fn, int addr, int write, int blockmode, int incr, void *a, int n)
 				sdio53why = "the card never offered data";
 				sdio53int = c->r[Interrupt];
 				sdio53stat = c->r[Status];
+				/*
+				 * Reset the DATA line too.
+				 *
+				 * Only sdhcicmd recovered, so a failure in
+				 * THIS loop left Datinhibit set and every
+				 * transfer afterwards reported "the data
+				 * line never went idle" -- one bad read
+				 * poisoning the whole run, exactly as the
+				 * command line did before sdhcirecover
+				 * existed.  It is why 4 and 8 blocks looked
+				 * like a different fault from 2.
+				 */
+				sdhcirecover(c, flags);
 				return -1;
 			}
 			c->r[Interrupt] = Readready;
@@ -1511,48 +1637,6 @@ sdiocheck(void)
 			print("sdio: board revision unavailable\n");
 	}
 
-	/*
-	 * FLIP THE CARD PINS TO ALT3 AND BACK BEFORE BRINGING SDIO UP.
-	 *
-	 * This is the difference between a radio that enumerates and one
-	 * that is silent.  Without it CMD5 times out on every attempt;
-	 * with it CMD5 answers r4 0x20ffff00 -- two I/O functions -- and
-	 * CMD52 reads CCCR revision 0x32.  Reproduced across boots.
-	 *
-	 * It is two register writes.  It does not initialise the
-	 * controller on the card's pins, does not drive the card's bus
-	 * and does not issue a command: an earlier version did all three,
-	 * and removing them one at a time left this.
-	 *
-	 * Five explanations were tested on the Wi-Fi pins alone and every
-	 * one failed to reproduce it: an extra host reset with a 150ms
-	 * wait; 150ms of RUNNING bus clock before the first command;
-	 * calling sdhcictlrinit() twice; a full bring-up followed by a
-	 * command that fails and the CMD-line reset after it; and the
-	 * controller init on the card pins, which turned out not to be
-	 * needed either.
-	 *
-	 * WHY IS NOT KNOWN.  Written down as an observed fact with a
-	 * reproduction, not as understood behaviour -- pins 48-53 and pin
-	 * 43 share GPFSEL4, but gpiofsel does a read-modify-write and
-	 * leaves 43 alone, so that is not it.  The next person should
-	 * treat this as a lead, not an explanation.
-	 *
-	 * It runs before anything has mounted the card and the pins go
-	 * straight back to alt0; SD-OK and FAT-OK are unaffected on every
-	 * boot that has run it.
-	 *
-	 * The near miss is why this comment is long.  Before it was
-	 * found, the evidence pointed hard at "the radio cannot be reset
-	 * without SET_GPIO_STATE, so replace the firmware" -- the one
-	 * change on this board that JTAG cannot undo -- and that was
-	 * wrong.
-	 */
-	for(i = 48; i <= 53; i++)
-		gpiofsel(i, Alt3);
-	for(i = 48; i <= 53; i++)
-		gpiofsel(i, Alt0);		/* straight back to SDHOST */
-
 	nfn = sdioinit();
 	if(nfn < 0){
 		print("SDIO-NONE bring-up stopped at %s\n",
@@ -1714,11 +1798,9 @@ sdiocheck(void)
 		 * identical addresses rather than trusting either alone.
 		 */
 		{
-			static uchar blk[512], bytewise[512];
-			int nbad;
+			static uchar blk[512];
 
 			memset(blk, 0, sizeof blk);
-			memset(bytewise, 0, sizeof bytewise);
 			/*
 			 * ONE block before many.
 			 *
@@ -1732,7 +1814,20 @@ sdiocheck(void)
 			 * which: it covers only the first 64 bytes, which
 			 * hold the chipid word that CMD52 already read.
 			 */
-			if(sdiocmd53(1, 0, 0, 1, 1, blk, 1) != 1)
+			/*
+			 * Sb32bit (0x8000) OR'd into the offset.
+			 *
+			 * 9front's sbrw passes off|Sb32bit on every
+			 * backplane access; it asks the chip for 32-bit
+			 * access to the window.  The multi-block read
+			 * here omitted it and got a data CRC, which is
+			 * the chip declining to drive a transfer it was
+			 * not asked for properly rather than a broken
+			 * transport.  A four-byte byte-mode read happened
+			 * to work without it, which is why it went
+			 * unnoticed.
+			 */
+			if(sdiocmd53(1, Sb32bit, 0, 1, 1, blk, 1) != 1)
 				print("SDIO-BLOCK1-FAIL one %d-byte block -- %s "
 					"(interrupt %#lux)\n", sdioblksize,
 					sdio53why, (ulong)sdio53int);
@@ -1744,45 +1839,65 @@ sdiocheck(void)
 				print("sdio: BLOCK1-OK one %d-byte block reads "
 					"the chipid correctly\n", sdioblksize);
 
-			nbad = sizeof blk / sdioblksize;	/* blocks that fit */
-			if(sdiocmd53(1, 0, 0, 1, 1, blk, nbad) != nbad)
-				print("SDIO-BLOCK-FAIL %dx%d read -- %s "
-					"(interrupt %#lux)\n", nbad, sdioblksize,
-					sdio53why, (ulong)sdio53int);
-			else if(blk[0] != id52[0] || blk[1] != id52[1]
-			|| blk[2] != id52[2] || blk[3] != id52[3])
-				print("SDIO-BLOCK-WRONG first word %2.2ux %2.2ux "
-					"%2.2ux %2.2ux, chipid is %2.2ux %2.2ux "
-					"%2.2ux %2.2ux\n", blk[0], blk[1], blk[2],
-					blk[3], id52[0], id52[1], id52[2], id52[3]);
-			else{
-				nbad = 0;
-				for(i = 0; i < sizeof blk; i++){
-					v = sdiocmd52(1, i, 0, 0);
-					if(v < 0){
-						nbad = -1;
-						break;
-					}
-					bytewise[i] = v;
-					if(bytewise[i] != blk[i])
-						nbad++;
+			/*
+			 * Where does multi-block start failing, and is it
+			 * the incrementing address?
+			 *
+			 * One block works and eight do not.  9front reads
+			 * exactly these 512 bytes as 8x64 in corescan, so
+			 * the request is legal and the bug is here.  Walk
+			 * the block count, and try the eight-block case
+			 * once more with the address held still: if fixed
+			 * addressing works, the fault is in how the
+			 * address advances, not in multi-block itself.
+			 */
+			/*
+			 * Which window offsets can be read at all?
+			 *
+			 * With one block per command, "2 blocks" failing
+			 * means the SECOND single-block read -- window
+			 * offset 0x40 -- failed while offset 0 worked.  So
+			 * this is the address, not the transfer size, and
+			 * the thing to do is map it rather than guess.
+			 * Byte-mode CMD52 of the same offset is the
+			 * control: if CMD52 can read what a 64-byte block
+			 * cannot, the fault is in the block path; if
+			 * neither can, the region is not readable.
+			 */
+			{
+				static int offs[] = {0, 0x20, 0x40, 0x80, 0x100, 0x200, 0x400, 0x800};
+				int k, b52;
+
+				for(k = 0; k < nelem(offs); k++){
+					memset(blk, 0, 64);
+					/*
+					 * Set the window before EVERY access.
+					 *
+					 * 9front's sbmem calls sbwindow()
+					 * ahead of each sbrw chunk; this
+					 * set it once and then walked
+					 * offsets, and block reads worked
+					 * only at offset 0.  If the window
+					 * does not survive a transfer, that
+					 * is exactly the shape the failures
+					 * would take.
+					 */
+					sdiocmd52(1, Sbaddr, 1, Enumbase >> 8);
+					sdiocmd52(1, Sbaddr + 1, 1, Enumbase >> 16);
+					sdiocmd52(1, Sbaddr + 2, 1, Enumbase >> 24);
+					b52 = sdiocmd52(1, Sb32bit + offs[k], 0, 0);
+					if(sdiocmd53(1, Sb32bit + offs[k], 0, 1, 1, blk, 1) != 1)
+						print("sdio: off %#ux block FAIL, "
+							"cmd52 says %#ux\n", offs[k], b52);
+					else
+						print("sdio: off %#ux block ok %2.2ux, "
+							"cmd52 %#ux\n", offs[k], blk[0], b52);
 				}
-				if(nbad < 0)
-					print("SDIO-BLOCK-NOCTL the byte-mode "
-						"control read failed\n");
-				else if(nbad == 0)
-					print("sdio: BLOCK-OK %d bytes in blocks of "
-						"%d agree with the CMD52 control\n",
-						(int)sizeof blk, sdioblksize);
-				else
-					print("SDIO-BLOCK-WRONG %d bytes "
-						"differ from the CMD52 control\n",
-						nbad);
 			}
 		}
 
 		memset(id53, 0, sizeof id53);
-		if(sdiocmd53(1, 0, 0, 0, 1, id53, 4) != 4)
+		if(sdiocmd53(1, Sb32bit, 0, 0, 1, id53, 4) != 4)
 			print("SDIO-CMD53-BACKPLANE-FAIL -- %s "
 				"(interrupt %#lux status %#lux)\n", sdio53why,
 				(ulong)sdio53int, (ulong)sdio53stat);
