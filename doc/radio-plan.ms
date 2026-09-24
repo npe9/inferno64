@@ -1401,6 +1401,62 @@ hardware's reach.  A \-72dBm signal arriving twenty-two dB down is
 ought to be workable \- so the next question is why 930.824 reads \-102
 rather than \-94, and that one is still open.
 .PP
+A TARGET INSIDE THE PASSBAND, AND A BUG THAT EXPLAINS A LOT.
+.PP
+Asked for something the hardware can actually reach, which means below
+928MHz where the antenna and the click's matching both live.  Filters
+first: at a quiet channel this part reports \-103 at 25 and 50kHz of
+bandwidth, \-86 at 100kHz and \-43 at 200kHz, so anything over 50kHz is
+not a measurement and the sweeps here use 50.
+.PP
+A max-hold of 902 to 928 at 200kHz steps finds, against a \-102 median:
+918.200 at \-88, 927.200 at \-91, 908.200 at \-93, and a cluster at
+911.4, 911.6, 912.0, 912.2 and 912.6 between \-93 and \-96 that is the
+shape of a frequency hopper.  928.000 appears too and
+.I bandhold.py
+labels it as the crystal, which is the point of that check.
+.PP
+908.42MHz is the one worth having, and not because it is the strongest.
+It is the US Z-Wave channel, and Z-Wave's parameters are published
+rather than guessed: 2-FSK, \(+-20kHz deviation, 9.6kbit/s for R1 with a
+0x55 preamble and an 0xF0 start of frame.  Nothing there has to be
+derived, and the 50kHz filter this part tops out at is exactly what
+\(+-20kHz and 9.6kbit/s want.  Probed, it gives an isolated 5183us burst
+in one window and two of 52 to 55ms in another \- and 52ms at 9.6kbit/s
+is 62 bytes, which is a full-length Z-Wave frame with its preamble.
+Later a burst at \-77dBm, twenty-nine dB over the floor.
+.PP
+It receives nothing.  Configured for it and confirmed off the part \-
+908.42MHz, 9600 baud, deviation 19958 against 20000 asked, 50kHz, fixed
+length, CRC off \- and again at 19200 and 40000 baud, with a sixteen-bit
+sync of 0xaaaa at the most permissive threshold, seventy seconds each:
+no packets, no CRC errors, no overflow.  MARCSTATE reads 0x6d, whose
+low five bits are 0x0d and that is RX, so the part is listening;
+MARC_STATUS1 stays 0x00 and NUM_RXBYTES stays 0, so it never syncs and
+the FIFO never sees a byte.
+.PP
+And one reason why, found by reading the registers back rather than
+trusting the write.  Asked for a sixteen-bit sync of 0xaaaa, the part
+holds SYNC3 0xaa, SYNC2 0xaa, SYNC1 0x51, SYNC0 0xde.  SYNC_MODE 2 is
+SYNC15_0, which is SYNC1 and SYNC0; this driver wrote the word to SYNC3
+and SYNC2 and set mode 2 anyway.  So every sixteen-bit sync word ever
+asked for went where the part was not looking, and it went on comparing
+against the 0x51de it was reset with.  Fixed in the driver and in the
+qemu model together \- the model had the same convention, and its own
+comment said it was a convention rather than a reading of the part and
+that silicon would have to settle it.  Silicon settled it.  A model and
+a driver wrong in the same direction pass every test between them,
+which is what the two-board test had been doing.
+.PP
+That is not the whole of it.  With 0xaaaa written by hand into SYNC1 and
+SYNC0, the sync pin still never asserts, at any of the five thresholds
+from 0 to 31, on a channel carrying \-77dBm bursts.  So a second fault
+sits behind the first and is still open.  The likeliest candidate is
+the modulation index: Z-Wave's \(+-20kHz against 9.6kbit/s is h = 4.2,
+and against the 19.2kBaud a Manchester-coded R1 actually puts on the
+air it is still 2.1, where this part's demodulator is specified for
+rather less.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP

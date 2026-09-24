@@ -2102,11 +2102,38 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 *	sync 0x904e 16		802.15.4g's SFD
 		 *	sync 0x930b 16		what the table leaves
 		 *
-		 * SYNC_MODE 5 is 16 bits, 6 is 32.  A wrong sync word
-		 * is the control for any claim made with a right one:
-		 * the same configuration listening for a number nobody
-		 * sends should find nothing, and if it finds as much as
-		 * the real one then what was found was noise.
+		 * SYNC_MODE 2 is sixteen bits and 5 is thirty-two, and
+		 * which registers each of them reads is the whole of the
+		 * bug this comment used to carry.  SYNC_MODE 5 is
+		 * SYNC31_0, so a 32-bit word goes to SYNC3 down to
+		 * SYNC0 with SYNC3 on the air first.  SYNC_MODE 2 is
+		 * SYNC15_0, which is SYNC1 and SYNC0 -- the other half
+		 * of the register file -- and this wrote sixteen bits to
+		 * SYNC3 and SYNC2 and set mode 2 anyway.
+		 *
+		 * So every sixteen-bit sync word this driver was ever
+		 * asked for was written where the part was not looking,
+		 * and the part went on comparing against whatever
+		 * SYNC1:SYNC0 held.  Read off silicon after asking for
+		 * 0xaaaa: SYNC3 0xaa, SYNC2 0xaa, SYNC1 0x51, SYNC0
+		 * 0xde -- the reset value, which is what it was actually
+		 * hunting for.  No packet has ever been received on this
+		 * board and this is at least one reason why.
+		 *
+		 * The qemu model had the same convention and its own
+		 * comment said so: that taking SYNC3 and SYNC2 for
+		 * sixteen bits was "a convention and not a reading of
+		 * the part", and that whether it agreed with silicon
+		 * "needs silicon".  It does not agree, and both ends
+		 * move together here, since a model and a driver that
+		 * are wrong in the same direction pass every test
+		 * between them.
+		 *
+		 * A wrong sync word is the control for any claim made
+		 * with a right one: the same configuration listening for
+		 * a number nobody sends should find nothing, and if it
+		 * finds as much as the real one then what was found was
+		 * noise.
 		 */
 		ulong w;
 		int bits, mode;
@@ -2122,8 +2149,9 @@ cc1120ctl(Radio *r, char *buf, int n)
 			if(state(rr) == Stidle)
 				break;
 		if(bits == 16){
-			wr(rr, Rsync3, (w>>8) & 0xff);
-			wr(rr, Rsync2, w & 0xff);
+			/* SYNC_MODE 2 reads SYNC15_0, which is these two */
+			wr(rr, Rsync1, (w>>8) & 0xff);
+			wr(rr, Rsync0, w & 0xff);
 		}else{
 			wr(rr, Rsync3, (w>>24) & 0xff);
 			wr(rr, Rsync2, (w>>16) & 0xff);
