@@ -787,6 +787,25 @@ kusum(sum: int, b: array of byte, n: int): int
 #
 kudone := 0;
 
+#
+# Set when an interface has been bound into /net AND has an address.
+#
+# remotecmd takes a PRIVATE namespace with FORKNS and then dials through
+# it for the life of the boot.  Taken before ethercheck's
+# sys->bind("#I", "/net", ...), that private namespace has no /net in it
+# and no later bind can put one there, so every poll fails with "file
+# does not exist" until the board is rebooted -- which is exactly what
+# the bind's own comment a thousand lines below warns about, for a
+# different reason.
+#
+# That race has always been here and usually won.  It lost on a kernel
+# that did a little extra work early in main(), and the result was a
+# board with a working card, a working network and a working shell that
+# could not be reached by anything and had to be recovered over JTAG.
+# Nothing about it looked like a namespace problem.
+#
+netdone := 0;
+
 kuthenfat()
 {
 	fatwrite();
@@ -1478,6 +1497,7 @@ etherone(ifname, tag: string, tries: int, ip, mask, gw: string)
 			return;
 		}
 		sys->print("%s-ADDR-OK ip=%s gw=%s\n", tag, ip, gw);
+		netdone = 1;
 		pingcheck(tag, gw);
 		return;
 	}
@@ -1504,6 +1524,7 @@ etherone(ifname, tag: string, tries: int, ip, mask, gw: string)
 		return;
 	}
 	sys->print("%s-DHCP-OK ip=%s gw=%s\n", tag, cfg.ip, cfg.ipgw);
+	netdone = 1;
 	# the clock first, and in its own process: everything after this
 	# line used to depend on ping(8) returning, and it does not always
 	spawn timecheck(cfg.ipgw);
@@ -2589,11 +2610,17 @@ remotecmd()
 	# worked, on a connection this loop has already made and into an
 	# output file on the host.
 	#
-	for(w := 0; w < 120; w++){
-		if(kudone)
+	# Both, not just kudone: the namespace taken below must already
+	# contain /net, and the bind that puts it there is ethercheck's.
+	# Bounded, so a board with no ethernet still reaches the code that
+	# says why it is unreachable rather than waiting in silence.
+	for(w := 0; w < 180; w++){
+		if(kudone && netdone)
 			break;
 		sys->sleep(1000);
 	}
+	if(!netdone)
+		sys->print("RCMD-NONET no interface after 180 s; dialling anyway\n");
 	#
 	# A PRIVATE namespace, from here on.
 	#
