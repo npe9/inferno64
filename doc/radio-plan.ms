@@ -731,13 +731,36 @@ value of 3.  The RSSI reads \-110dBm where it read \-9.
 .PP
 So the number is no longer a hundred decibels out.  It is not yet
 calibrated, which is item 2.
-.IP "2.  Calibrate it against a source, not a datasheet.  Blocked on a connector." 6
+.IP "2.  Calibrate it against a source, not a datasheet.  Unblocked, and half of it is still not possible." 6
 \-102 is the figure TI's examples use and it is not a measurement of
 this board.  The tinySA has a signal generator in it, so a known level
 at a known frequency into the click's antenna gives the offset this
 board actually wants.  That is the difference between an RSSI and a
 number.
 .PP
+THE CLAIM BELOW IS WRONG AND IS KEPT FOR WHAT IT COST.  The generator
+does reach the board.
+.CW "mode low output"
+is the low path and stops short, which is why 915MHz asked of it came
+out at 10 \- but
+.CW "mode output"
+is the high one and reaches 915 exactly, and its frequency is the
+sweep setting rather than
+.CW freq .
+Measured: generator off, this receiver's floor \-111 and peak \-106;
+generator on, floor \-93 and peak \-92; three times, on command.
+Nothing about a connector was ever in the way, only a word.
+.PP
+What is still not possible is the half that matters.  A known level
+into the click's antenna is what gives an offset, and free space
+between two antennas is an unknown loss, so what a radiated source
+calibrates is the slope \- whether ten dB of generator moves ten dB of
+RSSI \- and not the offset.  The offset wants a cable from the
+generator to the click's u.FL, which wants an adapter this bench does
+not have.  The slope is worth having on its own and needs only an
+antenna on the generator connector.
+.PP
+What was written here before, and is false:
 The generator does not reach the board.  At 868 it cannot: a tinySA
 ULTRA's output is the low path, which stops at 800MHz.  At 433.92,
 which both parts cover, the board's floor does not move between
