@@ -9948,3 +9948,38 @@ confirmed rather than assumed; the pad pull-ups on GPIO 34-39 are left
 however the firmware set them, and nothing here programs GPPUD; and the
 data timeout exponent and the clock in force during the data phase have
 not been checked at all.
+.PP
+.B "The CMD53 test is not valid against this chip."
+Pull-ups on 34-39 were programmed \(em nothing here had ever set them
+\(em and the block sizes too, and neither changed the CRC.  Reading the
+driver's own comment explains why: the CMD53 path was written against
+the SDIO function model in tools/qemu-patches, which has plain readable
+memory at function 1 offset 0x400.  A BCM43438 does not.  That offset is
+the chip's backplane window, and reading it without first setting the
+window up is not a meaningful request, so a failure there is not
+evidence that the transport is broken.  It is now reported as
+SDIO-CMD53-NA and says so.
+.PP
+.B "What the real chip says about itself, over CMD52."
+.P1
+CCCR 32 02 02 02 00 00 00 40 02 70 10 00
+     00 00 00 00 00 00 01 01 00 00 00
+.P2
+CCCR 3.00 with SDIO 2.00; function 1 both enabled (0x02) and ready
+(0x03); bus interface control 0x40, so the bus is in 1-bit mode, which
+agrees with the controller; and the CIS pointer at 0x001070.
+.PP
+One defect came straight out of that dump: function 0's block size, CCCR
+0x10/0x11, comes up ZERO, and function 1's had never been set either.
+Every real SDIO driver programs both before it moves anything.  They are
+now set to 64 \(em what ether4330 uses for this part \(em and read back
+to confirm it.  That did not change the CRC, which is consistent with
+the test target being meaningless rather than the transport being at
+fault, but it is required regardless and was simply missing.
+.PP
+.B "Next."
+The transport is proven as far as CMD52 on real silicon.  The next piece
+is the beginning of the ether4330 port rather than more probing: set up
+the backplane window through function 1 and read the chip's own ID back.
+That is the first CMD53 whose answer is worth anything on this part, and
+it is what a driver needs first anyway.

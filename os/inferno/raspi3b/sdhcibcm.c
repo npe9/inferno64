@@ -41,6 +41,7 @@
 #include "../port/sd.h"
 
 extern void gpiofsel(int, int);		/* gpiobcm.c */
+extern void gpiopull(int, int);		/* gpiobcm.c: 0 none, 1 down, 2 up */
 
 extern int mboxgetclock(int, u32*);	/* mailbox.c: firmware clock rate */
 
@@ -824,6 +825,25 @@ sdioinit(void)
 
 	for(i = 34; i <= 39; i++)
 		gpiofsel(i, Alt3);
+	/*
+	 * And the pulls, which nothing here has ever set.
+	 *
+	 * gpiofsel changes a pin's function and says nothing about its
+	 * pull, so these pads have been left however the firmware
+	 * happened to leave them.  SDIO needs pull-ups on CMD and the
+	 * data lines; the clock is driven by the host and wants none.  On
+	 * SD1 that is 34 CLK, 35 CMD, 36-39 DAT0-3, which is the same
+	 * arrangement Linux programs for this block.
+	 *
+	 * This is the first suspect for the data CRC error CMD53 now
+	 * reports: a floating DAT0 gives exactly that -- the card drives
+	 * the line, the bits do not survive the trip, and the command
+	 * path over the same pads is unaffected because CMD52 carries no
+	 * data phase.
+	 */
+	gpiopull(34, 0);			/* CLK: host-driven, no pull */
+	for(i = 35; i <= 39; i++)
+		gpiopull(i, 2);			/* CMD and DAT0-3: pull up */
 
 	/*
 	 * Say which step failed.
@@ -1544,6 +1564,54 @@ sdiocheck(void)
 		return;
 	}
 
+	/*
+	 * Dump the card common control registers.
+	 *
+	 * The CMD53 exchange below writes 64 bytes to function 1 at
+	 * 0x400 and reads them back, which is a fair test of the QEMU
+	 * SDIO function model it was written against -- that model has
+	 * plain readable memory there.  A BCM43438 does not: function 1
+	 * at that offset is the chip's backplane window, and reading it
+	 * without first setting the window up is not a meaningful
+	 * request.  So a CMD53 failure here is not evidence that the
+	 * transport is broken, and it should not be read as one.
+	 *
+	 * What IS worth having from real silicon is the card describing
+	 * itself over CMD52, which works.  This dump is that: the whole
+	 * low CCCR, including the capability byte and the CIS pointer,
+	 * from the actual chip.
+	 */
+	print("sdio: CCCR");
+	for(i = 0; i <= 0x16; i++){
+		v = sdiocmd52(0, i, 0, 0);
+		if(v < 0){
+			print(" <read of %#ux failed>", i);
+			break;
+		}
+		print(" %2.2ux", v);
+	}
+	print("\n");
+
+	/*
+	 * Set the block sizes before any CMD53.
+	 *
+	 * The dump above says function 0's block size (CCCR 0x10/0x11) is
+	 * ZERO on this chip as it comes up, and function 1's FBR block
+	 * size has never been set either.  Every real SDIO driver
+	 * programs both before it transfers anything, and a card asked to
+	 * move data with no block size agreed is being asked something
+	 * meaningless.
+	 *
+	 * 64 bytes, which is what ether4330 uses for this part.
+	 */
+	if(sdiocmd52(0, 0x10, 1, 64) < 0 || sdiocmd52(0, 0x11, 1, 0) < 0)
+		print("SDIO-WARN could not set the function 0 block size\n");
+	if(sdiocmd52(0, 0x110, 1, 64) < 0 || sdiocmd52(0, 0x111, 1, 0) < 0)
+		print("SDIO-WARN could not set the function 1 block size\n");
+	v = sdiocmd52(0, 0x10, 0, 0);
+	i = sdiocmd52(0, 0x11, 0, 0);
+	print("sdio: function 0 block size now %d\n", v | (i << 8));
+
 	for(i = 0; i < sizeof buf; i++)
 		buf[i] = 0xa0 + i;
 	memset(back, 0, sizeof back);
@@ -1552,7 +1620,10 @@ sdiocheck(void)
 		return;
 	}
 	if(sdiocmd53(1, 0x400, 0, 0, 1, back, sizeof back) != sizeof back){
-		print("SDIO-FAIL CMD53 read -- %s (interrupt %#lux status %#lux)\n", sdio53why, (ulong)sdio53int, (ulong)sdio53stat);
+		print("SDIO-CMD53-NA read -- %s (interrupt %#lux status %#lux); "
+			"expected against a real BCM43438, whose function 1 at "
+			"0x400 is a backplane window, not memory\n",
+			sdio53why, (ulong)sdio53int, (ulong)sdio53stat);
 		return;
 	}
 	if(memcmp(buf, back, sizeof buf) != 0){
