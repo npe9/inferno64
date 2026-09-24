@@ -1259,6 +1259,54 @@ schedule \-
 armed on carrier sense over hours.  Then a second wired GPIO, which is
 a soldering job.
 .PP
+TWO INSTRUMENTS AT THE SAME TIME, WHICH SETTLED BOTH QUESTIONS.
+.PP
+The crystal first.  A tinySA sweep of 895.8 to 896.2MHz, 1kHz bins,
+reports nothing above a \-114.3 floor; of 959.8 to 960.2, nothing but
+hits at exactly the reporting threshold, which is what noise looks
+like; and of 927.8 to 928.2, one trace at 928.0058 at \-105.7dBm, twenty
+dB below what the CC1120 claims for the same frequency at the same
+moment.  So the receiver reads \-86dBm at 896.000 where an instrument
+with a better view of the room reads nothing whatever, and the one
+place the tinySA does see something is the frequency where the CC1120's
+own harmonic would be radiating out of the click's antenna into it.
+Internal, confirmed from outside.
+.PP
+And the band, which is the useful half.  Sixteen sweeps of 928 to 932
+at the same time as all of the above:
+.DS
+.CW "      at MHz    width    peak    mean     p-m   seen"
+.CW "    930.8241      18k   -80.2  -103.9    23.7    2/16"
+.CW "    929.3274      18k   -85.2  -104.5    19.3    1/16"
+.CW "    929.8263      27k   -90.7  -104.5    13.7    2/16"
+.CW "    929.6036      62k   -91.2  -101.7    10.5    6/16"
+.DE
+which is a burst transmitter's signature and not a carrier's: a peak
+twenty dB over the mean, and the mean at the floor, because most sweeps
+caught the silence.  929.6036 is the same most-persistent channel the
+earlier survey found, at the same level, six sweeps in sixteen.
+.PP
+So there is something to decode, and the reason this receiver is not
+decoding it is the antenna and nothing subtler.  Its noise floor is
+\-110 to \-112 against the tinySA's \-106.7 \- better, not worse \- and it
+reads \-102 where the other reads peaks of \-80 to \-91.  A receiver with
+the lower floor and ten to twenty dB less signal is a receiver whose
+antenna is not delivering, which is a connector rather than a
+soldering iron and is the one thing to fix before anything else here is
+worth measuring again.
+.PP
+930.8241 is the channel to point it at when that is done: the strongest
+of the four, and 18kHz wide, which is what 2-level FLEX at 1600 bits a
+second or POCSAG at 1200 occupies.  At \-80dBm it would sit thirty dB
+over this part's floor.  What it wants is a long dwell on one channel
+rather than a sweep \- the max-hold gave each channel 200ms and saw
+nothing there, while the tinySA caught it in 2 sweeps of 16 \- so
+.B watch
+or a triggered
+.B probe
+on that one frequency, not
+.IR bandhold .
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
