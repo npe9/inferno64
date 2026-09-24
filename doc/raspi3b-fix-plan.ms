@@ -294,3 +294,72 @@ exactly the way that triggers this.  Re-test it with
 .CW emu-cpu
 BEFORE chasing anything there: the 1150-2000 figure may be this same
 fault and nothing else.
+.NH 1
+Where it stands after the round-trip work
+.PP
+.B "Closed."
+.IP \(bu
+.I "The server wedge"
+\(em macOS App Nap, suspending the whole emu.  Two fixes: an activity
+declaration for the GUI binary, and
+.CW emu-cpu ,
+which links no Cocoa at all and is what
+.CW styxd.sh
+serves with.  Acceptance met: 2000 abrupt disconnects, worst health
+0.040s.
+.IP \(bu
+.I "mv on the board"
+\(em renaming on FAT through dossrv always failed with Eperm, because
+rwstat compared a wstat's uid and gid literally and a wstat that means
+to leave them alone sends nil.  mv falls back to copy-and-remove, so it
+looked like it worked.  Proved with start-cluster numbers on a seeded
+image.
+.IP \(bu
+.I "The kfs test area"
+\(em it now uses the gap that exists rather than one that fitted the old
+card, and checks the gap is empty before reaming it.  On this card it is
+NOT empty, so the test is skipped for a correct reason and the check
+earned its keep on the first boot.
+.IP \(bu
+.I "The racy holder field"
+\(em handoffs and holder are written under isched.l now.
+.IP \(bu
+.I "The installer"
+\(em install.sh could never have worked: it waits for a kupdate that was
+deleted, and greps the console for a string the kernel does not print.
+.CW tools/jtag/kinstall.sh
+replaces it, drives the copy through the board.cmd poller, reboots with
+.CW "echo reboot >/dev/sysctl"
+because the console is handled but never hears, and confirms the banner.
+End to end, unattended.
+.PP
+.B "The board's bulk read, measured end to end."
+.P1
+at the start of this work   ~30 s per MB
+after the styx flush fix     3.9 s per 1.86MiB   (493 KB/s)
+with read-ahead              2.76 s              (705 KB/s)
+.P2
+.PP
+.B "What is left, in order."
+.IP 1.
+.I "More round trips in flight."
+Read-ahead queues eight and the host's exportfs runs at most four per
+connection (Maxconnproc), so the pipeline cannot fill.  Raising it is
+gated on the audit its own comment demands \(em it faulted on a nil
+dereference at 4 and not at 1, and that was never chased.
+.IP 2.
+.I "Bigger messages."
+8KB msize is 239 requests for this file.  64KB was tried and broke ls
+with "stat buffer too small", which is a real and separate bug in a
+caller that sizes a stat buffer by a constant rather than by msize.
+.IP 3.
+.I "DMA with multi-block returns wrong data."
+Untouched, reproduces on both cards, not urgent: DMA is off by default
+and PIO at 64 blocks is fast.
+.IP 4.
+.I "multicore."
+Its emu is a Cocoa binary and it was load-tested headless, which is
+exactly the App Nap case.  Re-test with
+.CW emu-cpu
+BEFORE chasing anything: the 1150-2000 figure may be this and nothing
+else.
