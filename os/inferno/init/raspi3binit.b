@@ -2513,6 +2513,40 @@ init()
 Cmdfile: con "/n/remote/os/inferno/raspi3b/board.cmd";
 Outfile: con "/n/remote/os/inferno/raspi3b/board.out";
 
+#
+# Say when the one remote channel has stopped working.
+#
+# Every giving-up path below -- no kupdate.txt, dial refused, mount
+# refused, board.cmd unreadable, a short read -- used to return nil, and
+# the caller cannot tell nil from "board.cmd has not changed".  So a
+# poller that was failing every fifteen seconds was indistinguishable
+# from a poller with nothing to do, and the console said nothing either
+# way.  That is how it looked when a kernel came up with the card and
+# the network both working and the board nonetheless unreachable: the
+# only way back in was JTAG.
+#
+# Print on the FIRST failure and then every twentieth -- five minutes --
+# so a long outage is legible in a hardcopy taken an hour later without
+# burying the boot log, which is the other thing a deaf board is read
+# through.  Print once more on recovery, so the log shows an end as well
+# as a beginning.
+#
+rcmdfails := 0;
+
+rcmdfail(why: string)
+{
+	rcmdfails++;
+	if(rcmdfails == 1 || rcmdfails % 20 == 0)
+		sys->print("RCMD-DOWN %d: %s\n", rcmdfails, why);
+}
+
+rcmdup()
+{
+	if(rcmdfails > 0)
+		sys->print("RCMD-UP after %d failed polls\n", rcmdfails);
+	rcmdfails = 0;
+}
+
 remotecmd()
 {
 	last := "-";
@@ -2587,8 +2621,12 @@ remotecmd()
 	#
 	sys->pctl(Sys->FORKNS, nil);
 	addrs := remoteaddrs();
-	if(addrs == nil)
-		return;			# no kupdate.txt: nothing to talk to
+	if(addrs == nil){
+		# remoteaddrs has already said which step failed.
+		sys->print("RCMD-OFF no host address: this board is JTAG-only now\n");
+		return;
+	}
+	sys->print("RCMD-ON polling %s every 15s\n", hd addrs);
 	#
 	# Fifteen seconds, not three.
 	#
@@ -2763,16 +2801,22 @@ remotemounted(addrs: list of string): int
 remoteaddrs(): list of string
 {
 	cfg := sys->open("/n/dos/kupdate.txt", Sys->OREAD);
-	if(cfg == nil)
+	if(cfg == nil){
+		sys->print("RCMD-NOADDR open /n/dos/kupdate.txt: %r\n");
 		return nil;
+	}
 	b := array[256] of byte;
 	n := sys->read(cfg, b, len b);
 	cfg = nil;
-	if(n <= 0)
+	if(n <= 0){
+		sys->print("RCMD-NOADDR read /n/dos/kupdate.txt: %r\n");
 		return nil;
+	}
 	(nf, f) := sys->tokenize(string b[0:n], " \t\r\n");
-	if(nf < 2)
+	if(nf < 2){
+		sys->print("RCMD-NOADDR /n/dos/kupdate.txt has %d fields, need 2\n", nf);
 		return nil;
+	}
 	rev: list of string;
 	for(l := f; l != nil; l = tl l)
 		if(tl l != nil)			# the last field is the path
@@ -2827,12 +2871,17 @@ readcmdfile(addrs: list of string): string
 		if(ok >= 0)
 			break;
 	}
-	if(ok < 0)
+	if(ok < 0){
+		rcmdfail(sys->sprint("dial %s: %r", hd addrs));
 		return nil;
-	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL, "") < 0)
+	}
+	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL, "") < 0){
+		rcmdfail(sys->sprint("mount /n/remote: %r"));
 		return nil;
+	}
 	fd := sys->open(Cmdfile, Sys->OREAD);
 	if(fd == nil){
+		rcmdfail(sys->sprint("open %s: %r", Cmdfile));
 		unmountremote();
 		return nil;
 	}
@@ -2840,8 +2889,11 @@ readcmdfile(addrs: list of string): string
 	n := sys->read(fd, b, len b);
 	fd = nil;
 	unmountremote();
-	if(n <= 0)
+	if(n <= 0){
+		rcmdfail(sys->sprint("read %s: %r", Cmdfile));
 		return nil;
+	}
+	rcmdup();
 	s := string b[0:n];
 	# trim trailing newlines so a file rewritten identically but for
 	# whitespace does not count as a new command
