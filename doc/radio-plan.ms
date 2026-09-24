@@ -1762,6 +1762,38 @@ rather than a rate.  What is needed to make it a finding is a packet
 count on both channels over equal time, and after that the content of
 enough frames to see whether a home ID repeats.  Neither is blocked.
 .PP
+AND THE PACKET RATE SAYS NO.
+.PP
+.I tools/radio/pktrate.py
+alternates between a target and a control, equal dwell, same minutes,
+and counts.  Alternating rather than doing one and then the other is
+the point: on a bench where the air changes, an hour of one followed by
+an hour of the other compares two times as much as two frequencies.
+.PP
+Sixteen windows of forty-five seconds, twelve minutes in all, with the
+registers read back off the part afterwards to show the configuration
+held \- SYNC_CFG1 0x5e, SYNC1 and SYNC0 both 0xaa, CRC off, variable
+length, PQT on:
+.DS
+.CW "  908.420MHz (target):   0 packets"
+.CW "  920.000MHz (control):  1 packet"
+.DE
+The target took nothing and the control took one.  So the patterned
+packet above does not reproduce, no Z-Wave reception is claimed, and
+the tool says so itself rather than leaving it to be judged: the
+counter is measuring the receiver and not the air.
+.PP
+That is the right place for this to stop rather than a disappointment.
+Everything the bench needed to reach an honest answer now exists and is
+demonstrated: a receive path proven end to end on silicon, a
+transmitter that proves the pin, noise at a known threshold that proves
+the sync detector, a ladder that says which rung a signal reaches, the
+bytes of whatever arrives, and a rate comparison that refuses a claim
+the counter cannot support.  What is missing is a transmitter on a
+protocol this part can demodulate, close enough and often enough to
+catch \- and the one in the house is a Z-Wave device somebody can
+operate on purpose.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP

@@ -269,14 +269,27 @@ class Console:
         end = time.time() + wait
         last = since()
         started = False
+        quiet = 0
         while time.time() < end:
             time.sleep(2.0)
             t = since()
             if t != last:
                 started = True
+                quiet = 0
                 last = t
                 continue
             if started:
+                break
+            # Nothing has printed yet, and for most ctl verbs nothing
+            # ever will: freq, rate, bw and the rest say nothing when
+            # they work.  Waiting out the whole timeout for those made
+            # every tuning step cost its full wait -- a packet-rate
+            # comparison with a 40s dwell was taking 200s a
+            # measurement, nearly all of it this loop waiting for
+            # silence to become louder.  Ten seconds of quiet after
+            # the command has been typed is a silent success.
+            quiet += 1
+            if quiet >= 5:
                 break
         self.eof()
         time.sleep(1.0)
