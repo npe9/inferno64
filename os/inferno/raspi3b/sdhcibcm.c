@@ -171,6 +171,13 @@ static u32 sdhcilastint, sdhcilaststat;
  */
 static char *sdio53why = "";
 static u32 sdio53int, sdio53stat;
+
+/*
+ * The block size the SDIO functions are programmed for.  512 until
+ * something sets the functions up; sdiocheck lowers it to 64, which is
+ * what this part wants and what ether4330 uses.
+ */
+static int sdioblksize = Secsize;
 static char *sdhcilastwhy = "";
 
 /*
@@ -980,7 +987,26 @@ sdiocmd53(int fn, int addr, int write, int blockmode, int incr, void *a, int n)
 	 */
 	if(blockmode){
 		nblk = n;
-		blksize = Secsize;
+		/*
+		 * The block size the FUNCTION is configured for, not 512.
+		 *
+		 * This said Secsize unconditionally, which is right only
+		 * when the function's block size happens to be 512.  An
+		 * SDIO function's block size is whatever CCCR 0x10/0x11
+		 * and the FBR were programmed with -- 64 for this part,
+		 * which is what ether4330 uses -- so the card sends
+		 * 64-byte blocks while the controller was told to expect
+		 * 512.  The symptom is a data CRC error together with a
+		 * data end-bit error (interrupt 0x608000), because the
+		 * controller is still waiting for the rest of a block the
+		 * card already finished.
+		 *
+		 * Byte mode never saw this, which is why it survived: the
+		 * only CMD53 that had ever worked was a four-byte read.
+		 * The firmware upload is several hundred kilobytes of
+		 * BLOCK writes and would have hit it immediately.
+		 */
+		blksize = sdioblksize;
 	}else{
 		nblk = 1;
 		blksize = n;
@@ -1610,7 +1636,10 @@ sdiocheck(void)
 		print("SDIO-WARN could not set the function 1 block size\n");
 	v = sdiocmd52(0, 0x10, 0, 0);
 	i = sdiocmd52(0, 0x11, 0, 0);
-	print("sdio: function 0 block size now %d\n", v | (i << 8));
+	sdioblksize = v | (i << 8);
+	if(sdioblksize <= 0 || sdioblksize > Secsize)
+		sdioblksize = Secsize;
+	print("sdio: function 0 block size now %d\n", sdioblksize);
 
 	/*
 	 * Read the chip's OWN ID through the backplane window -- first
@@ -1666,6 +1695,91 @@ sdiocheck(void)
 			print("sdio: chipid %#lux -> chip %#ux rev %d, "
 				"%d cores\n", (ulong)v, v & 0xffff,
 				(v >> 16) & 0xf, (v >> 24) & 0xf);
+
+		/*
+		 * And block mode, at size, which is the thing the
+		 * firmware upload actually depends on.
+		 *
+		 * The four-byte read below proves the byte-mode data
+		 * path and nothing more.  Loading this part means
+		 * several hundred kilobytes of BLOCK writes, so a
+		 * transport that is only known good for four bytes is
+		 * not known good for that.
+		 *
+		 * The enumeration space is readable and its first word
+		 * is already known from CMD52, so reading 8 blocks of 64
+		 * over it is checkable: the first four bytes must be the
+		 * chipid, and every byte must agree with the same region
+		 * read byte-mode.  That compares block against byte over
+		 * identical addresses rather than trusting either alone.
+		 */
+		{
+			static uchar blk[512], bytewise[512];
+			int nbad;
+
+			memset(blk, 0, sizeof blk);
+			memset(bytewise, 0, sizeof bytewise);
+			/*
+			 * ONE block before many.
+			 *
+			 * Fixing the block size took the end-bit error
+			 * away and left a data CRC, and that can still be
+			 * either of two things: multi-block transfers
+			 * being wrong, or this address range not being
+			 * readable as a long span -- the enumeration space
+			 * is registers, not memory, and reading across it
+			 * is not obviously legal.  A single block settles
+			 * which: it covers only the first 64 bytes, which
+			 * hold the chipid word that CMD52 already read.
+			 */
+			if(sdiocmd53(1, 0, 0, 1, 1, blk, 1) != 1)
+				print("SDIO-BLOCK1-FAIL one %d-byte block -- %s "
+					"(interrupt %#lux)\n", sdioblksize,
+					sdio53why, (ulong)sdio53int);
+			else if(blk[0] != id52[0] || blk[1] != id52[1])
+				print("SDIO-BLOCK1-WRONG %2.2ux %2.2ux vs chipid "
+					"%2.2ux %2.2ux\n", blk[0], blk[1],
+					id52[0], id52[1]);
+			else
+				print("sdio: BLOCK1-OK one %d-byte block reads "
+					"the chipid correctly\n", sdioblksize);
+
+			nbad = sizeof blk / sdioblksize;	/* blocks that fit */
+			if(sdiocmd53(1, 0, 0, 1, 1, blk, nbad) != nbad)
+				print("SDIO-BLOCK-FAIL %dx%d read -- %s "
+					"(interrupt %#lux)\n", nbad, sdioblksize,
+					sdio53why, (ulong)sdio53int);
+			else if(blk[0] != id52[0] || blk[1] != id52[1]
+			|| blk[2] != id52[2] || blk[3] != id52[3])
+				print("SDIO-BLOCK-WRONG first word %2.2ux %2.2ux "
+					"%2.2ux %2.2ux, chipid is %2.2ux %2.2ux "
+					"%2.2ux %2.2ux\n", blk[0], blk[1], blk[2],
+					blk[3], id52[0], id52[1], id52[2], id52[3]);
+			else{
+				nbad = 0;
+				for(i = 0; i < sizeof blk; i++){
+					v = sdiocmd52(1, i, 0, 0);
+					if(v < 0){
+						nbad = -1;
+						break;
+					}
+					bytewise[i] = v;
+					if(bytewise[i] != blk[i])
+						nbad++;
+				}
+				if(nbad < 0)
+					print("SDIO-BLOCK-NOCTL the byte-mode "
+						"control read failed\n");
+				else if(nbad == 0)
+					print("sdio: BLOCK-OK %d bytes in blocks of "
+						"%d agree with the CMD52 control\n",
+						(int)sizeof blk, sdioblksize);
+				else
+					print("SDIO-BLOCK-WRONG %d bytes "
+						"differ from the CMD52 control\n",
+						nbad);
+			}
+		}
 
 		memset(id53, 0, sizeof id53);
 		if(sdiocmd53(1, 0, 0, 0, 1, id53, 4) != 4)

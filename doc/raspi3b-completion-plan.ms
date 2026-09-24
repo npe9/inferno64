@@ -10019,3 +10019,40 @@ through the board.cmd poller with
 The installer no longer depends on the console either \(em it asks the
 board for /dev/osversion \(em so a kernel was built, installed, booted
 and read with the console entirely absent.
+.SH
+Block mode: a real bug, and what is still unproven
+.PP
+The four-byte read that proved CMD53 proved byte mode and nothing else,
+and the firmware upload is several hundred kilobytes of BLOCK writes, so
+that gap mattered.  Testing it found a real bug.
+.PP
+.B "sdiocmd53 hardcoded 512 as the block size."
+An SDIO function's block size is whatever CCCR 0x10/0x11 and the FBR
+were programmed with \(em 64 for this part, which is what ether4330 uses
+\(em so the card was sending 64-byte blocks while the controller had
+been told to expect 512.  The symptom is a data CRC error together with
+a data end-bit error, interrupt 0x608000, because the controller is
+still waiting for the rest of a block the card has already finished.
+Byte mode never saw it, which is exactly why it survived: the only CMD53
+that had ever worked was four bytes long.
+.PP
+Fixed, and the fix is visible in the failure: 0x608000 became 0x208000,
+the end-bit error gone and a CRC left.  Then, with one block instead of
+eight:
+.P1
+sdio: BLOCK1-OK one 64-byte block reads the chipid correctly
+SDIO-BLOCK-FAIL 8x64 read (interrupt 0x208000)
+.P2
+.PP
+.B "So block mode works; multi-block over THIS range does not."
+That is where the honest account stops.  0x18000000 is the SI
+enumeration space \(em registers, not memory \(em and the failing read
+walks an incrementing address across 512 bytes of them, which is not
+obviously a legal thing to ask for.  The same mistake as the 0x400 test,
+one level up: a transport is being judged against an address that may
+not support the access.
+.PP
+Proving multi-block needs a span of real memory, which means chip RAM,
+which means bringing the SOCRAM core up first.  That is step one of the
+driver anyway, so the remaining transport question and the next piece of
+work are the same piece of work.
