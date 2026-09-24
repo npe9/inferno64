@@ -1311,6 +1311,56 @@ click, and the shape of the evidence \- textbook floor, thirty dB of
 missing signal \- is what a disconnected or wrong-band antenna looks
 like rather than a subtle one.
 .PP
+930.824 IN ZERO SPAN, AND HOW MUCH OF IT TO BELIEVE.
+.PP
+.I tools/tinysa/listen.py
+stays on one frequency instead of sweeping past it, and on 930.824 it
+reports bursts at \-71 to \-73dBm against a \-96 floor \- eight dB
+stronger than the sweep's \-80.2, and twenty-four dB over the floor, on
+two separate runs.  That the signal is there is not in doubt.
+.PP
+What it is, is.  At 67us a point the bursts measure 1733us, run after
+run, which looks like a number.  At 667us a point the same signal
+measures 2667 and 3333.  A burst length that changes with the
+instrument's resolution is the instrument, and the repetition disagrees
+the same way \- about one burst per 30ms capture at the fine setting,
+three to five per 300ms capture at the coarse one.  So nothing here
+identifies a protocol, and in particular none of it matches paging:
+FLEX frames are 1.875 seconds and a POCSAG batch at 1200 baud is about
+half of one, against bursts of order milliseconds here.
+.PP
+The control for that was run and did not survive: zero span on 931.500,
+which the sweep put at the floor, returned no captures at all in 174
+seconds rather than captures containing nothing, and the instrument was
+wedged when asked afterwards.  A tool that fails and a channel that is
+quiet look identical in that output, so the 930.824 characterisation
+stands uncontrolled and is written down as uncontrolled.
+.PP
+And a correction to the section above, which claimed the deficit was
+measured on two channels.  It was measured on one.  The 881MHz
+comparison used there is noise against noise: this driver's own probe
+flags that frequency NOISE by its shape rule, and the tinySA's hits
+across 878 to 884 are all within three dB of each other at one sweep in
+twelve, which is what a reporting threshold looks like and not what a
+transmitter does.
+.PP
+What survives, and it is enough to act on.  Two independent runs put a
+real signal at \-72dBm on 930.824.  This receiver, whose noise floor is
+\-113 there and whose synthesiser reads locked and correctly banded at
+that frequency, sees nothing above \-110 in sixteen seconds.  Forty dB
+between a healthy receiver and a signal two instruments agree is
+present is a front end or an antenna and not a subtlety.
+.PP
+Three ways to settle which, cheapest first.  Swap the antennas between
+the two instruments and repeat the 930.824 measurement on each: if the
+deficit follows the antenna it is the antenna, and nothing has to
+transmit.  Measure the element: a quarter wave is 82mm at 915MHz, 164mm
+at 433 and 31mm at 2.4GHz, and which of those the whip is answers the
+question by eye.  Or key the part at 915MHz, which is unlicensed at
+Part 15 levels, and read it on the tinySA \- an antenna that does not
+radiate does not receive either, and that measures the same thing by
+reciprocity.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
