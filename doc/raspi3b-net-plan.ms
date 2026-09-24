@@ -515,3 +515,59 @@ across a fixed workload, counting transfers and bytes in each direction.
 No timing in the path, nothing printed during the run, and the frames
 per transfer computed rather than inferred.  Nothing in the transmit
 path should be touched until that exists.
+.NH 2
+The pool on parallelvm: it works, and it turns out to be unnecessary
+.PP
+No merge was needed to try it.  The emu binary and the root are
+independent, and
+.CW styxlisten.dis
+comes from the root \(em so the multicore branch's emu serving this
+worktree is already running the pooled styxlisten.
+.CW styxd.sh
+takes
+.CW EMU
+now for exactly this.
+.PP
+.B "First, the two scheduler fixes had to go over."
+multicore had both of them unchanged: the
+.CW "if(empty)"
+guard on the irend wakeup, and
+.CW trapUSR1
+returning without clearing
+.CW intwait .
+Testing anything there without them measures those.  Its own comment
+above
+.CW acquire()
+already asserts the invariant the first fix restores \(em "every writer of
+vmq calls Wakeup(&isched.irend) after dropping isched.l" \(em so the
+reasoning on that branch was right and only the code disagreed, which is
+independent confirmation of the fix.  Committed there as 54cce5c9.
+.PP
+.B "Then the measurement, with the board reading in the background:"
+.P1
+serial VM,   shared            worst 1.23s
+serial VM,   per connection    worst 0.03s, and 139 threads climbing
+serial VM,   pool of 4         two TIMEOUTS, several 13-14s
+parallelvm unfixed, pool of 4  five TIMEOUTS
+parallelvm + fixes, pool of 4  worst 0.01s, 21 threads, bounded
+parallelvm + fixes, SHARED     worst 0.01s
+.P2
+.B "The last line is the point."
+Shared is just as good as pooled once the VM is parallel and the two
+bugs are gone, so the pool contributes nothing on top and should stay a
+flag, off by default, on both branches.  What fixes the queueing is
+parallelvm plus those fixes \(em not the pool.  The pool was the right
+idea for a real bottleneck; the bottleneck was somewhere else.
+.PP
+.B "One caveat, stated rather than buried."
+The multicore server wedged later in the same session \(em handshake
+timing out, 0% CPU \(em so those numbers come from a window before it
+did.  That branch still lacks this one's exportfs work: the flushed
+request answered twice, the fs->work registration moved back into the
+reader, and mntfree retiring the tag of an abandoned rpc.  The isolation
+result is solid; "multicore is stable" is not claimed and is not true
+yet.
+.PP
+Board throughput did not move: 1MB still takes tens of seconds whichever
+emu serves it.  That was never a server problem, and the frame-count
+measurements say why.

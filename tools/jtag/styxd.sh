@@ -29,6 +29,14 @@
 #
 set -u
 ROOT=`cd \`dirname "$0"\`/../.. && pwd`
+#
+# EMU overrides which emu serves this worktree.  The binary and the root
+# are independent -- "emu -r <root>" serves <root> whatever built it --
+# so the multicore branch's emu can serve this tree with no merge at all,
+# which is how "does parallelvm fix it?" was answered for the cost of one
+# command rather than 2700 lines.
+#
+EMU=${EMU:-$ROOT/MacOSX/arm64/bin/emu}
 PORT=${PORT:-6666}
 #
 # About -P: one `export /' per connection rather than one shared.
@@ -157,7 +165,7 @@ fi
 # command does not, so the server silently never announced and the next
 # hour of measurements were of nothing at all.
 #
-nohup "$ROOT/MacOSX/arm64/bin/emu" -r "$ROOT" sh -c \
+nohup "$EMU" -r "$ROOT" sh -c \
 	"styxlisten ${STYXFLAGS:-} -A 'tcp!*!$PORT' export / ; sleep 2000000" \
 	>"$LOG" 2>&1 &
 
