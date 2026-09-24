@@ -46,6 +46,8 @@ struct Cc1120
 	uvlong	hz;			/* what setfreq() last tuned to */
 	ulong	symrate;		/* symbols a second, read from DRATE */
 	int	serial;		/* transparent mode: bits on GPIO3 */
+	uchar	lastrx[32];	/* the last packet's first bytes, for lastrx */
+	int	nlastrx;
 	int	lqi;
 
 	/* counters */

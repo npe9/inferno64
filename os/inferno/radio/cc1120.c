@@ -708,6 +708,32 @@ cc1120interrupt(Radio *r)
 	b->wp[11] = tick >> 24;
 	b->wp += Pkthdrlen + n;
 
+	/*
+	 * Keep the front of it, because a counter cannot tell a frame
+	 * from noise and the bytes can.
+	 *
+	 * At any sync threshold where this part's detector fires at
+	 * all it fires on noise, equally on a channel carrying traffic
+	 * and on an empty one -- measured, three windows in five on
+	 * each.  So "a packet arrived" is not evidence that anything
+	 * transmitted.  What a real frame has is structure: Z-Wave
+	 * opens with a home ID, a node ID, a length and a checksum,
+	 * and noise has none of those.  This keeps enough of the front
+	 * of each packet for "lastrx" to show it.
+	 */
+	/*
+	 * b->wp - n, and not b->wp + Pkthdrlen.  The header goes in at
+	 * the old wp and then wp advances past header and payload
+	 * together, so by here it points at the end of the packet and
+	 * adding to it reads off the end of the block.  The first cut
+	 * did that and printed the same thirty-two bytes on every
+	 * channel and every read -- 0x0801b949 and 0x2001d1b8, a flash
+	 * address and an SRAM one, which is what uninitialised memory
+	 * looks like on this part and is how it was caught.
+	 */
+	rr->nlastrx = n < sizeof rr->lastrx? n: sizeof rr->lastrx;
+	memmove(rr->lastrx, b->wp - n, rr->nlastrx);
+
 	rr->nrecv++;
 	qpass(rr->rq, b);
 }
@@ -2233,6 +2259,28 @@ cc1120ctl(Radio *r, char *buf, int n)
 		s->unlock(s);
 		for(i = 0; i < nstep; i++)
 			print("hold %lud %d\n", lo + (ulong)i*step, hold[i]);
+		return n;
+	}
+	if(strcmp(f[0], "lastrx") == 0){
+		/*
+		 * The first bytes of the last packet received, in hex.
+		 *
+		 * The counter in "stats" says how many arrived and
+		 * nothing about what they were, which is not enough on a
+		 * bench where the sync detector fires on noise: a packet
+		 * count rises identically whether or not anything is
+		 * transmitting.  These bytes are the discriminator.
+		 */
+		int k;
+
+		if(rr->nlastrx == 0){
+			print("lastrx none\n");
+			return n;
+		}
+		print("lastrx %d bytes:", rr->nlastrx);
+		for(k = 0; k < rr->nlastrx; k++)
+			print(" %.2ux", rr->lastrx[k]);
+		print("\n");
 		return n;
 	}
 	if(strcmp(f[0], "gread") == 0){

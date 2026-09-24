@@ -1723,6 +1723,45 @@ What remains is ordinary.  Receiving Z-Wave needs its sync word and its
 rate at a threshold that rejects noise, and traffic to arrive while the
 receiver is listening; none of that is blocked on anything now.
 .PP
+BYTES, AT LAST, AND WHAT THEY ARE NOT YET.
+.PP
+A packet counter cannot tell a frame from noise.  At every sync
+threshold where this part's detector fires at all it fires on noise,
+and equally on a channel carrying traffic and on an empty one \- three
+windows in five on each, measured, which is the control refusing the
+claim.  So "recv went up" is not evidence that anything transmitted,
+and the discriminator has to be the bytes.
+.PP
+.B lastrx
+keeps the front of the last packet and prints it in hex.  Its first cut
+copied from
+.CW "b->wp + Pkthdrlen" ,
+which is past the end of the block by then, and printed the same
+thirty-two bytes on every channel and every read: 0x0801b949 and
+0x2001d1b8, a flash address and an SRAM one.  Uninitialised memory is
+at least recognisable.  It copies from
+.CW "b->wp - n"
+now.
+.PP
+With that fixed, and the same settings on both channels: 920MHz gave
+"none" four times over two minutes, and 908.42 gave
+.DS
+.CW "  96 aa 95 53 2a 95 55 53 12 aa 6b 4a a2 92 aa d0 54 64 ea a5 ..."
+.DE
+which is not random.  It is saturated with aa, 55, 95, 53, 2a, 56 and
+52, every one of them an alternating-bit pattern, and noise is
+uniformly distributed.  That is a 2-FSK transmission with a preamble,
+sampled at a rate offset from its own \- which fits, because Z-Wave R1
+is Manchester coded and puts 19.2kBaud on the air for 9.6kbit/s of
+data, and this was clocking at 9600.
+.PP
+It is one packet, and that is all it is.  Later captures at 9600 and
+19200 look random, the two rates returned identical bytes because
+nothing new had arrived, and the control's silence was a single window
+rather than a rate.  What is needed to make it a finding is a packet
+count on both channels over equal time, and after that the content of
+enough frames to see whether a home ID repeats.  Neither is blocked.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
