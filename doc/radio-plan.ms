@@ -1964,6 +1964,44 @@ somebody switched on: so "nothing there" is a statement about the band
 and not about the bench.  What the band wants next is the tinySA's
 antenna, which sees ten to twenty dB more than the click's.
 .PP
+A FREQUENCY HOPPER, WHICH IS AN IDENTIFICATION OF A KIND.
+.PP
+With the tinySA's antenna back on its receive connector, three
+consecutive sweeps of 902 to 928MHz, twelve passes each:
+.DS
+.CW "  pass 1   904.2004  -76.7dBm  174kHz wide  seen 1/12"
+.CW "  pass 2   903.0423  -80.2dBm  347kHz wide  seen 1/12"
+.CW "  pass 3   925.7416  -77.1dBm  231kHz wide  seen 1/12"
+.DE
+and an earlier one at 915.1448, \-41.9dBm, 231kHz, also one sweep in
+eighteen.  Always one strong wide burst, always caught in exactly one
+sweep, always somewhere else.  That is frequency hopping across the
+whole band, which is what the US ISM allocation is mostly full of \-
+telemetry, meters, alarms, cordless things \- and it is the first
+positive identification of a signal class this work has made.
+.PP
+Checked against ourselves first, because \-41.9dBm at 915MHz is what
+this bench's own transmitter measured earlier and a spectrum run had
+wedged the board partway through: MARCSTATE read 0x6d, which is RX,
+before and after.  Not us.
+.PP
+Zooming in does not find it.  Twenty passes of 914.6 to 915.8 at 3kHz
+bins gave one marginal hit at \-95.3, which is what a hopper looks like
+from a narrow window: it was caught in the wide sweep because the sweep
+happened to be in that bin when it landed there, and a window a
+fiftieth as wide almost never is.
+.PP
+Nor can this receiver catch it.  A hop the tinySA sees at \-77 arrives
+here ten to twenty dB down, so carrier sense at a threshold of \-95
+never asserted in five seconds on the target or on the control.  The
+click's antenna is the limit, as it has been all along.
+.PP
+And a later sweep of thirty passes found nothing at all but 928.0000 at
+\-84, one sweep in thirty \- which is 29 times 32MHz, this board's own
+crystal, reaching the other instrument.  So the hopper is intermittent
+over minutes as well as over frequency, and the band is empty between
+whatever it is doing.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
