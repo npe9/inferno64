@@ -1018,6 +1018,20 @@ mountrpc(Mnt *m, Mntrpc *r)
 	}
 }
 
+/*
+ * Off.
+ *
+ * These two prints were left at column zero with no guard, in the error
+ * unwind of every mount rpc -- a path the board takes routinely, not
+ * exceptionally.  The result was a console producing several lines a
+ * second of "mountio waserror() at the start pid N" for ever, which is
+ * not merely noise: tools/jtag/install.sh decides whether a kernel came
+ * up by looking for its build banner in the console scrollback, and
+ * this had pushed every banner and every KUPDATE line out of the
+ * buffer, so the check could not see anything at all.
+ */
+int mntdebug = 0;
+
 static void
 mountio(Mnt *m, Mntrpc *r)
 {
@@ -1025,7 +1039,8 @@ mountio(Mnt *m, Mntrpc *r)
 	int n;
 
 	while(waserror()) {
-print("mountio waserror() at the start pid %ud\n", up->pid);
+		if(mntdebug)
+			print("mountio waserror() at the start pid %ud\n", up->pid);
 		if(m->rip == up)
 			mntgate(m);
 		if(strcmp(up->errstr, Eintr) != 0 || waserror()){
@@ -1054,7 +1069,8 @@ print("mountio waserror() at the start pid %ud\n", up->pid);
 	n = sizeS2M(&r->request);
 	b = allocb(n);
 	if(waserror()){
-print("mountio waserror() convS2M pid %ud\n", up->pid);
+		if(mntdebug)
+			print("mountio waserror() convS2M pid %ud\n", up->pid);
 		freeb(b);
 		nexterror();
 	}
