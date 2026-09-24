@@ -991,9 +991,32 @@ txproc()
 		nwrit++;
 		if(debug)
 			sys->print("etherusb: tx done %d\n", len f);
-		if(len f % outmaxpkt == 0)
+		#
+		# ONLY when the frame is an exact multiple of maxpkt.
+		#
+		# This was written without braces:
+		#
+		#	if(len f % outmaxpkt == 0)
+		#		txwrites++;
+		#		sys->write(bout.dfd, zlp, 0);
+		#
+		# and Limbo's if takes one statement, so the counter was the
+		# whole body and the zero-length packet went out after EVERY
+		# frame.  The indentation said otherwise and so does the
+		# comment at the top of this function, which is why it read
+		# as correct for so long.
+		#
+		# A bulk-out transfer is about four milliseconds on this
+		# board, and the counters say transmit is one frame per
+		# transfer, so this was doubling the cost of the whole
+		# transmit path to no purpose: a ZLP is only needed to
+		# delimit a transfer the device would otherwise wait for more
+		# of, which is exactly the exact-multiple case.
+		#
+		if(len f % outmaxpkt == 0){
 			txwrites++;
 			sys->write(bout.dfd, zlp, 0);
+		}
 	}
 }
 
