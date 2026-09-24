@@ -753,9 +753,14 @@ which connects, attaches, opens, sends a Tread and disconnects without
 waiting for the reply \(em what the board does to the host on every
 reboot.  Between 11 and 92 disconnects, varying widely run to run.
 .IP \(bu
-At the fault: connections are ACCEPTED and their first message is never
-read.  Both a loopback probe and the board show 19 unread bytes \(em a
-whole Tversion \(em sitting in the socket's receive queue.
+At the fault: connections are ACCEPTED and their first message sits
+unread \(em both a loopback probe and the board show 19 bytes, a whole
+Tversion, in the socket's receive queue.
+.B "It is read eventually."
+Measured: a probe that the five-second check called dead was answered
+34.9 seconds later, correctly, by a process that had used no CPU at all
+in between.  So this is a queue, not a stop, and every description of it
+as a server that has "stopped answering" is wrong.
 .IP \(bu
 The listening descriptor is stable and correct, the accept queue is
 empty, and the listener is blocked in accept waiting for the NEXT
@@ -821,3 +826,58 @@ was very nearly written down as a finding.  Use
 and re-parse its whole stack \(em truncating to the last three frames
 threw away the one frame that tells an idle worker from a blocked one,
 and an assertion was built on the difference.
+.NH 2
+It is not a wedge.  It is one Styx hop, shared by everybody
+.PP
+The five-second probe was the whole illusion.  Given a verdict instead
+of a timeout, the same fault reads:
+.P1
+=== short probe (5s) failed after 94 abrupt disconnects
+cpu 0:06.85 -> 0:06.85 over 5s, %cpu 0.0
+  it is IDLE (no cpu time at all in 5s)
+VERDICT: SLOW, not stopped -- answered in 34.90s
+.P2
+and every instrument agrees, in that one run, on a fresh binary:
+.CW "mntwatch: 1 mounts"
+every scan and never a stopped mux; exactly one
+.CW Styxlisten
+exportproc alive at a time with its pid advancing; no write stuck for
+two seconds; the reader never serving a request inline; no export
+failure.  Nothing is broken.  Everything is queued.
+.PP
+.B "This is the architecture, and it was already written down."
+styxlisten runs
+.CW "export /"
+ONCE and gives every connection a mount of that same pipe, so every byte
+every client reads crosses one Styx hop that all of them share.  The
+comment in
+.CW tools/jtag/styxd.sh
+records the same effect measured small: with one board pulling a kernel
+across, a new client's handshake went from 0.01s to 1.23s, and 0.03s
+with a server per connection.  Ninety-four abrupt disconnects and a
+board polling is the same mechanism with more load, and 35 seconds is
+where that queue's tail landed.
+.PP
+So the thing to fix is not a hang.  It is that one client's traffic
+delays every other client's, without bound, by design.
+.NH 2
+What is still worth fixing, listed honestly
+.IP 1.
+.I "The shared hop."
+.CW "styxlisten -P n"
+already builds a bounded pool of servers for exactly this and is the
+measurement to run next: if serialization is the cause, four servers
+should cut the tail about fourfold.  Per-connection servers are NOT the
+answer \(em they are never reclaimed, and a board dialling every fifteen
+seconds took the emu to 139 threads.
+.IP 2.
+.I "exreply's unbounded write."
+Against a client that stopped reading it blocks with no timeout, holding
+a worker \(em and the reader itself when the worker caps are full.  Real,
+reproducible, and independent of the above.  Caught in a sample as
+.CW "exworker -> exdispatch -> exreply -> ipwrite -> so_send -> write" .
+.IP 3.
+.I "Not by raising Maxconnproc."
+exportfs.c records that 4 is a CORRECTNESS bound, not merely a resource
+one: the redesign faulted on a nil dereference at 4 and not at 1.  That
+audit comes first.
