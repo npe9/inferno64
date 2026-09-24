@@ -24,7 +24,7 @@
 #
 #	bandhold.py 928000000 932000000 [step] [ms] [passes]
 #
-import os, re, sys
+import os, re, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import board
@@ -64,8 +64,25 @@ def holds(c, lo, hi, step, ms, passes):
     start = lo
     while start <= hi:
         end = min(hi, start + (per - 1) * step)
+        # A fresh marker at the shell before each chunk, and the reply
+        # taken from after its last copy.  Scanning the whole window
+        # instead -- which this did, to survive ctl() losing its own
+        # marker in a long reply -- picks up rows from earlier runs at
+        # the same frequencies and reports them as this one's.  It
+        # mixed a 2kHz-stepped sweep into a 6kHz-stepped one and made
+        # nonsense of a centre-frequency measurement twice.
+        mark = "H%d.%d" % (int(time.time()) % 100000, start // 1000)
+        c.run("echo " + mark, wait=20)
         out = c.ctl(["hold %d %d %d %d %d" % (start, end, step, ms, passes)],
                     wait=60 + (end - start) // step * ms * passes // 400) or ""
+        win = c.text()
+        i = win.rfind(mark)
+        if i < 0:
+            print("bandhold: marker for %d-%d never came back; that chunk is "
+                  "dropped rather than guessed at" % (start, end))
+            start = end + step
+            continue
+        win = win[i:]
         if "write error" in out or "refused" in out:
             print(out.strip()[-200:])
             return rows
@@ -81,14 +98,31 @@ def holds(c, lo, hi, step, ms, passes):
         # Filtering by the range asked for is what makes this safe:
         # rows from an earlier chunk, or from an earlier run, are
         # outside it and do not get counted twice.
-        seen = set()
-        for l in (c.text() + "\n" + (out or "")).split("\n"):
+        # Last value wins, not the first.
+        #
+        # The window holds earlier runs too, and a sweep of the same
+        # span twice would otherwise take the older run's rows and
+        # report them as the newer one's -- which it did, mixing a
+        # previous sweep's -91s into a later sweep's profile and making
+        # nonsense of it.  Reading in order and overwriting keeps the
+        # most recent reading for each frequency.
+        #
+        # And a level no receiver can report is dropped rather than
+        # averaged in.  This part's RSSI register has an invalid state
+        # and the driver does not check it, so readings of 0, +1 and
+        # +32 dBm come through; a positive dBm from an antenna is not a
+        # weak measurement, it is not a measurement.
+        fresh = {}
+        for l in (win + "\n" + (out or "")).split("\n"):
             m = re.search(r"\bhold (\d+) (-?\d+)\s*$", l.strip())
             if m:
                 hz, db = int(m.group(1)), int(m.group(2))
-                if start <= hz <= end and hz not in seen:
-                    seen.add(hz)
-                    rows.append((hz, db))
+                # On the grid asked for, too: a row at a frequency this
+                # sweep never visited is another run's.
+                if (start <= hz <= end and db < -10
+                        and (hz - start) % step == 0):
+                    fresh[hz] = db
+        rows.extend(sorted(fresh.items()))
         sys.stdout.flush()
         start = end + step
     return rows

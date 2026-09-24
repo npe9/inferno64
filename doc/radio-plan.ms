@@ -2088,6 +2088,58 @@ sweep reported five channels \- the last chunk only \- twice, and read
 as a quiet band.  It scans the whole window now and filters by the
 range it asked for, so an earlier chunk cannot be counted twice.
 .PP
+CABLED, AND WHAT TWO INSTRUMENTS CAN AND CANNOT SAY ABOUT EACH OTHER.
+.PP
+With the generator cabled straight into the click, the path is proved
+by a matrix rather than by a level.  Generator on each of three
+frequencies, receiver tuned to each of the three:
+.DS
+.CW "              rx@905   rx@915   rx@925"
+.CW "  gen@905        -76     -120      -91"
+.CW "  gen@915       -120      -76      -90"
+.CW "  gen@925       -120     -119      -77"
+.CW "  gen OFF       -119     -119      -90"
+.DE
+A diagonal of \-76, \-76, \-77 against a floor of \-119 everywhere else.
+Signal appears only where the receiver is tuned to the generator, which
+no amount of broadband leakage can imitate.
+.PP
+The level scale: stepped \-52 to \-76dBm in fours the receiver reads
+\-68, \-72, \-76, \-79, \-83, \-89, \-89, a least-squares slope of 0.93.
+Above about \-50 it saturates flat at \-65 to \-68 however hard it is
+driven.  With the generator off and the cable on it reads \-119, eight
+dB below what the antenna gives it.
+.PP
+The frequency scale, measured from the filter's own edges rather than
+from a peak, because the top is flat: half-power points either side,
+interpolated, midpoint taken.
+.DS
+.CW "  gen 915MHz   centre error -2917Hz (-3.19ppm)  width 25.8kHz"
+.CW "  gen 915MHz   centre error -2917Hz (-3.19ppm)  width 25.8kHz"
+.CW "  gen 910MHz   centre error -2917Hz (-3.21ppm)  width 25.8kHz"
+.DE
+The 25.8kHz measured against the 25.0 asked is what says the method is
+sound; a number that arrives with its own check is worth more than a
+number.
+.PP
+AND NEITHER OF THOSE SAYS WHICH INSTRUMENT IS WRONG.  Two instruments
+compared against each other give their difference and nothing else.
+The 2.9kHz is the disagreement between a CC1120's 32MHz crystal and a
+tinySA's reference; the 0.93 slope is the disagreement between the
+part's RSSI and the instrument's attenuator; and no arrangement of the
+two can attribute either.  Nor can the constant \-2917Hz at both 910
+and 915 be read as a fixed offset rather than a ppm error: 3.2ppm would
+differ by 16Hz between those two, and this measurement resolves about a
+kilohertz.
+.PP
+What would attribute it is a third reference that is traceable, and
+there is one on this bench already.  A cellular downlink carrier is
+frequency-locked to about 50 parts per billion, which is a hundred
+times better than either instrument here, and 869 to 894MHz is full of
+them and reachable by both.  Measuring one with each says which of the
+two is off and by how much, which is the only way this question has an
+answer.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
