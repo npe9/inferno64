@@ -2714,7 +2714,25 @@ remotemounted(addrs: list of string): int
 	}
 	if(ok < 0)
 		return 0;
-	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL, "") < 0)
+	#
+	# MCACHE, for the read-ahead behind it.
+	#
+	# devmnt has 9front's read-ahead -- Mntrah, eight rpcs in flight --
+	# and it is reached only through cread(), which needs CCACHE on the
+	# channel, which needs MCACHE on the mount.  Without it every read
+	# is one synchronous Tread waiting for its Rread, and that is the
+	# whole cost of a bulk transfer here: 239 requests for a 1.9MB file
+	# at 16.4ms a round trip.  Removing 40% of the USB transfers under
+	# those requests changed the time by one per cent, so the round
+	# trips are the thing, and eight in flight is the lever that exists.
+	#
+	# This is the mount runremote() uses for the command it runs.  The
+	# poller's own mount, which reads board.cmd, is deliberately NOT
+	# cached: that channel is how the board is driven at all, and a
+	# stale read there would cost the only reliable way of talking to
+	# it.
+	#
+	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL|Sys->MCACHE, "") < 0)
 		return 0;
 	return 1;
 }
