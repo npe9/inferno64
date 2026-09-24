@@ -1604,6 +1604,44 @@ packet if exactly sixty-four bytes followed it.  Repeated in variable
 length on 874 it still receives nothing, but that is the channel's
 fault rather than the configuration's, per the ladder above.
 .PP
+THE POSITIVE CONTROL, AT LAST, AND IT COST ONE TRANSMISSION.
+.PP
+Everything above rests on IOCFG3 selection 0x06 being PKT_SYNC_RXTX,
+which was taken from a table and never demonstrated.  PKT_SYNC_RXTX is
+named for both directions and asserts from the sync word to the end of
+a packet in transmit as well as receive, so keying the part settles it
+\- and nothing else can, short of a second radio.
+.PP
+.I tools/radio/txpin.py
+does it at 915MHz, inside the unlicensed Part 15 band and inside the
+W3312's 863-928 specification, at the part's own default power, for as
+long as four pin reads take and no longer, with the carrier turned off
+in a finally so an exception cannot leave a transmitter keyed:
+.DS
+.CW "  before      0x06 PKT_SYNC_RXTX    0% high   0x46 inverted 100%"
+.CW "  keyed       0x06 PKT_SYNC_RXTX  100% high   0x46 inverted   0%"
+.CW "  after       0x06 PKT_SYNC_RXTX    0% high   0x46 inverted 100%"
+.DE
+So the selection is that signal, the register drives the pin, the pin
+is the one this board wires, and
+.B gread
+reads it.  Carrier sense correctly reads nothing while transmitting.
+Every link from a register write to a number on the console is now
+proven by a signal the part made on demand, which is what a positive
+control is and what this work has been without from the beginning.
+.PP
+Which makes the receive-side zeros mean something at last.  A receiver
+that never asserts that pin is failing to detect a sync word, and the
+rung below it says why it never gets the chance: PQT_REACHED at zero
+is a preamble detector that never fires.  On cellular that is correct
+behaviour.  Whether it is correct on a channel carrying a real 2-FSK
+preamble is the one thing still unmeasured, and 908.42 is where to
+measure it \- with
+.B gtrig
+armed on carrier sense so the reading is taken while a burst is in the
+air, and pointed at 0x0b rather than 0x06, because the preamble is the
+first rung a working receiver would light.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
