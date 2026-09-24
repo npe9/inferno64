@@ -70,6 +70,15 @@ class Console:
         self.sess = session()
         self.scratch = scratch
         self.fd = None
+        # What the port has said so far, for the no-screen path.
+        #
+        # text() has to mean the same thing both ways.  Through screen
+        # it is a hardcopy, which is the whole window every time; on the
+        # port it is a drain, which is only what has arrived since the
+        # last one -- so run() and ctl(), which wait for their marker to
+        # appear twice, never saw it twice and every call returned None
+        # the moment nobody had a screen attached.
+        self.buf = ""
         if self.sess is None:
             sys.path.insert(0, os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), "..", "f407"))
@@ -84,13 +93,21 @@ class Console:
                 time.sleep(CHARDELAY)
             subprocess.run(["screen", "-S", self.sess, "-X", "stuff", "\n"])
         else:
-            self.console.send(self.fd, line, wait=0.5, check=False)
+            # Keep what it read.  console.send() drains the port and
+            # returns the echo, and throwing that away meant the bytes
+            # were gone before text() could see them -- so the marker
+            # never appeared twice and every run() and ctl() on the
+            # no-screen path returned None while the board was answering
+            # perfectly.
+            self.buf += self.console.send(self.fd, line, wait=0.5,
+                                          check=False)
 
     def eof(self):
         if self.sess:
             subprocess.run(["screen", "-S", self.sess, "-X", "stuff", "\004"])
         else:
             os.write(self.fd, b"\004")
+            self.buf += self.console.drain(self.fd, 0.5)
 
     def text(self):
         """Everything the console has shown, most recent last."""
@@ -101,7 +118,12 @@ class Console:
             time.sleep(0.4)
             with open(out, "rb") as f:
                 return f.read().decode("utf-8", "replace")
-        return self.console.drain(self.fd, 0.5)
+        self.buf += self.console.drain(self.fd, 0.5)
+        # Bounded, because a session can run for hours and a marker is
+        # always near the end.
+        if len(self.buf) > 65536:
+            self.buf = self.buf[-32768:]
+        return self.buf
 
     def run(self, line, wait=20.0):
         """Type a line and give back only what the board said after it.
@@ -175,17 +197,25 @@ class Console:
         # the tool runs has several matches in it.
         mark = "M%d.%d" % (int(time.time()) % 100000, Console.seq)
         if not self.mark(mark):
-            # No echo: a previous run may have left the board inside a
-            # held-open cat, where the marker is written to the ctl
-            # file rather than run -- the console shows "cat: write
-            # error" and this would wait for ever.  End that cat and
-            # mark again.
+            # No echo, which has two causes and only one of them is
+            # fixed by an end-of-file.
             #
-            # Only then, and never first.  An end-of-file at a shell
-            # prompt is end of input and the shell exits, which leaves
-            # the board with a console and nothing to run commands;
-            # sending one unconditionally "to be safe" killed the
-            # shell and every command after it went nowhere.
+            # A previous run may have left the board inside a held-open
+            # cat, where the marker is written to the ctl file rather
+            # than run; the console shows "cat: write error" or the cat
+            # command with no prompt after it, and ending the cat is
+            # right.  Or the board may simply not be answering, and
+            # then an end-of-file is end of input to the shell, which
+            # exits and leaves a console with nothing behind it.
+            #
+            # So this looks before it acts.  An earlier version fired
+            # the end-of-file whenever the marker did not come back,
+            # with a comment saying to do it second and never first --
+            # and that was not enough, because a bug elsewhere made the
+            # marker never come back at all, so it fired six times and
+            # killed the shell.  Evidence, or nothing.
+            if not self.incat():
+                return None
             self.eof()
             time.sleep(1.0)
             Console.seq += 1
@@ -239,6 +269,19 @@ class Console:
         self.eof()
         time.sleep(1.0)
         return since()
+
+    def incat(self):
+        """Does the board look like it is inside a held-open cat?
+
+        Two signs, either of which is enough: the part refusing a write,
+        which only a cat into a ctl file produces, or a "cat >" as the
+        last thing typed with no prompt printed after it.
+        """
+        t = self.text()
+        if "write error" in t[-2000:]:
+            return True
+        i = t.rfind("cat >")
+        return i >= 0 and ";" not in t[i:]
 
     def mark(self, mark, wait=8.0):
         """Type a marker and wait for the board to echo it back."""

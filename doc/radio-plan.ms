@@ -1298,14 +1298,18 @@ worth measuring again.
 930.8241 is the channel to point it at when that is done: the strongest
 of the four, and 18kHz wide, which is what 2-level FLEX at 1600 bits a
 second or POCSAG at 1200 occupies.  At \-80dBm it would sit thirty dB
-over this part's floor.  What it wants is a long dwell on one channel
-rather than a sweep \- the max-hold gave each channel 200ms and saw
-nothing there, while the tinySA caught it in 2 sweeps of 16 \- so
-.B watch
-or a triggered
-.B probe
-on that one frequency, not
-.IR bandhold .
+over this part's floor.
+.PP
+And pointed at it for sixteen seconds, in eight windows of two, it sees
+nothing: floor \-113, peak never above \-110, no bursts in any window,
+while the other instrument was reading \-80.2 there.  So the deficit is
+measured on two channels now and it is about thirty dB, with this
+receiver holding the better floor of the two by six.  A part whose noise
+floor is \-113 is working; what is not reaching it is signal.  Nothing
+else in this section is worth pursuing until an antenna is on that
+click, and the shape of the evidence \- textbook floor, thirty dB of
+missing signal \- is what a disconnected or wrong-band antenna looks
+like rather than a subtle one.
 .PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
