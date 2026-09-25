@@ -10590,3 +10590,40 @@ A reader process that accumulates frames and dispatches them by channel
 \(em which fixes WLC_SCAN_RESULTS, gives proper event decoding, and is
 the same reader the packet path needs.  Then association, and the ether
 binding.
+.SH
+The scan finds the network by name
+.P1
+sdio: 7a:7a:53:34:87:68  GL-BE6500-1f2
+.P2
+.PP
+The access point this board is meant to join, found over the air by its
+own radio, with its BSSID, decoded from an escan result event.  It is on
+2.4GHz and visible, which settles the doubt raised earlier about the
+band \(em a Wi-Fi 7 router might have had nothing the BCM43430 could
+hear, and it does not.
+.PP
+.B "The decoder, and why the heuristic had to go."
+The path to an SSID is: the SDPCM header's doffset, then a BDC header
+whose size is 4 + (its fourth byte << 2), then a 14-byte ethernet header
+and a 10-byte bcmeth header, then the event message \(em whose fields are
+BIG endian, unlike everything else in this driver.  Event 69 is
+E_ESCAN_RESULT and its payload starts 48 bytes into that message:
+buflen, version, sync_id, bss_count, then the bss_info records, each
+carrying its own length at offset 4 and a counted SSID at 18 and 19.
+.PP
+The printable-run heuristic that preceded this produced
+.CW "Family Room speaker.ynm," ,
+a real name with the next field's bytes stuck to it.  It was enough to
+prove the radio was receiving and not enough for anything else; in
+particular it would never have revealed that the event header is
+big-endian, which the real decoder needs.
+.PP
+.B "Association still does not complete, and the reason is now this code."
+The join is accepted and the firmware is asked for its BSSID until it
+answers; GET_BSSID returns BCME_NOTASSOCIATED, as it should while
+waiting, and then stops answering at all.  The polling is far too slow to
+be waiting through a four-way handshake: each command waits up to 400
+times 50ms before giving up, so a single GET_BSSID can take twenty
+seconds and sixty of them take twenty minutes.  That is a defect in this
+driver's synchronous design, not in the firmware, and it is the same
+defect the reader process fixes.

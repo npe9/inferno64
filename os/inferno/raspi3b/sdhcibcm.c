@@ -2737,13 +2737,31 @@ sdioscan(int *nev)
 	 * be one; it is enough to answer "what is on the air", which is
 	 * the question.
 	 */
+	/*
+	 * Decode the escan result events properly.
+	 *
+	 * The layout, from 9front's rproc and bcmevent: the SDPCM header's
+	 * doffset gets past the header, then a BDC header whose size is
+	 * 4 + (byte 3 << 2), then an ethernet header and a 10-byte bcmeth
+	 * header, and then the event message -- whose fields are BIG
+	 * endian, unlike everything else here.  Event 69 is E_ESCAN_RESULT
+	 * and its payload begins 48 bytes into that message: buflen,
+	 * version, sync_id, bss_count, then the bss_info records.  Each
+	 * record carries its own length at offset 4 and a counted SSID at
+	 * 18 and 19.
+	 *
+	 * This replaces pulling printable runs out of the frame, which was
+	 * a stopgap: it produced names with trailing rubbish attached and
+	 * mistook binary fields for short strings.
+	 */
 	{
 		static uchar ev[2048];
+		static char seen[32][33];
 		char name[33];
-		int m, k, j, nseen;
+		int m, k, bdc, doff, etype, nbss, off, rlen, sl, nseen, j, dup;
 
 		nseen = 0;
-		for(i = 0; i < 400; i++){
+		for(i = 0; i < 600; i++){
 			if(wlintwait(50) < 0)
 				continue;
 			m = wlreadpkt(ev, sizeof ev);
@@ -2751,25 +2769,48 @@ sdioscan(int *nev)
 				continue;
 			if((ev[5] & 0xf) != 1)
 				continue;
-			for(k = ev[7]; k < m; k++){
-				for(j = 0; k + j < m && j < 32; j++)
-					if(ev[k+j] < 0x20 || ev[k+j] > 0x7e)
-						break;
-				if(j >= 4){
-					memmove(name, &ev[k], j);
-					name[j] = 0;
-					print("sdio: SSID \"%s\"\n", name);
+			doff = ev[7];
+			if(m < doff + 4)
+				continue;
+			bdc = 4 + (ev[doff + 3] << 2);
+			if(m < doff + bdc + 24 + 48)
+				continue;
+			k = doff + bdc + 24;		/* the event message */
+			etype = ev[k+6] << 8 | ev[k+7];	/* big endian */
+			if(etype != 69)			/* E_ESCAN_RESULT */
+				continue;
+			k += 48;
+			nbss = ev[k+10] | ev[k+11] << 8;
+			off = k + 12;
+			while(nbss-- > 0 && off + 24 < m){
+				rlen = ev[off+4] | ev[off+5]<<8 |
+					ev[off+6]<<16 | ev[off+7]<<24;
+				if(rlen < 24 || off + rlen > m)
+					break;
+				sl = ev[off+18];
+				if(sl > 32)
+					sl = 32;
+				memmove(name, &ev[off+19], sl);
+				name[sl] = 0;
+				dup = 0;
+				for(j = 0; j < nseen && j < nelem(seen); j++)
+					if(strcmp(seen[j], name) == 0)
+						dup = 1;
+				if(!dup && sl > 0){
+					if(nseen < nelem(seen))
+						strcpy(seen[nseen], name);
+					print("sdio: %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux  %s\n",
+						ev[off+8], ev[off+9], ev[off+10],
+						ev[off+11], ev[off+12], ev[off+13],
+						name);
 					nseen++;
 				}
-				k += j;
+				off += rlen;
 			}
-			if(nseen > 40)
-				break;
 		}
-		print("sdio: %d name(s) seen in scan events\n", nseen);
+		print("sdio: %d network(s) found\n", nseen);
 		*nev = nseen;
 	}
-
 	return 0;
 }
 
