@@ -2645,3 +2645,154 @@ which is a different piece of work and is not pretended at here.  And decoding w
 870-889MHz is not a goal: the survey found it, both instruments agree
 it is there, and identifying a TDMA system at a few hundred
 microseconds a burst is a different project from making a radio work.
+.IP "6.  Stop typing at a shell.  Built, measured under qemu, not yet on silicon." 6
+Item 5 made one redirection work and the second one survivable.  It did
+not make the shell a reasonable thing to drive a radio with, because
+the cost is in what a shell is: a command is a process and a
+redirection is an open, so
+.PP
+.EX
+	echo rssioffset -90 >/dev/radio0/ctl
+.EE
+.PP
+forks twice to write eleven bytes, and
+.B tools/radio/board.py
+had to grow a held-open
+.B "cat >file"
+to get round it \- along with a comment explaining that inside such a
+.I cat
+a liveness marker cannot be sent, because it would be written to the
+ctl file rather than run.  That is the shape of the problem: the only
+way to stop forking was to give up being able to ask whether the board
+was still alive.
+.PP
+.IR Lil (1)
+is the answer taken: an interpreted subset of Limbo, in which a file is
+opened once, held in a variable, and written to as often as one likes.
+The defect
+.B board.py
+works around does not arise, because holding the file is a variable and
+writing to it is an ordinary statement, so a marker can still be
+printed between two writes.
+.PP
+Limbo's syntax rather than a Forth's or a Tcl's, so that what is typed
+at a console and what is compiled into a
+.B .dis
+look alike.  Three kinds of value \- integer, string, open file \-
+because holding a descriptor across statements is the entire purpose.
+No syntax tree: a
+.B while
+remembers the source text of its condition and body and re-scans them,
+which is slow and small.  12447 bytes at
+.BR DISWORD=4 ,
+against 41629 for
+.BR sh.dis ,
+and in flash rather than the pool because it is in
+.BR XIPDIS .
+.PP
+Selection is by file and not by conditional compilation: a board carries
+it because its config names it.  It is beside
+.I sh
+and not instead of it, and the
+.B init
+section still names
+.BR armv7minit ,
+so a fault in it leaves something to look at the board with.
+.PP
+What is measured, under qemu with the CC1120 model: it loads from flash,
+prints its banner and runs statements, and its allocation is flat \-
+four twenty-iteration loops with
+.B /dev/memory
+read between them left the heap's cursize unmoved at 50048 bytes and its
+live count at 459, allocations and frees tracking each other exactly.
+.PP
+Three bugs in it were found by review and not by testing, which is worth
+recording because the tests had all passed.
+.B expr 's
+second argument is a precedence level and the statement loop passed it a
+position; both are
+.BR int ,
+so it compiled silently and re-parsed from the start of the line, making
+.B "print(\\*qa\\*q); print(\\*qb\\*q)"
+print
+.I a
+twice and
+.I b
+never.  Every test had dodged it because the second statement on a line
+was always an assignment, which happens to slice.  The statement that
+runs twice in real use is
+.BR "write(ctl, ...)" .
+.B close
+was a builtin that closed nothing and said it had, because Limbo shuts a
+file when the last reference goes and the reference that matters is in
+the variable table, which a builtin cannot reach.  And an argument that
+failed was still passed, so
+.B "write(ctl, read(f, 8))"
+with a failing read wrote the string
+.B nil
+to the ctl file.
+.PP
+One thing reported here earlier was wrong and is withdrawn.  On the
+strength of a compiled Limbo loop whose body was only
+.B "t := s[1:]"
+growing a column of
+.B /dev/memory
+by one per iteration, I said no Dis heap allocation in this tree is ever
+reclaimed.  That column counts allocations made, not objects alive, and
+the one beside it counts frees; on the board they track each other and
+the live figure does not move.  What is true is narrower: under the
+.I host
+.IR emu (1)
+that loop freed 15 times in 20000 allocations and died having extended
+the arena rather than collected.  So a memory measurement taken under
+the host
+.I emu
+is not evidence about the board, which is exactly where I took it.
+.PP
+And one real limit, which is the board's and not
+.IR lil 's:
+.B dir
+on a large directory exhausts the heap.  There are about 40310 bytes
+free at a prompt and
+.B sys->dirread
+on
+.B /dis
+wants more than that.  The same kernel fails the same way under the
+shell \-
+.B "ls /dis"
+gives
+.BR "out of memory: heap" ,
+and
+.B "ls /dev"
+after it kills the shell outright \- and this board's configuration file
+has had
+.B "ls /dis | wc -l"
+written in it as the marginal case for some time.  The difference is
+what happens afterwards:
+.I lil
+reported the failure and kept its prompt, where the shell died and took
+the console with it, after which nothing drains the console queue.
+.PP
+What is left on this item.  The comparison in
+.B tools/radio/lilvsh.sh
+writes the same ctl line the same number of times at the same spacing
+through each of the two, so that the claim is a measurement and not an
+argument from how it is built; the shell run is the control, and if it
+survives too then forking was never the limit here.  After that,
+.B board.py
+still speaks shell \-
+.BR "echo <mark>" ,
+.BR "cat >file" ,
+.B "bind -a"
+\- and has to be taught the other language; and an init that loads
+.I lil
+instead of
+.I sh
+is a one-line change to a new file in
+.BR os/inferno/init/ ,
+named from the config's
+.B init
+section, which is worth making only once the board has been driven
+through
+.I lil
+for a while.
