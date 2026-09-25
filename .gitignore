@@ -490,3 +490,4 @@ os/inferno/raspi3b/raspi3b.c
 
 # python byte-code from the check scripts importing one another
 /scripts/__pycache__/
+__pycache__/
