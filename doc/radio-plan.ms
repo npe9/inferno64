@@ -2253,10 +2253,29 @@ was clean and thrice reproduced, but it used the same out-of-band
 source, and a source that can scatter spurs today could have done so
 then.
 .PP
-So the \-5.16ppm for the CC1120 stands on the earlier measurement and
-on this calibration, and it has not been confirmed a second way.  What
-would confirm it is a source at 915MHz that is in specification, which
-this bench does not have.
+Cabled again and in the receiver's linear region, the profile comes
+back clean and the source convicts itself.  Half-power edges at \-15.6
+and \+10.7kHz give a width of 26.3kHz against the 25.0 asked, and a
+centre of \-2437Hz.  But at \+40 and \+45kHz sit two products at
+\-61dBm \- sixteen dB STRONGER than the wanted carrier at \-77.  A
+generator whose spurs beat its signal by sixteen dB is not a frequency
+reference.
+.PP
+And it does not track its own correction.  freq_corr moved the 10.1MHz
+output by 20Hz, which is 1.97ppm and was confirmed by ear.  The same
+correction should move a 915MHz output by 1.8kHz; the measured centre
+moved from \-2917 to \-2437, which is 480Hz.  A 10MHz output that obeys
+the reference and a 915MHz output that does not is what a harmonic or
+an alias looks like, and it is the second independent sign that this
+path is not producing 915MHz the way it produces 10.
+.PP
+So the \-5.16ppm for the CC1120 is withdrawn to a range.  Against the
+uncorrected source it computed to \-5.16; against the corrected one the
+same measurement gives \-2.66; the two cannot both be right and the
+source is the reason.  What the CC1120's crystal actually is, this
+bench cannot say closer than "a few parts per million low", and closing
+it needs a source at 915MHz that is in specification \- which is a
+purchase, not a measurement.
 .PP
 What made all of it possible was an ear.  Every instrument here reads
 back its own opinion; only a zero beat against NIST reads back the
