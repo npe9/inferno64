@@ -1,0 +1,260 @@
+.TH LIL 1
+.SH NAME
+lil \- little Limbo: an interpreted subset, in place of a shell
+.SH SYNOPSIS
+.B lil
+.SH DESCRIPTION
+.I Lil
+reads statements in a small subset of Limbo and runs them as they are
+typed.
+It exists for boards where a shell does not fit \- chiefly
+.IR stm32f407 ,
+which has 147456 bytes for the Dis pool and whose
+.I mkfile
+records that
+.B /dis/sh.dis
+asks for 73536 of them for its instruction array alone.
+.PP
+The size of the shell is not the reason, though.  Execution-in-place
+puts an instruction array in flash, which is the only reason a shell
+runs on that board at all, and it would do the same for a smaller one.
+What XIP does not help with is the shell's semantics: a command is a
+process and a redirection is an open, so
+.PP
+.EX
+	echo rssioffset -90 >/dev/radio0/ctl
+.EE
+.PP
+forks twice to write eleven bytes.  The board's own configuration file
+records where that ends \-
+.B "no procs for kproc"
+\- and
+.B tools/radio/board.py
+records the same failure from the other side: a monitor running one
+probe every two seconds killed the shell in a few minutes.
+.PP
+What is wanted instead is a language, in which a file is opened once,
+kept in a variable, and written to as often as one likes:
+.PP
+.EX
+	ctl := open("/dev/radio0/ctl", "w")
+	write(ctl, "freq 915000000")
+	write(ctl, "rate 9600")
+	print(slurp("/dev/radio0/stats"))
+.EE
+.PP
+The syntax is Limbo's because that is the language this tree is written
+in, so that what is typed at a console and what is compiled into a
+.B .dis
+look alike.  A Forth would have been smaller and a Tcl more uniform;
+both would have been one more language to know for no gain.
+.SS Statements
+.TP
+.BI x " := e"
+Introduce
+.I x
+and give it the value of
+.IR e .
+.TP
+.BI x " = e"
+Assign to an
+.I x
+that already exists.  A name that does not is an error and not a new
+variable: a mistyped name on the left of
+.B =
+otherwise makes a variable nobody reads, and the write goes nowhere,
+silently, which is the one class of mistake a console session cannot
+see.
+.TP
+.BI if( e ) { ... } " else " { ... }
+The
+.B else
+must begin on the same line as the closing brace of the
+.B if
+body.  A line is read as complete once its brackets balance, and there
+is nothing to look ahead with.
+.TP
+.BI while( e ) { ... }
+Bounded by time, not by a count of iterations: see
+.B timelimit
+below.
+.PP
+Statements are separated by
+.B ;
+or by a newline, and a line whose brackets do not balance is continued,
+so a loop can be typed over several lines.
+.B #
+begins a comment.
+.SS Values
+There are three kinds: an integer, a string, and an open file.
+That is deliberate and not a stage on the way to more.  Holding a file
+descriptor across statements is the whole purpose; a program that wants
+lists, tuples, ADTs or functions of its own should be compiled.
+Integers may be written in decimal, or in hex as
+.B 0x0a
+or
+.BR 16r0a ,
+because every register and sync word on this bench is written that way.
+.B +
+on a string concatenates, and comparisons work on both kinds.
+.SS Builtins
+.TP
+.BI open( path [, mode ])
+.I Mode
+is
+.BR r ,
+.B w
+or
+.BR rw ,
+and defaults to
+.BR r .
+.TP
+.BI create( path )
+.TP
+.BI read( fd [, n ])
+One read of at most
+.I n
+bytes, 256 by default.  This is what a device file wants: a Styx read
+boundary is a message boundary, so a short read is a whole answer.
+.TP
+.BI readall( fd )
+Read until end of file.  A device file need never give one.
+.TP
+.BI slurp( path )
+Open, read to end of file, and close.  This is
+.IR cat (1),
+and it is most of what the shell was used for here.
+.TP
+.BI write( fd , " e " ...)
+Write the concatenation of its arguments, with no newline added.  One
+call is one write, and so one Styx message.
+.TP
+.BI close( x )
+.I X
+must be the name of a variable.  Limbo shuts a file when the last
+reference to it goes, and the reference that matters is the one in the
+variable table, so this is a statement rather than a builtin: written as
+a builtin it was handed the value and not the name, and reported success
+while closing nothing.
+.TP
+.BI dir( path )
+The names in a directory, one to a line, with
+.B /
+after those that are themselves directories.
+.TP
+.BI bind( from , " to" [, " flag" ])
+.I Flag
+is
+.BR a ,
+.B b
+or
+.BR c ,
+for after, before and create; replace is the default.
+.TP
+.BI sleep( ms )
+.TP
+.B millisec()
+.TP
+.BI len( e )
+.TP
+.BI timelimit([ ms ])
+How long one
+.B while
+may run, 60000 by default; returns the bound.
+.B timelimit(0)
+removes it.
+.PP
+The bound is in time and not in iterations because a count is not a
+timeout: what matters is how long the console goes undrained.  This
+board's
+.IR devcons (3)
+has no interrupt character \- nothing in
+.B kbdputc()
+turns a keystroke into a note \- so a loop that does not end can only be
+left by resetting the board, and a mistyped condition should not cost a
+power cycle.  When the bound trips it says so, rather than quietly
+returning a half-finished loop.
+.SS What it does not have
+No functions of one's own, no lists, tuples or declared types, no
+.BR for ,
+no
+.B &&
+or
+.BR || ,
+no
+.B ~
+or regular expressions, no globbing, no pipes and no redirection.  The
+last three are absent on purpose: they are the shell semantics this
+exists to avoid.
+.SH SOURCE
+.B /appl/cmd/lil.b
+.SH SEE ALSO
+.IR sh (1),
+.IR limbo (1)
+.SH BUGS
+There is no syntax tree.  A
+.B while
+remembers the source text of its condition and body and re-scans them
+each time round, which is slow; it is the trade a Forth makes too, on a
+machine where a human types the program one line at a time.
+.PP
+.B print
+is the only way to see a value; there is no automatic printing of a bare
+expression.
+.SH VERIFIED
+What has actually been run, and what has not.
+.PP
+Every statement form and every builtin above has been exercised under
+the host
+.IR emu (1)
+on a 64-bit Dis tree: declaration and assignment, hex and negative
+literals, string and integer comparison,
+.B if
+with and without
+.BR else ,
+.B while
+including its time bound tripping and being raised,
+.BR dir ,
+a
+.B create
+written to twice through one held-open descriptor and read back, and
+.B close
+followed by a
+.B read
+that correctly fails.  The module compiles clean with warnings enabled
+at both Dis word sizes, and is 12283 bytes at
+.BR DISWORD=4 .
+.PP
+Not yet done: it has not been run on the
+.I stm32f407
+kernel, under
+.IR qemu (1)
+or on silicon, so the claim that it survives where the shell did not is
+so far an argument from how it is built and not a measurement.  The
+comparison that would settle it is
+.BR board.py 's
+own recorded failure \- one probe every two seconds for several minutes
+\- run again in
+.IR lil .
+.PP
+One thing found while testing it is not
+.IR lil 's
+and matters more.  Under this tree's
+.IR emu ,
+every Dis heap allocation appears never to be reclaimed: a compiled
+Limbo program whose loop body is nothing but
+.B t := s[1:]
+grows the live allocation count in
+.B /dev/memory
+by exactly one per iteration and dies at
+.B "out of memory: heap"
+after about 260000 of them, having extended the arena rather than
+collected.  The same holds for string concatenation, for
+.BR "array of byte" ,
+and for a
+.BR ref ,
+whether the variable is declared inside the loop, outside it, or
+returned from a function.  If that also holds on the board then it, and
+not the cost of forking, is why the shell there dies, and no interpreter
+can help.  That is untested on the board and is the first thing to
+measure there.
