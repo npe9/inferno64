@@ -2189,6 +2189,51 @@ get the tinySA's error at HF, and only then does the 2917Hz at 915
 divide between the two.  The step that is still assumed is that the
 tinySA's error is the same on both of its synthesis paths.
 .PP
+BOTH OF THEM, IN OPPOSITE DIRECTIONS, WHICH IS WHY COMPARING THEM COULD
+NOT WORK.
+.PP
+The chain closes, and every link is a measurement rather than a
+datasheet.
+.IP \(bu
+NIST transmits WWV on 10.000000MHz, held to about one part in ten to
+the twelfth.
+.IP \(bu
+The FT-891 zero-beats it in CW at a displayed 10.000010, so its display
+reads ten hertz high: \+1.00ppm.
+.IP \(bu
+The tinySA generates a nominal 10.100000 and the FT-891 zero-beats that
+at 10.100030.  Taking the radio's own \+10.1Hz out, the true output is
+10.1000199, so the tinySA generates \+19.9Hz high: \+1.97ppm.
+.IP \(bu
+At 915MHz the tinySA's nominal 915.000000 is therefore really
+915.001803, and this receiver measured that carrier's centre at
+914.997083 by its filter's half-power edges.  So the CC1120 reads 4.72
+kilohertz low: \-5.16ppm.
+.PP
+A 32MHz crystal on a click board at 5ppm and an uncalibrated instrument
+at 2ppm are both ordinary; what was not ordinary was the belief that
+one of them had to be right.  The 2917Hz they disagreed by at 915 was
+the sum of two errors of opposite sign, and no arrangement of the two
+could ever have divided it.
+.PP
+The tinySA's frequency correction has never been set \-
+.CW freq_corr
+reads 0 ppb, factory default \- so \-1970ppb is what it wants, and the
+915MHz measurements inherit it because generator and receiver share one
+crystal.
+.PP
+Two assumptions are still in this and should be said.  That the
+tinySA's error is the same at 10MHz and at 915MHz, which holds only
+because both use its low path \- "mode output" and "mode low output"
+turned out to be the same command on this firmware.  And that the
+FT-891's 1ppm at 10MHz carries to 10.1MHz, which is a tenth of a hertz
+of extrapolation and safe.
+.PP
+What made all of it possible was an ear.  Every instrument here reads
+back its own opinion; only a zero beat against NIST reads back the
+truth, and no part of this bench could do that except a radio and a
+person listening to it.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
