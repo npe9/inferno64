@@ -10216,3 +10216,76 @@ any filesystem exists, so the image has to reach it another way.  After
 that: upload firmware and nvram, start the ARM, and then the SDPCM and
 CDC protocol layers, association, and binding as an ether device.  None
 of it is blocked.
+.SH
+The radio's firmware is loaded and its ARM is running
+.P1
+FWUP-START
+BRINGUP-OK
+up 1 chip 43430 rev 1 ram 524288 at 0x0 loaded 0 nvram 0
+FW-SENT
+NV-SENT
+GO-OK
+up 1 chip 43430 rev 1 ram 524288 at 0x0 loaded 399344 nvram 1121
+FWUP-END
+.P2
+and from the kernel's own log:
+.P1
+sdio: nvram 1121 bytes at 0x7fd58, token 0xff5600a9
+sdio: ARM started (399344 bytes of firmware at 0x0)
+.P2
+.PP
+All 399344 bytes of real Cypress firmware and the 1121-byte nvram, read
+off the host over styx, written through the backplane window into the
+chip's RAM, and the ARM taken out of reset.  The nvram sits at the top of
+RAM with the length token the firmware looks for \(em 169 words, so
+0xff5600a9 \(em exactly as fwload computes it.
+.PP
+.B "The kernel does not read the firmware, and deliberately so."
+The blob cannot be reached from where the bring-up used to run: that was
+early in main(), before any filesystem exists.  It cannot go in the
+kernel's root filesystem either \(em that image is built by
+/os/port/mkroot, which is not in this tree, so the root files are
+unregenerable artifacts.  And embedding 400KB in every kernel to reach a
+file already sitting on the boot partition would be the wrong trade.
+.PP
+So there is a new device, #H, with two files.  Writes to
+.CW wifictl
+are the verbs \(em bringup, fw, nvram, end, go \(em and
+.CW wifidata
+takes the bytes, which go straight into the chip at a running offset.
+Reading wifictl reports the state.  The boot script does the file
+handling in Limbo, where it belongs, at a point where the host is
+mounted:
+.P1
+and {echo bringup > '#H/wifictl'}
+    {echo fw > '#H/wifictl'}
+    {cat .../brcmfmac43430-sdio.bin > '#H/wifidata'}
+    {echo end > '#H/wifictl'}
+    {echo nvram > '#H/wifictl'}
+    {cat .../brcmfmac43430-sdio.txt > '#H/wifidata'}
+    {echo end > '#H/wifictl'}
+    {echo go > '#H/wifictl'}
+.P2
+The bulk transfer stays in the kernel, next to the window and the command
+layer; the firmware can be replaced without building a kernel.
+.PP
+.B "A false alarm worth recording."
+The first boot with #H in the config left the poller silent, and removing
+the device appeared to fix it \(em one trial each way.  It was not the
+device: that boot had
+.CW "1 out of 3 message(s) lost"
+and
+.CW ETHER-PING-DONE\ (fail:lost\ messages) ,
+and the DNS flood that filled the log ring follows from a lossy link, not
+from a new devtab entry.  Booting the same kernel again, the poller
+answered and #H read back its state.  The USB ethernet on this board has
+always been variable; a single trial cannot tell a bad link from a bad
+kernel, and this one nearly cost a working device.
+.PP
+The RAM self-tests are out of sbinit now.  They proved what they were
+for, but they ran on every bring-up \(em 800KB of SDIO traffic at 400kHz
+before the real upload \(em which looked exactly like a hang.
+.PP
+.B "Next."
+sbenable's HT clock, then the SDPCM and CDC layers to talk to the
+firmware that is now running, then association and the ether binding.

@@ -1811,93 +1811,226 @@ sbinit(void)
 	cfgwritel(sb.chipcommon + Gpiopulldown, 0);
 
 	/*
-	 * Prove the chip's RAM can be WRITTEN, not just read.
+	 * The RAM write/read self-tests that lived here are gone.
 	 *
-	 * Every transfer measured so far has been a read, and the
-	 * firmware upload is 399344 bytes of writes.  A pattern with a
-	 * position in every word catches a transfer that lands at the
-	 * wrong offset as well as one that corrupts, which a constant
-	 * fill would not.
+	 * They did their job: 512 bytes proved writes worked at all, and
+	 * 399344 bytes -- the firmware's exact size, with a
+	 * position-dependent pattern -- proved sbmem's window clipping.
+	 * But they ran on every bring-up, which meant 800KB of SDIO
+	 * traffic at 400kHz before the real upload could start, and that
+	 * looked exactly like a hang.  The evidence is in the commit
+	 * history where it belongs, not in the boot path.
 	 */
-	{
-		static uchar w[512], rb[512];
-		int i, bad;
+	return 0;
+}
 
-		for(i = 0; i < sizeof w; i++)
-			w[i] = (i * 7 + 0x5a) & 0xff;
-		memset(rb, 0, sizeof rb);
-		if(sbmem(1, w, sizeof w, sb.rambase) < 0)
-			print("sdio: RAM-WRITE-FAIL\n");
-		else if(sbmem(0, rb, sizeof rb, sb.rambase) < 0)
-			print("sdio: RAM-READBACK-FAIL\n");
-		else{
-			bad = 0;
-			for(i = 0; i < sizeof w; i++)
-				if(w[i] != rb[i])
-					bad++;
-			if(bad == 0)
-				print("sdio: RAM-OK 512 bytes written to chip RAM "
-					"and read back identical\n");
-			else
-				print("sdio: RAM-WRONG %d of 512 bytes differ "
-					"(%2.2ux vs %2.2ux)\n", bad, w[0], rb[0]);
+/*
+ * The firmware load, driven from outside the kernel.
+ *
+ * The blob is 399344 bytes and lives on the card's FAT partition, and
+ * the kernel has no way to read it: this runs before any filesystem
+ * exists, the root filesystem is compiled into the image by a tool
+ * (/os/port/mkroot) that is not in this tree, and embedding 400KB in
+ * every kernel to reach it would be the wrong trade anyway.
+ *
+ * So the bytes come in from Limbo through #H's wifidata file, which is
+ * a shell redirection at a point in the boot where /n/dos is already
+ * mounted.  The kernel keeps only the cursor and the nvram, which is
+ * small.
+ *
+ * Sequence, from 9front's fwload: ask for the ALP clock; zero the last
+ * word of RAM; write the firmware from rambase upward; write the
+ * condensed nvram at the TOP of RAM; put a length token in that last
+ * word; then take the ARM out of reset, which starts it.
+ */
+static struct {
+	int	up;		/* backplane is up */
+	int	mode;		/* 0 idle, 1 firmware, 2 nvram */
+	u32	off;		/* next firmware byte */
+	uchar	nv[3072];
+	int	nvlen;
+	int	err;
+} fw;
+
+int
+sdiobringup(void)
+{
+	int nfn;
+
+	fw.up = 0;
+	nfn = sdioinit();
+	if(nfn < 0){
+		print("sdio: bring-up failed at %s\n",
+			nfn == -2? "CMD3": nfn == -3? "CMD7": "CMD0/CMD5");
+		return -1;
+	}
+	if(sbinit() < 0)
+		return -1;
+	fw.up = 1;
+	fw.mode = 0;
+	fw.off = 0;
+	fw.nvlen = 0;
+	fw.err = 0;
+	return 0;
+}
+
+int
+sdiofwbegin(int isnv)
+{
+	if(!fw.up)
+		return -1;
+	fw.mode = isnv? 2 : 1;
+	fw.err = 0;
+	if(isnv)
+		fw.nvlen = 0;
+	else{
+		uchar z[4];
+
+		/* the ALP clock, then zero the length word at the top of RAM */
+		sdiocmd52(1, Clkcsr, 1, ReqALP);
+		for(isnv = 0; isnv < 500; isnv++){
+			if(sdiocmd52(1, Clkcsr, 0, 0) & ALPavail)
+				break;
+			microdelay(10);
 		}
-
-		/*
-		 * And at the size the firmware actually is.
-		 *
-		 * 512 bytes stays inside one window.  The firmware is
-		 * 399344 bytes, which slides the window a dozen times and
-		 * is the first thing to exercise sbmem's clipping at a
-		 * window boundary -- the place an off-by-one would put the
-		 * tail of one chunk at the start of the next.  No buffer
-		 * that size exists here, so it goes out in 4KB pieces with
-		 * a position-dependent pattern and comes back the same
-		 * way; a chunk landing at the wrong offset shows up as a
-		 * mismatch rather than being invisible the way a constant
-		 * fill would be.
-		 */
-		{
-			static uchar chunk[4096];
-			int k, j, nbad, off;
-			enum { Fwsize = 399344 };
-
-			nbad = 0;
-			for(off = 0; off < Fwsize; off += sizeof chunk){
-				k = Fwsize - off;
-				if(k > sizeof chunk)
-					k = sizeof chunk;
-				for(j = 0; j < k; j++)
-					chunk[j] = ((off + j) * 31 + 0x9e) & 0xff;
-				if(sbmem(1, chunk, k, sb.rambase + off) < 0){
-					print("sdio: BIG-WRITE-FAIL at %d\n", off);
-					nbad = -1;
-					break;
-				}
-			}
-			if(nbad == 0)
-				for(off = 0; off < Fwsize; off += sizeof chunk){
-					k = Fwsize - off;
-					if(k > sizeof chunk)
-						k = sizeof chunk;
-					memset(chunk, 0, k);
-					if(sbmem(0, chunk, k, sb.rambase + off) < 0){
-						print("sdio: BIG-READ-FAIL at %d\n", off);
-						nbad = -1;
-						break;
-					}
-					for(j = 0; j < k; j++)
-						if(chunk[j] != (uchar)(((off + j) * 31 + 0x9e) & 0xff))
-							nbad++;
-				}
-			if(nbad == 0)
-				print("sdio: BIG-OK %d bytes through chip RAM "
-					"intact\n", Fwsize);
-			else if(nbad > 0)
-				print("sdio: BIG-WRONG %d bytes differ\n", nbad);
-		}
+		memset(z, 0, sizeof z);
+		sbmem(1, z, 4, sb.rambase + sb.socramsize - 4);
+		fw.off = 0;
 	}
 	return 0;
+}
+
+int
+sdiofwdata(uchar *p, int n)
+{
+	if(!fw.up || fw.mode == 0 || fw.err)
+		return -1;
+	if(fw.mode == 2){
+		if(fw.nvlen + n > sizeof fw.nv){
+			fw.err = 1;
+			return -1;
+		}
+		memmove(fw.nv + fw.nvlen, p, n);
+		fw.nvlen += n;
+		return n;
+	}
+	/*
+	 * Pad the tail to a word.  Every chunk but the last is a multiple
+	 * of four in practice, and sbmem wants whole words for a 32-bit
+	 * window access.
+	 */
+	while(n & 3)
+		p[n++] = 0;
+	if(sbmem(1, p, n, sb.rambase + fw.off) < 0){
+		print("sdio: firmware write failed at %lud\n", (ulong)fw.off);
+		fw.err = 1;
+		return -1;
+	}
+	fw.off += n;
+	return n;
+}
+
+/*
+ * Strip comments and blank lines from the nvram file, turning each line
+ * into a NUL-terminated string, which is the form the firmware wants.
+ * 9front calls this condense().
+ */
+static int
+condense(uchar *buf, int n)
+{
+	uchar *p, *ep, *lp, *op;
+	int c, skipping;
+
+	skipping = 0;
+	ep = buf + n;
+	op = buf;
+	lp = buf;
+	for(p = buf; p < ep; p++){
+		switch(c = *p){
+		case '#':
+			skipping = 1;
+			break;
+		case '\0':
+		case '\n':
+			skipping = 0;
+			if(op != lp){
+				*op++ = '\0';
+				lp = op;
+			}
+			break;
+		case '\r':
+			break;
+		default:
+			if(!skipping)
+				*op++ = c;
+			break;
+		}
+	}
+	if(op != lp)
+		*op++ = '\0';
+	return op - buf;
+}
+
+int
+sdiofwend(void)
+{
+	uchar buf[4];
+	u32 n, off;
+
+	if(!fw.up || fw.err)
+		return -1;
+	if(fw.mode == 2){
+		n = condense(fw.nv, fw.nvlen);
+		while(n & 3)
+			fw.nv[n++] = 0;
+		off = sb.socramsize - n - 4;
+		if(sbmem(1, fw.nv, n, sb.rambase + off) < 0)
+			return -1;
+		n /= 4;
+		n = (n & 0xffff) | (~n << 16);
+		buf[0] = n;
+		buf[1] = n >> 8;
+		buf[2] = n >> 16;
+		buf[3] = n >> 24;
+		if(sbmem(1, buf, 4, sb.rambase + sb.socramsize - 4) < 0)
+			return -1;
+		print("sdio: nvram %d bytes at %#lux, token %#lux\n",
+			fw.nvlen, (ulong)off, (ulong)n);
+	}
+	fw.mode = 0;
+	return 0;
+}
+
+/*
+ * Start the ARM.  For an ARMcm3 that is simply taking armctl out of
+ * reset; the ARMcr4 path needs the reset vector written to address 0
+ * first and does not apply to this part.
+ */
+int
+sdiofwgo(void)
+{
+	if(!fw.up)
+		return -1;
+	if(sb.armcore == ARMcr4){
+		print("sdio: ARMcr4 start is not implemented\n");
+		return -1;
+	}
+	sbreset(sb.armctl, 0, 0);
+	print("sdio: ARM started (%lud bytes of firmware at %#lux)\n",
+		(ulong)fw.off, (ulong)sb.rambase);
+	return 0;
+}
+
+char*
+sdiostate(void)
+{
+	static char buf[128];
+
+	snprint(buf, sizeof buf,
+		"up %d chip %d rev %d ram %lud at %#lux loaded %lud nvram %d\n",
+		fw.up, sb.chipid, sb.chiprev, (ulong)sb.socramsize,
+		(ulong)sb.rambase, (ulong)fw.off, fw.nvlen);
+	return buf;
 }
 
 #ifdef SDIOTEST

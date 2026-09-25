@@ -493,3 +493,4 @@ os/inferno/raspi3b/raspi3b.c
 
 # 7l -a listings, made on demand by tools/ksym
 *.listing
+os/inferno/raspi3b/fw/
