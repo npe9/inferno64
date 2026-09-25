@@ -1119,7 +1119,9 @@ and
 makes the write fail outright, which is how the new path was confirmed
 to be the one being taken.
 .NH 1
-Phase 6: BCM43430 Wi-Fi over SDIO \- transport runs, the chip does not
+Phase 6: BCM43430 Wi-Fi over SDIO -- DONE (the heading below was written
+when the transport ran and the chip did not; it now associates, carries
+IP and comes up at boot -- see the end of this document)
 .PP
 The onboard Broadcom BCM43430 Wi-Fi hangs off SDIO (via Arasan), the
 piece 9front's ether4330 already handles: firmware upload plus the SDIO
@@ -2893,6 +2895,15 @@ and USB storage, over a firmware-loaded kernel8.img on real hardware.
 Phases 5-7 add Wi-Fi and the small peripherals.  Left out on purpose,
 until the machine is otherwise complete: Bluetooth, the CSI camera, DSI
 display, and anything GPU/OpenGL/VideoCore-accelerated.
+.PP
+.B "All seven phases are now done on silicon."
+Phase 6 closed last: the radio associates in about three seconds,
+.CW #l0
+carries IP, and the board takes a DHCP lease as
+.CW inferno-pi
+at boot without a host involved.  So the deferred list above is what is
+left, and it is no longer deferred \(em the machine is otherwise
+complete.
 .NH 1
 Where the port stands on real silicon, 16 September 2026
 .PP
@@ -11156,3 +11167,99 @@ and the wired adapter
 The router's own DNS picks them up, and
 .CW "ping inferno-pi.lan"
 from the host is 3 for 3 over the air.
+.NH 1
+Bluetooth: the other half of the same chip
+.PP
+.CW btbcm.c
+had gone as far as a kernel can: power the radio, give it the PL011, and
+prove it answers HCI Reset.  Everything above that is an ordinary Limbo
+program, and the whole stack \(em
+.CW btfs (4),
+the H4 transport, HCI, L2CAP, ATT, GATT, SMP \(em was already written and
+already in this kernel's root.  What was missing was the patch firmware,
+the one thing a
+.CW BCM43438
+will not work without, and three faults in the way.
+.PP
+.B "The patch was for a different chip, and there is nothing in the
+.B "format that says so."
+A
+.CW .hcd
+file is a list of RAM writes ending in a Launch RAM record.  The
+controller acknowledges every write whether or not the patch belongs to
+it.  Loading
+.CW BCM4345C0.hcd
+\(em the Pi 3B+ and Zero W part \(em into this board's radio did exactly
+that: all 221 records accepted, launch accepted, and then a controller
+that answered nothing.  The evidence was there to be had in one command,
+and
+.CW bcmfw
+now takes it before writing anything:
+.DS
+.CW
+bcmfw: controller lmp subversion 0x2209 (BCM43430A1, the Pi 3B and
+    Zero W radio)
+BCMFW-OK 121 records from /n/dos/bt43430a.hcd,
+    controller address b827eb2303d1
+.R
+.DE
+.PP
+.B "There was no way back from that, and that was the second fault."
+.CW radioon()
+only ever drove BT_ON high, which on a board that is already running is
+the same as doing nothing.  BT_ON is a line on the VideoCore's GPIO
+expander and it survives a warm ARM restart, so the bricked controller
+stayed bricked across every reboot: the board reported
+.CW BT-FAIL
+and had no way to reach the ROM that is known to answer.  The probe now
+starts from off \(em low, settle, high \(em because a cold controller is
+the only starting point this code can make claims about.  With that,
+.CW BT-OK
+came straight back.
+.PP
+.B "The third was not Bluetooth's fault at all."
+Run at boot, the download failed 106 records into 121 with no answer in
+five seconds; run by hand a minute later, on a quiet board, it completed
+every time.  Both radios are halves of one chip and both want their
+firmware at boot, but they do not compete for the chip \(em they compete
+for the CPU.  This kernel schedules one core, and pushing 400KB into the
+Wi-Fi side over SDIO starves everything else for seconds at a time.  So
+they take turns, Bluetooth first because it is 30KB at 115200 and over in
+a few seconds.  Hardware flow control was never the problem;
+.CW pl011_modemctl
+does real RTS/CTS, and with it the controller cannot be overrun.
+.PP
+And one more instance of a fault this port has now made three times: a
+namespace snapshot taken too early.  The remote-command poller forked its
+namespace before
+.CW btfs
+mounted, so every command it ran reported
+.CW "/n/bt/0: file does not exist"
+on a board whose Bluetooth was up and serving.  It already waited for the
+network before forking; it waits for this too.
+.PP
+The board now brings up both radios at boot and hears the room:
+.DS
+.CW
+BT-OK BCM43438 answered HCI Reset on the pl011 at 115200 baud
+BCMFW-OK 121 records, controller address b827eb2303d1
+btfs: serving /n/bt
+BT-SERVING /n/bt/0
+WIFI-DHCP-OK ip=192.168.8.210 gw=192.168.8.1
+
+; cat /n/bt/0/version
+hci 7 rev 0x01fc lmp 7 subver 0x2209 manufacturer 0x000f
+; echo scan on >/n/bt/0/ctl; sleep 20; cat /n/bt/0/state
+addr B827EB2303D1 scan on inquiry off advertise off devices 23
+    connections 0 aclsize 251 aclbufs 8
+.R
+.DE
+Twenty-three LE devices in twenty seconds, each a directory under
+.CW /n/bt/0/remote
+with its address type and signal strength \(em
+.CW "rssi -37 type random" ,
+.CW "rssi -59 type public" .
+What is
+.I not
+done: nothing has been paired, no connection has been made, and no
+profile above GATT has been exercised on this board.

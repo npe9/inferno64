@@ -1434,6 +1434,79 @@ usbcheck()
 # This is slow -- about 400KB over SDIO, then an association -- so it
 # runs in its own process and nothing waits for it.
 #
+#
+# Bluetooth: patch the controller once, then serve it.
+#
+# The BCM43438's ROM answers HCI Reset and little else; the rest of it
+# is a patch file the host downloads over the same UART (btbcm.c in the
+# kernel proves the controller answers at all, and stops there, because
+# the download needs a filesystem).  The file is on the card, as the
+# radio's firmware is, and for the same reason.
+#
+# ORDER MATTERS, and it is why this is here rather than left to a
+# person at the shell.  A patch may only be written to a controller
+# that has not been patched, and the only thing on this board that can
+# un-patch one is btbcm.c's power cycle at boot -- BT_ON is a line on
+# the VideoCore's expander and it survives a warm restart.  So the one
+# safe moment to do this is exactly once, just after boot, which is
+# here.  Running bt/bcmfw twice by hand is how the controller was
+# bricked-until-power-cycled twice during this work.
+#
+# set when btcheck has finished, however it finished: the radio's
+# firmware push must not run at the same time as the controller's
+btdone := 0;
+
+btcheck()
+{
+	#
+	# Wait for the card, as wificheck does and for the same reason:
+	# this is spawned alongside the SD checks that mount it.
+	#
+	hcd := "/n/dos/bt43430a.hcd";
+	for(w := 0; w < 600; w++){
+		if(sys->open(hcd, Sys->OREAD) != nil)
+			break;
+		sys->sleep(100);
+	}
+	if(sys->open(hcd, Sys->OREAD) == nil){
+		sys->print("BT-NONE (no %s)\n", hcd);
+		btdone = 1;
+		return;
+	}
+	bcmfw := load Command "/dis/bt/bcmfw.dis";
+	if(bcmfw == nil){
+		sys->print("BT-NONE (no bcmfw: %r)\n");
+		btdone = 1;
+		return;
+	}
+	spec := "#t/eia0!115200!fc";
+	#
+	# Each of these is a command module, and a command module's init()
+	# is a process body: it exits its caller when it finishes.  So both
+	# run in processes of their own, and this one waits on a marker
+	# rather than on a return.
+	#
+	spawn bcmfw->init(nil, "bcmfw" :: spec :: hcd :: nil);
+	sys->sleep(6000);
+	btfs := load Command "/dis/bt/btfs.dis";
+	if(btfs == nil){
+		sys->print("BT-NONE (no btfs: %r)\n");
+		btdone = 1;
+		return;
+	}
+	spawn btfs->init(nil, "btfs" :: "-m" :: "/n/bt" :: spec :: nil);
+	for(i := 0; i < 100; i++){
+		if(sys->open("/n/bt/0", Sys->OREAD) != nil){
+			sys->print("BT-SERVING /n/bt/0\n");
+			btdone = 1;
+		return;
+		}
+		sys->sleep(100);
+	}
+	sys->print("BT-FAIL btfs served nothing at /n/bt after 10 s\n");
+	btdone = 1;
+}
+
 wificheck()
 {
 	#
@@ -1476,6 +1549,25 @@ wificheck()
 		sys->print("WIFI-NONE (cannot bind #H: %r)\n");
 		return;
 	}
+	#
+	# Not at the same time as the Bluetooth download.
+	#
+	# Both radios are halves of the same chip and both want their
+	# firmware at boot, but they do not compete for the chip -- they
+	# compete for the CPU.  This kernel schedules one core, and pushing
+	# 400KB into the Wi-Fi side over SDIO starves everything else for
+	# seconds at a time; bt/bcmfw, waiting on a UART reply with a five
+	# second bound, gave up 106 records into 121.  Run by hand
+	# afterwards, on a quiet board, the same download completes every
+	# time.  That is a scheduling collision, not a Bluetooth fault, and
+	# the fix is to take turns.  Bluetooth goes first because it is
+	# 30KB at 115200 and over in a few seconds.
+	#
+	for(b := 0; b < 900 && !btdone; b++)
+		sys->sleep(100);
+	if(!btdone)
+		sys->print("WIFI-WAITED 90 s for the bluetooth download\n");
+
 	ctl := sys->open("/dev/wifictl", Sys->OWRITE);
 	if(ctl == nil){
 		sys->print("WIFI-NONE (no /dev/wifictl: %r)\n");
@@ -2676,6 +2768,8 @@ init()
 	spawn ethercheck();
 	# The radio, if the card carries firmware and credentials for one.
 	spawn wificheck();
+	# and the Bluetooth half of the same chip
+	spawn btcheck();
 	spawn readerwatch();
 	spawn netdebug();
 	spawn pingtest();
@@ -2824,17 +2918,27 @@ remotecmd()
 	# worked, on a connection this loop has already made and into an
 	# output file on the host.
 	#
-	# Both, not just kudone: the namespace taken below must already
-	# contain /net, and the bind that puts it there is ethercheck's.
-	# Bounded, so a board with no ethernet still reaches the code that
-	# says why it is unreachable rather than waiting in silence.
+	# Not just kudone: the namespace taken below must already contain
+	# /net, and the bind that puts it there is ethercheck's.  Bounded,
+	# so a board with no ethernet still reaches the code that says why
+	# it is unreachable rather than waiting in silence.
+	#
+	# btdone for the same reason, one layer further out.  btfs mounts
+	# its file system at /n/bt, and a namespace forked before that
+	# mount does not have it and never will -- so every command sent
+	# to this poller saw "/n/bt/0: file does not exist" on a board
+	# whose Bluetooth was up and serving.  A snapshot is only as good
+	# as its timing, which is the second time that has cost something
+	# here.
 	for(w := 0; w < 180; w++){
-		if(kudone && netdone)
+		if(kudone && netdone && btdone)
 			break;
 		sys->sleep(1000);
 	}
 	if(!netdone)
 		sys->print("RCMD-NONET no interface after 180 s; dialling anyway\n");
+	if(!btdone)
+		sys->print("RCMD-NOBT bluetooth not up after 180 s; going on\n");
 	#
 	# A PRIVATE namespace, from here on.
 	#

@@ -46,6 +46,7 @@ Bcmfw: module {
 
 stderr: ref Sys->FD;
 verbose := 0;
+identify := 0;		# -n: say what the controller is and write nothing
 
 Hcdpath:	con "/n/dos/BCM4345C0.hcd";
 
@@ -54,8 +55,11 @@ Cmddownload:	con 16rfc2e;	# vendor: Download Minidriver
 Cmdlaunch:	con 16rfc4e;	# vendor: Launch RAM
 Cmdbdaddr:	con 16rfc01;	# vendor: Write BD_ADDR
 Cmdreadbdaddr:	con 16r1009;	# HCI Read BD_ADDR
+Cmdreadver:	con 16r1001;	# HCI Read Local Version Information
 
 Replyms:	con 5000;	# how long a command may go unanswered
+Launchms:	con 500;	# settle after Launch RAM restarts the controller
+Resettries:	con 6;	# HCI Resets to try once it is back
 
 fail(s: string)
 {
@@ -227,7 +231,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 	newaddr: array of byte;
 	arg->init(argv);
-	arg->setusage("bt/bcmfw [-a addr] [-v] uartspec [hcdfile]");
+	arg->setusage("bt/bcmfw [-a addr] [-nv] uartspec [hcdfile]");
 	while((c := arg->opt()) != 0)
 		case c {
 		'a' =>
@@ -238,6 +242,7 @@ init(nil: ref Draw->Context, argv: list of string)
 				raise "fail:usage";
 			}
 		'v' =>	verbose = 1;
+		'n' =>	identify = 1;
 		* =>	arg->usage();
 		}
 	argv = arg->argv();
@@ -262,25 +267,42 @@ init(nil: ref Draw->Context, argv: list of string)
 	if((e := tport->init(bt, spec)) != nil)
 		fail(sys->sprint("%s: %s", spec, e));
 
-	# the whole file, because it is read once and it is 64K
-	fd := sys->open(path, Sys->OREAD);
-	if(fd == nil)
-		fail(sys->sprint("open %s: %r", path));
-	(ok, d) := sys->fstat(fd);
-	if(ok < 0)
-		fail(sys->sprint("stat %s: %r", path));
-	hcd := array[int d.length] of byte;
-	n := 0;
-	while(n < len hcd){
-		m := sys->read(fd, hcd[n:], len hcd - n);
-		if(m <= 0)
-			fail(sys->sprint("read %s: %r", path));
-		n += m;
-	}
-	fd = nil;
+	# the whole file, because it is read once and it is 64K.  Under -n
+	# nothing is written to the controller, so nothing is read here.
+	hcd := array[0] of byte;
+	if(!identify)
+		hcd = readhcd(path);
 
 	if((e = command(Cmdreset, nil)) != nil)
 		fail("reset: " + e);
+	#
+	# Ask the controller what it is, before writing a patch into it.
+	#
+	# A .hcd is a list of RAM writes and a Launch RAM at the end.  The
+	# controller acknowledges every one of those writes whether or not
+	# the patch was built for it -- there is nothing in the format that
+	# identifies the part -- and then launches whatever was written.
+	# Loading a BCM4345C0 patch (a Pi 3B+ / Zero W part) into this
+	# board's BCM43430A1 did exactly that: all 220-odd records
+	# accepted, launch accepted, and then a controller that answered
+	# nothing and could not be recovered by a reboot, because BT_ON
+	# survives one.  It took a power cycle.
+	#
+	# So the part identifies itself first, and the LMP subversion is
+	# printed whether or not anything is wrong with it.  It costs one
+	# command and it is the only evidence available that the file
+	# about to be written belongs here.
+	#
+	(sub, ve) := localversion();
+	if(ve != nil)
+		sys->fprint(stderr, "bcmfw: cannot read local version: %s\n", ve);
+	else
+		sys->print("bcmfw: controller lmp subversion %#4.4ux (%s)\n",
+			sub, partname(sub));
+	if(identify){
+		tport->close();
+		return;
+	}
 	if((e = command(Cmddownload, nil)) != nil)
 		fail("download minidriver: " + e);
 	# the controller wants a moment after the minidriver before it
@@ -295,6 +317,9 @@ init(nil: ref Draw->Context, argv: list of string)
 		if(o + 3 + plen > len hcd)
 			fail(sys->sprint("%s: record %d runs past the end of the file",
 				path, nrec));
+		if(verbose)
+			sys->print("bcmfw: record %d op %#4.4ux len %d\n",
+				nrec, op, plen);
 		if((e = command(op, hcd[o+3:o+3+plen])) != nil)
 			fail(sys->sprint("record %d: %s", nrec, e));
 		if(op == Cmdlaunch)
@@ -304,9 +329,48 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 	if(!launched)
 		fail(sys->sprint("%s: no Launch RAM record; nothing was started", path));
-	# and it restarts on the patched firmware
-	sys->sleep(250);
-	if((e = command(Cmdreset, nil)) != nil)
+	#
+	# It restarts on the patched firmware, and restarting means the
+	# link as well as the controller.
+	#
+	# A quarter of a second and a bare HCI Reset was not enough on a
+	# Pi 3B: every one of the patch records was acknowledged, the
+	# launch went in, and then the controller said nothing at all for
+	# five seconds -- not framing errors, which this already walks
+	# past, but silence.  Broadcom's own loader closes the tty and
+	# opens it again at this point rather than carrying on over the
+	# same descriptor, and that is the difference: the controller
+	# brings its UART back up, and anything the host had buffered
+	# from before the restart belongs to the firmware that is gone.
+	#
+	# So: drop the transport, give it time, take it again, and ask
+	# more than once.  Each attempt is reported under -v, because
+	# "no answer" after a successful download is the one failure here
+	# that says nothing about which half is wrong.
+	#
+	if(verbose)
+		sys->print("bcmfw: %d records in, launched; reopening %s\n",
+			nrec, spec);
+	tport->close();
+	sys->sleep(Launchms);
+	if((e = tport->init(bt, spec)) != nil)
+		fail(sys->sprint("reopen %s after launch: %s", spec, e));
+	e = "not attempted";
+	for(try := 0; try < Resettries; try++){
+		if(try > 0)
+			sys->sleep(Launchms);
+		e = command(Cmdreset, nil);
+		if(verbose){
+			why := e;
+			if(why == nil)
+				why = "ok";
+			sys->print("bcmfw: reset after launch, try %d: %s\n",
+				try + 1, why);
+		}
+		if(e == nil)
+			break;
+	}
+	if(e != nil)
 		fail("reset after launch: " + e);
 
 	if(newaddr != nil){
@@ -327,6 +391,73 @@ init(nil: ref Draw->Context, argv: list of string)
 		sys->print("BCMFW-OK %d records from %s, controller address %2.2ux%2.2ux%2.2ux%2.2ux%2.2ux%2.2ux\n",
 			nrec, path, int a[5], int a[4], int a[3], int a[2], int a[1], int a[0]);
 	tport->close();
+}
+
+#
+# The LMP subversion, which is how a Broadcom part names itself.  The
+# names below are the ones whose patch files exist in RPi-Distro's
+# bluez-firmware; an unknown one is reported as unknown rather than
+# guessed at, because guessing is what this whole function exists to
+# prevent.
+#
+readhcd(path: string): array of byte
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		fail(sys->sprint("open %s: %r", path));
+	(ok, d) := sys->fstat(fd);
+	if(ok < 0)
+		fail(sys->sprint("stat %s: %r", path));
+	hcd := array[int d.length] of byte;
+	n := 0;
+	while(n < len hcd){
+		m := sys->read(fd, hcd[n:], len hcd - n);
+		if(m <= 0)
+			fail(sys->sprint("read %s: %r", path));
+		n += m;
+	}
+	return hcd;
+}
+
+partname(sub: int): string
+{
+	case sub {
+	16r4406 =>	return "BCM4330B1";
+	16r610c =>	return "BCM4354";
+	16r2209 =>	return "BCM43430A1, the Pi 3B and Zero W radio";
+	16r6119 =>	return "BCM4345C0, the Pi 3B+ radio";
+	16r6606 =>	return "BCM4345C5, the Pi 4 radio";
+	16r230f =>	return "BCM4356A2";
+	* =>		return "unknown";
+	}
+}
+
+localversion(): (int, string)
+{
+	b := array[3] of byte;
+	b[0] = byte Cmdreadver;
+	b[1] = byte (Cmdreadver >> 8);
+	b[2] = byte 0;
+	if((e := tport->write(Bt->Hcicmd, b)) != nil)
+		return (0, e);
+	for(;;){
+		r := readwait(Replyms);
+		if(r == nil)
+			return (0, sys->sprint("no answer in %d ms", Replyms));
+		if(r.err != nil)
+			return (0, r.err);
+		ev := r.ev;
+		if(r.ptype != Bt->Hcievt || len ev < 14)
+			continue;
+		if(int ev[0] != 16r0e)
+			continue;
+		if((int ev[3] | (int ev[4] << 8)) != Cmdreadver)
+			continue;
+		if(int ev[5] != 0)
+			return (0, sys->sprint("status %#2.2ux", int ev[5]));
+		# status, hci_ver, hci_rev[2], lmp_ver, manuf[2], lmp_subver[2]
+		return (int ev[12] | (int ev[13] << 8), nil);
+	}
 }
 
 readaddr(a: array of byte): string

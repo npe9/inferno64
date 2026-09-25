@@ -54,6 +54,7 @@ enum {
 	Bttx	= 32,
 	Btrx	= 33,
 	Btbaud	= 115200,	/* the speed a cold BCM43438 comes up at */
+	Offms	= 200,		/* BT_ON held low, long enough to be a reset */
 	Powerms	= 200,		/* after BT_ON before the controller listens */
 	Replyms	= 1000,		/* how long to wait for the whole event */
 };
@@ -155,22 +156,44 @@ radioon(void)
 	iprint("bt: get state -> %d resp %#ux pin %ud state %ud\n",
 		r, resp, v[0], v[1]);
 
-	/* an output, push-pull, no pull resistor, starting high */
+	/* an output, push-pull, no pull resistor, starting low */
 	v[0] = Btonpin;
 	v[1] = 1;		/* direction: out */
 	v[2] = 0;		/* polarity: active high */
 	v[3] = 0;		/* terminator disabled */
 	v[4] = 0;		/* pull up: no */
-	v[5] = 1;		/* state: on */
+	v[5] = 0;		/* state: off, for now */
 	resp = 0;
 	r = mboxtag(Tagsetconfig, v, 6, 6, &resp);
 	iprint("bt: set config -> %d resp %#ux\n", r, resp);
+
+	/*
+	 * OFF, then on.  A power cycle, not a power-on.
+	 *
+	 * This only ever drove the line high, which is the same as doing
+	 * nothing on a board that was already running: BT_ON survives a
+	 * warm ARM restart, so a controller left in an odd state stayed in
+	 * it across every reboot.  That is not hypothetical.  Downloading
+	 * the patch firmware and launching it left the controller not
+	 * answering HCI Reset at 115200, and because nothing here ever
+	 * took its power away, every reboot afterwards reported BT-FAIL --
+	 * the board had no way back to the ROM that is known to answer.
+	 *
+	 * So the probe now starts from off.  A cold controller is the only
+	 * starting point this code can make claims about.
+	 */
+	v[0] = Btonpin;
+	v[1] = 0;
+	resp = 0;
+	r = mboxtag(Tagsetstate, v, 2, 2, &resp);
+	iprint("bt: set state off -> %d resp %#ux\n", r, resp);
+	delay(Offms);
 
 	v[0] = Btonpin;
 	v[1] = 1;
 	resp = 0;
 	r = mboxtag(Tagsetstate, v, 2, 2, &resp);
-	iprint("bt: set state -> %d resp %#ux\n", r, resp);
+	iprint("bt: set state on -> %d resp %#ux\n", r, resp);
 	/*
 	 * And on, whatever it answered.
 	 *
