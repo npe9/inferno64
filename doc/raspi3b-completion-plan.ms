@@ -10179,3 +10179,40 @@ sbinit's remaining steps: halt the ARM core, reset the d11 core, then
 ramscan for the SOCRAM banks.  After that the firmware upload, which has
 its blob staged and a transport now known to carry 512 bytes at a time
 correctly.
+.SH
+The chip is up: cores enumerated, ARM halted, RAM found and proven
+.PP
+.CW sbinit
+is ported and runs on the board:
+.P1
+chip 43430 rev 1: chipcommon 0x18000000 arm 0x82a ctl 0x18103000
+        regs 0x18003000 d11 0x18101000 socram 0x18104000/0x18004000
+        sd 0x18002000
+SOCRAM rev 22, 4 bank(s), 524288 bytes at 0x0
+RAM-OK 512 bytes written to chip RAM and read back identical
+BIG-OK 399344 bytes through chip RAM intact
+.P2
+.PP
+That is the whole of the chip bring-up: the part identifies itself, the
+enumeration ROM is parsed into every core's address, the ARM that will
+run the firmware is halted, the WLAN core is reset, and the SOCRAM banks
+are counted \(em 512KB at address 0, comfortably more than the 399344
+bytes of firmware that has to go into it.
+.PP
+.B "And the transport is proven in both directions at full size."
+512 bytes written to chip RAM and read back identical says writes work
+at all, which nothing before it did \(em every earlier measurement was a
+read.  Then the same thing at 399344 bytes, the exact size of the
+firmware, in 4KB pieces with a position-dependent pattern: it slides the
+window a dozen times and exercises sbmem's clipping at the window
+boundary, which is where an off-by-one would put the tail of one chunk
+at the head of the next.  A constant fill would not have caught that; a
+pattern that knows its own position does.
+.PP
+.B "What is left."
+Getting the firmware blob to the driver is now a delivery question
+rather than a transport one \(em the probe runs early in main(), before
+any filesystem exists, so the image has to reach it another way.  After
+that: upload firmware and nvram, start the ARM, and then the SDPCM and
+CDC protocol layers, association, and binding as an ether device.  None
+of it is blocked.

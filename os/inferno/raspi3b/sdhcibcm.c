@@ -133,6 +133,23 @@ enum {
 	Nohwreq		= 0x20,
 	ALPavail	= 0x40,
 	HTavail		= 0x80,
+	Ioctrl		= 0x408,	/* core control registers */
+	Resetctrl	= 0x800,
+	Coreinfo	= 0x00,		/* socram registers */
+	Bankidx		= 0x10,
+	Bankinfo	= 0x40,
+	Bankpda		= 0x44,
+	ARMcm3		= 0x82a,	/* core ids */
+	ARM7tdmi	= 0x825,
+	ARMcr4		= 0x83e,
+	Socram		= 0x80e,
+	Chipcommon	= 0x800,
+	D11		= 0x812,
+	Sdiocore	= 0x829,
+	Cr4Cpuhalt	= 0x20,
+	Pullups		= 0x1000f,	/* fn1: chip pull-ups */
+	Gpiopullup	= 0x58,		/* chipcommon */
+	Gpiopulldown	= 0x5c,
 	Sbwsize		= 0x8000,	/* backplane window size */
 	Sbaddr		= 0x1000a,	/* fn1: backplane window address, 3 bytes */
 	Enumbase	= 0x18000000,	/* SI enumeration space */
@@ -1463,6 +1480,426 @@ SDifc sdhcibcmifc = {
  * that is a property of the board's wiring rather than of this file.
  * Build with -DSDIOTEST.
  */
+/*
+ * Silicon Backplane access, ported from 9front's ether4330.c.
+ *
+ * The chip's cores hang off an internal bus the ARM cannot see; the only
+ * way to them is a 32KB window that function 1 slides over the
+ * backplane address space.  sbwindow() positions it and cfgreadl() and
+ * cfgwritel() read and write one 32-bit register through it, with the
+ * offset taken from the low fifteen bits of the address and Sb32bit set
+ * to ask for a 32-bit access.
+ */
+static void
+sbwindow(u32 addr)
+{
+	addr &= ~(Sbwsize-1);
+	sdiocmd52(1, Sbaddr, 1, addr >> 8);
+	sdiocmd52(1, Sbaddr + 1, 1, addr >> 16);
+	sdiocmd52(1, Sbaddr + 2, 1, addr >> 24);
+}
+
+static u32
+cfgreadl(u32 off)
+{
+	uchar p[4];
+
+	memset(p, 0, sizeof p);
+	if(sdiocmd53(1, (off & (Sbwsize-1)) | Sb32bit, 0, 0, 1, p, 4) != 4)
+		return ~0;
+	return p[0] | p[1]<<8 | p[2]<<16 | p[3]<<24;
+}
+
+static void
+cfgwritel(u32 off, u32 v)
+{
+	uchar p[4];
+
+	p[0] = v;
+	p[1] = v >> 8;
+	p[2] = v >> 16;
+	p[3] = v >> 24;
+	sdiocmd53(1, (off & (Sbwsize-1)) | Sb32bit, 1, 0, 1, p, 4);
+}
+
+/*
+ * Put a core into reset, and take one out of it.  Both polls are bounded
+ * here: 9front spins for ever on a chip that never answers, which on
+ * this board would be a silent hang at boot with no console to see it.
+ */
+static void
+sbdisable(u32 regs, int pre, int ioctl)
+{
+	int i;
+
+	sbwindow(regs);
+	if((cfgreadl(regs + Resetctrl) & 1) != 0){
+		cfgwritel(regs + Ioctrl, 3|ioctl);
+		cfgreadl(regs + Ioctrl);
+		return;
+	}
+	cfgwritel(regs + Ioctrl, 3|pre);
+	cfgreadl(regs + Ioctrl);
+	cfgwritel(regs + Resetctrl, 1);
+	microdelay(10);
+	for(i = 0; i < 1000; i++){
+		if(cfgreadl(regs + Resetctrl) & 1)
+			break;
+		microdelay(10);
+	}
+	if(i == 1000)
+		print("sdio: core %#lux would not enter reset\n", (ulong)regs);
+	cfgwritel(regs + Ioctrl, 3|ioctl);
+	cfgreadl(regs + Ioctrl);
+}
+
+static void
+sbreset(u32 regs, int pre, int ioctl)
+{
+	int i;
+
+	sbdisable(regs, pre, ioctl);
+	sbwindow(regs);
+	for(i = 0; i < 1000; i++){
+		if((cfgreadl(regs + Resetctrl) & 1) == 0)
+			break;
+		cfgwritel(regs + Resetctrl, 0);
+		microdelay(40);
+	}
+	if(i == 1000)
+		print("sdio: core %#lux would not leave reset\n", (ulong)regs);
+	cfgwritel(regs + Ioctrl, 1|ioctl);
+	cfgreadl(regs + Ioctrl);
+}
+
+/*
+ * What corescan found, and what ramscan worked out from it.
+ */
+static struct {
+	u32	chipcommon;
+	u32	armctl;
+	u32	armregs;
+	u32	socramctl;
+	u32	socramregs;
+	u32	d11ctl;
+	u32	sdregs;
+	int	armcore;
+	int	socramrev;
+	int	chipid;
+	int	chiprev;
+	u32	socramsize;
+	u32	rambase;
+} sb;
+
+/*
+ * Walk the enumeration ROM and record where each core lives.
+ *
+ * Entries are 32-bit words tagged in their low nibble: 0x1 introduces a
+ * core and carries its id, 0x5 is an address, 0xf ends the list.  Bit
+ * 0xC0 of an address entry marks it a control register block rather
+ * than the core's memory.  Read from the EROM pointer at
+ * chipcommon+0xfc, not from the enumeration base -- chipcommon itself
+ * is registers with unmapped holes and reading across it stalls the
+ * backplane.
+ */
+static int
+corescan(u32 erom)
+{
+	static uchar buf[512];
+	int i, coreid, corerev;
+	u32 addr;
+
+	sbwindow(erom);
+	memset(buf, 0, sizeof buf);
+	if(sdiocmd53(1, (erom & (Sbwsize-1)) | Sb32bit, 0, 1, 1, buf,
+	    sizeof buf / 64) != sizeof buf / 64){
+		print("sdio: cannot read the EROM at %#lux\n", (ulong)erom);
+		return -1;
+	}
+	coreid = corerev = 0;
+	for(i = 0; i < sizeof buf; i += 4){
+		if((buf[i] & 0xf) == 0xf)
+			break;
+		if((buf[i] & 0xf) == 0x1){
+			if((buf[i+4] & 0xf) != 0x1)
+				continue;
+			coreid = (buf[i+1] | buf[i+2]<<8) & 0xfff;
+			i += 4;
+			corerev = buf[i+3];
+			continue;
+		}
+		if((buf[i] & 0xf) != 0x5)
+			continue;
+		addr = (buf[i+1]<<8 | buf[i+2]<<16 | buf[i+3]<<24) & ~0xfff;
+		switch(coreid){
+		case Chipcommon:
+			if((buf[i] & 0xc0) == 0)
+				sb.chipcommon = addr;
+			break;
+		case ARMcm3:
+		case ARM7tdmi:
+		case ARMcr4:
+			sb.armcore = coreid;
+			if(buf[i] & 0xc0){
+				if(sb.armctl == 0)
+					sb.armctl = addr;
+			}else if(sb.armregs == 0)
+				sb.armregs = addr;
+			break;
+		case Socram:
+			if(buf[i] & 0xc0)
+				sb.socramctl = addr;
+			else if(sb.socramregs == 0)
+				sb.socramregs = addr;
+			sb.socramrev = corerev;
+			break;
+		case Sdiocore:
+			if((buf[i] & 0xc0) == 0)
+				sb.sdregs = addr;
+			break;
+		case D11:
+			if(buf[i] & 0xc0)
+				sb.d11ctl = addr;
+			break;
+		}
+	}
+	return 0;
+}
+
+/*
+ * How much RAM the chip has, and where, so the firmware has somewhere to
+ * go.  Only the SOCRAM path is implemented: this part is an ARMcm3 with
+ * SOCRAM revision 22, and the ARMcr4 variant belongs to other chips.
+ */
+static int
+ramscan(void)
+{
+	u32 n, r, size;
+	int banks, i;
+
+	if(sb.socramrev <= 7 || sb.socramrev == 12){
+		print("sdio: SOCRAM rev %d not supported\n", sb.socramrev);
+		return -1;
+	}
+	sbreset(sb.socramctl, 0, 0);
+	r = sb.socramregs;
+	sbwindow(r);
+	n = cfgreadl(r + Coreinfo);
+	banks = (n >> 4) & 0xf;
+	size = 0;
+	for(i = 0; i < banks; i++){
+		cfgwritel(r + Bankidx, i);
+		n = cfgreadl(r + Bankinfo);
+		size += 8192 * ((n & 0x3f) + 1);
+	}
+	sb.socramsize = size;
+	sb.rambase = 0;
+	if(sb.chipid == 43430){
+		cfgwritel(r + Bankidx, 3);
+		cfgwritel(r + Bankpda, 0);
+	}
+	print("sdio: SOCRAM rev %d, %d bank(s), %lud bytes at %#lux\n",
+		sb.socramrev, banks, (ulong)sb.socramsize, (ulong)sb.rambase);
+	return 0;
+}
+
+/*
+ * Move a run of bytes to or from the chip's memory, sliding the window
+ * as it goes.  This is what the firmware upload rides on.
+ *
+ * A transfer must not cross the end of the 32KB window, so each chunk
+ * is clipped to what is left of the current one.
+ */
+static int
+sbmem(int write, uchar *buf, int len, u32 off)
+{
+	u32 n;
+	int nb;
+
+	n = Sbwsize - (off & (Sbwsize-1));
+	while(len > 0){
+		if(n > len)
+			n = len;
+		sbwindow(off);
+		/*
+		 * Whole blocks through the block path, the remainder a
+		 * byte-mode transfer.  Both are measured good against the
+		 * EROM; the block size is the function's, 64.
+		 */
+		nb = n / sdioblksize;
+		if(nb > 0){
+			if(sdiocmd53(1, (off & (Sbwsize-1)) | Sb32bit, write, 1, 1,
+			    buf, nb) != nb)
+				return -1;
+			buf += nb * sdioblksize;
+			off += nb * sdioblksize;
+			len -= nb * sdioblksize;
+			n -= nb * sdioblksize;
+		}
+		if(n > 0){
+			if(sdiocmd53(1, (off & (Sbwsize-1)) | Sb32bit, write, 0, 1,
+			    buf, n) != n)
+				return -1;
+			buf += n;
+			off += n;
+			len -= n;
+		}
+		n = Sbwsize;
+	}
+	return 0;
+}
+
+/*
+ * Bring the chip's backplane up: identify it, enumerate its cores, halt
+ * the ARM that will run the firmware, reset the WLAN core, and find the
+ * RAM.  This is 9front's sbinit, less the 4330/43362-specific drive
+ * strength tweak, which does not apply to a 43430.
+ */
+static int
+sbinit(void)
+{
+	u32 r, erom;
+
+	memset(&sb, 0, sizeof sb);
+	sbwindow(Enumbase);
+	r = cfgreadl(Enumbase);
+	sb.chipid = r & 0xffff;
+	sb.chiprev = (r >> 16) & 0xf;
+	if(sb.chipid != 43430){
+		print("sdio: chip %#ux (%d) is not one this knows\n",
+			sb.chipid, sb.chipid);
+		return -1;
+	}
+	erom = cfgreadl(Enumbase + 63*4);
+	if(corescan(erom) < 0)
+		return -1;
+	print("sdio: chip %d rev %d: chipcommon %#lux arm %#ux ctl %#lux "
+		"regs %#lux d11 %#lux socram %#lux/%#lux sd %#lux\n",
+		sb.chipid, sb.chiprev, (ulong)sb.chipcommon, sb.armcore,
+		(ulong)sb.armctl, (ulong)sb.armregs, (ulong)sb.d11ctl,
+		(ulong)sb.socramctl, (ulong)sb.socramregs, (ulong)sb.sdregs);
+	if(sb.armctl == 0 || sb.d11ctl == 0 ||
+	   (sb.armcore == ARMcm3 && (sb.socramctl == 0 || sb.socramregs == 0))){
+		print("sdio: corescan did not find the essential cores\n");
+		return -1;
+	}
+	if(sb.armcore == ARMcr4)
+		sbreset(sb.armctl, Cr4Cpuhalt, Cr4Cpuhalt);
+	else
+		sbdisable(sb.armctl, 0, 0);
+	sbreset(sb.d11ctl, 8|4, 4);
+	if(ramscan() < 0)
+		return -1;
+
+	/*
+	 * Settle the clock the way the reference does once the cores are
+	 * in hand, and turn the chip's own pull-ups off.
+	 */
+	sdiocmd52(1, Clkcsr, 1, 0);
+	microdelay(10);
+	sdiocmd52(1, Clkcsr, 1, Nohwreq | ReqALP);
+	for(r = 0; r < 500; r++){
+		if(sdiocmd52(1, Clkcsr, 0, 0) & (HTavail|ALPavail))
+			break;
+		microdelay(10);
+	}
+	sdiocmd52(1, Clkcsr, 1, Nohwreq | ForceALP);
+	microdelay(65);
+	sdiocmd52(1, Pullups, 1, 0);
+	sbwindow(sb.chipcommon);
+	cfgwritel(sb.chipcommon + Gpiopullup, 0);
+	cfgwritel(sb.chipcommon + Gpiopulldown, 0);
+
+	/*
+	 * Prove the chip's RAM can be WRITTEN, not just read.
+	 *
+	 * Every transfer measured so far has been a read, and the
+	 * firmware upload is 399344 bytes of writes.  A pattern with a
+	 * position in every word catches a transfer that lands at the
+	 * wrong offset as well as one that corrupts, which a constant
+	 * fill would not.
+	 */
+	{
+		static uchar w[512], rb[512];
+		int i, bad;
+
+		for(i = 0; i < sizeof w; i++)
+			w[i] = (i * 7 + 0x5a) & 0xff;
+		memset(rb, 0, sizeof rb);
+		if(sbmem(1, w, sizeof w, sb.rambase) < 0)
+			print("sdio: RAM-WRITE-FAIL\n");
+		else if(sbmem(0, rb, sizeof rb, sb.rambase) < 0)
+			print("sdio: RAM-READBACK-FAIL\n");
+		else{
+			bad = 0;
+			for(i = 0; i < sizeof w; i++)
+				if(w[i] != rb[i])
+					bad++;
+			if(bad == 0)
+				print("sdio: RAM-OK 512 bytes written to chip RAM "
+					"and read back identical\n");
+			else
+				print("sdio: RAM-WRONG %d of 512 bytes differ "
+					"(%2.2ux vs %2.2ux)\n", bad, w[0], rb[0]);
+		}
+
+		/*
+		 * And at the size the firmware actually is.
+		 *
+		 * 512 bytes stays inside one window.  The firmware is
+		 * 399344 bytes, which slides the window a dozen times and
+		 * is the first thing to exercise sbmem's clipping at a
+		 * window boundary -- the place an off-by-one would put the
+		 * tail of one chunk at the start of the next.  No buffer
+		 * that size exists here, so it goes out in 4KB pieces with
+		 * a position-dependent pattern and comes back the same
+		 * way; a chunk landing at the wrong offset shows up as a
+		 * mismatch rather than being invisible the way a constant
+		 * fill would be.
+		 */
+		{
+			static uchar chunk[4096];
+			int k, j, nbad, off;
+			enum { Fwsize = 399344 };
+
+			nbad = 0;
+			for(off = 0; off < Fwsize; off += sizeof chunk){
+				k = Fwsize - off;
+				if(k > sizeof chunk)
+					k = sizeof chunk;
+				for(j = 0; j < k; j++)
+					chunk[j] = ((off + j) * 31 + 0x9e) & 0xff;
+				if(sbmem(1, chunk, k, sb.rambase + off) < 0){
+					print("sdio: BIG-WRITE-FAIL at %d\n", off);
+					nbad = -1;
+					break;
+				}
+			}
+			if(nbad == 0)
+				for(off = 0; off < Fwsize; off += sizeof chunk){
+					k = Fwsize - off;
+					if(k > sizeof chunk)
+						k = sizeof chunk;
+					memset(chunk, 0, k);
+					if(sbmem(0, chunk, k, sb.rambase + off) < 0){
+						print("sdio: BIG-READ-FAIL at %d\n", off);
+						nbad = -1;
+						break;
+					}
+					for(j = 0; j < k; j++)
+						if(chunk[j] != (uchar)(((off + j) * 31 + 0x9e) & 0xff))
+							nbad++;
+				}
+			if(nbad == 0)
+				print("sdio: BIG-OK %d bytes through chip RAM "
+					"intact\n", Fwsize);
+			else if(nbad > 0)
+				print("sdio: BIG-WRONG %d bytes differ\n", nbad);
+		}
+	}
+	return 0;
+}
+
 #ifdef SDIOTEST
 enum { Wlon = 129 };		/* VideoCore gpio expander: 128 BT_ON, 129 WL_ON */
 extern int mboxsetgpio(int, int);
@@ -1953,123 +2390,7 @@ sdiocheck(void)
 					k >= 200? " (ALP NEVER CAME)" : "");
 			}
 
-			/*
-			 * Read the EROM and enumerate the chip's cores.
-			 *
-			 * The linear scan of chipcommon was never a fair
-			 * test and the failures were real: 0x40-0x48 are
-			 * flash control and 0xbc-0xc4 and 0x100+ belong to
-			 * sub-cores, and touching a register whose core is
-			 * not clocked stalls the backplane.  The card says
-			 * so politely -- r5 0x1000, no error bits, command
-			 * accepted -- and then never drives data.  9front
-			 * never reads chipcommon linearly: it takes the
-			 * EROM pointer from chipcommon+0xfc and scans from
-			 * there, which is contiguous ROM.
-			 *
-			 * With the right target the transport is fine, and
-			 * always was.  Every "bulk transfer is broken"
-			 * finding before this was measuring a hole.
-			 */
-			{
-				u32 erom, w, addr;
-				int k, ok, coreid, corerev;
-
-				sdiocmd52(1, Sbaddr, 1, Enumbase >> 8);
-				sdiocmd52(1, Sbaddr + 1, 1, Enumbase >> 16);
-				sdiocmd52(1, Sbaddr + 2, 1, Enumbase >> 24);
-				memset(blk, 0, 4);
-				if(sdiocmd53(1, Sb32bit + 0xfc, 0, 0, 1, blk, 4) != 4){
-					print("sdio: EROM pointer unreadable\n");
-					erom = 0;
-				}else
-					erom = blk[0] | blk[1]<<8 | blk[2]<<16 | blk[3]<<24;
-
-				if(erom != 0){
-					sdiocmd52(1, Sbaddr, 1, erom >> 8);
-					sdiocmd52(1, Sbaddr + 1, 1, erom >> 16);
-					sdiocmd52(1, Sbaddr + 2, 1, erom >> 24);
-					memset(blk, 0, sizeof blk);
-					/*
-					 * Eight blocks in ONE command, against
-					 * memory that is actually readable.
-					 * This is the multi-block test that
-					 * every earlier attempt got wrong.
-					 */
-					/*
-					 * Read it BOTH ways and print both.
-					 *
-					 * The one-command form reports success
-					 * and the parse comes out as nonsense,
-					 * while eight separate single-block
-					 * reads of the same address gave a
-					 * valid EROM.  A transfer that returns
-					 * without error and with the wrong
-					 * bytes is far worse than one that
-					 * fails, and it would corrupt a
-					 * firmware upload silently, so compare
-					 * the two directly instead of trusting
-					 * either.
-					 */
-					ok = sdiocmd53(1, Sb32bit + (erom & 0x7fff),
-						0, 1, 1, blk, 8) == 8;
-					print("sdio: EROM %#lux, 8x64 one command %s:",
-						(ulong)erom, ok? "OK" : "FAILED");
-					for(k = 0; k < 16; k += 4)
-						print(" %2.2ux%2.2ux%2.2ux%2.2ux",
-							blk[k+3], blk[k+2], blk[k+1], blk[k]);
-					print("\n");
-
-					memset(blk, 0, sizeof blk);
-					ok = 1;
-					for(k = 0; k < 512; k += 64)
-						if(sdiocmd53(1, Sb32bit + (erom & 0x7fff) + k,
-						    0, 1, 1, blk + k, 1) != 1){
-							ok = 0;
-							break;
-						}
-					print("sdio: EROM 8 separate blocks %s:",
-						ok? "OK" : "FAILED");
-					for(k = 0; k < 16; k += 4)
-						print(" %2.2ux%2.2ux%2.2ux%2.2ux",
-							blk[k+3], blk[k+2], blk[k+1], blk[k]);
-					print("\n");
-					/*
-					 * Parse it: 0x1 is a core-info entry
-					 * carrying the id, 0x5 an address
-					 * entry, 0xf the end.  Bit 0xC0 of an
-					 * address entry marks it a control
-					 * register block rather than memory.
-					 */
-					if(ok){
-						coreid = corerev = 0;
-						for(k = 0; k < 512; k += 4){
-							w = blk[k] | blk[k+1]<<8 |
-								blk[k+2]<<16 | blk[k+3]<<24;
-							if((blk[k] & 0xf) == 0xf)
-								break;
-							if((blk[k] & 0xf) == 0x1){
-								if((blk[k+4] & 0xf) != 0x1)
-									continue;
-								coreid = (blk[k+1] |
-									blk[k+2]<<8) & 0xfff;
-								k += 4;
-								corerev = blk[k+3];
-								continue;
-							}
-							if((blk[k] & 0xf) != 0x5)
-								continue;
-							addr = (blk[k+1]<<8 | blk[k+2]<<16 |
-								blk[k+3]<<24) & ~0xfff;
-							print("sdio: core %#ux rev %d %s %#lux\n",
-								coreid, corerev,
-								blk[k] & 0xc0? "ctl" : "mem",
-								(ulong)addr);
-							USED(w);
-						}
-					}
-				}
-			}
+			sbinit();
 		}
 
 		memset(id53, 0, sizeof id53);
