@@ -138,11 +138,14 @@ wifiwrite(Chan *c, void *a, int n, vlong offset)
 			if(sdiobringup() < 0)
 				error("sdio bring-up failed");
 		}else if(strcmp(cmd, "fw") == 0){
-			if(sdiofwbegin(0) < 0)
+			if(sdiofwbegin(1) < 0)
 				error("cannot start a firmware upload");
 		}else if(strcmp(cmd, "nvram") == 0){
-			if(sdiofwbegin(1) < 0)
+			if(sdiofwbegin(2) < 0)
 				error("cannot start an nvram upload");
+		}else if(strcmp(cmd, "clm") == 0){
+			if(sdiofwbegin(3) < 0)
+				error("cannot start a clm upload");
 		}else if(strcmp(cmd, "end") == 0){
 			if(sdiofwend() < 0)
 				error("upload did not complete");

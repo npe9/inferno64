@@ -10465,3 +10465,44 @@ at best, so if that SSID is 5GHz or the network is WPA3-only, no amount
 of driver work will associate with it.  Nothing measured here can tell
 the difference yet, because the scan does not work \(em which is exactly
 why the scan is worth fixing before anything else.
+.SH
+Why nothing is ever seen: the firmware has no channels
+.P1
+sdio: valid channels -> 0, count 0
+.P2
+.PP
+That is WLC_GET_VALID_CHANNELS succeeding \(em returning 0 \(em and the
+firmware reporting that it has ZERO channels it is permitted to use.  A
+radio with no channels cannot scan, so every scan is refused, while
+every other question still has an answer because nothing else needs a
+channel.  It explains the whole pattern at once: ver, cur_etheraddr,
+country, the security settings, the PSK, UP and GET_CHANNEL all work,
+and only the scan and the association do not.
+.PP
+It also means the repeated 0xfffffffc was the firmware telling the plain
+truth all along, and the effort spent on request formats \(em parameter
+lengths, escan versus WLC_SCAN, UP payloads, the country structure \(em
+was aimed at the wrong thing.  Each of those was a real defect and each
+is fixed, but none of them was the cause.
+.PP
+.B "The cause is a missing CLM blob."
+This firmware is the 2021 Cypress build, 7.45.98, and it carries its
+regulatory tables in a separate file rather than inside the firmware
+image.  Without it there is no channel list at all.  The reference's
+firmware table has no regufile for a 43430 \(em correctly, for the build
+it was written against, which did not need one \(em and that is what
+misled the port.  RPi-Distro does ship one for this board:
+cyfmac43430-sdio.clm_blob, 4733 bytes, with a BLOB magic.
+.PP
+It is loaded through the "clmload" iovar in chunks, each carrying a
+twelve-byte header \(em flag, type, length, crc \(em with the handler
+version in the flag's top nibble and DL_BEGIN and DL_END marking the
+first and last chunk.  That is implemented, behind a "clm" verb on #H,
+and it is NOT yet tested: the board's JTAG debug interface wedged
+(DSCR.ERR=1) while installing the kernel that would have tried it, and
+recovering that needs the board power cycled by hand.
+.PP
+So the next run is the test, and the prediction is specific and
+falsifiable: with the blob loaded, WLC_GET_VALID_CHANNELS should report
+a non-zero count, and a scan should then return the networks that are
+plainly there.

@@ -44,6 +44,8 @@ extern void gpiofsel(int, int);		/* gpiobcm.c */
 extern void gpiopull(int, int);		/* gpiobcm.c: 0 none, 1 down, 2 up */
 extern int mboxgetgpio(int, int*);	/* mailbox.c */
 int sdiocmd52(int, int, int, int);	/* defined below; sdioinit configures the card with it */
+static void put4le(uchar*, u32);	/* defined below, used by the clm loader */
+int sdiosetvar(char*, void*, int);
 extern int mboxsetgpio(int, int);	/* mailbox.c */
 
 extern int mboxgetclock(int, u32*);	/* mailbox.c: firmware clock rate */
@@ -1894,6 +1896,8 @@ static struct {
 	u32	off;		/* next firmware byte */
 	uchar	nv[3072];
 	int	nvlen;
+	uchar	clm[8192];
+	int	clmlen;
 	int	err;
 	int	enabled;
 	int	said;		/* the firmware-ready mailbox seen */
@@ -1931,9 +1935,11 @@ sdiofwbegin(int isnv)
 {
 	if(!fw.up)
 		return -1;
-	fw.mode = isnv? 2 : 1;
+	fw.mode = isnv;			/* 1 firmware, 2 nvram, 3 clm */
 	fw.err = 0;
-	if(isnv)
+	if(isnv == 3)
+		fw.clmlen = 0;
+	else if(isnv == 2)
 		fw.nvlen = 0;
 	else{
 		uchar z[4];
@@ -1957,6 +1963,15 @@ sdiofwdata(uchar *p, int n)
 {
 	if(!fw.up || fw.mode == 0 || fw.err)
 		return -1;
+	if(fw.mode == 3){
+		if(fw.clmlen + n > sizeof fw.clm){
+			fw.err = 1;
+			return -1;
+		}
+		memmove(fw.clm + fw.clmlen, p, n);
+		fw.clmlen += n;
+		return n;
+	}
 	if(fw.mode == 2){
 		if(fw.nvlen + n > sizeof fw.nv){
 			fw.err = 1;
@@ -2031,6 +2046,56 @@ sdiofwend(void)
 
 	if(!fw.up || fw.err)
 		return -1;
+	if(fw.mode == 3){
+		/*
+		 * Hand the regulatory blob to the firmware.
+		 *
+		 * WLC_GET_VALID_CHANNELS answered with a count of ZERO --
+		 * the ioctl succeeding and the firmware saying it has no
+		 * channels it may use.  That is why every scan was refused
+		 * while everything else worked: nothing else needs a
+		 * channel.  This 2021 Cypress build carries its regulatory
+		 * tables in a separate CLM blob rather than in the firmware
+		 * image, and the reference's table predates that -- it has
+		 * no regufile for a 43430, because the build it was written
+		 * against did not need one.
+		 *
+		 * The blob goes in through the "clmload" iovar in chunks,
+		 * each with a 12-byte header: flag, type, length, crc.  The
+		 * flag carries the handler version in its top nibble and
+		 * DL_BEGIN on the first chunk, DL_END on the last.
+		 */
+		static uchar buf[12 + 1400];
+		int off, k;
+		u32 flag;
+
+		if(fw.clmlen == 0)
+			return -1;
+		for(off = 0; off < fw.clmlen; off += k){
+			k = fw.clmlen - off;
+			if(k > 1400)
+				k = 1400;
+			flag = 1 << 12;			/* handler version 1 */
+			if(off == 0)
+				flag |= 2;		/* DL_BEGIN */
+			if(off + k >= fw.clmlen)
+				flag |= 4;		/* DL_END */
+			memset(buf, 0, 12);
+			buf[0] = flag;
+			buf[1] = flag >> 8;
+			buf[2] = 2;			/* DL_TYPE_CLM */
+			put4le(buf + 4, k);
+			memmove(buf + 12, fw.clm + off, k);
+			if(sdiosetvar("clmload", buf, 12 + k) < 0){
+				print("sdio: clmload failed at %d of %d\n",
+					off, fw.clmlen);
+				return -1;
+			}
+		}
+		print("sdio: CLM blob loaded, %d bytes\n", fw.clmlen);
+		fw.mode = 0;
+		return 0;
+	}
 	if(fw.mode == 2){
 		n = condense(fw.nv, fw.nvlen);
 		while(n & 3)
@@ -2536,6 +2601,7 @@ sdioscan(int *nev)
 		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 	};
 	static uchar pkt[4096];
+	int i;
 
 	if(!fw.inited)
 		return -1;
@@ -2568,6 +2634,33 @@ sdioscan(int *nev)
 	 * what is wanted -- the SSID list disappears and the size is just
 	 * 64 + 14 channels * 2 = 92.
 	 */
+	/*
+	 * Ask what channels the firmware thinks it may use.
+	 *
+	 * Only the scan commands are refused; everything else -- ver,
+	 * cur_etheraddr, country, the security settings, the PSK, UP,
+	 * GET_CHANNEL -- works.  A firmware with an empty channel list
+	 * would behave exactly like that: nothing to scan, so the scan is
+	 * refused, while every other question still has an answer.  This
+	 * distinguishes a regulatory or calibration problem from a bug in
+	 * how the scan is being asked for.  WLC_GET_VALID_CHANNELS is 217
+	 * and returns a count followed by that many channel numbers.
+	 */
+	{
+		static uchar cl[256];
+		u32 nc;
+		int k;
+
+		memset(cl, 0, sizeof cl);
+		k = wlcmd(0, 217, nil, 0, cl, sizeof cl);
+		nc = cl[0] | cl[1]<<8 | cl[2]<<16 | cl[3]<<24;
+		print("sdio: valid channels -> %d, count %lud:", k, (ulong)nc);
+		if(k == 0 && nc < 64)
+			for(i = 0; i < nc; i++)
+				print(" %d", cl[4 + i*4]);
+		print("\n");
+	}
+
 	if(wlcmd(1, 50, params + 8, 64 + 14*2, nil, 0) < 0){
 		print("sdio: WLC_SCAN was refused\n");
 		return -1;
