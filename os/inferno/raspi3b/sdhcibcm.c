@@ -2658,6 +2658,28 @@ wlcmdint(int op, int val)
 	return wlcmd(1, op, b, 4, nil, 0);
 }
 
+/*
+ * Set a per-interface (bsscfg) iovar.
+ *
+ * brcmfmac sets wsec, wpa_auth, auth and sup_wpa this way, not as plain
+ * iovars: the name is "bsscfg:<name>" and the buffer carries the
+ * interface index ahead of the value.  A global of the same name is a
+ * DIFFERENT variable -- it sets and reads back happily and configures
+ * nothing for interface 0, which is how sup_wpa looked correct while the
+ * supplicant sat idle.
+ */
+static int
+sdiosetbss(char *name, int val)
+{
+	char nm[32];
+	uchar b[8];
+
+	snprint(nm, sizeof nm, "bsscfg:%s", name);
+	put4le(b, 0);				/* interface index */
+	put4le(b + 4, val);
+	return sdiosetvar(nm, b, sizeof b);
+}
+
 static int
 sdiosetint(char *name, int val)
 {
@@ -3033,17 +3055,19 @@ sdiojoin(char *ssid, char *pass)
 	 * and then nothing happens, with no EAPOL reaching the host
 	 * either.
 	 */
-	{
-		uchar b[8];
-
-		put4le(b, 0);			/* bsscfg index */
-		put4le(b + 4, 1);		/* enable */
-		print("sdio: wsec=4 -> %d, wpa_auth=0x80 -> %d, "
-			"bsscfg:sup_wpa=1 -> %d\n",
-			sdiosetint("wsec", 4),
-			sdiosetint("wpa_auth", 0x80),
-			sdiosetvar("bsscfg:sup_wpa", b, sizeof b));
-	}
+	/*
+	 * All of these per interface, in brcmfmac's order: WPA version,
+	 * open authentication, the cipher, the key-management mode, and
+	 * the supplicant.  Setting wsec and wpa_auth globally -- which is
+	 * what this did -- leaves interface 0 unconfigured, and an
+	 * unconfigured interface associates happily and then has nothing
+	 * to run a handshake with.
+	 */
+	print("sdio: bsscfg auth=%d wsec=%d wpa_auth=%d sup_wpa=%d\n",
+		sdiosetbss("auth", 0),			/* open system */
+		sdiosetbss("wsec", 4),			/* AES_ENABLED */
+		sdiosetbss("wpa_auth", 0x80),		/* WPA2-PSK */
+		sdiosetbss("sup_wpa", 1));		/* in-firmware supplicant */
 	{
 		uchar b[4];
 
@@ -3156,9 +3180,23 @@ sdiojoin(char *ssid, char *pass)
 		 * supplicant is really enabled or whether a data path has
 		 * to be built.
 		 */
+		/*
+		 * Ask the firmware what it thinks, rather than concluding
+		 * from the absence of an event.  GET_BSSID returns
+		 * BCME_NOTASSOCIATED (-17) when there is no association and
+		 * the AP's address when there is; if it answers with an
+		 * address then the association succeeded and only the
+		 * completion event was missed, which is a different bug
+		 * entirely from a handshake that never ran.
+		 */
 		print("sdio: no join event after 20 s; frames since: %d event, "
 			"%d data, last event type %d\n",
 			rx.nevent, rx.ndata, rx.lastetype);
+		memset(bssid, 0, sizeof bssid);
+		i = wlcmd(0, 23, nil, 0, bssid, sizeof bssid);
+		print("sdio: GET_BSSID -> %d, %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux\n",
+			i, bssid[0], bssid[1], bssid[2], bssid[3], bssid[4],
+			bssid[5]);
 		return -1;
 	}
 	if(rx.joinstatus != 1){
@@ -3189,8 +3227,22 @@ sdiojoin(char *ssid, char *pass)
 		fw.joined = 1;
 		return 0;
 	}
-	print("sdio: the join reported success but there is no BSSID\n");
-	return -1;
+	/*
+	 * The event is authoritative; the BSSID readback is a bonus.
+	 *
+	 * E_SET_SSID with status 0 IS the association succeeding -- it
+	 * arrives after E_ASSOC, E_LINK and E_PSK_SUP, which is the
+	 * four-way handshake having run.  Reporting failure because a
+	 * follow-up GET_BSSID went unanswered was believing the weaker
+	 * evidence over the stronger: the control channel stops answering
+	 * once the link is up and data starts flowing, which is a separate
+	 * bug in this reader and not a failure to associate.
+	 */
+	print("sdio: ASSOCIATED with %s (the join event says so; the BSSID "
+		"readback did not answer -- the control channel stalls once "
+		"the link is up)\n", ssid);
+	fw.joined = 1;
+	return 0;
 }
 
 char*

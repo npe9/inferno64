@@ -10766,3 +10766,47 @@ before the join: the PSK itself, the cipher and auth selections, and
 whatever else brcmfmac sets that is still missing here \(em it also
 writes "wpa_auth" per bsscfg, sets "mfp", and issues WLC_DISASSOC before
 a fresh join.  Each is a small experiment; none needs new machinery.
+.SH
+Associated
+.P1
+sdio: event type 3  status 0   E_AUTH, success
+sdio: event type 7  status 0   E_ASSOC, success
+sdio: event type 16 status 0   E_LINK, up
+sdio: event type 46 status 6   E_PSK_SUP
+sdio: event type 1  status 0   E_JOIN, success
+sdio: event type 0  status 0   E_SET_SSID, success
+sdio: ASSOCIATED with GL-BE6500-1f2
+.P2
+.PP
+The Pi's own radio, on a WPA2-PSK network, with the four-way handshake
+run by the firmware's supplicant.  E_PSK_SUP is that handshake; E_JOIN
+and E_SET_SSID with status 0 are the association completing.
+.PP
+.B "What made the difference: the security settings belong to the interface."
+brcmfmac sets auth, wsec, wpa_auth and sup_wpa through
+brcmf_fil_bsscfg_int_set, whose iovar name is "bsscfg:<name>" and whose
+buffer carries the interface index ahead of the value.  This driver was
+setting the plain global iovars of the same names.  They accept the
+write and read back the value, which is exactly why they looked correct
+for so long \(em and they configure nothing for interface 0, so the
+radio associated happily and then had nothing to run a handshake with.
+.PP
+Two things measured and discarded on the way, both recorded because they
+cost time: the AP is plain WPA2 Personal on channel 1, so the WPA3 guess
+was wrong; and associating with WLC_SET_SSID and a join_params, which is
+what brcmfmac does, gets LESS far here than the "join" iovar \(em it
+stops after E_AUTH.
+.PP
+.B "What is still wrong."
+The control channel stops answering once the link is up: GET_BSSID after
+the join times out repeatedly.  The join is reported on the strength of
+the event, which is the stronger evidence \(em E_SET_SSID status 0 is the
+association succeeding, and refusing to believe it because a follow-up
+ioctl went unanswered was preferring the weaker signal.  But the stall is
+real and is the next thing to fix, because the data path needs a control
+channel that keeps working while frames flow.
+.PP
+.B "And then."
+The data channel is already counted but not delivered anywhere.  Binding
+it as an ether device on /net.alt, so that IP runs over the radio, is the
+remaining piece.
