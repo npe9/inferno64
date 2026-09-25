@@ -2711,17 +2711,18 @@ sdiowltx(uchar *pkt, int len)
 	tx[1] = tlen >> 8;
 	tx[2] = ~tlen;
 	tx[3] = (~tlen) >> 8;
-	tx[4] = txseq;
 	tx[5] = 2;			/* channel 2: data */
 	tx[7] = Sdpcmsz;		/* doffset: at the BDC header */
 	tx[Sdpcmsz] = 0x20;		/* BDC: version 2, dataOffset 0 */
 	memmove(tx + Sdpcmsz + 4, pkt, len);
 	qlock(&rx.sdiolock);
+	tx[4] = txseq;			/* stamped under the lock; see wlcmd */
 	st = packetrw(1, tx, tlen);
+	if(st >= 0)
+		txseq++;
 	qunlock(&rx.sdiolock);
 	if(st < 0)
 		return -1;
-	txseq++;
 	return len;
 }
 
@@ -2804,8 +2805,7 @@ wlcmd(int write, int op, void *data, int dlen, void *res, int rlen)
 	pkt[1] = len >> 8;
 	pkt[2] = ~len;
 	pkt[3] = (~len) >> 8;
-	pkt[4] = txseq;
-	pkt[7] = Sdpcmsz;
+	pkt[7] = Sdpcmsz;		/* pkt[4], the sequence, is stamped below */
 	q = pkt + Sdpcmsz;
 	q[0] = op;
 	q[1] = op >> 8;
@@ -2838,15 +2838,29 @@ wlcmd(int write, int op, void *data, int dlen, void *res, int rlen)
 	 * where it matters.
 	 */
 	rx.rspid = -1;
+	/*
+	 * Stamp the sequence number and bump it INSIDE the bus lock.
+	 *
+	 * Doing either outside lets the two senders -- this one and the
+	 * ether device's -- interleave: both stamp N, both send N, and the
+	 * host's idea of the sequence diverges from the firmware's.  That
+	 * is the accounting the credit window rides on, so the symptom
+	 * would be unexplained frame loss whenever anything read wifictl
+	 * or ran a scan while traffic was flowing.  The reference holds its
+	 * packet lock across the write and the increment in both of its
+	 * senders; that is the invariant, not an accident.
+	 */
 	qlock(&rx.sdiolock);
+	pkt[4] = txseq;
 	st = packetrw(1, pkt, len);
+	if(st >= 0)
+		txseq++;
 	qunlock(&rx.sdiolock);
 	if(st < 0){
 		print("sdio: cmd %d could not be sent\n", op);
 		qunlock(&rx);
 		return -1;
 	}
-	txseq++;
 
 	/*
 	 * Sleep until the reader hands the reply over.

@@ -129,7 +129,6 @@ wifitxproc(void *a)
 	Block *b;
 	int i;
 
-	wl.txproc = 1;
 	for(;;){
 		if((b = qbread(edev->oq, ETHERMAXTU + 18)) == nil)
 			continue;
@@ -158,8 +157,15 @@ wifitxproc(void *a)
 static void
 wifiattach(Ether *edev)
 {
+	/*
+	 * Claim the sender here, not inside it.  Setting the flag in the
+	 * kproc lets two attaches arriving before it is scheduled both get
+	 * past this guard, and the two senders would then share the one
+	 * static transmit buffer in sdiowltx.
+	 */
 	if(wl.txproc)
 		return;
+	wl.txproc = 1;
 	kproc("wifitx", wifitxproc, edev, 0);
 }
 
