@@ -10289,3 +10289,45 @@ before the real upload \(em which looked exactly like a hang.
 .B "Next."
 sbenable's HT clock, then the SDPCM and CDC layers to talk to the
 firmware that is now running, then association and the ether binding.
+.SH
+The firmware is running, and the chip says so itself
+.P1
+sdio: ARM started (399344 bytes of firmware at 0x0)
+sdio: HT clock up after 100 ms, Clkcsr 0xd2
+sdio: ENABLED -- function 2 ready, the firmware is running
+up 1 enabled 1 chip 43430 rev 1 ram 524288 loaded 399344 nvram 1121
+.P2
+.PP
+.B "Why this is proof and the previous step was not."
+Everything up to the ARM start could have been done to a chip with 400KB
+of rubbish in its RAM: the writes go through the backplane window, which
+works whether or not the code makes sense.  sbenable is different.  The
+high-throughput clock is not something the host can switch on \(em it is
+requested through Clkcsr and the chip's own ARM has to grant it, which a
+halted or crashed core will not do \(em and SDIO function 2 does not
+exist at all until the firmware creates it.  HTavail came back in 100ms
+and function 2 reported ready, so the code that was uploaded is
+executing.
+.PP
+.B "A warm reboot does not reset the radio, and that broke the second run."
+WL_ON stays high across a kernel reboot, the chip keeps running whatever
+was uploaded, and it is still SELECTED from the previous bring-up.  CMD5
+is only legal in the idle state, so the second boot got a command timeout
+from every CMD5 attempt and the bring-up failed outright \(em which would
+have happened on every reboot after a successful load, and looked exactly
+like the earlier "the radio will not answer" symptom that cost so much
+time.
+.PP
+CMD0 does not reliably reset an SDIO-only card.  The spec's way is a
+CMD52 write of the RES bit to the I/O Abort register, CCCR 0x06, and
+CMD52 carries no relative address so it reaches a card still selected
+from before.  On a cold boot the card is not selected and the write
+simply fails, which is why its result is ignored.  With that in place the
+bring-up works from either state.
+.PP
+.B "What is left is protocol work."
+SDPCM framing and the CDC control channel, to send ioctls to the firmware
+that is now running and read its events; then setting ssid, security and
+passphrase, which the firmware's own supplicant handles; then presenting
+the result as an ether device on /net.alt.  No hardware unknowns remain
+between here and an associated radio.

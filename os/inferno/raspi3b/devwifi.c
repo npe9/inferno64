@@ -29,6 +29,7 @@
  *	cp /n/dos/brcmfmac43430-sdio.txt /dev/wifidata
  *	echo end >/dev/wifictl
  *	echo go >/dev/wifictl
+ *	echo enable >/dev/wifictl
  *
  * That keeps the bulk transfer in the kernel, where the backplane window
  * and the SDIO command layer live, and the file handling in Limbo, where
@@ -41,6 +42,7 @@ extern int	sdiofwbegin(int);
 extern int	sdiofwdata(uchar*, int);
 extern int	sdiofwend(void);
 extern int	sdiofwgo(void);
+extern int	sdioenable(void);
 extern char*	sdiostate(void);
 
 enum {
@@ -131,6 +133,9 @@ wifiwrite(Chan *c, void *a, int n, vlong offset)
 		}else if(strcmp(cmd, "go") == 0){
 			if(sdiofwgo() < 0)
 				error("cannot start the radio's ARM");
+		}else if(strcmp(cmd, "enable") == 0){
+			if(sdioenable() < 0)
+				error("the firmware did not come up");
 		}else
 			error(Ebadctl);
 		return n;

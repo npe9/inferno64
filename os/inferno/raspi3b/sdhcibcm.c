@@ -124,6 +124,7 @@ enum {
 	Cccioenable	= 0x02,
 	Cccioready	= 0x03,
 	Cccintenable	= 0x04,
+	Cccioabort	= 0x06,
 	Fbr1		= 0x100,	/* function 1 base register block */
 	Fbr2		= 0x200,
 	Fbrblksize	= 0x10,		/* offset of block size within an FBR */
@@ -150,6 +151,13 @@ enum {
 	Pullups		= 0x1000f,	/* fn1: chip pull-ups */
 	Gpiopullup	= 0x58,		/* chipcommon */
 	Gpiopulldown	= 0x5c,
+	ForceHT		= 0x02,
+	ReqHT		= 0x10,
+	Intmask		= 0x24,		/* sdio core registers */
+	Sbmboxdata	= 0x48,
+	Fcchange	= 1<<5,
+	FrameInt	= 1<<6,
+	MailboxInt	= 1<<7,
 	Sbwsize		= 0x8000,	/* backplane window size */
 	Sbaddr		= 0x1000a,	/* fn1: backplane window address, 3 bytes */
 	Enumbase	= 0x18000000,	/* SI enumeration space */
@@ -954,6 +962,27 @@ sdioinit(void)
 	 * cycles.
 	 */
 	delay(150);
+	/*
+	 * Reset the card's I/O side before anything else.
+	 *
+	 * A warm reboot does not reset the radio: WL_ON stays high, the
+	 * chip keeps running whatever firmware was uploaded, and it is
+	 * still SELECTED from the previous bring-up.  CMD5 is only legal
+	 * in the idle state, so on the second boot it comes back with a
+	 * command timeout and the whole bring-up fails -- which is
+	 * exactly what happened, and it would happen on every reboot
+	 * after a successful load.
+	 *
+	 * CMD0 does not reliably reset an SDIO-only card; the spec's way
+	 * is a CMD52 write of the RES bit to the I/O Abort register, CCCR
+	 * 0x06.  CMD52 carries no relative address, so it reaches a card
+	 * that is still selected from before.  On a cold boot the card is
+	 * not selected and this write simply fails, which is why its
+	 * result is ignored.
+	 */
+	sdiocmd52(0, Cccioabort, 1, 1<<3);
+	delay(2);
+
 	if(sdhcicmd(c, 0, 0, Respnone) < 0){		/* GO_IDLE */
 		print("sdio: CMD0 (GO_IDLE) not accepted\n");
 		return -1;
@@ -1850,6 +1879,7 @@ static struct {
 	uchar	nv[3072];
 	int	nvlen;
 	int	err;
+	int	enabled;
 } fw;
 
 int
@@ -2021,14 +2051,73 @@ sdiofwgo(void)
 	return 0;
 }
 
+/*
+ * Bring the running firmware's side of the link up: the high-throughput
+ * clock, the mailbox protocol version, the interrupts the firmware will
+ * raise, and SDIO function 2, which is the data path for packets.
+ *
+ * THIS IS THE TEST THAT THE FIRMWARE IS ALIVE.  The HT clock is not
+ * something the host can switch on by itself -- the chip's own ARM has
+ * to answer the request -- and function 2 does not exist until the
+ * firmware creates it.  Up to here everything could have been done to a
+ * chip with 400KB of rubbish in its RAM; if HTavail comes back and
+ * function 2 reports ready, the code that was uploaded is running.
+ */
+int
+sdioenable(void)
+{
+	int i, cc;
+
+	if(!fw.up)
+		return -1;
+	sdiocmd52(1, Clkcsr, 1, 0);
+	delay(1);
+	sdiocmd52(1, Clkcsr, 1, ReqHT);
+	for(i = 0; i < 50; i++){
+		cc = sdiocmd52(1, Clkcsr, 0, 0);
+		if(cc >= 0 && (cc & HTavail))
+			break;
+		delay(100);
+	}
+	if(i == 50){
+		print("sdio: no HT clock: Clkcsr %#ux -- the firmware is not "
+			"running\n", sdiocmd52(1, Clkcsr, 0, 0));
+		return -1;
+	}
+	sdiocmd52(1, Clkcsr, 1, sdiocmd52(1, Clkcsr, 0, 0) | ForceHT);
+	delay(10);
+	print("sdio: HT clock up after %d ms, Clkcsr %#ux\n", i * 100,
+		sdiocmd52(1, Clkcsr, 0, 0));
+
+	sbwindow(sb.sdregs);
+	cfgwritel(sb.sdregs + Sbmboxdata, 4 << 16);	/* protocol version 4 */
+	cfgwritel(sb.sdregs + Intmask, FrameInt | MailboxInt | Fcchange);
+
+	sdiocmd52(0, Cccioenable, 1, sdiocmd52(0, Cccioenable, 0, 0) | 1<<2);
+	for(i = 0; i < 10; i++){
+		if(sdiocmd52(0, Cccioready, 0, 0) & 1<<2)
+			break;
+		delay(100);
+	}
+	if(i == 10){
+		print("sdio: function 2 never became ready (ioready %#ux)\n",
+			sdiocmd52(0, Cccioready, 0, 0));
+		return -1;
+	}
+	sdiocmd52(0, Cccintenable, 1, (1<<1) | (1<<2) | 1);
+	print("sdio: ENABLED -- function 2 ready, the firmware is running\n");
+	fw.enabled = 1;
+	return 0;
+}
+
 char*
 sdiostate(void)
 {
 	static char buf[128];
 
 	snprint(buf, sizeof buf,
-		"up %d chip %d rev %d ram %lud at %#lux loaded %lud nvram %d\n",
-		fw.up, sb.chipid, sb.chiprev, (ulong)sb.socramsize,
+		"up %d enabled %d chip %d rev %d ram %lud at %#lux loaded %lud nvram %d\n",
+		fw.up, fw.enabled, sb.chipid, sb.chiprev, (ulong)sb.socramsize,
 		(ulong)sb.rambase, (ulong)fw.off, fw.nvlen);
 	return buf;
 }
