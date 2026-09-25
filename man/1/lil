@@ -252,8 +252,36 @@ On the
 .I stm32f407
 kernel under
 .IR qemu (1),
-which is the machine it is for: it loads from flash, prints its banner
-and runs statements.  Its allocation is flat \- twenty-iteration loops
+which is the machine it is for, by
+.BR tools/radio/liltest.sh :
+31 cases, all passing.  Every statement form and every builtin that this
+board can reach, four negative controls \- an
+.B else
+after a taken
+.BR if ,
+both untaken branches, and a
+.B read
+through a closed descriptor \- and three errors that must be reported
+rather than swallowed.  A case that prints nothing counts as a failure,
+so a hang or a crash cannot read as a pass.
+.PP
+.B create
+and a file written and read back are
+.I not
+covered there, because this board has nowhere to write: its root is
+devroot, served read-only out of flash, and nothing binds a ram file
+system over it.  The shell gets
+.B "permission denied"
+for a redirection into
+.BR /tmp .
+Those paths are covered under the host
+.I emu
+instead, and
+.B write
+is exercised on the board against the radio's ctl file, which is the
+write that matters here anyway.
+.PP
+It loads from flash, prints its banner and runs statements.  Its allocation is flat \- twenty-iteration loops
 run four times over, with
 .B /dev/memory
 read between them, left the heap's cursize unmoved at 50048 bytes and its
