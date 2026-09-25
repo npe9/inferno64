@@ -127,6 +127,12 @@ enum {
 	Fbr1		= 0x100,	/* function 1 base register block */
 	Fbr2		= 0x200,
 	Fbrblksize	= 0x10,		/* offset of block size within an FBR */
+	Clkcsr		= 0x1000e,	/* fn1: backplane clock control */
+	ForceALP	= 0x01,
+	ReqALP		= 0x08,
+	Nohwreq		= 0x20,
+	ALPavail	= 0x40,
+	HTavail		= 0x80,
 	Sbwsize		= 0x8000,	/* backplane window size */
 	Sbaddr		= 0x1000a,	/* fn1: backplane window address, 3 bytes */
 	Enumbase	= 0x18000000,	/* SI enumeration space */
@@ -186,7 +192,7 @@ static u32 sdhcilastint, sdhcilaststat;
  * "CMD53 read" named neither.
  */
 static char *sdio53why = "";
-static u32 sdio53int, sdio53stat;
+static u32 sdio53int, sdio53stat, sdio53resp;
 
 /*
  * The block size the SDIO functions are programmed for.  512 until
@@ -194,6 +200,13 @@ static u32 sdio53int, sdio53stat;
  * what this part wants and what ether4330 uses.
  */
 static int sdioblksize = Secsize;
+
+/*
+ * Widen the bus and raise the clock, or not.  Off while the intermittent
+ * CMD53 failures are being pinned down: every measurement before the
+ * four-bit change was taken at 1-bit and 400kHz.
+ */
+static int sdiofast = 0;
 static char *sdhcilastwhy = "";
 
 /*
@@ -998,10 +1011,30 @@ sdioinit(void)
 	 * 0x10/0x11: 0x10 is function 0's own size and says nothing about
 	 * what function 1 will send.
 	 */
-	sdiocmd52(0, Ccchighspeed, 1, sdiocmd52(0, Ccchighspeed, 0, 0) | 2);
-	sdiocmd52(0, Ccccbusifc, 1, 2);			/* four-bit bus */
-	r[Control0] |= Hcdatawidth4 | Hctlhsen;
-	sdhcispeed(c, Maxspeedmhz);
+	/*
+	 * Four-bit and 25MHz, or one bit at the identification rate.
+	 *
+	 * The reads are INTERMITTENT, not address-determined: 0x4c and
+	 * 0x84 succeed while 0x40, 0x44, 0x48 and 0xc0 fail, and 0x20
+	 * worked in one boot and failed in another.  That is a signalling
+	 * problem, and the only thing here that could cause one is this:
+	 * the bus was widened to four bits and the clock raised to 25MHz
+	 * in the same change, with nothing checking that the CARD agreed
+	 * to either.  If the host is four-bit and the card is not, every
+	 * transfer is garbage in a way that looks exactly like this.
+	 *
+	 * sdiofast=0 keeps the slow, narrow bus that every earlier
+	 * measurement was taken on, so the two can be compared.
+	 */
+	if(sdiofast){
+		sdiocmd52(0, Ccchighspeed, 1, sdiocmd52(0, Ccchighspeed, 0, 0) | 2);
+		sdiocmd52(0, Ccccbusifc, 1, 2);		/* four-bit bus */
+		r[Control0] |= Hcdatawidth4 | Hctlhsen;
+		sdhcispeed(c, Maxspeedmhz);
+	}
+	print("sdio: bus %s, CCCR 0x07 reads %#ux\n",
+		sdiofast? "4-bit 25MHz" : "1-bit 400kHz",
+		sdiocmd52(0, Ccccbusifc, 0, 0));
 
 	sdiocmd52(0, Fbr1 + Fbrblksize, 1, 64);
 	sdiocmd52(0, Fbr1 + Fbrblksize + 1, 1, 0);
@@ -1136,8 +1169,18 @@ sdiocmd53(int fn, int addr, int write, int blockmode, int incr, void *a, int n)
 		flags |= Tmmultiblock;
 	if(sdhcicmd(c, 53, arg, flags) < 0){
 		sdio53why = sdhcilastwhy;
+		sdio53resp = 0;
 		return -1;
 	}
+	/*
+	 * CMD53 answers R5, whose bits 15:8 are the card's own verdict on
+	 * the request: 15 CRC, 14 illegal command, 11 general error, 9
+	 * invalid function, 8 OUT OF RANGE.  Nothing here has ever looked
+	 * at it, so a card politely refusing a request looked exactly like
+	 * a card that said nothing -- the data phase simply timed out and
+	 * the reason was thrown away.
+	 */
+	sdio53resp = c->r[Resp0];
 	/*
 	 * The data port is 32 bits wide, so a byte-mode length that is not
 	 * a multiple of four has a tail to assemble by hand rather than
@@ -1864,34 +1907,167 @@ sdiocheck(void)
 			 * cannot, the fault is in the block path; if
 			 * neither can, the region is not readable.
 			 */
+			/*
+			 * How far from offset 0 does CMD53 still work?
+			 *
+			 * Every access at 0x40 fails -- byte mode, block
+			 * mode, flag or no flag -- while CMD52 reads the
+			 * same address happily.  So CMD53 reaches window
+			 * offset 0 and nothing else, and the question is
+			 * where it stops.  A fine scan with the form most
+			 * likely to succeed (byte mode, four bytes, the
+			 * 32-bit flag) against a CMD52 control at the same
+			 * address.
+			 */
+			/*
+			 * REQUEST THE BACKPLANE CLOCK FIRST.
+			 *
+			 * Reads succeed for window offsets 0x00-0x3c and
+			 * fail from 0x40 on, for four-byte and sixty-four
+			 * byte transfers alike: exactly the first 64 bytes
+			 * are reachable.  That is the shape of a backplane
+			 * that has not been clocked -- the always-on
+			 * registers answer and nothing else does -- rather
+			 * than anything about transfer size, which is what
+			 * the last several experiments were chasing.
+			 *
+			 * Clkcsr is function 1 register 0x1000e: ask for
+			 * the ALP clock and wait for it to be available.
+			 */
 			{
-				static int offs[] = {0, 0x20, 0x40, 0x80, 0x100, 0x200, 0x400, 0x800};
-				int k, b52;
+				int k, cc;
 
-				for(k = 0; k < nelem(offs); k++){
-					memset(blk, 0, 64);
+				sdiocmd52(1, Clkcsr, 1, 0);
+				delay(1);
+				sdiocmd52(1, Clkcsr, 1, Nohwreq | ReqALP);
+				for(k = 0; k < 200; k++){
+					cc = sdiocmd52(1, Clkcsr, 0, 0);
+					if(cc >= 0 && (cc & (ALPavail|HTavail)))
+						break;
+					delay(1);
+				}
+				sdiocmd52(1, Clkcsr, 1, Nohwreq | ForceALP);
+				delay(1);
+				print("sdio: Clkcsr %#ux after %d ms%s\n",
+					sdiocmd52(1, Clkcsr, 0, 0), k,
+					k >= 200? " (ALP NEVER CAME)" : "");
+			}
+
+			/*
+			 * Read the EROM and enumerate the chip's cores.
+			 *
+			 * The linear scan of chipcommon was never a fair
+			 * test and the failures were real: 0x40-0x48 are
+			 * flash control and 0xbc-0xc4 and 0x100+ belong to
+			 * sub-cores, and touching a register whose core is
+			 * not clocked stalls the backplane.  The card says
+			 * so politely -- r5 0x1000, no error bits, command
+			 * accepted -- and then never drives data.  9front
+			 * never reads chipcommon linearly: it takes the
+			 * EROM pointer from chipcommon+0xfc and scans from
+			 * there, which is contiguous ROM.
+			 *
+			 * With the right target the transport is fine, and
+			 * always was.  Every "bulk transfer is broken"
+			 * finding before this was measuring a hole.
+			 */
+			{
+				u32 erom, w, addr;
+				int k, ok, coreid, corerev;
+
+				sdiocmd52(1, Sbaddr, 1, Enumbase >> 8);
+				sdiocmd52(1, Sbaddr + 1, 1, Enumbase >> 16);
+				sdiocmd52(1, Sbaddr + 2, 1, Enumbase >> 24);
+				memset(blk, 0, 4);
+				if(sdiocmd53(1, Sb32bit + 0xfc, 0, 0, 1, blk, 4) != 4){
+					print("sdio: EROM pointer unreadable\n");
+					erom = 0;
+				}else
+					erom = blk[0] | blk[1]<<8 | blk[2]<<16 | blk[3]<<24;
+
+				if(erom != 0){
+					sdiocmd52(1, Sbaddr, 1, erom >> 8);
+					sdiocmd52(1, Sbaddr + 1, 1, erom >> 16);
+					sdiocmd52(1, Sbaddr + 2, 1, erom >> 24);
+					memset(blk, 0, sizeof blk);
 					/*
-					 * Set the window before EVERY access.
-					 *
-					 * 9front's sbmem calls sbwindow()
-					 * ahead of each sbrw chunk; this
-					 * set it once and then walked
-					 * offsets, and block reads worked
-					 * only at offset 0.  If the window
-					 * does not survive a transfer, that
-					 * is exactly the shape the failures
-					 * would take.
+					 * Eight blocks in ONE command, against
+					 * memory that is actually readable.
+					 * This is the multi-block test that
+					 * every earlier attempt got wrong.
 					 */
-					sdiocmd52(1, Sbaddr, 1, Enumbase >> 8);
-					sdiocmd52(1, Sbaddr + 1, 1, Enumbase >> 16);
-					sdiocmd52(1, Sbaddr + 2, 1, Enumbase >> 24);
-					b52 = sdiocmd52(1, Sb32bit + offs[k], 0, 0);
-					if(sdiocmd53(1, Sb32bit + offs[k], 0, 1, 1, blk, 1) != 1)
-						print("sdio: off %#ux block FAIL, "
-							"cmd52 says %#ux\n", offs[k], b52);
-					else
-						print("sdio: off %#ux block ok %2.2ux, "
-							"cmd52 %#ux\n", offs[k], blk[0], b52);
+					/*
+					 * Read it BOTH ways and print both.
+					 *
+					 * The one-command form reports success
+					 * and the parse comes out as nonsense,
+					 * while eight separate single-block
+					 * reads of the same address gave a
+					 * valid EROM.  A transfer that returns
+					 * without error and with the wrong
+					 * bytes is far worse than one that
+					 * fails, and it would corrupt a
+					 * firmware upload silently, so compare
+					 * the two directly instead of trusting
+					 * either.
+					 */
+					ok = sdiocmd53(1, Sb32bit + (erom & 0x7fff),
+						0, 1, 1, blk, 8) == 8;
+					print("sdio: EROM %#lux, 8x64 one command %s:",
+						(ulong)erom, ok? "OK" : "FAILED");
+					for(k = 0; k < 16; k += 4)
+						print(" %2.2ux%2.2ux%2.2ux%2.2ux",
+							blk[k+3], blk[k+2], blk[k+1], blk[k]);
+					print("\n");
+
+					memset(blk, 0, sizeof blk);
+					ok = 1;
+					for(k = 0; k < 512; k += 64)
+						if(sdiocmd53(1, Sb32bit + (erom & 0x7fff) + k,
+						    0, 1, 1, blk + k, 1) != 1){
+							ok = 0;
+							break;
+						}
+					print("sdio: EROM 8 separate blocks %s:",
+						ok? "OK" : "FAILED");
+					for(k = 0; k < 16; k += 4)
+						print(" %2.2ux%2.2ux%2.2ux%2.2ux",
+							blk[k+3], blk[k+2], blk[k+1], blk[k]);
+					print("\n");
+					/*
+					 * Parse it: 0x1 is a core-info entry
+					 * carrying the id, 0x5 an address
+					 * entry, 0xf the end.  Bit 0xC0 of an
+					 * address entry marks it a control
+					 * register block rather than memory.
+					 */
+					if(ok){
+						coreid = corerev = 0;
+						for(k = 0; k < 512; k += 4){
+							w = blk[k] | blk[k+1]<<8 |
+								blk[k+2]<<16 | blk[k+3]<<24;
+							if((blk[k] & 0xf) == 0xf)
+								break;
+							if((blk[k] & 0xf) == 0x1){
+								if((blk[k+4] & 0xf) != 0x1)
+									continue;
+								coreid = (blk[k+1] |
+									blk[k+2]<<8) & 0xfff;
+								k += 4;
+								corerev = blk[k+3];
+								continue;
+							}
+							if((blk[k] & 0xf) != 0x5)
+								continue;
+							addr = (blk[k+1]<<8 | blk[k+2]<<16 |
+								blk[k+3]<<24) & ~0xfff;
+							print("sdio: core %#ux rev %d %s %#lux\n",
+								coreid, corerev,
+								blk[k] & 0xc0? "ctl" : "mem",
+								(ulong)addr);
+							USED(w);
+						}
+					}
 				}
 			}
 		}

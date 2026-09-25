@@ -10120,3 +10120,62 @@ brcmfmac43430-sdio.bin and its nvram are fetched and staged \(em and
 9front's ether4330.c is available as the reference for the port.  The
 one thing in the way is the thing that has been in the way all along,
 and it is smaller and better described than it was, but it is not done.
+.SH
+Retraction: bulk transfer was never broken, and the cores enumerate
+.PP
+.B "The previous section is wrong and this one supersedes it."
+It concluded that bulk transfer did not work and that Wi-Fi was not
+close.  Both claims were mistaken, and the mistake was the same one
+made three times before in this file: judging the transport against an
+address that does not support the access.
+.PP
+Chipcommon is registers with holes in it.  Offsets 0x40-0x48 are the
+flash control registers, 0xbc-0xc4 and 0x100 upward belong to sub-cores,
+and touching a register whose core is not clocked stalls the backplane.
+The card is perfectly polite about it \(em CMD53 returns r5 0x1000, no
+error bits, the command accepted \(em and then never drives data.  Read
+linearly, that looks exactly like a transport that cannot move more than
+64 bytes, and the reads that appeared \fIintermittent\fP were simply the
+holes: 0x4c and 0x84 answer, 0x40 and 0xc0 do not.
+.PP
+9front never reads chipcommon linearly.  sbinit takes the EROM pointer
+from chipcommon+0xfc and corescan reads from THERE, which is contiguous
+ROM.  Pointed at the right address the transport is perfect:
+.P1
+EROM 0x18108000, 8x64 one command OK: 4bf80001 31004211 00000003 18000005
+EROM 8 separate blocks    OK: 4bf80001 31004211 00000003 18000005
+.P2
+512 bytes in a single CMD53 of eight blocks, byte-identical to the same
+512 bytes read as eight separate single-block commands.  Multi-block
+works, incrementing addresses work, and the single-block workaround is
+not needed.
+.PP
+.B "The chip enumerates."
+Parsing that EROM the way corescan does gives every core, with
+plausible revisions:
+.P1
+core 0x800 rev 49  chipcommon  mem 0x18000000  ctl 0x18100000
+core 0x812 rev 39  d11 (WLAN)  mem 0x18001000  ctl 0x18101000
+core 0x829 rev 21  SDIO        mem 0x18002000  ctl 0x18102000
+core 0x82a rev 9   ARMcm3      mem 0x18003000  ctl 0x18103000
+core 0x80e rev 22  SOCRAM      mem 0x18004000  ctl 0x18104000
+                               RAM at 0x0, 0x10000000, 0x1e000000
+.P2
+That is armcore, armctl, armregs, socramctl, socramregs, socramrev,
+d11ctl, sdregs and chipcommon \(em everything sbinit needs.  SOCRAM
+revision 22 is above the rev-7 floor and is not 12, so the supported
+ramscan path applies.
+.PP
+.B "What the ALP clock request did and did not do."
+Clkcsr (function 1 register 0x1000e) is now asked for the ALP clock
+before backplane access, and it comes back available immediately \(em
+0x61, which is ALPavail with Nohwreq and ForceALP.  It was added on a
+wrong theory (that only the first 64 bytes were reachable because the
+backplane was unclocked) and it did not change any read, but it is what
+the reference does and belongs there.
+.PP
+.B "Next, and now genuinely next rather than blocked."
+sbinit's remaining steps: halt the ARM core, reset the d11 core, then
+ramscan for the SOCRAM banks.  After that the firmware upload, which has
+its blob staged and a transport now known to carry 512 bytes at a time
+correctly.
