@@ -86,6 +86,7 @@ int		devstat(Chan*, uchar*, int, Dirtab*, int, Devgen*);
 Walkqid*	devwalk(Chan*, Chan*, char**, int, Dirtab*, int, Devgen*);
 int		devwstat(Chan*, uchar*, int);
 void		disinit(void*);
+void		minshinit(void);
 void		disfault(void*, char*);
 void		drawactive(int);
 void		drawcmap(void);
