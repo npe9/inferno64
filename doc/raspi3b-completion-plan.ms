@@ -11364,3 +11364,62 @@ among them.  The name appears if and only if the board is transmitting.
 Advertising is left off by default.  It is one write to turn on, and a
 board that broadcasts its presence to everything in radio range is a
 decision for whoever owns the board rather than a sensible default.
+.NH 1
+Powering a thing on is not resetting it, twice
+.PP
+The board stopped enumerating its USB hub.  Two kernels in a row came up
+with
+.CW "usbdwc: ep2.0 error intr 00000082"
+\(em CHHLTD and XACTERR \(em then
+.CW "usbd: ep1.0: port 1: set address: i/o error" ,
+and
+.CW ETHER-NONE :
+no hub, so no LAN9514 behind it, so no network and no remote command
+poller.
+.PP
+The first suspect was the change in hand, and the A/B said no: reverting
+it and rebuilding produced a kernel that failed in exactly the same way.
+Two different binaries failing identically is what says the fault is not
+in either of them.  What did fix it was
+.CW ^R
+on the console \(em
+.CW archreboot() ,
+the PM watchdog \(em which unlike a JTAG kernel load re-runs the
+VideoCore firmware and reinitialises the GPIO expander.
+.PP
+.B "Which names the cause."
+The LAN9514 is a USB hub with an ethernet function behind it, and its
+reset line is LAN_RUN, line 3 of the expander the ARM can only reach
+through the mailbox.  Nothing here had ever driven it.  A core reset
+resets the
+.I controller ;
+the device on the other end of the wire goes on believing it still holds
+the address it was given, and after enough JTAG loads it stops answering
+at all.  So
+.CW usbdwc.c
+now drives LAN_RUN low, waits, and drives it high before touching the
+core, which does for the hub what the reboot did.
+.PP
+Tested in the state that produced the fault rather than on a clean board:
+with the hub wedged and two kernels having just failed in it, the
+patched kernel was JTAG-loaded and came up
+.CW ETHER-DHCP-OK
+with no firmware reboot at all.
+.PP
+This is the same lesson as
+.CW BT_ON
+in
+.CW btbcm.c ,
+on a different line of the same expander, found the same afternoon.
+Both times the driver asserted the line it wanted and never released it;
+both times the device survived every reboot in whatever state it was in;
+and both times the symptom was a peripheral that had worked for weeks
+suddenly not answering, with nothing in the software to blame.  Anything
+behind that expander needs a cycle, not an assertion.
+.PP
+It also explains something about this rig that had been put down to bad
+luck: a JTAG kernel load is
+.I not
+a reset.  It is the fastest way to try a kernel and it leaves every
+peripheral exactly as the last one left it, which is a good bargain only
+as long as the drivers know it.

@@ -48,6 +48,8 @@ enum
 	Busalias	= 0xC0000000,		/* bus-master view of ARM RAM */
 	Cachelinesz	= 64,			/* Cortex-A53 D-cache line */
 	PowerUsb	= 3,			/* mailbox power-domain id */
+	Lanrunpin	= 131,			/* expander line 3: LAN_RUN,
+						 * the LAN9514's reset */
 
 	Compspins	= 200,		/* microseconds to spin for a completion */
 	Enabledelay	= 50,
@@ -106,6 +108,7 @@ static int debug = 0;
 static char Ebadlen[] = "bad usb request length";
 
 extern int mboxsetpower(int, int);	/* mailbox.c: firmware power domain */
+extern int mboxsetgpio(int, int);	/* mailbox.c: the VideoCore's expander */
 
 /*
  * The controller is a bus master; it sees ARM RAM through the same
@@ -1106,6 +1109,36 @@ init(Hci *hp)
 		print("DWC-POWER-FAIL\n");
 	else
 		print("DWC-POWER-OK\n");
+
+	/*
+	 * Reset the hub, not just the controller.
+	 *
+	 * The LAN9514 on a Pi 3B is a USB hub with an ethernet function
+	 * behind it, and its reset line is LAN_RUN -- line 3 of the
+	 * VideoCore's GPIO expander, which the ARM cannot reach except
+	 * through the mailbox.  Nothing here ever drove it, so the hub
+	 * kept whatever state the last kernel left it in: a core reset
+	 * resets the controller, and the device on the other end of the
+	 * wire goes on believing it still has the address it was given.
+	 *
+	 * That is not theoretical and it cost an afternoon.  Loading
+	 * kernels over JTAG does not reset the board, so after enough of
+	 * them the hub stopped answering -- "ep2.0 error intr 00000082"
+	 * (CHHLTD|XACTERR) and then "port 1: set address: i/o error" --
+	 * and the board came up with no ethernet at all.  Two different
+	 * kernels failed identically, which is what said it was not the
+	 * software; a full PM-watchdog reboot, which re-runs the firmware
+	 * and reinitialises the expander, fixed it every time.  This does
+	 * for the hub what that reboot did, so a JTAG-loaded kernel starts
+	 * from the same place a cold one does.
+	 *
+	 * It is the same lesson as BT_ON in btbcm.c, on a different line
+	 * of the same expander: powering a thing on is not resetting it.
+	 */
+	mboxsetgpio(Lanrunpin, 0);
+	tsleep(&up->sleep, return0, 0, 20);
+	mboxsetgpio(Lanrunpin, 1);
+	tsleep(&up->sleep, return0, 0, 50);
 
 	for(i = 0; i < 100000; i++){
 		if(r->grstctl & Ahbidle)

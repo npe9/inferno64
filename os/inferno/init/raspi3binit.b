@@ -1456,6 +1456,9 @@ usbcheck()
 # firmware push must not run at the same time as the controller's
 btdone := 0;
 
+# and when wificheck has, for the namespace reason below
+wifidone := 0;
+
 btcheck()
 {
 	#
@@ -1529,11 +1532,13 @@ wificheck()
 	}
 	if(cfg == nil){
 		sys->print("WIFI-NONE (no /n/dos/wifi.cfg)\n");
+		wifidone = 1;
 		return;
 	}
 	(nt, toks) := sys->tokenize(cfg, " \t\r\n");
 	if(nt < 2){
 		sys->print("WIFI-NONE (wifi.cfg is not 'ssid passphrase')\n");
+		wifidone = 1;
 		return;
 	}
 	ssid := hd toks;
@@ -1547,6 +1552,7 @@ wificheck()
 	#
 	if(sys->bind("#H", "/dev", Sys->MAFTER) < 0){
 		sys->print("WIFI-NONE (cannot bind #H: %r)\n");
+		wifidone = 1;
 		return;
 	}
 	#
@@ -1571,10 +1577,12 @@ wificheck()
 	ctl := sys->open("/dev/wifictl", Sys->OWRITE);
 	if(ctl == nil){
 		sys->print("WIFI-NONE (no /dev/wifictl: %r)\n");
+		wifidone = 1;
 		return;
 	}
 	if(sys->fprint(ctl, "bringup") < 0){
 		sys->print("WIFI-FAIL bringup: %r\n");
+		wifidone = 1;
 		return;
 	}
 	#
@@ -1584,20 +1592,25 @@ wificheck()
 	#
 	if(wifiblob(ctl, "fw", "/n/dos/brcmfw.bin") < 0 ||
 	   wifiblob(ctl, "nvram", "/n/dos/brcmnv.txt") < 0)
+		wifidone = 1;
 		return;
 	if(sys->fprint(ctl, "go") < 0 || sys->fprint(ctl, "enable") < 0){
 		sys->print("WIFI-FAIL start: %r\n");
+		wifidone = 1;
 		return;
 	}
 	if(wifiblob(ctl, "clm", "/n/dos/brcmclm.bin") < 0)
+		wifidone = 1;
 		return;
 	if(sys->fprint(ctl, "init") < 0){
 		sys->print("WIFI-FAIL init: %r\n");
+		wifidone = 1;
 		return;
 	}
 	sys->print("WIFI-FW-OK\n");
 	if(sys->fprint(ctl, "join %s %s", ssid, pass) < 0){
 		sys->print("WIFI-FAIL join %s: %r\n", ssid);
+		wifidone = 1;
 		return;
 	}
 	sys->print("WIFI-JOINED %s\n", ssid);
@@ -1613,6 +1626,7 @@ wificheck()
 	#
 	if(sys->bind("#I1", "/net.wifi", Sys->MREPL) < 0){
 		sys->print("WIFI-FAIL bind #I1: %r\n");
+		wifidone = 1;
 		return;
 	}
 	# As with the wired interface, the clone fd IS the interface: hold
@@ -1620,6 +1634,7 @@ wificheck()
 	cfd := sys->open("/net.wifi/ipifc/clone", Sys->ORDWR);
 	if(cfd == nil || sys->fprint(cfd, "bind ether #l0/ether0") < 0){
 		sys->print("WIFI-FAIL bind ether: %r\n");
+		wifidone = 1;
 		return;
 	}
 	ipctls = cfd :: ipctls;
@@ -1628,7 +1643,8 @@ wificheck()
 		dhcpclient = load Dhcpclient Dhcpclient->PATH;
 		if(dhcpclient == nil){
 			sys->print("WIFI-FAIL load dhcpclient: %r\n");
-			return;
+			wifidone = 1;
+		return;
 		}
 		dhcpclient->init();
 	}
@@ -1646,10 +1662,12 @@ wificheck()
 		"#l0/ether0/addr", cfg2, nil);
 	if(err != nil || cfg2 == nil || cfg2.ip == nil){
 		sys->print("WIFI-DHCP-FAIL %s\n", err);
+		wifidone = 1;
 		return;
 	}
 	sys->print("WIFI-DHCP-OK ip=%s gw=%s\n", cfg2.ip, cfg2.ipgw);
 	lease = nil;
+	wifidone = 1;
 }
 
 #
@@ -2930,15 +2948,30 @@ remotecmd()
 	# whose Bluetooth was up and serving.  A snapshot is only as good
 	# as its timing, which is the second time that has cost something
 	# here.
-	for(w := 0; w < 180; w++){
-		if(kudone && netdone && btdone)
+	#
+	# wifidone as well, and this is the THIRD time a namespace
+	# snapshot taken too early has cost something here -- /net for the
+	# wired interface, /n/bt for btfs, and now /net.wifi, which the
+	# poller saw as an empty directory on a board whose radio was
+	# carrying traffic.  The pattern is always the same: this process
+	# forks its namespace once and keeps it, so anything mounted after
+	# that moment does not exist for it, ever.  Waiting for each thing
+	# by name is what is done here because each thing is bounded and
+	# says so when it fails; it is not a general answer, and a general
+	# answer (mntgen over the mount points, or forking later) is worth
+	# having if there is a fourth.
+	#
+	for(w := 0; w < 240; w++){
+		if(kudone && netdone && btdone && wifidone)
 			break;
 		sys->sleep(1000);
 	}
 	if(!netdone)
 		sys->print("RCMD-NONET no interface after 180 s; dialling anyway\n");
 	if(!btdone)
-		sys->print("RCMD-NOBT bluetooth not up after 180 s; going on\n");
+		sys->print("RCMD-NOBT bluetooth not up after 240 s; going on\n");
+	if(!wifidone)
+		sys->print("RCMD-NOWIFI radio not up after 240 s; going on\n");
 	#
 	# A PRIVATE namespace, from here on.
 	#
