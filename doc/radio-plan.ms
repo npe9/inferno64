@@ -2372,6 +2372,45 @@ back its own opinion; only a zero beat against NIST reads back the
 truth, and no part of this bench could do that except a radio and a
 person listening to it.
 .PP
+WHAT IS ACTUALLY ON THIS BAND, WITH THE CONTROLS TO SAY SO.
+.PP
+Thirty sweeps of 902 to 928MHz with the calibrated instrument:
+.DS
+.CW "     at MHz    width    peak    mean    p-m   seen"
+.CW "   909.4699     231k   -71.0   -92.2   21.1   1/30"
+.CW "   919.1982     174k   -78.0   -93.0   15.1   1/30"
+.CW "   915.7238     405k   -78.0   -92.7   14.7   1/30"
+.CW "   905.0690     116k   -81.0   -93.4   12.3   1/30"
+.CW "   903.2160     174k   -82.0   -92.1   10.1   1/30"
+.DE
+Every one wide, strong, twenty dB over its own mean, and seen in
+exactly one sweep of thirty.  A continuous carrier would be thirty of
+thirty with its peak at its mean.  That is one frequency hopper and
+nothing else in the band clears the floor.
+.PP
+Zero span on 909.470 for 150 seconds, which listens for 2.8 of them,
+catches two bursts: 3267us at \-61.5dBm and 1933us at \-66.0, against a
+\-93 floor.  Dwelling sees them ten dB stronger than sweeping past
+does, so the thing is close.  The same measurement on 924.000, which
+the survey puts at the floor, catches nothing in a comparable 2.2
+seconds.
+.PP
+So: a frequency-hopping device, dwell of two to three and a bit
+milliseconds, roughly 100 to 200kHz occupied per hop, spread over at
+least 903 to 919MHz, strong enough to be in this building, and any one
+channel busy about two parts in a thousand.  A dwell of 2.6ms sits well
+inside what 15.247 allows, and says it is a fast hopper rather than a
+metering system parked for tens of milliseconds a channel.
+.PP
+What it is NOT is measurable by this receiver.  Camped on 909.470 with
+carrier sense at \-98, the CC1120 gave four crossings in twenty seconds
+against the control's one, and then zero on a repeat \- and the lengths
+it reported, 177 and 354us, are the histogram's own powers of two
+rather than a dwell.  A \-71dBm hop arriving ten to twenty dB down
+through the click's antenna, lasting two milliseconds, is past what
+that antenna can deliver.  The analyser measured it because it hears
+better, not because it is cleverer.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
