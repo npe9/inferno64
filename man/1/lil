@@ -204,57 +204,100 @@ expression.
 .SH VERIFIED
 What has actually been run, and what has not.
 .PP
-Every statement form and every builtin above has been exercised under
-the host
+Under the host
 .IR emu (1)
-on a 64-bit Dis tree: declaration and assignment, hex and negative
-literals, string and integer comparison,
+on a 64-bit Dis tree: every statement form and every builtin \-
+declaration and assignment, hex and negative literals, string and
+integer comparison,
 .B if
 with and without
 .BR else ,
 .B while
-including its time bound tripping and being raised,
-.BR dir ,
-a
+including its time bound tripping and being raised, a
 .B create
 written to twice through one held-open descriptor and read back, and
 .B close
 followed by a
 .B read
-that correctly fails.  The module compiles clean with warnings enabled
-at both Dis word sizes, and is 12283 bytes at
-.BR DISWORD=4 .
+that correctly fails.  The module compiles clean with warnings enabled at
+both Dis word sizes and is 12447 bytes at
+.BR DISWORD=4 ,
+against 41629 for
+.BR sh.dis .
 .PP
-Not yet done: it has not been run on the
+On the
 .I stm32f407
-kernel, under
-.IR qemu (1)
-or on silicon, so the claim that it survives where the shell did not is
-so far an argument from how it is built and not a measurement.  The
-comparison that would settle it is
-.BR board.py 's
-own recorded failure \- one probe every two seconds for several minutes
-\- run again in
-.IR lil .
-.PP
-One thing found while testing it is not
-.IR lil 's
-and matters more.  Under this tree's
-.IR emu ,
-every Dis heap allocation appears never to be reclaimed: a compiled
-Limbo program whose loop body is nothing but
-.B t := s[1:]
-grows the live allocation count in
+kernel under
+.IR qemu (1),
+which is the machine it is for: it loads from flash, prints its banner
+and runs statements.  Its allocation is flat \- twenty-iteration loops
+run four times over, with
 .B /dev/memory
-by exactly one per iteration and dies at
-.B "out of memory: heap"
-after about 260000 of them, having extended the arena rather than
-collected.  The same holds for string concatenation, for
-.BR "array of byte" ,
-and for a
-.BR ref ,
-whether the variable is declared inside the loop, outside it, or
-returned from a function.  If that also holds on the board then it, and
-not the cost of forking, is why the shell there dies, and no interpreter
-can help.  That is untested on the board and is the first thing to
-measure there.
+read between them, left the heap's cursize unmoved at 50048 bytes and its
+live count at exactly 459, allocations and frees tracking each other
+exactly (538/79, 885/426, 1232/773, 1579/1120).  So the interpreter
+holds nothing between statements.
+.PP
+Not yet done: it has not run on silicon, and the comparison that would
+settle the claim above \-
+.BR tools/radio/board.py 's
+own recorded failure, one probe every two seconds for several minutes \-
+has not been run in
+.IR lil .
+Until it is, "it survives where the shell did not" is an argument from
+how it is built and not a measurement.
+.SH "A MISREADING, CORRECTED"
+An earlier version of this page and of the commit that added
+.I lil
+said that every Dis heap allocation in this tree is never reclaimed, on
+the evidence of a compiled Limbo loop whose body was only
+.B "t := s[1:]"
+growing a column of
+.B /dev/memory
+by one per iteration.  That was wrong, and wrong in the ordinary way: the
+column counts allocations made, not objects alive, and the column beside
+it counts frees.  On the board the two track each other exactly and the
+live figure does not move.
+.PP
+What is true is narrower and still worth knowing.  Under the host
+.I emu
+the same loop freed 15 times in 20000 allocations, grew the arena to 25
+megabytes and died at
+.BR "out of memory: heap" ,
+having extended the arena rather than collected.  The board's kernel does
+not behave that way, so this is
+.IR emu 's
+own allocator and not the interpreter's, and a memory measurement taken
+under the host
+.I emu
+should not be believed about the board.
+.SH "WHAT THE BOARD CANNOT DO"
+.B dir
+on a large directory exhausts the Dis heap.  The board has about 40310
+bytes free at a prompt, and
+.B sys->dirread
+on
+.B /dis
+wants more than that before
+.I lil
+has printed a name.
+.PP
+This is the board and not
+.IR lil .
+The same kernel fails the same way under the shell:
+.B "ls /dis"
+gives
+.BR "out of memory: heap" ,
+and
+.B "ls /dev"
+after it kills the shell outright with
+.BR "[Sh] Broken" .
+The board's own configuration file has recorded the marginal case for
+some time \-
+.B "ls /dis | wc -l"
+is written there as what killed the shell.
+.PP
+The difference worth noting is what happens next.
+.I Lil
+reported the failure and kept its prompt; the shell died and took the
+console with it, and nothing then drains the console queue.

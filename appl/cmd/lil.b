@@ -559,10 +559,21 @@ call(name: string, args: string): Val
 		}
 		return strval(string buf[0:m]);
 	"dir" =>
-		# The names in a directory, one to a line.  This is how the
-		# board is looked around -- what a radio device actually
-		# serves, which files a bind produced -- and it is why ls.dis
-		# need not be carried.
+		# The names in a directory, printed as they are read and not
+		# collected into a string, and the count returned.  This is
+		# how the board is looked around -- what a radio device
+		# actually serves, which files a bind produced -- and it is
+		# why ls.dis need not be carried.
+		#
+		# Printed rather than returned because of what this board
+		# has: about 30000 bytes of Dis heap free at a prompt.
+		# Building the listing up first exhausted it on /dis, which
+		# is no surprise -- the board's own configuration file
+		# records that "ls /dis | wc -l" kills the shell with "out of
+		# memory" -- but it is a bad reason for a directory to be
+		# unreadable.  Reading a chunk, printing it and dropping it
+		# holds one chunk at a time instead of the whole answer plus
+		# every intermediate string that building it up allocates.
 		if(len a < 1){
 			fail("dir wants a path");
 			return nilval();
@@ -572,19 +583,27 @@ call(name: string, args: string): Val
 			fail("cannot open " + text(a[0]));
 			return nilval();
 		}
-		out := "";
+		count := 0;
 		for(;;){
 			(m, d) := sys->dirread(fd);
-			if(m <= 0)
+			if(m < 0){
+				fail(sys->sprint("dir: %r"));
+				return intval(big count);
+			}
+			if(m == 0)
 				break;
 			for(i := 0; i < m; i++){
-				out += d[i].name;
+				line := d[i].name;
 				if(d[i].qid.qtype & Sys->QTDIR)
-					out += "/";
-				out[len out] = '\n';
+					line += "/";
+				line[len line] = '\n';
+				b := array of byte line;
+				sys->write(stdout, b, len b);
+				count++;
 			}
+			d = nil;
 		}
-		return strval(out);
+		return intval(big count);
 	"timelimit" =>
 		# How long a single while may run.  0 removes the bound,
 		# which on this board means a loop that does not end can
