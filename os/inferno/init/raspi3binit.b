@@ -785,6 +785,19 @@ kusum(sum: int, b: array of byte, n: int): int
 # lock: this flag only ever goes from 0 to 1, and only remotecmd reads
 # it.
 #
+#
+# Run the 1.5MB FAT write test at boot, or not.
+#
+# It is a good test -- it is how the card's throughput has been measured
+# all along -- but it is also 1.5MB of writing on the boot path, and this
+# board's card slowed from 92 KB/s to 35 KB/s and then stopped finishing
+# it at all.  A boot that hangs there never starts the command poller,
+# which is the only way in, so a failing card takes the whole board with
+# it.  Off while the card is suspect; the throughput figure is not worth
+# the boot.
+#
+fatbigok := 0;
+
 kudone := 0;
 
 #
@@ -984,7 +997,10 @@ fatwrite()
 	sys->print("FAT-CLOBBER-OK refused, and the source is whole\n");
 	sys->remove("/n/dos/inferno2.txt");
 	fatheld();
-	fatbig();
+	if(fatbigok)
+		fatbig();
+	else
+		sys->print("FAT-BIG-SKIPPED (fatbigok is 0)\n");
 }
 
 #

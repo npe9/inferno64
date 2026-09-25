@@ -10664,3 +10664,56 @@ waiting sender microseconds rather than the reader's idle time.
 Not yet tested on the board: the JTAG debug interface wedged
 (DSCR.ERR=1) before the kernel carrying it could be booted, and that
 needs a power cycle.  The card was not written, so nothing is at risk.
+.SH
+A working scan, and association that stops at the handshake
+.P1
+sdio: 7a:7a:53:34:87:68  GL-BE6500-1f2
+sdio: ec:c9:ff:be:76:81  Windmill AC-63C21
+sdio: c4:04:15:10:8a:a8  NETGEAR35
+sdio: 58:cb:52:dd:87:b5  EMW Home
+sdio: fa:8f:ca:6c:c4:1b  Family Room speaker
+sdio: 50:91:e3:7d:2e:d7  TP-Link_2ED8
+sdio: 7 network(s) found
+.P2
+.PP
+A real scan: the neighbourhood, by name and BSSID, decoded from escan
+result events by the reader.
+.PP
+.B "Two bugs, the same bug, twice."
+The scan found nothing at first and the join alternated between success
+and silence on identical runs.  Both were the state being cleared AFTER
+the request was sent: the reader records the result, and the clearing
+then wipes it.  For the scan there was a 500ms sleep in between, which is
+exactly when the results arrive; for the join, E_SET_SSID arrives almost
+immediately.  Arming before sending fixes both.
+.PP
+The tell was worth having: a debug dump showed
+.CW GL-BE6500-1f2
+being parsed correctly out of a bss_info while the count printed zero.
+The decode had been right the whole time.
+.PP
+.B "And a third instance of delay() not yielding."
+The scan's wait loop spun on delay(), which starves the reader exactly as
+it starved the reader's own startup.  Three times now in this file; the
+rule is that any wait for another process must be tsleep.
+.PP
+.B "Where association stops."
+The firmware's own events say how far it gets:
+.P1
+event type 3  status 2   E_AUTH, timeout
+event type 87 status 0   E_ASSOC_REQ_IE
+event type 3  status 0   E_AUTH, success
+event type 88 status 0   E_ASSOC_RESP_IE
+.P2
+Authentication succeeds and the association request and response
+information elements are exchanged.  Then nothing: no E_SET_SSID, no
+E_LINK, and no deauthentication either.  So the radio reaches the point
+where the four-way handshake would run and stops there.
+.PP
+That is consistent with the access point wanting something this firmware
+will not do.  The chip is a 2021 Cypress build on a BCM43430, which is
+WPA2 at best; the AP is a Wi-Fi 7 router, and WPA3-SAE or WPA2/WPA3
+transition mode with management-frame protection required would produce
+exactly this \(em auth and assoc complete, the key exchange does not.
+It is worth checking what security that SSID is actually set to before
+assuming the driver is at fault.

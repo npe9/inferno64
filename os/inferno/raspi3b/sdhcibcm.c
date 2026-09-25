@@ -2239,6 +2239,10 @@ static struct {
 	int	joinstatus;	/* 0 waiting, else 1 + the event's status */
 	int	running;
 	int	ndata;		/* data frames seen */
+	int	nctl;		/* control replies seen */
+	int	nevent;		/* event frames seen */
+	int	nesc;		/* escan result events seen */
+	int	lastetype;
 	int	nssid;
 	char	ssid[24][33];
 	uchar	bssid[24][6];
@@ -2364,6 +2368,14 @@ wlevent(uchar *ev, int m)
 	k = doff + bdc + 24;
 	etype = ev[k+6] << 8 | ev[k+7];
 	status = ev[k+8] << 24 | ev[k+9] << 16 | ev[k+10] << 8 | ev[k+11];
+	rx.lastetype = etype;
+	/*
+	 * Say what the firmware is reporting.  A join that never completes
+	 * and a join whose completion event is missed look identical from
+	 * outside, and only the event stream tells them apart.
+	 */
+	if(etype != 69 && rx.nevent < 40)
+		print("sdio: event type %d status %d len %d\n", etype, status, m);
 
 	switch(etype){
 	case 0:					/* E_SET_SSID */
@@ -2372,6 +2384,7 @@ wlevent(uchar *ev, int m)
 		wakeup(&rx.joinr);
 		return;
 	case 69:				/* E_ESCAN_RESULT */
+		rx.nesc++;
 		break;
 	default:
 		return;
@@ -2381,6 +2394,14 @@ wlevent(uchar *ev, int m)
 	k += 48;
 	nbss = ev[k+10] | ev[k+11] << 8;
 	off = k + 12;
+	if(rx.nesc <= 4){
+		int z;
+
+		print("sdio: bss_info at %d:", off);
+		for(z = 0; z < 56 && off + z < m; z++)
+			print(" %2.2ux", ev[off+z]);
+		print("\n");
+	}
 	while(nbss-- > 0 && off + 24 < m){
 		rlen = ev[off+4] | ev[off+5]<<8 | ev[off+6]<<16 | ev[off+7]<<24;
 		if(rlen < 24 || off + rlen > m)
@@ -2435,6 +2456,7 @@ wlrxproc(void *a)
 		}
 		switch(buf[5] & 0xf){
 		case 0:				/* control reply */
+			rx.nctl++;
 			if(n < Sdpcmsz + Cmdsz || buf[7] > n - Cmdsz)
 				break;
 			if(n > sizeof rx.rsp)
@@ -2446,6 +2468,7 @@ wlrxproc(void *a)
 			wakeup(&rx.cmdr);
 			break;
 		case 1:
+			rx.nevent++;
 			wlevent(buf, n);
 			break;
 		case 2:
@@ -2878,6 +2901,16 @@ sdioscan(int *nev)
 	 * sync_id -- followed by the same scan parameters, so with no SSID
 	 * list it is 8 + 64 + 14 channels * 2 = 100 bytes.
 	 */
+	/*
+	 * Clear the list BEFORE starting the scan.
+	 *
+	 * It was cleared afterwards, with a sleep in between -- and that
+	 * sleep is exactly when the results arrive, so the reader filled
+	 * the list and this then wiped it.  The decode was right the whole
+	 * time: a debug dump showed "GL-BE6500-1f2" being parsed out of a
+	 * bss_info while the count printed zero.
+	 */
+	rx.nssid = 0;
 	if(sdiosetvar("escan", params, 8 + 64 + 14*2) < 0){
 		print("sdio: escan was refused\n");
 		return -1;
@@ -2892,7 +2925,7 @@ sdioscan(int *nev)
 	 * all -- which fits "still scanning" better than it fits a reply
 	 * that was sent and missed.
 	 */
-	delay(500);
+	tsleep(&up->sleep, return0, nil, 500);
 	memset(pkt, 0, sizeof pkt);
 	/*
 	 * Ask for 4KB of results.
@@ -2921,9 +2954,17 @@ sdioscan(int *nev)
 	/*
 	 * The reader collects the results; this just waits and reports.
 	 */
-	rx.nssid = 0;
+	/*
+	 * tsleep, not delay -- again.
+	 *
+	 * delay() is a busy wait.  Spinning on it here starves the reader
+	 * exactly as it starved its own startup, so the events arrive at a
+	 * process that never runs and the scan finds nothing.  The first
+	 * time this cost an hour; the symptom the second time was "0
+	 * network(s) found" from a scan that had plainly succeeded.
+	 */
 	for(i = 0; i < 60; i++){
-		delay(200);
+		tsleep(&up->sleep, return0, nil, 200);
 		if(rx.nssid >= nelem(rx.ssid))
 			break;
 	}
@@ -2932,7 +2973,9 @@ sdioscan(int *nev)
 			rx.bssid[i][0], rx.bssid[i][1], rx.bssid[i][2],
 			rx.bssid[i][3], rx.bssid[i][4], rx.bssid[i][5],
 			rx.ssid[i]);
-	print("sdio: %d network(s) found\n", rx.nssid);
+	print("sdio: %d network(s) found; frames: %d control, %d event "
+		"(%d escan), %d data; last event type %d\n",
+		rx.nssid, rx.nctl, rx.nevent, rx.nesc, rx.ndata, rx.lastetype);
 	*nev = rx.nssid;
 	return 0;
 }
@@ -3038,6 +3081,18 @@ sdiojoin(char *ssid, char *pass)
 	p += 2;					/* pad */
 	put4le(p, 0);				/* no channel list */
 
+	/*
+	 * Arm the wait BEFORE sending the join.
+	 *
+	 * Clearing joinstatus afterwards loses an event that arrives in
+	 * between, and E_SET_SSID arrives almost immediately -- so the
+	 * reader would record the outcome and this would wipe it, then
+	 * wait twenty seconds for an event that had already come.  It is
+	 * the same mistake as clearing the scan list after starting the
+	 * scan, and it showed as an outcome that alternated between
+	 * success and "no answer" on identical runs.
+	 */
+	rx.joinstatus = 0;
 	if(sdiosetvar("join", params, 68) < 0){
 		/*
 		 * Fall back to the classic way of associating.
@@ -3069,7 +3124,6 @@ sdiojoin(char *ssid, char *pass)
 	 * wakeup; status 0 is success and anything else is the reason it
 	 * failed.
 	 */
-	rx.joinstatus = 0;
 	tsleep(&rx.joinr, joined, nil, 20000);
 	if(rx.joinstatus == 0){
 		print("sdio: no answer from the join after 20 s\n");
@@ -3079,9 +3133,24 @@ sdiojoin(char *ssid, char *pass)
 		print("sdio: join failed, event status %d\n", rx.joinstatus - 1);
 		return -1;
 	}
-	memset(bssid, 0, sizeof bssid);
-	if(wlcmd(0, 23, nil, 0, bssid, sizeof bssid) == 0 &&
-	   (bssid[0] | bssid[1] | bssid[2] | bssid[3] | bssid[4] | bssid[5])){
+	/*
+	 * The join event says the association succeeded; give the firmware
+	 * a moment to have a BSSID to report.
+	 *
+	 * E_SET_SSID arrives as soon as the join is accepted, which is
+	 * slightly before GET_BSSID has anything to say -- the first
+	 * attempt came back empty and was reported as "the join reported
+	 * success but there is no BSSID", which is true and was the wrong
+	 * conclusion to draw from it.
+	 */
+	for(i = 0; i < 20; i++){
+		memset(bssid, 0, sizeof bssid);
+		if(wlcmd(0, 23, nil, 0, bssid, sizeof bssid) == 0 &&
+		   (bssid[0] | bssid[1] | bssid[2] | bssid[3] | bssid[4] | bssid[5]))
+			break;
+		tsleep(&up->sleep, return0, nil, 500);
+	}
+	if(bssid[0] | bssid[1] | bssid[2] | bssid[3] | bssid[4] | bssid[5]){
 		print("sdio: ASSOCIATED with %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux\n",
 			bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
 		memmove(fw.bssid, bssid, 6);
