@@ -39,9 +39,8 @@ implement Lil;
 # one's own, no lists, no tuples, no declared types, no "for", no && or
 # ||, no ~ or regular expressions, no globbing, no pipes, and no
 # redirection -- the last three on purpose, since they are the shell
-# semantics this exists to avoid.  An "else" must begin on the same line
-# as the "if" body's closing brace, because a line is read as complete
-# once its brackets balance and there is nothing to look ahead with.
+# semantics this exists to avoid.  No "else if" either: an else takes a
+# block and not another if.
 #
 # There are three kinds of value -- int, string, and an open file --
 # because holding a file descriptor across statements is the entire
@@ -78,6 +77,15 @@ Var: adt
 vars: list of ref Var;
 failed: string;			# non-nil once a statement has gone wrong
 looplimit := 60000;		# ms a single while may run; see stmt()
+
+# 0: no if is waiting for an else.  1: one ran its body.  2: one did not.
+#
+# This is what lets "else" begin a line of its own.  A line is read as
+# complete once its brackets balance, so "if(x){ ... }" has already run
+# by the time the next line arrives, and there is nothing to look ahead
+# with.  Rather than make that a rule the typist has to remember,
+# remember the if instead.
+pendingelse := 0;
 
 stdout, stderr: ref Sys->FD;
 
@@ -685,6 +693,32 @@ stmt(s: string, p: int): int
 	if(p >= len s)
 		return p;
 
+	# Take the flag now and clear it: every statement but an if or an
+	# else ends the chance to say else, and an else consumes it.
+	waiting := pendingelse;
+	pendingelse = 0;
+
+	if(has(s, p, "else")){
+		(nil, eq) := word(s, p);
+		if(waiting == 0){
+			fail("else without a preceding if");
+			return len s;
+		}
+		b := skip(s, eq);
+		if(b >= len s || s[b] != '{'){
+			fail("else wants {");
+			return len s;
+		}
+		be := matching(s, b, '{', '}');
+		if(be < 0){
+			fail("unclosed { after else");
+			return len s;
+		}
+		if(waiting == 2)
+			run(s[b+1:be-1]);
+		return be;
+	}
+
 	if(s[p] == '{'){
 		q := matching(s, p, '{', '}');
 		if(q < 0){
@@ -798,6 +832,11 @@ stmt(s: string, p: int): int
 				return ebe;
 			}
 		}
+		# No else here, so one may still arrive on the next line.
+		if(took)
+			pendingelse = 1;
+		else
+			pendingelse = 2;
 		return be;
 	}
 
@@ -939,7 +978,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	# the board and this is the only help there will be.
 	say("lil: little Limbo.  x := e; x = e; if(e){} else {}; while(e){}\n");
 	say("  print open create read readall slurp write close dir bind\n");
-	say("  sleep millisec len timelimit.  else goes on the closing brace.\n");
+	say("  sleep millisec len timelimit\n");
 
 	buf := array[256] of byte;
 	pending := "";

@@ -25,13 +25,36 @@ process and a redirection is an open, so
 	echo rssioffset -90 >/dev/radio0/ctl
 .EE
 .PP
-forks twice to write eleven bytes.  The board's own configuration file
-records where that ends \-
+forks twice to write eleven bytes.
+.PP
+That used to kill the board.  It does not any more, and the honest
+version of this page has to say so, because it was the argument
+.I lil
+was built on.  The board's configuration file records
 .B "no procs for kproc"
-\- and
+against exactly that command, and
 .B tools/radio/board.py
-records the same failure from the other side: a monitor running one
-probe every two seconds killed the shell in a few minutes.
+records the same failure from the other side \- a monitor running one
+probe every two seconds killing the shell in a few minutes \- but both
+predate
+.B KSTACKPREALLOC
+in
+.BR mem.h ,
+which takes every kernel stack in one piece at boot so a fork cannot
+fail for want of one.  Measured on the current kernel by
+.BR tools/radio/lilvsh.sh ,
+ninety of those redirections two seconds apart leave the shell alive with
+its live heap unmoved, 358 objects before and 363 after.  Forking at that
+rate is no longer the limit.
+.PP
+What remains is smaller and measured.  Those ninety redirections cost
+12665 heap allocations, 141 apiece; the same ninety writes through one
+descriptor held in a
+.I lil
+variable cost 4610, or 51.  And two things still kill the shell outright,
+for which see
+.B "WHAT THE BOARD CANNOT DO"
+below.
 .PP
 What is wanted instead is a language, in which a file is opened once,
 kept in a variable, and written to as often as one likes:
@@ -238,14 +261,23 @@ live count at exactly 459, allocations and frees tracking each other
 exactly (538/79, 885/426, 1232/773, 1579/1120).  So the interpreter
 holds nothing between statements.
 .PP
-Not yet done: it has not run on silicon, and the comparison that would
-settle the claim above \-
-.BR tools/radio/board.py 's
-own recorded failure, one probe every two seconds for several minutes \-
-has not been run in
-.IR lil .
-Until it is, "it survives where the shell did not" is an argument from
-how it is built and not a measurement.
+The comparison against the shell has been made, by
+.BR tools/radio/lilvsh.sh ,
+and it went against the claim it was written to test: ninety writes of
+.B "rssioffset -90"
+two seconds apart, paced one character at a time, and
+.I both
+survived.  The shell went from 358 live objects to 363 over 12665
+allocations;
+.I lil
+went from 455 to 462 over 4610.  So at that rate forking is not the limit
+and this measurement does not justify
+.IR lil ;
+what it does establish is that neither leaks and that
+.I lil
+allocates about a third as much per ctl write.
+.PP
+Not yet done: it has not run on silicon.
 .SH "A MISREADING, CORRECTED"
 An earlier version of this page and of the commit that added
 .I lil
@@ -271,6 +303,57 @@ own allocator and not the interpreter's, and a memory measurement taken
 under the host
 .I emu
 should not be believed about the board.
+.SH "WHAT STILL KILLS THE SHELL AND DOES NOT KILL THIS"
+Two things, both measured on the current kernel, and they are what
+.I lil
+is now justified by rather than the cost of forking.
+.PP
+A directory read.
+.B "ls /dis"
+gives
+.BR "out of memory: heap" ,
+and
+.B "ls /dev"
+attempted after it kills the shell outright with
+.BR "[Sh] Broken" ,
+after which nothing drains the console queue and every character
+subsequently typed allocates a block nobody frees.
+.I Lil
+reaches the same ceiling \-
+.B sys->dirread
+on
+.B /dis
+wants more than the 40310 bytes free at a prompt, which is the board's
+limit and not the interpreter's \- but it reports the failure and keeps
+its prompt.
+.PP
+And a held-open file.  To stop forking,
+.B board.py
+holds the ctl file open with
+.BR "cat >file" ,
+and its own comment explains what that costs: inside that
+.I cat
+a liveness marker cannot be sent, because it would be written to the ctl
+file rather than run.  So the only way to stop forking was to give up
+being able to ask whether the board was still alive, and everything
+downstream of that \- inferring liveness from whether a reply repeated,
+counting echoes that keep coming back from the uart interrupt handler
+long after the shell is dead \- exists to guess at what a marker would
+have said outright.  In
+.I lil
+the file is a variable and writing to it is an ordinary statement, so a
+marker is just another statement, and
+.B board.py 's
+.B LilStream.alive()
+asks the question that
+.B Stream
+structurally cannot.
+.PP
+A third, smaller: a character dropped because the line was typed faster
+than the console echoes leaves
+.I lil
+on its continuation prompt, which says what happened.  The shell gives a
+parse error.
 .SH "WHAT THE BOARD CANNOT DO"
 .B dir
 on a large directory exhausts the Dis heap.  The board has about 40310

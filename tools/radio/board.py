@@ -334,6 +334,15 @@ class Console:
         """
         return Stream(self, file)
 
+    def lilstream(self, file="/dev/radio0/ctl", var="ctl"):
+        """The same file held open by lil(1) instead of by a cat.
+
+        See LilStream.  The difference that matters is that a marker can
+        still be sent while the file is open, so a tool need not infer
+        from a reply what it could simply ask.
+        """
+        return LilStream(self, file, var)
+
     def mark(self, mark, wait=8.0):
         """Type a marker and wait for the board to run it, not echo it.
 
@@ -480,3 +489,147 @@ class Stream:
             time.sleep(1.0)
             self.ok = False
 
+
+
+class LilStream:
+    """A ctl file held open by lil(1) rather than by a shell's cat.
+
+    Stream above holds the file open with "cat >file", which stops the
+    forking but costs the thing Stream's own docstring explains at
+    length: inside that cat a liveness marker cannot be sent, because it
+    would be written to the ctl file instead of run.  So the only way to
+    stop forking was to give up asking whether the board was still
+    alive, and everything downstream -- the "expect" argument, the
+    three-silences rule, counting echoes that come back from the uart
+    interrupt handler after the shell is dead -- is built to infer from
+    the reply what a marker would have said outright.
+
+    In lil(1) the file lives in a variable and writing to it is an
+    ordinary statement, so nothing is swallowed and a marker is just
+    another statement:
+
+    	ctl := open("/dev/radio0/ctl", "w")
+    	write(ctl, "freq 915000000")
+    	print("M17")
+
+    This class is beside Stream and not instead of it.  The board's init
+    still loads sh, so lil is entered by typing its name, and a tool
+    opts in by asking for c.lilstream() where it asked for c.stream().
+    """
+
+    def __init__(self, c, file="/dev/radio0/ctl", var="ctl"):
+        self.c = c
+        self.var = var
+        self.silent = 0
+        Console.seq += 1
+        mark = "L%d.%d" % (int(time.time()) % 100000, Console.seq)
+        # The shell is still what is running, so the first marker is a
+        # shell marker: there is no point entering lil on a dead console.
+        self.ok = c.mark(mark)
+        if not self.ok:
+            return
+        c.send("lil")
+        time.sleep(2.0)
+        # And now one in lil's own language, which is the check Stream
+        # cannot make at all.  If this does not come back, lil did not
+        # start and nothing after it means anything.
+        if not self.alive():
+            self.ok = False
+            sys.stderr.write("board: lil did not answer its own marker; "
+                             "the shell may still be at the prompt\n")
+            return
+        self.c.send('%s := open("%s", "w")' % (var, file))
+        time.sleep(1.5)
+        # An open that failed says so, and saying so is the point: with
+        # a cat the failure arrives later, as writes that go nowhere.
+        t = self.c.text()[-400:]
+        if "cannot open" in t:
+            self.ok = False
+            sys.stderr.write("board: lil cannot open %s\n" % file)
+
+    def alive(self, wait=8.0):
+        """Ask lil, in lil, whether it is running.  Two copies again:
+        the first is the uart interrupt handler's echo, which keeps
+        coming back after the interpreter is gone, and the second is
+        print() actually running."""
+        Console.seq += 1
+        mark = "K%d.%d" % (int(time.time()) % 100000, Console.seq)
+        self.c.send('print("%s")' % mark)
+        end = time.time() + wait
+        while time.time() < end:
+            time.sleep(0.5)
+            if self.c.text().count(mark) >= 2:
+                return True
+        return False
+
+    def send(self, line, wait=25.0, expect=False):
+        """Write one ctl line.  Same contract as Stream.send()."""
+        if not self.ok or not self.c.alive():
+            return None
+        if self.silent >= 3:
+            self.ok = False
+            sys.stderr.write("board: three lil statements echoed and not "
+                             "answered; stopping before the console queue "
+                             "fills\n")
+            return None
+        stmt = '%s(%s, "%s")' % ("write", self.var, line)
+        self.c.send(stmt)
+        end = time.time() + wait
+        last = None
+        seen = False
+        while time.time() < end:
+            time.sleep(1.0)
+            t = self.c.text()
+            i = t.rfind(stmt)
+            if i < 0:
+                continue                # the echo has not come back yet
+            seen = True
+            after = t[i + len(stmt):]
+            # lil reports a failed statement in its own voice and keeps
+            # its prompt, where a cat that hits a write error quietly
+            # hands the rest of the session to the shell.
+            if "lil:" in after:
+                self.ok = False
+                return after
+            if after == last and (after.strip() or not expect):
+                self.silent = 0
+                return after
+            last = after
+        if not seen:
+            self.silent += 1
+            return None
+        reply = last if last is not None else ""
+        if expect and not reply.strip():
+            self.silent += 1
+        else:
+            self.silent = 0
+        return reply
+
+    def stmt(self, line, wait=25.0):
+        """Run one lil statement that is not a ctl write -- a print, a
+        slurp, a loop.  There is no equivalent in Stream: inside a cat
+        every line is data."""
+        if not self.ok:
+            return None
+        self.c.send(line)
+        end = time.time() + wait
+        last = None
+        while time.time() < end:
+            time.sleep(1.0)
+            t = self.c.text()
+            i = t.rfind(line)
+            if i < 0:
+                continue
+            after = t[i + len(line):]
+            if after == last:
+                return after
+            last = after
+        return last
+
+    def close(self):
+        if self.ok:
+            self.c.send("close(%s)" % self.var)
+            time.sleep(1.0)
+            self.c.eof()            # leave lil, back to the shell
+            time.sleep(1.0)
+            self.ok = False

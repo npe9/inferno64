@@ -2796,3 +2796,102 @@ section, which is worth making only once the board has been driven
 through
 .I lil
 for a while.
+.PP
+.B "The premise of this item was falsified by the measurement written to test it, and what follows replaces it."
+.PP
+.B tools/radio/lilvsh.sh
+writes the same ctl line the same number of times at the same spacing
+through the shell and through
+.IR lil ,
+and reports which way it went.  Ninety writes of
+.B "rssioffset -90"
+two seconds apart, paced one character at a time, on the current kernel
+under qemu:
+.DS
+.CW "                  live heap      allocations"
+.CW "sh    before             358"
+.CW "      after              363             12665"
+.CW "lil   before             455"
+.CW "      after              462              4610"
+.DE
+.PP
+Both survived.  The shell did not die, its live heap did not move, and
+forking ninety times at that rate is not the limit.  The failure this
+item was written around \-
+.B "no procs for kproc"
+in the board's configuration file, and
+.BR board.py 's
+monitor killing the shell in a few minutes \- predates
+.B KSTACKPREALLOC
+in
+.BR mem.h ,
+which takes every kernel stack in one piece at boot so that a fork cannot
+fail for want of one.  It does not reproduce.
+.PP
+So the fork-cost argument for
+.I lil
+is withdrawn.  What the run does establish is narrower and still worth
+having: neither leaks, and
+.I lil
+costs 51 allocations per ctl write where the shell costs 141.
+.PP
+And three things measured this session do justify it, all of them about
+the shell dying and taking the console with it rather than about the cost
+of a fork.
+.IP \(bu 3
+A directory read.
+.B "ls /dis"
+gives
+.BR "out of memory: heap" ,
+and
+.B "ls /dev"
+attempted after it kills the shell outright with
+.BR "[Sh] Broken" ,
+after which nothing drains the console queue and every character typed
+allocates a block nobody frees \- which is the state that ends at
+.B "allocb: no memory"
+and needs the reset button.
+.I Lil
+reaches the same ceiling, because
+.B sys->dirread
+on
+.B /dis
+wants more than the 40310 bytes free at a prompt, but it reports the
+failure and keeps its prompt.
+.IP \(bu 3
+A held-open file.
+.BR board.py 's
+own comment records that inside a
+.B "cat >file"
+a liveness marker cannot be sent, because it would be written to the ctl
+file rather than run: the only way to stop forking was to give up asking
+whether the board was alive.  Everything downstream of that \- inferring
+liveness from whether a reply repeated, counting echoes that come back
+from the uart interrupt handler long after the shell is dead \- exists to
+guess at what a marker would have said outright.
+.B LilStream
+in
+.B board.py
+asks it instead, and
+.B LilStream.alive()
+is a capability
+.B Stream
+structurally cannot have.
+.IP \(bu 3
+A dropped character.  A line typed faster than the console echoes is
+echoed in full and delivered short, because
+.B kbdputc()
+echoes and queues separately.
+.I Lil
+stays on its continuation prompt, which says what happened; the shell
+gives a parse error.  This cost a wasted run here before the harness was
+made to pace its input, and it is why
+.B lilvsh.sh
+does.
+.PP
+The lesson to keep is about the record and not about the shell.  Two of
+the three things this item was built on \- that no Dis allocation is
+reclaimed, and that a shell cannot survive repeated ctl writes \- were
+inherited from notes that were true when written and are not true now,
+and both fell to a measurement on the machine rather than a better
+reading of the notes.
