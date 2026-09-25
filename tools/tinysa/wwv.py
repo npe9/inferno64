@@ -21,7 +21,12 @@
 # hears plenty.  Check first that the band is open -- an HF receiver
 # tuned to 10.000MHz will have WWV's ticks on it, or will not.
 #
-#	wwv.py [span Hz] [passes]
+#	wwv.py [span Hz] [passes] [MHz ...]
+#
+# Naming frequencies skips the rest, which matters because propagation
+# does not open all five at once: 2.5MHz is a night frequency and dead
+# by day, and sweeping a dead one wastes a minute and prints a
+# distraction.  Ask the HF receiver which are audible first.
 #
 # A carrier found tens of kilohertz away is not WWV and is not
 # evidence: 5MHz here produced one at 4.99354, six and a half kilohertz
@@ -58,12 +63,15 @@ def measure(fd, hz, span, passes):
 def main():
     span = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
     passes = int(sys.argv[2]) if len(sys.argv) > 2 else 8
+    want = NOMINAL
+    if len(sys.argv) > 3:
+        want = tuple(int(float(a) * 1e6) for a in sys.argv[3:])
     fd = tinysa.open_port(wait=90)
     tinysa.cmd(fd, "mode low input")
     print("span +-%dHz, %d passes; a carrier needs 10dB over the floor"
           % (span, passes))
     good = []
-    for hz in NOMINAL:
+    for hz in want:
         r = measure(fd, hz, span, passes)
         if r is None:
             print("%6.1f MHz: no sweep" % (hz / 1e6))

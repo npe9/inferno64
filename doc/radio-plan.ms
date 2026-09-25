@@ -2140,6 +2140,55 @@ them and reachable by both.  Measuring one with each says which of the
 two is off and by how much, which is the only way this question has an
 answer.
 .PP
+ONE ABSOLUTE FREQUENCY, MEASURED AGAINST NIST BY EAR.
+.PP
+The two instruments disagree by 2917Hz at 915MHz, which is 3.19ppm, and
+no comparison between them can say which is wrong.  A third reference
+was wanted and three were tried.
+.PP
+Cellular fails on this bench.  A GSM BCCH would serve \- continuous, on
+a 200kHz raster, base stations held to 50 parts per billion \- but
+averaged over six sweeps 869 to 894MHz is flat at \-86 to \-88.5dBm, two
+dB across twenty-five megahertz.  Weak wideband LTE and bursts caught
+one sweep in twenty, and a frequency cannot be measured from a burst.
+.PP
+WWV fails for a better reason.  With a real HF antenna on it the tinySA
+hears the band \- 207 bins more than 15dB over the floor across 0.5 to
+30MHz, and the CB channels at \-32dBm \- but at 10MHz, with the
+resolution bandwidth narrowed to 100 and then 30Hz, there is no carrier
+at all: a broad two-kilohertz hump of equal bins at \-70.5 against a
+\-91 floor.  An FT-891 hears WWV there easily.  That is not a
+calibration difference, it is thirty to forty dB of sensitivity between
+a spectrum analyser and a communications receiver, and it is why the
+analyser is the wrong instrument for a weak standard.
+.PP
+Worth keeping from the attempt: the earlier readings were taken at a
+3kHz resolution bandwidth, which smears a carrier into its sidebands
+and made a \+902Hz feature look like a 90ppm error.  A sweep's point
+spacing is not its resolution.
+.PP
+And the CB grid gives a bound rather than an answer.  The strongest
+carrier sits 56Hz from its 10kHz raster point, 2.1ppm, so the tinySA's
+HF reference is good to a few parts per million and is certainly not 90
+\- but CB transmitters are held only to 50ppm by rule, so the reference
+is looser than the question.
+.PP
+The FT-891 settles its own case, by ear and without any of this.  Tuned
+in CW and zero-beaten against WWV on 10MHz it reads 10.000010: ten
+hertz high, 1.0ppm, traceable, because NIST's contribution is a
+millionth of it.  That is the first absolute frequency this bench has
+measured, and it is smaller than the 3.19ppm the other two disagree by
+\- so that disagreement is real rather than something both instruments'
+specifications allow.
+.PP
+What it does not do is attribute it.  The FT-891 stops at 56MHz and
+cannot hear 915, so the calibration has to be carried across: zero-beat
+a strong CB carrier with the FT-891 to learn its true frequency to a
+part per million, compare that with the tinySA's 27.1199MHz reading to
+get the tinySA's error at HF, and only then does the 2917Hz at 915
+divide between the two.  The step that is still assumed is that the
+tinySA's error is the same on both of its synthesis paths.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
