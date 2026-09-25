@@ -46,6 +46,7 @@ extern int mboxgetgpio(int, int*);	/* mailbox.c */
 int sdiocmd52(int, int, int, int);	/* defined below; sdioinit configures the card with it */
 static void put4le(uchar*, u32);	/* defined below, used by the clm loader */
 int sdiosetvar(char*, void*, int);
+static void wlrxstart(void);	/* the frame reader, defined below */
 extern int mboxsetgpio(int, int);	/* mailbox.c */
 
 extern int mboxgetclock(int, u32*);	/* mailbox.c: firmware clock rate */
@@ -2194,6 +2195,7 @@ sdioenable(void)
 	sdiocmd52(0, Cccintenable, 1, (1<<1) | (1<<2) | 1);
 	print("sdio: ENABLED -- function 2 ready, the firmware is running\n");
 	fw.enabled = 1;
+	wlrxstart();
 	return 0;
 }
 
@@ -2205,6 +2207,42 @@ sdioenable(void)
  * 512 bytes rather than function 1's 64.
  */
 static int txseq, reqid;
+
+/*
+ * The reader.
+ *
+ * Until now every command polled for its own reply and skipped anything
+ * else, which threw events away and made each command's timeout the
+ * whole latency budget: 400 waits of 50ms meant one GET_BSSID could take
+ * twenty seconds, and waiting through a four-way handshake that way took
+ * twenty minutes.  It also cannot collect a reply spread over more than
+ * one frame.
+ *
+ * So: one process reads frames and sorts them by channel.  Control
+ * replies are handed to whoever is waiting for that request id, events
+ * are decoded where they arrive, and data frames are counted for now.
+ * Commands sleep instead of spinning, and the join waits for the event
+ * the firmware already sends rather than asking repeatedly whether it
+ * has happened yet.
+ *
+ * The SDIO bus itself is single-threaded, so every transfer takes
+ * sdiolock: the reader and a sending command are two processes now.
+ */
+static struct {
+	QLock;			/* one command at a time */
+	QLock	sdiolock;	/* one transfer at a time */
+	Rendez	cmdr;
+	Rendez	joinr;
+	int	rspid;		/* request id of the reply held below */
+	int	rsplen;
+	uchar	rsp[2048];
+	int	joinstatus;	/* 0 waiting, else 1 + the event's status */
+	int	running;
+	int	ndata;		/* data frames seen */
+	int	nssid;
+	char	ssid[24][33];
+	uchar	bssid[24][6];
+} rx;
 
 static int
 packetrw(int write, uchar *buf, int len)
@@ -2302,6 +2340,164 @@ wlreadpkt(uchar *buf, int max)
 }
 
 /*
+ * Decode one event frame.  Called only from the reader.
+ *
+ * The layout: the SDPCM doffset, then a BDC header sized 4 + (its fourth
+ * byte << 2), then a 14-byte ethernet header and a 10-byte bcmeth
+ * header, then the event message -- whose fields are BIG endian, unlike
+ * everything else here.  Event 0 is E_SET_SSID and 16 E_LINK, which is
+ * how a join reports its outcome; 69 is E_ESCAN_RESULT, whose payload
+ * starts 48 bytes in.
+ */
+static void
+wlevent(uchar *ev, int m)
+{
+	int doff, bdc, k, etype, status, nbss, off, rlen, sl, j, dup;
+	char name[33];
+
+	doff = ev[7];
+	if(m < doff + 4)
+		return;
+	bdc = 4 + (ev[doff + 3] << 2);
+	if(m < doff + bdc + 24 + 16)
+		return;
+	k = doff + bdc + 24;
+	etype = ev[k+6] << 8 | ev[k+7];
+	status = ev[k+8] << 24 | ev[k+9] << 16 | ev[k+10] << 8 | ev[k+11];
+
+	switch(etype){
+	case 0:					/* E_SET_SSID */
+	case 16:				/* E_LINK */
+		rx.joinstatus = 1 + status;
+		wakeup(&rx.joinr);
+		return;
+	case 69:				/* E_ESCAN_RESULT */
+		break;
+	default:
+		return;
+	}
+	if(m < k + 48 + 12)
+		return;
+	k += 48;
+	nbss = ev[k+10] | ev[k+11] << 8;
+	off = k + 12;
+	while(nbss-- > 0 && off + 24 < m){
+		rlen = ev[off+4] | ev[off+5]<<8 | ev[off+6]<<16 | ev[off+7]<<24;
+		if(rlen < 24 || off + rlen > m)
+			break;
+		sl = ev[off+18];
+		if(sl > 32)
+			sl = 32;
+		memmove(name, &ev[off+19], sl);
+		name[sl] = 0;
+		dup = 0;
+		for(j = 0; j < rx.nssid; j++)
+			if(strcmp(rx.ssid[j], name) == 0)
+				dup = 1;
+		if(!dup && sl > 0 && rx.nssid < nelem(rx.ssid)){
+			strcpy(rx.ssid[rx.nssid], name);
+			memmove(rx.bssid[rx.nssid], &ev[off+8], 6);
+			rx.nssid++;
+		}
+		off += rlen;
+	}
+}
+
+static void
+wlrxproc(void *a)
+{
+	static uchar buf[2048];
+	int n;
+
+	USED(a);
+	rx.running = 1;
+	for(;;){
+		/*
+		 * Hold the bus across the check AND the read.
+		 *
+		 * wlintwait reads the interrupt-pending byte and the SDIO
+		 * core's status registers -- transfers like any other -- and
+		 * doing that unlocked while another process is sending a
+		 * command puts two conversations on one bus.  That hung the
+		 * whole sequence.  The lock is held only for a single poll
+		 * and one frame, so a waiting sender is delayed by
+		 * microseconds, not by the reader's idle time.
+		 */
+		qlock(&rx.sdiolock);
+		if(wlintwait(5) == 0)
+			n = wlreadpkt(buf, sizeof buf);
+		else
+			n = 0;
+		qunlock(&rx.sdiolock);
+		if(n <= 0){
+			tsleep(&up->sleep, return0, nil, 5);
+			continue;
+		}
+		switch(buf[5] & 0xf){
+		case 0:				/* control reply */
+			if(n < Sdpcmsz + Cmdsz || buf[7] > n - Cmdsz)
+				break;
+			if(n > sizeof rx.rsp)
+				break;
+			memmove(rx.rsp, buf, n);
+			rx.rsplen = n;
+			rx.rspid = rx.rsp[buf[7] + 10] |
+				rx.rsp[buf[7] + 11] << 8;
+			wakeup(&rx.cmdr);
+			break;
+		case 1:
+			wlevent(buf, n);
+			break;
+		case 2:
+			rx.ndata++;
+			break;
+		}
+	}
+}
+
+/*
+ * Start the reader once, and wait for it to be on its feet: a command
+ * issued before it is running would sleep for a reply nobody is there to
+ * collect.
+ */
+static void
+wlrxstart(void)
+{
+	int i;
+
+	if(rx.running)
+		return;
+	kproc("wlrx", wlrxproc, nil, 0);
+	/*
+	 * tsleep, not delay.
+	 *
+	 * delay() is a busy wait: it does not yield, so spinning on it
+	 * starves the very process being waited for and the reader never
+	 * runs.  That is exactly what happened -- "the frame reader did not
+	 * start" after a full second of delay() -- and it would have looked
+	 * like kproc failing rather than the waiting being wrong.
+	 */
+	for(i = 0; i < 100 && !rx.running; i++)
+		tsleep(&up->sleep, return0, nil, 10);
+	if(!rx.running)
+		print("sdio: the frame reader did not start\n");
+}
+
+static int
+rspready(void *a)
+{
+	USED(a);
+	return rx.rspid == reqid;
+}
+
+static int
+joined(void *a)
+{
+	USED(a);
+	return rx.joinstatus != 0;
+}
+
+/*
  * One control message, sent and answered.
  *
  * The reference does this asynchronously: a reader kproc dispatches
@@ -2315,32 +2511,24 @@ wlreadpkt(uchar *buf, int max)
 static int
 wlcmd(int write, int op, void *data, int dlen, void *res, int rlen)
 {
-	/*
-	 * 8KB, not 2KB.
-	 *
-	 * WLC_SCAN_RESULTS and WLC_GET_VALID_CHANNELS both came back
-	 * BCME_BUFTOOSHORT (-14) -- the firmware asking for more room than
-	 * was offered, not refusing the request.  A control frame here is
-	 * headers plus whatever the caller wants back, and a scan's worth
-	 * of results is several kilobytes.
-	 */
 	static uchar pkt[8192];
 	uchar *q;
-	int len, tlen, n, i;
+	int len, tlen, st;
 
-	if(!fw.enabled)
+	if(!fw.enabled || !rx.running)
 		return -1;
 	tlen = write? dlen + rlen : (dlen > rlen? dlen : rlen);
 	len = Sdpcmsz + Cmdsz + tlen;
 	if(len > sizeof pkt)
 		return -1;
+	qlock(&rx);
 	memset(pkt, 0, len);
 	pkt[0] = len;
 	pkt[1] = len >> 8;
 	pkt[2] = ~len;
 	pkt[3] = (~len) >> 8;
 	pkt[4] = txseq;
-	pkt[7] = Sdpcmsz;			/* doffset */
+	pkt[7] = Sdpcmsz;
 	q = pkt + Sdpcmsz;
 	q[0] = op;
 	q[1] = op >> 8;
@@ -2352,48 +2540,54 @@ wlcmd(int write, int op, void *data, int dlen, void *res, int rlen)
 	q[7] = tlen >> 24;
 	q[8] = write? 2 : 0;
 	reqid++;
+	if(reqid > 0xfffe)
+		reqid = 1;
 	q[10] = reqid;
 	q[11] = reqid >> 8;
 	if(dlen > 0)
 		memmove(q + Cmdsz, data, dlen);
 	if(write && rlen > 0)
 		memmove(q + Cmdsz + dlen, res, rlen);
-	if(packetrw(1, pkt, len) < 0){
+
+	rx.rspid = -1;
+	qlock(&rx.sdiolock);
+	st = packetrw(1, pkt, len);
+	qunlock(&rx.sdiolock);
+	if(st < 0){
 		print("sdio: cmd %d could not be sent\n", op);
+		qunlock(&rx);
 		return -1;
 	}
 	txseq++;
 
-	for(i = 0; i < 400; i++){
-		if(wlintwait(50) < 0)
-			continue;
-		n = wlreadpkt(pkt, sizeof pkt);
-		if(n <= 0)
-			continue;
-		if(fw.rxdebug < 24){
-			print("sdio: rx len %d chan %d seq %d doff %d win %d fc %#ux\n",
-				n, pkt[5] & 0xf, pkt[4], pkt[7], pkt[9], pkt[8]);
-			fw.rxdebug++;
-		}
-		if((pkt[5] & 0xf) != 0)			/* not a control frame */
-			continue;
-		if(n < Sdpcmsz + Cmdsz || pkt[7] > n - Cmdsz)
-			continue;
-		q = pkt + pkt[7];
-		if((q[10] | q[11]<<8) != reqid)
-			continue;
-		if(q[12] | q[13] | q[14] | q[15]){
-			print("sdio: cmd %d failed, status %#lux\n", op,
-				(ulong)(q[12] | q[13]<<8 | q[14]<<16 | q[15]<<24));
-			return -1;
-		}
-		if(!write && rlen > 0)
-			memmove(res, q + Cmdsz, rlen);
-		return 0;
+	/*
+	 * Sleep until the reader hands the reply over.  Three seconds is
+	 * ample for an ioctl -- the firmware answers in milliseconds -- and
+	 * unlike the old polling it costs nothing while waiting.
+	 */
+	tsleep(&rx.cmdr, rspready, nil, 3000);
+	if(rx.rspid != reqid){
+		print("sdio: cmd %d got no answer\n", op);
+		qunlock(&rx);
+		return -1;
 	}
-	print("sdio: cmd %d got no answer\n", op);
-	return -1;
+	q = rx.rsp + rx.rsp[7];
+	if(q[12] | q[13] | q[14] | q[15]){
+		print("sdio: cmd %d failed, status %#lux\n", op,
+			(ulong)(q[12] | q[13]<<8 | q[14]<<16 | q[15]<<24));
+		qunlock(&rx);
+		return -1;
+	}
+	if(!write && rlen > 0){
+		if(rx.rsplen < rx.rsp[7] + Cmdsz + rlen)
+			rlen = rx.rsplen - rx.rsp[7] - Cmdsz;
+		if(rlen > 0)
+			memmove(res, q + Cmdsz, rlen);
+	}
+	qunlock(&rx);
+	return 0;
 }
+
 
 int
 sdiogetvar(char *name, void *val, int len)
@@ -2725,92 +2919,21 @@ sdioscan(int *nev)
 	 */
 	fw.rxdebug = 0;
 	/*
-	 * Read the networks out of the scan's EVENTS, not out of
-	 * WLC_SCAN_RESULTS.
-	 *
-	 * The results ioctl wants a multi-kilobyte reply and never answers
-	 * one; the events are small single frames and arrive without any
-	 * of that difficulty.  Each escan result carries a bss_info whose
-	 * SSID is a counted string -- but the surrounding structure
-	 * differs between firmware versions, so rather than decode it,
-	 * pull out the printable runs.  That is a heuristic and is said to
-	 * be one; it is enough to answer "what is on the air", which is
-	 * the question.
+	 * The reader collects the results; this just waits and reports.
 	 */
-	/*
-	 * Decode the escan result events properly.
-	 *
-	 * The layout, from 9front's rproc and bcmevent: the SDPCM header's
-	 * doffset gets past the header, then a BDC header whose size is
-	 * 4 + (byte 3 << 2), then an ethernet header and a 10-byte bcmeth
-	 * header, and then the event message -- whose fields are BIG
-	 * endian, unlike everything else here.  Event 69 is E_ESCAN_RESULT
-	 * and its payload begins 48 bytes into that message: buflen,
-	 * version, sync_id, bss_count, then the bss_info records.  Each
-	 * record carries its own length at offset 4 and a counted SSID at
-	 * 18 and 19.
-	 *
-	 * This replaces pulling printable runs out of the frame, which was
-	 * a stopgap: it produced names with trailing rubbish attached and
-	 * mistook binary fields for short strings.
-	 */
-	{
-		static uchar ev[2048];
-		static char seen[32][33];
-		char name[33];
-		int m, k, bdc, doff, etype, nbss, off, rlen, sl, nseen, j, dup;
-
-		nseen = 0;
-		for(i = 0; i < 600; i++){
-			if(wlintwait(50) < 0)
-				continue;
-			m = wlreadpkt(ev, sizeof ev);
-			if(m <= 0)
-				continue;
-			if((ev[5] & 0xf) != 1)
-				continue;
-			doff = ev[7];
-			if(m < doff + 4)
-				continue;
-			bdc = 4 + (ev[doff + 3] << 2);
-			if(m < doff + bdc + 24 + 48)
-				continue;
-			k = doff + bdc + 24;		/* the event message */
-			etype = ev[k+6] << 8 | ev[k+7];	/* big endian */
-			if(etype != 69)			/* E_ESCAN_RESULT */
-				continue;
-			k += 48;
-			nbss = ev[k+10] | ev[k+11] << 8;
-			off = k + 12;
-			while(nbss-- > 0 && off + 24 < m){
-				rlen = ev[off+4] | ev[off+5]<<8 |
-					ev[off+6]<<16 | ev[off+7]<<24;
-				if(rlen < 24 || off + rlen > m)
-					break;
-				sl = ev[off+18];
-				if(sl > 32)
-					sl = 32;
-				memmove(name, &ev[off+19], sl);
-				name[sl] = 0;
-				dup = 0;
-				for(j = 0; j < nseen && j < nelem(seen); j++)
-					if(strcmp(seen[j], name) == 0)
-						dup = 1;
-				if(!dup && sl > 0){
-					if(nseen < nelem(seen))
-						strcpy(seen[nseen], name);
-					print("sdio: %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux  %s\n",
-						ev[off+8], ev[off+9], ev[off+10],
-						ev[off+11], ev[off+12], ev[off+13],
-						name);
-					nseen++;
-				}
-				off += rlen;
-			}
-		}
-		print("sdio: %d network(s) found\n", nseen);
-		*nev = nseen;
+	rx.nssid = 0;
+	for(i = 0; i < 60; i++){
+		delay(200);
+		if(rx.nssid >= nelem(rx.ssid))
+			break;
 	}
+	for(i = 0; i < rx.nssid; i++)
+		print("sdio: %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux  %s\n",
+			rx.bssid[i][0], rx.bssid[i][1], rx.bssid[i][2],
+			rx.bssid[i][3], rx.bssid[i][4], rx.bssid[i][5],
+			rx.ssid[i]);
+	print("sdio: %d network(s) found\n", rx.nssid);
+	*nev = rx.nssid;
 	return 0;
 }
 
@@ -2937,54 +3060,35 @@ sdiojoin(char *ssid, char *pass)
 	print("sdio: joining %s ...\n", ssid);
 
 	/*
-	 * Wait for it by asking who we are associated with.  The event
-	 * path would tell us sooner, but GET_BSSID answering with a real
-	 * address is the same fact and needs no reader: an unassociated
-	 * radio returns an error or all zeroes.
+	 * Wait for the firmware to say what happened.
+	 *
+	 * The previous version asked GET_BSSID over and over, which with
+	 * the old polling took twenty seconds an attempt and never
+	 * outlasted the handshake.  The firmware reports the outcome
+	 * itself as E_SET_SSID or E_LINK, and the reader turns that into a
+	 * wakeup; status 0 is success and anything else is the reason it
+	 * failed.
 	 */
-	for(i = 0; i < 60; i++){
-		/*
-		 * Drain event frames while waiting and show the first few.
-		 *
-		 * The firmware reports why an association failed as an
-		 * event, and those were being thrown away -- so a refused
-		 * join and a network that is simply not there looked
-		 * identical.  The interesting fields are the event type
-		 * and status, which sit in the BCM event header after the
-		 * SDPCM and BDC headers; dumping the first bytes is enough
-		 * to read them by eye without building the whole parser.
-		 */
-		{
-			static uchar ev[2048];
-			int k, m;
-
-			while(wlintwait(50) == 0){
-				m = wlreadpkt(ev, sizeof ev);
-				if(m <= 0)
-					break;
-				if((ev[5] & 0xf) != 1 || fw.nev >= 6)
-					continue;
-				fw.nev++;
-				print("sdio: event len %d:", m);
-				for(k = ev[7]; k < m && k < ev[7] + 40; k++)
-					print(" %2.2ux", ev[k]);
-				print("\n");
-			}
-		}
-		delay(500);
-		memset(bssid, 0, sizeof bssid);
-		if(wlcmd(0, 23, nil, 0, bssid, sizeof bssid) < 0)
-			continue;
-		if(bssid[0] | bssid[1] | bssid[2] | bssid[3] | bssid[4] | bssid[5]){
-			print("sdio: ASSOCIATED with %2.2ux:%2.2ux:%2.2ux:%2.2ux:"
-				"%2.2ux:%2.2ux after %d ms\n", bssid[0], bssid[1],
-				bssid[2], bssid[3], bssid[4], bssid[5], (i+1)*500);
-			memmove(fw.bssid, bssid, 6);
-			fw.joined = 1;
-			return 0;
-		}
+	rx.joinstatus = 0;
+	tsleep(&rx.joinr, joined, nil, 20000);
+	if(rx.joinstatus == 0){
+		print("sdio: no answer from the join after 20 s\n");
+		return -1;
 	}
-	print("sdio: no association after 30 s\n");
+	if(rx.joinstatus != 1){
+		print("sdio: join failed, event status %d\n", rx.joinstatus - 1);
+		return -1;
+	}
+	memset(bssid, 0, sizeof bssid);
+	if(wlcmd(0, 23, nil, 0, bssid, sizeof bssid) == 0 &&
+	   (bssid[0] | bssid[1] | bssid[2] | bssid[3] | bssid[4] | bssid[5])){
+		print("sdio: ASSOCIATED with %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux\n",
+			bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+		memmove(fw.bssid, bssid, 6);
+		fw.joined = 1;
+		return 0;
+	}
+	print("sdio: the join reported success but there is no BSSID\n");
 	return -1;
 }
 

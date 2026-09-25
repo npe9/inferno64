@@ -10627,3 +10627,40 @@ times 50ms before giving up, so a single GET_BSSID can take twenty
 seconds and sixty of them take twenty minutes.  That is a defect in this
 driver's synchronous design, not in the firmware, and it is the same
 defect the reader process fixes.
+.SH
+The frame reader
+.PP
+One process now reads frames and sorts them by channel: control replies
+go to whoever is waiting for that request id, events are decoded where
+they arrive, and data frames are counted.  Commands sleep instead of
+spinning, and the join waits for the event the firmware already sends
+rather than asking repeatedly whether it has happened.
+.PP
+This replaces a design that could not work for three separate reasons.
+Each command polled for its own reply and discarded everything else, so
+events were thrown away.  A command's timeout was the whole latency
+budget \(em four hundred waits of 50ms, so one GET_BSSID could take
+twenty seconds and sixty of them twenty minutes, which is why waiting
+through a four-way handshake never succeeded.  And a reply spread across
+more than one frame could never be collected at all.
+.PP
+.B "Two bugs of mine found building it, both about concurrency."
+The reader would not start: the code that waited for it spun on
+.CW delay() ,
+which is a busy wait that does not yield, so it starved the very process
+it was waiting for.  A full second of that reported "the frame reader did
+not start", which looks exactly like kproc failing.
+.CW tsleep
+yields and the reader starts at once.
+.PP
+Then the whole sequence hung after the firmware announced itself.
+.CW wlintwait
+reads the interrupt-pending byte and the SDIO core's registers \(em
+transfers like any other \(em and was doing it unlocked while another
+process was sending a command, which puts two conversations on one bus.
+The reader now holds the bus across its poll and its read, which costs a
+waiting sender microseconds rather than the reader's idle time.
+.PP
+Not yet tested on the board: the JTAG debug interface wedged
+(DSCR.ERR=1) before the kernel carrying it could be booted, and that
+needs a power cycle.  The card was not written, so nothing is at risk.
