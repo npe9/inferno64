@@ -3137,6 +3137,24 @@ sdiowlinit(uchar *ea)
 	 */
 	print("sdio: UP (no payload) -> %d\n", wlcmd(1, 2, nil, 0, nil, 0));
 	delay(1000);
+	/*
+	 * Stay awake.
+	 *
+	 * The firmware comes up in power-save (PM 1): it sleeps between
+	 * the AP's beacons and collects what arrived when it next wakes.
+	 * That is right for a battery and wrong for this board, which is
+	 * mains powered and is being asked to behave like a network
+	 * interface.  It shows up as latency and not as loss -- the link
+	 * measured 359 of 360 pings through, with an average of 134ms and
+	 * one round trip over two seconds, against 20ms on the wire.  A
+	 * lossless link with a two-second tail is a link that was asleep.
+	 *
+	 * PM 0 is CAM, constantly awake.  Reported rather than ignored:
+	 * if the firmware refuses it, the latency is something else and
+	 * this should not be the explanation left standing.
+	 */
+	if(wlcmdint(86, 0) < 0)		/* WLC_SET_PM, 0 = CAM */
+		print("sdio: the radio would not leave power save\n");
 	print("sdio: radio is UP\n");
 	fw.inited = 1;
 	return 0;

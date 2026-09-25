@@ -11311,3 +11311,31 @@ bricked Bluetooth controller bricked across every reboot until
 started driving BT_ON low first.  For those two devices software can do a
 true power cycle, through the mailbox; for anything else on a rail the
 expander does not control, only the supply will do.
+.PP
+.B "The two-second tail was power save, and it is gone."
+A link that loses almost nothing and occasionally takes two seconds is
+not a link that is dropping packets; it is a link that was asleep.  The
+firmware comes up in PM 1 and sleeps between the AP's beacons, which is
+right for a battery and wrong for a mains-powered board being asked to
+behave like a network interface.
+.CW "WLC_SET_PM 0"
+\(em CAM, constantly awake \(em is one ioctl, and it is reported if the
+firmware refuses it so that this cannot be left standing as an
+explanation it never earned.
+.DS
+.CW
+                        before PM 0            after PM 0
+radio,  56 bytes, 2/s   359/360 avg 134ms      360/360 avg 23ms
+                        max 2063ms             max 134ms
+radio, 1400 bytes, 1/s  180/180 avg  29ms      180/180 avg 25ms
+wired control           360/360 avg  20ms      360/360 avg 44ms
+                        max  162ms             max 480ms
+.R
+.DE
+Six times better on average and fifteen on the tail.  The control arm is
+what makes that worth reading: the
+.I wired
+interface was noisier in the second run than the first, so the rig was no
+kinder \(em and the radio still moved the other way, far enough that it
+now answers faster than the wire does.  (The wired path is a LAN9514
+behind a polled DWC2, which is its own story.)
