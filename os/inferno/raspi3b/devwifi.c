@@ -43,6 +43,7 @@ extern int	sdiofwdata(uchar*, int);
 extern int	sdiofwend(void);
 extern int	sdiofwgo(void);
 extern int	sdioenable(void);
+extern int	sdioversion(char*, int);
 extern char*	sdiostate(void);
 
 enum {
@@ -57,6 +58,8 @@ static Dirtab wifidir[] =
 	"wifictl",	{Qctl, 0},		0,	0664,
 	"wifidata",	{Qdata, 0},		0,	0222,
 };
+
+static char wifiver[256];
 
 static Chan*
 wifiattach(char *spec)
@@ -98,6 +101,12 @@ wifiread(Chan *c, void *a, int n, vlong offset)
 		return devdirread(c, a, n, wifidir, nelem(wifidir), devgen);
 	case Qctl:
 		p = sdiostate();
+		if(wifiver[0] != '\0'){
+			static char both[512];
+
+			snprint(both, sizeof both, "%sfirmware %s\n", p, wifiver);
+			p = both;
+		}
 		return readstr((ulong)offset, a, n, p);
 	}
 	error(Eperm);
@@ -136,6 +145,17 @@ wifiwrite(Chan *c, void *a, int n, vlong offset)
 		}else if(strcmp(cmd, "enable") == 0){
 			if(sdioenable() < 0)
 				error("the firmware did not come up");
+		}else if(strcmp(cmd, "ver") == 0){
+			/*
+			 * Ask the firmware to identify itself, and keep
+			 * the answer for a later read of wifictl.  "ver"
+			 * is a string variable every build carries, so a
+			 * reply with text in it proves the whole control
+			 * path: request out, firmware parsed it, answer
+			 * back.
+			 */
+			if(sdioversion(wifiver, sizeof wifiver) < 0)
+				error("the firmware did not answer");
 		}else
 			error(Ebadctl);
 		return n;

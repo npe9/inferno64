@@ -10331,3 +10331,50 @@ that is now running and read its events; then setting ssid, security and
 passphrase, which the firmware's own supplicant handles; then presenting
 the result as an ether device on /net.alt.  No hardware unknowns remain
 between here and an associated radio.
+.SH
+The firmware answers: the control channel works
+.P1
+firmware wl0: Jul 19 2021 03:24:18 version 7.45.98 (TOB)
+              (56df937 CY) FWID 01-8e14b897
+.P2
+.PP
+That string came out of the running firmware, over SDPCM and CDC, in
+answer to a GetVar of "ver".  A request was framed, written to function
+2, parsed by the chip, and a reply came back carrying data.  The receive
+trace shows the shape exactly:
+.P1
+rx len 12  chan 1 seq 0 doff 12 win 16   -- an event frame
+rx len 283 chan 0 seq 1 doff 12 win 17   -- the reply, 12+16+255
+.P2
+.PP
+.B "What was built."
+packetrw moves frames over function 2, which is a pipe rather than
+memory \(em every transfer goes to the same address with the address
+held still, and its blocks are 512 bytes rather than function 1's 64.
+wlreadpkt reads one SDPCM frame, checking the length against its own
+complement and halting and draining the receive side if they disagree,
+which is the only cure for a receiver that has lost sync.  wlcmd builds
+the 12-byte SDPCM and 16-byte CDC headers, sends, and polls for its own
+reply, matching on request id and skipping frames that are not control
+frames.
+.PP
+The reference does this asynchronously, with a reader kproc that
+dispatches by channel and wakes whoever is waiting.  There is no
+interrupt wired up here yet, so this polls; that is enough to establish
+that the firmware answers, which was the thing in doubt, and the
+asynchronous form is what the packet path will need.
+.PP
+.B "The bus is fast now, and that mattered."
+Four-bit at 25MHz \(em the card confirms it, CCCR 0x07 reads 0x42.  It
+had been left at one bit and 400kHz while the "intermittent" CMD53
+failures were chased, and those turned out to be unmapped register holes
+in chipcommon rather than anything to do with the bus, so the narrow slow
+bus was never implicated.  At 400kHz the firmware upload took the better
+part of twenty minutes, which made every experiment after it expensive;
+the first attempt at GetVar failed against that, and succeeded once the
+timing was not absurd.
+.PP
+.B "Left."
+Association \(em ssid, security and passphrase, which this firmware's own
+supplicant handles \(em and then presenting the radio as an ether device
+on /net.alt, which needs the asynchronous reader and the data channel.

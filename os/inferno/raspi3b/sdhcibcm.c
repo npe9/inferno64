@@ -158,6 +158,17 @@ enum {
 	Fcchange	= 1<<5,
 	FrameInt	= 1<<6,
 	MailboxInt	= 1<<7,
+	Intstatus	= 0x20,		/* sdio core */
+	Sbmbox		= 0x40,
+	Hostmboxdata	= 0x4c,
+	Cccintpend	= 0x05,		/* CCCR: interrupt pending */
+	Framectl	= 0x1000d,	/* fn1 */
+	Rfhalt		= 0x01,
+	Rfrmcnt		= 0x1001b,
+	Sdpcmsz		= 12,		/* the SDPCM header */
+	Cmdsz		= 16,		/* the CDC control header */
+	GetVar		= 262,
+	SetVar		= 263,
 	Sbwsize		= 0x8000,	/* backplane window size */
 	Sbaddr		= 0x1000a,	/* fn1: backplane window address, 3 bytes */
 	Enumbase	= 0x18000000,	/* SI enumeration space */
@@ -227,11 +238,16 @@ static u32 sdio53int, sdio53stat, sdio53resp;
 static int sdioblksize = Secsize;
 
 /*
- * Widen the bus and raise the clock, or not.  Off while the intermittent
- * CMD53 failures are being pinned down: every measurement before the
- * four-bit change was taken at 1-bit and 400kHz.
+ * Widen the bus to four bits and raise the clock to 25MHz.
+ *
+ * This was off while the "intermittent" CMD53 failures were chased, and
+ * those turned out to be unmapped register holes in chipcommon, not the
+ * bus -- so the narrow slow bus was never implicated and there is no
+ * reason to keep it.  At 400kHz with one block per command the firmware
+ * upload took the better part of twenty minutes, which is slow enough to
+ * distort every experiment that follows it.
  */
-static int sdiofast = 0;
+static int sdiofast = 1;
 static char *sdhcilastwhy = "";
 
 /*
@@ -1154,7 +1170,7 @@ sdiocmd53(int fn, int addr, int write, int blockmode, int incr, void *a, int n)
 		 * The firmware upload is several hundred kilobytes of
 		 * BLOCK writes and would have hit it immediately.
 		 */
-		blksize = sdioblksize;
+		blksize = fn == 2? Secsize : sdioblksize;
 	}else{
 		nblk = 1;
 		blksize = n;
@@ -1880,6 +1896,8 @@ static struct {
 	int	nvlen;
 	int	err;
 	int	enabled;
+	int	said;		/* the firmware-ready mailbox seen */
+	int	rxdebug;
 } fw;
 
 int
@@ -2107,6 +2125,223 @@ sdioenable(void)
 	sdiocmd52(0, Cccintenable, 1, (1<<1) | (1<<2) | 1);
 	print("sdio: ENABLED -- function 2 ready, the firmware is running\n");
 	fw.enabled = 1;
+	return 0;
+}
+
+/*
+ * SDPCM: packets to and from the running firmware, over function 2.
+ *
+ * Every transfer on function 2 goes to the same address with the address
+ * held still -- the function is a pipe, not memory -- and its blocks are
+ * 512 bytes rather than function 1's 64.
+ */
+static int txseq, reqid;
+
+static int
+packetrw(int write, uchar *buf, int len)
+{
+	int n, nb;
+
+	while(len > 0){
+		n = len;
+		if(n > 2048)
+			n = 2048;
+		n = (n + 3) & ~3;
+		if(n >= Secsize){
+			nb = n / Secsize;
+			if(sdiocmd53(2, Enumbase, write, 1, 0, buf, nb) != nb)
+				return -1;
+			n = nb * Secsize;
+		}else if(sdiocmd53(2, Enumbase, write, 0, 0, buf, n) != n)
+			return -1;
+		buf += n;
+		len -= n;
+	}
+	return 0;
+}
+
+/*
+ * Wait for the firmware to say it has a frame for us.
+ *
+ * The chip raises an SDIO interrupt; nothing here is wired to one yet, so
+ * this polls the CCCR pending byte and then reads the SDIO core's own
+ * interrupt status.  A mailbox interrupt with bit 3 set is the firmware
+ * announcing that it is ready, which is worth printing once: it is the
+ * firmware talking rather than being talked to.
+ */
+static int
+wlintwait(int ms)
+{
+	u32 ints, mbox;
+	int i, t;
+
+	for(t = 0; t < ms; t += 5){
+		i = sdiocmd52(0, Cccintpend, 0, 0);
+		if(i <= 0){
+			delay(5);
+			continue;
+		}
+		sbwindow(sb.sdregs);
+		ints = cfgreadl(sb.sdregs + Intstatus);
+		cfgwritel(sb.sdregs + Intstatus, ints);
+		if(ints & MailboxInt){
+			mbox = cfgreadl(sb.sdregs + Hostmboxdata);
+			cfgwritel(sb.sdregs + Sbmbox, 2);		/* ack */
+			if((mbox & 0x8) && !fw.said){
+				print("sdio: the firmware says it is ready\n");
+				fw.said = 1;
+			}
+		}
+		if(ints & FrameInt)
+			return 0;
+		delay(5);
+	}
+	return -1;
+}
+
+/*
+ * Read one SDPCM frame.  The header carries its own length twice, once
+ * complemented, and a frame that fails that check means the receive side
+ * has lost sync -- the cure is to halt and drain it rather than to keep
+ * reading rubbish.
+ */
+static int
+wlreadpkt(uchar *buf, int max)
+{
+	int len, lenck;
+
+	if(packetrw(0, buf, Sdpcmsz) < 0)
+		return -1;
+	len = buf[0] | buf[1]<<8;
+	if(len == 0)
+		return 0;
+	lenck = buf[2] | buf[3]<<8;
+	if(lenck != (len ^ 0xffff) || len < Sdpcmsz || len > max){
+		print("sdio: frame header len %#ux lenck %#ux -- resyncing\n",
+			len, lenck);
+		sdiocmd52(1, Framectl, 1, Rfhalt);
+		while(sdiocmd52(1, Rfrmcnt + 1, 0, 0) > 0)
+			;
+		while(sdiocmd52(1, Rfrmcnt, 0, 0) > 0)
+			;
+		return -1;
+	}
+	if(len > Sdpcmsz)
+		if(packetrw(0, buf + Sdpcmsz, len - Sdpcmsz) < 0)
+			return -1;
+	return len;
+}
+
+/*
+ * One control message, sent and answered.
+ *
+ * The reference does this asynchronously: a reader kproc dispatches
+ * frames by channel and wakes whoever is waiting.  There is no reader
+ * and no interrupt here yet, so this sends and then polls for its own
+ * reply, matching on the request id and skipping anything that is not a
+ * control frame.  It is enough to establish that the firmware answers,
+ * which is the thing in doubt; the asynchronous version is what the
+ * packet path will need.
+ */
+static int
+wlcmd(int write, int op, void *data, int dlen, void *res, int rlen)
+{
+	static uchar pkt[2048];
+	uchar *q;
+	int len, tlen, n, i;
+
+	if(!fw.enabled)
+		return -1;
+	tlen = write? dlen + rlen : (dlen > rlen? dlen : rlen);
+	len = Sdpcmsz + Cmdsz + tlen;
+	if(len > sizeof pkt)
+		return -1;
+	memset(pkt, 0, len);
+	pkt[0] = len;
+	pkt[1] = len >> 8;
+	pkt[2] = ~len;
+	pkt[3] = (~len) >> 8;
+	pkt[4] = txseq;
+	pkt[7] = Sdpcmsz;			/* doffset */
+	q = pkt + Sdpcmsz;
+	q[0] = op;
+	q[1] = op >> 8;
+	q[2] = op >> 16;
+	q[3] = op >> 24;
+	q[4] = tlen;
+	q[5] = tlen >> 8;
+	q[6] = tlen >> 16;
+	q[7] = tlen >> 24;
+	q[8] = write? 2 : 0;
+	reqid++;
+	q[10] = reqid;
+	q[11] = reqid >> 8;
+	if(dlen > 0)
+		memmove(q + Cmdsz, data, dlen);
+	if(write && rlen > 0)
+		memmove(q + Cmdsz + dlen, res, rlen);
+	if(packetrw(1, pkt, len) < 0){
+		print("sdio: cmd %d could not be sent\n", op);
+		return -1;
+	}
+	txseq++;
+
+	for(i = 0; i < 200; i++){
+		if(wlintwait(50) < 0)
+			continue;
+		n = wlreadpkt(pkt, sizeof pkt);
+		if(n <= 0)
+			continue;
+		if(fw.rxdebug < 8){
+			print("sdio: rx len %d chan %d seq %d doff %d win %d fc %#ux\n",
+				n, pkt[5] & 0xf, pkt[4], pkt[7], pkt[9], pkt[8]);
+			fw.rxdebug++;
+		}
+		if((pkt[5] & 0xf) != 0)			/* not a control frame */
+			continue;
+		if(n < Sdpcmsz + Cmdsz || pkt[7] > n - Cmdsz)
+			continue;
+		q = pkt + pkt[7];
+		if((q[10] | q[11]<<8) != reqid)
+			continue;
+		if(q[12] | q[13] | q[14] | q[15]){
+			print("sdio: cmd %d failed, status %#lux\n", op,
+				(ulong)(q[12] | q[13]<<8 | q[14]<<16 | q[15]<<24));
+			return -1;
+		}
+		if(!write && rlen > 0)
+			memmove(res, q + Cmdsz, rlen);
+		return 0;
+	}
+	print("sdio: cmd %d got no answer\n", op);
+	return -1;
+}
+
+int
+sdiogetvar(char *name, void *val, int len)
+{
+	return wlcmd(0, GetVar, name, strlen(name) + 1, val, len);
+}
+
+int
+sdiosetvar(char *name, void *val, int len)
+{
+	return wlcmd(1, SetVar, name, strlen(name) + 1, val, len);
+}
+
+/*
+ * Ask the firmware what it is.  "ver" is a string variable every build
+ * carries, so it is the cheapest thing that proves the control channel
+ * works end to end: a request went out, the firmware parsed it, and a
+ * matching reply came back with data in it.
+ */
+int
+sdioversion(char *buf, int len)
+{
+	memset(buf, 0, len);
+	if(sdiogetvar("ver", buf, len - 1) < 0)
+		return -1;
+	buf[len-1] = 0;
 	return 0;
 }
 
