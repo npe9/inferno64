@@ -46,6 +46,7 @@ extern int	sdioenable(void);
 extern int	sdioversion(char*, int);
 extern int	sdiowlinit(uchar*);
 extern int	sdioscan(int*);
+extern int	sdiojoin(char*, char*);
 extern char*	sdiostate(void);
 
 enum {
@@ -122,7 +123,7 @@ wifiread(Chan *c, void *a, int n, vlong offset)
 static int
 wifiwrite(Chan *c, void *a, int n, vlong offset)
 {
-	char cmd[32];
+	char cmd[160], *f[3];
 
 	USED(offset);
 	switch((ulong)c->qid.path){
@@ -159,6 +160,15 @@ wifiwrite(Chan *c, void *a, int n, vlong offset)
 			snprint(wifiea, sizeof wifiea,
 				"%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux",
 				ea[0], ea[1], ea[2], ea[3], ea[4], ea[5]);
+		}else if(strncmp(cmd, "join ", 5) == 0){
+			/*
+			 * join <ssid> <passphrase>.  The passphrase goes
+			 * straight to the chip and is never logged.
+			 */
+			if(tokenize(cmd, f, 3) != 3)
+				error("usage: join ssid passphrase");
+			if(sdiojoin(f[1], f[2]) < 0)
+				error("could not associate");
 		}else if(strcmp(cmd, "scan") == 0){
 			int nev;
 

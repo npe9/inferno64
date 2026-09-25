@@ -1899,6 +1899,9 @@ static struct {
 	int	said;		/* the firmware-ready mailbox seen */
 	int	rxdebug;
 	int	inited;
+	int	joined;
+	int	nev;
+	uchar	bssid[6];
 } fw;
 
 int
@@ -2396,6 +2399,43 @@ sdiowlinit(uchar *ea)
 	print("sdio: radio address %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux\n",
 		ea[0], ea[1], ea[2], ea[3], ea[4], ea[5]);
 
+	/*
+	 * The regulatory domain.
+	 *
+	 * The nvram sets ccode=ALL, which is a Cypress wildcard rather
+	 * than a real country, and a firmware that will not accept it has
+	 * no channel list -- which is a plausible reason for both escan
+	 * and WLC_SCAN to be refused while WLC_GET_CHANNEL still answers.
+	 * Report what it thinks, then name a real one.
+	 */
+	{
+		/*
+		 * wl_country_t, not a four-character string: country_abbrev
+		 * [4], rev [4], ccode [4].  Asking with four bytes was
+		 * refused for being too short (-14) and setting with four
+		 * for being a bad argument (-2), which is the structure
+		 * saying its own size.
+		 */
+		uchar cc[12];
+
+		memset(cc, 0, sizeof cc);
+		if(sdiogetvar("country", cc, sizeof cc) == 0)
+			print("sdio: country \"%s\" rev %d ccode \"%s\"\n",
+				(char*)cc, (int)(cc[4] | cc[5]<<8), (char*)&cc[8]);
+		memset(cc, 0, sizeof cc);
+		cc[0] = 'U';
+		cc[1] = 'S';
+		put4le(cc + 4, -1);		/* any revision */
+		cc[8] = 'U';
+		cc[9] = 'S';
+		print("sdio: set country US -> %d\n",
+			sdiosetvar("country", cc, sizeof cc));
+		memset(cc, 0, sizeof cc);
+		if(sdiogetvar("country", cc, sizeof cc) == 0)
+			print("sdio: country now \"%s\" ccode \"%s\"\n",
+				(char*)cc, (char*)&cc[8]);
+	}
+
 	sdiosetint("assoc_listen", 10);
 	wlcmdint(0x56, 0);			/* powersave off */
 	sdiosetint("bus:txglom", 0);
@@ -2445,7 +2485,17 @@ sdiowlinit(uchar *ea)
 	wlcmdint(10, 0);			/* SET_PROMISC off */
 	sdiosetint("arp_ol", 1);
 	sdiosetint("ndoe", 1);
-	wlcmdint(2, 1);				/* UP again, as the reference does */
+	/*
+	 * WLC_UP with NO payload.
+	 *
+	 * Every UP so far carried a four-byte argument, which is how the
+	 * reference writes it; brcmfmac sends BRCMF_C_UP with a
+	 * zero-length payload.  An ioctl that expects no data may well
+	 * ignore a request that carries some and still answer 0, which
+	 * would explain an UP that reports success while the scan keeps
+	 * saying the interface is not up.
+	 */
+	print("sdio: UP (no payload) -> %d\n", wlcmd(1, 2, nil, 0, nil, 0));
 	delay(1000);
 	print("sdio: radio is UP\n");
 	fw.inited = 1;
@@ -2480,7 +2530,7 @@ sdioscan(int *nev)
 		0xff,0xff,0xff,0xff,
 		0xff,0xff,0xff,0xff,
 		14,0,
-		1,0,
+		0,0,
 		0x01,0x2b,0x02,0x2b,0x03,0x2b,0x04,0x2b,0x05,0x2e,0x06,0x2e,0x07,0x2e,
 		0x08,0x2b,0x09,0x2b,0x0a,0x2b,0x0b,0x2b,0x0c,0x2b,0x0d,0x2b,0x0e,0x2b,
 		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -2505,7 +2555,20 @@ sdioscan(int *nev)
 	 * sync_id, and ioctl 51 hands back the accumulated results in one
 	 * buffer.  Synchronous, which is what everything here is.
 	 */
-	if(wlcmd(1, 50, params + 8, 124, nil, 0) < 0){
+	/*
+	 * 92 bytes, not 124.
+	 *
+	 * WLC_SCAN came back 0xfffffff2 -- a length complaint.  The fixed
+	 * part of wl_scan_params is 64 bytes, up to and including
+	 * channel_num; after it come the channel list and then the SSID
+	 * list.  The reference's block counts 32 bytes per SSID, but
+	 * brcmfmac's brcmf_ssid_le is 36 (a length word plus the name), so
+	 * a block sized the reference's way is the wrong length for this
+	 * firmware.  With nssids set to 0 -- a broadcast scan, which is
+	 * what is wanted -- the SSID list disappears and the size is just
+	 * 64 + 14 channels * 2 = 92.
+	 */
+	if(wlcmd(1, 50, params + 8, 64 + 14*2, nil, 0) < 0){
 		print("sdio: WLC_SCAN was refused\n");
 		return -1;
 	}
@@ -2549,14 +2612,191 @@ sdioscan(int *nev)
 	return 0;
 }
 
+/*
+ * Associate with a network, using the firmware's own supplicant.
+ *
+ * 9front's driver expects WPA keys from a userspace supplicant and feeds
+ * them in with wsec_key.  This part can do the whole handshake itself,
+ * which is much less to build: tell it the cipher, the authentication
+ * type, that its supplicant is in charge, and the passphrase, then hand
+ * it the SSID.
+ *
+ * wsec_pmk is a wsec_pmk_t -- key_len[2], flags[2], key[64] -- with
+ * flags 1 meaning the key is a passphrase rather than a computed PMK.
+ *
+ * The passphrase is never printed, here or anywhere: it arrives through
+ * the ctl file and goes straight into the chip.
+ */
+int
+sdiojoin(char *ssid, char *pass)
+{
+	uchar params[72], pmk[68], bssid[6];
+	uchar *p;
+	int n, i;
+
+	if(!fw.inited)
+		return -1;
+	n = strlen(pass);
+	if(n < 8 || n > 63){
+		print("sdio: the passphrase must be 8 to 63 characters\n");
+		return -1;
+	}
+	wlcmdint(2, 1);				/* UP */
+
+	/*
+	 * Report each of these rather than ignoring them.
+	 *
+	 * wsec_pmk came back BCME_UNSUPPORTED (-23) while the three
+	 * settings before it appeared to succeed, which does not fit: if
+	 * the firmware had no internal supplicant, sup_wpa should have
+	 * been refused too.  One of these assumptions is wrong and
+	 * printing each result says which.
+	 */
+	print("sdio: wsec=4 -> %d, wpa_auth=0x80 -> %d, sup_wpa=1 -> %d\n",
+		sdiosetint("wsec", 4),
+		sdiosetint("wpa_auth", 0x80),
+		sdiosetint("sup_wpa", 1));
+	{
+		uchar b[4];
+
+		memset(b, 0, sizeof b);
+		print("sdio: read back sup_wpa -> %d, value %d\n",
+			sdiogetvar("sup_wpa", b, 4), b[0]);
+	}
+
+	memset(pmk, 0, sizeof pmk);
+	pmk[0] = n;
+	pmk[1] = n >> 8;
+	pmk[2] = 1;				/* WSEC_PASSPHRASE */
+	memmove(pmk + 4, pass, n);
+	/*
+	 * The passphrase goes in through an IOCTL, not an iovar.
+	 *
+	 * SetVar "wsec_pmk" is refused with BCME_UNSUPPORTED (-23) by this
+	 * firmware, while sup_wpa sets and reads back as 1 -- so the
+	 * internal supplicant is there and only the way of handing it the
+	 * key was wrong.  brcmfmac uses BRCMF_C_SET_WSEC_PMK, ioctl 268,
+	 * with the same wsec_pmk_t payload.
+	 */
+	if(wlcmd(1, 268, pmk, sizeof pmk, nil, 0) < 0){
+		print("sdio: the passphrase was refused\n");
+		return -1;
+	}
+
+	/*
+	 * The join parameters: ssid, then a scan spec telling it to look
+	 * everywhere (-1 for the timings, a broadcast bssid, no channel
+	 * list).  68 bytes, not 72 -- the last four are only present when
+	 * a channel is named.
+	 */
+	memset(params, 0, sizeof params);
+	p = params;
+	n = strlen(ssid);
+	if(n > 32)
+		n = 32;
+	put4le(p, n);
+	p += 4;
+	memmove(p, ssid, n);
+	p += 32;
+	put4le(p, 0xff);			/* scan type */
+	p += 4;
+	put4le(p, -1);				/* nprobes */
+	p += 4;
+	put4le(p, -1);				/* active time */
+	p += 4;
+	put4le(p, -1);				/* passive time */
+	p += 4;
+	put4le(p, -1);				/* home time */
+	p += 4;
+	memset(p, 0xff, 6);			/* any bssid */
+	p += 6;
+	p += 2;					/* pad */
+	put4le(p, 0);				/* no channel list */
+
+	if(sdiosetvar("join", params, 68) < 0){
+		/*
+		 * Fall back to the classic way of associating.
+		 *
+		 * WLC_SET_SSID takes a bare wlc_ssid_t -- length then 32
+		 * bytes of name -- and is what brcmfmac drives.  The
+		 * "join" iovar is the newer spelling and not every build
+		 * carries it.
+		 */
+		uchar sp[36];
+
+		memset(sp, 0, sizeof sp);
+		put4le(sp, n);
+		memmove(sp + 4, ssid, n);
+		if(wlcmd(1, 26, sp, sizeof sp, nil, 0) < 0){
+			print("sdio: the join was refused\n");
+			return -1;
+		}
+	}
+	print("sdio: joining %s ...\n", ssid);
+
+	/*
+	 * Wait for it by asking who we are associated with.  The event
+	 * path would tell us sooner, but GET_BSSID answering with a real
+	 * address is the same fact and needs no reader: an unassociated
+	 * radio returns an error or all zeroes.
+	 */
+	for(i = 0; i < 60; i++){
+		/*
+		 * Drain event frames while waiting and show the first few.
+		 *
+		 * The firmware reports why an association failed as an
+		 * event, and those were being thrown away -- so a refused
+		 * join and a network that is simply not there looked
+		 * identical.  The interesting fields are the event type
+		 * and status, which sit in the BCM event header after the
+		 * SDPCM and BDC headers; dumping the first bytes is enough
+		 * to read them by eye without building the whole parser.
+		 */
+		{
+			static uchar ev[2048];
+			int k, m;
+
+			while(wlintwait(50) == 0){
+				m = wlreadpkt(ev, sizeof ev);
+				if(m <= 0)
+					break;
+				if((ev[5] & 0xf) != 1 || fw.nev >= 6)
+					continue;
+				fw.nev++;
+				print("sdio: event len %d:", m);
+				for(k = ev[7]; k < m && k < ev[7] + 40; k++)
+					print(" %2.2ux", ev[k]);
+				print("\n");
+			}
+		}
+		delay(500);
+		memset(bssid, 0, sizeof bssid);
+		if(wlcmd(0, 23, nil, 0, bssid, sizeof bssid) < 0)
+			continue;
+		if(bssid[0] | bssid[1] | bssid[2] | bssid[3] | bssid[4] | bssid[5]){
+			print("sdio: ASSOCIATED with %2.2ux:%2.2ux:%2.2ux:%2.2ux:"
+				"%2.2ux:%2.2ux after %d ms\n", bssid[0], bssid[1],
+				bssid[2], bssid[3], bssid[4], bssid[5], (i+1)*500);
+			memmove(fw.bssid, bssid, 6);
+			fw.joined = 1;
+			return 0;
+		}
+	}
+	print("sdio: no association after 30 s\n");
+	return -1;
+}
+
 char*
 sdiostate(void)
 {
 	static char buf[128];
 
 	snprint(buf, sizeof buf,
-		"up %d enabled %d chip %d rev %d ram %lud at %#lux loaded %lud nvram %d\n",
-		fw.up, fw.enabled, sb.chipid, sb.chiprev, (ulong)sb.socramsize,
+		"up %d enabled %d joined %d bssid %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux\n"
+		"chip %d rev %d ram %lud at %#lux loaded %lud nvram %d\n",
+		fw.up, fw.enabled, fw.joined, fw.bssid[0], fw.bssid[1],
+		fw.bssid[2], fw.bssid[3], fw.bssid[4], fw.bssid[5],
+		sb.chipid, sb.chiprev, (ulong)sb.socramsize,
 		(ulong)sb.rambase, (ulong)fw.off, fw.nvlen);
 	return buf;
 }

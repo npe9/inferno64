@@ -10418,3 +10418,50 @@ version, action and sync_id off the front of the reference's block is not
 what this firmware wants.  That is a structure-layout question and the
 next thing to settle; it is not a hardware or transport problem, and
 everything underneath it is verified.
+.SH
+Association and scanning: what is known, and what is not
+.PP
+.B "Not working: the radio will not scan, and will not associate."
+Both are refused by the firmware with 0xfffffffc.  No SSID has ever been
+seen, so there is nothing to report about what is on the air.
+.PP
+.B "What was eliminated along the way, each by measurement."
+The scan's first refusal was 0xfffffff2, a length complaint: the fixed
+part of wl_scan_params is 64 bytes and brcmfmac's per-SSID entry is 36,
+not the 32 the reference's escan block counts, so a broadcast scan is
+64 + 14 channels * 2 = 92 bytes.  With that corrected the length
+complaint went away and the refusal became 0xfffffffc, the same as
+escan's.
+.PP
+The passphrase was refused as an iovar (BCME_UNSUPPORTED) while sup_wpa
+set AND read back as 1 \(em so the firmware's internal supplicant is
+present and only the way of handing it a key was wrong.  It goes in
+through ioctl 268, WLC_SET_WSEC_PMK, which brcmfmac uses; with that the
+key is accepted and the join is accepted too.  The association simply
+never completes.
+.PP
+The regulatory domain is not the cause either.  country is a 12-byte
+wl_country_t, not a four-character string \(em asking with four bytes is
+refused for being too short and setting with four for being a bad
+argument, which is the structure stating its own size.  Read properly it
+says "#n", Broadcom's worldwide domain, so a domain IS set.  Setting US
+is refused, most likely because the interface must be down to change it.
+.PP
+.B "The one assumption still unchecked."
+0xfffffffc is BCME_NOTUP in the error table, and WLC_GET_CHANNEL answers
+with channel 1 at the same moment, which was read here as proof that the
+radio is up.  That inference may be wrong: GET_CHANNEL may answer from
+configuration without the MAC being enabled.  If the interface really is
+not up then every refusal so far has been the firmware telling the plain
+truth, and the question is what WLC_UP is not doing.  UP is sent with a
+four-byte argument, as the reference writes it; brcmfmac sends it with a
+zero-length payload, and an ioctl that expects none may ignore one that
+carries some and still answer 0.  That experiment was set up but its run
+was lost to a transient send failure, so it remains untried.
+.PP
+.B "And a caution about the environment."
+The AP is a Wi-Fi 7 router.  The BCM43430 is 2.4GHz only and speaks WPA2
+at best, so if that SSID is 5GHz or the network is WPA3-only, no amount
+of driver work will associate with it.  Nothing measured here can tell
+the difference yet, because the scan does not work \(em which is exactly
+why the scan is worth fixing before anything else.
