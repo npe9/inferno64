@@ -11071,3 +11071,76 @@ Three out of three, and the gateway's MAC in the arp table.  The round
 trip times are meaningless because this board has no clock until the init
 script has asked the network what time it is, and none of this ran under
 init.
+.LP
+.B "The board brings up its own radio."
+.CW wificheck()
+in the init script does at boot what the test harness had been doing by
+hand: it pushes the firmware, the nvram and the regulatory blob into
+.CW #H ,
+associates, gives the radio an IP stack of its own and takes a DHCP
+lease.
+.LP
+Everything it needs comes off the same FAT partition the kernel boots
+from \(em
+.CW brcmfw.bin ,
+.CW brcmnv.txt ,
+.CW brcmclm.bin ,
+and
+.CW wifi.cfg ,
+one line of "ssid passphrase".  The credentials are on the card and not
+in this repository, which is the point: the passphrase is the user's and
+this source is in git.  Nothing printed discloses it, the kernel does not
+log it either, and a card without a
+.CW wifi.cfg
+brings up no radio and says so once \(em which is the right behaviour for
+a kernel that also runs under qemu with no radio at all.
+.LP
+The radio gets its own IP stack at
+.CW /net.wifi
+rather than joining the wired one at
+.CW /net .
+Both are on the same subnet behind the same router, so separate stacks
+keep the two sets of routes from arguing; and this board is reached over
+the wired adapter, so a radio that misbehaves must not be able to take
+that down with it.
+.DS
+.CW
+WIFI-fw 399344 bytes
+WIFI-nvram 1121 bytes
+WIFI-clm 4733 bytes
+sdio: radio address b8:27:eb:dc:fc:2e
+#l0: address b827ebdcfc2e
+WIFI-FW-OK
+sdio: ASSOCIATED with 7a:7a:53:34:87:68
+#l0: wifi: link up: 54Mbps
+WIFI-JOINED GL-BE6500-1f2
+WIFIBIND-OK
+WIFI-DHCP-OK ip=192.168.8.210 gw=192.168.8.1
+.R
+.DE
+From the host, unprompted by anything on the board:
+.CW "4 packets transmitted, 4 packets received, 0.0% packet loss" ,
+and the arp entry for
+.CW 192.168.8.210
+is
+.CW b8:27:eb:dc:fc:2e
+\(em the radio's address, not the wired adapter's
+.CW b8:27:eb:89:a9:7b .
+The packets are going over the air.
+.LP
+Two smaller things this cost, both of the same kind.  The first attempt
+looked for
+.CW /n/dos/wifi.cfg
+once and printed
+.CW WIFI-NONE
+on a board whose card had everything on it: this is spawned alongside the
+SD checks that do the mounting, so it has to wait for the card the way
+the wired path waits for its adapter.  The second opened
+.CW /dev/wifictl
+without binding
+.CW #H
+into
+.CW /dev
+first \(em the device's own description assumes that bind, and nothing
+had been doing it.  It is done here now, in the shared namespace, so the
+files the init script uses are the files a person at the shell can use.

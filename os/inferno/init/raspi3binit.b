@@ -1411,6 +1411,194 @@ usbcheck()
 	spawn diskcheck();
 }
 
+#
+# The radio, from the card.
+#
+# Three things have to arrive from outside the kernel before the BCM43430
+# will do anything: the firmware image, its nvram, and the regulatory
+# blob.  The kernel cannot read them -- the SDIO bring-up runs in main()
+# long before any filesystem -- so they go in through #H from here, off
+# the same FAT partition the kernel itself boots from.
+#
+# The credentials come from there too, and not from this file.  The
+# passphrase is the user's, this source is in a git repository, and the
+# two must not meet: /n/dos/wifi.cfg holds one line, "ssid passphrase",
+# and is written onto the card directly.  A board whose card has no
+# wifi.cfg brings up no radio and says so once, which is the right
+# behaviour for a kernel that also runs under qemu with no radio at all.
+#
+# Nothing below is printed that would disclose the passphrase.  It is
+# passed to the kernel in a single write and the kernel does not log it
+# either.
+#
+# This is slow -- about 400KB over SDIO, then an association -- so it
+# runs in its own process and nothing waits for it.
+#
+wificheck()
+{
+	#
+	# Wait for the card, but only for as long as it might still be
+	# coming.
+	#
+	# This is spawned from the same place as everything else at the end
+	# of boot, and /n/dos is mounted by the SD checks running
+	# alongside it -- so the first version looked once, found nothing,
+	# and printed WIFI-NONE on a board whose card had the firmware on
+	# it.  The mount appears within seconds when it appears at all; a
+	# minute is generous and a board with no card waits alone.
+	#
+	cfg := "";
+	for(w := 0; w < 600; w++){
+		cfg = readctl("/n/dos/wifi.cfg");
+		if(cfg != nil)
+			break;
+		sys->sleep(100);
+	}
+	if(cfg == nil){
+		sys->print("WIFI-NONE (no /n/dos/wifi.cfg)\n");
+		return;
+	}
+	(nt, toks) := sys->tokenize(cfg, " \t\r\n");
+	if(nt < 2){
+		sys->print("WIFI-NONE (wifi.cfg is not 'ssid passphrase')\n");
+		return;
+	}
+	ssid := hd toks;
+	pass := hd tl toks;
+
+	#
+	# #H is not in /dev unless something puts it there.  Bind it in the
+	# shared namespace rather than opening "#H/wifictl" here, so that
+	# the files this uses are the same files a person at the shell can
+	# use -- which is what devwifi.c's own description assumes.
+	#
+	if(sys->bind("#H", "/dev", Sys->MAFTER) < 0){
+		sys->print("WIFI-NONE (cannot bind #H: %r)\n");
+		return;
+	}
+	ctl := sys->open("/dev/wifictl", Sys->OWRITE);
+	if(ctl == nil){
+		sys->print("WIFI-NONE (no /dev/wifictl: %r)\n");
+		return;
+	}
+	if(sys->fprint(ctl, "bringup") < 0){
+		sys->print("WIFI-FAIL bringup: %r\n");
+		return;
+	}
+	#
+	# Each blob: name the mode, push the bytes, say end.  The order
+	# matters -- the firmware has to be running before it will take a
+	# regulatory blob, so clm comes after go and enable.
+	#
+	if(wifiblob(ctl, "fw", "/n/dos/brcmfw.bin") < 0 ||
+	   wifiblob(ctl, "nvram", "/n/dos/brcmnv.txt") < 0)
+		return;
+	if(sys->fprint(ctl, "go") < 0 || sys->fprint(ctl, "enable") < 0){
+		sys->print("WIFI-FAIL start: %r\n");
+		return;
+	}
+	if(wifiblob(ctl, "clm", "/n/dos/brcmclm.bin") < 0)
+		return;
+	if(sys->fprint(ctl, "init") < 0){
+		sys->print("WIFI-FAIL init: %r\n");
+		return;
+	}
+	sys->print("WIFI-FW-OK\n");
+	if(sys->fprint(ctl, "join %s %s", ssid, pass) < 0){
+		sys->print("WIFI-FAIL join %s: %r\n", ssid);
+		return;
+	}
+	sys->print("WIFI-JOINED %s\n", ssid);
+
+	#
+	# Its own IP stack.
+	#
+	# The wired adapter already owns /net, and both are on the same
+	# subnet behind the same router.  Giving the radio a second stack
+	# at /net.wifi keeps the two sets of routes from arguing, and means
+	# a radio that misbehaves cannot take the wired network -- which is
+	# how this board is reached -- down with it.
+	#
+	if(sys->bind("#I1", "/net.wifi", Sys->MREPL) < 0){
+		sys->print("WIFI-FAIL bind #I1: %r\n");
+		return;
+	}
+	# As with the wired interface, the clone fd IS the interface: hold
+	# it or devip unbinds the ether the moment this function returns.
+	cfd := sys->open("/net.wifi/ipifc/clone", Sys->ORDWR);
+	if(cfd == nil || sys->fprint(cfd, "bind ether #l0/ether0") < 0){
+		sys->print("WIFI-FAIL bind ether: %r\n");
+		return;
+	}
+	ipctls = cfd :: ipctls;
+	sys->print("WIFIBIND-OK\n");
+	if(dhcpclient == nil){
+		dhcpclient = load Dhcpclient Dhcpclient->PATH;
+		if(dhcpclient == nil){
+			sys->print("WIFI-FAIL load dhcpclient: %r\n");
+			return;
+		}
+		dhcpclient->init();
+	}
+	cfg2 := Bootconf.new();
+	lease: ref Lease;
+	err: string;
+	(cfg2, lease, err) = dhcpclient->dhcp("/net.wifi", cfd,
+		"#l0/ether0/addr", cfg2, nil);
+	if(err != nil || cfg2 == nil || cfg2.ip == nil){
+		sys->print("WIFI-DHCP-FAIL %s\n", err);
+		return;
+	}
+	sys->print("WIFI-DHCP-OK ip=%s gw=%s\n", cfg2.ip, cfg2.ipgw);
+	lease = nil;
+}
+
+#
+# One blob into the radio.  Written in pieces because #H takes whatever
+# size it is given and puts it straight into the chip at a running
+# offset, and a short write is a firmware image with a hole in it.
+#
+wifiblob(ctl: ref Sys->FD, mode, path: string): int
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil){
+		sys->print("WIFI-FAIL open %s: %r\n", path);
+		return -1;
+	}
+	if(sys->fprint(ctl, "%s", mode) < 0){
+		sys->print("WIFI-FAIL %s: %r\n", mode);
+		return -1;
+	}
+	data := sys->open("/dev/wifidata", Sys->OWRITE);
+	if(data == nil){
+		sys->print("WIFI-FAIL open wifidata: %r\n");
+		return -1;
+	}
+	buf := array[8192] of byte;
+	total := 0;
+	for(;;){
+		n := sys->read(fd, buf, len buf);
+		if(n < 0){
+			sys->print("WIFI-FAIL read %s: %r\n", path);
+			return -1;
+		}
+		if(n == 0)
+			break;
+		if(sys->write(data, buf, n) != n){
+			sys->print("WIFI-FAIL write %s at %d: %r\n", path, total);
+			return -1;
+		}
+		total += n;
+	}
+	data = nil;
+	if(sys->fprint(ctl, "end") < 0){
+		sys->print("WIFI-FAIL end %s: %r\n", mode);
+		return -1;
+	}
+	sys->print("WIFI-%s %d bytes\n", mode, total);
+	return 0;
+}
+
 ethercheck()
 {
 	#
@@ -2478,6 +2666,8 @@ init()
 	# in its own process: the shell must not wait behind a DHCP lease and
 	# three pings, which take seconds and can be answered by nothing at all
 	spawn ethercheck();
+	# The radio, if the card carries firmware and credentials for one.
+	spawn wificheck();
 	spawn readerwatch();
 	spawn netdebug();
 	spawn pingtest();
