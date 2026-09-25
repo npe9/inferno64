@@ -10920,3 +10920,81 @@ handshake, which should have been read as the instrument failing.
 One residual: of the three joins, one associated in 17 seconds instead of
 3 and left the control channel stalled afterwards.  That is a real
 remaining fault, no longer the common case.
+.LP
+.B "The control channel never stalled."
+The previous section's commit said "3/3 joined, 3.4s each, and GET_BSSID
+answers after link-up."  Two of three, not three: one trial associated in
+17 seconds instead of 3 and its
+.CW GET_BSSID
+went unanswered, which is why that line reads
+.CW "ASSOCIATED with GL-BE6500-1f2"
+\(em the SSID, printed as a fallback \(em rather than a MAC address.
+.LP
+Chasing that residual turned it into something else entirely.  Two
+counters, kept apart, and a wider bound on the reply, and it named
+itself.  The counters first: the reader now issues a read whether or not
+a frame is waiting, so a read against an empty queue happens about 140
+times a second, and if an empty queue answered with a bus error rather
+than a zero length that idle loop would be driving a controller reset at
+the same rate on the bus every command travels over \(em which would look
+exactly like a stalled control channel.  Collapsing "nothing to read" and
+"the read failed" into one
+.CW "n <= 0"
+branch made that unaskable.  Split:
+.CW "empty 15241 readerr 0 recover 0" .
+The idle read is free, and that whole line of suspicion is closed.
+.LP
+What the event trace then showed is that the failing trial was never an
+association.  Its signature was different every time \(em
+.CW "E_AUTH status 4" ,
+then an
+.CW E_LINK
+eighteen seconds later, and nothing else: no
+.CW E_ASSOC ,
+no
+.CW E_PSK_SUP ,
+no
+.CW E_SET_SSID .
+.CW E_LINK
+reports the link going
+.I down
+as well as up, and the two differ only in the flags \(em
+.CW WLC_EVENT_MSG_LINK ,
+bit 0.  Taking every
+.CW E_LINK
+for a successful join made a teardown indistinguishable from an
+association.
+.LP
+And it was not an edge case.  A join issued while already associated
+makes the firmware drop the existing link and ignore the join; the second
+of three joins failed that way in every single run.  So the last of the
+"intermittency" was two deterministic behaviours read as one random one:
+a join from a disassociated radio succeeds every time in about 3.3
+seconds, and a join from an associated one never succeeded at all.
+.CW GET_BSSID
+answered correctly throughout \(em
+.CW "GET_BSSID -> 0, 00:00:00:00:00:00"
+after the link went down, which is the right answer to the question
+asked.  The control channel was never stalled; it was reporting a radio
+that was not associated, and being disbelieved.
+.LP
+The reference never meets this, because nothing there re-joins while up.
+Here it is said explicitly: if already associated, DISASSOC, wait for the
+firmware to confirm the link is down, pause, and only then bring the
+interface up and ask for the new association.  Four joins in a row, each
+one from an associated radio:
+.DS
+.CW
+=== trial 3
+sdio: already associated; disassociating first
+sdio: +111770ms the link went DOWN
+sdio: at join: auth 0 wsec 4 wpa_auth 0x80 sup_wpa 1
+sdio: +3210ms event type 7 status 0 flags 0x0 len 251
+sdio: +3220ms event type 16 status 0 flags 0x1 len 118
+sdio: +3230ms E_PSK_SUP KEYED
+sdio: ASSOCIATED with 7a:7a:53:34:87:68
+=== 4/4 joined
+.R
+.DE
+Every one with the bssid read back over the control channel after the
+link came up.  There is no intermittency left in the association.

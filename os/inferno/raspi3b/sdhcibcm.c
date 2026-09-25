@@ -268,8 +268,10 @@ static char *sdhcilastwhy = "";
  * the card path a single transient error would take the disk away and
  * never give it back.
  */
+int sdhcinrecover;
+
 static void
-sdhcirecover(Ctlr *c, u32 flags)
+sdhcirecover1(Ctlr *c, u32 flags)
 {
 	u32 *r = c->r;
 	u32 rst;
@@ -280,6 +282,25 @@ sdhcirecover(Ctlr *c, u32 flags)
 	r[Control1] |= rst;
 	awaitbit(&r[Control1], rst, 0);
 	r[Interrupt] = r[Interrupt];
+}
+
+/*
+ * Every CMD/DAT-line reset, counted.
+ *
+ * The frame reader now issues a read whether or not a frame is waiting,
+ * so a read against an empty queue happens about 140 times a second.  If
+ * an empty queue answered with a bus error rather than a zero length,
+ * that idle loop would be quietly driving a controller reset at the same
+ * rate, on the bus every command travels over -- indistinguishable from
+ * the outside from a stalled control channel.  Collapsing "nothing to
+ * read" and "the read failed" into one branch made that unaskable, so
+ * they are counted apart.
+ */
+static void
+sdhcirecover(Ctlr *c, u32 flags)
+{
+	sdhcinrecover++;
+	sdhcirecover1(c, flags);
 }
 
 static int
@@ -2244,6 +2265,10 @@ static struct {
 	int	nesc;		/* escan result events seen */
 	int	lastetype;
 	int	nresync;
+	int	nempty;		/* reads that found an empty queue */
+	int	nreaderr;	/* reads the bus refused */
+	Rendez	linkr;
+	int	linkdown;	/* the firmware has reported the link down */
 	uchar	txwindow;	/* the firmware's send credit */
 	uchar	fcmask;
 	long	t0;		/* ticks when the join was issued */
@@ -2290,9 +2315,16 @@ wlintwait(int ms)
 	u32 ints, mbox;
 	int i, t;
 
-	for(t = 0; t < ms; t += 5){
+	/*
+	 * ms == 0 means one look and no waiting.  The delay is a busy wait
+	 * and this is called with the SDIO bus locked, so an idle reader
+	 * spinning in here holds the lock against every sender for nothing.
+	 */
+	for(t = 0;; t += 5){
 		i = sdiocmd52(0, Cccintpend, 0, 0);
 		if(i <= 0){
+			if(t + 5 >= ms)
+				break;
 			delay(5);
 			continue;
 		}
@@ -2309,6 +2341,8 @@ wlintwait(int ms)
 		}
 		if(ints & FrameInt)
 			return 0;
+		if(t + 5 >= ms)
+			break;
 		delay(5);
 	}
 	return -1;
@@ -2373,7 +2407,7 @@ wlreadpkt(uchar *buf, int max)
 static void
 wlevent(uchar *ev, int flen)
 {
-	int doff, bdc, k, etype, status, nbss, off, rlen, sl, j, dup;
+	int doff, bdc, k, etype, status, flags, nbss, off, rlen, sl, j, dup;
 	char name[33];
 
 	doff = ev[7];
@@ -2383,6 +2417,11 @@ wlevent(uchar *ev, int flen)
 	if(flen < doff + bdc + 24 + 16)
 		return;
 	k = doff + bdc + 24;
+	/*
+	 * wl_event_msg_t, all big endian: version, flags, event_type,
+	 * status, reason, ...  The flags matter as much as the type.
+	 */
+	flags = ev[k+2] << 8 | ev[k+3];
 	etype = ev[k+6] << 8 | ev[k+7];
 	status = ev[k+8] << 24 | ev[k+9] << 16 | ev[k+10] << 8 | ev[k+11];
 	rx.lastetype = etype;
@@ -2402,13 +2441,42 @@ wlevent(uchar *ev, int flen)
 			print("sdio: +%ldms E_PSK_SUP %s\n",
 				(long)(TK2MS(m->ticks) - rx.t0), supstate[status]);
 		else
-			print("sdio: +%ldms event type %d status %d len %d\n",
-				(long)(TK2MS(m->ticks) - rx.t0), etype, status, flen);
+			print("sdio: +%ldms event type %d status %d flags %#ux len %d\n",
+				(long)(TK2MS(m->ticks) - rx.t0), etype, status,
+				flags, flen);
 	}
 
 	switch(etype){
-	case 0:					/* E_SET_SSID */
 	case 16:				/* E_LINK */
+		/*
+		 * E_LINK reports the link going DOWN as well as up, and the
+		 * two differ only in the flags: WLC_EVENT_MSG_LINK, bit 0.
+		 * Taking every E_LINK for a successful join made a teardown
+		 * indistinguishable from an association -- and that was not
+		 * an edge case, it was every second join.
+		 *
+		 * A join issued while already associated tears the old link
+		 * down first, so the sequence was E_AUTH status 4, then
+		 * E_LINK (down) fourteen seconds later, and nothing else:
+		 * no E_ASSOC, no E_PSK_SUP, no E_SET_SSID.  This reported
+		 * ASSOCIATED on it, then found GET_BSSID had nothing to
+		 * report, and blamed a stalled control channel.  The
+		 * control channel was fine; the radio was not associated.
+		 * The second of three joins failed this way in every run,
+		 * which is the last of the "intermittency".
+		 */
+		if((flags & 1) == 0){
+			print("sdio: +%ldms the link went DOWN\n",
+				(long)(TK2MS(m->ticks) - rx.t0));
+			rx.linkdown = 1;
+			fw.joined = 0;
+			wakeup(&rx.linkr);
+			return;
+		}
+		rx.joinstatus = 1 + status;
+		wakeup(&rx.joinr);
+		return;
+	case 0:					/* E_SET_SSID */
 		rx.joinstatus = 1 + status;
 		wakeup(&rx.joinr);
 		return;
@@ -2498,11 +2566,14 @@ wlrxproc(void *a)
 		 */
 		qlock(&rx.sdiolock);
 		n = wlreadpkt(buf, sizeof buf);
+		if(n == 0)
+			rx.nempty++;
+		else if(n < 0)
+			rx.nreaderr++;
+		if(n <= 0)
+			wlintwait(0);	/* one look, no delay under the lock */
 		qunlock(&rx.sdiolock);
 		if(n <= 0){
-			qlock(&rx.sdiolock);
-			wlintwait(5);
-			qunlock(&rx.sdiolock);
 			tsleep(&up->sleep, return0, nil, 2);
 			continue;
 		}
@@ -2573,6 +2644,13 @@ rspready(void *a)
 {
 	USED(a);
 	return rx.rspid == reqid;
+}
+
+static int
+linkisdown(void *a)
+{
+	USED(a);
+	return rx.linkdown;
 }
 
 static int
@@ -2657,11 +2735,19 @@ wlcmd(int write, int op, void *data, int dlen, void *res, int rlen)
 	txseq++;
 
 	/*
-	 * Sleep until the reader hands the reply over.  Three seconds is
-	 * ample for an ioctl -- the firmware answers in milliseconds -- and
-	 * unlike the old polling it costs nothing while waiting.
+	 * Sleep until the reader hands the reply over.
+	 *
+	 * The reference sleeps with no timeout at all; three seconds was
+	 * this driver's own invention, on the reasoning that the firmware
+	 * answers in milliseconds.  It usually does, but the one join in
+	 * three that took seventeen seconds instead of three shows the
+	 * firmware taking a slower path, and a ceiling tight enough to
+	 * expire on that is a bug reported rather than a bug found.  A
+	 * bound is still wanted -- an unanswered command must not wedge the
+	 * caller forever -- but it should be well clear of the firmware's
+	 * slow path.
 	 */
-	tsleep(&rx.cmdr, rspready, nil, 3000);
+	tsleep(&rx.cmdr, rspready, nil, 12000);
 	if(rx.rspid != reqid){
 		print("sdio: cmd %d got no answer\n", op);
 		qunlock(&rx);
@@ -3135,6 +3221,36 @@ sdiojoin(char *ssid, char *pass)
 		print("sdio: the passphrase must be 8 to 63 characters\n");
 		return -1;
 	}
+	/*
+	 * Let go of the old association first, and WAIT for it.
+	 *
+	 * A join issued while already associated does not re-associate:
+	 * the firmware drops the existing link -- E_LINK with the
+	 * WLC_EVENT_MSG_LINK flag clear, about eighteen seconds later --
+	 * and the join goes nowhere.  Every second join in a run failed
+	 * that way, deterministically, which had been read as the
+	 * association being flaky.
+	 *
+	 * The reference never hits this because nothing there re-joins
+	 * while up.  Here the fix is to say so explicitly: DISASSOC, wait
+	 * for the firmware to confirm the link is down, and only then set
+	 * the interface up and ask for the new one.
+	 */
+	if(fw.joined){
+		print("sdio: already associated; disassociating first\n");
+		rx.linkdown = 0;
+		wlcmdint(52, 0);		/* DISASSOC */
+		tsleep(&rx.linkr, linkisdown, nil, 25000);
+		if(!rx.linkdown)
+			print("sdio: the link never reported down\n");
+		fw.joined = 0;
+		/*
+		 * The firmware needs a moment after the link goes down
+		 * before it will take a join; asking immediately is how the
+		 * collision happened in the first place.
+		 */
+		tsleep(&up->sleep, return0, nil, 1000);
+	}
 	wlcmdint(2, 1);				/* UP */
 
 	/*
@@ -3385,9 +3501,11 @@ sdiojoin(char *ssid, char *pass)
 			if(wlcmd(0, 23, nil, 0, b, sizeof b) == 0 &&
 			   (b[0]|b[1]|b[2]|b[3]|b[4]|b[5])){
 				print("sdio: BSSID %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux "
-					"after %d tr(ies); window %d fcmask %#ux resyncs %d\n",
+					"after %d tr(ies); window %d fcmask %#ux "
+					"resyncs %d empty %d readerr %d recover %d\n",
 					b[0], b[1], b[2], b[3], b[4], b[5], k+1,
-					rx.txwindow, rx.fcmask, rx.nresync);
+					rx.txwindow, rx.fcmask, rx.nresync,
+					rx.nempty, rx.nreaderr, sdhcinrecover);
 				memmove(fw.bssid, b, 6);
 				break;
 			}
@@ -3395,8 +3513,10 @@ sdiojoin(char *ssid, char *pass)
 		}
 		if(k == 10)
 			print("sdio: the control channel is still stalled "
-				"(window %d fcmask %#ux resyncs %d)\n",
-				rx.txwindow, rx.fcmask, rx.nresync);
+				"(window %d fcmask %#ux resyncs %d "
+				"empty %d readerr %d recover %d)\n",
+				rx.txwindow, rx.fcmask, rx.nresync,
+				rx.nempty, rx.nreaderr, sdhcinrecover);
 	}
 	fw.joined = 1;
 	return 0;
