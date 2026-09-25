@@ -44,6 +44,8 @@ extern int	sdiofwend(void);
 extern int	sdiofwgo(void);
 extern int	sdioenable(void);
 extern int	sdioversion(char*, int);
+extern int	sdiowlinit(uchar*);
+extern int	sdioscan(int*);
 extern char*	sdiostate(void);
 
 enum {
@@ -60,6 +62,8 @@ static Dirtab wifidir[] =
 };
 
 static char wifiver[256];
+static char wifiea[32];
+static int wifinev;
 
 static Chan*
 wifiattach(char *spec)
@@ -104,7 +108,9 @@ wifiread(Chan *c, void *a, int n, vlong offset)
 		if(wifiver[0] != '\0'){
 			static char both[512];
 
-			snprint(both, sizeof both, "%sfirmware %s\n", p, wifiver);
+			snprint(both, sizeof both,
+				"%saddr %s\nscan events %d\nfirmware %s\n",
+				p, wifiea[0]? wifiea : "-", wifinev, wifiver);
 			p = both;
 		}
 		return readstr((ulong)offset, a, n, p);
@@ -145,6 +151,20 @@ wifiwrite(Chan *c, void *a, int n, vlong offset)
 		}else if(strcmp(cmd, "enable") == 0){
 			if(sdioenable() < 0)
 				error("the firmware did not come up");
+		}else if(strcmp(cmd, "init") == 0){
+			uchar ea[6];
+
+			if(sdiowlinit(ea) < 0)
+				error("the radio would not initialise");
+			snprint(wifiea, sizeof wifiea,
+				"%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux",
+				ea[0], ea[1], ea[2], ea[3], ea[4], ea[5]);
+		}else if(strcmp(cmd, "scan") == 0){
+			int nev;
+
+			if(sdioscan(&nev) < 0)
+				error("the scan failed");
+			wifinev = nev;
 		}else if(strcmp(cmd, "ver") == 0){
 			/*
 			 * Ask the firmware to identify itself, and keep

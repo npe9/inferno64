@@ -1898,6 +1898,7 @@ static struct {
 	int	enabled;
 	int	said;		/* the firmware-ready mailbox seen */
 	int	rxdebug;
+	int	inited;
 } fw;
 
 int
@@ -2342,6 +2343,209 @@ sdioversion(char *buf, int len)
 	if(sdiogetvar("ver", buf, len - 1) < 0)
 		return -1;
 	buf[len-1] = 0;
+	return 0;
+}
+
+static void
+put4le(uchar *p, u32 v)
+{
+	p[0] = v;
+	p[1] = v >> 8;
+	p[2] = v >> 16;
+	p[3] = v >> 24;
+}
+
+static int
+wlcmdint(int op, int val)
+{
+	uchar b[4];
+
+	put4le(b, val);
+	return wlcmd(1, op, b, 4, nil, 0);
+}
+
+static int
+sdiosetint(char *name, int val)
+{
+	uchar b[4];
+
+	put4le(b, val);
+	return sdiosetvar(name, b, 4);
+}
+
+/*
+ * Set the radio up, following 9front's wlinit for a 43430.
+ *
+ * The magic numbers are ioctl opcodes rather than anything derivable: 2
+ * is UP/DOWN, 0x14 SET_INFRA, 0x56 the powersave mode (which must be
+ * OFF on this part -- FAST wedges it), and 0xb9/0xbb/0x102 the three
+ * scan timings.  event_msgs is a bitmap of which events the firmware may
+ * report; all of them are enabled except a handful that are pure noise.
+ */
+int
+sdiowlinit(uchar *ea)
+{
+	uchar eventmask[16];
+
+	if(!fw.enabled)
+		return -1;
+	if(sdiogetvar("cur_etheraddr", ea, 6) < 0){
+		print("sdio: cannot read the radio's address\n");
+		return -1;
+	}
+	print("sdio: radio address %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux\n",
+		ea[0], ea[1], ea[2], ea[3], ea[4], ea[5]);
+
+	sdiosetint("assoc_listen", 10);
+	wlcmdint(0x56, 0);			/* powersave off */
+	sdiosetint("bus:txglom", 0);
+	sdiosetint("bcn_timeout", 10);
+	sdiosetint("assoc_retry_max", 3);
+
+	memset(eventmask, 0xff, sizeof eventmask);
+	eventmask[40/8] &= ~(1<<(40%8));	/* E_RADIO */
+	eventmask[44/8] &= ~(1<<(44%8));	/* E_PROBREQ_MSG */
+	eventmask[54/8] &= ~(1<<(54%8));	/* E_IF */
+	eventmask[71/8] &= ~(1<<(71%8));	/* E_PROBRESP_MSG */
+	eventmask[20/8] &= ~(1<<(20%8));	/* E_TXFAIL */
+	eventmask[124/8] &= ~(1<<(124%8));
+	sdiosetvar("event_msgs", eventmask, sizeof eventmask);
+
+	wlcmdint(0xb9, 0x28);			/* scan channel time */
+	wlcmdint(0xbb, 0x28);			/* scan unassoc time */
+	wlcmdint(0x102, 0x82);			/* scan passive time */
+	wlcmdint(2, 0);				/* DOWN */
+	sdiosetint("roam_off", 1);
+	wlcmdint(0x14, 1);			/* SET_INFRA */
+	if(wlcmdint(2, 1) < 0){			/* UP */
+		print("sdio: the radio would not come up\n");
+		return -1;
+	}
+	/*
+	 * Give UP time to take effect, and do NOT try to ask whether it
+	 * has.
+	 *
+	 * The first attempt at this polled ioctl 3, on the assumption that
+	 * it was GET_UP.  It is not: in wlioctl's numbering 2 is WLC_UP
+	 * and 3 is WLC_DOWN, so the poll took the radio down twenty times
+	 * in a row, immediately after bringing it up, and then reported
+	 * "GET_UP 0" as though the firmware were at fault.  The scan's
+	 * BCME_NOTUP was entirely self-inflicted.
+	 *
+	 * There is no GET_UP in that list to ask with.  So: wait, and let
+	 * the scan's own retry loop absorb what is left.
+	 */
+	/*
+	 * rxmode's settings, which wlinit does through the Ether layer.
+	 * None of them obviously gates UP, but they are part of the
+	 * sequence the reference is known to work with and leaving them
+	 * out is a difference for its own sake.
+	 */
+	sdiosetint("allmulti", 0);
+	wlcmdint(10, 0);			/* SET_PROMISC off */
+	sdiosetint("arp_ol", 1);
+	sdiosetint("ndoe", 1);
+	wlcmdint(2, 1);				/* UP again, as the reference does */
+	delay(1000);
+	print("sdio: radio is UP\n");
+	fw.inited = 1;
+	return 0;
+}
+
+/*
+ * Start a passive scan over the 2.4GHz channels and count what comes
+ * back.  The escan parameter block is a fixed layout and is taken
+ * verbatim from the reference, including its note that the byte order is
+ * only right on a little-endian machine -- which this is.
+ *
+ * The results arrive as events on channel 1.  Parsing them into SSIDs is
+ * the next piece of work; for now this reports how many event frames the
+ * radio produced, which is the difference between a radio that is
+ * listening to the air and one that is merely powered.
+ */
+int
+sdioscan(int *nev)
+{
+	static uchar params[4+2+2+4+32+6+1+1+4*4+2+2+14*2+32+4] = {
+		1,0,0,0,
+		1,0,
+		0x34,0x12,
+		0,0,0,0,
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+		0xff,0xff,0xff,0xff,0xff,0xff,
+		2,
+		0,
+		0xff,0xff,0xff,0xff,
+		0xff,0xff,0xff,0xff,
+		0xff,0xff,0xff,0xff,
+		0xff,0xff,0xff,0xff,
+		14,0,
+		1,0,
+		0x01,0x2b,0x02,0x2b,0x03,0x2b,0x04,0x2b,0x05,0x2e,0x06,0x2e,0x07,0x2e,
+		0x08,0x2b,0x09,0x2b,0x0a,0x2b,0x0b,0x2b,0x0c,0x2b,0x0d,0x2b,0x0e,0x2b,
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+	};
+	static uchar pkt[4096];
+
+	if(!fw.inited)
+		return -1;
+	/*
+	 * Scan with WLC_SCAN and read the results with WLC_SCAN_RESULTS,
+	 * rather than escan.
+	 *
+	 * escan is refused by this firmware -- status 0xfffffffc every
+	 * time -- and that is not "interface down" whatever the error
+	 * table says, because WLC_GET_CHANNEL answers with channel 1 at
+	 * the same moment: the radio is up.  escan also delivers its
+	 * results as events, which needs the asynchronous reader this does
+	 * not have yet.
+	 *
+	 * The older pair is a better fit and needs neither: ioctl 50 takes
+	 * the same scan parameters minus escan's version, action and
+	 * sync_id, and ioctl 51 hands back the accumulated results in one
+	 * buffer.  Synchronous, which is what everything here is.
+	 */
+	if(wlcmd(1, 50, params + 8, 124, nil, 0) < 0){
+		print("sdio: WLC_SCAN was refused\n");
+		return -1;
+	}
+	delay(3000);				/* let it sweep the channels */
+	memset(pkt, 0, sizeof pkt);
+	put4le(pkt, sizeof pkt);		/* buflen, as the firmware wants */
+	if(wlcmd(0, 51, pkt, 4, pkt, sizeof pkt - 64) < 0){
+		print("sdio: WLC_SCAN_RESULTS was refused\n");
+		return -1;
+	}
+	/*
+	 * wl_scan_results: buflen[4] version[4] count[4], then count
+	 * bss_info records, each length-prefixed at offset 4.  Inside a
+	 * record: version[4] length[4] BSSID[6] beacon_period[2]
+	 * capability[2] SSID_len[1] SSID[32].
+	 */
+	{
+		u32 buflen, count, off, rlen;
+		int k, sl;
+
+		buflen = pkt[0] | pkt[1]<<8 | pkt[2]<<16 | pkt[3]<<24;
+		count = pkt[8] | pkt[9]<<8 | pkt[10]<<16 | pkt[11]<<24;
+		print("sdio: scan results %lud bytes, %lud network(s)\n",
+			(ulong)buflen, (ulong)count);
+		off = 12;
+		for(k = 0; k < count && off + 24 < sizeof pkt; k++){
+			rlen = pkt[off+4] | pkt[off+5]<<8 | pkt[off+6]<<16 |
+				pkt[off+7]<<24;
+			if(rlen < 24 || off + rlen > sizeof pkt)
+				break;
+			sl = pkt[off+18];
+			if(sl > 32)
+				sl = 32;
+			print("sdio: %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux  %.*s\n",
+				pkt[off+8], pkt[off+9], pkt[off+10], pkt[off+11],
+				pkt[off+12], pkt[off+13], sl, (char*)&pkt[off+19]);
+			off += rlen;
+		}
+		*nev = count;
+	}
 	return 0;
 }
 

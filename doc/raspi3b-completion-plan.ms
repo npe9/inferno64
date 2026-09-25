@@ -10378,3 +10378,43 @@ timing was not absurd.
 Association \(em ssid, security and passphrase, which this firmware's own
 supplicant handles \(em and then presenting the radio as an ether device
 on /net.alt, which needs the asynchronous reader and the data channel.
+.SH
+The radio is initialised and up; scanning is not working yet
+.P1
+sdio: radio address b8:27:eb:dc:fc:2e
+sdio: radio is UP
+sdio: UP again -> 0
+sdio: GET_CHANNEL -> 0, channel 1 target 1
+.P2
+.PP
+The address came out of the firmware by GetVar of "cur_etheraddr", and
+b8:27:eb is the Raspberry Pi Foundation's OUI \(em the same prefix as the
+USB ethernet's b8:27:eb:89:a9:7b, which is a check on the value rather
+than just a plausible-looking six bytes.  wlinit's whole sequence runs:
+powersave off (which this part needs \(em FAST wedges it), the event
+mask, the three scan timings, roam_off, SET_INFRA, rxmode's settings, and
+UP.  WLC_GET_CHANNEL answering with channel 1 is independent evidence
+that the radio really is running, not just that an ioctl returned 0.
+.PP
+.B "Two mistakes of mine, both worth writing down."
+The first attempt polled ioctl 3 expecting GET_UP.  In wlioctl's
+numbering 2 is WLC_UP and 3 is WLC_DOWN, so that poll took the radio
+DOWN twenty times in a row, immediately after bringing it up, and then
+reported the firmware's entirely correct BCME_NOTUP as though the chip
+were at fault.  There is no GET_UP in that list to ask with.
+.PP
+The second was reading 0xfffffffc as \fIinterface not up\fP from an error
+table and believing it over the hardware.  WLC_GET_CHANNEL answers with a
+channel at the same moment, so the radio is up and that reading was
+wrong.  An error code is a claim; a register that answers is evidence.
+.PP
+.B "What is actually stuck."
+escan is refused with 0xfffffffc every time.  The older synchronous pair
+\(em WLC_SCAN (50) then WLC_SCAN_RESULTS (51) \(em is a better fit here
+anyway, because escan returns its results as events and there is no
+asynchronous reader yet, but WLC_SCAN comes back 0xfffffff2, which is a
+length complaint: the 124-byte wl_scan_params built by stripping escan's
+version, action and sync_id off the front of the reference's block is not
+what this firmware wants.  That is a structure-layout question and the
+next thing to settle; it is not a hardware or transport problem, and
+everything underneath it is verified.
