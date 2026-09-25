@@ -214,6 +214,7 @@ root
 	/dis/lib
 	/dis/sh.dis		/dis32/sh.dis
 	/dis/sh/std.dis		/dis32/sh/std.dis
+	/dis/lil.dis		/dis32/lil.dis
 	/dis/lib/arg.dis	/dis32/lib/arg.dis
 	/dis/lib/bufio.dis	/dis32/lib/bufio.dis
 	/dis/lib/daytime.dis	/dis32/lib/daytime.dis

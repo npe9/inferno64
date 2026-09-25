@@ -90,6 +90,7 @@ TARG=\
 	itest.dis\
 	itreplay.dis\
 	kill.dis\
+	lil.dis\
 	listen.dis\
 	lockfs.dis\
 	logfile.dis\

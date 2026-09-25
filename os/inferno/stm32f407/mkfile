@@ -123,9 +123,15 @@ $ROOT/tools/bin2ihex:
 #
 # sh is the extreme case and the reason any of this exists: 73536 bytes
 # of Inst against 176128 of RAM, so without XIP there is no shell.
+# lil.dis is lil(1), an interpreted subset of Limbo, here to be typed at
+# instead of the shell: it holds a file open in a variable rather than
+# forking a process and an open for every line.  It is beside sh and not
+# instead of it, so that a fault in it still leaves something to look at
+# the board with.
 XIPDIS=\
 	sh.dis\
 	sh/std.dis\
+	lil.dis\
 	lib/arg.dis\
 	lib/bufio.dis\
 	lib/daytime.dis\
