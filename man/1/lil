@@ -375,7 +375,25 @@ marker is just another statement, and
 .B LilStream.alive()
 asks the question that
 .B Stream
-structurally cannot.
+structurally cannot, and
+.B tools/radio/lilstream.py
+shows it doing so against a booted kernel: a marker answered with the ctl
+file open, three ctl lines written through it, a marker answered again
+afterwards, the part read back through
+.B slurp
+to confirm the writes landed, and a usable shell prompt after leaving.
+Eight cases, all passing, with no board \-
+.I qemu
+is given
+.B "-serial pty"
+and
+.B board.py
+aimed at that path by
+.BR INFERNO_BOARD_PORT ,
+which also stops it looking for a
+.IR screen (1)
+session, since a test that found the bench's screen instead would type at
+the physical board.
 .PP
 A third, smaller: a character dropped because the line was typed faster
 than the console echoes leaves

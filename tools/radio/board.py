@@ -34,6 +34,14 @@ def main():
         print(out if out else "(no reply to %r)" % line)
 
 
+# A console somewhere other than the usb serial adapter: a qemu pty, or a
+# second adapter.  Setting it also stops session() looking for a screen,
+# because the two must not disagree -- a test aimed at a qemu pty that
+# found the bench's screen instead would type its commands at the
+# physical board.
+ALTPORT = os.environ.get("INFERNO_BOARD_PORT")
+
+
 def session(port=PORT):
     """The screen session holding the console, or None.
 
@@ -44,6 +52,8 @@ def session(port=PORT):
     one, which this learned by typing a board's commands into somebody
     else's window.
     """
+    if ALTPORT:
+        return None
     try:
         out = subprocess.run(["screen", "-ls"], capture_output=True,
                              text=True).stdout
@@ -96,7 +106,7 @@ class Console:
                 os.path.dirname(os.path.abspath(__file__)), "..", "f407"))
             import console
             self.console = console
-            self.fd = console.open_port()
+            self.fd = console.open_port(ALTPORT or console.PORT)
 
     def send(self, line):
         if self.sess:
