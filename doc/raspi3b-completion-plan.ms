@@ -10998,3 +10998,76 @@ sdio: ASSOCIATED with 7a:7a:53:34:87:68
 .DE
 Every one with the bssid read back over the control channel after the
 link came up.  There is no intermittency left in the association.
+.LP
+.B "#l0: the radio as an ether device."
+The data channel is now an
+.CW Ether ,
+and the Pi pings its gateway over its own radio.
+.LP
+The awkward part is when the card exists.  devether probes its cards from
+.CW chandevreset ,
+very early in
+.CW main() ,
+and the radio at that point is a lump of silicon with no firmware in it:
+the 399344-byte image and its nvram come from user space through
+.CW #H ,
+long after
+.CW chandevreset
+has been and gone.  So
+.CW #l0
+registers unconditionally, with no address and no link, and fills itself
+in as the radio comes up \(em
+.CW "echo init"
+brings the MAC address,
+.CW "echo join"
+brings the link.  Sending is a process of its own blocked on the output
+queue rather than work done inside
+.CW transmit() ,
+because one frame out is a multi-block SDIO write over a bus shared with
+the frame reader and with every control command, and the IP stack's write
+path has no business waiting on that.
+.LP
+Two things were measured rather than assumed on the way.  The first was
+flow control: the firmware advertises a window in every frame it sends
+and drops anything sent past it in silence, so a driver that ignores it
+looks exactly like a driver whose bus has died.  Exposing the numbers
+settled it \(em
+.CW "txseq 40 txwindow 55"
+before a ping,
+.CW "txseq 44 txwindow 60"
+after.  The window advances as frames go out, which is the firmware
+saying it consumed them.  Flow control was not the problem.
+.LP
+The problem was the receive filter, and it was mine:
+.DS
+.CW
+if(n < ETHERMINTU || n > ETHERMAXTU + 18)
+	return;
+.R
+.DE
+.CW ETHERMINTU
+is 60, the minimum length of an ethernet frame
+.I "on the wire" ,
+where the PHY pads it.  There is no PHY here.  The firmware hands over an
+802.11 frame already converted to ethernet form, and a converted ARP
+reply is 42 bytes \(em header plus payload, no padding.  So the one frame
+the whole thing was waiting on was the one frame guaranteed to be thrown
+away.  The interface received broadcast traffic all day, the IP stack
+counted
+.CW "pktin 16" ,
+the ARP entry sat at
+.CW WAIT
+forever, and every explanation reached for was on the transmit side.
+.DS
+.CW
+sending 3 64 byte messages 1000 ms apart
+0: rtt ... ttl = 64
+1: rtt ... ttl = 64
+2: rtt ... ttl = 64
+ether  OK   192.168.8.1     9483c4dbe1f4     192.168.8.107
+.R
+.DE
+Three out of three, and the gateway's MAC in the arp table.  The round
+trip times are meaningless because this board has no clock until the init
+script has asked the network what time it is, and none of this ran under
+init.

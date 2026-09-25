@@ -38,6 +38,7 @@ ip
 
 link
 	usbdwc
+	etherwifi
 	ethermedium
 	loopbackmedium
 
@@ -132,6 +133,7 @@ root
 	/n/usb	/
 	/net	/
 	/net.alt	/
+	/net.wifi	/
 	/nvfs	/
 	/prog	/
 	/tmp	/

@@ -2229,6 +2229,10 @@ sdioenable(void)
  */
 static int txseq, reqid;
 
+static void (*wlrxhook)(uchar*, int);
+static void (*wleahook)(uchar*);
+static void (*wllinkhook)(int);
+
 /*
  * The reader.
  *
@@ -2470,6 +2474,8 @@ wlevent(uchar *ev, int flen)
 				(long)(TK2MS(m->ticks) - rx.t0));
 			rx.linkdown = 1;
 			fw.joined = 0;
+			if(wllinkhook != nil)
+				(*wllinkhook)(0);
 			wakeup(&rx.linkr);
 			return;
 		}
@@ -2605,7 +2611,25 @@ wlrxproc(void *a)
 			wlevent(buf, n);
 			break;
 		case 2:
+			/*
+			 * A data frame.  Strip the SDPCM header and the BDC
+			 * header -- whose length is 4 plus its own fourth
+			 * byte scaled by four -- and hand the ethernet frame
+			 * to whoever registered for it.  Until the ether
+			 * device exists these are still counted and dropped.
+			 */
 			rx.ndata++;
+			if(wlrxhook != nil){
+				int doff, bdc;
+
+				doff = buf[7];
+				if(n < doff + 4)
+					break;
+				bdc = 4 + (buf[doff+3] << 2);
+				if(n <= doff + bdc)
+					break;
+				(*wlrxhook)(buf + doff + bdc, n - doff - bdc);
+			}
 			break;
 		}
 	}
@@ -2644,6 +2668,96 @@ rspready(void *a)
 {
 	USED(a);
 	return rx.rspid == reqid;
+}
+
+/*
+ * The seam between this driver and the ether device.
+ *
+ * The packet path needs three things from here -- received data frames,
+ * the radio's MAC address once the firmware is up, and the link going up
+ * or down -- and needs to give one thing back, a frame to send.  Passing
+ * function pointers keeps etherif.h and netif.h out of this file, which
+ * is an SD host controller driver that happens to have a radio on the
+ * other end of the same bus.
+ */
+void
+sdiowlhooks(void (*rxf)(uchar*, int), void (*setea)(uchar*), void (*link)(int))
+{
+	wlrxhook = rxf;
+	wleahook = setea;
+	wllinkhook = link;
+}
+
+/*
+ * One ethernet frame out, on SDPCM channel 2.
+ *
+ * The layout is the SDPCM header, then a four-byte BDC header, then the
+ * frame; doffset points at the BDC header rather than past it, which is
+ * what the reference does and what the firmware expects.
+ */
+int
+sdiowltx(uchar *pkt, int len)
+{
+	static uchar tx[2048];
+	int tlen, st;
+
+	if(!fw.enabled || !rx.running || !fw.joined)
+		return -1;
+	tlen = Sdpcmsz + 4 + len;
+	if(tlen > sizeof tx)
+		return -1;
+	memset(tx, 0, Sdpcmsz + 4);
+	tx[0] = tlen;
+	tx[1] = tlen >> 8;
+	tx[2] = ~tlen;
+	tx[3] = (~tlen) >> 8;
+	tx[4] = txseq;
+	tx[5] = 2;			/* channel 2: data */
+	tx[7] = Sdpcmsz;		/* doffset: at the BDC header */
+	tx[Sdpcmsz] = 0x20;		/* BDC: version 2, dataOffset 0 */
+	memmove(tx + Sdpcmsz + 4, pkt, len);
+	qlock(&rx.sdiolock);
+	st = packetrw(1, tx, tlen);
+	qunlock(&rx.sdiolock);
+	if(st < 0)
+		return -1;
+	txseq++;
+	return len;
+}
+
+/*
+ * May a frame go out?
+ *
+ * Unlike the control channel, the data channel really is flow controlled:
+ * the firmware advertises how far the sequence number may run and which
+ * channels are choked, in every frame it sends.  The reference gates only
+ * the data path on it, and sending past the window is silently dropped --
+ * which from the host's side is indistinguishable from a broken bus.
+ */
+/*
+ * The sequence number, the window the firmware has granted, and the
+ * channel flow-control mask.  Worth exposing because a frame sent past
+ * the window is dropped in silence: the write succeeds, nothing is
+ * received, and there is no way to tell that from a dead radio.
+ */
+void
+sdiowlcredit(int *seq, int *win, int *fc)
+{
+	*seq = (uchar)txseq;
+	*win = rx.txwindow;
+	*fc = rx.fcmask;
+}
+
+int
+sdiowlcansend(void)
+{
+	if(!fw.enabled || !rx.running || !fw.joined)
+		return 0;
+	if((uchar)txseq == rx.txwindow)
+		return 0;
+	if(rx.fcmask & 1<<2)
+		return 0;
+	return 1;
 }
 
 static int
@@ -2901,6 +3015,15 @@ sdiowlinit(uchar *ea)
 	}
 	print("sdio: radio address %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux\n",
 		ea[0], ea[1], ea[2], ea[3], ea[4], ea[5]);
+	/*
+	 * The ether device was registered at chandevreset, long before any
+	 * of this: the firmware arrives from user space through #H, so at
+	 * the time #l0 came into existence there was nothing to ask.  This
+	 * is the first moment the address is known, so this is where it
+	 * gets filled in.
+	 */
+	if(wleahook != nil)
+		(*wleahook)(ea);
 
 	/*
 	 * The regulatory domain.
@@ -3473,6 +3596,8 @@ sdiojoin(char *ssid, char *pass)
 			bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
 		memmove(fw.bssid, bssid, 6);
 		fw.joined = 1;
+		if(wllinkhook != nil)
+			(*wllinkhook)(1);
 		return 0;
 	}
 	/*
@@ -3519,6 +3644,8 @@ sdiojoin(char *ssid, char *pass)
 				rx.nempty, rx.nreaderr, sdhcinrecover);
 	}
 	fw.joined = 1;
+	if(wllinkhook != nil)
+		(*wllinkhook)(1);
 	return 0;
 }
 
