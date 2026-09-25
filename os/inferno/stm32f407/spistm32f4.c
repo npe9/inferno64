@@ -210,6 +210,17 @@ static Spidev spidev = {
 	.gpio	= spigpio,
 	.irq	= spiirq,
 	.led		= spiled,
+	/*
+	 * -3550ppb, measured on this board and not taken from anywhere.
+	 * A carrier from a generator calibrated by ear against WWV
+	 * appeared 3250Hz below the frequency this part was commanded
+	 * to, at both 915 and 910MHz, three runs identical, with the
+	 * filter width coming out 25.5kHz against the 25.0 asked --
+	 * which is the check that the bracket found the filter and not
+	 * a spur.  With it applied the same measurement gives +233Hz.
+	 * See doc/radio-plan.ms.
+	 */
+	.ppb		= -3550,
 };
 
 /*

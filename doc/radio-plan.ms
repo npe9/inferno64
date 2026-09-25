@@ -2325,6 +2325,25 @@ also says something physical: the carrier appears BELOW the frequency
 commanded, so the part tunes above what it is told, so this crystal
 runs fast.
 .PP
+And it survives a reset.  The correction is a property of the crystal
+soldered to this click, not of the driver, so it is declared where the
+board's other specifics are declared \- beside
+.CW gpio ,
+.CW irq
+and
+.CW led
+on Spidev \- and the driver takes it when it allocates.  Taken
+explicitly and not left to the allocator: that struct is malloc'd and
+its fields are set by hand, so a correction relying on malloc having
+zeroed would be a correction of whatever was in that memory.  Zero
+stays the default and boards that have measured theirs say so.
+.CW ppm
+reads \-3550 ppb at boot now with nobody typing it.
+.PP
+Which retires something worth noticing about everything above: every
+hunt in this file before today was made with this receiver tuned 3.25
+kilohertz off where it said it was.
+.PP
 What made all of it possible was an ear.  Every instrument here reads
 back its own opinion; only a zero beat against NIST reads back the
 truth, and no part of this bench could do that except a radio and a

@@ -157,6 +157,16 @@ struct Spidev
 	 * A chip driver flips this when something arrives.
 	 */
 	void	(*led)(Spidev*, int);
+	/*
+	 * This click's crystal, in parts per billion, as measured
+	 * rather than as hoped.  Zero means nobody has measured this
+	 * board, which is the only honest default: the error belongs to
+	 * the crystal soldered to this particular part, and a figure
+	 * copied from another board would be a guess wearing a
+	 * measurement's clothes.  See the "ppm" ctl verb and
+	 * tools/radio/centre.py.
+	 */
+	int	ppb;
 };
 
 /*

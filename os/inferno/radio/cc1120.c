@@ -2871,6 +2871,16 @@ cc1120init(Spidev *s, int irq)
 		return nil;
 	rr->dev = &cc1120dev;
 	rr->spi = s;
+	/*
+	 * Taken from the board rather than left to the allocator: this
+	 * struct is malloc'd and its fields are set by hand, so a
+	 * crystal correction that relied on malloc having zeroed would
+	 * be a correction of whatever was in that memory.  Zero is the
+	 * right default and boards that have measured theirs say so.
+	 */
+	rr->ppb = s->ppb;
+	rr->ledon = 0;
+	rr->nlastrx = 0;
 
 	s->lock(s);
 	strobe(rr, Sres);
