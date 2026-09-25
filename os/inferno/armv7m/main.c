@@ -233,19 +233,7 @@ init0(void)
 		print("TRAPREG-FAIL R1 did not survive an exception\n");
 
 	poperror();
-	/*
-	 * MINSHBOOT starts the kernel's own interpreter instead of the
-	 * Limbo world.  On a board where sh.dis wants 73536 bytes of
-	 * Inst array out of 147456, and forks twice for every
-	 * redirection, Dis is better asked for than assumed; minsh's
-	 * "dis" command is where it gets asked for.  Boards that do not
-	 * define it are untouched.
-	 */
-#ifdef MINSHBOOT
-	minshinit();
-#else
 	disinit("/osinit.dis");
-#endif
 }
 
 void

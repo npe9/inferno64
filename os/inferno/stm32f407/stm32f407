@@ -83,10 +83,6 @@ port
 	exportfs
 	inferno
 	latin1
-# minsh: a command interpreter that is not a Dis program, for a board
-# where sh.dis costs 73536 bytes of Inst array against 147456 bytes of
-# RAM and forks twice for every redirection.  See os/inferno/port/minsh.c.
-	minsh
 	nocache
 	nodynld
 	parse

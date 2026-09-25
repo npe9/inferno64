@@ -203,10 +203,3 @@
 
 /* EXTI lines 10 to 15 share one NVIC interrupt, RM0090 table 62 */
 #define	EXTI15_10IRQ	40
-
-/*
- * Boot into the kernel's own command interpreter rather than Dis.
- * See os/inferno/port/minsh.c for why this board in particular wants
- * it, and "dis" there for getting the Limbo world back.
- */
-#define MINSHBOOT 1
