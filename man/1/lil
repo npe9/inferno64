@@ -185,7 +185,10 @@ How long one
 .B while
 may run, 60000 by default; returns the bound.
 .B timelimit(0)
-removes it.
+removes it, and on silicon that should be thought about first: with no
+bound and no interrupt character, a mistyped condition costs the reset
+button.  It is right for a monitor meant to run and wrong for anything
+typed by hand.
 .PP
 The bound is in time and not in iterations because a count is not a
 timeout: what matters is how long the console goes undrained.  This
@@ -247,6 +250,28 @@ both Dis word sizes and is 12447 bytes at
 .BR DISWORD=4 ,
 against 41629 for
 .BR sh.dis .
+.PP
+That its instruction array is in flash rather than in the pool has been
+checked and not inferred from its being in
+.BR XIPDIS .
+It is
+.B "RODATA $24768"
+in
+.BR stm32f407.prog.s ,
+and typing
+.B lil
+at a prompt moves the Dis heap from 39936 bytes to 50240 \- 10304 for the
+module's data, its type descriptors and its own buffers, with the 24768
+coming from flash.  Had the delta been 24768 the size argument here would
+have been wrong.  For comparison in the same file,
+.BR sh.dis 's
+array is 73332 bytes, which agrees with the 73536 the board's
+.I mkfile
+has recorded all along, and
+.BR ls.dis 's
+is 6324 \- so when
+.I ls
+dies for want of memory on this board, its code is not what is too big.
 .PP
 On the
 .I stm32f407
