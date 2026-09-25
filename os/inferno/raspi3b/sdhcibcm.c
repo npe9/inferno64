@@ -2315,7 +2315,16 @@ wlreadpkt(uchar *buf, int max)
 static int
 wlcmd(int write, int op, void *data, int dlen, void *res, int rlen)
 {
-	static uchar pkt[2048];
+	/*
+	 * 8KB, not 2KB.
+	 *
+	 * WLC_SCAN_RESULTS and WLC_GET_VALID_CHANNELS both came back
+	 * BCME_BUFTOOSHORT (-14) -- the firmware asking for more room than
+	 * was offered, not refusing the request.  A control frame here is
+	 * headers plus whatever the caller wants back, and a scan's worth
+	 * of results is several kilobytes.
+	 */
+	static uchar pkt[8192];
 	uchar *q;
 	int len, tlen, n, i;
 
@@ -2355,13 +2364,13 @@ wlcmd(int write, int op, void *data, int dlen, void *res, int rlen)
 	}
 	txseq++;
 
-	for(i = 0; i < 200; i++){
+	for(i = 0; i < 400; i++){
 		if(wlintwait(50) < 0)
 			continue;
 		n = wlreadpkt(pkt, sizeof pkt);
 		if(n <= 0)
 			continue;
-		if(fw.rxdebug < 8){
+		if(fw.rxdebug < 24){
 			print("sdio: rx len %d chan %d seq %d doff %d win %d fc %#ux\n",
 				n, pkt[5] & 0xf, pkt[4], pkt[7], pkt[9], pkt[8]);
 			fw.rxdebug++;
@@ -2647,7 +2656,7 @@ sdioscan(int *nev)
 	 * and returns a count followed by that many channel numbers.
 	 */
 	{
-		static uchar cl[256];
+		static uchar cl[1024];
 		u32 nc;
 		int k;
 
@@ -2667,8 +2676,32 @@ sdioscan(int *nev)
 	}
 	delay(3000);				/* let it sweep the channels */
 	memset(pkt, 0, sizeof pkt);
-	put4le(pkt, sizeof pkt);		/* buflen, as the firmware wants */
-	if(wlcmd(0, 51, pkt, 4, pkt, sizeof pkt - 64) < 0){
+	/*
+	 * Ask for 4KB of results.
+	 *
+	 * The firmware wants a buffer it can fill; too small and it
+	 * answers BCME_BUFTOOSHORT rather than truncating.  4KB holds a
+	 * few dozen networks and fits inside wlcmd's frame.
+	 */
+	/*
+	 * 3000: 1536 was too short (BCME_BUFTOOSHORT, so there really are
+	 * networks to report) and 4096 never came back.  A CDC reply rides
+	 * in SDPCM frames and a very large one may be split across several,
+	 * which this reader does not reassemble; 3000 asks for enough to
+	 * satisfy the firmware while staying within a single frame.
+	 */
+	/*
+	 * Show every frame that arrives while waiting for the results.
+	 *
+	 * 1536 was too short, 3000 and 4096 produce no reply at all.
+	 * "No answer" means no control frame with a matching id was seen
+	 * in the whole wait -- but frames may well be arriving and being
+	 * skipped, and which it is decides whether this is a size problem
+	 * or a reassembly problem.
+	 */
+	fw.rxdebug = 0;
+	put4le(pkt, 3000);
+	if(wlcmd(0, 51, pkt, 4, pkt, 3000) < 0){
 		print("sdio: WLC_SCAN_RESULTS was refused\n");
 		return -1;
 	}

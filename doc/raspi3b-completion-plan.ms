@@ -10506,3 +10506,53 @@ So the next run is the test, and the prediction is specific and
 falsifiable: with the blob loaded, WLC_GET_VALID_CHANNELS should report
 a non-zero count, and a scan should then return the networks that are
 plainly there.
+.SH
+The CLM blob was the cause; the scan now runs but its results do not come back
+.PP
+.B "Confirmed: the regulatory blob was the whole reason nothing could be scanned."
+Loading it changes three things at once, and all three are measured:
+.IP \(bu
+.CW "sdio: CLM blob loaded, 4733 bytes"
+\(em the clmload iovar accepts all four chunks.
+.IP \(bu
+Setting the country now WORKS.  It was refused with -1 before; now
+.CW "set country US -> 0"
+and reading it back gives
+.CW "country now \"US\" ccode \"US\"" .
+The regulatory subsystem had nothing in it and now has a table.
+.IP \(bu
+WLC_SCAN is no longer refused.  Before the blob it failed every time;
+after it, the scan command succeeds and the failure moves one step
+later, to reading the results.
+.PP
+That is three independent consequences of one change, which is what a
+real cause looks like as opposed to a coincidence.
+.PP
+.B "What still does not work."
+WLC_SCAN_RESULTS never answers.  Asked for 1536 bytes it says
+BCME_BUFTOOSHORT \(em so there ARE networks, and the firmware wants more
+room than that to describe them.  Asked for 3000 or 4096 it returns
+nothing at all within twenty seconds of polling, while frames continue
+to arrive and be logged.
+.PP
+The likely reason is reassembly.  A CDC reply rides inside SDPCM frames,
+and a reply several kilobytes long is split across more than one; this
+reader takes a single frame and matches it by request id, so a
+fragmented answer is never completed and never recognised.  The
+reference does not have this problem because its reader is a separate
+process that accumulates frames.  Building that reader is the next piece
+of work, and it is the same reader the packet path will need, so it is
+not a detour.
+.PP
+.B "An operational note, and a warning."
+The SD card's write rate fell from 92 KB/s to 35 KB/s partway through
+this session, which is why a kernel install timed out at 1800 seconds
+and left kernel8.img half written.  The board was recovered over JTAG and
+the card repaired from kernel8.bak, which is exactly the case that backup
+exists for.  A card that slows down like that is worth watching.
+.PP
+Also worth recording: when the board stopped answering, the cause was the
+HOST's styx server having died, and the board said so itself \(em
+.CW "RCMD-DOWN 1: dial ...: connection refused"
+\(em which is the instrument added at the very start of this session
+reporting the fault correctly from the other side of the link.
