@@ -11339,3 +11339,28 @@ interface was noisier in the second run than the first, so the rig was no
 kinder \(em and the radio still moved the other way, far enough that it
 now answers faster than the wire does.  (The wired path is a LAN9514
 behind a polled DWC2, which is its own story.)
+.PP
+.B "Findable, and checked from something that is not the board."
+.CW "echo advertise on >/n/bt/0/ctl"
+and the controller reports
+.CW "advertise on" ,
+which is the board agreeing with itself.  Whether anything is on the air
+is a question only another radio can answer, so
+.CW tools/bt/blescan.swift
+asks one: a CoreBluetooth scanner on the host.
+.DS
+.CW
+2D58D872-...  rssi -62  name inferno  kCBAdvDataIsConnectable,...
+--- 14 advertisers heard
+.R
+.DE
+The Pi, by name, at \-62dBm, and connectable.  And the control that makes
+it worth anything \(em advertising off, scan again:
+.CW "--- 15 advertisers heard"
+and no
+.CW inferno
+among them.  The name appears if and only if the board is transmitting.
+.PP
+Advertising is left off by default.  It is one write to turn on, and a
+board that broadcasts its presence to everything in radio range is a
+decision for whoever owns the board rather than a sensible default.
