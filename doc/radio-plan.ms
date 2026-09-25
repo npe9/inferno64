@@ -2229,6 +2229,35 @@ turned out to be the same command on this firmware.  And that the
 FT-891's 1ppm at 10MHz carries to 10.1MHz, which is a tenth of a hertz
 of extrapolation and safe.
 .PP
+The correction is applied and verified.
+.CW "freq_corr -1970"
+went in, the same zero beat was taken again, and it now reads
+10.100010 \- which is the FT-891's own \+1ppm and nothing else.  The
+sign was not guessed: the generator was left running so the
+measurement could be repeated, and a wrong sign would have moved it to
+10.100050.
+.PP
+The direct confirmation of the CC1120 against the corrected generator
+does NOT reproduce, and that is recorded rather than hidden.  Three
+attempts give centre errors of \+41 and \+24.7ppm with filter widths of
+5.5 and 5.8kHz, where the filter is 25kHz and the earlier clean runs
+measured 25.8.  The profiles are strong readings scattered across
+frequencies that should be at the floor, with no flat top anywhere \-
+not a filter response at all, so the bracket has nothing to bracket.
+.PP
+The likeliest cause is the source.  915MHz is on this instrument's low
+output path, which is specified to a few hundred megahertz, so what
+arrives may be a harmonic or an alias carrying spurs rather than a
+clean carrier.  Which puts a caveat on the earlier 915MHz work too: it
+was clean and thrice reproduced, but it used the same out-of-band
+source, and a source that can scatter spurs today could have done so
+then.
+.PP
+So the \-5.16ppm for the CC1120 stands on the earlier measurement and
+on this calibration, and it has not been confirmed a second way.  What
+would confirm it is a source at 915MHz that is in specification, which
+this bench does not have.
+.PP
 What made all of it possible was an ear.  Every instrument here reads
 back its own opinion; only a zero beat against NIST reads back the
 truth, and no part of this bench could do that except a radio and a
