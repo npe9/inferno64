@@ -11263,3 +11263,51 @@ What is
 .I not
 done: nothing has been paired, no connection has been made, and no
 profile above GATT has been exercised on this board.
+.PP
+.B "What the radio actually carries, and three measurements that did not
+.B "mean anything."
+The first soak said 6.8% loss at one packet a second and 59.7% at five.
+It was taken while this board was being JTAG-rebooted every few minutes,
+so most of that "loss" was a board that was not running.  The second,
+taken during the Bluetooth work, said 21.7% \(em and the wired control
+arm said 3.7% loss with a 488ms average, which is impossible on a wire
+and gave the game away: the board was busy, not the radio.  A control on
+a link known to be good is what turned two unusable numbers into
+evidence about what was wrong with the measurement.
+.PP
+On an idle board, three minutes an arm:
+.DS
+.CW
+radio,  56 bytes, 2/s:  359/360   0.3% loss  avg 134ms  max 2063ms
+wired,  56 bytes, 2/s:  360/360   0.0% loss  avg  20ms  max  162ms
+radio, 1400 bytes, 1/s: 180/180   0.0% loss  avg  29ms  max  129ms
+.R
+.DE
+The radio is effectively lossless and carries a full-size frame as
+happily as a small one.  It is slower than the wire and much spikier
+\(em one arm saw a two-second round trip \(em which is worth returning
+to, and is not the same kind of problem as losing packets.
+.PP
+.B "And a software-only reboot, which this board has had all along."
+.CW "echo reboot >/dev/sysctl"
+reaches
+.CW archreboot() ,
+which is the PM watchdog full reset in
+.CW pmbcm.c
+\(em what Linux does, and what replaced PSCI here because PSCI reaches
+nothing on real silicon.  The board goes down, the VideoCore reloads
+.CW kernel8.img
+from the card and comes back on its own: no JTAG and no power cycle, and
+it is how a newly installed kernel is picked up.
+.PP
+What it does
+.I not
+do is reset either radio.  BT_ON and WL_ON are lines on the VideoCore's
+GPIO expander, and they hold their state across an ARM reset \(em
+.CW sdhcibcm.c
+has said so about WL_ON for some time, and it is exactly what left a
+bricked Bluetooth controller bricked across every reboot until
+.CW btbcm.c
+started driving BT_ON low first.  For those two devices software can do a
+true power cycle, through the mailbox; for anything else on a rail the
+expander does not control, only the supply will do.
