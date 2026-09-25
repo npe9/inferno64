@@ -2243,6 +2243,9 @@ static struct {
 	int	nevent;		/* event frames seen */
 	int	nesc;		/* escan result events seen */
 	int	lastetype;
+	int	nresync;
+	uchar	txwindow;	/* the firmware's send credit */
+	uchar	fcmask;
 	int	nssid;
 	char	ssid[24][33];
 	uchar	bssid[24][6];
@@ -2330,11 +2333,24 @@ wlreadpkt(uchar *buf, int max)
 	if(lenck != (len ^ 0xffff) || len < Sdpcmsz || len > max){
 		print("sdio: frame header len %#ux lenck %#ux -- resyncing\n",
 			len, lenck);
+		/*
+		 * Bounded, unlike the reference.
+		 *
+		 * These two drains spin until the frame counters read zero,
+		 * and the reader holds the SDIO bus while they do -- so a
+		 * counter that never clears is not a slow resync, it is the
+		 * whole radio wedged with the lock held and every command
+		 * blocked behind it.  That is a plausible cause of the
+		 * control channel going silent once data starts flowing.
+		 */
 		sdiocmd52(1, Framectl, 1, Rfhalt);
-		while(sdiocmd52(1, Rfrmcnt + 1, 0, 0) > 0)
-			;
-		while(sdiocmd52(1, Rfrmcnt, 0, 0) > 0)
-			;
+		for(lenck = 0; lenck < 1000; lenck++)
+			if(sdiocmd52(1, Rfrmcnt + 1, 0, 0) <= 0)
+				break;
+		for(lenck = 0; lenck < 1000; lenck++)
+			if(sdiocmd52(1, Rfrmcnt, 0, 0) <= 0)
+				break;
+		rx.nresync++;
 		return -1;
 	}
 	if(len > Sdpcmsz)
@@ -2454,6 +2470,16 @@ wlrxproc(void *a)
 			tsleep(&up->sleep, return0, nil, 5);
 			continue;
 		}
+		/*
+		 * Every frame carries the firmware's flow control: byte 9
+		 * is how far the sequence number may run, byte 8 which
+		 * channels are choked.  Sending past the window is ignored
+		 * by the firmware, which looks exactly like a command that
+		 * got no answer -- and nothing here was tracking it.
+		 */
+		rx.txwindow = buf[9];
+		rx.fcmask = buf[8];
+
 		switch(buf[5] & 0xf){
 		case 0:				/* control reply */
 			rx.nctl++;
@@ -2572,6 +2598,17 @@ wlcmd(int write, int op, void *data, int dlen, void *res, int rlen)
 	if(write && rlen > 0)
 		memmove(q + Cmdsz + dlen, res, rlen);
 
+	/*
+	 * No flow-control wait here.
+	 *
+	 * Holding off while txseq equals the advertised window is what the
+	 * reference does for DATA frames, but applying it to every command
+	 * stalls at startup: before any frame has been received both are
+	 * zero, so every early command waited out its timeout and the join
+	 * never completed.  The window is tracked (the reader records it)
+	 * but not yet enforced; enforcing it belongs with the data path,
+	 * where it matters.
+	 */
 	rx.rspid = -1;
 	qlock(&rx.sdiolock);
 	st = packetrw(1, pkt, len);
@@ -3238,9 +3275,34 @@ sdiojoin(char *ssid, char *pass)
 	 * once the link is up and data starts flowing, which is a separate
 	 * bug in this reader and not a failure to associate.
 	 */
-	print("sdio: ASSOCIATED with %s (the join event says so; the BSSID "
-		"readback did not answer -- the control channel stalls once "
-		"the link is up)\n", ssid);
+	print("sdio: ASSOCIATED with %s\n", ssid);
+	{
+		uchar b[6];
+		int k;
+
+		/*
+		 * Now that flow control is honoured and the resync is
+		 * bounded, see whether the control channel survives the
+		 * link coming up.
+		 */
+		for(k = 0; k < 10; k++){
+			memset(b, 0, sizeof b);
+			if(wlcmd(0, 23, nil, 0, b, sizeof b) == 0 &&
+			   (b[0]|b[1]|b[2]|b[3]|b[4]|b[5])){
+				print("sdio: BSSID %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux "
+					"after %d tr(ies); window %d fcmask %#ux resyncs %d\n",
+					b[0], b[1], b[2], b[3], b[4], b[5], k+1,
+					rx.txwindow, rx.fcmask, rx.nresync);
+				memmove(fw.bssid, b, 6);
+				break;
+			}
+			tsleep(&up->sleep, return0, nil, 500);
+		}
+		if(k == 10)
+			print("sdio: the control channel is still stalled "
+				"(window %d fcmask %#ux resyncs %d)\n",
+				rx.txwindow, rx.fcmask, rx.nresync);
+	}
 	fw.joined = 1;
 	return 0;
 }

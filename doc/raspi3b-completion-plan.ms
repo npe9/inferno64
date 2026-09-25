@@ -10810,3 +10810,47 @@ channel that keeps working while frames flow.
 The data channel is already counted but not delivered anywhere.  Binding
 it as an ether device on /net.alt, so that IP runs over the radio, is the
 remaining piece.
+.SH
+Association is intermittent, and the credit window is not the fix
+.PP
+.B "Honest state: it associates, but not every time."
+Two runs reached
+.CW "ASSOCIATED with GL-BE6500-1f2"
+with the full event sequence \(em E_ASSOC, E_LINK, E_PSK_SUP, E_JOIN,
+E_SET_SSID all status 0.  Others stop after E_ASSOC_RESP_IE or E_ASSOC
+and never produce a join event, with identical code and an unchanged
+access point.  So the bsscfg settings were necessary and are not by
+themselves sufficient, and "it works" would be too strong a claim from
+two successes.
+.PP
+.B "A fix that made things worse, and why."
+SDPCM carries flow control in every frame: byte 9 is how far the send
+sequence may run, byte 8 which channels are choked, and sending past the
+window is dropped silently \(em which looks exactly like a command that
+got no answer.  Nothing here was tracking it, so enforcing it looked
+obviously right.
+.PP
+It is not, applied to commands.  Before any frame has been received both
+the sequence and the window are zero, so a rule of "hold off while they
+are equal" stalls every early command until its timeout and the join
+never gets made at all.  The window is now tracked but not enforced;
+enforcing it belongs with the data path, where the reference applies it
+and where it matters.
+.PP
+.B "One real bug fixed on the way."
+The receive resync \(em halt the receiver and drain its frame counters
+\(em spun until the counters read zero, with the SDIO bus locked
+throughout.  A counter that never clears is then not a slow resync but
+the whole radio wedged with the lock held and every command blocked
+behind it, which is a plausible shape for the control channel going
+silent once data starts flowing.  Both loops are bounded now and the
+resyncs are counted.
+.PP
+.B "What to look at next."
+The intermittency is the thing to chase, and the event trace is the way
+in: a run that fails stops after E_ASSOC_RESP_IE or E_ASSOC with no
+deauthentication and no E_PSK_SUP, which says the supplicant did not
+start rather than that it ran and failed.  Comparing the iovar state
+between a successful and a failed run \(em reading wsec, wpa_auth and
+sup_wpa back per bsscfg immediately before the join \(em would say
+whether the settings are surviving to the point of use.
