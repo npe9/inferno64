@@ -2344,6 +2344,29 @@ Which retires something worth noticing about everything above: every
 hunt in this file before today was made with this receiver tuned 3.25
 kilohertz off where it said it was.
 .PP
+AND THE FIRST BIN OF EVERY SWEEP WAS A PHANTOM.
+.PP
+With the antenna back on, two sweeps put a strong carrier at 906.000MHz
+\- \-78 and \-77dBm, thirty dB over the median, in both.  That is what a
+real transmitter looks like.  It was the first bin of both sweeps.
+.PP
+Swept from 902 instead, so that 906.000 falls in the middle, it reads
+\-94: nothing.  And 902.000, now the first bin, reads thirteen dB over
+the median in its place.  The elevation belongs to the position, not
+the frequency.
+.PP
+.B hold
+called setfreq and sampled immediately.  setfreq strobes a VCO
+calibration and the AGC restarts from wherever the last frequency left
+it, and RSSI_VALID comes up before either has finished \- and the first
+step of every pass follows the largest jump there is, from the top of
+the previous pass back to the bottom.  Two milliseconds and the first
+reading discarded fixes it: 906.000 and 902.000 both drop out of their
+sweeps' results entirely, and what remains \- 906.8, 912.0, 904.6 \-
+moves between sweeps, which is the hopper.
+.PP
+Every band sweep in this file was taken with that phantom in it.
+.PP
 What made all of it possible was an ear.  Every instrument here reads
 back its own opinion; only a zero beat against NIST reads back the
 truth, and no part of this bench could do that except a radio and a

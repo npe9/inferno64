@@ -2291,6 +2291,29 @@ cc1120ctl(Radio *r, char *buf, int n)
 					continue;
 				}
 				s->unlock(s);
+				/*
+				 * Let it settle before believing it.
+				 *
+				 * setfreq strobes a VCO calibration and
+				 * the AGC starts again from wherever the
+				 * last frequency left it, and RSSI_VALID
+				 * comes up before either has finished.
+				 * Sampling straight away made the first
+				 * step of every pass read about thirteen
+				 * dB high -- it is the one that follows
+				 * the largest jump, from the top of the
+				 * previous pass back to the bottom -- and
+				 * that put a phantom carrier at the start
+				 * of every sweep in this work.  906.000
+				 * read -78 as a first bin and -94 when
+				 * the same sweep started lower.
+				 *
+				 * Two milliseconds and the first reading
+				 * thrown away.  Cheap against a dwell of
+				 * ms per step, and it costs a phantom.
+				 */
+				delay(2);
+				(void)rdx(rr, Xrssi1);
 				for(nrun = 0; nrun < ms; nrun++){
 					s->lock(s);
 					r0 = rdx(rr, Xrssi0);
