@@ -2411,6 +2411,45 @@ through the click's antenna, lasting two milliseconds, is past what
 that antenna can deliver.  The analyser measured it because it hears
 better, not because it is cleverer.
 .PP
+THE OTHER THREE BANDS THIS PART CAN REACH.
+.PP
+A CC1120 covers 164-192, 274-320, 410-480 and 820-960MHz, and only the
+last had ever been looked at here.  Twenty sweeps each of the other
+two, with the antenna that can reach them:
+.DS
+.CW "  305-325MHz   312.3051  401k  -76.4  3/20"
+.CW "               311.3697  178k  -76.9  2/20"
+.CW "               313.5969  134k  -77.3  1/20"
+.CW "  425-445MHz   440.1002   44k  -63.6  1/20"
+.CW "               440.6347   44k  -63.6  1/20"
+.CW "               431.7706  223k  -80.0  3/20"
+.DE
+440.1002 and 440.6347 are the strongest signals this bench has found
+anywhere \- thirty dB over their own mean and only 44kHz wide, which is
+narrowband and is the 70cm repeater sub-band.  The cluster around 312
+is wide and unidentified.
+.PP
+This receiver tunes to 440 and its floor there is \-118, as good as at
+915, so the band is reachable; it heard nothing in a two-second probe,
+which is what a signal present in one sweep of twenty does to a
+two-second probe.  A hundred and forty seconds of zero span caught none
+either.
+.PP
+And the decodability is the point rather than the level.  An amateur
+repeater carrying analog FM voice cannot be demodulated by this part at
+all \- it slices FSK, it does not detect FM audio.  A repeater carrying
+DMR could be: DMR is 4-level FSK at 4800 baud in 12.5kHz and this part
+does 4-FSK.  Which of the two these are is exactly what could not be
+established, because telling them apart wants the TDMA structure and
+that wants catching one.
+.PP
+So the survey is finished and the answer to "is there anything else
+worth caring about" is: one hopper that cannot be followed without its
+sequence, one unidentified cluster at 312, and two strong narrowband
+signals at 440 that are either undecodable by construction or
+decodable and unconfirmed.  None of them is a transmitter that will
+send this receiver a packet.
+.PP
 None of that is an identification, and an attempt at one ran into
 something better worth having.
 .PP
