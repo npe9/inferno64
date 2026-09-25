@@ -10717,3 +10717,52 @@ transition mode with management-frame protection required would produce
 exactly this \(em auth and assoc complete, the key exchange does not.
 It is worth checking what security that SSID is actually set to before
 assuming the driver is at fault.
+.SH
+Association reaches E_ASSOC and stops; the AP is plain WPA2
+.PP
+.B "The security hypothesis was wrong and is withdrawn."
+The previous section guessed that a Wi-Fi 7 router might be running
+WPA3-SAE or requiring management-frame protection, which this chip could
+not do.  It is not: the network reports
+.CW "Security: WPA2 Personal" ,
+channel 1, 2.4GHz, country US.  Nothing exotic, and the failure is this
+driver's.
+.PP
+.B "How far it gets, from the firmware's own events."
+.P1
+event type 3  status 2   E_AUTH, timeout
+event type 87 status 0   E_ASSOC_REQ_IE
+event type 3  status 0   E_AUTH, success
+event type 88 status 0   E_ASSOC_RESP_IE
+event type 7  status 0   E_ASSOC, success
+.P2
+Authentication and association both succeed.  Then nothing at all: no
+E_SET_SSID, no E_LINK, no deauthentication, and \fIzero data frames\fP.
+.PP
+That last number is the informative one.  If the host were expected to
+run the four-way handshake, the AP's EAPOL frames would arrive on channel
+2 and be counted; they are not.  So the firmware's own supplicant is
+supposed to be running it, and is not finishing.
+.PP
+.B "Two differences from brcmfmac, fixed, neither of which was the cause."
+sup_wpa is set on the BSS CONFIG rather than globally \(em brcmfmac uses
+brcmf_fil_bsscfg_int_set, whose iovar is named "bsscfg:sup_wpa" and
+carries the interface index ahead of the value.  The plain iovar sets and
+reads back as 1, which is why it looked right, but it is a different
+variable.  And the wsec_pmk struct is 69 bytes, not 68: key_len[2],
+flags[2], key[2*32+1].  The firmware accepted 68 without complaint, which
+is not the same as having understood it.  Both are now right and neither
+changed the outcome.
+.PP
+.B "And one thing that is worse, recorded so it is not tried again."
+Associating with WLC_SET_SSID and a join_params, which is what brcmfmac
+does, gets LESS far than the "join" iovar: it stops after E_AUTH and
+never reaches E_ASSOC.  So the join iovar stays.
+.PP
+.B "What is left to try."
+The handshake is between the firmware and the AP with no host
+involvement, so the remaining levers are what the firmware was told
+before the join: the PSK itself, the cipher and auth selections, and
+whatever else brcmfmac sets that is still missing here \(em it also
+writes "wpa_auth" per bsscfg, sets "mfp", and issues WLC_DISASSOC before
+a fresh join.  Each is a small experiment; none needs new machinery.

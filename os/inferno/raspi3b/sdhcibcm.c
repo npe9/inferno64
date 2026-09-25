@@ -2998,7 +2998,7 @@ sdioscan(int *nev)
 int
 sdiojoin(char *ssid, char *pass)
 {
-	uchar params[72], pmk[68], bssid[6];
+	uchar params[72], pmk[69], bssid[6];
 	uchar *p;
 	int n, i;
 
@@ -3020,10 +3020,30 @@ sdiojoin(char *ssid, char *pass)
 	 * been refused too.  One of these assumptions is wrong and
 	 * printing each result says which.
 	 */
-	print("sdio: wsec=4 -> %d, wpa_auth=0x80 -> %d, sup_wpa=1 -> %d\n",
-		sdiosetint("wsec", 4),
-		sdiosetint("wpa_auth", 0x80),
-		sdiosetint("sup_wpa", 1));
+	/*
+	 * sup_wpa has to be set on the BSS CONFIG, not globally.
+	 *
+	 * The plain "sup_wpa" iovar sets and reads back as 1, which is why
+	 * it looked right -- but brcmfmac uses brcmf_fil_bsscfg_int_set,
+	 * and a bsscfg iovar is a different variable: the name is
+	 * "bsscfg:sup_wpa" and the buffer carries the interface index
+	 * ahead of the value.  Setting the global one enables nothing for
+	 * interface 0, which would leave the firmware's supplicant idle --
+	 * and idle is exactly what it looks like: association completes
+	 * and then nothing happens, with no EAPOL reaching the host
+	 * either.
+	 */
+	{
+		uchar b[8];
+
+		put4le(b, 0);			/* bsscfg index */
+		put4le(b + 4, 1);		/* enable */
+		print("sdio: wsec=4 -> %d, wpa_auth=0x80 -> %d, "
+			"bsscfg:sup_wpa=1 -> %d\n",
+			sdiosetint("wsec", 4),
+			sdiosetint("wpa_auth", 0x80),
+			sdiosetvar("bsscfg:sup_wpa", b, sizeof b));
+	}
 	{
 		uchar b[4];
 
@@ -3038,6 +3058,10 @@ sdiojoin(char *ssid, char *pass)
 	pmk[2] = 1;				/* WSEC_PASSPHRASE */
 	memmove(pmk + 4, pass, n);
 	/*
+	 * 69 bytes, not 68: brcmfmac's wsec_pmk is key_len[2], flags[2]
+	 * and key[2*32+1].  The firmware accepted 68 without complaint,
+	 * which is not the same as having understood it.
+	 *
 	 * The passphrase goes in through an IOCTL, not an iovar.
 	 *
 	 * SetVar "wsec_pmk" is refused with BCME_UNSUPPORTED (-23) by this
@@ -3093,24 +3117,18 @@ sdiojoin(char *ssid, char *pass)
 	 * success and "no answer" on identical runs.
 	 */
 	rx.joinstatus = 0;
+	/*
+	 * Associate with the "join" iovar.
+	 *
+	 * WLC_SET_SSID with a join_params, which is what brcmfmac uses,
+	 * was tried here and gets LESS far: it stops after E_AUTH and
+	 * never reaches E_ASSOC, where the join iovar reliably reaches
+	 * E_ASSOC with status 0.  So the association itself is fine and
+	 * the difference is downstream of it.
+	 */
 	if(sdiosetvar("join", params, 68) < 0){
-		/*
-		 * Fall back to the classic way of associating.
-		 *
-		 * WLC_SET_SSID takes a bare wlc_ssid_t -- length then 32
-		 * bytes of name -- and is what brcmfmac drives.  The
-		 * "join" iovar is the newer spelling and not every build
-		 * carries it.
-		 */
-		uchar sp[36];
-
-		memset(sp, 0, sizeof sp);
-		put4le(sp, n);
-		memmove(sp + 4, ssid, n);
-		if(wlcmd(1, 26, sp, sizeof sp, nil, 0) < 0){
-			print("sdio: the join was refused\n");
-			return -1;
-		}
+		print("sdio: the join was refused\n");
+		return -1;
 	}
 	print("sdio: joining %s ...\n", ssid);
 
@@ -3126,7 +3144,21 @@ sdiojoin(char *ssid, char *pass)
 	 */
 	tsleep(&rx.joinr, joined, nil, 20000);
 	if(rx.joinstatus == 0){
-		print("sdio: no answer from the join after 20 s\n");
+		/*
+		 * Say whether any DATA frames arrived.
+		 *
+		 * The AP is plain WPA2-PSK, so the four-way handshake
+		 * should happen -- the question is who runs it.  With the
+		 * firmware's own supplicant (sup_wpa 1) EAPOL never reaches
+		 * the host and this stays zero; if the host is expected to
+		 * do the handshake, the EAPOL frames arrive on channel 2
+		 * and this counts them.  That decides whether the
+		 * supplicant is really enabled or whether a data path has
+		 * to be built.
+		 */
+		print("sdio: no join event after 20 s; frames since: %d event, "
+			"%d data, last event type %d\n",
+			rx.nevent, rx.ndata, rx.lastetype);
 		return -1;
 	}
 	if(rx.joinstatus != 1){
