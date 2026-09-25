@@ -49,6 +49,7 @@ struct Cc1120
 	uchar	lastrx[32];	/* the last packet's first bytes, for lastrx */
 	int	nlastrx;
 	int	ledon;		/* what the lamp is showing */
+	int	ppb;		/* crystal error, parts per billion */
 	int	lqi;
 
 	/* counters */

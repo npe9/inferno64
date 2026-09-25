@@ -2277,6 +2277,54 @@ bench cannot say closer than "a few parts per million low", and closing
 it needs a source at 915MHz that is in specification \- which is a
 purchase, not a measurement.
 .PP
+FIXED, AND THE FIX MEASURED.
+.PP
+The source was the first thing wrong and the instrument's own command
+set had the answer.
+.CW output
+takes
+.CW on|off|normal|mixer ,
+and at 915MHz those are not alike:
+.CW normal
+gives a clean carrier with the floor either side,
+.CW mixer
+puts a spur 15dB over it at \+30kHz, and whatever the default was is
+worse than both.  Driven at
+.CW "output normal"
+the profile has a flat top and a floor, which is what a filter response
+is supposed to look like.
+.PP
+The analysis was the second.  A spur cannot be a filter top \- one or
+two bins is a spike, a 25kHz filter occupies many \- so
+.I tools/radio/centre.py
+median filters over five points before bracketing, which leaves a
+plateau standing and removes anything narrower than the answer.  Before
+that, the strongest bin was taken as the peak and a 25kHz filter came
+out 4.6kHz wide and 24ppm off.
+.PP
+With both fixed the measurement is reproducible and self-checking:
+\-3250Hz at 915MHz, \-3250 at 910, width 25.5kHz against the 25.0
+asked, three runs identical.  That is \-3.55ppm and it is this board's
+crystal.
+.PP
+And it is corrected.  cc1120.c computes FREQ from a nominal 32MHz, so a
+crystal a few parts per million out tunes the part the same amount out
+and reads its own error back as the air's.  A
+.CW ppm
+ctl verb moves the divisor; the default is zero, because every crystal
+differs and a number copied from this board would be a guess wearing a
+measurement's clothes.  For this one it is
+.CW "ppm -3550" ,
+and with it set the same measurement gives \+233Hz, \+0.26ppm, inside
+what a 4kHz grid can resolve.  Fourteen times better.
+.PP
+The sign was wrong first and that was worth having.  Applied backwards
+it took \-3250 to \-6200 rather than towards zero, which is what an
+inverted sign always looks like and is the cheapest test there is.  It
+also says something physical: the carrier appears BELOW the frequency
+commanded, so the part tunes above what it is told, so this crystal
+runs fast.
+.PP
 What made all of it possible was an ear.  Every instrument here reads
 back its own opinion; only a zero beat against NIST reads back the
 truth, and no part of this bench could do that except a radio and a

@@ -866,7 +866,39 @@ setfreq(Cc1120 *rr, uvlong hz)
 		return -1;
 	fscfg = (rd(rr, Rfscfg) & ~0xf) | ccbands[i].sel;
 	wr(rr, Rfscfg, fscfg);
-	v = (u32)((hz * ccbands[i].div * 65536) / 32000000);
+	/*
+	 * The crystal is not 32MHz and this is where that is paid for.
+	 *
+	 * FREQ is computed from a nominal 32000000, so a crystal a few
+	 * parts per million out tunes the part a few parts per million
+	 * out, and it reads its own error back as the air's.  Measured
+	 * on this board against a generator calibrated against WWV:
+	 * 3250Hz low at 915MHz and the same at 910, which is -3.55ppm,
+	 * reproduced three times with the filter width agreeing to
+	 * within half a kilohertz of the 25kHz asked for.
+	 *
+	 * The divisor moves rather than the numerator, and the sign was
+	 * got wrong once and is worth stating carefully because of it.
+	 * The measurement sweeps the commanded frequency and finds
+	 * where a known carrier appears: it appears 3250Hz BELOW the
+	 * frequency commanded, which means the part tunes ABOVE what it
+	 * is told, which means this crystal runs fast.  So the number
+	 * fed in is the measured error as centre.py reports it, and the
+	 * divisor grows to pull the tuning back down.  Applied with the
+	 * opposite sign it doubled the offset, -3250 to -6200, which is
+	 * what a wrong sign always looks like and is the cheapest test
+	 * there is.
+	 *
+	 * The arithmetic is 64-bit because hz * div * 65536 is already
+	 * past 2^32 at 915MHz.
+	 *
+	 * ppb is zero until somebody measures their own board, which is
+	 * the only honest default: every crystal is different and a
+	 * number copied from this one would be a guess wearing a
+	 * measurement's clothes.  See the "ppm" ctl verb.
+	 */
+	v = (u32)((hz * ccbands[i].div * 65536)
+		/ (32000000ULL - (32000000LL * rr->ppb) / 1000000000LL));
 	rr->hz = hz;
 	strobe(rr, Sidle);
 	wrx(rr, Xfreq2, (v>>16) & 0xff);
@@ -2274,6 +2306,48 @@ cc1120ctl(Radio *r, char *buf, int n)
 		s->unlock(s);
 		for(i = 0; i < nstep; i++)
 			print("hold %lud %d\n", lo + (ulong)i*step, hold[i]);
+		return n;
+	}
+	if(strcmp(f[0], "ppm") == 0){
+		/*
+		 * The crystal's error, in parts per billion, so that
+		 * this part tunes where it is told rather than where its
+		 * crystal thinks.
+		 *
+		 *	ppm		what it is set to
+		 *	ppm -3550	this board, measured
+		 *
+		 * Measured how: put a carrier of known frequency in --
+		 * known because the generator was calibrated by ear
+		 * against WWV, which is a part in ten to the twelfth --
+		 * and sweep this receiver across it, taking the midpoint
+		 * of the filter's half-power edges rather than its peak,
+		 * because the top is flat.  tools/radio/centre.py does
+		 * it and prints the filter width alongside, which is the
+		 * check: a bracket that does not come out the width of
+		 * the filter has bracketed a spur.
+		 *
+		 * The sign: feed in what centre.py printed.  A negative
+		 * figure means a carrier appears below the frequency
+		 * commanded, so the part tunes above what it is told and
+		 * the crystal is fast.  Feeding it in with the sign
+		 * reversed doubles the offset instead of removing it,
+		 * which is the cheapest check there is and was needed
+		 * here.
+		 */
+		if(nf == 1){
+			print("ppm %d ppb\n", rr->ppb);
+			return n;
+		}
+		if(nf != 2)
+			error(Ebadctl);
+		i = atoi(f[1]);
+		if(i < -100000 || i > 100000)
+			error("radio: a crystal is not that far out");
+		rr->ppb = i;
+		s->lock(s);
+		setfreq(rr, rr->hz);		/* retune where it now thinks */
+		s->unlock(s);
 		return n;
 	}
 	if(strcmp(f[0], "led") == 0 && nf == 2){
