@@ -10556,3 +10556,37 @@ HOST's styx server having died, and the board said so itself \(em
 .CW "RCMD-DOWN 1: dial ...: connection refused"
 \(em which is the instrument added at the very start of this session
 reporting the fault correctly from the other side of the link.
+.SH
+The radio hears the air
+.P1
+sdio: SSID "Family Room speaker"
+sdio: 4 name(s) seen in scan events
+.P2
+.PP
+A real network, belonging to somebody nearby, picked up over the air by
+the BCM43430 on this board and reported through SDIO to an Inferno
+kernel.  That is the first time this port has received anything by
+radio.
+.PP
+.B "What made it work, in order."
+The CLM regulatory blob, without which the radio had no channels and
+refused every scan.  Then escan rather than WLC_SCAN: the legacy ioctl
+succeeds now but keeps its results for WLC_SCAN_RESULTS, a
+multi-kilobyte reply this synchronous reader cannot collect, while escan
+reports each network as an EVENT that arrives as an ordinary small
+frame.  That was the mistake behind the last few attempts \(em the scan
+was working and the results were being asked for the wrong way.
+.PP
+.B "How the names are extracted, and why that is temporary."
+Each escan result carries a bss_info whose SSID is a counted string, but
+the structure around it differs between firmware versions, so this pulls
+out runs of printable bytes instead.  It is a heuristic and says so: the
+name comes out with a few trailing characters of whatever follows it,
+and binary fields occasionally look like short strings.  Decoding
+bss_info properly is a small job and belongs with the event reader.
+.PP
+.B "Left."
+A reader process that accumulates frames and dispatches them by channel
+\(em which fixes WLC_SCAN_RESULTS, gives proper event decoding, and is
+the same reader the packet path needs.  Then association, and the ether
+binding.

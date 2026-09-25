@@ -2670,11 +2670,35 @@ sdioscan(int *nev)
 		print("\n");
 	}
 
-	if(wlcmd(1, 50, params + 8, 64 + 14*2, nil, 0) < 0){
-		print("sdio: WLC_SCAN was refused\n");
+	/*
+	 * escan, not WLC_SCAN.
+	 *
+	 * WLC_SCAN succeeds now that the regulatory blob is loaded, but it
+	 * keeps its results to itself and hands them over through
+	 * WLC_SCAN_RESULTS -- a multi-kilobyte reply this reader cannot
+	 * collect.  escan reports each network as an EVENT instead, which
+	 * arrives as an ordinary small frame.  It was refused before only
+	 * because the radio had no channels; that is fixed.
+	 *
+	 * The block is escan's three extra words -- version, action,
+	 * sync_id -- followed by the same scan parameters, so with no SSID
+	 * list it is 8 + 64 + 14 channels * 2 = 100 bytes.
+	 */
+	if(sdiosetvar("escan", params, 8 + 64 + 14*2) < 0){
+		print("sdio: escan was refused\n");
 		return -1;
 	}
-	delay(3000);				/* let it sweep the channels */
+	/*
+	 * Give the sweep time to finish before asking for its results.
+	 *
+	 * Three seconds is not obviously enough: fourteen channels with a
+	 * passive dwell can take considerably longer, and a scan still in
+	 * progress has no results to hand over.  The frames logged while
+	 * waiting for the results were all events -- no control reply at
+	 * all -- which fits "still scanning" better than it fits a reply
+	 * that was sent and missed.
+	 */
+	delay(500);
 	memset(pkt, 0, sizeof pkt);
 	/*
 	 * Ask for 4KB of results.
@@ -2700,41 +2724,52 @@ sdioscan(int *nev)
 	 * or a reassembly problem.
 	 */
 	fw.rxdebug = 0;
-	put4le(pkt, 3000);
-	if(wlcmd(0, 51, pkt, 4, pkt, 3000) < 0){
-		print("sdio: WLC_SCAN_RESULTS was refused\n");
-		return -1;
-	}
 	/*
-	 * wl_scan_results: buflen[4] version[4] count[4], then count
-	 * bss_info records, each length-prefixed at offset 4.  Inside a
-	 * record: version[4] length[4] BSSID[6] beacon_period[2]
-	 * capability[2] SSID_len[1] SSID[32].
+	 * Read the networks out of the scan's EVENTS, not out of
+	 * WLC_SCAN_RESULTS.
+	 *
+	 * The results ioctl wants a multi-kilobyte reply and never answers
+	 * one; the events are small single frames and arrive without any
+	 * of that difficulty.  Each escan result carries a bss_info whose
+	 * SSID is a counted string -- but the surrounding structure
+	 * differs between firmware versions, so rather than decode it,
+	 * pull out the printable runs.  That is a heuristic and is said to
+	 * be one; it is enough to answer "what is on the air", which is
+	 * the question.
 	 */
 	{
-		u32 buflen, count, off, rlen;
-		int k, sl;
+		static uchar ev[2048];
+		char name[33];
+		int m, k, j, nseen;
 
-		buflen = pkt[0] | pkt[1]<<8 | pkt[2]<<16 | pkt[3]<<24;
-		count = pkt[8] | pkt[9]<<8 | pkt[10]<<16 | pkt[11]<<24;
-		print("sdio: scan results %lud bytes, %lud network(s)\n",
-			(ulong)buflen, (ulong)count);
-		off = 12;
-		for(k = 0; k < count && off + 24 < sizeof pkt; k++){
-			rlen = pkt[off+4] | pkt[off+5]<<8 | pkt[off+6]<<16 |
-				pkt[off+7]<<24;
-			if(rlen < 24 || off + rlen > sizeof pkt)
+		nseen = 0;
+		for(i = 0; i < 400; i++){
+			if(wlintwait(50) < 0)
+				continue;
+			m = wlreadpkt(ev, sizeof ev);
+			if(m <= 0)
+				continue;
+			if((ev[5] & 0xf) != 1)
+				continue;
+			for(k = ev[7]; k < m; k++){
+				for(j = 0; k + j < m && j < 32; j++)
+					if(ev[k+j] < 0x20 || ev[k+j] > 0x7e)
+						break;
+				if(j >= 4){
+					memmove(name, &ev[k], j);
+					name[j] = 0;
+					print("sdio: SSID \"%s\"\n", name);
+					nseen++;
+				}
+				k += j;
+			}
+			if(nseen > 40)
 				break;
-			sl = pkt[off+18];
-			if(sl > 32)
-				sl = 32;
-			print("sdio: %2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux:%2.2ux  %.*s\n",
-				pkt[off+8], pkt[off+9], pkt[off+10], pkt[off+11],
-				pkt[off+12], pkt[off+13], sl, (char*)&pkt[off+19]);
-			off += rlen;
 		}
-		*nev = count;
+		print("sdio: %d name(s) seen in scan events\n", nseen);
+		*nev = nseen;
 	}
+
 	return 0;
 }
 
