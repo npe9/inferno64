@@ -11144,3 +11144,15 @@ into
 first \(em the device's own description assumes that bind, and nothing
 had been doing it.  It is done here now, in the shared namespace, so the
 files the init script uses are the files a person at the shell can use.
+.LP
+.B "A name, not just an address."
+Both leases now carry a hostname, so the board is something other than a
+bare address in the router's client list.  The two interfaces are named
+apart because they sit on the same subnet and telling them apart has
+mattered all the way through this work: the radio is
+.CW inferno-pi
+and the wired adapter
+.CW inferno-pi-eth .
+The router's own DNS picks them up, and
+.CW "ping inferno-pi.lan"
+from the host is 3 for 3 over the air.

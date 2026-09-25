@@ -1541,6 +1541,13 @@ wificheck()
 		dhcpclient->init();
 	}
 	cfg2 := Bootconf.new();
+	#
+	# Say who we are.  A board that takes a lease without a hostname is
+	# a bare address in the router's client list, and this one has two
+	# interfaces on the same subnet -- so they are named apart, and the
+	# radio gets the plain name because it is the interesting one.
+	#
+	cfg2.puts(Dhcpclient->Ohostname, "inferno-pi");
 	lease: ref Lease;
 	err: string;
 	(cfg2, lease, err) = dhcpclient->dhcp("/net.wifi", cfd,
@@ -1718,6 +1725,7 @@ etherone(ifname, tag: string, tries: int, ip, mask, gw: string)
 		dhcpclient->init();
 	}
 	cfg := Bootconf.new();
+	cfg.puts(Dhcpclient->Ohostname, "inferno-pi-eth");
 	lease: ref Lease;
 	err: string;
 	(cfg, lease, err) = dhcpclient->dhcp("/net", cfd, addr, cfg, nil);
