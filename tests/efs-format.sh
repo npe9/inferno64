@@ -59,7 +59,8 @@ say "1. dump matches mkefs"
 check "block count"	'nblocks 256'				$T/efs-out.txt
 check "live generation"	'mount would take superblock 0, generation 1' $T/efs-out.txt
 check "spare is older"	'generation 0'				$T/efs-out.txt
-check "tree root at 1"	'treeroot 1'				$T/efs-out.txt
+check "bitmap at 1"	'freeroot 1'				$T/efs-out.txt
+check "tree root at 2"	'treeroot 2'				$T/efs-out.txt
 check "root inode"	'(1 inode 0).*mode 40775 nlink 2'	$T/efs-out.txt
 check "four blocks used"	'4 marked in use'			$T/efs-out.txt
 check "which four"	'in use: 0 1 2 255'			$T/efs-out.txt
@@ -73,8 +74,15 @@ printf '\336\255\276\357' | dd of=$T/efs-one.img bs=1 seek=32 conv=notrunc 2>/de
 cp $T/efs.img $T/efs-both.img
 printf '\336\255' | dd of=$T/efs-both.img bs=1 seek=32 conv=notrunc 2>/dev/null
 printf '\336\255' | dd of=$T/efs-both.img bs=1 seek=1044512 conv=notrunc 2>/dev/null
+#
+# The tree root, at block 2 in an empty image: byte 2*4096+20, which is
+# inside its first entry.  These offsets track mkefs's layout, so a
+# change there breaks this test rather than silently corrupting the
+# wrong block and passing -- which is what happened when the bitmap
+# moved to block 1 and this still aimed at 4096.
+#
 cp $T/efs.img $T/efs-tree.img
-printf '\336\255' | dd of=$T/efs-tree.img bs=1 seek=4116 conv=notrunc 2>/dev/null
+printf '\336\255' | dd of=$T/efs-tree.img bs=1 seek=8212 conv=notrunc 2>/dev/null
 
 cat > $T/efs-run2.sh <<'EOF'
 load std
