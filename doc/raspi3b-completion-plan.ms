@@ -11539,3 +11539,96 @@ The one
 seen while bisecting was on an older build and has not appeared since;
 five trials is not many, and it is recorded as not-observed rather than
 as fixed.
+.NH 1
+What to do next, and why that order
+.PP
+.B "Bluetooth is as far as it goes without hardware of the owner's."
+Scanning, advertising and the patch load are done and verified from
+another radio.  Pairing and connecting need a device to pair
+.I with ,
+and connecting to strangers' advertisers is not this project's to do.
+The same is true of the rest of the deferred list at the top of this
+document: the CSI camera and the DSI display need a module and a panel
+the rig does not have, and the GPU/VideoCore work is a large project with
+no verification path here.  So the honest next item is not on that list.
+.NH 2
+First: SD DMA, because it multiplies everything else
+.PP
+Card writes run about 96KB/s on the PIO path, at 128 MMIO accesses per
+sector, and that term appears twice in every kernel install, in FAT-BIG,
+in kfs, and in anything the board writes to itself.
+.PP
+The reason this is the moment is that the blocker was falsified in this
+session.  The "Arasan DMA write stall" was a 1e6-iteration spin count
+expiring inside a card's legal 250ms program time; the watch showed the
+engine resuming at 81ms and the transfer completing.  So a DMA flag left
+at 0 is resting on a fault that no longer exists rather than on a
+measurement, and it deserves re-testing before anything else.
+.PP
+Two corrections to that framing, both checked in the tree rather than
+remembered.  The flag is
+.CW sdhostdma
+in
+.CW sdhostbcm.c ,
+not
+.CW emmcdma
+\(em there is no such symbol any more, and the card is on SDHOST, the
+Arasan having been left to the radio.  And the case is already half made
+in every boot log:
+.DS
+.CW
+sdhost: MULTIVERIFY-OK 512 blocks at 2900500: write 50 ms (dma 0)
+sdhost: MULTIVERIFY-OK  64 blocks at 2900700: write 10 ms (dma 1)
+.R
+.DE
+one of the MULTIVERIFY cases already runs with DMA and passes, and it is
+the fastest write in the set.  The falsification is clean and needs no
+rebuild:
+.CW sdhostbcm.c
+has a
+.CW wrverify
+ctl that writes, reads back and verifies with a DMA flag per direction,
+so the two paths can be compared on the same sectors minutes apart.
+.PP
+One thing to watch while doing it: lines 1208 and 1223 set
+.CW sdhostdma
+back to 0 on a failure \(em "fall back, do not lose it".  A run that
+reports DMA numbers may therefore be reporting PIO, and the flag has to
+be read back afterwards rather than assumed.
+.NH 2
+Second: the 23ms round trip on the USB ethernet
+.PP
+That single number sets the Styx ceiling, because devmnt allows one
+outstanding RPC per mount and the kernel update reads in 8KB chunks \(em
+one chunk per 30ms is almost exactly the 222KB/s observed.
+.CW "usbdwc: ep3.1 re-armed after 2 s"
+is in every boot log, ep3.1 is the bulk-IN endpoint ethernet receives on,
+and nothing has ever chased it.
+.PP
+What makes it interesting is the contrast: SD interrupt wake measures
+201-478 microseconds, so the general interrupt path is fine and whatever
+costs 20ms is specific to the ether receive path.  The cheapest first
+move is pinging the gateway from the host, which decides in ten seconds
+whether the 23ms belongs to the board or to the network.
+.NH 2
+Third: the copy-on-write Styx server, to replace kfs
+.PP
+The strongest argument of the three \(em a machine whose power is pulled
+several times an hour should not have a filesystem where an interrupted
+write can leave a tree that still mounts and lies \(em but weeks of work
+rather than an afternoon, and it wants the DMA question settled first so
+that it is not designed around a 96KB/s card.
+.NH 2
+Two smaller things, to fold in rather than schedule
+.PP
+.CW dossrv 's
+read-modify-write:
+.CW biotrace
+showed
+.CW "bio r nb 9 bno 53671"
+immediately followed by a
+.CW "bio w"
+on the same blocks, which roughly doubles the cost of a write.
+.PP
+And the SD card itself, measured degrading from 92 to 35KB/s and hanging
+a boot: a component to watch and probably replace, not a bug to fix.
