@@ -1486,24 +1486,60 @@ btcheck()
 	# run in processes of their own, and this one waits on a marker
 	# rather than on a return.
 	#
-	spawn bcmfw->init(nil, "bcmfw" :: spec :: hcd :: nil);
-	sys->sleep(6000);
+	#
+	# WAIT for the download, do not guess at it.
+	#
+	# This slept six seconds between starting bcmfw and starting btfs,
+	# and the two speak to the same UART.  On a busy boot the download
+	# takes longer than that, so btfs opened the line in the middle of
+	# it and both talked at once: measured over eight boots, five
+	# served Bluetooth and three did not, and two of the three had no
+	# BCMFW-OK at all -- btfs racing a download still in progress.
+	#
+	# waitgone() on the child's pid is what the rest of this file does
+	# for exactly this, and it is not a guess.
+	#
+	pidch := chan of int;
+	spawn cmdproc(bcmfw, "bcmfw" :: spec :: hcd :: nil, pidch);
+	waitgone(<-pidch);
+
 	btfs := load Command "/dis/bt/btfs.dis";
 	if(btfs == nil){
 		sys->print("BT-NONE (no btfs: %r)\n");
 		btdone = 1;
 		return;
 	}
-	spawn btfs->init(nil, "btfs" :: "-m" :: "/n/bt" :: spec :: nil);
-	for(i := 0; i < 100; i++){
-		if(sys->open("/n/bt/0", Sys->OREAD) != nil){
-			sys->print("BT-SERVING /n/bt/0\n");
-			btdone = 1;
-		return;
+	#
+	# And try btfs more than once.
+	#
+	# The third of those three failures had BCMFW-OK above it and still
+	# reported "reset: no answer to command 0x0c03": the controller
+	# restarts on the patched firmware as the download ends, and a
+	# single HCI Reset aimed at it can arrive while it is still coming
+	# back.  Re-running btfs is safe -- the patch is already in, and
+	# btfs only resets and talks -- so it is retried rather than left
+	# as a boot that quietly has no Bluetooth.
+	#
+	# NOT EXERCISED.  Eight boots after the wait above was fixed served
+	# Bluetooth eight times and none of them printed BT-RETRY, so this
+	# path has never actually run.  It compiles and it reads correctly
+	# and that is the whole of the confidence in it; the measured fix is
+	# the waitgone() above, not this.
+	#
+	for(a := 0; a < 3; a++){
+		sys->sleep(1000);
+		spawn btfs->init(nil, "btfs" :: "-m" :: "/n/bt" :: spec :: nil);
+		for(i := 0; i < 80; i++){
+			if(sys->open("/n/bt/0", Sys->OREAD) != nil){
+				sys->print("BT-SERVING /n/bt/0\n");
+				btdone = 1;
+				return;
+			}
+			sys->sleep(100);
 		}
-		sys->sleep(100);
+		sys->print("BT-RETRY btfs attempt %d served nothing\n", a + 1);
 	}
-	sys->print("BT-FAIL btfs served nothing at /n/bt after 10 s\n");
+	sys->print("BT-FAIL btfs served nothing at /n/bt in 3 attempts\n");
 	btdone = 1;
 }
 
@@ -3223,6 +3259,23 @@ remoteaddrs(): list of string
 #
 # Run one board.cmd script.  Spawned, never called: see runremote.
 #
+#
+# Run a command module in a child and report its pid, so the caller can
+# wait for it with waitgone().  A command module's init() ends in exit,
+# which terminates the process that called it, so it cannot simply be
+# called and returned from -- the child is the whole point.
+#
+cmdproc(m: Command, argv: list of string, pidch: chan of int)
+{
+	pidch <-= sys->pctl(0, nil);
+	{
+		m->init(nil, argv);
+	}exception e{
+	"*" =>
+		sys->print("BT-EXCEPTION %s\n", e);
+	}
+}
+
 shellproc(sh: Shell, cmd: string, pidch: chan of int)
 {
 	pidch <-= sys->pctl(0, nil);

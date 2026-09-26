@@ -11955,3 +11955,51 @@ not about the controller (which answers in milliseconds) but about
 whether this process gets the processor on a board with one core and a
 polled SD driver.  Whether that is enough is not yet measured, and is
 recorded as such.
+.NH 2
+The intermittent Bluetooth failure was a six-second guess
+.PP
+The reply bound was raised from five seconds to fifteen on the theory
+that the patch download was being starved of processor.  Eight boots said
+that was wrong, or at least not enough: 5 of 8 served Bluetooth.
+.PP
+Reading the three failures rather than the count named it.  Two had no
+.CW BCMFW-OK
+at all and
+.CW btfs
+complaining
+.CW "reset: no answer" ,
+which is not a slow download \(em it is
+.CW btfs
+talking over one.
+.CW btcheck
+did
+.DS
+.CW
+spawn bcmfw->init(...);
+sys->sleep(6000);
+spawn btfs->init(...);
+.R
+.DE
+and the two speak to the same UART.  Six seconds is a guess, the download
+takes longer than that on a busy boot, and then both are on the line at
+once.  The rest of this file waits for a child with
+.CW waitgone()
+on its pid, which is not a guess, and that is what it does now.
+.DS
+.CW
+before: 5/8 served bluetooth
+after:  8/8 served bluetooth
+.R
+.DE
+.PP
+.B "And one piece of that change is untested, which is worth saying."
+The third failure had
+.CW BCMFW-OK
+above it and still could not reset the controller, so
+.CW btfs
+is retried up to three times \(em the patch is already loaded by then and
+btfs only resets and talks, so re-running it is safe.  In the eight boots
+that followed, not one printed
+.CW BT-RETRY .
+The measured fix is the wait; the retry compiles and reads correctly and
+that is the whole of the confidence in it.
