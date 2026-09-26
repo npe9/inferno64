@@ -33,12 +33,19 @@ get4(b: array of byte, o: int): int
 		(int b[o+2] << 8) | int b[o+3];
 }
 
+#
+# Two int halves and one big join, rather than eight big shifts.  Same
+# reason as checksum above: Key.unpack calls this twice per key and
+# Node.unpack unpacks every key in a block, so it is on the hottest path
+# there is.
+#
 get8(b: array of byte, o: int): big
 {
-	v := big 0;
-	for(i := 0; i < 8; i++)
-		v = (v << 8) | big int b[o+i];
-	return v;
+	hi := (int b[o] << 24) | (int b[o+1] << 16) |
+		(int b[o+2] << 8) | int b[o+3];
+	lo := (int b[o+4] << 24) | (int b[o+5] << 16) |
+		(int b[o+6] << 8) | int b[o+7];
+	return (big hi << 32) | (big lo & big 16rffffffff);
 }
 
 put2(b: array of byte, o: int, v: int)
@@ -87,15 +94,35 @@ superblk(nblocks: big, which: int): big
 # checksum that differs between the host and the board is worse than
 # none.
 #
+#
+# Adler-32, computed entirely in int, converted to big once at the end.
+#
+# This was FNV-1a in big arithmetic, and on this VM EVERY big operation
+# allocates: two per byte over a 4096-byte block is 8192 allocations per
+# checksum, and a checksum happens on every node pack and every node
+# unpack.  The allocation profiler put 3.77MB of a 6MB workload on the
+# single line that did it, with 1.05MB of that still live -- which is
+# how a server with a few hundred kilobytes of data exhausted a 32MB
+# heap.
+#
+# big was chosen here to dodge the other trap: Limbo's int is 32 bits to
+# the compiler and 64 at runtime, so a literal 16rffffffff is a big and
+# masking an int with it drags the whole expression into big arithmetic.
+# Adler-32 needs neither -- its two accumulators stay under 65521, every
+# constant is a small int, and the one value that needs 32 bits is built
+# once, at the end, where a single conversion costs one allocation
+# instead of eight thousand.
+#
 checksum(b: array of byte): big
 {
-	M32: con big 16rffffffff;
-	h := big 16r811c9dc5;
+	Base: con 65521;		# largest prime below 2^16
+	a := 1;
+	c := 0;
 	for(i := 0; i < len b; i++){
-		h = (h ^ big int b[i]) & M32;
-		h = (h * big 16r01000193) & M32;
+		a = (a + int b[i]) % Base;
+		c = (c + a) % Base;
 	}
-	return h;
+	return (big c << 16) | big a;
 }
 
 #
@@ -106,10 +133,8 @@ checksum(b: array of byte): big
 #
 get4b(b: array of byte, o: int): big
 {
-	v := big 0;
-	for(i := 0; i < 4; i++)
-		v = (v << 8) | big int b[o+i];
-	return v;
+	return big ((int b[o] << 24) | (int b[o+1] << 16) |
+		(int b[o+2] << 8) | int b[o+3]);
 }
 
 put4b(b: array of byte, o: int, v: big)
@@ -836,6 +861,25 @@ Fs.writeents(f: self ref Fs, ents: array of Ent, ntype: int, level: int):
 	nb := 0;
 	blks := array[8] of big;
 	keys := array[8] of Key;
+	#
+	# NO ENTRIES, NO BLOCK.
+	#
+	# This wrote one empty node and gave the parent a key of
+	# (0, inode, 0) to point at it, because that is what an empty
+	# entry list has for a first key.  A zero key sorts before every
+	# real one, so the parent's keys stopped rising, and a descent --
+	# which takes the last child whose key is not greater than the
+	# target -- began landing in the wrong subtree.  Lookups then
+	# failed for keys that were present, including the root
+	# directory's own inode: "no inode 1" on a filesystem that had
+	# one.
+	#
+	# It happens when the last entry is deleted from a leaf.  The
+	# answer is for the leaf to stop existing and the parent to lose
+	# its entry, which fixup does when it is handed no blocks.
+	#
+	if(len ents == 0)
+		return (blks[0:0], keys[0:0], nil);
 	i := 0;
 	for(;;){
 		if(nb >= len blks)
@@ -868,10 +912,7 @@ Fs.writeents(f: self ref Fs, ents: array of Ent, ntype: int, level: int):
 		if((we := f.d.wrblk(blk, b)) != nil)
 			return (nil, nil, we);
 		blks[nb] = blk;
-		if(len n.ents > 0)
-			keys[nb] = n.ents[0].key;
-		else
-			keys[nb] = Key(big 0, 0, big 0);
+		keys[nb] = n.ents[0].key;	# never empty; see above
 		nb++;
 		i = last;
 		if(i >= len ents)
@@ -923,6 +964,28 @@ Fs.fixup(f: self ref Fs, blks: array of big, idx: array of int, depth: int,
 			return we;
 		kids = nk;
 		kkeys = nkk;
+	}
+	#
+	# An empty tree still needs a root, and it is a leaf with no
+	# entries -- the one place an empty node is legitimate, because
+	# nothing points at it with a key.
+	#
+	if(len kids == 0){
+		n := ref Node;
+		n.ntype = Nleaf;
+		n.level = 0;
+		n.ents = array[0] of Ent;
+		(b, pe) := n.pack();
+		if(pe != nil)
+			return pe;
+		(blk, ae) := f.alloc();
+		if(ae != nil)
+			return ae;
+		if((we := f.d.wrblk(blk, b)) != nil)
+			return we;
+		f.s.treeroot = blk;
+		f.dirty = 1;
+		return nil;
 	}
 	f.s.treeroot = kids[0];
 	f.dirty = 1;
