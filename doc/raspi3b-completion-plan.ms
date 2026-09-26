@@ -11632,3 +11632,93 @@ on the same blocks, which roughly doubles the cost of a write.
 .PP
 And the SD card itself, measured degrading from 92 to 35KB/s and hanging
 a boot: a component to watch and probably replace, not a bug to fix.
+.NH 1
+Profiling the slow path: it is none of the things it looked like
+.PP
+.B "SD DMA was re-tested and is now on, and it is not the multiplier."
+The stall that justified leaving it off was falsified earlier in this
+document, so the flag was resting on a fault that does not exist.
+Re-measured with the
+.CW multiverify
+ctl, four interleaved pairs of 512KB so drift cannot favour either arm:
+.DS
+.CW
+read   dma 0: 90 90 90 90 ms     dma 1: 70 60 60 60 ms
+write  dma 0: 90 90 110 110 ms   dma 1: 90 80 80 90 ms
+.R
+.DE
+Every DMA run beat every PIO run on reads, 5.7MB/s to 8.5MB/s, and writes
+move about 1.15x.  It is on by default now; a failure sets the flag back
+to 0 and retries in PIO, so the worst case is the old behaviour.
+.PP
+But the premise it was chosen on \(em 96KB/s card writes \(em does not
+survive.  The block path was already doing 5-6MB/s.  What is slow is
+above it.
+.PP
+.B "And the first measurement of THAT was wrong too, in the ordinary way:
+.B "it measured a pipeline and blamed the sink."
+Copying a 400KB file from
+.CW /n/remote
+to
+.CW /n/dos
+takes 3.4s, which looks like 118KB/s of FAT write.  It is not:
+.CW /n/remote
+is a Styx mount over USB ethernet, and the copy is a network read feeding
+a card write.  Substituting the endpoints separates them:
+.DS
+.CW
+network read -> /dev/null      5.88 s      68 KB/s
+network read -> FAT write      7.80 s
+FAT read     -> /dev/null      0.44 s     911 KB/s
+.R
+.DE
+The FAT write is about 208KB/s by difference and the FAT read 911KB/s.
+The network is the bottleneck and everything else is noise beside it.
+.PP
+.B "Where the network time goes."
+Reading four files of different sizes over the same mount fits a
+straight line: about 195ms fixed per file, and 99KB/s after that \(em
+3878ms of marginal time for 399KB, against 8KB per RPC, which is 79ms
+for every 8KB read.
+.PP
+Four candidates, and the board answers three of them itself.
+.IP \(bu
+.B "Not the driver."
+.CW usbdwc
+prints
+.CW "USB-WAKE 8 slept, mean 1814 us, max 11202 us (898 more caught by the
+.CW "spin)"
+on every boot: 99 percent of transfers complete inside a 200us spin and
+never sleep at all.
+.IP \(bu
+.B "Not frame handling."
+365 frames arrived in 112 bulk-IN reads, 3.26 frames per read, with
+.CW "ndrop 0"
+and
+.CW "nwerr 0" .
+.IP \(bu
+.B "Not loss."
+Across the same transfer:
+.CW "RetransSegs 2" ,
+.CW "Resequenced 0" ,
+.CW "OutOfOrder 0" .
+.IP \(bu
+.B "Not round-trip time alone."
+Pinged from the board, the host is 5.7ms at best and about 8ms typical.
+79ms per 8KB read is six round trips, which is roughly one segment in
+flight.
+.PP
+What is left, and what the counters point at, is
+.CW "Delayack: 494"
+over one 400KB read.  A receiver delaying acknowledgements against a
+sender with a small window gives exactly this shape: no loss, no errors,
+low RTT, and six round trips to move six segments.  That is the next
+thing to look at, and it is in the IP stack rather than in any driver.
+.PP
+.B "Two side findings."
+A ping of six fragments to this board gets no reply at all \(em 1, 2 and
+4 fragments answer in 6.2, 9.0 and 12.8ms, and 6 is 100 percent loss \(em
+which is a reassembly limit worth its own look.  And the 23ms
+round trip this document blamed on the board is not the board's: the
+gateway, a router doing nothing, answers the host in 28ms while the board
+answers in 18.

@@ -455,7 +455,31 @@ fifofill(volatile u32 *r)
  * shifted windows, not the sector.  So bytemode reads stay on the byte
  * loop that was written for them.
  */
-static int sdhostdma = 0;
+/*
+ * DMA on, measured.
+ *
+ * This was 0 because of the "Arasan DMA write stall", and that stall was
+ * falsified: it was a 1e6-iteration spin count expiring inside a card's
+ * legal 250ms program time, with the engine resuming at 81ms and the
+ * transfer completing.  So the flag was resting on a fault that does not
+ * exist.  Re-tested with the wrverify and multiverify ctls, four
+ * interleaved pairs of 512KB so that drift cannot favour either arm:
+ *
+ *	read   dma 0: 90 90 90 90 ms     dma 1: 70 60 60 60 ms
+ *	write  dma 0: 90 90 110 110 ms   dma 1: 90 80 80 90 ms
+ *
+ * Every DMA run beat every PIO run on reads -- 5.7MB/s to 8.5MB/s -- and
+ * writes move about 1.15x.  It costs nothing: a DMA failure sets this
+ * back to 0 further down and the transfer is retried in PIO, so the
+ * worst case is the behaviour that was the default before.
+ *
+ * What this is NOT is the multiplier it was expected to be.  The block
+ * path was already doing 5-6MB/s; a 400KB file written through dossrv
+ * onto the FAT partition takes 3.4 seconds, which is 118KB/s, and with
+ * DMA on it takes 3.1, which is 129KB/s.  Nine percent.  Whatever costs
+ * a factor of forty-five lives above the block device, not in it.
+ */
+static int sdhostdma = 1;
 static int sdhosttrace = 0;	/* print the state at command issue */
 /*
  * Microseconds between issuing a data command and the FIRST read of
