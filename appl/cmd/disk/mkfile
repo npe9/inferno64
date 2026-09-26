@@ -4,6 +4,8 @@ DIRS=\
 	prep\
 
 TARG=\
+	mkefs.dis\
+	efsdump.dis\
 	kfs64.dis\
 	kfs.dis\
 	mbr.dis\
@@ -14,6 +16,7 @@ TARG=\
 	ftl.dis\
 
 SYSMODULES=\
+	daytime.m\
 	arg.m\
 	sys.m\
 	draw.m\

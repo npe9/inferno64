@@ -99,6 +99,19 @@ not fit it spills to a block whose number is recorded here instead.
 .B checksum ,
 4 bytes, over the whole block with this field taken as zero.
 .PP
+.B "Where the spare is, without trusting the first."
+Superblock 1 is in the last block, so finding it needs a block count
+\(em and taking that count from superblock 0 would mean a corrupt
+superblock 0 hides the copy that exists for exactly that case.  The size
+is a property of the device and the device can be asked: a file has a
+length, a partition has a size.
+.B "A reader gets the block count from the device and treats"
+.I nblocks
+.B "in the superblock as a claim to check against it,"
+not as the only source.  This was found by writing the corruption test
+before believing the design, and it is the kind of circularity that only
+shows up when the thing it protects against actually happens.
+.PP
 .B Mount
 reads both superblocks, discards any that fails its checksum or magic,
 and takes the one with the higher generation.
