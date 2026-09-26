@@ -11780,3 +11780,33 @@ taken against a loaded machine, which is the most likely explanation both
 for the 5.88s outlier and for writes costing 2.4 times reads \(em a
 write makes the far end do work, a read of a cached file does not.  The
 board's own contribution to the per-RPC cost is about two percent of it.
+.NH 2
+Retracted: the fragment-reassembly limit was never the board's
+.PP
+Two sections above this one report that "a ping of six fragments to this
+board gets no reply at all ... which is a reassembly limit worth its own
+look".  It is not the board's limit.  The threshold is exact \(em a
+datagram of 8192 bytes is answered and 8228 is not \(em which is what
+made it look like a buffer somewhere in this kernel, and the board's own
+counters agreed: no
+.CW InHdrErrors ,
+no
+.CW InDiscards ,
+and
+.CW ReasmReqds
+never moving.
+.PP
+The control settles it in ten seconds.  The gateway \(em a router that
+has nothing to do with this project \(em answers 8164 and loses 8200,
+exactly as the board does, on the wire and on the radio alike.  The limit
+is in the host or in the network between, and the Pi's IP stack was
+reassembling five-fragment datagrams correctly the whole time.
+.PP
+That is the third measurement in this session to be wrong in the same
+way: a pipeline attributed to its sink, a model fitted to a single
+outlier, and now a limit attributed to the one machine under test without
+asking whether anything else on the network behaves the same.  The board
+is the thing being changed, so it is the thing suspected, and that bias
+costs an afternoon each time.  The habit that catches it is cheap: before
+believing a number about the board, take the same number from something
+that is not the board.
