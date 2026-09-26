@@ -445,3 +445,157 @@ bitget(b: array of byte, i: int): int
 		return 1;
 	return 0;
 }
+
+#
+# Mounting: read both superblocks and take the newer one that checksums.
+#
+# The block count comes from the DEVICE, and the superblock's own
+# nblocks is checked against it rather than believed.  Superblock 1 is
+# in the last block, so trusting superblock 0 for the size would let a
+# corrupt superblock 0 hide the copy that exists for exactly that case.
+# doc/efs-format.ms says so; this is where it is enforced.
+#
+Fs.mount(name: string, startsect: big): (ref Fs, string)
+{
+	(d, e) := Dev.open(name, startsect, big 0, 0);
+	if(e != nil)
+		return (nil, e);
+	devblocks := big 0;
+	(ok, dir) := sys->fstat(d.fd);
+	if(ok >= 0)
+		devblocks = (dir.length - startsect * big Sectorsz) / big Blocksize;
+
+	(s0, nil) := readsuper(d, big 0);
+	nb := devblocks;
+	if(s0 != nil)
+		nb = s0.nblocks;
+	if(nb <= big 0)
+		return (nil, "superblock 0 is unreadable and the device has no size");
+	(s1, nil) := readsuper(d, superblk(nb, 1));
+
+	live := s0;
+	which := 0;
+	if(s0 == nil || (s1 != nil && s1.gen > s0.gen)){
+		live = s1;
+		which = 1;
+	}
+	if(live == nil)
+		return (nil, "neither superblock is good");
+	if(devblocks > big 0 && live.nblocks > devblocks)
+		return (nil, sys->sprint("superblock claims %bd blocks, device holds %bd",
+			live.nblocks, devblocks));
+	f := ref Fs;
+	f.d = d;
+	f.d.nblocks = live.nblocks;
+	f.s = live;
+	f.which = which;
+	return (f, nil);
+}
+
+readsuper(d: ref Dev, n: big): (ref Super, string)
+{
+	(b, e) := d.rdblk(n);
+	if(e != nil)
+		return (nil, e);
+	return Super.unpack(b);
+}
+
+Fs.getnode(f: self ref Fs, n: big): (ref Node, string)
+{
+	(b, e) := f.d.rdblk(n);
+	if(e != nil)
+		return (nil, e);
+	return Node.unpack(b);
+}
+
+#
+# Descend to the leaf that would hold k.
+#
+# An interior entry's key is the first key of the child it points at, so
+# the child to take is the last one whose key is not greater than the
+# target.  A bound on the depth because a corrupt block can point back
+# up the tree, and a filesystem server that loops on bad data is worse
+# than one that says the data is bad.
+#
+Maxdepth: con 16;
+
+Fs.leaffor(f: self ref Fs, k: Key): (ref Node, string)
+{
+	bn := f.s.treeroot;
+	for(i := 0; i < Maxdepth; i++){
+		(n, e) := f.getnode(bn);
+		if(e != nil)
+			return (nil, e);
+		if(n.ntype == Nleaf)
+			return (n, nil);
+		if(len n.ents == 0)
+			return (nil, sys->sprint("interior block %bd is empty", bn));
+		j := 0;
+		for(m := 0; m < len n.ents; m++)
+			if(n.ents[m].key.cmp(k) <= 0)
+				j = m;
+			else
+				break;
+		if(len n.ents[j].val != 8)
+			return (nil, sys->sprint("interior block %bd entry %d is %d bytes, want 8",
+				bn, j, len n.ents[j].val));
+		bn = get8(n.ents[j].val, 0);
+	}
+	return (nil, "tree deeper than " + string Maxdepth + " levels; giving up");
+}
+
+Fs.get(f: self ref Fs, k: Key): (array of byte, string)
+{
+	(n, e) := f.leaffor(k);
+	if(e != nil)
+		return (nil, e);
+	for(i := 0; i < len n.ents; i++)
+		if(n.ents[i].key.cmp(k) == 0)
+			return (n.ents[i].val, nil);
+	return (nil, nil);		# absent, not an error
+}
+
+#
+# Every entry for one inode and key type, in key order.
+#
+# Walks the leaves from the one holding the first possible key.  Leaves
+# are found by re-descending on the key after the last one seen, which
+# costs a descent per leaf and needs no sibling pointers in the format --
+# a pointer that a copy-on-write tree would have to rewrite in every
+# sibling of every changed block.
+#
+Fs.range(f: self ref Fs, ino: big, ktype: int): (array of Ent, string)
+{
+	out := array[0] of Ent;
+	k := Key(ino, ktype, big 0);
+	for(guard := 0; guard < 1024; guard++){
+		(n, e) := f.leaffor(k);
+		if(e != nil)
+			return (nil, e);
+		got := 0;
+		last: Key;
+		for(i := 0; i < len n.ents; i++){
+			ek := n.ents[i].key;
+			if(ek.cmp(k) < 0)
+				continue;
+			if(ek.ino != ino || ek.ktype != ktype)
+				return (out, nil);
+			t := array[len out + 1] of Ent;
+			t[0:] = out;
+			t[len out] = n.ents[i];
+			out = t;
+			last = ek;
+			got++;
+		}
+		if(got == 0)
+			return (out, nil);
+		#
+		# The next key after the last one taken.  offset+1 is right
+		# because offsets are whole numbers here -- a file offset in
+		# blocks, or a name hash -- and there is no key between n and
+		# n+1 to skip over.
+		#
+		k = Key(last.ino, last.ktype, last.off + big 1);
+	}
+	return (nil, "range: more leaves than expected; giving up");
+}

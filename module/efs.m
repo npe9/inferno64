@@ -118,6 +118,30 @@ Efs: module
 		unpack:	fn(b: array of byte): (ref Node, string);
 	};
 
+	#
+	# A mounted filesystem, read side.
+	#
+	# Lookup descends; range collects every entry for one inode and
+	# key type, which is how a directory is listed and how a file's
+	# extents are found.  Collecting into an array rather than handing
+	# back an iterator is a deliberate limit: it is simple, it is
+	# enough for the directories this board will hold, and a directory
+	# large enough for it to matter is a reason to write the iterator
+	# then rather than to carry one now.
+	#
+	Fs: adt {
+		d:	ref Dev;
+		s:	ref Super;
+		which:	int;		# which superblock was taken
+
+		mount:	fn(name: string, startsect: big): (ref Fs, string);
+		getnode: fn(f: self ref Fs, n: big): (ref Node, string);
+		leaffor: fn(f: self ref Fs, k: Key): (ref Node, string);
+		get:	fn(f: self ref Fs, k: Key): (array of byte, string);
+		range:	fn(f: self ref Fs, ino: big, ktype: int):
+				(array of Ent, string);
+	};
+
 	bitset:		fn(b: array of byte, i: int, v: int);
 	bitget:		fn(b: array of byte, i: int): int;
 

@@ -199,14 +199,30 @@ printbitmap(b: array of byte, nblocks: big)
 	n := nblocks;
 	if(n > covers)
 		n = covers;
+	#
+	# Count all of them, and show the LOWEST eight.
+	#
+	# This walked downwards and kept the first eight it met -- which
+	# are the highest -- then printed them in ascending order with an
+	# ellipsis after, so a nine-block filesystem reported "1 2 3 4 5 6
+	# 7 255 ..." and block 0 vanished.  It read as a prefix and was a
+	# suffix.  Walking upwards and stopping at eight is what it says it
+	# does.
+	#
 	used := 0;
-	first: list of big;
-	for(i := int n - 1; i >= 0; i--)
+	nshow := 0;
+	show: list of big;
+	for(i := 0; i < int n; i++)
 		if(efs->bitget(b, i)){
 			used++;
-			if(used <= 8)
-				first = big i :: first;
+			if(nshow < 8){
+				show = big i :: show;
+				nshow++;
+			}
 		}
+	first: list of big;
+	for(; show != nil; show = tl show)
+		first = hd show :: first;
 	sys->print("\tcovers blocks 0..%bd of %bd; %d marked in use\n",
 		n - big 1, nblocks, used);
 	s := "\t\tin use:";
