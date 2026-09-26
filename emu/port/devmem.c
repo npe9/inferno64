@@ -204,6 +204,137 @@ ismemdata(void *v)
 	return poolevents.full || poolevents.rd != poolevents.wr;
 }
 
+
+/*
+ * memheap: a census of the live Dis heap, grouped by type.
+ *
+ * The question this answers is "what is holding memory", and in a Dis
+ * program the answer is a type.  Every object in the heap pool begins
+ * with a Heap header carrying a Type*, so walking the pool's allocated
+ * blocks and grouping by that pointer says exactly which type is live
+ * and how much of it there is.
+ *
+ * Types have no names -- Type is {ref, free, mark, size, np, destroy,
+ * initialize, map} and nothing else -- so a line here identifies a type
+ * by its pointer, its object size and its pointer count.  That is
+ * enough to match against the source, and inventing a name would mean
+ * adding a field to every type in the system to serve a diagnostic.
+ *
+ * WHAT IS NOT CLAIMED.  A block in the heap pool is not guaranteed to
+ * be a Heap: the pool is a pool.  So a block is attributed only when
+ * its header looks like one -- a non-nil type whose object plus header
+ * fits the block -- and everything else is counted as unattributed and
+ * reported as such.  A census that quietly dropped what it could not
+ * explain would be worse than no census, because the number it printed
+ * would look complete.
+ */
+enum { Nhtype = 512 };
+
+typedef struct Htype Htype;
+struct Htype
+{
+	Type*	t;
+	int	size;
+	int	np;
+	ulong	count;
+	ulong	bytes;
+};
+
+static Htype	htype[Nhtype];
+static int	nhtype;
+static ulong	hunattr, hunattrbytes, hfree, hfreebytes;
+
+static char*
+heapaudit(int pno, Bhdr *b)
+{
+	Heap *h;
+	Type *t;
+	int i;
+
+	if(pno != 1)			/* heapmem; see alloc.c */
+		return nil;
+	if(b->magic == MAGIC_F){
+		hfree++;
+		hfreebytes += b->size;
+		return nil;
+	}
+	if(b->magic != MAGIC_A)
+		return nil;
+	h = (Heap*)B2D(b);
+	t = h->t;
+	if(t == nil || (ulong)t->size + sizeof(Heap) > (ulong)b->size){
+		hunattr++;
+		hunattrbytes += b->size;
+		return nil;
+	}
+	for(i = 0; i < nhtype; i++)
+		if(htype[i].t == t){
+			htype[i].count++;
+			htype[i].bytes += b->size;
+			return nil;
+		}
+	if(nhtype >= Nhtype){
+		hunattr++;
+		hunattrbytes += b->size;
+		return nil;
+	}
+	htype[nhtype].t = t;
+	htype[nhtype].size = t->size;
+	htype[nhtype].np = t->np;
+	htype[nhtype].count = 1;
+	htype[nhtype].bytes = b->size;
+	nhtype++;
+	return nil;
+}
+
+static char*
+heapcensus(void)
+{
+	char *s, *p, *e;
+	int i, j;
+	Htype tmp;
+	ulong tc, tb;
+
+	nhtype = 0;
+	hunattr = hunattrbytes = hfree = hfreebytes = 0;
+	memset(htype, 0, sizeof htype);
+	if((s = poolaudit(heapaudit)) != nil)
+		return nil;
+	/*
+	 * Biggest first, by bytes: the answer to "what is holding memory"
+	 * is wanted on the first line and not found by reading.  An
+	 * insertion sort because this is at most Nhtype entries and runs
+	 * when a person asks.
+	 */
+	for(i = 1; i < nhtype; i++){
+		tmp = htype[i];
+		for(j = i - 1; j >= 0 && htype[j].bytes < tmp.bytes; j--)
+			htype[j+1] = htype[j];
+		htype[j+1] = tmp;
+	}
+	s = malloc(Nhtype * 80 + 256);
+	if(s == nil)
+		return nil;
+	p = s;
+	e = s + Nhtype * 80 + 256;
+	p = seprint(p, e, "%8s %12s %8s %4s  %s\n",
+		"count", "bytes", "objsize", "np", "type");
+	tc = tb = 0;
+	for(i = 0; i < nhtype; i++){
+		p = seprint(p, e, "%8lud %12lud %8d %4d  %#p\n",
+			htype[i].count, htype[i].bytes,
+			htype[i].size, htype[i].np, htype[i].t);
+		tc += htype[i].count;
+		tb += htype[i].bytes;
+	}
+	p = seprint(p, e, "live %lud objects %lud bytes in %d type(s)\n",
+		tc, tb, nhtype);
+	p = seprint(p, e, "unattributed %lud blocks %lud bytes\n",
+		hunattr, hunattrbytes);
+	seprint(p, e, "free %lud blocks %lud bytes\n", hfree, hfreebytes);
+	return s;
+}
+
 static char*
 memaudit(int pno, Bhdr *b)
 {
@@ -351,6 +482,18 @@ memread(Chan *c, void *va, long count, vlong offset)
 		error(Egreg);
 	case Qctl:
 		return 0;
+	case Qheap:
+		{
+			static char *hc;
+
+			if(offset == 0){
+				free(hc);
+				hc = heapcensus();
+			}
+			if(hc == nil)
+				error("cannot take a heap census");
+			return readstr(offset, va, count, hc);
+		}
 	case Qsum:
 		summary = 1;
 		/* fall through */

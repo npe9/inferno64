@@ -26,6 +26,7 @@ dev
 	pipe
 	prog
 	prof
+	mem
 	srv
 	dup
 	ssl
