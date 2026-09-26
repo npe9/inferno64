@@ -599,3 +599,351 @@ Fs.range(f: self ref Fs, ino: big, ktype: int): (array of Ent, string)
 	}
 	return (nil, "range: more leaves than expected; giving up");
 }
+
+#
+# The write side.
+#
+# Everything here obeys one rule from doc/efs-format.ms: nothing
+# committed is ever overwritten in place.  A change writes new blocks
+# from the leaf up the spine and ends in a new root, and the only write
+# that makes any of it visible is the superblock at the end.  Until that
+# write lands, the old tree IS the filesystem; after it, the new one is;
+# there is no third state.
+#
+
+#
+# Take the free map into memory, and fold in what the last commit freed.
+#
+# The pendingfree list is why this is not simply "read the bitmap":
+# blocks freed by a commit are not allocatable until the commit AFTER
+# it, because a crash part way through a commit must be able to fall
+# back to a tree whose blocks nobody has scribbled on.  Those blocks
+# become free here, at the start of the next transaction, which is the
+# first moment it is safe.
+#
+Fs.writable(f: self ref Fs): string
+{
+	if(f.bitmap != nil)
+		return nil;
+	(b, e) := f.d.rdblk(f.s.freeroot);
+	if(e != nil)
+		return e;
+	f.bitmap = b;
+	for(i := 0; i < len f.s.pendingfree; i++){
+		n := f.s.pendingfree[i];
+		if(n >= big 0 && n < big (Blocksize * 8))
+			bitset(f.bitmap, int n, 0);
+	}
+	f.s.pendingfree = array[0] of big;
+	f.freed = nil;
+	f.dirty = 0;
+	return nil;
+}
+
+#
+# One free block.
+#
+# Block 0 is a superblock and the last block is the other one, so
+# neither is ever a candidate; the bitmap has them set and this trusts
+# it rather than special-casing them, because a bitmap that disagrees is
+# a bug worth hitting here and not somewhere quieter.
+#
+Fs.alloc(f: self ref Fs): (big, string)
+{
+	if((e := f.writable()) != nil)
+		return (big -1, e);
+	n := int f.s.nblocks;
+	if(n > Blocksize * 8)
+		n = Blocksize * 8;
+	for(i := 0; i < n; i++)
+		if(!bitget(f.bitmap, i)){
+			bitset(f.bitmap, i, 1);
+			f.dirty = 1;
+			return (big i, nil);
+		}
+	return (big -1, "filesystem is full");
+}
+
+#
+# Give a block back -- to the NEXT commit, not to this one.
+#
+# It is not cleared in the bitmap here.  It is remembered, written into
+# the superblock's pendingfree by commit, and only cleared when the
+# transaction after that starts.  Clearing it now would let this very
+# transaction hand out a block that the tree it is meant to fall back to
+# still points at.
+#
+Fs.free(f: self ref Fs, n: big)
+{
+	f.freed = n :: f.freed;
+	f.dirty = 1;
+}
+
+#
+# Insert or replace one key.
+#
+# Copy on write all the way up: the leaf is rewritten into a new block,
+# then each parent in turn to point at the new child, and the root that
+# comes out is remembered for commit to publish.
+#
+Fs.insert(f: self ref Fs, k: Key, v: array of byte): string
+{
+	if((e := f.writable()) != nil)
+		return e;
+	return f.replace(k, v, 1);
+}
+
+Fs.delete(f: self ref Fs, k: Key): string
+{
+	if((e := f.writable()) != nil)
+		return e;
+	return f.replace(k, nil, 0);
+}
+
+#
+# The path from the root to the leaf that holds k: block numbers, and
+# the index taken in each interior node.
+#
+Fs.pathto(f: self ref Fs, k: Key): (array of big, array of int, string)
+{
+	blks := array[Maxdepth] of big;
+	idx := array[Maxdepth] of int;
+	d := 0;
+	bn := f.s.treeroot;
+	for(;;){
+		if(d >= Maxdepth)
+			return (nil, nil, "tree deeper than " + string Maxdepth);
+		(n, e) := f.getnode(bn);
+		if(e != nil)
+			return (nil, nil, e);
+		blks[d] = bn;
+		if(n.ntype == Nleaf){
+			idx[d] = 0;
+			return (blks[0:d+1], idx[0:d+1], nil);
+		}
+		if(len n.ents == 0)
+			return (nil, nil, sys->sprint("interior block %bd is empty", bn));
+		j := 0;
+		for(m := 0; m < len n.ents; m++)
+			if(n.ents[m].key.cmp(k) <= 0)
+				j = m;
+			else
+				break;
+		idx[d] = j;
+		if(len n.ents[j].val != 8)
+			return (nil, nil, sys->sprint("interior %bd entry %d is not a pointer", bn, j));
+		bn = get8(n.ents[j].val, 0);
+		d++;
+	}
+}
+
+Fs.replace(f: self ref Fs, k: Key, v: array of byte, ins: int): string
+{
+	(blks, idx, e) := f.pathto(k);
+	if(e != nil)
+		return e;
+	depth := len blks - 1;
+	(leaf, le) := f.getnode(blks[depth]);
+	if(le != nil)
+		return le;
+
+	#
+	# Put the entry in, or take it out, in key order.
+	#
+	at := len leaf.ents;
+	found := 0;
+	for(i := 0; i < len leaf.ents; i++){
+		c := leaf.ents[i].key.cmp(k);
+		if(c == 0){
+			at = i;
+			found = 1;
+			break;
+		}
+		if(c > 0){
+			at = i;
+			break;
+		}
+	}
+	ents: array of Ent;
+	if(ins){
+		if(found){
+			ents = array[len leaf.ents] of Ent;
+			ents[0:] = leaf.ents;
+			ents[at] = Ent(k, v);
+		}else{
+			ents = array[len leaf.ents + 1] of Ent;
+			ents[0:] = leaf.ents[0:at];
+			ents[at] = Ent(k, v);
+			ents[at+1:] = leaf.ents[at:];
+		}
+	}else{
+		if(!found)
+			return nil;		# absent: deleting is a no-op
+		ents = array[len leaf.ents - 1] of Ent;
+		ents[0:] = leaf.ents[0:at];
+		ents[at:] = leaf.ents[at+1:];
+	}
+
+	#
+	# Write the new leaf, or two of them if it no longer fits, and
+	# hand what came out up to the parent.
+	#
+	(kids, kkeys, we) := f.writeents(ents, Nleaf, leaf.level);
+	if(we != nil)
+		return we;
+	f.free(blks[depth]);
+	return f.fixup(blks, idx, depth, kids, kkeys);
+}
+
+#
+# Write entries into as few blocks as they fit in, splitting when they
+# do not.  Returns the blocks and each one's first key.
+#
+Fs.writeents(f: self ref Fs, ents: array of Ent, ntype: int, level: int):
+	(array of big, array of Key, string)
+{
+	nb := 0;
+	blks := array[8] of big;
+	keys := array[8] of Key;
+	i := 0;
+	for(;;){
+		if(nb >= len blks)
+			return (nil, nil, "a node split into more pieces than expected");
+		n := ref Node;
+		n.ntype = ntype;
+		n.level = level;
+		last := i;
+		j := i;
+		while(j < len ents){
+			n.ents = ents[i:j+1];
+			(nil, pe) := n.pack();
+			if(pe != nil)
+				break;
+			last = j + 1;
+			j++;
+		}
+		if(last == i && i < len ents)
+			return (nil, nil, sys->sprint("entry %d does not fit in a block", i));
+		n.ents = ents[i:last];
+		(b, pe2) := n.pack();
+		if(pe2 != nil)
+			return (nil, nil, pe2);
+		(blk, ae) := f.alloc();
+		if(ae != nil)
+			return (nil, nil, ae);
+		if((we := f.d.wrblk(blk, b)) != nil)
+			return (nil, nil, we);
+		blks[nb] = blk;
+		if(len n.ents > 0)
+			keys[nb] = n.ents[0].key;
+		else
+			keys[nb] = Key(big 0, 0, big 0);
+		nb++;
+		i = last;
+		if(i >= len ents)
+			break;
+	}
+	return (blks[0:nb], keys[0:nb], nil);
+}
+
+#
+# Rewrite the spine above a level that has just been replaced.
+#
+Fs.fixup(f: self ref Fs, blks: array of big, idx: array of int, depth: int,
+	kids: array of big, kkeys: array of Key): string
+{
+	while(depth > 0){
+		depth--;
+		(par, pe) := f.getnode(blks[depth]);
+		if(pe != nil)
+			return pe;
+		at := idx[depth];
+		ents := array[len par.ents - 1 + len kids] of Ent;
+		ents[0:] = par.ents[0:at];
+		for(i := 0; i < len kids; i++){
+			v := array[8] of byte;
+			put8(v, 0, kids[i]);
+			ents[at+i] = Ent(kkeys[i], v);
+		}
+		ents[at+len kids:] = par.ents[at+1:];
+		(nk, nkk, we) := f.writeents(ents, Ninterior, par.level);
+		if(we != nil)
+			return we;
+		f.free(blks[depth]);
+		kids = nk;
+		kkeys = nkk;
+	}
+	#
+	# The top.  If what came out is one block it is the new root; if it
+	# split, a level is added above it.
+	#
+	while(len kids > 1){
+		ents := array[len kids] of Ent;
+		for(i := 0; i < len kids; i++){
+			v := array[8] of byte;
+			put8(v, 0, kids[i]);
+			ents[i] = Ent(kkeys[i], v);
+		}
+		(nk, nkk, we) := f.writeents(ents, Ninterior, 0);
+		if(we != nil)
+			return we;
+		kids = nk;
+		kkeys = nkk;
+	}
+	f.s.treeroot = kids[0];
+	f.dirty = 1;
+	return nil;
+}
+
+#
+# Publish everything written since the last commit.
+#
+#	1. the new free map
+#	2. wait for those writes to complete -- which on this board's
+#	   synchronous SD driver is every write call having returned
+#	3. one superblock, the older slot, with the new roots and
+#	   generation+1
+#
+# Step 3 is the only write that changes what a reader sees.
+#
+Fs.commit(f: self ref Fs): string
+{
+	if(!f.dirty)
+		return nil;
+	(bmblk, ae) := f.alloc();
+	if(ae != nil)
+		return ae;
+	old := f.s.freeroot;
+	#
+	# The bitmap block records itself as in use before it is written,
+	# or the map that comes back from a crash describes a filesystem in
+	# which the map is free.
+	#
+	bitset(f.bitmap, int bmblk, 1);
+	if((e := f.d.wrblk(bmblk, f.bitmap)) != nil)
+		return e;
+	f.s.freeroot = bmblk;
+	f.free(old);
+
+	np := 0;
+	for(l := f.freed; l != nil; l = tl l)
+		np++;
+	pf := array[np] of big;
+	i := 0;
+	for(l = f.freed; l != nil; l = tl l)
+		pf[i++] = hd l;
+	f.s.pendingfree = pf;
+	f.s.gen++;
+
+	#
+	# The older slot, so the live one survives a failure here.
+	#
+	slot := 1 - f.which;
+	if((e = f.d.wrblk(superblk(f.s.nblocks, slot), f.s.pack())) != nil)
+		return e;
+	f.which = slot;
+	f.freed = nil;
+	f.dirty = 0;
+	f.bitmap = nil;		# re-read next time, folding pendingfree in
+	return nil;
+}

@@ -134,7 +134,25 @@ Efs: module
 		s:	ref Super;
 		which:	int;		# which superblock was taken
 
+		# write side
+		bitmap:	array of byte;	# the free map, in memory
+		freed:	list of big;	# freed by the transaction in hand
+		dirty:	int;
+
 		mount:	fn(name: string, startsect: big): (ref Fs, string);
+		writable: fn(f: self ref Fs): string;
+		alloc:	fn(f: self ref Fs): (big, string);
+		free:	fn(f: self ref Fs, n: big);
+		insert:	fn(f: self ref Fs, k: Key, v: array of byte): string;
+		delete:	fn(f: self ref Fs, k: Key): string;
+		commit:	fn(f: self ref Fs): string;
+		pathto:	fn(f: self ref Fs, k: Key): (array of big, array of int, string);
+		replace: fn(f: self ref Fs, k: Key, v: array of byte, ins: int): string;
+		writeents: fn(f: self ref Fs, ents: array of Ent, ntype: int,
+				level: int): (array of big, array of Key, string);
+		fixup:	fn(f: self ref Fs, blks: array of big, idx: array of int,
+				depth: int, kids: array of big,
+				kkeys: array of Key): string;
 		getnode: fn(f: self ref Fs, n: big): (ref Node, string);
 		leaffor: fn(f: self ref Fs, k: Key): (ref Node, string);
 		get:	fn(f: self ref Fs, k: Key): (array of byte, string);

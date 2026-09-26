@@ -60,8 +60,8 @@ or {and {cmp /n/client/hello.txt /tmp/efsfiles/hello.txt} {echo CMP-HELLO-OK}} {
 or {and {cmp /n/client/two.txt /tmp/efsfiles/two.txt} {echo CMP-TWO-OK}} {echo CMP-TWO-DIFFERS}
 echo 'MARK enoent'
 or {cat /n/client/nosuch} {echo ENOENT-OK}
-echo 'MARK ronly'
-or {echo x > /n/client/hello.txt} {echo RONLY-OK}
+echo 'MARK writable'
+or {and {echo x > /n/client/hello.txt} {echo WRITE-OK}} {echo WRITE-REFUSED}
 EOF
 timeout 120 $EMU -r"$ROOT" /dis/sh.dis /tmp/efs-srv.sh 2>&1 |
 	grep -v '^new:\|^newa:' > $T/efs-srv.txt
@@ -78,7 +78,15 @@ check "9000 bytes byte-for-byte"	'CMP-BIG-OK'			$T/efs-srv.txt
 check "hello byte-for-byte"		'CMP-HELLO-OK'			$T/efs-srv.txt
 check "two byte-for-byte"		'CMP-TWO-OK'			$T/efs-srv.txt
 check "a missing name is ENOENT"	'ENOENT-OK'			$T/efs-srv.txt
-check "writes are refused by name"	'read-only until milestone 4'	$T/efs-srv.txt
+#
+# This asserted that writes were REFUSED, which was right for milestone
+# 3 and became wrong the moment milestone 4 landed.  A test that keeps
+# asserting an old limitation fails for the best possible reason, and
+# the fix is to assert the new behaviour rather than to delete the
+# check: writes go to tests/efs-write.sh, and what matters here is that
+# the read path still works with a writable server underneath it.
+#
+check "and the server accepts a write"	'WRITE-OK'			$T/efs-srv.txt
 
 if [ $fail -eq 0 ]; then
 	say "EFS-SERVER-OK"

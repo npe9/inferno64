@@ -5,9 +5,16 @@ implement Efsfs;
 #
 #	efs [-a|-b] [-s startsector] -f device mountpoint
 #
-# READ ONLY, for now.  Milestone 3 of doc/efs-plan.ms is attach, walk,
-# open, read, stat and directory listing; writes are milestone 4 and
-# this refuses them rather than pretending.
+# Milestones 3 and 4 of doc/efs-plan.ms: attach, walk, open, read, stat
+# and directory listing, then create, write, truncate, remove and
+# rename.
+#
+# Every modifying operation ends in a commit, which is a handful of
+# block writes and a superblock.  That is slow and it is the point: the
+# commit rule is what the whole format is for, and a server that batched
+# operations would be testing something other than the rule.  Batching
+# is an optimisation to make once there is a crash harness to keep it
+# honest.
 #
 # It is a Limbo program serving Styx, not a kernel device, and the
 # reason is testing rather than taste: the same .dis runs under emu on
@@ -26,6 +33,8 @@ include "styxservers.m";
 	styxservers: Styxservers;
 	Styxserver, Fid, Navop, Navigator: import styxservers;
 include "arg.m";
+include "daytime.m";
+	daytime: Daytime;
 include "efs.m";
 	efs: Efs;
 	Fs, Dev, Super, Node, Ent, Key, Inode: import efs;
@@ -36,6 +45,7 @@ Efsfs: module {
 
 fs: ref Fs;
 stderr: ref Sys->FD;
+wdebug := 0;
 
 #
 # Inode number to name.
@@ -77,7 +87,6 @@ nameof(ino: big): string
 }
 
 Rootino: con big 1;
-Eronly:  con "efs is read-only until milestone 4";
 
 fail(s: string)
 {
@@ -102,6 +111,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(efs == nil)
 		fail(sys->sprint("cannot load %s: %r", Efs->PATH));
 	efs->init();
+	daytime = load Daytime Daytime->PATH;
 
 	arg := load Arg Arg->PATH;
 	if(arg == nil)
@@ -118,6 +128,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		's' =>	startsect = big arg->earg();
 		'f' =>	device = arg->earg();
 		'D' =>	styxservers->traceset(1);
+		'W' =>	wdebug = 1;
 		* =>	arg->usage();
 		}
 	argv = arg->argv();
@@ -148,7 +159,12 @@ init(nil: ref Draw->Context, argv: list of string)
 	spawn server(tchan, srv, pidc, navops);
 	<-pidc;
 
-	if(sys->mount(fds[1], nil, mountpt, flags, nil) < 0)
+	#
+	# MCREATE, because this server implements create and a mount
+	# without it refuses creation at the mount point before the
+	# server ever sees the request.
+	#
+	if(sys->mount(fds[1], nil, mountpt, flags|Sys->MCREATE, nil) < 0)
 		fail(sys->sprint("mount %s: %r", mountpt));
 }
 
@@ -237,6 +253,7 @@ walkto(parent: big, name: string): (ref Sys->Dir, string)
 			return (nil, de);
 		if(nm == name){
 			remember(ino, nm);
+			rememberparent(ino, parent);
 			return dirof(ino);
 		}
 	}
@@ -263,6 +280,7 @@ readdir(n: ref Navop.Readdir)
 		if(de != nil)
 			break;
 		remember(ino, nm);
+		rememberparent(ino, n.path);
 		(d, derr) := dirof(ino);
 		if(derr != nil)
 			break;
@@ -335,6 +353,25 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 		if(gm == nil)
 			break;
 		pick m := gm {
+		Open =>
+			#
+			# Truncation arrives as a MODE BIT on the open, not
+			# as a wstat with length 0 -- which is why "> file"
+			# left a file its old size while wstat's truncate
+			# worked perfectly.
+			#
+			f := srv.getfid(m.fid);
+			if(f != nil && (m.mode & Sys->OTRUNC) &&
+			    (f.qtype & Sys->QTDIR) == 0){
+				e := truncate(f.path);
+				if(e == nil)
+					e = fs.commit();
+				if(e != nil){
+					srv.reply(ref Rmsg.Error(m.tag, e));
+					continue;
+				}
+			}
+			srv.default(m);
 		Read =>
 			f := srv.getfid(m.fid);
 			if(f == nil || f.isopen == 0){
@@ -357,16 +394,427 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 		# Milestone 4 is where these grow bodies.
 		#
 		Write =>
-			srv.reply(ref Rmsg.Error(m.tag, Eronly));
+			f := srv.getfid(m.fid);
+			if(f == nil || f.isopen == 0 || (f.qtype & Sys->QTDIR)){
+				srv.default(m);
+				continue;
+			}
+			e := writefile(f.path, m.offset, m.data);
+			if(e == nil)
+				e = fs.commit();
+			if(e != nil)
+				srv.reply(ref Rmsg.Error(m.tag, e));
+			else
+				srv.reply(ref Rmsg.Write(m.tag, len m.data));
 		Create =>
-			srv.reply(ref Rmsg.Error(m.tag, Eronly));
+			f := srv.getfid(m.fid);
+			if(f == nil || (f.qtype & Sys->QTDIR) == 0){
+				srv.default(m);
+				continue;
+			}
+			(d, e) := create(f.path, m.name, m.perm, m.mode);
+			if(e == nil)
+				e = fs.commit();
+			if(e != nil){
+				srv.reply(ref Rmsg.Error(m.tag, e));
+				continue;
+			}
+			f.open(m.mode, d.qid);
+			f.path = d.qid.path;
+			f.qtype = d.qid.qtype;
+			srv.reply(ref Rmsg.Create(m.tag, d.qid, 0));
 		Remove =>
-			srv.reply(ref Rmsg.Error(m.tag, Eronly));
+			f := srv.getfid(m.fid);
+			if(f == nil){
+				srv.default(m);
+				continue;
+			}
+			e := remove(f.path);
+			if(e == nil)
+				e = fs.commit();
+			srv.delfid(f);
+			if(e != nil)
+				srv.reply(ref Rmsg.Error(m.tag, e));
+			else
+				srv.reply(ref Rmsg.Remove(m.tag));
 		Wstat =>
-			srv.reply(ref Rmsg.Error(m.tag, Eronly));
+			f := srv.getfid(m.fid);
+			if(f == nil){
+				srv.default(m);
+				continue;
+			}
+			e := wstat(f.path, m.stat);
+			if(e == nil)
+				e = fs.commit();
+			if(e != nil)
+				srv.reply(ref Rmsg.Error(m.tag, e));
+			else
+				srv.reply(ref Rmsg.Wstat(m.tag));
 		* =>
 			srv.default(gm);
 		}
 	}
 	navops <-= nil;
+}
+
+#
+# Cut a file back to a length.
+#
+# Extents past the new end go and their blocks are freed; the one that
+# straddles it is trimmed by its length field and its block is left
+# alone, because the length is what says where a file ends.  The inode's
+# length is set by the caller, which is the only place that knows
+# whether this is a truncate or part of something larger.
+#
+trimto(ino: big, i: ref Inode, length: big): string
+{
+	(ents, re) := fs.range(ino, Efs->Kextent);
+	if(re != nil)
+		return re;
+	for(j := 0; j < len ents; j++){
+		start := ents[j].key.off * big Efs->Blocksize;
+		if(start >= length){
+			if(len ents[j].val >= 12)
+				fs.free(efs->get8(ents[j].val, 0));
+			if((e := fs.delete(ents[j].key)) != nil)
+				return e;
+		}else if(start + big Efs->Blocksize > length){
+			nv := array[12] of byte;
+			nv[0:] = ents[j].val[0:8];
+			efs->put4(nv, 8, int (length - start));
+			if((e := fs.insert(ents[j].key, nv)) != nil)
+				return e;
+		}
+	}
+	i.length = length;
+	return nil;
+}
+
+truncate(ino: big): string
+{
+	(v, e) := fs.get(Key(ino, Efs->Kinode, big 0));
+	if(e != nil)
+		return e;
+	if(v == nil)
+		return sys->sprint("no inode %bd", ino);
+	(i, ie) := Inode.unpack(v);
+	if(i == nil)
+		return ie;
+	if(i.length == big 0)
+		return nil;
+	if((e = trimto(ino, i, big 0)) != nil)
+		return e;
+	return fs.insert(Key(ino, Efs->Kinode, big 0), i.pack());
+}
+
+#
+# Is a wstat field the "do not change" sentinel?
+#
+# Styx sends all-ones, and the trap is that all-ones arrives as
+# 0xffffffff while Limbo's ~0 is -1.  Limbo's int is 32 bits to the
+# compiler and 64 at runtime in this implementation, so those two are
+# the same bits and different numbers, and "stat.mode != ~0" -- which is
+# what every other server in this tree writes, and what this wrote --
+# quietly passes.  The mode then goes through "& 0777" and a rename sets
+# the file to 0777.
+#
+# Tested both ways rather than cleverly, because the clever version is
+# what is already wrong.
+#
+unchanged(v: int): int
+{
+	if(v == ~0)
+		return 1;
+	return big v == big 16rffffffff;
+}
+
+#
+# The parent of an inode, and its name in that parent.
+#
+# The tree has no parent pointer -- a child does not know its directory
+# -- so this is a search of the directories the server has seen.  It is
+# kept for remove and for rename, which need to take a name out of a
+# directory, and it is honest about its cost: a scan of one directory,
+# the one the caller already walked through.
+#
+parents := array[64] of list of (big, big);	# child -> parent
+
+rememberparent(child: big, parent: big)
+{
+	h := int (child % big len parents);
+	for(l := parents[h]; l != nil; l = tl l){
+		(c, nil) := hd l;
+		if(c == child)
+			return;
+	}
+	parents[h] = (child, parent) :: parents[h];
+}
+
+parentof(child: big): big
+{
+	h := int (child % big len parents);
+	for(l := parents[h]; l != nil; l = tl l){
+		(c, p) := hd l;
+		if(c == child)
+			return p;
+	}
+	return big -1;
+}
+
+#
+# Make a file in a directory.
+#
+create(dir: big, name: string, perm: int, nil: int): (ref Sys->Dir, string)
+{
+	if(name == "" || name == "." || name == "..")
+		return (nil, "bad name");
+	#
+	# Refuse a duplicate.  The tree would take it -- a second dentry
+	# with the same name hashes to the same key and a bucket holds
+	# collisions -- so the check has to be here, and it is the check
+	# that stops a create from quietly shadowing a file.
+	#
+	(ents, re) := fs.range(dir, Efs->Kdentry);
+	if(re != nil)
+		return (nil, re);
+	for(i := 0; i < len ents; i++){
+		(nil, nm, de) := dentry(ents[i].val);
+		if(de == nil && nm == name)
+			return (nil, "file already exists");
+	}
+
+	ino := fs.s.nextino;
+	fs.s.nextino++;
+
+	now := 0;
+	if(daytime != nil)
+		now = daytime->now();
+	ni := ref Inode;
+	ni.mode = perm & 8r777;
+	if(perm & Sys->DMDIR)
+		ni.mode |= 8r40000;
+	ni.nlink = 1;
+	ni.length = big 0;
+	ni.atime = now;
+	ni.mtime = now;
+	ni.uid = "inferno";
+	ni.gid = "inferno";
+	e := fs.insert(Key(ino, Efs->Kinode, big 0), ni.pack());
+	if(e != nil)
+		return (nil, e);
+	if((e = adddentry(dir, name, ino)) != nil)
+		return (nil, e);
+	remember(ino, name);
+	rememberparent(ino, dir);
+	return dirof(ino);
+}
+
+adddentry(dir: big, name: string, ino: big): string
+{
+	nb := array of byte name;
+	v := array[10 + len nb] of byte;
+	efs->put8(v, 0, ino);
+	efs->put2(v, 8, len nb);
+	v[10:] = nb;
+	return fs.insert(Key(dir, Efs->Kdentry, namehash(name)), v);
+}
+
+#
+# The name hash, the same one mkefs uses.  Written in both places is one
+# place too many, and it moves to the library the moment anything else
+# needs it.
+#
+namehash(s: string): big
+{
+	M64: con big 16r7fffffffffffffff;
+	h := big 16rcbf29ce484222325;
+	b := array of byte s;
+	for(i := 0; i < len b; i++){
+		h = h ^ big int b[i];
+		h = h * big 16r100000001b3;
+	}
+	return h & M64;
+}
+
+#
+# Write into a file, block by block.
+#
+# A partial block is read, patched and written to a NEW block: no
+# committed data block is ever modified, so a crash in the middle leaves
+# the old block still intact and still the one the old tree points at.
+#
+writefile(ino: big, offset: big, data: array of byte): string
+{
+	(v, e) := fs.get(Key(ino, Efs->Kinode, big 0));
+	if(e != nil)
+		return e;
+	if(v == nil)
+		return sys->sprint("no inode %bd", ino);
+	(i, ie) := Inode.unpack(v);
+	if(i == nil)
+		return ie;
+
+	done := 0;
+	while(done < len data){
+		o := offset + big done;
+		blk := o / big Efs->Blocksize;
+		within := int (o % big Efs->Blocksize);
+		n := Efs->Blocksize - within;
+		if(n > len data - done)
+			n = len data - done;
+
+		buf := array[Efs->Blocksize] of {* => byte 0};
+		used := 0;
+		(ev, ee) := fs.get(Key(ino, Efs->Kextent, blk));
+		if(ee != nil)
+			return ee;
+		if(ev != nil && len ev >= 12){
+			ob := efs->get8(ev, 0);
+			used = efs->get4(ev, 8);
+			(b, be) := fs.d.rdblk(ob);
+			if(be != nil)
+				return be;
+			buf[0:] = b;
+			fs.free(ob);
+		}
+		buf[within:] = data[done:done+n];
+		if(within + n > used)
+			used = within + n;
+		(nb, ae) := fs.alloc();
+		if(ae != nil)
+			return ae;
+		if((we := fs.d.wrblk(nb, buf)) != nil)
+			return we;
+		nv := array[12] of byte;
+		efs->put8(nv, 0, nb);
+		efs->put4(nv, 8, used);
+		if((e = fs.insert(Key(ino, Efs->Kextent, blk), nv)) != nil)
+			return e;
+		done += n;
+	}
+	if(offset + big len data > i.length){
+		i.length = offset + big len data;
+		if((e = fs.insert(Key(ino, Efs->Kinode, big 0), i.pack())) != nil)
+			return e;
+	}
+	return nil;
+}
+
+#
+# Remove a file: its extents, its inode, and its name in its parent.
+#
+# The order matters only for what a crash leaves behind, and here it
+# does not matter at all: none of it is visible until the commit, and
+# the commit publishes all of it or none.
+#
+remove(ino: big): string
+{
+	if(ino == Rootino)
+		return "cannot remove the root";
+	(ents, e) := fs.range(ino, Efs->Kextent);
+	if(e != nil)
+		return e;
+	for(i := 0; i < len ents; i++){
+		if(len ents[i].val >= 12)
+			fs.free(efs->get8(ents[i].val, 0));
+		if((e = fs.delete(ents[i].key)) != nil)
+			return e;
+	}
+	#
+	# A directory must be empty.  Checked after the extents because a
+	# directory has none, so the scan above costs nothing for one.
+	#
+	(kids, ke) := fs.range(ino, Efs->Kdentry);
+	if(ke != nil)
+		return ke;
+	if(len kids > 0)
+		return "directory not empty";
+	if((e = fs.delete(Key(ino, Efs->Kinode, big 0))) != nil)
+		return e;
+
+	par := parentof(ino);
+	if(par < big 0)
+		return nil;		# never walked to; nothing names it here
+	return deldentry(par, ino);
+}
+
+deldentry(dir: big, ino: big): string
+{
+	(ents, e) := fs.range(dir, Efs->Kdentry);
+	if(e != nil)
+		return e;
+	for(i := 0; i < len ents; i++){
+		(ci, nil, de) := dentry(ents[i].val);
+		if(de == nil && ci == ino)
+			return fs.delete(ents[i].key);
+	}
+	return nil;
+}
+
+#
+# wstat, which is where rename lives.
+#
+# A rename is a KEY CHANGE and not the rewrite of an entry: the old
+# name's directory entry goes, a new one arrives, and the file's inode
+# -- and so its qid -- is untouched.  That is the property dossrv did
+# not have, and it is what kupdate does to this board's kernel on every
+# update.
+#
+wstat(ino: big, stat: Sys->Dir): string
+{
+	(v, e) := fs.get(Key(ino, Efs->Kinode, big 0));
+	if(e != nil)
+		return e;
+	if(v == nil)
+		return sys->sprint("no inode %bd", ino);
+	(i, ie) := Inode.unpack(v);
+	if(i == nil)
+		return ie;
+
+	changed := 0;
+	if(wdebug)
+		sys->fprint(stderr, "efs: wstat ino %bd name %q mode %#ux mtime %d length %bd\n",
+			ino, stat.name, stat.mode, stat.mtime, stat.length);
+	if(stat.name != nil && stat.name != ""){
+		par := parentof(ino);
+		if(par < big 0)
+			return "cannot rename: this server has not seen the directory";
+		(ents, re) := fs.range(par, Efs->Kdentry);
+		if(re != nil)
+			return re;
+		for(j := 0; j < len ents; j++){
+			(nil, nm, de) := dentry(ents[j].val);
+			if(de == nil && nm == stat.name)
+				return "file already exists";
+		}
+		if((e = deldentry(par, ino)) != nil)
+			return e;
+		if((e = adddentry(par, stat.name, ino)) != nil)
+			return e;
+		remember(ino, stat.name);
+		names[int (ino % big len names)] = (ino, stat.name) ::
+			names[int (ino % big len names)];
+		changed = 1;
+	}
+	#
+	# Truncate.  Extents past the new length go, and the last one is
+	# trimmed by its length field; the block itself is left as it is,
+	# because the length is what says where the file ends.
+	#
+	if(stat.length != big -1 && stat.length != i.length){
+		if((e = trimto(ino, i, stat.length)) != nil)
+			return e;
+		changed = 1;
+	}
+	if(!unchanged(stat.mode) && (stat.mode & 8r777) != (i.mode & 8r777)){
+		i.mode = (i.mode & ~8r777) | (stat.mode & 8r777);
+		changed = 1;
+	}
+	if(!unchanged(stat.mtime)){
+		i.mtime = stat.mtime;
+		changed = 1;
+	}
+	if(!changed)
+		return nil;
+	return fs.insert(Key(ino, Efs->Kinode, big 0), i.pack());
 }
