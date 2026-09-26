@@ -3813,6 +3813,24 @@ sdiocheck(void)
 		}
 	}
 
+	/*
+	 * WL_ON is SET here and not cycled, and that is deliberate.
+	 *
+	 * BT_ON in btbcm.c and LAN_RUN in usbdwc.c both needed a cycle --
+	 * asserting a line a previous kernel had already asserted does
+	 * nothing, and both devices held stale state across every reboot
+	 * short of a firmware restart.  The analogy to this line is
+	 * obvious and it is wrong: cycling WL_ON here made sdiofwgo() hang
+	 * inside sbreset() with the CPU idle, where without it the same
+	 * kernel prints "ARM started" and goes on.  Measured by reverting
+	 * it, not reasoned about.
+	 *
+	 * The warm-reboot case this would have addressed is already
+	 * handled a few lines down, by the CMD52 write of the I/O Abort
+	 * RES bit, which returns a still-selected card to idle.  That is
+	 * the supported way to reset an SDIO card and it costs one
+	 * command.
+	 */
 	if(mboxsetgpio(Wlon, 1) < 0)
 		print("sdio: WL_ON (firmware gpio %d) not set: "
 			"a sleeping radio and an absent one look alike\n", Wlon);

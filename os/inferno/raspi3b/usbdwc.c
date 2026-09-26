@@ -1113,27 +1113,19 @@ init(Hci *hp)
 	/*
 	 * Reset the hub, not just the controller.
 	 *
-	 * The LAN9514 on a Pi 3B is a USB hub with an ethernet function
-	 * behind it, and its reset line is LAN_RUN -- line 3 of the
-	 * VideoCore's GPIO expander, which the ARM cannot reach except
-	 * through the mailbox.  Nothing here ever drove it, so the hub
-	 * kept whatever state the last kernel left it in: a core reset
-	 * resets the controller, and the device on the other end of the
-	 * wire goes on believing it still has the address it was given.
-	 *
-	 * That is not theoretical and it cost an afternoon.  Loading
-	 * kernels over JTAG does not reset the board, so after enough of
-	 * them the hub stopped answering -- "ep2.0 error intr 00000082"
-	 * (CHHLTD|XACTERR) and then "port 1: set address: i/o error" --
-	 * and the board came up with no ethernet at all.  Two different
-	 * kernels failed identically, which is what said it was not the
-	 * software; a full PM-watchdog reboot, which re-runs the firmware
-	 * and reinitialises the expander, fixed it every time.  This does
-	 * for the hub what that reboot did, so a JTAG-loaded kernel starts
-	 * from the same place a cold one does.
-	 *
-	 * It is the same lesson as BT_ON in btbcm.c, on a different line
-	 * of the same expander: powering a thing on is not resetting it.
+	 * The LAN9514 is a USB hub with an ethernet function behind it,
+	 * and its reset line is LAN_RUN -- line 3 of the VideoCore's GPIO
+	 * expander, which the ARM can only reach through the mailbox.
+	 * Nothing here ever drove it, so the hub kept whatever state the
+	 * last kernel left it in: a core reset resets the controller, and
+	 * the device on the other end goes on believing it still has the
+	 * address it was given.  Loading kernels over JTAG does not reset
+	 * the board, so after enough of them the hub stopped answering --
+	 * "ep2.0 error intr 00000082" and "port 1: set address: i/o
+	 * error" -- and the board came up with no ethernet at all.  Two
+	 * different kernels failed identically, which is what said it was
+	 * not the software, and a full PM-watchdog reboot fixed it every
+	 * time.  This does for the hub what that reboot did.
 	 */
 	mboxsetgpio(Lanrunpin, 0);
 	tsleep(&up->sleep, return0, 0, 20);

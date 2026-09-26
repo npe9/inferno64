@@ -11423,3 +11423,63 @@ luck: a JTAG kernel load is
 a reset.  It is the fastest way to try a kernel and it leaves every
 peripheral exactly as the last one left it, which is a good bargain only
 as long as the drivers know it.
+.NH 1
+A convenience that cost the radio, and four wrong answers before the
+right one
+.PP
+Making the remote command poller see
+.CW /net.wifi
+in its namespace \(em a convenience, worth perhaps a line of shell \(em
+stopped the radio from starting at all.  The firmware and the nvram went
+in and then
+.CW sdiofwgo()
+never returned: no
+.CW "ARM started" ,
+no error, the process blocked and
+.CW tools/jtag/where
+reporting
+.CW idle+0x4
+on every core.  Nothing was spinning; something was waiting for what
+never came.
+.PP
+.B "Four suspects, each eliminated by a single trial, and every one of
+.B "those trials was worthless."
+LAN_RUN, because it was the change nearest in time.  A power cycle of
+WL_ON, on the strength of the analogy to BT_ON \(em added without
+evidence, and then blamed on evidence no better.  Binding the second IP
+stack early.  Each was disabled, the board booted once, the fault was
+still there, and the suspect was declared innocent.  But each of those
+builds still carried the other changes, so none of them isolated
+anything, and a fault that is intermittent would have cleared a suspect
+at random.
+.PP
+.B "The measurement that should have come first."
+Boot the same binary, unchanged, three times and count.  The failing
+build: 0 of 3.  The last build known to work: 3 of 3, two of them all the
+way to a DHCP lease.  That is what turned a wandering investigation into
+a bisect, and it is the same lesson this document already records about
+the association, learned again one screen further down the same file.
+With the C files then diffed against that known-good commit and found to
+differ by nothing but a comment, the cause was what was left:
+.CW raspi3binit.b .
+.PP
+So the poller convenience is gone.  What is kept is the hub reset, which
+was exonerated by the same bisect and fixes a real fault, and three
+markers \(em
+.CW WIFI-GO ,
+.CW WIFI-ENABLE ,
+.CW WIFI-CLM-START
+\(em because those three writes print nothing of their own on success,
+and a boot that stopped between them could not be told from one that
+stopped in the upload before them.  Several rebuild-and-boot cycles were
+spent inferring from a Limbo stack depth what a print would have said
+outright.  With them, and with the hub reset: 3 of 3.
+.PP
+.B "And one thing not to try again."
+Cycling WL_ON the way BT_ON and LAN_RUN are cycled.  The analogy is
+exact and the result is not: those two devices hold stale state across a
+warm reboot and need a cycle, and this one has a supported reset already
+in the driver \(em the CMD52 write of the I/O Abort RES bit, a few lines
+below, which returns a still-selected card to idle.  The comment there
+now says so, so that the next reader who notices the asymmetry does not
+spend the afternoon that was spent here.
