@@ -11810,3 +11810,39 @@ is the thing being changed, so it is the thing suspected, and that bias
 costs an afternoon each time.  The habit that catches it is cheap: before
 believing a number about the board, take the same number from something
 that is not the board.
+.NH 2
+Settled: devmnt's read-ahead does not help this board
+.PP
+.CW remotemounted()
+carried an open question: devmnt has 9front's read-ahead,
+.CW Mntrah ,
+eight rpcs in flight, reached only through
+.CW MCACHE ,
+and turning it on had looked like a 1.42x win that did not survive
+repetition.  The comment said what it would take to settle: "ten or more
+readings per arm".
+.PP
+Nothing exposed the flag, which is why it stayed open \(em
+.CW mount (1)
+had no way to ask for
+.CW Sys->MCACHE .
+It has a
+.CW -M
+now, so both arms run against one running kernel rather than two builds.
+Ten interleaved pairs, unmounting between so each starts cold, same 400KB
+read, deltas in seconds:
+.DS
+.CW
+plain   1.07 1.08 1.10 1.13 1.15 1.16 1.18 1.34 1.38 1.55
+cached  1.09 1.14 1.14 1.16 1.16 1.19 1.25 1.26 1.47 2.28
+.R
+.DE
+Medians 1.154 and 1.178.  The cache is two percent
+.I slower ,
+with a worse tail, so it stays off \(em and the first pair measured,
+taken alone, showed 1.24x in its favour.
+.PP
+This is consistent with everything else measured here.  Read-ahead
+deepens the pipeline; the pipeline is not what is full.  The send queue
+holds one 8KB request against a window twenty times that, and the cost is
+the far end's turnaround, which more requests in flight cannot shorten.

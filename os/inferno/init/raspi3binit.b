@@ -3125,7 +3125,28 @@ remotemounted(addrs: list of string): int
 	# MCACHE on -- no better than no-MCACHE fresh -- and there is no
 	# aged measurement from before the change to compare against.
 	#
-	# So it is off: an unproven gain is not worth a change in caching
+	# SETTLED, with the ten readings per arm this comment asked for.
+	# mount(1) grew a -M flag for Sys->MCACHE, so both arms run against
+	# one running kernel, ten interleaved pairs, unmounting between so
+	# each starts cold.  Deltas in seconds for the same 400KB read:
+	#
+	#	plain  1.07 1.08 1.10 1.13 1.15 1.16 1.18 1.34 1.38 1.55
+	#	cached 1.09 1.14 1.14 1.16 1.16 1.19 1.25 1.26 1.47 2.28
+	#
+	# Medians 1.154 and 1.178: the cache is two percent SLOWER, with a
+	# worse tail.  There is no gain to weigh against the change in
+	# semantics, so it stays off -- and the first pair measured, taken
+	# alone, showed 1.24x IN ITS FAVOUR, which is exactly the trap the
+	# paragraphs above describe.
+	#
+	# Why there is nothing to win: read-ahead deepens the pipeline, and
+	# the pipeline is not what is full.  Measured separately, the send
+	# queue holds one 8KB request and TCP's window is twenty times
+	# that; the cost is the far end's turnaround, which more requests
+	# in flight cannot shorten.
+	#
+	# The original reasoning, kept because it is the right reasoning:
+	# an unproven gain is not worth a change in caching
 	# semantics on the path the board is driven through.  To establish
 	# it properly would take ten or more readings per arm, arms
 	# interleaved, each preceded by a reboot, with the distribution

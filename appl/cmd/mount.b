@@ -53,7 +53,7 @@ init(ctxt: ref Draw->Context, args: list of string)
 		nomod(Arg->PATH);
 
 	arg->init(args);
-	arg->setusage("mount [-a|-b] [-coA9] [-C cryptoalg] [-k keyfile] [-q] net!addr|file|{command} mountpoint [spec]");
+	arg->setusage("mount [-a|-b] [-coA9M] [-C cryptoalg] [-k keyfile] [-q] net!addr|file|{command} mountpoint [spec]");
 	flags := 0;
 	while((o := arg->opt()) != 0){
 		case o {
@@ -63,6 +63,17 @@ init(ctxt: ref Draw->Context, args: list of string)
 			flags |= Sys->MBEFORE;
 		'c' =>
 			flags |= Sys->MCREATE;
+		'M' =>
+			#
+			# Cache this mount, which is also what turns on
+			# devmnt's read-ahead: Mntrah keeps eight rpcs in
+			# flight, and it is reached only through cread(),
+			# which needs CCACHE on the channel, which needs
+			# this flag.  Nothing exposed it before, so the one
+			# lever against "one outstanding rpc per mount"
+			# could not be tried without rebuilding a kernel.
+			#
+			flags |= Sys->MCACHE;
 		'C' =>
 			alg = arg->earg();
 		'k' or
