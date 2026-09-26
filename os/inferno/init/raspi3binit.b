@@ -2982,7 +2982,7 @@ remotecmd()
 		sys->print("RCMD-OFF no host address: this board is JTAG-only now\n");
 		return;
 	}
-	sys->print("RCMD-ON polling %s every 15s\n", hd addrs);
+	sys->print("RCMD-ON polling %s every 5s\n", hd addrs);
 	#
 	# Fifteen seconds, not three.
 	#
@@ -2995,7 +2995,7 @@ remotecmd()
 	# talking to the server it depends on.
 	#
 	for(;;){
-		sys->sleep(15000);
+		sys->sleep(5000);
 		cmd := readcmdfile(addrs);
 		if(cmd == nil || cmd == last)
 			continue;
@@ -3046,11 +3046,16 @@ runremote(sh: Shell, cmd: string, seq: int, addrs: list of string)
 	# This is the same shape of mistake kupdate's comments warn
 	# about, made again two hundred lines away.
 	#
-	mounted := remotemounted(addrs);
+	mounted := remoteheld;
+	if(!mounted)
+		mounted = mountremote(addrs);
+	madeout := 0;
 	if(mounted){
 		out = sys->create(Outfile, Sys->OWRITE, 8r666);
 		if(out == nil)
 			sys->print("RCMD-NOOUT create %s: %r\n", Outfile);
+		else
+			madeout = 1;
 	}
 	if(out != nil){
 		sys->fprint(out, "RCMD %d: %s\n", seq, cmd);
@@ -3089,8 +3094,19 @@ runremote(sh: Shell, cmd: string, seq: int, addrs: list of string)
 		sys->dup(save1.fd, 1);
 		sys->dup(save2.fd, 2);
 	}
-	if(mounted)
-		unmountremote();
+	#
+	# The mount stays.  It is dropped only when the create on it
+	# failed, which is the signal that the far end has gone.
+	#
+	# Note what this must NOT test: "out" is set to nil a few lines
+	# above, to close the file, so a condition on it here is always
+	# true and the mount would be dropped after every command -- which
+	# is what the first version of this did, quietly giving back most
+	# of what holding the mount was for.  madeout records whether the
+	# create worked, before out is cleared.
+	#
+	if(mounted && !madeout)
+		dropremote();
 }
 
 #
@@ -3239,7 +3255,27 @@ waitgone(pid: int)
 	}
 }
 
-readcmdfile(addrs: list of string): string
+#
+# The mount is HELD between polls, and that is what lets the poll be
+# frequent.
+#
+# This used to dial, mount, read, and unmount on every pass, which is a
+# whole TCP connection and Styx session for one 1KB read -- and it is why
+# the interval had to be fifteen seconds: at three, the comment below
+# records, a new connection to the host took four to seven seconds to be
+# answered and a health check read the server as wedged.  The load was
+# the mounting, not the reading.  Held, a pass is one open and one read
+# on a session that already exists, so it costs less at five seconds than
+# the old one did at fifteen, and a command comes back three times
+# sooner.
+#
+# Every failure drops the mount so the next pass dials afresh: that is
+# the old behaviour, kept as the fallback, and it is what makes this safe
+# against a host that restarts underneath us.
+#
+remoteheld := 0;
+
+mountremote(addrs: list of string): int
 {
 	ok := -1;
 	c: Sys->Connection;
@@ -3250,26 +3286,55 @@ readcmdfile(addrs: list of string): string
 	}
 	if(ok < 0){
 		rcmdfail(sys->sprint("dial %s: %r", hd addrs));
-		return nil;
+		return 0;
 	}
 	if(sys->mount(c.dfd, nil, "/n/remote", Sys->MREPL, "") < 0){
 		rcmdfail(sys->sprint("mount /n/remote: %r"));
-		return nil;
+		return 0;
 	}
-	fd := sys->open(Cmdfile, Sys->OREAD);
-	if(fd == nil){
-		rcmdfail(sys->sprint("open %s: %r", Cmdfile));
+	remoteheld = 1;
+	return 1;
+}
+
+dropremote()
+{
+	if(remoteheld){
 		unmountremote();
-		return nil;
+		remoteheld = 0;
 	}
+}
+
+readcmdfile(addrs: list of string): string
+{
 	b := array[1024] of byte;
-	n := sys->read(fd, b, len b);
-	fd = nil;
-	unmountremote();
-	if(n <= 0){
-		rcmdfail(sys->sprint("read %s: %r", Cmdfile));
-		return nil;
+	n := 0;
+	#
+	# Twice: once on the mount we are holding, and if that fails, once
+	# more on a fresh one.  A held mount whose far end went away fails
+	# at the open, which is exactly the signal to dial again.
+	#
+	for(try := 0; try < 2; try++){
+		if(!remoteheld && !mountremote(addrs))
+			return nil;
+		fd := sys->open(Cmdfile, Sys->OREAD);
+		if(fd == nil){
+			dropremote();
+			if(try > 0)
+				rcmdfail(sys->sprint("open %s: %r", Cmdfile));
+			continue;
+		}
+		n = sys->read(fd, b, len b);
+		fd = nil;
+		if(n <= 0){
+			dropremote();
+			if(try > 0)
+				rcmdfail(sys->sprint("read %s: %r", Cmdfile));
+			continue;
+		}
+		break;
 	}
+	if(n <= 0)
+		return nil;
 	rcmdup();
 	s := string b[0:n];
 	# trim trailing newlines so a file rewritten identically but for

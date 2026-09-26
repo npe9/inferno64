@@ -11846,3 +11846,47 @@ This is consistent with everything else measured here.  Read-ahead
 deepens the pipeline; the pipeline is not what is full.  The send queue
 holds one 8KB request against a window twenty times that, and the cost is
 the far end's turnaround, which more requests in flight cannot shorten.
+.NH 2
+Holding the mount: a poll three times as often for a quarter of the load
+.PP
+The command poller dialled, mounted, read 1KB, and unmounted on every
+pass, and a command cost two of those \(em one to notice it and one to
+run it.  That is why the interval was fifteen seconds and not three: the
+comment in
+.CW remotemounted
+records that at three, a new connection to the host took four to seven
+seconds to be answered and a five-second health check read the server as
+wedged.  The load was the mounting, not the reading.
+.PP
+So the mount is held.  A pass is now one open and one read on a session
+that already exists, and the interval is five seconds.  Measured:
+.DS
+.CW
+8/8 commands answered in 43 s total   (5.4 s each, was 20-30)
+connections to the server: 1 busy, 1 idle   (was 4 per minute)
+.R
+.DE
+One connection for the life of the boot, against four a minute before,
+while commands come back about four times sooner.  The thing that was too
+expensive at three seconds is cheaper at five than it was at fifteen.
+.PP
+.B "It heals, and that was tested rather than argued."
+Every failure drops the mount so the next pass dials afresh \(em the old
+behaviour, kept as the fallback.  Pulling the mount out from under the
+poller (a command that runs
+.CW "unmount /n/remote" )
+and asking for another command: answered, first try, nothing logged.
+.PP
+.B "One bug in it, worth keeping in the comment."
+The first version dropped the mount after every command, giving back most
+of what holding it was for.
+.CW runremote
+sets
+.CW out
+to nil a few lines before the test, to close the file, so
+.CW "out == nil"
+there is always true.  It reads like a check on whether the create
+succeeded and is a check on nothing.  A separate flag records the create,
+before
+.CW out
+is cleared.
