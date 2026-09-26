@@ -120,6 +120,52 @@ There is no check pass, no replay, and no repair step.  If neither
 superblock is good the filesystem does not mount, and that is the correct
 outcome: a filesystem that mounts and lies is the failure this format
 exists to prevent.
+.PP
+.B "The contract, stated so that it can be held to."
+A traditional filesystem's contract is
+.DS
+.CW
+crash -> mount -> fsck -> usable
+.R
+.DE
+and it needs the third step because the disk can hold a state that no
+sequence of operations could have produced.  Rename
+.CW a
+to
+.CW b
+in place and there are four writes \(em remove an entry, add an entry,
+update an inode, change the free map \(em and power can leave any prefix
+of them on the disk.  Something then has to guess what was meant.
+.PP
+This format's contract is
+.DS
+.CW
+crash -> mount -> usable
+.R
+.DE
+because there is no state between two commits.  Every block committed is
+immutable; a change writes new blocks and ends in one superblock write;
+and the two superblocks each carry a generation and a checksum, so even a
+torn write to the newer one is harmless \(em mount validates both and
+takes the highest that checksums.
+.PP
+.B "Which is why the checker is called"
+.CW efsck
+.B "and not"
+.CW fsck .
+It is not a recovery stage and nothing in the mount path calls it.  It
+asks "prove to me that this filesystem satisfies its invariants", and it
+exists because hardware faults, firmware bugs, memory corruption and bugs
+in this very code can still damage persistent state.  A filesystem that
+cannot
+.I need
+recovery is achievable; one that never
+.I benefits
+from an integrity checker is not.  If the crash harness ever has to run
+.CW efsck
+.I before
+an image is usable, the design has failed and no amount of checking will
+repair that.
 .NH 1
 The metadata tree
 .PP

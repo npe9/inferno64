@@ -4,6 +4,7 @@ DIRS=\
 	prep\
 
 TARG=\
+	efsck.dis\
 	efs.dis\
 	mkefs.dis\
 	efsdump.dis\
@@ -30,3 +31,12 @@ DISBIN=$ROOT/$DISROOT/disk
 
 <$ROOT/mkfiles/mkdis
 <$ROOT/mkfiles/mksubdirs
+
+#
+# efs.m is the format.  Without these, a change to the module
+# definition rebuilds nothing -- mk tracks .b files and not the .m they
+# include -- and the programs load a library whose adts no longer match,
+# which arrives as "link typecheck Efs->Dev.open()" at run time.  That
+# happened three times before the dependency was written down.
+#
+efs.dis mkefs.dis efsdump.dis efsck.dis:	$ROOT/module/efs.m

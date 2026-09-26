@@ -244,6 +244,7 @@ DISBIN=$ROOT/$DISROOT/lib
 plumbing.dis:N: plumbing.m
 plumber.dis:N: plumbing.m
 
+efs.dis:	$ROOT/module/efs.m
 ip.dis: $ROOT/module/ip.m
 ether.dis:	$ROOT/module/ether.m
 attrdb.dis attrhash.dis:	$ROOT/module/attrdb.m

@@ -46,6 +46,7 @@ Efsfs: module {
 fs: ref Fs;
 stderr: ref Sys->FD;
 wdebug := 0;
+failafter := 0;
 
 #
 # Inode number to name.
@@ -129,6 +130,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		'f' =>	device = arg->earg();
 		'D' =>	styxservers->traceset(1);
 		'W' =>	wdebug = 1;
+		'F' =>	failafter = int arg->earg();
 		* =>	arg->usage();
 		}
 	argv = arg->argv();
@@ -141,6 +143,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(f == nil)
 		fail(sys->sprint("%s: %s", device, e));
 	fs = f;
+	fs.d.failafter = failafter;
 	sys->fprint(stderr,
 		"efs: %s: %bd blocks, generation %bd from superblock %d\n",
 		device, fs.s.nblocks, fs.s.gen, fs.which);

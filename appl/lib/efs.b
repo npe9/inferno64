@@ -254,9 +254,13 @@ Dev.wrblk(d: self ref Dev, n: big, b: array of byte): string
 			n, len b, Blocksize);
 	if(n < big 0 || (d.nblocks > big 0 && n >= d.nblocks))
 		return sys->sprint("block %bd outside %bd", n, d.nblocks);
+	if(d.failafter > 0 && d.nwrite >= d.failafter)
+		return sys->sprint("injected write failure at write %d (block %bd)",
+			d.nwrite + 1, n);
 	o := d.start + n * big Blocksize;
 	if(sys->pwrite(d.fd, b, Blocksize, o) != Blocksize)
 		return sys->sprint("write block %bd at %bd: %r", n, o);
+	d.nwrite++;
 	return nil;
 }
 

@@ -45,6 +45,15 @@ Efs: module
 		start:	big;		# byte offset of block 0
 		nblocks: big;
 		name:	string;
+		#
+		# Write injection, for the crash harness.  failafter 0 means
+		# never fail; otherwise every write after the first
+		# "failafter" of them is refused.  It lives in the Dev
+		# because that is the one place a block leaves this program,
+		# so a workload cannot get a write past it by accident.
+		#
+		nwrite:	int;
+		failafter: int;
 
 		open:	fn(name: string, startsect: big, nblocks: big,
 				create: int): (ref Dev, string);
