@@ -11722,3 +11722,61 @@ which is a reassembly limit worth its own look.  And the 23ms
 round trip this document blamed on the board is not the board's: the
 gateway, a router doing nothing, answers the host in 28ms while the board
 answers in 18.
+.NH 2
+Correcting the profile above, which was fitted to an outlier
+.PP
+The section before this one reports "about 195ms fixed per file, and
+99KB/s after that", from a size sweep taken once.  Repeating the same
+400KB read gave 1.03s where that sweep had 5.88s, so the model was fitted
+to a sample 5.7 times slower than typical.  Five interleaved
+read/write pairs, medians:
+.DS
+.CW
+read  host -> board   1.215 s   329 KB/s   (1.14 .. 1.34)
+write board -> host   2.940 s   136 KB/s   (2.80 .. 3.63)
+.R
+.DE
+Stable to within about 15 percent, and the earlier figure was an outlier.
+.PP
+.B "The limit is one outstanding Styx RPC, and it is not TCP."
+Sampled during a write, the connection reads
+.CW "cwin 66203"
+and a second later
+.CW "cwin 172860" ,
+against
+.CW "swin 262144>>4"
+\(em the congestion window grows past 170KB and the peer offers 256KB.
+And
+.CW "qout 8215" :
+the send queue holds one 8KB request and nothing else.  TCP is not
+holding anything back; the application has nothing more to give it,
+because
+.CW cp
+writes 8KB, waits for the reply, and writes the next 8KB.  At 8KB per
+RPC that is 24ms per read and 60ms per write.
+.PP
+.B "Where those milliseconds are not."
+Not the USB driver: 99 percent of transfers complete inside a 200us spin.
+Not loss: two retransmits in a 400KB transfer.  Not round-trip time: the
+host answers the board in 5.7ms at best.  About 1.3ms of the 60 is the
+board's own frame sending.  The rest is the far end's turnaround.
+.PP
+.B "One real inefficiency on the board's side."
+.CW "txwrites 6499 txframes 6499"
+\(em every boot, every transfer, exactly one USB bulk-OUT per ethernet
+frame.  The receive path batches, 3.4 frames per bulk-IN read; the
+transmit path does not batch at all.  At 6.6 frames per 8KB request that
+is 6.6 transfers where one would do.  It is worth fixing and it is not
+where the time is going.
+.PP
+.B "And a confound worth recording rather than hiding."
+The far end is an
+.CW emu
+on the development host, and that host was running a process at 201
+percent CPU and a
+.CW qemu-system-riscv64
+at 69 percent throughout.  Every host-side number in this document was
+taken against a loaded machine, which is the most likely explanation both
+for the 5.88s outlier and for writes costing 2.4 times reads \(em a
+write makes the far end do work, a read of a cached file does not.  The
+board's own contribution to the per-RPC cost is about two percent of it.
