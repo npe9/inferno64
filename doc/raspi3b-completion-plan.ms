@@ -11483,3 +11483,46 @@ in the driver \(em the CMD52 write of the I/O Abort RES bit, a few lines
 below, which returns a still-selected card to idle.  The comment there
 now says so, so that the next reader who notices the asymmetry does not
 spend the afternoon that was spent here.
+.PP
+.B "The board serves itself over its own radio."
+Until now the radio only carried packets the board sent; the direction of
+every useful thing was still board-to-host, over the wire.  The other
+direction needs
+.CW styxlisten
+and
+.CW export ,
+which were not in this kernel's root \(em 6.5KB between them, and the
+libraries they want were there already.  With those and
+.CW auth.dis
+added:
+.DS
+.CW
+; @{bind '#I1' /net; styxlisten -A 'tcp!*!6666' export / &}
+
+(on the host, in emu)
+; mount -A tcp!192.168.8.210!6666 /n/client
+; cat /n/client/dev/osversion
+2000 1790418131
+; cat /n/client/n/bt/0/addr
+B827EB2303D1
+.R
+.DE
+The board's running build, and a Bluetooth controller's address read
+through
+.CW btfs ,
+through Styx, over Wi-Fi.  192.168.8.210 is the radio's address and the
+listener was announced on
+.CW #I1 ,
+which has nothing but the radio bound to it, so there is no wired path
+for that to have taken.
+.PP
+Two notes.  The poller reaches the radio's stack by binding
+.CW #I1
+itself \(em the stack is a kernel device and needs nobody's namespace
+\(em which means the change that broke the radio the day before was never
+necessary for this at all.  And the export is started by hand and not at
+boot:
+.CW styxlisten
+.CW -A
+is unauthenticated, and a board that offers its whole file system to
+anything on the network is a decision for whoever owns the board.

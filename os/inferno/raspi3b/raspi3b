@@ -217,6 +217,9 @@ root
 	/dis/lib/readdir.dis
 	/dis/lib/regex.dis
 	/dis/lib/string.dis
+	/dis/styxlisten.dis
+	/dis/lib/auth.dis
+	/dis/export.dis
 	/dis/lib/styx.dis
 	/dis/lib/styxconv/new2old.dis
 	/dis/lib/styxconv/ostyx.dis
