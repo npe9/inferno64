@@ -169,6 +169,20 @@ Efs: module
 				(array of Ent, string);
 	};
 
+	#
+	# How much of a block an entry costs, and how much a block holds.
+	#
+	# One place, used by everything that fills a node, because the
+	# alternative -- asking Node.pack whether a trial set fits -- packs
+	# the whole block once per candidate entry.  That is quadratic in
+	# both time and allocation, with a 4KB array per iteration, and it
+	# exhausted a 32MB heap on a workload whose live data was a few
+	# hundred kilobytes.
+	#
+	Nodehdr:	con 8;		# type, level, nents, checksum
+	entsize:	fn(e: Ent): int;
+	noderoom:	fn(): int;
+
 	bitset:		fn(b: array of byte, i: int, v: int);
 	bitget:		fn(b: array of byte, i: int): int;
 

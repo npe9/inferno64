@@ -369,20 +369,18 @@ fill(ents: array of Ent, ntype: int, level: int): (array of big, array of Key)
 		n.ntype = ntype;
 		n.level = level;
 		#
-		# Take entries until the next will not fit.  Node.pack is
-		# what knows the limit, so this asks it rather than
-		# duplicating the arithmetic -- two places that compute how
-		# much fits in a block is two places to disagree.
+		# Take entries until the next will not fit.  The arithmetic
+		# lives in the library, in entsize and noderoom, so that
+		# this and the server's writeents cannot disagree about it.
 		#
-		j := i;
 		last := i;
-		while(j < len ents){
-			n.ents = ents[i:j+1];
-			(nil, e) := n.pack();
-			if(e != nil)
+		room := efs->noderoom();
+		for(j := i; j < len ents; j++){
+			c := efs->entsize(ents[j]);
+			if(c > room)
 				break;
+			room -= c;
 			last = j + 1;
-			j++;
 		}
 		if(last == i && i < len ents)
 			fail(sys->sprint("entry %d does not fit in a block on its own", i));

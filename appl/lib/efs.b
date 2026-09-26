@@ -371,6 +371,16 @@ Inode.unpack(b: array of byte): (ref Inode, string)
 Nocksum: con 4;
 Noents: con 8;
 
+entsize(e: Ent): int
+{
+	return Keysz + 2 + len e.val;
+}
+
+noderoom(): int
+{
+	return Blocksize - Nodehdr;
+}
+
 Node.pack(n: self ref Node): (array of byte, string)
 {
 	b := array[Blocksize] of {* => byte 0};
@@ -570,9 +580,22 @@ Fs.get(f: self ref Fs, k: Key): (array of byte, string)
 #
 Fs.range(f: self ref Fs, ino: big, ktype: int): (array of Ent, string)
 {
-	out := array[0] of Ent;
+	#
+	# Collected onto a LIST and turned into an array once at the end.
+	#
+	# This grew the array by one and copied it every time, which is
+	# quadratic in allocation: scanning a directory of n entries
+	# allocated n arrays averaging n/2 entries each.  It is invisible
+	# on the handful of files every earlier test used and it killed the
+	# server under fatstress -- "out of memory: heap", 32MB gone, on a
+	# workload whose live data was a few hundred kilobytes.  A list
+	# cell per entry allocates once per entry and copies nothing.
+	#
+	rev: list of Ent;
+	nent := 0;
+	done := 0;
 	k := Key(ino, ktype, big 0);
-	for(guard := 0; guard < 1024; guard++){
+	for(guard := 0; guard < 1024 && !done; guard++){
 		(n, e) := f.leaffor(k);
 		if(e != nil)
 			return (nil, e);
@@ -582,17 +605,17 @@ Fs.range(f: self ref Fs, ino: big, ktype: int): (array of Ent, string)
 			ek := n.ents[i].key;
 			if(ek.cmp(k) < 0)
 				continue;
-			if(ek.ino != ino || ek.ktype != ktype)
-				return (out, nil);
-			t := array[len out + 1] of Ent;
-			t[0:] = out;
-			t[len out] = n.ents[i];
-			out = t;
+			if(ek.ino != ino || ek.ktype != ktype){
+				done = 1;
+				break;
+			}
+			rev = n.ents[i] :: rev;
+			nent++;
 			last = ek;
 			got++;
 		}
 		if(got == 0)
-			return (out, nil);
+			break;
 		#
 		# The next key after the last one taken.  offset+1 is right
 		# because offsets are whole numbers here -- a file offset in
@@ -601,7 +624,11 @@ Fs.range(f: self ref Fs, ino: big, ktype: int): (array of Ent, string)
 		#
 		k = Key(last.ino, last.ktype, last.off + big 1);
 	}
-	return (nil, "range: more leaves than expected; giving up");
+	out := array[nent] of Ent;
+	i := nent;
+	for(; rev != nil; rev = tl rev)
+		out[--i] = hd rev;
+	return (out, nil);
 }
 
 #
@@ -816,15 +843,18 @@ Fs.writeents(f: self ref Fs, ents: array of Ent, ntype: int, level: int):
 		n := ref Node;
 		n.ntype = ntype;
 		n.level = level;
+		#
+		# How many fit, by arithmetic.  This used to ask pack() and
+		# throw the block away, once per entry.
+		#
 		last := i;
-		j := i;
-		while(j < len ents){
-			n.ents = ents[i:j+1];
-			(nil, pe) := n.pack();
-			if(pe != nil)
+		room := noderoom();
+		for(j := i; j < len ents; j++){
+			c := entsize(ents[j]);
+			if(c > room)
 				break;
+			room -= c;
 			last = j + 1;
-			j++;
 		}
 		if(last == i && i < len ents)
 			return (nil, nil, sys->sprint("entry %d does not fit in a block", i));
