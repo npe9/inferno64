@@ -11526,3 +11526,16 @@ boot:
 .CW -A
 is unauthenticated, and a board that offers its whole file system to
 anything on the network is a decision for whoever owns the board.
+.PP
+.B "Boot reliability, measured rather than asserted."
+Five boots of the installed kernel, nothing changed between them:
+.DS
+.CW
+=== 5/5 took a lease; 5/5 loaded the clm blob
+.R
+.DE
+The one
+.CW "WIFI-FAIL end clm: upload did not complete"
+seen while bisecting was on an older build and has not appeared since;
+five trials is not many, and it is recorded as not-observed rather than
+as fixed.
