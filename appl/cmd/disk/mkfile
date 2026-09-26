@@ -4,6 +4,7 @@ DIRS=\
 	prep\
 
 TARG=\
+	efs.dis\
 	mkefs.dis\
 	efsdump.dis\
 	kfs64.dis\
@@ -16,6 +17,8 @@ TARG=\
 	ftl.dis\
 
 SYSMODULES=\
+	styx.m\
+	styxservers.m\
 	daytime.m\
 	arg.m\
 	sys.m\
