@@ -11890,3 +11890,68 @@ succeeded and is a check on nothing.  A separate flag records the create,
 before
 .CW out
 is cleared.
+.NH 2
+The last standing -FAIL, and the driver bug behind it
+.PP
+Every boot of this board printed
+.CW "AUXSPI-FAIL RX level 0 after 1 transfers" ,
+and had for as long as there has been a board.  A suite with a permanent
+failure in it teaches its reader to skip failures, so it was worth
+chasing even though nothing is attached to SPI1.
+.PP
+.B "It was the driver, not the test."
+.CW auxspiconfig
+built its configuration word as
+.DS
+.CW
+r[Cntl0] = (speed << Speedshift) | (6 << Csshift) | Enable |
+        Clearfifo | Shiftms | (nbits & Shiftlen);
+.R
+.DE
+and CLEARFIFO is a level, not a pulse: the datasheet says "if 1 the
+receive and transmit FIFOs are held in reset (and thus flushed)".  Held.
+So the FIFOs stayed in reset for every transfer the driver ever made, the
+transmit FIFO could not take a word, nothing was shifted, and the receive
+FIFO was empty for ever \(em which is exactly "RX level 0".  The AUX SPI
+driver could never have worked on hardware.  It survived because the
+emulator does not model the reset, so under QEMU it worked and the board
+was the odd one out.  Written set to flush, then clear to run.
+.PP
+.B "Then two wrong assumptions in the test, each found by printing rather
+.B "than reasoning."
+With the FIFOs released, the level field read 16, 32, 48 and 64 for one,
+two, three and four words into a FIFO four deep, the last with RX_FULL
+set: level times sixteen, so the field is bits 23:20 and not the 23:16
+the code had.  And the wait added for it was on the wrong bit \(em
+RX_EMPTY clears after the first word, so every later pass fell straight
+through and read the level mid-shift, with BUSY set and twelve bits still
+to go in the same status word that reported the failure.  BUSY dropping
+is the transfer being over.
+.DS
+.CW
+auxspi: spi1 at 0x3f215080, 4-word FIFO; a 12-bit shift length is
+    accepted but not carried here
+auxspi: nothing on the bus (jedec read gave zeroes)
+AUXSPI-OK gate, FIFO levels, and an 8-bit transaction
+.R
+.DE
+47 OK markers on silicon and no
+.CW -FAIL ;
+QEMU unchanged at 0 failures, reporting
+.CW AUXSPI-NONE
+as it should for a machine with no such block.
+.PP
+.B "One intermittent failure remains, and it is reported as intermittent."
+One boot in four printed
+.CW "BT-FAIL btfs served nothing" ,
+with
+.CW "bcmfw: record 115: no answer in 5000 ms"
+above it \(em the patch download starved of CPU beside the SD checks and
+USB enumeration, the same mechanism that made it fail at record 106
+before the radios were made to take turns.  Three boots of the current
+kernel served Bluetooth 3 for 3, so it is not a regression and not
+common.  The reply bound goes to fifteen seconds, because the bound is
+not about the controller (which answers in milliseconds) but about
+whether this process gets the processor on a board with one core and a
+polled SD driver.  Whether that is enough is not yet measured, and is
+recorded as such.

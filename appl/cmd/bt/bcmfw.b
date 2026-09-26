@@ -57,7 +57,22 @@ Cmdbdaddr:	con 16rfc01;	# vendor: Write BD_ADDR
 Cmdreadbdaddr:	con 16r1009;	# HCI Read BD_ADDR
 Cmdreadver:	con 16r1001;	# HCI Read Local Version Information
 
-Replyms:	con 5000;	# how long a command may go unanswered
+#
+# Fifteen seconds, not five.
+#
+# The controller answers in milliseconds; this bound is not about the
+# controller but about whether this process gets the CPU.  The patch
+# download runs at boot beside the SD checks, USB enumeration and kfs,
+# and this kernel schedules one core with a polled SD driver -- so a
+# command can sit unanswered for seconds with nothing wrong at the far
+# end.  It failed at record 106 of 121 once and at 115 another time,
+# and by hand on a quiet board the same file loads every time.
+#
+# A bound is still wanted, because a controller that has genuinely gone
+# away must not hang the boot.  It just has to be clear of how long this
+# board can be busy elsewhere.
+#
+Replyms:	con 15000;	# how long a command may go unanswered
 Launchms:	con 500;	# settle after Launch RAM restarts the controller
 Resettries:	con 6;	# HCI Resets to try once it is back
 

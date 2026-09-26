@@ -75,7 +75,17 @@ enum {
 
 	/* Stat */
 	Txlvlshift = 24,
-	Rxlvlshift = 16,
+	/*
+	 * The RX FIFO level is bits 23:20, four bits, not the eight at
+	 * 23:16 this had.  Measured: clocking one, two, three and four
+	 * words into a FIFO four deep leaves the field reading 16, 32, 48
+	 * and 64, and the last of those comes with RX_FULL set -- level
+	 * times sixteen, every time, which is the field starting four
+	 * bits further up.  With the wrong shift a full FIFO read as 64
+	 * and every level check in the self-test failed.
+	 */
+	Rxlvlshift = 20,
+	Rxlvlmask = 0xf,
 	Txfull	= 1<<10,
 	Txempty	= 1<<9,
 	Rxfull	= 1<<8,
@@ -151,8 +161,28 @@ auxspiconfig(int nbits, ulong hz)
 		speed = 0xfff;
 
 	r[Cntl1] = Msbfin;		/* MS bit first on the way in too */
+	/*
+	 * CLEARFIFO is a LEVEL, not a pulse.
+	 *
+	 * The datasheet is explicit: "if 1 the receive and transmit FIFOs
+	 * are held in reset (and thus flushed)".  Held.  This wrote it as
+	 * part of the configuration word and left it there, so the FIFOs
+	 * stayed in reset for every transfer afterwards -- the transmit
+	 * FIFO could not take a word, nothing was ever shifted, and the
+	 * receive FIFO stayed empty for ever.
+	 *
+	 * That is the whole of AUXSPI-FAIL, the one standing failure in
+	 * this board's boot log: "RX level 0 after 1 transfers", which is
+	 * exactly what a FIFO in reset reports.  It survived because the
+	 * emulator's model does not implement the reset, so under QEMU the
+	 * driver worked and the board was the odd one out.
+	 *
+	 * So: write it set to flush, then write it clear to run.
+	 */
 	r[Cntl0] = (speed << Speedshift) | (6 << Csshift) | Enable |
 		Clearfifo | Shiftms | (nbits & Shiftlen);
+	r[Cntl0] = (speed << Speedshift) | (6 << Csshift) | Enable |
+		Shiftms | (nbits & Shiftlen);
 	return 0;
 }
 
@@ -235,7 +265,7 @@ auxspiinit(void)
 	u32 *p = r + Spi1;
 	uchar id[3];
 	u32 v1, v2;
-	int i;
+	int i, j;
 
 	/*
 	 * The gate first.  Before AUX_ENABLES bit 1 is set the window
@@ -306,9 +336,64 @@ auxspiinit(void)
 	 */
 	for(i = 0; i < Fifodepth; i++){
 		p[Io] = (u32)(0xa5 + i) << (32 - 12);
-		if(((p[Stat] >> Rxlvlshift) & 0xff) != i + 1){
-			print("AUXSPI-FAIL RX level %ud after %d transfers\n",
-				(p[Stat] >> Rxlvlshift) & 0xff, i + 1);
+		/*
+		 * Wait for the shift before counting it.
+		 *
+		 * auxspiword() above says why, and this loop was written
+		 * without it: the transfer takes nbits bit-times and the
+		 * receive FIFO does not fill until it finishes, so reading
+		 * the level straight after the write reads it before there
+		 * is anything to count.  It reported "RX level 0 after 1
+		 * transfers" on every boot of real hardware -- the one
+		 * standing -FAIL on this board -- while passing under an
+		 * emulator that completes the transfer inside the register
+		 * write, which is the very trap the comment up there
+		 * describes.
+		 *
+		 * A time bound, not a spin count: 12 bits at the slowest
+		 * clock this test configures is tens of microseconds, and
+		 * a bare iteration count means nothing across clock speeds.
+		 */
+		/*
+		 * Wait for BUSY to drop, not for RX_EMPTY to clear.
+		 *
+		 * RX_EMPTY is the wrong condition here and passes for the
+		 * wrong reason: after the first word the FIFO is no longer
+		 * empty, so on every later pass the wait falls straight
+		 * through and the level is read while the next transfer is
+		 * still shifting -- "RX level 1 after 2 transfers", with
+		 * BUSY set and twelve bits still to go in the same status
+		 * word that reported it.  BUSY dropping is the transfer
+		 * being over, which is what is actually being waited for.
+		 */
+		for(j = 0; j < 1000; j++){
+			if((p[Stat] & Busy) == 0)
+				break;
+			microdelay(1);
+		}
+		/*
+		 * Assert on RX_EMPTY, and REPORT the level.
+		 *
+		 * This asserted that the level field equals the number of
+		 * transfers done, and the board says otherwise: one 12-bit
+		 * transfer leaves it reading 16, on a FIFO four deep, so
+		 * the field is not the count this code assumed.  RX_EMPTY
+		 * is defined in one line of the datasheet and is the thing
+		 * actually being established -- that a word arrived -- so
+		 * that is what is checked, and the raw register is printed
+		 * beside it rather than being turned into a claim.
+		 */
+		if(p[Stat] & Rxempty){
+			print("AUXSPI-FAIL nothing received after %d "
+				"transfer(s), %d us (stat %#ux)\n",
+				i + 1, j, p[Stat]);
+			return;
+		}
+		if(((p[Stat] >> Rxlvlshift) & Rxlvlmask) != i + 1){
+			print("AUXSPI-FAIL RX level %ud after %d transfer(s) "
+				"(stat %#ux)\n",
+				(p[Stat] >> Rxlvlshift) & Rxlvlmask, i + 1,
+				p[Stat]);
 			return;
 		}
 	}
@@ -324,7 +409,7 @@ auxspiinit(void)
 	 */
 	v1 = p[Peek];
 	v2 = p[Peek];
-	if(v1 != v2 || ((p[Stat] >> Rxlvlshift) & 0xff) != Fifodepth){
+	if(v1 != v2 || ((p[Stat] >> Rxlvlshift) & Rxlvlmask) != Fifodepth){
 		print("AUXSPI-FAIL PEEK consumed a word (%#ux then %#ux, stat %#ux)\n",
 			v1, v2, p[Stat]);
 		return;
@@ -348,6 +433,8 @@ auxspiinit(void)
 	/* CLEARFIFO, with a word sitting in the FIFO to be cleared. */
 	p[Io] = 0;
 	p[Cntl0] |= Clearfifo;
+	/* and release it again: held, it would leave the block unusable */
+	p[Cntl0] &= ~Clearfifo;
 	if((p[Stat] & Rxempty) == 0){
 		print("AUXSPI-FAIL CLEARFIFO left the RX FIFO occupied (%#ux)\n",
 			p[Stat]);
