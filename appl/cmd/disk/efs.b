@@ -74,6 +74,22 @@ remember(ino: big, name: string)
 	names[h] = (ino, name) :: names[h];
 }
 
+#
+# Drop what is known about an inode, so a rename replaces a name rather
+# than shadowing it with a second entry.
+#
+forget(ino: big)
+{
+	h := int (ino % big len names);
+	keep: list of (big, string);
+	for(l := names[h]; l != nil; l = tl l){
+		(i, nm) := hd l;
+		if(i != ino)
+			keep = (i, nm) :: keep;
+	}
+	names[h] = keep;
+}
+
 nameof(ino: big): string
 {
 	if(ino == Rootino)
@@ -794,9 +810,14 @@ wstat(ino: big, stat: Sys->Dir): string
 			return e;
 		if((e = adddentry(par, stat.name, ino)) != nil)
 			return e;
+		#
+		# Just remember it.  This also added the entry a second
+		# time, unconditionally, so every rename grew the cache by
+		# a cell, a tuple and a string that nothing would ever
+		# remove -- and remember() already skips a name it holds.
+		#
+		forget(ino);
 		remember(ino, stat.name);
-		names[int (ino % big len names)] = (ino, stat.name) ::
-			names[int (ino % big len names)];
 		changed = 1;
 	}
 	#

@@ -606,54 +606,107 @@ Fs.get(f: self ref Fs, k: Key): (array of byte, string)
 Fs.range(f: self ref Fs, ino: big, ktype: int): (array of Ent, string)
 {
 	#
-	# Collected onto a LIST and turned into an array once at the end.
+	# Walk the leaves along a PATH, not by key.
 	#
-	# This grew the array by one and copied it every time, which is
-	# quadratic in allocation: scanning a directory of n entries
-	# allocated n arrays averaging n/2 entries each.  It is invisible
-	# on the handful of files every earlier test used and it killed the
-	# server under fatstress -- "out of memory: heap", 32MB gone, on a
-	# workload whose live data was a few hundred kilobytes.  A list
-	# cell per entry allocates once per entry and copies nothing.
+	# This advanced from one leaf to the next by re-descending on the
+	# key after the last one it had seen.  That cannot work: a descent
+	# takes the last child whose key is not greater than the target,
+	# so a key one past the end of a leaf descends into that same leaf
+	# again -- the next leaf's first key is larger, so it is not
+	# chosen.  The scan then found nothing new and stopped, and every
+	# entry in every later leaf was invisible.
+	#
+	# With one leaf it is perfect, which is why four test suites and a
+	# crash harness passed over it.  It took an image shaped like a
+	# real one -- sixty files, so the tree has interior nodes -- to
+	# show a file that had just been written not existing.  That is
+	# the plan's rule about empty images, in the one place it was not
+	# yet being obeyed.
 	#
 	rev: list of Ent;
 	nent := 0;
-	done := 0;
 	k := Key(ino, ktype, big 0);
-	for(guard := 0; guard < 1024 && !done; guard++){
-		(n, e) := f.leaffor(k);
+	(blks, idx, pe) := f.pathto(k);
+	if(pe != nil)
+		return (nil, pe);
+	d := len blks - 1;
+	first := 1;
+	for(guard := 0; guard < 4096; guard++){
+		(n, e) := f.getnode(blks[d]);
 		if(e != nil)
 			return (nil, e);
-		got := 0;
-		last: Key;
 		for(i := 0; i < len n.ents; i++){
 			ek := n.ents[i].key;
-			if(ek.cmp(k) < 0)
+			if(first && ek.cmp(k) < 0)
 				continue;
 			if(ek.ino != ino || ek.ktype != ktype){
-				done = 1;
-				break;
+				#
+				# Keys rise, so the first entry past this
+				# inode and type is the end of the range --
+				# but only once the range has started.
+				#
+				if(nent > 0 || ek.cmp(k) > 0)
+					return (mkents(rev, nent), nil);
+				continue;
 			}
 			rev = n.ents[i] :: rev;
 			nent++;
-			last = ek;
-			got++;
 		}
-		if(got == 0)
+		first = 0;
+		if(!f.nextleaf(blks, idx))
 			break;
-		#
-		# The next key after the last one taken.  offset+1 is right
-		# because offsets are whole numbers here -- a file offset in
-		# blocks, or a name hash -- and there is no key between n and
-		# n+1 to skip over.
-		#
-		k = Key(last.ino, last.ktype, last.off + big 1);
 	}
+	return (mkents(rev, nent), nil);
+}
+
+#
+# Advance a path to the next leaf.  Returns 0 when there is none.
+#
+# Walking up until a parent has another child, then down that child's
+# leftmost edge, is the ordinary B-tree step.  It needs no sibling
+# pointers in the format, which a copy-on-write tree would have to
+# rewrite in every sibling of every changed block.
+#
+Fs.nextleaf(f: self ref Fs, blks: array of big, idx: array of int): int
+{
+	d := len blks - 1;
+	while(d > 0){
+		d--;
+		(n, e) := f.getnode(blks[d]);
+		if(e != nil)
+			return 0;
+		if(idx[d] + 1 < len n.ents){
+			idx[d]++;
+			if(len n.ents[idx[d]].val != 8)
+				return 0;
+			blks[d+1] = get8(n.ents[idx[d]].val, 0);
+			#
+			# Down the leftmost edge from there.
+			#
+			for(c := d + 1; c < len blks; c++){
+				(m, me) := f.getnode(blks[c]);
+				if(me != nil)
+					return 0;
+				if(m.ntype == Nleaf)
+					return 1;
+				if(len m.ents == 0 || len m.ents[0].val != 8)
+					return 0;
+				idx[c] = 0;
+				blks[c+1] = get8(m.ents[0].val, 0);
+			}
+			return 1;
+		}
+	}
+	return 0;
+}
+
+mkents(rev: list of Ent, nent: int): array of Ent
+{
 	out := array[nent] of Ent;
 	i := nent;
 	for(; rev != nil; rev = tl rev)
 		out[--i] = hd rev;
-	return (out, nil);
+	return out;
 }
 
 #

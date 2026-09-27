@@ -167,6 +167,8 @@ Efs: module
 		get:	fn(f: self ref Fs, k: Key): (array of byte, string);
 		range:	fn(f: self ref Fs, ino: big, ktype: int):
 				(array of Ent, string);
+		nextleaf: fn(f: self ref Fs, blks: array of big,
+				idx: array of int): int;
 	};
 
 	#

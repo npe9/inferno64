@@ -49,7 +49,22 @@ fatstress -n $rounds -f $files -s 8 /n/client
 echo 'MARK verify'
 disk/efsck /tmp/$img
 EOF
-	timeout 600 $EMU -r"$ROOT" /dis/sh.dis /tmp/efs-st.sh 2>&1 |
+	#
+	# -pheap: emu's default Dis heap is 32MB, and this workload's
+	# GARBAGE exceeds that even though its live data is a few hundred
+	# kilobytes.  The server died with "out of memory: heap" and it
+	# looked exactly like a leak -- until /dev/memheap showed the live
+	# count falling from 41516 to 5835 between two points in the same
+	# run, which is a collector reclaiming, not a leak.  Two
+	# "optimisations" made the census WORSE, because a faster mutator
+	# gives the collector less room; that inversion is the tell.
+	#
+	# The allocation RATE is still worth reducing and is a separate
+	# matter from correctness.  Sizing the heap for the workload is
+	# what a stress test should do; hiding the failure by shrinking
+	# the workload is not.
+	#
+	timeout 600 $EMU -pheap=256M -r"$ROOT" /dis/sh.dis /tmp/efs-st.sh 2>&1 |
 		grep -vE '^new:|^newa:' > $T/efs-st-$label.txt
 	if grep -q 'FATSTRESS-OK' $T/efs-st-$label.txt &&
 	   grep -q 'clean, generation' $T/efs-st-$label.txt; then
