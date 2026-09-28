@@ -12351,3 +12351,139 @@ failure would not say which.  Milestone 7 runs first;
 and
 .CW doc/efs-format.ms
 both carry the gap with the fix sketched so that it is not lost.
+.NH 1
+efs runs, on emulated hardware, and finding that took a QEMU bug
+.PP
+Milestone 7's markers all appear.  Not on the board \(em it is still
+waiting for its power to be cycled \(em but under QEMU, through the same
+SDHOST driver the board uses, on a 4GB card with a FAT32 partition and room
+above it:
+.DS
+.CW
+EFS-PART sectors 147456..8126463, crash partition 8126464..8388607
+EFS-REAM /n/dos/efsream is present and the range is empty; 997376 blocks
+EFS-OK mounted
+EFS-WRITE-OK 21 bytes back byte for byte
+EFS-RENAME-OK
+efsck: /dev/sdN0/efscrash: clean, generation 3
+EFS-CRASH-OK the card held the last committed state
+.R
+.DE
+.PP
+.B "None of it could run before, because the driver could not read a block."
+.CW tools/qemu-patches/0017
+gave the card the host's bus width and refuses a transfer when the two
+disagree, and hooked it into
+.I sdhci
+only.
+.CW bcm2835_sdhost
+never called
+.CW sdbus_set_bus_width() ,
+so the card's ACMD6 width was compared against a host that had said
+nothing \(em read as one line \(em and every data transfer on that
+controller was refused:
+.DS
+.CW
+sd_bus_width_agrees: CMD17 data transfer with the host driving 1 DAT
+  line(s) and the card set to 4; ACMD6 and the host's bus width disagree
+.R
+.DE
+That is the controller
+.CW SDDEV
+names, because the Arasan carries the Wi-Fi.  So the SD driver this board
+depends on has had
+.B "no emulated coverage at all" ,
+and the reason nobody noticed is the second half of the story: the
+.CW raspi3b
+baseline was recorded when
+.CW SDDEV
+still named the Arasan, so its evidence line said
+.CW "emmc:"
+and the arm failed on evidence whatever else it did.  A baseline the
+committed tree cannot reproduce is not a baseline.
+.CW tools/qemu-patches/0027
+fixes the width and makes SDHCFG and SDARG readable, which the driver's own
+diagnostic had been reporting as
+.CW "4-bit, sdhcfg 0x0" .
+.NH 2
+Four bugs in efscheck, all of which the board would have hit
+.PP
+.B "A partition one sector short."
+.CW devsd 's
+.CW part
+takes an exclusive end and this passed the last sector, as
+.CW fatcheck()
+has not since it was written.
+.I mkefs
+sized itself from the range it asked for, so its last block \(em the spare
+superblock \(em fell outside the partition, and a filesystem with no
+fallback superblock is the one thing two superblocks exist to prevent.
+.PP
+.B "A mount check that could not fail."
+.CW efsmount()
+polled
+.CW stat("/n/efs/.") ,
+and
+.CW /n/efs
+exists in the kernel's own root, so it stats whether anything is mounted or
+not.  Against a card with no filesystem that printed
+.CW EFS-OK
+three lines under the server's own
+.CW "neither superblock is good" .
+On this board
+.CW /n/<anything>
+always stats; only something inside it proves a mount.  The same blindness
+was one screen up in the wait for
+.CW /n/dos ,
+which is why the ream never ran with the opt-in file sitting on the card.
+.PP
+.B "The zero check on the wrong side."
+It refused to MAKE the partition when the sectors were not empty \(em the
+normal case after the first boot \(em so a card that already held a
+filesystem could never have it mounted.  Making a partition writes nothing.
+On the ream, with the opt-in file, it makes repeated boots idempotent
+instead.
+.PP
+.B "A crash partition of negative size"
+on a 16MB card whose FAT reaches the end.
+.NH 2
+And the suite could not have shown any of it twice
+.PP
+.B "A fresh card per attempt, not per run."
+These boards write to their cards, so a second boot is a different
+filesystem state:
+.CW "SD-FS skipped: sectors 1-16383 are not empty"
+and
+.CW "EFS-NOREAM ... are not empty"
+are both right on a card that already holds the thing and neither is what
+the baseline records.  A failing configuration is booted once more, so
+whenever anything else failed the kept log was the second boot's \(em and
+.CW SD-FS-CREATE-OK
+was missing from every run of this suite that did not pass first time.
+.PP
+.B "And multiverify failed a test it could not run."
+raspi3binit.b drives it at sector 2900000, and a 16MB card ends at 32768:
+six
+.CW MULTIVERIFY-FAIL
+lines from a check with nowhere to run, taking a real failure's name.
+.NH 2
+One question this cannot answer: where the AUX SPI's RX level lives
+.PP
+.CW AUXSPI-FAIL
+under QEMU, and the interesting part is the register.
+.CW auxspibcm.c
+reads the STAT RX level at bit 20 with a 4-bit mask.  Linux's
+.CW spi-bcm2835aux.c
+and QEMU's model both put it at bit 16 with an 8-bit mask, and the STAT
+this run printed \(em
+.CW 0x1020c
+\(em has one word there and nothing at 20.
+.PP
+Two authorities against this driver is not proof, because the driver passed
+on silicon and the emulator is not the hardware.  But it is the kind of
+thing that passes for the wrong reason, and it is a one-line experiment on
+a board that can print: read the field both ways and say which is non-zero
+after a transfer.
+.B "Not changed until then."
+A driver corrected to satisfy an emulator, against the chip, is the worst
+outcome available here.
