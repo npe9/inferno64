@@ -134,7 +134,21 @@ PYEOF`
 # Say it is missing, because a live console is still the fastest way to
 # watch a boot, and carry on.
 #
-SESS=${SESS:-`screen -ls | awk '/ttys/{print $1; exit}'`}
+#
+# "SESS=" set and EMPTY means NO CONSOLE, which ${SESS:-...} does not
+# honour: the colon form substitutes the default for an empty value as
+# well as an unset one, so every attempt to say "do not use a console"
+# picked the first screen session on the machine instead.  There are
+# usually three, none of them necessarily the board's, and the console
+# branch then hardcopies a scrollback that has nothing to do with the Pi
+# and greps it for a banner that will never be there.
+#
+# That is four rounds of "never came up in 4 attempts" for a kernel that
+# was running, chased through the ring reader, the clear, the grep pattern
+# and the read-back -- none of which had run at all, because the console
+# branch was taken every time.  ${SESS-...} without the colon.
+#
+SESS=${SESS-`screen -ls | awk '/ttys/{print $1; exit}'`}
 if [ -z "$SESS" ] || ! screen -S "$SESS" -X select . >/dev/null 2>&1; then
 	echo "kinstall: no console; the board will be asked directly instead" >&2
 	SESS=

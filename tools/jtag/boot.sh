@@ -38,7 +38,21 @@ S=${S:-/private/tmp/claude-501/-Users-npe-src-inferno64-branches-raspi3b-port/26
 # unresponsive when in fact nobody was speaking to it.  Take the first
 # attached session on a tty instead, and let SESS override it.
 #
-SESS=${SESS:-`screen -ls | awk '/ttys/{print $1; exit}'`}
+#
+# "SESS=" set and EMPTY means NO CONSOLE, which ${SESS:-...} does not
+# honour: the colon form substitutes the default for an empty value as
+# well as an unset one, so every attempt to say "do not use a console"
+# picked the first screen session on the machine instead.  There are
+# usually three, none of them necessarily the board's, and the console
+# branch then hardcopies a scrollback that has nothing to do with the Pi
+# and greps it for a banner that will never be there.
+#
+# That is four rounds of "never came up in 4 attempts" for a kernel that
+# was running, chased through the ring reader, the clear, the grep pattern
+# and the read-back -- none of which had run at all, because the console
+# branch was taken every time.  ${SESS-...} without the colon.
+#
+SESS=${SESS-`screen -ls | awk '/ttys/{print $1; exit}'`}
 
 #
 # Refuse to run without a console, instead of reporting a false
@@ -68,6 +82,8 @@ VIA=console
 if [ -z "$SESS" ] || ! screen -S "$SESS" -X select . >/dev/null 2>&1; then
 	VIA=kmesg
 	echo "boot: no console; confirming the boot over JTAG instead" >&2
+else
+	echo "boot: confirming the boot on console $SESS" >&2
 fi
 IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
 IFACE=${IFACE:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
@@ -121,8 +137,21 @@ KMESG=`python3 "$ROOT/tools/jtag/ksyms" "$ROOT/os/inferno/raspi3b/iraspi3b" 2>/d
 #
 banners() {
 	if [ "$VIA" = kmesg ]; then
-		# the ring is this boot's only; 0 before, 1 after
-		sh "$ROOT/tools/jtag/kmesg" 400 2>/dev/null >"$S/boot.txt"
+		#
+		# The ring is this boot's only; 0 before, 1 after.  kmesg's
+		# OWN failure is reported rather than swallowed: it exits 1
+		# when the debugger hands back nothing and 2 when what it
+		# hands back reads as an empty ring, and both used to arrive
+		# here as "the board printed no banner", which is the same
+		# answer as a board that did not boot.  Four attempts were
+		# reported that way for a kernel that was running.
+		#
+		sh "$ROOT/tools/jtag/kmesg" 400 >"$S/boot.txt" 2>>"$S/boot.err"
+		if [ $? -ne 0 ]; then
+			sed 's/^/boot: /' "$S/boot.err" >&2
+			echo 0
+			return
+		fi
 		LC_ALL=C grep -ac "conf raspi3b ($stamp)" "$S/boot.txt" 2>/dev/null | head -1
 		return
 	fi
@@ -242,6 +271,53 @@ while [ $try -le 4 ]; do
 		echo "boot: the log ring was not cleared; refusing to read it" >&2
 		LC_ALL=C grep -i "`printf '0x%08x' $nat`\|mww" "$S/openocd.txt" | head -3 >&2
 		exit 3
+	fi
+	#
+	# Reading the ring HALTS the core, so it is read ONCE per attempt,
+	# after a whole boot, not thirty times during one.
+	#
+	# The console branch polls because a hardcopy of a screen session
+	# costs the board nothing.  kmesg does not: it halts the core,
+	# dumps 16400 bytes and resumes.  Doing that every six seconds from
+	# six seconds after the resume caught the kernel in device bring-up
+	# and the board never finished booting -- all thirty reads came back
+	# as 16400 zero bytes, which is the ring just after BSS is cleared
+	# and nothing after it, and then the board came up by itself once
+	# boot.sh had given up and stopped halting it.  Four attempts of
+	# that reported "never came up" for a kernel that was running by the
+	# time the message was printed.
+	#
+	# So: one halt, after long enough for this board to reach a shell
+	# with its radios up, which is about forty seconds.  Seventy-five is
+	# that with room, and four attempts still cost four halts rather
+	# than a hundred and twenty.
+	#
+	if [ "$VIA" = kmesg ]; then
+		#
+		# A few reads, not thirty and not one.
+		#
+		# Thirty halts at six-second intervals caught the kernel in
+		# device bring-up; one at seventy-five seconds read a ring of
+		# zeros on a board that was running, which kmesg now refuses
+		# to report as content.  Six reads over two minutes is enough
+		# for this board to reach a shell with its radios up and few
+		# enough not to sit on the core while it does.
+		#
+		i=0
+		while [ $i -lt 6 ]; do
+			sleep 20
+			now=`banners`
+			if [ "$now" -gt "$was" ]; then
+				echo "boot: build $stamp is running (attempt $try)"
+				exit 0
+			fi
+			i=`expr $i + 1`
+		done
+		echo "boot: attempt $try did not come up"
+		sh "$ROOT/tools/jtag/kmesg" 3 >/dev/null 2>&1 ||
+			echo "boot: and the ring could not be read at all" >&2
+		try=`expr $try + 1`
+		continue
 	fi
 	i=0
 	while [ $i -lt 30 ]; do

@@ -23,13 +23,43 @@ OUT=${OUT:-/tmp/kmesg.bin}
 K=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" 2>/dev/null | awk '$3=="kmesg"{print $1}'`
 [ -n "$K" ] || { echo "kmesg: no kmesg symbol in $ELF" >&2; exit 2; }
 
-rm -f "$OUT"
-timeout 300 openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg \
-	-f "$ROOT/tools/jtag/raspi3b.cfg" \
-	-c init -c 'targets bcm2837.cpu0' -c halt \
-	-c "dump_image $OUT $K 16400" \
-	-c resume -c shutdown >/dev/null 2>&1
-[ -s "$OUT" ] || { echo "kmesg: nothing came back from the debugger" >&2; exit 1; }
+#
+# The dump, retried, because it intermittently reads as all zeros.
+#
+# dump_image hands back a file of the right length full of nothing often
+# enough to matter -- perhaps one read in three here -- and there is no
+# error to go with it.  A running kernel always has something in the ring:
+# its first line is "JTAG-STUB n bytes at 0x70000", printed before any
+# device is touched, and the count word is non-zero from then on.  So a
+# zero count is a read that did not read, and the answer is to read again
+# rather than to report an empty log.
+#
+# Reported rather than silent when every try comes back empty, because the
+# other thing a zero count means is a kernel that never started, and those
+# are not the same news.  boot.sh took the silent version for "the board
+# printed no banner" and called a running kernel four failed attempts.
+#
+ntry=0
+while :; do
+	rm -f "$OUT"
+	timeout 300 openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg \
+		-f "$ROOT/tools/jtag/raspi3b.cfg" \
+		-c init -c 'targets bcm2837.cpu0' -c halt \
+		-c "dump_image $OUT $K 16400" \
+		-c resume -c shutdown >/dev/null 2>&1
+	if [ ! -s "$OUT" ]; then
+		echo "kmesg: nothing came back from the debugger" >&2
+		exit 1
+	fi
+	n=`python3 -c "d=open('$OUT','rb').read();print(int.from_bytes(d[48:52],'little'))"`
+	[ "$n" != 0 ] && break
+	ntry=`expr $ntry + 1`
+	if [ $ntry -ge 3 ]; then
+		echo "kmesg: the ring read as empty three times; either the" >&2
+		echo "kmesg: kernel has not started or the debugger is not reading" >&2
+		exit 2
+	fi
+done
 
 # The Lock and the count come first; the text is whatever is printable
 # after them.  Rather than hardcode sizeof(Lock), which is per-arch,
