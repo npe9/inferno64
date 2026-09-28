@@ -164,9 +164,9 @@ with
 silent; and a free map of two groups, written across the 32768-block
 boundary.
 .PP
-.B Never run on the board.
+.B It runs, under emulation, and not on the board.
 .B raspi3binit.b
-now has an
+has an
 .B efscheck()
 that makes the partition above the firmware's FAT, reams it when
 .B /n/dos/efsream
@@ -179,11 +179,23 @@ and prints
 .B EFS-RENAME-OK
 and
 .BR EFS-CRASH-OK .
-It compiles and it is in the kernel.  NONE of it has executed: the board
-was unreachable while it was written, so the partition arithmetic, the
-mount and the on-card crash test are untried, and
+All of it now runs under QEMU, through the same SDHOST driver the board
+uses, on a 4GB card with a FAT32 partition and room above it: the
+partition is made, the filesystem is reamed on a blank card and mounted on
+a later boot, a file is written and read back and renamed, and the crash
+test injects a write failure, remounts and verifies clean.  It has still
+never run on the REAL card, and
 .I kfs
 is still what that file reams.
+.PP
+Four bugs came out of the first run that does not appear in any of the
+suites above, because none of them touches a partition or a boot: a
+partition one sector short of what it asked for, which put the spare
+superblock outside the filesystem; a mount check that stated success for a
+filesystem the server had just refused, because the mount point exists
+whether or not anything is mounted on it; the same blindness in the wait
+for the FAT; and a zero check that refused to make the partition when the
+card already held a filesystem, which is every boot after the first.
 .PP
 One piece of it was tested, under
 .I emu
