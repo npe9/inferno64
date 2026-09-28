@@ -106,8 +106,17 @@ configs='raspi3b raspi3b-4g raspi3b-usb raspi3b-2eth raspi4 raspi4-hot raspi4-us
 # that have no EFI loader in them.
 #
 # So are os/9front and os/osprey, which are other kernels in the same
-# checkout and are not linked into any of these, and every board
-# directory except the one this kernel came from.  Each board mkfile
+# tmp and n are pruned too, and that one is not a false positive that
+# costs nothing.  They are the test harnesses' scratch: fatstress writes
+# tmp/mvtest.b as DATA, and the efs and dossrv suites write scripts and
+# images there.  A .b in tmp is not a source, and because the next run of
+# any of those suites recreates it, the "mk it first" the message asks for
+# does NOT clear it -- the check said "kernel older than tmp/mvtest.b"
+# after a freshly linked kernel and went on saying it.  A false positive
+# that a rebuild cannot clear is an instrument that has stopped working.
+#
+# Everything else here is a board directory: every one except the one this
+# kernel came from.  Each board mkfile
 # reaches ../port, ../init and ../ip and nothing else -- sifiveu also
 # ../riscv, pc64 also ../pc -- so a board's kernel being older than
 # another board's source says nothing at all, and it said it loudly:
@@ -134,6 +143,8 @@ newer_source_than() {
 		-name .git -prune -o \
 		-path "$root/doc" -prune -o \
 		-path "$root/tools" -prune -o \
+		-path "$root/tmp" -prune -o \
+		-path "$root/n" -prune -o \
 		-path "$root/os/inferno/boot" -prune -o \
 		-path "$root/os/9front" -prune -o \
 		-path "$root/os/osprey" -prune -o \
@@ -1665,6 +1676,17 @@ pipart() {
 		fi
 		printf '%s\n' "$PIKERNEL" > "$mnt/kernel8.img"
 		dd if=/dev/zero of="$mnt/filler.bin" bs=1048576 count=$fatfill 2>/dev/null
+		#
+		# efsream is the opt-in raspi3binit.b's efscheck() looks for
+		# before it makes a filesystem above this partition, and this
+		# is the only card with room above it: the 16MB one's FAT
+		# reaches the end.  So the 4GB arm is where efs gets made,
+		# mounted, written, renamed and crash-tested, and without it
+		# that whole phase reports EFS-SKIP on every arm.
+		#
+		# It is empty; efscheck() only asks whether it opens.
+		#
+		: > "$mnt/efsream"
 		diskutil unmount "$mnt" >/dev/null 2>&1
 		hdiutil detach "$dev" >/dev/null 2>&1
 	elif command -v hdiutil >/dev/null 2>&1; then
@@ -1693,6 +1715,9 @@ pipart() {
 		if [ -n "$fatfill" ]; then
 			dd if=/dev/zero of="$work/filler.bin" bs=1048576 count=$fatfill 2>/dev/null
 			mcopy -i "$img" "$work/filler.bin" ::filler.bin >/dev/null 2>&1 || return 1
+			# see the note above: the opt-in for efscheck()
+			: > "$work/efsream"
+			mcopy -i "$img" "$work/efsream" ::efsream >/dev/null 2>&1 || return 1
 		fi
 	fi
 	python3 - "$1" "$img" $ptype <<'PIPART' || return 1

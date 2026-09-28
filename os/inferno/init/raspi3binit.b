@@ -3277,12 +3277,18 @@ Efsmin:		con 16384;	# sectors: 8MB, enough to be a filesystem
 Efscrashsec:	con 262144;	# sectors: 128MB at the top of the card
 
 #
-# A partition, made only if the sectors it covers read as zeros.
+# A partition.  Making one writes nothing to the card.
 #
-# Same rule as the kfs gap and for the same reason: mkefs writes, and
-# what it writes over had better be nobody's.  gapisclear() probes three
-# sectors rather than all of them, which is what it can afford on every
-# boot; that is a check on this arithmetic, not a guarantee about 30GB.
+# The zero check used to be here, and that was wrong in the direction
+# that matters: it refused to make the partition when the sectors were
+# not empty, so a card that already HELD a filesystem -- the normal case,
+# and the only one that matters after the first boot -- could not have it
+# mounted.  One run made an efs and every run after it reported
+# "sectors 147456-8126463 are not empty; not reaming them" and stopped,
+# with nothing reaming and nothing mounted.
+#
+# The check belongs on the REAM, where something is actually overwritten,
+# and it is there now.
 #
 efspart(name: string, first, last: int): int
 {
@@ -3291,13 +3297,25 @@ efspart(name: string, first, last: int): int
 			name, last - first + 1, Efsmin);
 		return 0;
 	}
-	if(!gapisclear(first, last)){
-		sys->print("EFS-SKIP sectors %d-%d are not empty; not reaming them\n",
-			first, last);
-		return 0;
-	}
+	#
+	# devsd's "part" takes an EXCLUSIVE end, so last + 1.
+	#
+	# fatcheck() has written "part dos start start+nsec" since it was
+	# written, which is the same convention; this passed the last sector
+	# instead and made every partition one sector short.  Nothing noticed
+	# until a filesystem used all of one: mkefs sized itself from the
+	# range it had asked for and its last block, the spare superblock,
+	# fell outside the partition --
+	#
+	#	mkefs: write block 997375 at 4085248000: file does not exist
+	#
+	# -- which on the real card is a filesystem that mounts from
+	# superblock 0 and has no fallback, i.e. exactly the thing the two
+	# superblocks exist to prevent, arrived at by an off-by-one in a
+	# partition table.  Found under QEMU on a 4GB card.
+	#
 	cfd := sys->open(SDDEV + "/ctl", Sys->ORDWR);
-	if(cfd == nil || sys->fprint(cfd, "part %s %d %d", name, first, last) < 0){
+	if(cfd == nil || sys->fprint(cfd, "part %s %d %d", name, first, last + 1) < 0){
 		sys->print("EFS-SKIP part %s: %r\n", name);
 		return 0;
 	}
@@ -3354,45 +3372,27 @@ efsdoneproc(m: Command, argv: list of string, donech: chan of int)
 #
 # Mount the partition at "where", with the server left running.
 #
-# Not efsdone(): the server does not exit, it serves, so there is nothing
-# to read to EOF.  What proves it answered is the mount point becoming a
-# directory that stats.
+# The verdict comes from efs's own init(): it raises when the device will
+# not mount and RETURNS, leaving the server behind, when it will.  So this
+# is efsdone() like everything else here, and the server outlives it.
+#
+# It used to spawn the server and then poll sys->stat(where + "/.") for
+# ten seconds, which is a check that cannot fail: /n/efs exists in the
+# kernel's own root, so it stats whether or not anything is mounted on it.
+# Run under QEMU against a card with no filesystem on it, that printed
+#
+#	efs: /dev/sdN0/efs: neither superblock is good
+#	EFS-OK mounted
+#	EFS-FAIL create: permission denied
+#
+# -- EFS-OK for a filesystem that was not there, with the server's own
+# refusal three lines above it.  On the board, with no console, the marker
+# would have been the only thing anybody saw.
 #
 efsmount(part: string, where: string): int
 {
-	efs := load Command "/dis/disk/efs.dis";
-	if(efs == nil){
-		sys->print("EFS-SKIP load efs: %r\n");
-		return 0;
-	}
-	pidch := chan of int;
-	spawn cmdproc(efs, "efs" :: "-f" :: SDDEV + "/" + part :: where :: nil,
-		pidch);
-	<-pidch;
-	#
-	# Ten seconds, and the reason it is enough rather than a guess.
-	#
-	# What has to happen before the mount point stats is two block
-	# reads: superblock 0 and superblock 1, the second of them at the
-	# far end of the partition.  Making the filesystem is NOT in this
-	# window -- mkefs runs to completion under efsdone() before this is
-	# called -- and even that is about 235 block writes for a 29GB
-	# partition (two superblocks, an index block, 230 group bitmaps and
-	# a tree root), which is under a megabyte and about a fifth of a
-	# second at the 5-6MB/s this board's block layer was measured to do.
-	#
-	# So ten seconds is three orders of magnitude of slack on two reads,
-	# and if it is ever not enough the thing to look at is the SD driver
-	# and not this number.
-	#
-	for(i := 0; i < 20; i++){
-		(ok, nil) := sys->stat(where + "/.");
-		if(ok >= 0)
-			return 1;
-		sys->sleep(500);
-	}
-	sys->print("EFS-FAIL %s did not answer within ten seconds\n", where);
-	return 0;
+	return efsdone("efs", "efs" :: "-f" :: SDDEV + "/" + part ::
+		where :: nil);
 }
 
 #
@@ -3469,26 +3469,16 @@ efscrashtest(part: string): int
 		sys->print("EFS-CRASH-FAIL mkefs did not finish\n");
 		return 0;
 	}
-	efs := load Command "/dis/disk/efs.dis";
-	if(efs == nil){
-		sys->print("EFS-CRASH-FAIL load efs: %r\n");
+	if(!efsdone("efs", "efs" :: "-F" :: "12" :: "-f" :: dev ::
+			"/n/efscrash" :: nil)){
+		sys->print("EFS-CRASH-FAIL the injecting server would not mount\n");
 		return 0;
-	}
-	pidch := chan of int;
-	spawn cmdproc(efs, "efs" :: "-F" :: "12" :: "-f" :: dev ::
-		"/n/efscrash" :: nil, pidch);
-	<-pidch;
-	for(i := 0; i < 20; i++){
-		(ok, nil) := sys->stat("/n/efscrash/.");
-		if(ok >= 0)
-			break;
-		sys->sleep(500);
 	}
 	#
 	# Write until the injection stops it.  These writes are EXPECTED to
 	# fail; what is under test is what the card holds afterwards.
 	#
-	for(i = 0; i < 8; i++){
+	for(i := 0; i < 8; i++){
 		cfd := sys->create(sys->sprint("/n/efscrash/f%d", i),
 			Sys->ORDWR, 8r644);
 		if(cfd == nil)
@@ -3524,8 +3514,21 @@ efscheck()
 	# flag, and three processes on the SD driver at boot is how the
 	# contention that costs this board its ethernet timing gets worse.
 	#
+	# Waiting for a FILE, not for the directory.  /n/dos exists in the
+	# kernel's own root, so stat("/n/dos/.") succeeds the instant the
+	# board boots whether dossrv has mounted or not -- and this waited
+	# on exactly that, went straight on, found no /n/dos/efsream because
+	# nothing was mounted yet, and reported EFS-SKIP with the opt-in file
+	# sitting on the card.  kernel8.img is what fatcheck() waits for and
+	# it cannot exist unless the FAT is really there.
+	#
+	# That is twice in this one function: the mount check below had the
+	# same shape and printed EFS-OK for a filesystem the server had just
+	# refused.  On this board /n/<anything> always stats; only something
+	# INSIDE it proves a mount.
+	#
 	for(i := 0; i < 40; i++){
-		(ok, nil) := sys->stat("/n/dos/.");
+		(ok, nil) := sys->stat("/n/dos/kernel8.img");
 		if(ok >= 0)
 			break;
 		sys->sleep(500);
@@ -3562,21 +3565,68 @@ efscheck()
 	# sectors rather than two halves of two.
 	#
 	estart := (fstart + nsec + 7) & ~7;
-	cend := cards - 1 - Efscrashsec;
+	#
+	# Room for the crash partition only if there is room for both, and
+	# the check has to be made BEFORE the subtraction rather than left
+	# to efspart to notice.
+	#
+	# Written as "cards - 1 - Efscrashsec" it went negative on a 16MB
+	# card, where the firmware's FAT reaches the end and there is nothing
+	# above it: efspart refused, which is the right outcome, but it
+	# refused with "efs would be -262144 sectors, need 16384", which
+	# describes nothing.  Found by running the board's boot under QEMU,
+	# on a card an eighth the size of the real one -- a size this
+	# arithmetic had never been given.
+	#
+	crash := Efscrashsec;
+	avail := cards - estart;
+	if(avail < Efsmin){
+		sys->print("EFS-SKIP %d sectors above the FAT at %d, need %d\n",
+			avail, fstart + nsec, Efsmin);
+		return;
+	}
+	if(avail < Efsmin + crash){
+		sys->print("EFS-NOCRASH %d sectors above the FAT is not room for a filesystem and a %d-sector crash partition; the crash test is skipped\n",
+			avail, crash);
+		crash = 0;
+	}
+	cend := cards - 1 - crash;
 	if(!efspart("efs", estart, cend))
 		return;
-	if(!efspart("efscrash", cend + 1, cards - 1))
+	if(crash > 0 && !efspart("efscrash", cend + 1, cards - 1))
 		return;
-	sys->print("EFS-PART sectors %d..%d, crash partition %d..%d\n",
-		estart, cend, cend + 1, cards - 1);
+	sys->print("EFS-PART sectors %d..%d", estart, cend);
+	if(crash > 0)
+		sys->print(", crash partition %d..%d", cend + 1, cards - 1);
+	sys->print("\n");
 
+	#
+	# Ream only when the operator asked AND the sectors are empty.
+	#
+	# Both halves are load-bearing and together they make repeated boots
+	# idempotent, which is what a board that reboots all day needs: the
+	# first boot after the file is put on the card finds zeros and makes
+	# the filesystem, and every boot after that finds the filesystem it
+	# made and mounts it, so the opt-in file can be left where it is.
+	#
+	# The zero check is the same rule as the kfs gap: mkefs writes, and
+	# what it writes over had better be nobody's.  gapisclear() probes
+	# three sectors rather than all of them, which is what it can afford
+	# on every boot -- a check on the arithmetic, not a guarantee about
+	# 30GB.
+	#
 	if(sys->open("/n/dos/efsream", Sys->OREAD) != nil){
-		nb := (cend - estart + 1) / 8;
-		sys->print("EFS-REAM /n/dos/efsream is present; %d blocks\n", nb);
-		if(!efsdone("mkefs", "mkefs" :: "-n" :: string nb ::
-				SDDEV + "/efs" :: nil)){
-			sys->print("EFS-FAIL mkefs did not finish\n");
-			return;
+		if(!gapisclear(estart, cend))
+			sys->print("EFS-NOREAM sectors %d-%d are not empty; mounting what is there rather than reaming it\n",
+				estart, cend);
+		else{
+			nb := (cend - estart + 1) / 8;
+			sys->print("EFS-REAM /n/dos/efsream is present and the range is empty; %d blocks\n", nb);
+			if(!efsdone("mkefs", "mkefs" :: "-n" :: string nb ::
+					SDDEV + "/efs" :: nil)){
+				sys->print("EFS-FAIL mkefs did not finish\n");
+				return;
+			}
 		}
 	}
 	if(!efsmount("efs", "/n/efs"))
@@ -3584,7 +3634,7 @@ efscheck()
 	sys->print("EFS-OK mounted\n");
 	if(!efswork())
 		return;
-	if(efscrashtest("efscrash"))
+	if(crash > 0 && efscrashtest("efscrash"))
 		sys->print("EFS-CRASH-OK the card held the last committed state\n");
 }
 
