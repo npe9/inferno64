@@ -950,6 +950,64 @@ smscrx(b: array of byte, rxc: chan of array of byte)
 # endpoint, one transfer each, with the zero-length packet a frame
 # that is an exact multiple of maxpkt needs to be delimited
 #
+#
+# How much may ride in one bulk-out transfer.
+#
+# The receive side already batches -- the chip's Mef and Burstcap put
+# several frames in one bulk-in transfer and the counters measure 3.7 of
+# them -- and transmit was one frame per transfer.  On a 2MB read through
+# a styx mount that is 3.2 bulk-out transfers per RPC at about four
+# milliseconds each, which is most of the 20.8ms an 8KB RPC costs, and
+# most of those frames are TCP acknowledgements.
+#
+# 4KB, conservatively: the chip takes a burst of frames each with its own
+# 8-byte command header, and this is well inside its transmit FIFO.
+#
+# AND IT BUYS NOTHING FOR REQUEST-AND-REPLY TRAFFIC, which is measured and
+# worth saying rather than leaving to be re-discovered.  Over the same 2MB
+# styx read the counters afterwards read 791 bulk-out transfers for 791
+# frames -- one each, exactly as before -- because a mount with one
+# outstanding RPC never has two frames to send at once: the board sends a
+# Tread or an acknowledgement and then waits.  The drain below is
+# non-blocking on purpose, so it cannot wait for a second frame that is
+# not coming; what it does is take a backlog when there is one, and this
+# workload has none.
+#
+# Kept because it is correct, cheap and exercised on every frame, and a
+# sender with a backlog is the case it is for.  The 20.8ms an 8KB RPC
+# costs is five USB bulk transfers at about 4.4ms each, and the way to
+# fewer of them is fewer round trips, not fuller ones.
+#
+Txbatch: con 4096;
+
+txwrap(f: array of byte): array of byte
+{
+	n := len f;
+	if(kind == Ksmsc){
+		t := array[8+n] of byte;
+		a := n | Txfirst | Txlast;
+		t[0] = byte a; t[1] = byte (a>>8); t[2] = byte (a>>16); t[3] = byte (a>>24);
+		t[4] = byte n; t[5] = byte (n>>8); t[6] = byte (n>>16); t[7] = byte (n>>24);
+		t[8:] = f;
+		return t;
+	}
+	if(n < 60){
+		# minimum ethernet frame; ECM devices do not pad
+		t := array[60] of { * => byte 0 };
+		t[0:] = f;
+		return t;
+	}
+	return f;
+}
+
+#
+# transmit: frames queued by the server loop go out on the bulk-out
+# endpoint.  On the SMSC chip several may ride in one transfer, each with
+# its own command header; anything else gets one transfer per frame,
+# because without a header there is nothing to delimit them by.  The
+# zero-length packet delimits a transfer whose total length is an exact
+# multiple of maxpkt, which the device would otherwise wait for more of.
+#
 txproc()
 {
 	zlp := array[0] of byte;
@@ -957,43 +1015,51 @@ txproc()
 		f := <-txc;
 		txframes++;
 		frame0 := f;
-		n := len f;
+		b := txwrap(f);
+		nb := 1;
 		if(kind == Ksmsc){
-			t := array[8+n] of byte;
-			a := n | Txfirst | Txlast;
-			t[0] = byte a; t[1] = byte (a>>8); t[2] = byte (a>>16); t[3] = byte (a>>24);
-			t[4] = byte n; t[5] = byte (n>>8); t[6] = byte (n>>16); t[7] = byte (n>>24);
-			t[8:] = f;
-			f = t;
-		} else if(n < 60){
-			# minimum ethernet frame; ECM devices do not pad
-			t := array[60] of { * => byte 0 };
-			t[0:] = f;
-			f = t;
+			#
+			# Take whatever is ALREADY queued and no more.  A
+			# non-blocking alt, so this never waits for a second
+			# frame: batching must not add latency to the one
+			# frame it has, which is what a timed gather would do.
+			#
+			more := 1;
+			while(more && len b + 8 + 1514 <= Txbatch){
+				alt {
+				g := <-txc =>
+					txframes++;
+					w := txwrap(g);
+					t := array[len b + len w] of byte;
+					t[0:] = b;
+					t[len b:] = w;
+					b = t;
+					nb++;
+				* =>
+					more = 0;
+				}
+			}
 		}
 		t := 0;
 		if(len frame0 >= 14)
 			t = (int frame0[12] << 8) | int frame0[13];
 		if(debug){
 			if(t == 16r800 && ndump4++ < 4)
-				txdump("ip", f);
+				txdump("ip", b);
 			else if(t == 16r806 && ndump6++ < 2)
-				txdump("arp", f);
+				txdump("arp", b);
+			sys->print("etherusb: tx write %d (%d frame(s))\n", len b, nb);
 		}
-		if(debug)
-			sys->print("etherusb: tx write %d\n", len f);
 		txwrites++;
-		if(sys->write(bout.dfd, f, len f) != len f){
+		if(sys->write(bout.dfd, b, len b) != len b){
 			nwerr++;
 			lasterr = sys->sprint("%r");
 			sys->print("etherusb: %s: transmit: %r\n", dev.name);
 			continue;
 		}
 		nwrit++;
-		if(debug)
-			sys->print("etherusb: tx done %d\n", len f);
 		#
-		# ONLY when the frame is an exact multiple of maxpkt.
+		# ONLY when the transfer is an exact multiple of maxpkt.
 		#
 		# This was written without braces:
 		#
@@ -1008,13 +1074,12 @@ txproc()
 		# as correct for so long.
 		#
 		# A bulk-out transfer is about four milliseconds on this
-		# board, and the counters say transmit is one frame per
-		# transfer, so this was doubling the cost of the whole
-		# transmit path to no purpose: a ZLP is only needed to
-		# delimit a transfer the device would otherwise wait for more
-		# of, which is exactly the exact-multiple case.
+		# board, so that was doubling the cost of the whole transmit
+		# path to no purpose: a ZLP is only needed to delimit a
+		# transfer the device would otherwise wait for more of, which
+		# is exactly the exact-multiple case.
 		#
-		if(len f % outmaxpkt == 0){
+		if(len b % outmaxpkt == 0){
 			txwrites++;
 			txzlp++;
 			sys->write(bout.dfd, zlp, 0);
