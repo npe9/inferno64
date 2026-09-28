@@ -16,6 +16,9 @@ dossrv, 9660srv \- DOS/Windows and ISO 9660 file systems
 [
 .BI -S " sectors/track"
 ]
+[
+.BI -N " buffers"
+]
 .PP
 .B 9660srv
 .RB [ \-rab ]
@@ -48,6 +51,36 @@ The directory where the contents of the file system should appear; defaults to
 .TP
 .BI -S  " sectors/track"
 The number of sectors per track. The default is 9.
+A track is the unit of device I/O, so this sets how much is read or
+written at a time and, with
+.BR -N ,
+how much is cached.
+.TP
+.BI -N " buffers"
+How many tracks are cached.  The default is 20.
+.PP
+.BR -S " and " -N
+interact and the second exists so that a measurement of the first can be
+controlled: twenty 32-sector tracks is 320KB of cache where twenty
+9-sector tracks is 90KB, so varying the track size alone varies the
+cache size with it.  Over
+.I fatstress
+on a FAT32 image with 512-byte clusters, quadrupling the cache at 9
+sectors moves the device read count by 1.6 per cent, while 16-sector
+tracks nearly halve it and 32-sector tracks cut it to a third; at a FIXED
+cache budget, 32-sector tracks thrash.  Larger tracks move more bytes for
+fewer operations, and which way that trades depends on the medium.
+.PP
+At EOF
+.I dossrv
+prints one line to standard error giving the track size, the cache size,
+the number of track reads and writes it asked the device for, and how
+many of the reads were read-modify-write \(em a track fetched only so
+that the sectors the client did not write would survive being written
+back with the ones it did.  That last number is the cost of the track
+being larger than the write, and on
+.I fatstress
+it is three to six per cent of the reads.
 .PP
 .I 9660srv
 performs a similar function for files (notably CDROMs) in ISO9660 format,
