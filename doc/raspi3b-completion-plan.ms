@@ -12184,3 +12184,96 @@ has had it three lines below since the directory was created, which means
 fifteen
 .CW .m
 dependencies declared there have never once caused a rebuild.
+.NH 1
+dossrv: the read-modify-write is 3 to 6 per cent, and the server never exited
+.PP
+"Two smaller things, to fold in rather than schedule" above puts
+.CW dossrv 's
+read-modify-write first, on the strength of one
+.CW biotrace
+pair \(em
+.CW "bio r nb 9 bno 53671"
+immediately followed by a
+.CW "bio w"
+on the same blocks \(em read as roughly doubling the cost of a write.
+.B "That is wrong, and counting it says so."
+.PP
+.I Dossrv
+now counts the device I/O it asks for and separates the reads nobody
+wanted from the ones a client did.  A track is its unit of device I/O, so
+those two numbers are the whole of its cost at the block layer.  Over
+.CW "fatstress -n 3 -f 8"
+on a FAT32 image with 512-byte clusters, which is the card's shape:
+.DS
+.CW
+9-sector tracks:  1166 reads, 65 of them read-modify-write
+.R
+.DE
+Sixty-five of eleven hundred.  The pair in the trace was a client reading
+a track and then writing it \(em a read-modify-write by the program above,
+not one this server invented.
+.PP
+What the counting does show is the TRACK SIZE, and the cache size is held
+fixed as a control because a bigger track makes the cache bigger with it:
+twenty 32-sector tracks is 320KB where twenty 9-sector tracks is 90KB, so
+a measurement that varies only
+.CW -S
+varies both.
+.CW -N
+exists for that control.
+.DS
+.CW
+S=9,  20 buffers, 90KB:   1166 reads, 1540 writes
+S=9,  40 buffers, 180KB:  1147 reads, 1476 writes
+S=9,  71 buffers, 319KB:  1147 reads, 1471 writes
+S=16, 20 buffers, 160KB:   679 reads, 1010 writes
+S=32, 20 buffers, 320KB:   378 reads,  857 writes
+S=32,  6 buffers,  96KB:  1905 reads,  742 writes
+.R
+.DE
+Quadrupling the cache at 9 sectors moves the read count by 1.6 per cent,
+so what 16 and 32 sectors save is the track size and not the memory; and
+at a fixed cache budget 32-sector tracks thrash.  9 to 16 nearly halves
+the operations for 70KB more cache and 16 per cent more bytes written, and
+16 sectors is exactly the 8192 bytes a Styx write carries.
+.PP
+.B "The default is not changed."
+Fewer larger operations against more bytes written is a trade only the
+board can settle: its own write-and-verify figures put the fixed cost near
+14ms against 1.65ms for an extra 4KB, which predicts about 1.5x for
+.CW "-S 16" ,
+and a prediction is not a measurement.
+.CW "-S 16"
+is the first thing to try when the board is reachable again.
+.NH 2
+And the same non-exit bug as efs, in the same shape
+.PP
+.I Dossrv
+never exited when its client went away.  A spawned process shares its
+parent's namespace, so once the mount point was mounted the server held a
+reference to the mount whose pipe it was reading: the client exited, the
+mount did not, the pipe never reached EOF, and emu waited for a process
+that was waiting for it.
+.PP
+.CW tests/dossrv-stress.sh
+had worked around it since it was written \(em emu in the background,
+killed once
+.CW FATSTRESS-
+appeared, with a comment saying "dossrv goes on serving after fatstress
+returns".  That comment was the symptom.  The server now forks its
+namespace before the mount, with a handshake so that "before" is a fact
+rather than a race, and the caller drops its end of the pipe where the
+mount succeeds.  The suite runs emu in the foreground and reads its exit
+status, which is also how a future regression would be noticed; five cases
+pass with
+.I fsck_msdos
+clean on each.
+.PP
+Worth noticing that this is the third place the same mistake was found in
+one sitting: efs, whose server processes held its own mount; efs again, in
+the pipe-capture helper that dup'd over its caller's standard output
+because the descriptor table is shared too; and here.  The rule is that
+anything a served program spawns needs its own namespace, taken before
+the mount, and that a suite which throws away
+.IR emu 's
+exit status cannot tell a server that will not exit from slow work.
