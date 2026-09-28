@@ -185,6 +185,44 @@ Suppresses normal output file generation.
 .B \-w
 Print warning messages about unused variables, etc.
 More \f5w\fP's (e.g., \f5\-ww\fP) increase the pedantry of the checking.
+.TP
+.B \-z
+Zero newly allocated memory that the language does not otherwise
+initialise.
+Two allocations are affected, and without this flag both come back
+holding whatever was last in that memory:
+.B array[
+.IR n
+.B ]
+of a pointer-free element type, and
+.B ref
+.I T
+written without an initialiser.
+This is the contract of the
+.B newa
+and
+.B new
+instructions, not a defect \(em
+.IR dis (6)
+says of
+.B newa
+that ``space not occupied by pointers has undefined value'' \(em and
+.B \-z
+selects the
+.B newaz
+and
+.B newz
+forms, which zero it.
+Only non-pointer fields are at issue: pointers are always set to
+.B nil
+because the garbage collector walks them, which is what makes the
+omission hard to see.
+.B ref
+.IB T ( \&...\& )
+with an initialiser is unaffected, since every field is assigned
+immediately afterwards.
+.B mkfiles/mkdis
+passes this flag for the whole tree.
 .PP
 .SH FILES
 .TF /module

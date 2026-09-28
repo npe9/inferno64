@@ -1288,8 +1288,35 @@ ecom(Src *src, Node *nto, Node *n)
 			tfree(&tto);
 			break;
 		}
+		/*
+		 * "ref T" with no initialiser: the ONE new that leaves
+		 * fields unwritten, so the one that -z has to cover.
+		 *
+		 * INEW runs initmem(), which writes H into pointer slots and
+		 * touches nothing else, so an adt's int, big, byte and real
+		 * fields come back holding whatever was last in that memory.
+		 * "ref T(a, b, c)" is safe because the initialiser assigns
+		 * every field straight afterwards; this form is not, and
+		 * nothing else in the generated code makes it so.
+		 *
+		 * This is the same rule as array[n] of int, and -z already
+		 * exists for that: INEWAZ for arrays, and now INEWZ here.
+		 * The instruction, the interpreter's newz and all seven JIT
+		 * back ends were already written; the compiler simply never
+		 * emitted it, so a documented, implemented, tested zeroing
+		 * allocation sat unreachable.
+		 *
+		 * It was not academic.  A "ref Fs" in appl/lib/efs.b came
+		 * back with a block cursor of 18193664 on the third of three
+		 * otherwise identical runs, and a "ref Dev" came back with
+		 * the crash harness's write-injection counter already set,
+		 * so mkefs refused its own write and left an image with no
+		 * superblock -- a program with no injection flag, injecting
+		 * a failure.  Both read as bugs in the code being written at
+		 * the time.
+		 */
 		if(left->op == Oname && left->decl->store == Dtype){
-			genrawop(src, INEW, mktn(t), nil, nto);
+			genrawop(src, arrayz ? INEWZ : INEW, mktn(t), nil, nto);
 			break;
 		}
 		if(t->kind == Tadt && t->tags != nil){

@@ -19,6 +19,21 @@ SYS_MODULE=${SYSMODULES:%=$MODDIR/%}
 #	-- 20/25 boots, identical address every time). See doc/inferno-
 #	ports.ms.
 #
+#	-z now also covers "ref T" with no initialiser, which has the
+#	same contract and was the half nobody had noticed: INEW writes H
+#	into an adt's pointer fields and leaves its int, big, byte and
+#	real fields holding whatever was last in that memory.  Measured,
+#	six fresh "ref A" in a row:
+#
+#	    without -z:  18521472/4313488768 18521856/4313489152 ...
+#	    with -z:     0/0 0/0 0/0 0/0 0/0 0/0
+#
+#	Those are heap addresses, so a stale field reads as a large
+#	plausible number rather than as obvious rubbish.  In appl/lib/efs.b
+#	it was a block cursor of 18193664 on a 256-block filesystem, on
+#	the third of three identical runs, and a write-injection counter
+#	that made mkefs refuse its own write.
+#
 LIMBOFLAGS=-I$MODDIR -W $DISWORD -z
 
 #
