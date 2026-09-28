@@ -12571,3 +12571,77 @@ reports
 own failure instead of turning it into "no banner"; and the ring is read six
 times over two minutes rather than thirty over three, because each read
 halts the core where a console hardcopy costs the board nothing.
+.NH 1
+The compiler change, cleared across every board
+.PP
+.CW "limbo -z"
+covering
+.CW "ref T"
+rebuilt every
+.CW .dis
+in the tree, and only the two Pi 3B arms had been run against it.  Every
+kernel the suite covers was relinked and the whole suite run:
+.DS
+.CW
+23 of 27 arms ok on the first pass; 26 of 27 after two fixes
+.R
+.DE
+virtarm64 and its ten variants, virt, virts, virt32, virt32s, virt-peer,
+peer-mixed, sifiveu, sifiveu-stdout, raspi4, raspi4-hot, raspi4-2eth,
+raspi4-usb and three raspi3b arms.
+.B "The compiler change broke nothing."
+.PP
+.B "And raspi4 was mounting a USB stick over its card's FAT."
+.CW raspi4init.b
+mounted the stick at
+.CW /n/dos ,
+which is where
+.CW fatcheck()
+mounts the card and where
+.I kupdate
+writes the kernel.  With MREPL the stick covers the card, so a raspi4 with
+a stick plugged in could take its kernel update onto the stick and leave
+the card as it was \(em and the only sign would be a board that keeps
+booting the old kernel.
+.CW raspi3binit.b
+uses
+.CW /n/usb
+and this had not been changed with it; the arm's evidence line had said
+.CW /n/usb
+all along and had been failing on it since.
+.PP
+Two markers are recorded as expected rather than chased.
+.CW AUXSPI-FAIL
+is a known
+.CW -FAIL
+on the four Pi arms because the board settled it: on silicon the same
+self-test prints
+.CW "AUXSPI-OK gate, FIFO levels, and an 8-bit transaction" ,
+so the field
+.CW auxspibcm.c
+reads works on the chip and the emulator's model is what differs.  And the
+timing markers pass on an idle host: they had been failing while this
+machine was building kernels and running QEMU, which is the one-sided error
+the suite's retry exists for, so a run that fails them is a busy machine
+and not a regression.
+.PP
+.CW raspi3b-usb
+is the one arm still failing, on
+.CW DNS-OK ,
+.CW CS-NAME-OK
+and
+.CW TIME-NONE .
+The Pi arms reach the network through QEMU's user-mode stack; the board
+prints
+.CW CS-OK
+and then
+.CW "TIME-TRY udp!10.0.2.2!ntp" ,
+where slirp runs no NTP server, and the two name markers never arrive at
+all although the host's own resolver answers.  Stopping the boot early was
+ruled out \(em
+.CW TIME-
+was added to that arm's
+.CW config_last
+and the markers still do not appear \(em and they are left in the baseline
+rather than recorded absent, because they are in it from a host where they
+did appear and removing them would hide the day they come back.
