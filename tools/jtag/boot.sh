@@ -176,7 +176,8 @@ while [ $try -le 4 ]; do
 		was=`banners`
 	fi
 	timeout 180 openocd -f "$IFACE" -f "$ROOT/tools/jtag/raspi3b.cfg" \
-		-c init -c "jtagrestart $IMG" -c "mww $nat 0" -c resume -c shutdown \
+		-c init -c "jtagrestart $IMG" -c "mww $nat 0" -c "mdw $nat" \
+		-c resume -c shutdown \
 		>"$S/openocd.txt" 2>&1
 	LC_ALL=C grep -i 'stub at\|Error:' "$S/openocd.txt" | head -5
 	#
@@ -216,6 +217,31 @@ while [ $try -le 4 ]; do
 		echo "boot: CORE is stuck, not just the sticky bit." >&2
 		echo "boot: this needs the Pi POWER CYCLED; not retrying." >&2
 		exit 2
+	fi
+	#
+	# The clear has to be SEEN to have landed, or this check turns a
+	# false failure into a false pass.
+	#
+	# Presence in the ring is only proof because the ring was zeroed
+	# first.  If the mww silently does not stick -- and every attempt
+	# at it so far died for unrelated reasons, so "it works" was an
+	# assumption -- then a load that never starts leaves the PREVIOUS
+	# boot's conf line in the ring, presence matches, and this reports
+	# a kernel that is not running as running.  kinstall decides
+	# whether it may write the card on this answer, so that is the
+	# expensive direction to be wrong in.
+	#
+	# So the same openocd invocation reads the word back and the value
+	# must be zero.  A read-back is not a strong instrument in general
+	# -- it cannot tell a write that stuck from a cache that answered
+	# -- but the failure being guarded against here is openocd not
+	# writing at all, which it does catch.
+	#
+	if [ "$VIA" = kmesg ] &&
+	   ! LC_ALL=C grep -q "`printf '0x%08x' $nat`: 00000000" "$S/openocd.txt"; then
+		echo "boot: the log ring was not cleared; refusing to read it" >&2
+		LC_ALL=C grep -i "`printf '0x%08x' $nat`\|mww" "$S/openocd.txt" | head -3 >&2
+		exit 3
 	fi
 	i=0
 	while [ $i -lt 30 ]; do
