@@ -165,14 +165,42 @@ silent; and a free map of two groups, written across the 32768-block
 boundary.
 .PP
 .B Never run on the board.
-The binaries are in the raspi3b kernel and the partition arithmetic is
-printed, but no
-.I efs
-has been made on the card, nothing boots from one, and
-.I kfs
-is still what
 .B raspi3binit.b
-reams.
+now has an
+.B efscheck()
+that makes the partition above the firmware's FAT, reams it when
+.B /n/dos/efsream
+is present, mounts it at
+.BR /n/efs ,
+and prints
+.BR EFS-PART ,
+.BR EFS-OK ,
+.BR EFS-WRITE-OK ,
+.B EFS-RENAME-OK
+and
+.BR EFS-CRASH-OK .
+It compiles and it is in the kernel.  NONE of it has executed: the board
+was unreachable while it was written, so the partition arithmetic, the
+mount and the on-card crash test are untried, and
+.I kfs
+is still what that file reams.
+.PP
+One piece of it was tested, under
+.I emu
+and away from the board: the verdict a command gives.
+.B efsdone()
+takes it from whether
+.IR mkefs 's
+or
+.IR efsck 's
+.B init()
+returned or raised, not from what it printed, and that was checked against
+a clean image and three controls that must fail \(em
+.I efsck
+on
+.BR /dis/sh.dis ,
+on an absent file, and on an image whose two superblocks had been
+overwritten.
 .PP
 .B The allocation rate is still high, and half what it was.
 A workload whose live data is a few hundred kilobytes churns through the

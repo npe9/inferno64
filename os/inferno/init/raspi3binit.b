@@ -2848,6 +2848,7 @@ init()
 	#
 	spawn sdfs();
 	spawn fatcheck();
+	spawn efscheck();
 
 	shell = load Shell "/dis/sh.dis";
 	if(shell == nil){ sys->print("init: load sh: %r\n"); exit; }
@@ -3254,6 +3255,321 @@ remoteaddrs(): list of string
 	for(l = rev; l != nil; l = tl l)
 		addrs = hd l :: addrs;
 	return addrs;
+}
+
+#
+# efs on the card: the partition above the firmware's FAT.
+#
+# doc/efs-format.ms and man/4/efs describe the filesystem; this is the
+# only place it meets real hardware.  Everything either of those claims
+# was established under emu on a host against an image file, and an image
+# file is not a card: it does not take 250ms to program a block, it does
+# not lie about its capacity, and it does not lose a write and return
+# success.
+#
+# The layout is the space the firmware does not use.  The FAT32
+# partition's start and length come from the partition table, not from
+# memory of this particular card -- the rule sdfs() learned when a
+# hardcoded gap reamed a filesystem.  efs gets everything above it bar a
+# tail for the crash test, which needs a filesystem it is allowed to ruin.
+#
+Efsmin:		con 16384;	# sectors: 8MB, enough to be a filesystem
+Efscrashsec:	con 262144;	# sectors: 128MB at the top of the card
+
+#
+# A partition, made only if the sectors it covers read as zeros.
+#
+# Same rule as the kfs gap and for the same reason: mkefs writes, and
+# what it writes over had better be nobody's.  gapisclear() probes three
+# sectors rather than all of them, which is what it can afford on every
+# boot; that is a check on this arithmetic, not a guarantee about 30GB.
+#
+efspart(name: string, first, last: int): int
+{
+	if(last - first + 1 < Efsmin){
+		sys->print("EFS-SKIP %s would be %d sectors, need %d\n",
+			name, last - first + 1, Efsmin);
+		return 0;
+	}
+	if(!gapisclear(first, last)){
+		sys->print("EFS-SKIP sectors %d-%d are not empty; not reaming them\n",
+			first, last);
+		return 0;
+	}
+	cfd := sys->open(SDDEV + "/ctl", Sys->ORDWR);
+	if(cfd == nil || sys->fprint(cfd, "part %s %d %d", name, first, last) < 0){
+		sys->print("EFS-SKIP part %s: %r\n", name);
+		return 0;
+	}
+	return 1;
+}
+
+#
+# Run one efs program and take its verdict from whether it RAISED.
+#
+# Not from what it printed.  The first version of this captured the
+# child's output through a pipe -- dup the write end onto 1 and 2, read
+# to EOF, grep -- and it hung on the first try and printed nothing at
+# all: a spawned process shares its parent's descriptor table, so the dup
+# replaced the CALLER's standard output too, and when the child exited
+# the shared entries still held the write end because the parent was
+# alive.  EOF never came.  Giving the child its own table fixed that
+# half and the read still never ended.
+#
+# The programs already say what happened in the way Limbo says things.
+# mkefs calls fail(), which raises; efsck raises fail:dirty or
+# fail:unmountable and RETURNS when the filesystem is clean.  So the
+# verdict is "did init() come back", which needs no pipe, no dup and no
+# string matching -- and the child's own output still reaches the console,
+# so whatever it complained about is there to read.
+#
+# Verified under emu with three negative controls: a clean image gives 1;
+# efsck on /dis/sh.dis, on an absent file, and on an image whose two
+# superblocks were overwritten all give 0.
+#
+efsdone(what: string, argv: list of string): int
+{
+	m := load Command "/dis/disk/" + what + ".dis";
+	if(m == nil){
+		sys->print("EFS-SKIP load %s: %r\n", what);
+		return 0;
+	}
+	donech := chan of int;
+	spawn efsdoneproc(m, argv, donech);
+	return <-donech;
+}
+
+efsdoneproc(m: Command, argv: list of string, donech: chan of int)
+{
+	{
+		m->init(nil, argv);
+		donech <-= 1;
+	}exception e{
+	"*" =>
+		sys->print("EFS-EXCEPTION %s\n", e);
+		donech <-= 0;
+	}
+}
+
+#
+# Mount the partition at "where", with the server left running.
+#
+# Not efsdone(): the server does not exit, it serves, so there is nothing
+# to read to EOF.  What proves it answered is the mount point becoming a
+# directory that stats.
+#
+efsmount(part: string, where: string): int
+{
+	efs := load Command "/dis/disk/efs.dis";
+	if(efs == nil){
+		sys->print("EFS-SKIP load efs: %r\n");
+		return 0;
+	}
+	pidch := chan of int;
+	spawn cmdproc(efs, "efs" :: "-f" :: SDDEV + "/" + part :: where :: nil,
+		pidch);
+	<-pidch;
+	for(i := 0; i < 20; i++){
+		(ok, nil) := sys->stat(where + "/.");
+		if(ok >= 0)
+			return 1;
+		sys->sleep(500);
+	}
+	sys->print("EFS-FAIL %s did not answer within ten seconds\n", where);
+	return 0;
+}
+
+#
+# What a filesystem has to do, on the card, at boot.
+#
+# The markers are separate on purpose: a filesystem that mounts and
+# cannot write is a different failure from one that writes and cannot
+# rename, and rename is where dossrv failed on this board and what
+# kupdate does to the kernel on every update.
+#
+efswork(): int
+{
+	fd := sys->create("/n/efs/boot.txt", Sys->ORDWR, 8r644);
+	if(fd == nil){
+		sys->print("EFS-FAIL create: %r\n");
+		return 0;
+	}
+	msg := array of byte "written by the board\n";
+	if(sys->write(fd, msg, len msg) != len msg){
+		sys->print("EFS-FAIL write: %r\n");
+		return 0;
+	}
+	fd = nil;
+	fd = sys->open("/n/efs/boot.txt", Sys->OREAD);
+	if(fd == nil){
+		sys->print("EFS-FAIL reopen: %r\n");
+		return 0;
+	}
+	buf := array[len msg] of byte;
+	if(sys->read(fd, buf, len buf) != len buf || string buf != string msg){
+		sys->print("EFS-FAIL what came back is not what went in\n");
+		return 0;
+	}
+	fd = nil;
+	sys->print("EFS-WRITE-OK %d bytes back byte for byte\n", len msg);
+
+	#
+	# Rename, onto a name that existed a moment ago.  That second half
+	# is the one this board needs: kupdate renames the new kernel over
+	# the old one, and dossrv's rename silently degraded to a copy.
+	#
+	sys->remove("/n/efs/old.txt");	# absent on the first boot; fine
+	d := sys->nulldir;
+	d.name = "old.txt";
+	if(sys->wstat("/n/efs/boot.txt", d) < 0){
+		sys->print("EFS-FAIL rename: %r\n");
+		return 0;
+	}
+	(rok, dir) := sys->stat("/n/efs/old.txt");
+	if(rok < 0 || dir.length != big len msg){
+		sys->print("EFS-FAIL the renamed file is absent or the wrong length\n");
+		return 0;
+	}
+	sys->print("EFS-RENAME-OK\n");
+	return 1;
+}
+
+#
+# The crash test, on the card rather than on an image.
+#
+# tests/efs-crash.sh does this sixty times on the host; here it is once,
+# on real media, because what an image cannot reproduce is a card that
+# takes its own time to program a block.  "efs -F 12" refuses every write
+# after the twelfth -- the same injection the host harness drives -- and
+# then the filesystem must mount and efsck must be silent.
+#
+# On its own partition.  A crash test sharing a filesystem with anything
+# worth keeping is not a test, it is an accident.
+#
+efscrashtest(part: string): int
+{
+	dev := SDDEV + "/" + part;
+	if(!efsdone("mkefs", "mkefs" :: "-n" :: "16384" :: dev :: nil)){
+		sys->print("EFS-CRASH-FAIL mkefs did not finish\n");
+		return 0;
+	}
+	efs := load Command "/dis/disk/efs.dis";
+	if(efs == nil){
+		sys->print("EFS-CRASH-FAIL load efs: %r\n");
+		return 0;
+	}
+	pidch := chan of int;
+	spawn cmdproc(efs, "efs" :: "-F" :: "12" :: "-f" :: dev ::
+		"/n/efscrash" :: nil, pidch);
+	<-pidch;
+	for(i := 0; i < 20; i++){
+		(ok, nil) := sys->stat("/n/efscrash/.");
+		if(ok >= 0)
+			break;
+		sys->sleep(500);
+	}
+	#
+	# Write until the injection stops it.  These writes are EXPECTED to
+	# fail; what is under test is what the card holds afterwards.
+	#
+	for(i = 0; i < 8; i++){
+		cfd := sys->create(sys->sprint("/n/efscrash/f%d", i),
+			Sys->ORDWR, 8r644);
+		if(cfd == nil)
+			break;
+		b := array[4096] of {* => byte i};
+		if(sys->write(cfd, b, len b) != len b)
+			break;
+	}
+	#
+	# Drop the crashed server and verify in a process that never saw it.
+	#
+	sys->unmount(nil, "/n/efscrash");
+	if(!efsdone("efsck", "efsck" :: dev :: nil)){
+		sys->print("EFS-CRASH-FAIL efsck would not call it clean\n");
+		return 0;
+	}
+	return 1;
+}
+
+#
+# Phase: efs on the card.
+#
+# /n/dos/efsream on the FAT partition is the opt-in for making a NEW
+# filesystem.  Without it this mounts what is already there and says so
+# if there is nothing -- because a filesystem that reams itself at boot
+# is a test and not storage, which is the whole reason mkefs is a
+# separate program.
+#
+efscheck()
+{
+	#
+	# Behind the FAT mount, not beside it.  /n/dos holds the opt-in
+	# flag, and three processes on the SD driver at boot is how the
+	# contention that costs this board its ethernet timing gets worse.
+	#
+	for(i := 0; i < 40; i++){
+		(ok, nil) := sys->stat("/n/dos/.");
+		if(ok >= 0)
+			break;
+		sys->sleep(500);
+	}
+	(fstart, nsec) := fatpart();
+	if(nsec == 0){
+		sys->print("EFS-SKIP no partition table to place a filesystem after\n");
+		return;
+	}
+	cfd := sys->open(SDDEV + "/ctl", Sys->OREAD);
+	if(cfd == nil){
+		sys->print("EFS-SKIP cannot open %s/ctl: %r\n", SDDEV);
+		return;
+	}
+	cb := array[2048] of byte;
+	n := sys->read(cfd, cb, len cb);
+	if(n <= 0){
+		sys->print("EFS-SKIP cannot read %s/ctl: %r\n", SDDEV);
+		return;
+	}
+	cards := 0;
+	(nil, lines) := sys->tokenize(string cb[0:n], "\n");
+	for(; lines != nil; lines = tl lines){
+		(nt, toks) := sys->tokenize(hd lines, " \t");
+		if(nt >= 2 && hd toks == "geometry")
+			cards = int hd tl toks;
+	}
+	if(cards <= 0){
+		sys->print("EFS-SKIP the ctl file reports no geometry\n");
+		return;
+	}
+	#
+	# Above the FAT, 4KB aligned so one efs block is one run of eight
+	# sectors rather than two halves of two.
+	#
+	estart := (fstart + nsec + 7) & ~7;
+	cend := cards - 1 - Efscrashsec;
+	if(!efspart("efs", estart, cend))
+		return;
+	if(!efspart("efscrash", cend + 1, cards - 1))
+		return;
+	sys->print("EFS-PART sectors %d..%d, crash partition %d..%d\n",
+		estart, cend, cend + 1, cards - 1);
+
+	if(sys->open("/n/dos/efsream", Sys->OREAD) != nil){
+		nb := (cend - estart + 1) / 8;
+		sys->print("EFS-REAM /n/dos/efsream is present; %d blocks\n", nb);
+		if(!efsdone("mkefs", "mkefs" :: "-n" :: string nb ::
+				SDDEV + "/efs" :: nil)){
+			sys->print("EFS-FAIL mkefs did not finish\n");
+			return;
+		}
+	}
+	if(!efsmount("efs", "/n/efs"))
+		return;
+	sys->print("EFS-OK mounted\n");
+	if(!efswork())
+		return;
+	if(efscrashtest("efscrash"))
+		sys->print("EFS-CRASH-OK the card held the last committed state\n");
 }
 
 #

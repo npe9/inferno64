@@ -129,6 +129,8 @@ root
 	/fd	/
 	/n	/
 	/n/bt	/
+	/n/efs	/
+	/n/efscrash	/
 	/n/dos	/
 	/n/remote	/
 	/n/usb	/
@@ -204,6 +206,10 @@ root
 	/dis/lib/timers.dis
 	/dis/unmount.dis
 	/dis/dossrv.dis
+	/dis/disk/efs.dis
+	/dis/disk/mkefs.dis
+	/dis/disk/efsck.dis
+	/dis/lib/efs.dis
 	/dis/disk/kfs.dis
 	/dis/disk/kfs64.dis
 	/dis/lib/disks.dis
