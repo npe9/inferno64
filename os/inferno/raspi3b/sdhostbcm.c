@@ -1635,6 +1635,25 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 			print("sdhost: multiverify wants 1..4096 blocks\n");
 			return 0;
 		}
+		/*
+		 * A card too small for the range asked for is a SKIP, not a
+		 * failure.  raspi3binit.b drives this at sector 2900000,
+		 * which is 1.4GB in and past the end of a 16MB card -- so
+		 * under QEMU's small card every arm printed
+		 *
+		 *   MULTIVERIFY-FAIL 64 blocks at 2900000: ... MISMATCH
+		 *
+		 * six times over, from a test that could not have passed.  A
+		 * check that fails for want of somewhere to run reports
+		 * nothing about the driver, and it takes a real failure's
+		 * name while doing it.
+		 */
+		if(u->sectors && bno + nb > u->sectors){
+			print("sdhost: MULTIVERIFY-SKIPPED %ld blocks at %llud"
+				" is past the end of a %llud-sector card\n",
+				nb, bno, u->sectors);
+			return 0;
+		}
 		if((buf = malloc(nb*Secsize)) == nil){
 			print("sdhost: multiverify no memory\n");
 			return 0;

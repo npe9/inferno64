@@ -714,16 +714,34 @@ config_evidence() {
 	case $1 in
 	raspi3b)
 		# Byte addressing is a CSD v1 (standard-capacity) card and
-		# block addressing a v2 one; the clock is the firmware's
-		# EMMC clock, asked for through the mailbox.
-		echo 'emmc: card rca 0x[0-9a-f]+ byte 32768 sectors, clock 50000000 Hz'
+		# block addressing a v2 one.
+		# SDHOST, not the Arasan.  SDDEV in raspi3binit.b names
+		# sdN0 because that is the controller a real Pi 3B wants --
+		# the Arasan carries the Wi-Fi -- and these lines said
+		# "emmc:" from a baseline recorded before that change, so
+		# they could not be produced by the committed tree and the
+		# arm failed on evidence whatever else it did.
+		#
+		# The width is asserted as well now.  QEMU's SDHOST model
+		# never told the card the host's width, so every data
+		# transfer was refused and the card could be identified and
+		# not read; tools/qemu-patches/0027 fixes that, and a run
+		# that goes back to one line would read as this arm losing
+		# its card again.
+		echo 'sdhost: card rca 0x[0-9a-f]+ byte 32768 sectors, core clock 350000000 Hz, 4-bit'
 		echo 'FAT-OK /n/dos/kernel8\.img is 39 bytes'
 		echo 'SD-MULTI-OK 32768 bytes, last block matches it read alone \(eb3c90'
 		;;
 	raspi3b-4g)
-		echo 'emmc: card rca 0x[0-9a-f]+ block 8388608 sectors, clock 50000000 Hz'
+		echo 'sdhost: card rca 0x[0-9a-f]+ block 8388608 sectors, core clock 350000000 Hz, 4-bit'
 		echo 'FAT-OK /n/dos/kernel8\.img is 39 bytes'
 		echo 'SD-MULTI-OK 32768 bytes, last block matches it read alone \(eb58'
+		# And the filesystem above the FAT, which only this arm has
+		# room for.  The crash marker is the one worth having: it is
+		# the injected write failure, a remount and efsck, on media
+		# rather than on an image file.
+		echo 'EFS-WRITE-OK 21 bytes back byte for byte'
+		echo 'EFS-CRASH-OK the card held the last committed state'
 		;;
 	raspi4-2eth)
 		# The same two lines as raspi3b-2eth: what this arm adds
@@ -732,7 +750,7 @@ config_evidence() {
 		echo 'ETHERUSB serving /net\.alt/ether1 mac 525400123458 \(CDC ECM'
 		echo 'ETHER2-ADDR-OK ip=10\.0\.3\.15 gw=10\.0\.3\.2';;
 	raspi3b-2eth)
-		echo 'emmc: card rca 0x[0-9a-f]+ byte 32768 sectors, clock 50000000 Hz'
+		echo 'sdhost: card rca 0x[0-9a-f]+ byte 32768 sectors, core clock 350000000 Hz, 4-bit'
 		# Both adapters, named apart, and the second one carrying
 		# traffic.  The MACs distinguish them, and the invocation
 		# names both rather than letting QEMU derive them from
@@ -2224,12 +2242,43 @@ status=0
 # One boot of one configuration.  Leaves the log, the marker set, the
 # diff and the missing-evidence list in $work, and echoes the reasons it
 # failed -- empty means it passed.
+# The card file a configuration uses, or nothing.
+config_cardfile() {
+	set -- `config_card $1`
+	[ -n "$1" ] && echo "$work/$1"
+}
+
 attempt() {
 	c=$1
 	log="$work/$c.log"
 	got="$work/$c.markers"
 	base="$here/$c.markers"
 	rm -f "$log"
+	#
+	# A FRESH card for every attempt, not one per run.
+	#
+	# These boards write to their cards -- kfs reams the gap below the
+	# FAT, efs makes a filesystem above it, dossrv renames a file -- so a
+	# second boot on the same card is a different filesystem state, and
+	# the markers differ for reasons that are correct:
+	#
+	#	SD-FS skipped: sectors 1-16383 are not empty
+	#	EFS-NOREAM sectors 147456-8126463 are not empty
+	#
+	# Both are the right answer on a card that already holds the thing;
+	# neither is what the baseline records.  A failing configuration is
+	# booted once more, so whenever any other marker fails the kept log is
+	# the SECOND boot's, and SD-FS-CREATE-OK was missing from every run of
+	# this suite that did not pass first time.  Reusing a card between
+	# runs had the same effect one step further out: the baseline was only
+	# reproducible on the very first run after the card was made.
+	#
+	# The README said cards were reused for speed.  Making one is a sparse
+	# dd and, for the FAT arms, a newfs -- seconds, against a boot of two
+	# to five minutes.
+	#
+	rm -f `config_cardfile $c`
+	makecard `config_card $c`
 	last=`config_last $c`
 	if ! freshstick "$c"; then
 		echo "no way to make a FAT16 image here (hdiutil, or mkfs.vfat and mcopy)"
