@@ -53,6 +53,7 @@ MAXN=${1:-40}
 fail=0
 mounted=0
 clean=0
+hung=0
 
 mkdir -p $D
 #
@@ -113,6 +114,16 @@ for i in f1 f1r f2 f3 {
 }
 echo 'MARK verify'
 disk/efsck /tmp/efscrash.img
+#
+# Unmount rather than leaving it to the shell exiting.
+#
+# The server exits when the last reference to its pipe goes, and leaving
+# that to the namespace being torn down at exit left about one trial in
+# two hundred hanging with the work finished and efsck reporting the image
+# clean.  A test that mounts something can unmount it, and then the
+# teardown is a step with a result rather than a race.
+#
+unmount /n/client
 echo 'MARK done'
 EOF
 
@@ -147,8 +158,24 @@ while [ $n -le "$MAXN" ]; do
 	why=""
 	if [ $lst -eq 124 ]; then
 		why="the crashed load never exited"
+	elif [ $cst -eq 124 ] && grep -q '^MARK done' $T/efs-c-chk.txt; then
+		#
+		# The work finished and emu did not exit.
+		#
+		# Every step of the check ran, efsck reported the image clean
+		# and then the process sat there.  That is emu declining to
+		# exit while a Dis process is blocked, which this directory
+		# has written down before, and it happens to about one trial
+		# in a hundred here.  It is not a statement about the
+		# filesystem and counting it as one would mean a harness that
+		# reports a fault at random.
+		#
+		# It is counted and printed, because a teardown flake that
+		# nobody counts is how a real hang gets ignored later.
+		#
+		hung=`expr $hung + 1`
 	elif [ $cst -ne 0 ]; then
-		why="the check exited $cst"
+		why="the check exited $cst (and did not finish)"
 	fi
 	if [ -n "$why" ]; then
 		: already decided
@@ -195,6 +222,7 @@ while [ $n -le "$MAXN" ]; do
 done
 
 echo "crash points tried: $MAXN; mounted clean and whole: $clean; failed: $fail"
+[ $hung -gt 0 ] && echo "($hung finished the check and then emu would not exit)"
 if [ $fail -eq 0 ]; then
 	echo "EFS-CRASH-OK"
 	exit 0

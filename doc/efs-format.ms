@@ -422,5 +422,15 @@ showed the live count falling from 41516 to 5835 inside one run \(em but
 it is still a rate worth reducing, and on a board with 1GB it will
 matter before it matters here.
 .IP \(bu
+.B "A checksum cannot tell a block from another copy of itself."
+Every block has one and it is checked on read, but it is computed over
+that block's own bytes and recorded nowhere else, so an internally
+consistent block passes even when it is the wrong block or an old version
+of the right one.  Data blocks have none at all.  The fix is the
+parent-records-child arrangement the FS-PI work above describes \(em
+block number in the node header, child checksum in the interior entry,
+data checksum in the extent record, root checksum in the superblock \(em
+which is a version bump and is not done.
+.IP \(bu
 .B "Past 64GB the index needs a second level."
 Refused, not truncated.

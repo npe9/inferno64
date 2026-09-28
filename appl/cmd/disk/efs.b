@@ -229,6 +229,18 @@ init(nil: ref Draw->Context, argv: list of string)
 	#
 	if(sys->mount(fds[1], nil, mountpt, flags|Sys->MCREATE, nil) < 0)
 		fail(sys->sprint("mount %s: %r", mountpt));
+	#
+	# Drop this end of the pipe HERE, not whenever the collector gets
+	# round to the array holding it.
+	#
+	# The mount has its own reference; this one is the caller's, and
+	# while it lives the pipe cannot reach EOF, so the server cannot
+	# exit and neither can emu.  Leaving it to init() returning is
+	# leaving it to the collector, and that showed as about one run in
+	# twenty hanging at a random crash point with efsck reporting the
+	# image clean -- a server still running after all its work was done.
+	#
+	fds[1] = nil;
 }
 
 #

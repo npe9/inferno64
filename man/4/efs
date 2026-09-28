@@ -186,6 +186,22 @@ is a test hook in a production program.  It sets where the allocator
 starts; it does not prove that the allocator REACHES the high groups by
 filling the low ones, which nothing yet does.
 .PP
+.B "A checksum cannot tell a block from another copy of itself."
+Every block carries one and it is verified on read, but it is computed
+over that block's own bytes and recorded nowhere else, so a block that is
+internally consistent passes even when it is the wrong block \(em a
+write that landed at another address \(em or an old version of the right
+one, which is what a card with a failing translation layer produces.
+Data blocks carry no checksum at all: they are 4096 bytes of data with no
+room for one.
+.PP
+The fix is for a parent to record its child: the block number bound into
+the node header, the child's checksum in the interior entry that points
+at it, the data block's checksum in the extent record, the root's in the
+superblock.  Then nothing is trusted on its own account and the
+superblocks, which have to be, are two with generations.  It is a format
+version bump and it has NOT been done.
+.PP
 An overlong
 .I pendingfree
 list is refused rather than spilled to a block of its own, which the
