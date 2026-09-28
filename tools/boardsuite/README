@@ -981,3 +981,43 @@ out of the same logs -- grep for them by name -- they just are not
 evidence of anything passing.  If you add an informational line and
 wonder why the count did not change, this is why, and it is the answer
 you wanted.
+
+THE RASPI3B ARMS AND WHAT THEY NOW COVER.  Until tools/qemu-patches/0027
+the SD driver these boards actually use could not transfer a block under
+emulation.  bcm2835_sdhost never told the card the host's bus width, so
+patch 0017's check refused every data transfer: the card was identified and
+then no read succeeded, the board found no partition table, and SD-OK,
+FAT-OK and everything past them were absent.  Nobody noticed because the
+baseline had been recorded when SDDEV in raspi3binit.b still named the
+Arasan, so the evidence line said "emmc:" and the arm failed on evidence
+whatever else it did.  With the patch the four Pi 3B arms read and write
+their cards, mount FAT32, and the 4GB one makes, mounts, writes, renames
+and crash-tests an efs filesystem in the space above the FAT.
+
+The baselines changed with it:
+
+	FAT-BIG-OK is gone from all four.  fatbigok in raspi3binit.b is a
+	  hardcoded 0 -- "off while the card is suspect" -- so the committed
+	  tree cannot produce that marker, and the baseline had been
+	  recorded with a local edit that set it.  This is the same mistake
+	  as the SDDEV one and the sifiveu one above: a baseline is only
+	  worth having if the committed tree can reproduce it.
+	raspi3b-4g gains EFS-OK, EFS-WRITE-OK, EFS-RENAME-OK, EFS-CRASH-OK
+	  and MULTIVERIFY-OK.  It is the only card with room above its FAT,
+	  so it carries the efsream opt-in and it is where the filesystem
+	  work gets exercised.
+
+Two differences are left and neither is recorded as expected:
+
+	AUXSPI-FAIL.  The self-test now requires data to move rather than a
+	  register to read back, and under QEMU the RX FIFO stays empty --
+	  but STAT says otherwise (0x1020c is one word at Linux's RX_LVL
+	  position) and auxspibcm.c reads that field four bits too high.
+	  Which end is wrong is a question for the board, and
+	  doc/raspi3b-completion-plan.ms has it; recording either answer
+	  now would be recording a guess.
+	ARMTIMER, ARMTIMER-INTR and SYSTMR fail on a loaded host, which is
+	  the one-sided error the retry above exists for.  Recording a
+	  baseline from a starved run is the thing that must not happen, so
+	  these were left as the earlier, idle-host run had them.  A
+	  re-record wants an idle machine.
