@@ -1,0 +1,110 @@
+From 2b936a81f5e381af492e7fb658c00668364b23e6 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Mon, 28 Sep 2026 12:40:05 -0400
+Subject: [PATCH] hw/sd/bcm2835_sdhost: tell the card the host's bus width, and
+ let SDHCFG be read
+
+Two defects, both of which stopped a guest driver from reading a single
+block through SDHOST.
+
+The bus width is the one that mattered.  "sd: refuse a data transfer whose
+two ends disagree about bus width" gave the card the host's width and
+refuses a transfer when the two disagree, and hooked it into sdhci only.
+bcm2835_sdhost never called sdbus_set_bus_width(), so the card-side width
+from ACMD6 was compared against a host that had said nothing, which reads
+as one line, and every data transfer on this controller was refused:
+
+    SD: CMD17 in a wrong state: transfer (spec v3.01)
+    sd_bus_width_agrees: CMD17 data transfer with the host driving 1 DAT
+      line(s) and the card set to 4; ACMD6 and the host's bus width disagree
+
+A guest that had done everything right -- ACMD6, then SDHCFG's WIDE_EXT_BUS
+and WIDE_INT_BUS -- got CMD_TIME_OUT on every read.  The width is now set
+where SDHCFG is written, the way sdhci sets it where hostctl1 is written,
+and on reset where config is cleared, so a four-bit belief in the card does
+not outlive a reset and refuse everything after it.
+
+And SDHCFG and SDARG are stored by the write path and were missing from
+the read path, so reading either produced "Bad offset" and zero.  Both are
+R/W in the BCM2835 documentation.  A driver that prints its own
+configuration register to report how it has set the bus up said
+
+    sdhost: card rca 0x3fd3 byte 32768 sectors, ... 4-bit, sdhcfg 0x0
+
+-- a bus it had in fact set up, described from a register that always read
+zero.  With both fixed the same driver reports sdhcfg 0x41e and reads the
+card.
+
+Checked against the Inferno raspi3b port, whose SD driver uses SDHOST
+because the Arasan carries the Pi 3B's Wi-Fi: before, every read failed
+and the board found no partition table; after, it reads and writes the
+card, mounts FAT32 through it, and makes and mounts a filesystem in the
+space above it.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ hw/sd/bcm2835_sdhost.c | 34 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/hw/sd/bcm2835_sdhost.c b/hw/sd/bcm2835_sdhost.c
+index f7cef7b..5f7fdc0 100644
+--- a/hw/sd/bcm2835_sdhost.c
++++ b/hw/sd/bcm2835_sdhost.c
+@@ -280,6 +280,19 @@ static uint64_t bcm2835_sdhost_read(void *opaque, hwaddr offset,
+     case SDEDM:
+         res = s->edm;
+         break;
++    /*
++     * SDHCFG and SDARG are stored by the write path below and were not
++     * readable, so a guest that reads either got a "Bad offset" line and
++     * zero.  Both are R/W in the BCM2835 documentation, and a driver that
++     * prints its own configuration register to say how it has set the bus
++     * up reported a bus it had not set up: "4-bit, sdhcfg 0x0".
++     */
++    case SDHCFG:
++        res = s->config;
++        break;
++    case SDARG:
++        res = s->cmdarg;
++        break;
+     case SDVDD:
+         res = s->vdd;
+         break;
+@@ -343,6 +356,21 @@ static void bcm2835_sdhost_write(void *opaque, hwaddr offset,
+         break;
+     case SDHCFG:
+         s->config = value;
++        /*
++         * Tell the card how wide the host now thinks the bus is, the way
++         * sdhci does when hostctl1 changes.  Without this the card-side
++         * width from ACMD6 is compared against a host that has never said
++         * anything, which reads as one line, and every data transfer on
++         * this controller is refused:
++         *
++         *   CMD17 data transfer with the host driving 1 DAT line(s) and
++         *   the card set to 4; ACMD6 and the host's bus width disagree
++         *
++         * so a guest driver that does everything right could not read a
++         * block through SDHOST at all.
++         */
++        sdbus_set_bus_width(&s->sdbus,
++                            (s->config & SDHCFG_WIDE_EXT_BUS) ? 4 : 1);
+         bcm2835_sdhost_fifo_run(s);
+         break;
+     case SDVDD:
+@@ -418,6 +446,12 @@ static void bcm2835_sdhost_reset(DeviceState *dev)
+     s->edm = 0x0000c60f;
+     trace_bcm2835_sdhost_edm_change("device reset", s->edm);
+     s->config = 0;
++    /*
++     * config has just been cleared, so the host is back to one data line.
++     * Say so, or a four-bit belief left in the card outlives the reset and
++     * refuses everything after it.
++     */
++    sdbus_set_bus_width(&s->sdbus, 1);
+     s->hbct = 0;
+     s->hblc = 0;
+     s->datacnt = 0;
+-- 
+2.51.0
+

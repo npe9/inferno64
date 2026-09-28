@@ -16,6 +16,23 @@ To apply and build:
 		--disable-fuse --disable-jack
 	ninja
 
+On macOS the link may fail on ParavirtualizedGraphics:
+
+	Undefined symbols for architecture arm64:
+	  "_PGNewDeviceWithDescriptor", referenced from:
+	      _apple_gfx_common_realize
+
+which is the host SDK and not qemu: a build that linked in September
+stopped linking a few weeks later with no change to the source.  None of
+these boards wants that device, so put
+
+	CONFIG_MAC_PVG_MMIO=n
+	CONFIG_MAC_PVG_PCI=n
+
+in configs/devices/aarch64-softmmu/default.mak and build again.  That is a
+local workaround and deliberately not a patch here -- it turns off a
+device rather than fixing anything.
+
 The build needs libslirp's development package, which this recipe does
 not name because on the machine it was written on it was already
 there.  qemu 10 takes -netdev user from the system libslirp, and
