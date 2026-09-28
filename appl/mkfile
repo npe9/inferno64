@@ -1,10 +1,19 @@
 <../mkconfig
 
+#
+# danby lives on inferno-rio.  It came across at the branch point and has
+# been removed here; inferno-rio still has it, and this branch is a board
+# port that never built it.
+#
+# A commented-out entry in the list below has to end in a backslash, like
+# alphabet and mux do: the list is one continued assignment, and a comment
+# line without one ends it, leaving the rest of the entries as statements.
+# That is a "syntax error; expected one of :<=" fifteen lines further on.
+#
 DIRS=\
 	acme\
 #	alphabet\
 	charon\
-	danby\
 	cmd\
 	collab\
 	demo\
