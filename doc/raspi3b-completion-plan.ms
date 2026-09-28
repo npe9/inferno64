@@ -12758,3 +12758,40 @@ would do.  The 4.4ms per bulk transfer is the other half and belongs to
 .CW "usbdwc: ep3.1 re-armed after 2 s" ,
 which this document says is in every boot log, is
 .B "not in this one" .
+.NH 2
+It is not the USB ethernet
+.PP
+The heading above this one, and the priority it belongs to, name the USB
+ethernet.  The same read over the OTHER interface says they are wrong.
+.PP
+This board has two: the SMSC LAN9514 on USB, served by a userland Dis
+program, and the BCM43430 on SDIO, driven in the kernel.  Different chips,
+different buses, different drivers, one on each side of the kernel
+boundary.  The same 2,065,416-byte file through the same
+.I styxlisten
+on the same host:
+.DS
+.CW
+usb ethernet   5.23 s     wire 2.41 ms avg, stddev 0.34
+wifi           5.25 s     wire 8.11 ms avg, stddev 4.31, max 18.8
+.R
+.DE
+.B "The same time, on a link whose round trip is three and a half times
+.B "slower and thirteen times more variable."
+.PP
+So the ethernet driver is not the cost, and neither is the wire: a link
+5.7ms slower per round trip produced the same throughput.  Of the 20.8ms
+an 8KB RPC costs, 3.3 is the host's server \(em measured with a second
+client on the host itself \(em and between 2.3 and 8.1 is the wire, and
+whatever is left is the board's own path above the driver: devmnt, the TCP
+stack, the Dis scheduler.
+.PP
+Which also disposes of the five-USB-transfers-at-4.4ms arithmetic above.
+The transfers are real and so is their count; what is not real is reading
+them as the cause.  They are what a link does while something else is
+being slow, and dividing one by the other made a rate out of a
+coincidence.
+.PP
+.B "The next measurement is on the board, not on either interface:"
+where the fifteen milliseconds between a reply arriving and the next
+request leaving are spent.
