@@ -12682,3 +12682,79 @@ The driver's error path still falls back to
 and says so, so restoring the flag costs nothing if it ever stops working
 \(em and after a boot and this measurement the ctl reads
 .CW "retried 0 gaveup 0" .
+.NH 1
+The 23ms round trip, decomposed
+.PP
+"Second: the 23ms round trip on the USB ethernet" said the cheapest first
+move was to ping the gateway and decide whether the time belongs to the
+board or the network.  It belongs to the board, and here is where.
+.PP
+Four measurements, none of them timed inside the path they measure:
+.IP \(bu 4
+.B "The wire is 2.3ms."
+Twenty ICMP round trips to the board: min 2.222, avg 2.316, max 2.429,
+stddev 0.063 ms.  Nothing about that is slow or variable.
+.IP \(bu
+.B "The host's server is 3.3ms per RPC."
+A second client on the HOST, over TCP to the same
+.I styxlisten
+on the same port, reads the same 2,065,416-byte file in 0.84s \(em
+2.45MB/s, 252 RPCs, 3.3ms each.  So the server and the host's
+.I emu
+are not it either.
+.IP \(bu
+.B "The board is 20.8ms per RPC."
+The same file through the board's own mount takes 5.23s: 395KB/s, 252
+RPCs of 8KB, 20.8ms each.  Server plus wire is 5.6 of those 20.8.
+.IP \(bu
+.B "An ethernet frame costs about a millisecond each way."
+ICMP with a growing payload, twelve packets each:
+.DS
+.CW
+-s 56   1 frame    2.42 ms
+-s 1400 1 frame    3.22 ms
+-s 2800 2 frames   6.98 ms
+-s 5600 4 frames   9.60 ms
+-s 8000 6 frames  12.83 ms
+.R
+.DE
+.PP
+.B "And the counters say it is five USB bulk transfers per RPC."
+.CW /net.alt/ether/stats
+sampled either side of that 2MB read:
+.DS
+.CW
+rx	466 transfers, 1783 frames	3.8 frames per transfer
+tx	791 transfers,  791 frames	1.0 frames per transfer
+.R
+.DE
+Five transfers per RPC at 4.4ms each is the whole 20.8ms.
+.NH 2
+Transmit batching was the obvious answer and it is the wrong one
+.PP
+Three of those five transfers are outbound, for a single
+.CW Tread ,
+and most of the outbound frames are TCP acknowledgements.  The chip takes
+a burst of frames each with its own command header, the receive side
+already uses it, so transmit batching looked like most of the cost.
+.PP
+It buys nothing.  With batching in, the same read gives 791 bulk-out
+transfers for 791 frames \(em one each, exactly as before \(em because a
+mount with one outstanding RPC never has two frames to send at once: the
+board sends a
+.CW Tread
+or an acknowledgement and then waits.  The drain is non-blocking on
+purpose, so it finds an empty queue and returns.  Elapsed 5.57s against
+5.31s, inside this rig's drift.
+.PP
+So the levers are
+.B "fewer round trips"
+and
+.B "fewer acknowledgements" ,
+not fuller transfers: read-ahead or more than one outstanding RPC on the
+mount, and whatever makes the board's TCP send three frames where one
+would do.  The 4.4ms per bulk transfer is the other half and belongs to
+.CW usbdwc ;
+.CW "usbdwc: ep3.1 re-armed after 2 s" ,
+which this document says is in every boot log, is
+.B "not in this one" .
