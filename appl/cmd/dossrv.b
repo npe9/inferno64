@@ -91,6 +91,12 @@ init2(nil: ref Draw->Context, args: list of string, iscmd: int): string
 				sectors = int s;
 			else
 				return usage(iscmd);
+		'N' =>
+			s := arg->arg();
+			if(s != nil && s[0]>='0' && s[0]<='9')
+				niobuf = int s;
+			else
+				return usage(iscmd);
 		's' =>
 			stdin = 1;
 		'f' =>
@@ -150,11 +156,38 @@ init2(nil: ref Draw->Context, args: list of string, iscmd: int): string
 
 	dossetup();
 
-	spawn dossrv(pipefd[1]);
+	#
+	# The server takes its own namespace, and it takes it BEFORE the
+	# mount below.
+	#
+	# A spawned process shares its parent's namespace, so once srvfile
+	# is mounted the server is holding a reference to the mount whose
+	# pipe it is reading: the client exits, its namespace goes, the
+	# mount does not, the pipe never reaches EOF, Tmsg.read never
+	# returns nil, and emu waits for a process that is waiting for it.
+	# tests/dossrv-stress.sh works around it by backgrounding emu and
+	# killing it, with a comment saying dossrv goes on serving -- that
+	# is the symptom, and this is the cause.
+	#
+	# The handshake is what makes "before" true.  Without it the pctl
+	# and the mount race, and a server that had not reached its pctl
+	# yet would copy a namespace WITH the mount in it and hold the pipe
+	# open by itself.
+	#
+	pidch := chan of int;
+	spawn dossrv(pipefd[1], pidch);
+	pipefd[1] = nil;
+	<-pidch;
 
 	if(!stdin) {
 		if(sys->mount(pipefd[0], nil, srvfile, sys->MREPL|sys->MCREATE, deffile) < 0)
 			return sys->sprint("mount %s: %r", srvfile);
+		#
+		# And drop this end here rather than leaving it to the
+		# collector: the mount has its own reference, and while this
+		# one lives the pipe cannot reach EOF either.
+		#
+		pipefd[0] = nil;
 	}
 
 	return nil;
@@ -211,10 +244,11 @@ e(n: int): ref Rmsg.Error
 	return ref Rmsg.Error(0, errmsg[n]);
 }
 
-dossrv(rfd: ref Sys->FD)
+dossrv(rfd: ref Sys->FD, pidch: chan of int)
 {
-	sys->pctl(Sys->NEWFD, rfd.fd :: 2 :: nil);
+	sys->pctl(Sys->FORKNS|Sys->NEWFD, rfd.fd :: 2 :: nil);
 	rfd = sys->fildes(rfd.fd);
+	pidch <-= sys->pctl(0, nil);
 	while((t := Tmsg.read(rfd, 0)) != nil){
 		if(debug & STYX_MESS)
 			chat(sys->sprint("%s...", t.text()));
@@ -267,6 +301,16 @@ dossrv(rfd: ref Sys->FD)
 
 	if(debug & STYX_MESS)
 		chat("server EOF\n");
+	#
+	# Flush before going.  Every clunk syncs, so in practice there is
+	# nothing left; but "in practice" is not a reason for a filesystem
+	# server to exit with a modified track in memory, and until the fix
+	# above it could not exit at all, so this path had never run.
+	#
+	sync();
+	sys->fprint(sys->fildes(2),
+		"dosfs: %d-sector tracks, %d buffers (%dKB), %d track reads (%d read-modify-write), %d track writes\n",
+		sect2trk, niobuf, niobuf*trksize/1024, ntread, ntrmw, ntwrite);
 }
 
 rversion(t: ref Tmsg.Version): ref Rmsg
@@ -3348,13 +3392,23 @@ BIMM: con	1<<1;
 BSTALE: con	1<<2;
 
 HIOB: con 31;	# a prime 
+#
+# How many tracks are cached, and why it is a variable.
+#
+# A bigger track makes the cache bigger too -- twenty 32-sector tracks is
+# 320KB where twenty 9-sector tracks is 90KB -- so a track-size
+# measurement that leaves this alone cannot tell which of the two did the
+# work.  "-N n" exists so that the control can be run: hold the cache
+# size fixed and vary the track, or the other way round.
+#
 NIOBUF: con 20;
 
 Sectorsize: con 512;
 Sect2trk: con 9;	# default
 
+niobuf := NIOBUF;
 hiob := array[HIOB+1] of ref Iotrack;		# hash buckets + lru list
-iobuf := array[NIOBUF] of ref Iotrack;		# the real ones
+iobuf: array of ref Iotrack;			# the real ones
 freelist: ref Iosect;
 sect2trk := Sect2trk;
 trksize := Sect2trk*Sectorsize;
@@ -3372,6 +3426,9 @@ iotrackinit(sectors: int)
 		sectors = 9;
 	sect2trk = sectors;
 	trksize = sect2trk*Sectorsize;
+	if(niobuf < 2)
+		niobuf = 2;
+	iobuf = array[niobuf] of ref Iotrack;
 
 	freelist = nil;
 
@@ -3392,10 +3449,10 @@ iotrackinit(sectors: int)
 	hiob[i].refn = 0;
 	hiob[i].addr = 0;
 
-	for(i=0;i<NIOBUF;i++)
+	for(i=0;i<niobuf;i++)
 		iobuf[i] = ref Iotrack;
 
-	for(i=0; i<NIOBUF; i++) {
+	for(i=0; i<niobuf; i++) {
 		iobuf[i].hprev = iobuf[i].hnext = iobuf[i];
 		iobuf[i].prev = iobuf[i].next = iobuf[i];
 		iobuf[i].refn=iobuf[i].addr=0;
@@ -3468,6 +3525,22 @@ getiosect(xf: ref Xfs, addr , rflag: int): ref Iosect
 #
 wberr := 0;
 wberrn := 0;
+
+#
+# What the device was actually asked to do.
+#
+# A track is the unit of device I/O here, so these two numbers are the
+# whole of this server's cost at the block layer, and the interesting one
+# is ntread on a workload that only writes: every one of those is a
+# read-modify-write, a track pulled in so that the sectors the client did
+# NOT write survive being written back with the ones it did.
+#
+# Printed at EOF rather than kept in a file, because the server has no
+# ctl file to put it in and EOF is exactly when the total is final.
+#
+ntread := 0;
+ntwrite := 0;
+ntrmw := 0;
 
 wbfailed(addr: int)
 {
@@ -3618,6 +3691,7 @@ purgetrack(t: ref Iotrack)
 
 twrite(t: ref Iotrack): int
 {
+	ntwrite++;
 	if(iodebug)
 		chat(sys->sprint("[twrite %d...", t.addr));
 
@@ -3628,6 +3702,15 @@ twrite(t: ref Iotrack): int
 				++refn;
 
 		if(refn < sect2trk) {
+			#
+			# THE read-modify-write.  The track is stale and not
+			# every sector of it has been written, so the ones
+			# that have not must be fetched before the whole
+			# track goes back.  Counted separately from ordinary
+			# reads because it is the only kind the client did
+			# not ask for.
+			#
+			ntrmw++;
 			if(tread(t) < 0) {
 				if (iodebug)
 					chat("error]");
@@ -3659,6 +3742,7 @@ tread(t: ref Iotrack): int
 		if(t.tp.p[i] != nil)
 			++refn;
 
+	ntread++;
 	if(iodebug)
 		chat(sys->sprint("[tread %d...", t.addr));
 
@@ -3692,7 +3776,7 @@ tread(t: ref Iotrack): int
 
 purgebuf(xf: ref Xfs)
 {
-	for(p := 0; p < NIOBUF; p++) {
+	for(p := 0; p < niobuf; p++) {
 		if(iobuf[p].xf != xf)
 			continue;
 		if(iobuf[p].xf == xf) {
@@ -3707,7 +3791,7 @@ purgebuf(xf: ref Xfs)
 
 sync()
 {
-	for(p := 0; p < NIOBUF; p++) {
+	for(p := 0; p < niobuf; p++) {
 		if(!(iobuf[p].flags & BMOD))
 			continue;
 

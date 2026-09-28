@@ -128,26 +128,26 @@ sleep 1
 fatstress -n $ROUNDS -f $FILES /n/t
 SH
 	#
-	# emu in the background and killed when the run says it is done:
-	# dossrv goes on serving after fatstress returns, and emu does not
-	# exit while it does.  (btbench.sh says the same about btfs.)
+	# In the foreground, and emu's exit status is read.
 	#
-	"$EMU" -r "$ROOT" sh /tmp/stress.sh > "$OUT/$1.log" 2>&1 &
-	emupid=$!
-	i=0
-	# 150 was too short once the rename-while-open case joined: the
-	# fat32 image reached round 2 of 4 and the harness killed it,
-	# which reads exactly like a server that hung.
-	while [ $i -lt ${WAIT:-600} ]; do
-		grep -q 'FATSTRESS-' "$OUT/$1.log" 2>/dev/null && break
-		kill -0 $emupid 2>/dev/null || break
-		sleep 1
-		i=`expr $i + 1`
-	done
-	sleep 1
-	kill $emupid 2>/dev/null || true
-	wait $emupid 2>/dev/null || true
+	# This used to run emu in the background and kill it once
+	# FATSTRESS- appeared in the log, because dossrv went on serving
+	# after fatstress returned and emu does not exit while a process is
+	# blocked.  That was the symptom of a bug in dossrv, not a fact
+	# about emu: the server shared the namespace holding its own mount,
+	# so the pipe never reached EOF.  With that fixed the run ends by
+	# itself, so the status is available -- and it is worth having,
+	# because killing emu also meant never finding out whether the
+	# server had flushed and exited cleanly.
+	#
+	timeout ${WAIT:-600} "$EMU" -r "$ROOT" sh /tmp/stress.sh > "$OUT/$1.log" 2>&1
+	emurc=$?
 	cat "$OUT/$1.log"
+	if [ $emurc -ne 0 ]; then
+		echo "STRESS FAIL ($1): emu exited $emurc (124 means it never exited)"
+		status=1
+		return
+	fi
 	if ! grep -q FATSTRESS-OK "$OUT/$1.log"; then
 		echo "STRESS FAIL ($1): the run did not finish clean"
 		status=1
