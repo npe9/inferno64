@@ -33,10 +33,35 @@ cd "$ROOT"
 EMU=./MacOSX/arm64/bin/emu-cpu
 [ -x "$EMU" ] || EMU=./MacOSX/arm64/bin/emu
 T=tmp
+EMUTIMEOUT=600
 D=$T/efspop
 fail=0
 
 say() { printf '%s\n' "$*"; }
+
+#
+# Run emu and NOTICE if it does not exit.
+#
+# Every suite here used to write "timeout N $EMU ... | grep -v ... > file"
+# and look only at the file.  emu's exit status went into the pipe's left
+# hand and nowhere, so a server that never exited was indistinguishable
+# from slow work: the checks passed on output that had been produced
+# seconds in, and every invocation then sat out its whole timeout.  That
+# was the real reason the crash harness took an hour.
+#
+# One temporary file instead of a pipe, so the status is the status.
+#
+runemu() {			# runemu <outfile> <script> [emu options...]
+	rout=$1; rscr=$2
+	shift 2
+	timeout $EMUTIMEOUT $EMU "$@" -r"$ROOT" /dis/sh.dis "$rscr" > $T/emu-raw.txt 2>&1
+	rst=$?
+	grep -v '^new:\|^newa:' $T/emu-raw.txt > "$rout"
+	if [ $rst -ne 0 ]; then
+		say "  FAIL: emu exited $rst on $rscr (124 means it never exited)"
+		fail=`expr $fail + 1`
+	fi
+}
 
 run() {				# run <label> <image> <blocks> <mkefs extra> <rounds> <files>
 	label=$1; img=$2; blocks=$3; extra=$4; rounds=$5; files=$6
@@ -64,8 +89,7 @@ EOF
 	# what a stress test should do; hiding the failure by shrinking
 	# the workload is not.
 	#
-	timeout 600 $EMU -pheap=256M -r"$ROOT" /dis/sh.dis /tmp/efs-st.sh 2>&1 |
-		grep -vE '^new:|^newa:' > $T/efs-st-$label.txt
+	runemu $T/efs-st-$label.txt /tmp/efs-st.sh -pheap=256M
 	if grep -q 'FATSTRESS-OK' $T/efs-st-$label.txt &&
 	   grep -q 'clean, generation' $T/efs-st-$label.txt; then
 		gen=`grep -o 'generation [0-9]*' $T/efs-st-$label.txt | tail -1`

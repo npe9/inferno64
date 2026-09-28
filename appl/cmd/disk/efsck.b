@@ -115,6 +115,30 @@ init(nil: ref Draw->Context, argv: list of string)
 	mark(fs.s.nblocks - big 1, big -1);
 	mark(fs.s.freeroot, big -1);
 
+	#
+	# The free map is a block of block numbers and each of those blocks
+	# is as reachable as the index that names it.  Read it here, once,
+	# because both the reachability marking and the comparison below
+	# need it and reading it twice is how the two would come to
+	# disagree.
+	#
+	ng := efs->ngroups(fs.s.nblocks);
+	groups := array[ng] of array of byte;
+	(ib, ie) := fs.d.rdblk(fs.s.freeroot);
+	if(ie != nil)
+		bad("free map index: " + ie);
+	else
+		for(g := 0; g < ng; g++){
+			gb := efs->get8(ib, g * 8);
+			mark(gb, big -1);
+			(gbuf, ge) := fs.d.rdblk(gb);
+			if(ge != nil)
+				bad(sys->sprint("free map group %d at block %bd: %s",
+					g, gb, ge));
+			else
+				groups[g] = gbuf;
+		}
+
 	inodes: list of big;
 	dentries: list of (big, big);		# parent, child
 
@@ -131,17 +155,22 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 
 	#
-	# Everything the tree reaches must be marked used.
+	# Everything the tree reaches must be marked used, over EVERY
+	# block, not the first 32768.  The old loop stopped at one
+	# bitmap block's worth, so on any filesystem larger than 128MB it
+	# checked the first eighth of a percent and pronounced the rest
+	# clean -- and it would have gone on doing that quietly, because
+	# nothing here would ever have said the loop had ended early.
 	#
-	(bm, be) := fs.d.rdblk(fs.s.freeroot);
-	if(be != nil)
-		bad("free map: " + be);
-	else{
+	{
 		unmarked := 0;
 		leaked := 0;
-		for(i := 0; i < nb && i < Efs->Blocksize * 8; i++){
+		for(i := 0; i < nb; i++){
+			gi := i / Efs->Bitsperblk;
+			if(groups[gi] == nil)
+				break;		# already reported above
 			r := efs->bitget(reach, i);
-			u := efs->bitget(bm, i);
+			u := efs->bitget(groups[gi], i % Efs->Bitsperblk);
 			if(r && !u){
 				if(unmarked < 8)
 					bad(sys->sprint("block %d is in the tree and free in the map", i));

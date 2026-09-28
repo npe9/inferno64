@@ -176,12 +176,23 @@ Super.pack(s: self ref Super): array of byte
 	put8(b, 48, s.nextino);
 	np := len s.pendingfree;
 	#
-	# Bounded by the block, and the format says an overlong list spills
-	# to a block of its own.  Nothing generates one yet, so refusing is
-	# honest where silently truncating would not be.
+	# Bounded by the block, and this cap is NOT how the bound is
+	# enforced -- Fs.commit is, by carrying what does not fit into the
+	# next commit.
 	#
-	if(Sopend + np * 8 > Blocksize)
-		np = (Blocksize - Sopend) / 8;
+	# The comment here used to say that refusing was honest where
+	# truncating would not be, and then truncated: everything past
+	# entry 504 was dropped, so a commit that freed more blocks than
+	# that -- removing a file of more than about 2MB does it -- leaked
+	# every one of them permanently, and efsck reported them as "marked
+	# used and not reached (not an error)".  A comment claiming the
+	# opposite of the code is worse than no comment.
+	#
+	# It stays as a last line of defence, because writing past the end
+	# of the block would be worse, and it is now unreachable.
+	#
+	if(np > maxpending())
+		np = maxpending();
 	put4(b, 56, np);
 	for(i := 0; i < np; i++)
 		put8(b, Sopend + i * 8, s.pendingfree[i]);
@@ -241,7 +252,18 @@ Dev.open(name: string, startsect: big, nblocks: big, create: int): (ref Dev, str
 	mode := Sys->ORDWR;
 	fd: ref Sys->FD;
 	if(create){
-		fd = sys->create(name, mode, 8r666);
+		#
+		# OPEN an existing one, and only create what is not there.
+		#
+		# The target of a real mkfs is a partition, and create on a
+		# device is at best meaningless and at worst destructive.
+		# Trying open first means mkefs on the board addresses the
+		# card through the same path as everything else, and mkefs
+		# on a host image still makes the image.
+		#
+		fd = sys->open(name, mode);
+		if(fd == nil)
+			fd = sys->create(name, mode, 8r666);
 		if(fd == nil)
 			return (nil, sys->sprint("create %s: %r", name));
 	}else{
@@ -252,11 +274,32 @@ Dev.open(name: string, startsect: big, nblocks: big, create: int): (ref Dev, str
 				return (nil, sys->sprint("open %s: %r", name));
 		}
 	}
+	#
+	# Again, every field, and the two that look like they must already
+	# be zero are the ones that matter.
+	#
+	# nwrite and failafter are the crash harness's write injection, and
+	# on this VM a "ref Dev" hands them whatever was in that memory.
+	# A fresh mkefs of a 32769-block image printed
+	#
+	#	mkefs: injected write failure at write 540620344 (block 4)
+	#
+	# and left an image with no superblock -- a program that has no
+	# injection flag, refusing its own write, for a reason that reads
+	# as a bug in the free map it was writing at the time.  This was
+	# latent long before the map changed: every run of every efs
+	# program has been one stale word away from it, and the crash
+	# harness passed 16 of 16 because it sets failafter explicitly.
+	#
+	# See Fs.mount for the same rule and the probe that established it.
+	#
 	d := ref Dev;
 	d.fd = fd;
 	d.start = startsect * big Sectorsz;
 	d.nblocks = nblocks;
 	d.name = name;
+	d.nwrite = 0;
+	d.failafter = 0;
 	return (d, nil);
 }
 
@@ -485,6 +528,16 @@ bitget(b: array of byte, i: int): int
 	return 0;
 }
 
+ngroups(nblocks: big): int
+{
+	return int ((nblocks + big (Bitsperblk - 1)) / big Bitsperblk);
+}
+
+maxpending(): int
+{
+	return (Blocksize - Sopend) / 8;
+}
+
 #
 # Mounting: read both superblocks and take the newer one that checksums.
 #
@@ -523,11 +576,37 @@ Fs.mount(name: string, startsect: big): (ref Fs, string)
 	if(devblocks > big 0 && live.nblocks > devblocks)
 		return (nil, sys->sprint("superblock claims %bd blocks, device holds %bd",
 			live.nblocks, devblocks));
+	#
+	# EVERY field, explicitly, including the ones that look like they
+	# are already zero.
+	#
+	# "ref Fs" does NOT reliably zero an adt's scalar fields in this
+	# implementation.  A probe that printed f.cursor at this point read
+	# 0, 0 and then 18193664 over three otherwise identical runs, and
+	# the third one sent the allocator to block 18193664 of a
+	# 256-block filesystem.  It is the same rule as array[N] holding
+	# stale data -- which this tree has already been bitten by and
+	# written down -- and it applies to a ref adt as well: pointer
+	# fields must be zeroed because the collector walks them, and
+	# nothing else must be.
+	#
+	# The symptom was a filesystem that wrote correctly two runs out of
+	# three and failed the third with a block number nowhere near the
+	# device, which reads exactly like a bug in the new free map.
+	#
 	f := ref Fs;
 	f.d = d;
 	f.d.nblocks = live.nblocks;
 	f.s = live;
 	f.which = which;
+	f.bmindex = nil;
+	f.groups = nil;
+	f.gdirty = nil;
+	f.repl = nil;
+	f.idxblk = Nilblk;
+	f.cursor = 0;
+	f.freed = nil;
+	f.dirty = 0;
 	return (f, nil);
 }
 
@@ -732,20 +811,92 @@ mkents(rev: list of Ent, nent: int): array of Ent
 #
 Fs.writable(f: self ref Fs): string
 {
-	if(f.bitmap != nil)
+	if(f.bmindex != nil)
 		return nil;
+	ng := ngroups(f.s.nblocks);
 	(b, e) := f.d.rdblk(f.s.freeroot);
 	if(e != nil)
 		return e;
-	f.bitmap = b;
+	f.bmindex = array[ng] of big;
+	for(g := 0; g < ng; g++)
+		f.bmindex[g] = get8(b, g * 8);
+	f.groups = array[ng] of array of byte;
+	f.gdirty = array[ng] of {* => 0};
+	f.repl = array[ng] of {* => Nilblk};
+	f.idxblk = Nilblk;
+	#
+	# f.cursor is deliberately NOT reset here.  The map is re-read
+	# every commit, and starting the search at block 0 each time
+	# would put the O(nblocks) scan back, once per transaction
+	# instead of once per allocation.
+	#
+	#
+	# Fold in what the last commit freed.  Before the map was grouped
+	# this was guarded by "n < Blocksize * 8" and anything above that
+	# was silently dropped -- a permanent leak, with no error, that
+	# efsck could not see because efsck only ever looked at one block
+	# of map either.  Now the group is looked up, and a block number
+	# outside the filesystem is a fault rather than a shrug.
+	#
 	for(i := 0; i < len f.s.pendingfree; i++){
 		n := f.s.pendingfree[i];
-		if(n >= big 0 && n < big (Blocksize * 8))
-			bitset(f.bitmap, int n, 0);
+		if(n < big 0 || n >= f.s.nblocks)
+			return sys->sprint("pendingfree holds block %bd, outside the filesystem", n);
+		if((e = f.bmset(int n, 0)) != nil)
+			return e;
 	}
 	f.s.pendingfree = array[0] of big;
-	f.freed = nil;
-	f.dirty = 0;
+	#
+	# f.freed and f.dirty are NOT cleared here.  They are set by
+	# Fs.mount and cleared by Fs.commit, and a commit that could not fit
+	# its whole freed list leaves the remainder on f.freed for this
+	# transaction to carry -- clearing it here would drop exactly the
+	# blocks the carry exists to save.
+	#
+	return nil;
+}
+
+#
+# One group of the free map, read on demand.
+#
+# What comes back is the COMMITTED group when it is first wanted and the
+# in-memory copy ever after, which is what makes a transaction's own
+# allocations visible to itself.  A group block number of Nilblk means
+# mkefs never wrote that group, which cannot happen and is reported
+# rather than turned into a block of zeros -- a block of zeros here reads
+# as 32768 free blocks and would hand out the whole filesystem twice.
+#
+Fs.group(f: self ref Fs, g: int): (array of byte, string)
+{
+	if(g < 0 || g >= len f.bmindex)
+		return (nil, sys->sprint("free map group %d does not exist", g));
+	if(f.groups[g] != nil)
+		return (f.groups[g], nil);
+	if(f.bmindex[g] == Nilblk)
+		return (nil, sys->sprint("free map group %d has no block", g));
+	(b, e) := f.d.rdblk(f.bmindex[g]);
+	if(e != nil)
+		return (nil, e);
+	f.groups[g] = b;
+	return (b, nil);
+}
+
+Fs.bmget(f: self ref Fs, n: int): (int, string)
+{
+	(b, e) := f.group(n / Bitsperblk);
+	if(e != nil)
+		return (0, sys->sprint("block %d: %s", n, e));
+	return (bitget(b, n % Bitsperblk), nil);
+}
+
+Fs.bmset(f: self ref Fs, n: int, v: int): string
+{
+	g := n / Bitsperblk;
+	(b, e) := f.group(g);
+	if(e != nil)
+		return sys->sprint("block %d: %s", n, e);
+	bitset(b, n % Bitsperblk, v);
+	f.gdirty[g] = 1;
 	return nil;
 }
 
@@ -753,23 +904,37 @@ Fs.writable(f: self ref Fs): string
 # One free block.
 #
 # Block 0 is a superblock and the last block is the other one, so
-# neither is ever a candidate; the bitmap has them set and this trusts
-# it rather than special-casing them, because a bitmap that disagrees is
-# a bug worth hitting here and not somewhere quieter.
+# neither is ever a candidate; the map has them set and this trusts it
+# rather than special-casing them, because a map that disagrees is a bug
+# worth hitting here and not somewhere quieter.
+#
+# The search starts where the last one stopped and wraps once.  From
+# block 0 every time it is O(nblocks) per allocation, which nobody
+# noticed while a filesystem was one group of 32768 blocks and which is
+# 230 group reads per allocation at 29GB.
 #
 Fs.alloc(f: self ref Fs): (big, string)
 {
 	if((e := f.writable()) != nil)
 		return (big -1, e);
-	n := int f.s.nblocks;
-	if(n > Blocksize * 8)
-		n = Blocksize * 8;
-	for(i := 0; i < n; i++)
-		if(!bitget(f.bitmap, i)){
-			bitset(f.bitmap, i, 1);
+	nb := int f.s.nblocks;
+	for(k := 0; k < nb; k++){
+		i := f.cursor + k;
+		if(i >= nb)
+			i -= nb;
+		(u, ue) := f.bmget(i);
+		if(ue != nil)
+			return (big -1, ue);
+		if(!u){
+			if((e = f.bmset(i, 1)) != nil)
+				return (big -1, e);
+			f.cursor = i + 1;
+			if(f.cursor >= nb)
+				f.cursor = 0;
 			f.dirty = 1;
 			return (big i, nil);
 		}
+	}
 	return (big -1, "filesystem is full");
 }
 
@@ -1060,24 +1225,95 @@ Fs.commit(f: self ref Fs): string
 {
 	if(!f.dirty)
 		return nil;
-	(bmblk, ae) := f.alloc();
-	if(ae != nil)
-		return ae;
-	old := f.s.freeroot;
 	#
-	# The bitmap block records itself as in use before it is written,
-	# or the map that comes back from a crash describes a filesystem in
-	# which the map is free.
+	# Allocate the map's own new blocks, to a fixpoint.
 	#
-	bitset(f.bitmap, int bmblk, 1);
-	if((e := f.d.wrblk(bmblk, f.bitmap)) != nil)
-		return e;
-	f.s.freeroot = bmblk;
-	f.free(old);
+	# Every group whose bits changed needs a new block, and allocating
+	# that block sets a bit, which may dirty a group that was not in
+	# the write set, which needs a new block of its own.  So: go round
+	# assigning a replacement to every dirty group without one, and to
+	# the index, until a pass assigns none.
+	#
+	# It TERMINATES, and the reason is worth writing down rather than
+	# re-deriving: inside a transaction allocation only ever SETS bits
+	# -- frees go to pendingfree and are not folded in until the next
+	# transaction begins -- so the set of dirty groups only grows, and
+	# it is bounded by the number of groups.  Each pass either enlarges
+	# the set of groups holding a replacement or ends the loop.
+	#
+	ng := len f.bmindex;
+	for(;;){
+		changed := 0;
+		for(g := 0; g < ng; g++)
+			if(f.gdirty[g] && f.repl[g] == Nilblk){
+				(n, ae) := f.alloc();
+				if(ae != nil)
+					return ae;
+				f.repl[g] = n;
+				f.free(f.bmindex[g]);
+				changed = 1;
+			}
+		if(f.idxblk == Nilblk){
+			(n, ae) := f.alloc();
+			if(ae != nil)
+				return ae;
+			f.idxblk = n;
+			f.free(f.s.freeroot);
+			changed = 1;
+		}
+		if(!changed)
+			break;
+	}
 
+	#
+	# Now write them.  Each group block records itself as in use before
+	# it is written -- alloc did that -- or the map that comes back
+	# from a crash describes a filesystem in which the map is free.
+	#
+	for(g := 0; g < ng; g++)
+		if(f.repl[g] != Nilblk){
+			if((e := f.d.wrblk(f.repl[g], f.groups[g])) != nil)
+				return e;
+			f.bmindex[g] = f.repl[g];
+		}
+	idx := array[Blocksize] of {* => byte 0};
+	for(g = 0; g < ng; g++)
+		put8(idx, g * 8, f.bmindex[g]);
+	if((e := f.d.wrblk(f.idxblk, idx)) != nil)
+		return e;
+	f.s.freeroot = f.idxblk;
+
+	#
+	# The freed list into the superblock -- and what does not fit stays
+	# on the list for the next commit rather than being dropped.
+	#
+	# A superblock holds 504 of them.  Removing a file of more than
+	# about 2MB frees more than that, and the excess used to vanish
+	# inside Super.pack: those blocks stayed marked used in the map with
+	# nothing pointing at them, for ever, and the only report was
+	# efsck's "marked used and not reached", which is documented there
+	# as not an error because pendingfree legitimately produces it.
+	#
+	# Carrying the remainder is safe in the direction that matters: a
+	# block still on the list is still marked used, so nothing hands it
+	# out, and it becomes free one commit later than it might have.  The
+	# filesystem stays dirty so that the next commit actually runs.
+	#
 	np := 0;
 	for(l := f.freed; l != nil; l = tl l)
 		np++;
+	keep: list of big;
+	if(np > maxpending()){
+		i := 0;
+		nl: list of big;
+		for(l = f.freed; l != nil; l = tl l)
+			if(i++ < maxpending())
+				nl = hd l :: nl;
+			else
+				keep = hd l :: keep;
+		f.freed = nl;
+		np = maxpending();
+	}
 	pf := array[np] of big;
 	i := 0;
 	for(l = f.freed; l != nil; l = tl l)
@@ -1092,8 +1328,11 @@ Fs.commit(f: self ref Fs): string
 	if((e = f.d.wrblk(superblk(f.s.nblocks, slot), f.s.pack())) != nil)
 		return e;
 	f.which = slot;
-	f.freed = nil;
-	f.dirty = 0;
-	f.bitmap = nil;		# re-read next time, folding pendingfree in
+	f.freed = keep;
+	f.dirty = keep != nil;
+	f.bmindex = nil;	# re-read next time, folding pendingfree in
+	f.groups = nil;
+	f.gdirty = nil;
+	f.repl = nil;
 	return nil;
 }

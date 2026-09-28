@@ -21,7 +21,29 @@ Efs: module
 	Keysz:		con 17;		# inode[8] type[1] offset[8]
 	Magicsz:	con 8;
 	Magic:		con "efs-0001";	# Magicsz bytes exactly
-	Version:	con 1;
+	#
+	# Version 2 moved the free map from a single block to a block of
+	# block numbers, so freeroot no longer means what it meant.  An
+	# image made by version 1 mounts nowhere: Super.unpack refuses on
+	# the version, which is the point of having the field.  There is no
+	# upgrade path and none is wanted -- the only version 1 images that
+	# exist are test images and none holds anything.
+	#
+	Version:	con 2;
+
+	#
+	# The free map's geometry.
+	#
+	# One bit per block, so a 4KB block covers 32768 blocks, and the
+	# INDEX block holds 4096/8 = 512 of those, which is 16,777,216
+	# blocks or 64GB.  Both numbers are here because mkefs, the
+	# allocator, efsck and efsdump all need them and a filesystem
+	# whose four programs disagree about where a bit lives is not
+	# worth debugging.
+	#
+	Bitsperblk:	con Blocksize * 8;
+	Maxgroups:	con Blocksize / 8;
+	Maxblocks:	con Maxgroups * Bitsperblk;
 
 	#
 	# An absent block pointer is all ones, NOT zero, because block 0 is
@@ -143,13 +165,35 @@ Efs: module
 		s:	ref Super;
 		which:	int;		# which superblock was taken
 
-		# write side
-		bitmap:	array of byte;	# the free map, in memory
+		#
+		# The write side, and the free map it allocates from.
+		#
+		# bmindex is the index block read into memory: one block
+		# number per group of 32768 blocks.  Group bitmaps are read
+		# only when a bit in them is wanted, because a 29GB
+		# filesystem has 230 of them and a commit touches one or
+		# two.  groups[g] is nil until then.
+		#
+		# repl[g] is the block this transaction will write group g
+		# to, or Nilblk while the group is unchanged; idxblk is the
+		# same for the index.  cursor is where the next allocation
+		# starts looking, so that filling a filesystem is not
+		# quadratic in the number of blocks.
+		#
+		bmindex: array of big;
+		groups:	array of array of byte;
+		gdirty:	array of int;
+		repl:	array of big;
+		idxblk:	big;
+		cursor:	int;
 		freed:	list of big;	# freed by the transaction in hand
 		dirty:	int;
 
 		mount:	fn(name: string, startsect: big): (ref Fs, string);
 		writable: fn(f: self ref Fs): string;
+		group:	fn(f: self ref Fs, g: int): (array of byte, string);
+		bmget:	fn(f: self ref Fs, n: int): (int, string);
+		bmset:	fn(f: self ref Fs, n: int, v: int): string;
 		alloc:	fn(f: self ref Fs): (big, string);
 		free:	fn(f: self ref Fs, n: big);
 		insert:	fn(f: self ref Fs, k: Key, v: array of byte): string;
@@ -187,6 +231,19 @@ Efs: module
 
 	bitset:		fn(b: array of byte, i: int, v: int);
 	bitget:		fn(b: array of byte, i: int): int;
+
+	#
+	# How many group bitmaps a filesystem of this many blocks needs.
+	# Not (nblocks + Bitsperblk - 1) / Bitsperblk written out four
+	# times, because it was, and one of the four rounded down.
+	#
+	ngroups:	fn(nblocks: big): int;
+
+	#
+	# How many freed blocks one superblock can carry.  Commit must not
+	# build a longer list than this; see the note there.
+	#
+	maxpending:	fn(): int;
 
 	init:		fn();
 	#

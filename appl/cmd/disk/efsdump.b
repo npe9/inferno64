@@ -139,12 +139,35 @@ init(nil: ref Draw->Context, argv: list of string)
 			printnode(n);
 	}
 
-	sys->print("free bitmap (block %bd):\n", live.freeroot);
-	(fb, fe) := d.rdblk(live.freeroot);
-	if(fe != nil)
-		sys->print("\tunreadable: %s\n", fe);
-	else
-		printbitmap(fb, live.nblocks);
+	#
+	# The free map: an index block of block numbers, then a bitmap
+	# block per 32768 blocks.  Every group is counted; the blocks in
+	# use are shown for the first only, because a 29GB filesystem has
+	# 230 groups and the interesting one is where the metadata lives.
+	#
+	ng := efs->ngroups(live.nblocks);
+	sys->print("free map index (block %bd), %d group(s):\n", live.freeroot, ng);
+	(ib, ie) := d.rdblk(live.freeroot);
+	if(ie != nil){
+		sys->print("\tunreadable: %s\n", ie);
+		return;
+	}
+	total := 0;
+	for(g := 0; g < ng; g++){
+		gb := efs->get8(ib, g * 8);
+		(fb, fe) := d.rdblk(gb);
+		if(fe != nil){
+			sys->print("\tgroup %d at block %bd unreadable: %s\n", g, gb, fe);
+			continue;
+		}
+		lo := big g * big Efs->Bitsperblk;
+		hi := lo + big Efs->Bitsperblk;
+		if(hi > live.nblocks)
+			hi = live.nblocks;
+		u := printbitmap(fb, g, lo, hi, g == 0);
+		total += u;
+	}
+	sys->print("\t%d block(s) marked in use over the whole map\n", total);
 }
 
 readsuper(d: ref Dev, n: big): (ref Super, string)
@@ -188,17 +211,13 @@ printnode(n: ref Node)
 	}
 }
 
-printbitmap(b: array of byte, nblocks: big)
+#
+# One group of the map.  Returns how many blocks in it are in use, and
+# names them only when asked -- the caller asks for group 0 -- because a
+# whole card's worth of groups would bury the numbers that matter.
+#
+printbitmap(b: array of byte, g: int, lo: big, hi: big, detail: int): int
 {
-	#
-	# One bitmap block covers this many blocks; a filesystem larger
-	# than that has more of them, and this prints the first only and
-	# says so rather than implying it has seen the whole map.
-	#
-	covers := big (Efs->Blocksize * 8);
-	n := nblocks;
-	if(n > covers)
-		n = covers;
 	#
 	# Count all of them, and show the LOWEST eight.
 	#
@@ -212,23 +231,26 @@ printbitmap(b: array of byte, nblocks: big)
 	used := 0;
 	nshow := 0;
 	show: list of big;
-	for(i := 0; i < int n; i++)
-		if(efs->bitget(b, i)){
+	for(i := lo; i < hi; i++)
+		if(efs->bitget(b, int (i - lo))){
 			used++;
 			if(nshow < 8){
-				show = big i :: show;
+				show = i :: show;
 				nshow++;
 			}
 		}
+	sys->print("\tgroup %d covers blocks %bd..%bd; %d marked in use\n",
+		g, lo, hi - big 1, used);
+	if(!detail)
+		return used;
 	first: list of big;
 	for(; show != nil; show = tl show)
 		first = hd show :: first;
-	sys->print("\tcovers blocks 0..%bd of %bd; %d marked in use\n",
-		n - big 1, nblocks, used);
 	s := "\t\tin use:";
 	for(l := first; l != nil; l = tl l)
 		s += sys->sprint(" %bd", hd l);
 	if(used > 8)
 		s += " ...";
 	sys->print("%s\n", s);
+	return used;
 }

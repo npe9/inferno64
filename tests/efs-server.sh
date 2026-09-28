@@ -21,6 +21,7 @@ cd "$ROOT"
 EMU=./MacOSX/arm64/bin/emu-cpu
 [ -x "$EMU" ] || EMU=./MacOSX/arm64/bin/emu
 T=tmp
+EMUTIMEOUT=120
 D=$T/efsfiles
 fail=0
 
@@ -30,6 +31,30 @@ check() {
 		say "  ok: $1"
 	else
 		say "  FAIL: $1 (wanted /$2/)"
+		fail=`expr $fail + 1`
+	fi
+}
+
+#
+# Run emu and NOTICE if it does not exit.
+#
+# Every suite here used to write "timeout N $EMU ... | grep -v ... > file"
+# and look only at the file.  emu's exit status went into the pipe's left
+# hand and nowhere, so a server that never exited was indistinguishable
+# from slow work: the checks passed on output that had been produced
+# seconds in, and every invocation then sat out its whole timeout.  That
+# was the real reason the crash harness took an hour.
+#
+# One temporary file instead of a pipe, so the status is the status.
+#
+runemu() {			# runemu <outfile> <script> [emu options...]
+	rout=$1; rscr=$2
+	shift 2
+	timeout $EMUTIMEOUT $EMU "$@" -r"$ROOT" /dis/sh.dis "$rscr" > $T/emu-raw.txt 2>&1
+	rst=$?
+	grep -v '^new:\|^newa:' $T/emu-raw.txt > "$rout"
+	if [ $rst -ne 0 ]; then
+		say "  FAIL: emu exited $rst on $rscr (124 means it never exited)"
 		fail=`expr $fail + 1`
 	fi
 }
@@ -63,8 +88,7 @@ or {cat /n/client/nosuch} {echo ENOENT-OK}
 echo 'MARK writable'
 or {and {echo x > /n/client/hello.txt} {echo WRITE-OK}} {echo WRITE-REFUSED}
 EOF
-timeout 120 $EMU -r"$ROOT" /dis/sh.dis /tmp/efs-srv.sh 2>&1 |
-	grep -v '^new:\|^newa:' > $T/efs-srv.txt
+runemu $T/efs-srv.txt /tmp/efs-srv.sh
 
 say "the read-only server"
 check "mounts, names the superblock"	'generation 1 from superblock 0'	$T/efs-srv.txt

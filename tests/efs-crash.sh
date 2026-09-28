@@ -122,6 +122,7 @@ while [ $n -le "$MAXN" ]; do
 	rm -f $D/out-*
 	sed "s/NNN/$n/" $T/efs-load.sh > $T/efs-load-n.sh
 	timeout 120 $EMU -r"$ROOT" /dis/sh.dis /tmp/efs-load-n.sh > $T/efs-c-load.txt 2>&1
+	lst=$?
 	#
 	# One process for the check and the fsck.  emu's startup dominates
 	# a trial, so three invocations per crash point made the sweep too
@@ -129,10 +130,29 @@ while [ $n -le "$MAXN" ]; do
 	# from the one that crashed, which is the part that matters.
 	#
 	timeout 120 $EMU -r"$ROOT" /dis/sh.dis /tmp/efs-chk.sh > $T/efs-c-chk.txt 2>&1
+	cst=$?
 	cp $T/efs-c-chk.txt $T/efs-c-fsck.txt
 
+	#
+	# emu's exit status, which this used to throw away.
+	#
+	# 124 is the timeout, and a server that never exits looks exactly
+	# like slow work when only the output file is read: every trial here
+	# was sitting out both its timeouts, which is why sixteen crash
+	# points took an hour of wall clock for four minutes of work.  The
+	# LOAD side is expected to end badly -- it is being crashed on
+	# purpose -- so only a timeout counts against it; the CHECK side has
+	# to exit cleanly.
+	#
 	why=""
-	if grep -q 'will not mount\|neither superblock' $T/efs-c-fsck.txt; then
+	if [ $lst -eq 124 ]; then
+		why="the crashed load never exited"
+	elif [ $cst -ne 0 ]; then
+		why="the check exited $cst"
+	fi
+	if [ -n "$why" ]; then
+		: already decided
+	elif grep -q 'will not mount\|neither superblock' $T/efs-c-fsck.txt; then
 		why="will not mount"
 	elif ! grep -q 'clean, generation' $T/efs-c-fsck.txt; then
 		why="fsck complained"

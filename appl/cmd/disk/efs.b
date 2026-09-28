@@ -134,10 +134,11 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(arg == nil)
 		fail(sys->sprint("cannot load %s: %r", Arg->PATH));
 	arg->init(argv);
-	arg->setusage("efs [-a|-b] [-s startsector] -f device mountpoint");
+	arg->setusage("efs [-a|-b] [-s startsector] [-C block] -f device mountpoint");
 	flags := Sys->MREPL;
 	startsect := big 0;
 	device := "";
+	cursor := 0;
 	while((o := arg->opt()) != 0)
 		case o {
 		'a' =>	flags = Sys->MAFTER;
@@ -147,6 +148,25 @@ init(nil: ref Draw->Context, argv: list of string)
 		'D' =>	styxservers->traceset(1);
 		'W' =>	wdebug = 1;
 		'F' =>	failafter = int arg->earg();
+		#
+		# Where the allocator starts looking.  An INSTRUMENT, and
+		# what it is for is the only way to reach the second and
+		# later blocks of the free map without first writing 128MB.
+		#
+		# A filesystem larger than 32768 blocks has more than one
+		# bitmap block, and an empty one allocates from block 4
+		# upward, so nothing above group 0 is ever touched until the
+		# first 128MB are full.  Every test would pass on a
+		# multi-group filesystem while exercising a single group,
+		# which is the same nothing that "the FAT stress test passed
+		# against a server that corrupted the card" was.
+		#
+		# What it does not prove: that the allocator REACHES the
+		# high groups by filling the low ones.  It sets the starting
+		# point; the scan, the wrap and the group arithmetic from
+		# there are the real code.
+		#
+		'C' =>	cursor = int arg->earg();
 		* =>	arg->usage();
 		}
 	argv = arg->argv();
@@ -160,6 +180,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail(sys->sprint("%s: %s", device, e));
 	fs = f;
 	fs.d.failafter = failafter;
+	fs.cursor = cursor;
 	sys->fprint(stderr,
 		"efs: %s: %bd blocks, generation %bd from superblock %d\n",
 		device, fs.s.nblocks, fs.s.gen, fs.which);
@@ -168,14 +189,37 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(sys->pipe(fds) < 0)
 		fail(sys->sprint("pipe: %r"));
 
-	navops := chan of ref Navop;
-	spawn navigator(navops);
-
-	(tchan, srv) := Styxserver.new(fds[0], Navigator.new(navops), Rootino);
-	fds[0] = nil;
-
+	#
+	# EVERYTHING on the server side is descended from ONE process that
+	# takes its own namespace first, and it does so before the mount.
+	#
+	# Without this the server never exits and neither does emu.  A
+	# spawned process SHARES the namespace it was spawned from, so once
+	# /n/client is mounted every server-side process is holding a
+	# reference to the mount whose pipe it is reading: the shell exits,
+	# its namespace goes, the mount does not, the pipe never reaches
+	# EOF, <-tchan never returns nil, and emu waits for a process that
+	# is waiting for it.  A namespace COPIED before the mount does not
+	# contain it, so the shell is the only holder and dropping it closes
+	# the pipe.
+	#
+	# It has to be one root process and not a pctl in each, which was
+	# the first fix and left about one run in sixty hanging.  Styxserver.new
+	# spawns a reader of its own, and forking the namespace in the
+	# processes this file can see does nothing about the one it cannot:
+	# built out here it would share the shell's namespace and hold the
+	# mount open by itself.  Built inside serve(), everything descends
+	# from the copy.
+	#
+	# This was costing every efs test its whole timeout.  Nothing
+	# noticed because the suites piped emu's output through grep and
+	# never looked at its exit status, so "timeout 150" read as "took
+	# 150 seconds" -- which is why a 16-point crash harness took an hour
+	# for six seconds of work.
+	#
 	pidc := chan of int;
-	spawn server(tchan, srv, pidc, navops);
+	spawn serve(fds[0], pidc);
+	fds[0] = nil;
 	<-pidc;
 
 	#
@@ -363,10 +407,23 @@ readfile(ino: big, offset: big, count: int): (array of byte, string)
 	return (out[0:got], nil);
 }
 
-server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
-	pidc: chan of int, navops: chan of ref Navop)
+#
+# The root of the server side: its own namespace, then everything else
+# built inside it.  See the note at the spawn.
+#
+serve(fd: ref Sys->FD, pidc: chan of int)
 {
+	sys->pctl(Sys->FORKNS, nil);
+	navops := chan of ref Navop;
+	spawn navigator(navops);
+	(tchan, srv) := Styxserver.new(fd, Navigator.new(navops), Rootino);
 	pidc <-= sys->pctl(0, nil);
+	server(tchan, srv, navops);
+}
+
+server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
+	navops: chan of ref Navop)
+{
 	for(;;){
 		gm := <-tchan;
 		if(gm == nil)

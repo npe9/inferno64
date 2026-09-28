@@ -6,6 +6,9 @@ archfs archfs
 cpu grid-cpu
 dbfs dbfs
 dossrv dossrv
+efs efs
+efsck efs
+efsdump efs
 export export
 factotum factotum
 feedkey factotum
@@ -21,6 +24,7 @@ kfs kfs
 lockfs lockfs
 logfile logfile
 memfs memfs
+mkefs efs
 mntgen mntgen
 namespace namespace
 palmsrv palmsrv

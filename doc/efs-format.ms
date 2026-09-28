@@ -214,18 +214,43 @@ extent.  No committed data block is ever modified.
 Free space
 .PP
 The free map is
-.B "a copy-on-write bitmap held in the tree" ,
+.B "a copy-on-write bitmap, indexed" ,
 not a monolithic bitmap and not a log.  One bit per block; a 4KB bitmap
-block covers 32768 blocks, which is 128MB of filesystem.
+block covers 32768 blocks, which is 128MB of filesystem; and the
+superblock's
+.I freeroot
+names an
+.B "index block"
+of 512 block numbers, one per group of 32768.  That is 16,777,216 blocks,
+or 64GB, which is more than this card and less than forever: past it the
+index needs a second level, and every program refuses rather than writing
+a map it knows is short.
 .PP
-The reason is arithmetic.  A 29GB partition of 4KB blocks is about 7.6M
-blocks, so a whole bitmap is about 950KB; writing that on every commit
-costs about 160ms at the 5-6MB/s this board's block layer was measured
-to do, which is not a commit, it is a stall.  Held in the tree, a commit
-rewrites only the bitmap blocks whose bits changed \(em a handful \(em
-plus their spine.  A log with checkpoints would also avoid the 950KB, at
-the price of a replay at mount, and replay at mount is the thing this
-format is trying not to have.
+The reason for indexing rather than one flat map is arithmetic.  A 29GB
+partition of 4KB blocks is about 7.6M blocks, so a whole bitmap is about
+950KB; writing that on every commit costs about 160ms at the 5-6MB/s
+this board's block layer was measured to do, which is not a commit, it is
+a stall.  Indexed, a commit rewrites only the bitmap blocks whose bits
+changed \(em a handful \(em plus the one index block above them.  A log
+with checkpoints would also avoid the 950KB, at the price of a replay at
+mount, and replay at mount is the thing this format is trying not to
+have.
+.PP
+This section said
+.B "held in the tree"
+until the map was built, and the index block is a deliberate departure
+from it.  The stated reason was never "in the tree" for its own sake, it
+was the 950KB, and an index block buys that in full.  What it avoids is
+a recursion: bitmap blocks kept as keyed records in the B-tree are
+allocated from the very map they describe, so updating the map allocates
+tree nodes, which dirties more of the map, which allocates more nodes.
+That converges, and it is the kind of thing that converges in testing and
+not on the card.  The one subsystem whose entire claim is that a crash
+never needs repair is the wrong place to put it.  The allocator is
+therefore outside the tree entirely, and the fixpoint that remains \(em
+allocating the replacement bitmap blocks can itself dirty another group
+\(em is bounded by the group count and terminates because allocation
+inside a transaction only ever sets bits.
 .PP
 .B "Blocks freed by a commit are not allocatable until the commit after
 .B "it."
@@ -323,9 +348,10 @@ this size: with a fanout of a couple of hundred keys per node, 7.6M
 blocks is three levels deep at 4KB and three at 8KB.  There is nothing to
 buy with a doubled write amplification on every small change, so 4KB.
 .IP \(bu
-.B "Free map: a copy-on-write bitmap in the tree."
-Reasoned above; a whole-bitmap write is 160ms a commit, and a log's
-price is a replay at mount.
+.B "Free map: a copy-on-write bitmap under an index block."
+Reasoned above; a whole-bitmap write is 160ms a commit, a log's price is
+a replay at mount, and putting the map in the tree makes the allocator
+recursive.
 .IP \(bu
 .B "Data is copy-on-write too."
 It costs a full block write for a one-byte change, and it is what makes
@@ -343,8 +369,8 @@ so the 7MB gap below the FAT partition \(em sectors 2048 to 16383, where
 .I kfs
 is reamed today \(em can hold a small
 .I efs
-as well.  A filesystem of a few blocks is legal: two superblocks, a root,
-and a bitmap block.
+as well.  A filesystem of a few blocks is legal: two superblocks, an
+index block, one bitmap block and a root.
 .NH 1
 What is not decided here
 .PP
@@ -357,3 +383,44 @@ and
 on the host) is where they get written and where
 .I dump
 becomes the second opinion that keeps them honest.
+.NH 1
+Where efs is today
+.PP
+Written and tested, on the host under
+.I emu :
+.I mkefs ,
+the server, writes, truncate, remove, rename,
+.I efsck ,
+.I efsdump ,
+a crash harness that fails every write in turn, a stress run under
+.IR fatstress ,
+and a free map of more than one group.  Six suites,
+.CW tests/efs-*.sh .
+.PP
+Not yet done, and named here so that nothing reads as finished that is
+not:
+.IP \(bu
+.B "It has never run on the board."
+Everything above is
+.I emu
+on the host against an image file.  The binaries are in the kernel and
+the partition arithmetic is printed, but no
+.I efs
+has been made on the card.
+.IP \(bu
+.B "Nothing boots from it."
+.I kfs
+is still what
+.CW raspi3binit.b
+reams, and it stays in the tree to compare against.
+.IP \(bu
+.B "The allocation rate is high."
+A workload with a few hundred kilobytes of live data needs a 256MB Dis
+heap.  That is garbage and not a leak \(em
+.CW /dev/memheap
+showed the live count falling from 41516 to 5835 inside one run \(em but
+it is still a rate worth reducing, and on a board with 1GB it will
+matter before it matters here.
+.IP \(bu
+.B "Past 64GB the index needs a second level."
+Refused, not truncated.

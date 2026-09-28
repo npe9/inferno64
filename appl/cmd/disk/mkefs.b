@@ -14,8 +14,9 @@ implement Mkefs;
 # What it writes, and nothing more:
 #
 #	block 0		 superblock, generation 1
-#	block 1		 the free bitmap's first block
-#	block 2..	 file data, then the metadata tree
+#	block 1		 the free map's index block
+#	block 2..	 one bitmap block per 32768 blocks, then file
+#			 data, then the metadata tree
 #	block nblocks-1	 the second superblock, generation 0
 #
 # With -a it copies files from the host into the root directory, which
@@ -48,7 +49,7 @@ Mkefs: module {
 };
 
 Rootino:	con big 1;
-Sbbitmap:	con big 1;	# block holding the first bitmap block
+Sbindex:	con big 1;	# block holding the free map's index
 
 dev:	ref Dev;
 nextblk: big;
@@ -93,16 +94,37 @@ init(nil: ref Draw->Context, argv: list of string)
 	name := hd argv;
 
 	#
-	# The smallest legal filesystem is four blocks: two superblocks, a
-	# tree root and a bitmap block.  The format assumes no minimum size
-	# beyond that, so the 7MB gap below the firmware's partition can
-	# hold one.
+	# The smallest legal filesystem is five blocks: two superblocks, an
+	# index block, one bitmap block and a tree root.  The format
+	# assumes no minimum size beyond that, so the 7MB gap below the
+	# firmware's partition can hold one.
 	#
 	if(nblocks == big 0)
 		fail("say how many blocks with -n");
-	if(nblocks < big 4)
-		fail(sys->sprint("%bd blocks is too few; four is the minimum",
+	if(nblocks < big 5)
+		fail(sys->sprint("%bd blocks is too few; five is the minimum",
 			nblocks));
+	#
+	# The index block holds one block number per group, so 512 groups
+	# of 32768 blocks is the ceiling: 64GB.  Past that the format needs
+	# a second level of index and this refuses rather than writing a
+	# map it knows is short.
+	#
+	if(nblocks > big Efs->Maxblocks)
+		fail(sys->sprint("%bd blocks is more than the %d this format indexes (64GB)",
+			nblocks, Efs->Maxblocks));
+
+	#
+	# Say exactly which sectors will be written, before writing any.
+	#
+	# On this board the filesystem lives above the firmware's FAT32,
+	# which ends at sector 1064960, and a mistake in this arithmetic
+	# overwrites the partition the board boots from.  Printing the
+	# range is cheap and it is checkable by the person running it.
+	#
+	sys->print("mkefs: %s: sectors %bd..%bd (%bd blocks of %d)\n",
+		name, startsect, startsect + nblocks * big Efs->Blksectors - big 1,
+		nblocks, Efs->Blocksize);
 
 	(d, e) := Dev.open(name, startsect, nblocks, 1);
 	if(e != nil)
@@ -126,16 +148,17 @@ init(nil: ref Draw->Context, argv: list of string)
 	ino.gid = "inferno";
 
 	#
-	# Allocation while building: blocks 0 and 1 are the superblock and
-	# the bitmap, the last is the spare superblock, and everything
-	# else is handed out in order from 2 upward.  In order because a
-	# builder that writes its blocks in ascending order is kind to a
+	# Allocation while building: block 0 is the superblock, block 1 the
+	# free map's index, blocks 2..1+ng its bitmaps, the last is the
+	# spare superblock, and everything else is handed out in order from
+	# there upward.  In order because a builder that writes its blocks
+	# in ascending order is kind to a
 	# card that erases in large units, and because it makes the image
 	# the same every time, which makes a diff between two runs mean
 	# something.
 	#
 	dev = d;
-	nextblk = big 2;
+	nextblk = big 2 + big efs->ngroups(nblocks);
 	limit = nblocks - big 1;
 
 	ents := array[1] of Ent;
@@ -155,22 +178,29 @@ init(nil: ref Draw->Context, argv: list of string)
 	treeroot := buildtree(ents);
 
 	#
-	# The free bitmap, written LAST, because it must record every block
+	# The free map, written LAST, because it must record every block
 	# the build used and the build does not know that until it is done.
-	# One bit per block, so a 4KB bitmap block covers 32768 blocks; a
-	# filesystem larger than that needs more of them, and this program
-	# refuses rather than writing a map it knows is short.
 	#
-	if(nblocks > big (Efs->Blocksize * 8))
-		fail(sys->sprint("%bd blocks needs more than one bitmap block, which this does not write yet",
-			nblocks));
-	bm := array[Efs->Blocksize] of {* => byte 0};
-	efs->bitset(bm, 0, 1);				# superblock 0
-	efs->bitset(bm, int Sbbitmap, 1);		# the bitmap itself
-	for(b := big 2; b < nextblk; b++)
-		efs->bitset(bm, int b, 1);		# data and tree
-	efs->bitset(bm, int (nblocks - big 1), 1);	# superblock 1
-	if((e = d.wrblk(Sbbitmap, bm)) != nil)
+	# Block 1 is the index and blocks 2..1+ng are the groups, reserved
+	# before the tree was built so that their numbers are known while
+	# they are being filled in.  Everything from 0 to nextblk-1 is in
+	# use by construction -- that is what allocating in ascending order
+	# buys -- plus the spare superblock at the end.
+	#
+	ng := efs->ngroups(nblocks);
+	idx := array[Efs->Blocksize] of {* => byte 0};
+	for(g := 0; g < ng; g++){
+		bm := array[Efs->Blocksize] of {* => byte 0};
+		lo := big g * big Efs->Bitsperblk;
+		for(b := lo; b < lo + big Efs->Bitsperblk && b < nblocks; b++)
+			if(b < nextblk || b == nblocks - big 1)
+				efs->bitset(bm, int (b - lo), 1);
+		gb := Sbindex + big 1 + big g;
+		if((e = d.wrblk(gb, bm)) != nil)
+			fail(e);
+		efs->put8(idx, g * 8, gb);
+	}
+	if((e = d.wrblk(Sbindex, idx)) != nil)
 		fail(e);
 
 	s := ref Super;
@@ -178,7 +208,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	s.blocksize = Efs->Blocksize;
 	s.nblocks = nblocks;
 	s.treeroot = treeroot;
-	s.freeroot = Sbbitmap;
+	s.freeroot = Sbindex;
 	s.nextino = nextino;
 	s.pendingfree = array[0] of big;
 
@@ -195,9 +225,9 @@ init(nil: ref Draw->Context, argv: list of string)
 	if((e = d.wrblk(efs->superblk(nblocks, 0), s.pack())) != nil)
 		fail(e);
 
-	sys->print("mkefs: %s: %bd blocks of %d, root inode %bd, tree at %bd, bitmap at %bd, %bd used\n",
-		name, nblocks, Efs->Blocksize, Rootino, treeroot, Sbbitmap,
-		nextblk);
+	sys->print("mkefs: %s: %bd blocks of %d, root inode %bd, tree at %bd, free map index at %bd over %d group(s), %bd used\n",
+		name, nblocks, Efs->Blocksize, Rootino, treeroot, Sbindex,
+		efs->ngroups(nblocks), nextblk);
 }
 
 #

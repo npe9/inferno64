@@ -33,6 +33,7 @@ cd "$ROOT"
 EMU=./MacOSX/arm64/bin/emu-cpu
 [ -x "$EMU" ] || EMU=./MacOSX/arm64/bin/emu
 T=tmp
+EMUTIMEOUT=120
 fail=0
 
 say() { printf '%s\n' "$*"; }
@@ -45,6 +46,30 @@ check() {			# check <what> <pattern> <file>
 	fi
 }
 
+#
+# Run emu and NOTICE if it does not exit.
+#
+# Every suite here used to write "timeout N $EMU ... | grep -v ... > file"
+# and look only at the file.  emu's exit status went into the pipe's left
+# hand and nowhere, so a server that never exited was indistinguishable
+# from slow work: the checks passed on output that had been produced
+# seconds in, and every invocation then sat out its whole timeout.  That
+# was the real reason the crash harness took an hour.
+#
+# One temporary file instead of a pipe, so the status is the status.
+#
+runemu() {			# runemu <outfile> <script> [emu options...]
+	rout=$1; rscr=$2
+	shift 2
+	timeout $EMUTIMEOUT $EMU "$@" -r"$ROOT" /dis/sh.dis "$rscr" > $T/emu-raw.txt 2>&1
+	rst=$?
+	grep -v '^new:\|^newa:' $T/emu-raw.txt > "$rout"
+	if [ $rst -ne 0 ]; then
+		say "  FAIL: emu exited $rst on $rscr (124 means it never exited)"
+		fail=`expr $fail + 1`
+	fi
+}
+
 rm -f $T/efs.img $T/efs-one.img $T/efs-both.img $T/efs-tree.img
 
 cat > $T/efs-run.sh <<'EOF'
@@ -52,18 +77,23 @@ load std
 disk/mkefs -n 256 /tmp/efs.img
 disk/efsdump /tmp/efs.img
 EOF
-timeout 120 $EMU -r"$ROOT" /dis/sh.dis /tmp/efs-run.sh 2>&1 |
-	grep -v '^new:\|^newa:' > $T/efs-out.txt
+runemu $T/efs-out.txt /tmp/efs-run.sh
 
 say "1. dump matches mkefs"
 check "block count"	'nblocks 256'				$T/efs-out.txt
 check "live generation"	'mount would take superblock 0, generation 1' $T/efs-out.txt
 check "spare is older"	'generation 0'				$T/efs-out.txt
-check "bitmap at 1"	'freeroot 1'				$T/efs-out.txt
-check "tree root at 2"	'treeroot 2'				$T/efs-out.txt
+check "map index at 1"	'freeroot 1'				$T/efs-out.txt
+check "one group"	'1 group(s)'				$T/efs-out.txt
+#
+# Block 2 is now that group's bitmap and the tree root is at 3.  These
+# numbers moved when the free map became an index plus a bitmap per
+# 32768 blocks, and this test is where that shows.
+#
+check "tree root at 3"	'treeroot 3'				$T/efs-out.txt
 check "root inode"	'(1 inode 0).*mode 40775 nlink 2'	$T/efs-out.txt
-check "four blocks used"	'4 marked in use'			$T/efs-out.txt
-check "which four"	'in use: 0 1 2 255'			$T/efs-out.txt
+check "five blocks used"	'5 marked in use'			$T/efs-out.txt
+check "which five"	'in use: 0 1 2 3 255'			$T/efs-out.txt
 
 #
 # The corruptions go at byte 32 of a block, which is the treeroot field,
@@ -75,14 +105,15 @@ cp $T/efs.img $T/efs-both.img
 printf '\336\255' | dd of=$T/efs-both.img bs=1 seek=32 conv=notrunc 2>/dev/null
 printf '\336\255' | dd of=$T/efs-both.img bs=1 seek=1044512 conv=notrunc 2>/dev/null
 #
-# The tree root, at block 2 in an empty image: byte 2*4096+20, which is
+# The tree root, at block 3 in an empty image: byte 3*4096+20, which is
 # inside its first entry.  These offsets track mkefs's layout, so a
 # change there breaks this test rather than silently corrupting the
 # wrong block and passing -- which is what happened when the bitmap
-# moved to block 1 and this still aimed at 4096.
+# moved to block 1 and this still aimed at 4096, and again when the map
+# grew an index block and this still aimed at 8192.
 #
 cp $T/efs.img $T/efs-tree.img
-printf '\336\255' | dd of=$T/efs-tree.img bs=1 seek=8212 conv=notrunc 2>/dev/null
+printf '\336\255' | dd of=$T/efs-tree.img bs=1 seek=12308 conv=notrunc 2>/dev/null
 
 cat > $T/efs-run2.sh <<'EOF'
 load std
@@ -93,8 +124,7 @@ disk/efsdump /tmp/efs-both.img
 echo 'MARK tree'
 disk/efsdump /tmp/efs-tree.img
 EOF
-timeout 120 $EMU -r"$ROOT" /dis/sh.dis /tmp/efs-run2.sh 2>&1 |
-	grep -v '^new:\|^newa:' > $T/efs-out2.txt
+runemu $T/efs-out2.txt /tmp/efs-run2.sh
 
 #
 # Inferno's shell parses an unquoted == as a syntax error: = is

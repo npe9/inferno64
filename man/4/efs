@@ -1,0 +1,192 @@
+.TH EFS 4
+.SH NAME
+efs, mkefs, efsck, efsdump \- copy-on-write disk file system
+.SH SYNOPSIS
+.B disk/mkefs
+[
+.BI -s " startsector"
+]
+.BI -n " nblocks"
+[
+.BI -a " file"
+]...
+.I image
+.PP
+.B disk/efs
+.RB [ -a | -b ]
+[
+.BI -s " startsector"
+]
+[
+.BI -C " block"
+]
+.BI -f " device"
+.I mountpoint
+.PP
+.B disk/efsck
+[
+.BI -s " startsector"
+]
+.RB [ -v ]
+.I image
+.PP
+.B disk/efsdump
+[
+.BI -s " startsector"
+]
+.I image
+.SH DESCRIPTION
+.I Efs
+serves a file system out of
+.I device
+and mounts it on
+.IR mountpoint .
+Nothing committed is ever overwritten in place: a change writes new
+blocks from the leaf up, and the only write that makes any of it visible
+is a superblock at the end.  Until that write lands the old file system
+is the file system; after it, the new one is; there is no third state.
+.PP
+The point of that rule is what happens after power is lost.  The contract
+is
+.B "crash, mount, usable"
+\(em not crash, mount, check, repair, usable.  There is no recovery stage
+and
+.I efsck
+is not one:
+.I efsck
+is an offline instrument that says whether what is on the disk satisfies
+the format's invariants, and it never repairs anything.
+.PP
+.I Mkefs
+makes a file system.  It runs once and it is a separate program on
+purpose: there is no ream flag on the server and no file system made as a
+side effect of mounting one, so a board that boots and finds no file
+system says so.
+.BI -n " nblocks"
+is required.
+.BI -s " startsector"
+puts block 0 at that sector, for a partition rather than a whole file;
+.I mkefs
+prints the absolute sector range it is about to write before writing any
+of it, because a mistake in that arithmetic overwrites whatever is next
+to the partition.
+.BI -a " file"
+copies a host file into the root directory.
+.PP
+.I Efsdump
+prints the superblocks, the tree and the free map.  It is the second
+opinion on
+.IR mkefs :
+the two programs share the format library but not the code that lays a
+file system out.
+.PP
+The options to
+.I efs
+are those of a file server \(em
+.B -a
+and
+.B -b
+for
+.B MAFTER
+and
+.BR MBEFORE ,
+.BI -s " startsector"
+as above \(em with one exception.
+.BI -C " block"
+sets the block the allocator starts looking at.  It is a test
+instrument, and the only way to reach the second and later blocks of the
+free map without first writing 128MB; see BUGS.
+.SH "ON-DISK FORMAT"
+4KB blocks.  Two superblocks, at block 0 and at the last block, each with
+a generation and a checksum; mount takes the newer one that checksums.
+One B-tree holds all metadata, keyed by 17 bytes of inode number, key
+type and offset, so an inode, a directory entry and a data extent are the
+same kind of record and there is no second structure to keep consistent.
+Every block carries a checksum, which turns "the tree is wrong" into
+"this block is wrong".
+.PP
+The free map is a bitmap with one bit per block, in blocks of its own:
+one 4KB block covers 32768 blocks, and the superblock names an index
+block of up to 512 of those.  That is 64GB; past it the index would need
+a second level, and every program here refuses rather than writing a map
+it knows is short.
+.PP
+Blocks freed by a commit are not allocatable until the commit after it.
+They are listed in the superblock that freed them and folded into the map
+by the next commit.  Without that rule a crash part way through a commit
+can scribble on the tree that commit was meant to fall back to.
+.PP
+.IR doc/efs-format.ms
+is the specification and gives the reasoning.
+.SH FILES
+.TF /dis/disk/efs.dis
+.TP
+.B /dis/lib/efs.dis
+the format: everything both programs must agree about
+.TP
+.B tests/efs-format.sh
+.TP
+.B tests/efs-server.sh
+.TP
+.B tests/efs-write.sh
+.TP
+.B tests/efs-crash.sh
+.TP
+.B tests/efs-stress.sh
+.TP
+.B tests/efs-groups.sh
+what has actually been run
+.SH SOURCE
+.B /appl/lib/efs.b
+.br
+.B /appl/cmd/disk/efs.b
+.br
+.B /appl/cmd/disk/mkefs.b
+.br
+.B /appl/cmd/disk/efsck.b
+.br
+.B /appl/cmd/disk/efsdump.b
+.SH "SEE ALSO"
+.IR kfs (4),
+.IR dossrv (4)
+.SH BUGS
+What is real and what is only demonstrated, because the difference
+matters here more than usual.
+.PP
+.B Real, and tested:
+everything in the six suites above, under
+.I emu
+on a host, against image files.  That includes a crash harness that
+refuses every write in turn across a whole workload and requires the
+image to mount and hold exactly the last committed state after each one,
+with
+.I efsck
+silent; and a free map of two groups, written across the 32768-block
+boundary.
+.PP
+.B Never run on the board.
+The binaries are in the raspi3b kernel and the partition arithmetic is
+printed, but no
+.I efs
+has been made on the card, nothing boots from one, and
+.I kfs
+is still what
+.B raspi3binit.b
+reams.
+.PP
+.B The allocation rate is high.
+A workload whose live data is a few hundred kilobytes needs a 256MB Dis
+heap.  That is garbage rather than a leak \(em
+.B /dev/memheap
+showed the live count falling from 41516 to 5835 within one run \(em but
+it is a rate worth reducing before this runs on a board with 1GB.
+.PP
+.BI -C " block"
+is a test hook in a production program.  It sets where the allocator
+starts; it does not prove that the allocator REACHES the high groups by
+filling the low ones, which nothing yet does.
+.PP
+An overlong
+.I pendingfree
+list is refused rather than spilled to a block of its own, which the
+format allows for.  Nothing generates one yet.
