@@ -174,12 +174,42 @@ is still what
 .B raspi3binit.b
 reams.
 .PP
-.B The allocation rate is high.
-A workload whose live data is a few hundred kilobytes needs a 256MB Dis
-heap.  That is garbage rather than a leak \(em
+.B The allocation rate is still high, and half what it was.
+A workload whose live data is a few hundred kilobytes churns through the
+heap: that is garbage rather than a leak \(em
 .B /dev/memheap
 showed the live count falling from 41516 to 5835 within one run \(em but
 it is a rate worth reducing before this runs on a board with 1GB.
+Two changes, measured through
+.B /dev/memory 's
+cumulative allocation count and through the smallest heap the
+.I fatstress
+workload survives:
+.IP
+.EX
+400KB written, renamed, removed:
+	allocations   79904 -> 32640
+	heap high water  4.36MB -> 2.06MB
+fatstress -n 4 -f 12, smallest heap that finishes:
+	48MB -> 24MB
+.EE
+.PP
+The checksum is two 16-bit halves in
+.B int
+rather than one 32-bit value in
+.BR big ,
+which allocated on every block packed and every block read, and
+verification no longer copies the whole 4KB block to zero the field
+before summing it.  Decoded nodes are cached by block number, which is
+sound only because no committed block is ever overwritten; the cache is
+emptied by every commit, because after one a freed block can be handed
+out again under the same number.
+.PP
+What is left is mostly
+.B Node.unpack
+copying every entry's value out of the block buffer, which it must do \(em
+an entry that pointed into the buffer would be a window on whatever that
+buffer held next.
 .PP
 .BI -C " block"
 is a test hook in a production program.  It sets where the allocator

@@ -186,6 +186,18 @@ Efs: module
 		repl:	array of big;
 		idxblk:	big;
 		cursor:	int;
+		#
+		# A few decoded nodes, by block number.
+		#
+		# Safe because of the format's own rule: a committed block is
+		# never written again, so a block number identifies its
+		# contents for as long as the transaction lasts.  Cleared by
+		# commit, because after one a freed block can be handed out
+		# again and the number would name something else.
+		#
+		cblk:	array of big;
+		cnode:	array of ref Node;
+		cnext:	int;
 		freed:	list of big;	# freed by the transaction in hand
 		dirty:	int;
 
@@ -247,17 +259,30 @@ Efs: module
 
 	init:		fn();
 	#
-	# The checksum is a 32-bit value and it is carried as big, not int.
-	# Limbo's int is 32 bits to the compiler and 64 at runtime in this
-	# implementation, so a computed 0xffffffff and a literal
-	# "int 16rffffffff" print alike and compare unequal.  A checksum
-	# that differs between the host and the board is worse than none,
-	# so the type that holds all 32 bits without sign games holds it,
-	# and get4b/put4b move it.
+	# The checksum, as its two 16-bit halves, NEVER joined into one
+	# 32-bit value.
 	#
-	checksum:	fn(b: array of byte): big;
-	get4b:		fn(b: array of byte, o: int): big;
-	put4b:		fn(b: array of byte, o: int, v: big);
+	# It used to be carried as a big, because Limbo's int is 32 bits to
+	# the compiler and 64 at runtime here, so a computed 0xffffffff and
+	# a literal "int 16rffffffff" print alike and compare unequal, and a
+	# checksum that differs between the host and the board is worse than
+	# none.  A big holds all 32 bits with no sign games -- and allocates,
+	# every time, on a path taken for every block packed and every block
+	# read.  mprof put 1.46MB of a 2.83MB workload on the single line
+	# that made one.
+	#
+	# Adler-32's halves are each below 65521, so neither has a sign
+	# problem in an int of any width, and the on-disk bytes are exactly
+	# what (c<<16)|a used to write big endian: c then a, two bytes each.
+	# The 32-bit value was never needed for anything except being
+	# awkward.
+	#
+	# skip is a byte offset whose four bytes are read as zero, which is
+	# how a block is verified against the sum stored inside it.  It used
+	# to be done by copying the whole 4KB block and zeroing the field in
+	# the copy: one 4096-byte allocation per block read.
+	#
+	checksum:	fn(b: array of byte, skip: int): (int, int);
 	get2:		fn(b: array of byte, o: int): int;
 	get4:		fn(b: array of byte, o: int): int;
 	get8:		fn(b: array of byte, o: int): big;

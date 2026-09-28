@@ -113,34 +113,24 @@ superblk(nblocks: big, which: int): big
 # once, at the end, where a single conversion costs one allocation
 # instead of eight thousand.
 #
-checksum(b: array of byte): big
+checksum(b: array of byte, skip: int): (int, int)
 {
 	Base: con 65521;		# largest prime below 2^16
 	a := 1;
 	c := 0;
 	for(i := 0; i < len b; i++){
-		a = (a + int b[i]) % Base;
+		#
+		# The four bytes at skip read as zero.  Adler still has to
+		# STEP over them -- a zero byte changes c -- so they are
+		# summed as zero rather than passed over.
+		#
+		v := 0;
+		if(skip < 0 || i < skip || i >= skip + 4)
+			v = int b[i];
+		a = (a + v) % Base;
 		c = (c + a) % Base;
 	}
-	return (big c << 16) | big a;
-}
-
-#
-# A 32-bit field held in a big, for the checksum.  See the note in
-# efs.m: converting between int and big for a value with bit 31 set is
-# where this implementation's int width stops being an implementation
-# detail.
-#
-get4b(b: array of byte, o: int): big
-{
-	return big ((int b[o] << 24) | (int b[o+1] << 16) |
-		(int b[o+2] << 8) | int b[o+3]);
-}
-
-put4b(b: array of byte, o: int, v: big)
-{
-	for(i := 0; i < 4; i++)
-		b[o+i] = byte int ((v >> ((3 - i) * 8)) & big 16rff);
+	return (a, c);
 }
 
 #
@@ -196,7 +186,9 @@ Super.pack(s: self ref Super): array of byte
 	put4(b, 56, np);
 	for(i := 0; i < np; i++)
 		put8(b, Sopend + i * 8, s.pendingfree[i]);
-	put4b(b, Socksum, checksum(b));
+	(a, c) := checksum(b, Socksum);
+	put2(b, Socksum, c);
+	put2(b, Socksum + 2, a);
 	return b;
 }
 
@@ -211,14 +203,10 @@ Super.unpack(b: array of byte): (ref Super, string)
 	# Check the sum before believing any other field, and check it the
 	# way it was made: over the whole block with the sum itself zero.
 	#
-	want := get4b(b, Socksum);
-	c := array[Blocksize] of byte;
-	c[0:] = b;
-	put4b(c, Socksum, big 0);
-	got := checksum(c);
-	if(got != want)
-		return (nil, sys->sprint("superblock checksum %bux, want %bux",
-			got, want));
+	(a, c) := checksum(b, Socksum);
+	if(c != get2(b, Socksum) || a != get2(b, Socksum + 2))
+		return (nil, sys->sprint("superblock checksum %ux %ux, want %ux %ux",
+			c, a, get2(b, Socksum), get2(b, Socksum + 2)));
 	s := ref Super;
 	s.version = get4(b, 8);
 	s.blocksize = get4(b, 12);
@@ -467,7 +455,9 @@ Node.pack(n: self ref Node): (array of byte, string)
 		b[o:] = e.val;
 		o += len e.val;
 	}
-	put4b(b, Nocksum, checksum(b));
+	(a, c) := checksum(b, Nocksum);
+	put2(b, Nocksum, c);
+	put2(b, Nocksum + 2, a);
 	return (b, nil);
 }
 
@@ -475,13 +465,10 @@ Node.unpack(b: array of byte): (ref Node, string)
 {
 	if(len b != Blocksize)
 		return (nil, sys->sprint("node is %d bytes", len b));
-	want := get4b(b, Nocksum);
-	c := array[Blocksize] of byte;
-	c[0:] = b;
-	put4b(c, Nocksum, big 0);
-	got := checksum(c);
-	if(got != want)
-		return (nil, sys->sprint("node checksum %bux, want %bux", got, want));
+	(a, c) := checksum(b, Nocksum);
+	if(c != get2(b, Nocksum) || a != get2(b, Nocksum + 2))
+		return (nil, sys->sprint("node checksum %ux %ux, want %ux %ux",
+			c, a, get2(b, Nocksum), get2(b, Nocksum + 2)));
 	n := ref Node;
 	n.ntype = int b[0];
 	n.level = int b[1];
@@ -605,6 +592,9 @@ Fs.mount(name: string, startsect: big): (ref Fs, string)
 	f.repl = nil;
 	f.idxblk = Nilblk;
 	f.cursor = 0;
+	f.cblk = nil;
+	f.cnode = nil;
+	f.cnext = 0;
 	f.freed = nil;
 	f.dirty = 0;
 	return (f, nil);
@@ -618,12 +608,44 @@ readsuper(d: ref Dev, n: big): (ref Super, string)
 	return Super.unpack(b);
 }
 
+#
+# One decoded node, from the cache if it is there.
+#
+# Node.unpack is the most expensive thing this library does per call: it
+# allocates a Node, an entry array and a COPY of every entry's value,
+# because an entry that pointed into the block buffer would be a window
+# on whatever that buffer held next.  mprof put 1.15MB of a 2.4MB
+# workload on it, and it was being paid more than once for the same
+# block -- Fs.replace walks to the leaf through pathto, which unpacks
+# every node on the way down, and then unpacks the leaf again.
+#
+# The cache is correct because of the format, not in spite of it: no
+# committed block is ever overwritten, so within a transaction a block
+# number names one set of bytes.  Commit empties it, because after a
+# commit a block on the freed list can be handed out again and the same
+# number would name something else.
+#
+Ncache: con 8;
 Fs.getnode(f: self ref Fs, n: big): (ref Node, string)
 {
+	if(f.cblk == nil){
+		f.cblk = array[Ncache] of {* => Nilblk};
+		f.cnode = array[Ncache] of ref Node;
+		f.cnext = 0;
+	}
+	for(i := 0; i < Ncache; i++)
+		if(f.cblk[i] == n)
+			return (f.cnode[i], nil);
 	(b, e) := f.d.rdblk(n);
 	if(e != nil)
 		return (nil, e);
-	return Node.unpack(b);
+	(nd, ue) := Node.unpack(b);
+	if(ue != nil)
+		return (nil, ue);
+	f.cblk[f.cnext] = n;
+	f.cnode[f.cnext] = nd;
+	f.cnext = (f.cnext + 1) % Ncache;
+	return (nd, nil);
 }
 
 #
@@ -1331,6 +1353,8 @@ Fs.commit(f: self ref Fs): string
 	f.freed = keep;
 	f.dirty = keep != nil;
 	f.bmindex = nil;	# re-read next time, folding pendingfree in
+	f.cblk = nil;		# a freed block can come back under a new name
+	f.cnode = nil;
 	f.groups = nil;
 	f.gdirty = nil;
 	f.repl = nil;
