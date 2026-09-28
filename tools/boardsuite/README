@@ -1009,15 +1009,24 @@ The baselines changed with it:
 
 Two differences are left and neither is recorded as expected:
 
-	AUXSPI-FAIL.  The self-test now requires data to move rather than a
-	  register to read back, and under QEMU the RX FIFO stays empty --
-	  but STAT says otherwise (0x1020c is one word at Linux's RX_LVL
-	  position) and auxspibcm.c reads that field four bits too high.
-	  Which end is wrong is a question for the board, and
-	  doc/raspi3b-completion-plan.ms has it; recording either answer
-	  now would be recording a guess.
-	ARMTIMER, ARMTIMER-INTR and SYSTMR fail on a loaded host, which is
-	  the one-sided error the retry above exists for.  Recording a
-	  baseline from a starved run is the thing that must not happen, so
-	  these were left as the earlier, idle-host run had them.  A
-	  re-record wants an idle machine.
+	AUXSPI-FAIL is recorded as expected, and the board is why.  The
+	  self-test requires data to move rather than a register to read
+	  back, and under QEMU the RX FIFO stays empty.  On silicon the same
+	  test prints "AUXSPI-OK gate, FIFO levels, and an 8-bit
+	  transaction", so the RX level auxspibcm.c reads at bit 20 works on
+	  the chip; QEMU's model and Linux's header put that field at bit 16.
+	  The hardware's answer is the one that counts, so the driver stays
+	  and the emulated arms carry the -FAIL, the way sifiveu carries
+	  SD-NONE for a qemu whose MMC-SPI controller has no drive behind it.
+	The Pi arms reach the real network through QEMU's user-mode stack,
+	  so DNS-OK, CS-NAME-OK and TIME-NONE on raspi3b-usb need the HOST
+	  to be able to resolve a name and reach an NTP server.  With no
+	  answer the board prints TIME-TRY and nothing after it, and the
+	  markers are simply absent.  Not recorded either way: absent is
+	  wrong on a machine that is online and present is wrong on one that
+	  is not, and this is the one arm that asks.
+	ARMTIMER, ARMTIMER-INTR and SYSTMR fail on a LOADED host, which is
+	  the one-sided error the retry above exists for, and they pass on an
+	  idle one -- so they are recorded as -OK and a run that fails them
+	  is a busy machine, not a regression.  Recording a baseline from a
+	  starved run is the thing that must not happen.

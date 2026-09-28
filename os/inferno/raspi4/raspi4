@@ -129,6 +129,7 @@ root
 	/fd	/
 	/n	/
 	/n/dos	/
+	/n/usb	/
 	/net	/
 	/net.alt	/
 	/nvfs	/

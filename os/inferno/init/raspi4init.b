@@ -390,7 +390,7 @@ usbcheck()
 # Phase 4: USB mass storage.  usbd's Bulk-Only Transport driver serves
 # the stick as a flat file at /chan/usbdisk0, turning byte-range reads
 # and writes into SCSI READ(10)/WRITE(10) over the bulk endpoints;
-# dossrv mounts the FAT filesystem on that file at /n/dos.  Listing the
+# dossrv mounts the FAT filesystem on that file at /n/usb.  Listing the
 # directory proves the read path end to end, and creating a file and
 # reading it back proves the write path.  Boot with
 # -drive if=none,id=d0,file=<img>,format=raw -device usb-storage,drive=d0
@@ -427,16 +427,26 @@ diskcheck()
 		sys->print("DISK-FAIL load dossrv: %r\n");
 		return;
 	}
-	spawn dossrv->init(nil, "dossrv" :: "-f" :: disk :: "-m" :: "/n/dos" :: nil);
+	#
+	# /n/usb, NOT /n/dos.
+	#
+	# /n/dos is where fatcheck() mounts the CARD's FAT, and kupdate
+	# writes the kernel there.  A USB stick mounted over it with MREPL
+	# covers the card, so a board with a stick plugged in could take its
+	# kernel update onto the stick and leave the card as it was -- and
+	# the only sign would be a board that keeps booting the old kernel.
+	# raspi3binit.b uses /n/usb and this had not been changed with it.
+	#
+	spawn dossrv->init(nil, "dossrv" :: "-f" :: disk :: "-m" :: "/n/usb" :: nil);
 
-	# /n/dos exists in the root either way, so an open proves nothing;
+	# /n/usb exists in the root either way, so an open proves nothing;
 	# wait for the mount by waiting for entries to appear under it
 	names := "";
 	first := "";
 	for(i = 0; i < 50; i++){
 		names = "";
 		first = "";
-		dfd := sys->open("/n/dos", Sys->OREAD);
+		dfd := sys->open("/n/usb", Sys->OREAD);
 		if(dfd != nil){
 			for(;;){
 				(n, dirs) := sys->dirread(dfd);
@@ -454,13 +464,13 @@ diskcheck()
 		sys->sleep(100);
 	}
 	if(names == nil){
-		sys->print("DISK-DOS-FAIL nothing under /n/dos: %r\n");
+		sys->print("DISK-DOS-FAIL nothing under /n/usb: %r\n");
 		return;
 	}
-	sys->print("DISK-DOS-OK /n/dos:%s\n", names);
+	sys->print("DISK-DOS-OK /n/usb:%s\n", names);
 
 	if(first != nil){
-		fd := sys->open("/n/dos/" + first, Sys->OREAD);
+		fd := sys->open("/n/usb/" + first, Sys->OREAD);
 		buf := array[512] of byte;
 		n := -1;
 		if(fd != nil)
@@ -474,7 +484,7 @@ diskcheck()
 	# the write path: create, write, close, reopen, read back.  This is
 	# a read-modify-write of a 512-byte block through SCSI WRITE(10).
 	msg := array of byte "written by inferno on the pi\n";
-	wfd := sys->create("/n/dos/pi.txt", Sys->OWRITE, 8r666);
+	wfd := sys->create("/n/usb/pi.txt", Sys->OWRITE, 8r666);
 	if(wfd == nil){
 		sys->print("DISK-WRITE-FAIL create: %r\n");
 		return;
@@ -484,7 +494,7 @@ diskcheck()
 		return;
 	}
 	wfd = nil;
-	rfd := sys->open("/n/dos/pi.txt", Sys->OREAD);
+	rfd := sys->open("/n/usb/pi.txt", Sys->OREAD);
 	if(rfd == nil){
 		sys->print("DISK-WRITE-FAIL reopen: %r\n");
 		return;
