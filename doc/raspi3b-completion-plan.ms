@@ -12487,3 +12487,87 @@ after a transfer.
 .B "Not changed until then."
 A driver corrected to satisfy an emulator, against the chip, is the worst
 outcome available here.
+.NH 1
+Milestone 7 on the board, and the partition that is not there
+.PP
+.B "efs runs on the Pi's own card."
+Build 1790623892, off the card, no JTAG:
+.DS
+.CW
+EFS-NOROOM 0 sectors above the FAT at 62357504; using files on it instead
+efs: /n/dos/efs.img: 16384 blocks, generation 4 from superblock 1
+EFS-OK mounted /n/dos/efs.img
+EFS-WRITE-OK 21 bytes back byte for byte
+EFS-RENAME-OK
+efsck: /n/dos/efscrash.img: clean, generation 5
+EFS-CRASH-OK the card held the last committed state
+.R
+.DE
+.CW "generation 4 from superblock 1"
+is the line to read twice: the filesystem was made on an earlier boot and
+this one mounted it and committed onto it.  A filesystem of this board's
+own that survives a reboot is a thing it has never had.
+.PP
+.B "The partition this document asked for does not exist."
+"Partition sectors 1064960 upward" was a wrong reading of the card.  It is
+one FAT32 partition from sector 2048 to the end: the table says
+2048..62357503 and the BPB's
+.I totsec32
+says 62355456, so the filesystem occupies all of it and there is neither
+space above it nor unused space inside it.  1064960 is not a boundary of
+anything.  The only ways to a raw partition are to repartition the card the
+board boots from, which destroys it, or to use a different card \(em both
+decisions for whoever owns the hardware, not for this file.
+.PP
+So where there is no room above the FAT, efs lives in files on it and the
+marker says
+.CW EFS-NOROOM
+rather than pretending.  That still tests the format and the server against
+real media and a real SD driver at a real card's timings; it does not test
+raw partition access, which the QEMU arm does, and it is weaker in one way
+that matters \(em the commit rule holds against efs losing power, and
+underneath it there is now a FAT and
+.I dossrv
+as well.
+.NH 2
+And the AUX SPI question is closed, by the board
+.PP
+The same boot printed
+.CW "AUXSPI-OK gate, FIFO levels, and an 8-bit transaction" .
+The RX level
+.CW auxspibcm.c
+reads at bit 20 works on the chip, so the driver stays as it is; QEMU's
+model and Linux's header put that field at bit 16, and the hardware's
+answer is the one that counts.  The emulated arm's
+.CW AUXSPI-FAIL
+is the model's disagreement with the chip, not the driver's.
+.NH 2
+Four rounds lost to one character
+.PP
+.CW "SESS= sh tools/jtag/boot.sh"
+is how a caller says there is no console, and
+.CW ${SESS:-...}
+does not honour it: the colon form substitutes the default for an EMPTY
+value as well as an unset one.  So every attempt to turn the console off
+took the first screen session on the machine, hardcopied a scrollback that
+has nothing to do with the Pi, and looked for a banner that will never be
+there.
+.PP
+Four rounds of
+.CW "never came up in 4 attempts"
+for a kernel that was answering its poller with that exact stamp, chased
+through the ring reader, the clear, the grep pattern and the read-back \(em
+none of which had run at all.  The three faults found while looking in the
+wrong place were real and are fixed, and they would have bitten the moment
+this one was out of the way:
+.I kmesg
+retries its dump, because
+.CW dump_image
+hands back a file of the right length full of zeros about one read in three
+with no error to go with it;
+.CW boot.sh
+reports
+.IR kmesg 's
+own failure instead of turning it into "no banner"; and the ring is read six
+times over two minutes rather than thirty over three, because each read
+halts the core where a console hardcopy costs the board nothing.

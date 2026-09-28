@@ -164,7 +164,7 @@ with
 silent; and a free map of two groups, written across the 32768-block
 boundary.
 .PP
-.B It runs, under emulation, and not on the board.
+.B It runs on the board, in files on the FAT rather than a partition.
 .B raspi3binit.b
 has an
 .B efscheck()
@@ -179,14 +179,41 @@ and prints
 .B EFS-RENAME-OK
 and
 .BR EFS-CRASH-OK .
-All of it now runs under QEMU, through the same SDHOST driver the board
-uses, on a 4GB card with a FAT32 partition and room above it: the
-partition is made, the filesystem is reamed on a blank card and mounted on
-a later boot, a file is written and read back and renamed, and the crash
-test injects a write failure, remounts and verifies clean.  It has still
-never run on the REAL card, and
-.I kfs
-is still what that file reams.
+All of it runs under QEMU, through the same SDHOST driver the board uses,
+on a 4GB card with a FAT32 partition and room above it: the partition is
+made, the filesystem is reamed on a blank card and mounted on a later boot,
+a file is written and read back and renamed, and the crash test injects a
+write failure, remounts and verifies clean.
+.PP
+And it runs on the REAL card, with one difference.  That card is a single
+FAT32 partition from sector 2048 to the end \(em the table says
+2048..62357503 and the BPB's totsec32 says 62355456 \(em so there is
+neither space above the filesystem nor unused space inside it, and
+.B "the partition doc/raspi3b-completion-plan.ms asked for does not exist" .
+Where there is no room above the FAT,
+.B efscheck()
+puts efs in FILES on it and prints
+.B EFS-NOROOM
+rather than pretending otherwise.  On this board that gives
+.BR EFS-OK ,
+.BR EFS-WRITE-OK ,
+.B EFS-RENAME-OK
+and
+.B EFS-CRASH-OK
+from a filesystem made on one boot and mounted on the next.
+.PP
+What a file still tests is the format and the server against real media
+and a real SD driver at a real card's timings.  What it cannot test is raw
+partition access, which the QEMU arm covers, and it is a weaker home in
+one way that matters: the commit rule holds against
+.I efs
+losing power, and underneath it there is now a FAT and
+.I dossrv
+as well.
+.I Kfs
+is still what
+.B raspi3binit.b
+reams.
 .PP
 Four bugs came out of the first run that does not appear in any of the
 suites above, because none of them touches a partition or a boot: a
