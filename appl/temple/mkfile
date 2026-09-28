@@ -106,8 +106,12 @@ TARG=\
 
 DISBIN=$ROOT/$DISROOT/temple
 
-<$ROOT/mkfiles/mkdis
-
+#
+# Moved ABOVE the include, where it has an effect.  mk computes
+# SYS_MODULE from this as soon as mkdis is read, so while it sat three
+# lines below that include these dependencies were declared and never
+# used: changing one of these .m files rebuilt nothing here.
+#
 SYSMODULES=\
 	draw.m\
 	sys.m\
@@ -124,3 +128,6 @@ SYSMODULES=\
 	liveplot.m\
 	numerics.m\
 	plot.m\
+
+<$ROOT/mkfiles/mkdis
+

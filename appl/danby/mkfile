@@ -182,5 +182,51 @@ TARG=\
 
 DISBIN=$ROOT/$DISROOT/danby
 
+#
+# The .m files these depend on, so that changing one rebuilds what
+# includes it.
+#
+# mkdis writes SYS_MODULE=${SYSMODULES:%=$MODDIR/%} and mk treats an
+# UNDEFINED variable there as a target it has to make, so "mk install"
+# in this directory failed with "don't know how to make 'SYSMODULES'"
+# before compiling anything.  It had been that way since the models were
+# split into plugins; nothing hit it because nothing in this worktree had
+# ever built danby, and a whole-tree "mk install" stops here, which means
+# everything after danby in appl/mkfile's DIRS was silently not rebuilt.
+#
+# BEFORE the include, not after.  mk evaluates assignments in the order it
+# reads them, so a SYSMODULES set below the line that includes mkdis is
+# set after SYS_MODULE has already been computed from nothing -- which is
+# how this was written the first time, and it failed identically.
+#
+SYSMODULES=\
+	danby/atmosphere.m\
+	danby/ballistics.m\
+	danby/cartpendulum.m\
+	danby/chaosmap.m\
+	danby/doublependulum.m\
+	danby/forcedpendulum.m\
+	danby/gravity.m\
+	danby/lorenz.m\
+	danby/oscillator.m\
+	danby/pendulum.m\
+	danby/populationmodel.m\
+	danby/propulsion.m\
+	danby/reaction.m\
+	danby/rotatinghoop.m\
+	danby/spinorbit.m\
+	danby/stability.m\
+	danby/twospecies.m\
+	draw.m\
+	env.m\
+	math.m\
+	numerics.m\
+	paramtracks.m\
+	plot.m\
+	sys.m\
+	tk.m\
+	wmclient.m\
+
 <$ROOT/mkfiles/mkdis
 <$ROOT/mkfiles/mksubdirs
+

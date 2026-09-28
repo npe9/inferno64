@@ -29,5 +29,36 @@ TARG=\
 
 DISBIN=$ROOT/$DISROOT/dreammachines
 
+#
+# The .m files these depend on, so that changing one rebuilds what
+# includes it.
+#
+# BEFORE the line that includes mkdis, not after.  mk evaluates
+# assignments in the order it reads them and mkdis computes
+# SYS_MODULE=${SYSMODULES:%=$MODDIR/%} as soon as it is read, so a
+# SYSMODULES set below that line is set after the only thing that reads
+# it.  Absent altogether, mk takes the undefined variable for a target
+# and "mk install" here stopped with "don't know how to make
+# 'SYSMODULES'" before compiling anything -- and a whole-tree
+# "mk install" stops with it, so every directory after this one in
+# appl/mkfile's DIRS was silently not rebuilt.
+#
+SYSMODULES=\
+	bufio.m\
+	draw.m\
+	dreammachines/eliza.m\
+	dreammachines/toycpu.m\
+	dreammachines/tutor.m\
+	math.m\
+	math/camerapath.m\
+	math/draw3d.m\
+	math/polyfill.m\
+	sys.m\
+	tk.m\
+	tkclient.m\
+	tone.m\
+	wmclient.m\
+
+
 <$ROOT/mkfiles/mkdis
 <$ROOT/mkfiles/mksubdirs
