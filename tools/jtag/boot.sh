@@ -90,11 +90,40 @@ print(int.from_bytes(d[addr-0x80000:addr-0x80000+4], "little"))
 PYEOF`
 [ -n "$stamp" ] || { echo "boot: no build stamp" >&2; exit 1; }
 
+#
+# Where the log ring lives, so that this script can CLEAR it before
+# resuming rather than trust a count.
+#
+# devcons.c has "struct { Lock lk; uint n; char buf[16384]; } kmesg" and
+# on this arch the Lock is 48 bytes, so n is at +48 and the text at +52
+# -- which a dump of the live ring confirms: the count word reads 9967
+# and "JTAG-STUB 128 bytes at 0x70000" starts four bytes later.
+#
+KMESG=`python3 "$ROOT/tools/jtag/ksyms" "$ROOT/os/inferno/raspi3b/iraspi3b" 2>/dev/null |
+	awk '$3=="kmesg"{print $1}'`
+
+#
+# The two instruments do NOT look for the same string, and reading the
+# ring for the console's banner is a check that can never pass.
+#
+# main.c prints "Inferno/arm64 raspi3b build <stamp>" with serialputs(),
+# which writes the UART directly because it runs before there is a print
+# to use.  Nothing of it reaches the kmesg ring.  The ring's first line
+# is "JTAG-STUB n bytes at 0x70000" and the stamp appears in it later,
+# as "conf raspi3b (<stamp>) jit N" from main()'s print().
+#
+# So the kmesg branch greps for the conf line.  Written the other way it
+# counted 0 for a board that had booted, four times, and reported a
+# working kernel as four failed attempts -- which is the same false
+# failure the console check above was fixed for, reintroduced one branch
+# over.  The board was answering its poller with the new build's stamp
+# at the time.
+#
 banners() {
 	if [ "$VIA" = kmesg ]; then
 		# the ring is this boot's only; 0 before, 1 after
 		sh "$ROOT/tools/jtag/kmesg" 400 2>/dev/null >"$S/boot.txt"
-		LC_ALL=C grep -ac "raspi3b build $stamp" "$S/boot.txt" 2>/dev/null | head -1
+		LC_ALL=C grep -ac "conf raspi3b ($stamp)" "$S/boot.txt" 2>/dev/null | head -1
 		return
 	fi
 	screen -S "$SESS" -X hardcopy -h "$S/boot.txt" 2>/dev/null
@@ -108,29 +137,83 @@ banners() {
 	LC_ALL=C grep -ac "raspi3b build $stamp" "$S/boot.txt" 2>/dev/null | head -1
 }
 
+#
+# Clearing the ring, and why a before-and-after count is not enough.
+#
+# "0 before, 1 after" fails in the one case this script is most often
+# used for: re-booting the SAME build, because the board is wedged or
+# because the kernel in RAM is the one being installed.  The ring then
+# already holds that build's conf line, was=1, now=1, and the loop waits
+# out all four attempts on a board that came up on the first.  That
+# happened twice in a row and both times the board was answering its
+# poller with the new build's stamp while this said it never came up.
+#
+# So the ring's count word is zeroed while the core is halted, between
+# the image load and the resume.  On a good boot the kernel zeroes its
+# whole BSS anyway, which makes the clear redundant; on a load that does
+# not start it is the difference between "the ring is empty" and "the
+# ring still has the last boot's text", and that is exactly the case the
+# count was there to catch.
+#
+# One openocd -c is one argument, and an unquoted shell variable holding
+# "-c mww ... 0" splits into four, which openocd reads as a command and
+# three stray arguments.  So the address is turned into a number here and
+# the command stays a single quoted word below.
+#
+[ -n "$KMESG" ] || { echo "boot: no kmesg symbol in the kernel" >&2; exit 1; }
+nat=`printf '%d' $((KMESG + 48))`
+
 try=1
 while [ $try -le 4 ]; do
-	was=`banners`
+	#
+	# The console's scrollback keeps every previous boot, so there it
+	# is still a count that has to RISE.  The ring is cleared just
+	# below, so there any occurrence at all is this boot's.
+	#
+	if [ "$VIA" = kmesg ]; then
+		was=0
+	else
+		was=`banners`
+	fi
 	timeout 180 openocd -f "$IFACE" -f "$ROOT/tools/jtag/raspi3b.cfg" \
-		-c init -c "jtagrestart $IMG" -c resume -c shutdown \
+		-c init -c "jtagrestart $IMG" -c "mww $nat 0" -c resume -c shutdown \
 		>"$S/openocd.txt" 2>&1
 	LC_ALL=C grep -i 'stub at\|Error:' "$S/openocd.txt" | head -5
 	#
 	# Stop on a wedged debug interface rather than retrying into it.
 	#
 	# DSCR.ERR=1 is sticky state in the CORE's debug logic, not in
-	# the TAP, and it survives everything reachable from here: TRST
-	# resets the TAP and does not touch it, and openocd's own init
-	# fails during target examine, so no command that could write
-	# EDRCR.CSE ever gets to run.  It wants the board power-cycled.
+	# the TAP, and TRST does not touch it.  The claim that nothing
+	# here could clear it was wrong, and tools/jtag/unwedge is the
+	# counter-example: EDRCR is memory mapped on the debug APB, so
+	# "-defer-examine" plus the mem-AP writes CSE without examining
+	# the core at all, and EDSCR's ERR bit goes.  That is verified.
 	#
-	# Retrying into it is worse than useless -- hammering a
-	# non-responding board is how this state gets created -- and it
-	# buries the one line that says what is wrong under several
-	# hundred identical errors.
+	# What is ALSO verified is that clearing the bit is not always
+	# enough.  If the core itself was left unable to execute a debug
+	# instruction -- which is what openocd segfaulting during
+	# jtagrestart does to it -- then examine re-sets ERR immediately
+	# and the next session is as wedged as the last.  The bit was the
+	# symptom; the core's state is the fault, and the only thing on
+	# this desk that resets the core is the power.
+	#
+	# So: clear it once and retry once, and say what the second
+	# failure means.  There is no JTAG path to the PM watchdog that
+	# archreboot() uses -- AP0 reaches the debug APB only, and mem-APs
+	# 1, 2 and 3 answer every peripheral address with 0x00000000,
+	# including the free-running system timer, which is a read that is
+	# not reading.
 	#
 	if LC_ALL=C grep -q 'DSCR.ERR=1' "$S/openocd.txt"; then
-		echo "boot: the debug interface is wedged (DSCR.ERR=1)." >&2
+		if [ "${unwedged:-0}" = 0 ]; then
+			echo "boot: DSCR.ERR=1; clearing it and retrying once" >&2
+			unwedged=1
+			sh "$ROOT/tools/jtag/unwedge" >&2
+			continue
+		fi
+		echo "boot: the debug interface is wedged (DSCR.ERR=1) and" >&2
+		echo "boot: stayed wedged after EDRCR.CSE cleared it, so the" >&2
+		echo "boot: CORE is stuck, not just the sticky bit." >&2
 		echo "boot: this needs the Pi POWER CYCLED; not retrying." >&2
 		exit 2
 	fi

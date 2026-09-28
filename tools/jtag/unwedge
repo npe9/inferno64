@@ -1,0 +1,47 @@
+#!/bin/sh
+#
+# Clear the core's sticky debug error, so a wedged JTAG interface does
+# not need a human at the power switch.
+#
+#	sh tools/jtag/unwedge
+#
+# When openocd dies mid-transaction -- it segfaults in the aarch64
+# memory path often enough, and killing it does the same thing -- the
+# Cortex-A53's external debug logic is left with EDSCR.ERR set.  That bit
+# is sticky, TRST does not touch it, and openocd's own init fails during
+# target examine, so no command that could clear it ever gets to run.
+# Every tool here then reports the same hundreds of lines of
+#
+#	Error: Opcode 0xd53b4500, DSCR.ERR=1, DSCR.EL=1
+#
+# and boot.sh said the board had to be power cycled.  It does not.
+#
+# EDRCR.CSE (bit 2) clears it, and EDRCR is a MEMORY-mapped external
+# debug register -- 0x80010000 is core 0's debug block on this chip, from
+# target/bcm2837.cfg's own ROM-table comment -- so it can be written
+# through the DAP's mem-AP without examining the core at all.  The two
+# pieces that make that possible:
+#
+#	"-defer-examine" on the aarch64 target, so init does not try to
+#	  run instructions on a core that cannot accept them.  Without it
+#	  init still fails and nothing after it runs.
+#	bcm2837.ap, the mem_ap target target/bcm2837.cfg already creates,
+#	  as the target for mww.
+#
+# Verified on silicon: EDSCR 0x13147d53 -> 0x03147d13, ERR (bit 6)
+# gone, and the next ordinary openocd session examined all four cores.
+#
+set -u
+ROOT=`cd \`dirname "$0"\`/../.. && pwd`
+IFACE=${IFACE:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
+CORE=${CORE:-0x80010000}
+
+timeout 90 openocd -f "$IFACE" -c 'set CHIPCORES 1' -f target/bcm2837.cfg \
+	-c 'adapter speed 1000' \
+	-c 'bcm2837.cpu0 configure -defer-examine' \
+	-c init -c 'targets bcm2837.ap' \
+	-c "echo {unwedge: EDSCR before}" -c "mdw `printf '%#x' $((CORE + 0x88))`" \
+	-c "mww `printf '%#x' $((CORE + 0x90))` 4" \
+	-c "echo {unwedge: EDSCR after}" -c "mdw `printf '%#x' $((CORE + 0x88))`" \
+	-c shutdown 2>&1 |
+	grep -vE 'Opcode|libusb|^Info : (JTAG|clock|Listen|starting|gdb)|^$'

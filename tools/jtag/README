@@ -4,6 +4,18 @@ JTAG on the Raspberry Pi 3B
 	config.txt		enable_jtag_gpio=1   (already set)
 	tools/jtag/raspi3b.cfg	OpenOCD for the BCM2837
 	tools/jtag/checkstub	build-time check on the trampoline
+	tools/jtag/unwedge	clear EDSCR.ERR after openocd dies mid-transaction
+
+WHEN EVERY COMMAND PRINTS "DSCR.ERR=1" HUNDREDS OF TIMES, run
+tools/jtag/unwedge.  It writes EDRCR.CSE through the mem-AP with the
+core's examine deferred, which is the one way to reach that register
+without first succeeding at the thing the bit is preventing, and it
+prints EDSCR before and after so you can see the bit go.  If the errors
+come back on the next session the core itself is stuck rather than just
+the sticky bit, and that needs the power.  There is no JTAG route to the
+PM watchdog: AP0 reaches the debug APB only, and mem-APs 1 to 3 answer
+every peripheral address with zero, the free-running system timer
+included.
 
 WHY.  Two days of bring-up went: build a kernel, write 1.9MB to the
 card through a filesystem server that is itself one of the things under
