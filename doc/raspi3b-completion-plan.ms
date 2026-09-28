@@ -12003,3 +12003,184 @@ that followed, not one printed
 .CW BT-RETRY .
 The measured fix is the wait; the retry compiles and reads correctly and
 that is the whole of the confidence in it.
+.NH 1
+efs: a free map past 128MB, and what the suites could not see
+.PP
+The filesystem's free map was one 4KB bitmap block, which is 32768 blocks
+or 128MB, on a card of 62,357,504 sectors.  It is now a bitmap per group
+of 32768 blocks under an
+.B "index block"
+of up to 512 of them: 64GB, and past that every program refuses rather
+than writing a map it knows is short.
+.CW doc/efs-format.ms
+had specified "a copy-on-write bitmap held in the tree" and now says why
+the index block is not that.  The stated reason for "in the tree" was
+arithmetic \(em do not write 950KB of bitmap on every commit \(em and an
+index buys it in full, while keeping the allocator out of the structure it
+allocates for.  Bitmap blocks as tree records are allocated from the map
+they describe, so updating the map allocates nodes, which dirties more of
+the map; that converges, and it is the sort of thing that converges in
+testing and not on the card.
+.PP
+Three faults came out of doing it, and the shape they share is that no
+existing test could have seen any of them.
+.IP \(bu
+.B "pendingfree was truncated in silence,"
+under a comment saying it refused because truncating would not be honest.
+A superblock holds 504 entries; removing a file of more than about 2MB
+frees more, and every block past the cap stayed marked used with nothing
+pointing at it for ever.  The only trace was
+.CW efsck 's
+"marked used and not reached", which is documented there as NOT an error,
+because
+.I pendingfree
+legitimately produces it.  Commit now carries the remainder into the next
+commit.  Measured over a 3MB file: 5 blocks in use before, 15 after; with
+the carry removed again, 1716.
+.IP \(bu
+.B "efsck checked the first 32768 blocks"
+and called the rest clean, with nothing said about stopping early.
+.IP \(bu
+.B "The server never exited, and every efs test was sitting out its whole timeout."
+A spawned process shares its parent's namespace, so once
+.CW /n/client
+was mounted every server-side process held a reference to the mount whose
+pipe it was reading: the shell exited, the mount did not, the pipe never
+reached EOF, and emu waited for a process that was waiting for it.  The
+suites piped emu's output through
+.I grep
+and read only the file, so emu's status went nowhere and
+.CW "timeout 150"
+read as "took 150 seconds".
+.PP
+The fix is one process that copies the namespace before the mount, with
+everything else spawned inside it \(em not a
+.CW pctl
+in each, because
+.CW Styxserver.new
+spawns a reader this file cannot see, and the per-process version left
+about one run in sixty hanging \(em plus dropping the caller's end of the
+pipe where the mount succeeds instead of leaving it to the collector.
+.DS
+.CW
+crash harness, 60 points:
+	before:   about four hours
+	after the namespace fix:  4m22s, one hang
+	after the pipe-end fix:   27s, 60 of 60
+.R
+.DE
+That is the difference between a harness that can be run at the width it
+needs and one that cannot, and it is why 60 points is now the number run
+rather than 16.
+.PP
+.B "tests/efs-groups.sh"
+is new and is the suite that had to exist.  Every other image is 256 to
+4096 blocks \(em one group \(em so the index, the group cache, the commit
+fixpoint with two dirty groups and
+.CW efsck 's
+group lookup were untested by five green suites.  It does the boundary
+triple 32767/32768/32769 and then writes across 32768 in a fourth image
+of 40000 blocks, not the 32769-block one, where block 32768 is the spare
+superblock and the allocator would wrap back to block 4 instead \(em
+leaving a check that could not fail.
+.PP
+.B "Where this leaves milestone 7."
+Six suites green, under
+.I emu
+on the host, against image files;
+.CW man/4/efs
+says so and says what is not true.
+.I efs
+has never run on the board, nothing boots from one, and
+.I kfs
+is still what
+.CW raspi3binit.b
+reams.  The binaries are in the kernel (build 1790585355, 2,055,096
+bytes) and
+.CW mkefs
+prints the absolute sector range before writing, verified on the host as
+.CW "sectors 1064960..1327103" ,
+above the firmware's FAT32 and inside the card.
+.PP
+.B "And it is blocked on the power switch."
+The board's debug interface wedged during a JTAG install \(em openocd
+segfaulted inside
+.CW jtagrestart ,
+which leaves EDSCR.ERR set in the core's debug logic.
+.CW tools/jtag/unwedge
+clears that bit through the mem-AP without examining the core, verified on
+silicon (EDSCR 0x13147d53 to 0x03147d13, and the next ordinary session
+examined all four cores) \(em but the core itself stays unable to execute a
+debug instruction, so examine sets the bit again immediately.  There is no
+JTAG route to the PM watchdog
+.CW archreboot()
+uses: AP0 reaches the debug APB only, and mem-APs 1, 2 and 3 answer every
+peripheral address with 0x00000000, the free-running system timer
+included, which is a read that is not reading.  The Pi needs power cycling
+by hand.
+.PP
+The first thing to check when it comes back is
+.CW tools/jtag/boot.sh 's
+read-back of the cleared log ring.  That guard is committed and has never
+once executed \(em every attempt died in
+.CW jtagrestart
+\(em so it is unverified, and its failure direction is a false PASS on the
+path that decides whether the card may be written.
+.NH 2
+Two bugs underneath, both older than this work
+.PP
+.B "ref T with no initialiser does not zero an adt's scalar fields."
+.CW INEW
+runs
+.CW initmem() ,
+which writes H into pointer slots so the collector can walk them and
+touches nothing else.  Six fresh
+.CW "ref A"
+in a row, same program, same run:
+.DS
+.CW
+without -z:  18521472/4313488768 18521856/4313489152 ...
+with -z:     0/0 0/0 0/0 0/0 0/0 0/0
+.R
+.DE
+Those are heap addresses, so a stale field reads as a large plausible
+number.  It cost a
+.CW "ref Fs"
+with an allocator cursor of 18193664 on a 256-block filesystem, on the
+third of three identical runs, and a
+.CW "ref Dev"
+with the crash harness's write-injection counter already set, so a fresh
+.I mkefs
+printed "injected write failure at write 540620344" and left an image with
+no superblock \(em a program with no injection flag, refusing its own
+write.  Both read as bugs in whatever was being written at the time.
+.PP
+The fix was one line:
+.CW INEWZ ,
+the interpreter's
+.CW newz ,
+.CW heapz 's
+memset and all seven JIT back ends were already written; the compiler
+never emitted the instruction.  Same shape as the array half of
+.CW -z ,
+which
+.CW doc/dis.ms
+had documented all along.
+.PP
+.B "A whole-tree mk install stopped at appl/danby."
+.CW mkfiles/mkdis
+computes
+.CW SYS_MODULE
+from
+.CW SYSMODULES
+as soon as it is read and mk takes an undefined variable there for a
+target, so "don't know how to make 'SYSMODULES'" \(em and everything after
+danby in
+.CW appl/mkfile 's
+DIRS was silently not rebuilt.  mk evaluates assignments in the order it
+reads them, so the assignment has to be ABOVE the include;
+.CW appl/temple
+has had it three lines below since the directory was created, which means
+fifteen
+.CW .m
+dependencies declared there have never once caused a rebuild.
