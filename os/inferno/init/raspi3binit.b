@@ -3499,6 +3499,68 @@ efscrashtest(part: string): int
 }
 
 #
+# efs in files on the FAT, for a card with no room above it.
+#
+# Reamed once, when /n/dos/efsream is there and the file is not: a FAT has
+# no sparse files, so mkefs writing its last block allocates every cluster
+# up to it, and 64MB through dossrv at this board's measured 370KB/s is
+# about three minutes.  Once.  Every boot after that is two block reads.
+#
+Efsfileblk:	con 16384;	# 64MB
+Efscrashblk:	con 1024;	# 4MB, and it is meant to be ruined
+efsonfat()
+{
+	img := "/n/dos/efs.img";
+	if(sys->open(img, Sys->OREAD) == nil){
+		if(sys->open("/n/dos/efsream", Sys->OREAD) == nil){
+			sys->print("EFS-SKIP no %s, and no /n/dos/efsream to say make one\n", img);
+			return;
+		}
+		sys->print("EFS-REAM making %s, %d blocks; this takes minutes\n",
+			img, Efsfileblk);
+		if(!efsdone("mkefs", "mkefs" :: "-n" :: string Efsfileblk ::
+				img :: nil)){
+			sys->print("EFS-FAIL mkefs did not finish\n");
+			return;
+		}
+	}
+	if(!efsdone("efs", "efs" :: "-f" :: img :: "/n/efs" :: nil))
+		return;
+	sys->print("EFS-OK mounted %s\n", img);
+	if(!efswork())
+		return;
+	#
+	# And the crash test, on a file of its own.
+	#
+	cimg := "/n/dos/efscrash.img";
+	if(sys->open(cimg, Sys->OREAD) == nil &&
+	    !efsdone("mkefs", "mkefs" :: "-n" :: string Efscrashblk :: cimg :: nil)){
+		sys->print("EFS-CRASH-FAIL mkefs did not finish\n");
+		return;
+	}
+	if(!efsdone("efs", "efs" :: "-F" :: "12" :: "-f" :: cimg ::
+			"/n/efscrash" :: nil)){
+		sys->print("EFS-CRASH-FAIL the injecting server would not mount\n");
+		return;
+	}
+	for(i := 0; i < 8; i++){
+		cfd := sys->create(sys->sprint("/n/efscrash/f%d", i),
+			Sys->ORDWR, 8r644);
+		if(cfd == nil)
+			break;
+		b := array[4096] of {* => byte i};
+		if(sys->write(cfd, b, len b) != len b)
+			break;
+	}
+	sys->unmount(nil, "/n/efscrash");
+	if(!efsdone("efsck", "efsck" :: cimg :: nil)){
+		sys->print("EFS-CRASH-FAIL efsck would not call it clean\n");
+		return;
+	}
+	sys->print("EFS-CRASH-OK the card held the last committed state\n");
+}
+
+#
 # Phase: efs on the card.
 #
 # /n/dos/efsream on the FAT partition is the opt-in for making a NEW
@@ -3581,8 +3643,26 @@ efscheck()
 	crash := Efscrashsec;
 	avail := cards - estart;
 	if(avail < Efsmin){
-		sys->print("EFS-SKIP %d sectors above the FAT at %d, need %d\n",
-			avail, fstart + nsec, Efsmin);
+		#
+		# No room above the FAT, so efs lives in FILES on it.
+		#
+		# This card is one FAT32 partition from sector 2048 to the
+		# end -- the table says 2048..62357503 and the BPB's
+		# totsec32 says 62355456, so the filesystem uses all of it
+		# and there is no space above it or unused inside it.
+		# doc/raspi3b-completion-plan.ms had asked for "sectors
+		# 1064960 upward", which was a wrong reading of this card:
+		# there is nothing there.
+		#
+		# A file is a weaker home than a partition and the marker
+		# says so.  What it still tests is the format and the server
+		# against real media and a real SD driver, at a real card's
+		# timings; what it cannot test is raw partition access, which
+		# is what the QEMU arm covers.
+		#
+		sys->print("EFS-NOROOM %d sectors above the FAT at %d; using files on it instead\n",
+			avail, fstart + nsec);
+		efsonfat();
 		return;
 	}
 	if(avail < Efsmin + crash){
