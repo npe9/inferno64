@@ -684,7 +684,16 @@ config_last() {
 	# has what it wants rather than waiting out its timeout, so the
 	# marker that made it last on every other Pi configuration is
 	# not last here.  The shell's is.
-	raspi3b-usb)		echo 'RASPI3B-SH-OK'; echo 'ETHER-PING-DONE'; echo 'DISK-WRITE'; echo 'USB-KBD';;
+	#
+	# TIME- as well, so the boot is not stopped while the clock check is
+	# still out.  It did NOT recover DNS-OK, CS-NAME-OK and TIME-NONE,
+	# which this arm's baseline has and which do not appear on this host:
+	# the board prints CS-OK and then "TIME-TRY udp!10.0.2.2!ntp", where
+	# slirp runs no NTP server, and the two name markers never arrive at
+	# all even though the host's own resolver answers.  Waiting longer is
+	# right either way; it is not the explanation.
+	#
+	raspi3b-usb)		echo 'RASPI3B-SH-OK'; echo 'ETHER-PING-DONE'; echo 'DISK-WRITE'; echo 'USB-KBD'; echo 'TIME-';;
 	# Two markers, both required, because on these two neither one is
 	# reliably last.  The pointer check reports when its own timeout
 	# runs out and the shell marker comes after the kfs ream, and the

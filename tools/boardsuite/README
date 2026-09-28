@@ -1018,13 +1018,16 @@ Two differences are left and neither is recorded as expected:
 	  The hardware's answer is the one that counts, so the driver stays
 	  and the emulated arms carry the -FAIL, the way sifiveu carries
 	  SD-NONE for a qemu whose MMC-SPI controller has no drive behind it.
-	The Pi arms reach the real network through QEMU's user-mode stack,
-	  so DNS-OK, CS-NAME-OK and TIME-NONE on raspi3b-usb need the HOST
-	  to be able to resolve a name and reach an NTP server.  With no
-	  answer the board prints TIME-TRY and nothing after it, and the
-	  markers are simply absent.  Not recorded either way: absent is
-	  wrong on a machine that is online and present is wrong on one that
-	  is not, and this is the one arm that asks.
+	raspi3b-usb is the suite's one open failure, on DNS-OK, CS-NAME-OK
+	  and TIME-NONE.  The Pi arms reach the network through QEMU's
+	  user-mode stack, and on this host the board prints CS-OK and then
+	  "TIME-TRY udp!10.0.2.2!ntp" -- slirp runs no NTP server there, so
+	  TIME cannot report -- and the two name markers never arrive at all
+	  although the host's own resolver answers.  Stopping the boot early
+	  was ruled out: TIME- was added to config_last for this arm and the
+	  markers still do not appear.  Left in the baseline rather than
+	  recorded absent, because they are in it from a host where they did
+	  appear and removing them would hide the day they come back.
 	ARMTIMER, ARMTIMER-INTR and SYSTMR fail on a LOADED host, which is
 	  the one-sided error the retry above exists for, and they pass on an
 	  idle one -- so they are recorded as -OK and a run that fails them
