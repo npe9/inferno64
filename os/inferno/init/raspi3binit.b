@@ -3369,6 +3369,22 @@ efsmount(part: string, where: string): int
 	spawn cmdproc(efs, "efs" :: "-f" :: SDDEV + "/" + part :: where :: nil,
 		pidch);
 	<-pidch;
+	#
+	# Ten seconds, and the reason it is enough rather than a guess.
+	#
+	# What has to happen before the mount point stats is two block
+	# reads: superblock 0 and superblock 1, the second of them at the
+	# far end of the partition.  Making the filesystem is NOT in this
+	# window -- mkefs runs to completion under efsdone() before this is
+	# called -- and even that is about 235 block writes for a 29GB
+	# partition (two superblocks, an index block, 230 group bitmaps and
+	# a tree root), which is under a megabyte and about a fifth of a
+	# second at the 5-6MB/s this board's block layer was measured to do.
+	#
+	# So ten seconds is three orders of magnitude of slack on two reads,
+	# and if it is ever not enough the thing to look at is the SD driver
+	# and not this number.
+	#
 	for(i := 0; i < 20; i++){
 		(ok, nil) := sys->stat(where + "/.");
 		if(ok >= 0)

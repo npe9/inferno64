@@ -12277,3 +12277,77 @@ anything a served program spawns needs its own namespace, taken before
 the mount, and that a suite which throws away
 .IR emu 's
 exit status cannot tell a server that will not exit from slow work.
+.NH 2
+How the \-S 16 experiment gets run, in one board.cmd
+.PP
+"First thing to try when the board is reachable" is not a plan unless the
+command is written down, and the boot path is the wrong place to try it:
+.CW fatcheck()
+mounts
+.CW /n/dos
+with the default before anything on the card could say otherwise, so a
+flag file cannot configure the server that serves the file.
+.PP
+It does not need to.  The measurement is throughput through
+.I dossrv
+on this card, and a SECOND mount of the same partition gives that without
+touching the boot path or rebuilding a kernel.  The kernel now carries a
+.CW /n/dos2
+mount point for it.  Two servers reading one partition is safe; neither
+arm writes.
+.DS
+.CW
+load std
+dossrv -S 16 -f /dev/sdN0/dos -m /n/dos2
+time cp /n/dos2/kernel8.img /dev/null
+unmount /n/dos2
+.R
+.DE
+and the control arm is the same four lines with
+.CW "-S 9" ,
+interleaved rather than run one after the other, because this rig drifts
+thirty per cent from hour to hour and three samples in a row prove
+nothing.  The
+.I dossrv
+line printed at EOF gives the device read count for each arm, so the
+operation count and the wall clock come out of the same run.
+.PP
+What decides it: the host says
+.CW "-S 16"
+does 679 device reads where
+.CW "-S 9"
+does 1166 for the same work, and moves 16 per cent more bytes.  If the
+board's time follows the operation count, the default changes; if it
+follows the bytes, it does not.
+.NH 1
+Two things that wait for the board, and why they are not being built now
+.PP
+.B "The free map's ceiling and the -S 16 default are both board questions,"
+and so is one larger thing.
+.PP
+.B "efs blocks carry a checksum that cannot tell them from another copy of
+.B "themselves."
+Every block has one and it is verified on read, but it is computed over
+that block's own bytes and recorded nowhere else, so an internally
+consistent block passes even when it is the wrong block or an old version
+of the right one \(em which is what a card with a failing translation layer
+produces.  Data blocks have no checksum at all.  The fix is
+parent-records-child: the block number in the node header, the child's
+checksum in the interior entry that points at it, the data block's in the
+extent record, the root's in the superblock.  Then nothing is trusted on
+its own account and the superblocks, which have to be, are two with
+generations.
+.PP
+It is a format version bump and it is NOT being built yet, for one
+reason: nothing of
+.I efs
+has run on the card.
+.CW efscheck()
+compiles and has never executed.  Making the first on-card run exercise a
+new format as well as the partition arithmetic and the crash injection
+would put two untested variables into a test that already has one, and a
+failure would not say which.  Milestone 7 runs first;
+.CW man/4/efs
+and
+.CW doc/efs-format.ms
+both carry the gap with the fix sketched so that it is not lost.
