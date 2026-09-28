@@ -12645,3 +12645,40 @@ was added to that arm's
 and the markers still do not appear \(em and they are left in the baseline
 rather than recorded absent, because they are in it from a host where they
 did appear and removing them would hide the day they come back.
+.NH 1
+SD DMA was off on every boot, and it is worth 1.8x
+.PP
+"First: SD DMA, because it multiplies everything else" says the flag is on
+by default now.  The driver's default is 1 and the board's
+.CW ctl
+said
+.CW "sdhost dma 0" .
+.PP
+.CW multiblockcheck()
+writes
+.CW "dma 0"
+twice as the control arm of an A/B and never put it back, so every boot
+ended with the driver in PIO.  The same boot prints five arms at
+.CW "dma 1" ,
+all of them OK, including 512 blocks in one request \(em so the comment
+above the last arm, about DMA failing and poisoning the next request,
+predates the fix for the card's legal 250ms program time and is no longer
+what happens.
+.PP
+Restored, and measured on the card, interleaved so the rig's thirty per
+cent drift cannot favour an arm.  Four pairs, 512 blocks each:
+.DS
+.CW
+dma 1   write 30 40 30 30 ms    read 30 30 30 30 ms
+dma 0   write 60 50 50    ms    read 50 60 60    ms
+.R
+.DE
+Every DMA arm beat every PIO arm: about 1.7x on writes and 1.9x on reads,
+which is 8.5MB/s against 4.4MB/s for a 256KB request and agrees with the
+5.7-to-8.5MB/s figure measured earlier in this document.
+.PP
+The driver's error path still falls back to
+.CW "dma 0"
+and says so, so restoring the flag costs nothing if it ever stops working
+\(em and after a boot and this measurement the ctl reads
+.CW "retried 0 gaveup 0" .

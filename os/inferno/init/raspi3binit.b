@@ -276,6 +276,27 @@ multiblockcheck()
 	# ships.
 	#
 
+	#
+	# AND PUT DMA BACK, because this function left the board running
+	# without it.
+	#
+	# The flag is set to 0 twice above as the control arm of an A/B and
+	# was never restored, so every boot ended with the driver in PIO --
+	# on a board whose ctl then reads "sdhost dma 0" and whose plan has
+	# SD DMA as the first thing that multiplies everything else.  What
+	# the same boot prints, five arms of it, is
+	#
+	#	MULTIVERIFY-OK 64 blocks at 2900000: ... (multi 1 dma 1)
+	#	MULTIVERIFY-OK 512 blocks at 2900500: ... (multi 64 dma 1)
+	#
+	# so DMA works here now: the comment above about the DMA arm failing
+	# and poisoning the next request predates the fix for the card's
+	# legal 250ms program time, and today that arm passes too.  The
+	# driver's own default is 1 and the error path still falls back to 0
+	# and says so, so restoring it costs nothing if it ever stops
+	# working.
+	#
+	sys->fprint(cfd, "dma 1");
 }
 
 kfsproc(pfd: ref Sys->FD)
