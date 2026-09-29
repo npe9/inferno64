@@ -407,7 +407,11 @@ parallelvm=1 cflag=1   ok-jit x3                      8821 8750 8945
 Every cell is between 8.4 and 9.3 seconds, the ranges overlap, and the
 number covers the UEFI firmware and the kernel's own device probes, which
 the JIT cannot touch.  Nothing here supports a claim that the JIT is
-faster or slower.  It is also compile-cost dominated by construction \(em a
+faster or slower.  Nor is the host steady: a later run of the same four
+cells, on a kernel that differed by one comment, came back at 7428, 7423,
+7441 and 7441 milliseconds \(em a second faster than every cell above,
+because the machine was idle rather than building.  A difference between
+cells has to be larger than a difference between afternoons.  It is also compile-cost dominated by construction \(em a
 boot runs each module about once, which is the worst case a JIT can be
 asked for \(em so a speed claim would need a program that loops, and that
 means adding one to the root file system, which has not been done.
