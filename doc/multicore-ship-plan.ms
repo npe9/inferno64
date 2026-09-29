@@ -583,3 +583,46 @@ The same benchmark on the host, where both arms run natively, gives 7x to
 could not see it.  With ninety-six per cent of the interpreter spent in
 something both arms paid equally, all four cells came back at 7.4 seconds
 and the matrix reported no difference at all.
+.NH 2
+And the hunt the instrument belongs to
+.PP
+.CW distrack
+defaulting to 0 blinds nothing that was watching.  Checked rather than
+assumed: nothing in
+.CW scripts/
+or
+.CW tests/
+greps for
+.CW track:
+or
+.CW "CHANGED TO BAD VALUE" ,
+and
+.CW check-pc64-parallelvm.sh
+judges on panics, "illegal dis instruction", "registers for" and "counts
+disagree", none of which the tracker prints.  Phase E's first item is the
+one thing that wants it, and it turns it on with
+.CW *distrack=1 .
+.PP
+.B "That item is still live, and the pc64 matrix caught it."
+Two boots per cell against a freshly built
+.CW CONF=pc64dev
+at
+.CW "-smp 2" :
+.IP
+.nf
+parallelvm=0 cflag=0   ok ok
+parallelvm=0 cflag=1   PANIC[page fault] x2
+parallelvm=1 cflag=0   PANIC[general protection violation], then ok
+parallelvm=1 cflag=1   refused refused
+.fi
+.PP
+The control cell is clean in the same run, so
+.CW parallelvm=1
+faulting where
+.CW parallelvm=0
+does not is the signal
+.CW check-pc64-parallelvm.sh
+exists to raise, and the matrix reports
+.B PC64JITMATRIX-FAIL
+rather than widening its expectation to cover it.  Two boots cannot give a
+rate; what they give is that it is still there.
