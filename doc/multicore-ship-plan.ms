@@ -624,5 +624,25 @@ does not is the signal
 .CW check-pc64-parallelvm.sh
 exists to raise, and the matrix reports
 .B PC64JITMATRIX-FAIL
-rather than widening its expectation to cover it.  Two boots cannot give a
-rate; what they give is that it is still there.
+rather than widening its expectation to cover it.
+.PP
+.B "The rate, eight boots an arm, same kernel, same ISO recipe:"
+.IP
+.nf
+parallelvm=1   3 of 8 bad
+parallelvm=0   0 of 8 bad
+.fi
+.PP
+The three were
+.CW "panic: lost pid" ,
+.CW "vmachine: error \(dq<nil>\(dq with no current prog"
+and
+.CW "vmachine: error \(dq\(dq with no current prog" .
+Two of the three are one shape \(em an error raised with no current
+.CW Prog
+\(em which is the register-file desync this plan's Phase E describes,
+seen from the other end.  Zero of eight in the control is what makes
+three of eight mean anything; the plan's own warning that a clean sweep
+of six is weak evidence cuts both ways, and eight against eight is not a
+large sample either.  It is enough to say the item is open and roughly
+how open.
