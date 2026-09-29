@@ -507,18 +507,79 @@ so a JIT it now claims is a JIT it can flush.  It has never been booted
 with
 .CW cflag=1 .
 .IP \(bu
-.B "No speed comparison exists, on either architecture."
-Time to a shell cannot provide one, for the reason above, and nothing else
-in the tree measures compiled Dis.  What it needs is a Dis workload that
-loops, with a checkable answer so the JIT is tested for correctness in the
-same run, and that needs either a program in the board's root file system
-\(em a kernel relink and a config line \(em or a serial channel the
-harness can type into, which neither matrix has.  Until one exists, the
-honest claim about the JIT on this branch is that it is correct, not that
-it is fast.
+.B "Closed:"
+.IR disbench (1)
+is that workload, it is in virtarm64's root file system, and every cell of
+the arm64 matrix runs it.  The numbers are below.
 .IP \(bu
 .B "Fixing"
 .CW comp-amd64.c ,
 unchanged as its own job and now specified: REX.W through the emitters.  It
 is the only architecture in this tree with a generator that does not work,
 rather than one of eight with a generator that was not there.
+.NH 2
+What the JIT is worth, measured
+.PP
+.B "And the instrument that had to come out first."
+.CW checktracked()
+runs once per Dis instruction and walks all 1024 slots of a table
+.CW initmem()
+fills with every pointer word of every object, and on this branch it had
+no off switch.  Profiled with
+.CW sample
+against
+.IR disbench (1):
+2410 of 2498 samples inside it, against eleven in the Dis opcodes.  The
+same run takes 9.2 seconds with it and 0.15 without.  It is guarded by
+.CW distrack
+now, default 0, turned on with
+.CW *distrack=1
+or
+.CW INFERNO_DISTRACK=1 .
+.PP
+.B "That is a caveat on this branch's own numbers, not only on these."
+Every interpreted measurement here was taken through it, and the parallel
+speedups most of all: a per-instruction walk of a private table with no
+shared state is the most scalable work a multiprocessor can be given, so
+it inflates a parallel speedup by construction.  Those numbers need
+retaking.
+.PP
+.B "virtarm64, QEMU -smp 4, one boot per cell, *disbench=20, milliseconds."
+.IP
+.nf
+                  cflag=0    cflag=1
+int                  3100         50
+loop                  670         10
+call                 9690         90
+array                1360         30
+real                 1280         30
+string                330        220
+boot to DISBENCH    11100       7544
+.fi
+.PP
+.CW parallelvm=1
+is within ten per cent of every one of these, which is what a
+single-threaded benchmark should say.
+.PP
+.B "Between 30x and 100x on the compiled paths, and 1.4x on string."
+.CW string
+is allocation and copying, punted to C in both arms, and it is the control
+that says the rest is the code generator and not the allocator.  The other
+control is
+.CW loop ,
+which is
+.CW call
+without the call: by difference, a Dis call costs 277ns interpreted and
+3.5ns compiled on the host.
+.PP
+.B "Read them as QEMU numbers."
+TCG emulates the interpreter's dispatch instruction by instruction and
+emulates far fewer instructions of compiled code, so it flatters a JIT.
+The same benchmark on the host, where both arms run natively, gives 7x to
+64x.  Nothing has been run on silicon.
+.PP
+.B "The boot is 1.5x faster compiled,"
+7.5 seconds against 11.1 to the same marker \(em and the old instrument
+could not see it.  With ninety-six per cent of the interpreter spent in
+something both arms paid equally, all four cells came back at 7.4 seconds
+and the matrix reported no difference at all.
