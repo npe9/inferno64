@@ -12795,3 +12795,85 @@ coincidence.
 .B "The next measurement is on the board, not on either interface:"
 where the fifteen milliseconds between a reply arriving and the next
 request leaving are spent.
+.NH 2
+Where the fifteen milliseconds are: in Dis, not in the network
+.PP
+The same ICMP round trip, measured from both ends of it:
+.DS
+.CW
+from the host, to the board   min 2.24  avg 2.41  max 3.86 ms  (n=20)
+from the board's ip/ping      min 6.82  median 19.61  max 73.54 ms  (n=22)
+.R
+.DE
+The board's kernel answers the host in 2.4ms.  A Dis program ON the board,
+doing the identical exchange through
+.CW /net ,
+needs 19.6ms \(em and 19.6ms is exactly what an 8KB Styx RPC costs
+(19.4-20.8ms across every measurement today).
+.PP
+.B "So the cost is not Styx, not devmnt, not the driver, not the wire."
+It is the latency of a Dis program doing a network round trip at all.  A
+Styx RPC costs one of those, and that is its whole cost.
+.PP
+The board's own scheduler marker says why:
+.DS
+.CW
+SCHED-LAT-OK 50ms sleeps overshoot by 2 ms against a Limbo loop
+             and 0 without (worst 102 and 1)
+.R
+.DE
+Nothing when the VM is free; up to 102ms when another Dis process is
+runnable.  Dis execution on this branch is serialised, and the board always
+has company \(em the command poller, the styx server,
+.I usbd ,
+.I etherusb ,
+a shell.  A process waking on I/O waits for the VM, and the spread of the
+board-side ping (6.8 to 73.5) is that wait.
+.NH 2
+What that rules out, all of it measured
+.IP \(bu 4
+.B "The ethernet driver."
+The same read over wifi \(em a kernel driver on a different bus \(em takes
+the same time as over the userland USB one.
+.IP \(bu
+.B "The wire."
+Wifi's round trip is 3.4x slower and 13x more variable and the throughput
+is identical.
+.IP \(bu
+.B "USB transfer count."
+Transmit batching collapses nothing, because the queue is never deeper
+than one frame.
+.IP \(bu
+.B "The clock tick."
+HZ 100 to 1000, a tenfold finer timer:
+.DS
+.CW
+                 HZ=100    HZ=1000
+1-byte read      65.8 ms   74.2 ms
+8KB read         76.3 ms   76.2 ms
+256KB read      731.3 ms  698.7 ms
+2MB read         5.23 s    4.89 s
+.R
+.DE
+Within this rig's drift, in both directions.  Reverted: ten times the timer
+interrupts for nothing.
+.IP \(bu
+.B "The host's server."
+3.3ms per RPC to a client on the host itself, and while ALSO serving the
+board that client still finishes in 1.04s against 0.84s alone, with the
+board unaffected (4.84s against 4.89s).  It has spare capacity.
+.IP \(bu
+.B "Read-ahead."
+Settled earlier: MCACHE is two per cent slower over ten interleaved pairs.
+.PP
+.B "The remaining lever is the Dis VM, and it is not on this branch."
+.CW doc/multicore-ship-plan.ms
+has the parallel VM, where
+.CW parallelvm=1
+is the default and arm64 measured 4.1x.  Everything above says this board's
+network latency is a scheduler-wait problem, which is that work; the
+alternative here is fewer Dis processes in the path, which
+.I etherusb
+and
+.I usbd
+being userland programs makes hard.
