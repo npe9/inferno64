@@ -78,8 +78,24 @@ virtual height of
 .CW 2*h
 returns an allocation of 2457600 bytes, exactly twice one screen, with
 pitch unchanged.  QEMU honours
-.CW SET_VIRTUAL_HEIGHT ,
-so the page-flip substrate exists under emulation.
+.CW SET_VIRTUAL_HEIGHT .
+.PP
+A fourth, taken afterwards, closes step 2's gate rather than leaving it
+open: setting the virtual offset really does move the scanout.  Painting
+the second half solid white, calling tag
+.CW 0x00048009
+with
+.CW "y = 480" ,
+and capturing the emulated display gives a frame that is
+.CW ffffff
+over 100% of its pixels; the same kernel with
+.CW "y = 0"
+gives
+.CW 2850a0
+over 100%, the Inferno desktop.  The control is the point \(em it shows
+the capture follows the offset rather than always reporting white.  So
+the whole page-flip substrate is confirmed under emulation: the buffer,
+and the flip.
 .NH 1
 The rule this plan runs under
 .PP
@@ -147,26 +163,28 @@ or
 This is what the vc4 KMS driver does on Linux, and it is the reason the
 firmware exposes the tag at all.
 .PP
-.B Gate:
-write distinguishable content into the two halves, flip, and capture the
+.B "Gate, and it has been run:"
+paint the two halves differently, flip, and capture the
 .I emulated
 display with the QEMU monitor's
-.CW screendump ,
-not the kernel's own screendump.  The kernel's dumps
+.CW screendump
+\(em not the kernel's own, which dumps
 .CW gscreen ,
-which is our memory and cannot tell whether the GPU changed what it
-scans out; the monitor's captures what QEMU actually displays.  The check
-fails if both captures match.
+our memory, and cannot see what the GPU scans out.  Done: white at
+.CW "y = 480" ,
+desktop at
+.CW "y = 0" ,
+both 100% of the frame.  The check would have failed if the two captures
+matched, and they do not.
 .PP
-.B "Failure mode to watch:"
-QEMU allocating a double-height buffer proves only the allocation, not
-that
-.CW SET_VIRTUAL_OFFSET
-moves the scanout.  If the capture shows the offset ignored, mark the
-step silicon-only rather than writing driver code that cannot be
-exercised \(em the same call already made for DMA below.  Also note that
-a flip wants to land in vertical blank; without that the tear moves
-rather than vanishing.
+.B "What this does not settle:"
+a flip wants to land in vertical blank.  Nothing above tests that, and
+without it the tear moves rather than vanishing \(em so tearing is a
+silicon-side question even though the mechanism is proven.  The firmware
+offers no vsync tag on this path; the usual answer is the
+.CW SMI
+or a DSI/HDMI field interrupt, and that is where the remaining work in
+this step lies.
 .NH 1
 Step 3: drive the flush from described damage
 .PP
@@ -287,6 +305,7 @@ flipping is a change of arguments before it is a change of design.
 .NH 1
 The one open question this plan does not settle
 .PP
+Not, any more, whether page flipping works \(em that is measured above.
 Step 3 needs the render-node
 .CW libtk
 from the
