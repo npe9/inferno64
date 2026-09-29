@@ -44,6 +44,12 @@
 int jitrefsatomic = 1;
 
 /*
+ * There is a code generator in this file; see jitrefsatomic above for
+ * whether it may be used with the parallel VM.
+ */
+int jitpresent = 1;
+
+/*
  * lib9.h sets _XOPEN_SOURCE, which hides Darwin extensions in
  * <sys/mman.h>. Provide the values ourselves.
  */

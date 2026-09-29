@@ -15,6 +15,12 @@
  */
 int jitrefsatomic = 0;
 
+/*
+ * There is a code generator in this file; see jitrefsatomic above for
+ * whether it may be used with the parallel VM.
+ */
+int jitpresent = 1;
+
 
 /*
  * Copyright © 1997 C H Forsyth (forsyth@terzarima.net)

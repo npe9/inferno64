@@ -236,6 +236,44 @@ main(void)
 			runqaudit = strtol(p, nil, 0);
 		}
 		/*
+		 * The JIT, as a boot option, the way pc64 takes it.
+		 *
+		 * Without this the second axis of the matrix in
+		 * doc/multicore-plan.ms needed a rebuild per cell on this
+		 * board, so nobody ran it: *parallelvm was a boot word and
+		 * cflag was a config file, and a two-by-two where one axis
+		 * costs a relink is a two-by-two that gets done once.
+		 *
+		 * disinit() refuses cflag=1 with parallelvm=1 unless the
+		 * code generator updates Heap.ref atomically, and the
+		 * generator this board links -- comp-aarch64.c, chosen by
+		 * OBJTYPE -- says it does not.  So that cell is expected to
+		 * report the refusal rather than run, and the point of
+		 * having the option is to see it say so.
+		 */
+		if((p = getconf("*cflag")) != nil){
+			extern int cflag, jitpresent;
+
+			cflag = strtol(p, nil, 0);
+			/*
+			 * Here and not only in disinit(), so that the banner
+			 * a few lines below tells the truth.  It prints
+			 * "jit %d" from cflag, and with a stub generator the
+			 * log said "jit 1" while every instruction was
+			 * interpreted -- a line that gets grepped later and
+			 * believed.  disinit() still carries the same check
+			 * for a kernel whose cflag comes from its config
+			 * file rather than a boot word, and stays quiet when
+			 * this one has already spoken.
+			 */
+			if(cflag != 0 && jitpresent == 0){
+				print("dis: this build has no code generator"
+					" for its architecture -- JIT"
+					" ignored.\n");
+				cflag = 0;
+			}
+		}
+		/*
 		 * *soak is NOT read here.  ksetenv() writes through
 		 * up->egrp and up is nil this early, so the call faults --
 		 * pc64's main.c carries the same note.  It is read beside

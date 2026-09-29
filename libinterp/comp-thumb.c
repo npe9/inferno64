@@ -29,6 +29,17 @@
  */
 int jitrefsatomic = 0;
 
+/*
+ * Is there a code generator here at all?
+ *
+ * compile() in this file returns 0 for everything: there is no JIT for
+ * this architecture, only the declaration that keeps the link happy.  A
+ * kernel built with cflag=1 therefore printed "jit 1" in its banner and
+ * then interpreted every instruction, which is a boot option that reports
+ * the opposite of what it did.  disinit() says so and clears cflag now.
+ */
+int jitpresent = 0;
+
 
 void (*comvec)(void);
 

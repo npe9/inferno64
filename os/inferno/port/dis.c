@@ -3717,8 +3717,29 @@ disinit(void *a)
 	 * board ships cflag=0 and why nobody noticed the refcounts.
 	 */
 	{
-		extern int cflag, jitrefsatomic;
+		extern int cflag, jitrefsatomic, jitpresent;
 
+		/*
+		 * No generator at all is the commoner case and it was
+		 * silent.  comp-aarch64.c, comp-riscv32.c, comp-riscv64.c
+		 * and comp-thumb.c are forty-odd lines whose compile()
+		 * returns 0, so on every arm64, riscv and thumb board in
+		 * this tree -- raspi3b, virtarm64, virt, virts, spike,
+		 * shakti, mangopi, sifiveu, virt32, virt32s, mps2,
+		 * teensy41, nucleof303 -- a boot with cflag=1 printed
+		 * "jit 1" in its banner and then interpreted every
+		 * instruction.  A boot option that reports the opposite of
+		 * what it did is worse than one that is not offered.
+		 *
+		 * Said before the atomics check below, because "there is no
+		 * JIT here" is the answer to the question the other message
+		 * asks, and printing both would be confusing.
+		 */
+		if(cflag != 0 && jitpresent == 0){
+			print("dis: this build has no code generator for its"
+				" architecture -- JIT ignored.\n");
+			cflag = 0;
+		}
 		if(cflag != 0 && parallelvm != 0 && jitrefsatomic == 0){
 			print("dis: this code generator updates Heap.ref"
 				" without atomics, and *parallelvm=1 would\n");
