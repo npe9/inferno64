@@ -170,6 +170,13 @@ root
 	/dis/dd.dis
 	/dis/fatstress.dis
 	/dis/sh.dis
+#
+# disbench(1), so the board can say whether the JIT is doing anything at
+# all -- separately from whether it helps the network, which is the
+# question it was built for and a question a wait rather than compute
+# may well answer "no" to.
+#
+	/dis/disbench.dis
 	/dis/sh/std.dis
 	/dis/usb/usbd.dis
 	/dis/usb/etherusb.dis

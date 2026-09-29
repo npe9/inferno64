@@ -1477,8 +1477,38 @@ usbcheck()
 # firmware push must not run at the same time as the controller's
 btdone := 0;
 
+#
+# Skip the Bluetooth controller entirely, keeping everything after it.
+#
+# Zero, so an ordinary boot is exactly what it was.  It exists because
+# with the JIT on -- cflag=1, a real code generator for this
+# architecture for the first time -- the board reaches
+# "bcmfw: controller lmp subversion 0x2209" and stops: no BCMFW-OK, no
+# BT-SERVING, no wifi, and then every process is gone and the kernel
+# prints "Hit the reset button".  Twice, identically.  Everything before
+# it is fine, including SD, the FAT, efs and USB ethernet, all of it
+# compiled.
+#
+# So the JIT's effect on the network cannot be measured through a boot
+# that never reaches the network.  Setting this to 1 gets past the one
+# stage that fails and leaves wifi, DHCP and the poller to run, which is
+# what the measurement needs.  It is a measurement aid and not a fix:
+# the Bluetooth failure under the JIT is real and is not addressed by
+# turning it off.  Both arms of any comparison must be built with the
+# same value, or one of them has a radio the other has not.
+#
+btskip := 0;
+
+# run disbench(1) before the network; see where it is called
+benchearly := 0;
+
 btcheck()
 {
+	if(btskip){
+		sys->print("BT-SKIPPED (btskip is 1)\n");
+		btdone = 1;
+		return;
+	}
 	#
 	# Wait for the card, as wificheck does and for the same reason:
 	# this is spawned alongside the SD checks that mount it.
@@ -2883,6 +2913,33 @@ init()
 		sys->dup(cons.fd, 2);
 	}
 	sys->print("RASPI3B-SH-OK\n");
+	#
+	# disbench(1) here, before the network, when benchearly is 1.
+	#
+	# The poller is the usual way to run anything on this board and it
+	# starts long after this point -- after ethernet, DHCP and the wifi
+	# join.  With the JIT on the board never gets that far, so the one
+	# question worth answering first, "does the compiled code compute
+	# the right answers on real silicon", cannot be asked through the
+	# poller at all.  It can be asked here.  Zero by default; an
+	# ordinary boot does not spend twenty seconds on it.
+	#
+	if(benchearly){
+		bench := load Command "/dis/disbench.dis";
+		if(bench == nil)
+			sys->print("DISBENCH-FAIL load: %r\n");
+		else{
+			#
+			# Ten, not one.  This board's clock ticks at 10ms
+			# and the whole compiled run fits inside a handful
+			# of ticks: at -n 1 the JIT arm reports 10ms for
+			# four of the six tests, which is one tick and not
+			# a measurement.
+			#
+			bench->init(nil, "disbench" :: "-n" :: "10" :: nil);
+			sys->print("DISBENCH-DONE\n");
+		}
+	}
 	spawn remotecmd();
 	shell->init(nil, "sh" :: "-i" :: "-n" :: nil);
 }

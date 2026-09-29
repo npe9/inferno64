@@ -58,6 +58,7 @@ TARG=\
 	dd.dis\
 	dial.dis\
 	diff.dis\
+	disbench.dis\
 	disdep.dis\
 	disdump.dis\
 	dossrv.dis\

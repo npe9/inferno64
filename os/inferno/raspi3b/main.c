@@ -41,10 +41,27 @@ extern int main_pool_pcnt;
 extern int heap_pool_pcnt;
 extern int image_pool_pcnt;
 
+/*
+ * segflush(): make instructions written as data visible to the fetcher.
+ *
+ * This was "USED(p, l); return 1;" -- a no-op -- which was harmless only
+ * while cflag was 0 and every instruction was interpreted.  It is not
+ * harmless with a code generator: the JIT writes instructions through
+ * the data side, and on an A53 the instruction side will happily fetch
+ * whatever was in its lines before.  Clean the range to the point of
+ * coherency and then drop the stale instruction lines; cacheiinv() ends
+ * in DSB and ISB, which orders the next fetch behind both.
+ *
+ * QEMU would never have caught this.  TCG does not model a split
+ * instruction and data cache, so a missing flush passes under emulation
+ * and fails only on silicon, which is the worst shape a bug can have on
+ * this board.
+ */
 int
 segflush(void *p, ulong l)
 {
-	USED(p, l);
+	cacheflush(p, l);
+	cacheiinv();
 	return 1;
 }
 

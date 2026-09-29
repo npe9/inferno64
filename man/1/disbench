@@ -1,0 +1,129 @@
+.TH DISBENCH 1
+.SH NAME
+disbench \- time the Dis virtual machine, with an answer that can be checked
+.SH SYNOPSIS
+.B disbench
+[
+.BI -n " reps"
+] [
+.I test ...
+]
+.SH DESCRIPTION
+.I Disbench
+runs a small set of loops under the Dis virtual machine and prints, for
+each one, how long it took and what it computed.  It exists to answer
+whether the JIT is worth anything, which nothing in this tree could
+answer before: every measurement had been a boot, and a boot runs each
+module about once, which is the worst case a code generator can be asked
+for.
+.PP
+Each test prints one line
+.IP
+.EX
+DISBENCH \fIname\fP \fIiterations\fP \fImilliseconds\fP \fIchecksum\fP
+.EE
+.PP
+and the last line is
+.B DISBENCH-OK
+or
+.BR DISBENCH-FAIL ,
+so a boot log can be judged without a human reading the numbers.  With no
+.I test
+named it runs them all.
+.PP
+.B -n
+repeats each test's inner loop
+.I reps
+times.  The loop sizes are constants, so the checksum is the same at
+every
+.BR -n :
+a longer run never has to switch the check off.  The defaults are sized
+for a board under emulation; a host wants
+.B -n
+.B 20
+or more.
+.SS The tests
+.TP
+.B int
+Shifts, xors and a backward branch, and nothing that leaves the generated
+code.  Twenty-two bits of state, not thirty-two, so that a generator
+using a 32-bit register and an interpreter using a 64-bit one agree \- an
+int is 32 bits to the compiler and 64 at runtime in this tree, and a
+recurrence that relies on wrapping would make a badly written benchmark
+look like a JIT bug.
+.TP
+.B loop
+The control for
+.BR call :
+the same sum over the same iterations with no call in it.
+.TP
+.B call
+The same loop with a function call in it, so
+.B call
+minus
+.B loop
+is what a Dis call costs.
+.TP
+.B array
+Indexed loads and stores, which carry a bounds check the generator emits
+itself.
+.TP
+.B real
+Kahan summation of 1/k, checked to a tolerance of 1e-12 against the same
+algorithm run in Python.  Compensated summation in IEEE double is
+deterministic \- the order is fixed by the loop and every operation is
+correctly rounded \- so a conforming implementation gets the same bits,
+and a tolerance a thousandth of a unit in the last place is far tighter
+than any plausible code-generator bug.  The check used to be
+.B "5.0 < sum < 100.0" ,
+a decade wide, which would have passed through almost anything.
+.TP
+.B string
+Allocation and copying, all of it punted to C.  It is the second control:
+whatever the other tests do, this one should not move much between a JIT
+and an interpreter, and if it does then the difference is in the
+allocator and not in the code generator.
+.SH SOURCE
+.B /appl/cmd/disbench.b
+.SH SEE ALSO
+.IR emu (1),
+.IR mprof (1),
+.B doc/multicore-ship-plan.ms
+.SH DIAGNOSTICS
+A test whose checksum is wrong prints
+.B WRONG
+and the expected value on its own line, and the run ends
+.BR DISBENCH-FAIL .
+The expected values are not recorded from a run of this program: each is
+the same recurrence evaluated in Python, outside this virtual machine, so
+a mismatch is the VM disagreeing with arithmetic rather than with a
+previous afternoon.
+.SH BUGS
+It measures the virtual machine and nothing else.  There is no I/O, no
+channel, no process and no garbage collection pressure in it, so it says
+nothing about a real program's time, and a speedup here is an upper bound
+on what a real program would see.
+.PP
+.B call
+is only as honest as its control.  Its first version had a callee of
+.B "return i" ,
+which
+.IR limbo (1)
+inlines \- a function with no locals whose body is a single return, see
+.B fninline()
+in
+.B limbo/typecheck.c
+and the
+.B -i
+flag that turns it off \- so there was no call in the call test and it
+came out within two per cent of
+.BR loop .
+The callee has a local for that reason and no other.
+.PP
+The numbers depend on whether the Dis word tracker is running; see
+.B distrack
+in
+.BR libinterp/heap.c .
+It is off by default and costs about ninety-six per cent of the
+interpreter's time when it is on, which is enough to make a JIT look
+sixty times better than it is.
