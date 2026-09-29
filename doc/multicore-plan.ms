@@ -23,6 +23,25 @@ and every JIT backend compiles that object's absolute address into the
 code it emits.  Two processors interpreting at once share one register
 file.  This is not a lock to be refined later; it is what the
 interpreter is.  Section 4.
+.QP
+.B "Amended, and only for one generator."
+.CW DISCTXREG
+made
+.CW R
+into
+.CW curP->reg
+with
+.CW curP
+a machine register, which answers the first half for the interpreter;
+and
+.CW comp-aarch64.c
+now reads that register instead of baking an address, which answers it
+for compiled code on one architecture.  All four cells of parallelvm
+crossed with cflag reach a shell on virtarm64.  The sentence above still
+describes
+.CW comp-amd64.c
+and the six other real generators, so it is left standing rather than
+softened.
 .IP 2.
 .B "The uniprocessor baseline is not stable."
 This tree panics at
@@ -392,6 +411,39 @@ and the other backends match.  So making the register file
 per-processor is not a matter of changing a declaration: it is a
 rewrite of every opcode and every code generator in the tree.
 .PP
+.B "One generator is done, and it cost one instruction."
+.CW comp-aarch64.c
+emits a move from the context register in place of
+.CW con((uvlong)&R) ,
+at seven sites.
+.CW REG
+is the first member of
+.CW Pctx ,
+so
+.CW &R
+is
+.CW curP
+with no arithmetic \(em measured, not assumed:
+.CW "long p(void){return (long)&R;}"
+through
+.CW "7c -DDISCTXREG -S"
+is exactly
+.CW "MOVW R25,R0" .
+The generator allocates X0-X5 and X19-X22, so it cannot touch X25, X26
+or X27, which are
+.CW curP ,
+.CW up
+and
+.CW m .
+What made this a one-instruction change rather than the rewrite above is
+that the opcodes were already done: every
+.CW R
+in
+.CW xec.c
+became register-relative when
+.CW DISCTXREG
+landed, and the generator was the last reader still naming an address.
+.PP
 There is a second, independent blocker behind it.  The atomics that
 protect
 .CW Heap.ref
@@ -409,6 +461,23 @@ in its
 .CW code
 section and therefore interprets.  Any board that wants both the JIT
 and more than one processor needs that fixed first.
+.PP
+.B "Fixed for one generator, and enforced for the rest."
+Each generator declares
+.CW jitrefsatomic
+for itself and
+.CW disinit()
+refuses
+.CW cflag
+with
+.CW parallelvm
+unless it is set, saying so on the console.
+.CW comp-aarch64.c
+sets it: it updates
+.CW Heap.ref
+with LDXRW/STXRW retry loops at all four sites, which is why
+.CW "*parallelvm=1 *cflag=1"
+is a cell that runs rather than a cell that reports its own refusal.
 .PP
 This section's title is about the interpreter as it stands, and should
 be read that way: it is a statement about the present design, not a

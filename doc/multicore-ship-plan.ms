@@ -364,3 +364,126 @@ It does not panic and the kernel reaches a shell and runs Dis, so it is
 a corruption signal rather than a failure, and it is only visible on a
 machine with memory above 4 GiB \(em which is every cloud machine.  It
 is the first thing to chase, ahead of the rest of Phase E.
+.NH 1
+The JIT crossed with the parallel VM, on both architectures
+.PP
+This plan named five phases and no JIT test, which is a gap rather than a
+decision: the plan's own front matter says the interpreter cannot be made
+parallel partly because
+.I "every JIT backend compiles the register file's absolute address into
+.I "the code it emits,"
+and no phase here asked whether that was still true.
+.CW scripts/check-arm64-jitmatrix.sh
+and
+.CW scripts/check-pc64-jitmatrix.sh
+are the two-by-two of
+.CW *parallelvm
+against
+.CW *cflag ,
+one kernel per architecture, nothing relinked between cells.
+.PP
+.B "arm64: all four cells, and the JIT is real."
+.CW comp-aarch64.c
+was forty-five lines whose
+.CW compile()
+returned 0; it is the hosted
+.CW comp-arm64.c
+now, with a kernel's allocator and cache flush.  Three boots per cell on
+virtarm64 under QEMU at
+.CW "-smp 4" ,
+twelve of twelve reaching an interactive shell, and the two
+.CW cflag=1
+cells reaching it with the JIT on rather than with the option silently
+dropped:
+.IP
+.nf
+parallelvm=0 cflag=0   ok ok ok        to shell (ms): 9152 8685 8390
+parallelvm=0 cflag=1   ok-jit x3                      9191 9283 9053
+parallelvm=1 cflag=0   ok ok ok                       8769 8695 8956
+parallelvm=1 cflag=1   ok-jit x3                      8821 8750 8945
+.fi
+.PP
+.B "The times are not a benchmark and the spread says so."
+Every cell is between 8.4 and 9.3 seconds, the ranges overlap, and the
+number covers the UEFI firmware and the kernel's own device probes, which
+the JIT cannot touch.  Nothing here supports a claim that the JIT is
+faster or slower.  It is also compile-cost dominated by construction \(em a
+boot runs each module about once, which is the worst case a JIT can be
+asked for \(em so a speed claim would need a program that loops, and that
+means adding one to the root file system, which has not been done.
+.PP
+.CW "parallelvm=1 cflag=1"
+is legitimate rather than tolerated:
+.CW comp-aarch64.c
+sets
+.CW jitrefsatomic=1 ,
+updating
+.CW Heap.ref
+with LDXRW/STXRW retry loops at all four sites, so
+.CW disinit()
+has nothing to refuse.  What made the generated code safe for more than
+one executor was one instruction: a move from the context register in
+place of
+.CW con((uvlong)&R) ,
+at seven sites, because
+.CW REG
+is the first member of
+.CW Pctx
+and
+.CW curP
+on aarch64 is X25.
+.PP
+.B "amd64: three cells right, and the generator is the broken one."
+Two boots per cell against a fresh
+.CW CONF=pc64dev
+at
+.CW "-smp 2" :
+.IP
+.nf
+parallelvm=0 cflag=0   ok ok
+parallelvm=1 cflag=0   ok ok
+parallelvm=0 cflag=1   PANIC[invalid opcode] x2
+parallelvm=1 cflag=1   refused refused
+.fi
+.PP
+The panic is with the VM lock held and no second executor anywhere, so it
+is
+.CW comp-amd64.c
+and not the parallel VM \(em and an earlier pair of boots gave "invalid
+opcode" and then "page fault", which is one generator failing two ways
+rather than a flake.  It already has
+.CW uintptr
+for
+.CW patch[]
+and the literal pool, so the two bugs that stood between
+.CW comp-aarch64.c
+and working are not this.  The refusal in the last cell is correct: it
+sets
+.CW jitrefsatomic=0
+and
+.CW disinit()
+says so on the console.
+.PP
+.B "And the pc64 harness was measuring its own marker."
+It judged every cell on reaching an interactive shell, and
+.CW CONF=pc64dev
+cannot reach one \(em
+.CW pc64devinit.b
+prints "DEVTEST: done" and sleeps for ever.  So the control cell failed on
+a kernel that had booted and finished, and what got written down from that
+reading was "pc64 does not boot in this environment", which is false.  The
+rule at the end of "How to run any of this" is about controls that are
+missing; this is the other half of it, a control that is present and
+broken, and it is the more expensive of the two because it looks like a
+result.
+.PP
+.B "What is left."
+Nothing on silicon:
+.CW raspi3b
+links the same generator and has never been booted with
+.CW cflag=1 .
+Fixing
+.CW comp-amd64.c
+is unchanged as its own job, and it is now the only architecture in this
+tree with a generator that does not work, rather than one of eight with a
+generator that was not there.
