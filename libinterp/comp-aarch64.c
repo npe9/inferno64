@@ -984,18 +984,58 @@ literal(uvlong imm, int roff)
 }
 
 /*
- * schedcheck — decrement IC at backward branches; reschedule if expired.
+ * schedcheck — charge the quantum at backward branches and reschedule
+ * when it runs out.
+ *
+ * IT USED TO SUBTRACT ONE, AND THAT IS A QUANTUM A HUNDRED TIMES TOO
+ * LONG.  xec()'s interpreter loop is "while(--R.IC != 0)": R.IC counts
+ * DIS INSTRUCTIONS, and PQUANTA is 2048 of them.  Compiled code reaches
+ * this only at a backward branch, so subtracting one made the quantum
+ * 2048 loop ITERATIONS -- 2048 times the body length in instructions.
+ *
+ * Measured, on the Raspberry Pi 3B, as USB completion-wake latency,
+ * which is what a process waiting on a device pays when something else
+ * holds the processor.  usbdwc.c prints it: with cflag=0, eight sleeps,
+ * mean 910us, max 1720us.  With cflag=1 and nothing else changed --
+ * literally one byte different in the kernel image -- mean 68097us, max
+ * 493235us.  Seventy-five times worse on average and half a second at
+ * worst, and single-frame ping latency went from 2.4ms to 5.2ms with it
+ * while multi-frame latency halved.  A faster virtual machine that holds
+ * the processor for half a second is not faster for anything waiting.
+ *
+ * So charge what the body actually is.  i - i->d.ins + 1 is the number
+ * of Dis instructions from the branch target to the branch inclusive,
+ * which is known here and is what the interpreter would have counted.
+ *
+ * Still an undercount, and it is worth being precise about which: a call
+ * inside the loop is charged as one instruction rather than as the
+ * callee's body, because the callee's length is not known here and for a
+ * cross-module call is not knowable.  What this removes is the factor
+ * proportional to the loop body; what remains is proportional to the
+ * work a loop hides behind calls.
  */
 static void
 schedcheck(Inst *i)
 {
 	u32int *skip;
+	long n;
 
 	if(!RESCHED || i->d.ins > i)
 		return;
 
+	/*
+	 * SUBS_IMM32 takes twelve bits.  A loop body longer than that is
+	 * charged 4095, which is an undercount for that one branch and
+	 * bounded, where subtracting one was unbounded.
+	 */
+	n = i - i->d.ins + 1;
+	if(n < 1)
+		n = 1;
+	if(n > 4095)
+		n = 4095;
+
 	mem(Ldw32, O(REG, IC), RREG, RA0);
-	SUBS_IMM32(RA0, RA0, 1);
+	SUBS_IMM32(RA0, RA0, (int)n);
 	mem(Stw32, O(REG, IC), RREG, RA0);
 	skip = code;
 	BCOND(GT, 0);		/* IC > 0: continue */

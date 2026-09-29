@@ -96,6 +96,7 @@ struct Ctlr {
 	vlong	isr_[Maxchans];		/* the handler saw it halt */
 	vlong	woke_[Maxchans];	/* and the waiting process ran */
 	uint	rearm[Maxchans];	/* bulk IN channels restarted after a silent NAK */
+	uint	naksleep;		/* NAK retries that cost a tick; see the NAK path */
 };
 
 struct Epio {
@@ -865,6 +866,38 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 				 * this; a deviation from the donor that buys
 				 * nothing measurable is not worth carrying.
 				 */
+				/*
+				 * Count the sleeps, because a tick each is
+				 * not free and the claim that it is was
+				 * measured on the wrong kernel.
+				 *
+				 * "Spinning here first was tried ... and it
+				 * changed nothing" is true and was measured
+				 * interpreted, where the Dis side is slow
+				 * enough that the device is ready by the time
+				 * the transfer is issued and a NAK is rare.
+				 * Compiled, single-frame ping latency goes from
+				 * 2.4ms to 5-16ms while multi-frame latency
+				 * halves, which is the shape of a few
+				 * millisecond sleeps added to a round trip
+				 * that has almost no other work in it.  This
+				 * says how many there are, at a decaying rate
+				 * so it stops talking: the first, the tenth,
+				 * the hundredth.
+				 */
+				if(ep->ttype != Tintr){
+					int nn, dd;
+
+					nn = ++ctlr->naksleep;
+					for(dd = 1; dd < nn; dd *= 10)
+						;
+					if(dd == nn)
+						print("usbdwc: ep%d.%d NAK sleep "
+							"%d (dir %s, type %d)\n",
+							ep->dev->nb, ep->nb, nn,
+							dir == Epin? "in": "out",
+							ep->ttype);
+				}
 				if(ep->ttype == Tintr)
 					tsleep(&up->sleep, return0, 0, ep->pollival);
 				else
