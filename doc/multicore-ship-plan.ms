@@ -490,13 +490,35 @@ missing; this is the other half of it, a control that is present and
 broken, and it is the more expensive of the two because it looks like a
 result.
 .PP
-.B "What is left."
-Nothing on silicon:
+.B "What is left, as items rather than caveats."
+.IP \(bu
+.B "Nothing on silicon."
 .CW raspi3b
-links the same generator and has never been booted with
+links the same generator \(em checked, it builds and links
+.CW comp-aarch64.7
+\(em and its
+.CW segflush()
+is real, cleaning the range with
+.CW cachebcm.c 's
+.CW cacheflush()
+and dropping the I-cache with
+.CW cacheiinv() ,
+so a JIT it now claims is a JIT it can flush.  It has never been booted
+with
 .CW cflag=1 .
-Fixing
-.CW comp-amd64.c
-is unchanged as its own job, and it is now the only architecture in this
-tree with a generator that does not work, rather than one of eight with a
-generator that was not there.
+.IP \(bu
+.B "No speed comparison exists, on either architecture."
+Time to a shell cannot provide one, for the reason above, and nothing else
+in the tree measures compiled Dis.  What it needs is a Dis workload that
+loops, with a checkable answer so the JIT is tested for correctness in the
+same run, and that needs either a program in the board's root file system
+\(em a kernel relink and a config line \(em or a serial channel the
+harness can type into, which neither matrix has.  Until one exists, the
+honest claim about the JIT on this branch is that it is correct, not that
+it is fast.
+.IP \(bu
+.B "Fixing"
+.CW comp-amd64.c ,
+unchanged as its own job and now specified: REX.W through the emitters.  It
+is the only architecture in this tree with a generator that does not work,
+rather than one of eight with a generator that was not there.

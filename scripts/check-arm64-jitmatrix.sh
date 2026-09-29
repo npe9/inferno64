@@ -93,7 +93,16 @@ boot() {	# boot <ini> <log>
 		>/dev/null 2>&1 || return 1
 	rm -f "$2"
 	start=`python3 -c 'import time;print(int(time.time()*1000))'`
-	timeout $BOOTSECS qemu-system-aarch64 -M virt -cpu cortex-a72 \
+	#
+	# No timeout(1) around this, deliberately.  With one, $! is timeout's
+	# pid and not qemu's, so the kill below would depend on timeout
+	# forwarding the signal -- and if it did not, an orphaned qemu would
+	# still be holding $WORK/a.img while the next cell rewrote it, which
+	# is a way to manufacture a failure in the cell after the one that
+	# went wrong.  The deadline is in the poll loop instead, where the
+	# pid is qemu's own.
+	#
+	qemu-system-aarch64 -M virt -cpu cortex-a72 \
 		-smp 4 -m 512 -display none -no-reboot \
 		-drive if=pflash,format=raw,readonly=on,file="$FW" \
 		-drive if=pflash,format=raw,file="$WORK/vars.fd" \
@@ -102,11 +111,14 @@ boot() {	# boot <ini> <log>
 		-serial "file:$2" >/dev/null 2>&1 &
 	qpid=$!
 	MSEC=-1
+	deadline=`expr $start + $BOOTSECS \* 1000`
 	while kill -0 $qpid 2>/dev/null; do
 		if grep -aq 'interactive sh' "$2" 2>/dev/null; then
 			MSEC=`python3 -c "import time;print(int(time.time()*1000)-$start)"`
 			break
 		fi
+		now=`python3 -c 'import time;print(int(time.time()*1000))'`
+		[ "$now" -ge "$deadline" ] && break
 		python3 -c 'import time;time.sleep(0.1)'
 	done
 	kill $qpid 2>/dev/null || true
