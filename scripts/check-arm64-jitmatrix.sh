@@ -36,7 +36,15 @@
 set -u
 ROOT=`cd \`dirname "$0"\`/.. && pwd`
 RUNS=${1:-3}
-BOOTSECS=${BOOTSECS:-120}
+BOOTSECS=${BOOTSECS:-180}
+#
+# What disbench's inner loops are repeated.  Twenty, because at one the
+# JIT cells report zeros: this board's clock ticks at 10ms and the whole
+# compiled run fits inside two of them, so the first version of this
+# printed "int=0 loop=0 call=0" and called it a measurement.  A number
+# below the clock's resolution is not a fast result, it is no result.
+#
+REPS=${REPS:-20}
 PATH=$ROOT/MacOSX/arm64/bin:$PATH
 export PATH ROOT
 
@@ -81,10 +89,18 @@ echo "kernel `ls -l \"$KERN\" | awk '{print $5}'` bytes, `date`"
 #
 # It is a coarse instrument and the point of saying so is that nobody
 # reads it as a benchmark.  It includes the firmware and the kernel's own
-# device probes, which the JIT cannot touch, and the poll granularity is
-# 100ms.  It is here because it is the only speed number available
-# without adding a program to the root file system, and because a JIT
-# that compiles everything and is not faster at all is worth noticing.
+# device probes, which the JIT cannot touch, the poll granularity is
+# 100ms, and it moves with what the host is doing: the same four cells
+# came back a second faster on an idle machine than on one that was
+# building kernels.  It is kept because a boot that suddenly takes twice
+# as long is worth seeing.
+#
+# THE SPEED NUMBER IS DISBENCH.  Every cell boots with *disbench=1, so
+# each one runs disbench(1) out of the kernel's own root file system
+# before it reaches a shell, and its per-test milliseconds are what this
+# prints.  That is loops rather than one pass over each module, and each
+# test carries a checksum computed outside the VM, so a JIT that is fast
+# and wrong fails here rather than looking good.
 #
 boot() {	# boot <ini> <log>
 	dd if=/dev/zero of="$WORK/vars.fd" bs=1m count=64 2>/dev/null
@@ -110,16 +126,35 @@ boot() {	# boot <ini> <log>
 		-device virtio-blk-device,drive=hd \
 		-serial "file:$2" >/dev/null 2>&1 &
 	qpid=$!
+	#
+	# Timed to the first DISBENCH line, not to the shell.  With
+	# *disbench set the benchmark runs before the shell does, so "to
+	# shell" would be the boot plus fifteen seconds of deliberate work
+	# and would say nothing about either.  The first DISBENCH line is
+	# printed after the same binds and probes the shell used to mark,
+	# and before any of the loops.
+	#
 	MSEC=-1
 	deadline=`expr $start + $BOOTSECS \* 1000`
 	while kill -0 $qpid 2>/dev/null; do
-		if grep -aq 'interactive sh' "$2" 2>/dev/null; then
+		if grep -aq '^DISBENCH ' "$2" 2>/dev/null; then
 			MSEC=`python3 -c "import time;print(int(time.time()*1000)-$start)"`
 			break
 		fi
 		now=`python3 -c 'import time;print(int(time.time()*1000))'`
 		[ "$now" -ge "$deadline" ] && break
 		python3 -c 'import time;time.sleep(0.1)'
+	done
+	#
+	# The boot is timed by then and the benchmark is not finished, so
+	# wait for the shell before taking the machine away.  Without this
+	# the cell reports the boot and no disbench numbers at all.
+	#
+	while kill -0 $qpid 2>/dev/null; do
+		grep -aq 'interactive sh' "$2" 2>/dev/null && break
+		now=`python3 -c 'import time;print(int(time.time()*1000))'`
+		[ "$now" -ge "$deadline" ] && break
+		python3 -c 'import time;time.sleep(0.2)'
 	done
 	kill $qpid 2>/dev/null || true
 	wait $qpid 2>/dev/null || true
@@ -169,7 +204,8 @@ fail=0
 for pv in 0 1; do
 	for cf in 0 1; do
 		ini="*parallelvm=$pv
-*cflag=$cf"
+*cflag=$cf
+*disbench=$REPS"
 		printf 'parallelvm=%s cflag=%s: ' $pv $cf
 		n=0
 		out=""
@@ -181,7 +217,24 @@ for pv in 0 1; do
 			times="$times $MSEC"
 			n=`expr $n + 1`
 		done
-		echo "$out	to shell (ms):$times"
+		echo "$out	to first DISBENCH line (ms):$times"
+		#
+		# The benchmark, from the first boot of the cell.  Printed
+		# rather than averaged: three boots of a deterministic loop
+		# under TCG do not need a mean, and a reader comparing cells
+		# wants the per-test numbers, not one figure of merit.
+		#
+		b0="$WORK/p$pv-c$cf-0.log"
+		if grep -aq DISBENCH-OK "$b0"; then
+			printf '	disbench (ms):'
+			grep -a '^DISBENCH ' "$b0" | tr -d '\r' | \
+				awk '{printf " %s=%s", $2, $4}'
+			echo ""
+		else
+			echo "	disbench: did not finish or gave a wrong answer"
+			grep -a 'DISBENCH-FAIL\|WRONG' "$b0" | tr -d '\r' | sed 's/^/	/'
+			fail=1
+		fi
 		case "$out" in
 		*panic*|*"no shell"*|*"no output"*|*build-failed*)	fail=1;;
 		esac

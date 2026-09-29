@@ -6,6 +6,16 @@
 #include "../port/error.h"
 #include "io.h"
 #include "version.h"
+/*
+ * For cflag, jitpresent and distrack, which the boot-option block below
+ * sets.  They used to be "extern int" declarations inside that block; a
+ * block-scope extern and libinterp's file-scope definition do not carry
+ * the same loader type signature, and the link fails with
+ * "incompatible type signatures ... (jitpresent)" while the types are
+ * identical.  See the note beside them in interp.h.
+ */
+#include <isa.h>
+#include <interp.h>
 
 extern Mach mach0;
 Mach *machp[MAXMACH];
@@ -276,7 +286,6 @@ main(void)
 		 * having the option is to see it say so.
 		 */
 		if((p = getconf("*cflag")) != nil){
-			extern int cflag, jitpresent;
 
 			cflag = strtol(p, nil, 0);
 			/*

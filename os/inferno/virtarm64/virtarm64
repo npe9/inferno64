@@ -141,6 +141,13 @@ root
 # parallel VM actually changes.
 #
 	/dis/chantest.dis
+#
+# disbench(1), so this board can say what the JIT is worth.  Before it,
+# the only number the matrix in doc/multicore-ship-plan.ms could report
+# was time to a shell, which is one pass over each module and moves more
+# with what the host is doing than with anything in the VM.
+#
+	/dis/disbench.dis
 	/dis/lib/dial.dis
 	/dis/shutdown
 	/dis/basename.dis

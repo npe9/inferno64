@@ -3729,7 +3729,6 @@ disinit(void *a)
 	 * scripts/check-arm64-jitmatrix.sh and check-pc64-jitmatrix.sh.
 	 */
 	{
-		extern int cflag, jitrefsatomic, jitpresent;
 
 		/*
 		 * No generator at all is the commoner case and it was

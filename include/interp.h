@@ -551,6 +551,20 @@ extern	void*	aswap(void**, void*);
 
 extern	int	bflag;
 extern	int	cflag;
+/*
+ * The two facts a code generator publishes about itself, declared here
+ * rather than with an "extern int" inside whichever function wants them.
+ *
+ * They were block-scope externs in os/inferno/port/dis.c and in each
+ * board's main.c, which is how three files came to declare a symbol that
+ * libinterp defines at file scope -- and the loader's type-signature
+ * check rejects the link when it sees the two, with
+ * "incompatible type signatures ... (jitpresent)" and no hint that the
+ * types are identical and only the scopes differ.  One declaration, in
+ * the header both sides already include.
+ */
+extern	int	jitpresent;	/* comp-<arch>.c has a real compile() */
+extern	int	jitrefsatomic;	/* ... and updates Heap.ref atomically */
 extern	int	nproc;
 extern	Type	Tarray;
 extern	Type	Tstring;

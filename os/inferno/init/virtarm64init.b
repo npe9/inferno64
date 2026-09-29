@@ -23,6 +23,11 @@ Shell: module
 	init:	fn(nil: ref Draw->Context, argv: list of string);
 };
 
+Command: module
+{
+	init:	fn(nil: ref Draw->Context, argv: list of string);
+};
+
 init()
 {
 	sys = load Sys Sys->PATH;
@@ -67,6 +72,34 @@ init()
 		else
 			sys->print("ARM64-DISK-FAIL %s: %r\n", hd l);
 	}
+	#
+	# *disbench=<reps> on the boot line times the virtual machine
+	# before the shell starts.
+	#
+	# It is here for the same reason *soak is: this board's init is
+	# this file rather than /dis/init, so anything a measurement needs
+	# to run has to be started from here.  And it is on the boot line
+	# rather than typed at the shell because the matrix in
+	# scripts/check-arm64-jitmatrix.sh captures a serial log and has
+	# no way to type anything -- without this the only number it could
+	# report was time to a shell, which is one pass over each module.
+	#
+	# The marker after the run is not decoration.  disbench's init()
+	# is called directly here, and a command module's init() is a
+	# process body rather than a function in this system; if it turns
+	# out not to return, DISBENCH-DONE is what says so.
+	#
+	nb := rf("#ec/*disbench");
+	if(nb != nil){
+		bench := load Command "/dis/disbench.dis";
+		if(bench == nil)
+			sys->print("DISBENCH-FAIL load: %r\n");
+		else{
+			bench->init(nil, "disbench" :: "-n" :: nb :: nil);
+			sys->print("DISBENCH-DONE\n");
+		}
+	}
+
 	shell := load Shell "/dis/sh.dis";
 	if(shell == nil){
 		sys->print("VIRTARM64-FAIL: load sh: %r\n");
