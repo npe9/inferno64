@@ -259,6 +259,16 @@ main(int argc, char *argv[])
 		enva[envc] = 0;
 		option(envc, enva, envusage);
 	}
+	/*
+	 * The Dis word tracker, off unless asked for.  It costs about
+	 * ninety-six per cent of the interpreter's time when it is on --
+	 * see the note above distrack in libinterp/heap.c -- so it is an
+	 * environment variable rather than something a measurement can
+	 * inherit without noticing.  The kernel takes *distrack on its
+	 * boot line for the same reason.
+	 */
+	if((opt = getenv("INFERNO_DISTRACK")) != nil && *opt != '\0')
+		distrack = atoi(opt);
 	option(argc, argv, usage);
 	eve = strdup("inferno");
 

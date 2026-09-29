@@ -1019,6 +1019,33 @@ struct Trackslot
 };
 static Trackslot track[NTRACK];
 
+/*
+ * OFF, and it has to be, because it is not free and it was not optional.
+ *
+ * checktracked() runs once per Dis instruction and walks all NTRACK
+ * slots; initmem() registers every pointer word of every object it
+ * initialises, so the table fills and stays full.  A profile of the
+ * interpreter running disbench(1) on this branch put 2410 of 2498
+ * samples inside checktracked() -- ninety-six per cent -- against
+ * eleven in the Dis opcodes themselves, and the same benchmark that
+ * takes 9.8 seconds here takes 0.13 on a branch where this is guarded.
+ * Seventy-five times, in the instrument.
+ *
+ * That is worth stating plainly rather than fixing quietly, because
+ * every interpreted measurement taken on this branch was taken through
+ * it, and the parallel speedups most of all: a per-instruction walk of
+ * a private table with no shared state is the most perfectly scalable
+ * work a multiprocessor can be given, so it inflates a parallel
+ * speedup by construction.  Those numbers need retaking.  See
+ * doc/multicore-plan.ms.
+ *
+ * Turned on with the boot word *distrack=1, or INFERNO_DISTRACK=1 in
+ * emu's environment.  The hunt this exists for -- the parallelvm
+ * corruption, Phase E's first item -- turns it on; nothing else should
+ * have been paying for it.
+ */
+int	distrack = 0;
+
 /* set by xec()'s dispatch loop just before optab[op]() runs */
 Modlink	*trackM;
 Inst	*trackPC;
@@ -1055,6 +1082,8 @@ trackreg(uintptr *addr, Type *t, void *obj, Type **typetagp)
 	int i, start, pid;
 	Prog *pr;
 
+	if(!distrack)
+		return;
 	pr = currun();
 	pid = pr != nil ? pr->pid : -1;
 	start = (int)(((uintptr)addr >> 3) % NTRACK);
@@ -1087,6 +1116,8 @@ checktracked(void)
 	uintptr v;
 	Type *t;
 
+	if(!distrack)
+		return;
 	for(i = 0; i < NTRACK; i++){
 		if(track[i].addr == nil)
 			continue;

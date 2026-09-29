@@ -249,6 +249,17 @@ main(void)
 			runqaudit = strtol(p, nil, 0);
 		}
 		/*
+		 * The Dis word tracker, off unless asked for.  It runs once
+		 * per Dis instruction over a table initmem() fills, and a
+		 * profile put ninety-six per cent of the interpreter inside
+		 * it; see the note above distrack in libinterp/heap.c.  It
+		 * is a boot word so that a measurement cannot inherit it.
+		 */
+		if((p = getconf("*distrack")) != nil){
+			extern int distrack;
+			distrack = strtol(p, nil, 0);
+		}
+		/*
 		 * The JIT, as a boot option, the way pc64 takes it.
 		 *
 		 * Without this the second axis of the matrix in

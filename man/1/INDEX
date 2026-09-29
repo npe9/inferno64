@@ -270,6 +270,7 @@ develop develop
 dial listen
 diff diff
 digits digits
+disbench disbench
 disdep disdep
 disdump asm
 dmview dmview
