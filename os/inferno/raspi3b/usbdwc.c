@@ -68,6 +68,14 @@ enum
 	Maxnak		= 2000,		/* not for bulk IN; see the NAK path */
 	Maxiters	= 4000,		/* attempts at one transfer, likewise */
 	Rearmsecs	= 2,		/* a bulk IN waits this long, then its channel restarts */
+	/*
+	 * Re-arms of one transfer before the channel is reprogrammed from
+	 * scratch rather than just re-enabled.  A healthy board never
+	 * re-arms at all, so any run of them is the wedge; eight is far
+	 * enough past "one unlucky transfer" to be sure and close enough
+	 * to be worth trying while the link still matters.
+	 */
+	Reinitarms	= 8,
 };
 
 typedef struct Ctlr Ctlr;
@@ -463,9 +471,24 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 			 * IN sat with Chen set and NAK latched, no completion
 			 * ever arrived, and the interface received nothing for
 			 * as long as it was left alone.  Halt the channel and
-			 * report a NAK, which is what the caller retries: an
-			 * idle NIC costs a re-arm every couple of seconds, and
-			 * a stopped one starts again instead of staying dead.
+			 * report a NAK, which is what the caller retries.
+			 *
+			 * "An idle NIC costs a re-arm every couple of seconds"
+			 * stood here and is wrong, which mattered: it made the
+			 * re-arm lines read as background noise.  Measured on a
+			 * healthy board, over a whole uptime and eight
+			 * megabytes each way: ZERO re-arms.  smscsetup sets the
+			 * chip's Bir bit, so an idle receive FIFO is answered
+			 * with a zero-length packet rather than held off, and
+			 * the channel completes instead of waiting.  A re-arm
+			 * on this board means the device has stopped answering
+			 * IN tokens altogether, and one is worth reading.
+			 *
+			 * "A stopped one starts again instead of staying dead"
+			 * is also not what happens.  When it does wedge it
+			 * re-arms past a hundred times and never recovers, so
+			 * toggling Chen is not enough on its own; see the
+			 * escalation in chanio.
 			 */
 			if(i >= Rearmsecs && (hc->hcchar & Chen) != 0){
 				hc->hcchar |= Chdis;
@@ -483,11 +506,34 @@ chanwait(Ep *ep, Ctlr *ctlr, Hostchan *hc, int mask)
 				n = ++ctlr->rearm[chan];
 				for(dec = 1; dec < n; dec *= 10)
 					;
+				/*
+				 * Everything, not two registers.
+				 *
+				 * "hcchar ... hcint 0" says the channel was
+				 * enabled and nothing happened, which is true
+				 * of an idle NIC and of a wedged one alike,
+				 * and the two were indistinguishable here for
+				 * a whole afternoon.  What tells them apart is
+				 * whether the transfer moved anything (hctsiz
+				 * and hcdma against what was programmed),
+				 * whether the port is still up (hprt), and
+				 * whether an interrupt was raised and not
+				 * delivered (haint, gintsts).
+				 */
 				if(dec == n)
 					print("usbdwc: ep%d.%d re-armed after %d s "
-						"(%d times): hcchar %8.8ux hcint %8.8ux\n",
+						"(%d times): hcchar %8.8ux hcint %8.8ux "
+						"acc %8.8ux hctsiz %8.8ux hcdma %8.8ux "
+						"hprt %8.8ux haint %8.8ux haintmsk %8.8ux "
+						"gintsts %8.8ux gintmsk %8.8ux\n",
 						ep->dev->nb, ep->nb, i,
-						n, hc->hcchar, hc->hcint);
+						n, hc->hcchar, hc->hcint,
+						ctlr->hcintr[chan], hc->hctsiz,
+						hc->hcdma, ctlr->regs->hport0,
+						ctlr->regs->haint,
+						ctlr->regs->haintmsk,
+						ctlr->regs->gintsts,
+						ctlr->regs->gintmsk);
 				return Chhltd|Nak;
 			}
 			/*
@@ -562,7 +608,8 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 {
 	Ctlr *ctlr;
 	int nleft, n, nt, i, imask, maxpkt, npkt, chan, split, naks, iters;
-	int nyets;
+	int nyets, nrearm;
+	uint rearm0;
 	uint hcdma, hctsiz;
 	vlong chaniot0;
 	Dwcregs *r;
@@ -617,6 +664,8 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 	nleft = len;
 	naks = 0;
 	nyets = 0;
+	nrearm = 0;
+
 	iters = 0;
 	i = 0;
 	chan = hc - r->hchan;
@@ -732,8 +781,42 @@ chanio(Ep *ep, Hostchan *hc, int dir, int pid, void *a, int len)
 		iunlock(ctlr);
 
 	started:
+		rearm0 = ctlr->rearm[chan];
 		i = chanwait(ep, ctlr, hc, imask);
 		hc->hcintmsk = 0;
+		/*
+		 * The channel was re-armed and moved nothing.  Count the run
+		 * of them, and once it is long enough stop re-enabling a
+		 * channel that is not going to start and program it again
+		 * from the beginning.
+		 *
+		 * Why this and not another Chen toggle: the re-arm above
+		 * halts the channel and re-enables it with whatever hctsiz
+		 * and hcdma the core left behind, which is right for
+		 * continuing a partly-done transfer and is not obviously
+		 * right for one that never began.  A fresh hctsiz, a fresh
+		 * DMA address and the caller's PID are what the first attempt
+		 * had, and
+		 * the first attempt worked.
+		 *
+		 * It says so once per run rather than silently, because a
+		 * recovery nobody can see is indistinguishable from a
+		 * failure that stopped on its own.
+		 */
+		if(ctlr->rearm[chan] != rearm0){
+			if(++nrearm == Reinitarms){
+				print("usbdwc: ep%d.%d re-armed %d times with "
+					"nothing moved; reprogramming the "
+					"channel\n", ep->dev->nb, ep->nb, nrearm);
+				ilock(ctlr);
+				hc->hctsiz = (dir == Epin? ROUND(len, maxpkt): len)
+					| npkt<<OPktcnt | pid;
+				hc->hcdma = dmaaddr(a);
+				ctlr->hcintr[chan] = 0;
+				iunlock(ctlr);
+			}
+		}else
+			nrearm = 0;
 		/* hc->hcint was already read-and-cleared by the interrupt handler */
 
 		if(split){
