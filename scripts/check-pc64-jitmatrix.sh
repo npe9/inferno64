@@ -13,8 +13,21 @@
 # lock held and no second executor anywhere, so the amd64 generator is
 # broken on its own account and before any of this."  That sentence was a
 # measurement somebody made once.  This is the measurement, kept, and it
-# now agrees: two boots of that cell gave "invalid opcode" and "page
-# fault", which is one generator failing two ways rather than a flake.
+# agreed: two boots of that cell gave "invalid opcode" twice.
+#
+# WHAT THE INVALID OPCODE WAS, since it is now something else.  genw() and
+# modrm() wrote a four-byte x86 field and then advanced by IBY2WD, the Dis
+# word size, which is eight on a 64-bit kernel.  So every immediate,
+# displacement and branch offset was followed by four bytes nobody wrote:
+# llvm-objdump on a dump of the first module's code reads "movl
+# $0xa61f48,%ebx" and then "addb %al,(%rax)" twice, over and over.  With
+# the stride fixed the module is 15104 bytes rather than 27792, decodes as
+# x86 throughout, and this cell panics with a page fault instead, which is
+# the generator's remaining and much larger problem: it stores 32-bit
+# halves of 64-bit Dis registers, so a field's top half keeps whatever was
+# there before.  The expectation below is still PANIC and the reason has
+# changed; that is worth saying rather than leaving the header describing
+# a fault the script no longer sees.
 #
 # Two processors, because parallelvm with one is not parallel.  The
 # control arm (0,0) is the point: it says what this kernel's ordinary
@@ -78,7 +91,7 @@ expect() {	# expect <pv> <cf>
 	case "$1$2" in
 	00)	echo ok;;
 	10)	echo ok;;
-	01)	echo PANIC;;		# comp-amd64.c, broken on its own account
+	01)	echo PANIC;;		# comp-amd64.c: 32-bit stores of 64-bit Dis registers
 	11)	echo refused;;		# jitrefsatomic=0; disinit() says so
 	esac
 }
