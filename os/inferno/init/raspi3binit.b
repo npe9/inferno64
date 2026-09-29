@@ -1388,6 +1388,89 @@ drawtest()
 # non-white pixel came from Tk.  A label that laid out but drew
 # nothing reports TK-NONE rather than TK-OK, which is the case this
 # would otherwise pass straight through.
+# How long does this board take to paint a screenful?
+#
+# This is the number the GPU question turns on.  doc/ui-next-plan.md on
+# the inferno-rio branch gates a hardware backend on a repaint costing
+# roughly 2ms of DRAWING; on an Apple M-series host a 900x700 fill is
+# about 56us, thirty times under, which is why that work stayed on
+# memdraw.  A Pi 3 shares one LPDDR2 controller between the ARM and the
+# VideoCore, so the same fill is expected to cost far more here - but
+# expected is not measured, and nothing had ever measured it.
+#
+# Two numbers, because the board pays twice for every pixel.  The first
+# is memdraw alone, filling an image of its own.  The second is the
+# same fill into the screen plus flushmemscreen(), which memmoves the
+# dirty rectangle from kernel RAM into the VideoCore's uncached
+# framebuffer and cleans the cache over it (screenbcm.c).  The gap
+# between them IS the soft->fb copy, which is the first thing worth
+# removing if these numbers are large.
+#
+# UNDER QEMU THESE MEAN NOTHING.  QEMU emulates the CPU and runs the
+# memory system at the host's speed, so what this prints there is a
+# property of the desktop it is running on.  Read it on silicon.
+drawrate()
+{
+	disp: ref Display;
+	{ disp = Display.allocate("/dev"); }
+	exception e { "*" => sys->print("DRAWRATE-FAIL Display: %s\n", e); return; }
+	if(disp == nil){
+		sys->print("DRAWRATE-FAIL nil display: %r\n");
+		return;
+	}
+	scr := disp.image;
+	r := scr.r;
+	npix := (r.max.x - r.min.x) * (r.max.y - r.min.y);
+	off := disp.newimage(r, scr.chans, 0, Draw->White);
+	if(off == nil){
+		sys->print("DRAWRATE-FAIL newimage: %r\n");
+		return;
+	}
+	col := disp.rgb(40, 80, 160);
+	if(col == nil){
+		sys->print("DRAWRATE-FAIL rgb: %r\n");
+		return;
+	}
+	# Run until the elapsed time is big enough to divide, rather than a
+	# fixed count.  A fixed fifty came back "0 us a fill" - sys->millisec()
+	# has millisecond resolution and fifty fills fit inside one tick - and
+	# a zero is not a fast number, it is a failed measurement.
+	Minms: con 200;
+
+	# warm once, so a first-call cost is not counted as the steady one
+	off.draw(r, col, nil, (0,0));
+
+	nd := 0;
+	t0 := sys->millisec();
+	for(;;){
+		off.draw(r, col, nil, (0,0));
+		nd++;
+		if(sys->millisec() - t0 >= Minms)
+			break;
+	}
+	t1 := sys->millisec();
+
+	ns := 0;
+	for(;;){
+		scr.draw(r, col, nil, (0,0));
+		scr.flush(Draw->Flushnow);
+		ns++;
+		if(sys->millisec() - t1 >= Minms)
+			break;
+	}
+	t2 := sys->millisec();
+
+	if(nd <= 0 || ns <= 0 || t1 - t0 <= 0 || t2 - t1 <= 0){
+		sys->print("DRAWRATE-FAIL nothing measurable (%d,%d fills)\n", nd, ns);
+		return;
+	}
+	drawus := ((t1 - t0) * 1000) / nd;
+	scrus := ((t2 - t1) * 1000) / ns;
+	sys->print("DRAWRATE-OK %dx%d (%d pixels): memdraw %d us a fill over %d, screen+flush %d us a fill over %d\n",
+		r.max.x - r.min.x, r.max.y - r.min.y, npix, drawus, nd, scrus, ns);
+	sys->print("DRAWRATE-NOTE meaningless under QEMU; read it on the board\n");
+}
+
 # Render a label of the given text into a fresh image and hand back
 # its pixels.  A toplevel of its own each time, because reconfiguring
 # one and reading it again measures whatever the reconfigure happened
@@ -2938,6 +3021,7 @@ init()
 	sdcheck();
 	drawtest();
 	tktest();
+	drawrate();
 	usbcheck();
 	# in its own process: the shell must not wait behind a DHCP lease and
 	# three pings, which take seconds and can be answered by nothing at all
