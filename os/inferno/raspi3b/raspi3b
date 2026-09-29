@@ -48,6 +48,7 @@ lib
 	memlayer
 	memdraw
 	draw
+	tk
 	sec
 	mp
 	math
@@ -109,6 +110,7 @@ mod
 	keyring
 	crypt
 	draw
+	tk
 
 init
 	raspi3binit
