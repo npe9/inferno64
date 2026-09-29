@@ -193,10 +193,18 @@ first, by a wide margin, since it runs over every dirty pixel every frame;
 then DMA or HVS for fills; then V3D for anything programmable.  The
 render-node tree in
 .CW libtk
-helps the first of these, and not by making any single copy faster \(em it
-helps because a described frame knows its damage before it paints, so the
-flush can be driven from the node tree's own bounds instead of from
-whatever rectangles happened to get drawn.
+could help the first of these, and not by making any single copy faster.
+Every
+.CW TkNode
+carries its own
+.CW "Rectangle r" ,
+so the union of a frame's damage is one walk of the node list away, and a
+flush driven from that union would push the frame's real bounds instead of
+whatever rectangles happened to get drawn.  Nothing computes it today:
+.CW TkScene
+is a block allocator, a head, a tail and a count, with no extent field.
+That is an opportunity the description makes cheap, not a property it
+already has.
 .NH 1
 Why no implementation accompanies this note
 .PP
