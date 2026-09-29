@@ -626,12 +626,27 @@ exists to raise, and the matrix reports
 .B PC64JITMATRIX-FAIL
 rather than widening its expectation to cover it.
 .PP
-.B "The rate, eight boots an arm, same kernel, same ISO recipe:"
+.B "The rate, and two runs of it that disagree."
+Eight boots an arm, same kernel, same ISO recipe, run alone on the host:
 .IP
 .nf
 parallelvm=1   3 of 8 bad
 parallelvm=0   0 of 8 bad
 .fi
+.PP
+.CW scripts/check-pc64-parallelvm.sh ,
+which is the tree's own instrument for this and does the same thing, then
+reported
+.B "0 of 8 faulted"
+on both arms against the same kernel.  Both are recorded rather than one
+of them chosen.  Pooled, that is three failures in sixteen boots at
+.CW parallelvm=1
+and none in sixteen at
+.CW parallelvm=0 ,
+and a clean sweep of eight is exactly what a nineteen per cent rate
+produces about one time in five \(em which is what that script's own
+warning says and why it is written on its output.  The lesson is the
+sample size, not a contradiction.
 .PP
 The three were
 .CW "panic: lost pid" ,
@@ -641,8 +656,7 @@ and
 Two of the three are one shape \(em an error raised with no current
 .CW Prog
 \(em which is the register-file desync this plan's Phase E describes,
-seen from the other end.  Zero of eight in the control is what makes
-three of eight mean anything; the plan's own warning that a clean sweep
-of six is weak evidence cuts both ways, and eight against eight is not a
-large sample either.  It is enough to say the item is open and roughly
-how open.
+seen from the other end.  None in sixteen in the control is what makes
+three in sixteen mean anything.  It is enough to say the item is open and
+roughly how open, and not enough for a rate to be quoted to a second
+digit.
