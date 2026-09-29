@@ -253,6 +253,49 @@ prflush(void)
 			break;
 }
 
+/*
+ * The ring, without the lock, for iprint() and panic().
+ *
+ * WHY THIS EXISTS.  iprint() writes screenputs and uartputs and nothing
+ * else, so nothing it prints reaches the kmesg ring -- and panic() prints
+ * through iprint().  On a board whose console is dead, and this one's has
+ * been for months, a panic is therefore completely invisible: the ring
+ * that tools/jtag/kmesg reads out of RAM holds every ordinary print and
+ * not one word of the fault that stopped the machine.  That is exactly
+ * backwards, and it cost an afternoon on a kernel that panicked three
+ * times in a row while the only evidence available was which print it had
+ * reached before the shutdown sequence.
+ *
+ * WHY WITHOUT THE LOCK.  iprint() runs at splhi and is the path a panic
+ * takes, and panic() may be reached with kmesg.lk already held by this
+ * same processor -- from inside kmesgputs itself, or from any print()
+ * underneath it -- in which case ilock() spins for ever and the panic
+ * never says anything at all.  A lock that can turn a diagnosable fault
+ * into a silent hang is worse than a torn line of text.  So this is the
+ * same arithmetic with no lock, and the cost is that a panic racing
+ * another processor's print can interleave, which a panic may.
+ */
+static void
+kmesgputsnl(char *str, int n)
+{
+	uint nn, d;
+
+	if(n > sizeof kmesg.buf){
+		d = n - sizeof kmesg.buf;
+		str += d;
+		n -= d;
+	}
+	nn = kmesg.n;
+	if(nn + n >= sizeof kmesg.buf){
+		d = nn + n - sizeof kmesg.buf;
+		if(d)
+			memmove(kmesg.buf, kmesg.buf+d, sizeof kmesg.buf-d);
+		nn -= d;
+	}
+	memmove(kmesg.buf+nn, str, n);
+	kmesg.n = nn + n;
+}
+
 static void
 kmesgputs(char *str, int n)
 {
@@ -461,6 +504,7 @@ iprint(char *fmt, ...)
 	if(screenputs != nil && iprintscreenputs)
 		screenputs(buf, n);
 	uartputs(buf, n);
+	kmesgputsnl(buf, n);	/* so a panic is visible without a console */
 	if(locked)
 		unlock(&iprintlock);
 	splx(s);

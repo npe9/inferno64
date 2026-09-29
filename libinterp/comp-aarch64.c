@@ -2894,15 +2894,88 @@ compile(Module *m, int size, Modlink *ml)
 
 	if(cflag > 3)
 		print("A: mod->entry=%.8p\n", mod->entry);
-	for(l = m->ext; l->name; l++)
+	/*
+	 * A module's export table holds data links as well as functions,
+	 * and a data link's pc is -1 on purpose.
+	 *
+	 * limbo/asm.c emits one link record per exported identifier, and
+	 * for a Dglobal -- module data -- it writes
+	 *
+	 *	link -1,-1,0x<sig>,".mp"
+	 *
+	 * so the loader stores u.pc as m->prog + (-1), one Inst below the
+	 * code.  Nothing ever uses it as a PC: xec.c reaches ext[-o-1].u.pc
+	 * only for a call.  This loop relocated it anyway, indexing
+	 * patch[-1] and storing base + 4*whatever-precedes-the-table as a
+	 * code address in the module's own export table.
+	 *
+	 * On the Raspberry Pi 3B that is fatal.  With cflag=1 the board
+	 * reached ETHERBIND-OK and panicked, three times out of three:
+	 *
+	 *	trap type 0 esr 0x96000005 pc 0xcf648   (compile+2220)
+	 *	tval 0x80465ad38
+	 *
+	 * a translation fault against an address with a plausible heap value
+	 * in its low half and a stray bit above bit 32.  The module was IP
+	 * and the entry was ".mp", which is how it was finally named:
+	 *
+	 *	jit: IP: export .mp pc 0x475e6e8 outside prog 0x475e700
+	 *
+	 * twenty-four bytes below prog, which is sizeof(Inst), which is -1.
+	 *
+	 * It was invisible for three boots because panic() prints through
+	 * iprint(), which writes the UART and not the kmesg ring, on a board
+	 * whose console has been dead for months.  devcons.c writes the ring
+	 * from iprint() now and that is what made this findable at all.
+	 *
+	 * The hosted generators have the same loop and get away with it:
+	 * patch[-1] there is eight bytes before a malloc block, mapped and
+	 * harmless, and the garbage address it computes is written into a
+	 * field nothing reads.  Same bug, no symptom, which is why it
+	 * survived in seven files.
+	 *
+	 * Validated in one pass before anything is written, because the
+	 * refusal has to be all-or-nothing: bailing out halfway through the
+	 * loop leaves some exports pointing into a code buffer that "bad"
+	 * has just freed, which is worse than the fault it was avoiding.
+	 */
+	for(l = m->ext; l->name; l++) {
+		if((long)(l->u.pc - m->prog) > size) {
+			print("jit: %s: export %s pc %#p is %ld from prog"
+				" %#p, %d instructions -- not compiling\n",
+				m->name, l->name, (void*)l->u.pc,
+				(long)(l->u.pc - m->prog), (void*)m->prog,
+				size);
+			goto bad;
+		}
+	}
+	if(ml != nil) {
+		e = &ml->links[0];
+		for(i = 0; i < ml->nlinks; i++, e++) {
+			if((long)(e->u.pc - m->prog) > size) {
+				print("jit: %s: link %d pc %#p is %ld from"
+					" prog %#p, %d instructions -- not"
+					" compiling\n", m->name, i,
+					(void*)e->u.pc,
+					(long)(e->u.pc - m->prog),
+					(void*)m->prog, size);
+				goto bad;
+			}
+		}
+	}
+	for(l = m->ext; l->name; l++) {
+		if(l->u.pc < m->prog)	/* a data link; see above */
+			continue;
 		l->u.pc = (Inst*)RELPC(patch[l->u.pc - m->prog]);
+	}
 	if(cflag > 3)
 		print("B: mod->entry=%.8p\n", mod->entry);
 	if(ml != nil) {
 		e = &ml->links[0];
-		for(i = 0; i < ml->nlinks; i++) {
+		for(i = 0; i < ml->nlinks; i++, e++) {
+			if(e->u.pc < m->prog)
+				continue;
 			e->u.pc = (Inst*)RELPC(patch[e->u.pc - m->prog]);
-			e++;
 		}
 	}
 	if(cflag > 3)
