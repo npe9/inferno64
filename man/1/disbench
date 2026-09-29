@@ -69,9 +69,14 @@ Indexed loads and stores, which carry a bounds check the generator emits
 itself.
 .TP
 .B real
-Kahan summation of 1/k.  The check is a shape rather than a value,
-because comparing a real for equality across two code generators is a
-promise this program should not make.
+Kahan summation of 1/k, checked to a tolerance of 1e-12 against the same
+algorithm run in Python.  Compensated summation in IEEE double is
+deterministic \- the order is fixed by the loop and every operation is
+correctly rounded \- so a conforming implementation gets the same bits,
+and a tolerance a thousandth of a unit in the last place is far tighter
+than any plausible code-generator bug.  The check used to be
+.B "5.0 < sum < 100.0" ,
+a decade wide, which would have passed through almost anything.
 .TP
 .B string
 Allocation and copying, all of it punted to C.  It is the second control:

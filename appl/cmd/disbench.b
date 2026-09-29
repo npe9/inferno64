@@ -248,12 +248,27 @@ arrayloop(n: int): big
 
 #
 # real: floating point, which this architecture's generator emits and
-# others punt.  Kahan summation of 1/k, which has no closed form, so what
-# is checked is a shape rather than a value: the sum must be finite and
-# in the right decade.  Comparing a real for equality across two code
-# generators is a promise this program should not make, and returning the
-# verdict as 0 or 1 keeps the table above honest about that.
+# others punt.  Kahan summation of 1/k for k in 1..n.
 #
+# The check used to be "5.0 < sum < 100.0", which is a decade wide and
+# would pass through almost any floating-point bug a code generator could
+# have -- the weakest of the six, and the one most likely to be quoted as
+# evidence the float path is correct.  It is a tolerance now.
+#
+# Compensated summation in IEEE double is deterministic: the order is
+# fixed by this loop and every operation is correctly rounded, so any
+# conforming implementation gets the same bits.  The value below is that
+# sum computed in Python, the same algorithm in the same order, outside
+# this VM: 12.090146129863427, whose double is 402e27a22f3fb0.  A
+# thousandth of a unit in the last place is far tighter than any
+# plausible generator bug and far looser than a rounding difference that
+# does not exist.
+#
+# Still 0 or 1 out of the table rather than the sum itself, because the
+# checksum column is big and this one is a verdict.
+#
+HARMONIC:	con 12.090146129863427;
+
 realloop(n: int): big
 {
 	sum := 0.0;
@@ -264,8 +279,10 @@ realloop(n: int): big
 		c = (t - sum) - y;
 		sum = t;
 	}
-	# the harmonic number at 100000 is about 12.09
-	if(sum > 5.0 && sum < 100.0)
+	d := sum - HARMONIC;
+	if(d < 0.0)
+		d = -d;
+	if(d < 1.0e-12)
 		return big 0;
 	return big 1;
 }
