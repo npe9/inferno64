@@ -1378,6 +1378,42 @@ tkrendercmd(TkTop *t, char *arg, char **ret)
 			return tkvalue(ret, "%d %d %d", runs, widgets, nodes);
 		return nil;
 	}
+	/*
+	 * `render bounds' answers the union of what those same trees
+	 * marked, as `minx miny maxx maxy', and resets with the counts.
+	 * It exists because a described frame can say where it drew
+	 * BEFORE anything looks at pixels, which is what lets a backend
+	 * push only the part that changed.  An empty rectangle means the
+	 * trees marked nothing.
+	 */
+	/*
+	 * `render nodes' answers how many nodes that mark pixels went by
+	 * and how many of those described no box, then resets with the
+	 * counts.  The second number is the one that matters and it should
+	 * be zero: a node whose extent is unknown is one a backend can
+	 * neither place nor cull, and that is what the tree is FOR.  The
+	 * scene-level union cannot see this - a detail node always sits
+	 * inside its widget's background - so it is asked directly.
+	 */
+	if(strcmp(buf, "nodes") == 0){
+		int drawn, undesc;
+
+		tkwalknodebox(&drawn, &undesc);
+		tkwalkreset();
+		if(ret != nil)
+			return tkvalue(ret, "%d %d", drawn, undesc);
+		return nil;
+	}
+	if(strcmp(buf, "bounds") == 0){
+		Rectangle b;
+
+		tkwalkbounds(&b);
+		tkwalkreset();
+		if(ret != nil)
+			return tkvalue(ret, "%d %d %d %d",
+				b.min.x, b.min.y, b.max.x, b.max.y);
+		return nil;
+	}
 	if(strcmp(buf, "scene") == 0)
 		tkviascene = 1;
 	else if(strcmp(buf, "direct") == 0)

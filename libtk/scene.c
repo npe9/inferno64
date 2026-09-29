@@ -88,10 +88,113 @@ tkscenefree(TkScene *s)
 }
 
 /*
+ * The box a scene's drawing lands in: the union of what its nodes mark.
+ *
+ * Conservative by construction, and the direction matters.  Damage that
+ * is too LARGE only costs work; damage that is too SMALL drops pixels.
+ * So a clip node is ignored rather than intersected - a clip can only
+ * shrink what gets painted, so leaving it out can never make this too
+ * small - and anything uncertain is taken wide.
+ *
+ * Nodes between a layer and its end draw into a SCRATCH surface, in that
+ * surface's coordinates, so their rectangles mean nothing here; the
+ * layer's dstr, where the scratch is blitted, is what marks the
+ * destination.  Hence the depth count: inside a layer, only the nesting
+ * is tracked.
+ *
+ * An empty rectangle means the scene marks nothing.
+ */
+Rectangle
+tkscenebounds(TkScene *s)
+{
+	TkNode *n;
+	Rectangle b, r;
+	int any, depth;
+
+	b = Rect(0, 0, 0, 0);
+	any = 0;
+	depth = 0;
+	if(s == nil)
+		return b;
+	for(n = s->head; n != nil; n = n->next){
+		if(n->type == TkNlayerend){
+			if(depth > 0)
+				depth--;
+			continue;
+		}
+		if(n->type == TkNlayer){
+			r = n->dstr;	/* where the scratch lands */
+			depth++;
+		}else if(depth > 0)
+			continue;	/* scratch coordinates: not ours */
+		else switch(n->type){
+		default:
+			continue;	/* group, clip, state: marks nothing */
+		case TkNcolour:
+		case TkNroundfill:
+		case TkNcorners:
+		case TkNborder:
+		case TkNglyphs:
+		case TkNtexture:
+		case TkNpolyfill:
+		case TkNspline:
+			r = n->r;
+			break;
+		case TkNellipse:
+		case TkNellipsefill:
+			/*
+			 * The one node whose r is not its box: r.min is the
+			 * CENTRE and sp the two radii.  ellipse() strokes
+			 * width+1 about the curve, so take it outward; a
+			 * filled one has width 0 and loses nothing by it.
+			 */
+			r.min.x = n->r.min.x - n->sp.x - n->width - 1;
+			r.min.y = n->r.min.y - n->sp.y - n->width - 1;
+			r.max.x = n->r.min.x + n->sp.x + n->width + 2;
+			r.max.y = n->r.min.y + n->sp.y + n->width + 2;
+			break;
+		}
+		if(Dx(r) <= 0 || Dy(r) <= 0)
+			continue;
+		if(!any){
+			b = r;
+			any = 1;
+		}else
+			combinerect(&b, r);
+	}
+	return b;
+}
+
+/*
  * Nodes come in blocks.  A tree is built and thrown away every repaint,
  * so the allocator is the cost that would show first if each node were a
  * separate malloc.
  */
+/*
+ * The box a run of points occupies.  Used where a node's geometry lives
+ * in pts rather than in r.
+ */
+static Rectangle
+ptsbbox(Point *p, int np)
+{
+	Rectangle b;
+	int i;
+
+	b.min = p[0];
+	b.max = p[0];
+	for(i = 1; i < np; i++){
+		if(p[i].x < b.min.x)
+			b.min.x = p[i].x;
+		if(p[i].y < b.min.y)
+			b.min.y = p[i].y;
+		if(p[i].x > b.max.x)
+			b.max.x = p[i].x;
+		if(p[i].y > b.max.y)
+			b.max.y = p[i].y;
+	}
+	return b;
+}
+
 static TkNode*
 newnode(TkScene *s, int type)
 {
@@ -283,8 +386,20 @@ tkscenetext(TkScene *s, Point p, char *text, Font *f, ulong rgba)
 		return;
 	if((n = newnode(s, TkNglyphs)) == nil)
 		return;
+	/*
+	 * The box the run occupies, not just its origin.  A node has to
+	 * describe its own extent, because the whole point of the tree is
+	 * that it outlives the repaint that built it and can be handed to
+	 * something else to draw: a backend that cannot see where a glyph
+	 * run lands can neither place it nor cull it.  r.max used to equal
+	 * r.min, so a walk that unioned node rectangles missed every
+	 * glyph.  string() takes r.min as the upper left and the renderer
+	 * still passes exactly that, so this adds information and moves no
+	 * pixel.
+	 */
 	n->r.min = p;
-	n->r.max = p;
+	n->r.max.x = p.x + stringwidth(f, text);
+	n->r.max.y = p.y + f->height;
 	n->rgba = rgba;
 	n->text = strdup(text);
 	n->fontname = strdup(f->name);
@@ -457,6 +572,29 @@ tkscenespline(TkScene *s, Point *p, int np, int end0, int end1, int width,
 	}
 	memmove(n->pts, p, np*sizeof(Point));
 	n->npts = np;
+	/*
+	 * A B-spline stays inside the convex hull of its control points,
+	 * so the hull's box bounds the curve; the ends do not, because an
+	 * arrowhead sticks out past the last point.  memlinebbox() is the
+	 * tree's own answer to exactly that question - it insets by the
+	 * radius plus the larger of the two end sizes - so the bound is
+	 * the union of it over consecutive control points rather than
+	 * arrow arithmetic rewritten here.  Declared locally: no libtk
+	 * source includes memdraw.h, and every link that has libtk has
+	 * libmemdraw.
+	 */
+	{
+		extern Rectangle memlinebbox(Point, Point, int, int, int);
+		Rectangle b;
+		int i;
+
+		b = memlinebbox(n->pts[0], n->pts[1], end0,
+			np == 2 ? end1 : 0, width);
+		for(i = 1; i < np-1; i++)
+			combinerect(&b, memlinebbox(n->pts[i], n->pts[i+1],
+				0, i == np-2 ? end1 : 0, width));
+		n->r = b;
+	}
 }
 
 /*
@@ -543,7 +681,36 @@ static struct {
 	int	runs;		/* trees rendered, for the test */
 	int	widgets;	/* widgets that joined one */
 	int	nodes;		/* nodes in them: what sizes a submission */
+	Rectangle bounds;	/* union of what those trees marked */
+	int	anybounds;	/* whether bounds means anything yet */
+	int	drawnodes;	/* nodes that mark pixels */
+	int	undesc;		/* ...of those, how many describe no extent */
 } walk;
+
+/*
+ * Does this node type mark pixels, and does its r mean its box?
+ *
+ * Both halves matter.  A group or a clip marks nothing, so an empty r is
+ * right for it.  An ellipse marks pixels but its r.min is the CENTRE and
+ * sp the radii - documented in tk.h, and the one node whose r is not a
+ * box - so it is excluded here rather than counted as undescribed.
+ */
+static int
+nodehasbox(int type)
+{
+	switch(type){
+	case TkNcolour:
+	case TkNroundfill:
+	case TkNcorners:
+	case TkNborder:
+	case TkNglyphs:
+	case TkNtexture:
+	case TkNpolyfill:
+	case TkNspline:
+		return 1;
+	}
+	return 0;
+}
 
 void
 tkwalkopen(TkCtxt *c, Image *dst)
@@ -650,6 +817,26 @@ tkwalkflush(void)
 					 * it is rendering */
 	w->clipon = 0;			/* the tree holding it is going */
 	walk.nodes += s->n;
+	{	/* before the tree is freed */
+		Rectangle b;
+
+		TkNode *n;
+
+		for(n = s->head; n != nil; n = n->next)
+			if(nodehasbox(n->type)){
+				walk.drawnodes++;
+				if(Dx(n->r) <= 0 || Dy(n->r) <= 0)
+					walk.undesc++;
+			}
+		b = tkscenebounds(s);
+		if(Dx(b) > 0 && Dy(b) > 0){
+			if(!walk.anybounds){
+				walk.bounds = b;
+				walk.anybounds = 1;
+			}else
+				combinerect(&walk.bounds, b);
+		}
+	}
 	tkscenerender(s, w->ctxt, w->dst);
 	tkscenefree(s);
 	walk.runs++;
@@ -772,12 +959,47 @@ tkwalkcount(int *runs, int *widgets, int *nodes)
 		*nodes = walk.nodes;
 }
 
+/*
+ * The union of what the trees counted above marked, in the destination's
+ * coordinates.  Answers 0 and an empty rectangle if they marked nothing.
+ */
+/*
+ * How many nodes that mark pixels described the box they mark, and how
+ * many did not.  A node that cannot say where it lands is one a backend
+ * can neither place nor cull, which is the whole contract the tree is
+ * for, so the second number should be zero.
+ */
+void
+tkwalknodebox(int *drawn, int *undesc)
+{
+	if(drawn != nil)
+		*drawn = walk.drawnodes;
+	if(undesc != nil)
+		*undesc = walk.undesc;
+}
+
+int
+tkwalkbounds(Rectangle *r)
+{
+	if(r != nil){
+		if(walk.anybounds)
+			*r = walk.bounds;
+		else
+			*r = Rect(0, 0, 0, 0);
+	}
+	return walk.anybounds;
+}
+
 void
 tkwalkreset(void)
 {
 	walk.runs = 0;
 	walk.widgets = 0;
 	walk.nodes = 0;
+	walk.anybounds = 0;
+	walk.bounds = Rect(0, 0, 0, 0);
+	walk.drawnodes = 0;
+	walk.undesc = 0;
 }
 
 /*
@@ -806,6 +1028,7 @@ tkscenepolyfill(TkScene *s, Point *p, int np, ulong rgba)
 	}
 	memmove(n->pts, p, np*sizeof(Point));
 	n->npts = np;
+	n->r = ptsbbox(n->pts, np);	/* fillpoly stays inside the points */
 }
 
 /*

@@ -315,6 +315,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	checkcontrast();
 	checkmenu();
 	checkhover();
+	checkbounds();
 	checkfocusall();
 	checkcolourwidth();
 	checkcanvastag();
@@ -1010,6 +1011,155 @@ checkfocusall()
 
 verbosefocus := 1;
 Band: con 4;		# the outer band a focus ring is expected to land in
+
+# The box of pixels that differ from the background the pane was filled
+# with.  Ground truth for what a repaint actually touched.
+inkbox(): Rect
+{
+	b := array[W*H*3] of byte;
+	off.readpixels(off.r, b);
+	minx := W; miny := H; maxx := -1; maxy := -1;
+	for(y := 0; y < H; y++){
+		for(x := 0; x < W; x++){
+			i := (y*W + x)*3;
+			if(int b[i] != 255 || int b[i+1] != 255 || int b[i+2] != 255){
+				if(x < minx)
+					minx = x;
+				if(y < miny)
+					miny = y;
+				if(x > maxx)
+					maxx = x;
+				if(y > maxy)
+					maxy = y;
+			}
+		}
+	}
+	if(maxx < 0)
+		return Rect((0,0),(0,0));
+	return Rect((minx,miny),(maxx+1,maxy+1));
+}
+
+rdbounds(top: ref Tk->Toplevel): Rect
+{
+	s := tk->cmd(top, "render bounds");
+	if(s == nil || len s == 0 || s[0] == '!')
+		return Rect((0,0),(0,0));
+	(n, f) := sys->tokenize(s, " ");
+	if(n != 4)
+		return Rect((0,0),(0,0));
+	v := array[4] of int;
+	for(i := 0; i < 4; i++){
+		v[i] = int hd f;
+		f = tl f;
+	}
+	return Rect((v[0],v[1]),(v[2],v[3]));
+}
+
+rdnodes(top: ref Tk->Toplevel): (int, int)
+{
+	s := tk->cmd(top, "render nodes");
+	if(s == nil || len s == 0 || s[0] == '!')
+		return (-1, -1);
+	(n, f) := sys->tokenize(s, " ");
+	if(n != 2)
+		return (-1, -1);
+	return (int hd f, int hd tl f);
+}
+
+contains(outer, inner: Rect): int
+{
+	if(inner.dx() <= 0 || inner.dy() <= 0)
+		return 1;
+	return outer.min.x <= inner.min.x && outer.min.y <= inner.min.y &&
+		outer.max.x >= inner.max.x && outer.max.y >= inner.max.y;
+}
+
+# `render bounds' must cover every pixel a repaint touched.  Too large
+# only costs work; too small drops pixels, so containment is the property
+# and the negative control is a bound shrunk by one on each side, which
+# must stop containing.
+#
+# It also must not reach the origin when the drawing does not.  That is
+# the check with teeth: tkscenepolyfill() and tkscenespline() used to
+# leave r zeroed, so a scrollbar arrow or a canvas line anywhere on the
+# screen dragged the union back to (0,0).
+checkbounds()
+{
+	top := offscreen();
+	if(top == nil){
+		report(0, "render bounds: no toplevel");
+		return;
+	}
+	tk->cmd(top, "frame .f");
+	tk->cmd(top, "label .f.l -text {bounds}");
+	tk->cmd(top, "scrollbar .f.s -orient horizontal");
+	# a checked checkbutton for its tick and a canvas line with an
+	# arrow: both emit spline nodes, which nothing else here does
+	tk->cmd(top, "checkbutton .f.c -text {tick}");
+	tk->cmd(top, ".f.c select");
+	tk->cmd(top, "canvas .f.cv -width 120 -height 60");
+	tk->cmd(top, ".f.cv create line 10 10 60 50 100 20 -arrow last");
+	tk->cmd(top, "pack .f.l .f.s .f.c .f.cv -side top");
+	tk->cmd(top, "pack .f -padx 40 -pady 40");
+	if(!map(top)){
+		report(0, "render bounds: no image");
+		return;
+	}
+	# First the property the union CANNOT see.  A detail node always
+	# sits inside its widget's background, so no scene-level box can
+	# tell whether a glyph run or a polygon knows its own extent; ask
+	# the nodes instead.  This is the check that fails without the fix.
+	blank();
+	tk->cmd(top, "render nodes");		# reset
+	tk->cmd(top, "render scene");		# full repaint
+	tk->cmd(top, "update");
+	(drawn, undesc) := rdnodes(top);
+	report(drawn > 0, "nodes that mark pixels went by at all");
+	report(undesc == 0,
+		"and every one of them describes the box it marks");
+
+	blank();
+	tk->cmd(top, "render bounds");		# reset the accumulator
+	tk->cmd(top, "render scene");		# full repaint, accumulating
+	tk->cmd(top, "update");
+	b := rdbounds(top);
+	ink := inkbox();
+
+	report(b.dx() > 0 && b.dy() > 0, "render bounds reports a box at all");
+	report(contains(b, ink), "and it covers every pixel the repaint touched");
+
+	# negative control: the check must be able to fail
+	shrunk := Rect((b.min.x+1, b.min.y+1), (b.max.x-1, b.max.y-1));
+	report(!contains(shrunk, ink),
+		"and a box one pixel smaller does NOT cover them");
+
+	# A FULL repaint always reaches the origin, because the toplevel's
+	# own background is a node covering the pane -- so the interesting
+	# case is a PARTIAL one, where the background is not redrawn.  That
+	# is also the only way to see the bug this fixed: tkscenepolyfill()
+	# and tkscenespline() used to leave r zeroed, so a scrollbar's arrow
+	# anywhere on screen dragged the union back to (0,0).
+	blank();
+	tk->cmd(top, "render bounds");		# reset
+	tk->cmd(top, ".f.s set 0.3 0.6");
+	tk->cmd(top, "update");
+	pb := rdbounds(top);
+	pink := inkbox();
+
+	if(pink.dx() <= 0 || pink.dy() <= 0){
+		report(0, "a scrollbar alone repaints something");
+		return;
+	}
+	report(1, "a scrollbar alone repaints something");
+	report(pink.min.x > 0 && pink.min.y > 0,
+		"and it lands away from the origin");
+	report(contains(pb, pink),
+		"the partial union covers what that repaint touched");
+	report(pb.min.x > 0 && pb.min.y > 0,
+		"and does NOT drag back to the origin");
+	report(pb.dx()*pb.dy() * 4 < W*H,
+		"and is a small part of the pane, not all of it");
+}
 
 mk2(top: ref Tk->Toplevel, spec: string): int
 {

@@ -2,7 +2,7 @@
 .SH NAME
 render \- choose how a border reaches the page
 .SH SYNOPSIS
-\f5render\fP ?\f5direct\fP|\f5scene\fP|\f5count\fP?
+\f5render\fP ?\f5direct\fP|\f5scene\fP|\f5count\fP|\f5bounds\fP|\f5nodes\fP?
 .SH DESCRIPTION
 .B Render
 sets which drawing path a flat border takes, and reports which is in
@@ -16,6 +16,39 @@ This is the default.
 .TP
 \f5scene\fP
 By building a render-node tree and rendering that.
+
+.TP
+\f5bounds\fP
+Answers four numbers \(em
+.BR minx ,
+.BR miny ,
+.BR maxx ,
+.BR maxy
+\(em the union of what those same trees marked, in the destination's
+coordinates, and resets with the counts.
+An empty rectangle means they marked nothing.
+It exists because a described frame can say where it drew
+.I before
+anything looks at pixels, which is what lets a backend push only the part
+that changed.
+The union is conservative by construction, and that direction is the one
+that matters: too large only costs work, too small drops pixels.
+A clip node is therefore ignored rather than intersected, since a clip
+can only shrink what is painted.
+.TP
+\f5nodes\fP
+Answers two numbers: how many nodes that mark pixels went by, and how
+many of those described no box.
+The second should be zero.
+A node that cannot say where it lands is one a backend can neither place
+nor cull, which is the whole contract the tree exists to keep.
+This is asked directly rather than inferred from
+\f5bounds\fP because the union cannot see it: a detail node always sits
+inside its own widget's background, so no scene-level rectangle changes
+when a glyph run or a polygon fails to describe itself.
+An ellipse is excluded from the count, its
+.B r.min
+being a centre rather than a corner.
 .TP
 \f5count\fP
 Answers three numbers: how many trees the repaints since the last
