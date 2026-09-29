@@ -1323,3 +1323,121 @@ The same kernel measured 3.9s steady in the afternoon and 5.2s in the
 evening.  Thirty per cent, no attributable cause, and it is why the 1.4x
 MCACHE question was never answerable: the effect sought was smaller than
 the drift between one hour and the next.
+.NH 1
+The JIT, on this network
+.PP
+.CW comp-aarch64.c
+is a real code generator on this branch now, so the board can be measured
+compiled as well as interpreted \(em and the network is where the two
+differ most, because every frame in and out of the USB ethernet passes
+through
+.CW etherusb ,
+which is Limbo.
+.PP
+.B "Boots, not one boot."
+The doc above says three reads is not a measurement here and that the rig
+drifts thirty per cent between one hour and the next, so this is the
+median across boots: six boots at
+.CW cflag=1
+and three at
+.CW cflag=0 ,
+each running
+.IR netbench (1)
+twice, all on one afternoon.
+.IP
+.nf
+                        cflag=0   cflag=1
+ping 64B, 1 frame          2.37      4.11
+ping 1400B, 1 frame        3.07      4.97
+ping 4000B, 3 frames       8.94      4.26
+ping 8000B, 6 frames      12.37      6.81
+1MB styx read              3.50      2.40
+1MB styx write             4.60      3.20
+.fi
+.PP
+.B "Two point one times on multi-frame latency and one point four on bulk."
+Those are the numbers the JIT buys, and the mechanism is visible in the
+shape: at one frame there is almost nothing for a code generator to make
+cheaper, and by three frames
+.CW smscrx() 's
+walk and
+.CW txproc() 's
+gather are doing real work per frame.
+.PP
+.B "And single-frame latency is worse, consistently."
+2.37ms interpreted against 4.11ms compiled, medians over three boots and
+six.  That is not the drift band: it is 1.7x and it is in the direction
+the JIT should not be.  Unexplained, and recorded rather than rounded
+away.
+.PP
+.B "Transmit batching had never run before this."
+It was added with "measure that it buys nothing here" and that was
+honest and wrong: interpreted,
+.CW txproc
+is too slow for a second frame to be queued by the time the
+non-blocking
+.CW alt
+looks, so every transfer was one frame and the batch path was dead code.
+Compiled, frames queue and it engages.  With
+.CW Txbatch
+cut to one frame the same kernel reads 1MB in 4.2 to 4.4s against 1.8 to
+2.1s with it.  A measurement of an optimisation taken on an interpreter
+too slow to reach it measured nothing at all.
+.NH 2
+The wedge, and what it is not
+.PP
+Twice, before the board was power-cycled, the USB ethernet stopped: the
+bulk IN channel armed, no completion, no interrupt, and
+.CW usbdwc.c 's
+re-arm firing past a hundred times without recovering.  A healthy boot
+shows zero re-arms \(em the file's claim that an idle NIC re-arms every
+couple of seconds is false, because
+.CW smscsetup
+sets the chip's
+.CW Bir
+bit and an idle receive FIFO is answered with a zero-length packet \(em so
+a re-arm on this board means the device has stopped answering IN tokens.
+.PP
+.B "Since the power cycle it has not happened once:"
+seven boots at
+.CW cflag=1 ,
+thirteen
+.IR netbench (1)
+runs, zero re-arms.  Including one boot reloaded over JTAG in the middle
+of heavy traffic, which was the theory \(em
+.CW jtagrestart
+halts the core and loads an image and is not a reset, so the controller
+and the LAN9514 inherit whatever the last kernel left \(em and that
+theory is tested and did not reproduce it.
+.PP
+.B "What is eliminated, by measurement."
+.CW etherusb 's
+own arithmetic is compiled correctly:
+.CW appl/cmd/jitetherframe.b
+is
+.CW smscrx() 's
+decode and frame walk,
+.CW txwrap() 's
+command header and
+.CW txproc() 's
+gather, copied out rather than rewritten, and under
+.CW "emu -c0"
+and
+.CW -c1
+on the host \(em the same generator the board links \(em every checksum
+agrees exactly.  The four-byte alignment of a batched transfer's interior
+command words is not it either: healthy boots batch constantly and move
+sixteen megabytes with those headers unaligned.  And batching is not the
+trigger; one boot each way said it was, and four more with it on survived
+everything.
+.PP
+.B "What is in place for the next one."
+The re-arm print carries the accumulated interrupt, hctsiz and hcdma
+against what was programmed, the port status, haint, haintmsk, gintsts and
+gintmsk.  And after eight re-arms in which nothing moved,
+.CW chanio
+reprograms the channel from the beginning rather than re-enabling it over
+what the core left behind.  That escalation has never run: zero
+reprograms in thirteen runs, because there has been nothing to recover
+from.  It is untested code and this paragraph is the only claim made for
+it.
