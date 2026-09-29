@@ -442,22 +442,31 @@ at
 .nf
 parallelvm=0 cflag=0   ok ok
 parallelvm=1 cflag=0   ok ok
-parallelvm=0 cflag=1   PANIC[invalid opcode] x2
+parallelvm=0 cflag=1   PANIC[invalid opcode] x2   (a page fault now; see below)
 parallelvm=1 cflag=1   refused refused
 .fi
 .PP
 The panic is with the VM lock held and no second executor anywhere, so it
 is
 .CW comp-amd64.c
-and not the parallel VM \(em and an earlier pair of boots gave "invalid
-opcode" and then "page fault", which is one generator failing two ways
-rather than a flake.  It already has
+and not the parallel VM.  It already has
 .CW uintptr
 for
 .CW patch[]
 and the literal pool, so the two bugs that stood between
 .CW comp-aarch64.c
-and working are not this.  The refusal in the last cell is correct: it
+and working are not this \(em but a third one of the same family was:
+.CW genw()
+wrote a four-byte x86 field and advanced by
+.CW IBY2WD ,
+which is eight here, leaving four bytes of nothing after every immediate,
+displacement and branch offset.  That was the invalid opcode.  Fixed, the
+first module is 15104 bytes rather than 27792 and decodes as x86 end to
+end, and the cell panics with a page fault instead, because the generator
+stores 32-bit halves of 64-bit Dis registers.  See the amended section in
+.CW doc/multicore-plan.ms ;
+correcting it means REX.W through the emitters, which is the job Phase 6
+names.  The refusal in the last cell is correct: it
 sets
 .CW jitrefsatomic=0
 and

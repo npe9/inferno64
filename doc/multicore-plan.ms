@@ -9167,6 +9167,48 @@ panics with "invalid opcode" during
 generator is broken on its own account and before any of this.  Fixing
 it is Phase 6, and it is a bigger job than the five refcount sites,
 because the generator does not currently work at all.
+.PP
+.B "What that invalid opcode was."
+.CW genw()
+and
+.CW modrm()
+wrote a four-byte x86 field and then advanced by
+.CW IBY2WD ,
+the Dis word size, which is eight on a 64-bit kernel.  So every
+immediate, displacement and branch offset was followed by four bytes
+nobody wrote, out of
+.CW "mallocz(sz, 0)" ,
+which does not clear.
+.CW llvm-objdump
+on a dump of the first module reads
+.CW "movl $0xa61f48,%ebx"
+and then
+.CW "addb %al,(%rax)"
+twice, over and over.  It was a stride, not an encoding, and it has been
+wrong since a Dis word stopped being four bytes.  The file's own
+.CW das()
+is a 386 disassembler that prints
+.CW "opcode: ??ffff??"
+for much of what this generator emits, so at
+.CW cflag>4
+it called the code wrong whether or not it was \(em an instrument that
+always fails is as blind as one that always passes, and it is why this
+went unseen.
+.PP
+With the stride fixed the module is 15104 bytes rather than 27792 and
+decodes as x86 end to end, and the cell panics with a page fault instead.
+That is Phase 6 proper, and the evidence for what it consists of is in the
+same disassembly:
+.CW "movl %esi, 16(%rbx)"
+is
+.CW R.FP ,
+an eight-byte
+.CW Frame* ,
+written four bytes at a time, and
+.CW "leal 80(%rdi), %eax"
+computes a frame address in 32-bit arithmetic.  This is a 386 generator
+with its addressing widened and its operands not, and correcting it means
+REX.W through the emitters.
 .NH 2
 The rest, in the order the payoff argues for
 .IP \(bu

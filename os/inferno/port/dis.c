@@ -3710,11 +3710,23 @@ disinit(void *a)
 	 * with a torn reference count is wrong.
 	 *
 	 * And do not read this as "*parallelvm=0 gets you the JIT".  On
-	 * pc64 it does not: "*cflag=1 *parallelvm=0" panics with "invalid
-	 * opcode" during *init*, with the VM lock held and no second
-	 * executor anywhere, so the amd64 generator is broken on its own
-	 * account and before any of this.  That is presumably why every
-	 * board ships cflag=0 and why nobody noticed the refcounts.
+	 * pc64 it does not: "*cflag=1 *parallelvm=0" faults during *init*,
+	 * with the VM lock held and no second executor anywhere, so the
+	 * amd64 generator is broken on its own account and before any of
+	 * this.  That is presumably why every board ships cflag=0 and why
+	 * nobody noticed the refcounts.
+	 *
+	 * It used to say "invalid opcode" and now says "page fault", and
+	 * the difference is one bug fixed and one named.  The invalid
+	 * opcode was comp-amd64.c writing a four-byte x86 field and then
+	 * advancing by IBY2WD, the Dis word size, which is eight here: four
+	 * bytes of nothing after every immediate, displacement and branch
+	 * offset.  What remains is larger -- it stores 32-bit halves of
+	 * 64-bit Dis registers, so the top half of R.FP keeps whatever was
+	 * there before -- and wants REX.W through the emitters.  On arm64
+	 * the generator does work: all four cells of parallelvm crossed
+	 * with cflag reach a shell on virtarm64.  See
+	 * scripts/check-arm64-jitmatrix.sh and check-pc64-jitmatrix.sh.
 	 */
 	{
 		extern int cflag, jitrefsatomic, jitpresent;
