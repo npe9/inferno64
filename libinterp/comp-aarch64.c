@@ -54,6 +54,26 @@ int jitrefsatomic = 1;
  */
 int jitpresent = 1;
 
+/*
+ * Modules NOT to compile, by name, space separated -- a bisecting tool.
+ *
+ * cflag is all or nothing, and "the board works interpreted and breaks
+ * compiled" is a statement about twenty-odd modules at once.  This makes
+ * it a statement about one: set it in the board's configuration file, in
+ * the code section beside cflag, and the named modules interpret while
+ * everything else compiles.
+ *
+ * It earned itself immediately.  With cflag=1 on the Raspberry Pi 3B the
+ * wifi works and the USB ethernet does not: DHCP completes over it and
+ * then every packet is lost, and the difference between the two is that
+ * wifi is a kernel driver in C and the ethernet is etherusb, a Limbo
+ * program that the JIT compiles.  One boot with jitskip = "Etherusb"
+ * says whether that is the whole of it.
+ *
+ * A name is matched whole, so "IP" does not match "IPint".
+ */
+char *jitskip = "";
+
 #define	RESCHED	1	/* check for interpreter reschedule */
 
 enum
@@ -2730,6 +2750,29 @@ patchex(Module *m, uintptr *p)
 	}
 }
 
+/*
+ * Is this module named in jitskip?  See the note above it.
+ */
+static int
+skipmod(char *name)
+{
+	char *p, *e;
+	int n;
+
+	if(jitskip == nil || *jitskip == '\0' || name == nil)
+		return 0;
+	n = strlen(name);
+	for(p = jitskip; *p != '\0'; p = e){
+		while(*p == ' ')
+			p++;
+		for(e = p; *e != '\0' && *e != ' '; e++)
+			;
+		if(e - p == n && memcmp(p, name, n) == 0)
+			return 1;
+	}
+	return 0;
+}
+
 int
 compile(Module *m, int size, Modlink *ml)
 {
@@ -2741,6 +2784,13 @@ compile(Module *m, int size, Modlink *ml)
 	/* JIT enabled */
 	ulong codesize;
 	ulong tmpsize;
+
+	if(skipmod(m->name)){
+		if(cflag > 1)
+			print("jit: %s: named in jitskip; interpreting it\n",
+				m->name);
+		return 0;
+	}
 
 	base = nil;
 	patch = mallocz((size + 1) * sizeof(*patch), 0);

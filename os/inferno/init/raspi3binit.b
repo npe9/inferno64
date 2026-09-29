@@ -2322,9 +2322,39 @@ pingcheck(tag, gw: string)
 	} exception e {
 	"*" =>
 		sys->print("%s-PING-DONE (%s)\n", tag, e);
+		etherstats(tag);
 		return;
 	}
 	sys->print("%s-PING-DONE\n", tag);
+	etherstats(tag);
+}
+
+#
+# etherusb's own counters, on the console.
+#
+# The poller is how anything is normally read off this board and it needs
+# a working network, so when the network is the thing that is broken
+# there is no way to ask.  With cflag=1 the USB ethernet takes a DHCP
+# lease and then loses every packet, and the question -- is it receiving
+# nothing, or transmitting nothing, or dropping what it receives -- has
+# no answer from outside.  etherusb serves the numbers at
+# /net.alt/ether/stats; this prints them where kmesg can read them.
+#
+etherstats(tag: string)
+{
+	fd := sys->open("/net.alt/ether/stats", Sys->OREAD);
+	if(fd == nil){
+		sys->print("%s-STATS-NONE %r\n", tag);
+		return;
+	}
+	buf := array[1024] of byte;
+	n := sys->read(fd, buf, len buf);
+	if(n <= 0){
+		sys->print("%s-STATS-EMPTY %r\n", tag);
+		return;
+	}
+	for(l := sys->tokenize(string buf[0:n], "\n").t1; l != nil; l = tl l)
+		sys->print("%s-STATS %s\n", tag, hd l);
 }
 
 # Phase 4: USB mass storage.  usbd's Bulk-Only Transport driver serves

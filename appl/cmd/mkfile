@@ -91,6 +91,7 @@ TARG=\
 	iostats.dis\
 	itest.dis\
 	itreplay.dis\
+	jitetherframe.dis\
 	kill.dis\
 	listen.dis\
 	lockfs.dis\
