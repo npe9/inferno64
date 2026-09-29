@@ -329,6 +329,31 @@ while [ $try -le 4 ]; do
 		fi
 		i=`expr $i + 1`
 	done
+	#
+	# The console said no.  Ask the ring before believing it.
+	#
+	# The console branch is chosen whenever ANY screen session on this
+	# machine answers, and that session need not be the board's -- there
+	# are usually three, this picks the first with a tty in its name, and
+	# the board's own console has been deaf on this desk for months.  So
+	# the console can report "did not come up" for a kernel that booted,
+	# joined wifi, took a DHCP lease and is answering its poller, and it
+	# did: four attempts in a row, while kmesg read "conf raspi3b
+	# ($stamp) jit 0" out of the ring on the first try afterwards.
+	#
+	# The comments above already say the ring is the better instrument
+	# and that a freshly loaded kernel zeroes its BSS, so presence in the
+	# ring is proof without a count.  This asks it rather than leaving
+	# the better instrument unused on the branch that needs it most.  It
+	# can only turn a false failure into a success: a board that really
+	# did not boot has nothing in its ring to find.
+	#
+	if LC_ALL=C sh "$ROOT/tools/jtag/kmesg" 400 2>/dev/null |
+	   LC_ALL=C grep -aq "conf raspi3b ($stamp)"; then
+		echo "boot: the console saw nothing, but the ring has" \
+		     "build $stamp -- it is running (attempt $try)"
+		exit 0
+	fi
 	echo "boot: attempt $try did not come up"
 	try=`expr $try + 1`
 done

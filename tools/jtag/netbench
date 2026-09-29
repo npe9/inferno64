@@ -77,9 +77,23 @@ if [ -n "$SESS" ] && screen -S "$SESS" -X select . >/dev/null 2>&1; then
 	STAMP=`LC_ALL=C grep -ao 'build [0-9]*' "$S/nb-stamp.txt" | tail -1`
 fi
 if [ -z "$STAMP" ]; then
+	#
+	# The ring does not contain the word "build" and never will.
+	#
+	# main.c prints "Inferno/arm64 raspi3b build <stamp>" with
+	# serialputs(), straight at the UART, before there is a print() to
+	# use -- so none of it reaches the kmesg ring.  What the ring has is
+	# "conf raspi3b (<stamp>) jit N" from main()'s own print().  Written
+	# as 'build [0-9]*' this branch could never match, and on a desk
+	# whose console has been deaf for months that means netbench refuses
+	# to measure a board that is booted, on the network, and answering
+	# its poller.  boot.sh has the same two instruments and the same
+	# note; this is the second one, found the same way.
+	#
 	say "no console; reading the build stamp over JTAG"
 	STAMP=`sh "$ROOT/tools/jtag/kmesg" 400 2>/dev/null \
-		| LC_ALL=C grep -ao 'build [0-9]*' | tail -1`
+		| LC_ALL=C sed -n 's/.*conf raspi3b (\([0-9]*\)).*/build \1/p' \
+		| tail -1`
 fi
 [ -n "$STAMP" ] || die "no build stamp from the console or from kmesg; cannot say what was measured"
 say "measuring $STAMP, $N repeats"
