@@ -54,6 +54,7 @@ void	mmuinit(void);
 void	mmuparams(uvlong*, uvlong*);
 uvlong	getsb(void);
 void	dccleanrange(void*, int);
+void	icinvall(void);
 void	setfcr(ulong);
 void	setfsr(ulong);
 void	trap(Ureg*);

@@ -12,20 +12,22 @@
 #
 #	parallelvm=0 cflag=0	the shipped configuration; the control
 #	parallelvm=1 cflag=0	the parallel VM as it ships on multicore
-#	parallelvm=0 cflag=1	the JIT alone -- and on this architecture
-#				there is no JIT: comp-aarch64.c is a
-#				forty-five line stub.  The cell is a pass
-#				when the kernel SAYS so, which is what
-#				this is really testing.  (On pc64 the
-#				generator is real and panics with
-#				"invalid opcode" during init.)
-#	parallelvm=1 cflag=1	with a generator, disinit() would refuse
-#				this and say so:
-#				the generator this board links,
-#				comp-aarch64.c, sets jitrefsatomic=0, so
-#				Heap.ref would be updated without
-#				atomics while two executors run.  A cell
-#				that reports its own refusal is a pass.
+#	parallelvm=0 cflag=1	the JIT alone.  comp-aarch64.c is a real code
+#				generator now -- it was a forty-five line stub
+#				when this script was written, and the version
+#				of these lines that said so is what the first
+#				green run of this matrix was measured against.
+#	parallelvm=1 cflag=1	both.  Legitimate only because comp-aarch64.c
+#				sets jitrefsatomic=1: it updates Heap.ref with
+#				LDXRW/STXRW retry loops at all four sites, so
+#				disinit() does not have to refuse it.  A
+#				generator without that would be refused here
+#				and the refusal would be the pass.
+#
+# All four are expected to reach a shell, and the two cflag=1 cells are
+# expected to reach it as ok-jit -- with a generator present and not
+# refused.  ok-nojit or ok-refused from this board now means something
+# regressed, not that the architecture has no JIT.
 #
 # Four processors, because parallelvm with one is not parallel and the
 # arm of the matrix that matters would measure nothing.
@@ -66,18 +68,49 @@ trap 'st=$?; rm -rf "$WORK" || true; exit $st' 0
 #
 echo "kernel `ls -l \"$KERN\" | awk '{print $5}'` bytes, `date`"
 
+#
+# boot, and time how long the Dis half of it took.
+#
+# The boot does not end -- it reaches an interactive shell on the UART
+# and sits there until the timeout -- so wall clock for the qemu process
+# measures BOOTSECS and nothing else.  What is timed instead is the wait
+# for "interactive sh" to appear in the serial log, which is the whole
+# Dis boot: osinit, the init module's binds, the ACPI and disk probes,
+# and the shell coming up, all of it Limbo.  The number is left in
+# $MSEC.
+#
+# It is a coarse instrument and the point of saying so is that nobody
+# reads it as a benchmark.  It includes the firmware and the kernel's own
+# device probes, which the JIT cannot touch, and the poll granularity is
+# 100ms.  It is here because it is the only speed number available
+# without adding a program to the root file system, and because a JIT
+# that compiles everything and is not faster at all is worth noticing.
+#
 boot() {	# boot <ini> <log>
 	dd if=/dev/zero of="$WORK/vars.fd" bs=1m count=64 2>/dev/null
 	INFERNO_KERNEL=$KERN INFERNO_INI="$1" \
 		sh "$ROOT/scripts/mkinferno-efi-disk-arm64.sh" "$WORK/a.img" \
 		>/dev/null 2>&1 || return 1
+	rm -f "$2"
+	start=`python3 -c 'import time;print(int(time.time()*1000))'`
 	timeout $BOOTSECS qemu-system-aarch64 -M virt -cpu cortex-a72 \
 		-smp 4 -m 512 -display none -no-reboot \
 		-drive if=pflash,format=raw,readonly=on,file="$FW" \
 		-drive if=pflash,format=raw,file="$WORK/vars.fd" \
 		-drive if=none,id=hd,format=raw,file="$WORK/a.img" \
 		-device virtio-blk-device,drive=hd \
-		-serial "file:$2" >/dev/null 2>&1 || true
+		-serial "file:$2" >/dev/null 2>&1 &
+	qpid=$!
+	MSEC=-1
+	while kill -0 $qpid 2>/dev/null; do
+		if grep -aq 'interactive sh' "$2" 2>/dev/null; then
+			MSEC=`python3 -c "import time;print(int(time.time()*1000)-$start)"`
+			break
+		fi
+		python3 -c 'import time;time.sleep(0.1)'
+	done
+	kill $qpid 2>/dev/null || true
+	wait $qpid 2>/dev/null || true
 	return 0
 }
 
@@ -88,15 +121,18 @@ boot() {	# boot <ini> <log>
 #
 verdict() {	# verdict <log>
 	#
-	# NOT the banner.  The first version of this read "conf ... jit 1"
-	# and called that cell ok-jit, which is exactly what the kernel says
-	# while compiling nothing: comp-aarch64.c is forty-five lines whose
-	# compile() returns 0, so there is no JIT on this architecture at
-	# all.  Reading the banner measured the option, not the behaviour.
+	# NOT the banner alone.  The first version of this read
+	# "conf ... jit 1" and called that cell ok-jit, which was exactly
+	# what the kernel said while compiling nothing: comp-aarch64.c was
+	# then forty-five lines whose compile() returned 0.  Reading the
+	# banner measured the option, not the behaviour.
 	#
-	# What is read instead is what disinit() says it did with the
-	# option, which is now one of three things: no generator, refused
-	# for the parallel VM, or nothing to say and the JIT is on.
+	# So what is read first is what disinit() says it DID with the
+	# option -- no generator, or refused for the parallel VM -- and the
+	# banner only decides between ok-jit and ok once neither of those
+	# was printed.  The generator is real now, so ok-jit is the
+	# expected answer and the other two are regressions; the check is
+	# written this way round so it keeps working either way.
 	#
 	if grep -aq 'interactive sh' "$1"; then
 		if grep -aq 'no code generator' "$1"; then
@@ -125,22 +161,43 @@ for pv in 0 1; do
 		printf 'parallelvm=%s cflag=%s: ' $pv $cf
 		n=0
 		out=""
+		times=""
 		while [ $n -lt $RUNS ]; do
 			log="$WORK/p$pv-c$cf-$n.log"
 			boot "$ini" "$log" || { out="$out build-failed"; break; }
 			out="$out `verdict \"$log\"`"
+			times="$times $MSEC"
 			n=`expr $n + 1`
 		done
-		echo "$out"
+		echo "$out	to shell (ms):$times"
 		case "$out" in
 		*panic*|*"no shell"*|*"no output"*|*build-failed*)	fail=1;;
 		esac
+		#
+		# A cflag=1 cell that reaches a shell without the JIT is a
+		# regression, not a pass.  Both ways it can happen say so on
+		# the console -- disinit() prints when it drops the option --
+		# and without this the matrix would go green on a kernel whose
+		# generator had gone back to being a stub.
+		#
+		# Counted, not matched: with three runs per cell, "ok-jit ok-jit
+		# ok" contains ok-jit and is still a cell that lost the JIT once.
+		if [ $cf -eq 1 ]; then
+			njit=0
+			for w in $out; do
+				[ "$w" = ok-jit ] && njit=`expr $njit + 1`
+			done
+			if [ $njit -ne $RUNS ]; then
+				echo "	cflag=1: $njit of $RUNS boots had the JIT"
+				fail=1
+			fi
+		fi
 		cp "$WORK/p$pv-c$cf-0.log" "$ROOT/tmp-jitmatrix-p$pv-c$cf.log" 2>/dev/null || true
 	done
 done
 
 if [ $fail -eq 0 ]; then
-	echo "JITMATRIX-OK all four cells reached a shell"
+	echo "JITMATRIX-OK all four cells reached a shell, both cflag=1 cells with the JIT"
 	exit 0
 fi
 echo "JITMATRIX-FAIL"

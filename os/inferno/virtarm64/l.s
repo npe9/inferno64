@@ -608,6 +608,29 @@ dcclean1:
 	DSB	$15
 	RET	R30
 
+/*
+ * icinvall(): drop every instruction-cache line in the inner shareable
+ * domain, and order it.
+ *
+ * For the JIT.  A code generator writes instructions with ordinary
+ * stores, so they land in the D-cache; the I-cache has never heard of
+ * them and may hold whatever was at those addresses before.  DC CVAC
+ * through dccleanrange() gets the data out to memory and this drops the
+ * stale instructions on top of it.
+ *
+ * IALLUIS rather than IALLU because parallelvm runs Dis on more than one
+ * processor: IALLU invalidates the caller's I-cache only, so a secondary
+ * could fetch the instructions the compiler replaced.  Inner shareable
+ * covers them all.  DSB before, so the cleans are complete; DSB and ISB
+ * after, so the invalidate is done and this processor refetches.
+ */
+TEXT	icinvall(SB), 1, $-4
+	DSB	$15
+	SYS	$SYSARG5(0,0,7,1,0)	/* IC IALLUIS */
+	DSB	$15
+	ISB	$15
+	RET	R30
+
 TEXT	setlabel(SB), 1, $-4
 	MOV	R0, R2
 	/*

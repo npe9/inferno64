@@ -37,10 +37,23 @@ extern int image_pool_pcnt;
  * processors that arrive, and PSCI discovers them when there is no
  * ACPI to ask.  See doc/multicore-plan.ms.
  */
+/*
+ * segflush(): make instructions written as data visible to the fetcher.
+ *
+ * This did nothing -- USED(p, l); return 1 -- which was harmless while
+ * every aarch64 board shipped without a code generator, because the only
+ * caller is the JIT.  With one, doing nothing means the processor
+ * executes whatever the I-cache held at those addresses before, which is
+ * a fault with no relation to the code that was generated.
+ *
+ * DC CVAC over the range to get the stores out to memory, then drop the
+ * stale instruction lines across the inner shareable domain.
+ */
 int
 segflush(void *p, ulong l)
 {
-	USED(p, l);
+	dccleanrange(p, l);
+	icinvall();
 	return 1;
 }
 
