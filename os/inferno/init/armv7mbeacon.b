@@ -133,8 +133,10 @@ init()
 	pkt := array of byte Payload;
 	n := 0;
 	lamp := 0;
+	ok := 0;
 	for(;;){
-		if(sys->write(data, pkt, len pkt) < 0)
+		ok = sys->write(data, pkt, len pkt) >= 0;
+		if(!ok)
 			sys->print("beacon: frame %d: %r\n", n);
 		else if(n % 15 == 0)
 			# Every thirtieth second and not every frame: the
@@ -142,12 +144,30 @@ init()
 			# frame would set the real period rather than
 			# Period doing it.
 			sys->print("beacon: %d frames\n", n);
-		# The lamp flips once per frame, so it is a half-Period
-		# square wave: a one-second-on, one-second-off blink at the
-		# default Period, which is unmistakably a loop turning and
-		# not a pin left somewhere.  Written through the same ctl
-		# file that is already open.
-		lamp = !lamp;
+		# The lamp says whether the frame went out, and the first
+		# version of this did not.
+		#
+		# It flipped once per frame regardless of what write()
+		# returned, so a blinking lamp meant only that the loop was
+		# turning -- and that is exactly the question that was open:
+		# the board blinked steadily while the other board's probe
+		# of 915MHz saw floor -108, peak -104 and no bursts at all.
+		# An indicator that cannot distinguish the two states it is
+		# being read for is not an indicator.
+		#
+		#	flipping once a frame	the write succeeded, so
+		#				the part was handed a
+		#				packet and strobed
+		#	solid on		the write is failing; the
+		#				loop still turns
+		#
+		# Solid rather than dark for the failure, because dark is
+		# what a board that never booted looks like and those must
+		# not be the same picture.
+		if(ok)
+			lamp = !lamp;
+		else
+			lamp = 1;
 		cmd := "led off";
 		if(lamp)
 			cmd = "led on";
