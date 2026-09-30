@@ -339,6 +339,15 @@ TEXT	boot1(SB), 1, $-4
 	MOV	$0, R0			/* the magic is not a device tree */
 haveadtb:
 	MOV	R0, dtbptr(SB)
+	/*
+	 * m and up are external registers (dat.h): R27 and R26.  Set them
+	 * before any C runs, because m must never be nil -- a warm restart
+	 * can take a timer interrupt before machinit() and clockintr
+	 * dereferences m at once.  machinit() still clears the Mach and
+	 * fills it in; this is only about the pointer.
+	 */
+	MOV	$mach0(SB), R27
+	MOV	$0, R26
 	BL	main(SB)
 deadb:
 	B	deadb
@@ -693,7 +702,7 @@ TEXT	splhi(SB), 1, $-4
 	MRS	DAIF, R0
 	AND	$0x80, R0, R1		/* previous I-bit, for the return value */
 	MSR	$2, DAIFSet		/* imm bit1 = IRQ */
-	MOV	$mach0(SB), R2
+	MOV	R27, R2			/* m, an external register: see dat.h */
 	/*
 	 * MOVW, not MOV: m->splpc is a ulong, which is FOUR bytes here,
 	 * and MOV of an X register stores eight.  This assembled to
@@ -716,7 +725,7 @@ TEXT	spllo(SB), 1, $-4
 	RET	R30
 
 TEXT	splx(SB), 1, $-4
-	MOV	$mach0(SB), R2
+	MOV	R27, R2			/* m */
 	MOVW	R30, 0(R2)		/* m->splpc, four bytes; see splhi */
 	CMP	$0, R0
 	BEQ	splxlo

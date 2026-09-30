@@ -11,27 +11,19 @@ extern int distrack;		/* libinterp/heap.c: the Dis heap watchdog */
 
 extern Mach mach0;
 /*
- * Initialised, so that m is never nil -- not even for the instant
- * between a JTAG image load and machinit().
- *
- * m lives in the data segment, so it has a value in the image, and an
- * uninitialised "Mach *m;" makes that value 0.  A warm restart loads
- * the image over a running kernel and therefore puts that 0 back.
- * If the ARM generic timer interrupt is still armed and pending at the
- * per-core controller when control reaches this kernel -- and it is,
- * measured: core timer irq control 0x2, core0 irq source 0x2 -- then
- * clockintr runs before machinit() has set m, calls accounttime, and
- * takes a data abort on "p->time[p->insyscall]++" with p = m->proc.
- * That is the fault this board has taken in every build, and the trap
- * report says so in as many words: "m = 0000000000000000".
- *
- * &mach0 is a link-time constant, so the image now carries the right
- * pointer and the window does not exist.  machinit() still assigns it,
- * which is where the Mach is actually cleared and made valid; this is
- * only about the pointer never being nil.
+ * m and up are external registers now (dat.h), so there is no
+ * definition of either here and no initialiser to give them.  What the
+ * initialiser was for still matters: m must never be nil, not even for
+ * the instant between a JTAG image load and machinit(), because a warm
+ * restart arrives with the generic timer still armed and pending at the
+ * per-core controller -- measured: core timer irq control 0x2, core0 irq
+ * source 0x2 -- so clockintr can run before machinit() and fault on
+ * "p->time[p->insyscall]++" with p = m->proc.  Every build of this board
+ * took that fault, and the trap report said "m = 0000000000000000".
+ * boot1 in l.s sets R27 to &mach0 and R26 to nil before it calls main,
+ * which is the same guarantee one instruction earlier than a data-segment
+ * initialiser could give it.
  */
-Mach *m = &mach0;
-Proc *up;
 Conf conf;
 
 extern ulong kerndate;

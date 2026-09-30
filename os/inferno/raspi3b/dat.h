@@ -166,8 +166,31 @@ struct
 #define	MACHP(n)	((Mach*)(void*)&mach0)
 
 extern Mach mach0;
-extern Mach *m;
-extern Proc *up;
+
+/*
+ * m and up are registers, not globals, and that is what makes them
+ * per-processor at all: every processor needs its own "which Mach am I"
+ * and "which Proc am I running", and a global has exactly one of each.
+ * 7c reserves R27 and R26 for external registers in every translation
+ * unit whether or not it has seen this declaration (REGEXT and REGEXT-1
+ * in utils/7c/7.out.h; txt.c sets reg[REGEXT] unconditionally), so
+ * libinterp, libsec and the rest -- none of which include this header,
+ * and all of which are prebuilt per objtype and shared with every other
+ * board -- cannot be using them.  Declaration order decides which is
+ * which: m is R27, up is R26.
+ *
+ * Only two pieces of assembly care.  boot1 and boot2 in l.s set them
+ * before any C runs, which is what keeps the property the old
+ * initialised global had -- m is never nil, not even for the instant
+ * between a JTAG image load and machinit(), which used to be a data
+ * abort in clockintr with "m = 0000000000000000" in the trap report.
+ * And splhi/splx write m->splpc: they named mach0 directly, which was
+ * correct only while there was one Mach, and read R27 now.  The trap
+ * path already saves and restores R26 and R27 in the Ureg like every
+ * other general register.
+ */
+extern register Mach *m;		/* R27 */
+extern register Proc *up;		/* R26 */
 
 /*
  * x0 as the kernel was entered: the firmware's DTB pointer on a cold
