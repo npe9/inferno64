@@ -29,6 +29,17 @@ implement Init;
 # because a board that beacons silently and a board that has not booted
 # look identical from the far end.
 #
+# AND IT FLASHES THE LAMP, which on this board is the only channel that
+# works.  Without it there was no way to tell a beacon that is running
+# from one that stopped at "no /dev/radio0/ctl", and the difference
+# decided what to do next: the first probe of the band from the other
+# board found floor -108, peak -104, duty 0 per cent and no bursts, and
+# either explanation fitted that equally well.  The lamp is on the
+# radio's own Spidev, so it flashing says the part was found, the ctl
+# file opened and the loop is turning -- three things at once, and all
+# three of them are what "nothing on the air" could otherwise have
+# meant.
+#
 # SELECTION IS BY FILE.  This is chosen by which init the build is given
 # -- "mk INIT=armv7mbeacon" -- and not by a flag tested inside
 # armv7minit.b.  A board carries a shell or carries this, and which one
@@ -121,6 +132,7 @@ init()
 	sys->print("ARMV7M-BEACON-OK\n");
 	pkt := array of byte Payload;
 	n := 0;
+	lamp := 0;
 	for(;;){
 		if(sys->write(data, pkt, len pkt) < 0)
 			sys->print("beacon: frame %d: %r\n", n);
@@ -130,6 +142,17 @@ init()
 			# frame would set the real period rather than
 			# Period doing it.
 			sys->print("beacon: %d frames\n", n);
+		# The lamp flips once per frame, so it is a half-Period
+		# square wave: a one-second-on, one-second-off blink at the
+		# default Period, which is unmistakably a loop turning and
+		# not a pin left somewhere.  Written through the same ctl
+		# file that is already open.
+		lamp = !lamp;
+		cmd := "led off";
+		if(lamp)
+			cmd = "led on";
+		lb := array of byte cmd;
+		sys->write(ctl, lb, len lb);
 		n++;
 		sys->sleep(Period);
 	}
