@@ -134,7 +134,7 @@ code
 	int comveccheck = 1;
 	int vcsweeptick = 0;
 	int acctclock = 1;
-	int smpsched = 0;
+	int smpsched = 1;
 	int livelockticks = 400;
 	int bootwdog = 0;
 	int consoleprint = 1;

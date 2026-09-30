@@ -13836,6 +13836,14 @@ at 400 is three times the largest of a small sample, and
 .CW Vmheldfloor
 at 50 keeps the distribution printing so that the sample can grow.
 .PP
+.B "Since answered:"
+that 670ms wait is a one-processor artefact and is gone with four \(em see the
+section on processes on all four processors below, where three boots each way
+put it at 690/690/760ms against 20/20/20ms.  The hold falls to 60 ticks with
+it, so
+.CW livelockticks
+at 400 now has more margin than it was given, not less.
+.PP
 .B "And with the floor lowered, most of a healthy boot's long holds are not Limbo at all."
 Reporting from 50 ticks rather than from the warning threshold shows four holds
 on one cold boot where the old constant showed two:
@@ -14064,7 +14072,40 @@ on a secondary is a process having run there.  A secondary with
 the four cores bought before this, and is the distinction the earlier tick
 counts could not draw.
 .PP
-.B "That measurement is QEMU's.  A JTAG boot cannot take it."
+.B "And on the board, cold-booted from the card, it holds."
+.CW smpsched
+is 1.  Three cold boots of that build came up \(em the one
+.CW kinstall
+performs to verify its own write, and two more driven from the poller \(em and
+the board is fully itself on each: shell, both DHCP leases, poller answering,
+pings at 1.6 to 3.8ms.  The numbers:
+.P1
+SCHED-MACHS nmach 4: cpu0[active 1 ticks 7058 cs 31540 load 281]
+  cpu1[active 1 ticks 5787 cs 2471] cpu2[... cs 2954]
+  cpu3[... cs 4839]
+.P2
+Thousands of context switches on every secondary.  Processes run on all four
+processors of this board.
+.PP
+.B "Which closes the 670ms first-sleep wait this document was carrying as unexplained."
+.CW raspi3binit.b 's
+own comment records "one wait of about 670 milliseconds on the first sleep
+after a second interpreter process appears, which is not explained yet", and
+that outlier is what made schedlat's hold 1.3s rather than the 0.5s its ten
+50ms sleeps ask for.  It is a one-processor artefact.  Three boots each way,
+same build but for the switch:
+.P1
+one processor   SCHED-LAT worst  690  690  760 ms
+four processors SCHED-LAT worst   20   20   20 ms
+.P2
+No overlap, a factor of thirty-four, and far outside the thirty percent this
+rig drifts hour to hour.  The VMHELD hold falls with it, from 126, 127 and 133
+ticks to 60 \(em which is about the 50 ticks ten 50ms sleeps actually ask for,
+so the hold was the outlier and nothing else.  A process the clock woke was
+waiting behind whatever held the single processor; with four, something else
+takes it.
+.PP
+.B "That measurement above is QEMU's.  A JTAG boot cannot take it."
 .CW jtagrestart
 halts all four processors and resumes core 0 alone, leaving the others held by
 the debugger, so on a JTAG-loaded kernel cores 1 to 3 can never start:
