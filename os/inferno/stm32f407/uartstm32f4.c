@@ -548,20 +548,8 @@ uartintr(Ureg*, void *arg)
 static void
 stm32f4_enable(Uart *uart, int ie)
 {
-	static int said;
-
 	USED(uart, ie);
 	uartboardinit();
-	/*
-	 * Once, and from here rather than from armv7m/main.c, which is
-	 * shared with three boards that have none of these USARTs.  By
-	 * this point the console is up and the clock is settled, so
-	 * apb1hz is the real one and the baud divisors are right.
-	 */
-	if(!said){
-		said = 1;
-		otherusarts();
-	}
 }
 
 static void
@@ -781,4 +769,22 @@ uartconsolesetup(void)
 	c = consuart->regs;
 	intrenable(c->irq, uartintr, consuart, 0, "eia0");
 	csrw(c, UartCr1, csrr(c, UartCr1)|UartRxneie);
+
+	/*
+	 * From here, and this took two goes to get right.
+	 *
+	 * It was in stm32f4_enable(), the PhysUart method, on the
+	 * reasoning that the console is up by then.  It is, but
+	 * uartenable() is called from devuart.c only when a uart is
+	 * OPENED -- "if(p->opens++ == 0 && uartenable(p) == nil)" -- and
+	 * nothing opens /dev/eia0 at boot.  So the method never ran, and
+	 * a diagnostic that never runs is worse than none: it was cited
+	 * as evidence that a silent board's click could not be in the
+	 * wrong socket, which it could not support.
+	 *
+	 * uartconsolesetup() is this board's own and armv7m/main.c calls
+	 * it unconditionally, after clockinit(), so apb1hz is the real
+	 * one and the baud divisors are right.
+	 */
+	otherusarts();
 }
