@@ -1033,3 +1033,83 @@ comparing against a snapshot whose words are
 .I zero
 says the snapshot was taken before that constant was written, and that is worth
 understanding before anything is concluded from it.
+.NH 1
+Where this closes, and the dependency that closes it
+.PP
+.B "parallelvm=1 needs Phase 1b, which the section above did not say."
+"What remains" presents
+.CW vmlock
+and
+.CW parallelvm
+as the last step.  That is incomplete.  At
+.CW parallelvm=1
+two kernel processes are inside
+.CW xec()
+at once, and each reaches its register file through
+.CW curP
+\(em which on this branch is a single global pointing at one
+.CW Pctx .
+Two executors would therefore share one register file, which is precisely the
+thing the per-context design exists to prevent and which multicore names in
+.CW claimctx() 's
+own diagnostic:
+.CW "sharing (unsafe while parallelvm=1)" .
+So the chain is
+.CW parallelvm=1
+depends on Phase 1b, and Phase 1b ripples into
+.CW raspi4
+and
+.CW virtarm64 ,
+neither of which declares an external register today and one of which has no
+hardware on this desk.
+.PP
+.B "And parallelvm=1 is not the destination anyway."
+Three failures in sixteen upstream against none at 0, "bad frame" on 11 boots of
+16, an undiagnosed
+.CW "incref: bad r" ,
+and Phase 4's per-channel lock not landed, with
+.CW isend()
+and
+.CW irecv()
+still writing another
+.CW Prog 's
+.CW ptr
+into its stack unlocked.
+.PP
+Put together: the switch needs a change that ripples to boards that cannot be
+tested here, in order to reach a state its own branch measures as worse than
+where this board already is.  So this integration is finished at the
+infrastructure, which is what it set out to do.
+.NH 2
+What is in, and what a later session would need
+.PP
+In, each built, QEMU-booted and \(em except the last two, which the rig blocked
+\(em cold-booted from the card and gated at eleven boots:
+.CW Prog.reg ;
+.CW "R" through a pointer;
+.CW Pctx
+with the register file, the current program, the safepoint flag and the run
+queue;
+.CW progreg() ;
+.CW gcdepth
+split from
+.CW gchalt ;
+.CW stoptheworld() ;
+the process-group lock; the multi-context unlink; and
+.CW GC-COUNTS
+to report all of it.
+.PP
+Not in, and each for a reason rather than for lack of time:
+.CW parallelvm
+and
+.CW vmlock ,
+per the chain above; Phase 1b, per the same; Phase 4's channel lock, which is
+upstream's open hazard and not this port's to close first;
+.CW killprog() 's
+queue-head test, which asks a different question than
+.CW delrunq()
+does;
+.CW propex() 's
+unlocked walk, which needs a snapshot taken on an exception path; and
+.CW claimctx()
+with a context pool, which only has a purpose once contexts outnumber one.
