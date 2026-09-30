@@ -1334,48 +1334,119 @@ through
 .CW etherusb ,
 which is Limbo.
 .PP
-.B "Boots, not one boot."
-The doc above says three reads is not a measurement here and that the rig
-drifts thirty per cent between one hour and the next, so this is the
-median across boots: six boots at
-.CW cflag=1
-and three at
-.CW cflag=0 ,
-each running
+.B "The comparison that counts, and why the earlier one did not."
+Two kernels ONE BYTE apart \(em
+.CW "cmp -l"
+says one byte, the
+.CW cflag
+int in the generated config \(em booted alternately, three rounds each,
+with the arm confirmed from the
+.CW jit
+field the kernel itself prints, and
 .IR netbench (1)
-twice, all on one afternoon.
+three times per boot.  Medians:
 .IP
 .nf
-                        cflag=0   cflag=1
-ping 64B, 1 frame          2.37      4.11
-ping 1400B, 1 frame        3.07      4.97
-ping 4000B, 3 frames       8.94      4.26
-ping 8000B, 6 frames      12.37      6.81
-1MB styx read              3.50      2.40
-1MB styx write             4.60      3.20
+                    cflag=0   cflag=1   ratio
+ping 64B, 1 frame      2.36      1.82    1.30x
+ping 1400B, 1 frame    3.10      2.50    1.24x
+ping 4000B, 3 frames   9.36      7.80    1.20x
+ping 8000B, 6 frames  13.82     10.44    1.32x
+1MB styx read          2.10      1.80    1.17x
+1MB styx write         3.20      2.60    1.23x
 .fi
 .PP
-.B "Two point one times on multi-frame latency and one point four on bulk."
-Those are the numbers the JIT buys, and the mechanism is visible in the
-shape: at one frame there is almost nothing for a code generator to make
-cheaper, and by three frames
-.CW smscrx() 's
-walk and
-.CW txproc() 's
-gather are doing real work per frame.
+.B "Faster on every number, and steadier."
+The third
+.CW cflag=0
+round blew out to 134ms at 8000 bytes and 10.5 to 11.6 seconds on the
+1MB write; the
+.CW cflag=1
+round beside it was 10.44ms and 2.4 to 2.7 seconds.
 .PP
-.B "And single-frame latency is worse, consistently."
-2.37ms interpreted against 4.11ms compiled, medians over three boots and
-six.  That is not the drift band: it is 1.7x and it is in the direction
-the JIT should not be.  Unexplained, and recorded rather than rounded
-away.
+.B "An earlier version of this section said the opposite"
+about single-frame latency \(em 2.37ms interpreted against 4.11ms
+compiled \(em and it was wrong twice over.  The arms straddled a power
+cycle, which this document's own closing note says is exactly the kind of
+confound this rig punishes; and there was a real bug underneath, which is
+what the wrong number was pointing at.
+.NH 2
+The bug the wrong number was pointing at
 .PP
-.B "Transmit batching had never run before this."
-It was added with "measure that it buys nothing here" and that was
-honest and wrong: interpreted,
+.CW xec() 's
+interpreter loop is
+.CW "while(--R.IC != 0)" ,
+so
+.CW R.IC
+counts DIS INSTRUCTIONS and
+.CW PQUANTA
+is 2048 of them.  Compiled code reaches that counter only at a backward
+branch, and every code generator in
+.CW libinterp
+subtracted ONE there.  So the compiled quantum was 2048 loop ITERATIONS,
+and a call inside the loop was charged as one instruction rather than as
+the callee's body.
+.PP
+.B "Measured as USB completion-wake latency,"
+which is what a process waiting on a device pays when something else will
+not let go of the processor.
+.CW usbdwc.c
+prints it:
+.IP
+.nf
+USB-WAKE, 8 sleeps        mean        max
+cflag=0                 1132us     3068us
+cflag=1  originally    68097us   493235us
+cflag=1  loop body      5990us    23794us
+cflag=1  and calls       1337us     6067us
+.fi
+.PP
+Half a second at worst, and every round trip that had to wait for a wake
+paid for it.  Charging the loop body and then the call brings it to within
+eighteen per cent of the interpreter, and the single-frame ping anomaly
+disappears with it.
+.PP
+.B "The kernel profile is what ruled out everything else."
+.IR devkprof (3)
+over 25 seconds while the host pinged 100 times, both arms:
+.IP
+.nf
+              cflag=0   cflag=1
+idle            81.4%     82.2%
+markheap         7.4%      7.3%
+rungc            5.6%      5.0%
+awaitbit         2.1%      2.5%
+xec              0.5%        --
+outside text         0         3
+.fi
+.PP
+Eighty per cent idle in both arms, and the Dis work a rounding error
+either way: sixteen ticks in
+.CW xec
+interpreted against three ticks outside the kernel's text compiled, which
+is the JIT's own buffers.  So the extra milliseconds were never CPU being
+burned \(em they were a process waiting, which is what pointed at the
+scheduler rather than at the driver or at
+.CW etherusb .
+The tick is 10ms here
+.CW "(HZ = 100)" ,
+which is why the residual sat at about half a tick until calls were
+charged.
+.PP
+.B "Only comp-aarch64.c is fixed."
+.CW comp-arm64.c ,
+.CW comp-amd64.c ,
+.CW comp-arm.c
+and
+.CW comp-386.c
+all subtract one at a backward branch and all have it.
+.NH 2
+Transmit batching had never run before this
+.PP
+It was added with "measure that it buys nothing here" and that was honest
+and wrong: interpreted,
 .CW txproc
-is too slow for a second frame to be queued by the time the
-non-blocking
+is too slow for a second frame to be queued by the time the non-blocking
 .CW alt
 looks, so every transfer was one frame and the batch path was dead code.
 Compiled, frames queue and it engages.  With
@@ -1403,12 +1474,12 @@ seven boots at
 .CW cflag=1 ,
 thirteen
 .IR netbench (1)
-runs, zero re-arms.  Including one boot reloaded over JTAG in the middle
-of heavy traffic, which was the theory \(em
+runs, zero re-arms, and another dozen boots since.  Including one boot
+reloaded over JTAG in the middle of heavy traffic, which was the theory \(em
 .CW jtagrestart
-halts the core and loads an image and is not a reset, so the controller
-and the LAN9514 inherit whatever the last kernel left \(em and that
-theory is tested and did not reproduce it.
+halts the core and loads an image and is not a reset, so the controller and
+the LAN9514 inherit whatever the last kernel left \(em and that theory is
+tested and did not reproduce it.
 .PP
 .B "What is eliminated, by measurement."
 .CW etherusb 's
@@ -1437,7 +1508,6 @@ against what was programmed, the port status, haint, haintmsk, gintsts and
 gintmsk.  And after eight re-arms in which nothing moved,
 .CW chanio
 reprograms the channel from the beginning rather than re-enabling it over
-what the core left behind.  That escalation has never run: zero
-reprograms in thirteen runs, because there has been nothing to recover
-from.  It is untested code and this paragraph is the only claim made for
-it.
+what the core left behind.  That escalation has never run, because there
+has been nothing to recover from.  It is untested code and this paragraph
+is the only claim made for it.
