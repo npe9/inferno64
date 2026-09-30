@@ -322,7 +322,15 @@ dead:
 	B	dead
 
 TEXT	boot1(SB), 1, $-4
+	/*
+	 * Sixteen below the top, for the reason boot2 does it: a callee writes
+	 * above its caller's SP, an argument home being at 0(FP) -- the
+	 * caller's SP plus eight.  This is harmless today only because main()
+	 * takes no arguments, and "stack" ends exactly where devslock begins,
+	 * so it would not stay harmless.  A stack top is not a usable address.
+	 */
 	MOV	$stack+KSTACK(SB), R2
+	SUB	$16, R2, R2
 	MOV	R2, RSP
 	MOV	$setSB(SB), R28
 	MOV	R19, R0

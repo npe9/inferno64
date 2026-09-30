@@ -372,9 +372,56 @@ wildspreport(Ureg *ur)
 	panic("exception on a wild sp %#llux at pc %#llux lr %#llux", c[147], c[144], c[148]);
 }
 
+/*
+ * comvec, libinterp's JIT entry trampoline, is the word a wild store
+ * overwrites when a secondary is taking interrupts without the 64 bytes of
+ * slack above its stack (doc/raspi3b-completion-plan.ms).  The mechanism is
+ * not known, so this is not a fix: it is the instrument that narrows the
+ * window and answers the one question the freeze cannot.
+ *
+ * Every trap -- every interrupt and every exception, so far more often than
+ * once a tick -- compares comvec against the value the JIT gave it and puts
+ * it back if it has changed, reporting the interrupted pc.  Two things come
+ * out of that.  The window shrinks from half a second to the gap between two
+ * traps, and if putting it back is enough to let the board run then comvec is
+ * the only casualty; if the board goes wrong somewhere else instead, the
+ * store is hitting more than one word and looking for a single victim is the
+ * wrong search.
+ *
+ * It cannot see a store that happens and is consumed between two traps, and
+ * it cannot name the storing instruction.  It is a narrowing instrument, and
+ * saying which is which matters more here than usual, because two mechanisms
+ * for this have already been wrong.
+ */
+static void
+comvecwatch(Ureg *ur)
+{
+	extern void (*comvec)(void);
+	extern int comveccheck;
+	static void (*good)(void);
+	static int nseen;
+
+	if(!comveccheck)
+		return;
+	if(good == nil){
+		good = comvec;		/* nil until the JIT compiles something */
+		return;
+	}
+	if(comvec == good)
+		return;
+	if(++nseen <= 8)
+		iprint("COMVEC %d: was %#p, now %#p, restored; trap pc %#llux"
+			" type %lld\n", nseen, good, comvec,
+			(uvlong)ur->pc, (uvlong)ur->type);
+	comvec = good;
+	coherence();
+}
+
 void
 trap(Ureg *ur)
 {
+	comvecwatch(ur);
+
 	u32 pend;
 	volatile u32 *ic;
 	int irq, bank, v;
