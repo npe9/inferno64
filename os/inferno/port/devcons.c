@@ -1394,14 +1394,27 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 				int id;
 				Mach *mm;
 
-				print("SCHED-MACHS nmach %lud:", (ulong)conf.nmach);
+				/*
+				 * load is printed ONCE and not per processor,
+				 * because it is not a per-processor number:
+				 * accounttime() returns early for machno != 0
+				 * with "only one processor gets to compute
+				 * system load averages", so every secondary's
+				 * m->load is 0 by design.  Printing it in the
+				 * per-cpu list read as "the load average is
+				 * not being computed there", which is a bug
+				 * report about correct behaviour.
+				 */
+				print("SCHED-MACHS nmach %lud load %d (cpu0's,"
+					" machine-wide):", (ulong)conf.nmach,
+					MACHP(0) != nil? MACHP(0)->load: 0);
 				for(id = 0; id < MAXMACH; id++){
 					if((mm = MACHP(id)) == nil)
 						continue;
-					print(" cpu%d[active %d ticks %lud cs %d"
-						" load %d]", id,
+					print(" cpu%d[active %d ticks %lud"
+						" cs %d]", id,
 						active.machs[id], mm->ticks,
-						mm->cs, mm->load);
+						mm->cs);
 				}
 				print("\n");
 			}
