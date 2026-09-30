@@ -917,3 +917,27 @@ there is none yet.  What is here is everything the collector needs in order to
 be correct once there is one, each piece measured on the board, and a
 .CW GC-COUNTS
 line that reports whether the invariants hold.
+.PP
+.B "And the gate is passed."
+.CW "GCBOOTS: 11 booted, 0 failed, of 11 cold boots of the collector build" ,
+each proved by a per-run tag coming back through the poller rather than by a
+ping \(em which once reported five clean boots of a loop that rebooted nothing.
+Twelve cold boots in all counting
+.CW kinstall 's
+own verification of the same build.  Afterwards the board reports
+.CW "nmach 4"
+with context switches on every secondary, 1418758 collections, 61 million heap
+inspections, and the safepoint invariant violated
+.B zero
+times.
+.PP
+Two things that reading would not have given, for the record.  Each cycle takes
+about twenty minutes on this rig, so eleven is four hours and the loop has to be
+left alone rather than watched.  And the script's own log lags its progress by
+two runs, because
+.CW sh
+buffers a redirected stdout in blocks and these lines are short: twice during
+this gate the log said 8 while
+.CW board.out
+already held run 10's reboot.  The board's own output is the truth; the
+harness's log is a convenience.
