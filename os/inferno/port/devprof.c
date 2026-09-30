@@ -15,6 +15,24 @@ extern	Inst*	pc2dispc(Inst*, Module*);
 
 static	int	interval = 100;	/* Sampling interval in milliseconds */
 
+/*
+ * What the sampler did, because "prof printed nothing" names no stage.
+ *
+ * This device had never been compiled into a kernel in this tree, and its
+ * first two failures were a panic and then silence.  Silence has at least
+ * four causes here -- the kproc never ran, every tick found no module,
+ * every module was refused a Record, or every sample fell outside the
+ * Record's buckets -- and one counter each tells them apart in one boot
+ * instead of four.  Printed when profiling stops.
+ */
+static	ulong	nstick;		/* sampler ticks */
+static	ulong	nsnomod;	/* ... with no current module */
+static	ulong	nsnorec;	/* ... whose module got no Record */
+static	ulong	nsout;		/* ... whose pc fell outside the buckets */
+static	ulong	nshit;		/* ... counted */
+static	ulong	nsnew;		/* Records created */
+static	ulong	nsnewnil;	/* newmodule() refusals */
+
 enum
 {
 	HSIZE	= 32,
@@ -402,8 +420,14 @@ profwrite(Chan *c, void *va, s32 n, s64 offset)
 					heapmonitor = memprof;
 				}
 			}
-			else if(strcmp(fields[0], "stop") == 0)
+			else if(strcmp(fields[0], "stop") == 0){
+				print("prof: ticks %lud nomod %lud norec %lud"
+					" out %lud hit %lud records %lud"
+					" refused %lud\n",
+					nstick, nsnomod, nsnorec, nsout,
+					nshit, nsnew, nsnewnil);
 				profiler = Pnil;
+			}
 			else if(strcmp(fields[0], "end") == 0){
 				profiler = Pnil;
 				freeprof();
@@ -451,6 +475,7 @@ newmodule(Module *m, int vm, int scale, int origin)
 	if(!vm)
 		acquire();
 	if((m->compiled && m->pctab == nil) || m->prog == nil) {
+		nsnewnil++;
 		if(!vm)
 			release();
 		return nil;
@@ -464,10 +489,12 @@ newmodule(Module *m, int vm, int scale, int origin)
 	dsize += origin;
 	r = malloc(sizeof(Record)+dsize);
 	if(r == nil) {
+		nsnewnil++;
 		if(!vm)
 			release();
 		return nil;
 	}
+	nsnew++;
 
 	r->id = ++ids;
 	if(ids == (1<<8)-1)
@@ -546,18 +573,26 @@ sampler(void* a)
 		 * lock held, and it need not: nothing frees a Record while the
 		 * profiler is running, so the pointer is good across the gap.
 		 */
-		if(R.M == H || (m = R.M->m) == nil)
+		nstick++;
+		if(R.M == H || (m = R.M->m) == nil){
+			nsnomod++;
 			continue;
+		}
 		p = R.PC;
 		r = mlook(m, 0, 1, 0);
-		if(r == nil)
+		if(r == nil){
+			nsnorec++;
 			continue;
+		}
 		lock(&profile.l);
 		profile.time += interval;
 		if(m->compiled && m->pctab != nil)
 			p = pc2dispc(p, m);
-		if((i = p-r->base) >= 0 && i < r->size)
+		if((i = p-r->base) >= 0 && i < r->size){
 			r->bucket[i]++;
+			nshit++;
+		}else
+			nsout++;
 		unlock(&profile.l);
 	}
 	samplefn = 0;

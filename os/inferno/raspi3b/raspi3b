@@ -127,7 +127,7 @@ code
 	int main_pool_pcnt = 20;
 	int heap_pool_pcnt = 20;
 	int image_pool_pcnt = 20;
-	int cflag = 0;
+	int cflag = 1;
 	int consoleprint = 1;
 	int panicreset = 0;
 
@@ -145,6 +145,22 @@ root
 # exist".
 #
 	/prof	/
+#
+# /appl, as a mount point and nothing else.  prof(1) reports function and
+# line numbers, so it needs the Limbo SOURCE and the .sbl beside it, not
+# the .dis: findb() asks the object for the path the compiler recorded --
+# /appl/cmd/disbench.b -- and findsbl() derives the symbol file from that.
+# Neither is in this kernel's root and neither should be.  The board
+# already mounts the whole host worktree on /n/remote, so
+#
+#	bind /n/remote/appl /appl
+#
+# gives the profiler every module's source and symbols for nothing.  That
+# is why "prof -f" printed no profile at all for a run with thousands of
+# samples in it: every module was skipped for want of a source file, and
+# the loop that skips them says nothing.
+#
+	/appl	/
 	/n/bt	/
 	/n/efs	/
 	/n/efscrash	/
@@ -204,13 +220,6 @@ root
 # may well answer "no" to.
 #
 	/dis/disbench.dis
-#
-# and its symbol table, so prof(1) can name what it sampled.  Without an
-# .sbl prof gets its samples and then says "no profile information:
-# cannot locate source file", which sounds like the device failed and is
-# the profiler declining to guess at names.
-#
-	/dis/disbench.sbl
 	/dis/sh/std.dis
 	/dis/usb/usbd.dis
 	/dis/usb/etherusb.dis
