@@ -171,6 +171,22 @@ static ulong	secticks(int);
  * config's code section, like cflag.
  */
 extern int	smpstart;
+extern int	smpsched;	/* config: secondaries run the scheduler */
+
+/*
+ * How many times each processor has come through cpustart().  A core that
+ * enters schedinit() stops being parked at a fixed address, so its spin-table
+ * slot means nothing afterwards and recall() can never bring it back -- which
+ * is how enabling smpsched turned the recall test into "CPU1 RECALL FAILED"
+ * the first time it ran.  That test is not decoration: the release path with
+ * the caches already live has no other caller, and it hid a real bug once.
+ * So the order is release, recall, and only THEN schedule: a processor runs
+ * the scheduler on its second start, never its first.  Only the core itself
+ * writes its own entry.
+ */
+static int	nstarted[Ncpu];
+extern int	acctclock;
+extern int	schedclock;
 
 extern void	_secondary(void);
 extern void	sev(void);
@@ -331,6 +347,35 @@ cpustart(int n)
 	 * core 0 can still call back by writing its slot, and it is idling at
 	 * the one fixed address in this kernel.
 	 */
+	/*
+	 * And, if asked, this processor stops resting and starts scheduling.
+	 *
+	 * active.machs[n] is what every other piece of the kernel reads as
+	 * "processor n is running a scheduler" -- portclock.c's timer path and
+	 * devcons.c's shutdown both test it -- so it is set here and nowhere
+	 * else, immediately before the one call that makes it true.
+	 * conf.nmach rises with it because reprioritize() computes a fair
+	 * share as conf.nmach/load: claiming four processors while three of
+	 * them park would make every process look starved and hand out
+	 * priority that nothing had earned.
+	 *
+	 * schedinit() does not return.  It sets m->sched as the label every
+	 * later process switch on this processor comes back to, and calls
+	 * sched(), which finds a process in the shared run queues and goes.
+	 * From that moment this core is no longer parked at a fixed address
+	 * and can no longer be recalled by writing its spin-table slot, which
+	 * is why recall() is tested at every boot BEFORE this can happen.
+	 */
+	if(smpsched && ++nstarted[n] >= 2){
+		m->proc = nil;
+		active.machs[n] = 1;
+		if(conf.nmach <= n)
+			conf.nmach = n + 1;
+		coherence();
+		spllo();
+		schedinit();		/* never returns */
+	}
+
 	spllo();
 	cpupark();
 }
@@ -513,7 +558,18 @@ cpuboot(void)
 			machp[n], machp[n]->machno,
 			smpstart >= 3? " secirq": "");
 	}
-	recall(1);
+	/*
+	 * CPU1 alone when nothing is going to schedule, because one
+	 * round-trip is all the coverage the release-with-caches-live path
+	 * needs.  All of them when smpsched is on, because the recall is also
+	 * what lets each core reach its second start and so enter the
+	 * scheduler at all.
+	 */
+	if(smpsched)
+		for(n = 1; n < Ncpu; n++)
+			recall(n);
+	else
+		recall(1);
 }
 
 /*

@@ -13977,3 +13977,106 @@ would have been measuring a chain with a missing link.
 So what stopped the layout build remains open, and the honest position is that
 a sufficient mechanism for the symptom is now known and reproducible on demand,
 while the path from that build's one real defect to that mechanism is not.
+.NH 2
+Processes on all four processors
+.PP
+.B "A secondary now enters the scheduler, behind smpsched."
+The step the summary above called a choice between two merges turns out to be
+small on the side that spreads kernel processes.
+.CW schedinit()
+in
+.CW port/proc.c
+is already the Plan 9 one \(em it sets
+.CW m->sched
+as the label every later switch on this processor returns to, and calls
+.CW sched()
+\(em and the run queues are already lock-protected, because
+.CW Schedq
+embeds a
+.CW Lock
+and
+.CW queueproc()
+takes
+.CW lock(runq)
+as the one scheduler lock.  So
+.CW cpustart()
+sets
+.CW active.machs[n] ,
+raises
+.CW conf.nmach ,
+and calls
+.CW schedinit() ,
+which does not return.
+.PP
+Two things had to come with it.
+.CW clocksecondary()
+was a count and a re-arm; a processor that runs the scheduler needs the
+preemption half of the tick as well, so it now calls
+.CW accounttime()
+and
+.CW hzsched()
+\(em and
+.I not
+.CW checkalarms()
+or
+.CW timercheck() ,
+because the soft timers and the alarm queue belong to processor 0 here as they
+do in Plan 9.  Without that a scheduled secondary would run whatever it picked
+up until that process blocked of its own accord, which is precisely the
+unpreemptible machine the three-arm experiment above produced on core 0.
+.PP
+And the recall test had to move.  A core that enters
+.CW schedinit()
+is no longer parked at a fixed address, so its spin-table slot means nothing
+and
+.CW recall()
+cannot bring it back: enabling this printed
+.CW "CPU1 RECALL FAILED"
+on the first run.  That test is not decoration \(em the
+release-with-caches-live path has no other caller and hid a real bug once \(em
+so the order is now release, recall, then schedule.  A processor runs the
+scheduler on its
+.I second
+start, and with
+.CW smpsched
+on every secondary is recalled rather than just CPU1, which is both better
+coverage and how each core reaches a second start at all.
+.PP
+.B "And what proves it is cs, not a boot that completes."
+A boot reaching
+.CW RASPI3B-SH-OK
+says nothing about where anything ran.
+.CW Mach
+carries
+.CW cs ,
+its context-switch count, so
+.CW "echo sched >/dev/sysctl"
+now prints a line per processor beside the aggregate:
+.P1
+SCHED-MACHS nmach 4: cpu0[active 1 ticks 136 cs 72 load 450]
+  cpu1[active 1 ticks 182 cs 6] cpu2[... cs 3] cpu3[... cs 34]
+.P2
+Non-zero
+.CW cs
+on a secondary is a process having run there.  A secondary with
+.CW cs
+0 has taken its own timer interrupts and run nothing, which is exactly what
+the four cores bought before this, and is the distinction the earlier tick
+counts could not draw.
+.PP
+.B "That measurement is QEMU's.  A JTAG boot cannot take it."
+.CW jtagrestart
+halts all four processors and resumes core 0 alone, leaving the others held by
+the debugger, so on a JTAG-loaded kernel cores 1 to 3 can never start:
+.CW SCHED-MACHS
+reports
+.CW "nmach 1"
+and one processor, with
+.CW machp[1..3]
+still nil.  That is not a failure of the port and it is written down here
+because the comment saying it lives inside
+.CW smpbcm.c ,
+where somebody reaching for
+.CW tools/jtag/boot.sh
+will not read it.  Every SMP measurement on this board has to come from a cold
+boot off the card.

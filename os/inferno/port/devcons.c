@@ -1380,6 +1380,31 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 				gcticks, gcpasses, gcmax, idlegcticks, idlegcmax,
 				skipscheds, preempts, coopsched, schedgate,
 				schedclock, lockboost);
+			/*
+			 * Per-processor, because on a machine with more than
+			 * one the aggregate above cannot say whether the
+			 * others are scheduling anything.  cs is context
+			 * switches, so a secondary with cs 0 has taken its
+			 * timer interrupts and run nothing -- which is what
+			 * "all four cores take their own interrupts" bought
+			 * before they entered schedinit(), and is exactly the
+			 * distinction a boot that merely completes cannot draw.
+			 */
+			{
+				int id;
+				Mach *mm;
+
+				print("SCHED-MACHS nmach %lud:", (ulong)conf.nmach);
+				for(id = 0; id < MAXMACH; id++){
+					if((mm = MACHP(id)) == nil)
+						continue;
+					print(" cpu%d[active %d ticks %lud cs %d"
+						" load %d]", id,
+						active.machs[id], mm->ticks,
+						mm->cs, mm->load);
+				}
+				print("\n");
+			}
 			if(cb->nf > 2 && strcmp(cb->f[1], "ioboost") == 0)
 				ioboost = atoi(cb->f[2]);
 			if(cb->nf > 2 && strcmp(cb->f[1], "coopsched") == 0)

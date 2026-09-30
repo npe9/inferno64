@@ -24,6 +24,7 @@ extern void	timercheck(Ureg*);
 extern ulong	ticknoup, ticknotrun, tickrun;
 extern int	schedclock;
 extern int	acctclock;		/* config: call accounttime() */
+extern int	smpsched;		/* config: secondaries run the scheduler */
 extern void	(*kproftick)(ulong);
 
 static uvlong
@@ -444,6 +445,29 @@ clocksecondary(Ureg*)
 	uvlong when;
 
 	m->ticks++;
+	/*
+	 * A processor that is running the scheduler needs the part of
+	 * clockintr() that makes preemption happen, and only that part.
+	 * accounttime() and hzsched() work on m-> and on the run queues,
+	 * which are lock-protected (Schedq embeds a Lock and queueproc()
+	 * takes lock(runq) as the one scheduler lock).  checkalarms() and
+	 * timercheck() are deliberately NOT here: the soft timers and the
+	 * alarm queue belong to processor 0 in this kernel, as they do in
+	 * Plan 9, and a second processor walking them would be the first
+	 * unprotected thing in the tick.
+	 *
+	 * Without this a scheduled secondary would run whatever it picked up
+	 * until that process blocked of its own accord -- the same
+	 * unpreemptible machine the freeze experiment produced on core 0 by
+	 * turning hzsched() off, which is the reason this is here and not a
+	 * later refinement.
+	 */
+	if(smpsched && active.machs[m->machno]){
+		if(acctclock)
+			accounttime();
+		if(schedclock && up != nil && up->state == Running)
+			hzsched();
+	}
 	when = now() + m->cpuhz/HZ;
 	hwtimerset(&when);
 }
