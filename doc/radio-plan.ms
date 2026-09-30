@@ -3138,3 +3138,72 @@ measures raw RSSI across that filter, so it would register a carrier
 several kilohertz off without trouble.
 .B "peak -104, duty 0%"
 is no energy, not mistuned energy.
+.PP
+.B "RETRACTION: the lamp deduction above was a misread LED, and everything drawn from it is withdrawn."
+.PP
+The board shows two lamps and I was told one blinked and one was solid.
+I took the blinking one for the beacon's and concluded that the CC1120
+had been found, that the ctl file had opened, that the loop was turning,
+and \- from
+.I cc1120init
+looking on SPI2 \- that the ccRF click must therefore be in mikroBUS 2
+and the RS232 click in mikroBUS 1.  A chain of four claims on one
+unidentified LED.
+.PP
+It was settled on the board whose console works, which costs nothing:
+.B "echo led off >/dev/radio0/ctl"
+darkens the
+.I right
+lamp.  So PE12, which
+.I spiled
+drives and which the beacon's
+.B led
+verb moves, is the right one \- and on the second board the right lamp
+has been solid in both images.  The beacon's lamp has never moved at
+all.  The blinking one is LD2, the heartbeat
+.I idlehands()
+gives it, and its rate changed between the two images because the second
+does eight ctl writes a frame where the first did one, so the kernel
+idles differently.  That change is what made the misreading look
+confirmed.
+.PP
+What is actually established is much less.  The board runs a kernel, and
+nothing else.  A solid PE12 is where
+.I archstm32f407.c
+leaves it at boot, so the beacon has not reached the point of moving it,
+which means it exited before its loop \- and the three ways it can do
+that are that
+.B /dev/radio0/ctl
+would not open, that a configuration write failed, or that
+.B /dev/radio0/data
+would not open.  All three print to a console nobody can read.
+.PP
+And there is a floor under how much any of this can say, which is worth
+naming because it shaped the whole attempt: the lamp is reached through
+the radio's own ctl file, so a board that cannot find its radio cannot
+use the lamp to report that.  The indicator is downstream of the thing
+most likely to have failed.  An LED reachable without the radio \- from
+.IR archstm32f407.c 's
+.I ledpin
+through
+.BR #P ,
+say \- would not have that defect.
+.PP
+The likeliest reading of all the evidence together is that the two
+clicks are in the opposite sockets to the ones this kernel expects.
+.I cc1120init
+looks on SPI2, which is mikroBUS 2; a ccRF click in mikroBUS 1 would not
+be found, which leaves no
+.B /dev/radio0
+and a beacon that exits at once with the lamp untouched.  The console is
+USART2 on PD5 and PD6, which is mikroBUS 1; an RS232 click in mikroBUS 2
+would never carry it.  One swap accounts for both symptoms.  It does not
+account for
+.IR otherusarts ()
+writing to USART3 on PD8 \- mikroBUS 2 \- and that not arriving either,
+so either the RS232 path has its own fault as well or that line is being
+lost for the same electrical reason as everything else.
+.PP
+The test is to exchange the two clicks and reset.  Nothing in software
+can distinguish these cases, and no more should be deduced from a lamp
+until it has been.
