@@ -437,29 +437,64 @@ bangallpins(void)
 		}
 }
 
+/*
+ * Every USART a clicker 2 brings out, so that a board whose UART click
+ * is in a socket this kernel is not configured for says which socket it
+ * IS in, rather than looking like a board that never booted.  That case
+ * is not hypothetical: a second board flashed with this kernel left its
+ * bootloader, so it was certainly running, and printed nothing on any
+ * serial port the host could see.
+ *
+ * The leading Us are deliberate.  0x55 is alternating bits, so it is
+ * the character a receiver at the wrong baud rate most reliably shows
+ * as something other than the right one, and eight of them give an
+ * adapter time to settle before anything worth reading arrives.
+ */
+static struct {
+	ulong	base;
+	ulong	port;
+	int	tx;
+	ulong	afr;
+	int	af;			/* AF7 for the USARTs, AF8 for UART4 */
+	char	*say;
+} allusarts[] = {
+	{ 0x40004400, GPIOD, 5, GPIO_AFRL, 7,
+		"UUUUUUUU\r\nInferno on USART2, PD5: mikroBUS 1\r\n" },
+	{ 0x40004800, GPIOD, 8, GPIO_AFRH, 7,
+		"UUUUUUUU\r\nInferno on USART3, PD8: mikroBUS 2\r\n" },
+	{ 0x40004c00, GPIOA, 0, GPIO_AFRL, 8,
+		"UUUUUUUU\r\nInferno on UART4, PA0: the pad\r\n" },
+};
+
 void
 otherusarts(void)
 {
-	/*
-	 * Never the console's own USART: rawuart() writes CR1 from
-	 * scratch, which drops the receive enable and the receive
-	 * interrupt, and the console would go deaf twice a second.  It
-	 * has nothing to prove anyway -- everything the kernel says
-	 * comes out of it.
-	 */
-	/* mikroBUS 1: USART2 TX on PD5, AF7, APB1 */
-#ifndef CONSUSART2
-	rawuart(0x40004400, GPIOD, 5, GPIO_AFRL, 7, apb1hz,
-		"UUUUUUUU\r\nInferno on USART2, PD5: mikroBUS 1\r\n");
-#endif
-	/* mikroBUS 2: USART3 TX on PD8, AF7, APB1 */
-#ifndef CONSUSART3
-	rawuart(0x40004800, GPIOD, 8, GPIO_AFRH, 7, apb1hz,
-		"UUUUUUUU\r\nInferno on USART3, PD8: mikroBUS 2\r\n");
-#endif
-	/* the 2x26 pad: UART4 TX on PA0, AF8, APB1 */
-	rawuart(0x40004c00, GPIOA, 0, GPIO_AFRL, 8, apb1hz,
-		"UUUUUUUU\r\nInferno on UART4, PA0: the pad\r\n");
+	int i;
+
+	for(i = 0; i < nelem(allusarts); i++){
+		/*
+		 * Never the console's own USART: rawuart() writes CR1 from
+		 * scratch, which drops the receive enable and the receive
+		 * interrupt, and the console would go deaf.  It has nothing
+		 * to prove anyway -- everything the kernel says comes out
+		 * of it.
+		 *
+		 * Compared against the console's own register base, and not
+		 * decided by #ifndef on the CONSUSART names as this did
+		 * before.  Two reasons.  A board moving its console to a
+		 * USART nobody had written an #ifndef for here would have
+		 * had its console quietly made deaf instead of being told
+		 * anything, which is the worst way for a diagnostic to
+		 * fail.  And conditional compilation is not how this tree
+		 * selects anything: a board takes code by which files its
+		 * config names, and values by what data it carries.
+		 */
+		if(allusarts[i].base == UART0)
+			continue;
+		rawuart(allusarts[i].base, allusarts[i].port,
+			allusarts[i].tx, allusarts[i].afr,
+			allusarts[i].af, apb1hz, allusarts[i].say);
+	}
 }
 
 static Uart*
@@ -513,8 +548,20 @@ uartintr(Ureg*, void *arg)
 static void
 stm32f4_enable(Uart *uart, int ie)
 {
+	static int said;
+
 	USED(uart, ie);
 	uartboardinit();
+	/*
+	 * Once, and from here rather than from armv7m/main.c, which is
+	 * shared with three boards that have none of these USARTs.  By
+	 * this point the console is up and the clock is settled, so
+	 * apb1hz is the real one and the baud divisors are right.
+	 */
+	if(!said){
+		said = 1;
+		otherusarts();
+	}
 }
 
 static void
