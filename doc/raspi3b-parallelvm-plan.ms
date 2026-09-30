@@ -979,15 +979,42 @@ own verification, and the safepoint invariant was violated zero times across
 1.4 million collections.  So on the evidence this is QEMU-only, or rare enough
 that twelve board boots did not catch it.
 .PP
+.B "And then the likely cause turned out to be the measurement."
+Every attempt to get a rate leaked emulators: the loops backgrounded
+.CW qemu.sh
+and killed the wrong thing, so instances accumulated \(em thirteen processes
+matching
+.CW qemu
+at one point.  The panic has been seen
+.I only
+during those periods.  With the host cleared and one emulator running alone,
+boots are clean: no panic, no
+.CW COMVECCODE ,
+the safepoint invariant at 0.  That is now five solo boots clean against one
+panic taken while an unknown number of emulators competed for the machine.
+.PP
+So this is most likely host contention perturbing a timing-sensitive boot, not a
+kernel fault \(em which puts it in the same category as the other harness
+mistakes in this file, and is why it is being corrected here rather than left as
+a finding.  Stated carefully: the correlation is strong and the mechanism is
+plausible, but "concurrent emulators cause it" is not proven either, and the
+honest position is that there is no evidence of a kernel fault and no clean
+measurement of one.
+.PP
 .B "What it is NOT safe to say."
-That it is pre-existing, or that this session introduced it.  Establishing
+That it is pre-existing, that this session introduced it, or \(em now \(em that
+it is a kernel fault at all.  Establishing
 either needs the pre-integration commit built and booted enough times to
 compare rates, and a single panicking run on either arm proves nothing \(em
 which is the same trap multicore's own pc64 numbers fell into and then recorded:
 three of eight bad on one run, none of eight on a repeat of the same
 comparison, "the lesson is the sample size, not a contradiction".  Two attempts
-to measure a rate here died in their own teardown, so there is no rate yet
-beyond "about one in seven".
+to measure a rate here died, and the cause was not mysterious once looked at:
+they exited 144, killed by a later
+.CW pkill
+of mine that was meant for a stray emulator and matched the measuring loop's own
+process tree.  A rate measurement has to be left entirely alone, including by
+the person taking it.
 .PP
 .B "The first thing to look at, when it is looked at."
 The
