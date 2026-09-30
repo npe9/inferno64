@@ -3207,3 +3207,66 @@ lost for the same electrical reason as everything else.
 The test is to exchange the two clicks and reset.  Nothing in software
 can distinguish these cases, and no more should be deduced from a lamp
 until it has been.
+.PP
+.B "Sockets were swapped, and both boards now work individually."
+The clicks were in each other's sockets, which is what the retraction
+above guessed from the symptoms and could not prove.  With them
+exchanged the second board's console came up on the RS232 click, and it
+says everything that was invisible before:
+.DS
+.CW "cc1120 mikrobus2: CC1120 rev 0x21, listening"
+.CW "armv7m beacon init"
+.CW "beacon: configured"
+.CW "ARMV7M-BEACON-OK"
+.CW "beacon: 0 frames"
+.DE
+.PP
+and then 15, 30, 45 frames with no error line, which is the thing that
+matters: a failing write prints
+.B "beacon: frame N:"
+and its error, and none appeared.  So the radio is found, the part is
+configured, and frames are going out.  The RS232 path was never at fault
+\- the console was simply wired to the wrong socket, and
+.IR otherusarts ()
+writes its line once at boot, long before any of my probes, so that
+silence was never evidence either.
+.PP
+The receiving board still hears nothing:
+.B "recv 0"
+and
+.B "peak -100 duty 0% bursts 0"
+against a floor of -104.  And the arithmetic now says where to look,
+because the transmit power is not what it could be.  The driver writes
+.B "PA_CFG2 0x4f"
+where reset is
+.BR 0x7f ;
+by the register's formula, output is (PA_POWER_RAMP+1)/2 - 18 dBm, so
+.B 0x7f
+is the +14dBm this file's comment records and
+.B 0x4f
+is
+.BR -10dBm .
+At half a metre and 915MHz, which is 25.6dB of free space:
+.DS
+.CW "both antennas fitted     -10 -25.6 -3.5 -3.5   about  -43dBm"
+.CW "one antenna missing                            about  -78dBm"
+.CW "neither fitted                                 about -115dBm"
+.DE
+.PP
+A W3312 is 45 per cent efficient, which is the -3.5 each.  The first two
+cases are far above a -98 threshold and would show bursts; the third is
+under the floor, which is what is measured.  So the question is whether
+each ccRF click has its antenna on \- and the comment in
+.I cc1120.c
+records that every measurement in it was made on "a clicker 2 with a
+ccRF click and a Pulse W3312 on it", while the antenna spent part of
+this session on the tinySA instead.
+.PP
+Worth keeping separately: -10dBm is 24dB below what this part will do,
+and nothing in the tree says why
+.B 0x4f
+rather than
+.BR 0x7f .
+It is inside Part 15 either way at these duty cycles.  If the link turns
+out marginal with antennas on, that register is 24dB of headroom nobody
+is using.
