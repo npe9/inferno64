@@ -230,6 +230,26 @@ main(void)
 	for(n = 1; n < MAXMACH; n++)
 		*(volatile ulong*)(0x40000040 + 4*n) = 0;
 
+	/*
+	 * And stop any watchdog the last kernel left running, for the same
+	 * reason and in the same breath: a warm restart through the JTAG
+	 * trampoline does not reset the PM block, so a kernel booted to
+	 * recover the board would inherit a countdown it knows nothing about
+	 * and be reset in the middle of booting.  That is exactly the
+	 * situation bootwdog creates on purpose (clock.c), so the recovery
+	 * path has to be safe from it unconditionally -- a board that cannot
+	 * be rescued over JTAG is a board that needs a human.
+	 *
+	 * Unconditional, not just on the JTAG path: a watchdog left running by
+	 * anything at all is not this kernel's, and pminit() re-establishes
+	 * whatever this kernel wants later.
+	 */
+	{
+		extern void wdogstop(void);	/* pmbcm.c */
+
+		wdogstop();
+	}
+
 	p = (long*)edata;
 	ep = (long*)end;
 	while(p < ep)
