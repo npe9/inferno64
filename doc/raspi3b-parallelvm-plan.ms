@@ -941,3 +941,68 @@ this gate the log said 8 while
 .CW board.out
 already held run 10's reboot.  The board's own output is the truth; the
 harness's log is a convenience.
+.NH 1
+An open, intermittent QEMU fault, recorded rather than attributed
+.PP
+While testing the run-queue move a QEMU boot ended in
+.CW "panic: trap" ,
+a data abort with
+.CW "esr 0x9600004e"
+at
+.CW main+0x58 ,
+.CW far 0x400000 ,
+preceded by seven
+.CW COMVECCODE
+lines \(em this port's own
+.CW comveccheck
+reporting that words 8 and 9 of the JIT's
+.CW comvec
+trampoline differ from its snapshot, a baked constant reading
+.CW 0x03a13e54
+where the snapshot has zero.
+.PP
+.B "It is intermittent, and that is the whole finding."
+The first instinct was that the run-queue move had caused it.  It had not: the
+change was reverted, HEAD rebuilt, and HEAD panicked too.  The second instinct
+was then that something in this session's eight commits had caused it, and that
+does not survive either \(em the same image booted clean twice immediately
+afterwards, and four QEMU boots of the same committed code earlier the same day
+were clean with no
+.CW COMVECCODE
+at all.  One panic in about seven boots.
+.PP
+.B "And it does not appear on the board."
+The same build passed eleven cold boots from the card with the poller answering
+on every one, plus
+.CW kinstall 's
+own verification, and the safepoint invariant was violated zero times across
+1.4 million collections.  So on the evidence this is QEMU-only, or rare enough
+that twelve board boots did not catch it.
+.PP
+.B "What it is NOT safe to say."
+That it is pre-existing, or that this session introduced it.  Establishing
+either needs the pre-integration commit built and booted enough times to
+compare rates, and a single panicking run on either arm proves nothing \(em
+which is the same trap multicore's own pc64 numbers fell into and then recorded:
+three of eight bad on one run, none of eight on a repeat of the same
+comparison, "the lesson is the sample size, not a contradiction".  Two attempts
+to measure a rate here died in their own teardown, so there is no rate yet
+beyond "about one in seven".
+.PP
+.B "The first thing to look at, when it is looked at."
+The
+.CW COMVECCODE
+lines, because they are not obviously a symptom of the trap and may be the
+cause's neighbour.  Phase 1a changed what
+.CW ctxreg()
+materialises \(em
+.CW con((uvlong)&R, rd)
+is now
+.CW curR 's
+value rather than a link-time constant.  It is still a constant, and it is the
+same constant, so the generated code should be identical; but
+.CW comveccheck
+comparing against a snapshot whose words are
+.I zero
+says the snapshot was taken before that constant was written, and that is worth
+understanding before anything is concluded from it.
