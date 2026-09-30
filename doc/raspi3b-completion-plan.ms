@@ -13152,7 +13152,7 @@ an indirect branch, not to it.  A
 is not an unconditional branch, which is why the original code was fine for
 months.
 .NH 2
-Per-processor Machs and timers, and a Dis livelock mistaken for corruption
+Per-processor Machs and timers, and two wrong explanations for one freeze
 .PP
 A core that runs is not a processor: it needs its own
 .CW Mach ,
@@ -13199,18 +13199,16 @@ to 0x3c12754.
 .PP
 So core 0 is executing valid JIT-generated Dis code with the JIT's own
 registers correctly loaded, at EL1, taking timer interrupts.  Nothing is
-corrupted.  What has stopped is Dis: this kernel serialises Dis execution, so
-one Limbo program that never yields starves every other Dis process \(em
-including
-.CW etherusb ,
-which is a Limbo program, which is why the network goes away and the command
-poller stops answering and it all looks like a hang.
+corrupted.  That part stands.
 .PP
-And the place it stops is
-.CW schedlat()
-in
-.CW raspi3binit.b ,
-whose whole purpose is to spawn a busy process:
+The explanation offered for it does not.  It was that this kernel serialises
+Dis, so one Limbo program that never yields starves every other Dis process
+\(em
+.CW etherusb
+among them, which is also a Limbo program \(em and that the program was
+.CW schedlat() 's
+own hog in
+.CW raspi3binit.b :
 .IP
 .EX
 schedhog(pidc: chan of int)
@@ -13222,7 +13220,29 @@ schedhog(pidc: chan of int)
 }
 .EE
 .PP
-A loop with no call in it and nothing but an unconditional backward jump.
+.B "That mechanism was tested, and it is false."
+A throwaway build in which
+.CW schedlat()
+does not kill its hog booted
+.I all the way through
+\(em SD, USB, draw, wifi association, DHCP, DNS, Bluetooth, the command poller
+\(em and the board stayed fully usable with the loop running.  The control the
+original reading never had is
+.CW /prog :
+.P1
+2   1  inferno  5:21.7  ready  4K Init
+.P2
+five minutes and twenty-one seconds of processor time in the hog against
+.CW 0:00.x
+for all thirty-odd other processes, so it was certainly running.
+.CW hzsched()
+slices it against everything else and nothing starves.  A never-yielding Limbo
+loop on this kernel costs throughput, not liveness.
+.PP
+So what stopped the layout build is unknown again.  The register evidence still
+rules out corruption, and it still shows core 0 running compiled Dis; what it
+does not show is why, and naming the hog was a guess that the experiment has
+now removed.
 .PP
 .B "Which retracts the whole corruption story."
 Every reading that pointed at a wild store was a misreading of a healthy
@@ -13315,6 +13335,104 @@ did so while printing exactly the evidence that made the instrument look
 alive \(em sixteen LIVELOCK lines naming the right process.  The count is now
 monotonic while one process holds the VM and a separate marker limits the
 printing.
+.PP
+.B "What a healthy boot's own long holds are."
+The question the watchdog turns on is how long a
+.I legitimate
+hold gets, and the periodic warning could not answer it: it says "at least
+.CW livelockticks" ,
+printed 100 twice on a healthy boot and never printed again, which bounds the
+holds to [100,200) and explains neither.  So the detector now reports an
+episode's exact length when it ends, with the last kernel pc and the last
+non-kernel pc the tick landed on \(em C code in the kernel and compiled Dis in
+the heap are different bugs, and
+.CW up->text
+is
+.CW dis
+for both.  On one boot:
+.P1
+VMHELD: pid 6 (dis) held the Dis VM for 133 ticks ... 
+	last kernel pc 0x167db4, last dis pc 0x3c12738
+VMHELD: pid 150 (dis) held the Dis VM for 103 ticks ...
+	last kernel pc 0x182d8c, last dis pc 0x3e203f0
+.P2
+Both are explained, and neither is a fault.
+.CW "ksyms iraspi3b"
+names the first pc
+.CW vmachine+0x2cc
+and the second
+.CW splx+0x1c .
+.PP
+The first, 1.33 seconds in pid 6, is the boot's own doing:
+.CW schedlat()
+in
+.CW raspi3binit.b
+spawns
+.CW schedhog() ,
+a bare
+.CW "for(;;) n++;"
+with no system call in it, and measures ten 50ms sleeps against it.
+.CW SCHED-LAT-OK
+on the same boot reports a 10ms median overshoot and a 690ms worst, so
+10\(mu60 + 690 = 1.29s, which is the 133 ticks.  The detector is naming the
+test's own hog, correctly.
+.PP
+The second, 1.03 seconds in pid 150, falls between
+.CW "sdio: UP (no payload) -> 0"
+and
+.CW "sdio: radio is UP" :
+it is the wifi radio bring-up waiting about a second for the firmware, and
+waiting by polling rather than sleeping, so the process stays Running.  Its
+kernel pc in
+.CW splx
+is an ilock in the SDIO driver and its Dis pc is in a different heap region
+from pid 6's, which is a different module's compiled code.
+.PP
+.B "And that reframes what the detector can claim."
+The tick lands in
+.CW vmachine
+and in JIT-generated Dis in the heap throughout both holds, so the Dis quantum
+was expiring and being recharged thousands of times a second the whole time.
+What held was the
+.I kernel
+process, which the scheduler kept re-choosing because nothing else wanted the
+processor \(em not a Limbo loop that never yielded.  The message used to say
+"nothing else has run", which claims more than
+.CW up->pid
+can show; it now says that one process has been Running without the scheduler
+choosing another, which is what it observes.  A Limbo loop that never yields
+and a kernel that keeps re-choosing the same process are indistinguishable
+from the pid alone, and that is why the pc is printed beside it.
+.PP
+.B "So the threshold is now a measured number."
+.CW livelockticks
+was 100, which both legitimate holds cleared; it is 400, three times the
+longest hold this board has been seen to take.
+.PP
+.B "And the watchdog's premise is refuted along with the mechanism."
+.CW bootwdog
+stops feeding the hardware watchdog once one process has held the VM for its
+threshold, so that the board resets itself out of a livelock.  The experiment
+above kills the idea.
+.CW livelockcheck()
+needs ONE process to stay Running across the whole window, and a hog sharing
+the machine with other work never does:
+.CW up
+changes at every slice, so
+.CW vmheldticks
+resets and the watchdog goes on being fed.  In the throwaway build, with
+.CW bootwdog
+set to ten seconds and a hog that had run for five minutes, no LIVELOCK line
+printed and no reset happened \(em correctly, because nothing was wrong.
+.PP
+The only thing that does hold continuously is a process that is the only
+runnable one, and that is the benign case: schedlat's measurement window and
+the wifi firmware wait.  So a threshold large enough to spare those never
+fires, and one small enough to fire resets the board for computing.  A watchdog
+here has to be fed by something that means progress \(em the poller answering,
+ethernet moving frames \(em not by the Dis VM changing hands.
+.CW bootwdog
+stays 0, and the reason is now a result rather than caution.
 .PP
 .B "So what the JTAG failures mean has to be read again too."
 The six

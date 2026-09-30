@@ -210,15 +210,22 @@ extern int smpstart;
 /*
  * Has one Dis program stopped letting anybody else run?
  *
- * This kernel serialises Dis, so a Limbo loop that never yields starves every
- * other Dis process -- etherusb among them, which is why such a thing looks
- * exactly like a dead board: no network, no command poller, and a kernel that
- * is in fact perfectly healthy and still taking these very interrupts.  That
- * is what the "freeze" with the secondaries running turned out to be, after
- * three theories about memory corruption that was never there: core 0 was
- * executing valid JIT-generated Dis code, with X20 holding the address of R
- * and RFP and RMP pointing into the heap, and the program it was running was
- * schedlat()'s deliberate busy loop, "for(;;) n++;".
+ * This was written believing that a Limbo loop which never yields starves every
+ * other Dis process -- etherusb among them -- so that such a thing looks
+ * exactly like a dead board while the kernel is perfectly healthy and still
+ * taking these very interrupts.  The healthy half of that is true and is why
+ * this works at all: interrupts keep arriving throughout.  The starvation is
+ * NOT true on this kernel, and the experiment that says so is written up at
+ * diswdog() below -- a build whose hog is never killed boots all the way and
+ * leaves the board fully usable.  hzsched() slices it against everything else.
+ *
+ * What remains worth reporting is narrower: one process being the only
+ * runnable one for a long stretch.  On the "freeze" with the secondaries
+ * running, core 0 was executing valid JIT-generated Dis code with X20 holding
+ * the address of R and RFP and RMP pointing into the heap, so the kernel was
+ * healthy and no memory had been corrupted -- three theories' worth of that
+ * was wrong.  But naming schedlat()'s hog as the cause does not survive the
+ * experiment above, and what stopped that build is still unknown.
  *
  * So say so, from inside the machine, rather than halting it over JTAG and
  * reading registers.  Interrupts keep arriving throughout, which is the whole
@@ -350,8 +357,28 @@ livelockcheck(Ureg *u)
  * watchdog counts at Wdoghz in a 20-bit field, which is about sixteen
  * seconds, so the feed interval has to be well under that.
  *
- * Default 0, which is off, because a wrong threshold here is a board that
- * reboots in a loop.
+ * Default 0, which is off, and now for a stronger reason than a wrong
+ * threshold: THE PREMISE OF THIS WATCHDOG IS REFUTED.  It was built on the
+ * reading that a Limbo loop which never yields starves every other Dis
+ * process, so that a healthy kernel looks like a dead board.  That was tested
+ * directly, with a throwaway build in which schedlat() does not kill its hog:
+ * the board booted all the way through -- SD, USB, draw, wifi association,
+ * DHCP, DNS, Bluetooth, the command poller -- and stayed fully usable with the
+ * hog running.  /prog showed it, pid 2 in Init with 5:21.7 of processor time
+ * against 0:00.x for everything else, so the hog was certainly running and the
+ * control the earlier reading lacked is present.  hzsched() time-slices it
+ * against the rest and nothing starves.
+ *
+ * Which also means this watchdog cannot fire on the case it was written for.
+ * livelockcheck() needs ONE process to stay Running across the whole window,
+ * and a hog sharing the machine with other work does not: up changes at every
+ * slice, so vmheldticks resets and the watchdog is fed for ever.  The only
+ * thing that does hold continuously is a process that is the only runnable one
+ * -- which is the BENIGN case, schedlat's measurement window and the wifi
+ * firmware wait.  So a bootwdog large enough to spare those is a bootwdog that
+ * never fires, and one small enough to fire resets the board for computing.
+ * A watchdog for this has to be fed by something that means progress -- the
+ * poller answering, ethernet moving frames -- not by the VM changing hands.
  */
 static void
 diswdog(void)
