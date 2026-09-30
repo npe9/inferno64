@@ -2966,3 +2966,84 @@ must see the token and does.  It also tells apart the case this tree has
 been bitten by before: the token seen once is the uart interrupt
 handler's echo, which comes back long after the shell is dead, and twice
 is the shell running what was typed.
+.PP
+.B "A beacon, so that item 3 does not need the second board's console."
+.I "os/inferno/init/armv7mbeacon.b"
+configures the radio and transmits
+.B INFERNO-BEACON
+every two seconds without being told to, so a board carrying it is
+useful with no working console at all \- which is what the second board
+has.  Chosen by
+.B "mk INIT=armv7mbeacon" ,
+so a board carries a shell or carries this and which one is a property of
+the image, the only thing establishable about a board that says nothing.
+.PP
+.B tools/radio/beacontest.sh
+runs it under qemu against a shell kernel over a socket, with the control
+that decides whether the positive means anything: the same receiver, the
+same settings, the same duration, no beacon started.  It passed \- and
+the number was wrong.  One packet received out of about twenty-five sent.
+.PP
+The driver's counters localised it, which is what they are for.
+.B "recv 1, crcerr 0, rxoverflow 0"
+\- so nothing failed CRC and no queue dropped anything.  Then
+.B NUM_RXBYTES
+read
+.B 0x0f
+\- a length byte and the fourteen-byte payload \- and stayed there across
+six readings three seconds apart while the beacon transmitted.  The part
+was holding a whole packet and nobody had been told, which points at one
+thing only: the interrupt.
+.PP
+And it was the model, not the driver.
+.I hw/ssi/cc1120.c
+raised PKT_SYNC_RXTX on a received packet and never lowered it, so the
+second packet set a pin that was already high; the stm32f407 asks EXTI
+for a rising edge, so it got one interrupt per boot.
+.B tools/qemu-patches/0051
+lowers it when the FIFO drains, which is where 0044 put the queue flush
+for the same reason.
+.B "recv 1"
+became
+.B "recv 19"
+over the same interval with the control still at zero.
+.PP
+That direction is worth noting because it has gone the other way here
+twice.  The driver does re-strobe SRX after reading a packet, and a real
+part lowers that pin at the end of a packet by itself, so silicon was
+never subject to this and nothing measured on the air is invalidated by
+it.  What is invalidated is anything concluded from
+.I qemu
+about receiving more than one packet, which until now nothing had tried.
+.PP
+The measurement that found it \- reading NUM_RXBYTES while holding the
+data file open for reading \- is not expressible inside
+.BR "cat /dev/radio0/data" ,
+because the cat owns the console and every line typed is data.  It was
+made in
+.IR lil (1),
+holding ctl and data in two variables.  That is the second thing
+.I lil
+has been needed for and the first that found a bug with it.
+.PP
+A build trap, met on the way and worth writing down because it could
+cost a flash cycle.
+.I mk
+has no dependency on
+.BR INIT ,
+so building with the override and then building without it silently kept
+the beacon init: the generated
+.I stm32f407.prog.s
+still named
+.B armv7mbeacon.dis
+and the image was byte identical to the beacon one.  Deleting the
+generated
+.B .s
+is not enough either, since
+.I mk
+short-circuits on the existing
+.BR .t ;
+both have to go.  Check which init an image carries by grepping the
+generated
+.BR prog.s ,
+never by having built without the override.
