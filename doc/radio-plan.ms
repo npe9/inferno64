@@ -3098,3 +3098,43 @@ returned \- so a blink meant the loop was turning and nothing more, which
 is precisely the question that was open.  It now flips only on a
 successful write and sits solid on a failing one, solid rather than dark
 because dark is what a board that never booted looks like.
+.PP
+.B "The second board is not calibrated, and one image cannot calibrate two boards."
+.B .ppb
+is
+.B -3550
+in
+.IR spistm32f4.c 's
+.I Spidev
+initialiser, and its comment says "measured on this board" \- which was
+the first one, against a generator zero-beat to WWV.  Both boards are
+built from the same config, so the second is corrected by the first
+one's crystal error.
+.PP
+That is the right shape and the wrong place.  A
+.I Spidev
+carrying
+.B ppb
+is per-board information held as data, which is how this tree is meant
+to differ between boards; but the data lives in a source file shared by
+every board built from that config, and nothing distinguishes two
+physical boards of the same type.  The
+.B ppm
+ctl verb sets it at runtime, so the answer is to correct each board when
+it is driven rather than to build an image per board \- which also means
+a board with no working console cannot be corrected at all until it has
+one.
+.PP
+It does not explain the current silence, and the arithmetic is worth
+writing down so it is not reached for again.  3550ppb at 915MHz is
+3249Hz.  If the second board's crystal erred the opposite way by as much
+again the total would be about 6.5kHz, and the receiving board listens
+with
+.BR "bw 50000" .
+Worst-case spread on a cheap 32MHz part is perhaps twenty parts per
+million, or 18kHz, still inside a 50kHz filter \- and
+.B probe
+measures raw RSSI across that filter, so it would register a carrier
+several kilohertz off without trouble.
+.B "peak -104, duty 0%"
+is no energy, not mistuned energy.
