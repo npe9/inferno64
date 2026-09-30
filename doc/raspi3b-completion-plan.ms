@@ -13152,7 +13152,7 @@ an indirect branch, not to it.  A
 is not an unconditional branch, which is why the original code was fine for
 months.
 .NH 2
-Per-processor Machs and timers, and a corruption that is not found
+Per-processor Machs and timers, and a Dis livelock mistaken for corruption
 .PP
 A core that runs is not a processor: it needs its own
 .CW Mach ,
@@ -13184,210 +13184,100 @@ rather than
 .CW clockintr()
 \(em but the per-processor state is real and it works.
 .PP
-.B "For most of a day it did not, and what is actually wrong is not found."
-Three explanations have been offered for the freeze and all three were
-falsified by the measurement they implied.  This section is what survives,
-because the pattern in the failures is worth more than another theory.
+.B "It is not memory corruption.  It is a Dis livelock, and the kernel is
+fine."
+Halting the frozen board and reading the registers settles it.  X20 is
+0x294d90, which is the address of
+.CW R
+\(em the Dis register block, and RREG in
+.CW libinterp/comp-aarch64.c .
+X21 and X22 are RFP and RMP, a Dis frame pointer and a module data pointer,
+both in the heap.  X27 is
+.CW mach0 .
+Interrupts are unmasked, and the pc moves between halts, over roughly 0x3c10db0
+to 0x3c12754.
 .PP
-.B "What the board does."
-With the secondaries taking interrupts, some builds freeze about half a
-second into the first Dis program, just after
-.CW "ILOCK-TRACE on" ,
-with core 0 at EL1, interrupts enabled,
-.CW m
-and
-.CW up
-valid, SP in a process kernel stack, and a pc outside the kernel's memory
-altogether \(em
-.CW conf.topofmem
-is 256MB and the pc is around 0x3c10dcc.  In those builds the link
-register is
-.CW xec+0xac ,
-whose preceding instructions disassemble to
-.CW "ldr x10, [x28, #0x2d50]"
-and
-.CW "blr x10" ,
-so the interpreter is calling
-.CW comvec
-\(em libinterp's JIT entry trampoline, one word of its data segment \(em and
-that word has been overwritten by a wild store.
+So core 0 is executing valid JIT-generated Dis code with the JIT's own
+registers correctly loaded, at EL1, taking timer interrupts.  Nothing is
+corrupted.  What has stopped is Dis: this kernel serialises Dis execution, so
+one Limbo program that never yields starves every other Dis process \(em
+including
+.CW etherusb ,
+which is a Limbo program, which is why the network goes away and the command
+poller stops answering and it all looks like a hang.
 .PP
-.B "And what makes the difference is the memory layout."
-Four things have each been measured to stop it, and every one of them moves
-the data or BSS segment:
-.IP \(bu
-64 bytes of slack at the top of
-.CW secstack .
-A control removing only the slack, byte for byte identical otherwise, froze;
-putting it back booted, twice.
-.IP \(bu
-.CW boot2
-subtracting 16 from a secondary's stack top \(em which fixes a real and
-separate defect, below \(em did
-.I not
-stop it on its own.
-.IP \(bu
-Adding the hardware-watchpoint code, which is never executed with
-.CW watchcomvec
-at 0.
-.IP \(bu
-Adding two loads and a compare to
-.CW trap() ,
-which boots with the slack
-.I removed
-and never once reports
-.CW comvec
-changing.
-.PP
-That last one is the useful measurement.  With no padding at all and a check
-on every trap, the board runs to
-.CW ETHER-PING-DONE
-and
-.CW comvec
-is never touched: the victim has moved, because adding code to
-.CW trap.c
-moves
-.CW edata
-and everything after it.  So the padding was not a fix either.  All four are
-the same non-fix wearing different clothes, and the bug is an unlocated
-memory corruption whose victim is chosen by address arithmetic.
-.PP
-.B "That changes what the shipped configuration means."
-.CW smpstart
-2 boots, repeatedly, and the numbers it prints are real.  It is not known to
-be correct.  It is known to be a layout in which the store lands somewhere
-that does not matter yet, and any change that moves the segments can move it
-back onto something that does.  Saying otherwise \(em which two earlier
-versions of this section did \(em is what makes a bug like this expensive
-later.
-.PP
-.B "One real defect found on the way, and fixed."
-A callee writes above its caller's SP: an argument home is at 0(FP), the
-caller's SP plus eight.
-.CW cpustart()
-disassembles to
-.CW "str x30, [sp, #-80]!"
-and then
-.CW "str w9, [sp, #88]" ,
-and 88 minus the 80-byte frame is SP-at-the-call plus eight.
-.CW boot2
-was setting a secondary's RSP to the last byte of its slice of
-.CW secstack ,
-and the linker put
-.CW mach0
-straight after it, so core 3's argument home was
-.CW mach0+8
-\(em the low word of
-.CW m->proc ,
-written with the core number \(em and
-.CW clockintr()
-stores through
-.CW m->proc
-on the next tick.  The arithmetic is exact: top 0x2b4930, home 0x2b4938,
-.CW mach0
-at 0x2b4930.
-.CW boot2
-subtracts 16 now.
-.PP
-.CW stack ,
-core 0's own KSTACK, has the same shape \(em it ends exactly where
-.CW devslock
-begins \(em and is harmless only because
-.CW main()
-takes no arguments.  A stack top is not a usable address, on any processor
-here.
-.PP
-.B "The caches are coherent, which killed the first theory."
-.CW cohcheck()
-has a secondary store a magic word from Normal cacheable memory while core 0
-spins on that line doing no cache maintenance at all, so a coherent pair has
-to take core 0's copy away.  On the board it does, after 14943 of core 0's
-own reads.  CPUECTLR_EL1.SMPEN is evidently set, and a shared cache line
-between a stack top and a Mach \(em which is what the slack removes \(em is
-merely slow.
-.PP
-.B "And the first version of that probe could not fail."
-It stored the magic
-.I before
-setting
-.CW alive ,
-so core 0's first read was an ordinary fetch from memory, which succeeds
-coherent or not.  It reported COHERENT on the board and would have reported
-it with the coherency logic switched off.  It stores 20ms
-.I after
-.CW alive
-now, timed on the secondary's own CNTPCT, and
-.CW cohcheck()
-runs the instant the core reports rather than after six hundred milliseconds
-of tick measurement, so core 0 is demonstrably in the loop when the store
-lands.  The spin count is printed to be read: a report at spin 0 is a fetch,
-not a take.  QEMU cannot fail the check at all, having no caches.
-.PP
-.B "The instrument that would actually find it."
-Not another layout.  The store has to be caught at the store, and this
-kernel already has the mechanism in
-.CW mmu.c ,
-where the 2MB block holding the page tables is mapped read-only so that a
-wild store into them faults with state intact.  The same trick on a 4KB
-granularity would do it: give the 2MB block containing
-.CW comvec
-an L3 table, take write permission from the one page that holds it once the
-JIT has set it, and the store faults at the store with a trap report naming
-the instruction.  The page also holds
-.CW endian ,
-.CW csshadow ,
-.CW IPnoaddr
-and
-.CW emmcnslept ,
-so the first thing to check is whether any of those is written after boot on
-this board \(em the root filesystem is on SDHOST and not the Arasan, so
-.CW emmcnslept
-may well not be.
-.PP
-.B "Two instruments, because watching a symbol cannot work here."
-.CW Bsspad
+And the place it stops is
+.CW schedlat()
 in
-.CW mem.h
-is the layout knob: bytes of dead BSS that move everything after them with no
-code changed, so that "this build happens to boot" becomes something that can
-be swept rather than an accident of code size.  And
-.CW vcsweep()
-walks the whole data segment for words holding a value that cannot be a kernel
-pointer \(em above
-.CW conf.topofmem ,
-which is 256MB here, and inside the window the VideoCore owns, which is the
-only memory above 256MB this kernel touches and so the only plausible source
-of a wild-looking value.  0x3c10dcc, the value found in
-.CW comvec ,
-is in that range.  It runs at boot and, with
-.CW vcsweeptick
-set, again from
-.CW clockintr
-after the freeze point, which is where it is useful \(em
+.CW raspi3binit.b ,
+whose whole purpose is to spawn a busy process:
+.IP
+.EX
+schedhog(pidc: chan of int)
+{
+	pidc <-= sys->pctl(0, nil);
+	n := 0;
+	for(;;)
+		n++;
+}
+.EE
+.PP
+A loop with no call in it and nothing but an unconditional backward jump.
+.PP
+.B "Which retracts the whole corruption story."
+Every reading that pointed at a wild store was a misreading of a healthy
+machine.
+.CW comvec
+held a good pointer to its own trampoline;
 .CW comveccheck
-is what keeps the board alive long enough to report.
+never fired because there was nothing to fire at; the first sixteen words of
+that trampoline's code were intact at every trap; the pc was inside a valid
+allocation because it
+.I was
+valid code; and 0x3c10dcc is 60MB because the JIT allocates from the heap like
+everything else.  Three mechanisms were proposed for a bug that was not there.
 .PP
-It prints addresses rather than a verdict, because a list is only useful
-against another list, and the healthy list is short and entirely accounted
-for.  On the board:
-.CW rngr
-(0x3f104000),
-.CW pl011ctlr
-(0x3f201000),
-.CW vfb
-(0x3c100000, the framebuffer),
-.CW minictlr
-(0x3f215000), three words inside libinterp's module tables that hold
-signatures in that range, and one string constant.  Eight words.  A ninth in
-a frozen build is the victim, and its address is the thing to protect.
+.B "What is genuinely open, and it is a much better question."
+Why does that loop not yield?
+.CW IJMP
+does charge the quantum \(em
+.CW comp-aarch64.c
+calls
+.CW schedcheck()
+on it, and
+.CW schedcheck()
+charges the body length at any branch whose target is not ahead of it, so a
+two-instruction loop costs two of PQUANTA's 2048 per turn and should reach
+.CW MacRELQ
+in about a thousand iterations.  It demonstrably does charge in general: that
+fix is what took USB completion-wake latency from 68ms to 1.3ms.  And the same
+kernel with
+.CW smpstart
+1 runs this test to
+.CW ILOCK-MAX
+and past it.  So the question is what the secondaries taking their own timer
+interrupts changes about either the charge or the reschedule that follows it.
 .PP
-The hardware watchpoint in
-.CW l.s
-would have been the other way, and it does not fire on this part: the
-registers read back exactly as written (wvr, wcr 0x1ff5, mdscr 0xa000 with
-MDE and KDE, daif with D clear) and neither store of its own self-test
-produces anything, on the board or under QEMU.  Unexplained, and recorded so
-that the next person does not spend the afternoon on it that this one did.
+.B "And the layout measurements have to be read again in that light."
+Four things were measured to stop this and all four move data or BSS, which
+was read as layout sensitivity.  A livelock reached through a spawn, a channel
+and a kill is also a race, and single cold boots cannot tell a layout effect
+from a coin toss.  The arms were one boot each.  What they measured may have
+been luck.
+.PP
+.B "The instrument, and it is a small one."
+.CW clockintr()
+already runs on core 0 throughout, which is the whole point: if the same
+.CW up
+has been Running for more than a second of ticks, print its pid, its
+.CW R.IC ,
+and the module and Dis pc from
+.CW R.M
+and
+.CW R.PC .
+That names the program that will not yield and how much quantum it thinks it
+has, from inside the machine that is still working, and needs neither JTAG nor
+another layout.
 .PP
 .B "The ladder is what found it, and it stays."
 .CW smpstart ,
