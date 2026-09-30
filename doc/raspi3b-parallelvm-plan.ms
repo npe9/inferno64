@@ -596,3 +596,74 @@ did, and the thing that would justify 1 is not more boots of it here but Phase
 4 landing there.  That is a statement about sequencing, not about the work being
 wrong: the collector half is sound and the register-file half is proven, and it
 is the channel queues that are not.
+.NH 1
+The one prerequisite that landed early, and its numbers here
+.PP
+.CW gchalt
+was two things in one counter on this branch, and splitting it is a
+prerequisite for the collector work rather than part of it, so it landed first.
+It was both "do not collect now" \(em a property of the heap, raised by
+.CW libprefab
+while it builds a Prefab and read by the collector \(em and
+.CW destroy() 's
+nested recursion depth, which
+.CW libinterp/heap.c
+read at line 505 to stop before it runs out of C stack:
+.CW "if(n > 0 || gchalt > 64) return" ,
+and that
+.CW return
+does not free the object.
+.PP
+One processor makes that harmless, because the only thing nested inside a
+destroy is another destroy.  Two make it fail in both directions: one
+processor's recursion depth would suppress another's collector, and one
+processor building a Prefab would make another believe it was 64 destroys deep
+and quietly stop freeing.
+.CW gclock()
+now raises both,
+.CW gcunlock()
+gives the depth back first,
+.CW libprefab
+keeps raising
+.CW gchalt
+alone, and
+.CW heap.c
+reads
+.CW gcdepth .
+.PP
+.B "And the numbers are this board's, not that branch's."
+Nothing in this tree printed the collector's counters, so
+.CW "echo sched >/dev/sysctl"
+prints
+.CW GC-COUNTS
+now, with
+.CW gcdepthmax
+in it for exactly this question.  Two samples from one boot on the board, the
+first where
+.CW schedlat()
+already writes that sysctl and the second after the whole boot has run \(em SD,
+USB, draw, wifi, efs:
+.P1
+             runs  sweeps  epochs  halted  depthmax  inspects
+early         913      88      44       0         1     42580
+late      1108957   11799    2448       4        14  47112719
+.P2
+That is not multicore's result and should not be reported as it.  There the
+depth ran to
+.I exactly
+65 against the guard of 64, three times per storm, while the suppression never
+fired at all \(em "the worst arrangement a multiprocessor could inherit,
+because the counter already sits on its boundary".  Here the depth reaches 14,
+with fifty of headroom, and the suppression
+.I does
+fire, four times.  So the hazard that motivated the split upstream is not the
+hazard this board has, and the split is a correct change that is currently
+harmless here either way.
+.PP
+Which is still worth having done, for two reasons.  A guard at 64 that is read
+through a counter another processor can raise is wrong whatever the current
+margin is, and the margin is a property of the workload rather than of the code
+\(em 14 is what this boot does, not a bound.  And
+.CW GC-COUNTS
+is now there: 1.1 million collector runs and 47 million heap inspections in one
+boot were numbers nothing in this tree could report before.
