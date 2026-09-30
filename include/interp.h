@@ -472,7 +472,18 @@ extern	Type Treal;
 struct Pctx
 {
 	REG	reg;		/* this context's Dis register file */
+	Prog*	curprog;	/* whose live registers `reg' holds, or nil */
 };
+
+/*
+ * Every context.  One today; the array is so that progreg() can answer
+ * "which register file holds this program's live roots" without the
+ * caller knowing how many there are.
+ */
+enum { MAXPCTX = 256 };
+extern	Pctx*	pctxs[MAXPCTX];
+extern	int	npctx;
+REG*	progreg(Prog*);		/* a program's live roots; see xec.c */
 
 /*
  * The Dis register file, reached through a pointer.

@@ -12,6 +12,44 @@ static	Pctx	_pctx;		/* the one execution context; see interp.h */
 Pctx*	curP = &_pctx;		/* a register once DISCTXREG lands */
 Pctx*	defpctx = &_pctx;	/* what a Proc starts with */
 REG*	curR = &_pctx.reg;	/* interp.h: #define R (*curR) */
+Pctx*	pctxs[MAXPCTX] = { &_pctx };	/* every context; see progreg() */
+int	npctx = 1;
+
+/*
+ * Where a program's live roots are.
+ *
+ * The collector marks from a Prog's register file, and p->reg is only a
+ * snapshot: xec() copies it into R at the start of a quantum and writes it
+ * back at the end, so for a program executing right now it is up to a whole
+ * PQUANTA out of date.  Today that is still safe, and the reason is exactly
+ * what per-executor register files remove -- the collector only ever runs
+ * between xec() calls, from vmachine()'s BusyGC block or execatidle().
+ *
+ * With two executors it would not be: one collects while the other is
+ * mid-quantum, and anything reachable only from the live registers -- an
+ * object just allocated into R.s or R.d, a frame pushed since the quantum
+ * began -- is not a root, the mark phase misses it and the sweeper takes
+ * it.  The symptom would be "movp: bad dv-freed" and the hunt would start
+ * in the wrong place.  A missing root is not a data race, so no sanitizer
+ * would find it either.
+ *
+ * So the collector asks here instead of taking &p->reg.  With one context
+ * the first test answers everything the old code did and the behaviour is
+ * identical; the loop exists so the answer stays right when there is a
+ * second one, rather than the assumption being rediscovered by its symptom.
+ */
+REG*
+progreg(Prog *p)
+{
+	int i;
+
+	if(p == curP->curprog)
+		return &curP->reg;	/* the common case: this context */
+	for(i = 0; i < npctx; i++)
+		if(pctxs[i]->curprog == p)
+			return &pctxs[i]->reg;
+	return &p->reg;			/* not running: the snapshot is it */
+}
 String	snil;			/* String known to be zero length */
 
 /* Diagnostic: ring buffer of the last few instructions xec() dispatched
@@ -2321,6 +2359,11 @@ isave(void)
 
 	p = delrun(Prelease);
 	p->reg = R;
+	/*
+	 * A safepoint: the registers are in p->reg now, so the snapshot is
+	 * authoritative and progreg() must stop naming this context's copy.
+	 */
+	curP->curprog = nil;
 	return p;
 }
 
@@ -2329,6 +2372,7 @@ irestore(Prog *p)
 {
 	R = p->reg;
 	R.IC = 1;
+	curP->curprog = p;	/* live here again; see progreg() */
 }
 
 void
@@ -2408,6 +2452,7 @@ xec(Prog *p)
 	R = p->reg;
 	R.MP = R.M->MP;
 	R.IC = p->quanta;
+	curP->curprog = p;	/* a quantum is open on this context */
 
 	if(p->kill != nil) {
 		char *m;
@@ -2478,5 +2523,10 @@ xec(Prog *p)
 */
 	} while(--R.IC != 0);
 
+	/*
+	 * The quantum is closing: p->reg is authoritative again, so a
+	 * collection from here on must read the snapshot, not this context.
+	 */
+	curP->curprog = nil;
 	p->reg = R;
 }

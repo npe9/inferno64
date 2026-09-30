@@ -425,6 +425,7 @@ rootset(Prog *root)
 	Module *m;
 	Stkext *sx;
 	Modlink *ml;
+	REG *rr;
 	uchar *fp, *sp, *ex, *mp;
 
 	mutator = gccolor % 3;
@@ -464,7 +465,15 @@ rootset(Prog *root)
 		root = root->next;
 	}*/
 	while(root != nil) {
-		ml = root->reg.M;
+		/*
+		 * progreg(), not &root->reg: for a program executing right
+		 * now the saved register file is up to a quantum out of date,
+		 * and the roots that matter are in the context's.  See the
+		 * comment on progreg() in xec.c -- with one context this is
+		 * the same pointer the old code took.
+		 */
+		rr = progreg(root);
+		ml = rr->M;
 		h = D2H(ml);
 		Setmark(h);
 		mp = ml->MP;
@@ -473,8 +482,8 @@ rootset(Prog *root)
 			Setmark(h);
 		}
 
-		sp = root->reg.SP;
-		ex = root->reg.EX;
+		sp = rr->SP;
+		ex = rr->EX;
 		while(ex != nil) {
 			sx = (Stkext*)ex;
 			fp = sx->reg.tos.fu;

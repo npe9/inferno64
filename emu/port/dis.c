@@ -431,6 +431,18 @@ delprog(Prog *p, char *msg)
 			isched.runtl = nil;
 	}
 	p->state = 0xdeadbeef;
+	/*
+	 * Before the memory goes back: progreg() compares Prog pointers
+	 * against each context's curprog, and the allocator will hand this
+	 * address out again.  Same reason as the kernel's delprog().
+	 */
+	{
+		int i;
+
+		for(i = 0; i < npctx; i++)
+			if(pctxs[i]->curprog == p)
+				pctxs[i]->curprog = nil;
+	}
 	free(o->user);
 	free(p->killstr);
 	free(p->exstr);

@@ -314,6 +314,22 @@ delprog(Prog *p, char *msg)
 			isched.runtl = nil;
 	}
 	p->state = 0xdeadbeef;
+	/*
+	 * Before the Prog's memory goes back.  progreg() answers "which
+	 * register file holds this program's live roots" by comparing a
+	 * Prog pointer against each context's curprog -- it never follows
+	 * the pointer, so a dangling one is not itself a fault.  But the
+	 * allocator will hand this address out again, and a new Prog at the
+	 * old address would be answered for with some other program's
+	 * register file.  So the context stops naming it here.
+	 */
+	{
+		int i;
+
+		for(i = 0; i < npctx; i++)
+			if(pctxs[i]->curprog == p)
+				pctxs[i]->curprog = nil;
+	}
 	free(o->user);
 	free(p->killstr);
 	free(p->exstr);
