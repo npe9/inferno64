@@ -1,0 +1,110 @@
+From ee5d87e03831e560ca4c78642c15868864da7315 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Wed, 30 Sep 2026 17:45:33 -0400
+Subject: [PATCH] hw/ssi/cc1120: lower PKT_SYNC_RXTX when the packet is over
+
+The pin was raised by a received packet and never lowered, so the
+second packet set a pin that was already high.  A guest taking an edge
+-- the stm32f407 points EXTI at it with a rising-edge trigger -- then
+gets exactly one interrupt per boot, and every packet after the first
+sits unread in the FIFO.
+
+Measured before this, with a board flashed to beacon every two seconds
+transmitting into another: NUM_RXBYTES stuck at 0x0f -- a length byte
+and a fourteen-byte payload -- across six readings three seconds apart,
+while the receiving driver's recv counter stayed at 1 with crcerr and
+rxoverflow both 0.  So nothing was failing CRC and nothing was being
+dropped by a queue; the part had a whole packet and nobody was told.
+After this, recv 19 over the same interval.
+
+A real part lowers it at the end of the packet on its own.  This model
+has no notion of how long a packet takes, so the FIFO going empty is
+the nearest moment it has -- the same place, and for the same reason,
+as the queue flush that 0044 added beside it.
+
+This was a model bug and not a driver bug, which matters for anything
+concluded from this model about the receive path: the driver does
+re-strobe SRX after reading a packet, and on silicon the pin falls by
+itself, so silicon was never subject to this.
+
+Signed-off-by: Noah Evans <noah.evans@gmail.com>
+---
+ hw/ssi/cc1120.c | 49 +++++++++++++++++++++++++++++++++++++++----------
+ 1 file changed, 39 insertions(+), 10 deletions(-)
+
+diff --git a/hw/ssi/cc1120.c b/hw/ssi/cc1120.c
+index 5a4044f..ed045f1 100644
+--- a/hw/ssi/cc1120.c
++++ b/hw/ssi/cc1120.c
+@@ -331,22 +331,29 @@ static int cc1120_synclen(CC1120State *s)
+ }
+ 
+ /*
+- * The sync word as it goes on the air, SYNC3 first.
++ * The sync word as it goes on the air.
+  *
+- * For sixteen bits this takes SYNC3 and SYNC2, which is the
+- * convention os/inferno/radio/cc1120.c writes them with.  It is a
+- * convention and not a reading of the part: what a real CC1120 puts
+- * on the air for a 16-bit sync word is not established here.  The
+- * model and the driver agreeing is what makes a mismatched-word test
+- * mean anything; whether either agrees with silicon is a separate
+- * question that needs silicon.
++ * Which registers hold it depends on SYNC_MODE and that is not a
++ * convention, which is what this comment used to say it was.  Mode 5
++ * is SYNC31_0, so thirty-two bits are SYNC3 down to SYNC0 with SYNC3
++ * on the air first.  Mode 2 is SYNC15_0, which is SYNC1 and SYNC0 --
++ * the other half of the file.
++ *
++ * This model took SYNC3 and SYNC2 for sixteen bits, matching the
++ * Inferno driver, and said in as many words that whether either
++ * agreed with silicon "needs silicon".  Silicon says no: asked for
++ * 0xaaaa, a real CC1120 reads back SYNC3 0xaa, SYNC2 0xaa, SYNC1
++ * 0x51, SYNC0 0xde, and goes on hunting for the 0x51de it was reset
++ * with.  Both ends are fixed together, because a model and a driver
++ * wrong in the same direction pass every test between them -- which
++ * is exactly what happened.
+  */
+ static void cc1120_syncword(CC1120State *s, uint8_t *out, int n)
+ {
+-    int i;
++    int i, base = n == 2 ? 0x06 : 0x04;
+ 
+     for (i = 0; i < n; i++) {
+-        out[i] = s->regs[0x04 + i];
++        out[i] = s->regs[base + i];
+     }
+ }
+ 
+@@ -566,6 +573,28 @@ static uint8_t cc1120_read_reg(CC1120State *s)
+             if (s->rxpos >= s->rxlen) {
+                 /* drained: there is room for another packet now */
+                 qemu_flush_queued_packets(qemu_get_queue(s->nic));
++                /*
++                 * And the packet is over, so PKT_SYNC_RXTX goes low.
++                 *
++                 * Without this the pin is raised by the first packet
++                 * and never lowered, so the second packet sets a pin
++                 * that is already high.  A guest taking an edge -- the
++                 * stm32f407 points EXTI at it with a rising-edge
++                 * trigger -- then gets exactly one interrupt per boot,
++                 * and every packet after the first sits unread in the
++                 * FIFO.  Measured before this: NUM_RXBYTES stuck at
++                 * 0x0f, six readings three seconds apart, while a
++                 * beacon transmitted continuously and the driver's
++                 * recv counter stayed at 1 with crcerr and rxoverflow
++                 * both 0.
++                 *
++                 * A real part lowers it at the end of the packet on
++                 * its own.  This model has no notion of how long a
++                 * packet takes, so the FIFO going empty is the nearest
++                 * moment it has -- the same place, and for the same
++                 * reason, as the flush above.
++                 */
++                cc1120_signal(s, GPIO_PKT_SYNC_RXTX, false);
+             }
+             return v;
+         }
+-- 
+2.51.0
+

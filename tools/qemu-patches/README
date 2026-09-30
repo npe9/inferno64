@@ -1326,3 +1326,26 @@ attached, a default kernel prints:
 	/dev/radio0; radio2=on and two -nic give both, and a write to
 	/dev/radio1 reaches the peer on the second socket while the
 	peer on the first hears nothing.
+
+0051 lowers PKT_SYNC_RXTX in the CC1120 model when the packet is over.
+It was raised by a received packet and never lowered, so the second
+packet set a pin that was already high; a guest taking a rising edge --
+which is what os/inferno/stm32f407/spistm32f4.c asks EXTI for -- then
+got exactly one interrupt per boot and every packet after the first sat
+unread in the FIFO.
+	Measured with one board flashed to beacon every two seconds
+	transmitting into another: NUM_RXBYTES stuck at 0x0f, a length
+	byte and a fourteen-byte payload, across six readings three
+	seconds apart, while the receiving driver's recv counter stayed
+	at 1 with crcerr and rxoverflow both 0.  So nothing failed CRC
+	and no queue dropped anything -- the part was holding a whole
+	packet and nobody had been told.  After the patch, recv 19 over
+	the same interval, with the no-transmitter control still at 0.
+	This one was the model's fault and not the driver's, which is
+	worth saying because the reverse has been true here twice: the
+	driver does re-strobe SRX after reading a packet, and a real
+	part lowers the pin at the end of a packet by itself, so silicon
+	was never subject to it.  The model has no notion of how long a
+	packet takes, so the FIFO going empty is the nearest moment it
+	has, which is where 0044 put the queue flush for the same
+	reason.
