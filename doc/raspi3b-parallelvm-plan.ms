@@ -259,15 +259,48 @@ and this generator sets
 to 1 \(em nothing has ever actually run the JIT and the parallel VM together on
 hardware.  The Pi would be the first.
 .PP
-That is the single largest risk in this plan and it is not reducible by reading:
-the JIT emits reference-count updates inline, and whether its LDXRW/STXRW loops
-are right under two executors is a question only two executors can answer.  It
-argues for measuring phase 5 with
-.CW cflag=0
-first, to separate "the parallel VM works" from "the parallel VM works with this
-generator", and for keeping
+.B "Overstated, and corrected from that branch's own documents."
+All four cells of
+.CW parallelvm
+crossed with
+.CW cflag
+reach a shell on
+.CW virtarm64 ,
+one kernel per architecture with nothing relinked between cells \(em the boot
+line overrides
+.CW *cflag ,
+which is why the configured 0 did not mean untested.  Their ship plan calls
+.CW "parallelvm=1 cflag=1"
+"legitimate rather than tolerated", because
+.CW comp-aarch64.c
+sets
+.CW jitrefsatomic=1
+and
+.CW disinit()
+has nothing to refuse.  And the reason it is only one instruction is stated and
+measured there:
+.CW REG
+is the first member of
+.CW Pctx ,
+so
+.CW &R
+is
+.CW curP
+with no arithmetic \(em
+.CW "long p(void){return (long)&R;}"
+through
+.CW "7c -DDISCTXREG -S"
+is exactly
+.CW "MOVW R25,R0" .
+The generator allocates X0-X5 and X19-X22, so it cannot touch X25, X26 or X27.
+.PP
+So this board is not the first to run the combination; aarch64 is the
+.I only
+architecture where it is done, and this board is the first to
+.I ship
+it as the configured default.  Keeping
 .CW jitskip
-close to hand.
+close to hand still costs nothing.
 .NH 1
 Gates
 .PP
@@ -338,6 +371,98 @@ stored at
 and reloaded at
 .CW l.s:1439 ,
 like every other general register.  Nothing in the trap path needs changing.
+.PP
+.B "Four traps, from that branch having hit them."
+Its documents name things that are not deducible from the design, and each cost
+it a debugging session.
+.PP
+One: an aarch64 board
+.I cannot
+opt out.  The flag that turns this on for
+.CW libinterp
+lives in
+.CW mkfiles/mkfile-Inferno-aarch64 ,
+which is every aarch64 board's
+.CW libinterp ,
+so a board that does not declare the three registers fails to link with
+.CW "dbgxec: undefined external: curP in dbgxec" .
+.PP
+Two: a kernel compiles its own files through the board mkfile but its libraries
+through
+.CW mkfiles/mkfile-os-aarch64 ,
+which
+.I also
+needs the flag, or the link says
+.CW "secmain: undefined: disctxinit" .
+Theirs "had been linking because the archive was older than that path", which is
+the kind of thing that passes once and fails on a clean build.
+.PP
+Three: the register has no initialiser.
+.CW "Pctx* curP = &_pctx"
+is compiled out under
+.CW DISCTXREG
+and nothing else writes it, so
+.CW machinit()
+must call
+.CW disctxinit()
+\(em on every processor, which on this board means the secondaries too, in
+.CW cpustart() .
+.PP
+Four, and the subtlest:
+.CW sched()
+sets
+.CW curP
+beside
+.CW up ,
+and must
+.I not
+do it by pre-filling
+.CW Proc.pctx ,
+because
+.CW vmachine()
+reaches
+.CW claimctx()
+through
+.CW "if(up->pctx == nil)" .
+Filling the field gave them "one context per boot instead of seven, with the
+register mechanism working and nothing using it" \(em a silent performance
+floor, not a crash.
+.PP
+.B "And this board's trap path has to be looked at again, not waved through."
+Earlier in this document R25 being saved and restored by
+.CW vectrap
+was called sufficient.  On amd64 that exact thing was a bug: their
+.CW _intrestore
+restored the context register from the trap frame on a kernel-mode return, and
+had to stop, because
+.CW trap()
+can reach
+.CW sched()
+and a process resumed on another processor must keep the value the scheduler
+left, not the one its frame carries.  Their aarch64 comment says saving and
+restoring all three "like every other general register" is right, and 192 boots
+at
+.CW "-smp 2"
+and 192 at
+.CW "-smp 4"
+back it.  Both cannot be taken on faith at once, so this is a thing to verify on
+this board rather than to assume in either direction.
+.PP
+.B "A naming note."
+Their knob for a scheduling secondary is
+.CW secsched ;
+this board's is
+.CW smpsched .
+Same thing.  And with a
+.I global
+.CW curP
+and a scheduling secondary they measured 10 panics in 10 boots, because "both
+processors shared one Dis context pointer, which is the single thing the
+per-executor design exists to prevent".  Phase 1a here keeps one context and
+.CW isched
+still serialises Dis, so one pointer is still one executor's \(em but that is
+the sentence to re-read before phase 1b lands on a board that already ships
+.CW smpsched=1 .
 .PP
 .B "The scope is three boards, not one."
 .CW -DDISCTXREG
