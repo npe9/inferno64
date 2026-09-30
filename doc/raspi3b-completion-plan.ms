@@ -14307,3 +14307,60 @@ change and the group locking, into the highest-risk file in the kernel.  It
 deserves its own plan and its own acceptance tests, and
 .CW doc/multicore-ship-plan.ms
 on that branch already has five phases of them.
+.NH 2
+A rig blocker: two host interfaces on one subnet
+.PP
+Board installs stopped working part-way through this session, and the cause is
+on the host rather than on the board.  It has acquired a
+.I second
+interface on the board's subnet:
+.CW en0
+is 192.168.8.233, which is what the rig has always used, and
+.CW en21
+is 192.168.8.117, MAC 80:69:1a:16:16:78 \(em an adapter that was not there
+earlier.  macOS picks
+.CW en21
+for that subnet, so
+.CW "route -n get 192.168.8.105"
+answers
+.CW "interface: en21" .
+.PP
+.B "What it does, and why it looks like a kernel fault."
+Straight after a board boot,
+.CW en21 's
+ARP entry for the board is
+.CW (incomplete)
+\(em there are two entries, one per interface, and only
+.CW en0 's
+is resolved.  Packets to the board go out the interface that cannot reach it, so
+the styx mount the board has just made dies, and
+.CW board.out
+stops being written.  A minute or two later ARP resolves and the board pings
+normally at 7ms, which is what makes this so misleading: by the time anything is
+investigated the network looks fine.
+.PP
+.CW kinstall 's
+pre-flight lands exactly in that window.  It JTAG-boots the candidate, prints
+.CW "build N boots" ,
+then asks "can the board still be driven?" and waits for the poller \(em which
+cannot answer.  Three installs stalled there in a row.  That is the pre-flight
+doing its job: it refuses to write the card when it cannot drive the board, so
+nothing was damaged.
+.PP
+.B "What it is not."
+Not a Phase 2a fault.  The same kernel JTAG-booted through SD, USB, draw, wifi
+association, DHCP and DNS on every one of those attempts \(em the console shows
+it \(em and the wired interface was passing frames, with the board's own
+.CW /net/ipifc
+status reporting 192.168.8.105 and
+.CW "pktin 22 pktout 95 errin 0 errout 0" .
+The board is healthy; the host cannot talk to it at the moment it matters.
+.PP
+.B "The fix needs a hand on the machine."
+Either unplug the adapter that owns 192.168.8.117, or pin a host route for the
+board to
+.CW en0 ,
+which needs privileges this session does not have.  One card reboot did get a
+working mount, because ARP happened to be warm, so warming it first is a
+workaround and not a fix \(em the board re-ARPs when it boots, which is the
+moment the window opens.
