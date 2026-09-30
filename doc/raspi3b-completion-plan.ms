@@ -13200,7 +13200,7 @@ and
 valid, SP in a process kernel stack, and a pc outside the kernel's memory
 altogether \(em
 .CW conf.topofmem
-is 256MB and the pc is in the 0x3c10000 range.  In those builds the link
+is 256MB and the pc is around 0x3c10dcc.  In those builds the link
 register is
 .CW xec+0xac ,
 whose preceding instructions disassemble to

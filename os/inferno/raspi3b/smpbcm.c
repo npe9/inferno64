@@ -352,6 +352,10 @@ cpustart(int n)
  * the framebuffer ones screenbcm owns, so the list this prints is short and
  * the difference between a healthy list and a frozen one is the victim.
  *
+ * iprint and not print, because the useful time to run this is from
+ * clockintr -- after the corruption rather than before it -- and print takes a
+ * lock.
+ *
  * It reports the ADDRESS of every such word, not a verdict.  A framebuffer
  * pointer is a legitimate entry and will be in every list; naming them is the
  * point, because a list is only useful against another list.
@@ -370,10 +374,10 @@ vcsweep(char *when)
 		v = *p;
 		if(v >= Vclo && v < Vchi){
 			if(++n <= Vcmax)
-				print("VCWORD %s: %#p holds %#llux\n", when, p, v);
+				iprint("VCWORD %s: %#p holds %#llux\n", when, p, v);
 		}
 	}
-	print("VCSWEEP %s: %d words in [%#ux,%#ux) over %#p-%#p\n",
+	iprint("VCSWEEP %s: %d words in [%#ux,%#ux) over %#p-%#p\n",
 		when, n, Vclo, Vchi, etext, edata);
 }
 

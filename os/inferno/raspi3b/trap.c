@@ -212,6 +212,7 @@ enum {
 	Basicmask	= 0xff,
 
 	Nwatch		= 12,		/* watchpoint hits to report */
+	Ncomvecwords	= 16,		/* words of comvec's code to guard */
 };
 
 static void
@@ -399,22 +400,49 @@ comvecwatch(Ureg *ur)
 	extern void (*comvec)(void);
 	extern int comveccheck;
 	static void (*good)(void);
-	static int nseen;
+	static u32 code[Ncomvecwords];
+	static int nseen, nword;
+	u32 *p;
+	int i;
 
 	if(!comveccheck)
 		return;
 	if(good == nil){
-		good = comvec;		/* nil until the JIT compiles something */
+		if((good = comvec) != nil)
+			memmove(code, (void*)good, sizeof code);
 		return;
 	}
-	if(comvec == good)
+	if(comvec != good){
+		if(++nseen <= 8)
+			iprint("COMVEC %d: pointer was %#p, now %#p, restored;"
+				" trap pc %#llux type %lld\n", nseen, good,
+				comvec, (uvlong)ur->pc, (uvlong)ur->type);
+		comvec = good;
+		coherence();
 		return;
-	if(++nseen <= 8)
-		iprint("COMVEC %d: was %#p, now %#p, restored; trap pc %#llux"
-			" type %lld\n", nseen, good, comvec,
-			(uvlong)ur->pc, (uvlong)ur->type);
-	comvec = good;
-	coherence();
+	}
+	/*
+	 * And the code it points at, which is the thing that was actually
+	 * wrong.  0x3c10dcc, the pc the board freezes at, is 63MB -- inside
+	 * the heap, not above conf.topofmem, which an earlier version of this
+	 * comment and two commits got wrong by reading the magnitude of a hex
+	 * number carelessly.  So comvec holds a perfectly good pointer to its
+	 * mallocz'd trampoline and the generated instructions in that block
+	 * are what get overwritten; the processor executes whatever is there
+	 * now.  Watching the pointer could never have seen it.
+	 */
+	p = (u32*)good;
+	for(i = 0; i < Ncomvecwords; i++){
+		if(p[i] == code[i])
+			continue;
+		if(++nword <= 8)
+			iprint("COMVECCODE %d: %#p word %d was %#.8ux now %#.8ux;"
+				" trap pc %#llux\n", nword, p+i, i, code[i], p[i],
+				(uvlong)ur->pc);
+		p[i] = code[i];		/* put it back and keep going */
+		cacheflush(p+i, sizeof p[i]);
+		cacheiinv();
+	}
 }
 
 void
