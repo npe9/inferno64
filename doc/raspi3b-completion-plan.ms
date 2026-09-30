@@ -13746,14 +13746,39 @@ this port needs is driven and checked on the real board, and the one
 outstanding hardware bug is a DMA write stall on the second SD controller,
 which has a workaround in the driver.
 .PP
-What is missing is the layer above it.  The JIT is on now, and it is worth
-eight to twenty times on Dis and a fifth to a third on every network number
-measured; all four processors run kernel code and take their own timer
-interrupts, but nothing is scheduled on three of them; there is no windowing
-system; and the copy-on-write filesystem is not the root.  None of those is a bring-up problem; each is a decision, a
-merge, or the next step of the one begun above.  A board that boots, stores, networks over wire and air, and can be
-driven remotely is a port; a board that uses its hardware is the next
-document.
+What is missing is the layer above it.  The JIT is on and worth eight to twenty
+times on Dis and a fifth to a third on every network number measured.  All four
+processors now run
+.I processes ,
+not just interrupts \(em
+.CW smpsched=1 ,
+thousands of context switches on each secondary, and a measured payoff of 9.1x
+on a six-fragment ping and 2.3x on a 1MB styx read, taken against the same
+binary with the other three processors held by a debugger.  And the Dis
+collector has the whole per-context apparatus the parallel VM rests on:
+.CW Pctx ,
+.CW progreg() ,
+the
+.CW inxec
+safepoint with an invariant the kernel checks, a bounded stopped world, a
+per-context run queue, and a lock on the process-group lists.
+.PP
+Two things are still missing, and one thing is deliberately not being built.
+There is no windowing system, and the copy-on-write filesystem is not the root.
+Neither is a bring-up problem.  The thing not being built is
+.CW parallelvm=1 :
+it needs the Dis context in a machine register, which ripples into
+.CW raspi4
+and
+.CW virtarm64 ,
+in order to reach a state its own branch measures as worse than where this board
+already is \(em three failures in sixteen against none, with the per-channel
+lock still unlanded.  See
+.CW doc/raspi3b-parallelvm-plan.ms .
+.PP
+A board that boots, stores, networks over wire and air, schedules on every
+processor it has, and can be driven remotely is a port; a board that uses its
+hardware is the next document.
 .NH 2
 What the SMP work does not yet buy, and the questions left open
 .PP
