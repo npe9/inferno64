@@ -667,3 +667,146 @@ margin is, and the margin is a property of the workload rather than of the code
 .CW GC-COUNTS
 is now there: 1.1 million collector runs and 47 million heap inspections in one
 boot were numbers nothing in this tree could report before.
+.NH 1
+What landed, and why the register is deferred
+.PP
+Four steps are on the board or on their way to it, in multicore's own order
+except for one deliberate reordering.
+.PP
+.B "The rename."
+.CW Prog.R
+is
+.CW Prog.reg ,
+111 sites in 20 files, because an object-like macro expands after
+.CW ->
+too and
+.CW p->R
+would become
+.CW p->(*curR) .
+Their Phase 1a hit the same thing and renamed it the same way.
+.PP
+.B "Phase 1a."
+.CW "static REG _R; REG* curR = &_R;"
+and
+.CW "#define R (*curR)" ,
+so all ~1900
+.CW R.field
+references go through a variable.  The generator needed nothing:
+.CW ctxreg() 's
+.CW "con((uvlong)&R, rd)"
+becomes
+.CW curR 's
+value, a constant while there is one register file, which is why this board
+took it with
+.CW cflag=1
+untouched.
+.PP
+.B "Phase 2a."
+.CW "struct Pctx { REG reg; }" ,
+one instance,
+.CW curP
+pointing at it,
+.CW curR
+now
+.CW &_pctx.reg .
+Not moved: the context's run queue, which would mean taking
+.CW runhd /
+.CW runtl
+out of both
+.CW isched
+structs, 39 sites here and 34 in emu's, and has nothing to do with the register
+file.  Never to be moved:
+.CW isched.head /
+.CW tail .
+.PP
+.B "Phase 5a, the seam."
+.CW Pctx
+gains
+.CW curprog ,
+.CW xec.c
+gains
+.CW pctxs[] ,
+.CW npctx
+and
+.CW progreg() ,
+and
+.CW gc.c 's
+root walk asks
+.CW progreg(root)
+instead of taking
+.CW &root->reg .
+With one context the first test returns the pointer the old code took, so it is
+behaviour-identical.  Both
+.CW delprog() s
+clear
+.CW curprog
+before freeing the Prog: the function only ever compares Prog pointers and never
+follows one, so a dangling
+.CW curprog
+is not a fault in itself, but the allocator hands the address out again and a
+new Prog there would be answered for with another program's register file.
+.NH 2
+Phase 1b is deferred, and that is a decision rather than a pause
+.PP
+Making
+.CW curP
+a machine register is the next step in multicore's order.  It is deferred here
+for two reasons that only appeared on contact with this tree.
+.PP
+.B "It is not needed for the collector."
+.CW progreg()
+and the stopped world depend on
+.CW Pctx ,
+.CW curprog
+and
+.CW inxec ,
+and none of them on how
+.CW curP
+is reached.  With
+.CW parallelvm
+at 0 \(em which is where this integration ends, for the reasons two sections up
+\(em one executor runs Dis at a time and a global
+.CW curP
+is correct.  The register is what makes per-executor access cheap when there
+really are two; it buys nothing before that.
+.PP
+.B "And it ripples into two boards that cannot be tested here."
+.CW -DDISCTXREG
+has to go into
+.CW mkfiles/mkfile-Inferno-aarch64 ,
+which is every aarch64 board's
+.CW libinterp ,
+so every aarch64 board must then declare the same three external registers in
+the same order or its link has no definition for
+.CW curP .
+This branch has three:
+.CW raspi3b ,
+.CW raspi4
+and
+.CW virtarm64 .
+And only
+.CW raspi3b
+declares
+.I any
+\(em the other two carry
+.CW m
+and
+.CW up
+as plain globals, so switching them is not an include but a change to how each
+starts, with its
+.CW l.s
+setting registers before any C runs.
+.CW virtarm64
+can at least be booted under QEMU here;
+.CW raspi4
+has no hardware on this desk.
+.PP
+So the sequence changes: the collector work first, because it is testable on the
+board that exists, and the register when there is a reason to pay for it.  The
+one thing that must not drift in the meantime is
+.CW comp-aarch64.c :
+its
+.CW ctxreg()
+is still correct only because there is one register file, and the day
+.CW DISCTXREG
+lands it must change in the same commit, for the reason its own comment gives.
