@@ -13252,6 +13252,19 @@ is each processor's slot in
 .CW secirq "'s"
 counter; the stacks were the one place it had been left to the linker.
 .PP
+.B "And the negative control, because the first evidence was two changes in
+one arm."
+The build that first booted at
+.CW smpstart
+3 had both the slack and the watchpoint code in it, and the watchpoint code
+unmasks PSTATE.D among other things.  So the slack was taken back out,
+everything else left byte for byte the same, and the condition recreated
+exactly \(em core 3's stack top and
+.CW mach0
+both at 0x2b47b0, one 64-byte line at 0x2b4780.  That kernel does not reach
+the network on a cold boot.  Put the slack back and it does.  One line of
+padding, and it is the whole difference.
+.PP
 .B "It also says something about this board that had been assumed rather
 than measured."
 With coherent caches that shared line would have been merely slow \(em one

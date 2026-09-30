@@ -178,6 +178,19 @@ clockinit(void)
  * processors at once proves is narrow and real -- each is taking its
  * own timer interrupt, through its own vector table, into its own Mach.
  */
+/*
+ * l.s's secirq re-arms the timer with a constant, because a handler that
+ * must not read memory cannot divide CNTFRQ by HZ for itself.  The constant
+ * is right for this part and silent if it ever is not: under QEMU, whose
+ * CNTFRQ is not 19.2MHz, it ran at fifty-one ticks in two hundred
+ * milliseconds instead of twenty and nothing said so.  So say so.
+ */
+enum {
+	Secirqperiod	= 192000,	/* the MOV in l.s's secirq */
+};
+
+extern int smpstart;
+
 void
 clockinitsecondary(void)
 {
@@ -189,6 +202,10 @@ clockinitsecondary(void)
 	m->ticks = 0;
 	*(volatile ulong*)(0x40000040 + 4*m->machno) = 1<<1;
 	coherence();
+	if(smpstart >= 3 && m->cpuhz/HZ != Secirqperiod)
+		iprint("CPU%d SECIRQ-RATE: cpuhz/HZ is %lud, secirq re-arms at %d;"
+			" its tick count is wrong by that ratio\n",
+			m->machno, m->cpuhz/HZ, Secirqperiod);
 	when = now() + m->cpuhz/HZ;
 	hwtimerset(&when);
 	timerie();
