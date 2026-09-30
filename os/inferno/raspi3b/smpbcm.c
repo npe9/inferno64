@@ -99,6 +99,8 @@ enum {
 	Parkwords = 7,			/* WFE through BR inclusive */
 
 	Parkmagic = 0x5041524b,		/* "PARK", the fingerprint's seed */
+	Cohmagic  = 0x434f4845,		/* "COHE", what a secondary writes */
+	Cohms	  = 200,		/* how long core 0 spins on the line */
 
 	Sctlrmmu = 1<<0,		/* SCTLR_EL1.M: MMU and caches on */
 };
@@ -112,6 +114,14 @@ struct Cpurep {
 	int	alive;			/* written with the MMU on */
 	ulong	ticks;			/* core 0's only: m->ticks, before */
 	uchar	pad2[Lines-4-sizeof(ulong)];
+	/*
+	 * The coherency probe, on a line of its own because the whole point
+	 * of it is that core 0 does no cache maintenance on this line at
+	 * all -- an invalidate anywhere near it would answer the question
+	 * for it.  See cohcheck().
+	 */
+	uvlong	coh;
+	uchar	pad3[Lines-8];
 };
 
 static uchar	repmem[sizeof(Cpurep)*Ncpu + Lines];
@@ -131,6 +141,7 @@ static uchar	machmem[sizeof(Cpumach)*Ncpu + Lines];
 static Cpumach	*cpumach;
 
 static void	recall(int);
+static void	cohcheck(int);
 static ulong	secticks(int);
 
 /*
@@ -157,6 +168,7 @@ extern void	sev(void);
 extern void	cpupark(void);
 extern void	getmpidr(uvlong*);
 extern void	getcurrentel(uvlong*);
+extern void	cntfrq(uvlong*);	/* CNTFRQ_EL0, for the probe's own wait */
 extern void	mmuenable(void*);
 extern uvlong	*mmul1;			/* core 0's identity map, shared */
 
@@ -266,13 +278,40 @@ cpustart(int n)
 	clockinitsecondary();
 
 	/*
-	 * alive last, because it is the word core 0 tests.  No barrier is
+	 * alive first here, and the coherency probe deliberately AFTER it.  No barrier is
 	 * needed in front of it: the other three words were written with the
 	 * MMU off, straight to DRAM, and mmuenable() ends in DSB and ISB, so
 	 * they are visible before this store can be.
 	 */
 	r->alive = 1;
 	coherence();
+
+	/*
+	 * The coherency probe, and the delay in front of it is the whole
+	 * instrument.  Core 0 starts spinning on this line the moment it sees
+	 * alive, and its own repeated reads are what keep the line in its
+	 * cache; the store then has to take that copy away from it.  Store it
+	 * before alive instead and core 0's first read is an ordinary fetch
+	 * from memory, which succeeds whether the caches are coherent or not
+	 * -- an answer of COHERENT that no hardware could fail.  That is what
+	 * the first version of this did.
+	 *
+	 * The wait is counted on this processor's own CNTPCT, because m->cpuhz
+	 * is only set at smpstart 2 and up and this probe runs from 1.
+	 */
+	{
+		uvlong t0, hz, now;
+
+		cntfrq(&hz);
+		if(hz == 0)
+			hz = 19200000;
+		cycles(&t0);
+		do
+			cycles(&now);
+		while(now - t0 < hz/50);	/* 20ms of core 0 spinning first */
+		r->coh = Cohmagic;
+		coherence();
+	}
 
 	/*
 	 * Interrupts on, and rest -- in the same park loop, which is an idle
@@ -350,6 +389,13 @@ cpuboot(void)
 	cacheflush(tab, sizeof(uintptr));
 
 	for(n = 1; n < Ncpu; n++){
+		/*
+		 * Read the coherency probe before letting the processor go, so
+		 * that core 0 certainly holds this line when the store lands on
+		 * it.  Reading it is the whole preparation; see cohcheck().
+		 */
+		if(*(volatile uvlong*)&cpurep[n].coh == Cohmagic)
+			print("CPU%d coh already set before release\n", n);
 		cacheinval(&tab[n], sizeof tab[n]);
 		tab[n] = (uintptr)_secondary;
 		cacheflush(&tab[n], sizeof tab[n]);
@@ -362,9 +408,22 @@ cpuboot(void)
 			if(r->alive)
 				break;
 		}
-		if(r->alive)
+		if(r->alive){
 			print("CPU%d alive: mpidr %#llux el%lld sp %#llux (%d ms)\n",
 				n, r->mpidr, (r->el>>2)&3, r->sp, i);
+			/*
+			 * Here, and not at the end of this function: the
+			 * secondary stores the coherency probe 20ms after it
+			 * sets alive, and core 0 has to already be spinning on
+			 * the line when that lands.  Six hundred milliseconds
+			 * of tick measurement in between is what made the first
+			 * two versions of this report COHERENT at spin 0 --
+			 * that is, on an ordinary fetch from memory, which
+			 * proves nothing.
+			 */
+			if(n == 1)
+				cohcheck(n);
+		}
 		else if(r->mpidr != 0)
 			print("CPU%d RAN BUT IS NOT COHERENT:"
 				" mpidr %#llux el%lld sp %#llux, alive still 0\n",
@@ -400,6 +459,75 @@ cpuboot(void)
 			smpstart >= 3? " secirq": "");
 	}
 	recall(1);
+}
+
+/*
+ * Are the two processors' caches coherent?  This is the measurement the
+ * shared-cache-line bug turned into a question worth asking, and the answer
+ * decides whether every arrangement above is merely slow when it shares a
+ * line or silently wrong.
+ *
+ * The rule is that core 0 does NO cache maintenance on r->coh, and that it
+ * is already spinning on the line when the store lands.  The spin is not
+ * impatience: it is what keeps the line in core 0's cache, so that the
+ * secondary's store has to take it away.  Without that the first read is an
+ * ordinary fetch from memory and succeeds whether the caches are coherent or
+ * not -- the first version of this probe stored the magic BEFORE alive and
+ * reported COHERENT on the board, which it would have done with the
+ * coherency logic switched off.  A check that cannot fail is not a check.
+ *
+ * So the secondary sets alive, waits 20ms on its own counter while core 0
+ * gets into the loop, and only then stores.  Coherent caches take core 0's
+ * copy away and the loop sees the magic.  Caches that are not coherent leave
+ * core 0 reading its own stale zero until the loop gives up, and the
+ * invalidate afterwards tells the two remaining cases apart: if the magic
+ * appears then, the store reached memory and only core 0's cache was stale,
+ * which is the definition of not coherent; if it does not appear even then,
+ * the processor never made the store and the probe says nothing.
+ *
+ * volatile because the whole loop is a re-read of one address, which a
+ * compiler is otherwise entitled to do once.
+ *
+ * QEMU CANNOT FAIL THIS CHECK.  TCG has no caches, so every store is
+ * visible to every processor at once and the answer there is COHERENT
+ * whatever the hardware would do.  A green run under the emulator is
+ * therefore not evidence of anything; only the board's answer counts.
+ */
+static void
+cohcheck(int n)
+{
+	volatile uvlong *p;
+	Cpurep *r;
+	int i;
+
+	if(n <= 0 || n >= Ncpu)
+		return;
+	r = &cpurep[n];
+	if(!r->alive)
+		return;
+	p = &r->coh;
+	/*
+	 * A tight spin, not delay(1) between reads: the reads themselves are
+	 * the mechanism, and Cohms is long enough to cover the secondary's
+	 * 20ms wait several times over.
+	 */
+	for(i = 0; i < Cohms*1000; i++){
+		if(*p == Cohmagic){
+			print("COHERENT: CPU%d's cacheable store took CPU0's copy"
+				" of the line away, with no cache maintenance"
+				" (spin %d)\n", n, i);
+			return;
+		}
+		microdelay(1);
+	}
+	cacheinval((void*)p, sizeof *p);
+	if(*p == Cohmagic)
+		print("NOT COHERENT: CPU%d's store reached memory but CPU0 read"
+			" its own stale copy for %d ms; it took an invalidate."
+			"  CPUECTLR_EL1.SMPEN is very likely clear\n", n, Cohms);
+	else
+		print("COH-NOSTORE: CPU%d never wrote the probe (%#llux), so this"
+			" says nothing about coherency\n", n, (uvlong)*p);
 }
 
 /*

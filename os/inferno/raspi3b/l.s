@@ -378,6 +378,29 @@ TEXT	boot2(SB), 1, $-4
 	ADD	R3, R2, R2
 	LSR	$4, R2, R2
 	LSL	$4, R2, R2
+	/*
+	 * AND SIXTEEN BYTES BELOW THE TOP, BECAUSE A CALLEE WRITES ABOVE ITS
+	 * CALLER'S SP.  A Plan 9 argument home is at 0(FP), which on this
+	 * architecture is the caller's SP plus eight: cpustart() below
+	 * disassembles to "str x30,[sp,#-80]!" and then "str w9,[sp,#88]",
+	 * which is SP-at-the-call plus eight.  Set RSP to the last byte of the
+	 * stack array and that store lands outside it.
+	 *
+	 * It did.  secstack's neighbour was mach0, so core 3's argument home
+	 * was mach0+8 -- the low word of m->proc -- and clockintr() stores
+	 * through m->proc on the very next tick, as
+	 * "p = m->proc; p->time[p->insyscall]++".  A store through a pointer
+	 * whose low half is 3.  That wild store is what overwrote libinterp's
+	 * comvec, which the interpreter then called, and it is why the board
+	 * froze half a second into the first Dis program with every secondary
+	 * ticking correctly.
+	 *
+	 * secstack also has 64 bytes of slack at the top now, which would
+	 * absorb this on its own; both are here because the slack protects
+	 * whatever the linker puts next and this protects the stack whatever
+	 * is next to it.  Sixteen, not eight, to keep RSP 16-byte aligned.
+	 */
+	SUB	$16, R2, R2
 	MOV	R2, RSP
 	MOV	$setSB(SB), R28
 	/*

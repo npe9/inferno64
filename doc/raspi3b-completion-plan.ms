@@ -13152,7 +13152,7 @@ an indirect branch, not to it.  A
 is not an unconditional branch, which is why the original code was fine for
 months.
 .NH 2
-Per-processor Machs and timers, and the one cache line that made them fatal
+Per-processor Machs and timers, and a fix whose mechanism is not known
 .PP
 A core that runs is not a processor: it needs its own
 .CW Mach ,
@@ -13184,103 +13184,148 @@ rather than
 .CW clockintr()
 \(em but the per-processor state is real and it works.
 .PP
-.B "For most of a day it did not, and the reason was one cache line."
+.B "For most of a day it did not, and the mechanism is still open."
+What is measured is narrow and worth stating exactly, because two plausible
+explanations of it have already been wrong.
+.IP \(bu
+64 bytes of slack at the top of
 .CW secstack
-is a GLOBL of three KSTACKs and the linker put
-.CW mach0
-immediately after it, so core 3's stack top and
-.CW mach0 "'s"
-first byte were the same address: 0x2b4690, which is not 64-byte aligned.
-The top sixteen bytes of core 3's stack and the first sixteen of core 0's
-Mach were therefore one 64-byte line, and two processors wrote it \(em core 3
-whenever it pushed an exception frame, core 0 on every
-.CW splhi()
-and
-.CW splx() ,
-which write
-.CW m->splpc .
-.PP
-The first sixteen bytes of a Mach are
-.CW splpc ,
-.CW machno
-and
-.CW proc .
-So a stale writeback from core 3 does not merely scramble a diagnostic
-field: it restores an old
-.CW m->proc ,
-and
-.CW clockintr()
-dereferences that on the very next tick, through
-.CW accounttime() ,
-as
-.IP
-.EX
-p = m->proc;
-p->time[p->insyscall]++;
-.EE
-.PP
-\(em a store through a pointer that is no longer valid.  That is the wild
-store.  Where one of them landed was
+makes the difference.  With it, two cold boots reach
+.CW RASPI3B-SH-OK ;
+without it, three cold boots out of three freeze, and a control that removes
+only the slack and changes nothing else freezes too.
+.IP \(bu
+The corrupted word is always
 .CW comvec ,
-libinterp's JIT entry trampoline: core 0's link register at the freeze was
+libinterp's JIT entry trampoline.  Core 0's link register at every freeze is
 .CW xec+0xac ,
 whose preceding instructions disassemble to
 .CW "ldr x10, [x28, #0x2d50]"
 followed by
-.CW "blr x10" ,
-and that word held 0x3c10dcc \(em which no allocation in this kernel can
-return, since
+.CW "blr x10" ;
+the word holds something in the 0x3c10000 range, which no allocation in this
+kernel can return, since
 .CW conf.topofmem
-is 256MB, and which lies in the range the memory of a freed and reused Proc
-would.  So the interpreter called a word that the clock interrupt had
-overwritten.
+is 256MB.  So a wild store overwrites one word of libinterp's data segment
+and the interpreter calls it.
+.IP \(bu
+The caches are coherent.
+.IP \(bu
+A callee's argument home lies above its caller's SP, and
+.CW boot2
+was putting a secondary's SP on the last byte of its stack.
 .PP
-Everything fits: the same SP to the byte on both readings, because the
-writer is the clock interrupt on the same stack every time; a freeze a few
-hundred milliseconds in, once the first process has been freed and reused;
+.B "The first explanation was a stale writeback, and it is false."
+The slack removes a shared cache line: core 3's stack top and
+.CW mach0 "'s"
+first byte were the same address, so the top sixteen bytes of a stack and the
+first sixteen of core 0's Mach \(em
+.CW splpc ,
+.CW machno
 and
-.CW smpstart
-0 and 1 surviving, because a processor that parks with interrupts masked
-never runs again, and its one dirty line is evicted while core 0's Mach
-still holds nothing that matters.
+.CW proc
+\(em were one 64-byte line that two processors wrote.  That is a real defect,
+and with incoherent caches one processor's writeback would restore the
+other's stale bytes, which would put an old
+.CW m->proc
+back and make
+.CW clockintr()
+store through it on the next tick.  It fits everything.  It is also wrong,
+because the caches are coherent, and a coherent shared line is merely slow.
 .PP
-The fix is 64 bytes of slack at the top of
-.CW secstack ,
-so that nothing the linker puts next can share a line with a stack.  One
-Mach per secondary was already on its own line for the same reason, and so
-is each processor's slot in
-.CW secirq "'s"
-counter; the stacks were the one place it had been left to the linker.
-.PP
-.B "And the negative control, because the first evidence was two changes in
-one arm."
-The build that first booted at
-.CW smpstart
-3 had both the slack and the watchpoint code in it, and the watchpoint code
-unmasks PSTATE.D among other things.  So the slack was taken back out,
-everything else left byte for byte the same, and the condition recreated
-exactly \(em core 3's stack top and
-.CW mach0
-both at 0x2b47b0, one 64-byte line at 0x2b4780.  That kernel does not reach
-the network on a cold boot.  Put the slack back and it does, twice out of
-twice, against three cold boots out of three frozen without it.  One line of
-padding, and it is the whole difference.
-.PP
-.B "It also says something about this board that had been assumed rather
-than measured."
-With coherent caches that shared line would have been merely slow \(em one
-processor taking it from another and back, a hundred times a second.  For a
-stale writeback to restore another processor's bytes, the two caches must
-not be coherent, which means CPUECTLR_EL1.SMPEN is very probably
-.I not
-set on this part by the firmware, contrary to what
+.CW cohcheck()
+in
 .CW smpbcm.c
-assumed in a comment.  That is an inference from one bug and not a
-measurement; the way to settle it is written down in that file \(em have a
-secondary write a word with the MMU on and have core 0 read it back with no
-cache maintenance at all, which is precisely what the core report does
-.I not
-do.
+is what settled that: a secondary stores a magic word from Normal cacheable
+memory while core 0 spins on the line doing no cache maintenance at all, so a
+coherent pair of caches has to take core 0's copy away.  On the board it
+does, after 14943 of core 0's own reads.
+.PP
+.B "And the first version of that probe could not fail."
+It stored the magic
+.I before
+it set
+.CW alive ,
+so by the time core 0 looked, the store was already made and core 0's first
+read was an ordinary fetch from memory \(em which succeeds whether the caches
+are coherent or not.  It reported COHERENT on the board and would have done
+so with the coherency logic switched off.  It stores 20ms
+.I after
+.CW alive
+now, timed on the secondary's own CNTPCT, and
+.CW cohcheck()
+runs the instant the core reports rather than after six hundred milliseconds
+of tick measurement, so core 0 is demonstrably in the loop when the store
+lands.  The spin count is printed to be read: a report at spin 0 is a fetch,
+not a take.
+.PP
+.B "The second explanation was a Plan 9 argument home, and it is a real
+defect that is not the mechanism."
+.CW boot2
+set RSP to the top of the stack array, and a callee writes above its caller's
+SP: an argument home is at 0(FP), the caller's SP plus eight.
+.CW cpustart()
+disassembles to
+.IP
+.EX
+str	x30, [sp, #-80]!
+...
+str	w9, [sp, #88]
+.EE
+.PP
+and 88 minus the 80-byte frame is SP-at-the-call plus eight.  With
+.CW mach0
+straight after
+.CW secstack ,
+core 3's argument home was
+.CW mach0+8 :
+the low word of
+.CW m->proc ,
+written with the core number.  The arithmetic is exact \(em 0x2b4930 for the
+top and 0x2b4938 for the home, against
+.CW mach0
+at 0x2b4930 \(em and
+.CW clockintr()
+does store through
+.CW m->proc
+on the next tick.
+.PP
+.CW boot2
+subtracts 16 from the top now, which puts that home inside the array, and
+.B "the board still freezes without the slack."
+Measured: the arm with the subtraction and no padding froze like the others,
+with
+.CW comvec
+overwritten and the link register at
+.CW xec+0xac
+again.  So the argument home was a real bug worth fixing on its own, and it
+is not what the padding is protecting against.
+.PP
+.B "What is left, and the instrument for it."
+Something writes into the 64 bytes above a secondary's stack top, or the
+padding moves a different victim out of the way of a store that has nothing
+to do with stacks; and whatever it is ends in one word of libinterp's data.
+Two explanations have now been offered for this and both were falsified by
+the measurement they implied, which is the argument for not offering a third
+without one.
+.PP
+The instrument to build is a tripwire rather than a theory.  A hardware
+watchpoint on
+.CW comvec
+exists in
+.CW l.s
+(see below) and does not fire on this part; the other way round is the
+read-only page
+.CW mmu.c
+already uses to catch a wild store into the page tables \(em give
+.CW comvec
+a page of its own and take the write permission away once the JIT has set it,
+and the wild store faults at the store, with a trap report naming the
+instruction.  Failing that, checking
+.CW comvec
+against its recorded value in
+.CW clockintr()
+localises the corruption to ten milliseconds and a stack.
 .PP
 .B "The ladder is what found it, and it stays."
 .CW smpstart ,
