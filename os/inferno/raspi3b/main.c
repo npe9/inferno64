@@ -24,6 +24,7 @@ extern Mach mach0;
  * which is the same guarantee one instruction earlier than a data-segment
  * initialiser could give it.
  */
+Mach *machp[MAXMACH];		/* machp[0] = &mach0; the rest set by cpustart() */
 Conf conf;
 
 extern ulong kerndate;
@@ -121,6 +122,7 @@ machinit(void)
 	m = &mach0;
 	memset(m, 0, sizeof(Mach));
 	m->machno = 0;
+	machp[0] = m;
 	memset(&active, 0, sizeof(active));
 	active.machs[0] = 1;
 }
@@ -205,6 +207,27 @@ void
 main(void)
 {
 	long *p, *ep;
+	int n;
+
+	/*
+	 * FIRST, before the BSS is zeroed and before anything else: stop the
+	 * timer interrupt reaching cores 1-3.
+	 *
+	 * A warm restart through the JTAG trampoline does not reset the
+	 * cores, so a secondary that a previous kernel started is still
+	 * running, with its VBAR pointing at that kernel's vector table and
+	 * its timer armed -- and this image is being written over both.  The
+	 * per-core timer routing registers in the BCM2836 local controller
+	 * are writable from any core, so core 0 can take those interrupts
+	 * away before it disturbs anything the other cores could be
+	 * executing.  Nothing here depends on the MMU, which is still off.
+	 *
+	 * A cold boot makes this a no-op three times over; that is the price
+	 * of it being unconditional.  smpbcm.c turns each core's route back
+	 * on as it starts that core.
+	 */
+	for(n = 1; n < MAXMACH; n++)
+		*(volatile ulong*)(0x40000040 + 4*n) = 0;
 
 	p = (long*)edata;
 	ep = (long*)end;

@@ -41,6 +41,7 @@
 #define	D_MIDR_EL1	SYSARG5(3,0,0,0,0)
 #define	D_TPIDR_EL1	SYSARG5(3,0,13,0,4)
 #define	D_TPIDRRO_EL0	SYSARG5(3,3,13,0,3)
+#define	D_TPIDR_EL0	SYSARG5(3,3,13,0,2)
 #define	CRUMB		0x20000000
 #define	D_CNTVOFF_EL2	SYSARG5(3,4,14,0,3)
 #define	D_ICC_SRE_EL1	SYSARG5(3,0,12,12,5)
@@ -375,6 +376,18 @@ TEXT	boot2(SB), 1, $-4
 	LSL	$4, R2, R2
 	MOV	R2, RSP
 	MOV	$setSB(SB), R28
+	/*
+	 * m and up (R27, R26 -- see dat.h) are whatever the firmware's spin
+	 * loop and the park loop left in them, which is not this processor's
+	 * Mach and not any Proc.  Zero both: cpustart() sets m to this
+	 * processor's Mach as soon as it has one, and until then anything
+	 * that touches either faults at a null pointer instead of writing
+	 * quietly through a stale one -- splhi() stores m->splpc, so a
+	 * garbage m is a store to an arbitrary address on every call.
+	 * Nothing between here and that assignment may use them.
+	 */
+	MOV	$0, R27
+	MOV	$0, R26
 	MOV	R21, R0			/* the core number */
 	BL	cpustart(SB)
 dead2:
@@ -419,6 +432,16 @@ TEXT	getcntpctl(SB), 1, $-4
 TEXT	getcntpcval(SB), 1, $-4
 	MRS	SPR(D_CNTP_CVAL_EL0), R1
 	MOV	R1, 0(R0)
+	RET	R30
+
+/*
+ * getsctlr(): SCTLR_EL1, whose M bit (0) says this processor's MMU and
+ * caches are already on -- which is how a released core tells a first
+ * release out of armstub8's loop from a second one out of the park loop.
+ * See cpustart() in smpbcm.c.
+ */
+TEXT	getsctlr(SB), 1, $-4
+	MRS	SPR(D_SCTLR_EL1), R0
 	RET	R30
 
 TEXT	getdaif(SB), 1, $-4
@@ -1078,11 +1101,36 @@ TEXT	vectorinit(SB), 1, $-4
  * cause there for the next boot to print.  Then it does what the slot
  * used to: open the Ureg frame, save X9 into it, and go to vectrap with
  * the class in X9.
+ *
+ * X9 IS NEEDED AS A SCRATCH TO WRITE THOSE RECORDS, SO THE CLASS HAS TO
+ * BE PARKED SOMEWHERE FIRST, AND THAT SOMEWHERE MUST BE PER PROCESSOR.
+ * It was CRUMB+56 -- one word, shared by all four cores.  With only core
+ * 0 running that was invisible; the moment a secondary takes its own
+ * timer interrupt (smpbcm.c) it is fatal, because a secondary's
+ * exception landing between core 0's store and its load hands core 0 the
+ * wrong class, and trap() then dispatches an IRQ as a synchronous fault
+ * or the reverse -- a wild pc, with no panic, a few hundred milliseconds
+ * into the first Dis program.  Measured: cold boots with the
+ * secondaries idling froze after ILOCK-TRACE with core 0 at pc
+ * 0x3c10db8, in RAM above the kernel, LR pointing back into it; the same
+ * image warm-booted over JTAG, which leaves the secondaries halted,
+ * booted every time.
+ *
+ * TPIDR_EL0 is the home now: a real per-processor register, and free
+ * here because Inferno has no user mode and nothing else in this kernel
+ * reads or writes it.  TPIDR_EL1 (the interrupted X9, put there by the
+ * vector slot) and TPIDRRO_EL0 (X10) were already per-processor, which
+ * is why they were not the bug.
+ *
+ * The crumb RECORD itself is still one buffer for four processors, so
+ * four cores' exceptions overwrite each other's diagnostics.  That
+ * costs accuracy in a post-mortem, not correctness at run time, and
+ * making it per-processor means giving crumbdump() a stride as well.
  */
 TEXT	crumbentry(SB), 1, $-4
 	MSR	R10, SPR(D_TPIDRRO_EL0)
+	MSR	R9, SPR(D_TPIDR_EL0)	/* the class; per processor, see above */
 	MOV	$CRUMB, R10
-	MOV	R9, 56(R10)
 	MRS	SPR(D_ESR_EL1), R9
 	MOV	R9, 16(R10)
 	MRS	ELR_EL1, R9
@@ -1118,8 +1166,8 @@ crumbframe:
 	SUB	$UR_SIZE, RSP
 	MRS	SPR(D_TPIDR_EL1), R9
 	MOV	R9, UR_R9(RSP)
-	MOV	$CRUMB, R9
-	MOV	56(R9), R9
+	MRS	SPR(D_TPIDR_EL0), R9	/* the class, back out of this
+					 * processor's own register */
 	B	vectrap(SB)
 
 wildsp:

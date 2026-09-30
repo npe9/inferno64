@@ -3020,11 +3020,13 @@ Mode setting beyond the firmware's default, and hotplug, are absent.
 No wall-clock time: the Pi has no battery-backed clock, and nothing yet
 asks the firmware or a network for the time.
 .IP 5.
-The kernel is uniprocessor.  MAXMACH is 1 and nothing is scheduled on more
-than one core \(em though cores 1-3 no longer sit at WFE for ever: each is
-released at boot, runs kernel C on its own stack with the MMU on, reports
-itself and goes back to resting.  See "The second, third and fourth cores
-run kernel code" below.
+Nothing is scheduled on more than one core, though cores 1-3 no longer sit
+at WFE for ever: each is released at boot, runs kernel C on its own stack
+with the MMU on, reports itself and goes back to resting.  MAXMACH is 4 and
+each secondary can take its own Mach, vector table and timer \(em measured
+doing so, at the right rate, on the board \(em but the board then freezes in
+the first Dis program, so that is not what ships.  See the two sections
+below.
 .IP 6.
 Bluetooth is absent and conflicts with the console: it needs the PL011,
 which the console uses.  uartmini.c exists for the mini UART but is
@@ -13093,9 +13095,21 @@ effect for a core already spinning in it.  A kernel that releases cores
 leaves a fingerprint of the loop's seven instructions in core 0's own
 (otherwise unused) spin-table slot, and a kernel entered over JTAG releases
 nothing unless the fingerprint it finds is the one it would have written.
-So the cores can only be started from a cold boot, which is what
+A matching fingerprint is what makes a warm release safe to
+.I attempt
+\(em a core resting on those seven instructions is resting on this image's
+\(em but on this rig it is not sufficient, because
+.I jtagrestart
+resumes core 0 alone and leaves cores 1-3 halted by the debugger, so a warm
+restart reports
+.CW "CPUn SILENT"
+however correct the code is.  Measured, with the slot still holding the
+release address nobody woke to read.  The cores can therefore only be
+started from a cold boot, which is what
 .I kinstall.sh
-ends with anyway.
+ends with anyway; and that same fact is what makes the warm path safe,
+since a halted core cannot run the previous kernel's code out of memory this
+image has overwritten.
 .PP
 .B "The release mechanism is the firmware's own."
 A real Pi's armstub8 leaves cores 1-3 waiting on a spin table at 0xd8, one
@@ -13138,45 +13152,283 @@ an indirect branch, not to it.  A
 .CW BL
 is not an unconditional branch, which is why the original code was fine for
 months.
+.NH 2
+Per-processor Machs and timers, and the one thing that still does not work
 .PP
-.B "What the next step is, and why it is bounded."
 A core that runs is not a processor: it needs its own
 .CW Mach ,
-and
-.CW m
-is a global here, of which there is exactly one.  The mechanism this tree
-already has for that is an external register \(em kencc reserves R24-R27
-(REGEXT in
-.CW utils/7c/7.out.h )
-in every translation unit whether or not it has seen the declaration, which
-is why the
-.CW multicore
-branch can make
+its own vector table and its own timer, none of which any amount of work
+on core 0 can set up on its behalf.  All three are built, each done by the
+core itself, and on the physical board each secondary's own timer
+interrupts arrive at the rate they should:
+.IP
+.EX
+CPU1 alive: mpidr 0x80000001 el1 sp 0x2a4520 (15 ms)
+CPU2 alive: mpidr 0x80000002 el1 sp 0x2ac520 (15 ms)
+CPU3 alive: mpidr 0x80000003 el1 sp 0x2b4520 (15 ms)
+CPU1 ticks 20 in 200 ms (mach 0x6ce740 machno 1)
+CPU2 ticks 20 in 200 ms (mach 0x6ce840 machno 2)
+CPU3 ticks 21 in 200 ms (mach 0x6ce940 machno 3)
+CPU1 recalled in 0 ms, ticks 20 in 200 ms after it
+.EE
+.PP
+against HZ of 100, so twenty in two hundred milliseconds is the whole
+budget and what all three are getting.
+.PP
+.B "And then the board freezes."
+Half a second later, in the first Dis program, reproducibly, three cold
+boots out of three.  So
+.CW smpstart
+\(em an int in the config's
+.CW code
+section, like
+.CW cflag
+\(em defaults to
+.B 1 ,
+which releases each secondary and lets it report itself and go back to
+resting with interrupts masked; that configuration boots clean and is what
+is shipped.
+.B 2
+is the one above: its own Mach, vectors and timer, idling with interrupts
+on.  0 leaves the cores parked as they were before any of this existed.
+.PP
+.B "What the freeze looks like, exactly."
+The boot reaches
+.CW "ILOCK-TRACE on"
+\(em the scheduler-latency check in
+.CW raspi3binit.b ,
+which spawns a busy process and times sleeps against it \(em and stops
+there.  Core 0 is at EL1 with interrupts enabled,
 .CW m
 and
 .CW up
-registers in one board header without touching libinterp.  Here that is:
-.CW dat.h
-declares them
-.CW "extern register" ,
-.CW l.s "'s"
-.CW splhi / splx
-read R27 instead of naming
-.CW mach0
-(they name
-.CW mach0
-today, not
-.CW m ,
-so this is two instructions), and the trap path already saves and restores
-R26 and R27 in the
-.CW Ureg .
-After that comes
+both valid, SP in a process kernel stack, and its pc is 0x3c10dcc: not in
+the kernel, and not in the kernel's memory at all, since
+.CW conf.topofmem
+is 256MB.  Its link register is
+.CW xec+0xac ,
+the Dis interpreter's dispatch, so the interpreter called through a pointer
+that was not code.  The pc is in the region the VideoCore framebuffer lives
+in, which is the sort of value that turns up in memory that has been freed
+and handed to the draw device.  Both readings, twice, with the same SP to
+the byte.
+.PP
+.B "The argument that it is the secondaries' interrupts: three builds and
+a control."
+The build that released the cores and left them resting with interrupts
+masked cold-booted clean.  The two that gave them timers froze, in the same
+place, every time.  A warm JTAG boot of one of those images reached the
+network every time \(em and that is a control for one variable, because
+.I jtagrestart
+resumes core 0 alone and leaves cores 1-3 halted by the debugger.  Then
+.CW smpstart
+1 on a cold boot, which has every other change of this work in place,
+reached
+.CW ETHER-PING-DONE
+with the ilock trace printed on the way.  Cold against warm alone would not
+have pinned it, since those differ in peripheral state as well; the resting
+arm is what makes it the interrupts and not the cores.
+.PP
+.B "What is ruled out by measurement, and should not be re-chased."
+.IP \(bu
+.I "m and up as registers."
+.CW smpstart
+1 has them and boots cold.
+.IP \(bu
+.I "The atomics."
+.CW ainc ,
+.CW adec
+and
+.CW cmpswap
+are LDXR/STXR loops now, and each was read back out of the linked image and
+disassembled \(em
+.CW "ldxr w1,[x3]; add w1,w1,#1; stxr w4,w1,[x3]; cbnz; dsb sy; sxtw x0,w1"
+\(em so they are what they claim to be, and they are in the arm that boots.
+.IP \(bu
+.I "A secondary's existence, its MMU, or its coherency with core 0."
+All present at level 1.
+.IP \(bu
+.I "The JIT clobbering the external registers."
+.CW libinterp/comp-aarch64.c
+allocates X0-X5 and X20-X22 and never names X26 or X27, and 7c's
+.CW txt.c
+reserves
+.CW reg[REGEXT]
+and
+.CW reg[REGEXT-1]
+unconditionally in every translation unit, so no prebuilt library can be
+using them \(em confirmed by compiling
+.CW libinterp/xec.c
+and counting the references, which are none.
+.IP \(bu
+.I "One shared word in the exception path,"
+which was real, was fixed, and was not this.
+.PP
+.B "The shared word that was real."
+Every vector slot branches to
+.CW crumbentry ,
+which records ESR, ELR, FAR, SPSR, SP and a count at
+.CW CRUMB
+before it touches the stack, so that an exception which faults again inside
+the vector path \(em silent, with everything masked \(em leaves its cause in
+memory for the next boot.  Writing those records needs X9 as a scratch, so
+the exception class the slot put in X9 had to be parked first, and it was
+parked at
+.CW CRUMB+56 :
+one word, for all four processors.  With one processor that is invisible;
+with a secondary taking interrupts it is fatal, because a secondary's
+exception landing between core 0's store and its load hands core 0 the
+wrong class and
+.CW trap()
+then dispatches an IRQ as a synchronous fault or the reverse.  The class
+lives in TPIDR_EL0 now, a real per-processor register, free because Inferno
+has no user mode; TPIDR_EL1 (the interrupted X9) and TPIDRRO_EL0 (X10) were
+already per-processor, which is why they were not the bug.  Fixing it did
+not fix the freeze, which is how we know there is a second cause and not
+only a first.
+.PP
+The crumb record itself is still one buffer for four processors, so their
+exceptions overwrite each other's diagnostics.  That costs accuracy in a
+post-mortem rather than correctness at run time, and making it
+per-processor means giving
+.CW crumbdump()
+a stride as well.
+.PP
+.B "Where to look next."
+The remaining shared state in a secondary's interrupt path is small and can
+be removed a piece at a time, which is the instrument to build rather than
+another theory.  Give the secondaries a vector table of their own, or
+better an entry of a dozen instructions of assembly \(em re-arm the timer,
+return \(em so that a secondary's interrupt touches neither
+.CW crumbentry
+nor
+.CW trap()
+nor any C at all.  If the board then boots at level 2, the fault is in what
+those two still share; if it does not, the interrupts are doing something
+to core 0 that has nothing to do with the code they run, and the next
+question is the interconnect rather than the kernel.
+.PP
+.B "The rest of the machinery, which is done."
 .CW MAXMACH
-4 and a
-.CW machp[]
-array, a vector table and a timer for each core, and only then a scheduler
-that can be entered from more than one of them.  The atomics were the first
-of those prerequisites and are done.
+is 4 and
+.CW MACHP(n)
+is
+.CW machp[n] ,
+which it was pretending to be: it returned
+.CW &mach0
+whatever
+.I n
+was, harmless only while there was one processor.  There is one
+.CW Mach
+per secondary, each on its own cache line.
+.CW vectorinstall()
+lets a processor that starts after
+.CW trapinit()
+put the table core 0 built into its own VBAR_EL1.
+.CW clockinitsecondary()
+and
+.CW clocksecondary()
+in
+.CW clock.c
+are the per-processor half of
+.CW clockinit()
+and
+.CW clockintr() ,
+and each secondary arms its own route in the BCM2836 local controller at
+0x40000040 + 4*machno.
+.CW conf.nmach
+stays 1 and
+.CW active.machs[n]
+stays 0 for a secondary, which is what keeps every portable user honest \(em
+.CW procwired()
+bounds its choice by
+.CW conf.nmach ,
+and devcons's
+.CW Qsysstat
+sizes its buffer from
+.CW conf.nmach
+while looping to
+.CW MAXMACH .
+.PP
+.CW m
+and
+.CW up
+are external registers: R27 and R26, by declaration order in
+.CW dat.h .
+.CW splhi
+and
+.CW splx
+write
+.CW m->splpc
+and named
+.CW mach0
+directly, which was right only while there was one Mach; they read R27 now.
+.CW boot1
+sets both before it calls
+.CW main ,
+which keeps the property the initialised global had \(em
+.CW m
+must never be nil, because a warm restart arrives with the timer armed and
+pending at the per-core controller, so
+.CW clockintr
+can run before
+.CW machinit()
+and fault on
+.CW "p->time[p->insyscall]++" .
+.CW boot2
+zeroes both on a secondary, so a premature use faults at a null pointer
+rather than writing quietly through whatever the firmware's spin loop left.
+.PP
+.B "Idling and resting are the same loop."
+A secondary ends in
+.CW cpupark() ,
+and once interrupts are enabled that park loop is an idle loop: WFE wakes
+on an unmasked IRQ as well as on an event, so the timer interrupt is taken
+at the WFE, returns to the instruction after it, finds the slot still zero
+and waits again.  So a processor that is idling is also one core 0 can call
+back, and it idles at the one address in this kernel that does not move
+between builds.
+.PP
+.B "The recall is a test, not a feature."
+A processor released out of armstub8's loop has its MMU off; one called back
+out of the park loop has it on, and
+.CW cpustart()
+must then skip
+.CW cacheinit() ,
+which is a
+.CW "DC ISW"
+loop \(em invalidate by set/way, without cleaning \(em and would throw away
+the dirty line holding that processor's own clearing of its spin-table
+slot, sending it straight back round for ever, re-zeroing its tick count
+each time so that the symptom would be a tick line near nought rather than
+anything that looks like a spin.  Nothing else in the kernel recalls a
+processor and a JTAG restart cannot reach the path, so
+.CW cpuboot()
+calls processor 1 back once at every boot: without that the branch would
+ship unexecuted, and QEMU cannot reach it either, having no caches.
+.PP
+.B "And core 0 takes the other processors' timers away before it does
+anything else."
+The first thing
+.CW main()
+does \(em before the BSS is zeroed, before
+.CW machinit() ,
+before anything else can be disturbed \(em is write 0 to the BCM2836
+per-core timer routing register of cores 1, 2 and 3.  A warm restart does
+not reset the cores, so a secondary a previous kernel started is still
+running, with its VBAR pointing into that kernel's vector table and its
+timer armed, while this image is being written over both.  Those routing
+registers are in the shared local controller and writable from any core.
+On a cold boot it is a no-op three times over, which is the price of it
+being unconditional.
+.PP
+.B "What the self-tests cost."
+About a second of every cold boot at level 2 and six hundred milliseconds
+at level 1: two hundred waiting for each processor to report, two hundred
+counting its ticks where there are ticks to count, and four hundred for the
+recall.  That is deliberate.  A per-processor timer that has stopped
+working should be a line in the boot log, where the next person reads it,
+rather than something a later measurement trips over.
 .NH 2
 The honest summary
 .PP

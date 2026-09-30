@@ -163,9 +163,19 @@ struct
 	s32	thunderbirdsarego;
 }active;
 
-#define	MACHP(n)	((Mach*)(void*)&mach0)
+/*
+ * One Mach per processor, which is what MACHP(n) was pretending to be:
+ * it returned &mach0 whatever n was, harmless only while there was one
+ * processor.  machp[0] is &mach0, set by machinit(); machp[n] for n > 0
+ * is set by that processor itself, in cpustart() (smpbcm.c), and is nil
+ * until then.  Every portable user of MACHP either passes 0 or is
+ * guarded by active.machs[n], which a processor that is not running a
+ * scheduler does not set.
+ */
+#define	MACHP(n)	(machp[n])
 
 extern Mach mach0;
+extern Mach *machp[MAXMACH];
 
 /*
  * m and up are registers, not globals, and that is what makes them

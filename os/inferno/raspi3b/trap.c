@@ -125,6 +125,8 @@ buildslot(u32 *slot, int class)
 	slot[2] = insn_b(&slot[2], (void*)crumbentry);
 }
 
+static u32 *vectab;			/* the built table; see vectorinstall() */
+
 static void
 vectorbuild(void)
 {
@@ -132,6 +134,7 @@ vectorbuild(void)
 	int i;
 
 	v = (u32*)(((uintptr)rawvectab + VBAR_ALIGN-1) & ~(uintptr)(VBAR_ALIGN-1));
+	vectab = v;
 
 	for(i = 0; i < NSlot; i++){
 		u32 *slot = v + i*(SlotSize/4);
@@ -238,6 +241,21 @@ gicinit(void)
 	coherence();
 }
 
+/*
+ * Install the table on this processor.  VBAR_EL1 is per-processor state,
+ * so a processor that starts after trapinit() has run has no vectors at
+ * all until it asks for them -- and an exception with no vectors on this
+ * part is a silent hang with every exception masked.  The table itself is
+ * shared and is not written again after vectorbuild(), so there is
+ * nothing to copy.
+ */
+void
+vectorinstall(void)
+{
+	if(vectab != nil)
+		vectorinit(vectab);
+}
+
 void
 trapinit(void)
 {
@@ -327,9 +345,32 @@ trap(Ureg *ur)
 	switch(ur->type){
 	case TIrq:
 		if(getcntpctl() & CntpIStatus){
+			/*
+			 * Every processor has its own generic timer, so every
+			 * processor gets its own timer interrupt here.  Only
+			 * processor 0 may run clockintr(), which accounts
+			 * process time, walks the alarm and soft-timer queues
+			 * and drives the scheduler's clock -- shared state
+			 * this kernel's portable half does not protect against
+			 * a second processor.  A secondary counts and re-arms,
+			 * and nothing else: clock.c has the argument.
+			 */
+			if(m->machno != 0){
+				clocksecondary(ur);
+				return;
+			}
 			clockintr(ur);
 			return;
 		}
+		/*
+		 * Peripheral IRQs are routed to processor 0 alone
+		 * (GPU_INT_ROUTING, gicinit above), so a secondary reaching
+		 * here has taken an interrupt nobody meant it to have.  Its
+		 * handlers would touch driver state concurrently with
+		 * processor 0's; dismiss it instead.
+		 */
+		if(m->machno != 0)
+			return;
 		/*
 		 * Both GPU banks.  The controller carries 64 GPU sources
 		 * in IRQ_PENDING1 (0..31) and IRQ_PENDING2 (32..63), and

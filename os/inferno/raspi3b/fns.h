@@ -15,6 +15,10 @@ ulong	tk2ms(ulong);
 void	coherence(void);
 void	cpuboot(void);			/* release the other three cores */
 void	cpustart(int);			/* what a released core runs */
+void	clockinitsecondary(void);	/* the timer, on a processor not 0 */
+void	clocksecondary(Ureg*);		/* and its whole interrupt handler */
+void	vectorinstall(void);		/* VBAR_EL1 on this processor */
+ulong	getsctlr(void);			/* SCTLR_EL1: bit 0 is MMU-and-caches-on */
 
 /*
  * Where a DMA transfer stopped, for the driver that owns the

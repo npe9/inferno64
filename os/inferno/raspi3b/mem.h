@@ -18,7 +18,14 @@
 #define	MIN(a, b)	((a) < (b)? (a): (b))
 #define	MAX(a, b)	((a) > (b)? (a): (b))
 
-#define	MAXMACH		1
+/*
+ * Four, because the BCM2837 has four Cortex-A53s and smpbcm.c starts
+ * three of them.  It sizes machp[] and active.machs[]; every portable
+ * loop over MAXMACH is guarded by active.machs[id], which stays 0 for a
+ * processor that is not running a scheduler, and conf.nmach stays 1, so
+ * procwired() and devcons's Qsysstat still see one processor.
+ */
+#define	MAXMACH		4
 #define	HZ		100
 #define	KSTACK		(32*1024)
 

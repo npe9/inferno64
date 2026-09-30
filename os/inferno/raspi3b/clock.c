@@ -159,6 +159,51 @@ clockinit(void)
 	timerie();
 }
 
+/*
+ * The same two things for a processor that is not processor 0.
+ *
+ * clockinitsecondary() is clockinit() minus everything that belongs to
+ * the machine rather than to this processor: CNTFRQ, CNTP_CVAL, the
+ * timer enable and the BCM2836 per-core routing register are all
+ * per-processor state, and conf.cpuspeed and the soft-timer queues are
+ * not.  The routing register is 0x40000040 + 4*machno -- one per core,
+ * bit 1 being CNTPNSIRQ -- so each processor arms its own.
+ *
+ * clocksecondary() is clockintr() minus everything that touches a
+ * process, a queue or a lock: it counts and re-arms.  That is the whole
+ * handler, and it is deliberately not clockintr(): accounttime(),
+ * checkalarms(), timercheck() and hzsched() all reach shared scheduler
+ * state that this kernel's portable half has never been asked to
+ * protect against a second processor.  What m->ticks rising on three
+ * processors at once proves is narrow and real -- each is taking its
+ * own timer interrupt, through its own vector table, into its own Mach.
+ */
+void
+clockinitsecondary(void)
+{
+	uvlong freq, when;
+
+	cntfrq(&freq);
+	m->cpuhz = (ulong)freq;
+	m->delayloop = m->cpuhz/1000;
+	m->ticks = 0;
+	*(volatile ulong*)(0x40000040 + 4*m->machno) = 1<<1;
+	coherence();
+	when = now() + m->cpuhz/HZ;
+	hwtimerset(&when);
+	timerie();
+}
+
+void
+clocksecondary(Ureg*)
+{
+	uvlong when;
+
+	m->ticks++;
+	when = now() + m->cpuhz/HZ;
+	hwtimerset(&when);
+}
+
 void
 clockpoll(void)
 {
