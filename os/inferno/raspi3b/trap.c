@@ -127,6 +127,16 @@ buildslot(u32 *slot, int class)
 
 static u32 *vectab;			/* the built table; see vectorinstall() */
 
+/*
+ * A second table, every slot of which branches to l.s's secirq: a
+ * secondary processor's whole handler, which touches no stack, no Ureg, no
+ * crumb record and no C.  Built only when smpstart says a secondary will
+ * use it, and installed by that processor in vectorinstallsec().  The
+ * argument for why it exists is in l.s above secirq.
+ */
+static u32	secrawvectab[NSlot*SlotSize/4 + VBAR_ALIGN/4];
+static u32	*secvectab;
+
 static void
 vectorbuild(void)
 {
@@ -254,6 +264,41 @@ vectorinstall(void)
 {
 	if(vectab != nil)
 		vectorinit(vectab);
+}
+
+/*
+ * Build the secondaries' table.  Core 0 does this, once, before it releases
+ * anybody; the table is not written again afterwards.
+ */
+void
+vectorbuildsec(void)
+{
+	extern void secirq(void);
+	u32 *v;
+	int i;
+
+	v = (u32*)(((uintptr)secrawvectab + VBAR_ALIGN-1) & ~(uintptr)(VBAR_ALIGN-1));
+	for(i = 0; i < NSlot; i++)
+		v[i*(SlotSize/4)] = insn_b(&v[i*(SlotSize/4)], (void*)secirq);
+	cacheflush(v, NSlot*SlotSize);
+	cacheiinv();
+	secvectab = v;
+	coherence();
+}
+
+/*
+ * And a secondary installs it on itself.  cacheiinv() here and not only in
+ * vectorbuildsec(): IC IALLU is local to the processor that runs it, so the
+ * processor about to fetch these instructions has to drop its own
+ * instruction cache, whatever core 0 did to its.
+ */
+void
+vectorinstallsec(void)
+{
+	if(secvectab == nil)
+		return;
+	cacheiinv();
+	vectorinit(secvectab);
 }
 
 void

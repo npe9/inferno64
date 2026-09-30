@@ -37,18 +37,21 @@
  * secondary holding a console lock when core 0 wants it is exactly the
  * kind of thing that would look like the board hanging at boot.
  *
- * THE REPORT IS DELIBERATELY IN TWO HALVES, IN TWO CACHE LINES.  mpidr,
- * el and sp are written before the MMU goes on, so they reach DRAM
- * directly and core 0 can read them back by invalidating its own copy
- * -- no inter-core cache coherency required.  alive is written after,
- * from Normal inner-shareable memory, so it arrives only if the two
- * cores' caches really are coherent (which on real hardware means
- * armstub8 set CPUECTLR_EL1.SMPEN for every core before it dropped to
- * EL2; this kernel does not write CPUECTLR itself, because access to it
- * from EL1 is trappable and a trap here would be a silent hang).  So
- * the two halves fail separately and say different things: nothing at
- * all means the core never ran, and the first half without the second
- * means it ran but its memory is not coherent with core 0's.
+ * THE REPORT IS IN TWO HALVES, IN TWO CACHE LINES.  mpidr, el and sp are
+ * written before the MMU goes on, so they reach DRAM directly; alive is
+ * written after, from Normal inner-shareable memory.  Core 0 invalidates
+ * its own copy of both before reading, so nothing at all means the core
+ * never ran and the first half without the second means it stopped
+ * between them.
+ *
+ * IT DOES NOT PROVE COHERENCY, and an earlier version of this comment
+ * claimed it did.  Core 0 invalidates before every read, which makes the
+ * read work whether the caches are coherent or not; a check for coherency
+ * would have to read without maintenance and is not what this is.  Whether
+ * armstub8 sets CPUECTLR_EL1.SMPEN for each core is therefore still an
+ * assumption here -- this kernel does not write CPUECTLR itself, because
+ * access to it from EL1 is trappable and a trap here would be a silent
+ * hang.
  *
  * They must be in separate cache lines for that to be true.  Core 0
  * cleans-and-invalidates to read the first half; if the second shared a
@@ -128,13 +131,15 @@ static uchar	machmem[sizeof(Cpumach)*Ncpu + Lines];
 static Cpumach	*cpumach;
 
 static void	recall(int);
+static ulong	secticks(int);
 
 /*
  * How far to take the other three processors.  0 leaves them parked as
  * they were before any of this existed; 1 releases each one, lets it
  * report itself and go back to resting with interrupts still masked; 2
  * gives it its own Mach, vector table and timer and lets it idle with
- * interrupts on.
+ * interrupts on; 3 is 2 with l.s's secirq as the whole handler instead of
+ * crumbentry and trap(), which is the instrument described there.
  *
  * It is here because two changes arrived together -- m and up became
  * registers, and the secondaries started taking interrupts -- and a
@@ -254,7 +259,10 @@ cpustart(int n)
 	 * And its own vectors, timer and route.  active.machs[n] is
 	 * deliberately not set: that array means "running a scheduler".
 	 */
-	vectorinstall();
+	if(smpstart >= 3)
+		vectorinstallsec();
+	else
+		vectorinstall();
 	clockinitsecondary();
 
 	/*
@@ -327,6 +335,8 @@ cpuboot(void)
 			Parkwfe, Parkbr);
 		return;
 	}
+	if(smpstart >= 3)
+		vectorbuildsec();
 	tab = (uintptr*)Spintab;
 	fp = parkprint(park);
 	cacheinval(tab, sizeof(uintptr));	/* slot 0: the fingerprint */
@@ -375,16 +385,19 @@ cpuboot(void)
 	 * interrupts, and wildly more would mean it is taking somebody
 	 * else's.
 	 */
-	for(n = 1; n < Ncpu; n++)
-		if(cpurep[n].alive && machp[n] != nil)
-			cpurep[n].ticks = machp[n]->ticks;
+	for(n = 1; n < Ncpu; n++){
+		if(!cpurep[n].alive || machp[n] == nil)
+			continue;
+		cpurep[n].ticks = secticks(n);
+	}
 	delay(Tickms);
 	for(n = 1; n < Ncpu; n++){
 		if(!cpurep[n].alive || machp[n] == nil)
 			continue;
-		print("CPU%d ticks %lud in %d ms (mach %#p machno %d)\n",
-			n, machp[n]->ticks - cpurep[n].ticks, Tickms,
-			machp[n], machp[n]->machno);
+		print("CPU%d ticks %lud in %d ms (mach %#p machno %d)%s\n",
+			n, secticks(n) - cpurep[n].ticks, Tickms,
+			machp[n], machp[n]->machno,
+			smpstart >= 3? " secirq": "");
 	}
 	recall(1);
 }
@@ -412,6 +425,16 @@ cpuboot(void)
  * invalidating core 0's own copy of `alive' would only throw away the
  * zero written just below.
  */
+static ulong
+secticks(int n)
+{
+	extern uchar sectick[];
+
+	if(smpstart >= 3)
+		return *(ulong*)(sectick + n*Lines);	/* secirq's own count */
+	return machp[n]->ticks;
+}
+
 static void
 recall(int n)
 {
@@ -442,8 +465,8 @@ recall(int n)
 		print("CPU%d RECALL FAILED after %d ms\n", n, Startms);
 		return;
 	}
-	t = machp[n]->ticks;
+	t = secticks(n);
 	delay(Tickms);
 	print("CPU%d recalled in %d ms, ticks %lud in %d ms after it\n",
-		n, i, machp[n]->ticks - t, Tickms);
+		n, i, secticks(n) - t, Tickms);
 }

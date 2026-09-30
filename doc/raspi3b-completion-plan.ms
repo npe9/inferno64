@@ -13294,19 +13294,82 @@ per-processor means giving
 .CW crumbdump()
 a stride as well.
 .PP
-.B "Where to look next."
-The remaining shared state in a secondary's interrupt path is small and can
-be removed a piece at a time, which is the instrument to build rather than
-another theory.  Give the secondaries a vector table of their own, or
-better an entry of a dozen instructions of assembly \(em re-arm the timer,
-return \(em so that a secondary's interrupt touches neither
-.CW crumbentry
-nor
-.CW trap()
-nor any C at all.  If the board then boots at level 2, the fault is in what
-those two still share; if it does not, the interrupts are doing something
-to core 0 that has nothing to do with the code they run, and the next
-question is the interconnect rather than the kernel.
+.B "It is not the code the secondary runs."
+That was the next thing to remove, so it was removed.
+.CW smpstart
+3 gives the secondaries a vector table of their own, every slot of which
+branches to
+.CW secirq
+in
+.CW l.s :
+fourteen instructions that re-arm the timer through CNTP_TVAL_EL0 and
+return, touching no stack, no Ureg, no crumb record, no C, and no memory
+core 0 can reach.  X9 and X10 are saved in per-processor system registers
+rather than anywhere in memory, and the count is one 64-byte line per
+processor.
+.PP
+It works, and the board freezes anyway, in the same place.  On the board:
+.IP
+.EX
+CPU1 ticks 20 in 200 ms (mach 0x6ce880 machno 1) secirq
+CPU2 ticks 21 in 200 ms (mach 0x6ce980 machno 2) secirq
+CPU3 ticks 21 in 200 ms (mach 0x6cea80 machno 3) secirq
+CPU1 recalled in 0 ms, ticks 20 in 200 ms after it
+.EE
+.PP
+\(em which also confirms the constant in
+.CW secirq ,
+since 192000 counts came out at twenty a fifth of a second and CNTFRQ on
+this part is 19.2MHz.  Then
+.CW "ILOCK-TRACE on" ,
+and nothing.  So a secondary taking a timer interrupt through fourteen
+instructions that share nothing still kills core 0, and no amount of
+auditing what the handler does will find it.
+.PP
+.B "What the corruption actually is."
+Core 0's link register at the freeze is
+.CW xec+0xac ,
+and the instruction before it disassembles to
+.CW "ldr x10, [x28, #0x2d50]"
+followed by
+.CW "blr x10" .
+That global is
+.CW comvec ,
+libinterp's JIT entry trampoline, allocated once with
+.CW mallocz
+and never freed.  It held 0x3c10dcc, which no allocation in this kernel can
+return \(em
+.CW conf.topofmem
+is 256MB \(em and which is in the range the VideoCore framebuffer occupies,
+the only memory above 256MB this kernel writes to at all.  So one word of
+libinterp's data segment was overwritten, and the interpreter called it.
+.PP
+That word's cache line holds
+.CW endian ,
+.CW csshadow ,
+.CW comvec ,
+.CW IPnoaddr
+and
+.CW emmcnslept ,
+all of them core 0's, and a secondary at
+.CW smpstart
+3 dirties exactly one line of its own.  So this is not one processor's
+writeback landing on another's line.  What is left is a wild store or a
+misdirected DMA on core 0 itself, made reachable by three processors
+changing the timing on a shared L2 and a shared memory controller \(em which
+is a latent bug of this port that the secondaries expose rather than a bug
+in starting them.
+.PP
+.B "The instrument that names the writer."
+A hardware watchpoint on
+.CW comvec .
+The A53 has four, openocd enumerates them, and the kernel can also arm one
+itself through DBGWVR0_EL1 and DBGWCR0_EL1 and take the debug exception
+into the vector table it already has, which avoids racing the debugger
+against a twenty-second boot.  Either way the answer is the ELR at the
+watchpoint: the exact instruction that writes the word.  That is the next
+piece of work, and it is worth having for its own sake \(em this kernel has
+had no way to ask "who wrote this address" at all.
 .PP
 .B "The rest of the machinery, which is done."
 .CW MAXMACH

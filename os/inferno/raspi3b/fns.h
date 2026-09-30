@@ -18,6 +18,8 @@ void	cpustart(int);			/* what a released core runs */
 void	clockinitsecondary(void);	/* the timer, on a processor not 0 */
 void	clocksecondary(Ureg*);		/* and its whole interrupt handler */
 void	vectorinstall(void);		/* VBAR_EL1 on this processor */
+void	vectorbuildsec(void);		/* the secondaries' own table */
+void	vectorinstallsec(void);		/* and VBAR_EL1 pointing at it */
 ulong	getsctlr(void);			/* SCTLR_EL1: bit 0 is MMU-and-caches-on */
 
 /*

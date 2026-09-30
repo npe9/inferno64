@@ -42,6 +42,7 @@
 #define	D_TPIDR_EL1	SYSARG5(3,0,13,0,4)
 #define	D_TPIDRRO_EL0	SYSARG5(3,3,13,0,3)
 #define	D_TPIDR_EL0	SYSARG5(3,3,13,0,2)
+#define	D_CNTP_TVAL_EL0	SYSARG5(3,3,14,2,0)
 #define	CRUMB		0x20000000
 #define	D_CNTVOFF_EL2	SYSARG5(3,4,14,0,3)
 #define	D_ICC_SRE_EL1	SYSARG5(3,0,12,12,5)
@@ -440,6 +441,49 @@ TEXT	getcntpcval(SB), 1, $-4
  * release out of armstub8's loop from a second one out of the park loop.
  * See cpustart() in smpbcm.c.
  */
+/*
+ * secirq: a secondary processor's whole interrupt handler, for smpstart 3.
+ *
+ * It exists as an instrument.  At smpstart 2 a secondary's timer interrupt
+ * goes through crumbentry and trap() like any other, and the board then
+ * freezes in the first Dis program -- with core 0's pc outside the kernel
+ * and its link register in the Dis interpreter's dispatch.  One shared word
+ * in crumbentry was found and fixed and was not the cause, so the next
+ * question is whether it is the code a secondary runs in the handler at all.
+ * This answers it: fourteen instructions that touch no stack, no Ureg, no
+ * crumb record, no C, and no memory that core 0 can reach.  X9 and X10 are
+ * saved in per-processor system registers rather than anywhere in memory.
+ *
+ * If the board boots at smpstart 3 and freezes at 2, what is left to blame
+ * is what crumbentry and trap() still share.  If it freezes at 3 as well,
+ * then it is the interrupts themselves and not the code they run, and the
+ * next question is the interconnect rather than the kernel.
+ *
+ * The re-arm is CNTP_TVAL_EL0, which is relative, so there is no counter to
+ * read and no division to do: one constant, and writing it clears the
+ * timer's ISTATUS, which is what dismisses the interrupt.  The constant is
+ * CNTFRQ/HZ for this part -- 19.2MHz, which the board prints at boot -- and
+ * it is written out rather than computed because this handler must not read
+ * memory to do its job.  sectick is one 64-byte line per processor, so the
+ * count is per-processor state as well.
+ */
+TEXT	secirq(SB), 1, $-4
+	MSR	R9, SPR(D_TPIDR_EL0)
+	MSR	R10, SPR(D_TPIDRRO_EL0)
+	MOV	$0x2ee00, R9		/* 192000: 19.2MHz / 100Hz */
+	MSR	R9, SPR(D_CNTP_TVAL_EL0)
+	MRS	SPR(D_MPIDR_EL1), R10
+	AND	$3, R10, R10
+	LSL	$6, R10, R10		/* 64 bytes a processor */
+	MOV	$sectick(SB), R9
+	ADD	R10, R9, R9
+	MOV	0(R9), R10
+	ADD	$1, R10
+	MOV	R10, 0(R9)
+	MRS	SPR(D_TPIDRRO_EL0), R10
+	MRS	SPR(D_TPIDR_EL0), R9
+	ERET
+
 TEXT	getsctlr(SB), 1, $-4
 	MRS	SPR(D_SCTLR_EL1), R0
 	RET	R30
@@ -451,7 +495,18 @@ TEXT	getdaif(SB), 1, $-4
 GLOBL	dtbptr(SB), $8
 GLOBL	bootx0(SB), $8		/* x0 as entered: DTB, or the JTAG magic */
 GLOBL	stack(SB), $KSTACK
-GLOBL	secstack(SB), $(3*KSTACK)	/* one stack per secondary; see boot2 */
+/*
+ * One stack per secondary (see boot2), and 64 bytes of slack at the top so
+ * that core 3's stack does not share a cache line with whatever the linker
+ * puts next.  It put mach0 there, whose first word is m->splpc, which core 0
+ * writes on every splhi() and splx() -- so the top sixteen bytes of core 3's
+ * stack and the first sixteen of core 0's Mach were one 64-byte line, which
+ * two processors wrote.  Coherency makes that merely slow; without it, one
+ * core's writeback restores the other's stale bytes.  Either way it is not
+ * an arrangement to leave in place.
+ */
+GLOBL	secstack(SB), $(3*KSTACK+64)
+GLOBL	sectick(SB), $(4*64)		/* secirq's count, one line per processor */
 GLOBL	mach0(SB), $(4*1024)
 GLOBL	wildstack(SB), $(16*1024)
 
