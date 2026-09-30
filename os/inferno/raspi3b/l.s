@@ -134,22 +134,113 @@
  * does mean SP).  Route through R2 rather than trust the one-step
  * pseudo-op.
  */
+/*
+ * WHERE A SECONDARY CORE RESTS IS A FIXED ADDRESS, AND THE SEVEN
+ * INSTRUCTIONS BELOW IT MUST NOT CHANGE SIZE.
+ *
+ * A core parked by one build of this kernel goes on executing at that
+ * address after the next build is loaded over it: tools/jtag/boot.sh
+ * restarts the board without resetting it (jtagrestart re-enters
+ * KTZERO, the cores are not reset, and there is no JTAG path to the
+ * watchdog), so a parked core inherits whatever code the new image put
+ * where its loop used to be.  (All of it is one TEXT block for the same
+ * reason: 7l does not lay TEXT symbols out in file order -- splitting
+ * the loop off as its own symbol put it 1.4MB away and made the
+ * core-number test "branch too far".)  While nothing ever signalled the parked
+ * cores that was only theoretical -- WFE may wake spuriously, but the
+ * next instruction was a branch back.  Now that core 0 does SEV it is
+ * real, and three cores executing arbitrary code can store anywhere.
+ *
+ * So the loop lives at the top of _main, reached by falling through the
+ * core-number test rather than by a branch, with nothing in front of it
+ * but instructions of a fixed size: no symbol references (7l turns
+ * "MOV $sym(SB), R" into a literal-pool load whose form it is free to
+ * change) and no large constants.  mem.h's Cpuparkwait names the
+ * address that produces, and smpbcm.c releases no core at all unless the
+ * words it finds there really are this loop -- the invariant is checked
+ * against the built image at every boot, not asserted in a comment, and
+ * a label cannot serve because a label is not a symbol.  Cpupark,
+ * where a core goes to rest again, is KTZERO itself: re-deriving the
+ * slot address costs four instructions and needs no second constant.
+ *
+ * THE LOOP: wait for core 0 to leave an address in this core's armstub
+ * spin-table slot, consume it, and branch there.  The slot is at
+ * Spintab + 8*n, which is where a real Pi 3's armstub8 parks cores 1-3
+ * already, so one release drives both cases -- a core still in the
+ * firmware's loop on hardware, and a core that reached this loop
+ * because QEMU's -M raspi3b starts all four cores at KTZERO.  Clearing
+ * the slot after reading it is what makes "resting" mean "slot zero",
+ * so a stale value cannot fling a core at an address from a kernel that
+ * is no longer loaded.
+ *
+ * It runs with the MMU off, which is not a defect: SCTLR.I is clear as
+ * well, so every instruction here is fetched from DRAM rather than from
+ * an I-cache, and a new kernel written over the loop takes effect for a
+ * core already spinning in it.  A core resting here holds no kernel
+ * state at all -- no Mach, no stack, no lock.
+ */
 TEXT	_main(SB), 1, $-4
 	/* Preserve firmware's DTB pointer (x0) across early EL/core setup. */
 	MOV	R0, R19
 	/*
 	 * QEMU raspi3b is a quad-core Pi 3 and starts ALL FOUR cores at
-	 * 0x80000.  This kernel is MAXMACH 1, so the three secondaries must
-	 * be parked or they trample the console and the boot.  Read MPIDR,
-	 * and if the low affinity byte is non-zero, spin at WFE forever.
-	 * Only core 0 continues.
+	 * 0x80000.  Read MPIDR, and if the low affinity byte is non-zero,
+	 * fall into the park loop and rest there until core 0 asks for this
+	 * core by name.  Only core 0 goes on into the boot.  (On real
+	 * hardware a secondary never arrives here at all: armstub8 holds it
+	 * in the same spin table this loop polls.)
 	 */
-	MRS	SPR(D_MPIDR_EL1), R0
-	AND	$0xff, R0, R0
-	CBNZW	R0, parkcore
+	MRS	SPR(D_MPIDR_EL1), R21
+	AND	$0xff, R21, R21
+	CBZW	R21, iscore0
+	MOV	$Spintab, R1
+	LSL	$3, R21, R2
+	ADD	R2, R1, R1
+parkwait:				/* Cpuparkwait: this is the address */
+	WFE
+	MOV	0(R1), R2
+	CBZ	R2, parkwait
+	MOV	$0, R3
+	MOV	R3, 0(R1)		/* consume it: resting means slot zero */
+	DSB	$15
+	B	(R2)
+iscore0:
+	MOV	$boot1(SB), R20		/* core 0 resumes here after the drop */
+	B	eldrop(SB)
+
+/*
+ * Where a released secondary arrives.  Core 0 writes this address into
+ * the core's spin-table slot; the core reaches it either from
+ * cpuparkloop (QEMU, where it has been resting at EL3) or straight out
+ * of armstub8's own loop (real hardware, at EL2).  Both then take the
+ * same drop that core 0 takes, which is why eldrop reads its
+ * destination from R20 instead of naming boot1.
+ */
+TEXT	_secondary(SB), 1, $-4
+	MRS	SPR(D_MPIDR_EL1), R21
+	AND	$0xff, R21, R21
 	/*
-	 * Core 0.  Drop to EL1 in one ERET, from whatever EL the firmware
-	 * entered at.  QEMU's -M raspi3b enters at EL3; a real Pi 3's
+	 * Clear this core's own slot.  The park loop clears it before
+	 * branching, but a core released straight out of armstub8's loop on
+	 * real hardware never ran the park loop, and armstub does not clear
+	 * the slot for us: leaving it set would fling the core back here the
+	 * instant it went to rest, for ever.  The core that owns the slot is
+	 * the one that clears it, so core 0 never has to write a slot it did
+	 * not write last -- see the cache discipline in smpbcm.c.
+	 */
+	MOV	$Spintab, R1
+	LSL	$3, R21, R2
+	ADD	R2, R1, R1
+	MOV	$0, R3
+	MOV	R3, 0(R1)
+	DSB	$15
+	MOV	$boot2(SB), R20
+	B	eldrop(SB)
+
+TEXT	eldrop(SB), 1, $-4
+	/*
+	 * Drop to EL1 in one ERET, from whatever EL the firmware
+	 * entered at, and resume at R20.  QEMU's -M raspi3b enters at EL3; a real Pi 3's
 	 * armstub64 enters a 64-bit kernel at EL2.  Both need HCR_EL2.RW set
 	 * so EL1 comes up AArch64, but the drop uses that EL's own SPSR/ELR
 	 * (and SCR_EL3 only exists at EL3) -- writing SCR_EL3 at EL2 would
@@ -158,7 +249,23 @@ TEXT	_main(SB), 1, $-4
 	MRS	CurrentEL, R0
 	AND	$0xc, R0, R0
 	CMP	$0x4, R0
-	BEQ	atel1			/* already at EL1 */
+	BNE	notatel1
+	/*
+	 * Already at EL1 (a warm restart through the JTAG trampoline, which
+	 * re-enters at whatever EL the last kernel ran in): no drop to make,
+	 * just go.  Written as a branch AROUND the indirect branch rather
+	 * than as "BEQ atel1" to it, because 7l's branch-follow pass cannot
+	 * retarget a conditional branch whose target is an indirect one: it
+	 * copied "B (R20)"'s register operand where a branch offset belongs
+	 * and emitted B.EQ with offset 0, an instruction that jumps to
+	 * itself.  That cost a JTAG session -- the board hung with the pc
+	 * parked on 0x54000000 and single-stepping did not move it, which is
+	 * what a self-branch looks like from a debugger.  The old code
+	 * reached boot1 with BL, and a BL is not an unconditional branch, so
+	 * the pass never touched it.
+	 */
+	B	(R20)
+notatel1:
 	CMP	$0x8, R0
 	BEQ	atel2			/* EL2 (real Pi firmware) */
 	MOV	$(1<<31), R0		/* EL3 (QEMU): drop EL3 -> EL1 */
@@ -167,8 +274,7 @@ TEXT	_main(SB), 1, $-4
 	MSR	R0, SPR(D_SCR_EL3)
 	MOV	$0x3c5, R0
 	MSR	R0, SPR(D_SPSR_EL3)
-	MOV	$boot1(SB), R0
-	MSR	R0, SPR(D_ELR_EL3)
+	MSR	R20, SPR(D_ELR_EL3)
 	ERET
 atel2:
 	/*
@@ -205,16 +311,10 @@ atel2:
 	MSR	R0, SPR(D_HCR_EL2)
 	MOV	$0x3c5, R0		/* EL1h, DAIF masked */
 	MSR	R0, SPR(D_SPSR_EL2)
-	MOV	$boot1(SB), R0
-	MSR	R0, SPR(D_ELR_EL2)
+	MSR	R20, SPR(D_ELR_EL2)
 	ERET
-atel1:
-	BL	boot1(SB)
 dead:
 	B	dead
-parkcore:
-	WFE
-	B	parkcore
 
 TEXT	boot1(SB), 1, $-4
 	MOV	$stack+KSTACK(SB), R2
@@ -243,6 +343,63 @@ haveadtb:
 deadb:
 	B	deadb
 
+/*
+ * A released secondary's first kernel code: give it its own stack and
+ * call cpustart(n).  R21 is the core number, carried here from
+ * _secondary through the EL drop (ERET does not touch the general
+ * registers).
+ *
+ * secstack holds three stacks, one per secondary, and core n's stack
+ * grows down from secstack + n*KSTACK -- so core 1 uses the first
+ * KSTACK bytes, core 3 the last, and nothing is reserved for core 0,
+ * which has its own "stack" above.  The two shifts round the top down
+ * to a 16-byte boundary because AArch64 faults on an SP that is not
+ * 16-aligned the moment anything uses it, and a GLOBL's alignment is
+ * the linker's business, not this file's.
+ */
+TEXT	boot2(SB), 1, $-4
+	MOV	$secstack(SB), R2
+	MOV	$KSTACK, R4
+	MUL	R4, R21, R3
+	ADD	R3, R2, R2
+	LSR	$4, R2, R2
+	LSL	$4, R2, R2
+	MOV	R2, RSP
+	MOV	$setSB(SB), R28
+	MOV	R21, R0			/* the core number */
+	BL	cpustart(SB)
+dead2:
+	B	dead2
+
+/*
+ * sev(): wake every core sitting at WFE.  The event is sticky per core
+ * -- a SEV before a WFE makes that WFE return at once -- so a release
+ * cannot be lost by arriving early.
+ */
+TEXT	sev(SB), 1, $-4
+	SEV
+	RET	R30
+
+/*
+ * cpupark(): go back to resting, at the fixed address the park loop
+ * lives at rather than at the cpuparkloop symbol, because the point of
+ * Cpupark is that it is the same address in every build.  Does not
+ * return.
+ */
+TEXT	cpupark(SB), 1, $-4
+	MOV	$Cpupark, R1
+	B	(R1)
+
+TEXT	getmpidr(SB), 1, $-4
+	MRS	SPR(D_MPIDR_EL1), R1
+	MOV	R1, 0(R0)
+	RET	R30
+
+TEXT	getcurrentel(SB), 1, $-4
+	MRS	CurrentEL, R1
+	MOV	R1, 0(R0)
+	RET	R30
+
 /* getcntpctl(): CNTP_CTL_EL0, whose ISTATUS bit (2) says the generic
  * timer has fired - used in trap() since raspi3b has no local IRQ
  * source register (0x40000000 is RAM here). */
@@ -262,6 +419,7 @@ TEXT	getdaif(SB), 1, $-4
 GLOBL	dtbptr(SB), $8
 GLOBL	bootx0(SB), $8		/* x0 as entered: DTB, or the JTAG magic */
 GLOBL	stack(SB), $KSTACK
+GLOBL	secstack(SB), $(3*KSTACK)	/* one stack per secondary; see boot2 */
 GLOBL	mach0(SB), $(4*1024)
 GLOBL	wildstack(SB), $(16*1024)
 
@@ -378,6 +536,98 @@ tas1:
 	RET	R30
 tasnommu:
 	B	tasbeforemmu(SB)
+
+/*
+ * cmpswap(s32*, s32 old, s32 new), ainc(int*) and adec(int*): the
+ * kernel's and libinterp's atomics, as the exclusives they are meant to
+ * be.  archbcm.c had all three as C with interrupts masked, which is an
+ * atomic only while MAXMACH is 1: masking interrupts stops this core and
+ * says nothing about the other three.  ainc and adec return the new
+ * value, sign-extended, because a reference count that has gone negative
+ * has to compare as negative.
+ *
+ * Each checks SCTLR.M first, exactly as _tas does and for the same
+ * reason: an LDXR/STXR pair is unpredictable until RAM has Normal-memory
+ * translation attributes, and these are reachable before mmuinit().  The
+ * fallback is a plain read-modify-write, which is sound there because
+ * only core 0 is running at that point -- a secondary is released long
+ * after the MMU is on.
+ */
+TEXT	ainc(SB), 1, $-4
+	MRS	SPR(D_SCTLR_EL1), R1
+	AND	$1, R1, R1
+	CBZ	R1, aincnommu
+	MOV	R0, R3
+ainc1:
+	LDXRW	(R3), R1
+	ADDW	$1, R1, R1
+	STXRW	R4, R1, (R3)
+	CBNZW	R4, ainc1
+	DSB	$15
+	SXTW	R1, R0
+	RET	R30
+aincnommu:
+	MOVW	0(R0), R1
+	ADDW	$1, R1, R1
+	MOVW	R1, 0(R0)
+	SXTW	R1, R0
+	RET	R30
+
+TEXT	adec(SB), 1, $-4
+	MRS	SPR(D_SCTLR_EL1), R1
+	AND	$1, R1, R1
+	CBZ	R1, adecnommu
+	MOV	R0, R3
+adec1:
+	LDXRW	(R3), R1
+	SUBW	$1, R1, R1
+	STXRW	R4, R1, (R3)
+	CBNZW	R4, adec1
+	DSB	$15
+	SXTW	R1, R0
+	RET	R30
+adecnommu:
+	MOVW	0(R0), R1
+	SUBW	$1, R1, R1
+	MOVW	R1, 0(R0)
+	SXTW	R1, R0
+	RET	R30
+
+/*
+ * cmpswap: 1 if *addr was old and is now new, 0 if it was not.  A
+ * failed STXR is not a failed compare -- it means another core touched
+ * the line -- so only a mismatch returns 0, and contention retries.
+ */
+TEXT	cmpswap(SB), 1, $-4
+	MOVW	swapold+8(FP), R5
+	MOVW	swapnew+16(FP), R6
+	MRS	SPR(D_SCTLR_EL1), R1
+	AND	$1, R1, R1
+	CBZ	R1, casnommu
+	MOV	R0, R3
+cas1:
+	LDXRW	(R3), R1
+	CMPW	R5, R1
+	BNE	casno
+	STXRW	R4, R6, (R3)
+	CBNZW	R4, cas1
+	DSB	$15
+	MOV	$1, R0
+	RET	R30
+casno:
+	CLREX
+	MOV	$0, R0
+	RET	R30
+casnommu:
+	MOVW	0(R0), R1
+	CMPW	R5, R1
+	BNE	casno2
+	MOVW	R6, 0(R0)
+	MOV	$1, R0
+	RET	R30
+casno2:
+	MOV	$0, R0
+	RET	R30
 
 TEXT	setlabel(SB), 1, $-4
 	MOV	R0, R2

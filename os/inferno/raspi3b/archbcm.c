@@ -148,50 +148,17 @@ microdelay(int us)
 		clockpoll();
 }
 
-int
-cmpswap(s32 *addr, s32 old, s32 new)
-{
-	int s, r;
-
-	s = splhi();
-	if(*addr == old){
-		*addr = new;
-		r = 1;
-	}else
-		r = 0;
-	splx(s);
-	return r;
-}
-
 /*
- * interp.h's AINC/ADEC (libinterp's Dis reference-counting primitives)
- * -- spl-masked, same uniprocessor assumption cmpswap above already
- * makes (MAXMACH is 1 on this board).  Nothing in os/inferno provides
- * these for the "arm" (5c) objtype yet; every other board either
- * never actually links a caller of them or has its own equivalent
- * this port didn't inherit.
+ * cmpswap(), ainc() and adec() are in l.s, as LDXR/STXR loops.  They
+ * used to be here, in C, with interrupts masked -- which is an atomic
+ * only while MAXMACH is 1, because masking interrupts stops this core
+ * and says nothing about the other three.  Now that a secondary core
+ * runs kernel code (smpbcm.c), a counter that two cores can reach has
+ * to be incremented with the instructions that were built for it; the
+ * spl-masked versions were correct for a uniprocessor and are exactly
+ * the kind of thing that keeps working for months after it stops being
+ * true.
  */
-int
-ainc(int *addr)
-{
-	int s, r;
-
-	s = splhi();
-	r = ++*addr;
-	splx(s);
-	return r;
-}
-
-int
-adec(int *addr)
-{
-	int s, r;
-
-	s = splhi();
-	r = --*addr;
-	splx(s);
-	return r;
-}
 
 long
 archkprofmicrosecondspertick(void)

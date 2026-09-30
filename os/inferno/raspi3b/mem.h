@@ -26,7 +26,12 @@
 #define	PHYSDRAM	((uintptr)0x0)
 #define	DRAMSIZE	(256*1024*1024)
 #define	KZERO		PHYSDRAM
-#define	KTZERO		((uintptr)0x80000)
+/*
+ * KTZEROraw exists because l.s reads this header and 7a cannot parse a
+ * cast; Cpupark below is built from it, and nothing else should be.
+ */
+#define	KTZEROraw	0x80000
+#define	KTZERO		((uintptr)KTZEROraw)
 
 /*
  * Where the JTAG restart trampoline lives: below KTZERO, so an image
@@ -45,6 +50,28 @@
  * it -- see the note there about literal pools.
  */
 #define	Jtagmagic	0x4a544147		/* "JTAG" */
+
+/*
+ * The armstub8 spin table: one 64-bit slot per core, at these fixed low
+ * addresses, which is where the Pi's firmware stub leaves cores 1-3
+ * waiting for an address to branch to.  Core 0's slot (Spintab itself)
+ * is never used; core n's is Spintab + 8*n.  It survives the kernel:
+ * confinit() starts free memory at the end of the image, well above
+ * this, and the only thing this kernel puts below KTZERO is the JTAG
+ * trampoline at 0x70000.
+ *
+ * Cpupark is where a secondary goes to rest: the kernel's own entry
+ * point, whose first four instructions send any core but core 0 into the
+ * park loop.  Cpuparkwait is where it then sits, seven instructions in.
+ * Both have to be constants rather than symbols, because a core parked
+ * by one build keeps executing at that address when the next build is
+ * loaded over it, so neither may move between builds.  l.s has the
+ * argument in full; smpbcm.c checks at boot that the linker agrees
+ * about Cpuparkwait and releases nothing if it does not.
+ */
+#define	Spintab		0xd8
+#define	Cpupark		KTZEROraw
+#define	Cpuparkwait	(KTZEROraw+0x1c)
 
 #define	UART0		((uintptr)0x3f201000)	/* PL011 */
 #define	AUX0		((uintptr)0x3f215000)	/* BCM2835 AUX: mini UART (UART1) */

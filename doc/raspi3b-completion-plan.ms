@@ -3020,8 +3020,11 @@ Mode setting beyond the firmware's default, and hotplug, are absent.
 No wall-clock time: the Pi has no battery-backed clock, and nothing yet
 asks the firmware or a network for the time.
 .IP 5.
-The kernel is uniprocessor.  MAXMACH is 1 and cores 1-3 sit at WFE;
-arm64 SMP lives on another worktree.
+The kernel is uniprocessor.  MAXMACH is 1 and nothing is scheduled on more
+than one core \(em though cores 1-3 no longer sit at WFE for ever: each is
+released at boot, runs kernel C on its own stack with the MMU on, reports
+itself and goes back to resting.  See "The second, third and fourth cores
+run kernel code" below.
 .IP 6.
 Bluetooth is absent and conflicts with the console: it needs the PL011,
 which the console uses.  uartmini.c exists for the mini UART but is
@@ -12983,6 +12986,198 @@ I2S is a register-level check, not a driver that plays anything.
 .B "USB mass storage is QEMU-only,"
 not because it fails on hardware but because nothing has been plugged in.
 .NH 2
+The second, third and fourth cores run kernel code
+.PP
+The BCM2837 is four Cortex-A53s and this kernel has used one of them since
+the board first booted.  The other three were parked at
+.CW WFE
+by
+.CW l.s
+on the first day, as the fix for a garbled console \(em all four cores were
+running the same boot and writing the same UART, which produced both of the
+early blockers at once.  They are no longer parked for ever:
+.CW smpbcm.c
+releases each in turn, gives it its own stack, and has it say so.
+.PP
+What that proves, exactly.  A released core takes the same EL2-to-EL1 drop
+core 0 takes, runs kernel C on a stack of its own, turns the MMU on with
+core 0's page tables, writes its MPIDR, exception level and stack pointer,
+and then writes a second word from Normal cacheable memory to show that its
+caches are coherent with core 0's.  On the physical board, cold-booted from
+the card (build 1790780750, read out of the log ring):
+.IP
+.EX
+CPU1 alive: mpidr 0x80000001 el1 sp 0x2a5470 (19 ms)
+CPU2 alive: mpidr 0x80000002 el1 sp 0x2ad470 (16 ms)
+CPU3 alive: mpidr 0x80000003 el1 sp 0x2b5470 (19 ms)
+.EE
+.PP
+Every field in those lines is a check rather than a decoration.  The MPIDRs
+are the real affinities with the MP bit set, so each core is the one it was
+asked for.
+.CW el1
+says the EL2-to-EL1 drop taken out of armstub8's loop worked.
+.CW secstack
+is at 0x29d480 and KSTACK is 0x8000, so the three stack pointers fall one
+each inside [0x29d480, 0x2a5480), [0x2a5480, 0x2ad480) and [0x2ad480,
+0x2b5480) \(em which is what verifies
+.CW boot2 "'s"
+stack arithmetic instead of making it plausible.  And the
+.CW alive
+word arrived at all, which is the coherency half of the report.  Sixteen to
+nineteen milliseconds each, against nought under QEMU, is the WFE wake, the
+EL drop and a full set/way cache invalidate on real silicon.
+.PP
+What it does not prove.  There is no second processor here.
+.CW MAXMACH
+is still 1,
+.CW m
+is still one global that belongs to core 0, a secondary has no
+.CW Mach ,
+no vector table, no timer and no place in the scheduler, and it touches no
+lock and calls no
+.CW print .
+Having said its line it goes back to resting.  This is the bring-up step
+that the rest depends on, and nothing more.
+.PP
+.B "The report is in two halves on purpose, in two cache lines."
+MPIDR, the exception level and the stack pointer are written before the MMU
+goes on, so they reach DRAM directly and core 0 reads them back by
+invalidating its own copy \(em no inter-core coherency required.  The
+.CW alive
+word is written after, from cacheable memory, so it arrives only if the two
+cores really are coherent.  The two halves therefore fail separately and say
+different things: nothing at all means the core never ran, and the first
+half without the second means it ran but its memory is not visible to core
+0.  They have to be in separate cache lines for that to be true, because
+core 0 cleans-and-invalidates to read the first half and would otherwise
+write its own stale zero back over the second.
+.PP
+.B "The atomics were never atomic."
+.CW cmpswap ,
+.CW ainc
+and
+.CW adec
+were C in
+.CW archbcm.c
+with interrupts masked, which is an atomic only while
+.CW MAXMACH
+is 1: masking interrupts stops this core and says nothing about the other
+three.  They are LDXR/STXR loops in
+.CW l.s
+now, each with the same SCTLR.M check
+.CW _tas
+already had, because an exclusive pair is unpredictable until RAM has
+Normal-memory translation attributes and all three are reachable before
+.CW mmuinit() .
+This was a prerequisite, not a side errand: the moment a second core runs,
+a counter two cores can reach has to be incremented with the instructions
+that were built for it.
+.PP
+.B "A parked core is resting on an address, and the address must not move."
+.I tools/jtag/boot.sh
+restarts the board without resetting it \(em the trampoline re-enters
+KTZERO, the cores are not reset, and there is no JTAG path to the watchdog
+\(em so a core parked by one build goes on executing at that address when
+the next build is loaded over it.  While nothing ever signalled the parked
+cores that was only theoretical.  A
+.CW SEV
+makes it real, and three cores executing arbitrary code can store anywhere.
+So the park loop is the top of
+.CW _main ,
+reached by falling through the core-number test, with nothing in front of it
+but instructions of a fixed size, and it runs with the MMU off, where
+SCTLR.I is clear and every instruction is fetched from DRAM rather than from
+an I-cache \(em which is what lets a new kernel written over the loop take
+effect for a core already spinning in it.  A kernel that releases cores
+leaves a fingerprint of the loop's seven instructions in core 0's own
+(otherwise unused) spin-table slot, and a kernel entered over JTAG releases
+nothing unless the fingerprint it finds is the one it would have written.
+So the cores can only be started from a cold boot, which is what
+.I kinstall.sh
+ends with anyway.
+.PP
+.B "The release mechanism is the firmware's own."
+A real Pi's armstub8 leaves cores 1-3 waiting on a spin table at 0xd8, one
+64-bit slot per core, and QEMU's
+.CW "-M raspi3b"
+models the same table.  So the park loop polls exactly those slots, and one
+mechanism drives both cases: a core still in the firmware's loop, and a core
+that reached ours because it was released once already.  The core that owns
+a slot is the one that clears it \(em armstub does not clear it for us, and
+a slot left set would fling a core back out the instant it went to rest.
+That in turn is why core 0 invalidates that cache line before every access
+and cleans it immediately after every write: all four slots and the
+fingerprint share one 64-byte line, and a line core 0 dirtied before a
+secondary's uncached write would put the release address back in DRAM when
+it was cleaned.
+.PP
+.B "One toolchain bug, one JTAG session."
+The EL-drop code was rewritten to resume at an address in a register, so
+that core 0 and a secondary could share it, and
+.CW "atel1: BL boot1(SB)"
+became
+.CW "atel1: B (R20)" .
+7l's branch-follow pass retargets a conditional branch whose target is an
+unconditional one; an indirect
+.CW "B (Rn)"
+is an unconditional branch whose destination is a register, so the pass
+copied a register operand where a PC-relative offset belongs and emitted
+.CW B.EQ
+with offset 0 \(em an instruction that branches to itself.  No diagnostic.
+The board was silent, the log ring was
+.I empty
+(so it had died before the first print), and
+.I tools/jtag/where
+found core 0 at a fixed pc that
+.CW step
+would not move, which is what a self-branch looks like from a debugger.
+A conditional branch here must jump
+.I around
+an indirect branch, not to it.  A
+.CW BL
+is not an unconditional branch, which is why the original code was fine for
+months.
+.PP
+.B "What the next step is, and why it is bounded."
+A core that runs is not a processor: it needs its own
+.CW Mach ,
+and
+.CW m
+is a global here, of which there is exactly one.  The mechanism this tree
+already has for that is an external register \(em kencc reserves R24-R27
+(REGEXT in
+.CW utils/7c/7.out.h )
+in every translation unit whether or not it has seen the declaration, which
+is why the
+.CW multicore
+branch can make
+.CW m
+and
+.CW up
+registers in one board header without touching libinterp.  Here that is:
+.CW dat.h
+declares them
+.CW "extern register" ,
+.CW l.s "'s"
+.CW splhi / splx
+read R27 instead of naming
+.CW mach0
+(they name
+.CW mach0
+today, not
+.CW m ,
+so this is two instructions), and the trap path already saves and restores
+R26 and R27 in the
+.CW Ureg .
+After that comes
+.CW MAXMACH
+4 and a
+.CW machp[]
+array, a vector table and a timer for each core, and only then a scheduler
+that can be entered from more than one of them.  The atomics were the first
+of those prerequisites and are done.
+.NH 2
 The honest summary
 .PP
 The hardware bring-up is essentially finished: every block on the SoC that
@@ -12990,10 +13185,11 @@ this port needs is driven and checked on the real board, and the one
 outstanding hardware bug is a DMA write stall on the second SD controller,
 which has a workaround in the driver.
 .PP
-What is missing is the layer above it.  Three of four processors are
-unused, there is no windowing system, the copy-on-write filesystem is not
-the root, and the JIT that makes Dis eight to twenty times faster is
-switched off.  None of those is a bring-up problem; each is a decision or a
-merge.  A board that boots, stores, networks over wire and air, and can be
+What is missing is the layer above it.  The JIT is on now, and it is worth
+eight to twenty times on Dis and a fifth to a third on every network number
+measured; three of four processors run kernel code but nothing is scheduled
+on them; there is no windowing system; and the copy-on-write filesystem is
+not the root.  None of those is a bring-up problem; each is a decision, a
+merge, or the next step of the one begun above.  A board that boots, stores, networks over wire and air, and can be
 driven remotely is a port; a board that uses its hardware is the next
 document.

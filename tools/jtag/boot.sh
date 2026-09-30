@@ -350,8 +350,18 @@ while [ $try -le 4 ]; do
 	#
 	if LC_ALL=C sh "$ROOT/tools/jtag/kmesg" 400 2>/dev/null |
 	   LC_ALL=C grep -aq "conf raspi3b ($stamp)"; then
-		echo "boot: the console saw nothing, but the ring has" \
-		     "build $stamp -- it is running (attempt $try)"
+		#
+		# The wording matters: kinstall.sh greps this log for the
+		# exact phrase "build <stamp> is running", so a success
+		# message that says the same thing in different words is
+		# read as a failure.  It was -- an install refused to touch
+		# the card, saying "JTAG booted something, but not build
+		# 1790780353", about a kernel this very branch had just
+		# confirmed by name.  Every path that means "it booted" says
+		# it the same way.
+		#
+		echo "boot: the console saw nothing, but the ring says" \
+		     "build $stamp is running (attempt $try)"
 		exit 0
 	fi
 	echo "boot: attempt $try did not come up"

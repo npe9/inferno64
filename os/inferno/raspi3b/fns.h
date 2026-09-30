@@ -13,6 +13,8 @@ uvlong	timersoon(void);
 uvlong	fastticks(uvlong*);
 ulong	tk2ms(ulong);
 void	coherence(void);
+void	cpuboot(void);			/* release the other three cores */
+void	cpustart(int);			/* what a released core runs */
 
 /*
  * Where a DMA transfer stopped, for the driver that owns the

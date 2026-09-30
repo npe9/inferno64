@@ -279,6 +279,8 @@ main(void)
 	quotefmtinstall();
 	printinit();
 
+	cpuboot();			/* the other three cores; smpbcm.c */
+
 	{	/* I2C probe: needs the console up to report the round trip */
 		extern void i2cinit(void);
 		i2cinit();

@@ -49,6 +49,14 @@ static uchar ptpages[2*0x200000];
 
 extern void mmuenable(void*);
 
+/*
+ * The identity map, published so a secondary core can install the same
+ * table for itself: TTBR0/TCR/MAIR are per-core registers but the
+ * translation they describe is one flat map, marked inner shareable.
+ * nil until mmuinit() has run, or for ever if Mmuon is 0.
+ */
+uvlong *mmul1;
+
 void
 mmuinit(void)
 {
@@ -84,5 +92,6 @@ mmuinit(void)
 
 	/* ARMv8 reset leaves cache contents UNKNOWN; do this before SCTLR.C. */
 	cacheinit();
+	mmul1 = l1;
 	mmuenable(l1);
 }

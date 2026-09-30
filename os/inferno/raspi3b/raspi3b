@@ -113,6 +113,7 @@ misc
 	smibcm
 	bscslbcm
 	btbcm
+	smpbcm
 
 mod
 	sys
