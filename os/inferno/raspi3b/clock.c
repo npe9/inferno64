@@ -239,23 +239,36 @@ static void
 livelockcheck(void)
 {
 	static Proc *held;
-	static ulong since;
+	static ulong since, told;
 	static int nseen;
 
 	if(up == nil || up->state != Running || up != held){
 		held = up;
 		since = m->ticks;
+		told = 0;
 		vmheldticks = 0;
 		return;
 	}
+	/*
+	 * vmheldticks counts from when this process took the VM and is NOT
+	 * re-based by reporting, because diswdog() reads it and an earlier
+	 * version rebased "since" every time it printed.  That capped the
+	 * count at livelockticks, so the watchdog's threshold of ten times
+	 * that could never be reached and the board sat livelocked for ever
+	 * with a watchdog that was being fed the whole time.  A rate limiter
+	 * for a message quietly disabled the thing that was supposed to
+	 * recover the machine; "told" rate-limits the printing instead.
+	 */
 	vmheldticks = m->ticks - since;
 	if(livelockticks == 0 || vmheldticks < (ulong)livelockticks)
 		return;
-	since = m->ticks;
+	if(vmheldticks - told < (ulong)livelockticks)
+		return;
+	told = vmheldticks;
 	if(++nseen <= 16)
-		iprint("LIVELOCK %d: pid %lud (%s) has held the Dis VM for %d"
+		iprint("LIVELOCK %d: pid %lud (%s) has held the Dis VM for %lud"
 			" ticks; nothing else has run\n", nseen, (ulong)up->pid,
-			up->text != nil? up->text: "?", livelockticks);
+			up->text != nil? up->text: "?", vmheldticks);
 }
 
 /*

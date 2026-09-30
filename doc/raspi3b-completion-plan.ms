@@ -13281,30 +13281,55 @@ overwritten before the poller had read it, so nothing rebooted and the result
 was clean five times.  An unchanging number across repetitions of a hardware
 test is the tell.
 .PP
-.B "The frozen build is deterministic, as far as ten minutes can say."
+.B "The control that was supposed to settle it measured nothing, because the"
+.B "instrument disabled the watchdog it was driving."
 With the layout that froze and
 .CW bootwdog
-set to ten seconds, so that the board resets itself out of a livelock and
-tries again, it never came up: ten minutes of self-resetting and no network.
-That is the control the one-boot arms never had, and it says the freeze is a
-property of the build rather than a coin toss \(em which is what makes the
-layout reading worth keeping even though the mechanism behind it is unknown.
+set, so that the board would reset itself out of a livelock and try again, it
+never came up: ten minutes and no network.  That was written down here as
+"deterministic \(em ten minutes of self-resetting".  It is withdrawn.  Asking
+the stopped board where it was, with
+.CW tools/jtag/where ,
+answered
+.CW "cpu0 0x0000000003c12754" ,
+the same address as before: the board was not resetting at all, so the ten
+minutes measured one livelock, not twenty recoveries.  The freeze may still be
+deterministic per build; nothing here says so.
 .PP
-.B "And it taught the watchdog's own cost."
-A board that resets itself every thirty seconds cannot be rescued over JTAG:
-the reset lands in the middle of the transfer, and openocd gives
+.B "The bug was in the reporting rate limiter."
+.CW livelockcheck()
+counts ticks since one process took the Dis VM and
+.CW diswdog()
+stops feeding the watchdog when that count passes
+.CW bootwdog .
+To keep the message from repeating, the reporting path set
+.CW "since = m->ticks" ,
+which re-bases the window: the count is reset every time it prints, so it
+never rises past
+.CW livelockticks
+and can never reach a threshold ten times larger.  The watchdog was fed
+throughout.  A rate limiter for a
+.I message
+silently disabled the thing that was supposed to recover the machine, and it
+did so while printing exactly the evidence that made the instrument look
+alive \(em sixteen LIVELOCK lines naming the right process.  The count is now
+monotonic while one process holds the VM and a separate marker limits the
+printing.
+.PP
+.B "So what the JTAG failures mean has to be read again too."
+The six
 .CW "JTAG-DP STICKY ERROR"
 and
-.CW "Failed to write memory" .
-Stopping an inherited watchdog at the top of
-.CW main()
-does not help, because the reset arrives before any of this kernel's code
-runs.  The load has to be retried until one lands in a window between resets,
-which it does, and the hardware cannot be asked for a longer first window
-because the counter is twenty bits at 65536Hz \(em sixteen seconds is all
-there is.  So
+.CW "Failed to write memory"
+refusals during that recovery were attributed to resets landing in the middle
+of a transfer.  There were no resets.  They happened against a board sitting
+in a livelock with the MMU on and four cores running, which is a different
+thing and is not explained.  What survives is operational: the load has to be
+retried, it eventually lands, and
 .CW bootwdog
-defaults to 0, and the reason is written here rather than discovered again.
+defaults to 0 \(em now because it has never been shown to fire on this board,
+not because of a reset window.  The sixteen-second ceiling on the hardware
+counter is still true: twenty bits at 65536Hz.
 .PP
 .B "And the layout measurements have to be read again in that light."
 Four things were measured to stop this and all four move data or BSS, which
