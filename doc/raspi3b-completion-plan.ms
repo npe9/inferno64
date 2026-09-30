@@ -14356,7 +14356,28 @@ status reporting 192.168.8.105 and
 .CW "pktin 22 pktout 95 errin 0 errout 0" .
 The board is healthy; the host cannot talk to it at the moment it matters.
 .PP
-.B "The fix needs a hand on the machine."
+.B "And it has a workaround, which the flag was already there for."
+.CW KINSTALL_NOPREFLIGHT=1
+skips the pre-flight, and its own comment says it exists "for the case where
+JTAG itself is the thing being repaired", with the cost that a bad kernel then
+costs a JTAG session.  That cost is not being paid here: the pre-flight's
+.I boot
+half had already passed three times, printing
+.CW "build 1790809221 boots" ,
+and the only unproved half was "can the board be driven afterwards", which is
+the thing the rig breaks.  With the flag set the install finished in under a
+minute \(em because writing the card uses the mount of the board that is
+.I already
+running, which works, and it is the pre-flight's own JTAG boot that opens the
+ARP window.  Then the post-write reboot, the stamp check and the poller all
+answered:
+.CW "running build 1790809221 from the card, poller answering" .
+.PP
+So the rule for this failure mode: if the pre-flight hangs at "can the board
+still be driven?" while the board is demonstrably up, the pre-flight is the
+thing triggering the fault, and skipping it is safer than retrying it.
+.PP
+.B "The real fix still needs a hand on the machine."
 Either unplug the adapter that owns 192.168.8.117, or pin a host route for the
 board to
 .CW en0 ,
