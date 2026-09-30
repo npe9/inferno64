@@ -13835,3 +13835,35 @@ hold 1.3s rather than the 0.5s its ten sleeps ask for.  So
 at 400 is three times the largest of a small sample, and
 .CW Vmheldfloor
 at 50 keeps the distribution printing so that the sample can grow.
+.PP
+.B "And with the floor lowered, most of a healthy boot's long holds are not Limbo at all."
+Reporting from 50 ticks rather than from the warning threshold shows four holds
+on one cold boot where the old constant showed two:
+.P1
+ 53 ticks  kernel pc splx+0x1c      dis pc 0
+127 ticks  kernel pc minigetc+0x58  dis pc 0x3c1274c
+ 76 ticks  kernel pc iload+0xf8     dis pc 0
+104 ticks  kernel pc cycles+0x0     dis pc 0
+.P2
+The single kernel pc per episode is the last tick of the hold and not a
+profile, so
+.CW splx
+and
+.CW cycles
+say little on their own \(em they are called from everywhere.  The
+.I "dis pc"
+column is the strong half, because it is written on every tick that lands
+outside
+.CW [KTZERO,etext) :
+a zero after a 104-tick hold means all hundred-odd samples were in kernel text.
+.PP
+So three of the four longest holds a healthy boot takes are kernel C doing work
+it does not interrupt \(em
+.CW iload+0xf8
+in the 76-tick one is module loading, and the 104-tick one is the wifi firmware
+wait \(em and only schedlat's hog has any compiled Dis in it at all.  Which cuts
+the same way as the hog experiment: on this board a Limbo loop is not what
+holds the machine.  The longest hold across three boots is 133 ticks, so
+.CW livelockticks
+at 400 has about three times' margin, and the floor at 50 is what will grow the
+sample.
