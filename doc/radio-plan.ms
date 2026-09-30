@@ -3047,3 +3047,54 @@ both have to go.  Check which init an image carries by grepping the
 generated
 .BR prog.s ,
 never by having built without the override.
+.PP
+.B "The second board is beaconing, and the lamp settled the socket question."
+Flashed with
+.I armv7mbeacon
+it blinks steadily, and because the lamp hangs off the radio's own
+.I Spidev
+and the beacon exits before reaching it if
+.B /dev/radio0/ctl
+cannot be opened, a blink says the CC1120 was found, the ctl file opened
+and the loop is turning.
+.PP
+That also answers, by deduction rather than by the argument made earlier
+in this document, where the clicks are.
+.I cc1120init
+looks on SPI2, which is the pinout of a ccRF click in mikroBUS 2, and the
+part was found \- so the ccRF click is in mikroBUS 2 and the RS232 click
+is in mikroBUS 1, which is exactly where the console's USART2 on PD5 and
+PD6 is.  The console click is in the right socket.  Its silence is
+therefore the RS232 electrical path and nothing to do with which socket
+anything is in.
+.PP
+What is still not working is the air.  The other board, whose console
+does work, was configured to match \- 915MHz, 9600, deviation 19958, bw
+50000, csthr -104 \- and its own
+.B probe
+of the band reports
+.B "floor -107 peak -104 duty 0% bursts 0"
+over 800ms, twice.
+.B probe
+is a raw RSSI sweep, so it would see a carrier whatever the sync word or
+the rate; nothing is radiating.
+.PP
+And the driver is not the reason.  The same silicon transmits from the
+console:
+.B "echo BOARD1-TEST >/dev/radio0/data"
+gives
+.BR "sent 1" ,
+.BR "lasttx staged 13" ,
+.B "marc 0x40"
+and
+.BR "txtrace 1 0 0 0 2 0" ,
+so the packet transmit path works on this hardware.  What is not known is
+whether the beacon board reaches it.
+.PP
+The lamp could not say, because the first version of it flipped once a
+frame regardless of what
+.I write
+returned \- so a blink meant the loop was turning and nothing more, which
+is precisely the question that was open.  It now flips only on a
+successful write and sits solid on a failing one, solid rather than dark
+because dark is what a board that never booted looks like.
