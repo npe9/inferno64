@@ -179,6 +179,7 @@ root
 	/n/dos2	/
 	/n/remote	/
 	/n/usb	/
+	/icons	/
 	/net	/
 	/net.alt	/
 	/net.wifi	/
@@ -293,3 +294,5 @@ root
 	/dis/lib/styxconv/ostyx.dis
 	/dis/lib/styxservers.dis
 	/dis/lib/workdir.dis
+	/fonts/pelm/unicode.8.font
+	/fonts/pelm/latin1.8
