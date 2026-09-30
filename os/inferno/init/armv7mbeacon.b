@@ -70,6 +70,21 @@ Init: module
 Payload:	con "INFERNO-BEACON";
 Period:		con 2000;		# ms between frames
 
+# The lamp, through the ctl file the caller already holds open.  The
+# write is checked because ignoring it was one of the three things that
+# made the lamp unreadable: a failing led write leaves the lamp wherever
+# boot put it, which is on, and that was indistinguishable from the
+# failure this loop is trying to report.
+setlamp(ctl: ref Sys->FD, on: int)
+{
+	cmd := "led off";
+	if(on)
+		cmd = "led on";
+	b := array of byte cmd;
+	if(sys->write(ctl, b, len b) < 0)
+		sys->print("beacon: %s: %r\n", cmd);
+}
+
 init()
 {
 	sys = load Sys Sys->PATH;
@@ -130,6 +145,25 @@ init()
 	# whole reason lil(1) exists is that a file wants holding, and an
 	# init has no excuse to do otherwise.
 	sys->print("ARMV7M-BEACON-OK\n");
+
+	# Six fast flips before anything else, and the reason is that the
+	# lamp had three meanings and could not be read.
+	#
+	# LD1 on PE12 is lit at boot by archstm32f407.c to say the kernel
+	# started, and the radio's ctl "led" verb is the only way to move
+	# it.  So a steady lamp meant any of: the write to the data file
+	# is failing, the loop was never reached, or the led write itself
+	# is failing and the lamp is simply where boot left it.  Three
+	# states, one picture.
+	#
+	# This burst separates them.  Seeing it at all says the loop was
+	# reached AND the led verb works, which leaves the running pattern
+	# to mean exactly one thing.  "led blink" is the driver's own
+	# verb for this: six flips, which its comment notes a steady pin
+	# cannot fake.
+	lb0 := array of byte "led blink";
+	if(sys->write(ctl, lb0, len lb0) < 0)
+		sys->print("beacon: led blink: %r\n");
 	pkt := array of byte Payload;
 	n := 0;
 	lamp := 0;
@@ -164,16 +198,24 @@ init()
 		# Solid rather than dark for the failure, because dark is
 		# what a board that never booted looks like and those must
 		# not be the same picture.
-		if(ok)
+		#	slow blink, one flip a frame	transmitting
+		#	fast flicker, eight a frame	write failing
+		#
+		# Two rates rather than on and off, because "off" and "on"
+		# are both states a board can be left in by something other
+		# than this loop, and a rate is not.
+		if(ok){
 			lamp = !lamp;
-		else
-			lamp = 1;
-		cmd := "led off";
-		if(lamp)
-			cmd = "led on";
-		lb := array of byte cmd;
-		sys->write(ctl, lb, len lb);
-		n++;
-		sys->sleep(Period);
+			setlamp(ctl, lamp);
+			n++;
+			sys->sleep(Period);
+		}else{
+			for(k := 0; k < 8; k++){
+				lamp = !lamp;
+				setlamp(ctl, lamp);
+				sys->sleep(Period/8);
+			}
+			n++;
+		}
 	}
 }
