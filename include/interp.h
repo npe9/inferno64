@@ -384,8 +384,35 @@ struct Handler
 #define H		((void*)(-1))
 #define SEXTYPE(f)	((Stkext*)((uchar*)(f)-OA(Stkext, reg.tos.fu)))
 #define Setmark(h)	if((h)->color!=mutator) { (h)->color = propagator; nprop=1; }
-#define gclock()	gchalt++
-#define gcunlock()	gchalt--
+/*
+ * Two things, deliberately not one counter.
+ *
+ * gcdepth is how deep this thread is in nested destruction -- destroy()
+ * calls t->free() calls destroy() -- and libinterp/heap.c reads it to stop
+ * recursing before it runs out of C stack.  That is a property of one
+ * thread's stack.  gchalt is "do not collect now", which is a property of
+ * the heap: libprefab raises it while building a Prefab and the collector
+ * refuses to run while it is set.
+ *
+ * They shared one counter, which is harmless on one processor because the
+ * only thing nested inside a destroy is another destroy.  On two it fails
+ * both ways: one processor's recursion depth would suppress another's
+ * collector, and one processor building a Prefab would make another
+ * believe it was 64 destroys deep and quietly stop freeing.  The
+ * multicore branch measured the depth half running to exactly 65 against
+ * heap.c's guard of 64, three times per storm, while the suppression half
+ * never fired at all -- which is the worst arrangement to inherit, since
+ * the counter already sits on its boundary and any second contributor
+ * tips it.  gcdepthmax below is so that can be checked here rather than
+ * believed.  See doc/raspi3b-parallelvm-plan.ms.
+ *
+ * gclock() raises both, because a destroy both recurses and must not be
+ * collected through.  libprefab raises gchalt alone, which is the whole
+ * point: building a Prefab is not recursion and must stop contributing to
+ * a C-stack bound.
+ */
+#define gclock()	do{ gchalt++; if(++gcdepth > gcdepthmax) gcdepthmax = gcdepth; }while(0)
+#define gcunlock()	do{ gcdepth--; gchalt--; }while(0)
 #define gcruns()	(gchalt == 0)
 
 /* Atomic refcount inc/dec: the scheduler genuinely runs multiple native
@@ -447,6 +474,8 @@ extern	Module*	modules;
 extern	int	mutator;
 extern	int	nprop;
 extern	int	gchalt;
+extern	int	gcdepth;
+extern	int	gcdepthmax;
 extern	int	gccolor;
 extern	int	minvalid;
 

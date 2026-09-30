@@ -502,7 +502,13 @@ destroy(void *v)
 			dumpstack();
 			abort();
 		}
-		if(n > 0 || gchalt > 64) 	/* Protect 'C' thread stack */
+		/*
+		 * gcdepth, not gchalt: this guard is about running out of C
+		 * stack in nested destroys, and gchalt is also raised by
+		 * libprefab building a Prefab, which is not recursion.  See
+		 * the gclock() comment in interp.h.
+		 */
+		if(n > 0 || gcdepth > 64) 	/* Protect 'C' thread stack */
 			return;
 	}
 

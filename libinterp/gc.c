@@ -23,6 +23,8 @@ struct Ptrhash
 
 	int	nprop;
 	int	gchalt;
+	int	gcdepth;	/* interp.h: destroy() recursion, not heap suppression */
+	int	gcdepthmax;
 	int	mflag;
 	int	mutator = 0;
 	int	gccolor = 3;

@@ -68,6 +68,9 @@ extern ulong	tickhipri, tickuphi, tickanyhi;
 extern ulong	gcticks, gcpasses, gcmax, idlegcticks, idlegcmax;
 extern ulong	delayedscheds, skipscheds, preempts;
 extern int	ioboost, coopsched, schedgate, schedclock;
+extern int	gchalt, gcdepth, gcdepthmax;		/* libinterp/gc.c */
+extern ulong	gcnruns, gcsweeps, gcepochs, gchalted;
+extern uvlong	gcdestroys, gcinspects;
 extern int	lockboost;
 
 extern int	ilocktrace;		/* taslock.c */
@@ -1417,6 +1420,24 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 						mm->cs);
 				}
 				print("\n");
+				/*
+				 * The collector's own counters, which nothing
+				 * in this tree printed.  gcdepthmax is the
+				 * reason: gchalt used to be both the heap's
+				 * "do not collect" flag and destroy()'s C-stack
+				 * recursion depth, and heap.c guards that depth
+				 * at 64 -- so how close the depth actually runs
+				 * to its guard decides whether splitting them
+				 * was cosmetic or load-bearing.  halted is the
+				 * other half: how often the suppression fired.
+				 */
+				print("GC-COUNTS runs %lud sweeps %lud epochs"
+					" %lud halted %lud, gchalt %d gcdepth %d"
+					" depthmax %d (guard 64), destroys %llud"
+					" inspects %llud\n",
+					gcnruns, gcsweeps, gcepochs, gchalted,
+					gchalt, gcdepth, gcdepthmax,
+					gcdestroys, gcinspects);
 			}
 			if(cb->nf > 2 && strcmp(cb->f[1], "ioboost") == 0)
 				ioboost = atoi(cb->f[2]);
