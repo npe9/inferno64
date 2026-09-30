@@ -14121,3 +14121,48 @@ where somebody reaching for
 .CW tools/jtag/boot.sh
 will not read it.  Every SMP measurement on this board has to come from a cold
 boot off the card.
+.PP
+.B "Eleven cold boots, no failures."
+Three boots is thin for something turned on by default, so eight more were
+driven from the poller:
+.CW "SMPBOOTS: 8 booted, 0 failed" ,
+and with the three earlier ones that is eleven cold boots of
+.CW smpsched=1
+with nothing to report.  After the eighth,
+.CW SCHED-MACHS
+still says
+.CW "nmach 4"
+with cs 3055, 2822 and 3910 on the secondaries.
+.PP
+The loop is tag-based and not ping-based, because a ping loop in this document's
+history reported five clean boots while rebooting nothing.  Each run writes a
+uniquely tagged command, waits for that tag to come back through
+.CW board.out ,
+and idles the command file immediately \(em a command the board has no record of
+running gets run again after the reboot it caused.  Every run reported "poller
+answered after 0s", which looks like a board that never rebooted and is the
+exact shape of that old false positive, so the control is
+.CW m->ticks :
+it read 255 and 2504 on the readings the 200-line console buffer still held,
+against 18750 before the loop started, and
+.CW board.out
+showed the poller's own
+.CW RCMD
+counter restarting at 1.  The reboots are real; the 0s is the board having come
+up during the detection window.  That control was checked on the readings that
+could be captured, not on all eight.
+.PP
+One thing the card does not yet carry: the
+.CW SCHED-MACHS
+line above still prints
+.CW "load 0"
+beside each secondary, because the installed build predates the fix for that.
+The figure is machine-wide \(em
+.CW accounttime()
+returns early for
+.CW "machno != 0"
+with "only one processor gets to compute system load averages" \(em so a
+secondary's
+.CW m->load
+is 0 by design, and printing it per processor was an invitation to file a bug
+about correct behaviour.  It is printed once and labelled now.
