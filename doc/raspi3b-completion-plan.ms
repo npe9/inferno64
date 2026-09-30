@@ -13281,6 +13281,31 @@ overwritten before the poller had read it, so nothing rebooted and the result
 was clean five times.  An unchanging number across repetitions of a hardware
 test is the tell.
 .PP
+.B "The frozen build is deterministic, as far as ten minutes can say."
+With the layout that froze and
+.CW bootwdog
+set to ten seconds, so that the board resets itself out of a livelock and
+tries again, it never came up: ten minutes of self-resetting and no network.
+That is the control the one-boot arms never had, and it says the freeze is a
+property of the build rather than a coin toss \(em which is what makes the
+layout reading worth keeping even though the mechanism behind it is unknown.
+.PP
+.B "And it taught the watchdog's own cost."
+A board that resets itself every thirty seconds cannot be rescued over JTAG:
+the reset lands in the middle of the transfer, and openocd gives
+.CW "JTAG-DP STICKY ERROR"
+and
+.CW "Failed to write memory" .
+Stopping an inherited watchdog at the top of
+.CW main()
+does not help, because the reset arrives before any of this kernel's code
+runs.  The load has to be retried until one lands in a window between resets,
+which it does, and the hardware cannot be asked for a longer first window
+because the counter is twenty bits at 65536Hz \(em sixteen seconds is all
+there is.  So
+.CW bootwdog
+defaults to 0, and the reason is written here rather than discovered again.
+.PP
 .B "And the layout measurements have to be read again in that light."
 Four things were measured to stop this and all four move data or BSS, which
 was read as layout sensitivity.  A livelock reached through a spawn, a channel
