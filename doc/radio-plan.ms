@@ -2895,3 +2895,74 @@ reclaimed, and that a shell cannot survive repeated ctl writes \- were
 inherited from notes that were true when written and are not true now,
 and both fell to a measurement on the machine rather than a better
 reading of the notes.
+.PP
+.B "The second board arrived, and is flashed."
+Two clicker 2s with ccRF clicks now, which is the transmitter item 3 has
+been waiting for.  What is done and what is not:
+.IP \(bu 3
+The new board is programmed, twice, with the kernel this tree builds.
+Both times the bootloader answered
+.B "McuType STM32F4XX" ,
+.B "DevDsc 'clicker 2 for STM32'" ,
+wrote through to 0xe0000 \- the ceiling
+.I bin2ihex
+is given, because the HID bootloader occupies the last 128K sector from
+there \- and rebooted.
+.IP \(bu 3
+It runs the image.  No HID device at 0x1234/0x0001 persists after a
+reset, so it leaves the bootloader rather than sitting in it, and the
+image is the same one the first board runs.
+.IP \(bu 3
+It says nothing on its console.  Its console is an RS232 click into a
+PL2303, where the first board's is a USB UART click, and nothing arrives
+on either device node the PL2303 presents.
+.PP
+The kernel is not the variable, and
+.I otherusarts()
+is why that can now be said.  It was written for exactly this case \-
+its own comment says "so that a board whose UART click is in the other
+socket is not mistaken for a board that never booted" \- and it had
+never been called.  It is called now, so the kernel writes its banner on
+USART2/PD5, which is mikroBUS 1, and a raw line naming the socket on
+USART3/PD8, which is mikroBUS 2, and on UART4/PA0, the pad.  Whichever
+socket a click sits in, something is transmitted at 115200.  So socket
+confusion on its own can no longer explain total silence, and what is
+left is the signal path.
+.PP
+Which is where an RS232 click differs from a USB UART click, and the
+difference is the whole of it.  The click carries a MAX3232 and puts
+true RS-232 on its connector: plus or minus five to twelve volts, and
+inverted.  A USB-to-UART cable expects TTL, and an RS-232 idle is a
+negative voltage a TTL input reads as a permanent break, which is
+silence and not garbage.  If the adapter is instead a real USB-to-DB9
+RS-232 one then the levels are right and both ends are DTE, so a
+straight cable puts transmit against transmit and a null modem is
+wanted.  Neither can be told from the other in software.
+.PP
+The cheapest test that settles it is a swap: a known-good TTL USB UART
+adapter, of the kind the first board uses, onto the new board's mikroBUS
+1 in place of the RS232 click.  If the board prints its banner then the
+flash and the kernel are proven and the fault is entirely in the RS232
+path; and with
+.I otherusarts()
+in, any working adapter now also names the socket it is in.
+.PP
+A method note, because it cost three of the user's button presses.  I
+first answered "is anything alive on this port" by opening it and
+listening, which cannot answer it: a board at a shell prompt says
+nothing until spoken to, so a passive listen only catches output that
+lands inside its window, which means a reset pressed at the right
+moment.  That listener reported zero bytes on seven ports across three
+resets, and I was about to read a wiring fault out of it.  Pointed at a
+.I qemu
+.B "-serial pty"
+carrying a kernel that was certainly printing, it reported zero bytes
+there too.  The instrument was measuring the wrong thing and every
+negative it had produced meant nothing.
+.B tools/f407/probeport.py
+pokes the port instead \- a newline for a prompt, then a command whose
+output is a token \- and is validated against that same pty, where it
+must see the token and does.  It also tells apart the case this tree has
+been bitten by before: the token seen once is the uart interrupt
+handler's echo, which comes back long after the shell is dead, and twice
+is the shell running what was typed.
