@@ -8,8 +8,10 @@
 #define DBG if(0) print
 static int debug = 0;
 
-static	REG	_R;		/* the one register file; see interp.h */
-REG*	curR = &_R;		/* interp.h: #define R (*curR) */
+static	Pctx	_pctx;		/* the one execution context; see interp.h */
+Pctx*	curP = &_pctx;		/* a register once DISCTXREG lands */
+Pctx*	defpctx = &_pctx;	/* what a Proc starts with */
+REG*	curR = &_pctx.reg;	/* interp.h: #define R (*curR) */
 String	snil;			/* String known to be zero length */
 
 /* Diagnostic: ring buffer of the last few instructions xec() dispatched

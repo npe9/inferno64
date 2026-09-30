@@ -70,6 +70,7 @@ typedef struct Atidle	Atidle;
 typedef struct Altc	Altc;
 typedef struct Except Except;
 typedef struct Handler Handler;
+typedef struct Pctx	Pctx;
 
 struct ILock
 {
@@ -449,6 +450,31 @@ extern	Type Tword;
 extern	Type Tlong;
 extern	Type Treal;
 /*
+ * An execution context for Dis: the state that becomes per-processor when
+ * more than one interpreter runs at a time.
+ *
+ * Phase 2a of doc/raspi3b-parallelvm-plan.ms, and like Phase 1a it arrives
+ * as pure indirection -- there is exactly one Pctx, curP always points at
+ * it, and this is the same program it was.  What goes in here is what a
+ * second interpreter would need its own copy of.
+ *
+ * It holds only the register file so far.  multicore's has the context's
+ * run queue as well, which means taking runhd/runtl out of both isched
+ * structs -- 39 sites in os/inferno/port/dis.c and 34 in emu's -- and that
+ * is a separate step with nothing to do with the register file.
+ *
+ * What is deliberately NOT here, in theirs or in this: isched.head/tail,
+ * the list of every Prog, which execatidle() hands to rungc() as the root
+ * list.  Splitting that per context would divide the root set and lose
+ * objects, and a missing root is not a data race, so no race detector
+ * would see it.  The root list is global and stays global.
+ */
+struct Pctx
+{
+	REG	reg;		/* this context's Dis register file */
+};
+
+/*
  * The Dis register file, reached through a pointer.
  *
  * Phase 1a of doc/raspi3b-parallelvm-plan.ms: pure indirection.  There is
@@ -457,13 +483,16 @@ extern	Type Treal;
  * variable, which is what later phases need in order to give each executor
  * its own register file.
  *
- * It is a pointer and not curP->reg yet, because the context struct is the
- * next step and this one is meant to be provable on its own.
+ * It is still a REG* and not curP->reg, because the step that makes curP a
+ * machine register is what removes curR, and until then a pointer straight
+ * at the register file is one indirection rather than two.
  *
  * R must be a macro rather than a REG, and that is why Prog.R had to be
  * renamed Prog.reg first: an object-like macro expands after "->" too, so
  * p->R would have become p->(*curR).
  */
+extern	Pctx*	curP;		/* the context whose registers R names */
+extern	Pctx*	defpctx;	/* the context a Proc starts with */
 extern	REG*	curR;
 #define	R	(*curR)
 extern	String	snil;
