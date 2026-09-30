@@ -440,8 +440,23 @@ delprog(Prog *p, char *msg)
 		int i;
 
 		for(i = 0; i < npctx; i++)
-			if(pctxs[i]->curprog == p)
+			if(pctxs[i]->curprog == p){
+				/*
+				 * inxec too: if the program whose quantum was
+				 * open is being freed, that quantum is over.
+				 * A program that exits from inside its own
+				 * quantum gets here through progexit() and
+				 * xec() never reaches the tail that would
+				 * clear the flag, which left inxec set for
+				 * the rest of the boot -- the collector's
+				 * guard reported "a quantum open (prog 0x0)",
+				 * a nil program beside a set flag, which is
+				 * the signature of clearing one and not the
+				 * other.
+				 */
 				pctxs[i]->curprog = nil;
+				pctxs[i]->inxec = 0;
+			}
 	}
 	free(o->user);
 	free(p->killstr);

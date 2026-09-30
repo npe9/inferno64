@@ -69,7 +69,7 @@ extern ulong	gcticks, gcpasses, gcmax, idlegcticks, idlegcmax;
 extern ulong	delayedscheds, skipscheds, preempts;
 extern int	ioboost, coopsched, schedgate, schedclock;
 extern int	gchalt, gcdepth, gcdepthmax;		/* libinterp/gc.c */
-extern ulong	gcnruns, gcsweeps, gcepochs, gchalted;
+extern ulong	gcnruns, gcsweeps, gcepochs, gchalted, gcinxecseen;
 extern uvlong	gcdestroys, gcinspects;
 extern int	lockboost;
 
@@ -1434,10 +1434,11 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 				print("GC-COUNTS runs %lud sweeps %lud epochs"
 					" %lud halted %lud, gchalt %d gcdepth %d"
 					" depthmax %d (guard 64), destroys %llud"
-					" inspects %llud\n",
+					" inspects %llud, quantum-open %lud"
+					" (must be 0)\n",
 					gcnruns, gcsweeps, gcepochs, gchalted,
 					gchalt, gcdepth, gcdepthmax,
-					gcdestroys, gcinspects);
+					gcdestroys, gcinspects, gcinxecseen);
 			}
 			if(cb->nf > 2 && strcmp(cb->f[1], "ioboost") == 0)
 				ioboost = atoi(cb->f[2]);

@@ -327,8 +327,23 @@ delprog(Prog *p, char *msg)
 		int i;
 
 		for(i = 0; i < npctx; i++)
-			if(pctxs[i]->curprog == p)
+			if(pctxs[i]->curprog == p){
+				/*
+				 * inxec too: if the program whose quantum was
+				 * open is being freed, that quantum is over.
+				 * A program that exits from inside its own
+				 * quantum gets here through progexit() and
+				 * xec() never reaches the tail that would
+				 * clear the flag, which left inxec set for
+				 * the rest of the boot -- the collector's
+				 * guard reported "a quantum open (prog 0x0)",
+				 * a nil program beside a set flag, which is
+				 * the signature of clearing one and not the
+				 * other.
+				 */
 				pctxs[i]->curprog = nil;
+				pctxs[i]->inxec = 0;
+			}
 	}
 	free(o->user);
 	free(p->killstr);
@@ -1360,6 +1375,29 @@ vmachine(void*)
 		DBG("vmachine waserror() loop up->env->errstr %s\n",  up->env->errstr);
 		if(up->type != Interp)
 			panic("vmachine: non-interp kproc");
+		/*
+		 * The quantum is over, however it ended.
+		 *
+		 * xec() clears inxec at its tail and isave() clears it when a
+		 * program blocks, but an exception leaves by longjmp and
+		 * reaches neither: error() inside a quantum unwinds straight
+		 * to here.  inxec then stays set for the rest of the boot,
+		 * and it is the flag the collector's root walk is guarded by
+		 * -- so the guard would read "a quantum is open" for ever and
+		 * mean nothing.
+		 *
+		 * Found by that guard rather than by reasoning: with it
+		 * checking on entry to rungc(), a QEMU boot printed "rungc:
+		 * context 0 has a quantum open (prog 0x0)".  The nil program
+		 * beside a set flag is what named the path -- delprog() had
+		 * cleared curprog on the way out while inxec stayed behind,
+		 * so the two could only disagree if the quantum had ended
+		 * somewhere that clears one and not the other.
+		 */
+		if(curP != nil){
+			curP->inxec = 0;
+			curP->curprog = nil;
+		}
 		/*
 		 * swiprog() posts a note to the kproc a killed Prog was last
 		 * running on, to break it out of a blocking system call.  If

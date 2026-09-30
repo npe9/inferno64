@@ -473,6 +473,7 @@ struct Pctx
 {
 	REG	reg;		/* this context's Dis register file */
 	Prog*	curprog;	/* whose live registers `reg' holds, or nil */
+	int	inxec;		/* a quantum is open on this context */
 };
 
 /*

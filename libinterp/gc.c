@@ -25,6 +25,8 @@ struct Ptrhash
 	int	gchalt;
 	int	gcdepth;	/* interp.h: destroy() recursion, not heap suppression */
 	int	gcdepthmax;
+	int	gcstwcheck = 1;	/* check no quantum is open when collecting */
+	ulong	gcinxecseen;	/* times one was, which should be never */
 	int	mflag;
 	int	mutator = 0;
 	int	gccolor = 3;
@@ -569,6 +571,35 @@ rungc(Prog *p)
 	if(gchalt) {
 		gchalted++;
 		return;
+	}
+	/*
+	 * The invariant the whole root walk rests on: no context may have a
+	 * quantum open while this runs.  rootset() reads a program's live
+	 * registers through progreg(), and inxec is exactly "this context's
+	 * register file is live" -- so a collection taken with a quantum
+	 * open is one walking registers that the mutator is still writing,
+	 * and the objects it misses are freed rather than marked.
+	 *
+	 * It holds today by construction: the collector is only ever reached
+	 * between xec() calls, from vmachine()'s BusyGC block or from
+	 * execatidle().  Checking it anyway is cheap, and it is the tripwire
+	 * for the step that adds a second context -- where the bound is
+	 * stoptheworld() waiting on this same flag rather than construction.
+	 * The multicore branch kept the same assertion and it earned itself
+	 * once, on the first boot where a second context existed.
+	 */
+	if(gcstwcheck){
+		int i;
+
+		for(i = 0; i < npctx; i++)
+			if(pctxs[i]->inxec){
+				if(gcinxecseen++ < 8)
+					print("rungc: context %d has a quantum"
+						" open (prog %#p); roots may be"
+						" stale\n", i,
+						pctxs[i]->curprog);
+				break;
+			}
 	}
 	if(base == nil) {
 		gcsweeps++;

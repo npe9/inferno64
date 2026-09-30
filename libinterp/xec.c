@@ -2363,6 +2363,7 @@ isave(void)
 	 * A safepoint: the registers are in p->reg now, so the snapshot is
 	 * authoritative and progreg() must stop naming this context's copy.
 	 */
+	curP->inxec = 0;
 	curP->curprog = nil;
 	return p;
 }
@@ -2373,6 +2374,7 @@ irestore(Prog *p)
 	R = p->reg;
 	R.IC = 1;
 	curP->curprog = p;	/* live here again; see progreg() */
+	curP->inxec = 1;
 }
 
 void
@@ -2453,6 +2455,7 @@ xec(Prog *p)
 	R.MP = R.M->MP;
 	R.IC = p->quanta;
 	curP->curprog = p;	/* a quantum is open on this context */
+	curP->inxec = 1;
 
 	if(p->kill != nil) {
 		char *m;
@@ -2527,6 +2530,7 @@ xec(Prog *p)
 	 * The quantum is closing: p->reg is authoritative again, so a
 	 * collection from here on must read the snapshot, not this context.
 	 */
+	curP->inxec = 0;
 	curP->curprog = nil;
 	p->reg = R;
 }
