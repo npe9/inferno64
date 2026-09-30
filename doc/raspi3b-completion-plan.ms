@@ -13262,7 +13262,8 @@ everything else left byte for byte the same, and the condition recreated
 exactly \(em core 3's stack top and
 .CW mach0
 both at 0x2b47b0, one 64-byte line at 0x2b4780.  That kernel does not reach
-the network on a cold boot.  Put the slack back and it does.  One line of
+the network on a cold boot.  Put the slack back and it does, twice out of
+twice, against three cold boots out of three frozen without it.  One line of
 padding, and it is the whole difference.
 .PP
 .B "It also says something about this board that had been assumed rather
