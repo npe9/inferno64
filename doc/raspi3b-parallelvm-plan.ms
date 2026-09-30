@@ -524,3 +524,75 @@ the wrong one.  On multicore they could lag, and did, because every native
 board there has
 .CW cflag=0 .
 That is the one place this port cannot follow that branch's staging.
+.NH 1
+The destination is not parallelvm=1, and that is from the source branch's own numbers
+.PP
+"Integrate the parallel VM" reads as "end with
+.CW parallelvm=1 ",
+because that is that branch's default.  Its own documents say the switch is not
+safe, and this section exists so the goal is not set by the default.
+.PP
+.B "What is measured against it."
+On
+.CW pc64 ,
+eight boots an arm, same kernel, same recipe: three of eight bad at 1 and none
+of eight at 0; a second run of the same comparison gave none of eight on both
+arms, and both are recorded rather than one chosen, "the lesson is the sample
+size, not a contradiction".  Pooled, three failures in sixteen at 1 and none in
+sixteen at 0.  The three were
+.CW "panic: lost pid"
+and twice
+.CW "vmachine: error with no current prog" ,
+and two of those three "are one shape \(em an error raised with no current
+.CW Prog ,
+which is the register-file desync this plan's Phase E describes, seen from the
+other end".  Separately, "bad frame", a frame whose type pointer is a heap
+address, on 11 boots of 16 at 1.  And a
+.CW pooloverlap
+check that its own comment said had never fired now fires, though only on a
+machine with memory above 4GiB.
+.PP
+.B "And what is unfixed by design, not by accident."
+Phase 4, the lock per channel, is not landed:
+.CW isend()
+and
+.CW irecv()
+"walk and edit the channel's send and recv queues, and read and write the other
+.CW Prog 's
+.CW ptr ,
+which points into that program's stack.  None of it is locked.  It did not need
+to be: the VM lock made every Dis instruction atomic with respect to every
+other, and that is the lock
+.CW parallelvm=1
+removes."  Their note on it ends "Still a hazard, still not this one."
+.CW claimctx()
+exhaustion is called "the next wall", with
+.CW ctxcap=256
+"a mitigation with no ceiling, not a bound".  And
+.CW "incref: bad r 0x300000003"
+is undiagnosed with two hypotheses explicitly disproved.
+.PP
+.B "So the destination here is the infrastructure, with the switch at 0."
+Phases 1a, 1b and 2a are landed there and verified \(em 192 boots at
+.CW "-smp 2"
+and 192 at
+.CW "-smp 4"
+\(em and they are what "the work on parallelising the GC" actually rests on:
+per-context register files,
+.CW progreg() ,
+the safepoint, and a stop-the-world collector that can be correct because
+.CW inxec
+means "this context's register file is live".  Bringing those over is a real
+integration and leaves this board where it is today: booting.
+.PP
+Flipping the switch would import three failures in sixteen onto a board that
+boots eleven in eleven, and would do it with the channel hazard still open.  So
+.CW parallelvm
+arrives defaulting to 0, the way
+.CW bootwdog
+and
+.CW smpsched
+did, and the thing that would justify 1 is not more boots of it here but Phase
+4 landing there.  That is a statement about sequencing, not about the work being
+wrong: the collector half is sound and the register-file half is proven, and it
+is the channel queues that are not.
