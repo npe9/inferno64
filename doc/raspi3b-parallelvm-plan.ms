@@ -289,3 +289,113 @@ holds cores 1 to 3, so a JTAG-loaded kernel is a one-processor machine and
 cannot exercise any of this.  It remains the cheapest
 .I control
 arm, which is how the four-processor payoff was measured.
+.NH 1
+The foundation, scoped against the real tree
+.PP
+.B "multicore already did the aarch64 groundwork, including for this board."
+.CW include/disreg.h
+on that branch declares
+.CW m ,
+.CW up
+and
+.CW curP
+together as R27, R26 and R25, and it exists because kencc allocates external
+registers
+.I "per file, in declaration order" :
+a file declaring only
+.CW curP
+gets the first register, one declaring all three gets the third, so libinterp
+and the kernel agree only if both declare the same set in the same order.  The
+measured failure without it is in that header \(em libinterp's
+.CW curP
+was the kernel's
+.CW m ,
+and booting printed
+.CW "cpu3318001: registers for kernel" .
+.PP
+Its comment says amd64 opts in, and that is stale:
+.CW mkfiles/mkfile-Inferno-aarch64 ,
+.CW mkfiles/mkfile-os-aarch64 ,
+.CW os/inferno/virtarm64/mkfile ,
+.CW os/inferno/pc64/mkfile
+and
+.CW os/inferno/raspi3b/mkfile
+all carry
+.CW -DDISCTXREG
+there, and that branch's
+.CW raspi3b/dat.h
+includes the header with a comment saying every aarch64 board must declare the
+same three.  So the plumbing does not have to be invented, only brought over.
+.PP
+.B "And this board is ready for a third register."
+.CW vectrap
+here already saves and restores R25:
+.CW "UR_R25 200"
+in
+.CW l.s ,
+stored at
+.CW l.s:1372
+and reloaded at
+.CW l.s:1439 ,
+like every other general register.  Nothing in the trap path needs changing.
+.PP
+.B "The scope is three boards, not one."
+.CW -DDISCTXREG
+in
+.CW mkfiles/mkfile-Inferno-aarch64
+is what makes
+.I libinterp
+expect a register
+.CW curP ,
+and this branch has three aarch64 boards \(em
+.CW raspi3b ,
+.CW raspi4
+and
+.CW virtarm64 .
+All three must declare the same three registers or their links have no
+definition for libinterp's
+.CW curP .
+That is the ripple, and it is small: each board's two
+.CW "extern register"
+lines become one include.
+.NH 2
+So the foundation splits in two, and the order is multicore's
+.PP
+.B "Phase 1a: pure indirection, no register."
+.CW Pctx
+in
+.CW interp.h ,
+.CW curP
+as an ordinary global,
+.CW R
+becoming
+.CW curP->reg ,
+and exactly one context.  multicore's own comment calls this "pure indirection
+\(em there is exactly one Pctx, curP is constant, and this is the same program
+it was".  The build stays green throughout and no
+.CW -DDISCTXREG
+is involved, so the JIT still bakes a constant
+.CW &R
+and is still correct, because there is still only one register file.
+.PP
+.B "Phase 1b: the register."
+.CW disreg.h ,
+.CW -DDISCTXREG
+in the two mkfiles and the three boards,
+.CW disctxinit() ,
+and
+.I "in the same change"
+.CW "RCTX = 25"
+and
+.CW ctxreg()
+in
+.CW comp-aarch64.c .
+Those last two cannot lag, because this board ships
+.CW cflag=1 :
+the moment
+.CW R
+is reached through a register, a generator that bakes the address is emitting
+the wrong one.  On multicore they could lag, and did, because every native
+board there has
+.CW cflag=0 .
+That is the one place this port cannot follow that branch's staging.
