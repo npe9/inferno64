@@ -13754,3 +13754,84 @@ system; and the copy-on-write filesystem is not the root.  None of those is a br
 merge, or the next step of the one begun above.  A board that boots, stores, networks over wire and air, and can be
 driven remotely is a port; a board that uses its hardware is the next
 document.
+.NH 2
+What the SMP work does not yet buy, and the questions left open
+.PP
+.B "There is no parallel VM in this tree."
+Four processors take their own timer interrupts, through their own vector
+tables, into their own
+.CW Mach ,
+and that is real and tested.  It buys no Dis throughput at all, for two
+independent reasons, and neither is a bug to be found \(em both are work not
+done.
+.PP
+First, nothing is scheduled on cores 1 to 3.  They report, they tick, and
+.CW recall()
+parks them again; only core 0 ever calls
+.CW schedule() .
+Second, and the harder one:
+.CW parallelvm
+does not exist in this tree.  It is the
+.CW multicore
+branch's work \(em where it is the default and worth 4.1x on arm64 \(em and
+grep finds the word here in exactly one place, a comment in
+.CW libinterp/comp-aarch64.c
+describing what that branch had to fix.  In this kernel Dis interpretation is
+guarded by
+.CW isched :
+.CW release()
+creates a further
+.CW dis
+kproc on demand and
+.CW acquire()
+hands the interpreter to one of them, so however many
+.CW dis
+processes exist, one executes Dis at a time.  A Limbo program gives the
+interpreter up by blocking in a system call or by exhausting its quantum, and
+that round-robin is what keeps a hog from starving the board \(em but it is a
+round-robin on one processor.
+.PP
+So the next step for SMP here is a choice between two merges, not a bring-up
+task: let cores 1 to 3 run
+.CW schedule()
+so that kernel processes spread, or bring
+.CW parallelvm
+across from
+.CW multicore
+so that Dis does.  The first is smaller and buys the device drivers; the second
+is what buys Limbo.
+.PP
+.B "And three things are open rather than answered."
+What stopped the layout build is unknown: the register evidence rules out
+corruption and shows core 0 running compiled Dis, and the explanation that
+replaced corruption \(em schedlat's hog starving everything \(em has now been
+falsified too.
+.PP
+The hog experiment ran with the scheduler clock live, which is the configured
+default
+.CW ( schedclock
+is 1 in
+.CW port/proc.c ,
+and
+.CW hzsched()
+is called under it).  So what it establishes is that a never-yielding Limbo
+loop costs throughput and not liveness
+.I "when that clock is running" .
+"Hog plus a preemption path that is not running" is a different claim, it
+reproduces the original symptom exactly \(em pc pinned in JIT-generated Dis,
+nothing else getting on \(em and it is untested.
+.CW schedclock
+is settable through
+.CW /dev/sysctl ,
+so it is testable from the poller without a new build.
+.PP
+And the legitimate-hold figures are two boots: 126 and 133 ticks for schedlat's
+window, 103 for the wifi firmware wait.  The tail is not characterised, and
+.CW raspi3binit.b 's
+own comment records a 670-to-690ms first-sleep wait "after a second interpreter
+process appears" as unexplained \(em which is the outlier that makes schedlat's
+hold 1.3s rather than the 0.5s its ten sleeps ask for.  So
+.CW livelockticks
+at 400 is three times the largest of a small sample, and
+.CW Vmheldfloor
+at 50 keeps the distribution printing so that the sample can grow.
