@@ -18,7 +18,7 @@ static Lock clock0lock;
 extern int	vcsweeptick;		/* config: sweep the data segment at this tick */
 extern int	livelockticks;		/* config: report a Dis program that will not yield */
 extern int	bootwdog;		/* config: reset if Dis stops for this many ticks */
-static void	livelockcheck(void);
+static void	livelockcheck(Ureg*);
 static void	diswdog(void);
 extern void	timercheck(Ureg*);
 extern ulong	ticknoup, ticknotrun, tickrun;
@@ -101,7 +101,7 @@ clockintr(Ureg *u)
 	 */
 	if(vcsweeptick != 0 && m->ticks == (ulong)vcsweeptick)
 		vcsweep("late");
-	livelockcheck();
+	livelockcheck(u);
 	diswdog();
 	if(schedclock)
 		accounttime();
@@ -229,20 +229,61 @@ extern int smpstart;
  * flooding, and a program that has genuinely stopped yielding says so for as
  * long as it goes on.
  *
+ * What it observes, exactly, is that one KERNEL process has been Running for
+ * that long without the scheduler choosing another -- not that no Dis program
+ * ran.  The message used to say "nothing else has run", which claims more.
+ * The difference is visible in the pc the tick lands on: on this board's
+ * healthy boot it is xec+0x18, the interpreter's own re-entry, so the Dis
+ * quantum was expiring and being recharged thousands of times a second
+ * throughout the hold.  A Limbo loop that never yields and a kernel that
+ * keeps re-choosing the same process look identical from up->pid alone.
+ *
  * It names the process and not yet the Dis instruction: R.IC and R.M would
  * want interp.h in here.  The pid and the text are enough to say which program
  * to look at, which is the step this was missing.
  */
 static ulong	vmheldticks;	/* how long one process has held the VM */
+static ulong	maxvmheld;	/* the longest hold seen, for calibration */
+static ulong	maxvmheldpid;
+static uintptr	heldkpc;	/* last kernel pc seen during a hold */
+static uintptr	helddispc;	/* last non-kernel (compiled Dis) pc */
 
 static void
-livelockcheck(void)
+livelockcheck(Ureg *u)
 {
+	extern char etext[];
 	static Proc *held;
 	static ulong since, told;
-	static int nseen;
+	static int nseen, nreleased;
 
 	if(up == nil || up->state != Running || up != held){
+		/*
+		 * The hold just ended, so say how long it actually was.  The
+		 * periodic warning below can only ever say "at least
+		 * livelockticks", and on this board it printed 100 twice on a
+		 * healthy boot and never printed again -- which says the holds
+		 * were somewhere in [100,200) and nothing more.  An episode's
+		 * length is worth one exact line, because the whole question a
+		 * watchdog threshold turns on is how long a LEGITIMATE hold
+		 * gets, and a lower bound cannot answer it.
+		 */
+		if(vmheldticks >= (ulong)livelockticks && livelockticks != 0){
+			if(vmheldticks > maxvmheld){
+				maxvmheld = vmheldticks;
+				maxvmheldpid = held != nil? held->pid: 0;
+			}
+			if(nreleased++ < 16)
+				iprint("VMHELD: pid %lud (%s) held the Dis VM"
+					" for %lud ticks, then released it"
+					" (longest so far %lud); last kernel"
+					" pc %#p, last dis pc %#p\n",
+					held != nil? (ulong)held->pid: 0UL,
+					held != nil && held->text != nil?
+						held->text: "?",
+					vmheldticks, maxvmheld,
+					heldkpc, helddispc);
+			heldkpc = helddispc = 0;
+		}
 		held = up;
 		since = m->ticks;
 		told = 0;
@@ -260,14 +301,30 @@ livelockcheck(void)
 	 * recover the machine; "told" rate-limits the printing instead.
 	 */
 	vmheldticks = m->ticks - since;
+	/*
+	 * Where the tick landed.  A hold is C code in the kernel or compiled
+	 * Dis in the heap, and those are different bugs: the first is one
+	 * uninterruptible kernel operation (the JIT compiling a module, a
+	 * large copy) and the second is a Limbo loop that does not yield.
+	 * Nothing here could tell them apart, so a healthy boot's two
+	 * one-second holds had no explanation at all -- only a name, "dis",
+	 * that every Dis process shares.
+	 */
+	if(u != nil){
+		if((char*)u->pc < etext && u->pc >= (uintptr)KTZERO)
+			heldkpc = u->pc;
+		else
+			helddispc = u->pc;
+	}
 	if(livelockticks == 0 || vmheldticks < (ulong)livelockticks)
 		return;
 	if(vmheldticks - told < (ulong)livelockticks)
 		return;
 	told = vmheldticks;
 	if(++nseen <= 16)
-		iprint("LIVELOCK %d: pid %lud (%s) has held the Dis VM for %lud"
-			" ticks; nothing else has run\n", nseen, (ulong)up->pid,
+		iprint("LIVELOCK %d: pid %lud (%s) has been Running for %lud"
+			" ticks; the scheduler has not chosen another"
+			" process\n", nseen, (ulong)up->pid,
 			up->text != nil? up->text: "?", vmheldticks);
 }
 
@@ -282,10 +339,14 @@ livelockcheck(void)
  * changing hands, and stop feeding once one process has held it for
  * bootwdog ticks.  The machine then resets itself and boots again.
  *
- * The threshold has to sit well above the legitimate holds: raspi3binit.b's
- * own scheduler-latency test deliberately spends a second in "for(;;) n++;",
- * and disbench spends longer, so ten seconds of one process is the sort of
- * number that means something is wrong rather than busy.  The BCM2835
+ * The threshold has to sit well above the legitimate holds.  One of them is
+ * known and deliberate: schedlat() in raspi3binit.b spawns schedhog(), a bare
+ * "for(;;) n++;" with no system call in it, and then measures ten 50ms sleeps
+ * against it -- half a second of wall time during which that loop is exactly
+ * what this detector is built to find.  So a healthy boot prints LIVELOCK for
+ * it, correctly, and a threshold has to clear 500ms for that reason alone.  A
+ * healthy boot shows a SECOND hold of the same order that schedlat cannot
+ * account for, and the VMHELD line above exists to name it.  The BCM2835
  * watchdog counts at Wdoghz in a 20-bit field, which is about sixteen
  * seconds, so the feed interval has to be well under that.
  *
