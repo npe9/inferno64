@@ -598,6 +598,7 @@ GLOBL	stack(SB), $KSTACK
  * an arrangement to leave in place.
  */
 GLOBL	secstack(SB), $(3*KSTACK+64)
+GLOBL	bsspad(SB), $(Bsspad+8)		/* mem.h: the layout knob */
 GLOBL	sectick(SB), $(4*64)		/* secirq's count, one line per processor */
 GLOBL	mach0(SB), $(4*1024)
 GLOBL	wildstack(SB), $(16*1024)

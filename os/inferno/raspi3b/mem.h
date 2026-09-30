@@ -76,6 +76,18 @@
  * argument in full; smpbcm.c checks at boot that the linker agrees
  * about Cpuparkwait and releases nothing if it does not.
  */
+/*
+ * Bytes of dead BSS, to move everything after it.  The knob exists because
+ * the wild store that freezes this board with the secondaries running is
+ * layout-sensitive: four separate changes have each stopped it and every one
+ * of them moved data or BSS, so "it boots" has meant "the store landed
+ * somewhere harmless this time".  Adding an instrument changes the layout and
+ * can hide the bug the instrument is for, which is a trap.  This makes the
+ * layout a variable to sweep rather than an accident of code size: edit the
+ * number, rebuild, and everything after bsspad moves, with no code changed.
+ */
+#define	Bsspad		0
+
 #define	Spintab		0xd8
 #define	Cpupark		KTZEROraw
 #define	Cpuparkwait	(KTZEROraw+0x1c)

@@ -102,6 +102,15 @@ enum {
 	Cohmagic  = 0x434f4845,		/* "COHE", what a secondary writes */
 	Cohms	  = 200,		/* how long core 0 spins on the line */
 
+	/*
+	 * What an impossible kernel pointer looks like on this board: above
+	 * the 256MB conf.topofmem gives the allocator, and inside the window
+	 * the VideoCore owns.  0x3c10dcc, the value found in comvec, is here.
+	 */
+	Vclo	  = 0x3c000000,
+	Vchi	  = 0x40000000,
+	Vcmax	  = 24,			/* addresses to print before counting only */
+
 	Sctlrmmu = 1<<0,		/* SCTLR_EL1.M: MMU and caches on */
 };
 
@@ -324,6 +333,48 @@ cpustart(int n)
 	 */
 	spllo();
 	cpupark();
+}
+
+/*
+ * Sweep the data segment for words that cannot be kernel pointers.
+ *
+ * The freeze this file's work uncovered is a wild store whose victim is
+ * chosen by address arithmetic: it landed on libinterp's comvec in two
+ * layouts and on nothing that mattered in the layout that ships.  Watching
+ * one symbol therefore finds it only by luck, and any instrument that watches
+ * one symbol has already moved the layout by existing.
+ *
+ * So watch by VALUE instead, which is layout-independent.  The value seen in
+ * comvec was 0x3c10dcc: above conf.topofmem, which is 256MB here, and inside
+ * the range the VideoCore keeps -- the only memory above 256MB this kernel
+ * touches at all, and the only place a plausible-looking wild value comes
+ * from.  No word of the kernel's own data should hold a pointer there except
+ * the framebuffer ones screenbcm owns, so the list this prints is short and
+ * the difference between a healthy list and a frozen one is the victim.
+ *
+ * It reports the ADDRESS of every such word, not a verdict.  A framebuffer
+ * pointer is a legitimate entry and will be in every list; naming them is the
+ * point, because a list is only useful against another list.
+ */
+void
+vcsweep(char *when)
+{
+	extern uchar edata[], etext[];
+	uvlong *p, *ep, v;
+	int n;
+
+	p = (uvlong*)(((uintptr)etext + 7) & ~(uintptr)7);
+	ep = (uvlong*)edata;
+	n = 0;
+	for(; p < ep; p++){
+		v = *p;
+		if(v >= Vclo && v < Vchi){
+			if(++n <= Vcmax)
+				print("VCWORD %s: %#p holds %#llux\n", when, p, v);
+		}
+	}
+	print("VCSWEEP %s: %d words in [%#ux,%#ux) over %#p-%#p\n",
+		when, n, Vclo, Vchi, etext, edata);
 }
 
 /*

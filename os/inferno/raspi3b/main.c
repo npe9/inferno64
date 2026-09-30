@@ -433,6 +433,8 @@ main(void)
 	eve = strdup("inferno");
 	kbdinit();
 
+	vcsweep("boot");		/* the baseline list; smpbcm.c */
+
 	print("\nInferno %s\n", VERSION);
 	print("conf %s (%lud) jit %d\n\n", conffile, kerndate, cflag);
 

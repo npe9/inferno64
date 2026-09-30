@@ -14,6 +14,7 @@ uvlong	fastticks(uvlong*);
 ulong	tk2ms(ulong);
 void	coherence(void);
 void	cpuboot(void);			/* release the other three cores */
+void	vcsweep(char*);			/* data words holding VideoCore addresses */
 void	cpustart(int);			/* what a released core runs */
 void	clockinitsecondary(void);	/* the timer, on a processor not 0 */
 void	clocksecondary(Ureg*);		/* and its whole interrupt handler */
