@@ -13258,6 +13258,29 @@ kernel with
 and past it.  So the question is what the secondaries taking their own timer
 interrupts changes about either the charge or the reschedule that follows it.
 .PP
+.B "The shipped build is repeatable, which is as far as that goes."
+Five cold boots of one build, each reboot proved by the board's own evidence
+rather than by ping timing \(em the command poller numbers what it runs and the
+counter resets at every boot, so
+.CW "RCMD 1"
+appearing again is a reboot that came back \(em and all five booted, with the
+poller answering twenty to twenty-five seconds later.  Seven clean boots of
+this configuration in all.
+.PP
+That does not settle whether the freeze is deterministic per build or a race:
+the arms that froze were three
+.I different
+builds, one boot each, and the control that would separate the two is five
+boots of one frozen build.  It does mean the configuration on the card is not
+a coin toss.
+.PP
+Two earlier versions of that loop used ping timing and reported an unvarying
+"booted in 10s" five times, which is not a Pi cold boot: the first dropped
+packet was taken as proof the board was down, and the command file was
+overwritten before the poller had read it, so nothing rebooted and the result
+was clean five times.  An unchanging number across repetitions of a hardware
+test is the tell.
+.PP
 .B "And the layout measurements have to be read again in that light."
 Four things were measured to stop this and all four move data or BSS, which
 was read as layout sensitivity.  A livelock reached through a spawn, a channel
