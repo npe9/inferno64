@@ -242,7 +242,7 @@ struct Progs
 
 struct Prog
 {
-	REG		R;		/* Register set */
+	REG		reg;		/* Register set */
 	Prog*		link;		/* Run queue */
 	Channel*		chan;	/* Channel pointer */
 	void*		ptr;		/* Channel data pointer */

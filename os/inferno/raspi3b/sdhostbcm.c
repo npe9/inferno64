@@ -883,7 +883,7 @@ sdhostonline(SDunit *u)
  * home for arg0 at caller-SP+8, which is exactly UR_R1, so trap()'s
  * prologue spilling its Ureg* argument overwrote the saved R1 on every
  * interrupt.  Usually R1 was dead so it went unnoticed; but a timer IRQ
- * landing in irestore's fixed-size R = p->R copy clobbered the live loop
+ * landing in irestore's fixed-size R = p->reg copy clobbered the live loop
  * counter, turning it into an unbounded copy that walked memory upward
  * from the global R (with the MMU off, silent corruption -> the "file
  * does not exist" symptom).  The one-line arg-home reservation in l.s's

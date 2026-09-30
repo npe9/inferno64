@@ -378,7 +378,7 @@ destroy(void *v)
 
 		xp = currun();
 		/*
-		 * xp->R (currun()'s Prog struct) is only refreshed at the
+		 * xp->reg (currun()'s Prog struct) is only refreshed at the
 		 * start and end of xec()'s whole PQUANTA=2048-instruction
 		 * quantum, not per instruction -- during the quantum it is
 		 * stale by however many instructions have run since entry.

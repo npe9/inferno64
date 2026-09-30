@@ -217,8 +217,8 @@ newprog(Prog *p, Modlink *m)
 	h = D2H(m);
 	h->ref++;
 	Setmark(h);
-	n->R.M = m;
-	n->R.MP = m->MP;
+	n->reg.M = m;
+	n->reg.MP = m->MP;
 	if(m->MP != H)
 		Setmark(D2H(m->MP));
 	addrun(n);
@@ -406,7 +406,7 @@ exprog(Prog *p, char *exc)
 {
 	switch(p->state) {
 	case Palt:
-		altdone(p->R.s, p, nil, -1);
+		altdone(p->reg.s, p, nil, -1);
 		break;
 	case Psend:
 		cqdelp(&p->chan->send, p);
@@ -489,7 +489,7 @@ killprog(Prog *p, char *cause)
 
 	switch(p->state) {
 	case Palt:
-		altdone(p->R.s, p, nil, -1);
+		altdone(p->reg.s, p, nil, -1);
 		break;
 	case Psend:
 		cqdelp(&p->chan->send, p);
@@ -537,14 +537,14 @@ killprog(Prog *p, char *cause)
 		int i;
 
 		i = snprint(msg, sizeof(msg), "%d \"", p->pid);
-		i += snprint(msg+i, sizeof(msg)-i, "%s", p->R.M->m->name);
+		i += snprint(msg+i, sizeof(msg)-i, "%s", p->reg.M->m->name);
 		i += snprint(msg+i, sizeof(msg)-i, "\":");
 		snprint(msg+i, sizeof(msg)-i, "%s", cause);
 	}
 
 	p->state = Pexiting;
 	gclock();
-	destroystack(&p->R);
+	destroystack(&p->reg);
 	delprog(p, msg);
 	gcunlock();
 
@@ -1054,9 +1054,9 @@ schedmod(Module *m)
 	p = newprog(nil, ml);
 	h = D2H(ml);
 	h->ref--;
-	p->R.PC = m->entry;
+	p->reg.PC = m->entry;
 	/*
-	 * newstack() (libinterp/stack.c) does memmove(p->R.FP, f, f->t->size)
+	 * newstack() (libinterp/stack.c) does memmove(p->reg.FP, f, f->t->size)
 	 * -- f->t is m->entryt here, the *complete* entry-frame type covering
 	 * every local the root module's init() declares, routinely far
 	 * bigger than sizeof(Frame).  This used to pass a bare on-stack
@@ -1075,7 +1075,7 @@ schedmod(Module *m)
 	f->t = m->entryt;
 	newstack(p);
 	free(f);
-	initmem(m->entryt, p->R.FP);
+	initmem(m->entryt, p->reg.FP);
 
 	return p;
 }
