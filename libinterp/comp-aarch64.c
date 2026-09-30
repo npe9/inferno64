@@ -1014,10 +1014,11 @@ literal(uvlong imm, int roff)
  * proportional to the loop body; what remains is proportional to the
  * work a loop hides behind calls.
  */
+static void	icharge(long);
+
 static void
 schedcheck(Inst *i)
 {
-	u32int *skip;
 	long n;
 
 	if(!RESCHED || i->d.ins > i)
@@ -1033,6 +1034,28 @@ schedcheck(Inst *i)
 		n = 1;
 	if(n > 4095)
 		n = 4095;
+
+	icharge(n);
+}
+
+/*
+ * icharge — take n off the quantum here and reschedule if it is spent.
+ *
+ * Split out of schedcheck so that a call can charge too.  A loop whose
+ * body is mostly calls reached the counter once per iteration and was
+ * charged for the call instruction alone, so the quantum still ran long
+ * past what the interpreter would have allowed -- which is the residual
+ * named in schedcheck's comment above.
+ *
+ * Placed BEFORE the call is set up, so that re-entry after a reschedule
+ * re-runs the whole call.  MacRELQ stores LR as R.PC and BL leaves LR
+ * inside this sequence, so execution resumes at the comparison with a
+ * refreshed R.IC and nothing half-done.
+ */
+static void
+icharge(long n)
+{
+	u32int *skip;
 
 	mem(Ldw32, O(REG, IC), RREG, RA0);
 	SUBS_IMM32(RA0, RA0, (int)n);
@@ -1962,6 +1985,8 @@ comp(Inst *i)
 		bradis(i->d.ins - mod->prog);
 		break;
 	case ICALL:
+		if(RESCHED)
+			icharge(1);
 		opwld(i, Ldw, RA0);
 		con(RELPC(patch[i - mod->prog + 1]), RA1);
 		mem(Stw, O(Frame, lr), RA0, RA1);
