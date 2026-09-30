@@ -421,7 +421,24 @@ extern	Type	Tbyte;
 extern	Type Tword;
 extern	Type Tlong;
 extern	Type Treal;
-extern	REG	R;
+/*
+ * The Dis register file, reached through a pointer.
+ *
+ * Phase 1a of doc/raspi3b-parallelvm-plan.ms: pure indirection.  There is
+ * one REG and curR always points at it, so this is the same program it was
+ * -- but every one of the ~1900 "R.field" references now goes through a
+ * variable, which is what later phases need in order to give each executor
+ * its own register file.
+ *
+ * It is a pointer and not curP->reg yet, because the context struct is the
+ * next step and this one is meant to be provable on its own.
+ *
+ * R must be a macro rather than a REG, and that is why Prog.R had to be
+ * renamed Prog.reg first: an object-like macro expands after "->" too, so
+ * p->R would have become p->(*curR).
+ */
+extern	REG*	curR;
+#define	R	(*curR)
 extern	String	snil;
 extern	void	(*optab[256])(void);
 extern	void	(*comvec)(void);
