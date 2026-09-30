@@ -14166,3 +14166,44 @@ secondary's
 .CW m->load
 is 0 by design, and printing it per processor was an invitation to file a bug
 about correct behaviour.  It is printed once and labelled now.
+.NH 2
+What the four processors buy, measured
+.PP
+"Letting cores 1 to 3 run
+.CW schedule()
+buys the device drivers" was an assertion.  Here it is measured, and the
+measurement is cheap because of the very limitation that cost a cycle earlier:
+a JTAG boot leaves cores 1 to 3 held by the debugger, so the
+.I same
+kernel image gives a one-processor arm and a four-processor arm with no rebuild,
+no second card write, and nothing differing but the processor count.  Both arms
+are build 1790798590, minutes apart, so the thirty percent this rig drifts hour
+to hour has no room to work.
+.P1
+                      one processor   four processors
+ping    64B  1 frame       1.77 ms          1.58 ms
+ping  1400B  1 frame       2.45             2.43
+ping  4000B  3 frames      6.88             5.38
+ping  8000B  6 frames     74.31             8.15
+1MB styx read        2.6 4.9 6.8      2.1 2.1 2.4
+1MB styx write       5.5 3.4 4.9      3.4 3.1 3.1
+.P2
+Four processors are 9.1 times better on the six-fragment ping, 2.3 times on the
+median styx read and 1.6 times on the write \(em and the spread collapses with
+the median, from 2.6x between repeats to 1.14x on the read.  A reassembly or a
+styx reply needs the driver process scheduled again and again, and on one
+processor it waits behind whatever holds that processor.
+.PP
+.B "And the control is in the table."
+The single-frame rows are the same in both arms, 1.77 against 1.58 and 2.45
+against 2.43.  That matters because the one-processor arm is a JTAG boot, and
+.CW quiesce
+resets the USB controller before loading \(em the ethernet is USB on this board,
+so a handicapped network path was the obvious confound.  A handicapped path
+would slow every row.  Only the multi-fragment and bulk rows move, which is the
+signature of scheduling and not of the wire.
+.PP
+Stated plainly: three repeats per point and one boot per arm, and the one-processor
+arm boots by a different route than the card.  The direction is consistent across
+three independent metrics and the largest effect is nine-fold, so the conclusion
+is safe even if the exact ratios are not.
