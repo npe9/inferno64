@@ -195,23 +195,79 @@ can be trusted.  A context blocked in a system call is already at one.
 measured.  Never combined with phase 4's install: one install has already
 failed in this tree because two variables moved at once.
 .NH 1
-The hard file
+The hard file is not hard
 .PP
 .CW comp-aarch64.c
-is the one place both branches rewrote the same generator from the same
-ancestor \(em 3134 lines added here, 2949 there.  It is also the file this port
-depends on most: this board ships
-.CW cflag=1 ,
+looked like the worst of it: both branches rewrote the same generator from the
+same ancestor, 3134 lines added here and 2949 there, and it is the file this
+port depends on most, because this board ships
+.CW cflag=1
 and
 .CW libinterp.a
 contains
 .CW comp-aarch64.7 ,
-so it is this generator that runs on the Pi.  The functional delta needed for
-the parallel VM may be as small as
-.CW ctxreg() ,
-because the atomic refcounts are already here and the comment says the
-generators should differ in nothing else.  That is a claim to verify
-function by function before touching it, not to act on.
+so this generator is what runs on the Pi.
+.PP
+Diffed rather than assumed, the two files are
+.B "nine hunks and 330 lines"
+apart.  Somebody kept them in sync on purpose, which is what the comment above
+.CW ctxreg()
+was for.  The whole functional delta is four things.
+.PP
+multicore has, and this branch needs:
+.CW "RCTX = 25"
+in the register enum, and
+.CW ctxreg()
+emitting
+.CW "MOV_REG(rd, RCTX)"
+in place of
+.CW "con((uvlong)&R, rd)" .
+X25 is free here \(em it appears in this file only inside comments \(em and the
+seven call sites are already annotated
+.CW "RREG = &R, out of the context register" ,
+so a previous session prepared this file for this exact change.
+.PP
+This branch has, and must keep:
+.CW jitskip
+with
+.CW skipmod() ,
+the per-module bisecting tool that earned itself on the Pi by isolating
+.CW Etherusb ;
+and
+.CW icharge(n) ,
+which charges a backward branch the real length of its loop, clamped to
+[1,4095], where multicore charges 1.  That second one is this port's quantum
+fix and losing it in a merge would be silent.
+.NH 1
+The risk this board takes on alone
+.PP
+multicore's native boards ship
+.CW "cflag = 0" :
+.CW virtarm64
+and
+.CW pc64
+both.  This board ships
+.CW "cflag = 1" .
+So although
+.CW disinit()
+on that branch deliberately
+.I permits
+the combination \(em it disables the JIT only when
+.CW "cflag != 0 && parallelvm != 0 && jitrefsatomic == 0" ,
+and this generator sets
+.CW jitrefsatomic
+to 1 \(em nothing has ever actually run the JIT and the parallel VM together on
+hardware.  The Pi would be the first.
+.PP
+That is the single largest risk in this plan and it is not reducible by reading:
+the JIT emits reference-count updates inline, and whether its LDXRW/STXRW loops
+are right under two executors is a question only two executors can answer.  It
+argues for measuring phase 5 with
+.CW cflag=0
+first, to separate "the parallel VM works" from "the parallel VM works with this
+generator", and for keeping
+.CW jitskip
+close to hand.
 .NH 1
 Gates
 .PP
