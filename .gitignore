@@ -534,3 +534,12 @@ os/inferno/virtarm64/ivirtarm64
 os/inferno/*/*.bin
 os/inferno/*/*.img
 os/inferno/*/*.listing
+
+# The board command channel.  board.cmd is what the running kernel's poller
+# reads over the styx mount and board.out is what it writes back, so both
+# change every time the board is driven and neither is source.  board.cmd was
+# tracked-but-never-committed, which is a rule enforced by remembering: it
+# holds the Wi-Fi passphrase while credentials are being set, so one
+# "git commit -a" would have published it.  Untracked and ignored instead.
+os/inferno/raspi3b/board.cmd
+os/inferno/raspi3b/board.out

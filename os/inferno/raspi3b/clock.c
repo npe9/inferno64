@@ -251,7 +251,17 @@ extern int smpstart;
  */
 static ulong	vmheldticks;	/* how long one process has held the VM */
 static ulong	maxvmheld;	/* the longest hold seen, for calibration */
-static ulong	maxvmheldpid;
+
+/*
+ * VMHELD reports on its own floor and not on livelockticks, because one knob
+ * cannot be both the warning threshold and the measuring floor: raising
+ * livelockticks to clear the legitimate holds would have switched off the
+ * very lines that measured them, and the boot would then have been "quiet"
+ * because the instrument was gone rather than because nothing held.
+ */
+enum {
+	Vmheldfloor	= 50,		/* ticks: report a hold at least this long */
+};
 static uintptr	heldkpc;	/* last kernel pc seen during a hold */
 static uintptr	helddispc;	/* last non-kernel (compiled Dis) pc */
 
@@ -274,11 +284,9 @@ livelockcheck(Ureg *u)
 		 * watchdog threshold turns on is how long a LEGITIMATE hold
 		 * gets, and a lower bound cannot answer it.
 		 */
-		if(vmheldticks >= (ulong)livelockticks && livelockticks != 0){
-			if(vmheldticks > maxvmheld){
+		if(vmheldticks >= Vmheldfloor){
+			if(vmheldticks > maxvmheld)
 				maxvmheld = vmheldticks;
-				maxvmheldpid = held != nil? held->pid: 0;
-			}
 			if(nreleased++ < 16)
 				iprint("VMHELD: pid %lud (%s) held the Dis VM"
 					" for %lud ticks, then released it"
@@ -289,8 +297,15 @@ livelockcheck(Ureg *u)
 						held->text: "?",
 					vmheldticks, maxvmheld,
 					heldkpc, helddispc);
-			heldkpc = helddispc = 0;
 		}
+		/*
+		 * Cleared here rather than in the reporting branch: only one of
+		 * the two is written per tick, so a sub-threshold episode that
+		 * ended in the kernel would otherwise leave heldkpc set and the
+		 * next reported episode, if it were pure Dis, would print that
+		 * stale address as its own.
+		 */
+		heldkpc = helddispc = 0;
 		held = up;
 		since = m->ticks;
 		told = 0;
