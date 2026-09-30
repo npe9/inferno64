@@ -491,3 +491,15 @@ os/inferno/raspi3b/raspi3b.c
 # python byte-code from the check scripts importing one another
 /scripts/__pycache__/
 __pycache__/
+
+# Built kernel images, and the ihex a bootloader is fed.  These are
+# output: os/inferno/<board>/i<board> is what the linker writes and
+# i<board>.hex is what tools/bin2ihex makes of it, so they change on
+# every build and carried no information the source did not.
+os/inferno/*/i[a-z0-9]*
+!os/inferno/*/i[a-z0-9]*.c
+!os/inferno/*/i[a-z0-9]*.h
+!os/inferno/*/i[a-z0-9]*.s
+!os/inferno/*/io.h
+*.hex
+os/inferno/mangopi/mangopi.bin
