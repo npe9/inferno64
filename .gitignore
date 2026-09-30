@@ -543,3 +543,10 @@ os/inferno/*/*.listing
 # "git commit -a" would have published it.  Untracked and ignored instead.
 os/inferno/raspi3b/board.cmd
 os/inferno/raspi3b/board.out
+
+# emu's linked executables.  mk names them o.<target> beside the sources,
+# so they sit inside emu/<platform>/ rather than in a build directory and
+# were tracked: every rebuild by any session then showed three modified
+# Mach-O binaries in "git status", which is noise nobody edited and a
+# diff nobody can read.  o.emu-g is tracked too and is the same thing.
+emu/*/o.emu-*
