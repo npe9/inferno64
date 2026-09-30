@@ -92,6 +92,34 @@ extern ulong gchalted;
  */
 enum { Stwticks = HZ/10 };	/* 100ms for another quantum to end */
 
+/*
+ * The process-group lists, and why they get a lock of their own.
+ *
+ * addgrp() and delgrp() thread Progs onto a doubly-linked group list and
+ * maintain g->head and g->tail.  Neither has ever taken a lock and neither
+ * needed one: newprog() calls addgrp() after it has released isched.l,
+ * delprog() calls delgrp() before it takes it, and both run with the
+ * interpreter acquired -- which, while one executor runs Dis at a time,
+ * means there is nothing to race with.  That is still true on this board.
+ *
+ * It stops being true the moment two executors run.  The multicore branch
+ * measured what happens: both run addgrp() and delgrp() on the same group,
+ * the list tears, g->tail is left naming a Prog that delprog() has since
+ * freed, and the next addgrp() to that group does "g->tail->grpnext = n",
+ * writing a Prog pointer into freed memory.  From there it is the
+ * allocator's problem and which panic you get depends on what the pool had
+ * since put there.  Three guests each way, fifteen minutes, eight
+ * processors: 18 and 17 detections on two guests of three without the lock,
+ * 0 on three of three with it, and the same channel throughput either way --
+ * so the fixed kernel was working just as hard and had simply stopped
+ * writing into freed Progs.
+ *
+ * A lock of its own, and NOT isched.l, because delgrp() ends by freeing
+ * empty parent groups and free() takes the pool's own lock.  The order is
+ * always grplock then pool, never the reverse.
+ */
+static Lock	grplock;
+
 int	gcstw;			/* a collection wants the others stopped */
 ulong	gcstwstops;		/* worlds stopped */
 ulong	gcstwwaits;		/* times one had to be waited for */
@@ -514,7 +542,12 @@ grpleader(Prog *p)
 	Prog *l;
 
 	g = p->group;
-	if(g != nil && (l = g->head) != nil && l->pid == g->id)
+	if(g == nil)
+		return nil;
+	lock(&grplock);
+	l = g->head;
+	unlock(&grplock);
+	if(l != nil && l->pid == g->id)
 		return l;
 	return nil;
 }
@@ -577,6 +610,16 @@ propex(Prog *p, char *estr)
 		pgl = p;
 	if(!(pgl->flags & (Ppropagate|Pnotifyleader)))
 		return;	/* exceptions are local; don't propagate */
+	/*
+	 * This walk is NOT under grplock, deliberately.  It calls exprog()
+	 * and killprog() on each member, and those can raise and can sleep,
+	 * which a spinlock forbids.  The answer is to snapshot the members
+	 * under the lock and act on the snapshot outside it -- which is what
+	 * the multicore branch does, and which needs somewhere to put the
+	 * snapshot on a path that is already handling an exception.  It
+	 * cannot race while one executor runs Dis, so it is written down here
+	 * rather than half-done.
+	 */
 	for(f = p->group->head; f != nil; f = nf){
 		nf = f->grpnext;
 		if(f != p && f != pgl){
@@ -683,7 +726,8 @@ newgrp(Prog *p)
 	g->id = p->pid;
 	g->flags = 0;
 	g->child = nil;
-	pg = delgrp(p);
+	pg = delgrp(p);		/* takes grplock itself; do not nest */
+	lock(&grplock);
 	g->head = g->tail = p;
 	p->group = g;
 	if(pg != nil){
@@ -691,6 +735,7 @@ newgrp(Prog *p)
 		pg->child = g;
 	}
 	g->parent = pg;
+	unlock(&grplock);
 }
 
 static void
@@ -700,6 +745,7 @@ addgrp(Prog *n, Prog *p)
 
 	n->group = p->group;
 	if((g = n->group) != nil){
+		lock(&grplock);
 		n->grpnext = nil;
 		if(g->head != nil){
 			n->grpprev = g->tail;
@@ -709,6 +755,7 @@ addgrp(Prog *n, Prog *p)
 			g->head = n;
 		}
 		g->tail = n;
+		unlock(&grplock);
 	}
 }
 
@@ -720,6 +767,7 @@ delgrp(Prog *p)
 	g = p->group;
 	if(g == nil)
 		return nil;
+	lock(&grplock);
 	if(p->grpprev)
 		p->grpprev->grpnext = p->grpnext;
 	else
@@ -752,6 +800,7 @@ delgrp(Prog *p)
 			free(g);
 		}while((g = pg) != nil && g->head == nil);
 	}
+	unlock(&grplock);
 	return g;
 }
 

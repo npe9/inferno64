@@ -694,6 +694,17 @@ newgrp(Prog *p)
 	g->parent = pg;
 }
 
+/*
+ * The process-group lists' own lock.  Same reasoning as the kernel's
+ * os/inferno/port/dis.c: addgrp() and delgrp() have never taken one and have
+ * never needed one, because acquire()/release() mean a single thread
+ * executes Dis at a time and both run with the interpreter held.  Not
+ * isched.l, because delgrp() frees empty parent groups and free() takes the
+ * pool's own lock; the order is always grplock then pool.
+ */
+static Lock	grplock;
+
+
 static void
 addgrp(Prog *n, Prog *p)
 {
@@ -701,6 +712,7 @@ addgrp(Prog *n, Prog *p)
 
 	n->group = p->group;
 	if((g = n->group) != nil){
+		lock(&grplock);
 		n->grpnext = nil;
 		if(g->head != nil){
 			n->grpprev = g->tail;
@@ -710,6 +722,7 @@ addgrp(Prog *n, Prog *p)
 			g->head = n;
 		}
 		g->tail = n;
+		unlock(&grplock);
 	}
 }
 
@@ -721,6 +734,7 @@ delgrp(Prog *p)
 	g = p->group;
 	if(g == nil)
 		return nil;
+	lock(&grplock);
 	if(p->grpprev)
 		p->grpprev->grpnext = p->grpnext;
 	else
@@ -753,6 +767,7 @@ delgrp(Prog *p)
 			free(g);
 		}while((g = pg) != nil && g->head == nil);
 	}
+	unlock(&grplock);
 	return g;
 }
 
