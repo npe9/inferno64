@@ -6,6 +6,9 @@
 #include	"error.h"
 #include	"raise.h"
 
+static ulong	nrunqother;	/* Progs found on another context's run queue */
+static ulong	nrunqdel;	/* Progs delprog() freed that were still queued */
+
 #define DP if(1){}else print
 
 /* Names for the Dis instruction set (include/isa.h), used only to make a
@@ -431,10 +434,30 @@ delprog(Prog *p, char *msg)
 		panic("lost pid");
 	*ph = p->pidlink;
 
+	/*
+	 * delrunq(), not a test against this context's queue head.  The head
+	 * test unlinks p only if it happens to be running here: a p anywhere
+	 * else in a queue stayed linked and was then freed, and with a second
+	 * context "anywhere else" includes another context's queue entirely.
+	 * nrunqdel counts the times the search found it somewhere the head
+	 * test would have missed.
+	 */
 	if(p == curP->runhd) {
 		curP->runhd = p->link;
 		if(p->link == nil)
 			curP->runtl = nil;
+	}else{
+		Prog *q;
+		int j;
+
+		for(j = 0; j < npctx; j++)
+			for(q = pctxs[j]->runhd; q != nil; q = q->link)
+				if(q == p){
+					nrunqdel++;
+					delrunq(p);
+					j = npctx;
+					break;
+				}
 	}
 	p->state = 0xdeadbeef;
 	/*
@@ -961,21 +984,37 @@ void
 delrunq(Prog *p)
 {
 	Prog *prev, *f;
+	Pctx *c;
+	int i;
 
-	prev = nil;
-	for(f = curP->runhd; f; f = f->link) {
-		if(f == p)
-			break;
-		prev = f;
-	}
-	if(f == nil)
+	/*
+	 * Every context's queue, not just this one.  With one context that is
+	 * the same search it always was; with two, a program can be on a
+	 * queue that is not the asking context's, and looking only here would
+	 * leave it linked -- on a Prog that delprog() is about to free.
+	 * nrunqother counts the case, so that "it cannot happen yet" is a
+	 * measurement rather than an assumption.
+	 */
+	for(i = 0; i < npctx; i++){
+		c = pctxs[i];
+		prev = nil;
+		for(f = c->runhd; f; f = f->link) {
+			if(f == p)
+				break;
+			prev = f;
+		}
+		if(f == nil)
+			continue;
+		if(c != curP)
+			nrunqother++;
+		if(prev == nil)
+			c->runhd = p->link;
+		else
+			prev->link = p->link;
+		if(p == c->runtl)
+			c->runtl = prev;
 		return;
-	if(prev == nil)
-		curP->runhd = p->link;
-	else
-		prev->link = p->link;
-	if(p == curP->runtl)
-		curP->runtl = prev;
+	}
 }
 
 Prog*
