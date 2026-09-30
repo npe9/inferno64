@@ -19,6 +19,16 @@ dev
 	ssl
 	cap
 	kprof
+#
+# prof: the Dis profiler's device, #P, which prof(1) binds.
+#
+# kprof above profiles the KERNEL -- it samples the ARM pc and tells you
+# that the board is eighty per cent idle in markheap and rungc.  It cannot
+# say anything about a Limbo program, and on this board the programs are
+# where the work is: etherusb touches every frame, efs every block.  #P
+# samples the Dis pc instead, per module, which is what prof(1) reports.
+#
+	prof
 	sd
 	draw
 	pointer
@@ -128,6 +138,13 @@ root
 	/env	/
 	/fd	/
 	/n	/
+#
+# /prof, for prof(1) to bind #P onto.  A bind needs its mount point to
+# exist, and the failure without it names the device rather than the
+# missing directory: "cannot bind prof device to /prof: file does not
+# exist".
+#
+	/prof	/
 	/n/bt	/
 	/n/efs	/
 	/n/efscrash	/
@@ -170,6 +187,16 @@ root
 	/dis/dd.dis
 	/dis/fatstress.dis
 	/dis/sh.dis
+	/dis/prof.dis
+	/dis/lib/profile.dis
+#
+# prof(1) loads these two through the Profile module: Debug to read a
+# module's symbol table and Dis to read the object.  Without them the
+# board says "cannot initialize profile device: cannot load Debug
+# module", which names the device and blames it for a missing library.
+#
+	/dis/lib/debug.dis
+	/dis/lib/dis.dis
 #
 # disbench(1), so the board can say whether the JIT is doing anything at
 # all -- separately from whether it helps the network, which is the
@@ -177,6 +204,13 @@ root
 # may well answer "no" to.
 #
 	/dis/disbench.dis
+#
+# and its symbol table, so prof(1) can name what it sampled.  Without an
+# .sbl prof gets its samples and then says "no profile information:
+# cannot locate source file", which sounds like the device failed and is
+# the profiler declining to guess at names.
+#
+	/dis/disbench.sbl
 	/dis/sh/std.dis
 	/dis/usb/usbd.dis
 	/dis/usb/etherusb.dis

@@ -9,7 +9,7 @@
 #include	"runt.h"
 
 static void	cpxec(Prog *);
-static void memprof(int, Heap*, ulong);
+static void memprof(int, void*, ulong);	/* heapmonitor's type; see interp.h */
 
 extern	Inst*	pc2dispc(Inst*, Module*);
 
@@ -246,7 +246,7 @@ profstat(Chan *c, uchar *db, int n)
 }
 
 static Chan*
-profopen(Chan *c, int omode)
+profopen(Chan *c, u32 omode)
 {
 	int qid;
 	Record *r;
@@ -318,8 +318,8 @@ profclose(Chan *c)
 	USED(c);
 }
 
-static long
-profread(Chan *c, void *va, long n, vlong offset)
+static s32
+profread(Chan *c, void *va, s32 n, s64 offset)
 {
 	int i;
 	Record *r;
@@ -338,12 +338,19 @@ profread(Chan *c, void *va, long n, vlong offset)
 	case Qpath:
 		return readstr(offset, va, n, r->path);
 	case Qhist:
-		i = (int)c->aux;
+		/*
+		 * Through uintptr, not straight to int.  c->aux carries the
+		 * bucket this read left off at -- a small integer stuffed in
+		 * a pointer -- and casting a pointer to int is a truncation
+		 * the compiler is right to warn about even when the value is
+		 * two.  The store below already goes the other way.
+		 */
+		i = (int)(uintptr)c->aux;
 		while(i < r->size && r->bucket[i] == 0)
 			i++;
 		if(i >= r->size)
 			return 0;
-		c->aux = (void*)(i+1);
+		c->aux = (void*)(uintptr)(i+1);
 		if(n < 20)
 			error(Etoosmall);
 		return sprint(a, "%d %lud", i, r->bucket[i]);
@@ -353,8 +360,8 @@ profread(Chan *c, void *va, long n, vlong offset)
 	return 0;
 }
 
-static long
-profwrite(Chan *c, void *va, long n, vlong offset)
+static s32
+profwrite(Chan *c, void *va, s32 n, s64 offset)
 {
 	int i;
 	char *a = va;
@@ -522,18 +529,31 @@ sampler(void* a)
 		tsleep(&up->sleep, return0, nil, interval);
 		if(profiler != Psam)
 			break;
-		lock(&profile.l);
-		profile.time += interval;
-		if(R.M == H || (m = R.M->m) == nil){
-			unlock(&profile.l);
+		/*
+		 * The lookup FIRST, and the spinlock only over the counter.
+		 *
+		 * This used to take profile.l and then call mlook(m, 0, ...),
+		 * which for a module it has not seen goes to newmodule() ->
+		 * acquire() and malloc().  Both can sleep, and sleeping with a
+		 * spinlock held is exactly
+		 *
+		 *	panic: acquire: sched returned queueing, nlocks 1
+		 *
+		 * which is what "prof ls /dis" did to the Raspberry Pi 3B the
+		 * first time this device was ever linked into a kernel: the
+		 * sampler meets its first module one interval in and takes the
+		 * machine down.  A sampling profiler must not allocate with a
+		 * lock held, and it need not: nothing frees a Record while the
+		 * profiler is running, so the pointer is good across the gap.
+		 */
+		if(R.M == H || (m = R.M->m) == nil)
 			continue;
-		}
 		p = R.PC;
 		r = mlook(m, 0, 1, 0);
-		if(r == nil){
-			unlock(&profile.l);
+		if(r == nil)
 			continue;
-		}
+		lock(&profile.l);
+		profile.time += interval;
 		if(m->compiled && m->pctab != nil)
 			p = pc2dispc(p, m);
 		if((i = p-r->base) >= 0 && i < r->size)
@@ -607,9 +627,15 @@ enum{
 
 #define MPAD	sizeof(double)
 
+/*
+ * The heap monitor's hook, and its signature is interp.h's rather than
+ * this file's wish.  heapmonitor is "void (*)(int, void*, ulong)"; this
+ * took Heap* and the assignment at the Pmem case would not compile.
+ */
 static void
-memprof(int c, Heap *h, ulong n)
+memprof(int c, void *hp, ulong n)
 {
+	Heap *h = hp;
 	int i, j, k;
 	ulong kk, *b;
 	Module *m;
