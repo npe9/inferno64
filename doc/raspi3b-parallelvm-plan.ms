@@ -810,3 +810,110 @@ its
 is still correct only because there is one register file, and the day
 .CW DISCTXREG
 lands it must change in the same commit, for the reason its own comment gives.
+.NH 1
+The collector half, landed and measured
+.PP
+Three more pieces are in, and between them they are what "parallelising the
+collector" means \(em the mechanism by which a collection can be correct when
+something else is running.
+.PP
+.B "The safepoint."
+.CW Pctx.inxec
+is "a quantum is open on this context", raised and lowered with
+.CW curprog
+at the four boundaries:
+.CW xec() 's
+entry and tail, and
+.CW isave() /
+.CW irestore() ,
+which are where a blocking system call hands the registers back and takes them
+again.
+.CW rungc()
+checks the invariant that no context has one open, because
+.CW rootset()
+reads live registers through
+.CW progreg()
+and a collection taken with a quantum open walks registers the mutator is still
+writing.
+.PP
+.B "And the check earned itself twice, immediately."
+A QEMU boot printed
+.CW "rungc: context 0 has a quantum open (prog 0x0)" ,
+and the nil program beside a set flag is what named the paths: something was
+clearing one and not the other.  First, an exception leaves a quantum by
+.CW longjmp
+and reaches neither
+.CW xec() 's
+tail nor
+.CW isave() ,
+so
+.CW inxec
+stayed set for the rest of the boot and the guard would have read "open" for
+ever and meant nothing.  Second, a program that exits from inside its own
+quantum reaches
+.CW delprog()
+through
+.CW progexit() ,
+which cleared
+.CW curprog
+while
+.CW xec()
+never reached the tail.  Both closed; the guard fires zero times across a full
+boot on silicon, with the collector running 1238464 times and inspecting 52
+million objects.
+.PP
+.B "The stopped world."
+Both collector call sites bracket
+.CW rungc()
+with
+.CW stoptheworld() /
+.CW starttheworld() .
+What it waits for is that no
+.I other
+context has a quantum open, and that is all: a context outside
+.CW xec()
+can mutate the heap, which the write barrier handles by design, and can queue a
+program, which cannot cost a root because roots come from
+.CW isched.head .
+Bounded by wall-clock time rather than by a count of tries, for the reason
+multicore measured \(em the same two thousand tries either spanned long enough
+or elapsed too quickly depending on whether a print sat in the loop \(em and
+abandoning a collection is safe in a way waiting is not.  At one executor it is
+satisfied the moment it is asked:
+.CW "stw 1274"
+against
+.CW "runs 1274" ,
+waited 0, gave up 0.  It is in so the precondition is enforced by code rather
+than by the accident of there being one executor.
+.PP
+.B "The process-group lock."
+The one piece that is a bug fix rather than groundwork, and the one whose
+measurement is multicore's rather than this board's: 18 and 17 detections of
+Progs written into freed memory on two guests of three without it, 0 on three of
+three with it, at the same throughput.  It cannot happen here while one executor
+runs Dis; it is in because the failure is a torn list and a
+.CW g->tail
+naming a freed Prog, which becomes the allocator's problem and then somebody
+else's panic.
+.NH 2
+What remains, and why it is the last thing rather than the next
+.PP
+.CW parallelvm
+itself.  Adding the switch is not the work; making its 1 position mean something
+is, and that means replacing this branch's serialisation \(em
+.CW isched 's
+idle/creating dance in
+.CW acquire() /
+.CW release()
+\(em with multicore's explicit
+.CW vmlock ,
+which at 0 is taken and at 1 is not.  Two sections up says why that is a
+behaviour change to prove rather than assume: the ancestor had no
+.CW vmlock
+at all, so "parallelvm=0 is the old behaviour" is true there and false here.
+.PP
+A switch whose 1 position is unimplemented would be worse than no switch, so
+there is none yet.  What is here is everything the collector needs in order to
+be correct once there is one, each piece measured on the board, and a
+.CW GC-COUNTS
+line that reports whether the invariants hold.
