@@ -14207,3 +14207,78 @@ Stated plainly: three repeats per point and one boot per arm, and the one-proces
 arm boots by a different route than the card.  The direction is consistent across
 three independent metrics and the largest effect is nine-fold, so the conclusion
 is safe even if the exact ratios are not.
+.NH 2
+Lock holds with four processors contending, and what parallelvm would cost
+.PP
+.B "No data-path lock is held long."
+Four processors sharing the run queues and the device queues is a new
+contention regime, and
+.CW ILOCKTRACE
+is compiled into this board, so
+.CW "echo ilock on"
+then
+.CW "echo ilock"
+on
+.CW /dev/sysctl
+brackets an interval and reports the longest hold in it with the pc.  Over a 1MB
+styx read on the four-processor card boot:
+.P1
+ILOCK-MAX 6 us at qwait+0xc8, mean 263 ns over 83825 ilocks
+.P2
+Six microseconds worst over eighty-three thousand ilocks, mean 263ns.  The one
+long hold anywhere is the console:
+.CW "629 us at uartkick+0x30" ,
+which is a lock held while characters are pushed into a 115200-baud FIFO and is
+therefore inherent to printing rather than to having four processors.  It costs
+a spinning processor time and not correctness, and it only bites while the
+kernel prints.
+.PP
+Note what this does and does not measure: it is hold time, not wait time, so it
+says the critical sections are short, not that nothing contends for them.  A
+one-processor arm would not illuminate it, because hold time is the same with
+nobody waiting.
+.PP
+.B "And parallelvm is the larger merge, with none of its groundwork here."
+The other half of the choice \(em making
+.I Dis
+run on more than one processor \(em is on the
+.CW multicore
+branch, where
+.CW parallelvm
+defaults to 1 and is worth 2.5x to 4.1x on rented amd64 and arm64 hardware.  It
+works by dropping the global VM lock and replacing it with a stop-the-world
+collector that stops contexts at safepoints, a safepoint being
+.CW "curP->inxec == 0"
+\(em no quantum open, so
+.CW isave()
+has written the registers back and
+.CW p->reg
+can be trusted.  A context blocked in a system call is already at one.
+.PP
+This branch has none of that groundwork.  Checked rather than assumed: no
+.CW inxec
+anywhere in
+.CW os/inferno/port ,
+.CW libinterp
+or
+.CW include ;
+no
+.CW stoptheworld ,
+no
+.CW gcstw ;
+and
+.CW addgrp() /
+.CW delgrp()
+here maintain the process-group list unlocked, which is exactly the race that
+panicked three of four instances the first time
+.CW multicore
+turned the switch on.  There are 42
+.CW parallelvm
+sites in that branch's
+.CW dis.c ,
+and the whole file has diverged by thousands of lines from this one, so this is
+not a cherry-pick; it is a port of the safepoint discipline, the collector
+change and the group locking, into the highest-risk file in the kernel.  It
+deserves its own plan and its own acceptance tests, and
+.CW doc/multicore-ship-plan.ms
+on that branch already has five phases of them.
