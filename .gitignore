@@ -506,3 +506,31 @@ os/inferno/raspi3b/fw/
 #
 os/inferno/*/*.root.s
 os/inferno/*/*.root.h
+
+#
+# The linked kernels themselves, one per board directory, and the raw
+# images and blobs made from them.  Same reason as the root images above:
+# a build rewrites them, they are megabytes of binary, and nothing reads
+# them from the repository -- the mkfile installs the kernel it just built
+# into Inferno/$OBJTYPE/bin.  raspi3b's was already untracked; this is the
+# rest of the boards.
+#
+# Named one by one rather than matched: the target is "i$CONF", which no
+# pattern can express without also catching i2cbcm.c, io.h and every other
+# source file that starts with an i.  A new board needs a line here.
+#
+os/inferno/armv7/iarmv7
+os/inferno/mangopi/imangopi
+os/inferno/mps2/imps2
+os/inferno/nucleof303/inucleof303
+os/inferno/pc64/ipc64
+os/inferno/raspi3b/iraspi3b
+os/inferno/sifiveu/isifiveu
+os/inferno/spike/ispike
+os/inferno/teensy41/iteensy41
+os/inferno/virt/ivirt
+os/inferno/virt32/ivirt32
+os/inferno/virtarm64/ivirtarm64
+os/inferno/*/*.bin
+os/inferno/*/*.img
+os/inferno/*/*.listing
