@@ -13899,43 +13899,81 @@ off is harmless by itself, so it is the
 .I combination
 that is fatal, not either half.
 .PP
-.B "So the mechanism is established.  Its application to the layout build is not."
-What is proven is that a Limbo loop which never yields freezes this board if
-and only if
+.B "It is hzsched(), and that took a fourth arm to establish."
+.CW schedclock
+gated
+.I two
+functions in
+.CW clockintr() :
+.CW accounttime()
+as well as
+.CW hzsched() .
+So arm 2 was equally consistent with "accounting stops, priority never decays,
+the hog stays at the head of the run queue", and the first version of this
+section named
 .CW hzsched()
-is not running \(em which is also why wiring the scheduler clock up, recorded
-further up this document, was load-bearing rather than tidying.
+anyway.  Two switches can tell them apart, so
+.CW accounttime()
+now has its own,
+.CW acctclock ,
+and the arm was run again:
+.P1
+acctclock  schedclock  hog   result
+    1          0       yes   FREEZES, cpu0 at 0x3c126d4
+.P2
+It froze fast enough that the shell's next
+.CW echo
+never printed.  So it is
+.CW hzsched()
+\(em a Limbo loop which never yields freezes this board if and only if
+.CW hzsched()
+is running, with the accounting irrelevant \(em which is also why wiring the
+scheduler clock up, recorded further up this document, was load-bearing rather
+than tidying.
 .PP
 What is not proven is that this is why the layout build froze, because
 .CW schedclock
-is 1 by default and nothing in that build set it to 0.  It does however give a
-specific prediction to check rather than a theory to argue about.
+is 1 by default and nothing in that build set it to 0.  .PP
+.B "And one attractive bridge between the two does not exist."
 .CW hzsched()
 is called under
 .CW "up != nil && up->state == Running" ,
-and
-.CW clockintr()
-already counts those three cases into
-.CW ticknoup ,
-.CW ticknotrun
-and
-.CW tickrun ,
-which
-.CW "sched"
-on
-.CW /dev/sysctl
-prints.  If the layout build clobbered
-.CW mach0.proc
-\(em and that is exactly what its
-.CW secstack
-abutting
-.CW mach0
-did, core 3's argument home landing on
-.CW m->proc 's
-low word \(em then core 0's
+so a wrong
 .CW up
-was wrong,
+would skip it, and the layout build's
+.CW secstack
+abutted
+.CW mach0
+with core 3's argument home landing on
+.CW m->proc 's
+low word.  That was written down here as the prediction to test: clobbered
+.CW mach0.proc
+gives a wrong
+.CW up
+gives no
 .CW hzsched()
-was never reached, and schedlat's hog became permanent.  The test is to
-rebuild that layout and read
-.CW ticknotrun .
+gives a permanent hog.  It is withdrawn, because the second link is not there.
+.CW up
+is an
+.I "external register"
+\(em R26, by
+.CW "extern register"
+in the board's
+.CW dat.h
+\(em and the only assignment between the two in this tree runs the other way,
+.CW "m->proc = up"
+at
+.CW os/inferno/port/proc.c:328 .
+Nothing reads
+.CW up
+back out of
+.CW m->proc ,
+so corrupting that field cannot reach the test in
+.CW clockintr() .
+Rebuilding a known-bad layout to read
+.CW ticknotrun
+would have been measuring a chain with a missing link.
+.PP
+So what stopped the layout build remains open, and the honest position is that
+a sufficient mechanism for the symptom is now known and reproducible on demand,
+while the path from that build's one real defect to that mechanism is not.

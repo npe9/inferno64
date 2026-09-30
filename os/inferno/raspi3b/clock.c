@@ -23,6 +23,7 @@ static void	diswdog(void);
 extern void	timercheck(Ureg*);
 extern ulong	ticknoup, ticknotrun, tickrun;
 extern int	schedclock;
+extern int	acctclock;		/* config: call accounttime() */
 extern void	(*kproftick)(ulong);
 
 static uvlong
@@ -103,7 +104,16 @@ clockintr(Ureg *u)
 		vcsweep("late");
 	livelockcheck(u);
 	diswdog();
-	if(schedclock)
+	/*
+	 * accounttime() has its own switch, because schedclock gated BOTH it
+	 * and hzsched() and so could not say which of them a measurement was
+	 * about.  Turning schedclock off with a non-yielding Limbo loop
+	 * running freezes this board; that was written up as "hzsched() is
+	 * what makes a hog survivable", which the experiment could not
+	 * actually distinguish from "accounting stops, priority never decays,
+	 * the hog stays at the head of the run queue".  Two switches can.
+	 */
+	if(acctclock)
 		accounttime();
 	checkalarms();
 	timercheck(u);
