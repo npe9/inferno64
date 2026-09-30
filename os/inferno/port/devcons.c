@@ -71,6 +71,7 @@ extern int	ioboost, coopsched, schedgate, schedclock;
 extern int	gchalt, gcdepth, gcdepthmax;		/* libinterp/gc.c */
 extern ulong	gcnruns, gcsweeps, gcepochs, gchalted, gcinxecseen;
 extern uvlong	gcdestroys, gcinspects;
+extern ulong	gcstwstops, gcstwwaits, gcstwfails;	/* port/dis.c */
 extern int	lockboost;
 
 extern int	ilocktrace;		/* taslock.c */
@@ -1435,10 +1436,12 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					" %lud halted %lud, gchalt %d gcdepth %d"
 					" depthmax %d (guard 64), destroys %llud"
 					" inspects %llud, quantum-open %lud"
-					" (must be 0)\n",
+					" (must be 0), stw %lud waited %lud"
+					" gaveup %lud\n",
 					gcnruns, gcsweeps, gcepochs, gchalted,
 					gchalt, gcdepth, gcdepthmax,
-					gcdestroys, gcinspects, gcinxecseen);
+					gcdestroys, gcinspects, gcinxecseen,
+					gcstwstops, gcstwwaits, gcstwfails);
 			}
 			if(cb->nf > 2 && strcmp(cb->f[1], "ioboost") == 0)
 				ioboost = atoi(cb->f[2]);

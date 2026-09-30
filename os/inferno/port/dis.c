@@ -59,6 +59,90 @@ int	disracewindows;	/* delprog windows opened, total */
 int	disraceoverlaps;	/* windows opened while another was already open */
 extern ulong gchalted;
 
+/*
+ * Stopping the world for a collection.
+ *
+ * rootset() reads a program's live registers through progreg(), and
+ * Pctx.inxec is exactly "this context's register file is live".  So the
+ * collector's precondition is that no OTHER context has a quantum open, and
+ * that is all it is: a context outside xec() can still mutate the heap,
+ * which the write barrier handles by design, and can still queue a program,
+ * which cannot cost a root because roots come from isched.head and never
+ * from a run queue.
+ *
+ * With one executor this is satisfied the moment it is asked, and that is
+ * the case the board runs today -- Dis is serialised through isched, so
+ * othersrunning() is always 0 and stoptheworld() returns without waiting.
+ * It is here so the precondition is enforced by code rather than by the
+ * accident of there being one executor, and so the call sites are already
+ * in the right shape.
+ *
+ * Bounded by wall-clock time, and by time rather than by a count of tries
+ * because that is the mistake the multicore branch measured: a count
+ * measures how fast this loop happens to go round, so the same two thousand
+ * tries either spanned long enough for other contexts to finish or elapsed
+ * too quickly to ever succeed, depending on whether an unrelated print sat
+ * in the loop.  What the waiting is for is wall-clock time for somebody
+ * else's quantum to end.
+ *
+ * Giving up is safe in a way that waiting is not: a collection that does not
+ * happen costs memory until the next one, and there is always a next one,
+ * while a collection that cannot start costs the boot.  Parking rather than
+ * polling is the better answer, as Go does with an M, and is a larger change.
+ */
+enum { Stwticks = HZ/10 };	/* 100ms for another quantum to end */
+
+int	gcstw;			/* a collection wants the others stopped */
+ulong	gcstwstops;		/* worlds stopped */
+ulong	gcstwwaits;		/* times one had to be waited for */
+ulong	gcstwfails;		/* collections abandoned; see above */
+
+static int
+othersrunning(void)
+{
+	int i, n;
+
+	n = 0;
+	for(i = 0; i < npctx; i++)
+		if(pctxs[i] != curP && pctxs[i]->inxec)
+			n++;
+	return n;
+}
+
+int
+stoptheworld(void)
+{
+	ulong start;
+
+	gcstw = 1;
+	coherence();
+	if(othersrunning() == 0){
+		gcstwstops++;
+		return 1;
+	}
+	start = m->ticks;
+	while(othersrunning() != 0){
+		if(m->ticks - start > Stwticks){
+			gcstw = 0;
+			coherence();
+			gcstwfails++;
+			return 0;
+		}
+		gcstwwaits++;
+		sched();
+	}
+	gcstwstops++;
+	return 1;
+}
+
+void
+starttheworld(void)
+{
+	gcstw = 0;
+	coherence();
+}
+
+
 
 static Progs*	delgrp(Prog*);
 static void	addgrp(Prog*, Prog*);
@@ -142,7 +226,10 @@ execatidle(void)
 			gcpartial++;
 			break;
 		}
+		if(!stoptheworld())
+			break;
 		rungc(isched.head);
+		starttheworld();
 		gcidlepass++;
 		if(((ulong)gcidlepass&0xFF) == 0)
 			sched();
@@ -1534,7 +1621,10 @@ vmachine(void*)
 				 * the first pass after a Limbo loop started.
 				 */
 				t0 = m->ticks;
-				rungc(isched.head);
+				if(stoptheworld()){
+					rungc(isched.head);
+					starttheworld();
+				}
 				t0 = m->ticks - t0;
 				gcticks += t0;
 				gcpasses++;
