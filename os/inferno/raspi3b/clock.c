@@ -15,6 +15,9 @@ struct Clock0link {
 static Clock0link *clock0link;
 static Lock clock0lock;
 
+extern int	vcsweeptick;		/* config: sweep the data segment at this tick */
+extern int	livelockticks;		/* config: report a Dis program that will not yield */
+static void	livelockcheck(void);
 extern void	timercheck(Ureg*);
 extern ulong	ticknoup, ticknotrun, tickrun;
 extern int	schedclock;
@@ -87,6 +90,16 @@ clockintr(Ureg *u)
 		kproftick((ulong)u->pc);
 
 	m->ticks++;
+	/*
+	 * A late sweep, from the config: vcsweeptick ticks after boot, which is
+	 * how the data segment gets looked at AFTER the wild store rather than
+	 * before it.  The freeze happens about half a second into the first Dis
+	 * program, so anything past 100 is late enough, and comveccheck in
+	 * trap.c is what keeps the board alive long enough to report.  0 is off.
+	 */
+	if(vcsweeptick != 0 && m->ticks == (ulong)vcsweeptick)
+		vcsweep("late");
+	livelockcheck();
 	if(schedclock)
 		accounttime();
 	checkalarms();
@@ -190,6 +203,55 @@ enum {
 };
 
 extern int smpstart;
+
+/*
+ * Has one Dis program stopped letting anybody else run?
+ *
+ * This kernel serialises Dis, so a Limbo loop that never yields starves every
+ * other Dis process -- etherusb among them, which is why such a thing looks
+ * exactly like a dead board: no network, no command poller, and a kernel that
+ * is in fact perfectly healthy and still taking these very interrupts.  That
+ * is what the "freeze" with the secondaries running turned out to be, after
+ * three theories about memory corruption that was never there: core 0 was
+ * executing valid JIT-generated Dis code, with X20 holding the address of R
+ * and RFP and RMP pointing into the heap, and the program it was running was
+ * schedlat()'s deliberate busy loop, "for(;;) n++;".
+ *
+ * So say so, from inside the machine, rather than halting it over JTAG and
+ * reading registers.  Interrupts keep arriving throughout, which is the whole
+ * reason this works: if the same process has been Running for livelockticks
+ * ticks without the scheduler ever choosing another, print which one it is.
+ * The report is rate-limited and repeats at that interval, so a program that
+ * legitimately computes for a long time says so once a second rather than
+ * flooding, and a program that has genuinely stopped yielding says so for as
+ * long as it goes on.
+ *
+ * It names the process and not yet the Dis instruction: R.IC and R.M would
+ * want interp.h in here.  The pid and the text are enough to say which program
+ * to look at, which is the step this was missing.
+ */
+static void
+livelockcheck(void)
+{
+	static Proc *held;
+	static ulong since;
+	static int nseen;
+
+	if(livelockticks == 0)
+		return;
+	if(up == nil || up->state != Running || up != held){
+		held = up;
+		since = m->ticks;
+		return;
+	}
+	if(m->ticks - since < (ulong)livelockticks)
+		return;
+	since = m->ticks;
+	if(++nseen <= 16)
+		iprint("LIVELOCK %d: pid %lud (%s) has held the Dis VM for %d"
+			" ticks; nothing else has run\n", nseen, (ulong)up->pid,
+			up->text != nil? up->text: "?", livelockticks);
+}
 
 void
 clockinitsecondary(void)
