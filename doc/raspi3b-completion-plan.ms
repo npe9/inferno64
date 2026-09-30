@@ -13344,6 +13344,43 @@ this board \(em the root filesystem is on SDHOST and not the Arasan, so
 .CW emmcnslept
 may well not be.
 .PP
+.B "Two instruments, because watching a symbol cannot work here."
+.CW Bsspad
+in
+.CW mem.h
+is the layout knob: bytes of dead BSS that move everything after them with no
+code changed, so that "this build happens to boot" becomes something that can
+be swept rather than an accident of code size.  And
+.CW vcsweep()
+walks the whole data segment for words holding a value that cannot be a kernel
+pointer \(em above
+.CW conf.topofmem ,
+which is 256MB here, and inside the window the VideoCore owns, which is the
+only memory above 256MB this kernel touches and so the only plausible source
+of a wild-looking value.  0x3c10dcc, the value found in
+.CW comvec ,
+is in that range.  It runs at boot and, with
+.CW vcsweeptick
+set, again from
+.CW clockintr
+after the freeze point, which is where it is useful \(em
+.CW comveccheck
+is what keeps the board alive long enough to report.
+.PP
+It prints addresses rather than a verdict, because a list is only useful
+against another list, and the healthy list is short and entirely accounted
+for.  On the board:
+.CW rngr
+(0x3f104000),
+.CW pl011ctlr
+(0x3f201000),
+.CW vfb
+(0x3c100000, the framebuffer),
+.CW minictlr
+(0x3f215000), three words inside libinterp's module tables that hold
+signatures in that range, and one string constant.  Eight words.  A ninth in
+a frozen build is the victim, and its address is the thing to protect.
+.PP
 The hardware watchpoint in
 .CW l.s
 would have been the other way, and it does not fire on this part: the
