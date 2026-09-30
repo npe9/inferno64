@@ -12877,3 +12877,123 @@ alternative here is fewer Dis processes in the path, which
 and
 .I usbd
 being userland programs makes hard.
+.NH 1
+Where the port actually stands
+.PP
+This document is twelve thousand lines of ordered plan and the order has
+long since been overtaken, so this section is the answer to "how close is
+it", written from what has been measured on the physical board rather than
+from the phase headings above.
+.NH 2
+Done on silicon, not only under QEMU
+.IP \(bu
+Boot, and warm restart ten times out of ten.  JTAG load, log-ring read and
+recovery tooling, which is how the board is driven at all: the serial
+console on this desk has been dead for months.
+.IP \(bu
+Storage.  SDHOST as
+.CW sdN
+at four bits with DMA verified both ways; the Arasan SDHCI as
+.CW sdM
+with SDIO.  FAT read, write, rename, rename with the file held open, and a
+clobber correctly refused.
+.IP \(bu
+.I efs ,
+the copy-on-write filesystem: format, mount on a later boot, write, rename
+and a crash-consistency check, all on the card.
+.IP \(bu
+USB.  The DWC2 host, the onboard hub, the LAN9514 ethernet with DHCP, and
+keyboard, mouse and tablet enumeration.
+.IP \(bu
+Wi-Fi.  BCM43430 over SDIO: associates in about 3.3 seconds, takes a DHCP
+lease, answers pings over the air.
+.IP \(bu
+Bluetooth.  The controller's firmware pushed over the UART and
+.I btfs
+serving
+.CW /n/bt .
+.IP \(bu
+The small peripherals, each driven and checked: system timer, ARM timer and
+its interrupt, RNG, OTP, thermal, PWM, I2S, SMI, BSC slave, AUX and its
+SPI, the VideoCore mailbox, DMA.
+.IP \(bu
+The framebuffer and the software cursor, through the draw device.
+.IP \(bu
+Networking above the interface: DNS, the connection server, time from the
+gateway, a styx mount to the host, and a remote command poller that is how
+anything is run on the board.
+.IP \(bu
+.IR kprof (3),
+kernel profiling, which is what localised the JIT's quantum bug.
+.IP \(bu
+The JIT.  A real arm64 code generator, correct on silicon \(em every
+.IR disbench (1)
+checksum matches an oracle computed outside the VM \(em and 8 to 20 times
+the interpreter on Dis-bound work, 1.2 to 1.3 times on the network.
+.NH 2
+Open, in the order that matters
+.IP 1.
+.B "The JIT ships off."
+.CW "int cflag = 0"
+in the configuration file.  It works and it is faster; what is not settled
+is a USB bulk-IN wedge seen twice in about twenty boots and not reproduced
+in the fifteen since a power cycle.  Enabling it is a decision about that
+risk, not more work on the generator.
+.IP 2.
+.B "One core of four."
+.CW MAXMACH
+is 1 and there is no parallel VM on this branch.  The Pi 3B has four
+Cortex-A53s and three of them are idle.  That is the largest single
+performance item left and it is a merge of the
+.I multicore
+branch's VM into this one.
+.IP 3.
+.B "The Arasan DMA write stall,"
+with a concurrency hypothesis and three named next steps earlier in this
+document.  It is the last open hardware bug.
+.IP 4.
+.B "No windowing system."
+There is no
+.I wm
+and no Tk in this board's root file list: the display is a framebuffer the
+draw device paints, not a session anyone can sit in front of.  Everything
+interactive happens over the styx poller.
+.IP 5.
+.B "efs is not the root."
+The card is one FAT32 partition from sector 2048 to the end, so
+.I efs
+lives in files on the FAT rather than in a partition of its own, and
+.I kfs
+is still what the init reams.
+.IP 6.
+.B "Styx throughput is bounded by one outstanding 8KB RPC,"
+about 580 KB/s read.  That is a protocol property rather than a driver one
+and nothing has been done about it.
+.IP 7.
+.B "Application profiling does not work."
+.I devprof
+is linked now and
+.IR prof (1)
+runs a program under it without taking the board down, which it did
+before; it reports no samples.
+.IP 8.
+.B "No audio."
+I2S is a register-level check, not a driver that plays anything.
+.IP 9.
+.B "USB mass storage is QEMU-only,"
+not because it fails on hardware but because nothing has been plugged in.
+.NH 2
+The honest summary
+.PP
+The hardware bring-up is essentially finished: every block on the SoC that
+this port needs is driven and checked on the real board, and the one
+outstanding hardware bug is a DMA write stall on the second SD controller,
+which has a workaround in the driver.
+.PP
+What is missing is the layer above it.  Three of four processors are
+unused, there is no windowing system, the copy-on-write filesystem is not
+the root, and the JIT that makes Dis eight to twenty times faster is
+switched off.  None of those is a bring-up problem; each is a decision or a
+merge.  A board that boots, stores, networks over wire and air, and can be
+driven remotely is a port; a board that uses its hardware is the next
+document.
