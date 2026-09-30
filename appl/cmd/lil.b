@@ -567,21 +567,33 @@ call(name: string, args: string): Val
 		}
 		return strval(string buf[0:m]);
 	"dir" =>
-		# The names in a directory, printed as they are read and not
-		# collected into a string, and the count returned.  This is
-		# how the board is looked around -- what a radio device
-		# actually serves, which files a bind produced -- and it is
-		# why ls.dis need not be carried.
+		# The names in a directory, printed as they are read, and the
+		# count returned.
 		#
-		# Printed rather than returned because of what this board
-		# has: about 30000 bytes of Dis heap free at a prompt.
-		# Building the listing up first exhausted it on /dis, which
-		# is no surprise -- the board's own configuration file
-		# records that "ls /dis | wc -l" kills the shell with "out of
-		# memory" -- but it is a bad reason for a directory to be
-		# unreadable.  Reading a chunk, printing it and dropping it
-		# holds one chunk at a time instead of the whole answer plus
-		# every intermediate string that building it up allocates.
+		# This does NOT use sys->dirread, and that is the whole point.
+		# dirread converts the entire directory into an array of
+		# Sys->Dir in one allocation, with four Limbo strings per
+		# entry, and this board cannot afford it: /dev is 2817 bytes
+		# of stat data over about 45 entries, and converting it
+		# exhausted the 30000 bytes free at a prompt before a single
+		# name had been printed.  That is why ls(1) fails here too --
+		# "ls /dis" gives out of memory and "ls /dev" after it kills
+		# the shell outright -- and it is not ls's code that is too
+		# big, which is 6324 bytes of flash.
+		#
+		# So the stat entries are read raw and the name taken out of
+		# each.  A read on a directory returns whole entries only, so
+		# a chunk boundary never splits one, and the cost is one
+		# buffer for the whole call however large the directory is.
+		# Measured: three reads of /dev returned 228, 234 and 230
+		# bytes and moved the heap by 256.
+		#
+		# The layout is libkern/convM2D.c's, and the offsets are its:
+		# size[2] type[2] dev[4] qid.type[1] qid.vers[4] qid.path[8]
+		# mode[4] atime[4] mtime[4] length[8], then name[s] -- a
+		# 16-bit count and that many bytes.  So qid.type is at 8, the
+		# name's count at 41 and its text at 43, and the entry is
+		# 2+size bytes long.  Little-endian, as GBIT16 is.
 		if(len a < 1){
 			fail("dir wants a path");
 			return nilval();
@@ -591,25 +603,44 @@ call(name: string, args: string): Val
 			fail("cannot open " + text(a[0]));
 			return nilval();
 		}
+		# Larger than any entry Styx can produce -- 49 fixed bytes, a
+		# 255-byte name and three 255-byte user names is 1073 -- so a
+		# read can never come back short for want of room, which would
+		# look exactly like the end of the directory and silently cut
+		# the listing off.
+		buf := array[1280] of byte;
 		count := 0;
 		for(;;){
-			(m, d) := sys->dirread(fd);
+			m := sys->read(fd, buf, len buf);
 			if(m < 0){
 				fail(sys->sprint("dir: %r"));
 				return intval(big count);
 			}
 			if(m == 0)
 				break;
-			for(i := 0; i < m; i++){
-				line := d[i].name;
-				if(d[i].qid.qtype & Sys->QTDIR)
+			i := 0;
+			while(i + 43 <= m){
+				sz := 2 + (int buf[i] | (int buf[i+1] << 8));
+				if(sz < 43 || i + sz > m){
+					fail("dir: a stat entry of " +
+						string sz + " bytes in " +
+						string m + " read");
+					return intval(big count);
+				}
+				nl := int buf[i+41] | (int buf[i+42] << 8);
+				if(43 + nl > sz){
+					fail("dir: a name longer than its entry");
+					return intval(big count);
+				}
+				line := string buf[i+43:i+43+nl];
+				if(int buf[i+8] & Sys->QTDIR)
 					line += "/";
 				line[len line] = '\n';
 				b := array of byte line;
 				sys->write(stdout, b, len b);
 				count++;
+				i += sz;
 			}
-			d = nil;
 		}
 		return intval(big count);
 	"timelimit" =>
