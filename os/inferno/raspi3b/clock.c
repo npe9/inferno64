@@ -17,7 +17,9 @@ static Lock clock0lock;
 
 extern int	vcsweeptick;		/* config: sweep the data segment at this tick */
 extern int	livelockticks;		/* config: report a Dis program that will not yield */
+extern int	bootwdog;		/* config: reset if Dis stops for this many ticks */
 static void	livelockcheck(void);
+static void	diswdog(void);
 extern void	timercheck(Ureg*);
 extern ulong	ticknoup, ticknotrun, tickrun;
 extern int	schedclock;
@@ -100,6 +102,7 @@ clockintr(Ureg *u)
 	if(vcsweeptick != 0 && m->ticks == (ulong)vcsweeptick)
 		vcsweep("late");
 	livelockcheck();
+	diswdog();
 	if(schedclock)
 		accounttime();
 	checkalarms();
@@ -230,6 +233,8 @@ extern int smpstart;
  * want interp.h in here.  The pid and the text are enough to say which program
  * to look at, which is the step this was missing.
  */
+static ulong	vmheldticks;	/* how long one process has held the VM */
+
 static void
 livelockcheck(void)
 {
@@ -237,20 +242,54 @@ livelockcheck(void)
 	static ulong since;
 	static int nseen;
 
-	if(livelockticks == 0)
-		return;
 	if(up == nil || up->state != Running || up != held){
 		held = up;
 		since = m->ticks;
+		vmheldticks = 0;
 		return;
 	}
-	if(m->ticks - since < (ulong)livelockticks)
+	vmheldticks = m->ticks - since;
+	if(livelockticks == 0 || vmheldticks < (ulong)livelockticks)
 		return;
 	since = m->ticks;
 	if(++nseen <= 16)
 		iprint("LIVELOCK %d: pid %lud (%s) has held the Dis VM for %d"
 			" ticks; nothing else has run\n", nseen, (ulong)up->pid,
 			up->text != nil? up->text: "?", livelockticks);
+}
+
+/*
+ * A watchdog fed by progress in Dis, which is the thing a livelock stops.
+ *
+ * The board's own watchdog is the only way off this desk without a human or a
+ * JTAG session, and a Dis livelock is precisely the failure it cannot
+ * otherwise catch: the kernel stays healthy and goes on taking these
+ * interrupts, so a watchdog fed from here unconditionally would be fed for
+ * ever while nothing useful ran.  So feed it only while the Dis VM is
+ * changing hands, and stop feeding once one process has held it for
+ * bootwdog ticks.  The machine then resets itself and boots again.
+ *
+ * The threshold has to sit well above the legitimate holds: raspi3binit.b's
+ * own scheduler-latency test deliberately spends a second in "for(;;) n++;",
+ * and disbench spends longer, so ten seconds of one process is the sort of
+ * number that means something is wrong rather than busy.  The BCM2835
+ * watchdog counts at Wdoghz in a 20-bit field, which is about sixteen
+ * seconds, so the feed interval has to be well under that.
+ *
+ * Default 0, which is off, because a wrong threshold here is a board that
+ * reboots in a loop.
+ */
+static void
+diswdog(void)
+{
+	extern void wdogset(int);	/* pmbcm.c */
+
+	if(bootwdog == 0)
+		return;
+	if(vmheldticks >= (ulong)bootwdog)
+		return;			/* stop feeding; let the reset come */
+	if(m->ticks % (5*HZ) == 0)
+		wdogset(15000);
 }
 
 void
