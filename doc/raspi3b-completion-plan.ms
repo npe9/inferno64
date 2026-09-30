@@ -13867,3 +13867,75 @@ holds the machine.  The longest hold across three boots is 133 ticks, so
 .CW livelockticks
 at 400 has about three times' margin, and the floor at 50 is what will grow the
 sample.
+.NH 2
+The freeze reproduced, with a control: a hog is fatal only without the scheduler clock
+.PP
+The hog experiment above says a never-yielding Limbo loop costs throughput and
+not liveness.  That was measured with
+.CW schedclock
+at its default of 1.  Turning it off needs no new build \(em it is settable
+through
+.CW /dev/sysctl
+\(em so the qualification is testable, and it matters, because "hog plus a
+preemption path that is not running" reproduces the original symptom.
+.PP
+Three arms on the physical board, one variable, driven from the command poller:
+.P1
+schedclock  hog   result
+    1       yes   fully usable: boots through SD, USB, draw, wifi, DHCP,
+                  DNS, Bluetooth, poller; hog reaches 5:21.7 of cpu
+    0       yes   FREEZES: no ping on either interface, poller stops
+                  answering, cpu0 pinned at 0x3c126b0
+    0       no    fine: poller answers, 5ms ping
+.P2
+The middle arm is the original freeze.  The pc is in the same heap
+neighbourhood the frozen board was halted in months of guessing ago \(em
+0x3c10dcc to 0x3c12754 then, 0x3c126b0 now \(em which is the hog's compiled
+loop; cores 1 to 3 are parked at
+.CW _main+0x20 ;
+the kernel is healthy and still taking interrupts.  The third arm is the
+control that makes the middle one mean something: turning the scheduler clock
+off is harmless by itself, so it is the
+.I combination
+that is fatal, not either half.
+.PP
+.B "So the mechanism is established.  Its application to the layout build is not."
+What is proven is that a Limbo loop which never yields freezes this board if
+and only if
+.CW hzsched()
+is not running \(em which is also why wiring the scheduler clock up, recorded
+further up this document, was load-bearing rather than tidying.
+.PP
+What is not proven is that this is why the layout build froze, because
+.CW schedclock
+is 1 by default and nothing in that build set it to 0.  It does however give a
+specific prediction to check rather than a theory to argue about.
+.CW hzsched()
+is called under
+.CW "up != nil && up->state == Running" ,
+and
+.CW clockintr()
+already counts those three cases into
+.CW ticknoup ,
+.CW ticknotrun
+and
+.CW tickrun ,
+which
+.CW "sched"
+on
+.CW /dev/sysctl
+prints.  If the layout build clobbered
+.CW mach0.proc
+\(em and that is exactly what its
+.CW secstack
+abutting
+.CW mach0
+did, core 3's argument home landing on
+.CW m->proc 's
+low word \(em then core 0's
+.CW up
+was wrong,
+.CW hzsched()
+was never reached, and schedlat's hog became permanent.  The test is to
+rebuild that layout and read
+.CW ticknotrun .
