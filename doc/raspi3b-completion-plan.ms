@@ -14255,7 +14255,32 @@ has written the registers back and
 .CW p->reg
 can be trusted.  A context blocked in a system call is already at one.
 .PP
-This branch has none of that groundwork.  Checked rather than assumed: no
+.B "That scoping was wrong twice, and is superseded."
+It is not primarily about locks \(em the foundation is
+.CW DISCTXREG ,
+which makes
+.CW R
+into
+.CW curP->reg
+with
+.CW curP
+in a machine register, so per-context register files are the parallel VM and
+the locks are how it is kept correct afterwards.  And the groundwork is not
+absent: this branch deliberately carries
+.CW jitrefsatomic ,
+.CW jitpresent ,
+a factored
+.CW ctxreg() ,
+atomic
+.CW Heap.ref
+updates at all four sites, and
+.CW gclock
+and
+.CW gchalt .
+.CW doc/raspi3b-parallelvm-plan.ms
+is the plan, with the per-file numbers that decide the method.
+.PP
+What is genuinely absent: no
 .CW inxec
 anywhere in
 .CW os/inferno/port ,
