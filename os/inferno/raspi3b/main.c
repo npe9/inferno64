@@ -29,6 +29,7 @@ Conf conf;
 
 extern ulong kerndate;
 extern int cflag;
+extern int watchcomvec;		/* config: watch libinterp's comvec for stores */
 extern int consoleprint;
 extern int main_pool_pcnt;
 extern int heap_pool_pcnt;
@@ -295,6 +296,47 @@ main(void)
 	printinit();
 
 	cpuboot();			/* the other three cores; smpbcm.c */
+
+	if(watchcomvec){
+		/*
+		 * Arm the one hardware watchpoint on libinterp's comvec, the
+		 * JIT entry trampoline, because that is the word found holding
+		 * a framebuffer-shaped address when the board freezes with the
+		 * secondaries taking interrupts (doc/raspi3b-completion-plan.ms).
+		 * Its address is taken here rather than written in the config,
+		 * since it moves with every build.
+		 *
+		 * Every store is reported, the legitimate ones included --
+		 * comvec's own assignment by compile() is the first hit -- since
+		 * a watchpoint that guesses which store is the wrong one is not
+		 * an instrument.
+		 */
+		extern void (*comvec)(void);
+		void (*save)(void);
+
+		print("WATCH arming on comvec at %#p\n", &comvec);
+		save = comvec;
+		watchset(&comvec);
+		/*
+		 * And immediately test it, by storing to the word it is
+		 * watching and putting it back.  A watchpoint that is not
+		 * firing looks exactly like an address nobody writes, and
+		 * three separate things have to be right for it to fire at all
+		 * -- DBGWCR's PAC field, MDSCR.MDE, and PSTATE.D, which boot1
+		 * leaves masked.  So the instrument says so itself: two WATCH
+		 * lines here mean it works, and none means every later silence
+		 * is meaningless.
+		 */
+		comvec = nil;
+		comvec = save;
+		{
+			uvlong w[4];
+
+			watchstate(w);
+			print("WATCH self-test done; wvr %#llux wcr %#llux"
+				" mdscr %#llux daif %#llux\n", w[0], w[1], w[2], w[3]);
+		}
+	}
 
 	{	/* I2C probe: needs the console up to report the round trip */
 		extern void i2cinit(void);

@@ -129,7 +129,8 @@ code
 	int heap_pool_pcnt = 20;
 	int image_pool_pcnt = 20;
 	int cflag = 1;
-	int smpstart = 1;
+	int smpstart = 2;
+	int watchcomvec = 0;
 	int consoleprint = 1;
 	int panicreset = 0;
 

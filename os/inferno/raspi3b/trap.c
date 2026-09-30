@@ -210,6 +210,8 @@ enum {
 	Basicbase	= 64,
 	Nbasicirq	= 8,
 	Basicmask	= 0xff,
+
+	Nwatch		= 12,		/* watchpoint hits to report */
 };
 
 static void
@@ -387,6 +389,28 @@ trap(Ureg *ur)
 			wildspreport(ur);
 		}
 	}
+	/*
+	 * A hardware watchpoint (watchset() in l.s), which is how this kernel
+	 * answers "who wrote that address".  ESR EC 0x34 is a watchpoint from
+	 * a lower exception level and 0x35 one from the same level; only 0x35
+	 * can happen here, since there is no EL0.  Report the pc and the
+	 * address and carry on -- the store has completed, so returning is
+	 * correct -- and give up after Nwatch of them so that a word written
+	 * in a loop cannot bury the console.
+	 */
+	if(ur->type == TSync && ((ur->cause>>26) & 0x3f) == 0x35){
+		static int nwatch;
+
+		if(++nwatch <= Nwatch)
+			iprint("WATCH %d: store to %#llux from pc %#llux\n",
+				nwatch, (uvlong)ur->tval, (uvlong)ur->pc);
+		if(nwatch >= Nwatch){
+			watchclr();
+			iprint("WATCH: %d hits, watchpoint off\n", nwatch);
+		}
+		return;
+	}
+
 	switch(ur->type){
 	case TIrq:
 		if(getcntpctl() & CntpIStatus){

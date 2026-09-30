@@ -21,6 +21,9 @@ void	vectorinstall(void);		/* VBAR_EL1 on this processor */
 void	vectorbuildsec(void);		/* the secondaries' own table */
 void	vectorinstallsec(void);		/* and VBAR_EL1 pointing at it */
 ulong	getsctlr(void);			/* SCTLR_EL1: bit 0 is MMU-and-caches-on */
+void	watchset(void*);		/* halt on a store to this doubleword */
+void	watchclr(void);
+void	watchstate(uvlong*);		/* the four registers, as they read back */
 
 /*
  * Where a DMA transfer stopped, for the driver that owns the

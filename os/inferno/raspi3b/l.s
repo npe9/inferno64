@@ -43,6 +43,9 @@
 #define	D_TPIDRRO_EL0	SYSARG5(3,3,13,0,3)
 #define	D_TPIDR_EL0	SYSARG5(3,3,13,0,2)
 #define	D_CNTP_TVAL_EL0	SYSARG5(3,3,14,2,0)
+#define	D_DBGWVR0_EL1	SYSARG5(2,0,0,0,4)
+#define	D_DBGWCR0_EL1	SYSARG5(2,0,0,0,7)
+#define	D_MDSCR_EL1	SYSARG5(2,0,0,2,2)
 #define	CRUMB		0x20000000
 #define	D_CNTVOFF_EL2	SYSARG5(3,4,14,0,3)
 #define	D_ICC_SRE_EL1	SYSARG5(3,0,12,12,5)
@@ -483,6 +486,64 @@ TEXT	secirq(SB), 1, $-4
 	MRS	SPR(D_TPIDRRO_EL0), R10
 	MRS	SPR(D_TPIDR_EL0), R9
 	ERET
+
+/*
+ * watchset(void *addr): halt on a store to the doubleword at addr, and say
+ * where the store came from.
+ *
+ * This kernel has had no way at all to ask "who wrote this address", which
+ * is the only question worth asking about a corrupted word, and the A53 has
+ * four hardware watchpoints sitting idle.  A self-hosted one -- the
+ * processor takes its own debug exception into the vector table it already
+ * has -- beats a debugger watchpoint here because there is no way to attach
+ * a debugger between a watchdog reset and the corruption twenty seconds
+ * later without racing it.
+ *
+ * DBGWCR: E, LSC = 0b10 (stores only), PAC = 0b10 with HMC and SSC zero
+ * (match at EL1), BAS = 0xff (all eight bytes), MASK = 0.  Then MDSCR.MDE,
+ * which is what lets a watchpoint generate an exception at all, and finally
+ * PSTATE.D, which boot1 left masked (SPSR 0x3c5 masks all four of DAIF) and
+ * which would otherwise make every one of the above do nothing.  Getting
+ * any one of those three wrong gives a watchpoint that never fires, which
+ * looks exactly like an address nobody writes.
+ */
+TEXT	watchset(SB), 1, $-4
+	MSR	R0, SPR(D_DBGWVR0_EL1)
+	MOV	$0x1ff5, R1
+	MSR	R1, SPR(D_DBGWCR0_EL1)
+	MRS	SPR(D_MDSCR_EL1), R1
+	/*
+	 * MDE (15) enables breakpoint and watchpoint exceptions at all, and
+	 * KDE (13) is what lets one be taken to the exception level it was
+	 * generated in -- without KDE a watchpoint at EL1 whose target is EL1
+	 * generates nothing, which is a watchpoint that is armed, reads back
+	 * exactly as written, and never fires.
+	 */
+	MOV	$((1<<15)|(1<<13)), R2
+	ORR	R2, R1, R1
+	MSR	R1, SPR(D_MDSCR_EL1)
+	ISB	$15
+	MSR	$8, DAIFClr		/* PSTATE.D: unmask debug exceptions */
+	RET	R30
+
+/* watchstate(uvlong p[4]): DBGWVR0, DBGWCR0, MDSCR, DAIF, as they read back */
+TEXT	watchstate(SB), 1, $-4
+	MRS	SPR(D_DBGWVR0_EL1), R1
+	MOV	R1, 0(R0)
+	MRS	SPR(D_DBGWCR0_EL1), R1
+	MOV	R1, 8(R0)
+	MRS	SPR(D_MDSCR_EL1), R1
+	MOV	R1, 16(R0)
+	MRS	DAIF, R1
+	MOV	R1, 24(R0)
+	RET	R30
+
+TEXT	watchclr(SB), 1, $-4
+	MOV	$0, R1
+	MSR	R1, SPR(D_DBGWCR0_EL1)
+	ISB	$15
+	MSR	$8, DAIFSet
+	RET	R30
 
 TEXT	getsctlr(SB), 1, $-4
 	MRS	SPR(D_SCTLR_EL1), R0

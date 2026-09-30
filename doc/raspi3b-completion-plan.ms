@@ -3020,13 +3020,12 @@ Mode setting beyond the firmware's default, and hotplug, are absent.
 No wall-clock time: the Pi has no battery-backed clock, and nothing yet
 asks the firmware or a network for the time.
 .IP 5.
-Nothing is scheduled on more than one core, though cores 1-3 no longer sit
-at WFE for ever: each is released at boot, runs kernel C on its own stack
-with the MMU on, reports itself and goes back to resting.  MAXMACH is 4 and
-each secondary can take its own Mach, vector table and timer \(em measured
-doing so, at the right rate, on the board \(em but the board then freezes in
-the first Dis program, so that is not what ships.  See the two sections
-below.
+Nothing is scheduled on more than one core.  Cores 1-3 are no longer parked,
+though: each is released at boot, takes its own Mach, vector table and
+generic timer, and idles taking its own interrupts at the right rate on the
+real board.  conf.nmach is still 1 and a secondary's tick goes to a private
+handler, because the portable scheduler state has never been made safe
+against a second processor.  See the two sections below.
 .IP 6.
 Bluetooth is absent and conflicts with the console: it needs the PL011,
 which the console uses.  uartmini.c exists for the mini UART but is
@@ -13153,139 +13152,182 @@ an indirect branch, not to it.  A
 is not an unconditional branch, which is why the original code was fine for
 months.
 .NH 2
-Per-processor Machs and timers, and the one thing that still does not work
+Per-processor Machs and timers, and the one cache line that made them fatal
 .PP
 A core that runs is not a processor: it needs its own
 .CW Mach ,
-its own vector table and its own timer, none of which any amount of work
-on core 0 can set up on its behalf.  All three are built, each done by the
-core itself, and on the physical board each secondary's own timer
-interrupts arrive at the rate they should:
+its own vector table and its own timer, none of which any amount of work on
+core 0 can set up on its behalf.  Each secondary does all three for itself
+now, and on the physical board, cold-booted from the card, each one's
+interrupts arrive at the rate they should and the boot runs to the end:
 .IP
 .EX
-CPU1 alive: mpidr 0x80000001 el1 sp 0x2a4520 (15 ms)
-CPU2 alive: mpidr 0x80000002 el1 sp 0x2ac520 (15 ms)
-CPU3 alive: mpidr 0x80000003 el1 sp 0x2b4520 (15 ms)
-CPU1 ticks 20 in 200 ms (mach 0x6ce740 machno 1)
-CPU2 ticks 20 in 200 ms (mach 0x6ce840 machno 2)
-CPU3 ticks 21 in 200 ms (mach 0x6ce940 machno 3)
+CPU1 alive: mpidr 0x80000001 el1 sp 0x2a4740 (19 ms)
+CPU2 alive: mpidr 0x80000002 el1 sp 0x2ac740 (17 ms)
+CPU3 alive: mpidr 0x80000003 el1 sp 0x2b4740 (19 ms)
+CPU1 ticks 20 in 200 ms (mach 0x6ce980 machno 1)
+CPU2 ticks 21 in 200 ms (mach 0x6cea80 machno 2)
+CPU3 ticks 21 in 200 ms (mach 0x6ceb80 machno 3)
 CPU1 recalled in 0 ms, ticks 20 in 200 ms after it
+...
+ILOCK-MAX 3197 us at 0x138df0, mean 7789 ns over 495 ilocks
+RASPI3B-SH-OK
+EFS-CRASH-OK the card held the last committed state
 .EE
 .PP
-against HZ of 100, so twenty in two hundred milliseconds is the whole
-budget and what all three are getting.
+against HZ of 100, so twenty in two hundred milliseconds is the whole budget
+and what all three are getting.  It is still not a second processor \(em
+.CW conf.nmach
+stays 1, nothing is scheduled on them, and a secondary's timer goes to
+.CW clocksecondary()
+rather than
+.CW clockintr()
+\(em but the per-processor state is real and it works.
 .PP
-.B "And then the board freezes."
-Half a second later, in the first Dis program, reproducibly, three cold
-boots out of three.  So
+.B "For most of a day it did not, and the reason was one cache line."
+.CW secstack
+is a GLOBL of three KSTACKs and the linker put
+.CW mach0
+immediately after it, so core 3's stack top and
+.CW mach0 "'s"
+first byte were the same address: 0x2b4690, which is not 64-byte aligned.
+The top sixteen bytes of core 3's stack and the first sixteen of core 0's
+Mach were therefore one 64-byte line, and two processors wrote it \(em core 3
+whenever it pushed an exception frame, core 0 on every
+.CW splhi()
+and
+.CW splx() ,
+which write
+.CW m->splpc .
+.PP
+The first sixteen bytes of a Mach are
+.CW splpc ,
+.CW machno
+and
+.CW proc .
+So a stale writeback from core 3 does not merely scramble a diagnostic
+field: it restores an old
+.CW m->proc ,
+and
+.CW clockintr()
+dereferences that on the very next tick, through
+.CW accounttime() ,
+as
+.IP
+.EX
+p = m->proc;
+p->time[p->insyscall]++;
+.EE
+.PP
+\(em a store through a pointer that is no longer valid.  That is the wild
+store.  Where one of them landed was
+.CW comvec ,
+libinterp's JIT entry trampoline: core 0's link register at the freeze was
+.CW xec+0xac ,
+whose preceding instructions disassemble to
+.CW "ldr x10, [x28, #0x2d50]"
+followed by
+.CW "blr x10" ,
+and that word held 0x3c10dcc \(em which no allocation in this kernel can
+return, since
+.CW conf.topofmem
+is 256MB, and which lies in the range the memory of a freed and reused Proc
+would.  So the interpreter called a word that the clock interrupt had
+overwritten.
+.PP
+Everything fits: the same SP to the byte on both readings, because the
+writer is the clock interrupt on the same stack every time; a freeze a few
+hundred milliseconds in, once the first process has been freed and reused;
+and
 .CW smpstart
-\(em an int in the config's
-.CW code
-section, like
-.CW cflag
-\(em defaults to
-.B 1 ,
-which releases each secondary and lets it report itself and go back to
-resting with interrupts masked; that configuration boots clean and is what
-is shipped.
-.B 2
-is the one above: its own Mach, vectors and timer, idling with interrupts
-on.  0 leaves the cores parked as they were before any of this existed.
+0 and 1 surviving, because a processor that parks with interrupts masked
+never runs again, and its one dirty line is evicted while core 0's Mach
+still holds nothing that matters.
 .PP
-.B "What the freeze looks like, exactly."
-The boot reaches
-.CW "ILOCK-TRACE on"
-\(em the scheduler-latency check in
-.CW raspi3binit.b ,
-which spawns a busy process and times sleeps against it \(em and stops
-there.  Core 0 is at EL1 with interrupts enabled,
+The fix is 64 bytes of slack at the top of
+.CW secstack ,
+so that nothing the linker puts next can share a line with a stack.  One
+Mach per secondary was already on its own line for the same reason, and so
+is each processor's slot in
+.CW secirq "'s"
+counter; the stacks were the one place it had been left to the linker.
+.PP
+.B "It also says something about this board that had been assumed rather
+than measured."
+With coherent caches that shared line would have been merely slow \(em one
+processor taking it from another and back, a hundred times a second.  For a
+stale writeback to restore another processor's bytes, the two caches must
+not be coherent, which means CPUECTLR_EL1.SMPEN is very probably
+.I not
+set on this part by the firmware, contrary to what
+.CW smpbcm.c
+assumed in a comment.  That is an inference from one bug and not a
+measurement; the way to settle it is written down in that file \(em have a
+secondary write a word with the MMU on and have core 0 read it back with no
+cache maintenance at all, which is precisely what the core report does
+.I not
+do.
+.PP
+.B "The ladder is what found it, and it stays."
+.CW smpstart ,
+an int in the config's
+.CW code
+section like
+.CW cflag :
+0 leaves the cores parked as they were before any of this existed; 1
+releases each one to report itself and rest with interrupts masked; 2 is
+the full arrangement above and the default; 3 is 2 with
+.CW secirq
+in
+.CW l.s
+as the entire interrupt handler.  Each level removes one thing, and the
+sequence of cold boots is the argument:
+.IP \(bu
+1 booted clean, which ruled out
 .CW m
 and
 .CW up
-both valid, SP in a process kernel stack, and its pc is 0x3c10dcc: not in
-the kernel, and not in the kernel's memory at all, since
-.CW conf.topofmem
-is 256MB.  Its link register is
-.CW xec+0xac ,
-the Dis interpreter's dispatch, so the interpreter called through a pointer
-that was not code.  The pc is in the region the VideoCore framebuffer lives
-in, which is the sort of value that turns up in memory that has been freed
-and handed to the draw device.  Both readings, twice, with the same SP to
-the byte.
-.PP
-.B "The argument that it is the secondaries' interrupts: three builds and
-a control."
-The build that released the cores and left them resting with interrupts
-masked cold-booted clean.  The two that gave them timers froze, in the same
-place, every time.  A warm JTAG boot of one of those images reached the
-network every time \(em and that is a control for one variable, because
+as registers, the atomics, a secondary's existence, its MMU, and its
+coherency with core 0 \(em all of them present at level 1.
+.IP \(bu
+2 froze three cold boots out of three, in the same place.
+.IP \(bu
+3 froze as well, which was the surprise and the useful one: fourteen
+instructions that touch no stack, no Ureg, no crumb record, no C and no
+memory core 0 can reach still killed it, so it was not the code a secondary
+runs and no amount of auditing the handler would have found it.
+.IP \(bu
+And a warm JTAG boot of a frozen image reached the network every time, since
 .I jtagrestart
-resumes core 0 alone and leaves cores 1-3 halted by the debugger.  Then
-.CW smpstart
-1 on a cold boot, which has every other change of this work in place,
-reached
-.CW ETHER-PING-DONE
-with the ilock trace printed on the way.  Cold against warm alone would not
-have pinned it, since those differ in peripheral state as well; the resting
-arm is what makes it the interrupts and not the cores.
+resumes core 0 alone and leaves the others halted \(em a control for exactly
+one variable.
 .PP
-.B "What is ruled out by measurement, and should not be re-chased."
-.IP \(bu
-.I "m and up as registers."
-.CW smpstart
-1 has them and boots cold.
-.IP \(bu
-.I "The atomics."
-.CW ainc ,
-.CW adec
-and
-.CW cmpswap
-are LDXR/STXR loops now, and each was read back out of the linked image and
-disassembled \(em
-.CW "ldxr w1,[x3]; add w1,w1,#1; stxr w4,w1,[x3]; cbnz; dsb sy; sxtw x0,w1"
-\(em so they are what they claim to be, and they are in the arm that boots.
-.IP \(bu
-.I "A secondary's existence, its MMU, or its coherency with core 0."
-All present at level 1.
-.IP \(bu
-.I "The JIT clobbering the external registers."
-.CW libinterp/comp-aarch64.c
-allocates X0-X5 and X20-X22 and never names X26 or X27, and 7c's
-.CW txt.c
-reserves
-.CW reg[REGEXT]
-and
-.CW reg[REGEXT-1]
-unconditionally in every translation unit, so no prebuilt library can be
-using them \(em confirmed by compiling
-.CW libinterp/xec.c
-and counting the references, which are none.
-.IP \(bu
-.I "One shared word in the exception path,"
-which was real, was fixed, and was not this.
+.CW secirq
+is worth keeping for the next time as well, and its one constant is checked
+by its own numbers: 192000 counts came out at twenty a fifth of a second, so
+CNTFRQ on this part is 19.2MHz as advertised.
 .PP
-.B "The shared word that was real."
+.B "One shared word in the exception path, found on the way and fixed."
 Every vector slot branches to
 .CW crumbentry ,
 which records ESR, ELR, FAR, SPSR, SP and a count at
 .CW CRUMB
 before it touches the stack, so that an exception which faults again inside
-the vector path \(em silent, with everything masked \(em leaves its cause in
-memory for the next boot.  Writing those records needs X9 as a scratch, so
-the exception class the slot put in X9 had to be parked first, and it was
-parked at
+the vector path \(em silent, with everything masked \(em leaves its cause for
+the next boot.  Writing those records needs X9 as a scratch, so the
+exception class the slot put in X9 had to be parked first, and it was parked
+at
 .CW CRUMB+56 :
 one word, for all four processors.  With one processor that is invisible;
-with a secondary taking interrupts it is fatal, because a secondary's
-exception landing between core 0's store and its load hands core 0 the
-wrong class and
+with a secondary taking interrupts a secondary's exception landing between
+core 0's store and its load hands core 0 the wrong class, and
 .CW trap()
 then dispatches an IRQ as a synchronous fault or the reverse.  The class
 lives in TPIDR_EL0 now, a real per-processor register, free because Inferno
 has no user mode; TPIDR_EL1 (the interrupted X9) and TPIDRRO_EL0 (X10) were
-already per-processor, which is why they were not the bug.  Fixing it did
-not fix the freeze, which is how we know there is a second cause and not
-only a first.
+already per-processor, which is why they were not it.  Fixing it did not fix
+the freeze, and saying so is the point: two bugs in the same path, and only
+one of them was the one being chased.
 .PP
 The crumb record itself is still one buffer for four processors, so their
 exceptions overwrite each other's diagnostics.  That costs accuracy in a
@@ -13294,84 +13336,57 @@ per-processor means giving
 .CW crumbdump()
 a stride as well.
 .PP
-.B "It is not the code the secondary runs."
-That was the next thing to remove, so it was removed.
-.CW smpstart
-3 gives the secondaries a vector table of their own, every slot of which
-branches to
-.CW secirq
-in
-.CW l.s :
-fourteen instructions that re-arm the timer through CNTP_TVAL_EL0 and
-return, touching no stack, no Ureg, no crumb record, no C, and no memory
-core 0 can reach.  X9 and X10 are saved in per-processor system registers
-rather than anywhere in memory, and the count is one 64-byte line per
-processor.
-.PP
-It works, and the board freezes anyway, in the same place.  On the board:
-.IP
-.EX
-CPU1 ticks 20 in 200 ms (mach 0x6ce880 machno 1) secirq
-CPU2 ticks 21 in 200 ms (mach 0x6ce980 machno 2) secirq
-CPU3 ticks 21 in 200 ms (mach 0x6cea80 machno 3) secirq
-CPU1 recalled in 0 ms, ticks 20 in 200 ms after it
-.EE
-.PP
-\(em which also confirms the constant in
-.CW secirq ,
-since 192000 counts came out at twenty a fifth of a second and CNTFRQ on
-this part is 19.2MHz.  Then
-.CW "ILOCK-TRACE on" ,
-and nothing.  So a secondary taking a timer interrupt through fourteen
-instructions that share nothing still kills core 0, and no amount of
-auditing what the handler does will find it.
-.PP
-.B "What the corruption actually is."
-Core 0's link register at the freeze is
-.CW xec+0xac ,
-and the instruction before it disassembles to
-.CW "ldr x10, [x28, #0x2d50]"
-followed by
-.CW "blr x10" .
-That global is
-.CW comvec ,
-libinterp's JIT entry trampoline, allocated once with
-.CW mallocz
-and never freed.  It held 0x3c10dcc, which no allocation in this kernel can
-return \(em
-.CW conf.topofmem
-is 256MB \(em and which is in the range the VideoCore framebuffer occupies,
-the only memory above 256MB this kernel writes to at all.  So one word of
-libinterp's data segment was overwritten, and the interpreter called it.
-.PP
-That word's cache line holds
-.CW endian ,
-.CW csshadow ,
-.CW comvec ,
-.CW IPnoaddr
+.B "A watchpoint, built for this and not needed in the end."
+This kernel had no way to ask "who wrote this address", which is the only
+question worth asking about a corrupted word, while the A53's four hardware
+watchpoints sat idle.
+.CW watchset() ,
+.CW watchclr()
 and
-.CW emmcnslept ,
-all of them core 0's, and a secondary at
-.CW smpstart
-3 dirties exactly one line of its own.  So this is not one processor's
-writeback landing on another's line.  What is left is a wild store or a
-misdirected DMA on core 0 itself, made reachable by three processors
-changing the timing on a shared L2 and a shared memory controller \(em which
-is a latent bug of this port that the secondaries expose rather than a bug
-in starting them.
+.CW watchstate()
+in
+.CW l.s
+arm one of them, self-hosted \(em the processor takes its own debug exception
+into the vector table it already has, and
+.CW trap()
+prints the storing pc and the address \(em which beats a debugger watchpoint
+because there is no way to attach one between a watchdog reset and a
+corruption twenty seconds later without racing it.
+.CW watchcomvec
+in the config arms it on
+.CW &comvec ,
+whose address is taken at run time because it moves with every build.
 .PP
-.B "The instrument that names the writer."
-A hardware watchpoint on
-.CW comvec .
-The A53 has four, openocd enumerates them, and the kernel can also arm one
-itself through DBGWVR0_EL1 and DBGWCR0_EL1 and take the debug exception
-into the vector table it already has, which avoids racing the debugger
-against a twenty-second boot.  Either way the answer is the ELR at the
-watchpoint: the exact instruction that writes the word.  That is the next
-piece of work, and it is worth having for its own sake \(em this kernel has
-had no way to ask "who wrote this address" at all.
+Three things have to be right at once or it silently never fires, and a
+watchpoint that never fires looks exactly like an address nobody writes:
+DBGWCR0_EL1 as
+.CW E|LSC=0b10|PAC=0b10|BAS=0xff
+(0x1ff5, stores only, matching at EL1); MDSCR_EL1.MDE
+.I and
+MDSCR_EL1.KDE, the second of which is what allows a debug exception to be
+taken to the exception level that generated it; and PSTATE.D, which
+.CW boot1
+leaves masked because its SPSR of 0x3c5 masks all four of DAIF.  Two of the
+three were wrong in the first version, so
+.CW watchset()
+is followed by a self-test that stores to the watched word twice and prints
+what the four registers read back as: getting
+.I no
+hits from a watchpoint is a result only if the instrument has just shown it
+can produce one.
 .PP
-.B "The rest of the machinery, which is done."
+It has never produced one.  Under QEMU
+.CW "-M raspi3b"
+the registers read back exactly as written \(em wvr 0x187d50, wcr 0x1ff5,
+mdscr 0xa000, daif 0x1c0 \(em and neither self-test store fires anything, so
+TCG does not implement self-hosted watchpoints; and on the board the same
+two stores are equally silent, which is a fact about this A53's debug
+configuration that is not yet explained.  The bug was found by removing
+things instead.  The instrument stays because the question it answers will
+come again, and the next person now knows both which three bits to check and
+that the board does not answer.
+.PP
+.B "The rest of the machinery."
 .CW MAXMACH
 is 4 and
 .CW MACHP(n)
@@ -13381,13 +13396,13 @@ which it was pretending to be: it returned
 .CW &mach0
 whatever
 .I n
-was, harmless only while there was one processor.  There is one
-.CW Mach
-per secondary, each on its own cache line.
+was, harmless only while there was one processor.
 .CW vectorinstall()
 lets a processor that starts after
 .CW trapinit()
-put the table core 0 built into its own VBAR_EL1.
+put the table core 0 built into its own VBAR_EL1, and
+.CW vectorbuildsec() / vectorinstallsec()
+do the same for the secondaries' own table.
 .CW clockinitsecondary()
 and
 .CW clocksecondary()
@@ -13413,11 +13428,41 @@ sizes its buffer from
 while looping to
 .CW MAXMACH .
 .PP
+A secondary's timer interrupt goes to
+.CW clocksecondary() ,
+which counts and re-arms and nothing else, rather than
+.CW clockintr() :
+.CW accounttime() ,
+.CW checkalarms() ,
+.CW timercheck()
+and
+.CW hzsched()
+all reach scheduler state this kernel's portable half has never been asked
+to protect against a second processor.
+.CW trap()
+dismisses any other interrupt a secondary sees, because peripheral IRQs are
+routed to processor 0 alone.  Making that state safe, and then letting a
+secondary run
+.CW schedinit() ,
+is the next step and a much larger one.
+.PP
 .CW m
 and
 .CW up
 are external registers: R27 and R26, by declaration order in
 .CW dat.h .
+This costs the rest of the tree nothing, because 7c sets
+.CW reg[REGEXT]
+and
+.CW reg[REGEXT-1]
+unconditionally in
+.CW txt.c ,
+so both are reserved in every translation unit whether or not it has seen
+the declaration \(em libinterp, libsec and libmath are prebuilt per objtype
+and shared with every other board, and none of them can be using them,
+which was confirmed by compiling
+.CW libinterp/xec.c
+and counting the references.
 .CW splhi
 and
 .CW splx
@@ -13436,7 +13481,7 @@ pending at the per-core controller, so
 .CW clockintr
 can run before
 .CW machinit()
-and fault on
+and fault on that same
 .CW "p->time[p->insyscall]++" .
 .CW boot2
 zeroes both on a secondary, so a premature use faults at a null pointer
@@ -13445,10 +13490,10 @@ rather than writing quietly through whatever the firmware's spin loop left.
 .B "Idling and resting are the same loop."
 A secondary ends in
 .CW cpupark() ,
-and once interrupts are enabled that park loop is an idle loop: WFE wakes
-on an unmasked IRQ as well as on an event, so the timer interrupt is taken
-at the WFE, returns to the instruction after it, finds the slot still zero
-and waits again.  So a processor that is idling is also one core 0 can call
+and once interrupts are enabled that park loop is an idle loop: WFE wakes on
+an unmasked IRQ as well as on an event, so the timer interrupt is taken at
+the WFE, returns to the instruction after it, finds the slot still zero and
+waits again.  So a processor that is idling is also one core 0 can call
 back, and it idles at the one address in this kernel that does not move
 between builds.
 .PP
@@ -13461,11 +13506,11 @@ must then skip
 which is a
 .CW "DC ISW"
 loop \(em invalidate by set/way, without cleaning \(em and would throw away
-the dirty line holding that processor's own clearing of its spin-table
-slot, sending it straight back round for ever, re-zeroing its tick count
-each time so that the symptom would be a tick line near nought rather than
-anything that looks like a spin.  Nothing else in the kernel recalls a
-processor and a JTAG restart cannot reach the path, so
+the dirty line holding that processor's own clearing of its spin-table slot,
+sending it straight back round for ever, re-zeroing its tick count each time
+so that the symptom would be a tick line near nought rather than anything
+that looks like a spin.  Nothing else in the kernel recalls a processor and
+a JTAG restart cannot reach the path, so
 .CW cpuboot()
 calls processor 1 back once at every boot: without that the branch would
 ship unexecuted, and QEMU cannot reach it either, having no caches.
@@ -13481,15 +13526,14 @@ per-core timer routing register of cores 1, 2 and 3.  A warm restart does
 not reset the cores, so a secondary a previous kernel started is still
 running, with its VBAR pointing into that kernel's vector table and its
 timer armed, while this image is being written over both.  Those routing
-registers are in the shared local controller and writable from any core.
-On a cold boot it is a no-op three times over, which is the price of it
-being unconditional.
+registers are in the shared local controller and writable from any core.  On
+a cold boot it is a no-op three times over, which is the price of it being
+unconditional.
 .PP
 .B "What the self-tests cost."
-About a second of every cold boot at level 2 and six hundred milliseconds
-at level 1: two hundred waiting for each processor to report, two hundred
-counting its ticks where there are ticks to count, and four hundred for the
-recall.  That is deliberate.  A per-processor timer that has stopped
+About a second of every cold boot: two hundred milliseconds waiting for each
+processor to report, two hundred counting its ticks, and four hundred for
+the recall.  That is deliberate.  A per-processor timer that has stopped
 working should be a line in the boot log, where the next person reads it,
 rather than something a later measurement trips over.
 .NH 2
@@ -13502,9 +13546,9 @@ which has a workaround in the driver.
 .PP
 What is missing is the layer above it.  The JIT is on now, and it is worth
 eight to twenty times on Dis and a fifth to a third on every network number
-measured; three of four processors run kernel code but nothing is scheduled
-on them; there is no windowing system; and the copy-on-write filesystem is
-not the root.  None of those is a bring-up problem; each is a decision, a
+measured; all four processors run kernel code and take their own timer
+interrupts, but nothing is scheduled on three of them; there is no windowing
+system; and the copy-on-write filesystem is not the root.  None of those is a bring-up problem; each is a decision, a
 merge, or the next step of the one begun above.  A board that boots, stores, networks over wire and air, and can be
 driven remotely is a port; a board that uses its hardware is the next
 document.
