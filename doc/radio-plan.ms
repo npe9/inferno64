@@ -3947,3 +3947,60 @@ set well ABOVE the pinned value \- if the pin still asserts with
 at -60, the part is hearing something the arithmetic is hiding; if it
 goes quiet, the part is genuinely deaf.  That is one ctl write and it has
 not been done.
+.PP
+.B "ITEM 3, ANSWERED: with 50dB of margin and a verified transmitter, board 2 receives no packet at all."
+Everything in the earlier attempts was confounded by level or by a
+configuration that had silently changed.  This measurement verifies
+board 2's frequency immediately before and after every reading, holds
+board 1's carrier by its own ctl write, and brackets it with the carrier
+off on both sides.
+.PP
+Board 1 at +14dBm \- PA_CFG2 0x7f, the 24dB the driver's table has never
+used:
+.DS
+.CW "                   floor  peak  duty   rssi"
+.CW "carrier OFF         -109   -95    0%   -106"
+.CW "carrier ON held      -69   -57   96%    -61"
+.CW "carrier OFF again   -110  -106    9%   -107"
+.DE
+Thirty-eight decibels, on command and off command, with the frequency
+read back as 915000000 at every step.  Board 2 hears the carrier at
+-57dBm, about fifty decibels over its own floor.
+.PP
+Then ten packets, written one at a time to
+.B /dev/radio0/data
+on board 1, which is proven to reach TX and reports
+.B "marc 0x40"
+and
+.B "left 0"
+for each:
+.DS
+.CW "recv 0   crcerr 0   lastrx none"
+.DE
+Not one packet.  Not one CRC error.
+.B lastrx
+has never held anything.
+.PP
+That is the answer.  The receive path does not detect a packet from a real
+CC1120 transmitter with fifty decibels of margin, at a matched rate,
+deviation, bandwidth and sync word, with carrier sense asserting 96 per
+cent of the time.  Every earlier negative on this bench was taken without
+a known transmitter or without a known level; this one has both, measured,
+with the stimulus switched on and off inside the same minute.
+.PP
+What this does NOT yet say is why.  The candidates still standing, in the
+order they should be tried, all now testable because the signal is ample:
+.IP \(bu 3
+SYNC_THR.  The driver's table leaves it at 11 and no ctl verb changes it;
+30 syncs on noise.  With fifty decibels of margin the useful range between
+them can be swept for the first time, and the payload checked against
+INFERNO-BEACON rather than counted.
+.IP \(bu 3
+The sync word's bit order or endianness.  Board 1 writes 0x930b into
+SYNC15_0 and board 2 hunts the same registers, so a transmitter and
+receiver that disagree about bit order would both be "correct" and never
+match.  That has never been checked against a third party.
+.IP \(bu 3
+The preamble length.  PREAMBLE_CFG1 reads 0x14, four bytes of 0xAA, which
+is TI's reset value and short; PQT has been seen to fire only occasionally
+even with a strong signal.
