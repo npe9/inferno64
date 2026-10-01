@@ -20,8 +20,8 @@ step is not ready to be worked on.
 Order, and why
 .LP
 .P1
-1  C1  the rig's ELF hazard      cheap, and it fakes failures
-2  A4  do the 32-bit back-ends narrow?    cheap, bounds A
+1  C1  the rig's ELF hazard      DONE a1e2e12a0
+2  A4  do the 32-bit back-ends narrow?    DONE, answered below
 3  A3  audit what the 7c fix changed      a risk I introduced
 4  B2  one namehash, not two              cheap, prevents a bad class
 5  A1  fix 6c                             blocked on A2
@@ -236,9 +236,9 @@ sloppily and relied on being ignored.  The repair there is to fix the cast,
 not to revert the compiler: a compiler that silently ignores what the source
 says is not a position to retreat to.
 .NH 2
-A4.  Do the 32-bit back-ends narrow?  Probably, but it is unverified
+A4.  CLOSED.  Only 6c and 7c were affected
 .LP
-.B Established.
+.B "The first table was wrong, and this is what it should have said."
 A first pass reported
 .CW 5c ,
 .CW 8c ,
@@ -246,56 +246,65 @@ A first pass reported
 .CW vc
 and
 .CW kc
-as affected.
-.B "That was wrong"
-\(em the test grepped for
+as affected.  That test grepped for
 .CW MOVWU
 and
 .CW AND ,
 mnemonics those architectures do not use, so every one of them read as a
-failure.  Reading the output instead,
-.CW 8c
-emits
+failure.  Read properly, all five are correct, by three different mechanisms:
 .P1
-MOVL	lo+12(FP),AX
-MOVL	$0,CX
-MOVL	hi+4(FP),BX
-MOVL	$0,DX
-ORL	AX,DX
-ORL	CX,BX
+5c, vc, kc   call _v2ui then _ui2v, runtime helpers
+8c           MOVL the low word, then MOVL $0 to the high word
+qc           stores REGZERO to the high word (R0ISZERO is set)
+6c           MOVQ lo; ORQ -- no truncation.  AFFECTED
+7c           was MOV with no truncation.  AFFECTED, fixed dcca478dd
+jc, 0c       MOVWU.  correct
 .P2
-and that
-.CW "MOVL $0,CX"
-is the zero extension, done correctly.  The 32-bit back-ends route 64-bit
-values through
-.CW utils/cc/com64.c
-as register pairs, which is a different mechanism entirely.
+.CW qc 's
+case needed one more step than reading: it emits
+.CW "MOVW R0,0(R3)"
+for the high word, and
+.CW R0
+is not obviously zero \(em a constant zero elsewhere compiles to an immediate
+.CW $0 ,
+not to
+.CW R0 .
+.CW utils/qc/txt.c
+settles it:
+.CW "if(R0ISZERO && a.type == D_CONST && a.offset == 0)"
+substitutes
+.CW REGZERO ,
+so that store really is a zero.
 .PP
-.B Suspected.
-That all five are correct.  Only
-.CW 8c
-was actually read.
-.PP
-.B "The check."
-A C program that computes
-.CW "(LONG)(u32)v"
-for a
-.CW v
-with its low word's top bit set, prints the result, and is
-.I run
-rather than inspected \(em under QEMU for the targets that can be booted, or
-compared against the host's answer where a kernel exists.  Inspection of
-generated assembly is how the first pass went wrong; a number that comes back
-from a running program cannot be misread.
-.PP
-.CW jc
+.B "And the bound A4 was actually for."
+A 32-bit target cannot have the
+.CW load.c
+bug at all, whatever its compiler does.
+.CW WORD
+is
+.CW intptr ,
+so on those machines
+.CW hi
 and
-.CW 0c
-emit
-.CW MOVWU
-and are correct.  They are the reference: when in doubt about what a back-end
-should do here, read
-.CW utils/jc/txt.c .
+.CW lo
+are 32 bits and
+.CW (u32)lo
+is not a narrowing \(em the line is correct by construction.
+.CW armv7 ,
+the one 32-bit board here that boots under QEMU, loads
+.CW /dis32/*.dis ,
+a
+.CW DISWORD=4
+build, which is the same thing said from the other side.
+.PP
+.B "What this is and is not."
+Inspection, not execution, which the plan asked for and does not get.  The
+justification for stopping at inspection is the paragraph above: there is no
+victim to run.  Each reading is unambiguous in a way the first grep was not \(em
+an explicit zero store or a named runtime helper, not an absence \(em and the
+one ambiguous case was chased into the compiler's own source.  If a 64-bit
+.CW big
+constant ever does misbehave on one of these, this is the note to disbelieve.
 .NH 1
 B.  efs
 .NH 2
