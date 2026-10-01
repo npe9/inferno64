@@ -118,7 +118,37 @@
  */
 #define	KSTACKPREALLOC	1
 #define	KSTACKWATCH	1	/* measure it; see os/inferno/port/proc.c */
-#define	NPROC		5
+/*
+ * NINE, AND WHAT WANTED MORE THAN FIVE.
+ *
+ * Five was enough for a shell and a radio.  #a wants three kprocs of
+ * its own the moment a packet device is attached to it -- ax25recv,
+ * ax25send and ax25tick, in os/inferno/radio/devax25.c -- and with the
+ * shell needing one spare for the fork a redirection costs, five is
+ * two short.  Measured: "ax25chk setup N0CALL-1" got as far as
+ * "addr-accepted ok" and then
+ *
+ *	no procs for kproc
+ *	kstack high water 3096 of 4096
+ *
+ * and took the console with it, which is the state that ends at the
+ * reset button.
+ *
+ * WHAT IT COSTS, and it is not the pool percentages.  KSTACKPREALLOC
+ * takes all conf.nproc stacks from xalloc at boot, so this is 16384
+ * more bytes of fixed allocation out of the 159744 free.  The pool
+ * maxima are ceilings and not reservations -- main 79850 plus heap
+ * 78253 is already more than the arena has -- so lowering
+ * main_pool_pcnt and heap_pool_pcnt would lower a ceiling neither pool
+ * can reach and free nothing.  What the extra stacks really take is
+ * headroom the two pools were competing for, and the heap is the one
+ * that notices: it had some 38000 bytes free at a prompt.
+ *
+ * And 3096 in that trace is why KSTACK stays at 4096.  The comment
+ * above records that 3072 was tried; a kproc has now been seen 3096
+ * deep, so 3072 would have overflowed it.
+ */
+#define	NPROC		9
 #define	CONFNAME	"stm32f407"
 
 /*
