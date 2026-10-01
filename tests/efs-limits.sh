@@ -139,19 +139,56 @@ rm -f $T/efsover.img
 say "efs when it runs out of room"
 cat > $T/efs-lim.sh <<'EOS'
 load std
+#
+# The mountpoints, created rather than assumed: everything under n/ in this
+# tree is untracked, so /n/client2 was simply absent and the remount said
+# "'/n/client2' does not exist".  The verdict read that as efs failing to
+# remount a filesystem it had just filled.
+#
+or {mkdir -p /n/client} {echo -n}
+or {mkdir -p /n/client2} {echo -n}
 disk/mkefs -n 1024 /tmp/efsfull.img
 or {and {disk/efs -f /tmp/efsfull.img /n/client} {echo MOUNTED}} {echo MOUNTFAIL}
 # 1024 blocks is 4MiB; write 1KiB files until one fails.
+#
+# No "break": this sh has no such builtin, and it ran it as a COMMAND.
+#
+# The arm used to say "break" to leave the loop on the first failed write.
+# sh looked for ./break, did not find it, and raised -- which aborted the
+# whole script, so everything after the loop (the write-when-full, the
+# unmount, the remount, the efsck) never ran at all.  The verdict then saw
+# no REMOUNTED and no CKCLEAN and reported "runs out of MEMORY", which is
+# how a missing builtin came to be read as a filesystem bug.  The
+# transcript said so plainly all along:
+#	sh: break: './break' file does not exist
+#
+# A flag instead: once n is 1 the body is skipped, and the loop spins out
+# its remaining turns doing nothing, which costs nothing worth having a
+# builtin for.
+#
 n:=0
 for i in `{seq 1 6000} {
-	or {echo 0123456789012345678901234567890123456789 > /n/client/f^$i} {
-		echo FULL-AT $i
-		n = 1
-		break
+	or {~ $n 1} {
+		or {echo 0123456789012345678901234567890123456789 > /n/client/f^$i} {
+			echo FULL-AT $i
+			n = 1
+		}
 	}
 }
 or {~ $n 1} {echo NEVER-FILLED}
-or {and {echo after-full > /n/client/last} {echo STILL-WRITABLE}} {echo REFUSES-AFTER-FULL}
+#
+# cp, not a redirect, because a FAILING redirect is not catchable here.
+#
+# "or {and {echo x > /n/client/last} {...}} {...}" does not work when the
+# write fails: sh raises on the redirect itself and the whole script ends,
+# so neither branch runs.  The transcript showed the create failing for
+# exactly the right reason --
+#	sh: cannot open /n/client/last: filesystem is full
+# -- and then nothing, which the verdict read as "did not refuse cleanly".
+# cp raises fail:*, which or catches.
+#
+echo after-full > /tmp/afull
+or {and {cp /tmp/afull /n/client/last} {echo STILL-WRITABLE}} {echo REFUSES-AFTER-FULL}
 unmount /n/client
 or {and {disk/efs -f /tmp/efsfull.img /n/client2} {echo REMOUNTED}} {echo NOREMOUNT}
 unmount /n/client2
