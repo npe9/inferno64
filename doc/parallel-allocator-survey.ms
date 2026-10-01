@@ -188,55 +188,205 @@ and the kernel's copy), so making
 expensive to read would be a poor trade: it wants to stay cheap even if it
 becomes approximate.
 .NH 2
-3.  The write barrier is the first thing that is actually UNSAFE
+3.  The write barrier \(em AUDITED, and it is not the hole
 .LP
 .CW include/interp.h :
 .P1
 #define Setmark(h) if((h)->color!=mutator) { (h)->color = propagator; nprop=1; }
 .P2
-Two non-atomic writes, one of them to a global
-.CW ( nprop ),
-executed by the mutator on every pointer store that the barrier covers \(em and
-.CW Setmark
-is used in
-.CW gc.c ,
-.CW heap.c ,
-.CW keyring.c ,
-.CW loader.c
-and
-.CW tk.c .
-With one mutator this is fine by construction.  With two it is a race on the
-colour field, and losing a
+This section used to call that "the first thing that is actually UNSAFE" and
+"the piece to design first", on the grounds that two mutators race on the colour
+field and that losing a
 .CW nprop
-set means the collector believes there is no propagation work outstanding when
-there is \(em which frees a live object.
+set frees a live object.  The audit below says the first claim is wrong and the
+second was aimed at the wrong pair of threads.  Nothing here is a code change:
+.CW npctx
+is 1,
+.CW othersrunning()
+is therefore always 0, and every parallel case in this section is latent.
 .PP
-This is the piece to design first, because it decides the rest: either the
-barrier becomes atomic (a compare-and-swap on the colour, which also has to be
-emitted by every JIT backend that inlines it), or the colour transitions happen
-only inside
-.CW stoptheworld() ,
-which is already built and would make the barrier's races unreachable at the
-cost of pausing all executors at every epoch.
-.NH 2
-4.  The colour globals, which stoptheworld() may already cover
-.LP
-.CW mutator ,
-.CW marker ,
-.CW sweeper
+.B "Two concurrent barriers on one object are benign, and the reason is the values."
+.CW propagator
+is an enum constant, 3 \(em not a variable.  Every generator loads it as an
+immediate
+.CW ( "con(propagator, RA2)" ),
+so compiled code never reads it.
+.CW Heap.color
+is a plain
+.CW int ,
+word-sized and aligned.  So two mutators running the barrier on the same object
+write
+.I identical
+bits to an aligned word, and identical bits
+.CW ( 1 )
+to
+.CW nprop .
+There is no lost update to lose.
+.PP
+.B "What that argument does NOT cover."
+Publication.  One executor allocating an object writes
+.CW "h->color = mutator"
+and then stores the pointer; another loads the pointer and dereferences it.
+Those two colour values \(em
+.CW mutator
 and
 .CW propagator
-are derived from
-.CW gccolor
-and read by both executors on every allocation
-.CW ( "h->color = mutator" )
-and every barrier.  They change only when
-.CW gccolor
-advances, which is an epoch boundary, which is exactly what
+\(em differ, so idempotence says nothing about them, and without release/acquire
+the second executor can see the pointer with a stale colour.  That is a separate
+question from the barrier and it is open; see section 4a.
+.PP
+.B "The nprop hazard is real, but it is mutator-versus-COLLECTOR."
+Losing a
+.CW nprop
+set needs a concurrent writer, and there is exactly one: the collector's
+.CW "nprop = 0"
+at
+.CW gc.c :684.
+The old text read as though two mutators could lose each other's, which they
+cannot.  In the kernel it is covered already \(em both
+.CW rungc()
+call sites,
+.CW execatidle()
+and the busy path, are inside
+.CW stoptheworld() ,
+so no mutator is running.  A mutator also cannot be stopped part way through the
+barrier: it is inlined with no safepoint in it, and safepoints are between Dis
+instructions.
+.PP
+.B "In emu it is NOT covered, and that matters for item 1's own purpose."
+.CW emu/port/dis.c
+has three
+.CW rungc()
+call sites and no
 .CW stoptheworld()
-exists to make safe.  Suspected, not established: that no other code path
+at all \(em the function is not even declared there.  Today that is correct by
+construction, because emu runs one serialised interpreter and the collector runs
+in the mutator's own thread.  But this survey says
+.CW parallelvm=1
+would be developed under
+.CW emu ,
+and under two executors emu would have exactly the mutator-versus-collector race
+the kernel is protected from.  Wrapping emu's collector is a prerequisite that
+item 1 does not cover.
+.NH 2
+4.  The colour globals \(em ESTABLISHED, stoptheworld() does cover them
+.LP
+The previous text said: "Suspected, not established: that no other code path
 advances them.  Worth checking before relying on it, because the whole safety
-argument for the colour scheme under two mutators rests on it.
+argument for the colour scheme under two mutators rests on it."  Checked:
+.IP "\(bu" 3
+.CW gccolor
+is written in exactly one place,
+.CW gc.c :670,
+.CW gccolor++
+at the end of an epoch.
+.IP "\(bu" 3
+.CW mutator ,
+.CW marker
+and
+.CW sweeper
+are assigned in exactly one place,
+.CW gc.c :433-435, inside
+.CW rootset() .
+.IP "\(bu" 3
+.CW rootset()
+has exactly one caller:
+.CW gc.c :671, the line after
+.CW gccolor++ .
+.LP
+So the colour globals change only at an epoch boundary, only inside
+.CW rungc() ,
+which in the kernel is inside
+.CW stoptheworld() .
+The safety argument the old text said everything rested on holds, and it is now
+read off the source rather than assumed.
+.NH 2
+4a.  NEWLY OPEN \(em the inxec handshake has no barriers, and one site is in the wrong order
+.LP
+.CW stoptheworld()
+publishes
+.CW "gcstw = 1"
+with a
+.CW coherence()
+and then spins until
+.CW othersrunning()
+reads 0.  There is no
+.CW coherence()
+on the success path before the collector starts reading the heap, and \(em the
+grep that discriminates \(em none at any of the six sites that clear
+.CW inxec
+either.  So both halves of the handshake are missing their barrier, not just the
+reader's.
+.PP
+Worse, and independent of barriers entirely,
+.CW libinterp/xec.c :2533 does this:
+.P1
+curP->inxec = 0;
+curP->curprog = nil;
+p->reg = R;
+.P2
+It announces the safepoint and
+.I then
+publishes the register snapshot, under a comment saying "p->reg is authoritative
+again" \(em which it is not until the next line.  A collector that saw
+.CW inxec
+go to 0 in between would read a stale
+.CW p->reg .
+.CW isave()
+at
+.CW xec.c :2366 does the same two things in the opposite, correct order, so the
+file disagrees with itself.  That one is wrong in plain program order on a
+sequentially consistent machine, never mind reordering.
+.PP
+Latent, like everything else here, and this tree has already paid for a missing
+barrier of exactly this shape once \(em
+.CW emu 's
+.CW unlock()
+had no release barrier and it cost the scheduler deadlock.
+.NH 2
+4b.  NEWLY OPEN \(em gclock() is the lost update, and gcdepth should not be shared
+.LP
+This is what section 3 was looking for, in the same file:
+.P1
+#define gclock()   do{ gchalt++; if(++gcdepth > gcdepthmax) gcdepthmax = gcdepth; }while(0)
+#define gcunlock() do{ gcdepth--; gchalt--; }while(0)
+.P2
+Non-atomic read-modify-write on two globals, and
+.I not
+idempotent, which is exactly what makes them unlike
+.CW Setmark .
+A lost
+.CW gchalt++
+leaves
+.CW gcruns()
+true while a destroy is in progress, and the collector runs through a destroy.
+That is the lost-update shape section 3 described, at the site that really has
+it.
+.PP
+.CW gcdepth
+is worse than racy, it is in the wrong place, and the comment above it already
+says so: "gcdepth is how deep
+.I "this thread"
+is in nested destruction ... That is a property of one thread's stack."  It is a
+plain
+.CW "extern int" .
+The comment goes on to record that sharing one counter for both purposes "fails
+both ways" on two processors, and that the
+.CW multicore
+branch measured the depth half hitting exactly 65 against
+.CW heap.c 's
+guard of 64.  Splitting
+.CW gchalt
+from
+.CW gcdepth
+fixed the conflation; it left both of them global.  So
+.CW gcdepth
+belongs in
+.CW Pctx
+and
+.CW gchalt
+needs atomic increment and decrement \(em and unlike the barrier, neither can be
+argued away by the values being equal.
 .NH 2
 5.  comp-arm64.c's refcounts, for hosted emu \(em DONE
 .LP
@@ -364,12 +514,47 @@ Order, and what not to do
 .LP
 .P1
 1  comp-arm64.c atomic refcounts      DONE; 2.75x on a pointer-move loop
-2  the Setmark barrier, by design     the only correctness hole in the GC
-3  Phase 1b (curP as a register)      without it two executors share R
-4  Phase 4 (a lock per channel)       without it isend/irecv corrupt stacks
-5  per-processor magazines            throughput only; measure first
-6  per-processor accounting           throughput only
+2  gclock()/gcunlock()                the lost update; gcdepth into Pctx
+3  the inxec handshake                barriers both halves, and xec.c:2533
+4  stoptheworld() around emu's rungc  or item 1 cannot be exercised at all
+5  Phase 1b (curP as a register)      without it two executors share R
+6  Phase 4 (a lock per channel)       without it isend/irecv corrupt stacks
+7  per-processor magazines            throughput only; measure first
+8  per-processor accounting           throughput only
 .P2
+.PP
+.B "That list changed, and the audit in sections 3 to 4b is why."
+What used to be item 2, "the Setmark barrier, by design -- the only correctness
+hole in the GC", is not a hole:
+.CW propagator
+is a constant and
+.CW Heap.color
+an aligned
+.CW int ,
+so two mutators running the barrier write identical bits.  The lost update it
+described is real and lives in
+.CW gclock() ,
+which is not idempotent, and the
+.CW nprop
+half of it is mutator-versus-collector and already covered in the kernel by
+.CW stoptheworld() .
+Items 3 and 4 are new: the safepoint handshake has no memory barrier at either
+end and one of its two sites publishes in the wrong order, and
+.CW emu
+has no
+.CW stoptheworld()
+at all, which matters because item 1's whole stated purpose is to make
+development under
+.CW emu
+possible.
+.PP
+.B "None of it is a code change in this tree, deliberately."
+.CW npctx
+is 1 and nothing assigns it, so
+.CW othersrunning()
+is always 0 and every case above is latent.  A concurrency fix that cannot be
+exercised is the one thing not to ship on the strength of an argument, however
+carefully the argument is written down \(em so this is written down instead.
 .PP
 .B "Where the infrastructure already is, which is less work than it sounds."
 .CW Pctx ,
