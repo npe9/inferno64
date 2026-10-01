@@ -1261,3 +1261,43 @@ against a control that creates nothing, with the +-170 noise band from E2 in
 mind \(em and then a counter on the work, tagged with the caller, once there is a
 number to attribute.  The cycle test in E1 found its leak that way in one
 afternoon; this is the same shape of question.
+.PP
+.B "And a check that nearly cost the slice fix."
+.CW mprof -2
+after 300
+.I creates
+\(em profiling the creates rather than rewrites, which is where the retention
+happens \(em attributes most of it to
+.CW efs.b:777 ,
+the line after
+.CW getnode
+inside
+.CW Fs.nextleaf :
+73.5MB with the slice change against 55.9MB without.  Read alone that says the
+change made retention worse, which would matter, because the retention is what
+runs the heap out.  The mechanism was even plausible:
+.CW Fs.range
+keeps
+.CW Ent
+values, and with slicing each one's
+.CW val
+pins the whole 4096-byte block it came from.
+.PP
+It is not what happened.  The per-line figures are not additive \(em
+.CW mprof
+attributes a callee's allocations to the line after the call, so
+.CW nextleaf 's
+and
+.CW unpack 's
+overlap and summing them double-counts \(em and the pool-level numbers after the
+same 300 creates say the opposite:
+.P1
+              cursize      hiwat       live blocks
+without     202816256   240359424         876206
+with        203327616   224801536         688848
+.P2
+Same current size, peak 6.5 per cent lower, 21 per cent fewer live blocks.  The
+change is good on count and on peak, and the per-line reading was the wrong
+instrument for the question.  Three for three: every time a per-line or
+per-call-site figure has been compared against a pool-level one in this
+investigation, the per-line one has been the misleading half.
