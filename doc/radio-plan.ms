@@ -3467,3 +3467,72 @@ cleanly.  It did not.
 What the test wants is tens of centimetres \- strong enough to be well
 over the floor, far enough to be an ordinary signal.  Centimetres was
 never the problem and metres is too many.
+.PP
+.B "At rate 1200 the part never enters TX, and the driver reports success anyway."
+Setting
+.B "rate 1200"
+with
+.B "deviation 3997"
+and
+.B "bw 25000"
+\- which is the driver's own register table, reached by resetting the
+part \- leaves it unable to transmit.  84 packets were written to
+.BR /dev/radio0/data ,
+the
+.B sent
+counter followed them, every one reported
+.B "marc 0x40"
+and
+.BR "left 0" ,
+and a tinySA swept across 914.8-915.2MHz ten times saw nothing: strongest
+-96.3dBm against a floor of -114, not one sweep twenty decibels over it.
+The same board keyed with
+.B "carrier on"
+gives -41dBm, so it is not the antenna or the instrument.
+.PP
+.B txtrace
+says where it stops.  The driver samples the part's state through the
+transmit sequence, and at rate 9600 it reads
+.B "1 0 0 0 2 0"
+\- RX, idle after SIDLE, idle after the FIFO flush, then
+.B 2
+for TX.  At rate 1200 it reads
+.B "1 0 0 0 4 0" :
+.B 4
+is CALIBRATE.  The part goes into calibration on its way to TX and comes
+back out to IDLE without ever transmitting.
+.PP
+.B "marc 0x40"
+is not evidence against that.  MARC_STATUS1 is cleared by being read, so
+the driver reads it once and keeps it; a 0x40 can be left over from the
+last transmit that did work.  A driver that counts
+.B sent
+for a packet the part never put on the air is reporting its own
+intentions.
+.PP
+This invalidated a run of measurements before the tinySA caught it: the
+board-to-board tests at the driver's defaults were made against a silent
+transmitter, and the receiver's reporting nothing was correct.
+.PP
+Not yet diagnosed.  What is known is that 9600/20000/50000 radiates and
+1200/3997/25000 does not, so the fault is in what the rate, deviation and
+bandwidth registers become at the low rate rather than in the transmit
+path itself.
+.PP
+.B "And the signal has to be strong enough for a negative to mean anything."
+With the boards close the receiver saw
+.B "floor -81 peak -64"
+\- seventeen decibels of margin \- and sync never fired, which is a
+result.  Brought near again it sees
+.B "floor -108 peak -105 duty 5% bursts 5" :
+three decibels, at which nothing could demodulate and a silent sync word
+says nothing at all.  Carrier sense reads 87 per cent and PQT_REACHED
+3693 of 1712104 samples there, which is a receiver chewing on noise just
+above its own floor with
+.B "csthr -104"
+set.
+.PP
+So the measurement wants the earlier geometry back \- whatever gave
+-64dBm, which was centimetres \- and a stated received level beside every
+future reading of the sync pin.  A sync failure at 3dB SNR and one at
+17dB are different claims.
