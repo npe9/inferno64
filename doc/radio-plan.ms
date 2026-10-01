@@ -4383,3 +4383,25 @@ the trial at the part's own 1200-baud configuration, which was meant to
 test whether the AGC, DCFILT and IQIC values suit the rate, was run while
 SYNC_MODE was still at thirty-two bits.  It could not have received
 anything whatever the demodulator was doing.
+.PP
+.B "Board 2's console input is intermittent, and it is not the board."
+Twice today board 2 has stopped running what is typed at it while its
+output stayed perfectly readable \- a clean boot log ending at a prompt,
+no panic, no
+.BR Broken ,
+no
+.BR "allocb: no memory" .
+Both times a fresh marker came back
+.I zero
+times, which means nothing typed is arriving at all rather than that a
+shell has died: an echo would make it one.
+.PP
+So the host-to-board direction of the RS232 path fails and recovers.
+A reset does not address it and was tried on the first occurrence, on my
+diagnosis, before the marker count was being reported; the tooling now
+distinguishes the two cases and says which.
+.PP
+It also accounts for several of the day's "board 2 died" events, and for
+why the 1200-baud trial could not be redone: the test needs both consoles
+for the few minutes it takes to configure two radios and send a handful
+of packets.
