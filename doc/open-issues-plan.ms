@@ -25,7 +25,7 @@ Order, and why
 3  A3  audit what the 7c fix changed      DONE: clean; left A5 hygiene
 4  B2  one namehash, not two              DONE 2d273290f
 5  A1  fix 6c                             DONE e5d6131f3 (A2 done b6a7201e9)
-6  B1  efs's quadratic allocation         attributed: descent, ~39%; one run to settle
+6  B1  efs's quadratic allocation         4 attempts; decoding conserved, ~39%
 7  D1  w4/w8, D2 close the bind section   DONE
 .P2
 .CW C1
@@ -705,19 +705,65 @@ term and not
 .I the
 term, and B1 is not one fix.
 .PP
-.B "Which leaves one thing unexplained, and it should be settled first."
-The second attempt \(em a descent that does not decode, with the decoded-node
-cache kept \(em targeted exactly these 789 and measured no change at all
-.CW ( 330/1371/1989 ).
-That cannot be right: either it did not avoid the decodes it was meant to, or
-they do not cost what the arithmetic above assumes.  Re-run it with this
-counter and read
-.CW decodes/op :
-if it does not fall, the change was wrong; if it falls and allocations do not,
-then an entry decode is much cheaper than one allocation and the whole
+.B "The decisive run, and it explains all three failures: the decoding is conserved."
+The plan said to re-run the non-decoding descent with the attribution counter and
+read
+.CW decodes/op .
+Done, on a 242-entry filesystem:
+.P1
+            alloc/op  decodes/op  entries decoded/op
+baseline        1998     14.00          789.0
+lazy descent    1999     14.00          789.0
+.P2
+Not one decode avoided.  The descent stops decoding, and
+.CW replace ,
+.CW fixup
+and
+.CW range
+then miss the cache and decode exactly the same blocks themselves \(em because
+they want a
+.CW Node ,
+not a block.  The attribution in the baseline, which put all 789 on
+.CW leaffor
+and
+.CW pathto ,
+was only recording who reached the block
+.I first .
+.PP
+So the decoding cannot be moved; it can only be removed, by making the callers
+that need it not need it.
+.CW fixup
+is the one case where that is easy, because an interior entry is a fixed 27 bytes
+and a child pointer can be patched in the packed block \(em which is what the
+third attempt did, for three per cent.
+.CW replace
+would need the same treatment for a variable-width leaf entry, and
+.CW range
+genuinely wants every entry it returns.
+.PP
+.B "And even all of it is not the whole quadratic."
 .CW Node.unpack
-line of attack is misconceived.  One run decides which, and nothing else should
-be attempted before it.
+allocates one array for the entries plus one value array per entry, so one
+allocation per decoded entry is the right order:
+.P1
+fs   2 entries   22 decoded/op of  328 alloc/op    7%
+fs  62 entries  514 decoded/op of 1372 alloc/op   37%
+fs 242 entries  789 decoded/op of 1998 alloc/op   39%
+.P2
+Removing every decode would take 1998 to about 1200, against 328 at two entries.
+Still growing.  Three fifths of the allocations at the large end have not been
+attributed to anything, and that is where the next measurement should go \(em not
+to another fix.
+.PP
+.B "Four attempts, and what each one taught."
+Keeping decoded nodes across commits: no effect, because copy on write renumbers
+the path.  A non-decoding descent: no effect, because the decoding is conserved.
+Patching
+.CW fixup :
+three per cent, real but not worth a format change on its own.  And the
+attribution counter itself, which is the one that should have been built first
+and is the only instrument here whose total can be checked against an
+independent measurement.
 .PP
 .B "What is solid, after all of it."
 That
