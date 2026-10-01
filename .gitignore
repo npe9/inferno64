@@ -550,3 +550,16 @@ os/inferno/raspi3b/board.out
 # Mach-O binaries in "git status", which is noise nobody edited and a
 # diff nobody can read.  o.emu-g is tracked too and is the same thing.
 emu/*/o.emu-*
+
+#
+# The acid symbol files a kernel build makes beside each linked kernel.
+# The rule is in each board's mkfile, "default:V: i$CONF i$CONF.acid", so
+# they are named after the image and rewritten by every build.
+#
+# Only i*.acid, deliberately: emu/9front/emu.acid, os/inferno/pc/pci.acid
+# and os/inferno/pc/pcidb.acid are tracked, hand-written acid scripts, and
+# a blanket *.acid would claim to ignore those too -- a no-op on a tracked
+# file, but it would quietly swallow the next hand-written one.  Generated
+# names begin with the kernel's i, source ones do not.
+#
+os/inferno/*/i*.acid
