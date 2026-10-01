@@ -3670,3 +3670,47 @@ the air, and it has stopped answering on either
 .B /dev/cu.usbmodem*
 after working earlier today.  Until it is back the link cannot be
 measured, only guessed at, and this document has enough guesses in it.
+.PP
+.B "Board 1 is not radiating, and two independent receivers agree."
+With the tinySA back, board 1 was keyed and swept over 914.9-915.1MHz at
+10kHz resolution.  Nothing: peaks of -103 to -112dBm against a floor of
+-122, at a different frequency every sweep, which is noise and not a
+carrier.  The same board keyed earlier today read -41dBm.
+.PP
+Its own account of itself is that it is transmitting.
+.B txtrace
+reads
+.B "1 0 0 0 2 0"
+with the 2 for TX,
+.IR txpin (1)
+reports
+.B "PKT_SYNC_RXTX 100% high"
+and
+.B "CRC_OK 100% high"
+while the carrier is up, and
+.B sent
+counts every packet.
+.PP
+PA_CFG2 is not the cause.  It was raised to 0x7f for +14dBm and put back
+to the table's 0x4f for -10dBm, and both read back correctly and both
+radiated nothing.
+.PP
+And the instrument is not the cause, which is the part that was checked
+against known references rather than assumed.  The tinySA hears the
+440.1MHz repeater this document surveyed at -71.2dBm where the survey
+recorded -63.6, FM broadcast at -64.7, and 902-928 at -85.9.  Its floor
+of -122 at 10kHz resolution is lower than the -114 it showed at 30kHz
+earlier, which is the resolution bandwidth and not a disconnected
+antenna.
+.PP
+So a working receiver with a working antenna, standing next to a
+transmitter that says it is transmitting, hears nothing; and the other
+board hears nothing either.  Two independent receivers and one
+transmitter that believes itself.  That points at board 1's own antenna
+connection, and nothing else fits: a radio reports the state of its
+registers and its state machine, neither of which knows whether the
+connector has anything on it.
+.PP
+It was radiating -41dBm this morning, so whatever changed happened during
+the moving \- which has already cost one UART cable and sent two
+conclusions wrong.
