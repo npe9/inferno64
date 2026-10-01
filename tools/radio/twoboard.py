@@ -129,20 +129,36 @@ class Board:
             return f.read().decode("utf-8", "replace")
 
     def live(self, wait=10.0):
-        """Two copies of a fresh marker, or it is not running commands."""
+        """Two copies of a fresh marker, or it is not running commands.
+
+        Records the count in self.lastcount, as PortBoard does, because
+        the two classes differing here defeated the diagnosis they exist
+        to provide: open_board had returned this one, lastcount was never
+        set, and a board was reported with "marker -1" -- which says
+        nothing about whether anything typed was arriving.  Zero and one
+        are different faults and both paths have to be able to say which.
+        """
         mark = "LV%d" % (int(time.time() * 1000) % 1000000)
         self._stuff("echo " + mark)
         end = time.time() + wait
+        best = 0
         while time.time() < end:
             time.sleep(0.5)
-            if self.text().count(mark) >= 2:
+            n = self.text().count(mark)
+            best = max(best, n)
+            if n >= 2:
+                self.lastcount = n
                 return True
+        self.lastcount = best
         return False
 
     def read(self, line, settle=4.0):
         """Send one line, bracketed by liveness marks."""
         if not self.live():
-            raise Dead("%s: not running commands BEFORE %r" % (self.name, line))
+            raise Dead("%s: not running commands BEFORE %r (marker seen %d "
+                       "times; 0 means nothing typed is arriving, 1 means "
+                       "the shell is gone)"
+                       % (self.name, line, getattr(self, "lastcount", -1)))
         self._stuff(line)
         time.sleep(settle)
         t = self.text()
