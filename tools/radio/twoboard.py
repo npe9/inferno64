@@ -203,6 +203,24 @@ for _m in ("ctl", "stats", "expect", "lastrx", "reaches_tx"):
     setattr(PortBoard, _m, getattr(Board, _m))
 
 
+def open_board(port, name=None):
+    """A board at this port, however it happens to be reachable.
+
+    Either path works and which one applies is not under this script's
+    control: a screen(1) window may or may not be attached to the tty at
+    any moment, and whichever it is, the port is busy for the other
+    method.  Picking by hand meant a run dying on "Resource busy" or on
+    "No screen session found" depending on what the bench looked like
+    minutes earlier, which is a property of the terminal and not of the
+    measurement.
+    """
+    held = subprocess.run(["lsof", "-t", port], capture_output=True,
+                          text=True).stdout.split()
+    if held:
+        return by_port(port)
+    return PortBoard(port, name)
+
+
 def sessions():
     out = subprocess.run(["screen", "-ls"], capture_output=True,
                          text=True).stdout
