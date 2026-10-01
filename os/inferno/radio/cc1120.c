@@ -692,6 +692,25 @@ cc1120interrupt(Radio *r)
 	rr = (Cc1120*)r;
 	s = rr->spi;
 
+	/*
+	 * Counted before anything is asked of the part, and split by the
+	 * level of the pin that raised it.
+	 *
+	 * PKT_SYNC_RXTX rises on the sync word and falls at the end of
+	 * the packet (SWRU295E table 10), so a call with the pin high
+	 * has nothing complete to read and a call with it low has.  A
+	 * board that enables only the rising edge therefore receives
+	 * every packet into the FIFO and reads none of them, which is
+	 * what the stm32f407 did -- and recv on its own cannot tell that
+	 * apart from a receiver that heard nothing, because recv is
+	 * downstream of this function being called at all.  These two
+	 * numbers are upstream of it.
+	 */
+	if(s->gpio != nil && s->gpio(s))
+		rr->nintrhigh++;
+	else
+		rr->nintrlow++;
+
 	s->lock(s);
 	st = state(rr);
 	if(st == Strxerr){
@@ -2962,7 +2981,8 @@ cc1120stat(Radio *r, char *p, int n)
 		"txtrace %d %d %d %d %d %d left %d\n"
 		"sent %ud recv %ud\n"
 		"crcerr %ud toobig %ud txtimeout %ud\n"
-		"rxoverflow %ud txunderflow %ud txnever %ud\n",
+		"rxoverflow %ud txunderflow %ud txnever %ud\n"
+		"intr high %ud low %ud\n",
 		rr->partnum, rr->partversion,
 		st >> 4,
 		(ulong)rr->hz, readrate(rr), readdev(rr), readbw(rr),
@@ -2976,7 +2996,8 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->txtrace[3], rr->txtrace[4], rr->txtrace[5], rr->txleft,
 		rr->nsent, rr->nrecv,
 		rr->ncrcerr, rr->ntoobig, rr->ntxtimeout,
-		rr->nrxoverflow, rr->ntxunderflow, rr->ntxnever);
+		rr->nrxoverflow, rr->ntxunderflow, rr->ntxnever,
+		rr->nintrhigh, rr->nintrlow);
 }
 
 /*

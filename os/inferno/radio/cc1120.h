@@ -61,6 +61,18 @@ struct Cc1120
 	u32	nrxoverflow;
 	u32	ntxunderflow;
 	u32	ntxnever;		/* strobed TX and never got there */
+	/*
+	 * Interrupts delivered, split by the level the pin was at.
+	 *
+	 * PKT_SYNC_RXTX rises on the sync word and falls at the end of
+	 * the packet, so a high pin means there is nothing complete to
+	 * read yet and a low one means there is.  A board that enables
+	 * only one edge receives perfectly and counts nothing, and the
+	 * two numbers say which edge arrived -- recv alone cannot tell
+	 * "never heard it" from "heard it and was never told".
+	 */
+	u32	nintrhigh;		/* edge taken with the pin high */
+	u32	nintrlow;		/* edge taken with the pin low */
 	uchar	rxstatus[2];		/* the two bytes APPEND_STATUS adds */
 
 	QLock	qlock;			/* one user of the part at a time */

@@ -160,7 +160,7 @@ spiunlock(Spidev*)
 
 /*
  * The click's GPIO3, on PE14.  It is already an input with an EXTI
- * rising edge on it for the packet interrupt; this just reads it.
+ * trigger on both edges for the packet interrupt; this just reads it.
  */
 /*
  * LD1 on PE12, which after boot says only that the kernel started and
@@ -330,9 +330,38 @@ spistm32f4link(void)
 		return;
 
 	/*
-	 * INT is an input, rising edge, routed to EXTI.  SYSCFG's
-	 * EXTICR picks which port owns each of the sixteen lines;
-	 * EXTI14 is in EXTICR4, nibble 2, and port E is 4.
+	 * INT is an input routed to EXTI.  SYSCFG's EXTICR picks which
+	 * port owns each of the sixteen lines; EXTI14 is in EXTICR4,
+	 * nibble 2, and port E is 4.
+	 *
+	 * BOTH EDGES, AND THE RISING ONE ALONE WAS THE WHOLE OF
+	 * doc/radio-plan.ms ITEM 3.
+	 *
+	 * The pin carries PKT_SYNC_RXTX, and SWRU295E table 10 says what
+	 * that is in RX: "asserted when sync word has been received and
+	 * de-asserted at the end of the packet".  The rising edge is the
+	 * sync word.  At that instant the payload has not been
+	 * transmitted yet, let alone demodulated, so cc1120interrupt()
+	 * read NUM_RXBYTES, found nothing, and returned -- and the
+	 * falling edge, which is the one moment the packet is complete
+	 * in the FIFO, was not enabled, so the packet was never read.
+	 *
+	 * The part received perfectly throughout.  Measured on this
+	 * board with ten packets sent from the other one: MARC_STATUS1
+	 * 0x80, which SWRU295E calls "RX finished successfully (a packet
+	 * is in the RX FIFO ready to be read)", MODEM_STATUS1 0xe1 with
+	 * SYNC_FOUND set against 0x61 before, and NUM_RXBYTES 0x0b --
+	 * one length byte, eight of payload and the two appended status
+	 * bytes, sitting unread.
+	 *
+	 * Every qemu test passed against this because the model raises
+	 * the pin once the packet is in its FIFO, so there the rising
+	 * edge does carry data.  See tools/qemu-patches/0051.
+	 *
+	 * cc1120interrupt() needs no edge of its own: it checks the
+	 * state and NUM_RXBYTES first and a call with nothing to do is a
+	 * no-op, which is also what the extra call at the end of each
+	 * transmitted packet becomes -- PKT_SYNC_RXTX asserts in TX too.
 	 */
 	v = *(volatile ulong*)(GPIOE+GPIO_MODER);
 	v &= ~(3UL << (2*Intpin));		/* input */
@@ -344,6 +373,7 @@ spistm32f4link(void)
 	*(volatile ulong*)(SYSCFG_EXTICR4) = v;
 
 	*(volatile ulong*)EXTI_RTSR |= 1UL << Intpin;
+	*(volatile ulong*)EXTI_FTSR |= 1UL << Intpin;
 	*(volatile ulong*)EXTI_PR = 1UL << Intpin;
 	*(volatile ulong*)EXTI_IMR |= 1UL << Intpin;
 	coherence();

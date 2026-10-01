@@ -86,6 +86,7 @@
 #define	EXTI		0x40013c00
 #define	  EXTI_IMR	(EXTI+0x00)
 #define	  EXTI_RTSR	(EXTI+0x08)
+#define	  EXTI_FTSR	(EXTI+0x0c)
 #define	  EXTI_PR	(EXTI+0x14)
 
 #define	FLASHIF		0x40023c00
