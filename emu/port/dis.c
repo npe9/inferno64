@@ -1729,7 +1729,39 @@ vmachine(void *a)
 			gcbusy++;
 			up->type = BusyGC;
 			pushrun(up->prog);
-			rungc(isched.head);
+			/*
+			 * Under memory pressure, a FULL cycle, not one step.
+			 *
+			 * rungc() is incremental: a call advances the
+			 * three-colour scheme a little, and only the sweep
+			 * phase frees anything.  One call per trigger is
+			 * fine while nothing is pressing, and hopeless when
+			 * a program allocates faster than the increments
+			 * reclaim.  Measured, 300 file creates through efs:
+			 * 1143908 allocations, 29176 rungc calls -- the
+			 * trigger was firing constantly, since memlow() is
+			 * true at every quantum past half the heap -- and
+			 * out of all that only 327 sweeps and 63 epochs,
+			 * while the pool grew from 228KB to 212MB.  Called
+			 * often, progressing barely.
+			 *
+			 * execatidle() has always done it properly, looping
+			 * gccolor+3 for a whole cycle; this is the same loop
+			 * for the case where there is no idle to wait for.
+			 * It costs latency in the quantum that pays it,
+			 * which is the right trade against raising
+			 * "out of memory: heap" on a heap that is nearly all
+			 * garbage: the same 300 creates leave 200MB in the
+			 * pool and, after ten seconds of idle, 347KB.
+			 */
+			if(memlow()) {
+				int done;
+
+				done = gccolor+3;
+				while(gccolor < done && gcruns())
+					rungc(isched.head);
+			} else
+				rungc(isched.head);
 			up->type = Interp;
 			delrunq(up->prog);
 		}
