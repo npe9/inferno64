@@ -13764,7 +13764,9 @@ safepoint with an invariant the kernel checks, a bounded stopped world, a
 per-context run queue, and a lock on the process-group lists.
 .PP
 Two things are still missing, and one thing is deliberately not being built.
-There is no windowing system, and the copy-on-write filesystem is not the root.
+The copy-on-write filesystem is not the root.  (The windowing system was the
+other, and is no longer missing: see the section on wm below \(em libtk is in
+the kernel and the whole environment runs on the board.)
 Neither is a bring-up problem.  The thing not being built is
 .CW parallelvm=1 :
 it needs the Dis context in a machine register, which ripples into
@@ -14410,3 +14412,126 @@ which needs privileges this session does not have.  One card reboot did get a
 working mount, because ARP happened to be warm, so warming it first is a
 workaround and not a fix \(em the board re-ARPs when it boots, which is the
 moment the window opens.
+.NH 2
+A window manager on the board
+.PP
+.B "Tk first, in two config lines."
+.CW tk
+in the
+.CW lib
+section after
+.CW draw ,
+and
+.CW tk
+in
+.CW mod
+\(em the second being what makes
+.CW mkdevc
+emit
+.CW tkmodinit() ,
+the call the hosted emu makes by hand.  pc64's config carries a comment blaming
+a
+.CW 6l
+bug for not doing this; it is amd64-only and
+.CW 7l
+does not have the fault.
+.CW libtk
+needs no porting and no freetype: it had only ever been through clang and
+.CW 6c ,
+and compiles clean under
+.CW 7c
+for aarch64 at 1566900 bytes.  Kernel 2181336 to 2528184 bytes.
+.PP
+The test is lifted from the
+.CW rio-pi-tk
+branch along with the reason for its shape.  Counting pixels that are not the
+white an image was filled with came back
+.I "6400 of 6400" ,
+because a label paints its whole rectangle in its own background before it draws
+a glyph \(em a saturated instrument reads exactly like a working one.  So it
+renders the same label twice, once with a word and once empty, and the
+difference is the glyphs.  Into an allocated image, because what a widget puts
+on the screen cannot be read back.
+.P1
+TK-OK $Tk is built in; a label filled 6400 of 6400 pixels
+      and its text inked 564 bytes
+.P2
+That 564 was 630 before the two
+.CW /fonts/pelm
+entries were added to the root, which is the label rendering with the pelm font
+rather than whatever it had fallen back to \(em so the font lines are not
+decoration.
+.PP
+.B "Then wm itself, and three mount points."
+.CW /icons
+and
+.CW /usr
+had to be added to the root as directories, because a bind needs somewhere to
+land:
+.CW "bind /n/remote/icons /icons"
+fails on the
+.I target .
+With those, and the host tree bound in, the whole environment starts with no
+errors \(em from the board's own
+.CW /prog :
+.CW Wm ,
+.CW Wmlib ,
+four
+.CW Wmsrv ,
+two
+.CW Toolbar ,
+two
+.CW Plumber
+and
+.CW Pinboard .
+.P1
+bind -a /n/remote/dis     /dis        # ftest, plumber, the rest
+bind -a /n/remote/dis/wm  /dis/wm
+bind -a /n/remote/dis/lib /dis/lib
+bind -a /n/remote/fonts   /fonts
+bind -a /n/remote/icons   /icons
+bind -a /n/remote/lib     /lib        # wmsetup
+bind -a /n/remote/usr     /usr        # the plumber's rules
+wm/wm &
+.P2
+Each bind moved the failure exactly one step \(em missing bitmap, missing font,
+missing
+.CW wmsetup ,
+missing
+.CW ftest ,
+missing plumber rules, done \(em which is what made it tractable.
+.PP
+.B "Two things that mislead, and cost a wrong diagnosis each."
+.CW "bind -a /n/remote/dis /dis"
+reports success and still leaves
+.CW /dis/wm/wm.dis
+missing, because a union's children are not themselves unions:
+.CW /dis/wm
+resolves to the
+.I first
+.CW wm
+found, the kernel root's empty one, and the walk into it fails without ever
+trying the remote.  Every directory present in both has to be bound in its own
+right.  And
+.CW wm
+must be started from the poller's namespace, not the console's \(em the console
+shell cannot see
+.CW /n/remote
+at all, because the styx mount belongs to the process group that made it.
+.CW /chan/plumb.input
+reading as absent afterwards is the same thing from the other side: the file is
+in wm's namespace and each poller command has its own.
+.PP
+What this is not: a desktop anybody has looked at.  There is no display attached
+to this board and no keyboard or mouse \(em
+.CW USB-KBD-NONE
+and
+.CW USB-MOUSE-NONE
+on every boot.  What is proved is that the window system runs, holds the display
+through
+.CW /dev/draw ,
+and paints what it is asked to.  Driving it would go through
+.CW /dev/pointerin
+and
+.CW /dev/keyboard ,
+which is how the GUI work on other branches is driven headlessly.
