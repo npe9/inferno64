@@ -2902,6 +2902,83 @@ reclaimed, and that a shell cannot survive repeated ctl writes \- were
 inherited from notes that were true when written and are not true now,
 and both fell to a measurement on the machine rather than a better
 reading of the notes.
+.IP "7.  A calibration program on the board, in Limbo." 6
+Everything items 1, 2 and 3 measured was driven from the host: a Python
+script typing at a console, one
+.B ctl
+write per line, reading the stat file back between them.  That is the
+right way to find a bug and the wrong way to own a measurement, for three
+reasons that are all about where the numbers come from.
+.IP \(bu 3
+The host sets the pace, so the two ends have to be kept in step by
+whatever is typing at them.  Every ladder measured so far has had the
+transmitter's step and the receiver's reading joined up by the script
+that drove both, which means a dropped console line silently attributes a
+reading to the wrong step.  The fix is in the packet:
+.B "put the step in the payload"
+and the receiver needs no synchronisation at all, because every packet
+says which step it belongs to.
+.IP \(bu 3
+The stat file gives one
+.B last
+RSSI per read, so a step gets one sample however many packets it sent.
+.B #W/radio0/pkt
+gives the twelve-byte header with every packet \- length, RSSI, SNR,
+flags and arrival tick, out of the same queue entry \- so a step gets a
+mean and a spread, and the CRC flag per packet rather than a counter
+difference.
+.IP \(bu 3
+The packet error rate has to be counted where the packets are.  Reading
+.B recv
+before and after a step measures what arrived minus what arrived, and
+cannot tell a lost packet from one that arrived late; a sequence number in
+the payload can.
+.PP
+So:
+.I radiocal (1),
+one program with two roles.
+.DS
+.CW "radiocal -t [-n per-step] [-s step] [-r rate]"
+.CW "radiocal -r [-o table]"
+.DE
+The transmitter walks PA_CFG2's PA_POWER_RAMP down its range, writing each
+value through
+.B ctl
+and reading it back before sending anything \- a step whose register did
+not take is not a step \- and sends
+.I per-step
+packets at each, each carrying the ramp value and a sequence number.  The
+receiver holds
+.B pkt
+open for the whole run, decodes the header, and tabulates per step: how
+many of the sequence arrived, how many are missing, and the mean, least
+and greatest RSSI.  It prints the table and the least-squares slope of
+RSSI against the datasheet's
+.CW "(PA_POWER_RAMP + 1)/2 - 18"
+dBm.
+.PP
+.B "What it can and cannot settle, which has to be in the program's own output."
+It measures the product of two things: how accurately the ramp field
+steps and how accurately this receiver's RSSI reports a change.  A slope
+of one means both are right or both are wrong by reciprocal amounts, and
+it cannot separate them.  It is worth having because the tinySA's own
+attenuator \- a real one, stepping a real generator cabled into the click
+\- already gave 0.93 over 24dB, so a figure near that from an entirely
+different ladder is two independent instruments agreeing, and a figure
+far from it says one of them is wrong.
+.B "It gives no offset:"
+free space between two antennas is an unknown loss, and that is still
+what item 2's second half is blocked on.
+.PP
+And it is the first thing on this bench that wants
+.I lil (1)
+or a compiled program rather than a shell for a reason that is not about
+heap: a ladder is a loop with a held-open descriptor in it, which is
+exactly what item 6 was built for.
+.PP
+.B "Measured from the host first, as the thing the program has to reproduce."
+tools/radio/paladder.py drives the same ladder through two consoles, five
+packets a step, and is the control the Limbo version is checked against.
 .PP
 .B "The second board arrived, and is flashed."
 Two clicker 2s with ccRF clicks now, which is the transmitter item 3 has
