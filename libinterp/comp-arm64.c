@@ -10,6 +10,15 @@
 #include "interp.h"
 #include "raise.h"
 
+/*
+ * Does this code generator update Heap.ref atomically?  Yes, since the
+ * four sites below became LDXRW/STXRW retry loops; before that it
+ * emitted a plain load/add/store and this would have been 0.  See
+ * macfrp, maccolr, macret and macmcal, and
+ * doc/parallel-allocator-survey.ms.
+ */
+int jitrefsatomic = 1;
+
 #include <sys/mman.h>
 #include <unistd.h>
 

@@ -12,6 +12,15 @@
 #include "interp.h"
 #include "raise.h"
 
+/*
+ * Does this code generator update Heap.ref atomically?  Vacuously yes:
+ * there is no code generator here, compile() always declines, and the
+ * interpreter's counts go through interp.h's AINC/ADEC, which are
+ * atomic.  Nothing non-atomic is emitted because nothing is emitted.
+ */
+int jitrefsatomic = 1;
+
+
 void (*comvec)(void);
 
 int

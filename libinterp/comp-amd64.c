@@ -3,6 +3,19 @@
 #include "interp.h"
 #include "raise.h"
 
+/*
+ * Does this code generator update Heap.ref atomically?  No: the count
+ * is emitted inline as plain INC/DEC on memory with no LOCK prefix,
+ * which loses an update when two executors touch the same object --
+ * a lost decrement frees a live object, a lost increment leaks one.
+ *
+ * comp-aarch64.c is the worked example of the other answer: the same
+ * four sites as LDXR/STXR retry loops.  See
+ * doc/parallel-allocator-survey.ms.
+ */
+int jitrefsatomic = 0;
+
+
 #define DOT			((uintptr)code)
 
 #define	RESCHED 1	/* check for interpreter reschedule */

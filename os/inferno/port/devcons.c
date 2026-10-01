@@ -66,6 +66,13 @@ extern int	sleeptrace;
 extern ulong	ticknoup, ticknotrun, tickrun;
 extern ulong	tickhipri, tickuphi, tickanyhi;
 extern ulong	gcticks, gcpasses, gcmax, idlegcticks, idlegcmax;
+/*
+ * Whether THIS board's code generator emits atomic reference counts,
+ * declared by each libinterp/comp-*.c.  Reported beside the collector's
+ * own counters because that is what it is about, and with cflag because
+ * the answer only matters when the generator is actually in use.
+ */
+extern int	jitrefsatomic;
 extern ulong	delayedscheds, skipscheds, preempts;
 extern int	ioboost, coopsched, schedgate, schedclock;
 extern int	gchalt, gcdepth, gcdepthmax;		/* libinterp/gc.c */
@@ -1439,12 +1446,14 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					" inspects %llud, quantum-open %lud"
 					" (must be 0), stw %lud waited %lud"
 					" gaveup %lud, runq-other %lud"
-					" runq-freed-queued %lud\n",
+					" runq-freed-queued %lud"
+					" jitrefsatomic %d cflag %d\n",
 					gcnruns, gcsweeps, gcepochs, gchalted,
 					gchalt, gcdepth, gcdepthmax,
 					gcdestroys, gcinspects, gcinxecseen,
 					gcstwstops, gcstwwaits, gcstwfails,
-					nrunqother, nrunqdel);
+					nrunqother, nrunqdel,
+					jitrefsatomic, cflag);
 			}
 			if(cb->nf > 2 && strcmp(cb->f[1], "ioboost") == 0)
 				ioboost = atoi(cb->f[2]);

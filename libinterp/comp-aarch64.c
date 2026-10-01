@@ -43,8 +43,24 @@
  * parallelvm=1 two executors really do touch the same object's count at
  * once.  A generator that emits a plain read-modify-write loses updates
  * exactly as a plain C ->ref++ does, and a lost decrement frees a live
- * object while a lost increment leaks one.  disinit() refuses to run
- * the JIT and the parallel VM together unless this says 1.
+ * object while a lost increment leaks one.
+ *
+ * This used to claim that "disinit() refuses to run the JIT and the
+ * parallel VM together unless this says 1".  It does not, and nothing
+ * else did either: the variable was declared in this file alone, out of
+ * twelve generators, and read nowhere in the tree.  An interlock that
+ * exists only in a comment is worse than no interlock, because it is
+ * the one a reader stops checking for.
+ *
+ * It cannot be wired yet, for the plain reason that there is no
+ * parallelvm switch in this tree to gate on -- the infrastructure is
+ * here and the switch is deliberately absent (see
+ * doc/parallel-allocator-survey.ms).  What is wired is the fact: every
+ * generator now declares its own answer, read off its emitted code
+ * rather than assumed, and "echo sched >/dev/sysctl" reports it, so a
+ * board states what its generator does instead of a reader inferring
+ * it.  When the switch arrives, the refusal goes where it reads the
+ * switch.
  */
 int jitrefsatomic = 1;
 
