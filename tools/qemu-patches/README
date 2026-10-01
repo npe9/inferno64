@@ -1349,3 +1349,25 @@ unread in the FIFO.
 	packet takes, so the FIFO going empty is the nearest moment it
 	has, which is where 0044 put the queue flush for the same
 	reason.
+
+0052 moves SYNC_MODE to SYNC_CFG0 bits 4:2 in the CC1120 model, which is
+where SWRU295E puts it.  The model had been reading SYNC_CFG1's top three
+bits -- a reserved pair with PQT_GATING_EN between them -- because that
+is where os/inferno/radio/cc1120.c was writing it, so model and driver
+agreed and twoboards.sh passed throughout while silicon received nothing.
+	The driver's own comment on the sixteen-versus-thirty-two-bit
+	register question had already said that a model and a driver
+	wrong in the same direction pass every test between them.  This
+	is the second instance and the proof came immediately: with the
+	driver corrected, this model started accepting a packet sent
+	with a mismatched sync word -- mode read as 0, meaning no sync
+	word -- and twoboards.sh failed its second half in one run.
+	Both halves pass with both sides fixed.
+	The real SYNC_MODE resets to 101b, thirty-two bits, so a driver
+	that never writes it leaves the part hunting a thirty-two-bit
+	word; and mode 2 shifted into the old position is 0x40, which is
+	PQT_GATING_EN, so asking for a sixteen-bit sync word silently
+	gated sync search behind a preamble detector.  Neither fault was
+	visible from this model because it modelled neither bit.
+	cc1120_syncword follows the mode too now: 110 is the "16H"
+	encoding, sixteen bits from the high pair.

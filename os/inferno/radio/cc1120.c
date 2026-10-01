@@ -46,7 +46,8 @@ enum {
 	Rsync2		= 0x05,
 	Rsync1		= 0x06,
 	Rsync0		= 0x07,
-	Rsynccfg1x	= 0x08,		/* SYNC_MODE in 4:0 */
+	Rsynccfg0	= 0x09,		/* SYNC_MODE in 4:2, SYNC_NUM_ERROR 1:0 */
+	  Pqtgatingen	= 0x40,		/* SYNC_CFG1 bit 6, NOT part of SYNC_MODE */
 	Rdeviationm	= 0x0a,
 	Rmodcfgdeve	= 0x0b,		/* DEV_E in 2:0 */
 	Rchanbw		= 0x11,
@@ -2331,7 +2332,50 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 * instead and leaves the mode at whatever it was --
 		 * which, here, was zero, meaning no sync word at all.
 		 */
-		wr(rr, Rsynccfg1x, (rd(rr, Rsynccfg1x) & 0x1f) | (mode<<5));
+		/*
+		 * SYNC_MODE is SYNC_CFG0 bits 4:2, and this wrote it into
+		 * SYNC_CFG1 bits 7:5 -- which is the second time this
+		 * driver has put a sync setting in the wrong place and the
+		 * worse of the two.
+		 *
+		 * SWRU295E's register tables, read at last rather than
+		 * recalled:
+		 *
+		 *	SYNC_CFG1 (0x08)  7 RESERVED7
+		 *	                  6 PQT_GATING_EN
+		 *	                  5 RESERVED5
+		 *	                4:0 SYNC_THR
+		 *	SYNC_CFG0 (0x09)  7:5 not used
+		 *	                4:2 SYNC_MODE    reset 101b
+		 *	                1:0 SYNC_NUM_ERROR
+		 *
+		 * So two faults from one write.  SYNC_MODE was never set
+		 * at all and stayed at its reset 101b, which is 32 bits
+		 * from SYNC31_0 -- the part has been hunting a
+		 * thirty-two-bit word this whole time while the driver
+		 * wrote only the low sixteen.  And mode 2 shifted up by
+		 * five is 0x40, which is PQT_GATING_EN: asking for a
+		 * sixteen-bit sync word silently turned on the feature
+		 * that, in SWRU295E's words, means "the demodulator will
+		 * not start to look for a sync word before a preamble is
+		 * detected".  On this bench PQT_REACHED asserts on about
+		 * two tenths of one per cent of samples, so sync search
+		 * was gated behind a detector that almost never fires.
+		 *
+		 * Both of those are consistent with every negative in
+		 * doc/radio-plan.ms: carrier sense responding, PQT
+		 * occasionally, PKT_SYNC_RXTX never, and no packet at any
+		 * threshold, rate or signal level.
+		 */
+		wr(rr, Rsynccfg0, (rd(rr, Rsynccfg0) & ~0x1c) | (mode<<2));
+		/*
+		 * And leave PQT gating off.  It is a real feature, but it
+		 * was never asked for -- it arrived as the top bits of a
+		 * misplaced SYNC_MODE -- and a sync search gated behind a
+		 * preamble detector is not something to enable by
+		 * accident.
+		 */
+		wr(rr, Rsynccfg1, rd(rr, Rsynccfg1) & ~Pqtgatingen);
 		s->unlock(s);
 		setfreq(rr, rr->hz);
 		return n;
@@ -3142,7 +3186,11 @@ ccapply(Cc1120 *rr, Spidev *s)
 	 * itself stays at the part's reset value; "sync" on the ctl
 	 * file changes both.
 	 */
-	wr(rr, Rsynccfg1x, (rd(rr, Rsynccfg1x) & 0x1f) | (2<<5));
+	/* SYNC_MODE 010, sixteen bits from SYNC15_0, in SYNC_CFG0 where it
+	 * lives -- see the sync ctl verb for what writing it to SYNC_CFG1
+	 * did instead.  PQT gating explicitly off. */
+	wr(rr, Rsynccfg0, (rd(rr, Rsynccfg0) & ~0x1c) | (2<<2));
+	wr(rr, Rsynccfg1, rd(rr, Rsynccfg1) & ~Pqtgatingen);
 	wr(rr, Ragccfg0, Agccfg0init);
 	wr(rr, Riocfg3, Gpktsyncrxtx);
 	wr(rr, Riocfg2, Ghighz);

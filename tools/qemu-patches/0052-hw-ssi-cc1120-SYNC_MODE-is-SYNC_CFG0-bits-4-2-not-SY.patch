@@ -1,0 +1,107 @@
+From d59e9d4ded0be6690eee769f449eaf2f4d5909ab Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Thu, 1 Oct 2026 13:03:04 -0400
+Subject: [PATCH] hw/ssi/cc1120: SYNC_MODE is SYNC_CFG0 bits 4:2, not
+ SYNC_CFG1's top three
+
+This model read SYNC_MODE from SYNC_CFG1 bits 7:5, which is where the
+Inferno driver was writing it -- so the two agreed and every test between
+them passed while silicon received nothing.  SWRU295E's register tables
+say otherwise:
+
+    SYNC_CFG1 (0x08)  7 RESERVED7, 6 PQT_GATING_EN,
+                      5 RESERVED5, 4:0 SYNC_THR
+    SYNC_CFG0 (0x09)  7:5 unused, 4:2 SYNC_MODE (reset 101b),
+                      1:0 SYNC_NUM_ERROR
+
+So the bits being read are a reserved pair with PQT gating between them,
+and the real SYNC_MODE defaults to 101b -- thirty-two bits -- not to
+whatever SYNC_CFG1 holds.
+
+The driver's own comment had said that a model and a driver wrong in the
+same direction pass every test between them.  That is exactly what
+happened, and the proof arrived the moment the driver was corrected: this
+model began accepting a packet sent with the wrong sync word, because
+mode read as 0, and twoboards.sh caught it in one run.  Both pass again
+with both sides fixed.
+
+cc1120_syncword follows the mode now too: mode 110 is the "16H" encoding,
+sixteen bits from SYNC31_24:SYNC23_16, where mode 010 takes the low pair.
+
+Signed-off-by: Noah Evans <noah.evans@gmail.com>
+---
+ hw/ssi/cc1120.c | 46 +++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 39 insertions(+), 7 deletions(-)
+
+diff --git a/hw/ssi/cc1120.c b/hw/ssi/cc1120.c
+index ed045f1..db1251e 100644
+--- a/hw/ssi/cc1120.c
++++ b/hw/ssi/cc1120.c
+@@ -312,17 +312,42 @@ static void cc1120_reset_state(CC1120State *s)
+ }
+ 
+ /*
+- * How many sync word bytes this part sends and expects.  SYNC_CFG1's
+- * top three bits are SYNC_MODE: 0 is no sync word at all, 5 is
+- * thirty-two bits, and everything else is counted as sixteen, which
+- * is enough for a model whose point is that a receiver listening for
+- * one word does not accept another.
++ * How many sync word bytes this part sends and expects.
++ *
++ * SYNC_MODE is SYNC_CFG0 bits 4:2, and this model read it from
++ * SYNC_CFG1's top three bits -- which is where the Inferno driver was
++ * writing it, so the two agreed and every test between them passed.
++ * SWRU295E's register tables say otherwise:
++ *
++ *	SYNC_CFG1 (0x08)  7 RESERVED7, 6 PQT_GATING_EN,
++ *	                  5 RESERVED5, 4:0 SYNC_THR
++ *	SYNC_CFG0 (0x09)  7:5 unused, 4:2 SYNC_MODE (reset 101b),
++ *	                  1:0 SYNC_NUM_ERROR
++ *
++ * So the bits this model was reading are a reserved pair with PQT
++ * gating between them, and the real SYNC_MODE defaults to 101b -- 32
++ * bits -- not to whatever SYNC_CFG1 happened to hold.
++ *
++ * The driver's own comment on the matter said that a model and a
++ * driver wrong in the same direction pass every test between them, and
++ * that is what happened: twoboards.sh passed throughout while silicon
++ * received nothing.  With the driver corrected this model started
++ * accepting a packet sent with the wrong sync word, because mode read
++ * as 0, and twoboards.sh caught it in one run.
++ *
++ * The encoding, from the same table: 000 none, 001 eleven bits, 010
++ * sixteen, 011 eighteen, 100 twenty-four, 101 thirty-two, 110 sixteen
++ * from the high half, 111 dual-sixteen.  Rounded up to whole bytes,
++ * which is as fine as a model that only has to tell one word from
++ * another needs to be.
+  */
+ static int cc1120_synclen(CC1120State *s)
+ {
+-    switch (s->regs[0x08] >> 5) {
++    switch ((s->regs[0x09] >> 2) & 7) {
+     case 0:
+         return 0;
++    case 4:
++        return 3;
+     case 5:
+         return 4;
+     default:
+@@ -350,7 +375,14 @@ static int cc1120_synclen(CC1120State *s)
+  */
+ static void cc1120_syncword(CC1120State *s, uint8_t *out, int n)
+ {
+-    int i, base = n == 2 ? 0x06 : 0x04;
++    int i, mode = (s->regs[0x09] >> 2) & 7;
++    /*
++     * SYNC1:SYNC0 for the sixteen-bit modes, SYNC3 downwards for the
++     * longer ones -- and mode 110 is the exception the encoding calls
++     * "16H": sixteen bits taken from SYNC31_24:SYNC23_16, the high
++     * pair, where mode 010 takes the low pair.
++     */
++    int base = (n == 2 && mode != 6) ? 0x06 : 0x04;
+ 
+     for (i = 0; i < n; i++) {
+         out[i] = s->regs[base + i];
+-- 
+2.51.0
+
