@@ -22,7 +22,7 @@ Order, and why
 .P1
 1  C1  the rig's ELF hazard      DONE a1e2e12a0
 2  A4  do the 32-bit back-ends narrow?    DONE, answered below
-3  A3  audit what the 7c fix changed      DONE, and it found A5
+3  A3  audit what the 7c fix changed      DONE: clean; left A5 hygiene
 4  B2  one namehash, not two              cheap, prevents a bad class
 5  A1  fix 6c                             blocked on A2
 6  B1  efs's quadratic allocation         the real remaining bug
@@ -181,7 +181,7 @@ stub that panics if called, boot it under QEMU, and
 The third way proves the code generator, which is the point, and leaves the
 port's own breakage to its owner.
 .NH 2
-A3.  DONE.  The 7c fix changed 100 files; nine sites need a source repair
+A3.  DONE.  The 7c fix changed 100 files; nothing newly truncated is dereferenced
 .LP
 .B Method.
 Two compilers were built from
@@ -280,14 +280,21 @@ whose body stores into a 32-bit
 so its four new truncations narrow a value that was about to be stored as 32
 bits regardless.
 .PP
-.B "The scan that matters, and the two ways it was wrong first."
-The question is whether any narrowed value is then used as an address.  A first
-scan looked only at added lines for the dereference and found one hit, in
+.B "The scan that matters, and the three ways it was wrong."
+The question is whether any narrowed value is then used as an address.  Getting
+that answer took four attempts, and the first three all produced findings that
+were not there.
+.PP
+One: look only at
+.I added
+lines for the dereference.  One hit, in
 .CW math.c ,
-which was a false positive:
+and it was
 .CW bits32<>+0(SB)
-is a destination symbol, not a register base.  A second scan looked at the
-following lines in the whole file and found 104 \(em almost all of the form
+\(em a destination symbol, not a register base.
+.PP
+Two: look at the following lines anywhere in the file.  104 hits, almost all of
+this shape:
 .P1
 MUL	R4,R0
 ADD	$32,R0
@@ -296,25 +303,40 @@ BL	,nheap+0(SB)
 MOV	R0,dh-16(SP)	<- R0 is now the RETURNED POINTER
 MOV	R2,8(R0)
 .P2
-where the window crossed a call and paired a truncated argument with an
-unrelated returned pointer.  With a branch or call ending the window \(em which
-is the correct dataflow boundary for an analysis this crude \(em 859 added
-register-to-register narrowings in the 93 linked files yield
-.B "nine suspects" ,
-540 windows having been closed by a branch.
+The window crossed a call and paired a truncated argument with the pointer the
+call returned.
 .PP
-.B "The nine, and what they are."
+Three: end the window at a branch or call.  Nine hits.  Chasing the first,
+.CW xec.c 's
+.CW slicela :
 .P1
-comp-aarch64.c  punt, commframe, commcall, comp, compile   7
-xec.c           slicela                                    1
-libtk/textw.c   tktdoubleclick                             2
+MOV	ss-24(SP),R2
+MOV	0(R2),R2	<- ss->len
+MOVW	24(R9),R3	<- t->size
+MUL	R3,R2
+MOVW	R2,R2		<- narrows the product: "int l", as declared
+MOVW	R2,R10
+MOVW	R10,R1
+MOV	ss-24(SP),R2	<- R2 RELOADED: a different value
+MOV	24(R2),R2	<- ss->data
+ADD	R2,R1		<- sp = ss->data + l
 .P2
-Each is a
-.CW "MOVW Rn,Rn"
-\(em which did not occur once in the old output of those files \(em followed by
-a dereference of
-.CW Rn .
-The JIT's come from one idiom:
+The register is redefined between the narrowing and the dereference, so the two
+have nothing to do with each other.  The narrowing is of
+.CW "int l = ss->len * t->size" ,
+which is exactly what the source declares.
+.PP
+Four: end the window at a branch, a call,
+.I or
+a redefinition of the register.
+.B "Zero suspects, across all 93 linked files and all 859 added narrowings."
+No value that the fix newly truncates is used as an address anywhere the kernel
+links.
+.PP
+.B "What the chase did turn up, which is a source issue and not a codegen one."
+While tracing the seven
+.CW comp-aarch64.c
+hits of attempt three, one idiom came out:
 .P1
 long _off = (long)((code) - (ptr));
 off = ((long)(IA(patch, dispc)) - (long)(code + codeoff)) >> 2;
@@ -325,66 +347,72 @@ and
 .CW SZ_LONG
 is
 .B 4
-in kencc.  Before the fix that cast was dropped and the arithmetic happened in
-64 bits, accidentally correct.  Now it truncates.
-.PP
-.B "Why nothing breaks, and why that is not a defence of the code."
-These are
-.I differences
-between addresses that are close together, so truncating both and subtracting
-preserves the result inside any 4GB region;
-.CW MOVW
-sign-extends, and every address on these boards is far below 2GB, so the
-extension is the identity.  That is why the kernel boots, passes every
-self-check, runs the JIT, and why
-.CW virtarm64
-boots too.  But the source says
-.CW long ,
-and
+in kencc.  The compiler now honours that, where before it ignored it.  It
+computes the right answer either way: these are differences between addresses
+inside one allocation, so truncating both operands preserves the result, and
+.CW off
+is a 4-byte
 .CW long
-is four bytes here; the code was relying on the compiler ignoring what it was
-told.
+regardless.  It is written down as A5 because the source says something it does
+not mean, not because anything is broken.
 .PP
-.B "So the repair is the cast, and it is item A5."
-Not a revert: a compiler that silently ignores a narrowing is not a position to
-retreat to.  Nine sites, listed above, want
+.B "Three claims this section had to withdraw, all its own."
+That the one
+.CW math.c
+hit was real.  That there were 104.  That there were nine "followed by a
+dereference".  Each died to looking at the actual instructions rather than
+trusting the pattern that produced the count \(em which is the same discipline
+that found the original bug, applied to my own analysis instead of someone
+else's code.
+.NH 2
+A5.  A pointer cast through long in the JIT
+.LP
+.B Established.
+.CW comp-aarch64.c
+computes code offsets as
+.CW "(long)(code - ptr)"
+and
+.CW "(long)(IA(...)) - (long)(code + codeoff)" ,
+with
+.CW SZ_LONG
+at 4.  Before
+.CW dcca478dd
+the cast was dropped; now it is obeyed.
+.PP
+.B "Not a bug today, and the reason is not 'addresses are small'."
+It is that these are differences between two addresses in the same allocation,
+and the destination is a 4-byte
+.CW long
+in any case.  Truncating both operands of a subtraction preserves the
+difference whenever it fits, and a branch displacement inside one code buffer
+always does.
+.PP
+.B The work.
 .CW uintptr
 rather than
 .CW long
-\(em and the
+at those casts, and at the
 .CW off
-variables they feed want the same, or the change buys nothing.  It is a
-separate, small, verifiable piece of work on the JIT, and it is deliberately
-not being done at the end of the session that found it.
-.NH 2
-A5.  Nine pointer-through-long casts, from A3
-.LP
-.B Established.
-The sites and the idiom are in A3.  They are latent, not active: correct on
-every board in this tree because its addresses fit in 31 bits.
-.PP
-.B The work.
-Change
-.CW (long)
-to
-.CW (uintptr)
-at those casts, and the
-.CW long off
-declarations that receive them to
-.CW uintptr
-or
-.CW vlong ,
-whichever the arithmetic wants.  Rebuild, confirm the nine
+variables that receive them \(em changing one without the other buys nothing.
+Rebuild, confirm the
 .CW "MOVW Rn,Rn"
-sites are gone from the
+sites in
+.CW punt ,
+.CW commframe ,
+.CW commcall ,
+.CW comp
+and
+.CW compile
+are gone from the
 .CW -S
-output, and boot: the JIT is exercised by anything that runs Dis, so
+output, and boot: anything that runs Dis exercises the JIT, so
 .CW DRAW-OK
 and the efs checks cover it.
 .PP
-.B "What would make this urgent."
-A board whose kernel or JIT buffer sits above 2GB.  None here does, which is
-why this is A5 and not A1.
+.B Priority.
+Low, and honestly so.  It is hygiene: making the source say what it means.
+Nothing in the tree miscomputes because of it, and the scan above says nothing
+newly truncated is dereferenced.
 .NH 2
 A4.  CLOSED.  Only 6c and 7c were affected
 .LP
