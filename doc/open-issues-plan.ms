@@ -26,7 +26,7 @@ Order, and why
 4  B2  one namehash, not two              DONE 2d273290f
 5  A1  fix 6c                             DONE e5d6131f3 (A2 done b6a7201e9)
 6  B1  efs's quadratic allocation         DIAGNOSED; fix is lazy decode
-7  D1  w4/w8, D2 close the bind section   housekeeping
+7  D1  w4/w8, D2 close the bind section   DONE
 .P2
 .CW C1
 goes first because an instrument that lies costs more than the bug it hides:
@@ -673,44 +673,87 @@ see.
 .NH 1
 D.  Housekeeping
 .NH 2
-D1.  libinterp/w4 and libinterp/w8 are untracked
+D1.  DONE.  They are generated, and are now ignored
 .LP
-Both hold the same eleven headers
-.CW ( runt.h ,
-.CW sysmod.h
-and the rest), and the kernel is built with
-.CW -I$ROOT/libinterp/w$DISWORD .
-So they are load-bearing and untracked, which is a combination that breaks a
-fresh clone.  Establish which: if they are generated, find what generates them
-and add them to
-.CW .gitignore ;
-if they are hand-written, they belong in the repository.  Do not commit them
-without knowing \(em they may be another session's work in progress, which is
-also why this is the last item and not the first.
+.CW libinterp/mkfile
+builds every file in them, down to the
+.CW mkdir :
+.P1
+$DISH/runt.h:D: $MODULES
+	mkdir -p $DISH && rm -f $target && \
+	limbo -W $DISWORD -a -I../module ../module/runt.m > $target
+.P2
+and nine more rules like it, with
+.CW DISH=w$DISWORD .
+They are the C shape of a Dis frame, which depends on the word width, so there
+is one directory per width and each board's CFLAGS point at the one it needs.
+Nothing is tracked in either.  Ignored as
+.CW libinterp/w[0-9]/ .
+.PP
+Untracked and load-bearing was the worry, and it is a real one \(em a fresh clone
+has no
+.CW w8
+until something runs
+.CW mk
+in
+.CW libinterp
+\(em but the answer is the ignore and not committing them, because the rule makes
+them before anything includes them.  The same applies to the acid symbol files a
+kernel build writes beside each kernel, ignored in the same change as
+.CW os/inferno/*/i*.acid ;
+only
+.CW i* ,
+because
+.CW emu/9front/emu.acid
+and
+.CW os/inferno/pc/pci.acid
+are hand-written and tracked.
 .NH 2
-D2.  Close the bind-create section
+D2.  DONE.  The bind-create section was two bugs, and both are closed
 .LP
 .CW doc/raspi3b-completion-plan.ms
-carries a section on creates through a
+carried a long section on creates through a
 .CW bind
 of the
 .CW efs
-mount failing silently and poisoning the name.  The poisoning was the
-.CW big
-literal bug, and that is now fixed and verified.  What remains unexplained is
-only the
-.I bind
-half, and the host already answers it: a create through a bind made without
-.CW -c
-fails
-.I loudly ,
-"mounted directory forbids creation".
+mount failing silently and poisoning the name.  It was two separate things, and
+neither is open.
 .PP
-So one board check closes it: on the fixed kernel, bind the efs mount without
+The silent, durable half was the
+.CW big
+literal bug: about half of all names hashed negative, so a create reported
+success and the file could never be found again.  Fixed in
+.CW 04d84c28c
+and
+.CW dcca478dd ,
+and the names that had been "poisoned" \(em
+.CW wprobe ,
+.CW inferno ,
+.CW zzz ,
+.CW abc ,
+.CW ab1 ,
+.CW second
+\(em all create and list now.
+.PP
+The other half is a namespace rule working exactly as intended, measured on the
+fixed kernel:
+.P1
+bind    /n/efs/d2 /n/efscrash   create -> cannot create: mounted
+                                 directory forbids creation
+bind -c /n/efs/d2 /n/efscrash   create -> OK
+                                 and the name that just failed -> OK
+.P2
+Loud, not silent, and no poisoning: the name that was refused through the
+.CW -c -less
+bind succeeds through the
 .CW -c
-and create through it, then with
+one, in the same command.  The host said the same thing all along, which is
+recorded in
+.CW bc90d99e6 ;
+the board now agrees.
+.PP
+What is left of that section is one sentence: a create through a bind made
+without
 .CW -c
-and create again.  If the first fails loudly and the second succeeds, the
-section folds into one paragraph saying the symptom was two bugs \(em a
-namespace rule working as intended, and a VM defect \(em and neither is open.
-If anything still fails silently, that is a new finding and the section stays.
+is refused by the namespace, correctly and with a message, and everything else
+attributed to it was the VM.

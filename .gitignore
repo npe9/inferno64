@@ -563,3 +563,18 @@ emu/*/o.emu-*
 # names begin with the kernel's i, source ones do not.
 #
 os/inferno/*/i*.acid
+
+#
+# The per-word-size headers limbo generates for libinterp.
+#
+# libinterp/mkfile builds every file in w$DISWORD with "limbo -W $DISWORD",
+# down to the mkdir: they are the C shape of a Dis frame, which depends on
+# the word width, so there is one directory per width and a kernel's CFLAGS
+# point at the one it needs (-I$ROOT/libinterp/w$DISWORD).  Generated, and
+# nothing reads them from the repository.
+#
+# Untracked and load-bearing is a bad pair -- a fresh clone that has not run
+# mk in libinterp has no w8 at all -- but the answer is the ignore, not
+# committing them: mk makes them before anything includes them.
+#
+libinterp/w[0-9]/
