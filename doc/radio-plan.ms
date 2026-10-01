@@ -3810,3 +3810,53 @@ what
 .B link
 mode was written for and the only way board 2's receive path has ever had
 a controlled stimulus.
+.PP
+.B "The tinySA on this bench cannot generate 915MHz, which caps what the generator test can prove."
+Asked what modes it has, the instrument answers
+.DS
+.CW "usage: mode [low] input|output"
+.DE
+\- so there is no high-band generator on it, and
+.B "mode output"
+is
+.B "mode low output"
+exactly as this document's earlier correction said.  Its low-band output
+does not reach 915MHz: commanded to
+.B "level -10"
+and cabled straight into board 2, it raises that receiver's floor from
+-122 to -107 and its peak to -105.  Fifteen decibels, where ninety-five
+would be expected.  What arrives is a harmonic or leakage, not the
+commanded signal.
+.PP
+So the level column of
+.B tools/radio/rxtest.py
+means nothing on this bench and only its on/off control carries
+information.  The receiver showed PQT_REACHED and PKT_SYNC_RXTX at zero
+per cent at every commanded level from -50 to -10dBm, with the generator
+on and with it off \- and at an arriving level of -105dBm, with
+.B "bw 50000"
+and
+.BR "rate 9600" ,
+that is at or under this part's sensitivity.  Nothing can be concluded
+from it.  The preamble registers were checked and are right:
+PREAMBLE_CFG1 reads 0x14, four bytes of 0xAA, and PREAMBLE_CFG0 reads
+0x2a with PQT enabled.
+.PP
+What remains is the one configuration that removes every unmeasured
+quantity: board 1's SMA cabled directly to board 2's.  Board 1 is proven
+to put a modulated packet at -32dBm into a cable and an unmodulated
+carrier at -30dBm within 3kHz of 915.000; board 2 is proven to respond to
+energy at its own connector.  Cabling them together leaves no antenna, no
+path loss and no instrument in the way.
+.PP
+The level is safe and worth stating because this document has been wrong
+about saturation once already.  PA_CFG2 at the table's 0x4f is -10dBm at
+the pin, and a CC1120's receiver takes about +10dBm before it is at risk
+\- twenty decibels of margin.  The AGC covers the range easily; the
+"saturation" this document withdrew was a cleared AGC register and not a
+real overload, and -10dBm cabled is an ordinary strong signal.
+.PP
+If board 2 syncs on that, the receive path works and every negative on
+this bench has been the antenna path.  If it does not sync on a -10dBm
+cabled 2-FSK packet from a part that is proven to be transmitting one,
+the receive path is broken and that is plan item 3's answer.
