@@ -68,6 +68,7 @@ enum {
 	Rpktcfg1	= 0x27,
 	  Appendstatus	= 0x01,		/* PKT_CFG1.APPEND_STATUS */
 	Rpacfg2		= 0x2b,
+	  Papowerramp	= 0x3f,		/* PA_CFG2.PA_POWER_RAMP */
 	Rpacfg1		= 0x2c,
 	Rpacfg0		= 0x2d,
 	Ragccsthr	= 0x18,		/* carrier sense threshold */
@@ -2980,7 +2981,7 @@ cc1120stat(Radio *r, char *p, int n)
 {
 	Cc1120 *rr;
 	Spidev *s;
-	int st, nrx, ntx, live, cs, pktcfg0, pktlen;
+	int st, nrx, ntx, live, cs, pktcfg0, pktlen, pacfg2, patenths;
 
 	rr = (Cc1120*)r;
 	s = rr->spi;
@@ -2993,6 +2994,27 @@ cc1120stat(Radio *r, char *p, int n)
 	 */
 	pktcfg0 = rd(rr, Rpktcfg0);
 	pktlen = rd(rr, Rpktlen);
+	/*
+	 * The transmitter's power, because nothing else here can read
+	 * it back and a program needs to.
+	 *
+	 * The "reg" verb prints to the console, which a Dis program
+	 * cannot read, so radiocal(1) walking PA_CFG2 down its range had
+	 * no way to assert that a rung's register had taken -- and a
+	 * ladder whose rungs are not asserted is a ladder of guesses.
+	 * SWRU295E gives the output as (PA_POWER_RAMP + 1)/2 - 18 dBm,
+	 * in tenths here because the step is half a decibel and an
+	 * integer dBm would round every other rung onto its neighbour.
+	 *
+	 * The ramp field is printed in decimal as well as in the whole
+	 * register's hex, and the decimal is the one a program uses:
+	 * Limbo's radix is 16r and not 0x, so "int ln" on the hex gives
+	 * zero, which is how radiocal(1) first came to report every rung
+	 * void against a register that had taken.  A number a reader
+	 * cannot parse is not a read-back.
+	 */
+	pacfg2 = rd(rr, Rpacfg2);
+	patenths = ((pacfg2 & Papowerramp) + 1) * 5 - 180;
 	nrx = rdx(rr, Xnumrxbytes);
 	ntx = rdx(rr, Xnumtxbytes);
 	live = (schar)rdx(rr, Xrssi1);
@@ -3013,7 +3035,8 @@ cc1120stat(Radio *r, char *p, int n)
 		"sent %ud recv %ud\n"
 		"crcerr %ud toobig %ud txtimeout %ud\n"
 		"rxoverflow %ud txunderflow %ud txnever %ud\n"
-		"intr high %ud low %ud\n",
+		"intr high %ud low %ud\n"
+		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n",
 		rr->partnum, rr->partversion,
 		st >> 4,
 		(ulong)rr->hz, readrate(rr), readdev(rr), readbw(rr),
@@ -3028,7 +3051,9 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->nsent, rr->nrecv,
 		rr->ncrcerr, rr->ntoobig, rr->ntxtimeout,
 		rr->nrxoverflow, rr->ntxunderflow, rr->ntxnever,
-		rr->nintrhigh, rr->nintrlow);
+		rr->nintrhigh, rr->nintrlow,
+		pacfg2, pacfg2 & Papowerramp,
+		patenths/10, patenths < 0? -patenths%10: patenths%10);
 }
 
 /*

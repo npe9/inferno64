@@ -131,6 +131,7 @@ TARG=\
 	mkradiokeys.dis\
 	lorachk.dis\
 	loraraw.dis\
+	radiocal.dis\
 	radiochk.dis\
 	radiossl.dis\
 	radiostyx.dis\

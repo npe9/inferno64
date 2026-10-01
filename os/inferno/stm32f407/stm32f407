@@ -126,6 +126,14 @@ link
 # is the radio's own ctl file, which a board that cannot find its radio
 # has not got -- and that is exactly the board that needs to say so.
 	ledstm32f4
+# uidstm32f4 puts the part's 96-bit factory serial number at #P/uid.
+# A board needs a name before a calibration can belong to it: with two
+# clicker 2s here, the crystal error baked into spistm32f4.c is right
+# for one of them and 64ppm wrong for the other, and no one image can
+# be right for both.  The identity has to come from silicon, because
+# anything the board was told is circular.  See doc/radio-plan.ms
+# item 8.
+	uidstm32f4
 
 mod
 	sys
@@ -232,6 +240,7 @@ root
 	/dis/lib/string.dis	/dis32/lib/string.dis
 	/dis/lib/workdir.dis	/dis32/lib/workdir.dis
 	/dis/echo.dis		/dis32/echo.dis
+	/dis/radiocal.dis	/dis32/radiocal.dis
 	/dis/ax25raw.dis	/dis32/ax25raw.dis
 	/dis/ax25chk.dis	/dis32/ax25chk.dis
 	/dis/export.dis		/dis32/export.dis
