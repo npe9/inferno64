@@ -60,6 +60,7 @@ struct Cc1120
 	u32	ntxtimeout;
 	u32	nrxoverflow;
 	u32	ntxunderflow;
+	u32	ntxnever;		/* strobed TX and never got there */
 
 	QLock	qlock;			/* one user of the part at a time */
 	Rendez	r;

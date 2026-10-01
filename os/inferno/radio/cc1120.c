@@ -613,6 +613,61 @@ cc1120send(Radio *r, uchar *p, int n)
 	strobe(rr, Srx);
 	s->unlock(s);
 
+	/*
+	 * Did the part actually transmit?
+	 *
+	 * txtrace[4] is the state it settled into after STX, and this
+	 * driver used to count nsent regardless of what that was.  So a
+	 * part that went into CALIBRATE and came back to IDLE without
+	 * ever reaching TX reported a successful send, and the counter,
+	 * MARC_STATUS1 and the write's return value all agreed with it.
+	 *
+	 * That is not hypothetical and it cost most of a day.  With the
+	 * synthesiser's analogue registers at their reset defaults --
+	 * which the old "reset" verb left them at -- 84 packets were
+	 * written, the counter followed every one, and a tinySA sweeping
+	 * the channel saw nothing at all: txtrace read 1 0 0 0 4 0,
+	 * where the 4 is CALIBRATE and a working transmit reads 2.  Four
+	 * separate measurements of the receiving board were made against
+	 * that silence before the instrument caught it.
+	 *
+	 * MARC_STATUS1 is no help here: it is cleared by being read, so
+	 * the 0x40 this driver keeps can be left over from the last
+	 * transmit that did work.  The state after STX is the only thing
+	 * that distinguishes them, and it is already being read.
+	 *
+	 * A write that did not reach the air must fail.  Counting it is
+	 * reporting an intention.
+	 *
+	 * CALIBRATE and not "anything but TX", which was the first
+	 * attempt and was wrong.  The three states this sample can hold
+	 * are not two:
+	 *
+	 *	2  TX		silicon, transmitting
+	 *	4  CALIBRATE	silicon with its synthesiser registers
+	 *			at reset defaults -- the fault above
+	 *	0  IDLE		the qemu model, which transmits inside
+	 *			the strobe and is back in IDLE before
+	 *			this loop looks
+	 *
+	 * Rejecting everything but TX therefore refused every transmit
+	 * under qemu, which broke twoboards.sh and beacontest.sh at a
+	 * stroke.  Rejecting CALIBRATE alone passes the model and the
+	 * working part and catches the fault.
+	 *
+	 * The residual risk is a real part caught legitimately mid-
+	 * calibration on its way to TX, which would be a false refusal.
+	 * On this board the sample reads 2 when it works, so it does not
+	 * happen in practice -- and if it ever does, txnever in the stat
+	 * file is where it will show.
+	 */
+	if(rr->txtrace[4] == (Stcal >> 4)){
+		rr->ntxnever++;
+		poperror();
+		qunlock(&rr->qlock);
+		return -1;
+	}
+
 	rr->nsent++;
 	poperror();
 	qunlock(&rr->qlock);
@@ -2711,6 +2766,37 @@ cc1120ctl(Radio *r, char *buf, int n)
 			print("\n");
 		return n;
 	}
+	if(strcmp(f[0], "syncthr") == 0 && nf == 2){
+		/*
+		 * SYNC_CFG1's low five bits, the sync word detector's
+		 * tolerance, which nothing could set until now.
+		 *
+		 * The register table leaves it at 11 and the "sync" verb
+		 * preserves the low bits when it writes SYNC_MODE, so the
+		 * only way to change it was a raw "reg 0x08" write with the
+		 * mode bits worked out by hand -- which is how it was
+		 * swept, and the sweep then had to be thrown away for an
+		 * unrelated reason.  A parameter that has to be reached by
+		 * computing a register value is a parameter that will be
+		 * got wrong.
+		 *
+		 * Higher is more permissive: measured on this bench, the
+		 * detector is silent from 0 to 28 and fires at 30, and at
+		 * 30 it fires on noise -- a recv whose payload was
+		 * 21 03 10 0a ... at the noise floor.  So the useful range
+		 * is narrow and worth sweeping, which this makes possible
+		 * without arithmetic.
+		 */
+		int thr;
+
+		thr = atoi(f[1]);
+		if(thr < 0 || thr > 31)
+			error("radio: a sync threshold is 0 to 31");
+		s->lock(s);
+		wr(rr, Rsynccfg1, (rd(rr, Rsynccfg1) & ~0x1f) | thr);
+		s->unlock(s);
+		return n;
+	}
 	if(strcmp(f[0], "reset") == 0){
 		/*
 		 * SRES and then everything back on top of it, because SRES
@@ -2783,7 +2869,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"txtrace %d %d %d %d %d %d left %d\n"
 		"sent %ud recv %ud\n"
 		"crcerr %ud toobig %ud txtimeout %ud\n"
-		"rxoverflow %ud txunderflow %ud\n",
+		"rxoverflow %ud txunderflow %ud txnever %ud\n",
 		rr->partnum, rr->partversion,
 		st >> 4,
 		(ulong)rr->hz, readrate(rr), readdev(rr), readbw(rr),
@@ -2797,7 +2883,7 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->txtrace[3], rr->txtrace[4], rr->txtrace[5], rr->txleft,
 		rr->nsent, rr->nrecv,
 		rr->ncrcerr, rr->ntoobig, rr->ntxtimeout,
-		rr->nrxoverflow, rr->ntxunderflow);
+		rr->nrxoverflow, rr->ntxunderflow, rr->ntxnever);
 }
 
 /*
