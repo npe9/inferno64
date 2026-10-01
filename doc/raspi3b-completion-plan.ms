@@ -14963,3 +14963,108 @@ succeeding with seventeen entries present.  These are two findings and not
 one, and the wedge in
 .CW tests/efs-wedge.sh
 should not be folded into the poisoning.
+.NH 2
+The silent create, on silicon: what the board says and what it rules out
+.LP
+The section above closes with "the next step on it is to print the actual
+error string the failing create returns rather than that it failed."  Done,
+on a Pi 3B booted from the card, and the answer is that there is no error
+string: the create
+.I succeeds .
+Four things are now established and six explanations are dead.
+.PP
+.B "The card's efs image is inconsistent, and nobody had ever asked it."
+.CW "disk/efsck /n/dos/efs.img"
+on the board:
+.P1
+efsck: generation 1489 from superblock 0, 16384 blocks
+efsck: block 0 is in the tree and free in the map
+efsck: block 25 is in the tree and free in the map
+efsck: block 16383 is in the tree and free in the map
+efsck: 68 block(s) marked used and not reached
+efsck: /n/dos/efs.img: 3 problem(s)
+.P2
+A block the tree points at and the allocator believes is free can be handed
+out and written over.  Block 0 is the superblock, so the tree holds at least
+one pointer that cannot be right.
+.PP
+.B "The poisoned names reproduce, with a control in the same command."
+On that image,
+.CW wprobe ,
+.CW inferno
+and
+.CW zzz
+each report success and are then absent from
+.CW ls ,
+while
+.CW t1 ,
+.CW t2 ,
+.CW t3 ,
+.CW ctl9 ,
+.CW z1 ,
+.CW z2
+and
+.CW r2
+\(em created in the same commands, the same way \(em all appear and persist.
+So the earlier record of this was right about the symptom.
+.PP
+.B "But it is not that image, and that is the surprise."
+A
+.I fresh
+1024-block image, made on
+.CW /n/dos
+and pronounced clean by
+.CW efsck ,
+does the same thing.  With no stale mount
+.CW ( unmount
+first says "not mounted"), a create reports success, the superblock's
+generation advances \(em so
+.CW efs
+is committing \(em and a
+.CW cat
+of the name one command later says the file does not exist.  Whatever this
+is, it is not damage accumulated in the card's filesystem.
+.PP
+.B "Six explanations tested and rejected."
+The
+.CW bind
+missing
+.CW -c :
+no, the host fails that case loudly and there is no bind here at all.  A full
+filesystem: no, the image is fresh and other names in the same command
+succeed.  A create whose process dies before it commits: no \(em a name
+created in a command that then ran a nonexistent program is present
+afterwards, as is a fresh control.  Several
+.CW efs
+servers writing one image: no,
+.CW ps
+shows the two the boot started and nothing else.  Shell redirection, which
+this rig has seen fail silently before: no \(em
+.CW "echo >"
+and
+.CW cp
+both work, and both fail, in the same places.  The last character of the
+name, which looked for one round like it decided it: no,
+.CW ab1
+fails and
+.CW ctl9
+succeeds.
+.PP
+.B "Where it stops, honestly."
+A 64-block image on
+.CW /n/dos
+works \(em create, read back, list.  A 1024-block image on
+.CW /n/dos
+does not.  A 64-block image on
+.CW /n/efs
+works.  So it is neither FAT nor
+.CW efs
+on its own, and the size at which it turns over has not been found: the
+round trip through the command poller is minutes, and this needs an
+instrument on the board rather than more guesses from outside.  Host
+.CW emu
+does not reproduce any of it at any size tried.
+.PP
+That is the thing to build next, and it is written here rather than
+attempted at the end of a long session, because the four explanations this
+file has already had to withdraw were all produced exactly then.
