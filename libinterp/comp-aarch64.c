@@ -592,19 +592,40 @@ ctxreg(int rd)
 static void
 bcondbra(int cond, int macidx)
 {
-	long off;
+	intptr off;
 
 	/*
-	 * The (long) casts below, and at the four other sites of this
-	 * shape, draw "conversion of pointer to shorter integer" from 7c
-	 * and are nonetheless exact -- unlike patch[], litpool and RELPC,
-	 * which were the same warning and were real.  Both operands are
-	 * truncated modulo 2**32 and then subtracted, so the difference is
-	 * (a-b) mod 2**32; both point into one code buffer, so |a-b| is far
-	 * below 2**31 and the signed 32-bit result is the true difference.
-	 * Widening them to uintptr would be harmless and would say nothing
-	 * the reader does not already know; leaving a note is cheaper than
-	 * leaving a puzzle.
+	 * intptr, not long, and not uintptr either.
+	 *
+	 * These used to be (long) casts of a pointer, with a long off to
+	 * receive them, which drew "conversion of pointer to shorter
+	 * integer" from 7c at five sites -- SZ_LONG is 4 here.  The old
+	 * note said that was exact and that widening to uintptr "would be
+	 * harmless".  The first half was right: both operands truncate
+	 * modulo 2**32 and are then subtracted, both point into one code
+	 * buffer, so |a-b| is far below 2**31 and the signed 32-bit result
+	 * is the true difference.
+	 *
+	 * The second half was wrong, and uintptr is what
+	 * doc/open-issues-plan.ms item A5 prescribed.  off is a SIGNED
+	 * branch displacement, tested against a negative bound on the very
+	 * next line:
+	 *
+	 *	if(off <= 0x3FFFF && off >= -0x40000)
+	 *
+	 * Make off unsigned and every backward branch -- the common case,
+	 * since the macros sit at the start of the buffer -- becomes a
+	 * number near 2**64, fails that test, and takes the long form or
+	 * urks.  Widening the casts alone while leaving off a long happens
+	 * to work, because assigning back to 32 bits restores the value mod
+	 * 2**32, which is exactly the accident the change was meant to stop
+	 * relying on.
+	 *
+	 * So: intptr, which is signed and pointer-width, at the casts and
+	 * at off together.  The displacement is then never truncated at
+	 * all, and the >> 2 is an arithmetic shift of a true signed
+	 * difference.  The B_IMM and BCOND macros mask to their field
+	 * widths, so a negative off still encodes correctly.
 	 */
 	if(pass == 0) {
 		/* reserve two slots; pass 1 picks short or long form */
@@ -612,7 +633,7 @@ bcondbra(int cond, int macidx)
 		NOP_INSN();
 		return;
 	}
-	off = ((long)(IA(macro, macidx)) - (long)(code + codeoff)) >> 2;
+	off = ((intptr)(IA(macro, macidx)) - (intptr)(code + codeoff)) >> 2;
 	if(off <= 0x3FFFF && off >= -0x40000) {
 		/* short form: direct B.cond + NOP padding */
 		BCOND(cond, off);
@@ -627,7 +648,7 @@ bcondbra(int cond, int macidx)
 	BCOND(cond ^ 1, 2);
 	off -= 1;
 	if(off > 0x1FFFFFF || off < -0x2000000) {
-		print("bcondbra long-form overflow: off=%ld macidx=%d\n",
+		print("bcondbra long-form overflow: off=%lld macidx=%d\n",
 			off, macidx);
 		urk("bcondbra: branch too far even in long form");
 	}
@@ -640,15 +661,15 @@ bcondbra(int cond, int macidx)
 static void
 bradis(int dispc)
 {
-	long off;
+	intptr off;
 
 	if(pass == 0) {
 		B_IMM(0);
 		return;
 	}
-	off = ((long)(IA(patch, dispc)) - (long)(code + codeoff)) >> 2;
+	off = ((intptr)(IA(patch, dispc)) - (intptr)(code + codeoff)) >> 2;
 	if(off > 0x1FFFFFF || off < -0x2000000) {
-		print("bradis overflow: off=%ld base=%p code=%p codeoff=%lud dispc=%d\n",
+		print("bradis overflow: off=%lld base=%p code=%p codeoff=%lud dispc=%d\n",
 			off, base, code, codeoff, dispc);
 		urk("bradis: branch too far");
 	}
@@ -661,15 +682,15 @@ bradis(int dispc)
 static void
 bramac(int macidx)
 {
-	long off;
+	intptr off;
 
 	if(pass == 0) {
 		B_IMM(0);
 		return;
 	}
-	off = ((long)(IA(macro, macidx)) - (long)(code + codeoff)) >> 2;
+	off = ((intptr)(IA(macro, macidx)) - (intptr)(code + codeoff)) >> 2;
 	if(off > 0x1FFFFFF || off < -0x2000000) {
-		print("bramac overflow: off=%ld base=%p code=%p codeoff=%lud macidx=%d\n",
+		print("bramac overflow: off=%lld base=%p code=%p codeoff=%lud macidx=%d\n",
 			off, base, code, codeoff, macidx);
 		urk("bramac: branch too far");
 	}
@@ -682,15 +703,15 @@ bramac(int macidx)
 static void
 blmac(int macidx)
 {
-	long off;
+	intptr off;
 
 	if(pass == 0) {
 		BL_IMM(0);
 		return;
 	}
-	off = ((long)(IA(macro, macidx)) - (long)(code + codeoff)) >> 2;
+	off = ((intptr)(IA(macro, macidx)) - (intptr)(code + codeoff)) >> 2;
 	if(off > 0x1FFFFFF || off < -0x2000000) {
-		print("blmac overflow: off=%ld base=%p code=%p codeoff=%lud macidx=%d\n",
+		print("blmac overflow: off=%lld base=%p code=%p codeoff=%lud macidx=%d\n",
 			off, base, code, codeoff, macidx);
 		urk("blmac: branch too far");
 	}
@@ -1184,14 +1205,14 @@ swapbraop(int b)
 static void
 bconddis(int cond, int dispc)
 {
-	long off;
+	intptr off;
 
 	if(pass == 0) {
 		BCOND(cond, 0);
 		NOP_INSN();
 		return;
 	}
-	off = ((long)(IA(patch, dispc)) - (long)(code + codeoff)) >> 2;
+	off = ((intptr)(IA(patch, dispc)) - (intptr)(code + codeoff)) >> 2;
 	if(off <= 0x3FFFF && off >= -0x40000) {
 		BCOND(cond, off);
 		NOP_INSN();
@@ -1200,7 +1221,7 @@ bconddis(int cond, int dispc)
 	BCOND(cond ^ 1, 2);
 	off -= 1;
 	if(off > 0x1FFFFFF || off < -0x2000000) {
-		print("bconddis long-form overflow: off=%ld dispc=%d\n",
+		print("bconddis long-form overflow: off=%lld dispc=%d\n",
 			off, dispc);
 		urk("bconddis: branch too far");
 	}

@@ -397,36 +397,73 @@ trusting the pattern that produced the count \(em which is the same discipline
 that found the original bug, applied to my own analysis instead of someone
 else's code.
 .NH 2
-A5.  A pointer cast through long in the JIT
+A5.  CLOSED \(em but not as prescribed: the type was wrong and so was the test
 .LP
 .B Established.
 .CW comp-aarch64.c
-computes code offsets as
-.CW "(long)(code - ptr)"
-and
-.CW "(long)(IA(...)) - (long)(code + codeoff)" ,
+computed code offsets as
+.CW "(long)(IA(...)) - (long)(code + codeoff)"
+into a
+.CW "long off" ,
 with
 .CW SZ_LONG
-at 4.  Before
-.CW dcca478dd
-the cast was dropped; now it is obeyed.
+at 4.  Five sites, ten warnings from 7c.
 .PP
-.B "Not a bug today, and the reason is not 'addresses are small'."
-It is that these are differences between two addresses in the same allocation,
-and the destination is a 4-byte
-.CW long
-in any case.  Truncating both operands of a subtraction preserves the
-difference whenever it fits, and a branch displacement inside one code buffer
-always does.
+.B "Not a bug, and the reason is not 'addresses are small'."
+It is that these are differences between two addresses in the same allocation.
+Truncating both operands modulo 2**32 and subtracting gives (a-b) mod 2**32, and
+a branch displacement inside one code buffer is far below 2**31, so the signed
+32-bit result is the true difference.
 .PP
-.B The work.
-.CW uintptr
-rather than
-.CW long
-at those casts, and at the
+.B "This item prescribed uintptr.  That would have introduced a bug."
 .CW off
-variables that receive them \(em changing one without the other buys nothing.
-Rebuild, confirm the
+is a
+.I signed
+branch displacement and the line after it reads
+.P1
+if(off <= 0x3FFFF && off >= -0x40000)
+.P2
+Make
+.CW off
+unsigned and every backward branch \(em the common case, since the macros sit at
+the start of the buffer \(em becomes a number near 2**64, fails that test, and
+takes the long form or
+.CW urk s.
+Widening the casts alone while leaving
+.CW off
+a
+.CW long
+happens to work, because assigning back to 32 bits restores the value mod
+2**32, which is precisely the accident the change was supposed to stop relying
+on.  The comment in the file asserted that widening to
+.CW uintptr
+"would be harmless"; it was wrong, and it has been replaced with the reasoning
+above.
+.PP
+So the change is
+.CW intptr
+\(em signed and pointer-width,
+.CW "typedef long long"
+on this target \(em at the casts and at the
+.CW off
+variables together.  The displacement is then never truncated, and the
+.CW ">> 2"
+is an arithmetic shift of a true signed difference.
+.CW B_IMM
+and
+.CW BCOND
+mask to their field widths, so a negative
+.CW off
+still encodes correctly.  The five
+.CW print s
+of
+.CW off
+became
+.CW %lld ,
+which is the sort of thing changing a type quietly breaks.
+.PP
+.B "And this item's acceptance test was wrong too, in a way that would have read as failure."
+It said to confirm the
 .CW "MOVW Rn,Rn"
 sites in
 .CW punt ,
@@ -435,16 +472,45 @@ sites in
 .CW comp
 and
 .CW compile
-are gone from the
+were gone from the
 .CW -S
-output, and boot: anything that runs Dis exercises the JIT, so
-.CW DRAW-OK
-and the efs checks cover it.
+output.  They are not gone, and they were never going to be: they come from
+other
+.CW long
+locals, not from the five pointer-difference sites that drew the warnings.
+Counted per function, before and after:
+.P1
+                before  after
+bcondbra             2      0
+bconddis             2      0
+blmac                2      0
+bradis               2      0
+bramac               2      0
+punt                 2      2
+commframe            4      4
+commcall             4      4
+comp                18     18
+compile             17     17
+(and 20 others)      -  unchanged
+total               95     85
+.P2
+Ten removed, exactly the ten warnings, exactly in the five functions changed.
+Had the prescribed check been run instead, it would have reported the change
+had not worked.
 .PP
-.B Priority.
-Low, and honestly so.  It is hygiene: making the source say what it means.
-Nothing in the tree miscomputes because of it, and the scan above says nothing
-newly truncated is dereferenced.
+.B Verified.
+Zero warnings from the kernel build where there were ten; the ten
+self-truncations gone and nothing else moved; and the kernel installed from the
+card boots with
+.CW DRAW-OK ,
+.CW TK-OK
+and all five EFS checks, with no
+.CW urk
+and no "branch too far" \(em which is the failure mode if the signed reasoning
+above were wrong.
+.CW "disbench -n 20"
+on the board passes all seven tests with correct checksums, which exercises
+these branch helpers in every compiled module.
 .NH 2
 A4.  CLOSED.  Only 6c and 7c were affected
 .LP
