@@ -56,6 +56,46 @@ for which see
 .B "WHAT THE BOARD CANNOT DO"
 below.
 .PP
+Those two numbers are the model's.  On silicon \- an stm32f407 with the
+pool it really has, the same board and the same console for both, forty
+writes each way with
+.B /dev/memory
+read before and after:
+.PP
+.EX
+	                     allocations   per write   live heap
+	sh   echo ... >ctl         +5856       146.4          +1
+	lil  one descriptor         +340         8.5           0
+.EE
+.PP
+Seventeen to one, and
+.IR lil 's
+figure is the pessimistic one: each of its forty writes had a
+.B print
+of a liveness marker between them, forty extra statements the shell's
+forty redirections cannot have at all.  The shell's 141 carried over
+almost exactly;
+.IR lil 's
+51 did not, and is six times better on the board than on the model.
+.PP
+And one thing silicon says that the model did not.  Typed at a console
+that had been in use for a long session, the shell could not load
+.I lil
+at all \-
+.PP
+.EX
+	; lil
+	[Sh] Broken: "out of memory: heap" at 0x0 pid 4
+.EE
+.PP
+which killed the shell and left the console undrained, the state that
+ends at the reset button.  From a fresh boot, with 38109 bytes free in
+the heap pool at the prompt, the same command works.  So the ceiling
+this page was written around is real; it is the shell's accumulated heap
+and not
+.IR lil 's
+size.
+.PP
 What is wanted instead is a language, in which a file is opened once,
 kept in a variable, and written to as often as one likes:
 .PP
@@ -328,10 +368,37 @@ and this measurement does not justify
 .IR lil ;
 what it does establish is that neither leaks and that
 .I lil
-allocates about a third as much per ctl write.
+allocates about a third as much per ctl write.  On the board that ratio
+is seventeen to one rather than three; see above.
 .PP
-Not yet done: it has not run on silicon.
-.SH "A MISREADING, CORRECTED"
+.B "And it has now run on silicon,"
+by
+.BR tools/radio/lilsilicon.py ,
+on an stm32f407 with the Dis pool it really has and over its own uart
+rather than a pty.  From a fresh boot: it loads, it answers a marker in
+its own language, it opens the radio's ctl file into a variable, and it
+takes forty writes through that one descriptor with a
+.B print
+of a marker between each \- forty of forty markers came back twice while
+the file stayed open, which is the thing a shell's
+.B "cat >file"
+structurally cannot do.
+.PP
+Then
+.B print(slurp("/dev/radio0/stats"))
+read
+.B "rssi -89 offset -90"
+off the part, and the offset is the check that the forty writes were not
+merely accepted: it boots at -102.
+.B dir("/dis")
+returned, and
+.I lil
+still had its prompt afterwards.
+.PP
+Its allocation on the board is flat, as it was on the model: over those
+forty writes the heap's cursize did not move, allocations and frees were
+both +340, and the live count came out unchanged.
+.SH "A MISREADING, CORRECTED\"
 An earlier version of this page and of the commit that added
 .I lil
 said that every Dis heap allocation in this tree is never reclaimed, on

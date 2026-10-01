@@ -219,6 +219,82 @@ for _m in ("ctl", "stats", "expect", "lastrx", "reaches_tx"):
     setattr(PortBoard, _m, getattr(Board, _m))
 
 
+class Lil:
+    """lil(1) running on a board, with the marker rule kept.
+
+    Board.read() brackets every line with "echo <mark>", which is a
+    shell statement and means nothing to an interpreter that is not a
+    shell.  The rule it enforces still applies and for the same reason:
+    this console echoes from the uart interrupt handler long after the
+    Dis program behind it is gone, so one copy of a marker is scrollback
+    and two is something running.
+
+    In lil the marker is just another statement, which is the whole
+    point of the thing -- inside a shell's "cat >file" a marker cannot
+    be sent at all, because it would be written to the file instead of
+    run, and board.py's Stream gave up asking whether the board was
+    alive for exactly that reason.  Here:
+
+    	ctl := open("/dev/radio0/ctl", "w")
+    	write(ctl, "rssioffset -90")
+    	print("M17")
+
+    and the marker comes back from print() while the descriptor stays
+    open.  enter() leaves the board inside lil; nothing puts it back,
+    because lil has no exit and a reset is how a board leaves it.
+    """
+    def __init__(self, board):
+        self.b = board
+        self.n = 0
+
+    def enter(self, wait=12.0):
+        """Type lil at a shell that is running, and prove it started."""
+        if not self.b.live():
+            raise Dead("%s: not running commands before lil (marker seen "
+                       "%d times)" % (self.b.name,
+                                      getattr(self.b, "lastcount", -1)))
+        self.b._send("lil") if hasattr(self.b, "_send") else self.b._stuff("lil")
+        time.sleep(2.5)
+        return self.live(wait)
+
+    def _type(self, line):
+        if hasattr(self.b, "_send"):
+            self.b._send(line)
+        else:
+            self.b._stuff(line)
+
+    def live(self, wait=12.0):
+        """A marker in lil's own language, twice."""
+        self.n += 1
+        mark = "K%d.%d" % (int(time.time() * 1000) % 1000000, self.n)
+        self._type('print("%s")' % mark)
+        end = time.time() + wait
+        best = 0
+        while time.time() < end:
+            time.sleep(0.5)
+            c = self.b.text().count(mark)
+            best = max(best, c)
+            if c >= 2:
+                self.lastcount = c
+                return True
+        self.lastcount = best
+        return False
+
+    def run(self, line, settle=2.5):
+        """One statement, bracketed by lil markers."""
+        if not self.live():
+            raise Dead("%s: lil not running statements BEFORE %r (marker "
+                       "seen %d times)"
+                       % (self.b.name, line, getattr(self, "lastcount", -1)))
+        self._type(line)
+        time.sleep(settle)
+        t = self.b.text()
+        if not self.live():
+            raise Dead("%s: lil died DURING %r -- its reply is scrollback"
+                       % (self.b.name, line))
+        return t
+
+
 def open_board(port, name=None):
     """A board at this port, however it happens to be reachable.
 

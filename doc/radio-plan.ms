@@ -4600,3 +4600,78 @@ Board 2 was reflashed before this measurement and that configuration no
 longer exists to re-ask, so what was different about it is not known;
 what is known is that on the same kernel both directions carry every
 packet.
+.PP
+.B "Item 6 on silicon: lil holds a descriptor across forty writes, and the shell's failure mode is real."
+.I tools/radio/lilsilicon.py
+runs on an stm32f407 with the Dis pool it really has, and
+.B Lil
+in
+.I tools/radio/twoboard.py
+keeps the marker rule in lil's own language \- a
+.B print
+between two writes, which is precisely what a shell's
+.B "cat >file"
+cannot do, because the marker would go into the file instead of being
+run.
+.DS
+.CW "40 of 40 markers came back twice while the file stayed open"
+.CW "the radio, read through lil: rssi -89 offset -90"
+.CW "dir(\(dq/dis\(dq) returned, and lil still has its prompt"
+.DE
+The offset is the check that the forty writes were not merely accepted:
+it boots at -102 and reads -90 afterwards.
+.PP
+.B "And the first attempt failed in a way worth keeping."
+Typed at a console that had been in use for a long session \- dozens of
+.B cat
+and
+.B echo
+redirections \- the shell could not load
+.I lil
+at all:
+.DS
+.CW "; lil"
+.CW "[Sh] Broken: \(dqout of memory: heap\(dq at 0x0 pid 4"
+.DE
+and that killed the shell and left the console undrained, which is the
+state that ends at the reset button.  From a fresh boot the same command
+works, with 38109 bytes free in the heap pool at the prompt.  So the
+ceiling is real and it is the shell's accumulated heap and not
+.IR lil 's
+size: the thing item 6 was written around still happens, just not for the
+reason it was written around.
+.PP
+The board was reset from its own console rather than by hand \- ^R twice
+running, which
+.I os/inferno/port/devuart.c
+handles in the uart receive interrupt precisely because that is the last
+thing working on a board in this state.  The same escape is how both
+boards were put into their bootloader to be flashed for this item and the
+last, with no button pressed.
+.PP
+.B "The cost, measured on silicon rather than on the model."
+The same forty ctl writes through each, on the same board, through the
+same console, with
+.B /dev/memory
+read before and after:
+.DS
+.CW "                     allocations   per write   live heap"
+.CW "sh   echo ... >ctl         +5856       146.4          +1"
+.CW "lil  one descriptor         +340         8.5           0"
+.DE
+Seventeen to one, and
+.I lil 's
+figure is the pessimistic one: its forty writes each had a
+.B print
+of a liveness marker between them, which is forty extra statements the
+shell's forty redirections cannot have at all.  Per statement rather than
+per write it is about four.
+.PP
+Both survive, which is the same answer the model gave; what the model got
+wrong was the size of the difference.  Under qemu
+.I lilvsh.sh
+measured 141 allocations per redirection against 51, and on silicon it is
+146 against 8.5 \- the shell's number carries over almost exactly and
+.IR lil 's
+is six times better than the model made it look.  A model of a console
+and a pool is not a console and a pool.
