@@ -2902,7 +2902,7 @@ reclaimed, and that a shell cannot survive repeated ctl writes \- were
 inherited from notes that were true when written and are not true now,
 and both fell to a measurement on the machine rather than a better
 reading of the notes.
-.IP "7.  A calibration program on the board, in Limbo." 6
+.IP "7.  A calibration program on the board, in Limbo.  Done, on silicon." 6
 Everything items 1, 2 and 3 measured was driven from the host: a Python
 script typing at a console, one
 .B ctl
@@ -4818,3 +4818,49 @@ then read 0x06.
 .B "The only evidence that a flash took is behaviour that only the new kernel has;"
 tools/radio now has that check as part of the measurement rather than as
 a thing to remember.
+.PP
+.B "Item 7 done on silicon: radiocal(1) measures the slope off the two boards themselves."
+Forty packets over eight rungs, every one received, nothing lost and no
+CRC error:
+.DS
+.CW "ramp  nominal   got lost crcerr   RSSI mean least most"
+.CW "  63   +14.0      5    0      0     -30  -31  -30"
+.CW "  55   +10.0      5    0      0     -33  -33  -33"
+.CW "  47    +6.0      5    0      0     -37  -37  -37"
+.CW "  39    +2.0      5    0      0     -41  -41  -41"
+.CW "  31    -2.0      5    0      0     -45  -45  -45"
+.CW "  23    -6.0      5    0      0     -48  -49  -48"
+.CW "  15   -10.0      5    0      0     -53  -53  -53"
+.CW "   7   -14.0      5    0      0     -56  -56  -56"
+.CW ""
+.CW "slope 0.949 dB of RSSI per dB of transmitter, over 8 rungs"
+.DE
+.PP
+.B "Three independent ladders now, and they agree."
+The tinySA's attenuator, cabled into the click, gave 0.930 over 24dB.
+.I paladder.py ,
+driving the same PA field from the host and reading one
+.B last
+RSSI per rung, gave 0.935 over 24dB.
+.I Radiocal
+on the boards, reading every packet's own RSSI out of
+.B pkt 's
+header, gives 0.949 over 28dB.  A real attenuator stepping a real
+generator and a transmitter's own power field, measured through two
+different paths, land within two per cent of each other \- which is as
+close to separating the two factors as this bench can get without the
+u.FL adapter item 2 wants.
+.PP
+The spread within a rung is nought to one decibel, which is this
+receiver's repeatability, and it is only visible because
+.B pkt
+carries an RSSI per packet.  The stat file's
+.B last
+gives one sample a rung and cannot show it.
+.PP
+What the ladder does not reach: ramp 0, which the datasheet calls
+-17.5dBm, is below the bottom of this run and
+.I paladder.py
+took 0 of 5 there with the RSSI one rung up still at -45dBm, sixty
+decibels over the floor.  So that is not sensitivity, and what ramp 0
+actually does to the amplifier is not known.
