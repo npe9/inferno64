@@ -1,0 +1,74 @@
+#
+# Per-radio calibration, in the attribute database format of attrdb(6).
+#
+# WHY THIS FILE EXISTS.  Every number in it was measured on one board
+# and is wrong on another.  os/inferno/stm32f407/spistm32f4.c carried
+# ".ppb = -3550, measured on this board and not taken from anywhere",
+# which was right when there was one board; with two, that line is
+# wrong on half the bench, and the two crystals here are 64 parts per
+# million apart -- 58.7kHz at 915MHz, wider than the 50kHz channel
+# filter, so an uncorrected pair cannot hear each other even in
+# principle.  Either every board gets its own kernel, which is a flash
+# cycle per measurement and an image that is silently wrong on the
+# board next door, or the image carries them all and each board picks
+# its own.  radiocfg(1) is the picking.
+#
+# WHY uid IS THE KEY.  An identity a board is told is circular: the
+# thing that would tell it is the thing that needs to know.  And the
+# radio has no identity of its own -- a CC1120 answers PARTNUMBER 0x48
+# and PARTVERSION 0x21 and nothing that distinguishes one part from
+# another.  The microcontroller does: RM0090 39.1, a 96-bit factory
+# serial, read-only, which no reflash can change.  #P/uid serves it as
+# twenty-four hex digits, most significant word first.
+#
+# So the key is the BOARD and not the click, which is an approximation
+# and the wrong one if a click is ever moved between boards, because
+# the crystal belongs to the click.  Each entry says which click it was
+# measured with so that a move is recordable rather than silent.
+#
+# This is not /lib/ndb/radio.  ndb(6) is the attribute database for
+# network configuration and /lib/ndb/local names the files that make up
+# that one logical database; a crystal error is not network data, and
+# putting it there would have every program that opens /lib/ndb/local
+# read it.  The format is attrdb(6) either way and attrdb(2) reads
+# both.
+#
+# ATTRIBUTES.
+#	uid		the board's #P/uid, the key
+#	radio		which part, for a reader that serves more than one
+#	board, click	what it was measured in and with
+#	name		what the bench calls it
+#	ppb		crystal error, parts per billion, for the ppm verb
+#	rssioffset	dB, AGC_GAIN_ADJUST
+#	csthr		dBm, AGC_CS_THR
+#	rssislope	dB of RSSI per dB of transmitter, from radiocal(1)
+#	slopesource	what measured the slope, because it matters
+#
+
+radio=cc1120 uid=2037303959315008002f0022
+	board=clicker2 click=ccrf2 name=board1
+	# -3550ppb: a carrier from a generator calibrated by ear against
+	# WWV appeared 3250Hz below where this part was commanded, at
+	# both 915 and 910MHz, three runs identical.  With it applied
+	# the same measurement gives +233Hz.
+	ppb=-3550
+	rssioffset=-102 csthr=-90
+	# 0.930 from a tinySA attenuator cabled into the click, stepping
+	# -52 to -76dBm in fours; 0.935 from this board's own PA ladder
+	# driven from the host.  See doc/radio-plan.ms items 2 and 7.
+	rssislope=0.930 slopesource=tinysa-attenuator
+
+radio=cc1120 uid=203730395931500800300022
+	board=clicker2 click=ccrf2 name=board2
+	# +60300ppb, and this is why the file exists: it is 64ppm from
+	# board 1's and no one kernel can carry both.  Measured by keying
+	# each board into the same tinySA in one session so the
+	# instrument's own error cancels in the difference; verified by
+	# applying it, which moved this carrier +58798Hz against a
+	# predicted +58442.
+	ppb=60300
+	rssioffset=-102 csthr=-90
+	# 0.949 over 28dB, measured by radiocal(1) on the boards
+	# themselves with board 1 transmitting: every packet's own RSSI
+	# out of pkt's header rather than one reading a rung.
+	rssislope=0.949 slopesource=radiocal-pa-ladder

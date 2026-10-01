@@ -241,11 +241,20 @@ root
 	/dis/lib/workdir.dis	/dis32/lib/workdir.dis
 	/dis/echo.dis		/dis32/echo.dis
 	/dis/radiocal.dis	/dis32/radiocal.dis
+	/dis/radiocfg.dis	/dis32/radiocfg.dis
+	/dis/md5sum.dis		/dis32/md5sum.dis
+	/dis/strings.dis	/dis32/strings.dis
+# The calibrations themselves, in attrdb(6) format, keyed by the
+# board's own #P/uid.  Here rather than compiled into a driver
+# because the two clicker 2s on this bench want crystal corrections
+# 64ppm apart and no one kernel can carry both.  See
+# doc/radio-plan.ms item 8.
+	/lib
+	/lib/radio		/lib/radio
 	/dis/ax25raw.dis	/dis32/ax25raw.dis
 	/dis/ax25chk.dis	/dis32/ax25chk.dis
 	/dis/export.dis		/dis32/export.dis
 	/dis/sed.dis		/dis32/sed.dis
-	/dis/ed.dis		/dis32/ed.dis
 	/dis/cat.dis		/dis32/cat.dis
 	/dis/dd.dis		/dis32/dd.dis
 	/dis/ls.dis		/dis32/ls.dis
@@ -268,7 +277,5 @@ root
 	/dis/kill.dis	/dis32/kill.dis
 	/dis/read.dis	/dis32/read.dis
 	/dis/env.dis	/dis32/env.dis
-	/dis/md5sum.dis	/dis32/md5sum.dis
-	/dis/strings.dis	/dis32/strings.dis
 	/dis/xd.dis	/dis32/xd.dis
 	/dis/seq.dis	/dis32/seq.dis

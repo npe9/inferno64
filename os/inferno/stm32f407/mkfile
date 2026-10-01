@@ -128,6 +128,24 @@ $ROOT/tools/bin2ihex:
 # forking a process and an open for every line.  It is beside sh and not
 # instead of it, so that a fault in it still leaves something to look at
 # the board with.
+# ed IS NOT HERE, and the ceiling is why it was looked at.  An image past
+# 0xe0000 cannot be written, since the HID bootloader occupies the last
+# 128K sector from there, and adding radiocal and radiocfg put this
+# 13184 bytes over it.
+#
+# ed is the thing that should go: this board's root is devroot served
+# read-only out of flash and there is nowhere on it to write, so an
+# editor that cannot save is 11979 bytes for a program that can only
+# ever print an error.  The shell already gets "permission denied" for a
+# redirection into /tmp; see man/1/lil.
+#
+# sed stays, at 12633 the largest thing in the list, because a stream
+# editor still works with nowhere to write -- it filters what is piped
+# through it, and the stat files are what get filtered.
+#
+# attrdb is not here either, and for a different reason: radiocfg(1)
+# used it and ran out of heap on the board even from a fresh boot, so it
+# parses the attrdb(6) subset itself.  See its own comment.
 XIPDIS=\
 	sh.dis\
 	sh/std.dis\
@@ -145,10 +163,12 @@ XIPDIS=\
 	lib/workdir.dis\
 	echo.dis\
 	radiocal.dis\
+	radiocfg.dis\
+	md5sum.dis\
+	strings.dis\
 	ax25raw.dis\
 	ax25chk.dis\
 	export.dis\
-	ed.dis\
 	sed.dis\
 	cat.dis\
 	dd.dis\
@@ -172,8 +192,6 @@ XIPDIS=\
 	kill.dis\
 	read.dis\
 	env.dis\
-	md5sum.dis\
-	strings.dis\
 	xd.dis\
 	seq.dis\
 

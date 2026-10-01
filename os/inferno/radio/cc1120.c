@@ -3036,7 +3036,8 @@ cc1120stat(Radio *r, char *p, int n)
 		"crcerr %ud toobig %ud txtimeout %ud\n"
 		"rxoverflow %ud txunderflow %ud txnever %ud\n"
 		"intr high %ud low %ud\n"
-		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n",
+		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n"
+		"ppb %d\n",
 		rr->partnum, rr->partversion,
 		st >> 4,
 		(ulong)rr->hz, readrate(rr), readdev(rr), readbw(rr),
@@ -3053,7 +3054,16 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->nrxoverflow, rr->ntxunderflow, rr->ntxnever,
 		rr->nintrhigh, rr->nintrlow,
 		pacfg2, pacfg2 & Papowerramp,
-		patenths/10, patenths < 0? -patenths%10: patenths%10);
+		patenths/10, patenths < 0? -patenths%10: patenths%10,
+		/*
+		 * The crystal correction, for the same reason PA_CFG2 is
+		 * here: the "ppm" verb prints it on the console, which a
+		 * Dis program cannot read, so radiocfg(1) had no way to
+		 * check that the figure it applied is the figure in
+		 * force.  Anything this driver can be told, it has to be
+		 * able to say back.
+		 */
+		rr->ppb);
 }
 
 /*

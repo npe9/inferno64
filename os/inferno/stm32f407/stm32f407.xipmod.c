@@ -40,14 +40,18 @@ extern Inst _dis_echo_dis[];
 extern Type* _dis_echo_distype[];
 extern Inst _dis_radiocal_dis[];
 extern Type* _dis_radiocal_distype[];
+extern Inst _dis_radiocfg_dis[];
+extern Type* _dis_radiocfg_distype[];
+extern Inst _dis_md5sum_dis[];
+extern Type* _dis_md5sum_distype[];
+extern Inst _dis_strings_dis[];
+extern Type* _dis_strings_distype[];
 extern Inst _dis_ax25raw_dis[];
 extern Type* _dis_ax25raw_distype[];
 extern Inst _dis_ax25chk_dis[];
 extern Type* _dis_ax25chk_distype[];
 extern Inst _dis_export_dis[];
 extern Type* _dis_export_distype[];
-extern Inst _dis_ed_dis[];
-extern Type* _dis_ed_distype[];
 extern Inst _dis_sed_dis[];
 extern Type* _dis_sed_distype[];
 extern Inst _dis_cat_dis[];
@@ -94,10 +98,6 @@ extern Inst _dis_read_dis[];
 extern Type* _dis_read_distype[];
 extern Inst _dis_env_dis[];
 extern Type* _dis_env_distype[];
-extern Inst _dis_md5sum_dis[];
-extern Type* _dis_md5sum_distype[];
-extern Inst _dis_strings_dis[];
-extern Type* _dis_strings_distype[];
 extern Inst _dis_xd_dis[];
 extern Type* _dis_xd_distype[];
 extern Inst _dis_seq_dis[];
@@ -121,10 +121,12 @@ static Xipmod tab[] = {
 	{ "/dis/lib/workdir.dis", 161, 14, _dis_lib_workdir_dis, 2, _dis_lib_workdir_distype },
 	{ "/dis/echo.dis", 433, 56, _dis_echo_dis, 3, _dis_echo_distype },
 	{ "/dis/radiocal.dis", 6309, 776, _dis_radiocal_dis, 20, _dis_radiocal_distype },
+	{ "/dis/radiocfg.dis", 4908, 629, _dis_radiocfg_dis, 15, _dis_radiocfg_distype },
+	{ "/dis/md5sum.dis", 853, 117, _dis_md5sum_dis, 7, _dis_md5sum_distype },
+	{ "/dis/strings.dis", 866, 123, _dis_strings_dis, 7, _dis_strings_distype },
 	{ "/dis/ax25raw.dis", 4361, 632, _dis_ax25raw_dis, 19, _dis_ax25raw_distype },
 	{ "/dis/ax25chk.dis", 7737, 1178, _dis_ax25chk_dis, 19, _dis_ax25chk_distype },
 	{ "/dis/export.dis", 742, 95, _dis_export_dis, 5, _dis_export_distype },
-	{ "/dis/ed.dis", 11979, 2123, _dis_ed_dis, 30, _dis_ed_distype },
 	{ "/dis/sed.dis", 12633, 1803, _dis_sed_dis, 30, _dis_sed_distype },
 	{ "/dis/cat.dis", 705, 92, _dis_cat_dis, 6, _dis_cat_distype },
 	{ "/dis/dd.dis", 5921, 821, _dis_dd_dis, 11, _dis_dd_distype },
@@ -148,8 +150,6 @@ static Xipmod tab[] = {
 	{ "/dis/kill.dis", 2046, 266, _dis_kill_dis, 11, _dis_kill_distype },
 	{ "/dis/read.dis", 1026, 123, _dis_read_dis, 6, _dis_read_distype },
 	{ "/dis/env.dis", 733, 90, _dis_env_dis, 5, _dis_env_distype },
-	{ "/dis/md5sum.dis", 853, 117, _dis_md5sum_dis, 7, _dis_md5sum_distype },
-	{ "/dis/strings.dis", 866, 123, _dis_strings_dis, 7, _dis_strings_distype },
 	{ "/dis/xd.dis", 3840, 526, _dis_xd_dis, 15, _dis_xd_distype },
 	{ "/dis/seq.dis", 1084, 133, _dis_seq_dis, 7, _dis_seq_distype },
 	{ nil, 0, 0, nil, 0, nil },

@@ -132,6 +132,7 @@ TARG=\
 	lorachk.dis\
 	loraraw.dis\
 	radiocal.dis\
+	radiocfg.dis\
 	radiochk.dis\
 	radiossl.dis\
 	radiostyx.dis\
