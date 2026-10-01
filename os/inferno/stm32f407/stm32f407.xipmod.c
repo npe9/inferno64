@@ -128,7 +128,7 @@ static Xipmod tab[] = {
 	{ "/dis/strings.dis", 866, 123, _dis_strings_dis, 7, _dis_strings_distype },
 	{ "/dis/ax25raw.dis", 4361, 632, _dis_ax25raw_dis, 19, _dis_ax25raw_distype },
 	{ "/dis/ax25up.dis", 2330, 267, _dis_ax25up_dis, 8, _dis_ax25up_distype },
-	{ "/dis/ax25chk.dis", 7737, 1178, _dis_ax25chk_dis, 19, _dis_ax25chk_distype },
+	{ "/dis/ax25chk.dis", 7935, 1198, _dis_ax25chk_dis, 19, _dis_ax25chk_distype },
 	{ "/dis/export.dis", 742, 95, _dis_export_dis, 5, _dis_export_distype },
 	{ "/dis/sed.dis", 12633, 1803, _dis_sed_dis, 30, _dis_sed_distype },
 	{ "/dis/cat.dis", 705, 92, _dis_cat_dis, 6, _dis_cat_distype },
