@@ -121,6 +121,11 @@ link
 # adcstm32f4 converts the two mikroBUS AN pins and the part's own
 # temperature, reference and battery channels into #P/adc.
 	adcstm32f4
+# ledstm32f4 puts the board's two lamps at #P/led.  Here so that a
+# program can signal without a radio: the only other way to move a lamp
+# is the radio's own ctl file, which a board that cannot find its radio
+# has not got -- and that is exactly the board that needs to say so.
+	ledstm32f4
 
 mod
 	sys
