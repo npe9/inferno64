@@ -622,23 +622,64 @@ walk the same blocks repeatedly within a transaction and were re-decoding on
 every call.  That is worth knowing: the decoded-node cache does real work
 inside a transaction, even though it never survives one.
 .PP
-.B "So the fix is in replace, and it is a byte-level splice."
-An insert into a leaf is
-.CW "decode N entries, build N+1, re-pack" ,
-and
-.CW N
-is the leaf's fullness.  Doing it in the packed block instead \(em move the tail
-of the buffer up by the new entry's width, write the entry, bump the count,
-recompute the checksum \(em allocates nothing per entry and is the same work a
-B-tree insert is supposed to be.
-.CW range
-would still decode what it returns, which is what it is for.
+.B "And the target is fixup, which is a THIRD answer."
+The plan said, two commits ago, that the cost was
+.CW replace 's
+leaf rebuild.  That was read off arm A alone, where it is exactly true \(em
+.CW replents/op
+is 22.0 and the total entries unpacked is 22 \(em and arm A is a filesystem of
+two entries, whose whole tree is one leaf with no parents at all.  Instrumenting
+the large case instead:
+.P1
+fs 242 entries   alloc/op 2000   repl/op 4.0   replents/op   6.0
+                                 rangeents/op 0.0   fixents/op 660.0
+.P2
+.CW Fs.fixup
+is 660 of the 789.  It walks back up the tree after a leaf is rewritten, and for
+each level it
+.I decodes the parent ,
+rebuilds every entry of it, and re-packs \(em to change one child pointer.  An
+interior node near the root of a 242-entry filesystem holds hundreds of entries,
+and copy on write means this happens on every modifying operation.
 .PP
-That is a real piece of work on the format layer and it has now had two wrong
-guesses in front of it, so the next person should start by instrumenting
-.CW replace
-specifically \(em entries decoded and re-packed per operation \(em and confirm it
-accounts for the 22, 514 and 789 before writing anything.
+.B "Which makes the fix small, because interior entries are fixed width."
+.CW Keysz
+is 17, an interior value is always the 8 bytes of a block number, and the length
+field is 2: an interior entry is exactly 27 bytes and never changes size.  So in
+the common case \(em
+.CW "len kids == 1" ,
+no split \(em the parent needs no decoding at all.  Copy its block, walk the entry
+headers to the offset of entry
+.CW at
+without allocating, overwrite 17 bytes of key and 8 of value, restamp the
+checksum the way
+.CW Node.pack
+does
+.CW ( "(a, c) := checksum(b, Nocksum)" ,
+then
+.CW put2
+at
+.CW Nocksum
+and
+.CW Nocksum+2 ),
+allocate a block, write it, free the old.  The split case keeps the existing
+decode-and-rebuild path, which is rare and genuinely needs it.
+.PP
+.B "Three answers, and why the first two were wrong in the same way."
+Keeping decoded nodes: measured, no effect, because copy on write renumbers.  A
+lazy descent: measured, no effect, because the entries are not in the interior
+nodes the descent reads \(em except that they
+.I are ,
+when
+.CW fixup
+rewrites those same nodes, which is what the third measurement found.  And
+.CW replace :
+true only of a one-leaf filesystem.
+.PP
+Each was a reading of one arm generalised to all three.  The instrument that
+settled it attributes entries to their caller and is run at
+.I both
+ends of the range, which is what the earlier measurements should have done.
 .PP
 .B Done when.
 .CW alloc/op
