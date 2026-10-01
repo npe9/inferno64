@@ -5278,3 +5278,37 @@ seconds apart did not kill the shell \- comes back in a different and
 sharper form: it is not that forking is slow, it is that on a board with
 .B #a
 attached there is no memory to fork with at all.
+.PP
+.B "Both boards now want the reset button, and the mechanism is worth stating exactly."
+.CW exit ()
+in
+.I os/inferno/armv7m/main.c
+branches on its argument: with zero it calls
+.CW archreboot (),
+which is a real reset, and with anything else it prints "Hit the reset
+button", runs
+.CW chandevshutdown ()
+and spins.
+.B "^R^R calls exit(0), so it reboots \- but only while the kernel is alive."
+Once a panic has taken the other branch the console devices are already
+shut down and nothing typed arrives at all, which is what both boards
+read as now:
+.CW live ()
+sees the marker zero times, not once, so it is not the shell that is
+gone but the uart handler that was echoing after it.
+.PP
+The route in is the one this document already describes and it was walked
+again here: the shell dies, nothing drains the console queue, every
+character typed allocates a block nobody frees, and the end of that is a
+panic.  What is new is only that
+.B "^R^R cannot rescue a board that has reached it,"
+which
+.I os/inferno/port/devuart.c
+says in its own comment \- "it is not a general rescue" \- and which is
+worth having measured rather than inferred.
+.PP
+Everything above was taken before that and each result was verified at
+the time.  Nothing two-board can be repeated until both boards have been
+reset by hand and reflashed with
+.IR tools/f407/flashverify.sh ,
+which is what proves which image is on them.
