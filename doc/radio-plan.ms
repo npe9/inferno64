@@ -3761,3 +3761,52 @@ its own -1970ppb
 may not have survived, which would account for most of it.  The
 instrument has to be recalibrated against WWV before this figure means
 anything.
+.PP
+.B "The packets are on the cable, modulated, at -32dBm."
+Max-held over eight sweeps of 914.9-915.1MHz at 10kHz resolution while
+board 1 sent packets into the cable:
+.DS
+.CW "held floor -129.4      held peak -31.9 dBm"
+.CW "  +8.2 kHz  -31.9        -7.3 kHz  -32.4"
+.CW "  +9.6 kHz  -33.4        -9.1 kHz  -33.4"
+.CW " +12.2 kHz  -36.9       -13.1 kHz  -41.9"
+.DE
+Symmetric about 915.000 with energy out to about thirteen kilohertz.  So
+the transmit chain including the modulator works, and the whole of board
+1 is now accounted for: registers, state machine, carrier and modulated
+packets.
+.PP
+What this is NOT is a deviation measurement, and the difference matters.
+The peaks sit near plus and minus eight kilohertz where a deviation of
+19958Hz would put two tones twenty kilohertz out; but the payload is
+ASCII, and the spectrum of 2-FSK carrying text is not the two-line
+spectrum that alternating symbols give.  Nothing here says the deviation
+is wrong.
+.PP
+It does cast doubt backwards, though.
+.B "carrier on"
+produced a
+.I single
+peak at 914.997MHz, so it is an unmodulated carrier \- and the
+.B spectrum
+mode of
+.IR txpin (1)
+keys exactly that and then looks for "two tones, 2*dev apart", taking the
+strongest bin and the strongest bin far enough from it.  On an
+unmodulated carrier the second of those is whatever noise peak happens to
+be outside the guard, so the table of deviation errors this document
+carries from that run \- +20.5, -53.1, -6.3, +12.2, -2.1 per cent \-
+measures the noise floor's shape and not the part.  It should not be
+relied on.
+.PP
+So both boards are now proven at their own connectors: board 1
+transmits modulated packets, board 2's front end and RSSI respond to a
+real transmitter, and neither can hear the other over the air.  The two
+remaining candidates are the antenna path on the transmitting side, and
+board 2's demodulator and sync detection, and they can be separated: the
+tinySA's generator can be cabled into board 2 at a known level, which is
+what
+.IR txpin (1)'s
+.B link
+mode was written for and the only way board 2's receive path has ever had
+a controlled stimulus.
