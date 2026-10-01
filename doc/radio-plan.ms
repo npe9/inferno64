@@ -3412,3 +3412,58 @@ anything into its value.  A passive port listener was believed until it
 reported nothing from a qemu pty that was certainly printing; an LED was
 believed until the lamp was identified on a board whose console worked;
 and an RSSI was believed until it was read with the transmitter off.
+.PP
+.B "Board 2's console was unplugged, not dead, and the distance is now too great."
+Two corrections to the section above.  Board 2 was never wedged \- its
+UART came off when the boards were moved, so the console echoed nothing
+and every figure read from it was
+.IR screen (1)
+scrollback.  Reconnected, it answers and is healthy: a clean boot at
+.BR "freq 868000000" ,
+.BR "rssi -103" ,
+.BR "pktcfg0 0x20 pktlen 125" .
+The
+.B "rssi -8"
+and
+.B "pktcfg0 0x00 pktlen 3"
+were history, as was the saturation reading drawn from them.
+.PP
+.B tools/radio/boardcmd.py
+exists so this cannot recur: it types at a board through its screen
+session and refuses to report anything unless a fresh marker comes back
+.I twice
+\- once is the uart interrupt handler, which answers long after the Dis
+shell has gone \- and it marks again afterwards, so a board that dies
+partway cannot have its last replies believed.  It reported BOARD-DEAD
+for board 2 and "alive before and after" for board 1, which was the first
+trustworthy statement about either in half an hour.
+.PP
+With both boards verified alive and configured identically \- 915MHz,
+rate 1200, deviation 3997, bw 25000, sync 0x930b, csthr -90, both quiet
+at
+.B "rssi -107"
+\- board 1 transmitted 79 packets, each with
+.B "marc 0x40"
+and
+.BR "left 0" ,
+its counter going 130 to 209.  Board 2 detected nothing at all:
+.BR "floor -110 peak -107 duty 0% bursts 0" ,
+and every detector pin at zero.
+.PP
+That is the distance and not a fault.  Moved apart, the received level
+fell from the -64dBm measured when they were close to below -107, which
+is over forty decibels and about what a hundredfold change in separation
+costs.  So the close measurement is the one that matters, and it stands:
+a strong signal present, carrier sense at 100 per cent, PQT_REACHED on
+7566 of 1712056 samples, PKT_SYNC_RXTX on none of 1720911.
+.PP
+Worth recording against the withdrawn saturation claim: -64dBm is about
+where this part's RSSI
+.I reporting
+saturates, which this bench measured long ago, but it is nowhere near
+where the receiver itself overloads.  A -64dBm signal should demodulate
+cleanly.  It did not.
+.PP
+What the test wants is tens of centimetres \- strong enough to be well
+over the floor, far enough to be an ordinary signal.  Centimetres was
+never the problem and metres is too many.
