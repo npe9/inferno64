@@ -25,7 +25,7 @@ Order, and why
 3  A3  audit what the 7c fix changed      DONE: clean; left A5 hygiene
 4  B2  one namehash, not two              DONE 2d273290f
 5  A1  fix 6c                             DONE e5d6131f3 (A2 done b6a7201e9)
-6  B1  efs's quadratic allocation         4 attempts; decoding conserved, ~39%
+6  B1  efs's quadratic allocation         4 attempts; decode ~39% of COUNT, mprof gives bytes
 7  D1  w4/w8, D2 close the bind section   DONE
 .P2
 .CW C1
@@ -751,9 +751,66 @@ fs  62 entries  514 decoded/op of 1372 alloc/op   37%
 fs 242 entries  789 decoded/op of 1998 alloc/op   39%
 .P2
 Removing every decode would take 1998 to about 1200, against 328 at two entries.
-Still growing.  Three fifths of the allocations at the large end have not been
-attributed to anything, and that is where the next measurement should go \(em not
-to another fix.
+Still growing.
+.PP
+.B "mprof, and a fourth instrument read wrongly."
+.CW mprof(1)
+gives memory per line of Limbo, which is what the unattributed remainder wants.
+Its default profiles
+.I "main, heap and image together"
+\(em main being dis code, JIT code and runtime stacks \(em and read that way it
+put
+.CW checksum()
+third, at 722KB over 40 operations, for a loop that contains no allocation at
+all.  That was stacks, not heap.
+.CW "mprof -2"
+is heap alone, and with it the picture is different:
+.P1
+sh.b:919   ctxt.setlocal("*", tl args)     524160 cur  535440 hiwat
+sh.b:1560  for (vl := e.vars[i]; ...)      524160       528824
+env.b:25                                   113160       113544
+efs.b:1252 fixup's getnode                  31424       191232
+efs.b:480  Node.unpack's entry loop         20952       287640
+.P2
+The shell dominates the
+.I current
+heap and
+.CW efs 's
+lines are mostly transient \(em
+.CW hiwat
+far above
+.CW cur
+\(em which is consistent with this being collector pressure rather than
+retention.  The shell's share is the same work on every operation whatever the
+filesystem holds, so it belongs to the fixed cost near 281 and not to the growth.
+Within
+.CW efs ,
+the two largest are the decode loop and the
+.CW getnode
+in
+.CW fixup .
+.PP
+.B "The gap that remains, stated exactly."
+.CW mprof
+measures
+.I bytes ;
+the quadratic was measured in allocation
+.I count ,
+from
+.CW nalloc .
+A decoded entry's value array is a handful of bytes and one allocation, so it can
+be most of the count and little of the bytes \(em which is why these two
+instruments rank things differently and why neither alone closes the question.
+What is needed is a per-line or per-function allocation
+.I count ,
+which
+.CW mprof
+does not report.  Failing that, the honest next step is a counter on each
+candidate allocation site in
+.CW efs ,
+summed and checked against
+.CW nalloc
+per operation the way the decode counter was checked against the 789.
 .PP
 .B "Four attempts, and what each one taught."
 Keeping decoded nodes across commits: no effect, because copy on write renumbers
