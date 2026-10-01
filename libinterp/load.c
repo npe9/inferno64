@@ -500,7 +500,41 @@ parsemod(char *path, uchar *code, u32 length, Dir *dir)
 			for(i = 0; i < n; i++) {
 				hi = disw(isp);
 				lo = disw(isp);
-				*(LONG*)si = (LONG)hi << 32 | (LONG)(u32)lo;
+				/*
+				 * The low word is masked with an AND, not
+				 * narrowed with a cast.
+				 *
+				 * hi and lo are WORDs, and with DISWORD=8 a
+				 * WORD is 64 bits, so (u32)lo narrowed a
+				 * 64-bit value -- and kencc emits NOTHING for
+				 * that.  7c turned the old line into
+				 *	MOV lo+8(FP),R10
+				 *	LSL $32,R0,R2
+				 *	ORR R10,R2,R0
+				 * with no truncation anywhere, so the full
+				 * sign-extended lo was OR'd in and every big
+				 * literal whose low word had its top bit set
+				 * came back with ones in its high word.
+				 * big 16r7fffffffffffffff loaded as -1.
+				 *
+				 * It cost a long hunt through efs, because
+				 * what it looks like from outside is a
+				 * filesystem: namehash() ends in "h & M64"
+				 * with M64 that literal, so on a kernel the
+				 * mask did nothing, half of all names hashed
+				 * negative, their dentries sorted before
+				 * every real key, and a create reported
+				 * success for a file that could never be
+				 * found again.  Hosted emu was always fine --
+				 * clang narrows -- which is why no host test
+				 * could see it.
+				 *
+				 * An AND is an operation and cannot be
+				 * dropped; 7c emits AND $4294967295,R3 for
+				 * it.  See kencc's other dropped narrowing
+				 * casts in utils/cc.
+				 */
+				*(LONG*)si = (LONG)hi << 32 | ((LONG)lo & (LONG)0xffffffff);
 				DNP(",%lld 0x%zx", *(LONG*)si, *(LONG*)si);
 				si += sizeof(LONG);
 			}
