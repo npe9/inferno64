@@ -565,18 +565,80 @@ not one block is ever seen twice.  The change was reverted: it is arguably more
 correct than clearing everything, but no measurement justifies it and the code
 it adds is not free.
 .PP
-.B "So the fix is to stop decoding whole blocks."
-A lookup wants one entry.  The packed layout is searchable \(em keys rise within
-a node, which
+.B "Two attempted fixes, both measured, both reverted."
+.I "Keep the decoded nodes across commits."
+The cache is cleared at every commit and an operation ends in one, so it was
+changed to drop only the blocks the transaction freed \(em known, and sound,
+since a committed block is never written again.  Measured:
+.CW 328/1372/1989
+became
+.CW 324/1367/1985 .
+Nothing.  Copy on write is why: every modifying operation rewrites the path, so
+the next reads
+.I new block numbers
+and the cache cannot hit across operations.
+.CW getnode/op
+staying at 4.0 over 240 operations on one file says it directly \(em no block is
+ever seen twice.
+.PP
+.I "A descent that does not decode."
+The cache was changed to hold the block
+.I bytes ,
+with
+.CW getnode
+decoding on demand and remembering the result per slot, and
 .CW leaffor
-already relies on \(em so the work is to binary-search the block as bytes and
-decode only the entry found, leaving
-.CW Node.unpack
-for the paths that genuinely want every entry
-.CW ( writeents ,
-.CW range ).
-That is a change to the format layer rather than a tuning knob, which is why it
-is written down here rather than attempted at the end of this session.
+and
+.CW pathto
+rewritten to walk the entries in place through a new
+.CW Fs.descend
+\(em keys compared out of the buffer, nothing copied.  Measured:
+.CW 330/1371/1989 .
+Nothing again.
+.PP
+.B "And that is the useful result, because it says where the cost is not."
+The descent was never paying for the unpacking.  Interior nodes are few and
+hold pointers; the entries are in the
+.I leaves ,
+and the callers that read leaves \(em
+.CW range ,
+which collects every entry for an inode, and
+.CW replace ,
+which decodes a leaf, rebuilds it with one entry inserted and re-packs it \(em
+genuinely need all of them.  So no amount of laziness in the descent helps.
+.PP
+An intermediate version, lazy descent
+.I without
+the per-slot decoded node, was
+.I worse
+\(em
+.CW 434/3075 ,
+and arm C did not finish \(em because
+.CW range ,
+.CW replace
+and
+.CW fixup
+walk the same blocks repeatedly within a transaction and were re-decoding on
+every call.  That is worth knowing: the decoded-node cache does real work
+inside a transaction, even though it never survives one.
+.PP
+.B "So the fix is in replace, and it is a byte-level splice."
+An insert into a leaf is
+.CW "decode N entries, build N+1, re-pack" ,
+and
+.CW N
+is the leaf's fullness.  Doing it in the packed block instead \(em move the tail
+of the buffer up by the new entry's width, write the entry, bump the count,
+recompute the checksum \(em allocates nothing per entry and is the same work a
+B-tree insert is supposed to be.
+.CW range
+would still decode what it returns, which is what it is for.
+.PP
+That is a real piece of work on the format layer and it has now had two wrong
+guesses in front of it, so the next person should start by instrumenting
+.CW replace
+specifically \(em entries decoded and re-packed per operation \(em and confirm it
+accounts for the 22, 514 and 789 before writing anything.
 .PP
 .B Done when.
 .CW alloc/op
