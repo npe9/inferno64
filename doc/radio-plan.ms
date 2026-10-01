@@ -4675,3 +4675,69 @@ measured 141 allocations per redirection against 51, and on silicon it is
 .IR lil 's
 is six times better than the model made it look.  A model of a console
 and a pool is not a console and a pool.
+.PP
+.B "Transparent mode works on silicon, and it is not the detector it was wanted as."
+With
+.B MDMCFG1.FIFO_EN
+cleared, the three registers read back off the part each time, and the
+keyed and unkeyed cases alternated four times:
+.DS
+.CW "mode off            0.0% high, the pin parked"
+.CW "mode on, quiet      49.0 to 52.5% high, 1613 runs in 2s"
+.CW "mode on, keyed      46.8 to 47.4% high, 1206 runs in 2s"
+.DE
+So the pin moves, where before the fix it did not move at all \- half a
+second, 405000 samples, one level, at all four TRANSPARENT_INTFACT
+settings and with SERIAL_CLK tried on two other pins.
+.B "The earlier conclusion that what this board could not rule out was the pin is retracted: the pin was never the problem."
+.PP
+But the two sets overlap, and the run lengths pile into the same
+512-sample bin either way \- 610 to 632 microseconds against the 833 a
+1200-symbol second gives.  The slicer has no squelch, so with nothing
+arriving it slices noise into roughly random bits at roughly half duty,
+which is what it does with a random-data carrier too.  The keyed set is
+tighter and has fewer and longer runs, 1206 against 1613, which is the
+shape real data would have; four readings four points apart is a hint and
+not a detector.  So "noise has no such pile", written here and in
+.IR radio (3),
+is false on this bench and is withdrawn.
+.PP
+.B "Two method failures in getting that number, both of the same kind."
+First,
+.B gread
+right after
+.B "serial on"
+can read 0.0 per cent, and one run gave 0.0 quiet against 52.2 keyed \-
+which reads as a clean detection and is settling.  The next run gave 43.1
+against 46.6.
+.B "A reading that exactly equals a degenerate baseline is as likely to mean the instrument was not ready as that the channel was empty,"
+which is rule 2 of this bench written down again in a new disguise.  The
+script now alternates four times.
+.PP
+Second, the histogram parser looked for two bare columns where the driver
+prints
+.CW "<bin>: low <n> high <n>" ,
+matched nothing, and reported "runs 0" for a pin
+.B gread
+had just measured as 52 per cent high.  A parser that cannot fail to
+match is one more instrument that lies by agreeing with the hypothesis,
+and it agreed with this one for two whole runs.
+.PP
+.B "And a flash that reports success is not evidence that the board runs what was flashed."
+Both boards were reflashed for this and both clients printed McuType,
+EraseBlock, BootStart and exited zero \- and board 2 was still running the
+previous kernel, which the harness caught because it asserts the register
+the new kernel writes:
+.B "serial on"
+left
+.B MDMCFG1
+at 0x46.  That is not a part refusing the write, which was checked
+separately \-
+.CW "reg 0x12 0x06"
+takes and sticks at a prompt.  Reflashing that board alone put the new
+kernel on it and
+.B "serial on"
+then read 0x06.
+.B "The only evidence that a flash took is behaviour that only the new kernel has;"
+tools/radio now has that check as part of the measurement rather than as
+a thing to remember.

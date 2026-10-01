@@ -545,21 +545,71 @@ alternating pattern at the symbol rate, so under
 .B ghist
 it arrives as a pile of runs all one length, and that length is the
 symbol period: 1953us is 512 symbols a second, 833us is 1200, 625us is
-1600 and 417us is 2400.  Noise has no such pile.  Everything else on
-this page reports a threshold being crossed, and a threshold is the
-receiver's.
+1600 and 417us is 2400.  Everything else on this page reports a threshold
+being crossed, and a threshold is the receiver's.
 .PP
-Not working on silicon, and this says what was tried, because the verb
-is here and does nothing useful on this board.  Both registers the mode
-needs are set and read back off the part \-
+"Noise has no such pile" was also written here and is not true of this
+bench: measured on silicon, the pin with the mode on and nothing
+transmitting gives 1613 runs in two seconds piling into the same
+512-sample bin as a keyed random-data carrier does.  A slicer with no
+squelch has to put out something.  What the mode gives is a bit stream
+whose run lengths can be read; separating that stream from noise is a
+separate problem and this page does not have an answer to it.
+.PP
+It now works on silicon, and the reason it had not is a third register.
+.B MDMCFG1 's
+FIFO_EN is 1 at reset, and SWRU295E says 1 is "data in/out through the
+FIFOs" where 0 is "data in/out through the serial pin(s) (the FIFOs are
+bypassed)".  This driver never wrote the register, so the demodulator's
+output went where it always goes and GPIO3 had nothing to carry however
 .B PKT_CFG2
-0x07, which is CCA_MODE 001 and PKT_FORMAT 11, and
+and
 .B MDMCFG0
-0x0d, which has TRANSPARENT_MODE_EN \- and GPIO3 does not move: half a
-second, 405000 samples at 1.23us, one level throughout.  That holds at
-all four TRANSPARENT_INTFACT settings, with SERIAL_CLK configured on
-IOCFG2, and with SERIAL_CLK on IOCFG1 and SERIAL_RX on IOCFG0 as well
-in case the interface wants more than one pin before it runs.
+were programmed.
+.B "serial on"
+clears it and
+.B "serial off"
+puts it back, and the restore matters as much: with FIFO_EN clear nothing
+reaches the RX FIFO at all.
+.PP
+Measured, with the three registers read back off the part each time:
+.PP
+.EX
+	mode off            0.0% high, the pin parked
+	mode on, quiet      49.0 to 52.5% high, 1613 runs in 2s
+	mode on, keyed      46.8 to 47.4% high, 1206 runs in 2s
+.EE
+.PP
+So the pin moves, where before it did not move at all: the earlier
+account of this said half a second and 405000 samples at one level, at
+all four TRANSPARENT_INTFACT settings and with SERIAL_CLK tried on IOCFG2
+and on IOCFG1 with SERIAL_RX on IOCFG0 as well, and concluded that what
+the board could not rule out was the pin.
+.B "That is retracted \- the pin was never the problem."
+.PP
+.B "And the mode is not a signal detector here, which is what it was wanted for."
+The slicer has no squelch, so with nothing arriving it slices noise into
+roughly random bits at roughly half duty, which is what it does with a
+random-data carrier too \- and the run lengths pile up in the same bin
+either way, 512 samples of 1.2us, which is 610 to 632 microseconds
+against the 833 a 1200-symbol second would give.  The keyed set is
+tighter (46.8 to 47.4 against 49.0 to 52.5) and has fewer and longer runs
+(1206 against 1613), which is the shape real data would have, but four
+readings four points apart is a hint and not a detector.
+.PP
+.B "One trap in measuring it, because it cost a wrong conclusion here."
+The first
+.B gread
+after
+.B "serial on"
+can read 0.0 per cent.  One run of
+.I tools/radio/serialsilicon.py
+gave 0.0 quiet against 52.2 keyed, which looks like a clean detection,
+and the next gave 43.1 against 46.6.  The 0.0 is settling and not
+silence, and it is a reading that exactly equals a degenerate baseline \-
+which is as likely to mean the instrument was not ready as that the
+channel was empty.  That script now alternates the keyed and unkeyed
+cases four times for exactly this reason.
 .PP
 The control is the sweep.  All sixty-four IOCFG3 selections with the
 mode off and with it on: exactly three move either way and by the same
