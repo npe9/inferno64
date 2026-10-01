@@ -14611,7 +14611,7 @@ have produced a
 that appears to work, leaves every binary resolving from the kernel root, and
 reports success.
 .NH 2
-A write to efs on the board does not survive a reboot
+WITHDRAWN: "a write to efs on the board does not survive a reboot"
 .PP
 Measured, and it is the thing that has to be fixed before
 .CW efs
@@ -14671,5 +14671,52 @@ restarts, and the filesystem is doing what it promises rather than losing data
 it had committed.  That is a hypothesis with an obvious test \(em commit, then
 reboot \(em and the commit trigger has to be found or added first.
 .PP
-So the last item is not "make efs the root".  It is: find what commits, make a
-write durable across a reboot, and only then union it over anything.
+.PP
+.B "All of which is withdrawn, by a better-controlled run."
+The hypothesis above was wrong twice over.  First,
+.CW appl/cmd/disk/efs.b
+says in its own header that "every modifying operation ends in a commit", and
+there are five
+.CW fs.commit()
+calls to match \(em so the write was committed, not pending.  Second, and
+decisively, the test was repeated with a
+.I paired control :
+one write to plain FAT and one to
+.CW efs ,
+in the same command, then a reboot.
+.P1
+and {echo fat-payload > /n/dos/fattest.txt} {echo FAT-WROTE}
+and {echo efs-payload > /n/efs/y1}          {echo EFS-WROTE}
+                        -- reboot --
+cat /n/dos/fattest.txt   fat-payload   FAT-SURVIVED
+cat /n/efs/y1            efs-payload   EFS-SURVIVED
+ls /n/efs                old.txt  y1
+.P2
+Both survive.
+.B "efs writes are durable across a reboot on this board."
+.PP
+What the first run actually was is not established.  The one difference visible
+in it is that its reboot was issued by a
+.I bare
+.CW "echo reboot > /dev/sysctl"
+in the same command as other work \(em the exact form shown above to fail
+silently \(em so what that boot did, and whether
+.CW efscheck()
+reamed on the way through, is unknown.  Recording it as unknown rather than
+inventing a mechanism for it.
+.PP
+.B "The lesson is the one this document keeps relearning."
+A single observation with no control produced a confident, wrong, committed
+claim about a filesystem losing data.  The paired FAT write is what settled it,
+and it cost one extra reboot.  The earlier note about
+.CW old.txt
+stands and is worth keeping: it IS recreated every boot, so it cannot evidence
+durability either way \(em which is why the control had to be a file this
+session wrote.
+.PP
+So the last item is smaller than either version said.  Writes are durable; what
+remains is a union of
+.CW efs
+over the directories that are written, and the knowledge that
+.CW "bind /n/efs /"
+is not it.
