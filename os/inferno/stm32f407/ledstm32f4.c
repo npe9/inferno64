@@ -48,6 +48,14 @@
  * variable kept here, so it does not drift from the hardware and it
  * reports what the radio or idlehands() did as readily as what was
  * written through this file.
+ *
+ * VERIFIED under qemu: a read gives "1 on / 2 on", "echo 1 off" then
+ * reads back "1 off", "echo 1 on" reads back "1 on", and both error
+ * paths answer -- "echo 3 on" gives "this board has two lamps, 1 and 2"
+ * and "echo 1 sideways" gives "a lamp is on or off".  The second lamp
+ * read "on" and then "off" across two of those reads without anything
+ * having written it, which is idlehands() blinking it and is the proof
+ * that the read is the register and not a variable.
  */
 
 enum
