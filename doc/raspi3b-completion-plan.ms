@@ -14535,3 +14535,78 @@ and paints what it is asked to.  Driving it would go through
 and
 .CW /dev/keyboard ,
 which is how the GUI work on other branches is driven headlessly.
+.NH 2
+"The copy-on-write filesystem is not the root": what that can and cannot mean here
+.PP
+The summary has carried this as the last missing thing.  It needs reframing
+rather than building, for two reasons that are both facts about this board rather
+than about
+.CW efs .
+.PP
+.B "This card has no room for a partition."
+It is one FAT32 partition from sector 2048 to the end \(em table 2048..62357503,
+BPB totsec32 62355456 \(em so there is nowhere for a filesystem of its own, and
+.CW efscheck()
+says so on every boot:
+.P1
+EFS-NOROOM 0 sectors above the FAT at 62357504; using files on it instead
+.P2
+What runs on the real board is therefore
+.CW efs
+in files on the FAT,
+.CW /n/dos/efs.img
+and
+.CW /n/dos/efscrash.img ,
+and that is green: made on one boot and mounted on the next, with
+.CW EFS-OK ,
+.CW EFS-WRITE-OK ,
+.CW EFS-RENAME-OK
+and
+.CW EFS-CRASH-OK .
+Raw-partition access is exercised only by the QEMU arm, on the one card image
+with room for it.
+.PP
+.B "And a union cannot shadow the root the way this item assumes."
+Inferno has no
+.CW chroot .
+"Make
+.CW efs
+the root" would be
+.CW "bind /n/efs /" ,
+and the wm work above establishes exactly why that does not do what it sounds
+like: a union's children are not themselves unions, so
+.CW /dis
+would still resolve to the
+.I kernel's
+.CW /dis
+\(em the first one found \(em and every path under it with it.  The built-in root
+is where the kernel's own files live and cannot get out of the way.  To put
+everything under
+.CW efs
+it would have to supply
+.CW /dis ,
+.CW /fonts ,
+.CW /lib
+and the rest itself, and be bound directory by directory.
+.PP
+.B "So the useful statement is the other one."
+What a copy-on-write root is actually wanted for is a namespace whose writable
+parts survive a crash, and that is a union of
+.CW efs
+over the directories that are written \(em
+.CW /usr ,
+.CW /tmp ,
+.CW /lib
+\(em not a replacement of
+.CW / .
+That is a bind per directory, and the pieces for it are already proved: the
+filesystem mounts, survives a reboot, and its crash contract holds on the card.
+.PP
+The item should be read as "nothing writable in the default namespace is
+crash-consistent yet", which is true and small, rather than "efs is not the
+root", which on this card is not reachable and would not be the right shape if
+it were.  Written down here rather than attempted, because attempting it would
+have produced a
+.CW "bind /n/efs /"
+that appears to work, leaves every binary resolving from the kernel root, and
+reports success.
