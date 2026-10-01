@@ -15143,21 +15143,46 @@ sequence of operations committing a different number of times on the two is
 a fact about one of them that has not been explained, and it is where the
 next look should start.
 .PP
-.B "Whether this predates the reserve, and the evidence that it does."
-The repro was run on a kernel carrying
+.B "It predates the reserve: settled by running the older kernel."
+The repro was first run on a kernel carrying
 .CW Fs.reserve ,
-so the question has to be asked.  The change gates creates through
-.CW room() ,
-which either returns an error that is replied or nil and falls through to
-the original
-.CW create ,
-and its other half is inside
-.CW remove() ;
-neither turns a create into a silent success.  But that is reasoning, and
-reasoning has been falsified twice in this file, so the evidence that
-settles it is this: the names recorded as silently failing on the card's
-.CW /n/efs
-were recorded in earlier sessions, under the kernel from before the change.
-The symptom predates it.  The clean way to confirm would be to JTAG-boot
-.CW kernel8.bak ,
-which is the pre-change kernel and is still on the card.
+so the question had to be asked, and reasoning was not going to answer it \(em
+reasoning has been falsified twice in this file.  So the pre-change sources
+were taken out of git, built into their own kernel and ELF, and JTAG-booted
+into RAM with the card untouched.  Build 1790849596, with no reserve code in
+it at all, does exactly the same thing:
+.P1
+command 1  generation 1 from superblock 0   create ok, cat returns the data
+command 2  generation 3 from superblock 0   create ok, cat: does not exist
+           ls shows only the file command 1 made
+.P2
+Identical, down to the generations.  So
+.CW Fs.reserve
+did not cause this, and the claim that it was verified on silicon stands.
+.PP
+.B "And getting there cost a fifth false \(lqdid not come up\(rq."
+.CW boot.sh
+took
+.CW IMG
+for the image to load but read the build stamp it waits for out of the tree's
+.CW kernel8.img ,
+so it waited for a stamp the loaded image does not contain and reported three
+failures over a kernel that was running.
+.CW alive
+said
+.CW "dead (ticks 0 -> 0)"
+about the same kernel, because it reads
+.CW mach0 's
+address from the tree's ELF.  Fixed in
+.CW boot.sh
+by making
+.CW ELF
+travel with
+.CW IMG ;
+.CW alive
+and
+.CW where
+still have it, and their comment now says so.  That file's own comments
+already record four of these, two in one session, and the shape never
+changes: an instrument that cannot see what it is pointed at returns a value
+instead of saying it cannot see.
