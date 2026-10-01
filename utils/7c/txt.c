@@ -781,18 +781,55 @@ gmove(Node *f, Node *t)
 			else
 				gins(AUCVTFS, f, t);
 			return;
+		/*
+		 * Narrowing from 64 bits needs a narrowing MOVE.
+		 *
+		 * This was one case assigning AMOV for every integer
+		 * destination, with the comment "TO DO: conversion done?".
+		 * It was not: a plain MOV keeps all 64 bits, so
+		 * (uint)someVlong truncated nothing -- and because the
+		 * opcode came out AMOV, the samaddr test below then dropped
+		 * even that move when source and destination landed in one
+		 * register, which is the common case.  So the cast compiled
+		 * to NOTHING AT ALL.
+		 *
+		 * What that cost: libinterp/load.c read a 64-bit Dis data
+		 * item with "(LONG)hi << 32 | (LONG)(u32)lo", the (u32)
+		 * vanished, and every big literal whose low word had its top
+		 * bit set came back with ones in its high word.  On a kernel
+		 * big 16r7fffffffffffffff loaded as -1, which made efs hash
+		 * half its names to negative keys and lose files that it had
+		 * just reported creating.  Hosted emu is clang and was never
+		 * affected, so it looked like a filesystem bug for three
+		 * sessions.
+		 *
+		 * Selected by the destination, as the 4-byte source case
+		 * above already does.  jc gets this right and is the model.
+		 */
 		case TINT:
-		case TUINT:
 		case TLONG:
+			a = AMOVW;
+			break;
+		case TUINT:
 		case TULONG:
+			a = AMOVWU;
+			break;
+		case TSHORT:
+			a = AMOVH;
+			break;
+		case TUSHORT:
+			a = AMOVHU;
+			break;
+		case TCHAR:
+			a = AMOVB;
+			break;
+		case TUCHAR:
+			a = AMOVBU;
+			break;
 		case TVLONG:
 		case TUVLONG:
 		case TIND:
-		case TSHORT:
-		case TUSHORT:
-		case TCHAR:
-		case TUCHAR:
-			a = AMOV;	/* TO DO: conversion done? */
+			a = AMOV;
 			break;
 		}
 		break;
@@ -923,9 +960,16 @@ gmove(Node *f, Node *t)
 	}
 	if(a == AGOK)
 		diag(Z, "bad opcode in gmove %T -> %T", f->type, t->type);
-	if(a == AMOV || (AMOVW || a == AMOVWU) && ewidth[ft] == ewidth[tt] || a == AFMOVS || a == AFMOVD)
-	if(samaddr(f, t))
-		return;
+	/*
+	 * "AMOVW ||" was a bare enum constant used as a truth value, so that
+	 * term was always true and the guard reduced to "the widths match".
+	 * It has to be a == AMOVW, or a same-register move that really does
+	 * convert gets dropped.
+	 */
+	if(a == AMOV || (a == AMOVW || a == AMOVWU) && ewidth[ft] == ewidth[tt]
+	   || a == AFMOVS || a == AFMOVD)
+		if(samaddr(f, t))
+			return;
 	gins(a, f, t);
 }
 
