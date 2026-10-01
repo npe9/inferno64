@@ -4004,3 +4004,40 @@ match.  That has never been checked against a third party.
 The preamble length.  PREAMBLE_CFG1 reads 0x14, four bytes of 0xAA, which
 is TI's reset value and short; PQT has been seen to fire only occasionally
 even with a strong signal.
+.PP
+.B "RETRACTION: the SYNC_THR sweep is void past threshold 14."
+Board 2's console ends at
+.B "reg 0x08 0x4e"
+\- threshold 14 \- with no panic and no further output, so it stopped
+running commands there and the rows for 17, 20, 23, 26 and 30 are one
+stale
+.B stats
+read repeated.  That is why every row was identical, and why "SYNC_THR is
+ruled out" cannot be said: only 11 and 14 were measured.
+.PP
+That is the third result thrown away for the same reason, after a
+.B csthr
+sweep taken while the board had silently rebooted onto 868MHz and a
+saturation reading that was a cleared AGC register.  In each case a
+one-off script read the screen without checking the board was still
+running what was typed at it, and the stale text parsed cleanly into
+numbers.
+.PP
+.B tools/radio/twoboard.py
+now holds the discipline where it cannot be skipped: every
+.I read
+is bracketed by liveness marks and raises rather than returning,
+.I expect
+voids a measurement whose registers no longer hold what they were set to,
+and
+.I reaches_tx
+reads txtrace element 4 because the driver counts
+.B sent
+whether or not the part entered TX.
+.PP
+What survives of the evening, measured with the frequency verified at
+every step and the carrier held: board 2 hears board 1's carrier at
+-57dBm, fifty decibels over its floor, and receives no packet at all \-
+.BR "recv 0, crcerr 0, lastrx none" .
+That stands.  Which thresholds, if any, change it is now an open question
+again.
