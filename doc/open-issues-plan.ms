@@ -1052,3 +1052,67 @@ without
 .CW -c
 is refused by the namespace, correctly and with a message, and everything else
 attributed to it was the VM.
+.NH 1
+E.  A retention leak found and fixed, and four places it is not
+.NH 2
+E1.  FIXED.  remove() pruned neither name cache
+.LP
+.CW disk/efs.b
+keeps two caches keyed by inode:
+.CW names
+for
+.CW nameof() ,
+.CW parents
+for
+.CW parentof() .
+.CW forget()
+prunes
+.CW names
+and was called from exactly one place \(em
+.CW wstat() ,
+the rename path \(em and
+.CW parents
+had no counterpart at all.
+.CW remove()
+pruned neither.  Since
+.CW nextino
+only increments, an entry for a deleted inode can never match again: it is dead
+weight for the filesystem's whole life, and with 64 buckets the chains that
+.CW remember() ,
+.CW nameof()
+and
+.CW parentof()
+walk on every operation grow with it.  Fixed in
+.CW 42b807c42 .
+.PP
+Live heap blocks after each of four cycles of 60 creates and 60 removes:
+.P1
+before   2385  2568  3365  3990     monotonic, +1605 over 240 files
+after    2116  2282  2621  2401     no trend
+after    2100  2554  2228  2146     again
+.P2
+About 6.7 blocks per file created and removed.
+.NH 2
+E2.  And the noise band, which matters more than the four negatives
+.LP
+The same instrument was pointed at four other operation mixes.  Directory
+create-and-remove looked like a second leak:
+.P1
+dir-1 2147   dir-2 2458   dir-3 2546
+.P2
+monotonic over three cycles, with the directory verified
+.I empty
+after each one \(em so not accumulated state.  Run eight times instead:
+.P1
+2074  1791  1908  1899  2089  1779  2071  2108
+.P2
+No trend.  It oscillates around 1950 by about 170 either way, and three samples
+inside that band happened to rise.  There is no directory leak.
+.PP
+So the band is +-170 live blocks for this test, and that is the number to beat
+before believing anything measured with it.  E1's signal was +1605, about nine
+times it, which is why that one is real; and the fixed runs sit inside the band.
+.PP
+Flat, with no retention found: renaming (1996, 2166, 2008), truncating by
+rewrite (2241, 2511, 2427) and walking a directory (2057, 2055, 2071) \(em the
+last being the tightest, which is what one expects of a read-only operation.
