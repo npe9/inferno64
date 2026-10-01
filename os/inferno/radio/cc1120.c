@@ -1258,7 +1258,25 @@ cc1120ctl(Radio *r, char *buf, int n)
 			rr->serial = 0;
 			wr(rr, Rpktcfg2, Fmtnormal);
 			wr(rr, Rmdmcfg0, rd(rr, Rmdmcfg0) & ~Transparenten);
-			wr(rr, Riocfg3, Gcarriersense);
+			/*
+			 * Back to PKT_SYNC_RXTX, which is what this board's
+			 * interrupt needs, and not to carrier sense.
+			 *
+			 * GPIO3 is wired to the MCU's EXTI line and the
+			 * receive path is driven entirely by it: cc1120-
+			 * interrupt() is what reads the FIFO.  Leaving the
+			 * pin on carrier sense means the packet interrupt
+			 * cannot fire, so the part can receive perfectly
+			 * and recv stays at zero until the board is
+			 * rebooted -- a silent, sticky break in the receive
+			 * path left behind by a diagnostic verb.
+			 *
+			 * The measurement verbs nearby get this right: they
+			 * read IOCFG3 into oldsel first and put it back.
+			 * This one did not, and "serial off" is exactly the
+			 * command somebody runs to get back to normal.
+			 */
+			wr(rr, Riocfg3, Gpktsyncrxtx);
 		}else{
 			s->unlock(s);
 			error(Ebadctl);
