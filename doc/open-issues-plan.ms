@@ -1076,6 +1076,88 @@ per level or adding a block cache beside the node cache.  Trading 99 small
 allocations for a 4KB one may be a loss, and this item already records two
 cache changes that measured as nothing.  That is a design decision with a
 number attached to it, and the number to beat is in the table above.
+.PP
+.B "TRIED, measured, and REVERTED \(em and the reason is that the term is not where the TIME is."
+Packed interior navigation was built and measured before being reverted:
+.CW pntype ,
+.CW pnents ,
+.CW pchild
+and
+.CW pchildfor
+walking a block's bytes, a raw-block cache under the decoded one, and
+.CW Fs.leaffor ,
+.CW Fs.pathto
+and
+.CW Fs.nextleaf
+converted to use them.  Same workload, same counters:
+.P1
+                 before     after
+interior ents    294020     85356
+leaf ents        142600    142318
+total            436620    227674     \(em48%
+raw block reads    (n/a)     17814
+.P2
+.B "The design worry is answered, and the answer is good."
+17814 raw reads is
+.I exactly
+the 17814 decodes the old path did, so navigating in packed bytes costs no
+extra block read at all.  The residue is
+.CW Fs.fixup ,
+which rebuilds a parent and so genuinely needs its entries \(em and part of
+it is the cache moving rather than the work going: 
+.CW pathto 's
+decoding used to warm the node cache that
+.CW fixup
+then hit.
+.PP
+.B "But 48 per cent less work bought about 4 per cent of wall time, and that is arithmetic, not luck."
+Host, three runs each, 300 creates:
+.CW "0.99/0.99/0.97 s"
+became
+.CW "0.87/0.95/0.97 s" .
+The reason is in figures this plan already has.  The board allocates 190000
+objects a second (F1's compute-bound measurement), and a create at 60 files
+costs 4205 allocations \(em about 22ms of a 150ms create, some 15 per cent.
+Cutting a 15 per cent term by half is 7 per cent, and that is what was seen.
+.B "Allocations were never going to explain a 7-second create."
+.PP
+.B "The board A/B could not see it either, for a reason worth keeping."
+Sixty creates on a 1024-block image gave
+.I identical
+allocations per create, 4205 both ways: at that size the tree is shallow and
+interior nodes are a small share of what is decoded, so the arm chosen to be
+cheap enough to run was too small to contain the effect.  The times differed
+by 26 per cent across five rounds, which is inside this rig's known drift and
+was not believed.
+.PP
+.B "Why it was reverted rather than kept as a free 48 per cent."
+Two runs of 300 creates on the board did not finish in the time the 60-file
+growth curve predicts \(em 81, 90, 118, 137, 149, 168 ms per create over six
+rounds extrapolates to about 100 seconds for 300, and both runs exceeded forty
+minutes, one ending in a reboot whose cause had already left the per-boot
+console ring.  And the same workload was never run on the board with the
+COMMITTED library, so there is no control: the change was neither convicted nor
+exonerated.  An optimisation with no measured benefit and an open question
+against it does not belong in the filesystem this board boots from.  The patch
+is recoverable from this entry's description; it is not subtle.
+.PP
+.B "And the real finding, which reframes this whole item for the board."
+The host does those 300 creates in 0.95 seconds.  The board takes more than
+forty minutes.  That is a factor of 2500 where
+.CW disbench
+puts the processor difference at 10 to 50.  Allocations are 15 per cent of a
+create and cannot be it; the free map is one group at these sizes and the image
+size was shown flat across a 64-fold range.  What is left is the writes: every
+efs block goes to a FILE on
+.CW dossrv ,
+which caches 9-sector tracks and does read-modify-write, and a commit rewrites
+a path.  So B1's quadratic is real, is now attributed, and is NOT what makes a
+create slow on this board.  The next measurement is writes per commit and
+microseconds per write through
+.CW dossrv ,
+and the one after it is whether efs on a raw partition \(em which
+.CW EFS-NOROOM
+says there is no room for on this card \(em is a different machine entirely.
 
 .NH 2
 B2.  DONE.  One namehash, in the library
