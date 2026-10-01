@@ -24,7 +24,7 @@ Order, and why
 2  A4  do the 32-bit back-ends narrow?    DONE, answered below
 3  A3  audit what the 7c fix changed      DONE: clean; left A5 hygiene
 4  B2  one namehash, not two              DONE 2d273290f
-5  A1  fix 6c                             blocked on A2
+5  A1  fix 6c                             DONE e5d6131f3 (A2 done b6a7201e9)
 6  B1  efs's quadratic allocation         the real remaining bug
 7  D1  w4/w8, D2 close the bind section   housekeeping
 .P2
@@ -42,144 +42,141 @@ outranks extending the fix to another architecture.
 .NH 1
 A.  The kencc narrowing-cast class
 .NH 2
-A1.  6c drops the same narrowing; the cause is NOT yet located
+A1.  DONE.  6c's peephole was deleting the truncation
 .LP
-.B Established.
-.CW 6c
-compiles
-.CW "(LONG)hi << 32 | (LONG)(u32)lo"
-to
-.P1
-MOVQ	BP,AX
-SALQ	$32,AX
-MOVQ	lo+8(FP),CX
-ORQ	CX,AX
-.P2
-with no truncation: the same defect
-.CW 7c
-had, by inspection of the generated code.  It affects
-.CW pc64
-and any amd64 kernel, exactly as it affected aarch64.
-.PP
-.B "Not established: where it is."
-A first draft of this plan said the cause was found, in a
-.CW /* ... */
-block spanning
-.CW utils/6c/txt.c
-759 to 815 that contains the narrowing pairs including
-.CW CASE(TVLONG,TUINT) .
-That was wrong, and wrong in the way this tree keeps paying for: a cause
-inferred from reading code and not tested.  The comment opens immediately after
-.CW default: ,
-and the live body of that
-.CW default
-is
-.P1
-	switch(CASE(ft,tt)) {
-	default:
-/*
- * integer to integer
- ********
-		a = AGOK;	break;
-	... fifty-six lines of case labels ...
- *****/
-		a = AMOVL;
-		break;
-.P2
-so an unhandled pair gets
-.CW AMOVL ,
-which on amd64 moves 32 bits and zero-extends \(em the correct truncation.
-Nothing about that block prevents it.  And the
-.CW samaddr
-guard does not drop it either:
-.CW "a == AMOVL && ewidth[ft] == ewidth[tt]"
-is false when the widths differ, which is the narrowing case.
-.PP
-So
-.CW gmove
-is never reached for this conversion, and the cast is being elided earlier \(em
-which is what happened in
-.CW 7c
-too, by a route the tree dumps could not show.  The structural oddities above
-are worth noting when the time comes (a
-.CW default
-that silently picks an opcode, fifty-six commented-out cases, and the guard's
-own
-.CW "/* TO DO: check AMOVL */" ),
-but they are context, not the diagnosis.
-.PP
-.B "How to locate it, the method that worked."
-Not by reading.
+The cause was not where the first draft of this plan guessed, and the method
+the plan prescribed instead is what found it.
 .CW "6c -t"
-dumps the tree after each front-end phase; if both casts survive to
-.CW "x complex"
-the defect is in the back-end.  Then instrument: a print at the top of
-.CW cgen 's
-.CW OCAST
-reporting
-.CW l->type ,
-.CW n->type
-and
-.CW nn->type
-with their widths, a print at the
-.CW nocast
-elision, and a print in
+shows both casts of
+.CW "(LONG)(u32)x"
+surviving to
+.CW "x complex" ,
+so the defect is in the back-end.  Instrumenting
 .CW gmove
-reporting
-.CW ft ,
-.CW tt ,
-the chosen opcode and
-.CW samaddr .
-That sequence took
+shows it choosing
+.CW AMOVL
+for the narrowing \(em which is
+.I correct ,
+.CW MOVL
+zero-extends on amd64 \(em and not skipping it.  So the instruction was emitted
+and is simply absent from the output.  Compiling with
+.CW -N
+settles it: with the peephole off, both
+.CW MOVL s
+are there.
+.PP
+.CW utils/6c/peep.c 's
+.CW loop1
+had
+.CW AMOVL
+grouped with
+.CW AMOVQ ,
+.CW AMOVSS
+and
+.CW AMOVSD ,
+copy-propagated and then excised.
+.CW MOVL
+is not a copy on amd64: it zeroes the upper 32 bits, so
+.CW "MOVL AX,AX"
+is a truncation and excising it removes the narrowing.  Fixed in
+.CW e5d6131f3 .
+All five narrowing types now emit one \(em
+.CW MOVL ,
+.CW MOVWQZX ,
+.CW MOVBQZX ,
+.CW MOVL ,
+.CW MOVLQSX
+\(em where the four-byte ones emitted nothing.
+.PP
+.B "What the board says, and what it does not."
+.CW pc64
+links again and was rebuilt with the fix, growing 8728342 to 8732789 bytes.
+Before: two QEMU boots, two pool-allocator panics,
+.CW alloc:D2B:free
+and
+.CW alloc:D2B:destroy-entry ,
+at different addresses \(em heap corruption rather than a fixed logic error,
+which is what a truncated pointer or size produces.  After: six boots, no
+.CW D2B
+at all, two of them reaching an interactive shell and running Dis cleanly.
+.PP
+But four of those six still panic \(em three general protection violations and
+one
+.CW cclose
+\(em so
+.CW pc64
+has other problems and is not fixed, and two baseline runs is a thin control.
+The
+.CW D2B
+class was present before and absent after; that is all the board supports.  The
+compiler probe is the evidence for the fix.
+.PP
+.B "And the three claims A1 and A2 had to withdraw."
+That the cause was the commented-out block at
+.CW utils/6c/txt.c
+759-815 \(em no, that comment opens after
+.CW default: ,
+whose live body picks
+.CW AMOVL
+correctly.  That
+.CW gmove
+or
+.CW samaddr
+was at fault, as in
 .CW 7c
-from symptom to one-line cause in three builds, and
-.CW 6c
-is the same shape of back-end.
-.PP
-.B Verification.
-The same sequence that verified
-.CW 7c ,
-and nothing less: the probe emits a truncation for
-.CW (uint) ,
-.CW (ulong) ,
-.CW (int) ,
-.CW (ushort)
-and
-.CW (uchar)
-of a 64-bit value; a full rebuild of the amd64 kernel from touched sources;
-and that kernel boots and runs Dis.  The last step is blocked \(em see A2 \(em
-and
-.B "the fix must not be committed as verified until it is unblocked" ,
-because a code-generator change that has never run is not a fix.
+\(em no, both do the right thing here.  And that
+.CW pc64 's
+link failure was another session's uncommitted work \(em no: see A2.
 .NH 2
-A2.  pc64 does not link, which is what blocks A1
+A2.  DONE, and the premise was wrong
 .LP
-.B Established.
-.P1
-consdebugchar: undefined: archreboot in consdebugchar
-.P2
-.CW libinterp
-builds clean for amd64; the missing symbol is in the port.  The tree has
-untracked
-.CW os/inferno/pc64/pc64dev.c ,
-.CW ipc64dev
+The plan said
+.CW pc64 's
+.CW "consdebugchar: undefined: archreboot"
+was work in progress belonging to someone else, inferred from untracked files in
+that directory.
+.CW "git log -L"
+on the call site says otherwise: the call was added to the
+.I shared
+.CW os/inferno/port/devcons.c
+by
+.CW c580839a5 ,
+the commit that added
+.CW ^R
+for raspi3b, on this branch.  So this line of work broke the link for the two
+x86 ports by giving shared port code a call no x86 port answered.  Every other
+port defines
+.CW archreboot ;
+only
+.CW pc
 and
-.CW ipc64.acid ,
-so this is work in progress belonging to someone else, and nothing here should
-edit it.
+.CW pc64
+do not.
 .PP
-.B "Three ways out, in preference order."
-Ask whoever owns that work to land or revert it.  Failing that, verify A1
-against a different amd64 target that does link, if one exists \(em this is
-worth five minutes with
-.CW mk
-before assuming it does not.  Failing that, and only to unblock verification,
-build a kernel with a local
-.CW archreboot
-stub that panics if called, boot it under QEMU, and
-.I do not commit the stub .
-The third way proves the code generator, which is the point, and leaves the
-port's own breakage to its owner.
+Fixed in
+.CW b6a7201e9 :
+.CW pc64
+already had the mechanism under another name, since
+.CW exit()
+ends with
+.CW arch->reset() ,
+so
+.CW archreboot()
+calls that directly \(em and deliberately not
+.CW exit() ,
+because
+.CW ^R
+exists to reset a machine whose software has stopped, and must not ask a wedged
+server to flush.
+.CW pc
+is left alone: same gap, but it is not built here and I cannot check that
+.CW arch->reset
+is the right call there.
+.PP
+The lesson is the one this file keeps relearning.  "Untracked files are nearby,
+so this is someone's work in progress" is an inference, and it was wrong; one
+.CW "git log -L"
+would have said so at the time, and it took four words to run.
 .NH 2
 A3.  DONE.  The 7c fix changed 100 files; nothing newly truncated is dereferenced
 .LP
