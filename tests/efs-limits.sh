@@ -37,7 +37,15 @@ emu() {					# emu <script-file>
 	# "out of memory: heap" and tells you nothing about the filesystem.
 	timeout $EMUTIMEOUT $EMU -pheap=256M -r"$ROOT" /dis/sh.dis "$1" > $T/efs-lim-raw.txt 2>&1
 	st=$?
-	[ $st -eq 124 ] && say "     (emu hit the ${EMUTIMEOUT}s timeout)"
+	#
+	# Recorded IN the transcript, not only said, so a verdict that reads
+	# the transcript can tell a timeout from a failure of the filesystem.
+	# Without this the fill arm called a timeout "runs out of MEMORY".
+	#
+	if [ $st -eq 124 ]; then
+		say "     (emu hit the ${EMUTIMEOUT}s timeout)"
+		echo "EMU-TIMEOUT ${EMUTIMEOUT}s" >> $T/efs-lim-raw.txt
+	fi
 	return $st
 }
 
@@ -150,15 +158,35 @@ unmount /n/client2
 or {and {disk/efsck /tmp/efsfull.img} {echo CKCLEAN}} {echo CKDIRTY}
 EOS
 rm -f $T/efsfull.img
-emu $T/efs-lim.sh
+#
+# This arm needs longer than the others, and it is the fix that made it so.
+#
+# It used to die at 151 to 292 creates with "out of memory: heap" and finish
+# well inside the shared timeout.  With the decode allocation removed (efs.b's
+# Node.unpack slices the block instead of copying each value out of it) the
+# fill reaches the end of a 4MiB filesystem -- 515 files of 41 bytes -- and
+# that takes longer than 240s, so the arm began reporting the generic failure
+# below for a timeout rather than for running out of memory.
+#
+EMUTIMEOUT=900 emu $T/efs-lim.sh
 if grep -q 'FULL-AT' $T/efs-lim-raw.txt &&
    grep -q REMOUNTED $T/efs-lim-raw.txt &&
    grep -q CKCLEAN $T/efs-lim-raw.txt; then
 	say "  ok: filled, refused cleanly, remounted, efsck clean"
 	grep -ao 'FULL-AT [0-9]*' $T/efs-lim-raw.txt | head -1 | sed 's/^/     /'
 else
-	say "  FAIL: runs out of MEMORY before it runs out of room (see above)"
-	grep -aE 'NEVER-FILLED|NOREMOUNT|CKDIRTY|efsck:|panic|FULL-AT|out of memory|bad address' \
+	#
+	# Say WHICH failure, because these are different bugs and the arm
+	# reported them all as the first one for a while.
+	#
+	if grep -qa 'out of memory' $T/efs-lim-raw.txt; then
+		say "  FAIL: runs out of MEMORY before it runs out of room"
+	elif grep -qa 'EMU-TIMEOUT' $T/efs-lim-raw.txt; then
+		say "  FAIL: did not finish in time -- not an out-of-memory"
+	else
+		say "  FAIL: filled, but did not refuse cleanly or remount clean"
+	fi
+	grep -aE 'NEVER-FILLED|NOREMOUNT|CKDIRTY|efsck:|panic|FULL-AT|out of memory|bad address|EMU-TIMEOUT' \
 		$T/efs-lim-raw.txt | head -5 | sed 's/^/     /'
 	fail=`expr $fail + 1`
 fi

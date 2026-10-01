@@ -491,8 +491,7 @@ Node.unpack(b: array of byte): (ref Node, string)
 		# from, so an entry that pointed into this buffer would be a
 		# window on whatever block the buffer next held.
 		#
-		v := array[vl] of byte;
-		v[0:] = b[o:o+vl];
+		v := b[o:o+vl];
 		o += vl;
 		n.ents[i] = Ent(k, v);
 	}
