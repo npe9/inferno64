@@ -3270,3 +3270,33 @@ rather than
 It is inside Part 15 either way at these duty cycles.  If the link turns
 out marginal with antennas on, that register is 24dB of headroom nobody
 is using.
+.PP
+.B "The beacon radiates, measured on the tinySA, and the receiving board is the deaf one."
+Max-held sweeps of 914.7-915.3MHz with the beacon running catch
+something at -58 to -64dBm against a held floor near -110.  The apparent
+frequency scatters across the span, 914.91 to 915.25, which is what a
+swept measurement does to a transient: a 12ms burst appears wherever the
+sweep happened to be, not where the signal is.
+.PP
+A count of bursts is the wrong measure, and its control said so.
+Counting sweeps whose peak stood 15dB over their own floor gave 3 of 12
+at 915.0 and
+.I "12 of 12"
+at both 920.3 and 908.3 \- the controls beating the target, because
+those bands carry the FHSS device this document found earlier and the
+floor moves under them.  A criterion the control satisfies better than
+the target measures nothing.
+.PP
+The level is what discriminates: 915.0 peaked at -64dBm in that run and
+-58 in the one before, where 920.3 peaked at -95.7 and 908.3 at -85.7.
+Twenty to thirty decibels over the neighbouring bands, at the frequency
+the beacon is set to.  Taken with the beacon's own console \- 15, 30, 45
+frames and no error line, where a failed write prints one \- the
+transmitting half of item 3 is done.
+.PP
+So the receiving board is the deaf one.  It reports
+.B "peak -100"
+against a floor of -104 while an instrument a similar distance away
+hears the same transmitter at -58.  Forty decibels is about what an
+antenna is worth, and the Gabil QRP is on the tinySA.  The thing to try
+is an antenna on the receiving board's ccRF click.
