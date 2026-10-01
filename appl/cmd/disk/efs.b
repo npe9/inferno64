@@ -90,6 +90,29 @@ forget(ino: big)
 	names[h] = keep;
 }
 
+#
+# And the same for the parent cache.
+#
+# There was no counterpart to forget() for parents, and remove() pruned
+# neither table, so every file ever deleted left a (child, parent) tuple
+# and a (ino, name) tuple behind.  Inode numbers are never reused --
+# nextino only increments -- so those entries can never match anything
+# again: they are dead weight that grows for the filesystem's whole life.
+# With 64 buckets the chains that remember(), nameof() and parentof()
+# walk on every operation grow with it, so it cost time as well as heap.
+#
+forgetparent(child: big)
+{
+	h := int (child % big len parents);
+	keep: list of (big, big);
+	for(l := parents[h]; l != nil; l = tl l){
+		(c, pa) := hd l;
+		if(c != child)
+			keep = (c, pa) :: keep;
+	}
+	parents[h] = keep;
+}
+
 nameof(ino: big): string
 {
 	if(ino == Rootino)
@@ -859,7 +882,13 @@ remove(ino: big): string
 	if((e = fs.delete(Key(ino, Efs->Kinode, big 0))) != nil)
 		return e;
 
+	#
+	# The inode is gone, so drop what the caches said about it, on both
+	# exits: nothing can name it again.
+	#
 	par := parentof(ino);
+	forget(ino);
+	forgetparent(ino);
 	if(par < big 0)
 		return nil;		# never walked to; nothing names it here
 	return deldentry(par, ino);
