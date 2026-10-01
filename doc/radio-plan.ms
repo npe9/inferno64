@@ -5386,3 +5386,35 @@ amplifier actually radiates there, and the formula
 is nominal \- the bottom of the field need not be linear.  Settling that
 needs an instrument on the output, or board 2 back so the link can be
 re-run at ramp 0.  Neither is available now.
+.PP
+.B "And the qualifier that belongs on all of it: from a fresh boot."
+At five,
+.I lil
+runs statements and holds a descriptor across writes:
+.DS
+.CW "fresh boot"
+.CW "  lil runs statements"
+.CW "  ctl held open"
+.CW "  0x40 -> pacfg2 0x40 ramp 0 power -17.5"
+.CW "  0x41 -> pacfg2 0x41 ramp 1 power -17.0"
+.CW "  0x43 -> pacfg2 0x43 ramp 3 power -16.0"
+.CW "  0x47 -> pacfg2 0x47 ramp 7 power -14.0"
+.CW "  0x4f -> pacfg2 0x4f ramp 15 power -10.0"
+.CW "LIL-FRESH 5 of 5 ctl writes through one descriptor"
+.DE
+each one read back off the part.  But the same thing attempted after a
+session of shell commands \- five stat reads and ten redirections, each a
+fork \- gives
+.CW "sh: /dis/lil.dis: exception: out of memory: heap"
+on the
+.I first
+write.
+.B "The heap does not come back,"
+which is the ceiling this document already records for the shell and
+which applies to
+.I lil
+as well: what
+.I lil
+avoids is the per-write fork, not the pool.  Every figure measured
+through either of them has to say whether the board had just booted, and
+the ones above do.
