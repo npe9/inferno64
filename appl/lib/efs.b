@@ -691,6 +691,9 @@ Fs.mountsuper(name: string, startsect: big, want: int): (ref Fs, string)
 	f.cblk = nil;
 	f.cnode = nil;
 	f.cnext = 0;
+	f.rblk = nil;
+	f.rraw = nil;
+	f.rnext = 0;
 	f.freed = nil;
 	f.dirty = 0;
 	return (f, nil);
@@ -722,6 +725,112 @@ readsuper(d: ref Dev, n: big): (ref Super, string)
 # number would name something else.
 #
 Ncache: con 8;
+
+#
+# A few RAW blocks, by block number.
+#
+# Correct for the same reason the decoded cache is: no committed block is
+# ever overwritten, so within a transaction a block number names one set
+# of bytes.  Cleared by commit, with the other caches.
+#
+Nraw: con 8;
+Fs.rawblk(f: self ref Fs, n: big): (array of byte, string)
+{
+	if(f.rblk == nil){
+		f.rblk = array[Nraw] of {* => Nilblk};
+		f.rraw = array[Nraw] of array of byte;
+		f.rnext = 0;
+	}
+	for(i := 0; i < Nraw; i++)
+		if(f.rblk[i] == n)
+			return (f.rraw[i], nil);
+	(b, e) := f.d.rdblk(n);
+	if(e != nil)
+		return (nil, e);
+	f.rblk[f.rnext] = n;
+	f.rraw[f.rnext] = b;
+	f.rnext = (f.rnext + 1) % Nraw;
+	return (b, nil);
+}
+
+#
+# Reading an INTERIOR block without decoding it.
+#
+# Node.unpack builds an array of Ent and slices a value for every entry
+# in the block.  An interior node here averages 99 entries and is read to
+# choose ONE child of it, so that is 99 entries decoded to use one -- two
+# thirds of every entry this library decoded, measured; see
+# doc/open-issues-plan.ms B1 for the attribution and the numbers.
+#
+# These walk the packed bytes instead.  Key.unpack returns a value adt
+# and allocates nothing, and nothing here slices, so navigating a block
+# costs no allocation at all.
+#
+# The walk reads each entry's length rather than assuming a stride.  An
+# interior entry's value is always the 8 bytes of a block number, so a
+# fixed 27-byte stride would be right today and would be a trap the day
+# anything else goes in one -- it would silently read the wrong offsets
+# rather than failing.
+#
+pntype(b: array of byte): int
+{
+	return int b[0];
+}
+
+pnents(b: array of byte): int
+{
+	return get2(b, 2);
+}
+
+#
+# The i'th entry's block number.
+#
+pchild(b: array of byte, i: int): (big, string)
+{
+	ne := pnents(b);
+	if(i < 0 || i >= ne)
+		return (big 0, sys->sprint("interior entry %d of %d", i, ne));
+	o := Noents;
+	for(m := 0; m < i; m++){
+		if(o + Keysz + 2 > Blocksize)
+			return (big 0, sys->sprint("interior entry %d past the end", m));
+		o += Keysz + 2 + get2(b, o + Keysz);
+	}
+	if(o + Keysz + 2 > Blocksize)
+		return (big 0, sys->sprint("interior entry %d past the end", i));
+	if(get2(b, o + Keysz) != 8)
+		return (big 0, sys->sprint("interior entry %d is not a pointer", i));
+	if(o + Keysz + 2 + 8 > Blocksize)
+		return (big 0, sys->sprint("interior entry %d value past the end", i));
+	return (get8(b, o + Keysz + 2), nil);
+}
+
+#
+# The last entry whose key is not greater than k, as (block, index).
+#
+# Index 0 when every key is greater, which is what the descent this
+# replaces did: j starts at 0 and the loop breaks before assigning.
+#
+pchildfor(b: array of byte, k: Key): (big, int, string)
+{
+	ne := pnents(b);
+	if(ne <= 0)
+		return (big 0, 0, "interior block is empty");
+	j := 0;
+	o := Noents;
+	for(m := 0; m < ne; m++){
+		if(o + Keysz + 2 > Blocksize)
+			return (big 0, 0, sys->sprint("interior entry %d past the end", m));
+		if(Key.unpack(b, o).cmp(k) <= 0)
+			j = m;
+		else
+			break;
+		o += Keysz + 2 + get2(b, o + Keysz);
+	}
+	(bn, e) := pchild(b, j);
+	return (bn, j, e);
+}
+
 Fs.getnode(f: self ref Fs, n: big): (ref Node, string)
 {
 	if(f.cblk == nil){
@@ -732,7 +841,7 @@ Fs.getnode(f: self ref Fs, n: big): (ref Node, string)
 	for(i := 0; i < Ncache; i++)
 		if(f.cblk[i] == n)
 			return (f.cnode[i], nil);
-	(b, e) := f.d.rdblk(n);
+	(b, e) := f.rawblk(n);
 	if(e != nil)
 		return (nil, e);
 	(nd, ue) := Node.unpack(b);
@@ -759,23 +868,20 @@ Fs.leaffor(f: self ref Fs, k: Key): (ref Node, string)
 {
 	bn := f.s.treeroot;
 	for(i := 0; i < Maxdepth; i++){
-		(n, e) := f.getnode(bn);
-		if(e != nil)
-			return (nil, e);
-		if(n.ntype == Nleaf)
-			return (n, nil);
-		if(len n.ents == 0)
-			return (nil, sys->sprint("interior block %bd is empty", bn));
-		j := 0;
-		for(m := 0; m < len n.ents; m++)
-			if(n.ents[m].key.cmp(k) <= 0)
-				j = m;
-			else
-				break;
-		if(len n.ents[j].val != 8)
-			return (nil, sys->sprint("interior block %bd entry %d is %d bytes, want 8",
-				bn, j, len n.ents[j].val));
-		bn = get8(n.ents[j].val, 0);
+		#
+		# The interior levels are navigated in packed bytes and only
+		# the LEAF is decoded, because the leaf is the only one the
+		# caller wants entries from.
+		#
+		(b, be) := f.rawblk(bn);
+		if(be != nil)
+			return (nil, be);
+		if(pntype(b) == Nleaf)
+			return f.getnode(bn);
+		(cb, nil, ce) := pchildfor(b, k);
+		if(ce != nil)
+			return (nil, sys->sprint("interior block %bd: %s", bn, ce));
+		bn = cb;
 	}
 	return (nil, "tree deeper than " + string Maxdepth + " levels; giving up");
 }
@@ -869,27 +975,29 @@ Fs.nextleaf(f: self ref Fs, blks: array of big, idx: array of int): int
 	d := len blks - 1;
 	while(d > 0){
 		d--;
-		(n, e) := f.getnode(blks[d]);
+		(nb, e) := f.rawblk(blks[d]);
 		if(e != nil)
 			return 0;
-		if(idx[d] + 1 < len n.ents){
+		if(idx[d] + 1 < pnents(nb)){
 			idx[d]++;
-			if(len n.ents[idx[d]].val != 8)
+			(cb, ce) := pchild(nb, idx[d]);
+			if(ce != nil)
 				return 0;
-			blks[d+1] = get8(n.ents[idx[d]].val, 0);
+			blks[d+1] = cb;
 			#
 			# Down the leftmost edge from there.
 			#
 			for(c := d + 1; c < len blks; c++){
-				(m, me) := f.getnode(blks[c]);
+				(mb, me) := f.rawblk(blks[c]);
 				if(me != nil)
 					return 0;
-				if(m.ntype == Nleaf)
+				if(pntype(mb) == Nleaf)
 					return 1;
-				if(len m.ents == 0 || len m.ents[0].val != 8)
+				(fb, fe) := pchild(mb, 0);
+				if(fe != nil)
 					return 0;
 				idx[c] = 0;
-				blks[c+1] = get8(m.ents[0].val, 0);
+				blks[c+1] = fb;
 			}
 			return 1;
 		}
@@ -1183,26 +1291,19 @@ Fs.pathto(f: self ref Fs, k: Key): (array of big, array of int, string)
 	for(;;){
 		if(d >= Maxdepth)
 			return (nil, nil, "tree deeper than " + string Maxdepth);
-		(n, e) := f.getnode(bn);
-		if(e != nil)
-			return (nil, nil, e);
+		(b, be) := f.rawblk(bn);
+		if(be != nil)
+			return (nil, nil, be);
 		blks[d] = bn;
-		if(n.ntype == Nleaf){
+		if(pntype(b) == Nleaf){
 			idx[d] = 0;
 			return (blks[0:d+1], idx[0:d+1], nil);
 		}
-		if(len n.ents == 0)
-			return (nil, nil, sys->sprint("interior block %bd is empty", bn));
-		j := 0;
-		for(m := 0; m < len n.ents; m++)
-			if(n.ents[m].key.cmp(k) <= 0)
-				j = m;
-			else
-				break;
+		(cb, j, ce) := pchildfor(b, k);
+		if(ce != nil)
+			return (nil, nil, sys->sprint("interior %bd: %s", bn, ce));
 		idx[d] = j;
-		if(len n.ents[j].val != 8)
-			return (nil, nil, sys->sprint("interior %bd entry %d is not a pointer", bn, j));
-		bn = get8(n.ents[j].val, 0);
+		bn = cb;
 		d++;
 	}
 }
@@ -1529,6 +1630,8 @@ Fs.commit(f: self ref Fs): string
 	f.bmindex = nil;	# re-read next time, folding pendingfree in
 	f.cblk = nil;		# a freed block can come back under a new name
 	f.cnode = nil;
+	f.rblk = nil;
+	f.rraw = nil;
 	f.groups = nil;
 	f.gdirty = nil;
 	f.repl = nil;

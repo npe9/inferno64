@@ -212,6 +212,20 @@ Efs: module
 		cblk:	array of big;
 		cnode:	array of ref Node;
 		cnext:	int;
+		#
+		# And a few RAW blocks, under the decoded cache.
+		#
+		# Interior nodes are navigated in their packed bytes rather
+		# than decoded -- two thirds of every entry this library used
+		# to decode was in an interior node, decoded only to choose
+		# one child of it (doc/open-issues-plan.ms B1).  Navigating
+		# needs the bytes, so the bytes are what is cached, and
+		# getnode() reads through here too so a block fetched once is
+		# fetched once however it is then used.
+		#
+		rblk:	array of big;
+		rraw:	array of array of byte;
+		rnext:	int;
 		freed:	list of big;	# freed by the transaction in hand
 		dirty:	int;
 
@@ -225,6 +239,7 @@ Efs: module
 		#
 		mountsuper: fn(name: string, startsect: big, which: int):
 				(ref Fs, string);
+		rawblk:	fn(f: self ref Fs, n: big): (array of byte, string);
 		writable: fn(f: self ref Fs): string;
 		group:	fn(f: self ref Fs, g: int): (array of byte, string);
 		bmget:	fn(f: self ref Fs, n: int): (int, string);

@@ -1303,8 +1303,57 @@ of wall time \(em measured against the SD card, where the medium was seventy
 per cent of a create and hid it.  On
 .CW sdmem
 the medium is nothing and the decode work is a far larger share, so the same
-change should be re-measured there before it is dismissed.  That is the next
-step, and the patch is described in the entry above.
+change should be re-measured there before it is dismissed.
+.PP
+.B "RE-MEASURED, and it is worth 2x.  The change is back in."
+Identical workload, identical image, both arms on
+.CW /dev/sdZ0/data
+with
+.CW "delay 0" ,
+timed per fifty creates:
+.P1
+creates    baseline   packed    ratio
+  1-50         35       18.4     1.9
+ 51-100        49       23.7     2.1
+101-150        78       44.2     1.8
+151-200       139       61.4     2.3
+201-250       140       75.7     1.85
+251-300       160       75.1     2.1
+total      29.6 s     14.9 s     1.98
+.P2
+.B "And the control is exact, which is what the driver's counters are for."
+Both arms report, byte for byte:
+.P1
+reads   17014 ops  136112 secs
+writes   4508 ops   36064 secs
+chunks   3912 held
+.P2
+The same I/O, the same allocation footprint, so the whole difference is CPU \(em
+which is the claim the change makes and nothing else.  No sampling, no drift,
+no three-run median: the thing that would have confounded it is measured and
+equal.
+.PP
+.B "The 4 per cent was not wrong, it was measured through the wrong medium."
+Against the SD card the medium is about seventy per cent of a create and hides
+a halving of the other thirty.  Against a medium that costs nothing the same
+change is a factor of two.  One patch, two defensible numbers, and the
+difference between them is entirely the instrument \(em which is the argument
+for
+.CW sdmem
+existing, made by the first thing it was pointed at.
+.PP
+.B "And it answers the open question that got the change reverted."
+Two runs of 300 creates on the card had not finished in the time a 60-file
+curve predicted, with no baseline arm to compare against, and that absence of a
+control was the stated reason for reverting.  The control is now arithmetic on
+measured counters: 300 creates are 17014 reads and 4508 writes, 21522
+transfers, and a transfer on that card costs tens of milliseconds \(em ten FAT
+creates measured 38.8ms each.  21522 at 38.8ms is fourteen minutes at the
+floor, before
+.CW dossrv 's
+read-modify-write.  So forty minutes is what 300 creates on that card COST, in
+either arm, and both arms issue exactly the same transfers.  The change was
+never implicated; the medium was.
 .PP
 .B "Calibration, so the delay is not believed more than it deserves."
 200 transfers at
