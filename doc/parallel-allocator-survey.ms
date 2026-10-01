@@ -410,13 +410,73 @@ guard of 64.  Splitting
 from
 .CW gcdepth
 fixed the conflation; it left both of them global.  So
-.CW gcdepth
-belongs in
-.CW Pctx
-and
 .CW gchalt
-needs atomic increment and decrement \(em and unlike the barrier, neither can be
-argued away by the values being equal.
+needs atomic increment and decrement \(em and unlike the barrier, neither of
+these can be argued away by the values being equal.
+.PP
+.B "And gcdepth does NOT simply belong in Pctx, which is what this section said first."
+.CW Pctx
+is an
+.I executor
+context, and the threads that raise
+.CW gcdepth
+are not all executors.  Read off the call sites:
+.IP "\(bu" 3
+.CW "destroy() (heap.c:353)"
+raises it, and
+.CW destroy()
+runs wherever the last reference to a Limbo object is dropped \(em
+.CW emu/port/devsrv.c ,
+.CW exception.c ,
+.CW inferno.c ,
+.CW kproc-pthreads.c
+and
+.CW srv.c
+all call it.  Those are device and service kprocs.
+.IP "\(bu" 3
+.CW "killprog() (os/inferno/port/dis.c:735)"
+raises it, and
+.CW "devprog.c:1156"
+calls
+.CW killprog()
+from a write to
+.CW /prog/N/ctl
+\(em which runs on whichever process wrote the file.
+.IP "\(bu" 3
+.CW "Bench_disablegc() (devbench.c:942)"
+raises it from a bench kproc.
+.LP
+Only
+.CW rungc()
+and
+.CW progexit()
+are reliably on an executor.  So the counter its own comment calls "a property of
+one thread's stack" is wanted by threads that have no
+.CW Pctx ,
+and putting it in one would give a device kproc some executor's recursion depth
+\(em the same confusion the
+split between
+.CW gchalt
+and
+.CW gcdepth
+was made to end, reintroduced one level down.
+.PP
+The honest home is per-thread, which here means
+.CW up ,
+and that is not a rename:
+.CW libinterp
+does not use
+.CW up
+\(em one file,
+.CW readmod.c ,
+references it at all \(em so reaching it from
+.CW heap.c
+means giving
+.CW libinterp
+a dependency it has avoided, on something whose definition differs between
+.CW emu
+and the kernel.  That is the design decision item 2 actually needs, and it is
+why this is still a design item and not a patch.
 .NH 2
 5.  comp-arm64.c's refcounts, for hosted emu \(em DONE
 .LP
@@ -544,7 +604,7 @@ Order, and what not to do
 .LP
 .P1
 1  comp-arm64.c atomic refcounts      DONE; 2.75x on a pointer-move loop
-2  gclock()/gcunlock()                the lost update; gcdepth into Pctx
+2  gclock()/gcunlock()                the lost update; gcdepth per-THREAD, not Pctx
 3  the inxec handshake, barriers       the ORDER half is done (xec.c:2533)
 4  stoptheworld() around emu's rungc  or item 1 cannot be exercised at all
 5  Phase 1b (curP as a register)      without it two executors share R
