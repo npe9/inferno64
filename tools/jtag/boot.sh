@@ -86,13 +86,26 @@ else
 	echo "boot: confirming the boot on console $SESS" >&2
 fi
 IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
+#
+# ELF travels WITH IMG, and defaults beside it.
+#
+# Every address here comes out of the ELF's symbol table and is then read
+# out of the flat image or out of the running kernel, so an ELF from one
+# build and an image from another agree about nothing.  This used to read
+# the stamp from $ROOT/.../kernel8.img whatever IMG said, so booting any
+# other image waited for a stamp that image does not contain and reported
+# "did not come up" three times over a kernel that was running fine.  The
+# same hazard is in alive and where, which name the tree's ELF outright:
+# if IMG is some other build, pass them the matching ELF too.
+#
+ELF=${ELF:-$ROOT/os/inferno/raspi3b/iraspi3b}
 IFACE=${IFACE:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
 
-stamp=`python3 - "$ROOT" <<'PYEOF'
+stamp=`python3 - "$ROOT" "$IMG" "$ELF" <<'PYEOF'
 import subprocess, sys
-root = sys.argv[1]
+root, img, elf = sys.argv[1], sys.argv[2], sys.argv[3]
 out = subprocess.run(["python3", root + "/tools/jtag/ksyms",
-                      root + "/os/inferno/raspi3b/iraspi3b", "-g", "kerndate"],
+                      elf, "-g", "kerndate"],
                      capture_output=True, text=True).stdout
 addr = None
 for l in out.splitlines():
@@ -101,7 +114,7 @@ for l in out.splitlines():
         addr = int(f[0], 16)
 if addr is None:
     sys.exit("no kerndate symbol")
-d = open(root + "/os/inferno/raspi3b/kernel8.img", "rb").read()
+d = open(img, "rb").read()
 print(int.from_bytes(d[addr-0x80000:addr-0x80000+4], "little"))
 PYEOF`
 [ -n "$stamp" ] || { echo "boot: no build stamp" >&2; exit 1; }
@@ -115,7 +128,7 @@ PYEOF`
 # -- which a dump of the live ring confirms: the count word reads 9967
 # and "JTAG-STUB 128 bytes at 0x70000" starts four bytes later.
 #
-KMESG=`python3 "$ROOT/tools/jtag/ksyms" "$ROOT/os/inferno/raspi3b/iraspi3b" 2>/dev/null |
+KMESG=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" 2>/dev/null |
 	awk '$3=="kmesg"{print $1}'`
 
 #
