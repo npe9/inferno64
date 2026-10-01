@@ -266,6 +266,19 @@ Efs: module
 	# times, because it was, and one of the four rounded down.
 	#
 	ngroups:	fn(nblocks: big): int;
+	#
+	# The hash a directory entry's key carries, so that a name can be
+	# looked up without scanning.
+	#
+	# It lives here because it was written out twice, in disk/efs.b and
+	# in disk/mkefs.b, and a divergence between those two would make
+	# every name in an image mkefs populated unfindable by the server --
+	# silently, since the dentry still holds the name and ls still lists
+	# it.  That is exactly the symptom the kencc big-literal bug produced,
+	# and it took three sessions to recognise; one way of causing it is
+	# enough.
+	#
+	namehash:	fn(s: string): big;
 
 	#
 	# How many freed blocks one superblock can carry.  Commit must not

@@ -730,25 +730,9 @@ adddentry(dir: big, name: string, ino: big): string
 	efs->put8(v, 0, ino);
 	efs->put2(v, 8, len nb);
 	v[10:] = nb;
-	return fs.insert(Key(dir, Efs->Kdentry, namehash(name)), v);
+	return fs.insert(Key(dir, Efs->Kdentry, efs->namehash(name)), v);
 }
 
-#
-# The name hash, the same one mkefs uses.  Written in both places is one
-# place too many, and it moves to the library the moment anything else
-# needs it.
-#
-namehash(s: string): big
-{
-	M64: con big 16r7fffffffffffffff;
-	h := big 16rcbf29ce484222325;
-	b := array of byte s;
-	for(i := 0; i < len b; i++){
-		h = h ^ big int b[i];
-		h = h * big 16r100000001b3;
-	}
-	return h & M64;
-}
 
 #
 # Write into a file, block by block.

@@ -312,7 +312,7 @@ addfile(path: string, ino: big, now: int): (array of Ent, big)
 	nb := array of byte name;
 	efs->put2(dv, 8, len nb);
 	dv[10:] = nb;
-	ents = Ent(Key(Rootino, Efs->Kdentry, namehash(name)), dv) :: ents;
+	ents = Ent(Key(Rootino, Efs->Kdentry, efs->namehash(name)), dv) :: ents;
 
 	a := array[len ents] of Ent;
 	k := 0;
@@ -321,27 +321,6 @@ addfile(path: string, ino: big, now: int): (array of Ent, big)
 	return (a, ino + big 1);
 }
 
-#
-# The name hash.  FNV-1a again, folded into the key's 64-bit offset.
-#
-# Collisions are legal: the format says a bucket holds however many
-# entries collide, and the name in the value is what settles which is
-# which.  Nothing here depends on the hash being good, only on it being
-# the same in every program that reads the filesystem -- which is why it
-# is written once, here, and the server calls it rather than having its
-# own.
-#
-namehash(s: string): big
-{
-	M64: con big 16r7fffffffffffffff;
-	h := big 16rcbf29ce484222325;
-	b := array of byte s;
-	for(i := 0; i < len b; i++){
-		h = h ^ big int b[i];
-		h = h * big 16r100000001b3;
-	}
-	return h & M64;
-}
 
 #
 # Insertion sort by key.  The lists here are tens of entries, not

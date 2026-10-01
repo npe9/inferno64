@@ -995,6 +995,23 @@ Fs.reserve(f: self ref Fs): int
 # size of the filesystem, and it leaves f.cursor alone: this is a
 # question, not an allocation.
 #
+#
+# The hash a directory entry's key carries.
+#
+# One copy, in the library, because there were two -- see module/efs.m.
+#
+namehash(s: string): big
+{
+	M64: con big 16r7fffffffffffffff;
+	h := big 16rcbf29ce484222325;
+	b := array of byte s;
+	for(i := 0; i < len b; i++){
+		h = h ^ big int b[i];
+		h = h * big 16r100000001b3;
+	}
+	return h & M64;
+}
+
 Fs.headroom(f: self ref Fs, want: int): (int, string)
 {
 	#
