@@ -15242,3 +15242,142 @@ and
 on the board \(em which leaf was found, whether a block was written, what
 root came out \(em and that is a small patch and a kernel build rather than a
 guess.
+.NH 2
+SOLVED: it was never efs.  A big literal lost its high word in the VM
+.LP
+The entry above said to put prints inside
+.CW create()
+and
+.CW Fs.replace
+rather than guess again.  That was right, and one of them ended it.  The
+trace from the board was identical to the host's in every field but one:
+.P1
+host   created name=second ino=3 hash=2637286319636488381
+board  created name=second ino=3 hash=-2186927586973704003
+.P2
+.CW namehash
+ends in
+.CW "h & M64"
+with
+.CW "M64: con big 16r7fffffffffffffff" ,
+which clears the sign bit and cannot return a negative number.  So the
+arithmetic was asked directly, and on the board
+.P1
+basis=-2078137563  mask=-1  and=-2078137563
+.P2
+against the host's
+.CW basis=-3750763034362895579 ,
+.CW mask=9223372036854775807 .
+The mask literal loads as
+.CW -1 :
+a 64-bit
+.CW big
+constant arrives with its high word full of ones.
+.PP
+.B "The line, and why only a kernel suffers from it."
+.CW libinterp/load.c 's
+.CW DEFL
+case read a 64-bit data item as
+.CW "(LONG)hi << 32 | (LONG)(u32)lo" .
+.CW hi
+and
+.CW lo
+are
+.CW WORD s,
+and
+.CW WORD
+is
+.CW intptr ,
+so on a 64-bit target that
+.CW (u32)
+narrows a 64-bit value \(em and kencc emits nothing at all for that.
+.CW 7c
+compiles it to
+.CW "MOV lo+8(FP),R10" ,
+.CW "LSL $32,R0,R2" ,
+.CW "ORR R10,R2,R0" ,
+with no truncation anywhere, so the whole sign-extended low word is OR'd in.
+Any literal whose low 32 bits have the top bit set comes back wrong, which is
+about half of them.  An AND is an operation and cannot be dropped \(em
+.CW 7c
+does emit
+.CW "AND $4294967295,R3"
+\(em so the mask is now explicit.
+.PP
+.B "Which ports, checked per compiler rather than assumed."
+.P1
+aarch64   WORD 64-bit   7c   AFFECTED -- proven on silicon
+amd64     WORD 64-bit   6c   AFFECTED -- MOVQ lo; ORQ, no truncation
+riscv64   WORD 64-bit   jc   fine -- emits MOVWU
+arm, 386, thumb         WORD is 32-bit; the cast never narrowed
+.P2
+So not every kencc target, and the first version of the commit message
+claiming "every architecture" was corrected before it stood.
+.CW pc64
+is affected, so this has been in that port too.  Hosted
+.CW emu
+never was, because clang narrows \(em which is the whole reason a day went
+into image sizes, the medium,
+.CW mkefs ,
+remounts and the card's own damage before anything looked at the hash.
+.PP
+.B "What it looked like, and the lesson that is worth more than the fix."
+About half of all names hashed negative; a negative key sorts before every
+real one; the dentry went in where no lookup would find it.  So a create
+reported
+.I success
+and the file could never be opened or listed again, durably, while other
+names in the same command worked perfectly.  Three sessions of notes called
+that "poisoned names", and this one chased image size, FAT, the SD card,
+.CW mkefs ,
+remount order, server lifetime and the JIT.  Every one of those was a
+difference between the host and the board that could be tested from outside,
+and none of them was it.  The fact that should have ended it on the first
+day was in plain sight all along: the
+.I same
+.CW .dis
+file gave different answers on the two machines.  That is never a filesystem.
+.PP
+.B "Verified, and it closes the writable home."
+On a fresh image the board now creates and lists
+.CW wprobe ,
+.CW inferno ,
+.CW zzz ,
+.CW abc ,
+.CW ab1
+and
+.CW second
+\(em every name that had failed all session \(em and
+.CW efsck
+calls the image clean.  The card's own
+.CW /n/dos/efs.img
+could not be saved: it had been written by affected kernels, its dentries are
+under wrongly computed keys, and it had reached
+.CW "node checksum 6eb9 7e4, want 3030 3031" .
+Remade at 16384 blocks, and the boot now prints
+.P1
+EFS-OK mounted /n/dos/efs.img
+EFS-WRITE-OK 21 bytes back byte for byte
+EFS-RENAME-OK
+EFS-CRASH-OK the card held the last committed state
+EFS-HOME-OK /n/efs/inferno is on efs, present and writable
+.P2
+which closes the writable home.  It had been blocked by the name
+.CW inferno
+being "poisoned", and that was this bug.
+.PP
+.B "Two things left open, named so they are not rediscovered."
+.CW comp-aarch64.c
+has sixteen
+.CW (ulong)
+casts of the same family.  The JIT works and none of them is currently fatal
+\(em this bug shows with
+.CW cflag=0
+too \(em but they are unaudited, on the compiler now known to drop such a
+cast.  And
+.CW pc64
+does not link at present,
+.CW "consdebugchar: undefined: archreboot" ,
+which is nothing to do with this change: its
+.CW libinterp
+built clean, and the missing symbol belongs to uncommitted work in that port.
