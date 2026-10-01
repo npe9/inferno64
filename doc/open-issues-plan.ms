@@ -1168,3 +1168,96 @@ times it, which is why that one is real; and the fixed runs sit inside the band.
 Flat, with no retention found: renaming (1996, 2166, 2008), truncating by
 rewrite (2241, 2511, 2427) and walking a directory (2057, 2055, 2071) \(em the
 last being the tightest, which is what one expects of a read-only operation.
+.NH 2
+B1b.  The collector's trigger, and why the OOM is retention after all
+.LP
+.B "Two facts about the VM, both read from the source."
+.CW emu/port/dis.c 's
+.CW vmachine()
+collects when
+.P1
+if(curP->runhd != nil)
+if((++gccounter&0xFF) == 0 || memlow()) { ... rungc(isched.head); ... }
+.P2
+so the periodic trigger counts
+.I scheduler passes ,
+not allocation, and
+.CW memlow()
+is
+.CW "heapmem->cursize > heapmem->maxsize/2" .
+The guard is harmless \(em a running process stays on the queue, rotated rather
+than dequeued, so
+.CW runhd
+is non-nil whenever anything is runnable.
+.PP
+And nothing collects when an allocation
+.I fails .
+.CW nheap() ,
+.CW heap()
+and
+.CW heapz()
+all read
+.P1
+h = poolalloc(heapmem, sizeof(Heap)+n);
+if(h == nil)
+	error(exHeap);
+.P2
+and
+.CW dopoolalloc
+returns nil without attempting any reclaim.  So a program dies rather than
+collecting once more and retrying.
+.PP
+.B "Why that is not a two-line fix."
+Collecting from inside
+.CW heap()
+would call the collector from an arbitrary point in the mutator, which is
+precisely what the quantum-boundary discipline exists to avoid: the collector
+wants a root set it can trust, and
+.CW rungc 's
+own invariant check \(em the one that reports "context %d has a quantum" \(em is
+there because of it.  The safe shape is to make the
+.I trigger
+allocation-driven while keeping the collection points where they are: count
+allocations, and fire at the next quantum boundary when the count since the last
+collection passes a threshold.
+.PP
+.B "But the pacing is not the whole story, and this is the correction."
+The first
+.CW efs-limits
+run of this session recorded
+.P1
+arena heap too large: size 128 maxsize 268435456 ressize 267911168
+                      cursize 268304384
+.P2
+\(em the pool at 268MB of 268MB.  Past 134MB
+.CW memlow()
+is true at every quantum, so the collector was running constantly and still
+could not keep the pool down.  At the moment of failure the live set really was
+that large.  So the out-of-memory is
+.I retention ,
+not allocation rate, and the 40 per cent cut in rate
+.CW ( 3d09ea990 )
+does not address it \(em which is exactly why the fill arm still fails while the
+rate numbers improved.
+.PP
+.B "So B1 is two problems, and the second is the one that OOMs."
+The rate is measured and partly fixed.  The retention is not found: an early
+measurement put live blocks at 558751 after 300 creates, about 1862 per file,
+and the only per-live-file state identified so far is the
+.CW names
+and
+.CW parents
+entries \(em two tuples and two list cells, call it four allocations.  Three
+orders of magnitude unaccounted for.
+.PP
+.B "And the instrument for it is the one that has worked twice."
+Not
+.CW nalloc
+per operation, which measures rate.  Live blocks
+.CW ( nalloc-nfree )
+sampled per
+.I created file ,
+against a control that creates nothing, with the +-170 noise band from E2 in
+mind \(em and then a counter on the work, tagged with the caller, once there is a
+number to attribute.  The cycle test in E1 found its leak that way in one
+afternoon; this is the same shape of question.
