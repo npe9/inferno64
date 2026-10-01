@@ -4209,3 +4209,47 @@ one this driver can read \- is not among them.  That would make these
 verbs unusable on this board by construction rather than by
 misconfiguration.  Guessing a GPIO mapping from recollection is how the
 sync-word bug happened.
+.PP
+.B "The two crystals are 64ppm apart, which is wider than the receive filter -- and compensating it does not fix reception."
+Measured by keying each board in turn into the same tinySA in one
+session, so the instrument's own error cancels in the difference, and
+with both boards carrying the same -3550ppb so the difference is purely
+their crystals:
+.DS
+.CW "board 1  commanded 915.000000  carrier 915.019581  (+19581 Hz)"
+.CW "board 2  commanded 915.000000  carrier 914.960906  (-39094 Hz)"
+.CW "difference                                -58675 Hz = -64.13 ppm"
+.DE
+Repeatable \- a wide pass at 30kHz resolution and a narrow one at 3kHz
+agree for both boards, and the levels, -43 and -55dBm, match what each
+board has measured at before, so neither peak is an interferer.
+.PP
+Sixty-four parts per million is far outside what two identical clicks
+should show, and 58.7kHz is wider than the 50kHz receive filter.  That
+looked like the whole answer: a signal outside the passband would leave
+RSSI and carrier sense responding to the energy, PQT firing on the skirt
+and sync never firing, which is the pattern recorded exactly \- and it
+would explain the 1200-baud case failing worse with its 25kHz filter.
+.PP
+It is not the answer.  Tuning board 2 up by the measured offset, so its
+passband centres on board 1's actual carrier, changes nothing:
+.B "recv 0"
+and
+.B "crcerr 0"
+at 915.000000, at the compensated 915.058675, and at 915.040000 half way
+between.
+.PP
+Two things are known now that were not.  The crystals really are 64ppm
+apart, which settles the calibration question: the
+.B .ppb
+of -3550 in
+.I spistm32f4.c
+is board 1's and is wrong for board 2 by about that much, and no single
+image can be right for both \- the
+.B ppm
+verb exists and each board should be corrected when it is driven.  And
+the frequency offset is not what stops the receiver, because the receiver
+still receives nothing with the signal centred in its filter.
+.PP
+At 915MHz one part per million is 915Hz, so 64ppm is 58.7kHz and a 50kHz
+filter is plus or minus 25.
