@@ -3300,3 +3300,77 @@ against a floor of -104 while an instrument a similar distance away
 hears the same transmitter at -58.  Forty decibels is about what an
 antenna is worth, and the Gabil QRP is on the tinySA.  The thing to try
 is an antenna on the receiving board's ccRF click.
+.PP
+.B "Roles swapped, and the receive path localised: the receiver is saturated."
+Both antennas are on, and swapping which board transmits removes every
+per-board explanation.  What is now measured, in both directions:
+.IP \(bu 3
+Transmit works on both.  The first board keyed and swept by a tinySA
+gives -41dBm against a -106 floor, 65dB up, with its 2-FSK tones
+separating as the deviation is swept.  The second board, beaconing, is
+seen at -58 to -64dBm.  Both report
+.B "marc 0x40"
+and
+.B "left 0"
+\- the part finished the transmit and emptied its FIFO.
+.IP \(bu 3
+The receive front end works.  With the first board keyed, the second
+board's own
+.B probe
+of 915MHz went from
+.B "floor -104 peak -100 duty 0%"
+to
+.BR "floor -81 peak -64 duty 92% bursts 24" .
+Forty decibels, from the receiver's own RSSI, through its own antenna.
+.IP \(bu 3
+And sync never fires.  With the first board transmitting packets in a
+loop, the second board's detector pins read: carrier sense
+.BR "100% high" ,
+PQT_REACHED
+.B "7566 of 1712056 samples"
+\- so a preamble is occasionally recognised \- and PKT_SYNC_RXTX
+.B "0 of 1720911" .
+.B recv
+and
+.B crcerr
+both stay at zero, so not even a corrupted packet arrives.
+.PP
+Two things were tried and did not fix it, and both are worth recording
+because the first looked certain.  Both boards had
+.BR "sync 0xaaaa 16" ,
+which is the pattern a preamble is made of \- a receiver hunting 0xAAAA
+inside a run of 0xAA has no bit boundary to lock to, and that setting is
+a holdover from the generator experiments, where an FM tone was an
+alternating symbol and 0xaaaa was the only thing to hunt for.  Setting
+both to
+.B 0x930b
+changed nothing.  Nor did resetting both radios to the driver's own
+register table and changing only the frequency \- rate 1200, deviation
+3997, bw 10000, which is a sane modulation index of 6.7 inside its
+filter.
+.PP
+What the last run showed instead is
+.BR "rssi -8" .
+Against a quiet floor of -104 that is some ninety-six decibels up, and
+while the absolute calibration of this number is an unverified -102
+offset taken from a TI example, the relative figure is not in doubt.
+The part is overloaded.  Its own datasheet RSSI saturates above about
+-65dBm, which this bench measured earlier, so the number may not even
+mean -8 \- but a receiver that far into saturation does not demodulate,
+and that accounts for every symptom at once: carrier sense pinned high,
+a preamble detector that cannot work, and a sync word never found.
+.PP
+Two radios a few centimetres apart with antennas on is too close.  The
+thing to try is metres rather than centimetres, or an attenuator.
+.PP
+A method note, because it cost two invalid measurements.  Driving two
+boards through two
+.IR screen (1)
+sessions is fine; driving one board from two processes at once is not.
+A transmit loop stuffing characters into the first board's session while
+a configuration script stuffed into the same session produced
+.B "cho INFEeRcNhOo- BIENAFCEORNN O>-/BdEeAvC/ONra"
+on its console, so the board was not transmitting what it was asked for
+and the reads came back empty.  One writer per console, and read the
+console to check it when a reply is missing rather than assuming the
+command arrived.
