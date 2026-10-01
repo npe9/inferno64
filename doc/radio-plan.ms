@@ -3714,3 +3714,50 @@ connector has anything on it.
 It was radiating -41dBm this morning, so whatever changed happened during
 the moving \- which has already cost one UART cable and sent two
 conclusions wrong.
+.PP
+.B "RETRACTION: board 1's transmitter works.  I measured a gap and called it dead."
+Cabled straight to the tinySA, with the carrier turned on by hand and
+.I held
+across the sweep:
+.DS
+.CW "PEAK -29.9 dBm at 914.99711 MHz   (-2.90 kHz from 915.000)"
+.CW "PEAK -30.4 dBm at 914.99666 MHz   (-3.34 kHz)"
+.DE
+against a baseline, cabled and unkeyed, of
+.BR "floor -136 peak -105" .
+Seventy-five decibels of carrier.  The transmitter is not dead and never
+was.
+.PP
+The error was mine and was in the timing.
+.IR txpin (1)
+keys the part, runs a ladder of four pin reads, and unkeys; its
+carrier-on window is however long that ladder takes, and I started a
+sweep forty-six seconds in and assumed the two overlapped.  They did
+not.  The sweep measured the part before or after the carrier, read
+-105.9dBm, matched the unkeyed baseline exactly, and I wrote that up as
+two independent receivers agreeing that nothing was on the air.
+.PP
+The lesson is the session's, again: the control has to be held, not
+inferred.  Turning the carrier on with its own ctl write, sweeping, and
+turning it off is unambiguous; sleeping into somebody else's window is
+not.  And when a measurement exactly equals its own baseline, that is as
+likely to mean the stimulus was absent as that the response was.
+.PP
+So the transmitter radiates -30dBm into a cable at PA_CFG2 0x4f, which
+is -10dBm at the pin with the tinySA's low-input attenuation between.
+What remains unexplained is the over-the-air link: board 2 hears nothing
+from a transmitter now known to work, and the tinySA on its own antenna
+heard nothing from it either, while hearing a 440MHz repeater and FM
+broadcast perfectly.  That is an antenna-path question on the
+transmitting side and it is still open.
+.PP
+One number from this is worth keeping and is provisional: the carrier sits
+2.9 to 3.3kHz low, about -3.2ppm, with this board's -3550ppb correction
+already applied.  That is close to the -3250Hz this document records as
+the error BEFORE correction, which would mean the correction is not
+reaching the part \- but the tinySA has been reset twice this evening and
+its own -1970ppb
+.B freq_corr
+may not have survived, which would account for most of it.  The
+instrument has to be recalibrated against WWV before this figure means
+anything.
