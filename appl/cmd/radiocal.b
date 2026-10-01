@@ -308,17 +308,21 @@ receive(secs: int)
 	# receiver said "listening for 60 seconds" and then nothing at
 	# all until qemu itself was terminated.
 	#
-	# Reading in a SPAWNED process, with this one owning the clock
-	# and killing it by pid, printed the table and never read
-	# anything: "0 reads returned, 0 failed" against the driver's own
-	# recv 12 and intr high 12 low 12, on the same run, with a print
-	# from inside the reader proving it had reached its first read.
-	# A "cat /dev/radio0/pkt" in the same qemu pair does get the
-	# packets, so the device and the model are not the fault.  That
-	# is unexplained and is written down in doc/radio-plan.ms rather
-	# than guessed at.
+	# Reading in a SPAWNED process, with this one owning the clock and
+	# killing it by pid, printed the table and never read anything:
+	# "0 reads returned, 0 failed" against the driver's own recv 12
+	# and intr high 12 low 12 on the same run.  THE SPAWN WAS NOT THE
+	# FAULT and this is kept because that took three runs to see: the
+	# window had already closed.  Under qemu this board's clock runs
+	# about three times fast, so -w 25 expired some eight host seconds
+	# in, before the transmitter had been typed at, and the packets
+	# arrived afterwards.  Reading here fails the same way with the
+	# same window; what fixed it was a window long enough in GUEST
+	# seconds, and the program now prints what its window really
+	# lasted so that this cannot happen silently again.
 	#
-	# So this process reads, as cat does, and the spawned one owns
+	# This process reads all the same, because it is the simpler of
+	# the two and the shell is waiting on it, and the spawned one owns
 	# the clock: when it expires it prints the table -- which it can,
 	# because the counters are this module's and both processes are
 	# the same module instance -- and only then kills the group.

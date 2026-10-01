@@ -156,8 +156,9 @@ setup(call: string)
 	ck("iounit-no-digi", iou == nodigi,
 		sys->sprint("iounit %d, carrier says %d", iou, nodigi));
 
-	over := array[Maxbuf+1] of byte;
-	over = over[0:nodigi+1];
+	# One past the budget, which setup() has just read off the
+	# carrier -- this is the one place the exact number matters.
+	over := array[nodigi+1] of byte;
 	n := sys->write(c.dfd, over, len over);
 	e := sys->sprint("%r");
 	ck("oversize-write-refused", n < 0, sys->sprint("wrote %d", n));
@@ -237,8 +238,13 @@ recv(count: int)
 	n := sys->read(c.dfd, one, len one);
 	ck("short-read-refused", n < 0, sys->sprint("read %d", n));
 
+	# Maxbuf and not the budget: a read buffer only has to be big
+	# enough, and ax25(3) errors rather than truncating if it is not.
+	# Reslicing this to nodigi was a regression -- nodigi is set in
+	# setup(), and "ax25chk recv" is a separate invocation that never
+	# calls it, so the buffer came out zero-length and every read
+	# returned nothing.
 	b := array[Maxbuf] of byte;
-	b = b[0:nodigi];
 	for(i := 0; i < count; i++){
 		n = sys->read(c.dfd, b, len b);
 		ck(sys->sprint("read-%d", i), n > 0, sys->sprint("%d %r", n));
@@ -320,8 +326,7 @@ listen(count, delay: int)
 	d := ref Conv(num, lfd, nil);
 	if(opendata(d) < 0)
 		return;
-	buf := array[Maxbuf] of byte;
-	buf = buf[0:nodigi];
+	buf := array[Maxbuf] of byte;		# see recvtest
 	for(i := 0; i < count; i++){
 		n = sys->read(d.dfd, buf, len buf);
 		ck(sys->sprint("read-%d", i), n > 0, sys->sprint("%d %r", n));

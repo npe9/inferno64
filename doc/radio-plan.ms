@@ -5199,3 +5199,43 @@ which came back
 \- the same refusal an unknown verb and a bad argument both give.  An
 error that cannot distinguish a wrong name from a wrong value costs a
 build and a flash cycle on a board.
+.PP
+.B "Two corrections and a thing left unmeasured, before any of this is repeated."
+.IP \(bu 3
+.B "Board 2's state is not known and no two-board measurement should be repeated until it is."
+Its console input is dead again \- output readable, nothing typed
+arriving, the adapter fault recorded above \- so ^R^R cannot reach it and
+it cannot be reset without the button.  Worse, it was flashed several
+times during the window when two stale
+.I mikroe-uhb
+clients were racing for the bootloader, so which image landed on it is
+unknown.  The results above stand, because each was verified by
+behaviour at the time it was taken \-
+.CW "ppb 60300"
+read back off the part, ten packets of ten received \- but
+.IR calibratedlink.py ,
+.IR ax25silicon.py ,
+.I radiocalsilicon.py
+and
+.I paladder.py
+will all now fail or answer staleley against it.  It wants a physical
+reset and a
+.I flashverify.sh
+run before anything two-board is measured again.
+.IP \(bu 3
+.B "The spawned-reader anomaly is explained and was never a spawn."
+It is written up above as unexplained; it is the three-times-fast guest
+clock, and
+.IR radiocal 's
+own comment now says so.
+.IP \(bu 3
+.B "Ramp 0 has never been visited by radiocal."
+.CW "-f 63 -l 0 -s 8"
+stops at 7, so the table above covers +14 down to -14 and not the
+-17.5dBm the datasheet gives for ramp 0 \- where
+.I paladder.py
+took 0 of 5 with the rung above still at -45dBm, sixty decibels over the
+floor.  That is the one unexplained thing left in item 7 and one
+.CW "radiocal -t -f 0 -l 0"
+would settle whether ramp 0 disables the amplifier or does something
+else.
