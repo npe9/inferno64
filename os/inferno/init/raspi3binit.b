@@ -3759,6 +3759,7 @@ efsonfat()
 		return;
 	}
 	sys->print("EFS-CRASH-OK the card held the last committed state\n");
+	efshome();
 }
 
 #
@@ -3917,6 +3918,103 @@ efscheck()
 		return;
 	if(crash > 0 && efscrashtest("efscrash"))
 		sys->print("EFS-CRASH-OK the card held the last committed state\n");
+	efshome();
+}
+
+#
+# Give the board somewhere writable that survives a crash.
+#
+# Everything written today goes either to the kernel's own root, which is
+# RAM and gone on the next boot, or to the FAT through dossrv.  efs is
+# mounted and its writes ARE durable: a file written on one boot and read
+# on the next, against a plain-FAT control that survived beside it.
+#
+# The home is /n/efs/$user and there is no bind, because a bind does not
+# work for this and the way it fails is worth recording.  Binding /n/efs
+# onto /usr -- MREPL|MCREATE or MAFTER|MCREATE, both tried -- gives a /usr
+# that READS efs correctly, and a create through it returns a non-nil fd
+# and leaves nothing behind.  Isolated at boot by doing both in one place:
+#
+#   EFS-HOME-PROBE direct create fd, stat present
+#   EFS-HOME-FAIL /usr/inferno is absent after create
+#
+# Same operation, same filesystem, same instant: straight into /n/efs it
+# works, through the bind it silently does not.  Twenty mkdir-and-verify
+# cycles into /n/efs from a shell are twenty present, so this is the bind
+# and not efs.  Not chased further than that.
+#
+# This is also NOT "efs is the root": see the wm section of
+# doc/raspi3b-completion-plan.ms for why binding at / would leave /dis and
+# everything under it resolving to the kernel root anyway.
+#
+# Everything the board writes today goes either to the kernel's own root,
+# which is RAM and gone on the next boot, or to the FAT through dossrv.
+# efs is mounted and its writes are durable -- a file written on one boot
+# and read on the next, against a plain-FAT control that survived
+# alongside it -- so the useful thing is for part of the namespace to
+# resolve to it without anyone having to bind it by hand.
+#
+# MREPL|MCREATE, and the first version had MAFTER|MCREATE, which does not
+# work: creating /usr/inferno through that union returned a non-nil fd and
+# left nothing behind, and the directory was absent on the stat right
+# after it.  Creating in efs itself is fine -- twenty mkdir-and-verify
+# cycles straight into /n/efs are twenty present -- so what failed is
+# creation through a union whose other element is the kernel root's own
+# directory, which refuses it.  MREPL makes /usr simply BE efs: one
+# element, no fall-through to get wrong.  Nothing is hidden that matters,
+# because the kernel root's /usr is an empty mount point this port added
+# for exactly this purpose.
+#
+# And /usr rather than /tmp, deliberately.  /tmp being volatile is a
+# property worth keeping; what is missing is a home, which is what the
+# plumber, wm and a shell all want somewhere to write.
+#
+# This is NOT "efs is the root", and the difference matters: binding efs
+# at / would leave /dis, /fonts and every other directory the kernel root
+# supplies resolving to the kernel's copy, because a union's children are
+# not themselves unions.  See the wm section of
+# doc/raspi3b-completion-plan.ms, where that cost a wrong diagnosis.
+#
+efshome()
+{
+	user := "inferno";
+	fd := sys->open("/dev/user", Sys->OREAD);
+	if(fd != nil){
+		b := array[64] of byte;
+		n := sys->read(fd, b, len b);
+		if(n > 0)
+			user = string b[0:n];
+		fd = nil;
+	}
+	home := "/n/efs/" + user;
+	(hok, nil) := sys->stat(home);
+	if(hok < 0){
+		hfd := sys->create(home, Sys->OREAD, Sys->DMDIR|8r775);
+		if(hfd == nil){
+			sys->print("EFS-HOME-FAIL create %s: %r\n", home);
+			return;
+		}
+		hfd = nil;
+	}
+	(hok2, d2) := sys->stat(home);
+	if(hok2 < 0){
+		sys->print("EFS-HOME-FAIL %s is absent after create: %r\n", home);
+		return;
+	}
+	if(!(d2.mode & Sys->DMDIR)){
+		sys->print("EFS-HOME-FAIL %s exists but is not a directory\n", home);
+		return;
+	}
+	# Existing is not writable; prove it.
+	t := home + "/.efswritable";
+	wfd := sys->create(t, Sys->OWRITE, 8r644);
+	if(wfd == nil){
+		sys->print("EFS-HOME-FAIL %s is not writable: %r\n", home);
+		return;
+	}
+	wfd = nil;
+	sys->remove(t);
+	sys->print("EFS-HOME-OK %s is on efs, present and writable\n", home);
 }
 
 #

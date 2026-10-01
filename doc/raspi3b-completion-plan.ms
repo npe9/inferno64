@@ -14720,3 +14720,75 @@ remains is a union of
 over the directories that are written, and the knowledge that
 .CW "bind /n/efs /"
 is not it.
+.NH 2
+A create through a bind of the efs mount fails silently, and poisons the name
+.PP
+Found while giving the board a writable home, and the reproducer fits in one
+command with its own control:
+.P1
+bind -c /n/efs /usr
+mkdir /usr/newname7   ; ls -d /usr/newname7     ABSENT
+mkdir /n/efs/newname7 ; ls -d /n/efs/newname7   ABSENT
+mkdir /n/efs/fresh8   ; ls -d /n/efs/fresh8     OK
+.P2
+.CW mkdir
+through the bind returns success and creates nothing.  Then the
+.I same
+name, created directly in
+.CW /n/efs ,
+also fails \(em while a name never used through the bind succeeds in the same
+command.  So the failed create does not merely fail: it leaves the name
+unusable, and durably, because
+.CW inferno
+and
+.CW zzz
+are still uncreatable several reboots after the attempts that first touched
+them.
+.PP
+.B "What is established, and what is not."
+Established: creates through such a bind fail silently; the name is poisoned
+afterwards; fresh names are unaffected; and reads through the bind are fine \(em
+.CW /usr
+lists efs's contents correctly throughout.  Direct creation into
+.CW /n/efs
+is reliable: twenty
+.CW mkdir -and-verify
+cycles are twenty present, and
+.CW qqq
+and
+.CW fresh8
+each worked first time.
+.PP
+Not established: which layer drops it.  Not capacity \(em removing eight
+entries did not free the name, and the directory had seventeen entries when
+.CW fresh8
+succeeded.  Not boot timing \(em the same failure happens from a shell long
+after boot.  Not
+.CW efs
+itself, on this evidence, since every direct create works.
+.PP
+.B "Three readings this cost, all wrong, all from thin evidence."
+"Writes are not durable" \(em withdrawn, a paired FAT control showed both
+survive a reboot.  "mkdir silently creates nothing" \(em wrong, it was that
+listing truncated in the console and then that specific names were poisoned.
+"The directory listing loses an entry on mkdir" \(em wrong, console truncation
+again.  Each was one observation without a control, and the controlled version
+contradicted each one.  The finding that survived is the one that was tested
+against a fresh name in the same command.
+.PP
+.B "And it blocks the writable home on this card, as data rather than as code."
+.CW efshome()
+creates
+.CW /n/efs/$user ,
+which is
+.CW /n/efs/inferno ,
+and that name was poisoned by the very first attempt \(em which went through a
+.CW /usr
+bind, before any of this was understood.  So the boot prints
+.P1
+EFS-HOME-FAIL /n/efs/inferno is absent after create: file does not exist
+.P2
+on an image where that name is spoiled, and would work on a fresh one.  The
+function is left reporting it rather than papering over it with a different
+name, because a board that says plainly what it could not do is worth more than
+one with a home at an unexplained path.
