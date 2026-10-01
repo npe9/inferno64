@@ -25,7 +25,7 @@ Order, and why
 3  A3  audit what the 7c fix changed      DONE: clean; left A5 hygiene
 4  B2  one namehash, not two              DONE 2d273290f
 5  A1  fix 6c                             DONE e5d6131f3 (A2 done b6a7201e9)
-6  B1  efs's quadratic allocation         40% CUT 3d09ea990; still grows
+6  B1  efs's quadratic allocation         SYMPTOM FIXED; limits passes
 7  D1  w4/w8, D2 close the bind section   DONE
 .P2
 .CW C1
@@ -963,13 +963,46 @@ that matters, because a divergence would leave
 .CW ls
 listing a name that could never be opened.
 .NH 2
-B3.  efs-limits.sh's memory arm
+B3.  CLOSED.  efs-limits passes
 .LP
-Fails by design, and says so in its own comment.  It closes with B1 and needs
-no separate work; it is listed only so that a reader who runs the suite and
-sees
-.CW EFS-LIMITS-FAIL
-knows it is recorded rather than new.
+.CW EFS-LIMITS-OK ,
+and the arm had
+.I four
+bugs of which only one was memory.
+.CW 5fa815638 ,
+.CW c406dfee5 .
+.PP
+Inferno's
+.CW sh
+has no
+.CW break
+builtin.  The loop said
+.CW break
+on the first failed write, sh looked for
+.CW ./break ,
+and raised \(em which aborted the script, so the write-when-full, the unmount,
+the remount and the efsck never ran.  The transcript had been saying it all
+along:
+.CW "sh: break: './break' file does not exist" .
+A failing redirect is not catchable either, so
+.CW "or {and {echo x > f} {...}} {...}"
+ends the script rather than taking a branch;
+.CW cp
+raises
+.CW fail:*
+and
+.CW or
+catches it.  And
+.CW /n/client2
+did not exist, because everything under
+.CW n/
+here is untracked, so the remount failed for that and the verdict called it efs.
+.PP
+The memory was real and is fixed by the two changes above.  What the arm reports
+now: 515 files into a 4MiB filesystem,
+.CW REFUSES-AFTER-FULL ,
+.CW REMOUNTED ,
+.CW CKCLEAN .
 .NH 1
 C.  The rig
 .NH 2
@@ -1301,3 +1334,69 @@ change is good on count and on peak, and the per-line reading was the wrong
 instrument for the question.  Three for three: every time a per-line or
 per-call-site figure has been compared against a pool-level one in this
 investigation, the per-line one has been the misleading half.
+.NH 2
+B1c.  SOLVED: there was never any retention, and the fix is the collector
+.LP
+.B "The measurement that settles it."
+Sample the pool immediately after 300 creates, then let the machine idle:
+.P1
+                          cursize     live blocks
+before any creates         191360             913
+immediately after 300   199905792          677406
+after 10s idle             347264            2019
+after 30s idle             318720            1873
+.P2
+200MB collapses to 347KB.  300 files cost about 1100 live blocks in total, 3.7
+per file, which is the
+.CW names
+and
+.CW parents
+entries and nothing else.
+.PP
+.B "So every retention figure in these notes was garbage, counted as live."
+.CW nalloc-nfree
+is
+.I allocated and not yet freed ,
+which is live
+.I plus
+whatever the collector has not reached.  The early reading of "558751 live
+blocks after 300 creates, about 1862 per file" was uncollected garbage, and it
+sent this investigation looking for a leak that does not exist \(em twice.
+.PP
+.B "And the collector was being asked, and not answering."
+From
+.CW /dev/memgc
+.CW ( "bind '#%' /dev" ,
+which is where the counters live \(em there is no
+.CW /dev/memheap
+in this emu):
+.P1
+allocations     1143908
+rungc calls       29176    14698 of them from the busy path
+sweeps              327
+epochs               63
+.P2
+Called constantly, since
+.CW memlow()
+is true at every quantum past half the heap, and progressing barely, because
+.CW rungc()
+is incremental and the busy path called it
+.I once
+per trigger.
+.CW execatidle()
+had always looped a full
+.CW gccolor+3
+cycle;
+.CW 5fa815638
+does the same when there is no idle to wait for.  Pool peak 212MB to 181MB,
+busy entries 14698 to 525, and no slower.
+.PP
+.B "What is left of B1."
+Nothing that OOMs.  The allocation
+.I rate
+still grows with filesystem size \(em 306, 858, 1203 per operation at 2, 62 and
+242 entries after
+.CW 3d09ea990
+\(em and that is a throughput matter now rather than a correctness one, because
+the garbage it makes is collected.  Whether to chase the remaining growth is a
+judgement about speed, not about whether the board can hold files.
