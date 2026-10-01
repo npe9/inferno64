@@ -57,7 +57,7 @@ Test: adt {
 	want:	big;
 };
 
-INT, LOOP, CALL, ARRAY, REAL, STRING: con iota;
+INT, LOOP, CALL, ARRAY, REAL, STRING, PTR: con iota;
 
 tests := array[] of {
 	INT =>		Test("int",	200000,	big 2904398),
@@ -66,6 +66,7 @@ tests := array[] of {
 	ARRAY =>	Test("array",	100000,	big 49796158),
 	REAL =>		Test("real",	100000,	big 0),
 	STRING =>	Test("string",	2000,	big 42000),
+	PTR =>		Test("ptr",	100000,	big 150000),
 };
 
 init(nil: ref Draw->Context, argv: list of string)
@@ -137,6 +138,7 @@ run(which, reps: int): big
 		ARRAY =>	sum = arrayloop(n);
 		REAL =>		sum = realloop(n);
 		STRING =>	sum = stringloop(n);
+		PTR =>		sum = ptrloop(n);
 		}
 	}
 	return sum;
@@ -294,6 +296,43 @@ realloop(n: int): big
 # in the allocator and not in the code generator -- which is worth being
 # able to tell, since this branch has already mistaken one for the other.
 #
+#
+# ptr: the reference-count path, which none of the five tests above
+# reaches.  It was added because an A/B of the aarch64 code generator's
+# refcount sequences could not be read off them: "call" exercises
+# macret, but macret's --R.M->ref sits behind a test of Frame.mr, which
+# is nil on every local return; "array" stores ints; "string" is IADDC,
+# which the arm64 and aarch64 generators both punt to the interpreter,
+# so its counts go through the C AINC/ADEC and not through compiled
+# code.  Measuring a change to MacCOLR/MacFRP against those three is
+# measuring code layout.
+#
+# One pointer move per iteration and nothing else: a[i&1] is an IMOVP
+# with a memory source, which is the one Dis instruction that calls
+# BOTH barriers -- MacCOLR on the incoming object and MacFRP on the
+# outgoing one.  The index is &1 rather than a branch so the loop has no
+# conditional in it, and the two cells differ in value so the checksum
+# cannot pass if the wrong one is loaded: n/2 iterations read 1 and n/2
+# read 2, so 100000 iterations sum to 150000.
+#
+ptrloop(n: int): big
+{
+	a := array[2] of ref Cell;
+	a[0] = ref Cell(1);
+	a[1] = ref Cell(2);
+	p := a[0];
+	sum := big 0;
+	for(i := 0; i < n; i++){
+		p = a[i & 1];
+		sum += big p.v;
+	}
+	return sum;
+}
+
+Cell: adt {
+	v:	int;
+};
+
 stringloop(n: int): big
 {
 	sum := big 0;
