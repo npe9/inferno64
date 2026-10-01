@@ -518,7 +518,7 @@ constant ever does misbehave on one of these, this is the note to disbelieve.
 .NH 1
 B.  efs
 .NH 2
-B1.  40 per cent of it fixed; the rest still grows
+B1.  The rate: 40 per cent of it fixed (the OOM is B1c)
 .LP
 .B "The fix, after four that were not."
 .CW Node.unpack
@@ -1006,7 +1006,7 @@ now: 515 files into a 4MiB filesystem,
 .NH 1
 C.  The rig
 .NH 2
-C1.  alive and where lie about a kernel from another build
+C1.  DONE.  alive and where lied about a kernel from another build
 .LP
 .B Established.
 .CW tools/jtag/boot.sh
@@ -1202,7 +1202,7 @@ Flat, with no retention found: renaming (1996, 2166, 2008), truncating by
 rewrite (2241, 2511, 2427) and walking a directory (2057, 2055, 2071) \(em the
 last being the tightest, which is what one expects of a read-only operation.
 .NH 2
-B1b.  The collector's trigger, and why the OOM is retention after all
+B1b.  The collector's trigger (and a conclusion B1c overturns)
 .LP
 .B "Two facts about the VM, both read from the source."
 .CW emu/port/dis.c 's
@@ -1400,3 +1400,43 @@ still grows with filesystem size \(em 306, 858, 1203 per operation at 2, 62 and
 \(em and that is a throughput matter now rather than a correctness one, because
 the garbage it makes is collected.  Whether to chase the remaining growth is a
 judgement about speed, not about whether the board can hold files.
+.NH 2
+F1.  The kernel has the same collector trigger, unmeasured
+.LP
+.CW 5fa815638
+fixed
+.CW emu 's
+busy-path collection to run a full cycle under pressure.
+.CW os/inferno/port/dis.c
+has the identical shape \(em
+.CW rungc(isched.head)
+once per trigger, against an
+.CW execatidle()
+that loops a whole
+.CW gccolor+3
+cycle \(em and was deliberately left alone, because the kernel's version runs
+inside
+.CW stoptheworld() :
+a full cycle there holds all four processors, not one scheduler.
+.PP
+.B "What decides it is a measurement the file is already set up for."
+The code around that call records
+.CW gcticks ,
+.CW gcpasses
+and
+.CW gcmax
+precisely because GC latency has bitten this board before \(em its comments
+carry a 50ms sleep that overshot by 670ms on the first pass after a Limbo loop
+started.  So: read
+.CW gcmax
+on the board under a load that allocates briskly, apply the same change, read it
+again.  If the worst pause does not move much, take the fix; if it does, the
+kernel wants something gentler than a full cycle, such as a bounded number of
+increments per trigger.
+.PP
+.B "And whether the board needs it at all is unestablished."
+The symptom that motivated the emu change \(em "out of memory: heap" filling a
+filesystem \(em has not been reproduced on the Pi.  Its efs image is 16384 blocks
+and the heap is sized by the config, so the first step is to try the fill there
+and see whether it fails at all.  Nothing should be changed in the kernel on the
+strength of a hosted measurement.
