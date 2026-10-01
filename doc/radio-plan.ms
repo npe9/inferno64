@@ -4041,3 +4041,72 @@ every step and the carrier held: board 2 hears board 1's carrier at
 .BR "recv 0, crcerr 0, lastrx none" .
 That stands.  Which thresholds, if any, change it is now an open question
 again.
+.PP
+.B "Two driver defects from the day's measurements, fixed."
+.IP \(bu 3
+.IR cc1120send ()
+counted
+.B nsent
+whatever the part did.
+.B txtrace[4]
+is the state it settled into after STX and the driver read it, printed it
+and ignored it, so a part that went into CALIBRATE and returned to IDLE
+without reaching TX reported a successful send \- counter, MARC_STATUS1
+and the write's return value all agreeing.  84 packets were written that
+way while a tinySA saw nothing on the channel.  A write that did not
+reach the air now fails and increments
+.BR txnever .
+.IP \(bu 3
+Rejecting anything-but-TX was the first attempt and broke every transmit
+under
+.IR qemu ,
+whose model transmits inside the strobe and is back in IDLE before that
+loop looks.  The three states are 2 for TX on working silicon, 4 for
+CALIBRATE on the fault, and 0 for the model, so CALIBRATE alone is
+rejected.
+.IP \(bu 3
+SYNC_THR could not be set at all.  The table leaves it at 11 and the
+.B sync
+verb preserves the low five bits when it writes SYNC_MODE, so the only
+way to change it was a raw
+.B "reg 0x08"
+write with the mode bits worked out by hand.
+.B "syncthr 0..31"
+now does it with the range checked.
+.PP
+Verified under qemu, and
+.B twoboards.sh
+still passes both halves.
+.PP
+.B "Two of the three candidates for the sync failure, examined."
+The sync word's bit order is
+.I correct
+and that candidate is closed by review: a sixteen-bit word goes to SYNC1
+and SYNC0, which is what SYNC_MODE 2 reads, with the most significant
+byte in SYNC1, and the mode is written into bits 7:5.
+.PP
+The third is a real gap and is not closed.
+.B PREAMBLE_CFG1
+is never written by this driver \- it is in neither table and no verb
+touches it \- so the preamble length is whatever the part's reset default
+is.  That is the same class of defect as the two already found here,
+SYNC_MODE left at zero and a sync word written to registers the part was
+not reading, and in both cases the reason was trusting a reset value.
+Changing it wants SWRU295E open at the NUM_PREAMBLE encoding rather than
+a recollection of it; decoding a bit field from memory is how the sync
+bug happened.
+.PP
+Also unexamined, and the more likely of the two: the driver's
+.BR rate ,
+.B deviation
+and
+.B bw
+verbs write three registers and leave the dependent demodulator settings
+\- AGC_CFG1 and AGC_CFG0, AGC_REF, DCFILT_CFG, IQIC \- at the table's
+values, which were computed for the part's 1200-baud default.  SmartRF
+Studio emits those as a group for a given rate.  Nothing in
+.I qemu
+models any of them, which is why
+.B twoboards.sh
+passes while silicon does not, and the plan's own earlier note that the
+model "does not exercise the radio itself" is the same point.
