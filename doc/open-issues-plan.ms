@@ -25,7 +25,7 @@ Order, and why
 3  A3  audit what the 7c fix changed      DONE: clean; left A5 hygiene
 4  B2  one namehash, not two              DONE 2d273290f
 5  A1  fix 6c                             DONE e5d6131f3 (A2 done b6a7201e9)
-6  B1  efs's quadratic allocation         4 attempts; decode ~39% of COUNT, mprof gives bytes
+6  B1  efs's quadratic allocation         40% CUT 3d09ea990; still grows
 7  D1  w4/w8, D2 close the bind section   DONE
 .P2
 .CW C1
@@ -518,24 +518,76 @@ constant ever does misbehave on one of these, this is the note to disbelieve.
 .NH 1
 B.  efs
 .NH 2
-B1.  DIAGNOSED.  Node.unpack allocates per entry in a block
+B1.  40 per cent of it fixed; the rest still grows
 .LP
-.B Established.
-.CW efs
-allocates more heap per operation the more entries the
-.I filesystem
-holds \(em not the directory, which was measured and falsified earlier.  With
-the written file's parent held at two entries:
+.B "The fix, after four that were not."
+.CW Node.unpack
+allocated an array per entry and copied the entry's value into it, so decoding a
+node cost one allocation per entry in the block \(em and blocks get fuller as a
+filesystem fills, which is the quadratic.  It now
+.I slices
+the block.
+.CW 3d09ea990 .
 .P1
-fs 2 entries	 328 alloc/op
-fs 62 entries	1372 alloc/op
-fs 242 entries	1989 alloc/op
+              fs 2    fs 62   fs 242
+before         328     1372     1989
+after          306      858     1203
 .P2
-.CW memfs
-mounted the same way is flat, so the term is
-.CW efs 's.
-Not a leak: live blocks fall during the work, so the ceiling is the high-water
-of garbage.
+Seven, thirty-seven and forty per cent, which is exactly the decode share the
+attribution counter predicted.  The remaining figures still grow, so the
+quadratic is reduced and not removed.
+.PP
+.B "Why the copy was there, and why slicing is safe."
+The comment it replaces says a slice "would be a window on whatever block the
+buffer next held".  No buffer is ever held again:
+.CW Dev.rdblk
+allocates a fresh
+.CW array[Blocksize]
+on every call and never reuses one, a slice keeps its parent alive by refcount,
+and the only buffers written in place are free-map groups, which are never
+unpacked as nodes.  Entry values are read-only in every caller.
+.PP
+.B "And it is a 40% cut in COUNT, which is what mattered."
+The earlier
+.CW mprof
+reading showed these allocations are small in
+.I bytes
+\(em an entry's value is a handful \(em which is why that instrument ranked them
+below the shell.  The pressure is on the count, and the count is what moved.
+.PP
+.B "Verified, including the thing the limits test was asking for."
+The whole suite passes, with
+.CW efs-crash 's
+40 crash points mounted clean and whole, and
+.CW efs-wedge
+unaffected.  Filling a 4MiB filesystem to capacity now ends properly: 515 files,
+.CW REFUSES-AFTER-FULL ,
+a clean remount listing 516 entries, and
+.CW efsck
+clean at generation 1032.  A standalone fill says "filesystem is full" where the
+figures recorded in
+.CW efs-limits.sh
+were 151 to 292 files and "out of memory: heap".
+.PP
+.B "The limits arm still fails, and its failure is pacing."
+Its own script runs out of memory where an otherwise identical loop with a print
+per iteration fills to 516 \(em twice each.  A print changes the outcome, so that
+arm turns on when the collector runs and is not a clean measure of
+.CW efs .
+Left failing rather than tuned until it passes.  Its verdict is fixed regardless:
+it reported a timeout as "runs out of MEMORY", and now records
+.CW EMU-TIMEOUT
+in the transcript and says which of three failures happened.
+.PP
+.B "What is left of B1."
+The growth that remains \(em 306 to 1203 \(em is still unattributed, and the way
+to attribute it is the one that worked: a counter on the work, tagged with the
+caller, its total checked against
+.CW nalloc .
+The four approaches already tried and why each failed are below, and the
+pacing sensitivity above is a hint that the collector's trigger, not
+.CW efs 's
+totals, may be the thing that decides whether a fill survives.
 .PP
 .B "Fs.range is NOT the term, which the bisect settled first."
 It was the leading suspect and the plan flagged it as a candidate rather than an
