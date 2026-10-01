@@ -255,7 +255,7 @@ execatidle(void)
 	up->iprog = nil;
 	addrun(up->prog);
 
-	t0 = m->ticks;
+	t0 = gticks();
 	done = gccolor+3;
 	while(gccolor < done && gcruns()) {
 		if(isched.vmq != nil || curP->runhd != curP->runtl) {
@@ -280,7 +280,7 @@ execatidle(void)
 	 * 1.8 million ticks on a board that had been up for 12 thousand.
 	 * A counter larger than the uptime is the tell.
 	 */
-	t0 = m->ticks - t0;
+	t0 = gticks() - t0;
 	idlegcticks += t0;
 	if(t0 > idlegcmax)
 		idlegcmax = t0;
@@ -1713,12 +1713,12 @@ vmachine(void*)
 				 * board overshot by 670ms exactly once, on
 				 * the first pass after a Limbo loop started.
 				 */
-				t0 = m->ticks;
+				t0 = gticks();
 				if(stoptheworld()){
 					rungc(isched.head);
 					starttheworld();
 				}
-				t0 = m->ticks - t0;
+				t0 = gticks() - t0;
 				gcticks += t0;
 				gcpasses++;
 				if(t0 > gcmax)

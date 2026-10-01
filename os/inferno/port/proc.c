@@ -68,6 +68,57 @@ ulong	lastuppri, lastrunvec, wokepri;
 ulong	pload;
 s32	prevpid;
 
+/*
+ * A tick count every processor agrees about.
+ *
+ * m->ticks is incremented by clockintr on the processor that takes the
+ * interrupt, so a four-processor board has four of them and they do not
+ * agree.  A running Pi 3B reports, from "echo sched >/dev/sysctl":
+ *
+ *	cpu0[ticks 827224] cpu1[686713] cpu2[686669] cpu3[686709]
+ *
+ * cpu0 is 140511 ahead because it clocks from machinit() and the others
+ * only from cpustart(), and cpu1-3 differ among themselves by up to 44.
+ *
+ * So "t0 = m->ticks; <anything that can reschedule>; m->ticks - t0"
+ * reads a different clock at each end, and when the process finishes on
+ * a processor whose count is lower the subtraction goes negative in a
+ * ulong.  The board's own counters said so before this existed:
+ *
+ *	runq     max 4294967295	= -1
+ *	sleepacq max 4294967293	= -3
+ *	tsleep   max 4294967287	= -9
+ *	idlegc   max 4294967257	= -39
+ *
+ * every one inside the +-44 spread among cpu1-3, with idlegcticks
+ * accumulated to 4275348120 -- a total larger than the uptime, which is
+ * the same tell that caught the static t0 in execatidle() earlier.
+ *
+ * balance() was the one that was not merely mismeasuring.  It reads
+ * "t - balancetime < HZ" to run at most once a second, and balancetime
+ * is global: set from a processor behind cpu0 it makes the difference
+ * 2^32-ish on cpu0, which is not < HZ, so balance() ran on every call.
+ *
+ * cpu0's count is the one everybody can read, it advances at HZ for as
+ * long as the machine clocks at all, and on a single-processor board
+ * MACHP(n) is &mach0 whatever n is -- so those boards pay nothing and
+ * behave identically.  It is still a tick count and still wraps; what it
+ * no longer does is go backwards between two reads.
+ *
+ * Deliberately NOT converted: the places where both reads come from the
+ * same Mach and cannot migrate between them -- m->schedticks in
+ * sched()/preemption, the spin in stoptheworld(), the one in
+ * devcons.c's console drain, flashamd29f0x0's wait -- and edf.c's
+ * readytime and devbridge.c's cache expiry, which have the same defect
+ * but are in neither this board's config nor any booted kernel here to
+ * test against.
+ */
+ulong
+gticks(void)
+{
+	return MACHP(0)->ticks;
+}
+
 static struct Procalloc
 {
 	Lock;
@@ -792,7 +843,7 @@ ready(Proc *p)
 	p->priority = pri;
 	rq = &runq[pri];
 	p->readypc = getcallerpc(&p);
-	p->readytick = m->ticks;
+	p->readytick = gticks();	/* read back on another processor; see gticks() */
 	p->nready++;
 	p->state = Ready;
 	queueproc(rq, p);
@@ -830,7 +881,7 @@ rebalance(void)
 	Proc *p;
 	ulong t;
 
-	t = m->ticks;
+	t = gticks();
 	if(t - balancetime < HZ)
 		return;
 	balancetime = t;

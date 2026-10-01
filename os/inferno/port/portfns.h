@@ -199,6 +199,7 @@ void		memmapadd(uintptr, uintptr, u32);
 intptr		memmapalloc(uintptr, uintptr, uintptr, u32);
 void		memmapfree(uintptr, uintptr, u32);
 int			memusehigh(void);
+ulong		gticks(void);
 void		microdelay(int);
 uvlong		mk64fract(uvlong, uvlong);
 void		mkqid(Qid*, s64, u32, u32);

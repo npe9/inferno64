@@ -714,15 +714,15 @@ Sys_sleep(void *fp)
 	f = fp;
 	/* Limbo int in a WORD slot; high half may be junk (see emu/port). */
 	period = (int)f->period;
-	t0 = m->ticks;
+	t0 = gticks();
 	release();
-	sleeprelticks += m->ticks - t0;
+	sleeprelticks += gticks() - t0;
 	if(period > 0){
 		if(waserror()){
 			acquire();
 			error("");
 		}
-		t0 = m->ticks;
+		t0 = gticks();
 		nr = up->nready;
 		rt = reschedtaken;
 		rr = reschedraised;
@@ -730,7 +730,7 @@ Sys_sleep(void *fp)
 		if(sleeptrace > 0){
 			sleeptrace--;
 			print("sleep %d ms: start %lud ready %lud now %lud, %lud readyings, pri %d, raised %lud taken %lud\n",
-				period, t0, up->readytick, m->ticks,
+				period, t0, up->readytick, gticks(),
 				up->nready - nr, up->priority,
 				reschedraised - rr, reschedtaken - rt);
 			print("  last tick ran %s %lud at pri %lud, runvec %#lux, my pri %d\n",
@@ -741,14 +741,14 @@ Sys_sleep(void *fp)
 		/*
 		 * Two halves again.  up->readytick is when ready() put
 		 * this process on a run queue -- the timer's doing -- and
-		 * m->ticks is when it got the processor.  A timer that
+		 * gticks() is when it got the processor.  A timer that
 		 * fires late and a run queue that is not reached are the
 		 * same overshoot from Limbo and different bugs here.
 		 */
-		sleeprqticks += m->ticks - up->readytick;
-		if(m->ticks - up->readytick > sleeprqmax)
-			sleeprqmax = m->ticks - up->readytick;
-		t0 = m->ticks - t0;
+		sleeprqticks += gticks() - up->readytick;
+		if(gticks() - up->readytick > sleeprqmax)
+			sleeprqmax = gticks() - up->readytick;
+		t0 = gticks() - t0;
 		sleeptsticks += t0;
 		if(t0 > sleeptsmax)
 			sleeptsmax = t0;
@@ -764,9 +764,9 @@ Sys_sleep(void *fp)
 	 * is coarse, because it is the difference between nothing and a
 	 * whole quantum that matters.  Read with "echo sched >/dev/sysctl".
 	 */
-	t0 = m->ticks;
+	t0 = gticks();
 	acquire();
-	t0 = m->ticks - t0;
+	t0 = gticks() - t0;
 	sleepacqticks += t0;
 	sleepacqn++;
 	if(t0 > sleepacqmax)
