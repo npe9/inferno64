@@ -31,8 +31,37 @@
 set -u
 HERE=`dirname "$0"`
 ROOT=`cd "$HERE/../.." && pwd`
+#
+# KERNEL was already overridable; IMG is its stamp, and the pair is CHECKED.
+#
+# The hazard here is quieter than the one alive and boot.sh had.  Those
+# reported "dead" about a running board when handed the wrong ELF.  This one
+# does something worse: every symbol table lookup still succeeds, so it prints
+# names -- plausible, confident and wrong -- for a kernel it is not looking at.
+# "accounttime+0xc" from the wrong build is a dead end that reads like a
+# finding, and this file's own comments record how much that has cost.
+#
+# So the kernel is checked against the running one by its build stamp, and on
+# a mismatch the pcs are still printed, because they are true, while the names
+# are withheld.  Refusing the whole answer would throw away what the debugger
+# genuinely knows; printing names would be inventing.
+#
 KERNEL=${KERNEL:-$ROOT/os/inferno/raspi3b/iraspi3b}
+IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
 ADAPTER=${ADAPTER:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
+
+KDADDR=`python3 "$HERE/ksyms" "$KERNEL" -g kerndate 2>/dev/null |
+	awk '$3=="kerndate"{print $1}'`
+WANT=
+if [ -n "$KDADDR" ] && [ -r "$IMG" ]; then
+	WANT=`python3 - "$IMG" "$KDADDR" <<'PYEOF'
+import sys
+img, addr = sys.argv[1], int(sys.argv[2], 16)
+d = open(img, "rb").read()
+o = addr - 0x80000
+print(int.from_bytes(d[o:o+4], "little") if 0 <= o <= len(d)-4 else "")
+PYEOF`
+fi
 TMP=${TMPDIR:-/tmp}/jtag-where.$$
 trap 'rm -f "$TMP"' 0 1 2 15
 
@@ -43,7 +72,9 @@ tail_cmd='resume;'
 	-c "init; halt; \
 	    foreach c {0 1 2 3} { \
 		catch { targets bcm2837.cpu\$c ; echo \"WHERE cpu\$c [reg pc]\" } \
-	    }; targets bcm2837.cpu0; $tail_cmd exit" ) >"$TMP" 2>&1
+	    }; targets bcm2837.cpu0" \
+	-c "mdw ${KDADDR:-0} 1" \
+	-c "$tail_cmd exit" ) >"$TMP" 2>&1
 
 if ! grep -aq WHERE "$TMP"; then
 	echo "where: the debugger did not answer; is the adapter attached?" >&2
@@ -51,7 +82,28 @@ if ! grep -aq WHERE "$TMP"; then
 	exit 1
 fi
 
+#
+# Does this kernel describe the one that is running?
+#
+NAMES=yes
+if [ -n "$KDADDR" ] && [ -n "$WANT" ]; then
+	got=`awk -F': ' '/^0x/{print $2; exit}' "$TMP" | awk '{print $1}'`
+	if [ -n "$got" ]; then
+		gotd=`python3 -c "print(int('$got',16))" 2>/dev/null`
+		if [ "$gotd" != "$WANT" ]; then
+			NAMES=no
+			echo "where: $KERNEL does not describe the running" \
+			     "kernel (board stamp $gotd, $IMG says $WANT) --" \
+			     "printing pcs WITHOUT names, which would be wrong" >&2
+		fi
+	fi
+fi
+
 grep -a WHERE "$TMP" | while read -r _ cpu _ _ pc; do
+	if [ "$NAMES" = no ]; then
+		printf '%-5s %s  %s\n' "$cpu" "$pc" "(no name: wrong kernel)"
+		continue
+	fi
 	name=`python3 "$HERE/ksyms" "$KERNEL" "$pc" 2>/dev/null | \
 		sed -e 's/^[^ ]*  *//'`
 	printf '%-5s %s  %s\n' "$cpu" "$pc" "${name:-?}"

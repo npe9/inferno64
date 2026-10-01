@@ -24,24 +24,93 @@
 set -u
 ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 MAX=${1:-0}
-ELF=$ROOT/os/inferno/raspi3b/iraspi3b
+#
+# ELF and IMG travel together, and both can be overridden.
+#
+# Every address here is read out of the ELF's symbol table and then read out
+# of the RUNNING kernel, so an ELF from one build against a kernel from
+# another agrees about nothing: mach0 is somewhere else, the word at that
+# address is not a tick count, and this printed "dead (ticks 0 -> 0)" about a
+# board that was running perfectly.  boot.sh had the same bug and was fixed
+# for it; this is the other half.
+#
+# So the ELF is checked before it is trusted.  kerndate is read from the board
+# at the address this ELF gives, and compared with the stamp in the matching
+# image.  If they disagree the answer is "cannot tell", which is a different
+# thing from "dead" and is the whole point: an instrument that cannot see must
+# say so rather than return a value.  Five false failures in this directory
+# came from tools that returned one.
+#
+ELF=${ELF:-$ROOT/os/inferno/raspi3b/iraspi3b}
+IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
 
 MACH0=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" 2>/dev/null |
 	awk '$3=="mach0"{print $1}'`
 [ -n "$MACH0" ] || { echo "alive: no mach0 symbol in $ELF" >&2; exit 2; }
 TICKS=`python3 -c "print(hex(int('$MACH0',16)+0x28))"`
 
-read_ticks() {
+KDADDR=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" -g kerndate 2>/dev/null |
+	awk '$3=="kerndate"{print $1}'`
+#
+# What that image says its stamp is.  Empty if there is no readable image to
+# compare against, in which case the plausibility test below is used instead.
+#
+WANT=
+if [ -n "$KDADDR" ] && [ -r "$IMG" ]; then
+	WANT=`python3 - "$IMG" "$KDADDR" <<'PYEOF'
+import sys
+img, addr = sys.argv[1], int(sys.argv[2], 16)
+d = open(img, "rb").read()
+o = addr - 0x80000
+print(int.from_bytes(d[o:o+4], "little") if 0 <= o <= len(d)-4 else "")
+PYEOF`
+fi
+
+#
+# One debugger session reads both words, so checking the ELF costs no extra
+# halt of the board.
+#
+read_pair() {
 	timeout 90 openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg \
 		-f "$ROOT/tools/jtag/raspi3b.cfg" \
 		-c init -c 'targets bcm2837.cpu0' -c halt \
-		-c "mdw $TICKS 1" -c resume -c shutdown 2>&1 |
-	awk -F': ' '/^0x/{print $2; exit}' | awk '{print $1}'
+		-c "mdw $TICKS 1" -c "mdw ${KDADDR:-$TICKS} 1" \
+		-c resume -c shutdown 2>&1 |
+	awk -F': ' '/^0x/{print $2}' | awk '{print $1}' | tr '\n' ' '
 }
 
-a=`read_ticks`
+pair=`read_pair`
+a=`echo "$pair" | awk '{print $1}'`
+kd=`echo "$pair" | awk '{print $2}'`
+
+#
+# Is this ELF even describing the kernel that is running?
+#
+if [ -n "$KDADDR" ] && [ -n "$kd" ]; then
+	got=`python3 -c "print(int('$kd',16))" 2>/dev/null`
+	if [ -n "$WANT" ] && [ "$WANT" != "$got" ]; then
+		echo "alive: CANNOT TELL -- $ELF does not describe the running" \
+		     "kernel (board stamp $got, $IMG says $WANT)" >&2
+		exit 2
+	fi
+	if [ -z "$WANT" ]; then
+		#
+		# No image to compare with, so fall back to asking whether the
+		# word is a plausible build stamp at all.  A mismatched ELF
+		# points at something that is not one.
+		#
+		if [ "$got" -lt 1600000000 ] || [ "$got" -gt 2200000000 ]; then
+			echo "alive: CANNOT TELL -- the word at kerndate reads" \
+			     "$got, which is not a build stamp, so $ELF does" \
+			     "not describe the running kernel" >&2
+			exit 2
+		fi
+	fi
+fi
+
 sleep 3
-b=`read_ticks`
+pair=`read_pair`
+b=`echo "$pair" | awk '{print $1}'`
 [ -n "$a" ] && [ -n "$b" ] || { echo "alive: no answer from the debugger" >&2; exit 2; }
 da=`python3 -c "print(int('$a',16))"`
 db=`python3 -c "print(int('$b',16))"`
