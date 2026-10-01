@@ -1158,6 +1158,80 @@ microseconds per write through
 and the one after it is whether efs on a raw partition \(em which
 .CW EFS-NOROOM
 says there is no room for on this card \(em is a different machine entirely.
+.NH 2
+B1a.  MEASURED \(em the growing term is READS, and walk and create scan the whole directory
+.LP
+Those measurements were taken.  Counters on
+.CW Dev.wrblk
+and
+.CW Dev.rdblk ,
+300 creates into one directory, printed every twenty commits:
+.P1
+commits   writes (+per 20)   reads (+per 20)
+     20        109  (+109)        95   (+95)
+    200       1423  (+157)      1247  (+140)
+    300       2188  (+150)      2009  (+160)
+    400       2989  (+160)      5752 (+1205)
+    500       3740  (+150)     12352 (+1320)
+    600       4500  (+159)     19018 (+1386)
+.P2
+.B "Writes are FLAT, at about 7.8 per commit, the whole way."
+So the model that a fuller directory rewrites more blocks per commit is wrong,
+and so is anything that follows from it.
+.PP
+.B "Reads go from about 4.8 per commit to about 69, and the step is between 150 and 200 files."
+That is the quadratic.  It is in reads, which is why the packed-navigation
+change above could not have helped: that change left reads untouched, and said
+so \(em 17814 raw reads before and after, exactly equal.  The one number it was
+careful to prove unchanged was the one that mattered.
+.PP
+.B "And the cause is in the SERVER, not the library and not the medium."
+.CW appl/cmd/disk/efs.b
+asks for the whole directory to answer a question about one name:
+.CW walkto()
+at 364,
+.CW create()
+at 733 and
+.CW deldentry()
+at 918 each call
+.CW "fs.range(dir, Kdentry)"
+and scan the result linearly.  Every walk and every create therefore reads every
+leaf of the directory, so an operation is O(entries) in reads and filling a
+directory is O(entries squared).
+.PP
+.B "The key is already designed for the lookup that is not being done."
+A dentry's key is
+.CW "Key(dir, Kdentry, namehash(name))"
+\(em
+.CW "create()" :775 builds it that way.  So a name could be found with one
+.CW Fs.get ,
+a descent of three or four reads, instead of a scan of the directory.
+.PP
+.B "What makes it non-trivial, in create()'s own words."
+"A second dentry with the same name hashes to the same key and a bucket holds
+collisions \(em so the check has to be here."  The hash is 64-bit FNV-1a masked
+to 63 bits, collisions are possible, and the tree holds more than one entry at a
+colliding key.
+.CW Fs.get
+returns one.  So the lookup wants to retrieve every entry AT one key and scan
+only those \(em normally one \(em which is a new library call, not a
+substitution.  Done wrongly it either misses a file or reintroduces the scan.
+.PP
+.B "Before building it, do the division."
+This item has just paid for not doing that: a 48 per cent cut in decode work
+bought 4 per cent, because decoding was 15 per cent of a create.  The share to
+establish first is reads: how many microseconds a block read costs through
+.CW dossrv
+on this board, times the reads per operation above, against the measured time
+per create.  A floor is already known \(em ten file creates straight onto
+.CW /n/dos ,
+FAT through the same
+.CW dossrv
+and the same card, cost 38.8ms each, against 97.7ms for an efs create on the
+same card \(em so a single durable metadata update on this medium is tens of
+milliseconds and efs pays about 2.5 times it at small directory sizes.  If 69
+reads a commit are each anywhere near that, reads are the whole story and the
+keyed lookup is worth building.
 
 .NH 2
 B2.  DONE.  One namehash, in the library
