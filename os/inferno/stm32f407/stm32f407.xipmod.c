@@ -38,6 +38,8 @@ extern Inst _dis_lib_workdir_dis[];
 extern Type* _dis_lib_workdir_distype[];
 extern Inst _dis_echo_dis[];
 extern Type* _dis_echo_distype[];
+extern Inst _dis_radiocal_dis[];
+extern Type* _dis_radiocal_distype[];
 extern Inst _dis_ax25raw_dis[];
 extern Type* _dis_ax25raw_distype[];
 extern Inst _dis_ax25chk_dis[];
@@ -118,6 +120,7 @@ static Xipmod tab[] = {
 	{ "/dis/lib/string.dis", 5259, 941, _dis_lib_string_dis, 19, _dis_lib_string_distype },
 	{ "/dis/lib/workdir.dis", 161, 14, _dis_lib_workdir_dis, 2, _dis_lib_workdir_distype },
 	{ "/dis/echo.dis", 433, 56, _dis_echo_dis, 3, _dis_echo_distype },
+	{ "/dis/radiocal.dis", 6309, 776, _dis_radiocal_dis, 20, _dis_radiocal_distype },
 	{ "/dis/ax25raw.dis", 4361, 632, _dis_ax25raw_dis, 19, _dis_ax25raw_distype },
 	{ "/dis/ax25chk.dis", 7737, 1178, _dis_ax25chk_dis, 19, _dis_ax25chk_distype },
 	{ "/dis/export.dis", 742, 95, _dis_export_dis, 5, _dis_export_distype },
