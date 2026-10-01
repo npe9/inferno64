@@ -22,7 +22,7 @@ Order, and why
 .P1
 1  C1  the rig's ELF hazard      DONE a1e2e12a0
 2  A4  do the 32-bit back-ends narrow?    DONE, answered below
-3  A3  audit what the 7c fix changed      a risk I introduced
+3  A3  audit what the 7c fix changed      DONE, and it found A5
 4  B2  one namehash, not two              cheap, prevents a bad class
 5  A1  fix 6c                             blocked on A2
 6  B1  efs's quadratic allocation         the real remaining bug
@@ -181,60 +181,210 @@ stub that panics if called, boot it under QEMU, and
 The third way proves the code generator, which is the point, and leaves the
 port's own breakage to its owner.
 .NH 2
-A3.  What the 7c fix changed, unreviewed
+A3.  DONE.  The 7c fix changed 100 files; nine sites need a source repair
 .LP
-.B Established.
-Where a narrowing used to be dropped it now happens.  The aarch64 kernel grew
-from 2537672 to 2540712 bytes, about 3KB of restored truncations across the
-whole tree, and no site was reviewed individually.  The symptom to expect is
-the mirror of the original: a value that used to keep its high word and now
-loses it.
+.B Method.
+Two compilers were built from
+.CW dcca478dd
+and its parent and confirmed to differ on the probe, then every
+.CW .c
+file in
+.CW libinterp ,
+.CW os/port ,
+.CW os/ip ,
+.CW os/inferno/raspi3b
+and the eight libraries the kernel links was compiled by both with
+.CW -S
+and the same flags, and the output diffed.  389 files compiled, none skipped,
+.B "100 changed" .
 .PP
-.B "What has been checked."
-.CW libinterp/comp-aarch64.c ,
-the one place flagged in advance, is clear: its sixteen
-.CW (ulong)
-casts are all
-.CW "con((uvlong)(ulong)off, RCON)"
-in
-.CW mem() ,
-whose
-.CW off
-is a
+.B "What the raw diff is not."
+12551 diff lines, whose histogram is dominated by
+.CW B ,
+.CW BCASE
+and
+.CW BEQ
+\(em branch targets and switch tables renumbering because inserting one
+instruction shifts everything after it.  Counting diff lines would have
+reported ten thousand semantic changes.  Counting narrowing instructions per
+file instead, which is immune to renumbering, gives
+.B "645 added" ,
+and 468 of those are in
+.CW comp-386.c ,
+.CW comp-amd64.c ,
+.CW comp-arm.c ,
+.CW comp-mips.c ,
+.CW comp-power.c ,
+.CW comp-sparc.c
+and
+.CW comp-spim.c
+\(em files this kernel never links, since
+.CW libinterp/mkfile
+takes only
+.CW comp-$OBJTYPE.c
+and the archive holds
+.CW comp-aarch64.7
+alone.
+.PP
+.B "And os/port and os/ip did not change at all,"
+which is worth saying plainly: the portable kernel is untouched.  The 100 are
+.CW libinterp
+32,
+.CW libkern
+23,
+.CW libdraw
+8,
+.CW libtk
+8,
+.CW libmemdraw
+5,
+.CW libmath
+3,
+.CW libkeyring
+3,
+.CW libsec
+1, and
+.CW os/inferno/raspi3b
+17.
+.PP
+.B "Most of it is a cast finally being obeyed."
+.CW convS2M
+and
+.CW convD2M
+gained 25 and 17: they write fixed-width Styx wire fields, where truncating is
+the definition of the job.
+.CW xec.c 's
+.CW cvtwb
+is "convert word to byte".
+.CW math.c 's
+are
+.CW Math_bits32real ,
+.CW Math_FPcontrol
+and
+.CW Math_FPstatus ,
+all of which narrow to 32 bits on purpose.
+.CW draw.c 's
+are
+.CW Display_rgb ,
+.CW Display_colormix
+and
+.CW Draw_setalpha ,
+packing colour channels.  And the JIT's
+.CW con()
+masks each field with
+.CW "& 0xFFFF"
+before passing it to
+.CW MOVZ ,
+whose body stores into a 32-bit
+.CW *code++ ,
+so its four new truncations narrow a value that was about to be stored as 32
+bits regardless.
+.PP
+.B "The scan that matters, and the two ways it was wrong first."
+The question is whether any narrowed value is then used as an address.  A first
+scan looked only at added lines for the dereference and found one hit, in
+.CW math.c ,
+which was a false positive:
+.CW bits32<>+0(SB)
+is a destination symbol, not a register base.  A second scan looked at the
+following lines in the whole file and found 104 \(em almost all of the form
+.P1
+MUL	R4,R0
+ADD	$32,R0
+MOVW	R0,R0		<- narrows the SIZE argument
+BL	,nheap+0(SB)
+MOV	R0,dh-16(SP)	<- R0 is now the RETURNED POINTER
+MOV	R2,8(R0)
+.P2
+where the window crossed a call and paired a truncated argument with an
+unrelated returned pointer.  With a branch or call ending the window \(em which
+is the correct dataflow boundary for an analysis this crude \(em 859 added
+register-to-register narrowings in the 93 linked files yield
+.B "nine suspects" ,
+540 windows having been closed by a branch.
+.PP
+.B "The nine, and what they are."
+.P1
+comp-aarch64.c  punt, commframe, commcall, comp, compile   7
+xec.c           slicela                                    1
+libtk/textw.c   tktdoubleclick                             2
+.P2
+Each is a
+.CW "MOVW Rn,Rn"
+\(em which did not occur once in the old output of those files \(em followed by
+a dereference of
+.CW Rn .
+The JIT's come from one idiom:
+.P1
+long _off = (long)((code) - (ptr));
+off = ((long)(IA(patch, dispc)) - (long)(code + codeoff)) >> 2;
+.P2
+a pointer cast through
 .CW long ,
 and
 .CW SZ_LONG
-is 4 on
-.CW 7c ,
-so they never narrowed 64 bits.  The kernel boots on silicon and passes every
-self-check it makes;
+is
+.B 4
+in kencc.  Before the fix that cast was dropped and the arithmetic happened in
+64 bits, accidentally correct.  Now it truncates.
+.PP
+.B "Why nothing breaks, and why that is not a defence of the code."
+These are
+.I differences
+between addresses that are close together, so truncating both and subtracting
+preserves the result inside any 4GB region;
+.CW MOVW
+sign-extends, and every address on these boards is far below 2GB, so the
+extension is the identity.  That is why the kernel boots, passes every
+self-check, runs the JIT, and why
 .CW virtarm64
-boots under QEMU to a shell.  That is evidence against gross breakage, not
-against a cold path.
-.PP
-.B "The audit, which is mechanical."
-Build the aarch64 kernel twice, once with
-.CW 7c
-at
-.CW dcca478dd
-and once with its parent, keeping
-.CW -S
-output per object.  Diff.  Every hunk is a site where a truncation appeared;
-there should be on the order of a few hundred, and each needs one question
-answered: is the value being narrowed one whose high bits mattered?  The
-interesting ones will be pointers and addresses cast through
-.CW long
-or
-.CW int ,
+boots too.  But the source says
+.CW long ,
 and
-.CW SZ_LONG
-being 4 makes those genuinely dangerous.
+.CW long
+is four bytes here; the code was relying on the compiler ignoring what it was
+told.
 .PP
-.B "What would falsify the fix."
-Any site where the truncation is wrong, which means the cast was written
-sloppily and relied on being ignored.  The repair there is to fix the cast,
-not to revert the compiler: a compiler that silently ignores what the source
-says is not a position to retreat to.
+.B "So the repair is the cast, and it is item A5."
+Not a revert: a compiler that silently ignores a narrowing is not a position to
+retreat to.  Nine sites, listed above, want
+.CW uintptr
+rather than
+.CW long
+\(em and the
+.CW off
+variables they feed want the same, or the change buys nothing.  It is a
+separate, small, verifiable piece of work on the JIT, and it is deliberately
+not being done at the end of the session that found it.
+.NH 2
+A5.  Nine pointer-through-long casts, from A3
+.LP
+.B Established.
+The sites and the idiom are in A3.  They are latent, not active: correct on
+every board in this tree because its addresses fit in 31 bits.
+.PP
+.B The work.
+Change
+.CW (long)
+to
+.CW (uintptr)
+at those casts, and the
+.CW long off
+declarations that receive them to
+.CW uintptr
+or
+.CW vlong ,
+whichever the arithmetic wants.  Rebuild, confirm the nine
+.CW "MOVW Rn,Rn"
+sites are gone from the
+.CW -S
+output, and boot: the JIT is exercised by anything that runs Dis, so
+.CW DRAW-OK
+and the efs checks cover it.
+.PP
+.B "What would make this urgent."
+A board whose kernel or JIT buffer sits above 2GB.  None here does, which is
+why this is A5 and not A1.
 .NH 2
 A4.  CLOSED.  Only 6c and 7c were affected
 .LP
