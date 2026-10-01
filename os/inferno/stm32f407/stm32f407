@@ -252,6 +252,7 @@ root
 	/lib
 	/lib/radio		/lib/radio
 	/dis/ax25raw.dis	/dis32/ax25raw.dis
+	/dis/ax25up.dis		/dis32/ax25up.dis
 	/dis/ax25chk.dis	/dis32/ax25chk.dis
 	/dis/export.dis		/dis32/export.dis
 	/dis/sed.dis		/dis32/sed.dis

@@ -128,6 +128,7 @@ TARG=\
 	kisschk.dis\
 	ax25chk.dis\
 	ax25raw.dis\
+	ax25up.dis\
 	mkradiokeys.dis\
 	lorachk.dis\
 	loraraw.dis\

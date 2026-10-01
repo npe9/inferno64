@@ -119,7 +119,7 @@
 #define	KSTACKPREALLOC	1
 #define	KSTACKWATCH	1	/* measure it; see os/inferno/port/proc.c */
 /*
- * NINE, AND WHAT WANTED MORE THAN FIVE.
+ * SEVEN, AND WHAT WANTED MORE THAN FIVE -- AND WHY NOT NINE.
  *
  * Five was enough for a shell and a radio.  #a wants three kprocs of
  * its own the moment a packet device is attached to it -- ax25recv,
@@ -144,11 +144,22 @@
  * headroom the two pools were competing for, and the heap is the one
  * that notices: it had some 38000 bytes free at a prompt.
  *
+ * NINE WAS TRIED AND IS TOO MANY, measured: the board boots, reaches a
+ * prompt, and the first command fails --
+ *
+ *	; echo LV461264
+ *	[String] Broken: "out of memory: heap" at 0x0 pid 1
+ *
+ * which is 36864 bytes of stacks out of 159744 leaving the heap unable
+ * to run echo.  Seven is two more than five, which is what #a's three
+ * kprocs need given the one the shell already has spare, at 8192 bytes
+ * rather than 16384.
+ *
  * And 3096 in that trace is why KSTACK stays at 4096.  The comment
  * above records that 3072 was tried; a kproc has now been seen 3096
  * deep, so 3072 would have overflowed it.
  */
-#define	NPROC		9
+#define	NPROC		7
 #define	CONFNAME	"stm32f407"
 
 /*

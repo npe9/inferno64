@@ -167,6 +167,7 @@ XIPDIS=\
 	md5sum.dis\
 	strings.dis\
 	ax25raw.dis\
+	ax25up.dis\
 	ax25chk.dis\
 	export.dis\
 	sed.dis\

@@ -36,8 +36,33 @@ Actl:	con "#a/ctl";
 Astats:	con "#a/stats";
 Clone:	con "#a/clone";
 
-Nodigi:	con 239;		# 255 less 14 of address and 2 of control
-Twodigi:	con 225;	# and 14 more for two digipeaters
+#
+# THESE WERE CONSTANTS AND THEY WERE AN SX1276'S.
+#
+# 239 is 255 less 14 of address field and 2 of control and PID, and 225
+# is 14 more off for two digipeaters -- and 255 is one particular
+# carrier's payload.  doc/ax25-plan.ms says the sizes come out of
+# sys->iounit rather than out of a constant in a test, and this file is
+# where that claim was not true: on a CC1120 the carrier is 125, so the
+# answers are 109 and 95, and both checks here would have failed against
+# a device that was right.
+#
+# Measured on an stm32f407 with a ccRF click, by ax25up(1), which exists
+# because this program will not run on that board:
+#
+#	ax25up: /dev/radio0/data iounit 125
+#	ax25up: #a/0/data iounit 109
+#	ax25up: #a/0/data iounit 95		(via WIDE1-1,WIDE2-1)
+#
+# So the budget is computed from the carrier the test itself attached.
+# The arithmetic stays here, because that is what is being checked; what
+# goes is the assumption about what it is applied to.
+#
+Hdrlen:	con 16;		# 14 of address field, 2 of control and PID
+Digilen:	con 7;	# one more address for each digipeater
+Maxbuf:	con 255;	# the largest carrier this can be pointed at
+
+nodigi, twodigi: int;	# set from the carrier in setup()
 
 nrun, nfail: int;
 
@@ -96,6 +121,13 @@ setup(call: string)
 		sys->print("ax25chk: %s: %r\n", Actl);
 		return;
 	}
+	# The carrier's own budget, before anything is asserted about
+	# what #a republishes from it.
+	nodigi = sys->iounit(rfd) - Hdrlen;
+	twodigi = nodigi - 2*Digilen;
+	sys->print("carrier iounit %d, so %d with no path and %d with two " +
+		"digipeaters\n", sys->iounit(rfd), nodigi, twodigi);
+
 	ck("addr-accepted", sys->fprint(lfd, "addr %s", call) > 0,
 		sys->sprint("%r"));
 	ck("attach-accepted", sys->fprint(lfd, "fd %d", rfd.fd) > 0,
@@ -121,13 +153,15 @@ setup(call: string)
 	if(opendata(c) < 0)
 		return;
 	iou := sys->iounit(c.dfd);
-	ck("iounit-no-digi", iou == Nodigi, sys->sprint("iounit %d", iou));
+	ck("iounit-no-digi", iou == nodigi,
+		sys->sprint("iounit %d, carrier says %d", iou, nodigi));
 
-	over := array[Nodigi+1] of byte;
+	over := array[Maxbuf+1] of byte;
+	over = over[0:nodigi+1];
 	n := sys->write(c.dfd, over, len over);
 	e := sys->sprint("%r");
 	ck("oversize-write-refused", n < 0, sys->sprint("wrote %d", n));
-	ck("oversize-names-budget", strstr(e, string Nodigi) >= 0,
+	ck("oversize-names-budget", strstr(e, string nodigi) >= 0,
 		sys->sprint("error was %q", e));
 
 	# The path changes the frame size, so it may not change under an
@@ -148,7 +182,8 @@ setup(call: string)
 	if(opendata(d) < 0)
 		return;
 	iou = sys->iounit(d.dfd);
-	ck("iounit-two-digis", iou == Twodigi, sys->sprint("iounit %d", iou));
+	ck("iounit-two-digis", iou == twodigi,
+		sys->sprint("iounit %d, carrier says %d", iou, twodigi));
 
 	ck("three-digis-refused",
 		sys->fprint(d.cfd, "via A-1,B-1,C-1") < 0,
@@ -202,7 +237,8 @@ recv(count: int)
 	n := sys->read(c.dfd, one, len one);
 	ck("short-read-refused", n < 0, sys->sprint("read %d", n));
 
-	b := array[Nodigi] of byte;
+	b := array[Maxbuf] of byte;
+	b = b[0:nodigi];
 	for(i := 0; i < count; i++){
 		n = sys->read(c.dfd, b, len b);
 		ck(sys->sprint("read-%d", i), n > 0, sys->sprint("%d %r", n));
@@ -284,7 +320,8 @@ listen(count, delay: int)
 	d := ref Conv(num, lfd, nil);
 	if(opendata(d) < 0)
 		return;
-	buf := array[Nodigi] of byte;
+	buf := array[Maxbuf] of byte;
+	buf = buf[0:nodigi];
 	for(i := 0; i < count; i++){
 		n = sys->read(d.dfd, buf, len buf);
 		ck(sys->sprint("read-%d", i), n > 0, sys->sprint("%d %r", n));

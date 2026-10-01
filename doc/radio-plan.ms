@@ -5126,3 +5126,76 @@ took that one and exited before the frame arrived.
 .B "A receive queue outlives the program that filled it,"
 which makes it a stale instrument like any other, and the tool resets
 both boards now.
+.PP
+.B "Item 9's second step: the payload budget, and the claim it tests."
+.DS
+.CW "ax25up: /dev/radio0/data iounit 125"
+.CW "ax25up: #a/0/data iounit 109      (no path)"
+.CW "ax25up: #a/0/data iounit 95       (via WIDE1-1,WIDE2-1)"
+.DE
+.I Doc/ax25-plan.ms
+records those as 239 and 225, which are an SX1276's 255 less 16 and less
+30, and says the sizes come out of
+.CW sys->iounit
+rather than out of a constant in a test.
+.B "That claim was testable only here,"
+because this is the first packet device under
+.B #a
+whose payload is not 255 \- and it holds: the same code gives 109 and 95
+off a carrier of 125.
+.PP
+.B "And the place it was not true was the test."
+.I Ax25chk (1)
+had
+.CW "Nodigi: con 239"
+and
+.CW "Twodigi: con 225"
+in it, so both of its
+.B iounit
+checks would have failed against a device that was right.  It computes
+them from the carrier it attached now; the arithmetic stays, because that
+is what is being checked, and what goes is the assumption about what it
+is applied to.
+.PP
+.B "Two board limits found on the way, and neither is the radio's."
+.IP \(bu 3
+.B #a
+starts three kprocs the moment a device is attached \- ax25recv,
+ax25send, ax25tick \- and
+.CW NPROC
+was five.
+.CW "ax25chk setup"
+got as far as
+.CW "addr-accepted ok"
+and then
+.CW "no procs for kproc" ,
+taking the console with it.  Seven works and
+.B "nine does not:"
+at nine the board boots to a prompt and the first command gives
+.CW "[String] Broken: \(dqout of memory: heap\(dq" ,
+because KSTACKPREALLOC takes 36864 bytes of stacks out of 159744 and the
+heap cannot run
+.I echo
+in what is left.
+.IP \(bu 3
+.B "And ax25chk still does not run on this board,"
+at seven or at nine: it is 7737 bytes of instruction array with
+twenty-odd checks and 239-byte buffers, and it dies with
+.CW "out of memory: heap"
+after attaching.  So
+.I ax25up (1)
+is the four lines of it that are a measurement rather than a self-test,
+at 2351 bytes, and that is what produced the numbers above.
+.PP
+.B "One thing the error messages cannot say."
+The path verb is
+.B via
+and the first version of
+.I ax25up
+wrote
+.BR digipath ,
+which came back
+.CW "bad arg in system call"
+\- the same refusal an unknown verb and a bad argument both give.  An
+error that cannot distinguish a wrong name from a wrong value costs a
+build and a flash cycle on a board.
