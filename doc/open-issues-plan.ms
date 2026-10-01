@@ -25,7 +25,7 @@ Order, and why
 3  A3  audit what the 7c fix changed      DONE: clean; left A5 hygiene
 4  B2  one namehash, not two              DONE 2d273290f
 5  A1  fix 6c                             DONE e5d6131f3 (A2 done b6a7201e9)
-6  B1  efs's quadratic allocation         DIAGNOSED; fix is lazy decode
+6  B1  efs's quadratic allocation         3 fixes tried+reverted; instrument first
 7  D1  w4/w8, D2 close the bind section   DONE
 .P2
 .CW C1
@@ -622,64 +622,71 @@ walk the same blocks repeatedly within a transaction and were re-decoding on
 every call.  That is worth knowing: the decoded-node cache does real work
 inside a transaction, even though it never survives one.
 .PP
-.B "And the target is fixup, which is a THIRD answer."
-The plan said, two commits ago, that the cost was
-.CW replace 's
-leaf rebuild.  That was read off arm A alone, where it is exactly true \(em
-.CW replents/op
-is 22.0 and the total entries unpacked is 22 \(em and arm A is a filesystem of
-two entries, whose whole tree is one leaf with no parents at all.  Instrumenting
-the large case instead:
+.B "Three fixes attempted, all measured, all reverted."
 .P1
-fs 242 entries   alloc/op 2000   repl/op 4.0   replents/op   6.0
-                                 rangeents/op 0.0   fixents/op 660.0
+keep decoded nodes across commits   328/1372/1989 -> 324/1367/1985
+a descent that does not decode      328/1372/1989 -> 330/1371/1989
+patch fixup's child pointer in place 328/1372/1989 -> 328/1343/1934
 .P2
-.CW Fs.fixup
-is 660 of the 789.  It walks back up the tree after a leaf is rewritten, and for
-each level it
-.I decodes the parent ,
-rebuilds every entry of it, and re-packs \(em to change one child pointer.  An
-interior node near the root of a 242-entry filesystem holds hundreds of entries,
-and copy on write means this happens on every modifying operation.
+The third is a real improvement and does strictly less work \(em interior entries
+are a fixed 27 bytes, so a parent whose child pointer changed can be edited in
+the packed block instead of decoded, rebuilt entry by entry and re-packed, and a
+counter confirms that path is taken 8 times per operation and the rebuild never.
+Three per cent.  It was reverted all the same: a change to the format layer
+needs a reason better than three per cent, and the dominant cost is still not
+identified.
 .PP
-.B "Which makes the fix small, because interior entries are fixed width."
-.CW Keysz
-is 17, an interior value is always the 8 bytes of a block number, and the length
-field is 2: an interior entry is exactly 27 bytes and never changes size.  So in
-the common case \(em
-.CW "len kids == 1" ,
-no split \(em the parent needs no decoding at all.  Copy its block, walk the entry
-headers to the offset of entry
-.CW at
-without allocating, overwrite 17 bytes of key and 8 of value, restamp the
-checksum the way
-.CW Node.pack
-does
-.CW ( "(a, c) := checksum(b, Nocksum)" ,
-then
-.CW put2
-at
-.CW Nocksum
+.B "The instrumentation is why, and this is the thing to fix first."
+Two counters were compared that do not measure the same thing.
+.CW unpents ,
+incremented inside
+.CW getnode
+after
+.CW Node.unpack ,
+counts entries
+.I actually decoded
+\(em cache misses only \(em and gave 22, 514 and 789 per operation.
+.CW fixents
 and
-.CW Nocksum+2 ),
-allocate a block, write it, free the old.  The split case keeps the existing
-decode-and-rebuild path, which is rare and genuinely needs it.
+.CW replents ,
+incremented at the call sites, count entries
+.I seen ,
+whether the node came from the cache or was decoded.  So
+.CW "fixents = 660"
+did not mean 660 decodes, which is exactly why removing all of them changed
+almost nothing, and why the fit of 2.1 to 2.25 allocations per entry cannot be
+applied to it.
 .PP
-.B "Three answers, and why the first two were wrong in the same way."
-Keeping decoded nodes: measured, no effect, because copy on write renumbers.  A
-lazy descent: measured, no effect, because the entries are not in the interior
-nodes the descent reads \(em except that they
-.I are ,
-when
+So the next attempt starts by making one counter that answers the question:
+entries decoded, attributed to the caller that forced the decode.  Increment it
+inside
+.CW getnode
+on the miss path, with a field on
+.CW Fs
+naming who asked, set by
+.CW range ,
+.CW replace ,
 .CW fixup
-rewrites those same nodes, which is what the third measurement found.  And
-.CW replace :
-true only of a one-leaf filesystem.
+and
+.CW pathto
+around their calls.  Until the 22, 514 and 789 are split between those four, any
+fix is a guess \(em which is what all three of these were.
 .PP
-Each was a reading of one arm generalised to all three.  The instrument that
-settled it attributes entries to their caller and is run at
-.I both
-ends of the range, which is what the earlier measurements should have done.
+.B "What is solid, after all of it."
+That
+.CW alloc/op
+is 328, 1372 and 1989 at 2, 62 and 242 entries, reproduced many times.  That
+.CW memfs
+is flat.  That it is collector pressure and not a leak.  That the term is
+entries decoded by
+.CW Node.unpack ,
+which allocates an
+.CW Ent
+per entry.  And that the cache cannot help across operations because copy on
+write renumbers every block on the path \(em
+.CW getnode/op
+stays at 4.0 over 240 operations on one file.  The open question is only which
+caller forces those decodes.
 .PP
 .B Done when.
 .CW alloc/op
