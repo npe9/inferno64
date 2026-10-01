@@ -3619,3 +3619,54 @@ The tinySA, which would settle it from outside, has stopped answering on
 either
 .B /dev/cu.usbmodem*
 after working earlier; it wanted a reboot once already today.
+.PP
+.B "SYNC_THR, and a received packet that was noise."
+The driver's table sets
+.B "SYNC_CFG1 0x0b" ,
+whose low five bits are
+.B SYNC_THR
+= 11, and the
+.B sync
+ctl verb preserves those bits when it sets the mode \- so the threshold
+is never changed from the table's.  This bench had already found
+empirically that sync asserts at 30 and not below, which is recorded
+earlier in this document as "recv 3, crcerr 3 at SYNC_THR 30".
+.PP
+Writing
+.B "reg 0x08 0x5e"
+\- mode 2, threshold 30 \- produced the first
+.B recv
+this pairing has ever shown.  It is not a received packet.
+.B lastrx
+gives
+.DS
+.CW "16 bytes: 21 03 10 0a 1a 94 49 04 95 20 05 9c 33 4a a2 12"
+.DE
+where INFERNO-BEACON is 49 4e 46 45 52 4e 4f 2d 42 45 41 43 4f 4e, and
+the packet's own RSSI reads
+.B "last -106"
+\- the noise floor.  One such event in seventy seconds.  Threshold 30 is
+maximally permissive and syncs on noise; that is what it did.
+.PP
+So the earlier "recv 3, crcerr 3 at SYNC_THR 30" in this document should
+be read the same way unless its payloads were checked, and there is no
+note that they were.  A
+.B recv
+with a garbage payload at the noise floor is a detector firing on
+nothing, and counting it as reception is how a receive path gets
+believed before it works.
+.PP
+What is actually blocking remains the level.  At +14dBm \- PA_CFG2 raised
+from the table's 0x4f, which is -10dBm, to 0x7f \- the receiver's carrier
+sense duty went from 6 to 41 per cent and its burst count from 12 to 21,
+so more energy is arriving; but the reported peak did not move from -103
+against a floor of -108.  Twenty-four decibels of transmit power that
+does not appear in the received level is not a level measurement one can
+reason from, and this board's RSSI offset is an unverified -102 taken
+from a TI example.
+.PP
+Which leaves the tinySA as the only instrument that can say what is on
+the air, and it has stopped answering on either
+.B /dev/cu.usbmodem*
+after working earlier today.  Until it is back the link cannot be
+measured, only guessed at, and this document has enough guesses in it.
