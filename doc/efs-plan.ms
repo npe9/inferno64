@@ -91,6 +91,68 @@ and reads the partial sector), so byte-offset I/O works.  It is still
 whole blocks that make transfers cheap on a polled controller, and the
 format should never issue anything smaller than a block.
 .NH 1
+Measured against kfs, at last
+.PP
+The section above argues for replacing kfs on shape and says plainly that
+"a filesystem here is judged on what it does after that, not on
+throughput."  That was the right argument and it left throughput
+unanswered, because the only medium on this desk charges about 38.8ms for
+one durable metadata update and buries both filesystems underneath itself.
+.PP
+.CW sdmem (3)
+removes the medium \(em a block device in RAM, with the I/O counted by the
+driver rather than by either filesystem, so neither is trusted to report
+its own numbers.
+.CW tests/fsbench
+is the run: 300 creates into one directory, six rounds of fifty, each
+filesystem reamed fresh on the same device in the same boot.
+.P1
+                        efs        kfs
+total                 12.25 s     9.53 s
+first fifty, each      31.7 ms    10.1 ms
+last fifty, each       41.9 ms    56.1 ms
+growth over 300        1.32x      5.6x
+read ops               4253      18131
+read sectors          34024      36262
+write ops              4402       3000
+write sectors         35216       6000
+disk touched           15.2 MB     640 KB
+.P2
+.PP
+.B "kfs wins the total, and efs wins the trend."
+kfs is three times quicker on a directory of fifty and ends up half as
+quick on one of three hundred: its per-create cost grows 5.6 times across
+the run where efs's grows 1.32.  The curves cross at about three hundred
+files and keep diverging, so which filesystem is faster is a question
+about how many files are in a directory and not a question with one
+answer.
+.PP
+.B "The number that decides it on THIS board is read ops, and efs issues a quarter as many."
+4253 against 18131, for about the same sectors read \(em kfs's blocks are
+1KB and efs's are 4KB, so kfs issues four times as many transfers a
+quarter the size.  A card charges per command far more than per byte: ten
+FAT creates on this one measured 38.8ms each while it streams megabytes a
+second.  So on the medium this board actually has, the four-fold
+difference in operations is the one that shows, and it is the opposite
+way round from the total above.
+.PP
+.B "And efs's costs are space and write amplification, which are real."
+It wrote 5.9 times the sectors kfs did and touched 15.2MB of a 16MB disk
+to hold three hundred tiny files, against kfs's 640KB.  That is copy on
+write plus an allocator that sweeps forward rather than reusing: a
+24-fold space amplification.  On flash the sweep is even wear and
+welcome; on a small medium it means efs needs far more free space than its
+data, and that belongs in the open questions below rather than being
+discovered later.
+.PP
+.B "Why both arms must be in one script."
+efs measured 31.7 to 41.9ms a create here and 17.2 to 32.8 in a run an
+hour earlier, on the same kernel and the same workload.  The rig drifts,
+which is already written down in this tree, so an absolute figure from one
+session is worth little and a ratio measured in one boot is worth a lot.
+.CW tests/fsbench
+reams both filesystems on the same device in the same run for that reason.
+.NH 1
 Why this is kinder to the card than kfs is
 .PP
 Everything above is about sectors, which is the fiction the card sells.

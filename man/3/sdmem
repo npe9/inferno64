@@ -133,6 +133,14 @@ echo delay 5000 > /dev/sdZ0/ctl
 .EE
 .SH SOURCE
 .B /os/inferno/port/sdmem.c
+.PP
+.B /tests/fsbench
+runs the same workload on
+.I efs
+and
+.I kfs
+through this device.  It must run on a board, not under host emu, since
+this is a kernel device.
 .SH SEE ALSO
 .IR sd (3),
 .IR efs (4)

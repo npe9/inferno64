@@ -1,0 +1,84 @@
+#!/dis/sh.dis
+#
+# fsbench - the same workload on efs and on kfs, on a medium that costs
+# nothing, with the I/O counted by the device rather than by either
+# filesystem.
+#
+# THIS RUNS ON A BOARD, not under host emu, because it needs sdmem(3) --
+# a block device in RAM, which is a kernel device.  From the host:
+#
+#	sh tools/jtag/kinstall.sh		# a kernel with sdmem
+#	... then on the board ...
+#	sh /n/remote/tests/fsbench
+#
+# WHY IT IS WORTH HAVING.  doc/efs-plan.ms argues for replacing kfs on
+# shape rather than on throughput, and says so: "A filesystem here is
+# judged on what it does after that, not on throughput."  That was the
+# right argument and it left the throughput question open, because the
+# only medium available charges about 38.8ms for one durable metadata
+# update and buries both filesystems underneath itself.  On sdmem the
+# medium is free and what is left is the filesystem.
+#
+# WHAT TO READ.  "reads" and "writes" are reported as OPS and SECTORS.
+# The ops are the number that matters for a real medium: a card charges
+# per command far more than per byte, so a filesystem issuing four times
+# as many half-size transfers is four times worse there whatever its byte
+# totals say.  "chunks" is how much of the disk was touched at all, which
+# is where copy-on-write shows up.
+#
+# And the per-round times matter more than the total.  A filesystem quick
+# at fifty files and slow at three hundred has a term that grows with the
+# directory, and that term is what decides whether it is usable at thirty
+# thousand.
+#
+load std
+
+D = /dev/sdZ0
+
+#
+# Probe with cat, not ftest: ftest is not in this board's kernel root, and
+# "! ftest ..." there inverts a MISSING COMMAND into a true condition, so
+# the check reported no sdmem on a kernel that had it.
+#
+if {! cat $D^/ctl >/dev/null >[2]/dev/null} {
+	echo 'fsbench: no '^$D^' -- this kernel has no sdmem(3)' >[1=2]
+	raise 'fail:no sdmem'
+}
+
+#
+# 300 creates in one directory, in six rounds of fifty.  One directory on
+# purpose: it is the structure both filesystems index by name, and the
+# term that grows is the one that grows with it.
+#
+fn bench {
+	mkdir /n/efscrash/sub
+	echo '  start '^`{cat /dev/time}
+	for a in 0 1 2 3 4 5 {
+		for i in 0 1 2 3 4 {
+			for j in 0 1 2 3 4 5 6 7 8 9 {
+				echo payload > /n/efscrash/sub/f^$a^$i^$j
+			}
+		}
+		echo '  round '^$a^' '^`{cat /dev/time}
+	}
+	cat $D^/ctl
+	unmount /n/efscrash
+}
+
+echo
+echo '===== efs'
+echo zero > $D^/ctl
+echo reset > $D^/ctl
+disk/mkefs -n 4000 $D^/data
+disk/efs -f $D^/data /n/efscrash
+bench
+
+echo
+echo '===== kfs'
+echo zero > $D^/ctl
+echo reset > $D^/ctl
+mount -c {disk/kfs -r $D^/data} /n/efscrash
+bench
+
+echo
+echo FSBENCH-DONE
