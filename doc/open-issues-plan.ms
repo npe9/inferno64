@@ -1427,15 +1427,85 @@ as the cause and proposed a keyed lookup to avoid it; that is still a real
 improvement and is still unbuilt, but it is no longer the first thing, because
 the scan is now walking five leaves instead of thirty-four.
 .PP
-.B "Still open."
+.NH 2
+B1d.  DONE \(em the keyed lookup, and the silent data loss it uncovered
+.LP
 .CW walkto() ,
 .CW create()
+and the rename in
+.CW wstat()
+read a whole directory to answer a question about one name.  They now do one
+descent:
+.CW dlook() ,
+which reads
+.CW "Key(dir, Kdentry, namehash(name))" .
+.CW adddentry()
+had always built the key that way; nothing used it.
+.PP
+.B "And B1a's premise about collisions was wrong, in the direction that loses files."
+.CW create() 's
+comment said "a second dentry with the same name hashes to the same key and a
+bucket holds collisions \(em so the check has to be here".  There is no bucket.
+.CW Fs.replace ,
+given a key it already holds,
+.I replaces
+it.  So a create whose name hashed onto an existing DIFFERENT name passed the
+scan \(em which compares names, and the names differ \(em reached
+.CW fs.insert ,
+and silently replaced that file's directory entry.  The file left the
+directory with no error and its inode and blocks leaked.
+.PP
+.B Demonstrated, not reasoned.
+With
+.CW namehash
+narrowed to 8 bits so a collision is reachable, creating
+.CW b
+then
+.CW ga
+\(em both hash to 165 \(em left only
+.CW ga ,
 and
-.CW deldentry()
-read a whole directory to answer a question about one name, which is
-O(entries) however full the leaves are.  The keyed lookup described in B1a
-would make it O(log entries), and the collision constraint recorded there is
-unchanged.
+.CW "cat b"
+said the file did not exist.  With the fix the second create is refused,
+.P1
+cannot open /n/client/d/ga: name hash collision with 'b';
+    efs holds one entry per key
+.P2
+and
+.CW b
+is still listed and still reads
+.CW first .
+At the real 63 bits a directory needs of the order of 2**31 names for this to
+be likely, which is why it had never been seen; silent is still silent.
+.PP
+Refusing is the only honest answer while one key holds one entry.  Making
+colliding names work needs a format that chains them, which is a version bump
+and not this.
+.PP
+.B "What the three changes are worth together."
+300 creates on
+.CW sdmem
+with
+.CW "delay 0" :
+.P1
+arm                      total   first 50   last 50   read ops
+as committed before      29.6 s      35        160       17014
++ packed navigation      14.9 s      18.4       75.1      17014
++ even split              8.0 s      17.5       29.3       4504
++ keyed lookup           7.06 s      17.2       22.1       4255
+.P2
+4.2x in total and 7.2x on the term that grew.  The keyed lookup is only 12 per
+cent of the time by itself, because the even split had already reduced a
+directory to about five leaves and a scan of five leaves is cheap \(em but it
+removes the last term that grows WITH the directory, which is the difference
+between fast at three hundred files and fast at thirty thousand.  The per-create
+figures are now flat.
+.PP
+.B "Not converted, and why."
+.CW deldentry(dir, ino)
+searches by inode: its two callers, remove and rename, know the inode and not
+the name.  It keeps the scan.  Both are far rarer than a walk, which happens on
+every path element of every operation.
 
 .NH 2
 B2.  DONE.  One namehash, in the library

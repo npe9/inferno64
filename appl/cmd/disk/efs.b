@@ -333,6 +333,39 @@ dentry(v: array of byte): (big, string, string)
 	return (ino, string v[10:10+n], nil);
 }
 
+#
+# Find a directory entry BY NAME, in one descent instead of a scan.
+#
+# A dentry's key is Key(dir, Kdentry, namehash(name)) -- adddentry() has
+# always built it that way -- so the name IS the key and there is no
+# reason to read the directory to find one entry.  walkto(), create() and
+# the rename in wstat() each used to call fs.range() and scan what came
+# back, which is O(entries) in block reads on every path element of every
+# operation; doc/open-issues-plan.ms B1a is the measurement.
+#
+# Returns (ino, name-found-there, nil).  ino < 0 means the key is absent.
+#
+# THE NAME AT THE KEY IS RETURNED RATHER THAN COMPARED HERE, and the
+# callers must look at it, because the key is a 63-bit hash and two names
+# can share one.  The tree holds ONE entry per key -- Fs.replace replaces
+# a key it finds rather than chaining -- so "the key exists" does not mean
+# "this name exists", and a caller that assumes it does either finds the
+# wrong file or destroys one.  See create() for the half of that which was
+# a bug.
+#
+dlook(dir: big, name: string): (big, string, string)
+{
+	(v, e) := fs.get(Key(dir, Efs->Kdentry, efs->namehash(name)));
+	if(e != nil)
+		return (big -1, nil, e);
+	if(v == nil)
+		return (big -1, nil, nil);
+	(ino, nm, de) := dentry(v);
+	if(de != nil)
+		return (big -1, nil, de);
+	return (ino, nm, nil);
+}
+
 navigator(navops: chan of ref Navop)
 {
 	for(;;){
@@ -361,20 +394,18 @@ walkto(parent: big, name: string): (ref Sys->Dir, string)
 	# itself from the fid's own path, so answering it wrongly would be
 	# worse than leaving it alone.
 	#
-	(ents, e) := fs.range(parent, Efs->Kdentry);
+	(ino, nm, e) := dlook(parent, name);
 	if(e != nil)
 		return (nil, e);
-	for(i := 0; i < len ents; i++){
-		(ino, nm, de) := dentry(ents[i].val);
-		if(de != nil)
-			return (nil, de);
-		if(nm == name){
-			remember(ino, nm);
-			rememberparent(ino, parent);
-			return dirof(ino);
-		}
-	}
-	return (nil, Styxservers->Enotfound);
+	#
+	# nm != name is a hash collision: some other name occupies this
+	# key, so the name asked for is not in this directory.
+	#
+	if(ino < big 0 || nm != name)
+		return (nil, Styxservers->Enotfound);
+	remember(ino, nm);
+	rememberparent(ino, parent);
+	return dirof(ino);
 }
 
 readdir(n: ref Navop.Readdir)
@@ -725,18 +756,39 @@ create(dir: big, name: string, perm: int, nil: int): (ref Sys->Dir, string)
 	if(name == "" || name == "." || name == "..")
 		return (nil, "bad name");
 	#
-	# Refuse a duplicate.  The tree would take it -- a second dentry
-	# with the same name hashes to the same key and a bucket holds
-	# collisions -- so the check has to be here, and it is the check
-	# that stops a create from quietly shadowing a file.
+	# Refuse a duplicate, and refuse a COLLISION.
 	#
-	(ents, re) := fs.range(dir, Efs->Kdentry);
+	# This used to read the whole directory and scan it for the name,
+	# with a comment saying "a second dentry with the same name hashes
+	# to the same key and a bucket holds collisions".  There is no
+	# bucket: Fs.replace, given a key it already holds, REPLACES it.
+	# So a create whose name hashed onto an existing DIFFERENT name
+	# passed this check, reached fs.insert, and silently replaced that
+	# file's directory entry -- the file vanished from the directory
+	# with no error and its inode and blocks leaked.
+	#
+	# Demonstrated rather than reasoned: with namehash narrowed to 8
+	# bits so a collision is reachable, creating "b" and then "ga"
+	# (both hash to 165) left only "ga", and "cat b" said the file did
+	# not exist.  At the real 63 bits a directory needs on the order of
+	# 2**31 names for this to be likely, which is why it had never been
+	# seen -- but silent is silent.
+	#
+	# One descent now, and the two cases are distinguished: the same
+	# name is "file already exists", a different name at the same key
+	# is refused as what it is.  Refusing is the only honest answer
+	# while one key holds one entry; making it work needs a format that
+	# chains them, which is a version bump and not this.
+	#
+	(xino, xnm, re) := dlook(dir, name);
 	if(re != nil)
 		return (nil, re);
-	for(i := 0; i < len ents; i++){
-		(nil, nm, de) := dentry(ents[i].val);
-		if(de == nil && nm == name)
+	if(xino >= big 0){
+		if(xnm == name)
 			return (nil, "file already exists");
+		return (nil, sys->sprint(
+			"name hash collision with %#q; efs holds one entry per key",
+			xnm));
 	}
 
 	ino := fs.s.nextino;
@@ -954,13 +1006,18 @@ wstat(ino: big, stat: Sys->Dir): string
 		par := parentof(ino);
 		if(par < big 0)
 			return "cannot rename: this server has not seen the directory";
-		(ents, re) := fs.range(par, Efs->Kdentry);
+		#
+		# Same two cases as create(), and for the same reason.
+		#
+		(rino, rnm, re) := dlook(par, stat.name);
 		if(re != nil)
 			return re;
-		for(j := 0; j < len ents; j++){
-			(nil, nm, de) := dentry(ents[j].val);
-			if(de == nil && nm == stat.name)
+		if(rino >= big 0){
+			if(rnm == stat.name)
 				return "file already exists";
+			return sys->sprint(
+				"name hash collision with %#q; efs holds one entry per key",
+				rnm);
 		}
 		if((e = deldentry(par, ino)) != nil)
 			return e;
