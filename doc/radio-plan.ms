@@ -4173,3 +4173,39 @@ should show runs clustered at one symbol period \- 104us at 9600 baud,
 random runs.  That distinguishes "the demodulator never recovers bits"
 from "it recovers them and the packet engine rejects them", which is the
 question everything else has failed to settle.
+.PP
+.B "Transparent mode's serial outputs are dead on both parts, and that blocks the last diagnostic."
+The verbs engage the mode:
+.B "serial on"
+moves PKT_CFG2 from 0x04 to 0x07, MDMCFG0 from 0x05 to 0x0d with
+TRANSPARENT_MODE_EN set, and IOCFG3 from 0x11 to 0x09, all three
+restoring on
+.BR "serial off" ,
+and the verb strobes SFRX and SRX so the part is receiving.
+.PP
+The pin does not move.  Over 256817 samples at 1.227us, with the far
+board idle and again with it transmitting continuous random data at
++14dBm:
+.DS
+.CW "SERIAL_RX  (0x09)    0 of 256817 high"
+.CW "SERIAL_CLK (0x08)    0 of 256824 high"
+.DE
+SERIAL_CLK is the recovered bit clock and should run at the symbol rate
+whatever the data is.
+.PP
+The controls say this is not a broken board.  The same pin on the same
+board, selected to carrier sense, reads
+.B "99% high, 252992 of 254224"
+\- so the GPIO, the sampler and the console path all work.  And the other
+board behaves identically, SERIAL_RX 0 of 256804 and SERIAL_CLK 0 of
+256810, so two parts fail the same way.  TRANSPARENT_INTFACT is not it
+either: MDMCFG0 bits 5:4 swept through 0x0d, 0x1d, 0x2d and 0x3d with an
+RX strobe after each gave 0 per cent every time.
+.PP
+The hypothesis to check first, and the reason this waits for SWRU295E:
+that the part routes SERIAL_CLK and SERIAL_RX only to particular GPIOs,
+and that GPIO3 \- the one a ccRF click wires to the MCU, and so the only
+one this driver can read \- is not among them.  That would make these
+verbs unusable on this board by construction rather than by
+misconfiguration.  Guessing a GPIO mapping from recollection is how the
+sync-word bug happened.
