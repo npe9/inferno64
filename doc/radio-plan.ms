@@ -3910,3 +3910,40 @@ reapplies the register table now, and the driver counts
 for packets the part never radiated, which
 .B txtrace
 exposes.  The rest were instruments believed without a baseline.
+.PP
+.B "The antenna swap cleared the antenna and the pigtail, and left board 2's receiver itself."
+With board 1's known-good antenna assembly moved onto board 2 and the
+carrier held off, on and off again:
+.DS
+.CW "board2  carrier OFF        floor -108  peak -101"
+.CW "board2  carrier ON held    floor -108  peak -101"
+.CW "board2  carrier OFF again  floor -108  peak -101"
+.DE
+Zero decibels, from an antenna that had just delivered +55dB to a tinySA.
+.PP
+And a pattern across the whole day's figures is now worth stating,
+because it was visible all along and was not looked at: board 2's probe
+peak has read between -100 and -105 in
+.I every
+condition recorded \- idle, with a generator cabled into it, with board 1
+at -10dBm, with board 1 at +14dBm, over the air and on a cable.  It has
+never moved.  Its floor has moved, once, from -122 to -107 when a
+generator was cabled on.  A number that does not respond to a
+twenty-four decibel change in stimulus is not measuring the stimulus.
+.PP
+So "board 2 hears nothing" may be "board 2's RSSI is pinned near -102 and
+cannot report what it hears", and those are different faults with
+different fixes.  The driver's own
+.B rssioffset
+is an unverified -102 taken from a TI example, and -102 is suspiciously
+close to where this number sits.
+.PP
+What separates them is the detector pins rather than the number:
+PKT_SYNC_RXTX and PQT_REACHED come from the part's own logic and not from
+the RSSI arithmetic.  Both have read zero throughout, which is consistent
+with either.  What has not been tried is carrier sense with a threshold
+set well ABOVE the pinned value \- if the pin still asserts with
+.B csthr
+at -60, the part is hearing something the arithmetic is hiding; if it
+goes quiet, the part is genuinely deaf.  That is one ctl write and it has
+not been done.
