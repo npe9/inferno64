@@ -1,0 +1,157 @@
+.TH SDMEM 3
+.SH NAME
+sdmem \- block device in RAM, for benchmarking filesystems
+.SH SYNOPSIS
+.nf
+.B bind #S /dev
+
+.B /dev/sdZ0/data
+.B /dev/sdZ0/ctl
+.fi
+.SH DESCRIPTION
+.I Sdmem
+is an
+.IR sd (3)
+controller whose storage is memory.  It presents one unit, by default at
+.BR /dev/sdZ0 ,
+holding a disk of 16MB in 512-byte sectors.  Anything that works on a
+.IR sd (3)
+data file works on it:
+.IR mkefs ,
+.IR efs (4),
+.IR kfs ,
+.IR dossrv ,
+a raw
+.IR dd .
+.PP
+It exists to separate what a filesystem does from what a medium charges
+for it, because on this board those two differ by more than an order of
+magnitude and the second hides the first.  Ten file creates onto the SD
+card's FAT partition cost 38.8ms each; ten
+.IR efs (4)
+creates on the same card cost 97.7ms; the same workload on
+.I sdmem
+costs 28.2ms.  So about seventy of those ninety-seven milliseconds were the
+card, and no amount of arithmetic on a single figure separates them as
+cleanly as running the same filesystem on a medium that costs nothing.
+.PP
+.B "The counters are in the driver."
+Anything layered on this device is counted, identically, without being
+instrumented itself \(em which is the difference between comparing two
+filesystems' numbers and comparing two filesystems' instruments.
+.PP
+The disk is
+.IR sparse .
+Chunks of 4096 bytes are allocated on first write, so an unwritten disk
+costs its chunk table and nothing more, and a read of a chunk never
+written returns zeros.  That is also what a newly made disk should look
+like to a program that checks whether a region is clear before writing
+it;
+.I mkefs
+does exactly that, and would refuse on uninitialised memory holding
+whatever was there before.
+.PP
+Nothing survives a reboot and nothing tries to.  Do not mount it from a
+boot script.
+.SS Control
+.B /dev/sdZ0/ctl
+reports geometry, the modelled latency, how much of the disk is held, and
+the counters:
+.PP
+.EX
+geometry 32768 512
+sdmem delay 0us chunks 3912 of 4096 (15648KB held)
+sdmem reads 17014 ops 136112 secs, writes 4508 ops 36064 secs
+sdmem holeread 0 failed 0
+.EE
+.PP
+.I Ops
+are transfers \(em one
+.I bio
+call, whatever its length \(em and
+.I secs
+are the sectors moved by them.  For a filesystem the first is usually the
+interesting one, since a medium charges per operation far more than per
+byte.
+.I Holeread
+counts reads served from a chunk that was never written, and
+.I failed
+counts transfers refused.
+.PP
+Writing to
+.B ctl
+accepts:
+.TP
+.BI size " nsectors"
+Give the disk a new size, dropping whatever it held.  Refused, leaving the
+old disk intact, if the chunk table cannot be allocated.  A fully written
+disk costs its whole size from the main pool, which on this board is about
+50MB in total, so that is the bound that matters rather than any limit
+here.  Set it before anything opens
+.BR data .
+.TP
+.BI delay " microseconds"
+Charge
+.I microseconds
+of
+.IR microdelay (10)
+per transfer, modelling a medium's per-operation cost.  Zero, the default,
+charges nothing.
+.IP
+It is charged ONCE per transfer and not per sector, deliberately: a card's
+cost is dominated by the command and not by the bytes, which is why a FAT
+create costs tens of milliseconds on a card that streams megabytes a
+second.  A per-sector charge would model bandwidth, which measurement on
+this board has already shown is not the term that matters.
+.IP
+Calibration, measured: 200 transfers at
+.B "delay 1000"
+added 221079us over the same workload at
+.BR "delay 0" ,
+or 1105us each against 1000 requested.  The overshoot is
+.IR microdelay 's
+granularity.  Take the counters as exact and the delay as approximate.
+.TP
+.B reset
+Zero the counters, leaving the contents alone.
+.TP
+.B zero
+Forget the contents, freeing every allocated chunk and leaving the
+geometry and the counters alone.  The disk reads as zeros again.
+.SH EXAMPLE
+Make a filesystem on it, count what three hundred creates cost with no
+medium charge, then put an SD card's latency back and see what that buys:
+.PP
+.EX
+disk/mkefs -n 4000 /dev/sdZ0/data
+echo reset > /dev/sdZ0/ctl
+disk/efs -f /dev/sdZ0/data /n/x
+mkdir /n/x/sub
+\&... create files in /n/x/sub ...
+cat /dev/sdZ0/ctl
+echo delay 5000 > /dev/sdZ0/ctl
+.EE
+.SH SOURCE
+.B /os/inferno/port/sdmem.c
+.SH SEE ALSO
+.IR sd (3),
+.IR efs (4)
+.PP
+.B /doc/open-issues-plan.ms
+items B1, B1a and F1, which are the measurements this device was built to
+stop having to do by hand.
+.SH BUGS
+A fully written disk is held in the main pool, so sizing one close to the
+pool's size will starve everything else before this device reports
+anything wrong; the allocation failure surfaces as an I/O error on the
+write that could not get a chunk.
+.PP
+.B size
+changes the unit's geometry under
+.IR sd (3),
+which re-reads it from
+.I online
+rather than being told.  It bumps the partition version so the change is
+noticed, but a size changed while
+.B data
+is open is not something to rely on.

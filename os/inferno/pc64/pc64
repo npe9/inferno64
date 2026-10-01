@@ -120,6 +120,7 @@ misc
 	sdvirtio	pci sdscsi
 	sdvirtio10	pci sdscsi virtio10pc
 	sdnvme	pci
+	sdmem
 	sdmmc
 
 	vgasoft		=cur swcursor

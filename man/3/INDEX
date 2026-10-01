@@ -40,6 +40,7 @@ prog prog
 root root
 rtc rtc
 sd sd
+sdmem sdmem
 sign sign
 snarf snarf
 srv srv

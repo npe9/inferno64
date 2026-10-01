@@ -1232,6 +1232,89 @@ same card \(em so a single durable metadata update on this medium is tens of
 milliseconds and efs pays about 2.5 times it at small directory sizes.  If 69
 reads a commit are each anywhere near that, reads are the whole story and the
 keyed lookup is worth building.
+.NH 2
+B1b.  ANSWERED, with an instrument: sdmem(3), a block device in RAM
+.LP
+The division above was done by taking the medium away.
+.CW os/inferno/port/sdmem.c
+is an
+.CW sd (3)
+controller whose storage is memory: sparse, 4096-byte chunks allocated on
+first write, a hole reading as zeros, and
+.B "the read and write counters in the driver"
+so that anything layered on it \(em
+.CW efs ,
+.CW kfs ,
+.CW dossrv ,
+a raw
+.CW dd
+\(em is counted without being instrumented.  It also charges a settable
+.CW delay
+in microseconds per transfer, once per transfer and not per sector, so a
+medium's cost can be put back and swept.  See
+.CW man/3/sdmem .
+.PP
+.B "The counters cross-validate the hand-patched ones, which is the first thing it bought."
+Three hundred creates into one directory, counted by the driver, against the
+same workload counted by counters patched into
+.CW appl/lib/efs.b
+and reverted:
+.P1
+            efs's counters   sdmem's counters
+writes               4500               4508
+reads               19018              17014
+.P2
+Two instruments at different layers, neither aware of the other.  The writes
+agree to eight parts in four thousand.
+.PP
+.B "And the growth survives the medium being free."
+Same three hundred creates, on
+.CW /dev/sdZ0/data
+with
+.CW "delay 0" ,
+timed per fifty:
+.P1
+creates     ms each
+  1-50           35
+ 51-100          49
+101-150          78
+151-200         139
+201-250         140
+251-300         160
+.P2
+29.6 seconds in total, growing by a factor of 4.6.  The medium costs nothing
+here, so that growth is the filesystem and not the card.  B1a's suspicion is
+confirmed from the other side.
+.PP
+.B "The medium's share, measured rather than divided."
+Ten creates, same shape, three ways on the same board:
+.P1
+FAT on the SD card, through dossrv     38.8 ms each
+efs on the SD card, through dossrv     97.7 ms each
+efs on sdmem, delay 0                  28.2 ms each
+.P2
+So about seventy of those ninety-seven milliseconds is the card.  The
+filesystem's own cost is 28ms at ten files and 160ms at three hundred, and
+THAT is the quadratic worth attacking.
+.PP
+.B "Which revives the change this plan reverted."
+Packed interior navigation cut decode work 48 per cent and bought 4 per cent
+of wall time \(em measured against the SD card, where the medium was seventy
+per cent of a create and hid it.  On
+.CW sdmem
+the medium is nothing and the decode work is a far larger share, so the same
+change should be re-measured there before it is dismissed.  That is the next
+step, and the patch is described in the entry above.
+.PP
+.B "Calibration, so the delay is not believed more than it deserves."
+200 transfers at
+.CW "delay 1000"
+added 221079us over the same workload at
+.CW "delay 0" ,
+or 1105us each against 1000 asked for.  The overshoot is
+.CW microdelay 's
+granularity.  The counters are exact; the delay is approximate and should be
+quoted as such.
 
 .NH 2
 B2.  DONE.  One namehash, in the library

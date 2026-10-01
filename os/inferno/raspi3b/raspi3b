@@ -101,6 +101,7 @@ misc
 	sdemmcbcm
 	sdhostbcm
 	sdhcibcm
+	sdmem
 	rngbcm
 	pmbcm
 	pwmbcm

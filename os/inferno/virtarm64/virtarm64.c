@@ -81,9 +81,11 @@ void modinit(void){
 #include "../port/sd.h"
 extern SDifc sdvirtio10ifc;
 extern SDifc sdnvmeifc;
+extern SDifc sdmemifc;
 SDifc* sdifc[] = {
 	&sdvirtio10ifc,
 	&sdnvmeifc,
+	&sdmemifc,
 	nil,
 };
 

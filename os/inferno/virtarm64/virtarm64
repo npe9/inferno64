@@ -111,6 +111,7 @@ misc
 	acpiarm
 	sdvirtio10	pci sdscsi virtio10mem
 	sdnvme	pci
+	sdmem
 	screenarm
 	randomvirtarm64
 
