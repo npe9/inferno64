@@ -60,6 +60,20 @@ load std
 
 T=/tmp
 
+#
+# The mountpoints are created here, not assumed.
+#
+# Everything under n/ in this tree is UNTRACKED -- git holds no empty
+# directories and nothing generates them -- so a fresh clone has no
+# /n/x, /n/client or /n/t at all, and a test that binds onto one fails
+# with "'/n/x' does not exist" for a reason that has nothing to do with
+# what it is testing.  Three other test scripts in this directory fail
+# exactly that way today.
+#
+or {mkdir -p /n/x} {echo -n}
+or {mkdir -p /n/client} {echo -n}
+or {mkdir -p /n/t} {echo -n}
+
 fn marks {
 	echo MARK-$1
 	cat /dev/memory

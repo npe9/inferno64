@@ -111,6 +111,41 @@ The
 class was present before and absent after; that is all the board supports.  The
 compiler probe is the evidence for the fix.
 .PP
+.B "The AMOVL left in subprop is safe, and now for a reason."
+The fix deliberately did not touch the
+.CW AMOVL
+in
+.CW subprop() ,
+on the grounds that there was no failure to point at.  That is a weak reason, so
+it was settled.
+.CW subprop
+and
+.CW copyprop
+are called from
+.CW loop1
+and nowhere else \(em checked exhaustively \(em so after the fix
+.CW r0
+is only ever
+.CW AMOVQ ,
+.CW AMOVSS
+or
+.CW AMOVSD ,
+never a truncating move.  The
+.CW AMOVL
+.CW subprop
+can still match is the instruction it
+.I retargets ,
+and turning
+.CW "MOVL x,v1; MOVQ v1,v2"
+into
+.CW "MOVL x,v2"
+keeps the truncation, because it travels with the instruction that performs it.
+Compiled both that shape and a two-consumer version: every
+.CW MOVL
+survives.  The reasoning is now in
+.CW utils/6c/peep.c
+beside the change.
+.PP
 .B "And the three claims A1 and A2 had to withdraw."
 That the cause was the commented-out block at
 .CW utils/6c/txt.c

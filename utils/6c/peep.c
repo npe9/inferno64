@@ -119,6 +119,16 @@ loop1:
 		 * where the value really was 32 bits already.  That is the
 		 * right side to err on: an unnecessary truncation is correct,
 		 * a missing one is not.
+		 *
+		 * The AMOVL in subprop() below is left alone, and is safe.
+		 * subprop and copyprop are called from HERE and nowhere else,
+		 * so after this change r0 is only ever AMOVQ, AMOVSS or
+		 * AMOVSD -- never a truncating move.  The AMOVL subprop can
+		 * still match is the instruction it RETARGETS: turning
+		 * "MOVL x,v1; MOVQ v1,v2" into "MOVL x,v2" keeps the
+		 * truncation, because it moves with the instruction that
+		 * performs it.  Checked as well as argued: both that shape
+		 * and a two-consumer version still emit their MOVLs.
 		 */
 		case AMOVQ:
 		case AMOVSS:
