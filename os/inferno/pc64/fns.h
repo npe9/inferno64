@@ -2,6 +2,7 @@
 void	aamloop(int);
 Dirtab*	addarchfile(char*, u32, s32(*)(Chan*,void*,s32,s64), s32(*)(Chan*,void*,s32,s64));
 void	archinit(void);
+void	archreboot(void);
 void	archreset(void);
 int	bios32call(BIOS32ci*, u16int[3]);
 int	bios32ci(BIOS32si*, BIOS32ci*);

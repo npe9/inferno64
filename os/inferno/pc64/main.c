@@ -508,3 +508,23 @@ reboot(void)
 {
 	exit(0);
 }
+
+/*
+ * The console's last-resort reset, for ^R in consdebugchar().
+ *
+ * os/inferno/port/devcons.c calls archreboot() from the console receive
+ * path, and every board but the two x86 ones defined it; pc and pc64 did
+ * not, so c580839a5 -- which added ^R for raspi3b -- left them failing to
+ * link with "consdebugchar: undefined: archreboot".  Shared port code
+ * should not have been given a call no x86 port answered.
+ *
+ * Deliberately NOT exit(): the point of ^R is to reset a machine whose
+ * software has stopped working, so it must not go through
+ * chandevshutdown() and ask a wedged server to flush.  arch->reset() is
+ * the same reset exit() ends with, taken directly.
+ */
+void
+archreboot(void)
+{
+	arch->reset();
+}
