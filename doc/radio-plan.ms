@@ -4253,3 +4253,44 @@ still receives nothing with the signal centred in its filter.
 .PP
 At 915MHz one part per million is 915Hz, so 64ppm is 58.7kHz and a 50kHz
 filter is plus or minus 25.
+.PP
+.B "Board 2 calibrated, and the strongest form of item 3's answer."
+The crystal error derived from the two-board difference, then applied and
+measured:
+.DS
+.CW "ppb -3550 (board 1's)   carrier 914.961024 MHz  (-38976 Hz)"
+.CW "ppb +60300 (measured)   carrier 915.019822 MHz  (+19822 Hz)"
+.CW "                        moved   +58798 Hz"
+.DE
+against a prediction of +58442, so the arithmetic and the part agree to
+within 356Hz.  Board 1 reads 915.019581 on the same instrument, so
+correctly calibrated the two are
+.B "241 Hz"
+apart.
+.PP
+So
+.B .ppb
+= -3550 in
+.I spistm32f4.c
+is board 1's, is wrong for board 2 by 64ppm, and no one image can be
+right for both.  The
+.B ppm
+verb sets it at runtime and that is where it belongs.  Uncorrected, the
+pair cannot hear each other even in principle: 64ppm is 58.7kHz and the
+filter is 50.
+.PP
+And with board 2 on its own correction, the carriers 241 Hz apart, both
+at rate 9600, deviation 19958, bw 50000, sync 0x930b, csthr -104,
+SYNC_CFG1 0x4b, board 1 at +14dBm and confirmed to reach TX:
+.DS
+.CW "recv +0   crcerr +0   rssi -16   lastrx none"
+.DE
+Ten packets, and an RSSI of -16dBm is some eighty-five decibels over this
+receiver's own floor.
+.PP
+.B "Level is eliminated.  Frequency is eliminated."
+With SYNC_THR over 8 to 31, the rate and bandwidth dependents at the
+part's own self-consistent setting, the sync word's bit order by review,
+and any asymmetry by reading eight registers off each part, what is left
+is the demodulator's own output \- and that is exactly what transparent
+mode will not show on either part.
