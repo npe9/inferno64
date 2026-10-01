@@ -4567,3 +4567,36 @@ now clears FIFO_EN and
 .B "serial off"
 restores it \- and restoring it matters as much, because with FIFO_EN
 clear nothing reaches the RX FIFO at all.
+.PP
+.B "Both directions, forty packets each, every one received."
+With both boards carrying the same kernel:
+.DS
+.CW "board1 -> board2   sent 40 recv 40 intr high 40 low 40"
+.CW "                   crcerr 0 rxoverflow 0 last -41dBm"
+.CW "board2 -> board1   sent 40 recv 40 intr high 40 low 40"
+.CW "                   crcerr 0 rxoverflow 0 last -45dBm"
+.DE
+and
+.B lastrx
+on each side reads
+.CW "8 bytes: 61 62 63 64 65 66 67 68" .
+The edge counters account for every packet in both directions.
+.PP
+The levels, measured while the transmitter is actually keyed rather than
+seconds after it stopped \- the live RSSI in the stat file is read at the
+moment the file is read, which is what made an earlier reading of -108
+mean nothing:
+.DS
+.CW "board1 keyed:  board2 sees -41dBm,  unkeyed -106"
+.CW "board2 keyed:  board1 sees -45dBm,  unkeyed -109"
+.DE
+Sixty-odd decibels each way.
+.PP
+One earlier run is superseded rather than explained.  Before board 2 was
+reflashed, with the fix on board 1 only and board 2 transmitting from the
+kernel it had been carrying, board 1 took no interrupts at all \-
+.CW "intr high 0 low 0" .
+Board 2 was reflashed before this measurement and that configuration no
+longer exists to re-ask, so what was different about it is not known;
+what is known is that on the same kernel both directions carry every
+packet.
