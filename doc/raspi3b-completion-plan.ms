@@ -15366,18 +15366,77 @@ which closes the writable home.  It had been blocked by the name
 .CW inferno
 being "poisoned", and that was this bug.
 .PP
-.B "Two things left open, named so they are not rediscovered."
-.CW comp-aarch64.c
-has sixteen
+.B "The compiler, which is where this actually lived."
+The entry above named
+.CW comp-aarch64.c 's
+sixteen
 .CW (ulong)
-casts of the same family.  The JIT works and none of them is currently fatal
-\(em this bug shows with
-.CW cflag=0
-too \(em but they are unaudited, on the compiler now known to drop such a
-cast.  And
-.CW pc64
-does not link at present,
-.CW "consdebugchar: undefined: archreboot" ,
-which is nothing to do with this change: its
+casts as an open audit.  Both of those threads closed together, because the
 .CW libinterp
-built clean, and the missing symbol belongs to uncommitted work in that port.
+line was only a victim: the defect is in
+.CW 7c .
+.CW gmove 's
+64-bit source case assigned
+.CW AMOV
+for
+.I every
+integer destination, narrow ones included, under the comment
+.CW "/* TO DO: conversion done? */" .
+It was not done \(em a plain
+.CW MOV
+keeps all 64 bits \(em and because the opcode came out
+.CW AMOV ,
+the
+.CW samaddr
+test at the end of
+.CW gmove
+then dropped even that move when source and destination shared a register,
+which is the usual case.  So the cast compiled to nothing whatever.  Fixed in
+.CW dcca478dd
+by choosing the opcode from the destination, as the 4-byte source case beside
+it already did and as
+.CW jc
+always has.
+.PP
+And the audit it was supposed to be: those sixteen casts are all
+.CW "con((uvlong)(ulong)off, RCON)"
+inside
+.CW mem() ,
+whose
+.CW off
+is a
+.CW long ,
+and
+.CW SZ_LONG
+is 4 on
+.CW 7c .
+They never narrowed a 64-bit value, so neither the bug nor the fix touches
+them.
+.PP
+.B "The fix cuts both ways, and that is the part to watch."
+Where a narrowing used to be dropped it now happens, so anything that was
+accidentally working on an untruncated value changes meaning.  The kernel grew
+by about 3KB of restored truncations, tree-wide, and those sites were not
+reviewed one by one.  What was done instead: a full rebuild from touched
+sources, a boot on silicon passing every self-check the board makes, the six
+lost names created and listed, the full-filesystem delete still working, and
+.CW virtarm64
+\(em a different aarch64 board on the same compiler and libraries \(em booting
+under QEMU to a shell with
+.CW ROOT-CMDS-OK .
+If something does surface later, this is the change to suspect, and the
+symptom to expect is the opposite of the original: a value that used to keep
+its high word and now loses it.
+.PP
+.B "Still open."
+.CW 6c
+has the same symptom \(em
+.CW "MOVQ lo; ORQ" ,
+no truncation \(em and is not fixed, because it is a separate back-end and
+.CW pc64
+does not link at present
+.CW ( "consdebugchar: undefined: archreboot" ,
+uncommitted work in that port), so nothing there could be verified.  The
+.CW libinterp
+workaround stays in place regardless: it is correct on its own, and the tree
+is built by more than one compiler.
