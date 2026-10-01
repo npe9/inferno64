@@ -96,7 +96,30 @@ loop1:
 	for(r=firstr; r!=R; r=r->link) {
 		p = r->prog;
 		switch(p->as) {
-		case AMOVL:
+		/*
+		 * AMOVL is NOT in this group, because on amd64 it is not a
+		 * copy: a 32-bit move zeroes the upper 32 bits of its
+		 * destination, so "MOVL AX,AX" is a TRUNCATION.
+		 *
+		 * It used to be here, and copyprop() duly called it
+		 * redundant and excise() deleted it.  That is how
+		 * (uint)someVlong compiled to nothing at all on this
+		 * compiler: gmove picks AMOVL for the narrowing -- correctly,
+		 * MOVL zero-extends -- and the peephole then removed it as a
+		 * self-copy.  With -N the two MOVLs are both there.
+		 *
+		 * What it cost: libinterp/load.c read a 64-bit Dis data item
+		 * with "(LONG)hi << 32 | (LONG)(u32)lo", the (u32) vanished,
+		 * and every big literal whose low word had its top bit set
+		 * came back with ones in its high word.  7c had the same
+		 * symptom from a different cause -- gmove choosing a
+		 * non-narrowing opcode -- fixed in dcca478dd.
+		 *
+		 * The cost of excluding it is a redundant MOVL left behind
+		 * where the value really was 32 bits already.  That is the
+		 * right side to err on: an unnecessary truncation is correct,
+		 * a missing one is not.
+		 */
 		case AMOVQ:
 		case AMOVSS:
 		case AMOVSD:
