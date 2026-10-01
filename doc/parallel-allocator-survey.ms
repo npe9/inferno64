@@ -238,7 +238,7 @@ exists to make safe.  Suspected, not established: that no other code path
 advances them.  Worth checking before relying on it, because the whole safety
 argument for the colour scheme under two mutators rests on it.
 .NH 2
-5.  comp-arm64.c's refcounts, for hosted emu
+5.  comp-arm64.c's refcounts, for hosted emu \(em DONE
 .LP
 Covered above.  It is a prerequisite for ever running
 .CW parallelvm=1
@@ -248,17 +248,153 @@ which is where it would be developed and tested, so in practice it comes before
 the allocator work rather than after.
 .CW comp-aarch64.c
 is the worked example: four sites, LDXRW/STXRW retry loops.
+.PP
+.B Landed.
+The four sequences were ported, not rewritten, and the nine emitted words
+checked against the system assembler \(em including the operand order of
+.CW "STXR Ws, Wt, [Xn]" ,
+which
+.CW os/inferno/virtarm64/l.s
+records getting backwards in
+.CW _tas ,
+where it assembled cleanly and stored the old contents back over themselves.
+.PP
+.B "And it cost something this survey asked for."
+Section 3 calls the barrier the hottest shared word in a parallel VM, so the
+figure matters.  None of
+.CW disbench 's
+six tests reaches these sequences:
+.CW call 's
+.CW macret
+decrement sits behind a test of
+.CW Frame.mr ,
+nil on every local return;
+.CW array
+stores ints, so no pointer move and no barrier; and
+.CW string
+is
+.CW IADDC ,
+which both generators punt to the interpreter, so its counts go through the C
+.CW AINC / ADEC .
+An A/B against those three moved
+.CW call
++2.5 per cent and
+.CW string
+\-12 per cent, in opposite directions, which is code layout.
+.PP
+So
+.CW disbench
+grew a seventh test,
+.CW ptr :
+one
+.CW a[i&1]
+per iteration, an
+.CW IMOVP
+with a memory source, which is the one Dis instruction that calls BOTH
+barriers.  Six interleaved pairs, host emu,
+.CW "-n 3000" ,
+with
+.CW array
+as the control:
+.P1
+            base           atomic
+array    690-752 ms      688-752 ms      (flat: no barrier)
+ptr      841-849 ms     2238-2432 ms     2.75x
+.P2
+About 5 ns, some 18 cycles, per pointer move for two LDXR/STXR pairs.  The flat
+control is what says the instrument measures the sequences rather than the
+layout, and 2.75x is the number to argue with when item 2 below is designed:
+it is the cost of making one word atomic by retry loop, in a loop that does
+nothing else.  The efs suites, which do real work, show no visible change.
+.NH 2
+6.  And the fact each generator states about itself
+.LP
+.CW comp-aarch64.c
+declared
+.CW "int jitrefsatomic = 1"
+and said in a comment that
+.CW disinit()
+refuses to run the JIT and the parallel VM together unless it is 1.  Neither
+half was true: one file out of twelve declared it, and nothing read it.
+.PP
+Every generator now declares its own answer, each read off its emitted code at
+the four
+.CW Heap.ref
+sites rather than inferred from the architecture:
+.CW aarch64
+and
+.CW arm64
+1;
+.CW 386 ,
+.CW amd64 ,
+.CW arm ,
+.CW mips ,
+.CW power
+and
+.CW sparc
+0, all six emitting a plain read-modify-write;
+.CW riscv32 ,
+.CW riscv64
+and
+.CW thumb
+1, because they are stubs that emit nothing at all.
+.PP
+A first pass at that table grepped for atomic mnemonics and would have recorded
+.CW 386 ,
+.CW amd64
+and
+.CW mips
+as atomic.  All three matched on something else \(em x86
+.CW XCHG
+between registers is not a locked operation \(em and reading the four sites gave
+the opposite answer for all three.  The lesson is the one this tree keeps
+relearning: grep what the code
+.I emits ,
+not what the architecture can express.
+.PP
+The refusal still cannot be wired, because there is no
+.CW parallelvm
+switch in this tree to gate on.  What is wired is reporting:
+.CW "echo sched >/dev/sysctl"
+ends its GC-COUNTS line with
+.CW "jitrefsatomic 1 cflag 1" ,
+so a board states what its generator does.
 .NH 1
 Order, and what not to do
 .LP
 .P1
-1  comp-arm64.c atomic refcounts      prerequisite for testing anything
+1  comp-arm64.c atomic refcounts      DONE; 2.75x on a pointer-move loop
 2  the Setmark barrier, by design     the only correctness hole in the GC
 3  Phase 1b (curP as a register)      without it two executors share R
 4  Phase 4 (a lock per channel)       without it isend/irecv corrupt stacks
 5  per-processor magazines            throughput only; measure first
 6  per-processor accounting           throughput only
 .P2
+.PP
+.B "Where the infrastructure already is, which is less work than it sounds."
+.CW Pctx ,
+.CW curR ,
+.CW progreg() ,
+the
+.CW inxec
+safepoint and
+.CW stoptheworld()
+live entirely in
+.CW include/interp.h ,
+.CW os/inferno/port/dis.c
+and
+.CW os/inferno/port/proc.c .
+Every board compiles all three, so there is nothing per-board to port: it is in
+all seventeen by construction, and what was unverified was only that they still
+build and boot with it.  They do \(em seventeen build, and raspi3b, raspi4,
+virtarm64, sifiveu, virt, virts, virt32 and virt32s boot with their marker sets
+unchanged.
+.CW os/inferno/port/dis.c
+is also why the uniprocessor boards get it free: its own comment records that
+.CW othersrunning()
+is 0 there and
+.CW stoptheworld()
+returns without waiting.
 .B "And parallelvm=1 should not be switched on at the end of this list either."
 The
 .CW multicore

@@ -1401,7 +1401,7 @@ still grows with filesystem size \(em 306, 858, 1203 per operation at 2, 62 and
 the garbage it makes is collected.  Whether to chase the remaining growth is a
 judgement about speed, not about whether the board can hold files.
 .NH 2
-F1.  The kernel has the same collector trigger, unmeasured
+F1.  CLOSED \(em the kernel does not need it, measured on silicon
 .LP
 .CW 5fa815638
 fixed
@@ -1419,24 +1419,209 @@ inside
 .CW stoptheworld() :
 a full cycle there holds all four processors, not one scheduler.
 .PP
-.B "What decides it is a measurement the file is already set up for."
-The code around that call records
-.CW gcticks ,
-.CW gcpasses
-and
+This item asked two questions before changing anything: what
 .CW gcmax
-precisely because GC latency has bitten this board before \(em its comments
-carry a 50ms sleep that overshot by 670ms on the first pass after a Limbo loop
-started.  So: read
-.CW gcmax
-on the board under a load that allocates briskly, apply the same change, read it
-again.  If the worst pause does not move much, take the fix; if it does, the
-kernel wants something gentler than a full cycle, such as a bounded number of
-increments per trigger.
+is on the board, and whether the board exhibits the symptom at all.  Both are
+now answered, and the answer is that the change would be dead code here.
 .PP
-.B "And whether the board needs it at all is unestablished."
-The symptom that motivated the emu change \(em "out of memory: heap" filling a
-filesystem \(em has not been reproduced on the Pi.  Its efs image is 16384 blocks
-and the heap is sized by the config, so the first step is to try the fill there
-and see whether it fails at all.  Nothing should be changed in the kernel on the
-strength of a hosted measurement.
+.B "The board does not come close to the trigger."
+Read from
+.CW /dev/memory
+on a Pi 3B up for 98 minutes, and again after driving it:
+.P1
+heap  cursize    maxsize     hw        nalloc
+      1 194 880  52 136 345  1 467 264  2 217 540   (98 min idle-ish)
+      1 338 752  52 136 345  2 357 760 20 192 090   (after the runs below)
+.P2
+A high-water mark of 2.36MB against a 50MB pool is 4.5 per cent.  The kernel's
+predicate is not
+.CW emu 's
+.CW memlow()
+\(em there is no
+.CW memlow()
+kernel side \(em but
+.CW memusehigh() ,
+which is
+.CW "cursize > ressize"
+with
+.CW ressize
+set by
+.CW poolsize()
+to
+.CW maxsize-RESERVED .
+That is a far later trigger than
+.CW maxsize/2 ,
+and the board reaches neither.
+.PP
+.B "Nor can a workload drive it there."
+Two shapes, both on silicon:
+.IP "\(bu" 3
+.B "I/O bound, the shape that caused the hosted failure."
+Ten file creates into the board's own
+.CW /n/efs
+cost 695 060 heap allocations in about 70 seconds \(em roughly 70 000
+allocations per create \(em and
+.CW cursize
+went from 1 321 088 to 1 325 184.  Flat.
+.IP "\(bu" 3
+.B "Compute bound, which is the harder case."
+.CW "disbench -n 2000 string"
+did 4 002 010 heap allocations in 21.07 seconds \(em 190 000 per second, no
+I/O at all \(em and
+.CW cursize
+was
+.I byte-identical
+before and after, 1 338 752 both times.
+.PP
+The reason is not that the collector is clever: it is that the board is slow
+enough that even the throttled one-increment busy path, gated on
+.CW "(++gccounter & 0xFF) == 0" ,
+has enormous slack.  A create takes about 7 seconds of SD I/O.  What defeated
+.CW emu
+was host speed outrunning one increment per trigger; nothing on this board
+outruns it.
+.PP
+.B "And gcmax is below the measuring floor."
+.CW "echo sched >/dev/sysctl"
+reports
+.CW "gc 39/23636 max 1" :
+23 636 busy-path passes, 39 ticks in total, worst single pass one tick.  Taking
+.CW emu 's
+change would triple the work inside
+.CW stoptheworld()
+to buy nothing, on a predicate that never fires.
+.PP
+.B "A caveat on that figure, which is why it had to be fixed first."
+.CW gcmax
+and
+.CW idlegcmax
+were among the counters broken by
+.CW m->ticks
+being per-processor; the figures above are from the kernel with
+.CW gticks()
+in it.  The pre-fix board reported
+.CW "idlegc 4275348120 max 4294967257" ,
+which is \-39.  An instrument this item depends on was lying, and F1 could not
+honestly have been answered against it.  That is now a separate landed change,
+and it is the only part of F1 that produced code.
+.PP
+.B "What would reopen this."
+A faster board, a smaller heap cap, or a workload that generates
+.I collector
+garbage \(em not refcount garbage \(em faster than the throttled path can
+sweep it.  The
+.CW string
+figure above does not test that: those strings are freed by reference count on
+the spot and never reach the collector.  The efs arm does, and it was flat.  If
+any of those three changes, re-read
+.CW gcmax
+and
+.CW cursize
+before touching
+.CW os/inferno/port/dis.c ,
+because the thing that makes the change safe on a host is exactly what makes it
+expensive in a kernel.
+.NH 1
+Found while closing F1, not part of it
+.NH 2
+G1.  efs can commit a superblock whose tree is not all on the medium
+.LP
+.B OPEN.
+The board's
+.CW /n/dos/efs.img
+would not mount:
+.P1
+efs: /n/dos/efs.img: 16384 blocks, generation 978 from superblock 1
+efs: mount /n/efs: node checksum 1000 1, want 0 0
+EFS-EXCEPTION fail:error
+.P2
+.CW efsck
+on the same image:
+.P1
+efsck: block 6521: node checksum 1000 1, want 0 0
+efsck: block 6521 is in the tree and free in the map
+efsck: block 6523 is in the tree and free in the map
+efsck: block 16383 is in the tree and free in the map
+efsck: 123 block(s) marked used and not reached
+efsck: /n/dos/efs.img: 4 problem(s)
+.P2
+.PP
+.B "Established."
+Block 6521 reads back as 4096 zero bytes, and that is arithmetic rather than
+inference:
+.CW checksum()
+is Adler with
+.CW a
+starting at 1 and
+.CW c
+at 0, so 4096 zero bytes give
+.CW a=1 ,
+.CW c=4096 ,
+which is the
+.CW "1000 1"
+printed, against stored fields of
+.CW "0 0" .
+So a durable superblock at generation 978 names a tree node that never reached
+the medium, and names two more blocks that the committed free map calls free.
+Block 16383 is not a false positive from
+.CW efsck
+counting its own superblock: a freshly made 1024-block image came back
+.CW "clean, generation 1" ,
+with no complaint about its block 1023.
+.PP
+.B "The hole in the design."
+.CW Fs.commit 's
+own comment sets out the order \(em free map, wait for the writes, then one
+superblock \(em and
+.CW Fs.alloc 's
+says that "a crash part way through a commit must be able to fall back".
+.CW Fs.mount
+does not provide that fallback.  It picks the higher-generation
+.I readable superblock
+and never checks that the tree that superblock names can be read, so a
+superblock whose tree is incomplete is preferred over an older one whose tree
+is whole.  Two superblocks exist precisely for this and the second is not
+reached.
+.PP
+.B "Hypothesis, NOT established."
+That writes within one transaction reached the medium out of order because the
+backing store is a file on
+.CW dossrv ,
+whose track cache is write-back.
+.CW dosfs
+reports it as
+.CW "9-sector tracks, 20 buffers" ,
+and if those buffers defer a write then
+.CW Fs.commit 's
+"on this board's synchronous SD driver" is false for this path.  The cache is read
+off one statistics line; it has not been shown to defer a write.
+.PP
+.B "And the confound is the author's."
+This image was filled by a session that both overwrote the board's command file
+while a transaction was running, killing the writer, and then rebooted the
+board.  So this may not be reachable in ordinary operation at all.  Against
+that: the boot's own injected-failure arm,
+.CW "efs -F 12" ,
+reports
+.CW "EFS-CRASH-OK the card held the last committed state" ,
+so efs survives a failure injected at its own layer; what it has not been shown
+to survive is the whole system going down with writes in flight below it.
+.PP
+.B "The discriminating test does not exist yet."
+Does superblock 0, at generation 977, mount cleanly?  If it does, the fallback
+is the whole fix and the ordering question is secondary.  There is no way to ask:
+.CW efs
+has no superblock-selection flag, and generations advance two at a time
+(a mount-write-unmount cycle commits twice), so the live slot cannot cheaply be
+forced either.  A
+.CW -S
+flag naming a superblock would answer it and is worth having for its own sake.
+.PP
+The image itself is gone: the board's boot check was failing on it, so it was
+removed and
+.CW EFS-REAM
+remade it, and the board now reports
+.CW EFS-OK
+with all five checks.  What survives is the
+.CW efsck
+output above, which is the evidence.
