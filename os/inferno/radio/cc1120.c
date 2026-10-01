@@ -2327,12 +2327,6 @@ cc1120ctl(Radio *r, char *buf, int n)
 			wr(rr, Rsync0, w & 0xff);
 		}
 		/*
-		 * SYNC_MODE is bits 7:5 and SYNC_THR is 4:0.  Writing
-		 * the mode into the low bits sets the threshold
-		 * instead and leaves the mode at whatever it was --
-		 * which, here, was zero, meaning no sync word at all.
-		 */
-		/*
 		 * SYNC_MODE is SYNC_CFG0 bits 4:2, and this wrote it into
 		 * SYNC_CFG1 bits 7:5 -- which is the second time this
 		 * driver has put a sync setting in the wrong place and the

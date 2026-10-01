@@ -4294,3 +4294,55 @@ part's own self-consistent setting, the sync word's bit order by review,
 and any asymmetry by reading eight registers off each part, what is left
 is the demodulator's own output \- and that is exactly what transparent
 mode will not show on either part.
+.PP
+.B "SWRU295E settled it: SYNC_MODE was in the wrong register, and the spare bits were PQT_GATING_EN."
+The user guide is on this machine and the register tables say:
+.DS
+.CW "SYNC_CFG1 (0x08)   7 RESERVED7"
+.CW "                   6 PQT_GATING_EN"
+.CW "                   5 RESERVED5"
+.CW "                 4:0 SYNC_THR          reset 0x0A"
+.CW "SYNC_CFG0 (0x09)  7:5 unused"
+.CW "                 4:2 SYNC_MODE         reset 101b"
+.CW "                 1:0 SYNC_NUM_ERROR    reset 11b"
+.DE
+This driver wrote SYNC_MODE into SYNC_CFG1 bits 7:5.  Two faults from one
+write, and between them they account for every negative in this
+document.
+.PP
+SYNC_MODE was never set.  It stayed at 101b, which the encoding gives as
+thirty-two bits from SYNC31_0, so the part has been hunting a
+thirty-two-bit word while the driver wrote sixteen into SYNC1 and SYNC0
+and left SYNC3 and SYNC2 at whatever they held.
+.PP
+And mode 2 shifted up by five is 0x40, which is PQT_GATING_EN.  Asking
+for a sixteen-bit sync word turned on, in the guide's words, "the
+demodulator will not start to look for a sync word before a preamble is
+detected".  PQT_REACHED asserts on about two tenths of one per cent of
+samples here, so sync search was gated behind a detector that almost
+never fires.  It is cleared explicitly now.
+.PP
+Confirmed correct against the same tables, so that these are closed and
+not merely unexamined: SYNC3 is 0x04 through SYNC0 at 0x07, and mode 010
+is "16 bits [SYNC15_8: SYNC7_0]", which is SYNC1 and SYNC0 \- where the
+driver writes a sixteen-bit word.  The word placement was always right;
+only the mode was misplaced.  SYNC_THR is SYNC_CFG1 4:0 and a sync word
+is accepted when its qualifier is below SYNC_THR/2, so a higher
+threshold is more permissive \- which is what this bench found
+empirically and is now confirmed.
+.PP
+.B PREAMBLE_CFG1
+closes too, and is not a fault.  Its reset 0x14 decodes as NUM_PREAMBLE
+0101, which the table gives as
+.I three
+bytes \- not the four guessed at earlier \- with PREAMBLE_WORD 00, which
+is 0xAA.  So a preamble is sent and the driver's never writing the
+register was harmless.
+.PP
+And the transparent-mode dead end was one by construction: "if sync word
+detection is enabled (SYNC_MODE != 000) the serial clock will not be
+output on the GPIO before a sync word is transmitted/received".  The
+serial pins sit downstream of sync detection, so they could never have
+shown why sync was failing.  That is the third indicator this session
+that was downstream of the fault it was being read for, after the lamp
+behind the radio's ctl file and the RSSI behind a cleared AGC.
