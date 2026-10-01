@@ -15440,3 +15440,22 @@ uncommitted work in that port), so nothing there could be verified.  The
 .CW libinterp
 workaround stays in place regardless: it is correct on its own, and the tree
 is built by more than one compiler.
+.PP
+.B "Everything still open is now in one place."
+.CW doc/open-issues-plan.ms
+carries the remaining work in the order it should be done, with what is
+established separated from what is only suspected for each item: the
+.CW 6c
+half of the narrowing bug and the
+.CW pc64
+link that blocks verifying it, the unreviewed audit of what fixing
+.CW 7c
+changed, whether the 32-bit back-ends narrow at all,
+.CW efs 's
+quadratic allocation, the duplicated
+.CW namehash ,
+.CW alive
+and
+.CW where
+still lying about a kernel from another build, and two pieces of housekeeping.
+This file keeps the history; that one is what is left.
