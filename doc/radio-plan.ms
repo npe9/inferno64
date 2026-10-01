@@ -3374,3 +3374,41 @@ on its console, so the board was not transmitting what it was asked for
 and the reads came back empty.  One writer per console, and read the
 console to check it when a reply is missing rather than assuming the
 command arrived.
+.PP
+.B "RETRACTION: the receiver was not saturated.  The -8dBm was the reset verb lying."
+.PP
+.B "rssi -8"
+was read with nothing transmitting at all, which is the check that should
+have been made before anything was concluded from it.  The cause was the
+.B reset
+verb: it strobed SRES and stopped, SRES puts every register back to the
+part's own default, and AGC_GAIN_ADJUST went to zero while
+.IR cc1120stat ()
+went on subtracting the software offset of -102 this board carries.
+Ninety-four decibels of bookkeeping and no radio involved.
+.PP
+So two of the measurements above are void.  The board-to-board test "at
+the driver's defaults" was run on a receiver whose AGC was not configured
+at all, and the saturation reading was an artefact.  The boards were moved
+apart on the strength of it, which was wasted effort.
+.PP
+What survives from that run is the part that did not depend on the
+reset: transmit works both ways, measured on an instrument; the receive
+front end works, measured by the receiver's own probe going 40dB with a
+real transmitter keyed; and with packets in the air carrier sense reads
+100 per cent, PQT_REACHED 7566 of 1712056 samples and PKT_SYNC_RXTX 0 of
+1720911.  Those were taken before any reset and stand.
+.PP
+.I ccapply ()
+now holds everything that follows an SRES and the reset verb calls it, so
+the driver and the part cannot disagree again.  The frequency is kept
+rather than returned to Deffreq, and a reset whose settings do not read
+back reports an error instead of success.
+.PP
+The lesson is the one this document has had to write three times today,
+and the third instance is the worst because the instrument was this
+tree's own code: read the quiet baseline of a measurement before reading
+anything into its value.  A passive port listener was believed until it
+reported nothing from a qemu pty that was certainly printing; an LED was
+believed until the lamp was identified on a board whose console worked;
+and an RSSI was believed until it was read with the transmitter off.
