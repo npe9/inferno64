@@ -15186,3 +15186,59 @@ still have it, and their comment now says so.  That file's own comments
 already record four of these, two in one session, and the shape never
 changes: an instrument that cannot see what it is pointed at returns a value
 instead of saying it cannot see.
+.NH 2
+The silent create, narrowed to the insert: the commit happens, the key does not
+.LP
+The entry above left the difference as "the real device", with the board's
+stack rebuilt on the host passing.  Two more facts close that gap and name
+what to instrument.
+.PP
+.B "The write never reaches the medium, so it is not a stale read."
+After a failing create, the image was copied off the board to the host and
+opened there.  The host reads it at generation 5 and lists
+.I only
+the file the first mount made.  So the second mount's commits did happen \(em
+generation 3 to 5 \(em and the tree they published does not contain the new
+key.  And the board's mount is not reading stale media either: command 1
+alone leaves generation 3 on the card by the host's own reckoning, which is
+exactly what the board's second mount reports reading.
+.PP
+.B "Nor is the image to blame: the host creates into it happily."
+That same board-written image, mounted under host
+.CW emu ,
+takes a create, reads it back, and lists both names.  So no state the board
+left in the file accounts for it.
+.PP
+.B "The host analogue is now structurally identical, and still passes."
+Three more differences were tried and excluded.  The JIT: the host does it
+with
+.CW -c0
+and with
+.CW -c1 ,
+and the board's
+.CW cflag=1
+goes through the same
+.CW comp-aarch64.c ,
+so it is not a miscompilation.  One long-lived
+.CW dossrv
+serving both mounts from a single
+.CW emu ,
+as the board has rather than a fresh one per run: works, and reports
+generations 1 then 3, the board's figures exactly.  And the first server
+still being alive at the second mount \(em which was the last shape the host
+had and the board did not \(em makes no difference: doing both mounts inside
+.I one
+board command, with both servers alive, fails the same way.
+.PP
+.B "So: Fs.replace silently does nothing, in the kernel, on a second mount."
+Everything above puts it there.  The create is called, returns nil, and the
+server replies success; the commit runs and advances the generation; the tree
+it writes has no new key; and the same code hosted, over the same image,
+inserts correctly.  The instrument this wants is not another A/B from outside
+but prints inside
+.CW create()
+and
+.CW Fs.replace
+on the board \(em which leaf was found, whether a block was written, what
+root came out \(em and that is a small patch and a kernel build rather than a
+guess.
