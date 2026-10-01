@@ -14610,3 +14610,66 @@ have produced a
 .CW "bind /n/efs /"
 that appears to work, leaves every binary resolving from the kernel root, and
 reports success.
+.NH 2
+A write to efs on the board does not survive a reboot
+.PP
+Measured, and it is the thing that has to be fixed before
+.CW efs
+can back anything writable.
+.P1
+and {echo aaa > /n/efs/x1} {echo STEP1-WROTE}   STEP1-WROTE
+and {cat /n/efs/x1}        {echo STEP2-READ}    aaa / STEP2-READ
+and {ls /n/efs/x1}         {echo STEP3-LISTED}  /n/efs/x1 / STEP3-LISTED
+ls /n/efs                                       old.txt  x1
+                        -- reboot --
+ls /n/efs                                       old.txt
+cat /n/efs/x1                                   file does not exist
+.P2
+So a create that is acknowledged, reads back byte for byte, stats, and appears
+in its own directory is gone after a clean reboot.
+.PP
+.B "And the boot test cannot see it, because it manufactures its own evidence."
+.CW EFS-WRITE-OK
+writes
+.CW boot.txt ,
+reads it back and renames it over
+.CW old.txt
+\(em all inside one boot, never across one.  So
+.CW old.txt
+being present on the next boot looks exactly like persistence and is not:
+.CW efscheck()
+removes and recreates it every time.  The one file in that directory which
+appears to prove durability is the one file that proves nothing.  Reading it as
+proof is what "made on one boot and mounted on the next" in the notes rests on.
+.PP
+.B "What it is not."
+Not a create bug.  Two earlier readings of this said creates were silently
+failing, and both were the shape of the command rather than the filesystem: a
+bare
+.CW "echo ... > /n/efs/f"
+in a poller command fails without a word, while the same redirect inside
+.CW "and {...} {...}"
+works.  Every step above is wrapped for that reason, and with the wrapper every
+step succeeds.  Worth knowing before reporting an efs fault that is not there.
+.PP
+.B "The likely mechanism, stated as likely."
+.CW efs
+is crash-consistent to its
+.I "last committed state"
+\(em
+.CW man/4/efs
+says so, and
+.CW "EFS-CRASH-OK the card held the last committed state"
+is the boot test of exactly that.  Neither
+.CW man/4/efs
+nor
+.CW doc/efs-format.ms
+says when a commit happens, and nothing in the boot path or in
+.CW "echo reboot >/dev/sysctl"
+asks for one.  So the write is most likely still uncommitted when the board
+restarts, and the filesystem is doing what it promises rather than losing data
+it had committed.  That is a hypothesis with an obvious test \(em commit, then
+reboot \(em and the commit trigger has to be found or added first.
+.PP
+So the last item is not "make efs the root".  It is: find what commits, make a
+write durable across a reboot, and only then union it over anything.
