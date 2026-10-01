@@ -46,15 +46,33 @@ def screentext(sess, scratch):
 
 
 def alive(sess, scratch, wait=10.0):
-    """Two copies of a fresh marker, or the board is not running commands."""
+    """Two copies of a fresh marker, or the board is not running commands.
+
+    Returns (mark, count).  The count matters and this used to throw it
+    away, which cost a wrong diagnosis: the failure was reported as "the
+    console echoes but runs nothing" when the marker had come back ZERO
+    times, meaning nothing typed was reaching the board at all.  Those
+    are different faults with different fixes --
+
+        0   the host-to-board direction is dead.  The board may be
+            perfectly healthy; its output still arrives, so its boot log
+            reads normally and it looks hung when it is only deaf.  Look
+            at the cable, the adapter's transmit line, the click.
+        1   the uart interrupt handler is echoing and no Dis process is
+            left to run what it echoes.  The board needs a reset.
+        2+  healthy.
+    """
     mark = "LIVE%d" % (int(time.time() * 1000) % 1000000)
     stuff(sess, "echo " + mark)
     end = time.time() + wait
+    best = 0
     while time.time() < end:
         time.sleep(0.5)
-        if screentext(sess, scratch).count(mark) >= 2:
-            return mark
-    return None
+        n = screentext(sess, scratch).count(mark)
+        best = max(best, n)
+        if n >= 2:
+            return mark, n
+    return None, best
 
 
 def main():
@@ -64,10 +82,17 @@ def main():
     scratch = os.environ.get("CLAUDE_JOB_DIR", "/tmp") + "/tmp"
     os.makedirs(scratch, exist_ok=True)
 
-    mark = alive(sess, scratch)
+    mark, n = alive(sess, scratch)
     if mark is None:
-        print("BOARD-DEAD %s: the console echoes but runs nothing; "
-              "everything readable from it is scrollback" % sess)
+        if n == 0:
+            print("BOARD-UNREACHABLE %s: a fresh marker came back 0 times, "
+                  "so nothing typed is reaching the board.  Its output may "
+                  "still be fine -- check the cable and the adapter's "
+                  "transmit line before resetting anything." % sess)
+        else:
+            print("BOARD-DEAD %s: the marker echoed once and was not run, "
+                  "so the uart handler is alive and no Dis process is left. "
+                  "Everything else readable is scrollback." % sess)
         return 1
 
     log = open(out, "w")
@@ -80,14 +105,15 @@ def main():
     time.sleep(2)
     # A second marker after the work, so a board that died DURING it
     # cannot have its last replies believed either.
-    mark2 = alive(sess, scratch)
+    mark2, n2 = alive(sess, scratch)
     t = screentext(sess, scratch)
     log.write("=== screen tail ===\n")
     log.write(t[-4000:])
     log.close()
     if mark2 is None:
-        print("BOARD-DIED-MIDWAY %s: it answered before the commands and "
-              "not after, so the replies cannot be trusted" % sess)
+        print("BOARD-DIED-MIDWAY %s: it answered before the commands and not "
+              "after (marker seen %d times), so the replies cannot be trusted"
+              % (sess, n2))
         return 1
     print("ok, alive before and after")
     return 0

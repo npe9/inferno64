@@ -36,6 +36,76 @@ class Dead(Exception):
     """The board stopped running what was typed at it."""
 
 
+class PortBoard:
+    """A board reached by opening its tty, with no screen(1) in the way.
+
+    Preferable to the screen path whenever nothing is attached to the
+    port, and the reason is not convenience.  A screen session's handle
+    is its pid, which changes every time the window is restarted, and
+    three runs here ended in a Dead blaming a board whose session had
+    simply been renumbered -- "No screen session found" printed once per
+    character stuffed.  A port belongs to the adapter.
+
+    The liveness rule is the same and matters as much: a marker must
+    come back twice, because this console echoes from the uart interrupt
+    handler long after the Dis shell is gone.  Zero copies means nothing
+    typed is arriving, which is a different fault from one copy and is
+    reported as such -- that distinction cost a wrong diagnosis today,
+    a board called hung when its boot log was perfectly readable and
+    only the host-to-board direction was dead.
+    """
+    def __init__(self, port, name=None, scratch=None):
+        sys.path.insert(0, os.path.join(os.path.dirname(
+            os.path.abspath(__file__)), "..", "f407"))
+        import console
+        self.console = console
+        self.port = port
+        self.name = name or os.path.basename(port)
+        self.fd = console.open_port(port)
+        self.buf = ""
+
+    def text(self):
+        self.buf += self.console.drain(self.fd, 0.6)
+        if len(self.buf) > 65536:
+            self.buf = self.buf[-32768:]
+        return self.buf
+
+    def _send(self, line):
+        for ch in line + "\n":
+            os.write(self.fd, ch.encode())
+            time.sleep(CHARDELAY)
+
+    def live(self, wait=10.0):
+        mark = "LV%d" % (int(time.time() * 1000) % 1000000)
+        self._send("echo " + mark)
+        end = time.time() + wait
+        best = 0
+        while time.time() < end:
+            time.sleep(0.5)
+            n = self.text().count(mark)
+            best = max(best, n)
+            if n >= 2:
+                return True
+        self.lastcount = best
+        return False
+
+    def read(self, line, settle=4.0):
+        if not self.live():
+            raise Dead("%s: not running commands BEFORE %r (marker seen %d "
+                       "times; 0 means nothing typed is arriving)"
+                       % (self.name, line, getattr(self, "lastcount", -1)))
+        self._send(line)
+        time.sleep(settle)
+        t = self.text()
+        if not self.live():
+            raise Dead("%s: died DURING %r -- its reply is scrollback"
+                       % (self.name, line))
+        return t
+
+    # the rest of the interface is identical, so borrow it
+    ctl = None
+
+
 class Board:
     def __init__(self, session, name=None, scratch=None):
         self.sess = session
@@ -127,13 +197,54 @@ class Board:
         return len(tt) > 4 and tt[4] == "2"
 
 
+# PortBoard differs from Board only in how a line is sent and the text
+# read back; everything that parses a stat file is the same code.
+for _m in ("ctl", "stats", "expect", "lastrx", "reaches_tx"):
+    setattr(PortBoard, _m, getattr(Board, _m))
+
+
 def sessions():
     out = subprocess.run(["screen", "-ls"], capture_output=True,
                          text=True).stdout
     return re.findall(r"(\d+\.ttys\d+\.\S+)", out)
 
 
+def by_port(port):
+    """The screen session holding this tty, as a Board.
+
+    Named sessions are the wrong handle and this took three failures to
+    accept: screen's pid changes whenever the window is restarted, so a
+    hardcoded "59999.ttys023.Noethikoma" quietly becomes "No screen
+    session found" printed once per character stuffed, and the run ends
+    in a Dead that blames the board.  The board did not move; the
+    session did.
+
+    The port is the stable name -- it belongs to the adapter, not to the
+    terminal -- so this asks which process has the tty open and matches
+    that pid against the session list.  board.py's session() has done it
+    this way all along, for the same reason and after the same mistake:
+    its comment records typing one board's commands into another
+    window.
+    """
+    pids = subprocess.run(["lsof", "-t", port], capture_output=True,
+                          text=True).stdout.split()
+    if not pids:
+        raise Dead("nothing holds %s -- no screen is attached to it" % port)
+    for s in sessions():
+        if s.split(".")[0] in pids:
+            return Board(s, os.path.basename(port))
+    raise Dead("%s is held by pid %s, which is not a screen session"
+               % (port, ",".join(pids)))
+
+
 if __name__ == "__main__":
+    import glob
     for s in sessions():
         b = Board(s)
         print("%-30s %s" % (s, "alive" if b.live() else "NOT RUNNING COMMANDS"))
+    print()
+    for port in sorted(glob.glob("/dev/cu.usbserial-*") +
+                       glob.glob("/dev/cu.PL2303*")):
+        held = subprocess.run(["lsof", "-t", port], capture_output=True,
+                              text=True).stdout.split()
+        print("%-40s %s" % (port, "screen " + held[0] if held else "-"))
