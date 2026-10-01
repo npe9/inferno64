@@ -3860,3 +3860,53 @@ If board 2 syncs on that, the receive path works and every negative on
 this bench has been the antenna path.  If it does not sync on a -10dBm
 cabled 2-FSK packet from a part that is proven to be transmitting one,
 the receive path is broken and that is plan item 3's answer.
+.PP
+.B "Board 1 radiates; board 2's antenna path does not receive.  That is the whole of what is left."
+Measured with the carrier turned on by its own ctl write and
+.I held
+across the sweeps, off before and off again after, on a tinySA whose
+antenna was first checked against known references \- the 440MHz
+repeater at -79.2dBm and the FM band at -47.7:
+.DS
+.CW "carrier OFF        floor -121.9   peak -103.4  (random bin, noise)"
+.CW "carrier ON held    floor -114.9   PEAK  -48.9  at 914.99755 MHz"
+.CW "carrier ON held    floor -115.4   PEAK  -48.4  at 915.00379 MHz"
+.CW "carrier OFF again  floor -122.4   peak -102.9  (random bin, noise)"
+.DE
+Fifty-five decibels, appearing on command and going away on command,
+within four kilohertz of where it was told to be.  Board 1's transmitter
+and its antenna both work.
+.PP
+Board 2, antenna fitted, probing the same frequency while that carrier
+was held, read
+.B "floor -108 peak -101 duty 1% bursts 3"
+against its own idle
+.BR "floor -108 peak -100 duty 1% bursts 2" .
+No change at all.
+.PP
+So the four links in the chain now stand as:
+.IP \(bu 3
+board 1's transmitter: proven, -32dBm modulated packets and a -30dBm
+carrier into a cable.
+.IP \(bu 3
+board 1's antenna path: proven, +55dB over the air to a verified
+receiver.
+.IP \(bu 3
+board 2's receiver at its own connector: proven, a cabled generator
+raising its floor fifteen decibels.
+.IP \(bu 3
+board 2's antenna path: FAILS.  A signal a third receiver hears at
+-48dBm produces nothing measurable.
+.PP
+That is a u.FL connector, the pigtail, or the antenna on board 2's ccRF
+click, and it is the only unverified element remaining.  Everything this
+document has chased today \- saturation, calibration, sync thresholds,
+preamble registers, the sockets, the reset verb \- sat downstream of it.
+.PP
+Two of those were real and are fixed:
+.B reset
+reapplies the register table now, and the driver counts
+.B sent
+for packets the part never radiated, which
+.B txtrace
+exposes.  The rest were instruments believed without a baseline.
