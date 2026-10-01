@@ -1364,6 +1364,78 @@ or 1105us each against 1000 asked for.  The overshoot is
 .CW microdelay 's
 granularity.  The counters are exact; the delay is approximate and should be
 quoted as such.
+.NH 2
+B1c.  FIXED \(em the leaves were eight per cent full, because a split was greedy
+.LP
+B1a said the growing term was reads and that they were in a directory scan.
+Attributing them, with a counter in
+.CW Fs.rawblk 's
+miss path tagged by caller:
+.P1
+commits   leaffor   nextleaf   pathto
+    200       506          0      337
+    400      1106       4145      866
+    600      1706      15845     1366
+.P2
+.CW Fs.nextleaf ,
+the leaf-advance
+.CW Fs.range
+uses, is 84 per cent of every read and is the thing that grows.
+.PP
+.B "But it was not walking too far.  The leaves were nearly empty."
+Of 15077 leaves walked, 5 matched nothing \(em so the scan stays inside its
+key range.  It took 16.7 leaves per call to see 147 entries, about eight per
+leaf, where a dentry is some 35 bytes and a 4096-byte leaf holds over a
+hundred.  Interior nodes meanwhile ran 65 per cent full.
+.PP
+.B "The cause, measured rather than reasoned: every split made a one-entry leaf."
+.CW Fs.writeents
+packed each node full and started another when one overflowed.  The shapes it
+produced, first piece over total:
+.P1
+96/97  97/98  97/98  98/99  98/99  99/100
+.P2
+A dentry's key is a name hash, so inserts arrive at uniformly random points.
+The one-entry leaf covers a sliver of the key range and almost nothing lands
+in it again, while the full leaf keeps being hit and keeps shedding another
+one.  300 creates made 119 such splits.
+.PP
+.B "Splitting evenly instead."
+The node count is still the greedy minimum, so evenness never costs a block;
+the entries are then divided among that many nodes.  The capacity test stays
+and is what makes it safe.  New shapes, and the count of splits over the same
+300 creates:
+.P1
+49/97  45/90  45/89  45/90  58/116  45/89      17 splits, was 119
+.P2
+.PP
+.B "What the two changes are worth, 300 creates on sdmem with delay 0."
+.P1
+arm                         total   first 50   last 50    read ops
+as committed before         29.6 s      35        160       17014
++ packed navigation         14.9 s      18.4       75.1      17014
++ even split                 8.0 s      17.5       29.3       4504
+.P2
+3.7x together, and on the term that grows \(em the last fifty creates \(em
+5.5x.  Reads fall 3.8x, which is the even split; the packed change moved no
+reads at all and never claimed to.
+.PP
+.B "Note which fix was fundamental."
+Packed navigation made each read cheaper.  The even split made there be fewer
+of them, by removing the reason they multiplied.  B1a named the directory scan
+as the cause and proposed a keyed lookup to avoid it; that is still a real
+improvement and is still unbuilt, but it is no longer the first thing, because
+the scan is now walking five leaves instead of thirty-four.
+.PP
+.B "Still open."
+.CW walkto() ,
+.CW create()
+and
+.CW deldentry()
+read a whole directory to answer a question about one name, which is
+O(entries) however full the leaves are.  The keyed lookup described in B1a
+would make it O(log entries), and the collision constraint recorded there is
+unchanged.
 
 .NH 2
 B2.  DONE.  One namehash, in the library

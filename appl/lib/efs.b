@@ -1374,6 +1374,7 @@ Fs.writeents(f: self ref Fs, ents: array of Ent, ntype: int, level: int):
 	(array of big, array of Key, string)
 {
 	nb := 0;
+	want := 0;
 	blks := array[8] of big;
 	keys := array[8] of Key;
 	#
@@ -1395,6 +1396,54 @@ Fs.writeents(f: self ref Fs, ents: array of Ent, ntype: int, level: int):
 	#
 	if(len ents == 0)
 		return (blks[0:0], keys[0:0], nil);
+	#
+	# HOW MANY NODES, so that they can be filled EVENLY rather than
+	# greedily.
+	#
+	# This used to pack each node full and start another when one
+	# overflowed, which is the obvious thing and was costing a factor
+	# of ten.  Greedy packing splits a full leaf of 97 entries into one
+	# of 96 and one of 1 -- measured, that is exactly what it did:
+	#
+	#	96/97  97/98  97/98  98/99  98/99  99/100
+	#
+	# A dentry's key is a name hash, so inserts arrive at uniformly
+	# random points in the key range.  The one-entry leaf covers a
+	# sliver of that range and almost nothing ever lands in it again,
+	# while the full leaf keeps being hit and keeps shedding another
+	# one-entry leaf.  So a directory of 300 entries ended up spread
+	# over about 120 leaves holding about 9 entries each -- eight per
+	# cent full -- and Fs.range, which walks every leaf of a directory,
+	# had to read all of them.  That was 84 per cent of every block
+	# read this filesystem did, growing with the directory; see
+	# doc/open-issues-plan.ms B1a and B1c.
+	#
+	# Splitting evenly is what a B-tree does and why: both halves stay
+	# able to absorb an insert, so leaves settle at a useful fraction
+	# full instead of at one entry.
+	#
+	# The node COUNT is still the greedy minimum -- computed here, then
+	# used as the divisor -- so evenness never costs an extra block.
+	# The capacity check stays in the packing loop below and is what
+	# makes this safe: if balancing ever asked for more than fits, the
+	# loop takes fewer and the "more pieces than expected" guard
+	# catches the pathological case rather than writing a bad node.
+	#
+	nnode := 0;
+	{
+		room := noderoom();
+		for(j := 0; j < len ents; j++){
+			c := entsize(ents[j]);
+			if(c > noderoom())
+				return (nil, nil, sys->sprint("entry %d does not fit in a block", j));
+			if(c > room){
+				nnode++;
+				room = noderoom();
+			}
+			room -= c;
+		}
+		nnode++;
+	}
 	i := 0;
 	for(;;){
 		if(nb >= len blks)
@@ -1408,9 +1457,20 @@ Fs.writeents(f: self ref Fs, ents: array of Ent, ntype: int, level: int):
 		#
 		last := i;
 		room := noderoom();
+		#
+		# An even share of what is left, by count.  Entries in one
+		# node are close enough in size that counting them balances
+		# the bytes, and counting cannot overrun a block because the
+		# capacity test below still governs.
+		#
+		want = len ents - i;
+		if(nb < nnode - 1 && nnode - nb > 0)
+			want = (len ents - i + (nnode - nb) - 1) / (nnode - nb);
 		for(j := i; j < len ents; j++){
 			c := entsize(ents[j]);
 			if(c > room)
+				break;
+			if(j - i >= want)
 				break;
 			room -= c;
 			last = j + 1;
