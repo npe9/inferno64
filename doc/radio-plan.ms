@@ -4110,3 +4110,66 @@ models any of them, which is why
 .B twoboards.sh
 passes while silicon does not, and the plan's own earlier note that the
 model "does not exercise the radio itself" is the same point.
+.PP
+.B "SYNC_THR and the rate hypothesis are both ruled out, properly this time."
+Swept with
+.B tools/radio/twoboard.py
+\- every read bracketed by liveness marks, the frequency asserted before
+and after each row, and the transmitter checked to reach TX by
+.B txtrace
+element 4 rather than by its
+.B sent
+counter:
+.DS
+.CW "SYNC_THR   8 11 14 17 20 23 26 29 31"
+.CW "recv       0  0  0  0  0  0  0  0  0"
+.CW "crcerr     0  0  0  0  0  0  0  0  0"
+.DE
+And the dependent-register hypothesis fails too.  Run at the part's own
+native configuration \- rate 1200, deviation 3997, bandwidth 25000, which
+is what the AGC, DCFILT and IQIC values in
+.I cc1120cfg[]
+were computed for and therefore the one self-consistent setting \- the
+result is identical to the 9600/20000/50000 used all day:
+.B "recv 0, crcerr 0"
+with
+.B "txtrace 1 0 0 0 2 0"
+in both, so the part reached TX each time.
+.PP
+.B "And both parts are configured alike, byte for byte."
+Read off the silicon rather than from the table:
+.DS
+.CW "              board1   board2"
+.CW "PREAMBLE_CFG1   0x14     0x14    (a preamble IS sent)"
+.CW "PREAMBLE_CFG0   0x2a     0x2a    (PQT enabled)"
+.CW "SYNC_CFG1       0x4b     0x4b"
+.CW "PKT_CFG2        0x04     0x04"
+.CW "PKT_CFG1        0x05     0x05"
+.CW "PKT_CFG0        0x20     0x20    (variable length)"
+.CW "MDMCFG1         0x46     0x46"
+.CW "MDMCFG0         0x05     0x05"
+.DE
+So the failure is not an asymmetry between the two parts, and the
+preamble is not absent.
+.PP
+That read found one real bug, which is committed: PKT_CFG1's bit 0 is
+APPEND_STATUS, so the part appends two bytes to every received packet,
+and the receive path read the payload and stopped \- leaving them for the
+next packet's read to take one as its length.  It needs two received
+packets to show, so this bench could never have seen it.
+.PP
+What is left to try, and the only one of the three candidates still
+standing: the driver has
+.B "serial on"
+for the part's transparent mode, where the packet engine is out of the
+path and the demodulated bits come out on a pin, and it has
+.BR gcapture ,
+.B ghist
+and
+.B runs
+to sample that pin.  A locked 2-FSK receiver fed an alternating preamble
+should show runs clustered at one symbol period \- 104us at 9600 baud,
+833us at 1200 \- and a receiver that is not locking should show short
+random runs.  That distinguishes "the demodulator never recovers bits"
+from "it recovers them and the packet engine rejects them", which is the
+question everything else has failed to settle.
