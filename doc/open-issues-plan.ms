@@ -25,7 +25,7 @@ Order, and why
 3  A3  audit what the 7c fix changed      DONE: clean; left A5 hygiene
 4  B2  one namehash, not two              DONE 2d273290f
 5  A1  fix 6c                             DONE e5d6131f3 (A2 done b6a7201e9)
-6  B1  efs's quadratic allocation         3 fixes tried+reverted; instrument first
+6  B1  efs's quadratic allocation         attributed: descent, ~39%; one run to settle
 7  D1  w4/w8, D2 close the bind section   DONE
 .P2
 .CW C1
@@ -636,41 +636,88 @@ Three per cent.  It was reverted all the same: a change to the format layer
 needs a reason better than three per cent, and the dominant cost is still not
 identified.
 .PP
-.B "The instrumentation is why, and this is the thing to fix first."
-Two counters were compared that do not measure the same thing.
+.B "The counter was built, and the attribution is now solid."
+The flaw behind the three attempts was comparing two counters that do not
+measure the same thing:
 .CW unpents ,
 incremented inside
 .CW getnode
 after
 .CW Node.unpack ,
 counts entries
-.I actually decoded
-\(em cache misses only \(em and gave 22, 514 and 789 per operation.
+.I actually decoded ,
+while
 .CW fixents
 and
 .CW replents ,
 incremented at the call sites, count entries
 .I seen ,
-whether the node came from the cache or was decoded.  So
+cached or not.  So
 .CW "fixents = 660"
-did not mean 660 decodes, which is exactly why removing all of them changed
-almost nothing, and why the fit of 2.1 to 2.25 allocations per entry cannot be
-applied to it.
+never meant 660 decodes, which is why removing all of them changed nothing.
 .PP
-So the next attempt starts by making one counter that answers the question:
-entries decoded, attributed to the caller that forced the decode.  Increment it
-inside
-.CW getnode
-on the miss path, with a field on
-.CW Fs
-naming who asked, set by
-.CW range ,
-.CW replace ,
+Replaced by one counter on the miss path, tagged with the call site that forced
+the decode.  On a 242-entry filesystem:
+.P1
+call site    decodes/op   entries/op
+leaffor          7.00        455.0
+nextleaf         1.00          1.0
+pathto           6.00        333.0
+replace          0            0
+fixup            0            0
+TOTAL                        789.0
+.P2
+The total is the 789 measured independently, which is the check that this
+counter is the trustworthy one.  All of the decoding is in the
+.I descent ,
+and
+.CW replace
+and
 .CW fixup
+force
+.I none
+\(em they hit the cache that
+.CW leaffor
 and
 .CW pathto
-around their calls.  Until the 22, 514 and 789 are split between those four, any
-fix is a guess \(em which is what all three of these were.
+have already filled.  So the third attempt, patching
+.CW fixup ,
+was aimed at a function that never decodes anything, and its three per cent was
+the re-pack it avoided and not a decode.
+.PP
+.B "But the decodes are not the whole quadratic, and that is new."
+If each decoded entry costs one allocation \(em
+.CW Node.unpack
+allocates one array for the entries and one value array per entry, and
+.CW Key
+is scalar so it costs nothing \(em then:
+.P1
+fs   2 entries   22 decoded/op of  328 alloc/op    7%
+fs  62 entries  514 decoded/op of 1372 alloc/op   37%
+fs 242 entries  789 decoded/op of 1998 alloc/op   39%
+.P2
+A growing share, and the largest single term identified, but three fifths of the
+allocations at the large end are still unattributed.  Removing the decoding
+entirely would take 1998 to about 1200, against 328 at two entries \(em still
+growing.  So the descent's decoding is
+.I a
+term and not
+.I the
+term, and B1 is not one fix.
+.PP
+.B "Which leaves one thing unexplained, and it should be settled first."
+The second attempt \(em a descent that does not decode, with the decoded-node
+cache kept \(em targeted exactly these 789 and measured no change at all
+.CW ( 330/1371/1989 ).
+That cannot be right: either it did not avoid the decodes it was meant to, or
+they do not cost what the arithmetic above assumes.  Re-run it with this
+counter and read
+.CW decodes/op :
+if it does not fall, the change was wrong; if it falls and allocations do not,
+then an entry decode is much cheaper than one allocation and the whole
+.CW Node.unpack
+line of attack is misconceived.  One run decides which, and nothing else should
+be attempted before it.
 .PP
 .B "What is solid, after all of it."
 That
