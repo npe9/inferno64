@@ -5083,3 +5083,46 @@ edit and a reflash.
 .I Radiocal
 measures and prints; nothing writes it down.  That is stage two and it
 wants a writable flash sector.
+.PP
+.B "Item 9's first step: an AX.25 UI frame crosses the CC1120 on silicon."
+.DS
+.CW "board1  RAWSENT N0CALL-7>KA9Q-1 28 bytes"
+.CW "board2  RAW N0CALL-7>KA9Q-1 UI pid 0xf0 info over-the-air"
+.DE
+by
+.IR tools/radio/ax25silicon.py ,
+with each board calibrated from its own
+.B /lib/radio
+entry and the host writing no correction.  The addresses, the UI control
+byte, PID 0xf0 and the information field all came back.
+.PP
+It is
+.I ax25raw (1)
+on both ends, which is the point: it assembles the bytes from the
+specification and writes them to
+.BR /dev/radio0/data ,
+so what crossed is an AX.25 frame and not this tree agreeing with
+itself.
+.I Ax25chk (1)
+checks
+.I ax25 (3)
+against
+.I ax25 (3)
+and cannot catch an address field that no TNC would accept.
+.PP
+.B "And the first run of it was wrong in a way worth recording."
+It reported that board 2 decoded nothing, and what board 2 had actually
+printed was
+.CW "ax25raw: RUNT 8 bytes"
+\- an
+.CW abcdefgh
+left in
+.BR #W/radio0 's
+queue by the ten
+.B txtest
+packets of the previous measurement.
+.CW "hear 1"
+took that one and exited before the frame arrived.
+.B "A receive queue outlives the program that filled it,"
+which makes it a stale instrument like any other, and the tool resets
+both boards now.
