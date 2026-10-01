@@ -23,7 +23,7 @@ Order, and why
 1  C1  the rig's ELF hazard      DONE a1e2e12a0
 2  A4  do the 32-bit back-ends narrow?    DONE, answered below
 3  A3  audit what the 7c fix changed      DONE: clean; left A5 hygiene
-4  B2  one namehash, not two              cheap, prevents a bad class
+4  B2  one namehash, not two              DONE 2d273290f
 5  A1  fix 6c                             blocked on A2
 6  B1  efs's quadratic allocation         the real remaining bug
 7  D1  w4/w8, D2 close the bind section   housekeeping
@@ -557,41 +557,31 @@ no longer grows with filesystem size, and
 fill arm reaches the end of a 4MiB filesystem instead of running out of
 memory first \(em which is B3, and closes with this.
 .NH 2
-B2.  One namehash, not two
+B2.  DONE.  One namehash, in the library
 .LP
-.B Established.
-.CW namehash
-exists twice, in
-.CW appl/cmd/disk/efs.b
-and
-.CW appl/cmd/disk/mkefs.b ,
-and the code's own comment says so: "Written in both places is one place too
-many, and it moves to the library the moment anything else needs it."
-.PP
-.B "Why it is worth doing now rather than when something needs it."
-A divergence between those two functions makes every name in an image created
-by
-.CW mkefs
-unfindable by the server, silently \(em which is, precisely, the failure the
-.CW big
-literal bug produced, and it took three sessions to recognise.  Leaving a
-second way to cause the same symptom is the expensive kind of tidiness to
-skip.
-.PP
-.B The move.
-Into
-.CW appl/lib/efs.b
-as
-.CW Efs->namehash ,
+Checked before moving, which the plan did not ask for and should have: the two
+copies were
+.I identical ,
+so this was latent rather than a live bug on the card.  Moved to
+.CW Efs->namehash
+in
+.CW appl/lib/efs.b ,
 declared in
-.CW module/efs.m ,
-with both callers using it.  Verification is that an image made by
+.CW module/efs.m
+with the reason recorded beside it, called from both commands.
+.CW 2d273290f .
+.PP
+Verified by the whole suite, and by the one path no suite covers:
+.CW "mkefs -n 256 -a payload"
+then mounting that image and reading
+.CW /n/client/payload
+.I "by name" ,
+which returns its contents \(em so the hash
 .CW mkefs
-with files in it still reads back under
-.CW disk/efs
-\(em which
-.CW tests/efs-format.sh
-already does, so it is a rebuild and a suite run.
+wrote and the hash the server looks up are the same one.  That is the check
+that matters, because a divergence would leave
+.CW ls
+listing a name that could never be opened.
 .NH 2
 B3.  efs-limits.sh's memory arm
 .LP
