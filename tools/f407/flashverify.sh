@@ -49,6 +49,22 @@ for s in re.findall(r"(\d+\.ttys\d+\.\S+)", out):
 PY
 )
 
+# STALE CLIENTS FIRST, AND THIS IS THE ROOT CAUSE OF THE DAY'S THREE
+# AMBIGUOUS FLASHES.  open_dev() in mikroe-uhb's hid/generic.py loops
+# forever waiting for VID/PID 0x1234/0x0001, and that match says nothing
+# about which board or which hex.  Two clients left over from earlier
+# backgrounded invocations -- one for hours -- grabbed the bootloader
+# whenever it appeared and wrote THEIR file, while the client just
+# started went on waiting.  So this clears them rather than leaving
+# somebody to remember: a pkill from outside would kill this script's own
+# client instead, which is how the first attempt at this ended with
+# "Terminated: 15" in its log.
+if pgrep -f "mikroe-uhb" > /dev/null 2>&1; then
+	echo "flashverify: clearing stale mikroe-uhb clients"
+	pkill -f "mikroe-uhb"
+	sleep 1
+fi
+
 HEX=$ROOT/os/inferno/stm32f407/istm32f407.hex
 "$ROOT/tools/f407/flash.sh" ~/src/mikroe-uhb \
 	~/src/mikroe-uhb/venv/bin/python "$HEX" > /tmp/fv-$$.log 2>&1 &

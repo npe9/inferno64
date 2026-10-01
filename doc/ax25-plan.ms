@@ -454,3 +454,83 @@ asked it to.
 .PP
 Each of those is a thing a TNC on the other end can be pointed at, which
 is the reason for that order rather than any other.
+.NH 1
+The sizes were a constant, and a CC1120 proved it
+.PP
+This document says, of item 1, that the payload sizes "came out as this
+document predicted: 239 with no path and 225 with two digipeaters, from
+.CW sys->iounit
+and not from a constant in the test".  The second half of that was not
+true of
+.IR ax25chk (1),
+which had
+.CW "Nodigi: con 239"
+and
+.CW "Twodigi: con 225"
+in it \- and 255 is one particular carrier's payload.
+.PP
+Measured on an stm32f407 with a ccRF click, by
+.IR ax25up (1):
+.DS
+.CW "ax25up: /dev/radio0/data iounit 125"
+.CW "ax25up: #a/0/data iounit 109      (no path)"
+.CW "ax25up: #a/0/data iounit 95       (via WIDE1-1,WIDE2-1)"
+.DE
+So
+.B #a
+is right and both of
+.IR ax25chk 's
+.B iounit
+checks would have failed against it.  The device republishes what its
+carrier gave it less sixteen bytes and seven for each digipeater,
+whatever the carrier is; the test was the thing carrying an assumption.
+.PP
+.I Ax25chk
+derives the budget from the carrier it attached now and prints it, and
+the first line of its output is the derivation:
+.DS
+.CW "; ax25chk setup N0CALL-1"
+.CW "carrier iounit 255, so 239 with no path and 225 with two digipeaters"
+.CW "..."
+.CW "12 checks, 0 failed"
+.CW "AX25CHK-OK"
+.DE
+on
+.CW mps2-an386
+over a socket pair, which is where every measurement in this document was
+taken.  Both numbers are the same as before, because the carrier is the
+same; what changed is where they come from.
+.PP
+.B "And one bug the change introduced, found by review and fixed."
+Two read buffers were resliced to the derived budget, which is a module
+global set inside
+.CW setup () \-
+and
+.CW "ax25chk recv"
+and the announcer are separate invocations that never call it, so those
+buffers came out zero-length and every read returned nothing.  A read
+buffer only has to be big enough, and
+.I ax25 (3)
+errors rather than truncating when it is not, so they are the maximum
+again.  Verified in the path that had it, two
+.CW mps2-an386
+over a socket pair:
+.DS
+.CW "; ax25chk recv 2"
+.CW "short-read-refused ok"
+.CW "read-0 ok"
+.CW "info hello-over-a-model-0"
+.CW "read-1 ok"
+.CW "info hello-over-a-model-1"
+.DE
+.PP
+.B "Why none of this was visible before."
+Every packet device under
+.B #a
+until now had a payload of 255, so the constant and the arithmetic agreed
+and no test could tell them apart.  A CC1120's is 125, and
+.I doc/radio-plan.ms
+item 3 had to be answered first \- until this week no packet had crossed
+between two of them at all \- so this is the first time the claim was
+falsifiable.
+.B "A number that agrees with the only case it is ever checked against is not a measurement."
