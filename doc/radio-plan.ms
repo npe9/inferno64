@@ -2979,6 +2979,172 @@ exactly what item 6 was built for.
 .B "Measured from the host first, as the thing the program has to reproduce."
 tools/radio/paladder.py drives the same ladder through two consoles, five
 packets a step, and is the control the Limbo version is checked against.
+.IP "8.  Calibrations that belong to a radio and survive a reboot." 6
+Asked for directly, with the question "is ndb the right place?".  The
+answer is that the
+.I format
+is right, the directory is not, and the hard part is neither: it is the
+key.
+.PP
+.B "What has to be stored."
+Three numbers per radio, all measured and none derivable: the crystal
+error in parts per billion, the RSSI offset in dB, and the carrier sense
+threshold in dBm.  A fourth now exists and is worth keeping beside them,
+the RSSI slope from item 7.
+.PP
+.B "Why a file at all, and why this was a bug before it was a feature."
+.CW spistm32f4.c
+carries
+.CW ".ppb = -3550," 
+with a comment saying it was measured on this board and not taken from
+anywhere, which was exactly right when there was one board.  There are
+two now and the second wants +60300, so that line is wrong on half the
+bench and
+.B "no single image can be right for both."
+Either every board gets its own kernel \- a flash cycle per measurement,
+and an image that is silently wrong on the board next door \- or the
+image carries the calibrations for every board it knows and each board
+picks its own.
+.PP
+.B "The key, which is the part that is not obvious."
+Picking its own needs an identity, and every identity a board could be
+told is circular: the thing that would tell it is the thing that needs
+to know.  Nor can it be the radio's: a CC1120 answers PARTNUMBER 0x48
+and PARTVERSION 0x21 and has no serial number, so two ccRF clicks are
+indistinguishable to software.  What does have one is the microcontroller
+\- RM0090 39.1, a 96-bit factory serial at 0x1fff7a10, read-only, which
+no reflash and no empty flash can change.  That is now at
+.B #P/uid
+as twenty-four hex digits, and the two boards here read
+.CW 2037303959315008002f0022
+and
+.CW 203730395931500800300022 .
+.B "The calibration is keyed on the board and not on the click,"
+which is a deliberate approximation and a wrong one if a click is ever
+moved between boards: the crystal belongs to the click.  It is right for
+this bench, where each click stays in its board, and the entry carries a
+.CW click=
+attribute so that a move is recordable rather than silent.
+.PP
+.B "The format is attrdb(6), and the place is beside ndb rather than in it."
+.I Ndb (6)
+is the attribute database for
+.I network
+configuration and
+.CW /lib/ndb/local
+names the files that make up that one logical database.  A crystal error
+is not network data and putting it there would make every program that
+opens
+.CW /lib/ndb/local
+read it.  But the format is exactly right \- entries of attribute/value
+pairs, one entry to a thing, read by
+.I attrdb (2)
+which is already in this tree \- and the mechanism for a second database
+is the same mechanism.  So
+.CW /lib/radio :
+.DS
+.CW "radio=cc1120 uid=2037303959315008002f0022"
+.CW "	board=clicker2 click=ccrf2 name=board1"
+.CW "	ppb=-3550 rssioffset=-102 csthr=-90"
+.CW "	rssislope=0.930 slopesource=tinysa-attenuator"
+.CW ""
+.CW "radio=cc1120 uid=203730395931500800300022"
+.CW "	board=clicker2 click=ccrf2 name=board2"
+.CW "	ppb=60300 rssioffset=-102 csthr=-90"
+.DE
+.PP
+.B "And a program to apply it:"
+.I radiocfg (1),
+which reads
+.B #P/uid ,
+finds the entry whose
+.CW uid
+matches, and writes the
+.B ppm ,
+.B rssioffset
+and
+.B csthr
+lines to the radio's
+.BR ctl .
+It reports what it applied and what the file did not have, because a
+calibration silently not applied is the failure mode that matters: it
+looks exactly like a calibration applied wrongly.  A board with no entry
+is not an error \- it says so and leaves the driver's defaults \- and a
+board whose entry exists but whose uid it cannot read is an error,
+because then it does not know whose numbers it would be using.
+.PP
+.B "What persistent means here, in two stages, and the first is not the second."
+.IP \(bu 3
+.B "Stage one, which is what this item builds."
+The file is in the board's root, which is devroot served read-only out of
+flash, so it is written at build time and is persistent across every
+reboot and every power cycle.  One image is then correct on both boards.
+What it is not is writable by the board: a new measurement means an edit
+and a reflash.
+.IP \(bu 3
+.B "Stage two, which is a separate piece of work."
+A board that has just measured its own crystal should be able to write
+the answer down.  That wants a writable flash region \- the image ends
+well short of the bootloader's sector at 0xe0000 and the F407 has a
+megabyte, so there are whole 128K sectors spare \- exposed as a device
+and carrying one small attrdb file.  Flash on this part erases by sector
+and writes by word, so the thing on it wants to be a log of entries
+rather than a file edited in place: append the new reading, and the
+reader takes the last entry for a uid.  That is a filesystem question and
+it belongs with
+.I xip (1)
+rather than here.
+.IP "9.  AX.25 between the two boards, over the CC1120 on silicon." 6
+Asked for directly.
+.I doc/ax25-plan.ms
+has all five of its items marked Done, and every one of them was measured
+on two
+.CW mps2-an386
+over a socket pair with the SX1276 model \- the address field and UI
+frames, SABM/UA/DISC/DM, I/RR/REJ and the sequence numbers, RNR and the
+window, and digipeaters.  None of it has ever carried a frame over a
+radio.
+.PP
+That was not an oversight: until item 3 was answered this morning, no
+packet had crossed between two CC1120s at all, so there was nothing for
+.B #a
+to attach to.  There is now, and the thing to measure is what changes
+when the packet device underneath is real:
+.IP \(bu 3
+.B "The payload budget."
+.I Ax25 (3)
+republishes
+.CW iounit
+less its header, and the numbers in
+.I doc/ax25-plan.ms
+\- 239 with no path, 225 with two digipeaters \- are the SX1276's 255.  A
+CC1120's is 125, so the same arithmetic gives 109 and 95, and the plan's
+claim that the sizes come from
+.CW sys->iounit
+rather than from a constant is a claim this measures.
+.IP \(bu 3
+.B "The timers."
+T1 and T2 were chosen against a LoRa model whose transmit at SF12 is over
+two minutes.  A CC1120 at 1200 symbols a second sends a hundred-byte
+frame in under a second, so the defaults are either fine or pointlessly
+long, and which is a measurement.
+.IP \(bu 3
+.B "T2, which has never been shown to be worth anything."
+The plan records that T2 was credited with fixing a link and then
+measured to make no difference once the model's own collision bug was
+fixed, and says plainly that nothing has yet shown what it is worth.  Two
+half-duplex radios on one channel is the case it was written for, and
+this is the first chance to find out.
+.IP \(bu 3
+.B "And whether the state machine survives a real error rate."
+Every frame of every earlier run arrived.  Over the air at the bottom of
+item 7's ladder the error rate is not zero, and REJ, RNR and the
+retransmission counter have never been exercised by anything but a
+deliberate test.
+.PP
+The order is the plan's own: UI frames first, because a beacon is a UI
+frame and needs no state machine, then the connected-mode handshake, then
+data through a window.
 .PP
 .B "The second board arrived, and is flashed."
 Two clicker 2s with ccRF clicks now, which is the transmitter item 3 has
