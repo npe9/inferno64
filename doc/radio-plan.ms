@@ -4405,3 +4405,32 @@ It also accounts for several of the day's "board 2 died" events, and for
 why the 1200-baud trial could not be redone: the test needs both consoles
 for the few minutes it takes to configure two radios and send a handful
 of packets.
+.PP
+.B "The 1200-baud trial, redone validly: the demodulator dependents are eliminated too."
+The earlier run was void because SYNC_MODE was still at thirty-two bits.
+Repeated with both boards correct, board 2 on its own +60300ppb, and
+board 1 at +14dBm:
+.DS
+.CW "both at 1200/3997/25000     recv +0  crcerr +0  rssi -21"
+.CW "both at 9600/19958/50000    recv +0  crcerr +0  rssi -19"
+.DE
+An RSSI of -21dBm is some eighty-five decibels over this receiver's floor.
+So the AGC, DCFILT and IQIC values suiting the rate is not the
+explanation either: the part's own self-consistent configuration fails
+exactly as the experimental one does.
+.PP
+What has now been eliminated, each with the frequency asserted before and
+after and the transmitter checked to reach TX: signal level, carrier
+frequency, SYNC_THR over its whole range, the sync word's bit order, the
+sync word's length and mode, PQT gating, the rate and bandwidth
+dependents, asymmetry between the parts, and the GPIO selection the
+receive interrupt depends on \- IOCFG3 read 0x06 on both boards through
+the last rounds.
+.PP
+A latent bug found while checking that last one and fixed:
+.B "serial off"
+set IOCFG3 to carrier sense rather than restoring PKT_SYNC_RXTX, so after
+any use of transparent mode the packet interrupt could not fire and
+.B recv
+would stay at zero until a reboot.  It did not affect the measurements
+above, which were taken after reboots, but only by luck.
