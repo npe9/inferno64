@@ -15068,3 +15068,96 @@ does not reproduce any of it at any size tried.
 That is the thing to build next, and it is written here rather than
 attempted at the end of a long session, because the four explanations this
 file has already had to withdraw were all produced exactly then.
+.NH 2
+The silent create, isolated: the SECOND mount of an image is the one that fails
+.LP
+The entry above asked for an instrument on the board instead of guesses from
+outside.  What it needed turned out to be the opposite \(em the board's own
+stack rebuilt on the host, where a probe costs seconds rather than minutes \(em
+and with that in place the variable fell out in two commands.
+.PP
+.B "The repro, on a Pi 3B booted from the card."
+First command: make a fresh image, mount it, create a name, read it back.
+.P1
+efs: /n/dos/s1024.img: 1024 blocks, generation 1 from superblock 0
+SIZE 1024 CAT		(empty status: it worked)
+.P2
+Second command, the same image, nothing else changed:
+.P1
+efs: /n/dos/s1024.img: 1024 blocks, generation 3 from superblock 0
+CREATE2			(empty status: success)
+cat: cannot open /n/efscrash/second: file does not exist
+---ls---
+/n/efscrash/pp
+.P2
+The create reports success.  The read in the
+.I same
+command says the name does not exist.
+.CW ls
+shows only the file the first mount made.  Every create through a second
+mount is discarded, silently, and
+.CW efsck
+afterwards calls the image clean.
+.PP
+.B "Four things this kills, including one of this file's own."
+"A 1024-block image on
+.CW /n/dos
+fails and a 64-block one works", from the entry above \(em wrong.  Sweeping
+64, 128, 256, 512 and 1024 blocks in one command, each freshly made and
+mounted once, all five work.  Size was never the variable; every failing
+case had been mounted before.  Nor is it the medium: copying the 2.5MB
+.CW kernel8.img
+to a second name on the FAT partition and comparing them is byte-identical,
+so large writes through
+.CW dossrv
+to the card are sound.  Nor is it
+.CW mkefs
+leaving the file short: it writes 4194304 bytes for 1024 blocks on the board
+exactly as on the host.  Nor is it the card's accumulated damage, since a
+fresh image does it too.
+.PP
+.B "The host, with the same stack, does not reproduce it."
+Built to match: a 64MB image formatted by
+.CW "disk/format -d -t hard -c 1"
+\(em 512-byte clusters, as the card has \(em served by
+.CW dossrv ,
+with the
+.CW efs
+image inside it, mounted twice in two separate
+.CW emu
+runs.  The second mount creates, reads back and lists correctly, at every
+size from 64 to 2048 blocks.  So it is not
+.CW efs 's
+remount logic and not
+.CW dossrv 's
+either, as both are the same code on both sides.  What is left between them
+is the real device: the card through
+.CW devsd 's
+.CW "part dos"
+and SDHOST, against a plain host file.
+.PP
+.B "One clue not yet used."
+Both sides pick superblock 0 on the remount, but arrive with different
+generations for the same work \(em 5 on the host, 3 on the board.  The same
+sequence of operations committing a different number of times on the two is
+a fact about one of them that has not been explained, and it is where the
+next look should start.
+.PP
+.B "Whether this predates the reserve, and the evidence that it does."
+The repro was run on a kernel carrying
+.CW Fs.reserve ,
+so the question has to be asked.  The change gates creates through
+.CW room() ,
+which either returns an error that is replied or nil and falls through to
+the original
+.CW create ,
+and its other half is inside
+.CW remove() ;
+neither turns a create into a silent success.  But that is reasoning, and
+reasoning has been falsified twice in this file, so the evidence that
+settles it is this: the names recorded as silently failing on the card's
+.CW /n/efs
+were recorded in earlier sessions, under the kernel from before the change.
+The symptom predates it.  The clean way to confirm would be to JTAG-boot
+.CW kernel8.bak ,
+which is the pre-change kernel and is still on the card.
