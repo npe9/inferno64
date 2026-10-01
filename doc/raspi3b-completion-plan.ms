@@ -14792,3 +14792,119 @@ on an image where that name is spoiled, and would work on a fresh one.  The
 function is left reporting it rather than papering over it with a different
 name, because a board that says plainly what it could not do is worth more than
 one with a home at an unexplained path.
+.NH 2
+Why efs runs out of memory: a per-operation cost that grows with the filesystem
+.LP
+.CW tests/efs-limits.sh
+recorded that four times the heap bought fewer than twice the files and left
+the reason open.  It is now measured, in
+.CW tests/efs-leak.sh :
+.CW efs
+allocates more heap per operation the more files the filesystem holds, and the
+garbage outruns the collector.  It is not a leak and it is not about space.
+.PP
+.B "The instrument, and two readings of it that had to be withdrawn."
+.CW /dev/memory
+is this tree's pool instrument.  Its heap row is
+.P1
+cursize maxsize hw nalloc nfree nbrk poolmax name
+.P2
+The first reading called column one "in use" and drew its conclusion from it;
+column one is
+.CW cursize ,
+the pool's current size, which cannot show retention because the pool both
+grows and shrinks.  The second reading used live blocks,
+.CW nalloc-nfree ,
+and called the growth retention.  That is wrong too: the same arm gave 94 live
+blocks per operation in one emu and 858 in another, nine times apart, because
+live counts whatever the collector has not reached.  The figure that reproduces
+\(em to about two per cent across separate runs \(em is
+.CW nalloc
+per operation, and that is what the numbers below are.
+.PP
+.B "memfs is the control that matters."
+The first control, the same shell loop writing to the root device instead of to
+.CW efs ,
+was flat, and that looked conclusive.  It was not: it varies the server
+.I and
+removes the mount, devmnt and served-program path at once, so a per-RPC leak in
+the plumbing would give the same answer.
+.CW memfs
+is a Dis Styx server reached by the same mount, so only the server varies.
+Over 240 rewrites of one existing file \(em no new names, no new inodes, nothing
+added to the filesystem:
+.P1
+		   this test   alone
+memfs   1 entry	     151.4	151.5
+memfs  60 entries    151.7	151.5	flat
+efs     1 entry	     323.6	323.5
+efs    60 entries   1439.3     1442.5	4.5 times
+.P2
+.CW memfs
+does not care how many files exist.
+.CW efs
+does.  At one entry the two are within a factor of two, which is why no test on
+a nearly empty image could have found this.
+.PP
+.B "It is the filesystem's size, not the directory's \(em and reading the code said otherwise."
+The obvious reading of
+.CW efs.b
+is that the cost is the written file's directory, since
+.CW Fs.range
+collects every entry for an inode into an array and the write path calls it.
+Measurement says no.  A run that held the written file's parent at two entries
+and grew a
+.I subdirectory
+instead:
+.P1
+fs 2 entries	     348.7	328.5
+fs 62 entries	    1386.9     1370.7
+fs 242 entries	    2000.8     1988.4
+.P2
+The parent never changed across those three.  The arms cross-check: sixty
+entries in the parent gave 1439.3, sixty-two with a two-entry parent 1386.9.
+Both columns above are real runs \(em the whole script, and each arm measured
+alone in its own emu \(em and they agree within six per cent, which is what
+.CW nalloc
+buys over live blocks.  So the term is the tree the operation walks, not the
+directory it writes into \(em and the hypothesis that came from reading
+the code was
+falsified by the measurement, which is the reason the retainer is left unnamed
+below rather than asserted.
+.PP
+.B "Not a leak: the collector does reclaim, it just does not keep up."
+In the 242-entry arm live blocks
+.I fell
+during the 240 operations, 952256 to 417297 \(em half a million blocks
+reclaimed while the work was running.  What exhausts the heap is the high-water
+of garbage that has not been collected yet, driven by an allocation rate that
+rises with the filesystem.  That is also what the 132.6MB pool for 300 creates
+into a 4MB image was: backlog, not a representation of the filesystem.  And it
+agrees with
+.CW tests/efs-stress.sh 's
+recorded reading that a census falling from 41516 to 5835 was a collector
+reclaiming rather than a leak \(em which this was briefly thought to
+contradict.
+.PP
+.B "Where the term is not."
+.CW Fs.cblk / cnode
+is bounded by
+.CW Ncache
+and cleared at commit;
+.CW Fs.groups
+caps at
+.CW Maxgroups*4096 ,
+2MB;
+.CW Fs.freed
+is emptied by commit.  Reads cost about what writes do, so it is in the path
+both share rather than in commit.  Which allocation it is remains unestablished.
+.PP
+.B "A second, separate finding, not chased."
+.CW memfs
+allocates 151.5 blocks per rewrite of a one-line file, and about 8 to 10 live
+blocks per operation persist after it.  That is the mount and Styx path, not
+.CW efs ,
+since it is the same under both servers and flat in filesystem size.  It is
+recorded here and left alone; the quadratic in
+.CW efs
+is the one that stops the board holding files.

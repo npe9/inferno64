@@ -103,13 +103,22 @@ rm -f $T/efsover.img
 #   heap 256M   265 creates, then "disfault: sys: bad address"
 #   heap 256M   292 creates, then "out of memory: heap"
 #
-# So four times the heap buys under twice the creates, which is
-# sublinear, and the mode varies between a clean out-of-memory and a
-# fault.  A filesystem server should run out of SPACE and say so; this
-# one runs out of memory first, and sometimes faults instead of
-# refusing.  tests/efs-stress.sh sizes its heap at 256M and runs four to
-# twelve files, which is inside the range that works -- nothing had
-# asked for hundreds.
+# So four times the heap buys under twice the creates, and the mode
+# varies between a clean out-of-memory and a fault.  A filesystem server
+# should run out of SPACE and say so; this one runs out of memory first,
+# and sometimes faults instead of refusing.  tests/efs-stress.sh sizes
+# its heap at 256M and runs four to twelve files, which is inside the
+# range that works -- nothing had asked for hundreds.
+#
+# Why four times the heap buys under twice the files is now measured, in
+# tests/efs-leak.sh: efs allocates more heap per operation the more files
+# the FILESYSTEM holds -- 323.6 blocks per operation at one entry, 1439.3
+# at sixty -- so a create costs more the more files already exist and the
+# total is quadratic.  Four times the memory for twice the files is that
+# law.  A memfs mounted the same way is exactly flat (151.4 against
+# 151.7), which puts the term in efs and not in the mount or Styx path.
+# It is not a leak: the collector does reclaim, it just does not keep up,
+# so the ceiling is the high-water of garbage.
 #
 # Left failing rather than tuned until it passes, because the number of
 # files a filesystem can hold should not be a property of the heap.
