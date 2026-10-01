@@ -25,7 +25,7 @@ Order, and why
 3  A3  audit what the 7c fix changed      DONE: clean; left A5 hygiene
 4  B2  one namehash, not two              DONE 2d273290f
 5  A1  fix 6c                             DONE e5d6131f3 (A2 done b6a7201e9)
-6  B1  efs's quadratic allocation         the real remaining bug
+6  B1  efs's quadratic allocation         DIAGNOSED; fix is lazy decode
 7  D1  w4/w8, D2 close the bind section   housekeeping
 .P2
 .CW C1
@@ -483,76 +483,112 @@ constant ever does misbehave on one of these, this is the note to disbelieve.
 .NH 1
 B.  efs
 .NH 2
-B1.  The quadratic per-operation allocation
+B1.  DIAGNOSED.  Node.unpack allocates per entry in a block
 .LP
 .B Established.
 .CW efs
 allocates more heap per operation the more entries the
 .I filesystem
-holds \(em not the directory, which was measured and falsified.  With the
-written file's parent held at two entries:
+holds \(em not the directory, which was measured and falsified earlier.  With
+the written file's parent held at two entries:
 .P1
-fs 2 entries	 328.5 alloc/op
-fs 62 entries	1370.7 alloc/op
-fs 242 entries	2000.8 alloc/op
+fs 2 entries	 328 alloc/op
+fs 62 entries	1372 alloc/op
+fs 242 entries	1989 alloc/op
 .P2
 .CW memfs
-mounted the same way is flat, 151.4 against 151.7, which is what puts the term
-in
-.CW efs
-and not in the mount or Styx path.  The total is quadratic, which is why four
-times the heap buys fewer than twice the files.  It is
-.I not
-a leak: live blocks fall during the work, so the ceiling is the high-water of
-garbage the collector has not reached.
+mounted the same way is flat, so the term is
+.CW efs 's.
+Not a leak: live blocks fall during the work, so the ceiling is the high-water
+of garbage.
 .PP
-.B "Not established: which allocation."
-.CW Fs.cblk / cnode
-is bounded by
-.CW Ncache
-and cleared at commit;
-.CW Fs.groups
-caps at 2MB;
-.CW Fs.freed
-is emptied by commit.  Reads cost about what writes do, so the term is in the
-path both share.
-.CW Fs.range
-collects every entry for an inode into an array on each call and has the right
-shape \(em but reading the code already produced one falsified hypothesis
-here, so it is a candidate and not an answer.
-.PP
-.B "How to find it, measuring not reading."
-.CW /dev/memheap
-names the live type and produced nothing in this emu, which is worth ten
-minutes to fix because it answers the question directly.  Failing that,
-.CW mprof(1)
-names the line.  Failing both: bisect by instrumenting
-.CW Fs.range
-to count the entries it collects per call and comparing that count against
-.CW nalloc
-per operation across the three filesystem sizes above.  If the ratio is
-constant,
+.B "Fs.range is NOT the term, which the bisect settled first."
+It was the leading suspect and the plan flagged it as a candidate rather than an
+answer.  Counters on it, per operation, across all three sizes:
+.P1
+          alloc/op  range/op  ents/op  leaf/op  path/op
+fs 2         328       2.0      3.0      1.0      6.0
+fs 62       1372       2.0      3.0      0.0      6.0
+fs 242      1989       2.0      3.0      1.0      6.0
+.P2
+Every one of them is flat while allocations grow six-fold.
 .CW range
-is the term; if it is not, it is somewhere else and the next candidate is
-.CW pathto .
+is called twice, returns three entries and advances one leaf, whatever the size
+of the filesystem.  Neither it nor
+.CW pathto
+is the term, and the iterator the module's own comment contemplates would not
+have helped.
 .PP
-.B "The measure, which matters more than the fix."
-.CW nalloc
-per operation, from
-.CW /dev/memory 's
-heap row
-.CW ( "cursize maxsize hw nalloc nfree nbrk poolmax name" ).
-Live blocks are not the measure: the same arm gave 94 per operation in one emu
-and 858 in another.
-.CW tests/efs-leak.sh
-holds the arms and the figures.
+.B "The term is entries unpacked, and it is NODE fullness."
+.CW getnode
+decodes a whole block, and
+.CW Node.unpack
+allocates an
+.CW Ent
+\(em a
+.CW Key
+and an
+.CW "array of byte"
+\(em for every entry in it.  Counting that:
+.P1
+          alloc/op  getnode/op  entries-unpacked/op
+fs 2         328        4.0            22
+fs 62       1372        8.0           514
+fs 242      1989       14.0           789
+.P2
+The fit is linear:
+.CW (1372-328)/(514-22)
+is 2.12 and
+.CW (1991-1372)/(789-514)
+is 2.25 allocations per entry unpacked, on a fixed cost near 281.  As a
+filesystem fills, its blocks get fuller, so every lookup pays for decoding
+hundreds of entries to find one.  That is the quadratic, and it is why four
+times the heap bought under twice the files.
+.PP
+.B "Caching cannot fix it, and that was tried and reverted."
+The obvious move is to keep the decoded nodes.  The cache is cleared at every
+commit \(em and an operation ends in a commit \(em so it was changed to drop only
+the blocks the transaction freed, which are known, keeping the rest: a committed
+block is never written again, so its number still identifies its contents.
+.PP
+Measured:
+.CW "328/1372/1989"
+became
+.CW "324/1367/1985" .
+Nothing.  The reason is copy on write: every modifying operation rewrites the
+path, so the next one reads
+.I new block numbers
+and the cache can never hit across operations.  The counters say so directly \(em
+.CW getnode/op
+stays at 4.0 over 240 operations on the same file instead of falling to zero, so
+not one block is ever seen twice.  The change was reverted: it is arguably more
+correct than clearing everything, but no measurement justifies it and the code
+it adds is not free.
+.PP
+.B "So the fix is to stop decoding whole blocks."
+A lookup wants one entry.  The packed layout is searchable \(em keys rise within
+a node, which
+.CW leaffor
+already relies on \(em so the work is to binary-search the block as bytes and
+decode only the entry found, leaving
+.CW Node.unpack
+for the paths that genuinely want every entry
+.CW ( writeents ,
+.CW range ).
+That is a change to the format layer rather than a tuning knob, which is why it
+is written down here rather than attempted at the end of this session.
 .PP
 .B Done when.
 .CW alloc/op
-no longer grows with filesystem size, and
+no longer grows with filesystem size, measured by
+.CW nalloc
+from
+.CW /dev/memory 's
+heap row \(em not live blocks, which gave 94 per operation in one emu and 858 in
+another \(em and
 .CW tests/efs-limits.sh 's
-fill arm reaches the end of a 4MiB filesystem instead of running out of
-memory first \(em which is B3, and closes with this.
+fill arm reaches the end of a 4MiB filesystem instead of running out of memory.
+That closes B3 with it.
 .NH 2
 B2.  DONE.  One namehash, in the library
 .LP
