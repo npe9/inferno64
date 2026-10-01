@@ -3577,3 +3577,45 @@ then nothing measured about the receive path means anything, including
 every reading of the sync pin taken after the reset: the strong-signal
 case that localised the fault to sync detection was taken BEFORE it, and
 that one stands.
+.PP
+.B "Both ends verified, and the loss is in the path between them."
+After board 1's boot restored the register table its transmitter works
+again:
+.B "txtrace 1 0 0 0 2 0"
+with the 2 for TX where the crippled part read 4 for CALIBRATE, and
+.IR txpin (1)
+reports
+.B "PKT_SYNC_RXTX 100% high"
+while the carrier is up \- the part's own transmit pin, measured at the
+transmitter.
+.PP
+Board 2 is alive by
+.BR boardcmd.py 's
+marker, configured to match, and quiet at
+.BR "floor -107 peak -103" .
+Its own quiet baseline already carries
+.B "duty 6% bursts 12"
+from the band's FHSS traffic with
+.B "csthr -104"
+set, which is why a burst count means nothing here without that baseline
+beside it.
+.PP
+With board 1 keyed, board 2 reads
+.B "peak -101"
+and
+.BR "peak -103" .
+Indistinguishable from its own silence.  The same pair, earlier in the
+day, read
+.B "floor -81 peak -64 duty 92%"
+under the same test.
+.PP
+So roughly forty decibels have gone out of the air path while both ends
+measure correctly at their own terminals.  The boards were moved twice
+between those readings, and one cable \- board 2's UART \- is already
+known to have come off in the process, so a disturbed antenna connection
+is the first thing to look at rather than anything in the radio.
+.PP
+The tinySA, which would settle it from outside, has stopped answering on
+either
+.B /dev/cu.usbmodem*
+after working earlier; it wanted a reboot once already today.
