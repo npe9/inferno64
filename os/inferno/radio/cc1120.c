@@ -493,6 +493,8 @@ state(Cc1120 *rr)
  * not itself counted.  The part appends the CRC and strips it again at
  * the far end, so what a caller writes is what the far end reads.
  */
+static int ccapply(Cc1120*, Spidev*);
+
 static int
 cc1120send(Radio *r, uchar *p, int n)
 {
@@ -2710,9 +2712,34 @@ cc1120ctl(Radio *r, char *buf, int n)
 		return n;
 	}
 	if(strcmp(f[0], "reset") == 0){
+		/*
+		 * SRES and then everything back on top of it, because SRES
+		 * alone leaves the part at its own defaults while this
+		 * driver still believes in what it wrote.  See ccapply().
+		 *
+		 * The frequency goes back to where the part was, not to
+		 * Deffreq: a reset is for getting a confused part back to
+		 * a known state, and moving it to 868MHz at the same time
+		 * would be a second surprise.
+		 */
+		ulong hz;
+		int nbad;
+
+		hz = rr->hz;
+		if(hz == 0)
+			hz = Deffreq;
 		s->lock(s);
 		strobe(rr, Sres);
+		if(chipready(rr) < 0){
+			s->unlock(s);
+			error("radio: not ready after reset");
+		}
+		nbad = ccapply(rr, s);
+		setfreq(rr, hz);
 		s->unlock(s);
+		if(nbad != 0)
+			error("radio: reset applied but settings did not "
+				"read back; see the console");
 		return n;
 	}
 	error(Ebadctl);
@@ -2882,72 +2909,34 @@ static Radiodev cc1120dev = {
 	cc1120caps,
 };
 
-Radio*
-cc1120init(Spidev *s, int irq)
+/*
+ * Everything the part needs after an SRES, and the reason it is a
+ * function rather than a run of lines inside cc1120init().
+ *
+ * The "reset" ctl verb used to strobe SRES and stop there.  SRES puts
+ * every register back to the part's own default, so afterwards the part
+ * held TI's reset values while this driver still believed in the ones it
+ * had written -- and said so.  The symptom was an RSSI of -8dBm with
+ * nothing transmitting and no antenna in reach of anything: AGC_GAIN_
+ * ADJUST had gone back to zero while cc1120stat() went on subtracting
+ * the software offset of -102 that this board had been given.  Ninety-
+ * four decibels of pure bookkeeping.
+ *
+ * It cost two measurements and nearly a third conclusion.  A board-to-
+ * board test was run "at the driver's defaults" on a receiver whose AGC
+ * was not configured at all, and the -8 was read as a saturated front
+ * end -- two radios too close together -- which is a plausible thing to
+ * conclude and was entirely an artefact of this.
+ *
+ * A reset that leaves the driver and the part disagreeing is worse than
+ * no reset verb, because every number read afterwards is confident and
+ * wrong.
+ */
+static int
+ccapply(Cc1120 *rr, Spidev *s)
 {
-	Cc1120 *rr;
 	int i, nbad;
 
-	USED(irq);
-	rr = malloc(sizeof(Cc1120));
-	if(rr == nil)
-		return nil;
-	rr->dev = &cc1120dev;
-	rr->spi = s;
-	/*
-	 * Taken from the board rather than left to the allocator: this
-	 * struct is malloc'd and its fields are set by hand, so a
-	 * crystal correction that relied on malloc having zeroed would
-	 * be a correction of whatever was in that memory.  Zero is the
-	 * right default and boards that have measured theirs say so.
-	 */
-	rr->ppb = s->ppb;
-	rr->ledon = 0;
-	rr->nlastrx = 0;
-
-	s->lock(s);
-	strobe(rr, Sres);
-	rr->ready = chipready(rr);
-	rr->partnum = rdx(rr, Xpartnumber);
-	rr->partversion = rdx(rr, Xpartversion);
-	s->unlock(s);
-
-	if(rr->ready < 0){
-		print("cc1120 %s: not ready after reset, status stays 0x%.2x\n",
-			s->name, strobe(rr, Snop));
-		free(rr);
-		return nil;
-	}
-
-	if(rr->partnum != Partcc1120){
-		/*
-		 * Say what was found rather than what was hoped for.  A
-		 * bus that is not reaching the part reads 0x00 or 0xff,
-		 * and those are worth telling apart from a CC1121 or a
-		 * CC1125, which answer 0x40 and 0x58.
-		 */
-		print("cc1120 %s: PARTNUMBER 0x%.2x, not a CC1120 (0x%.2x)\n",
-			s->name, rr->partnum, Partcc1120);
-		free(rr);
-		return nil;
-	}
-	rr->present = 1;
-
-	rr->rq = qopen(16*1024, Qmsg, nil, nil);
-	if(rr->rq == nil){
-		free(rr);
-		return nil;
-	}
-
-	s->lock(s);
-	/*
-	 * Variable packet length, and GPIO3 -- the pin the socket's INT
-	 * line carries -- asserted when a packet has been received or
-	 * sent.  IOCFG3 is register 0x00 and selects the function of
-	 * GPIO3, which is the reverse of what the numbering suggests.
-	 * The other three are parked at high impedance so a board that
-	 * wired them to something is not surprised.
-	 */
 	/*
 	 * TI's settings first, then this board's over the top of them.
 	 * See the tables above for where they come from and what this
@@ -3051,6 +3040,76 @@ cc1120init(Spidev *s, int irq)
 	nbad += verify(rr, Ragccfg0, Agccfg0init);
 	nbad += verify(rr, Riocfg3, Gpktsyncrxtx);
 	nbad += verify(rr, Riocfg2, Ghighz);
+	return nbad;
+}
+
+Radio*
+cc1120init(Spidev *s, int irq)
+{
+	Cc1120 *rr;
+	int nbad;
+
+	USED(irq);
+	rr = malloc(sizeof(Cc1120));
+	if(rr == nil)
+		return nil;
+	rr->dev = &cc1120dev;
+	rr->spi = s;
+	/*
+	 * Taken from the board rather than left to the allocator: this
+	 * struct is malloc'd and its fields are set by hand, so a
+	 * crystal correction that relied on malloc having zeroed would
+	 * be a correction of whatever was in that memory.  Zero is the
+	 * right default and boards that have measured theirs say so.
+	 */
+	rr->ppb = s->ppb;
+	rr->ledon = 0;
+	rr->nlastrx = 0;
+
+	s->lock(s);
+	strobe(rr, Sres);
+	rr->ready = chipready(rr);
+	rr->partnum = rdx(rr, Xpartnumber);
+	rr->partversion = rdx(rr, Xpartversion);
+	s->unlock(s);
+
+	if(rr->ready < 0){
+		print("cc1120 %s: not ready after reset, status stays 0x%.2x\n",
+			s->name, strobe(rr, Snop));
+		free(rr);
+		return nil;
+	}
+
+	if(rr->partnum != Partcc1120){
+		/*
+		 * Say what was found rather than what was hoped for.  A
+		 * bus that is not reaching the part reads 0x00 or 0xff,
+		 * and those are worth telling apart from a CC1121 or a
+		 * CC1125, which answer 0x40 and 0x58.
+		 */
+		print("cc1120 %s: PARTNUMBER 0x%.2x, not a CC1120 (0x%.2x)\n",
+			s->name, rr->partnum, Partcc1120);
+		free(rr);
+		return nil;
+	}
+	rr->present = 1;
+
+	rr->rq = qopen(16*1024, Qmsg, nil, nil);
+	if(rr->rq == nil){
+		free(rr);
+		return nil;
+	}
+
+	s->lock(s);
+	/*
+	 * Variable packet length, and GPIO3 -- the pin the socket's INT
+	 * line carries -- asserted when a packet has been received or
+	 * sent.  IOCFG3 is register 0x00 and selects the function of
+	 * GPIO3, which is the reverse of what the numbering suggests.
+	 * The other three are parked at high impedance so a board that
+	 * wired them to something is not surprised.
+	 */
+	nbad = ccapply(rr, s);
 	setfreq(rr, Deffreq);		/* calibrates and goes to RX */
 	s->unlock(s);
 
