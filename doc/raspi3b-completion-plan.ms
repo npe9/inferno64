@@ -14908,3 +14908,58 @@ since it is the same under both servers and flat in filesystem size.  It is
 recorded here and left alone; the quadratic in
 .CW efs
 is the one that stops the board holding files.
+.NH 2
+The bind-create poisoning does not reproduce on the host
+.LP
+The section above records that a create through a
+.CW bind
+of the
+.CW efs
+mount fails silently and leaves the name permanently unusable.  Run against
+the same
+.CW efs
+code under host
+.CW emu ,
+neither half of that happens.  A create through a
+.CW bind
+made without
+.CW -c
+fails, but it fails
+.I loudly
+\(em
+.P1
+cp: cannot create /usr/inferno: mounted directory forbids creation
+.P2
+\(em which is the namespace refusing creation through a mount that was not
+bound to allow it, not
+.CW efs .
+And the same name created directly straight afterwards
+.I succeeds ,
+as does a fresh name, and after rebinding with
+.CW -c
+every name works including the one that had just failed.  There is nothing
+durable and nothing silent.
+.PP
+So the board's symptom is not the
+.CW bind
+lacking
+.CW -c ,
+and whatever poisons the name is not in the part of
+.CW efs
+the host exercises.  The finding is narrowed, not explained: the board's
+image remains the only evidence, and the next step on it is to print the
+actual error string the failing create returns rather than that it failed.
+.PP
+.B "Two readings that were tested and rejected while chasing this."
+That a create failing for want of space leaves its dentry behind and poisons
+the name \(em no: on a full image a retry of the name that failed, a name
+never attempted, and a name just removed all fail identically, and on a
+near-full one all three succeed.  And that the board's "removing eight
+entries did not free the name" was a capacity effect \(em it cannot be, by
+itself, because on a genuinely full image fresh names fail too, whereas the
+board had
+.CW fresh8
+succeeding with seventeen entries present.  These are two findings and not
+one, and the wedge in
+.CW tests/efs-wedge.sh
+should not be folded into the poisoning.
