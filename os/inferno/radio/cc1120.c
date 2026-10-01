@@ -63,6 +63,7 @@ enum {
 	Rsettlingcfg	= 0x20,
 	Rfscfg		= 0x21,
 	Rpktcfg1	= 0x27,
+	  Appendstatus	= 0x01,		/* PKT_CFG1.APPEND_STATUS */
 	Rpacfg2		= 0x2b,
 	Rpacfg1		= 0x2c,
 	Rpacfg0		= 0x2d,
@@ -685,7 +686,7 @@ cc1120interrupt(Radio *r)
 	Spidev *s;
 	Block *b;
 	ulong tick;
-	int n, i, st;
+	int n, i, st, navail;
 
 	rr = (Cc1120*)r;
 	s = rr->spi;
@@ -700,8 +701,8 @@ cc1120interrupt(Radio *r)
 		return;
 	}
 
-	n = rdx(rr, Xnumrxbytes);
-	if(n < 1){
+	navail = rdx(rr, Xnumrxbytes);
+	if(navail < 1){
 		s->unlock(s);
 		return;
 	}
@@ -743,6 +744,42 @@ cc1120interrupt(Radio *r)
 	}
 	for(i = 0; i < n; i++)
 		b->wp[Pkthdrlen + i] = s->byte(s, 0);
+	/*
+	 * And the two bytes the part appends, which this driver read the
+	 * payload past and left behind.
+	 *
+	 * PKT_CFG1 is 0x05 in the table, and bit 0 of it is
+	 * APPEND_STATUS: the part puts an RSSI byte and a byte carrying
+	 * CRC_OK and the link quality after every received packet.  The
+	 * loop above reads the length byte and that many payload bytes
+	 * and stops, so two bytes stayed in the RX FIFO -- and the next
+	 * packet's read then took one of them for its length.
+	 *
+	 * Found by reading PKT_CFG1 off both parts rather than from the
+	 * table, which is the only way this was going to show: nothing
+	 * in the driver names the bit, the qemu model does not append
+	 * anything, and the symptom needs two packets to appear, so
+	 * every test here that received at most one could not see it.
+	 *
+	 * The CRC_OK bit is worth having as well.  The part has already
+	 * checked the CRC by this point and this driver was inferring a
+	 * failure from a length that looked wrong, which is a guess
+	 * where the hardware has an answer.
+	 */
+	rr->rxstatus[0] = rr->rxstatus[1] = 0;
+	/*
+	 * Only if the FIFO actually holds them, which NUM_RXBYTES said
+	 * before any of this was read.  Asking PKT_CFG1 alone is not
+	 * enough: the qemu model takes APPEND_STATUS from this driver's
+	 * own table, so the bit reads set there while the model appends
+	 * nothing -- and reading two bytes past the end of its FIFO is
+	 * an underflow that puts the model into RXERR and loses the
+	 * packet.  The count is the fact; the register is an intention.
+	 */
+	if((rd(rr, Rpktcfg1) & Appendstatus) && navail >= 1 + n + 2){
+		rr->rxstatus[0] = s->byte(s, 0);
+		rr->rxstatus[1] = s->byte(s, 0);
+	}
 	s->select(s, 0);
 
 	rr->rssi = (schar)rdx(rr, Xrssi1);

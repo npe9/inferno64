@@ -61,6 +61,7 @@ struct Cc1120
 	u32	nrxoverflow;
 	u32	ntxunderflow;
 	u32	ntxnever;		/* strobed TX and never got there */
+	uchar	rxstatus[2];		/* the two bytes APPEND_STATUS adds */
 
 	QLock	qlock;			/* one user of the part at a time */
 	Rendez	r;
