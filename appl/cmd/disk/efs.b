@@ -487,7 +487,9 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 				srv.default(m);
 				continue;
 			}
-			e := writefile(f.path, m.offset, m.data);
+			e := room();
+			if(e == nil)
+				e = writefile(f.path, m.offset, m.data);
 			if(e == nil)
 				e = fs.commit();
 			if(e != nil)
@@ -498,6 +500,10 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 			f := srv.getfid(m.fid);
 			if(f == nil || (f.qtype & Sys->QTDIR) == 0){
 				srv.default(m);
+				continue;
+			}
+			if((re := room()) != nil){
+				srv.reply(ref Rmsg.Error(m.tag, re));
 				continue;
 			}
 			(d, e) := create(f.path, m.name, m.perm, m.mode);
@@ -554,6 +560,26 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 # length is set by the caller, which is the only place that knows
 # whether this is a truncate or part of something larger.
 #
+#
+# Refuse an operation that would add to the filesystem unless the reserve
+# would survive it.
+#
+# Twice the reserve: once for what this operation is about to spend, once
+# for the margin that has to be left so a delete can still commit after.
+# Deletes and truncates do not come through here, which is the point --
+# they are what the margin is being kept for.
+#
+room(): string
+{
+	want := 2 * fs.reserve();
+	(got, e) := fs.headroom(want);
+	if(e != nil)
+		return e;
+	if(got < want)
+		return "filesystem is full";
+	return nil;
+}
+
 trimto(ino: big, i: ref Inode, length: big): string
 {
 	(ents, re) := fs.range(ino, Efs->Kextent);
@@ -791,9 +817,13 @@ writefile(ino: big, offset: big, data: array of byte): string
 #
 # Remove a file: its extents, its inode, and its name in its parent.
 #
-# The order matters only for what a crash leaves behind, and here it
-# does not matter at all: none of it is visible until the commit, and
-# the commit publishes all of it or none.
+# The order matters only for what a crash leaves behind, and normally it
+# does not matter at all: none of it is visible until the commit, and the
+# commit publishes all of it or none.
+#
+# The exception is a filesystem too tight to finish in one transaction --
+# see the commit inside the extent loop, which trades that atomicity for
+# being able to delete at all.
 #
 remove(ino: big): string
 {
@@ -806,6 +836,31 @@ remove(ino: big): string
 		if(len ents[i].val >= 12)
 			fs.free(efs->get8(ents[i].val, 0));
 		if((e = fs.delete(ents[i].key)) != nil)
+			return e;
+		#
+		# Commit part-way, but only once there is no longer room to
+		# finish.
+		#
+		# A delete ALLOCATES: each key rewrites the copy-on-write
+		# path down to it, and Fs.free hands the old blocks back only
+		# to the NEXT transaction.  So a file of many extents can need
+		# more blocks than are free and fail with "filesystem is full"
+		# on a filesystem it is in the middle of emptying -- which is
+		# how a full efs became impossible to empty.  Committing here
+		# releases what has been freed so far so the rest can proceed.
+		#
+		# What it costs is the atomicity promised above: a crash in
+		# the middle leaves the file shorter rather than untouched.
+		# That is the same state a truncate leaves, so it is a legal
+		# file and not a corrupt one, and it is paid only on a
+		# filesystem tight enough that the alternative is not
+		# finishing at all.
+		#
+		r := fs.reserve();
+		(got, he) := fs.headroom(r);
+		if(he != nil)
+			return he;
+		if(got < r && (e = fs.commit()) != nil)
 			return e;
 	}
 	#

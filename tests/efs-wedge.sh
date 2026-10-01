@@ -1,5 +1,5 @@
 #!/dis/sh
-# A full efs cannot be emptied.
+# A full efs could not be emptied.  Fixed; this is the test that holds it.
 #
 # efs is copy on write, and Fs.free gives a block back to the NEXT
 # commit, not to this one -- deliberately, because clearing it now would
@@ -9,37 +9,51 @@
 # with "filesystem is full" and there is no way back: nothing can be
 # deleted, so nothing can ever be created again.
 #
-# Measured on 2026-09-30, host emu, a 64-block (256KiB) image holding
-# 41-byte files, of which 44 fit:
+# BEFORE the reserve landed, measured on 2026-09-30 on host emu with a
+# 64-block (256KiB) image holding 41-byte files, of which 44 fit:
 #
-#	fill to 40 files   rm OK
-#	fill to 41 files   rm OK
-#	fill to 42 files   rm OK
-#	fill to 43 files   rm OK
-#	fill to 44 files   rm FAILS
-#	fill to 45 (full)  rm FAILS twice, and a create after also fails
+#	fill to 40 files	rm OK
+#	fill to 41 files	rm OK
+#	fill to 42 files	rm OK
+#	fill to 43 files	rm OK
+#	fill to 44 files	rm FAILS
+#	fill to 45 (full)	rm FAILS twice, create after also FAILS
 #
-# So deletes stop working about one file before the filesystem is
-# genuinely full, and past that point the image is wedged for good.
+#	45 small files (full)	 rm FAILS, rm FAILS, create FAILS, 45 left
+#	39 small files (control) rm OK, rm OK, 37 left, create OK
+#	5-block file + 41 small	 rm of the big file FAILS, 42 left
 #
-# The near-full arm is the control: at 39 files rm works twice (39 -> 37)
-# and a create afterwards works, so it is the full state that breaks
-# delete and not delete itself.
+# Deletes stopped working about one file before the filesystem was
+# genuinely full, and past that point the image was wedged for good.  The
+# near-full arm is the control, and it is what makes that the full state
+# breaking delete rather than delete being broken.  Nor did deleting a
+# LARGER file help, which is the arm that matters, since a filesystem is
+# usually full on account of large files: removing a 20480-byte file is
+# five extents and so five copy-on-write path rewrites inside one
+# transaction, and at full it failed exactly as the small ones did.
 #
-# Deleting a LARGER file does not help, which is the arm that matters,
-# because a filesystem is usually full on account of large files.  A
-# 20480-byte file is five blocks and five extents, and removing it costs a
-# copy-on-write path rewrite per extent inside one transaction; at full it
-# fails exactly as the small ones do.  Three arms, as run:
+# AFTER the reserve and the part-way commit, the same script:
 #
-#	45 small files (full)	rm FAILS, rm FAILS, create FAILS, 45 left
-#	39 small files (control)	rm OK, rm OK, 37 left, create OK
-#	5-block file + 41 small	rm of the big file FAILS, 42 left
+#	fills to 39 files	 rm OK, rm OK, 37 left, create after OK
+#	near-full control	 unchanged
+#	5-block file + 41 small	 rm of the big file OK, 35 left
 #
-# A reserve of free blocks that only deletes may use would stop a
-# filesystem reaching this state.  It would not cure an image already in
-# it: at zero free blocks rm still cannot allocate, so such an image has
-# to be remade, not repaired by new code.
+# Fewer files fit, which is the price: Fs.reserve holds an eighth of the
+# filesystem back, capped at Nreserve and floored at four, so that a
+# delete always has room to commit.  disk/efsck calls such an image clean
+# both before and after a tight delete, with the same count of
+# pendingfree blocks unreached, so nothing is corrupted and nothing
+# leaks; and tests/efs-crash.sh still mounts clean and whole at all 40 of
+# its crash points.
+#
+# Verified on silicon too, on a Pi 3B booted from the card, against a
+# 64-block image made on /n/efs and mounted at /n/efscrash: the fill
+# stopped at f40, so 39 files fit exactly as on the host, 21 creates were
+# refused with "filesystem is full", and then two rm's and a create all
+# succeeded.
+#
+# What this does NOT do is cure an image already wedged.  At zero free
+# blocks rm still cannot allocate, so such an image has to be remade.
 #
 # Run as: emu -pheap=256M -r<tree> /dis/sh.dis /tests/efs-wedge.sh
 load std

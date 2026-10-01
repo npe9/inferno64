@@ -103,6 +103,11 @@ rm -f $T/efsover.img
 #   heap 256M   265 creates, then "disfault: sys: bad address"
 #   heap 256M   292 creates, then "out of memory: heap"
 #
+# (Those three predate Fs.reserve, which holds an eighth of a filesystem
+# back so that a delete can always commit -- see tests/efs-wedge.sh.  The
+# reserve lowers how many files fit but not what this arm is about: the
+# server still runs out of MEMORY before it runs out of ROOM.)
+#
 # So four times the heap buys under twice the creates, and the mode
 # varies between a clean out-of-memory and a fault.  A filesystem server
 # should run out of SPACE and say so; this one runs out of memory first,

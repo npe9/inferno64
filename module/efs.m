@@ -53,6 +53,20 @@ Efs: module
 	#
 	Nilblk:		con big -1;
 
+	#
+	# Blocks kept back from anything that adds to the filesystem.
+	#
+	# A delete has to ALLOCATE in order to commit: efs is copy on write,
+	# so removing a key rewrites the path to it, and Fs.free defers the
+	# blocks it gives up to the NEXT transaction.  A filesystem with no
+	# free blocks therefore cannot be emptied -- rm returns "filesystem
+	# is full" and there is no way back.  Creates and writes are refused
+	# while the margin is thin and deletes are not, so there is always
+	# room to delete.  Nreserve covers one path rewrite (Maxdepth) and
+	# the group and index blocks a commit needs, with room over.
+	#
+	Nreserve:	con 24;
+
 	# key types
 	Kinode, Kdentry, Kextent: con iota;
 
@@ -207,6 +221,8 @@ Efs: module
 		bmget:	fn(f: self ref Fs, n: int): (int, string);
 		bmset:	fn(f: self ref Fs, n: int, v: int): string;
 		alloc:	fn(f: self ref Fs): (big, string);
+		headroom: fn(f: self ref Fs, want: int): (int, string);
+		reserve: fn(f: self ref Fs): int;
 		free:	fn(f: self ref Fs, n: big);
 		insert:	fn(f: self ref Fs, k: Key, v: array of byte): string;
 		delete:	fn(f: self ref Fs, k: Key): string;

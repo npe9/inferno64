@@ -961,6 +961,67 @@ Fs.alloc(f: self ref Fs): (big, string)
 }
 
 #
+# The margin to keep for deletes, in blocks.
+#
+# It has to cover one copy-on-write path rewrite plus the group and index
+# blocks a commit allocates.  A path is as deep as the tree, and the tree
+# is only as deep as the filesystem is large, so Nreserve is an upper
+# bound rather than a figure every filesystem must pay: on a small image a
+# flat Nreserve would be most of it, and the first version of this change
+# left a 64-block image unable to hold a single file.  An eighth, capped
+# at Nreserve and floored at four, keeps small images usable and large
+# ones safe.
+#
+Fs.reserve(f: self ref Fs): int
+{
+	r := int f.s.nblocks / 8;
+	if(r > Nreserve)
+		r = Nreserve;
+	if(r < 4)
+		r = 4;
+	return r;
+}
+
+#
+# How many blocks are free, counted no further than want.
+#
+# This exists so that something which adds to the filesystem can be
+# refused while there is still room to delete.  A delete allocates --
+# removing a key rewrites the copy-on-write path to it, and Fs.free gives
+# the old blocks back only to the next transaction -- so a filesystem
+# allowed to reach zero free blocks cannot be emptied again.
+#
+# It stops at want, so the cost is the size of the reserve and not the
+# size of the filesystem, and it leaves f.cursor alone: this is a
+# question, not an allocation.
+#
+Fs.headroom(f: self ref Fs, want: int): (int, string)
+{
+	#
+	# The write side has to be up before a bit can be read: bmget goes
+	# through the free map index that writable() loads, and without it
+	# every block reads as "free map group 0 does not exist".  It is
+	# idempotent, and anything that asks about headroom is about to
+	# write anyway.
+	#
+	if((we := f.writable()) != nil)
+		return (0, we);
+	nb := int f.s.nblocks;
+	got := 0;
+	for(k := 0; k < nb && got < want; k++){
+		i := f.cursor + k;
+		if(i >= nb)
+			i -= nb;
+		(u, ue) := f.bmget(i);
+		if(ue != nil)
+			return (got, ue);
+		if(!u)
+			got++;
+	}
+	return (got, nil);
+}
+
+#
 # Give a block back -- to the NEXT commit, not to this one.
 #
 # It is not cleared in the bitmap here.  It is remembered, written into
