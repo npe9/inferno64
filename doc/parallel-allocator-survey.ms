@@ -301,7 +301,7 @@ which in the kernel is inside
 The safety argument the old text said everything rested on holds, and it is now
 read off the source rather than assumed.
 .NH 2
-4a.  NEWLY OPEN \(em the inxec handshake has no barriers, and one site is in the wrong order
+4a.  the inxec handshake: the ORDER is fixed, the BARRIERS are still open
 .LP
 .CW stoptheworld()
 publishes
@@ -338,8 +338,38 @@ at
 file disagrees with itself.  That one is wrong in plain program order on a
 sequentially consistent machine, never mind reordering.
 .PP
-Latent, like everything else here, and this tree has already paid for a missing
-barrier of exactly this shape once \(em
+.B "FIXED, because it needed no parallelism to be wrong."
+.CW "p->reg = R"
+now comes first, then the two flags, which is
+.CW isave() 's
+order.  The load-bearing flag is
+.CW curprog ,
+not
+.CW inxec :
+.CW progreg()
+returns
+.CW &p->reg
+exactly when
+.CW curprog
+stops naming
+.CW p ,
+so clearing
+.CW curprog
+first handed a reader a snapshot that had not been written yet.  It cannot
+change behaviour while
+.CW npctx
+is 1, because the only reader is that same thread \(em which is why it was safe
+to make.  Verified: all seventeen boards build, raspi3b, raspi4, virtarm64 and
+virts boot, the six host efs suites pass, and the board runs
+.CW "disbench -n 20"
+with all seven checksums right, which drives the quantum-close path in every
+long loop.
+.PP
+.B "Still open: the barriers."
+Both halves, as above.  Those cannot be settled on this hardware, and a
+.CW coherence()
+that nothing can exercise is how a barrier ends up in the wrong place.  This
+tree has already paid for a missing barrier of exactly this shape once \(em
 .CW emu 's
 .CW unlock()
 had no release barrier and it cost the scheduler deadlock.
@@ -515,7 +545,7 @@ Order, and what not to do
 .P1
 1  comp-arm64.c atomic refcounts      DONE; 2.75x on a pointer-move loop
 2  gclock()/gcunlock()                the lost update; gcdepth into Pctx
-3  the inxec handshake                barriers both halves, and xec.c:2533
+3  the inxec handshake, barriers       the ORDER half is done (xec.c:2533)
 4  stoptheworld() around emu's rungc  or item 1 cannot be exercised at all
 5  Phase 1b (curP as a register)      without it two executors share R
 6  Phase 4 (a lock per channel)       without it isend/irecv corrupt stacks

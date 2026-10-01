@@ -2529,8 +2529,23 @@ xec(Prog *p)
 	/*
 	 * The quantum is closing: p->reg is authoritative again, so a
 	 * collection from here on must read the snapshot, not this context.
+	 *
+	 * SNAPSHOT FIRST, then the flags that send a reader to it.  This
+	 * used to clear curP->inxec and curP->curprog and assign p->reg
+	 * afterwards, which says the opposite of what the comment above
+	 * claims: progreg() returns &p->reg precisely when curprog no
+	 * longer names p, so clearing curprog hands readers a snapshot
+	 * that has not been written yet.  isave() a few lines up already
+	 * does these three in this order; the file disagreed with itself.
+	 *
+	 * Wrong in plain program order, not only under reordering, and
+	 * therefore not something npctx > 1 is needed to make wrong -- but
+	 * it also cannot change behaviour while npctx is 1, because the
+	 * only reader is this thread.  The missing memory barriers at both
+	 * ends of this handshake are a separate and still-open question;
+	 * see doc/parallel-allocator-survey.ms section 4a.
 	 */
+	p->reg = R;
 	curP->inxec = 0;
 	curP->curprog = nil;
-	p->reg = R;
 }
