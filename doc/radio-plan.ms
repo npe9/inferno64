@@ -4346,3 +4346,40 @@ serial pins sit downstream of sync detection, so they could never have
 shown why sync was failing.  That is the third indicator this session
 that was downstream of the fault it was being read for, after the lamp
 behind the radio's ctl file and the RSSI behind a cleared AGC.
+.PP
+.B "The SYNC_MODE fix was necessary and is not sufficient."
+Both boards flashed with it and verified from their own registers:
+.DS
+.CW "              SYNC3 SYNC2 SYNC1 SYNC0  CFG1  CFG0  PRE1  PRE0"
+.CW "board 1        0x93  0x0b  0x93  0x0b  0x0b  0x0b  0x14  0x2a"
+.CW "board 2        0x93  0x0b  0x93  0x0b  0x0b  0x0b  0x14  0x2a"
+.DE
+SYNC_CFG0 0x0b is SYNC_MODE 010, sixteen bits, with SYNC_NUM_ERROR
+disabled; SYNC_CFG1 0x0b is SYNC_THR 11 with PQT_GATING_EN clear.  Byte
+for byte identical, and both correct for the first time.
+.PP
+Before the fix board 2 read SYNC_CFG0 0x17 and SYNC_CFG1 0x4b \-
+SYNC_MODE 101, thirty-two bits, and PQT gating on \- which is the fault
+exactly as SWRU295E predicted it, seen in silicon rather than inferred.
+.PP
+And the link still does not work.  With board 2 on its own +60300ppb so
+the carriers sit 241 Hz apart, both at 9600/19958/50000, board 1 at
++14dBm and confirmed to reach TX by
+.BR "txtrace 1 0 0 0 2 0" :
+.DS
+.CW "recv +0   crcerr +0   rxoverflow 0   rssi -19   lastrx none"
+.DE
+An RSSI of -19dBm is about eighty-seven decibels over this receiver's own
+floor.  Eight packets, nothing received, not one CRC error.
+.PP
+So two registers that were provably wrong are now provably right and the
+symptom is unchanged.  That is worth stating plainly rather than leaving
+the fix looking like a solution: it was a real bug, found from the
+datasheet after four candidates had been eliminated, and it was not this
+one.
+.PP
+One earlier result is void and should be redone now rather than trusted:
+the trial at the part's own 1200-baud configuration, which was meant to
+test whether the AGC, DCFILT and IQIC values suit the rate, was run while
+SYNC_MODE was still at thirty-two bits.  It could not have received
+anything whatever the demodulator was doing.
