@@ -20,12 +20,18 @@ efs, mkefs, efsck, efsdump \- copy-on-write disk file system
 [
 .BI -C " block"
 ]
+[
+.BI -S " n"
+]
 .BI -f " device"
 .I mountpoint
 .PP
 .B disk/efsck
 [
 .BI -s " startsector"
+]
+[
+.BI -S " n"
 ]
 .RB [ -v ]
 .I image
@@ -96,6 +102,40 @@ as above \(em with one exception.
 sets the block the allocator starts looking at.  It is a test
 instrument, and the only way to reach the second and later blocks of the
 free map without first writing 128MB; see BUGS.
+.PP
+.BI -S " n"
+mounts superblock
+.I n
+\(em 0 or 1 \(em whatever its generation, instead of the one that would
+be chosen.  It is a diagnostic, and it is the only way to ask the
+question the two superblocks exist to answer: the live one's tree is
+broken, is the other one's sound?  A
+.IR mount - write - unmount
+cycle commits twice, so the live slot cannot be moved by hand to find
+out either.
+.I Efsck
+takes it too, and checks the tree that superblock names.
+.PP
+With no
+.BR -S ,
+.I efs
+takes the higher-generation superblock whose tree can be reached, and
+says so on standard error when that is not the newer one:
+.PP
+.EX
+efs: x.img: superblock 0 (generation 5) has no tree (tree root:
+    node checksum 1000 1, want 0 0); falling back to
+    superblock 1 (generation 4)
+.EE
+.PP
+What it verifies before accepting a superblock is the spine it needs
+itself: that the free map index reads and that the tree root unpacks.
+That is not a proof the whole tree is sound \(em that is
+.IR efsck 's
+job and it costs a pass over every block, some forty seconds on a 64MB
+image on a Pi 3B, which is not something to put in front of every
+mount.  A hole deeper in the tree still surfaces as a failed operation
+later.
 .SH "ON-DISK FORMAT"
 4KB blocks.  Two superblocks, at block 0 and at the last block, each with
 a generation and a checksum; mount takes the newer one that checksums.

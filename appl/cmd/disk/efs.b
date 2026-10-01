@@ -157,11 +157,16 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(arg == nil)
 		fail(sys->sprint("cannot load %s: %r", Arg->PATH));
 	arg->init(argv);
-	arg->setusage("efs [-a|-b] [-s startsector] [-C block] -f device mountpoint");
+	arg->setusage("efs [-a|-b] [-s startsector] [-C block] [-S n] -f device mountpoint");
 	flags := Sys->MREPL;
 	startsect := big 0;
 	device := "";
 	cursor := 0;
+	#
+	# Which superblock to mount: -1 is "the newer one whose tree is
+	# there", which is what everything but a diagnosis wants.
+	#
+	super := -1;
 	while((o := arg->opt()) != 0)
 		case o {
 		'a' =>	flags = Sys->MAFTER;
@@ -190,6 +195,20 @@ init(nil: ref Draw->Context, argv: list of string)
 		# there are the real code.
 		#
 		'C' =>	cursor = int arg->earg();
+		#
+		# Mount a NAMED superblock, generation regardless.
+		#
+		# This is how you ask the question the two superblocks exist
+		# to answer: the live one's tree is broken -- is the other
+		# one's sound?  Without it there was no way to ask.  A
+		# mount-write-unmount cycle commits twice, so the live slot
+		# cannot even be moved by hand to find out.
+		#
+		'S' =>	super = int arg->earg();
+			if(super != 0 && super != 1){
+				sys->fprint(stderr, "efs: -S wants 0 or 1\n");
+				raise "fail:usage";
+			}
 		* =>	arg->usage();
 		}
 	argv = arg->argv();
@@ -198,7 +217,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	mountpt := hd argv;
 	arg = nil;
 
-	(f, e) := Fs.mount(device, startsect);
+	(f, e) := Fs.mountsuper(device, startsect, super);
 	if(f == nil)
 		fail(sys->sprint("%s: %s", device, e));
 	fs = f;

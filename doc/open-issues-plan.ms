@@ -1607,21 +1607,109 @@ reports
 so efs survives a failure injected at its own layer; what it has not been shown
 to survive is the whole system going down with writes in flight below it.
 .PP
-.B "The discriminating test does not exist yet."
-Does superblock 0, at generation 977, mount cleanly?  If it does, the fallback
-is the whole fix and the ordering question is secondary.  There is no way to ask:
+.B "The fallback now exists, and so does the flag to ask with."
+Both halves of that are done.
 .CW efs
-has no superblock-selection flag, and generations advance two at a time
-(a mount-write-unmount cycle commits twice), so the live slot cannot cheaply be
-forced either.  A
-.CW -S
-flag naming a superblock would answer it and is worth having for its own sake.
-.PP
-The image itself is gone: the board's boot check was failing on it, so it was
-removed and
-.CW EFS-REAM
-remade it, and the board now reports
-.CW EFS-OK
-with all five checks.  What survives is the
+and
 .CW efsck
-output above, which is the evidence.
+take
+.CW "-S n" ,
+which mounts superblock
+.I n
+whatever its generation, so the two slots can be read independently \(em
+without it the question could not be put at all, because a
+mount-write-unmount cycle commits twice and the live slot cannot be moved by
+hand either.  And
+.CW Fs.mount
+now validates the superblock it chose before accepting it, falling back to the
+other when the tree is not there:
+.P1
+efs: x.img: superblock 0 (generation 5) has no tree (tree root:
+    node checksum 1000 1, want 0 0); falling back to
+    superblock 1 (generation 4)
+.P2
+.PP
+.B "The answer to the question is yes."
+On the board's own 64MB filesystem,
+.CW "disk/efsck -S 0"
+and
+.CW "-S 1"
+report generation 31 and generation 30, both clean.  The previous generation IS
+retained and IS sound, which is what the two superblocks were for and had never
+been shown.
+.PP
+.B "And the A/B is on one image, not two."
+A 256-block image was built, committed twice so both slots held a generation,
+and the block its live superblock's
+.CW treeroot
+names was zeroed by hand.  Against the library as it was, that image reproduces
+the board exactly \(em
+.CW "generation 5 from superblock 0" ,
+then
+.CW "mount /n/client: node checksum 1000 1, want 0 0" ,
+and nothing mounted.  Against the library as it is, it falls back to generation
+4 and both files read back.  Corrupting by hand rather than with
+.CW "efs -F"
+is the point:
+.CW -F
+stops writes at the efs layer, where the commit order still holds, so it cannot
+produce "the superblock landed and a node did not".
+.PP
+.CW tests/efs-fallback.sh
+is that experiment, and it was checked against the old library before being
+believed: 9 of its 13 checks fail there.  Two of them had to be tightened first
+\(em
+.CW '/n/client/a'
+unanchored matched
+.CW "cat: cannot open /n/client/a: does not exist" ,
+so a check written to catch the failure passed on it, and "mounted the spare"
+was matching the ordinary banner.  Anchored, and asserting the LOWER generation
+by number.
+.NH 2
+G1a.  STILL OPEN \(em what mount checks is a spine, not a proof
+.LP
+.CW Fs.mount
+reads the free map index and unpacks the tree root.  That is what mount itself
+needs, and it is deliberately not more: a full check is
+.CW efsck ,
+which costs a pass over every block \(em about forty seconds on the board's
+64MB image \(em and putting that in front of every mount would mean nobody
+mounts.  So a hole deeper in the tree still surfaces as a failed operation
+later, exactly as it did on the board, where the bad block was 6521 and not the
+root.
+.PP
+What would close this properly is for the SERVER to fall back when a descent
+fails at runtime, not only when mount's spine check does.  That is a larger
+change \(em it means a mounted filesystem changing generation under its own
+clients \(em and it should not be done before the question below is answered,
+because if commits are ordered correctly on the medium then a deep hole cannot
+happen and none of it is needed.
+.NH 2
+G1b.  STILL OPEN \(em and the cause is still not established
+.LP
+Everything above is recovery.  Why a superblock became durable while a node it
+named did not is unanswered, and the hypothesis in G1 is unchanged and still
+unverified: that
+.CW dossrv 's
+write-back track cache reordered the writes, which would make
+.CW Fs.commit 's
+"on this board's synchronous SD driver" false for a filesystem kept in a file
+on it.  The cache is read off one statistics line and has not been shown to
+defer anything.
+.PP
+The confound also stands: the image was filled by a session that killed a
+writer mid-transaction and then rebooted the board, so this may not be
+reachable in ordinary operation.  Against that, the boot's own
+.CW "efs -F 12"
+arm reports
+.CW "EFS-CRASH-OK the card held the last committed state" ,
+so efs survives a failure injected at its own layer.  What it has not been shown
+to survive is the system going down with writes in flight below it.
+.PP
+The test that would settle it is now cheap to build, which it was not before:
+make an image on
+.CW /n/dos ,
+write to it, pull power, and read both superblocks with
+.CW -S .
+If the newer one is durable and its tree is not, the ordering is not being kept
+and the fix belongs in the layer below efs, not in efs.

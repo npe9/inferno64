@@ -81,11 +81,22 @@ init(nil: ref Draw->Context, argv: list of string)
 	efs->init();
 	arg := load Arg Arg->PATH;
 	arg->init(argv);
-	arg->setusage("efsck [-s startsector] [-v] image");
+	arg->setusage("efsck [-s startsector] [-S n] [-v] image");
 	startsect := big 0;
+	#
+	# Which superblock to check.  -1 is the one efs(1) would mount;
+	# naming one checks THAT tree, which is how you find out whether
+	# the generation behind a broken one is sound.
+	#
+	super := -1;
 	while((c := arg->opt()) != 0)
 		case c {
 		's' =>	startsect = big arg->earg();
+		'S' =>	super = int arg->earg();
+			if(super != 0 && super != 1){
+				sys->print("efsck: -S wants 0 or 1\n");
+				raise "fail:usage";
+			}
 		'v' =>	verbose = 1;
 		* =>	arg->usage();
 		}
@@ -94,7 +105,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		arg->usage();
 	name := hd argv;
 
-	(f, e) := Fs.mount(name, startsect);
+	(f, e) := Fs.mountsuper(name, startsect, super);
 	if(f == nil){
 		sys->print("efsck: %s: will not mount: %s\n", name, e);
 		raise "fail:unmountable";

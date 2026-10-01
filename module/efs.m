@@ -216,6 +216,15 @@ Efs: module
 		dirty:	int;
 
 		mount:	fn(name: string, startsect: big): (ref Fs, string);
+		#
+		# mount, but naming the superblock: 0 or 1 takes that one
+		# whatever its generation, and -1 is what mount passes.
+		# Forcing it is a diagnostic -- it is the only way to ask
+		# whether the OTHER superblock is sound when the live one is
+		# not, which is the question the two of them exist to answer.
+		#
+		mountsuper: fn(name: string, startsect: big, which: int):
+				(ref Fs, string);
 		writable: fn(f: self ref Fs): string;
 		group:	fn(f: self ref Fs, g: int): (array of byte, string);
 		bmget:	fn(f: self ref Fs, n: int): (int, string);

@@ -533,7 +533,61 @@ maxpending(): int
 # corrupt superblock 0 hide the copy that exists for exactly that case.
 # doc/efs-format.ms says so; this is where it is enforced.
 #
+#
+# Can the tree this superblock names be reached at all?
+#
+# Two superblocks exist so that a commit interrupted part way through can
+# be fallen back from -- Fs.alloc says exactly that: "a crash part way
+# through a commit must be able to fall back".  Nothing provided the
+# fallback.  Fs.mount chose the higher-generation READABLE SUPERBLOCK and
+# never asked whether the tree that superblock names could be read, so a
+# superblock whose tree was incomplete was preferred over an older one
+# whose tree was whole, and the older one was never reached.
+#
+# That is not hypothetical.  A Pi 3B came up with:
+#
+#	efs: /n/dos/efs.img: 16384 blocks, generation 978 from superblock 1
+#	efs: mount /n/efs: node checksum 1000 1, want 0 0
+#
+# and efsck on the same image found block 6521 reading back as 4096 zero
+# bytes while the live superblock's tree still named it, plus two more
+# blocks the committed free map called free.  Generation 977, in the
+# other slot, was never tried.
+#
+# WHAT THIS CHECKS, AND WHAT IT DOES NOT.  It reads the free map index
+# and unpacks the tree root: the spine mount itself needs.  It is NOT a
+# proof that the whole tree is sound -- that is efsck's job and it costs
+# a pass over every block, some 40 seconds on the board's 64MB image,
+# which is not something to put in front of every mount.  So this
+# catches a superblock whose own root or free map did not land, and a
+# deeper hole still surfaces later as it did above.  Saying so here
+# matters more than the check does: a cheap check that reads like a
+# guarantee is how the next person stops running efsck.
+#
+spineok(d: ref Dev, s: ref Super): string
+{
+	if(s.freeroot != Nilblk){
+		(nil, fe) := d.rdblk(s.freeroot);
+		if(fe != nil)
+			return sys->sprint("free map index: %s", fe);
+	}
+	if(s.treeroot != Nilblk){
+		(b, te) := d.rdblk(s.treeroot);
+		if(te != nil)
+			return sys->sprint("tree root: %s", te);
+		(nil, ue) := Node.unpack(b);
+		if(ue != nil)
+			return sys->sprint("tree root: %s", ue);
+	}
+	return nil;
+}
+
 Fs.mount(name: string, startsect: big): (ref Fs, string)
+{
+	return Fs.mountsuper(name, startsect, -1);
+}
+
+Fs.mountsuper(name: string, startsect: big, want: int): (ref Fs, string)
 {
 	(d, e) := Dev.open(name, startsect, big 0, 0);
 	if(e != nil)
@@ -557,8 +611,51 @@ Fs.mount(name: string, startsect: big): (ref Fs, string)
 		live = s1;
 		which = 1;
 	}
-	if(live == nil)
-		return (nil, "neither superblock is good");
+	#
+	# Forced: take the one asked for and say nothing about the other.
+	# A caller that names a superblock is diagnosing, and silently
+	# giving it the good one would destroy the only measurement it
+	# came for.
+	#
+	if(want == 0 || want == 1){
+		if(want == 0)
+			live = s0;
+		else
+			live = s1;
+		which = want;
+		if(live == nil)
+			return (nil, sys->sprint("superblock %d is unreadable", want));
+	}else{
+		if(live == nil)
+			return (nil, "neither superblock is good");
+		#
+		# Prefer the newer, but only if its tree is there.  The
+		# older one is tried second and ONLY on a real fallback,
+		# so "generation N from superblock W" in efs(1)'s banner
+		# still says which one is in use.
+		#
+		if((se := spineok(d, live)) != nil){
+			other := s1;
+			oth := 1;
+			if(which == 1){
+				other = s0;
+				oth = 0;
+			}
+			if(other == nil)
+				return (nil, sys->sprint(
+					"superblock %d (generation %bd) has no tree (%s), and superblock %d is unreadable",
+					which, live.gen, se, oth));
+			if((oe := spineok(d, other)) != nil)
+				return (nil, sys->sprint(
+					"neither tree can be reached: superblock %d (generation %bd) %s, superblock %d (generation %bd) %s",
+					which, live.gen, se, oth, other.gen, oe));
+			sys->fprint(sys->fildes(2),
+				"efs: %s: superblock %d (generation %bd) has no tree (%s); falling back to superblock %d (generation %bd)\n",
+				name, which, live.gen, se, oth, other.gen);
+			live = other;
+			which = oth;
+		}
+	}
 	if(devblocks > big 0 && live.nblocks > devblocks)
 		return (nil, sys->sprint("superblock claims %bd blocks, device holds %bd",
 			live.nblocks, devblocks));
