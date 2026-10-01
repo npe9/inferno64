@@ -824,6 +824,13 @@ that the two instruments are not looking at in the same instant \- but
 it is the difference between a number that is wrong by the width of
 the scale and one that is wrong by the width of an antenna.
 .IP "3.  Receive a packet that somebody else sent." 6
+.B DONE.
+Ten packets between two clicker 2 boards, ten received, payload intact;
+the answer is in the last section of this document and the fault was an
+interrupt edge in a board file.  What follows is what was written before
+it was answered, kept because the elimination was all sound and none of
+it was ever the fault.
+.PP
 The transmitter is proven against an instrument and the receiver is
 proven against an instrument, and neither has yet carried a packet on
 silicon.  There is one CC1120 here, so this needs either a second one
@@ -4434,3 +4441,129 @@ any use of transparent mode the packet interrupt could not fire and
 .B recv
 would stay at zero until a reboot.  It did not affect the measurements
 above, which were taken after reboots, but only by luck.
+.NH 1
+Item 3 answered: a packet crosses, and the fault was an interrupt edge
+.PP
+.B "Ten packets sent, ten received, payload intact."
+.DS
+.CW "recv 10  crcerr 0  rxoverflow 0  last -41dBm"
+.CW "intr high 10 low 10"
+.CW "lastrx 8 bytes: 61 62 63 64 65 66 67 68"
+.DE
+which is
+.CW abcdefgh ,
+what
+.B "txtest 8"
+sends.  That is item 3: receive a packet that somebody else sent, on
+silicon, between two clicker 2 boards with ccRF clicks.
+.PP
+.B "The fault was four lines in a board file, and the receiver had been working the whole time."
+GPIO3 carries PKT_SYNC_RXTX and SWRU295E table 10 says what that is in
+RX: "asserted when sync word has been received and de-asserted at the end
+of the packet".  Two edges, and they are not interchangeable.  The rising
+edge is the sync word \- at that instant the payload has not been
+transmitted yet, let alone demodulated, and the FIFO is empty.  The
+falling edge is the end of the packet, and it is the only moment at which
+the packet is complete and can be read.
+.PP
+.CW os/inferno/stm32f407/spistm32f4.c
+set
+.CW EXTI_RTSR
+and nothing else.  So
+.CW cc1120interrupt ()
+was called at every sync word, read NUM_RXBYTES, found it empty and
+returned; the end-of-packet edge was never delivered and the packet was
+never read.
+.PP
+.B "What the receiver's own registers said before the fix," with ten
+packets sent from the other board:
+.DS
+.CW "MARC_STATUS1  0x80   RX finished successfully (a packet is"
+.CW "                     in the RX FIFO ready to be read)"
+.CW "MODEM_STATUS1 0xe1   SYNC_FOUND set, against 0x61 before"
+.CW "NUM_RXBYTES   0x0b   1 length + 8 payload + 2 status"
+.CW "recv          0"
+.DE
+The part had heard it, found its sync word, checked its CRC and put it in
+the FIFO.  Every candidate eliminated over the last two days \- level,
+frequency, SYNC_THR, the sync word's order and length and mode, PQT
+gating, the rate and bandwidth dependents, asymmetry between the parts \-
+was eliminated correctly.  None of them was ever the fault.
+.PP
+.B "Why none of the instruments could see it."
+Everything the driver reports about reception is downstream of that
+interrupt arriving.
+.B recv
+is incremented inside
+.CW cc1120interrupt (),
+so
+.B "recv 0"
+cannot distinguish a receiver that heard nothing from one that heard
+everything and was never told.  Nor can
+.B crcerr ,
+or
+.B rxoverflow ,
+or
+.B lastrx .
+Six measurements over two days asked the question through that counter
+and all six got the same answer for two different reasons.
+.PP
+The fix for that is in this commit too and is the more reusable half:
+.B stats
+now reports
+.CW "intr high N low N" ,
+the edges actually delivered to the MCU, counted at the top of
+.CW cc1120interrupt ()
+before any SPI and split by the level of the pin that raised them.  High
+is a sync word, with nothing complete to read; low is an end of packet,
+with something.  Those two numbers are upstream of
+.B recv
+and they say immediately which of the two faults is present: before the
+change
+.B low
+was zero, after it ten.
+.PP
+.B "The negative control, and it is in the log."
+The first attempt at this measurement was void \- the board had just been
+flashed, which leaves it on its boot default of 868MHz, while the other
+transmitted on 915.  Both counters stayed at zero and the live RSSI read
+-108.  They do not count noise.
+.PP
+.B "Why every emulated test passed."
+The qemu model raises the pin once the packet is in its FIFO and never
+lowers it (tools/qemu-patches/0051), so there the rising edge does carry
+data.
+.I tools/radio/twoboards.sh
+passed before this change and passes after it \- RADIO-RX-OK and
+RADIO-SYNC-OK \- because an unused falling edge costs nothing.  A model is
+a model of what somebody thought the part did, and
+.I silicfg.sh
+was built to separate the driver's software path from the part's
+configuration precisely because that gap was suspected; it was in the
+board file, which neither test touches.
+.PP
+.B "And the lesson that generalises past this part."
+The thing that finally answered it was not a better radio measurement.
+It was reading the receiver's own status registers \- MODEM_STATUS1,
+MARC_STATUS1, NUM_RXBYTES \- rather than the driver's counters, because
+the part reports what it did and the driver reports what it was told
+about.  Those three registers were readable from a shell prompt through
+the existing
+.B regx
+verb the whole time.
+.PP
+.B "Transparent mode, explained and fixed by the same datasheet."
+MDMCFG1.FIFO_EN: "specifies if data to/from modem will be passed through
+the FIFOs or directly to the serial pin", 0 being "data in/out through
+the serial pin(s) (the FIFOs are bypassed)" and 1 "data in/out through the
+FIFOs".  Its reset is 1 and this driver never wrote the register, so the
+demodulator's output went where it always goes and GPIO3 had nothing to
+carry whatever PKT_FORMAT and TRANSPARENT_MODE_EN said.  That is the whole
+of the 405000 samples at one level across all four TRANSPARENT_INTFACT
+settings, which had been put down to the click wiring GPIO3 and the mode
+perhaps delivering on another pin.
+.B "serial on"
+now clears FIFO_EN and
+.B "serial off"
+restores it \- and restoring it matters as much, because with FIFO_EN
+clear nothing reaches the RX FIFO at all.

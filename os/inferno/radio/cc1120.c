@@ -55,6 +55,8 @@ enum {
 	Rdrate1		= 0x15,
 	Rdrate0		= 0x16,
 	  Fxosc		= 32000000,	/* the crystal these boards fit */
+	Rmdmcfg1	= 0x12,
+	  Fifoen	= 0x40,		/* MDMCFG1.FIFO_EN */
 	Rmdmcfg0	= 0x13,
 	  Transparenten	= 0x08,		/* MDMCFG0.TRANSPARENT_MODE_EN */
 	  Transpintfact	= 0x30,		/* MDMCFG0.TRANSPARENT_INTFACT */
@@ -1272,11 +1274,40 @@ cc1120ctl(Radio *r, char *buf, int n)
 			 * is programmed.
 			 */
 			wr(rr, Rmdmcfg0, rd(rr, Rmdmcfg0) | Transparenten);
+			/*
+			 * And the FIFOs out of the path, which is why
+			 * the mode had never worked.
+			 *
+			 * SWRU295E on MDMCFG1.FIFO_EN: "specifies if
+			 * data to/from modem will be passed through the
+			 * FIFOs or directly to the serial pin", 0 being
+			 * "data in/out through the serial pin(s) (the
+			 * FIFOs are bypassed)" and 1 "data in/out
+			 * through the FIFOs".  Its reset is 1 and this
+			 * driver never wrote the register, so the
+			 * demodulator's output went where it always
+			 * goes and the pin had nothing to carry --
+			 * whatever PKT_FORMAT and TRANSPARENT_MODE_EN
+			 * were set to.  That accounts for the pin not
+			 * moving over 405000 samples at all four
+			 * TRANSPARENT_INTFACT settings, which was put
+			 * down to the click wiring GPIO3 and the mode
+			 * perhaps delivering on another pin.
+			 */
+			wr(rr, Rmdmcfg1, rd(rr, Rmdmcfg1) & ~Fifoen);
 			wr(rr, Riocfg3, Gserialrx);
 		}else if(strcmp(f[1], "off") == 0){
 			rr->serial = 0;
 			wr(rr, Rpktcfg2, Fmtnormal);
 			wr(rr, Rmdmcfg0, rd(rr, Rmdmcfg0) & ~Transparenten);
+			/*
+			 * The FIFOs back in the path, and this matters
+			 * as much as the line below: with FIFO_EN clear
+			 * nothing reaches the RX FIFO at all, so leaving
+			 * it clear is the same silent sticky break in
+			 * the receive path, one layer further down.
+			 */
+			wr(rr, Rmdmcfg1, rd(rr, Rmdmcfg1) | Fifoen);
 			/*
 			 * Back to PKT_SYNC_RXTX, which is what this board's
 			 * interrupt needs, and not to carrier sense.

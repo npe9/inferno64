@@ -401,6 +401,71 @@ keyed that set, and
 and
 .B power
 are what the manual says they are.
+.SH "THE INTERRUPT A PACKET ARRIVES ON"
+The CC1120 has no processor and does not interrupt; a pin of its does,
+and which pin and what it is made to carry is the board's choice.  On a
+mikroBUS socket there is one: a ccRF click wires GPIO3 of the four to
+the host, so whatever the receive path needs has to come off that pin.
+.PP
+It carries PKT_SYNC_RXTX, which has two edges and they are not
+interchangeable.  SWRU295E table 10: in RX it is "asserted when sync
+word has been received and de-asserted at the end of the packet".  The
+rising edge is the sync word, and at that instant the payload has not
+been transmitted yet, let alone demodulated \- the FIFO is empty.  The
+falling edge is the end of the packet, and it is the only moment at
+which the packet is complete and can be read.
+.PP
+A board that enables the rising edge alone therefore receives
+perfectly and reads nothing, which is what
+.I /os/inferno/stm32f407/spistm32f4.c
+did and what plan item 3 was.  It took two days to find because every
+instrument said the receiver worked, and all of them were right: the
+part heard the packet, found its sync word, checked its CRC and put it
+in the FIFO.  Measured on silicon, ten packets sent from a second
+board, read back out of the receiver's own registers:
+.EX
+	MARC_STATUS1  0x80   RX finished successfully
+	MODEM_STATUS1 0xe1   SYNC_FOUND, against 0x61 before
+	NUM_RXBYTES   0x0b   length + 8 payload + 2 status
+	recv          0
+.EE
+.PP
+.B Stats
+counts the edges that were delivered, as
+.BR "intr high N low N" ,
+split by the level of the pin that raised them and counted before
+anything is asked of the part.  High is a sync word, with nothing
+complete to read; low is an end of packet, with something.  They exist
+because
+.B recv
+cannot answer the question that matters when it reads zero:
+.B recv
+is downstream of the interrupt arriving at all, so it cannot
+distinguish a receiver that heard nothing from one that heard
+everything and was never told.  The two counters are upstream of it.
+What the fix looks like in them, same two boards and the same ten
+packets:
+.EX
+	recv 10  crcerr 0  rxoverflow 0  last -41dBm
+	intr high 10 low 10
+	lastrx 8 bytes: 61 62 63 64 65 66 67 68
+.EE
+.PP
+Ten sync words and ten ends of packet, where the ends of packet had
+been zero, and the payload is what
+.B txtest
+8 sends.
+.PP
+The negative control is worth as much.  With the receiver left on its
+boot default of 868MHz while the other board transmitted on 915, both
+counters stayed at zero: they do not count noise.
+.PP
+And the reason no emulated test could have caught this.  The qemu model
+raises the pin once the packet is in its FIFO and never lowers it, so
+there the rising edge does carry data and
+.I tools/radio/twoboards.sh
+passes either way.  A model is only ever a model of what somebody
+thought the part did.
 .SH "LOOKING AT A BAND"
 A receiver is an instrument, and this one will say what is on the air
 around it.  These are the CC1120 driver's, on
