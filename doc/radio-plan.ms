@@ -3536,3 +3536,44 @@ So the measurement wants the earlier geometry back \- whatever gave
 -64dBm, which was centimetres \- and a stated received level beside every
 future reading of the sync pin.  A sync failure at 3dB SNR and one at
 17dB are different claims.
+.PP
+.B "And the reset bug had crippled the transmitter too, which accounts for the missing forty decibels."
+Board 1 at 9600/19958/50000 \- the settings that radiated at -58 to
+-64dBm earlier in the day \- now reads
+.B "txtrace 1 0 0 0 4 0"
+where it used to read
+.BR "1 0 0 0 2 0" .
+The 2 is TX and the 4 is CALIBRATE: the part goes into calibration and
+returns to IDLE without transmitting, and
+.B sent
+counts every packet anyway.  A tinySA sweep agrees, finding -102.8dBm
+against a floor of -116 where the same board keyed gives -41.
+.PP
+The cause is the
+.B reset
+verb again.  Sixteen of the registers in this driver's table are the
+synthesiser's and the amplifier's analogue configuration \- FS_DIG1 and
+FS_DIG0, FS_CAL0, FS_DIVTWO, FS_DSM0, FS_DVC0, FS_PFD, FS_PRE,
+FS_REG_DIV_CML, FS_SPARE, XOSC5, XOSC3, XOSC1, PA_CFG1 and PA_CFG0 \- and
+the comment beside them records what the part does without them: "the
+only thing on the air is 755.902MHz at -31dBm ... in the same bin whether
+the part is told 868, 902 or 830".  SRES puts every one of them back to
+the part's default, the old reset verb reapplied nothing, and board 1 is
+still running the kernel with that bug.  Its AGC and packet registers
+were put back by hand because they are reachable from the ctl file; these
+are not.
+.PP
+So one bug produced both of today's false conclusions.  Cleared AGC on
+the second board gave an RSSI of -8 and a saturated front end that was
+not there; cleared FS and XOSC on the first gave a transmitter that
+reported success and radiated nothing, against which the receiver was
+measured four times.
+.PP
+Both boards need a boot to clear it \- cc1120init() writes the whole
+table \- and the kernel with
+.IR ccapply ()
+in it will not do this again.  The second board already has it.  Until
+then nothing measured about the receive path means anything, including
+every reading of the sync pin taken after the reset: the strong-signal
+case that localised the fault to sync detection was taken BEFORE it, and
+that one stands.
