@@ -2652,7 +2652,7 @@ which is a different piece of work and is not pretended at here.  And decoding w
 870-889MHz is not a goal: the survey found it, both instruments agree
 it is there, and identifying a TDMA system at a few hundred
 microseconds a burst is a different project from making a radio work.
-.IP "6.  Stop typing at a shell.  Built, measured under qemu, not yet on silicon." 6
+.IP "6.  Stop typing at a shell.  Done, on silicon." 6
 Item 5 made one redirection work and the second one survivable.  It did
 not make the shell a reasonable thing to drive a radio with, because
 the cost is in what a shell is: a command is a process and a
