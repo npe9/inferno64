@@ -1002,6 +1002,81 @@ another \(em and
 .CW tests/efs-limits.sh 's
 fill arm reaches the end of a 4MiB filesystem instead of running out of memory.
 That closes B3 with it.
+.PP
+.B "ATTRIBUTED, 2026-10-01, and it is INTERIOR nodes \(em not what this item concluded."
+The growth above was left "still unattributed", with the instruction to attribute
+it the way that worked: a counter on the work, tagged with the caller.  Done.  A
+counter inside
+.CW getnode 's
+MISS path \(em so a cache hit is not counted as a decode \(em tagged by which of
+the six call sites asked, and separately by node type.  300 files into one
+directory of a 4096-block image, 600 commits, host emu:
+.P1
+caller        decodes   entries decoded
+Fs.range        14754            217360
+Fs.leaffor       1706            123670
+Fs.pathto        1353             95520
+Fs.replace          0                 0
+Fs.fixup            1                70
+                -----            ------
+                17814            436620
+
+by node type  decodes   entries   entries/node
+interior         2970    294020             99
+leaf            14844    142600            9.6
+.P2
+The two totals agree exactly, 294020+142600 = 436620, which is the internal
+check; the external one is this item's own earlier figure of 789
+entries-unpacked/op at 242 files against 1450/op here at 300, same order and
+growing in the right direction from an independently built instrument.
+.PP
+.B "The claim above that Fs.range is NOT the term was wrong, and the reason is instructive."
+The table it rests on measured
+.CW range/op
+\(em range
+.I calls
+per operation \(em and found it flat at 2.0.  It is flat.  But the
+.I work
+those two calls cause is the largest term of the three: 14754 of the 17814 node
+decodes, 83 per cent, and 217360 of the 436620 entries.  It is also the
+fastest-growing: over the last twenty files of the run, range added 38596 entries
+against leaffor's 11973 and pathto's 10504.  Counting calls at the call site and
+counting work on the work path are different measurements, and this plan has
+already written that lesson down once for
+.CW fixents
+versus
+.CW unpents .
+It was made again one level up.
+.PP
+.B "And the target is interior navigation."
+Two thirds of every entry decoded is in an
+.I interior
+node, which is decoded only to choose one child of it.  An interior node here
+averages 99 entries; a leaf averages 9.6.  Interior entries are fixed width \(em
+.CW Keysz
+17, a 2-byte length and an 8-byte block number, 27 bytes \(em so an interior block
+can be navigated, or even binary searched, in the packed bytes with no
+allocation at all.
+.CW Key.unpack
+returns a value and does not allocate; what allocates is the
+.CW "array of Ent"
+and the per-entry value slice, and interior navigation needs neither.
+.PP
+.B "Why it is NOT implemented here."
+Because the obvious implementation trades a known cost for an unmeasured one.
+.CW getnode
+caches
+.I decoded
+nodes, and
+.CW Dev.rdblk
+allocates a fresh
+.CW array[Blocksize]
+on every call, so navigating in packed bytes means either re-reading a 4KB block
+per level or adding a block cache beside the node cache.  Trading 99 small
+allocations for a 4KB one may be a loss, and this item already records two
+cache changes that measured as nothing.  That is a design decision with a
+number attached to it, and the number to beat is in the table above.
+
 .NH 2
 B2.  DONE.  One namehash, in the library
 .LP
