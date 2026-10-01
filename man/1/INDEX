@@ -433,6 +433,8 @@ putzip getzip
 pwd pwd
 query grid-query
 quote sh
+radiocal radiocal
+radiocfg radiocal
 radiochk radiochk
 radiossl radiossl
 radiostyx radiostyx

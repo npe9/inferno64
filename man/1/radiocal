@@ -1,0 +1,271 @@
+.TH RADIOCAL 1
+.SH NAME
+radiocal, radiocfg \- calibrate a radio, and apply what was measured
+.SH SYNOPSIS
+.B radiocal
+.B -t
+[
+.B -n
+.I per-rung
+] [
+.B -s
+.I step
+] [
+.B -f
+.I first
+] [
+.B -l
+.I last
+]
+.PP
+.B radiocal
+.B -r
+[
+.B -w
+.I seconds
+]
+.PP
+.B radiocfg
+[
+.B -n
+] [
+.B -s
+] [
+.B -f
+.I file
+] [
+.B -u
+.I uid
+]
+.SH DESCRIPTION
+.I Radiocal
+measures what a decibel of transmitter is worth to a receiver, using the
+transmitter's own power amplifier as the attenuator.  It is two halves of
+one program, run on two boards.
+.PP
+.B -t
+walks
+.BR PA_CFG2 's
+.B PA_POWER_RAMP
+field from
+.I first
+down to
+.I last
+in steps of
+.IR step ,
+sending
+.I per-rung
+packets at each.  SWRU295E gives the field's output as
+.BR "(PA_POWER_RAMP + 1)/2 \- 18" dBm,
+so one count is half a decibel over a 31.5dB range.  Each value is
+written through the radio's
+.B ctl
+and
+.B "read back off the part"
+before anything is sent: a rung whose register did not take is not a
+rung, and the run stops rather than reporting it.
+.PP
+Every packet carries the rung and a sequence number.  That is the whole
+difference between this and driving the same ladder from a host: the
+transmitter's step and the receiver's reading are joined by the packet
+and not by whatever is typing at the two consoles, so a dropped console
+line cannot attribute a reading to the wrong rung.
+.PP
+.B -r
+holds
+.B #W/radio0/pkt
+open for
+.I seconds
+and tabulates, per rung, how many of the sequence arrived, how many are
+missing, how many had a CRC error, and the mean, least and greatest
+RSSI.  It then prints the least-squares slope of RSSI against the
+datasheet's dBm.
+.PP
+It uses
+.B pkt
+and not
+.B data
+because
+.I radio (3)
+hands over a twelve-byte header with every packet \- length, RSSI, SNR,
+flags and arrival tick, out of the same queue entry \- so a rung gets a
+spread and a per-packet CRC flag.  The stat file's
+.B last
+gives one sample however many packets a rung sent, and the spread is one
+decibel, which that cannot show.
+.SS "What the slope is and is not"
+It is the
+.B product
+of two things: how accurately
+.B PA_POWER_RAMP
+steps, and how accurately this receiver's RSSI reports a change.  A slope
+of one means both are right or both are wrong by reciprocal amounts, and
+nothing here separates them.  The program prints that with its answer,
+because a slope without it is a number somebody will quote.
+.PP
+It gives
+.B no offset.
+Free space between two antennas is an unknown loss, and the offset wants
+a calibrated generator cabled into the click's u.FL.
+.PP
+Three independent ladders have now been measured and they agree: 0.930
+from a tinySA's attenuator cabled in, 0.935 from the same PA field driven
+by
+.IR tools/radio/paladder.py ,
+and 0.949 from this program on the boards.  See
+.I doc/radio-plan.ms
+items 2 and 7.
+.SS Radiocfg
+.I Radiocfg
+applies the other direction: it reads this board's
+.B #P/uid
+\- the microcontroller's 96-bit factory serial \- finds the entry in
+.B /lib/radio
+whose
+.B uid
+matches, and writes that board's
+.BR ppm ,
+.B rssioffset
+and
+.B csthr
+to the radio's
+.BR ctl .
+.PP
+.B -n
+says what it would write and writes nothing.
+.B -s
+prints the uid and stops.
+.B -f
+reads another file and
+.B -u
+asserts another uid, both for testing somewhere that has neither.
+.PP
+Every figure is
+.B read back
+out of the stat file rather than taken from a write that returned, and
+every attribute the entry did not have is named.  A calibration silently
+not applied looks exactly like one applied wrongly.
+.PP
+A board with no entry is not an error: it says so and leaves the driver's
+defaults, because a new board has no calibration and should still come
+up.  A board whose uid cannot be read
+.B is
+an error, because then it does not know whose numbers it would be using.
+.PP
+.B rssislope
+is reported and not applied.  Nothing in the driver takes it; it is there
+so that whoever reads an RSSI knows what a change in it is worth.
+.SH FILES
+.TF /lib/radio
+.TP
+.B /lib/radio
+the calibrations, in the attribute database format of
+.IR attrdb (6),
+keyed by
+.BR uid .
+.TP
+.B #P/uid
+the board's factory serial, twenty-four hex digits.
+.SH SOURCE
+.B /appl/cmd/radiocal.b
+.br
+.B /appl/cmd/radiocfg.b
+.br
+.B /os/inferno/stm32f407/uidstm32f4.c
+.br
+.B /tools/radio/radiocaltest.sh
+.br
+.B /tools/radio/radiocalsilicon.py
+.br
+.B /tools/radio/calibratedlink.py
+.SH SEE ALSO
+.IR radio (3),
+.IR attrdb (6),
+.IR ndb (6)
+.SH VERIFIED
+.B "Radiocal under qemu,"
+by
+.IR tools/radio/radiocaltest.sh :
+four rungs, three packets each, none lost, no CRC error, twelve reads,
+and the slope arithmetic running.  The model's RSSI is the constant it
+was told, so the slope there is 0.000 by construction and the numbers
+are silicon's job.  The negative control passes too \-
+.B -r
+with nothing transmitting reports fewer than three rungs rather than
+printing a slope, so the table is not coming from uninitialised arrays.
+.PP
+.B "Radiocal on two clicker 2 boards,"
+forty packets over eight rungs, every one received:
+.PP
+.EX
+	ramp  nominal   got lost crcerr   RSSI mean least most
+	  63   +14.0      5    0      0     -30  -31  -30
+	  55   +10.0      5    0      0     -33  -33  -33
+	  47    +6.0      5    0      0     -37  -37  -37
+	  39    +2.0      5    0      0     -41  -41  -41
+	  31    -2.0      5    0      0     -45  -45  -45
+	  23    -6.0      5    0      0     -48  -49  -48
+	  15   -10.0      5    0      0     -53  -53  -53
+	   7   -14.0      5    0      0     -56  -56  -56
+
+	slope 0.949 dB of RSSI per dB of transmitter, over 8 rungs
+.EE
+.PP
+.B "Radiocfg on silicon,"
+with the board that boots holding the other board's crystal correction:
+.PP
+.EX
+	board2 ppb at boot: -3550
+	; radiocfg
+	radiocfg: uid 203730395931500800300022 is board2 in /lib/radio
+	radiocfg: ppm 60300
+	radiocfg: rssioffset -102
+	radiocfg: csthr -90
+	radiocfg: 3 applied, 0 absent from the entry
+.EE
+.PP
+and each of those three read back out of the stat file.
+.PP
+.B "And the two together,"
+by
+.IR tools/radio/calibratedlink.py ,
+which is the point of the whole item.  Both boards reset so that the
+reading is the kernel's default and not what a previous run left: both
+boot at
+.B -3550
+\- one figure for two boards, which is the bug.  Each runs
+.I radiocfg
+and they come out 63850ppb apart, which is the 64 parts per million the
+crystals are.  Then ten packets, with
+.B "the host having written no correction to either board"
+and the same frequency string to both: ten received, no CRC error, and
+the payload intact.
+.PP
+.B "Not yet done:"
+nothing writes
+.B /lib/radio
+on the board.  It is in devroot, served read-only out of flash, so a new
+measurement means an edit and a reflash.  See
+.I doc/radio-plan.ms
+item 8's second stage.
+.SH BUGS
+.I Radiocfg
+parses the
+.IR attrdb (6)
+subset itself rather than using
+.IR attrdb (2),
+which did not fit: on the stm32f407, with 147456 bytes of Dis pool and
+the shell in it, the library found the right entry and then ran out of
+heap, from a fresh boot as well.  Its own comment has the measurement.
+The file is still
+.IR attrdb (6)
+and
+.IR attrdb (2)
+reads it on a host, which is where it is edited.
+.PP
+The calibration is keyed on the board and not on the radio, because a
+CC1120 has no serial number of its own.  That is wrong if a click is
+moved between boards, since the crystal belongs to the click; each entry
+carries a
+.B click
+attribute so that a move is recordable rather than silent.

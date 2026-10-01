@@ -2979,7 +2979,7 @@ exactly what item 6 was built for.
 .B "Measured from the host first, as the thing the program has to reproduce."
 tools/radio/paladder.py drives the same ladder through two consoles, five
 packets a step, and is the control the Limbo version is checked against.
-.IP "8.  Calibrations that belong to a radio and survive a reboot." 6
+.IP "8.  Calibrations that belong to a radio and survive a reboot.  First stage done, on silicon." 6
 Asked for directly, with the question "is ndb the right place?".  The
 answer is that the
 .I format
@@ -5030,3 +5030,56 @@ What the ladder does not reach: ramp 0, which the datasheet calls
 took 0 of 5 there with the RSSI one rung up still at -45dBm, sixty
 decibels over the floor.  So that is not sensitivity, and what ramp 0
 actually does to the amplifier is not known.
+.PP
+.B "Item 8's first stage done: the boards calibrate themselves and then talk."
+.I Tools/radio/calibratedlink.py ,
+with both boards reset first so the reading is the kernel's default and
+not what a previous run left:
+.DS
+.CW "before, from a fresh boot: board1 ppb -3550, board2 ppb -3550"
+.CW "  the same figure on both, which is the bug: it is board 1's"
+.CW "  board1 radiocfg: ppm -3550  rssioffset -102  csthr -90"
+.CW "  board2 radiocfg: ppm 60300  rssioffset -102  csthr -90"
+.CW "after:  board1 ppb -3550, board2 ppb 60300"
+.CW "  the two differ by 63850 ppb, the 64ppm the crystals are apart"
+.CW ""
+.CW "board2 recv +10 of 10  crcerr +0  last -53 dBm"
+.CW "board2 lastrx: 8 bytes: 61 62 63 64 65 66 67 68"
+.DE
+and the host wrote no correction to either board: the same frequency
+string to both, and the 64ppm came off
+.B /lib/radio
+by way of each board's own
+.BR #P/uid .
+.PP
+Two things that had to be fixed to get there, both the same shape as the
+morning's.
+.B ppb
+is in the stat file now, because the
+.B ppm
+verb prints on the console and a Dis program cannot read that, so
+.I radiocfg
+had no way to check that the figure it applied was the figure in force.
+.B "Anything this driver can be told, it has to be able to say back"
+\- which is the third time today that rule has come up, after PA_CFG2 and
+after the interrupt counters.
+.PP
+And the first version of
+.I calibratedlink.py
+printed
+.CW "board2 ppb 60300 (both the kernel's default, which is board 1's)"
+on a board that had been given 60300 by a
+.I radiocfg
+five minutes earlier.
+.B "A test that asserts the thing it exists to demonstrate is not a test."
+It resets both boards now, and voids the run if they do not boot holding
+the same figure \- because if they did, the kernel would not be carrying
+one correction for two boards and there would be nothing to show.
+.PP
+.B "What stage one is not."
+.B /lib/radio
+is in devroot, served read-only out of flash, so a new measurement is an
+edit and a reflash.
+.I Radiocal
+measures and prints; nothing writes it down.  That is stage two and it
+wants a writable flash sector.
