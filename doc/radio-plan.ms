@@ -5239,3 +5239,42 @@ floor.  That is the one unexplained thing left in item 7 and one
 .CW "radiocal -t -f 0 -l 0"
 would settle whether ramp 0 disables the amplifier or does something
 else.
+.PP
+.B "NPROC 7 costs the one redirection, and lil(1) is the way out."
+Item 5 of this plan is "the one redirection, Done", and the board's
+configuration file records at length how
+.CW main_pool_pcnt
+and
+.CW heap_pool_pcnt
+were chosen to make
+.CW "echo rssioffset -90 >/dev/radio0/ctl"
+work.
+.B "Seven kernel processes takes it back."
+From a fresh boot, with the pool figures identical to what five gave \-
+they are ceilings and do not move \-
+.DS
+.CW "; echo reg 0x2b 0x40 >/dev/radio0/ctl"
+.CW "[Sh] Broken: \(dqout of memory: main\(dq at 0x0 pid 1"
+.DE
+because the 8192 bytes the two extra stacks take are out of the arena
+the fork wanted.
+.PP
+So this board can have
+.B #a
+or it can have
+.BR > ,
+and not both \- which is exactly the problem
+.I lil (1)
+was built for and the first time the case for it has been anything but
+an argument.  A ctl write through
+.I lil
+is not a fork: the file is opened once into a variable and written to as
+a statement.
+.B "Item 6 is what makes item 9 possible on this board,"
+and the fork-cost argument for
+.I lil
+\- withdrawn earlier in this document because ninety redirections two
+seconds apart did not kill the shell \- comes back in a different and
+sharper form: it is not that forking is slow, it is that on a board with
+.B #a
+attached there is no memory to fork with at all.
