@@ -5312,3 +5312,77 @@ the time.  Nothing two-board can be repeated until both boards have been
 reset by hand and reflashed with
 .IR tools/f407/flashverify.sh ,
 which is what proves which image is on them.
+.PP
+.B "NPROC is back at five, and seven was not a trade."
+The entry above says seven costs the one redirection.  It costs more than
+that, and the thing that showed it is
+.I lil (1)
+\- the program the entry had just named as the way out.  At seven:
+.DS
+.CW "; lil"
+.CW "[Sh] Broken: \(dqout of memory: heap\(dq at 0x0 pid 3"
+.CW "lil: little Limbo.  x := e; x = e; if(e){} else {} ..."
+.CW "; print(\(dqhello\(dq)"
+.CW "sh: /dis/lil.dis: exception: out of memory: main"
+.DE
+.B "lil prints its banner and then dies before it runs a statement."
+So both of the things items 5 and 6 are about are gone, and seven is not
+a board that does one thing at a cost; it is a board that does one thing
+and nothing else.  All three, measured:
+.DS
+.CW "5   shell, redirections and lil all work.  #a cannot start:"
+.CW "    \(dqno procs for kproc\(dq."
+.CW "7   #a starts.  A redirection gives \(dqout of memory: main\(dq from"
+.CW "    a fresh boot and lil dies after its banner."
+.CW "9   the board reaches a prompt and the first command fails,"
+.CW "    \(dq[String] Broken: out of memory: heap\(dq -- even echo."
+.DE
+Verified back at five on the board:
+.CW "procinit conf.nproc 5"
+and the one redirection works.
+.PP
+.B "A banner is not a running interpreter,"
+and this is the second time today that distinction has decided a
+question.  The console showed
+.I lil 's
+banner, which is a reason to think it started;
+.CW Lil.live ()
+in
+.I tools/radio/twoboard.py
+asks for a marker back
+.I twice
+and saw it once, which is the same rule that separates this console's
+uart-interrupt echo from a shell that is running commands.  The banner is
+printed before the first statement is read, so it is the echo of the
+module loading and not evidence that it can do anything.
+.PP
+.B "And so the way to have #a on this board is not more processes: it is not to run a shell."
+An init that attaches
+.B #a
+and does the work itself needs no fork and no second module in the pool,
+and
+.I os/inferno/init/armv7mbeacon.b
+already does exactly that for the radio.  That is what item 9's remaining
+steps want.
+.PP
+.B "Ramp 0 narrowed: the part transmits there."
+Every value tried reaches TX with
+.B txnever
+at zero, read off the part itself:
+.DS
+.CW "ramp  PA_CFG2  power    txtrace          after STX"
+.CW "   0  0x40     -17.5    1 0 0 0 2 0      TX"
+.CW "   1  0x41     -17.0    1 0 0 0 2 0      TX"
+.CW "   3  0x43     -16.0    1 0 0 0 2 0      TX"
+.CW "   7  0x47     -14.0    1 0 0 0 2 0      TX"
+.CW "  15  0x4f     -10.0    1 0 0 0 2 0      TX"
+.DE
+So the 0 of 5
+.I paladder.py
+took at ramp 0 is not the amplifier being disabled and not the part
+refusing: the digital half works at every rung.  What is left is what the
+amplifier actually radiates there, and the formula
+.CW "(PA_POWER_RAMP + 1)/2 - 18"
+is nominal \- the bottom of the field need not be linear.  Settling that
+needs an instrument on the output, or board 2 back so the link can be
+re-run at ramp 0.  Neither is available now.

@@ -119,47 +119,48 @@
 #define	KSTACKPREALLOC	1
 #define	KSTACKWATCH	1	/* measure it; see os/inferno/port/proc.c */
 /*
- * SEVEN, AND WHAT WANTED MORE THAN FIVE -- AND WHY NOT NINE.
+ * FIVE, AND THE MEASUREMENT THAT PUT IT BACK.
  *
- * Five was enough for a shell and a radio.  #a wants three kprocs of
- * its own the moment a packet device is attached to it -- ax25recv,
- * ax25send and ax25tick, in os/inferno/radio/devax25.c -- and with the
- * shell needing one spare for the fork a redirection costs, five is
- * two short.  Measured: "ax25chk setup N0CALL-1" got as far as
- * "addr-accepted ok" and then
+ * #a wants three kprocs of its own the moment a packet device is
+ * attached to it -- ax25recv, ax25send and ax25tick, in
+ * os/inferno/radio/devax25.c -- and five is two short:
  *
+ *	; ax25chk setup N0CALL-1
+ *	addr-accepted ok
  *	no procs for kproc
  *	kstack high water 3096 of 4096
  *
- * and took the console with it, which is the state that ends at the
- * reset button.
+ * So this was raised, and raising it is worse than leaving it alone.
+ * KSTACKPREALLOC takes all conf.nproc stacks from xalloc at boot, so
+ * each one is 4096 bytes of fixed allocation out of the 159744 free,
+ * and the two pools were already competing for what is left -- main
+ * 79850 plus heap 78253 is more than the arena has, so those maxima are
+ * ceilings and not reservations and lowering them would free nothing.
+ * Measured, all three on the board:
  *
- * WHAT IT COSTS, and it is not the pool percentages.  KSTACKPREALLOC
- * takes all conf.nproc stacks from xalloc at boot, so this is 16384
- * more bytes of fixed allocation out of the 159744 free.  The pool
- * maxima are ceilings and not reservations -- main 79850 plus heap
- * 78253 is already more than the arena has -- so lowering
- * main_pool_pcnt and heap_pool_pcnt would lower a ceiling neither pool
- * can reach and free nothing.  What the extra stacks really take is
- * headroom the two pools were competing for, and the heap is the one
- * that notices: it had some 38000 bytes free at a prompt.
+ *	5   the shell works, redirections work, lil loads and runs.
+ *	    #a cannot start: "no procs for kproc".
+ *	7   #a starts.  Nothing else does.  A redirection gives
+ *	    "[Sh] Broken: out of memory: main" from a fresh boot, and
+ *	    lil prints its banner and then dies before running a
+ *	    statement -- "sh: /dis/lil.dis: exception: out of memory:
+ *	    main".  Both of the things plan items 5 and 6 are about.
+ *	9   the board boots to a prompt and the first command fails:
+ *	    "[String] Broken: out of memory: heap".  Even echo.
  *
- * NINE WAS TRIED AND IS TOO MANY, measured: the board boots, reaches a
- * prompt, and the first command fails --
+ * Seven is not a trade, it is a board that does one thing and nothing
+ * else, so it is five.  The way to have #a as well is not more
+ * processes: it is not to run a shell.  An init that attaches #a and
+ * does the work itself needs no fork and no second module in the pool,
+ * and os/inferno/init/armv7mbeacon.b already does exactly that for the
+ * radio.  See doc/radio-plan.ms item 9.
  *
- *	; echo LV461264
- *	[String] Broken: "out of memory: heap" at 0x0 pid 1
- *
- * which is 36864 bytes of stacks out of 159744 leaving the heap unable
- * to run echo.  Seven is two more than five, which is what #a's three
- * kprocs need given the one the shell already has spare, at 8192 bytes
- * rather than 16384.
- *
- * And 3096 in that trace is why KSTACK stays at 4096.  The comment
- * above records that 3072 was tried; a kproc has now been seen 3096
- * deep, so 3072 would have overflowed it.
+ * And 3096 in that first trace is why KSTACK stays at 4096.  The
+ * comment above records that 3072 was tried and reverted because the
+ * deep paths were unmeasured; a kproc has now been seen 3096 deep, so
+ * 3072 would have overflowed it.
  */
-#define	NPROC		7
+#define	NPROC		5
 #define	CONFNAME	"stm32f407"
 
 /*
