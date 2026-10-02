@@ -612,7 +612,43 @@ device needs
 .CW iommu_platform=on :
 QEMU's virtio otherwise bypasses the emulated IOMMU, which no real
 device can.
+.IP "Phase 7: M6 (QEMU igb)." 4
+.CW #$/pci/F/sriov
+.CW 6e89830d2 ): (
+"vfs 4" sets ARI Capable Hierarchy, NumVFs and VF Enable, waits the
+specified 100 ms, and enumerates VFs 02:10.0, .2, .4, .6 as functions
+with their VF BARs; "vfs 0" removes them.  VFs made after translation
+is on get host-domain contexts.  What it exposed for phase 8:
+.CW ether82563
+is not an SR-IOV PF driver \(en queue 0 is VF0's pool once VFs exist,
+and VF0's reset disables it \(en so the PF loses its receive queue.
+.IP "Phase 10: M9 (QEMU + emu)." 4
+.CW os/inferno/init/vmserveinit.b
+exports the host's namespace on tcp!*!5640, and
+.CW scripts/check-styxvm.sh
+has hosted Inferno on the Mac mount it and run
+.CW vmlinux
+against the remote
+.CW /dev/vm :
+a machine made, given memory, assigned a device, booted from files on
+the Mac, typed at and read back, all over Styx
+.CW 1c3c4b338 ). (
+.IP "VMX, Linux." 4
+On Bochs (one processor) the host stalled with the guest early in its
+boot: a vCPU kproc was never preempted.  The run loop now yields when
+a host interrupt brings it out and anything else is ready
+.CW 7d9dc4f06 ), (
+and the guest got further (SMP and RCU setup) before the host stopped
+writing again; still open.  The realistic VMX bench for a full Linux
+boot is nested KVM on an Intel machine, which needs a rented instance.
 .IP "Next." 4
-M2 and M5 on VMX (Bochs, then nested KVM); SR-IOV (phase 7: enabling
-VFs, which this bench's igb has); virtio backends (phase 9); Styx
-control (phase 10); SMP guests (phase 5).
+M7 needs an SR-IOV PF driver for the 82576 (pools, VF mailbox:
+reset, MAC, multicast, VLAN, packet size) and a guest with
+.CW igbvf ,
+which is a module in Alpine's
+.CW linux-virt
+\(en the guest moves to the versioned
+.CW linux-virt-6.6.142-r0.apk ,
+whose kernel and modules match.  M8 (virtio backends in the kernel);
+M10 (Limbo placing guests across several hosts, which wants each host
+to report its capacity); phase 5 (SMP guests).
