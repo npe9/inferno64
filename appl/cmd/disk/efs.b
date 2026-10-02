@@ -1034,7 +1034,13 @@ writefile(ino: big, offset: big, data: array of byte): string
 		(nb, ae) := fs.alloc();
 		if(ae != nil)
 			return ae;
-		if((we := fs.d.wrblk(nb, buf)) != nil)
+		#
+		# Through fs.putblk, not fs.d.wrblk: a data block's number
+		# may have been a tree node's in an earlier transaction, and
+		# the library's raw-block cache is keyed by number.  Writing
+		# round the cache is the bug that cost plan item B1e.
+		#
+		if((we := fs.putblk(nb, buf)) != nil)
 			return we;
 		nv := array[12] of byte;
 		efs->put8(nv, 0, nb);

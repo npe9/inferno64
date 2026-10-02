@@ -736,6 +736,18 @@ Ncache: con 8;
 Nraw: con 8;
 Fs.rawblk(f: self ref Fs, n: big): (array of byte, string)
 {
+	#
+	# A dirty node, which has no block to read.  Not cached below and
+	# not checksummed here: these bytes were packed by this process a
+	# moment ago and the cache they would go in is keyed by a number
+	# that will mean something else after the flush.
+	#
+	if(n >= Pseudo){
+		i := int (n - Pseudo);
+		if(f.draw == nil || i < 0 || i >= len f.draw || f.draw[i] == nil)
+			return (nil, sys->sprint("dirty node %bd is not held", n));
+		return (f.draw[i], nil);
+	}
 	if(f.rblk == nil){
 		f.rblk = array[Nraw] of {* => Nilblk};
 		f.rraw = array[Nraw] of array of byte;
@@ -794,6 +806,135 @@ Fs.putblk(f: self ref Fs, n: big, b: array of byte): string
 				break;
 			}
 	return f.d.wrblk(n, b);
+}
+
+#
+# Hold a tree node without allocating a block for it.
+#
+# Returns its pseudo-number, which a parent stores exactly as it would a
+# real one.  The slot is never reused in this transaction: getnode()
+# caches by number, so a reused number would hand back the wrong node.
+#
+Fs.dnew(f: self ref Fs, b: array of byte): (big, string)
+{
+	if(f.draw == nil){
+		f.draw = array[64] of array of byte;
+		f.dfree = array[64] of int;
+		f.dnext = 0;
+		f.dfreen = 0;
+		f.dlive = 0;
+	}
+	i := -1;
+	if(f.dfreen > 0)
+		i = f.dfree[--f.dfreen];
+	else{
+		if(f.dnext >= len f.draw){
+			if(len f.draw >= Maxdirty)
+				return (big -1, sys->sprint(
+					"more than %d dirty tree nodes in one transaction",
+					Maxdirty));
+			n := array[2 * len f.draw] of array of byte;
+			n[0:] = f.draw;
+			f.draw = n;
+			nf := array[2 * len f.dfree] of int;
+			nf[0:] = f.dfree;
+			f.dfree = nf;
+		}
+		i = f.dnext++;
+	}
+	f.draw[i] = b;
+	f.dlive++;
+	f.dirty = 1;
+	return (Pseudo + big i, nil);
+}
+
+#
+# How many dirty nodes are live, which is how many blocks the next
+# commit has to allocate for the tree.
+#
+# Maintained rather than counted: room() asks for it on every create and
+# every write.
+#
+Fs.ndirty(f: self ref Fs): int
+{
+	return f.dlive;
+}
+
+#
+# Let go of a dirty node's slot.
+#
+# The decoded-node cache is keyed by block number and a pseudo-number is
+# the only kind that is ever handed out twice, so the cache entry has to
+# go before the number does.  rawblk's raw cache never holds one -- it
+# returns above -- so there is nothing to evict there.
+#
+Fs.ddrop(f: self ref Fs, i: int)
+{
+	if(f.draw == nil || i < 0 || i >= len f.draw || f.draw[i] == nil)
+		return;			# idempotent: a double free is a no-op
+	f.draw[i] = nil;
+	f.dlive--;
+	n := Pseudo + big i;
+	if(f.cblk != nil)
+		for(c := 0; c < Ncache; c++)
+			if(f.cblk[c] == n){
+				f.cblk[c] = Nilblk;
+				f.cnode[c] = nil;
+			}
+	if(f.dfreen < len f.dfree)
+		f.dfree[f.dfreen++] = i;
+}
+
+#
+# Give a dirty node a block, children first.
+#
+# BOTTOM-UP, and that is not a detail: a parent's bytes hold its
+# children's numbers, so a parent cannot be written until its children
+# have real ones.  The recursion does the ordering, and the checksum is
+# recomputed because patching a child's number invalidates it.
+#
+# The same order Fs.commit already documents -- blocks, barrier,
+# superblock -- with the whole tree written in one ordered pass instead
+# of once per insert.
+#
+Fs.flush(f: self ref Fs, n: big): (big, string)
+{
+	if(n < Pseudo)
+		return (n, nil);
+	i := int (n - Pseudo);
+	if(f.draw == nil || i < 0 || i >= len f.draw || f.draw[i] == nil)
+		return (big -1, sys->sprint("dirty node %bd is not held", n));
+	b := f.draw[i];
+	if(int b[0] == Ninterior){
+		ne := pnents(b);
+		o := Noents;
+		for(m := 0; m < ne; m++){
+			if(o + Keysz + 2 > Blocksize)
+				return (big -1, sys->sprint(
+					"dirty node %bd: entry %d past the end", n, m));
+			vl := get2(b, o + Keysz);
+			if(vl == 8 && o + Keysz + 2 + 8 <= Blocksize){
+				cb := get8(b, o + Keysz + 2);
+				if(cb >= Pseudo){
+					(rb, fe) := f.flush(cb);
+					if(fe != nil)
+						return (big -1, fe);
+					put8(b, o + Keysz + 2, rb);
+				}
+			}
+			o += Keysz + 2 + vl;
+		}
+		(a, c) := checksum(b, Nocksum);
+		put2(b, Nocksum, c);
+		put2(b, Nocksum + 2, a);
+	}
+	(blk, ae) := f.alloc();
+	if(ae != nil)
+		return (big -1, ae);
+	if((we := f.putblk(blk, b)) != nil)
+		return (big -1, we);
+	f.ddrop(i);
+	return (blk, nil);
 }
 
 #
@@ -951,6 +1092,25 @@ Fs.getnode(f: self ref Fs, n: big): (ref Node, string)
 # than one that says the data is bad.
 #
 Maxdepth: con 16;
+
+#
+# A bound on the dirty set, so a transaction cannot grow without limit.
+#
+# The write path already bounds itself at 32 blocks of file (Wbatch in
+# disk/efs.b), and 32 extent inserts touch 32 leaves and their ancestors,
+# so a few hundred is the shape of the worst case.  This is the guard
+# against something that does not bound itself, and it is an error rather
+# than a silent flush because a flush in the middle of an operation would
+# publish half of it.
+#
+Maxdirty: con 4096;
+
+#
+# A bound on how many rounds one commit may take to drain its freed
+# list: 504 blocks a round, so this covers a single operation freeing
+# about 32 million blocks, which is more than this format can address.
+#
+Maxrounds: con 65536;
 
 Fs.leaffor(f: self ref Fs, k: Key): (ref Node, string)
 {
@@ -1293,6 +1453,24 @@ Fs.reserve(f: self ref Fs): int
 		r = Nreserve;
 	if(r < 4)
 		r = 4;
+	#
+	# AND THE DIRTY SET, because a commit now writes all of it at once.
+	#
+	# Nreserve was documented as covering one copy-on-write path
+	# rewrite plus the map blocks a commit allocates, which was right
+	# while every node was written as it was made.  With writeback the
+	# commit allocates one block per live dirty node as well, and a
+	# reserve that does not cover them is the full-filesystem wedge
+	# this plan has already fixed once: a commit failing for want of
+	# space on a filesystem that had room.
+	#
+	# It GROWS with the transaction, which is the behaviour wanted --
+	# room() then refuses new work while a large uncommitted set is
+	# outstanding, and commit itself never consults room().
+	#
+	need := f.ndirty() + Maxdepth + len f.bmindex + 1;
+	if(r < need)
+		r = need;
 	return r;
 }
 
@@ -1363,6 +1541,22 @@ Fs.headroom(f: self ref Fs, want: int): (int, string)
 #
 Fs.free(f: self ref Fs, n: big)
 {
+	#
+	# A dirty node was never on the medium, so there is nothing to put
+	# on pendingfree: drop the bytes and the flush will not write it.
+	# This is what makes a node rewritten twice in one transaction cost
+	# ONE block instead of two, and it is why nothing leaks -- the
+	# failure mode the plan warned about for deferred writes was
+	# allocating per rewrite and writing once.
+	#
+	# The slot goes back to be handed out again, which Fs.ddrop does
+	# together with evicting the number from the decoded-node cache.
+	#
+	if(n >= Pseudo){
+		f.ddrop(int (n - Pseudo));
+		f.dirty = 1;
+		return;
+	}
 	f.freed = n :: f.freed;
 	f.dirty = 1;
 }
@@ -1591,11 +1785,9 @@ Fs.writeents(f: self ref Fs, ents: array of Ent, ntype: int, level: int):
 		(b, pe2) := n.pack();
 		if(pe2 != nil)
 			return (nil, nil, pe2);
-		(blk, ae) := f.alloc();
+		(blk, ae) := f.dnew(b);
 		if(ae != nil)
 			return (nil, nil, ae);
-		if((we := f.putblk(blk, b)) != nil)
-			return (nil, nil, we);
 		blks[nb] = blk;
 		keys[nb] = n.ents[0].key;	# never empty; see above
 		nb++;
@@ -1688,7 +1880,40 @@ Fs.fixup(f: self ref Fs, blks: array of big, idx: array of int, depth: int,
 #
 # Step 3 is the only write that changes what a reader sees.
 #
+#
+# Publish, and keep going until NOTHING IS CARRIED.
+#
+# A commit whose freed list does not fit in one superblock -- 504 blocks,
+# which removing a file of about 2MB exceeds -- puts 504 on pendingfree
+# and carries the remainder on f.freed for the next commit.  That is
+# correct in the direction that matters, a carried block is still marked
+# used so nothing hands it out, and it is WRONG about durability: f.freed
+# is memory, and a server that exits with blocks still on it leaks every
+# one of them permanently.
+#
+# Measured: removing a 12MB file freed about 3000 blocks, one commit took
+# 504, and the unmount that followed threw the other 2117 away.  efsck
+# reported them as "marked used and not reached (pendingfree keeps some;
+# not an error)", which is the message that made the leak invisible --
+# pendingfree does keep some, and 2117 is not some.
+#
+# So a commit drains the list before it returns.  Each round folds in the
+# previous round's pendingfree and takes the next 504, so the list
+# strictly shrinks; the bound is a guard against a list that somehow
+# grows, not an expected limit.
+#
 Fs.commit(f: self ref Fs): string
+{
+	for(n := 0; f.dirty; n++){
+		if(n > Maxrounds)
+			return sys->sprint("commit did not drain in %d rounds", Maxrounds);
+		if((e := commit1(f)) != nil)
+			return e;
+	}
+	return nil;
+}
+
+commit1(f: ref Fs): string
 {
 	if(!f.dirty)
 		return nil;
@@ -1737,6 +1962,27 @@ Fs.commit(f: self ref Fs): string
 	#
 	if((we := f.writable()) != nil)
 		return we;
+	#
+	# THE TREE GOES DOWN FIRST, and that is where the dirty nodes stop
+	# being dirty.  It has to come before the free map, because
+	# allocating those blocks is what dirties the groups the fixpoint
+	# below is about to replace.
+	#
+	(nr, fe) := f.flush(f.s.treeroot);
+	if(fe != nil)
+		return fe;
+	f.s.treeroot = nr;
+	#
+	# Nothing may be left holding bytes.  A dirty node unreachable from
+	# the root is a block this transaction wrote nowhere and will never
+	# write, which is the leak that deferred writes risk, so it is an
+	# error here rather than a quiet loss.
+	#
+	if((nd := f.ndirty()) != 0)
+		return sys->sprint("%d dirty tree node(s) not reachable from the root", nd);
+	f.draw = nil;
+	f.dfree = nil;
+	f.dnext = f.dfreen = f.dlive = 0;
 	#
 	# Allocate the map's own new blocks, to a fixpoint.
 	#
@@ -1844,6 +2090,9 @@ Fs.commit(f: self ref Fs): string
 	f.dirty = keep != nil;
 	f.bmindex = nil;	# re-read next time, folding pendingfree in
 	f.idxblk = Nilblk;	# never rewrite the published index in place
+	f.draw = nil;		# flushed above; a pseudo-number means nothing now
+	f.dfree = nil;
+	f.dnext = f.dfreen = f.dlive = 0;
 	f.cblk = nil;		# a freed block can come back under a new name
 	f.cnode = nil;
 	f.rblk = nil;

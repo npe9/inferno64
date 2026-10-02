@@ -118,6 +118,16 @@ fi
 # write into group 1 at all.  The check below would then have passed on
 # the single bit mkefs set there, which is a check that cannot fail.
 #
+# AND THE FILE IS BIGGER THAN THE ROOM LEFT BELOW THE BOUNDARY, which is
+# the other half of the same lesson.  It was 20000 bytes -- 5 blocks --
+# and it crossed only because the copy-on-write path rewrite allocated
+# several more blocks per write message on top of them.  The writeback
+# cache in doc/open-issues-plan.ms B1f removed those allocations, the
+# write stopped reaching 32768, and this check failed on a change that
+# made the filesystem better.  100000 bytes is 25 blocks against the 8
+# left below the cursor, so the crossing is a property of the workload
+# and not of how many blocks an operation happens to cost.
+#
 say "writing across the group boundary"
 rm -f $T/efsg4.img
 cat > $T/efs-g2.sh <<'EOF'
@@ -130,9 +140,9 @@ echo 'MARK read'
 or {and {cmp /n/client/across.bin /tmp/efsfiles/big.bin} {echo CMP-OK}} {echo CMP-DIFFERS}
 EOF
 mkdir -p $T/efsfiles
-head -c 20000 /dev/urandom > $T/efsfiles/big.bin
+head -c 100000 /dev/urandom > $T/efsfiles/big.bin
 runemu $T/efs-g2.txt /tmp/efs-g2.sh -pheap=256M
-check "20000 bytes byte-for-byte"	'CMP-OK'			$T/efs-g2.txt
+check "100000 bytes byte-for-byte"	'CMP-OK'			$T/efs-g2.txt
 
 #
 # And in a FRESH process, which is the only thing that proves the blocks

@@ -52,6 +52,13 @@ Efs: module
 	# compare against; it writes out as ff..ff.
 	#
 	Nilblk:		con big -1;
+	#
+	# Above every real block number: a dirty tree node's name until
+	# the commit barrier gives it a real one.  64GB is the largest
+	# filesystem this format can index, 2**24 blocks, so there is no
+	# overlap to arrange.
+	#
+	Pseudo:		con big 1 << 48;
 
 	#
 	# Blocks kept back from anything that adds to the filesystem.
@@ -226,6 +233,47 @@ Efs: module
 		rblk:	array of big;
 		rraw:	array of array of byte;
 		rnext:	int;
+		#
+		# DIRTY TREE NODES, which have no block number yet.
+		#
+		# Under copy on write every rewrite of a node needs a new
+		# block, so within one transaction a leaf and its ancestors
+		# are allocated and written once per insert -- measured at
+		# 5.6 blocks a write message against a floor of one.  A
+		# dirty node is held here instead and written ONCE, at the
+		# commit barrier.
+		#
+		# The crux is that deferring the write means deferring the
+		# ALLOCATION: allocate per rewrite and write once and the
+		# other N-1 blocks are leaked.  So a dirty node has NO block
+		# number at all.  It is named by a pseudo-number above every
+		# real one, Pseudo + its slot, which goes into its parent's
+		# entry exactly as a real block number would; rawblk() serves
+		# it from here, and commit's flush turns it into a real block
+		# bottom-up, patching each parent as its children are
+		# allocated.
+		#
+		# A slot whose node is superseded has its bytes dropped and
+		# is not flushed, which is what makes a node rewritten twice
+		# cost one block rather than two, and its slot goes back on
+		# dfree to be handed out again.  Reuse is only safe because
+		# getnode() caches decoded nodes BY NUMBER, so freeing a
+		# pseudo-number evicts it from that cache first; without the
+		# eviction a reused number would hand back the wrong node.
+		#
+		# Reclaiming them is not an optimisation.  dnext counts
+		# nodes WRITTEN and the live set is what has to be bounded:
+		# removing a 12MB file is one transaction that rewrites a
+		# leaf and its ancestors once per extent key, about 6000
+		# rewrites while never holding more than a handful, and
+		# without reuse that hit Maxdirty and failed a removal that
+		# had always worked.
+		#
+		draw:	array of array of byte;
+		dnext:	int;
+		dfree:	array of int;	# slots to hand out again
+		dfreen:	int;
+		dlive:	int;		# how many hold bytes
 		freed:	list of big;	# freed by the transaction in hand
 		dirty:	int;
 
@@ -241,6 +289,10 @@ Efs: module
 				(ref Fs, string);
 		rawblk:	fn(f: self ref Fs, n: big): (array of byte, string);
 		putblk:	fn(f: self ref Fs, n: big, b: array of byte): string;
+		dnew:	fn(f: self ref Fs, b: array of byte): (big, string);
+		ddrop:	fn(f: self ref Fs, i: int);
+		flush:	fn(f: self ref Fs, n: big): (big, string);
+		ndirty:	fn(f: self ref Fs): int;
 		writable: fn(f: self ref Fs): string;
 		group:	fn(f: self ref Fs, g: int): (array of byte, string);
 		bmget:	fn(f: self ref Fs, n: int): (int, string);

@@ -1825,7 +1825,7 @@ path always runs, and a connection severed under a client that still holds a
 fid is a case this tree cannot produce.  The control says so: removing the
 hangup commit again leaves the test passing.
 .NH 2
-B1f.  A CACHE FOR EFS, designed: dirty tree nodes, written once at the barrier
+B1f.  DONE \(em a cache for efs: dirty tree nodes, written once at the barrier
 .LP
 B1e leaves the write path at 2377 writes for 622 blocks of file.  The floor
 is 622.  The 1755 in between are 5.6 blocks a message of copy-on-write path
@@ -1904,6 +1904,180 @@ A far smaller change to commit timing \(em deferring one commit from Create to
 Clunk \(em produced 228 leaked blocks and a hang that are still unexplained.
 This is a larger change in the same place.  The leak check and the crash
 harness should be run at every step and not at the end.
+.PP
+.B "BUILT, and it does what the design above said it would."
+A dirty node is named by
+.CW "Pseudo + its slot" ,
+a number above every real block, which goes into its parent's entry exactly as
+a real one would.
+.CW Fs.rawblk
+serves it from memory,
+.CW Fs.dnew
+holds it,
+.CW Fs.free
+of a pseudo-number DROPS it rather than listing it on
+.CW pendingfree
+\(em which is what makes a node rewritten twice cost one block and not two, and
+why nothing leaks \(em and
+.CW Fs.flush
+turns the tree into real blocks at the commit barrier, children first,
+recomputing each parent's checksum as the children's numbers are patched in.
+.PP
+.B "Measured on the board, through sdmem (3), both arms in one boot."
+The kernel image into efs: 2548984 bytes, 622 blocks of file.
+.P1
+                  before      after
+write ops          2374        744     3.19x
+read ops           1726         96     18.0x
+write sectors     18992       5952
+disk touched      9436 KB    2916 KB
+time, free        14.84 s    12.40 s
+time, delay 10ms  61.65 s    22.09 s   2.79x
+.P2
+The design predicted "about 800" writes against a floor of 622.  744.  And the
+read collapse was not predicted at all: a node rewritten inside a transaction
+used to be read back from the medium, and now it never left memory.
+.PP
+2916KB to hold 2488KB of file is 1.17x write amplification, against 3.79x
+before.  On the charging medium the 3260 transfers not issued account for
+39.6s of the 39.6s saved, 12.1ms each, which matches
+.CW sdmem 's
+calibration \(em so this is the operation count and nothing else.
+.PP
+.B "And the create path, which the design did not aim at."
+300 creates into one directory, same board, same boot:
+.P1
+                  before      after
+read ops           3084       1643     1.88x
+write ops          3502       2057     1.70x
+disk touched      12.8 MB    7.0 MB
+commits (gen)       302        302
+time, free         38.3 s     35.3 s
+.P2
+The commit count is unchanged, correctly: how many commits there are is the
+clunk rule from B1e, and what each one costs is this.  Per-round cost stays
+flat, 5.79s to 5.64s across six rounds of fifty.
+.PP
+.B "The reserve had to grow, which the design said and the tests proved."
+.CW Fs.reserve
+was min(nblocks/8, 24), covering one path rewrite and the map.  A commit now
+writes the whole dirty set at once, so it is at least
+.CW "ndirty + Maxdepth + ngroups + 1" ,
+which grows with the transaction \(em and that is wanted:
+.CW room()
+then refuses new work while a large uncommitted set is outstanding, and
+.CW Fs.commit
+never consults
+.CW room() .
+.PP
+.B "TWO TESTS FAILED, and both were the tests."
+This is the third time in this plan that a filesystem improvement broke a
+check that had encoded the implementation's cost, so it is worth naming as a
+pattern rather than an accident.
+.PP
+.CW efs-groups
+puts the allocator's cursor at 32760 and requires the write to land blocks
+above 32768, which is the only test that makes a commit dirty two groups at
+once.  Its file was 20000 bytes \(em 5 blocks \(em and it crossed the boundary
+only because the path rewrite allocated several more blocks per write message
+on top of them.  Remove those and the write no longer reaches 32768, and the
+check failed on a change that made the filesystem better.  The file is 100000
+bytes now, 25 blocks against the 8 left below the cursor, so the crossing is a
+property of the workload.
+.PP
+.CW efs-limits
+fills a 4MiB filesystem until a create fails.  It filled with a REDIRECT, and
+a failing redirect is not catchable in this shell \(em it raises and the whole
+script ends, so the FULL-AT line never printed and nothing after the loop ran.
+That worked by accident while a full filesystem refused at the WRITE, which
+.CW echo
+reports as a failed command; the larger reserve makes it refuse at the CREATE,
+which is the better behaviour, and the failure became a redirect failure.  The
+loop uses
+.CW cp
+now, which is what the comment twenty lines below it already said and which
+that comment's own arm had been fixed to do.
+.PP
+It also filled to 921 files where it filled to 515, which is the space side of
+the same win.
+.PP
+.B "A SLOT HAS TO GO BACK, and the bound was bounding the wrong thing."
+The first version never reused a dirty slot, on the ground that
+.CW getnode
+caches decoded nodes by number and a reused number would hand back the wrong
+node.  True, and it made
+.CW Maxdirty
+count nodes WRITTEN rather than nodes HELD \(em and removing a file is one
+transaction that rewrites a leaf and its ancestors once per extent key while
+never holding more than a handful of them.  Removing a 12MB file made about
+6000 of them and failed:
+.P1
+rm: /n/client/big: more than 4096 dirty tree nodes in one transaction
+.P2
+and the half-done removal left the image with
+.CW "block 2410 is in the tree and free in the map" .
+A removal that had always worked.  So
+.CW Fs.ddrop
+puts the slot back and evicts the number from the decoded cache first, which
+is the whole of what made reuse unsafe;
+.CW ndirty
+is a maintained counter rather than a scan, because
+.CW room()
+asks for it on every create and every write.
+.PP
+.B "Which found a leak that predates all of this: a carried freed list is MEMORY."
+A commit whose freed list does not fit in one superblock puts 504 blocks on
+.CW pendingfree
+and carries the remainder on
+.CW f.freed
+for the next commit.  That is safe in the direction it was argued for \(em a
+carried block is still marked used, so nothing hands it out \(em and it says
+nothing about a server that EXITS still holding one.  Removing that 12MB file
+freed about 3000 blocks, one commit took 504, and the unmount threw the other
+2117 away, permanently.
+.PP
+.CW efsck
+reported them as "marked used and not reached (pendingfree keeps some; not an
+error)".  That message is why it was invisible: pendingfree does keep some,
+and 2117 is not some.
+.PP
+.CW Fs.commit
+drains the list before it returns now \(em each round folds in the previous
+round's pendingfree and takes the next 504, so the list strictly shrinks \(em
+and 2117 blocks became 109, which is the last commit's own pendingfree and
+becomes free at the next transaction.
+.PP
+.B "And efs-write could not see it, because it measured in the same session."
+Its big-remove check does twelve operations after the removal, which is enough
+commits to fold every carried block back in, so the arm that exists for
+exactly this leak drained it before looking.  A second arm removes a 12MB file
+and lets the server EXIT at once.  Control, with the drain removed again: "5
+before, 1979 after \(em 1974 carried blocks were lost".  With it: 473, one
+commit's worth.
+.PP
+.B "Verified."
+All ten efs suites pass, including
+.CW efs-crash
+(every write refused in turn, the image required to mount holding exactly the
+last committed state with
+.CW efsck
+silent) and
+.CW efs-write 's
+block-leak check, which the design named in advance as the one that matters
+because deferred allocation is the bug class it detects.
+.CW "fatstress -n 4 -f 12 -s 8"
+stays clean.  On the board \(em same state as B1e above, four cores with the
+work on core 0, the JIT on, both arms in one boot \(em the image copies back
+byte-for-byte with
+.CW cmp
+in both arms and
+.CW efsck
+is clean in arm B.  Arm A's
+.CW efsck
+did not run: it failed to load the library through the bind, unexplained, and
+the comparison rests on
+.CW cmp
+in both arms and on arm A being the code already shipped.
 .NH 2
 B1d.  DONE \(em the keyed lookup, and the silent data loss it uncovered
 .LP

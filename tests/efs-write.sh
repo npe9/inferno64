@@ -206,6 +206,63 @@ else
 	fail=`expr $fail + 1`
 fi
 
+#
+# AND THE SAME REMOVE WITH THE SERVER EXITING IMMEDIATELY AFTER IT.
+#
+# The check above measures in the same session, and twelve operations
+# follow the remove -- enough commits to fold every carried block back
+# in.  So it could not see the half of this that matters: a commit whose
+# freed list does not fit in one superblock carries the remainder on
+# f.freed, f.freed is MEMORY, and a server that exits still holding it
+# leaks every block on it permanently.
+#
+# Measured before the fix: removing a 12MB file freed about 3000 blocks,
+# one commit took 504, and the unmount threw the other 2117 away --
+# reported by efsck as "marked used and not reached (pendingfree keeps
+# some; not an error)", which is the message that made it invisible.
+# pendingfree does keep some; 2117 is not some.
+#
+# Fs.commit drains the list before it returns now, so what is left after
+# the server has gone is one commit's worth at most.  The bound here is
+# 600 rather than 504 because the last commit also frees its own map
+# blocks.
+#
+say "removing a big file and exiting at once"
+rm -f $T/efsw5.img
+head -c 12000000 /dev/urandom > $D/huge2.bin
+cat > $T/efs-w5.sh <<'EOF'
+load std
+disk/mkefs -n 8192 /tmp/efsw5.img
+disk/efs -f /tmp/efsw5.img /n/client
+echo MARK before
+disk/efsdump /tmp/efsw5.img
+or {and {cp /tmp/efsfiles/huge2.bin /n/client/huge2.bin} {echo COPIED}} {echo COPYFAIL}
+or {and {rm /n/client/huge2.bin} {echo REMOVED}} {echo RMFAIL}
+unmount /n/client
+echo MARK after
+disk/efsdump /tmp/efsw5.img
+EOF
+runemu $T/efs-w5.txt /tmp/efs-w5.sh -pheap=256M
+b2=`awk '/MARK before/,/MARK after/' $T/efs-w5.txt |
+	grep -o 'group 0 covers[^;]*; [0-9]* marked' | tail -1 |
+	grep -o '[0-9]* marked' | grep -o '[0-9]*'`
+a2=`awk '/MARK after/,0' $T/efs-w5.txt |
+	grep -o 'group 0 covers[^;]*; [0-9]* marked' | tail -1 |
+	grep -o '[0-9]* marked' | grep -o '[0-9]*'`
+if ! grep -q REMOVED $T/efs-w5.txt; then
+	say "  FAIL: the 12MB file was not copied in and removed"
+	grep -aE 'COPYFAIL|RMFAIL|rm:|cp:' $T/efs-w5.txt | head -3 | sed 's/^/     /'
+	fail=`expr $fail + 1`
+elif [ -z "$b2" ] || [ -z "$a2" ]; then
+	say "  FAIL: could not read the block counts (before='$b2' after='$a2')"
+	fail=`expr $fail + 1`
+elif [ "$a2" -le `expr $b2 + 600` ]; then
+	say "  ok: $b2 blocks before, $a2 after the server exited"
+else
+	say "  FAIL: $b2 before, $a2 after -- `expr $a2 - $b2` carried blocks were lost"
+	fail=`expr $fail + 1`
+fi
+
 if [ $fail -eq 0 ]; then
 	say "EFS-WRITE-OK"
 	exit 0

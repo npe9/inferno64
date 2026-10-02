@@ -166,10 +166,23 @@ or {and {disk/efs -f /tmp/efsfull.img /n/client} {echo MOUNTED}} {echo MOUNTFAIL
 # its remaining turns doing nothing, which costs nothing worth having a
 # builtin for.
 #
+#
+# cp, not a redirect, HERE TOO -- which the comment below the loop
+# already explained and this loop did not follow.
+#
+# A failing redirect is not catchable in this sh: it raises and the whole
+# script ends, so FULL-AT never prints and everything after the loop
+# never runs.  It worked by accident while a full filesystem refused at
+# the WRITE, which echo reports as a failed command; once it began
+# refusing at the CREATE -- which is what the larger reserve the
+# writeback cache needs does, and is the better behaviour -- the failure
+# became a redirect failure and the arm reported the generic verdict.
+#
+echo 0123456789012345678901234567890123456789 > /tmp/fill41
 n:=0
 for i in `{seq 1 6000} {
 	or {~ $n 1} {
-		or {echo 0123456789012345678901234567890123456789 > /n/client/f^$i} {
+		or {cp /tmp/fill41 /n/client/f^$i} {
 			echo FULL-AT $i
 			n = 1
 		}

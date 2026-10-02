@@ -353,6 +353,39 @@ one.  What that cost is written up in
 .B /doc/open-issues-plan.ms
 item B1e: it read as an unbalanced tree.
 .PP
+Dirty tree nodes are held in memory and written ONCE, at the commit
+barrier.  Under copy on write every rewrite of a node needs a new block,
+so a leaf and its ancestors used to be allocated and written once per
+insert; a dirty node now has no block number at all until the barrier
+gives it one, which is what keeps the deferral from leaking the blocks it
+did not write.  Measured on the board through
+.IR sdmem (3),
+copying this board's 622-block kernel image in:
+.PP
+.EX
+                  before      after
+write ops          2374        744
+read ops           1726         96
+disk touched      9436 KB    2916 KB
+time, delay 10ms  61.65 s    22.09 s
+.EE
+.PP
+2916KB to hold 2488KB of file is 1.17x write amplification against 3.79x
+before.  The reserve grows with the dirty set to match, because a commit
+now writes all of it at once.
+.PP
+A commit DRAINS its freed list before returning.  A list longer than the
+504 a superblock holds used to leave the remainder in memory for the next
+commit, which is safe against a crash \(em a carried block is still marked
+used \(em and loses every one of them if the server exits first.  Removing
+a 12MB file leaked 2117 blocks that way, reported only as
+.I "marked used and not reached"
+by
+.IR efsck ,
+which says that is not an error because
+.B pendingfree
+legitimately produces it.
+.PP
 A block's checksum is verified where it comes off the medium and not at
 each place that navigates one \(em once per block READ rather than once
 per block TOUCHED.  The difference is 1.30x against 1.90x on three
