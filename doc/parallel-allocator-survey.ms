@@ -220,8 +220,8 @@ first allocation after boot has to do.
 That relocates the latency complaint rather than answering it, and 6.1ms
 inside
 .CW uartkick
-was worth its own look.  It found a real bug and HALVED the number, which
-is written up where the code is; briefly,
+was worth its own look.  It found a real bug, which is written up
+where the code is; briefly,
 .CW pl011_kick
 asked
 .CW islo()
@@ -232,17 +232,38 @@ takes
 first, so
 .CW islo()
 is always 0 there and the fast path was dead code.  Every console write
-took a polling drain with interrupts masked:
+took a polling drain with interrupts masked.
+.PP
+.B "AND THE A/B I TOOK FOR IT IS NOT VALID.  The arms differ by more than the fix."
 .P1
-                     max at uartkick
-before                 6130, 6131 us
-after                  3557, 3557, 3558 us
+before   6130, 6131 us   card boot, FOUR cores
+after    3557, 3558 us   JTAG boot, cores 1-3 HELD
 .P2
-Stable to a microsecond across three runs each way.  The remaining 3.5ms
-is NOT explained: with the fix a live kick should leave when the transmit
-FIFO fills, which is sixteen bytes, and sixteen bytes cannot take three
-milliseconds.  So there is a second mechanism in there and it is still
-open.
+Two things changed between those sets and only one of them is the patch.
+There is no pre-fix single-core figure for
+.CW uartkick
+to compare 3557 against \(em the pre-fix single-core run's maximum was
+9724us in
+.CW poolalloc ,
+a different lock entirely.  So the honest statement is that the
+.CW islo()
+defect is established BY READING THE CODE
+.CW ( ilock
+calls
+.CW splhi ,
+so
+.CW islo()
+cannot be true below it) and its effect on the maximum is UNMEASURED.
+.PP
+This is the rule this document exists to enforce, broken by its own
+author in the same session that restated it: a ratio is worth something
+when both arms are one boot and one configuration, and worth nothing
+otherwise.  It was caught by a peer session querying a related claim, not
+by me.  The measurement to take, when the board is free, is both arms in
+the same configuration \(em and the question to ask of the result is
+whether the residual is a second mechanism in
+.CW pl011_kick
+or whether the whole difference was the core count.
 .PP
 .B "What the instrument does NOT tell you, which matters for both figures."
 .CW ILOCKTRACE
