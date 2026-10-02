@@ -49,6 +49,7 @@ PhysUart* physuart[] = {
 	int main_pool_pcnt = 70;
 	int heap_pool_pcnt = 25;
 	int image_pool_pcnt = 5;
+	int nprocwanted = 8;
 	int cflag = 0;
 	int consoleprint = 1;
 	int panicreset = 0;

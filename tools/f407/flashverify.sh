@@ -16,7 +16,26 @@
 # where kerndate is recompiled with the image.  This builds, keeps the
 # stamp, flashes, and then reads the boot line back.
 #
-#	flashverify.sh /dev/cu.usbserial-XXXX
+#	flashverify.sh /dev/cu.usbserial-XXXX [init]
+#
+# The optional second argument is the init to build, passed to mk as
+# INIT=.  It is needed because this script BUILDS before it flashes, and
+# building without the override silently reverts a station image to the
+# shell one -- mk has no dependency on a variable, which has cost a
+# wrong measurement here before.  It greps the generated prog.s to say
+# which init the image really carries, rather than trusting the
+# argument.
+#
+# AND IT CHECKS THE PROCESS COUNT AGAINST THE INIT, because the two have
+# to agree and nothing else makes them.  armv7max25 attaches a packet
+# device to #a, which starts three kprocs, and the board's config carries
+# five -- enough for a shell image and two short for a station.  At five
+# the station prints "addr N0CALL-1" and then "no procs for kproc"
+# forever, which is a board that looks like it booted.  The number is
+# nprocwanted in the config, beside main_pool_pcnt; there is no second
+# config file for a station because the format has no include and three
+# hundred duplicated lines would drift.  So it is two edits, and this
+# refuses to flash the half of them.
 #
 # The board is reset from its own console with ^R twice running
 # (os/inferno/port/devuart.c handles it in the uart receive interrupt),
@@ -27,8 +46,29 @@ cd "$(dirname "$0")/../.." || exit 1
 ROOT=$(pwd)
 export PATH="$ROOT/MacOSX/arm64/bin:$PATH"
 
-STAMP=$(cd os/inferno/stm32f407 && mk istm32f407 2>&1 |
-	sed -n "s/.*KERNDATE='\([0-9]*\).*/\1/p" | tail -1)
+INIT=$2
+if [ -n "$INIT" ]; then
+	rm -f os/inferno/stm32f407/stm32f407.prog.* \
+	      os/inferno/stm32f407/stm32f407.xipmod.* \
+	      os/inferno/stm32f407/stm32f407.root.*
+	STAMP=$(cd os/inferno/stm32f407 && mk INIT=$INIT istm32f407 2>&1 |
+		sed -n "s/.*KERNDATE='\([0-9]*\).*/\1/p" | tail -1)
+else
+	STAMP=$(cd os/inferno/stm32f407 && mk istm32f407 2>&1 |
+		sed -n "s/.*KERNDATE='\([0-9]*\).*/\1/p" | tail -1)
+fi
+case "$INIT" in
+*ax25*)	WANTPROC=7 ;;
+*)	WANTPROC= ;;
+esac
+CARRIES=$(grep -o "from \.\./init/[a-z0-9]*\.dis" \
+	os/inferno/stm32f407/stm32f407.prog.s | sort -u | head -1)
+echo "flashverify: the image carries $CARRIES"
+if [ -n "$INIT" ] && [ "$CARRIES" != "from ../init/$INIT.dis" ]; then
+	echo "FLASHVERIFY-FAILED asked for $INIT and the image carries"
+	echo "$CARRIES -- mk kept a generated table from a previous build"
+	exit 1
+fi
 if [ -z "$STAMP" ]; then
 	# nothing was rebuilt, so the stamp is whatever the image carries
 	# already; read it off the board after and compare to itself
@@ -117,7 +157,7 @@ fi
 rm -f /tmp/fv-$$.log
 
 # And the board's own account.  This is the whole point.
-python3 - "$PORT" "$STAMP" <<'PY'
+python3 - "$PORT" "$STAMP" "$WANTPROC" <<'PY'
 import re, sys, time
 sys.path.insert(0, "tools/radio")
 from twoboard import open_board
@@ -137,5 +177,19 @@ print("flashverify: the board says kerndate %s, nproc %s"
 if want and got != want:
     print("FLASHVERIFY-FAILED built %s, the board is running %s" % (want, got))
     raise SystemExit(1)
+need = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None
+if need:
+    if p is None:
+        print("FLASHVERIFY-FAILED the boot line did not say nproc, so the"
+              " process count cannot be checked")
+        raise SystemExit(1)
+    if int(p[-1]) < int(need):
+        print("FLASHVERIFY-FAILED this init needs nproc %s and the image has"
+              " %s." % (need, p[-1]))
+        print("Set nprocwanted in os/inferno/stm32f407/stm32f407 and build"
+              " again: at %s the station reaches \"addr\" and then \"no procs"
+              " for kproc\" forever, which looks like a board that booted."
+              % p[-1])
+        raise SystemExit(1)
 print("FLASHVERIFY-OK")
 PY

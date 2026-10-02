@@ -26,6 +26,27 @@ extern int consoleprint;
 extern int main_pool_pcnt;
 extern int heap_pool_pcnt;
 extern int image_pool_pcnt;
+/*
+ * How many processes this image wants, from the config's code section
+ * rather than from the board's mem.h.
+ *
+ * It was NPROC, a constant in a header, and that is the wrong place as
+ * soon as one board has two images.  os/inferno/stm32f407 does: a shell
+ * image wants five, because at seven the shell and lil(1) both die for
+ * want of heap, and an AX.25 station image wants seven, because #a
+ * starts three kprocs the moment a packet device is attached and at five
+ * it gets "no procs for kproc" -- with or without a shell, since an init
+ * removes the heap pressure and not the process pressure.  Both numbers
+ * are measured; os/inferno/stm32f407/mem.h has all three it was tried
+ * at.
+ *
+ * Which image a board carries is already selected by file, "mk
+ * INIT=armv7max25".  This is the matching selection for the number, and
+ * it is a value in a config rather than a conditional in a header
+ * because that is how this tree picks per-board facts -- the same way
+ * main_pool_pcnt beside it does.
+ */
+extern int nprocwanted;
 
 void
 poolinit(void)
@@ -112,7 +133,7 @@ confinit(void)
 		conf.mem[2].npage = conf.npage2;
 	}
 	conf.ialloc = (((conf.npage*main_pool_pcnt)/100)/2)*BY2PG;
-	conf.nproc = NPROC;
+	conf.nproc = nprocwanted;
 	conf.nmach = 1;
 }
 

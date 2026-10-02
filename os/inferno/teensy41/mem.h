@@ -62,7 +62,6 @@
  * #c/memory because it is not pool memory.  16 is three times what was
  * measured.  See doc/xip.ms.
  */
-#define	NPROC		16
 #define	CONFNAME	"teensy41"
 
 /*

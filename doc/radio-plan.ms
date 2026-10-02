@@ -5528,3 +5528,85 @@ difference that a malformed pair is now reported by
 rather than by
 .IR radiocfg ,
 which is accurate.
+.PP
+.B "The number is config data now, and the station runs on silicon."
+.CW NPROC
+was a constant in each armv7m board's
+.IR mem.h ,
+and
+.CW "conf.nproc = NPROC"
+in
+.I os/inferno/armv7m/main.c
+was its only user.  It is
+.CW nprocwanted
+in the config's
+.B code
+section now, beside
+.CW main_pool_pcnt ,
+which is how this tree picks a per-board value without a conditional \-
+and the reason it had to move is that one board has two images wanting
+different numbers.  All four armv7m boards keep the value their header
+had: mps2 and teensy41 sixteen, nucleof303 eight, stm32f407 five.
+.PP
+.B "Shown to be the source, which is the part that matters."
+Compiling with the same numbers it already had would prove nothing, so
+the config was changed and the kernel followed: with
+.CW "nprocwanted = 7"
+the board boots
+.CW "procinit conf.nproc 7" ,
+and mps2 with its own sixteen boots sixteen in the same build.
+.PP
+.B "And the station on silicon,"
+board 1 with
+.CW "mk INIT=armv7max25"
+and seven:
+.DS
+.CW "armv7m ax25 init"
+.CW "ax25init: uid 2037303959315008002f0022"
+.CW "ax25init: ppm -3550"
+.CW "ax25init: carrier iounit 125"
+.CW "ax25init: addr N0CALL-1"
+.CW "ax25init: attached fd 4"
+.CW "ax25init: conversation 0"
+.CW "ax25init: addressing N0CALL-2"
+.CW "ax25init: ax25 iounit 109, which is the carrier's 125 less 16"
+.CW "ARMV7M-AX25-UP"
+.CW "ax25init: beacon 1 ... beacon 25"
+.DE
+with
+.CW "kstack high water 2424 of 4096" .
+Everything in there except the two iounits came out of
+.B /lib/radio
+by way of the serial the part itself holds: the crystal correction, the
+callsign, and the station it addresses.  It hears nothing, because the
+station it addresses is board 2 and board 2's console is dead so it
+cannot be flashed.
+.PP
+.B "There is no second config file and the reason is worth writing down."
+The config format has no include \-
+.I os/inferno/port/mkdevlist
+reads sections and nothing else \- so a station config would be three
+hundred duplicated lines that drift.  So a station image is two edits,
+.CW "mk INIT=armv7max25"
+and
+.CW "nprocwanted = 7" ,
+and
+.I tools/f407/flashverify.sh
+refuses the half of them:
+.DS
+.CW "flashverify: the board says kerndate 1790900496, nproc 5"
+.CW "FLASHVERIFY-FAILED this init needs nproc 7 and the image has 5."
+.CW "Set nprocwanted in os/inferno/stm32f407/stm32f407 and build"
+.CW "again: at 5 the station reaches \(dqaddr\(dq and then \(dqno procs for"
+.CW "kproc\(dq forever, which looks like a board that booted."
+.DE
+It also greps the generated
+.I prog.s
+and fails if the image does not carry the init it was asked for, because
+mk has no dependency on a variable and building without the override
+silently reverts a station image to the shell one.
+.PP
+The committed default is five and the shell init, because that is the
+image a person uses and the one every tool in
+.I tools/radio
+drives.

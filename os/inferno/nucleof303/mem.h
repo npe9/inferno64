@@ -36,7 +36,6 @@
 #define	MAXMACH		1
 #define	HZ		100
 #define	KSTACK		(4*1024)
-#define	NPROC		8
 #define	CONFNAME	"nucleof303"
 
 #define	CPUHZ		64000000	/* HSI/2 * 16 */

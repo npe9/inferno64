@@ -199,6 +199,51 @@ code
 	int main_pool_pcnt = 50;
 	int heap_pool_pcnt = 49;
 	int image_pool_pcnt = 1;
+#
+# HOW MANY PROCESSES, AND ALL THREE VALUES IT WAS TRIED AT.
+#
+# #a wants three kprocs of its own the moment a packet device is
+# attached to it -- ax25recv, ax25send and ax25tick, in
+# os/inferno/radio/devax25.c -- and five is two short:
+#
+#	; ax25chk setup N0CALL-1
+#	addr-accepted ok
+#	no procs for kproc
+#	kstack high water 3096 of 4096
+#
+# So it was raised, and raising it is worse than leaving it alone.
+# KSTACKPREALLOC takes every stack from xalloc at boot, so each process
+# is 4096 bytes of fixed allocation out of the 159744 free, and the two
+# pools were already competing for what is left: main 79850 plus heap
+# 78253 is more than the arena has, so those maxima are ceilings and not
+# reservations and lowering the percentages would free nothing.
+# Measured, all three on the board:
+#
+#	5   the shell works, redirections work, lil loads and runs.
+#	    #a cannot start: "no procs for kproc".
+#	7   #a starts.  Nothing else does.  A redirection gives
+#	    "[Sh] Broken: out of memory: main" from a fresh boot, and lil
+#	    prints its banner and then dies before running a statement:
+#	    "sh: /dis/lil.dis: exception: out of memory: main".  Both of
+#	    the things plan items 5 and 6 are about.
+#	9   the board reaches a prompt and the first command fails,
+#	    "[String] Broken: out of memory: heap" -- even echo.
+#
+# AN INIT REMOVES THE HEAP PRESSURE AND NOT THE PROCESS PRESSURE, which
+# was worth finding out: os/inferno/init/armv7max25.b with no shell
+# anywhere still gives "no procs for kproc" at five, and at seven comes
+# up and beacons.  Three kprocs is three slots whatever else is running.
+#
+# So five is right for a shell image and seven for a station image, and
+# this is a value in a config rather than a constant in a header for
+# exactly that reason -- the same way main_pool_pcnt above it is.  A
+# station image is "mk INIT=armv7max25" with this set to 7.
+#
+# And 3096 in that first trace is why KSTACK in mem.h stays at 4096: the
+# comment there records that 3072 was tried and reverted because the
+# deep paths were unmeasured, and a kproc has now been seen 3096 deep.
+#
+	int nprocwanted = 5;
 	int cflag = 0;
 	int consoleprint = 1;
 	int panicreset = 0;

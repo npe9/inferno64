@@ -119,65 +119,12 @@
 #define	KSTACKPREALLOC	1
 #define	KSTACKWATCH	1	/* measure it; see os/inferno/port/proc.c */
 /*
- * FIVE, AND THE MEASUREMENT THAT PUT IT BACK.
- *
- * #a wants three kprocs of its own the moment a packet device is
- * attached to it -- ax25recv, ax25send and ax25tick, in
- * os/inferno/radio/devax25.c -- and five is two short:
- *
- *	; ax25chk setup N0CALL-1
- *	addr-accepted ok
- *	no procs for kproc
- *	kstack high water 3096 of 4096
- *
- * So this was raised, and raising it is worse than leaving it alone.
- * KSTACKPREALLOC takes all conf.nproc stacks from xalloc at boot, so
- * each one is 4096 bytes of fixed allocation out of the 159744 free,
- * and the two pools were already competing for what is left -- main
- * 79850 plus heap 78253 is more than the arena has, so those maxima are
- * ceilings and not reservations and lowering them would free nothing.
- * Measured, all three on the board:
- *
- *	5   the shell works, redirections work, lil loads and runs.
- *	    #a cannot start: "no procs for kproc".
- *	7   #a starts.  Nothing else does.  A redirection gives
- *	    "[Sh] Broken: out of memory: main" from a fresh boot, and
- *	    lil prints its banner and then dies before running a
- *	    statement -- "sh: /dis/lil.dis: exception: out of memory:
- *	    main".  Both of the things plan items 5 and 6 are about.
- *	9   the board boots to a prompt and the first command fails:
- *	    "[String] Broken: out of memory: heap".  Even echo.
- *
- * Seven is not a trade, it is a board that does one thing and nothing
- * else, so the default is five.
- *
- * "THE WAY TO HAVE #a IS NOT TO RUN A SHELL" WAS WRITTEN HERE AND IS
- * HALF WRONG.  An init that attaches #a itself does remove the heap
- * pressure -- no fork, no second module in the pool -- but it does not
- * remove the PROCESS pressure, and three kprocs is three slots whatever
- * else is running.  Measured, os/inferno/init/armv7max25.b with no
- * shell anywhere:
- *
- *	NPROC 5, no shell:  "no procs for kproc", repeating.
- *	NPROC 7, no shell:  ARMV7M-AX25-UP, ax25 iounit 109, beacons
- *	                    running, and two of them hear each other.
- *
- * So seven is right for a station image and wrong for a shell image,
- * and which image a board carries is already chosen by file --
- * "mk INIT=armv7max25".  What is not yet chosen that way is this
- * number, because it is a constant in a header both images share.  It
- * belongs in the config's data section beside main_pool_pcnt and
- * heap_pool_pcnt, which is how this tree selects a per-board value
- * without a conditional; until it is, a station image is built by
- * editing this line, and that is recorded rather than hidden.  See
- * doc/radio-plan.ms item 9.
- *
- * And 3096 in that first trace is why KSTACK stays at 4096.  The
- * comment above records that 3072 was tried and reverted because the
- * deep paths were unmeasured; a kproc has now been seen 3096 deep, so
- * 3072 would have overflowed it.
+ * The number of processes is NOT here any more.  It is nprocwanted in
+ * this board's config file, beside main_pool_pcnt, because one board
+ * has two images that want different numbers and a constant in a header
+ * cannot say that.  The measurements are in the config, where the value
+ * is.
  */
-#define	NPROC		5
 #define	CONFNAME	"stm32f407"
 
 /*
