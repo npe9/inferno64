@@ -33,6 +33,11 @@
 # the machine stopped with a gdb stub on tcp::1234 ("target remote
 # :1234"), console on stdio.
 #
+# VMHOST_FWD=port forwards that host port to the guest's 5640, where
+# os/inferno/init/vmserveinit.b exports the hypervisor over Styx.  The
+# forward is on the igb's network: it is ether0, the interface a DHCP
+# loop tries first.
+#
 # VMHOST_IOMMU=0 and VMHOST_IGB=0 leave the IOMMU or the igb out, to
 # tell a fault in either from one in the rest of the machine.
 #
@@ -91,9 +96,11 @@ if [ $cmd = run ] && [ $# -gt 0 ]; then
 	esac
 fi
 
+FWD=
+[ -n "$VMHOST_FWD" ] && FWD=",hostfwd=tcp:127.0.0.1:$VMHOST_FWD-:5640"
 IOMMU="-device intel-iommu,intremap=on"
 [ "${VMHOST_IOMMU:-1}" = 0 ] && IOMMU=
-IGB="-netdev user,id=net1 -device igb,netdev=net1,bus=rp2"
+IGB="-netdev user,id=net1$FWD -device igb,netdev=net1,bus=rp2"
 [ "${VMHOST_IGB:-1}" = 0 ] && IGB=
 
 # The IOMMU comes first: QEMU wants it created before the devices whose
