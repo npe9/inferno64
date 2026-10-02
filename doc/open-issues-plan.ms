@@ -2748,7 +2748,27 @@ Found while closing F1, not part of it
 .NH 2
 G1.  efs can commit a superblock whose tree is not all on the medium
 .LP
-.B OPEN.
+.B "CLOSED as a failure, not as a cause."
+Both symptoms below are now PRODUCED ON DEMAND, by
+.CW sdmem (3)'s
+injected faults, and both are caught at mount with the fallback reached:
+.P1
+node checksum 1000 1, want 0 0      a lost tree write
+                                    reorder 8 partial 1 stop 40
+                                    caught: "has no tree"; falls back
+
+block N is in the tree and         a map older than its tree
+free in the map                     reorder 8 partial 1 stop 130
+                                    caught by spineok's bit check;
+                                    falls back
+.P2
+The second needed a new check and is written up in G1a; the hypothesis about
+.CW dossrv
+below is refuted and is written up in G1b.  What remains unestablished is why
+the BOARD's image came to be that way, and the answer is now narrowed to the
+card's own volatile cache or to the confound this item already names.
+.PP
+.B "The original report, kept because the arithmetic in it is what made the rest possible."
 The board's
 .CW /n/dos/efs.img
 would not mount:
@@ -2805,7 +2825,7 @@ superblock whose tree is incomplete is preferred over an older one whose tree
 is whole.  Two superblocks exist precisely for this and the second is not
 reached.
 .PP
-.B "Hypothesis, NOT established."
+.B "Hypothesis, REFUTED \(em see G1b, which measures it."
 That writes within one transaction reached the medium out of order because the
 backing store is a file on
 .CW dossrv ,
@@ -2876,6 +2896,16 @@ is the point:
 .CW -F
 stops writes at the efs layer, where the commit order still holds, so it cannot
 produce "the superblock landed and a node did not".
+.PP
+.B "And that hand-zeroing is now unnecessary, which is the better test."
+.CW sdmem (3)
+produces the same state from the MEDIUM, which is where it comes from, and at
+twenty-one cut points rather than one hand-chosen block \(em
+.CW tests/efs-fault .
+.CW efs-fallback
+stays: it is the only arm that runs under host
+.CW emu ,
+and a check that needs a board is a check that does not run.
 .PP
 .CW tests/efs-fallback.sh
 is that experiment, and it was checked against the old library before being
