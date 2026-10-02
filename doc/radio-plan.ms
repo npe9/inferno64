@@ -6052,3 +6052,59 @@ antenna, which is where it was:
 which is the path loss between two antennas and not the receiver's error
 \- the exact mistake the whole substitution is built to avoid, made at
 the first opportunity.
+.PP
+.B "Leg A taken, and three things learned getting it."
+With the cable on the tinySA's input,
+.CW "offset.py sa cabled"
+gives
+.CW "ramp 0  peak -78.69 dBm at 914993764, floor -119.19"
+\- forty decibels over the instrument's floor, and inside the range where
+this receiver is linear.  That is the true power at the cable's far end
+and it is written down for leg B.
+.PP
+.B "One rung, because the carrier verb does not ladder."
+The run started as five rungs and read
+.B "exactly -30.19 dBm at ramps 3, 7, 11, 15 and 31"
+\- five transmit powers spanning fourteen and a half decibels of nominal
+\- then -78.69 at ramp 0.  So the carrier responds to
+.B PA_POWER_RAMP
+by forty-eight decibels between 0 and 3 and is flat across everything
+above it.
+.PP
+.B "It is not the instrument,"
+which was the first thing suspected.  Its own input attenuator was swept
+0 to 30dB on the low path against FM broadcast and the reported level
+moved less than two decibels \- which is a calibrated analyser behaving
+correctly, because the level it reports is meant to be independent of its
+attenuator.  (That also showed the cable was really on the input: FM
+peaked at -100dBm, which is a cabled input and not an antenna.)  And
+.I paladder.py
+got a clean ladder over the same ramp range, -19 to -45dBm across 63 down
+to 7, using
+.I packets
+rather than the carrier verb.
+.B "So the carrier verb's random and infinite-length mode does not reproduce the power ladder that packet transmission does,"
+which is a finding about the driver and not about this measurement.
+.PP
+.B "And an invented threshold refused good data twice."
+.I Offset.py
+began by refusing a leg A more than twelve decibels under the nominal, on
+the reasoning that a cable cannot lose that much.  It refused a genuinely
+cabled path at 20.8dB \- real loss in the pigtail, its connectors and a
+transmitter under its datasheet figure.  Widened to forty, it refused
+ramp 0 at 61.2dB, where most of the shortfall is the amplifier and not
+the path.
+.PP
+The premise was wrong both times.
+.B "A substitution cancels everything common to its two legs"
+\- the cable, the connectors, and the transmitter's own uncalibrated
+output \- so what the nominal says is irrelevant to the result, and a
+threshold against it is a threshold against something the method does not
+depend on.  The loss is reported now and judged not at all.  What knows
+whether the cable is on is whoever moved it, which is why the subcommand
+takes
+.B cabled
+and records it; what is checked instead is everything that can be, which
+is that the peak is a carrier and not noise, that no two rungs read
+alike, that the part holds the ramp it was given, and that leg B's RSSI
+is valid.

@@ -1,6 +1,28 @@
 #!/usr/bin/env python3
 """The RSSI offset, by substitution, with no calibrated generator.
 
+ONE RUNG, AND WHY.  The ladder this started with read the same -30.19 dBm
+at ramps 3, 7, 11, 15 and 31 -- five transmit powers spanning fourteen
+and a half decibels of nominal -- and then -78.69 at ramp 0.  So the
+carrier responds to the ramp field, by forty-eight decibels between 0 and
+3, and is flat across everything above it.
+
+It is not the instrument.  Its own input attenuator was swept 0 to 30 dB
+on the low path with FM broadcast and the reported level moved less than
+two decibels, which is a calibrated analyser behaving correctly: the
+level it reports is meant to be independent of its attenuator.  And
+paladder.py got a clean ladder over that same ramp range -- -19 to -45
+dBm across 63 down to 7 -- using PACKETS rather than the carrier verb.
+
+So the carrier verb's random and infinite-length mode does not reproduce
+the power ladder that packet transmission does, and that is a separate
+finding (doc/radio-plan.ms item 2).  What this needs is one accurate
+level, and ramp 0 is where the carrier demonstrably gives one: -78.69
+dBm, forty decibels over the instrument's floor and inside the range
+where this receiver is linear, which the plan puts at -68 down to at
+least -89.
+
+
 doc/radio-plan.ms item 2's second half.  The offset -- AGC_GAIN_ADJUST,
 -102 here, which is the figure TI's examples use and not a measurement of
 this board -- turns the part's raw RSSI into dBm.  Getting it needs a
@@ -33,7 +55,7 @@ were taken minutes apart is still valid -- nothing in between changes --
 and a run whose halves were taken at DIFFERENT PA settings is not, so the
 file carries the settings and leg B refuses if they do not match.
 
-	offset.py sa            leg A: board 1 into the tinySA
+	offset.py sa cabled     leg A: board 1 into the tinySA
 	offset.py rx            leg B: board 1 into board 2
 	offset.py report        what the two legs say
 
@@ -57,7 +79,7 @@ STATE = os.environ.get("CLAUDE_JOB_DIR", "/tmp") + "/tmp/offset.json"
 
 # PA_POWER_RAMP values and the dBm the datasheet's formula gives.  None
 # above 15: see SAFETY above.
-LADDER = [15, 11, 7, 3, 0]
+LADDER = [0]
 SAFEMAX = 15
 
 
@@ -79,57 +101,101 @@ def setramp(b, ramp):
     return float(m.group(2))
 
 
+def peakof(tinysa, fd):
+    """One sweep around the carrier: the peak and the floor."""
+    pts = tinysa.sweep(fd, HZ - 400000, HZ + 400000)
+    if not pts:
+        raise SystemExit("offset: the tinySA returned no sweep")
+    pk = max(pts, key=lambda p: p[1])
+    fl = sorted(v for f, v in pts)[len(pts) // 4]
+    return pk[1], pk[0], fl
+
+
 def lega():
+    # The path is asserted and not inferred: see the comment in the loop.
+    if len(sys.argv) < 3 or sys.argv[2] != "cabled":
+        raise SystemExit(
+            "offset: say 'offset.py sa cabled' once the cable really is\n"
+            "from the board to the tinySA's INPUT.  Nothing here can tell a\n"
+            "cable from an antenna -- the loss of a real one overlaps what\n"
+            "a short air path does -- and a leg A taken over the air gives\n"
+            "a plausible number and a wrong offset.  The assertion is\n"
+            "recorded in the file so a run can be read back later.")
     import tinysa
     tx = open_board(B1, "board1")
     tx.ctl("freq %d" % HZ, settle=3.0)
     fd = tinysa.open_port()
     if not tinysa.alive(fd):
         raise SystemExit("offset: the tinySA does not answer")
-    out = {"hz": HZ, "legA": {}}
+    # THE CONDITION tools/tinysa/README CALLS CALIBRATED, set rather than
+    # inherited: "a tinySA ULTRA at 100kHz resolution bandwidth and no
+    # input attenuation is a calibrated receiver".  Neither was being set
+    # by sweep(), so both were whatever the last session left -- and the
+    # floor moved nineteen decibels between two runs of this for that
+    # reason alone, which read as a path change and was a resolution
+    # bandwidth of 10kHz against a narrower one.  A carrier's peak power
+    # does not depend on rbw and a noise floor does, so the peaks were
+    # comparable and the floors were not; now both are.
+    tinysa.cmd(fd, "rbw 100")
+    print("  tinySA: rbw 100kHz")
+    out = {"hz": HZ, "legA": {}, "path": "cabled",
+           "when": time.strftime("%Y-%m-%d %H:%M")}
     print("leg A: board 1 into the tinySA, which is the trusted instrument")
     for ramp in LADDER:
         nominal = setramp(tx, ramp)
         tx.ctl("carrier on", settle=3.0)
-        # A narrow sweep around the carrier; the peak is the carrier.
-        pts = tinysa.sweep(fd, HZ - 400000, HZ + 400000)
+        p0, at0, fl0 = peakof(tinysa, fd)
         tx.ctl("carrier off", settle=2.5)
-        if not pts:
-            raise SystemExit("offset: the tinySA returned no sweep")
-        peak = max(pts, key=lambda p: p[1])
-        # and the floor, so a reading that is not a carrier is visible
-        floor = sorted(v for f, v in pts)[len(pts) // 4]
-        print("  ramp %-3d nominal %+6.1f  tinySA peak %+7.2f at %d"
-              "  floor %+7.2f" % (ramp, nominal, peak[1], peak[0], floor))
+        peak = (at0, p0)
+        floor = fl0
+        print("  ramp %-3d nominal %+6.1f  peak %+7.2f at %d  floor %+7.2f"
+              % (ramp, nominal, p0, at0, fl0))
         if peak[1] - floor < 15:
             print("    VOID: that peak is less than 15dB over the floor, so"
                   " it is not a carrier")
             raise SystemExit(1)
-        # IS THE CABLE ACTUALLY ON?  Nothing else here can tell, and a
-        # leg A taken over the air would produce perfectly plausible
-        # numbers and a wrong offset -- which is the one failure this
-        # whole measurement exists to avoid.
+        # THE LOSS IS REPORTED AND NOT JUDGED AT ALL, and two false
+        # refusals bought that.
         #
-        # The level discriminates, by tens of decibels.  A -10dBm
-        # carrier down a short cable arrives a few dB down; the same
-        # carrier across a few inches of air read -29.9dBm when this
-        # bench measured it, twenty decibels lower.  The nominal is the
-        # datasheet's formula and is itself uncalibrated, but it is not
-        # wrong by twenty.
+        # This started as "refuse more than twelve decibels under the
+        # nominal, because a cable cannot lose that much".  It refused a
+        # genuinely cabled path at 20.8 dB -- real loss in the pigtail,
+        # its connectors and a transmitter whose output is under the
+        # datasheet's formula.  Widened to forty, it then refused ramp 0
+        # at 61.2 dB, where most of the shortfall is the amplifier
+        # collapsing rather than anything in the path.
         #
-        # doc/radio-plan.ms records the other half of the signature too:
-        # cabled, the floor reads about eight decibels quieter than on an
-        # antenna, because an antenna hears the band.
-        if peak[1] < nominal - 12:
-            print("    VOID: %+.1f dBm is %.1f below the nominal %+.1f."
-                  % (peak[1], nominal - peak[1], nominal))
-            print("    That is a radiated path, not a cable: this leg has"
-                  " to be the tinySA's input")
-            print("    CABLED to the board, or the offset it gives is the"
-                  " path loss and not the receiver.")
-            raise SystemExit(1)
+        # The premise was wrong both times.  A SUBSTITUTION CANCELS
+        # EVERYTHING COMMON TO ITS TWO LEGS -- the cable, the
+        # connectors, and the transmitter's own uncalibrated output --
+        # so what the nominal says is irrelevant to the result.  A
+        # threshold against it is a threshold against something the
+        # method does not depend on, and an invented one refuses good
+        # data: twice, here.
+        #
+        # What actually knows whether the cable is on is whoever moved
+        # it, which is why this subcommand takes "cabled" and records
+        # it.  What is checked instead is everything that can be: the
+        # peak is a carrier and not noise, no two rungs read alike, the
+        # part holds the ramp that was asked for, and leg B's RSSI is
+        # valid.
+        loss = nominal - peak[1]
+
+        # AND NO TWO RUNGS MAY READ THE SAME.  Different transmit
+        # powers giving one number is not a measurement whatever the
+        # cause, and it is the thing that happened: it is why the ladder
+        # above is one rung.  The check stays, because a second rung
+        # added later must not quietly repeat it.
+        for k, v in out["legA"].items():
+            if abs(v["peak"] - peak[1]) < 0.05:
+                print("    VOID: ramp %s read %+.2f and this reads %+.2f."
+                      % (k, v["peak"], peak[1]))
+                print("    Two transmit powers cannot give one level;"
+                      " something is holding the reading.")
+                raise SystemExit(1)
         out["legA"][str(ramp)] = {"nominal": nominal, "peak": peak[1],
-                                  "at": peak[0], "floor": floor}
+                                  "at": peak[0], "floor": floor,
+                                  "loss": loss}
         sys.stdout.flush()
     setramp(tx, 15)
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
