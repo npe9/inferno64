@@ -612,3 +612,4 @@ __pycache__/
 # the QEMU model corrections the hypervisor bench is built with
 !/scripts/qemu-patches/*.patch
 !/scripts/bochs-patches/*.patch
+/.guest/
