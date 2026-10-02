@@ -731,7 +731,7 @@ value of 3.  The RSSI reads \-110dBm where it read \-9.
 .PP
 So the number is no longer a hundred decibels out.  It is not yet
 calibrated, which is item 2.
-.IP "2.  Calibrate it against a source, not a datasheet.  Unblocked, and half of it is still not possible." 6
+.IP "2.  Calibrate it against a source, not a datasheet.  Slope done; the offset wants a source accurate at 915MHz, not a connector." 6
 \-102 is the figure TI's examples use and it is not a measurement of
 this board.  The tinySA has a signal generator in it, so a known level
 at a known frequency into the click's antenna gives the offset this
@@ -789,10 +789,32 @@ What is still not possible is the half that matters.  A known level
 into the click's antenna is what gives an offset, and free space
 between two antennas is an unknown loss, so what a radiated source
 calibrates is the slope \- whether ten dB of generator moves ten dB of
-RSSI \- and not the offset.  The offset wants a cable from the
-generator to the click's u.FL, which wants an adapter this bench does
-not have.  The slope is worth having on its own and needs only an
-antenna on the generator connector.
+RSSI \- and not the offset.
+.PP
+.B "THE NEXT SENTENCE USED TO SAY THE OFFSET WANTS A u.FL ADAPTER THIS BENCH DOES NOT HAVE, AND THAT IS WRONG."
+It contradicted the paragraph above it, which records the generator
+cabled straight into the click and the connection proved real by the
+floor dropping eight decibels when it was made.  The cable exists and has
+been used.  Worse, the claim was repeated for a day afterwards as the
+reason item 2 is half done, in commits and in a report, by reading one
+sentence and not the one before it.
+.PP
+.B "What the offset actually wants is a level-accurate source at 915MHz."
+The tinySA's generator is out of its specified band there \- its low
+output path stops at 800MHz \- so its absolute level cannot be trusted
+and, as the paragraph above says, how much of that \-20 intercept is
+cable and how much is an uncalibrated output cannot be separated here.
+A connector does not fix that; a generator specified to 915, or a source
+whose absolute level is known at 915 with a calibrated attenuator, does.
+.PP
+.B "The connector that IS missing is a different one."
+There is no u.FL-to-u.FL cable, which is what would join the two
+.I boards
+to each other and take the air out of a measurement between them.  That
+is what item 9's error-rate bullet wants \- a channel whose loss is set
+by an attenuator rather than by how far apart two antennas happen to be
+\- and not what item 2 wants.  Mixing the two up is how the wrong one
+came to be written down.
 .PP
 What was written here before, and is false:
 The generator does not reach the board.  At 868 it cannot: a tinySA
@@ -5014,8 +5036,11 @@ on the boards, reading every packet's own RSSI out of
 header, gives 0.949 over 28dB.  A real attenuator stepping a real
 generator and a transmitter's own power field, measured through two
 different paths, land within two per cent of each other \- which is as
-close to separating the two factors as this bench can get without the
-u.FL adapter item 2 wants.
+close to separating the two factors as this bench can get.
+.B "An earlier version of this sentence ended \(dqwithout the u.FL adapter item 2 wants\(dq, and that was a stale claim repeated:"
+see item 2, where the generator has in fact been cabled into the click.
+What separating them actually wants is a source whose absolute level is
+accurate at 915MHz.
 .PP
 The spread within a rung is nought to one decibel, which is this
 receiver's repeatability, and it is only visible because

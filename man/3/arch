@@ -43,15 +43,29 @@ I/O ports.
 The port accessed is determined by the byte offset of the
 file descriptor.
 .SS "What a board adds"
-The files above are the PC's.
-.B #P
-is not only the PC's, though: a board registers its own with
+.B "This device is always architecture specific and has no portable implementation,"
+which follows from what it is for: it exists to present the hardware that
+is not portable.  There is no
+.I port/devarch.c
+in this tree or in any of the three kernels in it \- every one lives in an
+architecture's directory,
+.I os/inferno/pc
+and
+.I os/inferno/armv7m
+here, and
+.I emu/Nt ,
+.I os/9front/pc
+and
+.I os/osprey/pc
+beside them.  A page that named a portable one was naming a file that
+cannot exist.
+.PP
+So the files above are the PC's, and a board registers its own with
 .CW addarchfile ()
-and they appear here beside them, so what
+\- they appear here beside the architecture's, and what
 .B #P
-holds depends on which kernel is running.  A port's worth of hardware
-that is one board's and not portable belongs here rather than in a device
-of its own.
+holds depends on which kernel is running.  Hardware that is one board's
+belongs here rather than in a device of its own.
 .PP
 .I Os/inferno/stm32f407
 adds five, and they are listed because nothing else lists them:
