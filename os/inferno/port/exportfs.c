@@ -395,6 +395,7 @@ exflushed(Export *fs, Exq *fq)
 			if(q->finished){
 				/* slave replied and emptied its flush queue; we can Rflush now */
 				unlock(q);
+				unlock(fs);
 				return 1;
 			}
 			/* append to slave's flush queue */
@@ -407,7 +408,11 @@ exflushed(Export *fs, Exq *fq)
 			if(q->busy){
 				pid = q->slave->pid;
 				/* swiproc(q->slave, 0); */
-				postnote(q->slave, 1, "exflushed", NExit);
+				/*
+				 * not dolock: that qlocks the slave's debug
+				 * lock under fs's and q's spin locks
+				 */
+				postnote(q->slave, 0, "exflushed", NExit);
 			}
 			unlock(q);
 			unlock(fs);
@@ -457,7 +462,7 @@ exshutdown(Export *fs)
 		lock(q);
 		q->shut = 1;
 		/* swiproc(q->slave, 0);*/	/* whether busy or not */
-		postnote(q->slave, 1, "exshutdown", NExit);
+		postnote(q->slave, 0, "exshutdown", NExit);	/* under spin locks: see exflushed */
 		unlock(q);
 	}
 	unlock(fs);
