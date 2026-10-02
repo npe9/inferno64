@@ -17,6 +17,7 @@ typedef struct {
 			uvlong hdr[1];
 		} exechdr64;
 		Ehdr elfhdr32;			/* elf.h */
+		Ehdr64 elfhdr64;		/* elf.h */
 		struct mipsexec mips;	/* bootexec.h */
 		struct mips4kexec mips4k;	/* bootexec.h */
 		struct sparcexec sparc;	/* bootexec.h */
@@ -33,6 +34,7 @@ static	int	common(int, Fhdr*, ExecHdr*);
 static	int	commonllp64(int, Fhdr*, ExecHdr*);
 static	int	adotout(int, Fhdr*, ExecHdr*);
 static	int	elfdotout(int, Fhdr*, ExecHdr*);
+static	int	elf64dotout(int, Fhdr*, ExecHdr*);
 static	int	armdotout(int, Fhdr*, ExecHdr*);
 static	void	setsym(Fhdr*, long, long, long, vlong);
 static	void	setdata(Fhdr*, uvlong, long, vlong, long);
@@ -566,8 +568,14 @@ elfdotout(int fd, Fhdr *fp, ExecHdr *hp)
 
 	/* bitswap the header according to the DATA format */
 	ep = &hp->e.elfhdr32;
+	/*
+	 * 64-bit ELF has its own layout, not a widened version of this
+	 * one, so it gets its own reader rather than a flag in here.
+	 */
+	if(ep->ident[CLASS] == ELFCLASS64)
+		return elf64dotout(fd, fp, hp);
 	if(ep->ident[CLASS] != ELFCLASS32) {
-		werrstr("bad ELF class - not 32 bit");
+		werrstr("bad ELF class - not 32 or 64 bit");
 		return 0;
 	}
 	if(ep->ident[DATA] == ELFDATA2LSB) {
@@ -685,6 +693,158 @@ elfdotout(int fd, Fhdr *fp, ExecHdr *hp)
 
 	settext(fp, ep->elfentry, ph[it].vaddr, ph[it].memsz, ph[it].offset);
 	setdata(fp, ph[id].vaddr, ph[id].filesz, ph[id].offset, ph[id].memsz - ph[id].filesz);
+	if(is != -1)
+		setsym(fp, ph[is].filesz, 0, ph[is].memsz, ph[is].offset);
+	free(ph);
+	return 1;
+}
+
+/*
+ * 64-bit ELF, which nothing here could read.
+ *
+ * WHY IT MATTERS.  Every kernel this tree links with "-H7" is an
+ * ELFCLASS64 file -- raspi3b, pc64, armv7, mps2, the riscv boards -- and
+ * libmach's ELF reader rejected all of them with "bad ELF class - not 32
+ * bit".  So an address from a panic, or from /dev/ilock, could not be
+ * turned into a function name on any of them, and the workaround was to
+ * link the same objects a second time in Plan 9 format just for the
+ * symbol table.
+ *
+ * The symbol table IS in the ELF.  7l puts it in a program header of
+ * type NOPTYPE with filesz=symsz and memsz=pcsz, which is the same
+ * convention the 32-bit path above already looks for -- this needed no
+ * new idea, only the 64-bit structs.
+ *
+ * One wrinkle worth knowing: 7l writes FOUR-byte symbol values for
+ * -H7 and eight-byte ones for the Plan 9 header (asm.c switches on
+ * HEADTYPE), and syminit picks the width from fp->_magic, which the ELF
+ * table entry leaves 0.  So the widths already agree, and they agree by
+ * accident rather than by design.  A kernel linked above 4GB would need
+ * both halves of that changed.
+ */
+static int
+elf64dotout(int fd, Fhdr *fp, ExecHdr *hp)
+{
+	ulong (*swal)(ulong);
+	ushort (*swab)(ushort);
+	uvlong (*swav)(uvlong);
+	Ehdr64 *ep;
+	Phdr64 *ph;
+	int i, it, id, is, phsz;
+
+	ep = &hp->e.elfhdr64;
+	if(ep->ident[DATA] == ELFDATA2LSB) {
+		swab = leswab;
+		swal = leswal;
+		swav = leswav;
+	} else if(ep->ident[DATA] == ELFDATA2MSB) {
+		swab = beswab;
+		swal = beswal;
+		swav = beswav;
+	} else {
+		werrstr("bad ELF encoding - not big or little endian");
+		return 0;
+	}
+
+	ep->type = swab(ep->type);
+	ep->machine = swab(ep->machine);
+	ep->version = swal(ep->version);
+	ep->elfentry = swav(ep->elfentry);
+	ep->phoff = swav(ep->phoff);
+	ep->shoff = swav(ep->shoff);
+	ep->flags = swal(ep->flags);
+	ep->ehsize = swab(ep->ehsize);
+	ep->phentsize = swab(ep->phentsize);
+	ep->phnum = swab(ep->phnum);
+	ep->shentsize = swab(ep->shentsize);
+	ep->shnum = swab(ep->shnum);
+	ep->shstrndx = swab(ep->shstrndx);
+	if(ep->type != EXEC || ep->version != CURRENT) {
+		werrstr("ELF64: not an executable, or version %d", ep->version);
+		return 0;
+	}
+
+	fp->magic = ELF_MAG;
+	fp->hdrsz = (ep->ehsize+ep->phnum*ep->phentsize+16)&~15;
+	switch(ep->machine) {
+	case AMD64:
+		mach = &mamd64;
+		fp->type = FAMD64;
+		break;
+	case ARM64:
+		mach = &marm64;
+		fp->type = FARM64;
+		break;
+	/*
+	 * RISCV works now, and getting here took fixing the loaders.
+	 *
+	 * The first attempt at this case parsed the header fine and
+	 * produced rubbish symbols -- names with stray bytes on the front,
+	 * addresses like 0x8023 -- because the symbol value WIDTH differed
+	 * by loader: jl wrote eight unconditionally, 7l wrote four in an
+	 * ELF, and syminit took the width from HDR_MAGIC in the a.out
+	 * magic, which an ELF has not got.  The width is the machine's
+	 * address size and nothing else, so syminit reads it that way and
+	 * 6l and 7l write it that way.  Then this case is just a case.
+	 */
+	case RISCV:
+		mach = &mriscv64;
+		fp->type = FRISCV64;
+		break;
+	default:
+		werrstr("ELF64: unsupported machine %d", ep->machine);
+		return 0;
+	}
+
+	if(ep->phentsize != sizeof(Phdr64)) {
+		werrstr("bad ELF64 program header size %d", ep->phentsize);
+		return 0;
+	}
+	phsz = sizeof(Phdr64)*ep->phnum;
+	if((ph = malloc(phsz)) == nil)
+		return 0;
+	seek(fd, ep->phoff, 0);
+	if(read(fd, ph, phsz) != phsz) {
+		werrstr("ELF64: short read of program headers");
+		free(ph);
+		return 0;
+	}
+	/*
+	 * Field by field, not hswal: these are a mixture of 4- and 8-byte
+	 * fields and a blanket sweep of either width would scramble them.
+	 */
+	for(i = 0; i < ep->phnum; i++) {
+		ph[i].type = swal(ph[i].type);
+		ph[i].flags = swal(ph[i].flags);
+		ph[i].offset = swav(ph[i].offset);
+		ph[i].vaddr = swav(ph[i].vaddr);
+		ph[i].paddr = swav(ph[i].paddr);
+		ph[i].filesz = swav(ph[i].filesz);
+		ph[i].memsz = swav(ph[i].memsz);
+		ph[i].align = swav(ph[i].align);
+	}
+
+	/* find text, data and symbols and install them */
+	it = id = is = -1;
+	for(i = 0; i < ep->phnum; i++) {
+		if(ph[i].type == LOAD
+		&& (ph[i].flags & (R|X)) == (R|X) && it == -1)
+			it = i;
+		else if(ph[i].type == LOAD
+		&& (ph[i].flags & (R|W)) == (R|W) && id == -1)
+			id = i;
+		else if(ph[i].type == NOPTYPE && is == -1)
+			is = i;
+	}
+	if(it == -1 || id == -1) {
+		werrstr("No TEXT or DATA sections");
+		free(ph);
+		return 0;
+	}
+
+	settext(fp, ep->elfentry, ph[it].vaddr, ph[it].memsz, ph[it].offset);
+	setdata(fp, ph[id].vaddr, ph[id].filesz, ph[id].offset,
+		ph[id].memsz - ph[id].filesz);
 	if(is != -1)
 		setsym(fp, ph[is].filesz, 0, ph[is].memsz, ph[is].offset);
 	free(ph);

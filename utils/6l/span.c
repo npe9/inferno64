@@ -126,19 +126,25 @@ putsymb(char *s, int t, vlong v, int ver)
 
 	if(t == 'f')
 		s++;
-	l = 4;
-	switch(HEADTYPE){
-	default:
-		break;
-	case 5:
-		if(debug['8'])
-			break;
-	case 2:
-	case 6:
+	/*
+	 * THE ADDRESS WIDTH, not the header type.
+	 *
+	 * This wrote four bytes for every header type but 2, 5 and 6, so
+	 * an amd64 image linked any other way -- ELF among them -- got a
+	 * symbol table whose values were truncated to 32 bits.  The width
+	 * was matched to how libmach DECIDED the width, from HDR_MAGIC in
+	 * the a.out magic, which an ELF has not got; the two agreed for
+	 * Plan 9 output and disagreed for everything else.  libmach takes
+	 * it from the machine's address size now, so this does too.
+	 *
+	 * "-8" is kept: HEADTYPE 5 with debug['8'] is the 32-bit output
+	 * mode, where four bytes is the address width and therefore right.
+	 */
+	l = 8;
+	if(HEADTYPE == 5 && debug['8'])
+		l = 4;
+	if(l == 8)
 		lput(v>>32);
-		l = 8;
-		break;
-	}
 	lput(v);
 	if(ver)
 		t += 'a' - 'A';

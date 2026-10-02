@@ -18,7 +18,7 @@
 #
 # The format, from utils/7l/asm.c putsymb(), for HEADTYPE 7:
 #
-#	4 bytes		value, big-endian
+#	4 or 8 bytes	value, big-endian (see valuewidth)
 #	1 byte		type | 0x80, lowercase meaning "static"
 #	n bytes		name, NUL-terminated
 #
@@ -75,21 +75,47 @@ def loadend(d):
 		end = max(end, p_offset + p_filesz)
 	return end
 
+def valuewidth(d, i):
+	"""How many bytes a symbol value takes: 8 or 4.
+
+	7l used to write FOUR bytes in an ELF and eight in a Plan 9 header,
+	which was a bug -- an arm64 address is eight bytes and a kernel
+	linked above 4GB had its symbol table silently truncated.  It writes
+	eight now.  But the card can still be holding a kernel built before
+	that, and "alive" and "where" have to be able to read whatever is
+	actually on it, so this reads both.
+
+	The discriminator is exact rather than a guess: every loader writes
+	the type byte as t+0x80, so the byte after the value always has its
+	top bit set and is a letter underneath.  Try eight; if that does not
+	hold, it is four.
+	"""
+	for w in (8, 4):
+		if i + w >= len(d):
+			continue
+		t = d[i+w]
+		if (t & 0x80) and chr(t & 0x7f).isalpha():
+			return w
+	return None
+
 def symbols(path):
 	d = open(path, 'rb').read()
 	i = loadend(d)
 	if i is None:
 		sys.exit("ksyms: %s is not a 64-bit ELF" % path)
+	w = valuewidth(d, i)
+	if w is None:
+		sys.exit("ksyms: no symbol table in %s (linked with -s?)" % path)
 	out = []
-	while i + 5 < len(d):
-		v = int.from_bytes(d[i:i+4], 'big')
-		t = d[i+4]
+	while i + w + 1 < len(d):
+		v = int.from_bytes(d[i:i+w], 'big')
+		t = d[i+w]
 		if not (t & 0x80):		# not a record: table has ended
 			break
 		c = chr(t & 0x7f)
 		if not c.isalpha():
 			break
-		i += 5
+		i += w + 1
 		if c in 'zZ':
 			# doubly-NUL-terminated; skip without interpreting
 			j = i + 1

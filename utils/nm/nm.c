@@ -191,7 +191,14 @@ execsyms(int fd)
 
 	seek(fd, 0, 0);
 	if (crackhdr(fd, &f) == 0) {
-		error("Can't read header for %s", filename);
+		/*
+		 * With the reason, for the same reason as syminit below:
+		 * libmach sets errstr on every refusal -- "bad ELF class",
+		 * "ELF64: unsupported machine 243", "bad ELF header size" --
+		 * and "Can't read header" alone turns all of them into the
+		 * same unhelpful line.
+		 */
+		error("Can't read header for %s: %r", filename);
 		return;
 	}
 	/*

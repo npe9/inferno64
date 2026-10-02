@@ -26,9 +26,21 @@ if [ -z "$addr" ]; then
 	echo "usage: sh tools/sym.sh <address> [board]" >&2
 	exit 1
 fi
-sym=$ROOT/os/inferno/$conf/i$conf.sym
+#
+# The ELF the board actually boots, in preference to the Plan 9 relink.
+#
+# libmach reads 64-bit ELF now, so i<conf> is enough and the second link
+# is no longer needed -- which also removes the chance of resolving an
+# address against a .sym built from different sources.  i<conf>.sym stays
+# as the fallback, because the machines libmach has no ELF support for
+# still need it.
+#
+sym=$ROOT/os/inferno/$conf/i$conf
 if [ ! -f "$sym" ]; then
-	echo "sym: no $sym -- run 'mk syms' in os/inferno/$conf" >&2
+	sym=$ROOT/os/inferno/$conf/i$conf.sym
+fi
+if [ ! -f "$sym" ]; then
+	echo "sym: no kernel in os/inferno/$conf -- build one, or 'mk syms'" >&2
 	exit 1
 fi
 NM=$ROOT/MacOSX/arm64/bin/inm
@@ -84,8 +96,17 @@ NM=$ROOT/MacOSX/arm64/bin/inm
 			print a " is below every symbol in the table"
 			exit 0
 		}
-		printf "%s -> %s+%d (%s)\n", a, anyname, target - bestany, anykind
-		if (anykind != "T" && anykind != "t") {
+		off = target - bestany
+		printf "%s -> %s+%d (%s)\n", a, anyname, off, anykind
+		#
+		# An address past the end of the image lands on the last
+		# symbol with an enormous offset, which is true and
+		# useless.  Say so, rather than let "end+2141812192" be
+		# read as a location.
+		#
+		if (off > 1048576)
+			print "   that offset is over 1MB: the address is probably not in this image"
+		else if (anykind != "T" && anykind != "t") {
 			if (besttext < 0)
 				print "   no text symbol at or below it"
 			else

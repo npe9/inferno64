@@ -499,6 +499,29 @@ brloop(Prog *p)
 		if(p->as != AJMP)
 			return p;
 		q = p->cond;
+		/*
+		 * A BRANCH WITH NO RESOLVED TARGET IS A TARGET, NOT A PATH.
+		 *
+		 * This followed the chain while the instruction was a branch
+		 * and took its target; an INDIRECT branch -- "B (Rn)", "JMP
+		 * (AX)" -- has no resolved target, so the chain ran off the
+		 * end and this returned P.  The caller then skipped its
+		 * patch, leaving the conditional branch that started it all
+		 * with an offset of 0: a branch to itself, emitted silently.
+		 *
+		 * On arm64 that is 0x54000000 for a BEQ, and what it looks
+		 * like from outside is a board that dies before its first
+		 * print with one core at a pc that will not single-step.
+		 * It cost a long hunt, and the workaround written down at
+		 * the time was "do not write that in assembly" -- which is
+		 * the wrong half to fix.
+		 *
+		 * An indirect branch is a perfectly good thing to branch TO,
+		 * and is what the programmer wrote.  So stop here and return
+		 * it as the target.
+		 */
+		if(q == P)
+			return p;
 		if(q <= p) {
 			c++;
 			if(q == p || c > 5000)

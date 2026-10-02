@@ -1,14 +1,22 @@
 /*
  *	Definitions needed for  accessing Irix ELF headers
+ *
+ * THE 32-BIT FIELDS ARE u32, NOT ulong, and that is not cosmetic: ulong
+ * is eight bytes on a 64-bit host, which made sizeof(Phdr) 56 where
+ * ELF32 says 32 and sizeof(Ehdr) wrong in the same way.  The 32-bit ELF
+ * reader therefore refused every ELF32 executable with "bad ELF header
+ * size" -- it compared the file's phentsize, correctly 32, against its
+ * own miscomputed struct.  Same hazard as Exec in a.out.h, same fix; see
+ * the comment there.
  */
 typedef struct {
 	uchar	ident[16];	/* ident bytes */
 	ushort	type;		/* file type */
 	ushort	machine;	/* target machine */
 	int	version;	/* file version */
-	ulong	elfentry;	/* start address */
-	ulong	phoff;		/* phdr file offset */
-	ulong	shoff;		/* shdr file offset */
+	u32	elfentry;	/* start address */
+	u32	phoff;		/* phdr file offset */
+	u32	shoff;		/* shdr file offset */
 	int	flags;		/* file flags */
 	ushort	ehsize;		/* sizeof ehdr */
 	ushort	phentsize;	/* sizeof phdr */
@@ -20,26 +28,65 @@ typedef struct {
 
 typedef struct {
 	int	type;		/* entry type */
-	ulong	offset;		/* file offset */
-	ulong	vaddr;		/* virtual address */
-	ulong	paddr;		/* physical address */
+	u32	offset;		/* file offset */
+	u32	vaddr;		/* virtual address */
+	u32	paddr;		/* physical address */
 	int	filesz;		/* file size */
-	ulong	memsz;		/* memory size */
+	u32	memsz;		/* memory size */
 	int	flags;		/* entry flags */
 	int	align;		/* memory/file alignment */
 } Phdr;
 
+/*
+ * The 64-bit forms.  ELFCLASS64 is not a wider version of the same
+ * layout: e_entry, e_phoff and e_shoff become eight bytes and the
+ * program header's fields are reordered as well as widened, so the
+ * 32-bit structs above cannot be reused by casting.
+ */
 typedef struct {
-	ulong	name;		/* section name */
-	ulong	type;		/* SHT_... */
-	ulong	flags;		/* SHF_... */
-	ulong	addr;		/* virtual address */
-	ulong	offset;		/* file offset */
-	ulong	size;		/* section size */
-	ulong	link;		/* misc info */
-	ulong	info;		/* misc info */
-	ulong	addralign;	/* memory alignment */
-	ulong	entsize;	/* entry size if table */
+	uchar	ident[16];	/* ident bytes */
+	ushort	type;		/* file type */
+	ushort	machine;	/* target machine */
+	int	version;	/* file version */
+	uvlong	elfentry;	/* start address */
+	uvlong	phoff;		/* phdr file offset */
+	uvlong	shoff;		/* shdr file offset */
+	int	flags;		/* file flags */
+	ushort	ehsize;		/* sizeof ehdr */
+	ushort	phentsize;	/* sizeof phdr */
+	ushort	phnum;		/* number phdrs */
+	ushort	shentsize;	/* sizeof shdr */
+	ushort	shnum;		/* number shdrs */
+	ushort	shstrndx;	/* shdr string index */
+} Ehdr64;
+
+/*
+ * NOTE THE ORDER: flags comes SECOND here, where the 32-bit Phdr has it
+ * second from last.  Getting that wrong reads the flags out of the
+ * offset and finds no text segment.
+ */
+typedef struct {
+	int	type;		/* entry type */
+	int	flags;		/* entry flags */
+	uvlong	offset;		/* file offset */
+	uvlong	vaddr;		/* virtual address */
+	uvlong	paddr;		/* physical address */
+	uvlong	filesz;		/* file size */
+	uvlong	memsz;		/* memory size */
+	uvlong	align;		/* memory/file alignment */
+} Phdr64;
+
+typedef struct {
+	u32	name;		/* section name */
+	u32	type;		/* SHT_... */
+	u32	flags;		/* SHF_... */
+	u32	addr;		/* virtual address */
+	u32	offset;		/* file offset */
+	u32	size;		/* section size */
+	u32	link;		/* misc info */
+	u32	info;		/* misc info */
+	u32	addralign;	/* memory alignment */
+	u32	entsize;	/* entry size if table */
 } Shdr;
 
 enum {
@@ -84,6 +131,7 @@ enum {
 	ARM = 40,		/* ARM */
 	AMD64 = 62,		/* Amd64 */
 	ARM64 = 183,		/* ARM64 */
+	RISCV = 243,		/* RISC-V, 32 or 64 by ident[CLASS] */
 
 	NO_VERSION = 0,		/* version, ident[VERSION] */
 	CURRENT = 1,

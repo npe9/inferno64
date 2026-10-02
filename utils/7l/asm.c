@@ -317,15 +317,28 @@ putsymb(char *s, int t, vlong v, int ver)
 
 	if(t == 'f')
 		s++;
-	l = 4;
-	switch(HEADTYPE){
-	default:
-		break;
-	case 2:
-		lput(v>>32);
-		l = 8;
-		break;
-	}
+	/*
+	 * EIGHT BYTES, always, because an arm64 address is eight bytes.
+	 *
+	 * This wrote four for every header type but 2 -- the Plan 9 one --
+	 * so a kernel linked with -H7, which is every kernel in this tree,
+	 * got a symbol table whose values were silently truncated to 32
+	 * bits.  It happens to be harmless on the boards here because they
+	 * link low (raspi3b at 0x80000), and it is wrong the moment one
+	 * does not.
+	 *
+	 * The width was matched to how libmach DECIDED the width, which was
+	 * from HDR_MAGIC in the a.out magic -- something an ELF file does
+	 * not have.  So the two halves agreed only for Plan 9 output and
+	 * disagreed for everything else, and libmach read arm64 ELF symbol
+	 * tables as four-byte values because that is what this wrote.  Both
+	 * halves are fixed: libmach takes the width from the machine's
+	 * address size now, and this writes the machine's address size.
+	 * jl has always written eight unconditionally, which is what made
+	 * the inconsistency visible.
+	 */
+	l = 8;
+	lput(v>>32);
 	lput(v);
 	if(ver)
 		t += 'a' - 'A';

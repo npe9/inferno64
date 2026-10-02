@@ -102,7 +102,24 @@ syminit(int fd, Fhdr *fp)
 	nsym = 0;
 	size = 0;
 	for(p = symbols; size < fp->symsz; p++, nsym++) {
-		if(fp->_magic && (fp->magic & HDR_MAGIC)){
+		/*
+		 * THE WIDTH IS THE MACHINE'S ADDRESS SIZE, not a bit in the
+		 * a.out magic.
+		 *
+		 * This read 8-byte values when the header carried HDR_MAGIC
+		 * and 4 otherwise, which is not a property of the symbol
+		 * table at all -- an ELF file has no such bit, so every
+		 * 64-bit ELF was read as 4-byte values.  For arm64 that
+		 * happened to work, because 7l wrote 4 there for the same
+		 * bad reason; for riscv it produced names with stray bytes
+		 * on the front and addresses like 0x8023, because jl writes
+		 * 8 unconditionally.
+		 *
+		 * mach is set by crackhdr before this runs, and szaddr is
+		 * the one thing that actually determines how wide a symbol
+		 * value is.  The loaders write that width now too.
+		 */
+		if(mach != nil? mach->szaddr == 8: (fp->_magic && (fp->magic & HDR_MAGIC))){
 			svalsz = 8;
 			if(Bread(&b, &vl, 8) != 8)
 				return symerrmsg(8, "symbol");
