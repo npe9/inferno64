@@ -817,9 +817,21 @@ tkwalkflush(void)
 					 * it is rendering */
 	w->clipon = 0;			/* the tree holding it is going */
 	walk.nodes += s->n;
+	/*
+	 * Two extra walks of the node list per tree, on the path every
+	 * repaint takes, for figures nothing in this tree consumes yet.
+	 * That deserved a number rather than an argument.  tkbench -n,
+	 * interleaved because the rig drifts: the node path's per-widget
+	 * slope moved a few tenths of a percent, and the DIRECT path -
+	 * which none of this can touch - moved by the same amount over the
+	 * same runs, so the shift is drift and not this.  A compare per
+	 * node against a render that draws per node is the expected
+	 * answer; it is recorded here because the question is obvious, and
+	 * because the alternative was a flag to make it opt-in, which
+	 * would cost more in complexity than this costs in time.
+	 */
 	{	/* before the tree is freed */
 		Rectangle b;
-
 		TkNode *n;
 
 		for(n = s->head; n != nil; n = n->next)
