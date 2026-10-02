@@ -1478,7 +1478,7 @@ in this tree to borrow;
 .CW memfs (4)
 is a heap filesystem with no backing store, not a cache.
 .PP
-.B "REVERTED: deferring the create commit too."
+.B "DONE: deferring the create commit too."
 A create leaves a fid that 9P requires to be clunked, so the clunk could
 commit it, and for the common
 .CW "echo x > file"
@@ -1486,8 +1486,10 @@ that would halve the commits \(em the creates workload still pays two, one
 for the Create and one for the Clunk, and batching the write changed
 nothing there because an 8-byte write never reaches the bound.
 .PP
-It broke two suites.  One of those was the test's fault and is now fixed; the
-other is still open and is narrower than it looked.
+It broke two suites.  BOTH are now answered: one was the test's fault, and the
+other was a bug in
+.CW Fs.commit
+that the deferral exposed and did not cause.
 .PP
 .B "The 228 leaked blocks were not leaked.  The test encoded a commit count."
 .CW efs-write
@@ -1632,49 +1634,153 @@ faulting the workload completes, but returning 0 means "no more leaves", which
 would silently truncate a directory listing, so that is a diagnostic and not a
 fix.
 .PP
-.B "And it takes BOTH the even split and the deferred create commit."
+.B "And it took BOTH the even split and the deferred create commit."
 .P1
 even split, create commits (as shipped)   clean, efsck clean, rc=0
 even split, create deferred               OVERRUN
 greedy split, create deferred             clean, rc=0
 .P2
-So neither change is wrong by itself and the shipped tree is sound \(em
-verified, with
-.CW efsck
-clean at generation 285 and efs-stress, efs-write, efs-crash and
-efs-fallback all passing.  Even splitting makes the tree shallower (17 splits
-against 119), and a shallower tree is where a path of two exists at all, so
-the combination is what exposes whatever invalidates it.
+Neither change is wrong by itself.  Even splitting makes the tree shallower
+(17 splits against 119), and a shallower tree is where a path of two exists at
+all; batching the commit is what let a transaction end without an operation
+following it.  The combination exposed a third thing, which is what was
+actually broken.
 .PP
-.B "What to look at next, now that it is single-threaded."
-Depth changes in exactly one place:
-.CW Fs.fixup 's
-.CW "while(len kids > 1)"
-loop, which adds a level above every kid at once and looks right.  The other
-candidate is
-.CW idx[depth] ,
-the index in the parent of the child being replaced: a stale or wrong index
-there replaces the wrong entry and could attach a leaf where an interior
-belongs.  Both are reachable with a single process, which is now established,
-so this does not need the locking work to be done first.  A first guess was wrong and is worth recording: the stress failure
-first appeared as
-.CW "interior block 4095: interior entry 0 is not a pointer" ,
-block 4095 being
-.CW superblk(4096,1) ,
-so the allocator had handed out superblock 1 and a tree node had been
-written over it.  Guarding that in
-.CW Fs.alloc
-did not fix either suite, so the leak and the hang are something else.
+.B "CAUSE: a commit with no free map in memory wrote zeroes over the live one."
+.CW Fs.commit
+read
+.CW "ng := len f.bmindex"
+and assumed a transaction was open.  When it was not,
+.CW ng
+was 0, so the fixpoint considered no group, the write loop wrote no group
+block, and the all-zero
+.CW idx
+array went to
+.CW "f.putblk(f.idxblk, idx)"
+\(em over the free map index the mounted filesystem was using, because commit
+never cleared
+.CW f.idxblk .
+The next transaction read that back, took every group's block to be 0, and
+read BLOCK 0, a superblock, as the bitmap.  Almost every bit in a superblock
+is clear, so the allocator began handing out blocks that were already in the
+tree.
 .PP
-.B "The guard stays, because the invariant should never have depended on the map."
-.CW Fs.alloc
-now refuses block 0 and block nblocks-1 whatever the free map says.
+That is the whole of the unbalanced tree.  A live leaf was handed out and
+rewritten as an interior node while its parent still pointed at it as a leaf,
+so one child of the root was interior and its siblings were leaves.
+.CW pathto
+stops at the first block that says leaf, so paths of two different lengths
+both existed, and
+.CW Fs.nextleaf
+walked off the end of the shorter one.
+.PP
+.B "Exactly one state reaches it, which is why it took the two changes above."
+A commit whose freed list does not fit in the superblock \(em 504 blocks, hit
+by removing a file of about 2MB \(em sets
+.CW f.dirty
+from the carried remainder while leaving
+.CW f.bmindex
+nil.  The NEXT commit then runs with no map.  Before writes were batched there
+was always an operation between two commits and an operation opens a
+transaction, so the state was unreachable; batching removed the accident that
+was hiding it.
+.PP
+So
+.CW Fs.commit
+opens the transaction itself, and clears
+.CW f.idxblk
+so a published index can never be rewritten in place.
+.PP
+.B "How it was found, because two rounds of reasoning got it wrong first."
+Recording every block's whole history \(em alloc, free, write with its node
+type, and the pendingfree unmark \(em and reading out the offending child's:
+.P1
+HIST 865: alloc@36 wrINT@36 free@36 unmark@37
+          alloc@145 wrLEAF@145
+          alloc@205 wrINT@205
+.P2
+Allocated at 145, written as a leaf, never freed, and allocated AGAIN at 205.
+That is a double allocation and nothing about tree shape, which is where two
+sessions of looking at
+.CW fixup
+and
+.CW idx[depth]
+had been aimed.  A per-transaction check that every block the tree reaches is
+marked used then named the exact generation, and a trace of what each commit
+published named the one before it:
+.CW "npend 504" .
+.PP
+.B "This also answers the cleared bit that B1 left open."
+The entry below says
 .CW mkefs
-does mark both used, so a bit is being cleared somewhere, and that is still
-open \(em but overwriting superblock 1 destroys the copy the whole format
-exists to fall back to, and that must not be one bad bit away.  It also
-explains a reading in G1: efsck's "block 16383 is in the tree and free in
-the map" on this board's image was this, not corruption.
+marks block 0 and block nblocks-1 used, so "a bit is being cleared somewhere,
+and that is still open".  This is it: a zero index block makes the allocator
+read a superblock as the map, in which nearly every bit including those two is
+clear.  It explains the "interior block 4095: interior entry 0 is not a
+pointer" that started that line of enquiry, and G1's "block 16383 is in the
+tree and free in the map" on this board's image.  The guard in
+.CW Fs.alloc
+stays: an invariant that matters should not depend on a bit.
+.PP
+.B "Deferring alone bought nothing, which measuring said and arithmetic did not."
+.CW "echo x > f"
+clunks two fids \(em the directory walked to and the file created \(em and a
+clunk committed whenever the filesystem was dirty, so deferring moved the
+commit from Create to the other clunk and left the count at two per file.
+Sixty files cost generation 122 either way;
+.CW efsck 's
+generation counts commits exactly and is medium-independent, which is why this
+was visible at all without a board.  A clunk now commits when THAT fid dirtied
+something, or when no fid is holding a dirty change: 60 files cost generation
+62, 300 cost 302.  One commit per file.
+.PP
+.B "Two more bugs, both mine, found on the way."
+.CW Fs.rawblk
+\(em the raw-block cache B1c added \(em had no invalidation at all.  Every
+write went straight to
+.CW f.d.wrblk
+and left the stale copy behind, and a copy-on-write filesystem changes the
+bytes behind a block number constantly.  Writes now go through
+.CW Fs.putblk ,
+write-through rather than invalidating, because a block just written is the one
+most likely to be read next.
+.PP
+And B1c's packed navigation decided leaf-or-interior from byte 0 with no
+verification, where the code it replaced decided it from
+.CW Node.unpack ,
+which checks the checksum first.
+.CW Nleaf
+is 0, so a block of zeros read as a leaf.  Verified now in
+.CW Fs.rawblk ,
+and WHERE matters \(em 300 creates, host, 302 commits in every arm:
+.P1
+no verification                     2.41 s  2.39 s
+verified in Fs.rawblk               3.13 s  3.12 s   1.30x
+verified in each navigator          4.56 s  4.56 s   1.90x
+.P2
+B1c's whole win was 1.98x, so checking once per block TOUCHED gave almost all
+of it back; once per block READ costs 1.30x, which is the price of a filesystem
+actually checking the checksum it stores and is worth paying while G1b's
+corruption has no cause.
+.PP
+.B "And efsck did not check the B-tree invariant."
+It checked that the tree was no deeper than 16 and nothing about its shape, so
+an unbalanced tree passed it clean \(em which is why "efsck: clean, generation
+285" above had not contradicted any of this.  It now requires every leaf to be
+at the same depth.
+.PP
+.B "Verified, and what is not."
+All ten efs suites pass, and
+.CW "fatstress -n 4 -f 12 -s 8" ,
+which crashed the server reproducibly, finishes with
+.CW efsck
+clean including the new check.  HOST ONLY: none of this has been run on the
+board yet, and
+.CW tests/fsbench
+is the thing to run there.  The commit on hangup is a backstop that no harness
+here exercises \(em dropping a local mount makes the kernel clunk every fid
+first, so the clunk path always runs, and a connection severed under a client
+that still holds a fid is a case this tree cannot produce.
 .NH 2
 B1f.  A CACHE FOR EFS, designed: dirty tree nodes, written once at the barrier
 .LP

@@ -155,6 +155,37 @@ Blocks freed by a commit are not allocatable until the commit after it.
 They are listed in the superblock that freed them and folded into the map
 by the next commit.  Without that rule a crash part way through a commit
 can scribble on the tree that commit was meant to fall back to.
+.SS When a change is on the medium
+A mounted image holds exactly the last committed state, and never a
+partial one.  What is in the last commit is this:
+.TP
+a write or a create
+at the
+.B clunk
+of the fid that made it, and every 32 blocks within a long write.  So a
+file is durable when it is CLOSED, which is what
+.IR dossrv (4)
+does here and what a filesystem is normally taken to mean.
+.TP
+.BR remove ", " wstat ", a truncating " open
+at the operation, immediately.
+.TP
+a connection that goes away
+before it does, if anything is uncommitted.
+.PP
+A create used to commit at its own reply, and the clunk that has to
+follow then committed a second time for the same file \(em two durable
+metadata updates per file created, which on an SD card is the whole cost.
+Deferring it is worth exactly half the commits:
+.IR efsck 's
+generation number counts them, and 60 files cost generation 122 before
+and 62 after, 300 files 302.
+.PP
+The last line is a BACKSTOP and is not exercised by any test here.  A
+local mount being dropped makes the kernel clunk every fid first, so the
+clunk path always runs; a connection severed under a client that still
+holds a fid \(em a network mount whose client dies \(em is the case it
+exists for, and this tree has no harness that produces one.
 .PP
 .IR doc/efs-format.ms
 is the specification and gives the reasoning.
@@ -311,6 +342,22 @@ before summing it.  Decoded nodes are cached by block number, which is
 sound only because no committed block is ever overwritten; the cache is
 emptied by every commit, because after one a freed block can be handed
 out again under the same number.
+.PP
+Raw block bytes are cached too, for the navigation that walks a node's
+packed form rather than decoding it, and that cache is WRITE-THROUGH.
+Within one transaction a block is freed and handed out again, so the
+bytes behind a block number change without the number changing; a cache
+that only filled on read served the previous contents, and the previous
+contents of a node are a valid node with a good checksum, just the wrong
+one.  What that cost is written up in
+.B /doc/open-issues-plan.ms
+item B1e: it read as an unbalanced tree.
+.PP
+A block's checksum is verified where it comes off the medium and not at
+each place that navigates one \(em once per block READ rather than once
+per block TOUCHED.  The difference is 1.30x against 1.90x on three
+hundred creates, and the packed navigation it pays for is worth 1.98x, so
+checking per touch gives almost all of it back.
 .PP
 What is left is mostly
 .B Node.unpack

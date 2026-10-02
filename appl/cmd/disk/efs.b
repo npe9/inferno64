@@ -511,8 +511,22 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 {
 	for(;;){
 		gm := <-tchan;
-		if(gm == nil)
+		if(gm == nil){
+			#
+			# THE CONNECTION WENT AWAY, and a create is no longer
+			# durable at its own reply -- the clunk that follows
+			# makes it so.  A client that creates a file and
+			# disconnects without clunking sends no clunk, so
+			# without this the file is simply lost, which it was
+			# not before creates were deferred.  Nothing is left
+			# to report an error to, so it goes to stderr.
+			#
+			if(fs.dirty)
+				if((he := fs.commit()) != nil)
+					sys->fprint(sys->fildes(2),
+						"efs: commit on hangup: %s\n", he);
 			break;
+		}
 		pick m := gm {
 		Open =>
 			#
@@ -716,10 +730,16 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 # and far below any filesystem worth using, and leaves the existing
 # room() gate's arithmetic valid.
 #
-# Metadata operations -- Create, Remove, Wstat, a truncating Open -- still
-# commit immediately.  They are cheap and rare, and keeping the strong
-# guarantee where it costs nothing is worth more than the consistency of
-# having one rule.
+# Remove, Wstat and a truncating Open still commit immediately.  They are
+# cheap and rare, and keeping the strong guarantee where it costs nothing
+# is worth more than the consistency of having one rule.
+#
+# CREATE NO LONGER DOES.  It is the one metadata operation that is
+# neither rare nor standalone -- every file written passes through it,
+# and the clunk that must follow was committing a second time for the
+# same file.  So a create is durable at the clunk of the fid that made
+# it, like the write, and the hangup path above commits for a client
+# that disconnects without clunking at all.
 #
 Wbatch: con 32 * Efs->Blocksize;
 wpending := 0;			# bytes written since the last commit
