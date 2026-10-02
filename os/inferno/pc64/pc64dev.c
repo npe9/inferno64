@@ -9,7 +9,7 @@
 
 #include "pc64dev.root.h"
 
-ulong ndevs = 38;
+ulong ndevs = 39;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev archdevtab;
@@ -29,6 +29,7 @@ extern Dev readydevtab;
 extern Dev shmdevtab;
 extern Dev usbdevtab;
 extern Dev pcidevtab;
+extern Dev iommudevtab;
 extern Dev etherdevtab;
 extern Dev bridgedevtab;
 extern Dev ipdevtab;
@@ -40,7 +41,7 @@ extern Dev audiodevtab;
 extern Dev uartdevtab;
 extern Dev sddevtab;
 extern Dev tinyfsdevtab;
-Dev* devtab[38]={
+Dev* devtab[39]={
 	&rootdevtab,
 	&consdevtab,
 	&archdevtab,
@@ -60,6 +61,7 @@ Dev* devtab[38]={
 	&shmdevtab,
 	&usbdevtab,
 	&pcidevtab,
+	&iommudevtab,
 	&etherdevtab,
 	&bridgedevtab,
 	&ipdevtab,
@@ -74,6 +76,7 @@ Dev* devtab[38]={
 	nil,
 };
 
+extern void vtdlink(void);
 extern void ethermediumlink(void);
 extern void netdevmediumlink(void);
 extern void ether8169link(void);
@@ -92,6 +95,7 @@ extern void usbxhcipcilink(void);
 extern void pmmclink(void);
 extern void audiohdalink(void);
 void links(void){
+	vtdlink();
 	ethermediumlink();
 	netdevmediumlink();
 	ether8169link();

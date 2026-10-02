@@ -20,6 +20,7 @@ dev
 	shm
 	usb
 	pci
+	iommu
 
 	ether		netif
 	bridge		netif log
@@ -74,6 +75,7 @@ lib
 # what os/inferno/virt does.
 
 link
+	vtd
 ##	ether82557	pci
 #	ether83815	pci
 #	etherelnk3	pci

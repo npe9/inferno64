@@ -7,7 +7,10 @@
 #	Intel IOMMU (VT-d) with interrupt remapping
 #	PCIe root ports, each device behind its own
 #	igb (Intel 82576) -- MSI-X, and the SR-IOV capability with VFs
-#	NVMe -- MSI-X, a DMA-capable device for the IOMMU tests
+#	NVMe -- MSI-X, a DMA-capable device
+#	edu -- QEMU's teaching device: a DMA engine driven through BAR0,
+#		which is what the IOMMU tests aim at addresses; its DMA mask
+#		is widened from 28 bits to 48, as a real engine's would be
 #	virtio-net (1.0) -- the host's own network, as cloud-port boots it
 #	serial console, edk2 firmware, the tree's UEFI loader
 #
@@ -96,11 +99,13 @@ set -- \
 	-device pcie-root-port,id=rp1,chassis=1,slot=1 \
 	-device pcie-root-port,id=rp2,chassis=2,slot=2 \
 	-device pcie-root-port,id=rp3,chassis=3,slot=3 \
+	-device pcie-root-port,id=rp4,chassis=4,slot=4 \
 	-netdev user,id=net0 \
 	-device virtio-net-pci,netdev=net0,bus=rp1,disable-legacy=on \
 	$IGB \
 	-drive if=none,id=nvm0,format=raw,file="$NVME" \
 	-device nvme,drive=nvm0,serial=vmhost0,bus=rp3 \
+	-device edu,bus=rp4,dma_mask=0xffffffffffff \
 	-cdrom "$ISO" \
 	-display none -no-reboot \
 	"$@"

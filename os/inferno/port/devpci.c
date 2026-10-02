@@ -16,6 +16,11 @@
  *				aligned 1, 2 or 4 byte units
  *		caps		one line per capability, standard then
  *				extended, with what each one says
+ *		bar0 ... bar5	a memory BAR's registers: reads and writes
+ *				of 1, 2, 4 or 8 bytes at a naturally
+ *				aligned offset are single accesses of that
+ *				width.  Only memory BARs, and only those
+ *				with a size, appear; writes are eve's
  *
  *	The flat files are what this device always served and stay as
  *	they were.  Nothing here applies policy: no VF is enabled and no
@@ -40,9 +45,10 @@ enum {
 	Qdevctl,
 	Qdevconfig,
 	Qdevcaps,
+	Qdevbar,	/* through Qdevbar+5 */
 
 	Nflat	= 3,		/* entries per function in #$/pci */
-	Ndev	= 3,		/* files in a function's directory */
+	Ndev	= 3+6,		/* files in a function's directory */
 };
 
 #define TYPE(q)		((ulong)(q).path & 0x0F)
@@ -61,6 +67,13 @@ devname(char *buf, int tbdf)
 {
 	sprint(buf, "%.4x:%.2x:%.2x.%x", 0, BUSBNO(tbdf), BUSDNO(tbdf), BUSFNO(tbdf));
 	return buf;
+}
+
+/* BAR i is a memory BAR with a size */
+static int
+membar(Pcidev *p, int i)
+{
+	return p->mem[i].size != 0 && (p->mem[i].bar & 1) == 0;
 }
 
 static int
@@ -92,6 +105,14 @@ pcigen2(Chan *c, int t, int tbdf, Dir *dp)
 		return 1;
 	case Qdevcaps:
 		devdir(c, q, "caps", 0, eve, 0444, dp);
+		return 1;
+	}
+	if(t >= Qdevbar && t < Qdevbar+6){
+		p = pcimatchtbdf(tbdf);
+		if(p == nil || !membar(p, t-Qdevbar))
+			return 0;
+		snprint(up->genbuf, sizeof up->genbuf, "bar%d", t-Qdevbar);
+		devdir(c, q, up->genbuf, p->mem[t-Qdevbar].size, eve, 0664, dp);
 		return 1;
 	}
 	return -1;
@@ -143,6 +164,8 @@ pcigen(Chan *c, char *, Dirtab*, int, int s, Dir *dp)
 	case Qdevctl:
 	case Qdevconfig:
 	case Qdevcaps:
+	case Qdevbar: case Qdevbar+1: case Qdevbar+2:
+	case Qdevbar+3: case Qdevbar+4: case Qdevbar+5:
 		tbdf = QTBDF(c->qid);
 		if(pcimatchtbdf(tbdf) == nil)
 			return -1;
@@ -175,7 +198,7 @@ static Chan*
 pciopen(Chan *c, u32 omode)
 {
 	c = devopen(c, omode, nil, 0, pcigen);
-	if((omode & 3) != OREAD && TYPE(c->qid) == Qdevconfig && !iseve()){
+	if((omode & 3) != OREAD && (TYPE(c->qid) == Qdevconfig || TYPE(c->qid) >= Qdevbar) && !iseve()){
 		c->flag &= ~COPEN;
 		error(Eperm);
 	}
@@ -461,6 +484,42 @@ writeconfig(Pcidev *p, uchar *a, long n, vlong offset)
 	return n;
 }
 
+/*
+ * One access of n bytes to a memory BAR at offset.  The BAR is mapped
+ * when first touched; vmap() of the same range again is harmless.
+ */
+static s32
+baraccess(Pcidev *p, int i, void *a, s32 n, s64 off, int write)
+{
+	uchar *r;
+
+	if(!membar(p, i))
+		error(Enonexist);
+	if(n != 1 && n != 2 && n != 4 && n != 8)
+		error(Ebadarg);
+	if(off < 0 || off + n > p->mem[i].size || (off & (n-1)) != 0)
+		error(Ebadarg);
+	r = vmap(p->mem[i].bar & ~0xFULL, p->mem[i].size);
+	if(r == nil)
+		error(Enovmem);
+	r += off;
+	switch(n){
+	case 1:
+		if(write) *(volatile u8int*)r = *(u8int*)a; else *(u8int*)a = *(volatile u8int*)r;
+		break;
+	case 2:
+		if(write) *(volatile u16int*)r = *(u16int*)a; else *(u16int*)a = *(volatile u16int*)r;
+		break;
+	case 4:
+		if(write) *(volatile u32int*)r = *(u32int*)a; else *(u32int*)a = *(volatile u32int*)r;
+		break;
+	case 8:
+		if(write) *(volatile u64int*)r = *(u64int*)a; else *(u64int*)a = *(volatile u64int*)r;
+		break;
+	}
+	return n;
+}
+
 static s32
 pciread(Chan *c, void *va, s32 n, s64 offset)
 {
@@ -514,6 +573,8 @@ pciread(Chan *c, void *va, s32 n, s64 offset)
 	case Qdevconfig:
 		return readconfig(chanpcidev(c), (uchar*)a, n, offset);
 	default:
+		if(TYPE(c->qid) >= Qdevbar && TYPE(c->qid) < Qdevbar+6)
+			return baraccess(chanpcidev(c), TYPE(c->qid)-Qdevbar, a, n, offset, 0);
 		error(Egreg);
 	}
 	return n;
@@ -525,6 +586,9 @@ pciwrite(Chan *c, void *a, s32 n, s64 offset)
 	switch(TYPE(c->qid)){
 	case Qdevconfig:
 		return writeconfig(chanpcidev(c), a, n, offset);
+	case Qdevbar: case Qdevbar+1: case Qdevbar+2:
+	case Qdevbar+3: case Qdevbar+4: case Qdevbar+5:
+		return baraccess(chanpcidev(c), TYPE(c->qid)-Qdevbar, a, n, offset, 1);
 	case Qpcictl:
 	case Qpciraw:
 	case Qdevctl:
