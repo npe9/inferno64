@@ -192,15 +192,47 @@ and contention is bounded by the time the lock is HELD: at 2.4% there is
 nothing there to win.  The survey calls item 1 "the only real allocator
 work"; the measurement says it is not work worth doing.
 .PP
-.B "What this does NOT establish, said plainly."
+.B "ON FOUR CORES, which was the one hole in it, the figure does not move."
+That was a JTAG boot, which holds cores 1 to 3, so it is the serial cost
+with no contention in it.  The kernel installed on the card, all four
+processors online and taking work, three runs of the same 300 creates:
+.P1
+          wall      ilocks   mean    held    share
+run 1    21.73 s   1226945   421 ns  0.52 s   2.4%
+run 2    24.75 s   1235641   421 ns  0.52 s   2.1%
+run 3    25.78 s   1237797   421 ns  0.52 s   2.0%
+.P2
+The same 2% either way, and the mean hold identical to the nanosecond
+across all three.  So contention adds nothing measurable and item 1 is
+declined on the configuration that matters, not only on the easy one.
+.PP
+.B "AND THE 9.7ms HOLD IS A ONE-OFF, which three runs show and one did not."
+The first paragraph of this said the maximum was
+.CW poolalloc
+and guessed it was the pool growing under the lock.  The guess was wrong
+to state: that 9723us appeared on the FIRST run after a boot and never
+again.  Runs 2 and 3 both report 6130 and 6131us at
+.CW uartkick+48 ,
+the console UART.  So the recurring worst ilock holder in this kernel is
+not the allocator at all, and the one allocator outlier is whatever the
+first allocation after boot has to do.
+.PP
+That relocates the latency complaint rather than answering it, and 6.1ms
+inside
+.CW uartkick
+is worth its own look: this board's console is deaf, so whatever that
+lock is held across is being held for output nobody reads.
+.PP
+.B "What the instrument does NOT tell you, which matters for both figures."
 .CW ILOCKTRACE
-times every ilock in the kernel, not the pool lock alone, so 2.4% is an
+times every ilock in the kernel, not the pool lock alone, so 2% is an
 UPPER bound on the pool lock's share and the true figure is smaller.  And
-this was taken on a JTAG boot, which holds cores 1 to 3, so there is no
-contention in it at all \(em it is the serial cost.  Four cores could
-amplify waiting, but they cannot amplify it past the hold time: four
-processors demanding 2.4% each of a resource that can give 100% do not
-queue.
+it records the PC at ACQUIRE, so a maximum names the call site that held
+the lock and not what it did while holding it \(em which is exactly why
+the
+.CW poolalloc
+guess above should not have been written as a fact.  Naming the work
+inside a long hold needs a different instrument from this one.
 .PP
 .B "And the longest hold is poolalloc, which took fixing libmach to find out."
 .CW "sh tools/sym.sh 0x1af054"
@@ -217,20 +249,12 @@ so
 was 64 against an on-disk 32 and every field came out one slot shifted)
 and it had no arm64 machine description at all.
 .PP
-.B "Which sharpens the verdict rather than changing it, and splits it in two."
-THROUGHPUT: 2.4% of the run inside all ilocks together, so per-processor
-free lists cannot buy much and item 1 stays declined.
-.PP
-LATENCY: one
+.B "Which sharpens the verdict rather than changing it."
+2.4% of the run inside all ilocks together, so per-processor free lists
+cannot buy much and item 1 stays declined.  The longest single hold being
 .CW poolalloc
-held the lock for 9.7 MILLISECONDS.  That is a different complaint and a
-magazine would not fix it either \(em a per-processor cache in front of
-the pool still has to go to the pool when it misses, and what takes ten
-milliseconds in there is the pool GROWING, under the lock.  If anything
-is worth doing it is not holding the lock across a grow, which is a
-smaller change than item 1 and aimed at a defect item 1 does not
-address.  Unmeasured beyond this one maximum, and named here so it is not
-confused with the throughput question.
+looked at first like a separate latency complaint; three more runs showed
+it is a one-off and the recurring maximum is elsewhere \(em see below.
 .NH 2
 2.  The accounting has to stop being shared fields
 .LP
