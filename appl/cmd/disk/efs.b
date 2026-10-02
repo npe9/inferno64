@@ -563,8 +563,13 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 			e := room();
 			if(e == nil)
 				e = writefile(f.path, m.offset, m.data);
-			if(e == nil)
-				e = fs.commit();
+			if(e == nil){
+				wpending += len m.data;
+				if(wpending >= Wbatch){
+					e = fs.commit();
+					wpending = 0;
+				}
+			}
 			if(e != nil)
 				srv.reply(ref Rmsg.Error(m.tag, e));
 			else
@@ -580,6 +585,14 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 				continue;
 			}
 			(d, e) := create(f.path, m.name, m.perm, m.mode);
+			#
+			# A create commits here, and an attempt to defer it to
+			# the clunk that must follow was REVERTED.  It would
+			# have halved the commits for "echo x > file", and it
+			# broke two suites in ways not yet understood: efs-write
+			# reported 228 leaked blocks and efs-stress hung.  See
+			# doc/open-issues-plan.ms B1e.
+			#
 			if(e == nil)
 				e = fs.commit();
 			if(e != nil){
@@ -617,6 +630,38 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 				srv.reply(ref Rmsg.Error(m.tag, e));
 			else
 				srv.reply(ref Rmsg.Wstat(m.tag));
+		Clunk =>
+			#
+			# Where a write's transaction is closed.  srv.clunk()
+			# releases the fid and this replies, because the
+			# default handler would reply before the commit and
+			# tell the client the file was closed while it was
+			# not yet on the medium.
+			#
+			#
+			# Commit FIRST, then release the fid.  srv.clunk()
+			# replies by itself, so replying here as well would
+			# put two Rmsgs on one tag -- and committing after it
+			# would tell the client the file was closed while it
+			# was not yet on the medium.
+			#
+			e: string;
+			if(wpending > 0){
+				e = fs.commit();
+				wpending = 0;
+			}
+			if(e != nil){
+				#
+				# A clunk releases the fid whatever happens --
+				# 9P has no way to say "still open" -- so drop
+				# it and report the commit failure.
+				#
+				cf := srv.getfid(m.fid);
+				if(cf != nil)
+					srv.delfid(cf);
+				srv.reply(ref Rmsg.Error(m.tag, e));
+			}else
+				srv.clunk(m);
 		* =>
 			srv.default(gm);
 		}
@@ -633,6 +678,43 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 # length is set by the caller, which is the only place that knows
 # whether this is a truncate or part of something larger.
 #
+#
+# WHEN TO COMMIT A WRITE.
+#
+# Every Styx Write used to commit, which is the strongest thing a
+# filesystem can promise and the most expensive thing this one can do.  A
+# commit is a path rewrite plus the free map plus the superblock -- 7.8
+# blocks, measured -- so a file written in 8KB messages paid 7.8 blocks of
+# metadata for every 2 blocks of data.  Copying this board's own kernel
+# image into efs, 2548632 bytes, cost 13MB of writes and 3253 write
+# operations for 622 blocks of data: 5.1x write amplification and 5.2
+# write operations per block of file.  On an SD card, which charges per
+# operation and not per byte, that is the whole cost of a kernel update.
+#
+# So a write now leaves the transaction open and Clunk commits it.  A file
+# is durable when it is closed, which is what dossrv does here ("every
+# clunk syncs") and what a filesystem is normally taken to mean.  The
+# contract in man/4/efs is unchanged and was never per-operation: it is
+# that the image holds "exactly the last committed state", and it still
+# does -- there is simply less of it after a crash in the middle of a file
+# that was never closed.
+#
+# BOUNDED, because an open transaction cannot grow without limit.  Blocks
+# freed inside it are not reusable until the commit after it, so a
+# transaction that writes K blocks holds K blocks out of circulation; let
+# K run and a long write fills a filesystem that had room.  Committing
+# every Wbatch bytes bounds it at 32 blocks, which is above the reserve
+# and far below any filesystem worth using, and leaves the existing
+# room() gate's arithmetic valid.
+#
+# Metadata operations -- Create, Remove, Wstat, a truncating Open -- still
+# commit immediately.  They are cheap and rare, and keeping the strong
+# guarantee where it costs nothing is worth more than the consistency of
+# having one rule.
+#
+Wbatch: con 32 * Efs->Blocksize;
+wpending := 0;			# bytes written since the last commit
+
 #
 # Refuse an operation that would add to the filesystem unless the reserve
 # would survive it.

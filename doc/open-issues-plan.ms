@@ -1428,6 +1428,88 @@ improvement and is still unbuilt, but it is no longer the first thing, because
 the scan is now walking five leaves instead of thirty-four.
 .PP
 .NH 2
+B1e.  A write no longer commits per message \(em and two things that stopped it going further
+.LP
+Every Styx Write used to commit.  A commit is a path rewrite plus the free
+map plus the superblock, 7.8 blocks measured, so a file written in 8KB
+messages paid 7.8 blocks of metadata for 2 blocks of data.  Copying this
+board's own kernel image into efs \(em 2548632 bytes, 622 blocks \(em cost:
+.P1
+                     per-message    batched
+time (sdmem, free)       8.55 s      4.46 s
+write ops                 3253        2377
+write sectors            26024       19016
+disk touched              11.8 MB     9.4 MB
+.P2
+1.94x in time.  A write now leaves the transaction open and Clunk commits
+it, bounded at 32 blocks so an open transaction cannot hold the free map
+hostage; metadata operations still commit immediately.
+.PP
+.B "The contract is unchanged, and it was never per-operation."
+.CW man/4/efs
+promises that the image holds "exactly the last committed state", and it
+still does \(em there is simply less of it after a crash in the middle of a
+file nobody closed, which is what every filesystem means by writing.
+.CW efs-crash ,
+which fails every write in turn across a whole workload and requires the
+image to mount holding exactly the last committed state with
+.CW efsck
+silent, passes.
+.PP
+.B "Only 1.37x fewer write operations, and the remainder is worth naming."
+2377 writes for 622 data blocks is still 3.8 per block.  Subtracting the
+data, 1755 writes over about 311 messages is 5.6 blocks a message, and that
+is the copy-on-write path rewrite per extent insert: within ONE transaction
+the same leaf and its ancestors are rewritten once per insert, because
+nothing is overwritten in place.  Batching removed the per-commit part and
+left that.
+.PP
+.B "Which is where a cache belongs, and it belongs INSIDE efs."
+Holding dirty tree nodes in memory and writing them once at the commit
+barrier would collapse those 5.6 blocks a message toward one.  It is safe
+exactly because the barrier still orders everything: the blocks go down,
+then the superblock.  A cache UNDER efs \(em
+.CW dossrv 's
+track cache, or a block cache in a driver \(em cannot do this, because it
+does not know where the barrier is, and reordering across it is precisely
+the failure G1b suspects on this board.  There is no
+.CW cfs
+in this tree to borrow;
+.CW memfs (4)
+is a heap filesystem with no backing store, not a cache.
+.PP
+.B "REVERTED: deferring the create commit too."
+A create leaves a fid that 9P requires to be clunked, so the clunk could
+commit it, and for the common
+.CW "echo x > file"
+that would halve the commits \(em the creates workload still pays two, one
+for the Create and one for the Clunk, and batching the write changed
+nothing there because an 8-byte write never reaches the bound.
+.PP
+It broke two suites and the reasons are not understood:
+.CW efs-write
+reported "5 blocks in use before, 233 after \(em 228 leaked", and
+.CW efs-stress
+hung.  A first guess was wrong and is worth recording: the stress failure
+first appeared as
+.CW "interior block 4095: interior entry 0 is not a pointer" ,
+block 4095 being
+.CW superblk(4096,1) ,
+so the allocator had handed out superblock 1 and a tree node had been
+written over it.  Guarding that in
+.CW Fs.alloc
+did not fix either suite, so the leak and the hang are something else.
+.PP
+.B "The guard stays, because the invariant should never have depended on the map."
+.CW Fs.alloc
+now refuses block 0 and block nblocks-1 whatever the free map says.
+.CW mkefs
+does mark both used, so a bit is being cleared somewhere, and that is still
+open \(em but overwriting superblock 1 destroys the copy the whole format
+exists to fall back to, and that must not be one bad bit away.  It also
+explains a reading in G1: efsck's "block 16383 is in the tree and free in
+the map" on this board's image was this, not corruption.
+.NH 2
 B1d.  DONE \(em the keyed lookup, and the silent data loss it uncovered
 .LP
 .CW walkto() ,

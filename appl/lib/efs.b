@@ -1148,6 +1148,28 @@ Fs.alloc(f: self ref Fs): (big, string)
 		i := f.cursor + k;
 		if(i >= nb)
 			i -= nb;
+		#
+		# NEVER the superblocks, whatever the free map says.
+		#
+		# mkefs marks block 0 and block nblocks-1 used, and this used
+		# to rely on that alone.  Something clears the bit for
+		# nblocks-1: a long transaction reached the end of a
+		# 4096-block image, was handed block 4095 -- which is
+		# superblk(nb,1) -- and wrote a tree node over superblock 1.
+		# The failure surfaced as "interior block 4095: interior
+		# entry 0 is not a pointer", which reads as tree corruption
+		# and is an allocator handing out reserved space.  efsck's
+		# "block 16383 is in the tree and free in the map" on this
+		# board's image was the same thing and was misread as
+		# corruption.
+		#
+		# The bit being wrong is a separate bug and is still open;
+		# this is the invariant that should not have depended on it,
+		# because overwriting superblock 1 destroys the copy the
+		# whole format keeps in order to fall back to it.
+		#
+		if(i == 0 || i == nb - 1)
+			continue;
 		(u, ue) := f.bmget(i);
 		if(ue != nil)
 			return (big -1, ue);
