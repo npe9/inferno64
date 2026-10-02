@@ -85,6 +85,48 @@ init()
 	sys->bind("#l2", "/net", Sys->MAFTER);
 	sys->print("DEVTEST: start\n");
 
+	# pci: every function's directory under #$/pci -- what it is, its
+	# capabilities standard and extended, and how much configuration
+	# space a read of its config file returns (4096 for a PCI Express
+	# function reached through ECAM), with the words at 0 and 0x100
+	sys->bind("#$", "/dev", Sys->MAFTER);
+	pfd := sys->open("/dev/pci", Sys->OREAD);
+	if(pfd == nil)
+		sys->print("DEVTEST: /dev/pci: %r\n");
+	else for(;;){
+		(n, d) := sys->dirread(pfd);
+		if(n <= 0)
+			break;
+		for(i := 0; i < n; i++){
+			nm := d[i].name;
+			if((d[i].mode & Sys->DMDIR) == 0)
+				continue;
+			dir := "/dev/pci/" + nm;
+			sys->print("DEVTEST: PCI %s\n%s%s", nm, readfile(dir + "/ctl"), readfile(dir + "/caps"));
+			cfd := sys->open(dir + "/config", Sys->OREAD);
+			if(cfd == nil){
+				sys->print("DEVTEST: PCI %s config: %r\n", nm);
+				continue;
+			}
+			cfg := array[8192] of byte;
+			got := 0;
+			for(;;){
+				r := sys->read(cfd, cfg[got:], len cfg - got);
+				if(r <= 0)
+					break;
+				got += r;
+			}
+			w0 := "-";
+			w100 := "-";
+			if(got >= 4)
+				w0 = sys->sprint("%.2x%.2x%.2x%.2x", int cfg[3], int cfg[2], int cfg[1], int cfg[0]);
+			if(got >= 16r104)
+				w100 = sys->sprint("%.2x%.2x%.2x%.2x", int cfg[16r103], int cfg[16r102], int cfg[16r101], int cfg[16r100]);
+			sys->print("DEVTEST: PCI %s config %d bytes word0 %s word100 %s\n", nm, got, w0, w100);
+		}
+	}
+	pfd = nil;
+
 	# storage: every sd unit's ctl file
 	fd := sys->open("/dev", Sys->OREAD);
 	if(fd != nil){

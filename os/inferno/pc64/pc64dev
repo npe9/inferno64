@@ -19,6 +19,7 @@ dev
 	ready
 	shm
 	usb
+	pci
 
 	ether		netif
 	bridge		netif log

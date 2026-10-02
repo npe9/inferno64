@@ -1324,3 +1324,208 @@ pcidisable(Pcidev *p)
 	pcimsidisable(p);
 	pciclrbme(p);
 }
+
+/*
+ * PCI Express: the extended configuration space and what is in it.
+ *
+ * The 4096-byte space exists only for a PCI Express function, and is
+ * only reachable through ECAM; the legacy 0xCF8/0xCFC mechanism names
+ * 256 bytes.  A function has it when it has the PCI Express capability
+ * and a read of 0x100 comes back as something other than all ones --
+ * which is also what a configuration mechanism that cannot reach it
+ * returns.  An empty first header (0) is a valid, capability-less
+ * extended space.
+ */
+int
+pcicfgspace(Pcidev *p)
+{
+	if(pcicap(p, PciCapPCIe) < 0)
+		return 256;
+	if(pcicfgr32(p, 0x100) == -1)
+		return 256;
+	return 4096;
+}
+
+/*
+ * Walk the extended capability list from 0x100.  Each header is a
+ * 32-bit word: id in bits 15:0, version in 19:16, next offset in 31:20.
+ * fmatch is called with (p, id, version, offset, arg) and works as in
+ * pcienumcaps: 0 stops with this offset, <0 stops with failure.
+ */
+int
+pcienumextcaps(Pcidev *p, int (*fmatch)(Pcidev*, int, int, int, void*), void *arg)
+{
+	int i, off, r;
+	u32int h;
+
+	if(pcicfgspace(p) < 4096)
+		return -1;
+	off = 0x100;
+	for(i = 0; i < (4096-0x100)/4; i++){
+		h = pcicfgr32(p, off);
+		if(h == 0 || h == ~0)
+			break;
+		r = (*fmatch)(p, h & 0xFFFF, (h>>16) & 0xF, off, arg);
+		if(r < 0)
+			break;
+		if(r == 0)
+			return off;
+		off = (h>>20) & 0xFFC;
+		if(off < 0x100)
+			break;
+	}
+	return -1;
+}
+
+static int
+matchextcap(Pcidev*, int cap, int, int, void *arg)
+{
+	return cap != *(int*)arg;
+}
+
+int
+pciextcap(Pcidev *p, int cap)
+{
+	return pcienumextcaps(p, matchextcap, &cap);
+}
+
+char*
+pcicapname(int cap)
+{
+	switch(cap){
+	case PciCapPMG:	return "pm";
+	case PciCapAGP:	return "agp";
+	case PciCapVPD:	return "vpd";
+	case PciCapSID:	return "slotid";
+	case PciCapMSI:	return "msi";
+	case PciCapCHS:	return "hotswap";
+	case PciCapPCIX:	return "pcix";
+	case PciCapHTC:	return "ht";
+	case PciCapVND:	return "vendor";
+	case 0x0a:	return "debug";
+	case 0x0d:	return "ssvid";
+	case PciCapPCIe:	return "pcie";
+	case PciCapMSIX:	return "msix";
+	case PciCapSATA:	return "sata";
+	case 0x13:	return "af";
+	case 0x14:	return "ea";
+	}
+	return "unknown";
+}
+
+char*
+pciextcapname(int cap)
+{
+	switch(cap){
+	case PciExtCapAER:	return "aer";
+	case PciExtCapVC:	return "vc";
+	case PciExtCapDSN:	return "dsn";
+	case PciExtCapPB:	return "powerbudget";
+	case PciExtCapVNDR:	return "vendor";
+	case PciExtCapACS:	return "acs";
+	case PciExtCapARI:	return "ari";
+	case PciExtCapATS:	return "ats";
+	case PciExtCapSRIOV:	return "sriov";
+	case PciExtCapMRIOV:	return "mriov";
+	case PciExtCapMCAST:	return "mcast";
+	case PciExtCapPRI:	return "pri";
+	case PciExtCapRBAR:	return "rebar";
+	case PciExtCapLTR:	return "ltr";
+	case PciExtCapSPCIE:	return "secpcie";
+	case PciExtCapPASID:	return "pasid";
+	case PciExtCapDPC:	return "dpc";
+	case PciExtCapL1SS:	return "l1ss";
+	case PciExtCapPTM:	return "ptm";
+	case PciExtCapDLF:	return "dlf";
+	case PciExtCapPL16:	return "pl16";
+	}
+	return "unknown";
+}
+
+/*
+ * The device/port type from the PCI Express capability, or -1 for a
+ * conventional PCI function.
+ */
+int
+pcieporttype(Pcidev *p)
+{
+	int off;
+
+	if((off = pcicap(p, PciCapPCIe)) < 0)
+		return -1;
+	return (pcicfgr16(p, off+PcieCAP) >> 4) & 0xF;
+}
+
+/*
+ * Read the SR-IOV capability into s.  Mechanism only: nothing here
+ * enables a VF or changes NumVFs.  The VF BARs are sized the standard
+ * way, writing all ones and reading back, which the specification
+ * permits only while VF memory space is disabled; with it enabled the
+ * sizes are left 0 rather than disturbing running VFs.
+ */
+int
+pcisriov(Pcidev *p, Pcisriov *s)
+{
+	int off, i, r;
+	u32int v, sz, hi, szhi;
+	uvlong size;
+
+	memset(s, 0, sizeof *s);
+	if((off = pciextcap(p, PciExtCapSRIOV)) < 0)
+		return -1;
+	s->off = off;
+	s->cap = pcicfgr32(p, off+SriovCAP);
+	s->ctl = pcicfgr16(p, off+SriovCTL);
+	s->sts = pcicfgr16(p, off+SriovSTS);
+	s->initialvfs = pcicfgr16(p, off+SriovINITIAL);
+	s->totalvfs = pcicfgr16(p, off+SriovTOTAL);
+	s->numvfs = pcicfgr16(p, off+SriovNUM);
+	s->fdl = pcicfgr8(p, off+SriovFDL);
+	s->vfoffset = pcicfgr16(p, off+SriovOFFSET);
+	s->vfstride = pcicfgr16(p, off+SriovSTRIDE);
+	s->vfdid = pcicfgr16(p, off+SriovVFDID);
+	s->pgsup = pcicfgr32(p, off+SriovPGSUP);
+	s->pgsize = pcicfgr32(p, off+SriovPGSIZE);
+	for(i = 0; i < 6; i++){
+		r = off + SriovBAR0 + 4*i;
+		v = pcicfgr32(p, r);
+		s->vfbar[i].is64 = ((v >> Barwidthshift) & Barwidthmask) == Barwidth64;
+		s->vfbar[i].bar = v & ~0xFULL;
+		hi = 0;
+		if(s->vfbar[i].is64 && i < 5){
+			hi = pcicfgr32(p, r+4);
+			s->vfbar[i].bar |= (uvlong)hi << 32;
+		}
+		if((s->ctl & SriovMSE) == 0){
+			pcicfgw32(p, r, ~0);
+			sz = pcicfgr32(p, r);
+			pcicfgw32(p, r, v);
+			szhi = ~0;
+			if(s->vfbar[i].is64 && i < 5){
+				pcicfgw32(p, r+4, ~0);
+				szhi = pcicfgr32(p, r+4);
+				pcicfgw32(p, r+4, hi);
+			}
+			size = ((uvlong)szhi << 32) | (sz & ~0xF);
+			if((sz & ~0xF) != 0)
+				s->vfbar[i].size = -size;
+		}
+		if(s->vfbar[i].is64)
+			i++;
+	}
+	return 0;
+}
+
+/*
+ * The routing ID (bus<<8 | devfn) of VF vf, counting from 0, by the
+ * offset and stride the PF reports for its current NumVFs.  The VF
+ * may be on a bus number above the PF's.
+ */
+int
+pcivfrid(Pcidev *p, Pcisriov *s, int vf)
+{
+	int rid;
+
+	rid = (BUSBNO(p->tbdf)<<8) | (BUSDNO(p->tbdf)<<3) | BUSFNO(p->tbdf);
+	return (rid + s->vfoffset + vf*s->vfstride) & 0xFFFF;
+}

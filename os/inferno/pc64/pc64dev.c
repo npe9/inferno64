@@ -9,7 +9,7 @@
 
 #include "pc64dev.root.h"
 
-ulong ndevs = 37;
+ulong ndevs = 38;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev archdevtab;
@@ -28,6 +28,7 @@ extern Dev capdevtab;
 extern Dev readydevtab;
 extern Dev shmdevtab;
 extern Dev usbdevtab;
+extern Dev pcidevtab;
 extern Dev etherdevtab;
 extern Dev bridgedevtab;
 extern Dev ipdevtab;
@@ -39,7 +40,7 @@ extern Dev audiodevtab;
 extern Dev uartdevtab;
 extern Dev sddevtab;
 extern Dev tinyfsdevtab;
-Dev* devtab[37]={
+Dev* devtab[38]={
 	&rootdevtab,
 	&consdevtab,
 	&archdevtab,
@@ -58,6 +59,7 @@ Dev* devtab[37]={
 	&readydevtab,
 	&shmdevtab,
 	&usbdevtab,
+	&pcidevtab,
 	&etherdevtab,
 	&bridgedevtab,
 	&ipdevtab,

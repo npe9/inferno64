@@ -137,6 +137,112 @@ enum {
 	PciCapHSW       = 0x0c,         /* hot swap */
 };
 
+/*
+ * PCI Express extended capabilities, in the 4096-byte configuration
+ * space from 0x100 on.  Only reachable through ECAM; pcicfgspace()
+ * says whether a function has it.
+ */
+enum {
+	PciExtCapAER	= 0x0001,	/* advanced error reporting */
+	PciExtCapVC	= 0x0002,	/* virtual channel */
+	PciExtCapDSN	= 0x0003,	/* device serial number */
+	PciExtCapPB	= 0x0004,	/* power budgeting */
+	PciExtCapVNDR	= 0x000b,	/* vendor specific */
+	PciExtCapACS	= 0x000d,	/* access control services */
+	PciExtCapARI	= 0x000e,	/* alternative routing-id */
+	PciExtCapATS	= 0x000f,	/* address translation services */
+	PciExtCapSRIOV	= 0x0010,	/* single root i/o virtualization */
+	PciExtCapMRIOV	= 0x0011,
+	PciExtCapMCAST	= 0x0012,	/* multicast */
+	PciExtCapPRI	= 0x0013,	/* page request */
+	PciExtCapRBAR	= 0x0015,	/* resizable bar */
+	PciExtCapLTR	= 0x0018,	/* latency tolerance reporting */
+	PciExtCapSPCIE	= 0x0019,	/* secondary pci express */
+	PciExtCapPASID	= 0x001b,
+	PciExtCapL1SS	= 0x001e,	/* l1 pm substates */
+	PciExtCapDPC	= 0x001d,	/* downstream port containment */
+	PciExtCapPTM	= 0x001f,	/* precision time measurement */
+	PciExtCapDLF	= 0x0025,	/* data link feature */
+	PciExtCapPL16	= 0x0026,	/* physical layer 16 GT/s */
+};
+
+/* the PCI Express capability (PciCapPCIe), offsets from its start */
+enum {
+	PcieCAP		= 0x02,		/* capabilities: version, port type */
+	PcieDEVCAP	= 0x04,
+	PcieDEVCTL	= 0x08,
+	PcieDEVSTS	= 0x0a,
+	PcieLNKCAP	= 0x0c,
+	PcieLNKCTL	= 0x10,
+	PcieLNKSTS	= 0x12,
+	PcieDEVCAP2	= 0x24,
+	PcieDEVCTL2	= 0x28,
+
+	/* PcieCAP device/port type, bits 7:4 */
+	PcieEndpoint	= 0x0,
+	PcieLegacy	= 0x1,
+	PcieRCiEP	= 0x9,		/* root complex integrated endpoint */
+	PcieRCEC	= 0xa,		/* root complex event collector */
+	PcieRootPort	= 0x4,
+	PcieUpstream	= 0x5,		/* upstream switch port */
+	PcieDownstream	= 0x6,		/* downstream switch port */
+	PciePCIBridge	= 0x7,		/* pcie to pci bridge */
+	PcieBridgePCI	= 0x8,		/* pci to pcie bridge */
+
+	PcieAriFwd	= 1<<5,		/* DEVCAP2: ARI forwarding supported, DEVCTL2: enable */
+};
+
+/* the SR-IOV extended capability, offsets from its start */
+enum {
+	SriovCAP	= 0x04,
+	SriovCTL	= 0x08,
+	SriovSTS	= 0x0a,
+	SriovINITIAL	= 0x0c,
+	SriovTOTAL	= 0x0e,
+	SriovNUM	= 0x10,
+	SriovFDL	= 0x12,		/* function dependency link */
+	SriovOFFSET	= 0x14,		/* first VF offset */
+	SriovSTRIDE	= 0x16,
+	SriovVFDID	= 0x1a,
+	SriovPGSUP	= 0x1c,		/* supported page sizes */
+	SriovPGSIZE	= 0x20,		/* system page size */
+	SriovBAR0	= 0x24,		/* six VF BARs */
+
+	/* SriovCTL */
+	SriovVFE	= 1<<0,		/* VF enable */
+	SriovVFME	= 1<<1,		/* VF migration enable */
+	SriovMSE	= 1<<3,		/* VF memory space enable */
+	SriovARI	= 1<<4,		/* ARI capable hierarchy */
+};
+
+/*
+ * What the SR-IOV capability says, read by pcisriov().  The VF BARs
+ * are sized with the VFs' memory space off, the only time it is
+ * allowed; the size is per VF.
+ */
+typedef struct Pcisriov Pcisriov;
+struct Pcisriov
+{
+	int	off;			/* capability's offset in config space */
+	u32int	cap;
+	ushort	ctl;
+	ushort	sts;
+	ushort	initialvfs;
+	ushort	totalvfs;
+	ushort	numvfs;
+	uchar	fdl;
+	ushort	vfoffset;		/* routing-id of VF 1 minus the PF's */
+	ushort	vfstride;
+	ushort	vfdid;
+	u32int	pgsup;
+	u32int	pgsize;
+	struct {
+		uvlong	bar;
+		uvlong	size;		/* per VF; 0 if the BAR is not there */
+		int	is64;
+	} vfbar[6];
+};
+
 enum {
 	/* bar bits */
 	Barioaddr	= 1<<0,		/* vs. memory addr */
@@ -255,6 +361,14 @@ extern void pcisetmwi(Pcidev* p);
 extern void pciclrmwi(Pcidev* p);
 
 extern int pcicap(Pcidev *p, int cap);
+extern int pcicfgspace(Pcidev *p);
+extern int pcienumextcaps(Pcidev *p, int (*fmatch)(Pcidev*, int, int, int, void*), void *arg);
+extern int pciextcap(Pcidev *p, int cap);
+extern char* pcicapname(int cap);
+extern char* pciextcapname(int cap);
+extern int pcieporttype(Pcidev *p);
+extern int pcisriov(Pcidev *p, Pcisriov *s);
+extern int pcivfrid(Pcidev *p, Pcisriov *s, int vf);
 extern int pcihtcap(Pcidev *p, int cap);
 extern int pcienumcaps(Pcidev *p, int (*fmatch)(Pcidev*, int, int, int), int arg);
 

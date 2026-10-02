@@ -100,6 +100,12 @@ pcicfgrw8raw(int tbdf, int rno, int data, int read)
 {
 	int o;
 
+	/* these mechanisms name 256 bytes; a larger rno would spill into
+	 * the function and device bits of the address and touch another
+	 * function's registers.  Extended space is ECAM's alone. */
+	if(rno < 0 || rno >= 256)
+		return -1;
+
 	switch(pcicfgmode){
 	case 1:
 		o = rno & 0x03;
@@ -132,6 +138,12 @@ pcicfgrw16raw(int tbdf, int rno, int data, int read)
 {
 	int o;
 
+	/* these mechanisms name 256 bytes; a larger rno would spill into
+	 * the function and device bits of the address and touch another
+	 * function's registers.  Extended space is ECAM's alone. */
+	if(rno < 0 || rno >= 256)
+		return -1;
+
 	switch(pcicfgmode){
 	case 1:
 		o = rno & 0x02;
@@ -162,6 +174,12 @@ pcicfgrw16raw(int tbdf, int rno, int data, int read)
 static int
 pcicfgrw32raw(int tbdf, int rno, int data, int read)
 {
+
+	/* these mechanisms name 256 bytes; a larger rno would spill into
+	 * the function and device bits of the address and touch another
+	 * function's registers.  Extended space is ECAM's alone. */
+	if(rno < 0 || rno >= 256)
+		return -1;
 	switch(pcicfgmode){
 	case 1:
 		rno &= ~0x03;
@@ -193,6 +211,12 @@ pcicfgrw8bios(int tbdf, int rno, int data, int read)
 {
 	BIOS32ci ci;
 
+	/* these mechanisms name 256 bytes; a larger rno would spill into
+	 * the function and device bits of the address and touch another
+	 * function's registers.  Extended space is ECAM's alone. */
+	if(rno < 0 || rno >= 256)
+		return -1;
+
 	if(pcibiossi == nil)
 		return -1;
 
@@ -219,6 +243,12 @@ pcicfgrw16bios(int tbdf, int rno, int data, int read)
 {
 	BIOS32ci ci;
 
+	/* these mechanisms name 256 bytes; a larger rno would spill into
+	 * the function and device bits of the address and touch another
+	 * function's registers.  Extended space is ECAM's alone. */
+	if(rno < 0 || rno >= 256)
+		return -1;
+
 	if(pcibiossi == nil)
 		return -1;
 
@@ -244,6 +274,12 @@ static int
 pcicfgrw32bios(int tbdf, int rno, int data, int read)
 {
 	BIOS32ci ci;
+
+	/* these mechanisms name 256 bytes; a larger rno would spill into
+	 * the function and device bits of the address and touch another
+	 * function's registers.  Extended space is ECAM's alone. */
+	if(rno < 0 || rno >= 256)
+		return -1;
 
 	if(pcibiossi == nil)
 		return -1;
