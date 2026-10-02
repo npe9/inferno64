@@ -171,3 +171,15 @@ benchmod.h:D:  ../../module/bench.m
 	rm -f $target && limbo -t Bench -I../../module ../../module/bench.m > $target
 devbench.$O: bench.h benchmod.h
 $VGA screen.$O:	screen.h vga.h
+
+# The hypervisor bench, doc/genesize-plan.ms phase 0: the reference
+# q35 host with VT-d, igb (SR-IOV), NVMe and virtio behind root ports.
+# "mk CONF=pc64dev vmhost-run" boots this configuration on it.
+vmhost:V: i$CONF
+	$ROOT/scripts/vmhost.sh build $ROOT/os/inferno/pc64/i$CONF
+
+vmhost-run:V: vmhost
+	$ROOT/scripts/vmhost.sh run
+
+vmhost-debug:V: vmhost
+	$ROOT/scripts/vmhost.sh debug
