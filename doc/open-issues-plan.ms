@@ -1486,11 +1486,46 @@ that would halve the commits \(em the creates workload still pays two, one
 for the Create and one for the Clunk, and batching the write changed
 nothing there because an 8-byte write never reaches the bound.
 .PP
-It broke two suites and the reasons are not understood:
+It broke two suites.  One of those was the test's fault and is now fixed; the
+other is still open and is narrower than it looked.
+.PP
+.B "The 228 leaked blocks were not leaked.  The test encoded a commit count."
 .CW efs-write
-reported "5 blocks in use before, 233 after \(em 228 leaked", and
-.CW efs-stress
-hung.  A first guess was wrong and is worth recording: the stress failure
+copied a 733-block file in, removed it, and then did "two more commits, so
+every pendingfree list has been folded back in" \(em its own comment \(em
+before counting blocks marked used.  Deferring the create changed how many
+commits an operation costs, so two no longer sufficed and blocks still sitting
+in
+.CW pendingfree
+read as marked.  Driven further:
+.P1
+before            5 marked
+after 2 commits 233 marked      <- what the check looked at
+after 4          15 marked
+after 6          15 marked      <- settled
+.P2
+Nothing was leaking.  A test that encodes an implementation's commit frequency
+fails the next change to it whichever direction the change goes, so the check
+now does six operations and wants the count SETTLED rather than any particular
+value.  It reports "5 blocks before, 15 after" with the deferral applied and
+with it reverted, which is the point.
+.PP
+.B "The hang is real, and it is not a data bug."
+.CW efs-stress 's
+second arm printed
+.CW "FATSTRESS-OK 3 rounds, 8 files each"
+\(em the workload COMPLETED \(em and then
+.CW emu
+never exited, which this tree already records as the signature of a spawned
+Dis process still blocked rather than of anything wrong with the filesystem.
+.CW efs
+spawns a navigator and tells it to stop with
+.CW "navops <-= nil"
+after its Styx loop ends, so a main loop that never reaches that line leaves a
+process behind and
+.CW emu
+hangs.  What stops it getting there with the create commit deferred is not yet
+known.  A first guess was wrong and is worth recording: the stress failure
 first appeared as
 .CW "interior block 4095: interior entry 0 is not a pointer" ,
 block 4095 being

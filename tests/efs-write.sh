@@ -164,8 +164,23 @@ echo MARK before
 disk/efsdump /tmp/efsw4.img
 cp /tmp/efsfiles/huge.bin /n/client/huge.bin
 rm /n/client/huge.bin
-# two more commits, so every pendingfree list has been folded back in
+#
+# Enough commits that every pendingfree list has been folded back in.
+#
+# This used to be exactly two, with a comment saying so, and that made the
+# check below depend on HOW MANY COMMITS AN OPERATION COSTS.  When a write
+# stopped committing per message the count moved and the check reported
+# "228 leaked" on a filesystem that was leaking nothing: the blocks were
+# in pendingfree, and two more commits brought the count from 233 to 15
+# and it stayed there.  A test that encodes an implementation's commit
+# frequency fails the next change to it, whichever way the change went.
+#
+# Six operations, and the check wants the count to have SETTLED rather
+# than to be any particular value.
+#
 echo x > /n/client/a; echo y > /n/client/b; rm /n/client/a; rm /n/client/b
+echo p > /n/client/c; echo q > /n/client/d; rm /n/client/c; rm /n/client/d
+echo r > /n/client/e; echo s > /n/client/f; rm /n/client/e; rm /n/client/f
 echo MARK after
 disk/efsdump /tmp/efsw4.img
 EOF
