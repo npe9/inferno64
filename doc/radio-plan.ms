@@ -5692,3 +5692,87 @@ An announcer is for a station that does not know who will call it; this
 one does, because
 .B /lib/radio
 told it.
+.PP
+.B "A connected link between the two boards, and the error path is unreachable on this bench."
+Item 9's last bullet.  The role is data \- a
+.B role
+attribute in
+.B /lib/radio
+saying
+.B caller
+or
+.BR answerer ,
+because a link has one of each and which board is which is a bench fact.
+Absent, a station beacons UI frames, which needs no state machine and no
+peer to answer, so that stays the default.
+.PP
+On silicon, board 1 calling and board 2 answering:
+.DS
+.CW "caller:   linked to N0CALL-2 on #a/0, iounit 109 of 125"
+.CW "answerer: N0CALL-2 announced, waiting for N0CALL-1"
+.CW "          accepted on #a/1"
+.CW "          link 96: INFERNO-AX25-95"
+.CW "caller:   sent 95, state connected retransmitted 0 rejin 0"
+.CW "          rejout 0, radio sent/recv 96 recv 95 crcerr 0"
+.DE
+So SABM and UA crossed the air, ninety-six numbered I frames arrived in
+order, and the ninety-five the radio received are the answerer's
+acknowledgements.
+.B "Nothing was retransmitted and nothing was rejected."
+.PP
+.B "WHICH IS A NEGATIVE, AND THE REASON IS STRUCTURAL RATHER THAN LUCKY."
+UI mode on the same two boards lost heavily \- heard equalled the radio's
+recv exactly on both and both were well below what the other sent \-
+because both stations beacon on their own clock and collide.  A connected
+link does not: only the caller sends data and the answerer sends
+acknowledgements, so two half-duplex radios take turns by construction.
+That is the case T2 was written for, and it is still unproven, now for a
+better reason than before.
+.PP
+.B "And the error path stays unreachable at any transmit power."
+A
+.B txramp
+attribute was added for exactly this \- a station's power belongs to it
+like its callsign, and it is the one knob that can make a link lossy on
+purpose.  At the bottom of the range the link is still perfect:
+.DS
+.CW "ax25init: pa 0x40 ramp 0 power -17.5dBm"
+.CW "answerer took 96 frames, retransmitted 0 rejin 0 rejout 0"
+.DE
+the power read back off the part and not merely written.  Two boards a
+few inches apart have sixty-odd decibels of margin and thirty-one and a
+half decibels of attenuator does not spend it.  REJ, RNR and the
+retransmission counter want either the boards separated or an attenuator
+in the path, and neither is available here.
+.PP
+.B "One correction that follows from it."
+.I Paladder.py
+took 0 of 5 at
+.B PA_CFG2
+0x40 and this document called that unexplained, with the part known to
+reach TX there.  A connected link at that same setting carries ninety-six
+of ninety-six.
+.B "So ramp 0 radiates usably and the earlier 0 of 5 was not the amplifier."
+What it was is still not known; it is a single five-packet reading and
+the thing it was taken with is not what is in front of me now.
+.PP
+.B "Two bugs found writing it."
+.CW status ()
+tested
+.CW "ln[0:9] == \(dqreceived \(dq"
+behind a guard of
+.CW "len ln > 5" ,
+which is a bounds error on any shorter line \- and the status file has
+.CW "window 4"
+and
+.CW "n2 10"
+in it.  The caller linked up, sent four frames the answerer received, and
+died on the fifth, which from the far end is a link that stopped.  A
+prefix test written out by hand five times with its own length guard each
+time got it wrong once; it is one function now.
+.PP
+And the power was first read back by appending it to the radio line,
+which ran past the width
+.I screen 's
+hardcopy keeps and was invisible \- so a read-back that had worked all
+along read as one that had not.  It is a line of its own.

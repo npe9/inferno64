@@ -54,51 +54,68 @@ sleep 1
 for f in a b; do
 	tr -d '\r' < "$OUT/$f" > "$OUT/$f.c"
 	if ! grep -q ARMV7M-AX25-UP "$OUT/$f.c"; then
-		echo "AX25INITTEST-FAILED instance $f did not bring #a up:"
+		echo "AX25INITTEST-FAILED instance $f did not come up:"
 		grep -E '^(ax25init|ARMV7M)' "$OUT/$f.c" | tail -8
 		rc=1
-		continue
-	fi
-	car=$(sed -n 's/^ax25init: carrier iounit \([0-9]*\)$/\1/p' "$OUT/$f.c" | tail -1)
-	iou=$(sed -n 's/^ax25init: ax25 iounit \([0-9]*\),.*/\1/p' "$OUT/$f.c" | tail -1)
-	if [ -z "$car" ] || [ -z "$iou" ] || [ "$iou" != "$((car - 16))" ]; then
-		echo "AX25INITTEST-FAILED instance $f: carrier $car, ax25 $iou,"
-		echo "which is not sixteen less"
-		rc=1
-	else
-		echo "instance $f: #a up, carrier $car, ax25 $iou"
-	fi
-	if ! grep -qE '^ax25init: addressing N0CALL-[89]$' "$OUT/$f.c"; then
-		echo "AX25INITTEST-FAILED instance $f did not take a peer"
-		echo "from /lib/radio, so it does not know who to address:"
-		grep -E '^ax25init: (uid|addr|addressing|no entry)' "$OUT/$f.c"
-		rc=1
-	fi
-	if ! grep -q 'ax25init: beacon 1$' "$OUT/$f.c"; then
-		echo "AX25INITTEST-FAILED instance $f never beaconed"
-		rc=1
 	fi
 done
 
-for f in a b; do
-	if grep -q 'ax25init: heard .*INFERNO-AX25' "$OUT/$f.c"; then
-		echo "instance $f heard the other through #a:"
-		grep 'ax25init: heard' "$OUT/$f.c" | head -2
-	else
-		echo "AX25INITTEST-FAILED instance $f heard nothing:"
-		grep -cE '^ax25init: beacon' "$OUT/$f.c" | sed 's/^/  beacons sent: /'
-		rc=1
-	fi
-done
+# Connected mode is what /lib/radio's role= selects, and these two
+# serials carry role=caller and role=answerer -- so what this checks for
+# is a link and not a beacon.  The UI path is still there for a station
+# with no role, and tools/radio/ax25twosilicon.py exercises it on the
+# boards.
+if ! grep -q 'iounit 109 of a carrier.s 125' "$OUT/a.c"; then
+	echo "AX25INITTEST-FAILED the caller's link iounit is not the"
+	echo "carrier's 125 less sixteen:"
+	grep -E '^ax25init: (linked|carrier)' "$OUT/a.c"
+	rc=1
+fi
+if grep -q 'ax25init: linked to' "$OUT/a.c" &&
+   grep -q 'ax25init: accepted on' "$OUT/b.c"; then
+	echo "the link came up:"
+	grep -h -E 'ax25init: (linked to|accepted on)' "$OUT/a.c" "$OUT/b.c"
+else
+	echo "AX25INITTEST-FAILED the link did not come up:"
+	grep -E '^(ax25init|ARMV7M)' "$OUT/a.c" | tail -5
+	grep -E '^(ax25init|ARMV7M)' "$OUT/b.c" | tail -5
+	rc=1
+fi
+if grep -q 'ax25init: link [0-9]*: .*INFERNO-AX25' "$OUT/b.c"; then
+	echo "the answerer took numbered frames off the link:"
+	grep -o 'ax25init: link [0-9]*: .*' "$OUT/b.c" | tail -2
+else
+	echo "AX25INITTEST-FAILED nothing arrived on the link:"
+	grep -E '^ax25init' "$OUT/b.c" | tail -6
+	rc=1
+fi
+# and the state machine's own counters, which are the point of a link
+if grep -q 'ax25init: sent [0-9]*, .*vs ' "$OUT/a.c"; then
+	echo "the caller's link state:"
+	grep -o 'ax25init: sent [0-9]*, .*' "$OUT/a.c" | tail -1
+else
+	echo "AX25INITTEST-FAILED the caller reported no link state"
+	rc=1
+fi
 
-# The control: one alone.  It must come up and hear nothing.
-timeout 40 "$Q" -M netduinoplus2,radio=on -global stm32f405-soc.uid=0x11111111 \
+# THE CONTROL IS A STATION WITH NO ROLE, not a lone caller.  A caller
+# alone is waiting for an answerer and cannot come up, so using one here
+# would check nothing -- which is what the first version of this did, and
+# it reported "the lone instance did not come up" as a failure when that
+# is the correct behaviour.  A serial with no entry in /lib/radio gets no
+# role, which is the UI beacon, and that can come up alone and must then
+# hear nothing.
+timeout 40 "$Q" -M netduinoplus2,radio=on -global stm32f405-soc.uid=0x33333333 \
     -nic socket,model=cc1120,listen=127.0.0.1:$((PORT+1)) \
     -nographic -serial null -serial mon:stdio -kernel "$K" \
     > "$OUT/solo" 2>&1
 tr -d '\r' < "$OUT/solo" > "$OUT/solo.c"
 if ! grep -q ARMV7M-AX25-UP "$OUT/solo.c"; then
 	echo "AX25INITTEST-FAILED the lone instance did not come up"
+	rc=1
+elif ! grep -q 'no entry for this board' "$OUT/solo.c"; then
+	echo "AX25INITTEST-FAILED the control has an entry in /lib/radio,"
+	echo "so it is not the no-role station this check needs"
 	rc=1
 elif grep -q 'ax25init: heard' "$OUT/solo.c"; then
 	echo "AX25INITTEST-FAILED a lone instance reported hearing something,"

@@ -47,6 +47,22 @@
 #			name the other.  Who talks to whom is a fact about
 #			a bench, so it is data here and not a constant in
 #			an init.
+#	txramp		PA_CFG2's PA_POWER_RAMP, 0 to 63, if this station
+#			is not to transmit at the driver's default.  The
+#			output is (ramp+1)/2 - 18 dBm, so 63 is +14 and 15
+#			is -10.  It is here because a station's power
+#			belongs to it like its callsign does, and because
+#			it is the one knob that makes a link lossy on
+#			purpose: a connected link on a half-duplex channel
+#			self-coordinates and loses nothing, so REJ, RNR
+#			and the retransmission counter are unreachable
+#			until something costs frames.  See
+#			doc/radio-plan.ms item 9.
+#	role		"caller" or "answerer", for connected mode.  A
+#			link has one of each and which board is which is a
+#			bench fact too.  Absent means UI frames only: a
+#			beacon needs no state machine and no peer to
+#			answer, so that stays the default.
 #	ppb		crystal error, parts per billion, for the ppm verb
 #	rssioffset	dB, AGC_GAIN_ADJUST
 #	csthr		dBm, AGC_CS_THR
@@ -56,6 +72,7 @@
 
 radio=cc1120 uid=2037303959315008002f0022
 	board=clicker2 click=ccrf2 name=board1 call=N0CALL-1 peer=N0CALL-2
+	role=caller
 	# -3550ppb: a carrier from a generator calibrated by ear against
 	# WWV appeared 3250Hz below where this part was commanded, at
 	# both 915 and 910MHz, three runs identical.  With it applied
@@ -69,6 +86,7 @@ radio=cc1120 uid=2037303959315008002f0022
 
 radio=cc1120 uid=203730395931500800300022
 	board=clicker2 click=ccrf2 name=board2 call=N0CALL-2 peer=N0CALL-1
+	role=answerer
 	# +60300ppb, and this is why the file exists: it is 64ppm from
 	# board 1's and no one kernel can carry both.  Measured by keying
 	# each board into the same tinySA in one session so the
@@ -99,7 +117,7 @@ radio=cc1120 uid=203730395931500800300022
 #
 radio=cc1120 uid=eeeeeeee4b4b4b4b11111111
 	board=qemu-netduinoplus2 click=cc1120-model name=qemu1
-	call=N0CALL-9 peer=N0CALL-8
+	call=N0CALL-9 peer=N0CALL-8 role=caller
 	# The model's radio needs no crystal correction: it has no
 	# crystal.  Left out rather than set to zero, so that a run which
 	# expects a calibration says it did not find one.
@@ -107,5 +125,5 @@ radio=cc1120 uid=eeeeeeee4b4b4b4b11111111
 
 radio=cc1120 uid=dddddddd7878787822222222
 	board=qemu-netduinoplus2 click=cc1120-model name=qemu2
-	call=N0CALL-8 peer=N0CALL-9
+	call=N0CALL-8 peer=N0CALL-9 role=answerer
 	rssioffset=-102 csthr=-90

@@ -73,14 +73,24 @@ Payload:	con "INFERNO-AX25";
 Statevery:	con 5;		# beacons between radio reports
 Period:		con 4000;	# ms between beacons
 Maxbuf:		con 255;
+Stats:		con "/dev/radio0/stats";
 
-Wppb, Wrssioffset, Wcsthr, Wname, Wcall, Wpeer, Nwant: con iota;
+Wppb, Wrssioffset, Wcsthr, Wname, Wcall, Wpeer, Wrole, Wtxramp,
+	Nwant: con iota;
 
 # Conversation ctl files, held open for the life of the station: #a
 # frees a conversation when its files close.
 keep: list of ref Sys->FD;
 
 nrecv:	int;		# frames #a handed up, counted by the reader
+lastconv: int;		# the conversation conv() last made
+
+abs(v: int): int
+{
+	if(v < 0)
+		return -v;
+	return v;
+}
 
 lamp(ctl: ref Sys->FD, on: int)
 {
@@ -104,20 +114,33 @@ put(fd: ref Sys->FD, line: string): int
 	return 1;
 }
 
+# A whole file, as a string.
+slurp(path: string): string
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return "";
+	b := array[1024] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0)
+		return "";
+	return string b[0:n];
+}
+
 # The two numbers off the driver that say whether the air carried
 # anything: packets the part queued, and CRC errors it rejected.
 radioline(): string
 {
-	fd := sys->open("/dev/radio0/stats", Sys->OREAD);
-	if(fd == nil)
+	s := slurp(Stats);
+	if(s == "")
 		return "no stats";
-	b := array[1024] of byte;
-	n := sys->read(fd, b, len b);
-	if(n <= 0)
-		return "no stats";
-	s := string b[0:n];
 	recv := field(s, "sent");		# "sent N recv N"
 	rest := field(s, "crcerr");
+	# And the power, READ BACK, because a station that reports what
+	# the air did has to report what it put on the air.  "txramp 0,
+	# -17.5 dBm" above is what was asked for; this is what the part
+	# holds.  Every claim on this bench that skipped that step has
+	# had to be withdrawn.
 	return "sent/recv " + recv + " crcerr " + rest;
 }
 
@@ -146,7 +169,7 @@ field(s, what: string): string
 # announce go on the conversation's ctl BEFORE its data is opened,
 # because they change the frame size and the iounit is a promise rather
 # than an estimate.
-conv(how: string): ref Sys->FD
+conv(how: string, ui: int): ref Sys->FD
 {
 	cfd := sys->open("#a/clone", sys->ORDWR);
 	if(cfd == nil){
@@ -160,7 +183,13 @@ conv(how: string): ref Sys->FD
 		return nil;
 	}
 	cv := int string nb[0:n];
-	if(sys->fprint(cfd, "ui on") <= 0){
+	# UI for a beacon and not for a link: a connected conversation
+	# carries numbered I frames and the state machine that
+	# acknowledges them, which is the whole point of the connected
+	# half.  "ui on" there would turn every write into an
+	# unacknowledged frame and the retransmission counters would
+	# stay at zero whatever the air did.
+	if(ui && sys->fprint(cfd, "ui on") <= 0){
 		sys->print("ax25init: %d: ui on: %r\n", cv);
 		return nil;
 	}
@@ -173,7 +202,9 @@ conv(how: string): ref Sys->FD
 		sys->print("ax25init: #a/%d/data: %r\n", cv);
 		return nil;
 	}
-	sys->print("ax25init: conversation %d, %s\n", cv, how);
+	sys->print("ax25init: conversation %d, %s%s\n", cv, how,
+		(" ui")[0:ui]);
+	lastconv = cv;
 	# THE CTL FILE IS KEPT REFERENCED, AND NOTHING ELSE IN THIS FILE
 	# COST AS MUCH TO FIND.
 	#
@@ -235,6 +266,7 @@ init()
 	# not start, because it looks like the other end being deaf.
 	call := "N0CALL-1";
 	peer := "QST";
+	role := "";
 	radiocal = load Radiocal Radiocal->PATH;
 	if(radiocal == nil)
 		sys->print("ax25init: load %s: %r -- no calibration, the "
@@ -255,6 +287,8 @@ init()
 			want[Wname] = "name";
 			want[Wcall] = "call";
 			want[Wpeer] = "peer";
+			want[Wrole] = "role";
+			want[Wtxramp] = "txramp";
 			(got, bad, err) := radiocal->lookup(Radiocal->Cal,
 				uid, want);
 			if(bad > 0)
@@ -291,6 +325,36 @@ init()
 				# has to name the other.
 				if(got[Wpeer] != nil)
 					peer = got[Wpeer];
+				if(got[Wrole] != nil)
+					role = got[Wrole];
+				# The transmitter's power, if the entry
+				# names one.  Written through the reg verb
+				# in C radix: the ctl file parses with
+				# strtoul(s, nil, 0), so "16r2b" reads as
+				# 16 and would set a modem register.
+				if(got[Wtxramp] != nil){
+					r := int got[Wtxramp];
+					if(r < 0 || r > 63)
+						sys->print("ax25init: txramp"
+							+ " %s is not 0 to 63,"
+							+ " ignored\n",
+							got[Wtxramp]);
+					else if(put(ctl, sys->sprint(
+					    "reg 0x2b 0x%x", r | 16r40)))
+						# READ BACK, on a line of its
+						# own: the first version
+						# printed what it asked for
+						# and appended the part's
+						# answer to the radio line,
+						# where it ran past the width
+						# screen's hardcopy keeps and
+						# was invisible.  A number
+						# that cannot be read is not
+						# a read-back.
+						sys->print("ax25init: pa %s\n",
+							field(slurp(Stats),
+								"pacfg2"));
+				}
 				else if(got[Wname] != nil)
 					sys->print("ax25init: %s has no call "
 						+ "for %q; using %s\n",
@@ -343,7 +407,7 @@ init()
 	# an incoming frame is matched against conversations by its
 	# SOURCE -- so a frame from the peer matches this one, and one
 	# conversation both beacons and hears.  That is what works, under
-	# qemu with two instances.
+	# qemu with two instances and on silicon with two boards.
 	#
 	# ax25chk(1) does it in two commands, "send" connecting and
 	# "recv" announcing, and reading that as two conversations in one
@@ -354,7 +418,12 @@ init()
 	# 118 frames at each other and neither heard one.  An announcer
 	# is for a station that does not know who will call it; this one
 	# does, because /lib/radio told it.
-	bfd := conv("connect " + peer);
+	if(role == "caller" || role == "answerer"){
+		connected(ctl, call, peer, role, sys->iounit(rfd));
+		# connected() does not return: a link is the whole job of
+		# a station that has one.
+	}
+	bfd := conv("connect " + peer, 1);
 	if(bfd == nil){
 		sys->print("ARMV7M-AX25-NOBEACON\n");
 		exit;
@@ -395,6 +464,163 @@ init()
 				radioline(), nrecv);
 		sys->sleep(Period);
 	}
+}
+
+# A CONNECTED LINK, WHICH IS THE PART NOTHING HAS EXERCISED OVER A REAL
+# ERROR RATE.
+#
+# doc/ax25-plan.ms has the state machine marked Done -- SABM/UA/DISC/DM,
+# I/RR/REJ and the sequence numbers, RNR and the window -- and every
+# frame of every run that proved it arrived, because every run was two
+# models over a socket pair or two guests on a lossless channel.  REJ,
+# RNR and the retransmission counter have never been exercised by
+# anything but a deliberate test.
+#
+# Two half-duplex radios on one channel with no carrier sense lose
+# frames on their own: measured in UI mode, heard equals the radio's recv
+# exactly on both boards and both are well below what the other sent.  So
+# this is the first time the machine can be watched doing what it is for.
+#
+# The caller connects and sends numbered frames; the answerer announces
+# and reads.  Which board is which is in /lib/radio, because it is a fact
+# about a bench and not about a program.  Neither returns: a link is the
+# whole job of a station that has one.
+connected(ctl: ref Sys->FD, call, peer, role: string, carrier: int)
+{
+	if(role == "answerer"){
+		afd := conv("announce", 0);
+		if(afd == nil){
+			sys->print("ARMV7M-AX25-NOANNOUNCE\n");
+			exit;
+		}
+		acv := lastconv;
+		sys->print("ax25init: %s announced, waiting for %s\n",
+			call, peer);
+		sys->print("ARMV7M-AX25-UP\n");
+		# listen blocks until somebody sends a SABM and comes
+		# back holding that connection, on a conversation of its
+		# own.
+		lfd := sys->open(sys->sprint("#a/%d/listen", acv),
+			Sys->ORDWR);
+		if(lfd == nil){
+			sys->print("ax25init: listen: %r\n");
+			sys->print("ARMV7M-AX25-NOLISTEN\n");
+			exit;
+		}
+		nb := array[32] of byte;
+		n := sys->read(lfd, nb, len nb);
+		if(n <= 0){
+			sys->print("ax25init: read listen: %r\n");
+			exit;
+		}
+		cv := int string nb[0:n];
+		sys->print("ax25init: accepted on #a/%d\n", cv);
+		dfd := sys->open(sys->sprint("#a/%d/data", cv),
+			Sys->ORDWR);
+		if(dfd == nil){
+			sys->print("ax25init: #a/%d/data: %r\n", cv);
+			exit;
+		}
+		keep = lfd :: keep;
+		b := array[Maxbuf] of byte;
+		lit := 0;
+		for(;;){
+			n = sys->read(dfd, b, len b);
+			if(n < 0){
+				sys->print("ax25init: read: %r\n");
+				break;
+			}
+			if(n == 0)
+				continue;
+			nrecv++;
+			lit = !lit;
+			lamp(ctl, lit);
+			sys->print("ax25init: link %d: %q\n", nrecv,
+				string b[0:n]);
+			if(nrecv % Statevery == 0)
+				sys->print("ax25init: %s\n", status(cv));
+		}
+		sys->print("ax25init: %s\n", status(cv));
+		sys->print("ARMV7M-AX25-LINKDOWN\n");
+		for(;;)
+			sys->sleep(10000);
+	}
+
+	# the caller
+	cfd := conv("connect " + peer, 0);
+	if(cfd == nil){
+		sys->print("ax25init: no link to %s\n", peer);
+		sys->print("ARMV7M-AX25-NOLINK\n");
+		exit;
+	}
+	cv := lastconv;
+	sys->print("ax25init: linked to %s on #a/%d, iounit %d of a "
+		+ "carrier's %d\n", peer, cv, sys->iounit(cfd), carrier);
+	sys->print("ARMV7M-AX25-UP\n");
+
+	lit := 0;
+	nsent := 0;
+	for(;;){
+		b := array of byte sys->sprint("%s-%d", Payload, nsent);
+		if(sys->write(cfd, b, len b) != len b)
+			sys->print("ax25init: write %d: %r\n", nsent);
+		else{
+			nsent++;
+			lit = !lit;
+			lamp(ctl, lit);
+		}
+		if(nsent % Statevery == 0){
+			# The counters the state machine keeps, which are
+			# the whole reason for doing this over a lossy
+			# channel: retransmitted, rejin and rejout stay at
+			# zero on a model.
+			sys->print("ax25init: sent %d, %s\n", nsent,
+				status(cv));
+			sys->print("ax25init: radio %s\n", radioline());
+		}
+		sys->sleep(Period);
+	}
+}
+
+# Does this line start with that?
+#
+# Written out by hand five times with its own length guard each time,
+# the third of which was wrong: "ln[0:9] == \"received \"" guarded by
+# len ln > 5 is a bounds error on any shorter line, and the status file
+# has "window 4" and "n2 10" in it.  The caller linked up, sent four
+# frames the answerer received, and died silently on the fifth -- which
+# from the far end is a link that stopped.
+starts(ln, pre: string): int
+{
+	return len ln >= len pre && ln[0:len pre] == pre;
+}
+
+# One conversation's state, on one line: the fields that say what the
+# link DID, and not the constants it was configured with.
+status(cv: int): string
+{
+	fd := sys->open(sys->sprint("#a/%d/status", cv), Sys->OREAD);
+	if(fd == nil)
+		return "no status";
+	b := array[1024] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0)
+		return "no status";
+	want := array[] of {
+		"state ", "vs ", "vr ", "va ", "sent ", "received ",
+		"retransmitted ", "rejin ", "rejout ", "retries ",
+		"peerbusy ",
+	};
+	s := "";
+	for(l := sys->tokenize(string b[0:n], "\n").t1; l != nil; l = tl l){
+		ln := hd l;
+		for(i := 0; i < len want; i++)
+			if(starts(ln, want[i])){
+				s += ln + " ";
+				break;
+			}
+	}
+	return s;
 }
 
 # Anything that arrives, printed.  A station that transmits and cannot
