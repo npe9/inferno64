@@ -113,6 +113,58 @@ The ordering below follows from the copy
 .I existing ,
 which needs no timer, and the benefit must be read on a real board.
 .NH 1
+What it actually costs on the board
+.PP
+Read on real silicon, 2026-10-02, a Pi 3B booted over JTAG with the
+kernel this branch builds:
+.DS
+.CW
+DRAWRATE-OK 640x480 (307200 pixels):
+    memdraw      2090 us a fill over 177
+    screen+flush 24444 us a fill over 9
+.R
+.DE
+.LP
+A fill is 307200 pixels, 1228800 bytes.  So the draw into ordinary cached
+RAM runs at about 588 MB/s, and the same fill delivered to the screen
+runs at about 50 MB/s.  The difference, 22354us, is the soft-to-fb copy
+and the cache clean: it is
+.B "91.4% of the screen path"
+and
+.B "10.7 times"
+the cost of the drawing it exists to deliver.
+.PP
+That settles the ordering of this plan, and it settles it more strongly
+than the plan assumed.  QEMU put the same ratio at 7.0 and real hardware
+puts it at 11.7, so emulation
+.I understated
+how completely the copy dominates \(em which is the opposite of the
+direction a reader would guess from the warning above, and the reason
+that warning says only that QEMU decides nothing rather than that it
+flatters the copy.
+.PP
+Note also that memdraw itself is
+.I slower
+on the board than under QEMU (2090us against 819us), which is what one
+should expect and is a small check that the figure is real: TCG runs the
+rasteriser on a fast host CPU, while the board is a 1.2GHz A53.  A
+measurement where the emulator looked slower at everything would have
+been suspicious.
+.PP
+.B "What the kernel this was taken on is:"
+build 1790983290, with the pre-fix
+.CW pl011_kick ,
+whose interrupts-off window per console write is bounded at
+.CW Maxpoll
+= 64 bytes; what that costs on silicon is unmeasured.  It does not reach
+these figures, because
+.CW drawrate()
+puts no print inside either timed region \(em it timestamps, loops, and
+prints afterwards \(em but the kernel's state belongs with the number.
+.PP
+The boot was otherwise clean: no faults, no panics, 39 self-test markers,
+and the console printed normally throughout.
+.NH 1
 Step 1: draw into the framebuffer, keep the cache clean
 .PP
 Stop allocating the shadow buffer and point
