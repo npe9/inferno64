@@ -99,6 +99,25 @@ kernel8.img: i$CONF mkrawimg.py ../../../tools/jtag/checkstub
 	python3 mkrawimg.py i$CONF kernel8.img $KTZERO
 	python3 ../../../tools/jtag/checkstub kernel8.img $KTZERO jtagstub.bin
 
+# The same objects linked WITHOUT -H7, purely for its symbol table.
+#
+# WHY A SECOND LINK.  The kernel the board runs has to be ELF (-H7) for
+# mkrawimg.py to lay out its segments, and libmach cannot read a
+# 64-bit ELF at all -- its ELF reader uses a 32-bit Ehdr and its machine
+# switch has no ARM64 case, so inm, acid and idb all refuse i$CONF.  The
+# Plan 9 a.out that the same objects produce IS readable, and the
+# addresses are identical because -T is.
+#
+# So this is how a kernel address gets a name: tools/sym.sh reads it.
+# Without it a PC from /dev/ilock or a panic is just a number, which is
+# what doc/parallel-allocator-survey.ms records having to live with.
+#
+i$CONF.sym: $OBJ $CONF.c $CONF.root.h $LIBNAMES $LIBFILES
+	$LD -o $target -T$KTZERO -R4096 -l $OBJ $CONF.$O $LIBFILES
+
+syms:V: i$CONF.sym
+	echo 'i'$CONF'.sym holds the symbol table; tools/sym.sh <addr> reads it'
+
 boot:V: kernel8.img
 	echo 'kernel8.img + config.txt are ready for the Pi FAT boot partition'
 	echo '(also needs the Pi firmware: bootcode.bin start.elf fixup.dat)'

@@ -1,14 +1,33 @@
+/*
+ * THESE FIELDS ARE 32 BITS WIDE ON DISK, and they were spelled "long".
+ *
+ * On a host whose long is 64 bits -- every 64-bit Unix, including the one
+ * this is built on -- that made sizeof(Exec) 64 against an on-disk header
+ * of 32, so libmach read every field one slot out: crackhdr reported
+ * hdrsz 72 instead of 40, txtsz got the data size, datsz got the symbol
+ * table size, and symsz got 0.  syminit then returned "no symbols" and
+ * every tool built on libmach -- inm, acid, idb -- printed nothing and
+ * exited 0 for EVERY Plan 9 executable, on every architecture.  Not just
+ * arm64; arm64 is only where it was noticed, because nothing else here
+ * had ever been asked to name an address in one.
+ *
+ * The union in libmach/executable.c already says so: its 64-bit view
+ * declares "u32 ohdr[8]" for exactly these eight fields, so the layout
+ * was understood and only this declaration disagreed.
+ *
+ * See the "Plan 9 long is 32 bits" hazard this tree records elsewhere.
+ */
 typedef	struct	Exec	Exec;
 struct	Exec
 {
-	long	magic;		/* magic number */
-	long	text;	 	/* size of text segment */
-	long	data;	 	/* size of initialized data */
-	long	bss;	  	/* size of uninitialized data */
-	long	syms;	 	/* size of symbol table */
-	long	entry;	 	/* entry point */
-	long	spsz;		/* size of pc/sp offset table */
-	long	pcsz;		/* size of pc/line number table */
+	u32	magic;		/* magic number */
+	u32	text;	 	/* size of text segment */
+	u32	data;	 	/* size of initialized data */
+	u32	bss;	  	/* size of uninitialized data */
+	u32	syms;	 	/* size of symbol table */
+	u32	entry;	 	/* entry point */
+	u32	spsz;		/* size of pc/sp offset table */
+	u32	pcsz;		/* size of pc/line number table */
 };
 
 #define HDR_MAGIC	0x00008000		/* header expansion */

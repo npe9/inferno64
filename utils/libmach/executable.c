@@ -66,6 +66,7 @@ extern	Mach	marm;
 extern	Mach	mpower;
 extern	Mach	mpower64;
 extern	Mach	mriscv64;
+extern	Mach	marm64;
 
 ExecTable exectab[] =
 {
@@ -204,6 +205,25 @@ ExecTable exectab[] =
 		sizeof(Exec)+8,
 		nil,
 		commonllp64 },
+	/*
+	 * arm64 7.out and boot image.
+	 *
+	 * This table had no arm64 entry, so R_MAGIC was an unknown header
+	 * and every tool built on libmach -- inm, acid, idb -- refused
+	 * every aarch64 binary with "Can't read header".  7obj.c, the
+	 * object reader, was here all along; the executable reader was
+	 * not, which is a gap you only notice when you try to name an
+	 * address.
+	 */
+	{ R_MAGIC,			/* arm64 7.out & boot image */
+		"arm64 plan 9 executable",
+		"arm64 plan 9 dlm",
+		FARM64,
+		1,
+		&marm64,
+		sizeof(Exec)+8,
+		nil,
+		commonllp64 },
 	{ (143<<16)|0413,		/* (Free|Net)BSD Arm */
 		"arm *bsd executable",
 		nil,
@@ -292,7 +312,13 @@ crackhdr(int fd, Fhdr *fp)
 
 		mach = mp->mach;
 		if(mp->swal != nil)
-			hswal(&d, sizeof(d.e)/sizeof(ulong), mp->swal);
+			/*
+			 * In u32 units, because hswal swaps 32-bit words:
+			 * every header in that union is made of them, and
+			 * a count in ulong units swapped only half of one
+			 * on a 64-bit host.
+			 */
+			hswal(&d, sizeof(d.e)/sizeof(u32), mp->swal);
 		ret = mp->hparse(fd, fp, &d);
 		seek(fd, mp->hsize, 0);		/* seek to end of header */
 		break;
@@ -303,15 +329,22 @@ crackhdr(int fd, Fhdr *fp)
 }
 
 /*
- * Convert header to canonical form
+ * Convert header to canonical form: byteswap n 32-BIT words.
+ *
+ * This walked a ulong*, which is 64 bits on a 64-bit host, so it swapped
+ * eight-byte elements over a header made of four-byte ones -- and it is
+ * only ever called on a.out headers, whose fields are all 32 bits.  The
+ * count its caller passes was "sizeof(Exec)/sizeof(u32)", which was
+ * right for the same wrong reason and is now spelled in the width it
+ * means.
  */
 static void
 hswal(void *v, int n, ulong (*swap)(ulong))
 {
-	ulong *ulp;
+	u32 *p;
 
-	for(ulp = v; n--; ulp++)
-		*ulp = (*swap)(*ulp);
+	for(p = v; n--; p++)
+		*p = (*swap)(*p);
 }
 
 /*
@@ -398,7 +431,7 @@ commonllp64(int fd, Fhdr *fp, ExecHdr *hp)
 	uvlong entry;
 
 	USED(fd);
-	hswal(&hp->e, sizeof(Exec)/sizeof(long), beswal);
+	hswal(&hp->e, sizeof(Exec)/sizeof(u32), beswal);
 	if(!(hp->e.exec.magic & HDR_MAGIC))
 		return 0;
 
@@ -607,7 +640,7 @@ elfdotout(int fd, Fhdr *fp, ExecHdr *hp)
 		free(ph);
 		return 0;
 	}
-	hswal(ph, phsz/sizeof(ulong), swal);
+	hswal(ph, phsz/sizeof(u32), swal);	/* Phdr is 32-bit fields */
 
 	/* find text, data and symbols and install them */
 	it = id = is = -1;

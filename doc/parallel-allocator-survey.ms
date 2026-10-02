@@ -202,22 +202,35 @@ amplify waiting, but they cannot amplify it past the hold time: four
 processors demanding 2.4% each of a resource that can give 100% do not
 queue.
 .PP
-.B "And a gap worth naming: a kernel PC cannot be resolved to a name here."
-The longest hold is at
-.CW 0x1af054
-and there is no way in this tree to find out what that is.
-.CW 7l -H7
-emits a stripped ELF, so
-.CW nm
-reports no symbols;
-.CW inm
-cannot read that header; and relinking the same objects without
-.CW -H7
-produces a file
-.CW inm
-also refuses.  So "which lock" is unanswerable with the tools present,
-which is worth fixing before any lock work and is not worth fixing to
-decide against doing that work.
+.B "And the longest hold is poolalloc, which took fixing libmach to find out."
+.CW "sh tools/sym.sh 0x1af054"
+says
+.CW poolalloc+80 ,
+so the 9724us outlier IS the pool lock \(em the very lock item 1 is about.
+Naming it needed two bugs fixed and they are written up in the commit;
+briefly, libmach could not read ANY Plan 9 executable on a 64-bit host
+.CW ( Exec 's
+fields were declared
+.CW long ,
+so
+.CW sizeof(Exec)
+was 64 against an on-disk 32 and every field came out one slot shifted)
+and it had no arm64 machine description at all.
+.PP
+.B "Which sharpens the verdict rather than changing it, and splits it in two."
+THROUGHPUT: 2.4% of the run inside all ilocks together, so per-processor
+free lists cannot buy much and item 1 stays declined.
+.PP
+LATENCY: one
+.CW poolalloc
+held the lock for 9.7 MILLISECONDS.  That is a different complaint and a
+magazine would not fix it either \(em a per-processor cache in front of
+the pool still has to go to the pool when it misses, and what takes ten
+milliseconds in there is the pool GROWING, under the lock.  If anything
+is worth doing it is not holding the lock across a grow, which is a
+smaller change than item 1 and aimed at a defect item 1 does not
+address.  Unmeasured beyond this one maximum, and named here so it is not
+confused with the throughput question.
 .NH 2
 2.  The accounting has to stop being shared fields
 .LP

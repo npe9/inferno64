@@ -194,8 +194,17 @@ execsyms(int fd)
 		error("Can't read header for %s", filename);
 		return;
 	}
-	if (syminit(fd, &f) < 0)
+	/*
+	 * SAY WHY.  This returned silently, so a header that cracked and a
+	 * symbol table that would not load were indistinguishable from a
+	 * file with no symbols in it: nm printed nothing and exited 0.
+	 * libmach sets errstr on every one of these paths; it was only
+	 * ever being thrown away.
+	 */
+	if (syminit(fd, &f) < 0) {
+		error("%s: no symbols: %r", filename);
 		return;
+	}
 	s = symbase(&n);
 	nsym = 0;
 	while(n--)

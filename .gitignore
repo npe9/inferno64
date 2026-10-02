@@ -409,6 +409,7 @@ os/inferno/mps2/imps2
 os/inferno/nucleof303/inucleof303
 os/inferno/pc64/ipc64
 os/inferno/raspi3b/iraspi3b
+os/inferno/raspi3b/iraspi3b.sym
 os/inferno/raspi4/iraspi4
 os/inferno/shakti/ishakti
 os/inferno/sifiveu/isifiveu
