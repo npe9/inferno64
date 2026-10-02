@@ -30,6 +30,9 @@ cd bochs-$VER
 grep -q '<libgen.h>' gui/keymap.cc ||
 	sed -i.orig 's/^#include "param_names.h"/#include "param_names.h"\
 #include <libgen.h>/' gui/keymap.cc
+# Bochs' slirp uses res_ninit and friends, which on macOS are in
+# libresolv and not libc; its configure does not add it.
+case `uname` in Darwin) LIBS="$LIBS -lresolv"; export LIBS;; esac
 ./configure --prefix="$DEST" \
 	--enable-x86-64 --enable-smp --enable-cpu-level=6 \
 	--enable-vmx=2 --enable-svm \
