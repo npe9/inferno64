@@ -5418,3 +5418,113 @@ as well: what
 avoids is the per-write fork, not the pool.  Every figure measured
 through either of them has to say whether the board had just booted, and
 the ones above do.
+.PP
+.B "Item 9's third step: a station with no shell on it, and what that cost to learn."
+.I Os/inferno/init/armv7max25.b
+is an init that applies this board's own calibration, attaches the radio
+to
+.B #a
+by descriptor, takes its callsign and the station it addresses out of
+.BR /lib/radio ,
+and then beacons UI frames and prints what arrives.  Two of them under
+qemu, by
+.IR tools/radio/ax25inittest.sh :
+.DS
+.CW "instance a: #a up, carrier 125, ax25 109"
+.CW "instance b: #a up, carrier 125, ax25 109"
+.CW "instance a heard the other through #a: INFERNO-AX25"
+.CW "instance b heard the other through #a: INFERNO-AX25"
+.CW "control: alone, it came up and heard nothing"
+.CW "AX25INITTEST-OK"
+.DE
+and the control matters: a lone instance must come up, beacon and hear
+nothing, or "heard" is not coming from a packet.
+.PP
+.B "THE CLAIM IN THE ENTRY ABOVE WAS HALF WRONG AND IS CORRECTED."
+It said the way to have
+.B #a
+on this board is not to run a shell.  An init does remove the heap
+pressure \- no fork, no second module in the pool \- and it does
+.I not
+remove the process pressure:
+.DS
+.CW "NPROC 5, no shell:  \(dqno procs for kproc\(dq, repeating"
+.CW "NPROC 7, no shell:  ARMV7M-AX25-UP, beacons, both hear"
+.DE
+Three kprocs is three slots whatever else is running.  So seven is right
+for a station image and wrong for a shell image, and which image a board
+carries is already selected by file \-
+.CW "mk INIT=armv7max25" .
+What is not selected that way is
+.CW NPROC ,
+because it is a constant in a header both images share; it belongs in
+the config's data section beside
+.CW main_pool_pcnt ,
+which is how this tree picks a per-board value without a conditional.
+Until it is there, a station image is built by editing one line of
+.IR mem.h ,
+and that is written in
+.I mem.h
+rather than left to be discovered.
+.PP
+.B "Three things found building it, each of which looked like something else."
+.IP \(bu 3
+.B "A guest reading its own serial number died."
+.CW "bus fault ... bfar 1fff7a18"
+in the init, which is the three-word read of the unique device ID.  The
+F405 SoC in qemu maps flash, SRAM, CCM and the backup SRAM and nothing
+else, so the whole system memory region at 0x1fff0000 is absent.  On
+silicon the same code reads both boards' serials, so the driver was
+right and the model had nothing there.
+.I Tools/qemu-patches/0053
+maps it, with the twelve bytes coming from a property so that two guests
+can be told apart \- two that always answered alike could not exercise
+the check a two-board harness makes with the serial.
+.IP \(bu 3
+.B "A bind that half worked."
+.CW "sys->bind(\(dq#a\(dq, \(dq/net\(dq)"
+succeeds and puts the device's files at
+.BR /net/ctl ,
+so the init then failed with
+.CW "/net/ax25/ctl: file does not exist"
+having attached the device perfectly.
+.I Ax25 (3)'s
+synopsis is
+.CW "bind '#a' /net/ax25" ,
+and the device paths need no bind at all, which is what
+.I ax25chk (1)
+and
+.I ax25up (1)
+use.
+.IP \(bu 3
+.B "Two stations beaconing at each other and hearing nothing."
+133 frames out of one and 120 out of the other, both up, both with the
+right payload budget, and neither heard one.
+.B #a
+matches an incoming frame against a conversation by the frame's
+.I source ,
+and both were addressing
+.B QST
+with the same callsign, so nothing matched.  Who a station addresses is a
+fact about a bench rather than about a program, so it is a
+.B peer
+attribute in
+.B /lib/radio
+beside the callsign \- and that is also the test of the qemu serials,
+since each guest finds the other's callsign only by looking itself up.
+.PP
+.B "And the reader is a library now."
+.I Appl/lib/radiocal.b ,
+behind
+.IR module/radiocal.m ,
+is the parser that was measured on silicon, lifted out of
+.I radiocfg (1)
+rather than rewritten.  Two callers \- a command at a prompt and an init
+on a board that cannot run one \- and a format deserves one reader.
+Checked by giving both the five cases the copy passed, including two
+negative controls: byte-identical answers, with the one intended
+difference that a malformed pair is now reported by
+.I radiocal
+rather than by
+.IR radiocfg ,
+which is accurate.

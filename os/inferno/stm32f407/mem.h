@@ -149,11 +149,28 @@
  *	    "[String] Broken: out of memory: heap".  Even echo.
  *
  * Seven is not a trade, it is a board that does one thing and nothing
- * else, so it is five.  The way to have #a as well is not more
- * processes: it is not to run a shell.  An init that attaches #a and
- * does the work itself needs no fork and no second module in the pool,
- * and os/inferno/init/armv7mbeacon.b already does exactly that for the
- * radio.  See doc/radio-plan.ms item 9.
+ * else, so the default is five.
+ *
+ * "THE WAY TO HAVE #a IS NOT TO RUN A SHELL" WAS WRITTEN HERE AND IS
+ * HALF WRONG.  An init that attaches #a itself does remove the heap
+ * pressure -- no fork, no second module in the pool -- but it does not
+ * remove the PROCESS pressure, and three kprocs is three slots whatever
+ * else is running.  Measured, os/inferno/init/armv7max25.b with no
+ * shell anywhere:
+ *
+ *	NPROC 5, no shell:  "no procs for kproc", repeating.
+ *	NPROC 7, no shell:  ARMV7M-AX25-UP, ax25 iounit 109, beacons
+ *	                    running, and two of them hear each other.
+ *
+ * So seven is right for a station image and wrong for a shell image,
+ * and which image a board carries is already chosen by file --
+ * "mk INIT=armv7max25".  What is not yet chosen that way is this
+ * number, because it is a constant in a header both images share.  It
+ * belongs in the config's data section beside main_pool_pcnt and
+ * heap_pool_pcnt, which is how this tree selects a per-board value
+ * without a conditional; until it is, a station image is built by
+ * editing this line, and that is recorded rather than hidden.  See
+ * doc/radio-plan.ms item 9.
  *
  * And 3096 in that first trace is why KSTACK stays at 4096.  The
  * comment above records that 3072 was tried and reverted because the

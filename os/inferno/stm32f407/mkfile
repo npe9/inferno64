@@ -164,6 +164,7 @@ XIPDIS=\
 	echo.dis\
 	radiocal.dis\
 	radiocfg.dis\
+	lib/radiocal.dis\
 	md5sum.dis\
 	strings.dis\
 	ax25raw.dis\

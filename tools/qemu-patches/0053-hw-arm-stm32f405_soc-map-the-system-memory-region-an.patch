@@ -1,0 +1,186 @@
+From 5791dcd3c071e47063f4de99d5d727ff733ebf21 Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Thu, 1 Oct 2026 20:02:19 -0400
+Subject: [PATCH] hw/arm/stm32f405_soc: map the system memory region, and a
+ settable unique device ID
+
+The F405 SoC mapped flash, SRAM, CCM and the backup SRAM and nothing
+else, so the whole system memory region at 0x1fff0000 was absent: the
+bootloader ROM, the OTP area, and the read-only words that identify the
+part.  RM0090 3.3 and table 5 for the map, 39.1 for the 96-bit unique
+device ID at 0x1fff7a10.
+
+A guest reading its own serial number therefore took a bus fault and
+died:
+
+	bus fault pc 08018bb4 psr 01000200
+	  cfsr 00008200 hfsr 00000000 mmfar 00000000 bfar 1fff7a18
+	  r2 1fff7a18 r3 1fff7a10
+
+which is the three-word read of the unique ID.  On silicon it works --
+two clicker 2 boards read 2037303959315008002f0022 and
+203730395931500800300022 -- so the guest code was right and the model
+had nothing there.
+
+Why a guest wants it: a board needs a name before a per-board
+calibration can belong to it, and every name a board could be TOLD is
+circular, since the thing that would tell it is the thing that needs to
+know.  The serial in silicon is the only one there is.
+
+The twelve bytes come from a uid property rather than being fixed,
+because two instances that always reported the same serial could not
+exercise the check a two-board harness makes with it -- that two boards
+reporting one serial are one board.  The three words are (U,
+U^0x5a5a5a5a, ~U), so distinct properties give distinct serials and the
+same property gives the same serial every boot.  The default is all-ones,
+which is a value no silicon has: a real part reads its lot number and
+wafer position in there.
+
+The region is read-only, because on silicon it is, and a guest that
+writes to it has a bug this should not hide.
+
+Signed-off-by: Noah Evans <noah.evans@gmail.com>
+---
+ hw/arm/stm32f405_soc.c         | 58 ++++++++++++++++++++++++++++++++++
+ include/hw/arm/stm32f405_soc.h | 18 +++++++++++
+ 2 files changed, 76 insertions(+)
+
+diff --git a/hw/arm/stm32f405_soc.c b/hw/arm/stm32f405_soc.c
+index fa281d2..3826daa 100644
+--- a/hw/arm/stm32f405_soc.c
++++ b/hw/arm/stm32f405_soc.c
+@@ -196,6 +196,53 @@ static void stm32f405_soc_realize(DeviceState *dev_soc, Error **errp)
+     }
+     memory_region_add_subregion(system_memory, BKPSRAM_BASE_ADDRESS, &s->bkpsram);
+ 
++    /*
++     * System memory: the bootloader ROM, the OTP area, and the words
++     * that identify the part.  Read-only, because on silicon it is, and
++     * a guest that writes there has a bug this should not hide.
++     *
++     * The unique device ID is the reason this is here.  A board needs a
++     * name before a per-board calibration can belong to it, and every
++     * name a board could be told is circular -- so the one in silicon is
++     * the only one there is.  Unmapped, reading it was a bus fault and
++     * the guest died in its init.
++     *
++     * The twelve bytes come from the "uid" property, so two instances
++     * can be told apart.  That matters: a harness driving two boards
++     * checks that they do not report the same serial, because two that
++     * do are one board, and a pair of guests that always answered alike
++     * could not exercise the check.
++     */
++    memory_region_init_rom(&s->sysmem, OBJECT(dev_soc), "STM32F405.sysmem",
++                           SYSMEM_SIZE, &err);
++    if (err != NULL) {
++        error_propagate(errp, err);
++        return;
++    }
++    memory_region_add_subregion(system_memory, SYSMEM_BASE_ADDRESS,
++                                &s->sysmem);
++    {
++        uint32_t id[3];
++        uint16_t kb = FLASH_SIZE / 1024;
++
++        /*
++         * Three words, as RM0090 39.1 has them, derived from the one
++         * property so that distinct properties give distinct serials
++         * and the same property gives the same one every boot.
++         */
++        id[0] = s->uid;
++        id[1] = s->uid ^ 0x5a5a5a5a;
++        id[2] = ~s->uid;
++        address_space_write_rom(&address_space_memory,
++                                SYSMEM_BASE_ADDRESS + UID_OFFSET,
++                                MEMTXATTRS_UNSPECIFIED,
++                                (const uint8_t *)id, sizeof(id));
++        address_space_write_rom(&address_space_memory,
++                                SYSMEM_BASE_ADDRESS + FLASHSIZE_OFFSET,
++                                MEMTXATTRS_UNSPECIFIED,
++                                (const uint8_t *)&kb, sizeof(kb));
++    }
++
+     armv7m = DEVICE(&s->armv7m);
+     qdev_prop_set_uint32(armv7m, "num-irq", 96);
+     qdev_prop_set_uint8(armv7m, "num-prio-bits", 4);
+@@ -371,11 +418,22 @@ static void stm32f405_soc_realize(DeviceState *dev_soc, Error **errp)
+     create_unimplemented_device("RNG",         0x50060800, 0x400);
+ }
+ 
++/*
++ * A serial number per instance.  The default is recognisably not a real
++ * part -- an STM32F4 reads its lot number and wafer position in here, so
++ * all-ones is a value no silicon has -- and a test that wants two guests
++ * to differ sets it, "-global stm32f405-soc.uid=...".
++ */
++static const Property stm32f405_soc_properties[] = {
++    DEFINE_PROP_UINT32("uid", STM32F405State, uid, 0xffffffff),
++};
++
+ static void stm32f405_soc_class_init(ObjectClass *klass, const void *data)
+ {
+     DeviceClass *dc = DEVICE_CLASS(klass);
+ 
+     dc->realize = stm32f405_soc_realize;
++    device_class_set_props(dc, stm32f405_soc_properties);
+     /* No vmstate or reset required: device has no internal state */
+ }
+ 
+diff --git a/include/hw/arm/stm32f405_soc.h b/include/hw/arm/stm32f405_soc.h
+index ba59dee..93962e8 100644
+--- a/include/hw/arm/stm32f405_soc.h
++++ b/include/hw/arm/stm32f405_soc.h
+@@ -34,6 +34,7 @@
+ #include "hw/misc/stm32f4xx_exti.h"
+ #include "hw/or-irq.h"
+ #include "hw/ssi/stm32f2xx_spi.h"
++#include "hw/i2c/stm32f4xx_i2c.h"
+ #include "hw/arm/armv7m.h"
+ #include "qom/object.h"
+ 
+@@ -45,6 +46,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(STM32F405State, STM32F405_SOC)
+ #define STM_NUM_ADCS 6
+ #define STM_NUM_SPIS 6
+ #define STM_NUM_GPIOS 9
++#define STM_NUM_I2CS 3
+ 
+ #define FLASH_BASE_ADDRESS 0x08000000
+ #define FLASH_SIZE (1024 * 1024)
+@@ -62,6 +64,18 @@ OBJECT_DECLARE_SIMPLE_TYPE(STM32F405State, STM32F405_SOC)
+  */
+ #define BKPSRAM_BASE_ADDRESS 0x40024000
+ #define BKPSRAM_SIZE (4 * 1024)
++/*
++ * The system memory region, RM0090 3.3 and table 5.  The bootloader ROM
++ * is at 0x1fff0000, then one kilobyte of OTP at 0x1fff7800, and then the
++ * read-only words the part is identified by: a 96-bit unique device ID
++ * at 0x1fff7a10 (39.1), the flash size in kilobytes at 0x1fff7a22, and
++ * the package at 0x1fff7a40.  None of it was mapped, so a guest reading
++ * its own serial number took a bus fault.
++ */
++#define SYSMEM_BASE_ADDRESS 0x1fff0000
++#define SYSMEM_SIZE (32 * 1024)
++#define UID_OFFSET 0x7a10
++#define FLASHSIZE_OFFSET 0x7a22
+ 
+ struct STM32F405State {
+     SysBusDevice parent_obj;
+@@ -76,11 +90,15 @@ struct STM32F405State {
+     OrIRQState adc_irqs;
+     STM32F2XXADCState adc[STM_NUM_ADCS];
+     STM32F2XXSPIState spi[STM_NUM_SPIS];
++    STM32F4xxI2CState i2c[STM_NUM_I2CS];
+ 
+     Stm32f4xxGpioState gpio[STM_NUM_GPIOS];
+ 
+     MemoryRegion ccm;
+     MemoryRegion bkpsram;
++    MemoryRegion sysmem;
++
++    uint32_t uid;
+     MemoryRegion sram;
+     MemoryRegion flash;
+     MemoryRegion flash_alias;
+-- 
+2.51.0
+

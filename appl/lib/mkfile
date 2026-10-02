@@ -102,6 +102,7 @@ TARG=\
 	powerman.dis\
 	profile.dis\
 	pslib.dis\
+	radiocal.dis\
 	quicktime.dis\
 	rabin.dis\
 	rand.dis\
@@ -241,6 +242,7 @@ plumber.dis:N: plumbing.m
 ip.dis: $ROOT/module/ip.m
 ether.dis:	$ROOT/module/ether.m
 attrdb.dis attrhash.dis:	$ROOT/module/attrdb.m
+radiocal.dis:	$ROOT/module/radiocal.m
 ipattr.dis:	$ROOT/module/attrdb.m $ROOT/module/ip.m $ROOT/module/ipattr.m
 tftp.dis:	$ROOT/module/tftp.m
 registries.dis:	$ROOT/module/registries.m

@@ -38,8 +38,8 @@ extern unsigned char root30code[];
 extern int root30len;
 extern unsigned char root31code[];
 extern int root31len;
-extern unsigned char root33code[];
-extern int root33len;
+extern unsigned char root32code[];
+extern int root32len;
 extern unsigned char root34code[];
 extern int root34len;
 extern unsigned char root35code[];
@@ -98,8 +98,10 @@ extern unsigned char root61code[];
 extern int root61len;
 extern unsigned char root62code[];
 extern int root62len;
-int rootmaxq = 63;
-Dirtab roottab[63] = {
+extern unsigned char root63code[];
+extern int root63len;
+int rootmaxq = 64;
+Dirtab roottab[64] = {
 	"",	{0, 0, QTDIR},	 0,	0555,
 	"chan",	{1, 0, QTDIR},	 0,	0555,
 	"dev",	{2, 0, QTDIR},	 0,	0555,
@@ -161,10 +163,11 @@ Dirtab roottab[63] = {
 	"regex.dis",	{58, 0, QTFILE},	 0,	0444,
 	"string.dis",	{59, 0, QTFILE},	 0,	0444,
 	"workdir.dis",	{60, 0, QTFILE},	 0,	0444,
-	"std.dis",	{61, 0, QTFILE},	 0,	0444,
-	"radio",	{62, 0, QTFILE},	 0,	0444,
+	"radiocal.dis",	{61, 0, QTFILE},	 0,	0444,
+	"std.dis",	{62, 0, QTFILE},	 0,	0444,
+	"radio",	{63, 0, QTFILE},	 0,	0444,
 };
-Rootdata rootdata[63] = {
+Rootdata rootdata[64] = {
 	0,	 &roottab[1],	 11,	nil,
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
@@ -176,17 +179,16 @@ Rootdata rootdata[63] = {
 	0,	 nil,	 0,	 nil,
 	0,	 nil,	 0,	 nil,
 	0,	 root10code,	 0,	 &root10len,
-	0,	 &roottab[62],	 1,	nil,
-	3,	 &roottab[50],	 11,	nil,
+	0,	 &roottab[63],	 1,	nil,
+	3,	 &roottab[50],	 12,	nil,
 	3,	 root12code,	 0,	 &root12len,
-	3,	 &roottab[61],	 1,	nil,
+	3,	 &roottab[62],	 1,	nil,
 	3,	 root15code,	 0,	 &root15len,
 	3,	 root27code,	 0,	 &root27len,
 	3,	 root28code,	 0,	 &root28len,
 	3,	 root29code,	 0,	 &root29len,
-	3,	 root30code,	 0,	 &root30len,
 	3,	 root31code,	 0,	 &root31len,
-	3,	 root34code,	 0,	 &root34len,
+	3,	 root32code,	 0,	 &root32len,
 	3,	 root35code,	 0,	 &root35len,
 	3,	 root36code,	 0,	 &root36len,
 	3,	 root37code,	 0,	 &root37len,
@@ -215,6 +217,7 @@ Rootdata rootdata[63] = {
 	3,	 root60code,	 0,	 &root60len,
 	3,	 root61code,	 0,	 &root61len,
 	3,	 root62code,	 0,	 &root62len,
+	3,	 root63code,	 0,	 &root63len,
 	12,	 root16code,	 0,	 &root16len,
 	12,	 root17code,	 0,	 &root17len,
 	12,	 root18code,	 0,	 &root18len,
@@ -226,6 +229,7 @@ Rootdata rootdata[63] = {
 	12,	 root24code,	 0,	 &root24len,
 	12,	 root25code,	 0,	 &root25len,
 	12,	 root26code,	 0,	 &root26len,
+	12,	 root30code,	 0,	 &root30len,
 	14,	 root14code,	 0,	 &root14len,
-	11,	 root33code,	 0,	 &root33len,
+	11,	 root34code,	 0,	 &root34len,
 };

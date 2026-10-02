@@ -242,6 +242,8 @@ root
 	/dis/echo.dis		/dis32/echo.dis
 	/dis/radiocal.dis	/dis32/radiocal.dis
 	/dis/radiocfg.dis	/dis32/radiocfg.dis
+# The calibration reader, shared by radiocfg(1) and the AX.25 init.
+	/dis/lib/radiocal.dis	/dis32/lib/radiocal.dis
 	/dis/md5sum.dis		/dis32/md5sum.dis
 	/dis/strings.dis	/dis32/strings.dis
 # The calibrations themselves, in attrdb(6) format, keyed by the
