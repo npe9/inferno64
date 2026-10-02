@@ -33,6 +33,7 @@ Vmlinux: module
 Gdt:	con 16r500;
 Shell:	con "LINUXGUEST: shell";	# what scripts/mklinuxguest.sh's /init prints
 typed: string;
+quitat: string;	# -q: stop once the console has shown this
 Zero:	con 16r7000;
 Cmdline:	con 16r20000;
 Kernel:	con 16r100000;
@@ -41,7 +42,7 @@ stderr: ref Sys->FD;
 
 usage()
 {
-	sys->fprint(stderr, "usage: vmlinux [-m megabytes] [-a append] [-i initrd] [-s seconds] [-t typed] bzImage\n");
+	sys->fprint(stderr, "usage: vmlinux [-m megabytes] [-a append] [-i initrd] [-s seconds] [-t typed] [-q pattern] bzImage\n");
 	raise "fail:usage";
 }
 
@@ -153,6 +154,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		'i' =>	initrd = arg->earg();
 		's' =>	secs = int arg->earg();
 		't' =>	typed = arg->earg() + "\n";
+		'q' =>	quitat = arg->earg();
 		* =>	usage();
 		}
 	argv = arg->argv();
@@ -305,8 +307,21 @@ console(dir: string)
 	out := sys->fildes(1);
 	buf := array[1024] of byte;
 	tail := "";
+	seen := "";
 	while((n := sys->read(fd, buf, len buf)) > 0){
 		sys->write(out, buf, n);
+		# -q: the run is over once the guest has said this
+		if(quitat != nil){
+			seen += string buf[0:n];
+			if(contains(seen, quitat)){
+				quitat = nil;
+				sys->sleep(500);	# let the rest of the line out
+				cfd := sys->open(dir + "/vcpu0/ctl", Sys->OWRITE);
+				if(cfd != nil)
+					sys->fprint(cfd, "stop");
+			}else if(len seen > 4096)
+				seen = seen[len seen - 1024:];
+		}
 		# -t: type a line once the guest's shell is up
 		if(typed != nil){
 			tail += string buf[0:n];

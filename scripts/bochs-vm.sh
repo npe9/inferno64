@@ -13,6 +13,8 @@
 #
 # usage: scripts/bochs-vm.sh [-c cpu] kernel [seconds]
 #
+# BOCHS_MEGS sets the machine's memory (512 MiB by default).
+#
 #	-c cpu	a Bochs CPU model; default corei7_skylake_x (VMX, EPT,
 #		unrestricted guest).  ryzen gives SVM with nested paging.
 #
@@ -66,7 +68,7 @@ xorriso -as mkisofs -quiet -R -untranslated-filenames -omit-version-number \
 	"$WORK/iso"
 
 cat >"$WORK/bochsrc" <<RC
-megs: 512
+megs: ${BOCHS_MEGS:-512}
 cpu: model=$CPU, count=1, ips=200000000
 romimage: file=$B/share/bochs/BIOS-bochs-latest
 vgaromimage: file=$B/share/bochs/VGABIOS-lgpl-latest.bin
@@ -84,8 +86,14 @@ clock: sync=none, time0=local
 RC
 
 # Bochs is built with its debugger, which starts at its prompt; the
-# command file tells it to run.
-echo c >"$WORK/debugrc"
+# command file tells it to run.  BOCHS_STOPAT=n stops it after n
+# instructions instead and dumps the processor state to bochs.out,
+# which is how a boot that stops making progress is located.
+if [ -n "$BOCHS_STOPAT" ]; then
+	printf 'sb %s\nc\nr\nsreg\ncreg\nu /12\nbt\nprint-stack 24\ninfo idt\nq\n' "$BOCHS_STOPAT" >"$WORK/debugrc"
+else
+	echo c >"$WORK/debugrc"
+fi
 rm -f "$B/serial.log"
 timeout "$SECS" "$BOCHS" -q -f "$WORK/bochsrc" -rc "$WORK/debugrc" >"$B/bochs.out" 2>&1 </dev/null || true
 sed -e 's/\x1b\[[0-9;=]*[a-zA-Z]//g' -e 's/\r$//' "$B/serial.log" 2>/dev/null || true

@@ -30,7 +30,7 @@ init()
 		return;
 	}
 	{
-		vmlinux->init(nil, "vmlinux" :: "-s" :: "240" :: "-m" :: "256"
+		vmlinux->init(nil, "vmlinux" :: "-s" :: "7200" :: "-m" :: "256" :: "-q" :: "LINUXGUEST: ran"
 			:: "-i" :: "/guest/initramfs.cpio"
 			:: "-t" :: "echo LINUXGUEST: typed; uname -sr; echo LINUXGUEST: ran"
 			:: "/guest/vmlinuz" :: nil);
