@@ -155,6 +155,81 @@ over()
 		"and the window underneath is revealed, NOT wiped");
 }
 
+# NOT RUN.  Kept because it reproduces a SECOND afterimage, in one step,
+# that this tree does not fix: see BUGS in lorigintest(1).  Calling it
+# from init() turns the suite red, which is why it is not called.
+#
+# Dropping a window, rather than moving it.  memldelete() is reached
+# directly here, with no shadow window and no memlorigin, so the restore
+# the move path now does for itself is not in the way: this asks whether
+# CLOSING a window over bare background cleans up after itself.
+closed()
+{
+	scr := fresh();
+	if(scr == nil){
+		report(0, "closed: no screen");
+		return;
+	}
+	# a second window, kept, so the screen and its fill outlive the drop
+	keep := scr.newwindow(Rect((140,10),(190,60)), Draw->Refbackup, Draw->Green);
+	old := Rect((10,10),(60,60));
+	w := scr.newwindow(old, Draw->Refbackup, Draw->Blue);
+	if(w == nil || keep == nil){
+		report(0, "closed: no windows");
+		return;
+	}
+	w.flush(Draw->Flushnow);
+	allof(old, Blue, "a window to be dropped covers its own rectangle");
+
+	w = nil;			# last reference: the image is freed
+	keep.flush(Draw->Flushnow);
+	allof(old, Red, "and dropping it leaves NO afterimage");
+	allof(Rect((140,10),(190,60)), Green,
+		"and the window that stayed is untouched");
+}
+
+# The shape of the race that f7ce10cad was fixing, so that restoring the
+# background cannot quietly bring it back.  A nested Screen is allocated
+# over a window's own image and then discarded, which is what
+# wmclient.b's putimage() does on every reshape.  Every screen here
+# shares one pixel buffer, so the thing to check is that a SIBLING on
+# the parent screen is left alone.
+nested()
+{
+	scr := fresh();
+	if(scr == nil){
+		report(0, "nested: no screen");
+		return;
+	}
+	sibr := Rect((140,10),(190,60));
+	sib := scr.newwindow(sibr, Draw->Refbackup, Draw->Green);
+	client := scr.newwindow(Rect((10,10),(120,120)), Draw->Refbackup, Draw->Blue);
+	if(sib == nil || client == nil){
+		report(0, "nested: no windows");
+		return;
+	}
+	blue := disp.color(Draw->Blue);
+	inner := Screen.allocate(client, blue, 0);
+	if(inner == nil){
+		report(0, "nested: no nested screen");
+		return;
+	}
+	iwin := inner.newwindow(Rect((20,20),(80,80)), Draw->Refbackup, Draw->White);
+	if(iwin == nil){
+		report(0, "nested: no nested window");
+		return;
+	}
+	sib.flush(Draw->Flushnow);
+	allof(sibr, Green, "a sibling on the parent screen is drawn");
+
+	# discard the nested screen, putimage()-style: window then screen
+	iwin = nil;
+	inner = nil;
+	sib.flush(Draw->Flushnow);
+	allof(sibr, Green,
+		"and discarding a nested screen does NOT wipe it");
+}
+
 init(nil: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -170,5 +245,6 @@ init(nil: ref Draw->Context, nil: list of string)
 	}
 	alone();
 	over();
+	nested();
 	sys->print("lorigintest: %d ok, %d fail\n", ok, fail);
 }

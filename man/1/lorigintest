@@ -47,7 +47,35 @@ rather than as a pass.
 .IR draw (3),
 .IR tkofftest (1)
 .SH BUGS
-It covers the
+.B Closing
+a window still leaves an afterimage, and this does not catch it: the
+scenario is in the source as
+.I closed()
+and is deliberately not called, because calling it turns the suite red.
+Enabling it is a one-line change to
+.IR init ().
+.PP
+The cause is the same missing case as the move had.
+.I Memldelete
+reaches it directly, with no shadow window and nothing to restore the
+background, so a window dropped over bare background stays on the screen.
+It is unfixed because the safe place to fix it cannot be established from
+here:
+.B f7ce10cad
+removed the fill paint to close two races in which a dying layer's
+footprint stomped another screen's correct draw \(em all screens share
+one pixel buffer \(em and those races reached the painting step with
+.I drawgoodname
+already true, so neither that test nor a screen-liveness check excludes
+them.  They are timing races between screens, and nothing single-threaded
+and offscreen reproduces them; the suite that found them drives real
+resizes and needs a window context this has none of.
+.PP
+For the same reason the nested-screen arrangement here proves less than
+it looks: it is arranged like the reshape that raced, but an unguarded
+build passes it too.  It stands as a shape to extend, not as a guard.
+.PP
+Otherwise it covers the
 .B libmemlayer
 path and nothing downstream of it.
 A window move also passes through the host's own upload path \(em on
