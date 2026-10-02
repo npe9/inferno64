@@ -33,11 +33,13 @@ grep -q '<libgen.h>' gui/keymap.cc ||
 # Bochs' slirp uses res_ninit and friends, which on macOS are in
 # libresolv and not libc; its configure does not add it.
 case `uname` in Darwin) LIBS="$LIBS -lresolv"; export LIBS;; esac
+# --enable-usb: the i440FX's PIIX3 carries a UHCI controller and Bochs
+# refuses to start ("Plugin 'usb_uhci' not found") without it.
 ./configure --prefix="$DEST" \
 	--enable-x86-64 --enable-smp --enable-cpu-level=6 \
 	--enable-vmx=2 --enable-svm \
 	--enable-avx --enable-evex \
-	--enable-pci --enable-pcidev=no --enable-e1000 --enable-usb-xhci \
+	--enable-pci --enable-pcidev=no --enable-e1000 --enable-usb --enable-usb-xhci \
 	--enable-gdb-stub=no --enable-debugger \
 	--with-nogui --with-term \
 	--disable-docbook >"$DEST/configure.log" 2>&1

@@ -251,6 +251,7 @@ void		procdump(void);
 int		procindex(ulong);
 void		procinit(void);
 void		procpriority(Proc*, int, int);
+void		procwired(Proc*, int);
 Proc*		proctab(int);
 void	(*proctrace)(Proc*, int, vlong); 
 int		progfdprint(Chan*, int, int, char*, int);

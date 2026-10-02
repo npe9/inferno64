@@ -1,0 +1,896 @@
+/*
+ * #H: virtual machines (doc/genesize-plan.ms, phases 3-5)
+ *
+ *	#H/vm/clone		open to make a machine; the chan becomes
+ *				its ctl, and reading it gives the number
+ *	#H/vm/backend		which processor extension, and what it has
+ *	#H/vm/N/ctl		"mem bytes": guest RAM at guest-physical 0
+ *				"kill": destroy the machine
+ *	#H/vm/N/status		the machine and each vCPU's state
+ *	#H/vm/N/mem		guest-physical memory, offset = address
+ *	#H/vm/N/vcpuM/ctl	"go", "skip" (advance past the exiting
+ *				instruction, then go), "stop"
+ *	#H/vm/N/vcpuM/regs	"name value" lines, read and written
+ *				while the vCPU is stopped
+ *	#H/vm/N/vcpuM/exit	blocks until the vCPU stops at an exit
+ *				the kernel does not handle itself, and
+ *				says what it was
+ *
+ * Each vCPU is a kproc wired to one processor: a VMCS or VMCB belongs
+ * to the processor that loaded it, and so do VMXON and EFER.SVME.  The
+ * kproc does everything that touches the processor's virtualization
+ * state -- registers included -- so a read of regs from Limbo is a
+ * request to that kproc, not a VMREAD on whatever processor the Limbo
+ * program happens to be on.
+ *
+ * Nothing here is VMX or SVM: that is behind vmops (port/vm.h).
+ */
+#include	"u.h"
+#include	"../port/lib.h"
+#include	"mem.h"
+#include	"dat.h"
+#include	"fns.h"
+#include	"../port/error.h"
+#include	"../port/vm.h"
+
+enum {
+	Qroot,
+	Qvmdir,
+	Qclone,
+	Qbackend,
+	Qn,		/* vm/N */
+	Qctl,
+	Qstatus,
+	Qmem,
+	Qcpu,		/* vm/N/vcpuM */
+	Qcpuctl,
+	Qregs,
+	Qexit,
+
+	Nvm	= 16,
+	Memalign	= 2*1024*1024,
+};
+
+/* path: vm+1 in bits 16-23, vcpu in 8-15, type in 0-7 */
+#define QPATH(vm, cpu, t)	((((vm)+1)<<16)|((cpu)<<8)|(t))
+#define QTYPE(q)	((ulong)(q).path & 0xFF)
+#define QCPU(q)		(((ulong)(q).path >> 8) & 0xFF)
+#define QVM(q)		((int)(((ulong)(q).path >> 16) & 0xFF) - 1)
+
+Vmops *vmops;
+static char vmwhy[ERRMAX] = "no hypervisor backend linked";
+
+static QLock vmtablk;
+static Vm *vmtab[Nvm];
+
+/*
+ * Guest RAM is one contiguous run of host memory, mapped at guest-
+ * physical 0.  It comes from xalloc and not xspanalloc, because a
+ * machine asking for more than there is must fail, not panic the
+ * host; the run is aligned to 2 MiB by hand, and the pointer xalloc
+ * returned is kept here for xfree.
+ */
+static void *memfree[Nvm];
+
+static char *xkindname[VxNkind] = {
+[VxNone]	"none",
+[VxIo]		"io",
+[VxMmio]	"mmio",
+[VxCpuid]	"cpuid",
+[VxRdmsr]	"rdmsr",
+[VxWrmsr]	"wrmsr",
+[VxHlt]		"hlt",
+[VxCall]	"vmcall",
+[VxException]	"exception",
+[VxTriple]	"triple",
+[VxIntrwin]	"irqwin",
+[VxExtint]	"extint",
+[VxEntryfail]	"entryfail",
+[VxStopped]	"stopped",
+[VxOther]	"other",
+};
+
+static char *vcpustate[] = {
+[VcpuNew]	"new",
+[VcpuStopped]	"stopped",
+[VcpuRunning]	"running",
+[VcpuExited]	"exited",
+[VcpuDead]	"dead",
+};
+
+static char *regname[VNreg] = {
+[VRax] "rax", [VRbx] "rbx", [VRcx] "rcx", [VRdx] "rdx",
+[VRsi] "rsi", [VRdi] "rdi", [VRbp] "rbp", [VRsp] "rsp",
+[VR8] "r8", [VR9] "r9", [VR10] "r10", [VR11] "r11",
+[VR12] "r12", [VR13] "r13", [VR14] "r14", [VR15] "r15",
+[VRip] "rip", [VRflags] "rflags",
+[VCr0] "cr0", [VCr2] "cr2", [VCr3] "cr3", [VCr4] "cr4", [VEfer] "efer",
+[VCs] "cs", [VCsbase] "csbase", [VCslimit] "cslimit", [VCsattr] "csattr",
+[VDs] "ds", [VDsbase] "dsbase", [VDslimit] "dslimit", [VDsattr] "dsattr",
+[VEs] "es", [VEsbase] "esbase", [VEslimit] "eslimit", [VEsattr] "esattr",
+[VFs] "fs", [VFsbase] "fsbase", [VFslimit] "fslimit", [VFsattr] "fsattr",
+[VGs] "gs", [VGsbase] "gsbase", [VGslimit] "gslimit", [VGsattr] "gsattr",
+[VSs] "ss", [VSsbase] "ssbase", [VSslimit] "sslimit", [VSsattr] "ssattr",
+[VTr] "tr", [VTrbase] "trbase", [VTrlimit] "trlimit", [VTrattr] "trattr",
+[VLdtr] "ldtr", [VLdtrbase] "ldtrbase", [VLdtrlimit] "ldtrlimit", [VLdtrattr] "ldtrattr",
+[VGdtrbase] "gdtrbase", [VGdtrlimit] "gdtrlimit",
+[VIdtrbase] "idtrbase", [VIdtrlimit] "idtrlimit",
+};
+
+/*
+ * A backend calls this from its link function.  The first one whose
+ * processor has what it needs is the one used.
+ */
+void
+vmregister(Vmops *ops)
+{
+	char why[ERRMAX];
+
+	if(vmops != nil)
+		return;
+	why[0] = 0;
+	if(ops->probe(why, sizeof why) < 0){
+		snprint(vmwhy, sizeof vmwhy, "%s: %s", ops->name, why);
+		print("vm: %s\n", vmwhy);
+		return;
+	}
+	vmops = ops;
+	print("vm: %s\n", ops->name);
+}
+
+static Vm*
+getvm(int id)
+{
+	Vm *vm;
+
+	if(id < 0 || id >= Nvm)
+		error(Enonexist);
+	qlock(&vmtablk);
+	vm = vmtab[id];
+	qunlock(&vmtablk);
+	if(vm == nil || vm->dead)
+		error(Enonexist);
+	return vm;
+}
+
+static Vcpu*
+getvcpu(Vm *vm, int id)
+{
+	if(id < 0 || id >= vm->nvcpu || vm->vcpu[id] == nil)
+		error(Enonexist);
+	return vm->vcpu[id];
+}
+
+/*
+ * The vCPU's kproc.
+ */
+static int
+vcpuwork(void *a)
+{
+	Vcpu *v;
+
+	v = a;
+	return v->go || v->cmd != nil || v->quit;
+}
+
+static void
+vcpuexit(Vcpu *v, Vmexit *e)
+{
+	ilock(v);
+	v->exit = *e;
+	v->exitready = 1;
+	v->state = VcpuExited;
+	iunlock(v);
+	wakeup(&v->exitr);
+}
+
+static void
+vcpuproc(void *a)
+{
+	Vcpu *v;
+	Vmexit e;
+	void (*f)(Vcpu*, void*);
+
+	v = a;
+	procwired(up, v->machno);
+	sched();
+	if(waserror()){
+		kstrcpy(v->err, up->env->errstr, sizeof v->err);
+		print("vm%d: vcpu%d: %s\n", v->vm->id, v->id, v->err);
+		v->state = VcpuDead;
+		ilock(v);
+		if(v->cmd != nil){
+			v->cmderr = v->err;
+			v->cmddone = 1;
+		}
+		iunlock(v);
+		wakeup(&v->cmdr);
+		wakeup(&v->exitr);
+		while(!v->quit)
+			sleep(&v->r, vcpuwork, v);
+		v->arch = nil;
+		v->quit = 2;
+		wakeup(&v->cmdr);
+		pexit("", 0);
+	}
+	vmops->cpuon();
+	vmops->vcpuinit(v);
+	v->state = VcpuStopped;
+	wakeup(&v->cmdr);
+
+	for(;;){
+		sleep(&v->r, vcpuwork, v);
+		if(v->quit)
+			break;
+		if((f = v->cmd) != nil){
+			if(waserror()){
+				kstrcpy(v->err, up->env->errstr, sizeof v->err);
+				v->cmderr = v->err;
+			}else{
+				f(v, v->cmdarg);
+				poperror();
+			}
+			v->cmd = nil;
+			v->cmddone = 1;
+			wakeup(&v->cmdr);
+			continue;
+		}
+		if(!v->go)
+			continue;
+		v->go = 0;
+		v->stop = 0;
+		v->state = VcpuRunning;
+		for(;;){
+			memset(&e, 0, sizeof e);
+			vmops->run(v, &e);
+			v->nexit++;
+			if(e.kind == VxExtint || e.kind == VxIntrwin){
+				/*
+				 * The host's own interrupt took the
+				 * processor back; it has been serviced.
+				 * This is also how a guest that never exits
+				 * is stopped: a clock tick lands here.
+				 */
+				if(v->stop || v->quit || v->cmd != nil){
+					e.kind = VxStopped;
+					break;
+				}
+				continue;
+			}
+			break;
+		}
+		vcpuexit(v, &e);
+	}
+	vmops->vcpufree(v);
+	v->arch = nil;
+	poperror();
+	v->quit = 2;
+	wakeup(&v->cmdr);
+	pexit("", 0);
+}
+
+static int
+cmddone(void *a)
+{
+	Vcpu *v;
+
+	v = a;
+	return v->cmddone || v->state == VcpuDead;
+}
+
+static int
+vcpuinitdone(void *a)
+{
+	Vcpu *v;
+
+	v = a;
+	return v->state != VcpuNew;
+}
+
+/*
+ * Run f(v, arg) in the vCPU's kproc, on its processor, and wait.
+ * The vCPU must not be running.
+ */
+static void
+vcpucmd(Vcpu *v, void (*f)(Vcpu*, void*), void *arg)
+{
+	qlock(&v->cmdlk);
+	if(waserror()){
+		qunlock(&v->cmdlk);
+		nexterror();
+	}
+	sleep(&v->cmdr, vcpuinitdone, v);
+	if(v->state == VcpuDead)
+		error(v->err);
+	if(v->state == VcpuRunning)
+		error("vcpu is running");
+	v->cmderr = nil;
+	v->cmddone = 0;
+	v->cmdarg = arg;
+	v->cmd = f;
+	wakeup(&v->r);
+	sleep(&v->cmdr, cmddone, v);
+	if(v->cmderr != nil)
+		error(v->cmderr);
+	poperror();
+	qunlock(&v->cmdlk);
+}
+
+typedef struct Regbuf Regbuf;
+struct Regbuf {
+	char	*p;
+	char	*e;
+	char	*s;	/* for writes: the text */
+};
+
+static void
+cmdgetregs(Vcpu *v, void *a)
+{
+	Regbuf *b;
+	int i;
+
+	b = a;
+	for(i = 0; i < VNreg; i++)
+		b->p = seprint(b->p, b->e, "%s %#llux\n", regname[i], vmops->getreg(v, i));
+}
+
+static void
+cmdsetregs(Vcpu *v, void *a)
+{
+	Regbuf *b;
+	char *f[2], *line, *next;
+	int i, n;
+
+	b = a;
+	for(line = b->s; line != nil && *line != 0; line = next){
+		next = strchr(line, '\n');
+		if(next != nil)
+			*next++ = 0;
+		n = tokenize(line, f, nelem(f));
+		if(n == 0)
+			continue;
+		if(n != 2)
+			error(Ebadarg);
+		for(i = 0; i < VNreg; i++)
+			if(strcmp(f[0], regname[i]) == 0)
+				break;
+		if(i == VNreg)
+			error("unknown register");
+		vmops->setreg(v, i, strtoull(f[1], nil, 0));
+	}
+}
+
+static void
+cmdskip(Vcpu *v, void *)
+{
+	if(v->exit.ilen <= 0)
+		error("no instruction to skip");
+	vmops->setreg(v, VRip, vmops->getreg(v, VRip) + v->exit.ilen);
+}
+
+static Vcpu*
+newvcpu(Vm *vm)
+{
+	Vcpu *v;
+	char name[KNAMELEN];
+
+	if(vm->nvcpu >= Maxvcpu)
+		error("too many vcpus");
+	v = malloc(sizeof *v);
+	if(v == nil)
+		error(Enomem);
+	v->vm = vm;
+	v->id = vm->nvcpu;
+	v->state = VcpuNew;
+	/* the last processor: the bootstrap one keeps the clock and the console */
+	v->machno = (conf.nmach - 1 - v->id) % conf.nmach;
+	if(v->machno < 0)
+		v->machno += conf.nmach;
+	vm->vcpu[vm->nvcpu++] = v;
+	snprint(name, sizeof name, "vm%d.%d", vm->id, v->id);
+	kproc(name, vcpuproc, v, 0);
+	return v;
+}
+
+static Vm*
+newvm(void)
+{
+	Vm *vm;
+	int i;
+
+	if(vmops == nil)
+		error(vmwhy);
+	qlock(&vmtablk);
+	if(waserror()){
+		qunlock(&vmtablk);
+		nexterror();
+	}
+	for(i = 0; i < Nvm; i++)
+		if(vmtab[i] == nil)
+			break;
+	if(i == Nvm)
+		error("too many machines");
+	vm = malloc(sizeof *vm);
+	if(vm == nil)
+		error(Enomem);
+	vm->id = i;
+	vm->ref = 1;
+	vmops->gpinit(vm);
+	vmtab[i] = vm;
+	poperror();
+	qunlock(&vmtablk);
+	newvcpu(vm);
+	return vm;
+}
+
+static int
+vcpugone(void *a)
+{
+	return ((Vcpu*)a)->quit == 2;
+}
+
+static void
+killvm(Vm *vm)
+{
+	Vcpu *v;
+	int i;
+
+	qlock(vm);
+	if(vm->dead){
+		qunlock(vm);
+		return;
+	}
+	vm->dead = 1;
+	qunlock(vm);
+	for(i = 0; i < vm->nvcpu; i++){
+		v = vm->vcpu[i];
+		v->quit = 1;
+		wakeup(&v->r);
+		wakeup(&v->exitr);
+		while(!vcpugone(v))
+			sleep(&v->cmdr, vcpugone, v);
+		free(v);
+		vm->vcpu[i] = nil;
+	}
+	vmops->gpfree(vm);
+	if(memfree[vm->id] != nil){
+		xfree(memfree[vm->id]);
+		memfree[vm->id] = nil;
+	}
+	qlock(&vmtablk);
+	vmtab[vm->id] = nil;
+	qunlock(&vmtablk);
+	free(vm);
+}
+
+
+static void
+setmem(Vm *vm, uvlong size)
+{
+	uchar *a;
+	uintptr p;
+
+	if(size == 0 || size > 64ULL*1024*1024*1024)
+		error(Ebadarg);
+	size = (size + Memalign-1) & ~(uvlong)(Memalign-1);
+	qlock(vm);
+	if(waserror()){
+		qunlock(vm);
+		nexterror();
+	}
+	if(vm->mem != nil)
+		error("memory already set");
+	a = xalloc(size + Memalign);
+	if(a == nil)
+		error(Enomem);
+	p = ((uintptr)a + Memalign-1) & ~(uintptr)(Memalign-1);
+	memfree[vm->id] = a;
+	vm->mem = (uchar*)p;
+	vm->memsize = size;
+	memset(vm->mem, 0, size);
+	vmops->gpmap(vm, 0, PADDR(vm->mem), size, VmRWX);
+	poperror();
+	qunlock(vm);
+}
+
+static int
+vmgen(Chan *c, char *, Dirtab*, int, int s, Dir *dp)
+{
+	Qid q;
+	Vm *vm;
+	int id, cpu, t;
+	char *name;
+
+	t = QTYPE(c->qid);
+	id = QVM(c->qid);
+	cpu = QCPU(c->qid);
+	if(s == DEVDOTDOT){
+		switch(t){
+		case Qroot:
+		case Qvmdir:
+			q = (Qid){QPATH(-1, 0, Qroot), 0, QTDIR};
+			devdir(c, q, "#H", 0, eve, 0555, dp);
+			return 1;
+		case Qn:
+			q = (Qid){QPATH(-1, 0, Qvmdir), 0, QTDIR};
+			devdir(c, q, "vm", 0, eve, 0555, dp);
+			return 1;
+		case Qcpu:
+			q = (Qid){QPATH(id, 0, Qn), 0, QTDIR};
+			snprint(up->genbuf, sizeof up->genbuf, "%d", id);
+			devdir(c, q, up->genbuf, 0, eve, 0555, dp);
+			return 1;
+		}
+		return -1;
+	}
+	switch(t){
+	case Qroot:
+		if(s != 0)
+			return -1;
+		q = (Qid){QPATH(-1, 0, Qvmdir), 0, QTDIR};
+		devdir(c, q, "vm", 0, eve, 0555, dp);
+		return 1;
+	case Qvmdir:
+		if(s == 0){
+			q = (Qid){QPATH(-1, 0, Qclone), 0, QTFILE};
+			devdir(c, q, "clone", 0, eve, 0666, dp);
+			return 1;
+		}
+		if(s == 1){
+			q = (Qid){QPATH(-1, 0, Qbackend), 0, QTFILE};
+			devdir(c, q, "backend", 0, eve, 0444, dp);
+			return 1;
+		}
+		s -= 2;
+		qlock(&vmtablk);
+		for(id = 0; id < Nvm; id++)
+			if(vmtab[id] != nil && !vmtab[id]->dead && s-- == 0)
+				break;
+		qunlock(&vmtablk);
+		if(id == Nvm)
+			return -1;
+		q = (Qid){QPATH(id, 0, Qn), 0, QTDIR};
+		snprint(up->genbuf, sizeof up->genbuf, "%d", id);
+		devdir(c, q, up->genbuf, 0, eve, 0555, dp);
+		return 1;
+	case Qn:
+		qlock(&vmtablk);
+		vm = (id >= 0 && id < Nvm) ? vmtab[id] : nil;
+		qunlock(&vmtablk);
+		if(vm == nil)
+			return -1;
+		switch(s){
+		case 0:
+			q = (Qid){QPATH(id, 0, Qctl), 0, QTFILE};
+			devdir(c, q, "ctl", 0, eve, 0660, dp);
+			return 1;
+		case 1:
+			q = (Qid){QPATH(id, 0, Qstatus), 0, QTFILE};
+			devdir(c, q, "status", 0, eve, 0444, dp);
+			return 1;
+		case 2:
+			q = (Qid){QPATH(id, 0, Qmem), 0, QTFILE};
+			devdir(c, q, "mem", vm->memsize, eve, 0660, dp);
+			return 1;
+		}
+		s -= 3;
+		if(s >= vm->nvcpu)
+			return -1;
+		q = (Qid){QPATH(id, s, Qcpu), 0, QTDIR};
+		snprint(up->genbuf, sizeof up->genbuf, "vcpu%d", s);
+		devdir(c, q, up->genbuf, 0, eve, 0555, dp);
+		return 1;
+	case Qcpu:
+		switch(s){
+		case 0: t = Qcpuctl; name = "ctl"; break;
+		case 1: t = Qregs; name = "regs"; break;
+		case 2: t = Qexit; name = "exit"; break;
+		default: return -1;
+		}
+		q = (Qid){QPATH(id, cpu, t), 0, QTFILE};
+		devdir(c, q, name, 0, eve, t == Qexit ? 0444 : 0660, dp);
+		return 1;
+	}
+	return -1;
+}
+
+static Chan*
+vmattach(char *spec)
+{
+	Chan *c;
+
+	c = devattach('H', spec);
+	c->qid = (Qid){QPATH(-1, 0, Qroot), 0, QTDIR};
+	return c;
+}
+
+static Walkqid*
+vmwalk(Chan *c, Chan *nc, char **name, s32 nname)
+{
+	return devwalk(c, nc, name, nname, nil, 0, vmgen);
+}
+
+static s32
+vmstat(Chan *c, uchar *db, s32 n)
+{
+	return devstat(c, db, n, nil, 0, vmgen);
+}
+
+static Chan*
+vmopen(Chan *c, u32 omode)
+{
+	Vm *vm;
+
+	if(QTYPE(c->qid) == Qclone){
+		if(!iseve())
+			error(Eperm);
+		vm = newvm();
+		c->qid = (Qid){QPATH(vm->id, 0, Qctl), 0, QTFILE};
+	}
+	return devopen(c, omode, nil, 0, vmgen);
+}
+
+static void
+vmclose(Chan*)
+{
+}
+
+static int
+exitready(void *a)
+{
+	Vcpu *v;
+
+	v = a;
+	return v->exitready || v->state == VcpuDead || v->quit;
+}
+
+static s32
+exitread(Vcpu *v, char *a, s32 n, s64 off)
+{
+	char buf[512], *p, *e;
+	Vmexit x;
+
+	USED(off);
+	sleep(&v->exitr, exitready, v);
+	if(v->state == VcpuDead)
+		error(v->err);
+	if(v->quit)
+		error(Ehungup);
+	ilock(v);
+	x = v->exit;
+	v->exitready = 0;
+	iunlock(v);
+	p = buf;
+	e = buf + sizeof buf;
+	p = seprint(p, e, "%s rip %#llux ilen %d raw %#ux qual %#llux",
+		x.kind < VxNkind ? xkindname[x.kind] : "?", x.rip, x.ilen, x.raw, x.qual);
+	switch(x.kind){
+	case VxIo:
+		p = seprint(p, e, " %s port %#ux size %d", x.in ? "in" : "out", x.port, x.size);
+		if(!x.in)
+			p = seprint(p, e, " data %#llux", x.data);
+		if(x.string)
+			p = seprint(p, e, " string");
+		if(x.rep)
+			p = seprint(p, e, " rep");
+		break;
+	case VxMmio:
+		p = seprint(p, e, " gpa %#llux gva %#llux access %d", x.gpa, x.gva, x.access);
+		break;
+	case VxRdmsr:
+	case VxWrmsr:
+		p = seprint(p, e, " msr %#ux", x.msr);
+		break;
+	case VxException:
+		p = seprint(p, e, " vec %d errcode %#ux", x.vec, x.errcode);
+		break;
+	}
+	seprint(p, e, "\n");
+	return readstr(0, a, n, buf);
+}
+
+static s32
+vmread(Chan *c, void *a, s32 n, s64 off)
+{
+	Vm *vm;
+	Vcpu *v;
+	char *buf, *p, *e;
+	Regbuf rb;
+	int i;
+	s32 r;
+
+	switch(QTYPE(c->qid)){
+	case Qroot:
+	case Qvmdir:
+	case Qn:
+	case Qcpu:
+		return devdirread(c, a, n, nil, 0, vmgen);
+	case Qbackend:
+		buf = smalloc(READSTR);
+		if(waserror()){
+			free(buf);
+			nexterror();
+		}
+		if(vmops == nil)
+			snprint(buf, READSTR, "none: %s\n", vmwhy);
+		else
+			vmops->info(buf, buf+READSTR);
+		r = readstr(off, a, n, buf);
+		poperror();
+		free(buf);
+		return r;
+	case Qctl:
+		/* the bare number, as a Plan 9 clone file gives it */
+		vm = getvm(QVM(c->qid));
+		snprint(up->genbuf, sizeof up->genbuf, "%d", vm->id);
+		return readstr(off, a, n, up->genbuf);
+	case Qstatus:
+		vm = getvm(QVM(c->qid));
+		buf = smalloc(READSTR);
+		if(waserror()){
+			free(buf);
+			nexterror();
+		}
+		e = buf + READSTR;
+		p = seprint(buf, e, "vm %d backend %s mem %llud vcpus %d\n",
+			vm->id, vmops->name, vm->memsize, vm->nvcpu);
+		for(i = 0; i < vm->nvcpu; i++){
+			v = vm->vcpu[i];
+			p = seprint(p, e, "vcpu%d cpu %d state %s exits %llud%s%s\n", i, v->machno,
+				vcpustate[v->state], v->nexit,
+				v->state == VcpuDead ? " error " : "", v->state == VcpuDead ? v->err : "");
+		}
+		USED(p);
+		r = readstr(off, a, n, buf);
+		poperror();
+		free(buf);
+		return r;
+	case Qmem:
+		vm = getvm(QVM(c->qid));
+		if(vm->mem == nil || off >= vm->memsize)
+			return 0;
+		if(off + n > vm->memsize)
+			n = vm->memsize - off;
+		memmove(a, vm->mem + off, n);
+		return n;
+	case Qregs:
+		vm = getvm(QVM(c->qid));
+		v = getvcpu(vm, QCPU(c->qid));
+		buf = smalloc(READSTR);
+		if(waserror()){
+			free(buf);
+			nexterror();
+		}
+		rb.p = buf;
+		rb.e = buf + READSTR;
+		vcpucmd(v, cmdgetregs, &rb);
+		r = readstr(off, a, n, buf);
+		poperror();
+		free(buf);
+		return r;
+	case Qexit:
+		vm = getvm(QVM(c->qid));
+		v = getvcpu(vm, QCPU(c->qid));
+		return exitread(v, a, n, off);
+	case Qcpuctl:
+		return 0;
+	}
+	error(Egreg);
+	return 0;
+}
+
+static s32
+vmwrite(Chan *c, void *a, s32 n, s64 off)
+{
+	Vm *vm;
+	Vcpu *v;
+	Cmdbuf *cb;
+	Regbuf rb;
+	char *s;
+
+	switch(QTYPE(c->qid)){
+	case Qctl:
+		vm = getvm(QVM(c->qid));
+		cb = parsecmd(a, n);
+		if(waserror()){
+			free(cb);
+			nexterror();
+		}
+		if(cb->nf == 2 && strcmp(cb->f[0], "mem") == 0)
+			setmem(vm, strtoull(cb->f[1], nil, 0));
+		else if(cb->nf == 1 && strcmp(cb->f[0], "kill") == 0)
+			killvm(vm);
+		else
+			error(Ebadctl);
+		poperror();
+		free(cb);
+		return n;
+	case Qmem:
+		vm = getvm(QVM(c->qid));
+		if(vm->mem == nil)
+			error("no memory");
+		if(off < 0 || off >= vm->memsize)
+			error(Ebadarg);
+		if(off + n > vm->memsize)
+			n = vm->memsize - off;
+		memmove(vm->mem + off, a, n);
+		return n;
+	case Qcpuctl:
+		vm = getvm(QVM(c->qid));
+		v = getvcpu(vm, QCPU(c->qid));
+		cb = parsecmd(a, n);
+		if(waserror()){
+			free(cb);
+			nexterror();
+		}
+		if(cb->nf != 1)
+			error(Ebadctl);
+		if(strcmp(cb->f[0], "go") == 0 || strcmp(cb->f[0], "skip") == 0){
+			if(cb->f[0][0] == 's')
+				vcpucmd(v, cmdskip, nil);
+			qlock(&v->cmdlk);
+			if(v->state == VcpuDead){
+				qunlock(&v->cmdlk);
+				error(v->err);
+			}
+			if(v->state == VcpuRunning){
+				qunlock(&v->cmdlk);
+				error("vcpu is running");
+			}
+			if(vm->mem == nil){
+				qunlock(&v->cmdlk);
+				error("no memory");
+			}
+			v->exitready = 0;
+			v->go = 1;
+			wakeup(&v->r);
+			qunlock(&v->cmdlk);
+		}else if(strcmp(cb->f[0], "stop") == 0)
+			v->stop = 1;
+		else
+			error(Ebadctl);
+		poperror();
+		free(cb);
+		return n;
+	case Qregs:
+		vm = getvm(QVM(c->qid));
+		v = getvcpu(vm, QCPU(c->qid));
+		if(off != 0)
+			error(Ebadarg);
+		s = smalloc(n+1);
+		if(waserror()){
+			free(s);
+			nexterror();
+		}
+		memmove(s, a, n);
+		s[n] = 0;
+		rb.s = s;
+		vcpucmd(v, cmdsetregs, &rb);
+		poperror();
+		free(s);
+		return n;
+	}
+	error(Eperm);
+	return 0;
+}
+
+Dev vmdevtab = {
+	'H',
+	"vm",
+
+	devreset,
+	devinit,
+	devshutdown,
+	vmattach,
+	vmwalk,
+	vmstat,
+	vmopen,
+	devcreate,
+	vmclose,
+	vmread,
+	devbread,
+	vmwrite,
+	devbwrite,
+	devremove,
+	devwstat,
+};

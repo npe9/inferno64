@@ -903,6 +903,18 @@ TEXT vmlaunch(SB), 1, $-4
 	JBE	_vmout
 	
 	MOVQ	BP, ureg+0(FP)
+	/*
+	 * The host's R12-R15 go in the block (../pc64/vmx.c, Vmxregs)
+	 * and come back from it in vmrestore.  R14 and R15 are up and m;
+	 * R12 and R13 are reserved by 6c and R13 is the Dis context
+	 * (include/disreg.h), so a guest's values must not survive the
+	 * exit in any of them.  9front's copy reloaded up from 16(RMACH),
+	 * which in this kernel's Mach is pml4, not up.
+	 */
+	MOVQ	R12, 0x78(BP)
+	MOVQ	R13, 0x80(BP)
+	MOVQ	R14, 0x88(BP)
+	MOVQ	R15, 0x90(BP)
 	MOVL	resume+8(FP), AX
 	TESTL	AX, AX
 	MOVQ	0x00(BP), AX
@@ -945,9 +957,92 @@ TEXT vmrestore(SB), 1, $-4
 	MOVQ	R13, 0x60(BP)
 	MOVQ	R14, 0x68(BP)
 	MOVQ	R15, 0x70(BP)
-	
-	BYTE	$0x65; MOVQ 0, RMACH /* MOVQ GS:(0), RMACH */
-	MOVQ	16(RMACH), RUSER
+
+	MOVQ	0x78(BP), R12
+	MOVQ	0x80(BP), R13
+	MOVQ	0x88(BP), R14
+	MOVQ	0x90(BP), R15
+	XORL	AX, AX
+	RET
+
+/*
+ * AMD SVM: run the guest whose VMCB is at physical vmcb until the next
+ * #VMEXIT (../pc64/svm.c).
+ *
+ *	int svmrun(uvlong vmcb, Svmregs *r, uvlong hostsave)
+ *
+ * VMRUN switches RAX, RSP, RIP, RFLAGS, the control registers, EFER
+ * and CS/DS/ES/SS, and the processor restores the host's on #VMEXIT.
+ * FS, GS, TR, LDTR and the syscall MSRs it does not touch: those are
+ * moved by VMSAVE/VMLOAD, the host's into the per-processor hostsave
+ * page and the guest's from its VMCB, and back again after the exit.
+ * GS base is m in this kernel, so nothing between the two VMLOADs may
+ * use it -- nor up or m in R14 and R15, which hold the guest's -- and
+ * the global interrupt flag is clear across the whole sequence.
+ *
+ * The Svmregs block holds the guest's general registers but RAX and
+ * RSP (those live in the VMCB), and the host's R12-R15 at 0x70-0x88,
+ * as vmlaunch does for VMX.
+ */
+TEXT svmrun(SB), 1, $-4
+	MOVQ	r+8(FP), DX
+	MOVQ	hostsave+16(FP), CX
+	BYTE	$0x0f; BYTE $0x01; BYTE $0xdd	/* CLGI */
+	MOVQ	R12, 0x70(DX)
+	MOVQ	R13, 0x78(DX)
+	MOVQ	R14, 0x80(DX)
+	MOVQ	R15, 0x88(DX)
+	PUSHQ	DX			/* 16(SP): the block */
+	PUSHQ	BP			/* 8(SP): guest VMCB */
+	PUSHQ	CX			/* 0(SP): host save area */
+	MOVQ	CX, AX
+	BYTE	$0x0f; BYTE $0x01; BYTE $0xdb	/* VMSAVE: the host's FS, GS, TR, ... */
+	MOVQ	BP, AX
+	BYTE	$0x0f; BYTE $0x01; BYTE $0xda	/* VMLOAD: the guest's */
+	MOVQ	DX, BP
+	MOVQ	0x00(BP), BX
+	MOVQ	0x08(BP), CX
+	MOVQ	0x10(BP), DX
+	MOVQ	0x18(BP), SI
+	MOVQ	0x20(BP), DI
+	MOVQ	0x30(BP), R8
+	MOVQ	0x38(BP), R9
+	MOVQ	0x40(BP), R10
+	MOVQ	0x48(BP), R11
+	MOVQ	0x50(BP), R12
+	MOVQ	0x58(BP), R13
+	MOVQ	0x60(BP), R14
+	MOVQ	0x68(BP), R15
+	MOVQ	0x28(BP), BP
+	BYTE	$0x0f; BYTE $0x01; BYTE $0xd8	/* VMRUN, RAX = guest VMCB */
+	PUSHQ	BP			/* the guest's; the block is now at 24(SP) */
+	MOVQ	24(SP), BP
+	MOVQ	BX, 0x00(BP)
+	MOVQ	CX, 0x08(BP)
+	MOVQ	DX, 0x10(BP)
+	MOVQ	SI, 0x18(BP)
+	MOVQ	DI, 0x20(BP)
+	POPQ	0x28(BP)
+	MOVQ	R8, 0x30(BP)
+	MOVQ	R9, 0x38(BP)
+	MOVQ	R10, 0x40(BP)
+	MOVQ	R11, 0x48(BP)
+	MOVQ	R12, 0x50(BP)
+	MOVQ	R13, 0x58(BP)
+	MOVQ	R14, 0x60(BP)
+	MOVQ	R15, 0x68(BP)
+	MOVQ	8(SP), AX
+	BYTE	$0x0f; BYTE $0x01; BYTE $0xdb	/* VMSAVE: the guest's */
+	MOVQ	0(SP), AX
+	BYTE	$0x0f; BYTE $0x01; BYTE $0xda	/* VMLOAD: the host's */
+	MOVQ	0x70(BP), R12
+	MOVQ	0x78(BP), R13
+	MOVQ	0x80(BP), R14
+	MOVQ	0x88(BP), R15
+	POPQ	AX			/* the three pushed above; 6l balances */
+	POPQ	AX			/* PUSH against POP, not against ADDQ */
+	POPQ	AX
+	BYTE	$0x0f; BYTE $0x01; BYTE $0xdc	/* STGI */
 	XORL	AX, AX
 	RET
 
