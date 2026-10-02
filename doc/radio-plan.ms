@@ -3094,7 +3094,7 @@ reader takes the last entry for a uid.  That is a filesystem question and
 it belongs with
 .I xip (1)
 rather than here.
-.IP "9.  AX.25 between the two boards, over the CC1120 on silicon." 6
+.IP "9.  AX.25 between the two boards, over the CC1120 on silicon.  Done, except the error-rate bullet." 6
 Asked for directly.
 .I doc/ax25-plan.ms
 has all five of its items marked Done, and every one of them was measured
@@ -5610,3 +5610,85 @@ The committed default is five and the shell init, because that is the
 image a person uses and the one every tool in
 .I tools/radio
 drives.
+.PP
+.B "Item 9 is done: two real stations hear each other over the air through #a."
+Both boards running
+.I os/inferno/init/armv7max25.b
+with no shell on either, and
+.I tools/radio/ax25twosilicon.py
+typing nothing at all \- it reads two consoles:
+.DS
+.CW "board1 uid 2037303959315008002f0022 ppm -3550"
+.CW "       N0CALL-1 addressing N0CALL-2  carrier 125  ax25 109"
+.CW "board2 uid 203730395931500800300022 ppm 60300"
+.CW "       N0CALL-2 addressing N0CALL-1  carrier 125  ax25 109"
+.CW "each addresses the other, corrections differ by 63850 ppb"
+.CW ""
+.CW "board1 sent 38, heard 19: INFERNO-AX25"
+.CW "board2 sent 65, heard 18: INFERNO-AX25"
+.CW "AX25TWOSILICON-OK both heard the other through #a"
+.DE
+Everything in those two lines except the iounits came out of
+.B /lib/radio
+by the serial each part holds: the crystal correction, the callsign, and
+the station it addresses.
+.PP
+.B "And the radio's own counters say where the losses are, which is the point of putting them there."
+.DS
+.CW "board1: recv 43 crcerr 0 | heard 43"
+.CW "board2: recv 61 crcerr 0 | heard 61"
+.DE
+.B "Heard equals recv on both, exactly."
+So nothing is lost between the part and
+.BR #a :
+every packet the radio queued was matched to a conversation and handed
+up, and no packet failed a CRC.  What is lost is on the air, which is two
+half-duplex radios beaconing on one channel with no carrier sense \- and
+that is item 9's fourth bullet, the first time this bench has had two
+transmitters at once.
+.PP
+.B "A LIMBO REFERENCE DIES AT ITS LAST USE, NOT AT THE END OF ITS SCOPE, and that blocked this for an afternoon."
+The first version of the init held its conversation's ctl file in a local
+of
+.CW init (),
+which then runs forever \- so the variable is in scope for the life of
+the station.  It is not
+.I live
+for it: nothing reads it after the last
+.CW fprint ,
+so the reference is dropped there,
+.B #a
+sees the conversation's ctl closed, and the conversation stops being
+matched against incoming frames.  The data file, already open, goes on
+transmitting perfectly.
+.PP
+A station that sends and never hears, with every visible thing right.
+Measured by single-variable experiment on silicon, the other board
+beaconing at it throughout:
+.DS
+.CW "without the reference kept:        53 beacons out, 0 heard"
+.CW "with it, and nothing else changed: 30 out, 29 heard"
+.DE
+.B "That is the whole difference,"
+and it was worth two builds and two flash cycles to know rather than
+assume: the same run also had a
+.CW "heard 1: ''"
+in it \- a zero-length read counted as a frame \- and an attempt at a
+two-conversation arrangement, either of which could have been credited.
+.PP
+.B "The two-conversation attempt is recorded because it looked like the fix."
+.I Ax25chk (1)
+connects in its
+.B send
+and announces in its
+.BR recv ,
+so the obvious reading is one conversation for each.  In one program that
+is worse: with both open, a frame from the peer still matches the
+.I connected
+one, which is more specific than an announcer, so it lands on the
+conversation the beacon loop writes to and nobody reads it.  Two
+instances under qemu beaconed 130 and 118 frames and neither heard one.
+An announcer is for a station that does not know who will call it; this
+one does, because
+.B /lib/radio
+told it.

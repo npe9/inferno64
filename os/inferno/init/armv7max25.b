@@ -70,10 +70,17 @@ Init: module
 };
 
 Payload:	con "INFERNO-AX25";
+Statevery:	con 5;		# beacons between radio reports
 Period:		con 4000;	# ms between beacons
 Maxbuf:		con 255;
 
 Wppb, Wrssioffset, Wcsthr, Wname, Wcall, Wpeer, Nwant: con iota;
+
+# Conversation ctl files, held open for the life of the station: #a
+# frees a conversation when its files close.
+keep: list of ref Sys->FD;
+
+nrecv:	int;		# frames #a handed up, counted by the reader
 
 lamp(ctl: ref Sys->FD, on: int)
 {
@@ -95,6 +102,102 @@ put(fd: ref Sys->FD, line: string): int
 		return 0;
 	}
 	return 1;
+}
+
+# The two numbers off the driver that say whether the air carried
+# anything: packets the part queued, and CRC errors it rejected.
+radioline(): string
+{
+	fd := sys->open("/dev/radio0/stats", Sys->OREAD);
+	if(fd == nil)
+		return "no stats";
+	b := array[1024] of byte;
+	n := sys->read(fd, b, len b);
+	if(n <= 0)
+		return "no stats";
+	s := string b[0:n];
+	recv := field(s, "sent");		# "sent N recv N"
+	rest := field(s, "crcerr");
+	return "sent/recv " + recv + " crcerr " + rest;
+}
+
+# The rest of the line a named field starts, by a scan: tokenising a
+# seven-hundred-byte stat file into lists of strings is a page of heap
+# per call on a board with about 38000 bytes.
+field(s, what: string): string
+{
+	for(i := 0; i <= len s - len what; i++){
+		if(i > 0 && s[i-1] != '\n')
+			continue;
+		if(s[i:i+len what] != what)
+			continue;
+		j := i + len what;
+		k := j;
+		while(k < len s && s[k] != '\n')
+			k++;
+		return s[j+1:k];
+	}
+	return "?";
+}
+
+# One conversation, set up and opened.  Returns its data file.
+#
+# The order matters and ax25(3) enforces it: "ui on" and the connect or
+# announce go on the conversation's ctl BEFORE its data is opened,
+# because they change the frame size and the iounit is a promise rather
+# than an estimate.
+conv(how: string): ref Sys->FD
+{
+	cfd := sys->open("#a/clone", sys->ORDWR);
+	if(cfd == nil){
+		sys->print("ax25init: clone: %r\n");
+		return nil;
+	}
+	nb := array[32] of byte;
+	n := sys->read(cfd, nb, len nb);
+	if(n <= 0){
+		sys->print("ax25init: read clone: %r\n");
+		return nil;
+	}
+	cv := int string nb[0:n];
+	if(sys->fprint(cfd, "ui on") <= 0){
+		sys->print("ax25init: %d: ui on: %r\n", cv);
+		return nil;
+	}
+	if(sys->fprint(cfd, "%s", how) <= 0){
+		sys->print("ax25init: %d: %s: %r\n", cv, how);
+		return nil;
+	}
+	dfd := sys->open(sys->sprint("#a/%d/data", cv), sys->ORDWR);
+	if(dfd == nil){
+		sys->print("ax25init: #a/%d/data: %r\n", cv);
+		return nil;
+	}
+	sys->print("ax25init: conversation %d, %s\n", cv, how);
+	# THE CTL FILE IS KEPT REFERENCED, AND NOTHING ELSE IN THIS FILE
+	# COST AS MUCH TO FIND.
+	#
+	# A Limbo reference dies at its LAST USE, not at the end of the
+	# block it was declared in.  Nothing reads cfd after the fprint
+	# above, so without this line the reference is dropped there, #a
+	# sees the conversation's ctl file closed, and the conversation
+	# stops being matched against incoming frames -- while the data
+	# file, already open, goes on transmitting perfectly.
+	#
+	# A station that sends and never hears, in other words, and on
+	# this bench that is indistinguishable from a dozen other things.
+	# Measured by single-variable experiment on silicon, with the
+	# other board beaconing at it throughout:
+	#
+	#	without this line:  53 beacons out, 0 heard
+	#	with it and nothing else changed:  30 out, 29 heard
+	#
+	# The first version of this init was written without it and the
+	# whole of doc/radio-plan.ms item 9's last step was blocked on
+	# it, with every visible thing -- serial, callsign, peer, payload
+	# budget, frames leaving -- correct.
+	keep = cfd :: keep;
+	return dfd;
 }
 
 init()
@@ -233,50 +336,44 @@ init()
 	}
 	sys->print("ax25init: attached fd %d\n", rfd.fd);
 
-	cfd := sys->open("#a/clone", sys->ORDWR);
-	if(cfd == nil){
-		sys->print("ax25init: clone: %r\n");
-		sys->print("ARMV7M-AX25-NOCLONE\n");
+	# ONE CONVERSATION, CONNECTED, AND BOTH WAYS OF GETTING THIS
+	# WRONG ARE RECORDED BECAUSE THE SECOND LOOKED LIKE THE FIX.
+	#
+	# A conversation connected to the peer is what sends to it, and
+	# an incoming frame is matched against conversations by its
+	# SOURCE -- so a frame from the peer matches this one, and one
+	# conversation both beacons and hears.  That is what works, under
+	# qemu with two instances.
+	#
+	# ax25chk(1) does it in two commands, "send" connecting and
+	# "recv" announcing, and reading that as two conversations in one
+	# program made it worse: with both open, a frame from the peer
+	# still matches the CONNECTED one, which is more specific than an
+	# announcer, so it landed on the conversation the beacon loop
+	# writes to and nobody read it.  Two instances beaconed 130 and
+	# 118 frames at each other and neither heard one.  An announcer
+	# is for a station that does not know who will call it; this one
+	# does, because /lib/radio told it.
+	bfd := conv("connect " + peer);
+	if(bfd == nil){
+		sys->print("ARMV7M-AX25-NOBEACON\n");
 		exit;
 	}
-	nb := array[32] of byte;
-	n := sys->read(cfd, nb, len nb);
-	if(n <= 0){
-		sys->print("ax25init: read clone: %r\n");
-		sys->print("ARMV7M-AX25-NOCLONE\n");
-		exit;
-	}
-	cv := int string nb[0:n];
-	sys->print("ax25init: conversation %d\n", cv);
-
-	# UI frames, which need no state machine and no peer to answer.
-	if(sys->fprint(cfd, "ui on") <= 0)
-		sys->print("ax25init: ui on: %r\n");
-	if(sys->fprint(cfd, "connect %s", peer) <= 0)
-		sys->print("ax25init: connect %s: %r\n", peer);
-	else
-		sys->print("ax25init: addressing %s\n", peer);
-
-	dfd := sys->open(sys->sprint("#a/%d/data", cv), sys->ORDWR);
-	if(dfd == nil){
-		sys->print("ax25init: #a/%d/data: %r\n", cv);
-		sys->print("ARMV7M-AX25-NODATAFILE\n");
-		exit;
-	}
+	sys->print("ax25init: addressing %s\n", peer);
 	sys->print("ax25init: ax25 iounit %d, which is the carrier's %d "
-		+ "less 16\n", sys->iounit(dfd), sys->iounit(rfd));
+		+ "less 16\n", sys->iounit(bfd), sys->iounit(rfd));
 	sys->print("ARMV7M-AX25-UP\n");
 
 	# A reader and a beacon.  The reader is the spawned one because
 	# this process is the init and must not block on a receive: a
 	# board whose beacon stops is a board that looks dead.
-	spawn reader(dfd, ctl);
+	spawn reader(bfd, ctl);
 
 	lit := 0;
 	nsent := 0;
 	out := array of byte Payload;
 	for(;;){
-		if(sys->write(dfd, out, len out) != len out)
+		if(sys->write(bfd, out, len out) != len out)
 			sys->print("ax25init: beacon: %r\n");
 		else{
 			nsent++;
@@ -284,6 +381,18 @@ init()
 			lamp(ctl, lit);
 			sys->print("ax25init: beacon %d\n", nsent);
 		}
+		# THE RADIO'S OWN COUNTERS, every so often, because
+		# "heard" cannot report what it does not reach.  nrecv is
+		# incremented in this init after #a matched a frame to a
+		# conversation; recv in the driver's stat file is
+		# incremented when the part put a packet in the queue.  A
+		# station that hears nothing is one or the other and they
+		# want different fixes, and the whole of this bench's
+		# experience is that a counter downstream of the fault
+		# cannot say which.
+		if(nsent % Statevery == 0)
+			sys->print("ax25init: radio %s | heard %d\n",
+				radioline(), nrecv);
 		sys->sleep(Period);
 	}
 }
@@ -293,13 +402,20 @@ init()
 reader(dfd: ref Sys->FD, ctl: ref Sys->FD)
 {
 	b := array[Maxbuf] of byte;
-	nrecv := 0;
 	lit := 0;
 	for(;;){
 		n := sys->read(dfd, b, len b);
 		if(n < 0){
 			sys->print("ax25init: read: %r\n");
 			return;
+		}
+		if(n == 0){
+			# Not a packet.  The first version counted this and
+			# reported "heard 1: ''" -- an empty information
+			# field read as a frame, which is how a station
+			# that heard nothing came to say it had heard
+			# something.
+			continue;
 		}
 		nrecv++;
 		lit = !lit;
