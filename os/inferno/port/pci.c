@@ -604,6 +604,7 @@ pciscan(int bno, Pcidev** list, Pcidev *parent)
 
 				p->rom.bar = (ulong)pcicfgr32(p, PciEBAR0);
 				p->rom.size = pcibarsize(p, PciEBAR0);
+				pcisriovscan(p);
 				break;
 
 			case 0x06:		/* bridge device */
@@ -1457,21 +1458,62 @@ pcieporttype(Pcidev *p)
 }
 
 /*
- * Read the SR-IOV capability into s.  Mechanism only: nothing here
- * enables a VF or changes NumVFs.  The VF BARs are sized the standard
- * way, writing all ones and reading back, which the specification
- * permits only while VF memory space is disabled; with it enabled the
- * sizes are left 0 rather than disturbing running VFs.
+ * Find a function's SR-IOV capability and measure its VF BARs, once,
+ * while the bus is scanned.  Sizing is the standard write of all ones
+ * and read back, and the specification permits it only while VF
+ * memory space is disabled; firmware leaves it so, and if it has not,
+ * the sizes stay 0 rather than disturb running VFs.  Each write and
+ * its restore are under the configuration lock, as pcibarsize() does.
+ * After this nothing reads the capability by writing to it.
  */
-int
-pcisriov(Pcidev *p, Pcisriov *s)
+void
+pcisriovscan(Pcidev *p)
 {
 	int off, i, r;
 	u32int v, sz, hi, szhi;
 	uvlong size;
 
-	memset(s, 0, sizeof *s);
 	if((off = pciextcap(p, PciExtCapSRIOV)) < 0)
+		return;
+	p->sriov = off;
+	if(pcicfgr16(p, off+SriovCTL) & SriovMSE)
+		return;
+	for(i = 0; i < 6; i++){
+		r = off + SriovBAR0 + 4*i;
+		ilock(&pcicfglock);
+		v = pcicfgrw32(p->tbdf, r, 0, 1);
+		pcicfgrw32(p->tbdf, r, ~0, 0);
+		sz = pcicfgrw32(p->tbdf, r, 0, 1);
+		pcicfgrw32(p->tbdf, r, v, 0);
+		szhi = ~0;
+		if(((v >> Barwidthshift) & Barwidthmask) == Barwidth64 && i < 5){
+			hi = pcicfgrw32(p->tbdf, r+4, 0, 1);
+			pcicfgrw32(p->tbdf, r+4, ~0, 0);
+			szhi = pcicfgrw32(p->tbdf, r+4, 0, 1);
+			pcicfgrw32(p->tbdf, r+4, hi, 0);
+		}
+		iunlock(&pcicfglock);
+		size = ((uvlong)szhi << 32) | (sz & ~0xF);
+		if((sz & ~0xF) != 0)
+			p->vfbarsize[i] = -size;
+		if(((v >> Barwidthshift) & Barwidthmask) == Barwidth64)
+			i++;
+	}
+}
+
+/*
+ * Read the SR-IOV capability into s.  Only reads: the VF BAR sizes
+ * come from pcisriovscan().  Mechanism only: nothing here enables a
+ * VF or changes NumVFs.
+ */
+int
+pcisriov(Pcidev *p, Pcisriov *s)
+{
+	int off, i, r;
+	u32int v;
+
+	memset(s, 0, sizeof *s);
+	if((off = p->sriov) == 0)
 		return -1;
 	s->off = off;
 	s->cap = pcicfgr32(p, off+SriovCAP);
@@ -1491,25 +1533,9 @@ pcisriov(Pcidev *p, Pcisriov *s)
 		v = pcicfgr32(p, r);
 		s->vfbar[i].is64 = ((v >> Barwidthshift) & Barwidthmask) == Barwidth64;
 		s->vfbar[i].bar = v & ~0xFULL;
-		hi = 0;
-		if(s->vfbar[i].is64 && i < 5){
-			hi = pcicfgr32(p, r+4);
-			s->vfbar[i].bar |= (uvlong)hi << 32;
-		}
-		if((s->ctl & SriovMSE) == 0){
-			pcicfgw32(p, r, ~0);
-			sz = pcicfgr32(p, r);
-			pcicfgw32(p, r, v);
-			szhi = ~0;
-			if(s->vfbar[i].is64 && i < 5){
-				pcicfgw32(p, r+4, ~0);
-				szhi = pcicfgr32(p, r+4);
-				pcicfgw32(p, r+4, hi);
-			}
-			size = ((uvlong)szhi << 32) | (sz & ~0xF);
-			if((sz & ~0xF) != 0)
-				s->vfbar[i].size = -size;
-		}
+		if(s->vfbar[i].is64 && i < 5)
+			s->vfbar[i].bar |= (uvlong)pcicfgr32(p, r+4) << 32;
+		s->vfbar[i].size = p->vfbarsize[i];
 		if(s->vfbar[i].is64)
 			i++;
 	}

@@ -216,9 +216,9 @@ enum {
 };
 
 /*
- * What the SR-IOV capability says, read by pcisriov().  The VF BARs
- * are sized with the VFs' memory space off, the only time it is
- * allowed; the size is per VF.
+ * What the SR-IOV capability says, read by pcisriov().  The VF BAR
+ * sizes are the ones measured when the bus was scanned (pcisriovscan);
+ * the size is per VF.
  */
 typedef struct Pcisriov Pcisriov;
 struct Pcisriov
@@ -311,6 +311,8 @@ struct Pcidev
 	int	msi;			/* MSI capability register block */
 	int	msix;			/* MSI-X capability register block */
 	void*	msixtbl;		/* its vector table, vmap()ed */
+	int	sriov;			/* SR-IOV capability offset, 0 if none */
+	uvlong	vfbarsize[6];		/* per-VF BAR sizes, measured at scan */
 };
 
 enum {
@@ -368,6 +370,7 @@ extern char* pcicapname(int cap);
 extern char* pciextcapname(int cap);
 extern int pcieporttype(Pcidev *p);
 extern int pcisriov(Pcidev *p, Pcisriov *s);
+extern void pcisriovscan(Pcidev *p);
 extern int pcivfrid(Pcidev *p, Pcisriov *s, int vf);
 extern int pcihtcap(Pcidev *p, int cap);
 extern int pcienumcaps(Pcidev *p, int (*fmatch)(Pcidev*, int, int, int), int arg);
