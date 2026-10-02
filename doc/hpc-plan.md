@@ -1897,9 +1897,40 @@ unprotected. That is a hypothesis, not a finding: the crash reads the **new**
 image, not a retired one, so if the retirement window is the cause the path is
 indirect.
 
+**Localised to the layer walk, and two hypotheses eliminated.** Logging pointers
+through the path shows `n` and `n->data` are both sound when
+`drawscreenrebind()` is entered, so `gscreen` is *not* the stale pointer — the
+earlier reading of the text fault address was wrong about which structure it
+was. What is unsound is further in: `updatescreenstrides()` is `static` and
+inlines into `drawscreenrebind()`, and it walks every `DScreen` on the global
+`dscreen` list and then every layer in each screen's chain, reading `i->layer`
+and **writing** `i->width` and `i->zero`. The last log line before the fault is
+always inside that walk, and the fault addresses are garbage *values* — in one
+run, text — so the walk is reading a freed, reused structure.
+
+Eliminated:
+
+- **Not the memlayer move fix** (`ecb19cef7`). Suspected because it was new, and
+  one run each way appeared to confirm it; three runs each way disproved it,
+  both sides faulting 3 of 3. One run per side is worth nothing on this rig.
+- **Not `memlfree()` leaving dangling links.** It frees an image without
+  unlinking it from `s->frontmost`/`rearmost` or its neighbours, unlike
+  `memldelete()`, which looked like exactly the way a freed image could stay in
+  the chain this walk follows. But a probe counting its calls shows
+  `memlfree()` is **never called** in a run that faults. The latent asymmetry
+  is still worth knowing about; it is not this bug.
+
+**It is timing-sensitive, and instrumentation moves it.** Adding one more
+`print` inside the walk — the value of `next` — took the fault rate to 0 of 1.
+So the next step is not more printing. Both the devdraw entry points and
+`drawscreenrebind()` take `sdraw.q`, so there is no obviously unlocked mutation
+of that list to point at, and that is as far as reading gets.
+
 The tool for this is a sanitizer build. `MacOSX/arm64/bin/emu-cocoa-asan` exists
-but is from August and no mkfile target builds it, so it needs re-establishing
-before it can be trusted.
+but is from August and no mkfile target builds it; note also that a `CFLAGS`
+change needs a clean rebuild, since `mk` short-circuits on existing objects.
+Confirm a sanitizer build can reach a shell at all before investing in it: the
+Dis JIT writes executable memory, which `-fsanitize=address` may not tolerate.
 
 ### 3. draw3d intermittently rendered 0 of 60 segments
 
