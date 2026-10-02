@@ -1839,6 +1839,68 @@ What is *still* not seen: a hang after the results are written (one before shows
 as a missing PASS), and a quiet wrong answer from anything the component tests do
 not check themselves.
 
+### 2b. The resize hook *does* provoke a fault now — a segfault in `drawscreenrebind`
+
+Bug 2's section above ends by saying that with the trigger present the nil
+return still does not happen. That is still true. But the hook provokes a
+*different* fault, reliably, and this is a new entry rather than a note on bug 2
+because it is a crash rather than a nil and nothing shows the two are related.
+
+**Reproducer**, roughly two runs in three:
+
+```
+INFERNO_RESIZE_TEST=250 emu -g1024x768 /dis/wm/wm.dis runtests -g
+```
+
+9 of 11 runs faulted. Always the same frame:
+
+```
+0 trapmemref + 192
+1 _sigtramp + 56
+2 drawscreenrebind + 144
+3 drawscreenresize + 20
+4 screenresize + 728
+... libdispatch ... NSApplication run
+EMU: faults: sys: segmentation violation addr=0x392e636e75706e71
+```
+
+The fault address is not a pointer, it is **text**: those bytes are
+`q n p u n c . 9`, which is the tail of `genpunc.9`, a real subfont named by
+`/fonts/pelm/unicode.8.font`. So a structure was freed and its memory reused for
+a font name before this read it. The only pointer `drawscreenrebind()`
+dereferences that early is `n->data`, and `n` is `gscreen` — so `gscreen` is
+already stale by the time `screenresize()` hands it on, on the AppKit thread.
+
+**What narrowing has established so far.**
+
+| what | resizes every | runs | result |
+|---|---|---|---|
+| `runtests -g` (the whole screen suite) | 250ms | 11 | 9 faulted |
+| `wmtest -k` alone | 250ms | 3 | clean |
+| `clicktest -e press -n 2` alone | 250ms | 2 | clean |
+
+So it is not one test. It needs the state the suite accumulates: in the two runs
+where the position was captured, the fault landed immediately after
+`tilestest` reported ok — that is, on `clicktest`, the test after it.
+
+**It is not the memlayer move fix.** `ecb19cef7` was suspected because it was new,
+and a single run each way appeared to confirm it. Three runs each way disproved
+it: both sides faulted 3 of 3. One run per side is worth nothing on this rig —
+the same lesson as the `each`-slope measurements earlier in this document.
+
+**Not yet established**: which structure is freed. `screenresize()` already
+retires the old softscreen rather than freeing it (`retired[Retired]`,
+`Retired = 4`), so the obvious candidate is guarded — but that guard is a
+*generation count*, not a reference count, and at 250ms per resize four
+generations is one second. A client holding a reference longer than that is
+unprotected. That is a hypothesis, not a finding: the crash reads the **new**
+image, not a retired one, so if the retirement window is the cause the path is
+indirect.
+
+The tool for this is a sanitizer build. `MacOSX/arm64/bin/emu-cocoa-asan` exists
+but is from August and no mkfile target builds it, so it needs re-establishing
+before it can be trusted.
+
 ### 3. draw3d intermittently rendered 0 of 60 segments
 
 Seen twice, never reproduced under control — and, like bug 2, seen on a build
