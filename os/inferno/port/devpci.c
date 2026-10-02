@@ -16,6 +16,10 @@
  *				aligned 1, 2 or 4 byte units
  *		caps		one line per capability, standard then
  *				extended, with what each one says
+ *		sriov		a PF's SR-IOV: read, the capability and the
+ *				VFs enumerated; write "vfs n" to enable n VFs
+ *				(each then has a directory of its own here),
+ *				"vfs 0" to disable them
  *		bar0 ... bar5	a memory BAR's registers: reads and writes
  *				of 1, 2, 4 or 8 bytes at a naturally
  *				aligned offset are single accesses of that
@@ -46,9 +50,10 @@ enum {
 	Qdevconfig,
 	Qdevcaps,
 	Qdevbar,	/* through Qdevbar+5 */
+	Qdevsriov = Qdevbar+6,
 
 	Nflat	= 3,		/* entries per function in #$/pci */
-	Ndev	= 3+6,		/* files in a function's directory */
+	Ndev	= 3+6+1,	/* files in a function's directory */
 };
 
 #define TYPE(q)		((ulong)(q).path & 0x0F)
@@ -105,6 +110,13 @@ pcigen2(Chan *c, int t, int tbdf, Dir *dp)
 		return 1;
 	case Qdevcaps:
 		devdir(c, q, "caps", 0, eve, 0444, dp);
+		return 1;
+	}
+	if(t == Qdevsriov){
+		p = pcimatchtbdf(tbdf);
+		if(p == nil || p->sriov == 0)
+			return 0;
+		devdir(c, q, "sriov", 0, eve, 0664, dp);
 		return 1;
 	}
 	if(t >= Qdevbar && t < Qdevbar+6){
@@ -166,6 +178,7 @@ pcigen(Chan *c, char *, Dirtab*, int, int s, Dir *dp)
 	case Qdevcaps:
 	case Qdevbar: case Qdevbar+1: case Qdevbar+2:
 	case Qdevbar+3: case Qdevbar+4: case Qdevbar+5:
+	case Qdevsriov:
 		tbdf = QTBDF(c->qid);
 		if(pcimatchtbdf(tbdf) == nil)
 			return -1;
@@ -277,10 +290,14 @@ readctl(Pcidev *p, void *a, long n, vlong offset)
 	type = pcieporttype(p);
 	w = seprint(w, e, "port %s cfgspace %d intl %d intp %d\n",
 		porttypename(type), pcicfgspace(p), p->intl, pcicfgr8(p, PciINTP));
+	if(p->pf != nil)
+		w = seprint(w, e, "vf %d of %.4x:%.2x:%.2x.%x\n", p->vfindex, 0,
+			BUSBNO(p->pf->tbdf), BUSDNO(p->pf->tbdf), BUSFNO(p->pf->tbdf));
 	for(i = 0; i < nelem(p->mem); i++){
 		if(p->mem[i].size == 0)
 			continue;
-		bar = pcicfgr32(p, PciBAR0+4*i);
+		/* a VF's BAR registers read 0: its BARs are the PF's VF BARs */
+		bar = p->pf != nil ? (int)p->mem[i].bar : pcicfgr32(p, PciBAR0+4*i);
 		w = seprint(w, e, "bar%d %#llux %d %s%s\n", i, p->mem[i].bar & ~0xFULL,
 			p->mem[i].size,
 			(bar & Barioaddr) ? "io" :
@@ -521,6 +538,57 @@ baraccess(Pcidev *p, int i, void *a, s32 n, s64 off, int write)
 }
 
 static s32
+readsriov(Pcidev *p, void *a, s32 n, s64 off)
+{
+	Pcisriov s;
+	Pcidev *v;
+	char *buf, *w, *e;
+	s32 r;
+
+	if(pcisriov(p, &s) < 0)
+		error(Enonexist);
+	buf = smalloc(READSTR);
+	if(waserror()){
+		free(buf);
+		nexterror();
+	}
+	e = buf + READSTR;
+	w = sriovsummary(buf, e, p, &s);
+	w = seprint(w, e, "\n");
+	for(v = pcimatch(nil, 0, 0); v != nil; v = pcimatch(v, 0, 0))
+		if(v->pf == p)
+			w = seprint(w, e, "vf %d %.4x:%.2x:%.2x.%x %.4x/%.4x class %.2x.%.2x.%.2x\n",
+				v->vfindex, 0, BUSBNO(v->tbdf), BUSDNO(v->tbdf), BUSFNO(v->tbdf),
+				v->vid, v->did, v->ccrb, v->ccru, v->ccrp);
+	USED(w);
+	r = readstr(off, a, n, buf);
+	poperror();
+	free(buf);
+	return r;
+}
+
+static s32
+writesriov(Pcidev *p, void *a, s32 n)
+{
+	Cmdbuf *cb;
+	char *err;
+
+	cb = parsecmd(a, n);
+	if(waserror()){
+		free(cb);
+		nexterror();
+	}
+	if(cb->nf != 2 || strcmp(cb->f[0], "vfs") != 0)
+		error(Ebadctl);
+	err = pcisriovenable(p, atoi(cb->f[1]));
+	if(err != nil)
+		error(err);
+	poperror();
+	free(cb);
+	return n;
+}
+
+static s32
 pciread(Chan *c, void *va, s32 n, s64 offset)
 {
 	ulong x;
@@ -572,6 +640,8 @@ pciread(Chan *c, void *va, s32 n, s64 offset)
 		return readcaps(chanpcidev(c), a, n, offset);
 	case Qdevconfig:
 		return readconfig(chanpcidev(c), (uchar*)a, n, offset);
+	case Qdevsriov:
+		return readsriov(chanpcidev(c), a, n, offset);
 	default:
 		if(TYPE(c->qid) >= Qdevbar && TYPE(c->qid) < Qdevbar+6)
 			return baraccess(chanpcidev(c), TYPE(c->qid)-Qdevbar, a, n, offset, 0);
@@ -589,6 +659,8 @@ pciwrite(Chan *c, void *a, s32 n, s64 offset)
 	case Qdevbar: case Qdevbar+1: case Qdevbar+2:
 	case Qdevbar+3: case Qdevbar+4: case Qdevbar+5:
 		return baraccess(chanpcidev(c), TYPE(c->qid)-Qdevbar, a, n, offset, 1);
+	case Qdevsriov:
+		return writesriov(chanpcidev(c), a, n);
 	case Qpcictl:
 	case Qpciraw:
 	case Qdevctl:

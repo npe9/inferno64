@@ -565,6 +565,18 @@ iommuwrite(Chan *c, void *a, s32 n, s64 off)
 	return n;
 }
 
+/*
+ * A function that appears once translation is on -- a VF, say -- has
+ * no context, and its DMA would be blocked; it starts in the host
+ * domain like everything else.
+ */
+static void
+devadded(Pcidev *p)
+{
+	if(iommuops != nil && enabled && iommuops->covers(p))
+		iommuops->attach(nil, p);
+}
+
 static void
 enable(void)
 {
@@ -574,6 +586,7 @@ enable(void)
 		if(iommuops->enable() < 0)
 			error("enabling translation failed");
 		enabled = 1;
+		pcidevadded = devadded;
 	}
 }
 

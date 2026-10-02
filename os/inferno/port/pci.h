@@ -313,6 +313,8 @@ struct Pcidev
 	void*	msixtbl;		/* its vector table, vmap()ed */
 	int	sriov;			/* SR-IOV capability offset, 0 if none */
 	uvlong	vfbarsize[6];		/* per-VF BAR sizes, measured at scan */
+	Pcidev*	pf;			/* a VF's physical function, else nil */
+	int	vfindex;		/* and which VF of it */
 };
 
 enum {
@@ -371,6 +373,14 @@ extern char* pciextcapname(int cap);
 extern int pcieporttype(Pcidev *p);
 extern int pcisriov(Pcidev *p, Pcisriov *s);
 extern void pcisriovscan(Pcidev *p);
+extern char* pcisriovenable(Pcidev *p, int n);
+
+/*
+ * Called for each function that appears after the bus was scanned (the
+ * VFs pcisriovenable makes), so a layer that keeps per-function state
+ * -- the IOMMU's contexts -- can take it in.  nil when nothing has asked.
+ */
+extern void (*pcidevadded)(Pcidev*);
 extern int pcivfrid(Pcidev *p, Pcisriov *s, int vf);
 extern int pcihtcap(Pcidev *p, int cap);
 extern int pcienumcaps(Pcidev *p, int (*fmatch)(Pcidev*, int, int, int), int arg);

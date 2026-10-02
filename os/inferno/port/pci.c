@@ -1555,3 +1555,117 @@ pcivfrid(Pcidev *p, Pcisriov *s, int vf)
 	rid = (BUSBNO(p->tbdf)<<8) | (BUSDNO(p->tbdf)<<3) | BUSFNO(p->tbdf);
 	return (rid + s->vfoffset + vf*s->vfstride) & 0xFFFF;
 }
+
+/*
+ * Enable n VFs on PF p, or none with n 0, and keep the PCI list in
+ * step: each VF found is added as a function of its own, with its BARs
+ * the PF's VF BARs offset by its index (they are already assigned --
+ * firmware assigns VF BARs, and this kernel does not move BARs).  VFs
+ * are on the PF's bus here; a VF the offset and stride put on a bus
+ * above it is not enumerated.  Returns nil, or what went wrong.
+ *
+ * In process context: it sleeps the 100 ms the specification wants
+ * between VF Enable and the first configuration access to a VF.
+ */
+void (*pcidevadded)(Pcidev*);
+
+char*
+pcisriovenable(Pcidev *p, int n)
+{
+	Pcisriov s;
+	Pcidev *v, *q, **l;
+	int i, j, off, ctl, rid, pcie, ari;
+	u32int cls;
+
+	if(p->pf != nil)
+		return "a VF has no SR-IOV of its own";
+	if(pcisriov(p, &s) < 0)
+		return "no SR-IOV capability";
+	if(n < 0 || n > s.totalvfs)
+		return "more VFs than TotalVFs";
+	off = s.off;
+	ctl = pcicfgr16(p, off+SriovCTL);
+	if((ctl & SriovVFE) && s.numvfs == n)
+		return nil;
+
+	/* off first: NumVFs may change only with VF Enable clear */
+	if(ctl & SriovVFE){
+		pcicfgw16(p, off+SriovCTL, ctl & ~(SriovVFE|SriovMSE));
+		for(q = pcilist; q != nil; q = v){
+			v = q->list;
+			if(q->pf == p)
+				pcidevfree(q);
+		}
+		tsleep(&up->sleep, return0, nil, 100);
+	}
+	if(n == 0){
+		pcicfgw16(p, off+SriovNUM, 0);
+		return nil;
+	}
+
+	/*
+	 * ARI Capable Hierarchy, in the lowest-numbered PF, when the port
+	 * above forwards ARI: it changes the offset and stride, so it is
+	 * set before they are read.
+	 */
+	ari = 0;
+	if(p->parent != nil && (pcie = pcicap(p->parent, PciCapPCIe)) >= 0)
+		ari = (pcicfgr16(p->parent, pcie+PcieDEVCTL2) & PcieAriFwd) != 0;
+	ctl = pcicfgr16(p, off+SriovCTL) & ~(SriovVFE|SriovMSE);
+	if(BUSFNO(p->tbdf) == 0){
+		if(ari)
+			ctl |= SriovARI;
+		else
+			ctl &= ~SriovARI;
+		pcicfgw16(p, off+SriovCTL, ctl);
+	}
+	pcicfgw16(p, off+SriovNUM, n);
+	if(pcisriov(p, &s) < 0 || s.numvfs != n)
+		return "NumVFs did not take";
+	pcicfgw16(p, PciPCR, pcicfgr16(p, PciPCR) | MEMen);
+	pcicfgw16(p, off+SriovCTL, ctl | SriovVFE | SriovMSE);
+	tsleep(&up->sleep, return0, nil, 100);
+
+	for(i = 0; i < n; i++){
+		rid = pcivfrid(p, &s, i);
+		if((rid >> 8) != BUSBNO(p->tbdf))
+			continue;
+		v = pcidevalloc();
+		memset(v, 0, sizeof *v);
+		v->tbdf = MKBUS(BusPCI, rid >> 8, (rid >> 3) & 0x1F, rid & 7);
+		cls = pcicfgr32(v, PciRID);
+		if(cls == ~0){
+			print("pci: %T VF %d at %T does not answer\n", p->tbdf, i, v->tbdf);
+			continue;
+		}
+		v->vid = p->vid;		/* a VF's own ID registers read 0xFFFF */
+		v->did = s.vfdid;
+		v->rid = cls;
+		v->ccrp = cls >> 8;
+		v->ccru = cls >> 16;
+		v->ccrb = cls >> 24;
+		v->pcr = pcicfgr16(v, PciPCR);
+		v->intl = 0xFF;
+		for(j = 0; j < 6; j++){
+			if(s.vfbar[j].size == 0)
+				continue;
+			/* the low bits -- width, prefetchability -- as the PF's VF BAR has them */
+			v->mem[j].bar = (s.vfbar[j].bar + i*s.vfbar[j].size)
+				| (pcicfgr32(p, off + SriovBAR0 + 4*j) & 0xF);
+			v->mem[j].size = s.vfbar[j].size;
+		}
+		v->pf = p;
+		v->vfindex = i;
+		v->parent = p->parent;
+		if(p->parent != nil){
+			for(l = &p->parent->bridge; *l != nil; l = &(*l)->link)
+				;
+			*l = v;
+		}
+		*pcitail = v;
+		pcitail = &v->list;
+		if(pcidevadded != nil)
+			pcidevadded(v);
+	}
+	return nil;
+}

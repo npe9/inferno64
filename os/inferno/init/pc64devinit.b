@@ -58,6 +58,97 @@ msixcycle()
 }
 
 
+# ---- the SR-IOV test (doc/genesize-plan.ms, phase 7) ----
+#
+# The bench's igb (82576) is a PF with eight VFs.  "vfs 4" on its sriov
+# file enables four; each must then answer at the routing ID the PF's
+# offset and stride give, as a function with a directory of its own;
+# "vfs 0" must take them away again.  (Run last: see init.)
+
+findpci(vid, did: int): string
+{
+	fd := sys->open("/dev/pci", Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	want := sys->sprint("vid %.4x did %.4x", vid, did);
+	for(;;){
+		(n, d) := sys->dirread(fd);
+		if(n <= 0)
+			break;
+		for(i := 0; i < n; i++){
+			if((d[i].mode & Sys->DMDIR) == 0)
+				continue;
+			c := readfile("/dev/pci/" + d[i].name + "/ctl");
+			if(len c >= len want && c[0:len want] == want)
+				return d[i].name;
+		}
+	}
+	return nil;
+}
+
+countvfs(): int
+{
+	fd := sys->open("/dev/pci", Sys->OREAD);
+	if(fd == nil)
+		return -1;
+	n := 0;
+	for(;;){
+		(m, d) := sys->dirread(fd);
+		if(m <= 0)
+			break;
+		for(i := 0; i < m; i++){
+			if((d[i].mode & Sys->DMDIR) == 0)
+				continue;
+			c := readfile("/dev/pci/" + d[i].name + "/ctl");
+			want := "vid 8086 did 10ca";
+			if(len c >= len want && c[0:len want] == want)
+				n++;
+		}
+	}
+	return n;
+}
+
+sriovtest()
+{
+	pf := findpci(16r8086, 16r10c9);
+	if(pf == nil){
+		sys->print("DEVTEST: SRIOV-SKIP no 82576 PF\n");
+		return;
+	}
+	f := "/dev/pci/" + pf + "/sriov";
+	sys->print("DEVTEST: SRIOV %s before:\n%s", pf, readfile(f));
+	if((e := ctlwrite(f, "vfs 4")) != nil){
+		sys->print("DEVTEST: SRIOV-FAIL vfs 4: %s\n", e);
+		return;
+	}
+	after := readfile(f);
+	sys->print("DEVTEST: SRIOV after vfs 4:\n%s", after);
+	(nil, l) := sys->tokenize(after, "\n");
+	nvf := 0;
+	for(; l != nil; l = tl l){
+		line := hd l;
+		if(len line > 3 && line[0:3] == "vf "){
+			nvf++;
+			(nil, w) := sys->tokenize(line, " ");
+			sys->print("DEVTEST: SRIOV VF %s ctl:\n%s", hd tl tl w, readfile("/dev/pci/" + hd tl tl w + "/ctl"));
+		}
+	}
+	n := countvfs();
+	if(nvf == 4 && n == 4)
+		sys->print("DEVTEST: SRIOV-ENABLED-OK 4 VFs enumerated, 4 VF directories in /dev/pci\n");
+	else
+		sys->print("DEVTEST: SRIOV-FAIL %d VFs listed, %d VF directories\n", nvf, n);
+	if((e = ctlwrite(f, "vfs 0")) != nil){
+		sys->print("DEVTEST: SRIOV-FAIL vfs 0: %s\n", e);
+		return;
+	}
+	n = countvfs();
+	if(n == 0)
+		sys->print("DEVTEST: SRIOV-DISABLED-OK no VFs left\n");
+	else
+		sys->print("DEVTEST: SRIOV-FAIL %d VFs left after vfs 0\n", n);
+}
+
 # ---- the IOMMU test (doc/genesize-plan.ms, phase 2) ----
 #
 # Translation is turned on with every device in the host domain, then
@@ -465,6 +556,13 @@ init()
 		spawn ptrreport();
 	}
 
+	# sr-iov: the igb PF's VFs, enabled, enumerated, and taken away.
+	# Last, because it leaves the PF without its queue 0: on the 82576
+	# queue n is pool n's, enabling VFs resets them (QEMU's igbvf reset
+	# clears RXDCTL0, as the part does), and ether82563 is not an
+	# SR-IOV PF driver -- it does not move to a pool of its own.  That
+	# driver is phase 8.
+	sriovtest();
 	sys->print("DEVTEST: done\n");
 	for(;;)
 		sys->sleep(10000);
