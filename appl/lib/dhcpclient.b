@@ -472,7 +472,7 @@ setup(net: string, device: string, init: ref Bootconf): (ref Dhcp, ref DhcpIO, s
 	}
 	(dfd, err2) := udpannounce(net);
 	if(err2 != nil)
-		return (nil, nil, err);
+		return (nil, nil, err2);
 	bootfile: string;
 	options: array of array of byte;
 	if(init != nil){
