@@ -566,10 +566,12 @@ maxpending(): int
 #
 spineok(d: ref Dev, s: ref Super): string
 {
+	idx: array of byte;
 	if(s.freeroot != Nilblk){
-		(nil, fe) := d.rdblk(s.freeroot);
+		(b0, fe) := d.rdblk(s.freeroot);
 		if(fe != nil)
 			return sys->sprint("free map index: %s", fe);
+		idx = b0;
 	}
 	if(s.treeroot != Nilblk){
 		(b, te) := d.rdblk(s.treeroot);
@@ -578,6 +580,50 @@ spineok(d: ref Dev, s: ref Super): string
 		(nil, ue) := Node.unpack(b);
 		if(ue != nil)
 			return sys->sprint("tree root: %s", ue);
+	}
+	#
+	# AND THE MAP MUST BE AT LEAST AS NEW AS THE TREE.
+	#
+	# Everything above checks that the spine is READABLE, which is what
+	# a commit losing its tree looks like.  It cannot see the other
+	# half, and the other half was found by injecting one: a medium that
+	# loses a writeback part way through can land the superblock and the
+	# tree root while losing the group bitmap, and the result passes
+	# every check above.  Measured, with sdmem(3)'s "reorder 8 partial 1
+	# stop 130": mount accepted generation 16 and efsck then reported
+	# nine blocks "in the tree and free in the map", while generation 15
+	# in the other slot was clean.  So the fallback existed, was
+	# correct, and was not reached.
+	#
+	# A map older than the tree is the worst kind of damage this format
+	# can carry, because nothing goes wrong until the allocator hands
+	# out a block the tree is using -- which is what plan item B1e spent
+	# two sessions on from the other direction.
+	#
+	# The full check is efsck, a pass over every block, about forty
+	# seconds on this board's image, and putting that in front of every
+	# mount means nobody mounts.  This is the cheap sufficient one: the
+	# tree root's OWN BIT, in the map this superblock names.  One group
+	# block, which mount has to read anyway.  It cannot prove the map is
+	# right; it catches a map that predates the root, which is the shape
+	# a lost writeback leaves.
+	#
+	if(idx != nil && s.treeroot != Nilblk && s.treeroot >= big 0){
+		g := int (s.treeroot / big Bitsperblk);
+		if((g + 1) * 8 <= Blocksize){
+			gb := get8(idx, g * 8);
+			if(gb == big 0 || gb >= s.nblocks)
+				return sys->sprint(
+					"free map group %d says block %bd, which is not a map block",
+					g, gb);
+			(mb, me) := d.rdblk(gb);
+			if(me != nil)
+				return sys->sprint("free map group %d: %s", g, me);
+			if(!bitget(mb, int (s.treeroot % big Bitsperblk)))
+				return sys->sprint(
+					"tree root %bd is free in the map, so the map is older than the tree",
+					s.treeroot);
+		}
 	}
 	return nil;
 }
@@ -1348,6 +1394,29 @@ Fs.group(f: self ref Fs, g: int): (array of byte, string)
 		return (f.groups[g], nil);
 	if(f.bmindex[g] == Nilblk)
 		return (nil, sys->sprint("free map group %d has no block", g));
+	#
+	# A SUPERBLOCK IS NOT A BITMAP, whatever the index says.
+	#
+	# Block 0 and the last block are the two superblocks, so a group
+	# whose block is either is an index that has been destroyed -- and
+	# reading a superblock as a bitmap is not a quiet mistake: most of
+	# its bits are clear, so it reads as tens of thousands of free
+	# blocks and the allocator hands out the filesystem.
+	#
+	# That is not hypothetical.  It is exactly what happened when
+	# Fs.commit wrote an all-zero index over the live one (plan item
+	# B1e): every group's block became 0 and the allocator began
+	# handing out blocks that were already in the tree.  The commit bug
+	# is fixed, and so is the lack of invalidation that hid it, but a
+	# device that returns zeroes for a block it never wrote reaches the
+	# same state from outside -- which sdmem(3)'s "stop" can now
+	# demonstrate.  So this is checked where it is relied on, like the
+	# matching guard in Fs.alloc.
+	#
+	if(f.bmindex[g] == big 0 || f.bmindex[g] == f.s.nblocks - big 1)
+		return (nil, sys->sprint(
+			"free map group %d says block %bd, which is a superblock",
+			g, f.bmindex[g]));
 	(b, e) := f.d.rdblk(f.bmindex[g]);
 	if(e != nil)
 		return (nil, e);

@@ -181,6 +181,30 @@ Deferring it is worth exactly half the commits:
 generation number counts them, and 60 files cost generation 122 before
 and 62 after, 300 files 302.
 .PP
+A commit's writes go down, then a barrier, then one superblock, and that
+order is what the format rests on.  It survives the MEDIUM failing, which
+is now tested rather than argued:
+.B /tests/efs-fault
+drives
+.IR sdmem (3)'s
+injected faults \(em a transfer returning an error, a write torn at the
+first sector, every write from transfer
+.I n
+lost, and half a writeback lost so that a superblock lands while the tree
+it names does not \(em at twenty-one cut points, and requires the image to
+remount with
+.I efsck
+silent after each.  It runs on a board, not under
+.IR emu .
+.PP
+Losing writes outright is a KIND failure here and the reason is worth
+knowing: every write in a transaction goes to a new block, so whatever
+subset lands, the previous superblock still names a complete previous
+tree.  What is not kind is losing part of a writeback, and mount checks
+for it \(em the tree root's own bit must be set in the map the superblock
+names, or that superblock is older than its own tree and the other slot
+is taken instead.
+.PP
 The last line is a BACKSTOP and is not exercised by any test here.  A
 local mount being dropped makes the kernel clunk every fid first, so the
 clunk path always runs; a connection severed under a client that still

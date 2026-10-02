@@ -2888,7 +2888,7 @@ so a check written to catch the failure passed on it, and "mounted the spare"
 was matching the ordinary banner.  Anchored, and asserting the LOWER generation
 by number.
 .NH 2
-G1a.  STILL OPEN \(em what mount checks is a spine, not a proof
+G1a.  CLOSED for the failure that reaches it \(em and the check is one group read
 .LP
 .CW Fs.mount
 reads the free map index and unpacks the tree root.  That is what mount itself
@@ -2906,8 +2906,79 @@ change \(em it means a mounted filesystem changing generation under its own
 clients \(em and it should not be done before the question below is answered,
 because if commits are ordered correctly on the medium then a deep hole cannot
 happen and none of it is needed.
+.PP
+.B "INJECTED, and the spine check had a hole that was not the one above."
+.CW sdmem (3)
+can now be told to break, so this stopped being an argument.  The
+interesting fault is not a lost write but a lost HALF of a writeback:
+.CW "reorder 8 partial 1 stop n"
+holds eight writes, applies the newest and loses the rest, and the newest is
+the superblock because efs writes that last.  So the superblock lands and the
+tree it names does not.  Five cut points, and two different outcomes:
+.P1
+cut at 40, 70   the TREE ROOT was lost
+                mount: "has no tree (tree root: node checksum
+                1000 1, want 0 0); falling back to superblock 1"
+                the older generation is clean.  RECOVERED.
+
+cut at 130      the FREE MAP INDEX was lost
+                mount accepted generation 16
+                efsck: nine blocks "in the tree and free in
+                the map"; generation 15 in the other slot CLEAN
+.P2
+So the fallback existed, was correct, and was not reached.  The spine check
+asked whether the spine was READABLE, which is what a lost tree looks like, and
+a lost map is not that: every block it checks reads perfectly.
+.PP
+.B "The check that catches it is the tree root's own bit."
+A map older than its tree is the worst damage this format can carry, because
+nothing goes wrong until the allocator hands out a block the tree is using \(em
+which is what B1e spent two sessions on from the other direction.  The full
+check is
+.CW efsck ,
+a pass over every block, and putting forty seconds in front of every mount
+means nobody mounts.  So
+.CW spineok
+now reads the group the tree root falls in \(em one block, and mount reads the
+index anyway \(em and requires the root's bit to be SET.  It cannot prove the
+map is right; it catches a map that predates the root, which is the shape a
+lost writeback leaves.
+.PP
+Verified against the fault that found it: generation 16 is refused with "free
+map group 0 says block 0, which is not a map block" and mount takes generation
+15, which
+.CW efsck
+calls clean.  Before the check, mount took 16 and
+.CW efsck
+found nine problems.
+.PP
+.B "And a superblock is not a bitmap, which Fs.group did not say."
+.CW Fs.group
+accepted a group block number of 0.  Block 0 is a superblock, most of its bits
+are clear, so reading it as a bitmap reads as tens of thousands of free blocks
+and the allocator hands out the filesystem.  That is exactly the state B1e
+reached from inside, by writing an all-zero index over the live one \(em and a
+device that returns zeroes for a block it never wrote reaches it from outside,
+which "stop" demonstrates.  Guarded now, like the matching guard in
+.CW Fs.alloc ,
+and it is what produces the clean message above.
+.PP
+.B "What is still open here."
+The runtime fallback \(em a mounted server changing generation under its own
+clients when a descent fails deep in the tree.  Nothing injected so far
+reaches it: every shape tried is caught at mount.  It stays unbuilt, with the
+reason upgraded from "answer G1b first" to "no failure has been exhibited that
+needs it".
+.PP
+.CW tests/efs-fault
+is the suite: the four faults at twenty-one cut points, each requiring the
+image to remount and
+.CW efsck
+to call it clean with the faults OFF \(em a check run through a device that is
+still losing writes is checking the device.  Board only, like
+.CW tests/fsbench .
 .NH 2
-G1b.  STILL OPEN \(em and the cause is still not established
+G1b.  The suspect is DEAD, measured \(em dossrv defers nothing
 .LP
 Everything above is recovery.  Why a superblock became durable while a node it
 named did not is unanswered, and the hypothesis in G1 is unchanged and still
@@ -2935,3 +3006,67 @@ write to it, pull power, and read both superblocks with
 .CW -S .
 If the newer one is durable and its tree is not, the ordering is not being kept
 and the fix belongs in the layer below efs, not in efs.
+.PP
+.B "MEASURED, and it needed no power pull: dossrv does not defer."
+.CW sdmem (3)
+counts transfers in the DRIVER, so the moment a write reaches the medium is
+observable.  A FAT on it, a file written through
+.CW dossrv ,
+and the counter read at four points:
+.P1
+                       small write    2.5MB write
+mounted and idle          0 ops          0 ops
+the copy has returned     5 ops        559 ops
+six seconds later         5 ops        559 ops
+after the unmount         5 ops        559 ops
+.P2
+Every write is on the medium before the copy returns, and the unmount flushes
+NOTHING.  The second column is the same test under buffer pressure \(em 2548984
+bytes through twenty nine-sector buffers, 180KB of cache against 2.5MB \(em
+because a cache that defers only when it is full would pass the first column.
+It does not defer there either.
+.PP
+So the hypothesis this item has carried since G1 is refuted.  "Write-back" in
+.CW dossrv 's
+description is about the read-modify-write of a nine-sector track, not about
+deferring anything, and
+.CW Fs.commit 's
+"on this board's synchronous SD driver" is true for a filesystem in a file on
+it.
+.PP
+.B "And an attribution this plan has made twice is wrong."
+That 2.5MB write did 1251 READS for 5031 sectors written, with TWO
+read-modify-writes.  1245 clusters were allocated.  So the reads are not
+read-modify-write of partial tracks, which is what B1 and
+.CW doc/efs-plan.ms
+both say dossrv's cost is: they are one FAT lookup per cluster allocated.  That
+is a different fix \(em cache the FAT \(em and it is not efs's.
+.PP
+.B "A power cut alone cannot produce the state G1 describes, and the reason is structural."
+Eight cut points, writes lost from transfer 20 through 160: every one remounted
+and
+.CW efsck
+called every one clean, at generations 2 through 25 tracking the cut.  That had
+to happen, and seeing why is worth more than the eight results: under copy on
+write every write in a transaction goes to a NEW block, so whatever subset
+lands, the OLD superblock still names a complete old tree.  Losing writes is a
+KIND failure for this format.
+.PP
+What is not kind is losing PART of a writeback, which is what a volatile cache
+does when the power goes: the superblock lands and the tree does not.  That is
+reproducible now and efs survives it \(em see G1a above, which is where the one
+hole it exposed is written up.
+.PP
+.B "What remains unestablished."
+Why the board's image was damaged in the first place.
+.CW dossrv
+is eliminated.  The SD driver is synchronous.  What is left is the CARD's own
+volatile cache, which is precisely a device that can lose part of a writeback,
+and which cannot be tested without pulling power.  The confound the plan
+already names \(em the image was filled by a session that killed a writer and
+rebooted \(em also stands.
+.PP
+The useful change is that this no longer needs answering.  The question was
+"can the medium leave efs an unmountable filesystem", and the answer is now a
+measurement rather than a hypothesis: for every failure shape that can be
+injected, no.

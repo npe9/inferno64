@@ -111,9 +111,98 @@ added 221079us over the same workload at
 or 1105us each against 1000 requested.  The overshoot is
 .IR microdelay 's
 granularity.  Take the counters as exact and the delay as approximate.
+.SS Injected faults
+The medium is the layer a filesystem's durability argument rests on, and
+this device can be told to break.
+.PP
+Each fault names a TRANSFER NUMBER rather than a probability, because a
+test that cannot say which transfer it broke cannot be run twice and get
+the same answer \(em and the statement worth making is "survives a loss at
+every point in turn", which needs the point to be nameable.  The number is
+counted from the last
+.BR reset ,
+so the usual order is to set the fault and then reset.
+.TP
+.BI fail " n"
+Transfer
+.I n
+returns an I/O error.  Zero, the default, never.
+.TP
+.BI failevery " n"
+And so does every
+.IR n th.
+.TP
+.BI stop " n"
+From transfer
+.I n
+onward a write is accepted, reported successful, and THROWN AWAY.  Reads
+go on working, because the machine has not stopped \(em what has stopped is
+the medium keeping anything.
+.IP
+This is a power cut, and it is the fault worth having.
+.B /doc/open-issues-plan.ms
+item G1b asks why a superblock became durable while a node it named did
+not, and says the test that would settle it is to pull the power, which
+needs a human at the board and cannot go in a suite.  This is that test,
+repeatable, and it reaches cases a power cut cannot be aimed at: lose the
+writes from transfer 40, then from 41, then from 42.
+.TP
+.BI tear " n"
+Transfer
+.I n
+writes its FIRST SECTOR and reports success.  One sector is the unit a
+card guarantees, so a transfer longer than one has no atomicity to rely
+on; a format can be designed around that and cannot be if it is never
+tested.
+.TP
+.BI reorder " n"
+Hold up to
+.I n
+writes, at most 64, and apply them BACKWARDS when the queue fills or when
+.B flush
+is written.  A read sees a held write, because this models a device that
+reorders and not one that loses.
+.IP
+A filesystem whose ordering argument is right survives a reorder inside
+one transaction and nothing else, so this is what tells a commit barrier
+that is load-bearing from one that is merely believed in.
+.TP
+.B flush
+Apply what is held, backwards, now.
+.TP
+.B lose
+Throw what is held away without applying it \(em which is also what
+.B stop
+does to the queue when it first fires, because a device that loses new
+writes and carefully applies its cache is modelling nothing.
+.TP
+.B nofault
+Forget every fault, losing anything held.
+.PP
+.B ctl
+reports them:
+.PP
+.EX
+sdmem xfer 1832 fail 0 every 0 stop 1200 tear 0 reorder 0 held 0
+sdmem injected 0 dropped 632 torn 0 reordered 0
+.EE
+.PP
+.I Injected
+counts errors returned on purpose, which is how a test tells the faults it
+asked for from the ones it did not;
+.I dropped
+counts writes accepted and discarded,
+.I torn
+transfers cut short, and
+.I reordered
+writes applied out of order.
+.SS Control, continued
 .TP
 .B reset
-Zero the counters, leaving the contents alone.
+Zero the counters AND the transfer number the faults are indexed by, which
+cannot be separated from them: a workload that does not count from its own
+beginning cannot name a transfer.  The faults themselves are a setting,
+not a measurement, and are left alone.
 .TP
 .B zero
 Forget the contents, freeing every allocated chunk and leaving the
@@ -131,6 +220,27 @@ mkdir /n/x/sub
 cat /dev/sdZ0/ctl
 echo delay 5000 > /dev/sdZ0/ctl
 .EE
+.PP
+Lose every write from the 400th on \(em a power cut \(em and ask whether the
+filesystem still mounts and holds the last state it committed:
+.PP
+.EX
+disk/mkefs -n 4000 /dev/sdZ0/data
+echo nofault > /dev/sdZ0/ctl
+echo reset > /dev/sdZ0/ctl
+echo stop 400 > /dev/sdZ0/ctl
+disk/efs -f /dev/sdZ0/data /n/x
+\&... write until it stops mattering ...
+unmount /n/x
+echo nofault > /dev/sdZ0/ctl
+disk/efsck /dev/sdZ0/data
+.EE
+.PP
+.B nofault
+before
+.I efsck
+matters: a check run through a device that is still losing writes is
+checking the device.
 .SH SOURCE
 .B /os/inferno/port/sdmem.c
 .PP

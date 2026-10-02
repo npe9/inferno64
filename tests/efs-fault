@@ -1,0 +1,160 @@
+#!/dis/sh.dis
+#
+# efs-fault - what efs does when THE MEDIUM fails under it.
+#
+# THIS RUNS ON A BOARD, not under host emu, because it needs sdmem(3) --
+# a block device in RAM that can be told to break, which is a kernel
+# device.  From the host:
+#
+#	sh tools/jtag/boot.sh			# a kernel with sdmem
+#	... then on the board ...
+#	sh /n/remote/tests/efs-fault
+#
+# WHY IT EXISTS.  doc/open-issues-plan.ms item G1 asks why a superblock
+# became durable while a node it named did not, and G1b says the test
+# that would settle it needs a power pull and a human at the board.  That
+# test cannot go in a suite and cannot be aimed: a power cut arrives where
+# it arrives.  sdmem's injected faults are the same failure, repeatable
+# and aimed -- lose the writes from transfer 40, then from 70, then from
+# 100 -- and they reach a state a power cut can only reach by luck.
+#
+# WHAT IS REQUIRED, which is the contract in man/4/efs: the image mounts
+# and holds exactly the last committed state.  So after every fault it
+# must remount, and efsck must call it clean WITH THE FAULTS OFF -- a
+# check run through a device that is still losing writes is checking the
+# device.
+#
+load std
+
+D = /dev/sdZ0
+fail = 0
+
+if {! cat $D^/ctl >/dev/null >[2]/dev/null} {
+	echo 'efs-fault: no '^$D^' -- this kernel has no sdmem(3)' >[1=2]
+	raise 'fail:no sdmem'
+}
+
+fn setup {
+	echo nofault > $D^/ctl
+	echo zero > $D^/ctl
+	echo delay 0 > $D^/ctl
+	disk/mkefs -n 2000 $D^/data
+	echo nofault > $D^/ctl
+	echo reset > $D^/ctl
+}
+
+fn workload {
+	disk/efs -f $D^/data /n/efscrash
+	for i in 0 1 2 3 4 5 6 7 8 9 a b c d e f g h i j {
+		cp /n/remote/tests/efs-fault /n/efscrash/f^$i >[2]/dev/null
+	}
+	unmount /n/efscrash >[2]/dev/null
+	echo nofault > $D^/ctl
+}
+
+#
+# Each check is "it still mounts and it is still clean", and the
+# generation it mounts at is reported rather than required: WHICH
+# committed state survives depends on where the cut fell, and the
+# contract is that it is one of them and not that it is the newest.
+#
+#
+# NOTHING HERE CAPTURES THE OUTPUT OF "disk/efs -f".
+#
+# It mounts and leaves a server behind holding the file descriptors it
+# was given, so a backquote around it waits for an EOF that never comes:
+# the first version of this wedged the board's command poller, which
+# then needed a JTAG reboot.  efsck is a program that exits and can be
+# captured; a file server cannot.
+#
+fn want {
+	ck = `{disk/efsck $D^/data >[2=1]}
+	if {~ $"ck *clean*} {
+		if {disk/efs -f $D^/data /n/efscrash >[2]/dev/null} {
+			if {ls /n/efscrash >/dev/null >[2]/dev/null} {
+				echo '  ok: '^$1
+			} {
+				echo '  FAIL: '^$1^' -- mounted but unreadable'
+				fail = 1
+			}
+			unmount /n/efscrash >[2]/dev/null
+		} {
+			echo '  FAIL: '^$1^' -- clean but would not mount'
+			fail = 1
+		}
+	} {
+		echo '  FAIL: '^$1^' -- '^$"ck
+		fail = 1
+	}
+}
+
+#
+# 1.  A POWER CUT: from transfer n on, a write is accepted and thrown
+#     away.  Several points, because the interesting ones are the ones
+#     inside a commit and nothing says where those are.
+#
+echo 'losing every write from a given transfer'
+for n in 20 40 60 80 100 120 140 160 {
+	setup
+	echo stop $n > $D^/ctl
+	workload
+	want 'lost everything from transfer '^$n
+}
+
+#
+# 2.  A HARD ERROR on one transfer.  efs should report it and leave the
+#     image as whatever it last committed.
+#
+echo 'one transfer failing'
+for n in 20 60 100 140 {
+	setup
+	echo fail $n > $D^/ctl
+	workload
+	want 'transfer '^$n^' returned an error'
+}
+
+#
+# 3.  A TORN WRITE: the first sector lands, the rest does not, and the
+#     device reports success.  One sector is the unit a card guarantees,
+#     so a block write has no atomicity to rely on.
+#
+echo 'a write torn at the first sector'
+for n in 20 60 100 140 {
+	setup
+	echo tear $n > $D^/ctl
+	workload
+	want 'transfer '^$n^' was torn'
+}
+
+#
+# 4.  A VOLATILE CACHE THAT DOES NOT KEEP ORDER, losing part of a
+#     writeback.
+#
+# This is the one that produces the state G1 is about, and the reason it
+# takes two faults to get there is worth keeping: a whole queue lost is a
+# KIND failure for a copy-on-write filesystem, because every write in a
+# transaction goes to a new block, so whatever subset lands the old
+# superblock still names a complete old tree.  "partial 1" applies the
+# newest held write and loses the rest -- and the newest is the
+# superblock, because efs writes that last.  So the superblock lands and
+# the tree it names does not.
+#
+# efs must then NOT take that superblock.  The generation it mounts at
+# will be the older one.
+#
+echo 'a superblock landing while its tree does not'
+for n in 40 70 100 130 160 {
+	setup
+	echo reorder 8 > $D^/ctl
+	echo partial 1 > $D^/ctl
+	echo stop $n > $D^/ctl
+	workload
+	want 'half a writeback lost at transfer '^$n
+}
+
+echo
+if {~ $fail 0} {
+	echo EFS-FAULT-OK
+} {
+	echo EFS-FAULT-FAIL
+}
