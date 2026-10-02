@@ -1595,16 +1595,68 @@ and others call
 too.
 .PP
 So the lock boundary cannot be the message loop: the library calls back into
-the navigator from inside the handlers.  It has to be either inside the
-.CW Fs
-operations themselves, or \(em the Inferno-shaped answer \(em one process
-owning
-.CW fs
-with the navigator sending it requests, which is what
-.CW navops
-already is for half the operations.  Until that is done the create commit
-stays where it is, and the race stays latent: the suites pass because the
-window is narrow, not because it is closed.  A first guess was wrong and is worth recording: the stress failure
+the navigator from inside the handlers.
+.PP
+.B "CORRECTION: the race is NOT the cause, and locking every fs access proves it."
+The brackets were moved off the message and onto the
+.I fs work
+instead \(em every arm of the Styx loop around only the calls that reach
+.CW fs ,
+every
+.CW srv.default()
+outside, the navigator's three handlers around
+.CW dirof ,
+.CW walkto
+and the whole of
+.CW readdir
+(whose loop calls
+.CW dirof
+per entry).  Every
+.CW "fs."
+user in the file was enumerated and checked to be reachable only from a
+bracket.  That deadlocks nowhere and it does not fix the crash: "Broken"
+still appears.  So cross-process interleaving is not what invalidates the
+path, and the entry above that said it was is wrong.
+.PP
+.B "The fault is located exactly, and the tree really is unbalanced."
+A guard on the overrunning line prints before it would fault:
+.P1
+DBG nextleaf OVERRUN: c=1 len blks=2
+.P2
+A path of two \(em root and leaf \(em while the root's OTHER child, just
+stepped to, is an interior node.  One child of the root a leaf and another
+interior is an unbalanced tree, and
+.CW nextleaf
+is entitled to assume it is not.  With the guard returning 0 instead of
+faulting the workload completes, but returning 0 means "no more leaves", which
+would silently truncate a directory listing, so that is a diagnostic and not a
+fix.
+.PP
+.B "And it takes BOTH the even split and the deferred create commit."
+.P1
+even split, create commits (as shipped)   clean, efsck clean, rc=0
+even split, create deferred               OVERRUN
+greedy split, create deferred             clean, rc=0
+.P2
+So neither change is wrong by itself and the shipped tree is sound \(em
+verified, with
+.CW efsck
+clean at generation 285 and efs-stress, efs-write, efs-crash and
+efs-fallback all passing.  Even splitting makes the tree shallower (17 splits
+against 119), and a shallower tree is where a path of two exists at all, so
+the combination is what exposes whatever invalidates it.
+.PP
+.B "What to look at next, now that it is single-threaded."
+Depth changes in exactly one place:
+.CW Fs.fixup 's
+.CW "while(len kids > 1)"
+loop, which adds a level above every kid at once and looks right.  The other
+candidate is
+.CW idx[depth] ,
+the index in the parent of the child being replaced: a stale or wrong index
+there replaces the wrong entry and could attach a leaf where an interior
+belongs.  Both are reachable with a single process, which is now established,
+so this does not need the locking work to be done first.  A first guess was wrong and is worth recording: the stress failure
 first appeared as
 .CW "interior block 4095: interior entry 0 is not a pointer" ,
 block 4095 being
