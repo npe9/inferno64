@@ -2977,6 +2977,17 @@ image to remount and
 to call it clean with the faults OFF \(em a check run through a device that is
 still losing writes is checking the device.  Board only, like
 .CW tests/fsbench .
+.PP
+21 of 21, twice: once on a JTAG boot, which holds cores 1 to 3, and once on
+the kernel installed on the card with all four online.  The control is what
+makes it worth having \(em with the mount check above disabled again it fails
+at the reorder cut points, naming the nine blocks.
+.PP
+.B "Nothing in it may capture the output of" "disk/efs -f" .
+It mounts and leaves a server holding the descriptors it was given, so a
+backquote around it waits for an EOF that never comes.  The first version of
+the suite did that, wedged the board's command poller, and needed a JTAG
+reboot: a program that exits can be captured and a file server cannot.
 .NH 2
 G1b.  The suspect is DEAD, measured \(em dossrv defers nothing
 .LP
