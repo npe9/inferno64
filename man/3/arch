@@ -118,6 +118,8 @@ inportb(port: int): byte
 .SH SOURCE
 .B /os/inferno/pc/devarch.c
 .br
+.B /os/inferno/armv7m/devarch.c
+.br
 .B /os/inferno/stm32f407/uidstm32f4.c
 .br
 .B /os/inferno/stm32f407/calstm32f4.c
