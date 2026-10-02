@@ -180,6 +180,7 @@ TARG=\
 	lockfs.dis\
 	logfile.dis\
 	look.dis\
+	lorigintest.dis\
 	ls.dis\
 	lstar.dis\
 	m4.dis\

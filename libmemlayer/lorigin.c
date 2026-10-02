@@ -3,6 +3,113 @@
 #include "memdraw.h"
 #include "memlayer.h"
 
+
+enum {
+	Nvac = 32,	/* bands tracked while subtracting layers */
+};
+
+/*
+ * a minus b, as up to four rectangles.  Returns how many.
+ */
+static int
+subrect(Rectangle a, Rectangle b, Rectangle *out)
+{
+	Rectangle x;
+	int n;
+
+	n = 0;
+	if(!rectXrect(a, b)){
+		out[0] = a;
+		return 1;
+	}
+	if(b.min.y > a.min.y){		/* above */
+		x = a;
+		x.max.y = b.min.y;
+		out[n++] = x;
+	}
+	if(b.max.y < a.max.y){		/* below */
+		x = a;
+		x.min.y = b.max.y;
+		out[n++] = x;
+	}
+	if(b.min.x > a.min.x){		/* left, between the bands */
+		x = a;
+		x.max.x = b.min.x;
+		if(b.min.y > a.min.y)
+			x.min.y = b.min.y;
+		if(b.max.y < a.max.y)
+			x.max.y = b.max.y;
+		out[n++] = x;
+	}
+	if(b.max.x < a.max.x){		/* right, between the bands */
+		x = a;
+		x.min.x = b.max.x;
+		if(b.min.y > a.min.y)
+			x.min.y = b.min.y;
+		if(b.max.y < a.max.y)
+			x.max.y = b.max.y;
+		out[n++] = x;
+	}
+	return n;
+}
+
+/*
+ * Paint the screen's fill over the parts of r that no layer covers.
+ *
+ * This is what cleans up after a move.  memldelete() used to paint
+ * s->fill over a deleted layer's footprint and deliberately no longer
+ * does - ldelete.c explains why, with two independent reproductions: on
+ * a screen TEARDOWN the pixels may already belong to a different screen
+ * sharing the same softscreen, so painting them is a wipe.
+ *
+ * A move is not a teardown.  This screen still exists and still owns
+ * oldr, and memlorigin's shadow window exists for no other purpose than
+ * to make this restore happen - "this will cause no graphics action
+ * except to restore the background", says the comment below, which
+ * stopped being true when that step went.  So the restore is done here,
+ * where the thing ldelete.c cannot know is known.
+ *
+ * Subtracting the layers rather than painting and re-exposing them is
+ * deliberate: memlexpose() on a Refnone layer calls its refresh
+ * function, which in devdraw asks the client to repaint, so painting
+ * first would turn one window move into a repaint storm for everything
+ * underneath - and for a layer whose refresh does nothing it would leave
+ * fill where content was, trading this afterimage for another.
+ *
+ * Running out of bands drops the remainder, which shows as a stale patch
+ * rather than as live content painted over.  That is the safe direction.
+ */
+static void
+fillvacated(Memscreen *s, Rectangle r)
+{
+	Rectangle work[Nvac], next[Nvac], piece[4];
+	int nwork, nnext, i, j, n;
+	Memimage *t;
+
+	if(s->fill == nil || Dx(r) <= 0 || Dy(r) <= 0)
+		return;
+	work[0] = r;
+	nwork = 1;
+	for(t = s->rearmost; t != nil && nwork > 0; t = t->layer->front){
+		nnext = 0;
+		for(i = 0; i < nwork; i++){
+			n = subrect(work[i], t->layer->screenr, piece);
+			for(j = 0; j < n; j++){
+				if(Dx(piece[j]) <= 0 || Dy(piece[j]) <= 0)
+					continue;
+				if(nnext >= Nvac)
+					continue;
+				next[nnext++] = piece[j];
+			}
+		}
+		for(i = 0; i < nnext; i++)
+			work[i] = next[i];
+		nwork = nnext;
+	}
+	for(i = 0; i < nwork; i++)
+		memdraw(s->image, work[i], s->fill, work[i].min, nil, Pt(0,0), S);
+}
+
 /*
  * Place i so i->r.min = log, i->layer->screenr.min == scr.
 */
@@ -93,6 +200,15 @@ memlorigin(Memimage *i, Point log, Point scr)
 	else
 		memlexpose(i, newr);
 	memldelete(shad);
+
+	/*
+	 * The window is at its new place and the shadow is gone; nothing
+	 * has repainted what the window used to cover that no other layer
+	 * covers now.  oldr includes the part newr overlaps, which is fine:
+	 * the moved window is itself a layer at newr, so subtracting the
+	 * layers takes that out too.
+	 */
+	fillvacated(s, oldr);
 
 	return 1;
 }

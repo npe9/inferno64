@@ -1,0 +1,63 @@
+.TH LORIGINTEST 1
+.SH NAME
+lorigintest \- check that moving a window leaves nothing behind
+.SH SYNOPSIS
+.B lorigintest
+.SH DESCRIPTION
+.I Lorigintest
+moves a window and checks two things about the result: that none of the
+window is left at the place it came from, and that whatever was underneath
+it is revealed rather than painted over.
+Both halves are checked because the obvious fix for the first causes the
+second.
+.PP
+It runs entirely offscreen.
+A
+.B Screen
+is allocated over an ordinary image rather than over the display's own
+screen, so
+.B readpixels
+works \(em on the display's screen it reads back black \(em and nothing
+here depends on a window system, on
+.IR tk (2),
+or on any particular host graphics backend.
+.I Image.origin
+reaches
+.B memlorigin
+through the same
+.RB ` o '
+message
+.IR draw (3)
+uses for a real window move, so the path under test is the real one.
+.PP
+Two arrangements are measured.
+In the first a single window sits on nothing but the screen's fill, which
+is the case where no layer lies behind to be exposed.
+In the second a window overlaps one behind it, so part of what it vacates
+belongs to another window and part to the background.
+.PP
+Every arrangement states its premises first \(em that the window really
+did cover its own rectangle, that the one behind really did show where the
+front one did not reach \(em so that a broken harness reads as a failure
+rather than as a pass.
+.SH SOURCE
+.B /appl/cmd/lorigintest.b
+.SH SEE ALSO
+.IR draw (2),
+.IR draw (3),
+.IR tkofftest (1)
+.SH BUGS
+It covers the
+.B libmemlayer
+path and nothing downstream of it.
+A window move also passes through the host's own upload path \(em on
+MacOSX the tile marking in
+.B win-cocoa.m
+\(em and this never reaches it, so an afterimage that appeared only there
+would not be caught here.
+.PP
+Colours are compared byte by byte, and
+.B RGB24
+.B readpixels
+hands back blue, green, red in that order.
+Assuming the other order inverts every check, and did.
