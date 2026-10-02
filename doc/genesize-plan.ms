@@ -519,7 +519,7 @@ passes;
 .CW check-crossarch
 said "CANNOT TELL" (its arm64 console garbled the typed command) on a
 host loaded with two other emulators, and is to be rerun quiet.
-.IP "Phase 3, the hypervisor: M1 on SVM (QEMU TCG); VMX open." 4
+.IP "Phase 3, the hypervisor: M1 on SVM (QEMU TCG); VMX open (superseded below)." 4
 .CW port/vm.h
 and
 .CW port/devvm.c
@@ -555,3 +555,64 @@ Bochs boots the kernel through
 from a CD built by
 .CW scripts/bochs-vm.sh ;
 the same image boots to a shell under QEMU's BIOS.
+.IP "Phase 3: M1 on VMX (Bochs)." 4
+The Bochs stall was Bochs's: its TSC-deadline timer was scheduled
+against the raw tick count, not the TSC, which this kernel rewrites at
+boot, so the halted idle loop was never woken.  Patched
+.CW scripts/bochs-patches ), (
+and M1 passes on the VMX backend as on SVM
+.CW 2ebf3e7a7 ). (
+.IP "Phase 4: M2 on SVM (QEMU TCG)." 4
+An unmodified Alpine 6.6 kernel
+.CW scripts/mklinuxguest.sh ) (
+boots under
+.CW #H
+to a busybox shell that runs a command typed from Limbo
+.CW e65802bc6 ). (
+.CW vmlinux (1)
+loads it by the 32-bit boot protocol.  The platform
+.CW pc/vmplat.c ,
+.CW pc/vmdev.c ) (
+is an 8259 pair, an 8254, a 16550 and a local APIC, with CPUID, MSRs,
+HLT and the APIC's MMIO page (through a small instruction decoder and
+a guest page walk) handled in the kernel.  The PIT is required: with no
+MP or ACPI configuration Linux never starts the APIC's clock, and the
+first platform tried without it reached a prompt that ran nothing \(en
+an earlier note claiming otherwise was wrong and is corrected in the
+commit.
+.CW scripts/check-vm.sh
+runs M1, M2 and M5.  M2 on VMX: Bochs got as far as the guest's
+speculation-mitigation messages and stalled there once; being rerun
+with status reporting.
+.IP "Phase 2: M4 (QEMU, intel-iommu)." 4
+.CW #Q
+.CW port/deviommu.c ) (
+and the VT-d backend
+.CW pc/vtd.c ) (
+.CW ee2dc9c15 ). (
+With translation on, QEMU's edu device in its own domain copies
+through IOVA 0x100000 correctly, and a copy aimed at the host physical
+address of one of its own pages \(en which the domain does not map \(en
+faults (requester 04:00.0, reason 5) and leaves that page untouched,
+while the host's own devices keep working through the pass-through host
+domain.  Not yet: interrupt remapping, queued invalidation, AMD-Vi.
+.IP "Phase 6: M5 on SVM (QEMU)." 4
+.CW pc/vmpci.c
+.CW d91115e3c ): (
+the guest's PCI bus through configuration mechanism 1, an assigned
+function's configuration space virtualised (BARs, MSI-X, ROM), its
+BARs mapped uncached but for the trapped MSI-X table, MSI-X forwarded
+from per-entry host vectors into the guest's APIC, and DMA through an
+IOMMU domain mapping guest-physical onto guest memory.  The bench's
+virtio-serial function, which Inferno has no driver for, is assigned to
+the Linux guest, and its own
+.CW virtio_console
+writes "hello-from-the-guest" through it to QEMU's chardev.  The bench
+device needs
+.CW iommu_platform=on :
+QEMU's virtio otherwise bypasses the emulated IOMMU, which no real
+device can.
+.IP "Next." 4
+M2 and M5 on VMX (Bochs, then nested KVM); SR-IOV (phase 7: enabling
+VFs, which this bench's igb has); virtio backends (phase 9); Styx
+control (phase 10); SMP guests (phase 5).

@@ -38,17 +38,33 @@ init()
 		sys->print("LINUXTEST: FAIL load vmlinux: %r\n");
 		return;
 	}
+	# the bench's virtio-serial function, where the bench has one
+	# (QEMU's vmhost does; Bochs does not)
+	assign: list of string;
+	sys->bind("#$", "/dev", Sys->MAFTER);
+	(ok, nil) := sys->stat("/dev/pci/0000:05:00.0");
+	if(ok >= 0)
+		assign = "-p" :: "0000:05:00.0" :: nil;
+	else
+		sys->print("LINUXTEST: no 0000:05:00.0 here; nothing assigned\n");
+	args := "-s" :: "7200" :: "-m" :: "256" :: "-q" :: "LINUXGUEST: ran"
+		:: "-i" :: "/guest/initramfs.cpio"
+		:: "-t" :: "echo LINUXGUEST: typed; uname -sr; for d in /sys/bus/pci/devices/*; do echo LINUXGUEST: pci $d `cat $d/vendor $d/device`; done; ls /sys/bus/virtio/devices; grep -iE 'virtio|LOC|timer|ttyS' /proc/interrupts; ls -l /sys/bus/virtio/devices/virtio0/driver; dmesg | grep -iE 'virtio|vport|hvc|console' | tail -12; echo hello-from-the-guest > /dev/hvc0 && echo LINUXGUEST: wrote hvc0; echo LINUXGUEST: ran"
+		:: "/guest/vmlinuz" :: nil;
 	{
-		vmlinux->init(nil, "vmlinux" :: "-s" :: "7200" :: "-m" :: "256" :: "-q" :: "LINUXGUEST: ran"
-			:: "-p" :: "0000:05:00.0"
-			:: "-i" :: "/guest/initramfs.cpio"
-			:: "-t" :: "echo LINUXGUEST: typed; uname -sr; for d in /sys/bus/pci/devices/*; do echo LINUXGUEST: pci $d `cat $d/vendor $d/device`; done; ls /sys/bus/virtio/devices; grep -iE 'virtio|LOC|timer|ttyS' /proc/interrupts; ls -l /sys/bus/virtio/devices/virtio0/driver; dmesg | grep -iE 'virtio|vport|hvc|console' | tail -12; echo hello-from-the-guest > /dev/hvc0 && echo LINUXGUEST: wrote hvc0; echo LINUXGUEST: ran"
-			:: "/guest/vmlinuz" :: nil);
+		vmlinux->init(nil, "vmlinux" :: concat(assign, args));
 	} exception e {
 	"*" =>
 		sys->print("LINUXTEST: vmlinux: %s\n", e);
 	}
 	sys->print("LINUXTEST: done\n");
+}
+
+concat(a, b: list of string): list of string
+{
+	if(a == nil)
+		return b;
+	return hd a :: concat(tl a, b);
 }
 
 # two minutes in, what the IOMMU and the machine say
