@@ -526,31 +526,93 @@ far.
 and not one that needs a check pass to be trusted.  If recovery is not
 the superblock flip, the design is wrong.
 .NH 1
-Open questions
-.IP \(bu
-Block size.  4KB is eight sectors and a comfortable B-tree node; 8KB
-halves the tree depth and doubles the write amplification of a small
-change.  Decide by measuring on the board, with the polled controller,
-not on the host \(em and ask the card its allocation unit first (ACMD13,
-above), since tree depth is the smaller of the two considerations and
-the one this plan originally stated alone.
-.IP \(bu
-Whether the free map is a bitmap or a log.  A 29GB partition of 4KB
-blocks is about 7.6M blocks, so a bitmap is about a megabyte \(em small
-enough to hold, large enough that writing it on every commit is
-wasteful.  A log with periodic checkpoints is the likely answer and the
-more complicated one.
-.IP \(bu
-Whether data is copy-on-write as well as metadata.  It is simpler if it
-is, and it costs a full block write for a one-byte change.
-.IP \(bu
-Checksums on every block, or only on the superblock.  The SD card has
-its own ECC and this board has no memory errors anyone has seen, but a
-checksum is what turns "the tree is wrong" into "this block is wrong",
-and that is the difference between debugging and guessing.
-.IP \(bu
-Whether
-.I efs
-should be able to serve the 7MB gap as well, for a small filesystem that
-exists before the big partition is set up.  Probably yes, and it costs
-nothing if the format does not assume a minimum size.
+Open questions, and the four that are now decided
+.PP
+.B "DECIDED, by measurement: the block size stays 4KB."
+This asked to be settled "by measuring on the board, with the polled
+controller, not on the host", so it was: both block sizes on the same
+16MB disk through
+.CW sdmem (3)
+\(em 4000 blocks of 4KB against 2000 of 8KB \(em same workloads, same
+boot, counters from the driver.
+.P1
+300 creates                4KB        8KB
+time, free medium         32.9 s     39.0 s
+read ops                   1644       1478
+write ops                  2057       1982
+sectors moved             29608      55360
+disk touched              7044 KB   13488 KB
+
+2.5MB written              4KB        8KB
+time, free medium         11.3 s     11.8 s
+read ops                    733        352
+write ops                   745        356
+sectors moved             11824      11328
+time, delay 10ms          23.2 s     18.2 s
+.P2
+.PP
+.B "8KB halves the operations of a large sequential write and doubles the amplification of everything else."
+Both halves of that are in the table and both are large.  745 writes
+become 356 for the same bytes, which on a medium charging per command is
+1.27x measured; and 300 small files touch 13.5MB of a 16MB filesystem
+instead of 7MB.
+.PP
+The second decides it.  This filesystem is small \(em the board's is 64MB
+and the test images are 16 \(em and the section above on
+.I kfs
+already records that efs "needs far more free space than its data", so
+doubling that is the one cost this format cannot afford.  A workload of
+three hundred tiny files is also 19 per cent slower at 8KB on a free
+medium, so the large-write advantage is not even general.
+.PP
+.B "And the large-write advantage is mostly NOT available any other way, which is worth being clear about."
+Of the 389 transfers 8KB saves, about 311 are the 622 data blocks being
+twice as big, and no knob reaches those.  The remaining 78 are commits:
+the write batch is 32 BLOCKS, so 8KB batches 256KB against 4KB's 128KB,
+and that part is a constant in
+.CW disk/efs.b
+rather than a property of the format.  So "8KB is faster on a big write"
+is true and the format change is not the only way to get part of it.
+.PP
+.B "What would reopen it:"
+the card's allocation unit.  If a write smaller than the AU costs a whole
+AU inside the card, the amplification argument above is measuring the
+wrong thing, and ACMD13 reports it.  Nothing on this board reads ACMD13
+yet.
+.PP
+.B "DECIDED: the free map is a bitmap, with groups."
+One 4KB block covers 32768 blocks and the superblock names an index of up
+to 512 of them, which is 64GB; past that the index would need a second
+level and every program refuses rather than writing a map it knows is
+short.  A log with checkpoints was the "likely answer" here and was not
+needed: a commit writes only the groups whose bits changed, which is one
+or two, so writing the map on every commit is not the waste this question
+assumed.
+.PP
+.B "DECIDED: data is copy-on-write too."
+It is simpler, it costs a full block write for a one-byte change, and
+that cost is what the write batch and the dirty-node cache in
+.CW doc/open-issues-plan.ms
+B1f exist to amortise \(em measured at 1.17x write amplification for a
+large sequential write, against 3.79x before that cache.
+.PP
+.B "DECIDED: a checksum on every block."
+And it earned itself twice over.  It is what turned the board's
+unmountable image into "block 6521 is wrong" rather than "the tree is
+wrong", and it is what made a lost write diagnosable at all: 4096 zero
+bytes give Adler
+.CW "1000 1"
+against stored
+.CW "0 0" ,
+which is the message both the board's failure and every injected one
+print.  Where it is verified matters and is measured \(em once per block
+READ, not once per block touched, 1.30x against 1.90x; see B1e.
+.PP
+.B "DECIDED: yes, it serves the small gap, because the format assumes no minimum size."
+.CW Fs.reserve
+is an eighth of the filesystem capped at 24 blocks and floored at 4,
+which exists precisely because a flat reserve left a 64-block image
+unable to hold one file.
+.CW tests/efs-limits
+holds the small end honest: 32767, 32768 and 32769 blocks, and a 4MiB
+filesystem filled to 921 files.

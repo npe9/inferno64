@@ -1428,7 +1428,7 @@ improvement and is still unbuilt, but it is no longer the first thing, because
 the scan is now walking five leaves instead of thirty-four.
 .PP
 .NH 2
-B1e.  A write no longer commits per message \(em and two things that stopped it going further
+B1e.  DONE \(em a write no longer commits per message, and neither does a create
 .LP
 Every Styx Write used to commit.  A commit is a path rewrite plus the free
 map plus the superblock, 7.8 blocks measured, so a file written in 8KB
@@ -2746,7 +2746,7 @@ expensive in a kernel.
 .NH 1
 Found while closing F1, not part of it
 .NH 2
-G1.  efs can commit a superblock whose tree is not all on the medium
+G1.  CLOSED as a failure \(em efs can commit a superblock whose tree is not all on the medium
 .LP
 .B "CLOSED as a failure, not as a cause."
 Both symptoms below are now PRODUCED ON DEMAND, by
