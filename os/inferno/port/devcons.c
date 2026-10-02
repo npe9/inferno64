@@ -625,6 +625,7 @@ enum{
 	Qkmesg,
 	Qkprint,	/* tail of kprint's and cons. Why not just a tail of klog? Why is this needed? */
 	Qmemory,
+	Qilock,
 	Qnull,
 	Qosversion,
 	Qpid,
@@ -664,6 +665,7 @@ static Dirtab consdir[]=
 	"kmesg",	{Qkmesg},	0,		0440,
 	"kprint",		{Qkprint},	0,		0444,
 	"memory",	{Qmemory},	0,		0444,			/* not in 9front */
+	"ilock",	{Qilock},	0,		0444,			/* not in 9front */
 	"null",		{Qnull},	0,		0666,
 	"osversion",	{Qosversion},	0,		0444,
 	"pid",		{Qpid},		NUMSIZE,	0444,
@@ -1143,6 +1145,39 @@ consread(Chan *c, void *buf, s32 n, s64 offset)
 
 	case Qmemory:
 		return poolread(buf, n, offset);
+
+	/*
+	 * The ilock trace, READABLE.
+	 *
+	 * "echo ilock >/dev/sysctl" has reported these since the lock work,
+	 * by print(), to the console -- and this board's console has been
+	 * deaf for months, so on the one machine the numbers are wanted on
+	 * they cannot be had.  doc/parallel-allocator-survey.ms item 1 asks
+	 * for the allocator's lock contention under a real workload before
+	 * anything is built, and that is a measurement that has to come
+	 * back in a file.
+	 *
+	 * Reading does NOT reset, unlike the sysctl command: a reader is
+	 * something a script does, possibly twice, and a measurement that
+	 * disappears when looked at cannot be differenced.  "echo ilock on"
+	 * is what zeroes them.
+	 */
+	case Qilock:
+		{
+			ulong hz = m->cpuhz? m->cpuhz: 1;
+			ulong per = hz/1000000? hz/1000000: 1;
+
+			snprint(tmp, sizeof tmp,
+				"ilock trace %d max %ld us pc %#p mean %ld ns n %lud\n",
+				ilocktrace,
+				maxilockcycles/(long)per,
+				(void*)maxilockpc,
+				nilocktraced?
+				  (long)(cumilockcycles/(long)nilocktraced) * 1000
+				   / (long)per: 0L,
+				nilocktraced);
+		}
+		return readstr((ulong)offset, buf, n, tmp);
 
 	case Qmordor:
 		error("one does not simply read from mordor");

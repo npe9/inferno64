@@ -151,7 +151,7 @@ used to cover.
 .NH 1
 What a parallel allocator would need
 .NH 2
-1.  Per-processor free lists, which is the only real allocator work
+1.  Per-processor free lists \(em MEASURED, and not worth building
 .LP
 The lock is correct, so this is a throughput change and can be done
 incrementally and measured at each step: a small per-processor magazine in front
@@ -167,6 +167,57 @@ cost 1143908 allocations, and
 counts them per pool, so the allocation rate per processor under a real workload
 is one command away.  A magazine that does not cover the common size classes is
 just a slower path to the same lock.
+.PP
+.B "MEASURED FIRST, and it says this is not where the time is."
+Before sizing a magazine, the question is whether the lock costs anything.
+The kernel is built
+.CW -DILOCKTRACE ,
+which times every
+.CW ilock
+hold; the numbers were reported only by
+.CW print()
+to a console that has been deaf on this desk for months, so
+.CW /dev/ilock
+makes them readable.  300 creates through efs on the board:
+.P1
+wall                       27.11 s
+ilocks                   1232831
+mean held                   526 ns
+total held                 0.65 s      2.4% of the run
+longest single hold        9724 us
+.P2
+Four thousand one hundred ilocks per create, and two and a bit per cent of
+the run inside one.  A per-processor allocator can only remove contention,
+and contention is bounded by the time the lock is HELD: at 2.4% there is
+nothing there to win.  The survey calls item 1 "the only real allocator
+work"; the measurement says it is not work worth doing.
+.PP
+.B "What this does NOT establish, said plainly."
+.CW ILOCKTRACE
+times every ilock in the kernel, not the pool lock alone, so 2.4% is an
+UPPER bound on the pool lock's share and the true figure is smaller.  And
+this was taken on a JTAG boot, which holds cores 1 to 3, so there is no
+contention in it at all \(em it is the serial cost.  Four cores could
+amplify waiting, but they cannot amplify it past the hold time: four
+processors demanding 2.4% each of a resource that can give 100% do not
+queue.
+.PP
+.B "And a gap worth naming: a kernel PC cannot be resolved to a name here."
+The longest hold is at
+.CW 0x1af054
+and there is no way in this tree to find out what that is.
+.CW 7l -H7
+emits a stripped ELF, so
+.CW nm
+reports no symbols;
+.CW inm
+cannot read that header; and relinking the same objects without
+.CW -H7
+produces a file
+.CW inm
+also refuses.  So "which lock" is unanswerable with the tools present,
+which is worth fixing before any lock work and is not worth fixing to
+decide against doing that work.
 .NH 2
 2.  The accounting has to stop being shared fields
 .LP
