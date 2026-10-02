@@ -25,8 +25,18 @@ a raw
 .IR dd .
 .PP
 It exists to separate what a filesystem does from what a medium charges
-for it, because on this board those two differ by more than an order of
-magnitude and the second hides the first.  Ten file creates onto the SD
+for it, because on this board those two differed by more than an order of
+magnitude and the second hid the first.
+.PP
+.B "That is no longer the ratio, and this device is why."
+Three hundred
+.IR efs (4)
+creates cost 42.6s on the card and 32.9s here, so the medium is 23 per
+cent of a create where the figures below put it at about 70.  The work it
+took to get there was done against these counters;
+.B /doc/open-issues-plan.ms
+item B1 has the numbers.  The paragraph that follows is kept because it
+is what the device was built for and it was true then.  Ten file creates onto the SD
 card's FAT partition cost 38.8ms each; ten
 .IR efs (4)
 creates on the same card cost 97.7ms; the same workload on

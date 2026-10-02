@@ -584,7 +584,7 @@ constant ever does misbehave on one of these, this is the note to disbelieve.
 .NH 1
 B.  efs
 .NH 2
-B1.  The rate: 40 per cent of it fixed (the OOM is B1c)
+B1.  DONE \(em the quadratic is fixed, and forty minutes is now forty-two seconds
 .LP
 .B "The fix, after four that were not."
 .CW Node.unpack
@@ -1150,14 +1150,48 @@ create and cannot be it; the free map is one group at these sizes and the image
 size was shown flat across a 64-fold range.  What is left is the writes: every
 efs block goes to a FILE on
 .CW dossrv ,
-which caches 9-sector tracks and does read-modify-write, and a commit rewrites
-a path.  So B1's quadratic is real, is now attributed, and is NOT what makes a
-create slow on this board.  The next measurement is writes per commit and
-microseconds per write through
+and a commit rewrites a path.  So B1's quadratic is real, is now attributed,
+and is NOT what makes a create slow on this board.  The next measurement is
+writes per commit and microseconds per write through
+.CW dossrv .
+.PP
+.B "MEASURED, and the forty minutes is now forty-two SECONDS."
+The same three hundred creates, on the card, through
 .CW dossrv ,
-and the one after it is whether efs on a raw partition \(em which
-.CW EFS-NOROOM
-says there is no room for on this card \(em is a different machine entirely.
+on a file of its own:
+.P1
+300 creates on /n/dos        42.56 s     142 ms each
+  per round of fifty          6.83  6.62  7.28  7.15  7.59  7.09
+the same on sdmem(3)         32.86 s     110 ms each
+host emu, for reference       0.95 s
+.P2
+At least 56 times better than the figure above, flat across the run, and
+.CW efsck
+clean at generation 302.  Everything in B1a to B1f is in that number:
+even splitting, the keyed dentry lookup, the write batch, the clunk rule
+and the writeback cache.
+.PP
+.B "And the medium is no longer the cost, which inverts the premise of this whole item."
+The card adds 9.7s to the free medium's 32.9, which is 23 per cent of a
+create.
+.CW man/3/sdmem
+records it as about 70 per cent, and that was true when it was written.
+Three hundred creates issue 3701 transfers, so the card is costing about
+2.6ms a transfer through
+.CW dossrv
+\(em which is the "microseconds per write" this item asked for.
+.PP
+.B "The read-modify-write attribution above is WRONG, and G1b measures it."
+That 2.5MB through
+.CW dossrv
+does 1251 reads with TWO read-modify-writes, against 1245 clusters
+allocated.  The reads are a FAT lookup per cluster, not the track cache
+doing read-modify-write.  Different fix, and not efs's.
+.PP
+So the remaining question in this item \(em whether efs on a raw partition
+is a different machine \(em is now worth much less than it was: there is
+only 23 per cent to win, and part of that is the FAT lookups rather than
+the card.
 .NH 2
 B1a.  MEASURED \(em the growing term is READS, and walk and create scan the whole directory
 .LP
