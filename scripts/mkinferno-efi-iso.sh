@@ -60,7 +60,11 @@ echo 'fs0:\EFI\BOOT\BOOTX64.EFI' >"$NSH"
 
 echo "esp $ESP"
 rm -f "$ESP"
-mformat -i "$ESP" -C -T 32768 -h 16 -s 63 -v EFI ::
+# 16 MiB, or room for the kernel twice over and the loader if that is
+# more: a kernel with a guest system in its root (os/inferno/pc64/
+# pc64linux) is over 20 MB, and a fixed 16 MiB said "Disk full".
+sectors=`ls -l "$KERNEL" | awk '{ n = int($5*2/512) + 8192; print (n > 32768 ? n : 32768) }'`
+mformat -i "$ESP" -C -T $sectors -h 16 -s 63 -v EFI ::
 mmd -i "$ESP" ::/EFI ::/EFI/BOOT ::/amd64 ::/cfg
 mcopy -i "$ESP" "$LOADER" ::/EFI/BOOT/BOOTX64.EFI
 mcopy -i "$ESP" "$KERNEL" ::/amd64/ipc64

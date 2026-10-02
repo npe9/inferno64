@@ -185,6 +185,7 @@ TARG=\
 	tsort.dis\
 	ttffs.dis\
 	unicode.dis\
+	vmlinux.dis\
 	units.dis\
 	uniq.dis\
 	unmount.dis\

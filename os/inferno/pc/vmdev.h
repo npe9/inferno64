@@ -9,6 +9,8 @@ typedef struct Vpic Vpic;
 typedef struct Vpicchip Vpicchip;
 typedef struct Vuart Vuart;
 typedef struct Vlapic Vlapic;
+typedef struct Vpit Vpit;
+typedef struct Vpitch Vpitch;
 
 struct Vpicchip
 {
@@ -31,9 +33,41 @@ struct Vpic
 	Vpicchip c[2];		/* master at 0x20, slave at 0xA0 on IRQ 2 */
 };
 
+/*
+ * 8254: three channels counting a 1.193182 MHz input, computed from
+ * the host TSC rather than ticked.  Channel 0's output is IRQ 0;
+ * channel 2's gate and output are port 0x61's bits 0 and 5.
+ */
+struct Vpitch
+{
+	int	mode;		/* 0-5 */
+	int	rw;		/* 1 LSB, 2 MSB, 3 LSB then MSB */
+	int	reload;		/* the count written; 0 means 65536 */
+	int	writehi;	/* the next write is the MSB of an rw 3 count */
+	int	readhi;		/* the next read is the MSB */
+	int	latched;	/* a count is latched */
+	int	latch;
+	int	statlatched;	/* a status byte is latched (read-back) */
+	int	status;
+	int	gate;
+	int	armed;		/* counting: a count has been written */
+	int	nullcount;
+	uvlong	start;		/* host TSC at which the count was loaded */
+	uvlong	fire;		/* host TSC of the next output edge to raise, 0 if none */
+};
+
+struct Vpit
+{
+	Vpitch	ch[3];
+	uvlong	tschz;
+	int	spk;		/* port 0x61 bits 0-3 */
+	int	refresh;	/* port 0x61 bit 4, toggled on each read */
+};
+
 enum {
 	Uartfifo	= 16,
 	Uartin		= 4096,	/* console input waiting for the FIFO */
+	Uartout		= 64*1024,	/* guest output not yet read from #H */
 };
 
 struct Vuart
@@ -44,7 +78,16 @@ struct Vuart
 	int	rxr, rxw;	/* count of bytes in, out */
 	uchar	in[Uartin];	/* typed but not yet in the FIFO */
 	int	inr, inw;
-	Queue	*out;		/* what the guest wrote, for #H/vm/N/console */
+	/*
+	 * What the guest wrote, for #H/vm/N/console: a ring, not a qio
+	 * Queue -- a Queue charges each one-byte block its whole
+	 * allocation against the limit, filled after a few hundred bytes
+	 * and dropped the rest.  When the reader falls a whole ring
+	 * behind, the oldest output is overwritten and counted.
+	 */
+	uchar	out[Uartout];
+	uvlong	outr, outw;
+	uvlong	outlost;
 };
 
 struct Vlapic
@@ -77,6 +120,10 @@ enum {
 };
 
 /* vmdev.c */
+void	vpitreset(Vpit*, uvlong tschz);
+int	vpitio(Vpit*, int port, int in, u32int *val, uvlong now);
+int	vpittimer(Vpit*, uvlong now);
+uvlong	vpitnext(Vpit*);
 void	vpicreset(Vpic*);
 void	vpicsetirq(Vpic*, int irq, int level);
 int	vpicpending(Vpic*);

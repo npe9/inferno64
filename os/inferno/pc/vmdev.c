@@ -267,11 +267,7 @@ enum {
 void
 vuartreset(Vuart *u)
 {
-	Queue *q;
-
-	q = u->out;
 	memset(u, 0, sizeof *u);
-	u->out = q;
 	u->lsr = UartTHRE | UartTEMT;
 	u->msr = 0xB0;		/* CTS, DSR, DCD */
 }
@@ -349,8 +345,13 @@ vuartio(Vuart *u, int off, int in, u32int *val)
 			}
 			if(u->mcr & McrLoop)
 				rxput(u, v);
-			else if(u->out != nil)
-				qproduce(u->out, &v, 1);
+			else{
+				if(u->outw - u->outr >= Uartout){
+					u->outr++;
+					u->outlost++;
+				}
+				u->out[u->outw++ % Uartout] = v;
+			}
 			u->thripend = 1;
 			break;
 		case 1:
@@ -815,6 +816,259 @@ vlapicwrite(Vlapic *a, int reg, u32int val)
 		}
 		a->lvt[i] = val;
 		return 1;
+	}
+	return 1;
+}
+
+/*
+ * 8254 PIT.  Counts are not ticked: a channel's count is worked out
+ * from the host TSC at the moment it is read, and channel 0's output
+ * edges (IRQ 0) are raised by vpittimer() at the TSC times they fall
+ * due.  Modes 0 and 4 fire once at terminal count; 2 and 3 every
+ * period (the output of mode 2 is low for one input clock, of 3 for
+ * half the period; either way one rising edge per period).  Missed
+ * periods are not made up, as a real PIT does not queue them either.
+ * BCD counting is not modelled.
+ */
+enum {
+	Pithz	= 1193182,
+};
+
+static uvlong
+pitticks(Vpit *p, uvlong tsc)
+{
+	if(p->tschz == 0)
+		return 0;
+	return tsc * Pithz / p->tschz;
+}
+
+static uvlong
+pittsc(Vpit *p, uvlong ticks)
+{
+	return ticks * p->tschz / Pithz;
+}
+
+static int
+period(Vpitch *c)
+{
+	return c->reload == 0 ? 65536 : c->reload;
+}
+
+static void
+pitarm(Vpit *p, Vpitch *c, uvlong now)
+{
+	c->start = now;
+	c->armed = 1;
+	c->nullcount = 0;
+	c->fire = 0;
+	if(c == &p->ch[0] && c->gate)
+		c->fire = now + pittsc(p, period(c));
+}
+
+/* the count now, and the output pin */
+static int
+pitcount(Vpit *p, Vpitch *c, uvlong now, int *out)
+{
+	uvlong el;
+	int n, per;
+
+	per = period(c);
+	*out = 1;
+	if(!c->armed){
+		*out = c->mode == 0 ? 0 : 1;
+		return c->reload;
+	}
+	el = pitticks(p, now - c->start);
+	switch(c->mode){
+	case 0:
+	case 4:
+		if(el >= per){
+			*out = c->mode == 0;
+			return (per - (int)(el % 65536) + 65536) & 0xFFFF;
+		}
+		*out = c->mode == 4;
+		return per - (int)el;
+	case 2:
+		n = per - (int)(el % per);
+		*out = n != 1;
+		return n;
+	case 3:
+		n = per - (int)(el % per);
+		*out = n > per/2;
+		return n;
+	}
+	return per - (int)(el % per);
+}
+
+void
+vpitreset(Vpit *p, uvlong tschz)
+{
+	int i;
+
+	memset(p, 0, sizeof *p);
+	p->tschz = tschz;
+	for(i = 0; i < 3; i++){
+		p->ch[i].mode = 3;
+		p->ch[i].rw = 3;
+		p->ch[i].gate = i != 2;
+	}
+}
+
+int
+vpittimer(Vpit *p, uvlong now)
+{
+	Vpitch *c;
+	uvlong per;
+
+	c = &p->ch[0];
+	if(c->fire == 0 || now < c->fire)
+		return 0;
+	switch(c->mode){
+	case 2:
+	case 3:
+		per = pittsc(p, period(c));
+		if(per == 0)
+			per = 1;
+		c->fire += per;
+		if(c->fire <= now)
+			c->fire = now + per - (now - c->start) % per;
+		break;
+	default:
+		c->fire = 0;
+		break;
+	}
+	return 1;
+}
+
+uvlong
+vpitnext(Vpit *p)
+{
+	return p->ch[0].fire;
+}
+
+static void
+pitstatus(Vpit *p, Vpitch *c, uvlong now)
+{
+	int out;
+
+	pitcount(p, c, now, &out);
+	c->status = out << 7 | c->nullcount << 6 | c->rw << 4 | c->mode << 1;
+	c->statlatched = 1;
+}
+
+int
+vpitio(Vpit *p, int port, int in, u32int *val, uvlong now)
+{
+	Vpitch *c;
+	int v, i, out, n;
+
+	if(port == 0x61){
+		c = &p->ch[2];
+		if(in){
+			pitcount(p, c, now, &out);
+			p->refresh ^= 1;
+			*val = p->spk | p->refresh << 4 | (c->gate && out) << 5;
+		}else{
+			p->spk = *val & 0xF;
+			v = *val & 1;
+			if(v && !c->gate && c->armed && (c->mode == 1 || c->mode == 5 || c->mode == 2 || c->mode == 3))
+				c->start = now;		/* a rising gate retriggers */
+			c->gate = v;
+		}
+		return 1;
+	}
+	if(port < 0x40 || port > 0x43)
+		return 0;
+	if(port == 0x43){
+		if(in){
+			*val = 0xFF;
+			return 1;
+		}
+		v = *val;
+		if((v >> 6) == 3){		/* read-back */
+			for(i = 0; i < 3; i++){
+				if((v & (2 << i)) == 0)
+					continue;
+				c = &p->ch[i];
+				if((v & 0x20) == 0 && !c->latched){
+					c->latch = pitcount(p, c, now, &out);
+					c->latched = 2;
+				}
+				if((v & 0x10) == 0)
+					pitstatus(p, c, now);
+			}
+			return 1;
+		}
+		c = &p->ch[v >> 6];
+		if(((v >> 4) & 3) == 0){	/* counter latch */
+			if(!c->latched){
+				c->latch = pitcount(p, c, now, &out);
+				c->latched = c->rw == 3 ? 2 : 1;
+			}
+			return 1;
+		}
+		c->rw = (v >> 4) & 3;
+		c->mode = (v >> 1) & 7;
+		if(c->mode > 5)
+			c->mode &= 3;
+		c->armed = 0;
+		c->fire = 0;
+		c->writehi = 0;
+		c->readhi = 0;
+		c->latched = 0;
+		c->nullcount = 1;
+		return 1;
+	}
+	c = &p->ch[port - 0x40];
+	if(in){
+		if(c->statlatched){
+			c->statlatched = 0;
+			*val = c->status;
+			return 1;
+		}
+		n = c->latched ? c->latch : pitcount(p, c, now, &out);
+		switch(c->rw){
+		case 1:
+			*val = n & 0xFF;
+			c->latched = 0;
+			break;
+		case 2:
+			*val = (n >> 8) & 0xFF;
+			c->latched = 0;
+			break;
+		default:
+			*val = c->readhi ? (n >> 8) & 0xFF : n & 0xFF;
+			c->readhi ^= 1;
+			if(c->latched && --c->latched == 0)
+				c->readhi = 0;
+			break;
+		}
+		return 1;
+	}
+	v = *val & 0xFF;
+	switch(c->rw){
+	case 1:
+		c->reload = v;
+		pitarm(p, c, now);
+		break;
+	case 2:
+		c->reload = v << 8;
+		pitarm(p, c, now);
+		break;
+	default:
+		if(!c->writehi){
+			c->reload = c->reload & 0xFF00 | v;
+			c->writehi = 1;
+			if(c->mode == 0){	/* writing the LSB stops a mode 0 count */
+				c->armed = 0;
+				c->fire = 0;
+			}
+		}else{
+			c->reload = c->reload & 0xFF | v << 8;
+			c->writehi = 0;
+			pitarm(p, c, now);
+		}
+		break;
 	}
 	return 1;
 }

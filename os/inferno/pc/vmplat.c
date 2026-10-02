@@ -1,11 +1,17 @@
 /*
  * The x86 platform a guest of #H sees (doc/genesize-plan.ms, phase 4):
  *
- *	an 8259 pair, the console on a 16550 at 0x3F8 (IRQ 4), and a
- *	local APIC per vCPU (xAPIC at 0xFEE00000, or x2APIC if the guest
- *	enables it) whose timer runs off the TSC in one-shot, periodic or
- *	TSC-deadline mode.  No PIT, RTC, IOAPIC, HPET, ACPI or MP tables:
- *	the kernel is told the TSC rate on its command line.
+ *	an 8259 pair, an 8254 on IRQ 0, the console on a 16550 at 0x3F8
+ *	(IRQ 4), and a local APIC per vCPU (xAPIC at 0xFEE00000, or
+ *	x2APIC if the guest enables it) whose timer runs off the TSC in
+ *	one-shot, periodic or TSC-deadline mode.  No RTC, IOAPIC, HPET,
+ *	ACPI or MP tables; the kernel is told the TSC rate on its command
+ *	line.  The PIT is not optional: with no MP or ACPI configuration
+ *	Linux never starts the local APIC's clock (it is set up only in
+ *	the configured SMP paths), and the PIT through the 8259 is its
+ *	tick -- as on QEMU's microvm with pic=on, pit=on, where the guest
+ *	reports "Clock Event Device: pit", and not with pit=off, where it
+ *	reaches its shell and then runs nothing typed at it.
  *
  * Everything here runs in the vCPU's kproc on the vCPU's processor,
  * from devvm.c's run loop: CPUID, the MSRs that are not the
@@ -31,12 +37,15 @@ struct Plat
 	Lock;
 	Vm	*vm;
 	Vpic	pic;
+	Vpit	pit;
 	Vuart	uart;
 	Vlapic	lapic[Maxvcpu];
 	int	irqwin[Maxvcpu];
 	int	kick[Maxvcpu];	/* something for a halted vCPU to look at */
 	int	ioignore;
 	uvlong	tschz;
+	Rendez	consr;		/* readers of the console wait here */
+	int	hungup;
 
 	/* what the kernel handled, for status */
 	uvlong	ncpuid, nmsr, nio, nmmio, nhlt, nintr, ngp;
@@ -45,8 +54,6 @@ struct Plat
 };
 
 enum {
-	Consbuf	= 64*1024,
-
 	IF	= 1<<9,
 	CR0PG	= 1<<31,
 	CR4PAE	= 1<<5,
@@ -68,12 +75,7 @@ vmplatnew(Vm *vm)
 	p->vm = vm;
 	p->tschz = MACHP(0)->cpuhz;
 	vpicreset(&p->pic);
-	p->uart.out = qopen(Consbuf, 0, nil, nil);
-	if(p->uart.out == nil){
-		free(p);
-		error(Enomem);
-	}
-	qnoblock(p->uart.out, 1);	/* a guest that writes faster than it is read loses output, not time */
+	vpitreset(&p->pit, p->tschz);
 	vuartreset(&p->uart);
 	for(i = 0; i < Maxvcpu; i++)
 		vlapicreset(&p->lapic[i], i);
@@ -85,8 +87,10 @@ vmplathangup(Vm *vm)
 {
 	Plat *p;
 
-	if((p = PLAT(vm)) != nil)
-		qhangup(p->uart.out, nil);
+	if((p = PLAT(vm)) != nil){
+		p->hungup = 1;
+		wakeup(&p->consr);
+	}
 }
 
 void
@@ -96,7 +100,6 @@ vmplatfree(Vm *vm)
 
 	if((p = PLAT(vm)) == nil)
 		return;
-	qfree(p->uart.out);
 	free(p);
 	vm->plat = nil;
 }
@@ -106,9 +109,9 @@ vmplatfree(Vm *vm)
  * out and the hypervisor bit set.  Hidden: VMX and SVM (no nesting),
  * MONITOR/MWAIT, XSAVE and AVX (no XCR0 handling yet), x2APIC, MTRR,
  * machine check, performance monitoring, thermal and power
- * management, the speculation-control MSRs, PCID-related INVPCID and
- * RDTSCP (VMX needs a control enabled for each), LA57, PKU, TSC_ADJUST.
- * Shown: the local APIC, the TSC-deadline timer.
+ * management, the speculation-control MSRs, INVPCID, RDTSCP and RDPID
+ * (VMX needs a control enabled for each), LA57, PKU, TSC_ADJUST.
+ * Shown: the local APIC, the TSC-deadline timer, ARAT.
  */
 static void
 cpuidfilter(Vcpu *v, u32int leaf, u32int sub, u32int r[4])
@@ -151,8 +154,17 @@ cpuidfilter(Vcpu *v, u32int leaf, u32int sub, u32int r[4])
 		r[3] |= 1<<9;			/* APIC */
 		break;
 	case 5:
-	case 6:
 		r[0] = r[1] = r[2] = r[3] = 0;
+		break;
+	case 6:
+		/*
+		 * Power management is the host's; only ARAT is shown,
+		 * because it is true here -- this APIC timer runs whatever
+		 * the guest's idle state -- and without it Linux takes the
+		 * local timer for one that stops in deep idle.
+		 */
+		r[0] = 1<<2;
+		r[1] = r[2] = r[3] = 0;
 		break;
 	case 7:
 		if(sub != 0){
@@ -162,7 +174,8 @@ cpuidfilter(Vcpu *v, u32int leaf, u32int sub, u32int r[4])
 		r[0] = 0;
 		r[1] &= ~(1<<1|1<<2|1<<4|1<<5|1<<10|1<<11|1<<12|1<<14|1<<15|1<<16|1<<17
 			|1<<21|1<<26|1<<27|1<<28|1<<30|1u<<31);
-		r[2] &= ~(1<<1|1<<2|1<<3|1<<4|1<<5|1<<6|1<<11|1<<12|1<<14|1<<16|1<<30);
+		/* RDPID (22) reads TSC_AUX, which VMX gives only with RDTSCP enabled */
+		r[2] &= ~(1<<1|1<<2|1<<3|1<<4|1<<5|1<<6|1<<11|1<<12|1<<14|1<<16|1<<22|1<<30);
 		r[3] = 0;
 		break;
 	case 0x80000001:
@@ -286,6 +299,7 @@ static int
 doio(Vcpu *v, Plat *p, Vmexit *e)
 {
 	u32int val, mask;
+	uvlong now;
 	int port, claimed;
 
 	port = e->port;
@@ -298,6 +312,10 @@ doio(Vcpu *v, Plat *p, Vmexit *e)
 		else if(port == 0x20 || port == 0x21 || port == 0xA0 || port == 0xA1
 		|| port == 0x4D0 || port == 0x4D1)
 			claimed = vpicio(&p->pic, port, e->in, &val);
+		else if(port >= 0x40 && port <= 0x43 || port == 0x61){
+			cycles(&now);
+			claimed = vpitio(&p->pit, port, e->in, &val, now);
+		}
 		else if(port == 0x80){		/* POST code: a delay, nothing more */
 			claimed = 1;
 			val = 0xFF;
@@ -612,6 +630,10 @@ update(Plat *p, Vlapic *a)
 
 	cycles(&now);
 	vlapictimer(a, now);
+	if(vpittimer(&p->pit, now)){
+		vpicsetirq(&p->pic, 0, 1);	/* an edge on IRQ 0 */
+		vpicsetirq(&p->pic, 0, 0);
+	}
 	vpicsetirq(&p->pic, 4, vuartirq(&p->uart));
 }
 
@@ -666,7 +688,7 @@ static void
 dohlt(Vcpu *v, Plat *p, Vmexit *e)
 {
 	Vlapic *a;
-	uvlong now, rflags;
+	uvlong now, rflags, next;
 	int ms;
 
 	p->nhlt++;
@@ -683,12 +705,15 @@ dohlt(Vcpu *v, Plat *p, Vmexit *e)
 			return;
 		}
 		ms = 1000;
-		if((rflags & IF) && a->fire != 0 && p->tschz != 0){
+		next = a->fire;
+		if(vpitnext(&p->pit) != 0 && (next == 0 || vpitnext(&p->pit) < next))
+			next = vpitnext(&p->pit);
+		if((rflags & IF) && next != 0 && p->tschz != 0){
 			cycles(&now);
-			if(a->fire <= now)
+			if(next <= now)
 				ms = 0;
 			else
-				ms = (a->fire - now) * 1000 / p->tschz + 1;
+				ms = (next - now) * 1000 / p->tschz + 1;
 			if(ms > 1000)
 				ms = 1000;
 		}
@@ -722,6 +747,8 @@ vmplatexit(Vcpu *v, Vmexit *e)
 		ilock(p);
 		r = doio(v, p, e);
 		iunlock(p);
+		if(p->uart.outw != p->uart.outr)
+			wakeup(&p->consr);
 		return r;
 	case VxMmio:
 		ilock(p);
@@ -762,10 +789,32 @@ vmplatctl(Vm *vm, int nf, char **f)
 	return 0;
 }
 
+static int
+consready(void *a)
+{
+	Plat *p;
+
+	p = a;
+	return p->hungup || p->uart.outw != p->uart.outr;
+}
+
 long
 vmplatconsread(Vm *vm, void *a, long n)
 {
-	return qread(PLAT(vm)->uart.out, a, n);
+	Plat *p;
+	uchar *b;
+	long i;
+
+	p = PLAT(vm);
+	sleep(&p->consr, consready, p);
+	if(p->hungup)
+		error(Ehungup);
+	b = a;
+	ilock(p);
+	for(i = 0; i < n && p->uart.outr != p->uart.outw; i++)
+		b[i] = p->uart.out[p->uart.outr++ % Uartout];
+	iunlock(p);
+	return i;
 }
 
 long
@@ -796,7 +845,7 @@ vmplatstatus(Vm *vm, char *s, char *e)
 	s = seprint(s, e, "platform tschz %llud io %s\n", p->tschz, p->ioignore ? "ignore" : "exit");
 	s = seprint(s, e, "platform handled cpuid %llud msr %llud io %llud mmio %llud hlt %llud intr %llud gp %llud\n",
 		p->ncpuid, p->nmsr, p->nio, p->nmmio, p->nhlt, p->nintr, p->ngp);
-	s = seprint(s, e, "platform lastgpmsr %#ux lastport %#ux\n", p->lastgpmsr, p->lastport);
+	s = seprint(s, e, "platform lastgpmsr %#ux lastport %#ux conslost %llud\n", p->lastgpmsr, p->lastport, p->uart.outlost);
 	s = seprint(s, e, "pic imr %.2ux/%.2ux irr %.2ux/%.2ux isr %.2ux/%.2ux base %.2ux/%.2ux\n",
 		p->pic.c[0].imr, p->pic.c[1].imr, p->pic.c[0].irr, p->pic.c[1].irr,
 		p->pic.c[0].isr, p->pic.c[1].isr, p->pic.c[0].base, p->pic.c[1].base);
