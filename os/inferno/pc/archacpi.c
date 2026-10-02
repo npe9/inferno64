@@ -264,6 +264,148 @@ acpispcr(int *space, uvlong *addr, int *access, int *irq, int *baud)
 	return p[0];
 }
 
+/*
+ * The DMAR table describes the VT-d remapping hardware: a 36-byte
+ * header, then (offsets from t->data)
+ *
+ *	 0 host address width - 1	 2 reserved[10]
+ *	 1 flags			12 remapping structures
+ *
+ * and each structure is a 2-byte type and a 2-byte length.  Type 0 is
+ * a DRHD (a remapping unit: flags, size, segment, register base, then
+ * device scopes), type 1 an RMRR (memory a device must go on
+ * reaching through translation), type 2 an ATSR; the rest are not
+ * needed to drive a unit.  A device scope is type, length, flags,
+ * reserved, enumeration id, start bus, then (device, function) pairs.
+ *
+ * The parse is defensive about lengths -- firmware tables are not to
+ * be trusted -- and keeps only what fits in Dmar.
+ */
+#include "dmar.h"
+
+Dmar *dmar;
+static Dmar dmar0;
+
+static int
+dmarscopes(uchar *p, uchar *e, Dmarscope *sc, int max)
+{
+	int n, l, i;
+	Dmarscope *d;
+
+	n = 0;
+	for(; p+6 <= e; p += l){
+		l = p[1];
+		if(l < 6 || p+l > e)
+			break;
+		if(n >= max)
+			continue;
+		d = &sc[n++];
+		d->type = p[0];
+		d->enumid = p[4];
+		d->bus = p[5];
+		d->npath = 0;
+		for(i = 6; i+2 <= l && d->npath < Ndmarpath; i += 2){
+			d->path[d->npath][0] = p[i];
+			d->path[d->npath][1] = p[i+1];
+			d->npath++;
+		}
+	}
+	return n;
+}
+
+static char*
+dmarscopename(int t)
+{
+	switch(t){
+	case DmarScopeEndpoint:	return "endpoint";
+	case DmarScopeBridge:	return "bridge";
+	case DmarScopeIoapic:	return "ioapic";
+	case DmarScopeHpet:	return "hpet";
+	case DmarScopeAcpi:	return "acpi";
+	}
+	return "unknown";
+}
+
+static void
+dmarscopeprint(Dmarscope *sc, int n)
+{
+	int i, j;
+
+	for(i = 0; i < n; i++){
+		print("dmar:\t\tscope %s id %d %.2ux", dmarscopename(sc[i].type), sc[i].enumid, sc[i].bus);
+		for(j = 0; j < sc[i].npath; j++)
+			print("/%.2ux.%ux", sc[i].path[j][0], sc[i].path[j][1]);
+		print("\n");
+	}
+}
+
+static void
+acpidmar(void)
+{
+	Tbl *t;
+	uchar *p, *e;
+	int type, l, i;
+	Dmarunit *u;
+	Dmarrmrr *r;
+
+	if((t = findtable("DMAR")) == nil || tbldlen(t) < 12)
+		return;
+	dmar = &dmar0;
+	memset(dmar, 0, sizeof *dmar);
+	p = t->data;
+	e = t->data + tbldlen(t);
+	dmar->haw = p[0] + 1;
+	dmar->flags = p[1];
+	for(p += 12; p+4 <= e; p += l){
+		type = get16(p);
+		l = get16(p+2);
+		if(l < 4 || p+l > e)
+			break;
+		switch(type){
+		case 0:
+			if(l < 16 || dmar->nunit >= Ndmarunit)
+				break;
+			u = &dmar->unit[dmar->nunit++];
+			u->flags = p[4];
+			/* the size field is new in VT-d 3; 0 there means one page */
+			u->size = BY2PG << (p[5] & 0xF);
+			u->segment = get16(p+6);
+			u->base = get64(p+8);
+			u->nscope = dmarscopes(p+16, p+l, u->scope, Ndmarscope);
+			break;
+		case 1:
+			if(l < 24 || dmar->nrmrr >= Ndmarrmrr)
+				break;
+			r = &dmar->rmrr[dmar->nrmrr++];
+			r->segment = get16(p+6);
+			r->base = get64(p+8);
+			r->limit = get64(p+16);
+			r->nscope = dmarscopes(p+24, p+l, r->scope, Ndmarscope);
+			break;
+		case 2:
+			dmar->natsr++;
+			break;
+		}
+	}
+
+	print("dmar: haw %d%s%s%s, %d unit%s, %d rmrr\n", dmar->haw,
+		(dmar->flags & DmarIntrRemap) ? " intremap" : "",
+		(dmar->flags & DmarX2apicOptOut) ? " x2apic-optout" : "",
+		(dmar->flags & DmarDmaCtrlOptIn) ? " dmactl-optin" : "",
+		dmar->nunit, dmar->nunit == 1 ? "" : "s", dmar->nrmrr);
+	for(i = 0; i < dmar->nunit; i++){
+		u = &dmar->unit[i];
+		print("dmar:\tunit %d segment %d regs %#llux size %d%s\n", i, u->segment,
+			u->base, u->size, (u->flags & DmarIncludeAll) ? " include-all" : "");
+		dmarscopeprint(u->scope, u->nscope);
+	}
+	for(i = 0; i < dmar->nrmrr; i++){
+		r = &dmar->rmrr[i];
+		print("dmar:\trmrr segment %d %#llux-%#llux\n", r->segment, r->base, r->limit);
+		dmarscopeprint(r->scope, r->nscope);
+	}
+}
+
 static Tbl*
 findtable(char sig[4])
 {
@@ -679,6 +821,8 @@ acpiinit(void)
 	int machno, i, c;
 
 	amlinit();
+
+	acpidmar();
 
 	/* load DSDT */
 	DP("acpiinit: load DSDT\n");
