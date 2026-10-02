@@ -35,8 +35,12 @@ for p in "$ROOT"/scripts/qemu-patches/*.patch; do
 	echo "patch: `basename $p`"
 	patch -p1 <"$p"
 done
+# On Linux keep KVM: the nested-KVM bench (VMHOST_ACCEL=kvm) runs
+# this same patched binary, and its igb needs the same corrections.
+accel="--enable-tcg"
+case `uname` in Linux) accel="$accel --enable-kvm";; esac
 ./configure --prefix="$DEST" --target-list=x86_64-softmmu \
-	--without-default-features --enable-tcg --enable-slirp \
+	--without-default-features $accel --enable-slirp \
 	--disable-werror >"$SRC/configure.log" 2>&1
 make -j`sysctl -n hw.ncpu 2>/dev/null || nproc` >"$SRC/make.log" 2>&1
 make install >>"$SRC/make.log" 2>&1
