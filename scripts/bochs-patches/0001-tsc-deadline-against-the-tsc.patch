@@ -1,0 +1,32 @@
+--- a/cpu/apic.cc
++++ b/cpu/apic.cc
+@@ -1060,9 +1060,12 @@
+             Bit64u(timer_initial) * Bit64u(timer_divide_factor), 0);
+   }
+   else {
+-    // one-shot mode
++    // one-shot mode, or TSC-deadline: a deadline timer disarms itself
++    // and clears IA32_TSC_DEADLINE when it fires (SDM 11.5.4.1)
+     timer_current = 0;
+     timer_active = false;
++    if (timervec & 0x40000)
++      ticksInitial = 0;
+     BX_DEBUG(("local apic timer(one-shot) triggered int"));
+     bx_pc_system.deactivate_timer(timer_handle);
+   }
+@@ -1149,9 +1152,13 @@
+   ticksInitial = deadline;
+   if (deadline != 0) {
+     BX_DEBUG(("APIC: TSC-Deadline is set to " FMT_LL "d", deadline));
+-    Bit64u currtime = bx_pc_system.time_ticks();
++    // The deadline is a TSC value, and the TSC is time_ticks() plus
++    // tsc_adjust, which a write to IA32_TSC or IA32_TSC_ADJUST
++    // changes; compare against the TSC, as the hardware does, not
++    // against the raw tick count.
++    Bit64u currtsc = cpu->get_TSC();
+     timer_active = true;
+-    bx_pc_system.activate_timer_ticks(timer_handle, (deadline > currtime) ? (deadline - currtime) : 1 , 0);
++    bx_pc_system.activate_timer_ticks(timer_handle, (deadline > currtsc) ? (deadline - currtsc) : 1 , 0);
+   }
+ }
+ 

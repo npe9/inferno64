@@ -19,12 +19,23 @@ DEST=$ROOT/.bochs
 SRC=$DEST/src
 mkdir -p "$SRC"
 cd "$SRC"
-if [ ! -d bochs-$VER ]; then
+[ -f bochs-$VER.tar.gz ] ||
 	curl -fL -o bochs-$VER.tar.gz \
 		"https://downloads.sourceforge.net/project/bochs/bochs/$VER/bochs-$VER.tar.gz"
-	tar xzf bochs-$VER.tar.gz
-fi
+rm -rf bochs-$VER
+tar xzf bochs-$VER.tar.gz
 cd bochs-$VER
+# Where Bochs' model of the processor differs from the hardware, Bochs
+# is corrected (scripts/bochs-patches, each patch says how):
+#	0001-tsc-deadline-against-the-tsc.patch
+#		the TSC-deadline timer was scheduled against the raw tick
+#		count, not the TSC, so once a guest wrote IA32_TSC (this
+#		kernel zeroes it at boot) the timer never fired and the
+#		kernel slept forever after schedinit
+for p in "$ROOT"/scripts/bochs-patches/*.patch; do
+	echo "patch: `basename $p`"
+	patch -p1 <"$p"
+done
 # gui/keymap.cc calls basename() without <libgen.h>; glibc declares it
 # in <string.h>, macOS does not, and clang makes that an error.
 grep -q '<libgen.h>' gui/keymap.cc ||
