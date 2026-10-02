@@ -1769,18 +1769,61 @@ an unbalanced tree passed it clean \(em which is why "efsck: clean, generation
 285" above had not contradicted any of this.  It now requires every leaf to be
 at the same depth.
 .PP
-.B "Verified, and what is not."
+.B "Verified on the host."
 All ten efs suites pass, and
 .CW "fatstress -n 4 -f 12 -s 8" ,
 which crashed the server reproducibly, finishes with
 .CW efsck
-clean including the new check.  HOST ONLY: none of this has been run on the
-board yet, and
-.CW tests/fsbench
-is the thing to run there.  The commit on hangup is a backstop that no harness
-here exercises \(em dropping a local mount makes the kernel clunk every fid
-first, so the clunk path always runs, and a connection severed under a client
-that still holds a fid is a case this tree cannot produce.
+clean including the new check.
+.PP
+.B "And ON THE BOARD, against the previous commit, both arms in one boot."
+.CW sdmem (3)
+with the previous commit's three
+.CW .dis
+bound over
+.CW /dis
+for arm A, so the only difference is the library.  Four cores online with the
+work on core 0, the Dis JIT on.  300 creates into one directory, free medium:
+.P1
+                    A: 3dfb88270   B: this commit
+commits (generation)      602            302
+read ops                 4253           3084
+read sectors            34024          24672
+write ops                4402           3502
+write sectors           35216          28016
+disk touched            15.2 MB        12.8 MB
+time                    38.9 s         38.3 s
+.P2
+The commits are exactly halved, which is what the dirty-fid rule set out to
+do, and the transfers fall 24% with it.  The TIME IS UNCHANGED, and that is
+the expected answer rather than a disappointment: the medium is free in that
+arm, so operations it does not have to issue cost it nothing.
+.PP
+.B "With a card-like latency put back, 1.28x."
+The same A/B at
+.CW "delay 10000" ,
+10ms a transfer, 150 creates:
+.P1
+                    A             B
+transfers           4141          3122
+time                68.25 s       53.38 s
+.P2
+Faster in every one of the three rounds, no overlap.  1019 fewer transfers at
+a calibrated ~11ms is 11.2s of the 14.9s saved; the remaining 3.7s is the CPU
+the extra 300 commits cost in free-map scanning and superblock packing.  So
+the operation count is the thing, and
+.CW sdmem 's
+.CW delay
+is what turns it back into time without needing the card.
+.PP
+.B "What is NOT verified."
+Nothing has run on the real SD card, only on
+.CW sdmem .
+And the commit on hangup is a backstop that no harness here exercises \(em
+dropping a local mount makes the kernel clunk every fid first, so the clunk
+path always runs, and a connection severed under a client that still holds a
+fid is a case this tree cannot produce.  The control says so: removing the
+hangup commit again leaves the test passing.
 .NH 2
 B1f.  A CACHE FOR EFS, designed: dirty tree nodes, written once at the barrier
 .LP

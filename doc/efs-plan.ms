@@ -108,28 +108,42 @@ is the run: 300 creates into one directory, six rounds of fifty, each
 filesystem reamed fresh on the same device in the same boot.
 .P1
                         efs        kfs
-total                 12.25 s     9.53 s
-first fifty, each      31.7 ms    10.1 ms
-last fifty, each       41.9 ms    56.1 ms
-growth over 300        1.32x      5.6x
-read ops               4253      18131
-read sectors          34024      36262
-write ops              4402       3000
-write sectors         35216       6000
-disk touched           15.2 MB     640 KB
+total                 38.32 s    33.48 s
+first fifty, each     128.7 ms    93.6 ms
+last fifty, each      123.0 ms   137.2 ms
+growth over 300        0.96x      1.47x
+read ops               3084      18131
+read sectors          24672      36262
+write ops              3502       3000
+write sectors         28016       6000
+disk touched           12.8 MB     640 KB
 .P2
 .PP
-.B "kfs wins the total, and efs wins the trend."
-kfs is three times quicker on a directory of fifty and ends up half as
-quick on one of three hundred: its per-create cost grows 5.6 times across
-the run where efs's grows 1.32.  The curves cross at about three hundred
-files and keep diverging, so which filesystem is faster is a question
-about how many files are in a directory and not a question with one
-answer.
+.B "kfs wins the total, and efs wins the trend \(em and the crossing has happened by round five."
+kfs is a third quicker on a directory of fifty and SLOWER per create than
+efs on the last fifty of three hundred: 137.2ms against 123.0ms.  Its
+per-create cost grows 1.47x across the run; efs's does not grow at all,
+0.96x, which is flat within the rig's noise.  So which filesystem is
+faster is a question about how many files are in a directory, and past
+about two hundred and fifty the answer is efs.
 .PP
-.B "The number that decides it on THIS board is read ops, and efs issues a quarter as many."
-4253 against 18131, for about the same sectors read \(em kfs's blocks are
-1KB and efs's are 4KB, so kfs issues four times as many transfers a
+.B "These figures replace an earlier table and are not comparable with it."
+The same script on the same board in an earlier session gave 12.25s for
+the efs arm against 38.32s here, 31.7ms a create against 128.7ms \(em
+three times, on a workload that has since got cheaper in every counted
+operation.  Which kernel was booted then was not recorded, so the
+difference cannot be attributed and is not attributed.  What this board
+was running for the table above IS recorded: four cores online with the
+work on core 0, the Dis JIT on
+.CW ( /dev/jit
+reads 1), both arms in one boot.  An absolute number from a session that
+did not write down its kernel is worth nothing; the ratio within one boot
+is worth everything, which is the rule the next paragraph states and this
+is the cost of having broken it once.
+.PP
+.B "The number that decides it on THIS board is read ops, and efs issues a sixth as many."
+3084 against 18131, for two thirds the sectors read \(em kfs's blocks are
+1KB and efs's are 4KB, so kfs issues six times as many transfers a
 quarter the size.  A card charges per command far more than per byte: ten
 FAT creates on this one measured 38.8ms each while it streams megabytes a
 second.  So on the medium this board actually has, the four-fold
@@ -137,10 +151,10 @@ difference in operations is the one that shows, and it is the opposite
 way round from the total above.
 .PP
 .B "And efs's costs are space and write amplification, which are real."
-It wrote 5.9 times the sectors kfs did and touched 15.2MB of a 16MB disk
+It wrote 4.7 times the sectors kfs did and touched 12.8MB of a 16MB disk
 to hold three hundred tiny files, against kfs's 640KB.  That is copy on
 write plus an allocator that sweeps forward rather than reusing: a
-24-fold space amplification.  On flash the sweep is even wear and
+20-fold space amplification.  On flash the sweep is even wear and
 welcome; on a small medium it means efs needs far more free space than its
 data, and that belongs in the open questions below rather than being
 discovered later.
