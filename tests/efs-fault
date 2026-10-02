@@ -34,6 +34,26 @@ if {! cat $D^/ctl >/dev/null >[2]/dev/null} {
 	raise 'fail:no sdmem'
 }
 
+#
+# The heap, printed between sections.
+#
+# The suite wedged the board's command poller the first time it was run
+# end to end on a four-core boot, after eighteen of its twenty-one
+# checks, and the trial it stopped on passes five times out of five in
+# isolation on one core AND on four.  So what it stopped on was not that
+# trial: twenty-one mkefs-mount-write-efsck cycles in ONE shell process
+# accumulate, and on a board memory is the constraint that bites.
+#
+# A measurement rather than a guess, which is why it is printed and not
+# worked around.  /dev/memory's heap row is
+# "cursize maxsize hw nalloc nfree nbrk poolmax name"; the first number
+# is cursize, NOT in-use.
+#
+fn heap {
+	h = `{cat /dev/memory | grep heap}
+	echo '  heap '^$"h
+}
+
 fn setup {
 	echo nofault > $D^/ctl
 	echo zero > $D^/ctl
@@ -94,6 +114,7 @@ fn want {
 #     inside a commit and nothing says where those are.
 #
 echo 'losing every write from a given transfer'
+heap
 for n in 20 40 60 80 100 120 140 160 {
 	setup
 	echo stop $n > $D^/ctl
@@ -106,6 +127,7 @@ for n in 20 40 60 80 100 120 140 160 {
 #     image as whatever it last committed.
 #
 echo 'one transfer failing'
+heap
 for n in 20 60 100 140 {
 	setup
 	echo fail $n > $D^/ctl
@@ -119,6 +141,7 @@ for n in 20 60 100 140 {
 #     so a block write has no atomicity to rely on.
 #
 echo 'a write torn at the first sector'
+heap
 for n in 20 60 100 140 {
 	setup
 	echo tear $n > $D^/ctl
@@ -143,6 +166,7 @@ for n in 20 60 100 140 {
 # will be the older one.
 #
 echo 'a superblock landing while its tree does not'
+heap
 for n in 40 70 100 130 160 {
 	setup
 	echo reorder 8 > $D^/ctl
@@ -152,6 +176,7 @@ for n in 40 70 100 130 160 {
 	want 'half a writeback lost at transfer '^$n
 }
 
+heap
 echo
 if {~ $fail 0} {
 	echo EFS-FAULT-OK

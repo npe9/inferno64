@@ -3042,10 +3042,34 @@ to call it clean with the faults OFF \(em a check run through a device that is
 still losing writes is checking the device.  Board only, like
 .CW tests/fsbench .
 .PP
-21 of 21, twice: once on a JTAG boot, which holds cores 1 to 3, and once on
-the kernel installed on the card with all four online.  The control is what
-makes it worth having \(em with the mount check above disabled again it fails
-at the reorder cut points, naming the nine blocks.
+21 of 21, four times: twice on a JTAG boot, which holds cores 1 to 3, and
+twice on the kernel installed on the card with all four online.  The control
+is what makes it worth having \(em with the mount check above disabled again
+it fails at the reorder cut points, naming the nine blocks.
+.PP
+.B "ONE HANG, not reproduced, and recorded rather than explained."
+The first end-to-end run on a four-core card boot stopped after eighteen of
+the twenty-one checks and wedged the board's command poller.  Everything
+tried since has been clean: the trial it stopped on passes five times out of
+five in isolation on one core and five out of five on four, and two full runs
+have passed since.  So it was not that trial, and the obvious second theory
+\(em twenty-one mkefs-mount-write-efsck cycles in one shell process
+exhausting the board \(em is also wrong, which took measuring rather than
+arguing.  The suite now prints
+.CW /dev/memory 's
+heap row between sections:
+.P1
+cursize   in use   free
+1368064     5554   50764964
+1383808     5670   50749220
+1388160     5696   50744868
+1385344     5670   50747684
+1397760     5771   50735268
+.P2
+Flat across the run, in use and free both.  So the cause is unknown, the two
+theories it would have been are eliminated, and the instrument that would
+catch the next one is in place.  It is written down because an unexplained
+hang on a filesystem is not something to leave in a session transcript.
 .PP
 .B "Nothing in it may capture the output of" "disk/efs -f" .
 It mounts and leaves a server holding the descriptors it was given, so a
