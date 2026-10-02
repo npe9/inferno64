@@ -71,9 +71,24 @@ them.  They are timing races between screens, and nothing single-threaded
 and offscreen reproduces them; the suite that found them drives real
 resizes and needs a window context this has none of.
 .PP
-For the same reason the nested-screen arrangement here proves less than
-it looks: it is arranged like the reshape that raced, but an unguarded
-build passes it too.  It stands as a shape to extend, not as a guard.
+There is now a check with teeth for that, and the thing it tests is
+ORDER.  A teardown paint can only destroy something that is already
+there, so the replacement content has to be drawn
+.I before
+the old screen goes away \(em which is the order
+.IR wmclient (2)'s
+.I putimage
+uses, and the only order in which the race can bite.  Drawn afterwards it
+would always win and would prove nothing; that was the first version of
+this check, and it passed against a deliberately unguarded build, which
+is how the mistake showed.
+.PP
+With the order right it is decisive.  An unguarded delete fails it, 3600
+of 3600 pixels wrong \(em and so does a delete guarded on
+.I drawgoodname
+and on the screen outliving the window, which was the obvious fix and is
+why that fix is not here.  Anything that proposes to restore the
+background on close has to pass this.
 .PP
 Otherwise it covers the
 .B libmemlayer

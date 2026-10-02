@@ -61,7 +61,7 @@ notcol(r: Rect, b, g, rr: int): int
 	return bad;
 }
 
-Red, Green, Blue: con iota;
+Red, Green, Blue, White: con iota;
 
 allof(r: Rect, which: int, what: string)
 {
@@ -70,6 +70,7 @@ allof(r: Rect, which: int, what: string)
 	Red =>		bad = notcol(r, 0, 0, 255);
 	Green =>	bad = notcol(r, 0, 255, 0);
 	Blue =>		bad = notcol(r, 255, 0, 0);
+	White =>	bad = notcol(r, 255, 255, 255);
 	}
 	if(bad == 0)
 		report(1, what);
@@ -230,6 +231,65 @@ nested()
 		"and discarding a nested screen does NOT wipe it");
 }
 
+# The wipe, made deterministic.
+#
+# f7ce10cad removed memldelete()'s fill paint because a dying layer's
+# footprint could stomp content another screen had already drawn there --
+# all screens share one pixel buffer.  That is a TIMING race between
+# threads, which nothing single-threaded reproduces... unless the order is
+# forced, which here it can be.  wmclient.b's putimage() draws the new
+# thing and THEN discards the old screen, so: draw the replacement into
+# the footprint first, discard second, and demand the replacement survive.
+#
+# This is the check that a fix for the close-case afterimage has to pass.
+wipe()
+{
+	scr := fresh();
+	if(scr == nil){
+		report(0, "wipe: no screen");
+		return;
+	}
+	client := scr.newwindow(Rect((10,10),(120,120)), Draw->Refbackup, Draw->Blue);
+	if(client == nil){
+		report(0, "wipe: no client window");
+		return;
+	}
+	blue := disp.color(Draw->Blue);
+	white := disp.color(Draw->White);
+	if(blue == nil || white == nil){
+		report(0, "wipe: no colours");
+		return;
+	}
+	inner := Screen.allocate(client, blue, 0);
+	if(inner == nil){
+		report(0, "wipe: no nested screen");
+		return;
+	}
+	ir := Rect((20,20),(80,80));
+	iwin := inner.newwindow(ir, Draw->Refbackup, Draw->Green);
+	if(iwin == nil){
+		report(0, "wipe: no nested window");
+		return;
+	}
+	client.flush(Draw->Flushnow);
+	allof(ir, Green, "a nested window is drawn");
+
+	# The replacement lands FIRST, which is the order that matters: it is
+	# what putimage() does, and it is the only order in which a teardown
+	# paint can destroy something.  Drawing it after the teardown would
+	# always win and would prove nothing.
+	client.draw(ir, white, nil, ir.min);
+	client.flush(Draw->Flushnow);
+	allof(ir, White, "the replacement content is drawn over it");
+
+	# ...and only then does the old window, and its screen, go away
+	iwin = nil;
+	inner = nil;
+	client.flush(Draw->Flushnow);
+	allof(ir, White,
+		"and discarding the old screen does NOT wipe the replacement");
+}
+
 init(nil: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -246,5 +306,6 @@ init(nil: ref Draw->Context, nil: list of string)
 	alone();
 	over();
 	nested();
+	wipe();
 	sys->print("lorigintest: %d ok, %d fail\n", ok, fail);
 }
