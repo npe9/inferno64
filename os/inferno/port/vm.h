@@ -175,6 +175,7 @@ struct Vcpu
 	int	exitready;	/* exit holds one not yet read */
 	uvlong	nexit;		/* exits taken */
 	uvlong	nhandled;	/* of which the kernel handled */
+	ulong	lasttrace;	/* ticks at the last heartbeat (Vm.trace) */
 	uvlong	nkind[VxNkind];	/* and of each kind */
 
 	/* a request for the kproc to run on its own processor */
@@ -206,6 +207,7 @@ struct Vm
 	uvlong	memsize;
 	void	*gp;		/* the backend's nested page tables */
 	void	*plat;		/* the platform's devices (vmplat.c) */
+	int	trace;		/* seconds between vCPU heartbeats on the console, 0 none */
 	int	nvcpu;
 	Vcpu	*vcpu[Maxvcpu];
 };

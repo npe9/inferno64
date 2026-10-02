@@ -4,6 +4,11 @@
  *	#H/vm/clone		open to make a machine; the chan becomes
  *				its ctl, and reading it gives the number
  *	#H/vm/backend		which processor extension, and what it has
+ *	#H/vm/host		what this host has left for machines: its
+ *				processors, free memory and the largest
+ *				contiguous run of it (a machine's memory is
+ *				one run), the machines and vCPUs it runs --
+ *				what a scheduler placing machines reads
  *	#H/vm/N/ctl		"mem bytes": guest RAM at guest-physical 0
  *				"kill": destroy the machine
  *	#H/vm/N/status		the machine and each vCPU's state
@@ -38,6 +43,7 @@ enum {
 	Qvmdir,
 	Qclone,
 	Qbackend,
+	Qhost,
 	Qn,		/* vm/N */
 	Qctl,
 	Qstatus,
@@ -178,6 +184,28 @@ vcpuexit(Vcpu *v, Vmexit *e)
 	wakeup(&v->exitr);
 }
 
+/*
+ * "trace n": every n seconds the vCPU's kproc prints, on the kernel's
+ * console and nowhere else, where it is -- which needs no other process
+ * to run, so it still speaks when the host is starved.
+ */
+static void
+heartbeat(Vcpu *v, Vmexit *e)
+{
+	char buf[256], *p, *ep;
+	int k;
+
+	p = buf;
+	ep = buf + sizeof buf;
+	p = seprint(p, ep, "vm%d.%d: rip %#llux last %s exits %llud handled %llud",
+		v->vm->id, v->id, e->rip, e->kind < VxNkind ? xkindname[e->kind] : "?", v->nexit, v->nhandled);
+	for(k = 0; k < VxNkind; k++)
+		if(v->nkind[k] != 0)
+			p = seprint(p, ep, " %s %llud", xkindname[k], v->nkind[k]);
+	USED(p);
+	print("%s\n", buf);
+}
+
 static void
 vcpuproc(void *a)
 {
@@ -235,6 +263,21 @@ vcpuproc(void *a)
 		v->stop = 0;
 		v->state = VcpuRunning;
 		for(;;){
+			/*
+			 * A kproc is not preempted: the clock only marks
+			 * it (hzsched sets delaysched when its slice is used
+			 * and something else is ready).  A guest that never
+			 * halts would otherwise keep its processor from
+			 * everything else -- on a one-processor host, the
+			 * Limbo copying the guest's console, whose output
+			 * stopped mid-line.  The mark is honoured here, after
+			 * every exit: when the guest makes a stream of exits
+			 * the kernel handles, most clock interrupts arrive in
+			 * this loop rather than as exits, so looking only at
+			 * external-interrupt exits was not enough.
+			 */
+			if(up->delaysched)
+				sched();
 			memset(&e, 0, sizeof e);
 			vmplatintr(v);
 			vmops->run(v, &e);
@@ -246,6 +289,10 @@ vcpuproc(void *a)
 			 * CPUID, MSRs, HLT -- is handled here, on the
 			 * vCPU's own processor, without a trip to Limbo.
 			 */
+			if(v->vm->trace && TK2MS(m->ticks - v->lasttrace) >= v->vm->trace*1000){
+				v->lasttrace = m->ticks;
+				heartbeat(v, &e);
+			}
 			if(vmplatexit(v, &e)){
 				v->nhandled++;
 				if(v->stop || v->quit || v->cmd != nil){
@@ -267,18 +314,6 @@ vcpuproc(void *a)
 					e.kind = VxStopped;
 					break;
 				}
-				/*
-				 * A kproc is not preempted: the clock only
-				 * marks it.  A guest that never halts would
-				 * otherwise keep the processor from everything
-				 * else wired to it or waiting for it -- on a
-				 * one-processor host, the Limbo copying the
-				 * guest's console, so its output stopped
-				 * mid-line.  Give it up here when anything
-				 * else is ready.
-				 */
-				if(anyready())
-					yield();
 				continue;
 			}
 			break;
@@ -592,7 +627,12 @@ vmgen(Chan *c, char *, Dirtab*, int, int s, Dir *dp)
 			devdir(c, q, "backend", 0, eve, 0444, dp);
 			return 1;
 		}
-		s -= 2;
+		if(s == 2){
+			q = (Qid){QPATH(-1, 0, Qhost), 0, QTFILE};
+			devdir(c, q, "host", 0, eve, 0444, dp);
+			return 1;
+		}
+		s -= 3;
 		qlock(&vmtablk);
 		for(id = 0; id < Nvm; id++)
 			if(vmtab[id] != nil && !vmtab[id]->dead && s-- == 0)
@@ -721,6 +761,27 @@ chanvm(Chan *c)
 	return vm;
 }
 
+static void
+hostinfo(char *p, char *e)
+{
+	Vm *vm;
+	int i, nvm, nvcpu;
+	uvlong mem;
+
+	nvm = nvcpu = 0;
+	mem = 0;
+	qlock(&vmtablk);
+	for(i = 0; i < Nvm; i++)
+		if((vm = vmtab[i]) != nil && !vm->dead){
+			nvm++;
+			nvcpu += vm->nvcpu;
+			mem += vm->memsize;
+		}
+	qunlock(&vmtablk);
+	seprint(p, e, "backend %s cpus %d memfree %llud memlargest %llud machines %d vcpus %d guestmem %llud\n",
+		vmops != nil ? vmops->name : "none", conf.nmach, xfreebytes(), xlargest(), nvm, nvcpu, mem);
+}
+
 static int
 exitready(void *a)
 {
@@ -801,6 +862,17 @@ vmread(Chan *c, void *a, s32 n, s64 off)
 			snprint(buf, READSTR, "none: %s\n", vmwhy);
 		else
 			vmops->info(buf, buf+READSTR);
+		r = readstr(off, a, n, buf);
+		poperror();
+		free(buf);
+		return r;
+	case Qhost:
+		buf = smalloc(READSTR);
+		if(waserror()){
+			free(buf);
+			nexterror();
+		}
+		hostinfo(buf, buf+READSTR);
 		r = readstr(off, a, n, buf);
 		poperror();
 		free(buf);
@@ -901,6 +973,8 @@ vmwrite(Chan *c, void *a, s32 n, s64 off)
 			setmem(vm, strtoull(cb->f[1], nil, 0));
 		else if(cb->nf == 1 && strcmp(cb->f[0], "kill") == 0)
 			killvm(vm);
+		else if(cb->nf == 2 && strcmp(cb->f[0], "trace") == 0)
+			vm->trace = atoi(cb->f[1]);
 		else if(!vmplatctl(vm, cb->nf, cb->f))
 			error(Ebadctl);
 		poperror();

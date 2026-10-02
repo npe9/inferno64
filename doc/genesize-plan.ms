@@ -633,6 +633,40 @@ against the remote
 a machine made, given memory, assigned a device, booted from files on
 the Mac, typed at and read back, all over Styx
 .CW 1c3c4b338 ). (
+.IP "Phase 11: M10 (QEMU + emu)." 4
+Each host's
+.CW #H
+has a
+.CW host
+file \(en backend, processors, free memory, the largest contiguous run
+of it, machines, vCPUs and guest memory in use \(en and
+.CW vmsched (1)
+.CW appl/cloud/vmsched.b ) (
+reads it from every mounted host and places guests on the host running
+the fewest machines, ties to the most contiguous memory, then runs each
+with
+.CW vmlinux
+in a namespace with that host's
+.CW /dev
+bound in.
+.CW scripts/check-cloud.sh
+boots two hosts (2 and 1 GiB) and has emu place three 256 MiB guests:
+0 and 2 on the larger, 1 on the smaller, and each answers a line typed
+at its console naming the host it was put on.  Two bugs found on the
+way: the kernel's
+.CW xallocz
+zeroed its block's size from the data rather than the header, clearing
+the next block's header, so killing a guest whose memory lay just
+above another allocation panicked in
+.CW xfree ;
+and
+.CW vmlinux
+read the kernel and initrd whole, which ran a hosted emu loading three
+at once out of heap \(en it now streams them.  Freed guest memory does
+not always coalesce back into the largest run (the hosts report less
+contiguous memory after the guests are gone than before), since the
+kernel's own allocations land between; a guest-memory arena of its own
+would fix it.
 .IP "VMX, Linux." 4
 On Bochs (one processor) the host stalled with the guest early in its
 boot: a vCPU kproc was never preempted.  The run loop now yields when
@@ -650,5 +684,4 @@ which is a module in Alpine's
 \(en the guest moves to the versioned
 .CW linux-virt-6.6.142-r0.apk ,
 whose kernel and modules match.  M8 (virtio backends in the kernel);
-M10 (Limbo placing guests across several hosts, which wants each host
-to report its capacity); phase 5 (SMP guests).
+phase 5 (SMP guests); phase 12 (resource namespaces).

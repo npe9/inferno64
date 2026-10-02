@@ -22,6 +22,9 @@ vmlinux \- boot Linux as a guest
 .B -q
 .I pattern
 ] [
+.B -d
+.I seconds
+] [
 .B -p
 .I 0000:bb:dd.f
 ] ...
@@ -62,7 +65,13 @@ stops the guest once the console shows
 .B -s
 stops it after
 .I seconds
-regardless.  An exit the kernel does not handle is reported with the
+regardless;
+.B -d
+sets the machine's
+.B trace
+(see
+.IR vm (3)).
+The kernel and initrd are streamed into the machine's memory, not held.  An exit the kernel does not handle is reported with the
 registers, and ends the run, as does a stop; the machine's status is
 printed and the machine killed.
 .PP

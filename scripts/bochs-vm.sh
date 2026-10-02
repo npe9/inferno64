@@ -13,6 +13,7 @@
 #
 # usage: scripts/bochs-vm.sh [-c cpu] kernel [seconds]
 #
+# BOCHS_INFO is the bochsrc info: setting (e.g. "action=ignore, cpu0=report").
 # BOCHS_MEGS sets the machine's memory (512 MiB by default).
 #
 #	-c cpu	a Bochs CPU model; default corei7_skylake_x (VMX, EPT,
@@ -80,7 +81,7 @@ display_library: nogui
 log: $B/bochs.log
 panic: action=fatal
 error: action=report
-info: action=ignore
+info: ${BOCHS_INFO:-action=ignore}
 debug: action=ignore
 clock: sync=none, time0=local
 RC
@@ -89,7 +90,10 @@ RC
 # command file tells it to run.  BOCHS_STOPAT=n stops it after n
 # instructions instead and dumps the processor state to bochs.out,
 # which is how a boot that stops making progress is located.
-if [ -n "$BOCHS_STOPAT" ]; then
+if [ -n "$BOCHS_RC" ]; then
+	# a debugger script of one's own, e.g. 'sb N\nc\ntrace on\ns 20000\nr\nq'
+	printf "$BOCHS_RC" >"$WORK/debugrc"
+elif [ -n "$BOCHS_STOPAT" ]; then
 	printf 'sb %s\nc\nr\nsreg\ncreg\nu /12\nbt\nprint-stack 24\ninfo idt\nq\n' "$BOCHS_STOPAT" >"$WORK/debugrc"
 else
 	echo c >"$WORK/debugrc"

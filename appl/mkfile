@@ -2,6 +2,7 @@
 
 DIRS=\
 	acme\
+	cloud\
 #	alphabet\
 	charon\
 	danby\

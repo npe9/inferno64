@@ -49,9 +49,15 @@
 set -e
 ROOT=`cd \`dirname "$0"\`/.. && pwd`
 Q=$ROOT/.qemu
+# VMHOST_TAG runs another instance beside the first: its own serial
+# log, firmware variables, NVMe image and console file (the ISO is read
+# only and shared).  VMHOST_MEM and VMHOST_SMP size it.
+T=${VMHOST_TAG:+-$VMHOST_TAG}
 ISO=$Q/vmhost.iso
-LOG=$Q/vmhost.log
-NVME=$Q/vmhost-nvme.raw
+LOG=$Q/vmhost$T.log
+NVME=$Q/vmhost$T-nvme.raw
+HVC=$Q/vmhost$T-hvc.log
+VARS=$Q/edk2-vars-vmhost$T.fd
 ACCEL=${VMHOST_ACCEL:-tcg}
 # the patched QEMU from scripts/mkqemu.sh when it has been built; its
 # igb behaves as the 82576 does, upstream's does not
@@ -81,7 +87,7 @@ for f in edk2-code.fd edk2-vars.fd; do
 	[ -f "$Q/$f" ] || { echo "vmhost: no $Q/$f (see scripts/qemu-inferno-efi.sh)" >&2; exit 1; }
 done
 [ -f "$NVME" ] || dd if=/dev/zero of="$NVME" bs=1m count=64 2>/dev/null
-cp "$Q/edk2-vars.fd" "$Q/edk2-vars-vmhost.fd"
+cp "$Q/edk2-vars.fd" "$VARS"
 
 case $ACCEL in
 tcg)	MACHINE=q35; CPU=max ;;
@@ -106,9 +112,9 @@ IGB="-netdev user,id=net1$FWD -device igb,netdev=net1,bus=rp2"
 # The IOMMU comes first: QEMU wants it created before the devices whose
 # DMA it is to translate.
 set -- \
-	-machine $MACHINE -accel $ACCEL -cpu $CPU -smp 4 -m 2048 \
+	-machine $MACHINE -accel $ACCEL -cpu $CPU -smp ${VMHOST_SMP:-4} -m ${VMHOST_MEM:-2048} \
 	-drive if=pflash,format=raw,unit=0,readonly=on,file="$Q/edk2-code.fd" \
-	-drive if=pflash,format=raw,unit=1,file="$Q/edk2-vars-vmhost.fd" \
+	-drive if=pflash,format=raw,unit=1,file="$VARS" \
 	$IOMMU \
 	-device pcie-root-port,id=rp1,chassis=1,slot=1 \
 	-device pcie-root-port,id=rp2,chassis=2,slot=2 \
@@ -122,7 +128,7 @@ set -- \
 	-device nvme,drive=nvm0,serial=vmhost0,bus=rp3 \
 	-device edu,bus=rp4,dma_mask=0xffffffffffff \
 	-device virtio-serial-pci,bus=rp5,disable-legacy=on,iommu_platform=on \
-	-chardev file,id=hvc0,path="$Q/vmhost-hvc.log" \
+	-chardev file,id=hvc0,path="$HVC" \
 	-device virtconsole,chardev=hvc0 \
 	-cdrom "$ISO" \
 	-display none -no-reboot \
@@ -134,8 +140,8 @@ fi
 if [ -z "$secs" ]; then
 	exec $QEMU "$@" -serial mon:stdio
 fi
-rm -f "$LOG" "$Q/vmhost-hvc.log"
-timeout "$secs" $QEMU "$@" -serial "file:$LOG" >"$Q/vmhost-qemu.err" 2>&1 || true
+rm -f "$LOG" "$HVC"
+timeout "$secs" $QEMU "$@" -serial "file:$LOG" >"$Q/vmhost$T-qemu.err" 2>&1 || true
 sed -e 's/\x1b\[[0-9;=]*[a-zA-Z]//g' -e 's/\r$//' "$LOG"
-[ -s "$Q/vmhost-qemu.err" ] && sed 's/^/qemu: /' "$Q/vmhost-qemu.err" >&2
+[ -s "$Q/vmhost$T-qemu.err" ] && sed 's/^/qemu: /' "$Q/vmhost$T-qemu.err" >&2
 exit 0

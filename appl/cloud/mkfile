@@ -1,0 +1,20 @@
+<../../mkconfig
+
+# Inferno Cloud's control plane for the hypervisor (doc/genesize-plan.ms,
+# phases 10-12): Limbo programs that work on hosts' #H trees mounted over
+# Styx.
+
+TARG=\
+	vmsched.dis\
+
+SYSMODULES=\
+	sys.m\
+	draw.m\
+	arg.m\
+	sh.m\
+
+MODULES=\
+
+DISBIN=$ROOT/$DISROOT/cloud
+
+<$ROOT/mkfiles/mkdis

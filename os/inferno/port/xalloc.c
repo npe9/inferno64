@@ -131,8 +131,11 @@ xallocz(uintptr size, s32 zero)
 			p = KADDR(p);
 			p->magix = Magichole;
 			p->size = size;
+			/* size counts the header; zeroing size bytes from data
+			 * cleared the next block's header too, and its xfree
+			 * then panicked on the lost magic */
 			if(zero)
-				memset(p->data, 0, size);
+				memset(p->data, 0, size - datoff);
 			return p->data;
 		}
 		l = &h->link;
@@ -231,6 +234,40 @@ xhole(uintptr addr, uintptr size)
 	h->link = *l;
 	*l = h;
 	iunlock(&xlists);
+}
+
+/*
+ * What is left for xalloc, and the largest run of it: a guest's memory
+ * is one contiguous run (devvm.c), so the largest hole is what limits
+ * the next machine, not the total.
+ */
+uvlong
+xfreebytes(void)
+{
+	Hole *h;
+	uvlong n;
+
+	n = 0;
+	ilock(&xlists);
+	for(h = xlists.table; h; h = h->link)
+		n += h->size;
+	iunlock(&xlists);
+	return n;
+}
+
+uvlong
+xlargest(void)
+{
+	Hole *h;
+	uvlong n;
+
+	n = 0;
+	ilock(&xlists);
+	for(h = xlists.table; h; h = h->link)
+		if(h->size > n)
+			n = h->size;
+	iunlock(&xlists);
+	return n;
 }
 
 void

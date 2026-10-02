@@ -35,6 +35,7 @@ Shell:	con "LINUXGUEST: shell";	# what scripts/mklinuxguest.sh's /init prints
 typed: string;
 quitat: string;	# -q: stop once the console has shown this
 assign: list of string;	# -p: PCI functions given to the guest
+trace := 0;	# -d: vCPU heartbeat on the host's kernel console, seconds
 Zero:	con 16r7000;
 Cmdline:	con 16r20000;
 Kernel:	con 16r100000;
@@ -53,7 +54,10 @@ fail(s: string)
 	raise "fail:" + s;
 }
 
-readfile(name: string): array of byte
+# The kernel and initrd are streamed into guest memory, never held
+# whole: several machines loaded at once by one Inferno (vmsched(1))
+# ran a hosted emu out of heap.
+openfile(name: string): (ref Sys->FD, big)
 {
 	fd := sys->open(name, Sys->OREAD);
 	if(fd == nil)
@@ -61,15 +65,32 @@ readfile(name: string): array of byte
 	(ok, d) := sys->fstat(fd);
 	if(ok < 0)
 		fail(sys->sprint("%s: %r", name));
-	b := array[int d.length] of byte;
+	return (fd, d.length);
+}
+
+preadfull(fd: ref Sys->FD, b: array of byte, off: big, name: string)
+{
 	n := 0;
 	while(n < len b){
-		r := sys->read(fd, b[n:], len b - n);
+		r := sys->pread(fd, b[n:], len b - n, off + big n);
 		if(r <= 0)
 			fail(sys->sprint("%s: short read: %r", name));
 		n += r;
 	}
-	return b;
+}
+
+# copy n bytes of fd from off to guest-physical a
+copymem(mem: ref Sys->FD, a: big, fd: ref Sys->FD, off: big, n: big, name: string)
+{
+	buf := array[65536] of byte;
+	for(o := big 0; o < n; ){
+		m := len buf;
+		if(big m > n - o)
+			m = int (n - o);
+		preadfull(fd, buf[0:m], off + o, name);
+		writemem(mem, a + o, buf[0:m]);
+		o += big m;
+	}
 }
 
 get16(b: array of byte, o: int): int
@@ -157,14 +178,19 @@ init(nil: ref Draw->Context, argv: list of string)
 		't' =>	typed = arg->earg() + "\n";
 		'q' =>	quitat = arg->earg();
 		'p' =>	assign = arg->earg() :: assign;
+		'd' =>	trace = int arg->earg();
 		* =>	usage();
 		}
 	argv = arg->argv();
 	if(len argv != 1)
 		usage();
 
-	k := readfile(hd argv);
-	if(len k < 16r1000 || string k[16r202:16r206] != "HdrS")
+	(kfd, klen) := openfile(hd argv);
+	if(klen < big 16r1000)
+		fail("not a bzImage: too short");
+	k := array[16r1000] of byte;	# the setup header is in the first page
+	preadfull(kfd, k, big 0, hd argv);
+	if(string k[16r202:16r206] != "HdrS")
 		fail("not a bzImage: no HdrS");
 	version := get16(k, 16r206);
 	if(version < 16r20c)
@@ -172,8 +198,10 @@ init(nil: ref Draw->Context, argv: list of string)
 	setup := int k[16r1f1];
 	if(setup == 0)
 		setup = 4;
-	koff := (setup + 1) * 512;
-	kern := k[koff:];
+	koff := big ((setup + 1) * 512);
+	if(koff >= klen)
+		fail("not a bzImage: no protected-mode kernel");
+	kernlen := klen - koff;
 	hdrend := 16r202 + int k[16r201];
 	memsize := big megs * big (1024*1024);
 
@@ -185,12 +213,14 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(n <= 0)
 		fail(sys->sprint("clone: %r"));
 	dir := "/dev/vm/" + string buf[0:n];
-	sys->print("vmlinux: machine %s, %d MiB, kernel %s protocol %d.%d, %d bytes\n",
-		dir, megs, hd argv, version>>8, version&16rff, len kern);
+	sys->print("vmlinux: machine %s, %d MiB, kernel %s protocol %d.%d, %bd bytes\n",
+		dir, megs, hd argv, version>>8, version&16rff, kernlen);
 	if(sys->fprint(ctl, "mem %bd", memsize) < 0)
 		fail(sys->sprint("mem: %r"));
 	if(sys->fprint(ctl, "io ignore") < 0)
 		fail(sys->sprint("io ignore: %r"));
+	if(trace > 0 && sys->fprint(ctl, "trace %d", trace) < 0)
+		fail(sys->sprint("trace: %r"));
 	for(; assign != nil; assign = tl assign){
 		if(sys->fprint(ctl, "assign %s", hd assign) < 0)
 			fail(sys->sprint("assign %s: %r", hd assign));
@@ -207,20 +237,23 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail(sys->sprint("mem: %r"));
 
 	# the protected-mode kernel at 1 MiB
-	writemem(mem, big Kernel, kern);
+	copymem(mem, big Kernel, kfd, koff, kernlen, hd argv);
+	kfd = nil;
 
 	# the initrd as high as the kernel allows
 	rdaddr := big 0;
 	rdsize := 0;
 	if(initrd != ""){
-		rd := readfile(initrd);
-		rdsize = len rd;
+		(rfd, rlen) := openfile(initrd);
+		rdsize = int rlen;
 		top := memsize;
 		rdmax := big get32(k, 16r22c) & big 16rFFFFFFFF;
 		if(rdmax + big 1 < top)
 			top = rdmax + big 1;
-		rdaddr = (top - big rdsize) & ~big 16rFFF;
-		writemem(mem, rdaddr, rd);
+		rdaddr = (top - rlen) & ~big 16rFFF;
+		if(rdaddr < big Kernel + kernlen)
+			fail(sys->sprint("%s: does not fit in %d MiB", initrd, megs));
+		copymem(mem, rdaddr, rfd, big 0, rlen, initrd);
 	}
 
 	# the command line
@@ -271,10 +304,15 @@ init(nil: ref Draw->Context, argv: list of string)
 	if(sys->fprint(regs, "%s", r) < 0)
 		fail(sys->sprint("setting registers: %r"));
 
-	spawn console(dir);
-	spawn input(dir);
-	if(secs > 0)
-		spawn timeout(dir, ctl, secs);
+	pidc := chan of int;
+	spawn console(dir, pidc);
+	helpers := <-pidc :: nil;
+	spawn input(dir, pidc);
+	helpers = <-pidc :: helpers;
+	if(secs > 0){
+		spawn timeout(dir, ctl, secs, pidc);
+		helpers = <-pidc :: helpers;
+	}
 
 	vctl := sys->open(dir + "/vcpu0/ctl", Sys->OWRITE);
 	exitfd := sys->open(dir + "/vcpu0/exit", Sys->OREAD);
@@ -304,10 +342,18 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 	sys->print("vmlinux: status\n%s", readall(dir + "/status"));
 	sys->fprint(ctl, "kill");
+	# the helpers outlive the machine otherwise, which matters when
+	# vmlinux is loaded by another program (vmsched(1))
+	for(; helpers != nil; helpers = tl helpers){
+		fd := sys->open(sys->sprint("/prog/%d/ctl", hd helpers), Sys->OWRITE);
+		if(fd != nil)
+			sys->fprint(fd, "kill");
+	}
 }
 
-console(dir: string)
+console(dir: string, pidc: chan of int)
 {
+	pidc <-= sys->pctl(0, nil);
 	fd := sys->open(dir + "/console", Sys->OREAD);
 	if(fd == nil)
 		return;
@@ -351,8 +397,9 @@ contains(s, t: string): int
 	return 0;
 }
 
-input(dir: string)
+input(dir: string, pidc: chan of int)
 {
+	pidc <-= sys->pctl(0, nil);
 	fd := sys->open(dir + "/console", Sys->OWRITE);
 	if(fd == nil)
 		return;
@@ -370,8 +417,9 @@ input(dir: string)
 	}
 }
 
-timeout(dir: string, nil: ref Sys->FD, secs: int)
+timeout(dir: string, nil: ref Sys->FD, secs: int, pidc: chan of int)
 {
+	pidc <-= sys->pctl(0, nil);
 	sys->sleep(secs * 1000);
 	sys->print("\nvmlinux: %d seconds; stopping\n", secs);
 	fd := sys->open(dir + "/vcpu0/ctl", Sys->OWRITE);

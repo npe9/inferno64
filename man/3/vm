@@ -55,6 +55,13 @@ a read gets all ones and a write is dropped; with
 .BI assign " 0000:bb:dd.f"
 Give the machine a PCI function (see BUGS for which).
 .TP
+.BI trace " seconds"
+While a vCPU runs, print on the host's console, at most every
+.I seconds
+(0 turns it off), its guest RIP, the reason of its last exit and its
+count of exits: a heartbeat for telling a guest that is busy from a
+host that has stopped.
+.TP
 .B kill
 Stop the machine and free its memory.  Open files then return
 .BR Ehungup ;

@@ -382,6 +382,8 @@ void		wunlock(RWlock*);
 void*		xalloc(uintptr);
 void*		xallocz(uintptr, s32);
 void		xfree(void*);
+uvlong		xfreebytes(void);
+uvlong		xlargest(void);
 void		xhole(uintptr, uintptr);
 void		xinit(void);
 int		xmerge(void*, void*);

@@ -47,7 +47,7 @@ init()
 		assign = "-p" :: "0000:05:00.0" :: nil;
 	else
 		sys->print("LINUXTEST: no 0000:05:00.0 here; nothing assigned\n");
-	args := "-s" :: "7200" :: "-m" :: "256" :: "-q" :: "LINUXGUEST: ran"
+	args := "-s" :: "7200" :: "-m" :: "256" :: "-q" :: "LINUXGUEST: ran" :: "-d" :: "20"
 		:: "-i" :: "/guest/initramfs.cpio"
 		:: "-t" :: "echo LINUXGUEST: typed; uname -sr; for d in /sys/bus/pci/devices/*; do echo LINUXGUEST: pci $d `cat $d/vendor $d/device`; done; ls /sys/bus/virtio/devices; grep -iE 'virtio|LOC|timer|ttyS' /proc/interrupts; ls -l /sys/bus/virtio/devices/virtio0/driver; dmesg | grep -iE 'virtio|vport|hvc|console' | tail -12; echo hello-from-the-guest > /dev/hvc0 && echo LINUXGUEST: wrote hvc0; echo LINUXGUEST: ran"
 		:: "/guest/vmlinuz" :: nil;

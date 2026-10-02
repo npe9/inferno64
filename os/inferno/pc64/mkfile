@@ -185,7 +185,7 @@ vmhost-debug:V: vmhost
 	$ROOT/scripts/vmhost.sh debug
 
 # the hypervisor's portable interface
-vmx.$O svm.$O devvm.$O vmplat.$O: ../port/vm.h
+vmx.$O svm.$O devvm.$O vmplat.$O vmpci.$O: ../port/vm.h
 vmplat.$O vmdev.$O: ../pc/vmdev.h
 vtd.$O deviommu.$O: ../port/iommu.h ../pc/dmar.h
 vmplat.$O vmpci.$O: ../pc/vmpci.h ../port/iommu.h
