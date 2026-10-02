@@ -105,7 +105,13 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES $ROOT/tools/bin2ihex
 	# mikroe-uhb refuses rather than overwriting the only way in --
 	# so bin2ihex is given that as a ceiling and fails here instead
 	# of at the far end of a flash cycle.
-	$ROOT/tools/bin2ihex $target $KTZERO i$CONF.hex 917504
+# 901120 and not 917504: the last 16K below the bootloader is the
+# calibration store, CALBASE in mem.h, and an image that grew into it
+# would overwrite what a board had measured about itself.  So the ceiling
+# given here is the store's base and not the bootloader's, and an image
+# that would overlap fails to convert rather than silently taking it.
+# Keep the two numbers in step; mem.h says the same.
+	$ROOT/tools/bin2ihex $target $KTZERO i$CONF.hex 901120
 	cp $target i$CONF.hex $INSTALLDIR
 
 $ROOT/tools/bin2ihex:

@@ -134,6 +134,12 @@ link
 # anything the board was told is circular.  See doc/radio-plan.ms
 # item 8.
 	uidstm32f4
+# calstm32f4 serves #P/cal, an append-only log in the 16K of flash below
+# the bootloader that no image reaches.  It is where a board writes down
+# what it has measured about itself, because /lib/radio is in devroot and
+# read-only.  See mem.h for why it is a tail and not a sector, and
+# doc/radio-plan.ms item 8.
+	calstm32f4
 
 mod
 	sys

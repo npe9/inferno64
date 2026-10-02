@@ -47,12 +47,14 @@ extern void i2cstm32f4link(void);
 extern void adcstm32f4link(void);
 extern void ledstm32f4link(void);
 extern void uidstm32f4link(void);
+extern void calstm32f4link(void);
 void links(void){
 	spistm32f4link();
 	i2cstm32f4link();
 	adcstm32f4link();
 	ledstm32f4link();
 	uidstm32f4link();
+	calstm32f4link();
 }
 
 extern void sysmodinit(void);

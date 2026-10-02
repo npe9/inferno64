@@ -1,0 +1,68 @@
+From 1f1df8fbf2889c9d0d02dc2204a965ddcde4a40a Mon Sep 17 00:00:00 2001
+From: Noah Evans <noah.evans@gmail.com>
+Date: Fri, 2 Oct 2026 07:08:53 -0400
+Subject: [PATCH] hw/arm/stm32f405_soc: flash comes up erased, not zeroed
+
+Flash comes out of the factory erased, which is all ones, and a rom
+region is zero filled.  Anything a guest read outside what the loader
+wrote therefore read 0x00 here and 0xff on silicon.
+
+That is not a detail.  Erased flash is how a guest tells written from
+unwritten without a header or a superblock.
+os/inferno/stm32f407/calstm32f4.c keeps an append-only log in the tail of
+the last sector -- the part has no spare sector, the image ends inside
+sector 10 and sector 11 is the bootloader -- and finds its end by looking
+for the first 0xff, because the content is attrdb(6) text which never
+contains one.  Against this model that store read
+
+	base 0x080dc000 size 16384 used 16384 free 0
+
+full, on a board that had never written a byte of it.  On silicon the
+same code reads used 0.
+
+Filled before the kernel is loaded, so the loader still wins wherever the
+image covers.
+
+What this does NOT model is programming: the region stays rom, so a guest
+write is dropped.  The driver catches that by reading back what it wrote
+-- "cal: wrote 0x72 at offset 0 and it reads 0xff" -- which is the right
+answer for a write that did not happen, so the read path and the refusals
+are exercisable here and the write path is silicon only.
+
+Signed-off-by: Noah Evans <noah.evans@gmail.com>
+---
+ hw/arm/stm32f405_soc.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/hw/arm/stm32f405_soc.c b/hw/arm/stm32f405_soc.c
+index 3826daa..8773d93 100644
+--- a/hw/arm/stm32f405_soc.c
++++ b/hw/arm/stm32f405_soc.c
+@@ -169,6 +169,24 @@ static void stm32f405_soc_realize(DeviceState *dev_soc, Error **errp)
+                              "STM32F405.flash.alias", &s->flash, 0,
+                              FLASH_SIZE);
+ 
++    /*
++     * Flash comes out of the factory ERASED, which is all ones, and a
++     * rom region is zero filled.  Anything a guest reads outside what
++     * the loader wrote therefore read 0x00 here and 0xff on silicon.
++     *
++     * That is not a detail.  Erased flash is how a guest tells written
++     * from unwritten without a header or a superblock -- os/inferno/
++     * stm32f407/calstm32f4.c keeps an append-only log in the tail of
++     * the last sector and finds its end by looking for the first 0xff,
++     * because the content is attrdb(6) text which never contains one.
++     * Against this model that store read "used 16384 free 0": full, on
++     * a board that had never written a byte of it.
++     *
++     * Filled before the kernel is loaded, so the loader still wins
++     * wherever the image covers.
++     */
++    memset(memory_region_get_ram_ptr(&s->flash), 0xff, FLASH_SIZE);
++
+     memory_region_add_subregion(system_memory, FLASH_BASE_ADDRESS, &s->flash);
+     memory_region_add_subregion(system_memory, 0, &s->flash_alias);
+ 
+-- 
+2.51.0
+

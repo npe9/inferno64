@@ -1390,3 +1390,16 @@ the check a two-board harness makes with it, which is that two boards
 reporting one serial are one board.  tools/radio/ax25inittest.sh passes
 "-global stm32f405-soc.uid=0x11111111" and 0x22222222 for exactly that,
 and /lib/radio has an entry for each of the serials those produce.
+
+0054 makes the F405's flash come up erased.  Flash comes out of the
+factory all ones and a rom region is zero filled, so anything a guest
+read outside what the loader wrote read 0x00 here and 0xff on silicon.
+os/inferno/stm32f407/calstm32f4.c tells written flash from unwritten by
+looking for the first 0xff -- the content is attrdb(6) text, which never
+contains one -- so against the unpatched model its store read "used
+16384 free 0": full, on a board that had never written a byte.
+
+It does not model programming: the region stays rom and a guest write is
+dropped.  The driver catches that by reading back what it wrote, so the
+read path and the refusals are exercisable under qemu and the write path
+is silicon only.

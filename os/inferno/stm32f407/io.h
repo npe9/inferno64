@@ -91,6 +91,11 @@
 
 #define	FLASHIF		0x40023c00
 #define	  FLASH_ACR	(FLASHIF+0x00)
+#define	  FLASH_KEYR	(FLASHIF+0x04)
+#define	  FLASH_SR	(FLASHIF+0x0c)
+#define	  FLASH_CR	(FLASHIF+0x10)
+#define	  FLASH_KEY1	0x45670123
+#define	  FLASH_KEY2	0xcdef89ab
 #define	    AcrLatency5	(5<<0)		/* five wait states at 168MHz, 3.3V */
 #define	    AcrPrften	(1<<8)
 #define	    AcrIcen	(1<<9)

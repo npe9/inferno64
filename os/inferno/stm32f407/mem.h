@@ -125,6 +125,42 @@
  * cannot say that.  The measurements are in the config, where the value
  * is.
  */
+/*
+ * THE CALIBRATION STORE, AND WHY IT IS A TAIL AND NOT A SECTOR.
+ *
+ * doc/radio-plan.ms item 8's second stage wants a board to be able to
+ * write down what it has just measured, and sketched it as a spare 128K
+ * flash sector.  This part has no spare sector.  Measured against
+ * RM0090 table 5 with the image this tree builds:
+ *
+ *	sectors 0-9     0x08000000..0x080bffff   all image
+ *	sector 10       0x080c0000..0x080dffff   image ends inside it
+ *	sector 11       0x080e0000..0x080fffff   the HID bootloader
+ *
+ * The image is 889112 bytes and ends at 0x080d9118, so sector 10 is
+ * half used and sector 11 is the only way back into the board.  What is
+ * spare is the TAIL of sector 10 -- and it has never been written, so
+ * it is still erased.
+ *
+ * That turns out to suit the job better than a sector would.  Flash
+ * programming turns ones into zeroes, so appending to erased flash needs
+ * no erase: no sector-erase driver, no wear levelling, and no window
+ * where a power cut leaves the store erased instead of old.  The only
+ * thing that erases this region is a reflash, which rewrites /lib/radio
+ * anyway.  So the store is an APPEND-ONLY LOG that is never erased, and
+ * a reader takes the last entry for a uid.
+ *
+ * The base is fixed rather than taken from a linker symbol, because a
+ * symbol would move with every build and a record written against one
+ * address would be unreadable by the next image.  The build is what
+ * stops the image growing into it: the mkfile gives bin2ihex this
+ * address as its ceiling, so an image that would overlap the store fails
+ * to convert rather than overwriting it.  Both numbers are here and in
+ * the mkfile and each says to check the other.
+ */
+#define	CALBASE		0x080dc000
+#define	CALSIZE		(16*1024)
+
 #define	CONFNAME	"stm32f407"
 
 /*
