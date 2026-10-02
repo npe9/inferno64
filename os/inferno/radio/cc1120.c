@@ -106,6 +106,7 @@ enum {
 	  Agccfg0init	= 0xcf,
 	Ragcgainadjust	= 0x19,		/* the RSSI offset */
 	Rpktcfg2	= 0x26,
+	  Ccamode	= 7<<2,		/* PKT_CFG2.CCA_MODE */
 	  Fmtnormal	= 0x04,		/* CCA_MODE 001, PKT_FORMAT 00 */
 	  Fmtrandom	= 0x06,		/* PKT_FORMAT 10: random data, TX only */
 	  Fmttransparent = 0x07,	/* PKT_FORMAT 11: the bits, on a pin */
@@ -671,6 +672,44 @@ cc1120send(Radio *r, uchar *p, int n)
 		poperror();
 		qunlock(&rr->qlock);
 		return -1;
+	}
+	/*
+	 * AND RX, WHICH IS A BUSY CHANNEL AND WAS BEING COUNTED AS SENT.
+	 *
+	 * SWRU295E 6.11: "when an STX or SFSTXON command strobe is given
+	 * while CC112X is in the RX state, the TX or FSTXON state is only
+	 * entered if the clear channel requirements are fulfilled
+	 * (CCA_STATUS is asserted).  Otherwise, the chip will remain in
+	 * RX."  So TX on CCA is not a feature this driver turns on -- it
+	 * is what happens to every transmit, because PKT_CFG2's CCA_MODE
+	 * is 001 in the table above, which is "clear channel when RSSI is
+	 * below threshold", and this driver strobes STX from RX.
+	 *
+	 * A refused transmit therefore leaves the part in RX, and the
+	 * check above lets it through: the packet was staged, the strobe
+	 * was given, nothing went on the air and nsent counted it.  The
+	 * same bug as the CALIBRATE one above and found the same way,
+	 * from the datasheet rather than from a symptom.
+	 *
+	 * 1 is RX and is distinguishable from both 2 (TX, silicon
+	 * working) and 0 (IDLE, which is what the qemu model shows
+	 * because it transmits inside the strobe), so this costs the
+	 * model nothing.
+	 *
+	 * MARC_STATUS1 agrees independently when it is read: 0x0b is
+	 * "TX ON CCA failed.  A TX strobe was ignored due to a busy
+	 * channel."  It is in txmarc and the stat file prints it.
+	 *
+	 * A busy channel is not an error the way a crippled synthesiser
+	 * is -- it is the ordinary thing a shared channel does -- so it
+	 * has its own counter and its own errstr, and a caller that
+	 * wants to retry can tell the two apart.
+	 */
+	if(rr->txtrace[4] == (Strx >> 4)){
+		rr->nccabusy++;
+		poperror();
+		qunlock(&rr->qlock);
+		error("radio: channel busy");
 	}
 
 	rr->nsent++;
@@ -1532,6 +1571,53 @@ cc1120ctl(Radio *r, char *buf, int n)
 			error(Ebadctl);
 		for(i = 0; i < secs*1000/Dwellms; i++)
 			dwell1(rr, "watch", Dwellms);
+		return n;
+	}
+	if(strcmp(f[0], "cca") == 0 && nf == 2){
+		/*
+		 * What this part calls a clear channel, in PKT_CFG2's
+		 * CCA_MODE.
+		 *
+		 * It is a verb because it is the control for a
+		 * measurement and not because anybody wants to tune it.
+		 * Every transmit here already goes through carrier sense
+		 * -- SWRU295E 6.11, an STX from RX reaches TX only if
+		 * CCA_STATUS is asserted, and the table's CCA_MODE is
+		 * 001 -- so "how much does carrier sense cost, and what
+		 * does it save" cannot be asked without being able to
+		 * turn it off.  "cca off" is mode 000, always clear,
+		 * which is a transmitter that talks over anybody.
+		 *
+		 *	cca off		000, always a clear channel
+		 *	cca rssi	001, clear when RSSI is below csthr
+		 *	cca rx		010, clear unless receiving a packet
+		 *	cca both	011, both of those
+		 *	cca 0..4	the mode by number
+		 *
+		 * 100 is the ETSI listen-before-talk mode, which has
+		 * timing requirements this driver does not implement, so
+		 * it is reachable by number and not by name.
+		 */
+		int m;
+
+		if(strcmp(f[1], "off") == 0)
+			m = 0;
+		else if(strcmp(f[1], "rssi") == 0)
+			m = 1;
+		else if(strcmp(f[1], "rx") == 0)
+			m = 2;
+		else if(strcmp(f[1], "both") == 0)
+			m = 3;
+		else{
+			m = atoi(f[1]);
+			if(m < 0 || m > 4)
+				error("radio: CCA_MODE is 0 to 4; see cca");
+		}
+		s->lock(s);
+		wr(rr, Rpktcfg2, (rd(rr, Rpktcfg2) & ~Ccamode) | (m << 2));
+		m = (rd(rr, Rpktcfg2) >> 2) & 7;
+		s->unlock(s);
+		print("cca %d\n", m);
 		return n;
 	}
 	if(strcmp(f[0], "csthr") == 0 && nf == 2){
@@ -3036,6 +3122,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"crcerr %ud toobig %ud txtimeout %ud\n"
 		"rxoverflow %ud txunderflow %ud txnever %ud\n"
 		"intr high %ud low %ud\n"
+		"ccabusy %ud ccamode %d\n"
 		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n"
 		"ppb %d\n",
 		rr->partnum, rr->partversion,
@@ -3053,6 +3140,7 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->ncrcerr, rr->ntoobig, rr->ntxtimeout,
 		rr->nrxoverflow, rr->ntxunderflow, rr->ntxnever,
 		rr->nintrhigh, rr->nintrlow,
+		rr->nccabusy, (rd(rr, Rpktcfg2) >> 2) & 7,
 		pacfg2, pacfg2 & Papowerramp,
 		patenths/10, patenths < 0? -patenths%10: patenths%10,
 		/*

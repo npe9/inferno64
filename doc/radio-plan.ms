@@ -5856,3 +5856,67 @@ neither source was reported as found with every figure absent \- which is
 a calibrated board with no calibration.  It is a found flag now.  The
 control that caught it is the one that asks what happens for a uid
 nothing has heard of.
+.PP
+.B "Every transmit here has always gone through carrier sense, and a refusal was counted as a send."
+SWRU295E 6.11: "when an STX or SFSTXON command strobe is given while
+CC112X is in the RX state, the TX or FSTXON state is only entered if the
+clear channel requirements are fulfilled (CCA_STATUS is asserted).
+Otherwise, the chip will remain in RX."  This driver's table sets
+.B PKT_CFG2 's
+CCA_MODE to 001, clear when RSSI is below the carrier sense threshold,
+and
+.CW cc1120send ()
+strobes STX from RX.
+.B "So TX on CCA is not a feature anybody turned on here: it is what every transmit has been doing."
+.PP
+And a refused transmit leaves the part in RX, which the send path let
+through: the packet was staged, the strobe was given, nothing went on the
+air, and
+.B sent
+counted it.
+.B "The same bug as the CALIBRATE one, in the same place, found the same way"
+\- from the datasheet rather than from a symptom.  1 is RX and is
+distinguishable from 2, which is silicon transmitting, and from 0, which
+is the qemu model that transmits inside the strobe; so the check costs
+the model nothing and
+.I twoboards.sh
+still passes both halves.  A busy channel is the ordinary thing a shared
+channel does rather than a fault, so it has its own counter,
+.B ccabusy
+in the stat file, and its own errstr, and a caller that wants to retry can
+tell it from a crippled synthesiser.
+.PP
+A
+.B cca
+verb sets CCA_MODE, and it exists as the control for a measurement rather
+than as something to tune:
+.B "how much carrier sense costs cannot be asked without being able to turn it off."
+.CW "cca off"
+is mode 000, always clear, a transmitter that talks over anybody.
+.PP
+.B "Measured, and it refuses nothing on this bench."
+.DS
+.CW "cca rssi  mode 1   40 of 40 radiated arrived, 0 deferred"
+.CW "cca off   mode 0   40 of 40 radiated arrived, 0 deferred"
+.DE
+twenty from each board in each mode, interleaved.
+.B "And this test does not contend, which is its limit and not its result."
+.I Twoboard 's
+.CW read ()
+brackets every line with liveness marks, so each
+.B txtest
+is some twenty seconds after the last and the channel is quiet between
+them.  What it measures is a transmitter with the channel to itself, in
+both modes, which is the control.
+.PP
+So it does not settle whether this afternoon's UI-mode loss was refused
+transmits.
+.B "That wants both boards transmitting on their own clocks with no host pacing,"
+which is
+.I os/inferno/init/armv7max25.b
+with no
+.B role
+in its entry, and
+.B ccabusy
+is what would report it.  Until that is run, the UI-mode loss has one
+explanation fewer than it did and no new one.

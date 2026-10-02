@@ -73,6 +73,14 @@ struct Cc1120
 	 */
 	u32	nintrhigh;		/* edge taken with the pin high */
 	u32	nintrlow;		/* edge taken with the pin low */
+	/*
+	 * Transmits the part refused because the channel was busy.
+	 * SWRU295E 6.11: an STX from RX only reaches TX if CCA says the
+	 * channel is clear, and this driver's CCA_MODE is 001 -- so
+	 * every transmit goes through carrier sense whether anybody
+	 * asked for it or not, and a refusal leaves the part in RX.
+	 */
+	u32	nccabusy;
 	uchar	rxstatus[2];		/* the two bytes APPEND_STATUS adds */
 
 	QLock	qlock;			/* one user of the part at a time */

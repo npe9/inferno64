@@ -108,7 +108,7 @@ extern Inst _dis_seq_dis[];
 extern Type* _dis_seq_distype[];
 
 static Xipmod tab[] = {
-	{ "/osinit.dis", 715, 85, _osinit_dis, 3, _osinit_distype },
+	{ "/osinit.dis", 8281, 1016, _osinit_dis, 22, _osinit_distype },
 	{ "/dis/sh.dis", 41629, 6111, _dis_sh_dis, 118, _dis_sh_distype },
 	{ "/dis/sh/std.dis", 13431, 1967, _dis_sh_std_dis, 43, _dis_sh_std_distype },
 	{ "/dis/lil.dis", 13317, 2113, _dis_lil_dis, 23, _dis_lil_distype },
