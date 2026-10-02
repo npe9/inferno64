@@ -327,11 +327,50 @@ ptesplit(uintptr* table, uintptr va)
 	invlpg(va);
 }
 
+/*
+ * Every processor has its own PML4, but the kernel's mappings below it
+ * are one set of tables: mpstartap copies the bootstrap processor's
+ * PML4 entries into each AP's.  A mapping made after that -- a vmap()
+ * of a BAR the firmware put above 512 GiB, as edk2 does with a 64-bit
+ * BAR behind a PCIe root port, at 0xc000000000 -- needs a new PML4
+ * entry, and if it is made only in the PML4 of the processor that
+ * happened to call vmap(), the others fault on it.  That is what a
+ * virtio 1.0 NIC behind a root port did on a four-processor q35: the
+ * attach ran on cpu1 and took a page fault at 0xc000000016.
+ *
+ * So the walk is done in processor 0's PML4, under a lock, and any
+ * top-level entry it creates is copied into every other started
+ * processor's.  The entries are never removed, so creation is the only
+ * event to propagate.
+ *
+ * The lock is not taken until conf.mem is built.  Before that,
+ * rampage() makes page-table pages by calling pmap() itself, which
+ * would deadlock on the lock; and before that only processor 0 runs.
+ */
+static Lock pmaplock;
+
+static void
+pml4sync(uintptr pa)
+{
+	uintptr *pml4, e;
+	int i, x;
+
+	x = PTLX(pa, 3);
+	e = MACHP(0)->pml4[x];
+	for(i = 1; i < MAXMACH; i++){
+		if(MACHP(i) == nil || (pml4 = MACHP(i)->pml4) == nil)
+			continue;
+		if(pml4[x] != e)
+			pml4[x] = e;
+	}
+}
+
 void
 pmap(uintptr pa, u64 flags, s64 size)
 {
 	uintptr *pte, *ptee;
 	s32 z, l;
+	int locked;
 
 	if(size <= 0)
 		panic("pmap: pa=%#zux size=%lld", pa, size);
@@ -339,14 +378,20 @@ pmap(uintptr pa, u64 flags, s64 size)
 		pa, (uintptr)pa+size, flags, size, size);
 	pa = PPN(pa);
 	DP("\tpa 0x%zux\n", pa);
+	locked = conf.mem[0].npage != 0;
+	if(locked)
+		ilock(&pmaplock);
 	while(size > 0){
 		/* reducing complexity, use 4096 byte pages all through */
 		l = 0;
 		z = PGLSZ(0);
-		pte = mmuwalk(m->pml4, pa, l, 1);
+		pte = mmuwalk(MACHP(0)->pml4, pa, l, 1);
 		if(pte == nil){
+			if(locked)
+				iunlock(&pmaplock);
 			panic("pmap: pa=%#p size=%lld", pa, size);
 		}
+		pml4sync(pa);
 		ptee = pte + ptecount(pa, l);
 		while(size > 0 && pte < ptee){
 			*pte++ = pa | flags;
@@ -354,6 +399,8 @@ pmap(uintptr pa, u64 flags, s64 size)
 			size -= z;
 		}
 	}
+	if(locked)
+		iunlock(&pmaplock);
 }
 
 void

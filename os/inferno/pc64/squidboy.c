@@ -68,7 +68,12 @@ mpstartap(Apic* apic)
 	 * share the page tables across all processors except for pml4
 	 * they should be static at this point
 	 */
-	for(i=0; i<BY2PG/8; i+=8){
+	/*
+	 * Every entry: this loop used to step by eight, so an AP had
+	 * only PML4 slots 0, 8, 16, ... of the bootstrap processor's,
+	 * and a mapping in slot 1 (512 GiB to 1 TiB) was not there.
+	 */
+	for(i=0; i<PTSZ/sizeof(uintptr); i++){
 		pml4[i] = MACHP(0)->pml4[i];
 		if(pml4[i] != 0)
 			DP("mpstartap i %d pml4[i] 0x%p MACHP(0)->pml4[i] 0x%p\n",
