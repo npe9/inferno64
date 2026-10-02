@@ -94,7 +94,48 @@ struct Vmops
 	void	(*gpfree)(Vm*);
 	void	(*gpmap)(Vm*, uvlong gpa, uvlong hpa, uvlong len, int prot);
 	char*	(*info)(char*, char*);	/* capability summary for #H/vm/backend */
+
+	/* events, delivered at the next entry */
+	void	(*inject)(Vcpu*, int type, int vec, int haserr, u32int err);
+	int	(*canintr)(Vcpu*);	/* an external interrupt would be taken now */
+	void	(*irqwin)(Vcpu*, int);	/* exit (VxIntrwin) once it would be */
+
+	/*
+	 * MSRs whose state the processor switches with the guest:
+	 * EFER, PAT, FS and GS base, the syscall and sysenter MSRs.
+	 * -1 if msr is not one of the backend's.
+	 */
+	int	(*rdmsr)(Vcpu*, u32int msr, uvlong*);
+	int	(*wrmsr)(Vcpu*, u32int msr, uvlong);
 };
+
+enum {
+	/* inject type */
+	VeIntr	= 0,	/* external interrupt */
+	VeNmi	= 2,
+	VeExc	= 3,	/* hardware exception */
+
+	/* exceptions the platform raises */
+	VecUD	= 6,
+	VecGP	= 13,
+};
+
+/*
+ * The platform the guest sees -- for x86 the interrupt controllers,
+ * the console UART, CPUID and the MSRs that are not the processor's
+ * own -- lives below the portable layer (pc/vmplat.c), reached through
+ * these.  vmplatexit handles an exit in the kernel if it can and says
+ * whether it did; vmplatintr injects whatever interrupt is pending.
+ */
+void*	vmplatnew(Vm*);
+void	vmplatfree(Vm*);
+void	vmplathangup(Vm*);
+int	vmplatexit(Vcpu*, Vmexit*);
+void	vmplatintr(Vcpu*);
+int	vmplatctl(Vm*, int, char**);
+long	vmplatconsread(Vm*, void*, long);
+long	vmplatconswrite(Vm*, void*, long);
+char*	vmplatstatus(Vm*, char*, char*);
 
 enum {
 	/* gpmap prot */
@@ -131,6 +172,7 @@ struct Vcpu
 	Vmexit	exit;		/* the last one, for the exit file */
 	int	exitready;	/* exit holds one not yet read */
 	uvlong	nexit;		/* exits taken */
+	uvlong	nhandled;	/* of which the kernel handled */
 	uvlong	nkind[VxNkind];	/* and of each kind */
 
 	/* a request for the kproc to run on its own processor */
@@ -161,6 +203,7 @@ struct Vm
 	void	*memalloc;	/* what xalloc returned for it */
 	uvlong	memsize;
 	void	*gp;		/* the backend's nested page tables */
+	void	*plat;		/* the platform's devices (vmplat.c) */
 	int	nvcpu;
 	Vcpu	*vcpu[Maxvcpu];
 };

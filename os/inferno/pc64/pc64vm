@@ -105,6 +105,8 @@ link
 	audiohda	pci
 
 misc
+	vmplat
+	vmdev
 	pci		pcipc
 	archgeneric	devkbd i8259 i8253
 	archacpi	mp apic squidboy ec hpet

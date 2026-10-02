@@ -40,7 +40,6 @@ extern int vmwrite(u32int, uintptr);
 extern int invept(u32int, uvlong, uvlong);
 
 typedef struct Vmxregs Vmxregs;
-typedef struct Vmxcpu Vmxcpu;
 
 /*
  * The block vmlaunch() and vmrestore() in l.s read and write; the
@@ -54,6 +53,10 @@ struct Vmxregs
 };
 
 extern int vmlaunch(Vmxregs*, int);
+
+typedef struct Vmxcpu Vmxcpu;
+static int craccess(Vmxcpu*, uvlong);
+static void vmxinject(Vcpu*, int, int, int, u32int);
 extern void _clts(void);
 
 enum {
@@ -117,6 +120,16 @@ enum {
 	VMENTRY_LD_IA32_EFER = 1<<15,
 	VMENTRY_MSRLDCNT = 0x4014,
 	VMENTRY_INTRINFO = 0x4016,
+	VMENTRY_INTRCODE = 0x4018,
+	VMENTRY_INTRILEN = 0x401a,
+	VMEXIT_MSRSTADDR = 0x2006,
+	VMEXIT_MSRLDADDR = 0x2008,
+	VMENTRY_MSRLDADDR = 0x200A,
+	GUEST_SYSENTER_CS = 0x482A,
+	GUEST_SYSENTER_ESP = 0x6824,
+	GUEST_SYSENTER_EIP = 0x6826,
+	VM_IDTVECINFO = 0x4408,
+	VM_IDTVECCODE = 0x440A,
 
 	VMCS_LINK = 0x2800,
 
@@ -207,10 +220,15 @@ enum {
 	INVEPTALL = 2,
 
 	CR0PE = 1<<0,
+	CR0TS = 1<<3,
 	CR0NE = 1<<5,
 	CR0PG = 1<<31,
 	CR4VMXE = 1<<13,
+	EFERLME = 1<<8,
 	EFERLMA = 1<<10,
+
+	/* the MSRs switched through the VMCS MSR lists */
+	Nmsrlist = 5,
 
 	/* EPT leaf: read, write, execute, memory type WB, ignore PAT */
 	EptR = 1<<0,
@@ -226,9 +244,19 @@ struct Vmxcpu
 	FPsave	*fp;		/* guest floating point, 64-byte aligned */
 	Vmxregs	regs;
 	uintptr	cr2;
-	u32int	entryctls;
 	int	launched;
 	int	flushept;
+	u64int	*msrguest;	/* Nmsrlist (index, value) pairs, 16-byte aligned */
+	u64int	*msrhost;
+};
+
+/* the syscall MSRs: switched by the lists, never by a VMCS field */
+static u32int listmsr[Nmsrlist] = {
+	0xC0000081,	/* STAR */
+	0xC0000082,	/* LSTAR */
+	0xC0000083,	/* CSTAR */
+	0xC0000084,	/* SFMASK */
+	0xC0000102,	/* KERNEL_GS_BASE */
 };
 
 static int vmxrev;		/* VMCS revision identifier */
@@ -439,11 +467,13 @@ vmcsinit(Vcpu *v, Vmxcpu *x)
 	vmcswrite(PROCB_CTLS, procctls);
 	vmcswrite(PROCB_CTLS2, procctls2);
 	vmcswrite(VMEXIT_CTLS, exitctls);
-	x->entryctls = entryctls & ~VMENTRY_GUEST64;
-	vmcswrite(VMENTRY_CTLS, x->entryctls);
-	vmcswrite(VMEXIT_MSRSTCNT, 0);
-	vmcswrite(VMEXIT_MSRLDCNT, 0);
-	vmcswrite(VMENTRY_MSRLDCNT, 0);
+	vmcswrite(VMENTRY_CTLS, entryctls & ~VMENTRY_GUEST64);
+	vmcswrite(VMENTRY_MSRLDADDR, PADDR(x->msrguest));
+	vmcswrite(VMEXIT_MSRSTADDR, PADDR(x->msrguest));
+	vmcswrite(VMEXIT_MSRLDADDR, PADDR(x->msrhost));
+	vmcswrite(VMENTRY_MSRLDCNT, Nmsrlist);
+	vmcswrite(VMEXIT_MSRSTCNT, Nmsrlist);
+	vmcswrite(VMEXIT_MSRLDCNT, Nmsrlist);
 	vmcswrite(CR3_TARGCNT, 0);
 	vmcswrite(VMENTRY_INTRINFO, 0);
 	vmcswrite(VMCS_LINK, ~0ULL);
@@ -549,7 +579,7 @@ static void
 vmxvcpuinit(Vcpu *v)
 {
 	Vmxcpu *x;
-	int s;
+	int s, i;
 
 	x = mallocz(sizeof *x, 1);
 	if(x == nil)
@@ -557,12 +587,23 @@ vmxvcpuinit(Vcpu *v)
 	x->vmcs = mallocalign(BY2PG, BY2PG, 0, 0);
 	x->msrbits = mallocalign(BY2PG, BY2PG, 0, 0);
 	x->fp = mallocalign(sizeof(FPsave), 64, 0, 0);
-	if(x->vmcs == nil || x->msrbits == nil || x->fp == nil){
+	x->msrguest = mallocalign(Nmsrlist*16, 16, 0, 0);
+	x->msrhost = mallocalign(Nmsrlist*16, 16, 0, 0);
+	if(x->vmcs == nil || x->msrbits == nil || x->fp == nil
+	|| x->msrguest == nil || x->msrhost == nil){
 		free(x->vmcs);
 		free(x->msrbits);
 		free(x->fp);
+		free(x->msrguest);
+		free(x->msrhost);
 		free(x);
 		error(Enomem);
+	}
+	for(i = 0; i < Nmsrlist; i++){
+		x->msrguest[2*i] = listmsr[i];
+		x->msrguest[2*i+1] = 0;
+		x->msrhost[2*i] = listmsr[i];
+		x->msrhost[2*i+1] = rdmsrv(listmsr[i]);
 	}
 	memset(x->vmcs, 0, BY2PG);
 	memset(x->fp, 0, sizeof(FPsave));
@@ -595,6 +636,8 @@ vmxvcpufree(Vcpu *v)
 	free(x->vmcs);
 	free(x->msrbits);
 	free(x->fp);
+	free(x->msrguest);
+	free(x->msrhost);
 	free(x);
 }
 
@@ -692,6 +735,7 @@ vmxrun(Vcpu *v, Vmexit *e)
 
 	x = v->arch;
 	vmxload(x);
+Again:
 	if(x->flushept){
 		if(invept(INVEPTSINGLE, eptp(v->vm), 0) < 0
 		&& invept(INVEPTALL, 0, 0) < 0)
@@ -720,6 +764,276 @@ vmxrun(Vcpu *v, Vmexit *e)
 	}
 	x->launched = 1;
 	decode(v, e);
+
+	/*
+	 * An exit taken while an event was being delivered -- an
+	 * interrupt whose IDT entry or stack faulted in EPT, say -- must
+	 * deliver it again at the next entry.
+	 */
+	if(e->kind != VxEntryfail){
+		u32int info;
+
+		info = vmcsread(VM_IDTVECINFO);
+		if(info & 1<<31){
+			vmcswrite(VMENTRY_INTRINFO, info & ~(1<<12));
+			if(info & 1<<11)
+				vmcswrite(VMENTRY_INTRCODE, vmcsread(VM_IDTVECCODE));
+			if(((info >> 8) & 7) >= 4)
+				vmcswrite(VMENTRY_INTRILEN, vmcsread(VM_EXINSTRLEN));
+		}
+	}
+
+	/* control-register accesses are the backend's own business */
+	if(e->kind == VxOther && (e->raw & 0xFFFF) == 28){
+		if(craccess(x, e->qual))
+			vmcswrite(GUEST_RIP, e->rip + e->ilen);
+		else
+			vmxinject(v, VeExc, VecGP, 1, 0);
+		memset(e, 0, sizeof *e);
+		goto Again;
+	}
+}
+
+/*
+ * EFER and the IA-32e-mode-guest entry control must agree.  The
+ * control is read back from the VMCS rather than kept here: a VM exit
+ * writes EFER.LMA into it, so a cached copy goes stale the first time
+ * the guest enters long mode on its own.
+ */
+static void
+setefer(uvlong val)
+{
+	uvlong c;
+
+	vmcswrite(GUEST_IA32_EFER, val);
+	c = vmcsread(VMENTRY_CTLS);
+	if(val & EFERLMA)
+		c |= VMENTRY_GUEST64;
+	else
+		c &= ~VMENTRY_GUEST64;
+	vmcswrite(VMENTRY_CTLS, c);
+}
+
+/* a general register by its number in an instruction encoding */
+static uvlong
+gprn(Vmxcpu *x, int n)
+{
+	switch(n){
+	case 0: return x->regs.ax;
+	case 1: return x->regs.cx;
+	case 2: return x->regs.dx;
+	case 3: return x->regs.bx;
+	case 4: return vmcsread(GUEST_RSP);
+	case 5: return x->regs.bp;
+	case 6: return x->regs.si;
+	case 7: return x->regs.di;
+	case 8: return x->regs.r8;
+	case 9: return x->regs.r9;
+	case 10: return x->regs.r10;
+	case 11: return x->regs.r11;
+	case 12: return x->regs.r12;
+	case 13: return x->regs.r13;
+	case 14: return x->regs.r14;
+	case 15: return x->regs.r15;
+	}
+	return 0;
+}
+
+static void
+setgprn(Vmxcpu *x, int n, uvlong v)
+{
+	u64int *p;
+
+	switch(n){
+	case 0: p = &x->regs.ax; break;
+	case 1: p = &x->regs.cx; break;
+	case 2: p = &x->regs.dx; break;
+	case 3: p = &x->regs.bx; break;
+	case 4: vmcswrite(GUEST_RSP, v); return;
+	case 5: p = &x->regs.bp; break;
+	case 6: p = &x->regs.si; break;
+	case 7: p = &x->regs.di; break;
+	case 8: p = &x->regs.r8; break;
+	case 9: p = &x->regs.r9; break;
+	case 10: p = &x->regs.r10; break;
+	case 11: p = &x->regs.r11; break;
+	case 12: p = &x->regs.r12; break;
+	case 13: p = &x->regs.r13; break;
+	case 14: p = &x->regs.r14; break;
+	default: p = &x->regs.r15; break;
+	}
+	*p = v;
+}
+
+static void
+vmxinject(Vcpu *v, int type, int vec, int haserr, u32int err)
+{
+	vmxload(v->arch);
+	vmcswrite(VMENTRY_INTRINFO, 1<<31 | (haserr ? 1<<11 : 0) | (type & 7)<<8 | (vec & 0xFF));
+	if(haserr)
+		vmcswrite(VMENTRY_INTRCODE, err);
+}
+
+static int
+vmxcanintr(Vcpu *v)
+{
+	vmxload(v->arch);
+	return (vmcsread(GUEST_RFLAGS) & 1<<9) != 0
+		&& (vmcsread(GUEST_CANINTR) & 3) == 0
+		&& (vmcsread(VMENTRY_INTRINFO) & 1<<31) == 0;
+}
+
+static void
+vmxirqwin(Vcpu *v, int on)
+{
+	uvlong c;
+
+	vmxload(v->arch);
+	c = vmcsread(PROCB_CTLS);
+	if(on)
+		c |= PROCB_IRQWIN;
+	else
+		c &= ~PROCB_IRQWIN;
+	vmcswrite(PROCB_CTLS, c);
+}
+
+/* the CR0 the guest sees, and a write of it */
+static uvlong
+cr0read(void)
+{
+	uvlong mask;
+
+	mask = vmcsread(GUEST_CR0MASK);
+	return vmcsread(GUEST_CR0) & ~mask | vmcsread(GUEST_CR0SHADOW) & mask;
+}
+
+static void
+cr0write(uvlong val)
+{
+	uvlong old, efer;
+
+	old = cr0read();
+	vmcswrite(GUEST_CR0SHADOW, val);
+	vmcswrite(GUEST_CR0, val | (cr0fixed0 & ~(uvlong)(CR0PE|CR0PG)));
+	/*
+	 * Paging turned on with EFER.LME set enters IA-32e mode: the
+	 * write that does it is this one when it exited, so the mode
+	 * switch is done here as the processor would have done it.
+	 */
+	efer = vmcsread(GUEST_IA32_EFER);
+	if((old & CR0PG) == 0 && (val & CR0PG) != 0 && (efer & EFERLME) != 0)
+		setefer(efer | EFERLMA);
+	else if((old & CR0PG) != 0 && (val & CR0PG) == 0)
+		setefer(efer & ~(uvlong)EFERLMA);
+}
+
+/*
+ * Exit reason 28: a MOV to or from CR0, CR3 or CR4 that touched a bit
+ * the host owns, CLTS or LMSW.  Emulated here; returns 0 when the
+ * guest gets #GP instead.
+ */
+static int
+craccess(Vmxcpu *x, uvlong q)
+{
+	int cr, type, r;
+	uvlong val;
+
+	cr = q & 15;
+	type = (q >> 4) & 3;
+	r = (q >> 8) & 15;
+	switch(type){
+	case 0:		/* mov to cr */
+		val = gprn(x, r);
+		switch(cr){
+		case 0:
+			if((val & ~(uvlong)cr0fixed1 & ~(uvlong)(CR0PE|CR0PG|CR0NE)) != 0)
+				return 0;
+			cr0write(val);
+			return 1;
+		case 3:
+			vmcswrite(GUEST_CR3, val);
+			return 1;
+		case 4:
+			if((val & ~cr4fixed1 & ~(uvlong)CR4VMXE) != 0 || (val & CR4VMXE) != 0)
+				return 0;
+			vmcswrite(GUEST_CR4SHADOW, val);
+			vmcswrite(GUEST_CR4, val | cr4fixed0);
+			return 1;
+		}
+		return 0;
+	case 1:		/* mov from cr */
+		switch(cr){
+		case 0: val = cr0read(); break;
+		case 3: val = vmcsread(GUEST_CR3); break;
+		case 4: val = vmcsread(GUEST_CR4SHADOW) & vmcsread(GUEST_CR4MASK)
+			| vmcsread(GUEST_CR4) & ~vmcsread(GUEST_CR4MASK); break;
+		default: return 0;
+		}
+		setgprn(x, r, val);
+		return 1;
+	case 2:		/* clts */
+		cr0write(cr0read() & ~(uvlong)CR0TS);
+		return 1;
+	case 3:		/* lmsw: the low four bits, and PE is never cleared */
+		val = (q >> 16) & 0xF;
+		cr0write(cr0read() & ~0xEULL | val | (cr0read() & CR0PE));
+		return 1;
+	}
+	return 0;
+}
+
+static int
+vmxrdmsr(Vcpu *v, u32int msr, uvlong *val)
+{
+	Vmxcpu *x;
+	int i;
+
+	x = v->arch;
+	vmxload(x);
+	switch(msr){
+	case Efer: *val = vmcsread(GUEST_IA32_EFER); return 0;
+	case PAT_MSR: *val = vmcsread(GUEST_IA32_PAT); return 0;
+	case FSbase: *val = vmcsread(GUEST_FSBASE); return 0;
+	case GSbase: *val = vmcsread(GUEST_GSBASE); return 0;
+	case 0x174: *val = vmcsread(GUEST_SYSENTER_CS); return 0;
+	case 0x175: *val = vmcsread(GUEST_SYSENTER_ESP); return 0;
+	case 0x176: *val = vmcsread(GUEST_SYSENTER_EIP); return 0;
+	}
+	for(i = 0; i < Nmsrlist; i++)
+		if(listmsr[i] == msr){
+			*val = x->msrguest[2*i+1];
+			return 0;
+		}
+	return -1;
+}
+
+static int
+vmxwrmsr(Vcpu *v, u32int msr, uvlong val)
+{
+	Vmxcpu *x;
+	int i;
+
+	x = v->arch;
+	vmxload(x);
+	switch(msr){
+	case Efer:
+		/* LMA is the processor's to set; keep the guest's value of it */
+		val = val & ~(uvlong)EFERLMA | vmcsread(GUEST_IA32_EFER) & EFERLMA;
+		setefer(val);
+		return 0;
+	case PAT_MSR: vmcswrite(GUEST_IA32_PAT, val); return 0;
+	case FSbase: vmcswrite(GUEST_FSBASE, val); return 0;
+	case GSbase: vmcswrite(GUEST_GSBASE, val); return 0;
+	case 0x174: vmcswrite(GUEST_SYSENTER_CS, val); return 0;
+	case 0x175: vmcswrite(GUEST_SYSENTER_ESP, val); return 0;
+	case 0x176: vmcswrite(GUEST_SYSENTER_EIP, val); return 0;
+	}
+	for(i = 0; i < Nmsrlist; i++)
+		if(listmsr[i] == msr){
+			x->msrguest[2*i+1] = val;
+			return 0;
+		}
+	return -1;
 }
 
 static u32int segfield[][4] = {	/* selector, base, limit, access rights */
@@ -823,13 +1137,7 @@ vmxsetreg(Vcpu *v, int r, uvlong val)
 		vmcswrite(GUEST_CR4, val | cr4fixed0);
 		return;
 	case VEfer:
-		vmcswrite(GUEST_IA32_EFER, val);
-		/* IA-32e mode guest must agree with EFER.LMA */
-		if(val & EFERLMA)
-			x->entryctls |= VMENTRY_GUEST64;
-		else
-			x->entryctls &= ~VMENTRY_GUEST64;
-		vmcswrite(VMENTRY_CTLS, x->entryctls);
+		setefer(val);
 		return;
 	case VGdtrbase: vmcswrite(GUEST_GDTRBASE, val); return;
 	case VGdtrlimit: vmcswrite(GUEST_GDTRLIMIT, val); return;
@@ -928,6 +1236,11 @@ static Vmops vmxops = {
 	vmxgpfree,
 	vmxgpmap,
 	vmxinfo,
+	vmxinject,
+	vmxcanintr,
+	vmxirqwin,
+	vmxrdmsr,
+	vmxwrmsr,
 };
 
 void

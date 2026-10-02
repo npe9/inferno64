@@ -42,6 +42,7 @@ enum {
 	Qctl,
 	Qstatus,
 	Qmem,
+	Qconsole,
 	Qcpu,		/* vm/N/vcpuM */
 	Qcpuctl,
 	Qregs,
@@ -235,10 +236,26 @@ vcpuproc(void *a)
 		v->state = VcpuRunning;
 		for(;;){
 			memset(&e, 0, sizeof e);
+			vmplatintr(v);
 			vmops->run(v, &e);
 			v->nexit++;
 			if(e.kind >= 0 && e.kind < VxNkind)
 				v->nkind[e.kind]++;
+			/*
+			 * The platform -- interrupt controllers, console,
+			 * CPUID, MSRs, HLT -- is handled here, on the
+			 * vCPU's own processor, without a trip to Limbo.
+			 */
+			if(vmplatexit(v, &e)){
+				v->nhandled++;
+				if(v->stop || v->quit || v->cmd != nil){
+					memset(&e, 0, sizeof e);
+					e.kind = VxStopped;
+					e.rip = vmops->getreg(v, VRip);
+					break;
+				}
+				continue;
+			}
 			if(e.kind == VxExtint || e.kind == VxIntrwin){
 				/*
 				 * The host's own interrupt took the
@@ -411,6 +428,7 @@ newvm(void)
 	vm->id = i;
 	vm->ref = 1;
 	vmops->gpinit(vm);
+	vm->plat = vmplatnew(vm);
 	vmtab[i] = vm;
 	poperror();
 	qunlock(&vmtablk);
@@ -433,6 +451,7 @@ vmput(Vm *vm)
 		return;
 	for(i = 0; i < vm->nvcpu; i++)
 		free(vm->vcpu[i]);
+	vmplatfree(vm);
 	free(vm);
 }
 
@@ -470,6 +489,7 @@ killvm(Vm *vm)
 	}
 	vm->mem = nil;
 	vm->memsize = 0;
+	vmplathangup(vm);
 	qunlock(vm);
 	qlock(&vmtablk);
 	vmtab[vm->id] = nil;
@@ -591,8 +611,12 @@ vmgen(Chan *c, char *, Dirtab*, int, int s, Dir *dp)
 			q = (Qid){QPATH(id, 0, Qmem), 0, QTFILE};
 			devdir(c, q, "mem", vm->memsize, eve, 0660, dp);
 			return 1;
+		case 3:
+			q = (Qid){QPATH(id, 0, Qconsole), 0, QTFILE};
+			devdir(c, q, "console", 0, eve, 0660, dp);
+			return 1;
 		}
-		s -= 3;
+		s -= 4;
 		if(s >= vm->nvcpu)
 			return -1;
 		q = (Qid){QPATH(id, s, Qcpu), 0, QTDIR};
@@ -789,17 +813,21 @@ vmread(Chan *c, void *a, s32 n, s64 off)
 			p = seprint(p, e, "vcpu%d cpu %d state %s exits %llud%s%s\n", i, v->machno,
 				vcpustate[v->state], v->nexit,
 				v->state == VcpuDead ? " error " : "", v->state == VcpuDead ? v->err : "");
-			p = seprint(p, e, "vcpu%d exits", i);
+			p = seprint(p, e, "vcpu%d handled %llud exits", i, v->nhandled);
 			for(k = 0; k < VxNkind; k++)
 				if(v->nkind[k] != 0)
 					p = seprint(p, e, " %s %llud", xkindname[k], v->nkind[k]);
 			p = seprint(p, e, "\n");
 		}
+		p = vmplatstatus(vm, p, e);
 		USED(p);
 		r = readstr(off, a, n, buf);
 		poperror();
 		free(buf);
 		return r;
+	case Qconsole:
+		vm = chanvm(c);
+		return vmplatconsread(vm, a, n);
 	case Qmem:
 		vm = chanvm(c);
 		if(off < 0)
@@ -861,7 +889,7 @@ vmwrite(Chan *c, void *a, s32 n, s64 off)
 			setmem(vm, strtoull(cb->f[1], nil, 0));
 		else if(cb->nf == 1 && strcmp(cb->f[0], "kill") == 0)
 			killvm(vm);
-		else
+		else if(!vmplatctl(vm, cb->nf, cb->f))
 			error(Ebadctl);
 		poperror();
 		free(cb);
@@ -878,6 +906,9 @@ vmwrite(Chan *c, void *a, s32 n, s64 off)
 		memmove(vm->mem + off, a, n);
 		qunlock(vm);
 		return n;
+	case Qconsole:
+		vm = chanvm(c);
+		return vmplatconswrite(vm, a, n);
 	case Qcpuctl:
 		vm = chanvm(c);
 		v = getvcpu(vm, QCPU(c->qid));

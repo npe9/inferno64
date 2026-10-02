@@ -51,6 +51,7 @@ enum {
 	Msrpm		= 0x048,
 	Asid		= 0x058,
 	Tlbctl		= 0x05C,
+	Vintr		= 0x060,
 	Intshadow	= 0x068,
 	Exitcode	= 0x070,
 	Exitinfo1	= 0x078,
@@ -84,12 +85,21 @@ enum {
 	Srip		= 0x578,
 	Srsp		= 0x5D8,
 	Srax		= 0x5F8,
+	Sstar		= 0x600,
+	Slstar		= 0x608,
+	Scstar		= 0x610,
+	Ssfmask		= 0x618,
+	Skgsbase	= 0x620,
+	Ssyscs		= 0x628,
+	Ssysesp		= 0x630,
+	Ssyseip		= 0x638,
 	Scr2		= 0x640,
 	Sgpat		= 0x668,
 
 	/* vector 3 intercepts */
 	IntINTR		= 1<<0,
 	IntNMI		= 1<<1,
+	IntVINTR	= 1<<4,
 	IntCPUID	= 1<<18,
 	IntHLT		= 1<<24,
 	IntIOIO		= 1<<27,
@@ -372,6 +382,101 @@ decode(Svmcpu *x, Vmexit *e)
 }
 
 static void
+svminject(Vcpu *v, int type, int vec, int haserr, u32int err)
+{
+	Svmcpu *x;
+
+	x = v->arch;
+	V64(x, Eventinj) = (uvlong)err<<32 | 1ULL<<31 | (haserr ? 1<<11 : 0)
+		| (type & 7)<<8 | (vec & 0xFF);
+}
+
+static int
+svmcanintr(Vcpu *v)
+{
+	Svmcpu *x;
+
+	x = v->arch;
+	return (V64(x, Srflags) & 1<<9) != 0
+		&& (V64(x, Intshadow) & 1) == 0
+		&& (V64(x, Eventinj) & 1ULL<<31) == 0;
+}
+
+/*
+ * The interrupt window: a virtual interrupt request (V_IRQ, ignoring
+ * the virtual TPR) with VINTR intercepted exits as soon as the guest
+ * could take one.
+ */
+static void
+svmirqwin(Vcpu *v, int on)
+{
+	Svmcpu *x;
+
+	x = v->arch;
+	if(on){
+		V64(x, Vintr) |= 1<<8 | 1<<20;
+		V32(x, Ivec3) |= IntVINTR;
+	}else{
+		V64(x, Vintr) &= ~(uvlong)(1<<8 | 1<<20);
+		V32(x, Ivec3) &= ~IntVINTR;
+	}
+}
+
+static int
+svmmsroff(u32int msr)
+{
+	switch(msr){
+	case 0x277: return Sgpat;
+	case 0xC0000100: return Sfs+8;
+	case 0xC0000101: return Sgs+8;
+	case 0xC0000081: return Sstar;
+	case 0xC0000082: return Slstar;
+	case 0xC0000083: return Scstar;
+	case 0xC0000084: return Ssfmask;
+	case 0xC0000102: return Skgsbase;
+	case 0x174: return Ssyscs;
+	case 0x175: return Ssysesp;
+	case 0x176: return Ssyseip;
+	}
+	return -1;
+}
+
+static int
+svmrdmsr(Vcpu *v, u32int msr, uvlong *val)
+{
+	Svmcpu *x;
+	int o;
+
+	x = v->arch;
+	if(msr == Efer){
+		*val = V64(x, Sefer) & ~(uvlong)EferSVME;
+		return 0;
+	}
+	if((o = svmmsroff(msr)) < 0)
+		return -1;
+	*val = V64(x, o);
+	return 0;
+}
+
+static int
+svmwrmsr(Vcpu *v, u32int msr, uvlong val)
+{
+	Svmcpu *x;
+	int o;
+
+	x = v->arch;
+	if(msr == Efer){
+		/* LMA is the processor's; VMRUN wants SVME set */
+		V64(x, Sefer) = val & ~(uvlong)(1<<10) | V64(x, Sefer) & (1<<10) | EferSVME;
+		return 0;
+	}
+	if((o = svmmsroff(msr)) < 0)
+		return -1;
+	V64(x, o) = val;
+	return 0;
+}
+
+static void
 svmrunvcpu(Vcpu *v, Vmexit *e)
 {
 	Svmcpu *x;
@@ -386,7 +491,15 @@ svmrunvcpu(Vcpu *v, Vmexit *e)
 	_clts();
 	fpsave(x->fp);		/* leaves TS set */
 	splx(s);
+	V64(x, Eventinj) = 0;
 	decode(x, e);
+
+	/* an event cut short by the exit is delivered again */
+	if(V64(x, Exitintinfo) & 1ULL<<31)
+		V64(x, Eventinj) = V64(x, Exitintinfo);
+	/* the interrupt window, once open, has done its job */
+	if(e->kind == VxIntrwin)
+		svmirqwin(v, 0);
 }
 
 static int segoff[] = { Scs, Sds, Ses, Sfs, Sgs, Sss, Str, Sldtr };
@@ -577,6 +690,11 @@ static Vmops svmops = {
 	svmgpfree,
 	svmgpmap,
 	svminfo,
+	svminject,
+	svmcanintr,
+	svmirqwin,
+	svmrdmsr,
+	svmwrmsr,
 };
 
 void
