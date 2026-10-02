@@ -99,6 +99,9 @@ vmplathangup(Vm *vm)
 	if((p = PLAT(vm)) != nil){
 		p->hungup = 1;
 		wakeup(&p->consr);
+		qlock(&p->pcilk);
+		vmpcistop(p->pci);
+		qunlock(&p->pcilk);
 	}
 }
 
@@ -918,6 +921,17 @@ vmplatctl(Vm *vm, int nf, char **f)
 			nexterror();
 		}
 		vmpciassign(p->pci, f[1]);
+		poperror();
+		qunlock(&p->pcilk);
+		return 1;
+	}
+	if(nf == 3 && strcmp(f[0], "virtio") == 0){
+		qlock(&p->pcilk);
+		if(waserror()){
+			qunlock(&p->pcilk);
+			nexterror();
+		}
+		vmpcivirtio(p->pci, f[1], f[2]);
 		poperror();
 		qunlock(&p->pcilk);
 		return 1;

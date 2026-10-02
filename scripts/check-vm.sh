@@ -9,6 +9,13 @@
 #	M5	in the same run, the bench's virtio-serial function is
 #		assigned to the guest, whose own virtio_console driver
 #		writes through it to QEMU's chardev (.qemu/vmhost-hvc.log)
+#	M8	in the same run, a file in a Limbo memfs is the guest's
+#		virtio disk, served by the kernel's virtio-blk
+#		(pc/vmvirtio.c): the guest's virtio_blk reads the marker
+#		Limbo wrote and writes a sector Limbo reads back; and a
+#		bridge port on the bench's virtio NIC is the guest's
+#		virtio-net interface, on which it gets a DHCP lease from
+#		QEMU's user network
 #
 # Both run on QEMU's TCG, which emulates SVM and not VMX, so this
 # checks the SVM backend; the VMX backend is checked on Bochs
@@ -52,6 +59,25 @@ if grep -q 'hello-from-the-guest' "$ROOT/.qemu/vmhost-hvc.log" 2>/dev/null; then
 else
 	echo "check-vm: M5 (svm): FAIL -- the guest's virtio console output did not reach QEMU"
 	grep '^pci 00\|PCI-MSIX\|virtio' "$WORK/m2.log" | sort -u | sed 's/^/	/' | tail -8
+	fail=1
+fi
+if grep -q '^LINUXGUEST: disk vda 2048 sectors' "$WORK/m2.log" \
+&& grep -q '^LINUXGUEST: vda says INFERNO-VIRTIO-DISK' "$WORK/m2.log" \
+&& grep -q 'LINUXTEST: disk sector 1: guest-wrote-this' "$WORK/m2.log"; then	# Limbo's line can land mid-line, among vmlinux's
+	echo "check-vm: M8 disk (svm): pass"
+	grep 'virtio blk\|vda' "$WORK/m2.log" | grep -v 'echo\|then' | sort -u | sed 's/^/	/'
+else
+	echo "check-vm: M8 disk (svm): FAIL"
+	grep 'virtio\|vda\|LINUXTEST: disk' "$WORK/m2.log" | sort -u | sed 's/^/	/' | tail -8
+	fail=1
+fi
+if grep -q '^LINUXGUEST: dhcp udhcpc: lease of' "$WORK/m2.log" \
+&& grep -q '^LINUXGUEST: eth0 rx [0-9]* packets 0 length errors' "$WORK/m2.log"; then
+	echo "check-vm: M8 net (svm): pass"
+	grep '^LINUXGUEST: dhcp\|^LINUXGUEST: eth0\|virtio net' "$WORK/m2.log" | sort -u | sed 's/^/	/'
+else
+	echo "check-vm: M8 net (svm): FAIL"
+	grep 'LINUXGUEST: dhcp\|LINUXGUEST: eth0\|LINUXGUEST: net\|virtio net' "$WORK/m2.log" | sort -u | sed 's/^/	/' | tail -8
 	fail=1
 fi
 exit $fail

@@ -35,6 +35,8 @@ Shell:	con "LINUXGUEST: shell";	# what scripts/mklinuxguest.sh's /init prints
 typed: string;
 quitat: string;	# -q: stop once the console has shown this
 assign: list of string;	# -p: PCI functions given to the guest
+disks: list of string;	# -b: files given to the guest as virtio disks
+nets: list of string;	# -n: ether(3) devices the guest gets a virtio port on
 trace := 0;	# -d: vCPU heartbeat on the host's kernel console, seconds
 Zero:	con 16r7000;
 Cmdline:	con 16r20000;
@@ -44,7 +46,7 @@ stderr: ref Sys->FD;
 
 usage()
 {
-	sys->fprint(stderr, "usage: vmlinux [-m megabytes] [-a append] [-i initrd] [-s seconds] [-t typed] [-q pattern] [-p 0000:bb:dd.f]... bzImage\n");
+	sys->fprint(stderr, "usage: vmlinux [-m megabytes] [-a append] [-i initrd] [-s seconds] [-t typed] [-q pattern] [-p 0000:bb:dd.f]... [-b file]... [-n etherdir]... [-d seconds] bzImage\n");
 	raise "fail:usage";
 }
 
@@ -178,6 +180,8 @@ init(nil: ref Draw->Context, argv: list of string)
 		't' =>	typed = arg->earg() + "\n";
 		'q' =>	quitat = arg->earg();
 		'p' =>	assign = arg->earg() :: assign;
+		'b' =>	disks = arg->earg() :: disks;
+		'n' =>	nets = arg->earg() :: nets;
 		'd' =>	trace = int arg->earg();
 		* =>	usage();
 		}
@@ -225,6 +229,17 @@ init(nil: ref Draw->Context, argv: list of string)
 		if(sys->fprint(ctl, "assign %s", hd assign) < 0)
 			fail(sys->sprint("assign %s: %r", hd assign));
 		sys->print("vmlinux: assigned %s\n", hd assign);
+	}
+	# in the order given: the first is the guest's vda
+	for(disks = rev(disks); disks != nil; disks = tl disks){
+		if(sys->fprint(ctl, "virtio blk %s", hd disks) < 0)
+			fail(sys->sprint("virtio blk %s: %r", hd disks));
+		sys->print("vmlinux: virtio disk %s\n", hd disks);
+	}
+	for(nets = rev(nets); nets != nil; nets = tl nets){
+		if(sys->fprint(ctl, "virtio net %s", hd nets) < 0)
+			fail(sys->sprint("virtio net %s: %r", hd nets));
+		sys->print("vmlinux: virtio net on %s\n", hd nets);
 	}
 
 	tschz := big field(readall(dir + "/status"), "tschz");
@@ -363,10 +378,12 @@ console(dir: string, pidc: chan of int)
 	seen := "";
 	while((n := sys->read(fd, buf, len buf)) > 0){
 		sys->write(out, buf, n);
-		# -q: the run is over once the guest has said this
+		# -q: the run is over once the guest has said this, at the
+		# start of a line -- not where the console echoes a typed
+		# command that would print it
 		if(quitat != nil){
 			seen += string buf[0:n];
-			if(contains(seen, quitat)){
+			if(linestart(seen, quitat)){
 				quitat = nil;
 				sys->sleep(500);	# let the rest of the line out
 				cfd := sys->open(dir + "/vcpu0/ctl", Sys->OWRITE);
@@ -387,6 +404,22 @@ console(dir: string, pidc: chan of int)
 				tail = tail[len tail - 256:];
 		}
 	}
+}
+
+rev(l: list of string): list of string
+{
+	r: list of string;
+	for(; l != nil; l = tl l)
+		r = hd l :: r;
+	return r;
+}
+
+linestart(s, t: string): int
+{
+	for(i := 0; i + len t <= len s; i++)
+		if((i == 0 || s[i-1] == '\n') && s[i:i+len t] == t)
+			return 1;
+	return 0;
 }
 
 contains(s, t: string): int

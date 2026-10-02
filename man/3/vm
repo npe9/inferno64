@@ -55,12 +55,31 @@ a read gets all ones and a write is dropped; with
 .BI assign " 0000:bb:dd.f"
 Give the machine a PCI function (see BUGS for which).
 .TP
+.BI "virtio blk" " file"
+Give the machine a virtio disk (virtio 1.0, PCI transport) served by
+the kernel from
+.IR file ,
+resolved in the writer's namespace: read-write if it opens so,
+read-only otherwise; its size is the file's, in 512-byte sectors.
+.TP
+.BI "virtio net" " etherdir"
+Give the machine a virtio network interface on a new connection of the
+.IR ether (3)
+device
+.I etherdir
+opened as a bridge port (every type, promiscuous, bridge mode): the
+guest's frames go out with its own address, which the device learns,
+and frames for that address, broadcasts and multicasts come in.
+The address is 52:49:\fIvm\fP:\fIdev\fP:00:01.
+.TP
 .BI trace " seconds"
 While a vCPU runs, print on the host's console, at most every
 .I seconds
 (0 turns it off), its guest RIP, the reason of its last exit and its
 count of exits: a heartbeat for telling a guest that is busy from a
-host that has stopped.
+host that has stopped.  While any machine is traced, a vCPU that is
+running yet has taken no exit for three such periods has the host's
+processes, and where each sleeps, printed once.
 .TP
 .B kill
 Stop the machine and free its memory.  Open files then return

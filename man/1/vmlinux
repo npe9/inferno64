@@ -27,6 +27,12 @@ vmlinux \- boot Linux as a guest
 ] [
 .B -p
 .I 0000:bb:dd.f
+] ... [
+.B -b
+.I file
+] ... [
+.B -n
+.I etherdir
 ] ...
 .I bzImage
 .SH DESCRIPTION
@@ -54,6 +60,21 @@ the command line
 an initrd;
 .B -p
 assigns a PCI function, more than once for more;
+.B -b
+gives the guest
+.I file
+as a virtio disk (the first is its
+.BR vda ),
+and
+.B -n
+a virtio network interface on a bridge port of the
+.IR ether (3)
+device
+.I etherdir
+(such as
+.BR /net/ether1 ),
+each served by the kernel (see
+.IR vm (3));
 .B -t
 types
 .I line
@@ -61,7 +82,8 @@ once the console shows the guest's shell marker
 .RB ( "LINUXGUEST: shell" );
 .B -q
 stops the guest once the console shows
-.IR pattern ;
+.I pattern
+at the start of a line (so not in the echo of a typed command);
 .B -s
 stops it after
 .I seconds

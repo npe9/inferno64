@@ -40,6 +40,7 @@
 #include	"../port/vm.h"
 #include	"../port/iommu.h"
 #include	"vmpci.h"
+#include	"vmvirtio.h"
 
 typedef struct Vpci Vpci;
 typedef struct Vpcidev Vpcidev;
@@ -47,6 +48,7 @@ typedef struct Vmsix Vmsix;
 
 enum {
 	Ndevs		= 8,
+	Nvirt		= 8,
 	Nmsix		= 64,
 	Barbase		= 0xC0000000,	/* where guest BARs start */
 };
@@ -91,6 +93,9 @@ struct Vpci
 	u32int	cf8;
 	int	ndev;
 	Vpcidev	dev[Ndevs];
+	int	nvirt;
+	void	*virt[Nvirt];	/* the hypervisor's own functions (vmvirtio.c) */
+	int	nextdev;	/* the next device number on bus 0 */
 	uvlong	nextbar;
 	uvlong	nmsi;
 };
@@ -105,6 +110,7 @@ vmpcinew(Vm *vm)
 		error(Enomem);
 	pc->vm = vm;
 	pc->nextbar = Barbase;
+	pc->nextdev = 1;
 	return pc;
 }
 
@@ -119,6 +125,8 @@ vmpcifree(void *a)
 
 	if(pc == nil)
 		return;
+	for(i = 0; i < pc->nvirt; i++)
+		vvfree(pc->virt[i]);
 	for(i = 0; i < pc->ndev; i++){
 		d = &pc->dev[i];
 		for(j = 0; j < d->msixn; j++)
@@ -215,6 +223,8 @@ vmpciassign(void *arg, char *bdf)
 		error("give the machine memory before assigning a device");
 	if(pc->ndev >= Ndevs)
 		error("too many assigned devices");
+	if(pc->nextdev > 31)
+		error("guest PCI bus full");
 	s = strdup(bdf);
 	if(waserror()){
 		free(s);
@@ -238,7 +248,7 @@ vmpciassign(void *arg, char *bdf)
 	memset(d, 0, sizeof *d);
 	d->p = p;
 	d->vm = vm;
-	d->dev = pc->ndev + 1;
+	d->dev = pc->nextdev;
 	snprint(d->name, sizeof d->name, "vm%d.%T", vm->id, p->tbdf);
 
 	/* the BARs: same sizes, guest addresses chosen here */
@@ -293,7 +303,42 @@ vmpciassign(void *arg, char *bdf)
 	for(i = 0; i < 6; i++)
 		mapbar(d, i);
 	pc->ndev++;
+	pc->nextdev++;
 	print("vm%d: %T assigned as 00:%.2d.0\n", vm->id, p->tbdf, d->dev);
+}
+
+/* a virtio function of the hypervisor's own: "virtio blk /path" */
+void
+vmpcivirtio(void *arg, char *kind, char *path)
+{
+	Vpci *pc = arg;
+	uvlong a;
+
+	if(pc->vm->mem == nil)
+		error("give the machine memory before adding a device");
+	if(pc->nvirt >= Nvirt || pc->nextdev > 31)
+		error("too many virtio devices");
+	a = (pc->nextbar + Vvbarsize - 1) & ~(uvlong)(Vvbarsize - 1);
+	if(a + Vvbarsize > 0xFEC00000)
+		error("guest BAR space exhausted");
+	pc->virt[pc->nvirt] = vvnew(pc->vm, kind, path, pc->nextdev, a);
+	pc->nvirt++;
+	pc->nextdev++;
+	pc->nextbar = a + Vvbarsize;
+	print("vm%d: virtio %s %s as 00:%.2d.0\n", pc->vm->id, kind, path, pc->nextdev - 1);
+}
+
+/* stop whatever runs for the bus's devices; the guest's memory is going */
+void
+vmpcistop(void *arg)
+{
+	Vpci *pc = arg;
+	int i;
+
+	if(pc == nil)
+		return;
+	for(i = 0; i < pc->nvirt; i++)
+		vvstop(pc->virt[i]);
 }
 
 /* a config read of the host bridge: an Intel host bridge, and nothing else */
@@ -405,6 +450,7 @@ vmpciio(void *a, int port, int in, int size, u32int *val)
 {
 	Vpci *pc = a;
 	Vpcidev *d;
+	void *vv;
 	int bus, dev, fn, reg, sh, i;
 	u32int v, mask;
 
@@ -441,10 +487,22 @@ vmpciio(void *a, int port, int in, int size, u32int *val)
 	sh = 8 * (port - 0xCFC);
 	mask = (size == 4 ? 0xFFFFFFFF : (1 << 8*size) - 1) << sh;
 	d = nil;
-	if(bus == 0 && fn == 0)
+	vv = nil;
+	if(bus == 0 && fn == 0){
 		for(i = 0; i < pc->ndev; i++)
 			if(pc->dev[i].dev == dev)
 				d = &pc->dev[i];
+		for(i = 0; i < pc->nvirt; i++)
+			if(vvdev(pc->virt[i]) == dev)
+				vv = pc->virt[i];
+	}
+	if(vv != nil){
+		if(in)
+			*val = (vvcfgread(vv, reg) & mask) >> sh;
+		else
+			vvcfgwrite(vv, reg, *val << sh, mask);
+		return 1;
+	}
 	if(in){
 		if(bus != 0 || fn != 0)
 			v = 0xFFFFFFFF;
@@ -473,6 +531,9 @@ vmpcimmio(void *a, uvlong gpa, int size, int write, uvlong *val)
 	uchar *r;
 	int i, j, f;
 
+	for(i = 0; i < pc->nvirt; i++)
+		if(vvmmio(pc->virt[i], gpa, size, write, val))
+			return 1;
 	for(i = 0; i < pc->ndev; i++){
 		d = &pc->dev[i];
 		if(!d->msixcap || d->bar[d->tblbir].gpa == 0)
@@ -539,6 +600,8 @@ vmpcistatus(void *a, char *p, char *e)
 
 	if(pc == nil)
 		return p;
+	for(i = 0; i < pc->nvirt; i++)
+		p = vvstatus(pc->virt[i], p, e);
 	for(i = 0; i < pc->ndev; i++){
 		d = &pc->dev[i];
 		p = seprint(p, e, "pci 00:%.2d.0 is %T domain %d", d->dev, d->p->tbdf, d->dom->id);

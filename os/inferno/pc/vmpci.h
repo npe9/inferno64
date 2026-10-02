@@ -11,6 +11,8 @@
 void*	vmpcinew(Vm*);
 void	vmpcifree(void*);
 void	vmpciassign(void*, char *bdf);
+void	vmpcivirtio(void*, char *kind, char *path);
+void	vmpcistop(void*);
 int	vmpciio(void*, int port, int in, int size, u32int *val);
 int	vmpcimmio(void*, uvlong gpa, int size, int write, uvlong *val);
 char*	vmpcistatus(void*, char*, char*);

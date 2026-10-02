@@ -99,5 +99,16 @@ else
 	echo c >"$WORK/debugrc"
 fi
 rm -f "$B/serial.log"
-timeout "$SECS" "$BOCHS" -q -f "$WORK/bochsrc" -rc "$WORK/debugrc" >"$B/bochs.out" 2>&1 </dev/null || true
+# BOCHS_CMDS=1: the debugger also reads $WORK/cmds as it grows, and
+# -dbg makes SIGINT stop the machine into it rather than end Bochs:
+#	kill -INT <bochs pid>; echo r >>.bochs/work/cmds
+# An empty line repeats the last command, which may be "c".  Its output
+# goes to .bochs/bochs.out through a pty (script(1)), so that it is
+# line-buffered rather than held until a buffer fills.
+if [ -n "$BOCHS_CMDS" ]; then
+	: >"$WORK/cmds"
+	tail -f "$WORK/cmds" | timeout "$SECS" script -q -F "$B/bochs.out" "$BOCHS" -q -dbg -f "$WORK/bochsrc" -rc "$WORK/debugrc" >/dev/null 2>&1 || true
+else
+	timeout "$SECS" "$BOCHS" -q -f "$WORK/bochsrc" -rc "$WORK/debugrc" >"$B/bochs.out" 2>&1 </dev/null || true
+fi
 sed -e 's/\x1b\[[0-9;=]*[a-zA-Z]//g' -e 's/\r$//' "$B/serial.log" 2>/dev/null || true

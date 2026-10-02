@@ -139,7 +139,7 @@ run(g: int, dir, kernel, initrd: string, megs: int, secs: string, done: chan of 
 	args := "vmlinux" :: "-s" :: secs :: "-m" :: string megs :: "-q" :: "LINUXGUEST: ran" :: nil;
 	if(initrd != "")
 		args = append(args, "-i" :: initrd :: nil);
-	args = append(args, "-t" :: sys->sprint("echo LINUXGUEST: guest %d placed on %s; uname -sr; echo LINUXGUEST: ran", g, dir) :: kernel :: nil);
+	args = append(args, "-t" :: sys->sprint("echo LINUXGUEST: guest %d placed on %s; uname -sr; echo LINUXGUEST: \"r\"an", g, dir) :: kernel :: nil);
 	{
 		vmlinux->init(nil, args);
 		done <-= sys->sprint("guest %d on %s: finished", g, dir);

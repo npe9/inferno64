@@ -62,7 +62,7 @@ echo STYXVM: mounted
 ls /n/remote/dev/vm /n/remote/dev/iommu
 cat /n/remote/dev/vm/backend
 bind -a /n/remote/dev /dev
-vmlinux -s 1200 -m 256 -p 0000:05:00.0 -q 'LINUXGUEST: ran' -i /.guest/initramfs.cpio -t 'echo LINUXGUEST: typed over styx; uname -sr; echo hello-over-styx > /dev/hvc0; echo LINUXGUEST: ran' /.guest/vmlinuz-virt
+vmlinux -s 1200 -m 256 -p 0000:05:00.0 -q 'LINUXGUEST: ran' -i /.guest/initramfs.cpio -t 'echo LINUXGUEST: typed over styx; uname -sr; echo hello-over-styx > /dev/hvc0; echo LINUXGUEST: "r"an' /.guest/vmlinuz-virt
 echo STYXVM: done
 EOF
 timeout 1200 emu -r"$ROOT" /dis/sh.dis /tmp/styxvm-cli.sh >"$WORK/cli.log" 2>&1 || true

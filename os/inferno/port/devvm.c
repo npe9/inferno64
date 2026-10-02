@@ -206,6 +206,63 @@ heartbeat(Vcpu *v, Vmexit *e)
 	print("%s\n", buf);
 }
 
+/*
+ * While any machine is traced, a watchdog looks once a second for a
+ * running vCPU that has taken no exit in three trace periods -- whose
+ * kproc, then, is not running guest code -- and prints every process,
+ * where it sleeps, once per silence.  The heartbeat cannot report that
+ * case: it is printed by the kproc that has stopped.
+ */
+static Rendez watchr;
+static int watching;
+
+static void
+vmwatch(void*)
+{
+	Vm *vm;
+	Vcpu *v;
+	int i, j, any;
+	ulong ms;
+
+	for(;;){
+		tsleep(&watchr, return0, nil, 1000);
+		if(!canqlock(&vmtablk)){
+			print("vmwatch: vmtablk held\n");
+			continue;
+		}
+		any = 0;
+		for(i = 0; i < Nvm; i++){
+			if((vm = vmtab[i]) == nil || vm->trace <= 0)
+				continue;
+			any = 1;
+			for(j = 0; j < vm->nvcpu; j++){
+				v = vm->vcpu[j];
+				if(v->state != VcpuRunning){
+					v->silent = 0;
+					continue;
+				}
+				ms = TK2MS(MACHP(0)->ticks - v->lastexit);
+				if(ms < 3*vm->trace*1000){
+					v->silent = 0;
+					continue;
+				}
+				if(v->silent)
+					continue;
+				v->silent = 1;
+				print("vm%d.%d: no exit for %lud ms; kproc %s, processes:\n",
+					vm->id, v->id, ms,
+					v->kproc != nil ? (v->kproc->psstate != nil ? v->kproc->psstate : statename[v->kproc->state]) : "none");
+				procdump();
+			}
+		}
+		qunlock(&vmtablk);
+		if(!any){
+			watching = 0;
+			pexit("", 0);
+		}
+	}
+}
+
 static void
 vcpuproc(void *a)
 {
@@ -214,6 +271,7 @@ vcpuproc(void *a)
 	void (*f)(Vcpu*, void*);
 
 	v = a;
+	v->kproc = up;
 	procwired(up, v->machno);
 	sched();
 	if(waserror()){
@@ -261,6 +319,7 @@ vcpuproc(void *a)
 			continue;
 		v->go = 0;
 		v->stop = 0;
+		v->lastexit = MACHP(0)->ticks;
 		v->state = VcpuRunning;
 		for(;;){
 			/*
@@ -282,6 +341,7 @@ vcpuproc(void *a)
 			vmplatintr(v);
 			vmops->run(v, &e);
 			v->nexit++;
+			v->lastexit = MACHP(0)->ticks;
 			if(e.kind >= 0 && e.kind < VxNkind)
 				v->nkind[e.kind]++;
 			/*
@@ -289,8 +349,9 @@ vcpuproc(void *a)
 			 * CPUID, MSRs, HLT -- is handled here, on the
 			 * vCPU's own processor, without a trip to Limbo.
 			 */
-			if(v->vm->trace && TK2MS(m->ticks - v->lasttrace) >= v->vm->trace*1000){
-				v->lasttrace = m->ticks;
+			/* processor 0's ticks: an application processor's need not advance */
+			if(v->vm->trace && TK2MS(MACHP(0)->ticks - v->lasttrace) >= v->vm->trace*1000){
+				v->lasttrace = MACHP(0)->ticks;
 				heartbeat(v, &e);
 			}
 			if(vmplatexit(v, &e)){
@@ -528,6 +589,8 @@ killvm(Vm *vm)
 		while(!vcpugone(v))
 			sleep(&v->cmdr, vcpugone, v);
 	}
+	/* before the memory goes: the platform's devices stop using it */
+	vmplathangup(vm);
 	qlock(vm);
 	vmops->gpfree(vm);
 	if(vm->memalloc != nil){
@@ -536,7 +599,6 @@ killvm(Vm *vm)
 	}
 	vm->mem = nil;
 	vm->memsize = 0;
-	vmplathangup(vm);
 	qunlock(vm);
 	qlock(&vmtablk);
 	vmtab[vm->id] = nil;
@@ -973,8 +1035,13 @@ vmwrite(Chan *c, void *a, s32 n, s64 off)
 			setmem(vm, strtoull(cb->f[1], nil, 0));
 		else if(cb->nf == 1 && strcmp(cb->f[0], "kill") == 0)
 			killvm(vm);
-		else if(cb->nf == 2 && strcmp(cb->f[0], "trace") == 0)
+		else if(cb->nf == 2 && strcmp(cb->f[0], "trace") == 0){
 			vm->trace = atoi(cb->f[1]);
+			if(vm->trace > 0 && !watching){
+				watching = 1;
+				kproc("vmwatch", vmwatch, nil, 0);
+			}
+		}
 		else if(!vmplatctl(vm, cb->nf, cb->f))
 			error(Ebadctl);
 		poperror();

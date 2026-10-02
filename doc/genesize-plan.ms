@@ -669,19 +669,70 @@ kernel's own allocations land between; a guest-memory arena of its own
 would fix it.
 .IP "VMX, Linux." 4
 On Bochs (one processor) the host stalled with the guest early in its
-boot: a vCPU kproc was never preempted.  The run loop now yields when
-a host interrupt brings it out and anything else is ready
-.CW 7d9dc4f06 ), (
-and the guest got further (SMP and RCU setup) before the host stopped
-writing again; still open.  The realistic VMX bench for a full Linux
-boot is nested KVM on an Intel machine, which needs a rented instance.
+boot, at a different line each run.  It was not the hypervisor.  With
+Bochs's debugger reachable by SIGINT
+.CW BOCHS_CMDS ) (
+the stopped host showed no process running and the local APIC's timer
+taken every 415 instructions; Bochs, instrumented, showed the TSC
+deadline written each time was the TSC's low 32 bits plus a tick.
+.CW pc64/fns.h
+declared
+.CW "wrmsr(ulong, ulong)" ,
+and ulong is 32 bits here, so every MSR write lost its upper half: once
+the TSC passed 2^32 every deadline was already gone and the timer
+interrupted without end, starving every process (QEMU's TCG processor
+has no TSC-deadline timer, which is why only Bochs showed it).  PAT's
+upper entries, the MTRR masks and the machine-check enables were cut
+the same way, on real hardware too.  Fixed in the prototype; the
+assembly always took 64 bits.  The heartbeat (ctl
+.CW trace )
+now also reads processor 0's ticks, since an application processor's
+need not advance, and a watchdog prints the processes when a traced
+vCPU stops taking exits.
+.IP "Phase 9: M8 on SVM (QEMU)." 4
+.CW pc/vmvirtio.c :
+virtio functions of the hypervisor's own on the guest's PCI bus, the
+virtio 1.0 PCI transport (one trapped BAR: common, ISR, device and
+notify structures, MSI-X table), split rings in guest memory with every
+address checked.  blk serves a file in the namespace of whoever wrote
+"virtio blk
+.I path "
+\(en a Limbo memfs file in the check \(en on the vCPU's own kproc;
+net opens a bridge port on an ether(3) device (every type, promiscuous,
+bridge mode, so devether keeps the guest's source address and learns
+it), with a receiving kproc stopped before the guest's memory goes.
+The guest (now
+.CW linux-virt-6.6.142-r0.apk ,
+pinned by package checksum, with its virtio_blk, virtio_net and
+af_packet modules) finds vda, reads the marker Limbo wrote and writes a
+sector Limbo reads back; and gets a DHCP lease from QEMU's user network
+through the bridge port on the bench's virtio NIC.  The first net run
+returned every receive buffer the moment the driver posted it, empty
+\(en a notification on the receive queue was served like a request \(en
+which the guest counted as 954,000 length errors; the check now
+requires none.  Also fixed:
+.CW vmlinux 's
+.CW -q
+matched its pattern in the console's echo of the typed command and
+stopped guests early; it now matches only at a line's start.
 .IP "Next." 4
 M7 needs an SR-IOV PF driver for the 82576 (pools, VF mailbox:
 reset, MAC, multicast, VLAN, packet size) and a guest with
-.CW igbvf ,
-which is a module in Alpine's
+.CW igbvf .
+Alpine's
 .CW linux-virt
-\(en the guest moves to the versioned
+does not build it (its 6.6.142 configuration says
+.CW "# CONFIG_IGBVF is not set" ;
+an earlier note here said it was a module, which was wrong), so the M7
+guest is
+.CW linux-lts ,
+pinned by package checksum, with its own modules.  M8's guest is
 .CW linux-virt-6.6.142-r0.apk ,
-whose kernel and modules match.  M8 (virtio backends in the kernel);
-phase 5 (SMP guests); phase 12 (resource namespaces).
+whose
+.CW virtio_blk
+and
+.CW virtio_net
+are modules.  M8 is done on SVM: "boots on" the virtio disk (root on
+vda, through ext2) is still to come.  Then phase 5 (SMP guests) and
+phase 12 (resource namespaces); and M2 on VMX, on Bochs, again now that
+the host keeps time.

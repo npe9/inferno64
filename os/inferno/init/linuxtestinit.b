@@ -13,6 +13,17 @@ implement Init;
 # guest's own virtio-pci and virtio_console drive it, by DMA into its
 # memory through the IOMMU and with MSI-X forwarded.
 #
+# Phase 9: a 1 MiB file in a memfs(4) on /tmp is given to the guest as
+# a virtio disk, served by the kernel's own virtio-blk (pc/vmvirtio.c).
+# Limbo writes a marker in its first sector; the guest reads it from
+# /dev/vda and writes the second, which Limbo reads back afterwards.
+#
+# And the bench's virtio-net NIC (#l1, on a QEMU user network of its
+# own that this host does not use) gets a bridge port that is the
+# guest's virtio-net interface: the guest asks QEMU's DHCP server for a
+# lease on it, which takes frames both ways through the kernel's
+# virtio-net and devether's bridge.
+#
 # The guest kernel and initramfs are in this kernel's root (the
 # pc64linux configuration).
 #
@@ -29,6 +40,7 @@ Init: module
 init()
 {
 	sys = load Sys Sys->PATH;
+	sys->bind("#c", "/dev", Sys->MAFTER);	# /dev/user, which memfs takes its owner from
 	sys->bind("#H", "/dev", Sys->MAFTER);
 	sys->bind("#Q", "/dev", Sys->MAFTER);
 	sys->print("LINUXTEST: start\n");
@@ -47,9 +59,17 @@ init()
 		assign = "-p" :: "0000:05:00.0" :: nil;
 	else
 		sys->print("LINUXTEST: no 0000:05:00.0 here; nothing assigned\n");
+	disk := mkdisk();
+	if(disk != nil)
+		assign = "-b" :: disk :: assign;
+	(ok, nil) = sys->stat("#l1/ether1");
+	if(ok >= 0)
+		assign = "-n" :: "#l1/ether1" :: assign;
+	else
+		sys->print("LINUXTEST: no #l1/ether1 here; no virtio net\n");
 	args := "-s" :: "7200" :: "-m" :: "256" :: "-q" :: "LINUXGUEST: ran" :: "-d" :: "20"
 		:: "-i" :: "/guest/initramfs.cpio"
-		:: "-t" :: "echo LINUXGUEST: typed; uname -sr; for d in /sys/bus/pci/devices/*; do echo LINUXGUEST: pci $d `cat $d/vendor $d/device`; done; ls /sys/bus/virtio/devices; grep -iE 'virtio|LOC|timer|ttyS' /proc/interrupts; ls -l /sys/bus/virtio/devices/virtio0/driver; dmesg | grep -iE 'virtio|vport|hvc|console' | tail -12; echo hello-from-the-guest > /dev/hvc0 && echo LINUXGUEST: wrote hvc0; echo LINUXGUEST: ran"
+		:: "-t" :: "echo LINUXGUEST: typed; uname -sr; for d in /sys/bus/pci/devices/*; do echo LINUXGUEST: pci $d `cat $d/vendor $d/device`; done; ls /sys/bus/virtio/devices; grep -iE 'virtio|LOC|timer|ttyS' /proc/interrupts; ls -l /sys/bus/virtio/devices/virtio0/driver; dmesg | grep -iE 'virtio|vport|hvc|console' | tail -12; echo hello-from-the-guest > /dev/hvc0 && echo LINUXGUEST: wrote hvc0; if [ -b /dev/vda ]; then echo LINUXGUEST: vda says $(dd if=/dev/vda bs=512 count=1 2>/dev/null | head -c 19); echo guest-wrote-this | dd of=/dev/vda bs=512 seek=1 conv=sync,fsync 2>/dev/null && echo LINUXGUEST: wrote vda; fi; if [ -e /sys/class/net/eth0 ]; then ip link set eth0 up; udhcpc -i eth0 -n -q -t 3 -s /bin/true 2>&1 | sed 's/^/LINUXGUEST: dhcp /'; echo LINUXGUEST: eth0 rx $(cat /sys/class/net/eth0/statistics/rx_packets) packets $(cat /sys/class/net/eth0/statistics/rx_length_errors) length errors tx $(cat /sys/class/net/eth0/statistics/tx_packets); fi; echo LINUXGUEST: \"r\"an"
 		:: "/guest/vmlinuz" :: nil;
 	{
 		vmlinux->init(nil, "vmlinux" :: concat(assign, args));
@@ -57,7 +77,41 @@ init()
 	"*" =>
 		sys->print("LINUXTEST: vmlinux: %s\n", e);
 	}
+	if(disk != nil){
+		fd := sys->open(disk, Sys->OREAD);
+		buf := array[16] of byte;
+		if(fd != nil && sys->pread(fd, buf, len buf, big 512) == len buf)
+			sys->print("LINUXTEST: disk sector 1: %s\n", string buf);
+		else
+			sys->print("LINUXTEST: disk sector 1: %r\n");
+	}
 	sys->print("LINUXTEST: done\n");
+}
+
+Marker: con "INFERNO-VIRTIO-DISK";
+
+# a 1 MiB disk in memory, the marker in its first sector
+mkdisk(): string
+{
+	memfs := load Command "/dis/memfs.dis";
+	if(memfs == nil){
+		sys->print("LINUXTEST: no memfs: %r; no virtio disk\n");
+		return nil;
+	}
+	memfs->init(nil, "memfs" :: "/tmp" :: nil);
+	path := "/tmp/disk.img";
+	fd := sys->create(path, Sys->ORDWR, 8r666);
+	if(fd == nil){
+		sys->print("LINUXTEST: %s: %r; no virtio disk\n", path);
+		return nil;
+	}
+	b := array[1024*1024] of {* => byte 0};
+	b[0:] = array of byte Marker;
+	if(sys->write(fd, b, len b) != len b){
+		sys->print("LINUXTEST: writing %s: %r; no virtio disk\n", path);
+		return nil;
+	}
+	return path;
 }
 
 concat(a, b: list of string): list of string

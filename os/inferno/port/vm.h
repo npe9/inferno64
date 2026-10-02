@@ -176,6 +176,9 @@ struct Vcpu
 	uvlong	nexit;		/* exits taken */
 	uvlong	nhandled;	/* of which the kernel handled */
 	ulong	lasttrace;	/* ticks at the last heartbeat (Vm.trace) */
+	ulong	lastexit;	/* ticks at the last exit, for the watchdog */
+	int	silent;		/* the watchdog has reported this silence */
+	Proc	*kproc;		/* the vCPU's kproc, for the watchdog */
 	uvlong	nkind[VxNkind];	/* and of each kind */
 
 	/* a request for the kproc to run on its own processor */
