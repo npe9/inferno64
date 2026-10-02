@@ -585,7 +585,12 @@ does now \(em
 .P1
 sdhost au 9 (4096KB) eraseaus 1 erasetmo 3 speedclass 4
 .P2
-Six reads, six identical answers.  The allocation unit is FOUR MEGABYTES,
+Six reads, six identical answers \(em and the first one after a boot
+needs TWO attempts, because this controller loses SDHBCT writes, which
+the driver already documents for block reads and already answers with a
+bounded retry.  The attempt count is reported, so a retry that is always
+needed stays distinguishable from one that is occasionally needed: cold
+it is 2, and every call after a transfer is 1.  The allocation unit is FOUR MEGABYTES,
 which is 1024 blocks of 4KB and 512 of 8KB.  Neither candidate is within
 three orders of magnitude of it, so moving from 4KB to 8KB does not bring
 a write any closer to the card's own granularity: it halves the number of

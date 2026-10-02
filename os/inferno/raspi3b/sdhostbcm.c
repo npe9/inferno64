@@ -172,6 +172,7 @@ struct Ctlr {
 	 * phase and the answer does not change.
 	 */
 	int	auknown;
+	int	autries;	/* attempts the last ACMD13 took */
 	int	austage;	/* where ACMD13 got to, when it failed */
 	u32	auerr;
 	int	augot;
@@ -1601,11 +1602,11 @@ static int auskb[16] = {
  * bits 511:504 and AU_SIZE is the top nibble of sd[10].
  */
 static int
-sdhostaustatus(Ctlr *c)
+sdhostau1(Ctlr *c)
 {
 	volatile u32 *r = c->r;
 	uchar sd[64];
-	u32 err, w;
+	u32 err, w, cfg;
 	int i, j;
 
 	/*
@@ -1628,9 +1629,30 @@ sdhostaustatus(Ctlr *c)
 		return 0;
 	}
 	c->austage = 3;
+	/*
+	 * SDHCFG FOR A POLLED READ, which this did not set and had to.
+	 *
+	 * The data interrupt enables are left by whatever transfer ran
+	 * last: bio sets them from whether the DMA engine is moving the
+	 * data and in which direction, and does not put them back.  So
+	 * this worked six times out of six on a freshly booted board,
+	 * where its command was the first transfer, and returned "stage 4,
+	 * got 0 of 64, sdhsts 0" on a board that had been running
+	 * dossrv -- the command completed with no error and the FIFO
+	 * stayed empty, because the controller had been told the engine
+	 * would take the data.
+	 *
+	 * The same bits bio uses for a polled read, and restored
+	 * afterwards so the next transfer is not left in this one's
+	 * configuration -- the mistake above, in the other direction.
+	 */
+	cfg = r[SDHCFG];
+	r[SDHCFG] = (cfg & ~(u32)(Cfgdataint|Cfgblockint)) |
+		Cfgbusyint | Cfgdataint | sdhostcfg;
 	r[SDHBCT] = sizeof sd;
 	r[SDHBLC] = 1;
 	if(sdcmdstart(r, 13, 0, Readcmd) < 0){
+		r[SDHCFG] = cfg;
 		c->auerr = r[SDHSTS];
 		r[SDHBCT] = Secsize;
 		r[SDHBLC] = 1;
@@ -1663,6 +1685,7 @@ sdhostaustatus(Ctlr *c)
 	sdcmdwait(r, &err);
 	r[SDHBCT] = Secsize;			/* leave it as bio expects */
 	r[SDHBLC] = 1;
+	r[SDHCFG] = cfg;
 	c->augot = j;
 	c->auerr = err;
 	if(j < (int)sizeof sd)
@@ -1674,6 +1697,42 @@ sdhostaustatus(Ctlr *c)
 	c->erasetmo = sd[13] >> 2;
 	c->auknown = 1;
 	return 1;
+}
+
+/*
+ * ACMD13, RETRIED, because this controller loses SDHBCT.
+ *
+ * One attempt fails about half the time, and which half is not random:
+ * it fails when the card has done no recent data transfer and succeeds
+ * immediately after a read.  Measured, in one command --
+ *
+ *	echo status >ctl   stage 4, got 0 of 64, sdhsts 0
+ *	cat a 2.5MB file   fine
+ *	echo status >ctl   au 9 (4096KB)
+ *	cat it again       fine
+ *
+ * -- so the command completes with no error anywhere and the card simply
+ * sends no data.  That is the failure this driver already documents for
+ * block reads: "SDHBCT is written 512 here and reads 6 by the time of
+ * the failure -- and the register does hold writes, checked by writing it
+ * over JTAG and reading 0x200 back -- so something between these two
+ * points changes it."  bio's answer is a bounded retry, so this is the
+ * same answer, and the attempt count is reported rather than hidden
+ * because a retry that is always needed is a different fact from one
+ * that is occasionally needed.
+ */
+static int
+sdhostaustatus(Ctlr *c)
+{
+	int i;
+
+	for(i = 1; i <= Maxretry; i++){
+		c->autries = i;
+		if(sdhostau1(c))
+			return 1;
+		microdelay(1000);
+	}
+	return 0;
 }
 
 static char*
@@ -1698,12 +1757,12 @@ sdhostrctl(SDunit *u, char *p, char *e)
 	 * "echo status" asks once and this reports what came back.
 	 */
 	if(c->auknown)
-		p = seprint(p, e, "sdhost au %d (%dKB) eraseaus %d erasetmo %d speedclass %d\n",
+		p = seprint(p, e, "sdhost au %d (%dKB) eraseaus %d erasetmo %d speedclass %d tries %d\n",
 			c->aucode, c->aucode < 16? auskb[c->aucode]: 0,
-			c->erasesz, c->erasetmo, c->speedclass);
+			c->erasesz, c->erasetmo, c->speedclass, c->autries);
 	else if(c->austage > 0)
-		p = seprint(p, e, "sdhost au unread: ACMD13 stopped at stage %d, got %d of 64, sdhsts %#lux\n",
-			c->austage, c->augot, (ulong)c->auerr);
+		p = seprint(p, e, "sdhost au unread: ACMD13 stopped at stage %d, got %d of 64, sdhsts %#lux, %d tries\n",
+			c->austage, c->augot, (ulong)c->auerr, c->autries);
 	else
 		p = seprint(p, e, "sdhost au unread (echo status >ctl)\n");
 	return p;
@@ -1726,9 +1785,9 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 			print("sdhost: ACMD13 failed\n");
 			return 0;
 		}
-		print("sdhost: au %d (%dKB) eraseaus %d erasetmo %d speedclass %d\n",
+		print("sdhost: au %d (%dKB) eraseaus %d erasetmo %d speedclass %d tries %d\n",
 			c->aucode, c->aucode < 16? auskb[c->aucode]: 0,
-			c->erasesz, c->erasetmo, c->speedclass);
+			c->erasesz, c->erasetmo, c->speedclass, c->autries);
 		return 0;
 	}
 	if(strcmp(cb->f[0], "reinit") == 0){
