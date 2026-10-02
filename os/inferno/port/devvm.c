@@ -267,6 +267,18 @@ vcpuproc(void *a)
 					e.kind = VxStopped;
 					break;
 				}
+				/*
+				 * A kproc is not preempted: the clock only
+				 * marks it.  A guest that never halts would
+				 * otherwise keep the processor from everything
+				 * else wired to it or waiting for it -- on a
+				 * one-processor host, the Limbo copying the
+				 * guest's console, so its output stopped
+				 * mid-line.  Give it up here when anything
+				 * else is ready.
+				 */
+				if(anyready())
+					yield();
 				continue;
 			}
 			break;

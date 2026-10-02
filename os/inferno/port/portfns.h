@@ -374,6 +374,7 @@ char*		validnamedup(char*, int);
 void		validstat(uchar*, int);
 void		validwstatname(char*);
 Proc*		wakeup(Rendez*);
+void		yield(void);
 int		walk(Chan**, char**, int, int, int*);
 void		werrstr(char*, ...);
 void		wlock(RWlock*);
