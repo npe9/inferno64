@@ -213,7 +213,15 @@ void	vectortable(void);
 void*	vmap(uintptr, s32);
 void	vunmap(void*, s32);
 void	wbinvd(void);
-s32	wrmsr(ulong, ulong);
+/*
+ * The value is 64 bits: l.s takes it whole from the 8-byte argument
+ * slot.  Declared (ulong, ulong), with ulong 32 bits in this tree, every
+ * caller's value was cut to its low half before the call -- a TSC
+ * deadline past 2^32 became one long gone, and the local APIC timer
+ * interrupted without end; PAT's upper entries and the MTRR masks went
+ * the same way.
+ */
+s32	wrmsr(u32, s64);
 int	xchgw(ushort*, int);
 ulong	kzeromap(ulong, ulong, int);
 void	nmiscreen(void);
