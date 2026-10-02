@@ -390,16 +390,30 @@ pcibusno(void *dot)
 	if((x = amlwalk(dot, "^_HID")) != nil)
 		if((p = amlval(x)) != nil)
 			id = eisaid(p);
-	if((x = amlwalk(dot, "^_BBN")) == nil)
-		if((x = amlwalk(dot, "^_ADR")) == nil)
+	/*
+	 * A host bridge's bus number is its _BBN, and _BBN is
+	 * optional: without it the bridge decodes bus 0 (ACPI 6.5,
+	 * 6.5.5).  QEMU's q35 PCI0 has a _HID of PNP0A08 and neither
+	 * _BBN nor _ADR, and so has firmware on real boards; this used
+	 * to return -1 there, enumprt() then dropped the root bridge's
+	 * whole _PRT, and no PCI device anywhere could be given an
+	 * INTx interrupt.  It showed as an igb behind a root port
+	 * printing "mpintrassign: can't find bus type 12, number 0".
+	 */
+	if(id != nil && (strcmp(id, "PNP0A03")==0 || strcmp(id, "PNP0A08")==0)){
+		if((x = amlwalk(dot, "^_BBN")) == nil)
+			return 0;
+		p = nil;
+		if(amleval(x, "", &p) < 0)
 			return -1;
+		return amlint(p);
+	}
+	if((x = amlwalk(dot, "^_ADR")) == nil)
+		return -1;
 	p = nil;
 	if(amleval(x, "", &p) < 0)
 		return -1;
 	adr = amlint(p);
-	/* if root bridge, then we are done here */
-	if(id != nil && (strcmp(id, "PNP0A03")==0 || strcmp(id, "PNP0A08")==0))
-		return adr;
 	x = amlwalk(dot, "^");
 	if(x == nil || x == dot)
 		return -1;
