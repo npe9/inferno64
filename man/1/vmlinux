@@ -1,0 +1,77 @@
+.TH VMLINUX 1
+.SH NAME
+vmlinux \- boot Linux as a guest
+.SH SYNOPSIS
+.B vmlinux
+[
+.B -m
+.I megabytes
+] [
+.B -a
+.I append
+] [
+.B -i
+.I initrd
+] [
+.B -s
+.I seconds
+] [
+.B -t
+.I line
+] [
+.B -q
+.I pattern
+] [
+.B -p
+.I 0000:bb:dd.f
+] ...
+.I bzImage
+.SH DESCRIPTION
+.I Vmlinux
+makes a machine in
+.B /dev/vm
+(see
+.IR vm (3)),
+loads a Linux
+.I bzImage
+by the 32-bit boot protocol \(em the kernel at 1 MiB,
+.B boot_params
+with the setup header, command line, initrd and an e820 map, a GDT for
+CS 0x10 and DS 0x18 \(em starts it, and copies its console to standard
+output and standard input to its console.
+.B tsc_early_khz=
+is added to the command line from the host's TSC rate.
+.PP
+.B -m
+sets the memory (256 MiB);
+.B -a
+the command line
+.RB ( console=ttyS0 );
+.B -i
+an initrd;
+.B -p
+assigns a PCI function, more than once for more;
+.B -t
+types
+.I line
+once the console shows the guest's shell marker
+.RB ( "LINUXGUEST: shell" );
+.B -q
+stops the guest once the console shows
+.IR pattern ;
+.B -s
+stops it after
+.I seconds
+regardless.  An exit the kernel does not handle is reported with the
+registers, and ends the run, as does a stop; the machine's status is
+printed and the machine killed.
+.PP
+Nothing in it is local:
+.B /dev/vm
+may be a mount of another machine's, and the kernel and initrd are read
+from wherever they are.
+.SH SOURCE
+.B /appl/cmd/vmlinux.b
+.SH SEE ALSO
+.IR vm (3),
+.IR vmsched (1)

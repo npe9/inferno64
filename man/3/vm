@@ -1,0 +1,158 @@
+.TH VM 3
+.SH NAME
+vm \- virtual machines (hypervisor)
+.SH SYNOPSIS
+.EX
+bind -a #H /dev
+
+/dev/vm/clone
+/dev/vm/backend
+/dev/vm/host
+/dev/vm/\fIn\fP/ctl
+/dev/vm/\fIn\fP/status
+/dev/vm/\fIn\fP/mem
+/dev/vm/\fIn\fP/console
+/dev/vm/\fIn\fP/vcpu0/ctl
+/dev/vm/\fIn\fP/vcpu0/regs
+/dev/vm/\fIn\fP/vcpu0/exit
+.EE
+.SH DESCRIPTION
+.I Vm
+runs other operating systems as guests of the native kernel, using
+the processor's virtualization extension: Intel VMX with EPT and
+unrestricted guest, or AMD SVM with nested paging, whichever the
+processor has.
+.B backend
+says which, and why not when there is none.
+.B host
+reports what the host has left for machines: processors, free memory
+and the largest contiguous run of it (a machine's memory is one run),
+and the machines and vCPUs running.
+.PP
+Opening
+.B clone
+makes a machine; the channel becomes its
+.BR ctl ,
+and reading it gives the machine's number
+.IR n .
+Writes to
+.B ctl
+are commands:
+.TP
+.BI mem " bytes"
+Give the machine
+.I bytes
+of RAM (rounded up to 2 MiB) at guest-physical address 0.
+.TP
+.BI "io ignore" "\fR, \fP" "io exit"
+What happens to a port nothing in the kernel claims: with
+.BR ignore ,
+a read gets all ones and a write is dropped; with
+.B exit
+(the default) the vCPU stops and the access appears in
+.BR exit .
+.TP
+.BI assign " 0000:bb:dd.f"
+Give the machine a PCI function (see BUGS for which).
+.TP
+.B kill
+Stop the machine and free its memory.  Open files then return
+.BR Ehungup ;
+the structures go with the last close.
+.PP
+.B mem
+reads and writes guest memory at offset = guest-physical address.
+.B console
+carries the guest's 16550 at
+.BR 0x3F8 :
+reads return what it wrote, writes are what it receives.
+.B status
+gives the machine, each vCPU's state, its exits counted by kind and
+how many the kernel handled, the platform's counters, and each
+assigned function.
+.PP
+Each vCPU is a kernel process wired to one processor, and does all
+work on the processor's virtualization state itself.  Its
+.B ctl
+takes
+.B go
+(run until an exit the kernel does not handle),
+.B skip
+(advance past the exiting instruction, then go) and
+.B stop .
+.B regs
+reads and writes
+.RI \&" name " " value \&"
+lines (general registers,
+.BR rip ,
+.BR rflags ,
+control registers,
+.BR efer ,
+segment selectors, bases, limits and access rights in VMX format,
+descriptor tables) while the vCPU is stopped.
+.B exit
+blocks until the vCPU stops and says why: the kind
+.RB ( io ,
+.BR mmio ,
+.BR cpuid ,
+.BR rdmsr ,
+.BR wrmsr ,
+.BR hlt ,
+.BR vmcall ,
+.BR exception ,
+.BR triple ,
+.BR entryfail ,
+.BR stopped ,
+.BR other ),
+the guest's
+.BR rip ,
+the instruction length, the backend's own code and qualification, and
+the details of the kind.
+.PP
+The platform a guest sees is handled in the kernel, on the vCPU's
+processor: an 8259 pair, an 8254 on IRQ 0, the 16550 on IRQ 4, a
+local APIC (xAPIC MMIO, or x2APIC if the guest enables it) whose timer
+runs off the TSC in one-shot, periodic or TSC-deadline mode, CPUID
+(the host's with what is not provided hidden and the hypervisor bit
+set), the MSRs (the processor's own switched with the guest; others
+answered or given #GP), HLT (the vCPU sleeps until an interrupt it can
+take), and a PCI bus through configuration mechanism 1.  There is no
+RTC, IOAPIC, HPET, ACPI or MP table; Linux is told the TSC rate with
+.BR tsc_early_khz= .
+.SH EXAMPLE
+See
+.IR vmlinux (1),
+which uses nothing but these files, locally or over a mount.
+.SH SOURCE
+.B /os/inferno/port/devvm.c
+.br
+.B /os/inferno/port/vm.h
+.br
+.B /os/inferno/pc64/vmx.c
+.br
+.B /os/inferno/pc64/svm.c
+.br
+.B /os/inferno/pc/vmplat.c
+.br
+.B /os/inferno/pc/vmdev.c
+.br
+.B /os/inferno/pc/vmpci.c
+.SH SEE ALSO
+.IR iommu (3),
+.IR vmlinux (1),
+.IR vmsched (1)
+.SH BUGS
+One vCPU per machine.
+.PP
+VMX: a full Linux boot has been shown only on SVM (QEMU's TCG emulates
+SVM, not VMX); on VMX the freestanding test passes and Linux boots
+partway under Bochs.  A guest's debug registers DR0\-DR3 and DR6 are
+kept and read back but not loaded, so its hardware breakpoints do not
+fire.  No VPID; the TLB is flushed on every entry and exit.
+.PP
+Assignment: memory BARs only, MSI-X only, no extended configuration
+space, no function reset, and only a function the host has no driver
+for.  An assigned function's interrupt raised on another processor is
+seen at the vCPU's next exit, at most a clock tick later.
+.PP
+No XSAVE state beyond x87/SSE is offered to guests.

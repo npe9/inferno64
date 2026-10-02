@@ -1,0 +1,75 @@
+.TH IOMMU 3
+.SH NAME
+iommu \- DMA remapping
+.SH SYNOPSIS
+.EX
+bind -a #Q /dev
+
+/dev/iommu/ctl
+/dev/iommu/clone
+/dev/iommu/faults
+/dev/iommu/\fIn\fP/ctl
+/dev/iommu/\fIn\fP/devices
+/dev/iommu/\fIn\fP/map
+/dev/iommu/\fIn\fP/mem
+/dev/iommu/\fIn\fP/faults
+.EE
+.SH DESCRIPTION
+.I Iommu
+confines devices' DMA to address spaces called domains.  Reading
+.B ctl
+gives the backend (Intel VT-d) and its remapping units; writing
+.B enable
+turns translation on with every function the IOMMU covers in the host
+domain, where DMA addresses are host physical addresses as before.
+Functions that appear later (VFs made through
+.BR #$/pci/ IfunctionP /sriov )
+join the host domain.
+.PP
+Opening
+.B clone
+(or writing
+.B new
+to
+.BR ctl )
+makes a domain.  Its
+.B ctl
+takes
+.BI attach " 0000:bb:dd.f" \fR,
+.BI detach " 0000:bb:dd.f" \fR,
+.BI mem " iova bytes"
+(kernel memory for the domain, mapped read-write at
+.IR iova ,
+read and written through
+.B mem
+at offset = IOVA),
+.BI unmap " iova bytes"
+and
+.BR kill .
+A function attached to a domain reaches by DMA only what the domain
+maps; detached, it is back in the host domain.
+.B map
+lists what is mapped, and for
+.B mem
+the host physical address behind it.
+.B faults
+lists the DMA faults recorded: sequence, requester, read or write,
+address and reason \(em in all, or for the domain's functions.
+.PP
+.IR vm (3)
+makes domains from the kernel for assigned functions; they appear here
+like any other.
+.SH SOURCE
+.B /os/inferno/port/deviommu.c
+.br
+.B /os/inferno/port/iommu.h
+.br
+.B /os/inferno/pc/vtd.c
+.br
+.B /os/inferno/pc/dmar.h
+.SH SEE ALSO
+.IR vm (3)
+.SH BUGS
+VT-d only, legacy mode, register-based global invalidation after every
+change; no interrupt remapping, queued invalidation, or AMD-Vi.
+Tested on QEMU's intel-iommu.

@@ -1,0 +1,44 @@
+.TH VMSCHED 1
+.SH NAME
+vmsched \- place Linux guests across hypervisor hosts
+.SH SYNOPSIS
+.B cloud/vmsched
+[
+.B -n
+.I guests
+] [
+.B -m
+.I megabytes
+] [
+.B -i
+.I initrd
+] [
+.B -s
+.I seconds
+]
+.I bzImage
+.I hostdir
+\&...
+.SH DESCRIPTION
+.I Vmsched
+reads each host's
+.IB hostdir /dev/vm/host
+(see
+.IR vm (3))
+\(em a host's namespace mounted here, usually over Styx \(em and places
+.I guests
+machines: on the host running the fewest, ties to the one with the
+most contiguous memory, never on one whose largest free run is smaller
+than the guest.  Each is then run at once by
+.IR vmlinux (1)
+in a namespace of its own with its host's
+.B /dev
+bound in, typed a line naming it and its host, and stopped when it
+answers.  Placement is decided here; the hosts only report and obey.
+.SH SOURCE
+.B /appl/cloud/vmsched.b
+.SH SEE ALSO
+.IR vm (3),
+.IR vmlinux (1)
+.SH BUGS
+One placement policy, decided once; nothing migrates or rebalances.
