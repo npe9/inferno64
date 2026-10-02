@@ -220,8 +220,29 @@ first allocation after boot has to do.
 That relocates the latency complaint rather than answering it, and 6.1ms
 inside
 .CW uartkick
-is worth its own look: this board's console is deaf, so whatever that
-lock is held across is being held for output nobody reads.
+was worth its own look.  It found a real bug and HALVED the number, which
+is written up where the code is; briefly,
+.CW pl011_kick
+asked
+.CW islo()
+whether interrupts were on, and
+.CW uartkick
+takes
+.CW ilock
+first, so
+.CW islo()
+is always 0 there and the fast path was dead code.  Every console write
+took a polling drain with interrupts masked:
+.P1
+                     max at uartkick
+before                 6130, 6131 us
+after                  3557, 3557, 3558 us
+.P2
+Stable to a microsecond across three runs each way.  The remaining 3.5ms
+is NOT explained: with the fix a live kick should leave when the transmit
+FIFO fills, which is sixteen bytes, and sixteen bytes cannot take three
+milliseconds.  So there is a second mechanism in there and it is still
+open.
 .PP
 .B "What the instrument does NOT tell you, which matters for both figures."
 .CW ILOCKTRACE
