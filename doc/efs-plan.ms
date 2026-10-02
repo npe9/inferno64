@@ -574,11 +574,36 @@ and that part is a constant in
 rather than a property of the format.  So "8KB is faster on a big write"
 is true and the format change is not the only way to get part of it.
 .PP
-.B "What would reopen it:"
-the card's allocation unit.  If a write smaller than the AU costs a whole
-AU inside the card, the amplification argument above is measuring the
-wrong thing, and ACMD13 reports it.  Nothing on this board reads ACMD13
-yet.
+.B "ASKED, and it does not reopen it \(em it closes it."
+The thing that could have was the card's allocation unit: if a write
+smaller than the AU costs a whole AU inside the card, the amplification
+argument above is measuring the wrong thing.  ACMD13 reports it and
+nothing on this board read it, so
+.CW sdhostbcm.c
+does now \(em
+.CW "echo status >/dev/sdN0/ctl" :
+.P1
+sdhost au 9 (4096KB) eraseaus 1 erasetmo 3 speedclass 4
+.P2
+Six reads, six identical answers.  The allocation unit is FOUR MEGABYTES,
+which is 1024 blocks of 4KB and 512 of 8KB.  Neither candidate is within
+three orders of magnitude of it, so moving from 4KB to 8KB does not bring
+a write any closer to the card's own granularity: it halves the number of
+commands and doubles the bytes, and the AU is indifferent to both.
+.PP
+So the AU cannot be the tie-breaker this question hoped for, and the
+measurement above stands on its own.  What the AU does say is that
+sequential locality matters far more than block size on this card \(em
+whether a write stays inside one 4MB unit \(em which is an allocator
+question and not a format one, and is not something either block size
+addresses.
+.PP
+.CW ERASE_SIZE
+is one AU and
+.CW ERASE_TIMEOUT
+is 3, so erasing 4MB is budgeted at three seconds; nothing here issues an
+erase, and that is the figure to weigh if anything ever should.  Speed
+class 4 is Class 10.
 .PP
 .B "DECIDED: the free map is a bitmap, with groups."
 One 4KB block covers 32768 blocks and the superblock names an index of up

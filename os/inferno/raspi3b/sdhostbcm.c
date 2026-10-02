@@ -166,6 +166,19 @@ struct Ctlr {
 	int	bmset;		/* ... and bytemode has been decided */
 	ulong	fclk;
 	uint	rca;
+	/*
+	 * What the card says about itself, from ACMD13.  Read on demand
+	 * and remembered, because asking costs a command with a data
+	 * phase and the answer does not change.
+	 */
+	int	auknown;
+	int	austage;	/* where ACMD13 got to, when it failed */
+	u32	auerr;
+	int	augot;
+	int	aucode;		/* AU_SIZE, 0 means the card did not say */
+	int	speedclass;
+	int	erasesz;	/* ERASE_SIZE, in AUs */
+	int	erasetmo;
 };
 
 static Ctlr sdctlr;
@@ -1554,6 +1567,115 @@ out:
  * a card swap otherwise: the card cannot be in the reader and in the Pi
  * at once, and only the Pi has the silicon that misbehaves.
  */
+/*
+ * AU_SIZE, in KB, by its code.
+ *
+ * Regular up to 10 and then not: 11 is 12MB, not 16.  A shift would be
+ * wrong for five of the fifteen values, so it is a table.
+ */
+static int auskb[16] = {
+	0, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192,
+	12*1024, 16*1024, 24*1024, 32*1024, 64*1024,
+};
+
+/*
+ * ACMD13, SD_STATUS: sixty-four bytes the card reports about itself.
+ *
+ * WHY THIS IS WORTH A COMMAND.  The one field that matters here is
+ * AU_SIZE, the allocation unit the card erases and programs in.  A write
+ * smaller than the AU costs a whole AU inside the card, so a filesystem's
+ * own write amplification -- which doc/efs-plan.ms decided efs's block
+ * size on -- is measuring the wrong thing if the AU is much larger than
+ * a block.  That plan says to "ask the card its allocation unit first
+ * (ACMD13)" and records that nothing on this board did.  This does.
+ *
+ * It is an application command with a DATA PHASE, which is the only
+ * reason it is not three lines: CMD55 first to say the next command is
+ * an application one, then SDHBCT and SDHBLC armed for 64 bytes rather
+ * than 512, because this controller is told a command carries data by
+ * those two registers and nothing else.  Arming them at Secsize would
+ * wait for 512 bytes the card is never going to send.
+ *
+ * The 64 bytes arrive MSB first and are unpacked exactly as the block
+ * read path unpacks a sector, low byte of each word first, so sd[0] is
+ * bits 511:504 and AU_SIZE is the top nibble of sd[10].
+ */
+static int
+sdhostaustatus(Ctlr *c)
+{
+	volatile u32 *r = c->r;
+	uchar sd[64];
+	u32 err, w;
+	int i, j;
+
+	/*
+	 * Every exit records WHERE it got to, because the one thing this
+	 * cannot do is print: a wctl runs with the console, and this
+	 * board's console has been deaf for months.  The stage comes back
+	 * through ctl instead.
+	 */
+	c->austage = 0;
+	c->auerr = 0;
+	c->augot = 0;
+	if(!c->inited)
+		return 0;
+	c->austage = 1;
+	if(!cardready(c))
+		return 0;
+	c->austage = 2;
+	if(sdcmderr(r, 55, c->rca<<16, 0, &err) < 0){
+		c->auerr = err;
+		return 0;
+	}
+	c->austage = 3;
+	r[SDHBCT] = sizeof sd;
+	r[SDHBLC] = 1;
+	if(sdcmdstart(r, 13, 0, Readcmd) < 0){
+		c->auerr = r[SDHSTS];
+		r[SDHBCT] = Secsize;
+		r[SDHBLC] = 1;
+		return 0;
+	}
+	c->austage = 4;
+	if(c->bytemode){
+		for(j = 0; j < sizeof sd; j++){
+			if(!fifodata(r))
+				break;
+			sd[j] = r[SDDATA];
+		}
+	}else{
+		for(j = 0; j < sizeof sd; j += 4){
+			if(!fifodata(r))
+				break;
+			w = r[SDDATA];
+			sd[j] = w;
+			sd[j+1] = w>>8;
+			sd[j+2] = w>>16;
+			sd[j+3] = w>>24;
+		}
+	}
+	for(i = 0; i < 1000000; i++){		/* drain anything left */
+		if((r[SDHSTS] & Hstsdata) == 0 && fifofill(r) == 0)
+			break;
+		(void)r[SDDATA];
+	}
+	waitxfer(r);
+	sdcmdwait(r, &err);
+	r[SDHBCT] = Secsize;			/* leave it as bio expects */
+	r[SDHBLC] = 1;
+	c->augot = j;
+	c->auerr = err;
+	if(j < (int)sizeof sd)
+		return 0;
+	c->austage = 5;
+	c->speedclass = sd[8];
+	c->aucode = sd[10] >> 4;
+	c->erasesz = sd[11]<<8 | sd[12];
+	c->erasetmo = sd[13] >> 2;
+	c->auknown = 1;
+	return 1;
+}
+
 static char*
 sdhostrctl(SDunit *u, char *p, char *e)
 {
@@ -1570,6 +1692,20 @@ sdhostrctl(SDunit *u, char *p, char *e)
 	p = seprint(p, e, "sdhost sdcmd %#lux sdhsts %#lux sdedm %#lux sdhcfg %#lux errors %d\n",
 		(ulong)r[SDCMD], (ulong)r[SDHSTS], (ulong)r[SDEDM],
 		(ulong)r[SDHCFG], c->errors);
+	/*
+	 * Not asked for here.  Reading ctl is something scripts do in
+	 * loops, and this costs the card a command with a data phase;
+	 * "echo status" asks once and this reports what came back.
+	 */
+	if(c->auknown)
+		p = seprint(p, e, "sdhost au %d (%dKB) eraseaus %d erasetmo %d speedclass %d\n",
+			c->aucode, c->aucode < 16? auskb[c->aucode]: 0,
+			c->erasesz, c->erasetmo, c->speedclass);
+	else if(c->austage > 0)
+		p = seprint(p, e, "sdhost au unread: ACMD13 stopped at stage %d, got %d of 64, sdhsts %#lux\n",
+			c->austage, c->augot, (ulong)c->auerr);
+	else
+		p = seprint(p, e, "sdhost au unread (echo status >ctl)\n");
 	return p;
 }
 
@@ -1582,6 +1718,19 @@ sdhostwctl(SDunit *u, Cmdbuf *cb)
 	int cmd, flags, i;
 	uchar blk[Secsize];
 
+	if(strcmp(cb->f[0], "status") == 0){
+		qlock(c);
+		i = sdhostaustatus(c);
+		qunlock(c);
+		if(!i){
+			print("sdhost: ACMD13 failed\n");
+			return 0;
+		}
+		print("sdhost: au %d (%dKB) eraseaus %d erasetmo %d speedclass %d\n",
+			c->aucode, c->aucode < 16? auskb[c->aucode]: 0,
+			c->erasesz, c->erasetmo, c->speedclass);
+		return 0;
+	}
 	if(strcmp(cb->f[0], "reinit") == 0){
 		qlock(c);
 		c->inited = 0;
