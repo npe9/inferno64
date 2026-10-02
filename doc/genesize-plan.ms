@@ -407,3 +407,104 @@ found in
 as the starting point for the VMX backend.
 .CW scripts/mkbochs-vmx.sh
 written for the VMX/SVM processor bench.
+.IP "Phase 0, the bench (QEMU q35, TCG)." 4
+.CW scripts/vmhost.sh
+builds the ISO and boots the reference host:
+.CW "build" ,
+.CW "run [seconds]"
+(serial captured to
+.CW .qemu/vmhost.log )
+and
+.CW "debug"
+(stopped, gdb on :1234).  The
+.CW mk
+targets in
+.CW os/inferno/pc64
+are not written yet; the script is the interface.
+The unchanged
+.CW cloud-port
+kernel did not survive it.  Fixed, each found on this bench:
+.RS
+.IP \(bu 2
+.CW pmap()
+built a PML4 entry above 512 GiB only in the calling processor's
+table, and
+.CW mpstartap()
+copied only every eighth PML4 entry to an AP, so a virtio NIC whose
+64-bit BAR edk2 put at
+.CW 0xc000000000
+faulted in its attach on cpu1
+.CW 33dbee6b7 ). (
+.IP \(bu 2
+.CW pcibusno()
+returned \-1 for a host bridge with no
+.CW _BBN ,
+which q35 and much real firmware have, dropping every PCI interrupt
+route
+.CW b4bd57516 ). (
+.IP \(bu 2
+.CW dhcpclient 's
+.CW setup()
+returned a nil error with a nil request when the DHCP port was busy,
+and the nil dereference panicked the kernel
+.CW de0533b75 ). (
+.IP \(bu 2
+QEMU's igb disagreed with the 82576 three ways \(en no autonegotiation
+out of reset, no link bit in PHY register 17, and advanced receive
+descriptors written when legacy ones were selected \(en and is patched,
+.CW scripts/mkqemu.sh
+and
+.CW scripts/qemu-patches
+.CW d16222e94 ). (
+The driver is unchanged.
+.RE
+.IP
+Four boots since, each clean, DHCP over the igb.  Still open:
+.RS
+.IP \(bu 2
+a second
+.CW dhcp()
+straight after a failed one finds port 68 still held: the failed
+attempt's process holds the UDP descriptor until it exits, which races
+the caller.  It now fails with the true error.
+.IP \(bu 2
+page 0 is mapped on pc64, so a Limbo nil dereference that should raise
+"dereference of nil" reads zeros instead.  This is what turned the
+dhcpclient bug into a panic.
+.IP \(bu 2
+Bochs is built
+.CW scripts/mkbochs-vmx.sh ) (
+but the kernel has not been booted on it: it needs a legacy-BIOS loader
+for the multiboot image.
+.RE
+.IP "Phase 1, PCIe (QEMU q35)." 4
+Done but for BAR files and the
+.CW mk
+targets
+.CW fece67393 ). (
+Extended configuration space through ECAM, the extended capability
+walk, PCI Express port type, ARI, and SR-IOV parsing including VF BAR
+sizes, in
+.CW port/pci.c ;
+.CW #$/pci/0000:bb:dd.f/{ctl,config,caps} .
+On the bench the igb PF reports TotalVFs 8, offset 128, stride 2, VF
+device
+.CW 10ca ,
+two 64-bit 16 KiB VF BARs, VF0 at 02:10.0; the root ports report ARI
+forwarding.
+.CW bar N
+files are not there: Inferno has no user mapping, so they would be
+read/write windows, and nothing needs one yet.
+.IP "Phase 2, IOMMU (QEMU q35): discovery only." 4
+.CW acpidmar()
+reads DMAR into
+.CW pc/dmar.h
+.CW e9a3a18e4 ): (
+haw 48, interrupt remapping, one unit at
+.CW 0xfed90000
+whose scope covers the IOAPIC, the root-complex functions and the three
+root ports.  No unit is programmed;
+.CW vtd.c
+and
+.CW #Q
+are next.
