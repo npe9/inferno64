@@ -5920,3 +5920,39 @@ in its entry, and
 .B ccabusy
 is what would report it.  Until that is run, the UI-mode loss has one
 explanation fewer than it did and no new one.
+.PP
+.B "The contending measurement was not taken, and the reason is the bench."
+Both boards would have to run
+.I armv7max25
+with no
+.B role
+in their entries, and board 2 refused three flashes in a row \- each time
+with a bootloader answering and a client printing its whole summary, and
+each time the board still running the image it had before:
+.DS
+.CW "flashverify: the image carries from ../init/armv7max25.dis"
+.CW "flashverify: built, kerndate 1790943155"
+.CW "McuType: 'STM32F4XX'   BootStart: 0xe0000"
+.CW "flashverify: the board says kerndate 1790943023, nproc 5"
+.CW "FLASHVERIFY-FAILED built 1790943155, the board is running 1790943023"
+.DE
+and neither board changed, checked on both consoles afterwards.  So this
+is not the stale-client race found earlier in the day \- there were no
+stale clients, and that race would have written the wrong image rather
+than none.
+.PP
+.B "What is worth keeping is that the failure is visible at all."
+Before
+.I flashverify.sh
+this would have been a measurement taken against the previous image and
+believed, which is what happened three times earlier today before the
+cause was found.  The guard reads the board's own boot line back and
+refuses, so a bench that will not take a flash says so instead of
+answering with yesterday's kernel.
+.PP
+Board 2's console input has been the unreliable thing on this bench all
+along \- it has failed and recovered several times, output readable and
+nothing typed arriving \- and ^R^R is how the bootloader is entered, so a
+board whose input is intermittent is a board whose flashing is
+intermittent.  Both boards are on verified images and the question stands
+where it was.
