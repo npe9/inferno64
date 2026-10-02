@@ -6,6 +6,9 @@
 #	M2	an unmodified Linux boots to a shell that runs a command
 #		typed from Limbo (pc64linux, linuxtestinit.b, vmlinux(1),
 #		the guest of scripts/mklinuxguest.sh)
+#	M5	in the same run, the bench's virtio-serial function is
+#		assigned to the guest, whose own virtio_console driver
+#		writes through it to QEMU's chardev (.qemu/vmhost-hvc.log)
 #
 # Both run on QEMU's TCG, which emulates SVM and not VMX, so this
 # checks the SVM backend; the VMX backend is checked on Bochs
@@ -41,6 +44,14 @@ if grep -q '^Linux 6' "$WORK/m2.log" && grep -q '^LINUXGUEST: ran' "$WORK/m2.log
 else
 	echo "check-vm: M2 (svm): FAIL"
 	grep 'LINUXGUEST\|LINUXTEST\|vmlinux:\|panic' "$WORK/m2.log" | sed 's/^/	/' | tail -10
+	fail=1
+fi
+if grep -q 'hello-from-the-guest' "$ROOT/.qemu/vmhost-hvc.log" 2>/dev/null; then
+	echo "check-vm: M5 (svm): pass"
+	grep '^pci 00\|PCI-MSIX' "$WORK/m2.log" | sort -u | sed 's/^/	/'
+else
+	echo "check-vm: M5 (svm): FAIL -- the guest's virtio console output did not reach QEMU"
+	grep '^pci 00\|PCI-MSIX\|virtio' "$WORK/m2.log" | sort -u | sed 's/^/	/' | tail -8
 	fail=1
 fi
 exit $fail

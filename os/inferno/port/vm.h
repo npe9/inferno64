@@ -107,6 +107,7 @@ struct Vmops
 	 */
 	int	(*rdmsr)(Vcpu*, u32int msr, uvlong*);
 	int	(*wrmsr)(Vcpu*, u32int msr, uvlong);
+	void	(*gpunmap)(Vm*, uvlong gpa, uvlong len);
 };
 
 enum {
@@ -143,6 +144,7 @@ enum {
 	VmW	= 2,
 	VmX	= 4,
 	VmRWX	= 7,
+	VmUC	= 8,	/* uncached: a device's registers, not RAM */
 };
 
 enum {

@@ -23,6 +23,7 @@ dev
 	shm
 	usb
 	pci
+	iommu
 	vm
 
 	ether		netif
@@ -80,6 +81,7 @@ lib
 link
 	vmx
 	svm
+	vtd
 ##	ether82557	pci
 #	ether83815	pci
 #	etherelnk3	pci
@@ -107,6 +109,7 @@ link
 misc
 	vmplat
 	vmdev
+	vmpci
 	pci		pcipc
 	archgeneric	devkbd i8259 i8253
 	archacpi	mp apic squidboy ec hpet

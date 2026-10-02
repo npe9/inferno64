@@ -29,6 +29,7 @@
 #include	"../port/error.h"
 #include	"../port/vm.h"
 #include	"vmdev.h"
+#include	"vmpci.h"
 
 typedef struct Plat Plat;
 
@@ -40,6 +41,8 @@ struct Plat
 	Vpit	pit;
 	Vuart	uart;
 	Vlapic	lapic[Maxvcpu];
+	void	*pci;		/* vmpci.c's */
+	QLock	pcilk;		/* the PCI bus is not touched under the spin lock */
 	int	irqwin[Maxvcpu];
 	int	kick[Maxvcpu];	/* something for a halted vCPU to look at */
 	int	ioignore;
@@ -48,7 +51,7 @@ struct Plat
 	int	hungup;
 
 	/* what the kernel handled, for status */
-	uvlong	ncpuid, nmsr, nio, nmmio, nhlt, nintr, ngp;
+	uvlong	ncpuid, nmsr, nio, nmmio, nhlt, nintr, ngp, nmsi;
 	u32int	lastgpmsr;
 	int	lastport;
 };
@@ -79,6 +82,12 @@ vmplatnew(Vm *vm)
 	vuartreset(&p->uart);
 	for(i = 0; i < Maxvcpu; i++)
 		vlapicreset(&p->lapic[i], i);
+	if(waserror()){
+		free(p);
+		nexterror();
+	}
+	p->pci = vmpcinew(vm);
+	poperror();
 	return p;
 }
 
@@ -100,6 +109,7 @@ vmplatfree(Vm *vm)
 
 	if((p = PLAT(vm)) == nil)
 		return;
+	vmpcifree(p->pci);
 	free(p);
 	vm->plat = nil;
 }
@@ -578,38 +588,82 @@ decode(uchar *b, int n, int long64, Insn *in)
 	return i <= n ? 0 : -1;
 }
 
+/* decode the instruction that faulted on an MMIO page; 0 if it is not a MOV we know */
 static int
-dommio(Vcpu *v, Plat *p, Vmexit *e)
+mmioinsn(Vcpu *v, Vmexit *e, Insn *in)
+{
+	uchar buf[15];
+	int n, long64;
+
+	n = fetch(v, e->rip, buf, sizeof buf);
+	long64 = (vmops->getreg(v, VEfer) & EFERLMA) && (vmops->getreg(v, VCsattr) & 1<<13);
+	return n > 0 && decode(buf, n, long64, in) == 0;
+}
+
+static void
+mmiofinish(Vcpu *v, Vmexit *e, Insn *in, uvlong val)
+{
+	if(!in->write){
+		if(in->zext)
+			setop(v, in->reg, 4, in->rex, val & (in->zext == 1 ? 0xFF : 0xFFFF));
+		else
+			setop(v, in->reg, in->size, in->rex, val);
+	}
+	vmops->setreg(v, VRip, e->rip + in->len);
+}
+
+static uvlong
+mmiowval(Vcpu *v, Insn *in)
+{
+	return in->reg < 0 ? in->imm : getop(v, in->reg, in->size, in->rex);
+}
+
+/* the local APIC's page; the platform's lock held */
+static int
+apicmmio(Vcpu *v, Plat *p, Vmexit *e, Insn *in)
 {
 	Vlapic *a;
-	uchar buf[15];
-	Insn in;
-	int n, long64, reg;
+	int reg;
 	uvlong val;
 
 	a = &p->lapic[v->id];
-	if((e->gpa & ~0xFFFULL) != Apicbase || (a->base & (ApicEnable|ApicX2)) != ApicEnable)
+	if((a->base & (ApicEnable|ApicX2)) != ApicEnable)
 		return 0;
-	n = fetch(v, e->rip, buf, sizeof buf);
-	long64 = (vmops->getreg(v, VEfer) & EFERLMA) && (vmops->getreg(v, VCsattr) & 1<<13);
-	if(n <= 0 || decode(buf, n, long64, &in) < 0)
-		return 0;
-	if((e->gpa & 0xF) != 0 || in.size != 4 && in.zext == 0)
+	if((e->gpa & 0xF) != 0 || in->size != 4 && in->zext == 0)
 		return 0;		/* the APIC is 32-bit registers on 16-byte boundaries */
 	reg = (e->gpa & 0xFF0) >> 4;
 	p->nmmio++;
-	if(in.write){
-		val = in.reg < 0 ? in.imm : getop(v, in.reg, in.size, in.rex);
-		vlapicwrite(a, reg, val);
-	}else{
+	val = 0;
+	if(in->write)
+		vlapicwrite(a, reg, mmiowval(v, in));
+	else
 		val = vlapicread(a, reg);
-		if(in.zext)
-			setop(v, in.reg, 4, in.rex, val & (in.zext == 1 ? 0xFF : 0xFFFF));
-		else
-			setop(v, in.reg, in.size, in.rex, val);
-	}
-	vmops->setreg(v, VRip, e->rip + in.len);
+	mmiofinish(v, e, in, val);
 	return 1;
+}
+
+/* a trapped page of an assigned function's BAR; no spin lock held */
+static int
+pcimmio(Vcpu *v, Plat *p, Vmexit *e, Insn *in)
+{
+	uvlong val;
+	int r, size;
+
+	size = in->zext ? in->zext : in->size;
+	val = in->write ? mmiowval(v, in) : 0;
+	qlock(&p->pcilk);
+	if(waserror()){
+		qunlock(&p->pcilk);
+		nexterror();
+	}
+	r = vmpcimmio(p->pci, e->gpa, size, in->write, &val);
+	poperror();
+	qunlock(&p->pcilk);
+	if(r){
+		p->nmmio++;
+		mmiofinish(v, e, in, val);
+	}
+	return r;
 }
 
 /* the interrupt that would be delivered now, or -1; caller holds p */
@@ -725,10 +779,74 @@ dohlt(Vcpu *v, Plat *p, Vmexit *e)
 	}
 }
 
+/* configuration mechanism 1, without the spin lock */
+static int
+pciio(Vcpu *v, Plat *p, Vmexit *e)
+{
+	u32int val, mask;
+	int r;
+
+	mask = e->size == 4 ? 0xFFFFFFFF : (1 << 8*e->size) - 1;
+	val = e->in ? 0 : e->data & mask;
+	qlock(&p->pcilk);
+	if(waserror()){
+		qunlock(&p->pcilk);
+		nexterror();
+	}
+	r = vmpciio(p->pci, e->port, e->in, e->size, &val);
+	poperror();
+	qunlock(&p->pcilk);
+	if(!r)
+		return 0;
+	p->nio++;
+	if(e->in)
+		vmops->setreg(v, VRax, vmops->getreg(v, VRax) & ~(uvlong)mask | val & mask);
+	vmops->setreg(v, VRip, e->rip + e->ilen);
+	return 1;
+}
+
+/*
+ * An MSI from an assigned function: address 0xFEExxxxx names the
+ * destination in bits 19:12, physical or logical by bit 2, and data
+ * the vector and delivery mode.  Fixed and lowest-priority delivery to
+ * this machine's one vCPU.
+ */
+void
+vmplatmsi(Vm *vm, u32int addr, u32int data)
+{
+	Plat *p;
+	Vlapic *a;
+	int dest, mode;
+
+	p = PLAT(vm);
+	if(p == nil || vm->nvcpu == 0)
+		return;
+	a = &p->lapic[0];
+	dest = (addr >> 12) & 0xFF;
+	mode = (data >> 8) & 7;
+	if((addr & 0xFFF00000) != Apicbase || mode > 1)
+		return;
+	/*
+	 * Bit 2 is the destination mode.  Physical: dest is an APIC id.
+	 * Logical (what Linux programs): dest is matched against the
+	 * logical id the guest put in its LDR -- in the flat model a bit
+	 * mask, which is all that is modelled.  0xFF is everyone either way.
+	 */
+	if(dest != 0xFF && ((addr & 1<<2) ? (dest & (a->ldr >> 24)) == 0 : dest != a->id))
+		return;
+	ilock(p);
+	vlapicsetirr(a, data & 0xFF);
+	p->kick[0] = 1;
+	p->nmsi++;
+	iunlock(p);
+	wakeup(&vm->vcpu[0]->r);
+}
+
 int
 vmplatexit(Vcpu *v, Vmexit *e)
 {
 	Plat *p;
+	Insn in;
 	int r;
 
 	p = PLAT(v->vm);
@@ -744,6 +862,8 @@ vmplatexit(Vcpu *v, Vmexit *e)
 		iunlock(p);
 		return 1;
 	case VxIo:
+		if(e->port >= 0xCF8 && e->port <= 0xCFF && !e->string && !e->rep)
+			return pciio(v, p, e);
 		ilock(p);
 		r = doio(v, p, e);
 		iunlock(p);
@@ -751,10 +871,15 @@ vmplatexit(Vcpu *v, Vmexit *e)
 			wakeup(&p->consr);
 		return r;
 	case VxMmio:
-		ilock(p);
-		r = dommio(v, p, e);
-		iunlock(p);
-		return r;
+		if(!mmioinsn(v, e, &in))
+			return 0;
+		if((e->gpa & ~0xFFFULL) == Apicbase){
+			ilock(p);
+			r = apicmmio(v, p, e, &in);
+			iunlock(p);
+			return r;
+		}
+		return pcimmio(v, p, e, &in);
 	case VxHlt:
 		/*
 		 * HLT with interrupts off is a guest that has stopped
@@ -784,6 +909,17 @@ vmplatctl(Vm *vm, int nf, char **f)
 			p->ioignore = 0;
 		else
 			error(Ebadarg);
+		return 1;
+	}
+	if(nf == 2 && strcmp(f[0], "assign") == 0){
+		qlock(&p->pcilk);
+		if(waserror()){
+			qunlock(&p->pcilk);
+			nexterror();
+		}
+		vmpciassign(p->pci, f[1]);
+		poperror();
+		qunlock(&p->pcilk);
 		return 1;
 	}
 	return 0;
@@ -843,13 +979,14 @@ vmplatstatus(Vm *vm, char *s, char *e)
 	p = PLAT(vm);
 	a = &p->lapic[0];
 	s = seprint(s, e, "platform tschz %llud io %s\n", p->tschz, p->ioignore ? "ignore" : "exit");
-	s = seprint(s, e, "platform handled cpuid %llud msr %llud io %llud mmio %llud hlt %llud intr %llud gp %llud\n",
-		p->ncpuid, p->nmsr, p->nio, p->nmmio, p->nhlt, p->nintr, p->ngp);
+	s = seprint(s, e, "platform handled cpuid %llud msr %llud io %llud mmio %llud hlt %llud intr %llud gp %llud msi %llud\n",
+		p->ncpuid, p->nmsr, p->nio, p->nmmio, p->nhlt, p->nintr, p->ngp, p->nmsi);
 	s = seprint(s, e, "platform lastgpmsr %#ux lastport %#ux conslost %llud\n", p->lastgpmsr, p->lastport, p->uart.outlost);
 	s = seprint(s, e, "pic imr %.2ux/%.2ux irr %.2ux/%.2ux isr %.2ux/%.2ux base %.2ux/%.2ux\n",
 		p->pic.c[0].imr, p->pic.c[1].imr, p->pic.c[0].irr, p->pic.c[1].irr,
 		p->pic.c[0].isr, p->pic.c[1].isr, p->pic.c[0].base, p->pic.c[1].base);
 	s = seprint(s, e, "lapic0 base %#llux svr %#ux lvtt %#ux lint0 %#ux tpr %#ux fire %llud\n",
 		a->base, a->svr, a->lvt[LvtTimer], a->lvt[LvtLint0], a->tpr, a->fire);
+	s = vmpcistatus(p->pci, s, e);
 	return s;
 }

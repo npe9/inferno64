@@ -188,3 +188,4 @@ vmhost-debug:V: vmhost
 vmx.$O svm.$O devvm.$O vmplat.$O: ../port/vm.h
 vmplat.$O vmdev.$O: ../pc/vmdev.h
 vtd.$O deviommu.$O: ../port/iommu.h ../pc/dmar.h
+vmplat.$O vmpci.$O: ../pc/vmpci.h ../port/iommu.h

@@ -199,6 +199,8 @@ needenabled(void)
 		error("translation is not enabled; write \"enable\" to #Q/iommu/ctl");
 }
 
+static void enable(void);
+
 static Iodom*
 newdom(void)
 {
@@ -524,15 +526,9 @@ iommuwrite(Chan *c, void *a, s32 n, s64 off)
 			free(cb);
 			nexterror();
 		}
-		if(cb->nf == 1 && strcmp(cb->f[0], "enable") == 0){
-			if(iommuops == nil)
-				error(iommuwhy);
-			if(!enabled){
-				if(iommuops->enable() < 0)
-					error("enabling translation failed");
-				enabled = 1;
-			}
-		}else if(cb->nf == 1 && strcmp(cb->f[0], "new") == 0)
+		if(cb->nf == 1 && strcmp(cb->f[0], "enable") == 0)
+			enable();
+		else if(cb->nf == 1 && strcmp(cb->f[0], "new") == 0)
 			newdom();
 		else
 			error(Ebadctl);
@@ -567,6 +563,88 @@ iommuwrite(Chan *c, void *a, s32 n, s64 off)
 	poperror();
 	qunlock(&iommulk);
 	return n;
+}
+
+static void
+enable(void)
+{
+	if(iommuops == nil)
+		error(iommuwhy);
+	if(!enabled){
+		if(iommuops->enable() < 0)
+			error("enabling translation failed");
+		enabled = 1;
+	}
+}
+
+Iodom*
+iommudomain(void)
+{
+	Iodom *d;
+
+	qlock(&iommulk);
+	if(waserror()){
+		qunlock(&iommulk);
+		nexterror();
+	}
+	enable();
+	d = newdom();
+	poperror();
+	qunlock(&iommulk);
+	return d;
+}
+
+void
+iommudomattach(Iodom *d, Pcidev *p)
+{
+	qlock(&iommulk);
+	if(waserror()){
+		qunlock(&iommulk);
+		nexterror();
+	}
+	attach(d, p);
+	poperror();
+	qunlock(&iommulk);
+}
+
+void
+iommudomdetach(Iodom *d, Pcidev *p)
+{
+	qlock(&iommulk);
+	if(waserror()){
+		qunlock(&iommulk);
+		nexterror();
+	}
+	detach(d, p);
+	poperror();
+	qunlock(&iommulk);
+}
+
+void
+iommudommap(Iodom *d, uvlong iova, uvlong pa, uvlong len, int prot)
+{
+	qlock(&iommulk);
+	if(waserror()){
+		qunlock(&iommulk);
+		nexterror();
+	}
+	iommuops->map(d, iova, pa, len, prot);
+	d->npages += len / BY2PG;
+	poperror();
+	qunlock(&iommulk);
+}
+
+void
+iommudomkill(Iodom *d)
+{
+	qlock(&iommulk);
+	if(waserror()){
+		qunlock(&iommulk);
+		nexterror();
+	}
+	killdom(d);
+	poperror();
+	qunlock(&iommulk);
 }
 
 Dev iommudevtab = {

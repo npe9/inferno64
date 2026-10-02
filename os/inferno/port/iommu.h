@@ -65,3 +65,14 @@ struct Iommuops
 
 extern Iommuops *iommuops;
 void	iommuregister(Iommuops*);
+
+/*
+ * From the kernel -- devvm assigning a device to a guest (phase 6):
+ * a domain made this way is an ordinary one, seen in #Q like any
+ * other.  iommudomain() turns translation on if it is not yet.
+ */
+Iodom*	iommudomain(void);
+void	iommudomattach(Iodom*, Pcidev*);
+void	iommudomdetach(Iodom*, Pcidev*);
+void	iommudommap(Iodom*, uvlong iova, uvlong pa, uvlong len, int prot);
+void	iommudomkill(Iodom*);

@@ -668,6 +668,8 @@ svmgpmap(Vm *vm, uvlong gpa, uvlong hpa, uvlong len, int prot)
 	if((gpa | hpa | len) & 0xFFF)
 		error(Ebadarg);
 	bits = NptU;
+	if(prot & VmUC)
+		bits |= 1<<3 | 1<<4;	/* PWT, PCD: uncached */
 	if(prot & (VmR|VmX))
 		bits |= NptP;
 	if(prot & VmW)
@@ -675,6 +677,18 @@ svmgpmap(Vm *vm, uvlong gpa, uvlong hpa, uvlong len, int prot)
 	for(e = gpa + len; gpa < e; gpa += BY2PG, hpa += BY2PG)
 		*nptwalk(vm->gp, gpa) = hpa | bits;
 	/* every VMRUN flushes the whole TLB (Tlbctl), so nothing to do */
+}
+
+static void
+svmgpunmap(Vm *vm, uvlong gpa, uvlong len)
+{
+	uvlong e;
+
+	if((gpa | len) & 0xFFF)
+		error(Ebadarg);
+	for(e = gpa + len; gpa < e; gpa += BY2PG)
+		*nptwalk(vm->gp, gpa) = 0;
+	/* every VMRUN flushes the whole TLB (Tlbctl) */
 }
 
 static Vmops svmops = {
@@ -695,6 +709,7 @@ static Vmops svmops = {
 	svmirqwin,
 	svmrdmsr,
 	svmwrmsr,
+	svmgpunmap,
 };
 
 void

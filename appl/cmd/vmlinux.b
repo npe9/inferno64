@@ -34,6 +34,7 @@ Gdt:	con 16r500;
 Shell:	con "LINUXGUEST: shell";	# what scripts/mklinuxguest.sh's /init prints
 typed: string;
 quitat: string;	# -q: stop once the console has shown this
+assign: list of string;	# -p: PCI functions given to the guest
 Zero:	con 16r7000;
 Cmdline:	con 16r20000;
 Kernel:	con 16r100000;
@@ -42,7 +43,7 @@ stderr: ref Sys->FD;
 
 usage()
 {
-	sys->fprint(stderr, "usage: vmlinux [-m megabytes] [-a append] [-i initrd] [-s seconds] [-t typed] [-q pattern] bzImage\n");
+	sys->fprint(stderr, "usage: vmlinux [-m megabytes] [-a append] [-i initrd] [-s seconds] [-t typed] [-q pattern] [-p 0000:bb:dd.f]... bzImage\n");
 	raise "fail:usage";
 }
 
@@ -155,6 +156,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		's' =>	secs = int arg->earg();
 		't' =>	typed = arg->earg() + "\n";
 		'q' =>	quitat = arg->earg();
+		'p' =>	assign = arg->earg() :: assign;
 		* =>	usage();
 		}
 	argv = arg->argv();
@@ -189,6 +191,11 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail(sys->sprint("mem: %r"));
 	if(sys->fprint(ctl, "io ignore") < 0)
 		fail(sys->sprint("io ignore: %r"));
+	for(; assign != nil; assign = tl assign){
+		if(sys->fprint(ctl, "assign %s", hd assign) < 0)
+			fail(sys->sprint("assign %s: %r", hd assign));
+		sys->print("vmlinux: assigned %s\n", hd assign);
+	}
 
 	tschz := big field(readall(dir + "/status"), "tschz");
 	if(tschz <= big 0)

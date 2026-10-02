@@ -56,6 +56,7 @@ extern int vmlaunch(Vmxregs*, int);
 
 typedef struct Vmxcpu Vmxcpu;
 static int craccess(Vmxcpu*, uvlong);
+static int draccess(Vmxcpu*, uvlong);
 static void vmxinject(Vcpu*, int, int, int, u32int);
 extern void _clts(void);
 
@@ -235,6 +236,7 @@ enum {
 	EptW = 1<<1,
 	EptX = 1<<2,
 	EptWB = 6<<3,
+	EptIPAT = 1<<6,
 };
 
 struct Vmxcpu
@@ -247,6 +249,8 @@ struct Vmxcpu
 	int	launched;
 	int	flushept;
 	u64int	*msrguest;	/* Nmsrlist (index, value) pairs, 16-byte aligned */
+	uvlong	dr[4];		/* the guest's DR0-3 and DR6 (see draccess) */
+	uvlong	dr6;
 	u64int	*msrhost;
 };
 
@@ -783,12 +787,27 @@ Again:
 		}
 	}
 
-	/* control-register accesses are the backend's own business */
+	/* control- and debug-register accesses are the backend's own business */
 	if(e->kind == VxOther && (e->raw & 0xFFFF) == 28){
 		if(craccess(x, e->qual))
 			vmcswrite(GUEST_RIP, e->rip + e->ilen);
 		else
 			vmxinject(v, VeExc, VecGP, 1, 0);
+		memset(e, 0, sizeof *e);
+		goto Again;
+	}
+	if(e->kind == VxOther && (e->raw & 0xFFFF) == 29){
+		switch(draccess(x, e->qual)){
+		case 1:
+			vmcswrite(GUEST_RIP, e->rip + e->ilen);
+			break;
+		case 0:
+			vmxinject(v, VeExc, VecGP, 1, 0);
+			break;
+		default:
+			vmxinject(v, VeExc, VecUD, 0, 0);
+			break;
+		}
 		memset(e, 0, sizeof *e);
 		goto Again;
 	}
@@ -980,6 +999,50 @@ craccess(Vmxcpu *x, uvlong q)
 		return 1;
 	}
 	return 0;
+}
+
+/*
+ * Exit reason 29: MOV to or from a debug register; every one exits
+ * (MOV-DR exiting is on).  DR7 is the VMCS's guest DR7, loaded and
+ * saved by the entry and exit controls.  DR0-3 and DR6 are kept here
+ * and are what the guest reads back, but are not loaded into the
+ * processor around entry: a guest's hardware breakpoints do not fire.
+ * That keeps the host's own debug registers the host's; loading the
+ * guest's around each entry is the remaining piece.
+ */
+static int
+draccess(Vmxcpu *x, uvlong q)
+{
+	int dr, r;
+	uvlong v;
+
+	dr = q & 7;
+	r = (q >> 8) & 15;
+	if(dr == 4 || dr == 5){
+		if(vmcsread(GUEST_CR4SHADOW) & 1<<3)	/* CR4.DE: #UD */
+			return -1;
+		dr += 2;
+	}
+	if(q & 1<<4){		/* MOV from DR */
+		switch(dr){
+		case 6: v = x->dr6 | 0xFFFF0FF0; break;
+		case 7: v = vmcsread(GUEST_DR7); break;
+		default: v = x->dr[dr]; break;
+		}
+		setgprn(x, r, v);
+		return 1;
+	}
+	v = gprn(x, r);
+	switch(dr){
+	case 6: x->dr6 = v; break;
+	case 7:
+		if(v >> 32)
+			return 0;
+		vmcswrite(GUEST_DR7, v | 0x400);
+		break;
+	default: x->dr[dr] = v; break;
+	}
+	return 1;
 }
 
 static int
@@ -1208,7 +1271,7 @@ vmxgpmap(Vm *vm, uvlong gpa, uvlong hpa, uvlong len, int prot)
 
 	if((gpa | hpa | len) & 0xFFF)
 		error(Ebadarg);
-	bits = EptWB;
+	bits = (prot & VmUC) ? EptIPAT : EptWB;	/* UC, whatever the guest's PAT says */
 	if(prot & VmR)
 		bits |= EptR;
 	if(prot & VmW)
@@ -1218,6 +1281,21 @@ vmxgpmap(Vm *vm, uvlong gpa, uvlong hpa, uvlong len, int prot)
 	for(e = gpa + len; gpa < e; gpa += BY2PG, hpa += BY2PG)
 		*eptwalk(vm->gp, gpa) = hpa | bits;
 	/* the vCPUs flush before their next entry */
+	for(i = 0; i < vm->nvcpu; i++)
+		if(vm->vcpu[i] != nil && vm->vcpu[i]->arch != nil)
+			((Vmxcpu*)vm->vcpu[i]->arch)->flushept = 1;
+}
+
+static void
+vmxgpunmap(Vm *vm, uvlong gpa, uvlong len)
+{
+	uvlong e;
+	int i;
+
+	if((gpa | len) & 0xFFF)
+		error(Ebadarg);
+	for(e = gpa + len; gpa < e; gpa += BY2PG)
+		*eptwalk(vm->gp, gpa) = 0;
 	for(i = 0; i < vm->nvcpu; i++)
 		if(vm->vcpu[i] != nil && vm->vcpu[i]->arch != nil)
 			((Vmxcpu*)vm->vcpu[i]->arch)->flushept = 1;
@@ -1241,6 +1319,7 @@ static Vmops vmxops = {
 	vmxirqwin,
 	vmxrdmsr,
 	vmxwrmsr,
+	vmxgpunmap,
 };
 
 void

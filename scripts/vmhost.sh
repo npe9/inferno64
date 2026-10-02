@@ -11,6 +11,13 @@
 #	edu -- QEMU's teaching device: a DMA engine driven through BAR0,
 #		which is what the IOMMU tests aim at addresses; its DMA mask
 #		is widened from 28 bits to 48, as a real engine's would be
+#	virtio-serial (1.0, modern only) with one console port written to
+#		.qemu/vmhost-hvc.log -- the function assigned to a Linux
+#		guest in the phase 6 test; Inferno has no driver for it.
+#		iommu_platform=on is not optional: without it QEMU's virtio
+#		devices bypass the emulated IOMMU altogether -- an emulator
+#		convenience no real device has -- and an assigned one DMAs to
+#		the host's memory at the guest's addresses
 #	virtio-net (1.0) -- the host's own network, as cloud-port boots it
 #	serial console, edk2 firmware, the tree's UEFI loader
 #
@@ -100,12 +107,16 @@ set -- \
 	-device pcie-root-port,id=rp2,chassis=2,slot=2 \
 	-device pcie-root-port,id=rp3,chassis=3,slot=3 \
 	-device pcie-root-port,id=rp4,chassis=4,slot=4 \
+	-device pcie-root-port,id=rp5,chassis=5,slot=5 \
 	-netdev user,id=net0 \
 	-device virtio-net-pci,netdev=net0,bus=rp1,disable-legacy=on \
 	$IGB \
 	-drive if=none,id=nvm0,format=raw,file="$NVME" \
 	-device nvme,drive=nvm0,serial=vmhost0,bus=rp3 \
 	-device edu,bus=rp4,dma_mask=0xffffffffffff \
+	-device virtio-serial-pci,bus=rp5,disable-legacy=on,iommu_platform=on \
+	-chardev file,id=hvc0,path="$Q/vmhost-hvc.log" \
+	-device virtconsole,chardev=hvc0 \
 	-cdrom "$ISO" \
 	-display none -no-reboot \
 	"$@"
@@ -116,7 +127,7 @@ fi
 if [ -z "$secs" ]; then
 	exec $QEMU "$@" -serial mon:stdio
 fi
-rm -f "$LOG"
+rm -f "$LOG" "$Q/vmhost-hvc.log"
 timeout "$secs" $QEMU "$@" -serial "file:$LOG" >"$Q/vmhost-qemu.err" 2>&1 || true
 sed -e 's/\x1b\[[0-9;=]*[a-zA-Z]//g' -e 's/\r$//' "$LOG"
 [ -s "$Q/vmhost-qemu.err" ] && sed 's/^/qemu: /' "$Q/vmhost-qemu.err" >&2
