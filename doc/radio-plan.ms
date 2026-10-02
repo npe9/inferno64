@@ -5981,3 +5981,59 @@ nothing typed arriving \- and ^R^R is how the bootloader is entered, so a
 board whose input is intermittent is a board whose flashing is
 intermittent.  Both boards are on verified images and the question stands
 where it was.
+.PP
+.B "The offset is obtainable with what is on this bench, by substitution."
+This document said for a day that it wants a connector, and before that
+that it wants a calibrated generator.  It wants neither.
+.PP
+What it wants is a known level at the receiver's input, and the
+instrument here that can be trusted for a level at 915MHz is the tinySA's
+.IR input ,
+not its output.
+.I Tools/tinysa/README
+has said so all along \- "a tinySA ULTRA at 100kHz resolution bandwidth
+and no input attenuation is a calibrated receiver, while the CC1120's
+RSSI is its own AGC's estimate with the manufacturer's reference offset
+applied and no calibration of this board at all" \- and above 800MHz
+.CW sweep ()
+turns ultra mode on, which is the specified path for the input.  The
+generator's problem is the opposite and has no such escape: its low
+output path stops at 800MHz and there is no ultra mode for an output.
+.PP
+.B "So the trusted instrument is a receiver, and the method is substitution."
+.DS
+.CW "leg A   board 1 -> cable -> tinySA input: the TRUE power"
+.CW "        at the cable's far end"
+.CW "leg B   board 1 -> the SAME cable -> board 2's u.FL:"
+.CW "        board 2's RSSI"
+.DE
+The cable's loss, its connectors and the transmitter's own uncalibrated
+output are identical in both legs and cancel.  What is left is the
+difference, which is how much this receiver's RSSI is out \- and that is
+the offset.
+.B "No generator is involved at all;"
+the source is one of the boards, and it does not matter that its absolute
+output is unknown, because leg A measures it.
+.PP
+.I Tools/radio/offset.py
+is that, in two commands because the cable has to be moved between the
+legs and nothing here can move it.  Leg A writes what it measured to a
+file and leg B reads it back, so halves taken minutes apart are still
+valid \- nothing in between changes \- while halves taken at different PA
+settings are not, and the file carries the settings so leg B refuses when
+they differ.  It voids a leg A peak less than fifteen decibels over the
+floor, because that is not a carrier, and a leg B reading with
+RSSI_VALID clear.
+.PP
+.B "And it will not key more than -10dBm into the instrument."
+A tinySA's input is rated about +10 and this part will do +14, so the
+ladder stops at PA_POWER_RAMP 15, which the datasheet's formula makes
+-10dBm: twenty decibels of margin, and the tool refuses a higher rung
+rather than leaving that to be remembered.
+.PP
+.B "What it needs that cannot be done from here:"
+the cable moved from the tinySA's input to board 2's u.FL between
+.CW "offset.py sa"
+and
+.CW "offset.py rx" .
+Both legs run unattended once the cable is where they need it.
