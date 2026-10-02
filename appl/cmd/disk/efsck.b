@@ -33,6 +33,8 @@ implement Efsck;
 #
 #	every block it reads has a good checksum
 #	keys rise, within a node and from one leaf to the next
+#	every leaf is at the same depth -- the B-tree invariant, and the
+#	  one Fs.nextleaf's descent relies on
 #	every interior entry points at a block inside the filesystem
 #	every dentry names an inode that exists
 #	every extent's block is inside the filesystem, and no block is
@@ -61,6 +63,22 @@ nerr := 0;
 fs: ref Fs;
 
 reach: array of byte;		# blocks the tree reaches
+
+#
+# The depth every LEAF was found at, which must be one number.
+#
+# efsck checked that the tree was no deeper than 16 and nothing about its
+# shape, so an UNBALANCED tree -- one child of a node a leaf and another
+# interior -- passed it clean.  That is not a theoretical gap: it is why
+# "efsck: clean, generation 285" was true of an image whose root had a
+# leaf and an interior child, and why the only thing that noticed was
+# Fs.nextleaf walking off the end of a path it was entitled to trust.
+#
+# Every leaf at the same depth is THE B-tree invariant, and a filesystem
+# checker that does not test it cannot see the class of bug that breaks
+# descent.
+#
+leafdepth := -1;		# the depth of the first leaf seen
 owner: array of big;		# which inode claims a data block
 
 bad(s: string)
@@ -253,6 +271,14 @@ walk(bn: big, depth: int): (list of big, list of (big, big))
 	if(n == nil){
 		bad(sys->sprint("block %bd: %s", bn, e));
 		return (inodes, dentries);
+	}
+	if(n.ntype == Efs->Nleaf){
+		if(leafdepth < 0)
+			leafdepth = depth;
+		else if(depth != leafdepth)
+			bad(sys->sprint(
+				"block %bd is a leaf at depth %d; another is at depth %d (the tree is unbalanced)",
+				bn, depth, leafdepth));
 	}
 	for(i := 0; i < len n.ents; i++){
 		if(i > 0 && n.ents[i-1].key.cmp(n.ents[i].key) >= 0)

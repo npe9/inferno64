@@ -564,6 +564,7 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 			if(e == nil)
 				e = writefile(f.path, m.offset, m.data);
 			if(e == nil){
+				markdirty(m.fid);
 				wpending += len m.data;
 				if(wpending >= Wbatch){
 					e = fs.commit();
@@ -586,15 +587,21 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 			}
 			(d, e) := create(f.path, m.name, m.perm, m.mode);
 			#
-			# A create commits here, and an attempt to defer it to
-			# the clunk that must follow was REVERTED.  It would
-			# have halved the commits for "echo x > file", and it
-			# broke two suites in ways not yet understood: efs-write
-			# reported 228 leaked blocks and efs-stress hung.  See
+			# A create does NOT commit.  The clunk that must
+			# follow does, and marking the fid here is what tells
+			# it to -- see the dirty-fid list above.
+			#
+			# Deferring it was reverted once, because it made
+			# efs-write report 228 leaked blocks and efs-stress
+			# hang.  Both were real and neither was this code: the
+			# leak figure was a test that encoded a commit count,
+			# and the hang was Fs.commit running with no free map
+			# in memory, which the deferral exposed rather than
+			# caused.  Fixed in appl/lib/efs.b; see
 			# doc/open-issues-plan.ms B1e.
 			#
 			if(e == nil)
-				e = fs.commit();
+				markdirty(m.fid);
 			if(e != nil){
 				srv.reply(ref Rmsg.Error(m.tag, e));
 				continue;
@@ -610,6 +617,7 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 				continue;
 			}
 			e := remove(f.path);
+			takedirty(m.fid);
 			if(e == nil)
 				e = fs.commit();
 			srv.delfid(f);
@@ -646,7 +654,8 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 			# was not yet on the medium.
 			#
 			e: string;
-			if(wpending > 0){
+			mine := takedirty(m.fid);
+			if(fs.dirty && (mine || dirtyfid == nil)){
 				e = fs.commit();
 				wpending = 0;
 			}
@@ -714,6 +723,54 @@ server(tchan: chan of ref Styx->Tmsg, srv: ref Styxserver,
 #
 Wbatch: con 32 * Efs->Blocksize;
 wpending := 0;			# bytes written since the last commit
+
+#
+# WHICH FIDS HAVE DIRTIED THE FILESYSTEM.
+#
+# A clunk is where an uncommitted change is made durable, and the first
+# version of that committed on EVERY clunk while the filesystem was
+# dirty.  That is correct and it bought nothing: "echo x > f" clunks two
+# fids -- the directory walked to, and the file created -- so deferring
+# the create's commit to the clunk simply moved one commit and left the
+# count at two per file.  Measured by generation number, which counts
+# commits exactly and is medium-independent: 60 files cost generation
+# 122 either way.
+#
+# So a clunk commits when THAT fid is the one that dirtied something, or
+# when no fid is holding a dirty change any more.  The second half is
+# the backstop: it catches dirt from a fid that has already gone, and
+# without it a change could sit uncommitted until the next write
+# batch.  Between the two, the directory's clunk never commits -- if it
+# arrives first the file's fid is still on this list, and if it arrives
+# last the file's clunk has already committed and nothing is dirty.
+#
+dirtyfid: list of int;
+
+markdirty(fid: int)
+{
+	for(l := dirtyfid; l != nil; l = tl l)
+		if(hd l == fid)
+			return;
+	dirtyfid = fid :: dirtyfid;
+}
+
+#
+# Was this fid dirty?  Takes it off the list either way, because the
+# caller is done with it.
+#
+takedirty(fid: int): int
+{
+	found := 0;
+	nl: list of int;
+	for(l := dirtyfid; l != nil; l = tl l)
+		if(hd l == fid)
+			found = 1;
+		else
+			nl = hd l :: nl;
+	dirtyfid = nl;
+	return found;
+}
+
 
 #
 # Refuse an operation that would add to the filesystem unless the reserve

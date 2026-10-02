@@ -240,6 +240,7 @@ Efs: module
 		mountsuper: fn(name: string, startsect: big, which: int):
 				(ref Fs, string);
 		rawblk:	fn(f: self ref Fs, n: big): (array of byte, string);
+		putblk:	fn(f: self ref Fs, n: big, b: array of byte): string;
 		writable: fn(f: self ref Fs): string;
 		group:	fn(f: self ref Fs, g: int): (array of byte, string);
 		bmget:	fn(f: self ref Fs, n: int): (int, string);

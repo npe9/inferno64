@@ -747,10 +747,53 @@ Fs.rawblk(f: self ref Fs, n: big): (array of byte, string)
 	(b, e) := f.d.rdblk(n);
 	if(e != nil)
 		return (nil, e);
+	if((e = pok(b)) != nil)
+		return (nil, sys->sprint("block %bd: %s", n, e));
 	f.rblk[f.rnext] = n;
 	f.rraw[f.rnext] = b;
 	f.rnext = (f.rnext + 1) % Nraw;
 	return (b, nil);
+}
+
+#
+# Writing a block, THROUGH the cache above.
+#
+# This exists because the cache was added without it, and the hole it
+# left is the whole of plan item B1e -- the unbalanced tree.  Nothing
+# invalidated a cached block when it was written, and a copy-on-write
+# filesystem rewrites blocks constantly: free() returns a block to the
+# map and alloc() can hand the same one back inside the SAME
+# transaction, so the bytes behind a block number change without the
+# number changing.  rawblk then served the previous contents.
+#
+# It was not a corruption that any check could see, which is why it took
+# so long to find: the stale bytes were a VALID node with a GOOD
+# checksum, just the wrong one -- usually the leaf that used to live
+# there, where an interior node now does.  pathto() stops at the first
+# block that says leaf, so it returned a path SHORTER than the tree, and
+# Fs.fixup then attached new leaves at that shallow level.  The tree
+# really did end up with leaves at depth 1 and at depth 6, and
+# Fs.nextleaf walked off the end of a path array sized for the short
+# one, which is the "array bounds error" the server died of.
+#
+# Deferring the commit per create is what made it show: before that,
+# every operation committed, so a freed block went onto pendingfree and
+# was not reused until the next transaction.  The bug was always there
+# and the deferral only removed the accident that was hiding it.
+#
+# Write-through rather than invalidate: the caller already has the
+# bytes, and a block just written is the one most likely to be read
+# next -- a commit rewrites the free map and then reads it back.
+#
+Fs.putblk(f: self ref Fs, n: big, b: array of byte): string
+{
+	if(f.rblk != nil)
+		for(i := 0; i < Nraw; i++)
+			if(f.rblk[i] == n){
+				f.rraw[i] = b;
+				break;
+			}
+	return f.d.wrblk(n, b);
 }
 
 #
@@ -772,6 +815,51 @@ Fs.rawblk(f: self ref Fs, n: big): (array of byte, string)
 # anything else goes in one -- it would silently read the wrong offsets
 # rather than failing.
 #
+#
+# Is this block a node at all?
+#
+# THE PACKED PATH HAS TO CHECK THIS and the first version did not, which
+# was a real regression against the code it replaced.  leaffor() and
+# pathto() used to decide leaf-or-interior from Node.unpack's result, and
+# unpack verifies the block's checksum first; the packed version read
+# byte 0 raw.  Nleaf is 0, so a block of zeros -- one never written, or
+# freed and handed out again -- reads as A LEAF.  pathto then stops at it
+# and returns a path shorter than the tree, and Fs.fixup attaches the new
+# leaves at that shallow level: leaves at depth 1 in a tree whose others
+# are at depth 6, which efsck now reports and which Fs.nextleaf walks off
+# the end of.
+#
+# So the checksum is verified -- IN Fs.rawblk, where a block comes off
+# the medium, and NOT at each of the places that navigate one.  Where
+# matters, measured on three hundred creates, host, same image and the
+# same 302 commits in every arm:
+#
+#	no verification			2.41s  2.39s
+#	verified in Fs.rawblk		3.13s  3.12s	1.30x
+#	verified in each navigator	4.56s  4.56s	1.90x
+#
+# The third is where this started: leaffor(), pathto() and nextleaf()
+# each checked, which is once per block TOUCHED rather than once per
+# block READ.  B1c's whole win was 1.98x, so that gave almost all of it
+# back.  Verified on read, the Adler pass falls exactly where
+# Node.unpack was already paying one before B1c -- the saving in B1c was
+# never the checksum, it was the per-entry allocation.
+#
+# The remaining 30% is the price of a filesystem actually checking the
+# checksum it stores, and it is worth paying here: what an unchecked
+# block cost was not an error message but an unbalanced tree and a
+# bounds fault, and the cause of the corruption in plan item G1b is
+# still unknown.
+#
+pok(b: array of byte): string
+{
+	(a, c) := checksum(b, Nocksum);
+	if(c != get2(b, Nocksum) || a != get2(b, Nocksum + 2))
+		return sys->sprint("node checksum %ux %ux, want %ux %ux",
+			c, a, get2(b, Nocksum), get2(b, Nocksum + 2));
+	return nil;
+}
+
 pntype(b: array of byte): int
 {
 	return int b[0];
@@ -1506,7 +1594,7 @@ Fs.writeents(f: self ref Fs, ents: array of Ent, ntype: int, level: int):
 		(blk, ae) := f.alloc();
 		if(ae != nil)
 			return (nil, nil, ae);
-		if((we := f.d.wrblk(blk, b)) != nil)
+		if((we := f.putblk(blk, b)) != nil)
 			return (nil, nil, we);
 		blks[nb] = blk;
 		keys[nb] = n.ents[0].key;	# never empty; see above
@@ -1578,7 +1666,7 @@ Fs.fixup(f: self ref Fs, blks: array of big, idx: array of int, depth: int,
 		(blk, ae) := f.alloc();
 		if(ae != nil)
 			return ae;
-		if((we := f.d.wrblk(blk, b)) != nil)
+		if((we := f.putblk(blk, b)) != nil)
 			return we;
 		f.s.treeroot = blk;
 		f.dirty = 1;
@@ -1604,6 +1692,51 @@ Fs.commit(f: self ref Fs): string
 {
 	if(!f.dirty)
 		return nil;
+	#
+	# OPEN A TRANSACTION FIRST, and this line is the whole of plan item
+	# B1e.  Without it a commit could run with f.bmindex nil -- no free
+	# map in memory at all -- and the arithmetic below then quietly
+	# destroyed the filesystem's free map:
+	#
+	#	ng := len f.bmindex		is 0
+	#	the fixpoint loop		considers no group
+	#	the write loop			writes no group block
+	#	idx := array[Blocksize] of 0	stays all zeroes
+	#	f.putblk(f.idxblk, idx)		writes THAT over the live
+	#					free map index
+	#
+	# f.idxblk still held the previous commit's index block, so the
+	# write was in place, over the index the mounted filesystem was
+	# using.  The next transaction read it back as a block of zeroes,
+	# took every group's block number to be 0, and read BLOCK 0 -- a
+	# superblock -- as the bitmap.  Almost every bit in it is clear, so
+	# the allocator began handing out blocks that were already in the
+	# tree.
+	#
+	# What that looked like from the outside was an unbalanced tree.  A
+	# live leaf was handed out, rewritten as an interior node, and its
+	# parent still pointed at it as a leaf -- so one child of the root
+	# was an interior node while its siblings were leaves.  pathto()
+	# stops at the first block that says leaf, so paths of two
+	# different lengths both existed, and Fs.nextleaf walked off the end
+	# of the shorter one: the "array bounds error" the server died of,
+	# and efsck's "leaf at depth 2; another is at depth 1".
+	#
+	# The state that reached it is exactly ONE condition: a commit
+	# whose freed list did not fit in the superblock.  That sets
+	# f.dirty from the carried remainder while leaving f.bmindex nil,
+	# so the NEXT commit -- which the server makes whenever fs.dirty is
+	# set, without any operation in between -- ran with no map.  Before
+	# writes were batched there was always an operation between two
+	# commits, and an operation calls writable(); batching removed the
+	# accident that was hiding this.
+	#
+	# Hence the invariant, stated where it is relied on: everything
+	# below needs the map in memory, so commit opens the transaction
+	# rather than assuming one is open.
+	#
+	if((we := f.writable()) != nil)
+		return we;
 	#
 	# Allocate the map's own new blocks, to a fixpoint.
 	#
@@ -1651,14 +1784,14 @@ Fs.commit(f: self ref Fs): string
 	#
 	for(g := 0; g < ng; g++)
 		if(f.repl[g] != Nilblk){
-			if((e := f.d.wrblk(f.repl[g], f.groups[g])) != nil)
+			if((e := f.putblk(f.repl[g], f.groups[g])) != nil)
 				return e;
 			f.bmindex[g] = f.repl[g];
 		}
 	idx := array[Blocksize] of {* => byte 0};
 	for(g = 0; g < ng; g++)
 		put8(idx, g * 8, f.bmindex[g]);
-	if((e := f.d.wrblk(f.idxblk, idx)) != nil)
+	if((e := f.putblk(f.idxblk, idx)) != nil)
 		return e;
 	f.s.freeroot = f.idxblk;
 
@@ -1704,12 +1837,13 @@ Fs.commit(f: self ref Fs): string
 	# The older slot, so the live one survives a failure here.
 	#
 	slot := 1 - f.which;
-	if((e = f.d.wrblk(superblk(f.s.nblocks, slot), f.s.pack())) != nil)
+	if((e = f.putblk(superblk(f.s.nblocks, slot), f.s.pack())) != nil)
 		return e;
 	f.which = slot;
 	f.freed = keep;
 	f.dirty = keep != nil;
 	f.bmindex = nil;	# re-read next time, folding pendingfree in
+	f.idxblk = Nilblk;	# never rewrite the published index in place
 	f.cblk = nil;		# a freed block can come back under a new name
 	f.cnode = nil;
 	f.rblk = nil;
