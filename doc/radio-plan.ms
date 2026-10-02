@@ -6108,3 +6108,61 @@ and records it; what is checked instead is everything that can be, which
 is that the peak is a carrier and not noise, that no two rungs read
 alike, that the part holds the ramp it was given, and that leg B's RSSI
 is valid.
+.PP
+.B "The shared-node arrangement: tried five times, coherent once, and that once was the outlier."
+With board 2's u.FL cabled to the tinySA's input the cable has replaced
+board 2's antenna, so it looked like one transmission line with the
+receiver at one end and a calibrated instrument at the other \- both
+reading the same node, with nothing to move between readings.
+.I Tools/radio/offsetnode.py
+is that.
+.PP
+.B "Its own control refutes it."
+If the two really share a node then keying the transmitter moves both by
+the same amount, and mostly it does not:
+.DS
+.CW "ramp 15   tinySA risen +14.00   board2 risen +41"
+.DE
+twenty-seven decibels apart, which is board 2 hearing board 1 through its
+own board and package rather than through its antenna connector, with the
+cable carrying almost none of it.  One run did have both rises agreeing
+\- +23.5 against +21, and +16.5 against +15, giving an offset within two
+decibels of the figure already in the driver \- and the three runs after
+it found no rung where both heard the same carrier at all.
+.B "One of five is an outlier and not a measurement,"
+and the equal-rise check is what tells them apart.  It was not in the
+first version, which is why that version printed "AGC_GAIN_ADJUST wants
+about -101 where it holds -102" from a premise its own data falsified.
+.PP
+.B "Nothing is concluded about the offset from any of this."
+The figures that appeared \- -101, -104, and a -58 from the run before
+the quiet baseline existed \- are each from an arrangement later shown
+unsound, and none is carried forward.  What is worth keeping is the three
+controls that caught them: the quiet baseline on both instruments, the
+requirement that each rise by ten decibels, and the requirement that the
+two rises agree.
+.PP
+.B "The cable topology, worked out rather than assumed."
+With one SMA-to-u.FL lead the ends are fixed \- u.FL to a board, SMA to
+the instrument \- so each leg of the substitution is individually
+possible and no pair of them shares a cable:
+.DS
+.CW "board1 u.FL -> lead -> tinySA SMA       leg A, works"
+.CW "tinySA gen  -> lead -> board2 u.FL      leg B, works"
+.CW "board1 u.FL -> lead -> board2 u.FL      wants u.FL both ends"
+.DE
+and leg A wants u.FL at the source while leg B wants SMA at it, so they
+cannot be the same lead.
+.B "u.FL-to-u.FL leads have been bought and can be tried next."
+.PP
+With one, the two legs are
+.I tools/radio/offset.py
+as written: board 1 into the instrument, then board 1 into board 2.  The
+transmitter's uncalibrated output cancels, which is what removes the need
+for a calibrated source.
+.B "The cable does not cancel,"
+because the two legs use different leads \- one u.FL-to-SMA and one
+u.FL-to-u.FL \- so the result carries the difference of their losses,
+which for two short pigtails is of order a decibel.  That is the
+uncertainty of the answer and it is worth having: the figure in the
+driver now is TI's example and not a measurement of anything.

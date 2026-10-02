@@ -44,9 +44,18 @@ the method is substitution:
 	leg B   board 1 -> the SAME cable -> board 2's u.FL.  Board 2's
 	        RSSI reads R.
 
-The cable's loss, its connectors and the transmitter's own uncalibrated
-output all cancel, because they are identical in both legs.  What is left
-is P - R, which is how much this receiver's RSSI is out.
+The transmitter's own uncalibrated output cancels, because it is the same
+transmitter at the same ramp in both legs.  That is what removes the need
+for a calibrated source and it is the whole point.
+
+THE CABLE ONLY CANCELS IF IT IS THE SAME CABLE, and with the connectors
+this bench has it is not: leg A wants u.FL at the board and SMA at the
+instrument, and leg B wants u.FL at both ends.  Two different pigtails,
+so what is left is P - R plus the DIFFERENCE of their losses.  Each is a
+short lead of half a decibel to two, so the difference is of order a
+decibel -- which is the residual uncertainty of the result and is stated
+rather than wished away.  It is still the difference between a number and
+TI's example figure.
 
 WHY IT IS TWO COMMANDS AND NOT ONE.  The cable has to be moved between
 the legs and nothing here can move it.  Leg A writes what it measured to
@@ -205,6 +214,18 @@ def lega():
           " 'offset.py rx'")
 
 
+def rssiof(b, want=False):
+    """This receiver's live RSSI, and whether it called it valid."""
+    t = b.read("cat /dev/radio0/stats", settle=5.0)
+    s = t[t.rfind("part CC1120"):][:900]
+    m = re.search(r"rssi (-?\d+)(\S*)", s)
+    if m is None:
+        raise Dead("board 2 reported no rssi")
+    if want:
+        return int(m.group(1)), "invalid" not in m.group(2)
+    return int(m.group(1))
+
+
 def legb():
     if not os.path.exists(STATE):
         raise SystemExit("offset: no %s -- run 'offset.py sa' first" % STATE)
@@ -224,19 +245,37 @@ def legb():
             raise SystemExit("offset: ramp %d was %+.1f dBm in leg A and is"
                              " %+.1f now" % (ramp,
                              st["legA"][str(ramp)]["nominal"], nominal))
+        # THE QUIET BASELINE FIRST, which is the whole of why this
+        # exists as a separate read.
+        #
+        # The first version of leg B read the RSSI with the carrier on
+        # and nothing else, and reported -123 dBm as the receiver's
+        # answer to a -78.69 dBm input: an offset of 44 decibels.  But
+        # -123 is BELOW this receiver's own noise floor, which is around
+        # -110 to -119, so it was not hearing the carrier at all and the
+        # number was the difference between a real power and a floor.
+        # RSSI_VALID was set throughout, so that check did not catch it.
+        #
+        # A level is only a level if it moves when the transmitter does.
+        rq = rssiof(rx)
         tx.ctl("carrier on", settle=4.0)
-        t = rx.read("cat /dev/radio0/stats", settle=5.0)
-        s = t[t.rfind("part CC1120"):][:900]
-        m = re.search(r"rssi (-?\d+)(\S*)", s)
+        ron, valid = rssiof(rx, True)
         tx.ctl("carrier off", settle=2.5)
-        if m is None:
-            raise Dead("board 2 reported no rssi")
-        r = int(m.group(1))
-        valid = "invalid" not in m.group(2)
-        print("  ramp %-3d nominal %+6.1f  board2 rssi %+5d%s"
-              % (ramp, nominal, r, "" if valid else " (INVALID)"))
+        r = ron
+        print("  ramp %-3d nominal %+6.1f  board2 quiet %+5d  keyed %+5d"
+              "  risen %+5d%s"
+              % (ramp, nominal, rq, ron, ron - rq,
+                 "" if valid else " (INVALID)"))
         if not valid:
             print("    VOID: RSSI_VALID was not set")
+            raise SystemExit(1)
+        if ron - rq < 10:
+            print("    VOID: keying the transmitter moved this receiver by"
+                  " %d dB." % (ron - rq))
+            print("    It is not hearing the carrier, so the difference"
+                  " against leg A would be")
+            print("    the gap between a real power and a noise floor and"
+                  " not an offset.")
             raise SystemExit(1)
         st["legB"][str(ramp)] = r
         sys.stdout.flush()
