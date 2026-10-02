@@ -58,19 +58,12 @@ enum {
 #define QVM(q)		((int)(((ulong)(q).path >> 16) & 0xFF) - 1)
 
 Vmops *vmops;
+static Vm* chanvm(Chan*);
 static char vmwhy[ERRMAX] = "no hypervisor backend linked";
 
 static QLock vmtablk;
 static Vm *vmtab[Nvm];
 
-/*
- * Guest RAM is one contiguous run of host memory, mapped at guest-
- * physical 0.  It comes from xalloc and not xspanalloc, because a
- * machine asking for more than there is must fail, not panic the
- * host; the run is aligned to 2 MiB by hand, and the pointer xalloc
- * returned is kept here for xfree.
- */
-static void *memfree[Nvm];
 
 static char *xkindname[VxNkind] = {
 [VxNone]	"none",
@@ -244,6 +237,8 @@ vcpuproc(void *a)
 			memset(&e, 0, sizeof e);
 			vmops->run(v, &e);
 			v->nexit++;
+			if(e.kind >= 0 && e.kind < VxNkind)
+				v->nkind[e.kind]++;
 			if(e.kind == VxExtint || e.kind == VxIntrwin){
 				/*
 				 * The host's own interrupt took the
@@ -430,6 +425,23 @@ vcpugone(void *a)
 }
 
 static void
+vmput(Vm *vm)
+{
+	int i;
+
+	if(decref(vm) != 0)
+		return;
+	for(i = 0; i < vm->nvcpu; i++)
+		free(vm->vcpu[i]);
+	free(vm);
+}
+
+/*
+ * Stop the machine and give back what it holds.  Channels still open
+ * on it see Ehungup; the Vm and its Vcpus are freed by the last
+ * vmput().
+ */
+static void
 killvm(Vm *vm)
 {
 	Vcpu *v;
@@ -449,21 +461,28 @@ killvm(Vm *vm)
 		wakeup(&v->exitr);
 		while(!vcpugone(v))
 			sleep(&v->cmdr, vcpugone, v);
-		free(v);
-		vm->vcpu[i] = nil;
 	}
+	qlock(vm);
 	vmops->gpfree(vm);
-	if(memfree[vm->id] != nil){
-		xfree(memfree[vm->id]);
-		memfree[vm->id] = nil;
+	if(vm->memalloc != nil){
+		xfree(vm->memalloc);
+		vm->memalloc = nil;
 	}
+	vm->mem = nil;
+	vm->memsize = 0;
+	qunlock(vm);
 	qlock(&vmtablk);
 	vmtab[vm->id] = nil;
 	qunlock(&vmtablk);
-	free(vm);
+	vmput(vm);
 }
 
-
+/*
+ * Guest RAM is one contiguous run of host memory, mapped at guest-
+ * physical 0.  It comes from xalloc and not xspanalloc, because a
+ * machine asking for more than there is must fail, not panic the
+ * host; the run is aligned to 2 MiB by hand.
+ */
 static void
 setmem(Vm *vm, uvlong size)
 {
@@ -484,7 +503,7 @@ setmem(Vm *vm, uvlong size)
 	if(a == nil)
 		error(Enomem);
 	p = ((uintptr)a + Memalign-1) & ~(uintptr)(Memalign-1);
-	memfree[vm->id] = a;
+	vm->memalloc = a;
 	vm->mem = (uchar*)p;
 	vm->memsize = size;
 	memset(vm->mem, 0, size);
@@ -627,12 +646,43 @@ vmopen(Chan *c, u32 omode)
 		vm = newvm();
 		c->qid = (Qid){QPATH(vm->id, 0, Qctl), 0, QTFILE};
 	}
-	return devopen(c, omode, nil, 0, vmgen);
+	vm = nil;
+	if(QVM(c->qid) >= 0){
+		vm = getvm(QVM(c->qid));
+		incref(vm);
+	}
+	if(waserror()){
+		if(vm != nil)
+			vmput(vm);
+		nexterror();
+	}
+	c = devopen(c, omode, nil, 0, vmgen);
+	poperror();
+	c->aux = vm;
+	return c;
 }
 
 static void
-vmclose(Chan*)
+vmclose(Chan *c)
 {
+	if((c->flag & COPEN) && c->aux != nil){
+		vmput(c->aux);
+		c->aux = nil;
+	}
+}
+
+/* the machine an open file is on; Ehungup once it is killed */
+static Vm*
+chanvm(Chan *c)
+{
+	Vm *vm;
+
+	vm = c->aux;
+	if(vm == nil)
+		return getvm(QVM(c->qid));
+	if(vm->dead)
+		error(Ehungup);
+	return vm;
 }
 
 static int
@@ -696,7 +746,7 @@ vmread(Chan *c, void *a, s32 n, s64 off)
 	Vcpu *v;
 	char *buf, *p, *e;
 	Regbuf rb;
-	int i;
+	int i, k;
 	s32 r;
 
 	switch(QTYPE(c->qid)){
@@ -721,11 +771,11 @@ vmread(Chan *c, void *a, s32 n, s64 off)
 		return r;
 	case Qctl:
 		/* the bare number, as a Plan 9 clone file gives it */
-		vm = getvm(QVM(c->qid));
+		vm = chanvm(c);
 		snprint(up->genbuf, sizeof up->genbuf, "%d", vm->id);
 		return readstr(off, a, n, up->genbuf);
 	case Qstatus:
-		vm = getvm(QVM(c->qid));
+		vm = chanvm(c);
 		buf = smalloc(READSTR);
 		if(waserror()){
 			free(buf);
@@ -739,6 +789,11 @@ vmread(Chan *c, void *a, s32 n, s64 off)
 			p = seprint(p, e, "vcpu%d cpu %d state %s exits %llud%s%s\n", i, v->machno,
 				vcpustate[v->state], v->nexit,
 				v->state == VcpuDead ? " error " : "", v->state == VcpuDead ? v->err : "");
+			p = seprint(p, e, "vcpu%d exits", i);
+			for(k = 0; k < VxNkind; k++)
+				if(v->nkind[k] != 0)
+					p = seprint(p, e, " %s %llud", xkindname[k], v->nkind[k]);
+			p = seprint(p, e, "\n");
 		}
 		USED(p);
 		r = readstr(off, a, n, buf);
@@ -746,15 +801,21 @@ vmread(Chan *c, void *a, s32 n, s64 off)
 		free(buf);
 		return r;
 	case Qmem:
-		vm = getvm(QVM(c->qid));
-		if(vm->mem == nil || off >= vm->memsize)
+		vm = chanvm(c);
+		if(off < 0)
+			error(Ebadarg);
+		qlock(vm);
+		if(vm->mem == nil || off >= vm->memsize){
+			qunlock(vm);
 			return 0;
+		}
 		if(off + n > vm->memsize)
 			n = vm->memsize - off;
 		memmove(a, vm->mem + off, n);
+		qunlock(vm);
 		return n;
 	case Qregs:
-		vm = getvm(QVM(c->qid));
+		vm = chanvm(c);
 		v = getvcpu(vm, QCPU(c->qid));
 		buf = smalloc(READSTR);
 		if(waserror()){
@@ -769,7 +830,7 @@ vmread(Chan *c, void *a, s32 n, s64 off)
 		free(buf);
 		return r;
 	case Qexit:
-		vm = getvm(QVM(c->qid));
+		vm = chanvm(c);
 		v = getvcpu(vm, QCPU(c->qid));
 		return exitread(v, a, n, off);
 	case Qcpuctl:
@@ -790,7 +851,7 @@ vmwrite(Chan *c, void *a, s32 n, s64 off)
 
 	switch(QTYPE(c->qid)){
 	case Qctl:
-		vm = getvm(QVM(c->qid));
+		vm = chanvm(c);
 		cb = parsecmd(a, n);
 		if(waserror()){
 			free(cb);
@@ -806,17 +867,19 @@ vmwrite(Chan *c, void *a, s32 n, s64 off)
 		free(cb);
 		return n;
 	case Qmem:
-		vm = getvm(QVM(c->qid));
-		if(vm->mem == nil)
-			error("no memory");
-		if(off < 0 || off >= vm->memsize)
-			error(Ebadarg);
+		vm = chanvm(c);
+		qlock(vm);
+		if(vm->mem == nil || off < 0 || off >= vm->memsize){
+			qunlock(vm);
+			error(vm->mem == nil ? "no memory" : Ebadarg);
+		}
 		if(off + n > vm->memsize)
 			n = vm->memsize - off;
 		memmove(vm->mem + off, a, n);
+		qunlock(vm);
 		return n;
 	case Qcpuctl:
-		vm = getvm(QVM(c->qid));
+		vm = chanvm(c);
 		v = getvcpu(vm, QCPU(c->qid));
 		cb = parsecmd(a, n);
 		if(waserror()){
@@ -853,7 +916,7 @@ vmwrite(Chan *c, void *a, s32 n, s64 off)
 		free(cb);
 		return n;
 	case Qregs:
-		vm = getvm(QVM(c->qid));
+		vm = chanvm(c);
 		v = getvcpu(vm, QCPU(c->qid));
 		if(off != 0)
 			error(Ebadarg);

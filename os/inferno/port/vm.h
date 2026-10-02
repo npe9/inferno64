@@ -131,6 +131,7 @@ struct Vcpu
 	Vmexit	exit;		/* the last one, for the exit file */
 	int	exitready;	/* exit holds one not yet read */
 	uvlong	nexit;		/* exits taken */
+	uvlong	nkind[VxNkind];	/* and of each kind */
 
 	/* a request for the kproc to run on its own processor */
 	QLock	cmdlk;
@@ -145,6 +146,11 @@ enum {
 	Maxvcpu	= 1,		/* one until phase 5 */
 };
 
+/*
+ * A Vm is referenced by the table while it lives and by every open
+ * file under it; "kill" stops its vCPUs, frees its memory and takes it
+ * out of the table, and the structures go with the last close.
+ */
 struct Vm
 {
 	Ref;
@@ -152,6 +158,7 @@ struct Vm
 	QLock;
 	int	dead;
 	uchar	*mem;		/* guest RAM, contiguous, gpa 0 up */
+	void	*memalloc;	/* what xalloc returned for it */
 	uvlong	memsize;
 	void	*gp;		/* the backend's nested page tables */
 	int	nvcpu;

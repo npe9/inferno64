@@ -151,7 +151,14 @@ init()
 				sys->print("VMTEST: M1 PASS\n");
 			else
 				fail("the guest did not say Hi");
-			sys->fprint(ctl, "kill");
+			if(sys->fprint(ctl, "kill") < 0)
+				fail(sys->sprint("kill: %r"));
+			else if(sys->open(dir + "/status", Sys->OREAD) != nil)
+				fail("the machine is still there after kill");
+			else if(sys->read(exitfd, ebuf, len ebuf) >= 0)
+				fail("an open exit file still reads after kill");
+			else
+				sys->print("VMTEST: killed: %r\n");
 			return;
 		* =>
 			fail("unexpected exit");

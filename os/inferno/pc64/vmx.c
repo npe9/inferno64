@@ -619,6 +619,15 @@ decode(Vcpu *v, Vmexit *e)
 	switch(reason & 0xFFFF){
 	case 0:		/* exception or NMI */
 		info = vmcsread(VM_EXINTRINFO);
+		if(((info >> 8) & 7) == 2){
+			/*
+			 * Interruption type 2 is an NMI, and with NMI
+			 * exiting on it is the host's, not the guest's:
+			 * a host event, like an external interrupt.
+			 */
+			e->kind = VxExtint;
+			break;
+		}
 		e->kind = VxException;
 		e->vec = info & 0xFF;
 		if(info & 1<<11)
