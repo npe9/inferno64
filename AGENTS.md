@@ -1,5 +1,12 @@
 # Repository guidance
 
+- On the `genesize` branch the work is the hypervisor described in
+  `doc/genesize-plan.ms`, and that file's progress section is the
+  record to keep current.  Every pointer below to the "next item" of
+  `doc/osprey-progress.ms` or `doc/inferno-ports.ms` reads, on this
+  branch, as the next item of `doc/genesize-plan.ms`.  The rules
+  themselves are unchanged.
+
 - Never stub, cheat, or misrepresent.  Do not fake, mock, hard-code, or
   disable a result to make something appear to work.  Do not describe
   cleanup, a partial step, or a demonstration as if it were the finished
