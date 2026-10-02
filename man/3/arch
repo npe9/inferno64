@@ -42,6 +42,62 @@ cause 8-bit wide, 16-bit wide, and 32-bit wide requests to
 I/O ports.
 The port accessed is determined by the byte offset of the
 file descriptor.
+.SS "What a board adds"
+The files above are the PC's.
+.B #P
+is not only the PC's, though: a board registers its own with
+.CW addarchfile ()
+and they appear here beside them, so what
+.B #P
+holds depends on which kernel is running.  A port's worth of hardware
+that is one board's and not portable belongs here rather than in a device
+of its own.
+.PP
+.I Os/inferno/stm32f407
+adds five, and they are listed because nothing else lists them:
+.TF calinfoxx
+.TP
+.B uid
+The microcontroller's 96-bit factory serial number, read-only in silicon
+(RM0090 39.1), as twenty-four hex digits.
+.B "A board needs a name before anything measured about it can belong to it,"
+and every name a board could be told is circular \- the thing that would
+tell it is the thing that needs to know.  It is the key of
+.B /lib/radio
+and of
+.B cal
+below; see
+.IR radiocal (1).
+.TP
+.B cal
+An append-only log in the flash below the bootloader, where a board
+writes down what it has measured about itself.  Read it for what is
+stored and write a whole record to append one; there is no erase,
+because the region is virgin flash and programming only clears bits, so
+appending needs none and nothing else can be offered.  A reflash erases
+it.
+.TP
+.B calinfo
+Where that store is, how big it is and how much of it is used.
+.TP
+.B led
+The board's two lamps, written as
+.RB ` "1 on" '
+or
+.RB ` "2 off" '.
+Reading gives the port's own output register rather than what was last
+written, which is the difference between a lamp and a variable.
+.TP
+.B adc
+The two mikroBUS analogue pins and the part's own temperature, reference
+and battery channels.
+.TP
+.B spi2
+What the SPI bus says right now: the status byte, the part number and
+version, and the MISO pin read directly.  It exists because when
+.CW cc1120init ()
+finds no part the only account of why is a line printed at boot, which on
+a board has usually scrolled away by the time anybody wants it.
 .SH EXAMPLE
 The following Limbo code reads from an x86 byte I/O port.
 .IP
@@ -61,3 +117,16 @@ inportb(port: int): byte
 .EE
 .SH SOURCE
 .B /os/inferno/pc/devarch.c
+.br
+.B /os/inferno/stm32f407/uidstm32f4.c
+.br
+.B /os/inferno/stm32f407/calstm32f4.c
+.br
+.B /os/inferno/stm32f407/ledstm32f4.c
+.br
+.B /os/inferno/stm32f407/adcstm32f4.c
+.br
+.B /os/inferno/stm32f407/spistm32f4.c
+.SH SEE ALSO
+.IR radiocal (1),
+.IR radio (3)

@@ -466,6 +466,172 @@ there the rising edge does carry data and
 .I tools/radio/twoboards.sh
 passes either way.  A model is only ever a model of what somebody
 thought the part did.
+.SH "SETTING THE PART, AND READING IT BACK"
+These are the CC1120 driver's remaining
+.B ctl
+verbs: what the part is told, as against the band-looking ones below.
+.PP
+.B "Everything here can be read back out of"
+.BR stats ,
+and that is not a convenience.  Two of them \-
+.B ppm
+and
+.B reg
+\- print their answer on the console, which a Dis program cannot read, so
+.I radiocfg (1)
+had no way to check that a figure it applied was the figure in force and
+reported success for writes it could not verify.
+.B "Anything this driver can be told, it has to be able to say back."
+.TP
+.BI ppm " ppb"
+The crystal's error in parts per
+.IR billion ,
+despite the name, so the part tunes where it is told rather than where
+its crystal thinks.  The two boards on this bench are 64 parts per
+million apart, which is 58.7kHz at 915MHz and wider than a 50kHz channel
+filter: an uncorrected pair cannot hear each other even in principle.
+With no argument it prints what it holds; in
+.B stats
+it is
+.BR ppb .
+The sign is what
+.I tools/radio/centre.py
+printed, and feeding it in reversed doubles the offset instead of
+removing it.
+.TP
+.BI rssioffset " db"
+.TP
+.BI csthr " dbm"
+AGC_GAIN_ADJUST and AGC_CS_THR: the number added to every RSSI this part
+reports, and the level below which it calls a channel clear.  In
+.B stats
+they are
+.B offset
+and
+.BR csthr .
+A wrong offset is the difference between an RSSI and a number; see item 1
+of
+.IR doc/radio-plan.ms ,
+where this read a hundred decibels high.
+.TP
+.BI cca " off|rssi|rx|both|0-4"
+What this part calls a clear channel, in
+.BR PKT_CFG2 's
+CCA_MODE.
+.B "It is here as the control for a measurement rather than as something to tune."
+SWRU295E 6.11: an STX strobe given while the part is in RX reaches TX
+only if the clear channel requirement is met, and otherwise the part
+stays in RX \- so
+.B "every transmit through this driver already goes through carrier sense,"
+because the register table sets CCA_MODE 001 and
+.B send
+strobes STX from RX.  How much that costs cannot be asked without being
+able to turn it off, which is
+.B "cca off"
+\- mode 000, always clear, a transmitter that talks over anybody.
+.B rssi
+is 001, clear below
+.BR csthr ;
+.B rx
+is 010, clear unless a packet is arriving;
+.B both
+is 011.  Mode 100 is the ETSI listen-before-talk mode, whose timing this
+driver does not implement, so it is reachable by number and not by name.
+.B Stats
+reports the mode as
+.B ccamode
+and the transmits the part refused as
+.BR ccabusy .
+A refusal is not an error the way a crippled synthesiser is \- it is what
+a shared channel does \- so it has its own counter and its own errstr,
+.BR "radio: channel busy" ,
+and a caller that wants to retry can tell the two apart.
+.TP
+.BI syncthr " 0-31"
+.B SYNC_CFG1 's
+SYNC_THR, how many bit errors the sync word detector tolerates.  Higher
+is more permissive.  Nothing else could set it, which is why it exists:
+the whole range was swept looking for the fault that turned out to be an
+interrupt edge.
+.TP
+.BI txmode " var|fixed"
+.TP
+.BI pktlen " n"
+Variable or fixed packet length, in
+.BR PKT_CFG0 's
+LENGTH_CONFIG, and the length that goes with it.  In variable mode
+.B PKT_LEN
+is the maximum a received length byte may claim and this driver sets it
+to its payload budget; in fixed mode it is the length itself.  Both read
+back in
+.B stats
+as
+.B pktcfg0
+and
+.BR pktlen .
+.TP
+.BI regx " addr [value]"
+The extended register space, as
+.B reg
+does the normal one.  A bench and not an interface: every question asked
+of this part has cost a flash cycle and a reset, and the answers have
+turned on single register reads.  It was
+.B regx
+that answered
+.IR doc/radio-plan.ms "'s"
+item 3 \-
+.B MARC_STATUS1
+0x80, "a packet is in the RX FIFO ready to be read", on a receiver whose
+.B recv
+said nought.
+.TP
+.B lastrx
+The first bytes of the last packet received, in hex.
+.B "A counter cannot tell a frame from noise and the bytes can:"
+at any sync threshold where this part's detector fires at all it fires on
+noise, so "a packet arrived" is not evidence that anything transmitted.
+A real frame has structure and noise has none.
+.TP
+.BI led " on|off"
+The board's lamp, through the radio's own
+.BR Spidev .
+It is here rather than only at
+.B #P/led
+because a board that cannot find its radio is exactly the board that
+needs to say so, and because a station with no console says it is alive
+this way \-
+.I os/inferno/init/armv7max25.b
+flips it on every frame.
+.SS "What stats reports"
+Beyond the settings above:
+.B "sent and recv"
+are packets the part radiated and queued;
+.B crcerr
+those it rejected;
+.B toobig
+writes refused for exceeding the payload;
+.B txtimeout
+transmits that never reported done;
+.B "rxoverflow and txunderflow"
+the FIFO faults;
+.B txnever
+transmits that strobed TX and never got there, which is the crippled
+synthesiser;
+.B ccabusy
+those the part refused for a busy channel.
+.B "intr high and low"
+are the interrupt edges delivered, split by the level of the pin that
+raised them \- see
+.B "THE INTERRUPT A PACKET ARRIVES ON"
+above, where the difference between those two was the whole of plan item
+3.
+.B pacfg2
+is the amplifier's register with the ramp field and the power the
+datasheet's formula gives for it, and
+.B txtrace
+is the part's state through the last transmit, element four being the
+state it settled into after the strobe: 2 is TX, 4 CALIBRATE, 1 a busy
+channel, 0 the qemu model.
 .SH "LOOKING AT A BAND"
 A receiver is an instrument, and this one will say what is on the air
 around it.  These are the CC1120 driver's, on
