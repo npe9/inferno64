@@ -1,0 +1,114 @@
+--- a/hw/net/igb_core.c
++++ b/hw/net/igb_core.c
+@@ -239,15 +239,6 @@
+     return (core->mac[RXCSUM] & E1000_RXCSUM_PCSD) ? false : true;
+ }
+ 
+-static inline bool
+-igb_rx_use_legacy_descriptor(IGBCore *core)
+-{
+-    /*
+-     * TODO: If SRRCTL[n],DESCTYPE = 000b, the 82576 uses the legacy Rx
+-     * descriptor.
+-     */
+-    return false;
+-}
+ 
+ typedef struct E1000ERingInfo {
+     int dbah;
+@@ -264,6 +255,20 @@
+     return core->mac[E1000_SRRCTL(r->idx) >> 2] & E1000_SRRCTL_DESCTYPE_MASK;
+ }
+ 
++/*
++ * If SRRCTL[n].DESCTYPE is 000b, which is its reset value, the 82576
++ * uses the legacy receive descriptor on queue n (82576 datasheet,
++ * 7.1.4).  This was a stub returning false with a TODO, so every
++ * queue was written back in the advanced format, and a driver using
++ * legacy descriptors found the packet length where it looks for the
++ * status byte and never saw Descriptor Done.
++ */
++static inline bool
++igb_rx_use_legacy_descriptor(IGBCore *core, const E1000ERingInfo *r)
++{
++    return igb_rx_queue_desctyp_get(core, r) == 0;
++}
++
+ static bool
+ igb_rx_use_ps_descriptor(IGBCore *core, const E1000ERingInfo *r)
+ {
+@@ -276,8 +281,7 @@
+ igb_rss_enabled(IGBCore *core)
+ {
+     return (core->mac[MRQC] & 3) == E1000_MRQC_ENABLE_RSS_MQ &&
+-           !igb_rx_csum_enabled(core) &&
+-           !igb_rx_use_legacy_descriptor(core);
++           !igb_rx_csum_enabled(core);
+ }
+ 
+ typedef struct E1000E_RSSInfo_st {
+@@ -1277,7 +1281,7 @@
+ {
+     uint32_t desc_type;
+ 
+-    if (igb_rx_use_legacy_descriptor(core)) {
++    if (igb_rx_use_legacy_descriptor(core, r)) {
+         igb_read_lgcy_rx_descr(core, &desc->legacy, &pdma_st->ba[1]);
+         pdma_st->ba[0] = 0;
+         return;
+@@ -1428,7 +1432,7 @@
+ {
+     uint32_t status_flags;
+ 
+-    assert(!rss_info->enabled);
++    /* a legacy descriptor has no field for the RSS hash; it is dropped */
+ 
+     memset(desc, 0, sizeof(*desc));
+     desc->length = cpu_to_le16(length);
+@@ -1576,7 +1580,7 @@
+                    IGBPacketRxDMAState *pdma_st,
+                    const E1000ERingInfo *r)
+ {
+-    if (igb_rx_use_legacy_descriptor(core)) {
++    if (igb_rx_use_legacy_descriptor(core, r)) {
+         igb_write_lgcy_rx_descr(core, &desc->legacy, pkt, rss_info,
+                                 pdma_st->bastate.written[1]);
+     } else if (igb_rx_use_ps_descriptor(core, r)) {
+@@ -1590,9 +1594,10 @@
+ 
+ static inline void
+ igb_pci_dma_write_rx_desc(IGBCore *core, PCIDevice *dev, dma_addr_t addr,
+-                          union e1000_rx_desc_union *desc, dma_addr_t len)
++                          union e1000_rx_desc_union *desc, dma_addr_t len,
++                          const E1000ERingInfo *r)
+ {
+-    if (igb_rx_use_legacy_descriptor(core)) {
++    if (igb_rx_use_legacy_descriptor(core, r)) {
+         struct e1000_rx_desc *d = &desc->legacy;
+         size_t offset = offsetof(struct e1000_rx_desc, status);
+         uint8_t status = d->status;
+@@ -1944,7 +1949,7 @@
+                            etqf, ts,
+                            &pdma_st,
+                            rxi);
+-        igb_pci_dma_write_rx_desc(core, d, base, &desc, rx_desc_len);
++        igb_pci_dma_write_rx_desc(core, d, base, &desc, rx_desc_len, rxi);
+         igb_ring_advance(core, rxi, rx_desc_len / E1000_MIN_RX_DESC_LEN);
+     } while (pdma_st.desc_offset < pdma_st.total_size);
+ 
+@@ -2212,11 +2217,10 @@
+ static void
+ igb_calc_rxdesclen(IGBCore *core)
+ {
+-    if (igb_rx_use_legacy_descriptor(core)) {
+-        core->rx_desc_len = sizeof(struct e1000_rx_desc);
+-    } else {
+-        core->rx_desc_len = sizeof(union e1000_adv_rx_desc);
+-    }
++    /* legacy and advanced receive descriptors are both 16 bytes */
++    QEMU_BUILD_BUG_ON(sizeof(struct e1000_rx_desc) !=
++                      sizeof(union e1000_adv_rx_desc));
++    core->rx_desc_len = sizeof(union e1000_adv_rx_desc);
+     trace_e1000e_rx_desc_len(core->rx_desc_len);
+ }
+ 

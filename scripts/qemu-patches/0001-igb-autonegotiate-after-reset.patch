@@ -1,0 +1,24 @@
+--- a/hw/net/igb_core.c	2026-10-02 06:30:47
++++ b/hw/net/igb_core.c	2026-10-02 06:30:47
+@@ -4499,6 +4499,21 @@
+         tx->first = true;
+         tx->skip_cp = false;
+     }
++
++    /*
++     * The 82576's internal copper PHY comes out of reset with
++     * auto-negotiation enabled and negotiates on its own; the link is
++     * up with no driver action beyond CTRL.SLU.  The PHY registers were
++     * reloaded above, which loses the completed negotiation, so start
++     * it again here rather than waiting for the guest to write
++     * BMCR.ANRESTART -- a driver that relies on the hardware (9front's
++     * and Inferno's ether82563) otherwise never sees link and never
++     * receives a packet.
++     */
++    if (!qemu_get_queue(core->owner_nic)->link_down &&
++        igb_have_autoneg(core)) {
++        e1000x_restart_autoneg(core->mac, core->phy, core->autoneg_timer);
++    }
+ }
+ 
+ void

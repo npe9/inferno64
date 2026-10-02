@@ -609,3 +609,5 @@ __pycache__/
 !/os/*/*/fonts/**
 !/emu/*/fonts/**
 /.bochs/
+# the QEMU model corrections the hypervisor bench is built with
+!/scripts/qemu-patches/*.patch

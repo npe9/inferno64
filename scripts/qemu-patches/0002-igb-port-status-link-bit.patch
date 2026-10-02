@@ -1,0 +1,27 @@
+--- a/hw/net/igb_core.c
++++ b/hw/net/igb_core.c
+@@ -2691,7 +2691,23 @@
+             trace_igb_core_mdic_read_unhandled(addr);
+             val |= E1000_MDIC_ERROR;
+         } else {
+-            val = (val ^ data) | core->phy[addr];
++            uint16_t reg = core->phy[addr];
++
++            /*
++             * The 82576 PHY's Port Status register (17) reports the
++             * link in real time in bit 10, as Linux's
++             * IGP01E1000_PSSR_LINK_UP has it.  Nothing here maintained
++             * that bit, so a driver that reads link from this register
++             * (9front's and Inferno's ether82563) saw a dead link on a
++             * live one.  Derive it from the PHY's own link status.
++             */
++            if (addr == IGP01E1000_PHY_PORT_STATUS) {
++                reg &= ~0x0400;
++                if (core->phy[MII_BMSR] & MII_BMSR_LINK_ST) {
++                    reg |= 0x0400;
++                }
++            }
++            val = (val ^ data) | reg;
+             trace_igb_core_mdic_read(addr, val);
+         }
+     } else if (val & E1000_MDIC_OP_WRITE) {
