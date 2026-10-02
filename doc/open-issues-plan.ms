@@ -1510,6 +1510,86 @@ exists to fall back to, and that must not be one bad bit away.  It also
 explains a reading in G1: efsck's "block 16383 is in the tree and free in
 the map" on this board's image was this, not corruption.
 .NH 2
+B1f.  A CACHE FOR EFS, designed: dirty tree nodes, written once at the barrier
+.LP
+B1e leaves the write path at 2377 writes for 622 blocks of file.  The floor
+is 622.  The 1755 in between are 5.6 blocks a message of copy-on-write path
+rewrite: within one transaction the same leaf and its ancestors are rewritten
+once per insert, because nothing is overwritten in place.  A cache that holds
+those nodes and writes each once should reach about 800 \(em a further 3x, and
+the last large one available.
+.PP
+.B "The crux is that deferring the WRITE means deferring the ALLOCATION."
+Under copy on write each rewrite gets a new block.  Defer the write but keep
+allocating per rewrite and you allocate N blocks, write one, and leak N-1 \(em
+which is exactly the shape of the 228 leaked blocks B1e reverted.  So a dirty
+node must have
+.I no block number at all
+until it is flushed.
+.PP
+.B "Which gives the key: the committed block number it was read from."
+A node read from block B and modified twice is ONE dirty entry, named B.  At
+flush it is allocated one new block, written once, and B goes to
+.CW pendingfree
+\(em the rule that a block freed by a commit is not allocatable until the
+commit after it is untouched, and so is the rule that no committed block is
+ever overwritten.  A dirty node that has never been allocated is not a
+committed block, so holding it in memory is consistent with the format rather
+than an exception to it.
+.PP
+.B "Flush is bottom-up, and it is today's fixup run once."
+Children are allocated and written first; their new numbers are patched into
+their parents; parents are written; up to the root, then the free map, then
+the superblock.  That is the same order
+.CW Fs.commit
+already documents \(em blocks, barrier, superblock \(em with the tree written
+in one ordered pass instead of once per insert.  The barrier is not weakened
+by this; it is the thing that makes it safe.
+.PP
+.B "The reserve has to grow, and getting that wrong is a known wedge."
+.CW Fs.reserve()
+is min(nblocks/8, 24) and
+.CW Nreserve
+is documented as covering "one path rewrite (Maxdepth) and the group and index
+blocks a commit needs".  With writeback a commit writes the WHOLE dirty set at
+once, so the reserve must cover that set and not one path: the Wbatch bound of
+32 blocks, the tree blocks that bound implies, and the map.  Too small and a
+commit fails for want of space on a filesystem that had room, which is the
+full-filesystem wedge this plan has already fixed once.
+.PP
+.B "It does not touch reads, which are already cached."
+.CW getnode 's
+decoded cache and the raw-block cache under it handle repeats inside a
+transaction; reads were 1724 of the 4101 operations in the kernel-image write.
+A read cache is not the missing piece.
+.PP
+.B "And it must be INSIDE efs."
+A cache below \(em
+.CW dossrv 's
+track cache, a block cache in a driver \(em cannot do this, because it does
+not know where the barrier is, and reordering across it is precisely what G1b
+suspects of this board.  There is no
+.CW cfs
+in this tree to borrow, and
+.CW memfs (4)
+is a heap filesystem with no backing store rather than a cache.
+.PP
+.B "What must guard it, named in advance."
+.CW efs-crash ,
+for the invariant.  But the test that matters more here is
+.CW efs-write 's
+block-leak check \(em "5 blocks in use before, 233 after" \(em because
+deferred allocation is exactly the bug class it detects, and it is what caught
+the create deferral.  Then the
+.CW sdmem
+counters for the win, against the 2377 above.
+.PP
+.B "Approach it expecting to be wrong."
+A far smaller change to commit timing \(em deferring one commit from Create to
+Clunk \(em produced 228 leaked blocks and a hang that are still unexplained.
+This is a larger change in the same place.  The leak check and the crash
+harness should be run at every step and not at the end.
+.NH 2
 B1d.  DONE \(em the keyed lookup, and the silent data loss it uncovered
 .LP
 .CW walkto() ,
