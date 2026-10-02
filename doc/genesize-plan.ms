@@ -508,3 +508,50 @@ root ports.  No unit is programmed;
 and
 .CW #Q
 are next.
+.IP "Regression gate." 4
+.CW scripts/check-all.sh
+on this branch after phases 0\-2: 14 of 16 passed outright; the two
+arm64 checks lacked
+.CW .qemu/edk2-aarch64-code.fd
+in the new worktree.  With it,
+.CW check-arm64-smp
+passes;
+.CW check-crossarch
+said "CANNOT TELL" (its arm64 console garbled the typed command) on a
+host loaded with two other emulators, and is to be rerun quiet.
+.IP "Phase 3, the hypervisor: M1 on SVM (QEMU TCG); VMX open." 4
+.CW port/vm.h
+and
+.CW port/devvm.c
+.CW #H ) (
+are the portable layer, with
+.CW pc64/vmx.c
+and
+.CW pc64/svm.c
+behind the same
+.CW Vmops
+.CW 61414747c ). (
+Each vCPU is a kproc wired to a processor and does all VMCS/VMCB work
+itself; unhandled exits go to Limbo through
+.CW vcpuN/exit .
+.CW os/inferno/init/vmtestinit.b
+(the
+.CW pc64vm
+configuration's init) runs a 32-bit payload that writes "Hi" to port
+0xe9 and halts.  On QEMU's SVM it passes: two decoded i/o exits, a
+clean
+.CW hlt
+at 0x1008.  The VMX backend registers on Bochs
+.CW corei7_skylake_x
+("vm: vmx": EPT and unrestricted guest present), but on Bochs the
+kernel stops after
+.CW schedinit
+and never runs Dis \(en plain
+.CW pc64
+too \(en so M1 on VMX is not yet shown.  That stall is being located.
+Bochs boots the kernel through
+.CW os/inferno/boot/pc 's
+.CW 9bootiso
+from a CD built by
+.CW scripts/bochs-vm.sh ;
+the same image boots to a shell under QEMU's BIOS.
