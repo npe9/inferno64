@@ -54,6 +54,42 @@ fn heap {
 	echo '  heap '^$"h
 }
 
+#
+# A WATCHER FOR A DEAD SERVER, because a hang here is most likely a crash.
+#
+# This tree already records the pattern: "the server process dies, nothing
+# replies, and the client waits for a mount whose server is gone -- which
+# is why it reads as a hang".  A cp into a dead "disk/efs -f" mount blocks
+# for ever, this board's console is deaf so the kernel's "Broken" line is
+# invisible, and nothing in a shell script can see it.
+#
+# So something looks.  It prints the status AND the stack, because the
+# stack is what makes a crash a located crash: the PCs resolve against the
+# .sbl the library is built with.
+#
+# "while {~ 1 1}" and not "for(;;)": this sh has no C-style for, and the
+# parse error from writing one does not stop at the function -- it aborted
+# the whole script, so the suite produced NOTHING and looked like a board
+# that had died.  Test a loop before putting it round a test.
+#
+fn watch {
+	while {~ 1 1} {
+		for i in `{ls -p /prog} {
+			#
+			# Stderr goes away: a process can exit between the
+			# ls and the grep, and "cannot open" for one that
+			# has gone is not a finding.
+			#
+			if {grep -s broken /prog/^$i^/status >[2]/dev/null} {
+				echo 'WATCH-BROKEN pid '^$i
+				cat /prog/^$i^/status
+				cat /prog/^$i^/stack
+			}
+		}
+		sleep 5
+	}
+}
+
 fn setup {
 	echo nofault > $D^/ctl
 	echo zero > $D^/ctl
@@ -68,7 +104,34 @@ fn workload {
 	for i in 0 1 2 3 4 5 6 7 8 9 a b c d e f g h i j {
 		cp /n/remote/tests/efs-fault /n/efscrash/f^$i >[2]/dev/null
 	}
-	unmount /n/efscrash >[2]/dev/null
+	#
+	# THE UNMOUNT HAS TO BE CHECKED, and hiding its stderr is what made
+	# the suite hang.
+	#
+	# A failed unmount leaves the server mounted, the next trial mounts
+	# ANOTHER on top, and after eighteen trials there is a stack of
+	# them all holding the same device: which one answers a write is
+	# then a question about the mount table.  That is why the suite
+	# stopped at the nineteenth check on a four-core boot while the
+	# nineteenth trial passes five times out of five on its own.
+	#
+	# So: report it, and count the servers still alive, which is the
+	# measurement that distinguishes a stack from a coincidence.
+	#
+	#
+	# THE UNMOUNT IS CHECKED, because hiding its stderr would hide a
+	# stack of servers: a failed unmount leaves one mounted, the next
+	# trial mounts another on top, and which one answers a write is
+	# then a question about the mount table.
+	#
+	# That was a theory about the hang recorded below, and it is WRONG:
+	# twenty-one trials report no failure, and the two long-lived efs
+	# processes a /prog scan finds are the BOARD's own, mounted at boot
+	# by raspi3binit's efscheck, with the same two pids every trial.
+	# Kept because the check costs nothing and the theory was worth
+	# eliminating.
+	#
+	or {and {unmount /n/efscrash} {}} {echo '  UNMOUNT-FAILED'}
 	echo nofault > $D^/ctl
 }
 
@@ -107,6 +170,9 @@ fn want {
 		fail = 1
 	}
 }
+
+watch &
+watcher = $apid
 
 #
 # 1.  A POWER CUT: from transfer n on, a write is accepted and thrown
@@ -177,6 +243,7 @@ for n in 40 70 100 130 160 {
 }
 
 heap
+echo kill > /prog/^$watcher^/ctl >[2]/dev/null
 echo
 if {~ $fail 0} {
 	echo EFS-FAULT-OK

@@ -177,6 +177,30 @@ A filesystem whose ordering argument is right survives a reorder inside
 one transaction and nothing else, so this is what tells a commit barrier
 that is load-bearing from one that is merely believed in.
 .TP
+.BI partial " n"
+Of a queue that is LOST, apply the newest
+.I n
+writes first and lose the rest.
+.IP
+This is what makes the queue worth having, and it took four clean trials
+to notice.  A whole queue lost is a KIND failure for a copy-on-write
+filesystem: every write in one transaction goes to a new block, so
+whatever subset lands, the OLD superblock still names a complete old
+tree.
+.IR Efs (4)
+came back clean at every cut point and had to.
+.IP
+The state that bites \(em a superblock durable while a node it names is
+not \(em needs the loss to fall INSIDE a writeback: some of the queue
+applied and the rest not.  Backwards, so the newest goes first, and the
+newest is the superblock because
+.I efs
+writes that last.  So
+.B "partial 1"
+puts the superblock on the medium and loses the tree it names, which is
+what a power cut mid-writeback produces and which no cut point alone can
+reach.
+.TP
 .B flush
 Apply what is held, backwards, now.
 .TP
@@ -193,8 +217,8 @@ Forget every fault, losing anything held.
 reports them:
 .PP
 .EX
-sdmem xfer 1832 fail 0 every 0 stop 1200 tear 0 reorder 0 held 0
-sdmem injected 0 dropped 632 torn 0 reordered 0
+sdmem xfer 1832 fail 0 every 0 stop 1200 tear 0 reorder 8 partial 1 held 3
+sdmem injected 0 dropped 632 torn 0 reordered 71
 .EE
 .PP
 .I Injected
@@ -231,19 +255,36 @@ cat /dev/sdZ0/ctl
 echo delay 5000 > /dev/sdZ0/ctl
 .EE
 .PP
-Lose every write from the 400th on \(em a power cut \(em and ask whether the
+Lose HALF a writeback from the 100th transfer on, which is the failure a
+power cut leaves in a card's volatile cache, and ask whether the
 filesystem still mounts and holds the last state it committed:
 .PP
 .EX
 disk/mkefs -n 4000 /dev/sdZ0/data
 echo nofault > /dev/sdZ0/ctl
 echo reset > /dev/sdZ0/ctl
-echo stop 400 > /dev/sdZ0/ctl
+echo reorder 8 > /dev/sdZ0/ctl
+echo partial 1 > /dev/sdZ0/ctl
+echo stop 100 > /dev/sdZ0/ctl
 disk/efs -f /dev/sdZ0/data /n/x
 \&... write until it stops mattering ...
 unmount /n/x
 echo nofault > /dev/sdZ0/ctl
 disk/efsck /dev/sdZ0/data
+.EE
+.PP
+All three faults, because
+.B stop
+alone cannot produce the interesting state \(em see
+.B partial
+above.  With them,
+.IR efs (4)
+refuses the newer superblock and mounts the older one:
+.PP
+.EX
+efs: superblock 1 (generation 16) has no tree (free map group 0
+    says block 0, which is not a map block); falling back to
+    superblock 0 (generation 15)
 .EE
 .PP
 .B nofault

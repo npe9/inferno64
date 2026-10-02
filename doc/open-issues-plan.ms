@@ -3047,29 +3047,55 @@ twice on the kernel installed on the card with all four online.  The control
 is what makes it worth having \(em with the mount check above disabled again
 it fails at the reorder cut points, naming the nine blocks.
 .PP
-.B "ONE HANG, not reproduced, and recorded rather than explained."
-The first end-to-end run on a four-core card boot stopped after eighteen of
-the twenty-one checks and wedged the board's command poller.  Everything
-tried since has been clean: the trial it stopped on passes five times out of
-five in isolation on one core and five out of five on four, and two full runs
-have passed since.  So it was not that trial, and the obvious second theory
-\(em twenty-one mkefs-mount-write-efsck cycles in one shell process
-exhausting the board \(em is also wrong, which took measuring rather than
-arguing.  The suite now prints
+.B "AN INTERMITTENT HANG: twice in nine full runs, both at the nineteenth check."
+A run on a four-core card boot stops after eighteen of the twenty-one checks
+and wedges the board's command poller.  It is not reproducible on demand \(em
+nine full runs, two hangs, both on a card boot and both at the same check \(em
+and four theories are eliminated by measurement rather than by argument:
+.IP \(bu
+.B "Not that trial."
+Reorder 8, partial 1, stop 100 passes five times out of five in isolation on
+one core and five out of five on four.
+.IP \(bu
+.B "Not memory."
+The suite prints
 .CW /dev/memory 's
-heap row between sections:
-.P1
-cursize   in use   free
-1368064     5554   50764964
-1383808     5670   50749220
-1388160     5696   50744868
-1385344     5670   50747684
-1397760     5771   50735268
-.P2
-Flat across the run, in use and free both.  So the cause is unknown, the two
-theories it would have been are eliminated, and the instrument that would
-catch the next one is in place.  It is written down because an unexplained
-hang on a filesystem is not something to leave in a session transcript.
+heap row between sections, and it is flat across a run in use and free both:
+in use 5554, 5670, 5696, 5670, 5771 blocks, with 50.7MB free throughout.
+.IP \(bu
+.B "Not a crash."
+A watcher process scans
+.CW /prog
+for a
+.I broken
+process every five seconds and dumps its status and stack.  It ran during a
+hung run and found none, which rules out this tree's usual explanation for a
+hang \(em "the server process dies, nothing replies, and the client waits for
+a mount whose server is gone".  So something is BLOCKED, not dead.
+.IP \(bu
+.B "Not a stack of servers."
+A failed unmount would leave one mounted and the next trial would mount
+another on top.  The unmount is checked now and twenty-one trials report no
+failure; the two long-lived
+.CW Efsfs
+processes a
+.CW /prog
+scan finds are the BOARD's own, from raspi3binit's
+.CW efscheck ,
+with the same two pids every trial.
+.PP
+.B "And the instrument that will catch the next one exists."
+The hang leaves the poller blocked, so nothing can be asked of the board
+afterwards \(em which is why four rounds of this produced no evidence.  The
+answer is for the watcher to write a snapshot of every process's status AND
+stack to the HOST, through the styx mount, every eight seconds.  Then a hang
+leaves the last snapshot on the host whether or not the board can still be
+asked anything.  That version lives outside the suite, because a test should
+not depend on being able to write to the machine running it.
+.PP
+It is written down at this length because an intermittent hang in a
+filesystem is the thing most likely to be quietly forgotten, and because
+three of the four eliminations above would have been the obvious answer.
 .PP
 .B "Nothing in it may capture the output of" "disk/efs -f" .
 It mounts and leaves a server holding the descriptors it was given, so a

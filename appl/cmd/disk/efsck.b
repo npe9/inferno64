@@ -211,7 +211,36 @@ init(nil: ref Draw->Context, argv: list of string)
 		if(unmarked > 8)
 			bad(sys->sprint("... and %d more blocks in the tree but free",
 				unmarked - 8));
-		if(verbose || leaked > 0)
+		#
+		# MARKED USED AND NOT REACHED: how many is the question, and
+		# this used to say "not an error" for any number at all.
+		#
+		# One commit's pendingfree legitimately produces some: a
+		# block freed by a commit stays marked until the commit
+		# after it folds the list in.  A superblock carries 504 of
+		# them, and the commit that wrote it also freed its own map
+		# blocks, so a few hundred is the honest ceiling.
+		#
+		# Above that it is a LEAK, and saying "not an error" for any
+		# count is what hid 2117 of them: a commit whose freed list
+		# did not fit in the superblock carried the remainder in
+		# MEMORY, and a server that exited still holding it lost
+		# every one.  Removing a 12MB file did exactly that.
+		# Fs.commit drains the list before returning now, so a count
+		# this high means something else is wrong and efsck should
+		# be the thing that says so.
+		#
+		# The bound is maxpending plus a margin for the map blocks
+		# of the last commit.  It is deliberately generous: this
+		# check's job is to stop a leak hiding behind a message, not
+		# to account for every block.
+		#
+		max := efs->maxpending() + 128;
+		if(leaked > max)
+			bad(sys->sprint(
+				"%d block(s) marked used and not reached, which is more than one commit's pendingfree (%d) can explain",
+				leaked, max));
+		else if(verbose || leaked > 0)
 			sys->print("efsck: %d block(s) marked used and not reached (pendingfree keeps some; not an error)\n",
 				leaked);
 	}
