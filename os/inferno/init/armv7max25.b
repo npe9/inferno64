@@ -289,15 +289,20 @@ init()
 			want[Wpeer] = "peer";
 			want[Wrole] = "role";
 			want[Wtxramp] = "txramp";
-			(got, bad, err) := radiocal->lookup(Radiocal->Cal,
-				uid, want);
+			# Both sources, the store winning: #P/cal is what
+			# this board has measured since its image was
+			# built, and a station should come up on the
+			# measurement rather than on the build.
+			(got, nil, bad, err) := radiocal->current(
+				Radiocal->Cal, uid, want);
 			if(bad > 0)
 				sys->print("ax25init: %d unparsable pairs in "
 					+ "%s\n", bad, Radiocal->Cal);
 			if(err == "noentry")
 				sys->print("ax25init: no entry for this "
-					+ "board in %s; the driver's defaults "
-					+ "stand\n", Radiocal->Cal);
+					+ "board in %s or %s; the driver's "
+					+ "defaults stand\n", Radiocal->Cal,
+					Radiocal->Store);
 			else if(err != nil)
 				sys->print("ax25init: %s\n", err);
 			else{

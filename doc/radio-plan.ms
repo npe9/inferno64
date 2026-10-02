@@ -2979,7 +2979,7 @@ exactly what item 6 was built for.
 .B "Measured from the host first, as the thing the program has to reproduce."
 tools/radio/paladder.py drives the same ladder through two consoles, five
 packets a step, and is the control the Limbo version is checked against.
-.IP "8.  Calibrations that belong to a radio and survive a reboot.  First stage done, on silicon." 6
+.IP "8.  Calibrations that belong to a radio and survive a reboot.  Done, on silicon." 6
 Asked for directly, with the question "is ndb the right place?".  The
 answer is that the
 .I format
@@ -5776,3 +5776,83 @@ which ran past the width
 .I screen 's
 hardcopy keeps and was invisible \- so a read-back that had worked all
 along read as one that had not.  It is a line of its own.
+.PP
+.B "Item 8's second stage done: a board can write down what it measured."
+.B #P/cal ,
+in
+.IR os/inferno/stm32f407/calstm32f4.c ,
+and the loop closed on silicon by
+.IR tools/radio/calstore.py :
+.DS
+.CW "the store: used 0, free 16384"
+.CW "  before: ppm        -3550   from /lib/radio"
+.CW "appended 95 bytes: used 0 -> 95"
+.CW "after a reset: used 95, unchanged"
+.CW "  after:  ppm        -3551   from #P/cal"
+.CW "CALSTORE-OK"
+.DE
+The last two lines are the only part that is not true of any file: a
+figure in the store overrides the same figure in the image, and
+.I radiocfg (1)
+says which source each one came from, because a number from the file and
+the same number from the store mean different things.
+.PP
+.B "This plan asked for a spare 128K sector and the part has none."
+Measured against RM0090 table 5 with the image this tree builds: sectors
+0 to 9 are all image, the image ends inside sector 10 at 0x080d9118, and
+sector 11 is the HID bootloader, which is the only way back into the
+board.
+.B "What is spare is the tail of sector 10, and it has never been written, so it is still erased."
+.PP
+That suits the job better than a sector would.  Flash programming turns
+ones into zeroes, so appending to erased flash needs no erase \- no
+sector-erase driver, no wear levelling, and no window in which a power
+cut leaves the store erased rather than merely old.  The end of the log
+is the first 0xff byte: the content is
+.IR attrdb (6)
+text, which never contains one, so the store needs no header, no length
+field and no superblock, and a reader that knows nothing about the device
+can tell written from unwritten by looking.
+.PP
+.B "A reflash erases it, and that is the consequence rather than a defect."
+The store is the tail of the sector the image ends in, so a new image
+erases it; the run above started at
+.CW "used 0"
+on a board that had records in it before the rebuild.  A figure worth
+keeping belongs in
+.B /lib/radio
+eventually and the store is what carries it until then.  The build is
+what stops an image growing into it:
+.I bin2ihex
+is given the store's base, 901120, instead of the bootloader's 917504,
+so an image that would overlap fails to convert.
+.PP
+.B "Two things it refuses, and both were exercised."
+A write past the end \-
+.CW "cal: 16384 bytes written of 16384, 28 more will not fit"
+\- because silently truncating a calibration is worse than not storing
+it.  And it reads back every byte it wrote and errors if the flash
+disagrees, which is how a run under qemu reports honestly that nothing
+happened:
+.CW "cal: wrote 0x72 at offset 0 and it reads 0xff" ,
+the model's flash being a read-only region.
+.PP
+.B "And a qemu gap that made the store read full on an empty board."
+A rom region is zero filled and flash comes out of the factory all ones,
+so everything outside what the loader wrote read 0x00 under qemu and
+0xff on silicon \-
+.CW "used 16384 free 0"
+on a board that had never written a byte.
+.I Tools/qemu-patches/0054
+fills it before the kernel is loaded.  The write path stays silicon only,
+because the region is still read-only there, and the driver's read-back
+is what makes that visible rather than silent.
+.PP
+.B "One bug of my own, caught by the negative control."
+Reading two sources means combining two results, and the first version
+did it by comparing error strings: "noentry" from the file and an open
+failure from the store matched no branch and came out nil, so a board in
+neither source was reported as found with every figure absent \- which is
+a calibrated board with no calibration.  It is a found flag now.  The
+control that caught it is the one that asks what happens for a uid
+nothing has heard of.

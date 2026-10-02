@@ -87,7 +87,7 @@ Ctl:	con "/dev/radio0/ctl";
 Stats:	con "/dev/radio0/stats";
 
 nset, nmissing: int;
-dryrun: int;
+dryrun, record: int;
 
 # One field out of the stat file, by a scan and not by tokenising it.
 #
@@ -125,7 +125,7 @@ statfield(what: string): string
 }
 
 # One ctl line, and then the stat file asked whether it took.
-apply(ctl: ref Sys->FD, verb, val, field: string)
+apply(ctl: ref Sys->FD, verb, val, field, src: string)
 {
 	if(val == nil){
 		sys->print("radiocfg: no %s in the entry; the driver's "
@@ -153,7 +153,7 @@ apply(ctl: ref Sys->FD, verb, val, field: string)
 			+ "%s -- the calibration is NOT in force\n",
 			line, field, got);
 	else{
-		sys->print("radiocfg: %s %s\n", verb, got);
+		sys->print("radiocfg: %s %s, from %s\n", verb, got, src);
 		nset++;
 	}
 }
@@ -174,11 +174,12 @@ init(nil: ref Draw->Context, argv: list of string)
 	show := 0;
 
 	arg->init(argv);
-	arg->setusage("radiocfg [-n] [-s] [-f file] [-u uid]");
+	arg->setusage("radiocfg [-n] [-s] [-w] [-f file] [-u uid]");
 	while((c := arg->opt()) != 0)
 		case c {
 		'n' =>	dryrun = 1;
 		's' =>	show = 1;
+		'w' =>	record = 1;
 		'f' =>	cal = arg->earg();
 		'u' =>	uid = arg->earg();
 		* =>	arg->usage();
@@ -220,11 +221,15 @@ init(nil: ref Draw->Context, argv: list of string)
 	want[Wslope] = "rssislope";
 	want[Wsrc] = "slopesource";
 
-	(got, bad, err) := radiocal->lookup(cal, uid, want);
+	# Both sources, the store winning: /lib/radio is what the image
+	# was built with and #P/cal is what this board has measured
+	# since.  A board whose crystal was measured after its image was
+	# built should use the measurement without being reflashed.
+	(got, from, bad, err) := radiocal->current(cal, uid, want);
 	if(err == "noentry"){
-		sys->print("radiocfg: %s has no entry for uid %s; this board "
-			+ "is uncalibrated and the driver's defaults stand\n",
-			cal, uid);
+		sys->print("radiocfg: neither %s nor %s has an entry for uid "
+			+ "%s; this board is uncalibrated and the driver's "
+			+ "defaults stand\n", cal, Radiocal->Store, uid);
 		return;
 	}
 	if(err != nil){
@@ -248,9 +253,10 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	# ppm takes parts per billion despite its name; see the verb's
 	# own comment in os/inferno/radio/cc1120.c.
-	apply(ctl, "ppm", got[Wppb], "ppb");
-	apply(ctl, "rssioffset", got[Wrssioffset], "offset");
-	apply(ctl, "csthr", got[Wcsthr], "csthr");
+	apply(ctl, "ppm", got[Wppb], "ppb", from[Wppb]);
+	apply(ctl, "rssioffset", got[Wrssioffset], "offset",
+		from[Wrssioffset]);
+	apply(ctl, "csthr", got[Wcsthr], "csthr", from[Wcsthr]);
 
 	# Not applied, only reported: the slope is a property of the
 	# receiver that nothing in the driver takes.  It is here so that
@@ -262,4 +268,48 @@ init(nil: ref Draw->Context, argv: list of string)
 
 	sys->print("radiocfg: %d applied, %d absent from the entry\n",
 		nset, nmissing);
+
+	if(record)
+		keepit(uid);
+}
+
+# Append what the part now holds to #P/cal, so that a figure worked out
+# by hand survives a reboot without a reflash.
+#
+# It records what the PART holds and not what was asked for or what the
+# file said: the whole arrangement here is that a number is read back off
+# the hardware before it is believed, and a store written from an
+# intention rather than from a read-back would be the one place that rule
+# did not hold.
+keepit(uid: string)
+{
+	ppb := statfield("ppb");
+	off := statfield("offset");
+	cs := statfield("csthr");
+	if(ppb == nil || off == nil || cs == nil){
+		sys->fprint(sys->fildes(2), "radiocfg: the stat file does "
+			+ "not report all of ppb, offset and csthr, so there "
+			+ "is nothing honest to record\n");
+		return;
+	}
+	rec := sys->sprint("radio=cc1120 uid=%s ppb=%s rssioffset=%s "
+		+ "csthr=%s\n", uid, ppb, off, cs);
+	if(dryrun){
+		sys->print("radiocfg: would append to %s: %s",
+			Radiocal->Store, rec);
+		return;
+	}
+	fd := sys->open(Radiocal->Store, Sys->OWRITE);
+	if(fd == nil){
+		sys->fprint(sys->fildes(2), "radiocfg: %s: %r\n",
+			Radiocal->Store);
+		return;
+	}
+	a := array of byte rec;
+	if(sys->write(fd, a, len a) != len a){
+		sys->fprint(sys->fildes(2), "radiocfg: append to %s: %r\n",
+			Radiocal->Store);
+		return;
+	}
+	sys->print("radiocfg: recorded in %s: %s", Radiocal->Store, rec);
 }

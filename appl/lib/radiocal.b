@@ -52,9 +52,49 @@ boarduid(path: string): string
 lookup(path, uid: string, want: array of string): (array of string, int, string)
 {
 	got := array[len want] of string;
+	from := array[len want] of string;
+	(bad, nil, err) := lookinto(path, path, uid, want, got, from);
+	return (got, bad, err);
+}
+
+# Both sources, the store winning, because the store is what this board
+# has measured since its image was built.  See module/radiocal.m.
+current(path, uid: string, want: array of string):
+	(array of string, array of string, int, string)
+{
+	got := array[len want] of string;
+	from := array[len want] of string;
+	(bad1, found1, err1) := lookinto(path, path, uid, want, got, from);
+	(bad2, found2, nil) := lookinto(Store, Store, uid, want, got, from);
+	# AN ENTRY IN EITHER IS AN ENTRY, and this is decided by a flag
+	# and not by comparing error strings.  The first version did the
+	# latter -- "noentry" from the file and an open failure from the
+	# store matched no branch and came out nil, so an unknown board
+	# was reported as found with everything absent, which is a
+	# calibrated board with no calibration.  The negative control
+	# caught it.
+	#
+	# A store that does not open is not an error either: a host has
+	# no #P/cal and neither does a board whose kernel predates it,
+	# and the file alone is how this worked before and must go on
+	# working.
+	if(!found1 && !found2){
+		if(err1 != nil && err1 != "noentry")
+			return (got, from, bad1, err1);
+		return (got, from, bad1, "noentry");
+	}
+	return (got, from, bad1+bad2, nil);
+}
+
+# One source, into the caller's arrays, recording where each value came
+# from so that a caller can say whether a figure is the one its image was
+# built with or one the board measured later.
+lookinto(path, src, uid: string, want: array of string,
+	got: array of string, from: array of string): (int, int, string)
+{
 	fd := sys->open(path, Sys->OREAD);
 	if(fd == nil)
-		return (got, 0, sys->sprint("open %s: %r", path));
+		return (0, 0, sys->sprint("open %s: %r", path));
 
 	buf := array[512] of byte;
 	carry := "";
@@ -83,26 +123,27 @@ lookup(path, uid: string, want: array of string): (array of string, int, string)
 			line := carry[i:nl];
 			i = nl + 1;
 			(inentry, started, bad) =
-				feed(line, uid, want, got, inentry,
-					started, bad);
+				feed(line, src, uid, want, got, from,
+					inentry, started, bad);
 		}
 		carry = carry[i:];
 		if(eof){
 			if(len carry > 0)
 				(inentry, started, bad) =
-					feed(carry, uid, want, got,
-						inentry, started, bad);
+					feed(carry, src, uid, want, got,
+						from, inentry, started, bad);
 			break;
 		}
 	}
 	if(!started)
-		return (got, bad, "noentry");
-	return (got, bad, nil);
+		return (bad, 0, "noentry");
+	return (bad, 1, nil);
 }
 
 # One line of it.  An entry begins in column one; an indented line
 # continues the one before.
-feed(line, uid: string, want: array of string, got: array of string,
+feed(line, src, uid: string, want: array of string,
+	got: array of string, from: array of string,
 	inentry, started, bad: int): (int, int, int)
 {
 	# a comment is the rest of the line, wherever it starts
@@ -172,8 +213,10 @@ feed(line, uid: string, want: array of string, got: array of string,
 		if(!inentry)
 			continue;
 		for(w := 0; w < len want; w++)
-			if(want[w] == attr)
+			if(want[w] == attr){
 				got[w] = val;
+				from[w] = src;
+			}
 	}
 	return (inentry, started, bad);
 }

@@ -135,6 +135,15 @@ to the radio's
 says what it would write and writes nothing.
 .B -s
 prints the uid and stops.
+.B -w
+appends what the part now holds to
+.BR #P/cal ,
+so that a figure worked out by hand survives a reboot without a reflash.
+It records what the
+.I part
+holds and not what was asked for or what the file said: every number here
+is read back off the hardware before it is believed, and a store written
+from an intention would be the one place that rule did not hold.
 .B -f
 reads another file and
 .B -u
@@ -159,10 +168,21 @@ so that whoever reads an RSSI knows what a change in it is worth.
 .TF /lib/radio
 .TP
 .B /lib/radio
-the calibrations, in the attribute database format of
+the calibrations the image was built with, in the attribute database
+format of
 .IR attrdb (6),
 keyed by
 .BR uid .
+.TP
+.B #P/cal
+what this board has measured about itself since: an append-only log in
+the flash below the bootloader, same format, same key.
+.B "The store wins."
+A board whose crystal was measured after its image was built should come
+up on the measurement, and nothing should have to be reflashed for that.
+.IR Radiocfg
+names the source of every figure it applies, because a number from the
+file and the same number from the store mean different things.
 .TP
 .B #P/uid
 the board's factory serial, twenty-four hex digits.
@@ -241,13 +261,31 @@ crystals are.  Then ten packets, with
 and the same frequency string to both: ten received, no CRC error, and
 the payload intact.
 .PP
-.B "Not yet done:"
-nothing writes
+.B "And the store, measured on silicon"
+by
+.IR tools/radio/calstore.py ,
+which checks the only thing that is not true of any file \- that a figure
+in the store overrides the same figure in the image:
+.PP
+.EX
+	the store: used 0, free 16384
+	  before: ppm        -3550   from /lib/radio
+	appended 95 bytes: used 0 -> 95
+	after a reset: used 95, unchanged
+	  after:  ppm        -3551   from #P/cal
+	CALSTORE-OK
+.EE
+.PP
+.B "A reflash erases it,"
+and that is not a bug to be fixed but the consequence of there being no
+spare sector: the store is the tail of the last sector the image uses, so
+writing a new image erases it.  A figure worth keeping belongs in
 .B /lib/radio
-on the board.  It is in devroot, served read-only out of flash, so a new
-measurement means an edit and a reflash.  See
-.I doc/radio-plan.ms
-item 8's second stage.
+eventually; the store is what carries it until then.  The run above began
+with
+.CW "used 0"
+for exactly that reason, on a board that had records in it before the
+image was rebuilt.
 .SH BUGS
 .I Radiocfg
 parses the

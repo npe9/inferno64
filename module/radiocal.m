@@ -24,6 +24,7 @@ Radiocal: module
 
 	Uid:	con "#P/uid";
 	Cal:	con "/lib/radio";
+	Store:	con "#P/cal";
 
 	init:	fn();
 
@@ -40,4 +41,21 @@ Radiocal: module
 	# -- and an error: nil, "noentry", or something to print.
 	lookup:	fn(path, uid: string, want: array of string):
 			(array of string, int, string);
+
+	# Both sources, with the STORE winning.
+	#
+	# /lib/radio is what the image was built with and #P/cal is what
+	# this board has measured about itself since -- an append-only
+	# log in the flash below the bootloader, so the last entry for a
+	# uid is the current one.  A board whose crystal was measured
+	# after its image was built should use the measurement, and
+	# nothing should have to be reflashed for that.
+	#
+	# Returns the values, where each one came from, the count of
+	# unparsable pairs, and an error: nil, "noentry" when neither
+	# source has this board, or something to print.
+	# path is the file half, so a caller can point it elsewhere for a
+	# test; the store is always #P/cal, because it is the board's.
+	current:	fn(path, uid: string, want: array of string):
+			(array of string, array of string, int, string);
 };
