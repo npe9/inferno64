@@ -287,6 +287,32 @@ loop:
 		}
 		xfol(p->link);
 		q = brchain(p->pcond);
+		/*
+		 * q MAY BE P, and this dereferenced it.
+		 *
+		 * brchain() returns P when the chain it is walking ends in a
+		 * branch with no resolved target.  The sibling call four
+		 * lines above checks for that -- "if(q != P && q->mark)" --
+		 * and this one did not, so a nil q was dereferenced at the
+		 * offset of "mark", which is 0x6a: EXC_BAD_ACCESS at
+		 * address 0x6a, inside brchain, with no diagnostic.
+		 *
+		 * It is hard to reach today, because brloop() returns P for
+		 * an indirect branch and the caller then leaves p->pcond
+		 * alone, so the "p->pcond != P" guard above keeps execution
+		 * out of here.  It was found by removing that accident:
+		 * making brloop return the indirect branch (which is the
+		 * right answer, and what 7l does now) made every link of the
+		 * pc64 kernel crash here.
+		 *
+		 * The nil check is worth having on its own.  The brloop
+		 * change is NOT made for amd64, because with this check in
+		 * place it then lays out a conditional branch with a wrong
+		 * offset and drops the indirect jump entirely -- a third
+		 * thing wrong in the same chain, and not one to guess at.
+		 */
+		if(q == P)
+			return;
 		if(q->mark) {
 			p->pcond = q;
 			return;
