@@ -6032,8 +6032,23 @@ ladder stops at PA_POWER_RAMP 15, which the datasheet's formula makes
 rather than leaving that to be remembered.
 .PP
 .B "What it needs that cannot be done from here:"
-the cable moved from the tinySA's input to board 2's u.FL between
-.CW "offset.py sa"
-and
-.CW "offset.py rx" .
-Both legs run unattended once the cable is where they need it.
+the cable from board 1 to the tinySA's input for leg A, and then the same
+cable to board 2's u.FL for leg B.  Both legs run unattended once the
+cable is where they need it.
+.PP
+.B "And the check for whether it is there earned its place on the first run."
+Nothing else in the tool can tell a cabled input from an antenna, and a
+leg A taken over the air produces perfectly plausible numbers and a wrong
+offset \- which is the one failure this measurement exists to avoid.  The
+level discriminates by tens of decibels, so leg A refuses a peak more
+than twelve decibels under the nominal.  Run with the tinySA on its
+antenna, which is where it was:
+.DS
+.CW "ramp 15  nominal -10.0  tinySA peak -55.81  floor -118.31"
+.CW "VOID: -55.8 dBm is 45.8 below the nominal -10.0."
+.CW "That is a radiated path, not a cable"
+.DE
+.B "Without that check this would have reported an offset of about 46 decibels,"
+which is the path loss between two antennas and not the receiver's error
+\- the exact mistake the whole substitution is built to avoid, made at
+the first opportunity.

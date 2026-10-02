@@ -105,6 +105,29 @@ def lega():
             print("    VOID: that peak is less than 15dB over the floor, so"
                   " it is not a carrier")
             raise SystemExit(1)
+        # IS THE CABLE ACTUALLY ON?  Nothing else here can tell, and a
+        # leg A taken over the air would produce perfectly plausible
+        # numbers and a wrong offset -- which is the one failure this
+        # whole measurement exists to avoid.
+        #
+        # The level discriminates, by tens of decibels.  A -10dBm
+        # carrier down a short cable arrives a few dB down; the same
+        # carrier across a few inches of air read -29.9dBm when this
+        # bench measured it, twenty decibels lower.  The nominal is the
+        # datasheet's formula and is itself uncalibrated, but it is not
+        # wrong by twenty.
+        #
+        # doc/radio-plan.ms records the other half of the signature too:
+        # cabled, the floor reads about eight decibels quieter than on an
+        # antenna, because an antenna hears the band.
+        if peak[1] < nominal - 12:
+            print("    VOID: %+.1f dBm is %.1f below the nominal %+.1f."
+                  % (peak[1], nominal - peak[1], nominal))
+            print("    That is a radiated path, not a cable: this leg has"
+                  " to be the tinySA's input")
+            print("    CABLED to the board, or the offset it gives is the"
+                  " path loss and not the receiver.")
+            raise SystemExit(1)
         out["legA"][str(ramp)] = {"nominal": nominal, "peak": peak[1],
                                   "at": peak[0], "floor": floor}
         sys.stdout.flush()
