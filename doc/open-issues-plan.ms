@@ -1524,8 +1524,87 @@ spawns a navigator and tells it to stop with
 after its Styx loop ends, so a main loop that never reaches that line leaves a
 process behind and
 .CW emu
-hangs.  What stops it getting there with the create commit deferred is not yet
-known.  A first guess was wrong and is worth recording: the stress failure
+hangs.
+.PP
+.B "DIAGNOSED: it is a crash, and the cause is a data race between efs's two processes."
+Tracing every message in and out of the Styx loop found it stopping inside
+.CW remove() ,
+and
+.CW emu 's
+own output had said why all along:
+.P1
+[Efs] Broken: pid 13066 "array bounds error"
+.P2
+The server process dies, nothing replies, and the client waits for a mount
+whose server is gone \(em which is why it reads as a hang.  Reading the test's
+stdout rather than
+.CW emu 's
+had hidden it.
+.PP
+The faulting site is
+.CW Fs.nextleaf 's
+leftmost descent:
+.P1
+for(c := d + 1; c < len blks; c++){
+        ...
+        blks[c+1] = fb;         # c can be the last index
+.P2
+On a BALANCED tree that cannot overrun, because the descent meets a leaf
+before
+.CW c
+runs out \(em every leaf is at the same depth.  So the path it was handed no
+longer described the tree.
+.PP
+.B "And the path goes stale because fs is shared with no mutual exclusion."
+.CW serve()
+spawns a navigator, and
+.CW Styxserver.new
+spawns a reader of its own, so
+.CW walkto() ,
+.CW dirof()
+and
+.CW readdir()
+run in a DIFFERENT process from the loop that creates, writes and removes.
+Both reach the same
+.CW "ref Fs" ,
+its node cache, its raw-block cache and its free map, with nothing between
+them.  Dis is serialised here but it interleaves at instruction boundaries, so
+a tree walk can be suspended half way and resumed after the tree has been
+rewritten under it.  Deferring the create commit widens the window; it does not
+create it.
+.PP
+.B "And the obvious fix is the wrong shape, which was worth finding out."
+One token in a buffered channel, taken per Styx message and per Navop,
+.I does
+remove the crash \(em "Broken" stops appearing.  It then deadlocks, because
+several arms of the Styx loop end in
+.CW srv.default(m)
+as their NORMAL path, and
+.CW srv.default
+answers Walk, Stat and Attach by sending a Navop to the navigator, which wants
+the same token.
+.CW Open 's
+truncate arm is the first one hit, eleven messages in.  Releasing the token
+around the one
+.CW "* =>"
+arm is not enough, because
+.CW Open ,
+.CW Read
+and others call
+.CW srv.default
+too.
+.PP
+So the lock boundary cannot be the message loop: the library calls back into
+the navigator from inside the handlers.  It has to be either inside the
+.CW Fs
+operations themselves, or \(em the Inferno-shaped answer \(em one process
+owning
+.CW fs
+with the navigator sending it requests, which is what
+.CW navops
+already is for half the operations.  Until that is done the create commit
+stays where it is, and the race stays latent: the suites pass because the
+window is narrow, not because it is closed.  A first guess was wrong and is worth recording: the stress failure
 first appeared as
 .CW "interior block 4095: interior entry 0 is not a pointer" ,
 block 4095 being
