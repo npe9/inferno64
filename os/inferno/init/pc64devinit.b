@@ -171,8 +171,14 @@ init()
 			lease: ref Lease;
 			err: string;
 			(cfg, lease, err) = dhcpclient->dhcp("/net", cfd, ether + "/addr", cfg, nil);
-			if(err != nil || cfg == nil || cfg.ip == nil)
+			if(err != nil || cfg == nil || cfg.ip == nil){
 				sys->print("DEVTEST: %s DHCP-FAIL %s\n", ether, err);
+				# what the driver saw, so a failure can be told
+				# apart: nothing sent, sent and nothing back, or
+				# received and dropped
+				sys->print("DEVTEST: %s/stats:\n%s", ether, readfile(ether + "/stats"));
+				sys->print("DEVTEST: %s/ifstats:\n%s", ether, readfile(ether + "/ifstats"));
+			}
 			else {
 				if(lease != nil)
 					lease.release();
