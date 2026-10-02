@@ -1920,6 +1920,20 @@ Eliminated:
   `memlfree()` is **never called** in a run that faults. The latent asymmetry
   is still worth knowing about; it is not this bug.
 
+**It is a use-after-free, and the allocator proves it.** `INFERNO_POOLPOISON=1`
+— the free-block poisoning already in `emu/port/alloc.c`, added for the
+allocator corruption in bug 5 — changes the fault address to
+`0xa5a5a5a5a5a5a64d`. That is the poison pattern plus a field offset, so the
+walk read a **pointer out of a poisoned, freed block** and then dereferenced
+it. A freed object is still linked into the chain `updatescreenstrides()`
+follows. No more argument is needed about whether this is a lifetime bug.
+
+Worth recording for whoever picks it up: **guard malloc is useless here, and
+its silence means nothing.** `DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib`
+runs emu fine and reports no error at all on a run that faults, because emu
+implements its own pool allocator — `libgmalloc` never sees those blocks. The
+tool that works is emu's own poisoning, which is already there.
+
 **It is timing-sensitive, and instrumentation moves it.** Adding one more
 `print` inside the walk — the value of `next` — took the fault rate to 0 of 1.
 So the next step is not more printing. Both the devdraw entry points and
