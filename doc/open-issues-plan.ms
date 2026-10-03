@@ -3721,3 +3721,63 @@ asks the four questions that tell the ends apart: does the host answer a NEW
 styx handshake, is the server process moving, does the board answer JTAG, and
 does the print ring hold anything.  On a catch, question one is the whole
 experiment.
+.NH 2
+H1a update.  ANSWERED: the firmware does know where vertical blank is
+.LP
+H1a above says the one thing not established is landing the flip in vertical
+blank, and that without it a flip moves the tear rather than removing it.  It
+was open because nobody had asked the hardware.
+.PP
+Mailbox tag 0x0004800e, waited on eight times from the board's
+.CW screenstats()
+hook
+.CW ( c942709ef ):
+.P1
+SCREEN vsync errors 0 gaps(us)
+    8612 16664 16665 16667 16665 16666 16668 16665
+.P2
+Zero errors, a partial first interval because the probe entered mid-frame, then
+seven gaps of 16664 to 16668us \(em 60.006Hz, stable to 2us.
+.PP
+.B "The outcomes were written down before the run,"
+because one number here is ambiguous three ways:
+.P1
+errors 0, gaps near 16667us   it works
+errors 0, gaps of a few us    the firmware ignores the tag
+errors 8, gaps of a few us    the firmware refuses it
+errors 8, gaps near a second  mboxread's SPIN COUNT expired
+.P2
+The last row was the real hazard.
+.CW mboxread
+bounds its wait with a spin count and not a timeout, and a spin count expiring
+inside a legitimately slow reply is how this tree once read a working SD card
+as a stalled one \(em see
+.CW doc
+and the standing note on it.
+.CW Spins
+is 10 million, about a second of uncached reads by
+.CW mailbox.c 's
+own comment, against a 16.7ms frame: sixty frames of headroom.  Checked, not
+assumed.
+.PP
+And the partial first gap is the internal control: a fixed 16.667ms sleep would
+have given eight equal gaps.  This is phase-locked to something outside the
+ARM.
+.PP
+.B "What is still NOT established, and it is the next step."
+That the call returns exactly at vertical blank.  Timing shows only that it
+synchronises to a 60Hz frame clock.  Whether a flip issued immediately after
+the return lands before scanout reaches the top is a different question, and
+the order H1a already sets stands: write the tear probe FIRST and see it catch
+the tear that exists today, because a probe that cannot see today's tear
+proves nothing about tomorrow's flip.
+.PP
+.B "A note on the probe's placement."
+.CW mboxvsync()
+blocks the calling core for up to a frame, so it lives on a statistics hook
+reached by writing
+.CW dump
+to
+.CW /dev/kpctl
+and nowhere near a draw path.  Nothing should change that until the flip is
+built, and then only on the path that flips.
