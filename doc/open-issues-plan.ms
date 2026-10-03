@@ -3573,3 +3573,74 @@ an argument.  Nothing is changed in
 behaviour here, because the premise candidate 1 rests on \(em that a
 hard-failed region is bigger than a cluster \(em cannot be verified without
 the failing card, and this tree does not ship unverified premises as fixes.
+.NH 2
+H3.  OPEN, and now explained: 8l is validated by its shape alone
+.LP
+Every other loader change in this tree was validated by relinking something
+large.
+.CW 7l ,
+.CW 5l
+and
+.CW jl
+link real kernels;
+.CW 6l
+relinks
+.CW pc64
+and was shown to produce a byte-for-byte identical size with its defensive
+check in place.
+.CW 8l
+got the same nil check in
+.CW xfol
+and has never linked anything, because the only 386 target here \(em
+.CW os/inferno/pc
+\(em is dormant.
+.PP
+.B "How dormant, measured rather than assumed."
+Five divergences from the port it links against, all fixed in
+.CW 70be6af06
+by matching
+.CW os/inferno/pc64 :
+a missing
+.CW FPU
+typedef that
+.CW portdat.h
+has required since every
+.CW Osenv
+gained one;
+.CW active.machs
+as an
+.CW int
+bitmap where
+.CW portclock.c
+indexes an array;
+.CW waserror()
+defined twice; and a config asking for
+.CW bootp ,
+.CW iprouter
+and
+.CW netaux ,
+none of which exist in
+.CW os/inferno
+any more.
+.CW portclock.c
+compiles now and so does everything before
+.CW i8250.c ,
+which declares its own
+.CW Uart
+while the port declares one too \(em a driver that moved into the port and
+left a copy behind.
+.PP
+.B "What closing this needs, and what it is worth."
+Reviving the 386 port is its own job, and the only thing it buys here is one
+loader's validation.  So the honest order is: leave
+.CW 8l
+as it is, with
+.CW tests/kencc-brloop.sh
+saying why; if the port is ever revived for its own sake, relink with
+.CW 8l
+then and compare sizes as
+.CW 6l 's
+check was compared.  What must NOT happen is the gap being closed by argument:
+.CW 6l 's
+story is three bugs deep and each one was found by linking a real kernel, not
+by reading the pass.
