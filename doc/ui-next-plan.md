@@ -1860,6 +1860,36 @@ eager cost — 1770µs, the number this was trying to beat — and never to a
 wrong image. Which makes what remains a **performance** question rather
 than a correctness one.
 
+### Measured: there are no partial-overwrite operations at all
+
+`INFERNO_FRAME_DAMAGE` also tallies the command byte behind every damage
+rectangle, and classifies each `'d'`. On `runtests -g` at 640×480:
+
+| | count |
+|---|---|
+| ops producing damage | `d`=2644… 8628 total `'d'` calls, plus `G`, `L`, `b`, `f`, `t` |
+| `s` `x` `l` `p` `P` `e` `E` reaching the damage path | **0** |
+| `'d'` operations that do not overwrite their rect | **0 of 8628** |
+
+So Tk sends no string, line, polygon or ellipse directly to the screen or
+to a window layer — it renders them into per-widget images and blits
+those — and every blit it does send is `SoverD` with an opaque mask and
+source. **The stale-buffer hazard does not arise on this workload, and no
+per-operation machinery is needed.** That was the Pi session's guess from
+Tk being flicker-free, and it holds.
+
+**Both zeroes were checked against a control, because a zero from a
+predicate is worth nothing until the predicate is shown able to fire.**
+The op tally proves the instrument sees operations at all (2644 `'d'`
+rectangles, not silence). Inverting the opacity test to `op == SoverD`
+gives **8628 of 8628**, so the counter can be non-zero and every
+operation really is `SoverD`.
+
+**The limit**: with the op term legitimately zero, the mask-alpha and
+source-alpha terms were never exercised by this workload, so they are
+untested rather than confirmed. A workload that blits an alpha image to a
+window would test them.
+
 ### Measured first: Tk's damage is widget-sized
 
 The rule above is only worth the plumbing if Tk's damage is small, and

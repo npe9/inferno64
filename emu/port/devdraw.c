@@ -557,9 +557,68 @@ static Rectangle vcur, vprev;
 static int vcurok, vprevok, vevery = -1;
 static uvlong vframes, veager, voverlap, vdeferred;
 
+/*
+ * PROBE, second half: how often would deferring be UNSAFE?
+ *
+ * Deferring the repair until the flip means frame N is drawn into a
+ * buffer still stale in S = damage(N-1).  An operation that fully
+ * overwrites its damage rectangle does not care.  One that does not
+ * leaves frame N-2 pixels inside damage(N), which the repair excludes.
+ * The exposure is damage(N) INTERSECT S.
+ *
+ * Only a fill or an opaque blit truly overwrites.  A string is a MASK,
+ * so non-ink pixels keep the destination -- and text is the default
+ * case, not a rare one.  line/poly/ellipse write spans while dstflush()
+ * charges the bounding box, so the holes are inside damage(N) too.
+ *
+ * curop is the command byte being executed, set in drawmesg's loop, so
+ * framedamage() can tell which kind of operation produced a rectangle.
+ * Counting is an UPPER bound: it ignores an opaque background fill
+ * earlier in the same present having already covered the region, which
+ * is the normal widget-repaint order.  Zero means no per-operation
+ * machinery is needed at all.
+ */
+static int curop;
+static uvlong vpartial;		/* partial-overwrite ops whose rect met S */
+static uvlong vpartialtot;	/* ...of this many partial-overwrite ops */
+static uvlong vopseen[128];	/* every command byte that produced damage */
+static uvlong vdtot, vdpartial;	/* 'd' ops, and those that do not overwrite */
+
+static int
+partialoverwrite(int c)
+{
+	switch(c){
+	case 's':		/* string: the glyph is a mask */
+	case 'x':		/* string with a background, same mask */
+	case 'l':		/* line: spans inside a bounding box */
+	case 'p':		/* poly */
+	case 'P':		/* filled poly, nonzero winding */
+	case 'e':		/* ellipse */
+	case 'E':		/* filled ellipse */
+		return 1;
+	}
+	return 0;		/* 'd' is counted only when non-opaque: not yet */
+}
+
 static void
 framedamage(Rectangle r)
 {
+	/*
+	 * CONTROL for the count below: a zero partial count means nothing
+	 * unless this instrument can be shown to see operations at all.
+	 * Tally every command byte that reaches here, so "0 partial" can be
+	 * distinguished from "0 observed".
+	 */
+	if(curop >= 0 && curop < 128)
+		vopseen[curop]++;
+	if(partialoverwrite(curop)){
+		Rectangle x;
+
+		vpartialtot++;
+		x = r;
+		if(vprevok && rectclip(&x, vprev))
+			vpartial++;
+	}
 	if(vcurok)
 		combinerect(&vcur, r);
 	else {
@@ -599,8 +658,20 @@ frameboundary(void)
 	vcurok = 0;
 	vframes++;
 	if(vframes % (uvlong)vevery == 0)
-		print("FRAMEDAMAGE frames %llud  eager %llud  deferred %llud  overlap %llud  mean %llud\n",
-			vframes, veager, vdeferred, voverlap, veager/vframes);
+		print("FRAMEDAMAGE frames %llud  eager %llud  deferred %llud  overlap %llud  mean %llud  partial %llud of %llud\n",
+			vframes, veager, vdeferred, voverlap, veager/vframes,
+			vpartial, vpartialtot);
+	if(vframes % (uvlong)vevery == 0){
+		int k;
+
+		print("FRAMEOPS");
+		for(k = 0; k < 128; k++)
+			if(vopseen[k])
+				print(" %c=%llud", k, vopseen[k]);
+		print("\n");
+		print("FRAMEDRAW d-ops %llud, non-overwriting %llud\n",
+			vdtot, vdpartial);
+	}
 }
 
 static void
@@ -2807,6 +2878,7 @@ drawmesg(Client *client, void *av, int n)
 				gpudrawflush();
 			break;
 		}
+		curop = *a;
 		switch(*a){
 		default:
 			error("bad draw command");
@@ -2939,6 +3011,19 @@ drawmesg(Client *client, void *av, int n)
 			drawpoint(&p, a+29);
 			drawpoint(&q, a+37);
 			op = drawclientop(client);
+			/*
+			 * PROBE: is this 'd' a true overwrite of its rect?
+			 * It is only when the mask is opaque and the source
+			 * has no alpha and the operator replaces -- a fill or
+			 * an opaque blit.  Anything else leaves destination
+			 * pixels inside the damage rect, which is what makes
+			 * deferring the stale-buffer repair unsafe.
+			 */
+			vdtot++;
+			if(op != SoverD
+			|| (mask != nil && (mask->flags&Falpha))
+			|| (src != nil && (src->flags&Falpha)))
+				vdpartial++;
 			/*
 			 * A draw observes all preceding draw3d work, exactly
 			 * as a read does.  Without this, geometry the GPU has
