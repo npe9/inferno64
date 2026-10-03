@@ -6658,3 +6658,59 @@ acceptance test is
 undrawn-region check with
 .CW Dbufnorepair
 as its control, and both arms need the board.
+.NH 2
+H4 ACCEPTED: 30 clean, 0 slow, 0 wedges of 30 against the I-cache fix alone
+.LP
+.P1
+HUNTHANG2-NONE: 30 clean, 0 slow, 0 wedges of 30
+.P2
+The batch scoring
+.CW b461ec5f1
+\(em
+.CW cacheiinv()
+in
+.CW os/inferno/raspi3b/l.s
+changed from
+.CW "IC IALLU"
+(the local processor only) to
+.CW "IC IALLUIS"
+(the whole Inner Shareable domain), which is what the JIT needs when a core
+other than the writer runs the code \(em has finished.
+.PP
+.B "What this is, precisely."
+Thirty consecutive runs of the committed suite, each scored by a UNIQUE per-run
+token appearing within 600s, with the wedge/slow split taken from the kernel ring
+rather than from the timeout.  No run wedged, and no run was merely slow.  One
+change was under test: the GC guard
+.CW 6c587face
+was deliberately held back so the result is attributable.
+.PP
+.B "What it is NOT: a measured rate improvement."
+Three wedges were caught before the fix, but the denominator is not a clean
+number and should not be presented as one.  The harness changed during the hunt
+\(em
+.CW hunthang2.sh 's
+own header records that the first ten runs used a noisier variant writing a
+.CW /prog
+snapshot to
+.CW /n/remote
+every five seconds, "so the two cannot be pooled into one batch of thirty" \(em
+and the wedge/slow distinction did not exist for the earlier catches at all,
+which is why they were all called the same thing.  So the honest claim is thirty
+for thirty against one change, not a before-and-after ratio.
+.PP
+.B "And the predicates were audited rather than trusted,"
+which is recorded above: the hang check uses a unique per-run token so stale
+output cannot satisfy it; the clean check greps a NON-unique marker and is sound
+only because
+.CW board.out
+is a rolling
+.CW hardcopy
+snapshot rather than an accumulating log; the slow branch counts and continues
+instead of aborting, which is what makes a wedge count measurable at all.  The
+one thing that could have silently falsified it \(em a relink moving
+.CW kmesg 's
+symbol so every wedge scored SLOW \(em did not happen, and nothing was linked
+into
+.CW os/inferno/raspi3b
+for the duration.
