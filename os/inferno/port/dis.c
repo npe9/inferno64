@@ -925,11 +925,14 @@ vmtook(Proc *p)
 	vmholdticks = m->ticks;
 }
 
+extern char *statename[];
+
 void
 diswatchproc(void*)
 {
 	ulong last, lastticks;
-	int quiet, reported;
+	int quiet, reported, i;
+	Proc *q;
 
 	last = disbeat;
 	lastticks = 0;
@@ -1011,6 +1014,32 @@ diswatchproc(void*)
 					vmholderp->qwaitq->opc);
 		}else
 			iprint("DIS-WEDGED-HOLDER: none -- the token is free\n");
+		/*
+		 * WHICH PROCESSOR IS RUNNING WHAT, at the moment of the
+		 * wedge rather than minutes later over JTAG.
+		 *
+		 * Every catch so far has had a token holder whose state says
+		 * Running while a later JTAG read finds all four cores idle,
+		 * and those are two different instants -- so "readied and
+		 * never scheduled" could not be told from "was running when
+		 * the dump was taken".  This closes that gap: the census is
+		 * printed from inside the wedge.
+		 *
+		 * Guarded by active.machs[], which a processor that is not
+		 * running a scheduler does not set -- the rule raspi3b's
+		 * dat.h states for portable users of MACHP.
+		 */
+		for(i = 0; i < MAXMACH; i++){
+			if(!active.machs[i] || MACHP(i) == nil)
+				continue;
+			q = MACHP(i)->proc;
+			iprint("DIS-WEDGED-CPU%d: %s\n", i,
+				q == nil? "no process (idle)":
+					q->text);
+			if(q != nil)
+				iprint("\tpid %ud, state %s\n", q->pid,
+					statename[q->state]);
+		}
 		iprint("DIS-WEDGED-END: beat %lud, vmq %s, runhd %s,"
 			" ticks %lud (the dump above is %d s of no progress)\n",
 			disbeat,
