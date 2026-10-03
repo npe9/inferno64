@@ -1,0 +1,25 @@
+--- cpu/vmx.cc	2026-10-03 09:31:39
++++ cpu/vmx.cc	2026-10-03 09:31:39
+@@ -2834,6 +2834,9 @@
+   BX_CPU_THIS_PTR eflags = 0x2; // Bit1 is always set
+   // Update lazy flags state
+   clearEFlagsOSZAPC();
++  // IF is 0 in the host now: mask what the guest's external-interrupt
++  // exiting had left unmasked, or the host takes an interrupt with IF=0
++  handleInterruptMaskChange();
+ 
+   BX_CPU_THIS_PTR activity_state = BX_ACTIVITY_STATE_ACTIVE;
+ 
+@@ -3310,6 +3313,12 @@
+ 
+   BX_CPU_THIS_PTR in_vmx_guest = true;
+ 
++  // the interrupt mask depends on being in the guest (external-interrupt
++  // exiting makes EFLAGS.IF irrelevant), not only on IF: recompute it now,
++  // or a guest entered with IF=0 from a host with IF=0 never exits on an
++  // external interrupt until it sets IF itself
++  handleInterruptMaskChange();
++
+   unmask_event(BX_EVENT_INIT);
+ 
+   if (vm->vmexec_ctrls1.TSC_OFFSET())

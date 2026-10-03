@@ -41,6 +41,14 @@ done
 grep -q '<libgen.h>' gui/keymap.cc ||
 	sed -i.orig 's/^#include "param_names.h"/#include "param_names.h"\
 #include <libgen.h>/' gui/keymap.cc
+# Bochs's VM entry and exit change whether external interrupts are
+# masked (in a guest with external-interrupt exiting IF does not mask
+# them) without recomputing the mask, so a guest entered with IF=0 from
+# a host with IF=0 never exits on a host interrupt -- a guest spinning
+# with interrupts off kept the processor from the host -- and the host,
+# back with IF=0, could be given one.  Real processors do neither.
+grep -q 'the interrupt mask depends on being in the guest' cpu/vmx.cc ||
+	patch -p0 <"$ROOT/scripts/bochs-vmx-intmask.patch" >/dev/null
 # Bochs' slirp uses res_ninit and friends, which on macOS are in
 # libresolv and not libc; its configure does not add it.
 case `uname` in Darwin) LIBS="$LIBS -lresolv"; export LIBS;; esac
