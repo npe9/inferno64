@@ -6572,3 +6572,89 @@ is false.
 Which is the whole argument for the fix, now with numbers behind it: the four
 tools that check fail safely and the one that does not fails into the batch
 wedge/slow verdict.
+.PP
+.B "The flip re-read end to end, since it is unrun code going onto hardware."
+Re-reading found the inverted ternary earlier, so the rest was checked the same
+way rather than trusted.
+.IP \(bu
+.B "Flip direction."
+.CW fbfront
+is the half the GPU scans out, 0 meaning offset 0.
+.CW screeninit
+sets
+.CW "fbfront = 0"
+and
+.CW "fb = backaddr()" ,
+the SECOND half, so the first flip shows what was drawn.
+.CW "mboxvirtoffset(0, fbfront? 0: ScrY)"
+with
+.CW fbfront
+0 asks for offset
+.CW ScrY
+\(em the second half, the one just drawn.  Then
+.CW "fbfront = !fbfront"
+makes
+.CW frontaddr()
+the second half and
+.CW backaddr()
+the first.  Consistent at every step.
+.IP \(bu
+.B "Stride."
+.CW fbcopy
+and the half offsets use
+.CW "ScrX*ScrPix"
+and
+.CW "ScrY*ScrX*ScrPix" ,
+which are right because virtual WIDTH equals physical width \(em only the height
+doubles \(em and
+.CW screeninit
+still checks the firmware pitch against
+.CW "ScrX*ScrPix" .
+.IP \(bu
+.B "The Memdata assumption, which everything rests on."
+.CW "allocmemimaged(r, ScrChan, &scrdata)"
+builds
+.CW gscreen
+on
+.CW &scrdata ,
+and
+.CW attachscreen
+returns that same
+.CW &scrdata
+for devdraw to build
+.CW screenimage
+on.  So both share it and
+.CW "scrdata.bdata = backaddr()"
+moves both at once.
+.IP \(bu
+.B "And nothing caches a derived pointer."
+.CW Memimage.zero
+is an
+.CW s32int
+OFFSET, not a pointer, and
+.CW byteaddr()
+computes
+.CW "i->data->bdata + i->zero + ..."
+on every call.  So there is no stale row pointer anywhere to invalidate \(em which
+is the thing that would have half-worked silently.
+.IP \(bu
+.B "The flush path."
+With
+.CW Dbuf
+and
+.CW Directfb ,
+.CW fb == vfb ,
+so
+.CW flushmemscreen 's
+.CW "if(dp != sp)"
+skips the memmove and still cleans the dirty span to the point of coherency \(em
+which is why
+.CW bcmpresent()
+only has to clean the repair.
+.PP
+Four checks, four passes, and none of them is a substitute for running it.  The
+acceptance test is
+.CW drawink 's
+undrawn-region check with
+.CW Dbufnorepair
+as its control, and both arms need the board.
