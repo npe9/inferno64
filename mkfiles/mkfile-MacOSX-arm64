@@ -16,7 +16,7 @@ CFLAGS=		-g\
 		-O2\
 		-fno-strict-aliasing\
 		-Wno-error\
-		-Wno-implicit-function-declaration\
+		-Werror=implicit-function-declaration\
 		-Wno-implicit-int\
 		-Wno-incompatible-pointer-types\
 		-Wno-return-type\

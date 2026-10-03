@@ -6,6 +6,16 @@
 #ifndef _BSD_SOURCE
 #define _BSD_SOURCE
 #endif
+/*
+ * _XOPEN_SOURCE 500 makes Darwin pin _POSIX_C_SOURCE to 199506L, and with it
+ * __DARWIN_C_LEVEL, which hides the whole POSIX.1-2001 block of <unistd.h>
+ * (fchown, gethostname, readlink, setegid, seteuid, symlink) from every file
+ * that includes this header -- i.e. all of emu.  _DARWIN_C_SOURCE restores the
+ * full level.  It must stay above the system includes below: <unistd.h> is
+ * pulled in here, so a later #undef _POSIX_C_SOURCE (as several per-platform
+ * os.c files do) is too late to help -- the header has already been read at the lower level.
+ */
+#define _DARWIN_C_SOURCE 1
 #define _XOPEN_SOURCE  500
 #define _LARGEFILE_SOURCE	1
 #define _LARGEFILE64_SOURCE	1

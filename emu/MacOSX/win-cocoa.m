@@ -27,6 +27,19 @@
 #undef attachscreen
 #include <memlayer.h>
 #include "cursor.h"
+/*
+ * kwerrstr() is VARIADIC and was called here with no prototype in
+ * scope, which this file never noticed because the build passed
+ * -Wno-implicit-function-declaration (now -Werror=).  On arm64
+ * Darwin that is not
+ * harmless: variadic arguments are passed on the stack while fixed
+ * ones go in registers, so without a prototype the compiler passes
+ * them in registers and the callee reads the stack.  Measured: a
+ * three-int variadic call gives 11,22,33 with a prototype and
+ * -105332480,0,1866540768 without.
+ */
+extern void kwerrstr(char*, ...);
+
 #include "keyboard.h"
 #include "keycodes.h"
 

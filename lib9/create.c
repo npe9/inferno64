@@ -1,5 +1,6 @@
 #include "lib9.h"
 #include <sys/types.h>
+#include <sys/stat.h>	/* mkdir */
 #include <fcntl.h>
 
 int

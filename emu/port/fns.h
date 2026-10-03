@@ -135,6 +135,7 @@ Pgrp*	newpgrp(void);
 Proc*	newproc(void);
 void		nexterror(void);
 void		nofence(void);
+int		nrand(int);	/* devcons.c */
 void		notkilled(void);
 int		openmode(ulong);
 void		osblock(void);
