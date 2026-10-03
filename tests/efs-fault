@@ -103,6 +103,19 @@ fn watch {
 				# console input.  tools/jtag/wedgediag reads
 				# it and says which end stopped.
 				#
+				# BOTH HALVES VERIFIED, because neither was
+				# obvious and the first would have been
+				# silent.  A failing redirect in this shell
+				# raises fail:bad redir and aborts the whole
+				# script -- so an unwritable /dev/cons would
+				# have turned "a process broke" into "the
+				# suite vanished", the exact opposite of
+				# what this is for.  It is writable: the
+				# probe printed its marker after the
+				# redirect.  And the text lands in the ring
+				# as a line of its own, next to the poller's
+				# echo of the command that produced it.
+				#
 				echo 'WATCH-BROKEN pid '^$i
 				cat /prog/^$i^/status
 				cat /prog/^$i^/stack
