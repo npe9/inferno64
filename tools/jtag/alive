@@ -47,6 +47,41 @@ IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
 MACH0=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" 2>/dev/null |
 	awk '$3=="mach0"{print $1}'`
 [ -n "$MACH0" ] || { echo "alive: no mach0 symbol in $ELF" >&2; exit 2; }
+
+#
+# THE MAP MUST COME FROM THE BUILD THAT IS RUNNING, NOT THE ONE YOU HOLD.
+#
+# The comment above says mach0 moves with every build, which is true and does
+# not imply the thing that bit a peer: they ran this from a DIFFERENT WORKTREE
+# against this board, so every address came from their kernel's symbol table and
+# was read out of mine.  It printed "dead (ticks 168052864 -> 168052864, not
+# advancing)" -- a reading that is not alarming but MEANINGLESS, because the
+# word it watched is not m->ticks in the kernel that is there.
+#
+# Checked in this tree: a stale ELF differs in BOTH the address and the stamp --
+# kerndate@0x1d9fd8 stamp 1791056038 against kerndate@0x1d9fc8 stamp 1791023117 --
+# so the comparison below has distinguishing inputs and does fire.
+#
+# WHICH IS WHY THE SKIP PATH IS NOW FATAL.  Every stamp test here is inside
+# `if [ -n "$KDADDR" ] && [ -n "$kd" ]`, so an empty KDADDR silently skipped ALL
+# of them and left this reporting ticks from an address nothing had vouched for.
+# A check that can be skipped is not a check.
+#
+# THE REFUSAL BELOW IS UNTESTED, and that is stated rather than implied.  Every
+# real kernel in this tree carries both mach0 and kerndate, so reaching it needs
+# an ELF with one and not the other, which I could not construct: pointing ELF at
+# an object file trips the mach0 test above first (exit 2, verified).  So it
+# guards a case I could not produce -- defensive, not demonstrated, unlike the
+# stamp comparison itself whose inputs ARE verified distinguishing above.
+#
+KDCHECK=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" -g kerndate 2>/dev/null |
+	awk '$3=="kerndate"{print $1}'`
+[ -n "$KDCHECK" ] || {
+	echo "alive: no kerndate symbol in $ELF, so this cannot verify that the" >&2
+	echo "alive: ELF describes the running kernel -- refusing rather than" >&2
+	echo "alive: reporting ticks from an unvouched address" >&2
+	exit 2
+}
 TICKS=`python3 -c "print(hex(int('$MACH0',16)+0x28))"`
 
 KDADDR=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" -g kerndate 2>/dev/null |
