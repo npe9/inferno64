@@ -6109,3 +6109,76 @@ in
 .CW os/inferno/raspi3b
 will relink and replace the artefacts the JTAG tools key on.  That is exactly
 what the post-batch step wants and exactly what must not happen before it.
+.NH 2
+H4.  7c exits ZERO on an implicitly declared function, so a build filter cannot see it
+.LP
+A peer found that kencc never prints
+.CW "error:" ,
+so a filter tuned on clang's wording misses every kernel compile failure, and
+proposed
+.CW mk 's
+own
+.CW "exit status=exit(1)"
+as the toolchain-independent signal.  That is right and it is not sufficient.
+Measured by appending each error kind to a real kernel source and reading both
+the status and whether an object appeared:
+.P1
+injected error                      7c exit   object written
+syntax error                            1         no
+name not declared (a variable)          1         no
+structure not fully declared            1         no
+function not declared                   0        YES
+.P2
+.PP
+An implicit function declaration is a WARNING here.
+.CW 7c
+prints the diagnostic, WRITES THE OBJECT, and exits 0 \(em so
+.CW mk
+prints no
+.CW "exit status"
+either, and neither an
+.CW "error:"
+grep nor a status check nor the exit-status pattern sees it.  The peer's own
+counterexample,
+.CW "mailbox.c:484 function not declared: mboxtagprobe" ,
+is exactly this case, which means that build did not merely fail quietly:
+.CW 7c
+reported SUCCESS and
+.CW mk
+archived an object.  That is why the stale kernel ran.
+.PP
+.B "And it is the dangerous case, not just the sneaky one."
+The link is the backstop, but only when the symbol does not exist.  A misspelled
+call that happens to match ANOTHER real symbol compiles, links, and misbehaves at
+runtime with no diagnostic anywhere.  The reliable catches are reading the
+diagnostic TEXT and a successful link:
+.P1
+7c ... -o <scratch>/x.7 f.c > out 2>&1; echo $?; grep -c 'not declared' out
+.P2
+Checked on this session's three changed files: exit 0, zero
+.CW "not declared"
+diagnostics, zero output of any kind.
+.PP
+.B "A second instrument bug of mine, and it invalidates a number stated above."
+.CW "cmd | head -20; echo \(dqrc=$?\(dq)"
+reports HEAD's status, not the command's.  The
+.CW rc=0
+recorded earlier for the scratch link was therefore meaningless.  Re-run with the
+output redirected and
+.CW $?
+captured on the bare command, the linker's real status IS 0 with no diagnostics
+and a byte-identical 3228778-byte output \(em so the conclusion stands and the
+evidence given for it did not.  The substantive evidence was always the output
+file plus
+.CW ksyms
+resolving the new symbols.
+.PP
+.B "What generalises, and it is the peer's method rather than either finding."
+Reading a predicate tells you what it MATCHES; firing it tells you what it
+MISSES.  They found the kencc wording by injecting a real syntax error instead of
+re-reading the filter, and the
+.CW 7c
+table above exists only because they did.  Of the four ways a correct number
+lies, this is the only one with a reliable procedure attached: break the thing
+deliberately and check the instrument notices.  It is the same move as auditing a
+harness that is producing a result you like.
