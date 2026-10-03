@@ -14,7 +14,9 @@
 # usage: scripts/bochs-vm.sh [-c cpu] kernel [seconds]
 #
 # BOCHS_INFO is the bochsrc info: setting (e.g. "action=ignore, cpu0=report").
-# BOCHS_MEGS sets the machine's memory (512 MiB by default), BOCHS_CPUS
+# BOCHS_TAG runs another instance beside the first, with its own work
+# directory and logs (.bochs/serial-TAG.log).  BOCHS_MEGS sets the
+# machine's memory (512 MiB by default), BOCHS_CPUS
 # its processors (1).
 #
 #	-c cpu	a Bochs CPU model; default corei7_skylake_x (VMX, EPT,
@@ -43,7 +45,8 @@ if [ ! -f "$LOADER" ]; then
 	(cd "$ROOT/os/inferno/boot/pc" && mk 9bootiso) >/dev/null
 fi
 
-WORK=$B/work
+T=${BOCHS_TAG:+-$BOCHS_TAG}
+WORK=$B/work$T
 rm -rf "$WORK"
 mkdir -p "$WORK/iso/386" "$WORK/iso/amd64" "$WORK/iso/cfg"
 cp "$LOADER" "$WORK/iso/386/9bootiso"
@@ -77,9 +80,9 @@ vgaromimage: file=$B/share/bochs/VGABIOS-lgpl-latest.bin
 ata0: enabled=1, ioaddr1=0x1f0, ioaddr2=0x3f0, irq=14
 ata0-master: type=cdrom, path="$WORK/boot.iso", status=inserted
 boot: cdrom
-com1: enabled=1, mode=file, dev=$B/serial.log
+com1: enabled=1, mode=file, dev=$B/serial$T.log
 display_library: nogui
-log: $B/bochs.log
+log: $B/bochs$T.log
 panic: action=fatal
 error: action=report
 info: ${BOCHS_INFO:-action=ignore}
@@ -99,7 +102,7 @@ elif [ -n "$BOCHS_STOPAT" ]; then
 else
 	echo c >"$WORK/debugrc"
 fi
-rm -f "$B/serial.log"
+rm -f "$B/serial$T.log"
 # BOCHS_CMDS=1: the debugger also reads $WORK/cmds as it grows, and
 # -dbg makes SIGINT stop the machine into it rather than end Bochs:
 #	kill -INT <bochs pid>; echo r >>.bochs/work/cmds
@@ -108,8 +111,8 @@ rm -f "$B/serial.log"
 # line-buffered rather than held until a buffer fills.
 if [ -n "$BOCHS_CMDS" ]; then
 	: >"$WORK/cmds"
-	tail -f "$WORK/cmds" | timeout "$SECS" script -q -F "$B/bochs.out" "$BOCHS" -q -dbg -f "$WORK/bochsrc" -rc "$WORK/debugrc" >/dev/null 2>&1 || true
+	tail -f "$WORK/cmds" | timeout "$SECS" script -q -F "$B/bochs$T.out" "$BOCHS" -q -dbg -f "$WORK/bochsrc" -rc "$WORK/debugrc" >/dev/null 2>&1 || true
 else
-	timeout "$SECS" "$BOCHS" -q -f "$WORK/bochsrc" -rc "$WORK/debugrc" >"$B/bochs.out" 2>&1 </dev/null || true
+	timeout "$SECS" "$BOCHS" -q -f "$WORK/bochsrc" -rc "$WORK/debugrc" >"$B/bochs$T.out" 2>&1 </dev/null || true
 fi
-sed -e 's/\x1b\[[0-9;=]*[a-zA-Z]//g' -e 's/\r$//' "$B/serial.log" 2>/dev/null || true
+sed -e 's/\x1b\[[0-9;=]*[a-zA-Z]//g' -e 's/\r$//' "$B/serial$T.log" 2>/dev/null || true

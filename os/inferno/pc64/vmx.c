@@ -467,6 +467,7 @@ static void
 vmcsinit(Vcpu *v, Vmxcpu *x)
 {
 	vlong msr;
+	char *p;
 
 	vmcswrite(PINB_CTLS, pinctls);
 	vmcswrite(PROCB_CTLS, procctls);
@@ -482,7 +483,14 @@ vmcsinit(Vcpu *v, Vmxcpu *x)
 	vmcswrite(CR3_TARGCNT, 0);
 	vmcswrite(VMENTRY_INTRINFO, 0);
 	vmcswrite(VMCS_LINK, ~0ULL);
-	vmcswrite(EXC_BITMAP, 0);
+	/*
+	 * The guest's exceptions are its own.  *vmxexcbitmap= in
+	 * plan9.ini intercepts those it names instead, each an exit
+	 * (VxException) with its vector: how a guest that dies before it
+	 * can print says what killed it.
+	 */
+	p = getconf("*vmxexcbitmap");
+	vmcswrite(EXC_BITMAP, p != nil ? strtoul(p, nil, 0) : 0);
 	vmcswrite(PFAULT_MASK, 0);
 	vmcswrite(PFAULT_MATCH, 0);
 

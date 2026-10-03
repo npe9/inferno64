@@ -815,7 +815,9 @@ run(dir: string, ctl: ref Sys->FD, secs: int, append: string)
 			break;
 		}
 		# nothing else is expected: the kernel handles the platform
-		sys->print("vmlinux: regs\n%s", readall(dir + "/vcpu0/regs"));
+		regs := readall(dir + "/vcpu0/regs");
+		sys->print("vmlinux: regs\n%s", regs);
+		stackdump(dir, regs);
 		break;
 	}
 	sys->print("vmlinux: status\n%s", readall(dir + "/status"));
@@ -938,13 +940,65 @@ field64(s, name: string): (big, int)
 {
 	(nil, l) := sys->tokenize(s, " \n");
 	for(; l != nil && tl l != nil; l = tl l)
-		if(hd l == name){
-			v := hd tl l;
-			if(len v > 2 && v[0:2] == "0x")
-				return (big ("16r" + v[2:]), 1);
-			return (big v, 1);
-		}
+		if(hd l == name)
+			return (num(hd tl l), 1);	# big("16r...") cannot hold a kernel address
 	return (big 0, 0);
+}
+
+# the top of an x86 guest's stack, through its page tables: an early
+# exception's frame (vector, error code, rip, cs, rflags) is there
+stackdump(dir, regs: string)
+{
+	# num, not field64: big("16r...") cannot hold a kernel address
+	if(field(regs, "rsp") == nil || field(regs, "cr3") == nil)
+		return;
+	sp := num(field(regs, "rsp"));
+	cr3 := num(field(regs, "cr3"));
+	if(cr3 == big 0)
+		return;
+	fd := sys->open(dir + "/mem", Sys->OREAD);
+	if(fd == nil)
+		return;
+	b := array[8] of byte;
+	for(i := 0; i < 24; i++){
+		va := sp + big (8*i);
+		pa := gva2gpa(fd, cr3, va);
+		if(pa < big 0 || sys->pread(fd, b, 8, pa) != 8){
+			sys->print("vmlinux: stack %bux unreadable\n", va);
+			return;
+		}
+		sys->print("vmlinux: stack %bux: %bux\n", va, le64(b));
+	}
+}
+
+le64(b: array of byte): big
+{
+	e := big 0;
+	for(k := 7; k >= 0; k--)
+		e = (e << 8) | big b[k];
+	return e;
+}
+
+# va through the four levels from cr3; -1 if it is not mapped
+gva2gpa(fd: ref Sys->FD, cr3, va: big): big
+{
+	b := array[8] of byte;
+	t := cr3 & big 16r000FFFFFFFFFF000;
+	for(l := 0; l < 4; l++){
+		idx := int ((va >> (39 - 9*l)) & big 16r1FF);
+		if(sys->pread(fd, b, 8, t + big (8*idx)) != 8)
+			return big -1;
+		e := le64(b);
+		if((e & big 1) == big 0)
+			return big -1;
+		if(l > 0 && l < 3 && (e & big 16r80) != big 0){
+			sh := 39 - 9*l;
+			m := (big 1 << sh) - big 1;
+			return (e & big 16r000FFFFFFFFFF000 & ~m) | (va & m);
+		}
+		t = e & big 16r000FFFFFFFFFF000;
+	}
+	return t | (va & big 16rFFF);
 }
 
 # the four-level walk of va from cr3, read from the guest's memory

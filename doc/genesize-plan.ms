@@ -717,6 +717,32 @@ LINUXGUEST: ran
 M2 and M8's disk half are met on VMX.  M8's network half and M5 were
 not exercised there: the Bochs bench has neither the second NIC nor the
 virtio-serial function.  The run took about an hour of Bochs.
+.IP "Phase 5: M3 on VMX (Bochs), not yet." 4
+The four-processor guest
+.CW pc64smp ) (
+does not boot on VMX.  On a two-processor Bochs host it halts at once
+in
+.CW native_halt ,
+the early boot's halt loop, having printed nothing (not even with
+.CW earlyprintk ):
+.CW vmlinux
+now dumps an x86 guest's stack at such an exit, through its page
+tables, and the frame there is
+.CW early_idt_handler_common
+for a fault in
+.CW copy_bootdata +0x26,
+the first read of boot_params through the direct map \(en a page
+fault that
+.CW early_make_pgtable
+should have satisfied, with the guest's CR2 left at
+0xffffffffffffffe6.  No other exception was taken first (the new
+.CW *vmxexcbitmap=
+in plan9.ini intercepts the guest's exceptions, here all but #PF).  On
+a one-processor host it does not halt there, but nothing comes, not
+even the vCPU's heartbeat, in over an hour.  The same kernel boots on
+SVM with four processors, and on VMX with one.  Being investigated:
+the one-processor guest on the two-processor host, whose vCPU is then
+on the host's application processor.
 .IP "Phase 9: M8 on SVM (QEMU)." 4
 .CW pc/vmvirtio.c :
 virtio functions of the hypervisor's own on the guest's PCI bus, the
