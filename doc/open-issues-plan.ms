@@ -6278,3 +6278,67 @@ So for kencc the catches are: a clean link, plus
 grep -cE 'not declared|redeclaration' <compile output>
 .P2
 and the status alone is not one of them.
+.NH 2
+H4.  The implicit-declaration audit: 110 linked sources, ZERO, and 12 false findings on the way
+.LP
+Since
+.CW 7c
+writes an object and exits 0 for a call to a function not declared in the
+translation unit, any such call in this kernel compiles and links today and
+misbehaves only if the name happens to match some other symbol.  That had never
+been checked, so:
+.P1
+110 linked C sources, compiled with the build's own flags
+0 with 'not declared' or 'redeclaration' diagnostics
+2 of the 112 objects have no .c (generated or assembly)
+.P2
+Clean.  A statement not available without looking.
+.PP
+.B "And the two sweeps before it produced twelve findings, all artifacts."
+Worth recording because each looked exactly like a real bug.
+.IP \(bu
+Sweeping
+.CW "raspi3b/*.c"
+flagged
+.CW "raspi3b.c:132 name not declared: KERNDATE" .
+The mkfile compiles that file with
+.CW "'-DKERNDATE='$KERNDATE"
+and my hand invocation had no such define.  One false finding.
+.IP \(bu
+Sweeping
+.CW "../port/*.c"
+flagged eleven files \(em
+.CW devboot ,
+.CW devns16552 ,
+.CW devpci ,
+.CW devproc ,
+three
+.CW flash* ,
+.CW iomap ,
+.CW pciecam ,
+.CW portclock ,
+.CW rdb
+\(em with plausible-looking misses like
+.CW "function not declared: segflush"
+and
+.CW "function not declared: kmapinval" .
+NONE of the eleven is linked into this kernel.  They are port files for other
+boards, compiled against raspi3b's headers, missing the per-board declarations
+their own configs supply.
+.PP
+The fix was to stop guessing at the file set and take it from the LINK LINE:
+.CW "mk -n"
+gives the real
+.CW OBJ
+list, every
+.CW .7
+maps to a source, and that is the only set the build actually compiles.  Two
+wrong file sets and one wrong flag set, twelve findings, zero real.
+.PP
+.B "Which is the same error as everything else in this item, at the input end."
+An audit is an instrument, and its SCOPE is a parameter like any other.  Running
+a correct check over the wrong file set produces correct diagnostics about code
+that is never built \(em a measurement of the wrong population, next to the
+measurement of the wrong quantity and the comparison of incommensurable units
+already recorded above.  The control is cheap and I nearly skipped it: ask
+whether the thing you just flagged is in the artefact you care about.
