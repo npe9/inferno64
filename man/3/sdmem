@@ -88,6 +88,45 @@ counts reads served from a chunk that was never written, and
 .I failed
 counts transfers refused.
 .PP
+Two more lines appear once a transfer has happened since the last
+.BR reset :
+.PP
+.EX
+sdmem who dis reads 1284 ops 5156 secs, writes 572 ops 5148 secs
+sdmem trace r0+9 r63+9 r97+4 r27+9 r101+4 r105+4 ...
+.EE
+.PP
+.I Who
+breaks the counters down by the process name the kernel keeps, one line
+per name, up to eight; a ninth name is reported as
+.B "TABLE FULL"
+rather than folded into another, because a transfer quietly given the
+wrong owner is worse than one left out.  Every Limbo process is called
+.BR dis ,
+so the name separates a Dis program's I/O from the kernel's and no
+further; when two Dis programs share a device, the trace is what tells
+them apart.
+.PP
+.I Trace
+is the first sixty-four transfers since the reset, as
+.BI r nnn + m
+or
+.BI w nnn + m
+for a read or a write of
+.I m
+sectors at sector
+.IR nnn .
+A total says how much I/O a workload cost and a name says whose; neither
+says which sectors, which is the question when a workload's I/O cannot be
+found in the code that is supposed to have issued it.  The example above
+is a 64KB write through
+.IR dossrv (4):
+the nine-sector reads are its track cache, and the four-sector reads
+marching up from sector 97 \(em the first data sector \(em are
+.IR dossrv 's
+bad-cluster check reading each cluster before allocating it.  That took
+one run to see and three wrong hypotheses without it.
+.PP
 Writing to
 .B ctl
 accepts:
@@ -235,7 +274,8 @@ writes applied out of order.
 .B reset
 Zero the counters AND the transfer number the faults are indexed by, which
 cannot be separated from them: a workload that does not count from its own
-beginning cannot name a transfer.  The faults themselves are a setting,
+beginning cannot name a transfer.  The per-process breakdown and the trace
+go with them.  The faults themselves are a setting,
 not a measurement, and are left alone.
 .TP
 .B zero

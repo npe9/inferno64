@@ -108,6 +108,35 @@ enum {
 	 * and because every held write is a copy of its data.
 	 */
 	Maxheld		= 64,
+
+	/*
+	 * Distinct process names remembered.  Small on purpose: if a
+	 * workload has more than this many openers, the question being
+	 * asked is not "who" any more.  Overflow is reported rather than
+	 * silently folded, because a name quietly dropped is how a
+	 * measurement acquires a wrong owner.
+	 */
+	Maxwho		= 8,
+	Namelen		= 16,
+
+	/*
+	 * Transfers remembered in the trace, from the last reset.
+	 *
+	 * A total says how much, a name says whose, and neither says WHICH
+	 * SECTORS -- which is the question when a workload's reads cannot be
+	 * found in the code that is supposed to have issued them.  The first
+	 * few dozen transfers are enough to tell a FAT scan from a
+	 * read-modify-write from a media sweep, because each has a different
+	 * address pattern and they are not close.
+	 */
+	Maxtrace	= 64,
+};
+
+typedef struct Who Who;
+struct Who {
+	char	name[Namelen];
+	uvlong	nread, nwrite;
+	uvlong	nreadsec, nwritesec;
 };
 
 typedef struct Held Held;
@@ -158,6 +187,27 @@ struct Ctlr {
 	uvlong	ntorn;
 	uvlong	ninjected;		/* errors returned on purpose */
 	uvlong	nreordered;		/* writes applied out of order */
+
+	/*
+	 * WHO asked, by process name.
+	 *
+	 * The totals above say how much I/O a workload cost and cannot say
+	 * whose it was, and a count that matches the number of clusters a
+	 * filesystem allocated reads as that filesystem's cost whether it
+	 * issued it or not.  This tree has made that mistake: a 2.6MB write
+	 * through dossrv charged 1286 reads here while dossrv's own counter
+	 * said it had issued six.  A name settles it in one run.
+	 */
+	Who	who[Maxwho];
+	int	nwho;
+
+	/* trace of the first Maxtrace transfers since the reset */
+	struct {
+		uvlong	bno;
+		long	nb;
+		int	write;
+	} trace[Maxtrace];
+	int	ntrace;
 };
 
 static Ctlr sdmemctlr;
@@ -327,9 +377,49 @@ sdmemlose(Ctlr *c)
  * does not clear the faults themselves -- they are a setting, not a
  * measurement -- so the usual order is to set them and then reset.
  */
+/*
+ * Charge this transfer to the process that asked for it.
+ *
+ * up->text is the name the kernel already keeps; nothing is allocated and
+ * nothing is looked up, so this costs a strcmp per transfer against a
+ * table that in practice holds one or two entries.  The name is the whole
+ * value here: it is what distinguishes I/O a filesystem issued from I/O
+ * issued underneath it on the same device.
+ */
+static void
+whocharge(Ctlr *c, int write, long nb)
+{
+	Who *w;
+	char *name;
+	int i;
+
+	name = up != nil && up->text[0] != 0? up->text: "kernel";
+	for(i = 0; i < c->nwho; i++)
+		if(strncmp(c->who[i].name, name, Namelen-1) == 0)
+			break;
+	if(i == c->nwho){
+		if(c->nwho >= Maxwho)
+			return;			/* reported as overflow */
+		w = &c->who[i];
+		memset(w, 0, sizeof *w);
+		strncpy(w->name, name, Namelen-1);
+		c->nwho++;
+	}
+	w = &c->who[i];
+	if(write){
+		w->nwrite++;
+		w->nwritesec += nb;
+	}else{
+		w->nread++;
+		w->nreadsec += nb;
+	}
+}
+
 static void
 sdmemreset(Ctlr *c)
 {
+	c->nwho = 0;
+	c->ntrace = 0;
 	c->nreadop = c->nwriteop = 0;
 	c->nreadsec = c->nwritesec = 0;
 	c->nzeroread = 0;
@@ -562,6 +652,13 @@ sdmembio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 		c->nreadop++;
 		c->nreadsec += nb;
 	}
+	whocharge(c, write, nb);
+	if(c->ntrace < Maxtrace){
+		c->trace[c->ntrace].bno = bno;
+		c->trace[c->ntrace].nb = nb;
+		c->trace[c->ntrace].write = write;
+		c->ntrace++;
+	}
 	qunlock(c);
 	return torn? nb * Secsize: nbytes;
 }
@@ -570,6 +667,7 @@ static char*
 sdmemrctl(SDunit *u, char *p, char *e)
 {
 	Ctlr *c = u->dev->ctlr;
+	int i;
 
 	qlock(c);
 	p = seprint(p, e, "geometry %llud %lud\n", u->sectors, u->secsize);
@@ -578,6 +676,20 @@ sdmemrctl(SDunit *u, char *p, char *e)
 		(c->nalloced * Chunksize) / 1024);
 	p = seprint(p, e, "sdmem reads %llud ops %llud secs, writes %llud ops %llud secs\n",
 		c->nreadop, c->nreadsec, c->nwriteop, c->nwritesec);
+	for(i = 0; i < c->nwho; i++)
+		p = seprint(p, e, "sdmem who %s reads %llud ops %llud secs, writes %llud ops %llud secs\n",
+			c->who[i].name, c->who[i].nread, c->who[i].nreadsec,
+			c->who[i].nwrite, c->who[i].nwritesec);
+	if(c->nwho >= Maxwho)
+		p = seprint(p, e, "sdmem who TABLE FULL -- some transfers are unattributed\n");
+	if(c->ntrace > 0){
+		p = seprint(p, e, "sdmem trace");
+		for(i = 0; i < c->ntrace; i++)
+			p = seprint(p, e, " %c%llud+%ld",
+				c->trace[i].write? 'w': 'r',
+				c->trace[i].bno, c->trace[i].nb);
+		p = seprint(p, e, "\n");
+	}
 	p = seprint(p, e, "sdmem holeread %llud failed %llud\n",
 		c->nzeroread, c->nfailed);
 	p = seprint(p, e, "sdmem xfer %llud fail %llud every %llud stop %llud tear %llud reorder %d partial %d held %d\n",
