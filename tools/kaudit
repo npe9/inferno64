@@ -140,7 +140,33 @@ if [ "$n" = 0 ]; then
 	exit 2
 fi
 
+#
+# WHAT THIS DOES NOT COVER, said in the output rather than left to be assumed.
+#
+# The board mkfile links PREBUILT ARCHIVES -- $LIBFILES -- so no library source
+# appears in its recipes and none is audited.  Measured: 0 of the compile lines
+# name a file under libtk, libinterp, libmemdraw or libsec.
+#
+# That is not academic.  A peer hit exactly the bug this tool is for, in
+# libtk/ebind.c: a `static announce(Tk*)` colliding with kern.h's
+# `announce(char*, char*)`, which Inferno's lib9.h reaches and the host's does
+# not -- clean on MacOSX/arm64, fatal under 7c.  This tool would NOT have found
+# it, because libtk is outside the set it can see.
+#
+# So "clean" below means clean for the kernel's OWN sources.  Auditing a
+# library means running this in that library's directory against its own
+# mkfile, which is a different invocation and not this one.
+#
 echo "kaudit: $CONF, $n sources, flags and file set from mk -n -a"
+echo "kaudit: NOT covered -- the prebuilt archives this kernel links:"
+awk '/^[ \t]*[0-9a-z]+l .*-o i/ {
+	for(i = 1; i <= NF; i++)
+		if($i ~ /\.a$/) {
+			sub(/.*\//, "", $i)
+			printf "kaudit:   %s\n", $i
+		}
+	exit
+}' "$TMP/recipes"
 echo "kaudit: matching: $PAT"
 hits=0
 files=0
@@ -167,5 +193,5 @@ while read -r cmd; do
 done < "$TMP/cmds"
 
 echo "kaudit: $files compiled, $hits with findings"
-[ "$hits" = 0 ] && echo "kaudit: clean -- no silently-accepted declaration errors in $CONF"
+[ "$hits" = 0 ] && echo "kaudit: clean for $CONF's OWN sources -- the archives above are unaudited"
 exit 0
