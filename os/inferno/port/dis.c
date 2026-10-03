@@ -926,6 +926,8 @@ vmtook(Proc *p)
 }
 
 extern char *statename[];
+extern int panicking;
+extern char panicmsg[];
 
 void
 diswatchproc(void*)
@@ -958,6 +960,28 @@ diswatchproc(void*)
 		if(++quiet < Wedgesecs || reported)
 			continue;
 		reported = 1;
+		/*
+		 * A PANIC IS NOT A WEDGE, and dumping over one destroys the
+		 * only explanation there is.
+		 *
+		 * A panicking process never releases the interpreter token,
+		 * so every other Dis process queues behind it and this
+		 * watchdog fires -- correctly, by its own test, and
+		 * uselessly.  Its dump then crowds the panic message out of
+		 * the ring, which is exactly what happened: the stack of the
+		 * token holder had panic and exit on it, panicking read 1
+		 * over JTAG, and the message itself was gone.
+		 *
+		 * So say what it is and print nothing else.  devcons.c keeps
+		 * the text in panicmsg for the same reason.
+		 */
+		if(panicking){
+			iprint("\nDIS-WEDGED: NOT a wedge -- a PANIC is in"
+				" progress and the panicking process still"
+				" holds the interpreter token.\n");
+			iprint("DIS-WEDGED: panicmsg is \"%s\"\n", panicmsg);
+			continue;
+		}
 		iprint("\nDIS-WEDGED: no interpreter progress for %d s, "
 			"beat %lud, vmq %s, runhd %s, ticks %lud\n",
 			quiet, disbeat,

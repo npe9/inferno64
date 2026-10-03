@@ -82,6 +82,8 @@ A_GCSW=`sym gcsweeps`
 A_GCBRK=`sym gcbroken`
 A_GCBUSY=`sym gcbusy`
 A_GCIDLE=`sym gcidle`
+A_PANICKING=`sym panicking`
+A_PANICMSG=`sym panicmsg`
 
 for v in A_TICKS A_MAX A_KPC A_DISPC; do
 	eval a=\$$v
@@ -134,6 +136,8 @@ trap 'rm -f "$TMP"' 0 1 2 15
 	-c "echo \"VMHELD-GCBRK\"; mdw ${A_GCBRK:-0} 1" \
 	-c "echo \"VMHELD-GCBUSY\"; mdw ${A_GCBUSY:-0} 2" \
 	-c "echo \"VMHELD-GCIDLE\"; mdw ${A_GCIDLE:-0} 2" \
+	-c "echo \"VMHELD-PANICKING\"; mdw ${A_PANICKING:-0} 1" \
+	-c "echo \"VMHELD-PANICMSG\"; mdb ${A_PANICMSG:-0} 160" \
 	-c "echo \"VMHELD-HTEXT\"; mdb ${A_HTEXT:-0} 16" \
 	-c "resume; exit" ) >"$TMP" 2>&1
 
@@ -257,6 +261,27 @@ fi
 # substitution did not survive: gc busy and gc idle printed as empty
 # strings, which reads as "zero" and is not.
 #
+#
+# A PANIC FIRST, because it changes what everything else means: a
+# panicking process never releases the interpreter token, so the wedge
+# watchdog fires and its dump crowds the panic message out of the ring.
+# The message is kept in a variable for exactly that reason.
+#
+if [ -n "$A_PANICKING" ]; then
+	pk=`val VMHELD-PANICKING`
+	if [ "`dec $pk`" != 0 ]; then
+		pmsg=`awk '/VMHELD-PANICMSG/{s=1;next} s&&/^0x/{sub(/^[^:]*: */,"");printf "%s ",$0} s&&!/^0x/&&NR>1{exit}' "$TMP" |
+			python3 -c "
+import sys
+b=bytes(int(x,16) for x in sys.stdin.read().split() if len(x)==2)
+print(b.split(b'\0')[0].decode('ascii','replace'))" 2>/dev/null`
+		echo "vmheld: *** A PANIC IS IN PROGRESS ***"
+		echo "vmheld:   $pmsg"
+		echo "vmheld:   so a 'wedge' here is the panicking process never"
+		echo "vmheld:   releasing the interpreter token, not a scheduler bug"
+	fi
+fi
+
 if [ -n "$A_NHELD" ]; then
 	nheld=`val VMHELD-NHELD`
 	echo "vmheld: long VM holds since boot: `dec $nheld`"

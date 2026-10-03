@@ -524,6 +524,8 @@ iprint(char *fmt, ...)
 	return n;
 }
 
+char panicmsg[256];		/* the last panic, for JTAG; see below */
+
 void
 panic(char *fmt, ...)
 {
@@ -542,6 +544,25 @@ panic(char *fmt, ...)
 	va_start(arg, fmt);
 	vseprint(buf+strlen(buf), buf+sizeof(buf), fmt, arg);
 	va_end(arg);
+	/*
+	 * KEEP IT, as well as printing it.
+	 *
+	 * iprint puts this in the ring, and on this board the ring is the
+	 * only post-mortem channel there is.  That is not enough: a panic
+	 * does not stop the other processors, so whatever they print
+	 * afterwards crowds it out.  It happened, and the irony is exact --
+	 * the Dis wedge watchdog fires BECAUSE of a panic (the panicking
+	 * process never releases the interpreter token) and its dump then
+	 * destroys the panic message that explains why it fired.  Four
+	 * floods have eaten evidence in this hunt and this is the one that
+	 * cost most.
+	 *
+	 * A variable cannot be crowded out.  tools/jtag/vmheld reads this
+	 * one, so the next panic is legible even if a thousand lines follow
+	 * it.
+	 */
+	strncpy(panicmsg, buf, sizeof(panicmsg)-1);
+	panicmsg[sizeof(panicmsg)-1] = 0;
 	iprint("%s\n", buf);
 	if(consdebug)
 		(*consdebug)();
