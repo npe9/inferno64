@@ -16,6 +16,7 @@
 #define	MSTATUS	0x300
 #define	MIE	0x304
 #define	MTVEC	0x305
+#define	MSCRATCH	0x340
 #define	MEPC	0x341
 #define	MCAUSE	0x342
 #define	MTVAL	0x343
@@ -178,12 +179,21 @@ TEXT	mextie(SB), 1, $-4
  *	[SP, SP+TRAPPAD)	scratch for KenC frames
  *	[SP+TRAPPAD, +UREG)	Ureg
  *	SP+TRAPFRAME		interrupted SP
+ *
+ * Every offset here is past a 12-bit immediate, so the assembler
+ * builds each address in its temporary, R4 (tp) -- which the
+ * interrupted code may be using the same way, between an AUIPC and
+ * the load or store it addresses.  So R4 waits in mscratch until the
+ * frame is made, and goes back through it after the frame's last use.
+ * mscratch is free here: it is the guest's only while one runs, when
+ * mtvec is rvexit, not this.  Interrupts stay off throughout (MIE is
+ * clear on entry and in the mstatus put back).
  */
 TEXT	trapvec(SB), 1, $-4
+	MOV	R4, CSR(MSCRATCH)
 	SUB	$TRAPFRAME, SP
 	MOV	R1, (TRAPPAD+UREG_R1)(SP)
 	MOV	R3, (TRAPPAD+UREG_R3)(SP)
-	MOV	R4, (TRAPPAD+4*XLEN)(SP)
 	MOV	R5, (TRAPPAD+5*XLEN)(SP)
 	MOV	R6, (TRAPPAD+6*XLEN)(SP)
 	MOV	R7, (TRAPPAD+7*XLEN)(SP)
@@ -211,6 +221,8 @@ TEXT	trapvec(SB), 1, $-4
 	MOV	R29, (TRAPPAD+29*XLEN)(SP)
 	MOV	R30, (TRAPPAD+30*XLEN)(SP)
 	MOV	R31, (TRAPPAD+31*XLEN)(SP)
+	MOV	CSR(MSCRATCH), R10
+	MOV	R10, (TRAPPAD+4*XLEN)(SP)
 
 	MOV	SP, R10
 	ADD	$TRAPFRAME, R10
@@ -238,9 +250,10 @@ TEXT	trapvec(SB), 1, $-4
 	MOV	(TRAPPAD+UREG_STATUS)(SP), R10
 	MOV	R10, CSR(MSTATUS)
 
+	MOV	(TRAPPAD+4*XLEN)(SP), R10
+	MOV	R10, CSR(MSCRATCH)
 	MOV	(TRAPPAD+UREG_R1)(SP), R1
 	MOV	(TRAPPAD+UREG_R3)(SP), R3
-	MOV	(TRAPPAD+4*XLEN)(SP), R4
 	MOV	(TRAPPAD+5*XLEN)(SP), R5
 	MOV	(TRAPPAD+6*XLEN)(SP), R6
 	MOV	(TRAPPAD+7*XLEN)(SP), R7
@@ -269,6 +282,7 @@ TEXT	trapvec(SB), 1, $-4
 	MOV	(TRAPPAD+30*XLEN)(SP), R30
 	MOV	(TRAPPAD+31*XLEN)(SP), R31
 	MOV	(TRAPPAD+UREG_SP)(SP), SP
+	MOV	CSR(MSCRATCH), R4
 	MRET
 
 /*
@@ -283,7 +297,6 @@ TEXT	trapvec(SB), 1, $-4
  * registers are swapped whole, F28 to F31 being the compiler's
  * constants.
  */
-#define	MSCRATCH	0x340
 #define	FCSR		0x003
 #define	RV_PC		256
 #define	RV_HOSTSP	264

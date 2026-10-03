@@ -15,6 +15,11 @@
 # a virtio-net bridge port on the host's second NIC (QEMU's user
 # network), both devices' interrupts through the platform's PLIC.
 #
+# With CHECKRV_AIA=1, M5 in the same run: the bench's virtio console
+# function, behind its RISC-V IOMMU, is assigned to the guest, on the
+# guest's PCI bus, its MSI-X into the guest's interrupt files; the
+# guest's own virtio_console writes through it to QEMU's chardev.
+#
 # And M3: virtsmp (rvsmpinit.b) boots the guest with four harts, the
 # rest started by the SBI's hart_start; all come online, eight busy
 # workers finish, every hart accounts time and takes IPIs.
@@ -45,7 +50,16 @@ if [ -n "$CHECKRV_AIA" ]; then
 fi
 SER=`mktemp`
 LOG=`mktemp`
-trap 'rm -f "$SER" "$LOG"' 0
+HVC=`mktemp`
+trap 'rm -f "$SER" "$LOG" "$HVC"' 0
+# on the AIA machine, a function to assign: QEMU's virtio console behind
+# its RISC-V IOMMU (iommu_platform: QEMU's virtio otherwise bypasses
+# the IOMMU, which no real device can)
+PASS=
+if [ -n "$CHECKRV_AIA" ]; then
+	PASS="-device riscv-iommu-pci -device virtio-serial-pci,iommu_platform=on,disable-legacy=on
+		-chardev file,id=hvc,path=$HVC -device virtconsole,chardev=hvc"
+fi
 # the serial port straight to a file (through a pipe, the last lines
 # wait in a buffer); its lines end with \r
 timeout 120 qemu-system-riscv64 -M $MACH -m 256 -display none -bios none -kernel "$K" \
@@ -72,7 +86,7 @@ fi
 K=$ROOT/os/inferno/virt/ivirtlinux
 [ -f "$K" ] || { echo "check-rv: no $K; mk CONF=virtlinux in os/inferno/virt first" >&2; exit 1; }
 : >"$SER"
-timeout 1500 qemu-system-riscv64 -M $MACH -m 256 -display none -bios none -kernel "$K" \
+timeout 1500 qemu-system-riscv64 -M $MACH -m 256 -display none -bios none -kernel "$K" $PASS \
 	-netdev user,id=n0 -device virtio-net-device,netdev=n0 \
 	-netdev user,id=n1 -device virtio-net-device,netdev=n1 \
 	-monitor none -serial file:"$SER" </dev/null >/dev/null 2>&1 &
@@ -84,7 +98,7 @@ until tr -d '\r' <"$SER" >"$LOG"; grep -q 'RVLINUX: done\|panic' "$LOG"; do
 done
 pkill -f "qemu-system-riscv6[4].*$K" 2>/dev/null
 tr -d '\r' <"$SER" >"$LOG"
-grep -a 'ttyS0 at\|riscv-plic\|^LINUXGUEST: \(up\|typed\|vda\|wrote\|dhcp.*lease\|irq\|ran\)\|^Linux 6\|vmlinux: exit\|^vcpu0 handled\|^plic\|^mmio\|RVLINUX: disk\|panic' "$LOG" | sed 's/^/	/'
+grep -a 'ttyS0 at\|riscv-plic\|^LINUXGUEST: \(up\|typed\|vda\|wrote\|dhcp.*lease\|irq\|pci\|ran\)\|^Linux 6\|vmlinux: \(exit\|assigned\)\|^vcpu0 handled\|^plic\|^mmio\|^pci \|RVLINUX: disk\|panic' "$LOG" | sed 's/^/	/'
 if grep -q '^LINUXGUEST: up' "$LOG" && grep -q '^LINUXGUEST: typed' "$LOG" && grep -q '^LINUXGUEST: ran' "$LOG"; then
 	echo "check-rv: M2 ($TAG): pass"
 else
@@ -103,6 +117,14 @@ if grep -q '^LINUXGUEST: dhcp udhcpc: lease of' "$LOG"; then
 else
 	echo "check-rv: M8 net ($TAG, virtio-mmio): FAIL"
 	fail=1
+fi
+if [ -n "$CHECKRV_AIA" ]; then
+	if grep -q 'hello-from-the-guest' "$HVC" && grep -q '^LINUXGUEST: wrote hvc0' "$LOG"; then
+		echo "check-rv: M5 ($TAG, riscv-iommu, virtio console assigned): pass"
+	else
+		echo "check-rv: M5 ($TAG, riscv-iommu, virtio console assigned): FAIL"
+		fail=1
+	fi
 fi
 K=$ROOT/os/inferno/virt/ivirtsmp
 [ -f "$K" ] || { echo "check-rv: no $K; mk CONF=virtsmp in os/inferno/virt first" >&2; exit 1; }

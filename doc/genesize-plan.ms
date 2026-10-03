@@ -717,7 +717,46 @@ LINUXGUEST: ran
 M2 and M8's disk half are met on VMX.  M8's network half and M5 were
 not exercised there: the Bochs bench has neither the second NIC nor the
 virtio-serial function.  The run took about an hour of Bochs.
-.IP "Phase 5: M3 on VMX (Bochs), not yet." 4
+.IP "Phase 5: M3 on VMX (Bochs, two processors): done." 4
+The last of it, below, was the VMX backend's.  Two vCPUs wired to one
+processor take turns on it, and a VMCS is that processor's current one
+until another is loaded; the backend loaded a vCPU's VMCS
+.CW vmxload ) (
+and then read or entered it, and a vCPU preempted between the two came
+back to the other vCPU's VMCS.  The HLT exits read with IF clear were
+the other vCPU's RFLAGS, and the all-zero exit another entry's.  The
+vCPU's process now carries its VMCS
+.CW up->vmx ), (
+and
+.CW procrestore
+makes it current again whenever the process is scheduled (KVM's
+preempt notifiers do the same).  SVM has no current VMCB, and the
+RISC-V backend keeps the VS CSRs in the vCPU and enters at splhi, so
+neither had the fault.  On Bochs (corei7_skylake_x, two processors,
+1 GiB) the four-vCPU guest
+.CW pc64smp ) (
+then ran M3's test through:
+.DS
+.ft CW
+[    3.525745] smp: Brought up 1 node, 4 CPUs
+LINUXGUEST: up 6.6.142-0-virt cpus 4 uptime 14.99
+LINUXGUEST: smp 4 processors, online 0-3
+LINUXGUEST: worker 2 done
+\&...
+LINUXGUEST: worker 7 done
+LINUXGUEST: cpu0 38 0 767 1289 0 122 0 0 0 0
+LINUXGUEST: cpu1 17 0 424 980 0 31 0 0 0 0
+LINUXGUEST: cpu2 21 0 218 1266 0 10 0 0 0 0
+LINUXGUEST: cpu3 21 0 134 848 0 0 0 0 0 0
+LINUXGUEST: irq LOC:       2217       1447       1507       1004   Local timer interrupts
+LINUXGUEST: irq RES:         26         26         34         20   Rescheduling interrupts
+LINUXGUEST: irq CAL:        239        410        205        401   Function call interrupts
+LINUXGUEST: irq TLB:          3          1          1          0   TLB shootdowns
+LINUXGUEST: ran
+.ft
+.DE
+The history:
+.IP
 The four-processor guest
 .CW pc64smp ) (
 does not boot on VMX.  On a two-processor Bochs host it halts at once
@@ -786,8 +825,8 @@ platform's
 looked at on its own processor between exits), and waits for its SIPI
 as one never started.  And on Bochs the application processors still
 took HLT exits that the platform read with IF clear, and once an exit
-of all zeros \(en with two vCPUs sharing a processor's VMCSs.  That is
-where M3 on VMX stands.
+of all zeros \(en with two vCPUs sharing a processor's VMCSs: the
+VMCS fault above.
 .IP "Phase 5: a four-vCPU guest on one processor (SVM, QEMU TCG)." 4
 The four-processor guest on a one-processor host stopped after its
 first lines, the vCPU heartbeat with it.  The QEMU monitor
@@ -1264,6 +1303,88 @@ AIA too (21 seconds of guest uptime to its shell with four harts,
 against under one).  Still to do for M12 besides: the RISC-V IOMMU,
 and a host with more than one processor (the riscv64 port's MAXMACH
 is 1).
+.IP
+The corruption was found later, and was not AIA's: the riscv64 port's
+machine-mode trap entry lost R4 on every trap.  Its frame offsets are
+all past a 12-bit immediate (the Ureg sits 2048 bytes up the stack),
+so the assembler builds every address in its temporary, R4 (tp) \(en
+whose first use, making the frame, overwrote the interrupted R4, and
+whose slot in the Ureg then took the address being formed.  The
+compiler uses R4 the same way, between an AUIPC and the load or store
+it addresses, so an interrupt between the two sent that access
+somewhere else.  It showed as a Dis interpreter fault in D89, its
+register file's pointer
+.CW curR ) (
+read as zero while in memory it was right (gdb on QEMU's stub, a
+breakpoint at
+.CW panic );
+a host that panicked in 5 runs of 6 with one build of
+.CW trap.c
+and in none with another of different length.  The entry now parks R4
+in mscratch \(en free in the host, where mtvec is
+.CW trapvec
+and not the guest's
+.CW rvexit
+\(en until the frame is made, and puts it back through mscratch after
+the frame's last use; 0 panics in 12.  The AIA host's earlier panics,
+a return address with bits 49 and 50 set, fit the same fault; the
+re-sent level sources are right regardless.
+.IP "Phase 15: M5 on RISC-V (QEMU virt,aia=aplic-imsic, riscv-iommu-pci, TCG)." 4
+.CW pc/vmpci.c
+is
+.CW port/vmpci.c
+now: the bus is the same on both, reached through configuration
+mechanism 1 on a PC
+.CW vmpciio ) (
+and through an ECAM window elsewhere
+.CW vmpciecam ), (
+with the guest's BAR window the platform's to give.  On RISC-V, with
+AIA, the platform has the ECAM window at 0x30000000 and the BARs from
+0x40000000, where QEMU's virt machine has its, and
+.CW vmlinux
+describes a
+.CW pci-host-ecam-generic
+bridge whose
+.CW msi-parent
+is the guest's IMSIC (no INTx: a PLIC guest gets no PCI bus).  An
+assigned function's MSI-X entry, as the guest wrote it, gets a host
+vector of its own: the host's MSI-X (new on riscv64,
+.CW trap.c 's
+.CW pcimsixintrenable )
+gives each vector an identity of the machine-level IMSIC from 128 up,
+and its handler writes the guest's identity into the target hart's
+guest interrupt file
+.CW vmplatmsi ). (
+The device's DMA goes through an IOMMU domain over the guest's memory;
+the riscv-iommu's device contexts have no MSI page table here, so the
+device's message to the host IMSIC is a DMA write like any other, and
+every domain maps the IMSIC's page at its own address
+.CW rviommu.c ). (
+The bench's virtio console function behind its riscv-iommu is assigned
+to the Linux guest, whose own
+.CW virtio_pci
+and
+.CW virtio_console
+write through it to QEMU's chardev:
+.DS
+.ft CW
+vm0: PCI.0.2.0 assigned as 00:01.0
+LINUXGUEST: pci 0000:00:00.0 0x8086 0x29c0
+LINUXGUEST: pci 0000:00:01.0 0x1af4 0x1043
+LINUXGUEST: wrote hvc0
+LINUXGUEST: irq  11:          0  PCI-MSIX-0000:00:01.0   0 Edge      virtio2-config
+LINUXGUEST: irq  12:          5  PCI-MSIX-0000:00:01.0   1 Edge      virtio2-virtqueues
+pci ecam 0x30000000 0x100000 mem 0x40000000 0x40000000 msis 5 lost 0
+pci 00:01.0 is PCI.0.2.0 domain 0 bar1 0x40004000->0x40000000 bar4 0x40000000->0x40004000 msix on 2/2 hosted
+.ft
+.DE
+and the chardev holds "hello-from-the-guest".  Found on the way, in the
+bus itself: Linux swapped the function's two BARs, and moving BAR 1
+off the page BAR 4 had just moved onto unmapped BAR 4's first page; a
+move now maps every BAR on the bus again after taking the old pages.
+The x86 guests had never moved a BAR.
+.CW "CHECKRV_AIA=1 scripts/check-rv.sh"
+runs it as stage M5.
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
@@ -1280,10 +1401,7 @@ are modules.  M8 is done on SVM, including Linux booting on the virtio
 disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
 its /bin, /lib and /init) on its second disk, and a second guest given
 that disk alone and linuxguest.root=vda mounts it from the initramfs
-and switches to it.  Next: M3 on VMX (Bochs with more than one
-processor), where with the Bochs fix the remaining fault is HLT exits
-read with IF clear and an all-zero exit while vCPUs share a processor;
-the MTTCG faults; a device given to a RISC-V guest through the RISC-V
-IOMMU (its domain the guest's G stage); a multiprocessor riscv64 host;
+and switches to it.  M3 is done on VMX too (Bochs, two processors).
+Next: the MTTCG faults; a multiprocessor riscv64 host;
 and the workstation (phase 13).  On QEMU, check-vm (SVM) and check-rv,
 on both the PLIC and the AIA machine, pass every stage.

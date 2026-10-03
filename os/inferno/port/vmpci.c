@@ -2,13 +2,16 @@
  * The guest's PCI bus, and whole-function assignment (doc/genesize-
  * plan.ms, phase 6).
  *
- * The guest sees one bus through configuration mechanism 1 (0xCF8,
- * 0xCFC): a host bridge at 00:00.0, and each assigned function at
- * 00:N.0.  An assigned function's configuration space is the real
- * one's, read and written through, except:
+ * The guest sees one bus: a host bridge at 00:00.0, and each assigned
+ * function at 00:N.0, reached through configuration mechanism 1
+ * (0xCF8, 0xCFC; vmpciio) on a PC, or through an ECAM window
+ * (vmpciecam) where the platform has no I/O ports.  An assigned
+ * function's configuration space is the real one's, read and written
+ * through, except:
  *
  *	the BARs, which the guest sees at guest-physical addresses this
- *	file chose as firmware would, and sizes as the real ones;
+ *	file chose as firmware would, in the window the platform gave
+ *	it, and sizes as the real ones;
  *	the expansion ROM, hidden;
  *	the MSI-X capability's control word, kept here;
  *	the interrupt line, kept here.
@@ -23,7 +26,7 @@
  * with guest-physical addresses and it can reach nothing else.
  *
  * Not done: I/O BARs, MSI (only MSI-X), INTx, extended configuration
- * space (mechanism 1 reaches 256 bytes), function-level reset on
+ * space (the guest sees 256 bytes, through either), function-level reset on
  * assignment, and taking a function back from a host driver -- assign
  * only functions the host has no driver for.  An interrupt raised on
  * a processor other than the vCPU's is seen at the vCPU's next exit,
@@ -38,9 +41,8 @@
 #include	"../port/error.h"
 #include	"../port/pci.h"
 #include	"../port/vm.h"
-#include	"../pc/vm86.h"
 #include	"../port/iommu.h"
-#include	"vmpci.h"
+#include	"../port/vmpci.h"
 #include	"../port/vmvirtio.h"
 
 typedef struct Vpci Vpci;
@@ -51,7 +53,6 @@ enum {
 	Ndevs		= 8,
 	Nvirt		= 8,
 	Nmsix		= 64,
-	Barbase		= 0xC0000000,	/* where guest BARs start */
 };
 
 struct Vmsix
@@ -66,6 +67,7 @@ struct Vmsix
 
 struct Vpcidev
 {
+	Vpci	*bus;
 	Pcidev	*p;
 	int	dev;		/* guest device number on bus 0 */
 	Iodom	*dom;
@@ -98,11 +100,13 @@ struct Vpci
 	void	*virt[Nvirt];	/* the hypervisor's own functions (vmvirtio.c) */
 	int	nextdev;	/* the next device number on bus 0 */
 	uvlong	nextbar;
+	uvlong	barend;		/* the end of the guest's BAR window */
 	uvlong	nmsi;
 };
 
+/* a bus whose BARs the guest finds in guest-physical [barbase, barend) */
 void*
-vmpcinew(Vm *vm)
+vmpcinew(Vm *vm, uvlong barbase, uvlong barend)
 {
 	Vpci *pc;
 
@@ -110,7 +114,8 @@ vmpcinew(Vm *vm)
 	if(pc == nil)
 		error(Enomem);
 	pc->vm = vm;
-	pc->nextbar = Barbase;
+	pc->nextbar = barbase;
+	pc->barend = barend;
 	pc->nextdev = 1;
 	return pc;
 }
@@ -208,6 +213,26 @@ unmapbar(Vpcidev *d, int i)
 		vmops->gpunmap(d->vm, d->bar[i].gpa, (d->bar[i].size + BY2PG-1) & ~(uvlong)(BY2PG-1));
 }
 
+/*
+ * BAR i of d moves to a: its old pages go, and every BAR on the bus
+ * is mapped again, since a guest reprogramming its BARs may have put
+ * another where this one was (Linux swapping two does), and taking
+ * the old pages away would take that one's too.
+ */
+static void
+movebar(Vpcidev *d, int i, uvlong a)
+{
+	Vpci *pc;
+	int j, k;
+
+	unmapbar(d, i);
+	d->bar[i].gpa = a;
+	pc = d->bus;
+	for(j = 0; j < pc->ndev; j++)
+		for(k = 0; k < 6; k++)
+			mapbar(&pc->dev[j], k);
+}
+
 void
 vmpciassign(void *arg, char *bdf)
 {
@@ -247,6 +272,7 @@ vmpciassign(void *arg, char *bdf)
 
 	d = &pc->dev[pc->ndev];
 	memset(d, 0, sizeof *d);
+	d->bus = pc;
 	d->p = p;
 	d->vm = vm;
 	d->dev = pc->nextdev;
@@ -270,7 +296,7 @@ vmpciassign(void *arg, char *bdf)
 		if(d->bar[i].is64)
 			i++;
 	}
-	if(pc->nextbar > 0xFEC00000)
+	if(pc->nextbar > pc->barend)
 		error("guest BAR space exhausted");
 
 	/* MSI-X: where the table is */
@@ -320,7 +346,7 @@ vmpcivirtio(void *arg, char *kind, char *path)
 	if(pc->nvirt >= Nvirt || pc->nextdev > 31)
 		error("too many virtio devices");
 	a = (pc->nextbar + Vvbarsize - 1) & ~(uvlong)(Vvbarsize - 1);
-	if(a + Vvbarsize > 0xFEC00000)
+	if(a + Vvbarsize > pc->barend)
 		error("guest BAR space exhausted");
 	pc->virt[pc->nvirt] = vvnew(pc->vm, kind, path, pc->nextdev, a);
 	pc->nvirt++;
@@ -419,11 +445,8 @@ devcfgwrite(Vpcidev *d, int reg, u32int v, u32int mask)
 			a = (a & 0xFFFFFFFF) | (uvlong)v << 32;
 		else
 			a = (a & ~0xFFFFFFFFULL) | (v & ~(u32int)(d->bar[i].size - 1) & ~0xFU);
-		if(a != d->bar[i].gpa){
-			unmapbar(d, i);
-			d->bar[i].gpa = a;
-			mapbar(d, i);
-		}
+		if(a != d->bar[i].gpa)
+			movebar(d, i, a);
 		return;
 	}
 	if(reg == PciEBAR0)
@@ -447,14 +470,55 @@ devcfgwrite(Vpcidev *d, int reg, u32int v, u32int mask)
 	pcicfgw32(d->p, reg, (old & ~mask) | (v & mask));
 }
 
+/*
+ * A configuration access: the 32-bit register reg of bus:dev.fn, the
+ * bytes of mask (shifted into place) read or written.
+ */
+static void
+cfgaccess(Vpci *pc, int bus, int dev, int fn, int reg, int write, u32int *val, u32int mask)
+{
+	Vpcidev *d;
+	void *vv;
+	int i;
+
+	d = nil;
+	vv = nil;
+	if(bus == 0 && fn == 0){
+		for(i = 0; i < pc->ndev; i++)
+			if(pc->dev[i].dev == dev)
+				d = &pc->dev[i];
+		for(i = 0; i < pc->nvirt; i++)
+			if(vvdev(pc->virt[i]) == dev)
+				vv = pc->virt[i];
+	}
+	if(vv != nil){
+		if(write)
+			vvcfgwrite(vv, reg, *val, mask);
+		else
+			*val = vvcfgread(vv, reg) & mask;
+		return;
+	}
+	if(!write){
+		if(bus != 0 || fn != 0)
+			*val = mask;
+		else if(dev == 0)
+			*val = bridgecfg(reg) & mask;
+		else if(d != nil)
+			*val = devcfgread(d, reg) & mask;
+		else
+			*val = mask;
+		return;
+	}
+	if(d != nil)
+		devcfgwrite(d, reg, *val, mask);
+}
+
 /* configuration mechanism 1: 0xCF8 address, 0xCFC-0xCFF data */
 int
 vmpciio(void *a, int port, int in, int size, u32int *val)
 {
 	Vpci *pc = a;
-	Vpcidev *d;
-	void *vv;
-	int bus, dev, fn, reg, sh, i;
+	int sh;
 	u32int v, mask;
 
 	if(port == 0xCF8 && size == 4){
@@ -483,43 +547,44 @@ vmpciio(void *a, int port, int in, int size, u32int *val)
 			*val = 0xFFFFFFFF;
 		return 1;
 	}
-	bus = (pc->cf8 >> 16) & 0xFF;
-	dev = (pc->cf8 >> 11) & 0x1F;
-	fn = (pc->cf8 >> 8) & 7;
-	reg = pc->cf8 & 0xFC;
 	sh = 8 * (port - 0xCFC);
 	mask = (size == 4 ? 0xFFFFFFFF : (1 << 8*size) - 1) << sh;
-	d = nil;
-	vv = nil;
-	if(bus == 0 && fn == 0){
-		for(i = 0; i < pc->ndev; i++)
-			if(pc->dev[i].dev == dev)
-				d = &pc->dev[i];
-		for(i = 0; i < pc->nvirt; i++)
-			if(vvdev(pc->virt[i]) == dev)
-				vv = pc->virt[i];
-	}
-	if(vv != nil){
-		if(in)
-			*val = (vvcfgread(vv, reg) & mask) >> sh;
-		else
-			vvcfgwrite(vv, reg, *val << sh, mask);
+	v = in ? 0 : *val << sh;
+	cfgaccess(pc, (pc->cf8 >> 16) & 0xFF, (pc->cf8 >> 11) & 0x1F, (pc->cf8 >> 8) & 7,
+		pc->cf8 & 0xFC, !in, &v, mask);
+	if(in)
+		*val = v >> sh;
+	return 1;
+}
+
+/*
+ * An access at offset off of an ECAM window (PCIe's enhanced
+ * configuration mechanism): bus<<20 | dev<<15 | fn<<12 | register.
+ * Registers past the first 256 bytes read as zero and take no writes.
+ */
+int
+vmpciecam(void *a, uvlong off, int size, int write, uvlong *val)
+{
+	Vpci *pc = a;
+	int sh, reg;
+	u32int v, mask;
+
+	if(size != 1 && size != 2 && size != 4)
+		return 0;
+	if(off & (size-1))
+		return 0;
+	reg = off & 0xFFF;
+	if(reg >= 256){
+		if(!write)
+			*val = 0;
 		return 1;
 	}
-	if(in){
-		if(bus != 0 || fn != 0)
-			v = 0xFFFFFFFF;
-		else if(dev == 0)
-			v = bridgecfg(reg);
-		else if(d != nil)
-			v = devcfgread(d, reg);
-		else
-			v = 0xFFFFFFFF;
+	sh = 8 * (reg & 3);
+	mask = (size == 4 ? 0xFFFFFFFF : (1 << 8*size) - 1) << sh;
+	v = write ? (u32int)*val << sh : 0;
+	cfgaccess(pc, (off >> 20) & 0xFF, (off >> 15) & 0x1F, (off >> 12) & 7, reg & ~3, write, &v, mask);
+	if(!write)
 		*val = (v & mask) >> sh;
-		return 1;
-	}
-	if(d != nil)
-		devcfgwrite(d, reg, *val << sh, mask);
 	return 1;
 }
 

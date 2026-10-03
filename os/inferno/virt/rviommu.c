@@ -278,6 +278,9 @@ rvinfo(char *p, char *e)
 		iommu->tbdf, cap, R64(Rddtp), R32(Rcqcsr), R32(Rfqcsr));
 }
 
+static uvlong*	gswalk(Rvdom*, uvlong);
+extern uintptr	imsicbase;	/* trap.c */
+
 static void
 rvdomnew(Iodom *d)
 {
@@ -294,6 +297,22 @@ rvdomnew(Iodom *d)
 	memset(r->root, 0, Rootsize);
 	r->gscid = d->id + 1;
 	d->arch = r;
+	/*
+	 * Device contexts here have no MSI page table, so a device's
+	 * message is translated like any write: the host IMSIC's page,
+	 * where trap.c's MSI-X vectors send it, is in every domain, at
+	 * its own address.
+	 */
+	if(imsicbase != 0)
+		*gswalk(r, imsicbase) = (uvlong)imsicbase>>PGSHIFT<<10 | Pv|Pu|Pa|Pd|Pr|Pw;
+}
+
+/* a range that would take the IMSIC's page out of the domain */
+static void
+msiclash(uvlong iova, uvlong len)
+{
+	if(imsicbase != 0 && iova < (uvlong)imsicbase + BY2PG && iova + len > imsicbase)
+		error("the range covers the IMSIC's page, which every domain keeps");
 }
 
 static void
@@ -365,6 +384,7 @@ rvmap(Iodom *d, uvlong iova, uvlong pa, uvlong len, int prot)
 		error(Ebadarg);
 	if(iova + len > 1ULL<<41)
 		error("beyond Sv39x4's 41 bits");
+	msiclash(iova, len);
 	bits = Pv|Pu|Pa|Pd;
 	if(prot & IoR)
 		bits |= Pr;
@@ -385,6 +405,7 @@ rvunmap(Iodom *d, uvlong iova, uvlong len)
 	r = d->arch;
 	if((iova | len) & (BY2PG-1))
 		error(Ebadarg);
+	msiclash(iova, len);
 	for(e = iova + len; iova < e; iova += BY2PG)
 		*gswalk(r, iova) = 0;
 	coherence();

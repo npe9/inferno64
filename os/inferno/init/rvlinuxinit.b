@@ -17,6 +17,13 @@ implement Init;
 # (#l1), a bridge port on it is the guest's virtio-net interface, on
 # which it asks for a DHCP lease.
 #
+# M5 on RISC-V: where the bench has a virtio console function behind
+# its RISC-V IOMMU (check-rv.sh gives QEMU's AIA machine one), it is
+# assigned to the guest, on the guest's PCI bus (port/vmpci.c), its DMA
+# through an IOMMU domain over the guest's memory and its MSI-X into
+# the guest's interrupt files; the guest's own virtio_pci and
+# virtio_console write through it to QEMU's chardev.
+#
 # The guest kernel and initramfs are in this kernel's root (the
 # virtlinux configuration).  Every line this program prints starts
 # RVLINUX; the guest's, LINUXGUEST.
@@ -38,6 +45,7 @@ init()
 	sys = load Sys Sys->PATH;
 	sys->bind("#c", "/dev", Sys->MAFTER);	# /dev/user, which memfs takes its owner from
 	sys->bind("#H", "/dev", Sys->MAFTER);
+	sys->bind("#$", "/dev", Sys->MAFTER);
 	sys->print("RVLINUX: start\n");
 	vmlinux := load Command "/dis/vmlinux.dis";
 	if(vmlinux == nil){
@@ -53,6 +61,12 @@ init()
 		devs = "-n" :: "#l1/ether1" :: devs;
 	else
 		sys->print("RVLINUX: no #l1/ether1 here; no virtio net\n");
+	hvc := findpci(16r1af4, 16r1043);
+	if(hvc != nil){
+		sys->print("RVLINUX: virtio console %s, assigned\n", hvc);
+		devs = "-p" :: hvc :: devs;
+	}else
+		sys->print("RVLINUX: no virtio console function here; nothing assigned\n");
 	{
 		vmlinux->init(nil, "vmlinux" :: "-s" :: "1200" :: "-m" :: "96" :: "-d" :: "20"
 			:: "-q" :: "LINUXGUEST: ran"
@@ -60,7 +74,9 @@ init()
 			:: "-t" :: "echo LINUXGUEST: typed; uname -srm; dmesg | grep -iE 'sbi|plic|virtio|vda' | sed 's/^/LINUXGUEST: dmesg /' | head -20\n"
 				+ "if [ -b /dev/vda ]; then echo LINUXGUEST: vda says $(dd if=/dev/vda bs=512 count=1 2>/dev/null | head -c 19); echo guest-wrote-this | dd of=/dev/vda bs=512 seek=1 conv=sync,fsync 2>/dev/null && echo LINUXGUEST: wrote vda; fi\n"
 				+ "if [ -e /sys/class/net/eth0 ]; then ip link set eth0 up; udhcpc -i eth0 -n -q -t 3 -s /bin/true 2>&1 | sed 's/^/LINUXGUEST: dhcp /'; fi\n"
-				+ "grep -i plic /proc/interrupts | sed 's/^/LINUXGUEST: irq /'; echo LINUXGUEST: \"r\"an"
+				+ "for d in /sys/bus/pci/devices/*; do [ -e $d ] && echo LINUXGUEST: pci ${d##*/} $(cat $d/vendor $d/device); done\n"
+				+ "if [ -e /dev/hvc0 ]; then echo hello-from-the-guest > /dev/hvc0 && echo LINUXGUEST: wrote hvc0; fi\n"
+				+ "grep -iE 'plic|aplic|imsic|msi' /proc/interrupts | sed 's/^/LINUXGUEST: irq /'; echo LINUXGUEST: \"r\"an"
 			:: concat(devs, "/guest/Image" :: nil));
 	} exception e {
 	"*" =>
@@ -77,6 +93,32 @@ init()
 	sys->print("RVLINUX: done\n");
 	for(;;)
 		sys->sleep(3600*1000);
+}
+
+# the PCI function with vendor vid and device did, by its name in #$/pci
+findpci(vid, did: int): string
+{
+	fd := sys->open("/dev/pci", Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	want := sys->sprint("vid %.4x did %.4x", vid, did);
+	for(;;){
+		(n, d) := sys->dirread(fd);
+		if(n <= 0)
+			break;
+		for(i := 0; i < n; i++){
+			if((d[i].mode & Sys->DMDIR) == 0)
+				continue;
+			cfd := sys->open("/dev/pci/" + d[i].name + "/ctl", Sys->OREAD);
+			if(cfd == nil)
+				continue;
+			b := array[64] of byte;
+			m := sys->read(cfd, b, len b);
+			if(m >= len want && string b[0:len want] == want)
+				return d[i].name;
+		}
+	}
+	return nil;
 }
 
 # a disk of size bytes in a memfs on /tmp, a marker in its first sector

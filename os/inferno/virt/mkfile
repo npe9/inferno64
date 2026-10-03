@@ -103,5 +103,6 @@ pciecam.$O:	../port/pciecam.c
 devvm.$O vmrv.$O vmplat.$O:	../port/vm.h
 vmrv.$O vmplat.$O:	vmrv.h
 vmplat.$O vuart.$O:	../port/vuart.h
-vmplat.$O vmvirtio.$O:	../port/vmvirtio.h
+vmplat.$O vmvirtio.$O vmpci.$O:	../port/vmvirtio.h
+vmplat.$O vmpci.$O:	../port/vmpci.h ../port/iommu.h
 rviommu.$O deviommu.$O:	../port/iommu.h

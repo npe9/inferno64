@@ -32,7 +32,7 @@
 #include	"../port/vm.h"
 #include	"../pc/vm86.h"
 #include	"vmdev.h"
-#include	"vmpci.h"
+#include	"../port/vmpci.h"
 #include	"../port/vmvirtio.h"
 
 char *vm86regname[VNreg] = {
@@ -330,7 +330,7 @@ vmplatnew(Vm *vm)
 		free(p);
 		nexterror();
 	}
-	p->pci = vmpcinew(vm);
+	p->pci = vmpcinew(vm, 0xC0000000, 0xFEC00000);
 	poperror();
 	return p;
 }

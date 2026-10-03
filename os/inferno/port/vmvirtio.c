@@ -4,7 +4,7 @@
  * is served without a trip to Limbo for each request, behind one of
  * two transports -- no legacy interface for either:
  *
- *	PCI	a function on the x86 guest's PCI bus (pc/vmpci.c), the
+ *	PCI	a function on the guest's PCI bus (port/vmpci.c), the
  *		virtio 1.0 PCI transport, interrupts by MSI-X (vvmsi);
  *	MMIO	a virtio-mmio window (version 2) at a fixed address, as
  *		RISC-V's virt machine has them (virt/vmplat.c), its

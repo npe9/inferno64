@@ -5,6 +5,7 @@
 #include "fns.h"
 #include "io.h"
 #include "ureg.h"
+#include "../port/pci.h"
 
 enum {
 	IrqTimer	= 7,	/* machine timer */
@@ -30,8 +31,24 @@ uintptr	plicbase = PLIC;
  * plicbase: a DTB miss cannot hang a working board.
  */
 uintptr	virtiobase = VIRTIO0;
-static void	(*irqhandler[96])(Ureg*, void*);
-static void	*irqarg[96];
+
+/*
+ * Interrupt identities: a wired source's number, below Nsource (the
+ * PLIC's sources, or the APLIC's, which in MSI mode sends each as the
+ * identity of its number); and, with an IMSIC, MSI-X vectors from
+ * Msifirst, each a message a device writes to the IMSIC's page.
+ */
+enum {
+	Nsource		= 96,
+	Msifirst	= 128,
+	Nid		= 256,
+};
+static void	(*irqhandler[Nid])(Ureg*, void*);
+static void	*irqarg[Nid];
+static struct {
+	Pcidev	*p;	/* nil when free */
+	int	vec;
+} msivec[Nid];
 
 extern char	etext[];
 
@@ -100,15 +117,80 @@ aiainit(void)
 }
 
 static void
-aiaenable(int irq)
+imsicenable(int id, int on)
 {
 	int r;
 
+	r = Eie0 + 2*(id/64);
+	if(on)
+		imsicwr(r, imsicrd(r) | 1ULL<<(id%64));
+	else
+		imsicwr(r, imsicrd(r) & ~(1ULL<<(id%64)));
+}
+
+static void
+aiaenable(int irq)
+{
 	APLIC(Aplicsourcecfg + 4*(irq-1)) = SrcLevelHigh;
 	APLIC(Aplictarget + 4*(irq-1)) = irq;	/* hart 0, guest 0, identity irq */
-	r = Eie0 + 2*(irq/64);
-	imsicwr(r, imsicrd(r) | 1ULL<<(irq%64));
+	imsicenable(irq, 1);
 	APLIC(Aplicsetienum) = irq;
+}
+
+/*
+ * MSI-X (port/pci.h's pcimsixintrenable): a vector of the device's
+ * is an identity of the IMSIC's own, which the device's message, to
+ * the IMSIC's page, makes pending.  The message is a DMA write: behind
+ * an IOMMU the page must be reachable through the device's domain
+ * (rviommu.c maps it into every domain).
+ */
+static void
+msixintrenable(Pcidev *p, int vec, void (*f)(Ureg*, void*), void *a, char *name)
+{
+	int id, s;
+
+	s = splhi();
+	for(id = Msifirst; id < Nid; id++)
+		if(msivec[id].p == nil)
+			break;
+	if(id == Nid){
+		splx(s);
+		print("msix: %s vec %d: no IMSIC identity left\n", name, vec);
+		return;
+	}
+	msivec[id].p = p;
+	msivec[id].vec = vec;
+	irqhandler[id] = f;
+	irqarg[id] = a;
+	imsicenable(id, 1);
+	splx(s);
+	if(pcimsixenable(p, vec, imsicbase, id) < 0){
+		s = splhi();
+		imsicenable(id, 0);
+		irqhandler[id] = nil;
+		msivec[id].p = nil;
+		splx(s);
+		print("msix: %s vec %d: pcimsixenable failed\n", name, vec);
+	}
+}
+
+static void
+msixintrdisable(Pcidev *p, int vec, void (*)(Ureg*, void*), void*, char*)
+{
+	int id, s;
+
+	for(id = Msifirst; id < Nid; id++)
+		if(msivec[id].p == p && msivec[id].vec == vec)
+			break;
+	if(id == Nid)
+		return;
+	pcimsixmask(p, vec, 1);
+	s = splhi();
+	imsicenable(id, 0);
+	irqhandler[id] = nil;
+	irqarg[id] = nil;
+	msivec[id].p = nil;
+	splx(s);
 }
 
 static u32*
@@ -138,6 +220,8 @@ plicinit(void)
 {
 	if(imsicbase != 0){
 		aiainit();
+		pcimsixintrenable = msixintrenable;
+		pcimsixintrdisable = msixintrdisable;
 		plicenable(Uart0IRQ);
 		mextie();
 		return;
@@ -181,7 +265,7 @@ trap(Ureg *ur)
 					 * ran -- is sent again, as Linux does at
 					 * EOI, or it is lost.
 					 */
-					if(irq < 1024 && (APLIC(Aplicinclrip + 4*(irq/32)) & 1<<(irq%32)))
+					if(irq < Nsource && (APLIC(Aplicinclrip + 4*(irq/32)) & 1<<(irq%32)))
 						APLIC(Aplicsetipnum) = irq;
 				}
 				return;
@@ -225,7 +309,7 @@ void
 intrenable(int v, void (*f)(Ureg*, void*), void *a, int tbdf, char *name)
 {
 	USED(tbdf, name);
-	if(v <= 0 || v >= nelem(irqhandler))
+	if(v <= 0 || v >= Nsource)
 		panic("intrenable: irq %d", v);
 	irqhandler[v] = f;
 	irqarg[v] = a;
@@ -236,7 +320,7 @@ void
 intrdisable(int v, void (*f)(Ureg*, void*), void *a, int tbdf, char *name)
 {
 	USED(tbdf, f, a, name);
-	if(v > 0 && v < nelem(irqhandler)){
+	if(v > 0 && v < Nsource){
 		irqhandler[v] = nil;
 		irqarg[v] = nil;
 	}

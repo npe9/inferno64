@@ -30,6 +30,13 @@
  * the lines of virtio-mmio devices (port/vmvirtio.c) in windows from
  * 0x10001000 on sources from 1, where QEMU's virt machine has its.
  *
+ * With AIA, a PCI bus (port/vmpci.c) for functions assigned to the
+ * guest: its configuration space in an ECAM window at 0x30000000,
+ * where QEMU's virt machine has one, its BARs from 0x40000000, and
+ * the functions' MSI-X messages sent on into the guest's interrupt
+ * files (vmplatmsi).  Their DMA goes through an IOMMU domain that maps
+ * guest-physical addresses onto the guest's memory.
+ *
  * The guest's timer is hvip.VSTIP, made pending when the time the
  * guest asked for has come; a WFI with the timer armed sleeps until
  * then, or until console input comes.  A WFI with nothing that could
@@ -44,6 +51,9 @@
 #include	"../port/vm.h"
 #include	"../port/vuart.h"
 #include	"../port/vmvirtio.h"
+#include	"../port/pci.h"
+#include	"../port/iommu.h"
+#include	"../port/vmpci.h"
 #include	"vmrv.h"
 
 enum {
@@ -59,6 +69,12 @@ enum {
 	Aplicbase	= 0x0D000000,	/* an APLIC domain, MSI delivery */
 	Apliclen	= 0x8000,
 	Imsicbase	= 0x28000000,	/* hart h's interrupt file at Imsicbase + 0x1000*h */
+
+	/* the PCI bus of assigned functions, with AIA */
+	Ecambase	= 0x30000000,	/* bus 0 alone */
+	Ecamlen		= 0x100000,
+	Pcimembase	= 0x40000000,	/* the BARs' window */
+	Pcimemend	= 0x80000000,
 
 	/* SBI extensions */
 	Xsettimer	= 0x00,
@@ -134,6 +150,10 @@ struct Plat
 	u32int	msiaddr[4];		/* mmsiaddrcfg, h; smsiaddrcfg, h: kept, not used */
 	uvlong	nmsi;
 	uvlong	nrx;		/* and read by the guest from the UART */
+
+	void	*pci;		/* port/vmpci.c's bus, with AIA */
+	uvlong	npcimsi;	/* messages from assigned functions */
+	uvlong	npcimsilost;	/* to no hart's file */
 };
 
 #define	PLAT(vm)	((Plat*)(vm)->plat)
@@ -149,7 +169,7 @@ extern void	rvfencei(void);
 static void	rvfences(int);
 
 void*
-vmplatnew(Vm *)
+vmplatnew(Vm *vm)
 {
 	Plat *p;
 	int i;
@@ -162,6 +182,14 @@ vmplatnew(Vm *)
 	vuartreset(&p->uart);
 	vvirq = plicirq;	/* the virtio devices' lines */
 	p->aia = guestimsic != 0;
+	if(p->aia){
+		if(waserror()){
+			free(p);
+			nexterror();
+		}
+		p->pci = vmpcinew(vm, Pcimembase, Pcimemend);
+		poperror();
+	}
 	return p;
 }
 
@@ -179,6 +207,7 @@ vmplathangup(Vm *vm)
 	/* the devices stop using the guest's memory before it goes */
 	for(i = 0; i < p->nvirt; i++)
 		vvstop(p->virt[i]);
+	vmpcistop(p->pci);
 }
 
 void
@@ -188,9 +217,11 @@ vmplatfree(Vm *vm)
 	int i;
 
 	p = PLAT(vm);
-	if(p != nil)
+	if(p != nil){
 		for(i = 0; i < p->nvirt; i++)
 			vvfree(p->virt[i]);
+		vmpcifree(p->pci);
+	}
 	free(vm->plat);
 	vm->plat = nil;
 }
@@ -526,6 +557,30 @@ imsicmmio(Plat *p, Vm *vm, uvlong off, int write, u32int *val)
 	p->kick[h] = 1;
 	wakeup(&vm->vcpu[h]->r);
 	return 1;
+}
+
+/*
+ * An assigned function's MSI-X message, as the guest programmed it:
+ * to hart h's interrupt file in the guest's map, the identity in
+ * data.  Interrupt context.
+ */
+void
+vmplatmsi(Vm *vm, u32int addr, u32int data)
+{
+	Plat *p;
+	int h;
+
+	p = PLAT(vm);
+	p->npcimsi++;
+	if(addr < Imsicbase || addr >= Imsicbase + 0x1000*vm->nvcpu || (addr & 0xFFF) != 0){
+		p->npcimsilost++;
+		return;
+	}
+	h = (addr - Imsicbase) / 0x1000;
+	*(volatile u32int*)(guestimsic + 0x1000*(h+1)) = data;
+	coherence();
+	p->kick[h] = 1;
+	wakeup(&vm->vcpu[h]->r);
 }
 
 /*
@@ -1044,6 +1099,10 @@ dommio(Vcpu *v, Plat *p, Vmexit *e)
 	else if(e->gpa >= Virtiobase && e->gpa < Virtiobase + Nvirtio*Vvmmiosize
 	&& (e->gpa - Virtiobase)/Vvmmiosize < p->nvirt)
 		dev = 'v';
+	else if(p->pci != nil && e->gpa >= Ecambase && e->gpa < Ecambase + Ecamlen)
+		dev = 'e';
+	else if(p->pci != nil && e->gpa >= Pcimembase && e->gpa < Pcimemend)
+		dev = 'b';	/* a trapped page of an assigned function's BAR */
 	else
 		return 0;
 	insn = e->insn;
@@ -1072,6 +1131,12 @@ dommio(Vcpu *v, Plat *p, Vmexit *e)
 			else
 				imsicmmio(p, v->vm, e->gpa - Imsicbase, store, &val);
 			x = val;
+		}else if(dev == 'e'){
+			if(!vmpciecam(p->pci, e->gpa - Ecambase, width, store, &x))
+				return 0;
+		}else if(dev == 'b'){
+			if(!vmpcimmio(p->pci, e->gpa, width, store, &x))
+				return 0;
 		}else if(!vvmmio(p->virt[(e->gpa - Virtiobase)/Vvmmiosize], e->gpa, width, store, &x))
 			return 0;
 		if(!store && r != 0){
@@ -1132,7 +1197,9 @@ vmplatexit(Vcpu *v, Vmexit *e)
 /*
  * "virtio blk|net path": a virtio-mmio device, in the next window,
  * on the next of the PLIC's sources (vmlinux(1) describes them in the
- * device tree from what status says).
+ * device tree from what status says).  "assign 0000:bb:dd.f": a PCI
+ * function given to the guest, on its PCI bus (AIA only: the
+ * functions interrupt by MSI-X, into the guest's interrupt files).
  */
 int
 vmplatctl(Vm *vm, int nf, char **f)
@@ -1151,6 +1218,12 @@ vmplatctl(Vm *vm, int nf, char **f)
 		iunlock(p);
 		coherence();
 		p->nvirt = n+1;
+		return 1;
+	}
+	if(nf == 2 && strcmp(f[0], "assign") == 0){
+		if(p->pci == nil)
+			error("no PCI bus: the guest needs AIA's interrupt files for MSI-X");
+		vmpciassign(p->pci, f[1]);
 		return 1;
 	}
 	return 0;
@@ -1225,6 +1298,11 @@ vmplatstatus(Vm *vm, char *s, char *e)
 	}
 	for(i = 0; i < p->nvirt; i++)
 		s = vvstatus(p->virt[i], s, e);
+	if(p->pci != nil){
+		s = seprint(s, e, "pci ecam %#ux %#ux mem %#ux %#ux msis %llud lost %llud\n",
+			Ecambase, Ecamlen, Pcimembase, Pcimemend - Pcimembase, p->npcimsi, p->npcimsilost);
+		s = vmpcistatus(p->pci, s, e);
+	}
 	for(i = 0; i < vm->nvcpu; i++)
 		if(p->timer[i] != ~0ULL)
 			s = seprint(s, e, "vcpu%d timer %llud\n", i, p->timer[i]);

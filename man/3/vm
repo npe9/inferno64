@@ -53,7 +53,13 @@ a read gets all ones and a write is dropped; with
 .BR exit .
 .TP
 .BI assign " 0000:bb:dd.f"
-Give the machine a PCI function (see BUGS for which).
+Give the machine a PCI function (see BUGS for which), on its PCI bus:
+on a PC reached through configuration mechanism 1; on RISC-V, where
+the processor gives guests AIA, through an ECAM window at
+0x30000000 with BARs from 0x40000000, its MSI-X sent into the guest's
+IMSIC interrupt files.  Its DMA goes through an
+.IR iommu (3)
+domain mapping guest-physical addresses onto the machine's memory.
 .TP
 .BI "virtio blk" " file"
 Give the machine a virtio disk (virtio 1.0, PCI transport) served by
@@ -183,9 +189,8 @@ which uses nothing but these files, locally or over a mount.
 .SH BUGS
 One vCPU per machine.
 .PP
-VMX: a full Linux boot has been shown only on SVM (QEMU's TCG emulates
-SVM, not VMX); on VMX the freestanding test passes and Linux boots
-partway under Bochs.  A guest's debug registers DR0\-DR3 and DR6 are
+VMX: shown on Bochs (QEMU's TCG emulates SVM, not VMX), where Linux
+boots with four processors on a two-processor host.  A guest's debug registers DR0\-DR3 and DR6 are
 kept and read back but not loaded, so its hardware breakpoints do not
 fire.  No VPID; the TLB is flushed on every entry and exit.
 .PP

@@ -9,7 +9,7 @@
 
 #include "virtvm.root.h"
 
-ulong ndevs = 27;
+ulong ndevs = 28;
 extern Dev rootdevtab;
 extern Dev consdevtab;
 extern Dev progdevtab;
@@ -29,7 +29,8 @@ extern Dev capdevtab;
 extern Dev kprofdevtab;
 extern Dev usbdevtab;
 extern Dev vmdevtab;
-Dev* devtab[27]={
+extern Dev iommudevtab;
+Dev* devtab[28]={
 	&rootdevtab,
 	&consdevtab,
 	&progdevtab,
@@ -49,6 +50,7 @@ Dev* devtab[27]={
 	&kprofdevtab,
 	&usbdevtab,
 	&vmdevtab,
+	&iommudevtab,
 	nil,
 };
 
@@ -61,6 +63,7 @@ extern void loopbackmediumlink(void);
 extern void inputvirtiommiolink(void);
 extern void rngvirtiommiolink(void);
 extern void vmrvlink(void);
+extern void rviommulink(void);
 void links(void){
 	ethervirtiommiolink();
 	ethervirtio10link();
@@ -71,6 +74,7 @@ void links(void){
 	inputvirtiommiolink();
 	rngvirtiommiolink();
 	vmrvlink();
+	rviommulink();
 }
 
 extern void sysmodinit(void);

@@ -229,8 +229,6 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 
 	if(linestart(readall("/dev/vm/backend"), "riscv-h")){
-		if(assign != nil)
-			fail("the RISC-V platform has no PCI");
 		if(!appended)
 			append = "console=ttyS0 earlycon=sbi";
 		rvboot(kernel, initrd, append, megs, secs);
@@ -427,8 +425,16 @@ rvboot(kernel, initrd, append: string, megs, secs: int)
 			fail(sys->sprint("virtio net %s: %r", hd nets));
 		sys->print("vmlinux: virtio net on %s\n", hd nets);
 	}
-	# where the platform put them: "mmio base irq n ..." in status; and
-	# "aia imsic base files n" if the processor gives guests AIA
+	# PCI functions, on the guest's PCI bus (AIA only)
+	for(; assign != nil; assign = tl assign){
+		if(sys->fprint(ctl, "assign %s", hd assign) < 0)
+			fail(sys->sprint("assign %s: %r", hd assign));
+		sys->print("vmlinux: assigned %s\n", hd assign);
+		pcibus = 1;
+	}
+	# where the platform put them: "mmio base irq n ..." in status;
+	# "aia imsic base files n" if the processor gives guests AIA; and
+	# "pci ecam base len mem base len" for the PCI bus
 	mmios: list of (big, int);
 	imsic := big 0;
 	(nil, sl) := sys->tokenize(readall(dir + "/status"), "\n");
@@ -438,9 +444,15 @@ rvboot(kernel, initrd, append: string, megs, secs: int)
 			mmios = (num(hd tl f), int hd tl tl tl f) :: mmios;
 		if(nf >= 5 && hd f == "aia" && hd tl f == "imsic" && int hd tl tl tl tl f >= ncpu)
 			imsic = num(hd tl tl f);
+		if(pcibus && nf >= 7 && hd f == "pci" && hd tl f == "ecam" && hd tl tl tl tl f == "mem"){
+			f = tl tl f;
+			pciwin = array[] of {num(hd f), num(hd tl f), num(hd tl tl tl f), num(hd tl tl tl tl f)};
+		}
 	}
 	if(imsic != big 0)
 		sys->print("vmlinux: AIA: an IMSIC guest file a hart at %#bux, an APLIC\n", imsic);
+	if(pcibus && pciwin == nil)
+		fail("functions assigned, and the machine has no PCI bus");
 	mem := sys->open(dir + "/mem", Sys->ORDWR);
 	if(mem == nil)
 		fail(sys->sprint("mem: %r"));
@@ -682,6 +694,8 @@ c2(v: big): (big, big)
 
 Plic:	con 16r0C000000;
 Aplic:	con 16r0D000000;
+pcibus := 0;	# functions were assigned: the tree has the PCI bus
+pciwin: array of big;	# its ECAM window and BAR window: base, length, base, length
 Nplic:	con 2;	# phandles: the PLIC's (or the APLIC's), the IMSIC's, and hart h's interrupt controller's
 Nimsic:	con 3;
 Ncpuintc:	con 16;
@@ -788,6 +802,23 @@ mkdtb(memsize: big, append: string, rdaddr, rdend: big, mmios: list of (big, int
 	f.propcells("interrupts-extended", array[] of {big Ncpuintc, big 9});
 	f.propcells("phandle", array[] of {big Nplic});
 	f.end();
+	}
+	if(pciwin != nil){
+		# a generic ECAM host bridge: bus 0, its BARs in one 32-bit
+		# window, MSIs to the IMSIC; no INTx
+		f.begin(sys->sprint("pci@%bux", pciwin[0]));
+		f.propstr("compatible", "pci-host-ecam-generic");
+		f.propstr("device_type", "pci");
+		f.propcells("#address-cells", array[] of {big 3});
+		f.propcells("#size-cells", array[] of {big 2});
+		f.propcells("bus-range", array[] of {big 0, big 0});
+		f.propcells("reg", array[] of {pciwin[0] >> 32, pciwin[0] & big 16rFFFFFFFF,
+			pciwin[1] >> 32, pciwin[1] & big 16rFFFFFFFF});
+		f.propcells("ranges", array[] of {big 16r02000000, pciwin[2] >> 32, pciwin[2] & big 16rFFFFFFFF,
+			pciwin[2] >> 32, pciwin[2] & big 16rFFFFFFFF, pciwin[3] >> 32, pciwin[3] & big 16rFFFFFFFF});
+		f.propcells("msi-parent", array[] of {big Nimsic});
+		f.propnone("dma-coherent");
+		f.end();
 	}
 	for(; mmios != nil; mmios = tl mmios){
 		(base, irq) := hd mmios;

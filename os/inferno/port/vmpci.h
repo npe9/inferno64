@@ -8,12 +8,13 @@
  * and an incomplete struct in one file and the complete one in another
  * do not match.
  */
-void*	vmpcinew(Vm*);
+void*	vmpcinew(Vm*, uvlong barbase, uvlong barend);
 void	vmpcifree(void*);
 void	vmpciassign(void*, char *bdf);
 void	vmpcivirtio(void*, char *kind, char *path);
 void	vmpcistop(void*);
 int	vmpciio(void*, int port, int in, int size, u32int *val);
+int	vmpciecam(void*, uvlong off, int size, int write, uvlong *val);
 int	vmpcimmio(void*, uvlong gpa, int size, int write, uvlong *val);
 char*	vmpcistatus(void*, char*, char*);
 

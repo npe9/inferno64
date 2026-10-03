@@ -197,9 +197,12 @@ pkg, members, kver = unpack(sys.argv[4])
 open(os.path.join(g, 'rv', 'Image'), 'wb').write(gzip.decompress(pkg.extractfile(members['boot/vmlinuz-lts']).read()))
 bpkg = tarfile.open(fileobj=io.BytesIO(gzip.open(os.path.join(g, sys.argv[5])).read()), ignore_zeros=True)
 # virtio itself is a module here: the core and ring first, then the
-# MMIO transport, the disk, the network and what udhcpc needs
+# MMIO transport, the PCI one (for a function assigned to the guest),
+# the disk, the console, the network and what udhcpc needs
 cpio(modules(pkg, members, kver, ('kernel/drivers/virtio/virtio.ko.gz',
 		'kernel/drivers/virtio/virtio_ring.ko.gz', 'kernel/drivers/virtio/virtio_mmio.ko.gz',
+		'kernel/drivers/virtio/virtio_pci_legacy_dev.ko.gz', 'kernel/drivers/virtio/virtio_pci_modern_dev.ko.gz',
+		'kernel/drivers/virtio/virtio_pci.ko.gz', 'kernel/drivers/char/virtio_console.ko.gz',
 		'kernel/drivers/block/virtio_blk.ko.gz', 'kernel/net/core/failover.ko.gz',
 		'kernel/drivers/net/net_failover.ko.gz', 'kernel/drivers/net/virtio_net.ko.gz',
 		'kernel/net/packet/af_packet.ko.gz')),

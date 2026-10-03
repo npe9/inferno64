@@ -33,6 +33,7 @@ dev
 	kprof
 	usb
 	vm
+	iommu
 
 ip
 	tcp
@@ -69,6 +70,7 @@ link
 	inputvirtiommio
 	rngvirtiommio
 	vmrv
+	rviommu
 
 # the portable kernel this board takes, and its own code beside it.
 # archvirt and the rest are objects and nothing more; naming them under
@@ -113,6 +115,7 @@ port
 	vmplat
 	vuart
 	vmvirtio
+	vmpci
 
 misc
 	sdvirtiommio	sdscsi

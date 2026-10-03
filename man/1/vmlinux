@@ -68,19 +68,18 @@ says
 the kernel is a RISC-V
 .I Image
 instead, loaded at its text offset and entered in VS-mode with
-translation off, the hart in a0 and a flattened device tree in a1: one
-hart, its timer and console the SBI's, the memory, and a 16550 with no
-interrupt, which Linux polls.  The command line is then
+translation off, the hart in a0 and a flattened device tree in a1: the
+harts, their timers and console the SBI's, the memory, a 16550 with no
+interrupt, which Linux polls, a PLIC (or, where the processor gives
+guests AIA, an IMSIC interrupt file a hart and an APLIC), and the
+virtio disks and networks as virtio-mmio devices.  Functions given by
+.B -p
+need AIA: they sit on a generic ECAM host bridge whose MSIs go to the
+IMSIC.  The command line is then
 .B "console=ttyS0 earlycon=sbi"
 unless
 .B -a
-gives one; the platform has no PCI, so
-.BR -c ,
-.BR -p ,
-.B -b
-and
-.B -n
-are refused.
+gives one.
 .PP
 .B -m
 sets the memory (256 MiB);
