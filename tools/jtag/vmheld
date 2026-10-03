@@ -1,0 +1,164 @@
+#!/bin/sh
+#
+# Who is holding the Dis VM?  Read off a WEDGED board, over JTAG.
+#
+#	sh tools/jtag/vmheld
+#
+# WHY THIS EXISTS.  doc/open-issues-plan.ms item H4 caught the board
+# wedged with 38 Dis processes queued for the VM and cpu0 idle: the VM is
+# held and never given back.  What it could not say is WHICH process
+# holds it -- and clock.c has been recording exactly that all along, in
+# four file-scope variables that livelockcheck() updates every tick:
+#
+#	vmheldticks	how long the current holder has held it
+#	maxvmheld	the longest hold seen since boot
+#	heldkpc		last kernel pc seen during a hold
+#	helddispc	last compiled-Dis pc seen during a hold
+#
+# It also PRINTS them, as VMHELD lines -- and that is why this tool is
+# needed rather than the print.  When the board wedged, a process dump
+# flooded the kernel's ring and wrapped it: 111 lines, every one a
+# process entry, with the trigger and any VMHELD above them gone.  A
+# print can be crowded out of a ring; a variable cannot.
+#
+# NO KERNEL CHANGE.  The numbers were already there; only a reader was
+# missing.  That is worth saying because the first instinct was to make
+# the ring bigger, which would have been a kernel build, an install, a
+# reboot, and a wait for the fault to happen again.
+#
+# AND IT CHECKS THE KERNEL FIRST, like where(1) beside it.  Resolving an
+# address against a kernel built from different sources is how item C1
+# wasted three sessions, and it nearly happened again today: the host
+# kernel had been rebuilt while the board ran, so `where` refused to name
+# anything and the symbols had to come from a kernel rebuilt at the exact
+# commit the card holds.  This refuses in the same way rather than
+# printing confident nonsense.
+#
+set -u
+HERE=`cd \`dirname "$0"\` && pwd`
+ROOT=`cd "$HERE/../.." && pwd`
+CONF=${CONF:-raspi3b}
+KERNEL=${KERNEL:-$ROOT/os/inferno/$CONF/i$CONF}
+IMG=${IMG:-$ROOT/os/inferno/$CONF/kernel8.img}
+ADAPTER=${ADAPTER:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
+
+if [ ! -r "$KERNEL" ]; then
+	echo "vmheld: no kernel at $KERNEL" >&2
+	exit 1
+fi
+
+sym() {	# $1 symbol name -> hex address, empty if absent
+	python3 "$HERE/ksyms" "$KERNEL" -g "$1" 2>/dev/null |
+		awk -v n="$1" '$3==n{print $1; exit}'
+}
+
+KDADDR=`sym kerndate`
+A_TICKS=`sym vmheldticks`
+A_MAX=`sym maxvmheld`
+A_KPC=`sym heldkpc`
+A_DISPC=`sym helddispc`
+A_LLT=`sym livelockticks`
+A_WDOG=`sym bootwdog`
+
+for v in A_TICKS A_MAX A_KPC A_DISPC; do
+	eval a=\$$v
+	if [ -z "$a" ]; then
+		echo "vmheld: $KERNEL has no $v symbol -- wrong kernel?" >&2
+		exit 1
+	fi
+done
+
+#
+# What the image says the stamp should be, read at kerndate's address.
+#
+WANT=
+if [ -n "$KDADDR" ] && [ -r "$IMG" ]; then
+	WANT=`python3 - "$IMG" "$KDADDR" <<'PYEOF'
+import sys
+img, addr = sys.argv[1], int(sys.argv[2], 16)
+d = open(img, "rb").read()
+o = addr - 0x80000
+print(int.from_bytes(d[o:o+4], "little") if 0 <= o <= len(d)-4 else "")
+PYEOF`
+fi
+
+TMP=${TMPDIR:-/tmp}/jtag-vmheld.$$
+trap 'rm -f "$TMP"' 0 1 2 15
+
+#
+# mdw, one read per variable, labelled so the output can be parsed
+# without depending on openocd's ordering.  ulong is 4 bytes here and
+# uintptr is 8, so the pcs take two words.
+#
+( cd "$ROOT" && timeout 90 openocd -f "$ADAPTER" -f tools/jtag/raspi3b.cfg \
+	-c "init; halt; targets bcm2837.cpu0" \
+	-c "echo \"VMHELD-STAMP\"; mdw ${KDADDR:-0} 1" \
+	-c "echo \"VMHELD-TICKS\"; mdw $A_TICKS 1" \
+	-c "echo \"VMHELD-MAX\"; mdw $A_MAX 1" \
+	-c "echo \"VMHELD-KPC\"; mdw $A_KPC 2" \
+	-c "echo \"VMHELD-DISPC\"; mdw $A_DISPC 2" \
+	-c "echo \"VMHELD-LLT\"; mdw ${A_LLT:-0} 1" \
+	-c "echo \"VMHELD-WDOG\"; mdw ${A_WDOG:-0} 1" \
+	-c "resume; exit" ) >"$TMP" 2>&1
+
+if ! grep -aq VMHELD-TICKS "$TMP"; then
+	echo "vmheld: the debugger did not answer; is the adapter attached?" >&2
+	grep -a 'Error' "$TMP" | head -3 >&2
+	exit 1
+fi
+
+val() {	# $1 label -> the first word printed after it
+	awk -v l="$1" '
+		$0 ~ l {seen=1; next}
+		seen && /^0x/ {sub(/^[^:]*: */, ""); print $1; exit}
+	' "$TMP"
+}
+val2() {	# $1 label -> two words, low then high, as one 64-bit hex
+	awk -v l="$1" '
+		$0 ~ l {seen=1; next}
+		seen && /^0x/ {sub(/^[^:]*: */, ""); print $1, $2; exit}
+	' "$TMP"
+}
+
+stamp=`val VMHELD-STAMP`
+ticks=`val VMHELD-TICKS`
+max=`val VMHELD-MAX`
+llt=`val VMHELD-LLT`
+wdog=`val VMHELD-WDOG`
+kpc=`val2 VMHELD-KPC`
+dispc=`val2 VMHELD-DISPC`
+
+dec() { python3 -c "print(int('$1',16))" 2>/dev/null || echo "?"; }
+join64() {	# low high -> 0x<64-bit>
+	set -- $1
+	python3 -c "print(hex(int('$2',16)<<32 | int('$1',16)))" 2>/dev/null
+}
+
+if [ -n "$WANT" ] && [ -n "$stamp" ]; then
+	gotd=`dec "$stamp"`
+	if [ "$gotd" != "$WANT" ]; then
+		echo "vmheld: $KERNEL does NOT describe the running kernel" >&2
+		echo "vmheld:   board stamp $gotd, $IMG says $WANT" >&2
+		echo "vmheld: the addresses below would be read from the wrong" >&2
+		echo "vmheld: places.  Rebuild from the commit the card holds." >&2
+		exit 2
+	fi
+	echo "vmheld: kernel matches the board (stamp $gotd)"
+fi
+
+echo "vmheld: the CURRENT hold is `dec $ticks` ticks; the longest since boot is `dec $max` ticks"
+if [ -n "$llt" ]; then
+	echo "vmheld: livelockticks is `dec $llt`, bootwdog is `dec $wdog`"
+	if [ "`dec $wdog`" = 0 ]; then
+		echo "vmheld:   bootwdog 0 means diswdog() never arms the hardware"
+		echo "vmheld:   watchdog, so a held VM wedges the board for ever"
+	fi
+fi
+
+k=`join64 "$kpc"`
+d=`join64 "$dispc"`
+echo "vmheld: last kernel pc during a hold $k"
+[ -n "$k" ] && sh "$ROOT/tools/sym.sh" "$k" "$CONF" 2>&1 | sed 's/^/vmheld:   /'
+echo "vmheld: last compiled-Dis pc during a hold $d"
+echo "vmheld:   (a Dis pc is in the heap and has no kernel symbol; zero"
+echo "vmheld:   means the hold was entirely in kernel C code)"
