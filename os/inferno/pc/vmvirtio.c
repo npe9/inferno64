@@ -50,6 +50,7 @@
 #include	"io.h"
 #include	"../port/error.h"
 #include	"../port/vm.h"
+#include	"../pc/vm86.h"
 #include	"vmpci.h"
 #include	"vmvirtio.h"
 

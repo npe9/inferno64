@@ -3,7 +3,7 @@
 #Configurable parameters
 
 CONF=virt
-CONFLIST=virt
+CONFLIST=virt virtvm
 
 SYSTARG=$OSTARG
 OBJTYPE=riscv64
@@ -98,3 +98,7 @@ pciecam.$O:	../port/pciecam.c
 	$CC $CFLAGS ../port/pciecam.c
 
 # qemu-system-riscv64 -M virt -nographic -bios none -kernel ivirt
+
+# the hypervisor (virtvm)
+devvm.$O vmrv.$O vmplat.$O:	../port/vm.h
+vmrv.$O vmplat.$O:	vmrv.h

@@ -4,7 +4,7 @@
  * devvm.c knows machines, vCPUs, guest memory and the files; it
  * reaches the processor's virtualization extensions only through a
  * Vmops, registered by a backend (pc64/vmx.c for Intel VMX, an SVM
- * backend beside it, the RISC-V H extension one day).  Exits come back
+ * backend beside it, virt/vmrv.c for the RISC-V H extension).  Exits come back
  * decoded into a Vmexit, so nothing above the backend sees a VMX exit
  * reason or an SVM exit code.
  */
@@ -13,23 +13,10 @@ typedef struct Vcpu Vcpu;
 typedef struct Vmexit Vmexit;
 typedef struct Vmops Vmops;
 
-/* registers, by portable index */
-enum {
-	VRax, VRbx, VRcx, VRdx, VRsi, VRdi, VRbp, VRsp,
-	VR8, VR9, VR10, VR11, VR12, VR13, VR14, VR15,
-	VRip, VRflags,
-	VCr0, VCr2, VCr3, VCr4, VEfer,
-	VCs, VCsbase, VCslimit, VCsattr,
-	VDs, VDsbase, VDslimit, VDsattr,
-	VEs, VEsbase, VEslimit, VEsattr,
-	VFs, VFsbase, VFslimit, VFsattr,
-	VGs, VGsbase, VGslimit, VGsattr,
-	VSs, VSsbase, VSslimit, VSsattr,
-	VTr, VTrbase, VTrlimit, VTrattr,
-	VLdtr, VLdtrbase, VLdtrlimit, VLdtrattr,
-	VGdtrbase, VGdtrlimit, VIdtrbase, VIdtrlimit,
-	VNreg,
-};
+/*
+ * Registers are the backend's: each names its own (Vmops.regname),
+ * by its own index, and says which of them is the program counter.
+ */
 
 /* Vmexit.kind */
 enum {
@@ -48,6 +35,7 @@ enum {
 	VxEntryfail,	/* the processor refused the guest state */
 	VxStopped,	/* stopped by request, not by the guest */
 	VxOther,	/* anything else; raw names the backend's code */
+	VxShutdown,	/* the guest asked to be switched off (SBI SRST); raw the reset type */
 	VxNkind,
 };
 
@@ -108,6 +96,10 @@ struct Vmops
 	int	(*rdmsr)(Vcpu*, u32int msr, uvlong*);
 	int	(*wrmsr)(Vcpu*, u32int msr, uvlong);
 	void	(*gpunmap)(Vm*, uvlong gpa, uvlong len);
+
+	char	**regname;	/* the registers' names, by index */
+	int	nreg;
+	int	pc;		/* the index of the program counter */
 };
 
 enum {

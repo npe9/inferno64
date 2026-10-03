@@ -38,6 +38,7 @@
 #include	"../port/error.h"
 #include	"../port/pci.h"
 #include	"../port/vm.h"
+#include	"../pc/vm86.h"
 #include	"../port/iommu.h"
 #include	"vmpci.h"
 #include	"vmvirtio.h"

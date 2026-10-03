@@ -22,6 +22,7 @@
 #include	"fns.h"
 #include	"../port/error.h"
 #include	"../port/vm.h"
+#include	"../pc/vm86.h"
 
 typedef struct Svmregs Svmregs;
 typedef struct Svmcpu Svmcpu;
@@ -710,6 +711,9 @@ static Vmops svmops = {
 	svmrdmsr,
 	svmwrmsr,
 	svmgpunmap,
+	vm86regname,
+	VNreg,
+	VRip,
 };
 
 void

@@ -833,6 +833,64 @@ threads).  It looked first like a hang in the mount, then in ndb/cs,
 then in sh with
 .CW #e
 bound; it was none of them.  nsvminit does without the shell.
+.IP "Phase 15: M12 begun, M1 on RISC-V (QEMU riscv64 virt, TCG)." 4
+.CW virt/vmrv.c
+is a third backend of the same
+.CW Vmops ,
+for the H extension.  This port's kernel runs in machine mode, so the
+hypervisor does too: a guest is entered by MRET with
+.CW mstatus.MPV
+set and MPP supervisor, which is VS-mode, its addresses put through
+the G stage (hgatp, Sv39x4, guest RAM in 2 MiB pages); what the
+guest's own supervisor handles is delegated to it through medeleg,
+hedeleg and hideleg, and everything else comes back through
+.CW rvexit
+.CW l.s ) (
+\(en its ecalls, the G stage's faults, WFI (hstatus.VTW), the host's
+interrupts.  The C calling convention keeps nothing in registers across
+a call but SP, the link and SB, so that is all of the host the switch
+saves, with the floating-point registers swapped whole.  A PMP entry
+over all of memory is needed for anything below machine mode to reach
+memory at all.
+.CW virt/vmplat.c
+is the platform, which on RISC-V is the SBI: base, the legacy console,
+TIME, DBCN, answered in the kernel; SRST handed up as a new portable
+exit,
+.CW shutdown .
+The guest's timer is hvip.VSTIP, and a WFI with it armed sleeps until
+it is due.  To make room for a register set that is not x86's, the
+register names are the backend's now
+.CW Vmops.regname , (
+.CW nreg ,
+.CW pc ),
+the x86 ones moved to
+.CW pc/vm86.h .
+.CW scripts/check-rv.sh
+boots
+.CW virtvm
+.CW rvtestinit.b ) (
+under
+.CW "qemu-system-riscv64 -M virt" ,
+whose rv64 has H, and passed first time:
+.DS
+.ft CW
+RVTEST: backend riscv-h misa 0x80000000001411ad hstatus 0x200000000 g-stage sv39x4
+RVTEST: exit mmio rip 0x1034 ilen 4 raw 0x17 qual 0x10000000 gpa 0x10000000 gva 0x10000000 access 2
+RVTEST: exit shutdown rip 0x1098 ilen 4 raw 0x0 qual 0x0
+vcpu0 handled 5 exits mmio 1 hlt 1 vmcall 5
+platform sbi calls 5 time 1819480
+RVTEST: the guest said "Hi from VS-mode
+T"
+RVTEST: M1 PASS (riscv-h)
+.ft
+.DE
+The guest printed by the legacy putchar and by DBCN, stored to an
+address with no RAM (the mmio exit, stepped past from Limbo), armed
+its timer and waited in WFI; the timer interrupt reached its stvec by
+hvip
+.CW vscause "" (
+0x8000000000000005), and it shut down.  Still to do for M12: a Linux
+guest, AIA/IMSIC, and the RISC-V IOMMU.
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
@@ -850,4 +908,5 @@ disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
 its /bin, /lib and /init) on its second disk, and a second guest given
 that disk alone and linuxguest.root=vda mounts it from the initramfs
 and switches to it.  Next: M2, M8 and M3 on VMX (Bochs), now that the
-host keeps time; the MTTCG triple fault; and the workstation (phase 13).
+host keeps time; the MTTCG triple fault; a Linux guest on the RISC-V
+backend; and the workstation (phase 13).

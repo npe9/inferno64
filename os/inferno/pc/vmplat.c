@@ -30,8 +30,28 @@
 #include	"io.h"
 #include	"mp.h"
 #include	"../port/vm.h"
+#include	"../pc/vm86.h"
 #include	"vmdev.h"
 #include	"vmpci.h"
+
+char *vm86regname[VNreg] = {
+[VRax] "rax", [VRbx] "rbx", [VRcx] "rcx", [VRdx] "rdx",
+[VRsi] "rsi", [VRdi] "rdi", [VRbp] "rbp", [VRsp] "rsp",
+[VR8] "r8", [VR9] "r9", [VR10] "r10", [VR11] "r11",
+[VR12] "r12", [VR13] "r13", [VR14] "r14", [VR15] "r15",
+[VRip] "rip", [VRflags] "rflags",
+[VCr0] "cr0", [VCr2] "cr2", [VCr3] "cr3", [VCr4] "cr4", [VEfer] "efer",
+[VCs] "cs", [VCsbase] "csbase", [VCslimit] "cslimit", [VCsattr] "csattr",
+[VDs] "ds", [VDsbase] "dsbase", [VDslimit] "dslimit", [VDsattr] "dsattr",
+[VEs] "es", [VEsbase] "esbase", [VEslimit] "eslimit", [VEsattr] "esattr",
+[VFs] "fs", [VFsbase] "fsbase", [VFslimit] "fslimit", [VFsattr] "fsattr",
+[VGs] "gs", [VGsbase] "gsbase", [VGslimit] "gslimit", [VGsattr] "gsattr",
+[VSs] "ss", [VSsbase] "ssbase", [VSslimit] "sslimit", [VSsattr] "ssattr",
+[VTr] "tr", [VTrbase] "trbase", [VTrlimit] "trlimit", [VTrattr] "trattr",
+[VLdtr] "ldtr", [VLdtrbase] "ldtrbase", [VLdtrlimit] "ldtrlimit", [VLdtrattr] "ldtrattr",
+[VGdtrbase] "gdtrbase", [VGdtrlimit] "gdtrlimit",
+[VIdtrbase] "idtrbase", [VIdtrlimit] "idtrlimit",
+};
 
 typedef struct Plat Plat;
 

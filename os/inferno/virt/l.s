@@ -270,3 +270,304 @@ TEXT	trapvec(SB), 1, $-4
 	MOV	(TRAPPAD+31*XLEN)(SP), R31
 	MOV	(TRAPPAD+UREG_SP)(SP), SP
 	MRET
+
+/*
+ * The H extension's world switch (vmrv.c).  This kernel runs in
+ * machine mode, so a guest is entered with MRET, mstatus.MPV set and
+ * MPP supervisor -- VS-mode -- and every trap it does not delegate
+ * comes back to machine mode, through mtvec, which points at rvexit
+ * while the guest runs.  Rvcpu, in vmrv.c, holds the guest's state at
+ * these offsets.  The C calling convention keeps nothing in registers
+ * across a call but SP, the link and SB (setlabel saves no more), so
+ * those are all of the host that is kept; the floating-point
+ * registers are swapped whole, F28 to F31 being the compiler's
+ * constants.
+ */
+#define	MSCRATCH	0x340
+#define	FCSR		0x003
+#define	RV_PC		256
+#define	RV_HOSTSP	264
+#define	RV_HOSTRA	272
+#define	RV_MSTATUS	280
+#define	RV_MCAUSE	288
+#define	RV_MTVAL	296
+#define	RV_MTVAL2	304
+#define	RV_MTINST	312
+#define	RV_F		320
+#define	RV_FCSR		576
+#define	RV_HOSTF	584
+#define	RV_HOSTFCSR	840
+#define	CSRRWSCRATCH8	WORD $0x34041473	/* csrrw x8, mscratch, x8 */
+
+#define	SAVEF(o) \
+	MOVD	F0, (o+0*8)(R8); MOVD	F1, (o+1*8)(R8); MOVD	F2, (o+2*8)(R8); MOVD	F3, (o+3*8)(R8);\
+	MOVD	F4, (o+4*8)(R8); MOVD	F5, (o+5*8)(R8); MOVD	F6, (o+6*8)(R8); MOVD	F7, (o+7*8)(R8);\
+	MOVD	F8, (o+8*8)(R8); MOVD	F9, (o+9*8)(R8); MOVD	F10, (o+10*8)(R8); MOVD	F11, (o+11*8)(R8);\
+	MOVD	F12, (o+12*8)(R8); MOVD	F13, (o+13*8)(R8); MOVD	F14, (o+14*8)(R8); MOVD	F15, (o+15*8)(R8);\
+	MOVD	F16, (o+16*8)(R8); MOVD	F17, (o+17*8)(R8); MOVD	F18, (o+18*8)(R8); MOVD	F19, (o+19*8)(R8);\
+	MOVD	F20, (o+20*8)(R8); MOVD	F21, (o+21*8)(R8); MOVD	F22, (o+22*8)(R8); MOVD	F23, (o+23*8)(R8);\
+	MOVD	F24, (o+24*8)(R8); MOVD	F25, (o+25*8)(R8); MOVD	F26, (o+26*8)(R8); MOVD	F27, (o+27*8)(R8);\
+	MOVD	F28, (o+28*8)(R8); MOVD	F29, (o+29*8)(R8); MOVD	F30, (o+30*8)(R8); MOVD	F31, (o+31*8)(R8)
+
+#define	LOADF(o) \
+	MOVD	(o+0*8)(R8), F0; MOVD	(o+1*8)(R8), F1; MOVD	(o+2*8)(R8), F2; MOVD	(o+3*8)(R8), F3;\
+	MOVD	(o+4*8)(R8), F4; MOVD	(o+5*8)(R8), F5; MOVD	(o+6*8)(R8), F6; MOVD	(o+7*8)(R8), F7;\
+	MOVD	(o+8*8)(R8), F8; MOVD	(o+9*8)(R8), F9; MOVD	(o+10*8)(R8), F10; MOVD	(o+11*8)(R8), F11;\
+	MOVD	(o+12*8)(R8), F12; MOVD	(o+13*8)(R8), F13; MOVD	(o+14*8)(R8), F14; MOVD	(o+15*8)(R8), F15;\
+	MOVD	(o+16*8)(R8), F16; MOVD	(o+17*8)(R8), F17; MOVD	(o+18*8)(R8), F18; MOVD	(o+19*8)(R8), F19;\
+	MOVD	(o+20*8)(R8), F20; MOVD	(o+21*8)(R8), F21; MOVD	(o+22*8)(R8), F22; MOVD	(o+23*8)(R8), F23;\
+	MOVD	(o+24*8)(R8), F24; MOVD	(o+25*8)(R8), F25; MOVD	(o+26*8)(R8), F26; MOVD	(o+27*8)(R8), F27;\
+	MOVD	(o+28*8)(R8), F28; MOVD	(o+29*8)(R8), F29; MOVD	(o+30*8)(R8), F30; MOVD	(o+31*8)(R8), F31
+
+/*
+ * rvrun(Rvcpu*): enter the guest, interrupts off, mepc, mstatus and
+ * the VS CSRs already set by the caller; back when it traps.
+ */
+TEXT	rvrun(SB), 1, $-4
+	MOV	SP, RV_HOSTSP(R8)
+	MOV	LINK, RV_HOSTRA(R8)
+	SAVEF(RV_HOSTF)
+	MOV	CSR(FCSR), R10
+	MOV	R10, RV_HOSTFCSR(R8)
+	LOADF(RV_F)
+	MOV	RV_FCSR(R8), R10
+	MOV	R10, CSR(FCSR)
+	MOV	RV_PC(R8), R10
+	MOV	R10, CSR(MEPC)
+	MOV	RV_MSTATUS(R8), R10
+	MOV	R10, CSR(MSTATUS)
+	MOV	R8, CSR(MSCRATCH)
+	MOV	$rvexit(SB), R10
+	MOV	R10, CSR(MTVEC)
+	MOV	(1*8)(R8), R1
+	MOV	(2*8)(R8), R2
+	MOV	(3*8)(R8), R3
+	MOV	(4*8)(R8), R4
+	MOV	(5*8)(R8), R5
+	MOV	(6*8)(R8), R6
+	MOV	(7*8)(R8), R7
+	MOV	(9*8)(R8), R9
+	MOV	(10*8)(R8), R10
+	MOV	(11*8)(R8), R11
+	MOV	(12*8)(R8), R12
+	MOV	(13*8)(R8), R13
+	MOV	(14*8)(R8), R14
+	MOV	(15*8)(R8), R15
+	MOV	(16*8)(R8), R16
+	MOV	(17*8)(R8), R17
+	MOV	(18*8)(R8), R18
+	MOV	(19*8)(R8), R19
+	MOV	(20*8)(R8), R20
+	MOV	(21*8)(R8), R21
+	MOV	(22*8)(R8), R22
+	MOV	(23*8)(R8), R23
+	MOV	(24*8)(R8), R24
+	MOV	(25*8)(R8), R25
+	MOV	(26*8)(R8), R26
+	MOV	(27*8)(R8), R27
+	MOV	(28*8)(R8), R28
+	MOV	(29*8)(R8), R29
+	MOV	(30*8)(R8), R30
+	MOV	(31*8)(R8), R31
+	MOV	(8*8)(R8), R8
+	MRET
+
+/*
+ * The guest trapped: mscratch holds its Rvcpu.  Save it, put the
+ * host's trap vector back, and return from rvrun.
+ */
+TEXT	rvexit(SB), 1, $-4
+	CSRRWSCRATCH8
+	MOV	R1, (1*8)(R8)
+	MOV	R2, (2*8)(R8)
+	MOV	R3, (3*8)(R8)
+	MOV	R4, (4*8)(R8)
+	MOV	R5, (5*8)(R8)
+	MOV	R6, (6*8)(R8)
+	MOV	R7, (7*8)(R8)
+	MOV	R9, (9*8)(R8)
+	MOV	R10, (10*8)(R8)
+	MOV	R11, (11*8)(R8)
+	MOV	R12, (12*8)(R8)
+	MOV	R13, (13*8)(R8)
+	MOV	R14, (14*8)(R8)
+	MOV	R15, (15*8)(R8)
+	MOV	R16, (16*8)(R8)
+	MOV	R17, (17*8)(R8)
+	MOV	R18, (18*8)(R8)
+	MOV	R19, (19*8)(R8)
+	MOV	R20, (20*8)(R8)
+	MOV	R21, (21*8)(R8)
+	MOV	R22, (22*8)(R8)
+	MOV	R23, (23*8)(R8)
+	MOV	R24, (24*8)(R8)
+	MOV	R25, (25*8)(R8)
+	MOV	R26, (26*8)(R8)
+	MOV	R27, (27*8)(R8)
+	MOV	R28, (28*8)(R8)
+	MOV	R29, (29*8)(R8)
+	MOV	R30, (30*8)(R8)
+	MOV	R31, (31*8)(R8)
+	MOV	CSR(MSCRATCH), R10
+	MOV	R10, (8*8)(R8)
+	MOV	CSR(MEPC), R10
+	MOV	R10, RV_PC(R8)
+	MOV	CSR(MSTATUS), R10
+	MOV	R10, RV_MSTATUS(R8)
+	MOV	CSR(MCAUSE), R10
+	MOV	R10, RV_MCAUSE(R8)
+	MOV	CSR(MTVAL), R10
+	MOV	R10, RV_MTVAL(R8)
+	MOV	CSR(0x34B), R10		/* mtval2: the guest-physical address >> 2 */
+	MOV	R10, RV_MTVAL2(R8)
+	MOV	CSR(0x34A), R10		/* mtinst */
+	MOV	R10, RV_MTINST(R8)
+	SAVEF(RV_F)
+	MOV	CSR(FCSR), R10
+	MOV	R10, RV_FCSR(R8)
+	LOADF(RV_HOSTF)
+	MOV	RV_HOSTFCSR(R8), R10
+	MOV	R10, CSR(FCSR)
+	MOV	$setSB(SB), R3
+	MOV	$trapvec(SB), R10
+	MOV	R10, CSR(MTVEC)
+	MOV	RV_HOSTSP(R8), SP
+	MOV	RV_HOSTRA(R8), LINK
+	RET
+
+/* the CSRs vmrv.c reads and writes, one function each: the number is in the instruction */
+TEXT	csrrdmisa(SB), 1, $-4
+	MOV	CSR(0x301), RARG
+	RET
+
+TEXT	csrrdmstatus(SB), 1, $-4
+	MOV	CSR(0x300), RARG
+	RET
+
+TEXT	csrrdhgatp(SB), 1, $-4
+	MOV	CSR(0x680), RARG
+	RET
+
+TEXT	csrrdhstatus(SB), 1, $-4
+	MOV	CSR(0x600), RARG
+	RET
+
+TEXT	csrrdhvip(SB), 1, $-4
+	MOV	CSR(0x645), RARG
+	RET
+
+TEXT	csrrdvsstatus(SB), 1, $-4
+	MOV	CSR(0x200), RARG
+	RET
+
+TEXT	csrrdvsie(SB), 1, $-4
+	MOV	CSR(0x204), RARG
+	RET
+
+TEXT	csrrdvstvec(SB), 1, $-4
+	MOV	CSR(0x205), RARG
+	RET
+
+TEXT	csrrdvsscratch(SB), 1, $-4
+	MOV	CSR(0x240), RARG
+	RET
+
+TEXT	csrrdvsepc(SB), 1, $-4
+	MOV	CSR(0x241), RARG
+	RET
+
+TEXT	csrrdvscause(SB), 1, $-4
+	MOV	CSR(0x242), RARG
+	RET
+
+TEXT	csrrdvstval(SB), 1, $-4
+	MOV	CSR(0x243), RARG
+	RET
+
+TEXT	csrrdvsatp(SB), 1, $-4
+	MOV	CSR(0x280), RARG
+	RET
+
+TEXT	csrwrmedeleg(SB), 1, $-4
+	MOV	RARG, CSR(0x302)
+	RET
+
+TEXT	csrwrmcounteren(SB), 1, $-4
+	MOV	RARG, CSR(0x306)
+	RET
+
+TEXT	csrwrmstatus(SB), 1, $-4
+	MOV	RARG, CSR(0x300)
+	RET
+
+TEXT	csrwrpmpcfg0(SB), 1, $-4
+	MOV	RARG, CSR(0x3a0)
+	RET
+
+TEXT	csrwrpmpaddr0(SB), 1, $-4
+	MOV	RARG, CSR(0x3b0)
+	RET
+
+TEXT	csrwrhstatus(SB), 1, $-4
+	MOV	RARG, CSR(0x600)
+	RET
+
+TEXT	csrwrhedeleg(SB), 1, $-4
+	MOV	RARG, CSR(0x602)
+	RET
+
+TEXT	csrwrhideleg(SB), 1, $-4
+	MOV	RARG, CSR(0x603)
+	RET
+
+TEXT	csrwrhcounteren(SB), 1, $-4
+	MOV	RARG, CSR(0x606)
+	RET
+
+TEXT	csrwrhtimedelta(SB), 1, $-4
+	MOV	RARG, CSR(0x605)
+	RET
+
+TEXT	csrwrhvip(SB), 1, $-4
+	MOV	RARG, CSR(0x645)
+	RET
+
+TEXT	csrwrhgatp(SB), 1, $-4
+	MOV	RARG, CSR(0x680)
+	RET
+
+TEXT	csrwrvsstatus(SB), 1, $-4
+	MOV	RARG, CSR(0x200)
+	RET
+
+TEXT	csrwrvsie(SB), 1, $-4
+	MOV	RARG, CSR(0x204)
+	RET
+
+TEXT	csrwrvstvec(SB), 1, $-4
+	MOV	RARG, CSR(0x205)
+	RET
+
+TEXT	csrwrvsscratch(SB), 1, $-4
+	MOV	RARG, CSR(0x240)
+	RET
+
+TEXT	csrwrvsepc(SB), 1, $-4
+	MOV	RARG, CSR(0x241)
+	RET
+
+TEXT	csrwrvscause(SB), 1, $-4
+	MOV	RARG, CSR(0x242)
+	RET
+
+TEXT	csrwrvstval(SB), 1, $-4
+	MOV	RARG, CSR(0x243)
+	RET
+
+TEXT	csrwrvsatp(SB), 1, $-4
+	MOV	RARG, CSR(0x280)
+	RET
+
+TEXT	rvhfencegvma(SB), 1, $-4
+	WORD	$0x62000073	/* hfence.gvma zero, zero */
+	RET

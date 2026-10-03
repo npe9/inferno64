@@ -88,6 +88,7 @@ static char *xkindname[VxNkind] = {
 [VxEntryfail]	"entryfail",
 [VxStopped]	"stopped",
 [VxOther]	"other",
+[VxShutdown]	"shutdown",
 };
 
 static char *vcpustate[] = {
@@ -96,25 +97,6 @@ static char *vcpustate[] = {
 [VcpuRunning]	"running",
 [VcpuExited]	"exited",
 [VcpuDead]	"dead",
-};
-
-static char *regname[VNreg] = {
-[VRax] "rax", [VRbx] "rbx", [VRcx] "rcx", [VRdx] "rdx",
-[VRsi] "rsi", [VRdi] "rdi", [VRbp] "rbp", [VRsp] "rsp",
-[VR8] "r8", [VR9] "r9", [VR10] "r10", [VR11] "r11",
-[VR12] "r12", [VR13] "r13", [VR14] "r14", [VR15] "r15",
-[VRip] "rip", [VRflags] "rflags",
-[VCr0] "cr0", [VCr2] "cr2", [VCr3] "cr3", [VCr4] "cr4", [VEfer] "efer",
-[VCs] "cs", [VCsbase] "csbase", [VCslimit] "cslimit", [VCsattr] "csattr",
-[VDs] "ds", [VDsbase] "dsbase", [VDslimit] "dslimit", [VDsattr] "dsattr",
-[VEs] "es", [VEsbase] "esbase", [VEslimit] "eslimit", [VEsattr] "esattr",
-[VFs] "fs", [VFsbase] "fsbase", [VFslimit] "fslimit", [VFsattr] "fsattr",
-[VGs] "gs", [VGsbase] "gsbase", [VGslimit] "gslimit", [VGsattr] "gsattr",
-[VSs] "ss", [VSsbase] "ssbase", [VSslimit] "sslimit", [VSsattr] "ssattr",
-[VTr] "tr", [VTrbase] "trbase", [VTrlimit] "trlimit", [VTrattr] "trattr",
-[VLdtr] "ldtr", [VLdtrbase] "ldtrbase", [VLdtrlimit] "ldtrlimit", [VLdtrattr] "ldtrattr",
-[VGdtrbase] "gdtrbase", [VGdtrlimit] "gdtrlimit",
-[VIdtrbase] "idtrbase", [VIdtrlimit] "idtrlimit",
 };
 
 /*
@@ -360,7 +342,7 @@ vcpuproc(void *a)
 				if(v->stop || v->quit || v->cmd != nil){
 					memset(&e, 0, sizeof e);
 					e.kind = VxStopped;
-					e.rip = vmops->getreg(v, VRip);
+					e.rip = vmops->getreg(v, vmops->pc);
 					break;
 				}
 				continue;
@@ -451,8 +433,8 @@ cmdgetregs(Vcpu *v, void *a)
 	int i;
 
 	b = a;
-	for(i = 0; i < VNreg; i++)
-		b->p = seprint(b->p, b->e, "%s %#llux\n", regname[i], vmops->getreg(v, i));
+	for(i = 0; i < vmops->nreg; i++)
+		b->p = seprint(b->p, b->e, "%s %#llux\n", vmops->regname[i], vmops->getreg(v, i));
 }
 
 static void
@@ -472,10 +454,10 @@ cmdsetregs(Vcpu *v, void *a)
 			continue;
 		if(n != 2)
 			error(Ebadarg);
-		for(i = 0; i < VNreg; i++)
-			if(strcmp(f[0], regname[i]) == 0)
+		for(i = 0; i < vmops->nreg; i++)
+			if(strcmp(f[0], vmops->regname[i]) == 0)
 				break;
-		if(i == VNreg)
+		if(i == vmops->nreg)
 			error("unknown register");
 		vmops->setreg(v, i, strtoull(f[1], nil, 0));
 	}
@@ -486,7 +468,7 @@ cmdskip(Vcpu *v, void *)
 {
 	if(v->exit.ilen <= 0)
 		error("no instruction to skip");
-	vmops->setreg(v, VRip, vmops->getreg(v, VRip) + v->exit.ilen);
+	vmops->setreg(v, vmops->pc, vmops->getreg(v, vmops->pc) + v->exit.ilen);
 }
 
 static Vcpu*

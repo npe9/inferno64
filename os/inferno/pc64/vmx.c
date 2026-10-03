@@ -30,6 +30,7 @@
 #include	"fns.h"
 #include	"../port/error.h"
 #include	"../port/vm.h"
+#include	"../pc/vm86.h"
 
 extern int vmxon(u64int);
 extern int vmxoff(void);
@@ -1320,6 +1321,9 @@ static Vmops vmxops = {
 	vmxrdmsr,
 	vmxwrmsr,
 	vmxgpunmap,
+	vm86regname,
+	VNreg,
+	VRip,
 };
 
 void
