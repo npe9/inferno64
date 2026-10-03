@@ -69,10 +69,17 @@ static uvlong	nflush, nflushbyte, ncompose, ncomposeskip;
  * one full-screen flush among a thousand widget flushes moves the mean
  * and decides nothing.
  *
- * Five buckets, by bytes, with the top one at everything above a quarter
- * of the screen -- because the rule worth testing is "flip when the
- * damage covers the screen, copy when it does not", and what that needs
- * to know is how often each case happens.
+ * Five buckets, by bytes.  The top one is >1MB, which on this 1228800-byte
+ * screen is 85 per cent of it and NOT the quarter an earlier version of this
+ * comment claimed; a quarter is 307200 bytes and falls in the 256KB bucket.
+ *
+ * These buckets were cut for the rule "flip when the damage covers the
+ * screen, copy when it does not", and that rule has since been WITHDRAWN --
+ * see chargeoverlap() below and the H1a correction in the plan.  The saving
+ * is the overlap between consecutive frames, which this histogram cannot
+ * see at all, because it throws the order away.  The buckets are kept
+ * because the COST question they answer is still live and the numbers taken
+ * with them are still good; they just do not decide the rule.
  */
 enum {
 	Tearprobe	= 1,	/* data, not a conditional compile */
@@ -109,6 +116,114 @@ chargedamage(uvlong nb)
 	else
 		i = 4;
 	ndamage[i]++;
+}
+
+/*
+ * What the flip/copy rule actually turns on, which the histogram above
+ * CANNOT answer.  doc/open-issues-plan.ms, H1a correction: with two
+ * buffers the back buffer holds frame N-2 at the start of frame N, so
+ * bringing it up to date before drawing costs
+ *
+ *	deferred cost(N) = |damage(N-1) \ damage(N)|
+ *	eager    cost(N) = |damage(N)|
+ *
+ * and the difference between the two schemes is exactly the OVERLAP of
+ * consecutive frames' damage, summed.  Coverage of the screen does not
+ * enter it; a widget redrawing in place overlaps itself completely and
+ * costs the deferred scheme nothing at all.
+ *
+ * Every damage number taken so far -- here and in a peer's session -- is a
+ * distribution over flushes with the ORDER THROWN AWAY, and the question is
+ * about order.  That is why this exists: one remembered rectangle, one
+ * rectclip and an add.
+ *
+ * Both areas below are EXACT even though prev\r is not a rectangle: devdraw
+ * hands flushmemscreen a bounding box, so prev and r are rectangles, and the
+ * AREA of the difference is |prev| - |prev AND r| whatever shape it is.
+ *
+ * nfulladj is the cheapest possible answer to the sequence question: how
+ * often is a near-full-screen flush PRECEDED by another one.  Deferred beats
+ * eager on dropped frames only for consecutive full frames; for an isolated
+ * one the big copy merely moves a frame later.  If this stays near zero on a
+ * real session the rule saves no drops at all on it.
+ *
+ * WHAT THIS MEASURES IS FLUSH-TO-FLUSH, NOT FRAME-TO-FRAME, and the scheme's
+ * arithmetic is about frames.  A flip is once per frame, so the deferred copy
+ * is against the UNION of the previous frame's flushes; this charges it
+ * against the previous flush alone.  The two agree exactly when a frame is
+ * one flush and not otherwise.
+ *
+ * It is not fixable here, and that is the item itself: flushmemscreen is
+ * given a rectangle and no indication of where one frame's drawing began --
+ * devdraw's addflush() emits mid-batch whenever the bounding box wastes too
+ * much area, so one frame can arrive as several flushes, and nothing in the
+ * interface says which.  That is the same missing frame boundary the pre-draw
+ * hint exists to supply, so this instrument is approximate for precisely the
+ * reason the thing it measures is worth building.
+ *
+ * The error runs in BOTH directions, which I first wrote down as a one-sided
+ * bound and then found a counter-example to, so both are recorded:
+ *
+ *	UNDER-states.  Frame A arrives as two disjoint flushes a1,a2 and
+ *	frame B repaints both as b1,b2.  Every adjacent pair is disjoint, so
+ *	this reports 0, where the frame-level union reports all of A.
+ *
+ *	OVER-states.  One frame flushes the same rectangle w twice and the
+ *	next frame repaints elsewhere.  This reports |w| from the w,w pair,
+ *	where frame-level accounting reports 0 -- a frame does not overlap
+ *	itself.
+ *
+ * nsamerect detects the second case, and it is why it is counted: when it is
+ * ZERO no flush repeats its predecessor's rectangle, the over-stating case is
+ * absent, and the overlap below is then a genuine LOWER bound on the
+ * frame-to-frame overlap.  When it is non-zero these numbers bound nothing in
+ * either direction and the only fix is a real frame boundary.
+ *
+ * So: nsamerect 0 and overlap near zero is evidence AGAINST the rule.  A large
+ * overlap is not evidence for it until a frame boundary exists.
+ */
+enum {
+	Fullish	= (uvlong)ScrX*ScrY*ScrPix*85/100,	/* the >85% bucket */
+};
+static uvlong	neagerbyte, ndeferbyte, noverlapbyte;
+static uvlong	ndeferzero, ndeferover, nfulladj, nfullish, nsamerect;
+static Rectangle prevdamage;
+static int	haveprev;
+
+static void
+chargeoverlap(Rectangle r)
+{
+	Rectangle in;
+	uvlong ar, aprev, aov;
+
+	ar = (uvlong)Dx(r) * Dy(r) * ScrPix;
+	neagerbyte += ar;
+	if(haveprev){
+		if(eqrect(prevdamage, r))
+			nsamerect++;
+		aprev = (uvlong)Dx(prevdamage) * Dy(prevdamage) * ScrPix;
+		in = prevdamage;
+		aov = rectclip(&in, r)?
+			(uvlong)Dx(in) * Dy(in) * ScrPix : 0;
+		noverlapbyte += aov;
+		ndeferbyte += aprev - aov;
+		if(aprev == aov)
+			ndeferzero++;
+		/*
+		 * Did this frame's own deferred copy blow a frame?  Charged
+		 * against the MEASURED vsync period when there is one, and
+		 * against 16665us otherwise, because a claim about dropped
+		 * frames needs the real frame clock and not a nominal 60Hz.
+		 */
+		if((aprev - aov) * 166 / 10000 > (vsmeasured? vsmeasured: 16665))
+			ndeferover++;
+		if(ar >= Fullish && aprev >= Fullish)
+			nfulladj++;
+	}
+	if(ar >= Fullish)
+		nfullish++;
+	prevdamage = r;
+	haveprev = 1;
 }
 static uvlong	tcycles_flush, tcycles_compose;
 
@@ -276,6 +391,20 @@ screenstats(void)
 	for(i = 0; i < nelem(ndamage); i++)
 		print(" %s %llud", damagename[i], ndamage[i]);
 	print("\n");
+	/*
+	 * The two double-buffering schemes, costed over this session's actual
+	 * SEQUENCE of damage rectangles rather than its distribution.  eager
+	 * is the scheme that needs no pre-draw hint; defer is the one the
+	 * flip/copy rule proposes; overlap is exactly the difference, and
+	 * "skipped" counts frames the deferred scheme copies NOTHING for.
+	 * "over" counts frames whose deferred copy alone exceeds a frame.
+	 * fullish/adj is the sequence question: how many near-full flushes,
+	 * and how many of those followed another one.
+	 */
+	print("SCREEN dbuf eager %llud defer %llud overlap %llud"
+		" skipped %llud over %llud fullish %llud adj %llud samerect %llud\n",
+		neagerbyte, ndeferbyte, noverlapbyte,
+		ndeferzero, ndeferover, nfullish, nfulladj, nsamerect);
 	print("SCREEN tear ops %llud of %llud rows %llud period %llud %s\n",
 		ntearop, nopchecked, ntearrow, vsmeasured,
 		vsmeasured == 0? "NOT CALIBRATED":
@@ -505,6 +634,7 @@ flushmemscreen(Rectangle r)
 	nflush++;
 	nflushbyte += (uvlong)Dx(r) * Dy(r) * ScrPix;
 	chargedamage((uvlong)Dx(r) * Dy(r) * ScrPix);
+	chargeoverlap(r);
 	if(cursenable){
 		p = mousexy();
 		cr = cursrect(p);
