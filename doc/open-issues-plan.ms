@@ -3848,3 +3848,33 @@ removes tearing for the real workload, before any second buffer is allocated.
 It costs up to a frame of latency per flush and nothing else.  The numbers
 above say it should work for full-screen fills; items 2 and 3 say Tk is where
 it will not, and that is a measurement, not a guess.
+.PP
+.B "And where the wait would have to go, which settles the architecture."
+With
+.CW Directfb ,
+.CW memdraw
+writes the scanout buffer directly, so by the time
+.CW flushmemscreen
+runs the pixels are already on the wire \(em waiting there is TOO LATE, and
+that is where the obvious implementation would have put it.
+.PP
+There is a correct pre-draw hook:
+.CW hwdraw(par)
+is called from
+.CW memimagedraw
+in
+.CW libmemdraw/draw.c
+before any pixel is written, and
+.CW screenbcm.c 's
+returns 0 and does nothing.  But it fires once per draw OPERATION, and a Tk
+update is hundreds of them, so a vsync wait there would cost hundreds of frames
+per update.  Per-operation synchronisation is not an option at any granularity
+the draw device exposes, because nothing in it says where one frame's worth of
+drawing begins.
+.PP
+That is the argument for double buffering, and it is stronger than "it tears":
+a single buffer has no moment at which waiting is both correct and affordable.
+Two buffers give one \(em the flip \(em and the flip is once per frame no matter
+how many draws fed it.  So the direction H1a already had is right, and the
+cheap-experiment paragraph above applies only to the one case where a frame IS
+a single top-to-bottom pass.
