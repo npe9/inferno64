@@ -5309,3 +5309,83 @@ over flushes cannot answer a question about order and neither of us asked which
 kind of question we had.  Validating an input does not validate the model it
 feeds \(em the rate check was not wasted, it would have caught a different
 failure, and it was not the one we had.
+.NH 2
+H1a: 84.9 per cent is an UPPER bound, and the frame boundary this item says does not exist does
+.LP
+Two corrections to the section above, one to a claim I made in it and one to a
+premise this whole item has carried.
+.PP
+.B "First, my absorb-rule bound does not follow."
+I argued that because
+.CW addflush()
+emits only when
+.CW "!rectXrect(flushrect, r)" ,
+consecutive flushes within one frame begin disjoint, so adjacent flushes that
+overlap mark a frame boundary and 84.9 per cent is close to a lower bound.
+That covers MID-BATCH emissions only.
+.CW dunlock()
+calls
+.CW drawflush()
+on every
+.CW /dev/draw
+write that took the drawlock, so the ordinary flush is one per write batch and
+has no disjointness guarantee against the next batch whatsoever.  The argument
+was reasoning from one code path and generalising to the other.
+.PP
+.B "And the peer's per-transition data says the unit is probably not a frame."
+.CW damage(N-1)
+lies entirely INSIDE
+.CW damage(N)
+in 132 of 196 transitions on
+.CW "runtests -g" ,
+120 of 121 on
+.CW wmtest ,
+and no transition on either has zero overlap.  Nested growing rectangles are
+what several write batches refining one logical update look like.  Independent
+frames repainting the same widget would REPEAT a rectangle, not grow through
+it.
+.PP
+So 84.9 per cent is an upper bound on the deferred saving, not a lower one: a
+present coalesces those nested flushes into one damage region, and the overlap
+between coalesced regions is the quantity the scheme is about.  Which makes
+.CW nsamerect
+the discriminator after all, for exactly the reason I nearly demoted it \(em
+repeated IDENTICAL rectangles are genuine frame-to-frame repaint, strict growth
+is refinement within one update, and the ratio between them settles which this
+is.
+.PP
+.B "Second, the frame boundary EXISTS, and this item has been assuming it does not."
+The item has said throughout that nothing in the draw interface says where one
+frame's drawing begins, and used that to argue a hint must come down from
+libtk.  For the DECISION that is still true, because the decision needs
+damage(N) before frame N is drawn.  For MEASUREMENT it is false:
+.P1
+'v' in devdraw is the client's present.
+libdraw's flushimage(d, 1) emits it; flushimage(d, 0) does not.
+drawflush() runs on it.
+.P2
+What makes the flush stream ambiguous is only that
+.CW dunlock()
+flushes unconditionally as well, mixing real presents with incidental per-write
+flushes.  So accumulating damage between
+.CW 'v'
+commands needs no new interface at all, and the instrument belongs in
+.CW os/inferno/port/devdraw.c
+where
+.CW 'v'
+is visible rather than in a screen driver, which cannot tell the two kinds of
+flush apart.
+.PP
+That is the third instrument, after the distribution and the per-flush overlap,
+and it is the first one that measures the quantity the scheme is about.  Both
+earlier ones measured something adjacent to it.
+.PP
+.B "The pattern, now three deep."
+A distribution answered a question about order.  A per-flush overlap answered a
+question about frames.  Each measurement was correct and each was of a quantity
+ADJACENT to the one its argument needed, and in both cases the error was found
+by someone other than whoever made it \(em I caught the first by working the
+sequence, the peer caught the second by distrusting an agreement they would
+have liked.  The durable rule is the peer's: validating an input does not
+validate the model it feeds, and the two need separate checks.  The per-byte
+linearity check was not wasted; it would have caught a different failure.

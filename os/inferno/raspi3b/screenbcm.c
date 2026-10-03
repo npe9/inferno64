@@ -173,32 +173,44 @@ chargedamage(uvlong nb)
  *	where frame-level accounting reports 0 -- a frame does not overlap
  *	itself.
  *
- * BUT devdraw's own absorb rule nearly excludes the over-stating case, which
- * is a better argument than the counter above and was not obvious.  addflush()
- * emits the accumulated box only when
+ * I ARGUED THE OVER-STATING CASE AWAY AND THE ARGUMENT WAS WRONG; it is kept
+ * here because the mistake is instructive.  addflush() emits the accumulated
+ * box only when
  *
  *	anbb > 1024 && waste*2 >= anbb && !rectXrect(flushrect, r)
  *
- * so a mid-frame emission happens precisely when the new rectangle does NOT
- * intersect the box being emitted, and the next box starts as that disjoint
- * r.  Consecutive flushes from the SAME frame therefore begin disjoint by
- * construction, and two adjacent flushes that overlap are evidence of a frame
- * boundary rather than of intra-frame splitting.  The second box can still
- * grow back over the first by absorbing rectangles toward it, so this is
- * strong rather than airtight.
+ * so a MID-BATCH emission happens precisely when the new rectangle does not
+ * intersect the box being emitted, and I concluded that consecutive flushes
+ * within one frame begin disjoint, hence that overlapping adjacent flushes
+ * indicate a frame boundary.  That covers only mid-batch emissions.
+ * dunlock() calls drawflush() on EVERY /dev/draw write that took the drawlock,
+ * so the ordinary flush is one per write batch and carries no disjointness
+ * guarantee against the next batch at all.  The bound does not follow.
  *
- * Which makes the overlap below close to a LOWER bound on the frame-to-frame
- * overlap: the under-stating case is real and common, the over-stating case is
- * mostly excluded by the emit condition.  nsamerect is kept as a direct check
- * on the identical-rectangle sub-case, but it is weaker than it first looks --
- * two PARTIALLY overlapping flushes in one frame would contaminate the sum and
- * nsamerect would not see them, and when the rule genuinely wins (Tk
- * repainting one widget each frame) nsamerect is LARGE for the honest reason,
- * so a non-zero count does not by itself indict the number.
+ * A peer's per-transition data says the unit is probably not a frame:
+ * damage(N-1) lies entirely INSIDE damage(N) in 132 of 196 transitions on one
+ * workload and 120 of 121 on another, and NO transition anywhere has zero
+ * overlap.  Nested growing rectangles are what several write batches refining
+ * one logical update look like, not what independent frames repainting the
+ * same widget look like -- those would repeat a rectangle, not grow through
+ * it.
  *
- * So: a near-zero overlap is evidence AGAINST the rule.  A large one is
- * evidence FOR it, weaker than a frame boundary would give, and no longer
- * merely suggestive.
+ * So the overlap below is an UPPER bound on the deferred saving, not a lower
+ * one: a real present coalesces those nested flushes into one damage region,
+ * and the overlap between coalesced regions is the quantity the scheme is
+ * about.  nsamerect is the discriminator that matters after all, for the
+ * reason it was nearly dropped: repeated IDENTICAL rectangles are genuine
+ * frame-to-frame repaint, while strict growth is refinement within one update.
+ *
+ * THE FRAME BOUNDARY DOES EXIST, which this comment used to deny.  'v' in
+ * devdraw is the client's present -- libdraw's flushimage(d, 1) emits it,
+ * flushimage(d, 0) does not -- and drawflush() runs on it.  What makes the
+ * stream ambiguous is only that dunlock() flushes unconditionally as well, so
+ * real presents and incidental per-write flushes are mixed.  Accumulating
+ * damage between 'v' commands is therefore measurable without any new
+ * interface, and it belongs in devdraw where 'v' is visible, not here.  'v' is
+ * still a POST-draw signal, so it gives the boundary for MEASUREMENT and not
+ * the pre-draw damage the decision needs.
  */
 enum {
 	Fullish	= (uvlong)ScrX*ScrY*ScrPix*85/100,	/* the >85% bucket */
