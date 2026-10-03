@@ -136,8 +136,20 @@ Give the disk a new size, dropping whatever it held.  Refused, leaving the
 old disk intact, if the chunk table cannot be allocated.  A fully written
 disk costs its whole size from the main pool, which on this board is about
 50MB in total, so that is the bound that matters rather than any limit
-here.  Set it before anything opens
-.BR data .
+here.  A resize is a media change: the unit loses its geometry and
+.IR sd (3)
+re-reads the partition table on the next access, so
+.B data
+covers the new disk.  An
+.B fd
+already open on
+.B data
+gets an error, because the medium it was opened on is gone.  Earlier this
+only updated the geometry and left
+.B data
+covering the OLD disk, so every transfer past the old end failed with an
+i/o error indistinguishable from an injected one \(em found by a test
+whose image copy failed on a disk it had just enlarged.
 .TP
 .BI delay " microseconds"
 Charge
@@ -180,6 +192,32 @@ returns an I/O error.  Zero, the default, never.
 .BI failevery " n"
 And so does every
 .IR n th.
+.TP
+.BI failsect " sector " [ ntimes ]
+Any transfer whose range covers
+.I sector
+fails, read or write, the next
+.I ntimes
+times \(em once if
+.I ntimes
+is omitted, and not at all if it is zero.
+.IP
+The other faults are indexed by TRANSFER NUMBER, which is what makes
+"survives a loss at every point in turn" sayable.  That is the wrong
+index for the other question a medium asks, which is
+.I "this place on the disk does not work any more" :
+a filesystem's answer to that is supposed to be to stop using the place,
+and a test for it has to name the place.  A transfer number moves the
+moment anything unrelated reads the disk first, and a test whose target
+drifts silently reports on something else.
+.IP
+.IR dossrv (4)
+verifies a cluster by reading it before allocating it; aiming
+.B failsect
+at a cluster's first sector is how
+.B /tests/dossrv-badclust
+checks that the cluster is condemned in the FAT and the write still
+succeeds, which before this could only be tested by owning a dying card.
 .TP
 .BI stop " n"
 From transfer

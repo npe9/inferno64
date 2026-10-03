@@ -150,6 +150,18 @@ typedef struct Ctlr Ctlr;
 struct Ctlr {
 	QLock;
 	int	inited;
+	/*
+	 * The medium changed size and devsd has not been told.
+	 *
+	 * A resize is a MEDIA CHANGE, and devsd already has a path for one:
+	 * gen() re-reads the partition table when online() returns more
+	 * than 1.  Without that, "size" left the unit's geometry correct
+	 * and the data partition covering the OLD disk, so every transfer
+	 * beyond the old end failed with an i/o error that looked like a
+	 * fault injection -- which is exactly how this was found, by a test
+	 * whose image copy failed on a disk it had just enlarged.
+	 */
+	int	changed;
 	uvlong	sectors;
 	uchar**	chunk;			/* nil until written */
 	ulong	nchunk;
@@ -171,6 +183,24 @@ struct Ctlr {
 	uvlong	nxfer;
 	uvlong	failat;			/* this transfer returns Eio */
 	uvlong	failevery;		/* and every n'th one does */
+	/*
+	 * A DEAD SECTOR, as opposed to a dead transfer.
+	 *
+	 * The faults above are indexed by transfer number, which is what
+	 * makes "survives a loss at every point in turn" sayable.  It is the
+	 * wrong index for the other question a medium asks: "this PLACE on
+	 * the disk does not work any more".  A filesystem's answer to that
+	 * is supposed to be to stop using the place, and a test for it has
+	 * to name the place -- a transfer number moves the moment anything
+	 * unrelated reads the disk first, and a test whose target drifts
+	 * silently reports on something else.
+	 *
+	 * failsectn is how many transfers touching it still fail, so a
+	 * filesystem that retries can be given a sector that fails twice
+	 * and then works.
+	 */
+	uvlong	failsect;
+	uvlong	failsectn;
 	uvlong	stopat;			/* writes from here on are discarded */
 	uvlong	tearat;			/* this one writes its first sector */
 	int	nreorder;		/* hold this many writes, 0 = off */
@@ -481,6 +511,10 @@ sdmemonline(SDunit *u)
 		c->inited = 1;
 		first = 1;
 	}
+	if(c->changed){
+		c->changed = 0;
+		first = 1;			/* report a media change */
+	}
 	/*
 	 * Repopulate every call.  sdinitpart() zeroes unit->sectors before
 	 * each one, so a re-init that does not restore them loses the data
@@ -552,7 +586,10 @@ sdmembio(SDunit *u, int lun, int write, void *a, long nb, uvlong bno)
 	 * the ones it did not.
 	 */
 	if((c->failat != 0 && xfer == c->failat) ||
-	   (c->failevery != 0 && xfer % c->failevery == 0)){
+	   (c->failevery != 0 && xfer % c->failevery == 0) ||
+	   (c->failsectn != 0 && c->failsect >= bno && c->failsect < end)){
+		if(c->failsectn != 0 && c->failsect >= bno && c->failsect < end)
+			c->failsectn--;
 		c->nfailed++;
 		c->ninjected++;
 		qunlock(c);
@@ -695,6 +732,8 @@ sdmemrctl(SDunit *u, char *p, char *e)
 	p = seprint(p, e, "sdmem xfer %llud fail %llud every %llud stop %llud tear %llud reorder %d partial %d held %d\n",
 		c->nxfer, c->failat, c->failevery, c->stopat, c->tearat,
 		c->nreorder, c->partial, c->nheld);
+	p = seprint(p, e, "sdmem failsect %llud times %llud\n",
+		c->failsect, c->failsectn);
 	p = seprint(p, e, "sdmem injected %llud dropped %llud torn %llud reordered %llud\n",
 		c->ninjected, c->ndropped, c->ntorn, c->nreordered);
 	qunlock(c);
@@ -755,6 +794,23 @@ sdmemwctl(SDunit *u, Cmdbuf *cb)
 		qunlock(c);
 		return 0;
 	}
+	/*
+	 * failsect <sector> [ntimes], ntimes defaulting to one.
+	 *
+	 * Any transfer whose range covers that sector fails, read or write.
+	 * The sector, not the transfer, is the target: see the comment on
+	 * failsect in Ctlr.
+	 */
+	if(strcmp(cb->f[0], "failsect") == 0){
+		if(cb->nf != 2 && cb->nf != 3)
+			error(Ebadctl);
+		v = strtoull(cb->f[1], nil, 0);
+		qlock(c);
+		c->failsect = v;
+		c->failsectn = cb->nf == 3? strtoull(cb->f[2], nil, 0): 1;
+		qunlock(c);
+		return 0;
+	}
 	if(strcmp(cb->f[0], "partial") == 0){
 		if(cb->nf != 2)
 			error(Ebadctl);
@@ -806,11 +862,17 @@ sdmemwctl(SDunit *u, Cmdbuf *cb)
 		}
 		sdmemreset(c);
 		/*
-		 * The unit's geometry is stale now.  sdinitpart() runs from
-		 * online(), so bump the version and let devsd notice rather
-		 * than rewriting the partition table from here.
+		 * The unit's geometry AND its partition table are stale now.
+		 * Say the medium changed and leave the unit with no geometry:
+		 * devsd re-reads the table when sectors is zero or when
+		 * online() reports a change, and sdaddpart/sdinitpart are
+		 * static to devsd.c so they cannot be called from here.  The
+		 * old code only updated u->sectors, which left "data"
+		 * covering the OLD disk and failed every transfer past its
+		 * end.
 		 */
-		u->sectors = c->sectors;
+		c->changed = 1;
+		u->sectors = 0;
 		u->vers++;
 		qunlock(c);
 		return 0;

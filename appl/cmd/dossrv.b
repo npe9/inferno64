@@ -125,6 +125,20 @@ init2(nil: ref Draw->Context, args: list of string, iscmd: int): string
 
 	if(deffile == "" || !stdin && srvfile == "")
 		return usage(iscmd);
+	#
+	# Refuse what we are not going to use.
+	#
+	# The mount point comes from -m and the device from -f; there are no
+	# positional arguments.  "dossrv -f /dev/sdZ0/data /n/dos2" used to
+	# IGNORE the second word and mount on the default /n/dos instead,
+	# which is a working command that does something else -- and when the
+	# default happens to be a writable mount already, it looks like it
+	# worked.  That cost five board runs chasing a mount that was never
+	# where it was asked for.
+	#
+	if(args != nil)
+		return sys->sprint("%s: unexpected argument %s (the mount point is -m)",
+			arg0, hd args);
 
 	styx = load Styx Styx->PATH;
 	if(styx == nil)

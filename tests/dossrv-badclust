@@ -1,0 +1,259 @@
+#!/dis/sh.dis
+#
+# Does dossrv survive a cluster the medium will not deliver?
+#
+# THIS RUNS ON A BOARD, not under host emu, because it needs sdmem(3) --
+# a block device in RAM, which is a kernel device.  From the host:
+#
+#	sh tools/jtag/kinstall.sh		# a kernel with sdmem
+#	... then on the board ...
+#	sh /n/remote/tests/dossrv-badclust
+#
+# WHY IT EXISTS.  appl/cmd/dossrv.b verifies a cluster before allocating
+# it: clustok() reads it straight off the device, and a cluster that will
+# not read is marked bad in the FAT and skipped for good.  That was added
+# for a real failing card, where deleting a file and copying it again put
+# it back on the same dead page and it failed at the same byte, 1245184,
+# every time.  Until sdmem(3) there was no way to exercise it except by
+# owning a dying card, so the behaviour has never been tested; and
+# doc/open-issues-plan.ms item H2 wants to make the check cheaper, which
+# must not be attempted while its only evidence is a comment.
+#
+# So: write the test FIRST, against the CURRENT code, and see it pass.  A
+# test written after a change proves only that the two agree.
+#
+# WHAT IS REQUIRED.
+#	1  the write still succeeds, every byte of it
+#	2  the server says which cluster it condemned
+#	3  the condemned cluster is marked bad IN THE FAT, so it is still
+#	   skipped after a remount, when nothing remembers the failure
+#	4  the file reads back as what was written
+#	5  with the fault on a sector NO allocation touches, nothing is
+#	   condemned -- the negative control, without which requirement 2
+#	   is satisfied by a server that condemns clusters at random
+#
+# sdmem's "failsect" aims the fault at a SECTOR rather than at a transfer
+# number, which matters here: the target is a place on the disk, and a
+# transfer number moves the moment anything unrelated reads first.
+#
+# The mount point is given with -m.  dossrv has no positional mount
+# point and used to ignore one silently, mounting on its default
+# /n/dos -- which, being a writable mount already on this board, looked
+# like success.  It now refuses a stray argument.
+#
+load std
+
+D = /dev/sdZ0
+#
+# NOT /n/dos.  That is where the board's boot mounts the CARD's own FAT
+# partition, and "unmount /n/dos" with no server named removes every
+# mount at that point -- so a test that borrows it unmounts the board's
+# boot filesystem on the way out.  This session did exactly that before
+# noticing.  /n/dos2 is an empty directory in the kernel root with
+# nothing mounted on it.
+#
+M = /n/dos2
+IMG = /n/remote/tmp/f16k.img
+#
+# Where the server's stderr goes.  /tmp on this board is not writable in
+# the namespace a remote command runs in, and a redirect that fails in
+# Inferno sh is not catchable -- it aborts the script with "cannot open",
+# which reads as the test being broken rather than as the log being
+# unplaceable.  So name it once, here.
+#
+LOG = /n/remote/tmp
+
+if {! cat $D^/ctl >/dev/null >[2]/dev/null} {
+	echo 'dossrv-badclust: no '^$D^' -- this kernel has no sdmem(3)' >[1=2]
+	raise 'fail:no sdmem'
+}
+if {! cat $IMG >/dev/null >[2]/dev/null} {
+	echo 'dossrv-badclust: no '^$IMG^' -- make it on the host first' >[1=2]
+	raise 'fail:no image'
+}
+
+#
+# CLEAR EVERY FAULT ON THE WAY IN, not only on the way out.
+#
+# The first run of this test aborted on an unwritable log path after it
+# had armed failsect, and the NEXT run's image copy then failed on the
+# armed sector -- an i/o error that read as the disk being broken.  A
+# suite that arms a fault must disarm it before it trusts anything,
+# because the run that armed it may not have got to its own cleanup.
+#
+fn clearfaults {
+	echo 'fail 0' > $D^/ctl
+	echo 'failevery 0' > $D^/ctl
+	echo 'failsect 0 0' > $D^/ctl
+	echo 'stop 0' > $D^/ctl
+	echo 'tear 0' > $D^/ctl
+	echo 'reorder 0' > $D^/ctl
+}
+clearfaults
+
+#
+# Counting failures without arithmetic: $fails is a LIST and each failure
+# appends to it, so "did anything fail" is an emptiness test.  The first
+# version piped into math/pi, which produced an empty string, so every
+# failing run reported "FAILED  checks" and a passing one would have read
+# the same way.
+#
+fails = ()
+fn bad {
+	echo '  FAIL' $*
+	fails = $fails x
+}
+fn good {
+	echo '  ok' $*
+}
+
+#
+# The 16KB-cluster image: 1 reserved sector, 2 FATs of 16 sectors, a
+# 512-entry root directory of 32 sectors, so cluster 2 -- the first one
+# falloc hands out -- starts at sector 65.  Read off the image rather
+# than asserted: dataaddr is printed by nothing, so it is computed the
+# same way clust2sect does.
+#
+DATA0 = 65
+NOTDATA = 1500000		# beyond the disk: nothing can touch it
+
+fn setup {
+	clearfaults
+	echo 'size 131072' > $D^/ctl
+	# a resize is a media change: touch the directory so devsd re-reads
+	# the partition table before anything writes past the old end
+	ls $D >/dev/null
+	cp $IMG $D^/data
+	echo 'reset' > $D^/ctl
+}
+
+# How big is a file, without parsing ls output?  Read it and count.
+fn fsize {
+	cat $1 | wc -c
+}
+
+echo '=== 1-4: the first data sector will not read'
+setup
+echo 'failsect '^$DATA0^' 1' > $D^/ctl
+dossrv -m $M -f $D^/data >[2] $LOG^/bc.log
+dd -if /dev/zero -of $M^/f.bin -bs 16384 -count 8 >[2]/dev/null
+sz = `{fsize $M^/f.bin}
+echo '  file is' $"sz 'bytes'
+if {~ $"sz *131072*} {
+	good 'the write succeeded through a dead cluster'
+} {
+	bad 'the write did not produce 131072 bytes:' $"sz
+}
+if {grep -s 'marking it bad' $LOG^/bc.log} {
+	good 'the server condemned a cluster:' `{grep 'marking it bad' $LOG^/bc.log}
+} {
+	bad 'the server never said it condemned anything'
+	cat $LOG^/bc.log
+}
+# read it back through the same server before unmounting
+nz = `{cat $M^/f.bin | wc -c}
+if {~ $"nz *131072*} {
+	good 'it reads back at the right length:' $"nz
+} {
+	bad 'read back' $"nz 'bytes, wanted 131072'
+}
+unmount $M
+
+echo '=== 3: after a remount, with nothing remembering the failure'
+clearfaults				# the medium is whole again
+dossrv -m $M -f $D^/data >[2] $LOG^/bc2.log
+nz2 = `{cat $M^/f.bin | wc -c}
+if {~ $"nz2 *131072*} {
+	good 'the file survives a remount:' $"nz2
+} {
+	bad 'after remount the file reads' $"nz2
+}
+#
+# The real check, and it has to be about SECTORS.
+#
+# An earlier version wrote a second file and read it back, expecting the
+# trace to show where it landed.  The read came out of the server's cache
+# -- "reads 0 ops" -- so it proved nothing at all.  What proves it is the
+# WRITE: remove the file, so every cluster it held is free again, and
+# write a fresh one.  A remount resets freeptr to 2, so the very first
+# cluster falloc considers is the condemned one; if the bad mark reached
+# the FAT it is skipped with no fault set, and if it only ever lived in
+# the server's head, sector 65 is written again.
+#
+rm $M^/f.bin
+echo 'reset' > $D^/ctl
+dd -if /dev/zero -of $M^/g.bin -bs 16384 -count 1 >[2]/dev/null
+#
+# The witness is "r65+32", clustok's own read of cluster 2, and it has
+# to be: the DATA goes out as nine-sector tracks aligned to the track
+# grid -- w63+9 w72+9 w81+9 w90+9 for a cluster at sector 65 -- so no
+# transfer ever STARTS at 65.  An earlier version looked for "w65+" and
+# so could never have failed; the positive control in section 6 is what
+# found that.  clustok reads exactly clustsize sectors at the cluster's
+# own first sector, which makes it an exact marker for "this cluster was
+# offered to falloc".
+#
+tr = `{cat $D^/ctl}
+if {~ $"tr *'r65+32'*} {
+	bad 'the condemned cluster was offered again after a remount:' $"tr
+} {
+	good 'a fresh write never even considered cluster 2, so the mark is in the FAT'
+}
+unmount $M
+if {grep -s 'marking it bad' $LOG^/bc2.log} {
+	bad 'the remount condemned a cluster with no fault set:' `{grep 'marking it bad' $LOG^/bc2.log}
+} {
+	good 'the remount condemned nothing, so the mark is in the FAT'
+}
+
+echo '=== 5: negative control -- a fault nothing touches'
+setup
+echo 'failsect '^$NOTDATA^' 1' > $D^/ctl
+dossrv -m $M -f $D^/data >[2] $LOG^/bc3.log
+dd -if /dev/zero -of $M^/f.bin -bs 16384 -count 8 >[2]/dev/null
+sz3 = `{fsize $M^/f.bin}
+unmount $M
+if {grep -s 'marking it bad' $LOG^/bc3.log} {
+	bad 'condemned a cluster with the fault aimed off the disk:' `{grep 'marking it bad' $LOG^/bc3.log}
+} {
+	good 'nothing condemned when nothing failed'
+}
+if {~ $"sz3 *131072*} {
+	good 'the control write is the same size'
+} {
+	bad 'the control write produced' $"sz3
+}
+
+#
+# 6: the positive control for the check in section 3.
+#
+# "a fresh write skipped sector 65" is only evidence if a fresh write
+# would otherwise HIT sector 65.  Same sequence with no fault anywhere:
+# nothing is condemned, cluster 2 stays free, and the write after the
+# remount must land on it.  Without this, section 3 would pass on a
+# server that never allocated cluster 2 for any reason at all.
+#
+echo '=== 6: positive control -- with nothing condemned, sector 65 IS used'
+setup
+dossrv -m $M -f $D^/data >[2] $LOG^/bc4.log
+dd -if /dev/zero -of $M^/f.bin -bs 16384 -count 8 >[2]/dev/null
+unmount $M
+dossrv -m $M -f $D^/data >[2] $LOG^/bc5.log
+rm $M^/f.bin
+echo 'reset' > $D^/ctl
+dd -if /dev/zero -of $M^/g.bin -bs 16384 -count 1 >[2]/dev/null
+tr6 = `{cat $D^/ctl}
+unmount $M
+if {~ $"tr6 *'r65+32'*} {
+	good 'the unfaulted write does take cluster 2, so section 3 discriminates'
+} {
+	bad 'cluster 2 was not taken even with no fault, so section 3 proves nothing:' $"tr6
+}
+
+clearfaults
+if {~ $"fails ''} {
+	echo DOSSRV-BADCLUST-OK
+} {
+	echo 'DOSSRV-BADCLUST-FAILED:' $"fails
+	raise 'fail:badclust'
+}

@@ -48,6 +48,16 @@ the DOS/Windows file system image; defaults to
 .BI -m " mountpoint"
 The directory where the contents of the file system should appear; defaults to
 .BR /n/dos .
+.IP
+This is the ONLY way to say where to mount.
+.I Dossrv
+takes no positional arguments \(em unlike
+.I 9660srv
+beside it, which takes two \(em and used to ignore one silently and mount
+on the default instead, which on a board where
+.B /n/dos
+is already a writable mount looks exactly like success.  It now refuses a
+stray argument.
 .TP
 .BI -S  " sectors/track"
 The number of sectors per track. The default is 9.
