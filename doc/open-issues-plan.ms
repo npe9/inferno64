@@ -6182,3 +6182,55 @@ table above exists only because they did.  Of the four ways a correct number
 lies, this is the only one with a reliable procedure attached: break the thing
 deliberately and check the instrument notices.  It is the same move as auditing a
 harness that is producing a result you like.
+.PP
+.B "Refinement, and it is worse for me and better for the tree."
+Checking whether the
+.CW kmesg
+flaw is in COMMITTED tooling or only in my scratch batch script: only mine.
+.CW tools/jtag/boot.sh
+already does it correctly, and its comment says this exact bug bit before \(em
+.P1
+# kmesg's OWN failure is reported rather than swallowed: it exits 1
+# when the debugger hands back nothing and 2 when what it hands back
+# reads as an empty ring, and both used to arrive here as "the board
+# printed no banner", which is the same answer as a board that did
+# not boot.  Four attempts were reported that way for a kernel that
+# was running.
+.P2
+so it redirects, tests
+.CW $? ,
+and reports
+.CW kmesg 's
+own stderr separately before concluding anything about the board.
+.CW wedgediag
+only dumps the ring for a human and branches on nothing.
+.PP
+So the pattern was already in the tree, with the scar tissue attached, and my
+batch script reimplemented the check without it.  That is a worse failure than
+not knowing: the lesson was written down ten feet away.
+.PP
+.B "And it narrows what kmesg actually misses."
+It is not blind \(em it exits 1 when the debugger answers nothing and 2 when the
+ring reads empty.  What it has no check for is a WRONG KERNEL: after a relink it
+resolves
+.CW kmesg
+to the new kernel's address and reads that address on the old running one.
+Whether that presents as an empty ring (caught, exit 2) or as plausible garbage
+(not caught, exit 0) depends on what the arbitrary
+.CW n
+word at the wrong address happens to hold, and is untested.  So the
+misclassification is PROBABLE rather than certain, which is not a better place to
+be: it means a relink would corrupt the wedge count some of the time, which is
+harder to notice than always.
+.PP
+Two fixes, both after the batch: give
+.CW kmesg
+the
+.CW kerndate
+check its siblings have, so the wrong-kernel case is certain rather than
+probabilistic; and make the batch test
+.CW kmesg 's
+exit status the way
+.CW boot.sh
+does, so "could not read the ring" is a third verdict and not silently folded
+into SLOW.
