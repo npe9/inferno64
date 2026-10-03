@@ -62,6 +62,26 @@
 # MacOSX/<arch>/bin toolchain, so on another host that is the first thing
 # that will need changing.
 #
+# PATTERNS THAT ARE NOT WORTH ADDING, measured rather than guessed.
+#
+# `used and not set` and `set and not used` look like the uninitialised-variable
+# class and in this kernel they are dominated by ONE structural false positive:
+# error() never returns -- it raises -- and kencc does not know that, so any
+#
+#	switch(x){ case A: v = 1; break; default: error(Egreg); }
+#	... use v ...
+#
+# reports "used and not set: v" although v is set on every path that continues.
+# Checked on all three hits before believing them:
+#
+#	devusb.c:936   isotiming()   max   -- default: error(Egreg)
+#	devsd.c:1357   sdwrite()     ifc sdev
+#	devcons.c:958                o
+#
+# So that pattern is high-noise here and is deliberately NOT in the default
+# PAT.  Pass it explicitly if you want it, and expect to verify each hit
+# against an error() path before filing anything.
+#
 set -u
 HERE=`cd \`dirname "$0"\` && pwd`
 ROOT=`cd "$HERE/.." && pwd`
