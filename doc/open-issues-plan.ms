@@ -3781,3 +3781,70 @@ to
 .CW /dev/kpctl
 and nowhere near a draw path.  Nothing should change that until the flip is
 built, and then only on the path that flips.
+.NH 2
+H1a correction.  The prescribed tear probe cannot work, and the arithmetic says why
+.LP
+H1a asks for
+.QP
+a tear probe that fills alternating colours as fast as it can and samples one
+scanline, which on a torn frame reads two colours.
+.LP
+.B "That probe cannot see a tear, and would have reported success."
+A readback reads the FRAMEBUFFER, and the framebuffer is never torn: after a
+fill completes, every pixel in it is the new colour, whatever the display did
+while the fill was running.  A tear is a property of the IMAGE THE GPU
+ASSEMBLED during one frame \(em old pixels above the beam, new below \(em and
+that image exists only on the wire.
+.CW drawink (1)
+reads the same memory the fill wrote and would pass on a wildly tearing
+display, which is exactly the shape of instrument this plan keeps catching.
+.PP
+.B "What CAN be measured, now that the frame clock is known."
+Tearing is a race between two rates, and both are now numbers:
+.P1
+scanout        34.72 us/row   (480 rows in 16.665ms, measured)
+memdraw fill    4.35 us/row   (2090us full screen, the peer's figure)
+fill + flush    7.18 us/row   (3448us full screen, the peer's figure)
+.P2
+A full-screen fill proceeds in scanline order, so a fill STARTED AT VSYNC runs
+8.0x ahead of the beam and finishes row 479 when the beam is at row 60.  With
+the flush included it is 4.8x ahead and finishes at row 99.  The beam never
+catches the write, so the frame the GPU assembles is entirely new pixels.
+.PP
+.B "Which means, for this case, vsync alone is the fix and double buffering is not needed."
+A draw that waits for vertical blank and then writes faster than the beam
+advances cannot tear.  That is a claim about ONE full-screen fill at the
+measured rate, and it is the case the numbers cover.
+.PP
+.B "Where it stops being true, which is what the probe must measure."
+.IP 1.
+A draw that takes longer than a frame.  At 16.665ms the beam laps the writer
+and every subsequent frame is torn regardless of phase.
+.IP 2.
+A draw that does not proceed in scanline order.  Tk paints many small
+rectangles in widget order, so a write can land above the beam after the beam
+has passed, and that pixel appears one frame late \(em a tear that no
+full-screen measurement predicts.
+.IP 3.
+A draw not aligned to the frame at all, which is every draw today: nothing in
+.CW flushmemscreen
+waits for anything.  A write at a random phase puts the boundary wherever the
+beam happens to be.
+.PP
+.B "So the probe to write is a timing probe, not a pixel probe."
+Three numbers, all available on the board: the gap from a vsync return to the
+first write of a draw (the phase), the draw's duration, and its extent in rows.
+From those, "did any row get written after the beam had passed it" is
+arithmetic, and it is decidable per draw rather than guessed at from a
+photograph.  The acceptance test for a flip is then that this count is ZERO
+over a run of draws, with
+.CW drawink
+unchanged to show the pixels are still right.
+.PP
+.B "And the first thing to measure is the cheap one:"
+whether simply waiting for vsync in
+.CW flushmemscreen
+removes tearing for the real workload, before any second buffer is allocated.
+It costs up to a frame of latency per flush and nothing else.  The numbers
+above say it should work for full-screen fills; items 2 and 3 say Tk is where
+it will not, and that is a measurement, not a guess.
