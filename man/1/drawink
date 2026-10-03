@@ -78,9 +78,27 @@ check reports SKIP instead of passing.
 .PP
 .B "This check passes trivially with a single buffer,"
 and that is said rather than hidden.  It can only fail when double
-buffering is enabled and wrong, which is what it is for.  It is not a
-blind instrument \(em a broken flip does make it fail \(em but a PASS is
-not evidence that double buffering is on.
+buffering is enabled and wrong, which is what it is for.  So a PASS is not
+evidence that double buffering is on, and on its own it is not evidence the
+check works either.
+.PP
+.B "There is a control for it,"
+and it is the same idea as
+.B -k
+below.
+.I os/inferno/raspi3b/screenbcm.c
+has
+.B Dbufnorepair ,
+which makes the forward copy a no-op \(em reproducing exactly the bug the
+first version of that copy had, an inverted ternary that copied the back
+buffer onto itself.  With
+.B Dbuf
+on and
+.B Dbufnorepair
+on, this check MUST fail and print
+.BR "TWO FRAMES STALE" .
+If it does not, the check is watching the wrong region and proves nothing,
+which is the trap a test of an undrawn region falls into most easily.
 .PP
 .B clear
 and
@@ -145,5 +163,10 @@ has the page flip and the forward copy written and switched off
 .RB ( Dbuf
 is 0), waiting on the board.  Against the single-buffered kernel the
 check passes, which as described above demonstrates only that it does not
-false-alarm.  It has not yet been shown capable of failing on real
-hardware, and until it has, treat it as written rather than as verified.
+false-alarm.  The control
+.RB ( Dbuf
+on,
+.B Dbufnorepair
+on, the check expected to FAIL) has not been run either, because that also
+needs the board.  Until both arms have been run on hardware, treat this
+check as written rather than as verified.

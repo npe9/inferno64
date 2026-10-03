@@ -97,6 +97,25 @@ enum { Directfb = 1 };
  */
 enum { Dbuf = 0 };
 
+/*
+ * SKIP THE FORWARD COPY, so the acceptance test can be shown able to fail.
+ *
+ * drawink(1)'s "undrawn region" check asserts that what a frame did not redraw
+ * still holds the previous frame.  With a single buffer it passes trivially,
+ * and with a correct flip it passes for the right reason -- which means a PASS
+ * proves nothing on its own.  Setting this to 1 makes the repair a no-op,
+ * reproducing exactly the bug the first version of bcmpresent() had (an
+ * inverted ternary that copied the back buffer onto itself), and the check must
+ * then FAIL with "TWO FRAMES STALE".  If it does not, the check is watching the
+ * wrong region.
+ *
+ * Data, not a conditional compile, and the same discipline as Tearprobe above
+ * and as drawink's own -k flag, which leaves the cursor in place to prove its
+ * other checks can fail.  Until this has been run both ways on hardware the
+ * undrawn check is written rather than verified.
+ */
+enum { Dbufnorepair = 0 };
+
 static uchar	*fbbase;	/* base of the whole (2*ScrY tall) allocation */
 static int	fbfront;	/* which half the GPU is scanning out */
 static Rectangle dmg;		/* damage(N), accumulating */
@@ -501,8 +520,9 @@ screenstats(void)
 	 */
 	drawpresentstats();
 	if(Dbuf)
-		print("SCREEN flip %llud failed %llud repair %llud bytes in %llud rects\n",
-			nflip, nflipfail, nrepairbyte, nrepairrect);
+		print("SCREEN flip %llud failed %llud repair %llud bytes in %llud rects%s\n",
+			nflip, nflipfail, nrepairbyte, nrepairrect,
+			Dbufnorepair? " REPAIR DISABLED (control run)": "");
 	print("SCREEN dbuf eager %llud defer %llud overlap %llud"
 		" skipped %llud over %llud fullish %llud adj %llud samerect %llud\n",
 		neagerbyte, ndeferbyte, noverlapbyte,
@@ -852,7 +872,7 @@ bcmpresent(void)
 	if(fbbase == nil || dmg.min.x >= dmg.max.x)
 		return;
 	/* 1. repair the part of BACK that this frame did not redraw */
-	if(havedmgprev){
+	if(havedmgprev && !Dbufnorepair){
 		n = rectsub(dmgprev, dmg, sub);
 		for(i = 0; i < n; i++)
 			fbcopy(frontaddr(), backaddr(), sub[i]);
