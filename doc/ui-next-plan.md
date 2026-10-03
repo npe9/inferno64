@@ -1792,9 +1792,17 @@ It was aimed at making the Raspberry Pi 3B's `flushmemscreen` cheaper.
 That is not what wants it. The Pi work went: draw straight into the
 scanout buffer and the copy disappears — 91% of the screen path, measured
 at **6.8 to 7.1 times faster** on silicon. But drawing into scanout
-tears, the fix for the tear is double buffering, and double buffering has
-a cost that *scales with damage*: the copy to the back buffer is 20452µs
-of a 23900µs path full-screen but 818µs for a 128×96 widget.
+tears, and the usual answer is double buffering, whose cost *scales with
+damage*: the copy to the back buffer is 20452µs of a 23900µs path
+full-screen but 818µs for a 128×96 widget.
+
+Not "the fix", which is what this said and which conflates two things.
+Double buffering removes the **half-drawn** frame; it does not promise a
+**clean** one. Without a wait for vertical blank the flip itself becomes
+the tear line, so the tear *moves* rather than vanishing. The Pi's
+`mboxvsync()` exists and the period is measured, but a vsync wait holds
+the mailbox lock for a whole frame and whether that is affordable is its
+own measurement.
 
 So the rule is **copy `damage(N-1) \ damage(N)`** per frame.
 
@@ -1889,6 +1897,32 @@ operation really is `SoverD`.
 source-alpha terms were never exercised by this workload, so they are
 untested rather than confirmed. A workload that blits an alpha image to a
 window would test them.
+
+### And what that zero does to the acceptance test
+
+The zero is good news about the drawn region and therefore *bad* news
+about what an instrument can see. If every operation fully overwrites its
+rectangle, the pixels a frame draws are always right — so a defect in the
+machinery that repairs the region a frame did **not** draw produces a
+screen that looks entirely correct, with wrong pixels only where nothing
+is watching.
+
+That is not hypothetical. The Pi session's first repair had an inverted
+source and copied the back buffer onto itself: a no-op whose only symptom
+would have been subtly stale pixels in exactly the region the repair
+exists to fix.
+
+So the acceptance test for a flip is **not** "does the screen look
+right". It is a readback of the **un-redrawn** region specifically,
+asserting it still holds the previous frame's content there.
+
+`lorigintest(1)` is already that shape, which is why it caught the
+afterimage: `alone()` and `over()` check the region a move *vacated* —
+the part nothing redrew — rather than the window's new position. The
+general rule is the sharpest version of the blind-instrument problem in
+this document: **an instrument that watches what the code writes cannot
+see a bug in what the code does not write.** Point it at the complement
+of the action.
 
 ### Measured first: Tk's damage is widget-sized
 
