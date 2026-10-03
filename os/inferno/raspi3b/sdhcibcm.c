@@ -119,6 +119,29 @@ enum {
 	Hispeedmhz	= 50,	/* what CMD6's high-speed function allows */
 	Fnhispeed	= 1,	/* group 1 function number for high speed */
 	Timeout		= 1000000,	/* bounded register polls */
+
+	/*
+	 * How the wifi reader gives up, in CONSECUTIVE refused reads.
+	 *
+	 * Nfailquiet is where it stops also polling the interrupt status
+	 * under the bus lock and starts sleeping Failsleep instead of 2ms:
+	 * four in a row is well clear of anything a working chip does,
+	 * because one successful read resets the count and an empty queue
+	 * does not raise it.
+	 *
+	 * Failsleep is 1000ms rather than something cleverer because the
+	 * point is to stop monopolising the bus and the processor, not to
+	 * tune a recovery: a chip that has refused four reads is not about
+	 * to answer the fifth a millisecond sooner.  At one failed command
+	 * a second the board stays usable and the fault stays visible.
+	 *
+	 * Nfailsay is higher than Nfailquiet so the message means "this is
+	 * not a blip", and it is printed ONCE per episode with the matching
+	 * line when the chip comes back.
+	 */
+	Nfailquiet	= 4,
+	Nfailsay	= 8,
+	Failsleep	= 1000,
 	Idhz		= 400000,	/* identification runs at 400kHz or less */
 	Sb32bit		= 0x8000,	/* backplane: ask for 32-bit access */
 	Hctlhsen	= 1<<2,		/* Control0: high speed */
@@ -2271,6 +2294,9 @@ static struct {
 	int	nresync;
 	int	nempty;		/* reads that found an empty queue */
 	int	nreaderr;	/* reads the bus refused */
+	int	nfail;		/* CONSECUTIVE refusals, for the backoff */
+	int	nfailmax;	/* the longest run of them seen */
+	int	saidfail;	/* the run has been reported once */
 	Rendez	linkr;
 	int	linkdown;	/* the firmware has reported the link down */
 	uchar	txwindow;	/* the firmware's send credit */
@@ -2576,12 +2602,64 @@ wlrxproc(void *a)
 			rx.nempty++;
 		else if(n < 0)
 			rx.nreaderr++;
-		if(n <= 0)
+		/*
+		 * BACK OFF ON CONSECUTIVE REFUSALS, and do not look at the
+		 * interrupt status while backing off.
+		 *
+		 * This loop used to retry at full speed for ever, and that
+		 * turned one unanswered SDIO command into a dead board.  When
+		 * the chip stops answering, every sdiocmd52 in wlreadpkt and
+		 * in wlintwait fails through sdhcicmd into sdhcirecover,
+		 * whose register poll is bounded at a million uncached reads
+		 * -- about 0.1s each.  The 2ms sleep below is nothing beside
+		 * that, so the kproc spends essentially all of its time in
+		 * the recovery path while HOLDING rx.sdiolock, which also
+		 * blocks every sender.  Measured on a wedged board:
+		 * sdhcinrecover 3100 and climbing, cpu0 in awaitbit on five
+		 * samples over eighteen minutes, and the only network this
+		 * board has silent throughout -- see item H4 in
+		 * doc/open-issues-plan.ms.
+		 *
+		 * A bounded poll inside an unbounded caller is not a bound.
+		 * This board has made that mistake once before, with the
+		 * Arasan DMA stall.
+		 *
+		 * So: count consecutive refusals and lengthen the sleep with
+		 * them, to a ceiling.  A healthy reader never enters this --
+		 * nfail is zeroed by any successful read, and an empty queue
+		 * is not a failure -- so nothing about the working path
+		 * changes.  A chip that has stopped answering costs one
+		 * failed command per second instead of ten per second, which
+		 * leaves the board usable, the console alive and the fault
+		 * visible instead of fatal.
+		 */
+		if(n < 0){
+			if(++rx.nfail > rx.nfailmax)
+				rx.nfailmax = rx.nfail;
+		}else if(n > 0)
+			rx.nfail = 0;
+		if(n <= 0 && rx.nfail < Nfailquiet)
 			wlintwait(0);	/* one look, no delay under the lock */
 		qunlock(&rx.sdiolock);
+		if(rx.nfail >= Nfailsay && !rx.saidfail){
+			rx.saidfail = 1;
+			print("sdio: the wifi chip has refused %d reads in a"
+				" row (%s); backing off to %dms a try."
+				"  recoveries %d\n",
+				rx.nfail,
+				sdhcilastwhy != nil && *sdhcilastwhy != 0?
+					sdhcilastwhy: "no reason recorded",
+				Failsleep, sdhcinrecover);
+		}
 		if(n <= 0){
-			tsleep(&up->sleep, return0, nil, 2);
+			tsleep(&up->sleep, return0, nil,
+				rx.nfail >= Nfailquiet? Failsleep: 2);
 			continue;
+		}
+		if(rx.saidfail){
+			rx.saidfail = 0;
+			print("sdio: the wifi chip is answering again after"
+				" %d refusals in a row\n", rx.nfailmax);
 		}
 		/*
 		 * Every frame carries the firmware's flow control: byte 9
