@@ -65,18 +65,43 @@ fi
 TMP=${TMPDIR:-/tmp}/jtag-where.$$
 trap 'rm -f "$TMP"' 0 1 2 15
 
-tail_cmd='resume;'
-[ "${1:-}" = "-r" ] && tail_cmd=''
+#
+# HALT EACH CORE, and say so when one cannot be read.
+#
+# This used to halt ONCE -- which halts the current target, cpu0 -- and
+# then switch targets round the loop without halting.  Reading pc on a
+# core that is still running fails, the catch swallowed it, and the
+# output was a single line for cpu0 with nothing to say the other three
+# had not been looked at.
+#
+# That is not a cosmetic gap.  On a wedged board it printed "cpu0
+# idle+4", which reads as "nothing is running", and the truth found by
+# halting each core by hand was three cores idle and ONE working through
+# clockpoll with a pc that moved between samples -- a live kernel, not a
+# dead one.  An instrument that examines a quarter of the machine and
+# does not say so produced the wrong conclusion.
+#
+# So: halt each core in turn, report the ones that refuse by name, and
+# resume every core on the way out rather than only cpu0.  Leaving a core
+# halted turns a diagnosis into a second fault.
+#
+resume_all='foreach c {0 1 2 3} { catch { targets bcm2837.cpu$c ; resume } };'
+[ "${1:-}" = "-r" ] && resume_all=''
 
-( cd "$ROOT" && timeout 90 openocd -f "$ADAPTER" -f tools/jtag/raspi3b.cfg \
-	-c "init; halt; \
+( cd "$ROOT" && timeout 120 openocd -f "$ADAPTER" -f tools/jtag/raspi3b.cfg \
+	-c "init; \
 	    foreach c {0 1 2 3} { \
-		catch { targets bcm2837.cpu\$c ; echo \"WHERE cpu\$c [reg pc]\" } \
+		if {[catch { \
+			targets bcm2837.cpu\$c ; halt ; \
+			echo \"WHERE cpu\$c [reg pc]\" \
+		    } msg]} { \
+			echo \"WHERE-UNREAD cpu\$c \$msg\" \
+		} \
 	    }; targets bcm2837.cpu0" \
 	-c "mdw ${KDADDR:-0} 1" \
-	-c "$tail_cmd exit" ) >"$TMP" 2>&1
+	-c "$resume_all exit" ) >"$TMP" 2>&1
 
-if ! grep -aq WHERE "$TMP"; then
+if ! grep -aq '^WHERE cpu' "$TMP"; then
 	echo "where: the debugger did not answer; is the adapter attached?" >&2
 	grep -a 'Error' "$TMP" | head -3 >&2
 	exit 1
@@ -99,7 +124,15 @@ if [ -n "$KDADDR" ] && [ -n "$WANT" ]; then
 	fi
 fi
 
-grep -a WHERE "$TMP" | while read -r _ cpu _ _ pc; do
+#
+# The cores that refused, first and plainly.  These lines must NOT reach
+# the parser below: its fields are "WHERE cpuN pc (/64): 0x..." and an
+# UNREAD line's message would land in the pc column and be printed as an
+# address.
+#
+grep -a 'WHERE-UNREAD' "$TMP" | sed 's/^WHERE-UNREAD /where: could NOT read /'
+
+grep -a '^WHERE cpu' "$TMP" | while read -r _ cpu _ _ pc; do
 	if [ "$NAMES" = no ]; then
 		printf '%-5s %s  %s\n' "$cpu" "$pc" "(no name: wrong kernel)"
 		continue
@@ -108,4 +141,5 @@ grep -a WHERE "$TMP" | while read -r _ cpu _ _ pc; do
 		sed -e 's/^[^ ]*  *//'`
 	printf '%-5s %s  %s\n' "$cpu" "$pc" "${name:-?}"
 done
-[ -n "$tail_cmd" ] && echo "(resumed)" || echo "(left halted; 'resume' to go)"
+[ -n "$resume_all" ] && echo "(all cores resumed)" ||
+	echo "(left halted; 'resume' to go)"
