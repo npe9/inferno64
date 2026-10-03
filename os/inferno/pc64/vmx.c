@@ -796,6 +796,18 @@ Again:
 		}
 	}
 
+	/*
+	 * A page fault intercepted (*vmxexcbitmap=) is the guest's: given
+	 * back to it as the processor would have delivered it, CR2 set to
+	 * the address.
+	 */
+	if(e->kind == VxException && e->vec == 14){
+		x->cr2 = e->qual;
+		vmxinject(v, VeExc, 14, 1, e->errcode);
+		memset(e, 0, sizeof *e);
+		goto Again;
+	}
+
 	/* control- and debug-register accesses are the backend's own business */
 	if(e->kind == VxOther && (e->raw & 0xFFFF) == 28){
 		if(craccess(x, e->qual))

@@ -740,9 +740,24 @@ should have satisfied, with the guest's CR2 left at
 in plan9.ini intercepts the guest's exceptions, here all but #PF).  On
 a one-processor host it does not halt there, but nothing comes, not
 even the vCPU's heartbeat, in over an hour.  The same kernel boots on
-SVM with four processors, and on VMX with one.  Being investigated:
-the one-processor guest on the two-processor host, whose vCPU is then
-on the host's application processor.
+SVM with four processors, and on VMX with one.
+.IP
+The one-processor guest fails the same way on the two-processor host,
+whose vCPU is then on the host's application processor: it is the
+processor, not the guest's four.  A trace of every exit (rip, the
+guest's CR2 before and after) showed an external-interrupt exit taken
+with the guest's RIP still on the faulting load and CR2 already holding
+its address \(en a #PF begun and not delivered, with no IDT-vectoring
+information \(en and the guest, resumed there, next fault at
+0xffffffffffffffe6.  Real hardware does not write CR2 for a #PF it then
+leaves undelivered; Bochs's #PF path writes it before delivery, and its
+external-interrupt exits are taken only at instruction boundaries, so
+where it goes wrong inside Bochs is not found yet.  With
+.CW *vmxexcbitmap=0x4000
+the backend takes the guest's page faults itself and gives them back as
+the processor would, CR2 set (a VMM's ordinary choice without EPT), and
+the guest gets past it: Linux printed its banner on the application
+processor.  M3 on VMX is being run that way.
 .IP "Phase 9: M8 on SVM (QEMU)." 4
 .CW pc/vmvirtio.c :
 virtio functions of the hypervisor's own on the guest's PCI bus, the
