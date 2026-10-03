@@ -564,6 +564,19 @@ drawrefresh(Memimage *l, Rectangle r, void *v)
  * the expected frame count, and quote the frame number the figure came from.
  */
 static Rectangle vcur, vprev;
+/*
+ * vcur is a BOUNDING BOX: combinerect accumulates a box, not a true union,
+ * so for damage scattered across the screen the box area overstates what a
+ * copy would really move.  The box is still the right definition for the
+ * scheme -- it is what the driver is told, and therefore what it copies --
+ * but the ABSOLUTE byte figures are an upper bound and have to be quoted as
+ * one.  vsumarea sums the individual rectangles instead: for disjoint damage
+ * that IS the union, so box/sum is the inflation factor.  vnflush counts the
+ * rectangles per present, with a max rather than a top bucket, because a
+ * saturating bucket cannot tell 7 from 301.
+ */
+static uvlong vsumarea;		/* sum of individual flush rect areas */
+static uvlong vnflush, vnflushmax, vnflushtot;
 static int vcurok, vprevok, vevery = -1;
 static uvlong vframes, veager, voverlap, vdeferred;
 
@@ -692,6 +705,8 @@ framedamage(Rectangle r)
 		if(vprevok && rectclip(&x, vprev))
 			vpartial++;
 	}
+	vsumarea += (uvlong)Dx(r) * Dy(r) * 4;
+	vnflush++;
 	if(vcurok)
 		combinerect(&vcur, r);
 	else {
@@ -730,6 +745,10 @@ frameboundary(void)
 	vprevok = 1;
 	vcurok = 0;
 	vframes++;
+	vnflushtot += vnflush;
+	if(vnflush > vnflushmax)
+		vnflushmax = vnflush;
+	vnflush = 0;
 	if(vframes % (uvlong)vevery == 0)
 		print("FRAMEDAMAGE frames %llud  eager %llud  deferred %llud  overlap %llud  mean %llud  partial %llud of %llud\n",
 			vframes, veager, vdeferred, voverlap, veager/vframes,
@@ -744,6 +763,12 @@ frameboundary(void)
 		print("\n");
 		print("FRAMEDRAW d-ops %llud, non-overwriting %llud\n",
 			vdtot, vdpartial);
+		print("FRAMEBOX boxbytes %llud  sumbytes %llud  inflation %llud.%.2lludx  flushes %llud  per-present %llud.%.2llud  max %llud\n",
+			veager, vsumarea,
+			vsumarea? veager/vsumarea: 0,
+			vsumarea? (veager*100/vsumarea)%100: 0,
+			vnflushtot, vnflushtot/vframes,
+			(vnflushtot*100/vframes)%100, vnflushmax);
 		print("FRAMEMASK nil %llud  memopaque %llud  1x1repl-ones %llud  1x1repl-other %llud  alpha %llud  other %llud\n",
 			vmnil, vmopaque, vmreplones, vmreplother, vmalpha, vmother);
 	}

@@ -2191,10 +2191,56 @@ incidental flushes in with real presents.
 | `wmtest -n 40` | per `'v'` | 122 | 8171520 B | 1182672 B | 84.9% | 1115→161µs |
 
 The two boundaries agree **exactly** — same counts, same bytes. So on
-these workloads Tk emits one `'v'` per update: a flush *is* a frame,
-there is no intra-frame fragmentation to coalesce, and the upper bound
-turns out to be the value. Measured at the right boundary rather than
-assumed to be the same.
+these workloads Tk emits one `'v'` per update: a flush *is* a frame at
+the level of the **boundary count**, and the upper bound turns out to be
+the value. Measured at the right boundary rather than assumed to be the
+same.
+
+**PARTLY WITHDRAWN: "there is no intra-frame fragmentation to coalesce."**
+That sentence stood here and is wrong, and the agreement above could not
+have caught it, because both boundaries count *presents* and neither
+counts the damage rectangles inside one. A counter that does — `FRAMEBOX`,
+added after the raspi3b session measured 266 flushes per present on a
+fragmenting client — says Tk fragments too:
+
+| | `runtests -g`, frame 190 |
+|---|---|
+| damage rectangles | 3749 |
+| presents | 190 |
+| rectangles per present | **19.73**, max **103** |
+| box bytes (`combinerect`) | 20544912 |
+| sum of individual rect bytes | 33594528 |
+| box ÷ sum | **0.61×** |
+
+So ~20 rectangles per present are coalesced into one box, and the original
+suspicion two sections up — that the figure might measure redundancy
+*within* a frame — was closer to the truth about the stream than the
+"settled" heading suggested.
+
+**What survives, and why the 84.9% is still a between-frame figure.** The
+overlap arithmetic runs on `vcur` against `vprev`, and `vcur` is already
+the coalesced box for a whole present. The within-present rectangles are
+merged *before* any overlap is computed, so none of that redundancy can
+enter the ratio. The fragmentation changes what the stream looks like, not
+which quantity the 84.9% is.
+
+**And the absolute bytes are an upper bound, but a tight one here — not
+the inflated one the warning predicts.** `combinerect` accumulates a
+bounding box, not a true union, so for damage scattered across the screen
+the box overstates what a copy moves. For Tk it does the opposite: the box
+is 0.61× the sum of the rectangles, which means Tk's ~20 rectangles
+*overlap each other heavily* within a present (nested, growing updates to
+one widget), so the box is the **tighter** of the two bounds and the true
+union lies below it. The regime where the box inflates is scattered
+*disjoint* damage, and there the raspi3b session measured the per-flush
+instrument reporting 0.38% where the per-present truth was 99.44% — a
+260-fold under-statement, because no adjacent pair of disjoint flushes
+overlaps. Tk is at the opposite end of that axis.
+
+**The design note worth keeping:** a maximum beside a histogram, not a top
+bucket. `max 103` here and their `max 301` are both figures a saturating
+`>= 7` bucket could not express, and the distinction mattered in both
+cases.
 
 **What is measured and what is predicted, because the table does not
 distinguish them.** The *damage* is measured: those are real rectangles
