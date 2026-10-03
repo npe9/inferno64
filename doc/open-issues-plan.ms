@@ -6714,3 +6714,63 @@ symbol so every wedge scored SLOW \(em did not happen, and nothing was linked
 into
 .CW os/inferno/raspi3b
 for the duration.
+.NH 2
+H4.  kmesg now checks the stamp, and the first control for it was wrong
+.LP
+The check is in, reading the stamp in the SAME openocd session as the dump \(em one
+attach, one halt, so it cannot see a different kernel than the ring did \(em and
+exiting 3 on mismatch, distinct from 1 (the debugger said nothing) and 2 (the ring
+reads empty).
+.CW ELF
+is overridable, because a check only ever seen to pass is not a check.
+.PP
+.B "Both arms, against the live board, with statuses captured outside a pipeline:"
+.P1
+correct kernel                       exit 0, reads the ring
+relinked ELF + its matching image    exit 3, no stdout, says why
+real case: new tree kernel, board     exit 3, board stamp 1689260
+  still running the old one             against image 1791029644
+.P2
+.PP
+.B "THE FIRST CONTROL WAS UNREPRESENTATIVE and reported the check dead."
+Overriding
+.CW ELF
+alone while leaving
+.CW IMG
+as the installed image compares a location to ITSELF:
+.CW kernel8.img
+is a byte image of the running kernel, so image offset
+.CW addr-0x80000
+and board address
+.CW addr
+hold the same value for anything the kernel has not written since boot.  The test
+passed and proved nothing.  A relink updates BOTH artefacts, so the faithful
+control needed a matching image, built with
+.CW mkrawimg.py
+from the relinked ELF.
+.PP
+.B "And the two ways it fires are different, which is why it is robust."
+.IP \(bu
+A real
+.CW mk
+build recompiles
+.CW raspi3b.c
+with a fresh
+.CW KERNDATE ,
+so the stamp VALUE changes: 1791023117 to 1791029644.  The comparison fails on
+the value.
+.IP \(bu
+A hand
+.CW 7l
+relink that reuses the existing objects leaves
+.CW KERNDATE
+alone \(em my scratch link carried the same 1791023117 \(em but every symbol
+ADDRESS moves, so the check reads
+.CW kerndate
+at 0x001d9fc8 where the running kernel has unrelated data (1689260).  The
+comparison fails on the address.
+.PP
+Both fire.  Which is worth knowing because the obvious mental model \(em "the
+timestamp changes when you rebuild" \(em is only half of it, and the half that does
+NOT hold for the case most likely to catch someone out: a quick relink to check
+something links.
