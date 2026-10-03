@@ -4463,3 +4463,102 @@ moving \(em not a wedge at all, and the watchdog's threshold is wrong.
 .PP
 Those are three different bugs and no amount of reading process states tells
 them apart, which is why the previous three catches did not.
+.NH 2
+H4.  The token's holder is named, and the next question is two numbers
+.LP
+.B "The three-way question is answered: branch one."
+.P1
+DIS-WEDGED-END: beat 2185878, vmq waiting, runhd ready, ticks 51303
+vmheld: the token is held by pid 145 (dis)
+vmheld:   and disbeat has NOT moved since it took it
+vmheld: handovers since boot 2650203, disbeat 2185878
+.P2
+So it is not a lost handover.  ONE Dis process takes the interpreter token and
+stops making progress, and every other Dis process queues behind it.  Two and a
+half million handovers had happened before that one.
+.PP
+.B "Where it is stuck is not yet established, and one reading was a trap."
+The dump's
+.CW pc
+field for pid 145 said
+.CW Sys_pread+172 ,
+which looks like an answer and is not:
+.CW up->pc
+is set by
+.CW acquire()
+when a process QUEUES, so it records where that process last queued, not where
+it is now.  And
+.CW Sys_pread
+does
+.CW release()
+and
+.CW acquire()
+around its
+.CW kpread
+correctly \(em checked in
+.CW os/inferno/port/inferno.c
+\(em so it is not a syscall blocking with the token held.
+.PP
+.B "The live suspect, with the evidence both ways."
+On the wedged board all four cores were read \(em which needed
+.CW where
+fixed first, since it had been examining only cpu0 \(em and cpu0, cpu2 and cpu3
+were in
+.CW idle+4
+on every sample while cpu1 was in
+.CW clockpoll ,
+.CW minigetc ,
+or
+.CW splhi
+inside
+.CW minigetc
+on four of five.  An idle core sits in WFI like the other three, so that
+asymmetry wants explaining.
+.PP
+.CW clockpoll()
+drained the console FIFO with
+.CW "while getc() >= 0" ,
+unbounded, and it is called from
+.CW clockcheck()
+INSIDE
+.CW vmachine 's
+loop \(em exactly where a token holder would spin.  The console is chosen at
+runtime by GPIO14's function select and on this board the firmware chose the
+MINI uart, so
+.CW consuart->phys->getc
+is
+.CW minigetc ;
+.CW uartmini.c 's
+"NOT LINKED" header comment is stale.
+.PP
+.B "Against it:"
+on a fresh boot
+.CW npollchar
+reads 0, so in ordinary operation the console delivers no characters and the
+loop cannot iterate.  That does not contradict the above \(em a stuck RX line
+would be present only during the wedge \(em but it is not a diagnosis, and I
+nearly committed one.
+.PP
+.B "So it is now two numbers rather than an inference."
+.CW 991f8ddf0
+bounds the drain at 64 characters a call (the bound
+.CW uartpl011 's
+kick loop already uses) and counts
+.CW npollchar
+and
+.CW npollfull ;
+.CW vmheld
+reads both.  At the next wedge:
+.CW npollfull
+climbing means the drain was being trapped and the old loop would have spun
+there for ever;
+.CW npollchar
+still 0 means the console is not involved at all.  The bound removes an
+unbounded loop from the token path either way, which is the part that does not
+depend on being right about the cause.
+.PP
+.B "Three unbounded loops found in this item so far,"
+all of the same shape and all in paths that hold something: the SDIO retry
+above a bounded poll, the wifi reader's retry, and this drain.  The tree's own
+rule \(em a bound on one call is not a bound on its caller \(em has now been
+earned three times.

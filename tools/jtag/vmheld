@@ -74,6 +74,8 @@ A_HTEXT=`sym vmholdertext`
 A_HBEAT=`sym vmholdbeat`
 A_HN=`sym vmholdn`
 A_BEAT=`sym disbeat`
+A_PFULL=`sym npollfull`
+A_PCHAR=`sym npollchar`
 
 for v in A_TICKS A_MAX A_KPC A_DISPC; do
 	eval a=\$$v
@@ -118,6 +120,8 @@ trap 'rm -f "$TMP"' 0 1 2 15
 	-c "echo \"VMHELD-HBEAT\"; mdw ${A_HBEAT:-0} 1" \
 	-c "echo \"VMHELD-HN\"; mdw ${A_HN:-0} 1" \
 	-c "echo \"VMHELD-BEAT\"; mdw ${A_BEAT:-0} 1" \
+	-c "echo \"VMHELD-PFULL\"; mdw ${A_PFULL:-0} 1" \
+	-c "echo \"VMHELD-PCHAR\"; mdw ${A_PCHAR:-0} 1" \
 	-c "echo \"VMHELD-HTEXT\"; mdb ${A_HTEXT:-0} 16" \
 	-c "resume; exit" ) >"$TMP" 2>&1
 
@@ -205,6 +209,23 @@ print(b.split(b'\0')[0].decode('ascii','replace'))" 2>/dev/null`
 		fi
 	fi
 	echo "vmheld: handovers since boot `dec $hn`, disbeat `dec $beat`"
+fi
+
+#
+# The console drain, which clock.c bounds at 64 characters a call.  If a
+# wedge shows npollfull climbing, the drain loop was being trapped by a
+# stuck RX line and the OLD unbounded loop would have spun there for
+# ever; if npollchar is 0, the console delivered nothing and the loop is
+# not involved.  Two numbers instead of inferring from pc samples.
+#
+if [ -n "$A_PFULL" ]; then
+	pfull=`val VMHELD-PFULL`
+	pchar=`val VMHELD-PCHAR`
+	echo "vmheld: console drain: `dec $pchar` chars taken, `dec $pfull` calls hit the 64 bound"
+	if [ "`dec $pfull`" != 0 ]; then
+		echo "vmheld:   a non-zero bound count means the OLD unbounded"
+		echo "vmheld:   drain would have been trapped here"
+	fi
 fi
 
 k=`join64 "$kpc"`
