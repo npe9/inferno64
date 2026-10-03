@@ -28,7 +28,8 @@ enum {
 	ScrPix	= ScrDepth/8,
 };
 
-extern int mboxfballoc(int, int, uintptr*, u32*, u32*);
+extern int mboxfballoc(int, int, int, uintptr*, u32*, u32*);
+extern int mboxvirtoffset(int, int);
 extern int mboxvsync(void);
 extern void drawpresentstats(void);
 static void vsyncprobe(void);
@@ -45,6 +46,25 @@ static uchar	*vfb;		/* visible mailbox framebuffer in VC RAM */
  * against.
  */
 enum { Directfb = 1 };
+
+/*
+ * Double buffering with a page flip.  OFF: the mailbox and devdraw halves are
+ * written and measured, the driver half is not, and what stands between is an
+ * audit rather than code -- a flip makes the draw buffer's address ALTERNATE
+ * every frame, and several things here and in port code hold or compare it:
+ *
+ *	fbsaveunder()/fbrestoreunder()	save the cursor's pixels by address
+ *	the tear probe			keys on par->dst->data == gscreen->data
+ *	dstflush() in devdraw.c		compares l->screen->image->data
+ *					against screenimage->data
+ *	memlayer			holds the screen image
+ *
+ * Each of those caching a stale buffer fails SILENTLY: a cursor restored into
+ * the buffer that is no longer visible, a tear probe that reports zero because
+ * its identity test never matches, a layer that stops flushing.  None of them
+ * would announce itself.  That is why this is 0 and not 1.
+ */
+enum { Dbuf = 0 };
 static int	fbok;
 
 static int	cursenable;
@@ -540,8 +560,15 @@ screeninit(void)
 	 * One buffer: the firmware allocates the framebuffer in VC RAM and
 	 * gscreen draws straight into it (no soft->fb copy).  The returned
 	 * pitch must equal ScrX*ScrPix so gscreen->width (in words) is ScrX.
+	 *
+	 * Dbuf asks for a virtual height of 2*ScrY instead, two stacked buffers
+	 * in one allocation, so a page flip is mboxvirtoffset(0, 0 or ScrY)
+	 * and copies nothing.  It is 0 here and the allocation is unchanged:
+	 * the geometry is the only part that is written, because the flip needs
+	 * an audit of everything that caches the draw buffer's address and that
+	 * audit is not done.  doc/open-issues-plan.ms H1a lists what.
 	 */
-	if(mboxfballoc(ScrX, ScrY, &fbpa, &pitch, &fbsize) < 0){
+	if(mboxfballoc(ScrX, ScrY, Dbuf? 2*ScrY: ScrY, &fbpa, &pitch, &fbsize) < 0){
 		print("screen: mailbox framebuffer alloc failed\n");
 		return;
 	}

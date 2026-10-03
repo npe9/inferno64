@@ -5686,3 +5686,57 @@ for pc64, since the file is shared by every board.  Not built into a kernel: the
 board is scoring
 .CW b461ec5f1
 alone.
+.PP
+.B "The mailbox half of the flip, and why the driver half is still off."
+.CW mboxfballoc()
+pinned virtual height to physical height, so a page flip was not possible at
+all.  It now takes a virtual height:
+.CW ScrY
+gives exactly what it always allocated,
+.CW 2*ScrY
+gives two stacked buffers in ONE allocation, which is what the flip needs \(em
+the firmware scans out from a virtual window into a single buffer, so two
+separate
+.CW ALLOCATE_BUFFER
+calls would give two framebuffers the GPU cannot switch between.
+.PP
+.CW mboxvirtoffset(x, y)
+is the flip: tag
+.CW 0x00048009 ,
+SET_VIRTUAL_OFFSET, which
+.CW mboxfballoc()
+already sends once with
+.CW (0,0)
+during setup, so this is a re-send rather than a new capability.  It CHECKS the
+offset the firmware reports back, because the firmware clamps rather than
+failing when an offset would scan past the allocation, and a silently clamped
+flip shows the WRONG buffer with a success code \(em the same shape as the bug
+.CW mboxprop() 's
+missing lock used to have, a wrong answer rather than a detectable error.
+.PP
+.B "And it is OFF, gated on an audit rather than on code."
+.CW "Dbuf = 0" .
+A flip makes the draw buffer's address ALTERNATE every frame, and several things
+hold or compare it:
+.P1
+fbsaveunder()/fbrestoreunder()  save the cursor's pixels by address
+the tear probe                  keys on par->dst->data == gscreen->data
+dstflush() in devdraw.c         compares l->screen->image->data
+                                against screenimage->data
+memlayer                        holds the screen image
+.P2
+Every one of those fails SILENTLY if it caches a stale buffer: a cursor restored
+into the buffer that is no longer visible, a tear probe reporting zero because
+its identity test never matches, a layer that stops flushing.  None would
+announce itself, and a tear probe reading zero would look like the flip WORKING.
+That is the reason the flag is 0 and not 1, and the audit is the next piece of
+work on this item rather than the flip itself.
+.PP
+.CW raspi4
+has its own
+.CW mailbox.c
+and
+.CW screenbcm.c
+with its own five-argument
+.CW mboxfballoc() ,
+and is untouched.

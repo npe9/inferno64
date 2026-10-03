@@ -551,9 +551,19 @@ mboxvsync(void)
  * (the scanline stride in bytes).  Returns 0 and fills *fbpa (the ARM
  * physical address, the bus alias stripped), *pitch and *fbsize on
  * success, -1 otherwise.
+ *
+ * vh is the VIRTUAL height.  Passing h gives the single buffer this has
+ * always allocated; passing 2*h allocates two stacked buffers in one
+ * allocation, which is what a page flip needs -- the flip is then a virtual
+ * offset of 0 or h through mboxvirtoffset() and no copy at all.
+ *
+ * It is one allocation rather than two because the firmware scans out from a
+ * virtual window into a single buffer; two separate ALLOCATE_BUFFER calls
+ * would give two framebuffers the GPU cannot switch between.  doc/open-
+ * issues-plan.ms H1a.
  */
 int
-mboxfballoc(int w, int h, uintptr *fbpa, u32 *pitch, u32 *fbsize)
+mboxfballoc(int w, int h, int vh, uintptr *fbpa, u32 *pitch, u32 *fbsize)
 {
 	static u32 raw[40+4];
 	u32 *buf, *tag, *pitchslot;
@@ -564,7 +574,7 @@ mboxfballoc(int w, int h, uintptr *fbpa, u32 *pitch, u32 *fbsize)
 	buf[i++] = 0x00048003; buf[i++] = 8; buf[i++] = 0;	/* set phys w,h */
 		buf[i++] = w; buf[i++] = h;
 	buf[i++] = 0x00048004; buf[i++] = 8; buf[i++] = 0;	/* set virt w,h */
-		buf[i++] = w; buf[i++] = h;
+		buf[i++] = w; buf[i++] = vh;
 	buf[i++] = 0x00048005; buf[i++] = 4; buf[i++] = 0;	/* set depth */
 		buf[i++] = 32;
 	buf[i++] = 0x00048006; buf[i++] = 4; buf[i++] = 0;	/* set pixel order */
@@ -589,6 +599,45 @@ mboxfballoc(int w, int h, uintptr *fbpa, u32 *pitch, u32 *fbsize)
 	*fbpa = (uintptr)(tag[0] & ~Busalias);	/* bus alias -> ARM physical */
 	*fbsize = tag[1];
 	*pitch = *pitchslot;
+	return 0;
+}
+
+/*
+ * Move the scanout window within a framebuffer allocated with a virtual
+ * height larger than its physical height.  THIS IS THE PAGE FLIP: with
+ * vh == 2*h, an offset of y=0 shows the first buffer and y=h the second,
+ * and nothing is copied.
+ *
+ * Tag 0x00048009 is SET_VIRTUAL_OFFSET, the same tag mboxfballoc sends once
+ * with (0,0) during setup, so this is a re-send and not a new capability.
+ * The firmware answers with the offset it actually took, which is checked --
+ * it clamps rather than failing if the offset would scan past the allocation,
+ * and a silently clamped flip would show the WRONG buffer with a success
+ * code, which is the shape of bug mboxprop()'s missing lock used to have.
+ *
+ * Returns 0 on success, -1 if the exchange failed or the firmware took a
+ * different offset than asked.  doc/open-issues-plan.ms H1a.
+ */
+int
+mboxvirtoffset(int x, int y)
+{
+	static u32 raw[8+4];
+	u32 *buf, *val;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[2] = 0x00048009;		/* tag: set virtual offset */
+	buf[3] = 8;			/* value buffer bytes */
+	buf[4] = 0;			/* request */
+	val = &buf[5];
+	buf[5] = x;
+	buf[6] = y;
+	buf[7] = 0;			/* end tag */
+	buf[0] = 8 * 4;
+	buf[1] = 0;
+	if(mboxprop(buf) < 0)
+		return -1;
+	if((int)val[0] != x || (int)val[1] != y)
+		return -1;		/* clamped: NOT the buffer we asked for */
 	return 0;
 }
 
