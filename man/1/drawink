@@ -4,6 +4,8 @@ drawink \- check that drawing reaches the pixels
 .SH SYNOPSIS
 .B drawink
 [
+.B -k
+] [
 .I dev
 ]
 .SH DESCRIPTION
@@ -75,6 +77,15 @@ installs an all-zero cursor while it runs and restores the default on
 the way out.
 A failure in a 16x16 box at the pointer therefore means a cursor that
 did not get hidden; anything else is a drawing fault.
+.PP
+The
+.B -k
+flag leaves the cursor alone.  On a kernel that composites one into the
+screen image it is expected to fail, and that is its purpose: it is how
+these checks are shown to be capable of failing at all, and a plain run
+followed by a
+.B -k
+run that sees the cursor again is what verifies the restore.
 .SH SOURCE
 .B /appl/cmd/drawink.b
 .SH SEE ALSO
@@ -95,3 +106,10 @@ What has actually been run: all five checks pass on a hosted
 under MacOS X at 1024x768 x8b8g8r8, and on a Raspberry Pi 3B on silicon
 at 640x480 x8r8g8b8 reading back out of scanout RAM.  The two agree on
 the glyph ink to the pixel (226 of 1728 inked, ink box 9,10 to 71,21).
+.PP
+On that board, with the cursor enabled,
+.B -k
+fails two checks and names a 14x14 box at 320,240 \- the pointer hotpoint
+the kernel seeds to the screen centre \- reproducing 75539 of 75684 and
+306 of 320 exactly.  So the checks discriminate, and the plain run that
+precedes it put the default cursor back.

@@ -272,6 +272,8 @@ pointerwrite(Chan* c, void* va, long n, vlong off)
 		/*
 		 *  hotx[4] hoty[4] dx[4] dy[4] clr[dx/8 * dy/2] set[dx/8 * dy/2]
 		 *  dx must be a multiple of 8; dy must be a multiple of 2.
+		 *  The four counts are LITTLE-endian: BG32INT composes two
+		 *  little-endian halves in little-endian order (draw.h).
 		 */
 		if(n == 0){
 			cur.data = nil;

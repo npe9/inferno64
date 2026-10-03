@@ -22,6 +22,13 @@ implement Drawink;
 # that disagreed -- a 16x16 box at the pointer is a cursor that did not
 # get hidden, and anything else is a drawing fault.
 #
+# The -k flag leaves the cursor alone.  On a kernel that composites one
+# into the screen image it is expected to FAIL, with the box naming the
+# pointer, and that is its purpose: it is how these checks are shown to
+# be capable of failing at all, and it is how the restore on the way out
+# gets verified -- a plain run followed by a -k run that sees the cursor
+# again proves the default came back.
+#
 
 include "sys.m";
 	sys: Sys;
@@ -47,7 +54,12 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 
 	dev := "/dev";
+	keepcursor := 0;
 	argv = tl argv;
+	if(argv != nil && hd argv == "-k"){
+		keepcursor = 1;
+		argv = tl argv;
+	}
 	if(argv != nil)
 		dev = hd argv;
 
@@ -83,7 +95,9 @@ init(nil: ref Draw->Context, argv: list of string)
 		raise "fail:depth";
 	}
 
-	cf := hidecursor(dev);
+	cf: ref Sys->FD;
+	if(!keepcursor)
+		cf = hidecursor(dev);
 
 	black := disp.rgb(0, 0, 0);
 	# Three channel-separable colours, so a swapped channel shows up as
