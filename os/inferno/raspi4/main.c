@@ -19,6 +19,40 @@ extern int main_pool_pcnt;
 extern int heap_pool_pcnt;
 extern int image_pool_pcnt;
 
+/*
+ * segflush(): make instructions written as data visible to the fetcher.
+ *
+ * THIS IS A STUB AND DOES NOTHING, which was not written down anywhere
+ * until now.  It cleans no data cache and invalidates no instruction
+ * cache, so every caller that writes instructions is relying on a
+ * promise this does not keep:
+ *
+ *	devboot.c	four calls, after loading a kernel image and
+ *			before jumping to it
+ *	devdbg.c	after writing a process's text
+ *	libinterp/comp-aarch64.c
+ *			three calls, after the JIT emits code
+ *
+ * The JIT one is not reachable here today -- this board's config sets
+ * cflag = 0, so no Dis is compiled -- but the devboot path is live, and
+ * booting a kernel whose instructions may still be sitting in the data
+ * cache is exactly the failure this function exists to prevent.
+ *
+ * raspi3b's is three lines (cacheflush(p, l); cacheiinv(); return 1;)
+ * and this board has both of those routines.  It is NOT filled in here
+ * because there is no Pi 4 on this desk to test it on, and a cache
+ * change that cannot be booted is not an improvement -- it is an
+ * untested behavioural change to a port nobody can check.  Written down
+ * instead, so whoever has the hardware sees it immediately.
+ *
+ * And while reading it: cacheiinv() in this board's l.s uses IC IALLU,
+ * which invalidates the LOCAL processor's I-cache only.  raspi3b had the
+ * same instruction and it was the cause of an intermittent wedge there
+ * once the JIT and four cores were both in play -- a core fetching stale
+ * instructions and trapping with ESR exception class 0 at a heap pc.
+ * See b461ec5f1.  Latent here while cflag is 0 and nothing starts the
+ * secondary processors, and wrong the moment either changes.
+ */
 int
 segflush(void *p, ulong l)
 {
