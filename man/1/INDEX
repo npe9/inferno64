@@ -515,6 +515,7 @@ tiny tiny
 titanium titanium
 tk sh-tk
 tkcmd tkcmd
+tkscenetest tkscenetest
 tktester tktester
 tl sh-std
 tolower sh-string

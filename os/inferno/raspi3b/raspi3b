@@ -171,6 +171,7 @@ root
 	/dis/cmp.dis
 	/dis/dd.dis
 	/dis/fatstress.dis
+	/dis/tkscenetest.dis
 	/dis/sh.dis
 	/dis/sh/std.dis
 	/dis/usb/usbd.dis
