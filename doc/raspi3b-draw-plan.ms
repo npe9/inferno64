@@ -116,27 +116,47 @@ which needs no timer, and the benefit must be read on a real board.
 What it actually costs on the board
 .PP
 Read on real silicon, 2026-10-02, a Pi 3B booted over JTAG with the
-kernel this branch builds:
+kernel this branch builds, three boots:
 .DS
 .CW
-DRAWRATE-OK 640x480 (307200 pixels):
-    memdraw      2090 us a fill over 177
-    screen+flush 24444 us a fill over 9
+            memdraw   screen+flush
+boot 1       2090 us      24444 us
+boot 2       2090 us      23333 us
+boot 3       2090 us      23333 us
+             (177 fills)  (9 fills)
 .R
 .DE
 .LP
 A fill is 307200 pixels, 1228800 bytes.  So the draw into ordinary cached
-RAM runs at about 588 MB/s, and the same fill delivered to the screen
-runs at about 50 MB/s.  The difference, 22354us, is the soft-to-fb copy
-and the cache clean: it is
-.B "91.4% of the screen path"
-and
-.B "10.7 times"
-the cost of the drawing it exists to deliver.
+RAM runs at about 588 MB/s, and the same fill delivered to the screen at
+50 to 53 MB/s.  The difference \(em the soft-to-fb copy and the cache
+clean \(em is
+.B "91.0 to 91.4%"
+of the screen path, and
+.B "about 10 times"
+the cost of the drawing it exists to deliver (10.2 to 10.7).
+.PP
+.B "Three boots rather than one, and why the spread is what it is."
+An earlier draft of this section quoted a single boot as 91.4% and
+10.7x.  Those are the high end rather than the figure.  memdraw is
+identical to the digit across all three boots, because it completes 177
+fills inside the 200ms floor; screen+flush completes only
+.B nine ,
+so its quantisation is coarse \(em 24444 and 23333 are elapsed times of
+220ms and 210ms divided by 9, which is one step of the millisecond clock.
+The 4.8% spread is therefore mostly the instrument and not the board, and
+.I more
+boots cannot reduce it.  Only raising the floor for that arm would, by
+taking more than nine samples; that is the honest improvement to make if
+the figure ever needs to be tighter than "about ten times".
+.PP
+The ratio is what the plan rests on and it is not close to the line, so a
+tenfold answer is enough to order the work.  The percentage is the stable
+part: 91.0 against 91.4 across the three.
 .PP
 That settles the ordering of this plan, and it settles it more strongly
-than the plan assumed.  QEMU put the same ratio at 7.0 and real hardware
-puts it at 11.7, so emulation
+than the plan assumed.  QEMU put the ratio of screen+flush to memdraw at
+7.0; real hardware puts it at 11.2 to 11.7, so emulation
 .I understated
 how completely the copy dominates \(em which is the opposite of the
 direction a reader would guess from the warning above, and the reason
