@@ -24,7 +24,7 @@ Gfxstress: module {
 win: ref Window;
 d: ref Display;
 d3c: ref Draw3d->Context;
-img, tile, alpha, mask, scratch: ref Image;
+img, tile, alpha, mask, amask, scratch: ref Image;
 black, white, red, green, blue, yellow: ref Image;
 font: ref Font;
 seed := 16r13579bdf;
@@ -66,6 +66,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	tile = d.newimage(Rect((0,0),(256,256)), img.chans, 0, Draw->Blue);
 	alpha = d.newimage(Rect((0,0),(128,128)), Draw->RGBA32, 0, -12582784);
 	mask = d.newimage(Rect((0,0),(128,128)), Draw->GREY8, 0, -2139062017);
+	# A mask that carries its OWN alpha channel, which GREY8 does not:
+	# memdraw takes a different path for it (libmemdraw/draw.c, the
+	# mask->flags&Falpha branch), and devdraw's hazard classifier has a
+	# bucket for it that no other phase here can make non-zero.
+	amask = d.newimage(Rect((0,0),(128,128)), Draw->RGBA32, 0, -2139062017);
 	scratch = d.newimage(Rect((0,0),(512,512)), img.chans, 0, Draw->Black);
 	font = Font.open(d, "/fonts/lucidasans/unicode.8.font");
 	if(font == nil)
@@ -82,6 +87,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		seconds = 1;
 	if(phase == "all"){
 		phases := "fill" :: "copy" :: "overlap" :: "alpha" :: "mask" ::
+			"alphamask" ::
 			"line" :: "ellipse" :: "poly" :: "text" :: "upload" ::
 			"damage" :: "windowmove" :: "draw3d" :: "draw3dthick" :: nil;
 		for(; phases != nil; phases = tl phases)
@@ -103,6 +109,7 @@ run(phase: string, seconds: int)
 		"overlap" => ops += overlapbatch();
 		"alpha" => ops += alphabatch(0);
 		"mask" => ops += alphabatch(1);
+		"alphamask" => ops += alphabatch(2);
 		"line" => ops += linebatch();
 		"ellipse" => ops += ellipsebatch();
 		"poly" => ops += polybatch();
@@ -171,14 +178,19 @@ overlapbatch(): int
 	return 200;
 }
 
+# masked: 0 no mask, 1 a GREY8 coverage mask, 2 a mask with an alpha channel.
 alphabatch(masked: int): int
 {
 	for(i := 0; i < 250; i++){
 		p := Point(rnd(672), rnd(472));
-		if(masked)
+		case masked {
+		1 =>
 			img.gendraw(Rect(p,p.add((128,128))), alpha, Point(0,0), mask, Point(0,0));
-		else
+		2 =>
+			img.gendraw(Rect(p,p.add((128,128))), alpha, Point(0,0), amask, Point(0,0));
+		* =>
 			img.draw(Rect(p,p.add((128,128))), alpha, nil, Point(0,0));
+		}
 	}
 	return 250;
 }

@@ -1956,10 +1956,26 @@ a GREY8 coverage mask, and the old predicate would have counted all 19000
 of these blends as **full overwrites**. `maskbucket()` puts them in `other`
 and counts them partial, which is right.
 
-**What is still untested, stated rather than implied:** the mask-*alpha*
-bucket (`vmalpha`) is **0** in every run, because gfxstress's mask is GREY8
-rather than a channel with alpha. Two of the three terms now have a
-positive control; a mask carrying its own alpha channel still has none.
+**And the third term, which needed a phase that did not exist.** The
+mask-*alpha* bucket stayed **0** in both runs above, because GREY8 carries
+no alpha channel, so `libmemdraw/draw.c:714`'s `mask->flags&Falpha` branch
+had no positive control at all. `gfxstress` now has an `alphamask` phase
+that passes an **RGBA32** mask:
+
+| phase | `d`-ops | non-overwriting | buckets |
+|---|---|---|---|
+| `alphamask` | 65050 | **64750** | `1x1repl-ones` 300, **`alpha` 64750** |
+
+So all three terms of the predicate now have a positive control, and none
+of the six buckets is one that has never been seen non-zero. That was the
+point: twice today a zero turned out to come from a predicate that could
+not fire, and a bucket with no demonstrated firing case is the same
+hazard one level down.
+
+The three mask phases are now documented in `gfxstress(1)` as the thing
+that distinguishes them — no mask, a GREY8 coverage mask, an RGBA32 mask —
+with the channel-layout-versus-contents trap in its BUGS, because that is
+where someone writing a kernel draw path will look.
 
 **Quote the frame number, because the instrument reports a prefix.** The
 counters are cumulative and the last print is the figure, but there is no

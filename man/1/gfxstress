@@ -15,6 +15,36 @@ fills, straight copies, overlapping regions, alpha blending, masked
 draws) at a fixed, seeded pattern, so a run can be compared frame for
 frame against a previous one rather than relying on eyeballing it.
 .PP
+Three of the phases differ only in what they pass as the mask, which is
+the distinction a kernel draw path cares about and which no other
+workload here makes:
+.TP
+.B alpha
+an RGBA32 source with
+.B no
+mask, so the source alone carries the transparency.
+.TP
+.B mask
+the same source through a
+.B GREY8
+coverage mask \(em a channel with no alpha in it, which is what a glyph
+or stipple mask is.
+.TP
+.B alphamask
+the same source through an
+.B RGBA32
+mask, which carries its own alpha channel and takes a different path
+inside
+.IR memdraw (2).
+.PP
+The three are kept separate because a draw that does not fully overwrite
+its rectangle is what makes a deferred screen repair unsafe, and a
+classifier that tests the mask's channel layout rather than its contents
+gets
+.B mask
+wrong: GREY8 sets no alpha flag, so such a test reports a blend as a
+full overwrite. See BUGS.
+.PP
 With no arguments it cycles through all phases; giving
 .I phase
 restricts the run to that one, and
@@ -22,5 +52,21 @@ restricts the run to that one, and
 bounds how long it runs \(em useful for exact placement in automated
 testing, where waiting for a pointer-driven placement would make the
 run non-deterministic.
+.SH BUGS
+The phases are an exerciser, not an oracle: nothing here checks the
+pixels, so a phase proves that a path was
+.B taken
+and says nothing about whether it was taken correctly.
+.PP
+.BR mask 's
+GREY8 mask and
+.BR alphamask 's
+RGBA32 mask exist specifically so the two non-opaque mask cases can be
+made to occur on demand; before they were separated, every mask reaching
+.IR draw (3)
+from a Tk session was
+.BR display->white ,
+a 1\(mu1 replicated all-ones image, and a counter of non-opaque masks
+could not be made non-zero by any workload in the tree.
 .SH SOURCE
 .B /appl/wm/gfxstress.b
