@@ -7836,3 +7836,79 @@ verify a link happened with
 before believing EITHER arm of a control, exactly as an implicit-declaration
 sweep needs its file count.  A control that ran stale code proves nothing and
 looks like proof.
+.NH 2
+H1a.  The render-node path verified on this board: 46 ok, 0 fail, 1 skipped
+.LP
+A peer RAM-booted their render-node kernel over JTAG
+.CW ( conf
+.CW raspi3b
+.CW "(1791059177) jit 0" ,
+first attempt) and asked for one command in
+.CW board.cmd
+rather than writing it \(em the styx export is rooted at this worktree, so that
+file is this tree's, and the user authorised them the BOARD rather than the tree.
+Run through
+.CW tools/jtag/boardrun
+with
+.CW BIND=0 :
+.P1
+tkscenetest: 46 ok, 0 fail, 1 skipped
+.P2
+.B "Matching a prediction they committed before the run,"
+the skip being the non-default-font case because the root carries exactly one
+font and it is also Tk's default.  Every identity comparison is zero bytes
+differ, across scale, scrollbar, listbox, canvas, text, menubutton, checkbutton,
+radiobutton, entry with a selection, entry
+.CW -show ,
+disabled button, canvas with items, listbox with a selection, text with content,
+scale at a value, scrollbar part-scrolled and frame
+.CW -relief .
+.PP
+.CW BIND=0
+was load-bearing:
+.CW boardrun 's
+default binds
+.CW /n/remote/dis
+and
+.CW '#K' ,
+and on a RAM-booted kernel with no mount a failed bind would have aborted the
+line before the test ran.  Their dis being compiled into the root section is what
+made that safe.
+.PP
+.B "What it adds that drawink cannot."
+.CW drawink 's
+six checks ask whether the pixels are right.
+.CW tkscenetest
+asks whether TWO PATHS AGREE on them, which separates a change in WHAT libtk
+computes from a change in WHEN the pixels arrive \(em and that is exactly the
+distinction a page flip blurs.  It is the test to run either side of turning
+.CW Dbuf
+on, and it needs no display: it allocates its own image and reads back.
+.NH 3
+Two rig facts their boot re-derived, both worth keeping
+.LP
+.B "The console has no prompt, and that is the standing state rather than that boot."
+.CW remotecmd()
+is the only input path, which is why
+.CW boardrun
+exists and why the rule is never to open the board's serial device:
+.CW screen
+owns it, a second opener wedges the adapter so the board prints but cannot hear,
+and only unplugging the USB fixes it \(em which needs a human.
+.PP
+.B "And identifying the board's screen session needs the BUILD STAMP, not the session order."
+Three sessions were live, 62468 being the stm32 bench and 62490 showing nothing;
+32543 was the one printing
+.CW "conf raspi3b (1791059177)" .
+"The Pi is the one that is left" is the inference that fails here, and the stamp
+is the only identifier that cannot be coincidence.
+.NH 3
+A state note for whoever picks this up
+.LP
+This tree is now AHEAD of the card, because the kernel was rebuilt for the
+.CW 7l
+guard.  The card still holds the shipping
+.CW "Dbuf = 0"
+kernel, so a power cycle returns the board to it \(em but the JTAG readers will
+REFUSE against the card's build until it is reinstalled, which is the stamp check
+working rather than a fault.
