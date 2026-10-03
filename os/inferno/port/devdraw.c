@@ -404,12 +404,19 @@ drawrefresh(Memimage*, Rectangle r, void *v)
  * redundancy within a frame, which a present coalesces.
  *
  * ALREADY SETTLED ON HOST EMU, for Tk: a peer ran this same accounting at the
- * 'v' boundary and got 196 frames against 197 flushes, with the deferred
- * figure identical to the byte and eager differing by exactly one damage
- * region.  Tk emits one 'v' per update, so there was no fragmentation to
- * coalesce and the per-flush 84.9 per cent was the value rather than a bound.
- * This exists to confirm that on the BOARD, where the client is the same Tk
- * but the damage geometry is this screen's.
+ * 'v' boundary and the two boundaries agree EXACTLY --
+ *
+ *	runtests -g   197 flushes / 197 frames  eager 20952256 defer 3084216
+ *	wmtest -n 40  122 flushes / 122 frames  eager  8171520 defer 1182672
+ *
+ * 84.9 per cent both ways, 1770us -> 261us and 1115us -> 161us a frame.  So Tk
+ * emits one 'v' per update and there was never any fragmentation to coalesce.
+ * (An earlier version of this comment said 196 against 197 with eager differing
+ * by "exactly one damage region".  That was a cumulative counter read mid-run,
+ * and a gap the size of a plausible finding got explained instead of
+ * questioned.  Kept as a note because it is the same error as everything else
+ * in this item's history.)  This exists to confirm it on the BOARD, where the
+ * client is the same Tk but the damage geometry is this screen's.
  *
  * WHAT THESE COUNTERS CANNOT TELL YOU, said because I nearly claimed they
  * could: nflushper does not distinguish a per-FRAME 'v' from a per-OPERATION

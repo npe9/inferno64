@@ -5398,15 +5398,25 @@ boundary rather than assuming the unit, on
 .CW "runtests -g"
 at 640x480:
 .P1
-per flush      197 flushes  eager 20952256 B  deferred 3084216 B  84.94%
-per 'v' frame  196 frames   eager 20880624 B  deferred 3084216 B  84.89%
+runtests -g   197 flushes / 197 frames  eager 20952256 B  deferred 3084216 B
+wmtest -n 40  122 flushes / 122 frames  eager  8171520 B  deferred 1182672 B
 .P2
-The deferred figure is identical to the byte and eager differs by 71632, which
-is one damage region \(em 197 flushes against 196 frames.  So Tk emits one
+The two boundaries agree EXACTLY, on both workloads: same counts, same bytes,
+84.9 per cent either way, 1770us to 261us and 1115us to 161us a frame.  So Tk
+emits one
 .CW 'v'
 per update, there was never any fragmentation to coalesce, and the per-flush
 number was the value rather than an upper bound.  Measured at the boundary
 instead of assumed equal to it, which is the whole difference.
+.PP
+.B "A retraction inside the retraction, and it is the same error again."
+The first figures from the
+.CW 'v'
+boundary were 196 frames against 197 flushes with eager differing by 71632
+bytes, and both the peer and I explained the gap as one damage region.  It was a
+cumulative counter read while the run was still going, before the last frame
+closed.  A gap the size of a plausible finding got explained instead of
+questioned \(em by its own author, who had written the reporting cadence.
 .PP
 .B "The equal/growth discriminator came in first and was nearly enough."
 Splitting the nested transitions by area:
@@ -5495,3 +5505,128 @@ disjointness guarantee to a conclusion about the path
 .CW dunlock()
 takes.  That is the same shape as reading a distribution as an answer about
 order \(em generalising from the path you looked at to the path that runs.
+.NH 2
+H1a.  WHERE THIS STANDS (read this first; the H1a sections above are chronological)
+.LP
+.B "Settled." 
+Double buffering with incremental drawing costs a damage-sized copy per frame.
+Two schemes: EAGER copies
+.CW damage(N)
+after each flip, DEFERRED copies
+.CW "damage(N-1) \e damage(N)"
+before each flip.  The difference is the summed OVERLAP of consecutive frames'
+damage and nothing else; coverage of the screen never enters.  Measured at the
+.CW 'v'
+present boundary on two Tk workloads at 640x480, the saving is
+.B "84.9 per cent"
+\(em 1770us a frame down to 261us, 1115us down to 161us, against a 16665us
+budget, so 1.6 per cent of a frame instead of 10.6.
+.PP
+.B "Withdrawn."
+Three earlier arguments for the same conclusion, all of which were wrong: that
+the rule is about damage COVERING THE SCREEN (it is about overlap, at any size);
+that it saves dropped frames on full-screen frames (an isolated one drops under
+both schemes, the copy merely moves a frame later); and that 47 per cent of the
+cost in 4 per cent of the frames was a saving (it was a description of where
+eager's cost sits).
+.PP
+.B "And the hint this item was built around is NOT NEEDED."
+Everything above assumed the copy must precede the DRAWING, so
+.CW damage(N)
+had to be known in advance, so a frame-level hint had to come down from libtk's
+.CW tkscenebounds()
+through
+.CW devdraw.c
+to a screen driver.  The copy only has to precede the FLIP.  At
+.CW 'v'
+both rectangles are already known \(em
+.CW prevpresent
+is
+.CW damage(N-1)
+and
+.CW presentbb
+is
+.CW damage(N)
+\(em so the repair happens there, between the last draw and the flip, with no
+hint, no interface change and no producer in libtk.  By region:
+.P1
+in S and in damage(N)      back was drawn this frame.  correct.
+in S, not in damage(N)     frame N == frame N-1 there, and FRONT holds
+                           frame N-1.  copying front->back gives frame N.
+outside S                  back held frame N-2 == frame N-1 (undamaged in
+                           N-1), undamaged in N, so == frame N.
+.P2
+where
+.CW "S = damage(N-1)"
+is where the back buffer is stale.  The difference is a rectangle subtraction,
+at most four rectangles.  The H1a correction that introduced the hint conflated
+"before it is SHOWN" with "before it is DRAWN".
+.PP
+.B "The one real hazard, and it is wider than read-modify-write."
+Step 2 draws into a back buffer that is stale in S.  An operation that FULLY
+OVERWRITES its damage rectangle does not care.  One that does not fully
+overwrite it leaves stale pixels inside
+.CW damage(N) ,
+which step 4 excludes from the repair, and the error is shown.  That is not
+only alpha and masks:
+.IP \(bu
+.CW string
+\(em the glyph is a MASK, so non-ink pixels inside the glyph rectangle keep
+whatever the destination held.  Text is the DEFAULT case, not a rare one.
+.IP \(bu
+.CW line ,
+.CW poly ,
+.CW ellipse
+\(em only the spans are written, but
+.CW dstflush()
+charges the whole bounding box, so the holes are inside
+.CW damage(N)
+and excluded from repair.
+.IP \(bu
+any
+.CW 'd'
+with a non-opaque mask, an alpha source, or an op other than
+.CW SoverD .
+.PP
+So the only true overwrite is a fill or an opaque blit.  The question is
+therefore NOT how often Tk uses alpha; it is whether Tk draws partial-overwrite
+operations onto a window directly, or onto a per-widget offscreen image that is
+then blitted opaquely.  Inferno's Tk is flicker-free, which suggests the second,
+and that is a guess and marked as one.
+.PP
+.B "What makes it shippable either way."
+At the first partial-overwrite operation in frame N whose rectangle meets S,
+repair ALL of S eagerly, there and then.  Worst case the scheme degrades to
+eager \(em 1770us, the number it was trying to beat \(em and it never degrades
+to a wrong image.  That turns the measurement below into a question about
+PERFORMANCE rather than correctness, and 84.9 per cent is what you get when the
+count is zero.
+.PP
+.B "Open, and it is a measurement in devdraw rather than an argument."
+In
+.CW drawmesg() 's
+.CW 'd' ,
+.CW 's' ,
+.CW 'l' ,
+.CW 'p' ,
+.CW 'e'
+cases, where the destination is the screen or a window layer, classify each
+operation as overwrite or partial and count the partial ones whose rectangle
+meets
+.CW prevpresent .
+That is an UPPER bound, because it ignores that an opaque background fill
+earlier in the same present has usually already covered the region \(em which is
+the normal widget-repaint order.  Zero on Tk workloads means the scheme is
+correct with no per-operation machinery at all.  Non-zero means adding the
+containment test against this present's earlier opaque rectangles.  The same
+hook counts operations per present, which closes the one thing the present
+instrument cannot tell you on its own: whether
+.CW 'v'
+arrives per frame or per operation.
+.PP
+.B "Also owed, and only this board can give it."
+The damage histogram off a real
+.CW wm
+session for the coverage ratio to 1228800 bytes, and whether an interactive
+session looks like the two automated suites at all.  That limit has been flagged
+since the first measurement and cannot be removed from the other side.
