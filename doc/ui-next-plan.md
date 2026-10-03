@@ -1922,10 +1922,44 @@ On `runtests -g` at 640×480, from the print at **frame 190** of ~197:
 | mask with an alpha channel | 0 |
 | any other mask | 0 |
 
+Those two counts are **different populations**, and the difference
+favours the claim: the classifier runs on every `'d'` command the client
+sends, screen-bound or not, so 9504 is a superset of the 3464 that
+produce damage. The zero therefore covers offscreen blits — the
+per-widget renders Tk does before it blits — as well as the ones that
+reach the screen.
+
 Every single mask Tk sends is `display->white`, verified all-ones rather
 than assumed. That is the raspi3b session's `imagedraw()` diagnosis holding
 exactly, on a different tree and a different counter — including the part
 that matters, that `memopaque` never appears at all.
+
+**The terms are no longer untested, and the test was already in the tree.**
+`wm/gfxstress` builds an RGBA32 image and a 128×128 GREY8 mask and draws
+them straight into `win.image`, which is what the old note was asking for.
+Two phases, `INFERNO_FRAME_DAMAGE=5`:
+
+| phase | `d`-ops | non-overwriting | buckets |
+|---|---|---|---|
+| `alpha` | 65300 | **65000** | `1x1repl-ones` 65300, all others 0 |
+| `mask` | 19300 | **19000** | `1x1repl-ones` 300, **`other` 19000** |
+
+The `alpha` phase fires the **source** term: its mask is still
+`display->white` (a nil Limbo mask), so every bucket is unchanged and the
+65000 come from `src->flags&Falpha` on the RGBA32 source.
+
+The `mask` phase is the one that **discriminates the two predicates**, and
+it is the case the old one got wrong. `Falpha` is set only for a `CAlpha`
+channel — `libmemdraw/alloc.c:177` — and `GREY8` is `CHAN1(CGrey, 8)`,
+which sets `Fgrey` and never `Falpha`. So `mask->flags&Falpha` is false for
+a GREY8 coverage mask, and the old predicate would have counted all 19000
+of these blends as **full overwrites**. `maskbucket()` puts them in `other`
+and counts them partial, which is right.
+
+**What is still untested, stated rather than implied:** the mask-*alpha*
+bucket (`vmalpha`) is **0** in every run, because gfxstress's mask is GREY8
+rather than a channel with alpha. Two of the three terms now have a
+positive control; a mask carrying its own alpha channel still has none.
 
 **Quote the frame number, because the instrument reports a prefix.** The
 counters are cumulative and the last print is the figure, but there is no
