@@ -618,7 +618,14 @@ tkannouncetext(Tk *tk)
  * announced when it changed either.
  */
 static void tkannouncefocus(Tk*);
-static void announce(Tk*);
+/*
+ * tkannounce, not announce: include/kern.h:396's neighbourhood declares
+ * announce(char*, char*) for the kernel, and Inferno's lib9.h pulls kern.h
+ * in, so a static announce(Tk*) here is an "external redeclaration" under
+ * 7c even though the hosted build never sees it.  The rest of this file
+ * already uses the tkannounce* prefix; this one was the outlier.
+ */
+static void tkannounce(Tk*);
 
 static char*
 tkannouncestate(Tk *tk, char *buf, int nbuf)
@@ -641,7 +648,7 @@ tkannouncestate(Tk *tk, char *buf, int nbuf)
 	case TKchoicebutton:
 		/*
 		 * A choicebutton has no label of its own - what it displays IS
-		 * the chosen value - so on arrival announce() already says it.
+		 * the chosen value - so on arrival tkannounce() already says it.
 		 * This is for the other half: choosing a different one from the
 		 * menu changed the widget and said nothing at all.
 		 */
@@ -673,7 +680,7 @@ tkannouncestate(Tk *tk, char *buf, int nbuf)
 void
 tkannouncewidget(Tk *tk)
 {
-	announce(tk);
+	tkannounce(tk);
 }
 
 void
@@ -690,7 +697,7 @@ tkannouncechange(Tk *tk)
 }
 
 static void
-announce(Tk *tk)
+tkannounce(Tk *tk)
 {
 	char buf[128], sbuf[64];
 	char *text, *state, *class;
@@ -732,7 +739,7 @@ tkannouncefocus(Tk *tk)
 {
 	if(tk == nil || tk->name == nil)
 		return;
-	announce(tk);
+	tkannounce(tk);
 }
 
 void
