@@ -446,14 +446,40 @@ vmxcpuon(void)
 	print("vmx: cpu%d in VMX operation\n", m->machno);
 }
 
-/* make this vCPU's VMCS the current one on this processor */
+/*
+ * Make this vCPU's VMCS the current one on this processor.  Two
+ * vCPUs wired to one processor take turns on it, and either may be
+ * preempted between making its VMCS current and reading or entering
+ * it; so the vCPU's process carries its VMCS (up->vmx) and
+ * procrestore makes it current again whenever the process is
+ * scheduled (vmxprocrestore).
+ */
 static void
 vmxload(Vmxcpu *x)
 {
+	int s;
+
+	s = splhi();
+	up->vmx = x;
+	if(vmxcur[m->machno] != x){
+		if(vmptrld(PADDR(x->vmcs)) < 0)
+			panic("vmx: VMPTRLD %#p failed", x->vmcs);
+		vmxcur[m->machno] = x;
+	}
+	splx(s);
+}
+
+/* procrestore: the process is a vCPU's; its VMCS is current again */
+static void
+vmxrestore(Proc *p)
+{
+	Vmxcpu *x;
+
+	x = p->vmx;
 	if(vmxcur[m->machno] == x)
 		return;
 	if(vmptrld(PADDR(x->vmcs)) < 0)
-		error("vmx: VMPTRLD failed");
+		panic("vmx: VMPTRLD %#p failed", x->vmcs);
 	vmxcur[m->machno] = x;
 }
 
@@ -639,13 +665,18 @@ static void
 vmxvcpufree(Vcpu *v)
 {
 	Vmxcpu *x;
+	int s;
 
 	x = v->arch;
 	if(x == nil)
 		return;
+	s = splhi();
 	if(vmxcur[m->machno] == x)
 		vmxcur[m->machno] = nil;
+	if(up->vmx == x)
+		up->vmx = nil;
 	vmclear(PADDR(x->vmcs));
+	splx(s);
 	free(x->vmcs);
 	free(x->msrbits);
 	free(x->fp);
@@ -1349,5 +1380,6 @@ static Vmops vmxops = {
 void
 vmxlink(void)
 {
+	vmxprocrestore = vmxrestore;
 	vmregister(&vmxops);
 }

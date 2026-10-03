@@ -237,3 +237,4 @@ int	kbdinready(void);
 
 /* x86 DMA is cache coherent; 9front's port drivers call this */
 #define	dmaflush(clean, addr, len)
+extern void	(*vmxprocrestore)(Proc*);

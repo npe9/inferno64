@@ -614,6 +614,8 @@ procsave(Proc *p)
 	/* TODO obsolete with linear memory? */
 	mmuflushtlb();
 }
+void	(*vmxprocrestore)(Proc*);	/* vmx.c's, when configured */
+
 void
 procrestore(Proc *p)
 {
@@ -622,9 +624,8 @@ procrestore(Proc *p)
 		putdr(p->dr);
 	}
 	
-/*	if(p->vmx != nil)
+	if(p->vmx != nil && vmxprocrestore != nil)
 		vmxprocrestore(p);
-*/
 
 	fpuprocrestore(p);
 }
