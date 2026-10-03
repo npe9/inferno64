@@ -5900,3 +5900,34 @@ written removes the half-drawn frame; it does not yet promise a clean one.
 Compiled clean; nothing has run on the board, which is scoring
 .CW b461ec5f1
 alone.
+.PP
+.B "Why none of this has been LINKED, which is a better reason than host load."
+Everything above was compiled file by file with
+.CW "7c -wFV"
+(and
+.CW 6c
+for the shared port file) and deliberately not linked.  The reason recorded
+earlier was that heavy host work during a batch is a confound, and that is true
+but secondary.  The real one:
+.PP
+.CW tools/jtag/vmheld ,
+.CW kstack ,
+.CW where
+and
+.CW wedgediag
+all read the board by ADDRESS, and all of them check the board's
+.CW kerndate
+word against the one in
+.CW os/inferno/raspi3b/kernel8.img
+and REFUSE when it differs \(em which is the thing that makes them trustworthy.
+Linking replaces
+.CW iraspi3b
+and
+.CW kernel8.img ,
+so a link mid-batch does not merely load the host: it DISARMS every diagnostic
+the batch exists to feed.  If run 18 wedges, the tools would correctly refuse to
+name a symbol, and the catch would be wasted.
+.PP
+So the ordering is forced, and it is not a preference: finish the batch, then
+link.  The compiles establish that the code is syntactically sound and type
+correct; they say nothing about symbols, and the link waits.
