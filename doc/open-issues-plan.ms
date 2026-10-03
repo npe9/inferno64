@@ -7295,3 +7295,52 @@ The 84.9 per cent and the 99.44 per cent are both RATIOS computed on the
 already-coalesced per-present box, so neither depends on which regime its
 workload is in.  What does not survive is reading a per-FLUSH overlap as the
 scheme's saving, in either direction.
+.NH 2
+H1a.  The same workload reproduces on other hardware, and 1.00 is a NAMED ORIGIN
+.LP
+A peer ran
+.CW "gfxstress fill"
+on host emu at 1024x768, against this board at 640x480:
+.P1
+                         this board      peer, host
+                           640x480        1024x768
+box / sum                     2.86            2.92
+saving                      99.44%          99.71%
+rects per present             266             390, max 399
+.P2
+Neither figure was derived from the other and the hardware, the resolution and
+the screen path all differ.  Two instruments built independently agreeing to
+within 0.06 on the ratio and 0.3 points on the saving is better evidence for the
+model than either number alone, which is the first thing in this item that can
+be called a reproduction rather than a measurement.
+.PP
+.B "And the peer's reading of the 1.00 point is sharper than mine."
+I had described
+.CW box/sum
+as telling you which regime a workload is in.  It does more than that:
+.B "1.00 is a named origin, not merely a small number."
+It is the degenerate case where the bounding box IS the single rectangle, and
+therefore the ONLY point at which the per-flush instrument is EXACT rather than
+approximately right.  Everywhere else it is wrong by a factor the ratio names.
+.PP
+So
+.CW box/sum
+is a
+.B "validity test for a figure"
+rather than a description of a workload \(em a stronger claim, and one that
+needed the drawink point at exactly 1.00 to see, because two points off the
+origin cannot distinguish "tight here" from "exact here".
+.PP
+.B "The two directions have to be stated together, because each alone misleads."
+Scattering damage makes the bounding box a WORSE estimate of bytes and a BETTER
+case for deferring, SIMULTANEOUSLY \(em the box inflates toward the whole screen,
+and it is precisely that inflation that makes consecutive presents overlap almost
+completely.  A reader given only the inflation half will discount the 99 per cent
+saving as an artefact; a reader given only the saving half will quote absolute
+byte figures that are inflated by nearly 3x.  Both halves or neither.
+.PP
+.B "The transferable rule, which is the peer's:"
+when an instrument aggregates sub-events into a summary unit, print BOTH the
+aggregate and the sum of the parts.  Their ratio names the regime, and a summary
+without it cannot be read \(em not because it is wrong, but because its validity
+is conditional on a regime the output does not state.
