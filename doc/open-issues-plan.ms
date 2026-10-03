@@ -7240,3 +7240,58 @@ plus
 .CW mboxlock .
 .PP
 That last is now the only thing between this and turning it on.
+.NH 2
+H1a.  box/sum tells you which regime you are in, from counters already present
+.LP
+A peer added a rectangles-per-present counter after the 266-per-present finding
+and it falsified a sentence of theirs: Tk fragments too, 19.73 damage rectangles
+per present, max 103.  Their 197-against-197 could not have caught it because
+BOTH boundaries count presents and neither counts the rectangles inside one \(em
+two measurements agreeing about a quantity neither of them measures.
+.PP
+Their box/sum for Tk is 0.61, which is the OPPOSITE of what the
+.CW combinerect
+warning predicted, and the combination with this board's numbers gives the whole
+axis.  Both figures come from counters that already exist here: the per-PRESENT
+eager total is the sum of bounding boxes, the per-FLUSH eager total is the sum of
+the individual rectangles, so their ratio needs no new instrument.
+.P1
+workload                       box px       sum px   box/sum   rects/present
+drawink (board)               2538166      2538166      1.00            1.00
+Tk runtests -g (peer, host)  20544912     33594528      0.61           19.73
+gfxstress fill (board)      248474010     86979486      2.86          265.58
+.P2
+.PP
+.B "So box/sum is a regime indicator, and the three cases are qualitatively different."
+.IP \(bu
+.B "Exactly 1.00"
+\(em one rectangle per present.  The box IS the rectangle, "a flush is a frame"
+holds, and the per-flush instrument is exact.  This is drawink, and it is the
+same cross-check that matched to the byte earlier
+.CW ( 10152664/4
+is
+.CW 2538166 ).
+.IP \(bu
+.B "Below 1.00"
+\(em the rectangles OVERLAP EACH OTHER within a present, so the box is TIGHTER
+than their sum and the true union lies below it.  This is Tk: nested growing
+updates to one widget.  The box is the better of the two bounds here.
+.IP \(bu
+.B "Above 1.00"
+\(em scattered DISJOINT damage, so the box inflates toward the whole screen while
+the rectangles stay tiny.  This is gfxstress fill at 2.86, and it is exactly
+where the per-flush overlap reported 0.38 per cent against a 99.44 per cent
+truth.
+.PP
+.B "The same instrument is therefore tight at one end of this axis and silent at the other,"
+and the ratio says which end you are on before you quote anything.  That is
+worth more than either number: a reader with only the per-flush figure cannot
+tell 0.38 per cent from 99.44 per cent, and
+.CW box/sum
+distinguishes them without another run.
+.PP
+.B "What survives unchanged."
+The 84.9 per cent and the 99.44 per cent are both RATIOS computed on the
+already-coalesced per-present box, so neither depends on which regime its
+workload is in.  What does not survive is reading a per-FLUSH overlap as the
+scheme's saving, in either direction.
