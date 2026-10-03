@@ -4303,3 +4303,84 @@ Why the chip stops answering.  3100 recoveries with
 .CW Interrupt
 reading 0x100 every time says a fixed state rather than a fluctuating one, and
 the place to start is that register rather than the driver's own counters.
+.NH 2
+H4 CORRECTION.  There are TWO failures, and "ROOT CAUSE" above claims too much
+.LP
+The section headed
+.B "H4 ROOT CAUSE"
+says the hang is the wifi SDIO retry.  That is one of the failures and not both,
+and the fix for it did not stop the next one.
+.PP
+.B "Three catches, two signatures."
+.P1
+A  cpu0 idle+4     38 Queueing, wlrx Running, no SDIO data taken
+B  cpu0 awaitbit   3100 recoveries, "nothing answered"
+C  cpu0 idle+4     63 Queueing, NO refusals, heldkpc 0
+.P2
+B is the SDIO retry, diagnosed and bounded in
+.CW 796d76547 .
+A and C are something else: in C the backoff never fired, so the chip never
+refused a read, and all four cores were examined \(em three idle and one
+cycling through
+.CW clockpoll
+with a pc that MOVES between samples.  The kernel is alive and idling; only the
+Dis world is stuck.
+.PP
+.B "And C is a failure this kernel has described all along."
+.CW os/inferno/port/dis.c ,
+above
+.CW diswatchproc() :
+.QP
+This board wedges: the interpreter stops handing over, and a dump taken with
+^\\ at that moment shows processes Queueing for the VM and others Ready with
+nobody running them.  Five of those in two days.
+.LP
+That is catch C exactly.  There is already a watchdog for it \(em
+.CW diswatch ,
+pid 3, the process
+.CW VMHELD
+named \(em and the process dump this plan has been reading for three catches is
+ITS output, not a dump anyone asked for.
+.PP
+.B "Which means the evidence was being destroyed by the instrument that gathered it."
+.CW diswatchproc
+prints
+.CW DIS-WEDGED
+with the facts \(em beat,
+.CW vmq
+waiting or empty,
+.CW runhd
+ready or empty \(em and THEN calls
+.CW kstackdump() ,
+which writes two lines per process: over 150 lines on a 77-process board, into
+a ring that holds about 111.  A ring keeps the newest lines, so the one line
+that names the wedge was gone every time.  Three captures were reconstructed
+from process states when a single line had already said it.  Fixed in
+.CW 31c5358a3
+by printing the summary again AFTER the dump.
+.PP
+.B "What this does to the item."
+.IP 1.
+The SDIO retry was a real unbounded loop and bounding it was right, but it is
+not "the" cause and the previous section's heading overstates it.  Stated here
+rather than by editing that section, so the sequence of what was believed when
+stays legible.
+.IP 2.
+Catch A's data is thin \(em no
+.CW vmheld ,
+no per-core reading \(em so whether A is C or B is not decided.  It looks like
+C.
+.IP 3.
+The open question is now the one the kernel's comment already poses: why does
+the interpreter stop handing over?  And for the first time the next occurrence
+will say so itself, in a line that survives.
+.PP
+.B "So the batch to run is the same batch, and its reading has changed."
+A wedge now produces
+.CW DIS-WEDGED-END
+with
+.CW vmq
+and
+.CW runhd ,
+which distinguishes "nothing was waiting" (not a wedge) from "work was queued
+and nobody ran it" (the real thing) without reconstructing anything.
