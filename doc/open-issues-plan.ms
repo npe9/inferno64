@@ -7734,3 +7734,105 @@ to extract the low half of a genuinely 64-bit value \(em not an identity mask.
 Which is a clean result rather than a null one, because the scan is validated in
 both directions: it fires on the word that panicked a real board, and it is
 silent on 350078 words of this one.
+.NH 2
+H4.  7l now refuses to emit the undefined mask, and the 64-bit guard was the clue
+.LP
+A peer traced their panic to
+.CW utils/7l/asmout.c :
+the
+.CW "s == 64"
+branch is ALREADY guarded, and the comment immediately above their new lines
+describes this exact hazard \(em "a run of 32 ones in a 64-bit register has e ==
+64 and without N it became the reserved 32-bit element of all ones, an undefined
+instruction".  The
+.CW "s == 32"
+branch underneath it had no such check.  Whoever guarded one half left the other
+sitting beneath the explanation of why it was needed.
+.PP
+Added here too.  For
+.CW 0xffffffff
+with
+.CW "s == 32" :
+.CW findmask
+gives a run of 32,
+.CW "imms = s-1 = 31" ,
+.CW N=0
+correctly because
+.CW sf=0
+requires it, and
+.CW DecodeBitMasks
+then has len 5, levels 0b011111 and
+.CW "imms AND levels == levels"
+\(em UNDEFINED.  Every SHORTER run encodes fine, because
+.CW N=0
+with
+.CW "imms < 31"
+still yields esize 32.  All ones is the one value with no 32-bit encoding.
+.NH 3
+Both arms, run here
+.LP
+.B "Positive \(em no false positives."
+The kernel links clean with the new
+.CW 7l :
+.CW "mk exit=0" ,
+one link, zero diagnostics.
+.PP
+.B "Negative \(em it fires, and names the instruction."
+Injecting
+.CW "ulong undefimmprobe(ulong v){ return v & 0xffffffffUL; }"
+into a kernel source:
+.P1
+undefimmprobe: all-ones mask has no 32-bit logical immediate encoding 0xffffffff
+(4914)	ANDW	$4294967295,R4
+mk exit=1
+.P2
+.CW 7l 's
+own symbolic form is a THIRD independent confirmation of the decode, after this
+plan's by-hand derivation from the ARM ARM and the peer's spliced-Mach-O check
+against Apple's disassembler.  Three routes, one answer.
+.PP
+Source restored, kernel rebuilt, and
+.CW undefimm
+re-run: 0 undefined encodings in 350076 words.  So the scan DETECTS and the
+linker PREVENTS, which are different jobs \(em the scan covers kernels built by
+an older
+.CW 7l ,
+including anything already on a card.
+.NH 3
+And a verification of ten results I would otherwise have been trusting
+.LP
+The peer's control took three attempts, every failure a stale artefact, and the
+second is the one that bears on this plan:
+.CW "mk kernel8.img"
+reported SUCCESS having run
+.CW 7l
+zero times, because
+.CW iraspi3b
+was older than
+.CW libtk.a
+and was not relinked, so the image came from a stale ELF.
+.PP
+Every kernel build recorded in this session was therefore checked by their
+method:
+.P1
+build1..build12.log      7l -o runs: 1 each
+.P2
+All ten builds behind the installs above genuinely relinked, so each install
+carried the source it was supposed to.  The reason mine could not hit their trap
+is structural rather than lucky: the mkfile recompiles
+.CW $CONF.c
+with a fresh
+.CW KERNDATE
+on every invocation, so
+.CW raspi3b.7
+is always newer than
+.CW iraspi3b
+and the link is always forced \(em which is also why every install reported a
+different build stamp.
+.PP
+.B "The rule, which is cheap:"
+verify a link happened with
+.CW "grep -c '7l -o'"
+before believing EITHER arm of a control, exactly as an implicit-declaration
+sweep needs its file count.  A control that ran stale code proves nothing and
+looks like proof.

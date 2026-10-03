@@ -749,6 +749,33 @@ asmout(Prog *p, Optab *o)
 				if(mask->e == 64)
 					o1 |= 1<<22;
 			}else{
+				/*
+				 * AND THE 32-BIT HALF HAD NO SUCH CHECK, with the
+				 * comment above it describing this exact hazard.
+				 * Whoever guarded the 64-bit case fixed one half
+				 * and the other sat underneath it.
+				 *
+				 * A run of 32 ones is ALL ONES for a 32-bit
+				 * operation, and AArch64 has no logical-immediate
+				 * encoding for it: sf=0 requires N=0, imms becomes
+				 * s-1 = 31, and DecodeBitMasks then has len 5,
+				 * levels 0b011111 and imms AND levels == levels,
+				 * which the ARM ARM declares UNDEFINED.  Every
+				 * SHORTER run encodes fine, because N=0 with
+				 * imms < 31 still yields esize 32.
+				 *
+				 * It reached a real board as a panic rather than a
+				 * diagnostic: ESR 0x02000000 (EC=0, "unknown
+				 * reason") with far=0, from
+				 *	x & 0xffffffffUL
+				 * where ulong is 32 bits -- an identity mask
+				 * written as a portability fix for a 64-bit host.
+				 * tools/jtag/undefimm finds the word in an image;
+				 * this stops it being emitted.
+				 */
+				if(mask->s == 32)
+					diag("all-ones mask has no 32-bit logical immediate encoding %#llux\n%P",
+						p->from.offset, p);
 				u = (uvlong)p->from.offset >> 32;
 				if(u != 0 && u != 0xFFFFFFFF)
 					diag("mask needs 64 bits %#llux\n%P", p->from.offset, p);
