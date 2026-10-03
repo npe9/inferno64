@@ -1890,9 +1890,18 @@ is not a small term, which is the inverse of the usual mistake.
 Every flush in that bucket exceeds the whole frame budget **on the copy
 alone**, before any drawing happens. Without the flip rule those are
 dropped frames, deterministically rather than occasionally. With it they
-become the *cheapest* frames there are, because the copy is exactly what
-gets skipped when damage covers the screen. The rule converts the only
-frames that cannot meet the budget into free ones.
+become the *cheapest* frames there are: the copy is what gets skipped on
+a frame that is **about to** cover the screen, so the only frames that
+cannot meet the budget are converted into free ones.
+
+**That "about to" is load-bearing and this paragraph nearly shipped
+without it.** Read off the frame just *drawn*, the rule is the bug the
+correction earlier in this section exists to fix: a full-screen fill
+followed by a widget update would inherit a back buffer holding the frame
+before last. Unqualified, the budget arithmetic above is a persuasive
+argument for shipping exactly that — which is the whole reason the
+decision has to come from a description of the frame that has not been
+drawn yet, and cannot come from observing the one that has.
 
 The per-byte rate those figures rest on is not an assumption: the Pi's
 measured copy is 0.01664µs a byte at 1228800, 307200, 49152 and 12288
