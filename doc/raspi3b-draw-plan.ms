@@ -515,8 +515,50 @@ so a union over a frame is one walk of the node list; but
 .CW TkScene
 .CW ( include/tk.h:612 )
 is a block allocator, a head, a tail and a count, with no extent field
-and nothing accumulating one.  Step 3 is to accumulate it and let the
-flush use it.
+and nothing accumulating one.
+.PP
+.B "That last sentence is still true and is no longer the task."
+.CW tkscenebounds()
+in
+.CW libtk/scene.c
+already computes the union in one walk, conservatively: a clip node is
+ignored rather than intersected, since a clip can only shrink what gets
+painted; nodes inside a layer are skipped in favour of the layer's
+.CW dstr ,
+where the scratch actually lands; and an ellipse is computed from its
+centre and radii rather than from
+.CW r ,
+which for that one node kind is not a box.  So the libtk side of step 3
+exists.  What is left is a consumer.
+.PP
+.B "And the stored field is NOT that consumer."
+Measured rather than assumed, on
+.CW inferno-rio
+.CW ( 5e8980f8d ):
+.CW tkscenebounds()
+has exactly one caller, the stats block in
+.CW tkwalkflush() ,
+which calls it once per tree and then
+.CW tkscenefree() s
+the tree two lines later.  A cached extent would be written once, read
+once and freed.  A field accumulated during construction would have to be
+maintained at every one of the dozen
+.CW tkscene*()
+constructors, and omitting one would silently UNDERSTATE the box, which
+is the dangerous direction for a damage rectangle.  The walk costs one
+pass per tree and the measurement puts the whole stats block below the
+rig's drift.
+.PP
+So step 3 is: let
+.CW flushmemscreen
+clean the area
+.CW tkscenebounds()
+reports, instead of the union of whatever rectangles happened to get
+drawn.  That is a change in
+.CW os/inferno/raspi3b/screenbcm.c
+and the seam that reaches it \(em kernel work, not
+.CW libtk
+work, and not this session's to write.
 .PP
 .B Gate:
 a frame that touches one small widget must clean a correspondingly small
@@ -524,10 +566,19 @@ area.  Count bytes cleaned per frame, with a negative control: a frame
 that legitimately dirties the whole screen must still report the whole
 screen.  A metric that only ever goes down is measuring the wrong thing.
 .PP
-This step depends on the render-node
+This step depended on the render-node
 .CW libtk
-being present on this branch, which it is not \(em see the open
-integration question below.
+being present on this branch, and it now is:
+.CW 18207de0d
+brought it over (35 files, 5106 insertions \(em every widget was
+converted to emit nodes, so the whole of
+.CW libtk
+diverged along with
+.CW include/tk.h 's
+vocabulary), and
+.CW 76163c65a
+records it rendering on silicon, byte-identical to the direct path across
+22 cases.  The integration question below is answered.
 .NH 1
 Step 4, contingent: DMA for the copy, only if steps 1 and 2 fail
 .PP
@@ -634,3 +685,38 @@ this branch's board work onto
 .CW inferno-rio ,
 or both onto main \(em is a repository-structure decision, not a
 technical one, and steps 1 and 2 do not depend on it.
+.PP
+.B ANSWERED:
+libtk onto this branch, the user's choice of the three.  Done as
+.CW 18207de0d .
+.PP
+.B "And the technical risk this section cited does not exist."
+It said this branch carries the
+.CW memdrawcopy
+hooks and
+.CW inferno-rio 's
+does not, so a path checkout would silently revert them.  Both branches
+have 6
+.CW memdrawcopy
+and 3
+.CW hwdraw
+references, and
+.CW "grep -cE \(dqmemdrawcopy|hwdraw\(dq"
+over the branch diff of
+.CW libmemdraw/draw.c
+is 0 \(em the divergence there is entirely
+.CW chardrawaa ,
+the antialiased-glyph coverage path, which
+.CW inferno-rio
+HAS and this branch did not.  The gap ran the opposite way to the
+assumption, and what made the checkout safe was that
+.CW "git diff merge-base rio-pi-tk -- libtk"
+is empty: this branch had made no
+.CW libtk
+changes since the split, so the conflict surface really was nil.
+.CW libmemdraw/mkfile
+was left alone deliberately, being the one file here whose content
+.CW inferno-rio
+lacks (the
+.CW .j
+JIT members).
