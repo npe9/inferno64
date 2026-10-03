@@ -311,6 +311,11 @@ dossrv(rfd: ref Sys->FD, pidch: chan of int)
 	sys->fprint(sys->fildes(2),
 		"dosfs: %d-sector tracks, %d buffers (%dKB), %d track reads (%d read-modify-write), %d track writes\n",
 		sect2trk, niobuf, niobuf*trksize/1024, ntread, ntrmw, ntwrite);
+	for(i := 0; i < len nregion; i++)
+		if(nregion[i] != 0)
+			sys->fprint(sys->fildes(2),
+				"dosfs: %d reads from %s (%d had sectors already resident)\n",
+				nregion[i], regionname[i], nregionpart[i]);
 }
 
 rversion(t: ref Tmsg.Version): ref Rmsg
@@ -1549,15 +1554,20 @@ Dmddo:
 	# card through this same dossrv takes 7 seconds -- but a number
 	# that decides performance should not have to be guessed at.
 	#
-	sys->fprint(sys->fildes(2),
-		"dosfs: %d-byte sectors, %d sectors/cluster, fat%d, %d clusters, %d-sector track\n",
-		bp.sectsize, bp.clustsize, bp.fatbits, bp.fatclusters, sect2trk);
+	# fatbits is decided just below, so this print has to come after it:
+	# it read the field before anything assigned it and said "fat0" for
+	# every filesystem this server has ever mounted.  A number printed so
+	# that it can be checked is worth less than nothing when it is always
+	# the same wrong number.
 	if(bp.isfat32)
 		bp.fatbits = 32;
 	else if(bp.fatclusters < 4087)
 		bp.fatbits = 12;
 	else
 		bp.fatbits = 16;
+	sys->fprint(sys->fildes(2),
+		"dosfs: %d-byte sectors, %d sectors/cluster, fat%d, %d clusters, %d-sector track\n",
+		bp.sectsize, bp.clustsize, bp.fatbits, bp.fatclusters, sect2trk);
 	bp.freeptr = 2;
 	if(debug & FAT_INFO){
 		chat(sys->sprint("fatbits=%d (%d clusters)...",
@@ -3733,6 +3743,41 @@ twrite(t: ref Iotrack): int
 	return 0;
 }
 
+#
+# Where the reads come from, by REGION of the medium and by how many
+# sectors of the track were already present.
+#
+# The totals alone said this server read 1251 tracks to write 5031
+# sectors and invited the conclusion that the FAT is being re-read,
+# which the arithmetic refuses: a 32-bit FAT holds 1152 entries in a
+# nine-sector track, so the 1245 clusters that write allocated span
+# barely one track and LRU touches it every iteration.  A count cannot
+# say which region it came from.  These can.
+#
+# nregion[] is indexed by the four regions below; npartial counts the
+# reads that pulled a track in only to preserve sectors the client did
+# not write, which is the read-modify-write the totals already report
+# but not where it happened.
+#
+Rboot, Rfat, Rroot, Rdata: con iota;
+regionname := array[] of {"boot/reserved", "fat", "root dir", "data"};
+nregion := array[4] of {* => 0};
+nregionpart := array[4] of {* => 0};
+
+trackregion(t: ref Iotrack): int
+{
+	if(t.xf == nil || t.xf.ptr == nil)
+		return Rboot;
+	bp := t.xf.ptr;
+	if(t.addr >= bp.dataaddr)
+		return Rdata;
+	if(t.addr >= bp.rootaddr)
+		return Rroot;
+	if(t.addr >= bp.fataddr)
+		return Rfat;
+	return Rboot;
+}
+
 tread(t: ref Iotrack): int
 {
 	refn := 0;
@@ -3743,6 +3788,10 @@ tread(t: ref Iotrack): int
 			++refn;
 
 	ntread++;
+	reg := trackregion(t);
+	nregion[reg]++;
+	if(refn != 0)
+		nregionpart[reg]++;
 	if(iodebug)
 		chat(sys->sprint("[tread %d...", t.addr));
 
