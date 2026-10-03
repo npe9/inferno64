@@ -138,6 +138,28 @@ main(void)
 		fdtinit(dtbptr);
 		if(fdtreg("riscv,plic0", &base, &size) && base != 0)
 			plicbase = (uintptr)base;
+		/*
+		 * AIA in place of the PLIC: the lowest APLIC is the root
+		 * (machine-level) domain, the lowest IMSIC the
+		 * machine-level interrupt files (QEMU's virt,aia=aplic-imsic).
+		 */
+		{
+			/* the supervisor-level IMSIC's guest files, for guests (vmplat.c) */
+			extern int fdtimsicguests(uvlong*, uvlong*, int*);
+			extern uintptr guestimsic;
+			extern int guestbits;
+			int bits;
+			if(fdtimsicguests(&base, &size, &bits) && bits > 0){
+				guestimsic = (uintptr)base;
+				guestbits = bits;
+			}
+		}
+		if(fdtregmin("riscv,imsics", &base, &size) && base != 0){
+			extern uintptr imsicbase, aplicbase;
+			imsicbase = (uintptr)base;
+			if(fdtregmin("riscv,aplic", &base, &size) && base != 0)
+				aplicbase = (uintptr)base;
+		}
 		if(fdtregmin("virtio,mmio", &base, &size) && base != 0)
 			virtiobase = (uintptr)base;	/* lowest slot; drivers scan up */
 	}
@@ -173,9 +195,12 @@ main(void)
 		else
 			print("fdt: no device tree\n");
 		{
-			extern uintptr plicbase, virtiobase;
-			print("fdt: plic base %#p (mem.h PLIC %#p)\n",
-				plicbase, (uintptr)PLIC);
+			extern uintptr plicbase, virtiobase, imsicbase, aplicbase;
+			if(imsicbase != 0)
+				print("fdt: aia: aplic %#p imsic %#p\n", aplicbase, imsicbase);
+			else
+				print("fdt: plic base %#p (mem.h PLIC %#p)\n",
+					plicbase, (uintptr)PLIC);
 			print("fdt: virtio base %#p (mem.h VIRTIO0 %#p)\n",
 				virtiobase, (uintptr)VIRTIO0);
 		}

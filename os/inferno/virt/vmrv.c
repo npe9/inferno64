@@ -14,6 +14,10 @@
  * which vmplat.c is), the G stage's faults (MMIO), WFI (hstatus.VTW),
  * and the host's own interrupts, which the host then takes.
  *
+ * Where the processor's IMSIC has guest interrupt files (AIA), a vCPU
+ * runs with one of them (hstatus.VGEIN): the guest's IMSIC CSRs and its
+ * interrupt file page reach it in hardware.
+ *
  * The VS CSRs are the guest's supervisor state and are swapped with
  * it, so vCPUs can share a processor; so is the mode it was in, VS or
  * VU, which a host interrupt can take it out of.  Interrupts go to the guest by
@@ -51,6 +55,8 @@ enum {
 	Cvscause	= 0x242,
 	Cvstval		= 0x243,
 	Cvsatp		= 0x280,
+	Cvsiselect	= 0x250,
+	Chgeip		= 0xE12,
 
 	/* mstatus */
 	Mie		= 1<<3,
@@ -60,6 +66,8 @@ enum {
 
 	/* hstatus */
 	Vtw		= 1<<21,
+	Vgeinshift	= 12,
+	Vgeinmask	= 0x3F,
 
 	/* vsstatus */
 	Sie		= 1<<1,
@@ -126,6 +134,7 @@ struct Rvcpu
 
 	uvlong	vs[RvNreg-RvVsstatus];	/* the VS CSRs and hvip, by register index */
 	uvlong	mpp;		/* the mode it left: VS (MppS) or VU (0) */
+	int	vgein;		/* its IMSIC guest file, 0 none */
 };
 
 typedef struct Gpt Gpt;
@@ -136,6 +145,10 @@ struct Gpt
 };
 
 extern void	rvrun(Rvcpu*);
+extern uvlong	csrrdvsiselect(void);
+extern void	csrwrvsiselect(uvlong);
+extern uvlong	csrrdhgeip(void);
+extern uintptr	guestimsic;	/* main.c: IMSIC guest files, 0 if the processor has none (no AIA) */
 extern void	rvhfencegvma(void);
 extern void	rvhfencevvma(void);
 static Rvcpu	*lastrun;	/* on this processor (MAXMACH is 1 here) */
@@ -182,11 +195,12 @@ static char *rvregname[RvNreg] = {
 	"s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6",
 	"pc",
 	"vsstatus", "vsie", "vstvec", "vsscratch", "vsepc", "vscause", "vstval", "vsatp",
+	"vsiselect",
 	"hvip",
 };
 
 static int vscsr[] = {
-	Cvsstatus, Cvsie, Cvstvec, Cvsscratch, Cvsepc, Cvscause, Cvstval, Cvsatp, Chvip,
+	Cvsstatus, Cvsie, Cvstvec, Cvsscratch, Cvsepc, Cvscause, Cvstval, Cvsatp, Cvsiselect, Chvip,
 };
 
 /*
@@ -213,6 +227,8 @@ rdcsr(int csr)
 	case Cvscause:	v = csrrdvscause(); break;
 	case Cvstval:	v = csrrdvstval(); break;
 	case Cvsatp:	v = csrrdvsatp(); break;
+	case Cvsiselect:	v = csrrdvsiselect(); break;
+	case Chgeip:	v = csrrdhgeip(); break;
 	default:
 		panic("vmrv: rdcsr %#ux", csr);
 		v = 0;
@@ -244,6 +260,7 @@ wrcsr(int csr, uvlong v)
 	case Cvscause:	csrwrvscause(v); break;
 	case Cvstval:	csrwrvstval(v); break;
 	case Cvsatp:	csrwrvsatp(v); break;
+	case Cvsiselect:	csrwrvsiselect(v); break;
 	default:
 		panic("vmrv: wrcsr %#ux", csr);
 	}
@@ -310,6 +327,20 @@ rvvcpufree(Vcpu *v)
 	free(v->arch);
 }
 
+void
+rvvgein(Vcpu *v, int g)
+{
+	((Rvcpu*)v->arch)->vgein = g;
+}
+
+uvlong
+rvgeip(void)
+{
+	if(guestimsic == 0)
+		return 0;
+	return rdcsr(Chgeip);
+}
+
 uvlong
 rvtime(void)
 {
@@ -346,8 +377,11 @@ rvrunvcpu(Vcpu *v, Vmexit *e)
 		rvhfencevvma();
 		lastrun = r;
 	}
+	/* the guest interrupt file before the VS CSRs: vsiselect reaches into it */
+	wrcsr(Chstatus, (rdcsr(Chstatus) & ~((uvlong)Vgeinmask<<Vgeinshift)) | (uvlong)r->vgein<<Vgeinshift);
 	for(i = 0; i < nelem(vscsr); i++)
-		wrcsr(vscsr[i], r->vs[i]);
+		if(vscsr[i] != Cvsiselect || guestimsic != 0)
+			wrcsr(vscsr[i], r->vs[i]);
 	ms = rdcsr(Cmstatus);
 	ms &= ~(Mpp|Mie|(1ULL<<39)|(1ULL<<38));
 	/* MPV, and back to the mode it was in: a host interrupt can take it out of its user mode */
@@ -355,7 +389,8 @@ rvrunvcpu(Vcpu *v, Vmexit *e)
 	rvrun(r);
 	r->mpp = r->mstatus & Mpp;
 	for(i = 0; i < nelem(vscsr); i++)
-		r->vs[i] = rdcsr(vscsr[i]);
+		if(vscsr[i] != Cvsiselect || guestimsic != 0)
+			r->vs[i] = rdcsr(vscsr[i]);
 	/* not virtualised, and nothing of the guest's, from here on */
 	wrcsr(Cmstatus, rdcsr(Cmstatus) & ~((1ULL<<39)|(1ULL<<38)|Mpp));
 	wrcsr(Chgatp, 0);

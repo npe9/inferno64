@@ -757,7 +757,12 @@ where it goes wrong inside Bochs is not found yet.  With
 the backend takes the guest's page faults itself and gives them back as
 the processor would, CR2 set (a VMM's ordinary choice without EPT), and
 the guest gets past it: Linux printed its banner on the application
-processor.  M3 on VMX is being run that way.
+processor.  Run that way, the four-processor guest printed its first
+two lines and then nothing more, the vCPU heartbeat included, for half
+an hour: the same as the four-vCPU guest on the one-processor host.
+So there are two problems: the lost CR2 on Bochs's application
+processor, and a host that stops when a VMX guest has four vCPUs.  M3
+on VMX is still open.
 .IP "Phase 9: M8 on SVM (QEMU)." 4
 .CW pc/vmvirtio.c :
 virtio functions of the hypervisor's own on the guest's PCI bus, the
@@ -1116,8 +1121,50 @@ middle, where the guest's tty echoed it as
 .CW ^[[1;1R
 into the output.  The command is now typed after the answer, or three
 seconds after the marker if the shell asks nothing.
+.IP "Phase 15: AIA on RISC-V (QEMU virt,aia=aplic-imsic, TCG)." 4
+The host first: the riscv64 port drives AIA where the device tree has
+it instead of a PLIC \(en the root APLIC domain in MSI mode, every
+wired source a message to this hart's machine-level IMSIC with its
+source number for identity, claimed through mtopei
+.CW trap.c ). (
+Then the guest: where the processor's IMSIC has guest interrupt files
+(riscv,guest-index-bits), hart h of a machine runs with file h+1
+(hstatus.VGEIN, vsiselect swapped with it), so the guest's IMSIC CSRs
+\(en its claims, enables, threshold \(en are the hardware's.  The
+platform emulates an APLIC in MSI mode for the guest's devices: a
+source that becomes pending is written, as its identity, straight into
+the target hart's guest file, and the hart woken.  The guest's IMSIC
+pages are left unmapped, so an IPI one hart sends another comes to the
+platform too, is put in the target's file the same way, and wakes it
+\(en a write in hardware would not: the guest-external interrupt is
+supervisor-level and this kernel runs in machine mode.
+.CW vmlinux
+describes an IMSIC and the APLIC when the status says there is a file
+for every hart, and the harts' ISA gains ssaia.  Linux:
+.DS
+.ft CW
+riscv-intc: 64 local interrupts mapped using AIA
+riscv-imsic: imsics@28000000: providing IPIs using interrupt 1
+riscv-aplic d000000.aplic: 31 interrupts forwarded to MSI base 0x0000000028000000
+LINUXGUEST: irq  11:          5  APLIC-MSI-d000000.aplic   1 Level   -fasteoi   virtio1
+LINUXGUEST: irq  12:          6  APLIC-MSI-d000000.aplic   2 Level   -fasteoi   virtio0
+aia imsic 0x28000000 files 3 aplic 0xd000000 domaincfg 0x104 ie 0x6 ip 0x0 msis 17
+.ft
+.DE
+and with four harts (seven guest files) all came online, the eight
+workers finished, and every hart took rescheduling and function-call
+IPIs, 977 messages through the platform.
+.CW "CHECKRV_AIA=1 scripts/check-rv.sh"
+runs every stage on the AIA machine.
 .IP
-Still to do for M12: AIA/IMSIC in place of the PLIC, the RISC-V IOMMU,
+Open: on the AIA machine the host has panicked in about one run in four
+\(en a return into
+.CW collect
+through a saved return address with bits 49 and 50 set \(en with the
+guest on AIA and with it on the PLIC alike, so in the host's own AIA
+path; never in eight runs on the PLIC machine.  Boot is slower with
+AIA too (21 seconds of guest uptime to its shell with four harts,
+against under one).  Still to do for M12 besides: the RISC-V IOMMU,
 and a host with more than one processor (the riscv64 port's MAXMACH
 is 1).
 .IP "Next." 4

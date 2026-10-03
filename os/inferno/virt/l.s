@@ -579,3 +579,32 @@ TEXT	rvhfencevvma(SB), 1, $-4
 TEXT	rvfencei(SB), 1, $-4
 	WORD	$0x0000100F	/* fence.i */
 	RET
+
+/* the machine-level IMSIC (trap.c), through its indirect registers */
+TEXT	csrwrmiselect(SB), 1, $-4
+	MOV	RARG, CSR(0x350)
+	RET
+
+TEXT	csrrdmireg(SB), 1, $-4
+	MOV	CSR(0x351), RARG
+	RET
+
+TEXT	csrwrmireg(SB), 1, $-4
+	MOV	RARG, CSR(0x351)
+	RET
+
+TEXT	csrclaimmtopei(SB), 1, $-4
+	WORD	$0x35C01473	/* csrrw x8, mtopei, x0: the top identity, claimed */
+	RET
+
+TEXT	csrrdvsiselect(SB), 1, $-4
+	MOV	CSR(0x250), RARG
+	RET
+
+TEXT	csrwrvsiselect(SB), 1, $-4
+	MOV	RARG, CSR(0x250)
+	RET
+
+TEXT	csrrdhgeip(SB), 1, $-4
+	MOV	CSR(0xE12), RARG
+	RET

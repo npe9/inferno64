@@ -35,6 +35,80 @@ static void	*irqarg[96];
 
 extern char	etext[];
 
+/*
+ * The Advanced Interrupt Architecture, where the machine has it
+ * instead of a PLIC (main sets these from the device tree): the root
+ * APLIC domain in MSI mode turns each wired source into a message to
+ * this hart's machine-level IMSIC, identity = source number, and an
+ * external interrupt is claimed from the IMSIC through mtopei.
+ */
+uintptr	imsicbase;
+uintptr	aplicbase;
+uintptr	guestimsic;	/* the supervisor-level IMSIC, whose guest files guests get (vmplat.c) */
+int	guestbits;	/* riscv,guest-index-bits: (1<<guestbits)-1 guest files */
+
+enum {
+	Aplicdomaincfg	= 0x0000,
+	Aplicsourcecfg	= 0x0004,	/* +4*(source-1) */
+	Aplicmmsiaddr	= 0x1BC0,
+	Aplicmmsiaddrh	= 0x1BC4,
+	Aplicsetienum	= 0x1EDC,
+	Aplictarget	= 0x3004,	/* +4*(source-1) */
+
+	DomIE		= 1<<8,
+	DomDM		= 1<<2,		/* MSI delivery */
+	SrcLevelHigh	= 6,
+
+	/* IMSIC registers, by miselect */
+	Eidelivery	= 0x70,
+	Eithreshold	= 0x72,
+	Eie0		= 0xC0,		/* 64 identities a register on RV64, even numbers only */
+};
+
+extern void	csrwrmiselect(uvlong);
+extern uvlong	csrrdmireg(void);
+extern void	csrwrmireg(uvlong);
+extern uvlong	csrclaimmtopei(void);
+
+#define	APLIC(r)	(*(u32*)(aplicbase + (r)))
+
+static void
+imsicwr(int reg, uvlong v)
+{
+	csrwrmiselect(reg);
+	csrwrmireg(v);
+}
+
+static uvlong
+imsicrd(int reg)
+{
+	csrwrmiselect(reg);
+	return csrrdmireg();
+}
+
+static void
+aiainit(void)
+{
+	APLIC(Aplicdomaincfg) = DomDM;	/* off while it is set up */
+	APLIC(Aplicmmsiaddr) = imsicbase >> 12;
+	APLIC(Aplicmmsiaddrh) = 0;
+	imsicwr(Eithreshold, 0);
+	imsicwr(Eidelivery, 1);
+	APLIC(Aplicdomaincfg) = DomIE | DomDM;
+}
+
+static void
+aiaenable(int irq)
+{
+	int r;
+
+	APLIC(Aplicsourcecfg + 4*(irq-1)) = SrcLevelHigh;
+	APLIC(Aplictarget + 4*(irq-1)) = irq;	/* hart 0, guest 0, identity irq */
+	r = Eie0 + 2*(irq/64);
+	imsicwr(r, imsicrd(r) | 1ULL<<(irq%64));
+	APLIC(Aplicsetienum) = irq;
+}
+
 static u32*
 plicctx(void)
 {
@@ -48,6 +122,10 @@ plicenable(int irq)
 
 	if(irq <= 0)
 		return;
+	if(imsicbase != 0){
+		aiaenable(irq);
+		return;
+	}
 	*(u32*)(plicbase + PlicPriority + 4*irq) = 1;
 	en = (u32*)(plicbase + PlicEnable);
 	en[irq/32] |= 1 << (irq%32);
@@ -56,6 +134,12 @@ plicenable(int irq)
 void
 plicinit(void)
 {
+	if(imsicbase != 0){
+		aiainit();
+		plicenable(Uart0IRQ);
+		mextie();
+		return;
+	}
 	plicctx()[PlicThresh/4] = 0;
 	plicenable(Uart0IRQ);
 	mextie();
@@ -83,6 +167,13 @@ trap(Ureg *ur)
 			clockintr(ur);
 			return;
 		case IrqExternal:
+			if(imsicbase != 0){
+				/* claimed by reading and clearing mtopei: identity in 26:16 */
+				while((irq = csrclaimmtopei() >> 16) != 0)
+					if(irq < nelem(irqhandler) && (f = irqhandler[irq]) != nil)
+						f(ur, irqarg[irq]);
+				return;
+			}
 			irq = plicctx()[PlicClaim/4];
 			if(irq == 0)
 				return;

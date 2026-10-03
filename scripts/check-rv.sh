@@ -19,6 +19,12 @@
 # rest started by the SBI's hart_start; all come online, eight busy
 # workers finish, every hart accounts time and takes IPIs.
 #
+# With CHECKRV_AIA=1 every run is on QEMU's AIA machine instead
+# (virt,aia=aplic-imsic,aia-guests=7): the host drives its APLIC and
+# IMSIC, and the guests get AIA -- an IMSIC guest file a hart, in
+# hardware, and an emulated APLIC sending their devices' interrupts
+# into it.
+#
 # usage: scripts/check-rv.sh
 # needs: os/inferno/virt/ivirtvm, ivirtlinux and ivirtsmp (mk CONF=...
 # in os/inferno/virt), .guest/rv (scripts/mklinuxguest.sh),
@@ -26,12 +32,18 @@
 ROOT=`cd \`dirname "$0"\`/.. && pwd`
 K=$ROOT/os/inferno/virt/ivirtvm
 [ -f "$K" ] || { echo "check-rv: no $K; mk CONF=virtvm in os/inferno/virt first" >&2; exit 1; }
+MACH=virt
+TAG="riscv-h, QEMU TCG"
+if [ -n "$CHECKRV_AIA" ]; then
+	MACH=virt,aia=aplic-imsic,aia-guests=7
+	TAG="riscv-h, AIA, QEMU TCG"
+fi
 SER=`mktemp`
 LOG=`mktemp`
 trap 'rm -f "$SER" "$LOG"' 0
 # the serial port straight to a file (through a pipe, the last lines
 # wait in a buffer); its lines end with \r
-timeout 120 qemu-system-riscv64 -M virt -m 256 -display none -bios none -kernel "$K" \
+timeout 120 qemu-system-riscv64 -M $MACH -m 256 -display none -bios none -kernel "$K" \
 	-monitor none -serial file:"$SER" </dev/null >/dev/null 2>&1 &
 n=0
 until tr -d '\r' <"$SER" >"$LOG"; grep -q 'RVTEST: M1 PASS\|RVTEST: FAIL\|panic' "$LOG"; do
@@ -45,9 +57,9 @@ tr -d '\r' <"$SER" >"$LOG"
 grep 'RVTEST: \(backend\|exit\|the guest\|FAIL\|M1\)\|^vcpu0 handled\|^platform\|panic' "$LOG" | sed 's/^/	/'
 fail=0
 if grep -q 'RVTEST: M1 PASS' "$LOG"; then
-	echo "check-rv: M1 (riscv-h, QEMU TCG): pass"
+	echo "check-rv: M1 ($TAG): pass"
 else
-	echo "check-rv: M1 (riscv-h, QEMU TCG): FAIL"
+	echo "check-rv: M1 ($TAG): FAIL"
 	tail -20 "$LOG" | sed 's/^/	/'
 	fail=1
 fi
@@ -55,7 +67,7 @@ fi
 K=$ROOT/os/inferno/virt/ivirtlinux
 [ -f "$K" ] || { echo "check-rv: no $K; mk CONF=virtlinux in os/inferno/virt first" >&2; exit 1; }
 : >"$SER"
-timeout 1500 qemu-system-riscv64 -M virt -m 256 -display none -bios none -kernel "$K" \
+timeout 1500 qemu-system-riscv64 -M $MACH -m 256 -display none -bios none -kernel "$K" \
 	-netdev user,id=n0 -device virtio-net-device,netdev=n0 \
 	-netdev user,id=n1 -device virtio-net-device,netdev=n1 \
 	-monitor none -serial file:"$SER" </dev/null >/dev/null 2>&1 &
@@ -69,28 +81,28 @@ pkill -f "qemu-system-riscv6[4].*$K" 2>/dev/null
 tr -d '\r' <"$SER" >"$LOG"
 grep -a 'ttyS0 at\|riscv-plic\|^LINUXGUEST: \(up\|typed\|vda\|wrote\|dhcp.*lease\|irq\|ran\)\|^Linux 6\|vmlinux: exit\|^vcpu0 handled\|^plic\|^mmio\|RVLINUX: disk\|panic' "$LOG" | sed 's/^/	/'
 if grep -q '^LINUXGUEST: up' "$LOG" && grep -q '^LINUXGUEST: typed' "$LOG" && grep -q '^LINUXGUEST: ran' "$LOG"; then
-	echo "check-rv: M2 (riscv-h, QEMU TCG): pass"
+	echo "check-rv: M2 ($TAG): pass"
 else
-	echo "check-rv: M2 (riscv-h, QEMU TCG): FAIL"
+	echo "check-rv: M2 ($TAG): FAIL"
 	tail -20 "$LOG" | sed 's/^/	/'
 	fail=1
 fi
 if grep -q '^LINUXGUEST: vda says INFERNO-VIRTIO-DISK' "$LOG" && grep -q 'RVLINUX: disk sector 1: guest-wrote-this' "$LOG"; then
-	echo "check-rv: M8 disk (riscv-h, virtio-mmio, QEMU TCG): pass"
+	echo "check-rv: M8 disk ($TAG, virtio-mmio): pass"
 else
-	echo "check-rv: M8 disk (riscv-h, virtio-mmio, QEMU TCG): FAIL"
+	echo "check-rv: M8 disk ($TAG, virtio-mmio): FAIL"
 	fail=1
 fi
 if grep -q '^LINUXGUEST: dhcp udhcpc: lease of' "$LOG"; then
-	echo "check-rv: M8 net (riscv-h, virtio-mmio, QEMU TCG): pass"
+	echo "check-rv: M8 net ($TAG, virtio-mmio): pass"
 else
-	echo "check-rv: M8 net (riscv-h, virtio-mmio, QEMU TCG): FAIL"
+	echo "check-rv: M8 net ($TAG, virtio-mmio): FAIL"
 	fail=1
 fi
 K=$ROOT/os/inferno/virt/ivirtsmp
 [ -f "$K" ] || { echo "check-rv: no $K; mk CONF=virtsmp in os/inferno/virt first" >&2; exit 1; }
 : >"$SER"
-timeout 3000 qemu-system-riscv64 -M virt -m 256 -display none -bios none -kernel "$K" \
+timeout 3000 qemu-system-riscv64 -M $MACH -m 256 -display none -bios none -kernel "$K" \
 	-monitor none -serial file:"$SER" </dev/null >/dev/null 2>&1 &
 n=0
 until tr -d '\r' <"$SER" >"$LOG"; grep -q 'RVSMP: done\|panic' "$LOG"; do
@@ -110,9 +122,9 @@ done
 grep '^LINUXGUEST: irq IPI[01]:' "$LOG" | awk '{ n = 0; for (i = 4; i <= 7; i++) if ($i > 0) n++; if (n > 1) found = 1 } END { exit !found }' || ok=0
 grep -q 'BUG\|soft lockup\|rcu.*stall' "$LOG" && ok=0
 if [ $ok = 1 ]; then
-	echo "check-rv: M3 (riscv-h, 4 harts, QEMU TCG): pass"
+	echo "check-rv: M3 ($TAG, 4 harts): pass"
 else
-	echo "check-rv: M3 (riscv-h, 4 harts, QEMU TCG): FAIL"
+	echo "check-rv: M3 ($TAG, 4 harts): FAIL"
 	tail -20 "$LOG" | sed 's/^/	/'
 	fail=1
 fi

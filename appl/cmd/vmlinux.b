@@ -427,14 +427,20 @@ rvboot(kernel, initrd, append: string, megs, secs: int)
 			fail(sys->sprint("virtio net %s: %r", hd nets));
 		sys->print("vmlinux: virtio net on %s\n", hd nets);
 	}
-	# where the platform put them: "mmio base irq n ..." in status
+	# where the platform put them: "mmio base irq n ..." in status; and
+	# "aia imsic base files n" if the processor gives guests AIA
 	mmios: list of (big, int);
+	imsic := big 0;
 	(nil, sl) := sys->tokenize(readall(dir + "/status"), "\n");
 	for(; sl != nil; sl = tl sl){
 		(nf, f) := sys->tokenize(hd sl, " ");
 		if(nf >= 4 && hd f == "mmio" && hd tl tl f == "irq")
 			mmios = (num(hd tl f), int hd tl tl tl f) :: mmios;
+		if(nf >= 5 && hd f == "aia" && hd tl f == "imsic" && int hd tl tl tl tl f >= ncpu)
+			imsic = num(hd tl tl f);
 	}
+	if(imsic != big 0)
+		sys->print("vmlinux: AIA: an IMSIC guest file a hart at %#bux, an APLIC\n", imsic);
 	mem := sys->open(dir + "/mem", Sys->ORDWR);
 	if(mem == nil)
 		fail(sys->sprint("mem: %r"));
@@ -453,7 +459,7 @@ rvboot(kernel, initrd, append: string, megs, secs: int)
 		copymem(mem, rdaddr, rfd, big 0, rlen, initrd);
 		rdend = rdaddr + rlen;
 	}
-	dtb := mkdtb(memsize, append, rdaddr, rdend, mmios, ncpu);
+	dtb := mkdtb(memsize, append, rdaddr, rdend, mmios, ncpu, imsic);
 	if(len dtb > Dtbmax)
 		fail("the device tree is too big");
 	writemem(mem, dtbaddr, dtb);
@@ -675,10 +681,12 @@ c2(v: big): (big, big)
 }
 
 Plic:	con 16r0C000000;
-Nplic:	con 2;	# phandles: the PLIC's, and hart h's interrupt controller's
+Aplic:	con 16r0D000000;
+Nplic:	con 2;	# phandles: the PLIC's (or the APLIC's), the IMSIC's, and hart h's interrupt controller's
+Nimsic:	con 3;
 Ncpuintc:	con 16;
 
-mkdtb(memsize: big, append: string, rdaddr, rdend: big, mmios: list of (big, int), ncpu: int): array of byte
+mkdtb(memsize: big, append: string, rdaddr, rdend: big, mmios: list of (big, int), ncpu: int, imsic: big): array of byte
 {
 	f := Fdt.new();
 	f.begin("");
@@ -713,7 +721,10 @@ mkdtb(memsize: big, append: string, rdaddr, rdend: big, mmios: list of (big, int
 		f.propstr("device_type", "cpu");
 		f.propcells("reg", array[] of {big h});
 		f.propstr("compatible", "riscv");
-		f.propstr("riscv,isa", "rv64imafdc");
+		if(imsic != big 0)
+			f.propstr("riscv,isa", "rv64imafdc_ssaia");
+		else
+			f.propstr("riscv,isa", "rv64imafdc");
 		f.propstr("mmu-type", "riscv,sv39");
 		f.propstr("status", "okay");
 		f.begin("interrupt-controller");
@@ -736,6 +747,36 @@ mkdtb(memsize: big, append: string, rdaddr, rdend: big, mmios: list of (big, int
 	f.propcells("reg", array[] of {big 0, big Uart, big 0, big 16r100});
 	f.propcells("clock-frequency", array[] of {big 3686400});
 	f.end();
+	if(imsic != big 0){
+		# AIA: an IMSIC interrupt file a hart (a guest file of the
+		# processor's own), and an APLIC sending the devices' lines
+		# to them as messages
+		f.begin(sys->sprint("imsics@%bux", imsic));
+		f.propstrs("compatible", "riscv,imsics" :: nil);
+		f.propcells("reg", array[] of {imsic >> 32, imsic & big 16rFFFFFFFF, big 0, big (16r1000*ncpu)});
+		ie := array[2*ncpu] of big;
+		for(h = 0; h < ncpu; h++){
+			ie[2*h] = big (Ncpuintc + h);
+			ie[2*h+1] = big 9;
+		}
+		f.propcells("interrupts-extended", ie);
+		f.propcells("riscv,num-ids", array[] of {big 63});
+		f.propnone("msi-controller");
+		f.propnone("interrupt-controller");
+		f.propcells("#interrupt-cells", array[] of {big 0});
+		f.propcells("phandle", array[] of {big Nimsic});
+		f.end();
+		f.begin(sys->sprint("aplic@%ux", Aplic));
+		f.propstrs("compatible", "riscv,aplic" :: nil);
+		f.propcells("reg", array[] of {big 0, big Aplic, big 0, big 16r8000});
+		f.propcells("msi-parent", array[] of {big Nimsic});
+		f.propcells("riscv,num-sources", array[] of {big 31});
+		f.propnone("interrupt-controller");
+		f.propcells("#interrupt-cells", array[] of {big 2});
+		f.propcells("#address-cells", array[] of {big 0});
+		f.propcells("phandle", array[] of {big Nplic});
+		f.end();
+	}else{
 	# the PLIC, one context: the hart's supervisor external interrupt
 	f.begin(sys->sprint("plic@%ux", Plic));
 	f.propstrs("compatible", "sifive,plic-1.0.0" :: "riscv,plic0" :: nil);
@@ -747,13 +788,17 @@ mkdtb(memsize: big, append: string, rdaddr, rdend: big, mmios: list of (big, int
 	f.propcells("interrupts-extended", array[] of {big Ncpuintc, big 9});
 	f.propcells("phandle", array[] of {big Nplic});
 	f.end();
+	}
 	for(; mmios != nil; mmios = tl mmios){
 		(base, irq) := hd mmios;
 		f.begin(sys->sprint("virtio_mmio@%bux", base));
 		f.propstr("compatible", "virtio,mmio");
 		f.propcells("reg", array[] of {base >> 32, base & big 16rFFFFFFFF, big 0, big 16r1000});
 		f.propcells("interrupt-parent", array[] of {big Nplic});
-		f.propcells("interrupts", array[] of {big irq});
+		if(imsic != big 0)
+			f.propcells("interrupts", array[] of {big irq, big 4});	# level-high
+		else
+			f.propcells("interrupts", array[] of {big irq});
 		f.end();
 	}
 	f.end();

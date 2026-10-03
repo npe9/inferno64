@@ -328,3 +328,53 @@ fdtregmin(char *compat, uvlong *base, uvlong *size)
 		*size = f.size;
 	return 1;
 }
+
+typedef struct Findg Findg;
+struct Findg
+{
+	uvlong	base;
+	uvlong	size;
+	int	bits;
+	int	found;
+};
+
+static uintptr
+matchguestfiles(char *name, uchar *props, int acells, int scells, void *a)
+{
+	Findg *f = a;
+	uchar *gv, *rv;
+	u32int glen, rlen;
+
+	USED(name);
+	gv = fdtprop(props, "riscv,guest-index-bits", &glen);
+	if(gv == nil || glen < 4 || f->found)
+		return 0;
+	rv = fdtprop(props, "reg", &rlen);
+	if(rv == nil || rlen < (u32int)(acells+scells)*4)
+		return 0;
+	f->base = fdtbecells(rv, acells);
+	f->size = fdtbecells(rv + acells*4, scells);
+	f->bits = be32(gv);
+	f->found = 1;
+	return 0;
+}
+
+/*
+ * The RISC-V IMSIC that has guest interrupt files (the supervisor
+ * level's, with riscv,guest-index-bits): its base, the size of its
+ * reg, and the bits.  0 if there is none.
+ */
+int
+fdtimsicguests(uvlong *base, uvlong *size, int *bits)
+{
+	Findg f;
+
+	memset(&f, 0, sizeof f);
+	fdtwalk(matchguestfiles, &f);
+	if(!f.found)
+		return 0;
+	*base = f.base;
+	*size = f.size;
+	*bits = f.bits;
+	return 1;
+}

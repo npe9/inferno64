@@ -10,6 +10,7 @@ enum {
 	RvS8, RvS9, RvS10, RvS11, RvT3, RvT4, RvT5, RvT6,
 	RvPc,
 	RvVsstatus, RvVsie, RvVstvec, RvVsscratch, RvVsepc, RvVscause, RvVstval, RvVsatp,
+	RvVsiselect,
 	RvHvip,
 	RvNreg,
 };
@@ -22,3 +23,5 @@ enum {
 };
 
 uvlong	rvtime(void);		/* the time CSR the guest reads */
+void	rvvgein(Vcpu*, int);	/* the guest interrupt file it runs with (hstatus.VGEIN) */
+uvlong	rvgeip(void);		/* hgeip: the guest files with an interrupt for their guest */

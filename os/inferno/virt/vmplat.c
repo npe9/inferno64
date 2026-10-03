@@ -55,6 +55,11 @@ enum {
 	Virtiobase	= 0x10001000,	/* window n at Virtiobase + 0x1000*n, on source 1+n */
 	Nvirtio		= 8,
 
+	/* AIA, where the processor has IMSIC guest files */
+	Aplicbase	= 0x0D000000,	/* an APLIC domain, MSI delivery */
+	Apliclen	= 0x8000,
+	Imsicbase	= 0x28000000,	/* hart h's interrupt file at Imsicbase + 0x1000*h */
+
 	/* SBI extensions */
 	Xsettimer	= 0x00,
 	Xputchar	= 0x01,
@@ -117,12 +122,26 @@ struct Plat
 	uvlong	startarg[Maxvcpu];
 	int	ssip[Maxvcpu];		/* an IPI for it, for its hvip */
 	uvlong	nipi;
+
+	/* the APLIC, AIA's in place of the PLIC */
+	int	aia;			/* the processor has a guest file for every hart */
+	int	gfile[Maxvcpu];		/* hart h's guest file, mapped at Imsicbase + 0x1000*h */
+	u32int	domaincfg;
+	u32int	srccfg[Nsrc];
+	u32int	target[Nsrc];
+	u32int	aie;			/* enabled, by source */
+	u32int	aip;			/* pending, by source */
+	u32int	msiaddr[4];		/* mmsiaddrcfg, h; smsiaddrcfg, h: kept, not used */
+	uvlong	nmsi;
 	uvlong	nrx;		/* and read by the guest from the UART */
 };
 
 #define	PLAT(vm)	((Plat*)(vm)->plat)
 
 static void	plicirq(Vm*, int, int);
+static void	apliclevel(Plat*, Vm*, int, int);
+extern uintptr	guestimsic;
+extern int	guestbits;
 static uvlong	reg(Vcpu*, int);
 static void	setreg(Vcpu*, int, uvlong);
 extern void	rvhfencevvma(void);
@@ -142,6 +161,7 @@ vmplatnew(Vm *)
 		p->timer[i] = ~0ULL;
 	vuartreset(&p->uart);
 	vvirq = plicirq;	/* the virtio devices' lines */
+	p->aia = guestimsic != 0;
 	return p;
 }
 
@@ -218,6 +238,10 @@ plicirq(Vm *vm, int irq, int level)
 	p = PLAT(vm);
 	if(p == nil || irq <= 0 || irq >= Nsrc)
 		return;
+	if(p->domaincfg & 1<<8){	/* the guest has the APLIC on */
+		apliclevel(p, vm, irq, level);
+		return;
+	}
 	ilock(p);
 	if(level){
 		p->level |= 1<<irq;
@@ -286,6 +310,221 @@ plicmmio(Plat *p, uvlong off, int write, u32int *val)
 		*val = 0;
 	plicupdate(p);
 	iunlock(p);
+	return 1;
+}
+
+/*
+ * The APLIC, for a guest given AIA: one domain in MSI delivery mode
+ * (the AIA specification, chapter 4).  A source that becomes pending
+ * while enabled is sent as a message straight into the target hart's
+ * IMSIC guest file -- its identity written to the file's seteipnum --
+ * which the processor then delivers to the guest; the hart is woken in
+ * case it waits.  Level-high sources are pending when they rise or
+ * when setipnum names them while still up (how Linux retriggers one at
+ * EOI); edge sources when they rise.  The guest's MSI address
+ * configuration is kept, not used: target hart h's file is the one
+ * mapped at Imsicbase + 0x1000*h.
+ */
+enum {
+	Asourcecfg	= 0x0004,
+	Asetip		= 0x1C00,
+	Asetipnum	= 0x1CDC,
+	Ainclrip	= 0x1D00,
+	Aclripnum	= 0x1DDC,
+	Asetie		= 0x1E00,
+	Asetienum	= 0x1EDC,
+	Aclrie		= 0x1F00,
+	Aclrienum	= 0x1FDC,
+	Asetipnumle	= 0x2000,
+	Agenmsi		= 0x3000,
+	Atarget		= 0x3004,
+};
+
+static void
+sendmsi(Plat *p, Vm *vm, int src)
+{
+	u32int t;
+	int h;
+
+	t = p->target[src];
+	h = t >> 18;
+	p->aip &= ~(1<<src);
+	if(h >= vm->nvcpu)
+		return;		/* nowhere to send it */
+	*(volatile u32int*)(guestimsic + 0x1000*(h+1)) = t & 0x7FF;
+	coherence();
+	p->nmsi++;
+	p->kick[h] = 1;
+	wakeup(&vm->vcpu[h]->r);
+}
+
+/* source src pending: sent at once if the domain and source allow */
+static void
+aplicpend(Plat *p, Vm *vm, int src)
+{
+	p->aip |= 1<<src;
+	if((p->domaincfg & 1<<8) && (p->aie & 1<<src))
+		sendmsi(p, vm, src);
+}
+
+static int
+aplicactive(Plat *p, int src)
+{
+	int sm;
+
+	sm = p->srccfg[src] & 7;
+	return (p->srccfg[src] & 1<<10) == 0 && sm >= 4;	/* not delegated, an edge or level mode */
+}
+
+static void
+apliclevel(Plat *p, Vm *vm, int irq, int level)
+{
+	int was;
+
+	ilock(p);
+	was = (p->level >> irq) & 1;
+	if(level)
+		p->level |= 1<<irq;
+	else
+		p->level &= ~(1<<irq);
+	if(aplicactive(p, irq) && level && !was)
+		aplicpend(p, vm, irq);
+	iunlock(p);
+}
+
+static int
+aplicmmio(Plat *p, Vm *vm, uvlong off, int write, u32int *val)
+{
+	int i, n;
+	u32int v;
+
+	ilock(p);
+	v = write ? *val : 0;
+	if(off == 0){
+		if(write)
+			p->domaincfg = v & (1<<8 | 1<<2);
+		else
+			v = 0x80000000 | p->domaincfg | 1<<2;	/* MSI delivery only */
+	}else if(off >= Asourcecfg && off < Asourcecfg + 4*(Nsrc-1)){
+		i = (off - Asourcecfg)/4 + 1;
+		if(write){
+			p->srccfg[i] = v & 0x7FF;
+			if(!aplicactive(p, i)){
+				p->aie &= ~(1<<i);
+				p->aip &= ~(1<<i);
+			}
+		}else
+			v = p->srccfg[i];
+	}else if(off >= 0x1BC0 && off < 0x1BD0){
+		n = (off - 0x1BC0)/4;
+		if(write)
+			p->msiaddr[n] = v;
+		else
+			v = p->msiaddr[n];
+	}else if(off == Asetip){
+		if(write){
+			for(i = 1; i < Nsrc; i++)
+				if((v & 1<<i) && aplicactive(p, i))
+					aplicpend(p, vm, i);
+		}else
+			v = p->aip;
+	}else if(off == Asetipnum || off == Asetipnumle){
+		i = v;
+		/* a level source is made pending only while it is up */
+		if(write && i > 0 && i < Nsrc && aplicactive(p, i)
+		&& ((p->srccfg[i] & 7) < 6 || (p->level & 1<<i)))
+			aplicpend(p, vm, i);
+		if(!write)
+			v = 0;
+	}else if(off == Ainclrip){
+		if(write)
+			p->aip &= ~v;
+		else
+			v = p->level;		/* the rectified inputs */
+	}else if(off == Aclripnum){
+		if(write && v < Nsrc)
+			p->aip &= ~(1<<v);
+		if(!write)
+			v = 0;
+	}else if(off == Asetie){
+		if(write){
+			for(i = 1; i < Nsrc; i++)
+				if((v & 1<<i) && aplicactive(p, i)){
+					p->aie |= 1<<i;
+					if(p->aip & 1<<i)
+						aplicpend(p, vm, i);
+				}
+		}else
+			v = p->aie;
+	}else if(off == Asetienum){
+		i = v;
+		if(write && i > 0 && i < Nsrc && aplicactive(p, i)){
+			p->aie |= 1<<i;
+			if(p->aip & 1<<i)
+				aplicpend(p, vm, i);
+		}
+		if(!write)
+			v = 0;
+	}else if(off == Aclrie){
+		if(write)
+			p->aie &= ~v;
+		else
+			v = 0;
+	}else if(off == Aclrienum){
+		if(write && v < Nsrc)
+			p->aie &= ~(1<<v);
+		if(!write)
+			v = 0;
+	}else if(off >= Atarget && off < Atarget + 4*(Nsrc-1)){
+		i = (off - Atarget)/4 + 1;
+		if(write)
+			p->target[i] = v & (0x3FFF<<18 | 0x7FF);	/* hart index, identity */
+		else
+			v = p->target[i];
+	}else if(!write)
+		v = 0;		/* genmsi, the rest: nothing */
+	if(!write)
+		*val = v;
+	iunlock(p);
+	return 1;
+}
+
+/*
+ * Hart h's IMSIC guest file is file h+1 of this processor's, which it
+ * runs with: its IMSIC CSRs reach it in hardware.  Its page in the
+ * guest, at Imsicbase + 0x1000*h, is not mapped: a write there -- an
+ * IPI from another hart, or an MSI -- comes here (imsicmmio), is put
+ * in the file, and wakes the hart, which a write in hardware could not
+ * (the guest-external interrupt is supervisor-level, and this kernel
+ * runs in machine mode).
+ */
+static void
+aiahart(Vcpu *v, Plat *p)
+{
+	p->gfile[v->id] = v->id + 1;
+	rvvgein(v, v->id + 1);
+}
+
+static int
+imsicmmio(Plat *p, Vm *vm, uvlong off, int write, u32int *val)
+{
+	int h;
+
+	h = off / 0x1000;
+	off %= 0x1000;
+	if(!write){
+		*val = 0;
+		return 1;
+	}
+	if(h >= vm->nvcpu || off > 4)
+		return 1;
+	if(off == 4)	/* seteipnum_be */
+		*val = (*val>>24) | (*val>>8 & 0xFF00) | (*val<<8 & 0xFF0000) | *val<<24;
+	*(volatile u32int*)(guestimsic + 0x1000*(h+1)) = *val;
+	coherence();
+	p->nmsi++;
+	p->kick[h] = 1;
+	wakeup(&vm->vcpu[h]->r);
 	return 1;
 }
 
@@ -589,6 +828,8 @@ vmplatintr(Vcpu *v)
 		p->timer[v->id] = ~0ULL;
 		setreg(v, RvHvip, reg(v, RvHvip) | RvVsti);
 	}
+	if(p->aia && p->gfile[v->id] == 0)
+		aiahart(v, p);
 	if(p->ssip[v->id]){
 		p->ssip[v->id] = 0;
 		setreg(v, RvHvip, reg(v, RvHvip) | RvVssi);
@@ -611,7 +852,8 @@ wfiwake(void *a)
 	v = a;
 	p = PLAT(v->vm);
 	return v->stop || v->quit || v->cmd != nil || p->kick[v->id] || timerdue(v, p)
-		|| v->id == 0 && p->eip || p->ssip[v->id];
+		|| v->id == 0 && p->eip || p->ssip[v->id]
+		|| p->gfile[v->id] && (rvgeip() & 1ULL<<p->gfile[v->id]);
 }
 
 static int
@@ -626,7 +868,8 @@ dowfi(Vcpu *v, Plat *p)
 	if((reg(v, RvHvip) & RvVsti) != 0 && (ie & Stie) != 0
 	|| (reg(v, RvHvip) & RvVssi) != 0 && (ie & Ssie) != 0
 	|| v->id == 0 && p->eip && (ie & Seie) != 0
-	|| p->ssip[v->id] && (ie & Ssie) != 0)
+	|| p->ssip[v->id] && (ie & Ssie) != 0
+	|| p->gfile[v->id] && (rvgeip() & 1ULL<<p->gfile[v->id]) && (ie & Seie) != 0)
 		goto out;	/* already pending */
 	when = p->timer[v->id];
 	/* with no timer, an external interrupt or an IPI can still wake it */
@@ -638,9 +881,12 @@ dowfi(Vcpu *v, Plat *p)
 		ms = (when - now) / 10000 + 1;	/* QEMU virt's mtime is 10 MHz */
 		if(ms > 1000)
 			ms = 1000;
-		tsleep(&v->r, wfiwake, v, ms);
 	}else if(when == ~0ULL)
-		tsleep(&v->r, wfiwake, v, 1000);
+		ms = 1000;
+	else
+		ms = 0;
+	if(ms > 0)
+		tsleep(&v->r, wfiwake, v, ms);
 out:
 	setreg(v, RvPc, reg(v, RvPc) + 4);
 	return 1;
@@ -784,6 +1030,10 @@ dommio(Vcpu *v, Plat *p, Vmexit *e)
 		dev = 'u';
 	else if(e->gpa >= Plicbase && e->gpa < Plicbase + Pliclen)
 		dev = 'p';
+	else if(p->aia && e->gpa >= Aplicbase && e->gpa < Aplicbase + Apliclen)
+		dev = 'a';
+	else if(p->aia && e->gpa >= Imsicbase && e->gpa < Imsicbase + 0x1000*v->vm->nvcpu)
+		dev = 'i';
 	else if(e->gpa >= Virtiobase && e->gpa < Virtiobase + Nvirtio*Vvmmiosize
 	&& (e->gpa - Virtiobase)/Vvmmiosize < p->nvirt)
 		dev = 'v';
@@ -804,11 +1054,16 @@ dommio(Vcpu *v, Plat *p, Vmexit *e)
 		return 0;
 	if(dev != 'u'){
 		x = store && r != 0 ? reg(v, r) : 0;
-		if(dev == 'p'){
+		if(dev == 'p' || dev == 'a' || dev == 'i'){
 			if(width != 4)
 				return 0;
 			val = x;
-			plicmmio(p, e->gpa - Plicbase, store, &val);
+			if(dev == 'p')
+				plicmmio(p, e->gpa - Plicbase, store, &val);
+			else if(dev == 'a')
+				aplicmmio(p, v->vm, e->gpa - Aplicbase, store, &val);
+			else
+				imsicmmio(p, v->vm, e->gpa - Imsicbase, store, &val);
 			x = val;
 		}else if(!vvmmio(p->virt[(e->gpa - Virtiobase)/Vvmmiosize], e->gpa, width, store, &x))
 			return 0;
@@ -954,6 +1209,13 @@ vmplatstatus(Vm *vm, char *s, char *e)
 		p->uart.inw - p->uart.inr, p->nin, p->nrx, p->uart.outw, p->uart.outlost);
 	s = seprint(s, e, "plic pend %#ux enable %#ux claimed %#ux thresh %d eip %d claims %llud\n",
 		p->pend, p->enable, p->claimed, p->thresh, p->eip, p->nclaim);
+	if(p->aia){
+		s = seprint(s, e, "aia imsic %#ux files %d aplic %#ux domaincfg %#ux ie %#ux ip %#ux msis %llud geip %#llux",
+			Imsicbase, (1<<guestbits)-1, Aplicbase, p->domaincfg, p->aie, p->aip, p->nmsi, rvgeip());
+		for(i = 0; i < vm->nvcpu; i++)
+			s = seprint(s, e, " hart%d file %d", i, p->gfile[i]);
+		s = seprint(s, e, "\n");
+	}
 	for(i = 0; i < p->nvirt; i++)
 		s = vvstatus(p->virt[i], s, e);
 	for(i = 0; i < vm->nvcpu; i++)
