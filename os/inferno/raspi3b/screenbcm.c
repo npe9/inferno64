@@ -56,6 +56,46 @@ static int	underok;
 
 /* cheap screen path counters (printed from #K dump) */
 static uvlong	nflush, nflushbyte, ncompose, ncomposeskip;
+
+/*
+ * How big is a damage rectangle, by distribution and not by mean?
+ *
+ * doc/open-issues-plan.ms H1a turns on this.  Tear-freedom needs page
+ * flipping, flipping with incremental drawing needs a damage-sized copy
+ * per frame, and that copy is what Directfb removed -- 20452us of a
+ * 23900us screen path for a FULL-SCREEN fill, against 818us for a
+ * 128x96 widget.  So whether the copy is affordable is entirely a
+ * question of how big the damage usually is, and the mean cannot say:
+ * one full-screen flush among a thousand widget flushes moves the mean
+ * and decides nothing.
+ *
+ * Five buckets, by bytes, with the top one at everything above a quarter
+ * of the screen -- because the rule worth testing is "flip when the
+ * damage covers the screen, copy when it does not", and what that needs
+ * to know is how often each case happens.
+ */
+static uvlong	ndamage[5];
+static char	*damagename[5] = {
+	"<=4KB", "<=64KB", "<=256KB", "<=1MB", ">1MB",
+};
+
+static void
+chargedamage(uvlong nb)
+{
+	int i;
+
+	if(nb <= 4*1024)
+		i = 0;
+	else if(nb <= 64*1024)
+		i = 1;
+	else if(nb <= 256*1024)
+		i = 2;
+	else if(nb <= 1024*1024)
+		i = 3;
+	else
+		i = 4;
+	ndamage[i]++;
+}
 static uvlong	tcycles_flush, tcycles_compose;
 
 /* Standard Inferno arrow (same bits as os/pc/screen.c). */
@@ -204,6 +244,8 @@ cursorcompose(void)
 void
 screenstats(void)
 {
+	int i;
+
 	print("SCREEN flush ");
 	print("%llud ", nflush);
 	print("bytes ");
@@ -216,6 +258,10 @@ screenstats(void)
 	print("%llud ", ncomposeskip);
 	print("cyc ");
 	print("%llud\n", tcycles_compose);
+	print("SCREEN damage");
+	for(i = 0; i < nelem(ndamage); i++)
+		print(" %s %llud", damagename[i], ndamage[i]);
+	print("\n");
 	vsyncprobe();
 }
 
@@ -439,6 +485,7 @@ flushmemscreen(Rectangle r)
 	cycles(&t0);
 	nflush++;
 	nflushbyte += (uvlong)Dx(r) * Dy(r) * ScrPix;
+	chargedamage((uvlong)Dx(r) * Dy(r) * ScrPix);
 	if(cursenable){
 		p = mousexy();
 		cr = cursrect(p);
