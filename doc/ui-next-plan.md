@@ -1731,3 +1731,75 @@ before the work that closed them and were still being read as open:
   `Image` a Limbo program writes through `putimage`, so there is no
   file for a node to name. `text`, `canvas` and `menu` were on this
   line and are done.
+
+## 9. A node that cannot say where it lands — **done**
+
+Written after the walk and the widget conversions, and it is a defect
+report rather than a plan item: three node kinds did not describe the box
+they mark, which is the one property the whole vocabulary exists to
+provide.
+
+- `tkscenetext()` set `r.max = r.min`, so a glyph run was an **empty
+  rectangle at the text origin**.
+- `tkscenepolyfill()` and `tkscenespline()` never set `r` at all,
+  leaving it zeroed.
+
+A backend reading such a node can neither place it nor cull it, and the
+tree's own premise is that it "outlives the repaint that built it and can
+be handed to something else to draw". Fixed at build time, where the
+information is already in hand: the text setter has the `Font`, so it
+records `stringwidth` by height; the polygon takes the box of its points;
+the spline unions `memlinebbox()` over consecutive control points, which
+is `libmemdraw`'s own answer to arrows and end styles rather than that
+arithmetic rewritten in `libtk`. A B-spline stays inside its control
+hull, so that bounds the curve.
+
+### The test nearly tested nothing, and the reason is structural
+
+The obvious check — does the scene union cover every pixel the repaint
+touched — **passes with all three bugs present**, and that was confirmed
+by removing a fix and watching it still pass. A zeroed rect is *empty*,
+so a union walk skips it; and every detail node sits inside its own
+widget's background, so no scene-level rectangle moves when a glyph run
+or a polygon fails to describe itself. **A scene-level union cannot see
+per-node extent at all.**
+
+So the nodes are asked directly. `render nodes` reports how many nodes
+marked pixels and how many described no box; the second must be zero.
+Proved by removing each fix in turn: without polyfill 92 ok 1 fail,
+without glyphs 92 ok 1 fail, without spline 92 ok 1 fail, all three
+present 93 ok 0 fail. The spline arm needed a checked `checkbutton` and a
+canvas line with an arrow added to the pane — nothing else there emits a
+spline node, and until they were added that arm passed with the fix
+removed.
+
+### `render bounds`, and the consumer it does not have
+
+`tkscenebounds()` unions what a tree marks, reached as `render bounds`.
+It is conservative by construction, and that direction is the one that
+matters: damage too large only costs work, damage too small drops pixels.
+A clip node is therefore ignored rather than intersected, since leaving
+it out can never make the answer too small.
+
+**Nothing consumes it on this branch, and no speculative caller was
+wired to justify it.** `emu/MacOSX/win-cocoa.m` already marks 32x32
+tiles from per-`memimagedraw` damage, which is *finer* than a whole-frame
+union, so a union would tell it nothing it does not have. The consumer it
+is shaped for is the Raspberry Pi 3B's `flushmemscreen`, where the
+soft-to-fb copy has now been measured at **91% of the screen path on real
+silicon** — see `doc/raspi3b-draw-plan.ms` on the `rio-pi-tk` branch.
+That tree is not ours, so the producer waits on the consumer.
+
+The accumulator costs nothing measurable: two extra walks of the node
+list per tree moved the per-widget slope by a few tenths of a percent,
+and the *direct* path — which none of it can touch — moved by the same
+amount over the same runs, so the shift is the rig drifting.
+
+### What `TkScene` still does not know
+
+Its damage bounds, as a stored property. Every `TkNode` carries a
+`Rectangle r`, so the union is one walk away, but `TkScene` is a block
+allocator, a head, a tail and a count, with no extent field and nothing
+accumulating one. An earlier draft of `doc/draw-hardware-seam.ms` claimed
+otherwise and was corrected: it is an opportunity the description makes
+cheap, not a property it already has.
