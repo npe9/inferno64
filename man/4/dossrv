@@ -68,6 +68,38 @@ how much is cached.
 .TP
 .BI -N " buffers"
 How many tracks are cached.  The default is 20.
+.TP
+.B -A
+Allocate a cluster without first checking that it reads.
+.IP
+By default
+.I dossrv
+reads every cluster off the device before allocating it, and marks one
+that will not read bad in the FAT so it is never handed out again.  That
+exists because of a real failing card: deleting a file and copying it
+again put it back on the same dead page and it failed at the same byte
+every time, because a free cluster is a free cluster and nothing ever
+asked whether it worked.
+.IP
+The cost is one device read per cluster allocated, which is
+.I one cluster read for every cluster written.
+Measured on
+.IR sdmem (3)
+over a 2.6MB write: 22 per cent of the elapsed time with a free medium
+and 39 per cent with 500us charged per transfer, and the read count
+scales as 1/clustersize \(em 1284 reads at 2KB clusters against 165 at
+16KB.
+.B -A
+turns it off, which is how that was measured, and
+.B /tests/dossrv-badclust
+is what checks the behaviour it turns off.
+.TP
+.B -B
+Scan every cluster for readability and report what cannot be read,
+without changing anything.
+.TP
+.B -b
+The same scan, marking what cannot be read bad in the FAT.
 .PP
 .BR -S " and " -N
 interact and the second exists so that a measurement of the first can be
@@ -91,6 +123,27 @@ back with the ones it did.  That last number is the cost of the track
 being larger than the write, and on
 .I fatstress
 it is three to six per cent of the reads.
+.PP
+A further line per region of the medium \(em boot/reserved, FAT, root
+directory, data \(em says where the reads went and how many of them found
+sectors of that track already in the cache.  The totals alone cannot
+distinguish a FAT being re-read from a sweep of the data region, and
+.B /doc/open-issues-plan.ms
+records two sessions attributing one to the other: a 2.6MB write was
+reported as "one FAT lookup per cluster allocated" when the FAT accounted
+for two reads of the six, and the thousand-odd others were the
+per-cluster verification read described under
+.B -A
+below.
+.PP
+A caution about both lines: they count what
+.I dossrv
+asked the DEVICE for, which is not what the device did.  The
+per-allocation verification read goes straight to the device rather than
+through this cache and appears in NEITHER line; on a kernel with
+.IR sdmem (3)
+the driver's own counters see it.  Two instruments disagreeing by a
+factor of two hundred is how it was found.
 .PP
 .I 9660srv
 performs a similar function for files (notably CDROMs) in ISO9660 format,
