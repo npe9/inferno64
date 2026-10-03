@@ -1099,7 +1099,43 @@ checkbounds()
 	tk->cmd(top, ".f.c select");
 	tk->cmd(top, "canvas .f.cv -width 120 -height 60");
 	tk->cmd(top, ".f.cv create line 10 10 60 50 100 20 -arrow last");
-	tk->cmd(top, "pack .f.l .f.s .f.c .f.cv -side top");
+	# One of every widget and canvas item that can describe itself.
+	#
+	# This used to be five kinds, and five kinds is a SYNTHETIC test: it
+	# reproduces one path to the defect rather than asking whether the
+	# defect is present.  The kencc session made the distinction the
+	# hard way -- its four-instruction loader test passed for as long as
+	# the loader was miscompiling every kernel it linked, and only a
+	# scan of the binaries found it.  The analogue here is to put the
+	# whole node-emitting surface in the pane, so `render nodes' is
+	# answering about the surface and not about the sample.
+	bad := 0;
+	for(bl := list of {
+		"button .f.b -text {button}",
+		"radiobutton .f.r -text {radio} -value 1",
+		".f.r select",
+		"entry .f.e",
+		".f.e insert end {entry text}",
+		"scale .f.sc -orient horizontal",
+		"listbox .f.lb -height 2",
+		".f.lb insert end {one} {two}",
+		"text .f.t -width 10 -height 2",
+		".f.t insert end {text widget}",
+		"menubutton .f.mb -text {menu}",
+		".f.cv create rectangle 5 5 40 25 -fill red",
+		".f.cv create oval 45 5 80 25 -fill blue",
+		".f.cv create polygon 85 5 115 5 100 25 -fill green",
+		".f.cv create text 20 40 -text {ct}",
+	}; bl != nil; bl = tl bl){
+		e := tk->cmd(top, hd bl);
+		if(e != nil && len e > 0 && e[0] == '!'){
+			sys->print("     %s: %s\n", hd bl, e);
+			bad++;
+		}
+	}
+	report(bad == 0, "every widget and canvas item in the pane was made");
+	tk->cmd(top, "button .f.bx -text {x}");
+	tk->cmd(top, "pack .f.l .f.s .f.c .f.b .f.bx .f.r .f.e .f.sc .f.lb .f.t .f.mb .f.cv -side top");
 	tk->cmd(top, "pack .f -padx 40 -pady 40");
 	if(!map(top)){
 		report(0, "render bounds: no image");
@@ -1115,8 +1151,9 @@ checkbounds()
 	tk->cmd(top, "update");
 	(drawn, undesc) := rdnodes(top);
 	report(drawn > 0, "nodes that mark pixels went by at all");
-	report(undesc == 0,
-		"and every one of them describes the box it marks");
+	report(undesc == 0, sys->sprint(
+		"and of %d nodes that mark pixels, %d describe no box",
+		drawn, undesc));
 
 	blank();
 	tk->cmd(top, "render bounds");		# reset the accumulator
