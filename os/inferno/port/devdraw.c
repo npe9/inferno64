@@ -458,6 +458,25 @@ drawrefresh(Memimage*, Rectangle r, void *v)
  */
 void	(*screenpresent)(void);
 
+/*
+ * Set by the same driver, and called from drawpre() BEFORE a partial-overwrite
+ * operation draws, with that operation's rectangle in screen coordinates.
+ * Pre-draw and not post: see drawpre().
+ *
+ * It exists because the hazard is real and measured, not precautionary.  A
+ * deferred repair at 'v' excludes damage(N) from the copy, so any pixel inside
+ * damage(N) that the frame did not actually write keeps the back buffer's older
+ * content and is shown.  On this board, with a Limbo client, drawink reports
+ *
+ *	DRAW ops 15 full 13 partial 2 partial-in-stale 2
+ *
+ * -- the text draw is a glyph MASK, so its non-ink pixels are exactly that
+ * case, and both partial operations landed in the stale region.  A peer's
+ * measurement on another client stack reported zero and suggested no
+ * per-operation machinery was needed; this board disagrees.
+ */
+void	(*screenpartial)(Rectangle);
+
 uvlong	npresent, npresentflush, npresentempty;
 uvlong	presenteager, presentdefer, presentoverlap;
 uvlong	nsamebb, nnestbb, nflushper[8];
@@ -680,27 +699,86 @@ addflush(Rectangle r)
 	waste = 0;
 }
 
-static
-void
-dstflush(int dstid, Memimage *dst, Rectangle r, int full)
+/*
+ * Map a destination rectangle to SCREEN coordinates, or say it does not reach
+ * the screen.  Factored out of dstflush() because drawpre() below needs the
+ * same walk BEFORE the drawing happens, and duplicating it would be two
+ * chances to get the layer deltas wrong.
+ */
+static int
+toscreen(int dstid, Memimage *dst, Rectangle r, Rectangle *out)
 {
 	Memlayer *l;
 
 	if(dstid == 0){
-		combinerect(&flushrect, r);
-		chargeop(r, full);
-		return;
+		*out = r;
+		return 1;
 	}
 	if(screenimage == nil || dst == nil || (l = dst->layer) == nil)
-		return;
+		return 0;
 	do{
 		if(l->screen->image->data != screenimage->data)
-			return;
+			return 0;
 		r = rectaddpt(r, l->delta);
 		l = l->screen->image->layer;
 	}while(l);
-	chargeop(r, full);	/* screen coordinates, after the layer walk */
-	addflush(r);
+	*out = r;
+	return 1;
+}
+
+/*
+ * Called BEFORE an operation draws, which is the whole point: a
+ * partial-overwrite operation composes against whatever the destination
+ * already holds, so a stale back buffer has to be brought up to date while the
+ * frame can still be drawn over it.  Afterwards is useless -- repairing the
+ * region then would copy the front buffer over the glyph that was just drawn.
+ *
+ * Counting happens in dstflush() after the fact, where it is harmless; only
+ * the REPAIR has to be early.
+ */
+static void
+drawpre(int dstid, Memimage *dst, int full)
+{
+	Rectangle sr, in;
+
+	if(full || screenpartial == nil || !havepresent)
+		return;
+	/*
+	 * The DESTINATION's whole rectangle, not the operation's.  Each
+	 * operation computes its own damage box differently -- a line insets
+	 * by its thickness, a string spans to the advance, an ellipse by its
+	 * radii -- and reproducing five of those expressions here would be
+	 * five chances to get one subtly wrong in code that only matters when
+	 * it is wrong.  A superset is correct for this purpose because the
+	 * driver repairs ALL of the stale region anyway, so the rectangle is
+	 * used only to ask "does this destination reach the stale part of the
+	 * screen at all".
+	 *
+	 * The cost of the conservatism is that a frame containing any partial
+	 * operation degrades to the eager scheme.  That is the documented
+	 * worst case and it is never a wrong picture.
+	 */
+	if(!toscreen(dstid, dst, dst->r, &sr))
+		return;
+	in = prevpresent;
+	if(rectclip(&in, sr))
+		(*screenpartial)(sr);
+}
+
+static
+void
+dstflush(int dstid, Memimage *dst, Rectangle r, int full)
+{
+	Rectangle sr;
+
+	if(!toscreen(dstid, dst, r, &sr))
+		return;
+	chargeop(sr, full);
+	if(dstid == 0){
+		combinerect(&flushrect, sr);
+		return;
+	}
+	addflush(sr);
 }
 
 void
@@ -1868,6 +1946,7 @@ drawmesg(Client *client, void *av, int n)
 			drawpoint(&p, a+29);
 			drawpoint(&q, a+37);
 			op = drawclientop(client);
+			drawpre(dstid, dst, fulloverwrite(src, mask, op));
 			memdraw(dst, r, src, p, mask, q, op);
 			dstflush(dstid, dst, r, fulloverwrite(src, mask, op));
 			continue;
@@ -1889,6 +1968,7 @@ drawmesg(Client *client, void *av, int n)
 				error(Eshortdraw);
 			dst = drawimage(client, a+1);
 			dstid = BG32INT(a+1);
+			drawpre(dstid, dst, 0);	/* spans or a glyph mask: never a full overwrite */
 			src = drawimage(client, a+5);
 			drawpoint(&p, a+9);
 			e0 = BG32INT(a+17);
@@ -2011,6 +2091,7 @@ drawmesg(Client *client, void *av, int n)
 			memline(dst, p, q, e0, e1, j, src, sp, op);
 			/* avoid memlinebbox if possible */
 			if(dstid==0 || dst->layer!=nil){
+			drawpre(dstid, dst, 0);	/* spans or a glyph mask: never a full overwrite */
 				/* BUG: this is terribly inefficient: update maximal containing rect*/
 				r = memlinebbox(p, q, e0, e1, j);
 				dstflush(dstid, dst, insetrect(r, -(1+1+j)), 0);
@@ -2151,6 +2232,7 @@ drawmesg(Client *client, void *av, int n)
 			pp = malloc(ni*sizeof(Point));
 			if(pp == nil)
 				error(Enomem);
+			drawpre(dstid, dst, 0);	/* spans only: never a full overwrite */
 			doflush = 0;
 			if(dstid==0 || (screenimage && dst->layer && dst->layer->screen->image->data == screenimage->data))
 				doflush = 1;	/* simplify test in loop */
@@ -2237,6 +2319,7 @@ drawmesg(Client *client, void *av, int n)
 
 			dst = drawimage(client, a+1);
 			dstid = BG32INT(a+1);
+			drawpre(dstid, dst, 0);	/* spans or a glyph mask: never a full overwrite */
 			src = drawimage(client, a+5);
 			font = drawlookup(client, BG32INT(a+9), 1);
 			if(font == 0)
