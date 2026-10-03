@@ -6,8 +6,11 @@
 #	.guest/vmlinuz-virt	Alpine 3.20's linux-virt 6.6.142-r0, a stock bzImage
 #	.guest/busybox		busybox 1.35.0, static, x86_64 musl
 #	.guest/initramfs.cpio	busybox, an /init, and the package's
-#				virtio_blk, virtio_net (and what it needs)
-#				and af_packet modules, cpio "newc"
+#				virtio_blk, virtio_net (and what it needs),
+#				ext2 and af_packet modules, cpio "newc"
+#	.guest/lts/		the same from linux-lts-6.6.142-r0.apk,
+#				whose igbvf (an 82576 VF's driver, M7)
+#				linux-virt does not build
 #
 # Kernel and modules come from one versioned package, so they match;
 # the package is pinned by checksum (Alpine's netboot vmlinuz-virt,
@@ -33,6 +36,10 @@ cd "$G"
 PKG=linux-virt-6.6.142-r0.apk
 PURL=https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64/$PKG
 PSUM=0d84e30c04c52426b0bf10b01616c45f7d0c5384a59552e4c4a6caeb13a3f6e7
+# the M7 guest: linux-virt has no igbvf; linux-lts does
+LPKG=linux-lts-6.6.142-r0.apk
+LURL=https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64/$LPKG
+LSUM=6a2c64473187c27b6030e146653e940672ef0eb5dd0f4905da8c0d15e4da6bb4
 BURL=https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox
 BSUM=6e123e7f3202a8c1e9b1f94d8941580a25135382b99e8d3e34fb858bba311348
 
@@ -50,26 +57,38 @@ fetch() {
 	fi
 }
 fetch "$PURL" "$PKG" "$PSUM"
+fetch "$LURL" "$LPKG" "$LSUM"
 fetch "$BURL" busybox "$BSUM"
 chmod +x busybox
 
-python3 - "$G" "$PKG" <<'EOF'
+python3 - "$G" "$PKG" "$LPKG" <<'EOF'
 import os, sys, stat, gzip, tarfile, io
 g = sys.argv[1]
-# an apk is gzip members (signature, control, data) of concatenated tar
-# streams; read past each one's end-of-archive blocks
-pkg = tarfile.open(fileobj=io.BytesIO(gzip.open(os.path.join(g, sys.argv[2])).read()), ignore_zeros=True)
-members = {m.name: m for m in pkg.getmembers()}
+
+def unpack(pkgfile):
+	# an apk is gzip members (signature, control, data) of concatenated
+	# tar streams; read past each one's end-of-archive blocks
+	pkg = tarfile.open(fileobj=io.BytesIO(gzip.open(os.path.join(g, pkgfile)).read()), ignore_zeros=True)
+	members = {m.name: m for m in pkg.getmembers()}
+	kver = [n.split('/')[2] for n in members if n.startswith('lib/modules/') and n.count('/') >= 3][0]
+	return pkg, members, kver
+
+def modules(pkg, members, kver, rels):
+	mods = []
+	for rel in rels:
+		data = gzip.decompress(pkg.extractfile(members['lib/modules/%s/%s' % (kver, rel)]).read())
+		mods.append((os.path.basename(rel)[:-3], data))
+	return mods
+
+pkg, members, kver = unpack(sys.argv[2])
 open(os.path.join(g, 'vmlinuz-virt'), 'wb').write(pkg.extractfile(members['boot/vmlinuz-virt']).read())
-kver = [n.split('/')[2] for n in members if n.startswith('lib/modules/') and n.count('/') >= 3][0]
-mods = []	# in load order: virtio_net needs net_failover, which needs failover;
-		# af_packet is the packet sockets udhcpc uses
-for rel in ('kernel/net/packet/af_packet.ko.gz',
+# in load order: virtio_net needs net_failover, which needs failover;
+# af_packet is the packet sockets udhcpc uses; ext2 (and mbcache) for a
+# root on a virtio disk
+mods = modules(pkg, members, kver, ('kernel/net/packet/af_packet.ko.gz',
 		'kernel/fs/mbcache.ko.gz', 'kernel/fs/ext2/ext2.ko.gz',
 		'kernel/net/core/failover.ko.gz', 'kernel/drivers/net/net_failover.ko.gz',
-		'kernel/drivers/net/virtio_net.ko.gz', 'kernel/drivers/block/virtio_blk.ko.gz'):
-	data = gzip.decompress(pkg.extractfile(members['lib/modules/%s/%s' % (kver, rel)]).read())
-	mods.append((os.path.basename(rel)[:-3], data))
+		'kernel/drivers/net/virtio_net.ko.gz', 'kernel/drivers/block/virtio_blk.ko.gz'))
 init = b'''#!/bin/busybox sh
 /bin/busybox echo "LINUXGUEST: init"
 /bin/busybox mkdir -p /proc /sys /dev /tmp
@@ -81,7 +100,7 @@ export PATH=/bin
 if [ -e /ONDISK ]; then
 	echo "LINUXGUEST: root `awk '$2 == "/" { r = $1 " " $3 } END { print r }' /proc/mounts`"
 else
-	for m in af_packet failover net_failover virtio_net virtio_blk mbcache ext2; do
+	for m in `cat /lib/modules/order`; do
 		insmod /lib/modules/$m.ko || echo "LINUXGUEST: insmod $m failed"
 	done
 	if grep -q linuxguest.root=vda /proc/cmdline; then
@@ -108,35 +127,50 @@ echo "LINUXGUEST: shell exited"
 while :; do sleep 3600; done
 '''
 busybox = open(os.path.join(g, 'busybox'), 'rb').read()
-entries = [
-	('.', stat.S_IFDIR | 0o755, b''),
-	('bin', stat.S_IFDIR | 0o755, b''),
-	('dev', stat.S_IFDIR | 0o755, b''),
-	('proc', stat.S_IFDIR | 0o755, b''),
-	('sys', stat.S_IFDIR | 0o755, b''),
-	('tmp', stat.S_IFDIR | 0o1777, b''),
-	('bin/busybox', stat.S_IFREG | 0o755, busybox),
-	('init', stat.S_IFREG | 0o755, init),
-	('lib', stat.S_IFDIR | 0o755, b''),
-	('lib/modules', stat.S_IFDIR | 0o755, b''),
-] + [('lib/modules/%s' % name, stat.S_IFREG | 0o644, data) for name, data in mods]
+
 def pad(n):
 	return b'\0' * ((4 - n % 4) % 4)
-out = bytearray()
-ino = 1
-def add(name, mode, data, rdev=(0, 0)):
-	global ino, out
-	nb = name.encode() + b'\0'
-	hdr = b'070701' + b''.join(b'%08X' % v for v in (
-		ino, mode, 0, 0, 1, 0, len(data), 0, 0, rdev[0], rdev[1], len(nb), 0))
-	out += hdr + nb + pad(110 + len(nb)) + data + pad(len(data))
-	ino += 1
-for name, mode, data in entries:
-	add(name, mode, data)
-# the console, before devtmpfs is mounted
-add('dev/console', stat.S_IFCHR | 0o600, b'', (5, 1))
-add('TRAILER!!!', 0, b'')
-out += b'\0' * ((512 - len(out) % 512) % 512)
-open(os.path.join(g, 'initramfs.cpio'), 'wb').write(out)
+
+def cpio(mods, path):
+	order = ''.join(name[:-3] + '\n' for name, data in mods).encode()
+	entries = [
+		('.', stat.S_IFDIR | 0o755, b''),
+		('bin', stat.S_IFDIR | 0o755, b''),
+		('dev', stat.S_IFDIR | 0o755, b''),
+		('proc', stat.S_IFDIR | 0o755, b''),
+		('sys', stat.S_IFDIR | 0o755, b''),
+		('tmp', stat.S_IFDIR | 0o1777, b''),
+		('bin/busybox', stat.S_IFREG | 0o755, busybox),
+		('init', stat.S_IFREG | 0o755, init),
+		('lib', stat.S_IFDIR | 0o755, b''),
+		('lib/modules', stat.S_IFDIR | 0o755, b''),
+		('lib/modules/order', stat.S_IFREG | 0o644, order),
+	] + [('lib/modules/%s' % name, stat.S_IFREG | 0o644, data) for name, data in mods]
+	out = bytearray()
+	ino = 1
+	def add(name, mode, data, rdev=(0, 0)):
+		nonlocal ino, out
+		nb = name.encode() + b'\0'
+		hdr = b'070701' + b''.join(b'%08X' % v for v in (
+			ino, mode, 0, 0, 1, 0, len(data), 0, 0, rdev[0], rdev[1], len(nb), 0))
+		out += hdr + nb + pad(110 + len(nb)) + data + pad(len(data))
+		ino += 1
+	for name, mode, data in entries:
+		add(name, mode, data)
+	# the console, before devtmpfs is mounted
+	add('dev/console', stat.S_IFCHR | 0o600, b'', (5, 1))
+	add('TRAILER!!!', 0, b'')
+	out += b'\0' * ((512 - len(out) % 512) % 512)
+	open(path, 'wb').write(out)
+
+cpio(mods, os.path.join(g, 'initramfs.cpio'))
+
+# the M7 guest: linux-lts, whose igbvf drives an 82576 VF
+pkg, members, kver = unpack(sys.argv[3])
+os.makedirs(os.path.join(g, 'lts'), exist_ok=True)
+open(os.path.join(g, 'lts', 'vmlinuz-lts'), 'wb').write(pkg.extractfile(members['boot/vmlinuz-lts']).read())
+cpio(modules(pkg, members, kver, ('kernel/net/packet/af_packet.ko.gz',
+		'kernel/drivers/net/ethernet/intel/igbvf/igbvf.ko.gz')),
+	os.path.join(g, 'lts', 'initramfs.cpio'))
 EOF
 ls -l "$G/vmlinuz-virt" "$G/initramfs.cpio"

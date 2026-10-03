@@ -83,6 +83,23 @@ enum {
 	Vfta		= 0x5600,	/* VLAN Filter Table Array */
 	Mrqc		= 0x5818,	/* Multiple Receive Queues Command */
 
+	/* 82576 virtualisation (SR-IOV PF) */
+	Vtctl		= 0x581C,	/* VT control: default pool in 9:7 */
+	Dtxswc		= 0x3500,	/* DMA tx switch control: loopback in 31 */
+	Vfre		= 0x0C8C,	/* VF receive enables, bit per pool */
+	Vfte		= 0x0C90,	/* VF transmit enables */
+	Vflre		= 0x0C88,	/* VF level reset events, w1c */
+	Mbvficr		= 0x0C80,	/* mailbox: VF request (bit n), VF ack (16+n), w1c */
+	P2vmbox		= 0x0C00,	/* PF's side of VF n's mailbox, + 4n */
+	Vmbmem		= 0x0800,	/* the mailboxes' memory, + 64n, 16 words */
+	Vmolr		= 0x5AD0,	/* VM offload (per pool), + 4n */
+	Gpie		= 0x1514,	/* general purpose interrupt enable */
+	Eims		= 0x1524,	/* extended interrupt mask set */
+	Eiac		= 0x152C,	/* extended interrupt auto clear */
+	Eiam		= 0x1530,	/* extended interrupt auto mask */
+	Ivar0		= 0x1700,	/* interrupt vector allocation, queues */
+	Ivarmisc	= 0x1740,	/* interrupt vector allocation, other causes */
+
 	/* Transmit */
 
 	Tctl		= 0x0400,	/* Transmit Control */
@@ -251,6 +268,25 @@ enum {					/* Icr, Ics, Ims, Imc */
 	Rxcfgset		= 0x00000400,	/* Receiving /C/ ordered sets */
 	Ack		= 0x00020000,	/* Receive ACK frame */
 	Omed		= 1<<20,	/* media change; pcs interface */
+	Vmmb		= 0x00000100,	/* 82576: a VF's mailbox message or reset */
+};
+
+enum {					/* SR-IOV PF: the VF mailbox protocol (igbvf) */
+	Mbsts		= 0x01,		/* P2VMAILBOX: status (a message) for the VF */
+	Mback		= 0x02,		/* ack of the VF's message */
+	Mbpfu		= 0x08,		/* buffer taken by the PF */
+
+	Vfmsgreset	= 0x01,
+	Vfmsgsetmac	= 0x02,
+	Vfmsgsetmc	= 0x03,
+	Vfmsgsetvlan	= 0x04,
+	Vfmsgsetlpe	= 0x05,
+	Vtack		= 0x80000000,
+	Vtnack		= 0x40000000,
+	Vtcts		= 0x20000000,
+
+	Pfrstd		= 0x4000,	/* Ctrlext: the PF is up, VFs may run */
+	Maxvf		= 7,		/* the PF takes the pool after the VFs' */
 };
 
 enum {					/* Txcw */
@@ -567,12 +603,45 @@ struct Ctlr {
 	int	fcrth;
 
 	u32int	pba;			/* packet buffer allocation */
+
+	/* SR-IOV PF (82576, *igbvfs=n): the PF in pool and queue nvf */
+	int	nvf;
+	int	q;			/* the PF's queue: 0 without VFs */
+	uchar	vfmac[Maxvf][Eaddrlen];
+	int	vflpe[Maxvf];
+	uint	nmbox;
+	uint	nvfreset;
+	uint	nvflr;
+	uint	nmsix;
 };
 
 #define csr32r(c, r)	(*((c)->nic+((r)/4)))
 #define csr32w(c, r, v)	(*((c)->nic+((r)/4)) = (v))
 
+/*
+ * The PF's own receive and transmit queue registers.  With VFs (82576)
+ * the PF is in the pool after theirs, and its queue with it: queue n's
+ * registers are queue 0's plus 0x100*n for n < 4, and at 0xC000 or
+ * 0xE000 plus 0x40*n beyond.  Without VFs q is 0: queue 0's, as ever.
+ */
+static u32int
+rxq(Ctlr *c, u32int r)
+{
+	if(c->q < 4)
+		return r + 0x100*c->q;
+	return 0xC000 + 0x40*c->q + (r - Rdbal);
+}
+
+static u32int
+txq(Ctlr *c, u32int r)
+{
+	if(c->q < 4)
+		return r + 0x100*c->q;
+	return 0xE000 + 0x40*c->q + (r - Tdbal);
+}
+
 static	Ctlr	*i82563ctlrhead;
+static void	i82576pfready(Ctlr*);
 static	Ctlr	*i82563ctlrtail;
 
 static char *statistics[Nstatistics] = {
@@ -715,7 +784,15 @@ i82563ifstat(void *arg, char *p, char *e)
 	p = seprint(p, e, "ctrlext: %.8ux\n", csr32r(ctlr, Ctrlext));
 	p = seprint(p, e, "status: %.8ux\n", csr32r(ctlr, Status));
 	p = seprint(p, e, "txcw: %.8ux\n", csr32r(ctlr, Txcw));
-	p = seprint(p, e, "txdctl: %.8ux\n", csr32r(ctlr, Txdctl));
+	p = seprint(p, e, "txdctl: %.8ux\n", csr32r(ctlr, txq(ctlr, Txdctl)));
+	if(ctlr->nvf > 0){
+		p = seprint(p, e, "sriov: vfs %d pf pool %d mbox %ud vfresets %ud vflr %ud msix %ud vfre %.8ux vfte %.8ux\n",
+			ctlr->nvf, ctlr->q, ctlr->nmbox, ctlr->nvfreset, ctlr->nvflr, ctlr->nmsix,
+			csr32r(ctlr, Vfre), csr32r(ctlr, Vfte));
+		for(i = 0; i < ctlr->nvf; i++)
+			p = seprint(p, e, "vf%d: %E lpe %d vmolr %.8ux\n", i, ctlr->vfmac[i], ctlr->vflpe[i],
+				csr32r(ctlr, Vmolr + 4*i));
+	}
 	p = seprint(p, e, "pba: %.8ux\n", ctlr->pba);
 
 	p = seprint(p, e, "speeds: 10:%ud 100:%ud 1000:%ud ?:%ud\n",
@@ -824,21 +901,21 @@ i82563txinit(Ctlr *ctlr)
 		}
 		memset(&ctlr->tdba[i], 0, sizeof(Td));
 	}
-	csr32w(ctlr, Tdbal, PCIWADDR(ctlr->tdba));
-	csr32w(ctlr, Tdbah, 0);
-	csr32w(ctlr, Tdlen, ctlr->ntd * sizeof(Td));
+	csr32w(ctlr, txq(ctlr, Tdbal), PCIWADDR(ctlr->tdba));
+	csr32w(ctlr, txq(ctlr, Tdbah), 0);
+	csr32w(ctlr, txq(ctlr, Tdlen), ctlr->ntd * sizeof(Td));
 	ctlr->tdh = PREV(0, ctlr->ntd);
-	csr32w(ctlr, Tdh, 0);
+	csr32w(ctlr, txq(ctlr, Tdh), 0);
 	ctlr->tdt = 0;
-	csr32w(ctlr, Tdt, 0);
+	csr32w(ctlr, txq(ctlr, Tdt), 0);
 	csr32w(ctlr, Tidv, 128);
 	csr32w(ctlr, Tadv, 64);
 	csr32w(ctlr, Tctl, csr32r(ctlr, Tctl) | Ten);
-	r = csr32r(ctlr, Txdctl) & ~WthreshMASK;
+	r = csr32r(ctlr, txq(ctlr, Txdctl)) & ~WthreshMASK;
 	r |= 4<<WthreshSHIFT | 4<<PthreshSHIFT;
 	if(cttab[ctlr->type].flag & F75)
 		r |= Enable;
-	csr32w(ctlr, Txdctl, r);
+	csr32w(ctlr, txq(ctlr, Txdctl), r);
 }
 
 static uint
@@ -902,7 +979,7 @@ i82563tproc(void *v)
 		coherence();
 		ctlr->tb[tdt] = bp;
 		ctlr->tdt = tdt = n;
-		csr32w(ctlr, Tdt, tdt);
+		csr32w(ctlr, txq(ctlr, Tdt), tdt);
 	}
 }
 
@@ -933,7 +1010,7 @@ i82563replenish(Ctlr *ctlr)
 	if(i != 0){
 		coherence();
 		ctlr->rdt = rdt;
-		csr32w(ctlr, Rdt, rdt);
+		csr32w(ctlr, rxq(ctlr, Rdt), rdt);
 	}
 }
 
@@ -944,14 +1021,14 @@ i82563rxinit(Ctlr *ctlr)
 	Block *bp;
 
 	if(ctlr->rbsz <= 2048)
-		csr32w(ctlr, Rctl, Dpf|Bsize2048|Bam|RdtmsHALF);
+		csr32w(ctlr, Rctl, Dpf|Bsize2048|Bam|RdtmsHALF | (ctlr->nvf ? Secrc : 0));	/* VFs' frames: CRC stripped */
 	else{
 		i = ctlr->rbsz / 1024;
 		if(cttab[ctlr->type].flag & F75){
 			csr32w(ctlr, Rctl, Lpe|Dpf|Bsize2048|Bam|RdtmsHALF|Secrc);
 			if(ctlr->type != i82575)
 				i |= (ctlr->nrd/2>>4)<<20;		/* RdmsHalf */
-			csr32w(ctlr, Srrctl, i | Dropen);
+			csr32w(ctlr, rxq(ctlr, Srrctl), i | Dropen);
 			csr32w(ctlr, Rmpl, ctlr->rbsz);
 //			csr32w(ctlr, Drxmxod, 0x7ff);
 		}else
@@ -964,13 +1041,13 @@ i82563rxinit(Ctlr *ctlr)
 	if(ctlr->type == i82566)
 		csr32w(ctlr, Pbs, 16);
 
-	csr32w(ctlr, Rdbal, PCIWADDR(ctlr->rdba));
-	csr32w(ctlr, Rdbah, 0);
-	csr32w(ctlr, Rdlen, ctlr->nrd * sizeof(Rd));
+	csr32w(ctlr, rxq(ctlr, Rdbal), PCIWADDR(ctlr->rdba));
+	csr32w(ctlr, rxq(ctlr, Rdbah), 0);
+	csr32w(ctlr, rxq(ctlr, Rdlen), ctlr->nrd * sizeof(Rd));
 	ctlr->rdh = 0;
-	csr32w(ctlr, Rdh, 0);
+	csr32w(ctlr, rxq(ctlr, Rdh), 0);
 	ctlr->rdt = 0;
-	csr32w(ctlr, Rdt, 0);
+	csr32w(ctlr, rxq(ctlr, Rdt), 0);
 	ctlr->rdtr = 25;
 	ctlr->radv = 500;
 	csr32w(ctlr, Rdtr, ctlr->rdtr);
@@ -989,9 +1066,9 @@ i82563rxinit(Ctlr *ctlr)
 	}
 
 	if(cttab[ctlr->type].flag & F75)
-		csr32w(ctlr, Rxdctl, 1<<WthreshSHIFT | 8<<PthreshSHIFT | 1<<HthreshSHIFT | Enable);
+		csr32w(ctlr, rxq(ctlr, Rxdctl), 1<<WthreshSHIFT | 8<<PthreshSHIFT | 1<<HthreshSHIFT | Enable);
 	else
-		csr32w(ctlr, Rxdctl, 2<<WthreshSHIFT | 2<<PthreshSHIFT);
+		csr32w(ctlr, rxq(ctlr, Rxdctl), 2<<WthreshSHIFT | 2<<PthreshSHIFT);
 
 	/*
 	 * Enable checksum offload.
@@ -1021,10 +1098,11 @@ i82563rproc(void *arg)
 
 	csr32w(ctlr, Rctl, csr32r(ctlr, Rctl) | Ren);
 	if(cttab[ctlr->type].flag & F75){
-		csr32w(ctlr, Rxdctl, csr32r(ctlr, Rxdctl) | Enable);
+		csr32w(ctlr, rxq(ctlr, Rxdctl), csr32r(ctlr, rxq(ctlr, Rxdctl)) | Enable);
 		im = Rxt0|Rxo|Rxdmt0|Rxseq|Ack;
 	}else
 		im = Rxt0|Rxo|Rxdmt0|Rxseq|Ack;
+	i82576pfready(ctlr);
 
 	while(waserror())
 		;
@@ -1366,10 +1444,224 @@ serdeslproc(void *v)
 	}
 }
 
+
+/*
+ * SR-IOV PF (82576).  With *igbvfs=n in plan9.ini the PF makes n VFs
+ * when it is attached and runs the switch for them, as Linux's igb
+ * does: pools 0 to n-1 are the VFs' (pool v owns queues v and v+8),
+ * the PF takes pool and queue n (VT_CTL's default pool), VMDq sorts
+ * received frames to pools by destination address (each VF's in its
+ * own receive-address entry, at 23-v), and the transmit switch loops
+ * frames between pools as well as to the wire.  The VFs' interrupts
+ * work only in MSI-X mode (GPIE), so the PF runs on one MSI-X vector
+ * too, for its queue and its other causes alike, and serves the VF
+ * mailbox from it: a VF's igbvf asks to be reset, given its address,
+ * its multicast filter, its frame size, and waits about a second for
+ * each answer.  A VF's reset (VFLRE) leaves its queues and VFRE/VFTE
+ * bits cleared by the device; it is set up again by its next reset
+ * message.  VLAN filtering, anti-spoofing and rate limits are not done.
+ */
+static u32int
+ralreg(int i)
+{
+	return i < 16 ? Ral + 8*i : 0x54E0 + 8*(i-16);
+}
+
+static void
+vfaddr(Ctlr *c, int v, uchar *ea)
+{
+	int i;
+
+	i = 23 - v;
+	csr32w(c, ralreg(i), ea[3]<<24 | ea[2]<<16 | ea[1]<<8 | ea[0]);
+	csr32w(c, ralreg(i)+4, 1<<31 | 1<<(18+v) | ea[5]<<8 | ea[4]);
+}
+
+static void
+vfmsg(Ctlr *c, int v)
+{
+	u32int m[16], r[3];
+	u32int mb;
+	int i, nr, n;
+	uint h;
+
+	mb = P2vmbox + 4*v;
+	csr32w(c, mb, Mbpfu);
+	if((csr32r(c, mb) & Mbpfu) == 0)
+		return;			/* the VF holds it; it will ask again */
+	for(i = 0; i < 16; i++)
+		m[i] = csr32r(c, Vmbmem + 64*v + 4*i);
+	csr32w(c, mb, Mback|Mbpfu);
+	c->nmbox++;
+
+	nr = 1;
+	r[0] = (m[0] & ~(Vtack|Vtnack|Vtcts)) | Vtack | Vtcts;	/* the request, answered */
+	switch(m[0] & 0xFFFF){
+	case Vfmsgreset:
+		c->nvfreset++;
+		vfaddr(c, v, c->vfmac[v]);
+		csr32w(c, Vmolr + 4*v, 1<<27 | 1<<24);	/* BAM, AUPE */
+		csr32w(c, Vfre, csr32r(c, Vfre) | 1<<v);
+		csr32w(c, Vfte, csr32r(c, Vfte) | 1<<v);
+		r[0] = Vfmsgreset | Vtack;		/* exactly: no CTS */
+		r[1] = c->vfmac[v][3]<<24 | c->vfmac[v][2]<<16 | c->vfmac[v][1]<<8 | c->vfmac[v][0];
+		r[2] = c->vfmac[v][5]<<8 | c->vfmac[v][4];
+		nr = 3;
+		break;
+	case Vfmsgsetmac:
+		/* info 1 and 2 are unicast filter commands: nothing to do */
+		if(((m[0] >> 16) & 0xFF) == 0){
+			for(i = 0; i < 4; i++)
+				c->vfmac[v][i] = m[1] >> 8*i;
+			c->vfmac[v][4] = m[2];
+			c->vfmac[v][5] = m[2] >> 8;
+			vfaddr(c, v, c->vfmac[v]);
+		}
+		break;
+	case Vfmsgsetmc:
+		n = (m[0] >> 16) & 0xFF;
+		if(n > 30)
+			n = 30;
+		for(i = 0; i < n; i++){
+			h = (m[1 + i/2] >> 16*(i&1)) & 0xFFF;
+			csr32w(c, Mta + 4*(h>>5), csr32r(c, Mta + 4*(h>>5)) | 1<<(h&31));
+		}
+		csr32w(c, Vmolr + 4*v, csr32r(c, Vmolr + 4*v) | 1<<25);	/* ROMPE */
+		break;
+	case Vfmsgsetvlan:
+		break;			/* no VLAN filtering: everything is accepted */
+	case Vfmsgsetlpe:
+		c->vflpe[v] = m[1];
+		csr32w(c, Vmolr + 4*v, (csr32r(c, Vmolr + 4*v) & ~0x3FFF) | 1<<16 | (m[1] & 0x3FFF));
+		break;
+	default:
+		r[0] = (m[0] & ~(Vtack|Vtnack|Vtcts)) | Vtnack | Vtcts;
+		break;
+	}
+	csr32w(c, mb, Mbpfu);
+	for(i = 0; i < nr; i++)
+		csr32w(c, Vmbmem + 64*v + 4*i, r[i]);
+	csr32w(c, mb, Mbsts);		/* tell the VF; lets the buffer go */
+}
+
+static void
+vfmbox(Ctlr *c)
+{
+	u32int icr, lr;
+	int v;
+
+	for(;;){
+		lr = csr32r(c, Vflre);
+		if(lr != 0){
+			csr32w(c, Vflre, lr);
+			c->nvflr++;
+		}
+		icr = csr32r(c, Mbvficr);
+		if(icr == 0)
+			break;
+		csr32w(c, Mbvficr, icr);
+		for(v = 0; v < c->nvf; v++)
+			if(icr & 1<<v)
+				vfmsg(c, v);
+	}
+}
+
+/* the one MSI-X vector: the PF's queue and its other causes */
+static void
+i82576interrupt(Ureg*, void *arg)
+{
+	Ctlr *ctlr;
+	Ether *edev;
+	u32int icr;
+
+	edev = arg;
+	ctlr = edev->ctlr;
+	ctlr->nmsix++;
+	icr = csr32r(ctlr, Icr);	/* the other causes; the read clears them (GPIE NSICR) */
+	vfmbox(ctlr);
+	ilock(&ctlr->imlock);
+	if(icr & (Lsc | Omed)){
+		ctlr->lim = icr & (Lsc | Omed);
+		wakeup(&ctlr->lrendez);
+		ctlr->lintr++;
+	}
+	ctlr->rim = Rxt0;
+	ctlr->im &= ~Txdw;
+	iunlock(&ctlr->imlock);
+	wakeup(&ctlr->rrendez);
+	wakeup(&ctlr->trendez);
+	ctlr->rintr++;
+	csr32w(ctlr, Eims, 1);		/* auto-masked on the interrupt */
+}
+
+static void
+i82576sriov(Ether *edev, int n)
+{
+	Ctlr *c;
+	char *err;
+	u32int r;
+	int v;
+
+	c = edev->ctlr;
+	if(n > Maxvf)
+		n = Maxvf;
+	if(pcimsixintrenable == nil){
+		print("#l%d: %s: no MSI-X here; no VFs\n", edev->ctlrno, cname(c));
+		return;
+	}
+	if((err = pcisriovenable(c->pcidev, n)) != nil){
+		print("#l%d: %s: VFs: %s\n", edev->ctlrno, cname(c), err);
+		return;
+	}
+	c->nvf = n;
+	c->q = n;
+	for(v = 0; v < n; v++){
+		memmove(c->vfmac[v], "\x52\x54\x00\x76\x00\x00", Eaddrlen);
+		c->vfmac[v][4] = edev->ctlrno;
+		c->vfmac[v][5] = 0x10 + v;
+	}
+
+	/* interrupts: MSI-X mode (the VFs' need it), one vector for the PF */
+	csr32w(c, Imc, ~0);
+	csr32w(c, Gpie, 1<<31 | 1<<30 | 1<<4 | 1<<0);	/* PBA, EIAME, MSI-X mode, NSICR */
+	r = csr32r(c, Ivar0 + 4*(n&7));
+	r &= ~(0xFF<<((n&8)<<1) | 0xFF<<(((n&8)<<1)+8));
+	r |= 0x80<<((n&8)<<1) | 0x80<<(((n&8)<<1)+8);	/* rx and tx of queue n: vector 0 */
+	csr32w(c, Ivar0 + 4*(n&7), r);
+	csr32w(c, Ivarmisc, 0x80<<8);			/* other causes: vector 0 */
+	csr32w(c, Eiac, csr32r(c, Eiac) | 1);
+	csr32w(c, Eiam, csr32r(c, Eiam) | 1);
+	pcimsixintrenable(c->pcidev, 0, i82576interrupt, edev, edev->name);
+	csr32w(c, Eims, 1);
+
+	/* the switch: pools, default pool n, loopback between them */
+	csr32w(c, Vtctl, n<<7);
+	csr32w(c, Mrqc, 3);
+	csr32w(c, Dtxswc, 1<<31);
+	csr32w(c, Rah, csr32r(c, Rah) | 1<<(18+n));	/* the PF's address: its pool */
+	for(v = 0; v <= n; v++)
+		csr32w(c, Vmolr + 4*v, 1<<27 | 1<<24);	/* BAM, AUPE */
+	csr32w(c, Vfre, 1<<n);
+	csr32w(c, Vfte, 1<<n);
+	csr32w(c, Vflre, ~0);
+	csr32w(c, Mbvficr, ~0);
+	print("#l%d: %s: %d VFs, the PF in pool %d\n", edev->ctlrno, cname(c), n, n);
+}
+
+/* after the PF's queues are up: the VFs may reset and run */
+static void
+i82576pfready(Ctlr *c)
+{
+	if(c->nvf == 0)
+		return;
+	i82563im(c, Vmmb);
+	csr32w(c, Ctrlext, csr32r(c, Ctrlext) | Pfrstd);
+}
+
 static void
 i82563attach(Ether *edev)
 {
-	char name[KNAMELEN];
+	char name[KNAMELEN], *s;
 	Ctlr *ctlr;
 	uint r;
 
@@ -1413,6 +1705,9 @@ i82563attach(Ether *edev)
 	r = csr32r(ctlr, Ctrl);
 	r &= ~(Frcspd|Frcdplx);	/* dont force */
 	csr32w(ctlr, Ctrl, Slu|r);
+
+	if(ctlr->type == i82576 && (s = getconf("*igbvfs")) != nil && atoi(s) > 0)
+		i82576sriov(edev, atoi(s));
 
 	snprint(name, sizeof name, "#l%dl", edev->ctlrno);
 	if(csr32r(ctlr, Status) & Tbimode)

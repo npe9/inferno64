@@ -377,6 +377,8 @@ devcfgread(Vpcidev *d, int reg)
 	}
 	if(reg == PciEBAR0)
 		return 0;
+	if(reg == 0 && d->p->pf != nil)
+		return d->p->vid | (u32int)d->p->did << 16;	/* a VF's read all ones: SR-IOV's are in the PF */
 	if(reg == 0x3C)
 		return (pcicfgr32(d->p, 0x3C) & ~0xFF) | (d->intline & 0xFF);
 	v = pcicfgr32(d->p, reg);

@@ -768,6 +768,36 @@ Also found here: the test's typed command grew past 1024 characters,
 the most busybox's shell takes on a line, which dropped the rest and
 left the shell waiting for a closing parenthesis; it is typed as
 several lines now.
+.IP "Phase 8: M7 (QEMU igb)." 4
+.CW ether82563
+is the 82576's SR-IOV PF: with
+.CW *igbvfs= \fIn
+in plan9.ini it makes
+.I n
+VFs when the interface is attached and runs the switch for them as
+Linux's igb does \(en pools 0 to
+.I n \-1
+the VFs', the PF in pool and queue
+.I n
+(VT_CTL's default pool; its ring registers move with it), VMDq sorting
+by destination address, the transmit switch looping between pools,
+.CW RCTL.SECRC
+(QEMU strips the CRC only on it) \(en and serves the VF mailbox:
+reset (the VF's address back, its filter and pool enables set),
+address, multicast hashes, VLAN (accepted, not filtered) and frame
+size, then PFRSTD once.  The VFs' interrupts work only in MSI-X mode,
+so the PF runs on one MSI-X vector of its own.  vmpci gives an assigned
+VF the vendor and device IDs its configuration space reads as all ones.
+.CW scripts/check-vf.sh
+boots
+.CW pc64vf
+.CW vftestinit.b ): (
+two linux-lts guests (Alpine's linux-virt has no igbvf) on the two
+VFs at once; igbvf takes the address the PF gives, its link comes up,
+and each pings the other through the 82576's switch, nothing lost.
+The research behind it (QEMU's igb model, Linux's igb and igbvf) found
+what the M6 note had seen: VF0's reset disables queue 0 because queue 0
+is pool 0's, which is why the PF moves.
 .IP "Phase 12: a machine from a namespace (QEMU + emu)." 4
 .CW vmlinux
 .CW -N
@@ -804,18 +834,13 @@ then in sh with
 .CW #e
 bound; it was none of them.  nsvminit does without the shell.
 .IP "Next." 4
-M7 needs an SR-IOV PF driver for the 82576 (pools, VF mailbox:
-reset, MAC, multicast, VLAN, packet size) and a guest with
-.CW igbvf .
-Alpine's
-.CW linux-virt
-does not build it (its 6.6.142 configuration says
-.CW "# CONFIG_IGBVF is not set" ;
-an earlier note here said it was a module, which was wrong), so the M7
-guest is
+The M7 guest is
 .CW linux-lts ,
-pinned by package checksum, with its own modules.  M8's guest is
-.CW linux-virt-6.6.142-r0.apk ,
+since Alpine's
+.CW linux-virt
+does not build igbvf (an earlier note here said it was a module, which
+was wrong); M8's is
+.CW linux-virt ,
 whose
 .CW virtio_blk
 and
@@ -825,5 +850,4 @@ disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
 its /bin, /lib and /init) on its second disk, and a second guest given
 that disk alone and linuxguest.root=vda mounts it from the initramfs
 and switches to it.  Next: M2, M8 and M3 on VMX (Bochs), now that the
-host keeps time; the MTTCG triple fault; and M7 (the 82576 PF driver
-and an igbvf guest).
+host keeps time; the MTTCG triple fault; and the workstation (phase 13).

@@ -17,7 +17,7 @@ implement Init;
 # a virtio disk, served by the kernel's own virtio-blk (pc/vmvirtio.c).
 # Limbo writes a marker in its first sector; the guest reads it from
 # /dev/vda and writes the second, which Limbo reads back afterwards.
-# A second, 16 MiB, is its vdb, on which it makes an ext2 root (its own
+# A second, 4 MiB, is its vdb, on which it makes an ext2 root (its own
 # /bin, /lib and /init); a second guest is then booted on that disk
 # alone (linuxguest.root=vda: the initramfs mounts it and switches to
 # it) and says what its root is.
@@ -64,7 +64,7 @@ init()
 	else
 		sys->print("LINUXTEST: no 0000:05:00.0 here; nothing assigned\n");
 	disk := mkdisk("/tmp/disk.img", 1024*1024, Marker);
-	root := mkdisk("/tmp/root.img", 16*1024*1024, nil);
+	root := mkdisk("/tmp/root.img", 4*1024*1024, nil);	# busybox, the modules, /init
 	if(disk != nil && root != nil)
 		assign = "-b" :: disk :: "-b" :: root :: assign;	# vda, vdb
 	(ok, nil) = sys->stat("#l1/ether1");

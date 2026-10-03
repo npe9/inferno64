@@ -49,8 +49,9 @@ done
 export VMHOST_TAG=nsvm VMHOST_ISO=$ROOT/.qemu/vmhost-nsvm.iso
 INFERNO_INI="nsvmport=$PORT" sh "$ROOT/scripts/vmhost.sh" build "$KERN" >"$WORK/build.out" 2>&1 \
 || { echo "check-nsvm: FAIL -- building the bench image"; tail -5 "$WORK/build.out"; exit 1; }
-sh "$ROOT/scripts/vmhost.sh" run 1200 >/dev/null 2>&1 &
 L=$ROOT/.qemu/vmhost-nsvm.log
+rm -f "$L"	# the last run's would say done before this one starts
+sh "$ROOT/scripts/vmhost.sh" run 1200 >/dev/null 2>&1 &
 n=0
 until grep -a -q 'NSVM: done\|NSVM: FAIL' "$L" 2>/dev/null; do
 	sleep 5
