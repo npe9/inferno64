@@ -4066,3 +4066,101 @@ RING WRAPPED \(em 111 lines, all of them process-dump lines, with the trigger
 and any VMHELD above them gone.  So: make the hold report survive, by raising
 the ring or by sending VMHELD somewhere that is not the ring, and run the batch
 again.  The answer is one line of output away and the instrument threw it away.
+.NH 2
+H4 LOCALISED.  The wedge is a poll of the CARDLESS Arasan controller
+.LP
+Caught a second time, with the host deliberately idle so the confound of the
+first catch could not apply, and with
+.CW tools/jtag/vmheld
+armed.
+.PP
+.B "The holder question is answered, and the answer kills my own hypothesis."
+.P1
+vmheld: the CURRENT hold is 14 ticks; the longest since boot is 127 ticks
+vmheld: last kernel pc during a hold 0x8b100 -> awaitbit+44
+where:  cpu0 0x8b100 awaitbit+0x2c   (five samples over 18 minutes)
+.P2
+.CW maxvmheld
+is 127 ticks, which is exactly the healthy-boot figure, so NO process held the
+Dis VM for long.  The first catch's reading \(em "the VM is held and never
+given back" \(em was wrong, and the thing that refuted it is the instrument
+built to confirm it.
+.PP
+.B "What it really is."
+.CW awaitbit
+is in
+.CW sdhcibcm.c :
+the register poll of the Arasan/EMMC controller, which on this board has NO
+CARD.  cpu0 sits in it.
+.PP
+.B "Spinning, not stalled, and that distinction took one command."
+Five samples at the identical pc look like a core stalled on an MMIO read that
+never returns \(em and this tree's own rule says a pc that will not move is
+stalled.  It moves: single-stepping gives 0x8b100, 0x8b104, 0x8b108, 0x8b10c.
+So the core is executing, and the identical samples are a short loop whose
+uncached register read dominates its time.
+.PP
+.B "And the loop that never ends is the OUTER one."
+.CW awaitbit
+is bounded \(em
+.CW "for(i = 0; i < Timeout; i++)"
+with
+.CW Timeout
+one million.  By
+.CW mailbox.c 's
+own calibration (ten million uncached reads is about a second) that is 0.1s a
+call, so eighteen minutes of wedge is about TEN THOUSAND completed calls.
+Something re-enters it for ever.  A spin count is a bound on one call and not
+on a caller, which is the same lesson this board learned from the Arasan DMA
+stall and is now wearing a second time.
+.PP
+.B "Why the board never comes back."
+.CW bootwdog
+is 0, so
+.CW diswdog()
+never arms the hardware watchdog.  Confirmed from the running kernel.
+.PP
+.B "Established."
+Reproducible: two hangs in thirteen runs across two batches.  The host answered
+a new styx handshake in 0.00s BOTH times.  cpu0 executes inside
+.CW awaitbit .
+It is not an efs fault, not the styx session, not memory, and not a Dis VM
+hold.  No recovery is possible as configured.
+.PP
+.B "NOT established: which caller re-enters it, and why the Arasan is driven at all."
+The suite works on
+.CW /dev/sdZ0 ,
+which is RAM.  Two leads, neither tested.  First,
+.CW devsd 's
+.CW gen()
+calls
+.CW online()
+whenever a unit has no media, and a cardless unit never acquires any, so every
+directory read of
+.CW /dev
+re-probes it.  Second, the board's config has all four drivers
+.CW ( sdemmcbcm ,
+.CW sdhostbcm ,
+.CW sdhcibcm ,
+.CW sdmem ),
+so binding
+.CW #S
+enumerates the Arasan whether or not anything wants it \(em and
+.CW tests/efs-fault
+does NOT bind
+.CW #S
+itself; the harness around it does.  Whether the original hangs, which predate
+that harness, share this cause is open.
+.PP
+.B "The next instrument, and it is small."
+Name the CALLER.  openocd can read cpu0's registers, so a tool that takes
+.CW sp
+and
+.CW x29
+and walks the frame chain against the kernel's symbols would print the stack
+above
+.CW awaitbit
+in one command \(em the same shape as
+.CW vmheld ,
+which needed no kernel change either.  That is the one fact missing, and
+guessing between the two leads above is not worth a build.
