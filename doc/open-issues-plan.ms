@@ -4654,3 +4654,134 @@ that is a lost wakeup in
 and the bug is located.  If it is on no queue at all, it was readied and
 dropped, which is a different bug in the same place.  Either way the answer is
 two reads and no more guessing.
+.NH 2
+H4.  WHERE THIS STANDS (read this first; the sections above are chronological)
+.LP
+.B "The symptom:"
+.CW tests/efs-fault
+sometimes stops and the board answers nothing.  It was read, over two days and
+by me, as an efs bug, a styx wedge, a memory leak, a held Dis VM and a wifi
+SDIO stall.
+.PP
+.B "What it actually is, as far as it is established:"
+a Dis process is handed the interpreter token and never runs.
+.CW disbeat
+freezes at the value the watchdog reports;
+.CW vmq
+has processes waiting and
+.CW runhd
+has Progs ready; all four processors are idle.  So the fault is in
+.CW ready()
+or the run queue, not in the interpreter and not in any driver.
+.PP
+.B "Two REAL bugs were found and fixed on the way, neither of them this one:"
+.IP \(bu
+.CW 796d76547
+\(em
+.CW wlrxproc
+retried a failed SDIO command for ever (3100 recoveries, each spinning a
+bounded poll), so one unanswered command killed the board.  Bounded.
+.IP \(bu
+.CW 991f8ddf0
+\(em
+.CW clockpoll()
+drained the console FIFO unbounded, inside
+.CW vmachine 's
+loop.  Bounded.  Measured NOT to be this wedge (0 characters taken during two
+of them) and fixed anyway, because an unbounded loop in the token path is a
+hazard on its own.
+.PP
+.B "Eight theories eliminated by measurement:"
+the host (styx answers in 0.00s at every catch), efs, memory
+.CW ( conf.nproc
+200 against 74), the styx export session, the SDIO retry, the console drain, a
+held-too-long VM, and a blocking syscall holding the token
+.CW ( Sys_pread
+and
+.CW Sys_print
+both release correctly).
+.PP
+.B "Four instruments were wrong before they were useful,"
+and each one produced a wrong conclusion first:
+.IP \(bu
+the wedge watchdog printed its diagnosis and then flooded it out of the ring
+with its own 150-line dump;
+.IP \(bu
+.CW devprog 's
+.CW progpid
+counter printed every 10000 calls for ever and filled the ring with 333 lines
+of itself;
+.IP \(bu
+.CW where
+examined cpu0 and printed nothing about the other three, so "cpu0 idle" read as
+"nothing is running";
+.IP \(bu
+.CW vmheldticks
+is named for the token and measures the longest single-process run on ONE
+processor.
+.PP
+.B "Two readings of a dump that look like answers and are not:"
+.CW up->pc
+is where a process last QUEUED, so it always names an
+.CW acquire()
+call site;
+and a procdump stack line is a raw SCRAPE, not a call chain \(em one of them had
+.CW vmachine
+four times and a data symbol in it.
+.PP
+.B "The next fact needed"
+is the per-processor census the watchdog now prints from inside the wedge
+.CW ( 3810cbdc2 ):
+whether any processor has the holder as its current process.  On a queue with
+four cores idle is a lost wakeup in
+.CW ready() /
+.CW queueproc() ;
+on no queue at all is readied-and-dropped.
+.PP
+.B "And one fault is open and unexplained:"
+the USB host controller reports
+.CW "ep3.1 completion timeout"
+and
+.CW "channel won't halt"
+in the same window.  Its halt loop is bounded, so it is not a loop defect, but
+it is a fault on the same board at the same moment and nothing yet connects or
+disconnects it.
+.PP
+.B "ADDENDUM, and it splits the item in two."
+A catch that produced NO
+.CW DIS-WEDGED
+produced something else entirely: the ring full of
+.CW VMHELD
+lines naming holds of 53 to 91 ticks whose last kernel pc was
+.CW rungc+128 ,
+.CW rungc+632
+or
+.CW memset .
+The GARBAGE COLLECTOR holds the interpreter token for up to 0.91s at a time.
+.PP
+The watchdog's fifteen-second threshold cannot see that, so the board is SLOW
+rather than wedged \(em and the harness, which only waits 600s for an answer,
+had been calling both of them "HUNG".  It greps
+.CW DIS-WEDGED
+now, so the two are different readings.  Everything above that was written
+before this distinction existed should be read with it in mind: the catches
+with a
+.CW DIS-WEDGED
+line are wedges, the others may be slowness.
+.PP
+.B "And the GC's own counters say the heap chain breaks."
+On a HEALTHY boot:
+.P1
+gc sweeps 53594, chains found BROKEN 12
+gc busy 0xac3, gc idle 0x496e
+.P2
+.CW gcsweep()
+calls
+.CW okbhdr(ptr)
+and, when the block header's magic is none of the four valid values, sets
+.CW "base = nil" ,
+counts it and abandons the sweep.  Not fatal \(em the next call restarts from
+the pool chain head \(em but a header reading as invalid on a healthy boot is
+either corruption or the sweep walking the chain while the allocator updates
+it, and the second is a race.  Twelve in 53594 sweeps.  Recorded, not
+diagnosed, and NOT yet connected to either failure above.
