@@ -6458,3 +6458,73 @@ with
 A diagnostic, not a DMA path \(em it would print a wrong address on a
 high-mapped framebuffer, which is worth fixing on the board that owns it and is
 not this one.
+.NH 2
+H4.  getcallerpc() is declared 32-bit and implemented 64-bit, and pc64 already has it right
+.LP
+A broad
+.CW kaudit
+sweep
+.CW ( PAT=warning )
+gives 19 of 110 files, and almost all of it is one message:
+.CW "format mismatch #p ULONG" ,
+concentrated in
+.CW ../port/taslock.c ,
+.CW qlock.c
+and
+.CW proc.c
+\(em which is to say, in the code that prints WHEN A LOCK OR A PROCESS HAS
+ALREADY GONE WRONG.
+.PP
+.B "The cause is one declaration."
+.P1
+os/inferno/port/lib.h:144   extern ulong getcallerpc(void*);
+raspi3b/fns.h:69            ulong getcallerpc(void*);
+raspi3b/l.s:606             TEXT getcallerpc(SB); MOV 0(RSP), R0; RET
+pc64/fns.h:222              #define getcallerpc(x) (((uintptr*)(x))[-1])
+.P2
+The assembly loads the FULL 64-bit return address into R0.  The declaration is
+.CW ulong ,
+which is 4 bytes on this kernel.  So every one of 110 call sites in linked code
+truncates a value the implementation returned whole, and
+.CW %#p
+on the result is the mismatch the compiler reports.  pc64 \(em the mature port
+\(em uses
+.CW uintptr
+and does not have the problem, which is as close to a reference answer as this
+tree offers.
+.PP
+.B "Currently lossless on this board, and that is the whole of the defence."
+Kernel text runs from
+.CW KTZERO
+0x80000 to
+.CW etext
+around 0x1d0000, so a return address fits in 32 bits and the truncation loses
+nothing.  The 19 warnings are therefore true statements about the TYPES and false
+alarms about the OUTPUT \(em here.  On any board whose kernel text sits above 4GB
+the same prints would show truncated PCs, which is the instrument lying exactly
+when it is needed.
+.PP
+.B "NOT fixed, and the blast radius was measured rather than guessed."
+Changing only
+.CW raspi3b/fns.h
+to
+.CW uintptr
+took the audit from 19 findings to
+.B 108 of 110 ,
+every one a conflicting redeclaration against
+.CW ../port/lib.h:144 .
+So the declaration is duplicated and the fix has to change
+.CW lib.h
+and every board's
+.CW fns.h
+together \(em which rebuilds every config and needs a boot test per board, with
+.CW pc64 's
+.CW #define
+form to reconcile against a prototype.  Reverted, baseline confirmed back at 19.
+.PP
+That is a coordinated change behind a kernel rebuild, and the board is committed
+to the acceptance batch, so it is written down here rather than attempted.
+Unlike
+.CW va2pa ,
+which was three files and whose callers were already
+.CW uintptr .
