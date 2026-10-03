@@ -472,14 +472,54 @@ clocksecondary(Ureg*)
 	hwtimerset(&when);
 }
 
+/*
+ * Drain the console's receive FIFO -- BOUNDED.
+ *
+ * The loop here used to run until getc() said there was nothing left,
+ * which is unbounded and is how this board wedges.  A console whose RX
+ * line is asserted continuously -- a wedged USB adapter will do it, and
+ * this desk's has -- keeps RxRdy set for ever, so the loop never exits.
+ * clockpoll() is called from idlehands(), from delay(), and from
+ * clockcheck() INSIDE vmachine's loop, and that last one is the one that
+ * matters: a Dis process holding the interpreter token spins here and
+ * every other Dis process starves behind it.
+ *
+ * Measured, on the wedge that found this: the watchdog reporting
+ * "vmq waiting, runhd ready" with no interpreter progress for 15s; the
+ * token held by one pid whose disbeat had not moved since it took it;
+ * and the holder's core cycling between clockpoll and minigetc on five
+ * samples.  doc/open-issues-plan.ms item H4.
+ *
+ * Draining is still right -- RxRdy covers however many characters are
+ * queued, and taking one per call loses the rest (see the latched-bit
+ * rule this tree already carries).  So drain a bounded number and come
+ * back: uartrecv() has queued what we took, and the next call takes
+ * more.  Input keeps flowing and no single call can be trapped.
+ *
+ * Maxdrain is 64, the same bound uartpl011's kick loop uses, which is
+ * about a FIFO's worth.  npollfull counts the calls that hit the bound,
+ * so a stuck line is visible as a number rather than as a dead board.
+ */
+enum {
+	Maxdrain = 64,
+};
+
+ulong	npollfull;		/* calls that hit Maxdrain */
+ulong	npollchar;		/* characters taken */
+
 void
 clockpoll(void)
 {
-	int c;
+	int c, n;
 
 	if(consuart != nil && consuart->phys->getc != nil){
-		while((c = consuart->phys->getc(consuart)) >= 0)
+		for(n = 0; n < Maxdrain; n++){
+			if((c = consuart->phys->getc(consuart)) < 0)
+				return;
+			npollchar++;
 			uartrecv(consuart, c);
+		}
+		npollfull++;
 	}
 }
 
