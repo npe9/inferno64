@@ -100,18 +100,41 @@ and the flip.
 The rule this plan runs under
 .PP
 Every step names evidence that could come back negative, and no step is
-justified by a speed measurement.  This matters here more than usual.
-The board's
-.CW DRAWRATE
-line reports 819us a fill for memdraw and 5714us for screen+flush, and
-the direct-draw probe moved the second number to 12500us \(em
-.I worse .
-That is not a result about the Pi.  Writing into the emulated framebuffer
-region is expensive under TCG because every store is tracked for display
-refresh, so QEMU penalises exactly the thing that is free on silicon.
-The ordering below follows from the copy
+justified by a speed measurement.  The ordering below follows from the
+copy
 .I existing ,
-which needs no timer, and the benefit must be read on a real board.
+which needs no timer, and the benefit is read on a real board.
+.PP
+.B "A retracted claim, kept because it is instructive about probes."
+An earlier draft of this section reported that under QEMU the first
+direct-draw probe moved screen+flush from 5714us to
+.B 12500us
+\(em worse \(em and explained it as TCG tracking every store into the
+emulated framebuffer region for display refresh, so that emulation
+penalised the very thing this plan wants.
+.PP
+That explanation was wrong, and the number was the probe's own fault.
+The probe pointed
+.CW fb
+at
+.CW fbpa
+but left
+.CW flushmemscreen 's
+.CW memmove
+in place, so every flush still copied all 480 scanlines \(em to and from
+the same address.  It was described at the time as "a self-copy
+(no-op)", which a
+.CW memmove
+is not.  With the copy actually skipped when there is nothing to copy,
+QEMU gives screen+flush
+.B "1104us over 181 fills"
+against 5714us over 35: about five times
+.I better ,
+in the direction silicon should go.
+.PP
+The lesson is not about TCG.  A probe that leaves the work it meant to
+remove still in the code measures the probe, and an emulator is a
+convenient thing to blame for a number one has produced oneself.
 .NH 1
 What it actually costs on the board
 .PP
@@ -253,6 +276,30 @@ scanline by scanline for the cache clean.
 and the glyph-ink count unchanged at 564 under QEMU \(em already
 observed.  On silicon, a screendump must show correct pixels, since a
 missing or misplaced cache clean shows up there and nowhere else.
+.PP
+.B "DONE, AND MEASURED ON THE BOARD."
+Build 1790990050, the same Pi, same 640x480, one JTAG boot:
+.DS
+.CW
+            memdraw   screen+flush
+before       2090 us   23333-24444 us   (9 fills)
+after        2090 us        3448 us     (58 fills)
+.R
+.DE
+.LP
+memdraw is unchanged, which is the control: nothing about the drawing
+moved, only the delivery.  screen+flush is
+.B "6.8 to 7.1 times"
+faster, 50 MB/s to about 356 MB/s, and what remains past the 2090us of
+drawing is 1358us of cache clean rather than 21 to 22ms of copy.  So the
+flush fell from 91% of the screen path to 39% of a much shorter one.
+.PP
+Correctness came back unchanged in the same boot:
+.CW DRAW-OK ,
+.CW TK-OK
+with the same 564 bytes of glyph ink, and no faults or panics.  The fill
+count rising from 9 to 58 is a side benefit \(em the arm that was too
+coarse to quote precisely now takes six times the samples.
 .PP
 .B "Failure mode to watch:"
 this introduces tearing.  Nothing separates drawing from scanout any
