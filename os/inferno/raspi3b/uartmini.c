@@ -1,12 +1,33 @@
 /*
  * BCM2835 AUX mini UART (UART1) at 0x3f215040.
  *
- * NOT LINKED: the console is the PL011 (uartpl011.c), and this driver's
- * enable takes GPIO 14/15 for itself, so it must not be opened while the
- * PL011 owns the header.  One physical boot with it as the console
- * (build 1789434335, config.txt without disable-bt) printed nothing at
- * all; that has not been explained.  Kept for the Bluetooth arrangement
- * below, where it would be the header UART again.
+ * LINKED, AND ON THIS BOARD IT IS THE CONSOLE.  The header used to say
+ * "NOT LINKED: the console is the PL011", which contradicted the very
+ * next paragraph and is false for the firmware's default arrangement.
+ * uartconsole() in uartpl011.c chooses at RUN TIME by GPIO 14's function
+ * select: Altmini means the firmware kept the mini uart on the header,
+ * so consuart becomes &miniuart; otherwise the PL011 is taken and
+ * reprogrammed.  This board reports the first case in its own boot
+ * print, which is the evidence rather than the inference:
+ *
+ *	AUX-CONSOLE the mini uart is this kernel's console: the block
+ *	is enabled and its transmitter idles, and nothing here
+ *	reprogrammed it
+ *	console: mini uart, the firmware's choice
+ *
+ * That matters beyond bookkeeping.  clockpoll() in clock.c drains
+ * consuart->phys->getc, so on this board the console poll goes through
+ * minigetc -- and a core sampled in minigetc is an IDLE core running
+ * idlehands(), not a stuck one, because idlehands() is "idle();
+ * clockpoll();".  Chasing the Dis wedge I read a core there as evidence
+ * of a spin in the drain loop, and the drain counters said 0 characters
+ * taken, which is what settled it.  The old header sent me looking for
+ * a caller of minigetc that could not exist.
+ *
+ * This driver's enable takes GPIO 14/15 for itself, so it must not be
+ * opened while the PL011 owns the header.  One physical boot with it as
+ * the console (build 1789434335, config.txt without disable-bt) printed
+ * nothing at all; that has not been explained.
  *
  * On a Pi 3B the PL011 (UART0) is wired to the Bluetooth part and the
  * mini UART is what reaches GPIO 14/15 (header pins 8/10), which is
