@@ -5389,3 +5389,109 @@ sequence, the peer caught the second by distrusting an agreement they would
 have liked.  The durable rule is the peer's: validating an input does not
 validate the model it feeds, and the two need separate checks.  The per-byte
 linearity check was not wasted; it would have caught a different failure.
+.NH 2
+H1a SETTLED: a flush IS a frame on these workloads, so 84.9 per cent is the value
+.LP
+The peer measured at the
+.CW 'v'
+boundary rather than assuming the unit, on
+.CW "runtests -g"
+at 640x480:
+.P1
+per flush      197 flushes  eager 20952256 B  deferred 3084216 B  84.94%
+per 'v' frame  196 frames   eager 20880624 B  deferred 3084216 B  84.89%
+.P2
+The deferred figure is identical to the byte and eager differs by 71632, which
+is one damage region \(em 197 flushes against 196 frames.  So Tk emits one
+.CW 'v'
+per update, there was never any fragmentation to coalesce, and the per-flush
+number was the value rather than an upper bound.  Measured at the boundary
+instead of assumed equal to it, which is the whole difference.
+.PP
+.B "The equal/growth discriminator came in first and was nearly enough."
+Splitting the nested transitions by area:
+.P1
+runtests -g    EQUAL 128  STRICT-growth 4  partial 64
+               overlap bytes: EQUAL 74.6%  STRICT 0.9%  partial 24.6%
+wmtest -n 40   EQUAL 119  STRICT-growth 1  partial 1
+               overlap bytes: EQUAL 98.7%  STRICT 0.7%  partial 0.7%
+.P2
+Refinement by growth \(em the inflation mechanism \(em is under one per cent of
+overlap bytes.  But the peer's push-back on my framing is right and is kept:
+EQUAL rules out growth, not DUPLICATION.  A widget repainted next frame and a
+widget flushed twice within one frame both read as equal rectangles, and a
+present coalesces the second.  So the rectangle comparison narrowed it and only
+the
+.CW 'v'
+boundary could close it.
+.PP
+.B "So the deferred scheme is justified, by overlap, at 84.9 per cent."
+On this geometry that is 1770us a frame for eager against 260us for deferred,
+both against a 16665us budget.  Nothing about coverage of the screen, and
+nothing about the rare full-screen frames that two measurements and two
+sessions were built around: the saving is Tk repainting the same widgets, which
+is repeated damage of the same region at any size.
+.PP
+.B "The on-board instrument is written and not yet run."
+.CW os/inferno/port/devdraw.c
+now accumulates the union of damage between
+.CW 'v'
+commands and charges both schemes against the previous present, reported from
+.CW screenbcm.c 's
+.CW screenstats()
+rather than from
+.CW devkprof.c
+beside
+.CW screenstats() :
+.CW shakti
+and
+.CW sifiveu
+configure
+.CW kprof
+WITHOUT
+.CW draw ,
+so a hook there is an undefined symbol on those boards and would need a stub in
+each, which is exactly why
+.CW screenstats()
+itself needs
+.CW screennone.c .
+.PP
+It is not built into a kernel.  The board is scoring
+.CW b461ec5f1
+alone and two changes in one batch makes neither attributable.
+.PP
+.B "What the counters cannot tell you, recorded because I nearly claimed they could."
+.CW nflushper
+does not distinguish a per-FRAME
+.CW 'v'
+from a per-OPERATION one.
+.CW libinterp/draw.c 's
+.CW checkflush()
+sends
+.CW "flushimage(display, 1)"
+after a draw when the image has flush enabled, so
+.CW 'v'
+can arrive per operation \(em and then each
+.CW 'v'
+still produces exactly one flush, so
+.CW nflushper
+reads 1 either way.  The unit is established by the 196-against-197 result and
+by nothing in the instrument.
+.PP
+.B "Four instruments, and the lesson did not change once."
+A distribution answered a question about order.  A per-flush overlap answered a
+question about frames.  A rectangle comparison answered a question about growth
+when the question was about duplication.  Only the fourth measured the quantity
+its argument needed.  Every time, the author already held the disconfirming
+data \(em my four linearity points were in the message I sent, the peer's
+equal/growth split was in records already taken, the sequence model needed no
+new measurement at all \(em and every time the error was caught by the other
+one of us.  The missing step was never collection.  It was asking what question
+the number answers.
+.PP
+And one failure mode of mine that repeated inside this item: I argued from
+.CW addflush() 's
+disjointness guarantee to a conclusion about the path
+.CW dunlock()
+takes.  That is the same shape as reading a distribution as an answer about
+order \(em generalising from the path you looked at to the path that runs.

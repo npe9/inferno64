@@ -30,6 +30,7 @@ enum {
 
 extern int mboxfballoc(int, int, uintptr*, u32*, u32*);
 extern int mboxvsync(void);
+extern void drawpresentstats(void);
 static void vsyncprobe(void);
 
 static Memdata	scrdata;
@@ -431,6 +432,15 @@ screenstats(void)
 	 * fullish/adj is the sequence question: how many near-full flushes,
 	 * and how many of those followed another one.
 	 */
+	/*
+	 * devdraw's per-PRESENT accounting, reported from here rather than
+	 * from devkprof.c beside screenstats(): shakti and sifiveu configure
+	 * kprof WITHOUT draw, so a hook there is an undefined symbol on those
+	 * boards and would need a stub in each, which is why screenstats()
+	 * itself needs screennone.c.  Calling it from a board that has a
+	 * screen needs no stub anywhere.
+	 */
+	drawpresentstats();
 	print("SCREEN dbuf eager %llud defer %llud overlap %llud"
 		" skipped %llud over %llud fullish %llud adj %llud samerect %llud\n",
 		neagerbyte, ndeferbyte, noverlapbyte,

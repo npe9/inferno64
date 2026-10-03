@@ -372,6 +372,147 @@ drawrefresh(Memimage*, Rectangle r, void *v)
 	}
 }
 
+/*
+ * How much damage does one PRESENT carry, and how much of it repeats the
+ * previous present's?
+ *
+ * doc/open-issues-plan.ms H1a.  Double buffering with incremental drawing
+ * costs, per frame,
+ *
+ *	deferred = |damage(N-1) \ damage(N)|
+ *	eager    = |damage(N)|
+ *
+ * so the whole value of the deferred scheme is SUM |damage(N-1) AND damage(N)|,
+ * the overlap of consecutive frames' damage.  Two instruments have already
+ * tried to measure that and measured something adjacent to it instead: a
+ * histogram of flush sizes (which throws the order away, and the question is
+ * about order) and a per-flush overlap (which assumes a flush is a frame).
+ *
+ * THIS one is in the right place, and the reason is 'v'.  A flush is not a
+ * frame: dunlock() calls drawflush() on every /dev/draw write that took the
+ * drawlock, so damage reaches a driver in however many pieces the writes
+ * happened to come in.  But 'v' IS a frame -- it is the client declaring a
+ * present, emitted by libdraw's flushimage(d, 1) and by nothing else
+ * (flushimage(d, 0) flushes the command buffer without it).  So accumulate
+ * the union of damage between 'v' commands and the quantity is exact, with no
+ * new interface and nothing platform-specific: a host window's upload and a
+ * board's page flip are both downstream of this.
+ *
+ * nflushper is the number that settles the earlier instrument: flushes
+ * accumulated into one present.  At 1 a flush WAS a frame and the per-flush
+ * overlap was measuring the right thing after all.  Above 1 it was measuring
+ * redundancy within a frame, which a present coalesces.
+ *
+ * ALREADY SETTLED ON HOST EMU, for Tk: a peer ran this same accounting at the
+ * 'v' boundary and got 196 frames against 197 flushes, with the deferred
+ * figure identical to the byte and eager differing by exactly one damage
+ * region.  Tk emits one 'v' per update, so there was no fragmentation to
+ * coalesce and the per-flush 84.9 per cent was the value rather than a bound.
+ * This exists to confirm that on the BOARD, where the client is the same Tk
+ * but the damage geometry is this screen's.
+ *
+ * WHAT THESE COUNTERS CANNOT TELL YOU, said because I nearly claimed they
+ * could: nflushper does not distinguish a per-FRAME 'v' from a per-OPERATION
+ * one.  libinterp/draw.c's checkflush() sends flushimage(display, 1) after a
+ * draw when the image has flush enabled, so 'v' CAN arrive per operation --
+ * and in that case each 'v' still produces exactly one flush, so nflushper
+ * reads 1 either way.  The unit is established by the peer's 196-against-197
+ * result above, not by anything here.  npresent close to nflush is consistent
+ * with both readings and proves neither.
+ *
+ * nsamebb and nnestbb split the overlap the way the two readings differ:
+ * an IDENTICAL present rectangle is genuine repaint of the same region, which
+ * is what the scheme harvests, while one present strictly inside the next is
+ * growth, which is refinement rather than repaint.  Measured on host emu,
+ * growth is under 1 per cent of overlap bytes on both workloads, and the
+ * peer's caveat is worth keeping: EQUAL rules out growth, not duplication,
+ * since a widget repainted next frame and one flushed twice in a frame both
+ * read as equal rectangles.  That is what the 'v' boundary settles and a
+ * rectangle comparison cannot.
+ *
+ * Counters, not prints: a kernel print that recurs per frame is a denial of
+ * service against every other diagnostic, and these are read by address or
+ * from drawpresentstats() at the end of a run.
+ */
+uvlong	npresent, npresentflush, npresentempty;
+uvlong	presenteager, presentdefer, presentoverlap;
+uvlong	nsamebb, nnestbb, nflushper[8];
+static Rectangle presentbb = {{10000, 10000}, {-10000, -10000}};
+static Rectangle prevpresent;
+static int	havepresent;
+static int	presentflushes;
+
+/*
+ * Called wherever damage is handed to the screen, to accumulate it into the
+ * present being built.  Bytes are not known here -- devdraw does not own the
+ * depth -- so areas are in PIXELS and a reader multiplies by the screen's
+ * bytes per pixel.  Said explicitly because every byte figure this tree has
+ * printed for the screen path has been wrong by a factor once already.
+ */
+static void
+presentcharge(Rectangle r)
+{
+	combinerect(&presentbb, r);
+	presentflushes++;
+}
+
+/*
+ * Called when the client declares a present ('v').  Closes the accumulation
+ * window and charges both schemes against the previous present.
+ */
+void
+drawpresent(void)
+{
+	Rectangle in;
+	uvlong ar, aprev, aov;
+	int i;
+
+	if(presentbb.min.x >= presentbb.max.x){
+		npresentempty++;	/* a 'v' with nothing drawn since the last */
+		return;
+	}
+	npresent++;
+	npresentflush += presentflushes;
+	i = presentflushes;
+	if(i > nelem(nflushper)-1)
+		i = nelem(nflushper)-1;
+	nflushper[i]++;
+	ar = (uvlong)Dx(presentbb) * Dy(presentbb);
+	presenteager += ar;
+	if(havepresent){
+		aprev = (uvlong)Dx(prevpresent) * Dy(prevpresent);
+		in = prevpresent;
+		aov = rectclip(&in, presentbb)?
+			(uvlong)Dx(in) * Dy(in) : 0;
+		presentoverlap += aov;
+		presentdefer += aprev - aov;
+		if(eqrect(prevpresent, presentbb))
+			nsamebb++;
+		else if(aprev == aov)
+			nnestbb++;	/* prev strictly inside this one */
+	}
+	prevpresent = presentbb;
+	havepresent = 1;
+	presentbb = Rect(10000, 10000, -10000, -10000);
+	presentflushes = 0;
+}
+
+void
+drawpresentstats(void)
+{
+	int i;
+
+	print("DRAW present %llud empty %llud flushes %llud\n",
+		npresent, npresentempty, npresentflush);
+	print("DRAW dbufpix eager %llud defer %llud overlap %llud"
+		" samebb %llud nestbb %llud\n",
+		presenteager, presentdefer, presentoverlap, nsamebb, nnestbb);
+	print("DRAW flushper");
+	for(i = 0; i < nelem(nflushper); i++)
+		print(" %d:%llud", i, nflushper[i]);
+	print("\n");
+}
+
 static void
 addflush(Rectangle r)
 {
@@ -409,8 +550,10 @@ addflush(Rectangle r)
 		return;
 	}
 	/* emit current state */
-	if(flushrect.min.x < flushrect.max.x)
+	if(flushrect.min.x < flushrect.max.x){
+		presentcharge(flushrect);
 		flushmemscreen(flushrect);
+	}
 	flushrect = r;
 	waste = 0;
 }
@@ -439,8 +582,10 @@ dstflush(int dstid, Memimage *dst, Rectangle r)
 void
 drawflush(void)
 {
-	if(screenimage && flushrect.min.x < flushrect.max.x)
+	if(screenimage && flushrect.min.x < flushrect.max.x){
+		presentcharge(flushrect);
 		flushmemscreen(flushrect);
+	}
 	flushrect = Rect(10000, 10000, -10000, -10000);
 }
 
@@ -2086,6 +2231,7 @@ drawmesg(Client *client, void *av, int n)
 			printmesg(fmt="", a, 0);
 			m = 1;
 			drawflush();
+			drawpresent();	/* the client declared a frame; H1a */
 			continue;
 
 		/* write: 'y' id[4] R[4*4] data[x*1] */
