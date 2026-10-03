@@ -4,6 +4,7 @@
 #include "tk.h"
 #include "textw.h"
 
+extern void voiceannounce(char*);   /* voice(3); see man 3 voice */
 extern void voiceannouncetext(char*);   /* voice(3); see man 3 voice */
 
 /*
