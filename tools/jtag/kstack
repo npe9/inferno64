@@ -1,0 +1,142 @@
+#!/bin/sh
+#
+# What is above a wedged core's pc?  Read the stack over JTAG and name
+# every word in it that could be a return address.
+#
+#	sh tools/jtag/kstack            # cpu0
+#	sh tools/jtag/kstack 1          # another core
+#	NWORD=256 sh tools/jtag/kstack  # look further up
+#
+# WHY.  doc/open-issues-plan.ms H4 has cpu0 spinning in sdhcibcm.c's
+# awaitbit -- the register poll of a cardless controller -- and awaitbit
+# is BOUNDED, so something re-enters it for ever.  The missing fact is
+# which caller, and `where` gives only the pc.
+#
+# IT IS A SCRAPE, NOT A BACKTRACE, and that is stated because the
+# difference bit this session.  Plan 9's arm64 compiler keeps no frame
+# pointer chain -- the return address sits at the bottom of each frame
+# and the frame sizes are not in the symbol table -- so there is nothing
+# to walk.  What this does instead is what the kernel's own procdump
+# does: take the words on the stack and print the ones that fall inside
+# kernel text.  Reading one of those as a call chain is a mistake I made
+# today with a procdump line in which vmachine appeared four times and a
+# data symbol appeared as a frame.
+#
+# So: every candidate, in stack order, named, with duplicates kept --
+# because a repeated address is itself evidence (a loop that re-enters
+# through the same call site) and collapsing them would hide it.
+#
+# CHECKS THE KERNEL FIRST, like where and vmheld, and refuses rather than
+# naming addresses from a build the board is not running.
+#
+set -u
+HERE=`cd \`dirname "$0"\` && pwd`
+ROOT=`cd "$HERE/../.." && pwd`
+CONF=${CONF:-raspi3b}
+KERNEL=${KERNEL:-$ROOT/os/inferno/$CONF/i$CONF}
+IMG=${IMG:-$ROOT/os/inferno/$CONF/kernel8.img}
+ADAPTER=${ADAPTER:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
+CPU=${1:-0}
+NWORD=${NWORD:-128}
+TEXTLO=${TEXTLO:-0x80000}
+
+[ -r "$KERNEL" ] || { echo "kstack: no kernel at $KERNEL" >&2; exit 1; }
+
+sym() {
+	python3 "$HERE/ksyms" "$KERNEL" -g "$1" 2>/dev/null |
+		awk -v n="$1" '$3==n{print $1; exit}'
+}
+KDADDR=`sym kerndate`
+ETEXT=`sym etext`
+[ -n "$ETEXT" ] || { echo "kstack: no etext in $KERNEL" >&2; exit 1; }
+
+WANT=
+if [ -n "$KDADDR" ] && [ -r "$IMG" ]; then
+	WANT=`python3 - "$IMG" "$KDADDR" <<'PYEOF'
+import sys
+img, addr = sys.argv[1], int(sys.argv[2], 16)
+d = open(img, "rb").read()
+o = addr - 0x80000
+print(int.from_bytes(d[o:o+4], "little") if 0 <= o <= len(d)-4 else "")
+PYEOF`
+fi
+
+TMP=${TMPDIR:-/tmp}/jtag-kstack.$$
+trap 'rm -f "$TMP"' 0 1 2 15
+
+#
+# Halt, read the stamp, the pc and sp, then the stack itself.  The core
+# is RESUMED on the way out: this is a read, and leaving a board halted
+# turns a diagnosis into a second fault.
+#
+( cd "$ROOT" && timeout 120 openocd -f "$ADAPTER" -f tools/jtag/raspi3b.cfg \
+	-c "init; halt; targets bcm2837.cpu$CPU" \
+	-c "echo \"KS-STAMP\"; mdw ${KDADDR:-0} 1" \
+	-c "echo \"KS-PC\"; reg pc" \
+	-c "echo \"KS-SP\"; reg sp" \
+	-c "resume; exit" ) >"$TMP" 2>&1
+
+grep -aq KS-SP "$TMP" || {
+	echo "kstack: the debugger did not answer; is the adapter attached?" >&2
+	grep -a 'Error' "$TMP" | head -3 >&2
+	exit 1
+}
+
+stamp=`awk '/KS-STAMP/{s=1;next} s&&/^0x/{sub(/^[^:]*: */,"");print $1;exit}' "$TMP"`
+pc=`awk '/KS-PC/{s=1;next} s&&/pc .*: /{sub(/.*: */,"");print;exit}' "$TMP"`
+sp=`awk '/KS-SP/{s=1;next} s&&/sp .*: /{sub(/.*: */,"");print;exit}' "$TMP"`
+
+if [ -n "$WANT" ] && [ -n "$stamp" ]; then
+	got=`python3 -c "print(int('$stamp',16))" 2>/dev/null`
+	if [ "$got" != "$WANT" ]; then
+		echo "kstack: $KERNEL does NOT describe the running kernel" >&2
+		echo "kstack:   board stamp $got, $IMG says $WANT" >&2
+		exit 2
+	fi
+fi
+[ -n "$sp" ] || { echo "kstack: could not read sp" >&2; exit 1; }
+
+echo "kstack: cpu$CPU pc $pc sp $sp"
+sh "$ROOT/tools/sym.sh" "$pc" "$CONF" 2>&1 | sed 's/^/kstack:   pc is /'
+
+#
+# The stack itself, in a second pass so the dump address can come from
+# the sp just read.
+#
+( cd "$ROOT" && timeout 120 openocd -f "$ADAPTER" -f tools/jtag/raspi3b.cfg \
+	-c "init; halt; targets bcm2837.cpu$CPU" \
+	-c "mdd $sp $NWORD" \
+	-c "resume; exit" ) >"$TMP" 2>&1
+
+echo "kstack: words on the stack that fall inside kernel text ($TEXTLO..$ETEXT),"
+echo "kstack: in stack order, duplicates KEPT -- this is a scrape, not a chain:"
+python3 - "$TMP" "$TEXTLO" "$ETEXT" <<'PYEOF' > "$TMP.a"
+import re, sys
+lo = int(sys.argv[2], 16); hi = int(sys.argv[3], 16)
+out = []
+for line in open(sys.argv[1], errors="replace"):
+    if not line.startswith("0x"):
+        continue
+    body = line.split(":", 1)
+    if len(body) != 2:
+        continue
+    for w in body[1].split():
+        try:
+            v = int(w, 16)
+        except ValueError:
+            continue
+        if lo <= v < hi:
+            out.append(v)
+for v in out:
+    print(hex(v))
+PYEOF
+n=0
+while read a; do
+	n=`expr $n + 1`
+	printf 'kstack:   %-18s ' "$a"
+	sh "$ROOT/tools/sym.sh" "$a" "$CONF" 2>/dev/null | head -1 |
+		sed 's/^[^ ]* -> //'
+done < "$TMP.a"
+rm -f "$TMP.a"
+[ "$n" = 0 ] && echo "kstack:   none -- the stack holds no kernel text addresses"
+exit 0

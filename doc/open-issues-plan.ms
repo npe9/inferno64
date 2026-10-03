@@ -4164,3 +4164,92 @@ in one command \(em the same shape as
 .CW vmheld ,
 which needed no kernel change either.  That is the one fact missing, and
 guessing between the two leads above is not worth a build.
+.NH 2
+H4 ROOT CAUSE.  The wifi chip stops answering SDIO, and the driver retries for ever
+.LP
+.CW tools/jtag/kstack
+names the caller, and it is not what either lead in the previous section
+guessed:
+.P1
+awaitbit            (cpu0 spinning here)
+sdhcirecover+36
+sdhcicmd+308
+sdiocmd52+132
+wlintwait+36
+wlrxproc+104
+linkproc
+.P2
+.B "And it corrects this plan's own reading of the hardware."
+The previous section calls the Arasan controller "cardless".  It is not: on a
+Pi 3B, SDHOST drives the SD card and the ARASAN drives the SDIO WIFI chip.
+That is why a controller nothing seemed to want was being polled \(em the wifi
+receive kproc was polling it, which is its job.
+.PP
+.B "The counters say the retry is unbounded, read off the wedged board:"
+.P1
+sdhcinrecover  0xc1c = 3100 recoveries
+sdhcilastint   0x100   (no Cmdcomplete, no Interr)
+sdhcilaststat  0x01ff0000
+sdhcilastwhy   "nothing answered: no completion and no error"
+.P2
+So an SDIO command to the wifi chip got NO response at all \(em neither a
+completion nor an error.
+.CW sdhcicmd
+returns -1,
+.CW sdhcirecover
+runs and spins its bounded poll, and
+.CW wlrxproc
+comes straight back for more: three thousand one hundred times, and still
+going after eighteen minutes.  Each
+.CW awaitbit
+is bounded; the retry above it is not, which is the whole bug.
+.PP
+.B "Why it presents as every other theory."
+The board's only network is wifi, so when
+.CW wlrxproc
+stops making progress the styx mount and the command poller go silent and the
+board looks dead.  The HOST is untouched, which is why
+.CW wedgediag
+found it answering in 0.00s both times.  It is not an efs fault:
+.CW efs-fault
+is merely a workload long enough, with enough network traffic, to reach it.
+That also explains the first catch's two
+.CW Running
+processes \(em
+.CW wlrx
+with 6309 ticks \(em and the waiters parked at
+.CW tcpkick ,
+which is TCP backing up behind a dead link.
+.PP
+.B "Established, end to end."
+The chain above, from a stack scrape on the wedged core; the counters, read by
+address; the reason string, read by address; and reproducibility, two hangs in
+thirteen runs with the host proven healthy both times.  No recovery, because
+.CW bootwdog
+is 0.
+.PP
+.B "What is NOT established."
+WHY the chip stops answering.  A retry loop that never gives up turns one lost
+response into a dead board, and that is a driver defect whatever the cause \(em
+but the cause is a separate question, and the counters above are the place to
+start: 3100 recoveries with
+.CW Interrupt
+reading 0x100 every time says the controller is in a fixed state, not a
+fluctuating one.
+.PP
+.B "The fix, in the order it should be done."
+.IP 1.
+Bound the retry.  A caller of
+.CW sdhcirecover
+must give up and report, not loop; a bounded poll inside an unbounded caller is
+the same mistake this board already made with the Arasan DMA stall, now in a
+second place.
+.IP 2.
+Then decide what "give up" means for wifi: drop the link and re-associate is
+recoverable, and the board stays reachable over the console and JTAG either
+way.
+.IP 3.
+Only then consider
+.CW bootwdog .
+A watchdog that resets the board would have hidden all of this, and the two
+hangs would have read as spontaneous reboots.  It is a backstop, not the fix.
