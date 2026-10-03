@@ -466,6 +466,47 @@ mboxsetpower(int devid, int on)
 }
 
 /*
+ * Wait for the next vertical sync (tag 0x0004800e, SET_VSYNC).
+ *
+ * WHY: doc/open-issues-plan.ms item H1a.  Drawing straight into the
+ * scanout buffer tears, and the cure is to flip between two buffers --
+ * but a flip that does not land in vertical blank MOVES the tear instead
+ * of removing it, so double buffering without this is not a fix.  The
+ * mailbox already does everything else the flip needs: virtual height is
+ * pinned to physical with 0x00048004 and the virtual offset 0x00048009
+ * is sent as 0,0, and asking for twice the height returns twice the
+ * allocation with y=h moving the scanout.
+ *
+ * WHETHER THE FIRMWARE IMPLEMENTS IT IS AN OPEN QUESTION, which is why
+ * this returns rather than being wired into the flush.  The tag is
+ * documented and present in Linux's firmware driver; a Pi 3B's blob may
+ * answer it, may return immediately, or may not know it.  Those three
+ * are told apart by TIMING, not by the return code: a real vsync gives a
+ * stable frame period and an unimplemented one returns at once.
+ *
+ * IT BLOCKS THE CALLING CORE for up to a frame, so nothing in a draw
+ * path may call it until that has been measured.
+ */
+int
+mboxvsync(void)
+{
+	static u32 raw[8+4];
+	u32 *buf;
+
+	buf = (u32*)(((uintptr)raw + 0xf) & ~(uintptr)0xf);
+	buf[0] = 7*4;			/* total bytes */
+	buf[1] = 0;			/* request */
+	buf[2] = 0x0004800e;		/* tag: set vsync */
+	buf[3] = 4;			/* value buffer size */
+	buf[4] = 0;			/* request code */
+	buf[5] = 0;			/* value: in/out */
+	buf[6] = 0;			/* end tag */
+	if(mboxprop(buf) < 0)
+		return -1;
+	return 0;
+}
+
+/*
  * Ask the firmware to allocate a linear framebuffer of w x h at 32bpp.
  * One property message carries the whole setup: physical and virtual
  * size, depth, a zero virtual offset, then ALLOCATE_BUFFER (whose value

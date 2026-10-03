@@ -29,6 +29,8 @@ enum {
 };
 
 extern int mboxfballoc(int, int, uintptr*, u32*, u32*);
+extern int mboxvsync(void);
+static void vsyncprobe(void);
 
 static Memdata	scrdata;
 Memimage	*gscreen;
@@ -214,6 +216,78 @@ screenstats(void)
 	print("%llud ", ncomposeskip);
 	print("cyc ");
 	print("%llud\n", tcycles_compose);
+	vsyncprobe();
+}
+
+/*
+ * Does this firmware answer SET_VSYNC, and with what period?
+ *
+ * doc/open-issues-plan.ms H1a: double buffering cures the tear only if
+ * the flip lands in vertical blank, and nothing here has ever been shown
+ * to know where vertical blank is.  The tag is documented and Linux uses
+ * it; a Pi 3B's blob may answer it, may return at once, or may not know
+ * it, and the three are told apart by TIMING rather than by a return
+ * code.
+ *
+ * So: eight waits, the gap between each printed in microseconds.  A real
+ * vsync is a stable period near a frame -- 16667us at 60Hz; an
+ * unimplemented tag returns immediately and the gaps are a handful of
+ * microseconds, which is the mailbox round trip and nothing else.  Eight
+ * and not one, because a single gap cannot tell a period from a
+ * coincidence, and the SPREAD is the evidence: a frame clock is regular
+ * and a mailbox round trip is not.
+ *
+ * Printed from screenstats() -- the board's existing screen measurement
+ * hook, reached from userland through devkprof -- rather than wired into
+ * the flush, because this call BLOCKS THE CALLING CORE for up to a frame
+ * and nothing in a draw path may use it until the numbers are in.
+ *
+ * CHECKED BEFORE TRUSTING THE RESULT: mboxread() bounds its wait with a
+ * SPIN COUNT, not a timeout, and a spin count that expires inside a
+ * legitimately slow reply is how this tree once read a working SD card
+ * as a stalled one.  Spins is 10 million, about a second of uncached
+ * reads by mailbox.c's own comment, against a frame of 16.7ms -- sixty
+ * frames of headroom, so it cannot expire inside a real vsync wait.
+ *
+ * Which also means the three outcomes stay separable, and both numbers
+ * below are needed to separate them:
+ *
+ *	errors 0, gaps near 16667us	it works
+ *	errors 0, gaps of a few us	the firmware ignores the tag
+ *	errors 8, gaps of a few us	the firmware refuses it
+ *	errors 8, gaps near a second	the spin expired after all, and
+ *					the reasoning above is wrong
+ */
+static void
+vsyncprobe(void)
+{
+	uvlong t[9];
+	int i, err;
+	ulong hz;
+
+	/*
+	 * m->cpuhz is NOT the CPU clock on this board: clockinit() sets it
+	 * from cntfrq(), which is the 19.2MHz counter cycles() reads, so
+	 * this division is the right one.  Said here because the name
+	 * invites the opposite assumption and a 62-fold error in a frame
+	 * period would still look like a plausible number.
+	 */
+	hz = m->cpuhz;
+	if(hz == 0){
+		print("SCREEN vsync no cpuhz\n");
+		return;
+	}
+	err = 0;
+	cycles(&t[0]);
+	for(i = 1; i <= 8; i++){
+		if(mboxvsync() < 0)
+			err++;
+		cycles(&t[i]);
+	}
+	print("SCREEN vsync errors %d gaps(us)", err);
+	for(i = 1; i <= 8; i++)
+		print(" %llud", (t[i] - t[i-1]) * 1000000 / (uvlong)hz);
+	print("\n");
 }
 
 void
