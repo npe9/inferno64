@@ -19,6 +19,23 @@ extern int main_pool_pcnt;
 extern int heap_pool_pcnt;
 extern int image_pool_pcnt;
 
+/*
+ * segflush(): a stub, and here that is DEFENSIBLE -- which is worth
+ * saying because the identical stub on raspi4 is not.
+ *
+ * This board exists for QEMU's -M virt, where TCG invalidates its
+ * translations when the guest writes to memory it has translated, so
+ * instructions written as data are seen without any cache maintenance.
+ * There are no cache routines in this directory at all, consistently.
+ * It also sets cflag = 0, so the JIT never emits code, and starts no
+ * secondary processors.
+ *
+ * Do not generalise this to a board with real caches.  raspi4 has the
+ * same stub on silicon with a live devboot path (see its main.c), and
+ * raspi3b's equivalent had to clean the data cache and invalidate the
+ * instruction caches of ALL FOUR processors -- IC IALLUIS, not IC IALLU
+ * -- before an intermittent wedge went away (b461ec5f1).
+ */
 int
 segflush(void *p, ulong l)
 {
