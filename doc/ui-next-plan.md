@@ -1781,14 +1781,53 @@ matters: damage too large only costs work, damage too small drops pixels.
 A clip node is therefore ignored rather than intersected, since leaving
 it out can never make the answer too small.
 
-**Nothing consumes it on this branch, and no speculative caller was
-wired to justify it.** `emu/MacOSX/win-cocoa.m` already marks 32x32
+**Nothing consumed it when it was committed, and no speculative caller
+was wired to justify it.** `emu/MacOSX/win-cocoa.m` already marks 32x32
 tiles from per-`memimagedraw` damage, which is *finer* than a whole-frame
-union, so a union would tell it nothing it does not have. The consumer it
-is shaped for is the Raspberry Pi 3B's `flushmemscreen`, where the
-soft-to-fb copy has now been measured at **91% of the screen path on real
-silicon** — see `doc/raspi3b-draw-plan.ms` on the `rio-pi-tk` branch.
-That tree is not ours, so the producer waits on the consumer.
+union, so a union would tell it nothing it does not have.
+
+### The consumer turned up, and it is not the one this was aimed at
+
+It was aimed at making the Raspberry Pi 3B's `flushmemscreen` cheaper.
+That is not what wants it. The Pi work went: draw straight into the
+scanout buffer and the copy disappears — 91% of the screen path, measured
+at **6.8 to 7.1 times faster** on silicon. But drawing into scanout
+tears, the fix for the tear is double buffering, and double buffering has
+a cost that *scales with damage*: the copy to the back buffer is 20452µs
+of a 23900µs path full-screen but 818µs for a 128×96 widget.
+
+So the rule worth trying there is **flip when damage covers the screen,
+copy when it does not** — and that rule has to know how much of the
+screen a frame will touch **before drawing it**. An immediate-mode draw
+cannot say; a described frame can. `tkscenebounds()` is that answer.
+
+The point is not that the guess was lucky. It is that what a description
+buys is *answering questions before the pixels exist*, and which question
+turns out to matter is not something the producer gets to pick. Writing
+the union and saying plainly that nothing consumed it was cheaper than
+guessing a consumer and shaping it to fit.
+
+What is still missing is the path: `libtk` knows a frame's bounds, the
+decision belongs in a screen driver, and nothing carries one to the
+other. `hwdraw()` is a genuine pre-draw hook but fires per draw
+*operation* — hundreds per Tk update — so it is the wrong granularity.
+That is a real design question spanning trees that are not all ours; see
+`doc/raspi3b-draw-plan.ms` on `rio-pi-tk`.
+
+### And a warning about every instrument in this section
+
+The Pi work measured its tear directly: 31 of 31 draw operations torn,
+2339 rows written after the beam had passed them — and in the *same run*,
+a readback check of the pixels passed all five of its tests. **The
+framebuffer is never torn.** Tearing is a relationship between when a
+pixel was written and where the beam was, and reading the pixels back
+afterwards cannot recover it.
+
+`tkofftest(1)`, `lorigintest(1)` and `render bounds` are all readback
+probes. They are sound for what they check, which is what the pixels
+**are**. They are blind by construction to anything that is a property
+of **when** the pixels got there, and no amount of care inside them fixes
+that.
 
 The accumulator costs nothing measurable: two extra walks of the node
 list per tree moved the per-widget slope by a few tenths of a percent,
