@@ -13,7 +13,13 @@
  * that includes this header -- i.e. all of emu.  _DARWIN_C_SOURCE restores the
  * full level.  It must stay above the system includes below: <unistd.h> is
  * pulled in here, so a later #undef _POSIX_C_SOURCE (as several per-platform
- * os.c files do) is too late to help -- the header has already been read at the lower level.
+ * os.c files do) is too late to help -- the header has already been read at
+ * the lower level.
+ *
+ * MacOSX/amd64/include/lib9.h has done exactly this since 384519fff: it is a
+ * wrapper that sets _DARWIN_C_SOURCE and includes <sys/stat.h> before
+ * including this file.  Only arm64 -- the base header, and the one every
+ * Apple Silicon build uses -- was missing both.
  */
 #define _DARWIN_C_SOURCE 1
 #define _XOPEN_SOURCE  500
