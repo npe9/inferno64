@@ -917,6 +917,31 @@ diswatchproc(void*)
 			m->ticks);
 		USED(lastticks);
 		kstackdump();
+		/*
+		 * AND AGAIN, AFTER THE DUMP.
+		 *
+		 * The line above is the only one that says what happened, and
+		 * printing it first destroyed it: kstackdump() writes two
+		 * lines per process, which on a board carrying seventy-seven
+		 * of them is over 150 lines into a ring that holds about 111.
+		 * So by the time anyone read the ring over JTAG, every line in
+		 * it was a process entry and the diagnosis was gone -- three
+		 * separate captures this session, and the wedge had to be
+		 * reconstructed from the process states instead of simply
+		 * read.
+		 *
+		 * A ring keeps the NEWEST lines, so the summary has to come
+		 * last to survive.  It is printed twice rather than moved
+		 * because the first copy is what a watching human sees
+		 * immediately, before the dump scrolls past, and the second is
+		 * what a reader finds afterwards.
+		 */
+		iprint("DIS-WEDGED-END: beat %lud, vmq %s, runhd %s,"
+			" ticks %lud (the dump above is %d s of no progress)\n",
+			disbeat,
+			isched.vmq != nil? "waiting": "empty",
+			curP->runhd != nil? "ready": "empty",
+			m->ticks, quiet);
 	}
 }
 
