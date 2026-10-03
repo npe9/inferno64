@@ -177,6 +177,22 @@ The ratio is what the plan rests on and it is not close to the line, so a
 tenfold answer is enough to order the work.  The percentage is the stable
 part: 91.0 against 91.4 across the three.
 .PP
+.B "The configuration, because it is the confound that has bitten here."
+Every figure in this document was taken on a
+.B JTAG
+boot, and a JTAG boot parks cores 1 to 3 \(em so these are SINGLE-CORE
+numbers, and nothing here can speak for what four active cores do to
+memory bandwidth.  That is stated rather than buried because the
+raspi3b-port session lost a uart measurement to exactly this: a 1.72x
+that turned out to be a four-core card boot against a single-core JTAG
+boot, two things changed and only one of them the patch.
+.PP
+What saves the step-1 figure below is that its two arms were taken the
+SAME way \(em JTAG against JTAG, same board, same session, memdraw
+identical to the digit across both as the control.  A ratio between two
+runs of one configuration survives the configuration being unusual; an
+absolute number does not.
+.PP
 That settles the ordering of this plan, and it settles it more strongly
 than the plan assumed.  QEMU put the ratio of screen+flush to memdraw at
 7.0; real hardware puts it at 11.2 to 11.7, so emulation
@@ -380,6 +396,104 @@ worth keeping straight: those were BEHAVIOURAL.  A doubled virtual height
 returned twice the allocation, a size that changed rather than a bit that
 was set, and the offset flip was confirmed by capturing the emulated
 display.  A response code is the thing QEMU will lie about.
+.NH 1
+Step 2, answered: the firmware does the waiting
+.PP
+The vblank question above is settled, and not by this branch: the
+raspi3b-port session measured tag
+.CW 0x0004800e
+on silicon
+.CW ( c942709ef ).
+The tag exists and it
+.I blocks .
+Eight successive waits gave gaps of 8612, 16664, 16665, 16667, 16665,
+16666, 16667 and 16666us \(em 60.006Hz, stable to 2us, replicated on a
+second build and boot.
+.PP
+.B "The control in that measurement is the part worth copying."
+The first gap is SHORT and the remaining seven are equal, because the
+probe entered mid-frame.  A fixed 16.667ms sleep would have produced
+eight equal gaps.  So the short first gap is what distinguishes a real
+vsync from a timer, and it is an internal control \(em no second build
+needed to produce it.  The same measurement also checked the hazard that
+.CW mboxread
+bounds its wait with a SPIN COUNT rather than a timeout:
+.CW Spins
+is ten million, about a second, against a 16.7ms frame, so sixty frames
+of headroom.
+.NH 1
+And the tear, which a readback probe cannot see
+.PP
+.B "This is the most important methodological result in this document."
+With step 1 in place the same session measured the tear directly: 31 of
+31 draw operations torn, 2339 rows written after the beam had passed
+them, scanout period 319999 ticks = 16666.6us \(em which matches the
+vsync figure independently, from a different mechanism.
+.PP
+In the
+.I same
+run,
+.I drawink (1)
+passed all five of its checks.
+.PP
+So a readback probe
+.B cannot
+detect tearing, and this is not a weakness of that particular test: the
+framebuffer is never torn.  Tearing is a relationship between when a
+pixel was written and where the beam was, and no amount of reading the
+pixels back afterwards recovers it.  A probe of the form "sample a
+scanline and look for two colours" would have reported success on a
+wildly tearing display.  What to measure instead is phase, duration and
+extent against 34.72us a row, which is arithmetic.
+.PP
+This matters beyond the Pi, because every instrument this branch and
+.CW inferno-rio
+use for draw correctness \(em
+.I tkofftest (1),
+.I lorigintest (1),
+.CW readpixels
+generally \(em is a readback probe.  They are sound for what they check,
+which is what the pixels ARE.  They are blind by construction to anything
+that is a property of WHEN the pixels got there.
+.NH 1
+What step 2 should actually do, and why not a vsync wait in the flush
+.PP
+Two findings from the same session change the shape of step 2.
+.IP 1.
+.B "A vsync wait in flushmemscreen is too late under Directfb."
+By the time the flush runs, memdraw has already written the scanout
+buffer.
+.CW hwdraw()
+is a genuine
+.I pre-draw
+hook, but it fires per draw OPERATION and a single Tk update is hundreds
+of them, so there is no granularity at which per-operation
+synchronisation is affordable.  That is a better argument for double
+buffering than "it tears" is.
+.IP 2.
+.B "Tear-freedom costs the step-1 win back, scaled by damage."
+The copy was 20452us of a 23900us full-screen path, but 818us for a
+128x96 widget.  So paying it is affordable for ordinary Tk repaints and
+not for a full-screen fill \(em and the expensive case is exactly the one
+that needs no copy, because the next frame overwrites the whole back
+buffer anyway.
+.PP
+Which gives the rule to try:
+.B "flip when damage covers the screen, copy when it does not."
+.PP
+.B "And that rule needs this document's step 3 to work."
+It has to know how much of the screen a frame will touch BEFORE drawing
+it, which is precisely what a described frame can say and an immediate
+draw cannot.  Step 3 was written here as a way to make the flush cheaper;
+it turns out to be the thing that lets step 2 choose its strategy at all.
+.CW tkscenebounds()
+and
+.CW "render bounds"
+in
+.CW inferno-rio 's
+.CW libtk
+were committed with the honest note that nothing consumed them.  This is
+the consumer.
 .NH 1
 Step 3: drive the flush from described damage
 .PP
