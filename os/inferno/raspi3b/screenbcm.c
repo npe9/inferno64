@@ -34,6 +34,14 @@ static Memdata	scrdata;
 Memimage	*gscreen;
 static uchar	*fb;		/* software gscreen buffer memdraw draws into */
 static uchar	*vfb;		/* visible mailbox framebuffer in VC RAM */
+
+/*
+ * Draw straight into the scanout buffer instead of into a shadow and
+ * copying.  0 restores the shadow buffer and the per-frame copy; see
+ * screeninit() for what that costs and for the tearing this trades it
+ * against.
+ */
+enum { Directfb = 1 };
 static int	fbok;
 
 static int	cursenable;
@@ -234,20 +242,59 @@ screeninit(void)
 		return;
 	}
 	/*
-	 * memdraw draws into a plain kernel-RAM buffer (fb); flushmemscreen
-	 * copies dirty rectangles to the visible framebuffer (vfb) the GPU
-	 * scans out.  Drawing straight into the VC-RAM buffer faults deep in
-	 * memdraw, and the copy is also where the real-hardware cache clean
-	 * of the dirty rect belongs (see the header note).
+	 * memdraw draws into fb; flushmemscreen() delivers it to vfb, the
+	 * buffer the GPU scans out.
+	 *
+	 * With Directfb, fb IS vfb: memdraw draws straight into the scanout
+	 * buffer and the flush only has to clean the dirty rectangle out of
+	 * the cache.  THE SOFT-TO-FB COPY IS THE PI'S BIGGEST DRAW COST --
+	 * measured on silicon at 91% of the screen path and about ten times
+	 * the drawing it delivers (memdraw 2090us a fill, screen+flush
+	 * 23333-24444us at 640x480, three boots) -- so not making it is
+	 * worth more than anything else in this file.
+	 *
+	 * This used to say that drawing straight into the VC-RAM buffer
+	 * "faults deep in memdraw".  That was true when written and is not
+	 * now: it predates mmuinit().  With the MMU off all of RAM is
+	 * Device-nGnRnE, where unaligned accesses fault architecturally and
+	 * memdraw makes them constantly.  mmuenable() in l.s now sets
+	 * $0x1005 (M|C|I) from mmuinit() at main.c:249, and mmu.c maps every
+	 * 2MB block below BCMPERIPH as Pnormal, so the mailbox buffer
+	 * (fbpa 0x3c100000) is ordinary cacheable memory.  Probed rather
+	 * than argued: pointing fb at fbpa boots to DRAW-OK, TK-OK and the
+	 * same 564 bytes of glyph ink, with no fault.
+	 *
+	 * IT TEARS, AND THAT IS NOT FIXED HERE.  Nothing now separates
+	 * drawing from scanout, so a frame can be displayed half-drawn.
+	 * The cure is double buffering: the mailbox already pins virtual
+	 * height to physical with tag 0x00048004 and already sends tag
+	 * 0x00048009 (virtual offset) as 0,0, and asking for 2*h returns
+	 * exactly twice the allocation while y=h moves the scanout -- both
+	 * verified under QEMU.  What is NOT verified is landing the flip in
+	 * vertical blank, and without that the tear moves rather than
+	 * vanishing.  Until that is done this trades a tear for the copy.
+	 * Set Directfb to 0 to get the copy, and the old behaviour, back.
+	 *
+	 * See doc/raspi3b-draw-plan.ms for the measurements and the gates.
 	 */
 	vfb = (uchar*)fbpa;
-	fb = xalloc(nbytes);
+	if(Directfb)
+		fb = vfb;
+	else
+		fb = xalloc(nbytes);
 	if(fb == nil){
 		print("screen: no memory for %d byte soft fb\n", nbytes);
 		return;
 	}
 	memset(fb, 0x40, nbytes);
-	memmove(vfb, fb, nbytes);
+	if(fb != vfb)
+		memmove(vfb, fb, nbytes);
+	/*
+	 * Clean the initial fill out to the point of coherency, which the
+	 * copy above never did: the GPU scans vfb out uncached, so without
+	 * this the first frame can show whatever was in that memory.
+	 */
+	cacheflush(vfb, nbytes);
 	scrdata.base = nil;
 	scrdata.bdata = fb;
 	scrdata.ref = 1;
@@ -351,7 +398,8 @@ flushmemscreen(Rectangle r)
 		sp = fb + r.min.y*stride + r.min.x*ScrPix;
 		dp = vfb + r.min.y*stride + r.min.x*ScrPix;
 		for(y = r.min.y; y < r.max.y; y++){
-			memmove(dp, sp, nb);
+			if(dp != sp)		/* Directfb: nothing to copy */
+				memmove(dp, sp, nb);
 			/*
 			 * Clean this scanline to the point of coherency: the
 			 * GPU scans vfb out uncached, so without the clean it
