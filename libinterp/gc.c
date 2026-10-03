@@ -34,6 +34,7 @@ struct Ptrhash
 	ulong	gcnruns;
 	ulong	gcsweeps;
 	ulong	gcbroken;
+	ulong	gcbadptr;	/* words rejected before Setmark wrote through them */
 	ulong	gchalted;
 	ulong	gcepochs;
 	uvlong	gcdestroys;
@@ -254,6 +255,7 @@ markheap(Type *t, void *vw)
 	Heap *h;
 	uchar *p;
 	int i, c, m;
+	uintptr wv;
 	WORD **w, **q;
 	Type *t1;
 
@@ -311,6 +313,52 @@ markheap(Type *t, void *vw)
 				 * See doc/inferno-ports.ms.
 				 */
 				if((c & m) && *(WORD*volatile*)q != H) {
+					/*
+					 * REJECT AN IMPLAUSIBLE WORD BEFORE
+					 * WRITING THROUGH IT.
+					 *
+					 * Setmark(h) writes h->color.  With a
+					 * garbage word here, h is garbage and
+					 * that write lands in a live, unrelated
+					 * object -- an ordinary store, so there
+					 * is no fault at the write site to point
+					 * at what happened.  The comment above
+					 * this function describes the mechanism
+					 * and the shape of the population it has
+					 * seen: 0, 0x18, 0x80.
+					 *
+					 * The only guard until now was
+					 * checkmarkptr(), which returns at once
+					 * unless distrack is set -- and distrack
+					 * is 0 on raspi3b, where it costs 7.5x
+					 * (main.c says so).  So on that board
+					 * nothing checked, and gcbroken counted
+					 * 38 to 56 damaged chains per boot.
+					 *
+					 * This is the same test markheap's own
+					 * entry already applies to t, for the
+					 * same reason it gives: a real pointer
+					 * is never near-zero and never
+					 * misaligned, so a word that is either
+					 * is known-bad without touching it.  Two
+					 * compares, always on, against a write
+					 * that corrupts the heap.
+					 *
+					 * Skipping is the right response: there
+					 * is no object at a misaligned or
+					 * near-zero address to mark, so nothing
+					 * live is being dropped.  Counted rather
+					 * than silent, because the count is the
+					 * evidence for whether this is the
+					 * mechanism.
+					 */
+					wv = (uintptr)*(WORD*volatile*)q;
+					if(wv < 0x1000 ||
+					   (wv & (sizeof(uintptr)-1)) != 0){
+						gcbadptr++;
+						q++;
+						continue;
+					}
 					checkmarkptr(q, t, vw);
 					h = D2H(*q);
 					Setmark(h);
