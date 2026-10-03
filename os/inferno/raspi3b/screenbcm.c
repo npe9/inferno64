@@ -173,14 +173,32 @@ chargedamage(uvlong nb)
  *	where frame-level accounting reports 0 -- a frame does not overlap
  *	itself.
  *
- * nsamerect detects the second case, and it is why it is counted: when it is
- * ZERO no flush repeats its predecessor's rectangle, the over-stating case is
- * absent, and the overlap below is then a genuine LOWER bound on the
- * frame-to-frame overlap.  When it is non-zero these numbers bound nothing in
- * either direction and the only fix is a real frame boundary.
+ * BUT devdraw's own absorb rule nearly excludes the over-stating case, which
+ * is a better argument than the counter above and was not obvious.  addflush()
+ * emits the accumulated box only when
  *
- * So: nsamerect 0 and overlap near zero is evidence AGAINST the rule.  A large
- * overlap is not evidence for it until a frame boundary exists.
+ *	anbb > 1024 && waste*2 >= anbb && !rectXrect(flushrect, r)
+ *
+ * so a mid-frame emission happens precisely when the new rectangle does NOT
+ * intersect the box being emitted, and the next box starts as that disjoint
+ * r.  Consecutive flushes from the SAME frame therefore begin disjoint by
+ * construction, and two adjacent flushes that overlap are evidence of a frame
+ * boundary rather than of intra-frame splitting.  The second box can still
+ * grow back over the first by absorbing rectangles toward it, so this is
+ * strong rather than airtight.
+ *
+ * Which makes the overlap below close to a LOWER bound on the frame-to-frame
+ * overlap: the under-stating case is real and common, the over-stating case is
+ * mostly excluded by the emit condition.  nsamerect is kept as a direct check
+ * on the identical-rectangle sub-case, but it is weaker than it first looks --
+ * two PARTIALLY overlapping flushes in one frame would contaminate the sum and
+ * nsamerect would not see them, and when the rule genuinely wins (Tk
+ * repainting one widget each frame) nsamerect is LARGE for the honest reason,
+ * so a non-zero count does not by itself indict the number.
+ *
+ * So: a near-zero overlap is evidence AGAINST the rule.  A large one is
+ * evidence FOR it, weaker than a frame boundary would give, and no longer
+ * merely suggestive.
  */
 enum {
 	Fullish	= (uvlong)ScrX*ScrY*ScrPix*85/100,	/* the >85% bucket */

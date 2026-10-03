@@ -5243,3 +5243,69 @@ linearity at both ends.  The conclusion was still wrong, because a distribution
 cannot answer a question about order and I never asked which kind of question I
 had.  Checking an extrapolation and checking a rate does not check that the
 quantity measured is the quantity the argument needs.
+.NH 2
+H1a MEASURED on overlap: 84.9 per cent, and the right measurement is larger than the wrong one
+.LP
+The correction above said the flip/copy rule had no measurement behind it and
+named the one to take: the overlap of consecutive frames' damage.  A peer
+session built it \(em one remembered rectangle, one
+.CW rectclip
+and an add \(em and ran it on
+.CW "runtests -g"
+at 640x480 over 197 flushes:
+.P1
+eager    20952256 B    1770 us a frame
+deferred  3084216 B     260 us a frame
+overlap  17796408 B    84.9 per cent saved
+.P2
+.PP
+So the deferred scheme is strongly justified, and by the thing the model named
+rather than the thing either of us argued: consecutive frames overlap because
+Tk repaints the same widgets, which is repeated damage of the same region at
+any size and has nothing to do with the rare full-screen frames both
+measurements had been built around.  The right measurement gives a LARGER
+number than the withdrawn one \(em 84.9 against a claimed 47 that was not even
+a saving.
+.PP
+.B "And the sequence question has an answer, which kills the drops argument."
+Differencing the cumulative histogram recovers which flush incremented which
+bucket:
+.P1
+runtests -g  >1MB at flushes 1,2,3,4,5,6,7 and 68
+wmtest -n 40 >1MB at flushes 1 and 2
+.P2
+The consecutive case that favours deferred on DROPPED frames does occur \(em
+seven in a row \(em and all of it is start-up paint.  The one mid-run
+full-screen frame, at flush 68, is isolated and saves nothing.  So on these
+workloads the dropped-frame argument survives only for initial paint, which
+nothing is trying to hit 60Hz on, and the whole case for the rule is the
+amortised overlap.  That is the opposite of how I argued it: I called the
+budget decisive and the amortised figure secondary.
+.PP
+.B "A check on the instrument, from devdraw's own absorb rule."
+Both instruments measure flush-to-flush where the scheme is frame-to-frame, and
+the error runs both ways: a frame arriving as several disjoint flushes
+under-states, while two overlapping flushes within one frame over-state,
+because a frame does not overlap itself.
+.CW addflush()
+nearly excludes the second.  It emits the accumulated box only when
+.P1
+anbb > 1024 && waste*2 >= anbb && !rectXrect(flushrect, r)
+.P2
+\(em a mid-frame emission happens precisely when the new rectangle does NOT
+intersect the box being emitted, and the next box starts as that disjoint
+rectangle.  Consecutive flushes from one frame therefore begin disjoint by
+construction, so two adjacent flushes that overlap are evidence of a frame
+boundary rather than of intra-frame splitting.  Not airtight \(em the second box
+can grow back over the first \(em but it makes 84.9 per cent close to a lower
+bound rather than merely suggestive, since the under-stating case is the common
+one and the over-stating case is mostly excluded by the emit condition.
+.PP
+.B "What the failure was, and it is not an arithmetic mistake."
+Every number in the withdrawn argument was right: the histogram, the peer's
+tightened 47 per cent, the per-byte rate checked for linearity at both ends of
+a hundredfold range.  The conclusion was wrong anyway, because a distribution
+over flushes cannot answer a question about order and neither of us asked which
+kind of question we had.  Validating an input does not validate the model it
+feeds \(em the rate check was not wasted, it would have caught a different
+failure, and it was not the one we had.
