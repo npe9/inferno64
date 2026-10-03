@@ -581,6 +581,112 @@ an explicit zero store or a named runtime helper, not an absence \(em and the
 one ambiguous case was chased into the compiler's own source.  If a 64-bit
 .CW big
 constant ever does misbehave on one of these, this is the note to disbelieve.
+.NH 2
+A6.  DONE \(em the LOADERS, and a branch to itself inside panic()
+.LP
+The A-series above is about the compilers.  The loaders had a worse
+defect, and it was in the one function whose failure cannot report
+itself.
+.PP
+.B "Three bugs, each hidden behind the last."
+.P1
+brloop() followed an indirect branch and returned P
+xfol() dereferenced that P                       (segfault)
+xfol() abandoned the layout instead of using it
+.P2
+.CW brloop
+walks a chain of branches to find a conditional branch's final target.
+An INDIRECT branch has no resolved target, so the chain ran off the end,
+.CW brloop
+returned P, the caller skipped its patch, and the conditional branch kept
+an offset of 0: a branch to itself, emitted silently.
+.PP
+.B "What it did to real kernels."
+.P1
+raspi3b (7l)   panic+240   0x54000000   B.EQ +0
+pc64 (6l)      panic       74 fe        JE -2
+.P2
+On amd64 the whole tail of
+.CW panic()
+\(em a second call and a retry loop \(em was not in the binary at all.
+pc64 relinks ten bytes larger with identical symbol sets and the change
+confined to one site: 539 text symbols unmoved, 3950 shifted by exactly
++10, boundary at
+.CW panic .
+A peer session scanning a kernel from another branch found it at
+.CW panic+0xf0 ,
+the same offset, independently.
+.PP
+.B "And the synthetic test passed the whole time."
+.CW tests/kencc-brloop.sh
+assembles four instructions and checks the encoding; it is a good test
+and it was green while the loader was doing this to every kernel it
+linked, because the pattern it reproduces is not the only way to reach
+the defect.
+.CW tests/kencc-selfbranch.sh
+asks the question that matters instead \(em is there one in the binary
+we are about to boot \(em and that is what found it.  Keep both; they are
+not substitutes.
+.PP
+Two filters that scan needs, both learned by chasing ghosts: a hit must
+lie INSIDE A FUNCTION, because this kernel embeds instruction-template
+tables in its text segment (six matches, all data, in a 29KB unsymbolised
+gap); and the scan must check
+.CW e_machine ,
+because the first version scanned the riscv kernels for an AArch64
+encoding and called them clean.
+.PP
+.B "5l and jl take the same change; 8l takes only the nil check."
+Verified by relinking the real armv7 and virts kernels.  And that is the
+method lesson: the one-line fix applied to all five loaders passed the
+synthetic test and SEGFAULTED 6l on the real pc64 kernel.  A loader
+change is validated by relinking something large, not by a test case.
+.PP
+.B "Also done, from the same thread."
+6l and 7l wrote FOUR-byte symbol values for every header type but the
+Plan 9 one, so every kernel linked with
+.CW -H7
+had a symbol table truncated to 32 bits \(em harmless while these boards
+link low, wrong the moment one does not.  Both write the address width
+now.
+.PP
+And libmach could not read a Plan 9 executable AT ALL on this host:
+.CW Exec 's
+fields were declared
+.CW long ,
+so
+.CW sizeof(Exec)
+was 64 against an on-disk 32 and every field came out one slot shifted.
+.CW elf.h 's
+.CW Ehdr
+and
+.CW Phdr
+had the same defect, so ELF32 never worked either, and there was no
+arm64 machine description and no 64-bit ELF reader.  All fixed:
+.P1
+raspi3b (arm64 ELF64)   5866 symbols
+pc64 (amd64 Plan 9)     6035
+virts (riscv64 ELF64)   5080
+armv7 (arm ELF32)       3465
+.P2
+.CW "sh tools/sym.sh <addr> [board]"
+names a kernel address, which is what
+.CW doc/parallel-allocator-survey.ms
+recorded being unable to do.
+.PP
+.B "The narrowing-cast family is CLEAN, which is worth recording as a negative."
+A1 to A4 chased
+.CW kencc
+dropping a truncating cast.  Asked again, every 64-bit compiler now
+truncates correctly in the load-bearing shape \(em a cast used mid
+expression where nothing downstream truncates \(em at 32, 16 and 8 bits:
+.P1
+          (u64)(u32)x      (u64)(u16)x     (u64)(u8)x
+7c        MOVWU            MOVHU           MOVBU
+6c        MOVL             MOVWQZX         MOVBQZX
+jc        MOVW/MOVWU       MOVHU           MOVBU
+.P2
+A note elsewhere in this tree says "6c still broken"; it is stale.
 .NH 1
 B.  efs
 .NH 2
