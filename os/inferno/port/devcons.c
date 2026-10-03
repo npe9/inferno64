@@ -77,6 +77,7 @@ extern ulong	delayedscheds, skipscheds, preempts;
 extern int	ioboost, coopsched, schedgate, schedclock;
 extern int	gchalt, gcdepth, gcdepthmax;		/* libinterp/gc.c */
 extern ulong	gcnruns, gcsweeps, gcepochs, gchalted, gcinxecseen;
+extern ulong	gcbroken;
 extern uvlong	gcdestroys, gcinspects;
 extern ulong	gcstwstops, gcstwwaits, gcstwfails;	/* port/dis.c */
 extern ulong	nrunqother, nrunqdel;			/* port/dis.c */
@@ -1503,12 +1504,14 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					" (must be 0), stw %lud waited %lud"
 					" gaveup %lud, runq-other %lud"
 					" runq-freed-queued %lud"
+					" broken-chains %lud"
 					" jitrefsatomic %d cflag %d\n",
 					gcnruns, gcsweeps, gcepochs, gchalted,
 					gchalt, gcdepth, gcdepthmax,
 					gcdestroys, gcinspects, gcinxecseen,
 					gcstwstops, gcstwwaits, gcstwfails,
 					nrunqother, nrunqdel,
+					gcbroken,
 					jitrefsatomic, cflag);
 			}
 			if(cb->nf > 2 && strcmp(cb->f[1], "ioboost") == 0)
