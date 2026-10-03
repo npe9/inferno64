@@ -311,8 +311,18 @@ loop:
 		 * offset and drops the indirect jump entirely -- a third
 		 * thing wrong in the same chain, and not one to guess at.
 		 */
+		/*
+		 * AND IF THE CHAIN CANNOT BE FOLLOWED, LAY OUT THE BRANCH
+		 * ITSELF.  brchain() returns P when the chain ends in
+		 * something with no resolved target, and both giving up here
+		 * and the original "p = q; goto loop" with q == P abandon
+		 * the rest of the layout: the indirect jump never gets
+		 * emitted and the conditional branch that reached it is
+		 * patched to nothing.  Continue from p->pcond, which is the
+		 * instruction the chain ended on.
+		 */
 		if(q == P)
-			return;
+			q = p->pcond;
 		if(q->mark) {
 			p->pcond = q;
 			return;
@@ -490,6 +500,17 @@ brloop(Prog *p)
 	c = 0;
 	for(q = p; q != P; q = q->pcond) {
 		if(q->as != AJMP)
+			break;
+		/*
+		 * A branch with no resolved target is a target, not a path:
+		 * an indirect "JMP (AX)" is a perfectly good thing to jump
+		 * TO, and is what the programmer wrote.  Following through
+		 * it ran off the end and returned P, and the caller then
+		 * left the conditional branch with an offset of 0 -- a jump
+		 * to itself, emitted silently.  7l had the same defect; see
+		 * tests/kencc-brloop.sh.
+		 */
+		if(q->pcond == P)
 			break;
 		c++;
 		if(c >= 5000)

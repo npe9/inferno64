@@ -29,11 +29,29 @@
 # in utils/7l/pass.c's brloop and this test fails with offset 0, which is
 # how the fix was confirmed in the first place.
 #
-# arm64 only, deliberately.  5l and jl have the identical brloop and got
-# the identical change, but their assembly is not written here; 6l and 8l
-# have a DIFFERENT brloop and the same defect, and the same fix applied
-# to 6l makes it segfault linking real code -- a second bug behind the
-# first.  See doc/open-issues-plan.ms.
+# arm64 and amd64.  5l and jl have the identical brloop to 7l's and got
+# the identical change; their assembly is not written here.  8l has 6l's
+# shape and the same fix, and there is no 386 target in this tree to
+# relink it against.
+#
+# THE amd64 HALF WAS WORTH THREE ATTEMPTS, and what it found is why this
+# test exists at all.  Applying 7l's fix to 6l first made it SEGFAULT
+# linking the real pc64 kernel: xfol dereferenced a nil brchain() result,
+# a second bug hidden behind the first.  Fixing that made 6l emit a
+# conditional branch with a wrong offset and drop the indirect jump
+# entirely, because xfol gave up on the layout when it could not follow
+# the chain -- a third bug behind the second.  With all three fixed, the
+# real kernel differs from the old one by TEN BYTES, all of them inside
+# panic(), where 6l had been emitting
+#
+#	83 f8 00	CMPL	AX, $0
+#	74 fe		JE	-2		<- jumps to itself
+#
+# so a panic meeting that condition spun forever instead of printing.
+# It now reads "74 0f", landing on the deliberate "eb fe" hang at the end
+# of the function.  A self-branch in panic() is the worst place for this
+# defect to have been sitting: the one path whose failure cannot report
+# itself.
 #
 set -u
 ROOT=`cd \`dirname "$0"\`/.. && pwd`
@@ -95,6 +113,55 @@ if target != 0xd61f0280:
     sys.exit(1)
 print("  ok: B.cond offset %d lands on BR R20 (%#010x)" % (imm, target))
 EOF
+
+#
+# amd64: the same shape in 6a/6l.  "JMP (BX)" is memory-indirect in Plan
+# 9 x86 syntax and assembles as "ff 23" -- not "ff e3", which is what a
+# first pass at this test looked for and did not find.
+#
+cat > "$T/a.s" <<'EOF'
+TEXT tryit(SB), 1, $0
+	CMPL	AX, $4
+	JEQ	atel1
+	MOVL	$0, AX
+	RET
+atel1:
+	JMP	(BX)
+
+TEXT _main(SB), 1, $0
+	CALL	tryit(SB)
+	RET
+EOF
+
+if ! (cd "$T" && "$BIN/6a" a.s) 2>"$T/err"; then
+	say "  FAIL: 6a would not assemble the pattern"
+	sed 's/^/     /' "$T/err"
+	fail=1
+elif ! (cd "$T" && "$BIN/6l" -o a.out -H2 -T0x1000 a.6) 2>"$T/err"; then
+	say "  FAIL: 6l would not link it (it used to segfault here)"
+	sed 's/^/     /' "$T/err"
+	fail=1
+else
+	python3 - "$T/a.out" <<'EOF' || fail=1
+import sys
+d = open(sys.argv[1], 'rb').read()
+t = d[40:40+24]
+i = t.find(b'\x74')			# JE rel8
+if i < 0:
+    print("  FAIL: no JE in the output: %s" % t.hex(' '))
+    sys.exit(1)
+rel = t[i+1]
+if rel == 0xfe or rel == 0:
+    print("  FAIL: JE rel8 %#x -- it branches to itself" % rel)
+    sys.exit(1)
+target = i + 2 + rel
+if t[target:target+2] != b'\xff\x23':
+    print("  FAIL: JE+%d lands on %s, not the indirect JMP (ff 23)" %
+          (rel, t[target:target+2].hex(' ') or "nothing"))
+    sys.exit(1)
+print("  ok: JE +%d lands on JMP (BX) (ff 23)" % rel)
+EOF
+fi
 
 if [ $fail -eq 0 ]; then
 	say "KENCC-BRLOOP-OK"
