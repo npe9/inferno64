@@ -1796,23 +1796,69 @@ tears, the fix for the tear is double buffering, and double buffering has
 a cost that *scales with damage*: the copy to the back buffer is 20452µs
 of a 23900µs path full-screen but 818µs for a 128×96 widget.
 
-So the rule worth trying there is **flip when damage covers the screen,
-copy when it does not** — and that rule has to know how much of the
-screen a frame will touch **before drawing it**. An immediate-mode draw
-cannot say; a described frame can. `tkscenebounds()` is that answer.
+So the rule is **copy `damage(N-1) \ damage(N)`** per frame.
 
-The point is not that the guess was lucky. It is that what a description
-buys is *answering questions before the pixels exist*, and which question
-turns out to matter is not something the producer gets to pick. Writing
-the union and saying plainly that nothing consumed it was cheaper than
-guessing a consumer and shaping it to fit.
+### WITHDRAWN: that this needs anything from `libtk`
 
-What is still missing is the path: `libtk` knows a frame's bounds, the
-decision belongs in a screen driver, and nothing carries one to the
-other. `hwdraw()` is a genuine pre-draw hook but fires per draw
-*operation* — hundreds per Tk update — so it is the wrong granularity.
-That is a real design question spanning trees that are not all ours; see
-`doc/raspi3b-draw-plan.ms` on `rio-pi-tk`.
+This section claimed the rule had to know a frame's extent *before
+drawing it*, that an immediate-mode draw could not say, and that
+`tkscenebounds()` was the answer. **That is wrong, and the error was
+mine as much as the Pi session's: it conflates "before the frame is
+SHOWN" with "before it is DRAWN".** The copy only has to precede the
+**flip**.
+
+Work the order with two buffers. After the flip for frame N-1, front is
+frame N-1 and back is frame N-2, so back is stale exactly in
+`S = damage(N-1)`. Then:
+
+1. draw `damage(N)` into back;
+2. at `'v'`, **both** rectangles are in hand — `S` from the previous
+   present and `damage(N)` from the one just finished;
+3. copy `S \ damage(N)` front→back;
+4. flip.
+
+| region | back buffer holds | correct? |
+|---|---|---|
+| in `damage(N)` | drawn this frame | yes |
+| in `S`, not in `damage(N)` | frame N-1, copied from front — and frame N == frame N-1 here | yes |
+| outside `S` | frame N-2, which equals frame N-1 outside `S`, and N is undamaged here | yes |
+
+The cost is `|damage(N-1) \ damage(N)|`, the deferred cost exactly, and
+the work is a rectangle subtraction of at most four pieces. Nothing needs
+to know anything before the drawing, so **there is no pre-draw hint and
+no path from `libtk` to build**.
+
+`tkscenebounds()` therefore still has no consumer, and the commit that
+said so plainly remains true — not because the consumer is unwritten but
+because it should not exist. It may still earn its place as the only
+thing in the tree that knows a frame's extent *before* the frame, which
+is genuinely unavailable elsewhere; just not for this.
+
+### The hazard that replaces it: drawing into a stale buffer
+
+Step 1 draws into a buffer stale in `S`. An operation that **fully
+overwrites** its damage rect does not care. One that does not leaves
+frame N-2 pixels inside `damage(N)`, which step 3 deliberately excludes
+from repair. The exposure is `damage(N) ∩ S`, and it is wider than
+"read-modify-write" suggests:
+
+- **`string` is the default case, not a rare one**: a glyph is a *mask*,
+  so non-ink pixels inside the glyph rect keep what the destination held.
+- `line`, `poly`, `ellipse` write only their spans while `dstflush()`
+  charges the whole bounding box, so the holes lie inside `damage(N)`.
+- any `'d'` with a non-opaque mask, an alpha source, or `op != SoverD`.
+
+Only a fill or an opaque blit is a true overwrite. So the question is
+whether Tk draws partial-overwrite operations straight onto a window or
+onto a per-widget offscreen image that is then blitted opaquely — and
+Inferno's Tk being flicker-free hints at the second, which is a guess and
+labelled as one.
+
+It ships either way: on the first partial-overwrite operation in frame N
+that meets `S`, repair all of `S` eagerly. The worst case degrades to the
+eager cost — 1770µs, the number this was trying to beat — and never to a
+wrong image. Which makes what remains a **performance** question rather
+than a correctness one.
 
 ### Measured first: Tk's damage is widget-sized
 
