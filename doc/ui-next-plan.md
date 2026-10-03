@@ -2242,7 +2242,7 @@ window:
 | damage rectangles | 3749 | 10781779 |
 | rectangles per present | 19.73, max 103 | **390.22**, max 399 |
 | box ÷ sum of rects | **0.61×** (box tighter) | **2.92×** (box inflates) |
-| mean box per present | 108131 B | 1797681 B = 57% of the screen |
+| mean box per present | 108131 B = 8.8% of the 640×480 screen | 1797681 B = **93.6% of its 800×600 window** |
 | eager | 20544912 B | 49669940216 B |
 | deferred | 3084216 B | 142111560 B |
 | saving | 85.0% | **99.71%** |
@@ -2253,11 +2253,24 @@ Tk's ~20 rectangles per present are nested updates to one widget, and
 `gfxstress fill`'s ~390 are scattered and mostly disjoint, so their box is
 nearly the screen while the fills themselves are tiny.
 
-**The saving goes the other way from the inflation, and that is the point.**
-Scattering makes the box *worse* as an estimate of bytes and *better* for
-the scheme: consecutive presents both cover nearly the whole screen, so
-almost nothing needs carrying forward, and deferring saves 99.71% against
-85.0% for Tk. The raspi3b session measured **99.44%** on silicon for the
+**The saving goes the other way from the inflation, and the inflation
+CAUSES it.** Scattering makes the box *worse* as an estimate of bytes and
+*better* for the scheme, and not coincidentally: the box inflates until it
+nearly fills the region the client draws into, and once it does,
+consecutive presents' boxes are nearly the **same** region, so almost
+nothing needs carrying forward. Measured: the mean box is 93.6% of the
+window, and the mean overlap is **99.71% of a box** — consecutive boxes are
+not merely forced to intersect, they virtually coincide. Deferring saves
+99.71% against 85.0% for Tk.
+
+**Take the coverage percentage against what the client draws into, not the
+screen.** This table first said the `gfxstress fill` box was "57% of the
+screen", against 1024×768. The workload reshapes its window to 800×600, so
+the right denominator makes it **93.6%**, and the difference is not
+cosmetic: two regions covering 57% of a plane need overlap by only 14% of
+it, so the causal account above looks weak at 57% and is forced at 93.6%.
+A coverage figure with the wrong denominator understated the mechanism it
+was cited to support. The raspi3b session measured **99.44%** on silicon for the
 same workload through an independently written counter — two trees, two
 instruments, two platforms, agreeing to within a third of a percent, which
 is better evidence for the model than either number alone. They also found
