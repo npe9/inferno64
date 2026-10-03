@@ -6234,3 +6234,47 @@ exit status the way
 .CW boot.sh
 does, so "could not read the ring" is a third verdict and not silently folded
 into SLOW.
+.PP
+.B "CORRECTION to the paragraph above: the peer's incident was NOT the exit-0 case."
+I wrote that their
+.CW "function not declared: mboxtagprobe"
+build "did not merely fail quietly:
+.CW 7c
+reported SUCCESS and
+.CW mk
+archived an object."  That is true of my table and false of their example.  Their
+build ALSO printed
+.CW "external redeclaration of: mboxtagprobe"
+with conflicting types, which is a hard error.  Reproduced here:
+.P1
+void zz(void){ gg_nosuch(); }                      exit=0  object=YES
+    function not declared: gg_nosuch
+
+void zz(void){ gg_conflict(); }                    exit=1  object=NO
+u32 gg_conflict(void){ return 1; }
+    function not declared: gg_conflict
+    external redeclaration of: gg_conflict
+.P2
+So
+.CW mk
+DID print
+.CW "exit status=exit(1)"
+on their build, and their stale kernel ran because their filter was not looking
+for it \(em the TEXT gap, since kencc never says
+.CW "error:" .
+Two different holes, and I attributed mine to their example.
+.PP
+.B "And the correction sharpens the finding rather than softening it."
+The exit-0 case is specifically a call to a function NOT DEFINED IN THAT
+TRANSLATION UNIT.  When the callee is defined later in the same file with a
+different type, kencc catches the conflict and fails.  So the silent case is the
+ordinary cross-file call with a missing
+.CW extern
+declaration \(em which is the normal shape of kernel code, not an exotic one.
+The link backstops it only when no symbol of that name exists anywhere.
+.PP
+So for kencc the catches are: a clean link, plus
+.P1
+grep -cE 'not declared|redeclaration' <compile output>
+.P2
+and the status alone is not one of them.
