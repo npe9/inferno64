@@ -6175,6 +6175,24 @@ static uvlong dmgbucket[5];
 static uvlong dmgtotal, dmgbytes, dmgmax;
 static int dmgevery = -1;
 
+/*
+ * The quantity the flip-vs-copy argument actually needs, which a
+ * distribution over flushes cannot give: the OVERLAP between
+ * consecutive frames' damage.
+ *
+ * With two buffers, drawing frame N into the back buffer needs
+ * damage(N-1) \ damage(N) copied into it first, because the back buffer
+ * holds frame N-2.  So deferring the copy until just before the draw
+ * costs sum |damage(N-1) \ damage(N)|, where copying eagerly after each
+ * flip costs sum |damage(N)|.  The difference is exactly
+ * sum |damage(N-1) AND damage(N)| -- repeated damage of the same region,
+ * at any size.  Screen coverage does not enter.
+ */
+static Rectangle dmgprev;
+static int dmgprevok;
+static uvlong dmgoverlap;	/* sum |damage(N-1) AND damage(N)| */
+static uvlong dmgdeferred;	/* sum |damage(N-1) \ damage(N)| */
+
 static void
 damagenote(Rectangle r)
 {
@@ -6199,10 +6217,26 @@ damagenote(Rectangle r)
 	dmgbytes += b;
 	if(b > dmgmax)
 		dmgmax = b;
+	if(dmgprevok){
+		Rectangle x;
+		uvlong ov;
+
+		x = dmgprev;
+		if(rectclip(&x, r))
+			ov = (uvlong)Dx(x) * Dy(x) * 4;
+		else
+			ov = 0;
+		dmgoverlap += ov;
+		dmgdeferred += (uvlong)Dx(dmgprev)*Dy(dmgprev)*4 - ov;
+	}
+	dmgprev = r;
+	dmgprevok = 1;
+
 	if(dmgtotal % (uvlong)dmgevery == 0)
-		print("DAMAGEHIST n %llud  <=4KB %llud <=64KB %llud <=256KB %llud <=1MB %llud >1MB %llud  mean %llud bytes  max %llud\n",
+		print("DAMAGEHIST n %llud  <=4KB %llud <=64KB %llud <=256KB %llud <=1MB %llud >1MB %llud  mean %llud bytes  max %llud  eager %llud deferred %llud overlap %llud\n",
 			dmgtotal, dmgbucket[0], dmgbucket[1], dmgbucket[2],
-			dmgbucket[3], dmgbucket[4], dmgbytes/dmgtotal, dmgmax);
+			dmgbucket[3], dmgbucket[4], dmgbytes/dmgtotal, dmgmax,
+			dmgbytes, dmgdeferred, dmgoverlap);
 }
 
 void

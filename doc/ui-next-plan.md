@@ -1865,47 +1865,85 @@ churn-heavy one — `wmtest -n 40`, forty toplevels — is the *more*
 widget-sized of the two, so if these are biased it is toward
 overestimating damage.
 
-### Why the rare bucket is the one that justifies the rule
+### WITHDRAWN: the budget argument, and why it was wrong
 
-The obvious reading of that table is that the flip case is too rare to
-plumb for: 1.6 to 4.1% of flushes. That reading is wrong twice over, and
-the argument is the raspi3b-port session's.
+An earlier version of this section argued that the rare `>85%` bucket was
+what justified the rule, on two grounds: that 4.1% of flushes carried 47%
+of the damage bytes, and that every flush in that bucket exceeds a 60Hz
+frame budget on the copy alone (20452µs against 16665µs, 1.23×). Both
+numbers are correct. **The conclusion does not follow and the argument is
+withdrawn.**
 
-**Amortised, a 4% frequency carries nearly half the cost**, because the
-rare frames are the expensive ones. If the eight `>85%` flushes in the
-`runtests` run are each a full screen — which the recorded maximum of
-1228800 bytes and the self-consistency of the remainder both say, the
-other 189 then averaging 58845 bytes — they are **47% of all damage bytes
-in the run**. Skipping the copy on 4.1% of frames removes nearly half the
-average copy cost. A small frequency term multiplied by a large magnitude
-is not a small term, which is the inverse of the usual mistake.
+Working the sequence rather than the distribution: with two buffers,
+drawing frame N into the back buffer requires `damage(N-1) \ damage(N)`
+copied into it first, because the back buffer holds frame N-2. So
 
-**And the decisive argument is not the mean at all, it is the budget:**
+| scheme | cost of frame N |
+|---|---|
+| eager — copy after each flip | `|damage(N)|` |
+| deferred — copy before each draw | `|damage(N-1) \ damage(N)|` |
 
-| | bytes | copy | against a 60Hz frame |
-|---|---|---|---|
-| full screen | 1228800 | 20452µs | **1.23×** |
-| the 85% boundary | 1044480 | 17384µs | **1.04×** |
+and since `|A \ B| = |A| − |A ∩ B|`, summing gives
 
-Every flush in that bucket exceeds the whole frame budget **on the copy
-alone**, before any drawing happens. Without the flip rule those are
-dropped frames, deterministically rather than occasionally. With it they
-become the *cheapest* frames there are: the copy is what gets skipped on
-a frame that is **about to** cover the screen, so the only frames that
-cannot meet the budget are converted into free ones.
+> **eager − deferred = Σ |damage(N-1) ∩ damage(N)|**
 
-**That "about to" is load-bearing and this paragraph nearly shipped
-without it.** Read off the frame just *drawn*, the rule is the bug the
-correction earlier in this section exists to fix: a full-screen fill
-followed by a widget update would inherit a back buffer holding the frame
-before last. Unqualified, the budget arithmetic above is a persuasive
-argument for shipping exactly that — which is the whole reason the
-decision has to come from a description of the frame that has not been
-drawn yet, and cannot come from observing the one that has.
+The saving is the **overlap between consecutive frames' damage**, and
+screen coverage does not appear in it anywhere.
 
-The per-byte rate those figures rest on is not an assumption: the Pi's
-measured copy is 0.01664µs a byte at 1228800, 307200, 49152 and 12288
-bytes — linear across a hundredfold range.
+So an *isolated* full-screen frame drops a frame under **both** schemes.
+Deferred makes the full frame itself free, then charges the frame after it
+`|full \ widget|`, which is nearly the whole screen. The 20452µs does not
+disappear; it moves one frame later. "Dropped frames deterministically"
+was a true statement about *eager* presented as an argument for
+*deferred*. Deferred wins on drops only when full-screen frames are
+**consecutive**: k in a row is k drops eager and one deferred.
+
+The 47% goes the same way. It is a true statement about where eager's
+cost sits, not a saving — for isolated fulls the deferred total is the
+same to within a couple of widgets, because the big copy is still paid.
+**The number described the cost and it was read as the prize.**
+
+### The rule that survives is better than the one it replaces
+
+The saving is **repeated damage of the same region, at any size**,
+because that is where consecutive damage overlaps. A widget animating in
+place costs eager that rectangle every frame and costs deferred *zero,
+for ever*. "Flip when damage covers the screen" is one sufficient
+condition for `damage(N-1) \ damage(N)` being empty, which is why it
+looked right — and it misses every small repeated rectangle. The rule is
+just **copy `damage(N-1) \ damage(N)`**, with no coverage test in it.
+
+### Measured, with the right quantity this time
+
+`INFERNO_DAMAGE_HIST` now also keeps the previous rectangle and
+accumulates the overlap — one `rectclip` and an add:
+
+| workload | flushes | eager | deferred | saving |
+|---|---|---|---|---|
+| `runtests -g` @640×480 | 197 | 20952256 B | 3084216 B | **84.9%** |
+
+Per frame that is 1770µs eager against 260µs deferred. So the deferred
+scheme is strongly justified — by overlap, which is what the model says,
+and not by coverage, which is what the withdrawn argument said. The right
+measurement gave a *larger* answer than the wrong one.
+
+And the sequence question the model raised, which the distribution had
+thrown away: the `>1MB` flushes in that run are at indices **1, 2, 3, 4,
+5, 6, 7 and 68** — seven consecutive, then one isolated. So the
+consecutive case that favours deferred does occur, but all of it is
+start-up paint; the single mid-run full frame drops a frame either way.
+
+### The methodological failure, which is the part worth keeping
+
+Every number in the withdrawn argument was correct. The histogram, the
+47%, and the per-byte rate — which was even checked for linearity at both
+ends. The conclusion was wrong anyway, because **a distribution over
+flushes cannot answer a question about order**, and neither of us asked
+which kind of question we had.
+
+Checking a rate does not check that the quantity measured is the quantity
+the argument needs. That is a different and harder check, and it is the
+one that was missing.
 
 ### And a warning about every instrument in this section
 
