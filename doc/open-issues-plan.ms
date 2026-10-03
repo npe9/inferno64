@@ -3301,3 +3301,215 @@ The useful change is that this no longer needs answering.  The question was
 "can the medium leave efs an unmountable filesystem", and the answer is now a
 measurement rather than a hypothesis: for every failure shape that can be
 injected, no.
+.NH 1
+H.  The draw path
+.NH 2
+H1.  DONE \(em the Pi draws into the scanout buffer, and the pixels were read back
+.LP
+The soft-to-framebuffer copy was 91% of this board's screen path, measured on
+silicon at ten times the drawing it delivered.  A peer session pointed
+.CW gscreen
+at the mailbox buffer instead
+.CW ( Directfb
+in
+.CW screenbcm.c )
+and reported
+.CW screen+flush
+falling from 23333-24444us over 9 fills to 3448us over 58, with
+.CW memdraw
+unchanged at 2090us.  Those numbers are theirs and are not re-run here.
+Committed as
+.CW a66d787a7 .
+.PP
+.B "What the commit rests on that is mine."
+It builds; the self-branch scan over the linked kernel stays clean; the card is
+.CW kinstall -verified
+and the board boots with wifi, DHCP, DNS and the poller up;
+.CW wm/wm
+runs against it with no fault, no broken process and the board still answering.
+None of that sees a pixel, and
+.CW DRAW-OK
+at boot does not either \(em it prints after filling three colour bars and
+checks nothing.
+.PP
+So
+.CW drawink (1)
+was written to close that gap
+.CW ( 6fbfd2b9a ,
+.CW 39123e35f ):
+it draws geometry of known size and colour into the screen image and reads it
+back
+.I "out of the screen image" ,
+which under
+.CW Directfb
+is the memory the GPU scans out.  Five checks \(em a clear that must read all
+zero, a fill that must read all non-zero inside, the band above it that must
+stay zero, two abutting fills that must each be whole, and a string whose box
+must be partly but not wholly inked, because text reaches memdraw as a mask
+rather than as a solid source.  The first two are each other's control: the
+same pixels read all zero after the clear and all non-zero after the fill, so
+neither a readback stuck at zero nor one stuck at full scale passes both.
+.PP
+All five pass on the board, and the glyph ink agrees with hosted
+.CW emu
+to the pixel \(em 226 of 1728, ink box 9,10 to 71,21 \(em so the board's draw
+path produces the same pixels as the known-good host rather than merely
+plausible ones.
+.PP
+.B "And the checks were shown to be capable of failing."
+The first board run failed two of them, by 145 pixels of 75684 and by 14 of
+320 on the middle row.  That is the kernel's 16x16 soft cursor, which
+.CW Directfb
+now composites into the live scanout buffer;
+.CW drawink
+hides it while it runs.
+.CW "drawink -k"
+leaves it alone and fails both checks again, naming a 14x14 box at 320,240 \(em
+the hotpoint the kernel seeds to the screen centre \(em with both counts
+reproducing exactly.  One run therefore establishes three things: the checks
+discriminate, the holes were the cursor, and the zero-length write that
+restores the default cursor works.
+.PP
+.B "Two faults a readback cannot see, both already covered."
+Reading back through the same memimage, stride and mapping it wrote through
+would pass a pitch error and a cache error alike.
+.CW screeninit
+refuses outright if the mailbox returns a pitch other than
+.CW ScrX*ScrPix ,
+and
+.CW flushmemscreen
+still cleans each dirty scanline to the point of coherency now that it has
+nothing to copy.  Both were in the patch; neither is owed.
+.NH 2
+H1a.  OPEN.  It tears, and nothing here separates drawing from scanout
+.LP
+Stated plainly in the commit and in
+.CW screenbcm.c :
+a frame can be displayed half-drawn.  This is the price
+.CW Directfb
+pays for not copying, and
+.CW Directfb
+set to 0 buys the copy back.
+.PP
+.B Established.
+The mailbox already pins virtual height to physical with tag 0x00048004 and
+already sends tag 0x00048009 (virtual offset) as 0,0; asking for 2*h returns
+exactly twice the allocation and y=h moves the scanout.  Both verified under
+QEMU.
+.PP
+.B "Not established, and it is the whole problem."
+Landing the flip in vertical blank.  Without that a flip moves the tear rather
+than removing it, so double buffering on its own is not a fix and must not be
+committed as one.
+.PP
+.B "How it gets closed."
+Find the vsync signal the VideoCore exposes to the ARM \(em SMI or the
+mailbox's own frame-sync tag \(em and show, with a counter, that flips happen
+only between frames.  The acceptance test is not "it looks better": it is
+.CW drawink
+unchanged (a flip must not change what the readback sees) plus a tear probe
+that fills alternating colours as fast as it can and samples one scanline,
+which on a torn frame reads two colours.  Write the probe first and prove it
+sees the tear that exists today, or it proves nothing afterwards.
+.NH 2
+H2.  OPEN, and G1b's attribution is withdrawn: the reads are the bad-cluster check
+.LP
+.CW G1b
+closed with this, twice stated as established:
+.QP
+That 2.5MB write did 1251 READS for 5031 sectors written \(em they are one FAT
+lookup per cluster allocated.  That is a different fix \(em cache the FAT.
+.LP
+The count is right.  The attribution is wrong, and the arithmetic should have
+refused it at the time: a 32-bit FAT holds 1152 entries in a nine-sector
+track, so the 1245 clusters that write allocated span barely one track, and
+LRU touches that track every iteration.  Nothing there needs re-reading.
+.PP
+.B "What it actually is, read off a trace."
+.CW sdmem (3)
+now records the first sixty-four transfers since a reset.  A 64KB write
+through
+.CW dossrv :
+.P1
+r0+9 r63+9 r97+4 r27+9 r101+4 r105+4 r109+4 r113+4 ...
+.P2
+The nine-sector reads are the track cache \(em five of them, matching
+.CW dossrv 's
+own counter exactly.  The four-sector reads march up from sector 97, which is
+that filesystem's first data sector, one per cluster.  That is
+.CW clustok()
+in
+.CW appl/cmd/dossrv.b ,
+reading each cluster off the device before allocating it to check the medium
+can still deliver it.
+.PP
+A control came first, because the layer below was the obvious suspect: 574
+aligned 4608-byte writes straight to the device produce exactly ZERO reads, so
+.CW devsd
+invents none and the reads had to be the server's.
+.PP
+.B "Measured, with the server's own -A to turn the check off."
+Four arms, same 2.6MB:
+.P1
+                            check on          check off
+2KB clusters, delay 0    1284 reads 1512ms   4 reads 1176ms
+2KB clusters, delay 500  1284 reads 2360ms   4 reads 1437ms
+16KB clusters, delay 500  165 reads 1609ms   5 reads 1390ms
+.P2
+22 per cent of the write with a free medium, 39 per cent with a
+500us-per-transfer one, and the read count scales as 1/clustersize exactly as
+the code's own comment predicts.  The 4-read arm agrees with
+.CW dossrv 's
+track counter to the transfer, which is the two instruments checking each
+other.
+.PP
+.B "And it matters on this board."
+Its card is FAT32 with 16KB clusters, so the check reads 16KB for every 16KB
+written: about double the bytes moved for a sequential write.
+.CW doc/efs-plan.ms
+and item B1 both attribute dossrv's cost to read-modify-write of partial
+tracks.  Measured, that is TWO transfers in a 2.6MB write.  This is the cost.
+.PP
+.B "Why it is not fixed here."
+.CW clustok
+is not a tuning knob, it is failure handling, and it was added for a real
+card: deleting a file and copying it again put it back on the same dead page
+and it failed at the same byte, 1245184, every time, because nothing ever
+asked whether a free cluster worked.  A fix has to keep that.
+.PP
+.B "What a fix must preserve, and the three candidates."
+The property is: a cluster the medium cannot deliver is marked bad in the FAT
+and never handed out again.
+.IP 1.
+.I "Read one sector instead of the whole cluster."
+Cuts the added bytes 32-fold at 16KB clusters and keeps the FAT marking.
+Weakens detection to "the cluster's first sector fails".  The premise that a
+hard-failed region is larger than a cluster is PLAUSIBLE AND UNVERIFIED, and
+cannot be verified without the failing card, so this must not be committed as
+though it were equivalent.
+.IP 2.
+.I "Detect on the write that is already happening."
+.CW falloc
+zero-fills the whole cluster immediately after allocating it, so the medium is
+exercised anyway and
+.CW wberr
+already latches a failed write-back.  Moving the FAT marking there costs
+nothing.  The gap: a pre-write read detects a page that cannot be READ, and a
+write can succeed where a read fails \(em so this is a different test, not a
+cheaper one.  Which failure the card actually had is not recorded.
+.IP 3.
+.I "Check once per run of free clusters rather than per cluster."
+.CW falloc
+allocates sequentially from
+.CW freeptr ,
+so a run of clusters is contiguous on the medium; one read per run of 32 would
+cost 1/32 as much and detect a dead region of at least that size.
+.PP
+.B "The acceptance test, which has to exist first."
+.CW sdmem 's
+.CW fail
+fault can make one transfer return an error, so "the cluster is marked bad in
+the FAT and the write still succeeds" is now a test that can be written and
+run, at a chosen cluster, without a bad card.  Write that test against the
+CURRENT code and see it pass before changing anything; a fix whose test was
+written afterwards proves only that the two agree.
