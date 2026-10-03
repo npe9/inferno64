@@ -137,8 +137,8 @@ init2(nil: ref Draw->Context, args: list of string, iscmd: int): string
 	# where it was asked for.
 	#
 	if(args != nil)
-		return sys->sprint("%s: unexpected argument %s (the mount point is -m)",
-			arg0, hd args);
+		return sys->sprint("unexpected argument %s (the mount point is -m)",
+			hd args);
 
 	styx = load Styx Styx->PATH;
 	if(styx == nil)
