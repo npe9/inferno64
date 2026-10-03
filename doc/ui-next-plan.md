@@ -2253,24 +2253,42 @@ Tk's ~20 rectangles per present are nested updates to one widget, and
 `gfxstress fill`'s ~390 are scattered and mostly disjoint, so their box is
 nearly the screen while the fills themselves are tiny.
 
-**The saving goes the other way from the inflation, and the inflation
-CAUSES it.** Scattering makes the box *worse* as an estimate of bytes and
-*better* for the scheme, and not coincidentally: the box inflates until it
-nearly fills the region the client draws into, and once it does,
-consecutive presents' boxes are nearly the **same** region, so almost
-nothing needs carrying forward. Measured: the mean box is 93.6% of the
-window, and the mean overlap is **99.71% of a box** — consecutive boxes are
-not merely forced to intersect, they virtually coincide. Deferring saves
-99.71% against 85.0% for Tk.
+**The saving goes the other way from the inflation. The measurement says
+so directly: consecutive boxes overlap by 99.71% of a box** — they do not
+merely intersect, they virtually coincide, and that is why almost nothing
+needs carrying forward. Deferring saves 99.71% against 85.0% for Tk.
 
-**Take the coverage percentage against what the client draws into, not the
-screen.** This table first said the `gfxstress fill` box was "57% of the
-screen", against 1024×768. The workload reshapes its window to 800×600, so
-the right denominator makes it **93.6%**, and the difference is not
-cosmetic: two regions covering 57% of a plane need overlap by only 14% of
-it, so the causal account above looks weak at 57% and is forced at 93.6%.
-A coverage figure with the wrong denominator understated the mechanism it
-was cited to support. The raspi3b session measured **99.44%** on silicon for the
+**The saturation argument for that is real but weaker than the number it
+was invoked to support, and it is where the error got in.** The reasoning
+goes: the box inflates until it nearly fills the region the client draws
+into, so consecutive boxes must be nearly the same region. Made exact, two
+regions each covering a fraction *c* of a plane must overlap by at least
+2*c*−1 of it, so at *c* = 93.6% the overlap is at least **93.2% of a box**.
+The measurement shows **99.71%**. So the argument proves a bound 6.5 points
+below what was already measured — it was never load-bearing, and the honest
+order is measurement first, bound second.
+
+That matters because the argument is what carried a defect the measurement
+could not have. This table first gave the box as "57% of the screen",
+dividing by 1024×768 when the workload reshapes its window to 800×600
+(`appl/wm/gfxstress.b:55`); the right denominator is **93.6%**. At 57% the
+bound is 2(0.57)−1 = 14% of the plane, so the saturation step is
+**unsupported** and a reader could reasonably reject it; at 93.6% it is
+forced. A coverage figure with the wrong denominator understated the very
+mechanism it was cited to support — the right quantity over the wrong
+population, and the one of these traps that changes a conclusion rather
+than a decimal.
+
+**Two rules out of that.** A coverage percentage must be quoted with its
+denominator, because "98.6% coverage" cannot be checked by anyone,
+including its author. And when the measurement already establishes the
+claim, do not reach for a supporting argument: it cannot strengthen the
+result, and it introduces failure modes the measurement does not have.
+Both sessions made the same denominator mistake here; the raspi3b one
+escaped it only because that board's 640×480 screen is smaller than
+gfxstress's 800×600 request, so the window was clamped to within a few rows
+of full screen and dividing by the screen happened to be nearly right.
+Luck, not method. The raspi3b session measured **99.44%** on silicon for the
 same workload through an independently written counter — two trees, two
 instruments, two platforms, agreeing to within a third of a percent, which
 is better evidence for the model than either number alone. They also found
