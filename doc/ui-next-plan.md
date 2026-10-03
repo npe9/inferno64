@@ -2078,6 +2078,18 @@ there is no intra-frame fragmentation to coalesce, and the upper bound
 turns out to be the value. Measured at the right boundary rather than
 assumed to be the same.
 
+**What is measured and what is predicted, because the table does not
+distinguish them.** The *damage* is measured: those are real rectangles
+from a real Tk workload, counted at the client's own present. The
+*costs* are not. `eager` and `deferred` are what the two schemes **would**
+cost if this tree flipped, and emu does not flip — it uploads, and
+nothing here was ever double-buffered. The µs figures go further still,
+applying the Pi's measured 0.0166µs a byte to damage measured on a host.
+So the honest label is: **real measurement of damage, predicted cost of a
+scheme neither tree has run.** The same caveat applies to the Pi's own
+accounting wherever `screenpresent` is nil, which is every board but the
+one being worked on.
+
 (An earlier version of this table reported 196 frames against 197
 flushes and explained the 71632-byte gap as one damage region. That was a
 line sampled while the run was still going, before the last frame
