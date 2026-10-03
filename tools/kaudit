@@ -49,6 +49,19 @@
 # address with no such check at all.  Relinking mid-experiment disarms the
 # first four and silently misleads the fifth.
 #
+# WHAT HAS ACTUALLY BEEN RUN.  raspi3b: 110 sources, 0 findings for the
+# declaration patterns.  virtarm64: 98 sources, 2 findings, both
+# "conversion of pointer to shorter integer" and both examined (one is
+# devkprof's by-design ulong profile range, one is a print format).  The
+# can-it-fire check was PAT='shorter integer' on raspi3b, which produced two
+# findings -- so this tool has been shown capable of reporting, not only of
+# saying nothing.  It found one real bug on its first control run: PADDR()
+# returning ulong into xhole()'s uintptr.
+#
+# NOT run on: pc64, or any non-arm64 config.  The PATH line below assumes a
+# MacOSX/<arch>/bin toolchain, so on another host that is the first thing
+# that will need changing.
+#
 set -u
 HERE=`cd \`dirname "$0"\` && pwd`
 ROOT=`cd "$HERE/.." && pwd`
