@@ -45,6 +45,36 @@ if [ ! -f "$sym" ]; then
 fi
 NM=$ROOT/MacOSX/arm64/bin/inm
 [ -x "$NM" ] || NM=inm
+
+#
+# SAY WHICH KERNEL ANSWERED, every time.
+#
+# where(1), vmheld and kstack all check the board's build stamp and
+# REFUSE when the host kernel is not the running one.  This tool takes a
+# bare address with no board attached, so it cannot do that -- and that
+# makes it the one place where a resolution can be silently wrong.  It
+# happened: 0x1cf024 named splhi+16 against one build and swcursorget+32
+# against the next, both correct for their own kernel, and nothing in the
+# output said the kernel had changed underneath.
+#
+# So the kernel and its build stamp go to stderr with every answer.  The
+# stamp is what the board reports as its own, so a reader can compare the
+# two by eye even when the tool cannot.
+#
+stamp=
+kdaddr=`python3 "$ROOT/tools/jtag/ksyms" "$sym" -g kerndate 2>/dev/null |
+	awk '$3=="kerndate"{print $1}'`
+img=$ROOT/os/inferno/$conf/kernel8.img
+if [ -n "${kdaddr:-}" ] && [ -r "$img" ]; then
+	stamp=`python3 - "$img" "$kdaddr" <<'PYEOF' 2>/dev/null
+import sys
+img, addr = sys.argv[1], int(sys.argv[2], 16)
+d = open(img, "rb").read()
+o = addr - 0x80000
+print(int.from_bytes(d[o:o+4], "little") if 0 <= o <= len(d)-4 else "")
+PYEOF`
+fi
+echo "sym: resolved against $sym${stamp:+ (build $stamp)}" >&2
 #
 # EVERY symbol kind, not just text.
 #
@@ -86,7 +116,17 @@ NM=$ROOT/MacOSX/arm64/bin/inm
 		v = hex($1)
 		if (v < 0 || v > target) next
 		if (v > bestany) { bestany = v; anyname = $3; anykind = $2 }
-		if (($2 == "T" || $2 == "t") && v > besttext) {
+		#
+		# L and l are TEXT too: Plan 9 marks a LEAF function (one
+		# declared with no frame, $-4) that way, and this tree has
+		# plenty -- awaitbit in sdhcibcm.c, splhi in l.s, tready in
+		# dis.c.  Counting only T/t made those resolve as "not text"
+		# and print an unrelated nearest-text symbol beside them,
+		# which is how I came to doubt a CORRECT resolution of a
+		# wedged board pc in the middle of chasing it.
+		#
+		if (($2 == "T" || $2 == "t" || $2 == "L" || $2 == "l") &&
+		    v > besttext) {
 			besttext = v; textname = $3
 		}
 	}
