@@ -52,6 +52,8 @@ enum {
 	Aplicsourcecfg	= 0x0004,	/* +4*(source-1) */
 	Aplicmmsiaddr	= 0x1BC0,
 	Aplicmmsiaddrh	= 0x1BC4,
+	Aplicsetipnum	= 0x1CDC,
+	Aplicinclrip	= 0x1D00,	/* +4*(source/32): reads the rectified inputs */
 	Aplicsetienum	= 0x1EDC,
 	Aplictarget	= 0x3004,	/* +4*(source-1) */
 
@@ -169,9 +171,19 @@ trap(Ureg *ur)
 		case IrqExternal:
 			if(imsicbase != 0){
 				/* claimed by reading and clearing mtopei: identity in 26:16 */
-				while((irq = csrclaimmtopei() >> 16) != 0)
+				while((irq = csrclaimmtopei() >> 16) != 0){
 					if(irq < nelem(irqhandler) && (f = irqhandler[irq]) != nil)
 						f(ur, irqarg[irq]);
+					/*
+					 * In MSI mode a level source is pending
+					 * again only when it rises: one still up
+					 * after its handler -- more came while it
+					 * ran -- is sent again, as Linux does at
+					 * EOI, or it is lost.
+					 */
+					if(irq < 1024 && (APLIC(Aplicinclrip + 4*(irq/32)) & 1<<(irq%32)))
+						APLIC(Aplicsetipnum) = irq;
+				}
 				return;
 			}
 			irq = plicctx()[PlicClaim/4];

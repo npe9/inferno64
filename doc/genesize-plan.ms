@@ -1157,12 +1157,19 @@ IPIs, 977 messages through the platform.
 .CW "CHECKRV_AIA=1 scripts/check-rv.sh"
 runs every stage on the AIA machine.
 .IP
-Open: on the AIA machine the host has panicked in about one run in four
+On the AIA machine the host at first panicked in about one run in four
 \(en a return into
 .CW collect
 through a saved return address with bits 49 and 50 set \(en with the
-guest on AIA and with it on the PLIC alike, so in the host's own AIA
-path; never in eight runs on the PLIC machine.  Boot is slower with
+guest on AIA and with it on the PLIC alike, never in eight runs on the
+PLIC machine.  The host's AIA path lost interrupts: in MSI mode an
+APLIC makes a level source pending only when it rises, so a device
+still asserting when its handler returned (more had come meanwhile)
+was not sent again, and the virtio drivers ran on their 100 ms polls.
+The host now sends such a source again after its handler, as Linux
+does at EOI; eight runs since, none panicked.  What the polls
+corrupted is not found: the drivers' rings give buffers back only once
+used, and the receive length is the block's own.  Boot is slower with
 AIA too (21 seconds of guest uptime to its shell with four harts,
 against under one).  Still to do for M12 besides: the RISC-V IOMMU,
 and a host with more than one processor (the riscv64 port's MAXMACH

@@ -137,6 +137,8 @@ set -- \
 	"$@"
 # VMHOST_REBOOT=1: a reset reboots, rather than ending QEMU, so that with
 # VMHOST_D=cpu_reset the log has every processor's state at a triple fault
+# VMHOST_MON: a QEMU monitor on that TCP port of localhost, for a run
+[ -n "$VMHOST_MON" ] && set -- "$@" -monitor "tcp:127.0.0.1:$VMHOST_MON,server,nowait"
 # VMHOST_D: QEMU's -d log items (cpu_reset, guest_errors, ...), in .qemu/vmhost-d.log
 [ -n "$VMHOST_D" ] && set -- "$@" -d "$VMHOST_D" -D "$Q/vmhost$T-d.log"
 
