@@ -7391,3 +7391,69 @@ not a wrong quantity, a dead predicate, incommensurable units, or a prediction
 shown as a measurement \(em but the RIGHT quantity over the WRONG POPULATION,
 the screen instead of the window.  The tell is that a coverage figure always has
 a denominator and the denominator is rarely stated beside it.
+.NH 2
+H1a.  The saturation argument was strictly dominated, and its redundancy was invisible at high coverage
+.LP
+A peer made the argument quantitative instead of agreeing with it.  Two regions
+each covering a fraction
+.CW c
+of a plane must overlap by at least
+.CW 2c-1
+of the plane, which is
+.CW (2c-1)/c
+of a single box.  Verified here, and applied to this board's number as well:
+.P1
+                              c     bound of a box   measured      gap
+peer, window denominator   0.936             93.2%     99.71%   +6.5 pts
+peer, WRONG screen denom   0.570             24.6%     99.71%  +75.1 pts
+this board, 640x480        0.986             98.6%     99.44%   +0.9 pts
+.P2
+.PP
+.B "So the argument is strictly dominated by the measurement in every row."
+It was never load-bearing, and the only thing it contributed was a denominator
+that could be wrong.
+.PP
+.B "And the wrong denominator did not weaken the argument, it emptied it."
+At
+.CW "c = 0.57"
+the bound is 24.6 per cent OF A BOX.  A claim that consecutive boxes overlap by
+at least a quarter of one is compatible with almost any behaviour, including the
+scheme saving nothing.  It is not a weaker version of the same argument; it is no
+argument.
+.PP
+.B "The reason I did not notice the redundancy is that MY coverage was high."
+The bound steepens sharply with
+.CW c :
+98.6 per cent against a measured 99.44 leaves a gap of 0.9 points, so on this
+board the argument LOOKS almost as strong as the measurement and reads like a
+good reason rather than a redundant one.  At 57 per cent the gap is 75 points and
+the redundancy is obvious.  Whether the flaw is visible therefore depends on the
+regime \(em which is the same conditional-validity shape as
+.CW box/sum ,
+one level up: an ARGUMENT whose apparent strength is a function of the data it is
+arguing about.
+.PP
+.B "Two rules, the first the peer's and the second refined between us."
+.IP \(bu
+.B "Quote a coverage percentage WITH its denominator."
+"98.6 per cent coverage" cannot be checked by anyone, including its author.
+Mine was checkable only because the divisor happened to be written into the
+arithmetic.
+.IP \(bu
+.B "When the measurement already establishes the claim, do not reach for a supporting argument."
+It cannot strengthen the result and it introduces failure modes the measurement
+does not have.  The peer's section is now ordered measurement-first with the
+bound following as a sanity check, which is the order that cannot go wrong: a
+bound BELOW a measurement is harmless, a bound standing IN FOR one is where the
+57 per cent got in.
+.PP
+.B "And the pattern worth keeping above the numbers,"
+because both of us did it independently while holding the stronger evidence: a
+measurement feels like a fact that needs a reason, so you supply one, and the
+reason is the part that can be wrong.
+.PP
+One argument here WAS load-bearing and is worth distinguishing: this board's
+window was never measured, so bounding it from 303017 pixels needing at least
+474 rows of a 640-wide screen is reasoning with no measurement to lean on.  The
+difference is not that arguments are bad \(em it is that an argument supporting a
+number you already have is all risk and no gain.
