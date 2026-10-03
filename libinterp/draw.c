@@ -500,6 +500,22 @@ freedrawdisplay(Heap *h, int swept)
 
 	dd = H2D(DDisplay*, h);
 
+	/*
+	 * Stop the host resize path pointing at this.
+	 *
+	 * resize_display is set when a Display is made and was never
+	 * cleared, so once the Display was collected the next host window
+	 * resize ran drawdisplayresize() on freed memory: its own guard
+	 * reads dd->display and then dd->display->image, so a poisoned
+	 * dd->display comes back non-nil and the second read faults.  That
+	 * is the resize use-after-free in doc/hpc-plan.md bug 2b -- about
+	 * two runs in three of the screen suite under INFERNO_RESIZE_TEST,
+	 * and it needed accumulated state only because something had to
+	 * create and drop a Display first.
+	 */
+	if(resize_display == dd)
+		resize_display = nil;
+
 	if(!swept) {
 		destroy(dd->drawdisplay.image);
 		destroy(dd->drawdisplay.black);

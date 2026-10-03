@@ -1839,7 +1839,7 @@ What is *still* not seen: a hang after the results are written (one before shows
 as a missing PASS), and a quiet wrong answer from anything the component tests do
 not check themselves.
 
-### 2b. The resize hook *does* provoke a fault now — a segfault in `drawscreenrebind`
+### 2b. A segfault on resize — **FIXED**: `resize_display` was never cleared
 
 Bug 2's section above ends by saying that with the trigger present the nil
 return still does not happen. That is still true. But the hook provokes a
@@ -1896,6 +1896,44 @@ generations is one second. A client holding a reference longer than that is
 unprotected. That is a hypothesis, not a finding: the crash reads the **new**
 image, not a retired one, so if the retirement window is the cause the path is
 indirect.
+
+**THE CAUSE, and it was in none of the places this section first looked.**
+`libinterp/draw.c` declares `static DDisplay *resize_display`, assigns it when a
+Display is created, and **never clears it**. When the Display is collected the
+global dangles, and the next host resize runs `drawdisplayresize()` on freed
+memory.
+
+Its own guard is what faults. It tests
+`dd == nil || dd->display == nil || dd->display->image == nil`, so a poisoned
+`dd->display` reads back non-nil and the *second* dereference goes through
+poison — which is why the fault address was the poison pattern plus a field
+offset, and why `0xa8` matched no pointer field in `Memimage`, `Memlayer`,
+`Memscreen` or `DScreen`. Wrong structs entirely.
+
+It also explains the one thing that never fitted: why no single test reproduced
+it but the suite did. Nothing about layers or chains was ever involved —
+something merely had to create and drop a Display first, which each earlier
+test does.
+
+Fixed by clearing the global in `freedrawdisplay()`, the `TDisplay` GC
+destructor. **Measured**: 4 of 4 runs clean with poisoning on, all reporting
+`8 of 8 ran clean`, against a baseline of 9 of 11 runs faulting.
+
+**Two method lessons, each of which produced a wrong answer first.**
+
+*A backtrace frame is a return address, not a faulting PC.* `drawscreenrebind +
+144` was read as the faulting instruction and disassembled to `flushrect =
+n->r`; hoisting that read moved the frame to `+160`, which disassembles to
+`adrp` — pure address arithmetic that cannot fault. Both offsets were simply the
+instruction after `bl _drawdisplayresize`, whose own frame `_sigtramp`
+displaces. The relocation is itself the proof: a faulting instruction does not
+move when you edit code above it and keep faulting. Disassemble an offset
+before believing it names a statement.
+
+*The informative result was the negative one.* Checking every pointer in the
+layer walk against the poison pattern, printing only on a hit so the normal path
+stayed silent, returned **zero** hits while still faulting. That null is what
+forced the search off the chain hypothesis and onto identity.
 
 **Localised to the layer walk, and two hypotheses eliminated.** Logging pointers
 through the path shows `n` and `n->data` are both sound when
