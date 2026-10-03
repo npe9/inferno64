@@ -48,21 +48,49 @@ static uchar	*vfb;		/* visible mailbox framebuffer in VC RAM */
 enum { Directfb = 1 };
 
 /*
- * Double buffering with a page flip.  OFF: the mailbox and devdraw halves are
- * written and measured, the driver half is not, and what stands between is an
- * audit rather than code -- a flip makes the draw buffer's address ALTERNATE
- * every frame, and several things here and in port code hold or compare it:
+ * Double buffering with a page flip.  OFF, but the audit it was waiting on is
+ * DONE and it came out much shorter than feared.
  *
- *	fbsaveunder()/fbrestoreunder()	save the cursor's pixels by address
- *	the tear probe			keys on par->dst->data == gscreen->data
- *	dstflush() in devdraw.c		compares l->screen->image->data
- *					against screenimage->data
- *	memlayer			holds the screen image
+ * The flip is three lines:
  *
- * Each of those caching a stale buffer fails SILENTLY: a cursor restored into
- * the buffer that is no longer visible, a tear probe that reports zero because
- * its identity test never matches, a layer that stops flushing.  None of them
- * would announce itself.  That is why this is 0 and not 1.
+ *	scrdata.bdata = base + (front? ScrY*stride: 0);
+ *	fb = vfb = scrdata.bdata;
+ *	mboxvirtoffset(0, front? 0: ScrY);
+ *
+ * and the reason it is that cheap is that attachscreen() hands devdraw the
+ * Memdata ITSELF, which allocmemimaged() then shares into the screen Memimage.
+ * Memimage.data is a Memdata*, and the byte pointer is Memdata.bdata inside
+ * it.  So reassigning bdata propagates to every Memimage sharing it at once,
+ * and every identity test in the system keeps working, because all of them
+ * compare the Memdata POINTER and not the bytes:
+ *
+ *	devdraw.c:639   l->screen->image->data != screenimage->data
+ *	devdraw.c:901   l->data == screenimage->data
+ *	devdraw.c:2097  dst->layer->screen->image->data == screenimage->data
+ *	devdraw.c:2286  lp[0]->layer->screen->image->data == screenimage->data
+ *	screenbcm.c     par->dst->data == gscreen->data   (the tear probe)
+ *
+ * I listed the tear probe and dstflush() as hazards in an earlier version of
+ * this comment.  They are not.  Nor is memlayer, whose per-layer save[] are
+ * their own allocations.
+ *
+ * WHAT IS LEFT IS ONE REAL HAZARD, and it is the cursor.  fbsaveunder() copies
+ * the pixels under the cursor out of fb and fbrestoreunder() puts them back,
+ * with underok and curslast persisting BETWEEN frames.  A save in frame N
+ * restored after a flip writes frame N's pixels into the buffer that is now
+ * visible, at a moment when it holds frame N-1.  The fix is one line at the
+ * flip -- underok = 0 -- because the cursor is recomposed on the next flush
+ * anyway, and invalidating is cheaper than remembering which buffer a save
+ * came from.
+ *
+ * memdraw computes byte addresses per call and the flip happens at 'v' with
+ * drawlock held, so nothing holds a byte address across it.
+ *
+ * Still 0 because none of this has been run on the board, and the batch
+ * scoring the I-cache fix owns the board.  What is written is the mailbox half
+ * (mboxfballoc's virtual height, mboxvirtoffset) and the measurement
+ * (devdraw's per-present accounting); what is not is these three lines, the
+ * underok invalidation, and the deferred repair at 'v'.
  */
 enum { Dbuf = 0 };
 static int	fbok;

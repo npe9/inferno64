@@ -5740,3 +5740,84 @@ and
 with its own five-argument
 .CW mboxfballoc() ,
 and is untouched.
+.PP
+.B "The audit is done, and three of its four items were not hazards."
+.CW attachscreen()
+hands devdraw the
+.CW Memdata
+ITSELF, which
+.CW allocmemimaged()
+shares into the screen
+.CW Memimage .
+.CW Memimage.data
+is a
+.CW "Memdata *" ,
+and the byte pointer is
+.CW Memdata.bdata
+inside it.  So reassigning
+.CW bdata
+propagates to every
+.CW Memimage
+sharing it at once, and every identity test in the system keeps working, because
+every one of them compares the Memdata POINTER and not the bytes:
+.P1
+devdraw.c:639   l->screen->image->data != screenimage->data
+devdraw.c:901   l->data == screenimage->data
+devdraw.c:2097  dst->layer->screen->image->data == screenimage->data
+devdraw.c:2286  lp[0]->layer->screen->image->data == screenimage->data
+screenbcm.c     par->dst->data == gscreen->data   (the tear probe)
+.P2
+I listed the tear probe and
+.CW dstflush()
+as hazards.  They are not, and neither is
+.CW memlayer ,
+whose per-layer
+.CW save[]
+are their own allocations.  The worry that a tear probe reading zero would look
+like the flip working was real as a worry and false as a fact.
+.PP
+.B "So the flip is three lines."
+.P1
+scrdata.bdata = base + (front? ScrY*stride: 0);
+fb = vfb = scrdata.bdata;
+mboxvirtoffset(0, front? 0: ScrY);
+.P2
+.PP
+.B "And ONE real hazard survives, which is the cursor."
+.CW fbsaveunder()
+copies the pixels under the cursor out of
+.CW fb
+and
+.CW fbrestoreunder()
+puts them back, with
+.CW underok
+and
+.CW curslast
+persisting BETWEEN frames.  A save taken in frame N and restored after a flip
+writes frame N's pixels into the buffer that is now visible, at a moment when it
+holds frame N-1.  The fix is one line at the flip \(em
+.CW "underok = 0"
+\(em because the cursor is recomposed on the next flush anyway, and invalidating
+is cheaper than remembering which buffer a save came from.
+.PP
+.CW memdraw
+computes byte addresses per call and the flip happens at
+.CW 'v'
+with
+.CW drawlock
+held, so nothing holds a byte address across it.
+.PP
+.B "What is written and what is not."
+Written: the mailbox half
+.CW ( mboxfballoc 's
+virtual height,
+.CW mboxvirtoffset ),
+the per-present measurement in
+.CW devdraw.c ,
+and the partial-overwrite counter.  Not written: those three lines, the
+.CW underok
+invalidation, and the deferred repair at
+.CW 'v' .
+Nothing is on the board, which is scoring
+.CW b461ec5f1
+alone.
