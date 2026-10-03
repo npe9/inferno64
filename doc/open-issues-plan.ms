@@ -3675,14 +3675,25 @@ long-lived
 processes a
 .CW /prog
 scan finds are the board's own, with the same two pids every trial.  The
-specific trial: passes five of five alone.  Memory accumulation, which the
-suite's own comment proposes: the heap moves 7KB across the sections of a
-passing run and live allocations
-.CW ( nalloc-nfree )
-go from 6785 to 6861 \(em 76 objects, not a leak.  A styx connection or
+specific trial: passes five of five alone.  A styx connection or
 thread leak on the host: sampled every thirty seconds through six suite runs,
 ESTABLISHED connections stayed at 7 and the server's threads at 30, with CPU
 climbing 1.7 per cent.
+.PP
+.B "Memory accumulation is NOT eliminated, and a claim made here has to be withdrawn."
+The suite's own comment proposes it: "twenty-one mkefs-mount-write-efsck cycles
+in ONE shell process accumulate, and on a board memory is the constraint that
+bites".  Between the LAST TWO of the suite's five heap prints the heap moves
+7KB and live allocations
+.CW ( nalloc-nfree )
+go from 6785 to 6861 \(em 76 objects.  That is the end of the run only,
+because those were the two lines a truncated capture showed, and
+.CW 09f679c25 's
+message calls it "across a passing run", which it is not.  The figure that
+matters is the first print against the fifth, and it has not been taken: the
+board was running the batch.  Take it with the WHOLE output kept \(em
+.CW grep heap
+over an untruncated capture \(em before the theory is called dead.
 .PP
 .B "The theory that is left, and it is NOT efs."
 The workload copies its twenty files FROM
