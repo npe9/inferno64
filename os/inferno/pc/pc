@@ -16,8 +16,8 @@ dev
 	pointer
 	vga
 
-	ip	bootp ip ipv6 ipaux iproute arp netlog ptclbsum386 iprouter plan9 nullmedium pktmedium
-	ether		netif netaux ethermedium
+	ip	ip ipv6 ipaux ptclbsum386 parseip eipfmt classmask equivip parseether iproute arp chandial netlog ethermedium plan9 nullmedium pktmedium
+	ether		netif
 
 #	ata # Breaks on Linux/amd64
 	audio		dma

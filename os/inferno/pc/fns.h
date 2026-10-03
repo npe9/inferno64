@@ -159,7 +159,12 @@ ulong	kzeromap(ulong, ulong, int);
 void	nmiscreen(void);
 int	kbdinready(void);
 
-#define	waserror()	(up->nerrlab++, setlabel(&up->errlab[up->nerrlab-1]))
+/*
+ * waserror() is defined by os/inferno/port/portfns.h and was defined
+ * here too, identically in effect -- increment nerrlab, label the slot
+ * below it -- which 8c refuses as a redefinition.  pc64/fns.h does not
+ * carry one; neither does this now.
+ */
 #define getcallerpc(x)	(((uintptr*)(x))[-1])
 #define KADDR(a)	((void*)((uintptr)(a)|KZERO))
 #define PADDR(a)	((uintptr)(a)&~KZERO)

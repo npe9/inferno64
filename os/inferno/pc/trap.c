@@ -336,7 +336,7 @@ trap(Ureg* ureg)
 			m->machno, vno, m->lastintr);
 		if(0)if(conf.nmach > 1){
 			for(i = 0; i < 32; i++){
-				if(!(active.machs & (1<<i)))
+				if(!active.machs[i])
 					continue;
 				mach = MACHP(i);
 				if(m->machno == mach->machno)

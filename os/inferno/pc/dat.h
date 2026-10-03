@@ -4,6 +4,15 @@ typedef struct Conf	Conf;
 typedef union FPsave	FPsave;
 typedef struct FPx87state FPx87state;
 typedef struct FPssestate FPssestate;
+/*
+ * Inferno names a machine's floating point save area FPU, and
+ * os/inferno/port/portdat.h puts one in every Osenv.  This machine
+ * directory came from 9front, where the same thing is FPsave -- the
+ * same note os/inferno/pc64/dat.h carries, and the typedef pc64 got
+ * and this directory did not, so portclock.c has not compiled here
+ * since portdat.h gained the field.
+ */
+typedef union FPsave	FPU;
 typedef struct PFPU	PFPU;
 typedef ulong Instr;
 typedef struct ISAConf	ISAConf;
@@ -229,7 +238,15 @@ struct Mach
 struct
 {
 	Lock;
-	int	machs;			/* bitmap of active CPUs */
+	/*
+	 * One byte per processor, not a bitmap.
+	 *
+	 * os/inferno/port/portclock.c indexes this -- "active.machs[m->machno]"
+	 * -- and has for as long as pc64 has existed; this directory still had
+	 * the old int bitmap, so the shared clock has not compiled here since.
+	 * pc64/dat.h is the shape to match.
+	 */
+	char	machs[MAXMACH];		/* one per active CPU */
 	int	exiting;		/* shutdown */
 	int	ispanic;		/* shutdown in response to a panic */
 	int	thunderbirdsarego;	/* lets the added processors continue to schedinit */
