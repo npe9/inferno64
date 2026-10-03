@@ -1920,12 +1920,33 @@ accumulates the overlap — one `rectclip` and an add:
 
 | workload | flushes | eager | deferred | saving |
 |---|---|---|---|---|
-| `runtests -g` @640×480 | 197 | 20952256 B | 3084216 B | **84.9%** |
+| `runtests -g` @640×480 | 197 | 20952256 B | 3084216 B | 84.9% |
+| `wmtest -n 40` @640×480 | 122 | 8171520 B | 1182672 B | 84.9% |
 
-Per frame that is 1770µs eager against 260µs deferred. So the deferred
-scheme is strongly justified — by overlap, which is what the model says,
-and not by coverage, which is what the withdrawn argument said. The right
-measurement gave a *larger* answer than the wrong one.
+That is 1770µs eager against 261µs, and 1115µs against 161µs. The saving
+is overlap, which is what the model says, and not coverage, which is what
+the withdrawn argument said.
+
+**But this number is not yet the one the model wants, and the reason is
+the same mistake one level down.** The model's `damage(N)` is what *frame*
+N draws. `flushmemscreen` is called per **flush**, and nothing here has
+established that a flush is a frame. The per-transition data says it
+probably is not: `damage(N-1)` is entirely *inside* `damage(N)` in 132 of
+196 transitions, and 120 of 121 for `wmtest`, with **no** transition
+having zero overlap. Nested, growing rectangles are what several flushes
+refining one logical update look like — so 84.9% may be measuring
+redundancy *within* a frame rather than overlap *between* frames.
+
+If a flush is not a frame then the figure is an upper bound on the
+deferred saving, because a real flip coalesces those nested flushes into
+one damage region and the overlap between the coalesced regions is what
+actually matters. Settling it needs damage accumulated **between
+presents** rather than per flush, which is a different instrument again.
+
+Recording it that way rather than quoting 84.9% as the answer, because
+quoting it would be the identical error to the withdrawn argument: a
+correct measurement of a quantity adjacent to the one the argument
+needs.
 
 And the sequence question the model raised, which the distribution had
 thrown away: the `>1MB` flushes in that run are at indices **1, 2, 3, 4,
