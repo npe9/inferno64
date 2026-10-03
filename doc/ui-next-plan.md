@@ -2258,15 +2258,34 @@ so directly: consecutive boxes overlap by 99.71% of a box** — they do not
 merely intersect, they virtually coincide, and that is why almost nothing
 needs carrying forward. Deferring saves 99.71% against 85.0% for Tk.
 
-**The saturation argument for that is real but weaker than the number it
-was invoked to support, and it is where the error got in.** The reasoning
+**The saturation argument for that proves less than the number it was
+invoked to support — and for Tk it proves nothing at all.** The reasoning
 goes: the box inflates until it nearly fills the region the client draws
 into, so consecutive boxes must be nearly the same region. Made exact, two
 regions each covering a fraction *c* of a plane must overlap by at least
-2*c*−1 of it, so at *c* = 93.6% the overlap is at least **93.2% of a box**.
-The measurement shows **99.71%**. So the argument proves a bound 6.5 points
-below what was already measured — it was never load-bearing, and the honest
-order is measurement first, bound second.
+2*c*−1 of it, which as a fraction of one box is 2 − 1/*c*. That is
+**vacuous for any *c* ≤ 0.5**. Run against every regime measured:
+
+| | *c* | bound on overlap, per box | measured | gap |
+|---|---|---|---|---|
+| Tk `runtests -g` | 0.088 | **vacuous** | 84.75% | — |
+| `gfxstress fill`, window denominator | 0.936 | 93.2% | 99.71% | +6.5 pts |
+| `gfxstress fill`, *wrong* screen denominator | 0.571 | 25.0% | 99.71% | +74.7 pts |
+| raspi3b board, 640×480 | 0.986 | 98.6% | 99.44% | +0.9 pts |
+
+So the argument is **strictly dominated in every row**, and in the row this
+section is mostly about — Tk — it is not a weak argument but an empty one,
+while the measurement shows 84.75%. The honest order is measurement first,
+bound second.
+
+**And whether the redundancy is VISIBLE depends on the regime, which is why
+neither session caught it.** The bound 2 − 1/*c* climbs steeply towards 1 as
+*c* → 1, so at *c* = 0.986 it sits 0.9 points under the measurement and
+reads like a good reason; at *c* = 0.571 it sits 74.7 points under and the
+emptiness is obvious on sight. The raspi3b session was in the regime where
+the mistake is invisible. That is the same conditional-validity shape as
+`box/sum` one level up: an **argument** whose apparent strength is a
+function of the data it is arguing about.
 
 That matters because the argument is what carried a defect the measurement
 could not have. This table first gave the box as "57% of the screen",
