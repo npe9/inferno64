@@ -562,8 +562,21 @@ console(dir: string, pidc: chan of int, done: chan of int)
 	buf := array[1024] of byte;
 	tail := "";
 	seen := "";
+	# whole lines, each in one write: several machines' consoles may
+	# share the output (vmsched(1)), and a line must not be broken by
+	# another's
+	pend := array[0] of byte;
 	while((n := sys->read(fd, buf, len buf)) > 0){
-		sys->write(out, buf, n);
+		pend = cat(pend, buf[0:n]);
+		for(nl := len pend - 1; nl >= 0 && pend[nl] != byte '\n'; nl--)
+			;
+		if(nl >= 0){
+			sys->write(out, pend, nl+1);
+			pend = pend[nl+1:];
+		}else if(len pend > 4096){
+			sys->write(out, pend, len pend);
+			pend = pend[len pend:];
+		}
 		# -q: the run is over once the guest has said this, at the
 		# start of a line -- not where the console echoes a typed
 		# command that would print it
@@ -593,7 +606,17 @@ console(dir: string, pidc: chan of int, done: chan of int)
 				tail = tail[len tail - 256:];
 		}
 	}
+	if(len pend > 0)
+		sys->write(out, pend, len pend);
 	done <-= 1;
+}
+
+cat(a, b: array of byte): array of byte
+{
+	c := array[len a + len b] of byte;
+	c[0:] = a;
+	c[len a:] = b;
+	return c;
 }
 
 rev(l: list of string): list of string
