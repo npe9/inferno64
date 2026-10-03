@@ -3513,3 +3513,63 @@ the FAT and the write still succeeds" is now a test that can be written and
 run, at a chosen cluster, without a bad card.  Write that test against the
 CURRENT code and see it pass before changing anything; a fix whose test was
 written afterwards proves only that the two agree.
+.PP
+.B "The acceptance test now exists, and passes against the UNCHANGED code."
+.CW tests/dossrv-badclust ,
+ten checks on
+.CW sdmem (3)
+with a new fault that names a SECTOR rather than a transfer number \(em
+.CW "failsect n [times]" ,
+because a transfer number moves the moment anything unrelated reads the disk
+first, and the question here is about a PLACE.  The write succeeds through a
+dead cluster; the server names what it condemned; the file reads back and
+survives a remount; a fresh write after that remount never offers cluster 2
+again, so the bad mark reached the FAT; and with the fault aimed off the disk
+nothing is condemned.
+.PP
+.B "Two controls, and the positive one earned its keep by failing."
+"A fresh write skipped the cluster" first looked for a transfer starting at
+sector 65.  The control \(em the same sequence with no fault, where cluster 2
+MUST be taken \(em failed, because the data leaves as nine-sector tracks
+aligned to the track grid
+.CW ( w63+9
+.CW w72+9
+.CW w81+9
+.CW w90+9 ),
+so nothing ever starts at 65 and the check could not have failed.  The witness
+is
+.CW clustok 's
+own read,
+.CW r65+32 ,
+which is exactly
+.CW clustsize
+sectors at the cluster's first sector.
+.PP
+.B "And candidate 1 now has a named check to break."
+Section 7 aims the fault at sector 80, in the MIDDLE of cluster 2, and
+requires the cluster to be condemned.  Reading only the first sector would
+turn that check red.  That is the point: the trade-off has to be taken by
+editing a stated requirement, not discovered afterwards as a regression.
+.PP
+.B "A fourth candidate, and why it is worse than all three."
+Start with the check OFF and turn it on the first time a transfer fails \(em
+free on healthy media, protective once a card starts dying.  It is unsafe, and
+not marginally.  A bad page that accepts a write and cannot return it later is
+precisely the case
+.CW clustok 's
+READ catches before the data is trusted; with the check off that write is
+believed, and the loss surfaces as unreadable data in a file reported written.
+Worse, if the bad page announces itself by failing the write instead,
+.CW wberr
+is sticky and every later write to that filesystem fails until the server is
+restarted.  So the trigger either arrives too late or wedges the filesystem.
+Recorded because it is the obvious idea and it is wrong.
+.PP
+.B "Where this leaves H2."
+Ready to be worked on, which it was not before: there is a test, it passes
+unchanged, and each candidate's cost is now a check that turns red rather than
+an argument.  Nothing is changed in
+.CW dossrv 's
+behaviour here, because the premise candidate 1 rests on \(em that a
+hard-failed region is bigger than a cluster \(em cannot be verified without
+the failing card, and this tree does not ship unverified premises as fixes.

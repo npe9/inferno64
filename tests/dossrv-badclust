@@ -225,6 +225,36 @@ if {~ $"sz3 *131072*} {
 }
 
 #
+# 7: the granularity the check has TODAY, pinned on purpose.
+#
+# clustok reads the WHOLE cluster, so a dead sector anywhere in it is
+# caught.  doc/open-issues-plan.ms H2 wants to read less than that --
+# reading only the first sector would cut the cost 32-fold at 16KB
+# clusters -- and this is the check that such a change would break.  It
+# is here so the trade-off has to be made deliberately, by editing a
+# named requirement, rather than discovered later as a regression.
+#
+# Sector 80 is in the middle of cluster 2, which spans 65 to 96.
+#
+echo '=== 7: a dead sector in the MIDDLE of a cluster is caught too'
+setup
+echo 'failsect 80 1' > $D^/ctl
+dossrv -m $M -f $D^/data >[2] $LOG^/bc6.log
+dd -if /dev/zero -of $M^/f.bin -bs 16384 -count 8 >[2]/dev/null
+sz7 = `{fsize $M^/f.bin}
+unmount $M
+if {grep -s 'marking it bad' $LOG^/bc6.log} {
+	good 'a mid-cluster dead sector condemns the cluster:' `{grep 'marking it bad' $LOG^/bc6.log}
+} {
+	bad 'a dead sector at 80 did not condemn cluster 2 -- the check now reads less than a whole cluster'
+}
+if {~ $"sz7 *131072*} {
+	good 'and the write still succeeded'
+} {
+	bad 'the write produced' $"sz7
+}
+
+#
 # 6: the positive control for the check in section 3.
 #
 # "a fresh write skipped sector 65" is only evidence if a fresh write
