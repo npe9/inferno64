@@ -3878,3 +3878,42 @@ Two buffers give one \(em the flip \(em and the flip is once per frame no matter
 how many draws fed it.  So the direction H1a already had is right, and the
 cheap-experiment paragraph above applies only to the one case where a frame IS
 a single top-to-bottom pass.
+.PP
+.B "The cost of tear-freedom, and it is the Directfb win handed back."
+Page flipping with INCREMENTAL drawing needs both buffers to agree except for
+the current frame's damage, so each frame costs a damage-sized copy (or the
+same damage drawn twice).  That is exactly what
+.CW Directfb
+removed: the old path drew into a shadow and copied the damage to the scanout
+buffer, and the peer measured the copy at 20452us of a 23900us screen path for
+a full-screen fill \(em 86 per cent.
+.PP
+Scaled by damage, which is the number that decides it:
+.P1
+full screen 640x480     20452 us
+a quarter of it          5113 us
+a 128x96 widget            818 us
+a 64x48 widget             205 us
+.P2
+So for Tk, where damage is widget-sized, tear-freedom costs a few hundred
+microseconds a frame against a 16665us budget, and is affordable.  For a
+full-screen fill it costs 20ms and would undo the whole change.
+.PP
+.B "Which gives the item a shape it did not have."
+The conflict is real and it is not either/or: the expensive case for the copy
+is the full-screen redraw, and a full-screen redraw is exactly the case that
+needs NO copy, because the next frame overwrites the whole back buffer anyway.
+So the rule to try is: flip when the damage covers the screen, copy when it
+does not, and the copy is small precisely when it is needed.  That is a
+hypothesis with a measurement attached, which is what this item has been
+missing; it is not yet built and not yet tested.
+.PP
+.B "What would refute it."
+A workload whose damage is both large and partial \(em half the screen, every
+frame \(em pays 10ms a frame and 60Hz becomes impossible.  Whether Tk ever does
+that is a measurement on the real thing, not an argument, and
+.CW flushmemscreen
+already counts
+.CW nflushbyte ,
+so the damage distribution can be read off a session before any of this is
+built.
