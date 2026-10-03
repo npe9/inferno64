@@ -7535,3 +7535,113 @@ A bounds check before a blind write through a declared-pointer word is correct
 whether or not it ever fires here, and it costs two comparisons on a path that
 already walks every word.  But it did not fix the broken chains, and a commit
 that says otherwise would be wrong.
+.NH 2
+H4.  Five ways a check fails, and the fifth cannot be found by reading the tool
+.LP
+A peer's
+.CW tools/jtag/alive
+read printed
+.CW "dead (ticks 168052864 -> 168052864, not advancing)"
+against this board, which was meaningless rather than alarming.  Diagnosing it
+took two wrong hypotheses \(em mine and theirs \(em and produced a shape neither
+of us had.
+.PP
+.B "First I assumed a missing check, as in kmesg.  It was not:"
+.CW alive
+in THIS tree already compares the board's
+.CW kerndate
+against the image's stamp, with an
+.CW "exit 2" ,
+and its comment already warns that
+.CW mach0
+moves with every build.  Its inputs are distinguishing, verified here \(em a
+stale ELF differs in BOTH the address and the stamp,
+.CW kerndate@0x1d9fd8
+stamp 1791056038 against
+.CW kerndate@0x1d9fc8
+stamp 1791023117.
+.PP
+.B "Then I found a real hole, which is a fourth shape but not the one that bit them."
+Every stamp test sat inside
+.CW "if [ -n \(dq$KDADDR\(dq ] && [ -n \(dq$kd\(dq ]" ,
+so an empty
+.CW KDADDR
+silently skipped ALL of them and left the tool reporting ticks from an address
+nothing had vouched for.
+.B "A check that can be skipped is not a check."
+Now fatal
+.CW ( 5578c0c42 ),
+with the refusal path LABELLED UNTESTED because every real kernel here carries
+both
+.CW mach0
+and
+.CW kerndate ,
+so firing it needs an ELF with one and not the other and pointing
+.CW ELF
+at an object file trips the
+.CW mach0
+test first.
+.PP
+.B "And the actual cause is a fifth shape.  Measured across the worktrees:"
+.P1
+tools/jtag/alive      lines   kerndate/stamp refs
+raspi3b-port            161                    18
+rio-pi-tk                57                     0
+inferno-rio         (absent entirely)
+.P2
+Three trees, three meanings for one path: checked, unchecked, nonexistent.  They
+ran the 57-line copy, which predates the check, against a board running this
+tree's kernel.
+.PP
+.B "Which is nastier than the other four in one specific way."
+Every other member leaves evidence in the tool you are READING:
+.IP \(bu
+a diagnostic that does not exist (kencc never prints
+.CW "error:" );
+.IP \(bu
+one that exists but is not consulted
+.CW ( kmesg
+had no stamp check);
+.IP \(bu
+one deliberately silenced
+.CW ( -Wno-implicit-function-declaration );
+.IP \(bu
+one that exists, is consulted, and can be conditionally SKIPPED.
+.PP
+This one cannot be found by reading the tool, because the file you read and the
+file you ran are different files with the same path.  The peer had read this
+tree's reasoning about
+.CW mach0
+in a copy of the comment with no check beneath it.
+.PP
+.B "The practical form, theirs:"
+when a shared tool gives a surprising answer, check the copy you INVOKED \(em
+.CW "wc -l" ,
+a grep for the check you expect, and
+.CW "git log -1"
+on the path.  Two seconds against twenty minutes on the wrong hypothesis.
+.PP
+.B "And one corollary for writing them rather than running them:"
+a tool that reads a kernel by address should SAY which build it believes it is
+reading, in its output, so a stale copy announces itself instead of answering
+confidently.
+.CW kmesg
+and
+.CW alive
+now do;
+.CW vmheld ,
+.CW kstack ,
+.CW where
+and
+.CW wedgediag
+already did.
+.PP
+.B "A note on the shared memory, which is a live hazard rather than a lesson."
+.CW MEMORY.md
+is at its ~24400-byte limit and two sessions are editing it.  Detected directly:
+a read of 24150 bytes, a write of 24134, and
+.CW "wc -c"
+immediately after reporting 24520 \(em the file changed between the read and the
+write.  Read-modify-write on it is unsafe while another session is active, the
+same hazard as the shared git index, and over the limit the loader drops the
+LAST lines, which are the newest entries.
