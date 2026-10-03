@@ -715,6 +715,59 @@ requires none.  Also fixed:
 .CW -q
 matched its pattern in the console's echo of the typed command and
 stopped guests early; it now matches only at a line's start.
+.IP "Phase 5: M3 on SVM (QEMU, one TCG thread)." 4
+"vcpus
+.I n "
+on a machine's ctl makes processors 1 to n\-1, each a kproc wired to a
+processor of its own where there are enough, waiting as an application
+processor waits.  The platform delivers what a guest APIC's ICR sends
+(fixed, lowest-priority, NMI, INIT, SIPI; physical, logical flat or
+cluster, and shorthand destinations) and MSIs to the APICs they name;
+a SIPI starts a vCPU in real mode at its page, set on its own
+processor; a vCPU in guest mode elsewhere is taken out by a host IPI
+(LAPIC IRQ 21) to see what it was sent.  An NMI is injected only when
+an interrupt could be (so not into the guest's NMI handler, which a VM
+entry would refuse; one sent to a processor spinning with interrupts
+off waits), and an INIT to a processor already running does not stop
+it.  There is an I/O APIC (vmdev.c: 24 entries at 0xFEC00000, the PIT
+on input 2, the UART on 4; edge delivery, no remote IRR).
+.CW vmlinux
+.CW -c
+writes ACPI (RSDP, RSDT, and a MADT with a local APIC per vCPU, the
+I/O APIC and IRQ 0's override to GSI 2) rather than an MP table, which
+Alpine's kernel does not parse, and names it in
+.CW boot_params.acpi_rsdp_addr .
+.CW scripts/check-vm.sh 's
+M3 stage boots
+.CW pc64smp 's
+guest with four: all online, eight busy workers run at once and finish,
+every processor accounts user and system time and takes rescheduling,
+function-call and TLB-shootdown IPIs, and the guest reports no BUG,
+lockup or stall.  Linux passes its NMI self-tests.  Without an I/O APIC
+described, Linux took "symmetric
+I/O mode", masked the PIC's timer and UART inputs and expected them
+from an I/O APIC that was not there: the kernel's own printk (polled)
+went on but user programs' output never came \(en hence the I/O APIC.
+.IP
+QEMU's multi-threaded TCG: with four host processors each running a
+vCPU, the host triple-faulted on processor 0 at the instruction after
+VMRUN, reading its IDT, with the guest's TR and GS still loaded (which
+they are there, until the VMLOAD after it), found with QEMU's
+.CW cpu_reset
+log
+.CW VMHOST_D=cpu_reset , (
+.CW VMHOST_REBOOT=1 ).
+With
+.CW VMHOST_ACCEL=tcg,thread=single ,
+which the M3 stage uses, it has not happened.  That points at QEMU's
+nested SVM under MTTCG rather than the exit path, but does not prove
+it: one thread also serialises the host's own processors.  Still open;
+nested KVM on real hardware is the arbiter.
+.IP
+Also found here: the test's typed command grew past 1024 characters,
+the most busybox's shell takes on a line, which dropped the rest and
+left the shell waiting for a closing parenthesis; it is typed as
+several lines now.
 .IP "Next." 4
 M7 needs an SR-IOV PF driver for the 82576 (pools, VF mailbox:
 reset, MAC, multicast, VLAN, packet size) and a guest with
@@ -732,7 +785,10 @@ whose
 .CW virtio_blk
 and
 .CW virtio_net
-are modules.  M8 is done on SVM: "boots on" the virtio disk (root on
-vda, through ext2) is still to come.  Then phase 5 (SMP guests) and
-phase 12 (resource namespaces); and M2 on VMX, on Bochs, again now that
-the host keeps time.
+are modules.  M8 is done on SVM, including Linux booting on the virtio
+disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
+its /bin, /lib and /init) on its second disk, and a second guest given
+that disk alone and linuxguest.root=vda mounts it from the initramfs
+and switches to it.  Next: phase 12 (resource namespaces); M2, M8 and
+M3 on VMX (Bochs), now that the host keeps time; and the MTTCG triple
+fault.

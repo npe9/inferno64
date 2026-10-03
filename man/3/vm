@@ -72,6 +72,19 @@ guest's frames go out with its own address, which the device learns,
 and frames for that address, broadcasts and multicasts come in.
 The address is 52:49:\fIvm\fP:\fIdev\fP:00:01.
 .TP
+.BI vcpus " n"
+Give the machine
+.I n
+processors (up to 8): vCPUs 1 to
+.IR n \-1,
+each a kernel process of its own on a processor of its own where the
+host has enough, which wait, as application processors do, for the
+INIT and SIPI the guest's bootstrap processor sends through its APIC.
+The platform delivers inter-processor interrupts (fixed,
+lowest-priority, NMI, INIT, SIPI) and MSIs to the APICs they name, and
+has an I/O APIC at 0xFEC00000 (id 8) with the PIT on its input 2 and
+the UART on 4.
+.TP
 .BI trace " seconds"
 While a vCPU runs, print on the host's console, at most every
 .I seconds

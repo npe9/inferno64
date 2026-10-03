@@ -17,6 +17,10 @@ implement Init;
 # a virtio disk, served by the kernel's own virtio-blk (pc/vmvirtio.c).
 # Limbo writes a marker in its first sector; the guest reads it from
 # /dev/vda and writes the second, which Limbo reads back afterwards.
+# A second, 16 MiB, is its vdb, on which it makes an ext2 root (its own
+# /bin, /lib and /init); a second guest is then booted on that disk
+# alone (linuxguest.root=vda: the initramfs mounts it and switches to
+# it) and says what its root is.
 #
 # And the bench's virtio-net NIC (#l1, on a QEMU user network of its
 # own that this host does not use) gets a bridge port that is the
@@ -59,17 +63,20 @@ init()
 		assign = "-p" :: "0000:05:00.0" :: nil;
 	else
 		sys->print("LINUXTEST: no 0000:05:00.0 here; nothing assigned\n");
-	disk := mkdisk();
-	if(disk != nil)
-		assign = "-b" :: disk :: assign;
+	disk := mkdisk("/tmp/disk.img", 1024*1024, Marker);
+	root := mkdisk("/tmp/root.img", 16*1024*1024, nil);
+	if(disk != nil && root != nil)
+		assign = "-b" :: disk :: "-b" :: root :: assign;	# vda, vdb
 	(ok, nil) = sys->stat("#l1/ether1");
 	if(ok >= 0)
 		assign = "-n" :: "#l1/ether1" :: assign;
 	else
 		sys->print("LINUXTEST: no #l1/ether1 here; no virtio net\n");
+	# typed as several lines: busybox's shell takes at most 1024
+	# characters a line, and quietly drops the rest
 	args := "-s" :: "7200" :: "-m" :: "256" :: "-q" :: "LINUXGUEST: ran" :: "-d" :: "20"
 		:: "-i" :: "/guest/initramfs.cpio"
-		:: "-t" :: "echo LINUXGUEST: typed; uname -sr; for d in /sys/bus/pci/devices/*; do echo LINUXGUEST: pci $d `cat $d/vendor $d/device`; done; ls /sys/bus/virtio/devices; grep -iE 'virtio|LOC|timer|ttyS' /proc/interrupts; ls -l /sys/bus/virtio/devices/virtio0/driver; dmesg | grep -iE 'virtio|vport|hvc|console' | tail -12; echo hello-from-the-guest > /dev/hvc0 && echo LINUXGUEST: wrote hvc0; if [ -b /dev/vda ]; then echo LINUXGUEST: vda says $(dd if=/dev/vda bs=512 count=1 2>/dev/null | head -c 19); echo guest-wrote-this | dd of=/dev/vda bs=512 seek=1 conv=sync,fsync 2>/dev/null && echo LINUXGUEST: wrote vda; fi; if [ -e /sys/class/net/eth0 ]; then ip link set eth0 up; udhcpc -i eth0 -n -q -t 3 -s /bin/true 2>&1 | sed 's/^/LINUXGUEST: dhcp /'; echo LINUXGUEST: eth0 rx $(cat /sys/class/net/eth0/statistics/rx_packets) packets $(cat /sys/class/net/eth0/statistics/rx_length_errors) length errors tx $(cat /sys/class/net/eth0/statistics/tx_packets); fi; echo LINUXGUEST: \"r\"an"
+		:: "-t" :: "echo LINUXGUEST: typed; uname -sr; for d in /sys/bus/pci/devices/*; do echo LINUXGUEST: pci $d `cat $d/vendor $d/device`; done; ls /sys/bus/virtio/devices; grep -iE 'virtio|LOC|timer|ttyS' /proc/interrupts; ls -l /sys/bus/virtio/devices/virtio0/driver; dmesg | grep -iE 'virtio|vport|hvc|console' | tail -12\necho hello-from-the-guest > /dev/hvc0 && echo LINUXGUEST: wrote hvc0\nif [ -b /dev/vda ]; then echo LINUXGUEST: vda says $(dd if=/dev/vda bs=512 count=1 2>/dev/null | head -c 19); echo guest-wrote-this | dd of=/dev/vda bs=512 seek=1 conv=sync,fsync 2>/dev/null && echo LINUXGUEST: wrote vda; fi\nif [ -b /dev/vdb ]; then mke2fs -q /dev/vdb && mkdir -p /mnt && mount -t ext2 /dev/vdb /mnt && cp -a /bin /lib /init /mnt/ && mkdir /mnt/proc /mnt/sys /mnt/dev /mnt/tmp /mnt/newroot && touch /mnt/ONDISK && umount /mnt && echo LINUXGUEST: made a root on vdb; fi\nif [ -e /sys/class/net/eth0 ]; then ip link set eth0 up; udhcpc -i eth0 -n -q -t 3 -s /bin/true 2>&1 | sed 's/^/LINUXGUEST: dhcp /'; echo LINUXGUEST: eth0 rx $(cat /sys/class/net/eth0/statistics/rx_packets) packets $(cat /sys/class/net/eth0/statistics/rx_length_errors) length errors tx $(cat /sys/class/net/eth0/statistics/tx_packets); fi; echo LINUXGUEST: \"r\"an"
 		:: "/guest/vmlinuz" :: nil;
 	{
 		vmlinux->init(nil, "vmlinux" :: concat(assign, args));
@@ -85,31 +92,53 @@ init()
 		else
 			sys->print("LINUXTEST: disk sector 1: %r\n");
 	}
+	if(root != nil){
+		sys->print("LINUXTEST: booting on the virtio disk\n");
+		args = "-s" :: "7200" :: "-m" :: "256" :: "-q" :: "LINUXGUEST: ran" :: "-d" :: "20"
+			:: "-i" :: "/guest/initramfs.cpio" :: "-a" :: "console=ttyS0 linuxguest.root=vda"
+			:: "-b" :: root
+			:: "-t" :: "echo LINUXGUEST: on disk; grep vda /proc/mounts | sed 's/^/LINUXGUEST: mount /'; echo LINUXGUEST: \"r\"an"
+			:: "/guest/vmlinuz" :: nil;
+		{
+			vmlinux->init(nil, "vmlinux" :: args);
+		} exception e {
+		"*" =>
+			sys->print("LINUXTEST: vmlinux: %s\n", e);
+		}
+	}
 	sys->print("LINUXTEST: done\n");
 }
 
 Marker: con "INFERNO-VIRTIO-DISK";
+memfsup := 0;
 
-# a 1 MiB disk in memory, the marker in its first sector
-mkdisk(): string
+# a disk of size bytes in memory, a marker in its first sector if given;
+# the memfs on /tmp is started by the first
+mkdisk(path: string, size: int, marker: string): string
 {
-	memfs := load Command "/dis/memfs.dis";
-	if(memfs == nil){
-		sys->print("LINUXTEST: no memfs: %r; no virtio disk\n");
-		return nil;
+	if(!memfsup){
+		memfs := load Command "/dis/memfs.dis";
+		if(memfs == nil){
+			sys->print("LINUXTEST: no memfs: %r; no virtio disk\n");
+			return nil;
+		}
+		memfs->init(nil, "memfs" :: "/tmp" :: nil);
+		memfsup = 1;
 	}
-	memfs->init(nil, "memfs" :: "/tmp" :: nil);
-	path := "/tmp/disk.img";
 	fd := sys->create(path, Sys->ORDWR, 8r666);
 	if(fd == nil){
 		sys->print("LINUXTEST: %s: %r; no virtio disk\n", path);
 		return nil;
 	}
 	b := array[1024*1024] of {* => byte 0};
-	b[0:] = array of byte Marker;
-	if(sys->write(fd, b, len b) != len b){
-		sys->print("LINUXTEST: writing %s: %r; no virtio disk\n", path);
-		return nil;
+	if(marker != nil)
+		b[0:] = array of byte marker;
+	for(off := 0; off < size; off += len b){
+		if(sys->write(fd, b, len b) != len b){
+			sys->print("LINUXTEST: writing %s: %r; no virtio disk\n", path);
+			return nil;
+		}
+		b[0:] = array[len Marker] of {* => byte 0};
 	}
 	return path;
 }

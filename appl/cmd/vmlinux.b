@@ -38,6 +38,8 @@ assign: list of string;	# -p: PCI functions given to the guest
 disks: list of string;	# -b: files given to the guest as virtio disks
 nets: list of string;	# -n: ether(3) devices the guest gets a virtio port on
 trace := 0;	# -d: vCPU heartbeat on the host's kernel console, seconds
+ncpu := 1;	# -c: processors
+Acpi:	con 16rF0000;	# the ACPI tables, in the BIOS area the e820 map reserves
 Zero:	con 16r7000;
 Cmdline:	con 16r20000;
 Kernel:	con 16r100000;
@@ -46,7 +48,7 @@ stderr: ref Sys->FD;
 
 usage()
 {
-	sys->fprint(stderr, "usage: vmlinux [-m megabytes] [-a append] [-i initrd] [-s seconds] [-t typed] [-q pattern] [-p 0000:bb:dd.f]... [-b file]... [-n etherdir]... [-d seconds] bzImage\n");
+	sys->fprint(stderr, "usage: vmlinux [-m megabytes] [-a append] [-i initrd] [-s seconds] [-t typed] [-q pattern] [-p 0000:bb:dd.f]... [-b file]... [-n etherdir]... [-c cpus] [-d seconds] bzImage\n");
 	raise "fail:usage";
 }
 
@@ -182,6 +184,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		'p' =>	assign = arg->earg() :: assign;
 		'b' =>	disks = arg->earg() :: disks;
 		'n' =>	nets = arg->earg() :: nets;
+		'c' =>	ncpu = int arg->earg();
 		'd' =>	trace = int arg->earg();
 		* =>	usage();
 		}
@@ -225,6 +228,8 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail(sys->sprint("io ignore: %r"));
 	if(trace > 0 && sys->fprint(ctl, "trace %d", trace) < 0)
 		fail(sys->sprint("trace: %r"));
+	if(ncpu > 1 && sys->fprint(ctl, "vcpus %d", ncpu) < 0)
+		fail(sys->sprint("vcpus %d: %r", ncpu));
 	for(; assign != nil; assign = tl assign){
 		if(sys->fprint(ctl, "assign %s", hd assign) < 0)
 			fail(sys->sprint("assign %s: %r", hd assign));
@@ -308,6 +313,16 @@ init(nil: ref Draw->Context, argv: list of string)
 	bp[16r1e8] = byte len e820;
 	writemem(mem, big Zero, bp);
 
+	# more than one processor: ACPI's MADT says where they are (this
+	# kernel reads no MP table: CONFIG_X86_MPPARSE is off), named in
+	# boot_params.acpi_rsdp_addr as well as found by a scan
+	if(ncpu > 1){
+		writemem(mem, big Acpi, acpitables(ncpu));
+		rsdp := array[8] of {* => byte 0};
+		put32(rsdp, 0, Acpi);
+		writemem(mem, big Zero + big 16r70, rsdp);
+	}
+
 	regs := sys->open(dir + "/vcpu0/regs", Sys->OWRITE);
 	if(regs == nil)
 		fail(sys->sprint("regs: %r"));
@@ -320,12 +335,21 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail(sys->sprint("setting registers: %r"));
 
 	pidc := chan of int;
-	spawn console(dir, pidc);
-	helpers := <-pidc :: nil;
+	condone := chan[1] of int;	# buffered: the copier may end first
+	spawn console(dir, pidc, condone);
+	conspid := <-pidc;
+	helpers: list of int;
 	spawn input(dir, pidc);
 	helpers = <-pidc :: helpers;
 	if(secs > 0){
 		spawn timeout(dir, ctl, secs, pidc);
+		helpers = <-pidc :: helpers;
+	}
+
+	# an exit an application processor takes that the kernel does not
+	# handle ends the run, as one of the bootstrap processor's does
+	for(i = 1; i < ncpu; i++){
+		spawn apexit(dir, i, pidc);
 		helpers = <-pidc :: helpers;
 	}
 
@@ -357,6 +381,15 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 	sys->print("vmlinux: status\n%s", readall(dir + "/status"));
 	sys->fprint(ctl, "kill");
+	# the console copier ends when it has copied all the guest wrote
+	tick := chan[1] of int;	# buffered: the timer must not wait for a reader that has gone
+	spawn timer(tick, 30*1000);
+	alt {
+	<-condone =>
+		;
+	<-tick =>
+		helpers = conspid :: helpers;
+	}
 	# the helpers outlive the machine otherwise, which matters when
 	# vmlinux is loaded by another program (vmsched(1))
 	for(; helpers != nil; helpers = tl helpers){
@@ -366,12 +399,165 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 }
 
-console(dir: string, pidc: chan of int)
+apexit(dir: string, i: int, pidc: chan of int)
+{
+	pidc <-= sys->pctl(0, nil);
+	fd := sys->open(sys->sprint("%s/vcpu%d/exit", dir, i), Sys->OREAD);
+	if(fd == nil)
+		return;
+	buf := array[512] of byte;
+	n := sys->pread(fd, buf, len buf, big 0);
+	if(n <= 0)
+		return;
+	sys->print("vmlinux: vcpu%d exit %s", i, string buf[0:n]);
+	regs := readall(sys->sprint("%s/vcpu%d/regs", dir, i));
+	sys->print("vmlinux: vcpu%d regs\n%s", i, regs);
+	# where the processor's IDT is, in its own page tables
+	(cr3, ok1) := field64(regs, "cr3");
+	(idt, ok2) := field64(regs, "idtrbase");
+	if(ok1 && ok2)
+		ptwalk(dir, i, cr3, idt);
+	fd = sys->open(dir + "/vcpu0/ctl", Sys->OWRITE);
+	if(fd != nil)
+		sys->fprint(fd, "stop");
+}
+
+#
+# ACPI, as little as says where the processors and their interrupts
+# are: the RSDP (revision 0, so an RSDT), the RSDT, and a MADT with a
+# local APIC for each vCPU (APIC id = vCPU number), LINT1 as NMI on
+# all, the platform's I/O APIC (id 8, at 0xFEC00000, GSIs from 0) and
+# IRQ 0 overridden to GSI 2, as on a PC.  No FADT or DSDT: there is no
+# ACPI hardware.
+#
+acpitables(ncpu: int): array of byte
+{
+	madtlen := 44 + 8*ncpu + 6 + 12 + 10;
+	b := array[16r60 + madtlen] of {* => byte 0};
+
+	# RSDP at 0
+	b[0:] = array of byte "RSD PTR ";
+	b[9:] = array of byte "INFRNO";
+	b[15] = byte 0;		# revision 0: RSDT only
+	put32(b, 16, Acpi + 16r20);
+	b[8] = byte -sum(b[0:20]);
+
+	# RSDT at 16r20: one entry, the MADT
+	r := b[16r20:16r20+40];
+	acpihdr(r, "RSDT", 40, 1);
+	put32(r, 36, Acpi + 16r60);
+	r[9] = byte -sum(r);
+
+	# MADT at 16r60
+	t := b[16r60:16r60+madtlen];
+	acpihdr(t, "APIC", madtlen, 3);
+	put32(t, 36, int 16rFEE00000);	# the local APIC
+	put32(t, 40, 1);		# PCAT_COMPAT: there are 8259s
+	o := 44;
+	for(i := 0; i < ncpu; i++){
+		t[o] = byte 0;		# processor local APIC
+		t[o+1] = byte 8;
+		t[o+2] = byte i;	# processor UID
+		t[o+3] = byte i;	# APIC id
+		put32(t, o+4, 1);	# enabled
+		o += 8;
+	}
+	t[o] = byte 4;			# local APIC NMI
+	t[o+1] = byte 6;
+	t[o+2] = byte 16rFF;		# every processor
+	t[o+5] = byte 1;		# LINT1
+	o += 6;
+	t[o] = byte 1;			# I/O APIC
+	t[o+1] = byte 12;
+	t[o+2] = byte 8;		# its id
+	put32(t, o+4, int 16rFEC00000);
+	put32(t, o+8, 0);		# GSI base
+	o += 12;
+	t[o] = byte 2;			# interrupt source override
+	t[o+1] = byte 10;
+	t[o+2] = byte 0;		# ISA
+	t[o+3] = byte 0;		# IRQ 0
+	put32(t, o+4, 2);		# is GSI 2
+	put16(t, o+8, 0);		# bus-default polarity and trigger
+	t[9] = byte -sum(t);
+	return b;
+}
+
+acpihdr(t: array of byte, sig: string, length, rev: int)
+{
+	t[0:] = array of byte sig;
+	put32(t, 4, length);
+	t[8] = byte rev;
+	t[10:] = array of byte "INFRNO";
+	t[16:] = array of byte "GENESIZE";
+	put32(t, 24, 1);
+	t[28:] = array of byte "INFR";
+	put32(t, 32, 1);
+}
+
+field64(s, name: string): (big, int)
+{
+	(nil, l) := sys->tokenize(s, " \n");
+	for(; l != nil && tl l != nil; l = tl l)
+		if(hd l == name){
+			v := hd tl l;
+			if(len v > 2 && v[0:2] == "0x")
+				return (big ("16r" + v[2:]), 1);
+			return (big v, 1);
+		}
+	return (big 0, 0);
+}
+
+# the four-level walk of va from cr3, read from the guest's memory
+ptwalk(dir: string, vcpu: int, cr3, va: big)
+{
+	fd := sys->open(dir + "/mem", Sys->OREAD);
+	if(fd == nil)
+		return;
+	b := array[8] of byte;
+	t := cr3 & ~big 16rFFF;
+	names := array[] of {"pml4e", "pdpte", "pde", "pte"};
+	for(l := 0; l < 4; l++){
+		idx := int ((va >> (39 - 9*l)) & big 16r1FF);
+		a := t + big (8*idx);
+		if(sys->pread(fd, b, 8, a) != 8){
+			sys->print("vmlinux: vcpu%d walk of %bux: %s at %bux unreadable: %r\n", vcpu, va, names[l], a);
+			return;
+		}
+		e := big 0;
+		for(k := 7; k >= 0; k--)
+			e = (e << 8) | big b[k];
+		sys->print("vmlinux: vcpu%d walk of %bux: %s[%d] at %bux = %bux\n", vcpu, va, names[l], idx, a, e);
+		if((e & big 1) == big 0)
+			return;
+		if(l > 0 && l < 3 && (e & big 16r80) != big 0)
+			return;	# a large page
+		t = e & big 16r000FFFFFFFFFF000;
+	}
+}
+
+sum(b: array of byte): int
+{
+	s := 0;
+	for(i := 0; i < len b; i++)
+		s += int b[i];
+	return s & 16rFF;
+}
+
+timer(c: chan of int, ms: int)
+{
+	sys->sleep(ms);
+	c <-= 1;
+}
+
+console(dir: string, pidc: chan of int, done: chan of int)
 {
 	pidc <-= sys->pctl(0, nil);
 	fd := sys->open(dir + "/console", Sys->OREAD);
-	if(fd == nil)
+	if(fd == nil){
+		done <-= 1;
 		return;
+	}
 	out := sys->fildes(1);
 	buf := array[1024] of byte;
 	tail := "";
@@ -397,13 +583,17 @@ console(dir: string, pidc: chan of int)
 			tail += string buf[0:n];
 			if(contains(tail, Shell)){
 				wfd := sys->open(dir + "/console", Sys->OWRITE);
-				if(wfd != nil)
-					sys->fprint(wfd, "%s", typed);
+				# written whole: fprint's buffer cut a long command short
+				if(wfd != nil){
+					b := array of byte typed;
+					sys->write(wfd, b, len b);
+				}
 				typed = nil;
 			}else if(len tail > 256)
 				tail = tail[len tail - 256:];
 		}
 	}
+	done <-= 1;
 }
 
 rev(l: list of string): list of string

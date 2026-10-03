@@ -16,7 +16,12 @@
 # The /init mounts /proc and /sys, loads the modules, prints LINUXGUEST:
 # lines a check can look for -- the kernel version, the processor count,
 # uptime, the virtio disks and interfaces it found -- and then runs a
-# shell on the console.
+# shell on the console.  Given linuxguest.root=vda on the command line
+# it boots on the guest's first virtio disk instead: mounts it (ext2),
+# and if it holds a root made by the same /init (with /ONDISK), switches
+# to it, where the disk's own copy of this /init says which root it is
+# on and runs the shell.  A first boot makes such a root on a disk with
+# busybox's mke2fs and a copy of /bin, /lib and /init.
 #
 # usage: scripts/mklinuxguest.sh
 set -e
@@ -60,6 +65,7 @@ kver = [n.split('/')[2] for n in members if n.startswith('lib/modules/') and n.c
 mods = []	# in load order: virtio_net needs net_failover, which needs failover;
 		# af_packet is the packet sockets udhcpc uses
 for rel in ('kernel/net/packet/af_packet.ko.gz',
+		'kernel/fs/mbcache.ko.gz', 'kernel/fs/ext2/ext2.ko.gz',
 		'kernel/net/core/failover.ko.gz', 'kernel/drivers/net/net_failover.ko.gz',
 		'kernel/drivers/net/virtio_net.ko.gz', 'kernel/drivers/block/virtio_blk.ko.gz'):
 	data = gzip.decompress(pkg.extractfile(members['lib/modules/%s/%s' % (kver, rel)]).read())
@@ -72,9 +78,21 @@ init = b'''#!/bin/busybox sh
 /bin/busybox mount -t devtmpfs dev /dev 2>/dev/null
 /bin/busybox --install -s /bin
 export PATH=/bin
-for m in af_packet failover net_failover virtio_net virtio_blk; do
-	insmod /lib/modules/$m.ko || echo "LINUXGUEST: insmod $m failed"
-done
+if [ -e /ONDISK ]; then
+	echo "LINUXGUEST: root `awk '$2 == "/" { r = $1 " " $3 } END { print r }' /proc/mounts`"
+else
+	for m in af_packet failover net_failover virtio_net virtio_blk mbcache ext2; do
+		insmod /lib/modules/$m.ko || echo "LINUXGUEST: insmod $m failed"
+	done
+	if grep -q linuxguest.root=vda /proc/cmdline; then
+		mkdir -p /newroot
+		if mount -t ext2 /dev/vda /newroot && [ -e /newroot/ONDISK ]; then
+			umount /proc /sys /dev
+			exec switch_root /newroot /init
+		fi
+		echo "LINUXGUEST: no root on vda"
+	fi
+fi
 echo "LINUXGUEST: up `uname -r` cpus `grep -c ^processor /proc/cpuinfo` uptime `cut -d' ' -f1 /proc/uptime`"
 for d in /sys/block/vd*; do
 	[ -e $d ] && echo "LINUXGUEST: disk ${d##*/} `cat $d/size` sectors"

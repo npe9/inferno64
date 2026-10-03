@@ -170,7 +170,7 @@ vcpuwork(void *a)
 	Vcpu *v;
 
 	v = a;
-	return v->go || v->cmd != nil || v->quit;
+	return v->go || v->cmd != nil || v->quit || vmplatsipipending(v);
 }
 
 static void
@@ -315,7 +315,8 @@ vcpuproc(void *a)
 			wakeup(&v->cmdr);
 			continue;
 		}
-		if(!v->go)
+		/* an application processor is started by its SIPI, not by "go" */
+		if(!v->go && !vmplatsipi(v))
 			continue;
 		v->go = 0;
 		v->stop = 0;
@@ -510,6 +511,35 @@ newvcpu(Vm *vm)
 	snprint(name, sizeof name, "vm%d.%d", vm->id, v->id);
 	kproc(name, vcpuproc, v, 0);
 	return v;
+}
+
+/*
+ * "vcpus n": processors 1 to n-1 of the machine, each a kproc on a
+ * processor of its own where there are enough; they wait, as an
+ * application processor does, for the INIT and SIPI that start them.
+ */
+static void
+setvcpus(Vm *vm, int n)
+{
+	Vcpu *v;
+
+	if(n < 1 || n > Maxvcpu)
+		error(Ebadarg);
+	qlock(vm);
+	if(waserror()){
+		qunlock(vm);
+		nexterror();
+	}
+	if(n < vm->nvcpu)
+		error("vcpus cannot be taken away");
+	while(vm->nvcpu < n){
+		v = newvcpu(vm);
+		sleep(&v->cmdr, vcpuinitdone, v);
+		if(v->state == VcpuDead)
+			error(v->err);
+	}
+	poperror();
+	qunlock(vm);
 }
 
 static Vm*
@@ -1035,6 +1065,8 @@ vmwrite(Chan *c, void *a, s32 n, s64 off)
 			setmem(vm, strtoull(cb->f[1], nil, 0));
 		else if(cb->nf == 1 && strcmp(cb->f[0], "kill") == 0)
 			killvm(vm);
+		else if(cb->nf == 2 && strcmp(cb->f[0], "vcpus") == 0)
+			setvcpus(vm, atoi(cb->f[1]));
 		else if(cb->nf == 2 && strcmp(cb->f[0], "trace") == 0){
 			vm->trace = atoi(cb->f[1]);
 			if(vm->trace > 0 && !watching){

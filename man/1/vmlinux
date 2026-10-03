@@ -33,6 +33,9 @@ vmlinux \- boot Linux as a guest
 ] ... [
 .B -n
 .I etherdir
+] ... [
+.B -c
+.I cpus
 ] ...
 .I bzImage
 .SH DESCRIPTION
@@ -75,11 +78,20 @@ device
 .BR /net/ether1 ),
 each served by the kernel (see
 .IR vm (3));
+.B -c
+gives it
+.I cpus
+processors, and ACPI tables (an RSDP, RSDT and MADT, in the BIOS area,
+named in
+.BR boot_params )
+saying where they and the I/O APIC are;
 .B -t
 types
 .I line
 once the console shows the guest's shell marker
-.RB ( "LINUXGUEST: shell" );
+.RB ( "LINUXGUEST: shell" ),
+which may be several lines (busybox's shell takes at most 1024
+characters a line);
 .B -q
 stops the guest once the console shows
 .I pattern

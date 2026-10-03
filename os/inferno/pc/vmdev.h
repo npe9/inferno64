@@ -8,6 +8,7 @@
 typedef struct Vpic Vpic;
 typedef struct Vpicchip Vpicchip;
 typedef struct Vuart Vuart;
+typedef struct Vioapic Vioapic;
 typedef struct Vlapic Vlapic;
 typedef struct Vpit Vpit;
 typedef struct Vpitch Vpitch;
@@ -119,6 +120,19 @@ enum {
 	ApicBsp		= 1<<8,
 };
 
+enum {
+	Nioapic		= 24,		/* redirection entries */
+	Ioapicbase	= 0xFEC00000,
+	Ioapicid	= 8,		/* after the vCPUs' APIC ids */
+};
+
+struct Vioapic
+{
+	u32int	sel;		/* IOREGSEL */
+	uvlong	rte[Nioapic];
+	uchar	level[Nioapic];	/* the input lines as they are now */
+};
+
 /* vmdev.c */
 void	vpitreset(Vpit*, uvlong tschz);
 int	vpitio(Vpit*, int port, int in, u32int *val, uvlong now);
@@ -144,3 +158,9 @@ int	vlapicextint(Vlapic*);
 void	vlapictimer(Vlapic*, uvlong now);
 void	vlapicsetdeadline(Vlapic*, uvlong tsc, uvlong now);
 void	vlapicsetirr(Vlapic*, int vec);
+int	vlapicmatch(Vlapic*, u32int dest, int logical);
+
+void	vioapicreset(Vioapic*);
+u32int	vioapicread(Vioapic*, int off);
+void	vioapicwrite(Vioapic*, int off, u32int val);
+int	vioapicset(Vioapic*, int pin, int level, uvlong *rte);

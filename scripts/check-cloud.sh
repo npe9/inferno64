@@ -31,7 +31,8 @@ P0=`port`
 P1=`port`
 trap 'st=$?; pkill -f "hostfwd=tcp:127.0.0.1:$P0-" 2>/dev/null || true; pkill -f "hostfwd=tcp:127.0.0.1:$P1-" 2>/dev/null || true; rm -rf "$WORK" || true; rm -f "$ROOT/tmp/cloud-cli.sh" || true; exit $st' 0
 
-sh "$ROOT/scripts/vmhost.sh" build "$KERN" >/dev/null 2>&1
+sh "$ROOT/scripts/vmhost.sh" build "$KERN" >"$WORK/build.out" 2>&1 \
+|| { echo "check-cloud: FAIL -- building the bench image"; tail -5 "$WORK/build.out"; exit 1; }
 # a previous run's logs would say "listening" before these hosts have
 rm -f "$ROOT/.qemu/vmhost-h0.log" "$ROOT/.qemu/vmhost-h1.log"
 VMHOST_TAG=h0 VMHOST_MEM=2048 VMHOST_SMP=2 VMHOST_FWD=$P0 sh "$ROOT/scripts/vmhost.sh" run 1500 >"$WORK/h0.out" 2>&1 &

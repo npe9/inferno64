@@ -131,6 +131,8 @@ enum {
 void*	vmplatnew(Vm*);
 void	vmplatfree(Vm*);
 void	vmplathangup(Vm*);
+int	vmplatsipi(Vcpu*);		/* on the vCPU's processor: start it if a SIPI came */
+int	vmplatsipipending(Vcpu*);
 int	vmplatexit(Vcpu*, Vmexit*);
 void	vmplatintr(Vcpu*);
 int	vmplatctl(Vm*, int, char**);
@@ -191,7 +193,7 @@ struct Vcpu
 };
 
 enum {
-	Maxvcpu	= 1,		/* one until phase 5 */
+	Maxvcpu	= 8,
 };
 
 /*

@@ -446,9 +446,10 @@ vuartinput(Vuart *u, uchar *a, int n)
  * Local APIC, xAPIC register layout (offset >> 4 is the register
  * number, which is also the x2APIC MSR number minus 0x800).  The
  * timer counts host TSC ticks divided by TDCR, so its bus clock is
- * the TSC; one-shot, periodic and TSC-deadline modes.  Only one vCPU
- * exists yet, so an IPI can only be to itself; INIT, SIPI, NMI and
- * logical destinations wait for phase 5.
+ * the TSC; one-shot, periodic and TSC-deadline modes.  An ICR write
+ * is handed up to the platform (vlapicwrite returns 2), which knows
+ * the other vCPUs and delivers the IPI; vlapicmatch says whether a
+ * destination names this APIC.
  */
 enum {
 	RegId		= 0x02,
@@ -731,12 +732,37 @@ vlapicread(Vlapic *a, int reg)
 	return 0;
 }
 
-/* returns 0 for a register that cannot be written */
+/*
+ * Whether an interrupt for dest (physical or logical) reaches this
+ * APIC.  xAPIC: an 8-bit destination, logical in the flat or cluster
+ * model as DFR says; x2APIC: 32 bits, logical as cluster:bitmap.
+ */
+int
+vlapicmatch(Vlapic *a, u32int dest, int logical)
+{
+	if(a->base & ApicX2){
+		if(dest == 0xFFFFFFFF)
+			return 1;
+		if(!logical)
+			return dest == a->id;
+		return (dest >> 16) == (a->id >> 4) && (dest & 1<<(a->id & 15)) != 0;
+	}
+	dest &= 0xFF;
+	if(dest == 0xFF)
+		return 1;
+	if(!logical)
+		return dest == (a->id & 0xFF);
+	if((a->dfr >> 28) == 0xF)
+		return (dest & (a->ldr >> 24)) != 0;
+	return (dest >> 4) == (a->ldr >> 28) && (dest & (a->ldr >> 24) & 0xF) != 0;
+}
+
+/* returns 0 for a register that cannot be written, 2 for an IPI to send */
 int
 vlapicwrite(Vlapic *a, int reg, u32int val)
 {
 	uvlong now;
-	int i, vec, sh;
+	int i;
 
 	switch(reg){
 	case RegId:
@@ -772,16 +798,9 @@ vlapicwrite(Vlapic *a, int reg, u32int val)
 		a->icrhi = val;
 		return 1;
 	case RegIcrlo:
+		/* an IPI: the platform delivers it, to whichever vCPUs it names */
 		a->icrlo = val;
-		vec = val & 0xFF;
-		sh = (val >> 18) & 3;
-		if(((val >> 8) & 7) != 0)	/* only fixed delivery is modelled */
-			return 1;
-		/* with one vCPU, an IPI reaches this one or none */
-		if(sh == 1 || sh == 2
-		|| sh == 0 && ((a->base & ApicX2) ? a->icrhi : a->icrhi >> 24) == a->id)
-			vlapicsetirr(a, vec);
-		return 1;
+		return 2;
 	case RegSelfipi:
 		if(!(a->base & ApicX2))
 			return 0;
@@ -1070,5 +1089,90 @@ vpitio(Vpit *p, int port, int in, u32int *val, uvlong now)
 		}
 		break;
 	}
+	return 1;
+}
+
+/*
+ * The I/O APIC: an 82093AA's registers -- IOREGSEL at 0x00, IOWIN at
+ * 0x10; ID, version (24 entries) and arbitration, and a redirection
+ * entry per input -- at 0xFEC00000.  An edge into an unmasked input
+ * is delivered (by the platform, which knows the APICs) as the entry
+ * says: vector, fixed or lowest-priority, physical or logical
+ * destination.  A level-triggered entry is delivered on the rising
+ * edge as well; there is no remote IRR, and EOIs do not come here --
+ * the only inputs are the ISA ones (the PIT, the UART), which are edge.
+ */
+void
+vioapicreset(Vioapic *io)
+{
+	int i;
+
+	memset(io, 0, sizeof *io);
+	for(i = 0; i < Nioapic; i++)
+		io->rte[i] = 1<<16;	/* masked */
+}
+
+u32int
+vioapicread(Vioapic *io, int off)
+{
+	int r, i;
+
+	if(off == 0x00)
+		return io->sel;
+	if(off != 0x10)
+		return 0;
+	r = io->sel & 0xFF;
+	switch(r){
+	case 0x00:
+		return Ioapicid << 24;
+	case 0x01:
+		return (Nioapic-1) << 16 | 0x20;
+	case 0x02:
+		return Ioapicid << 24;
+	}
+	if(r >= 0x10 && r < 0x10 + 2*Nioapic){
+		i = (r - 0x10) / 2;
+		return (r & 1) ? io->rte[i] >> 32 : (u32int)io->rte[i];
+	}
+	return 0;
+}
+
+void
+vioapicwrite(Vioapic *io, int off, u32int val)
+{
+	int r, i;
+
+	if(off == 0x00){
+		io->sel = val;
+		return;
+	}
+	if(off != 0x10)
+		return;		/* the EOI register (0x40) included: no remote IRR */
+	r = io->sel & 0xFF;
+	if(r >= 0x10 && r < 0x10 + 2*Nioapic){
+		i = (r - 0x10) / 2;
+		if(r & 1)
+			io->rte[i] = (io->rte[i] & 0xFFFFFFFFULL) | (uvlong)val << 32;
+		else
+			io->rte[i] = (io->rte[i] & ~0xFFFFFFFFULL) | (val & ~(1<<12 | 1<<14));	/* status bits are read-only */
+	}
+}
+
+/*
+ * Input pin goes to level; 1 and the redirection entry in *rte if that
+ * is an edge the platform is to deliver.
+ */
+int
+vioapicset(Vioapic *io, int pin, int level, uvlong *rte)
+{
+	int was;
+
+	if(pin < 0 || pin >= Nioapic)
+		return 0;
+	was = io->level[pin];
+	io->level[pin] = level != 0;
+	if(was || !level || (io->rte[pin] & 1<<16))
+		return 0;
+	*rte = io->rte[pin];
 	return 1;
 }

@@ -53,7 +53,7 @@ Q=$ROOT/.qemu
 # log, firmware variables, NVMe image and console file (the ISO is read
 # only and shared).  VMHOST_MEM and VMHOST_SMP size it.
 T=${VMHOST_TAG:+-$VMHOST_TAG}
-ISO=$Q/vmhost.iso
+ISO=${VMHOST_ISO:-$Q/vmhost.iso}	# VMHOST_ISO: an image of its own, for a run beside another
 LOG=$Q/vmhost$T.log
 NVME=$Q/vmhost$T-nvme.raw
 HVC=$Q/vmhost$T-hvc.log
@@ -90,9 +90,9 @@ done
 cp "$Q/edk2-vars.fd" "$VARS"
 
 case $ACCEL in
-tcg)	MACHINE=q35; CPU=max ;;
+tcg|tcg,*)	MACHINE=q35; CPU=max ;;	# tcg,thread=single: one host thread for every vCPU
 kvm)	MACHINE=q35,kernel-irqchip=split; CPU=host ;;
-*)	echo "vmhost: VMHOST_ACCEL is tcg or kvm" >&2; exit 2 ;;
+*)	echo "vmhost: VMHOST_ACCEL is tcg[,options] or kvm" >&2; exit 2 ;;
 esac
 
 secs=
@@ -109,6 +109,8 @@ IOMMU="-device intel-iommu,intremap=on"
 IGB="-netdev user,id=net1$FWD -device igb,netdev=net1,bus=rp2"
 [ "${VMHOST_IGB:-1}" = 0 ] && IGB=
 
+NOREBOOT=-no-reboot
+[ "$VMHOST_REBOOT" = 1 ] && NOREBOOT=
 # The IOMMU comes first: QEMU wants it created before the devices whose
 # DMA it is to translate.
 set -- \
@@ -131,8 +133,12 @@ set -- \
 	-chardev file,id=hvc0,path="$HVC" \
 	-device virtconsole,chardev=hvc0 \
 	-cdrom "$ISO" \
-	-display none -no-reboot \
+	-display none $NOREBOOT \
 	"$@"
+# VMHOST_REBOOT=1: a reset reboots, rather than ending QEMU, so that with
+# VMHOST_D=cpu_reset the log has every processor's state at a triple fault
+# VMHOST_D: QEMU's -d log items (cpu_reset, guest_errors, ...), in .qemu/vmhost-d.log
+[ -n "$VMHOST_D" ] && set -- "$@" -d "$VMHOST_D" -D "$Q/vmhost$T-d.log"
 
 if [ $cmd = debug ]; then
 	exec $QEMU "$@" -serial mon:stdio -S -gdb tcp::1234
@@ -141,7 +147,12 @@ if [ -z "$secs" ]; then
 	exec $QEMU "$@" -serial mon:stdio
 fi
 rm -f "$LOG" "$HVC"
-timeout "$secs" $QEMU "$@" -serial "file:$LOG" >"$Q/vmhost$T-qemu.err" 2>&1 || true
+# QEMU's exit status, if not 0 or timeout's 124, goes with its output:
+# a QEMU killed by a signal otherwise leaves nothing behind
+timeout "$secs" $QEMU "$@" -serial "file:$LOG" >"$Q/vmhost$T-qemu.err" 2>&1 || {
+	st=$?
+	[ $st = 124 ] || echo "qemu-system-x86_64 exit status $st at `date +%T`" >>"$Q/vmhost$T-qemu.err"
+}
 sed -e 's/\x1b\[[0-9;=]*[a-zA-Z]//g' -e 's/\r$//' "$LOG"
 [ -s "$Q/vmhost$T-qemu.err" ] && sed 's/^/qemu: /' "$Q/vmhost$T-qemu.err" >&2
 exit 0

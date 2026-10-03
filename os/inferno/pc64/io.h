@@ -36,6 +36,7 @@ enum {
 	IrqTIMER	= 18,
 	IrqERROR	= 19,
 	IrqPCINT	= 20,
+	IrqVMKICK	= 21,		/* the hypervisor's: out of guest mode (vmplat.c) */
 	IrqSPURIOUS	= 31,		/* must have bits [3-0] == 0x0F */
 	MaxIrqLAPIC	= 31,
 

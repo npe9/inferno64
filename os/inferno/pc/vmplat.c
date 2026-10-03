@@ -27,6 +27,8 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"../port/error.h"
+#include	"io.h"
+#include	"mp.h"
 #include	"../port/vm.h"
 #include	"vmdev.h"
 #include	"vmpci.h"
@@ -40,11 +42,17 @@ struct Plat
 	Vpic	pic;
 	Vpit	pit;
 	Vuart	uart;
+	Vioapic	ioapic;
 	Vlapic	lapic[Maxvcpu];
 	void	*pci;		/* vmpci.c's */
 	QLock	pcilk;		/* the PCI bus is not touched under the spin lock */
 	int	irqwin[Maxvcpu];
 	int	kick[Maxvcpu];	/* something for a halted vCPU to look at */
+	int	initwait[Maxvcpu];	/* after INIT, before SIPI: waits to be started */
+	int	sipi[Maxvcpu];	/* a startup IPI's vector, not yet acted on; -1 none */
+	int	nmi[Maxvcpu];	/* an NMI sent, not yet delivered */
+	u32int	poke;		/* vCPUs to wake once the lock is let go */
+	uvlong	nipi;
 	int	ioignore;
 	uvlong	tschz;
 	Rendez	consr;		/* readers of the console wait here */
@@ -66,6 +74,183 @@ enum {
 
 #define	PLAT(vm)	((Plat*)(vm)->plat)
 
+/*
+ * Taking a vCPU out of guest mode on another processor: a host IPI.
+ * The VM exit on it is the point; the handler has nothing to do (the
+ * interrupt is not acknowledged on exit, so the host takes it, and
+ * EOIs it, as any other once out of the guest).
+ */
+static void
+kickintr(Ureg*, void*)
+{
+}
+
+static void
+kickinit(void)
+{
+	static int done;
+
+	if(done || conf.nmach < 2)
+		return;
+	done = 1;
+	intrenable(IrqVMKICK, kickintr, nil, BUSUNKNOWN, "vmkick");
+}
+
+static int
+apicof(int machno)
+{
+	int i;
+
+	for(i = 0; i <= MaxAPICNO; i++)
+		if(mpapic[i] != nil && mpapic[i]->type == PcmpPROCESSOR
+		&& mpapic[i]->machno == machno && mpapic[i]->online)
+			return mpapic[i]->apicno;
+	return -1;
+}
+
+/*
+ * Wake the vCPUs in p->poke: those sleeping in HLT or waiting for a
+ * SIPI, and those in guest mode on another processor, which a host
+ * IPI takes out to see what they have been sent.  Not under p's lock.
+ */
+static void
+dopokes(Plat *p)
+{
+	Vm *vm;
+	Vcpu *v;
+	u32int poke;
+	int i, apic, s;
+
+	ilock(p);
+	poke = p->poke;
+	p->poke = 0;
+	iunlock(p);
+	vm = p->vm;
+	for(i = 0; poke != 0 && i < vm->nvcpu; i++, poke >>= 1){
+		if((poke & 1) == 0 || (v = vm->vcpu[i]) == nil)
+			continue;
+		wakeup(&v->r);
+		if(v->state == VcpuRunning && v->machno != m->machno
+		&& (apic = apicof(v->machno)) >= 0){
+			s = splhi();	/* the ICR is two writes: not split by another IPI */
+			lapicicrw(apic<<24, VectorPIC+IrqVMKICK);
+			splx(s);
+		}
+	}
+}
+
+/*
+ * An IPI from vCPU src's APIC, as written to its ICR: fixed and
+ * lowest-priority interrupts (the latter to the first that matches),
+ * NMI, INIT and SIPI; SMI and the rest are not modelled.  p's lock held.
+ */
+static void
+ipi(Plat *p, int src, u32int hi, u32int lo)
+{
+	Vlapic *a;
+	u32int dest;
+	int i, mode, sh, logical, vec;
+
+	a = &p->lapic[src];
+	mode = (lo >> 8) & 7;
+	sh = (lo >> 18) & 3;
+	logical = (lo >> 11) & 1;
+	vec = lo & 0xFF;
+	dest = (a->base & ApicX2) ? hi : hi >> 24;
+	if(mode == 5 && (lo & 1<<15) && !(lo & 1<<14))
+		return;		/* INIT level de-assert: nothing to do */
+	p->nipi++;
+	for(i = 0; i < p->vm->nvcpu; i++){
+		switch(sh){
+		case 0:
+			if(!vlapicmatch(&p->lapic[i], dest, logical))
+				continue;
+			break;
+		case 1:
+			if(i != src)
+				continue;
+			break;
+		case 3:
+			if(i == src)
+				continue;
+			break;
+		}
+		switch(mode){
+		case 0:		/* fixed */
+		case 1:		/* lowest priority */
+			vlapicsetirr(&p->lapic[i], vec);
+			p->kick[i] = 1;
+			p->poke |= 1<<i;
+			if(mode == 1)
+				return;
+			break;
+		case 4:		/* NMI */
+			p->nmi[i] = 1;
+			p->kick[i] = 1;
+			p->poke |= 1<<i;
+			break;
+		case 5:		/* INIT: an application processor waits for SIPI */
+			if(i != 0)
+				p->initwait[i] = 1;
+			break;
+		case 6:		/* SIPI: start one that waits, at vec<<12 */
+			if(p->initwait[i]){
+				p->initwait[i] = 0;
+				p->sipi[i] = vec;
+				p->poke |= 1<<i;
+			}
+			break;
+		}
+	}
+}
+
+/*
+ * The vCPU's kproc, woken while stopped: if a SIPI is waiting for it,
+ * start it -- in real mode at the SIPI's page, as a processor leaves
+ * wait-for-SIPI -- and return 1.  On the vCPU's own processor.
+ */
+int
+vmplatsipi(Vcpu *v)
+{
+	Plat *p;
+	int vec, s;
+
+	p = PLAT(v->vm);
+	ilock(p);
+	vec = p->sipi[v->id];
+	p->sipi[v->id] = -1;
+	iunlock(p);
+	if(vec < 0)
+		return 0;
+	vmops->setreg(v, VEfer, 0);
+	vmops->setreg(v, VCr0, 0x60000010);	/* CD, NW, ET: as at INIT */
+	vmops->setreg(v, VCr3, 0);
+	vmops->setreg(v, VCr4, 0);
+	vmops->setreg(v, VRflags, 2);
+	vmops->setreg(v, VRip, 0);
+	vmops->setreg(v, VCs, vec << 8);
+	vmops->setreg(v, VCsbase, vec << 12);
+	vmops->setreg(v, VCslimit, 0xFFFF);
+	vmops->setreg(v, VCsattr, 0x9B);
+	for(s = VDs; s <= VSs; s += 4){	/* DS, ES, FS, GS, SS */
+		vmops->setreg(v, s, 0);
+		vmops->setreg(v, s+1, 0);
+		vmops->setreg(v, s+2, 0xFFFF);
+		vmops->setreg(v, s+3, 0x93);
+	}
+	vmops->setreg(v, VGdtrbase, 0);
+	vmops->setreg(v, VGdtrlimit, 0xFFFF);
+	vmops->setreg(v, VIdtrbase, 0);
+	vmops->setreg(v, VIdtrlimit, 0xFFFF);
+	return 1;
+}
+
+int
+vmplatsipipending(Vcpu *v)
+{
+	return PLAT(v->vm)->sipi[v->id] >= 0;
+}
+
 void*
 vmplatnew(Vm *vm)
 {
@@ -80,8 +265,13 @@ vmplatnew(Vm *vm)
 	vpicreset(&p->pic);
 	vpitreset(&p->pit, p->tschz);
 	vuartreset(&p->uart);
-	for(i = 0; i < Maxvcpu; i++)
+	vioapicreset(&p->ioapic);
+	for(i = 0; i < Maxvcpu; i++){
 		vlapicreset(&p->lapic[i], i);
+		p->sipi[i] = -1;
+		p->initwait[i] = i != 0;	/* application processors wait for SIPI */
+	}
+	kickinit();
 	if(waserror()){
 		free(p);
 		nexterror();
@@ -297,6 +487,8 @@ domsr(Vcpu *v, Plat *p, Vmexit *e)
 				ok = vlapicwrite(a, 0x30, val);
 			}else
 				ok = vlapicwrite(a, msr - 0x800, val);
+			if(ok == 2)
+				ipi(p, v->id, a->icrhi, a->icrlo);
 		}else
 			ok = 0;
 		if(!ok){
@@ -637,10 +829,31 @@ apicmmio(Vcpu *v, Plat *p, Vmexit *e, Insn *in)
 	reg = (e->gpa & 0xFF0) >> 4;
 	p->nmmio++;
 	val = 0;
-	if(in->write)
-		vlapicwrite(a, reg, mmiowval(v, in));
-	else
+	if(in->write){
+		if(vlapicwrite(a, reg, mmiowval(v, in)) == 2)
+			ipi(p, v->id, a->icrhi, a->icrlo);
+	}else
 		val = vlapicread(a, reg);
+	mmiofinish(v, e, in, val);
+	return 1;
+}
+
+/* the I/O APIC's page; the platform's lock held */
+static int
+ioapicmmio(Vcpu *v, Plat *p, Vmexit *e, Insn *in)
+{
+	uvlong val;
+	int off;
+
+	off = e->gpa & 0xFFF;
+	if(in->size != 4 && in->zext == 0)
+		return 0;
+	p->nmmio++;
+	val = 0;
+	if(in->write)
+		vioapicwrite(&p->ioapic, off, mmiowval(v, in));
+	else
+		val = vioapicread(&p->ioapic, off);
 	mmiofinish(v, e, in, val);
 	return 1;
 }
@@ -669,15 +882,45 @@ pcimmio(Vcpu *v, Plat *p, Vmexit *e, Insn *in)
 	return r;
 }
 
-/* the interrupt that would be delivered now, or -1; caller holds p */
+/*
+ * Whether an interrupt would be delivered now; caller holds p.  The
+ * PIC is wired to the bootstrap processor's LINT0 only.
+ */
 static int
 pendingvec(Plat *p, Vlapic *a)
 {
 	if(vlapicpending(a))
 		return 1;
-	if(vpicpending(&p->pic) && vlapicextint(a))
+	if(a == &p->lapic[0] && vpicpending(&p->pic) && vlapicextint(a))
 		return 1;
 	return 0;
+}
+
+/*
+ * An I/O APIC input; an edge it delivers goes to the APICs its entry
+ * names (fixed: all that match; lowest priority: the first).  p's lock
+ * held; the vCPUs to wake are left in p->poke.
+ */
+static void
+ioapicin(Plat *p, int pin, int level)
+{
+	uvlong r;
+	int i, mode;
+
+	if(!vioapicset(&p->ioapic, pin, level, &r))
+		return;
+	mode = (r >> 8) & 7;
+	if(mode > 1)
+		return;		/* fixed and lowest priority only */
+	for(i = 0; i < p->vm->nvcpu; i++){
+		if(!vlapicmatch(&p->lapic[i], r >> 56, (r >> 11) & 1))
+			continue;
+		vlapicsetirr(&p->lapic[i], r & 0xFF);
+		p->kick[i] = 1;
+		p->poke |= 1<<i;
+		if(mode == 1)
+			break;
+	}
 }
 
 static void
@@ -690,8 +933,11 @@ update(Plat *p, Vlapic *a)
 	if(vpittimer(&p->pit, now)){
 		vpicsetirq(&p->pic, 0, 1);	/* an edge on IRQ 0 */
 		vpicsetirq(&p->pic, 0, 0);
+		ioapicin(p, 2, 1);		/* GSI 2: ACPI's override of IRQ 0 */
+		ioapicin(p, 2, 0);
 	}
 	vpicsetirq(&p->pic, 4, vuartirq(&p->uart));
+	ioapicin(p, 4, vuartirq(&p->uart));
 }
 
 void
@@ -705,8 +951,23 @@ vmplatintr(Vcpu *v)
 	a = &p->lapic[v->id];
 	ilock(p);
 	update(p, a);
+	/*
+	 * An NMI goes in when an interrupt could: injecting one while the
+	 * guest blocks NMIs (in its handler, or after MOV SS) would fail
+	 * the VM entry, and with interrupts on and no shadow it is not in
+	 * an NMI handler -- Linux's run with interrupts off.  So an NMI
+	 * sent to a processor spinning with interrupts off waits.
+	 */
+	if(p->nmi[v->id] && vmops->canintr(v)){
+		p->nmi[v->id] = 0;
+		iunlock(p);
+		if(p->poke)
+			dopokes(p);	/* update() may have sent the I/O APIC's */
+		vmops->inject(v, VeNmi, 2, 0, 0);
+		return;
+	}
 	vec = -1;
-	want = pendingvec(p, a);
+	want = pendingvec(p, a) || p->nmi[v->id];
 	if(want && vmops->canintr(v)){
 		if(vlapicpending(a))
 			vec = vlapicack(a);
@@ -715,6 +976,8 @@ vmplatintr(Vcpu *v)
 		want = 0;
 	}
 	iunlock(p);
+	if(p->poke)
+		dopokes(p);
 	if(vec >= 0){
 		p->nintr++;
 		vmops->inject(v, VeIntr, vec, 0, 0);
@@ -757,8 +1020,10 @@ dohlt(Vcpu *v, Plat *p, Vmexit *e)
 		ilock(p);
 		update(p, a);
 		p->kick[v->id] = 0;
-		if((rflags & IF) && pendingvec(p, a)){
+		if((rflags & IF) && pendingvec(p, a) || p->nmi[v->id]){
 			iunlock(p);
+			if(p->poke)
+				dopokes(p);
 			return;
 		}
 		ms = 1000;
@@ -775,6 +1040,8 @@ dohlt(Vcpu *v, Plat *p, Vmexit *e)
 				ms = 1000;
 		}
 		iunlock(p);
+		if(p->poke)
+			dopokes(p);	/* an I/O APIC edge update() sent elsewhere */
 		if(v->stop || v->quit || v->cmd != nil)
 			return;
 		if(ms > 0)
@@ -809,40 +1076,41 @@ pciio(Vcpu *v, Plat *p, Vmexit *e)
 }
 
 /*
- * An MSI from an assigned function: address 0xFEExxxxx names the
- * destination in bits 19:12, physical or logical by bit 2, and data
- * the vector and delivery mode.  Fixed and lowest-priority delivery to
- * this machine's one vCPU.
+ * An MSI, from an assigned function or one of the hypervisor's own:
+ * address 0xFEExxxxx names the destination in bits 19:12, physical or
+ * logical by bit 2 (matched as the guest's APICs say: vlapicmatch),
+ * and data the vector and delivery mode.  Fixed delivery goes to every
+ * APIC that matches, lowest-priority to the first.  Interrupt context.
  */
 void
 vmplatmsi(Vm *vm, u32int addr, u32int data)
 {
 	Plat *p;
-	Vlapic *a;
-	int dest, mode;
+	int i, dest, mode, any;
 
 	p = PLAT(vm);
 	if(p == nil || vm->nvcpu == 0)
 		return;
-	a = &p->lapic[0];
 	dest = (addr >> 12) & 0xFF;
 	mode = (data >> 8) & 7;
 	if((addr & 0xFFF00000) != Apicbase || mode > 1)
 		return;
-	/*
-	 * Bit 2 is the destination mode.  Physical: dest is an APIC id.
-	 * Logical (what Linux programs): dest is matched against the
-	 * logical id the guest put in its LDR -- in the flat model a bit
-	 * mask, which is all that is modelled.  0xFF is everyone either way.
-	 */
-	if(dest != 0xFF && ((addr & 1<<2) ? (dest & (a->ldr >> 24)) == 0 : dest != a->id))
-		return;
+	any = 0;
 	ilock(p);
-	vlapicsetirr(a, data & 0xFF);
-	p->kick[0] = 1;
-	p->nmsi++;
+	for(i = 0; i < vm->nvcpu; i++){
+		if(!vlapicmatch(&p->lapic[i], dest, (addr & 1<<2) != 0))
+			continue;
+		vlapicsetirr(&p->lapic[i], data & 0xFF);
+		p->kick[i] = 1;
+		p->poke |= 1<<i;
+		any = 1;
+		if(mode == 1)
+			break;
+	}
+	if(any)
+		p->nmsi++;
 	iunlock(p);
-	wakeup(&vm->vcpu[0]->r);
+	dopokes(p);
 }
 
 int
@@ -863,6 +1131,8 @@ vmplatexit(Vcpu *v, Vmexit *e)
 		ilock(p);
 		domsr(v, p, e);
 		iunlock(p);
+		if(p->poke)
+			dopokes(p);
 		return 1;
 	case VxIo:
 		if(e->port >= 0xCF8 && e->port <= 0xCFF && !e->string && !e->rep)
@@ -879,6 +1149,14 @@ vmplatexit(Vcpu *v, Vmexit *e)
 		if((e->gpa & ~0xFFFULL) == Apicbase){
 			ilock(p);
 			r = apicmmio(v, p, e, &in);
+			iunlock(p);
+			if(p->poke)
+				dopokes(p);
+			return r;
+		}
+		if((e->gpa & ~0xFFFULL) == Ioapicbase){
+			ilock(p);
+			r = ioapicmmio(v, p, e, &in);
 			iunlock(p);
 			return r;
 		}
@@ -957,7 +1235,12 @@ vmplatconsread(Vm *vm, void *a, long n)
 
 	p = PLAT(vm);
 	sleep(&p->consr, consready, p);
-	if(p->hungup)
+	/*
+	 * What the guest wrote before it was killed is still here, in
+	 * the platform, which outlives the machine's memory: give it out
+	 * before saying the machine has gone.
+	 */
+	if(p->hungup && p->uart.outr == p->uart.outw)
 		error(Ehungup);
 	b = a;
 	ilock(p);
@@ -989,9 +1272,9 @@ vmplatstatus(Vm *vm, char *s, char *e)
 {
 	Plat *p;
 	Vlapic *a;
+	int i;
 
 	p = PLAT(vm);
-	a = &p->lapic[0];
 	s = seprint(s, e, "platform tschz %llud io %s\n", p->tschz, p->ioignore ? "ignore" : "exit");
 	s = seprint(s, e, "platform handled cpuid %llud msr %llud io %llud mmio %llud hlt %llud intr %llud gp %llud msi %llud\n",
 		p->ncpuid, p->nmsr, p->nio, p->nmmio, p->nhlt, p->nintr, p->ngp, p->nmsi);
@@ -999,8 +1282,17 @@ vmplatstatus(Vm *vm, char *s, char *e)
 	s = seprint(s, e, "pic imr %.2ux/%.2ux irr %.2ux/%.2ux isr %.2ux/%.2ux base %.2ux/%.2ux\n",
 		p->pic.c[0].imr, p->pic.c[1].imr, p->pic.c[0].irr, p->pic.c[1].irr,
 		p->pic.c[0].isr, p->pic.c[1].isr, p->pic.c[0].base, p->pic.c[1].base);
-	s = seprint(s, e, "lapic0 base %#llux svr %#ux lvtt %#ux lint0 %#ux tpr %#ux fire %llud\n",
-		a->base, a->svr, a->lvt[LvtTimer], a->lvt[LvtLint0], a->tpr, a->fire);
+	for(i = 0; i < vm->nvcpu; i++){
+		a = &p->lapic[i];
+		s = seprint(s, e, "lapic%d id %d base %#llux svr %#ux ldr %#ux lvtt %#ux lint0 %#ux tpr %#ux fire %llud%s\n",
+			i, a->id, a->base, a->svr, a->ldr, a->lvt[LvtTimer], a->lvt[LvtLint0], a->tpr, a->fire,
+			i == 0 ? "" : p->initwait[i] ? " waiting for SIPI" : "");
+	}
+	if(p->nipi)
+		s = seprint(s, e, "platform ipis %llud\n", p->nipi);
+	for(i = 0; i < Nioapic; i++)
+		if((p->ioapic.rte[i] & 1<<16) == 0)
+			s = seprint(s, e, "ioapic pin %d rte %#llux\n", i, p->ioapic.rte[i]);
 	s = vmpcistatus(p->pci, s, e);
 	return s;
 }
