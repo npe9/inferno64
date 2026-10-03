@@ -7344,3 +7344,50 @@ when an instrument aggregates sub-events into a summary unit, print BOTH the
 aggregate and the sum of the parts.  Their ratio names the regime, and a summary
 without it cannot be read \(em not because it is wrong, but because its validity
 is conditional on a regime the output does not state.
+.NH 2
+H1a.  The coverage denominator is the WINDOW, not the screen, and the clamp is why this board got away with it
+.LP
+A peer checking the claim "the inflation CAUSES the saving" rather than adopting
+it found an error in their own table:
+.CW gfxstress
+reshapes its window to 800x600
+.CW ( gfxstress.b:55 )
+and all its damage is inside that window, so dividing by a 1024x768 SCREEN gave
+57 per cent where the window gives 93.6 per cent.
+.PP
+.B "And the difference decides the argument rather than decorating it."
+Two regions each covering 57 per cent of a plane need overlap by only 14 per
+cent of it, so at 57 per cent the step "the box saturates, therefore consecutive
+boxes coincide" is NOT supported and a reader could reject it.  At 93.6 per cent
+it is forced.  A coverage figure with the wrong denominator understated the very
+mechanism it was cited to support.
+.PP
+.B "This board divided by the screen too, and the reason it is nearly right is a clamp."
+.CW gfxstress
+asks for 800x600; this screen is 640x480, SMALLER in both axes, so the window is
+clamped.  The size was not measured directly, but the data bounds it \(em the
+mean per-present box is 303017 pixels in SCREEN coordinates, and a box cannot be
+wider than the screen, so it needs at least
+.P1
+303017 / 640 = 473.5  ->  at least 474 rows
+.P2
+which is 98.8 per cent of the screen height.  A 20-row titlebar would leave
+640x460 = 294400 pixels, LESS than the mean box, so the window image is taller
+than that: the reshape was clamped to within six rows of the full screen.
+.PP
+So 98.6 per cent of the screen and the true window figure differ by about one
+per cent here, and the causal claim sits in the forced regime either way.  The
+denominator was still wrong in PRINCIPLE, and it was the clamp rather than the
+reasoning that saved it \(em which is luck, not method.
+.PP
+.B "Measured overlap is stronger than either bound needs."
+The mean overlap is 99.71 per cent OF A BOX on the peer's run and 99.44 per cent
+on this one, so consecutive boxes virtually COINCIDE rather than merely
+intersect.  The saturation argument is a lower bound on what the measurement
+already shows.
+.PP
+.B "A distinct trap from the four already recorded:"
+not a wrong quantity, a dead predicate, incommensurable units, or a prediction
+shown as a measurement \(em but the RIGHT quantity over the WRONG POPULATION,
+the screen instead of the window.  The tell is that a coverage figure always has
+a denominator and the denominator is rarely stated beside it.
