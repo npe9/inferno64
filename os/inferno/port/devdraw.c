@@ -403,8 +403,12 @@ drawrefresh(Memimage*, Rectangle r, void *v)
  * overlap was measuring the right thing after all.  Above 1 it was measuring
  * redundancy within a frame, which a present coalesces.
  *
- * ALREADY SETTLED ON HOST EMU, for Tk: a peer ran this same accounting at the
- * 'v' boundary and the two boundaries agree EXACTLY --
+ * SETTLED FOR TK AND FOR drawink, AND FALSE IN GENERAL.  wm/gfxstress on this
+ * board puts about 80 flushes into a single present, so "a flush is a frame" is
+ * a property of the WORKLOAD and not of the system -- which means the per-flush
+ * overlap instrument over-counts for a fragmenting client, exactly as was first
+ * feared and then wrongly dismissed on the strength of two agreeing workloads.
+ * nflushpermax is what says which case you are in.  For Tk:
  *
  *	runtests -g   197 flushes / 197 frames  eager 20952256 defer 3084216
  *	wmtest -n 40  122 flushes / 122 frames  eager  8171520 defer 1182672
@@ -479,7 +483,7 @@ void	(*screenpartial)(Rectangle);
 
 uvlong	npresent, npresentflush, npresentempty;
 uvlong	presenteager, presentdefer, presentoverlap;
-uvlong	nsamebb, nnestbb, nflushper[8];
+uvlong	nsamebb, nnestbb, nflushper[8], nflushpermax;
 static Rectangle presentbb = {{10000, 10000}, {-10000, -10000}};
 static Rectangle prevpresent;
 static int	havepresent;
@@ -520,6 +524,13 @@ drawpresent(void)
 	if(i > nelem(nflushper)-1)
 		i = nelem(nflushper)-1;
 	nflushper[i]++;
+	/*
+	 * The top bucket SATURATES, so record the maximum beside it.  Measured
+	 * need: wm/gfxstress put 2 presents in the >=7 bucket carrying about 80
+	 * flushes each, and the histogram alone could not tell 7 from 80.
+	 */
+	if((uvlong)presentflushes > nflushpermax)
+		nflushpermax = presentflushes;
 	ar = (uvlong)Dx(presentbb) * Dy(presentbb);
 	presenteager += ar;
 	if(havepresent){
@@ -651,7 +662,7 @@ drawpresentstats(void)
 	print("DRAW flushper");
 	for(i = 0; i < nelem(nflushper); i++)
 		print(" %d:%llud", i, nflushper[i]);
-	print("\n");
+	print(" max %llud\n", nflushpermax);
 }
 
 static void

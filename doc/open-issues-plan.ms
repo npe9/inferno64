@@ -7087,3 +7087,62 @@ would not load), so the DORMANT case needs a Tk environment that works on this
 board.  The hook lives in the kernel's
 .CW devdraw.c ,
 so host emu cannot stand in for either.
+.NH 2
+H1a.  A THIRD workload refutes "a flush is a frame", and the masked client fires the hook 305 times
+.LP
+.CW "wm/gfxstress mask 4"
+runs on the board \(em the wmclient bitmap errors are cosmetic, a missing
+.CW /icons
+binding \(em and reports
+.CW "phase=mask ops=500 ms=4280 ops_per_sec=116" .
+Taking the delta against a drawink run in the same boot:
+.P1
+                  drawink   after gfxstress   delta
+DRAW ops               15               522     507
+  full                 13                20       7
+  partial               2               502     500
+  partial-in-stale      2               307     305
+DRAW present           15                25      10
+  flushes              15               189     174
+.P2
+.PP
+.B "So a masked client generates stale regions at 60 per cent of its operations."
+500 of 507 operations are partial and 305 of them land where the back buffer is
+stale.  That is the peer's GREY8 finding reproduced on silicon at this board's
+scale, and it is the FIRING case the hook was built for \(em measured rather than
+argued.
+.PP
+.B "And 174 flushes across 10 presents refutes a conclusion we had both adopted."
+.P1
+drawink     DRAW flushper 0:0 1:15 2:0 3:0 4:0 5:0 6:0 7:0
+gfxstress   DRAW flushper 0:0 1:20 2:1 3:2 4:0 5:0 6:0 7:2
+.P2
+The top bucket saturates, so
+.CW 7:2
+means two presents with SEVEN OR MORE.  By subtraction those two carry
+.CW "174 - 13 = 161"
+flushes between them \(em about 80 each.
+.PP
+"A flush is a frame" was concluded from two workloads that agreed \(em drawink
+1:1 here, Tk 197-against-197 on host emu \(em and a third breaks it by eighty
+times.  It is a property of the WORKLOAD, not of the system.  Which means the
+per-flush overlap instrument DOES over-count for a fragmenting client, exactly
+as was first feared and then dismissed on the strength of those two agreeing
+measurements.
+.PP
+.B "Two agreeing workloads are not a general result,"
+and that is the lesson rather than the number.  The agreement was real and the
+inference from it was not: nothing about drawink or Tk sampled the fragmenting
+case, so their agreement could not have detected its absence.
+.PP
+.B "The instrument is fixed rather than just caveated."
+.CW nflushpermax
+is recorded beside the histogram, because a saturating top bucket cannot tell 7
+from 80 \(em which is precisely the distinction that matters here.  The comment in
+.CW devdraw.c
+that asserted the settled result now says for which workloads it holds.
+.PP
+.B "Also: the shipping kernel is regression-clean."
+.CW "Dbuf = 0" ,
+.CW "Dbufnorepair = 0" ,
+every hook in, drawink 6 of 6 with the glyph figures unchanged.
