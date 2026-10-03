@@ -1,0 +1,97 @@
+.TH DRAWINK 1
+.SH NAME
+drawink \- check that drawing reaches the pixels
+.SH SYNOPSIS
+.B drawink
+[
+.I dev
+]
+.SH DESCRIPTION
+.B Drawink
+draws geometry of known size and colour into the screen image and then
+reads it back
+.I out of the screen image,
+so the pixels are checked where they actually landed rather than where
+the drawing code thought it put them.
+It reports a line per check and exits with a non-empty status if any
+check failed, so a script can gate on it.
+.PP
+.I Dev
+is the directory holding the draw and pointer devices, by default
+.BR /dev ;
+.B drawink
+binds
+.B #i
+and
+.B #m
+after it, which is harmless if they are already there.
+.PP
+The checks are:
+.TP
+.B clear
+A screen-wide fill with black, read back one row: every byte must be
+zero.
+.TP
+.B box inside
+A rectangle covering the middle half of the screen, filled red: every
+pixel strictly inside must be non-zero.
+.TP
+.B box outside
+The band above that rectangle must still be all zero.  A row-stride
+error leaves the inside of a fill correct and smears the outside, so
+this is the check that catches it.
+.TP
+.B halves
+Two abutting full-height fills, green and white, sampled on the middle
+row: each half must be entirely inked.  A stride error paints the second
+fill over the first.
+.TP
+.B text ink
+A string drawn with the built-in font must leave some, but not all, of
+its bounding box inked.  Text goes through memdraw as a mask rather than
+as a solid source, so a glyph path that lands nowhere is a failure none
+of the colour fills can see.
+The built-in font needs no
+.BR /fonts ,
+so this runs on a board with no filesystem; the check is skipped if the
+font cannot be opened.
+.PP
+.B clear
+and
+.B box inside
+are each other's control: the same pixels must read all zero after the
+clear and all non-zero after the fill, so neither a readback stuck at
+zero nor one stuck at full scale can pass both.
+.PP
+When a check fails,
+.B drawink
+also prints the bounding box of the pixels that disagreed.
+A kernel with a software cursor composites a 16x16 overlay into the
+screen image, which on a direct framebuffer reads back as holes in a
+solid fill \- the cursor working, not the fill failing \-
+so
+.B drawink
+installs an all-zero cursor while it runs and restores the default on
+the way out.
+A failure in a 16x16 box at the pointer therefore means a cursor that
+did not get hidden; anything else is a drawing fault.
+.SH SOURCE
+.B /appl/cmd/drawink.b
+.SH SEE ALSO
+.IR draw (3),
+.IR pointer (3),
+.IR draw-image (2)
+.SH BUGS
+Reading pixels back is only as good as the draw device's own readback
+path: a fault common to both the write and the read would pass.  On
+a Raspberry Pi 3B
+with a direct framebuffer the readback comes out of video RAM, so the
+check does reach the memory the GPU scans out; on a kernel with a
+shadow framebuffer it stops at the shadow, and says nothing about
+whether the copy to the display happened.
+.PP
+What has actually been run: all five checks pass on a hosted
+.IR emu (1)
+under MacOS X at 1024x768 x8b8g8r8, and on a Raspberry Pi 3B on silicon
+at 640x480 x8r8g8b8 reading back out of scanout RAM.  The two agree on
+the glyph ink to the pixel (226 of 1728 inked, ink box 9,10 to 71,21).
