@@ -175,6 +175,69 @@ init(nil: ref Draw->Context, argv: list of string)
 				tbox.min.x, tbox.min.y, tbox.max.x, tbox.max.y), ZR);
 	}
 
+	# 5.  The region a frame did NOT redraw.  This is the acceptance test
+	#     for double buffering with incremental drawing: with two buffers
+	#     the back one holds the frame before last, so everything the
+	#     current frame does not redraw has to be copied forward before
+	#     the flip.  If that repair is missing -- or is a no-op, which is
+	#     how the first version of it was written -- then the drawn region
+	#     is still perfectly right and only the UNDRAWN region is wrong.
+	#     None of checks 1-4 looks there: they all read where ink was just
+	#     put.
+	#
+	#     Three presents with three distinct fills, capturing the actual
+	#     bytes each time rather than assuming a channel order, so the
+	#     failure can say WHICH generation it found:
+	#
+	#	present 1  all white     -> gen1 bytes
+	#	present 2  all green     -> gen2 bytes
+	#	present 3  a small box   -> read the same strip again
+	#
+	#     Outside the box the strip must still read gen2.  Reading gen1
+	#     means the repair did not happen and the buffer is two frames
+	#     stale, which is the exact signature of a missing or no-op copy.
+	#
+	#     WITH A SINGLE BUFFER THIS PASSES TRIVIALLY, and that is stated
+	#     rather than hidden: it can only fail when double buffering is on
+	#     and wrong, which is what it is for.  It is not blind -- a broken
+	#     flip makes it fail -- but a PASS here is not evidence that double
+	#     buffering is enabled.
+	far := Rect((r.min.x, r.max.y - 2), (r.max.x, r.max.y - 1));
+	gen1 := array[far.dx() * bpp] of byte;
+	gen2 := array[far.dx() * bpp] of byte;
+	gen3 := array[far.dx() * bpp] of byte;
+	scr.draw(r, white, nil, (0, 0));
+	scr.flush(Draw->Flushnow);
+	n1 := scr.readpixels(far, gen1);
+	scr.draw(r, green, nil, (0, 0));
+	scr.flush(Draw->Flushnow);
+	n2 := scr.readpixels(far, gen2);
+	# A small box far from the strip: its damage must not cover the strip,
+	# or there is nothing left for the repair to have to carry forward.
+	tiny := Rect((r.min.x + 4, r.min.y + 4), (r.min.x + 20, r.min.y + 20));
+	scr.draw(tiny, red, nil, (0, 0));
+	scr.flush(Draw->Flushnow);
+	n3 := scr.readpixels(far, gen3);
+	if(n1 != len gen1 || n2 != len gen2 || n3 != len gen3){
+		sys->print("drawink: FAIL undrawn readpixels %d %d %d of %d: %r\n",
+			n1, n2, n3, len gen1);
+		nfail++;
+	}else if(eqbytes(gen1, gen2)){
+		# The two fills read identically, so the check cannot tell a
+		# stale buffer from a fresh one.  Say so instead of passing.
+		sys->print("drawink: SKIP undrawn: white and green read alike\n");
+	}else{
+		detail := "";
+		if(eqbytes(gen3, gen2))
+			detail = "still the last frame's fill";
+		else if(eqbytes(gen3, gen1))
+			detail = "TWO FRAMES STALE -- the repair did not happen";
+		else
+			detail = sys->sprint("neither fill: %d bytes differ from the last",
+				ndiff(gen3, gen2));
+		report("undrawn region", eqbytes(gen3, gen2), detail, ZR);
+	}
+
 	# Leave something a human can recognise rather than the debris of the
 	# last check, and put the cursor back the way it was.
 	scr.draw(r, black, nil, (0, 0));
@@ -231,6 +294,25 @@ report(what: string, ok: int, detail: string, where: Rect)
 			where.dx(), where.dy());
 	sys->print("drawink: FAIL %s: %s%s\n", what, detail, s);
 	nfail++;
+}
+
+eqbytes(a, b: array of byte): int
+{
+	if(len a != len b)
+		return 0;
+	for(i := 0; i < len a; i++)
+		if(a[i] != b[i])
+			return 0;
+	return 1;
+}
+
+ndiff(a, b: array of byte): int
+{
+	n := 0;
+	for(i := 0; i < len a && i < len b; i++)
+		if(a[i] != b[i])
+			n++;
+	return n;
 }
 
 rectunion(a, b: Rect): Rect

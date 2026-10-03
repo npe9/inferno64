@@ -57,6 +57,30 @@ The built-in font needs no
 .BR /fonts ,
 so this runs on a board with no filesystem; the check is skipped if the
 font cannot be opened.
+.TP
+.B "undrawn region"
+Three presents \(em all white, all green, then a small box in a corner
+\(em and after the third the strip far from that box must still read
+exactly the bytes the green fill left.  This is the acceptance test for
+double buffering with incremental drawing: with two buffers the back one
+holds the frame before last, so everything a frame does not redraw has to
+be carried forward before the flip, and if that copy is missing the drawn
+region is still perfectly correct and only the UNDRAWN region is wrong.
+None of the checks above looks there \(em every one of them reads where
+ink was just put.
+If the strip reads the bytes of the WHITE fill instead, the message says
+.B "TWO FRAMES STALE"
+and the buffer is the one from before last, which is the exact signature
+of a missing or no-op forward copy.
+The actual bytes of each fill are captured rather than assumed, so no
+channel order is presumed; if white and green happen to read alike the
+check reports SKIP instead of passing.
+.PP
+.B "This check passes trivially with a single buffer,"
+and that is said rather than hidden.  It can only fail when double
+buffering is enabled and wrong, which is what it is for.  It is not a
+blind instrument \(em a broken flip does make it fail \(em but a PASS is
+not evidence that double buffering is on.
 .PP
 .B clear
 and
@@ -101,7 +125,7 @@ check does reach the memory the GPU scans out; on a kernel with a
 shadow framebuffer it stops at the shadow, and says nothing about
 whether the copy to the display happened.
 .PP
-What has actually been run: all five checks pass on a hosted
+What has actually been run.  The first five checks pass on a hosted
 .IR emu (1)
 under MacOS X at 1024x768 x8b8g8r8, and on a Raspberry Pi 3B on silicon
 at 640x480 x8r8g8b8 reading back out of scanout RAM.  The two agree on
@@ -113,3 +137,13 @@ fails two checks and names a 14x14 box at 320,240 \- the pointer hotpoint
 the kernel seeds to the screen centre \- reproducing 75539 of 75684 and
 306 of 320 exactly.  So the checks discriminate, and the plain run that
 precedes it put the default cursor back.
+.PP
+.B "The undrawn-region check has NOT been run against a double-buffered kernel,"
+because there is not one yet.
+.I os/inferno/raspi3b/screenbcm.c
+has the page flip and the forward copy written and switched off
+.RB ( Dbuf
+is 0), waiting on the board.  Against the single-buffered kernel the
+check passes, which as described above demonstrates only that it does not
+false-alarm.  It has not yet been shown capable of failing on real
+hardware, and until it has, treat it as written rather than as verified.
