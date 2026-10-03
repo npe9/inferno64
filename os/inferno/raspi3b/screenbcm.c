@@ -30,9 +30,12 @@ enum {
 
 extern int mboxfballoc(int, int, int, uintptr*, u32*, u32*);
 extern int mboxvirtoffset(int, int);
+extern void (*screenpresent)(void);
 extern int mboxvsync(void);
 extern void drawpresentstats(void);
 static void vsyncprobe(void);
+static void bcmpresent(void);
+static uchar *backaddr(void);
 
 static Memdata	scrdata;
 Memimage	*gscreen;
@@ -93,6 +96,13 @@ enum { Directfb = 1 };
  * underok invalidation, and the deferred repair at 'v'.
  */
 enum { Dbuf = 0 };
+
+static uchar	*fbbase;	/* base of the whole (2*ScrY tall) allocation */
+static int	fbfront;	/* which half the GPU is scanning out */
+static Rectangle dmg;		/* damage(N), accumulating */
+static Rectangle dmgprev;	/* damage(N-1): where BACK is stale */
+static int	havedmgprev;
+static uvlong	nflip, nflipfail, nrepairbyte, nrepairrect;
 static int	fbok;
 
 static int	cursenable;
@@ -489,6 +499,9 @@ screenstats(void)
 	 * screen needs no stub anywhere.
 	 */
 	drawpresentstats();
+	if(Dbuf)
+		print("SCREEN flip %llud failed %llud repair %llud bytes in %llud rects\n",
+			nflip, nflipfail, nrepairbyte, nrepairrect);
 	print("SCREEN dbuf eager %llud defer %llud overlap %llud"
 		" skipped %llud over %llud fullish %llud adj %llud samerect %llud\n",
 		neagerbyte, ndeferbyte, noverlapbyte,
@@ -591,10 +604,9 @@ screeninit(void)
 	 *
 	 * Dbuf asks for a virtual height of 2*ScrY instead, two stacked buffers
 	 * in one allocation, so a page flip is mboxvirtoffset(0, 0 or ScrY)
-	 * and copies nothing.  It is 0 here and the allocation is unchanged:
-	 * the geometry is the only part that is written, because the flip needs
-	 * an audit of everything that caches the draw buffer's address and that
-	 * audit is not done.  doc/open-issues-plan.ms H1a lists what.
+	 * and copies nothing.  The flip, the deferred repair and the cursor
+	 * invalidation are all written below; Dbuf is 0 because none of it has
+	 * run on the board.  doc/open-issues-plan.ms H1a.
 	 */
 	if(mboxfballoc(ScrX, ScrY, Dbuf? 2*ScrY: ScrY, &fbpa, &pitch, &fbsize) < 0){
 		print("screen: mailbox framebuffer alloc failed\n");
@@ -627,16 +639,20 @@ screeninit(void)
 	 * than argued: pointing fb at fbpa boots to DRAW-OK, TK-OK and the
 	 * same 564 bytes of glyph ink, with no fault.
 	 *
-	 * IT TEARS, AND THAT IS NOT FIXED HERE.  Nothing now separates
-	 * drawing from scanout, so a frame can be displayed half-drawn.
-	 * The cure is double buffering: the mailbox already pins virtual
-	 * height to physical with tag 0x00048004 and already sends tag
-	 * 0x00048009 (virtual offset) as 0,0, and asking for 2*h returns
-	 * exactly twice the allocation while y=h moves the scanout -- both
-	 * verified under QEMU.  What is NOT verified is landing the flip in
-	 * vertical blank, and without that the tear moves rather than
-	 * vanishing.  Until that is done this trades a tear for the copy.
-	 * Set Directfb to 0 to get the copy, and the old behaviour, back.
+	 * IT TEARS WHILE Dbuf IS 0.  Nothing then separates drawing from
+	 * scanout, so a frame can be displayed half-drawn.  The cure is the
+	 * double buffering below: mboxfballoc() now takes a virtual height, so
+	 * 2*ScrY gives two stacked buffers, and mboxvirtoffset() moves the
+	 * scanout between them.
+	 *
+	 * WHAT IS STILL NOT VERIFIED is landing the flip in vertical blank, and
+	 * without that the tear MOVES rather than vanishing -- the flip itself
+	 * becomes the tear line.  mboxvsync() exists and vsyncprobe() measures
+	 * the period, but bcmpresent() does not wait, because a vsync wait holds
+	 * the mailbox lock for a whole frame and whether that is affordable is
+	 * its own measurement.  So double buffering as written removes the
+	 * half-drawn frame and does not yet promise a tear-free one.
+	 * Set Directfb to 0 to get the shadow buffer and the per-frame copy back.
 	 *
 	 * See doc/raspi3b-draw-plan.ms for the measurements and the gates.
 	 */
@@ -645,6 +661,23 @@ screeninit(void)
 		fb = vfb;
 	else
 		fb = xalloc(nbytes);
+	if(Dbuf && Directfb){
+		/*
+		 * Two stacked buffers in one allocation.  The GPU starts at
+		 * offset 0, so draw into the SECOND half and the first flip
+		 * shows it.  scrdata.bdata is set below from fb, and devdraw
+		 * shares that same Memdata, so reassigning it at each flip
+		 * moves every Memimage at once.
+		 */
+		if(fbsize < (u32)(2 * nbytes)){
+			print("screen: fb %ud too small for 2x%d\n", fbsize, nbytes);
+			return;
+		}
+		fbbase = vfb;
+		fbfront = 0;			/* the GPU starts at offset 0 */
+		fb = vfb = backaddr();		/* so draw into the second half */
+		screenpresent = bcmpresent;
+	}
 	if(fb == nil){
 		print("screen: no memory for %d byte soft fb\n", nbytes);
 		return;
@@ -708,6 +741,150 @@ attachscreen(Rectangle *r, ulong *chan, int *d, int *width, int *softscreen)
 	return &scrdata;
 }
 
+/*
+ * THE PAGE FLIP, and the deferred repair that makes incremental drawing
+ * correct across it.  doc/open-issues-plan.ms H1a.
+ *
+ * Invariant at the start of a frame: FRONT is being scanned out and holds the
+ * last presented frame; BACK is what memdraw draws into and holds the frame
+ * before that, so BACK is stale exactly in dmgprev, the last present's damage.
+ *
+ * At the present:
+ *	1. copy dmgprev \ dmg from FRONT to BACK.  BACK is now this frame
+ *	   everywhere -- inside dmg it was drawn, inside dmgprev\dmg it is
+ *	   copied, and outside both it already agreed.
+ *	2. flip, so BACK becomes FRONT.
+ *	3. the new BACK (the old FRONT) holds the previous frame and is stale
+ *	   exactly in this frame's damage, which becomes the next dmgprev.
+ *
+ * The copy costs |dmgprev \ dmg|, which is measured at 84.9 per cent less than
+ * copying the damage every frame: 261us against 1770us on a Tk workload at this
+ * geometry.  The saving is the OVERLAP of consecutive frames' damage and has
+ * nothing to do with how much of the screen is covered.
+ *
+ * It is correct only because every operation Tk sends to a window fully
+ * overwrites its damage rectangle -- otherwise pixels inside dmg that the
+ * frame did not actually write would keep BACK's stale content and be shown.
+ * Measured on a Tk workload: zero of 8628 draws was anything but SoverD with
+ * an opaque mask and source, and no string, line, polygon or ellipse reached
+ * the screen path at all, because Tk renders into per-widget images and blits
+ * them opaquely.  devdraw's npartialhit counts violations if that ever stops
+ * being true.  The mask-alpha and source-alpha cases are UNTESTED rather than
+ * confirmed: that workload never exercised them.
+ */
+/*
+ * s minus c, as up to four rectangles.  Returns how many were written.
+ */
+/*
+ * Which half is which.  Named rather than written inline as a ternary at each
+ * use, because the first version of the repair below had the ternary inverted
+ * and copied the back buffer onto itself -- a no-op whose only symptom would
+ * have been subtly stale pixels in whatever a frame did not redraw, which is
+ * the hardest kind of wrong picture to notice.
+ *
+ * fbfront is the half the GPU is scanning out: 0 means offset 0.
+ */
+static uchar*
+frontaddr(void)
+{
+	return fbbase + (fbfront? ScrY*ScrX*ScrPix: 0);
+}
+
+static uchar*
+backaddr(void)
+{
+	return fbbase + (fbfront? 0: ScrY*ScrX*ScrPix);
+}
+
+static int
+rectsub(Rectangle s, Rectangle c, Rectangle *out)
+{
+	int n;
+
+	if(!rectclip(&c, s)){		/* disjoint: all of s survives */
+		out[0] = s;
+		return 1;
+	}
+	n = 0;
+	if(c.min.y > s.min.y)
+		out[n++] = Rect(s.min.x, s.min.y, s.max.x, c.min.y);
+	if(c.max.y < s.max.y)
+		out[n++] = Rect(s.min.x, c.max.y, s.max.x, s.max.y);
+	if(c.min.x > s.min.x)
+		out[n++] = Rect(s.min.x, c.min.y, c.min.x, c.max.y);
+	if(c.max.x < s.max.x)
+		out[n++] = Rect(c.max.x, c.min.y, s.max.x, c.max.y);
+	return n;
+}
+
+static void
+fbcopy(uchar *from, uchar *to, Rectangle r)
+{
+	int y, stride, nb;
+	uchar *sp, *dp;
+
+	stride = ScrX * ScrPix;
+	nb = Dx(r) * ScrPix;
+	if(nb <= 0)
+		return;
+	sp = from + r.min.y*stride + r.min.x*ScrPix;
+	dp = to + r.min.y*stride + r.min.x*ScrPix;
+	for(y = r.min.y; y < r.max.y; y++){
+		memmove(dp, sp, nb);
+		cacheflush(dp, nb);	/* the GPU will scan this out uncached */
+		sp += stride;
+		dp += stride;
+	}
+	nrepairbyte += (uvlong)nb * Dy(r);
+	nrepairrect++;
+}
+
+/*
+ * Called from devdraw's drawpresent() at every 'v', with drawlock held.
+ */
+static void
+bcmpresent(void)
+{
+	Rectangle sub[4];
+	int i, n;
+
+	if(fbbase == nil || dmg.min.x >= dmg.max.x)
+		return;
+	/* 1. repair the part of BACK that this frame did not redraw */
+	if(havedmgprev){
+		n = rectsub(dmgprev, dmg, sub);
+		for(i = 0; i < n; i++)
+			fbcopy(frontaddr(), backaddr(), sub[i]);
+	}
+	/* 2. show the buffer just completed */
+	if(mboxvirtoffset(0, fbfront? 0: ScrY) < 0){
+		nflipfail++;
+		/*
+		 * The firmware clamped or the exchange failed, so the buffer
+		 * being scanned out is NOT the one just drawn.  Leave
+		 * everything alone: the frame is stale rather than torn, and
+		 * swapping fb now would draw the next frame into the visible
+		 * buffer with no repair behind it.
+		 */
+		return;
+	}
+	fbfront = !fbfront;
+	nflip++;
+	/* 3. draw into what used to be shown */
+	fb = vfb = scrdata.bdata = backaddr();
+	/*
+	 * The cursor's saved pixels came out of the OTHER buffer.  Restoring
+	 * them now would write this frame's pixels into the visible buffer
+	 * while it holds the previous frame.  Invalidate: the cursor is
+	 * recomposed on the next flush anyway, and that is cheaper than
+	 * remembering which buffer a save came from.
+	 */
+	underok = 0;
+	dmgprev = dmg;
+	havedmgprev = 1;
+	dmg = Rect(10000, 10000, -10000, -10000);
+}
+
 void
 flushmemscreen(Rectangle r)
 {
@@ -730,6 +907,8 @@ flushmemscreen(Rectangle r)
 	nflushbyte += (uvlong)Dx(r) * Dy(r) * ScrPix;
 	chargedamage((uvlong)Dx(r) * Dy(r) * ScrPix);
 	chargeoverlap(r);
+	if(Dbuf)
+		combinerect(&dmg, r);	/* damage(N), closed at the present */
 	if(cursenable){
 		p = mousexy();
 		cr = cursrect(p);

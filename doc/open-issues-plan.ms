@@ -5821,3 +5821,82 @@ invalidation, and the deferred repair at
 Nothing is on the board, which is scoring
 .CW b461ec5f1
 alone.
+.PP
+.B "The flip and the deferred repair are written, and the hazard measured away."
+The peer ran the partial-overwrite counter on
+.CW "runtests -g"
+at 640x480:
+.P1
+s x l p P e E reaching the damage path      0
+'d' ops that do not overwrite their rect    0 of 8628
+.P2
+Tk sends no string, line, polygon or ellipse to a window or to the screen, and
+every blit it does send is
+.CW SoverD
+with an opaque mask and an alpha-free source \(em it renders into per-widget
+images and blits them opaquely, which is why it is flicker-free.  So the
+post-draw repair is correct with no per-operation machinery.
+.PP
+.B "Both zeroes have controls," 
+which matters because a zero from a predicate never shown able to fire is not a
+measurement: the op tally proves the instrument sees operations at all (2644
+.CW 'd'
+rectangles plus others), and inverting the opacity test to
+.CW "op == SoverD"
+gives 8628 of 8628.
+.PP
+.B "And the limit is real."
+With the operation term legitimately zero, the mask-alpha and source-alpha terms
+were never exercised.  They are UNTESTED rather than confirmed.  A workload
+blitting an alpha image straight to a window would test them; the games and
+draw3d go through other paths.
+.PP
+.B "What is now in the tree."
+.CW bcmpresent() ,
+called from devdraw's
+.CW drawpresent()
+through a function POINTER
+.CW ( screenpresent ,
+nil by default, so no board needs a stub \(em the same shape as emu's
+.CW gpudrawflush ):
+.P1
+1. copy dmgprev \e dmg from FRONT to BACK   (|damage(N-1) \e damage(N)|)
+2. mboxvirtoffset to show BACK
+3. fb = vfb = scrdata.bdata = the old FRONT
+4. underok = 0                             (the cursor hazard)
+5. dmgprev = dmg
+.P2
+with
+.CW rectsub()
+giving the difference as up to four rectangles.  A failed or clamped
+.CW mboxvirtoffset()
+returns WITHOUT swapping
+.CW fb ,
+because swapping it then would draw the next frame into the visible buffer with
+no repair behind it \(em a stale frame is better than that.
+.PP
+.B "A bug found by re-reading, which is the kind this would have hidden."
+The first version of the repair had the source ternary inverted and copied the
+back buffer onto itself.  A no-op whose only symptom is subtly stale pixels in
+whatever a frame did not redraw \(em the hardest wrong picture to notice.  The
+two halves are now behind
+.CW frontaddr()
+and
+.CW backaddr()
+rather than written inline at each use, which is the fix, not the sign flip.
+.PP
+.B "Still not tear-free, and the comment in the file now says so."
+.CW bcmpresent()
+does not wait for vertical blank, so the flip itself becomes the tear line \(em
+the tear MOVES rather than vanishing.
+.CW mboxvsync()
+exists and
+.CW vsyncprobe()
+measures the period, but a vsync wait holds the mailbox lock for a whole frame
+and whether that is affordable is its own measurement.  Double buffering as
+written removes the half-drawn frame; it does not yet promise a clean one.
+.PP
+.CW "Dbuf = 0" .
+Compiled clean; nothing has run on the board, which is scoring
+.CW b461ec5f1
+alone.

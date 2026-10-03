@@ -441,6 +441,15 @@ drawrefresh(Memimage*, Rectangle r, void *v)
  * service against every other diagnostic, and these are read by address or
  * from drawpresentstats() at the end of a run.
  */
+/*
+ * Set by a screen driver that page-flips, called at the end of every present
+ * with drawlock held.  A POINTER and not a function every board must define,
+ * so no board needs a stub -- the same shape as emu's gpudrawflush.  The
+ * driver keeps its own damage accumulation; all it needs from here is the
+ * moment, which only 'v' knows.
+ */
+void	(*screenpresent)(void);
+
 uvlong	npresent, npresentflush, npresentempty;
 uvlong	presenteager, presentdefer, presentoverlap;
 uvlong	nsamebb, nnestbb, nflushper[8];
@@ -502,6 +511,8 @@ drawpresent(void)
 	havepresent = 1;
 	presentbb = Rect(10000, 10000, -10000, -10000);
 	presentflushes = 0;
+	if(screenpresent != nil)
+		(*screenpresent)();
 }
 
 /*
