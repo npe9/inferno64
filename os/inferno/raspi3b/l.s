@@ -983,12 +983,43 @@ TEXT	dccivac(SB), 1, $-4		/* clean+invalidate D-line at R0 */
 	RET	R30
 
 /*
- * cacheiinv(): invalidate the whole instruction cache to the point of
- * unification, then the barriers that make it visible to the next
- * fetch.  IC IALLU has no address operand (Rt == XZR).
+ * cacheiinv(): invalidate the instruction cache to the point of
+ * unification, on EVERY processor, then the barriers that make it
+ * visible to the next fetch.  Neither op has an address operand
+ * (Rt == XZR).
+ *
+ * IALLUIS AND NOT IALLU, and on a four-core board that is the whole
+ * difference.  IC IALLU invalidates the LOCAL processor's I-cache; IC
+ * IALLUIS invalidates every I-cache in the Inner Shareable domain.
+ * segflush() calls this to make instructions written as data visible to
+ * the fetcher, and the writer of those instructions is the JIT: it
+ * compiles a Dis module on whichever processor is running, and the
+ * process that then executes the code can be scheduled on any other.
+ * With a local invalidate, that other processor can fetch stale
+ * instructions from its own I-cache.
+ *
+ * Measured, not inferred.  A wedged board gave
+ *
+ *	trap type 0 esr 0x2000000 pc 0x4c86be0
+ *	panic: trap
+ *
+ * ESR 0x02000000 is exception class 0 -- "unknown reason", which is
+ * what a processor says when it executes something that is not an
+ * instruction -- and pc 0x4c86be0 is in the Dis heap, which on this
+ * board is where compiled code lives (cflag = 1).  So a processor
+ * fetched garbage from an address the JIT had just written.  It is
+ * intermittent because it needs the process to migrate between the
+ * compile and the execution, and it cannot happen at all on a JTAG boot,
+ * which holds cores 1-3.
+ *
+ * The leading DSB orders the D-cache clean that segflush() does just
+ * before this against the invalidate; cacheflush() ends in a DSB of its
+ * own, so this is belt and braces rather than a new requirement, and it
+ * makes the routine correct on its own terms for any other caller.
  */
 TEXT	cacheiinv(SB), 1, $-4
-	SYS	$SYSARG5(0,0,7,5,0)	/* IC IALLU */
+	DSB	$15
+	SYS	$SYSARG5(0,0,7,1,0)	/* IC IALLUIS */
 	DSB	$15
 	ISB	$15
 	RET	R30
