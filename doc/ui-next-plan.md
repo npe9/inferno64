@@ -1868,35 +1868,103 @@ eager cost — 1770µs, the number this was trying to beat — and never to a
 wrong image. Which makes what remains a **performance** question rather
 than a correctness one.
 
-### Measured: there are no partial-overwrite operations at all
+### Measured: Tk sends no partial-overwrite operation to the screen
 
-`INFERNO_FRAME_DAMAGE` also tallies the command byte behind every damage
-rectangle, and classifies each `'d'`. On `runtests -g` at 640×480:
+**This section originally claimed more than it had measured, and the
+over-claim was found by the raspi3b session rather than here.** Both the
+predicate and the scope were wrong; the conclusion survives, the evidence
+behind it did not.
+
+**The predicate.** The test for "this `'d'` fully overwrites its rect" read
+
+```c
+if(op != SoverD
+|| (mask != nil && (mask->flags&Falpha))
+|| (src != nil && (src->flags&Falpha)))
+```
+
+`mask->flags&Falpha` asks whether the mask has an alpha *channel*. That is
+not opacity. A `GREY1` stipple or glyph mask has no `Falpha` and is plainly
+not opaque; a transparent 1×1 replicated mask has no `Falpha` either, and
+`memdraw` no-ops the operation while `dstflush` still charges the whole
+rectangle — the stale-region hazard exactly, counted as a full overwrite.
+The predicate asked about the image's **type** where the question was about
+its **content**.
+
+The same class of error, from the other side, is what the raspi3b session
+hit: it tested `mask == memopaque`, and `libinterp/draw.c`'s `imagedraw()`
+hands a nil Limbo mask to devdraw as `display->white` — a separately
+allocated 1×1 replicated all-ones image, *not* `memopaque`. So on any Limbo
+client stack that test can never succeed, and their first figure was 100%
+partial, entirely noise.
+
+`maskbucket()` replaces the proxy with a content test and reports the
+distribution rather than one bit, so a zero can be read. `nil` and
+`memopaque` are opaque by construction; for anything else `byteaddr()` is
+exported where `pixelbits()` is static to libmemdraw, and for a 1×1 `Frepl`
+image the pixel is the whole of its storage, so all-ones bytes mean opaque.
+Below 8 bits of depth the byte also carries padding, so an opaque mask whose
+padding is not `0xff` reads as part-zero and counts PARTIAL — a bias that
+overstates the hazard and cannot hide it, which is the safe direction.
+
+On `runtests -g` at 640×480, from the print at **frame 190** of ~197:
 
 | | count |
 |---|---|
-| ops producing damage | `d`=2644… 8628 total `'d'` calls, plus `G`, `L`, `b`, `f`, `t` |
 | `s` `x` `l` `p` `P` `e` `E` reaching the damage path | **0** |
-| `'d'` operations that do not overwrite their rect | **0 of 8628** |
+| ops producing damage | `d`=3464, plus `G`=60, `L`=60, `b`=42, `f`=40, `t`=83 |
+| `'d'` calls classified | 9504 |
+| `'d'` calls that do not overwrite their rect | **0 of 9504** |
+| mask `nil` | 0 |
+| mask `memopaque` | 0 |
+| mask 1×1 `Frepl`, **all ones** | **9504** |
+| mask 1×1 `Frepl`, not all ones | 0 |
+| mask with an alpha channel | 0 |
+| any other mask | 0 |
 
-So Tk sends no string, line, polygon or ellipse directly to the screen or
-to a window layer — it renders them into per-widget images and blits
-those — and every blit it does send is `SoverD` with an opaque mask and
-source. **The stale-buffer hazard does not arise on this workload, and no
-per-operation machinery is needed.** That was the Pi session's guess from
-Tk being flicker-free, and it holds.
+Every single mask Tk sends is `display->white`, verified all-ones rather
+than assumed. That is the raspi3b session's `imagedraw()` diagnosis holding
+exactly, on a different tree and a different counter — including the part
+that matters, that `memopaque` never appears at all.
 
-**Both zeroes were checked against a control, because a zero from a
-predicate is worth nothing until the predicate is shown able to fire.**
-The op tally proves the instrument sees operations at all (2644 `'d'`
-rectangles, not silence). Inverting the opacity test to `op == SoverD`
-gives **8628 of 8628**, so the counter can be non-zero and every
-operation really is `SoverD`.
+**Quote the frame number, because the instrument reports a prefix.** The
+counters are cumulative and the last print is the figure, but there is no
+at-exit flush and there cannot easily be one — `cleanexit()` ends emu with
+`_exit()`, which does not run `atexit` handlers. `INFERNO_FRAME_DAMAGE=100`
+on a 197-frame workload prints **once**, at frame 100, covering a third of
+the operations, and a stipple in the unobserved tail would be invisible
+while the output looked complete. The first version of this table was that
+prefix. This is the same error as `INFERNO_DAMAGE_HIST=300` on a 200-flush
+workload, inverted: not an interval longer than the experiment, but one that
+lands only once and never at the end.
 
-**The limit**: with the op term legitimately zero, the mask-alpha and
-source-alpha terms were never exercised by this workload, so they are
-untested rather than confirmed. A workload that blits an alpha image to a
-window would test them.
+**The scope.** "No per-operation machinery is needed" was wrong, and
+measurably so. The hazard is a property of the **client**, not of the
+double-buffering scheme:
+
+- Tk composites each widget into its own image and blits the image, so no
+  string, line, polygon, ellipse or stipple ever reaches the screen or a
+  window layer. Hence the zero above.
+- A client that draws a glyph straight at the screen creates a stale region
+  on the spot: its non-ink pixels keep whatever the destination held, those
+  pixels sit inside `damage(N)`, and the deferred repair excludes
+  `damage(N)` from the copy. The raspi3b session measured this on silicon
+  with `drawink` — 13 of 15 operations genuine full overwrites, 2 not, and
+  **both of the 2 inside the stale region** (their figure, their board, not
+  reproduced here).
+
+A kernel cannot know which kind of client it has, so the per-operation
+repair is **required** — it is merely dormant under Tk. That also sets the
+test: the hook's cost must be measured where it fires *and* where it must
+cost nothing, and "zero eager repairs under Tk" is the number that makes
+the dormancy measured rather than assumed.
+
+**On the control that did not control anything.** The original note was
+pleased that inverting the opacity test to `op == SoverD` gave 8628 of 8628.
+That validated the `op` clause and nothing else — inverting one clause of a
+conjunction tests that clause alone, and the mask clause, the one that was
+wrong, was never exercised. The op tally (3464 `'d'` rectangles, not
+silence) does its job and is the part of the original evidence that stands.
 
 ### And what that zero does to the acceptance test
 

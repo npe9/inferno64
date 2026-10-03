@@ -552,6 +552,16 @@ drawrefresh(Memimage *l, Rectangle r, void *v)
  * neither of which can tell the two kinds of flush apart.
  *
  * INFERNO_FRAME_DAMAGE=n prints every n frames.
+ *
+ * All the counters are cumulative, so the LAST print is the figure and the
+ * interval only decides how often it appears -- but there is no at-exit
+ * flush, and there cannot easily be one: cleanexit() ends emu with _exit(),
+ * which does not run atexit handlers.  So an interval that does not divide
+ * into the run silently reports a PREFIX of it: INFERNO_FRAME_DAMAGE=100 on
+ * a 197-frame workload prints once, at frame 100, covering a third of the
+ * operations -- and a stipple or alpha mask in the unobserved tail would be
+ * invisible while the output looked complete.  Pick an interval well under
+ * the expected frame count, and quote the frame number the figure came from.
  */
 static Rectangle vcur, vprev;
 static int vcurok, vprevok, vevery = -1;
@@ -583,6 +593,15 @@ static uvlong vpartial;		/* partial-overwrite ops whose rect met S */
 static uvlong vpartialtot;	/* ...of this many partial-overwrite ops */
 static uvlong vopseen[128];	/* every command byte that produced damage */
 static uvlong vdtot, vdpartial;	/* 'd' ops, and those that do not overwrite */
+/*
+ * Mask shape for the 'd' ops that reach the damage path.  The earlier
+ * predicate tested mask->flags&Falpha -- the absence of an alpha CHANNEL,
+ * which is not opacity.  A GREY1 stipple has no Falpha and is not opaque;
+ * libinterp/draw.c's imagedraw() hands a nil Limbo mask as display->white,
+ * a separately allocated 1x1 Frepl all-ones image which is opaque but is
+ * not memopaque either.  So bucket what the masks really are instead.
+ */
+static uvlong vmnil, vmopaque, vmreplones, vmreplother, vmalpha, vmother;
 
 static int
 partialoverwrite(int c)
@@ -598,6 +617,60 @@ partialoverwrite(int c)
 		return 1;
 	}
 	return 0;		/* 'd' is counted only when non-opaque: not yet */
+}
+
+/*
+ * Does this mask cover its whole rectangle?  nil and memopaque are opaque by
+ * construction.  For anything else, byteaddr() is exported (pixelbits() is
+ * not) and for a 1x1 Frepl image the single pixel is the whole of its
+ * storage, so all-ones bytes mean opaque.  A larger or part-zero mask is
+ * reported as what it is rather than assumed either way.
+ *
+ * Below 8 bits of depth the byte also holds padding, and padding that is not
+ * 0xff makes an opaque mask read as part-zero.  That biases the instrument
+ * towards reporting PARTIAL, which is the safe direction for a hazard count:
+ * it can overstate the risk, never hide it.
+ */
+static int
+maskbucket(Memimage *m)
+{
+	uchar *p;
+	int i, nb, ones;
+
+	if(m == nil){
+		vmnil++;
+		return 1;
+	}
+	if(m == memopaque){
+		vmopaque++;
+		return 1;
+	}
+	if(m->flags&Falpha){
+		vmalpha++;
+		return 0;
+	}
+	if((m->flags&Frepl) && Dx(m->r) == 1 && Dy(m->r) == 1){
+		nb = (m->depth + 7) / 8;
+		if(nb < 1)
+			nb = 1;
+		p = byteaddr(m, m->r.min);
+		ones = 1;
+		if(p == nil)
+			ones = 0;
+		else for(i = 0; i < nb; i++)
+			if(p[i] != 0xff){
+				ones = 0;
+				break;
+			}
+		if(ones){
+			vmreplones++;
+			return 1;
+		}
+		vmreplother++;
+		return 0;
+	}
+	vmother++;
+	return 0;
 }
 
 static void
@@ -671,6 +744,8 @@ frameboundary(void)
 		print("\n");
 		print("FRAMEDRAW d-ops %llud, non-overwriting %llud\n",
 			vdtot, vdpartial);
+		print("FRAMEMASK nil %llud  memopaque %llud  1x1repl-ones %llud  1x1repl-other %llud  alpha %llud  other %llud\n",
+			vmnil, vmopaque, vmreplones, vmreplother, vmalpha, vmother);
 	}
 }
 
@@ -3021,7 +3096,7 @@ drawmesg(Client *client, void *av, int n)
 			 */
 			vdtot++;
 			if(op != SoverD
-			|| (mask != nil && (mask->flags&Falpha))
+			|| !maskbucket(mask)
 			|| (src != nil && (src->flags&Falpha)))
 				vdpartial++;
 			/*
