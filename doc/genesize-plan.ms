@@ -1244,5 +1244,8 @@ disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
 its /bin, /lib and /init) on its second disk, and a second guest given
 that disk alone and linuxguest.root=vda mounts it from the initramfs
 and switches to it.  Next: M3 on VMX (Bochs with more than one
-processor); the MTTCG triple fault; the RISC-V backend's harts and
-AIA; and the workstation (phase 13).
+processor), where with the Bochs fix the remaining fault is HLT exits
+read with IF clear and an all-zero exit while vCPUs share a processor;
+the MTTCG faults; the RISC-V IOMMU and a multiprocessor riscv64 host;
+and the workstation (phase 13).  On QEMU, check-vm (SVM) and check-rv,
+on both the PLIC and the AIA machine, pass every stage.
