@@ -689,6 +689,34 @@ assembly always took 64 bits.  The heartbeat (ctl
 now also reads processor 0's ticks, since an application processor's
 need not advance, and a watchdog prints the processes when a traced
 vCPU stops taking exits.
+.IP "Phases 4 and 9: M2 and M8 on VMX (Bochs)." 4
+With the host keeping time,
+.CW pc64linux
+.CW linuxtestinit.b ) (
+ran to the end on Bochs, one processor, the VMX backend
+.CW "vm: vmx" "" (
+on the console): the linux-virt guest booted to its shell and ran the
+typed command; read the marker on its virtio disk and wrote the next
+sector, which Limbo read back; made an ext2 root on its second virtio
+disk; and the second guest booted on that disk alone.  The booted host
+printed
+.DS
+.ft CW
+vm 0 backend vmx mem 268435456 vcpus 1
+LINUXGUEST: up 6.6.142-0-virt cpus 1 uptime 5.07
+LINUXGUEST: vda says INFERNO-VIRTIO-DISK
+LINUXGUEST: made a root on vdb
+platform handled cpuid 655 msr 36 io 155346 mmio 2198 hlt 3196 intr 8243 gp 5 msi 976
+LINUXTEST: disk sector 1: guest-wrote-this
+LINUXTEST: booting on the virtio disk
+LINUXGUEST: root /dev/vda ext2
+LINUXGUEST: on disk
+LINUXGUEST: ran
+.ft
+.DE
+M2 and M8's disk half are met on VMX.  M8's network half and M5 were
+not exercised there: the Bochs bench has neither the second NIC nor the
+virtio-serial function.  The run took about an hour of Bochs.
 .IP "Phase 9: M8 on SVM (QEMU)." 4
 .CW pc/vmvirtio.c :
 virtio functions of the hypervisor's own on the guest's PCI bus, the
@@ -985,6 +1013,6 @@ are modules.  M8 is done on SVM, including Linux booting on the virtio
 disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
 its /bin, /lib and /init) on its second disk, and a second guest given
 that disk alone and linuxguest.root=vda mounts it from the initramfs
-and switches to it.  Next: M2, M8 and M3 on VMX (Bochs), now that the
-host keeps time; the MTTCG triple fault; a Linux guest on the RISC-V
-backend; and the workstation (phase 13).
+and switches to it.  Next: M3 on VMX (Bochs with more than one
+processor); the MTTCG triple fault; the RISC-V backend's devices
+(virtio-mmio, AIA) and harts; and the workstation (phase 13).
