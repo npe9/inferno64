@@ -7146,3 +7146,97 @@ that asserted the settled result now says for which workloads it holds.
 .CW "Dbuf = 0" ,
 .CW "Dbufnorepair = 0" ,
 every hook in, drawink 6 of 6 with the glyph figures unchanged.
+.NH 2
+H1a CLOSED: dormancy is ZERO over 324807 operations, and deferred is the difference between impossible and free
+.LP
+.CW "wm/gfxstress fill 4"
+is the dormant case without needing Tk at all: 400-fill batches with a nil matte
+\(em which becomes
+.CW display->white ,
+a 1x1 replicated all-ones mask that
+.CW opaquerepl()
+correctly calls opaque \(em and ZERO
+.CW readpixels
+calls in the whole program.  Delta against a baseline dump in the same boot:
+.P1
+                   baseline    after fill 4      delta
+DRAW ops                  3          324810     324807, ALL full
+  partial                 0               0          0
+  partial-in-stale        0               0          0
+EAGER-REPAIRS             0               0          0
+flips                     3             823        820, 0 failed
+.P2
+.PP
+.B "eager-repairs 0 over 324807 operations is the dormancy, measured."
+A client that neither masks nor reads back never fires the hook.  That was the
+last open measurement on this item and it is closed, on silicon, with a
+workload already in the tree.
+.NH 3
+And the two instruments disagree by 260x, which is the right answer
+.LP
+.P1
+                    eager        deferred     saving
+per-PRESENT   248474010 px     1494037 px     99.44%
+per-FLUSH     347917944 B    346959240 B       0.38%
+.P2
+266 flushes per present,
+.CW "max 301" .
+The per-PRESENT figure is the correct one, because the scheme flips once per
+present; the per-FLUSH figure is what you get from taking a flush for a frame.
+.PP
+.B "WHICH CORRECTS THE DIRECTION I GAVE TWO COMMITS AGO."
+I wrote that the per-flush instrument "DOES over-count for a fragmenting
+client".  It UNDER-counts here, by 260 times.  The original two-sided analysis
+was right and my summary of it was not: a frame arriving as many DISJOINT
+flushes under-states, because no adjacent pair overlaps, and only the
+same-rectangle-twice case over-states.  gfxstress fill is 266 scattered small
+fills per present \(em the under-stating case at full strength.
+.NH 3
+A subtlety that must be stated: presentbb is a BOUNDING BOX
+.LP
+.P1
+per-present  303017 px a present = 98.6% of the 307200-pixel screen
+per-flush        399 px a flush  (the individual fills really are tiny)
+.P2
+.CW combinerect()
+accumulates a bounding box, not a true union area, so 266 scattered fills give a
+box covering almost the whole screen while the fills themselves are a fraction
+of it.  Both numbers are self-consistent GIVEN their damage definition, and the
+bounding box is the right definition for the scheme, because the box is what the
+driver is told and therefore what it copies.
+.PP
+It does mean the ABSOLUTE costs are inflated for scattered damage \(em and that
+inflation is the whole point:
+.P1
+eager    would copy 1183.7 KB a frame = 20120us = 121% of a 16665us frame
+deferred actually     7.1 KB a frame =    121us =   0.73%
+.P2
+.PP
+.B "So on this workload the deferred scheme is the difference between impossible and free."
+Eager cannot meet the frame budget at all \(em every frame dropped, before any
+drawing \(em and deferred costs under one per cent of it.  That is a larger
+result than the 84.9 per cent measured under Tk on host emu, and it is the same
+mechanism: consecutive presents both cover nearly the whole screen, so their
+damage overlaps almost completely and there is almost nothing to carry forward.
+.NH 3
+Where the item now stands
+.LP
+.IP \(bu
+The flip WORKS: 820 flips here, 15 earlier, zero failures in both.
+.IP \(bu
+The hook FIRES where it must: 305 of 507 masked operations in the stale region.
+.IP \(bu
+The hook is DORMANT where it must be: 0 over 324807 maskless operations.
+.IP \(bu
+The deferred scheme's value is measured on both ends: 0.73 per cent of a frame
+against eager's 121 per cent on a maskless client, and about 90 per cent of
+eager on drawink, which reads back after every draw.
+.IP \(bu
+.CW Dbuf
+still ships 0, for the one reason that has not moved: no vertical-blank wait, so
+the flip moves the tear rather than removing it, and the wait cannot go inside
+.CW drawlock
+plus
+.CW mboxlock .
+.PP
+That last is now the only thing between this and turning it on.

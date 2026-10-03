@@ -1,0 +1,86 @@
+#!/bin/sh
+#
+# Run ONE command line on the board through the remote-command poller, wait
+# for it to finish, and leave board.cmd harmless.
+#
+#	sh tools/jtag/boardrun 'drawink'
+#	sh tools/jtag/boardrun -t 600 'wm/gfxstress mask 4'
+#	BIND=0 sh tools/jtag/boardrun 'cat /dev/sysname'   # no /dis or #K bind
+#
+# The console on this desk is deaf, so the poller is how the board is driven:
+# it reads os/inferno/raspi3b/board.cmd and runs what it finds.  Everything
+# here exists because driving it by hand went wrong in two specific ways.
+#
+# A UNIQUE TOKEN PER RUN, not a fixed marker.  Completion is detected by
+# echoing BR-<pid>-<epoch> at the end and waiting for that exact string, so
+# an earlier run's output cannot satisfy this one's wait.  board.out is a
+# rolling `screen -X hardcopy` snapshot rather than an accumulating log, which
+# makes a non-unique marker look fine until the day it does not.
+#
+# AND board.cmd IS RESET ON EVERY EXIT, including the failures and the
+# interrupts.  THE POLLER RE-RUNS WHATEVER IT FINDS: a `wm/gfxstress mask 4`
+# left in place executed a second time, which was visible only as a changed
+# elapsed-time figure (ms=4280 then ms=4210) on an otherwise identical line.
+# The repeat is not the problem; board.cmd being a SINGLE SHARED CHANNEL is.
+# kinstall.sh's probe queued behind that cycling workload and its log sat
+# quiet in "pre-flight -- booting the candidate" for minutes, looking stuck
+# when it was only waiting its turn.  kinstall.sh gets this right for itself
+# ("Leave board.cmd harmless on every exit") and this matches it.
+#
+# It does NOT touch JTAG and does NOT open the serial device -- screen owns
+# that, and a second opener wedges the adapter until someone unplugs it.
+#
+set -u
+HERE=`cd \`dirname "$0"\` && pwd`
+ROOT=`cd "$HERE/../.." && pwd`
+CMD=$ROOT/os/inferno/raspi3b/board.cmd
+OUT=$ROOT/os/inferno/raspi3b/board.out
+WAIT=300
+BIND=${BIND:-1}
+
+while [ $# -gt 0 ]; do
+	case $1 in
+	-t)	WAIT=$2; shift 2;;
+	--)	shift; break;;
+	-*)	echo "boardrun: unknown option $1" >&2; exit 2;;
+	*)	break;;
+	esac
+done
+[ $# -ge 1 ] || { echo "usage: boardrun [-t seconds] 'command line'" >&2; exit 2; }
+
+idle() {
+	printf 'load std; echo BR-IDLE-%s\n' "`date +%s`" > "$CMD"
+}
+trap 'idle' 0 1 2 15
+
+TOK=BR-$$-`date +%s`
+if [ "$BIND" = 1 ]; then
+	PRE="load std; bind /n/remote/dis /dis; bind -a '#K' /dev; "
+else
+	PRE="load std; "
+fi
+printf '%s%s; echo %s\n' "$PRE" "$1" "$TOK" > "$CMD"
+
+n=0
+lim=`expr $WAIT / 10`
+while [ $n -le $lim ]; do
+	if LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT" 2>/dev/null |
+	    grep -q "^$TOK"; then
+		LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT" | grep -vE '^RCMD'
+		exit 0
+	fi
+	sleep 10
+	n=`expr $n + 1`
+done
+
+#
+# Reported as a timeout rather than as a board failure, because the two are
+# different and this cannot tell them apart: the poller may be busy with a
+# previous command, the board may be slow, or it may be wedged.  What it can
+# say is that the token did not appear, and it leaves board.cmd idle so
+# whatever runs next is not queued behind this.
+#
+echo "boardrun: $TOK did not appear within ${WAIT}s" >&2
+echo "boardrun: console tail follows; the board may be busy, slow or wedged" >&2
+LC_ALL=C tr -cd '\11\12\40-\176' < "$OUT" 2>/dev/null | tail -12 >&2
+exit 1
