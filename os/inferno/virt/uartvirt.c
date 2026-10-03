@@ -34,6 +34,8 @@ virt_pnp(void)
 	return &virtuart;
 }
 
+static void	virt_kick(Uart*);
+
 static void
 uartintr(Ureg*, void *arg)
 {
@@ -49,6 +51,12 @@ uartintr(Ureg*, void *arg)
 			break;
 		ch = csr8r(c, UartRBR);
 		uartrecv(uart, ch);
+	}
+	/* the transmitter has room: send what is still queued */
+	if(csr8r(c, UartLSR) & UartLSRTHRE){
+		ilock(&uart->tlock);
+		virt_kick(uart);
+		iunlock(&uart->tlock);
 	}
 }
 
@@ -84,10 +92,20 @@ virt_kick(Uart *uart)
 	for(i = 0; i < 128; i++){
 		if(!(csr8r(c, UartLSR) & UartLSRTHRE))
 			break;
-		if(uart->op >= uart->oe && uartstageoutput(uart) == 0)
-			break;
+		if(uart->op >= uart->oe && uartstageoutput(uart) == 0){
+			/* all sent: no more transmit interrupts */
+			csr8w(c, UartIER, csr8r(c, UartIER) & ~UartIER_THRE);
+			return;
+		}
 		csr8w(c, UartTHR, *uart->op++);
 	}
+	/*
+	 * More to send than one kick sends: the transmitter's interrupt
+	 * (uartintr) sends the rest.  Without it a long write waited
+	 * for the next one to kick it, and the last stayed queued.
+	 */
+	if(consuart == uart && uart->putc != nil)	/* once uartconsolesetup has the interrupt */
+		csr8w(c, UartIER, csr8r(c, UartIER) | UartIER_THRE);
 }
 
 static void

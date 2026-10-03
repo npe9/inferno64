@@ -9,7 +9,7 @@ implement Init;
 # its supervisor's translation off.  The kernel is its SBI
 # (virt/vmplat.c): it prints through the legacy putchar and the debug
 # console, both answered in the kernel and read here from the
-# machine's console file; it stores to an address with no RAM behind
+# machine's console file; it stores to an address with nothing behind
 # it, which the G stage refuses and which comes up here as an mmio
 # exit, stepped past with "skip"; it arms its timer with the TIME
 # extension, enables the interrupt and waits in WFI, which the kernel
@@ -30,7 +30,7 @@ implement Init;
 #		la	a1, msg
 #		li	a2, 0
 #		ecall
-#		li	t0, 0x10000000	# no RAM there: a G-stage fault
+#		li	t0, 0x20000000	# no RAM or device there: a G-stage fault
 #		li	t1, 0x2a
 #		sw	t1, 0(t0)
 #		la	t0, tick	# the timer interrupt goes to tick
@@ -77,7 +77,7 @@ guest := array[] of {
 	byte 16r9b, byte 16r88, byte 16re8, byte 16r34, byte 16r13, byte 16r08, byte 16r00, byte 16r00,
 	byte 16r13, byte 16r05, byte 16rf0, byte 16r00, byte 16r97, byte 16r05, byte 16r00, byte 16r00,
 	byte 16r93, byte 16r85, byte 16r45, byte 16r08, byte 16r13, byte 16r06, byte 16r00, byte 16r00,
-	byte 16r73, byte 16r00, byte 16r00, byte 16r00, byte 16rb7, byte 16r02, byte 16r00, byte 16r10,
+	byte 16r73, byte 16r00, byte 16r00, byte 16r00, byte 16rb7, byte 16r02, byte 16r00, byte 16r20,
 	byte 16r13, byte 16r03, byte 16ra0, byte 16r02, byte 16r23, byte 16ra0, byte 16r62, byte 16r00,
 	byte 16r97, byte 16r02, byte 16r00, byte 16r00, byte 16r93, byte 16r82, byte 16r02, byte 16r04,
 	byte 16r73, byte 16r90, byte 16r52, byte 16r10, byte 16r93, byte 16r02, byte 16r00, byte 16r02,
@@ -97,7 +97,7 @@ guest := array[] of {
 };
 
 Load: con 16r1000;
-Mmio: con "0x10000000";
+Mmio: con "0x20000000";
 Want: con "Hi from VS-mode\nT";
 
 fail(s: string)

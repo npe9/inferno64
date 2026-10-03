@@ -112,6 +112,14 @@ clockintr(Ureg *u)
 		unlock(&clock0lock);
 	}
 
+	/*
+	 * Mark a process that has had its time for rescheduling, as
+	 * portclock does: nothing here preempts, so a kproc that never
+	 * sleeps -- a guest's vCPU (port/devvm.c) -- yields only where
+	 * it looks at the mark.
+	 */
+	if(u != nil && up != nil && up->state == Running)
+		hzsched();
 }
 
 void

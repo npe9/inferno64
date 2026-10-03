@@ -571,3 +571,11 @@ TEXT	csrwrvsatp(SB), 1, $-4
 TEXT	rvhfencegvma(SB), 1, $-4
 	WORD	$0x62000073	/* hfence.gvma zero, zero */
 	RET
+
+TEXT	rvhfencevvma(SB), 1, $-4
+	WORD	$0x22000073	/* hfence.vvma zero, zero */
+	RET
+
+TEXT	rvfencei(SB), 1, $-4
+	WORD	$0x0000100F	/* fence.i */
+	RET

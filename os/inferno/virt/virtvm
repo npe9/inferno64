@@ -105,6 +105,7 @@ port
 	randomvirt
 	screenvirt
 	vmplat
+	vuart
 
 misc
 	sdvirtiommio	sdscsi

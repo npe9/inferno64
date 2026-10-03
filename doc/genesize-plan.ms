@@ -889,8 +889,86 @@ address with no RAM (the mmio exit, stepped past from Limbo), armed
 its timer and waited in WFI; the timer interrupt reached its stvec by
 hvip
 .CW vscause "" (
-0x8000000000000005), and it shut down.  Still to do for M12: a Linux
-guest, AIA/IMSIC, and the RISC-V IOMMU.
+0x8000000000000005), and it shut down.
+.IP "Phase 15: M2 on RISC-V (QEMU riscv64 virt, TCG)." 4
+An unmodified Linux \(en Alpine 3.22's riscv64
+.CW linux-lts
+6.12.111, its Image uncompressed by
+.CW scripts/mklinuxguest.sh ,
+with busybox-static 1.37 and the same
+.CW /init
+\(en boots under
+.CW riscv-h
+to a shell and runs a command typed from Limbo.
+.CW vmlinux
+has a RISC-V path: the Image at its text offset, a0 the hart, a1 a
+flattened device tree it writes itself (one hart with its
+.CW riscv,cpu-intc ,
+the timebase, the memory, a 16550 at 0x10000000 with no interrupt,
+which Linux polls).  The platform gained the 16550 \(en the x86
+platform's, moved to
+.CW port/vuart.c
+so both use one \(en done by decoding the faulting load or store, from
+mtinst's transformed instruction or, where there is none, the
+instruction itself read through the guest's own page tables; and SBI
+IPI, RFENCE, HSM and the legacy calls.
+.CW scripts/check-rv.sh
+runs it after M1; the booted host printed
+.DS
+.ft CW
+[    0.294637] 10000000.serial: ttyS0 at MMIO 0x10000000 (irq = 0, base_baud = 230400) is a 16550A
+LINUXGUEST: up 6.12.111-0-lts cpus 1 uptime 0.45
+LINUXGUEST: typed
+Linux 6.12.111-0-lts riscv64
+LINUXGUEST: cpuinfo isa		: rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd
+LINUXGUEST: dmesg [    0.000000] SBI HSM extension detected
+LINUXGUEST: ran
+vcpu0 handled 6784 exits mmio 5463 hlt 242 vmcall 1079 extint 56
+check-rv: M2 (riscv-h, QEMU TCG): pass
+.ft
+.DE
+.IP
+Found on the way, in order:
+.RS
+.IP \(bu
+Nothing ever lowered a process's priority after
+.CW canlock
+raised it to PriLock: the clock interrupt's
+.CW canlock(&clock0lock)
+raised whatever it interrupted, a vCPU's kproc never sleeps to have it
+recomputed, and the scheduler always picked it again over Limbo, which
+then never ran \(en no console, no timeout.  On a PC with more than one
+processor the vCPU has a processor of its own, which hid it.
+.CW canlock
+no longer raises it (lock never did).
+.IP \(bu
+The riscv64 clock never marked a long-running process for
+rescheduling; it calls
+.CW hzsched
+now, as portclock does, which is what devvm's loop looks at.
+.IP \(bu
+The riscv64 console UART sent at most 128 bytes per kick and had no
+transmit interrupt, so the rest of a long write waited for the next
+write; it now finishes on the THRE interrupt.
+.IP \(bu
+The backend re-entered the guest in VS-mode after a host interrupt
+that had taken it out of VU-mode \(en user code run as supervisor, a
+store fault on its own
+.CW tp ,
+and a guest looping in
+.CW handle_exception .
+The mode it left (MPP) is kept with it now.
+.IP \(bu
+busybox 1.37's line editor asks the terminal where its cursor is
+(ESC [ 6 n) and takes no input until it has the answer; 1.35, the x86
+guest's, asks and goes on.  A canonical read in the guest had the typed
+line, so the UART was right.
+.CW vmlinux ,
+which is the guest's terminal, answers now.
+.RE
+.IP
+Still to do for M12: AIA/IMSIC, virtio-mmio, more than one hart, and the
+RISC-V IOMMU.
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,

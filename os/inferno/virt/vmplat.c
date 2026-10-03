@@ -8,16 +8,28 @@
  * is answered on the vCPU's processor, without a trip to Limbo:
  *
  *	base (0x10)	spec 2.0, this implementation, and probe
- *	legacy 0, 1, 2	set_timer, console putchar and getchar
+ *	legacy 0 to 7	set_timer, console putchar and getchar, the
+ *			IPI and remote fences
  *	TIME		set_timer
  *	DBCN		the debug console: write, read, write_byte
+ *	IPI, RFENCE	for the one hart there is
+ *	HSM		hart 0's status
  *	SRST, legacy 8	system reset: not answered here, but handed up
  *			to Limbo as a shutdown exit
  *
- * The console is the machine's console file.  The guest's timer is
- * hvip.VSTIP, made pending when the time the guest asked for has come;
- * a WFI with the timer armed sleeps until then, or until console input
- * comes.  A WFI with nothing that could wake it goes up to Limbo.
+ * Beside it is a 16550 (port/vuart.c) at guest-physical 0x10000000,
+ * where QEMU's virt machine has one, with no interrupt: Linux's 8250
+ * polls a port that has none.  Its loads and stores fault in the G
+ * stage and are done here: the access is mtinst's transformed
+ * instruction where the processor gives one, else the instruction
+ * itself, read from the guest through its own page tables.  The
+ * SBI's console and the UART are one console, the machine's console
+ * file.
+ *
+ * The guest's timer is hvip.VSTIP, made pending when the time the
+ * guest asked for has come; a WFI with the timer armed sleeps until
+ * then, or until console input comes.  A WFI with nothing that could
+ * wake it goes up to Limbo.
  */
 #include	"u.h"
 #include	"../port/lib.h"
@@ -26,11 +38,12 @@
 #include	"fns.h"
 #include	"../port/error.h"
 #include	"../port/vm.h"
+#include	"../port/vuart.h"
 #include	"vmrv.h"
 
 enum {
-	Consout	= 64*1024,
-	Consin	= 4*1024,
+	Uartbase	= 0x10000000,
+	Uartlen		= 0x100,
 
 	/* SBI extensions */
 	Xsettimer	= 0x00,
@@ -41,6 +54,14 @@ enum {
 	Xtime		= 0x54494D45,
 	Xdbcn		= 0x4442434E,
 	Xsrst		= 0x53525354,
+	Xipi		= 0x735049,
+	Xrfence		= 0x52464E43,
+	Xhsm		= 0x48534D,
+	Xclearipi	= 0x03,
+	Xsendipi	= 0x04,
+	Xfencei		= 0x05,
+	Xsfencevma	= 0x06,
+	Xsfencevmaasid	= 0x07,
 
 	/* SBI errors */
 	Enotsupp	= -2,
@@ -60,16 +81,19 @@ struct Plat
 	Lock;
 	int	hungup;
 	Rendez	consr;		/* readers of the console wait here */
-	uchar	out[Consout];
-	ulong	outr, outw;
-	uchar	in[Consin];
-	ulong	inr, inw;
+	Vuart	uart;		/* and the SBI's console is its too */
 	uvlong	timer[Maxvcpu];	/* when each vCPU's timer fires; ~0 off */
 	int	kick[Maxvcpu];	/* wake from WFI */
 	uvlong	nsbi;
+	uvlong	nin;		/* console input taken, all told */
+	uvlong	nrx;		/* and read by the guest from the UART */
 };
 
 #define	PLAT(vm)	((Plat*)(vm)->plat)
+
+extern void	rvhfencevvma(void);
+extern void	rvfencei(void);
+static void	rvfences(int);
 
 void*
 vmplatnew(Vm *)
@@ -82,6 +106,7 @@ vmplatnew(Vm *)
 		error(Enomem);
 	for(i = 0; i < Maxvcpu; i++)
 		p->timer[i] = ~0ULL;
+	vuartreset(&p->uart);
 	return p;
 }
 
@@ -117,24 +142,30 @@ vmplatsipipending(Vcpu *)
 	return 0;
 }
 
+/* the SBI's console is the UART's transmitter and receiver */
 static void
 consput(Plat *p, int c)
 {
+	u32int v;
+
+	v = c;
 	ilock(p);
-	if(p->outw - p->outr < Consout)
-		p->out[p->outw++ % Consout] = c;
+	vuartio(&p->uart, 0, 0, &v);
 	iunlock(p);
 }
 
 static int
 consget(Plat *p)
 {
-	int c;
+	u32int lsr, c;
 
-	c = -1;
 	ilock(p);
-	if(p->inr != p->inw)
-		c = p->in[p->inr++ % Consin];
+	vuartio(&p->uart, 5, 1, &lsr);
+	if((lsr & 1) == 0){
+		iunlock(p);
+		return -1;
+	}
+	vuartio(&p->uart, 0, 1, &c);
 	iunlock(p);
 	return c;
 }
@@ -202,8 +233,53 @@ dosbi(Vcpu *v, Plat *p)
 	case Xgetchar:
 		setreg(v, RvA0, consget(p));
 		goto legacy;
+	case Xclearipi:
+		setreg(v, RvHvip, reg(v, RvHvip) & ~RvVssi);
+		setreg(v, RvA0, 0);
+		goto legacy;
+	case Xsendipi:
+		/* a0 is the address of the hart mask; there is hart 0 */
+		setreg(v, RvHvip, reg(v, RvHvip) | RvVssi);
+		setreg(v, RvA0, 0);
+		goto legacy;
+	case Xfencei:
+	case Xsfencevma:
+	case Xsfencevmaasid:
+		rvfences(eid == Xfencei);
+		setreg(v, RvA0, 0);
+		goto legacy;
 	case Xshutdown:
 		return 0;
+	case Xipi:
+		if(fid != 0){
+			err = Enotsupp;
+			break;
+		}
+		/* hart_mask a0 from hart_mask_base a1; -1 is all of them */
+		if(a1 == ~0ULL || (a1 == 0 && (a0 & 1)))
+			setreg(v, RvHvip, reg(v, RvHvip) | RvVssi);
+		break;
+	case Xrfence:
+		if(fid > 6){
+			err = Enotsupp;
+			break;
+		}
+		rvfences(fid == 0);
+		break;
+	case Xhsm:
+		switch(fid){
+		case 2:		/* hart_get_status */
+			if(a0 != 0)
+				err = Einvalparam;
+			val = 0;	/* started */
+			break;
+		case 0:		/* hart_start: there is no other hart */
+			err = a0 == 0 ? -6 : Einvalparam;	/* already available */
+			break;
+		default:
+			err = Enotsupp;
+		}
+		break;
 	case Xbase:
 		switch(fid){
 		case 0:	val = 2<<24; break;	/* spec version 2.0 */
@@ -212,7 +288,9 @@ dosbi(Vcpu *v, Plat *p)
 		case 3:
 			switch(a0){
 			case Xbase: case Xtime: case Xdbcn: case Xsrst:
+			case Xipi: case Xrfence: case Xhsm:
 			case Xsettimer: case Xputchar: case Xgetchar: case Xshutdown:
+			case Xclearipi: case Xsendipi: case Xfencei: case Xsfencevma: case Xsfencevmaasid:
 				val = 1;
 			}
 			break;
@@ -331,6 +409,176 @@ out:
 	return 1;
 }
 
+/*
+ * A remote fence for the one hart there is, done here: the guest's
+ * translations by hfence.vvma (its VMID is the hypervisor's 0), and
+ * fence.i for its instruction fetch.
+ */
+static void
+rvfences(int i)
+{
+	if(i)
+		rvfencei();
+	else
+		rvhfencevvma();
+}
+
+/*
+ * The guest-physical address of a guest virtual one, through the
+ * guest's own page tables (vsatp: Sv39, Sv48 or Sv57, or bare);
+ * ~0 if it is not mapped.
+ */
+static uvlong
+vswalk(Vcpu *v, uvlong va)
+{
+	uvlong satp, a, pte, *pp;
+	int mode, levels, i;
+
+	satp = reg(v, RvVsatp);
+	mode = satp >> 60;
+	switch(mode){
+	case 0:
+		return va;
+	case 8:	levels = 3; break;
+	case 9:	levels = 4; break;
+	case 10:	levels = 5; break;
+	default:
+		return ~0ULL;
+	}
+	a = (satp & ((1ULL<<44)-1)) << 12;
+	for(i = levels-1; i >= 0; i--){
+		pp = (uvlong*)gpaptr(v->vm, a + ((va >> (12+9*i)) & 0x1FF)*8, 8);
+		if(pp == nil)
+			return ~0ULL;
+		pte = *pp;
+		if((pte & 1) == 0)
+			return ~0ULL;
+		a = (pte >> 10) << 12;
+		if(pte & (2|8))		/* R or X: a leaf, perhaps a large one */
+			return a + (va & ((1ULL<<(12+9*i))-1));
+	}
+	return ~0ULL;
+}
+
+/* the instruction at the guest's pc, and its length; 0 if it cannot be read */
+static u32int
+fetch(Vcpu *v, int *len)
+{
+	uvlong pc, gpa;
+	uchar *b;
+	u32int insn;
+
+	pc = reg(v, RvPc);
+	gpa = vswalk(v, pc);
+	if(gpa == ~0ULL || (b = gpaptr(v->vm, gpa, 2)) == nil)
+		return 0;
+	insn = b[0] | b[1]<<8;
+	if((insn & 3) != 3){
+		*len = 2;
+		return insn;
+	}
+	/* the second half may be on the next page */
+	gpa = vswalk(v, pc+2);
+	if(gpa == ~0ULL || (b = gpaptr(v->vm, gpa, 2)) == nil)
+		return 0;
+	*len = 4;
+	return insn | (b[0] | b[1]<<8) << 16;
+}
+
+/*
+ * A load or store as width (bytes), signedness, register and
+ * direction, from a 32-bit instruction or a compressed one: the
+ * transformed ones mtinst gives are 32-bit loads and stores already.
+ */
+static int
+decode(u32int insn, int len, int *width, int *sign, int *r, int *store)
+{
+	int f3, op;
+
+	if(len == 2){
+		op = insn & 3;
+		f3 = (insn >> 13) & 7;
+		if(op != 0)
+			return 0;
+		switch(f3){
+		case 2:	*width = 4; *sign = 1; *store = 0; break;	/* c.lw */
+		case 3:	*width = 8; *sign = 0; *store = 0; break;	/* c.ld */
+		case 6:	*width = 4; *sign = 0; *store = 1; break;	/* c.sw */
+		case 7:	*width = 8; *sign = 0; *store = 1; break;	/* c.sd */
+		default:
+			return 0;
+		}
+		*r = 8 + ((insn >> 2) & 7);	/* rd' or rs2' */
+		return 1;
+	}
+	op = insn & 0x7F;
+	f3 = (insn >> 12) & 7;
+	if(op == 0x03){
+		if(f3 == 7)
+			return 0;
+		*width = 1 << (f3 & 3);
+		*sign = (f3 & 4) == 0 && f3 != 3;
+		*r = (insn >> 7) & 0x1F;
+		*store = 0;
+		return 1;
+	}
+	if(op == 0x23){
+		if(f3 > 3)
+			return 0;
+		*width = 1 << f3;
+		*sign = 0;
+		*r = (insn >> 20) & 0x1F;
+		*store = 1;
+		return 1;
+	}
+	return 0;
+}
+
+static int
+dommio(Vcpu *v, Plat *p, Vmexit *e)
+{
+	u32int insn, val;
+	int len, width, sign, r, store;
+	uvlong x;
+
+	if(e->gpa < Uartbase || e->gpa >= Uartbase + Uartlen || e->access == 4)
+		return 0;
+	insn = e->insn;
+	if(insn & 1){
+		len = (insn & 2) ? 4 : 2;
+		insn |= 2;	/* the transformed instruction is a 32-bit one */
+		if(!decode(insn, 4, &width, &sign, &r, &store))
+			return 0;
+	}else{
+		insn = fetch(v, &len);
+		if(insn == 0 || !decode(insn, len, &width, &sign, &r, &store))
+			return 0;
+	}
+	if(store != (e->access == 2))
+		return 0;
+	ilock(p);
+	if(store){
+		x = r == 0 ? 0 : reg(v, r);
+		val = x;
+		vuartio(&p->uart, e->gpa - Uartbase, 0, &val);
+	}else{
+		if(e->gpa == Uartbase && (p->uart.lcr & 0x80) == 0 && (p->uart.lsr & 1))
+			p->nrx++;
+		vuartio(&p->uart, e->gpa - Uartbase, 1, &val);
+	}
+	iunlock(p);
+	if(store)
+		wakeup(&p->consr);
+	else if(r != 0){
+		x = val & ((width >= 8) ? ~0ULL : (1ULL<<(8*width))-1);
+		if(sign && width < 8 && (x & (1ULL<<(8*width-1))))
+			x |= ~0ULL << (8*width);
+		setreg(v, r, x);
+	}
+	setreg(v, RvPc, reg(v, RvPc) + len);
+	return 1;
+}
+
 int
 vmplatexit(Vcpu *v, Vmexit *e)
 {
@@ -347,6 +595,8 @@ vmplatexit(Vcpu *v, Vmexit *e)
 		return 0;
 	case VxHlt:
 		return dowfi(v, p);
+	case VxMmio:
+		return dommio(v, p, e);
 	}
 	return 0;
 }
@@ -363,7 +613,7 @@ consready(void *a)
 	Plat *p;
 
 	p = a;
-	return p->hungup || p->outw != p->outr;
+	return p->hungup || p->uart.outw != p->uart.outr;
 }
 
 long
@@ -375,12 +625,12 @@ vmplatconsread(Vm *vm, void *a, long n)
 
 	p = PLAT(vm);
 	sleep(&p->consr, consready, p);
-	if(p->hungup && p->outr == p->outw)
+	if(p->hungup && p->uart.outr == p->uart.outw)
 		error(Ehungup);
 	b = a;
 	ilock(p);
-	for(i = 0; i < n && p->outr != p->outw; i++)
-		b[i] = p->out[p->outr++ % Consout];
+	for(i = 0; i < n && p->uart.outr != p->uart.outw; i++)
+		b[i] = p->uart.out[p->uart.outr++ % Uartout];
 	iunlock(p);
 	return i;
 }
@@ -389,15 +639,13 @@ long
 vmplatconswrite(Vm *vm, void *a, long n)
 {
 	Plat *p;
-	uchar *b;
 	long i;
 	int j;
 
 	p = PLAT(vm);
-	b = a;
 	ilock(p);
-	for(i = 0; i < n && p->inw - p->inr < Consin; i++)
-		p->in[p->inw++ % Consin] = b[i];
+	i = vuartinput(&p->uart, a, n);
+	p->nin += i;
 	for(j = 0; j < vm->nvcpu; j++)
 		p->kick[j] = 1;
 	iunlock(p);
@@ -414,6 +662,9 @@ vmplatstatus(Vm *vm, char *s, char *e)
 
 	p = PLAT(vm);
 	s = seprint(s, e, "platform sbi calls %llud time %llud\n", p->nsbi, rvtime());
+	s = seprint(s, e, "uart ier %#ux lcr %#ux mcr %#ux lsr %#ux fifo %d waiting %d in %llud read %llud out %llud lost %llud\n",
+		p->uart.ier, p->uart.lcr, p->uart.mcr, p->uart.lsr, p->uart.rxw - p->uart.rxr,
+		p->uart.inw - p->uart.inr, p->nin, p->nrx, p->uart.outw, p->uart.outlost);
 	for(i = 0; i < vm->nvcpu; i++)
 		if(p->timer[i] != ~0ULL)
 			s = seprint(s, e, "vcpu%d timer %llud\n", i, p->timer[i]);

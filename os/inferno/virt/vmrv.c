@@ -15,7 +15,8 @@
  * and the host's own interrupts, which the host then takes.
  *
  * The VS CSRs are the guest's supervisor state and are swapped with
- * it, so vCPUs can share a processor.  Interrupts go to the guest by
+ * it, so vCPUs can share a processor; so is the mode it was in, VS or
+ * VU, which a host interrupt can take it out of.  Interrupts go to the guest by
  * hvip, which the processor delivers once the guest enables them.
  */
 #include	"u.h"
@@ -69,6 +70,8 @@ enum {
 	Einstmisalign	= 0,
 	Eillegal	= 2,
 	Ebreak		= 3,
+	Eloadmisalign	= 4,
+	Estoremisalign	= 6,
 	Euecall		= 8,
 	Evsecall	= 10,
 	Einstpf		= 12,
@@ -79,9 +82,10 @@ enum {
 	Evirtinsn	= 22,
 	Estoregpf	= 23,
 
-	/* the exceptions the guest's supervisor takes itself, as KVM delegates them */
+	/* the exceptions the guest's supervisor takes itself: KVM's, and misaligned accesses, which Linux emulates */
 	Guestexc	= 1<<Einstmisalign | 1<<Eillegal | 1<<Ebreak | 1<<Euecall
-			| 1<<Einstpf | 1<<Eloadpf | 1<<Estorepf,
+			| 1<<Einstpf | 1<<Eloadpf | 1<<Estorepf
+			| 1<<Eloadmisalign | 1<<Estoremisalign,
 
 	/* G-stage PTEs */
 	Pv		= 1<<0,
@@ -121,6 +125,7 @@ struct Rvcpu
 	uvlong	hostfcsr;	/* 840 */
 
 	uvlong	vs[RvNreg-RvVsstatus];	/* the VS CSRs and hvip, by register index */
+	uvlong	mpp;		/* the mode it left: VS (MppS) or VU (0) */
 };
 
 typedef struct Gpt Gpt;
@@ -291,6 +296,7 @@ rvvcpuinit(Vcpu *v)
 	if(r == nil)
 		error(Enomem);
 	memset(r, 0, sizeof *r);
+	r->mpp = MppS;
 	v->arch = r;
 }
 
@@ -331,8 +337,10 @@ rvrunvcpu(Vcpu *v, Vmexit *e)
 		wrcsr(vscsr[i], r->vs[i]);
 	ms = rdcsr(Cmstatus);
 	ms &= ~(Mpp|Mie|(1ULL<<39)|(1ULL<<38));
-	r->mstatus = ms | MppS | Mpie | 1ULL<<39;	/* MPV: into VS-mode */
+	/* MPV, and back to the mode it was in: a host interrupt can take it out of its user mode */
+	r->mstatus = ms | r->mpp | Mpie | 1ULL<<39;
 	rvrun(r);
+	r->mpp = r->mstatus & Mpp;
 	for(i = 0; i < nelem(vscsr); i++)
 		r->vs[i] = rdcsr(vscsr[i]);
 	/* not virtualised, and nothing of the guest's, from here on */
@@ -367,6 +375,7 @@ rvrunvcpu(Vcpu *v, Vmexit *e)
 		 * when its supervisor is not translating.
 		 */
 		insn = r->mtinst;
+		e->insn = insn;
 		if(insn & 1)
 			e->ilen = (insn & 2) ? 4 : 2;
 		else if(cause != Einstgpf && (r->vs[RvVsatp-RvVsstatus]>>60) == 0
@@ -602,9 +611,11 @@ rvinject(Vcpu *v, int type, int vec, int haserr, u32int err)
 	*st &= ~(Spie|Spp);
 	if(*st & Sie)
 		*st |= Spie;
-	*st |= Spp;	/* from VS-mode: the hypervisor does not know VU from VS here */
+	if(r->mpp != 0)
+		*st |= Spp;	/* it was in VS-mode, not VU */
 	*st &= ~Sie;
 	r->pc = r->vs[RvVstvec-RvVsstatus] & ~3ULL;
+	r->mpp = MppS;
 }
 
 static int

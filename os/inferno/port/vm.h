@@ -59,6 +59,7 @@ struct Vmexit
 	uvlong	gpa;
 	uvlong	gva;
 	int	access;		/* 1 read, 2 write, 4 execute */
+	u32int	insn;		/* the access, where the processor says (RISC-V's mtinst), else 0 */
 
 	/* VxRdmsr, VxWrmsr: msr is ecx, data edx:eax for a write */
 	u32int	msr;

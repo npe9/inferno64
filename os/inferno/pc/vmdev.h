@@ -5,9 +5,10 @@
  * SDM volume 3 chapter 11), and where this file is less than the part
  * the comment says so.
  */
+#include	"../port/vuart.h"
+
 typedef struct Vpic Vpic;
 typedef struct Vpicchip Vpicchip;
-typedef struct Vuart Vuart;
 typedef struct Vioapic Vioapic;
 typedef struct Vlapic Vlapic;
 typedef struct Vpit Vpit;
@@ -65,32 +66,6 @@ struct Vpit
 	int	refresh;	/* port 0x61 bit 4, toggled on each read */
 };
 
-enum {
-	Uartfifo	= 16,
-	Uartin		= 4096,	/* console input waiting for the FIFO */
-	Uartout		= 64*1024,	/* guest output not yet read from #H */
-};
-
-struct Vuart
-{
-	uchar	ier, lcr, mcr, lsr, msr, scr, dll, dlm, fcr;
-	uchar	thripend;	/* a THRE interrupt is owed until IIR is read */
-	uchar	rx[Uartfifo];
-	int	rxr, rxw;	/* count of bytes in, out */
-	uchar	in[Uartin];	/* typed but not yet in the FIFO */
-	int	inr, inw;
-	/*
-	 * What the guest wrote, for #H/vm/N/console: a ring, not a qio
-	 * Queue -- a Queue charges each one-byte block its whole
-	 * allocation against the limit, filled after a few hundred bytes
-	 * and dropped the rest.  When the reader falls a whole ring
-	 * behind, the oldest output is overwritten and counted.
-	 */
-	uchar	out[Uartout];
-	uvlong	outr, outw;
-	uvlong	outlost;
-};
-
 struct Vlapic
 {
 	int	id;
@@ -144,10 +119,6 @@ int	vpicpending(Vpic*);
 int	vpicack(Vpic*);
 int	vpicio(Vpic*, int port, int in, u32int *val);
 
-void	vuartreset(Vuart*);
-int	vuartio(Vuart*, int off, int in, u32int *val);
-int	vuartirq(Vuart*);
-int	vuartinput(Vuart*, uchar*, int);
 
 void	vlapicreset(Vlapic*, int id);
 u32int	vlapicread(Vlapic*, int reg);

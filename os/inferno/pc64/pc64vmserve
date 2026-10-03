@@ -116,6 +116,7 @@ link
 misc
 	vmplat
 	vmdev
+	vuart
 	vmpci
 	vmvirtio
 	pci		pcipc

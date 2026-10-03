@@ -28,6 +28,8 @@
 # (scripts/bochs-vm.sh), which is too slow for a routine check.
 #
 # usage: scripts/check-vm.sh
+#	CHECKVM_STAGES="m1 m2 m3" (the default) says which runs to make:
+#	m2 is M2, M5 and M8, one boot.
 # needs: os/inferno/pc64/ipc64vm, os/inferno/pc64/ipc64linux, .qemu/edk2-*.fd
 set -e
 ROOT=`cd \`dirname "$0"\`/.. && pwd`
@@ -38,7 +40,15 @@ done
 WORK=`mktemp -d`
 trap 'st=$?; rm -rf "$WORK" || true; exit $st' 0
 fail=0
+STAGES=" ${CHECKVM_STAGES:-m1 m2 m3} "
+stage() {
+	case "$STAGES" in
+	*" $1 "*)	return 0;;
+	esac
+	return 1
+}
 
+stage m1 && {
 sh "$ROOT/scripts/vmhost.sh" build "$K/ipc64vm" >/dev/null 2>&1
 sh "$ROOT/scripts/vmhost.sh" run 120 >"$WORK/m1.log" 2>&1 || true
 if grep -q 'VMTEST: M1 PASS' "$WORK/m1.log" && grep -q 'VMTEST: killed' "$WORK/m1.log"; then
@@ -48,7 +58,9 @@ else
 	grep 'VMTEST\|panic' "$WORK/m1.log" | sed 's/^/	/' | tail -8
 	fail=1
 fi
+}
 
+stage m2 && {
 sh "$ROOT/scripts/vmhost.sh" build "$K/ipc64linux" >/dev/null 2>&1
 sh "$ROOT/scripts/vmhost.sh" run 1200 >"$WORK/m2.log" 2>&1 || true
 if grep -q '^Linux 6' "$WORK/m2.log" && grep -q '^LINUXGUEST: ran' "$WORK/m2.log"; then
@@ -96,10 +108,13 @@ else
 	grep 'LINUXGUEST: made\|LINUXGUEST: root\|LINUXGUEST: no root\|LINUXGUEST: insmod\|LINUXTEST: booting\|LINUXGUEST: mount' "$WORK/m2.log" | sed 's/^/	/' | tail -8
 	fail=1
 fi
+}
+
 # One QEMU thread for the four host processors: with a thread each
 # (MTTCG) the host has triple-faulted right after a VMRUN with the
 # guest's TR and GS still loaded, which one thread has not shown
 # (doc/genesize-plan.ms, phase 5).
+stage m3 && {
 sh "$ROOT/scripts/vmhost.sh" build "$K/ipc64smp" >/dev/null 2>&1
 VMHOST_ACCEL=tcg,thread=single sh "$ROOT/scripts/vmhost.sh" run 2400 >"$WORK/m3.log" 2>&1 || true
 ok=1
@@ -121,4 +136,5 @@ else
 	grep 'LINUXGUEST: smp\|LINUXGUEST: worker\|LINUXGUEST: cpu\|LINUXGUEST: irq\|BUG\|lockup\|stall\|vcpu[0-9] exit\|Brought up' "$WORK/m3.log" | sed 's/^/	/' | tail -20
 	fail=1
 fi
+}
 exit $fail

@@ -193,11 +193,16 @@ canlock(Lock *l)
 		return 0;
 	}
 
-	if(up){
+	/*
+	 * No PriLock here: nothing gives the priority back (unlock does
+	 * not, and lock never took it), so a process that once got a
+	 * lock this way kept the top priority until it next slept --
+	 * one that never sleeps, as a vCPU's kproc does not, for good,
+	 * since the clock interrupt's canlock(&clock0lock) raised whoever
+	 * it interrupted, and the scheduler then always chose it again.
+	 */
+	if(up)
 		up->lastlock = l;
-		l->priority = up->priority;
-		up->priority = PriLock;
-	}
 	l->pc = getcallerpc(&l);
 	l->p = up;
 	l->m = MACHP(m->machno);

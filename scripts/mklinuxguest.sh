@@ -11,6 +11,11 @@
 #	.guest/lts/		the same from linux-lts-6.6.142-r0.apk,
 #				whose igbvf (an 82576 VF's driver, M7)
 #				linux-virt does not build
+#	.guest/rv/Image		for the RISC-V backend (M12): Alpine 3.22's
+#				riscv64 linux-lts 6.12.111-r0, its Image
+#				uncompressed (vmlinux loads it as it is)
+#	.guest/rv/initramfs.cpio	busybox-static 1.37.0-r20 for riscv64
+#				and the same /init
 #
 # Kernel and modules come from one versioned package, so they match;
 # the package is pinned by checksum (Alpine's netboot vmlinuz-virt,
@@ -60,8 +65,18 @@ fetch "$PURL" "$PKG" "$PSUM"
 fetch "$LURL" "$LPKG" "$LSUM"
 fetch "$BURL" busybox "$BSUM"
 chmod +x busybox
+# the RISC-V guest
+mkdir -p rv
+RPKG=linux-lts-6.12.111-r0.apk
+RURL=https://dl-cdn.alpinelinux.org/alpine/v3.22/main/riscv64/$RPKG
+RSUM=c00dba7cf81eb529e9438951a015405469227e125bf48d081294be6a69e04824
+RBPKG=busybox-static-1.37.0-r20.apk
+RBURL=https://dl-cdn.alpinelinux.org/alpine/v3.22/main/riscv64/$RBPKG
+RBSUM=29072f0a72ff8f2ff19a8be703cf0e68d4722ea4dc0acf4830acc932f98cf31c
+fetch "$RURL" "rv/$RPKG" "$RSUM"
+fetch "$RBURL" "rv/$RBPKG" "$RBSUM"
 
-python3 - "$G" "$PKG" "$LPKG" <<'EOF'
+python3 - "$G" "$PKG" "$LPKG" "rv/$RPKG" "rv/$RBPKG" <<'EOF'
 import os, sys, stat, gzip, tarfile, io
 g = sys.argv[1]
 
@@ -131,7 +146,7 @@ busybox = open(os.path.join(g, 'busybox'), 'rb').read()
 def pad(n):
 	return b'\0' * ((4 - n % 4) % 4)
 
-def cpio(mods, path):
+def cpio(mods, path, busybox=busybox):
 	order = ''.join(name[:-3] + '\n' for name, data in mods).encode()
 	entries = [
 		('.', stat.S_IFDIR | 0o755, b''),
@@ -172,5 +187,13 @@ open(os.path.join(g, 'lts', 'vmlinuz-lts'), 'wb').write(pkg.extractfile(members[
 cpio(modules(pkg, members, kver, ('kernel/net/packet/af_packet.ko.gz',
 		'kernel/drivers/net/ethernet/intel/igbvf/igbvf.ko.gz')),
 	os.path.join(g, 'lts', 'initramfs.cpio'))
+
+# the RISC-V guest: linux-lts for riscv64, whose Image (an EFI-stub
+# PE that is also a bare Image, header at 0x30) is gzipped in the
+# package; and busybox-static's busybox
+pkg, members, kver = unpack(sys.argv[4])
+open(os.path.join(g, 'rv', 'Image'), 'wb').write(gzip.decompress(pkg.extractfile(members['boot/vmlinuz-lts']).read()))
+bpkg = tarfile.open(fileobj=io.BytesIO(gzip.open(os.path.join(g, sys.argv[5])).read()), ignore_zeros=True)
+cpio([], os.path.join(g, 'rv', 'initramfs.cpio'), bpkg.extractfile('bin/busybox.static').read())
 EOF
-ls -l "$G/vmlinuz-virt" "$G/initramfs.cpio"
+ls -l "$G/vmlinuz-virt" "$G/initramfs.cpio" "$G/rv/Image" "$G/rv/initramfs.cpio"
