@@ -1937,16 +1937,44 @@ having zero overlap. Nested, growing rectangles are what several flushes
 refining one logical update look like — so 84.9% may be measuring
 redundancy *within* a frame rather than overlap *between* frames.
 
-If a flush is not a frame then the figure is an upper bound on the
-deferred saving, because a real flip coalesces those nested flushes into
-one damage region and the overlap between the coalesced regions is what
-actually matters. Settling it needs damage accumulated **between
-presents** rather than per flush, which is a different instrument again.
+If a flush is not a frame then the figure is an upper bound, because a
+flip coalesces nested flushes into one damage region and it is the
+overlap between coalesced regions that matters.
 
-Recording it that way rather than quoting 84.9% as the answer, because
-quoting it would be the identical error to the withdrawn argument: a
-correct measurement of a quantity adjacent to the one the argument
-needs.
+### Settled: a frame boundary already exists, and a flush is a frame here
+
+It needed no platform-specific instrument. `'v'` in `devdraw` **is** the
+client's present by its own declaration — `libdraw`'s
+`flushimage(d, visible)` emits it only when `visible` is non-zero — so
+the union of damage between `'v'` commands is exactly the quantity the
+model wants, in portable code above both a flip and an upload. What makes
+the raw flush stream ambiguous is only that `dunlock()` calls
+`drawflush()` on every `/dev/draw` write that took the drawlock, mixing
+incidental flushes in with real presents.
+
+`INFERNO_FRAME_DAMAGE=n` accumulates damage between `'v'`s. On
+`runtests -g` at 640×480:
+
+| boundary | count | eager | deferred | saving |
+|---|---|---|---|---|
+| per flush | 197 | 20952256 B | 3084216 B | 84.94% |
+| per `'v'` frame | 196 | 20880624 B | 3084216 B | 84.89% |
+
+**`deferred` is identical to the byte**, and `eager` differs by 71632 —
+one damage region, matching 197 flushes against 196 frames. So on this
+workload Tk emits one `'v'` per update: a flush *is* a frame, there is no
+intra-frame fragmentation to coalesce, and the upper bound turns out to
+be the value. Measured at the right boundary rather than assumed to be
+the same.
+
+Two cross-checks had already pointed that way. Strict growth —
+`damage(N-1)` *properly* inside `damage(N)`, the refinement a present
+would absorb — is **0.9%** of overlap bytes on this workload and 0.7% on
+`wmtest`; the overlap is almost all equal rectangles, which given
+containment means the same rectangle redrawn. The equal case alone could
+not distinguish a widget repainted next frame from one flushed twice in
+the same frame, which is why the `'v'` measurement was still worth
+taking.
 
 And the sequence question the model raised, which the distribution had
 thrown away: the `>1MB` flushes in that run are at indices **1, 2, 3, 4,

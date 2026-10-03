@@ -537,6 +537,72 @@ drawrefresh(Memimage *l, Rectangle r, void *v)
 	}
 }
 
+
+/*
+ * PROBE: damage per FRAME, where a frame ends at a 'v' command.
+ *
+ * The flip-vs-copy model is about damage(N) for successive FRAMES, and a
+ * per-flush measurement cannot supply it: dunlock() calls drawflush() on
+ * every /dev/draw write that took the drawlock, so incidental flushes are
+ * mixed into the same stream as real presents.  But 'v' IS the client's
+ * present by its own declaration -- libdraw's flushimage(d, visible)
+ * emits it only when visible is non-zero -- so the union of damage
+ * between 'v' commands is exactly the quantity wanted, and it lives here
+ * in portable code rather than in either platform's screen driver,
+ * neither of which can tell the two kinds of flush apart.
+ *
+ * INFERNO_FRAME_DAMAGE=n prints every n frames.
+ */
+static Rectangle vcur, vprev;
+static int vcurok, vprevok, vevery = -1;
+static uvlong vframes, veager, voverlap, vdeferred;
+
+static void
+framedamage(Rectangle r)
+{
+	if(vcurok)
+		combinerect(&vcur, r);
+	else {
+		vcur = r;
+		vcurok = 1;
+	}
+}
+
+static void
+frameboundary(void)
+{
+	Rectangle x;
+	uvlong a, ov;
+	char *e;
+
+	if(vevery < 0){
+		e = getenv("INFERNO_FRAME_DAMAGE");
+		vevery = e == nil? 0: atoi(e);
+		if(vevery < 0)
+			vevery = 0;
+	}
+	if(vevery == 0 || !vcurok)
+		return;
+	a = (uvlong)Dx(vcur) * Dy(vcur) * 4;
+	veager += a;
+	if(vprevok){
+		x = vprev;
+		if(rectclip(&x, vcur))
+			ov = (uvlong)Dx(x) * Dy(x) * 4;
+		else
+			ov = 0;
+		voverlap += ov;
+		vdeferred += (uvlong)Dx(vprev)*Dy(vprev)*4 - ov;
+	}
+	vprev = vcur;
+	vprevok = 1;
+	vcurok = 0;
+	vframes++;
+	if(vframes % (uvlong)vevery == 0)
+		print("FRAMEDAMAGE frames %llud  eager %llud  deferred %llud  overlap %llud  mean %llud\n",
+			vframes, veager, vdeferred, voverlap, veager/vframes);
+}
+
 static void
 addflush(Rectangle r)
 {
@@ -544,6 +610,7 @@ addflush(Rectangle r)
 		return;
 	if(gpudrawdamage)
 		gpudrawdamage(r);
+	framedamage(r);
 
 	/*
 	 * Softscreen present is deferred until drawflush ('v' / Flushnow).
@@ -573,6 +640,7 @@ dstflush(Memimage *dst, Rectangle r)
 	if(dst == screenimage){
 		if(gpudrawdamage)
 			gpudrawdamage(r);
+		framedamage(r);
 		combinerect(&flushrect, r);
 		return;
 	}
@@ -3379,6 +3447,7 @@ drawmesg(Client *client, void *av, int n)
 			printmesg(fmt="", a, 0);
 			m = 1;
 			drawflush();
+			frameboundary();	/* the client's own present */
 			continue;
 
 		/*
