@@ -6067,3 +6067,45 @@ So "19 clean, 0 slow, 0 wedges of 30" is a real reading, and the one thing that
 could have silently falsified it is a relink, for the
 .CW kmesg
 reason above rather than for host load.
+.PP
+.B "It LINKS, verified without disarming anything."
+A compile proves syntax and types and says nothing about symbols, and the
+no-link rule above is about
+.CW iraspi3b
+and
+.CW kernel8.img
+specifically \(em not about linking as such.  So: compile the three changed files
+into the tree, capture the real link line with
+.CW "mk -n" ,
+and run it with the output redirected to the scratchpad.
+.P1
+7l -o <scratch>/iraspi3b.linktest -H7 -T0x80000 -R4096 -l ...   rc=0, 3228778 bytes
+iraspi3b, kernel8.img                                           untouched, 06:25:17
+.P2
+Every JTAG reader stays armed and the batch's wedge/slow classification is
+intact, because neither artefact they key on moved.
+.PP
+The new symbols all resolved, read back with the tree's own
+.CW tools/jtag/ksyms :
+.P1
+0x00082e84 t bcmpresent
+0x0016450c T mboxvirtoffset
+0x0019a5cc T drawpresent
+0x0019a998 T drawpresentstats
+0x001d6878 d nflip
+0x001d6b60 D npartialhit
+0x001d9338 D screenpresent
+0x001d93a8 d vsmeasuredus
+0x001dab50 D presentoverlap
+.P2
+The counters are DATA in the symbol table, which is the point of putting counts
+in variables rather than prints: they can be read off a wedged or slow board by
+address with no kernel change.
+.PP
+.B "One consequence to remember: the tree's objects are now NEWER than iraspi3b."
+So any
+.CW mk
+in
+.CW os/inferno/raspi3b
+will relink and replace the artefacts the JTAG tools key on.  That is exactly
+what the post-batch step wants and exactly what must not happen before it.
