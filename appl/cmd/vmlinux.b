@@ -39,6 +39,7 @@ disks: list of string;	# -b: files given to the guest as virtio disks
 nets: list of string;	# -n: ether(3) devices the guest gets a virtio port on
 trace := 0;	# -d: vCPU heartbeat on the host's kernel console, seconds
 ncpu := 1;	# -c: processors
+nsdir: string;	# -N: the machine described by a directory
 Acpi:	con 16rF0000;	# the ACPI tables, in the BIOS area the e820 map reserves
 Zero:	con 16r7000;
 Cmdline:	con 16r20000;
@@ -48,7 +49,7 @@ stderr: ref Sys->FD;
 
 usage()
 {
-	sys->fprint(stderr, "usage: vmlinux [-m megabytes] [-a append] [-i initrd] [-s seconds] [-t typed] [-q pattern] [-p 0000:bb:dd.f]... [-b file]... [-n etherdir]... [-c cpus] [-d seconds] bzImage\n");
+	sys->fprint(stderr, "usage: vmlinux [-m megabytes] [-a append] [-i initrd] [-s seconds] [-t typed] [-q pattern] [-p 0000:bb:dd.f]... [-b file]... [-n etherdir]... [-c cpus] [-d seconds] {bzImage | -N dir}\n");
 	raise "fail:usage";
 }
 
@@ -186,17 +187,44 @@ init(nil: ref Draw->Context, argv: list of string)
 		'n' =>	nets = arg->earg() :: nets;
 		'c' =>	ncpu = int arg->earg();
 		'd' =>	trace = int arg->earg();
+		'N' =>	nsdir = arg->earg();
 		* =>	usage();
 		}
 	argv = arg->argv();
-	if(len argv != 1)
-		usage();
+	kernel: string;
+	if(nsdir != nil){
+		# the machine as a namespace of resources: what is bound
+		# there is what it gets (doc/genesize-plan.ms, phase 12)
+		if(argv != nil)
+			usage();
+		kernel = nsdir + "/kernel";
+		if(exists(nsdir + "/initrd"))
+			initrd = nsdir + "/initrd";
+		if((v := trim(readall(nsdir + "/cmdline"))) != "")
+			append = v;
+		if((v = trim(readall(nsdir + "/mem"))) != "")
+			megs = int v;
+		if((v = trim(readall(nsdir + "/cpus"))) != "")
+			ncpu = int v;
+		for(l := dirnames(nsdir + "/disk"); l != nil; l = tl l)
+			disks = nsdir + "/disk/" + hd l :: disks;
+		for(l = dirnames(nsdir + "/net"); l != nil; l = tl l)
+			nets = nsdir + "/net/" + hd l :: nets;
+		for(l = dirnames(nsdir + "/pci"); l != nil; l = tl l)
+			assign = hd l :: assign;
+		sys->print("vmlinux: machine from %s: %d MiB, %d processors, %d disks, %d networks, %d PCI functions\n",
+			nsdir, megs, ncpu, len disks, len nets, len assign);
+	}else{
+		if(len argv != 1)
+			usage();
+		kernel = hd argv;
+	}
 
-	(kfd, klen) := openfile(hd argv);
+	(kfd, klen) := openfile(kernel);
 	if(klen < big 16r1000)
 		fail("not a bzImage: too short");
 	k := array[16r1000] of byte;	# the setup header is in the first page
-	preadfull(kfd, k, big 0, hd argv);
+	preadfull(kfd, k, big 0, kernel);
 	if(string k[16r202:16r206] != "HdrS")
 		fail("not a bzImage: no HdrS");
 	version := get16(k, 16r206);
@@ -221,7 +249,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail(sys->sprint("clone: %r"));
 	dir := "/dev/vm/" + string buf[0:n];
 	sys->print("vmlinux: machine %s, %d MiB, kernel %s protocol %d.%d, %bd bytes\n",
-		dir, megs, hd argv, version>>8, version&16rff, kernlen);
+		dir, megs, kernel, version>>8, version&16rff, kernlen);
 	if(sys->fprint(ctl, "mem %bd", memsize) < 0)
 		fail(sys->sprint("mem: %r"));
 	if(sys->fprint(ctl, "io ignore") < 0)
@@ -257,7 +285,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		fail(sys->sprint("mem: %r"));
 
 	# the protected-mode kernel at 1 MiB
-	copymem(mem, big Kernel, kfd, koff, kernlen, hd argv);
+	copymem(mem, big Kernel, kfd, koff, kernlen, kernel);
 	kfd = nil;
 
 	# the initrd as high as the kernel allows
@@ -617,6 +645,43 @@ cat(a, b: array of byte): array of byte
 	c[0:] = a;
 	c[len a:] = b;
 	return c;
+}
+
+exists(path: string): int
+{
+	(ok, nil) := sys->stat(path);
+	return ok >= 0;
+}
+
+trim(s: string): string
+{
+	while(s != nil && (s[len s - 1] == '\n' || s[len s - 1] == ' '))
+		s = s[0:len s - 1];
+	return s;
+}
+
+# a directory's entries, sorted by name: disk/0 before disk/1
+dirnames(path: string): list of string
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	names: list of string;
+	for(;;){
+		(n, d) := sys->dirread(fd);
+		if(n <= 0)
+			break;
+		for(i := 0; i < n; i++)
+			names = insert(d[i].name, names);
+	}
+	return names;
+}
+
+insert(s: string, l: list of string): list of string
+{
+	if(l == nil || s < hd l)
+		return s :: l;
+	return hd l :: insert(s, tl l);
 }
 
 rev(l: list of string): list of string

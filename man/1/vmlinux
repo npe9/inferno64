@@ -37,6 +37,13 @@ vmlinux \- boot Linux as a guest
 .B -c
 .I cpus
 ] ...
+.br
+.B vmlinux
+[
+.I options
+]
+.B -N
+.I dir
 .I bzImage
 .SH DESCRIPTION
 .I Vmlinux
@@ -108,6 +115,40 @@ sets the machine's
 The kernel and initrd are streamed into the machine's memory, not held.  An exit the kernel does not handle is reported with the
 registers, and ends the run, as does a stop; the machine's status is
 printed and the machine killed.
+.PP
+With
+.BR -N ,
+the machine is the directory
+.I dir
+\(em a namespace of resources put together with
+.IR bind (1)
+and
+.IR mount (1)
+before it starts:
+.I dir\fB/kernel
+and, if there,
+.I dir\fB/initrd
+are the kernel and initrd,
+.I dir\fB/cmdline ,
+.I dir\fB/mem
+(megabytes) and
+.I dir\fB/cpus
+hold what
+.BR -a ,
+.B -m
+and
+.B -c
+would, and each entry of
+.IR dir\fB/disk ,
+.I dir\fB/net
+and
+.I dir\fB/pci
+is a virtio disk (in name order), a network (an
+.IR ether (3)
+directory) and an assigned PCI function (named by its address).  The
+kernel opens each device by its path there, so what is bound there \(em
+a local file, one mounted from another machine, a file a Limbo program
+serves \(em is what the guest gets.
 .PP
 Nothing in it is local:
 .B /dev/vm

@@ -768,6 +768,38 @@ Also found here: the test's typed command grew past 1024 characters,
 the most busybox's shell takes on a line, which dropped the rest and
 left the shell waiting for a closing parenthesis; it is typed as
 several lines now.
+.IP "Phase 12: a machine from a namespace (QEMU + emu)." 4
+.CW vmlinux
+.CW -N
+.I dir
+builds a machine from a directory \(en kernel, initrd, cmdline, mem,
+cpus, and disk/, net/, pci/ with an entry per device \(en put together
+with bind and mount; the kernel's virtio backends open each device by
+its path in that namespace, so what is bound there is what the guest
+gets.
+.CW scripts/check-nsvm.sh
+has the native host
+.CW pc64nsvm , (
+.CW nsvminit.b )
+mount a directory the Mac exports from emu, assemble
+.CW /tmp/m
+in a memfs from four places \(en the kernel and initrd from its root,
+the disk image from the Mac's mount, the bench's virtio NIC's
+.CW #l1
+directory as its network \(en and boot it.  The guest reads the marker
+the Mac wrote, writes a sector that the check then reads from the file
+on the Mac, and gets a DHCP lease on the bound network.
+.IP
+Found here, and still open: on the native kernel
+.CW sh->init
+with
+.CW -c
+does not return once its command is done (vmserveinit never noticed,
+as it sleeps after it), and sh hangs at its start with
+.CW #e
+\(en plan9.ini's variables \(en bound on
+.CW /env .
+nsvminit does without the shell.
 .IP "Next." 4
 M7 needs an SR-IOV PF driver for the 82576 (pools, VF mailbox:
 reset, MAC, multicast, VLAN, packet size) and a guest with
@@ -789,6 +821,6 @@ are modules.  M8 is done on SVM, including Linux booting on the virtio
 disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
 its /bin, /lib and /init) on its second disk, and a second guest given
 that disk alone and linuxguest.root=vda mounts it from the initramfs
-and switches to it.  Next: phase 12 (resource namespaces); M2, M8 and
-M3 on VMX (Bochs), now that the host keeps time; and the MTTCG triple
-fault.
+and switches to it.  Next: M2, M8 and M3 on VMX (Bochs), now that the
+host keeps time; the MTTCG triple fault; the native shell's hangs; and
+M7 (the 82576 PF driver and an igbvf guest).
