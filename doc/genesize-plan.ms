@@ -790,16 +790,19 @@ directory as its network \(en and boot it.  The guest reads the marker
 the Mac wrote, writes a sector that the check then reads from the file
 on the Mac, and gets a DHCP lease on the bound network.
 .IP
-Found here, and still open: on the native kernel
+Found here: a shell started by calling
 .CW sh->init
 with
 .CW -c
-does not return once its command is done (vmserveinit never noticed,
-as it sleeps after it), and sh hangs at its start with
+from the init's own thread ends that thread when its command is done
+\(en sh finishes with Limbo's
+.CW exit ,
+which is the caller's \(en so the init stopped, silently, after each
+shell (vmserveinit never noticed, its servers living on in other
+threads).  It looked first like a hang in the mount, then in ndb/cs,
+then in sh with
 .CW #e
-\(en plan9.ini's variables \(en bound on
-.CW /env .
-nsvminit does without the shell.
+bound; it was none of them.  nsvminit does without the shell.
 .IP "Next." 4
 M7 needs an SR-IOV PF driver for the 82576 (pools, VF mailbox:
 reset, MAC, multicast, VLAN, packet size) and a guest with
@@ -822,5 +825,5 @@ disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
 its /bin, /lib and /init) on its second disk, and a second guest given
 that disk alone and linuxguest.root=vda mounts it from the initramfs
 and switches to it.  Next: M2, M8 and M3 on VMX (Bochs), now that the
-host keeps time; the MTTCG triple fault; the native shell's hangs; and
-M7 (the 82576 PF driver and an igbvf guest).
+host keeps time; the MTTCG triple fault; and M7 (the 82576 PF driver
+and an igbvf guest).

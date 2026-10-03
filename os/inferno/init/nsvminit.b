@@ -41,13 +41,15 @@ init()
 		sys->bind(sys->sprint("#l%d", i), "/net", Sys->MAFTER);
 	sys->print("NSVM: start\n");
 
-	port := trim(readall("#e/nsvmport"));	# not bound on /env: sh would take in all of plan9.ini
+	port := trim(readall("#e/nsvmport"));	# plan9.ini's, in the kernel's environment
 	if(port == nil){
 		sys->print("NSVM: FAIL no nsvmport in plan9.ini\n");
 		return;
 	}
 	if(!dhcp())
 		return;
+	# no sh -c here: a shell called from this thread ends it, with
+	# Limbo's exit, when its command is done
 	cs := load Command "/dis/ndb/cs.dis";
 	if(cs == nil){
 		sys->print("NSVM: FAIL cs: %r\n");
