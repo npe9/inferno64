@@ -1,0 +1,65 @@
+#!/bin/sh
+#
+# Make the FAT image tests/dossrv-badclust needs, on the host.
+#
+# This tree has no FAT formatter, so the image comes from the host's
+# newfs_msdos.  The test's sector numbers depend on this exact geometry,
+# which is why the recipe lives in a file rather than in a shell history:
+#
+#	64MB, FAT16, 32 sectors per cluster  =>  16KB clusters, 4093 of them
+#	1 reserved sector, 2 FATs of 16 sectors, a 512-entry root directory
+#	of 32 sectors, so cluster 2 -- the first one falloc hands out --
+#	begins at sector 1 + 32 + 32 = 65.
+#
+# 16KB clusters on purpose: that is what the Pi's own card uses, so the
+# cost the test's subject carries here is the cost it carries there.
+#
+# 64MB and not the device's default 16MB because FAT16 needs more than
+# 4084 clusters and 16MB at 16KB clusters has 1000, which newfs_msdos
+# refuses.  sdmem is told "size 131072" by the test to match.
+#
+# Only the first 512KB is kept: everything past the root directory is
+# zero on a fresh filesystem, and the test writes its own data.  A 64MB
+# file in the repo's tmp/ would be copied to the board over styx.
+#
+set -e
+ROOT=${ROOT:-`cd \`dirname $0\`/.. && pwd`}
+OUT=$ROOT/tmp/f16k.img
+WORK=${TMPDIR:-/tmp}/dossrv-badclust-$$.img
+
+for t in newfs_msdos hdiutil; do
+	command -v $t >/dev/null 2>&1 || { echo "dossrv-badclust.host: no $t" >&2; exit 2; }
+done
+
+mkdir -p "$ROOT/tmp"
+rm -f "$WORK"
+dd if=/dev/zero of="$WORK" bs=1048576 count=0 seek=64 2>/dev/null
+dev=`hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount "$WORK" | awk '{print $1; exit}'`
+[ -n "$dev" ] || { echo "dossrv-badclust.host: cannot attach $WORK" >&2; exit 2; }
+newfs_msdos -F 16 -c 32 -v BADCLUST "$dev" 2>&1 | grep -i cluster || true
+hdiutil detach "$dev" >/dev/null 2>&1
+
+#
+# Check the geometry the test depends on rather than trusting the flags:
+# newfs_msdos picks reserved sectors and FAT size itself, and a different
+# version could move sector 65.
+#
+spc=`dd if="$WORK" bs=1 skip=13 count=1 2>/dev/null | od -An -tu1 | tr -d ' \n'`
+res=`dd if="$WORK" bs=1 skip=14 count=2 2>/dev/null | od -An -tu2 | tr -d ' \n'`
+nft=`dd if="$WORK" bs=1 skip=16 count=1 2>/dev/null | od -An -tu1 | tr -d ' \n'`
+spf=`dd if="$WORK" bs=1 skip=22 count=2 2>/dev/null | od -An -tu2 | tr -d ' \n'`
+rde=`dd if="$WORK" bs=1 skip=17 count=2 2>/dev/null | od -An -tu2 | tr -d ' \n'`
+data0=`expr $res + $nft \* $spf + $rde \* 32 / 512`
+echo "dossrv-badclust.host: spc=$spc reserved=$res fats=$nft fatsize=$spf rootents=$rde"
+echo "dossrv-badclust.host: first data sector = $data0"
+if [ "$spc" != 32 ] || [ "$data0" != 65 ]; then
+	echo "dossrv-badclust.host: geometry is not what the test assumes" >&2
+	echo "  wanted 32 sectors/cluster and first data sector 65" >&2
+	echo "  edit DATA0 in tests/dossrv-badclust, or this script" >&2
+	rm -f "$WORK"
+	exit 1
+fi
+
+dd if="$WORK" of="$OUT" bs=512 count=1024 2>/dev/null
+rm -f "$WORK"
+echo "dossrv-badclust.host: wrote $OUT (`wc -c < "$OUT"` bytes)"

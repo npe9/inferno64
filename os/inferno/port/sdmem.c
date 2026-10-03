@@ -137,6 +137,15 @@ struct Who {
 	char	name[Namelen];
 	uvlong	nread, nwrite;
 	uvlong	nreadsec, nwritesec;
+	/*
+	 * First and last pid seen under this name.  Every Limbo process is
+	 * called "dis", so the name alone cannot say whether one program
+	 * did all of this I/O or twenty did a share each -- and that is
+	 * exactly the distinction wanted when a filesystem server and its
+	 * client are both Dis.  Equal pids mean one process; different
+	 * ones mean at least two, and /prog names them.
+	 */
+	int	firstpid, lastpid;
 };
 
 typedef struct Held Held;
@@ -433,9 +442,11 @@ whocharge(Ctlr *c, int write, long nb)
 		w = &c->who[i];
 		memset(w, 0, sizeof *w);
 		strncpy(w->name, name, Namelen-1);
+		w->firstpid = up != nil? up->pid: 0;
 		c->nwho++;
 	}
 	w = &c->who[i];
+	w->lastpid = up != nil? up->pid: 0;
 	if(write){
 		w->nwrite++;
 		w->nwritesec += nb;
@@ -714,8 +725,9 @@ sdmemrctl(SDunit *u, char *p, char *e)
 	p = seprint(p, e, "sdmem reads %llud ops %llud secs, writes %llud ops %llud secs\n",
 		c->nreadop, c->nreadsec, c->nwriteop, c->nwritesec);
 	for(i = 0; i < c->nwho; i++)
-		p = seprint(p, e, "sdmem who %s reads %llud ops %llud secs, writes %llud ops %llud secs\n",
-			c->who[i].name, c->who[i].nread, c->who[i].nreadsec,
+		p = seprint(p, e, "sdmem who %s pid %d..%d reads %llud ops %llud secs, writes %llud ops %llud secs\n",
+			c->who[i].name, c->who[i].firstpid, c->who[i].lastpid,
+			c->who[i].nread, c->who[i].nreadsec,
 			c->who[i].nwrite, c->who[i].nwritesec);
 	if(c->nwho >= Maxwho)
 		p = seprint(p, e, "sdmem who TABLE FULL -- some transfers are unattributed\n");

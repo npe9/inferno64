@@ -92,7 +92,7 @@ Two more lines appear once a transfer has happened since the last
 .BR reset :
 .PP
 .EX
-sdmem who dis reads 1284 ops 5156 secs, writes 572 ops 5148 secs
+sdmem who dis pid 219..219 reads 1284 ops 5156 secs, writes 572 ops 5148 secs
 sdmem trace r0+9 r63+9 r97+4 r27+9 r101+4 r105+4 ...
 .EE
 .PP
@@ -104,8 +104,12 @@ rather than folded into another, because a transfer quietly given the
 wrong owner is worse than one left out.  Every Limbo process is called
 .BR dis ,
 so the name separates a Dis program's I/O from the kernel's and no
-further; when two Dis programs share a device, the trace is what tells
-them apart.
+further.  The two pids are the first and the last seen under that name:
+equal means one process did all of it, different means at least two did,
+and
+.IR ps (1)
+names them.  When two Dis programs share a device, that and the trace are
+what tell them apart.
 .PP
 .I Trace
 is the first sixty-four transfers since the reset, as

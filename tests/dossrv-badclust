@@ -5,9 +5,14 @@
 # THIS RUNS ON A BOARD, not under host emu, because it needs sdmem(3) --
 # a block device in RAM, which is a kernel device.  From the host:
 #
+#	sh tests/dossrv-badclust.host		# makes tmp/f16k.img
 #	sh tools/jtag/kinstall.sh		# a kernel with sdmem
 #	... then on the board ...
 #	sh /n/remote/tests/dossrv-badclust
+#
+# The image is made on the host because this tree has no FAT formatter of
+# its own; the geometry the test's sector numbers assume is 16KB clusters
+# on a 64MB disk, and the companion script is where that is written down.
 #
 # WHY IT EXISTS.  appl/cmd/dossrv.b verifies a cluster before allocating
 # it: clustok() reads it straight off the device, and a cluster that will
@@ -68,7 +73,7 @@ if {! cat $D^/ctl >/dev/null >[2]/dev/null} {
 	raise 'fail:no sdmem'
 }
 if {! cat $IMG >/dev/null >[2]/dev/null} {
-	echo 'dossrv-badclust: no '^$IMG^' -- make it on the host first' >[1=2]
+	echo 'dossrv-badclust: no '^$IMG^' -- run tests/dossrv-badclust.host' >[1=2]
 	raise 'fail:no image'
 }
 
