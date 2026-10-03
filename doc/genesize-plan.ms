@@ -763,6 +763,31 @@ an hour: the same as the four-vCPU guest on the one-processor host.
 So there are two problems: the lost CR2 on Bochs's application
 processor, and a host that stops when a VMX guest has four vCPUs.  M3
 on VMX is still open.
+.IP
+The stopped host was Bochs's.  Under its debugger the processor was in
+the guest, spinning with IF clear, and never left: Bochs recomputes
+whether external interrupts are masked only when IF changes, and VM
+entry changes what masks them (with external-interrupt exiting, IF
+does not) without recomputing \(en so a guest entered with IF clear
+from a host with IF clear kept the host's interrupts masked until it
+set IF itself.  VM exit had the mirror fault: the host, back with IF
+clear, could be handed an interrupt.  Real processors do neither.
+.CW scripts/bochs-vmx-intmask.patch ,
+which
+.CW mkbochs-vmx.sh
+applies, recomputes the mask at both.  (SVM had its own version of
+this, in the kernel: below.)  With it the four-vCPU guest runs on
+Bochs, and two more things showed.  An INIT for an application
+processor that was running only marked it to wait for a SIPI, and it
+went on running its old code until a SIPI happened to find it stopped;
+a processor stops at INIT, and now a running vCPU does too (the
+platform's
+.CW vmplatinit ,
+looked at on its own processor between exits), and waits for its SIPI
+as one never started.  And on Bochs the application processors still
+took HLT exits that the platform read with IF clear, and once an exit
+of all zeros \(en with two vCPUs sharing a processor's VMCSs.  That is
+where M3 on VMX stands.
 .IP "Phase 5: a four-vCPU guest on one processor (SVM, QEMU TCG)." 4
 The four-processor guest on a one-processor host stopped after its
 first lines, the vCPU heartbeat with it.  The QEMU monitor

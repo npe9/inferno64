@@ -126,6 +126,7 @@ void	vmplatfree(Vm*);
 void	vmplathangup(Vm*);
 int	vmplatsipi(Vcpu*);		/* on the vCPU's processor: start it if a SIPI came */
 int	vmplatsipipending(Vcpu*);
+int	vmplatinit(Vcpu*);		/* on the vCPU's processor: an INIT stopped it; wait for SIPI */
 int	vmplatexit(Vcpu*, Vmexit*);
 void	vmplatintr(Vcpu*);
 int	vmplatctl(Vm*, int, char**);

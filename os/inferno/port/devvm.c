@@ -320,6 +320,11 @@ vcpuproc(void *a)
 			 */
 			if(up->delaysched)
 				sched();
+			/* an INIT stopped it: back to waiting, no exit to report */
+			if(vmplatinit(v)){
+				memset(&e, 0, sizeof e);	/* VxNone */
+				break;
+			}
 			memset(&e, 0, sizeof e);
 			vmplatintr(v);
 			vmops->run(v, &e);
@@ -361,6 +366,10 @@ vcpuproc(void *a)
 				continue;
 			}
 			break;
+		}
+		if(e.kind == VxNone && v->state == VcpuRunning){
+			v->state = VcpuStopped;	/* INIT: waiting for SIPI again */
+			continue;
 		}
 		vcpuexit(v, &e);
 	}

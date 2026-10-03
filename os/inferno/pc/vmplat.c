@@ -70,6 +70,7 @@ struct Plat
 	int	irqwin[Maxvcpu];
 	int	kick[Maxvcpu];	/* something for a halted vCPU to look at */
 	int	initwait[Maxvcpu];	/* after INIT, before SIPI: waits to be started */
+	int	initreq[Maxvcpu];	/* an INIT for one running: it stops, to wait for SIPI */
 	int	sipi[Maxvcpu];	/* a startup IPI's vector, not yet acted on; -1 none */
 	int	nmi[Maxvcpu];	/* an NMI sent, not yet delivered */
 	u32int	poke;		/* vCPUs to wake once the lock is let go */
@@ -211,8 +212,18 @@ ipi(Plat *p, int src, u32int hi, u32int lo)
 			p->poke |= 1<<i;
 			break;
 		case 5:		/* INIT: an application processor waits for SIPI */
-			if(i != 0)
+			if(i != 0){
+				/*
+				 * One that is running stops first, as a
+				 * processor does at INIT, whatever it was
+				 * doing -- not carry on with its old code
+				 * until a SIPI happened to find it stopped.
+				 */
 				p->initwait[i] = 1;
+				p->initreq[i] = 1;
+				p->kick[i] = 1;
+				p->poke |= 1<<i;
+			}
 			break;
 		case 6:		/* SIPI: start one that waits, at vec<<12 */
 			if(p->initwait[i]){
@@ -240,6 +251,8 @@ vmplatsipi(Vcpu *v)
 	ilock(p);
 	vec = p->sipi[v->id];
 	p->sipi[v->id] = -1;
+	if(vec >= 0)
+		p->initreq[v->id] = 0;	/* the INIT this SIPI follows has been obeyed */
 	iunlock(p);
 	if(vec < 0)
 		return 0;
@@ -264,6 +277,25 @@ vmplatsipi(Vcpu *v)
 	vmops->setreg(v, VIdtrbase, 0);
 	vmops->setreg(v, VIdtrlimit, 0xFFFF);
 	return 1;
+}
+
+/*
+ * On the vCPU's own processor, between exits: an INIT came for it.  It
+ * leaves the guest without an exit to report and waits, as one that
+ * was never started does, for its SIPI.
+ */
+int
+vmplatinit(Vcpu *v)
+{
+	Plat *p;
+	int r;
+
+	p = PLAT(v->vm);
+	ilock(p);
+	r = p->initreq[v->id];
+	p->initreq[v->id] = 0;
+	iunlock(p);
+	return r;
 }
 
 int

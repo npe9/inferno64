@@ -554,6 +554,13 @@ vmplatsipi(Vcpu *v)
 	return 1;
 }
 
+/* there is no INIT on RISC-V: a hart is stopped with the SBI's HSM, by itself */
+int
+vmplatinit(Vcpu*)
+{
+	return 0;
+}
+
 int
 vmplatsipipending(Vcpu *v)
 {
