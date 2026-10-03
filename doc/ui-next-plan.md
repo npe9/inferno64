@@ -2232,10 +2232,38 @@ is 0.61× the sum of the rectangles, which means Tk's ~20 rectangles
 *overlap each other heavily* within a present (nested, growing updates to
 one widget), so the box is the **tighter** of the two bounds and the true
 union lies below it. The regime where the box inflates is scattered
-*disjoint* damage, and there the raspi3b session measured the per-flush
-instrument reporting 0.38% where the per-present truth was 99.44% — a
-260-fold under-statement, because no adjacent pair of disjoint flushes
-overlaps. Tk is at the opposite end of that axis.
+*disjoint* damage, and that is measurable here rather than borrowed.
+`gfxstress fill` at 1024×768, which scatters small fills across the whole
+window:
+
+| | `runtests -g` (Tk) | `gfxstress fill` |
+|---|---|---|
+| presents | 190 | 27630 |
+| damage rectangles | 3749 | 10781779 |
+| rectangles per present | 19.73, max 103 | **390.22**, max 399 |
+| box ÷ sum of rects | **0.61×** (box tighter) | **2.92×** (box inflates) |
+| mean box per present | 108131 B | 1797681 B = 57% of the screen |
+| eager | 20544912 B | 49669940216 B |
+| deferred | 3084216 B | 142111560 B |
+| saving | 85.0% | **99.71%** |
+
+So the same instrument is **tight at one end of that axis and inflated by
+3× at the other**, and which end you are on is a property of the client:
+Tk's ~20 rectangles per present are nested updates to one widget, and
+`gfxstress fill`'s ~390 are scattered and mostly disjoint, so their box is
+nearly the screen while the fills themselves are tiny.
+
+**The saving goes the other way from the inflation, and that is the point.**
+Scattering makes the box *worse* as an estimate of bytes and *better* for
+the scheme: consecutive presents both cover nearly the whole screen, so
+almost nothing needs carrying forward, and deferring saves 99.71% against
+85.0% for Tk. The raspi3b session measured **99.44%** on silicon for the
+same workload through an independently written counter — two trees, two
+instruments, two platforms, agreeing to within a third of a percent, which
+is better evidence for the model than either number alone. They also found
+the per-flush instrument reporting **0.38%** there, a 260-fold
+under-statement, because no adjacent pair of disjoint flushes overlaps;
+that is the failure mode the per-present boundary exists to avoid.
 
 **The design note worth keeping:** a maximum beside a histogram, not a top
 bucket. `max 103` here and their `max 301` are both figures a saturating
