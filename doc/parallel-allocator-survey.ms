@@ -259,11 +259,37 @@ This is the rule this document exists to enforce, broken by its own
 author in the same session that restated it: a ratio is worth something
 when both arms are one boot and one configuration, and worth nothing
 otherwise.  It was caught by a peer session querying a related claim, not
-by me.  The measurement to take, when the board is free, is both arms in
-the same configuration \(em and the question to ask of the result is
-whether the residual is a second mechanism in
-.CW pl011_kick
-or whether the whole difference was the core count.
+by me.
+.PP
+.B "TAKEN PROPERLY: the fix makes no measurable difference, and the whole earlier difference was the core count."
+Two kernels differing only in
+.CW pl011_kick ,
+both booted the same way, three runs each:
+.P1
+                  max us          mean    ilocks     wall
+pre-fix       9724, 629, 3558    526,421,421  1.248M   34.6 s
+with the fix  3557, 3557, 3556   421,421,421  1.245M   33.1 s
+.P2
+The pre-fix kernel's third run gives 3558us \(em the same number as all
+three of the fixed arm.  Mean hold and ilock count are identical to three
+figures in both.  Wall time differs by 4 per cent, which is inside this
+rig's drift.
+.PP
+So the
+.CW islo()
+defect is REAL BY READING THE CODE and its effect on lock-hold time is
+NIL BY THIS INSTRUMENT, and the 6130-to-3557 "1.72x" was the four-core
+card boot against the single-core JTAG one, exactly as the retraction
+suspected and could not then show.
+.PP
+.B "And the maximum is an unstable statistic, which is the lesson to carry."
+The pre-fix arm's three runs span 629us to 9724us \(em fifteen-fold, same
+kernel, same workload, same boot method.  The mean and the count are
+stable to three figures across six runs; the maximum is not a
+measurement, it is a sighting.  The original claim rested on two maxima
+that happened to agree, and agreement between two sightings is not
+stability.  Quote the mean, or quote the maximum over at least three runs
+with its spread.
 .PP
 .B "What the instrument does NOT tell you, which matters for both figures."
 .CW ILOCKTRACE
