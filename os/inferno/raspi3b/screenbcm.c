@@ -147,7 +147,8 @@ enum {
 
 static uvlong	vsbase;		/* cycles at a known vertical blank */
 static uvlong	vsperiod;	/* cycles per frame while ACCOUNTING, else 0 */
-static uvlong	vsmeasured;	/* the same period, kept for the report */
+static uvlong	vsmeasured;	/* the same period, in 19.2MHz TICKS */
+static uvlong	vsmeasuredus;	/* and in microseconds, for comparing against costs */
 static uvlong	vsend;		/* cycles at which the window closes */
 static uvlong	ntearop, ntearrow, nopchecked;
 static int	vsclosed;	/* the window filled up before it was read */
@@ -304,7 +305,7 @@ chargeoverlap(Rectangle r)
 		 * against 16665us otherwise, because a claim about dropped
 		 * frames needs the real frame clock and not a nominal 60Hz.
 		 */
-		if((aprev - aov) * 166 / 10000 > (vsmeasured? vsmeasured: 16665))
+		if((aprev - aov) * 166 / 10000 > (vsmeasuredus? vsmeasuredus: 16665))
 			ndeferover++;
 		if(ar >= Fullish && aprev >= Fullish)
 			nfulladj++;
@@ -506,8 +507,8 @@ screenstats(void)
 		" skipped %llud over %llud fullish %llud adj %llud samerect %llud\n",
 		neagerbyte, ndeferbyte, noverlapbyte,
 		ndeferzero, ndeferover, nfullish, nfulladj, nsamerect);
-	print("SCREEN tear ops %llud of %llud rows %llud period %llud %s\n",
-		ntearop, nopchecked, ntearrow, vsmeasured,
+	print("SCREEN tear ops %llud of %llud rows %llud period %llud ticks (%llud us) %s\n",
+		ntearop, nopchecked, ntearrow, vsmeasured, vsmeasuredus,
 		vsmeasured == 0? "NOT CALIBRATED":
 		(vsclosed? "window full": "window open"));
 	vsyncprobe();
@@ -873,6 +874,23 @@ bcmpresent(void)
 	/* 3. draw into what used to be shown */
 	fb = vfb = scrdata.bdata = backaddr();
 	/*
+	 * NO VERTICAL-BLANK WAIT HERE, and it cannot simply be added.
+	 * bcmpresent() runs with drawlock held, and mboxvirtoffset() takes
+	 * mboxlock.  That is safe as it stands, because a property exchange is
+	 * short and nothing holding mboxlock wants drawlock, so there is no
+	 * deadlock -- only a brief coupling.  A vsync wait is different: it
+	 * holds mboxlock for a WHOLE FRAME, and doing that under drawlock
+	 * would stop every Dis draw operation in the system for up to 16.7ms
+	 * while also starving sdhostbcm, sdhcibcm, btbcm and pwmbcm, which all
+	 * come back to the mailbox at runtime.  mboxprop()'s own comment
+	 * already rules out a periodic vsync kproc for the same reason.  So
+	 * landing the flip in vertical blank needs the wait OUTSIDE both
+	 * locks, which is a design question and not a line of code.
+	 *
+	 * The region this frame drew was already cleaned to the point of
+	 * coherency by flushmemscreen(), per flush, so only the repair above
+	 * has to clean anything here.
+	 *
 	 * The cursor's saved pixels came out of the OTHER buffer.  Restoring
 	 * them now would write this frame's pixels into the visible buffer
 	 * while it holds the previous frame.  Invalidate: the cursor is
@@ -1143,7 +1161,7 @@ teararm(void)
 	if(!Tearprobe)
 		return;
 	ntearop = ntearrow = nopchecked = 0;
-	vsperiod = vsmeasured = 0;
+	vsperiod = vsmeasured = vsmeasuredus = 0;
 	vsclosed = 0;
 	if(mboxvsync() < 0)
 		return;
@@ -1160,6 +1178,16 @@ teararm(void)
 	if(b <= a)
 		return;
 	vsperiod = vsmeasured = (b - a) / 8;
+	/*
+	 * And in microseconds, because every cost in this file is in
+	 * microseconds and vsmeasured is in cycles() ticks.  A comparison
+	 * across the two silently never fires: ndeferover was tested against
+	 * vsmeasured directly, so at 19.2MHz a 16.665ms frame is 320000 and
+	 * no damage-sized copy in microseconds ever exceeded it.  m->cpuhz is
+	 * the 19.2MHz counter frequency here, not the CPU clock -- see
+	 * vsyncprobe().
+	 */
+	vsmeasuredus = m->cpuhz? vsmeasured * 1000000 / (uvlong)m->cpuhz: 0;
 	vsbase = b;
 	vsend = b + (uvlong)Tearframes * vsperiod;
 }

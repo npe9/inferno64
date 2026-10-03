@@ -5931,3 +5931,70 @@ name a symbol, and the catch would be wasted.
 So the ordering is forced, and it is not a preference: finish the batch, then
 link.  The compiles establish that the code is syntactically sound and type
 correct; they say nothing about symbols, and the link waits.
+.PP
+.B "Two defects in the instruments above, found by re-reading rather than by running."
+.PP
+.B "A unit mismatch that made one counter unreachable."
+.CW ndeferover
+counts frames whose deferred copy alone exceeds a frame, and it compared a
+microsecond cost against
+.CW vsmeasured ,
+which
+.CW teararm()
+sets from
+.CW cycles()
+and is therefore in 19.2MHz TICKS.  At that rate a 16.665ms frame is 320000,
+so no damage-sized copy in microseconds ever exceeded it and the counter could
+only ever read zero once the probe had run.  A zero from a predicate that
+cannot fire is not a measurement, which is the rule this item has been applying
+to everyone else's numbers.  Fixed with
+.CW vsmeasuredus
+alongside, converted with the same
+.CW m->cpuhz
+.CW vsyncprobe()
+uses, and the report now labels both units.
+.PP
+It is the same class as the 196-against-197: a plausible number whose DIMENSION
+nobody checked.
+.PP
+.B "And the non-flipping numbers are a prediction, which the comment now says."
+The per-present accounting runs on every board that links
+.CW devdraw.c ,
+but where
+.CW screenpresent
+is nil nothing is ever swapped, so eager and deferred are "what the two schemes
+WOULD cost if this board flipped".  That is deliberate \(em the point is to
+decide whether a board should flip before making it \(em but a reader of pc64's
+or virt's numbers is reading a hypothetical, and nothing said so.
+.PP
+.B "A lock constraint on the next step, which is the vblank wait."
+.CW bcmpresent()
+runs with
+.CW drawlock
+held and
+.CW mboxvirtoffset()
+takes
+.CW mboxlock .
+As it stands that is safe: a property exchange is short, and nothing holding
+.CW mboxlock
+wants
+.CW drawlock ,
+so there is no deadlock and only a brief coupling.  A vsync wait is a different
+thing \(em it holds
+.CW mboxlock
+for a WHOLE FRAME, and doing that under
+.CW drawlock
+would stop every Dis draw operation in the system for up to 16.7ms while also
+starving
+.CW sdhostbcm ,
+.CW sdhcibcm ,
+.CW btbcm
+and
+.CW pwmbcm ,
+all of which return to the mailbox at runtime.
+.CW mboxprop() 's
+own comment already rules out a periodic vsync kproc for exactly this reason.
+.PP
+So landing the flip in vertical blank needs the wait OUTSIDE both locks.  That
+is a design question, not a line of code, and it is the gate on tear-freedom
+rather than on double buffering.

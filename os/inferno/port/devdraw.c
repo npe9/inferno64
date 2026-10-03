@@ -440,6 +440,14 @@ drawrefresh(Memimage*, Rectangle r, void *v)
  * Counters, not prints: a kernel print that recurs per frame is a denial of
  * service against every other diagnostic, and these are read by address or
  * from drawpresentstats() at the end of a run.
+ *
+ * ON A BOARD THAT DOES NOT FLIP these numbers are a HYPOTHETICAL -- "what the
+ * two schemes would cost if this board page-flipped" -- because nothing
+ * consumes them: screenpresent is nil and no buffer is ever swapped.  That is
+ * deliberate, since the whole point is to decide whether a board should flip
+ * before making it, but it means a reader of pc64's or virt's numbers is
+ * reading a prediction and not a measurement.  Only where screenpresent is
+ * non-nil do they describe work actually done.
  */
 /*
  * Set by a screen driver that page-flips, called at the end of every present
