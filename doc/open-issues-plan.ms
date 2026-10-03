@@ -6528,3 +6528,47 @@ Unlike
 .CW va2pa ,
 which was three files and whose callers were already
 .CW uintptr .
+.PP
+.B "The relink hazard, measured rather than argued."
+Two real links of the same tree were available \(em the installed
+.CW iraspi3b
+and the scratch
+.CW linktest
+made an hour later with this session changes in it \(em so the claim can be
+checked instead of asserted:
+.P1
+symbol        installed    relinked     delta
+kmesg         0x003138e0   0x00314c20   +0x1340
+kerndate      0x001d8e18   0x001d9fc8   +0x11b0
+panicmsg      0x0074f110   0x00750450   +0x1340
+vmholderpid   0x001d86c0   0x001d9860   +0x11a0
+.P2
+Every one moved, and the installed image own stamp is 1791023117, which is
+06:25:17 \(em
+.CW iraspi3b
+mtime to the second.
+.PP
+So after a relink:
+.IP \(bu
+.CW vmheld ,
+.CW kstack ,
+.CW where ,
+.CW wedgediag
+read
+.CW kerndate
+at 0x001d9fc8 on a kernel that has it at 0x001d8e18, get whatever lives there,
+mismatch, and REFUSE.  Correct, and loud.
+.IP \(bu
+.CW kmesg
+reads the ring 4928 bytes past where it is.  That address is still inside the
+kernel data region, so
+.CW dump_image
+succeeds and returns real memory that is not the ring.  Its only sanity check is
+that the count word is non-zero, and at a wrong address that word is arbitrary \(em
+so it most likely returns plausible garbage with exit 0, and
+.CW "grep -q DIS-WEDGED"
+is false.
+.PP
+Which is the whole argument for the fix, now with numbers behind it: the four
+tools that check fail safely and the one that does not fails into the batch
+wedge/slow verdict.
