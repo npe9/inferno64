@@ -5123,3 +5123,123 @@ It waits on the
 .CW "IC IALLUIS"
 acceptance batch, not on the decision.  Two changes and one batch makes neither
 attributable.
+.NH 2
+H1a CORRECTION, and it withdraws the budget argument above: the saving is OVERLAP, not coverage
+.LP
+The section above says the flip/copy rule turns frames that cannot meet the
+budget into free ones, and that 47 per cent of the copy cost is in four per cent
+of the frames.  Both halves are wrong as stated, and the error is the same one
+the H1a correction describes \(em I wrote the qualification into the paragraph
+and then reasoned without it.  What follows replaces them.
+.PP
+.B "Work the two schemes over a sequence, which a histogram cannot hold."
+Call the buffers FRONT and BACK.  After the flip ending frame
+.CW N-1 ,
+FRONT holds frame
+.CW N-1
+and BACK holds frame
+.CW N-2 ,
+because BACK is the buffer that was front two flips ago.  Frames
+.CW N-1
+and
+.CW N-2
+differ exactly in
+.CW damage(N-1) .
+So before frame
+.CW N
+can be drawn incrementally, BACK must be brought up to frame
+.CW N-1
+everywhere frame
+.CW N
+will not overwrite:
+.P1
+deferred cost(N) = |damage(N-1) \e damage(N)|
+eager    cost(N) = |damage(N)|
+.P2
+where eager is the obvious scheme \(em copy this frame's damage to the new back
+immediately after the flip, so BACK is never stale and no hint is needed.
+.PP
+.B "Then the difference between them is the overlap, and nothing else."
+.P1
+eager - deferred = SUM |damage(N-1) AND damage(N)|
+.P2
+Deferred never copies more than eager and never less than eager minus the
+intersection of consecutive frames' damage.  Modelled over scanline intervals,
+where intersection is exact:
+.P1
+isolated full among widgets  eager 1474560 B / 1 dropped  deferred 1167360 B / 1 dropped
+a RUN of four fulls          eager 5038080 B / 4 dropped  deferred 1167360 B / 1 dropped
+the same widget every frame  eager  368640 B / 0 dropped  deferred       0 B / 0 dropped
+disjoint widgets every frame eager  245760 B / 0 dropped  deferred  184320 B / 0 dropped
+.P2
+.PP
+.B "So the budget argument is withdrawn for the case I argued it on."
+An ISOLATED full-screen frame drops one frame under both schemes.  Deferred
+makes the full frame itself free and then charges the frame AFTER it
+.CW "|full \e widget|" ,
+which is very nearly the whole screen.  The 20452us copy does not disappear; it
+moves one frame later.  "Dropped frames deterministically, not occasionally" was
+true of eager and I presented it as an argument for deferred, which does not fix
+it.  Deferred wins on drops only when full-screen frames are CONSECUTIVE: k in a
+row costs eager k drops and deferred one.
+.PP
+.B "And the amortised 47 per cent goes the same way."
+47 per cent of the total damage bytes sitting in four per cent of the flushes is
+a true statement about EAGER's cost distribution.  It is not a saving.  For
+isolated fulls the deferred total is the same to within two widgets, because the
+big copy is still paid, one frame later.  The number described the cost, and I
+read it as the prize.
+.PP
+.B "What the model says instead, which is a better rule than the one it corrects."
+The saving is
+.B "repeated damage of the same region, at any size" ,
+because that is where consecutive damage overlaps.  A widget animating in place
+\(em redrawing the same rectangle every frame \(em costs eager that rectangle
+every frame and costs deferred ZERO, for ever.  Coverage of the screen does not
+enter.
+.PP
+So "flip when the damage covers the screen, copy when it does not" is not the
+rule; it is one sufficient condition for the rule, which is why it looked right.
+Full-screen
+.CW damage(N)
+makes
+.CW "damage(N-1) \e damage(N)"
+empty, so the coverage test fires exactly when the real test would \(em and also
+misses every case where the real test fires on a small repeated rectangle.  The
+rule is just: copy
+.CW "damage(N-1) \e damage(N)" ,
+with no coverage test in it at all.
+.PP
+.B "The pre-draw hint survives this, and for a sharper reason."
+.CW damage(N)
+is needed BEFORE frame
+.CW N
+is drawn, and nothing observing frames that have already been drawn can supply
+it.  That is not an argument that a described frame is tidier; it is the whole
+reason
+.CW tkscenebounds()
+is the only possible producer and
+.CW hwdraw()
+is not one.  The hint is still worth building.  What is withdrawn is the claim
+that the measurement already justified it.
+.PP
+.B "What is now owed, and it is not a histogram."
+Whether consecutive damage overlaps is a property of the SEQUENCE, and every
+number taken so far \(em mine and the peer's \(em is a distribution over flushes
+with the order thrown away.  The instrument has to change: record
+.CW "|damage(N-1) AND damage(N)|"
+per flush, which
+.CW flushmemscreen
+can do by keeping the previous rectangle, and which costs one
+.CW rectclip
+and an add.  Until that exists the flip/copy rule has no measurement behind it,
+and the honest state of H1a is one step further back than the section above
+claims.
+.PP
+.B "The lesson, which is mine and not the arithmetic's."
+Every number here was correct.  The histogram was correct, the 47 per cent was
+correct and tightened by the peer, the per-byte rate was correct and checked for
+linearity at both ends.  The conclusion was still wrong, because a distribution
+cannot answer a question about order and I never asked which kind of question I
+had.  Checking an extrapolation and checking a rate does not check that the
+quantity measured is the quantity the argument needs.
