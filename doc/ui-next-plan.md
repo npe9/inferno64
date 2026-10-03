@@ -1822,26 +1822,48 @@ board — which means it can be answered here. `INFERNO_DAMAGE_HIST=n`
 puts the same five buckets the Pi's `flushmemscreen` uses into emu's,
 printing every n flushes:
 
-| workload | flushes | mean bytes | ≤64KB | ≤256KB | >1MB |
-|---|---|---|---|---|---|
-| `runtests -g` | 197 | 221236 | 67.5% | 95.4% | 4.6% |
-| `wmtest -n 40` | 122 | 98404 | 98.4% | 98.4% | 1.6% |
+Run at **640×480**, which is the Pi's geometry to the byte (a full screen
+is 1228800 bytes either place), so the buckets *are* coverage:
 
-So the common case is a widget, and the full-screen case is 2-5% of
-flushes. Against the Pi's measured copy cost of 0.0166µs a byte, 64KB is
-about 1.1ms of a 16665µs frame and these means are 1.6 to 3.7ms —
-affordable. A full screen is 20.5ms, which is impossible at 60Hz, and is
-exactly the case that needs no copy because the next frame overwrites the
-whole back buffer.
+| workload | flushes | mean bytes | mean coverage | ≤5.3% | ≤21% | >85% |
+|---|---|---|---|---|---|---|
+| `runtests -g` | 197 | 106356 | 8.7% | 74.6% | 19.8% | 4.1% |
+| `wmtest -n 40` | 122 | 66979 | 5.5% | 98.4% | 0.0% | 1.6% |
 
-**Two limits on reading that across.** The emu screen here is 1024×768
-where the Pi is 640×480, so widget-sized damage transfers directly (a
-128×96 widget is 49152 bytes on either) while the `>1MB` bucket holds
-flushes 2.6× larger in bytes than a Pi full screen. And both workloads
-are automated suites rather than a person using the machine; what makes
-that less worrying than it sounds is that the churn-heavy one —
-`wmtest -n 40`, which creates forty toplevels — is the *more* widget-sized
-of the two, so if these are biased it is toward overestimating damage.
+So the common case is a widget at a few percent of the screen, the mean
+copy is 1115 to 1770µs — **6.7 to 10.6% of a 16665µs frame** — and the
+flip case, damage past 85% of the screen, is **1.6 to 4.1% of flushes**.
+Both halves of the rule are affordable, which is what it needed.
+
+### Neither bytes nor coverage transfers, and that is why this was re-run
+
+The first version of this measured at 1024×768 and argued the buckets
+transferred because they are byte-denominated: a 128×96 widget is 49152
+bytes on any screen. The raspi3b-port session pointed out the other half
+— the rule's *decision* is about coverage, and the same rectangle is
+2.6× more of a 640×480 screen than of a 1024×768 one, so the flip case
+should fire more often on the Pi.
+
+Both arguments are half right, and the data says why. Shrinking the
+screen by 2.56× in area moved the mean damage by only 2.08× and 1.47×:
+
+| workload | 1024×768 | 640×480 | ratio | coverage then → now |
+|---|---|---|---|---|
+| `runtests -g` | 221236 B | 106356 B | 2.08× | 7.0% → 8.7% |
+| `wmtest -n 40` | 98404 B | 66979 B | 1.47× | 3.1% → 5.5% |
+
+Tk's damage scales with the screen **sub-linearly** — some of it is
+widget-sized and fixed, some of it is window-sized and follows the
+layout. So byte figures do not transfer (they fell), and coverage
+figures do not transfer either (they rose, in the direction predicted).
+The conclusion is duller and more useful than either position: **measure
+at the target geometry**, which is what the table above does.
+
+**One limit remains.** Both workloads are automated suites rather than a
+person using the machine. What makes that less worrying is that the
+churn-heavy one — `wmtest -n 40`, forty toplevels — is the *more*
+widget-sized of the two, so if these are biased it is toward
+overestimating damage.
 
 ### And a warning about every instrument in this section
 
