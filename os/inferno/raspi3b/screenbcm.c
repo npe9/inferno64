@@ -111,12 +111,25 @@ enum { Dbuf = 1 };
  * then FAIL with "TWO FRAMES STALE".  If it does not, the check is watching the
  * wrong region.
  *
+ * IT MUST DISABLE BOTH REPAIRS, and the first version did not.  Gating only
+ * the deferred repair in bcmpresent() left bcmpartial() running, and drawink is
+ * readback-heavy: every readback takes the pre-draw hook, eagerly repairs the
+ * whole stale region, and keeps the picture correct.  Measured -- the control
+ * run reported "eager-repairs 9 REPAIR DISABLED" and drawink passed all six
+ * checks, so the control proved nothing.
+ *
+ * The lesson is not that the check is blind.  Reading the counters instead of
+ * the verdict showed the control had disabled the wrong mechanism, and had I
+ * trusted the PASS I would have drawn a wrong conclusion (the check is
+ * watching the wrong region) from a correct observation (the control did not
+ * fire).
+ *
  * Data, not a conditional compile, and the same discipline as Tearprobe above
  * and as drawink's own -k flag, which leaves the cursor in place to prove its
  * other checks can fail.  Until this has been run both ways on hardware the
  * undrawn check is written rather than verified.
  */
-enum { Dbufnorepair = 0 };
+enum { Dbufnorepair = 1 };
 
 static uchar	*fbbase;	/* base of the whole (2*ScrY tall) allocation */
 static int	fbfront;	/* which half the GPU is scanning out */
@@ -884,7 +897,7 @@ static void
 bcmpartial(Rectangle r)
 {
 	USED(r);
-	if(fbbase == nil || !havedmgprev)
+	if(fbbase == nil || !havedmgprev || Dbufnorepair)
 		return;
 	fbcopy(frontaddr(), backaddr(), dmgprev);
 	havedmgprev = 0;

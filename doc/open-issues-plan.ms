@@ -6946,3 +6946,62 @@ whole run.  Verified by grep rather than assumed: nothing calls
 or
 .CW drawpresentstats()
 on an interval.
+.NH 2
+H1a.  The control arm did not fail, and the reason was the CONTROL, not the test
+.LP
+.CW "Dbufnorepair = 1"
+installed, drawink expected to report
+.CW "TWO FRAMES STALE" .
+All six checks passed.
+.PP
+The tempting conclusion \(em and the one a peer had warned about in advance \(em
+is that the undrawn-region check is watching the wrong region.  The counters said
+otherwise:
+.P1
+SCREEN flip 15 failed 0 repair 7070404 bytes in 9 rects
+                 eager-repairs 9 REPAIR DISABLED (control run)
+.P2
+.B "eager-repairs 9, under REPAIR DISABLED."
+The flag gated only the DEFERRED repair in
+.CW bcmpresent()
+and left
+.CW bcmpartial()
+running \(em and drawink is readback-heavy, so every readback took the pre-draw
+hook, eagerly repaired the whole stale region, and kept the picture correct.  The
+control disabled a path that was not doing the work.
+.PP
+.B "Had I trusted the PASS I would have recorded a false finding about the TEST"
+instead of a true one about the control.  Reading the counters rather than the
+verdict is what separated them.  Fixed by gating both paths.
+.PP
+.B "This is a fourth shape, and it is the one that cannot be caught by staring."
+.IP \(bu
+A diagnostic that does not exist (kencc never prints
+.CW "error:" ).
+.IP \(bu
+One that exists but is not consulted (kmesg's missing stamp check).
+.IP \(bu
+One that exists, is consulted, and was deliberately silenced
+.CW ( -Wno-implicit-function-declaration ).
+.IP \(bu
+And this: a CONTROL that perturbs something other than the mechanism under
+test.  The check was fine, the switch was in the wrong path, and a PASS was the
+honest output of a correct test.  The first three can be found by reading the
+check.  This one can only be found by a counter that says the work is still
+happening.
+.PP
+Two tests for it, the second from the peer and better than mine.  Ask which code
+path actually produces the behaviour you are trying to break, and confirm the
+switch is in THAT path.  And
+.B "instrument the mechanism you are disabling so that \(lqdisabled\(rq is observable rather than assumed"
+\(em
+.CW "eager-repairs 9"
+beside a
+.CW "REPAIR DISABLED"
+banner is a self-contradicting line, and that contradiction is the whole reason
+it was findable.
+.PP
+.B "It is also the mirror of the error the peer spent the day retracting."
+They drew a conclusion from a PREDICATE that could not fire; I nearly drew a
+conclusion about a TEST from a CONTROL that could not fire.  Same cause, and the
+thing that could not fire was the control rather than the counter.
