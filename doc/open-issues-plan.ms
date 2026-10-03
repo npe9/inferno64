@@ -5630,3 +5630,59 @@ The damage histogram off a real
 session for the coverage ratio to 1228800 bytes, and whether an interactive
 session looks like the two automated suites at all.  That limit has been flagged
 since the first measurement and cannot be removed from the other side.
+.PP
+.B "The partial-overwrite counter is written."
+.CW os/inferno/port/devdraw.c
+now classifies every client draw operation that reaches the screen and counts
+the ones that can break the post-draw repair.
+.CW fulloverwrite()
+is memdraw's own criterion for its opaque path \(em
+.CW "mask == memopaque" ,
+which is what sets
+.CW Fullmask
+in
+.CW libmemdraw/draw.c ,
+and a source carrying no
+.CW Falpha ,
+and
+.CW op
+of
+.CW SoverD
+or
+.CW S .
+The seven
+.CW dstflush()
+call sites are classified by command:
+.P1
+'d' draw     fulloverwrite(src, mask, op)
+'y','Y'      FULL -- writes the given pixels over all of r
+'x','s'      partial -- the glyph is a mask
+'e','E'      partial -- ellipse, spans only
+'l','L'      partial -- line, spans only
+'p','P'      partial -- poly, spans only
+.P2
+.PP
+.CW npartialhit
+is the number that decides it: a partial operation whose rectangle, in SCREEN
+coordinates after the layer walk, meets
+.CW prevpresent
+\(em the region where the back buffer is stale.  It is an upper bound twice
+over.
+.CW fulloverwrite()
+does not recognise a 1x1 replicated all-ones mask, which is opaque in fact, and
+the count ignores that an opaque background fill earlier in the SAME present has
+usually already covered the region, which is the normal widget-repaint order.
+Both errors run toward over-counting, which is the direction that cannot hide a
+correctness problem.
+.PP
+It needed a fourth argument on
+.CW dstflush() ,
+and that is the whole interface change \(em no hint, no new command, nothing
+from libtk.  Compiled clean with
+.CW "7c -wFV"
+and with
+.CW 6c
+for pc64, since the file is shared by every board.  Not built into a kernel: the
+board is scoring
+.CW b461ec5f1
+alone.

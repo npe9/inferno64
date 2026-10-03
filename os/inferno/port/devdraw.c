@@ -504,6 +504,61 @@ drawpresent(void)
 	presentflushes = 0;
 }
 
+/*
+ * Does this operation FULLY OVERWRITE its damage rectangle?
+ *
+ * It matters because the deferred repair happens at 'v', AFTER the frame is
+ * drawn, and so excludes damage(N) from the copy.  Anything inside damage(N)
+ * that the frame did not actually write keeps the stale frame-N-2 pixels the
+ * back buffer held, and is shown.  See the H1a section in the plan.
+ *
+ * This is memdraw's own criterion for its opaque path (libmemdraw/draw.c: mask
+ * == memopaque sets Fullmask, and the source must carry no alpha).  A 1x1
+ * replicated all-ones mask is opaque too and is NOT recognised here, which
+ * makes the partial count an UPPER bound -- the direction that cannot hide a
+ * correctness problem.
+ */
+static int
+fulloverwrite(Memimage *src, Memimage *mask, int op)
+{
+	if(op != SoverD && op != S)
+		return 0;
+	if(mask != memopaque)
+		return 0;
+	if(src->flags & Falpha)
+		return 0;
+	return 1;
+}
+
+/*
+ * Counts, not a conclusion.  npartialhit is the one that decides whether the
+ * deferred scheme needs any per-operation machinery: a partial-overwrite
+ * operation landing in the region where the back buffer is stale.  It is an
+ * upper bound twice over -- fulloverwrite() is conservative, and this ignores
+ * that an opaque background fill earlier in the SAME present has usually
+ * already covered the region, which is the normal widget-repaint order.  Zero
+ * means the scheme is correct with nothing added.
+ */
+uvlong	nopfull, noppartial, npartialhit, npresentop;
+
+static void
+chargeop(Rectangle r, int full)
+{
+	Rectangle in;
+
+	npresentop++;
+	if(full){
+		nopfull++;
+		return;
+	}
+	noppartial++;
+	if(!havepresent)
+		return;
+	in = prevpresent;
+	if(rectclip(&in, r))
+		npartialhit++;
+}
+
 void
 drawpresentstats(void)
 {
@@ -514,6 +569,8 @@ drawpresentstats(void)
 	print("DRAW dbufpix eager %llud defer %llud overlap %llud"
 		" samebb %llud nestbb %llud\n",
 		presenteager, presentdefer, presentoverlap, nsamebb, nnestbb);
+	print("DRAW ops %llud full %llud partial %llud partial-in-stale %llud\n",
+		npresentop, nopfull, noppartial, npartialhit);
 	print("DRAW flushper");
 	for(i = 0; i < nelem(nflushper); i++)
 		print(" %d:%llud", i, nflushper[i]);
@@ -567,12 +624,13 @@ addflush(Rectangle r)
 
 static
 void
-dstflush(int dstid, Memimage *dst, Rectangle r)
+dstflush(int dstid, Memimage *dst, Rectangle r, int full)
 {
 	Memlayer *l;
 
 	if(dstid == 0){
 		combinerect(&flushrect, r);
+		chargeop(r, full);
 		return;
 	}
 	if(screenimage == nil || dst == nil || (l = dst->layer) == nil)
@@ -583,6 +641,7 @@ dstflush(int dstid, Memimage *dst, Rectangle r)
 		r = rectaddpt(r, l->delta);
 		l = l->screen->image->layer;
 	}while(l);
+	chargeop(r, full);	/* screen coordinates, after the layer walk */
 	addflush(r);
 }
 
@@ -1752,7 +1811,7 @@ drawmesg(Client *client, void *av, int n)
 			drawpoint(&q, a+37);
 			op = drawclientop(client);
 			memdraw(dst, r, src, p, mask, q, op);
-			dstflush(dstid, dst, r);
+			dstflush(dstid, dst, r, fulloverwrite(src, mask, op));
 			continue;
 
 		/* toggle debugging: 'D' val[1] */
@@ -1795,7 +1854,7 @@ drawmesg(Client *client, void *av, int n)
 				memarc(dst, p, e0, e1, c, src, sp, ox, oy, op);
 			}else
 				memellipse(dst, p, e0, e1, c, src, sp, op);
-			dstflush(dstid, dst, Rect(p.x-e0-j, p.y-e1-j, p.x+e0+j+1, p.y+e1+j+1));
+			dstflush(dstid, dst, Rect(p.x-e0-j, p.y-e1-j, p.x+e0+j+1, p.y+e1+j+1), 0);
 			continue;
 
 		/* free: 'f' id[4] */
@@ -1896,7 +1955,7 @@ drawmesg(Client *client, void *av, int n)
 			if(dstid==0 || dst->layer!=nil){
 				/* BUG: this is terribly inefficient: update maximal containing rect*/
 				r = memlinebbox(p, q, e0, e1, j);
-				dstflush(dstid, dst, insetrect(r, -(1+1+j)));
+				dstflush(dstid, dst, insetrect(r, -(1+1+j)), 0);
 			}
 			continue;
 
@@ -2068,12 +2127,12 @@ drawmesg(Client *client, void *av, int n)
 						combinerect(&r, Rect(p.x-esize, p.y-esize, p.x+esize+1, p.y+esize+1));
 					}
 					if(rectclip(&r, dst->clipr))		/* should perhaps be an arg to dstflush */
-						dstflush(dstid, dst, r);
+						dstflush(dstid, dst, r, 0);
 				}
 				pp[y] = p;
 			}
 			if(y == 1)
-				dstflush(dstid, dst, Rect(p.x-esize, p.y-esize, p.x+esize+1, p.y+esize+1));
+				dstflush(dstid, dst, Rect(p.x-esize, p.y-esize, p.x+esize+1, p.y+esize+1), 0);
 			op = drawclientop(client);
 			if(*a == 'p')
 				mempoly(dst, pp, ni, e0, e1, j, src, sp, op);
@@ -2171,7 +2230,7 @@ drawmesg(Client *client, void *av, int n)
 			}
 			dst->clipr = clipr;
 			p.y -= font->ascent;
-			dstflush(dstid, dst, Rect(p.x, p.y, q.x, p.y+Dy(font->image->r)));
+			dstflush(dstid, dst, Rect(p.x, p.y, q.x, p.y+Dy(font->image->r)), 0);
 			continue;
 
 		/* use public screen: 'S' id[4] chan[4] */
@@ -2258,7 +2317,7 @@ drawmesg(Client *client, void *av, int n)
 			y = memload(dst, r, a+m, n-m, *a=='Y');
 			if(y < 0)
 				error("bad writeimage call");
-			dstflush(dstid, dst, r);
+			dstflush(dstid, dst, r, 1);
 			m += y;
 			continue;
 		}
