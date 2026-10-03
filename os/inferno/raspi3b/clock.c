@@ -262,6 +262,7 @@ extern int smpstart;
  */
 static ulong	vmheldticks;	/* how long one process has held the VM */
 static ulong	maxvmheld;	/* the longest hold seen, for calibration */
+ulong		nvmheld;	/* how MANY long holds; the print stops at 16 */
 
 /*
  * VMHELD reports on its own floor and not on livelockticks, because one knob
@@ -296,6 +297,18 @@ livelockcheck(Ureg *u)
 		 * gets, and a lower bound cannot answer it.
 		 */
 		if(vmheldticks >= Vmheldfloor){
+			/*
+			 * COUNT every one; print only the first sixteen.
+			 *
+			 * The print bound is right -- a console full of these
+			 * loses whatever else happened -- but it also hid the
+			 * RATE, which is the number that matters: sixteen
+			 * holds of half a second are nothing, and sixteen
+			 * thousand are a board that never finishes anything.
+			 * One is in the ring, the other is in a variable that
+			 * tools/jtag/vmheld reads.
+			 */
+			nvmheld++;
 			if(vmheldticks > maxvmheld)
 				maxvmheld = vmheldticks;
 			if(nreleased++ < 16)

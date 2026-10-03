@@ -77,6 +77,11 @@ A_BEAT=`sym disbeat`
 A_PFULL=`sym npollfull`
 A_PCHAR=`sym npollchar`
 A_REACH=`sym disreachcount`
+A_NHELD=`sym nvmheld`
+A_GCSW=`sym gcsweeps`
+A_GCBRK=`sym gcbroken`
+A_GCBUSY=`sym gcbusy`
+A_GCIDLE=`sym gcidle`
 
 for v in A_TICKS A_MAX A_KPC A_DISPC; do
 	eval a=\$$v
@@ -124,6 +129,11 @@ trap 'rm -f "$TMP"' 0 1 2 15
 	-c "echo \"VMHELD-PFULL\"; mdw ${A_PFULL:-0} 1" \
 	-c "echo \"VMHELD-PCHAR\"; mdw ${A_PCHAR:-0} 1" \
 	-c "echo \"VMHELD-REACH\"; mdw ${A_REACH:-0} 1" \
+	-c "echo \"VMHELD-NHELD\"; mdw ${A_NHELD:-0} 1" \
+	-c "echo \"VMHELD-GCSW\"; mdw ${A_GCSW:-0} 1" \
+	-c "echo \"VMHELD-GCBRK\"; mdw ${A_GCBRK:-0} 1" \
+	-c "echo \"VMHELD-GCBUSY\"; mdw ${A_GCBUSY:-0} 2" \
+	-c "echo \"VMHELD-GCIDLE\"; mdw ${A_GCIDLE:-0} 2" \
 	-c "echo \"VMHELD-HTEXT\"; mdb ${A_HTEXT:-0} 16" \
 	-c "resume; exit" ) >"$TMP" 2>&1
 
@@ -232,6 +242,36 @@ fi
 
 if [ -n "$A_REACH" ]; then
 	echo "vmheld: progpid() reached `dec \`val VMHELD-REACH\`` times (devprog's race window)"
+fi
+
+#
+# The GARBAGE COLLECTOR, which is where the long holds turned out to be:
+# rungc+128 and rungc+632 appeared as the last kernel pc of holds lasting
+# 53 to 91 ticks.  nvmheld counts ALL of them (the console print stops at
+# sixteen, which hid the rate), and gcbusy/gcidle say how much collecting
+# happened with work pending versus on an idle machine.
+#
+#
+# Plain variables, not nested backticks.  The first version wrote
+# `dec \`val X\`` inside a double-quoted echo and the two levels of
+# substitution did not survive: gc busy and gc idle printed as empty
+# strings, which reads as "zero" and is not.
+#
+if [ -n "$A_NHELD" ]; then
+	nheld=`val VMHELD-NHELD`
+	echo "vmheld: long VM holds since boot: `dec $nheld`"
+fi
+if [ -n "$A_GCSW" ]; then
+	gcsw=`val VMHELD-GCSW`
+	gcbrk=`val VMHELD-GCBRK`
+	gcbusy=`val2 VMHELD-GCBUSY`
+	gcidle=`val2 VMHELD-GCIDLE`
+	echo "vmheld: gc sweeps `dec $gcsw`, chains found BROKEN `dec $gcbrk`"
+	echo "vmheld: gc busy `join64 "$gcbusy"`, gc idle `join64 "$gcidle"`"
+	if [ "`dec $gcbrk`" != 0 ]; then
+		echo "vmheld:   a broken chain makes gcsweep abandon its sweep"
+		echo "vmheld:   (base = nil, return) -- see libinterp/gc.c"
+	fi
 fi
 
 k=`join64 "$kpc"`
