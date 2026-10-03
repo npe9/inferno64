@@ -1955,17 +1955,25 @@ incidental flushes in with real presents.
 `INFERNO_FRAME_DAMAGE=n` accumulates damage between `'v'`s. On
 `runtests -g` at 640×480:
 
-| boundary | count | eager | deferred | saving |
-|---|---|---|---|---|
-| per flush | 197 | 20952256 B | 3084216 B | 84.94% |
-| per `'v'` frame | 196 | 20880624 B | 3084216 B | 84.89% |
+| workload | boundary | count | eager | deferred | saving | per frame |
+|---|---|---|---|---|---|---|
+| `runtests -g` | per flush | 197 | 20952256 B | 3084216 B | 84.9% | 1770→261µs |
+| `runtests -g` | per `'v'` | 197 | 20952256 B | 3084216 B | 84.9% | 1770→261µs |
+| `wmtest -n 40` | per flush | 122 | 8171520 B | 1182672 B | 84.9% | 1115→161µs |
+| `wmtest -n 40` | per `'v'` | 122 | 8171520 B | 1182672 B | 84.9% | 1115→161µs |
 
-**`deferred` is identical to the byte**, and `eager` differs by 71632 —
-one damage region, matching 197 flushes against 196 frames. So on this
-workload Tk emits one `'v'` per update: a flush *is* a frame, there is no
-intra-frame fragmentation to coalesce, and the upper bound turns out to
-be the value. Measured at the right boundary rather than assumed to be
-the same.
+The two boundaries agree **exactly** — same counts, same bytes. So on
+these workloads Tk emits one `'v'` per update: a flush *is* a frame,
+there is no intra-frame fragmentation to coalesce, and the upper bound
+turns out to be the value. Measured at the right boundary rather than
+assumed to be the same.
+
+(An earlier version of this table reported 196 frames against 197
+flushes and explained the 71632-byte gap as one damage region. That was a
+line sampled while the run was still going, before the last frame
+closed. The final counts are equal, which is a cleaner result than the
+one it replaces — and a reminder that a cumulative counter read mid-run
+is not the total.)
 
 Two cross-checks had already pointed that way. Strict growth —
 `damage(N-1)` *properly* inside `damage(N)`, the refinement a present
