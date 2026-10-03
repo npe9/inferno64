@@ -2220,3 +2220,24 @@ allocator, a head, a tail and a count, with no extent field and nothing
 accumulating one. An earlier draft of `doc/draw-hardware-seam.ms` claimed
 otherwise and was corrected: it is an opportunity the description makes
 cheap, not a property it already has.
+
+**And checked before building it: there is nothing to amortise.**
+`tkscenebounds()` has exactly one caller — the stats block in
+`tkwalkflush()` — which calls it once per tree and then
+`tkscenefree(s)`es the tree two lines later. A cached extent would be
+written once, read once, and freed; a field accumulated during
+construction would have to be maintained at every one of the dozen
+`tkscene*()` constructors, where omitting one silently *understates* the
+box. So the stored property is not a pending optimisation, it is an
+optimisation with no consumer, and it stays unbuilt until something asks
+the scene for its extent without immediately discarding the scene.
+
+The cost that *is* real, and is already measured in place: the stats
+block walks the node list **twice** per tree on the repaint path, for
+figures nothing consumes yet — once for `nodehasbox` counts and once for
+the bounds. Merging them is a single loop, but the measurement says the
+whole block moves the node path's per-widget slope by a few tenths of a
+percent, and the direct path — which it cannot touch — moved by the same
+amount over the same runs. It is below the rig's drift, so merging two
+walks that are both below the noise floor would be a change whose effect
+could not be shown.
