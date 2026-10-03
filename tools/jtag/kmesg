@@ -17,11 +17,56 @@
 set -u
 ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 N=${1:-40}
-ELF=$ROOT/os/inferno/raspi3b/iraspi3b
+#
+# Overridable so the stamp check below can be SHOWN to fire: point ELF at a
+# kernel the board is not running and this must refuse with exit 3.  A check
+# that has only ever been seen to pass is not a check.
+#
+ELF=${ELF:-$ROOT/os/inferno/raspi3b/iraspi3b}
 OUT=${OUT:-/tmp/kmesg.bin}
 
 K=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" 2>/dev/null | awk '$3=="kmesg"{print $1}'`
 [ -n "$K" ] || { echo "kmesg: no kmesg symbol in $ELF" >&2; exit 2; }
+
+#
+# THE BUILD STAMP, which this tool did not check and its siblings all do.
+#
+# vmheld, kstack, where and wedgediag compare the board's kerndate against
+# kernel8.img and REFUSE on mismatch.  This read the ring at an address taken
+# from the ELF with no such check -- and every symbol MOVES when the kernel is
+# relinked.  Measured across two links of one tree:
+#
+#	kmesg       0x003138e0 -> 0x00314c20   (+0x1340)
+#	kerndate    0x001d8e18 -> 0x001d9fc8   (+0x11b0)
+#
+# 4928 bytes past the ring is still inside the kernel's data region, so
+# dump_image SUCCEEDS and hands back real memory that is not the ring.  The
+# only sanity check below is a non-zero count word, which at a wrong address
+# is arbitrary.  So a stale ELF produced plausible garbage with exit 0, and a
+# caller that branches on the TEXT got the wrong answer silently: the wedge
+# acceptance batch greps this output for DIS-WEDGED to tell a wedge from mere
+# slowness, so a relink mid-batch would have scored every wedge as SLOW -- in
+# the one number the batch existed to produce.
+#
+# Exit 3, distinct from 1 (the debugger said nothing) and 2 (the ring reads
+# empty), so a caller can tell "wrong kernel" from "no answer".
+# tools/jtag/boot.sh is the reference for consuming this: redirect, test $?,
+# report kmesg's own stderr separately, and only then conclude anything about
+# the board.
+#
+KDADDR=`python3 "$ROOT/tools/jtag/ksyms" "$ELF" 2>/dev/null |
+	awk '$3=="kerndate"{print $1}'`
+IMG=${IMG:-$ROOT/os/inferno/raspi3b/kernel8.img}
+WANT=
+if [ -n "$KDADDR" ] && [ -r "$IMG" ]; then
+	WANT=`python3 - "$IMG" "$KDADDR" <<'PYEOF'
+import sys
+img, addr = sys.argv[1], int(sys.argv[2], 16)
+d = open(img, "rb").read()
+o = addr - 0x80000
+print(int.from_bytes(d[o:o+4], "little") if 0 <= o <= len(d)-4 else "")
+PYEOF`
+fi
 
 #
 # The dump, retried, because it intermittently reads as all zeros.
@@ -46,7 +91,25 @@ while :; do
 		-f "$ROOT/tools/jtag/raspi3b.cfg" \
 		-c init -c 'targets bcm2837.cpu0' -c halt \
 		-c "dump_image $OUT $K 16400" \
-		-c resume -c shutdown >/dev/null 2>&1
+		-c "echo KM-STAMP" -c "mdw ${KDADDR:-0} 1" \
+		-c resume -c shutdown >"$OUT.log" 2>&1
+	#
+	# Same session as the dump: one attach, and the stamp is read from the
+	# same halt as the ring rather than from a second one that could see a
+	# different kernel.
+	#
+	if [ -n "$WANT" ]; then
+		got=`awk '/KM-STAMP/{s=1;next} s&&/^0x/{sub(/^[^:]*: */,"");print $1;exit}' "$OUT.log"`
+		if [ -n "$got" ]; then
+			gotd=`python3 -c "print(int('$got',16))" 2>/dev/null`
+			if [ "$gotd" != "$WANT" ]; then
+				echo "kmesg: $ELF does NOT describe the running kernel" >&2
+				echo "kmesg:   board stamp $gotd, $IMG says $WANT" >&2
+				echo "kmesg:   the ring address would be wrong; refusing" >&2
+				exit 3
+			fi
+		fi
+	fi
 	if [ ! -s "$OUT" ]; then
 		echo "kmesg: nothing came back from the debugger" >&2
 		exit 1
