@@ -551,7 +551,17 @@ flushmemscreen(Rectangle r)
 			sp += stride;
 			dp += stride;
 		}
-		nflushbyte += (uvlong)Dy(r) * nb;
+		/*
+		 * NOT counted again here.  nb is Dx(r)*ScrPix, so Dy(r)*nb is
+		 * the same quantity the counter already took at the top of
+		 * this function, and every "bytes" figure this driver has ever
+		 * printed was exactly DOUBLE the damage.  Found by the damage
+		 * histogram disagreeing with it: three flushes totalling
+		 * 2457600 bytes, every one of them in the 256KB-1MB bucket,
+		 * which cannot both be true.  doc/open-issues-plan.ms H1a
+		 * proposes reading the damage distribution off this counter,
+		 * so a factor of two in it is not cosmetic.
+		 */
 	}
 
 	/* Long Tk update holds the Dis VM; keep soft timers alive. */
