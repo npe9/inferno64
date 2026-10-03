@@ -763,6 +763,26 @@ an hour: the same as the four-vCPU guest on the one-processor host.
 So there are two problems: the lost CR2 on Bochs's application
 processor, and a host that stops when a VMX guest has four vCPUs.  M3
 on VMX is still open.
+.IP "Phase 5: a four-vCPU guest on one processor (SVM, QEMU TCG)." 4
+The four-processor guest on a one-processor host stopped after its
+first lines, the vCPU heartbeat with it.  The QEMU monitor
+.CW VMHOST_MON= , (
+new) showed the processor in the guest at one instruction with the
+guest's interrupts off, and the host's timer interrupt pending in its
+local APIC's IRR and never taken.  The VMCB left V_INTR_MASKING clear,
+under which a physical interrupt is masked by the guest's IF: a guest
+spinning with interrupts off \(en Linux waiting for an application
+processor to come up \(en never exited, and with one processor that
+application processor's vCPU never ran.  With more processors it ran
+elsewhere, which is why M3 passed.  V_INTR_MASKING is set now and
+.CW svmrun
+executes VMRUN with IF set under a clear GIF
+.CW "CLGI; STI; VMRUN; CLI; STGI" ), (
+as KVM does, so a host interrupt always takes the guest out; the guest
+also gets a TPR of its own rather than writing the host's.  The same
+guest on the one-processor host then ran M3's test through: four
+processors online, the eight workers done, every processor taking
+timer, rescheduling, function-call and TLB-shootdown interrupts.
 .IP "Phase 9: M8 on SVM (QEMU)." 4
 .CW pc/vmvirtio.c :
 virtio functions of the hypervisor's own on the guest's PCI bus, the

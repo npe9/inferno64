@@ -978,7 +978,9 @@ TEXT vmrestore(SB), 1, $-4
  * page and the guest's from its VMCB, and back again after the exit.
  * GS base is m in this kernel, so nothing between the two VMLOADs may
  * use it -- nor up or m in R14 and R15, which hold the guest's -- and
- * the global interrupt flag is clear across the whole sequence.
+ * the global interrupt flag is clear across the whole sequence.  IF is
+ * set for VMRUN alone: with V_INTR_MASKING it is what lets a physical
+ * interrupt take the guest out.
  *
  * The Svmregs block holds the guest's general registers but RAX and
  * RSP (those live in the VMCB), and the host's R12-R15 at 0x70-0x88,
@@ -1014,7 +1016,9 @@ TEXT svmrun(SB), 1, $-4
 	MOVQ	0x60(BP), R14
 	MOVQ	0x68(BP), R15
 	MOVQ	0x28(BP), BP
+	STI				/* GIF is clear: taken in the guest, as exits (V_INTR_MASKING) */
 	BYTE	$0x0f; BYTE $0x01; BYTE $0xd8	/* VMRUN, RAX = guest VMCB */
+	CLI
 	PUSHQ	BP			/* the guest's; the block is now at 24(SP) */
 	MOVQ	24(SP), BP
 	MOVQ	BX, 0x00(BP)

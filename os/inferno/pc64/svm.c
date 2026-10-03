@@ -251,6 +251,16 @@ svmvcpuinit(Vcpu *v)
 	V32(x, Ivec4) = IntVMRUN|IntVMMCALL;	/* VMRUN must be intercepted */
 	V64(x, Iopm) = PADDR(iopm);
 	V64(x, Msrpm) = PADDR(msrpm);
+	/*
+	 * V_INTR_MASKING: physical interrupts go by the host's IF, which
+	 * svmrun sets under a clear GIF, so a host interrupt always takes
+	 * the guest out -- not, as without it, only when the guest's own
+	 * IF allows, which let a guest spinning with interrupts off keep
+	 * a processor from the host for good (with one processor, from the
+	 * vCPU it was waiting for).  It also gives the guest a TPR (CR8) of
+	 * its own instead of the host's.
+	 */
+	V64(x, Vintr) = 1<<24;
 	V32(x, Asid) = 1;
 	V8(x, Tlbctl) = 1;			/* flush everything on VMRUN */
 	V64(x, Npenable) = 1;
