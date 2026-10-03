@@ -19,6 +19,11 @@
 # rest started by the SBI's hart_start; all come online, eight busy
 # workers finish, every hart accounts time and takes IPIs.
 #
+# And M4 on RISC-V: virtiommu (rviommuinit.b) under QEMU's
+# riscv-iommu-pci with an edu device: edu in a domain of its own copies
+# through it, and a copy to an address the domain does not map faults
+# and leaves its target untouched.
+#
 # With CHECKRV_AIA=1 every run is on QEMU's AIA machine instead
 # (virt,aia=aplic-imsic,aia-guests=7): the host drives its APLIC and
 # IMSIC, and the guests get AIA -- an IMSIC guest file a hart, in
@@ -26,7 +31,7 @@
 # into it.
 #
 # usage: scripts/check-rv.sh
-# needs: os/inferno/virt/ivirtvm, ivirtlinux and ivirtsmp (mk CONF=...
+# needs: os/inferno/virt/ivirtvm, ivirtlinux, ivirtsmp and ivirtiommu (mk CONF=...
 # in os/inferno/virt), .guest/rv (scripts/mklinuxguest.sh),
 # qemu-system-riscv64
 ROOT=`cd \`dirname "$0"\`/.. && pwd`
@@ -126,6 +131,27 @@ if [ $ok = 1 ]; then
 else
 	echo "check-rv: M3 ($TAG, 4 harts): FAIL"
 	tail -20 "$LOG" | sed 's/^/	/'
+	fail=1
+fi
+K=$ROOT/os/inferno/virt/ivirtiommu
+[ -f "$K" ] || { echo "check-rv: no $K; mk CONF=virtiommu in os/inferno/virt first" >&2; exit 1; }
+: >"$SER"
+timeout 120 qemu-system-riscv64 -M $MACH -m 256 -display none -bios none -kernel "$K" \
+	-device riscv-iommu-pci -device edu \
+	-monitor none -serial file:"$SER" </dev/null >/dev/null 2>&1 &
+n=0
+until tr -d '\r' <"$SER" >"$LOG"; grep -q 'IOMMUTEST: end\|panic' "$LOG"; do
+	sleep 2
+	n=`expr $n + 1`
+	[ $n -gt 55 ] && break
+done
+pkill -f "qemu-system-riscv6[4].*$K" 2>/dev/null
+tr -d '\r' <"$SER" >"$LOG"
+grep -a 'rviommu:\|IOMMUTEST: \(IOMMU\|domain /\)\|^0 00:\|panic' "$LOG" | sed 's/^/	/'
+if grep -q 'IOMMU-DMA-MAPPED-OK' "$LOG" && grep -q 'IOMMU-DMA-BLOCKED-OK' "$LOG" && ! grep -q 'IOMMU-FAIL' "$LOG"; then
+	echo "check-rv: M4 ($TAG, riscv-iommu): pass"
+else
+	echo "check-rv: M4 ($TAG, riscv-iommu): FAIL"
 	fail=1
 fi
 exit $fail

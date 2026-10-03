@@ -1174,6 +1174,43 @@ middle, where the guest's tty echoed it as
 .CW ^[[1;1R
 into the output.  The command is now typed after the answer, or three
 seconds after the marker if the shell asks nothing.
+.IP "Phase 15: M4 on RISC-V, the RISC-V IOMMU (QEMU riscv-iommu-pci, TCG)." 4
+.CW virt/rviommu.c
+is the portable IOMMU layer's second backend.  The device directory is
+two levels deep, indexed by requester ID; every function behind the
+IOMMU has a device context, valid with both stages bare while in the
+host domain, and a domain is a second-stage table in Sv39x4 \(en the
+format of a guest's own G stage
+.CW vmrv.c ), (
+tagged by its GSCID.  Commands (IODIR to drop a cached context,
+IOTINVAL.GVMA a domain's translations, IOFENCE.C to wait) go through
+the command queue and faults come back through the fault queue, both
+polled.  The register layout and the rules for changing the directory's
+mode (only by way of Off or Bare) are from QEMU's own source.  The
+IOMMU is a PCI function, found at link time, so
+.CW pciinit
+now scans once, whoever calls it first.  The same edu test as VT-d's,
+.CW rviommuinit.b ,
+in
+.CW virtiommu :
+.DS
+.ft CW
+rviommu: PCI.0.1.0 translating, 64-byte device contexts
+IOMMUTEST: domain /dev/iommu/0 devices 0000:00:02.0
+IOMMUTEST: IOMMU-DMA-MAPPED-OK 256 bytes A -> edu -> B through IOVA 0x100000
+0 00:02.0 write 0x3783000 reason 0x17 second-stage (guest) page fault
+IOMMUTEST: IOMMU-DMA-BLOCKED-OK DMA to host pa 83783000 faulted and page B is untouched
+.ft
+.DE
+(edu masks its DMA addresses to 28 bits, hence the fault's address.)
+Found on the way: riscv64's
+.CW jc
+passes an int vararg after a vlong one wrongly \(en the fault lines
+stopped at "reason" \(en so
+.CW #Q
+formats its numbers as 64 bits now; the compiler is not fixed yet.
+.CW scripts/check-rv.sh
+runs it as its last stage.
 .IP "Phase 15: AIA on RISC-V (QEMU virt,aia=aplic-imsic, TCG)." 4
 The host first: the riscv64 port drives AIA where the device tree has
 it instead of a PLIC \(en the root APLIC domain in MSI mode, every
@@ -1246,6 +1283,7 @@ that disk alone and linuxguest.root=vda mounts it from the initramfs
 and switches to it.  Next: M3 on VMX (Bochs with more than one
 processor), where with the Bochs fix the remaining fault is HLT exits
 read with IF clear and an all-zero exit while vCPUs share a processor;
-the MTTCG faults; the RISC-V IOMMU and a multiprocessor riscv64 host;
+the MTTCG faults; a device given to a RISC-V guest through the RISC-V
+IOMMU (its domain the guest's G stage); a multiprocessor riscv64 host;
 and the workstation (phase 13).  On QEMU, check-vm (SVM) and check-rv,
 on both the PLIC and the AIA machine, pass every stage.

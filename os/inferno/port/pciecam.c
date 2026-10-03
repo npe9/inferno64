@@ -106,15 +106,22 @@ pciintx(Pcidev *p)
 	return PCIINTXBASE + ((BUSDNO(p->tbdf) + pin - 1) & 3);
 }
 
-/* called from archvirt.c's pciarchinit() */
+/*
+ * Called from archvirt.c's pciarchinit(), and earlier by a driver that
+ * needs the bus before then (the RISC-V IOMMU, at link time): once.
+ */
 void
 pciinit(void)
 {
+	static int done;
 	Pcidev *p;
 	uvlong mema;
 	ulong ioa;
 	int i;
 
+	if(done)
+		return;
+	done = 1;
 	fmtinstall('T', tbdffmt);
 	pcimaxdno = 31;
 

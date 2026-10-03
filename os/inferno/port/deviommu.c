@@ -124,9 +124,10 @@ faultlist(char *p, char *e, Iodom *d)
 		if(d != nil && !domhas(d, f.sid))
 			continue;
 		iunlock(&faultlk);
-		p = seprint(p, e, "%llud %.2x:%.2x.%x %s %#llux reason %#x %s\n",
-			f.seq, f.sid>>8, (f.sid>>3)&0x1F, f.sid&7, f.write ? "write" : "read",
-			f.addr, f.reason, iommuops->reasonname(f.reason));
+		/* every number 64 bits: riscv64's jc passes an int after a vlong wrongly */
+		p = seprint(p, e, "%llud %.2llux:%.2llux.%llux %s %#llux reason %#llux %s\n",
+			f.seq, (uvlong)(f.sid>>8), (uvlong)((f.sid>>3)&0x1F), (uvlong)(f.sid&7), f.write ? "write" : "read",
+			f.addr, (uvlong)f.reason, iommuops->reasonname(f.reason));
 		ilock(&faultlk);
 	}
 	iunlock(&faultlk);
