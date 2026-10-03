@@ -3971,3 +3971,98 @@ error small against what is being measured.
 .PP
 It also imposes a rule the file now states: NOTHING may call the mailbox from an
 interrupt handler.
+.NH 2
+H4 update.  CAUGHT, and it is not efs, not the host, and not memory
+.LP
+The hang reproduced on the third run of the second batch, and the instrument
+built for it answered the question it was built to answer.
+.PP
+.B "A confound first, recorded before the result was read."
+Between 23:58 and 00:02 I ran three kernel links on THIS host while writing the
+tear probe, and this host serves the board's styx mount.
+.CW styxd.sh
+records that a server busy sending the board a kernel does not answer promptly,
+so a slow run during my builds could have been mine.  It was not:
+.CW wedgediag 's
+first question is whether the HOST answers a NEW styx handshake, and it
+answered in 0.00s on the first attempt, with the server process blocked and its
+CPU time unchanged across five seconds.  The host was healthy.  The rule for
+the next batch stands anyway \(em nothing heavy on this host while one runs.
+.PP
+.B "The board is WEDGED, not reset."
+Its build stamp reads correctly over JTAG
+.CW ( 1790998142 ,
+the installed build) so kernel memory is readable and no reboot happened, and
+yet the command poller does not answer.
+.PP
+.B "What the dump says, with every name resolved against the build that was running."
+That mattered:
+.CW where
+REFUSED to print names because the host's kernel had been rebuilt since the
+install \(em item C1's fix doing its job \(em so the symbols came from a kernel
+rebuilt from the exact commit the card holds.
+.P1
+55 processes: 38 Queueing, 15 Wakeme, 2 Running
+cpu0                 idle+4
+31 of the Queueing   sched <- iyield <- vmachine
+one Running (dis)    in Sys_readn, lpc iprintcanlock+36
+one Running (wlrx)   wlreadpkt -> sleep, lpc qlock+140
+many waiters         qpc tcpkick+84
+.P2
+.CW iyield
+parks a process on the Dis VM's idle queue, so those 31 are queued for the
+single-threaded VM, which is ordinary.  What is not ordinary is 38 of them
+queued while cpu0 is IDLE: nothing is running and nothing can run, which is a
+VM that is held and never given back.
+.PP
+.B "Three theories die here, two of them mine."
+Not the host, measured above.  Not process exhaustion:
+.CW conf.nproc
+is 200 and there are 55.  Not the styx export session, which is the theory this
+item has carried \(em it answered instantly.
+.PP
+.B "And the board cannot recover from it, which is why it reads as a hang."
+.CW clock.c 's
+.CW diswdog()
+exists for exactly this \(em it stops feeding the hardware watchdog once a Dis
+process has held the VM too long, and lets the reset come \(em but it begins
+.CW "if(bootwdog == 0) return;" ,
+and
+.CW bootwdog
+is 0 in the config.  So the recovery written for this failure is switched off,
+and a VM livelock wedges the board for ever.  That is a configuration finding,
+not a bug in the watchdog.
+.PP
+.B "What is established and what is not."
+Established: the facts in the table, the host's health, the dead theories, and
+that the board cannot self-recover.  NOT established: WHICH process holds the
+VM and why.  Two candidates, each with evidence and neither proven:
+.IP 1.
+The console.  The one Dis process in
+.CW Sys_readn
+has its last lock in
+.CW iprintcanlock ,
+and
+.CW clockpoll /
+.CW clockcheck
+\(em the console UART poll \(em are on its stack.  A process holding the VM and
+stuck in the print path would produce precisely this.
+.IP 2.
+The network.  Many waiters carry
+.CW qpc
+.CW tcpkick+84 ,
+and
+.CW wlrx ,
+the wifi receive kproc, had 6309 ticks of time.  The styx mount runs over wifi,
+so a stalled receive path with the VM held would also produce it.
+.PP
+.B "The next step is one instrument change, and the ring is why."
+.CW clock.c
+already prints
+.CW VMHELD
+lines naming the pid, the text, the ticks held and the last kernel and Dis pcs.
+Those would name the holder outright.  They are not in the capture because the
+RING WRAPPED \(em 111 lines, all of them process-dump lines, with the trigger
+and any VMHELD above them gone.  So: make the hold report survive, by raising
+the ring or by sending VMHELD somewhere that is not the ring, and run the batch
+again.  The answer is one line of output away and the instrument threw it away.
