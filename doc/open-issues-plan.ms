@@ -4785,3 +4785,341 @@ the pool chain head \(em but a header reading as invalid on a healthy boot is
 either corruption or the sweep walking the chain while the allocator updates
 it, and the second is a race.  Twelve in 53594 sweeps.  Recorded, not
 diagnosed, and NOT yet connected to either failure above.
+.NH 2
+H4 ROOT CAUSE, FOUND: the JIT's I-cache invalidate covered one core of four
+.LP
+.CW b461ec5f1 .
+.CW cacheiinv()
+in
+.CW os/inferno/raspi3b/l.s
+executed
+.CW "IC IALLU" ,
+which invalidates the LOCAL processor's instruction cache to the point of
+unification.
+.CW "IC IALLUIS"
+invalidates every I-cache in the Inner Shareable domain.
+.CW segflush()
+calls
+.CW cacheiinv()
+to make instructions written as data visible to the fetcher, and on this board
+the writer is the JIT
+.CW ( cflag
+is 1): it compiles a Dis module on whichever processor happens to be running,
+and the process that then executes that code can be scheduled on any other.
+With a local invalidate, that other processor fetches stale instructions from
+its own I-cache.
+.PP
+.B "The measurement that named it."
+.P1
+trap type 0 esr 0x2000000 pc 0x4c86be0
+panic: trap
+.P2
+ESR 0x02000000 is exception class 0 \(em "unknown reason", which is what a
+processor says when it executes something that is not an instruction \(em and
+.CW pc
+0x4c86be0 is in the Dis heap, where compiled code lives.  A processor fetched
+garbage from an address the JIT had just written.
+.PP
+.B "Why it hid, and it is four things at once."
+It is intermittent, because it needs the process to migrate between the compile
+and the execution.  It is INVISIBLE to any single-processor arm, because a JTAG
+boot holds cores 1-3 \(em so every JTAG-booted test in this plan would have
+pronounced it fixed.  It presents as a WEDGE and not as a fault, because the
+panicking process never releases the interpreter token and every other Dis
+process then queues in
+.CW acquire()
+behind it.  And the wedge watchdog's own dump flooded the panic message out of
+the ring.  Each of those had to be removed before the trap line was visible at
+all.
+.PP
+.B "The encoding was checked by hand, because a wrong system instruction traps."
+.P1
++0  0xd5033f9f  DSB SY
++4  0xd508711f  IC IALLUIS     (IC IALLU is 0xd508751f)
++8  0xd5033f9f  DSB SY
++12 0xd5033fdf  ISB SY
++16 0xd65f03c0  RET
+.P2
+.B "And the rest of the sequence is sufficient, checked rather than assumed:"
+.CW cacheflush()
+cleans with
+.CW "DC CVAC" ,
+to the point of COHERENCY, which is beyond the point of unification that
+instruction fetch needs, and ends in
+.CW coherence() .
+The two other
+.CW IALLU
+sites in
+.CW l.s
+are left alone: both run at boot on one processor, where a local invalidate is
+what is wanted.
+.PP
+.B "A PREDICTION THAT FAILED, which is the useful part."
+If a processor executing garbage can scribble on the heap before it traps, the
+GC's broken block headers should have been a consequence, and should have gone
+to zero.  They did not:
+.P1
+pre-fix boot A   12 broken /  53594 sweeps = 2.24e-04
+pre-fix boot B   13 broken /  41247 sweeps = 3.15e-04
+pre-fix boot C   56 broken / 184251 sweeps = 3.04e-04
+FIXED            38 broken / 452782 sweeps = 8.39e-05
+.P2
+3.5 times lower pooled, and NOT zero.  The comparison is across different boots
+and workloads, so even the factor is not clean.  So the broken chains are their
+own fault, still open, and the honest reading is that this fix addresses the
+EC-0 trap and says nothing certain about them.
+.NH 2
+H4, the SECOND failure: the GC writes through unvalidated words
+.LP
+The item split in two and this is the other half: a board that is SLOW rather
+than wedged, and a heap the GC keeps damaging.  Both have the same source, and
+.CW libinterp/gc.c
+has described it for four-plus sessions in a comment above
+.CW markheap() :
+.QP
+if it's not H, it's D2H()'d and Setmark()'d (h->color written) with no
+validation at all \(em unlike freeptrs(), which has had checkfreeptr()
+guarding the same kind of word...  A small, non-H garbage value here computes a
+garbage Heap*, and Setmark() then WRITES to whatever h->color happens to
+resolve to \(em a live, unrelated object's memory, corrupting it, with no crash
+at the write site itself (an ordinary store, not a fault) to point at what
+happened.
+.LP
+.B "The only guard was switched off on this board."
+.CW checkmarkptr()
+returns at once unless
+.CW distrack
+is set, and
+.CW main.c
+sets
+.CW distrack
+to 0 on raspi3b because it costs 7.5x \(em 60ms a frame against 8ms, and 7
+frames handed to a waiting reader against 1222.  So nothing checked, and
+.CW gcbroken
+counted 38 to 56 damaged chains per boot while being reported by nothing.
+.PP
+.B "The fix is two compares, always on."
+The same test
+.CW markheap 's
+own entry already applies to
+.CW t ,
+for the reason it gives: a real pointer is never near-zero and never
+misaligned, so a word that is either is known-bad without touching it.  Reject
+it, count it in
+.CW gcbadptr ,
+and skip \(em skipping is right because there is no object at a misaligned or
+near-zero address to mark, so nothing live is dropped.
+.PP
+Checked for safety before writing it:
+.CW H
+is
+.CW (void*)(-1) ,
+which IS misaligned and would be rejected \(em but the existing
+.CW "*q != H"
+test excludes it first.
+.PP
+.B "And the slowness is a separate, structural thing."
+.CW Quanta
+is 50 blocks and
+.CW MaxQuanta
+750, so the SWEEP is bounded; the ROOT WALK is not.
+.CW rootset()
+calls
+.CW markheap()
+on every live process's every stack frame every pass, which is why holds of 53
+to 91 ticks appear once the suite has accumulated seventy-odd Dis processes,
+and why the board stops answering inside 600s without ever being stuck.  That
+is a design property, not a bug, and bounding it is its own piece of work.
+.PP
+.B "NOT installed with the I-cache fix, deliberately."
+Two changes and one batch makes a clean result unattributable to either.  The
+batch running now scores WEDGES against
+.CW b461ec5f1
+alone; the guard goes in afterwards, with
+.CW gcbroken
+as its own acceptance number.
+.NH 2
+H1a correction.  "The expensive case needs no copy" assumed the wrong frame
+.LP
+The flip/copy rule above says the expensive case for the copy is the
+full-screen redraw, and that a full-screen redraw needs no copy because the
+next frame overwrites the whole back buffer.  The first half is true and the
+second quietly assumes the NEXT frame also covers the screen.
+.PP
+A full-screen fill followed by a widget update needs the copy after all: the
+widget frame inherits a back buffer holding the frame before last, and only the
+widget's own rectangle gets rewritten.  So the rule has to decide from the
+frame it is ABOUT TO DRAW, not the one it has just drawn.
+.PP
+That is a sharper argument for a described frame than the one I gave, because
+"how much of the screen will this frame touch" is answerable before drawing
+only if something describes the frame first.  An immediate-mode draw knows it
+after the fact, which is too late to choose between flipping and copying.  A
+peer session has built that producer in libtk \(em
+.CW tkscenebounds()
+and
+.CW "render bounds" ,
+the union of what a described frame will mark \(em and committed it saying
+plainly that nothing consumed it.  This rule is its first consumer.
+.PP
+.B "What is still missing is the PATH, and it is not built."
+libtk knows the bounds, the decision belongs in a screen driver, and nothing
+carries one to the other.
+.CW hwdraw()
+is a genuine pre-draw hook at the wrong granularity (per draw operation, and a
+Tk update is hundreds).  Carrying a frame-level damage hint would be a change
+to
+.CW os/inferno/port/devdraw.c .
+.PP
+.B "And it is gated on a measurement I have not taken."
+.CW aeb56a141 's
+damage histogram answers the question the rule turns on, and has only been read
+for
+.CW drawink 's
+own workload of full-screen fills.  Tk is the case that matters: widget-sized
+damage makes the copy a few hundred microseconds against a 16665us frame and
+the path worth building, while damage that is routinely half the screen makes
+it 10ms a frame and 60Hz impossible \(em and then the rule is wrong and a hint
+would carry a decision that cannot be made.  Read the histogram off a real
+.CW wm
+session FIRST.
+.NH 2
+H1a.  The damage measurement, and what transfers from another machine
+.LP
+A peer session measured the distribution the flip/copy rule turns on, without
+needing a board, on the argument that damage GEOMETRY is a property of
+.CW libtk 's
+repaint logic and not of any screen.  That argument is right, and it is why the
+measurement did not need hardware.  Its own
+.CW flushmemscreen
+got the same five buckets, env-gated:
+.P1
+runtests -g   n=197  mean 221236  <=64KB 67.5%  <=256KB 95.4%  >1MB 4.6%
+wmtest -n 40  n=122  mean  98404  <=64KB 98.4%  <=256KB 98.4%  >1MB 1.6%
+.P2
+.B "The cost question is settled by that, and the frequency question is not."
+They separate, and only one of them transfers:
+.IP \(bu
+COST is byte-denominated.  At 0.0166us a byte, 64KB is 1.1ms of a 16665us
+frame and those means are 1.6 to 3.7ms.  A 128x96 widget is 49152 bytes on any
+screen, so this carries over directly and the copy is affordable.
+.IP \(bu
+FREQUENCY is COVERAGE-denominated and does NOT carry over.  "Flip when the
+damage covers the screen" compares damage against the screen, and the screen is
+1228800 bytes here against 3145728 there.  The same rectangle is 2.6 times more
+of this board's screen, so the flip case fires MORE often here \(em and their
+">1MB" bucket is below full screen for them and above it for us.
+.PP
+That is the pleasant direction: more full-screen frames means more frames
+needing no copy at all.  But it means the histogram still has to be read on
+THIS board, for the coverage number rather than to second-guess theirs \(em the
+buckets are the same absolute bytes, so the ratio to 1228800 is the part only
+this board can give.
+.PP
+.B "Their bias note is also in the reassuring direction,"
+and worth keeping: both workloads are automated suites rather than a person
+using the machine, but the churn-heavy one \(em
+.CW wmtest
+creating forty toplevels \(em is the MORE widget-sized of the two, so any bias
+overestimates damage.
+.PP
+.B "And one harness rule from them, which is the mirror of four of mine."
+At a reporting interval of 300 flushes nothing printed at all, because the
+whole workload produces a couple of hundred.  An instrument whose reporting
+interval exceeds the experiment is indistinguishable from an instrument
+measuring nothing.  Mine were the inverse \(em prints recurring without bound
+that ate the kernel's ring, four of them, one being the wedge watchdog
+destroying the panic message that explained why it fired.  Same error in both
+directions: choosing a cadence without reference to how long the measured thing
+lasts.  Counts belong in variables; prints belong bounded.
+.NH 2
+H1a RESOLVED on frequency: the refuting workload does not exist
+.PP
+.B "It has been read, and it does not refute it \(em it is the argument FOR it."
+The peer took the distribution at 640x480 over two real workloads.  Damage is
+in bytes, so these are directly comparable to the scaled table above.  This is
+a SECOND measurement, re-run at this board's geometry rather than theirs, which
+is what makes the coverage column mean anything: the frequency question above
+does not transfer between screen sizes, and re-running at 640x480 is how it
+gets answered without the board.  Coverage is the ratio to 1228800 bytes.
+.P1
+workload        flushes  mean B  mean cov  <=5.3%  <=21%   >85%
+runtests -g         197  106356      8.7%   74.6%  19.8%   4.1%
+wmtest -n 40        122   66979      5.5%   98.4%   0.0%   1.6%
+.P2
+.PP
+The refuting workload \(em large and partial every frame \(em does not appear.
+The middle of the distribution is nearly empty: damage is either widget-sized
+(three quarters to all of it under 5.3 per cent) or it is the whole screen.
+That is the shape the rule was designed for and not the one that breaks it.
+.PP
+.B "And the rare bucket is the one that decides it, which I had backwards."
+A bucket holding 1.6 to 4.1 per cent of flushes reads as too rare to plumb
+devdraw for.  It is not, for two separate reasons, and the second is decisive.
+.PP
+First, amortised.  Taking the bucket boundary, 1044480 bytes, as a lower bound
+gives at least 42823 of
+.CW "runtests -g" 's
+106356-byte mean \(em 40 per cent \(em and at least 16711 of
+.CW wmtest 's
+66979, 25 per cent.  The peer then pinned it tighter from data I did not have:
+the eight
+.CW >85%
+flushes in that run are 9830400 of 20952132 total damage bytes,
+.B "47 per cent" ,
+if each is a full screen \(em and they are, on two independent grounds in the
+recording.  The maximum in the run is exactly 1228800, and the remainder is
+self-consistent: the other 189 flushes then average 58845 bytes, inside the
+64KB bucket that holds 147 of them, and the ceiling-sum of the non-1MB buckets
+is 20652032, barely under the total, so those buckets sit well below their
+ceilings.
+.PP
+So four per cent of the flushes carry 47 per cent of the damage bytes, and
+skipping the copy there saves at least 711us of a 1766us average copy, 277us of
+1112us for
+.CW wmtest .
+That is the inverse of the usual mistake: a 48 per cent cut of a 15 per cent
+term is 7 per cent, but a four per cent term that is 47 per cent of the mean is
+the MAIN term.
+.PP
+.B "The per-byte rate the whole thing extrapolates from is measured, not assumed."
+Both halves above scale a full-screen measurement down to bucket sizes, so a
+rate that bent with size would move the amortised half.  It does not: the four
+points on this board are 0.01664us a byte at 1228800, 0.01664 at 307200,
+0.01664 at 49152 and 0.01668 at 12288 \(em linear across a hundredfold range.
+Worth stating because an unexamined extrapolation is where this argument would
+have failed.
+.PP
+Second, and this is the real argument, the budget:
+.P1
+full-screen copy  1228800 B x 0.0166 us/B = 20398 us
+one 60Hz frame                            = 16665 us
+                                             1.22x the whole budget
+at the 85 per cent boundary               = 17338 us = 1.04x
+.P2
+Every flush in that bucket exceeds a frame's entire budget on the copy ALONE,
+before a single pixel is drawn.  Without the rule those are not slow frames,
+they are dropped frames, deterministically.  With it they are the cheapest
+frames there are \(em on the condition the correction above insists on: the
+frame ABOUT TO BE DRAWN covers the screen, not the one just drawn.  Read that
+way the rule converts the only frames that cannot meet the budget into free
+ones.  Read the other way it is the bug that correction describes, and the
+budget arithmetic would be an argument for shipping it.
+.PP
+So the frame-level damage hint in
+.CW os/inferno/port/devdraw.c
+\(em carrying libtk's
+.CW tkscenebounds()
+down to a screen driver \(em is worth building, and that is now a measured
+conclusion rather than a preference.  What is still owed from this board rather
+than from host emu is the coverage ratio on silicon: the per-byte cost above is
+measured here, the bucket boundaries are in the same absolute bytes, but
+whether a real
+.CW wm
+session on the Pi puts the same 1.6 to 4.1 per cent of its flushes in the top
+bucket is a measurement only the board can give.
+.PP
+It waits on the
+.CW "IC IALLUIS"
+acceptance batch, not on the decision.  Two changes and one batch makes neither
+attributable.
