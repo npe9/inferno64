@@ -1814,6 +1814,35 @@ other. `hwdraw()` is a genuine pre-draw hook but fires per draw
 That is a real design question spanning trees that are not all ours; see
 `doc/raspi3b-draw-plan.ms` on `rio-pi-tk`.
 
+### Measured first: Tk's damage is widget-sized
+
+The rule above is only worth the plumbing if Tk's damage is small, and
+that is a question about `libtk`'s repaint logic rather than about any
+board — which means it can be answered here. `INFERNO_DAMAGE_HIST=n`
+puts the same five buckets the Pi's `flushmemscreen` uses into emu's,
+printing every n flushes:
+
+| workload | flushes | mean bytes | ≤64KB | ≤256KB | >1MB |
+|---|---|---|---|---|---|
+| `runtests -g` | 197 | 221236 | 67.5% | 95.4% | 4.6% |
+| `wmtest -n 40` | 122 | 98404 | 98.4% | 98.4% | 1.6% |
+
+So the common case is a widget, and the full-screen case is 2-5% of
+flushes. Against the Pi's measured copy cost of 0.0166µs a byte, 64KB is
+about 1.1ms of a 16665µs frame and these means are 1.6 to 3.7ms —
+affordable. A full screen is 20.5ms, which is impossible at 60Hz, and is
+exactly the case that needs no copy because the next frame overwrites the
+whole back buffer.
+
+**Two limits on reading that across.** The emu screen here is 1024×768
+where the Pi is 640×480, so widget-sized damage transfers directly (a
+128×96 widget is 49152 bytes on either) while the `>1MB` bucket holds
+flushes 2.6× larger in bytes than a Pi full screen. And both workloads
+are automated suites rather than a person using the machine; what makes
+that less worrying than it sounds is that the churn-heavy one —
+`wmtest -n 40`, which creates forty toplevels — is the *more* widget-sized
+of the two, so if these are biased it is toward overestimating damage.
+
 ### And a warning about every instrument in this section
 
 The Pi work measured its tear directly: 31 of 31 draw operations torn,

@@ -6162,6 +6162,49 @@ screeninit(void)
  * would risk deadlock: this runs while devdraw.c's drawwrite() holds
  * sdraw.q, which a concurrent resize on the main thread also takes.
  */
+/*
+ * PROBE: how big is a damage rectangle, really?
+ *
+ * Same five buckets as the Pi's histogram (aeb56a141) so the two are
+ * comparable.  The question is whether Tk's damage is widget-sized or
+ * screen-sized, and that is a property of libtk's repaint logic rather
+ * than of any board, so measuring it here answers it for the Pi too.
+ * INFERNO_DAMAGE_HIST=n prints every n flushes.
+ */
+static uvlong dmgbucket[5];
+static uvlong dmgtotal, dmgbytes, dmgmax;
+static int dmgevery = -1;
+
+static void
+damagenote(Rectangle r)
+{
+	uvlong b;
+	char *e;
+
+	if(dmgevery < 0){
+		e = getenv("INFERNO_DAMAGE_HIST");
+		dmgevery = e == nil? 0: atoi(e);
+		if(dmgevery < 0)
+			dmgevery = 0;
+	}
+	if(dmgevery == 0)
+		return;
+	b = (uvlong)Dx(r) * Dy(r) * 4;
+	if(b <= 4*1024) dmgbucket[0]++;
+	else if(b <= 64*1024) dmgbucket[1]++;
+	else if(b <= 256*1024) dmgbucket[2]++;
+	else if(b <= 1024*1024) dmgbucket[3]++;
+	else dmgbucket[4]++;
+	dmgtotal++;
+	dmgbytes += b;
+	if(b > dmgmax)
+		dmgmax = b;
+	if(dmgtotal % (uvlong)dmgevery == 0)
+		print("DAMAGEHIST n %llud  <=4KB %llud <=64KB %llud <=256KB %llud <=1MB %llud >1MB %llud  mean %llud bytes  max %llud\n",
+			dmgtotal, dmgbucket[0], dmgbucket[1], dmgbucket[2],
+			dmgbucket[3], dmgbucket[4], dmgbytes/dmgtotal, dmgmax);
+}
+
 void
 flushmemscreen(Rectangle r)
 {
@@ -6169,6 +6212,7 @@ flushmemscreen(Rectangle r)
 
 	if(r.max.x < r.min.x || r.max.y < r.min.y)
 		return;
+	damagenote(r);
 	if(view == nil)
 		return;
 	scr = gscreen;
