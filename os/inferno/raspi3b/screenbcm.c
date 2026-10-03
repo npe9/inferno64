@@ -74,6 +74,18 @@ static uvlong	nflush, nflushbyte, ncompose, ncomposeskip;
  * damage covers the screen, copy when it does not", and what that needs
  * to know is how often each case happens.
  */
+enum {
+	Tearprobe	= 1,	/* data, not a conditional compile */
+	Tearframes	= 120,	/* close the window after this many frames */
+};
+
+static uvlong	vsbase;		/* cycles at a known vertical blank */
+static uvlong	vsperiod;	/* cycles per frame, 0 until measured */
+static uvlong	vsend;		/* cycles at which the window closes */
+static uvlong	ntearop, ntearrow, nopchecked;
+
+static void teararm(void);
+
 static uvlong	ndamage[5];
 static char	*damagename[5] = {
 	"<=4KB", "<=64KB", "<=256KB", "<=1MB", ">1MB",
@@ -262,7 +274,10 @@ screenstats(void)
 	for(i = 0; i < nelem(ndamage); i++)
 		print(" %s %llud", damagename[i], ndamage[i]);
 	print("\n");
+	print("SCREEN tear ops %llud of %llud rows %llud period %llud\n",
+		ntearop, nopchecked, ntearrow, vsperiod);
 	vsyncprobe();
+	teararm();
 }
 
 /*
@@ -663,14 +678,126 @@ drawcursor(Drawcursor *c)
 	setcursor(&curs);
 }
 
+/*
+ * TEAR ACCOUNTING, and why it is arithmetic rather than a picture.
+ *
+ * With Directfb memdraw writes the scanout buffer, so a row written
+ * after the beam has already passed it shows the OLD pixels for the rest
+ * of that frame: the displayed frame is new below the beam and old
+ * above, which is the tear.  Nothing in software can SEE that -- the
+ * framebuffer is never torn, so a readback (drawink(1) included) would
+ * report success on a wildly tearing display, which is what
+ * doc/open-issues-plan.ms H1a originally prescribed.
+ *
+ * What can be computed is the condition itself.  The beam's position is
+ * known once the frame clock is: the vsync tag gives 16.665ms stable to
+ * 2us, so 480 rows at 34.72us each, and the beam row at any instant is
+ * the phase since a known vertical blank scaled into rows.  For a draw
+ * covering rows [min,max), every row BELOW min and above the beam was
+ * written late.
+ *
+ * MEASURED AT hwdraw, which is called from memimagedraw BEFORE any pixel
+ * is written, so the timestamp is the write's own and not the flush's.
+ * The flush would be later and would overstate the beam; this understates
+ * it, because a long draw's lower rows are written after its start while
+ * the beam also advances -- but a full-screen fill runs eight times
+ * faster than the beam, so the gap is small and the number is a LOWER
+ * BOUND on rows torn.
+ *
+ * A BOUNDED WINDOW, not a running monitor.  Keeping a live vsync
+ * timestamp would need a kproc waiting on the mailbox sixty times a
+ * second, and a vsync wait holds the mailbox lock for a whole frame, so
+ * that would starve every other user of it (see mailbox.c).  Instead the
+ * window is armed from screenstats(), which measures the period over
+ * eight frames and then accounts for a bounded run.  Within two seconds
+ * the extrapolation error is about one row; over a minute it would be
+ * half a frame and worthless, which is why the window closes itself.
+ *
+ * Arm and read with two writes of "dump" to /dev/kpctl: the first arms,
+ * the workload runs, the second reports and re-arms.
+ */
+static void
+teararm(void)
+{
+	uvlong a, b;
+	int i;
+
+	if(!Tearprobe)
+		return;
+	ntearop = ntearrow = nopchecked = 0;
+	vsperiod = 0;
+	if(mboxvsync() < 0)
+		return;
+	cycles(&a);
+	/*
+	 * Eight frames, not one: the period divides the measurement error
+	 * by the number of frames spanned, and the error is what limits how
+	 * long the window can stay open.
+	 */
+	for(i = 0; i < 8; i++)
+		if(mboxvsync() < 0)
+			return;
+	cycles(&b);
+	if(b <= a)
+		return;
+	vsperiod = (b - a) / 8;
+	vsbase = b;
+	vsend = b + (uvlong)Tearframes * vsperiod;
+}
+
+/*
+ * The counters are plain increments and drawing can in principle run on
+ * more than one core, so a lost increment is possible; devdraw holds
+ * drawlock across a draw, which is why it has not been made atomic, and
+ * the direction of any error is to UNDERCOUNT.  That matters only if the
+ * answer is near zero, and a near-zero answer is the one claim this probe
+ * must not make on its own.
+ */
+static void
+tearcharge(Rectangle r)
+{
+	uvlong now, phase;
+	int beam, hi;
+
+	if(vsperiod == 0)
+		return;
+	cycles(&now);
+	if(now >= vsend){
+		vsperiod = 0;		/* window closed; stop accounting */
+		return;
+	}
+	phase = (now - vsbase) % vsperiod;
+	beam = (int)((phase * ScrY) / vsperiod);
+	nopchecked++;
+	hi = r.max.y < beam? r.max.y: beam;
+	if(hi > r.min.y){
+		ntearop++;
+		ntearrow += hi - r.min.y;
+	}
+}
+
 int
 hwdraw(Memdrawparam *par)
 {
 	/*
 	 * Overlay cursor: softscreen never contains the glyph, so there
 	 * is nothing to avoid/hide when apps draw (including Bounce).
+	 *
+	 * Returns 0 always: this accelerates nothing and only measures.
 	 */
-	USED(par);
+	/*
+	 * dst->data, NOT dst == gscreen.  A Tk window is a Memlayer whose
+	 * Memimage is its own but whose Memdata is "shared by windows in
+	 * this image" (memdraw.h), so a comparison against gscreen itself
+	 * matches only draws straight to the root and would have reported
+	 * zero torn rows for every window in a real session -- a probe
+	 * silently measuring nothing, which is the failure this one was
+	 * written to replace.  A layer's rectangle is already in screen
+	 * coordinates, so par->r needs no translation.
+	 */
+	if(Tearprobe && par != nil && gscreen != nil
+	&& par->dst != nil && par->dst->data == gscreen->data)
+		tearcharge(par->r);
 	return 0;
 }
 
