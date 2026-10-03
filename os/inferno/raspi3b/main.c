@@ -673,8 +673,17 @@ fpurestore(int x)
 	USED(x);
 }
 
-ulong
+/*
+ * PADDR() is this, and it feeds xhole() in ../port/xalloc.c, whose parameter
+ * and whose Hole.addr are both uintptr.  Returning ulong truncated a 64-bit
+ * pointer to 32 bits on the way into a 64-bit field: harmless on this board,
+ * where KZERO == PHYSDRAM == 0 and 1GB of RAM puts every address below 4GB,
+ * and a silent corruptor of the allocator's free-hole list on any arm64 board
+ * with memory above 4GB.  ulong is 4 bytes here and pointers are 8, asserted
+ * with a compile-time check rather than assumed.  doc/open-issues-plan.ms H4.
+ */
+uintptr
 va2pa(void *v)
 {
-	return (ulong)v;
+	return (uintptr)v;
 }

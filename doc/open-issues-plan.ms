@@ -6342,3 +6342,119 @@ that is never built \(em a measurement of the wrong population, next to the
 measurement of the wrong quantity and the comparison of incommensurable units
 already recorded above.  The control is cheap and I nearly skipped it: ask
 whether the thing you just flagged is in the artefact you care about.
+.NH 2
+H4.  kaudit(1), and the truncating PADDR it found on its first control run
+.LP
+The hand audit above is now
+.CW tools/kaudit ,
+because the two mistakes that made its first sweeps useless are avoidable by
+construction.  Both the FLAGS and the FILE SET come from
+.CW "mk -n -a" ,
+which prints every recipe without running any of them \(em so per-file defines
+like
+.CW -DKERNDATE
+are included and the file set is exactly what the kernel compiles.  Objects go to
+a temp directory, so
+.CW i$CONF
+and
+.CW kernel8.img
+are never replaced and the JTAG readers stay armed.
+.PP
+.B "It refused before it worked, twice, and both refusals were the design working."
+First run: no compile lines matched, and it said
+.CW "that is a FAILURE of this tool, not a clean audit"
+rather than reporting zero.  The pattern
+.CW "^[0-9]?[a-z]c"
+wanted three characters and
+.CW 7c
+is two.
+.PP
+Second: 39 of 110 sources.
+.CW mk
+prints recipes for a mkfile own targets at column 0 and inherited ones
+TAB-INDENTED, so a pattern anchored at column 0 saw every board file and not one
+of
+.CW ../port
+or
+.CW ../ip
+\(em and would have reported "clean" over a third of the kernel without saying it
+was a third.  That is the third too-narrow pattern of the session, after the
+monitor filter and the two audit sweeps.
+.PP
+.B "Then the can-it-fire check, which is the only procedure of the four:"
+run it with a pattern known to match.
+.CW "PAT='shorter integer'"
+produced two findings, so the tool is not blind \(em and the two findings were
+real.
+.NH 3
+PADDR() truncated a 64-bit pointer into 64-bit fields
+.LP
+.CW "#define PADDR(v) va2pa((void*)(v))"
+and
+.CW va2pa
+returned
+.CW ulong .
+Measured with a compile-time assertion rather than assumed:
+.CW ulong
+is 4 bytes on this kernel and pointers are 8.
+.PP
+.B "And the callers are 64-bit."
+.CW ../port/xalloc.c
+\(em which IS linked into raspi3b \(em calls
+.CW "xhole(PADDR(a), t)"
+three times, and
+.P1
+xhole(uintptr addr, uintptr size)
+struct Hole { uintptr addr; u64 size; uintptr top; Hole *link; };
+.P2
+so the allocator record is 64-bit correct and the macro feeding it truncated.
+.CW virtarm64/ethervirtiommio.c
+is worse: it puts
+.CW PADDR()
+straight into a virtio DMA descriptor address.
+.PP
+.B "Harmless here, a silent corruptor elsewhere."
+raspi3b has
+.CW "KZERO == PHYSDRAM == 0"
+and 1GB of RAM, so every address is below 4GB and the truncation never bites.
+On an arm64 board with memory above 4GB \(em raspi4 goes to 8GB,
+.CW virtarm64
+takes whatever QEMU is given \(em
+.CW xalloc
+records the wrong hole and a device DMAs to the wrong physical page, with
+nothing reported anywhere.
+.PP
+Fixed to
+.CW uintptr
+in
+.CW fns.h
+and
+.CW main.c
+on raspi3b, raspi4 and virtarm64, with the reason in the code.  Verified by
+.CW kaudit
+on raspi3b and virtarm64: the
+.CW main.c
+warning is gone from both.
+.NH 3
+The two truncations NOT changed, and why
+.LP
+.CW ../port/devkprof.c:73 ,
+.CW "kprof.maxpc = (ulong)etext" .
+.CW kprof.minpc
+and
+.CW maxpc
+are BOTH
+.CW ulong
+by design, with a comment in the struct saying so, so the truncation is
+internally consistent: both ends truncate the same way, the difference is right,
+and the profiler works for any text segment under 4GB.  Self-consistent rather
+than wrong.
+.PP
+.CW virtarm64/screenarm.c:203
+prints
+.CW "(ulong)fb"
+with
+.CW %lux .
+A diagnostic, not a DMA path \(em it would print a wrong address on a
+high-mapped framebuffer, which is worth fixing on the board that owns it and is
+not this one.

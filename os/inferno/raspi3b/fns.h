@@ -96,7 +96,7 @@ void	clockcheckboot(void);
 void	serialputc(int);
 void	serialputs(char*, int);
 void	(*screenputs)(char*, int);
-ulong	va2pa(void*);
+uintptr	va2pa(void*);
 
 #define procsave(p)
 #define procrestore(p)

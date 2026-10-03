@@ -1,0 +1,138 @@
+#!/bin/sh
+#
+# Compile every source a kernel actually links, with the flags that kernel
+# actually uses, and report the diagnostics kencc does not fail on.
+#
+#	sh tools/kaudit            # raspi3b
+#	sh tools/kaudit pc64       # another config
+#	PAT='not declared' sh tools/kaudit
+#
+# WHY THIS EXISTS.  7c exits 0 and WRITES AN OBJECT for a call to a function
+# that is not declared in the translation unit:
+#
+#	void zz(void){ gg_nosuch(); }     exit=0  object=YES
+#	    function not declared: gg_nosuch
+#
+# so `mk` sees success, archives the object, and prints no
+# "exit status=exit(1)".  Neither an exit-status check nor a grep for
+# clang's "error:" (which kencc never prints) sees it.  The link backstops it
+# only when NO symbol of that name exists anywhere -- a misspelling onto a
+# real symbol compiles, links, and misbehaves at runtime with nothing to find.
+#
+# The case that stays silent is a call to a function defined in ANOTHER file,
+# i.e. the ordinary cross-file call with a missing extern.  When the callee is
+# defined later in the same file with a different type, kencc has both
+# declarations to compare, prints "external redeclaration of:" as well, and
+# DOES fail -- which is why the easy-to-notice shape is the unrepresentative
+# one.  doc/open-issues-plan.ms H4.
+#
+# HOW IT AVOIDS THE TWO MISTAKES THAT MADE THE FIRST SWEEP USELESS.  Done by
+# hand this produced twelve findings and all twelve were artifacts:
+#
+#   WRONG FLAGS.  raspi3b.c is compiled with '-DKERNDATE='$KERNDATE by the
+#   mkfile.  A hand invocation without it reports "name not declared:
+#   KERNDATE" -- a real diagnostic about a build that never happens.
+#
+#   WRONG FILE SET.  Sweeping ../port/*.c flagged eleven files (devboot,
+#   devpci, portclock, rdb and others) with plausible misses like "function
+#   not declared: segflush".  NONE of them is linked into raspi3b: they are
+#   other boards' port files read against this board's headers.
+#
+# So both come from `mk -n -a`, which prints every recipe WITHOUT RUNNING ANY
+# of them.  The flags are the build's own, including per-file defines, and the
+# file set is exactly what this kernel compiles.  Neither is guessed here.
+#
+# IT DOES NOT TOUCH THE TREE.  Every object goes to a temp directory, so
+# i$CONF and kernel8.img are never replaced -- which matters because
+# tools/jtag/{vmheld,kstack,where,wedgediag} verify the board's kerndate
+# against kernel8.img and refuse on mismatch, and tools/jtag/kmesg reads an
+# address with no such check at all.  Relinking mid-experiment disarms the
+# first four and silently misleads the fifth.
+#
+set -u
+HERE=`cd \`dirname "$0"\` && pwd`
+ROOT=`cd "$HERE/.." && pwd`
+CONF=${1:-raspi3b}
+PAT=${PAT:-'not declared|redeclaration|type clash|incompatible'}
+DIR=$ROOT/os/inferno/$CONF
+
+[ -d "$DIR" ] || { echo "kaudit: no such config: $DIR" >&2; exit 1; }
+
+PATH=$ROOT/MacOSX/$(uname -m | sed 's/^arm64$/arm64/')/bin:$PATH
+export PATH
+command -v mk >/dev/null || { echo "kaudit: mk not on PATH" >&2; exit 1; }
+
+TMP=${TMPDIR:-/tmp}/kaudit.$$
+mkdir -p "$TMP" || exit 1
+trap 'rm -rf "$TMP"' 0 1 2 15
+
+cd "$DIR" || exit 1
+
+#
+# -n prints recipes, -a pretends everything is out of date.  Without -a an
+# up-to-date tree prints nothing at all and the audit silently examines no
+# files -- which reads exactly like a clean result.
+#
+mk -n -a "i$CONF" > "$TMP/recipes" 2>"$TMP/mkerr" || {
+	echo "kaudit: mk -n failed:" >&2
+	head -5 "$TMP/mkerr" >&2
+	exit 1
+}
+
+#
+# A compile line ends in the source file, and carries no -o, so 7c would
+# write the object into the tree.  Insert -o into the temp directory instead.
+#
+awk -v tmp="$TMP" '
+	#
+	# LEADING WHITESPACE IS NOT OPTIONAL TO ALLOW FOR.  mk prints the
+	# recipes it would run for THIS mkfile own targets at column 0 and
+	# the ones inherited through other rules TAB-INDENTED.  A pattern
+	# anchored at column 0 matched 39 of 110 sources here -- every board
+	# file and not one of ../port or ../ip -- and reported "clean" over a
+	# third of the kernel without saying it was a third.
+	#
+	/^[ \t]*[0-9a-z]+c .*\.c$/ {
+		src = $NF
+		$NF = ""
+		cmd = $0
+		sub(/^[ \t]+/, "", cmd)
+		printf "%s-o %s/o.7 %s\n", cmd, tmp, src
+	}' "$TMP/recipes" > "$TMP/cmds"
+
+n=`grep -c . "$TMP/cmds"`
+if [ "$n" = 0 ]; then
+	echo "kaudit: no compile lines found in the recipes for i$CONF." >&2
+	echo "kaudit: that is a FAILURE of this tool, not a clean audit." >&2
+	exit 2
+fi
+
+echo "kaudit: $CONF, $n sources, flags and file set from mk -n -a"
+echo "kaudit: matching: $PAT"
+hits=0
+files=0
+while read -r cmd; do
+	src=`echo "$cmd" | awk '{print $NF}'`
+	files=$((files+1))
+	( eval "$cmd" ) > "$TMP/out" 2>&1
+	st=$?
+	if grep -qE "$PAT" "$TMP/out"; then
+		hits=$((hits+1))
+		echo "--- $src (exit $st):"
+		grep -E "$PAT" "$TMP/out" | sed 's/^/    /'
+	elif [ $st -ne 0 ]; then
+		#
+		# A hard failure with none of the patterns in it is still a
+		# finding: reported separately rather than counted as clean,
+		# because "the audit found nothing" and "the file would not
+		# build" are different answers.
+		#
+		hits=$((hits+1))
+		echo "--- $src DID NOT COMPILE (exit $st), and no pattern matched:"
+		grep -v '^$' "$TMP/out" | head -4 | sed 's/^/    /'
+	fi
+done < "$TMP/cmds"
+
+echo "kaudit: $files compiled, $hits with findings"
+[ "$hits" = 0 ] && echo "kaudit: clean -- no silently-accepted declaration errors in $CONF"
+exit 0

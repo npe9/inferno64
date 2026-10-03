@@ -458,8 +458,16 @@ fpurestore(int x)
 	USED(x);
 }
 
-ulong
+/*
+ * PADDR() is this.  Returning ulong truncated a 64-bit pointer to 32 bits,
+ * and the callers feed 64-bit fields: xhole() in ../port/xalloc.c takes
+ * uintptr and its Hole.addr is uintptr, and the virtio drivers put the result
+ * straight into a DMA descriptor address.  Below 4GB that is invisible; above
+ * it, the allocator records the wrong hole and a device DMAs to the wrong
+ * physical page, with nothing reported anywhere.  doc/open-issues-plan.ms H4.
+ */
+uintptr
 va2pa(void *v)
 {
-	return (ulong)v;
+	return (uintptr)v;
 }
