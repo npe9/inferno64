@@ -53,8 +53,30 @@ static uchar	*vfb;		/* visible mailbox framebuffer in VC RAM */
 enum { Directfb = 1 };
 
 /*
- * Double buffering with a page flip.  OFF, but the audit it was waiting on is
- * DONE and it came out much shorter than feared.
+ * Double buffering with a page flip.  PROVEN AND OFF.
+ *
+ * It works on silicon -- 15 flips, 0 failures, drawink 6 of 6 with glyph
+ * figures identical to the single-buffered path -- and it is 0 because working
+ * is not the same as being an improvement:
+ *
+ *	THE TEAR IS NOT FIXED.  bcmpresent() does not wait for vertical
+ *	blank, so the flip itself becomes the tear line: the tear MOVES
+ *	rather than vanishing.  The wait cannot simply be added -- see
+ *	bcmpresent() for why it would hold mboxlock for a whole frame under
+ *	drawlock -- so tear-freedom is a design question still open.
+ *
+ *	THE COST IS NOT ESTABLISHED on a real workload.  On drawink the
+ *	repair is 608k a frame against eager's 677k, about 90 per cent of
+ *	eager, because drawink reads back after every draw AND draws glyphs
+ *	straight at the screen.  The 84.9 per cent saving a peer measured
+ *	needs a client that does neither, which is Tk, and that has not been
+ *	measured here.
+ *
+ * So turning it on today would trade a known tear for a moved tear plus a
+ * cost.  The code is proven rather than hoped, and still off.
+ *
+ * The audit it was once waiting on is DONE and came out much shorter than
+ * feared.
  *
  * The flip is three lines:
  *
@@ -97,7 +119,7 @@ enum { Directfb = 1 };
  * (devdraw's per-present accounting); what is not is these three lines, the
  * underok invalidation, and the deferred repair at 'v'.
  */
-enum { Dbuf = 1 };
+enum { Dbuf = 0 };
 
 /*
  * SKIP THE FORWARD COPY, so the acceptance test can be shown able to fail.
@@ -129,7 +151,7 @@ enum { Dbuf = 1 };
  * other checks can fail.  Until this has been run both ways on hardware the
  * undrawn check is written rather than verified.
  */
-enum { Dbufnorepair = 1 };
+enum { Dbufnorepair = 0 };
 
 static uchar	*fbbase;	/* base of the whole (2*ScrY tall) allocation */
 static int	fbfront;	/* which half the GPU is scanning out */

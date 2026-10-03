@@ -7005,3 +7005,85 @@ it was findable.
 They drew a conclusion from a PREDICATE that could not fire; I nearly drew a
 conclusion about a TEST from a CONTROL that could not fire.  Same cause, and the
 thing that could not fire was the control rather than the counter.
+.NH 2
+H1a VERIFIED: three arms on silicon, and the test can fail
+.LP
+.CW drawink 's
+undrawn-region check was committed as "written, not verified".  It is verified
+now, by running all three arms on the board:
+.P1
+Dbuf=0                               6 of 6 PASS
+Dbuf=1, repairs on                   6 of 6 PASS, flip 15 failed 0,
+                                     eager-repairs 9
+Dbuf=1, BOTH repairs gated           4 FAIL
+    FAIL clear: 1279 of 2560 bytes non-zero
+    FAIL box inside: 0 of 75684 pixels inked
+    PASS box outside: 0 of 38080 above the box inked
+    PASS halves: left 320/320 right 320/320
+    FAIL text ink: 0 of 1728
+    FAIL undrawn region: neither fill, 1280 bytes differ from the last
+.P2
+.PP
+.B "The prediction was recorded before the run, so it could be wrong."
+With both repairs off, check 1 flips an all-black frame, then
+.CW "draw(box, red)"
+lands in the back buffer and flips, so the readback sees the other buffer and
+.CW "box inside"
+should read 0 of 75684.  It read exactly that.
+.PP
+.CW "box outside"
+passing is the same artefact as before and is why it is kept: it expects to read
+NOTHING there, so it passes whichever buffer it reads, and a check that passes for
+the wrong reason is worth having only when the reason is written down.
+.PP
+.B "The undrawn check says \(lqneither fill\(rq rather than \(lqTWO FRAMES STALE\(rq,"
+and that is correct rather than a miss: with both repairs off the back buffer
+holds content from several frames back, not cleanly the white generation, so
+neither captured pattern matches.  The three-way report distinguishes "stale by
+exactly one generation" from "stale by an unknown amount", and this is the
+second.
+.NH 3
+Shipping decision: Dbuf stays 0, and the reason is not caution
+.LP
+The flip WORKS.  Fifteen flips, zero failures, pixel-identical output.  It is off
+because working is not the same as being an improvement:
+.IP \(bu
+.B "The tear is not fixed."
+.CW bcmpresent()
+does not wait for vertical blank, so the flip becomes the tear line \(em the tear
+MOVES rather than vanishing.  The wait cannot simply be added: it would hold
+.CW mboxlock
+for a whole frame under
+.CW drawlock ,
+stopping every Dis draw operation and starving the four drivers that return to
+the mailbox at runtime.
+.IP \(bu
+.B "The cost is not established on a real workload."
+608k a frame of repair against eager's 677k \(em 90 per cent of eager \(em because
+drawink reads back after every draw AND draws glyphs at the screen.  The 84.9 per
+cent needs a client that does neither.
+.PP
+So turning it on today would trade a known tear for a moved tear plus a cost.
+What changed is that the code is PROVEN rather than hoped, and the test that
+would catch its regression is proven too.
+.NH 3
+What is owed, and it is one measurement
+.LP
+.CW "eager-repairs 0"
+under a client that neither reads back nor masks \(em which would make the
+dormancy measured rather than argued.
+.CW wm/gfxstress
+is in this tree with the phases that matter
+.CW ( alpha ,
+and
+.CW mask
+which is GREY8), so the FIRING case is runnable on the board;
+.CW wm/clock
+failed for unrelated reasons (no
+.CW /icons
+binding, and
+.CW clock.dis
+would not load), so the DORMANT case needs a Tk environment that works on this
+board.  The hook lives in the kernel's
+.CW devdraw.c ,
+so host emu cannot stand in for either.
