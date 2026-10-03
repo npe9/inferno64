@@ -4253,3 +4253,53 @@ Only then consider
 .CW bootwdog .
 A watchdog that resets the board would have hidden all of this, and the two
 hangs would have read as spontaneous reboots.  It is a backstop, not the fix.
+.NH 2
+H4 FIX.  The retry is bounded; what that does and does not claim
+.LP
+.CW 796d76547 .
+.CW wlrxproc
+counts CONSECUTIVE refused reads, lengthens its sleep to a ceiling, and stops
+polling the interrupt status under the bus lock while backing off.  Four in a
+row is well clear of a working chip, because one successful read resets the
+count and an empty queue does not raise it.  The ceiling is a flat second: the
+point is to stop monopolising the bus and the processor, not to tune a
+recovery.
+.PP
+.B "Verified both ways, because a path that has never run is not a fix."
+The negative control is build 1791005012 \(em boots,
+.CW WIFI-JOINED ,
+.CW WIFI-DHCP-OK ,
+poller answering over the air, and NO "refused" message, so the backoff does
+not fire on a healthy board.  The positive control is a build with both
+thresholds set to 0, which printed both messages alternating and could
+deliberately not sustain a network; so neither branch is dead code.  That test
+also found the message's own bug:
+.CW sdhcilastwhy
+is initialised to
+.CW ""
+and not nil, so the nil guard printed empty parentheses.
+.PP
+.B "What this claims."
+That one unanswered SDIO command can no longer kill the board.  Nothing more.
+.PP
+.B "What it does NOT claim."
+It does not stop the chip refusing commands, and it is not yet shown to hold
+under the workload that produced the fault.  THAT is the acceptance test, and
+it is the batch H4 already specifies: thirty runs, one variant, host idle.  The
+outcome to require is not merely "thirty clean" \(em it is that IF the chip
+refuses reads, the
+.CW sdio
+message appears AND the run still finishes.  A batch with no refusals at all
+proves only that the chip behaved, which is the same thing ten clean runs
+proved before and did not settle.
+.PP
+.B "And the counters make that distinguishable,"
+which is the point of having them: the message names the run of refusals and
+the recovery count, so "no failures occurred" and "failures occurred and were
+survived" are different readings rather than one silence.
+.PP
+.B "Still open, and narrower than the item began."
+Why the chip stops answering.  3100 recoveries with
+.CW Interrupt
+reading 0x100 every time says a fixed state rather than a fluctuating one, and
+the place to start is that register rather than the driver's own counters.
