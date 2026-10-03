@@ -1865,6 +1865,39 @@ churn-heavy one — `wmtest -n 40`, forty toplevels — is the *more*
 widget-sized of the two, so if these are biased it is toward
 overestimating damage.
 
+### Why the rare bucket is the one that justifies the rule
+
+The obvious reading of that table is that the flip case is too rare to
+plumb for: 1.6 to 4.1% of flushes. That reading is wrong twice over, and
+the argument is the raspi3b-port session's.
+
+**Amortised, a 4% frequency carries nearly half the cost**, because the
+rare frames are the expensive ones. If the eight `>85%` flushes in the
+`runtests` run are each a full screen — which the recorded maximum of
+1228800 bytes and the self-consistency of the remainder both say, the
+other 189 then averaging 58845 bytes — they are **47% of all damage bytes
+in the run**. Skipping the copy on 4.1% of frames removes nearly half the
+average copy cost. A small frequency term multiplied by a large magnitude
+is not a small term, which is the inverse of the usual mistake.
+
+**And the decisive argument is not the mean at all, it is the budget:**
+
+| | bytes | copy | against a 60Hz frame |
+|---|---|---|---|
+| full screen | 1228800 | 20452µs | **1.23×** |
+| the 85% boundary | 1044480 | 17384µs | **1.04×** |
+
+Every flush in that bucket exceeds the whole frame budget **on the copy
+alone**, before any drawing happens. Without the flip rule those are
+dropped frames, deterministically rather than occasionally. With it they
+become the *cheapest* frames there are, because the copy is exactly what
+gets skipped when damage covers the screen. The rule converts the only
+frames that cannot meet the budget into free ones.
+
+The per-byte rate those figures rest on is not an assumption: the Pi's
+measured copy is 0.01664µs a byte at 1228800, 307200, 49152 and 12288
+bytes — linear across a hundredfold range.
+
 ### And a warning about every instrument in this section
 
 The Pi work measured its tear directly: 31 of 31 draw operations torn,
