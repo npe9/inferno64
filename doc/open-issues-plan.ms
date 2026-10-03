@@ -6774,3 +6774,85 @@ Both fire.  Which is worth knowing because the obvious mental model \(em "the
 timestamp changes when you rebuild" \(em is only half of it, and the half that does
 NOT hold for the case most likely to catch someone out: a quick relink to check
 something links.
+.NH 2
+H1a.  FIRST BOARD NUMBERS, and the partial-overwrite counter was 100 per cent noise
+.LP
+The kernel with every change in it and
+.CW "Dbuf = 0"
+is installed and running from the card.
+.CW drawink
+passes all six checks, including the new undrawn-region one, and the glyph figures
+are identical to the recorded ones \(em 226 of 1728 inked, ink box 9,10 to 71,21
+\(em so the devdraw changes did not perturb drawing.  On a single buffer the new
+check passes trivially, so that is a no-regression result and nothing more.
+.PP
+.B "The counters, read off the board with kmesg:"
+.P1
+SCREEN flush 15 bytes 10152664
+SCREEN damage <=4KB 2 <=64KB 1 <=256KB 0 <=1MB 6 >1MB 6
+DRAW present 15 empty 13 flushes 15
+DRAW flushper 0:0 1:15 2:0 ...
+DRAW dbufpix eager 2538166 defer 1659914 overlap 875687 samebb 1 nestbb 5
+DRAW ops 15 full 0 partial 15 partial-in-stale 11
+SCREEN dbuf eager 10152664 defer 6639656 overlap 3502748 skipped 6 over 3
+                  fullish 6 adj 1 samerect 1
+SCREEN vsync errors 0 gaps(us) 8702 16668 16659 16674 16658 16666 16668 16666
+.P2
+.IP \(bu
+.B "A flush IS a frame here too."
+.CW "flushper 1:15"
+\(em every present carried exactly one flush, which is the peer's 197-against-197
+result reproduced on silicon.
+.IP \(bu
+.B "The two accountings agree exactly,"
+which is the cross-check worth having:
+.CW 10152664/4
+is
+.CW 2538166 ,
+so devdraw's per-present pixels and the driver's per-flush bytes are the same
+measurement from two independent counters.
+.IP \(bu
+.B "The unit fix works."
+.CW "over 3"
+\(em three frames whose deferred copy alone exceeds a frame.  Against
+.CW vsmeasured
+in ticks that counter could only ever have read zero.
+.IP \(bu
+.B "The firmware's frame clock is real:"
+eight vsync gaps of 16658-16674us around a 16666us nominal, with zero errors.
+.PP
+.B "And the partial-overwrite counter reported 15 of 15 PARTIAL, which was the test."
+.CW libinterp/draw.c ,
+.CW imagedraw() :
+.P1
+if(f->matte == H) m = d->display->white;    (ones)
+.P2
+A Limbo draw with a nil mask passes
+.CW display->white ,
+a separately allocated 1x1 REPLICATED all-ones image \(em not
+.CW memopaque .
+So for any Limbo client, which is every draw on this system,
+.CW "mask == memopaque"
+can never hold and the count is 100 per cent noise.  I had documented the 1x1
+case as making the figure an upper bound; on this tree it is not a bound, it is
+the whole measurement.
+.PP
+Fixed by EXAMINING the mask instead of assuming.
+.CW pixelbits()
+is static to libmemdraw but
+.CW byteaddr()
+is exported, and for a 1x1
+.CW Frepl
+image the pixel is the whole of its storage, so all-ones bytes mean opaque.
+Anything else counts as partial, which is right: a TRANSPARENT 1x1 mask makes
+memdraw no-op the operation while
+.CW dstflush()
+still charges the rectangle, and that is precisely the stale-region hazard.
+.PP
+.B "It also explains the disagreement with the peer's zero,"
+which I had taken at face value and which is not comparable: their 0 of 8628 came
+from a path where the mask reaches memdraw as
+.CW memopaque .
+The same counter on the same question gives 100 per cent on one client stack and
+0 on another, so the number was never about Tk's drawing \(em it was about which
+library built the mask.

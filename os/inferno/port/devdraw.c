@@ -531,18 +531,57 @@ drawpresent(void)
  * that the frame did not actually write keeps the stale frame-N-2 pixels the
  * back buffer held, and is shown.  See the H1a section in the plan.
  *
- * This is memdraw's own criterion for its opaque path (libmemdraw/draw.c: mask
- * == memopaque sets Fullmask, and the source must carry no alpha).  A 1x1
- * replicated all-ones mask is opaque too and is NOT recognised here, which
- * makes the partial count an UPPER bound -- the direction that cannot hide a
- * correctness problem.
+ * memdraw's own criterion for its opaque path is mask == memopaque, which sets
+ * Fullmask in libmemdraw/draw.c, plus a source carrying no alpha.  That test
+ * alone reported 15 of 15 operations PARTIAL on this board, which was the test
+ * and not the board:
+ *
+ *	libinterp/draw.c, imagedraw():
+ *		if(f->matte == H) m = d->display->white;    (ones)
+ *
+ * A Limbo draw with a nil mask passes display->white -- a separately allocated
+ * 1x1 REPLICATED all-ones image, not memopaque -- so for any Limbo client,
+ * which is to say for essentially every draw on this system, the memopaque
+ * test can never succeed and the partial count is 100 per cent noise.
+ *
+ * So a 1x1 replicated mask is examined rather than assumed.  pixelbits() is
+ * static to libmemdraw, but byteaddr() is exported, and for a 1x1 Frepl image
+ * the pixel is the whole of its storage: all-ones bytes mean opaque, and
+ * anything else is either a transparent mask (which memdraw no-ops while
+ * dstflush still charges the rectangle -- precisely the stale-region hazard)
+ * or a partial one.  Both must count as partial.
  */
+static int
+opaquerepl(Memimage *m)
+{
+	uchar *p;
+	int nb, i;
+
+	if((m->flags & Frepl) == 0)
+		return 0;
+	if(Dx(m->r) != 1 || Dy(m->r) != 1)
+		return 0;
+	p = byteaddr(m, m->r.min);
+	if(p == nil)
+		return 0;
+	/*
+	 * depth < 8 shares a byte with neighbours, but a 1x1 replicated image
+	 * has no neighbours, so the whole byte is this pixel's storage and
+	 * 0xFF is all-ones for GREY1 as much as for GREY8.
+	 */
+	nb = m->depth < 8? 1: m->depth / 8;
+	for(i = 0; i < nb; i++)
+		if(p[i] != 0xFF)
+			return 0;
+	return 1;
+}
+
 static int
 fulloverwrite(Memimage *src, Memimage *mask, int op)
 {
 	if(op != SoverD && op != S)
 		return 0;
-	if(mask != memopaque)
+	if(mask != memopaque && !opaquerepl(mask))
 		return 0;
 	if(src->flags & Falpha)
 		return 0;
