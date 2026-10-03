@@ -902,6 +902,7 @@ extern void kstackdump(void);		/* devcons.c */
  * round busily with nobody finishing".
  */
 int	vmholderpid;			/* 0 when the token is free */
+Proc*	vmholderp;			/* the same process, for the dump */
 char	vmholdertext[KNAMELEN];
 ulong	vmholdbeat;
 ulong	vmholdticks;
@@ -911,6 +912,7 @@ static void
 vmtook(Proc *p)
 {
 	vmholdn++;
+	vmholderp = p;
 	if(p == nil){
 		vmholderpid = 0;
 		vmholdertext[0] = 0;
@@ -980,6 +982,35 @@ diswatchproc(void*)
 		 * immediately, before the dump scrolls past, and the second is
 		 * what a reader finds afterwards.
 		 */
+		/*
+		 * AND THE HOLDER, specifically, because the dump above does
+		 * not survive.
+		 *
+		 * kstackdump() prints two lines per process and already
+		 * prints, for a Queueing one, WHICH qlock it waits on and
+		 * who holds that -- which is the answer to "what is the
+		 * token holder blocked on".  On a 74-process board that is
+		 * about 148 lines into a ring holding 111, so the holder's
+		 * entry is wrapped away every time; the summary below
+		 * survives only because it comes last.
+		 *
+		 * The watchdog knows the holder (vmholderp, maintained by
+		 * acquire/release/iyield), so it prints that one process
+		 * again here, at the end, where it will still be there.  One
+		 * process is three lines, not a hundred and fifty.
+		 */
+		if(vmholderp != nil){
+			iprint("DIS-WEDGED-HOLDER: pid %d, the token holder:\n",
+				vmholderpid);
+			dumpaproc(vmholderp);
+			if(vmholderp->state == Queueing && vmholderp->qwaitq != nil)
+				iprint("\tqlock %#p held by %ud acquired at %#p\n",
+					vmholderp->qwaitq,
+					vmholderp->qwaitq->owner != nil?
+						vmholderp->qwaitq->owner->pid: 0,
+					vmholderp->qwaitq->opc);
+		}else
+			iprint("DIS-WEDGED-HOLDER: none -- the token is free\n");
 		iprint("DIS-WEDGED-END: beat %lud, vmq %s, runhd %s,"
 			" ticks %lud (the dump above is %d s of no progress)\n",
 			disbeat,
