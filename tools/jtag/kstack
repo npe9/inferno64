@@ -65,12 +65,20 @@ TMP=${TMPDIR:-/tmp}/jtag-kstack.$$
 trap 'rm -f "$TMP"' 0 1 2 15
 
 #
+# "targets cpuN; halt", NOT "halt; targets cpuN".
+#
+# halt acts on the CURRENT target, so halting first and switching after
+# leaves cpuN running and every read of it fails with "target
+# bcm2837.cpuN not halted".  where(1) beside this had the identical bug
+# and reported one core of four because of it; this one reported nothing
+# at all, which is at least honest.
+#
 # Halt, read the stamp, the pc and sp, then the stack itself.  The core
 # is RESUMED on the way out: this is a read, and leaving a board halted
 # turns a diagnosis into a second fault.
 #
 ( cd "$ROOT" && timeout 120 openocd -f "$ADAPTER" -f tools/jtag/raspi3b.cfg \
-	-c "init; halt; targets bcm2837.cpu$CPU" \
+	-c "init; targets bcm2837.cpu$CPU; halt" \
 	-c "echo \"KS-STAMP\"; mdw ${KDADDR:-0} 1" \
 	-c "echo \"KS-PC\"; reg pc" \
 	-c "echo \"KS-SP\"; reg sp" \
@@ -104,7 +112,7 @@ sh "$ROOT/tools/sym.sh" "$pc" "$CONF" 2>&1 | sed 's/^/kstack:   pc is /'
 # the sp just read.
 #
 ( cd "$ROOT" && timeout 120 openocd -f "$ADAPTER" -f tools/jtag/raspi3b.cfg \
-	-c "init; halt; targets bcm2837.cpu$CPU" \
+	-c "init; targets bcm2837.cpu$CPU; halt" \
 	-c "mdd $sp $NWORD" \
 	-c "resume; exit" ) >"$TMP" 2>&1
 
