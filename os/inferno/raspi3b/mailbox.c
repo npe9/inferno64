@@ -45,6 +45,11 @@ enum {
 	Spins	= 10*1000*1000,	/* bound on a mailbox wait: uncached reads, so about a second */
 };
 
+/*
+ * Serialises every property-channel exchange; see mboxprop below.
+ */
+static Lock mboxlock;
+
 static u32*
 mbox(void)
 {
@@ -112,10 +117,36 @@ mboxprop(u32 *buf)
 	uintptr pa = (uintptr)buf;	/* RAM is identity-mapped */
 	usize reqlen;
 	u32 resp;
+	int r;
 
 	if(pa & 0xf)
 		panic("mboxprop: buf %#p not 16-byte aligned", buf);
 	reqlen = buf[0];		/* total length, read before the exchange overwrites it */
+
+	/*
+	 * ONE EXCHANGE AT A TIME, and nothing here used to say so.
+	 *
+	 * An exchange is a write of a buffer address followed by a read of
+	 * the reply, with the reply landing in the caller's own buffer.  Two
+	 * callers interleaving can each take the other's reply: a GPIO read
+	 * returning a clock rate is not a detectable error, it is a wrong
+	 * answer with the success code set.
+	 *
+	 * It is reachable.  Boot-time callers run one at a time, but several
+	 * drivers come back at runtime -- btbcm reads a firmware GPIO to
+	 * power Bluetooth, sdhostbcm and sdhcibcm ask for clock rates on a
+	 * card reset, pwmbcm asks on open, and screenbcm's vsync probe waits
+	 * on the display.  Any two of those can overlap.
+	 *
+	 * A Lock and not a QLock: mboxprop runs during boot, from
+	 * mailboxinit and screeninit, where there is no process to sleep.
+	 * The cost is that a waiter spins -- and a vsync wait holds this for
+	 * a whole frame, up to 16.7ms -- which is why NOTHING may call the
+	 * mailbox from an interrupt handler, and why a periodic vsync kproc
+	 * is not an option: at 60 waits a second it would hold the mailbox
+	 * essentially all the time and starve every other user.
+	 */
+	lock(&mboxlock);
 
 	/*
 	 * Clean the request to the point of coherency so the GPU, which
@@ -124,10 +155,14 @@ mboxprop(u32 *buf)
 	 * below is ordered after the clean.
 	 */
 	cacheflush(buf, reqlen);
-	if(mboxwrite(Chanprop, (u32)(pa | Busalias)) < 0)
+	if(mboxwrite(Chanprop, (u32)(pa | Busalias)) < 0){
+		unlock(&mboxlock);
 		return -1;
-	if(mboxread(Chanprop, &resp) < 0)
+	}
+	if(mboxread(Chanprop, &resp) < 0){
+		unlock(&mboxlock);
 		return -1;
+	}
 	USED(resp);
 	/*
 	 * The GPU filled the response in place.  Invalidate our now-stale
@@ -137,7 +172,9 @@ mboxprop(u32 *buf)
 	 * in it to lose.
 	 */
 	cacheinval(buf, reqlen);
-	return buf[1] == Respok ? 0 : -1;
+	r = buf[1] == Respok ? 0 : -1;
+	unlock(&mboxlock);
+	return r;
 }
 
 /*

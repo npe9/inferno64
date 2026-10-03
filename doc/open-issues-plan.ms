@@ -3917,3 +3917,57 @@ already counts
 .CW nflushbyte ,
 so the damage distribution can be read off a session before any of this is
 built.
+.PP
+.B "A latent bug the vsync work turned up: the mailbox was not serialised."
+.CW os/inferno/raspi3b/mailbox.c
+had no lock of any kind.  An exchange is a write of a buffer address followed
+by a read of the reply, with the reply landing in the CALLER'S buffer, so two
+callers interleaving can each take the other's \(em a GPIO read returning a
+clock rate, with the success code set.  Not a detectable error: a wrong answer.
+.PP
+It is reachable.  Boot-time callers run one at a time, but several drivers come
+back at runtime:
+.CW btbcm
+reads a firmware GPIO to power Bluetooth,
+.CW sdhostbcm
+and
+.CW sdhcibcm
+ask for clock rates on a card reset,
+.CW pwmbcm
+asks on open, and now
+.CW screenbcm 's
+vsync probe waits on the display.  Any two can overlap.  One
+.CW Lock
+in
+.CW mboxprop
+serialises all of it, since
+.CW mboxwrite
+and
+.CW mboxread
+are used nowhere else.  A
+.CW Lock
+and not a
+.CW QLock
+because
+.CW mboxprop
+runs during boot from
+.CW mailboxinit
+and
+.CW screeninit ,
+where there is no process to sleep.
+.PP
+.B "And that settles how the tear probe must get its timeline."
+A waiter on this lock spins, and a vsync wait holds it for a whole frame.  So a
+periodic vsync kproc \(em the obvious way to keep a running vsync timestamp for
+any draw to measure its phase against \(em is NOT an option: at sixty waits a
+second it would hold the mailbox essentially all the time and starve every
+other user of it.
+.PP
+The probe must instead sample vsync ONCE per measurement window and extrapolate
+from the period, which the measurement makes safe: 16.665ms stable to 2us, so
+extrapolating over a second of frames accumulates at most 120us of phase error
+\(em three and a half rows out of 480.  One mailbox call per window, and an
+error small against what is being measured.
+.PP
+It also imposes a rule the file now states: NOTHING may call the mailbox from an
+interrupt handler.
