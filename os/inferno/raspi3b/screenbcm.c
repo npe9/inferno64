@@ -80,9 +80,11 @@ enum {
 };
 
 static uvlong	vsbase;		/* cycles at a known vertical blank */
-static uvlong	vsperiod;	/* cycles per frame, 0 until measured */
+static uvlong	vsperiod;	/* cycles per frame while ACCOUNTING, else 0 */
+static uvlong	vsmeasured;	/* the same period, kept for the report */
 static uvlong	vsend;		/* cycles at which the window closes */
 static uvlong	ntearop, ntearrow, nopchecked;
+static int	vsclosed;	/* the window filled up before it was read */
 
 static void teararm(void);
 
@@ -274,8 +276,10 @@ screenstats(void)
 	for(i = 0; i < nelem(ndamage); i++)
 		print(" %s %llud", damagename[i], ndamage[i]);
 	print("\n");
-	print("SCREEN tear ops %llud of %llud rows %llud period %llud\n",
-		ntearop, nopchecked, ntearrow, vsperiod);
+	print("SCREEN tear ops %llud of %llud rows %llud period %llud %s\n",
+		ntearop, nopchecked, ntearrow, vsmeasured,
+		vsmeasured == 0? "NOT CALIBRATED":
+		(vsclosed? "window full": "window open"));
 	vsyncprobe();
 	teararm();
 }
@@ -725,7 +729,8 @@ teararm(void)
 	if(!Tearprobe)
 		return;
 	ntearop = ntearrow = nopchecked = 0;
-	vsperiod = 0;
+	vsperiod = vsmeasured = 0;
+	vsclosed = 0;
 	if(mboxvsync() < 0)
 		return;
 	cycles(&a);
@@ -740,7 +745,7 @@ teararm(void)
 	cycles(&b);
 	if(b <= a)
 		return;
-	vsperiod = (b - a) / 8;
+	vsperiod = vsmeasured = (b - a) / 8;
 	vsbase = b;
 	vsend = b + (uvlong)Tearframes * vsperiod;
 }
@@ -763,7 +768,15 @@ tearcharge(Rectangle r)
 		return;
 	cycles(&now);
 	if(now >= vsend){
-		vsperiod = 0;		/* window closed; stop accounting */
+		/*
+		 * Stop accounting, but keep the period for the report: it is
+		 * cleared here and read later, and zeroing both made the
+		 * report say "period 0", which reads as "never calibrated"
+		 * rather than "the window closed".  Two states that look
+		 * alike in a number are two states that get confused.
+		 */
+		vsperiod = 0;
+		vsclosed = 1;
 		return;
 	}
 	phase = (now - vsbase) % vsperiod;
