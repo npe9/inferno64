@@ -5998,3 +5998,72 @@ own comment already rules out a periodic vsync kproc for exactly this reason.
 So landing the flip in vertical blank needs the wait OUTSIDE both locks.  That
 is a design question, not a line of code, and it is the gate on tear-freedom
 rather than on double buffering.
+.NH 2
+H4.  kmesg has no build-stamp check, and the batch's wedge/slow split depends on it
+.LP
+Checking the batch's own predicates rather than trusting them turned up a worse
+version of the no-link rule recorded above.
+.PP
+.CW tools/jtag/vmheld ,
+.CW kstack ,
+.CW where
+and
+.CW wedgediag
+all compare the board's
+.CW kerndate
+against
+.CW kernel8.img
+and REFUSE on mismatch.
+.CW tools/jtag/kmesg
+does not.  It resolves the
+.CW kmesg
+symbol out of the ELF and reads that address, so after a relink it reads the NEW
+kernel's address on the OLD running kernel, and prints garbage or nothing.
+.PP
+.B "And kmesg is the tool the classification turns on."
+.CW hunthang2.sh
+decides whether a 600s timeout was a wedge or merely slowness with
+.P1
+if ! sh tools/jtag/kmesg | grep -q 'DIS-WEDGED'; then  ... SLOW ...
+.P2
+so a relink makes that grep fail and EVERY WEDGE IS SILENTLY SCORED SLOW.  A
+refusal wastes a catch and says so; a missing check corrupts the result and does
+not.  The acceptance number this batch exists to produce is a wedge count, so
+that is the one failure mode that would invalidate it without appearing anywhere.
+.PP
+.CW kmesg
+is NOT being changed while the batch runs: the stamp currently matches, so a
+check would be a no-op, and a buggy one would break the very detection it is
+meant to protect.  It is also why
+.CW hunthang2.sh
+itself is not being edited \(em
+.CW sh
+is executing that file right now.  Both after the batch.
+.PP
+.B "What the batch's predicates DO establish, having read them."
+.IP \(bu
+HANG: a unique per-run token
+.CW ( H2 <i>-<epoch>)
+must appear within 40 polls of 15s.  Unique per run, so it cannot be satisfied
+by an earlier run's output.  Sound.
+.IP \(bu
+CLEAN:
+.CW EFS-FAULT-OK
+in the console snapshot.  The marker is NOT unique, which would be contaminated
+by earlier runs if the log accumulated \(em it does not.
+.CW board.out
+is a rolling
+.CW "screen -X hardcopy"
+snapshot, overwritten each refresh (2995 bytes mid-run, with no earlier run's
+tokens in it), and the end token is echoed AFTER the suite, so when the token is
+visible the OK line is still on screen above it.  Sound, for a reason that had
+to be checked rather than assumed.
+.IP \(bu
+SLOW: counted, and the loop continues rather than exiting \(em which is the
+whole point, since aborting on slowness would make the wedge count
+unmeasurable.
+.PP
+So "19 clean, 0 slow, 0 wedges of 30" is a real reading, and the one thing that
+could have silently falsified it is a relink, for the
+.CW kmesg
+reason above rather than for host load.
