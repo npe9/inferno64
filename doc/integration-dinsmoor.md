@@ -1,102 +1,158 @@
-# Dinsmoor Inferno64 integration audit
+# Dinsmoor Inferno64 technical decision study
 
 Reference: `dinsmoor/master` at `6563393c8b4501ee88e0619eda20d6bc156ebe95`.
-Integration base: `inferno-rio` at `704c0c07e`.
+Study base: `inferno-rio` at `704c0c07e`.
 
-The histories have no Git merge base, although 8,560 paths overlap and 7,720
-of those paths have identical blobs.  Dinsmoor is an LP64 fork (64-bit pointers,
-32-bit Limbo `int`); this tree's 64-bit line has different ABI choices and has
-continued into multicore, JIT, native-port, and parallel-GC work.  Treat the
-repository as a source of tests and separable applications, not as a runtime
-merge target.
+This studies why Dinsmoor replaced core pieces and what those decisions teach
+us. It is not an import request. Although 8,560 paths overlap and 7,720 are
+byte-identical, the remaining changes concentrate at incompatible ABI and
+product boundaries.
 
-## Include, after adaptation
+## LP64 preserves the language contract
 
-### 1. Layered test gate
+Dinsmoor keeps Limbo `int` and a Dis word at 32 bits while making pointers 64
+bits. The stated reason is source portability: integer range, overflow,
+structure layout, and wire behavior should not change with host address width.
+The ILP64 experiment is kept on another branch instead of blurring the main
+ABI.
 
-Port the structure and useful cases under `tests/`, not the directory as one
-copy.  The high-value pieces are:
+Classic Inferno often used `WORD` both for a Dis word and for storage capable
+of carrying an address. LP64 separates:
 
-- C unit tests for lib9, libbio, libdraw, libinterp, libmath, libmemdraw,
-  libmp, and libsec;
-- Dis VM suites for execution, concurrency, crypto, Styx, loading, exceptions,
-  globals, and image I/O;
-- JIT interpreter-equivalence checks;
-- QEMU native-kernel console tests;
-- narrowing lint and sparse/static-analysis gates;
-- platform manifests that keep unsupported cells visible;
-- headless Tk render baselines.
+- `IBY2WD`: four-byte language/Dis word;
+- `IBY2PTR`: four- or eight-byte reference/frame slot.
 
-Each imported test must first be run against the local implementation.  A test
-whose expected values encode LP64 layout is rewritten from the local Dis ABI
-specification, not changed merely until it passes.  New tests must also be seen
-to fail under a deliberate negative control before being credited as coverage.
+Compiler temporaries, frame headers, module globals, case tables, `alt`, GC
+maps, loaders, builtins, and JIT moves must use the right unit. The history is
+a catalog of defects from choosing the wrong one. This base instead made more
+VM words and alignment pointer-sized. Dinsmoor is coherent, but adopting it is
+an ABI conversion, not a pointer-safety patch.
 
-### 2. Developer entry point
+Useful work is to specify the language data model separately from the C host
+model and audit boundaries in those terms. A comparative benchmark corpus can
+measure language-visible behavior, frame/heap size, and JIT cost. Do not mix
+LP64 compiler or JIT hunks with the current frame layout.
 
-Adapt the `make check` capability matrix and fresh-build wrapper as convenience
-front ends to this tree's `mk` rules.  They must not introduce a second build
-graph or make GNU make authoritative.  Existing per-branch build and smoke
-workflows remain the source of truth.
+## Module magic identifies both widths
 
-### 3. Documentation, selectively
+Dinsmoor assigns independent module-magic bits to pointer width and word width,
+distinguishing classic 32/32, LP64 64/32, and ILP64 64/64. The loader rejects
+mismatches and the shell may rebuild trusted source.
 
-The subsystem guides under `docs/ON_*.md` are useful review checklists.  Import
-only documents that are reconciled line by line with this tree.  In particular,
-JIT, ABI, GC, kernel, graphics, and build claims differ and cannot be copied as
-current documentation.
+Pointer width alone cannot distinguish Dinsmoor modules from this line's
+64-bit-word format. Both have 64-bit addresses but different frames, globals,
+GC maps, and integer representations. Silent acceptance becomes memory
+corruption.
 
-### 4. Independent userspace candidates
+The concept transfers: document an ABI identity covering pointer width, word
+width, alignment, and opcode/layout extensions, then emit a named loader error.
+Automatic rebuilding is safe only when source and toolchain provenance are
+unambiguous; otherwise stop at rejection.
 
-Good isolated candidates are:
+## Tests arose from concrete width failures
 
-- Charon CSS/DOM/dechunk/gzip improvements;
-- readline and terminal modules;
-- image animation/loaders and WebP wrappers;
-- newer Tk widgets, theming, cursors, and workspaces;
-- Fediverse and Bible file servers;
-- OBJ/raymath/raster3 applications;
-- live X11 resize, compared with the existing resize branch.
+C unit tests, narrowing lint, sparse annotations, heap checks, Dis scenarios,
+JIT equivalence, and stale-bytecode guards correspond to observed failures:
+implicit declarations truncating pointers, pointer moves through 32-bit temps,
+stale Dis, bad GC maps, sign extension, wrong exception/global slots, and
+interpreter/JIT width disagreement.
 
-Each is a separate commit with its own fixtures and man page.  Network clients
-must use local `tls12(2)`/`https(2)`, not Dinsmoor's bundled TLS as an implicit
-transport replacement.
+This provenance is more valuable than copying expected values. Port the harness
+in layers: width-neutral base-library tests first, VM assertions rewritten from
+the local ABI specification second, then narrowing/address-space analysis with
+a reviewed baseline. Require a deliberate negative control before crediting a
+test with coverage.
 
-## Evaluate separately
+## Fresh builds enforce coherence
 
-- FFmpeg: useful codec surface, but the tree includes a large upstream archive
-  and a kernel-facing wrapper; prefer a reproducible external-source recipe.
-- WebP and stb: small wrappers are plausible, but retain upstream notices and
-  use system/upstream sources rather than casually vendoring generated bulk.
-- mbedTLS: 272 new files and a competing TLS/crypto stack.  Consider only for a
-  narrowly defined interoperability or oracle role.
-- Raylib-style 3D: compare against the existing Metal draw3d path before
-  introducing a second rendering architecture.
+Dinsmoor wraps `mk` and nukes before full builds because incremental builds
+allowed compiler, emulator, and Dis artifacts from different ABIs to coexist.
+Those failures resembled runtime corruption.
 
-## Exclude
+The decision is to make compiler/runtime/bytecode coherence an invariant.
+Always rebuilding is reasonable while cheap; a build stamp can support safe
+incrementality only if it covers every ABI-affecting input. Keep `mk`
+authoritative—a wrapper may orchestrate it but must not create another build
+graph.
 
-- LP64 compiler, VM, Dis layout, JIT, pointer checks, or ABI markers as a
-  wholesale replacement.
-- Whole-tree merges of `libinterp` (29 conflicting files), `emu` (80), `os`
-  (139), `appl/cmd` (57), `appl/lib` (29), or `module` (23).
-- Vendored mbedTLS and FFmpeg source by default.
-- Dinsmoor's native-kernel changes through this branch; native `os/` work is
-  maintained separately and must be compared on its owning branches.
-- Pre-rendered screenshot baselines without a reproducible renderer, font set,
-  dimensions, and pixel-difference rule.
-- Documentation that describes the LP64 fork as though it describes this tree.
+## The platform matrix keeps missing evidence visible
 
-## Import order
+`make check` records required, skipped, and TODO cells across platform,
+configuration, and execution mode. A green suite can no longer mean that
+headless, JIT, native, or another architecture simply never ran.
 
-1. C unit-test harness and base-library tests.
-2. Dis VM tests and JIT equivalence gate.
-3. Lint, sparse, and platform capability manifests.
-4. QEMU native tests, on the native-port owning branch rather than here.
-5. Charon, Tk, terminal/readline, and image improvements one subsystem at a
-   time.
-6. Optional multimedia or 3D integrations only after choosing one dependency
-   and rendering strategy.
+This directly suits a repository with many hardware and research branches.
+Adapt the idea, not its manifests. Each claimed platform should name its build,
+test, last verified revision, and whether evidence is local, CI, or hardware.
 
-No Dinsmoor runtime source has been imported on this audit commit.  Importing
-its LP64 core would turn this into an ABI conversion rather than an integration
-and would overwrite newer local runtime work.
+## Tk was extended instead of replaced
+
+Dinsmoor added geometry, events, fonts, validation, undo, and themed widgets
+while reusing classic cores, then migrated applications and added headless
+render baselines. This preserves the existing application ecosystem and makes
+modernization incremental.
+
+It contrasts with InferNode's replacement UI. The technical question is whether
+missing primitives or synchronous remote-I/O behavior is the actual constraint.
+Evaluate `after`, `place`, virtual events, undo, themes, resize, and widgets
+independently. Screenshot tests must pin renderer, fonts, dimensions, and a
+discriminating pixel metric.
+
+## Charon moved to a retained, testable model
+
+Dinsmoor introduced a retained DOM, render-from-DOM, live handlers, CSS/layout,
+canvas, compression/chunking, cookie rules, resize, and fixture-based tests. The
+sequence matters: representation and dispatch were separated before features
+were layered on.
+
+Retaining the document model enables mutation, event lifetime, reflow, and
+testing. Port coherent phases with fixtures rather than isolated CSS tokens.
+Keep network transport on local `tls12(2)`/`https(2)`, not a second TLS
+stack.
+
+## Vendored C compensates for Inferno's execution boundary
+
+Dinsmoor links mbedTLS, FFmpeg, WebP, stb, and other C into hosted `emu`.
+Inferno has no conventional native-C userspace: C joins the trusted
+emulator/kernel while applications are Dis. A builtin is therefore the direct
+route to modern codecs, images, crypto, or 3D.
+
+The tradeoff is a larger TCB, host/native disparity, upstream maintenance,
+licensing, and frozen builtin APIs. Prefer remote 9P services when latency and
+data movement permit; use a builtin only when measurement justifies it. Do not
+vendor 272 mbedTLS files for operations local `libsec` already supplies.
+
+## The native-application limit is an important negative result
+
+Dinsmoor explicitly concludes that applications requiring arbitrary modern C
+libraries do not fit naturally in native Inferno. Adding protected POSIX C
+userspace would turn it into another OS. The architectural choices remain
+Limbo/Dis, a narrow audited builtin, or a remote file service.
+
+That is a useful filter: software requiring a POSIX process, ELF ecosystem, and
+broad syscall surface should usually stay remote behind 9P rather than recreate
+POSIX inside Inferno.
+
+## Decision table
+
+| Decision | Treatment | Reason |
+|---|---|---|
+| LP64 language model | Benchmark/document | Coherent but incompatible ABI |
+| Two-dimensional ABI magic | Adapt concept | Prevents 64/32 vs 64/64 confusion |
+| Stale-Dis rejection | Adopt concept | Turns corruption into a build error |
+| LP64 compiler/VM/JIT | Reject as import | Cannot mix layouts |
+| C/Dis test layers | Port selectively | Captures real failure classes |
+| Narrowing/sparse gates | Prototype | Valuable with reviewed baselines |
+| Capability matrix | Adapt | Makes absent testing visible |
+| Fresh-build wrapper | Adapt orchestration | Coherence benefit; `mk` stays authoritative |
+| Tk extensions | Evaluate separately | Incremental, limited-risk modernization |
+| Retained-DOM Charon | Port by phase | Representation enables real browser behavior |
+| mbedTLS | Exclude | Competing TLS/crypto stack and large TCB |
+| FFmpeg/WebP/stb | Decide by measurement | Performance vs TCB/portability |
+| Raylib/raster3 | Compare with Metal draw3d | Avoid duplicate unmeasured architectures |
+| Native patches | Study on owning branches | Protect active `os/` work |
+
+The first experiment should be ABI coherence plus a small test slice: document
+local widths, add an explicit module identity/rejection test, and port
+width-neutral C tests with negative controls. That evaluates Dinsmoor's best
+technical decisions without presuming its ABI is the answer.
