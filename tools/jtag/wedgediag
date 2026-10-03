@@ -1,0 +1,114 @@
+#!/bin/sh
+#
+# The board stopped answering.  WHICH END stopped?
+#
+#	sh tools/jtag/wedgediag
+#
+# WHY THIS EXISTS.  "The board is not answering" is one symptom with at
+# least four causes, and they are indistinguishable from the host unless
+# each is asked its own question:
+#
+#   1. the HOST's styx server stopped answering.  tools/jtag/styxd.sh
+#      records this as a real mode -- "seen once, on a server that had
+#      been up three and a half days" -- and the board's own comment for
+#      it is that kupdate "simply blocks with no message".  Anything the
+#      board does through /n/remote blocks, including the command poller,
+#      so the board looks dead while being perfectly healthy.
+#   2. the board's kernel is alive and a Dis process is stuck.  JTAG
+#      answers, the print ring has content, /prog has a process in an odd
+#      state.
+#   3. the board's kernel is wedged.  JTAG answers and the ring does not
+#      move.
+#   4. the board is off, reset, or the link is gone.  JTAG does not
+#      answer at all.
+#
+# This asks all four in order and says which one it is.  It changes
+# NOTHING: no reboot, no reflash, no writing to the card, and it never
+# opens the console device (see the standing rule -- a second opener
+# leaves the board printing and unable to hear, and only unplugging the
+# USB fixes it).
+#
+set -u
+ROOT=`cd \`dirname "$0"\`/../.. && pwd`
+PORT=${PORT:-6666}
+
+echo "wedgediag: 1. is the HOST's styx server answering a NEW connection?"
+
+#
+# The same handshake tools/jtag/styxd.sh uses, and patient for the same
+# reason its comments give: a server busy sending the board a 1.9MB
+# kernel does not answer promptly, and one declared wedged answered
+# normally a minute later.  So the timing is reported rather than
+# thresholded -- "slow" and "dead" are different findings.
+#
+python3 - "$PORT" <<'PYEOF'
+import socket, struct, sys, time
+port = int(sys.argv[1])
+for attempt in range(3):
+    t0 = time.time()
+    try:
+        s = socket.create_connection(('127.0.0.1', port), timeout=30)
+        v = b'9P2000'
+        body = struct.pack('<IH', 8192, len(v)) + v
+        s.sendall(struct.pack('<IBH', 4+1+2+len(body), 100, 0xffff) + body)
+        s.settimeout(30)
+        d = s.recv(64)
+        s.close()
+        if d and d[4] == 101:
+            print("  styx: answered in %.2fs on attempt %d" % (time.time()-t0, attempt+1))
+            sys.exit(0)
+        print("  styx: connected and the reply was not Rversion (%r)" % (d[:8],))
+    except Exception as e:
+        print("  styx: attempt %d: %s" % (attempt+1, e))
+    time.sleep(2)
+print("  styx: NO ANSWER after three attempts -- suspect cause 1")
+sys.exit(1)
+PYEOF
+styxok=$?
+
+echo "wedgediag: the port's sockets (LISTEN plus whatever the board left)"
+netstat -an 2>/dev/null | grep "\.$PORT " | sed 's/^/  /' | head -12
+
+echo "wedgediag: 2. the server process -- is it running, and is it moving?"
+#
+# CPU time sampled twice.  A server spinning and a server blocked look
+# the same in ps once; the difference is whether the number changes.
+#
+p1=`ps -o pid=,time=,state=,command= -A 2>/dev/null | grep '[e]mu-cpu' | head -3`
+if [ -z "$p1" ]; then
+	echo "  no emu-cpu running -- nothing is serving this tree (cause 1)"
+else
+	echo "$p1" | sed 's/^/  before: /'
+	sleep 5
+	ps -o pid=,time=,state=,command= -A 2>/dev/null | grep '[e]mu-cpu' | head -3 |
+		sed 's/^/  after:  /'
+	echo "  (same TIME in both = blocked; climbing = busy or spinning)"
+fi
+
+echo "wedgediag: 3. does the BOARD answer over JTAG?"
+if sh "$ROOT/tools/jtag/alive" >/dev/null 2>&1; then
+	echo "  alive: yes -- the kernel is running, so this is cause 1, 2 or 3"
+else
+	echo "  alive: NO -- cause 4, or JTAG itself is not attached"
+fi
+
+echo "wedgediag: 4. the kernel's print ring (where the watcher's SNAP lines land)"
+#
+# The ring is read over JTAG, so it needs neither styx nor the console's
+# deaf input path -- which is the whole reason tests write their
+# snapshots to /dev/cons rather than to /n/remote.  A styx wedge takes
+# the latter down with it.
+#
+sh "$ROOT/tools/jtag/kmesg" 2>&1 | tr -d '\r' | tail -40 | sed 's/^/  /'
+
+echo "wedgediag: verdict"
+if [ "$styxok" != 0 ]; then
+	echo "  the HOST stopped answering styx.  Restart it with"
+	echo "      sh tools/jtag/styxd.sh"
+	echo "  and note that this is cause 1, which looks exactly like a dead"
+	echo "  board from every instrument that goes through /n/remote."
+else
+	echo "  the host is serving styx, so a board that is not answering is"
+	echo "  not blocked on the host.  Read the SNAP lines above for which"
+	echo "  process is stuck, and tools/jtag/where for the kernel's pcs."
+fi

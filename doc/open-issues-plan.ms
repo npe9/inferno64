@@ -3644,3 +3644,69 @@ check was compared.  What must NOT happen is the gap being closed by argument:
 .CW 6l 's
 story is three bugs deep and each one was found by linking a real kernel, not
 by reading the pass.
+.NH 2
+H4.  OPEN.  The intermittent efs-fault hang, and what a clean run is worth
+.LP
+.CW tests/efs-fault
+has hung twice in about twelve runs.  The symptom is not a failed check: it is
+the BOARD'S COMMAND POLLER wedging, once after eighteen of the suite's
+twenty-one checks, and the trial it stopped on passes five times out of five
+on its own, on one core and on four.
+.PP
+.B "The criterion, written down BEFORE the runs."
+Two in twelve is a rate of about 0.17, so a clean batch proves much less than
+it feels like it does:
+.P1
+clean runs   chance of that many clean if the rate is unchanged
+   10                      16%
+   20                     2.6%
+   30                     0.4%
+.P2
+So ten clean runs are NOT evidence of anything \(em one batch in six looks
+like that with nothing fixed.  Thirty are: at 0.4% the old rate is refused.
+And to claim the rate is now under 5 per cent would take fifty-nine.  The
+batch to run is THIRTY, and the sentence it licenses is "the rate is not what
+it was", never "it is fixed", because nothing has been changed to fix it.
+.PP
+.B "Theories eliminated, each by a measurement."
+Mount stacking: twenty-one trials report no failed unmount, and the two
+long-lived
+.CW efs
+processes a
+.CW /prog
+scan finds are the board's own, with the same two pids every trial.  The
+specific trial: passes five of five alone.  Memory accumulation, which the
+suite's own comment proposes: the heap moves 7KB across the sections of a
+passing run and live allocations
+.CW ( nalloc-nfree )
+go from 6785 to 6861 \(em 76 objects, not a leak.  A styx connection or
+thread leak on the host: sampled every thirty seconds through six suite runs,
+ESTABLISHED connections stayed at 7 and the server's threads at 30, with CPU
+climbing 1.7 per cent.
+.PP
+.B "The theory that is left, and it is NOT efs."
+The workload copies its twenty files FROM
+.CW /n/remote
+\(em the styx mount, through the same export session the poller holds.
+.CW tools/jtag/styxd.sh
+records "the server genuinely stops answering Styx" as a real mode, seen on a
+server up three and a half days, whose symptom is that the board "simply
+blocks with no message".  That is the reported symptom exactly, and it would
+make a healthy board look dead to every instrument that reaches it through
+.CW /n/remote .
+.PP
+.B "Which is why the instrument had to change first."
+The watcher wrote its snapshot to
+.CW /n/remote/tmp/snap.txt ,
+so for the failure most likely to be happening it would block too \(em an
+instrument that goes down with the thing it watches, and the reason two hangs
+produced no evidence.  It writes to
+.CW /dev/cons
+now, which reaches the serial port AND the kernel's print ring, and the ring is
+readable over JTAG with neither styx nor the console's deaf input path.
+.PP
+.CW tools/jtag/wedgediag
+asks the four questions that tell the ends apart: does the host answer a NEW
+styx handshake, is the server process moving, does the board answer JTAG, and
+does the print ring hold anything.  On a catch, question one is the whole
+experiment.

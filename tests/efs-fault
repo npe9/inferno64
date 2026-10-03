@@ -81,9 +81,35 @@ fn watch {
 			# has gone is not a finding.
 			#
 			if {grep -s broken /prog/^$i^/status >[2]/dev/null} {
+				#
+				# TO THE CONSOLE AS WELL, and that is not
+				# belt and braces.
+				#
+				# Everything this suite prints reaches the
+				# host through the styx mount at /n/remote --
+				# the same mount its own workload copies
+				# files from, and the same export session
+				# the board's command poller holds.
+				# tools/jtag/styxd.sh records "the server
+				# genuinely stops answering Styx" as a real
+				# mode whose symptom is the board blocking
+				# with no message.  If that is what happens
+				# here, stdout goes nowhere and the one
+				# finding worth having is lost.
+				#
+				# /dev/cons reaches the serial port and the
+				# kernel's print ring, and the ring is
+				# readable over JTAG with no styx and no
+				# console input.  tools/jtag/wedgediag reads
+				# it and says which end stopped.
+				#
 				echo 'WATCH-BROKEN pid '^$i
 				cat /prog/^$i^/status
 				cat /prog/^$i^/stack
+				{
+					echo 'WATCH-BROKEN pid '^$i
+					cat /prog/^$i^/status >[2]/dev/null
+				} > /dev/cons
 			}
 		}
 		sleep 5
