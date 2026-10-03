@@ -78,6 +78,7 @@ extern int	ioboost, coopsched, schedgate, schedclock;
 extern int	gchalt, gcdepth, gcdepthmax;		/* libinterp/gc.c */
 extern ulong	gcnruns, gcsweeps, gcepochs, gchalted, gcinxecseen;
 extern ulong	gcbroken;
+extern ulong	gcbadptr;
 extern uvlong	gcdestroys, gcinspects;
 extern ulong	gcstwstops, gcstwwaits, gcstwfails;	/* port/dis.c */
 extern ulong	nrunqother, nrunqdel;			/* port/dis.c */
@@ -1505,13 +1506,22 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					" gaveup %lud, runq-other %lud"
 					" runq-freed-queued %lud"
 					" broken-chains %lud"
+					/*
+					 * gcbadptr is the guard committed in
+					 * 6c587face: words markheap() refused
+					 * BEFORE Setmark wrote through them.  It
+					 * was in the symbol table and reported by
+					 * NOTHING -- not here, not vmheld -- so
+					 * the fix had a counter and no reader.
+					 */
+					" bad-ptrs-rejected %lud"
 					" jitrefsatomic %d cflag %d\n",
 					gcnruns, gcsweeps, gcepochs, gchalted,
 					gchalt, gcdepth, gcdepthmax,
 					gcdestroys, gcinspects, gcinxecseen,
 					gcstwstops, gcstwwaits, gcstwfails,
 					nrunqother, nrunqdel,
-					gcbroken,
+					gcbroken, gcbadptr,
 					jitrefsatomic, cflag);
 			}
 			if(cb->nf > 2 && strcmp(cb->f[1], "ioboost") == 0)

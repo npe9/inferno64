@@ -80,6 +80,7 @@ A_REACH=`sym disreachcount`
 A_NHELD=`sym nvmheld`
 A_GCSW=`sym gcsweeps`
 A_GCBRK=`sym gcbroken`
+A_GCBAD=`sym gcbadptr`	# the 6c587face guard's own counter
 A_GCBUSY=`sym gcbusy`
 A_GCIDLE=`sym gcidle`
 A_PANICKING=`sym panicking`
@@ -134,6 +135,7 @@ trap 'rm -f "$TMP"' 0 1 2 15
 	-c "echo \"VMHELD-NHELD\"; mdw ${A_NHELD:-0} 1" \
 	-c "echo \"VMHELD-GCSW\"; mdw ${A_GCSW:-0} 1" \
 	-c "echo \"VMHELD-GCBRK\"; mdw ${A_GCBRK:-0} 1" \
+	-c "echo \"VMHELD-GCBAD\"; mdw ${A_GCBAD:-0} 1" \
 	-c "echo \"VMHELD-GCBUSY\"; mdw ${A_GCBUSY:-0} 2" \
 	-c "echo \"VMHELD-GCIDLE\"; mdw ${A_GCIDLE:-0} 2" \
 	-c "echo \"VMHELD-PANICKING\"; mdw ${A_PANICKING:-0} 1" \
@@ -291,7 +293,15 @@ if [ -n "$A_GCSW" ]; then
 	gcbrk=`val VMHELD-GCBRK`
 	gcbusy=`val2 VMHELD-GCBUSY`
 	gcidle=`val2 VMHELD-GCIDLE`
+	gcbad=`val VMHELD-GCBAD`
 	echo "vmheld: gc sweeps `dec $gcsw`, chains found BROKEN `dec $gcbrk`"
+	#
+	# The 6c587face guard's own counter: words markheap() refused BEFORE
+	# Setmark wrote through them.  It was in the symbol table and read by
+	# NOTHING -- not here, not devcons's GC-COUNTS -- so the fix had a
+	# counter and no reader, which is the shape this tool exists to avoid.
+	#
+	echo "vmheld: bad pointers REJECTED before Setmark `dec $gcbad`"
 	echo "vmheld: gc busy `join64 "$gcbusy"`, gc idle `join64 "$gcidle"`"
 	if [ "`dec $gcbrk`" != 0 ]; then
 		echo "vmheld:   a broken chain makes gcsweep abandon its sweep"

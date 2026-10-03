@@ -7457,3 +7457,81 @@ window was never measured, so bounding it from 303017 pixels needing at least
 474 rows of a 640-wide screen is reasoning with no measurement to lean on.  The
 difference is not that arguments are bad \(em it is that an argument supporting a
 number you already have is all risk and no gain.
+.NH 2
+H4.  The GC guard is INERT, and the theory it was built on is withdrawn
+.LP
+.CW 6c587face
+added a bounds check in
+.CW markheap()
+to reject an implausible word BEFORE
+.CW Setmark
+writes through it, on the theory that writing
+.CW h->color
+through a garbage declared-pointer word was corrupting the heap.  It was held
+back from the wedge batch so that batch would score one change.  The batch is
+accepted, so the guard is due its own number.
+.PP
+.B "First: it was already installed and read by NOTHING."
+.CW gcbadptr
+and
+.CW gcbroken
+are both in the linked kernel
+.CW ( 0x001d7ae4
+and
+.CW 0x001d84f8 ),
+so the guard has been live on the board \(em but no reader printed
+.CW gcbadptr :
+not
+.CW devcons 's
+.CW GC-COUNTS
+line, not
+.CW tools/jtag/vmheld .
+A fix with a counter and no reader, which is the exact shape the ring rule
+exists to prevent.  Both now report it.
+.PP
+.B "Then the number, from the workload that produced the plan's 38."
+A first reading off a boot that had run only
+.CW drawink
+and
+.CW gfxstress
+gave 107142 sweeps, 0 broken, 0 rejected \(em which is NOT a comparison, because
+the 38 came from the efs-fault suite.  Running that suite:
+.P1
+                          before    after    delta
+gc sweeps                 107142   177428    70286
+chains found BROKEN            0       20       20
+bad pointers REJECTED          0        0        0
+.P2
+.PP
+.B "So the suite does produce broken chains and the guard never fires."
+20 in 70286 sweeps, the same order as the recorded 38 from this workload, with
+.CW gcbadptr
+at zero throughout.  The guard is installed, live, and INERT.
+.PP
+.B "Which retracts the theory it was built on."
+.CW gcbadptr
+is not a side-effect counter, it IS the test for the condition: the predicate is
+.CW "wv < 0x1000 || (wv & (sizeof(uintptr)-1)) != 0"
+and it increments on every rejection, so zero rejections means no word matching
+that predicate was ever encountered.  Writing through an IMPLAUSIBLE word is not
+what breaks the chains, because no implausible word is ever seen.
+.PP
+What remains are two candidates the counters cannot separate, and a peer named
+the instrument for them:
+.IP \(bu
+The bad words are PLAUSIBLE \(em aligned and above 0x1000 \(em so they pass the
+guard and corrupt anyway, which the guard cannot detect by construction.
+.IP \(bu
+Or the chains break for the other reason this plan already flagged:
+.CW gcsweep
+walking the pool chain while the allocator updates it, which is a race and not a
+bad pointer at all.
+.PP
+Splitting them needs a reader on the path that CREATES a chain rather than on the
+guard.  That is the next instrument for this item and it is not written.
+.PP
+.B "The guard stays in and gets credit for nothing."
+A bounds check before a blind write through a declared-pointer word is correct
+whether or not it ever fires here, and it costs two comparisons on a path that
+already walks every word.  But it did not fix the broken chains, and a commit
+that says otherwise would be wrong.
