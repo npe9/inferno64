@@ -7645,3 +7645,92 @@ immediately after reporting 24520 \(em the file changed between the read and the
 write.  Read-modify-write on it is unsafe while another session is active, the
 same hazard as the shared git index, and over the limit the loader drops the
 LAST lines, which are the newest entries.
+.NH 2
+H4.  7c can emit an UNDEFINED instruction, and this kernel is clean of it
+.LP
+A peer broadening a test found a kencc code-generation bug that panicked their
+raspi3b kernel:
+.P1
+TRAP type 0 esr 02000000 pc 0010a170 lr 0010a120 far 0000000000000000
+panic: trap
+.P2
+ESR
+.CW 0x02000000
+is EC=0, "unknown reason" \(em an undefined instruction \(em and
+.CW far=0
+confirms it is not a data abort.  The word at the pc was
+.CW 0x12007ca5 ,
+.CW "AND w5, w5, #0xFFFFFFFF" ,
+from
+.P1
+*rgba = (ulong)tkcolortab[i].con & 0xffffffffUL;   libtk/parse.c:999
+.P2
+.PP
+.B "The mask was a deliberate portability fix that became an undefined instruction."
+It was added to stop a 64-bit host sign-extending
+.CW RGB(255,255,255) ,
+where
+.CW 0xFFFFFFFF
+is -1 as an
+.CW int .
+But
+.CW ulong
+is 32 bits under kencc \(em asserted in this tree earlier, not assumed \(em so the
+mask is the IDENTITY, and AArch64 has no encoding for an all-ones logical
+immediate.  A correct fix for one target, silently fatal on another, on a branch
+reached only when a colour is NAMED rather than given in hex.  Twelve
+default-coloured widgets passed;
+.CW "-fill red"
+panicked.
+.NH 3
+tools/jtag/undefimm, and both of its controls
+.LP
+The trigger is any identity-width logical mask, so a source grep cannot find it
+reliably \(em it is a codegen artefact.  The scan decodes bits 28..23 == 0x24,
+applies
+.CW DecodeBitMasks ,
+and flags
+.CW "imms AND levels == levels" .
+.PP
+.B "Control one: it fires on the known-bad word."
+.P1
+0x12007ca5  undefined=True   sf=0 N=0 imms=0x1f   the peer's panic word
+0x121f7800  undefined=False  sf=0 N=0 imms=0x1e   legitimate 32-bit AND imm
+0x92400000  undefined=False                       legitimate 64-bit AND imm
+0xd65f03c0  undefined=False                       ret, not a logical immediate
+.P2
+By hand for the first: field =
+.CW "~0x1f & 0x3f"
+= 0x20, len = 5, levels = 0x1f, and
+.CW "imms & levels == levels" ,
+which is the peer's derivation independently reproduced.
+.PP
+.B "Control two: the etext bound is load-bearing, measured on THIS image."
+.P1
+whole image (642398 words):  2130 "hits"
+text only   (350078 words):     0 hits
+.P2
+The 2130 are ASCII in the string section \(em
+.CW 0x726f6d65
+is
+.CW "'emor'" ,
+the same fragment the peer hit \(em which is the data-in-text blind spot the
+kencc notes already warn about.  So the tool REFUSES to scan without an etext
+rather than printing two thousand false positives.
+.NH 3
+The result for this kernel
+.LP
+.B "0 undefined encodings in 350078 words of text."
+The source site does not exist here either:
+.CW libtk/parse.c
+in this tree has no such mask, and the only
+.CW "& 0xffffffff"
+hits in kernel-linked code are
+.CW os/inferno/port/mul64fract.c
+lines 28 and 30, which use
+.CW 0xffffffffULL
+to extract the low half of a genuinely 64-bit value \(em not an identity mask.
+.PP
+Which is a clean result rather than a null one, because the scan is validated in
+both directions: it fires on the word that panicked a real board, and it is
+silent on 350078 words of this one.

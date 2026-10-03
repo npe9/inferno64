@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+#
+# Scan an aarch64 kernel image for logical-immediate instructions whose
+# encoding is architecturally UNDEFINED.
+#
+#	python3 tools/jtag/undefimm os/inferno/raspi3b/kernel8.img
+#	python3 tools/jtag/undefimm <img> <elf>     # bound text with that ELF
+#
+# WHY.  A peer hit this as a kernel panic: 7c emitted 0x12007ca5 for
+#
+#	*rgba = (ulong)tkcolortab[i].con & 0xffffffffUL;
+#
+# which is AND w5,w5,#0xFFFFFFFF -- an IDENTITY mask, because ulong is 32 bits
+# under kencc.  AArch64 has no encoding for an all-ones logical immediate, so
+# DecodeBitMasks declares it UNDEFINED and the core takes
+#
+#	TRAP type 0 esr 02000000 ... far 0
+#
+# EC=0 "unknown reason", far=0 confirming it is not a data abort.  The source
+# was a DELIBERATE portability fix -- masking to stop a 64-bit host
+# sign-extending RGB(255,255,255), where 0xFFFFFFFF is -1 as an int -- and on a
+# 32-bit-ulong target it became an undefined instruction.  A correct fix for one
+# target, silently fatal on another, on a path reached only when a colour is
+# named rather than given in hex.
+#
+# The trigger is ANY identity-width logical mask: `x & 0xffffffffUL' where ulong
+# is 32 bits is the obvious shape, and it is silent until the code runs.  A
+# source grep cannot find it reliably, because it is a code-generation artifact
+# and other shapes reach the same encoding -- which is why this scans the image.
+#
+# BOUND THE SCAN BY etext OR IT IS USELESS.  Unbounded, this reports ~1987 hits
+# on a real kernel, essentially all of them ASCII in the string section
+# (0x726f6d65 is "emor").  That is the data-in-text blind spot the kencc notes in
+# doc/ already warn about, and it is the difference between one real finding and
+# two thousand false ones.
+#
+import sys, subprocess, os
+
+def highest_set_bit(x):
+    return x.bit_length() - 1
+
+def logical_imm_undefined(w):
+    """True if w is a logical-immediate instruction with an UNDEFINED encoding."""
+    if (w >> 23) & 0x3f != 0x24:        # bits 28..23 == 0b100100
+        return False
+    sf   = (w >> 31) & 1
+    n    = (w >> 22) & 1
+    imms = (w >> 10) & 0x3f
+    if sf == 0 and n == 1:              # 32-bit form requires N == 0
+        return True
+    # len = HighestSetBit(immN : NOT(imms)) over 7 bits
+    field = (n << 6) | ((~imms) & 0x3f)
+    if field == 0:
+        return True                     # len < 1 -> UNDEFINED
+    ln = highest_set_bit(field)
+    if ln < 1:
+        return True
+    levels = (1 << ln) - 1
+    # DecodeBitMasks: for a logical IMMEDIATE, imms AND levels == levels is UNDEFINED
+    if (imms & levels) == levels:
+        return True
+    return False
+
+def etext_of(elf):
+    try:
+        out = subprocess.run(['python3',
+                os.path.join(os.path.dirname(__file__), 'ksyms'), elf],
+                capture_output=True, text=True).stdout
+    except Exception:
+        return None
+    for l in out.splitlines():
+        f = l.split()
+        if len(f) >= 3 and f[2] == 'etext':
+            return int(f[0], 16)
+    return None
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit("usage: undefimm <kernel8.img> [iraspi3b]")
+    img = sys.argv[1]
+    elf = sys.argv[2] if len(sys.argv) > 2 else \
+          os.path.join(os.path.dirname(img), 'iraspi3b')
+    base = 0x80000
+    d = open(img, 'rb').read()
+    et = etext_of(elf)
+    if et is None:
+        print("undefimm: no etext in %s -- REFUSING, because an unbounded scan"
+              % elf, file=sys.stderr)
+        print("undefimm: reports ~2000 false hits from ASCII in the string section",
+              file=sys.stderr)
+        sys.exit(2)
+    limit = min(len(d), et - base)
+    print("undefimm: %s, text %#x..%#x (%d words), etext from %s"
+          % (os.path.basename(img), base, et, limit // 4, os.path.basename(elf)))
+    hits = 0
+    for off in range(0, limit - 3, 4):
+        w = int.from_bytes(d[off:off+4], 'little')
+        if logical_imm_undefined(w):
+            hits += 1
+            print("undefimm:   %#010x: %#010x UNDEFINED logical immediate"
+                  % (base + off, w))
+    print("undefimm: %d undefined encoding(s) in text" % hits)
+    return 1 if hits else 0
+
+if __name__ == '__main__':
+    sys.exit(main())
