@@ -4562,3 +4562,95 @@ all of the same shape and all in paths that hold something: the SDIO retry
 above a bounded poll, the wifi reader's retry, and this drain.  The tree's own
 rule \(em a bound on one call is not a bound on its caller \(em has now been
 earned three times.
+.NH 2
+H4.  The holder is handed the token and never runs \(em the suspect is now the SCHEDULER
+.LP
+The watchdog prints the holder's own entry now, and it moves the question off
+the interpreter altogether.
+.P1
+DIS-WEDGED-HOLDER: pid 158, the token holder:
+158: dis pc 0x1c101c  Running (Running) ut 217
+     qpc 0x164dc4 (tcpkick+84) lpc 0x1766ec (iprintcanlock+36)
+DIS-WEDGED-END: beat 313842, vmq waiting, runhd ready, ticks 10352
+.P2
+.B "0x1c101c is Sys_print+256, and that is the acquire() AFTER the write."
+.CW Sys_print
+in
+.CW os/inferno/port/inferno.c
+does
+.CW release() ,
+then formats and
+.CW kwrite 's,
+then
+.CW acquire()
+\(em correctly.  So this is NOT a syscall blocking with the token held, which
+was the obvious theory and is now the second one eliminated by reading the code
+rather than guessing
+.CW ( Sys_pread
+was the first).  And
+.CW up->pc
+is where a process last QUEUED, so it names the
+.CW acquire()
+call site, not a position.
+.PP
+.B "What that leaves."
+pid 158 finished its print, queued in
+.CW acquire() ,
+was handed the token \(em
+.CW vmholderpid
+says so \(em and then made no progress at all:
+.CW disbeat
+is frozen at the same value the watchdog reported.  Meanwhile ALL FOUR CORES
+ARE IDLE (three in WFI, one in the idle path's
+.CW clockpoll ,
+which matches 0 characters taken).
+.PP
+So the token was handed to a process that never ran, with every processor idle.
+That is not the Dis token logic and not a missing release: it is
+.CW ready()
+or the run queue.  The dumps have been pointing at it all along \(em the
+.CW lpc
+of almost every queued process is
+.CW queueproc+40
+or
+.CW dequeueproc+16 ,
+the scheduler's own lock.
+.PP
+.B "Eliminated, each by evidence rather than argument."
+The host (styx answers in 0.00s, five catches running).  efs (the suite is a
+workload, not a cause).  Memory
+.CW ( conf.nproc
+200 against 74).  The styx export session.  The SDIO retry (a real bug, bounded,
+and its refusal count is zero in these catches).
+.CW clockpoll 's
+drain (0 characters taken DURING two wedges).  A held-too-long VM
+.CW ( maxvmheld
+measures something else entirely \(em withdrawn above).  A blocking syscall
+holding the token
+.CW ( Sys_pread
+and
+.CW Sys_print
+both release correctly).
+.PP
+.B "Not eliminated, and newly visible now the ring survives:"
+the USB host controller is erroring in the same window \(em
+.CW "ep3.1 completion timeout" ,
+.CW "error intr 00000082" ,
+.CW "channel won't halt hcchar c0000000" .
+That halt loop IS bounded (a 100-tick timeout, checked), so it is not a loop
+defect, but a controller that will not halt a channel is a fault in its own
+right and it is on the same board at the same moment.  Whether it is cause,
+consequence or coincidence is open.
+.PP
+.B "The next instrument, and it is the last one this needs."
+Read the RUN QUEUE and each processor's
+.CW up
+at a wedge, by address, the way
+.CW vmheld
+reads the token.  If pid 158 is sitting on a run queue while four cores idle,
+that is a lost wakeup in
+.CW ready() /
+.CW queueproc() ,
+and the bug is located.  If it is on no queue at all, it was readied and
+dropped, which is a different bug in the same place.  Either way the answer is
+two reads and no more guessing.
