@@ -170,6 +170,7 @@ init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
 	stderr = sys->fildes(2);
+	typetok = chan[1] of string;
 	arg := load Arg Arg->PATH;
 	if(arg == nil)
 		fail(sys->sprint("load %s: %r", Arg->PATH));
@@ -228,8 +229,8 @@ init(nil: ref Draw->Context, argv: list of string)
 	}
 
 	if(linestart(readall("/dev/vm/backend"), "riscv-h")){
-		if(ncpu > 1 || disks != nil || nets != nil || assign != nil)
-			fail("the RISC-V platform has one processor and no devices but its console yet");
+		if(assign != nil)
+			fail("the RISC-V platform has no PCI");
 		if(!appended)
 			append = "console=ttyS0 earlycon=sbi";
 		rvboot(kernel, initrd, append, megs, secs);
@@ -384,9 +385,11 @@ init(nil: ref Draw->Context, argv: list of string)
 # RISC-V (virt/vmrv.c): the kernel's Image at its text_offset, entered
 # in VS-mode with translation off, a0 the hart and a1 a flattened
 # device tree (Linux's Documentation/arch/riscv/boot.rst).  The tree
-# describes the platform of virt/vmplat.c: one hart, whose timer and
-# console are the SBI's, the RAM, and a 16550 with no interrupt (Linux
-# polls it) where QEMU's virt machine has one.
+# describes the platform of virt/vmplat.c: the harts (the rest started
+# by the SBI's hart_start), whose timers and IPIs are the SBI's, the
+# RAM, a 16550 with no interrupt (Linux polls it) where QEMU's virt
+# machine has one, its PLIC, whose one context is hart 0's, and the
+# virtio-mmio devices on it.
 Dtbmax:	con 64*1024;
 Uart:	con 16r10000000;
 Timebase:	con 10000000;	# the time CSR: QEMU virt's mtime, 10 MHz
@@ -410,6 +413,28 @@ rvboot(kernel, initrd, append: string, megs, secs: int)
 	(ctl, dir) := newmachine(memsize);
 	sys->print("vmlinux: machine %s, %d MiB, RISC-V Image %s, %bd bytes at %#bux\n",
 		dir, megs, kernel, klen, textoff);
+	# harts 1 to n-1 wait for the SBI's hart_start
+	if(ncpu > 1 && sys->fprint(ctl, "vcpus %d", ncpu) < 0)
+		fail(sys->sprint("vcpus %d: %r", ncpu));
+	# virtio-mmio devices, in the order given: the first disk is vda
+	for(disks = rev(disks); disks != nil; disks = tl disks){
+		if(sys->fprint(ctl, "virtio blk %s", hd disks) < 0)
+			fail(sys->sprint("virtio blk %s: %r", hd disks));
+		sys->print("vmlinux: virtio disk %s\n", hd disks);
+	}
+	for(nets = rev(nets); nets != nil; nets = tl nets){
+		if(sys->fprint(ctl, "virtio net %s", hd nets) < 0)
+			fail(sys->sprint("virtio net %s: %r", hd nets));
+		sys->print("vmlinux: virtio net on %s\n", hd nets);
+	}
+	# where the platform put them: "mmio base irq n ..." in status
+	mmios: list of (big, int);
+	(nil, sl) := sys->tokenize(readall(dir + "/status"), "\n");
+	for(; sl != nil; sl = tl sl){
+		(nf, f) := sys->tokenize(hd sl, " ");
+		if(nf >= 4 && hd f == "mmio" && hd tl tl f == "irq")
+			mmios = (num(hd tl f), int hd tl tl tl f) :: mmios;
+	}
 	mem := sys->open(dir + "/mem", Sys->ORDWR);
 	if(mem == nil)
 		fail(sys->sprint("mem: %r"));
@@ -428,7 +453,7 @@ rvboot(kernel, initrd, append: string, megs, secs: int)
 		copymem(mem, rdaddr, rfd, big 0, rlen, initrd);
 		rdend = rdaddr + rlen;
 	}
-	dtb := mkdtb(memsize, append, rdaddr, rdend);
+	dtb := mkdtb(memsize, append, rdaddr, rdend, mmios, ncpu);
 	if(len dtb > Dtbmax)
 		fail("the device tree is too big");
 	writemem(mem, dtbaddr, dtb);
@@ -457,6 +482,33 @@ newmachine(memsize: big): (ref Sys->FD, string)
 	return (ctl, dir);
 }
 
+# a C-style number: 0x hex or decimal
+num(s: string): big
+{
+	base := big 10;
+	if(len s > 2 && s[0:2] == "0x"){
+		base = big 16;
+		s = s[2:];
+	}
+	v := big 0;
+	for(i := 0; i < len s; i++){
+		c := s[i];
+		d: int;
+		if(c >= '0' && c <= '9')
+			d = c - '0';
+		else if(c >= 'a' && c <= 'f')
+			d = c - 'a' + 10;
+		else if(c >= 'A' && c <= 'F')
+			d = c - 'A' + 10;
+		else
+			break;
+		if(big d >= base)
+			break;
+		v = v*base + big d;
+	}
+	return v;
+}
+
 get64(b: array of byte, o: int): big
 {
 	v := big 0;
@@ -483,6 +535,7 @@ Fdt: adt {
 	propstr:	fn(f: self ref Fdt, name, v: string);
 	propcells:	fn(f: self ref Fdt, name: string, v: array of big);
 	propnone:	fn(f: self ref Fdt, name: string);
+	propstrs:	fn(f: self ref Fdt, name: string, v: list of string);
 	bytes:	fn(f: self ref Fdt): array of byte;
 };
 
@@ -573,6 +626,19 @@ Fdt.propcells(f: self ref Fdt, name: string, v: array of big)
 	f.prop(name, b);
 }
 
+Fdt.propstrs(f: self ref Fdt, name: string, v: list of string)
+{
+	b := array[0] of byte;
+	for(; v != nil; v = tl v){
+		s := array of byte hd v;
+		c := array[len b + len s + 1] of {* => byte 0};
+		c[0:] = b;
+		c[len b:] = s;
+		b = c;
+	}
+	f.prop(name, b);
+}
+
 Fdt.propnone(f: self ref Fdt, name: string)
 {
 	f.prop(name, array[0] of byte);
@@ -608,7 +674,11 @@ c2(v: big): (big, big)
 	return ((v >> 32) & big 16rFFFFFFFF, v & big 16rFFFFFFFF);
 }
 
-mkdtb(memsize: big, append: string, rdaddr, rdend: big): array of byte
+Plic:	con 16r0C000000;
+Nplic:	con 2;	# phandles: the PLIC's, and hart h's interrupt controller's
+Ncpuintc:	con 16;
+
+mkdtb(memsize: big, append: string, rdaddr, rdend: big, mmios: list of (big, int), ncpu: int): array of byte
 {
 	f := Fdt.new();
 	f.begin("");
@@ -638,20 +708,22 @@ mkdtb(memsize: big, append: string, rdaddr, rdend: big): array of byte
 	f.propcells("#address-cells", array[] of {big 1});
 	f.propcells("#size-cells", array[] of {big 0});
 	f.propcells("timebase-frequency", array[] of {big Timebase});
-	f.begin("cpu@0");
-	f.propstr("device_type", "cpu");
-	f.propcells("reg", array[] of {big 0});
-	f.propstr("compatible", "riscv");
-	f.propstr("riscv,isa", "rv64imafdc");
-	f.propstr("mmu-type", "riscv,sv39");
-	f.propstr("status", "okay");
-	f.begin("interrupt-controller");
-	f.propcells("#interrupt-cells", array[] of {big 1});
-	f.propnone("interrupt-controller");
-	f.propstr("compatible", "riscv,cpu-intc");
-	f.propcells("phandle", array[] of {big 1});
-	f.end();
-	f.end();
+	for(h := 0; h < ncpu; h++){
+		f.begin(sys->sprint("cpu@%d", h));
+		f.propstr("device_type", "cpu");
+		f.propcells("reg", array[] of {big h});
+		f.propstr("compatible", "riscv");
+		f.propstr("riscv,isa", "rv64imafdc");
+		f.propstr("mmu-type", "riscv,sv39");
+		f.propstr("status", "okay");
+		f.begin("interrupt-controller");
+		f.propcells("#interrupt-cells", array[] of {big 1});
+		f.propnone("interrupt-controller");
+		f.propstr("compatible", "riscv,cpu-intc");
+		f.propcells("phandle", array[] of {big (Ncpuintc + h)});
+		f.end();
+		f.end();
+	}
 	f.end();
 
 	f.begin("soc");
@@ -664,6 +736,26 @@ mkdtb(memsize: big, append: string, rdaddr, rdend: big): array of byte
 	f.propcells("reg", array[] of {big 0, big Uart, big 0, big 16r100});
 	f.propcells("clock-frequency", array[] of {big 3686400});
 	f.end();
+	# the PLIC, one context: the hart's supervisor external interrupt
+	f.begin(sys->sprint("plic@%ux", Plic));
+	f.propstrs("compatible", "sifive,plic-1.0.0" :: "riscv,plic0" :: nil);
+	f.propcells("#address-cells", array[] of {big 0});
+	f.propcells("#interrupt-cells", array[] of {big 1});
+	f.propnone("interrupt-controller");
+	f.propcells("reg", array[] of {big 0, big Plic, big 0, big 16r600000});
+	f.propcells("riscv,ndev", array[] of {big 31});
+	f.propcells("interrupts-extended", array[] of {big Ncpuintc, big 9});
+	f.propcells("phandle", array[] of {big Nplic});
+	f.end();
+	for(; mmios != nil; mmios = tl mmios){
+		(base, irq) := hd mmios;
+		f.begin(sys->sprint("virtio_mmio@%bux", base));
+		f.propstr("compatible", "virtio,mmio");
+		f.propcells("reg", array[] of {base >> 32, base & big 16rFFFFFFFF, big 0, big 16r1000});
+		f.propcells("interrupt-parent", array[] of {big Nplic});
+		f.propcells("interrupts", array[] of {big irq});
+		f.end();
+	}
 	f.end();
 
 	f.end();
@@ -939,6 +1031,19 @@ console(dir: string, pidc: chan of int, done: chan of int)
 			}else if(len seen > 4096)
 				seen = seen[len seen - 1024:];
 		}
+		# -t: type a line once the guest's shell is up
+		if(typed != nil){
+			tail += string buf[0:n];
+			if(contains(tail, Shell)){
+				# typed once the shell asks where its cursor is
+				# (and is answered), or in three seconds if it
+				# does not ask
+				typetok <-= typed;
+				spawn typelater(dir);
+				typed = nil;
+			}else if(len tail > 256)
+				tail = tail[len tail - 256:];
+		}
 		# a terminal answers where its cursor is: busybox's line
 		# editor (1.37) asks, with ESC [ 6 n, and takes no input
 		# until it has the answer
@@ -946,28 +1051,45 @@ console(dir: string, pidc: chan of int, done: chan of int)
 			wfd := sys->open(dir + "/console", Sys->OWRITE);
 			if(wfd != nil)
 				sys->fprint(wfd, "\u001b[1;1R");
+			# the line waiting to be typed goes after the answer,
+			# not into the middle of a command it would be echoed in
+			alt{
+			t := <-typetok =>
+				typeline(dir, t);
+			* =>
+				;
+			}
 		}
 		dsrtail = string buf[0:n];
 		if(len dsrtail > 3)
 			dsrtail = dsrtail[len dsrtail - 3:];
-		# -t: type a line once the guest's shell is up
-		if(typed != nil){
-			tail += string buf[0:n];
-			if(contains(tail, Shell)){
-				wfd := sys->open(dir + "/console", Sys->OWRITE);
-				# written whole: fprint's buffer cut a long command short
-				if(wfd != nil){
-					b := array of byte typed;
-					sys->write(wfd, b, len b);
-				}
-				typed = nil;
-			}else if(len tail > 256)
-				tail = tail[len tail - 256:];
-		}
 	}
 	if(len pend > 0)
 		sys->write(out, pend, len pend);
 	done <-= 1;
+}
+
+typetok: chan of string;	# the line to type, taken by whichever comes first
+
+typelater(dir: string)
+{
+	sys->sleep(3000);
+	alt{
+	t := <-typetok =>
+		typeline(dir, t);
+	* =>
+		;
+	}
+}
+
+typeline(dir, t: string)
+{
+	wfd := sys->open(dir + "/console", Sys->OWRITE);
+	# written whole: fprint's buffer cut a long command short
+	if(wfd != nil){
+		b := array of byte t;
+		sys->write(wfd, b, len b);
+	}
 }
 
 # ESC [ 6 n in s, or begun at the end of what came before it

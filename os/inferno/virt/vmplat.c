@@ -12,8 +12,8 @@
  *			IPI and remote fences
  *	TIME		set_timer
  *	DBCN		the debug console: write, read, write_byte
- *	IPI, RFENCE	for the one hart there is
- *	HSM		hart 0's status
+ *	IPI, RFENCE	between the harts
+ *	HSM		hart_start and hart_get_status
  *	SRST, legacy 8	system reset: not answered here, but handed up
  *			to Limbo as a shutdown exit
  *
@@ -25,6 +25,10 @@
  * itself, read from the guest through its own page tables.  The
  * SBI's console and the UART are one console, the machine's console
  * file.
+ *
+ * A PLIC with one context, the hart's supervisor (hvip.VSEIP), takes
+ * the lines of virtio-mmio devices (port/vmvirtio.c) in windows from
+ * 0x10001000 on sources from 1, where QEMU's virt machine has its.
  *
  * The guest's timer is hvip.VSTIP, made pending when the time the
  * guest asked for has come; a WFI with the timer armed sleeps until
@@ -39,11 +43,17 @@
 #include	"../port/error.h"
 #include	"../port/vm.h"
 #include	"../port/vuart.h"
+#include	"../port/vmvirtio.h"
 #include	"vmrv.h"
 
 enum {
 	Uartbase	= 0x10000000,
 	Uartlen		= 0x100,
+	Plicbase	= 0x0C000000,
+	Pliclen		= 0x600000,
+	Nsrc		= 32,		/* sources 1 to 31 */
+	Virtiobase	= 0x10001000,	/* window n at Virtiobase + 0x1000*n, on source 1+n */
+	Nvirtio		= 8,
 
 	/* SBI extensions */
 	Xsettimer	= 0x00,
@@ -86,11 +96,35 @@ struct Plat
 	int	kick[Maxvcpu];	/* wake from WFI */
 	uvlong	nsbi;
 	uvlong	nin;		/* console input taken, all told */
+
+	/* the PLIC: one context, the hart's supervisor */
+	u32int	prio[Nsrc];
+	u32int	level;		/* lines up */
+	u32int	pend;		/* pending, by source */
+	u32int	claimed;	/* claimed and not yet completed */
+	u32int	enable;
+	u32int	thresh;
+	int	eip;		/* the context's interrupt: hvip.VSEIP */
+	uvlong	nclaim;
+
+	void	*virt[Nvirtio];	/* virtio-mmio devices (port/vmvirtio.c) */
+	int	nvirt;
+
+	/* harts: the SBI's HSM, and IPIs between them */
+	int	started[Maxvcpu];	/* hart 0 by "go", the rest by hart_start */
+	int	startreq[Maxvcpu];	/* a hart_start for it, not yet taken up */
+	uvlong	startpc[Maxvcpu];
+	uvlong	startarg[Maxvcpu];
+	int	ssip[Maxvcpu];		/* an IPI for it, for its hvip */
+	uvlong	nipi;
 	uvlong	nrx;		/* and read by the guest from the UART */
 };
 
 #define	PLAT(vm)	((Plat*)(vm)->plat)
 
+static void	plicirq(Vm*, int, int);
+static uvlong	reg(Vcpu*, int);
+static void	setreg(Vcpu*, int, uvlong);
 extern void	rvhfencevvma(void);
 extern void	rvfencei(void);
 static void	rvfences(int);
@@ -107,6 +141,7 @@ vmplatnew(Vm *)
 	for(i = 0; i < Maxvcpu; i++)
 		p->timer[i] = ~0ULL;
 	vuartreset(&p->uart);
+	vvirq = plicirq;	/* the virtio devices' lines */
 	return p;
 }
 
@@ -114,32 +149,201 @@ void
 vmplathangup(Vm *vm)
 {
 	Plat *p;
+	int i;
 
 	p = PLAT(vm);
 	if(p == nil)
 		return;
 	p->hungup = 1;
 	wakeup(&p->consr);
+	/* the devices stop using the guest's memory before it goes */
+	for(i = 0; i < p->nvirt; i++)
+		vvstop(p->virt[i]);
 }
 
 void
 vmplatfree(Vm *vm)
 {
+	Plat *p;
+	int i;
+
+	p = PLAT(vm);
+	if(p != nil)
+		for(i = 0; i < p->nvirt; i++)
+			vvfree(p->virt[i]);
 	free(vm->plat);
 	vm->plat = nil;
 }
 
-/* a RISC-V machine's harts all start from Limbo ("go"); there is no SIPI */
-int
-vmplatsipi(Vcpu *)
+/*
+ * The PLIC (SiFive's, as Linux's irq-sifive-plic drives it), with one
+ * context, the hart's supervisor, whose interrupt is hvip.VSEIP.
+ * Sources are level-triggered, as virtio-mmio's are: a line that is up
+ * is pending unless claimed, and pending again at completion if it is
+ * still up.
+ */
+static void
+plicupdate(Plat *p)
 {
-	return 0;
+	u32int m;
+	int i;
+
+	m = p->pend & p->enable;
+	p->eip = 0;
+	for(i = 1; i < Nsrc; i++)
+		if((m & 1<<i) && p->prio[i] > p->thresh)
+			p->eip = 1;
+}
+
+static void
+kickall(Vm *vm)
+{
+	Plat *p;
+	int i;
+
+	p = PLAT(vm);
+	for(i = 0; i < vm->nvcpu; i++){
+		p->kick[i] = 1;
+		wakeup(&vm->vcpu[i]->r);
+	}
+}
+
+/* vvirq: a device's line, from the vCPU's kproc or a device's own */
+static void
+plicirq(Vm *vm, int irq, int level)
+{
+	Plat *p;
+	int eip;
+
+	p = PLAT(vm);
+	if(p == nil || irq <= 0 || irq >= Nsrc)
+		return;
+	ilock(p);
+	if(level){
+		p->level |= 1<<irq;
+		if((p->claimed & 1<<irq) == 0)
+			p->pend |= 1<<irq;
+	}else{
+		p->level &= ~(1<<irq);
+		p->pend &= ~(1<<irq);
+	}
+	plicupdate(p);
+	eip = p->eip;
+	iunlock(p);
+	if(eip)
+		kickall(vm);
+}
+
+static int
+plicmmio(Plat *p, uvlong off, int write, u32int *val)
+{
+	int i, best;
+
+	ilock(p);
+	if(off < 4*Nsrc){
+		i = off/4;
+		if(write){
+			if(i > 0)
+				p->prio[i] = *val & 7;
+		}else
+			*val = p->prio[i];
+	}else if(off == 0x1000){
+		if(!write)
+			*val = p->pend;
+	}else if(off == 0x2000){
+		if(write)
+			p->enable = *val & ~1;
+		else
+			*val = p->enable;
+	}else if(off == 0x200000){
+		if(write)
+			p->thresh = *val & 7;
+		else
+			*val = p->thresh;
+	}else if(off == 0x200004){
+		if(write){
+			/* completion: a line still up is pending again */
+			i = *val;
+			if(i > 0 && i < Nsrc && (p->claimed & 1<<i)){
+				p->claimed &= ~(1<<i);
+				if(p->level & 1<<i)
+					p->pend |= 1<<i;
+			}
+		}else{
+			best = 0;
+			for(i = 1; i < Nsrc; i++)
+				if((p->pend & p->enable & 1<<i) && p->prio[i] > 0
+				&& (best == 0 || p->prio[i] > p->prio[best]))
+					best = i;
+			if(best){
+				p->pend &= ~(1<<best);
+				p->claimed |= 1<<best;
+				p->nclaim++;
+			}
+			*val = best;
+		}
+	}else if(!write)
+		*val = 0;
+	plicupdate(p);
+	iunlock(p);
+	return 1;
+}
+
+/*
+ * Hart 0 starts from Limbo ("go"); the rest by the SBI's hart_start,
+ * which a hart already running makes and the started one's kproc takes
+ * up here, on its own processor: at the address it was given, with
+ * a0 its hart number and a1 the opaque word, translation off, in
+ * supervisor mode -- the SBI's state for a started hart.
+ */
+int
+vmplatsipi(Vcpu *v)
+{
+	Plat *p;
+
+	p = PLAT(v->vm);
+	if(p == nil || !p->startreq[v->id])
+		return 0;
+	setreg(v, RvPc, p->startpc[v->id]);
+	setreg(v, RvA0, v->id);
+	setreg(v, RvA1, p->startarg[v->id]);
+	setreg(v, RvVsatp, 0);
+	setreg(v, RvVsstatus, 0);
+	setreg(v, RvVsie, 0);
+	p->startreq[v->id] = 0;
+	p->started[v->id] = 1;
+	return 1;
 }
 
 int
-vmplatsipipending(Vcpu *)
+vmplatsipipending(Vcpu *v)
 {
-	return 0;
+	Plat *p;
+
+	p = PLAT(v->vm);
+	return p != nil && p->startreq[v->id];
+}
+
+/* an IPI for each hart in mask (from base; base ~0 is every hart) */
+static void
+sendipis(Vcpu *v, Plat *p, uvlong mask, uvlong base)
+{
+	Vm *vm;
+	int h;
+
+	vm = v->vm;
+	for(h = 0; h < vm->nvcpu; h++){
+		if(base != ~0ULL && (h < base || h - base >= 64 || (mask & 1ULL<<(h - base)) == 0))
+			continue;
+		p->nipi++;
+		if(h == v->id){
+			setreg(v, RvHvip, reg(v, RvHvip) | RvVssi);
+			continue;
+		}
+		p->ssip[h] = 1;
+		p->kick[h] = 1;
+		wakeup(&vm->vcpu[h]->r);
+	}
 }
 
 /* the SBI's console is the UART's transmitter and receiver */
@@ -256,25 +460,42 @@ dosbi(Vcpu *v, Plat *p)
 			break;
 		}
 		/* hart_mask a0 from hart_mask_base a1; -1 is all of them */
-		if(a1 == ~0ULL || (a1 == 0 && (a0 & 1)))
-			setreg(v, RvHvip, reg(v, RvHvip) | RvVssi);
+		sendipis(v, p, a0, a1);
 		break;
 	case Xrfence:
 		if(fid > 6){
 			err = Enotsupp;
 			break;
 		}
+		/*
+		 * The harts share this processor, and a switch between
+		 * them flushes the guest's translations (vmrv.c); this
+		 * one's, here, is all that is left to do.
+		 */
 		rvfences(fid == 0);
 		break;
 	case Xhsm:
 		switch(fid){
-		case 2:		/* hart_get_status */
-			if(a0 != 0)
+		case 2:		/* hart_get_status: 0 started, 1 stopped, 3 start pending */
+			if(a0 >= v->vm->nvcpu)
 				err = Einvalparam;
-			val = 0;	/* started */
+			else if(a0 == 0 || p->started[a0])
+				val = 0;
+			else
+				val = p->startreq[a0] ? 3 : 1;
 			break;
-		case 0:		/* hart_start: there is no other hart */
-			err = a0 == 0 ? -6 : Einvalparam;	/* already available */
+		case 0:		/* hart_start(hart, address, opaque) */
+			if(a0 >= v->vm->nvcpu)
+				err = Einvalparam;
+			else if(a0 == 0 || p->started[a0] || p->startreq[a0])
+				err = -6;	/* already available */
+			else{
+				p->startpc[a0] = a1;
+				p->startarg[a0] = a2;
+				coherence();
+				p->startreq[a0] = 1;
+				wakeup(&v->vm->vcpu[a0]->r);
+			}
 			break;
 		default:
 			err = Enotsupp;
@@ -368,6 +589,17 @@ vmplatintr(Vcpu *v)
 		p->timer[v->id] = ~0ULL;
 		setreg(v, RvHvip, reg(v, RvHvip) | RvVsti);
 	}
+	if(p->ssip[v->id]){
+		p->ssip[v->id] = 0;
+		setreg(v, RvHvip, reg(v, RvHvip) | RvVssi);
+	}
+	/* the PLIC's context is hart 0's */
+	if(v->id == 0){
+		if(p->eip)
+			setreg(v, RvHvip, reg(v, RvHvip) | RvVsei);
+		else
+			setreg(v, RvHvip, reg(v, RvHvip) & ~RvVsei);
+	}
 }
 
 static int
@@ -378,7 +610,8 @@ wfiwake(void *a)
 
 	v = a;
 	p = PLAT(v->vm);
-	return v->stop || v->quit || v->cmd != nil || p->kick[v->id] || timerdue(v, p);
+	return v->stop || v->quit || v->cmd != nil || p->kick[v->id] || timerdue(v, p)
+		|| v->id == 0 && p->eip || p->ssip[v->id];
 }
 
 static int
@@ -390,10 +623,14 @@ dowfi(Vcpu *v, Plat *p)
 	ie = reg(v, RvVsie);
 	if((ie & (Stie|Seie|Ssie)) == 0)
 		return 0;	/* nothing could ever wake it */
-	if((reg(v, RvHvip) & RvVsti) != 0 && (ie & Stie) != 0)
+	if((reg(v, RvHvip) & RvVsti) != 0 && (ie & Stie) != 0
+	|| (reg(v, RvHvip) & RvVssi) != 0 && (ie & Ssie) != 0
+	|| v->id == 0 && p->eip && (ie & Seie) != 0
+	|| p->ssip[v->id] && (ie & Ssie) != 0)
 		goto out;	/* already pending */
 	when = p->timer[v->id];
-	if(when == ~0ULL && (ie & Seie) == 0)
+	/* with no timer, an external interrupt or an IPI can still wake it */
+	if(when == ~0ULL && (ie & (Seie|Ssie)) == 0)
 		return 0;
 	p->kick[v->id] = 0;
 	now = rvtime();
@@ -538,10 +775,19 @@ static int
 dommio(Vcpu *v, Plat *p, Vmexit *e)
 {
 	u32int insn, val;
-	int len, width, sign, r, store;
+	int len, width, sign, r, store, dev;
 	uvlong x;
 
-	if(e->gpa < Uartbase || e->gpa >= Uartbase + Uartlen || e->access == 4)
+	if(e->access == 4)
+		return 0;
+	if(e->gpa >= Uartbase && e->gpa < Uartbase + Uartlen)
+		dev = 'u';
+	else if(e->gpa >= Plicbase && e->gpa < Plicbase + Pliclen)
+		dev = 'p';
+	else if(e->gpa >= Virtiobase && e->gpa < Virtiobase + Nvirtio*Vvmmiosize
+	&& (e->gpa - Virtiobase)/Vvmmiosize < p->nvirt)
+		dev = 'v';
+	else
 		return 0;
 	insn = e->insn;
 	if(insn & 1){
@@ -556,6 +802,26 @@ dommio(Vcpu *v, Plat *p, Vmexit *e)
 	}
 	if(store != (e->access == 2))
 		return 0;
+	if(dev != 'u'){
+		x = store && r != 0 ? reg(v, r) : 0;
+		if(dev == 'p'){
+			if(width != 4)
+				return 0;
+			val = x;
+			plicmmio(p, e->gpa - Plicbase, store, &val);
+			x = val;
+		}else if(!vvmmio(p->virt[(e->gpa - Virtiobase)/Vvmmiosize], e->gpa, width, store, &x))
+			return 0;
+		if(!store && r != 0){
+			if(width < 8)
+				x &= (1ULL<<(8*width))-1;
+			if(sign && width < 8 && (x & (1ULL<<(8*width-1))))
+				x |= ~0ULL << (8*width);
+			setreg(v, r, x);
+		}
+		setreg(v, RvPc, reg(v, RvPc) + len);
+		return 1;
+	}
 	ilock(p);
 	if(store){
 		x = r == 0 ? 0 : reg(v, r);
@@ -601,9 +867,30 @@ vmplatexit(Vcpu *v, Vmexit *e)
 	return 0;
 }
 
+/*
+ * "virtio blk|net path": a virtio-mmio device, in the next window,
+ * on the next of the PLIC's sources (vmlinux(1) describes them in the
+ * device tree from what status says).
+ */
 int
-vmplatctl(Vm *, int, char **)
+vmplatctl(Vm *vm, int nf, char **f)
 {
+	Plat *p;
+	int n;
+
+	p = PLAT(vm);
+	if(nf == 3 && strcmp(f[0], "virtio") == 0){
+		n = p->nvirt;
+		if(n >= Nvirtio)
+			error("too many virtio devices");
+		p->virt[n] = vvnewmmio(vm, f[1], f[2], n, Virtiobase + n*Vvmmiosize, 1 + n);
+		ilock(p);
+		p->prio[1+n] = 0;
+		iunlock(p);
+		coherence();
+		p->nvirt = n+1;
+		return 1;
+	}
 	return 0;
 }
 
@@ -661,10 +948,14 @@ vmplatstatus(Vm *vm, char *s, char *e)
 	int i;
 
 	p = PLAT(vm);
-	s = seprint(s, e, "platform sbi calls %llud time %llud\n", p->nsbi, rvtime());
+	s = seprint(s, e, "platform sbi calls %llud ipis %llud time %llud\n", p->nsbi, p->nipi, rvtime());
 	s = seprint(s, e, "uart ier %#ux lcr %#ux mcr %#ux lsr %#ux fifo %d waiting %d in %llud read %llud out %llud lost %llud\n",
 		p->uart.ier, p->uart.lcr, p->uart.mcr, p->uart.lsr, p->uart.rxw - p->uart.rxr,
 		p->uart.inw - p->uart.inr, p->nin, p->nrx, p->uart.outw, p->uart.outlost);
+	s = seprint(s, e, "plic pend %#ux enable %#ux claimed %#ux thresh %d eip %d claims %llud\n",
+		p->pend, p->enable, p->claimed, p->thresh, p->eip, p->nclaim);
+	for(i = 0; i < p->nvirt; i++)
+		s = vvstatus(p->virt[i], s, e);
 	for(i = 0; i < vm->nvcpu; i++)
 		if(p->timer[i] != ~0ULL)
 			s = seprint(s, e, "vcpu%d timer %llud\n", i, p->timer[i]);

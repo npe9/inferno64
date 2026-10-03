@@ -106,6 +106,7 @@ port
 	screenvirt
 	vmplat
 	vuart
+	vmvirtio
 
 misc
 	sdvirtiommio	sdscsi

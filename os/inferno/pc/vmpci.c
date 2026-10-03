@@ -41,7 +41,7 @@
 #include	"../pc/vm86.h"
 #include	"../port/iommu.h"
 #include	"vmpci.h"
-#include	"vmvirtio.h"
+#include	"../port/vmvirtio.h"
 
 typedef struct Vpci Vpci;
 typedef struct Vpcidev Vpcidev;

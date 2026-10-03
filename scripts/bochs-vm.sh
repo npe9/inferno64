@@ -14,7 +14,8 @@
 # usage: scripts/bochs-vm.sh [-c cpu] kernel [seconds]
 #
 # BOCHS_INFO is the bochsrc info: setting (e.g. "action=ignore, cpu0=report").
-# BOCHS_MEGS sets the machine's memory (512 MiB by default).
+# BOCHS_MEGS sets the machine's memory (512 MiB by default), BOCHS_CPUS
+# its processors (1).
 #
 #	-c cpu	a Bochs CPU model; default corei7_skylake_x (VMX, EPT,
 #		unrestricted guest).  ryzen gives SVM with nested paging.
@@ -70,7 +71,7 @@ xorriso -as mkisofs -quiet -R -untranslated-filenames -omit-version-number \
 
 cat >"$WORK/bochsrc" <<RC
 megs: ${BOCHS_MEGS:-512}
-cpu: model=$CPU, count=1, ips=200000000
+cpu: model=$CPU, count=${BOCHS_CPUS:-1}, ips=200000000
 romimage: file=$B/share/bochs/BIOS-bochs-latest
 vgaromimage: file=$B/share/bochs/VGABIOS-lgpl-latest.bin
 ata0: enabled=1, ioaddr1=0x1f0, ioaddr2=0x3f0, irq=14

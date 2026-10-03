@@ -1,9 +1,18 @@
 /*
  * Virtio devices provided by the hypervisor itself (doc/genesize-
- * plan.ms, phase 9): a function on the guest's PCI bus (vmpci.c) with
- * the virtio 1.0 PCI transport -- no legacy interface -- and a backend
- * here in the kernel, so a guest's disk is served without a trip to
- * Limbo for each request.
+ * plan.ms, phase 9): a backend here in the kernel, so a guest's disk
+ * is served without a trip to Limbo for each request, behind one of
+ * two transports -- no legacy interface for either:
+ *
+ *	PCI	a function on the x86 guest's PCI bus (pc/vmpci.c), the
+ *		virtio 1.0 PCI transport, interrupts by MSI-X (vvmsi);
+ *	MMIO	a virtio-mmio window (version 2) at a fixed address, as
+ *		RISC-V's virt machine has them (virt/vmplat.c), its
+ *		interrupt a level on a line of the platform's
+ *		interrupt controller (vvirq).
+ *
+ * The rest of this comment is the PCI transport's; the MMIO one is
+ * described at mmiotransport.
  *
  * The transport is one 64-bit memory BAR (BAR4) that is never mapped:
  * every access traps, through the nested page tables, to vvmmio.  It
@@ -47,12 +56,12 @@
 #include	"mem.h"
 #include	"dat.h"
 #include	"fns.h"
-#include	"io.h"
 #include	"../port/error.h"
 #include	"../port/vm.h"
-#include	"../pc/vm86.h"
-#include	"vmpci.h"
-#include	"vmvirtio.h"
+#include	"../port/vmvirtio.h"
+
+void	(*vvmsi)(Vm*, u32int addr, u32int data);
+void	(*vvirq)(Vm*, int irq, int level);
 
 typedef struct Vv Vv;
 typedef struct Vq Vq;
@@ -121,8 +130,13 @@ struct Vv
 {
 	Vm	*vm;
 	int	type;
-	int	dev;		/* device number on the guest's bus 0 */
+	int	dev;		/* device number on the guest's bus 0, or the MMIO window's */
 	char	name[KNAMELEN];
+
+	/* the MMIO transport, if not PCI */
+	int	mmio;
+	uvlong	base;
+	int	irq;
 
 	/* configuration space */
 	uvlong	bar;
@@ -226,6 +240,12 @@ gmem(Vv *v, uvlong a, uvlong n)
 static void
 vecintr(Vv *v, int vec)
 {
+	if(v->mmio){
+		/* a level: up while InterruptStatus has a bit set */
+		if(vvirq != nil)
+			vvirq(v->vm, v->irq, v->isr != 0);
+		return;
+	}
 	if(!(v->msixctl & 1<<15))
 		return;		/* INTx is not modelled */
 	if(vec == Novec || vec >= Nvec){
@@ -238,7 +258,8 @@ vecintr(Vv *v, int vec)
 	}
 	v->msix[vec].pending = 0;
 	v->nmsi++;
-	vmplatmsi(v->vm, v->msix[vec].addrlo, v->msix[vec].data);
+	if(vvmsi != nil)
+		vvmsi(v->vm, v->msix[vec].addrlo, v->msix[vec].data);
 }
 
 /* entries unmasked with an interrupt pending get it now */
@@ -275,6 +296,8 @@ reset(Vv *v)
 	v->cfgvec = Novec;
 	v->qsel = 0;
 	v->isr = 0;
+	if(v->mmio && vvirq != nil)
+		vvirq(v->vm, v->irq, 0);
 	for(i = 0; i < v->nq; i++){
 		memset(&v->q[i], 0, sizeof v->q[i]);
 		v->q[i].size = Qmax;
@@ -766,20 +789,28 @@ extract(uchar *b, int off, int size)
 
 static int mmio(Vv*, uvlong, int, int, uvlong*);
 
+static int mmiotransport(Vv*, uvlong, int, int, uvlong*);
+
 int
 vvmmio(void *a, uvlong gpa, int size, int write, uvlong *val)
 {
 	Vv *v = a;
 	int r;
 
-	if(v->bar == 0 || gpa < v->bar || gpa >= v->bar + Vvbarsize)
+	if(v->mmio){
+		if(gpa < v->base || gpa >= v->base + Vvmmiosize)
+			return 0;
+	}else if(v->bar == 0 || gpa < v->bar || gpa >= v->bar + Vvbarsize)
 		return 0;
 	qlock(&v->lk);
 	if(waserror()){
 		qunlock(&v->lk);
 		nexterror();
 	}
-	r = mmio(v, gpa - v->bar, size, write, val);
+	if(v->mmio)
+		r = mmiotransport(v, gpa - v->base, size, write, val);
+	else
+		r = mmio(v, gpa - v->bar, size, write, val);
 	poperror();
 	qunlock(&v->lk);
 	return r;
@@ -862,6 +893,83 @@ mmio(Vv *v, uvlong off, int size, int write, uvlong *val)
 		return 1;
 	}
 	return 1;	/* the rest of the BAR reads as zero and ignores writes */
+}
+
+/*
+ * The virtio-mmio transport, version 2 (the virtio 1.1 specification,
+ * 4.2.2): 32-bit registers, the device's configuration from 0x100.
+ * The common configuration is the same state as the PCI transport's,
+ * at other offsets, so writes go through commonwrite.  Interrupts:
+ * InterruptStatus is the ISR; the line is up while it is not zero and
+ * comes down when the driver acknowledges.
+ */
+static int
+mmiotransport(Vv *v, uvlong off, int size, int write, uvlong *val)
+{
+	uchar img[0x100];
+	Vq *q;
+	u32int w;
+
+	if(off >= 0x100){
+		if(!write && off - 0x100 + size <= 0x100){
+			devimage(v, img);
+			*val = extract(img, off - 0x100, size);
+		}else if(!write)
+			*val = 0;
+		return 1;
+	}
+	if(size != 4){
+		if(!write)
+			*val = 0;
+		return 1;
+	}
+	q = v->qsel < v->nq ? &v->q[v->qsel] : nil;
+	if(!write){
+		switch((int)off){
+		case 0x000: *val = 0x74726976; break;	/* "virt" */
+		case 0x004: *val = 2; break;
+		case 0x008: *val = v->type; break;	/* 1 net, 2 blk */
+		case 0x00C: *val = 0x1AF4; break;
+		case 0x010: *val = v->dfsel < 2 ? (u32int)(v->dfeat >> 32*v->dfsel) : 0; break;
+		case 0x034: *val = q != nil ? Qmax : 0; break;
+		case 0x044: *val = q != nil ? q->enable : 0; break;
+		case 0x060: *val = v->isr; break;
+		case 0x070: *val = v->status; break;
+		case 0x0FC: *val = 0; break;	/* config generation: it never changes */
+		default: *val = 0; break;
+		}
+		return 1;
+	}
+	w = *val;
+	switch((int)off){
+	case 0x014: commonwrite(v, 0x00, 4, w); break;
+	case 0x020: commonwrite(v, 0x0C, 4, w); break;
+	case 0x024: commonwrite(v, 0x08, 4, w); break;
+	case 0x030: commonwrite(v, 0x16, 2, w); break;
+	case 0x038: commonwrite(v, 0x18, 2, w); break;
+	case 0x044:
+		if(q != nil && (w & 1) == 0 && q->enable)
+			q->enable = 0;	/* the driver takes a queue back */
+		else
+			commonwrite(v, 0x1C, 2, w);
+		break;
+	case 0x050:
+		if(w < v->nq)
+			serve(v, w);
+		break;
+	case 0x064:
+		v->isr &= ~w;
+		vecintr(v, Novec);
+		break;
+	case 0x070: commonwrite(v, 0x14, 1, w); break;
+	case 0x080: commonwrite(v, 0x20, 4, w); break;
+	case 0x084: commonwrite(v, 0x24, 4, w); break;
+	case 0x090: commonwrite(v, 0x28, 4, w); break;
+	case 0x094: commonwrite(v, 0x2C, 4, w); break;
+	case 0x0A0: commonwrite(v, 0x30, 4, w); break;
+	case 0x0A4: commonwrite(v, 0x34, 4, w); break;
+	}
+	return 1;
 }
 
 /*
@@ -1028,8 +1136,22 @@ netopen(Vv *v, char *dir)
 	v->dfeat = 1ULL<<Fversion1 | 1ULL<<Fnetmac;
 }
 
+static Vv* vvmake(Vm*, char*, char*, int, uvlong, int, int);
+
 void*
 vvnew(Vm *vm, char *kind, char *path, int dev, uvlong bar)
+{
+	return vvmake(vm, kind, path, dev, bar, 0, 0);
+}
+
+void*
+vvnewmmio(Vm *vm, char *kind, char *path, int n, uvlong base, int irq)
+{
+	return vvmake(vm, kind, path, n, base, irq, 1);
+}
+
+static Vv*
+vvmake(Vm *vm, char *kind, char *path, int dev, uvlong addr, int irq, int mmio)
 {
 	Vv *v;
 
@@ -1049,7 +1171,12 @@ vvnew(Vm *vm, char *kind, char *path, int dev, uvlong bar)
 	}
 	v->vm = vm;
 	v->dev = dev;
-	v->bar = bar;
+	v->mmio = mmio;
+	if(mmio){
+		v->base = addr;
+		v->irq = irq;
+	}else
+		v->bar = addr;
 	v->path = strdup(path);
 	if(strcmp(kind, "blk") == 0)
 		blkopen(v, path);
@@ -1119,11 +1246,17 @@ vvstatus(void *a, char *p, char *e)
 	Vv *v = a;
 	int i;
 
-	p = seprint(p, e, "pci 00:%.2d.0 virtio %s %s", v->dev, v->type == Tblk ? "blk" : "net", v->path);
+	if(v->mmio)
+		p = seprint(p, e, "mmio %#llux irq %d virtio %s %s", v->base, v->irq, v->type == Tblk ? "blk" : "net", v->path);
+	else
+		p = seprint(p, e, "pci 00:%.2d.0 virtio %s %s", v->dev, v->type == Tblk ? "blk" : "net", v->path);
 	if(v->type == Tblk)
 		p = seprint(p, e, "%s %llud sectors", v->ro ? " ro" : "", v->sectors);
-	p = seprint(p, e, " bar4 %#llux status %#ux features %#llux msix %s",
-		v->bar, v->status, v->gfeat, (v->msixctl & 1<<15) ? "on" : "off");
+	if(v->mmio)
+		p = seprint(p, e, " status %#ux features %#llux isr %#ux", v->status, v->gfeat, v->isr);
+	else
+		p = seprint(p, e, " bar4 %#llux status %#ux features %#llux msix %s",
+			v->bar, v->status, v->gfeat, (v->msixctl & 1<<15) ? "on" : "off");
 	for(i = 0; i < v->nq; i++)
 		p = seprint(p, e, " q%d %s size %d vec %d req %llud", i,
 			v->q[i].enable ? "on" : "off", v->q[i].size, v->q[i].vec, v->q[i].nreq);

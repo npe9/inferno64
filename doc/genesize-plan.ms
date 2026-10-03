@@ -994,9 +994,91 @@ line, so the UART was right.
 .CW vmlinux ,
 which is the guest's terminal, answers now.
 .RE
+.IP "Phase 15: M8 on RISC-V (QEMU riscv64 virt, TCG)." 4
+The virtio backends moved to
+.CW port/vmvirtio.c
+and gained a second transport beside PCI: virtio-mmio, version 2, its
+interrupt a level on a line of the platform's interrupt controller
+(the platform sets
+.CW vvirq ,
+as the x86 one sets
+.CW vvmsi ).
+The RISC-V platform has that controller now: a PLIC as Linux's
+.CW irq-sifive-plic
+drives it, one context (the hart's supervisor, hvip.VSEIP),
+level-triggered sources pending again at completion while still up.
+.CW "virtio blk|net"
+on the machine's ctl puts a device in the next window from 0x10001000
+on the next source from 1, where QEMU's virt machine has its, and
+.CW vmlinux
+describes the PLIC and each window from what status says.  The
+riscv64 guest's initramfs carries the virtio modules (all of virtio is
+modular in that kernel).
+.CW scripts/check-rv.sh
+boots the host with a second NIC; the guest read the marker Limbo put
+on its disk, wrote the next sector, which Limbo read back, and got a
+lease on a bridge port on the second NIC:
+.DS
+.ft CW
+riscv-plic: plic@c000000: mapped 31 interrupts with 1 handlers for 1 contexts.
+LINUXGUEST: vda says INFERNO-VIRTIO-DISK
+LINUXGUEST: dhcp udhcpc: lease of 10.0.2.15 obtained from 10.0.2.2, lease time 86400
+LINUXGUEST: irq  12:          5  SiFive PLIC   1 Edge      virtio1
+LINUXGUEST: irq  13:          6  SiFive PLIC   2 Edge      virtio0
+plic pend 0x0 enable 0x6 claimed 0x0 thresh 0 eip 0 claims 17
+RVLINUX: disk sector 1: guest-wrote-this
+check-rv: M8 disk (riscv-h, virtio-mmio, QEMU TCG): pass
+check-rv: M8 net (riscv-h, virtio-mmio, QEMU TCG): pass
+.ft
+.DE
+.IP "Phase 15: M3 on RISC-V (QEMU riscv64 virt, TCG)." 4
+More than one hart: hart 0 starts from Limbo, the rest by the SBI's
+HSM \(en
+.CW hart_start
+recorded by the platform and taken up by the started vCPU's own kproc
+through devvm's start hook (the one SIPI uses on x86), with a0 the hart
+and a1 the opaque word; IPIs between harts are a flag each vCPU puts in
+its own hvip before it enters.  The host port has one processor, so the
+four vCPUs share it, all with VMID 0 and the same ASIDs in different
+page tables: the backend flushes the guest's translations
+.CW hfence.vvma ) (
+whenever the processor switches from one vCPU to another.
+.CW vmlinux
+.CW -c
+writes a node per hart.
+.CW virtsmp
+.CW rvsmpinit.b ) (
+passed first time:
+.DS
+.ft CW
+smp: Brought up 1 node, 4 CPUs
+LINUXGUEST: smp 4 processors, online 0-3
+LINUXGUEST: cpu0 0 0 37 251 0 0 1 0 0 0
+LINUXGUEST: cpu1 1 0 15 264 0 0 0 0 0 0
+LINUXGUEST: cpu2 1 0 17 249 0 0 0 0 0 0
+LINUXGUEST: cpu3 0 0 13 289 0 0 0 0 0 0
+LINUXGUEST: irq IPI0:         3         41         32         25  Rescheduling interrupts
+LINUXGUEST: irq IPI1:       173        111         24         27  Function call interrupts
+platform sbi calls 3441 ipis 450 time 116085610
+.ft
+.DE
+with all eight workers done.  A later run ended early: a secondary
+hart, idle with no timer armed and no external interrupt (the PLIC's
+one context is hart 0's), waited in WFI, and the platform took that for
+a hart nothing could wake and handed it up; an IPI can, so such a WFI
+sleeps now.
 .IP
-Still to do for M12: AIA/IMSIC, virtio-mmio, more than one hart, and the
-RISC-V IOMMU.
+And on x86, answering the cursor query broke M8's boot on the disk:
+vmlinux typed the command when the shell marker came, before the
+prompt, so busybox 1.35 ran it at once and the answer arrived in the
+middle, where the guest's tty echoed it as
+.CW ^[[1;1R
+into the output.  The command is now typed after the answer, or three
+seconds after the marker if the shell asks nothing.
+.IP
+Still to do for M12: AIA/IMSIC in place of the PLIC, the RISC-V IOMMU,
+and a host with more than one processor (the riscv64 port's MAXMACH
+is 1).
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
@@ -1014,5 +1096,5 @@ disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
 its /bin, /lib and /init) on its second disk, and a second guest given
 that disk alone and linuxguest.root=vda mounts it from the initramfs
 and switches to it.  Next: M3 on VMX (Bochs with more than one
-processor); the MTTCG triple fault; the RISC-V backend's devices
-(virtio-mmio, AIA) and harts; and the workstation (phase 13).
+processor); the MTTCG triple fault; the RISC-V backend's harts and
+AIA; and the workstation (phase 13).

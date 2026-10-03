@@ -3,7 +3,7 @@
 #Configurable parameters
 
 CONF=virt
-CONFLIST=virt virtvm virtlinux
+CONFLIST=virt virtvm virtlinux virtsmp
 
 SYSTARG=$OSTARG
 OBJTYPE=riscv64
@@ -103,3 +103,4 @@ pciecam.$O:	../port/pciecam.c
 devvm.$O vmrv.$O vmplat.$O:	../port/vm.h
 vmrv.$O vmplat.$O:	vmrv.h
 vmplat.$O vuart.$O:	../port/vuart.h
+vmplat.$O vmvirtio.$O:	../port/vmvirtio.h

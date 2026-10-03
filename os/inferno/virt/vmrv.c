@@ -137,6 +137,8 @@ struct Gpt
 
 extern void	rvrun(Rvcpu*);
 extern void	rvhfencegvma(void);
+extern void	rvhfencevvma(void);
+static Rvcpu	*lastrun;	/* on this processor (MAXMACH is 1 here) */
 extern uvlong	csrrdmisa(void);
 extern uvlong	csrrdmstatus(void);
 extern uvlong	csrrdhgatp(void);
@@ -303,6 +305,8 @@ rvvcpuinit(Vcpu *v)
 static void
 rvvcpufree(Vcpu *v)
 {
+	if(lastrun == v->arch)
+		lastrun = nil;
 	free(v->arch);
 }
 
@@ -333,6 +337,15 @@ rvrunvcpu(Vcpu *v, Vmexit *e)
 	s = splhi();
 	wrcsr(Chgatp, (uvlong)Hgatpsv39x4<<60 | (uvlong)PADDR(g->root)>>PGSHIFT);
 	hfencegvma();
+	/*
+	 * Every vCPU runs with VMID 0, and those sharing a processor
+	 * have different page tables under the same ASIDs: the one that
+	 * ran last's translations go before another runs.
+	 */
+	if(lastrun != r){
+		rvhfencevvma();
+		lastrun = r;
+	}
 	for(i = 0; i < nelem(vscsr); i++)
 		wrcsr(vscsr[i], r->vs[i]);
 	ms = rdcsr(Cmstatus);

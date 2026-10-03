@@ -14,8 +14,10 @@
 #	.guest/rv/Image		for the RISC-V backend (M12): Alpine 3.22's
 #				riscv64 linux-lts 6.12.111-r0, its Image
 #				uncompressed (vmlinux loads it as it is)
-#	.guest/rv/initramfs.cpio	busybox-static 1.37.0-r20 for riscv64
-#				and the same /init
+#	.guest/rv/initramfs.cpio	busybox-static 1.37.0-r20 for riscv64,
+#				the same /init, and the package's virtio
+#				(core, ring, mmio, blk, net) and af_packet
+#				modules
 #
 # Kernel and modules come from one versioned package, so they match;
 # the package is pinned by checksum (Alpine's netboot vmlinuz-virt,
@@ -194,6 +196,13 @@ cpio(modules(pkg, members, kver, ('kernel/net/packet/af_packet.ko.gz',
 pkg, members, kver = unpack(sys.argv[4])
 open(os.path.join(g, 'rv', 'Image'), 'wb').write(gzip.decompress(pkg.extractfile(members['boot/vmlinuz-lts']).read()))
 bpkg = tarfile.open(fileobj=io.BytesIO(gzip.open(os.path.join(g, sys.argv[5])).read()), ignore_zeros=True)
-cpio([], os.path.join(g, 'rv', 'initramfs.cpio'), bpkg.extractfile('bin/busybox.static').read())
+# virtio itself is a module here: the core and ring first, then the
+# MMIO transport, the disk, the network and what udhcpc needs
+cpio(modules(pkg, members, kver, ('kernel/drivers/virtio/virtio.ko.gz',
+		'kernel/drivers/virtio/virtio_ring.ko.gz', 'kernel/drivers/virtio/virtio_mmio.ko.gz',
+		'kernel/drivers/block/virtio_blk.ko.gz', 'kernel/net/core/failover.ko.gz',
+		'kernel/drivers/net/net_failover.ko.gz', 'kernel/drivers/net/virtio_net.ko.gz',
+		'kernel/net/packet/af_packet.ko.gz')),
+	os.path.join(g, 'rv', 'initramfs.cpio'), bpkg.extractfile('bin/busybox.static').read())
 EOF
 ls -l "$G/vmlinuz-virt" "$G/initramfs.cpio" "$G/rv/Image" "$G/rv/initramfs.cpio"

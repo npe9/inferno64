@@ -33,6 +33,7 @@
 #include	"../pc/vm86.h"
 #include	"vmdev.h"
 #include	"vmpci.h"
+#include	"../port/vmvirtio.h"
 
 char *vm86regname[VNreg] = {
 [VRax] "rax", [VRbx] "rbx", [VRcx] "rcx", [VRdx] "rdx",
@@ -281,6 +282,7 @@ vmplatnew(Vm *vm)
 	if(p == nil)
 		error(Enomem);
 	p->vm = vm;
+	vvmsi = vmplatmsi;	/* the virtio functions' interrupts */
 	p->tschz = MACHP(0)->cpuhz;
 	vpicreset(&p->pic);
 	vpitreset(&p->pit, p->tschz);
