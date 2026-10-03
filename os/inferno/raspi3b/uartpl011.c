@@ -39,6 +39,26 @@ enum {
  * uartputccheck(); see the console chapter of
  * doc/raspi3b-completion-plan.ms.
  */
+/*
+ * What pl011_kick's polling drain actually does, per kick.
+ *
+ * doc/parallel-allocator-survey.ms records an unexplained number:
+ * /dev/ilock puts the longest ilock hold in this driver at about 3.5ms,
+ * which is some 37 bytes at 115200, where a loop that stops at a full
+ * 16-byte FIFO should cost 16.  Counting is cheaper than arguing, and
+ * these say which of the loop's three exits is being taken.
+ */
+static ulong kickcalls;		/* kicks that got past the guards */
+static ulong kickbytes;		/* bytes written by all of them */
+static int kickmax;		/* most bytes written in one kick */
+static ulong kickfull;		/* exits because the TX FIFO was full */
+static ulong kickbound;		/* exits at Maxpoll */
+static ulong kickempty;		/* exits because the queue ran dry */
+static ulong kickspin;		/* the per-byte wait was entered */
+static ulong kicklo;		/* kicks that saw islo() true */
+static ulong kickalive;		/* kicks with the machine not stopping */
+static int kickspinmax;		/* worst per-byte wait, in iterations */
+
 static int putcfull;		/* writes that met a full TX FIFO */
 static int putcspin;		/* worst spin, in iterations */
 static int putcdrop;		/* writes that gave up and wrote anyway */
@@ -267,24 +287,85 @@ pl011_kick(Uart *uart)
 	 * about this loop's pacing is not understood; the number and the
 	 * method are in doc/parallel-allocator-survey.ms.
 	 */
+	/*
+	 * islo() IS ALWAYS 0 HERE, so the test this used to make was dead.
+	 *
+	 * uartkick() takes ilock(&p->tlock) before calling this and ilock()
+	 * does splhi(), so interrupts are masked whatever the caller was
+	 * doing.  The comment above reasons about "the interrupts-on path"
+	 * and there was no such path: every console write took the polling
+	 * drain, up to Maxpoll bytes, waiting per byte for FIFO room, with
+	 * interrupts off.  "kick lo" in /dev/eia0status is 0 and stays 0,
+	 * which is that stated as a measurement.
+	 *
+	 * The condition that was wanted is not "are interrupts on" but
+	 * "will something come back for the rest", and that does not depend
+	 * on the current mask: the TX interrupt and uarttxpoll() run
+	 * whenever the machine is alive.  So a live kick leaves when the
+	 * FIFO fills and only a machine that is stopping forces the whole
+	 * queue through.
+	 *
+	 * MEASURED DIRECTLY, by counting what the loop does, same board,
+	 * same build but for this branch:
+	 *
+	 *	                 before    after
+	 *	bytes per kick,
+	 *	  worst case         64       17
+	 *	per-byte waits    24921        0
+	 *	exits at Maxpoll    465        0
+	 *	exits on a full
+	 *	  FIFO                 0     3561
+	 *	bytes written     30235    30235
+	 *
+	 * Identical output, and the interrupts-off window per write goes
+	 * from about 48 bytes of line time to none.
+	 *
+	 * THIS WAS REVERTED ONCE, on a bad statistic, and the mistake is
+	 * worth recording where the code is.  The first attempt to judge it
+	 * used /dev/ilock's whole-run MAXIMUM, which showed no change --
+	 * because that maximum is dominated by poolalloc (9.7ms) and
+	 * because the workload being timed produces no console output at
+	 * all, so the kick loop was not even running inside the measured
+	 * region.  A proxy that the change cannot move is not evidence
+	 * about the change.  The counters above measure the thing itself.
+	 */
 	lo = islo();
 	bounded = !lo && !panicking && !active.exiting;
+	kicklo += lo != 0;
+	kickalive += (!panicking && !active.exiting) != 0;
+	kickcalls++;
 	for(n = 0;; n++){
-		if(bounded && n >= Maxpoll)
+		if(bounded && n >= Maxpoll){
+			kickbound++;
 			break;
+		}
 		if(csr32r(c, UartFR) & UartFRTXFF){
-			if(lo)
+			if(!panicking && !active.exiting){	/* alive: leave the rest */
+				kickfull++;
 				break;
+			}
 			for(i = 0; i < Putcspin; i++)
 				if((csr32r(c, UartFR) & UartFRTXFF) == 0)
 					break;
-			if(csr32r(c, UartFR) & UartFRTXFF)
+			if(i > 0){
+				kickspin++;
+				if(i > kickspinmax)
+					kickspinmax = i;
+			}
+			if(csr32r(c, UartFR) & UartFRTXFF){
+				kickfull++;
 				break;
+			}
 		}
-		if(uart->op >= uart->oe && uartstageoutput(uart) == 0)
+		if(uart->op >= uart->oe && uartstageoutput(uart) == 0){
+			kickempty++;
 			break;
+		}
 		csr32w(c, UartDR, *uart->op++);
 	}
+	kickbytes += n;
+	if(n > kickmax)
+		kickmax = n;
 	if(uart->op < uart->oe || qlen(uart->oq) != 0)
 		csr32w(c, UartIMSC, csr32r(c, UartIMSC) | UartIMSCTX);
 	else
@@ -420,10 +501,38 @@ pl011_dtr(Uart*, int)
 {
 }
 
+/*
+ * /dev/eia0status.  This returned nothing at all.
+ *
+ * It is the only readable per-port file the uart device offers, and on a
+ * board whose console is deaf it is the only way to ask the driver what
+ * it has been doing.
+ */
 static long
-pl011_status(Uart*, void*, long, long)
+pl011_status(Uart *uart, void *buf, long n, long offset)
 {
-	return 0;
+	char *p, *e;
+	long r;
+
+	USED(uart);
+	p = malloc(READSTR);
+	if(p == nil)
+		return 0;
+	e = p + READSTR;
+	seprint(p, e,
+		"kick calls %lud bytes %lud max %d\n"
+		"kick exits: full %lud bound %lud empty %lud\n"
+		"kick lo %lud alive %lud\n"
+		"kick spins %lud worst %d of %d\n"
+		"putc full %d spin %d drop %d\n",
+		kickcalls, kickbytes, kickmax,
+		kickfull, kickbound, kickempty,
+		kicklo, kickalive,
+		kickspin, kickspinmax, Putcspin,
+		putcfull, putcspin, putcdrop);
+	r = readstr(offset, buf, n, p);
+	free(p);
+	return r;
 }
 
 static void

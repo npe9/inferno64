@@ -261,7 +261,7 @@ when both arms are one boot and one configuration, and worth nothing
 otherwise.  It was caught by a peer session querying a related claim, not
 by me.
 .PP
-.B "TAKEN PROPERLY: the fix makes no measurable difference, and the whole earlier difference was the core count."
+.B "TAKEN PROPERLY: the core count was the whole of the earlier difference."
 Two kernels differing only in
 .CW pl011_kick ,
 both booted the same way, three runs each:
@@ -271,16 +271,44 @@ pre-fix       9724, 629, 3558    526,421,421  1.248M   34.6 s
 with the fix  3557, 3557, 3556   421,421,421  1.245M   33.1 s
 .P2
 The pre-fix kernel's third run gives 3558us \(em the same number as all
-three of the fixed arm.  Mean hold and ilock count are identical to three
-figures in both.  Wall time differs by 4 per cent, which is inside this
-rig's drift.
-.PP
-So the
-.CW islo()
-defect is REAL BY READING THE CODE and its effect on lock-hold time is
-NIL BY THIS INSTRUMENT, and the 6130-to-3557 "1.72x" was the four-core
+three of the fixed arm.  So the 6130-to-3557 "1.72x" was the four-core
 card boot against the single-core JTAG one, exactly as the retraction
 suspected and could not then show.
+.PP
+.B "AND THEN THE NULL RESULT TURNED OUT TO BE THE STATISTIC'S FAULT TOO."
+On the strength of the table above the change was reverted, and that was
+wrong for a second reason: the whole-run ILOCK MAXIMUM cannot see this
+change at all.  It is dominated by
+.CW poolalloc
+at 9.7ms, and \(em the part that makes it useless here \(em the workload
+being timed produces NO CONSOLE OUTPUT, so the kick loop is not running
+inside the measured region.  The kick counters are identical before and
+after a full
+.CW efs-fault
+run.  A proxy the change cannot move is not evidence about the change.
+.PP
+.B "Counted directly, it does exactly what it was meant to."
+.CW /dev/eia0status
+reports what the loop did, same board, same build but for the one branch:
+.P1
+                      before    after
+bytes per kick, worst     64       17
+per-byte waits         24921        0
+exits at Maxpoll         465        0
+exits on a full FIFO         0    3561
+bytes written          30235    30235
+.P2
+Identical output, and the interrupts-off window per console write goes
+from about 48 bytes of line time to none.  That also answers the "3.5ms
+against 16 bytes" puzzle recorded here earlier: the FIFO-full exit was
+never taken, because the per-byte wait always succeeded first, so the
+loop ran to
+.CW Maxpoll
+every time.
+.PP
+So the change is in, and the arc is the lesson: a defect established by
+reading the code, judged null by a proxy that could not move, reverted on
+that, and then settled by counting the thing itself.
 .PP
 .B "And the maximum is an unstable statistic, which is the lesson to carry."
 The pre-fix arm's three runs span 629us to 9724us \(em fifteen-fold, same
