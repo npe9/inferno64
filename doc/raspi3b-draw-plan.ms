@@ -184,6 +184,55 @@ prints afterwards \(em but the kernel's state belongs with the number.
 .PP
 The boot was otherwise clean: no faults, no panics, 39 self-test markers,
 and the console printed normally throughout.
+.PP
+.B "And a defect in that kernel, found afterwards, which does not touch
+.B "these figures."
+The
+.CW 7l
+on this branch emits a conditional branch to ITSELF when the branch's
+target label begins with an indirect branch \(em fixed on
+.CW raspi3b-port
+in
+.CW c56c0c6c8 ,
+.CW 1cc04ead7
+and
+.CW b97ac24d0 ,
+not yet on this one.  This kernel has one, and it is in the worst place:
+.DS
+.CW
+0x16a340  6b1f009f   CMP   w4, #0
+0x16a344  54000000   B.EQ  +0        <- branches to itself
+0x16a348  97fc57cb   BL
+0x16a34c  17fffffb   B     -5        (a retry loop)
+.R
+.DE
+.LP
+.CW ksyms
+puts
+.CW 0x16a344
+at
+.CW panic+0xf0 ,
+the same function where the amd64 half of the same bug emitted
+.CW "74 fe" .
+So an arm64 panic meeting that condition hangs at one instruction instead
+of printing \(em on the one path whose failure cannot report itself.
+.PP
+It does not affect the measurement, and the distinction is worth keeping
+straight: the kernel booted cleanly three times and
+.CW drawrate()
+never goes near
+.CW panic() ,
+so the figures above are from code that ran correctly.  It is a latent
+hang, not a corrupted result.  The scan that found it is a filter over
+the ELF program headers for words matching
+.CW 0x54000000
+with
+.CW imm19
+zero, keeping only offsets inside a
+.CW PT_LOAD
+marked executable \(em eight of the nine candidates in this file are
+data, so the executable filter is what makes it a signal rather than
+nine ghosts.
 .NH 1
 Step 1: draw into the framebuffer, keep the cache clean
 .PP
