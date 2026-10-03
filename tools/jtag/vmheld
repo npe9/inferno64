@@ -76,6 +76,7 @@ A_HN=`sym vmholdn`
 A_BEAT=`sym disbeat`
 A_PFULL=`sym npollfull`
 A_PCHAR=`sym npollchar`
+A_REACH=`sym disreachcount`
 
 for v in A_TICKS A_MAX A_KPC A_DISPC; do
 	eval a=\$$v
@@ -122,6 +123,7 @@ trap 'rm -f "$TMP"' 0 1 2 15
 	-c "echo \"VMHELD-BEAT\"; mdw ${A_BEAT:-0} 1" \
 	-c "echo \"VMHELD-PFULL\"; mdw ${A_PFULL:-0} 1" \
 	-c "echo \"VMHELD-PCHAR\"; mdw ${A_PCHAR:-0} 1" \
+	-c "echo \"VMHELD-REACH\"; mdw ${A_REACH:-0} 1" \
 	-c "echo \"VMHELD-HTEXT\"; mdb ${A_HTEXT:-0} 16" \
 	-c "resume; exit" ) >"$TMP" 2>&1
 
@@ -226,6 +228,10 @@ if [ -n "$A_PFULL" ]; then
 		echo "vmheld:   a non-zero bound count means the OLD unbounded"
 		echo "vmheld:   drain would have been trapped here"
 	fi
+fi
+
+if [ -n "$A_REACH" ]; then
+	echo "vmheld: progpid() reached `dec \`val VMHELD-REACH\`` times (devprog's race window)"
 fi
 
 k=`join64 "$kpc"`

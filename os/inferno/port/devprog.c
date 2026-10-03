@@ -23,15 +23,39 @@ int	SECURE = 0;
  */
 extern int disracepid;
 static int dishitcount;
-static int disreachcount;
+int disreachcount;		/* not static: read over JTAG at a wedge */
+static int disreachsaid;
 
+/*
+ * The milestone print is BOUNDED, and it has to be.
+ *
+ * It used to print at 1, 10, 100, 1000 and then every 10000 FOR EVER.
+ * progpid() is reached once per /prog entry read, so anything that scans
+ * /prog -- the efs-fault suite's own watcher does, every five seconds --
+ * drives it without limit.  On one board that counter reached 150000 and
+ * its 19 lines were the whole of the kernel's print ring: 333 lines, not
+ * one of them the DIS-WEDGED line that was the reason for looking.  Two
+ * catches' evidence went that way.
+ *
+ * The ring is the board's ONLY post-mortem channel -- the console input
+ * is deaf on this desk and styx is gone when the board is wedged -- so a
+ * print that recurs without bound is not a diagnostic, it is a denial of
+ * service against every other diagnostic.  The sibling print below knew
+ * this already: it stops after eight lines.
+ *
+ * The count is kept in a variable instead, which no flood can crowd out,
+ * and tools/jtag/vmheld reads it.  Same information, bounded cost.
+ */
 static void
 disracecheck(Prog *p, char *where)
 {
 	disreachcount++;
-	if(disreachcount == 1 || disreachcount == 10 || disreachcount == 100 ||
-	   disreachcount == 1000 || (disreachcount % 10000) == 0)
-		print("devprog: %s progpid() reached, count %d\n", where, disreachcount);
+	if((disreachcount == 1 || disreachcount == 10 || disreachcount == 100 ||
+	    disreachcount == 1000 || (disreachcount % 10000) == 0)
+	&& disreachsaid++ < 8)
+		print("devprog: %s progpid() reached, count %d%s\n",
+			where, disreachcount,
+			disreachsaid == 8? " (last of these; read disreachcount)": "");
 	if(p != nil && disracepid != -1 && p->pid == disracepid && dishitcount < 8) {
 		dishitcount++;
 		print("devprog: %s touched pid %d live inside its own delprog close window\n",
