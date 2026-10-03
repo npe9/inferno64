@@ -348,11 +348,38 @@ matched, and they do not.
 .B "What this does not settle:"
 a flip wants to land in vertical blank.  Nothing above tests that, and
 without it the tear moves rather than vanishing \(em so tearing is a
-silicon-side question even though the mechanism is proven.  The firmware
-offers no vsync tag on this path; the usual answer is the
+silicon-side question even though the mechanism is proven.
+.PP
+.B "Whether the firmware will do the waiting is UNKNOWN, and an earlier
+.B "draft of this claimed otherwise."
+It said the firmware offers no vsync tag and that the answer must be the
 .CW SMI
-or a DSI/HDMI field interrupt, and that is where the remaining work in
-this step lies.
+or a DSI/HDMI field interrupt.  That was asserted, not checked.  The
+property interface documents tag
+.CW 0x0004800e
+for exactly this, and whether this firmware honours it is a question for
+the board.
+.PP
+.B "And it cannot be answered under QEMU, which is the trap here."
+QEMU's
+.CW bcm2835
+property model sets the response bit for tags it does not implement.
+Probing
+.CW 0x0004800e
+returns
+.CW 0x80000000 ,
+which looks like an answer \(em but so does
+.CW 0x00049999 ,
+which is not a tag at all, and five vsync calls take 2250 cycles rather
+than blocking.  So a response code proves nothing there, and a probe that
+reported "the firmware answers it" would have been reporting the
+emulator's politeness.
+.PP
+This does not touch the two step-2 checks above, and the difference is
+worth keeping straight: those were BEHAVIOURAL.  A doubled virtual height
+returned twice the allocation, a size that changed rather than a bit that
+was set, and the offset flip was confirmed by capturing the emulated
+display.  A response code is the thing QEMU will lie about.
 .NH 1
 Step 3: drive the flush from described damage
 .PP
