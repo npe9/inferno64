@@ -6,12 +6,23 @@ tkscenetest \- check that libtk's render-node path draws what the direct path dr
 .RB [ -v ]
 .SH DESCRIPTION
 .I Tkscenetest
-renders one of every widget kind twice \(em once through
+renders each of a set of cases twice \(em once through
 .IR libtk 's
 direct path, which paints into the destination image, and once through its
 render-node path, which describes the widget as a tree of nodes and renders
 the tree \(em and checks that the two produce the same pixels, byte for
 byte.
+.PP
+The cases are one of every widget kind with default options, and then the
+widget
+.I states
+that have node kinds of their own: a selected entry, an entry with
+.BR -show ,
+a disabled button, a canvas with a rectangle, a line, an oval and a string
+in it, a listbox with a selection, a text widget with content, a scale away
+from its minimum, a part-scrolled scrollbar, a non-default font and a
+sunken frame. Default options alone would pass while every one of those was
+broken.
 .PP
 That identity is the whole acceptance condition for the node tree: a
 description that draws something other than what the direct path draws is
@@ -63,6 +74,14 @@ pass. So two
 .I different
 widgets are compared as well, and must differ.
 .PP
+A case may be
+.BR skipped ,
+counted separately from a pass and a failure, when the environment cannot
+distinguish it from the case it is meant to differ from \(em the only such
+case is the non-default font, and the Pi 3B kernel's root carries exactly
+one font, which is also Tk's default. A case that is dropped is reported,
+because coverage quietly lost is worse than coverage never claimed.
+.PP
 Two further properties of the description are checked, because a tree that
 draws correctly can still be useless to a backend: every node that marks
 pixels must describe its own box, and the union the trees marked must be a
@@ -91,11 +110,19 @@ cover:
 .PP
 The widgets are laid out with
 .B pack
-and default options into a 160\(mu60 image. Nothing here exercises a
-widget's selected, focused or disabled appearance, a scrolled or
-partially-clipped widget, a canvas with items in it, a posted menu, or a
-non-default font or colour scheme \(em each of which reaches node kinds this
-does not.
+into a 160\(mu60 image. The states listed above are covered; a
+.I focused
+widget, a partially-clipped one, a posted menu with a cascade, and a
+non-default colour scheme are not, and each reaches node kinds this does
+not.
+.PP
+The "drew something" check counts bytes differing from the white the image
+was filled with, so a widget that painted only its own grey background
+satisfies it. It is a guard against comparing two blank images, not evidence
+that a case's content was drawn; what guards the content is that every
+setup command's reply is checked, so a selection or an item that did not
+take is reported rather than silently leaving a default widget to be
+compared with itself.
 .PP
 The two controls above rule out the node path not running and the
 comparison not working. They do not amount to showing that a

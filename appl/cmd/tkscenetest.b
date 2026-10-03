@@ -38,8 +38,24 @@ Tkscenetest: module
 	init:	fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
-ok, fail: int;
+ok, fail, skipped: int;
 verbose: int;
+
+#
+# A case that cannot be built HERE, for a reason that is about the
+# environment rather than about libtk -- the only one so far is a
+# non-default font, and the Pi 3B kernel's root carries exactly one font
+# (/fonts/pelm/unicode.8.font, which is also Tk's default) so there is no
+# second face to ask for there.  Reported as skipped and counted
+# separately, because a case silently dropped is coverage silently lost,
+# and a case failed for a missing font is a false alarm about the node
+# path.
+#
+skip(what: string)
+{
+	skipped++;
+	sys->print("SKIP %s\n", what);
+}
 
 report(good: int, what: string)
 {
@@ -60,7 +76,7 @@ H: con 60;
 # pixels.  A toplevel of its own each time, because reconfiguring one and
 # reading it again measures whatever the reconfigure happened to repaint,
 # which is not the question.  (The idiom is raspi3binit.b's.)
-paint(disp: ref Display, spec: string): array of byte
+paint(disp: ref Display, name: string, cmds: list of string): array of byte
 {
 	off := disp.newimage(Rect((0,0),(W,H)), draw->RGB24, 0, Draw->White);
 	if(off == nil){
@@ -72,17 +88,24 @@ paint(disp: ref Display, spec: string): array of byte
 		sys->print("FAIL toplevel: %r\n");
 		return nil;
 	}
-	c := tk->cmd(top, spec);
-	if(c != nil && len c > 0 && c[0] == '!'){
-		sys->print("FAIL %s: %s\n", spec, c);
-		return nil;
+	#
+	# Every command's reply is checked, not just the creation's.  A
+	# setup step that fails silently -- a selection that did not take,
+	# an item that was not added -- leaves a DEFAULT widget being
+	# compared against itself, which passes and covers nothing.  That
+	# is tkofftest(1)'s creation-error lesson applied to the steps
+	# after creation.
+	#
+	for(l := cmds; l != nil; l = tl l){
+		c := tk->cmd(top, hd l);
+		if(c != nil && len c > 0 && c[0] == '!'){
+			sys->print("FAIL %s: `%s\' -> %s\n", name, hd l, c);
+			return nil;
+		}
 	}
-	if((c = tk->cmd(top, "pack .w")) != nil && len c > 0 && c[0] == '!'){
-		sys->print("FAIL pack: %s\n", c);
-		return nil;
-	}
-	if((c = tk->putimage(top, ". -1", off, nil)) != nil && len c > 0){
-		sys->print("FAIL putimage: %s\n", c);
+	pc := tk->putimage(top, ". -1", off, nil);
+	if(pc != nil && len pc > 0){
+		sys->print("FAIL putimage: %s\n", pc);
 		return nil;
 	}
 	tk->cmd(top, "update");
@@ -203,41 +226,138 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		raise "fail:display";
 	}
 
-	# One of every widget kind the node path has a conversion for.  A
-	# single label would pass while every other widget was broken --
-	# the coverage lesson from tkofftest(1).
-	specs := array[] of {
-		"label .w -text Label",
-		"button .w -text Button",
-		"frame .w -width 80 -height 30",
-		"entry .w -width 60",
-		"scale .w -from 0 -to 10",
-		"scrollbar .w",
-		"listbox .w -width 10 -height 2",
-		"canvas .w -width 80 -height 30",
-		"text .w -width 10 -height 2",
-		"menubutton .w -text Menu",
-		"checkbutton .w -text Check",
-		"radiobutton .w -text Radio",
+	#
+	# One of every widget kind the node path has a conversion for, and
+	# then the STATES those conversions have their own nodes for.  A
+	# default-options-only suite passes while every selected, focused,
+	# disabled or populated widget is broken -- which is tkofftest(1)'s
+	# coverage lesson, and the plan records each of these states as a
+	# separate conversion with its own node kinds.
+	#
+	# Each case is a name and the commands to build it.  `pack .w' last,
+	# always, because a widget must exist before it is packed.
+	#
+	names := array[] of {
+		# plain, default options
+		"label", "button", "frame", "entry", "scale", "scrollbar",
+		"listbox", "canvas", "text", "menubutton", "checkbutton",
+		"radiobutton",
+		# the states with their own node kinds
+		"entry with a selection", "entry -show", "disabled button",
+		"canvas with items", "listbox with a selection",
+		"text with content", "scale at a value",
+		"scrollbar part-scrolled", "non-default font", "frame -relief",
 	};
+	cases := array[] of {
+		list of {"label .w -text Label", "pack .w"},
+		list of {"button .w -text Button", "pack .w"},
+		list of {"frame .w -width 80 -height 30", "pack .w"},
+		list of {"entry .w -width 60", "pack .w"},
+		list of {"scale .w -from 0 -to 10", "pack .w"},
+		list of {"scrollbar .w", "pack .w"},
+		list of {"listbox .w -width 10 -height 2", "pack .w"},
+		list of {"canvas .w -width 80 -height 30", "pack .w"},
+		list of {"text .w -width 10 -height 2", "pack .w"},
+		list of {"menubutton .w -text Menu", "pack .w"},
+		list of {"checkbutton .w -text Check", "pack .w"},
+		list of {"radiobutton .w -text Radio", "pack .w"},
 
-	sys->print("tkscenetest: %d widget kinds, %dx%d RGB24\n", len specs, W, H);
+		# A selection band is tkscenetextsel()'s five colour nodes plus
+		# glyph runs, and no default widget reaches it.
+		list of {"entry .w -width 60", "pack .w",
+			".w insert 0 selected", ".w selection from 0",
+			".w selection to 8"},
+		# -show replaces every rune, so the glyph run is not the text.
+		list of {"entry .w -width 60 -show *", "pack .w",
+			".w insert 0 secret"},
+		# Disabled draws in a different colour through the same nodes.
+		list of {"button .w -text Button -state disabled", "pack .w"},
+		# Canvas items are their own conversions: a rectangle, a line,
+		# an oval and a string, so four node kinds in one image.
+		list of {"canvas .w -width 140 -height 50", "pack .w",
+			".w create rectangle 5 5 60 30 -fill red",
+			".w create line 10 40 130 45 -width 2",
+			".w create oval 70 5 120 30 -fill blue",
+			".w create text 20 45 -text item"},
+		# A listbox selection band, which is not the entry's.
+		list of {"listbox .w -width 12 -height 3", "pack .w",
+			".w insert end one", ".w insert end two",
+			".w insert end three", ".w selection set 1 1"},
+		# Text with content reaches the text widget's glyph layout
+		# rather than an empty box.
+		list of {"text .w -width 16 -height 3", "pack .w",
+			".w insert end 'two lines\nof text"},
+		# A scale away from its minimum moves the slider node.
+		list of {"scale .w -from 0 -to 10 -length 120", "pack .w",
+			".w set 7"},
+		# A part-scrolled scrollbar is a different geometry from a
+		# full one, and the full one is the default.
+		list of {"scrollbar .w -orient horizontal", "pack .w",
+			".w set 0.25 0.6"},
+		# A non-default font makes a wrong-font node visible; with
+		# every widget in one face it would still have drawn.
+		list of {"label .w -text Font -font /fonts/pelm/latin1.9.font",
+			"pack .w"},
+		# A relief is the border conversion rather than the fill.
+		list of {"frame .w -width 80 -height 30 -relief sunken -borderwidth 2",
+			"pack .w"},
+	};
+	if(len names != len cases){
+		sys->print("tkscenetest: %d names for %d cases\n", len names, len cases);
+		raise "fail:internal";
+	}
+	#
+	# Cases that need something the environment may not have, and which
+	# must therefore PROVE they got it.  Indexed as names/cases are.
+	#
+	# The font case needs it.  A face that cannot be opened is reported
+	# -- `!failed to open font' -- so the per-command check catches that
+	# much.  What it does not catch is a font that opens and draws the
+	# SAME, which is what asking for the default face by another name
+	# would do, and then the case passes while covering nothing about the
+	# font-name node.  So the case must differ from the one it is
+	# supposed to differ from, and is skipped when it does not: on the
+	# Pi 3B kernel the root carries exactly one font
+	# (/fonts/pelm/unicode.8.font, which is also Tk's default), so there
+	# is no second face there and skipping is the honest outcome.
+	#
+	optional := array[len names] of {* => -1};
+	for(oi := 0; oi < len names; oi++)
+		if(names[oi] == "non-default font")
+			optional[oi] = 0;	# must differ from case 0, the plain label
+
+	sys->print("tkscenetest: %d cases, %dx%d RGB24\n", len cases, W, H);
 
 	# Baseline: the direct path, which is the default.
 	if(!setmode(disp, "direct"))
 		raise "fail:render direct";
-	dpix := array[len specs] of array of byte;
-	for(i := 0; i < len specs; i++){
-		dpix[i] = paint(disp, specs[i]);
+	dpix := array[len cases] of array of byte;
+	for(i := 0; i < len cases; i++){
+		dpix[i] = paint(disp, names[i], cases[i]);
+		if(optional[i] >= 0){
+			# It had to come out different from the case it names.
+			d := differ(dpix[i], dpix[optional[i]]);
+			if(dpix[i] == nil || d == 0){
+				why := "indistinguishable from `" + names[optional[i]] +
+					"\' here, so it covers nothing";
+				if(dpix[i] == nil)
+					why = "could not be built here (see above)";
+				skip(sys->sprint("%s: %s", names[i], why));
+				dpix[i] = nil;
+				continue;
+			}
+			report(1, sys->sprint("%s really differs from `%s\' (%d bytes)",
+				names[i], names[optional[i]], d));
+		}
 		report(dpix[i] != nil && inked(dpix[i]) > 0,
 			sys->sprint("direct: %s drew something (%d bytes of ink)",
-				specs[i], inked(dpix[i])));
+				names[i], inked(dpix[i])));
 	}
 
 	# NEGATIVE CONTROL for the comparison itself: two DIFFERENT widgets
 	# must not compare equal.  Without this, a differ() that always
 	# returned 0 would make every identity check below pass.
-	if(len specs >= 2){
+	if(len cases >= 2){
 		d := differ(dpix[0], dpix[1]);
 		report(d > 0, sys->sprint("control: a label and a button differ (%d bytes)", d));
 	}
@@ -246,9 +366,11 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	if(!setmode(disp, "scene"))
 		raise "fail:render scene";
 
-	spix := array[len specs] of array of byte;
-	for(i = 0; i < len specs; i++)
-		spix[i] = paint(disp, specs[i]);
+	spix := array[len cases] of array of byte;
+	for(i = 0; i < len cases; i++)
+		if(dpix[i] != nil)	# a dropped case is not re-run: it would
+			spix[i] = paint(disp, names[i], cases[i]);
+					# only reprint its own setup failure
 
 	#
 	# ONE READ PER ROUND.  `render count', `render nodes' and `render
@@ -278,8 +400,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 
 	# Fresh round: every node that marks pixels must describe its own
 	# box, which is the one property the vocabulary exists to provide.
-	for(i = 0; i < len specs; i++)
-		paint(disp, specs[i]);
+	for(i = 0; i < len cases; i++)
+		if(dpix[i] != nil)
+			paint(disp, names[i], cases[i]);
 	n := counts(disp, "nodes");
 	drawn := undesc := 0;
 	if(n != nil){
@@ -293,8 +416,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	# Fresh round again: the union the trees marked must be a non-empty
 	# box inside the image.  A described frame that says it drew nothing,
 	# or says it drew outside the image, is useless to a backend.
-	for(i = 0; i < len specs; i++)
-		paint(disp, specs[i]);
+	for(i = 0; i < len cases; i++)
+		if(dpix[i] != nil)
+			paint(disp, names[i], cases[i]);
 	bb := counts(disp, "bounds");
 	bok := 0;
 	bs := "no reply";
@@ -315,12 +439,17 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	report(bok, sys->sprint("the trees marked a non-empty box inside the image (%s)", bs));
 
 	# And the identity itself.
-	for(i = 0; i < len specs; i++){
+	for(i = 0; i < len cases; i++){
+		if(dpix[i] == nil)
+			continue;	# dropped: reported as skipped or failed already
 		d := differ(dpix[i], spix[i]);
-		report(d == 0, sys->sprint("scene == direct: %s (%d bytes differ)", specs[i], d));
+		report(d == 0, sys->sprint("scene == direct: %s (%d bytes differ)", names[i], d));
 	}
 
-	sys->print("tkscenetest: %d ok, %d fail\n", ok, fail);
+	if(skipped > 0)
+		sys->print("tkscenetest: %d ok, %d fail, %d skipped\n", ok, fail, skipped);
+	else
+		sys->print("tkscenetest: %d ok, %d fail\n", ok, fail);
 	if(fail > 0)
 		raise "fail:tkscenetest";
 }
