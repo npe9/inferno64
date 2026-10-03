@@ -4384,3 +4384,82 @@ and
 .CW runhd ,
 which distinguishes "nothing was waiting" (not a wedge) from "work was queued
 and nobody ran it" (the real thing) without reconstructing anything.
+.NH 2
+H4.  The watchdog's verdict survived \(em and a counter I trusted measures something else
+.LP
+.B "The fix to the watchdog worked, first wedge after it:"
+.P1
+DIS-WEDGED-END: beat 5472271, vmq waiting, runhd ready,
+    ticks 134819 (the dump above is 15 s of no progress)
+.P2
+BOTH queues non-empty: processes waiting in
+.CW acquire()
+for the token AND Progs ready to run, with no interpreter progress for fifteen
+seconds.  That is the one line three earlier captures had to be reconstructed
+without.
+.PP
+.B "And no SDIO refusals at all in that catch,"
+so the chip was answering and the backoff never fired.  The SDIO retry is a
+real bug and is not this.
+.PP
+.B "WITHDRAWN: 'no process held the Dis VM for long'."
+That claim, in the correction two sections above, rested on
+.CW maxvmheld
+reading 127 ticks.  It does not support it.
+.CW livelockcheck()
+keys on
+.CW "static Proc *held"
+and resets the count whenever the processor's current running process changes,
+so on a four-core board
+.CW vmheldticks
+is the longest single-process run on cpu0 and says nothing about the token.
+The name invites the reading and I took it.
+.PP
+The counters are still worth having \(em a Dis program that will not yield is
+what they were built for \(em but they are not a measure of the token, and
+.CW tools/jtag/vmheld
+now says so where it prints them.
+.PP
+.B "So the token is instrumented directly."
+.CW port/dis.c
+records
+.CW vmholderpid ,
+.CW vmholdertext ,
+.CW vmholdbeat
+and
+.CW vmholdn
+in
+.CW acquire() ,
+.CW release()
+and
+.CW iyield()
+\(em scalars rather than a
+.CW Proc* ,
+because they are read off a wedged board by address and a pointer would need
+Proc's offsets, which are not in the symbol table.  Verified on a healthy
+board: the token reads FREE, with 1031369 handovers against a disbeat of
+903697.
+.PP
+.B "What the next wedge will settle, and it is a two-way question."
+.CW vmholdbeat
+against
+.CW disbeat :
+.IP \(bu
+holder named and
+.CW disbeat
+UNCHANGED since it took the token \(em one process is stuck inside the
+interpreter, and its kernel pc names where;
+.IP \(bu
+token FREE with
+.CW vmq
+waiting \(em the token was lost on a handover, and the bug is in
+.CW release() /
+.CW iyield() /
+.CW acquire() ;
+.IP \(bu
+holder named and
+.CW disbeat
+moving \(em not a wedge at all, and the watchdog's threshold is wrong.
+.PP
+Those are three different bugs and no amount of reading process states tells
+them apart, which is why the previous three catches did not.

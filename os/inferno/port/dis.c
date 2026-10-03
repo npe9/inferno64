@@ -879,6 +879,50 @@ enum {
 ulong	disbeat;
 extern void kstackdump(void);		/* devcons.c */
 
+/*
+ * WHO HOLDS THE INTERPRETER TOKEN, and since when.
+ *
+ * The wedge this file's watchdog describes is "the interpreter stops
+ * handing over", and the obvious question at a wedge is who had it.
+ * Nothing recorded that.  The nearest thing, raspi3b's vmheldticks, has
+ * a misleading name: livelockcheck() keys on the CURRENT RUNNING PROCESS
+ * of the processor it runs on and resets whenever that changes, so on a
+ * four-core board it measures the longest single-process run on cpu0 and
+ * not the token's hold at all.  I read 127 ticks there as "nobody held
+ * the VM for long" and that did not follow.
+ *
+ * These are scalars on purpose, not a Proc*: they are read off a wedged
+ * board over JTAG by address, and a pointer would need Proc's offsets,
+ * which are not in the symbol table.  A pid and a text name are enough
+ * to find the process in the watchdog's own dump.
+ *
+ * vmholdbeat is disbeat at the moment the token was taken.  If a wedge
+ * reports disbeat equal to vmholdbeat, the holder has made no progress
+ * since taking it, which separates "held by someone stuck" from "handed
+ * round busily with nobody finishing".
+ */
+int	vmholderpid;			/* 0 when the token is free */
+char	vmholdertext[KNAMELEN];
+ulong	vmholdbeat;
+ulong	vmholdticks;
+ulong	vmholdn;			/* handovers, to see it moving */
+
+static void
+vmtook(Proc *p)
+{
+	vmholdn++;
+	if(p == nil){
+		vmholderpid = 0;
+		vmholdertext[0] = 0;
+		return;
+	}
+	vmholderpid = p->pid;
+	strncpy(vmholdertext, p->text, KNAMELEN-1);
+	vmholdertext[KNAMELEN-1] = 0;
+	vmholdbeat = disbeat;
+	vmholdticks = m->ticks;
+}
+
 void
 diswatchproc(void*)
 {
@@ -1360,6 +1404,8 @@ acquire(void)
 				up->nlocks, up->delaysched);
 	}
 
+	vmtook(up);			/* this process now holds the token */
+
 	if(up->type == Interp) {
 		p = up->iprog;
 		up->iprog = nil;
@@ -1409,12 +1455,14 @@ release(void)
 			 * whatever newproc() handed it otherwise.
 			 */
 			kproc("dis", vmachine, nil, KPDUP);
+		vmtook(nil);		/* nobody wanted it; it is free */
 		return;
 	}
 	p = *pq;
 	*pq = p->qnext;
 	unlock(&isched.l);
 
+	vmtook(nil);			/* given up; the taker records itself */
 	ready(p);
 }
 
@@ -1445,6 +1493,12 @@ iyield(void)
 	up->state = Queueing;
 	up->pc = getcallerpc(&p);
 	unlock(&isched.l);
+	/*
+	 * Handed to p, which is blocked in acquire()'s sched() and will
+	 * record itself as it comes out.  Cleared here so the window in
+	 * between does not name the process that has just let go.
+	 */
+	vmtook(nil);
 	ready(p);
 	sched();
 }

@@ -5,15 +5,25 @@
 #	sh tools/jtag/vmheld
 #
 # WHY THIS EXISTS.  doc/open-issues-plan.ms item H4 caught the board
-# wedged with 38 Dis processes queued for the VM and cpu0 idle: the VM is
-# held and never given back.  What it could not say is WHICH process
-# holds it -- and clock.c has been recording exactly that all along, in
-# four file-scope variables that livelockcheck() updates every tick:
+# wedged with dozens of Dis processes queued for the interpreter and the
+# watchdog reporting "vmq waiting, runhd ready" -- work queued and nobody
+# finishing.  The question is WHO HAD THE TOKEN.
 #
-#	vmheldticks	how long the current holder has held it
-#	maxvmheld	the longest hold seen since boot
-#	heldkpc		last kernel pc seen during a hold
-#	helddispc	last compiled-Dis pc seen during a hold
+# It reports two different things, and keeping them apart is the point:
+#
+#   the TOKEN, from port/dis.c's vmholderpid/vmholdertext/vmholdbeat,
+#	which acquire(), release() and iyield() maintain.  This is the
+#	actual answer, and comparing vmholdbeat with disbeat says whether
+#	the holder has made any progress since taking it.
+#
+#   raspi3b's vmheldticks/maxvmheld/heldkpc/helddispc, which
+#	livelockcheck() updates every tick.  THESE DO NOT MEASURE THE
+#	TOKEN, despite the name: livelockcheck keys on the current running
+#	process of the processor it runs on and resets whenever that
+#	changes, so on four cores it is the longest single-process run on
+#	cpu0.  I read 127 ticks there as "nobody held the VM for long" and
+#	that did not follow.  They are still worth having -- a Dis program
+#	that will not yield is what they were built for.
 #
 # It also PRINTS them, as VMHELD lines -- and that is why this tool is
 # needed rather than the print.  When the board wedged, a process dump
@@ -59,6 +69,11 @@ A_KPC=`sym heldkpc`
 A_DISPC=`sym helddispc`
 A_LLT=`sym livelockticks`
 A_WDOG=`sym bootwdog`
+A_HPID=`sym vmholderpid`
+A_HTEXT=`sym vmholdertext`
+A_HBEAT=`sym vmholdbeat`
+A_HN=`sym vmholdn`
+A_BEAT=`sym disbeat`
 
 for v in A_TICKS A_MAX A_KPC A_DISPC; do
 	eval a=\$$v
@@ -99,6 +114,11 @@ trap 'rm -f "$TMP"' 0 1 2 15
 	-c "echo \"VMHELD-DISPC\"; mdw $A_DISPC 2" \
 	-c "echo \"VMHELD-LLT\"; mdw ${A_LLT:-0} 1" \
 	-c "echo \"VMHELD-WDOG\"; mdw ${A_WDOG:-0} 1" \
+	-c "echo \"VMHELD-HPID\"; mdw ${A_HPID:-0} 1" \
+	-c "echo \"VMHELD-HBEAT\"; mdw ${A_HBEAT:-0} 1" \
+	-c "echo \"VMHELD-HN\"; mdw ${A_HN:-0} 1" \
+	-c "echo \"VMHELD-BEAT\"; mdw ${A_BEAT:-0} 1" \
+	-c "echo \"VMHELD-HTEXT\"; mdb ${A_HTEXT:-0} 16" \
 	-c "resume; exit" ) >"$TMP" 2>&1
 
 if ! grep -aq VMHELD-TICKS "$TMP"; then
@@ -153,6 +173,38 @@ if [ -n "$llt" ]; then
 		echo "vmheld:   bootwdog 0 means diswdog() never arms the hardware"
 		echo "vmheld:   watchdog, so a held VM wedges the board for ever"
 	fi
+fi
+
+#
+# THE TOKEN ITSELF, which is what the name of this tool suggests and
+# what vmheldticks above does NOT measure: livelockcheck() keys on the
+# running process of ONE processor and resets whenever that changes, so
+# on four cores its figure is the longest single-process run on cpu0.
+# Reading 127 ticks there as "nobody held the VM for long" does not
+# follow, and I made exactly that mistake.
+#
+if [ -n "$A_HPID" ]; then
+	hpid=`val VMHELD-HPID`
+	hbeat=`val VMHELD-HBEAT`
+	hn=`val VMHELD-HN`
+	beat=`val VMHELD-BEAT`
+	htext=`awk '/VMHELD-HTEXT/{s=1;next} s&&/^0x/{sub(/^[^:]*: */,"");print;exit}' "$TMP" |
+		python3 -c "
+import sys
+b=bytes(int(x,16) for x in sys.stdin.read().split() if len(x)==2)
+print(b.split(b'\0')[0].decode('ascii','replace'))" 2>/dev/null`
+	if [ "`dec $hpid`" = 0 ]; then
+		echo "vmheld: the interpreter token is FREE (no holder)"
+	else
+		echo "vmheld: the token is held by pid `dec $hpid` ($htext)"
+		if [ "`dec $hbeat`" = "`dec $beat`" ]; then
+			echo "vmheld:   and disbeat has NOT moved since it took it"
+			echo "vmheld:   (`dec $beat`) -- the holder is stuck, not busy"
+		else
+			echo "vmheld:   disbeat has moved since: `dec $hbeat` -> `dec $beat`"
+		fi
+	fi
+	echo "vmheld: handovers since boot `dec $hn`, disbeat `dec $beat`"
 fi
 
 k=`join64 "$kpc"`
