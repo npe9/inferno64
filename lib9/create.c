@@ -1,5 +1,6 @@
 #include "lib9.h"
 #include <sys/types.h>
+#include <sys/stat.h>	/* mkdir; MacOSX/amd64/include/lib9.h adds this for amd64 */
 #include <fcntl.h>
 
 int

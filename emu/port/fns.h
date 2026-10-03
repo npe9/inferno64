@@ -81,6 +81,20 @@ void		freeblist(Block*);
 void		freeskey(Signerkey*);
 uintptr	getcallerpc(void*);
 ulong	getFPcontrol(void);
+/*
+ * Defined in devip.c and called from ipif-posix.c, which had no declaration
+ * for it -- so the compiler assumed int, read the low 32 bits of a 64-bit
+ * ulong, and passed that to a %lud expecting 64.  ulong is 8 bytes in the
+ * host build (asserted, not assumed).  Benign while ipseqno is small and the
+ * print is debug-gated, and a real width mismatch regardless.  It was hidden
+ * by -Wno-implicit-function-declaration in mkfiles/mkfile-MacOSX-*.
+ */
+ulong	ipseq(void);
+/*
+ * In include/kern.h, which emu/port/devssl.c does not reach -- same hidden
+ * declaration, same suppressed flag.  int-returning, so no width issue.
+ */
+int	nrand(int);
 ulong	getFPstatus(void);
 void		gkbdputc(Queue*, int);
 int		incref(Ref*);

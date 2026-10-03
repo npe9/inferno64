@@ -6,6 +6,33 @@
 #ifndef _BSD_SOURCE
 #define _BSD_SOURCE
 #endif
+/*
+ * _XOPEN_SOURCE 500 pins Darwin's __DARWIN_C_LEVEL below 200112L, which
+ * SILENTLY removes fchown, gethostname, readlink, setegid, seteuid and symlink
+ * from <unistd.h> for every file that includes this header -- which is all of
+ * emu.  Adding <unistd.h> to a .c file does not help, because this header
+ * includes it itself, and the "#undef _POSIX_C_SOURCE" that several os.c files
+ * carry runs too late.
+ *
+ * _DARWIN_C_SOURCE restores them.  THE TREE ALREADY KNEW THIS: MacOSX/amd64/
+ * include/lib9.h has been a wrapper that sets _DARWIN_C_SOURCE and then
+ * includes THIS file since 384519fff ("add amd64 Cocoa and Plan 9 emulator
+ * support"), so the amd64 host build has been compensating for the defect all
+ * along and only the arm64 base header -- the one every Apple Silicon build
+ * actually uses -- lacked it.  The sibling platform's prior answer is better
+ * evidence than any argument about __DARWIN_C_LEVEL.
+ *
+ * Verified here rather than assumed: a file including lib9.h and calling
+ * gethostname, readlink, symlink and seteuid gets four "call to undeclared
+ * function" errors under -Werror=implicit-function-declaration, and compiles
+ * clean with -D_DARWIN_C_SOURCE.
+ *
+ * The guard matters: the amd64 wrapper defines it before including this file,
+ * so this must not redefine it.
+ */
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE 1
+#endif
 #define _XOPEN_SOURCE  500
 #define _LARGEFILE_SOURCE	1
 #define _LARGEFILE64_SOURCE	1
