@@ -6856,3 +6856,93 @@ from a path where the mask reaches memdraw as
 The same counter on the same question gives 100 per cent on one client stack and
 0 on another, so the number was never about Tk's drawing \(em it was about which
 library built the mask.
+.NH 2
+H1a.  THE PAGE FLIP WORKS ON SILICON, and the safety net is load-bearing
+.LP
+.CW "Dbuf = 1" ,
+build 1791031428 from the card:
+.P1
+drawink: all checks passed        (6 of 6, text ink 226 of 1728,
+                                   ink box 9,10 71,21 -- IDENTICAL to
+                                   the single-buffered figures)
+SCREEN flip 15 failed 0 repair 9117124 bytes in 13 rects eager-repairs 9
+DRAW ops 15 full 13 partial 2 partial-in-stale 2
+.P2
+Fifteen flips, zero failures.  The mailbox virtual-offset flip
+.CW ( mboxvirtoffset ,
+tag 0x00048009) works on real hardware, and the output is pixel-identical to the
+single-buffered path.
+.PP
+.B "And the first run FAILED 5 of 6, which is how the read path was found."
+With the flip on and no hook on the read path:
+.P1
+FAIL clear: 640 of 2560 bytes non-zero
+FAIL box inside: 0 of 75684 pixels inked
+PASS box outside: 0 of 38080 pixels above the box inked
+FAIL halves: left 320/320 right 0/320
+FAIL text ink: 0 of 1728
+FAIL undrawn region: neither fill
+.P2
+.CW "box inside"
+reading ZERO while
+.CW "box outside"
+still passed is the signature of reading a buffer nothing was drawn into, not of
+drawing nothing.  It is inherent to the deferred scheme rather than a slip: after
+a present the buffer
+.CW memunload()
+reads is the BACK buffer, which BY DESIGN holds the frame before the one just
+presented, because the repair is deferred until the next frame draws.  So draw,
+flush, read back returns the previous frame.
+.PP
+The fix is one line and the same insight as the write path \(em A READ DEPENDS ON
+WHAT THE BUFFER ALREADY HOLDS, exactly as a partial-overwrite operation does, so
+it takes the same hook.
+.CW "drawpre(BG32INT(a+1), i, 0)"
+before
+.CW memunload
+in the
+.CW 'r'
+case.
+.PP
+.B "What caught it was running it."
+Not the four static checks, not the compiler, not the re-read that found the
+inverted ternary.  The acceptance test written and documented as "written, not
+verified" did the job it existed for on its first real use, and the
+counter-signature \(em one check passing BECAUSE it expected to read nothing
+there \(em is what turned a failure into a diagnosis.
+.PP
+.B "eager-repairs 9 is the number that makes the safety net real."
+Nine eager repairs on a 15-frame workload.  Without them five checks failed, so
+the hook is load-bearing rather than precautionary, and that is measured on this
+board rather than argued from the hazard.
+.PP
+.B "And the cost is the documented worst case, arriving as designed."
+.P1
+repair 9117124 B over 15 frames  = 608k a frame
+eager 10152664 B over 15 frames  = 677k a frame
+.P2
+So on drawink the deferred scheme saves almost nothing \(em about 90 per cent of
+eager \(em because the eager repairs dominate.  drawink is the adversarial case:
+it reads back after every draw and draws glyphs straight at the screen.  The
+84.9 per cent the peer measured needs a client where no partial operation occurs,
+which is Tk.
+.PP
+.B "Which sets the remaining measurement, and it is the peer's framing:"
+measure the hook where it FIRES and where it must cost NOTHING.
+.CW "eager-repairs 0"
+under a Tk session is what would make the dormancy measured rather than assumed.
+.PP
+.B "A trap checked rather than assumed, on the peer's warning."
+A cumulative counter whose last print lands before the end of the workload
+reports a PREFIX, and a zero from one that stopped reporting early reads exactly
+like dormancy.  These counters are printed ONLY from
+.CW devkprof 's
+.CW kprofdump() ,
+which this harness triggers explicitly with
+.CW "echo dump > /dev/kpctl"
+AFTER the workload in the same command line \(em so the figure always covers the
+whole run.  Verified by grep rather than assumed: nothing calls
+.CW screenstats()
+or
+.CW drawpresentstats()
+on an interval.

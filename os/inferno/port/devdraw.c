@@ -2298,6 +2298,24 @@ drawmesg(Client *client, void *av, int n)
 			client->readdata = mallocz(c, 0);
 			if(client->readdata == nil)
 				error("readimage malloc failed");
+			/*
+			 * A READ DEPENDS ON WHAT THE BUFFER ALREADY HOLDS, which
+			 * is the same dependency a partial-overwrite operation
+			 * has, so it takes the same hook.
+			 *
+			 * Without this the deferred scheme breaks every
+			 * readback.  After a present the buffer memunload()
+			 * reads is the BACK buffer, which by design holds the
+			 * frame BEFORE the one just presented -- the repair is
+			 * deferred until the next frame draws.  So draw, flush,
+			 * read back returns the previous frame's pixels.
+			 * Measured: with the flip on and this missing, drawink
+			 * failed 5 of 6 checks -- "box inside 0 of 75684
+			 * pixels inked" with "box outside" still passing, which
+			 * is the signature of reading a buffer nothing was
+			 * drawn into rather than of drawing nothing.
+			 */
+			drawpre(BG32INT(a+1), i, 0);
 			client->nreaddata = memunload(i, r, client->readdata, c);
 			if(client->nreaddata < 0){
 				free(client->readdata);

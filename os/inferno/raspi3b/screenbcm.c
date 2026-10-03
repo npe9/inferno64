@@ -31,10 +31,12 @@ enum {
 extern int mboxfballoc(int, int, int, uintptr*, u32*, u32*);
 extern int mboxvirtoffset(int, int);
 extern void (*screenpresent)(void);
+extern void (*screenpartial)(Rectangle);
 extern int mboxvsync(void);
 extern void drawpresentstats(void);
 static void vsyncprobe(void);
 static void bcmpresent(void);
+static void bcmpartial(Rectangle);
 static uchar *backaddr(void);
 
 static Memdata	scrdata;
@@ -95,7 +97,7 @@ enum { Directfb = 1 };
  * (devdraw's per-present accounting); what is not is these three lines, the
  * underok invalidation, and the deferred repair at 'v'.
  */
-enum { Dbuf = 0 };
+enum { Dbuf = 1 };
 
 /*
  * SKIP THE FORWARD COPY, so the acceptance test can be shown able to fail.
@@ -121,7 +123,7 @@ static int	fbfront;	/* which half the GPU is scanning out */
 static Rectangle dmg;		/* damage(N), accumulating */
 static Rectangle dmgprev;	/* damage(N-1): where BACK is stale */
 static int	havedmgprev;
-static uvlong	nflip, nflipfail, nrepairbyte, nrepairrect;
+static uvlong	nflip, nflipfail, nrepairbyte, nrepairrect, neagerrepair;
 static int	fbok;
 
 static int	cursenable;
@@ -520,8 +522,9 @@ screenstats(void)
 	 */
 	drawpresentstats();
 	if(Dbuf)
-		print("SCREEN flip %llud failed %llud repair %llud bytes in %llud rects%s\n",
-			nflip, nflipfail, nrepairbyte, nrepairrect,
+		print("SCREEN flip %llud failed %llud repair %llud bytes in %llud rects"
+			" eager-repairs %llud%s\n",
+			nflip, nflipfail, nrepairbyte, nrepairrect, neagerrepair,
 			Dbufnorepair? " REPAIR DISABLED (control run)": "");
 	print("SCREEN dbuf eager %llud defer %llud overlap %llud"
 		" skipped %llud over %llud fullish %llud adj %llud samerect %llud\n",
@@ -698,6 +701,7 @@ screeninit(void)
 		fbfront = 0;			/* the GPU starts at offset 0 */
 		fb = vfb = backaddr();		/* so draw into the second half */
 		screenpresent = bcmpresent;
+		screenpartial = bcmpartial;
 	}
 	if(fb == nil){
 		print("screen: no memory for %d byte soft fb\n", nbytes);
@@ -858,6 +862,33 @@ fbcopy(uchar *from, uchar *to, Rectangle r)
 	}
 	nrepairbyte += (uvlong)nb * Dy(r);
 	nrepairrect++;
+}
+
+/*
+ * Called from devdraw's drawpre() BEFORE an operation that does not fully
+ * overwrite its damage rectangle draws into the stale region.
+ *
+ * Such an operation composes against whatever the back buffer holds, and the
+ * back buffer is a frame behind in dmgprev.  So bring ALL of dmgprev up to
+ * date now, while the frame can still be drawn over it, and record that
+ * nothing is stale any more -- which also means bcmpresent() has no repair
+ * left to do for this frame.  The frame then costs what the eager scheme would
+ * have cost, which is the documented worst case and is never a wrong picture.
+ *
+ * Repairing all of dmgprev rather than just the operation's rectangle is
+ * deliberate: the rectangle devdraw passes is the DESTINATION's, a superset of
+ * the operation's own, and a partial repair would leave the rest of dmgprev
+ * stale for the deferred copy that now will not happen.
+ */
+static void
+bcmpartial(Rectangle r)
+{
+	USED(r);
+	if(fbbase == nil || !havedmgprev)
+		return;
+	fbcopy(frontaddr(), backaddr(), dmgprev);
+	havedmgprev = 0;
+	neagerrepair++;
 }
 
 /*
