@@ -151,16 +151,19 @@ tkcvsbitfree(TkCitem *i)
 
 	b = TKobj(TkCbits, i);
 	if(b->bitmap)
+		tkimgpathdrop(b->bitmap);
 		freeimage(b->bitmap);
 }
 
 void
-tkcvsbitdraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvsbitdraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
+	Image *img;
 	TkEnv *e;
 	TkCbits *b;
 	Rectangle r;
 	Image *bi;
+	char *path;
 
 	USED(pe);
 
@@ -176,6 +179,24 @@ tkcvsbitdraw(Image *img, TkCitem *i, TkEnv *pe)
 	r.max.x += Dx(bi->r);
 	r.max.y += Dy(bi->r);
 
+	/*
+	 * The same texture node a label's -bitmap uses, and the same rule:
+	 * the node names the FILE and the renderer opens it.  An image
+	 * with no path - one read from a descriptor - has no name to give,
+	 * so it draws.
+	 */
+	path = tkimgpath(bi);
+	if(cd->sc != nil && path != nil) {
+		if(bi->depth != 1) {
+			tkscenetexture(cd->sc, r, path, 0, 0);
+			return;
+		}
+		tkscenecolour(cd->sc, r, e->colors[TkCbackgnd]);
+		tkscenetexture(cd->sc, r, path, 1, e->colors[TkCforegnd]);
+		return;
+	}
+
+	img = tkcvsdirect(cd);
 	if(bi->depth != 1) {
 		draw(img, r, bi, nil, ZP);
 		return;

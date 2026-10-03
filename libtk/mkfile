@@ -4,11 +4,13 @@ LIB=libtk.a
 
 OFILES=\
 	ebind.$O\
+	voicedefault.$O\
 	grids.$O\
 	image.$O\
 	packr.$O\
 	panel.$O\
 	parse.$O\
+	scene.$O\
 	utils.$O\
 	varbl.$O\
 	windw.$O\

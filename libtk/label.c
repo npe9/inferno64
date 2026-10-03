@@ -121,15 +121,15 @@ tksizelabel(Tk *tk)
 	h = 0;
 	tkl->textheight = 0;
 	if(tkl->img != nil) {
-		w = tkl->img->w + 2*Bitpadx;
-		h = tkl->img->h + 2*Bitpady;
+		w = tkl->img->w + 2*tkspace(tk)->bitpadx;
+		h = tkl->img->h + 2*tkspace(tk)->bitpady;
 	} else if(tkl->bitmap != nil) {
-		w = Dx(tkl->bitmap->r) + 2*Bitpadx;
-		h = Dy(tkl->bitmap->r) + 2*Bitpady;
+		w = Dx(tkl->bitmap->r) + 2*tkspace(tk)->bitpadx;
+		h = Dy(tkl->bitmap->r) + 2*tkspace(tk)->bitpady;
 	} else if(tkl->text != nil) {
 		p = tkstringsize(tk, tkl->text);
-		w = p.x + 2*Textpadx;
-		h = p.y + 2*Textpady;
+		w = p.x + 2*tkspace(tk)->labelpadx;
+		h = p.y + 2*tkspace(tk)->labelpady;
 		if(tkl->ul != -1 && tkl->ul > strlen(tkl->text))
 			tkl->ul = strlen(tkl->text);	/* underline all */
 		tkl->textheight = p.y;
@@ -169,8 +169,8 @@ tklabelmargin(Tk *tk)
 		else if (tkl->bitmap != nil)
 			img = tkl->bitmap;
 		if (img != nil)
-			return Bitpadx;
-		return Textpadx;
+			return tkspace(tk)->bitpadx;
+		return tkspace(tk)->labelpadx;
 
 	default:
 		fprint(2, "label margin: type %d\n", tk->type);
@@ -204,6 +204,7 @@ tkfreelabel(Tk *tk)
 	if(i != nil) {
 		d = i->display;
 		locked = lockdisplay(d);
+		tkimgpathdrop(i);	/* the registry is keyed on the address */
 		freeimage(i);
 		if(locked)
 			unlockdisplay(d);
@@ -212,8 +213,29 @@ tkfreelabel(Tk *tk)
 		free(tkl->menu);
 }
 
+/*
+ * The file behind whatever image this widget shows, or nil when there
+ * is none to name - no image at all, or one read from a descriptor.
+ */
+char*
+tkimgfile(TkLabel *tkl)
+{
+	if(tkl->img != nil && tkl->img->img != nil)
+		return tkimgpath(tkl->img->img);
+	if(tkl->bitmap != nil)
+		return tkimgpath(tkl->bitmap);
+	return nil;
+}
+
+/*
+ * A cascade's arrow, into an image or into a scene.  It is one filled
+ * triangle either way, and the renderer's TkNpolyfill calls the same
+ * fillpoly() with the same winding rule and the same source point - so
+ * the only thing that had to be arranged was that both be given the
+ * same three points, which is why they are computed here once.
+ */
 static void
-tktriangle(Point u, Image *i, TkEnv *e)
+tktriangle(Point u, Image *i, TkScene *sc, TkEnv *e)
 {	
 	Point p[3];
 
@@ -224,7 +246,10 @@ tktriangle(Point u, Image *i, TkEnv *e)
 	p[1].y = u.y + CheckButton;
 	p[2].x = u.x;
 	p[2].y = u.y;
-	fillpoly(i, p, 3, ~0, tkgc(e, TkCforegnd), p[0]);
+	if(sc != nil)
+		tkscenepolyfill(sc, p, 3, e->colors[TkCforegnd]);
+	else
+		fillpoly(i, p, 3, ~0, tkgc(e, TkCforegnd), p[0]);
 }
 
 /*
@@ -239,6 +264,7 @@ tkdrawlabel(Tk *tk, Point orig)
 	int dx, dy, h;
 	Point p, u, v;
 	Image *i, *dst, *ct, *img;
+	TkScene *lsc;
 	int relief, bgnd, fgnd;
 
 	e = tk->env;
@@ -260,19 +286,80 @@ tkdrawlabel(Tk *tk, Point orig)
 
 	fgnd = TkCforegnd;
 	bgnd = TkCbackgnd;
+	/*
+	 * A menubutton and a choicebutton are CONTROLS, and are filled like
+	 * one - the same surface a push button gets in buton.c.  They share
+	 * this draw with a plain label, which is why they were not: the fill
+	 * went in where push buttons are drawn and these are drawn here, so
+	 * two of the three things a person clicks came out looking like
+	 * text on the page.
+	 *
+	 * A label is NOT filled.  It is text on the page and has nothing to
+	 * click, so a slab behind it would say otherwise.
+	 */
+	if (tkstyleflat(tk)
+	&& (tk->type == TKmenubutton || tk->type == TKchoicebutton))
+		bgnd = TkCfield;
 	if (tk->flag & Tkdisabled)
 		fgnd = TkCdisablefgnd;
 	else if (tk->flag & Tkactive) {
 		fgnd = TkCactivefgnd;
 		bgnd = TkCactivebgnd;
+		/*
+		 * A menu item is the one label whose active background is the
+		 * accent - menus.c fills it - so it is the one that needs the
+		 * light foreground to go with it.  An item is recognised by
+		 * its parent being the menu, which tkappenditem() sets.
+		 */
+		if (tkstyleflat(tk) && tk->parent != nil
+		&& tk->parent->type == TKmenu) {
+			fgnd = TkCfield;
+			bgnd = TkCselect;
+		}
 	}
 
-	i = tkitmp(e, r.max, bgnd);
-	if(i == nil)
-		return nil;
+	/*
+	 * The whole widget as one layer, in the simple case - and a label
+	 * is the widget there are most of: every dialog is mostly labels,
+	 * and until now each one ended the walk's run, because asking
+	 * tkitmp() for the scratch is what says a widget is about to paint
+	 * into the window itself.
+	 *
+	 * The only exclusion left is an image or a bitmap, which want a
+	 * texture node.  A cascade's arrow is a TkNpolyfill now, and
+	 * several lines, an underline and a justification are NOT
+	 * among them any more - tkscenestring() lays those out from the same
+	 * code tkdrawstring() uses, a line to a glyph node and the underline
+	 * rule as a filled rectangle.  This draw is shared with menubutton
+	 * and choicebutton, so those come with it.
+	 */
+	/*
+	 * An image or a bitmap is in now, as long as it has a FILE behind
+	 * it: a texture node names the file and the renderer opens it.  One
+	 * that came from a file descriptor has no name and keeps the
+	 * scratch, which is the only exclusion left.
+	 */
+	lsc = nil;
+	if(tkviascene && tkstyleflat(tk)
+	&& (tkl->text != nil || tkimgfile(tkl) != nil))
+		lsc = tkwalkjoin(e->top->ctxt, dst);
+	if(lsc != nil){
+		Rectangle dr;
 
-	if(tk->flag & Tkactive)
-		draw(i, r, tkgc(e, bgnd), nil, ZP);
+		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
+		tkscenelayerround(lsc, r.max, e->colors[bgnd], dr, ZP,
+			tkscenecorner(tk, relief));
+		if(tk->flag & Tkactive)
+			tkscenecolour(lsc, r, e->colors[bgnd]);
+		i = nil;
+	}else{
+		i = tkitmp(e, r.max, bgnd);
+		if(i == nil)
+			return nil;
+
+		if(tk->flag & Tkactive)
+			draw(i, r, tkgc(e, bgnd), nil, ZP);
+	}
 
 	p = mainr.min;
 	h = tkl->h - 2 * tk->highlightwidth;
@@ -292,7 +379,7 @@ tkdrawlabel(Tk *tk, Point orig)
 	if(tk->type == TKcascade) {
 		u.x = mainr.max.x - CheckButton - CheckButtonBW;	/* TO DO: CheckButton etc is really the triangle/arrow */
 		u.y = p.y + ButtonBorder + (h-CheckSpace)/2;
-		tktriangle(u, i, e);
+		tktriangle(u, i, lsc, e);
 	}
 
 	p.x += tk->ipad.x/2;
@@ -305,22 +392,72 @@ tkdrawlabel(Tk *tk, Point orig)
 	else if (tkl->bitmap != nil)
 		img = tkl->bitmap;
 	if(img != nil) {
-		s.min.x = p.x + Bitpadx;
-		s.min.y = p.y + Bitpady;
+		s.min.x = p.x + tkspace(tk)->bitpadx;
+		s.min.y = p.y + tkspace(tk)->bitpady;
 		s.max.x = s.min.x + Dx(img->r);
 		s.max.y = s.min.y + Dy(img->r);
 		s = rectaddpt(s, u);
-		if(tkchanhastype(img->chan, CGrey))
+		/*
+		 * A node when the image has a file behind it - which is
+		 * every one that did not come from a descriptor - because
+		 * the node names that file and the renderer opens it.  A
+		 * one-bit image is painted THROUGH in the foreground
+		 * colour, exactly as draw() does with it as the mask.
+		 */
+		if(lsc != nil && tkimgpath(img) != nil)
+			tkscenetexture(lsc, s, tkimgpath(img),
+				tkchanhastype(img->chan, CGrey),
+				e->colors[fgnd]);
+		else if(tkchanhastype(img->chan, CGrey))
 			draw(i, s, tkgc(e, fgnd), img, ZP);
 		else
 			draw(i, s, img, nil, ZP);
 	} else if(tkl->text != nil) {
-		u.x += Textpadx;
-		u.y += Textpady;
+		u.x += tkspace(tk)->labelpadx;
+		u.y += tkspace(tk)->labelpady;
 		ct = tkgc(e, fgnd);
 		
 		p.y += (h - tkl->textheight) / 2;
-		tkdrawstring(tk, i, addpt(u, p), tkl->text, tkl->ul, ct, tkl->justify);
+		/*
+		 * Whatever the run is.  tkscenestring() and tkdrawstring()
+		 * are the same layout code, so a label of three centred lines
+		 * with an underline under one of them is as describable as a
+		 * one-word left-justified one.
+		 *
+		 * The middle branch is for a label that is NOT a scene as a
+		 * whole - a cascade, or one carrying an image - whose text
+		 * still goes through the node path, into a scene of its own
+		 * rendered straight into the scratch.  It keeps the text node
+		 * exercised on a widget the walk cannot take.
+		 */
+		if(lsc != nil)
+			tkscenestring(lsc, tk, addpt(u, p), tkl->text,
+				tkl->ul, e->colors[fgnd], tkl->justify);
+		else if(tkviascene){
+			TkScene *ts;
+
+			ts = tkscenenew();
+			if(ts != nil){
+				tkscenestring(ts, tk, addpt(u, p), tkl->text,
+					tkl->ul, e->colors[fgnd], tkl->justify);
+				tkscenerender(ts, e->top->ctxt, i);
+				tkscenefree(ts);
+			}else
+				tkdrawstring(tk, i, addpt(u, p), tkl->text,
+					tkl->ul, ct, tkl->justify);
+		}else
+			tkdrawstring(tk, i, addpt(u, p), tkl->text, tkl->ul, ct,
+				tkl->justify);
+	}
+
+	if(lsc != nil){
+		if(tkhaskeyfocus(tk))
+			tksceneborder(lsc, focusr, 0, tk->highlightwidth,
+				e->colors[TkChighlightfgnd]);
+		tkreliefnodes(lsc, tk, ZP, bgnd, relief);
+		tkscenelayerend(lsc);
+		tkscenefinish(lsc, e->top->ctxt, dst);
+		return nil;
 	}
 
 	if(tkhaskeyfocus(tk))
@@ -330,7 +467,7 @@ tkdrawlabel(Tk *tk, Point orig)
 	p.x = tk->act.x + orig.x;
 	p.y = tk->act.y + orig.y;
 	r = rectaddpt(r, p);
-	draw(dst, r, i, nil, ZP);
+	tkshapedblit(dst, r, i, ZP, tkscenecorner(tk, relief));
 
 	return nil;
 }

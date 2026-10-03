@@ -25,8 +25,6 @@
 
 /* Layout constants */
 enum {
-	Entrypady	= 0,
-	Entrypadx	= 0,
 	Inswidth = 2,
 
 	Ecursoron = 1<<0,
@@ -118,13 +116,13 @@ TkOption opts[] =
 static int
 xinset(Tk *tk)
 {
-	return Entrypadx + tk->highlightwidth;
+	return tkspace(tk)->entrypadx + tk->highlightwidth;
 }
 
 static int
 yinset(Tk *tk)
 {
-	return Entrypady + tk->highlightwidth;
+	return tkspace(tk)->entrypady + tk->highlightwidth;
 }
 
 static void
@@ -234,7 +232,7 @@ tkentry(TkTop *t, char *arg, char **ret)
 		return TkNomem;
 
 	tk->relief = TKsunken;
-	tk->borderwidth = 1;
+	tk->borderwidth = tkborderwidth(tk, 1);
 	tk->flag |= Tktakefocus;
 	tk->highlightwidth = 1;
 
@@ -298,50 +296,119 @@ tkfreeentry(Tk *tk)
 	free(tke->show);
 }
 
+static char*
+runesutf(Rune *t, int n)
+{
+	char *b, *q;
+	int j;
+
+	if(n <= 0)
+		return nil;
+	b = mallocz(n*UTFmax + 1, 0);
+	if(b == nil)
+		return nil;
+	q = b;
+	for(j = 0; j < n; j++)
+		q += runetochar(q, &t[j]);
+	*q = 0;
+	return b;
+}
+
+/*
+ * The runes an entry displays: its own, or -show's stand-in repeated.
+ * The caller frees what comes back only when it is not tke->text, which
+ * is the one thing both callers have to remember.
+ */
+static Rune*
+entryshow(TkEntry *tke)
+{
+	Rune showr, *text;
+	int j;
+
+	if(tke->show == 0)
+		return tke->text;
+	chartorune(&showr, tke->show);
+	text = mallocz(sizeof(Rune) * (tke->textlen+1), 0);
+	if(text == nil)
+		return nil;
+	for(j = 0; j < tke->textlen; j++)
+		text[j] = showr;
+	return text;
+}
+
+/*
+ * Where the selection band goes, and which runes fall inside it, or 0
+ * for a selection with nothing of it on screen.  A selection can begin
+ * before the first visible rune and end after the last, and the four
+ * cases that come out of that are exactly the sort of thing that drifts
+ * apart when it is written twice - so it is written here, and the
+ * draw() path and the node path both ask.
+ *
+ * The far edge used to be s.max.x, an ABSOLUTE x, where every other
+ * value here is an offset that rectaddpt() then shifts by s.min - so
+ * the band's right edge landed on the widget's OUTER edge, covering the
+ * inset gutter, and only the borderwidth part of that was painted over
+ * afterwards.  Both paths shared the mistake, so the two of them agreed
+ * and an identity check said nothing; tkofftest(1) asks the pixels.
+ */
+static int
+entrysel(TkEntry *tke, Rectangle s, int fh, Rectangle *rp, int *s0p, int *s1p)
+{
+	int s0, s1, xs0, xs1;
+
+	if(!(tke->sel0 < tke->v1 && tke->sel1 > tke->v0))
+		return 0;
+
+	if (tke->sel0 < tke->v0) {
+		s0 = tke->v0;
+		xs0 = tke->xv0 - tke->x0;
+	} else {
+		s0 = tke->sel0;
+		xs0 = tke->xsel0 - tke->x0;
+	}
+
+	if (tke->sel1 > tke->v1) {
+		s1 = tke->v1;
+		xs1 = s.max.x - s.min.x;
+	} else {
+		s1 = tke->sel1;
+		xs1 = tke->xsel1 - tke->x0;
+	}
+
+	*rp = rectaddpt(Rect(xs0, 0, xs1, fh), s.min);
+	*s0p = s0;
+	*s1p = s1;
+	return 1;
+}
+
 static void
 tkentrytext(Image *i, Rectangle s, Tk *tk, TkEnv *env)
 {
 	TkEntry *tke = TKobj(TkEntry, tk);
 	Point dp;
-	int s0, s1, xs0, xs1, j;
+	int s0, s1;
 	Rectangle r;
-	Rune showr, *text;
+	Rune *text;
 
 	dp = Pt(s.min.x - (tke->x0 - tke->xv0), s.min.y);
-	if (tke->show) {
-		chartorune(&showr, tke->show);
-		text = mallocz(sizeof(Rune) * (tke->textlen+1), 0);
-		if (text == nil)
-			return;
-		for (j = 0; j < tke->textlen; j++)
-			text[j] = showr;
-	} else
-		text = tke->text;
+	text = entryshow(tke);
+	/*
+	 * An entry with nothing in it has a nil text pointer, and it still
+	 * draws a caret when it holds the keyboard - so nil is not a reason
+	 * to return, it is a reason to draw no runes.  It also covers
+	 * -show failing to allocate: nothing is drawn rather than the real
+	 * runes, and the caret still appears, which is what the node path
+	 * does too.
+	 */
+	if (text != nil) {
+		runestringn(i, dp, tkgc(env, TkCforegnd), dp, env->font,
+					text+tke->v0, tke->v1-tke->v0);
 
-	runestringn(i, dp, tkgc(env, TkCforegnd), dp, env->font,
-				text+tke->v0, tke->v1-tke->v0);
-
-	if (tke->sel0 < tke->v1 && tke->sel1 > tke->v0) {
-		if (tke->sel0 < tke->v0) {
-			s0 = tke->v0;
-			xs0 = tke->xv0 - tke->x0;
-		} else {
-			s0 = tke->sel0;
-			xs0 = tke->xsel0 - tke->x0;
+		if (entrysel(tke, s, env->font->height, &r, &s0, &s1)) {
+			tktextsdraw(i, r, env, 1);
+			runestringn(i, r.min, tkgc(env, TkCselectfgnd), r.min,
+					env->font, text+s0, s1-s0);
 		}
-
-		if (tke->sel1 > tke->v1) {
-			s1 = tke->v1;
-			xs1 = s.max.x;
-		} else {
-			s1 = tke->sel1;
-			xs1 = tke->xsel1 - tke->x0;
-		}
-
-		r = rectaddpt(Rect(xs0, 0, xs1, env->font->height), s.min);
-		tktextsdraw(i, r, env, 1);
-		runestringn(i, r.min, tkgc(env, TkCselectfgnd), r.min, env->font,
-				text+s0, s1-s0);
 	}
 
 	if((tke->flag&Ecursoron) && tke->icursor >= tke->v0 && tke->icursor <= tke->v1) {
@@ -351,27 +418,47 @@ tkentrytext(Image *i, Rectangle s, Tk *tk, TkEnv *env)
 		);
 		draw(i, rectaddpt(r, s.min), tkgc(env, TkCforegnd), nil, ZP);
 	}
-	if (tke->show)
+	if (text != tke->text)
 		free(text);
 }
 
+/*
+ * The visible run of the text, as UTF-8.
+ *
+ * The scene's glyph node carries a string, because a string is a value
+ * and a Rune* into a widget's own buffer is not: the node outlives the
+ * call that made it.  An entry holds Runes and draws a SLICE of them, so
+ * the slice is converted here and the node takes its own copy.
+ */
 char*
 tkdrawentry(Tk *tk, Point orig)
 {
-	Point p;
+	Point p, dp;
 	TkEnv *env;
 	Rectangle r, s;
 	Image *i;
+	TkScene *sc;
+	TkEntry *tke;
+	char *txt;
 	int xp, yp;
 
 	env = tk->env;
+	tke = TKobj(TkEntry, tk);
 
 	r.min = ZP;
 	r.max.x = tk->act.width + 2*tk->borderwidth;
 	r.max.y = tk->act.height + 2*tk->borderwidth;
-	i = tkitmp(env, r.max, TkCbackgnd);
-	if(i == nil)
-		return nil;
+
+	/*
+	 * The whole widget as one layer of nodes.  Everything an entry draws
+	 * is already a node: the caret is a filled rectangle and so a
+	 * TkNcolour, the selection band is five of them (tkscenetextsel()),
+	 * and -show changes which runes the glyph node names, not what kind
+	 * of node it is.
+	 */
+	sc = nil;
+	if(tkviascene && tkstyleflat(tk))
+		sc = tkwalkjoin(env->top->ctxt, tkimageof(tk));
 
 	xp = tk->borderwidth + xinset(tk);
 	yp = tk->borderwidth + yinset(tk);
@@ -380,17 +467,82 @@ tkdrawentry(Tk *tk, Point orig)
 	s.max.x -= xp;
 	s.min.y += yp;
 	s.max.y -= yp;
+
+	if(sc != nil){
+		Rectangle dr, selr;
+		Rune *text;
+		int s0, s1;
+
+		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
+		tkscenelayerround(sc, r.max, env->colors[TkCfield], dr, ZP,
+			tkscenecorner(tk, tk->relief));
+		text = entryshow(tke);
+		if(text != nil){
+			txt = runesutf(text + tke->v0, tke->v1 - tke->v0);
+			if(txt != nil){
+				dp = Pt(s.min.x - (tke->x0 - tke->xv0), s.min.y);
+				tkscenetext(sc, dp, txt, env->font,
+					env->colors[TkCforegnd]);
+				free(txt);
+			}
+			/*
+			 * Band first, then the selected runes over it, which
+			 * is the order draw() uses - the band is opaque and
+			 * would swallow them the other way round.
+			 */
+			if(entrysel(tke, s, env->font->height, &selr, &s0, &s1)){
+				tkscenetextsel(sc, selr, env, 1);
+				txt = runesutf(text + s0, s1 - s0);
+				if(txt != nil){
+					tkscenetext(sc, selr.min, txt,
+						env->font,
+						env->colors[TkCselectfgnd]);
+					free(txt);
+				}
+			}
+			if(text != tke->text)
+				free(text);
+		}
+		if((tke->flag&Ecursoron) && tke->icursor >= tke->v0
+		&& tke->icursor <= tke->v1)
+			tkscenecolour(sc, rectaddpt(Rect(
+				tke->xicursor - tke->x0, 0,
+				tke->xicursor - tke->x0 + Inswidth,
+				env->font->height), s.min),
+				env->colors[TkCforegnd]);
+		if(tkhaskeyfocus(tk))
+			tksceneborder(sc, insetrect(r, tk->borderwidth), 0,
+				tk->highlightwidth,
+				env->colors[TkChighlightfgnd]);
+		tkreliefnodes(sc, tk, ZP, TkCbackgnd, tk->relief);
+		tkscenelayerend(sc);
+		tkscenefinish(sc, env->top->ctxt, tkimageof(tk));
+		return nil;
+	}
+
+	i = tkitmp(env, r.max, tkstyleflat(tk) ? TkCfield : TkCbackgnd);
+	if(i == nil)
+		return nil;
+
 	tkentrytext(i, s, tk, env);
 
-	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
-
+	/*
+	 * The ring before the border, which is the order every other widget
+	 * here already used.  It matters once a widget is composited in its
+	 * own rounded shape: a ring drawn AFTER the border puts its square
+	 * corner where the border has just cut the widget away, so a
+	 * focused entry showed a blue notch outside its own rounded corner.
+	 * The border is the last word on the shape of a widget.
+	 */
 	if (tkhaskeyfocus(tk))
 		tkbox(i, insetrect(r, tk->borderwidth), tk->highlightwidth, tkgc(tk->env, TkChighlightfgnd));
+
+	tkdrawrelief(i, tk, ZP, TkCbackgnd, tk->relief);
 
 	p.x = tk->act.x + orig.x;
 	p.y = tk->act.y + orig.y;
 	r = rectaddpt(r, p);
-	draw(tkimageof(tk), r, i, nil, ZP);
+	tkshapedblit(tkimageof(tk), r, i, ZP, tkscenecorner(tk, tk->relief));
 
 	return nil;
 }
@@ -1366,3 +1518,34 @@ TkMethod entrymethod = {
 	tkdrawentry,
 	tkentrygeom
 };
+
+/*
+ * What an entry holds, for voice(3), unless it is a secret.
+ *
+ * Entry and text used to be refused outright here, on the grounds that
+ * announcing a field's contents on arrival is how a screen reader reads
+ * a password aloud.  That is true of a password and of nothing else: a
+ * filename field that says only "entry" cannot be read at all by a
+ * person using their ears, which is a worse failure than the one being
+ * avoided.
+ *
+ * -show is the marker.  It is what masks the characters on screen, and
+ * in this tree it is set on exactly the three fields that hold a secret
+ * - getauthinfo's Password, readmail's Secret, remotelogon's - because
+ * that is what it is for.  A field with it stays silent; a field without
+ * it is not a secret in the first place, since it is already displayed
+ * in clear.
+ *
+ * A text widget is still refused: it can hold a whole shell session, and
+ * reading that on every focus is not a thing anyone wants.
+ */
+char*
+tkentrystate(Tk *tk, char *buf, int nbuf)
+{
+	TkEntry *tke = TKobj(TkEntry, tk);
+
+	if(tke->show != nil || tke->text == nil || tke->textlen <= 0)
+		return nil;
+	snprint(buf, nbuf, "%.*S", tke->textlen, tke->text);
+	return buf;
+}

@@ -2,6 +2,8 @@
 #include "draw.h"
 #include "keyboard.h"
 #include "tk.h"
+extern void tkannouncewidget(Tk*);	/* ebind.c, for voice(3) */
+extern void tkannouncechange(Tk*);	/* ebind.c, for voice(3) */
 #include "frame.h"
 #include "label.h"
 
@@ -190,7 +192,7 @@ tkmkmenubutton(TkTop *t, char *arg, char **ret, int type, TkOption *opts)
 	tk = tknewobj(t, type, sizeof(Tk)+sizeof(TkLabel));
 	if(tk == nil)
 		return TkNomem;
-	tk->borderwidth = 2;
+	tk->borderwidth = tkborderwidth(tk, 2);
 	tk->flag |= Tknograb;
 
 	tkl = TKobj(TkLabel, tk);
@@ -494,6 +496,7 @@ tkchoicebutset(Tk *tk, char *arg, char **val)
 		return e;
 
 	tk->dirty = tkrect(tk, 1);
+	tkannouncechange(tk);	/* voice(3); see man 3 voice */
 	return nil;
 }
 
@@ -559,6 +562,7 @@ tkchoicebutsetvalue(Tk *tk, char *arg, char **val)
 	tkl->check = v - tkl->values;
 
 	tk->dirty = tkrect(tk, 1);
+	tkannouncechange(tk);	/* voice(3); see man 3 voice */
 	return nil;
 }
 
@@ -662,7 +666,7 @@ tkmenu(TkTop *t, char *arg, char **ret)
 	tkw->di = (void*)-1;		// XXX
 	tk->relief = TKraised;
 	tk->flag |= Tknograb;
-	tk->borderwidth = 1;
+	tk->borderwidth = tkborderwidth(tk, 1);
 
 	tko[0].ptr = tk;
 	tko[0].optab = tkgeneric;
@@ -1231,6 +1235,15 @@ activateitem(Tk *item)
 	if (!(item->flag & Tkdisabled)) {
 		item->flag |= Tkactive;
 		menuitemdirty(item);
+		/*
+		 * voice(3).  A menu highlights an item without the keyboard
+		 * focus moving - the focus stays on the menu - so nothing
+		 * else in libtk says which item a person is on, and walking a
+		 * menu was silent from the moment it opened.  This is the one
+		 * place an item becomes the current one, whether that came
+		 * from a key or from the mouse passing over it.
+		 */
+		tkannouncewidget(item);
 	}
 }
 
@@ -1536,9 +1549,37 @@ drawmenu(Tk *tk, Point orig)
 	Point p, bd;
 	int bg;
 	Rectangle mainr, clientr, subr;
+	int msc;
 
 	tkw = TKobj(TkWin, tk);
 	dst = tkimageof(tk);
+
+	/*
+	 * A menu's items are labels, and a label has been nodes since
+	 * f32a759e - so the only things a menu painted itself were the
+	 * slab behind each item and its own border.  Both are nodes now,
+	 * which is what lets the walk run THROUGH a menu rather than stop
+	 * at it: the slab, the item's text and the border go into one tree
+	 * in that order, which is the order they have to be drawn in.
+	 *
+	 * The flush stays for the other case.  Anything that paints into
+	 * the window itself has to render what the walk has pending first,
+	 * or the tree would land on top of it.
+	 */
+	/*
+	 * A boolean, NOT a held TkScene*.  The walk frees a tree when it
+	 * flushes, and an item can flush - a separator is drawn by frame.c,
+	 * which paints into the window - so a pointer taken here and used
+	 * after the loop is a pointer to freed memory.  It faulted on an
+	 * address built out of the menu's own item text.  Ask the walk
+	 * again at each point instead; it is two comparisons.
+	 */
+	msc = tkviascene && tkstyleflat(tk)
+		&& tkwalkhas(tk->env->top->ctxt, dst);
+	if(msc)
+		tkwalkjoin(tk->env->top->ctxt, dst);	/* count it once */
+	else
+		tkwalkflush();
 
 	bd = Pt(tk->borderwidth, tk->borderwidth);
 	mainr.min = addpt(orig, Pt(tk->act.x, tk->act.y));
@@ -1559,9 +1600,28 @@ drawmenu(Tk *tk, Point orig)
 		subr.min.y = p.y + sub->act.y - sub->borderwidth;
 		subr.max.y = p.y + sub->act.y + sub->act.height + sub->borderwidth;
 		bg = TkCbackgnd;
-		if (sub->flag & Tkactive)
-			bg = TkCactivebgnd;
-		draw(dst, subr, tkgc(sub->env, bg), nil, ZP);
+		if (sub->flag & Tkactive) {
+			/*
+			 * The item under the pointer is filled with the ACCENT
+			 * under the flat style, which is what a menu in any
+			 * current system does - a menu is a list you are
+			 * choosing from, and the choice wants to be obvious
+			 * rather than tasteful.  A button's hover keeps the
+			 * quiet tint: a button is not a list, and an accent
+			 * slab on every rollover is noise.
+			 *
+			 * label.c gives the item light text to sit on it; dark
+			 * ink on this blue is 2.80:1, which is the defect
+			 * fixed for the checkbutton chip and would have been
+			 * reintroduced here.
+			 */
+			bg = tkstyleflat(sub) ? TkCselect : TkCactivebgnd;
+		}
+		if(msc)
+			tkscenecolour(tkwalkscene(tk->env->top->ctxt, dst),
+				subr, sub->env->colors[bg]);
+		else
+			draw(dst, subr, tkgc(sub->env, bg), nil, ZP);
 		sub->dirty = tkrect(sub, 1);
 		sub->flag |= Tkrefresh;
 		tkmethod[sub->type]->draw(sub, p);
@@ -1569,7 +1629,11 @@ drawmenu(Tk *tk, Point orig)
 		sub->flag &= ~Tkrefresh;
 	}
 	/* todo: dirty check */
-	tkdrawrelief(dst, tk, mainr.min, TkCbackgnd, tk->relief);
+	if(msc)
+		tkreliefnodes(tkwalkscene(tk->env->top->ctxt, dst), tk,
+			mainr.min, TkCbackgnd, tk->relief);
+	else
+		tkdrawrelief(dst, tk, mainr.min, TkCbackgnd, tk->relief);
 	return nil;
 }
 

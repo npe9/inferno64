@@ -5,6 +5,7 @@ typedef struct TkCline TkCline;
 typedef struct TkCtag TkCtag;
 typedef struct TkCpoints TkCpoints;
 typedef struct TkCwind TkCwind;
+typedef struct TkCdraw TkCdraw;
 
 struct TkCline
 {
@@ -123,11 +124,31 @@ struct TkCanvas
 	int		buffer;
 };
 
+/*
+ * Where a canvas item draws.
+ *
+ * A canvas builds a tree of its own rather than joining the walk: its
+ * items usually go into a buffer rather than into the window, and a
+ * tree belongs to one target.  Items are converted one type at a time,
+ * so both ways have to work in the same pass - and an item that draws
+ * DIRECTLY while nodes are pending would be painted over when they
+ * render.  tkcvsdirect() is how such an item says so: it renders what
+ * is pending and starts a fresh tree, which keeps the order the items
+ * are in.  An item that mixes the two - a stippled fill with a plain
+ * outline - calls it once, before the direct part.
+ */
+struct TkCdraw
+{
+	Image*	img;		/* direct drawing goes here */
+	TkScene*	sc;	/* the tree, or nil when not building one */
+	TkCtxt*	ctxt;
+};
+
 struct TkCimeth
 {
 	char*	name;
 	char*	(*create)(Tk*, char *arg, char **val);
-	void	(*draw)(Image*, TkCitem*, TkEnv*);
+	void	(*draw)(TkCdraw*, TkCitem*, TkEnv*);
 	void	(*free)(TkCitem*);
 	char*	(*coord)(TkCitem*, char*, int, int);
 	char*	(*cget)(TkCitem*, char*, char**);
@@ -139,6 +160,7 @@ extern	TkCimeth	tkcimethod[];
 extern	int	cvslshape[];
 extern	Rectangle	bbnil;
 extern	Rectangle	huger;
+extern	Image*	tkcvsdirect(TkCdraw*);
 
 /* General */
 extern	char*		tkcaddtag(Tk*, TkCitem*, int);
@@ -171,7 +193,7 @@ extern	void		tkcvssetdirty(Tk*);
 
 /* Canvas Item methods - required to populate tkcimethod in canvs.c */
 extern	char*	tkcvslinecreat(Tk*, char *arg, char **val);
-extern	void	tkcvslinedraw(Image*, TkCitem*, TkEnv*);
+extern	void	tkcvslinedraw(TkCdraw*, TkCitem*, TkEnv*);
 extern	void	tkcvslinefree(TkCitem*);
 extern	char*	tkcvslinecoord(TkCitem*, char*, int, int);
 extern	char*	tkcvslinecget(TkCitem*, char*, char**);
@@ -179,21 +201,21 @@ extern	char*	tkcvslineconf(Tk*, TkCitem*, char*);
 extern	int		tkcvslinehit(TkCitem*, Point);
 
 extern	char*	tkcvstextcreat(Tk*, char *arg, char **val);
-extern	void	tkcvstextdraw(Image*, TkCitem*, TkEnv*);
+extern	void	tkcvstextdraw(TkCdraw*, TkCitem*, TkEnv*);
 extern	void	tkcvstextfree(TkCitem*);
 extern	char*	tkcvstextcoord(TkCitem*, char*, int, int);
 extern	char*	tkcvstextcget(TkCitem*, char*, char**);
 extern	char*	tkcvstextconf(Tk*, TkCitem*, char*);
 
 extern	char*	tkcvsrectcreat(Tk*, char *arg, char **val);
-extern	void	tkcvsrectdraw(Image*, TkCitem*, TkEnv*);
+extern	void	tkcvsrectdraw(TkCdraw*, TkCitem*, TkEnv*);
 extern	void	tkcvsrectfree(TkCitem*);
 extern	char*	tkcvsrectcoord(TkCitem*, char*, int, int);
 extern	char*	tkcvsrectcget(TkCitem*, char*, char**);
 extern	char*	tkcvsrectconf(Tk*, TkCitem*, char*);
 
 extern	char*	tkcvsovalcreat(Tk*, char *arg, char **val);
-extern	void	tkcvsovaldraw(Image*, TkCitem*, TkEnv*);
+extern	void	tkcvsovaldraw(TkCdraw*, TkCitem*, TkEnv*);
 extern	void	tkcvsovalfree(TkCitem*);
 extern	char*	tkcvsovalcoord(TkCitem*, char*, int, int);
 extern	char*	tkcvsovalcget(TkCitem*, char*, char**);
@@ -201,28 +223,28 @@ extern	char*	tkcvsovalconf(Tk*, TkCitem*, char*);
 extern	int		tkcvsovalhit(TkCitem*, Point);
 
 extern	char*	tkcvsarccreat(Tk*, char *arg, char **val);
-extern	void	tkcvsarcdraw(Image*, TkCitem*, TkEnv*);
+extern	void	tkcvsarcdraw(TkCdraw*, TkCitem*, TkEnv*);
 extern	void	tkcvsarcfree(TkCitem*);
 extern	char*	tkcvsarccoord(TkCitem*, char*, int, int);
 extern	char*	tkcvsarccget(TkCitem*, char*, char**);
 extern	char*	tkcvsarcconf(Tk*, TkCitem*, char*);
 
 extern	char*	tkcvsbitcreat(Tk*, char *arg, char **val);
-extern	void	tkcvsbitdraw(Image*, TkCitem*, TkEnv*);
+extern	void	tkcvsbitdraw(TkCdraw*, TkCitem*, TkEnv*);
 extern	void	tkcvsbitfree(TkCitem*);
 extern	char*	tkcvsbitcoord(TkCitem*, char*, int, int);
 extern	char*	tkcvsbitcget(TkCitem*, char*, char**);
 extern	char*	tkcvsbitconf(Tk*, TkCitem*, char*);
 
 extern	char*	tkcvswindcreat(Tk*, char *arg, char **val);
-extern	void	tkcvswinddraw(Image*, TkCitem*, TkEnv*);
+extern	void	tkcvswinddraw(TkCdraw*, TkCitem*, TkEnv*);
 extern	void	tkcvswindfree(TkCitem*);
 extern	char*	tkcvswindcoord(TkCitem*, char*, int, int);
 extern	char*	tkcvswindcget(TkCitem*, char*, char**);
 extern	char*	tkcvswindconf(Tk*, TkCitem*, char*);
 
 extern	char*	tkcvspolycreat(Tk*, char *arg, char **val);
-extern	void	tkcvspolydraw(Image*, TkCitem*, TkEnv*);
+extern	void	tkcvspolydraw(TkCdraw*, TkCitem*, TkEnv*);
 extern	void	tkcvspolyfree(TkCitem*);
 extern	char*	tkcvspolycoord(TkCitem*, char*, int, int);
 extern	char*	tkcvspolycget(TkCitem*, char*, char**);
@@ -230,7 +252,7 @@ extern	char*	tkcvspolyconf(Tk*, TkCitem*, char*);
 extern	int		tkcvspolyhit(TkCitem*, Point);
 
 extern	char*	tkcvsimgcreat(Tk*, char *arg, char **val);
-extern	void	tkcvsimgdraw(Image*, TkCitem*, TkEnv*);
+extern	void	tkcvsimgdraw(TkCdraw*, TkCitem*, TkEnv*);
 extern	void	tkcvsimgfree(TkCitem*);
 extern	char*	tkcvsimgcoord(TkCitem*, char*, int, int);
 extern	char*	tkcvsimgcget(TkCitem*, char*, char**);

@@ -3,6 +3,8 @@
 #include "tk.h"
 #include "label.h"
 
+extern void tkannouncechange(Tk*);	/* ebind.c, for voice(3) */
+
 #define	O(t, e)		((long)(&((t*)0)->e))
 
 /* Widget Commands (+ means implemented)
@@ -126,7 +128,7 @@ newbutton(TkTop *t, int btype, char *arg, char **ret)
 		break;
 	default:
 		tk->relief = TKraised;
-		tk->borderwidth = 1;
+		tk->borderwidth = tkborderwidth(tk, 1);
 		tko[2].ptr = nil;
 		break;
 	}
@@ -233,6 +235,7 @@ tkdrawbutton(Tk *tk, Point orig)
 	Point p, u, v, pp[4];
 	Image *i, *dst, *cd, *cl, *ct, *img;
 	int relief, bgnd, fgnd;
+	TkScene *bsc;
 
 	e = tk->env;
 
@@ -253,21 +256,87 @@ tkdrawbutton(Tk *tk, Point orig)
 
 	fgnd = TkCforegnd;
 	bgnd = TkCbackgnd;
+	/*
+	 * A push button is a FILLED control sitting on the page, not an
+	 * outline drawn on it.  That is what every current system does -
+	 * macOS puts a white control on a grey page, Windows and GNOME a
+	 * filled grey one - and it is the difference between a button and a
+	 * rectangle with a label in it.
+	 *
+	 * Only the push buttons.  A checkbutton or radiobutton with its
+	 * indicator is a LABEL beside a control, so it belongs on the page;
+	 * filling it would put a slab behind every line of a list of
+	 * options.
+	 */
+	if (tkstyleflat(tk) && (tk->type == TKbutton || tk->type == TKmenubutton))
+		bgnd = TkCfield;
 	if (tk->flag & Tkdisabled)
 		fgnd = TkCdisablefgnd;
-	else if ((tk->type == TKcheckbutton || tk->type == TKradiobutton) && tkl->indicator == BoolF && tkl->check)
+	else if ((tk->type == TKcheckbutton || tk->type == TKradiobutton) && tkl->indicator == BoolF && tkl->check) {
 		bgnd = TkCselect;
+		/*
+		 * Light text on the accent, and this is a contrast defect
+		 * rather than a preference.  The foreground here is the
+		 * near-black ink, which against #3D6A9A measures 2.80:1 -
+		 * WCAG AA asks 4.5:1 for body text.  The field colour gives
+		 * 5.63:1.
+		 *
+		 * It reaches further than the chip it was found on: a
+		 * tknotebook(2) tab is an indicator-less radiobutton, so
+		 * every chosen tab had the same 2.80:1.
+		 *
+		 * Left alone under classic, deliberately.  The same defect is
+		 * there - it is the same two colours - but classic is the
+		 * look this toolkit has always had, kept for compatibility
+		 * and asserted unchanged by tkofftest(1); changing it would
+		 * be changing the thing it exists to preserve.
+		 */
+		if (tkstyleflat(tk))
+			fgnd = TkCfield;
+	}
 	else if (tk->flag & Tkactive) {
 		fgnd = TkCactivefgnd;
 		bgnd = TkCactivebgnd;
 	}
 
-	i = tkitmp(e, r.max, bgnd);
-	if(i == nil)
-		return nil;
+	/*
+	 * The whole widget as one layer, when it is the simple case: a plain
+	 * button with text and no image, a run that reduces to one string(),
+	 * and the flat style.  Everything else keeps the scratch-and-blit it
+	 * has always used.  -indicatoron 0 is in as well: such a button draws
+	 * no indicator at all, it picks a relief and is otherwise a push
+	 * button, and every part of that already had a node.
+	 *
+	 * Nothing is translated: a button already draws its interior in
+	 * coordinates relative to its own top-left, which is exactly what a
+	 * layer wants.  The blit at the end becomes the layer's own
+	 * composite, so the destination has to be known here rather than
+	 * there - it is only tk->act plus orig, which is available either
+	 * way.
+	 */
+	bsc = nil;
+	if(tkviascene && tkstyleflat(tk)
+	&& (tk->type == TKbutton || tk->type == TKradiobutton
+		|| tk->type == TKcheckbutton)
+	&& (tkl->text != nil || tkimgfile(tkl) != nil))
+		bsc = tkwalkjoin(e->top->ctxt, dst);
+	if(bsc != nil){
+		Rectangle dr;
 
-	if(tk->flag & Tkactive)
-		draw(i, r, tkgc(e, bgnd), nil, ZP);
+		dr = rectaddpt(r, Pt(tk->act.x + orig.x, tk->act.y + orig.y));
+		tkscenelayerround(bsc, r.max, e->colors[bgnd], dr, ZP,
+			tkscenecorner(tk, relief));
+		if(tk->flag & Tkactive)
+			tkscenecolour(bsc, r, e->colors[bgnd]);
+		i = nil;
+	}else{
+		i = tkitmp(e, r.max, bgnd);
+		if(i == nil)
+			return nil;
+
+		if(tk->flag & Tkactive)
+			draw(i, r, tkgc(e, bgnd), nil, ZP);
+	}
 
 	p = mainr.min;
 	h = tkl->h - 2 * tk->highlightwidth;
@@ -295,7 +364,31 @@ tkdrawbutton(Tk *tk, Point orig)
 
 		cl = tkgc(e, bgnd+TkLightshade);
 		cd = tkgc(e, bgnd+TkDarkshade);
-		tkbevel(i, u, CheckButton, CheckButton, CheckButtonBW, cd, cl);
+		/*
+		 * A box that is EMPTY when off and FILLED in the accent when
+		 * on, rather than a sunken well with a mark in it.  The tick
+		 * below is drawn either way; on the filled box it lands in the
+		 * foreground colour against the accent, which is the contrast
+		 * a filled checkbox relies on.
+		 */
+		if(tkstyleflat(tk)) {
+			Rectangle cb;
+
+			cb = Rect(u.x, u.y, u.x+CheckButton, u.y+CheckButton);
+			if(bsc != nil){
+				/* the box: filled when on, a stroke when off */
+				if(tkl->check)
+					tkscenecolour(bsc, cb,
+						e->colors[TkChighlightfgnd]);
+				else
+					tksceneborder(bsc, cb, 0, CheckButtonBW,
+						e->colors[TkCdisablefgnd]);
+			}else if(tkl->check)
+				draw(i, cb, tkgc(e, TkChighlightfgnd), nil, ZP);
+			else
+				tkbox(i, cb, CheckButtonBW, tkgc(e, TkCdisablefgnd));
+		} else
+			tkbevel(i, u, CheckButton, CheckButton, CheckButtonBW, cd, cl);
 		if(tkl->check) {
 			u.x += CheckButtonBW+1;
 			u.y += CheckButtonBW+1;
@@ -310,7 +403,19 @@ tkdrawbutton(Tk *tk, Point orig)
 			pp[3] = u;
 			pp[3].x += CheckButton-2;
 			pp[3].y++;
-			bezspline(i, pp, 4, Enddisc, Enddisc, 1, tkgc(e, TkCforegnd), ZP);
+			/*
+			 * On the filled box the tick has to be the LIGHT
+			 * colour: drawn in the foreground it is near-black on
+			 * the accent, which is the one combination a filled
+			 * checkbox must not use.
+			 */
+			if(bsc != nil)
+				tkscenespline(bsc, pp, 4, Enddisc, Enddisc, 1,
+					e->colors[tkstyleflat(tk) ?
+						TkCbackgnd : TkCforegnd]);
+			else
+				bezspline(i, pp, 4, Enddisc, Enddisc, 1,
+					tkgc(e, tkstyleflat(tk) ? TkCbackgnd : TkCforegnd), ZP);
 		}
 		break;
 	case TKradiobutton:
@@ -321,9 +426,34 @@ tkdrawbutton(Tk *tk, Point orig)
 		u.x = p.x + ButtonBorder;
 		u.y = p.y + ButtonBorder + (h - CheckSpace) / 2;
 		v = Pt(u.x+CheckButton/2,u.y+CheckButton/2);
-		ellipse(i, v, CheckButton/2, CheckButton/2, CheckButtonBW-1, tkgc(e, bgnd+TkDarkshade), ZP);
-		if(tkl->check)
-			fillellipse(i, v, CheckButton/2-2, CheckButton/2-2, tkgc(e, TkCforegnd), ZP);	/* could be TkCselect */
+		if(tkstyleflat(tk)) {
+			/*
+			 * A ring, filled when chosen.  This is the one shape
+			 * in the flat style that is not a rectangle, which is
+			 * why the node vocabulary had to grow an ellipse
+			 * before a radiobutton could be described by it.
+			 */
+			if(bsc != nil){
+				tksceneellipse(bsc, v,
+					Pt(CheckButton/2, CheckButton/2),
+					CheckButtonBW, e->colors[tkl->check ?
+					TkChighlightfgnd : TkCdisablefgnd]);
+				if(tkl->check)
+					tksceneellipsefill(bsc, v,
+						Pt(CheckButton/2-3, CheckButton/2-3),
+						e->colors[TkChighlightfgnd]);
+				break;
+			}
+			ellipse(i, v, CheckButton/2, CheckButton/2, CheckButtonBW,
+				tkgc(e, tkl->check ? TkChighlightfgnd : TkCdisablefgnd), ZP);
+			if(tkl->check)
+				fillellipse(i, v, CheckButton/2-3, CheckButton/2-3,
+					tkgc(e, TkChighlightfgnd), ZP);
+		} else {
+			ellipse(i, v, CheckButton/2, CheckButton/2, CheckButtonBW-1, tkgc(e, bgnd+TkDarkshade), ZP);
+			if(tkl->check)
+				fillellipse(i, v, CheckButton/2-2, CheckButton/2-2, tkgc(e, TkCforegnd), ZP);	/* could be TkCselect */
+		}
 		break;
 	case TKbutton:
 		if ((tk->flag & (Tkactivated|Tkactive)) == (Tkactivated|Tkactive))
@@ -347,32 +477,70 @@ tkdrawbutton(Tk *tk, Point orig)
 	else if (tkl->bitmap != nil)
 		img = tkl->bitmap;
 	if (img != nil) {
-		s.min.x = p.x + Bitpadx;
-		s.min.y = p.y + Bitpady;
+		s.min.x = p.x + tkspace(tk)->bitpadx;
+		s.min.y = p.y + tkspace(tk)->bitpady;
 		s.max.x = s.min.x + Dx(img->r);
 		s.max.y = s.min.y + Dy(img->r);
 		s = rectaddpt(s, u);
-		if(tkchanhastype(img->chan, CGrey))
+		/*
+		 * A node when the image has a file behind it - which is
+		 * every one that did not come from a descriptor - because
+		 * the node names that file and the renderer opens it.  A
+		 * one-bit image is painted THROUGH in the foreground
+		 * colour, exactly as draw() does with it as the mask.
+		 */
+		if(bsc != nil && tkimgpath(img) != nil)
+			tkscenetexture(bsc, s, tkimgpath(img),
+				tkchanhastype(img->chan, CGrey),
+				e->colors[fgnd]);
+		else if(tkchanhastype(img->chan, CGrey))
 			draw(i, s, tkgc(e, fgnd), img, ZP);
 		else
 			draw(i, s, img, nil, ZP);
 	} else if(tkl->text != nil) {
-		u.x += Textpadx;
-		u.y += Textpady;
+		u.x += tkspace(tk)->labelpadx;
+		u.y += tkspace(tk)->labelpady;
 		ct = tkgc(e, fgnd);
 		
 		p.y += (h - tkl->textheight) / 2;
-		tkdrawstring(tk, i, addpt(u, p), tkl->text, tkl->ul, ct, tkl->justify);
+		if(bsc != nil)
+			tkscenestring(bsc, tk, addpt(u, p), tkl->text,
+				tkl->ul, e->colors[fgnd], tkl->justify);
+		else
+			tkdrawstring(tk, i, addpt(u, p), tkl->text, tkl->ul, ct,
+				tkl->justify);
 	}
 
-//	if(tkhaskeyfocus(tk))
-//		tkbox(i, focusr, tk->highlightwidth, tkgc(e, TkChighlightfgnd));
+	/*
+	 * Which control has the keyboard, shown.
+	 *
+	 * These two lines were commented out here and are live and identical
+	 * in label.c, and entry.c does the same thing a line further down.
+	 * So a label and a text field showed their focus and a button did
+	 * not - and a button is what a person tabs between. Nothing was
+	 * saved by leaving it out: tk->highlightwidth is already 1 for these
+	 * widgets and mainr is already inset by it, so the ring has had its
+	 * pixel reserved all along and the space was simply left blank.
+	 */
+	if(bsc != nil){
+		/* a focus ring is a square stroke: the same node, radius 0 */
+		if(tkhaskeyfocus(tk))
+			tksceneborder(bsc, focusr, 0, tk->highlightwidth,
+				e->colors[TkChighlightfgnd]);
+		tkreliefnodes(bsc, tk, ZP, bgnd, relief);
+		tkscenelayerend(bsc);
+		tkscenefinish(bsc, e->top->ctxt, dst);
+		return nil;
+	}
+
+	if(tkhaskeyfocus(tk))
+		tkbox(i, focusr, tk->highlightwidth, tkgc(e, TkChighlightfgnd));
 	tkdrawrelief(i, tk, ZP, bgnd, relief);
 
 	p.x = tk->act.x + orig.x;
 	p.y = tk->act.y + orig.y;
 	r = rectaddpt(r, p);
-	draw(dst, r, i, nil, ZP);
+	tkshapedblit(dst, r, i, ZP, tkscenecorner(tk, relief));
 
 	return nil;
 }
@@ -414,7 +582,7 @@ tkbuttonmargin(Tk *tk)
 	case TKbutton:
 		if (tkl->img != nil || tkl->bitmap != nil)
 			return 0;
-		return Textpadx+tk->highlightwidth;
+		return tkspace(tk)->labelpadx+tk->highlightwidth;
 	case TKcheckbutton:
 	case TKradiobutton:
 		return CheckButton + 2*CheckButtonBW + 2*ButtonBorder;
@@ -625,6 +793,8 @@ buttoninvoke(Tk *tk, char **val)
 		e = tksetvar(top, tkl->variable, tkl->value);
 	if(e != nil)
 		return e;
+	if(tk->type == TKcheckbutton || tk->type == TKradiobutton)
+		tkannouncechange(tk);	/* voice(3); see man 3 voice */
 	if(tkl->command != nil)
 		return tkexec(tk->env->top, tkl->command, val);
 	return nil;

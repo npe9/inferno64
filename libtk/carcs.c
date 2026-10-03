@@ -177,14 +177,24 @@ tkcvsarcfree(TkCitem *i)
 
 	a = TKobj(TkCarc, i);
 	if(a->stipple)
+		tkimgpathdrop(a->stipple);
 		freeimage(a->stipple);
 	if(a->pen)
 		freeimage(a->pen);
 }
 
 void
-tkcvsarcdraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvsarcdraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
+	/*
+	 * An arc DRAWS, and says so.  There is no node for a partial
+	 * ellipse - TkNellipse is a whole one - and the pieslice arm below
+	 * needs a temporary image to cut its two radii against, which no
+	 * node describes either.  A node type could be added for the first
+	 * half, and would leave the second where it is; it has one caller
+	 * and half a use, so the arc waits until that is worth it.
+	 */
+	Image *img = tkcvsdirect(cd);
 	TkEnv *e;
 	TkCarc *a;
 	Rectangle d;

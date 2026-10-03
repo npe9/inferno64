@@ -373,8 +373,27 @@ tkcvswindfree(TkCitem *i)
 }
 
 void
-tkcvswinddraw(Image *img, TkCitem *i, TkEnv *pe)
+tkcvswinddraw(TkCdraw *cd, TkCitem *i, TkEnv *pe)
 {
+	/*
+	 * A window item DESCENDS, and that is why it draws.  There is
+	 * nothing here to describe - the picture is whatever the embedded
+	 * widget paints - and tkdrawslaves() opens a walk of its own for
+	 * the length of the descent, against that widget's own image.
+	 *
+	 * So the tkcvsdirect() below is not a leftover from before the
+	 * items were converted: it is the flush, and it is load-bearing.
+	 * The descent paints, and anything the canvas has pending would
+	 * otherwise be rendered afterwards and land on top of it.  The
+	 * clip narrowing below is the second reason: a tree must not span
+	 * a change to the destination's clip, and this reads img->clipr
+	 * to decide what the embedded widget's dirty rectangle is.
+	 *
+	 * Nothing is needed on the way OUT, because tkdrawslaves() closes
+	 * the walk it opened and renders what the last run of node widgets
+	 * left pending before it returns.
+	 */
+	Image *img = tkcvsdirect(cd);
 	TkCwind *w;
 	Point rel;
 	Rectangle r;

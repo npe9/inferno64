@@ -56,6 +56,22 @@ enum
 	TKgroove,
 	TKridge,
 
+	/*
+	 * Widget style, per toplevel, set by the `style' command.  It picks
+	 * what a relief MEANS, not what any widget asks for: every widget
+	 * keeps saying `raised' or `sunken' and this decides whether that
+	 * is a two-tone chisel or one restrained outline.  Classic is the
+	 * default and is the look this toolkit has always had.
+	 */
+	/*
+	 * FLAT IS ZERO, and that is the whole of how it became the default.
+	 * A TkTop is heapz'd, so a style nobody sets is whichever constant
+	 * is 0 - which means the default is chosen here and at no creation
+	 * site, and there is no path that makes a toplevel and forgets.
+	 */
+	TkSflat		= 0,
+	TkSclassic,
+
 	TkArepl		= 0,	/* Bind options */
 	TkAadd,
 	TkAsub,
@@ -162,6 +178,10 @@ typedef struct TkEbind TkEbind;
 typedef struct TkImg TkImg;
 typedef struct TkPanelimage TkPanelimage;
 typedef struct TkWinfo TkWinfo;
+typedef struct TkSpace TkSpace;
+typedef struct TkNode TkNode;
+typedef struct TkNodeblk TkNodeblk;
+typedef struct TkScene TkScene;
 typedef struct TkCursor TkCursor;
 typedef struct TkGrid TkGrid;
 typedef struct TkGridbeam TkGridbeam;
@@ -394,6 +414,15 @@ enum
 	TkChighlightfgnd,
 	TkCfill,
 	TkCtransparent,
+	/*
+	 * The surface a FIELD sits on - an entry, a listbox, a text widget.
+	 * Under the classic style it is the same as the background, which
+	 * is what it always was; under flat it is a level above the page,
+	 * and that difference is most of what makes a window look modern.
+	 * A field outlined on the same colour as everything else is the
+	 * look of a wireframe.
+	 */
+	TkCfield,
 
 	TkNcolor,
 
@@ -411,6 +440,181 @@ struct TkEnv
 	ulong		colors[TkNcolor];	/* OPTcolr */
 	Font*		font;			/* Font description */
 	int		wzero;			/* Width of "0" in pixel */
+};
+
+/*
+ * The spacings a widget insets its content by, as one named register
+ * rather than a constant per file.  They were scattered - and did not
+ * agree: label.h called 3 pixels `Textpadx' and textw.c called 2 pixels
+ * the same name, in the same toolkit, so a label and a text widget
+ * packed side by side did not line up and nothing said why.  Naming them
+ * apart is most of the repair; having them in one table is what lets a
+ * style change all of them together.
+ *
+ * Indexed by TkSclassic/TkSflat.  The classic row is exactly the numbers
+ * that were compiled in before this existed, so the default look is
+ * unchanged to the pixel.
+ */
+struct TkSpace
+{
+	int	labelpadx;	/* label and button text, was Textpadx */
+	int	labelpady;
+	int	bitpadx;	/* image or bitmap in a label */
+	int	bitpady;
+	int	entrypadx;	/* entry contents */
+	int	entrypady;
+	int	textpadx;	/* text widget contents */
+	int	textpady;
+	int	scaleborder;	/* derive the default border from the font? */
+	int	corner;		/* corner radius, 0 for square */
+};
+
+/*
+ * Render nodes, after GTK4's GSK: a retained description of a frame that
+ * something other than an immediate draw() can consume.  See the head of
+ * libtk/scene.c for why, and for what the software renderer is FOR -
+ * it is the oracle a GPU backend gets to be correct against, not a
+ * stepping stone to one.
+ *
+ * A node carries VALUES and never a draw(2) Image.  An Image is a
+ * server-side resource belonging to one display; an rgba is a number,
+ * and a number is what a backend other than the software one can use.
+ */
+enum {
+	TkNgroup	= 0,
+	TkNcolour,		/* r filled with rgba */
+	TkNroundfill,		/* r filled, corners rounded by radius */
+	TkNborder,		/* rounded rectangle, stroked, width wide */
+	TkNcorners,		/* the four corner cutaways, in rgba.
+				 * Emitted by nothing since a layer takes its
+				 * own rounded shape; the type and its
+				 * renderer stay because a node type's number
+				 * must not move once a backend has seen it. */
+
+	/*
+	 * Declared, not implemented.  This is the vocabulary a GPU backend
+	 * needs to express what a window contains, written down now so that
+	 * the node type is not renumbered later: a texture for an image or
+	 * a cached glyph run, a linear gradient, a shadow, and the three
+	 * that make animation cost nothing to rasterise - clip, transform
+	 * and opacity.  tkscenerender() ignores them and says so.
+	 */
+	/*
+	 * A subtree rendered into a scratch surface and then composited at
+	 * a point.  Not speculative: a gallery frame draws 43 widgets and
+	 * takes 27 scratch surfaces, so a frame is 28 surfaces and a flat
+	 * list cannot describe one.  It is SEQUENTIAL though - tkitmp()
+	 * hands out one cached scratch per context, reused and blitted out
+	 * between widgets - so a layer node is a scope, not a live surface,
+	 * which is much the easier thing to render.
+	 */
+	TkNlayer,
+	TkNlayerend,
+	/*
+	 * An image, drawn into r.  It names a FILE and the renderer opens
+	 * it - the same arrangement TkNglyphs has with its face, and for
+	 * the same reason: a node holds no display-side resource, so a
+	 * tree can outlive the repaint that built it and can be written
+	 * down for something else to draw.
+	 *
+	 * A file rather than a Tk image name, because of what the renderer
+	 * can reach: a TkCtxt has a Display, which is all display_open()
+	 * wants, and no TkTop, so tkname2img() is not available to it.
+	 * Both sources of an image here end up at a path anyway - a
+	 * -bitmap is /icons/tk/NAME or an @path, and `image create bitmap
+	 * -file' goes through the same option parser - so a path is what
+	 * there always is.  An image that came from a file DESCRIPTOR has
+	 * no path and keeps the scratch.
+	 *
+	 * width says how the image is used: 1 for a MASK, with rgba the
+	 * colour painted through it, which is what a one-bit icon in the
+	 * foreground colour is; 0 for a source, drawn as it stands.
+	 */
+	TkNtexture,
+	TkNglyphs,
+	TkNlinear,
+	TkNshadow,
+	TkNclip,
+	TkNtransform,
+	TkNopacity,
+
+	/*
+	 * An ellipse, stroked or filled.  Added after the six above rather
+	 * than beside its rectangular cousins because the numbering of a
+	 * node type must not move once a backend has seen it.
+	 *
+	 * It uses the fields differently from every other node and there is
+	 * no way round that: r.min is the CENTRE and sp is the two radii,
+	 * because an ellipse is a centre and two radii, and deriving them
+	 * from a bounding rectangle loses the distinction between a radius
+	 * of r and a box 2r+1 wide.  TkNellipse's width is the stroke
+	 * thickness, in ellipse()'s sense where 0 is one pixel.
+	 */
+	TkNellipse,
+	TkNellipsefill,
+
+	/*
+	 * A filled polygon.  The flat scrollbar's arrows are solid
+	 * triangles, the one shape left in the flat style that is neither a
+	 * rectangle nor an ellipse.  The points are copied into the scene,
+	 * as a glyph node's string is, and the fill rule is always
+	 * fillpoly()'s nonzero winding (~0), which is what every caller
+	 * uses.
+	 */
+	TkNpolyfill,
+
+	/*
+	 * A B-spline through its points, stroked.  A checkbutton's tick is
+	 * one, and it is the last thing in the flat style that no other
+	 * node can describe.  Like TkNpolyfill it owns a copy of the
+	 * points; width is bezspline()'s thickness and sp carries the two
+	 * end styles, first and last.  In sp and not in radius because an
+	 * end style is a packed value that a short truncates - a canvas
+	 * line's arrow is 25329922 - and two of them because bezspline()
+	 * takes two and a line can have an arrow at one end only.
+	 */
+	TkNspline,
+
+	/*
+	 * The close of a TkNclip, which is NOT next to it: TkNclip's slot
+	 * was reserved before the shape was settled, and a node type's
+	 * number must not move once a backend has seen it, so the pair is
+	 * split across the enum rather than the numbering disturbed.
+	 *
+	 * A clip is bracketed the way a layer is, and for the same reason:
+	 * it is a property of a SPAN of nodes rather than of one, and a
+	 * flat list has nowhere else to put that.  The renderer narrows
+	 * the target's clipping rectangle at TkNclip and restores it here,
+	 * which is what the text widget does to the window by hand.
+	 * Clips do not nest, again as layers do not.
+	 */
+	TkNclipend
+};
+
+struct TkNode
+{
+	uchar		type;
+	uchar		pad;
+	short		radius;
+	short		width;
+	Rectangle	r;
+	Rectangle	dstr;		/* TkNlayer: where the result lands */
+	Point		sp;		/* TkNlayer: source point of the blit */
+	ulong		rgba;
+	char*		fontname;	/* TkNglyphs and TkNtexture: the face or
+					 * the file, owned by the scene */
+	char*		text;		/* TkNglyphs, owned by the scene */
+	Point*		pts;		/* TkNpolyfill, owned by the scene */
+	int		npts;
+	TkNode*		next;
+};
+
+struct TkScene
+{
+	TkNodeblk*	blk;		/* nodes, in blocks */
+	TkNode*		head;
+	TkNode*		tail;
+	int		n;
 };
 
 struct TkGeom
@@ -583,6 +787,7 @@ struct TkTop
 	TkPanelimage*	panelimages;
 	TkAction*	binds[TKwidgets];
 	int		debug;
+	char		style;			/* TkSclassic or TkSflat */
 	int		execdepth;
 	char		focused;
 	char		dirty;
@@ -622,6 +827,57 @@ extern	char*	tkradiobutton(TkTop*, char*, char**);
 extern	char*	tkraise(TkTop*, char*, char**);
 extern	char*	tkscale(TkTop*, char*, char**);
 extern	char*	tkscrollbar(TkTop*, char*, char**);
+extern	char*	tkstylecmd(TkTop*, char*, char**);
+extern	char*	tkrendercmd(TkTop*, char*, char**);
+extern	int	tkviascene;
+extern	TkSpace	tkspaces[];
+extern	int	tkborderwidth(Tk*, int);
+extern	int	tkstyleflat(Tk*);
+extern	TkEnv*	tkbehind(Tk*);
+extern	TkScene*	tkscenenew(void);
+extern	Rectangle	tkscenebounds(TkScene*);
+extern	void		tkscenefree(TkScene*);
+extern	void		tkscenecolour(TkScene*, Rectangle, ulong);
+extern	void		tksceneroundfill(TkScene*, Rectangle, int, ulong);
+extern	void		tksceneborder(TkScene*, Rectangle, int, int, ulong);
+extern	void		tksceneborderon(TkScene*, Rectangle, int, int, ulong, ulong);
+extern	void		tkscenetext(TkScene*, Point, char*, Font*, ulong);
+extern	void		tkscenetextn(TkScene*, Point, char*, int, Font*, ulong);
+extern	void		tksceneellipse(TkScene*, Point, Point, int, ulong);
+extern	void		tksceneellipsefill(TkScene*, Point, Point, ulong);
+extern	int		tkscenecorner(Tk*, int);
+extern	void		tkshapedblit(Image*, Rectangle, Image*, Point, int);
+extern	int		tkinset(int, int);
+extern	int		tkclamprad(Rectangle, int);
+extern	void		tkscenepolyfill(TkScene*, Point*, int, ulong);
+extern	void		tkscenetexture(TkScene*, Rectangle, char*, int, ulong);
+extern	char*		tkimgpath(Image*);
+extern	void		tkimgpathset(Image*, char*);
+extern	void		tkimgpathdrop(Image*);
+extern	void		tkscenespline(TkScene*, Point*, int, int, int, int, ulong);
+extern	void		tkwalkopen(TkCtxt*, Image*);
+extern	void		tkwalkflush(void);
+extern	void		tkwalkclose(void);
+extern	void		tksceneclip(TkScene*, Rectangle);
+extern	void		tksceneclipend(TkScene*);
+extern	int		tkwalkhas(TkCtxt*, Image*);
+extern	TkScene*	tkwalkscene(TkCtxt*, Image*);
+extern	void		tkwalkclip(Rectangle);
+extern	void		tkwalkclipend(void);
+extern	TkScene*	tkwalkjoin(TkCtxt*, Image*);
+extern	void		tkscenefinish(TkScene*, TkCtxt*, Image*);
+extern	void		tkwalkcount(int*, int*, int*);
+extern	void		tkwalkreset(void);
+extern	int		tkwalkbounds(Rectangle*);
+extern	void		tkwalknodebox(int*, int*);
+extern	void		tkscenelayer(TkScene*, Point, ulong, Rectangle, Point);
+extern	void		tkscenelayerround(TkScene*, Point, ulong, Rectangle, Point, int);
+extern	void		tkscenelayerend(TkScene*);
+extern	void		tkreliefnodes(TkScene*, Tk*, Point, int, int);
+extern	void		tkreliefnodeson(TkScene*, Tk*, Point, int, int);
+extern	int		tkscenerender(TkScene*, TkCtxt*, Image*);
+extern	int		tkscenecount(TkScene*);
+extern	TkSpace*	tkspace(Tk*);
 extern	char*	tksend(TkTop*, char*, char**);
 extern	char*	tktext(TkTop*, char*, char**);
 extern	char*	tkupdatecmd(TkTop*, char*, char**);
@@ -682,7 +938,7 @@ extern	void		tkgetpanelimage(Tk*, Image**, Image**);
 extern	void		tksetpanelimage(Tk *tk, Image*, Image*);
 
 /* General - colrs.c */
-extern	void		tksetenvcolours(TkEnv*);
+extern	void		tksetenvcolours(TkEnv*, int);
 
 /* General - ebind.c */
 extern	void		tkcmdbind(Tk*, int, char*, void*);
@@ -745,11 +1001,15 @@ extern	void		tkfreeobj(Tk*);
 extern	char*		tkaddchild(TkTop*, Tk*, TkName**);
 extern	Tk*		tklook(TkTop*, char*, int);
 extern	void		tktextsdraw(Image*, Rectangle, TkEnv*, int);
+extern	int		tkselrects(Rectangle, int, Rectangle*, int*);
+extern	void		tkscenetextsel(TkScene*, Rectangle, TkEnv*, int);
 extern	void		tkbox(Image*, Rectangle, int, Image*);
+extern	void		tkbevelnodes(TkScene*, Point, int, int, int, ulong, ulong);
 extern	void		tkbevel(Image*, Point, int, int, int, Image*, Image*);
 extern	void		tkdrawrelief(Image*, Tk*, Point, int, int);
 extern	Point		tkstringsize(Tk*, char*);
 extern	void		tkdrawstring(Tk*, Image*, Point, char*, int, Image *, int);
+extern	void		tkscenestring(TkScene*, Tk*, Point, char*, int, ulong, int);
 extern	int		tkeventfmt(Fmt*);
 extern	Tk*		tkdeliver(Tk*, int, void*);
 extern	int		tksubdeliver(Tk*, TkAction*, int, void*, int);
@@ -795,6 +1055,7 @@ extern	TkCtxt*		tknewctxt(Display*);
 extern	void		tkfreectxt(TkCtxt*);
 extern	void		tkfreecolcache(TkCtxt*);
 extern	Image*		tkitmp(TkEnv*, Point, int);
+extern	Image*		tkitmppix(TkCtxt*, Point, ulong);
 extern	void		tkgeomchg(Tk*, TkGeom*, int);
 extern	Tk*		tkinwindow(Tk*, Point, int);
 extern	Tk*		tkfindfocus(TkTop*, int, int, int);

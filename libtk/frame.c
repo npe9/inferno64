@@ -68,6 +68,8 @@ tkdrawframe(Tk *tk, Point orig)
 	Point p;
 	Image *i;
 	Tk *f;
+	TkScene *framescene;
+	Rectangle framebox;
 	Rectangle r, slaver;		/* dribbling, whipping or just square? */
 
 	i = tkimageof(tk);
@@ -77,7 +79,104 @@ tkdrawframe(Tk *tk, Point orig)
 	p.x = orig.x + tk->act.x + tk->borderwidth;
 	p.y = orig.y + tk->act.y + tk->borderwidth;
 
-	draw(i, rectaddpt(tk->dirty, p), tkgc(tk->env, TkCbackgnd), nil, ZP);
+	/*
+	 * A frame is the first widget whose WHOLE appearance can be a scene,
+	 * and that is why it is the one done first.  It draws straight into
+	 * its parent's image with no temporary and no blit, and its fill and
+	 * its border are adjacent with no content drawn between them - so the
+	 * three nodes below are the entire widget, in paint order, and the
+	 * border node needs no colour for what shows outside the corner.
+	 *
+	 * That argument to tksceneborder() exists only because every OTHER
+	 * widget fills its whole rectangle, then draws text, then asks
+	 * tkdrawrelief() for a border - by which point the corner is already
+	 * wrong and the only thing that can be done is to paint it back.  A
+	 * widget described entirely by nodes never has that problem, which
+	 * is the point of describing one entirely by nodes.
+	 *
+	 * Behind tkviascene, so nothing in a running system takes this path
+	 * until it has been compared against the other one.
+	 */
+	framescene = nil;
+	if(tkviascene && tkstyleflat(tk) && tk->type == TKframe)
+		framescene = tkwalkjoin(tk->env->top->ctxt, i);
+	if(framescene != nil){
+		ulong own, par;
+		TkEnv *pe;
+
+		/*
+		 * The box tkdrawrelief() would be given: its origin is the
+		 * widget's own position, NOT the content origin, and its size
+		 * includes the border on both sides.  Computed here once and
+		 * used for both nodes - the first attempt built it with
+		 * rectaddpt(tkrect(tk,1), p), which adds the border offset a
+		 * second time and drew the whole frame one border-width up and
+		 * to the left.  1044 pixels, found by the byte comparison.
+		 */
+		framebox = Rect(orig.x + tk->act.x, orig.y + tk->act.y, 0, 0);
+		framebox.max.x = framebox.min.x + tk->act.width + 2*tk->borderwidth;
+		framebox.max.y = framebox.min.y + tk->act.height + 2*tk->borderwidth;
+		own = tk->env->colors[TkCbackgnd];
+		pe = tkbehind(tk);
+		par = pe->colors[TkCbackgnd];
+		/*
+		 * IN PLACE, in window coordinates, with no layer.
+		 *
+		 * A frame had one for a while, and it was put there on
+		 * purpose: a frame does not need a layer - it draws straight
+		 * into its parent's image - which made it the one widget that
+		 * could prove the layer node, since the result had to be
+		 * identical to rendering the same nodes in place and any
+		 * error in the scratch's extent or the blit's offset showed
+		 * as a difference rather than as a widget that merely looked
+		 * fine.
+		 *
+		 * That proof is done, and six widgets that genuinely need a
+		 * layer keep it exercised.  Paying for it here does not:
+		 * tkbench(1) put an empty toplevel - two frames - at 1.41ms
+		 * on the node path against 59us direct, and taking the layer
+		 * off the frame put it back to 58.88us.  A layer is a scratch
+		 * the size of the widget, allocated, filled and blitted every
+		 * repaint, and a frame is usually the size of the window.
+		 */
+		/*
+		 * The MEND, and only when there is a corner to mend.
+		 *
+		 * The rounded fill below leaves the corner pixels alone, so
+		 * what is behind them has to be painted first or they keep
+		 * whatever was there.  With a radius of ZERO it leaves
+		 * nothing alone: it covers every pixel of framebox, which
+		 * contains fr, so this fill is overwritten in its entirety.
+		 *
+		 * That is not a small waste.  A frame with no border is the
+		 * commonest widget in a window and is usually the size of
+		 * the window, so this was a second full-window fill on every
+		 * repaint - and it is the whole of the fixed-cost gap that
+		 * tkbench(1) has been reporting: an empty toplevel is one
+		 * tree of exactly two nodes, TkNcolour then TkNroundfill,
+		 * both 900x700, against a direct path that fills once.
+		 */
+		if(tkscenecorner(tk, tk->relief) > 0){
+			Rectangle fr;
+
+			fr = rectaddpt(tk->dirty, p);
+			if(rectclip(&fr, framebox))
+				tkscenecolour(framescene, fr, par);
+		}
+		/*
+		 * Rounded only if this frame draws a border to round: a
+		 * rounded fill is a row of draws per corner row, and a frame
+		 * with no border is the commonest widget in a window.  The
+		 * radius is invisible on such a frame anyway - its background
+		 * is its parent's - so nothing here showed the cost.
+		 */
+		tksceneroundfill(framescene, framebox,
+			tkscenecorner(tk, tk->relief), own);
+	}else{
+		/* a frame that is not nodes paints into the window itself */
+		tkwalkflush();
+		draw(i, rectaddpt(tk->dirty, p), tkgc(tk->env, TkCbackgnd), nil, ZP);
+	}
 
 	/*
 	 * doesn't matter about drawing TKseparator
@@ -115,6 +214,16 @@ tkdrawframe(Tk *tk, Point orig)
 	p.x -= tk->borderwidth;
 	p.y -= tk->borderwidth;
 
+	if(framescene != nil){
+		if(!rectinrect(tk->dirty, tkrect(tk, 0)) && tk->relief != TKflat
+		&& tk->borderwidth > 0)
+			tksceneborder(framescene, framebox,
+				tkspace(tk)->corner,
+				tk->borderwidth,
+				tk->env->colors[TkCbackgnd+TkDarkshade]);
+		tkscenefinish(framescene, tk->env->top->ctxt, i);
+		return nil;
+	}
 	if (!rectinrect(tk->dirty, tkrect(tk, 0)))
 		tkdrawrelief(i, tk, p, TkCbackgnd, tk->relief);
 	return nil;

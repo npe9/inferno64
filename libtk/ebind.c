@@ -3,6 +3,12 @@
 #include "tk.h"
 #include <kernel.h>
 #include <interp.h>
+#include "label.h"
+
+extern void voiceannounce(char*);   /* voice(3) */
+extern char* tkscalestate(Tk*, char*, int);	/* scale.c */
+extern char* tklistbstate(Tk*, char*, int);	/* listb.c */
+extern char* tkentrystate(Tk*, char*, int);	/* entry.c */
 
 enum
 {
@@ -546,6 +552,196 @@ focusdirty(Tk *tk)
 	}
 }
 
+/*
+ * Say what has the keyboard, for anyone who cannot see it.
+ *
+ * voiceannounce() is voice(3)'s, and this is the only thing in libtk that
+ * calls it. A configuration with tk must therefore also have voice; every one
+ * in this tree does, and emu-g - which has voice and no tk - never links this
+ * file at all.
+ *
+ * This is the one place keyboard focus changes, which is what makes it the
+ * right place: everything that moves the focus, whether a click, a Tab, or a
+ * program calling "focus", arrives here.
+ */
+static char*
+tkclassname(int t)
+{
+	switch(t){
+	case TKlabel:		return "label";
+	case TKbutton:		return "button";
+	case TKcheckbutton:	return "check button";
+	case TKradiobutton:	return "radio button";
+	case TKmenubutton:	return "menu button";
+	case TKchoicebutton:	return "choice button";
+	case TKcascade:		return "menu item";
+	case TKmenu:		return "menu";
+	case TKentry:		return "entry";
+	case TKtext:		return "text";
+	case TKlistbox:		return "list";
+	case TKscrollbar:	return "scroll bar";
+	case TKscale:		return "scale";
+	case TKcanvas:		return "canvas";
+	case TKframe:		return "frame";
+	case TKpanel:		return "panel";
+	}
+	return "widget";
+}
+
+/*
+ * The label family all keep their text in the same place, which is most of
+ * what a person needs to hear. A text widget is deliberately not read out:
+ * it can hold a whole shell session. An entry is read by tkentrystate()
+ * below unless it is masked with -show, which is what marks a secret.
+ */
+static char*
+tkannouncetext(Tk *tk)
+{
+	switch(tk->type){
+	case TKlabel:
+	case TKbutton:
+	case TKcheckbutton:
+	case TKradiobutton:
+	case TKmenubutton:
+	case TKcascade:
+		return TKobj(TkLabel, tk)->text;
+	}
+	return nil;
+}
+
+/*
+ * A control's state, or nil for a control that has none.
+ *
+ * Naming a control without it answers the wrong question: "Wrap lines
+ * checkbutton" tells a person what the thing is and not what it is set
+ * to, and there was no way to find out by listening, because nothing was
+ * announced when it changed either.
+ */
+static void tkannouncefocus(Tk*);
+/*
+ * tkannounce, not announce: include/kern.h:396's neighbourhood declares
+ * announce(char*, char*) for the kernel, and Inferno's lib9.h pulls kern.h
+ * in, so a static announce(Tk*) here is an "external redeclaration" under
+ * 7c even though the hosted build never sees it.  The rest of this file
+ * already uses the tkannounce* prefix; this one was the outlier.
+ */
+static void tkannounce(Tk*);
+
+static char*
+tkannouncestate(Tk *tk, char *buf, int nbuf)
+{
+	TkLabel *tkl;
+
+	switch(tk->type){
+	case TKcheckbutton:
+		tkl = TKobj(TkLabel, tk);
+		return tkl->check ? "checked" : "not checked";
+	case TKradiobutton:
+		tkl = TKobj(TkLabel, tk);
+		return tkl->check ? "selected" : "not selected";
+	case TKscale:
+		return tkscalestate(tk, buf, nbuf);
+	case TKlistbox:
+		return tklistbstate(tk, buf, nbuf);
+	case TKentry:
+		return tkentrystate(tk, buf, nbuf);
+	case TKchoicebutton:
+		/*
+		 * A choicebutton has no label of its own - what it displays IS
+		 * the chosen value - so on arrival tkannounce() already says it.
+		 * This is for the other half: choosing a different one from the
+		 * menu changed the widget and said nothing at all.
+		 */
+		tkl = TKobj(TkLabel, tk);
+		if(tkl->text == nil)
+			return nil;
+		snprint(buf, nbuf, "%s", tkl->text);
+		return buf;
+	}
+	USED(buf); USED(nbuf);
+	return nil;
+}
+
+/*
+ * Say what a control has just become, after the person acted on it.
+ * The label is not repeated: they know which control they are on, having
+ * just been told when they moved to it, and a screen reader that reads
+ * the whole thing back on every keypress is tiring to use.
+ */
+/*
+ * Say what a widget is, the way arriving at it by keyboard would.
+ * For places that make something current without the keyboard focus
+ * moving - a menu highlights an item and the focus stays on the menu.
+ *
+ * No name is required, and that is the point: a menu item has no widget
+ * path at all, being reachable by index rather than by name, so the guard
+ * in tkannouncefocus() would refuse every one of them.
+ */
+void
+tkannouncewidget(Tk *tk)
+{
+	tkannounce(tk);
+}
+
+void
+tkannouncechange(Tk *tk)
+{
+	char buf[64];
+	char *state;
+
+	if(tk == nil)
+		return;
+	state = tkannouncestate(tk, buf, sizeof buf);
+	if(state != nil)
+		voiceannounce(state);
+}
+
+static void
+tkannounce(Tk *tk)
+{
+	char buf[128], sbuf[64];
+	char *text, *state, *class;
+
+	if(tk == nil)
+		return;
+	text = tkannouncetext(tk);
+	state = tkannouncestate(tk, sbuf, sizeof sbuf);
+	/*
+	 * An item in a menu is made as a label or a cascade, so its type
+	 * says "label", which is true and useless: what a person needs to
+	 * hear is that they are in a menu.  Where it sits says so.
+	 */
+	class = tkclassname(tk->type);
+	if(tk->parent != nil && tk->parent->type == TKmenu && tk->type != TKcascade)
+		class = "menu item";
+	if(text != nil && *text != '\0' && state != nil)
+		snprint(buf, sizeof buf, "%s %s %s", text, class, state);
+	else if(text != nil && *text != '\0')
+		snprint(buf, sizeof buf, "%s %s", text, class);
+	else if(state != nil)
+		snprint(buf, sizeof buf, "%s %s", class, state);
+	else
+		/*
+		 * No label to fall back on. tk->name->name is a Tcl/Tk widget
+		 * PATH - ".ft.t", say - not a word, and not meant to be one:
+		 * every shell window's main text pane hits this branch on
+		 * every focus, since text/entry widgets never have a
+		 * tkannouncetext(). Speaking the path is speaking an
+		 * identifier as if it were prose; the class alone is what a
+		 * person actually needs.
+		 */
+		snprint(buf, sizeof buf, "%s", class);
+	voiceannounce(buf);
+}
+
+static void
+tkannouncefocus(Tk *tk)
+{
+	if(tk == nil || tk->name == nil)
+		return;
+	tkannounce(tk);
+}
+
 void
 tksetkeyfocus(TkTop *top, Tk *new, int dir)
 {
@@ -558,6 +754,7 @@ tksetkeyfocus(TkTop *top, Tk *new, int dir)
 	if(old == new)
 		return;
 	c->tkkeygrab = new;
+	tkannouncefocus(new);
 	if(top->focused == 0)
 		return;
 	if(old != nil && old != top->root){
@@ -574,6 +771,9 @@ void
 tksetglobalfocus(TkTop *top, int in)
 {
 	Tk *tk;
+	TkVar *v;
+	char wbuf[128];
+	int named;
 	in = (in != 0);
 	if (in != top->focused){
 		top->focused = in;
@@ -584,6 +784,44 @@ tksetglobalfocus(TkTop *top, int in)
 				tkdeliver(tk, TkFocusin, (void*)0);
 				focusdirty(tk);
 			}
+			/*
+			 * Arriving in a window is a bigger move than stepping
+			 * between two things inside one, and a person who
+			 * cannot see it has nothing else to tell them it
+			 * happened.
+			 *
+			 * Which window, then where in it - the order a person
+			 * needs, and the order a screen reader elsewhere would
+			 * use. This used to say only where the keyboard was,
+			 * on the grounds that Tk has no title to give because
+			 * a title belongs to wm. It still has none of its own,
+			 * but it can be told: the variable "windowname" is
+			 * where anything that knows may put it, and
+			 * titlebar(2) does when the title is set. A variable
+			 * rather than a widget path because it is a fact about
+			 * the window, not a thing on the screen, and any
+			 * program can set it without having a titlebar at all.
+			 */
+			named = 0;
+			v = tkmkvar(top, "windowname", 0);
+			if(v != nil && v->type == TkVstring && v->value != nil
+			&& *(char*)v->value != '\0'){
+				/*
+				 * "... window", because at this call site that
+				 * is what it is: the wording wmclient.b used
+				 * when it said this itself, and it tells a
+				 * person a window changed rather than merely
+				 * naming something.
+				 */
+				snprint(wbuf, sizeof wbuf, "%s window",
+					(char*)v->value);
+				voiceannounce(wbuf);
+				named = 1;
+			}
+			if(tk != nil && tk != top->root)
+				tkannouncefocus(tk);
+			else if(!named)
+				voiceannounce("window");
 		}else{
 			if(tk != nil && tk != top->root){
 				tkdeliver(tk, TkFocusout, nil);
@@ -609,28 +847,40 @@ tkfocus(TkTop *top, char *arg, char **ret)
 
 	global = 0;
 	
+	/*
+	 * tkparse's name list belongs to the caller, and this was the one
+	 * caller in libtk that asked for one and never freed it: every
+	 * "focus .widget" leaked a TkName, which is 128 bytes of the main
+	 * pool per window opened, for ever.  Found by histogramming live
+	 * blocks by allocpc through /dev/memleak.  Every return below goes
+	 * through Out now rather than each one growing its own free.
+	 */
 	names = nil;
 	e = tkparse(top, arg, tko, &names);
 	if (e != nil)
-		return e;
+		goto Out;
 
 	if(names == nil){
-		if(global)
-			return tkvalue(ret, "%d", top->focused);
+		if(global){
+			e = tkvalue(ret, "%d", top->focused);
+			goto Out;
+		}
 		tk = top->ctxt->tkkeygrab;
 		if (tk != nil && tk->name != nil)
-			return tkvalue(ret, "%s", tk->name->name);
-		return nil;
+			e = tkvalue(ret, "%s", tk->name->name);
+		goto Out;
 	}
 
 	if(global){
 		tksetglobalfocus(top, atoi(names->name));
-		return nil;
+		goto Out;
 	}
 
 	wp = mallocz(Tkmaxitem, 0);
-	if(wp == nil)
-		return TkNomem;
+	if(wp == nil){
+		e = TkNomem;
+		goto Out;
+	}
 
 	tkword(top, arg, wp, wp+Tkmaxitem, nil);
 	if (!strcmp(wp, "next")) {
@@ -647,14 +897,17 @@ tkfocus(TkTop *top, char *arg, char **ret)
 		if(tk == nil){
 			tkerr(top, wp);
 			free(wp);
-			return TkBadwp;
+			e = TkBadwp;
+			goto Out;
 		}
 		dir = 0;
 	}
 	free(wp);
 
 	tksetkeyfocus(top, tk, dir);
-	return nil;
+Out:
+	tkfreename(names);
+	return e;
 }
 
 char*
@@ -910,11 +1163,13 @@ tkupdatecmd(TkTop *t, char *arg, char **ret)
 	return tkupdate(t);
 }
 
+static char* tkchildren(TkTop*, char*, char**);
+
 char*
 tkwinfo(TkTop *t, char *arg, char **ret)
 {
 	Tk *tk;
-	char *cmd, *arg1;
+	char *cmd, *arg1, *e;
 
 	cmd = mallocz(Tkmaxitem, 0);
 	if(cmd == nil)
@@ -939,8 +1194,116 @@ tkwinfo(TkTop *t, char *arg, char **ret)
 		free(cmd);
 		return tkvalue(ret, "%s", tkmethod[tk->type]->name);
 	}
+	if(strcmp(cmd, "manager") == 0) {
+		arg1 = mallocz(Tkmaxitem, 0);
+		if(arg1 == nil) {
+			free(cmd);
+			return TkNomem;
+		}
+		tkword(t, arg, arg1, arg1+Tkmaxitem, nil);
+		tk = tklook(t, arg1, 0);
+		if(tk == nil){
+			tkerr(t, arg1);
+			free(arg1);
+			free(cmd);
+			return TkBadwp;
+		}
+		free(arg1);
+		free(cmd);
+		/*
+		 * Which geometry manager has this widget, or nothing at all.
+		 * Both pack and grid set master and clear it on unpack, so
+		 * this is what separates a widget that is laid out from one
+		 * that was merely created - and programs here create widgets
+		 * they never lay out, to ask them how big they would be.
+		 */
+		if(tk->master == nil)
+			return tkvalue(ret, "");
+		if(tk->master->grid != nil)
+			return tkvalue(ret, "grid");
+		return tkvalue(ret, "pack");
+	}
+	if(strcmp(cmd, "master") == 0) {
+		arg1 = mallocz(Tkmaxitem, 0);
+		if(arg1 == nil) {
+			free(cmd);
+			return TkNomem;
+		}
+		tkword(t, arg, arg1, arg1+Tkmaxitem, nil);
+		tk = tklook(t, arg1, 0);
+		if(tk == nil){
+			tkerr(t, arg1);
+			free(arg1);
+			free(cmd);
+			return TkBadwp;
+		}
+		free(arg1);
+		free(cmd);
+		/*
+		 * The widget this one is packed inside, which is not always
+		 * its parent by path: `pack .b -in .f` leaves .b named under
+		 * the root and lays it out inside .f.  Anything reasoning
+		 * about who shares space with whom wants this, not the name.
+		 */
+		if(tk->master == nil || tk->master->name == nil)
+			return tkvalue(ret, "");
+		return tkvalue(ret, "%s", tk->master->name->name);
+	}
+	if(strcmp(cmd, "children") == 0) {
+		arg1 = mallocz(Tkmaxitem, 0);
+		if(arg1 == nil) {
+			free(cmd);
+			return TkNomem;
+		}
+		tkword(t, arg, arg1, arg1+Tkmaxitem, nil);
+		e = tkchildren(t, arg1, ret);
+		free(arg1);
+		free(cmd);
+		return e;
+	}
 	free(cmd);
 	return TkBadvl;
+}
+
+/*
+ * The paths one level below wp, in the order the widgets were created.
+ *
+ * Every widget hangs off t->root on the siblings list under its whole
+ * path, so a child of wp is a name that begins with wp and has no
+ * further dot after it - ".f" has child ".f.b" but not ".f.b.c".  That
+ * is the packer-independent answer, and the one Tcl gives: a widget that
+ * exists but has never been packed is still a child.
+ */
+static char*
+tkchildren(TkTop *t, char *wp, char **ret)
+{
+	Tk *f;
+	char *e, *sep;
+	int n;
+
+	if(tklook(t, wp, 0) == nil) {
+		tkerr(t, wp);
+		return TkBadwp;
+	}
+	n = strlen(wp);
+	if(n > 0 && wp[n-1] == '.')	/* the root, "." */
+		n--;
+	sep = "";
+	for(f = t->root; f != nil; f = f->siblings) {
+		if(f->name == nil)
+			continue;
+		if(strncmp(f->name->name, wp, n) != 0)
+			continue;
+		if(f->name->name[n] != '.' || f->name->name[n+1] == '\0')
+			continue;
+		if(strchr(f->name->name+n+1, '.') != nil)
+			continue;
+		e = tkvalue(ret, "%s%s", sep, f->name->name);
+		if(e != nil)
+			return e;
+		sep = " ";
+	}
+	return nil;
 }
 
 char*
@@ -976,6 +1339,7 @@ tkcursorcmd(TkTop *t, char *arg, char **ret)
 	if(c.img != nil || c.bit != nil){
 		e = tkcursorswitch(t, c.bit, c.img);
 		tkimgput(c.img);
+		tkimgpathdrop(c.bit);	/* the registry is keyed on the address */
 		freeimage(c.bit);
 	}
 	if(e == nil){
