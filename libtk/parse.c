@@ -995,8 +995,21 @@ tkparsecolor(char *buf, ulong *rgba)
 		 * read - and widening TkStab is not an option, since the same
 		 * struct carries every other string-to-constant table in the
 		 * toolkit.
+		 *
+		 * Through `uint' rather than `& 0xffffffffUL', and that is not
+		 * a style choice.  ulong is 32 bits under kencc, so the mask
+		 * was the IDENTITY, and 7c encoded it as an all-ones 32-bit
+		 * logical immediate -- AND w5, w5, #0xFFFFFFFF, 0x12007ca5 --
+		 * which the architecture declares UNDEFINED (DecodeBitMasks:
+		 * imms AND levels == levels).  The raspi3b kernel trapped on
+		 * it with ESR EC=0 the first time a colour was named rather
+		 * than given in hex, which is why every default-coloured
+		 * widget worked and `-fill red' panicked.  int -> uint is a
+		 * reinterpretation with no sign extension and uint -> ulong
+		 * zero-extends, so this says the same thing with nothing to
+		 * mis-encode, on a 32- or a 64-bit ulong alike.
 		 */
-		*rgba = (ulong)tkcolortab[i].con & 0xffffffffUL;
+		*rgba = (ulong)(uint)tkcolortab[i].con;
 	}
 	if (alpha != 0xff) {
 		tkrgbavals(*rgba, &R, &G, &B, &A);

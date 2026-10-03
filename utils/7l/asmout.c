@@ -752,6 +752,28 @@ asmout(Prog *p, Optab *o)
 				u = (uvlong)p->from.offset >> 32;
 				if(u != 0 && u != 0xFFFFFFFF)
 					diag("mask needs 64 bits %#llux\n%P", p->from.offset, p);
+				/*
+				 * The 32-bit half of the hazard the comment above
+				 * describes, which was not guarded.  A run of 32
+				 * ones has mask->s == 32, so imms becomes 31 with
+				 * N == 0, and DecodeBitMasks then has
+				 * imms AND levels == levels, which the
+				 * architecture declares UNDEFINED.  All ones
+				 * simply has no 32-bit logical-immediate
+				 * encoding; every shorter run does, because N == 0
+				 * with imms < 31 still yields esize 32.
+				 *
+				 * 7l emitted 0x12007ca5 (AND w5, w5, #0xFFFFFFFF)
+				 * for `(ulong)x & 0xffffffffUL' in
+				 * libtk/parse.c, where ulong is 32 bits so the
+				 * mask was the identity.  The raspi3b kernel
+				 * trapped on it with ESR EC=0 the first time a
+				 * colour was named rather than given in hex.  A
+				 * diagnostic here turns that class from a runtime
+				 * panic into a build failure.
+				 */
+				if(mask->s == 32)
+					diag("all-ones mask has no 32-bit logical immediate encoding %#llux\n%P", p->from.offset, p);
 			}
 		}else
 			diag("invalid mask %#llux\n%P", p->from.offset, p);	/* probably shouldn't happen */
