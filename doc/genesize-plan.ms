@@ -858,6 +858,14 @@ nested SVM under MTTCG rather than the exit path, but does not prove
 it: one thread also serialises the host's own processors.  Still open;
 nested KVM on real hardware is the arbiter.
 .IP
+Three MTTCG runs after V_INTR_MASKING (below): one host reset right
+after the guest started, as before; and twice the guest's vCPU 3 took a
+triple fault instead (exit 0x7f), CR2 0xfffffe0000000080 \(en its
+IDT's base plus 0x80, gate 8: delivering a double fault, it found its
+own IDT page, which Linux maps at boot and never changes, not mapped.
+Never with one thread.  The pattern still points at QEMU's nested paging
+under MTTCG.
+.IP
 Also found here: the test's typed command grew past 1024 characters,
 the most busybox's shell takes on a line, which dropped the rest and
 left the shell waiting for a closing parenthesis; it is typed as
