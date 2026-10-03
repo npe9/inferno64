@@ -183,7 +183,7 @@ static void
 pl011_kick(Uart *uart)
 {
 	Ctlr *c;
-	int i, alive, n;
+	int i, lo, bounded, n;
 	extern int panicking;
 
 	c = uart->regs;
@@ -240,43 +240,40 @@ pl011_kick(Uart *uart)
 	 * that reason.
 	 */
 	/*
-	 * islo() IS ALWAYS 0 HERE, and that is the bug.
+	 * islo() IS ALWAYS 0 HERE, so the branch below that tests it is
+	 * dead and "bounded" is always true.
 	 *
-	 * This asked islo() to tell "called with interrupts on" from
-	 * "called from a handler", and it cannot: uartkick() takes
-	 * ilock(&p->tlock) before calling this, ilock() does splhi(), so
-	 * by the time kick runs interrupts are masked whatever the caller
-	 * was doing.  "if(lo) break" was dead code and "bounded" was
-	 * always true, so EVERY console write took the polling drain --
-	 * up to Maxpoll bytes, each spinning for FIFO room, with
+	 * uartkick() takes ilock(&p->tlock) before calling this, and
+	 * ilock() does splhi(), so interrupts are masked by the time kick
+	 * runs whatever the caller was doing.  The comment above reasons
+	 * about "the interrupts-on path" and there is no such path: EVERY
+	 * console write takes the polling drain, up to Maxpoll bytes, with
 	 * interrupts off.
 	 *
-	 * MEASURED ON THE BOARD, which the comment above asked for:
-	 * /dev/ilock reported 6130us and 6131us at uartkick on two
-	 * consecutive runs, and 64 bytes at 115200 baud is 5.6ms, so the
-	 * arithmetic closes to within the MMIO overhead.  HZ is 100 here,
-	 * which makes that 61 per cent of a tick with every interrupt
-	 * masked -- for console output that nothing on this desk is even
-	 * reading.
+	 * IT IS WRITTEN DOWN RATHER THAN CHANGED, and that is a measured
+	 * decision rather than caution.  Making the live case leave when
+	 * the FIFO fills -- what the dead branch was reaching for -- was
+	 * tried: two kernels differing only in that, both JTAG-booted so
+	 * the core count matched, three runs each.  Identical mean hold
+	 * (421ns), identical ilock counts to three figures, and the
+	 * pre-change arm produced the same maximum as every run of the
+	 * changed one.  It bought nothing, and it risked console output
+	 * completeness that cannot be checked on this desk, where the
+	 * console has been deaf for months.
 	 *
-	 * The condition that was wanted is not "are interrupts on" but
-	 * "will something come back for the rest", and the answer to that
-	 * does not depend on the current mask: the TX interrupt and
-	 * uarttxpoll() run whenever the machine is alive.  So a live kick
-	 * now LEAVES when the FIFO fills -- sixteen bytes and out -- and
-	 * only a machine that is stopping forces the whole queue through.
-	 *
-	 * Maxpoll stays as the live bound, for QEMU: there the model
-	 * consumes a byte the instant it is written, so the FIFO never
-	 * reports full and the loop would write the whole queue.  That is
-	 * the 40ms the comment above records reading there.
+	 * What IS unexplained is the SIZE of the hold.  /dev/ilock reports
+	 * about 3.5ms here, which is some 37 bytes at 115200, where a loop
+	 * that stops at a full 16-byte FIFO should cost 16.  So something
+	 * about this loop's pacing is not understood; the number and the
+	 * method are in doc/parallel-allocator-survey.ms.
 	 */
-	alive = !panicking && !active.exiting;
+	lo = islo();
+	bounded = !lo && !panicking && !active.exiting;
 	for(n = 0;; n++){
-		if(alive && n >= Maxpoll)
+		if(bounded && n >= Maxpoll)
 			break;
 		if(csr32r(c, UartFR) & UartFRTXFF){
-			if(alive)
+			if(lo)
 				break;
 			for(i = 0; i < Putcspin; i++)
 				if((csr32r(c, UartFR) & UartFRTXFF) == 0)
