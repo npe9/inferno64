@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """The RSSI offset, by substitution, with no calibrated generator.
 
+ONE RUNG OVER A CABLE, FOR A SECOND REASON.  A pigtail costs a decibel or
+two where a few inches of air cost twenty or thirty, so a conducted link
+has MORE margin and not less.  Board 1 at ramp 31 puts about -4 dBm into
+board 2, and doc/radio-plan.ms records this receiver saturating above
+about -50 dBm, reading a flat -65 to -68 however hard it is driven.  So
+most of the ladder is unusable conducted, and ramp 0 -- whose output
+collapses some forty-eight decibels, measured on the instrument -- is the
+one rung that lands in the range where the receiver is linear, which the
+plan puts at -68 down to at least -89.
+
 ONE RUNG, AND WHY.  The ladder this started with read the same -30.19 dBm
 at ramps 3, 7, 11, 15 and 31 -- five transmit powers spanning fourteen
 and a half decibels of nominal -- and then -78.69 at ramp 0.  So the
@@ -227,9 +237,15 @@ def rssiof(b, want=False):
 
 
 def legb():
-    if not os.path.exists(STATE):
-        raise SystemExit("offset: no %s -- run 'offset.py sa' first" % STATE)
-    st = json.load(open(STATE))
+    # EITHER LEG MAY RUN FIRST.  It used to require leg A, which meant the
+    # half that happened to be cabled right had to wait for the other --
+    # and on this bench the cabling arrives in whatever order it arrives.
+    # Each leg writes its own half and report() combines them when both
+    # are there.
+    st = {"hz": HZ, "legA": {}}
+    if os.path.exists(STATE):
+        st = json.load(open(STATE))
+    st.setdefault("legA", {})
     tx = open_board(B1, "board1")
     rx = open_board(B2, "board2")
     tx.ctl("freq %d" % HZ, settle=3.0)
@@ -238,10 +254,13 @@ def legb():
     print("leg B: board 1 into board 2 through the same cable")
     st["legB"] = {}
     for ramp in LADDER:
-        if str(ramp) not in st["legA"]:
-            raise SystemExit("offset: leg A has no ramp %d" % ramp)
         nominal = setramp(tx, ramp)
-        if abs(nominal - st["legA"][str(ramp)]["nominal"]) > 0.01:
+        # If leg A has this rung, the two must agree about what it is.
+        # A pair of legs taken at different powers is not a
+        # substitution, and the file is what carries that across the
+        # cable change.
+        if str(ramp) in st["legA"] and \
+           abs(nominal - st["legA"][str(ramp)]["nominal"]) > 0.01:
             raise SystemExit("offset: ramp %d was %+.1f dBm in leg A and is"
                              " %+.1f now" % (ramp,
                              st["legA"][str(ramp)]["nominal"], nominal))
@@ -280,8 +299,15 @@ def legb():
         st["legB"][str(ramp)] = r
         sys.stdout.flush()
     setramp(tx, 15)
+    st["pathB"] = "cabled"
+    st["whenB"] = time.strftime("%Y-%m-%d %H:%M")
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
     json.dump(st, open(STATE, "w"), indent=1)
-    report(st)
+    if st["legA"]:
+        report(st)
+    else:
+        print("wrote %s.  leg A still wants board 1's u.FL on the tinySA's"
+              " input." % STATE)
 
 
 def report(st=None):
@@ -289,8 +315,10 @@ def report(st=None):
         if not os.path.exists(STATE):
             raise SystemExit("offset: no %s" % STATE)
         st = json.load(open(STATE))
-    if "legB" not in st:
+    if "legB" not in st or not st["legB"]:
         raise SystemExit("offset: leg B has not been run")
+    if not st.get("legA"):
+        raise SystemExit("offset: leg A has not been run")
     print()
     print("  ramp  nominal  tinySA   board2   board2 is out by")
     rows = []

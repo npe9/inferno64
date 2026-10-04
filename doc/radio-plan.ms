@@ -6166,3 +6166,45 @@ u.FL-to-u.FL \- so the result carries the difference of their losses,
 which for two short pigtails is of order a decibel.  That is the
 uncertainty of the answer and it is worth having: the figure in the
 driver now is TI's example and not a measurement of anything.
+.PP
+.B "Leg B banked over a u.FL-to-u.FL cable, and a correction about what a cable is for."
+.DS
+.CW "ramp 0   nominal -17.5   board2 quiet -124  keyed -80  risen +44"
+.DE
+Board 2 hears it forty-four decibels over its own floor and reads -80dBm,
+which is inside the range where this receiver is linear.  That is half
+the substitution and it is written down; leg A wants board 1's u.FL on
+the tinySA's input, and either leg may now run first \- requiring leg A
+first meant the half that happened to be cabled right had to wait for the
+other, and on this bench the cabling arrives in whatever order it
+arrives.
+.PP
+.B "A CABLE MAKES THE CHANNEL LESS LOSSY, NOT MORE, which is the opposite of what was said here."
+A pigtail costs a decibel or two where a few inches of air cost twenty or
+thirty.  So a conducted link has
+.I more
+margin, every rung lands higher, and the error path is further away:
+.DS
+.CW "ramp  nominal   at board2    the receiver's state"
+.CW "  63   +14.0    +12.0 dBm    saturated, and at the part's max"
+.CW "  31    -2.0     -4.0 dBm    saturated"
+.CW "  15   -10.0    -12.0 dBm    saturated"
+.CW "   1   -17.0    -19.0 dBm    saturated"
+.CW "   0   -17.5    -80.0 dBm    linear, and measured -80"
+.DE
+saturated meaning above the -50dBm knee this document already records,
+where the receiver reads a flat -65 to -68 however hard it is driven.
+.PP
+.B "So ramp 0 is the only rung a cable can put in the linear range,"
+which is the rung both legs used \- and it is only there because its
+output collapses some forty-eight decibels, measured on the instrument.
+The saturation knee itself, the receiver's sensitivity, and the packet
+error path all want attenuation that neither the PA's range nor a pigtail
+provides.
+.B "Item 9's error-rate bullet is therefore no closer with a cable than without one,"
+and the thing it wants is a step attenuator.
+.PP
+.B "And +14dBm conducted is at this part's absolute maximum input,"
+so the ladder must not be walked from the top into a cabled receiver.
+That is the same constraint already written down for the tinySA's input
+and it applies to the other board for the same reason.
