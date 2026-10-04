@@ -136,12 +136,54 @@ radioline(): string
 		return "no stats";
 	recv := field(s, "sent");		# "sent N recv N"
 	rest := field(s, "crcerr");
-	# And the power, READ BACK, because a station that reports what
-	# the air did has to report what it put on the air.  "txramp 0,
-	# -17.5 dBm" above is what was asked for; this is what the part
-	# holds.  Every claim on this bench that skipped that step has
-	# had to be withdrawn.
-	return "sent/recv " + recv + " crcerr " + rest;
+	# AND HOW STRONG THE LAST FRAME WAS, which is the only thing on
+	# this console that says WHICH PATH carried it.
+	#
+	# Two clicks sitting inches apart hear each other through the air
+	# whether a cable is fitted between their u.FL ports or not, so a
+	# run described as conducted is a claim about the path and not
+	# about the bench, and nothing here was measuring it.  I wrote
+	# "conducted, u.FL to u.FL" into the plan on the strength of a
+	# cable being plugged in.  A cable is about a decibel; free space
+	# between two bare u.FL ports at a few inches is twenty or thirty.
+	# The "last" figure separates them and nothing else on this board
+	# does.
+	#
+	# The whole rssi line, because its fields are the instantaneous
+	# reading, the offset and threshold in force, and "last", which is
+	# the RSSI of the last packet the part received.
+	rssi := field(s, "rssi");
+	# And transmits the part refused because the channel was busy.
+	# Every transmit goes through carrier sense -- SWRU295E 6.11, an
+	# STX in RX enters TX only if CCA_STATUS is asserted -- so this is
+	# the count of times the other station was already talking, which
+	# is the collision mechanism counted at the source rather than
+	# inferred from what went missing.
+	busy := field(s, "ccabusy");
+	# TWO LINES, BECAUSE A CONSOLE LINE HAS A WIDTH.
+	#
+	# Everything above on one line came to about 130 characters and
+	# screen's hardcopy -- which is how every measurement here is read
+	# -- cut it at the window width, mid-word, in the middle of
+	# "ccamode".  A regex for "ccabusy N ccamode N" then matched
+	# nothing and the run reported no CCA figures at all, which reads
+	# as the driver not having them.  So: short lines, and the figures
+	# that matter near the front of each.
+	return "sent/recv " + recv + " crcerr " + rest + "\n"
+		+ "ax25init: rssi " + rssi + "\n"
+		+ "ax25init: cca " + busy + "\n"
+		# AND WHAT STATE THE PART IS SITTING IN, which is the
+		# question when sent goes up and recv does not.  A
+		# receiver that is not in RX between transmits hears
+		# nothing and reports nothing: no CRC error, no overflow,
+		# no carrier -- exactly the silence that reads as a path
+		# that does not close.  state is the driver's STATE field
+		# off the status byte, and the overflow and txnever
+		# counters say whether frames were lost after sync or
+		# never put on the air at all.
+		+ "ax25init: state " + field(s, "state")
+		+ " marc " + field(s, "lasttx")
+		+ " ovf " + field(s, "rxoverflow");
 }
 
 # The rest of the line a named field starts, by a scan: tokenising a
@@ -360,11 +402,19 @@ init()
 							field(slurp(Stats),
 								"pacfg2"));
 				}
+				# THE else OF THE txramp BRANCH, which said
+				# "has no call" -- a message copied from the
+				# wrong place.  Neither board has a txramp
+				# attribute, so both printed "/lib/radio has
+				# no call for board1" while using the call
+				# they had just read out of it, and the line
+				# was read as the lookup having failed when
+				# the lookup had worked.
 				else if(got[Wname] != nil)
-					sys->print("ax25init: %s has no call "
-						+ "for %q; using %s\n",
-						Radiocal->Cal, got[Wname],
-						call);
+					sys->print("ax25init: %s names no "
+						+ "txramp for %q; the part's "
+						+ "default power stands\n",
+						Radiocal->Cal, got[Wname]);
 			}
 		}
 	}
