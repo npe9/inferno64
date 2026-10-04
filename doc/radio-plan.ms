@@ -6259,3 +6259,191 @@ with the shell init and five processes, which is a committed build and a
 working bench; what was being attempted when this started \- the station
 image in UI mode on both, to tell collision loss from path loss \- is not
 done.
+.NH 1
+The other half of the flashing fault: a build that could not convert and said nothing
+.LP
+.B "The lock was necessary and it was not sufficient."
+With it held, one run at a time, board 2 took a shell image and reported
+the new stamp \-
+.CW "kerndate 1791074738, nproc 5" \-
+and then refused the station image three more times in exactly the same
+way: a bootloader answered,
+.I mikroe-uhb
+printed
+.CW McuType
+and exited zero, and the board came up on the image it already had.
+Which killed the overlap as the whole explanation, because there was
+nothing left to overlap with.
+.PP
+.B "The hex was older than the kernel beside it."
+The kernel was stamped 20:49 and the hex 20:45.  Running the conversion
+by hand said why in one line:
+.DS
+.CW "bin2ihex: istm32f407 is 914264 bytes; the limit is 901120"
+.DE
+The station image does not fit.  That is
+.I bin2ihex
+doing its job \- the ceiling is the calibration store's base, and an
+image that reached past it would overwrite what a board had measured
+about itself \- and the refusal was correct every time.
+.PP
+.B "What was wrong was that nothing downstream could tell."
+Two faults, and both of them are mine.
+.IP 1.
+The conversion was the second half of the link recipe, with a
+.I cp
+after it.
+.B "A recipe's status is its last command's,"
+so when
+.I bin2ihex
+refused, the
+.I cp
+succeeded and mk reported a build.
+.B KERNDATE
+went by in the output as usual.
+.IP 2.
+Nothing depended on the hex, so mk had no reason to make one: the thing
+it was asked for \- the kernel \- was up to date.  A hex missing or
+older than the kernel beside it was never anybody's business.
+.LP
+And
+.I flashverify.sh
+built
+.B istm32f407
+and flashed
+.BR istm32f407.hex ,
+which are two different files, and read one thing out of the build
+output \- the stamp \- with a
+.I sed
+that cannot fail.
+.PP
+.B "So five flashes had two causes and I found the first one and stopped."
+The overlap was real and the lock was right; it was also the cause I
+could see, and finding it closed the question before the second cause
+was reached.  The tell was there in the first log I kept \- the client
+wrote every block and exited zero \- and the thing I did not do was ask
+what it had been given to write.
+.B "A build log grepped for the line you want cannot report the line you did not expect."
+.PP
+.B "The fixes, in the tool and not the caller."
+The hex is its own target now, depending on the kernel, so asking for it
+rebuilds it whenever the kernel is newer; its recipe removes the old hex
+.I before
+converting and copies only on success, so a refusal leaves no hex at all
+rather than the last one that worked \- a missing file stops a flashing
+tool at its first argument and an old one gets written to a board.  That
+the
+.I "&&"
+is load-bearing was checked rather than assumed: this mk feeds a whole
+recipe to one shell, and without it the
+.I cp
+of the stale hex still ran.
+.PP
+The stamp is written down beside the image as
+.BR istm32f407.date ,
+from the same recipe that compiled it in, because
+.B KERNDATE
+is a fresh integer every link and appears nowhere afterwards but the
+boot line.  Scraping it from build output works only on a build that
+relinked, and
+.B "the build that matters most is the one right after a refused conversion,"
+where the kernel is already current and only the hex is remade: then the
+stamp came out empty and
+.I flashverify.sh
+announced that the stamp could not be checked and flashed anyway.  It
+reads the file now and insists on it.
+.NH 2
+And the image was made to fit, which is one list per init
+.LP
+The station image was 13144 bytes over.  The reason it is bigger at all
+is that
+.B armv7max25.dis
+is 19440 bytes more decoded than
+.B armv7minit.dis
+is, and the reason there is no room for that is the calibration store:
+the ceiling went from 917504 to 901120 when the store was sited below
+the bootloader, and the shell image had 6296 bytes to spare.
+.PP
+.B "The lever is XIPMODS, and the measurement is in the generated prog.s."
+Every module in the root carries a decoded instruction array in flash so
+that
+.I libinterp/load.c
+does not build one in RAM \- on this board that is the difference between
+having a shell and not.  Per module, measured:
+.DS
+.CW "sh.dis        77458"
+.CW "lil.dis       26185"
+.CW "sh/std.dis    25107"
+.CW "sed.dis       22701"
+.CW "osinit.dis    12960"
+.CW "...           347190 for the whole list"
+.DE
+.PP
+.B "A station runs none of them."
+.B Armv7max25.b
+loads
+.I Sys ,
+which is built in, and
+.I Radiocal ,
+which is
+.BR /dis/lib/radiocal.dis .
+It runs no commands because it runs no shell: at
+.B "nproc 7"
+the three kprocs
+.B #a
+starts and a shell will not both fit, and a station whose job is a link
+does not need a prompt.  So the station's list is one module, 9999
+bytes, and the image went from 914264 to
+.B 581672
+\- 319448 under the ceiling, with the shell image byte-identical at
+894824.
+.PP
+.B "Which list is used is selected by file and not by a conditional."
+.B xipdis-armv7minit
+and
+.B xipdis-armv7max25
+sit beside the config and the mkfile includes the one named after the
+init it is building.  They are not copies of each other: a module is in
+a list because that image's init runs it.  And a module left out is
+still in the root as its raw
+.B .dis
+and still not runnable here \- loading
+.B sh.dis
+asks malloc for 73536 bytes against 147456 in the whole board \- so the
+station image carries a shell it cannot run, which both files say.
+.PP
+.B "The include is a pipe include, and that was tested before anything was written to depend on it."
+.I "<xipdis-$INIT"
+does not work: this mk does not expand a variable in an include
+filename, it looks for a file called
+.CW "xipdis-$INIT" ,
+and \- worse \-
+.B "it warns that the file is missing and carries on with XIPDIS empty."
+.I "<| cat xipdis-$INIT"
+expands it and stops with
+.CW "bad include program status"
+when the file is not there.  There is deliberately no default: a new
+init has to say what it runs, because this board has already spent a day
+on a build that silently reverted to the shell image.
+.NH 2
+Flashed, and the station's calibration is part of flashed
+.LP
+Board 2, first run after the fixes:
+.DS
+.CW "flashverify: built, kerndate 1791075602"
+.CW "flashverify: the board says kerndate 1791075602, nproc 7"
+.CW "flashverify: ax25init: uid 203730395931500800300022"
+.CW "flashverify: ax25init: ppm 60300"
+.DE
+.PP
+The last line is a new check and it belongs there.
+.B Armv7max25
+soft-fails every calibration path on purpose \- it prints why and carries
+on, because a station that will not start is no better than one on the
+wrong frequency \- but these two boards are 64ppm apart, which at 915MHz
+is about 59kHz, and at 1200-baud 2-FSK that is no link at all.  A
+station running the driver's defaults boots clean, prints its address,
+beacons, hears nothing, and
+.B "looks exactly like a path that does not close,"
+which is the one thing a cabled run exists to rule out.  So the applied
+figure is checked as part of the flash rather than noticed afterwards.

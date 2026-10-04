@@ -1,0 +1,70 @@
+# The modules the SHELL image executes in place.
+#
+# One of these files per init, and the mkfile beside them picks the one
+# named after the init it is building.  They are not copies of each
+# other: a module is in a list because the image's init runs it, and
+# which modules an init runs is the difference between the images.
+#
+# WHAT BEING OUTSIDE THE LIST MEANS.  The root section of the config
+# still carries every module as its raw .dis, so a module left out of
+# here is still in the filesystem -- but on this part it is not
+# runnable.  Loading /dis/sh.dis asks malloc for 73536 bytes for its
+# Inst array alone, against 147456 bytes of RAM in the whole board, and
+# libinterp/load.c builds that array at load time for a module that has
+# no prepared one.  So a station image carries a shell it cannot run.
+# See doc/xip.ms and the XIPMODS comment in the mkfile.
+#
+# And the sizes are why there are two lists at all.  Decoded, measured
+# from the generated prog.s: sh.dis 77458 bytes, sh/std.dis 25107,
+# lil.dis 26185, sed.dis 22701 -- 347190 for this whole list, in an
+# image that may not pass 901120.
+XIPDIS=\
+	sh.dis\
+	sh/std.dis\
+	lil.dis\
+	lib/arg.dis\
+	lib/bufio.dis\
+	lib/daytime.dis\
+	lib/env.dis\
+	lib/filepat.dis\
+	lib/names.dis\
+	lib/rand.dis\
+	lib/readdir.dis\
+	lib/regex.dis\
+	lib/string.dis\
+	lib/workdir.dis\
+	echo.dis\
+	radiocal.dis\
+	radiocfg.dis\
+	lib/radiocal.dis\
+	md5sum.dis\
+	strings.dis\
+	ax25raw.dis\
+	ax25up.dis\
+	ax25chk.dis\
+	export.dis\
+	sed.dis\
+	cat.dis\
+	dd.dis\
+	ls.dis\
+	bind.dis\
+	pwd.dis\
+	cd.dis\
+	grep.dis\
+	wc.dis\
+	date.dis\
+	sleep.dis\
+	ps.dis\
+	basename.dis\
+	cleanname.dis\
+	sort.dis\
+	uniq.dis\
+	tee.dis\
+	tr.dis\
+	test.dis\
+	time.dis\
+	kill.dis\
+	read.dis\
+	env.dis\
+	xd.dis\
+	seq.dis\

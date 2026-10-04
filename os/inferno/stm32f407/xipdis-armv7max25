@@ -1,0 +1,18 @@
+# The modules the AX.25 STATION image executes in place.
+#
+# One: the init loads Sys, which is built in, and Radiocal, which is
+# this.  It runs no commands, because it runs no shell -- at NPROC 7 the
+# three kprocs #a starts and a shell will not both fit, and a station
+# whose job is a link does not need a prompt.  See
+# os/inferno/init/armv7max25.b.
+#
+# The counterpart of that: the shell image's list is 347190 bytes of
+# decoded arrays and this one is 9999, and the station init is 19440
+# bytes bigger than the shell init.  With the shell image's list a
+# station image came to 914264 bytes against a ceiling of 901120 and
+# would not convert -- see the i$CONF.hex rule in the mkfile.
+#
+# A module left out of here is still in the root as its raw .dis and
+# still not runnable on this part; xipdis-armv7minit says why.
+XIPDIS=\
+	lib/radiocal.dis\

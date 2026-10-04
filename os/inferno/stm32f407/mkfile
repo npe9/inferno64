@@ -93,26 +93,65 @@ KERNDATE=`{$NDATE}
 
 default:V: i$CONF
 
-install:V: i$CONF
-	cp i$CONF $INSTALLDIR/i$CONF
+install:V: i$CONF i$CONF.hex
+	cp i$CONF i$CONF.date i$CONF.hex $INSTALLDIR
 
-i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES $ROOT/tools/bin2ihex
+i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
 	$LD $LDFLAGS -o $target -H4 -T$KTZERO -D$KDATA -R0 -l $OBJ $CONF.$O $LIBFILES
-	# The USB HID bootloader already in this part's flash occupies
-	# the last 128K sector, from 0x080e0000, and reports BootStart
-	# 0xe0000 when asked.  An image past that cannot be written --
-	# mikroe-uhb refuses rather than overwriting the only way in --
-	# so bin2ihex is given that as a ceiling and fails here instead
-	# of at the far end of a flash cycle.
+	# THE STAMP THIS IMAGE PRINTS, written down where it can be read.
+	#
+	# KERNDATE is a fresh number every link, it is compiled in as an
+	# integer, and the only place it appears afterwards is the boot
+	# line the kernel prints.  Anything wanting to ask "is the board
+	# running THIS image" had to scrape it out of the build output --
+	# which works only on a build that relinked, and the build that
+	# matters most is the one after a failed conversion, where the
+	# kernel is already current and only the hex is remade.  Then the
+	# stamp came out empty and the check that catches a flash writing
+	# an old image was skipped.  So: beside the image, from the same
+	# recipe that compiled it in.
+	echo $KERNDATE > $target.date
+	cp $target $target.date $INSTALLDIR
+
+# THE HEX IS ITS OWN TARGET, and it has to be, for two reasons that both
+# cost a day.
+#
+# The conversion used to be the second half of the link recipe above,
+# with a cp after it.  bin2ihex refuses an image that would reach past
+# the ceiling -- that is the whole point of the ceiling -- and when it
+# refused, the cp that followed it succeeded, so the RECIPE succeeded and
+# mk reported a build.  KERNDATE went by in the output as usual.  What
+# was left on disk was the previous hex, and five flashes in a row wrote
+# it: a bootloader answered, mikroe-uhb printed its summary and exited
+# zero, and the board came up running the image it already had.  A
+# recipe's status is its LAST command's.
+#
+# And nothing depended on the hex, so a hex that was missing or older
+# than the kernel beside it was never noticed: mk had no reason to make
+# it, because the thing mk was asked for -- the kernel -- was up to
+# date.  Now the dependency is written down, so asking for the hex
+# rebuilds it whenever the kernel it comes from is newer.
+#
+# The USB HID bootloader already in this part's flash occupies the last
+# 128K sector, from 0x080e0000, and reports BootStart 0xe0000 when
+# asked.  An image past that cannot be written -- mikroe-uhb refuses
+# rather than overwriting the only way in.
+#
 # 901120 and not 917504: the last 16K below the bootloader is the
 # calibration store, CALBASE in mem.h, and an image that grew into it
-# would overwrite what a board had measured about itself.  So the ceiling
-# given here is the store's base and not the bootloader's, and an image
-# that would overlap fails to convert rather than silently taking it.
-# Keep the two numbers in step; mem.h says the same.
-	$ROOT/tools/bin2ihex $target $KTZERO i$CONF.hex 901120
-	cp $target i$CONF.hex $INSTALLDIR
+# would overwrite what a board had measured about itself.  So the
+# ceiling is the store's base and not the bootloader's.  Keep the two
+# numbers in step; mem.h says the same.
+#
+# The rm first, and the && after, so that a refusal leaves NO hex rather
+# than the last one that converted.  A stale hex beside a fresh kernel
+# is the shape of the whole failure above, and it is worse than a
+# missing file: a missing file stops a flashing tool at its first
+# argument, and an old one gets written to the board.
+i$CONF.hex: i$CONF $ROOT/tools/bin2ihex
+	rm -f $target $INSTALLDIR/$target
+	$ROOT/tools/bin2ihex i$CONF $KTZERO $target 901120 && cp $target $INSTALLDIR
 
 $ROOT/tools/bin2ihex:
 	cd $ROOT/tools; mk bin2ihex
@@ -152,56 +191,17 @@ $ROOT/tools/bin2ihex:
 # attrdb is not here either, and for a different reason: radiocfg(1)
 # used it and ran out of heap on the board even from a fresh boot, so it
 # parses the attrdb(6) subset itself.  See its own comment.
-XIPDIS=\
-	sh.dis\
-	sh/std.dis\
-	lil.dis\
-	lib/arg.dis\
-	lib/bufio.dis\
-	lib/daytime.dis\
-	lib/env.dis\
-	lib/filepat.dis\
-	lib/names.dis\
-	lib/rand.dis\
-	lib/readdir.dis\
-	lib/regex.dis\
-	lib/string.dis\
-	lib/workdir.dis\
-	echo.dis\
-	radiocal.dis\
-	radiocfg.dis\
-	lib/radiocal.dis\
-	md5sum.dis\
-	strings.dis\
-	ax25raw.dis\
-	ax25up.dis\
-	ax25chk.dis\
-	export.dis\
-	sed.dis\
-	cat.dis\
-	dd.dis\
-	ls.dis\
-	bind.dis\
-	pwd.dis\
-	cd.dis\
-	grep.dis\
-	wc.dis\
-	date.dis\
-	sleep.dis\
-	ps.dis\
-	basename.dis\
-	cleanname.dis\
-	sort.dis\
-	uniq.dis\
-	tee.dis\
-	tr.dis\
-	test.dis\
-	time.dis\
-	kill.dis\
-	read.dis\
-	env.dis\
-	xd.dis\
-	seq.dis\
+# The modules this image executes in place, which depend on which init
+# it carries: see xipdis-armv7minit for what the list means and
+# xipdis-armv7max25 for why it is not one list.
+#
+# A pipe include and not "<xipdis-$INIT", because this mk does not
+# expand a variable in an include filename -- it looks for a file
+# called "xipdis-$INIT", warns that it is missing, and carries on with
+# XIPDIS empty.  A pipe include expands it and, when the file is not
+# there, stops with "bad include program status".  There is deliberately
+# no default: a new init must say what it runs.
+<| cat xipdis-$INIT
 
 
 
@@ -219,7 +219,7 @@ $CONF.prog.s $CONF.xipmod.c: $INITDIR/$INIT.dis $XIPDISFILES
 <../port/portmkfile
 
 # After the include: portmkfile sets CLEANEXTRA empty.
-CLEANEXTRA=$CONF.prog.s $CONF.xipmod.c i$CONF.hex
+CLEANEXTRA=$CONF.prog.s $CONF.xipmod.c i$CONF.hex i$CONF.date
 
 ../init/$INIT.dis:	../init/$INIT.b
 	cd ../init; mk 'DISWORD='$DISWORD $INIT.dis

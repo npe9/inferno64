@@ -70,15 +70,72 @@ ROOT=$(pwd)
 export PATH="$ROOT/MacOSX/arm64/bin:$PATH"
 
 INIT=$2
+
+# ASK FOR THE HEX, NOT THE KERNEL, AND KEEP THE WHOLE BUILD LOG.
+#
+# This used to build istm32f407 and then flash istm32f407.hex, which are
+# two different files, and it read one thing out of the build output --
+# KERNDATE -- with a sed that cannot fail.  The kernel built; the
+# conversion to hex refused the image for being too big; and this
+# printed "built, kerndate <new>" and flashed a hex from an earlier
+# build.  Five times.  The board was reporting the truth all along.
+#
+# So: the target is the hex, because the hex is what gets written to the
+# board; the status of the build is checked; and the log is searched for
+# diagnostics rather than for the one line that was wanted.  See the
+# mkfile beside the config for the other half of this.
+BUILDLOG=/tmp/fv-build-$$.log
 if [ -n "$INIT" ]; then
 	rm -f os/inferno/stm32f407/stm32f407.prog.* \
 	      os/inferno/stm32f407/stm32f407.xipmod.* \
 	      os/inferno/stm32f407/stm32f407.root.*
-	STAMP=$(cd os/inferno/stm32f407 && mk INIT=$INIT istm32f407 2>&1 |
-		sed -n "s/.*KERNDATE='\([0-9]*\).*/\1/p" | tail -1)
+	(cd os/inferno/stm32f407 && mk INIT=$INIT istm32f407.hex) \
+		> $BUILDLOG 2>&1
 else
-	STAMP=$(cd os/inferno/stm32f407 && mk istm32f407 2>&1 |
-		sed -n "s/.*KERNDATE='\([0-9]*\).*/\1/p" | tail -1)
+	(cd os/inferno/stm32f407 && mk istm32f407.hex) > $BUILDLOG 2>&1
+fi
+brc=$?
+if [ "$brc" != 0 ]; then
+	echo "flashverify: the build exited $brc; its last lines were"
+	tail -12 $BUILDLOG | sed 's/^/    /'
+	echo "FLASHVERIFY-FAILED the build did not produce a hex"
+	rm -f $BUILDLOG
+	exit 1
+fi
+rm -f $BUILDLOG
+HEXF=$ROOT/os/inferno/stm32f407/istm32f407.hex
+ELFF=$ROOT/os/inferno/stm32f407/istm32f407
+
+# THE STAMP COMES FROM BESIDE THE IMAGE, not out of the build output.
+#
+# Scraping KERNDATE from what mk printed works only on a build that
+# relinked the kernel, and the build that matters is the one right after
+# a refused conversion: the kernel is already current, only the hex is
+# remade, nothing prints a stamp, and the comparison that catches an old
+# image on the board was skipped exactly when it was needed.  The mkfile
+# writes the stamp it compiled in to istm32f407.date; this reads that,
+# and insists on it.
+if [ ! -f "$ELFF.date" ]; then
+	echo "FLASHVERIFY-FAILED no $ELFF.date, so the stamp this image"
+	echo "prints is unknown and the flash cannot be verified"
+	exit 1
+fi
+STAMP=$(cat "$ELFF.date")
+if [ -z "$STAMP" ]; then
+	echo "FLASHVERIFY-FAILED $ELFF.date is empty"
+	exit 1
+fi
+if [ ! -f "$HEXF" ]; then
+	echo "FLASHVERIFY-FAILED mk exited zero and there is no hex"
+	exit 1
+fi
+# And older than the kernel beside it is the same fault wearing a
+# success: the mkfile now removes the hex when it cannot make one, but
+# this costs nothing and does not depend on that staying true.
+if [ -n "$(find "$ELFF" -newer "$HEXF" 2>/dev/null)" ]; then
+	echo "FLASHVERIFY-FAILED the hex is older than the kernel beside it,"
+	echo "so it is from an earlier build and must not be flashed"
+	exit 1
 fi
 case "$INIT" in
 *ax25*)	WANTPROC=7 ;;
@@ -92,13 +149,7 @@ if [ -n "$INIT" ] && [ "$CARRIES" != "from ../init/$INIT.dis" ]; then
 	echo "$CARRIES -- mk kept a generated table from a previous build"
 	exit 1
 fi
-if [ -z "$STAMP" ]; then
-	# nothing was rebuilt, so the stamp is whatever the image carries
-	# already; read it off the board after and compare to itself
-	echo "flashverify: nothing to rebuild; the stamp cannot be checked"
-	echo "flashverify: touch a source and run again if that matters"
-fi
-[ -n "$STAMP" ] && echo "flashverify: built, kerndate $STAMP"
+echo "flashverify: built, kerndate $STAMP"
 
 SESS=$(python3 - "$PORT" <<'PY'
 import re, subprocess, sys
@@ -234,5 +285,29 @@ if need:
               " for kproc\" forever, which looks like a board that booted."
               % p[-1])
         raise SystemExit(1)
+# AND, FOR A STATION, THAT IT APPLIED ITS CALIBRATION.
+#
+# armv7max25 soft-fails every calibration path on purpose -- it prints
+# why and carries on, because a station that will not start is no better
+# than one on the wrong frequency.  But these two boards are 64ppm
+# apart, which at 915MHz is about 59kHz, and at 1200-baud 2-FSK that is
+# no link at all.  A station running the driver's defaults therefore
+# boots clean, prints its address, beacons, hears nothing, and looks
+# exactly like a path that does not close -- which is the thing a
+# cabled run exists to rule out.  So the applied figure is part of
+# "flashed", not something to notice afterwards.
+if need:
+    t = b.text()
+    if "ax25init: ppm " not in t:
+        why = [l for l in t.split("\n") if l.startswith("ax25init:")]
+        print("FLASHVERIFY-FAILED the station did not apply a ppm"
+              " correction, so it is on the driver's default crystal.")
+        print("What it said about calibration:")
+        for l in why[-6:]:
+            print("    " + l)
+        raise SystemExit(1)
+    for l in t.split("\n"):
+        if l.startswith("ax25init: ppm ") or l.startswith("ax25init: uid "):
+            print("flashverify: " + l.strip())
 print("FLASHVERIFY-OK")
 PY
