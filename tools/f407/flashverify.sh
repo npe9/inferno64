@@ -42,6 +42,29 @@
 # so nothing has to be touched.
 #
 PORT=${1:?usage: flashverify.sh <tty>}
+
+# ONE AT A TIME, which clearing stale clients at startup does not give.
+#
+# A lock, because the clearing below is not enough and the reason is this
+# script's own use: run in the background, two invocations overlap, and
+# the second clears the FIRST one's client -- mid-write, with the board
+# in its bootloader.  Whichever client is alive when a bootloader appears
+# then writes whatever hex it was given, which may be several builds old.
+#
+# That is how both boards came to be running an image from the previous
+# day while five flashes in a row reported a bootloader, printed a
+# summary and exited zero.  The guard below caught every one of them;
+# what it could not say was that the cause was upstream in the flashing
+# and not in the board.
+if ! mkdir /tmp/flashverify.lock 2>/dev/null; then
+	echo "flashverify: /tmp/flashverify.lock exists, so another run is"
+	echo "in progress or one died holding it.  Two at once write each"
+	echo "other's images to whichever board enters its bootloader."
+	echo "FLASHVERIFY-FAILED not the only run"
+	exit 1
+fi
+trap 'rmdir /tmp/flashverify.lock 2>/dev/null' 0 1 2 3 15
+
 cd "$(dirname "$0")/../.." || exit 1
 ROOT=$(pwd)
 export PATH="$ROOT/MacOSX/arm64/bin:$PATH"
@@ -89,8 +112,8 @@ for s in re.findall(r"(\d+\.ttys\d+\.\S+)", out):
 PY
 )
 
-# STALE CLIENTS FIRST, AND THIS IS THE ROOT CAUSE OF THE DAY'S THREE
-# AMBIGUOUS FLASHES.  open_dev() in mikroe-uhb's hid/generic.py loops
+# STALE CLIENTS, WHICH THE LOCK MAKES MEANINGFUL: with one run at a time
+# anything still alive here is genuinely orphaned.  open_dev() in mikroe-uhb's hid/generic.py loops
 # forever waiting for VID/PID 0x1234/0x0001, and that match says nothing
 # about which board or which hex.  Two clients left over from earlier
 # backgrounded invocations -- one for hours -- grabbed the bootloader
@@ -154,7 +177,27 @@ if ! grep -q McuType /tmp/fv-$$.log; then
 	rm -f /tmp/fv-$$.log
 	exit 1
 fi
+# THE CLIENT'S OWN EXIT STATUS, which this captured and then ignored.
+#
+# Five flashes of one board have now ended with a bootloader answering,
+# mikroe-uhb printing McuType and BootStart, and the board still running
+# the image it had before.  A client that printed its summary and then
+# failed looks identical here to one that succeeded, because the only
+# thing read out of its log was that summary -- and the summary is
+# printed when it attaches, not when it finishes.
+#
+# So: the status, and on anything but zero the end of its log, which is
+# the one place the reason can be.
+if [ "$rc" != 0 ]; then
+	echo "flashverify: the client exited $rc; its last lines were"
+	grep -v "^DEBUG:mikroeuhb.device:send data:" /tmp/fv-$$.log |
+		tail -8 | sed 's/^/    /'
+fi
 rm -f /tmp/fv-$$.log
+if [ "$rc" != 0 ]; then
+	echo "FLASHVERIFY-FAILED the client did not succeed"
+	exit 1
+fi
 
 # And the board's own account.  This is the whole point.
 python3 - "$PORT" "$STAMP" "$WANTPROC" <<'PY'

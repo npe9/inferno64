@@ -6208,3 +6208,54 @@ and the thing it wants is a step attenuator.
 so the ladder must not be walked from the top into a cabled receiver.
 That is the same constraint already written down for the tinySA's input
 and it applies to the other board for the same reason.
+.PP
+.B "Five flashes that reported success and changed nothing, and the cause was this script's own use."
+Board 2 refused five in a row today: a bootloader answered,
+.I mikroe-uhb
+printed McuType and BootStart,
+.B "the client exited zero,"
+and the board went on running the image it had.
+.I Flashverify.sh
+caught every one by reading the board's own boot line back, which is what
+it is for, and what it could not say was where the fault was.
+.PP
+.B "It was not the board, and it was not the hex."
+Checked in turn: ^R^R resets board 2 and it reboots and prints a fresh
+banner, so the console path works; no 1234:0001 device is present between
+flashes, so nothing is lingering; and the port-to-board mapping is right,
+proved by
+.B #P/uid
+rather than by the ports \-
+.CW 2037303959315008002f0022
+on the USB UART and
+.CW 203730395931500800300022
+on the PL2303, which is what
+.B /lib/radio
+says they are.
+.B "That is what #P/uid is for and it is the only identity on this bench that a re-enumeration cannot move."
+.PP
+What it was:
+.B "two of this script's own runs overlapping."
+It is started in the background, a second invocation clears the first
+one's client \- mid-write, with a board in its bootloader \- and whichever
+client is alive when a bootloader next appears writes whatever hex it was
+given, which may be several builds old.  Board 1 ended the day running
+.CW 1790943023 ,
+which is the image built for board 2 the previous evening, and board 1
+had been verified on
+.CW 1790942893
+an hour earlier.
+.PP
+.B "So clearing stale clients at startup was the wrong fix for the right problem,"
+which is the lesson: it addressed the symptom I had seen \- somebody
+else's orphan \- and not the mechanism, which is that two runs of one
+script must not exist.  There is a lock now, taken before anything is
+built, and the clearing below it is meaningful again because with one run
+at a time anything alive really is an orphan.
+.PP
+Both boards are on
+.CW 1790943023
+with the shell init and five processes, which is a committed build and a
+working bench; what was being attempted when this started \- the station
+image in UI mode on both, to tell collision loss from path loss \- is not
+done.
