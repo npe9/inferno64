@@ -75,6 +75,23 @@ class PortBoard:
             os.write(self.fd, ch.encode())
             time.sleep(CHARDELAY)
 
+
+    def reset(self):
+        """^R twice running, which devuart handles in its receive interrupt.
+
+        NOT _stuff("\x12") twice: _stuff and _send both append a newline,
+        so that sends ^R, newline, ^R, newline -- and any character
+        between the two ^Rs disarms the sequence.  Eight reset-and-measure
+        trials ran against a board that was never reset, reporting a
+        delivery rate as if each trial had drawn a fresh beacon phase when
+        every one of them was the same phase.  tools/f407/flashverify.sh
+        has always done it with bare stuffs for this reason; this is that,
+        where the boards are.
+        """
+        for _ in range(2):
+            os.write(self.fd, b"\x12")
+            time.sleep(0.2)
+
     def live(self, wait=10.0):
         mark = "LV%d" % (int(time.time() * 1000) % 1000000)
         self._send("echo " + mark)
@@ -127,6 +144,24 @@ class Board:
         time.sleep(0.6)
         with open(self.hc, "rb") as f:
             return f.read().decode("utf-8", "replace")
+
+
+    def reset(self):
+        """^R twice running, which devuart handles in its receive interrupt.
+
+        NOT _stuff("\x12") twice: _stuff and _send both append a newline,
+        so that sends ^R, newline, ^R, newline -- and any character
+        between the two ^Rs disarms the sequence.  Eight reset-and-measure
+        trials ran against a board that was never reset, reporting a
+        delivery rate as if each trial had drawn a fresh beacon phase when
+        every one of them was the same phase.  tools/f407/flashverify.sh
+        has always done it with bare stuffs for this reason; this is that,
+        where the boards are.
+        """
+        for _ in range(2):
+            subprocess.run(["screen", "-S", self.sess, "-X", "stuff",
+                            "\x12"])
+            time.sleep(0.2)
 
     def live(self, wait=10.0):
         """Two copies of a fresh marker, or it is not running commands.
