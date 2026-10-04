@@ -220,14 +220,30 @@ while [ $n -lt 6 ]; do
 	n=$((n+1))
 	echo "flashverify: no bootloader yet, resetting again ($n)"
 done
-wait $FL
-rc=$?
-grep -E "McuType|BootStart" /tmp/fv-$$.log || true
-if ! grep -q McuType /tmp/fv-$$.log; then
-	echo "FLASHVERIFY-FAILED no bootloader appeared"
+
+# IF NO BOOTLOADER CAME, KILL THE CLIENT RATHER THAN WAIT FOR IT.
+#
+# open_dev() in mikroe-uhb's hid/generic.py loops forever waiting for
+# VID/PID 0x1234/0x0001, so a board that never enters its bootloader
+# leaves this script blocked in "wait" with nothing on its stdout and
+# the lock held.  It sat there for fifteen minutes with an empty client
+# log before I thought to look at the process list.
+#
+# A board that will not enter its bootloader in six resets is a result,
+# not something to go on waiting for.
+if ! grep -q "McuType" /tmp/fv-$$.log 2>/dev/null; then
+	kill $FL 2>/dev/null
+	wait $FL 2>/dev/null
+	echo "FLASHVERIFY-FAILED no bootloader appeared after six resets."
+	echo "The console given was $PORT; check it is the board's and not"
+	echo "another board's -- a reset stuffed into the wrong session"
+	echo "looks exactly like this.  What that console last said:"
 	rm -f /tmp/fv-$$.log
 	exit 1
 fi
+wait $FL
+rc=$?
+grep -E "McuType|BootStart" /tmp/fv-$$.log || true
 # THE CLIENT'S OWN EXIT STATUS, which this captured and then ignored.
 #
 # Five flashes of one board have now ended with a bootloader answering,
