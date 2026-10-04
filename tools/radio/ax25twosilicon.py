@@ -24,12 +24,82 @@ sys.path.insert(0, __import__("os").path.dirname(
     __import__("os").path.abspath(__file__)))
 from twoboard import open_board, Dead
 
-B1 = "/dev/cu.usbserial-AQ02DK34"
-B2 = "/dev/cu.PL2303-USBtoUART22430"
 WAIT = int(sys.argv[1]) if len(sys.argv) > 1 else 60
 
-b1 = open_board(B1, "board1")
-b2 = open_board(B2, "board2")
+
+def names():
+    """uid -> name, out of /lib/radio, which is what the boards read too."""
+    import os
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "..", "..", "lib", "radio")
+    uid, out = None, {}
+    for line in open(p):
+        line = line.split("#")[0]
+        for pair in line.split():
+            if pair.startswith("uid="):
+                uid = pair[4:]
+            elif pair.startswith("name=") and uid:
+                out[uid] = pair[5:]
+    return out
+
+
+def stations():
+    """The two boards, found by the serial number each one printed.
+
+    NOT by a hardcoded port.  This script named two ttys, and one of
+    them -- /dev/cu.usbserial-AQ02DK34 -- is not board 1's any more:
+    the adapter on that board was changed and the tty went with it, so a
+    run that had worked reported "board1 is not running the station
+    init" about a board that was.  twoboard.by_port's comment says the
+    port is the stable name because it belongs to the adapter and not
+    to the terminal, which is true and is the whole problem here, since
+    the adapter is not the board either.
+
+    The only name on this bench that nothing can move is the 96-bit
+    serial in the part, and a station prints it: armv7max25 looks its
+    calibration up by that number and says which one it used.  So this
+    reads every tty a console is sitting on, takes the uid each board
+    states, and maps it through /lib/radio -- the same file, by the same
+    key, as the boards themselves.
+    """
+    import glob
+    byuid = names()
+    found = {}
+    for port in sorted(glob.glob("/dev/cu.*")):
+        if "Bluetooth" in port or "debug-console" in port:
+            continue
+        if not subprocess.run(["lsof", "-t", port], capture_output=True,
+                              text=True).stdout.split():
+            continue        # nothing has it open, so no console is on it
+        try:
+            b = open_board(port, port)
+        except Exception:
+            continue
+        m = re.findall(r"ax25init: uid ([0-9a-f]{24})", b.text())
+        if not m:
+            continue
+        nm = byuid.get(m[-1])
+        if nm is None:
+            print("note: %s says uid %s, which is not in /lib/radio"
+                  % (port, m[-1]))
+            continue
+        b.name = nm
+        found[nm] = (b, port)
+    return found
+
+
+import subprocess
+st = stations()
+if len(st) < 2:
+    print("VOID: found %d station console(s): %s"
+          % (len(st), ", ".join("%s on %s" % (n, p)
+                                for n, (b, p) in st.items()) or "none"))
+    print("A station prints \"ax25init: uid\" at boot; a board running the")
+    print("shell image prints no such line and is not one of these.")
+    raise SystemExit(1)
+(b1, p1), (b2, p2) = st["board1"], st["board2"]
+print("board1 on %s, board2 on %s, by the serial each one printed"
+      % (p1, p2))
 
 
 def account(b, name):
