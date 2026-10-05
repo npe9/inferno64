@@ -7912,3 +7912,109 @@ guard.  The card still holds the shipping
 kernel, so a power cycle returns the board to it \(em but the JTAG readers will
 REFUSE against the card's build until it is reinstalled, which is the stamp check
 working rather than a fault.
+.NH 2
+H1a.  The vblank question is ANSWERED: the phase is predictable to 3 ppm
+.LP
+This item's last open piece was recorded as a design question \(em the flip
+cannot wait for vertical blank, because
+.CW bcmpresent()
+holds
+.CW drawlock
+and
+.CW mboxvsync()
+holds
+.CW mboxlock
+for a whole frame.  It is answerable instead, and the reframing is the whole of
+it:
+.B "a wait is only one way to know where vblank is."
+If the period is stable the phase can be COMPUTED from
+.CW cycles()
+against a known base, with no mailbox call per frame at all.
+.PP
+.CW vsdrift()
+calibrates over 8 frames, runs on to 240, and asks how far a prediction from the
+short fit has drifted over the long one.  On this board:
+.P1
+SCREEN drift frames 240 period8 319999 periodN 320000 (ticks)
+SCREEN drift period8 16666 us periodN 16666 us
+SCREEN drift predict EARLY by 12 us over 240 frames
+SCREEN vsync errors 0 gaps(us) 9416 16666 16666 16666 16667 16665 16666 16666
+.P2
+.IP \(bu
+The two fits differ by ONE TICK in 320000 \(em
+.B "3.1 parts per million."
+.IP \(bu
+Predicting frame 240 from the 8-frame fit is off by
+.B "12us, which is 0.072 per cent of a frame."
+.IP \(bu
+That is 0.05us a frame, so the phase takes
+.B "46 minutes to drift half a frame"
+and 93 to drift a whole one.
+.PP
+.B "And the earlier 16us spread was measurement noise, not instability."
+The first probe reported gaps of 16658..16674; this one reports 16665..16667, a
+2us spread.  Eight samples could not tell noise from slope, which is why the
+question needed 240 rather than a second look at 8.
+.NH 3
+What that permits, and why it removes the lock problem rather than scheduling around it
+.LP
+Calibration is already done once at boot by
+.CW teararm() ,
+which sets
+.CW vsbase
+and
+.CW vsperiod .
+With a 3 ppm period the next vblank is
+.P1
+next = vsbase + ((now - vsbase)/vsperiod + 1) * vsperiod
+.P2
+computed from
+.CW cycles()
+alone.  So:
+.IP \(bu
+.B "No mailbox call per frame."
+The only mailbox traffic is the brief
+.CW mboxvirtoffset()
+write that IS the flip, plus a re-calibration every few MINUTES \(em and 46
+minutes to drift half a frame means even that is generous.
+.IP \(bu
+.B "No frame-long hold of either lock."
+.CW mboxvsync() 's
+frame-long
+.CW mboxlock
+hold disappears entirely, because nothing waits on the mailbox.
+.IP \(bu
+.B "The critical section becomes short and its timing becomes known."
+A kproc sleeps until the computed vblank, then takes
+.CW drawlock
+only to swap
+.CW fb
+and issue the offset write \(em tens of microseconds at a predictable moment,
+not a frame-long wait at an arbitrary one.
+.PP
+.B "That last point is the mechanism, stated plainly:"
+prediction converts a frame-long WAIT into a short WRITE at a known time.  The
+reason the original design could not put the wait outside both locks is that the
+flip and the
+.CW fb
+swap must be atomic with respect to drawing, so drawlock is unavoidable \(em but
+the DURATION of that hold is what matters, and arriving at a vblank rather than
+waiting for one is what makes it short.
+.NH 3
+What is still not established
+.LP
+.IP \(bu
+Nothing above has been BUILT.  The measurement says the design is possible; it
+is not a tested flip in vertical blank.
+.IP \(bu
+The drift figure is from one 4-second run on one board at one temperature.  A
+crystal's rate moves with temperature, and 3 ppm is small enough that thermal
+drift could be comparable \(em so the re-calibration interval should be chosen
+from a measurement across a warm-up, not from this number.
+.IP \(bu
+And the tear itself remains unmeasured on silicon.  The tear probe reports
+.CW "NOT CALIBRATED"
+because
+.CW teararm()
+runs after the reads, and a readback cannot see a tear in any case \(em that needs
+a camera, which is the one claim no instrument in this tree can make.

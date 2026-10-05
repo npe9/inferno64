@@ -198,6 +198,7 @@ static uvlong	nflush, nflushbyte, ncompose, ncomposeskip;
  */
 enum {
 	Tearprobe	= 1,	/* data, not a conditional compile */
+	Driftframes	= 240,	/* 4 seconds: long enough for a slope to show */
 	Tearframes	= 120,	/* close the window after this many frames */
 };
 
@@ -210,6 +211,7 @@ static uvlong	ntearop, ntearrow, nopchecked;
 static int	vsclosed;	/* the window filled up before it was read */
 
 static void teararm(void);
+static void vsdrift(void);
 
 static uvlong	ndamage[5];
 static char	*damagename[5] = {
@@ -570,6 +572,7 @@ screenstats(void)
 		vsmeasured == 0? "NOT CALIBRATED":
 		(vsclosed? "window full": "window open"));
 	vsyncprobe();
+	vsdrift();
 	teararm();
 }
 
@@ -1238,6 +1241,75 @@ drawcursor(Drawcursor *c)
  * Arm and read with two writes of "dump" to /dev/kpctl: the first arms,
  * the workload runs, the second reports and re-arms.
  */
+/*
+ * CAN THE VERTICAL BLANK BE PREDICTED, instead of waited for?
+ *
+ * This is the gating question for the one thing still between the page flip and
+ * turning it on.  bcmpresent() cannot wait for vblank: it runs with drawlock
+ * held, and mboxvsync() holds mboxlock for a whole frame, so waiting there
+ * stalls every Dis draw for up to 16.7ms while starving sdhostbcm, sdhcibcm,
+ * btbcm and pwmbcm.  mboxprop()'s own comment already rules out a periodic
+ * vsync kproc for the same reason: at 60 waits a second it holds the mailbox
+ * essentially always.
+ *
+ * But a wait is only one way to know where vblank is.  If the period is stable,
+ * the phase can be COMPUTED from cycles() against a known base -- no mailbox
+ * call per frame at all, which removes the lock problem rather than scheduling
+ * around it.  vsbase and vsperiod already exist for the tear probe.
+ *
+ * So: calibrate over a SHORT span, then check how far a prediction from it has
+ * drifted after a LONG one.  The short-span period is what a kproc would use;
+ * the residual is the error it would accumulate.  An eight-frame probe reported
+ * gaps of 16658..16674us -- a 16us spread about 16665.6 -- and whether that is
+ * noise or slope cannot be told from eight samples.
+ */
+static void
+vsdrift(void)
+{
+	uvlong t0, t8, tn;
+	uvlong p8, pn, predicted, actual;
+	ulong hz;
+	int i, err;
+
+	if((hz = m->cpuhz) == 0)
+		return;
+	err = 0;
+	if(mboxvsync() < 0)
+		return;
+	cycles(&t0);
+	for(i = 0; i < 8; i++)
+		if(mboxvsync() < 0)
+			err++;
+	cycles(&t8);
+	for(i = 8; i < Driftframes; i++)
+		if(mboxvsync() < 0)
+			err++;
+	cycles(&tn);
+	if(err != 0 || tn <= t0 || t8 <= t0){
+		print("SCREEN drift errors %d -- no reading\n", err);
+		return;
+	}
+	p8 = (t8 - t0) / 8;
+	pn = (tn - t0) / Driftframes;
+	predicted = t0 + p8 * Driftframes;	/* where the 8-frame fit says frame N lands */
+	actual = tn;
+	print("SCREEN drift frames %d period8 %llud periodN %llud (ticks)\n",
+		Driftframes, p8, pn);
+	print("SCREEN drift period8 %llud us periodN %llud us\n",
+		p8 * 1000000 / hz, pn * 1000000 / hz);
+	/*
+	 * The decisive number: predicting frame N's vblank from the 8-frame fit,
+	 * how far off is it?  Reported in microseconds and as a fraction of a
+	 * frame, because what matters is whether the error stays well inside one.
+	 */
+	if(predicted >= actual)
+		print("SCREEN drift predict LATE by %llud us over %d frames\n",
+			(predicted - actual) * 1000000 / hz, Driftframes);
+	else
+		print("SCREEN drift predict EARLY by %llud us over %d frames\n",
+			(actual - predicted) * 1000000 / hz, Driftframes);
+}
+
 static void
 teararm(void)
 {
