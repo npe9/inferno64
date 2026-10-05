@@ -6819,3 +6819,37 @@ radio problem.  What the bench did was refuse the two wrong
 explanations \- the path, by measuring it at seven decibels, and the
 beacon phase, by eight resets that all read zero \- and hold the
 question open until the code was read.
+.NH 2
+And the connected link over the cable, which is the case the watchdog was written for
+.LP
+The answerer announces and then transmits nothing until it has accepted,
+so it is the station that cannot reach the recovery in
+.IR rxarm .
+One attempt before any of this was fixed had the caller reach
+.B Sconn
+while the answerer never printed
+.BR accepted .
+With the bus-lock fix in, roles back in
+.B /lib/radio
+and both boards reflashed:
+.DS
+.CW "answerer: link 35: INFERNO-AX25-34"
+.CW "          state connected vr 3 received 35"
+.CW "          retransmitted 0 rejin 0 rejout 0"
+.CW "caller:   sent 35, state connected vs 3 va 2"
+.CW "          retransmitted 0 rejin 0 rejout 0"
+.CW "          radio sent/recv 36 recv 35 crcerr 0"
+.CW "          fifoerr 0  watch 0 of 146"
+.DE
+SABM and UA crossed, thirty-five numbered I frames arrived in order, the
+thirty-five the caller's radio received are the answerer's
+acknowledgements, and
+.B "nothing was retransmitted and nothing was rejected."
+.PP
+.B "What that does and does not show."
+It shows the arrangement that failed now works, with the answerer being
+exactly the receive-only case.  It does not show that the earlier failure
+was the FIFO latch, because that run was not instrumented to say so \-
+the station had no
+.B state
+field then, which is the whole reason it was added.

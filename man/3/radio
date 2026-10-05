@@ -676,12 +676,32 @@ listening, at the top of every transmit, and from the clock once a
 second for a part whose reader is blocked and which therefore never
 transmits at all.
 .PP
-.B "The cause was reading one packet per interrupt."
-An interrupt pending bit coalesces edges, so two packets arriving between
-the handler's runs raise one interrupt and one stays in the FIFO; the
-residue only grows, and four frames fill 128 bytes.  The handler drains
-now, stopping while PKT_SYNC_RXTX is high because that means a packet is
-still arriving and its length byte has not been followed by its payload.
+.B "The cause was reading this file."
+.I Cc1120stat
+read four of its values after releasing the bus lock \- they were
+arguments to its
+.IR snprint ,
+and an argument is evaluated where it is written \- which is seven
+register reads on an unlocked bus.  The lock is an
+.I ilock
+because the packet interrupt touches the same bus, so with it released
+the interrupt can fire between a register read's two chip selects and
+push a FIFO burst into the middle of it.  A station reading
+.B stats
+every five beacons corrupted its own receiver at that rate:
+.B fifoerr
+14 per quarter hour and about a third of the frames delivered, against
+.B "0 and all of them"
+once the reads moved under the lock.
+.PP
+The handler also drains the FIFO rather than taking one packet per
+interrupt, stopping while PKT_SYNC_RXTX is high because that means a
+packet is still arriving and its length byte has not been followed by
+its payload.  That is a correctness fix and not the cure: reading one
+frame out of a FIFO holding two is wrong on its own terms, but the edge
+counters show nothing was ever being missed \- 70 falling edges for 35
+transmits and 35 receptions, the pin being named RXTX because it asserts
+for this part's own transmits too.
 .PP
 .B "This is why fifoerr is in the stat file rather than only in a comment."
 The counter that was supposed to report it,
