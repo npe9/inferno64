@@ -909,6 +909,29 @@ cc1120interrupt(Radio *r)
 	 * spin.  Four is the FIFO.
 	 */
 	for(ndrain = 0; ndrain < Rxdrain; ndrain++){
+		/*
+		 * AND ONLY COMPLETE FRAMES, which is what draining has to
+		 * be careful about and the one-packet-per-edge version
+		 * never had to.
+		 *
+		 * This function is entered on the falling edge of
+		 * PKT_SYNC_RXTX, so the FIFO holds at least one whole
+		 * packet.  It can also hold the beginning of the NEXT
+		 * one: NUM_RXBYTES is non-zero in the middle of a
+		 * reception, and a loop that trusted it would read a
+		 * length byte for a frame whose payload has not arrived
+		 * and then read bytes out of an empty FIFO.
+		 *
+		 * PKT_SYNC_RXTX says exactly this: SWRU295E table 10,
+		 * asserted when the sync word has been received and
+		 * de-asserted at the end of the packet.  High means a
+		 * packet is arriving now.  So after the first pass, stop
+		 * if the pin is high and let that packet's own falling
+		 * edge bring us back -- by which time there will be two
+		 * to drain, which is the point.
+		 */
+		if(ndrain > 0 && s->gpio != nil && s->gpio(s))
+			break;
 		s->lock(s);
 		st = state(rr);
 		if(st == Strxerr){
