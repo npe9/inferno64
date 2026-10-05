@@ -1,0 +1,39 @@
+--- a/target/i386/tcg/system/fpu_helper.c
++++ b/target/i386/tcg/system/fpu_helper.c
+@@ -39,10 +39,26 @@
+     }
+ }
+ 
++/*
++ * IGNNE# is a pin of the first processor's, driven by the chipset; on a
++ * real machine nothing another processor does can change the first
++ * one's other state through it.  Here it is a bit of that processor's
++ * hflags2, and the processor that clears it (by FNCLEX, FLDENV, FRSTOR
++ * or FXRSTOR, cpu_set_fpus) or sets it (port F0h) may be any other: with
++ * MTTCG a plain read-modify-write from another thread can write back
++ * the first processor's hflags2 as it was, undoing whatever that
++ * processor's own thread changed in between -- HF2_NPT_MASK at VMRUN or
++ * #VMEXIT, so that its host ran on its guest's nested page tables, or
++ * its guest without them.  So the bit is changed only when it has to
++ * be, and atomically.
++ */
+ void cpu_clear_ignne(void)
+ {
+     CPUX86State *env = &X86_CPU(first_cpu)->env;
+-    env->hflags2 &= ~HF2_IGNNE_MASK;
++
++    if (qatomic_read(&env->hflags2) & HF2_IGNNE_MASK) {
++        qatomic_and(&env->hflags2, ~HF2_IGNNE_MASK);
++    }
+ }
+ 
+ void cpu_set_ignne(void)
+@@ -51,7 +67,7 @@
+ 
+     assert(bql_locked());
+ 
+-    env->hflags2 |= HF2_IGNNE_MASK;
++    qatomic_or(&env->hflags2, HF2_IGNNE_MASK);
+     /*
+      * We get here in response to a write to port F0h.  The chipset should
+      * deassert FP_IRQ and FERR# instead should stay signaled until FPSW_SE is

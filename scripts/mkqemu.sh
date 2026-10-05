@@ -16,6 +16,17 @@
 #	0003-igb-legacy-rx-descriptors.patch
 #		SRRCTL.DESCTYPE 0 means legacy receive descriptors;
 #		QEMU's always wrote the advanced format (a TODO stub)
+#	0004-i386-ignne-atomic.patch
+#		IGNNE# is a chipset pin; QEMU's is a bit of the first
+#		processor's hflags2 that any other processor's FXRSTOR
+#		rewrote, unlocked, under MTTCG -- undoing the first's
+#		nested-paging switch at VMRUN or #VMEXIT
+#	0005-amd-iommu-bus-number-at-translation.patch
+#		a requester ID carries its bus's number as it is now;
+#		QEMU's AMD-Vi took it before firmware numbered the bus,
+#		so a device behind a bridge was bus 0.  Also: a
+#		not-present PTE is an I/O page fault, an event's
+#		address is kept, and its RW flag is bit 5
 #
 # usage: scripts/mkqemu.sh      installs into $ROOT/.qemu/local;
 #                               scripts/vmhost.sh uses it when present
