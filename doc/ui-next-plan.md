@@ -2148,8 +2148,31 @@ accumulates the overlap — one `rectclip` and an add:
 
 | workload | flushes | eager | deferred | saving |
 |---|---|---|---|---|
-| `runtests -g` @640×480 | 197 | 20952256 B | 3084216 B | 84.9% |
-| `wmtest -n 40` @640×480 | 122 | 8171520 B | 1182672 B | 84.9% |
+| `runtests -g` @640×480 | 197 | 20952256 B | 3084216 B | **85.28%** |
+| `wmtest -n 40` @640×480 | 122 | 8171520 B | 1182672 B | **85.53%** |
+
+**CORRECTED: these were both given as 84.9%, which is a different
+quantity.** The saving is `1 − deferred/eager`, the ratio of the two
+schemes' costs, and that is 85.28% and 85.53%. What 84.9% actually was is
+`overlap/eager` — the fraction of eager's bytes that are *repeated*
+damage. Related, not the same, and `deferred + overlap ≠ eager` because
+`deferred` and `overlap` partition `|damage(N−1)|` while `eager` sums
+`|damage(N)|`, so they differ by one frame's worth (71632 B and 48112 B
+here).
+
+Found by making `INFERNO_FRAME_DAMAGE` **print** the saving instead of
+leaving `1 − deferred/eager` as arithmetic for the reader — which is how it
+had been quoted by hand in several commits. An instrument that makes its
+consumer compute the headline invites exactly this.
+
+**And the identical 84.9% for two unrelated workloads should have been a
+tell rather than a tidy coincidence.** `overlap/eager` is 84.9379% for
+`runtests -g` and 84.9381% for `wmtest -n 40` — four decimal places apart
+on workloads with different damage, which is not chance and suggests the
+ratio is structural rather than a property of either. I have no explanation
+for it and am recording it as unexplained rather than inventing one. The
+*saving* figures differ, 85.28% against 85.53%, which is what two different
+workloads should look like.
 
 That is 1770µs eager against 261µs, and 1115µs against 161µs. The saving
 is overlap, which is what the model says, and not coverage, which is what
@@ -2162,7 +2185,7 @@ established that a flush is a frame. The per-transition data says it
 probably is not: `damage(N-1)` is entirely *inside* `damage(N)` in 132 of
 196 transitions, and 120 of 121 for `wmtest`, with **no** transition
 having zero overlap. Nested, growing rectangles are what several flushes
-refining one logical update look like — so 84.9% may be measuring
+refining one logical update look like — so the figure may be measuring
 redundancy *within* a frame rather than overlap *between* frames.
 
 If a flush is not a frame then the figure is an upper bound, because a
@@ -2185,10 +2208,10 @@ incidental flushes in with real presents.
 
 | workload | boundary | count | eager | deferred | saving | per frame |
 |---|---|---|---|---|---|---|
-| `runtests -g` | per flush | 197 | 20952256 B | 3084216 B | 84.9% | 1770→261µs |
-| `runtests -g` | per `'v'` | 197 | 20952256 B | 3084216 B | 84.9% | 1770→261µs |
-| `wmtest -n 40` | per flush | 122 | 8171520 B | 1182672 B | 84.9% | 1115→161µs |
-| `wmtest -n 40` | per `'v'` | 122 | 8171520 B | 1182672 B | 84.9% | 1115→161µs |
+| `runtests -g` | per flush | 197 | 20952256 B | 3084216 B | 85.28% | 1770→261µs |
+| `runtests -g` | per `'v'` | 197 | 20952256 B | 3084216 B | 85.28% | 1770→261µs |
+| `wmtest -n 40` | per flush | 122 | 8171520 B | 1182672 B | 85.53% | 1115→161µs |
+| `wmtest -n 40` | per `'v'` | 122 | 8171520 B | 1182672 B | 85.53% | 1115→161µs |
 
 The two boundaries agree **exactly** — same counts, same bytes. So on
 these workloads Tk emits one `'v'` per update: a flush *is* a frame at
@@ -2245,7 +2268,7 @@ window:
 | mean box per present | 108131 B = 8.8% of the 640×480 screen | 1797681 B = **93.6% of its 800×600 window** |
 | eager | 20544912 B | 49669940216 B |
 | deferred | 3084216 B | 142111560 B |
-| saving | 85.0% | **99.71%** |
+| saving (1 − deferred/eager) | **84.99%** | **99.71%** |
 
 So the same instrument is **tight at one end of that axis and inflated by
 3× at the other**, and which end you are on is a property of the client:
@@ -2256,7 +2279,8 @@ nearly the screen while the fills themselves are tiny.
 **The saving goes the other way from the inflation. The measurement says
 so directly: consecutive boxes overlap by 99.71% of a box** — they do not
 merely intersect, they virtually coincide, and that is why almost nothing
-needs carrying forward. Deferring saves 99.71% against 85.0% for Tk.
+needs carrying forward. Deferring saves 99.71% against 84.99% for Tk, both
+as 1 - deferred/eager.
 
 **The saturation argument for that proves less than the number it was
 invoked to support — and for Tk it proves nothing at all.** The reasoning

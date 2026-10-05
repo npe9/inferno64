@@ -750,9 +750,31 @@ frameboundary(void)
 		vnflushmax = vnflush;
 	vnflush = 0;
 	if(vframes % (uvlong)vevery == 0)
-		print("FRAMEDAMAGE frames %llud  eager %llud  deferred %llud  overlap %llud  mean %llud  partial %llud of %llud\n",
+	{
+		/*
+		 * The SAVING, printed rather than left for the reader.
+		 *
+		 * This line used to give eager, deferred and overlap and stop
+		 * there, so the figure every result actually quotes --
+		 * 1 - deferred/eager -- was arithmetic the reader had to do,
+		 * and I did it by hand for 84.9% and 99.71% in separate
+		 * commits.  A number whose interpretation depends on a
+		 * calculation someone else performs is not a result, and an
+		 * instrument that makes its consumer compute the headline
+		 * invites exactly the errors this one has already produced.
+		 *
+		 * Integer arithmetic, scaled by 100: no floating point in
+		 * the kernel-side half of this and none wanted here either.
+		 */
+		uvlong savepc = 0;
+
+		if(veager > 0)
+			savepc = ((veager - vdeferred) * 10000) / veager;
+		print("FRAMEDAMAGE frames %llud  eager %llud  deferred %llud  overlap %llud  mean %llud  SAVING %llud.%.2llud%%  partial %llud of %llud\n",
 			vframes, veager, vdeferred, voverlap, veager/vframes,
+			savepc/100, savepc%100,
 			vpartial, vpartialtot);
+	}
 	if(vframes % (uvlong)vevery == 0){
 		int k;
 
