@@ -8160,3 +8160,87 @@ that they were unrelated.
 a hypothesis it would have survived indefinitely without being tested, which is
 the worse outcome: a candidate explanation nobody can be bothered to kill
 accumulates the authority of having stood.
+.NH 2
+H4.  A documented failure that manifests as a panic looks exactly like a new bug
+.LP
+An install failed pre-flight twice in a row, identically:
+.P1
+kinstall: pre-flight -- build 1791238242 boots
+kinstall: KI-ALIVE did not appear within 300s
+kinstall: build 1791238242 boots but its command poller never answered
+kinstall: THE CARD WAS NOT CHANGED.
+.P2
+The card being untouched is
+.CW kinstall 's
+contract working, and the reason its own comment says the card is the last thing
+it touches rather than the first.
+.PP
+.B "Two conclusions walked back on the way to the right one."
+.IP \(bu
+.B "A transient."
+Retried once; it failed identically.  Two of the same is a pattern.
+.IP \(bu
+.B "The host styx server."
+.CW styxd.sh 's
+own comment records the server genuinely stopping "on a server that had been up
+three and a half days", and this one had been up TEN DAYS.  But its check is a
+version handshake, and
+.CW emu-styxlisten-stops-accepting
+records that a desynced session still answers version while refusing to mount \(em
+so the weak check was suspect.  Tested the strong one, an actual MOUNT:
+.P1
+mount -A tcp!127.0.0.1!6666 /n/x; ls /n/x/os/inferno/raspi3b/board.cmd
+  -> exit 0, file listed
+.P2
+The host was fine.  The ten days was a red herring, and the only reason it got
+tested is that a weaker check had been mistaken for a stronger one \(em which is
+worth keeping even though the answer was no.
+.IP \(bu
+.B "My own change, on seeing dumpstack in the ring."
+Also premature.
+.PP
+.B "What the evidence actually says."
+.P1
+trap type 0 esr 0x2000000 pc 0x17927c    EC=0, "unknown reason"
+word at 0x17927c = 0x00007568            bytes 68 75 = ASCII "hu"
+shutdown: devtab[10] is corrupt (0x2f2f60)   0x2f2f = ASCII "//"
+.P2
+Two different pointers holding ASCII.  That is a CORRUPTION signature rather
+than a logic error, and it is what
+.CW boot.sh 's
+header documents:
+.P1
+jtagrestart succeeds about half the time; the other half the console
+comes up garbled and the kernel panics in chandevreset with a devtab
+full of rubbish.  The cause is not known.  What is known is that a
+retry works, so this retries
+.P2
+So: the known warm-restart flake, hit twice at about one chance in four.  The
+change under test is
+.CW vsdrift() ,
+called only from
+.CW screenstats()
+and never at boot, and
+.CW undefimm
+reports zero undefined encodings in the image \(em so it is neither this change
+nor the peer's instruction-encoding class.
+.PP
+.B "The lesson, and it is about diagnosis rather than about the bug."
+.CW dumpstack
+said a panic happened.  It did not say whose fault it was.
+.B "A documented failure mode that manifests as a panic is indistinguishable from a new bug that manifests as a panic,"
+and what separated them was decoding the actual words rather than reading the
+summary line \(em ASCII in two unrelated pointers, which no logic error produces.
+The panic message is the cheapest thing to read and the least discriminating.
+.PP
+.B "And the recovery needed no human,"
+which
+.CW kinstall
+itself says at the point of failure:
+.CW "sh tools/jtag/boot.sh"
+with a good
+.CW kernel8.img
+gets back in.  It did, on attempt 1 \(em and reported "the console saw nothing,
+but the ring says build 1791238242 is running", which is the stamp-based
+confirmation that script exists for, because reading the screen buffer without a
+reference point has given a confident wrong answer four times in that directory.
