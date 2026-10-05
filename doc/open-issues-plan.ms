@@ -8018,3 +8018,76 @@ because
 .CW teararm()
 runs after the reads, and a readback cannot see a tear in any case \(em that needs
 a camera, which is the one claim no instrument in this tree can make.
+.NH 2
+H1a.  Which quantity the saving figures are, and why the peer's two agreed
+.LP
+A peer applying the put-the-verdict-in-the-output rule to their own instrument
+found that the 84.9 per cent quoted throughout is
+.CW overlap/eager ,
+not
+.CW "1 - deferred/eager"
+\(em the latter being what the word "saving" means and what was being computed by
+hand in commit messages.  Their corrected figures are 85.28 and 85.53 per cent.
+.PP
+.B "That lands on this plan's numbers too, and they are the same quantity."
+The 99.44 per cent recorded here was computed as
+.CW "100*overlap/eager" .
+Both ways on the same data:
+.P1
+gfxstress fill, per-present, pixels
+  overlap/eager       99.4359%
+  1 - deferred/eager  99.3987%
+  difference           0.0372 points
+.P2
+So the comparison with their 84.9 was CONSISTENT \(em both sides were
+.CW overlap/eager
+\(em but neither of us said which, and a column heading that means one thing is
+worth less than one that says what it means.  The figures above now carry the
+expression.
+.PP
+.B "And their partition observation holds here:"
+.CW deferred
+and
+.CW overlap
+partition
+.CW |damage(N-1)|
+while
+.CW eager
+sums
+.CW |damage(N)| ,
+so they do not add up \(em 248566522 against 248474010, off by 92512, which is
+about one frame's worth on this workload.  That offset is why the two
+expressions differ at all, and it is why they converge as the run lengthens.
+.NH 3
+Their "unexplained" agreement has a candidate explanation: both workloads are Tk
+.LP
+They recorded
+.CW overlap/eager
+coming out 84.9379 per cent for
+.CW "runtests -g"
+and 84.9381 per cent for
+.CW "wmtest -n 40"
+\(em four decimal places apart on workloads with different damage \(em as
+structural and unexplained, and were right not to invent a reason.
+.PP
+.B "But those are not two unrelated workloads.  They are two Tk workloads."
+Both drive the same repaint algorithm, so a Tk-characteristic overlap fraction is
+what one would expect rather than a coincidence.  The evidence from this side is
+the non-Tk point on the IDENTICAL metric:
+.P1
+runtests -g   (Tk)       84.9379%
+wmtest -n 40  (Tk)       84.9381%
+gfxstress fill (not Tk)  99.4359%
+.P2
+Fourteen points away.  So the ratio looks like a property of the CLIENT'S
+repaint pattern rather than something structural in the metric \(em which is the
+weaker and more useful reading, because it is testable: a third Tk workload
+should land near 84.94, and a third non-Tk one should not.
+.PP
+.B "Their tell and this plan's are the same reasoning on different statistics."
+Theirs was "implausibly equal across workloads"; this plan's was "consistently
+early, never late".  In both cases a quantity that should have been
+noise-dominated came out systematic, and in both the first candidate was the
+instrument rather than the system.  Check the SHAPE of the residual \(em its sign
+distribution, or its agreement where none is expected \(em before trusting its
+magnitude.
