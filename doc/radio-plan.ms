@@ -6447,3 +6447,162 @@ beacons, hears nothing, and
 .B "looks exactly like a path that does not close,"
 which is the one thing a cabled run exists to rule out.  So the applied
 figure is checked as part of the flash rather than noticed afterwards.
+.NH 1
+Conducted, over the u.FL cable: the path is seven decibels and the delivery rate is not a property of it
+.LP
+Both boards on the station init, cabled u.FL to u.FL, nothing typed at
+either console, both transmitting at the driver's default
+.CW "PA_CFG2 0x4f"
+\- ramp 15, which is -10dBm, and which is also the figure this bench
+settled on as safe into a cabled receiver.
+.PP
+.B "First, the path, because that is a measurement and not a cable being plugged in."
+Two clicks sitting inches apart hear each other through the air whether
+anything is fitted between their u.FL ports or not, so "conducted" is a
+claim about where the energy went.
+.B "I wrote it into this plan before taking it,"
+on the strength of the cable, and the station printed nothing that could
+have told me either way.  It does now:
+.B last
+on the rssi line is the RSSI of the last packet the part received, and
+against a -10dBm transmitter it reads
+.DS
+.CW "board1: last -17dBm   (board2 -> board1, 7dB)"
+.CW "board2: last -12dBm   (board1 -> board2, 2dB)"
+.DE
+Two and seven decibels, steady over an hour.  Free space between two
+bare u.FL ports at a few inches is twenty or thirty, so
+.B "the cable is carrying it,"
+in both directions, and the two legs differ by five decibels because
+connectors and matching are not symmetric.
+.PP
+.B "Second, the delivery rate, which came out three different ways under one arrangement."
+Three windows, same boards, same cable, same power, nothing touched
+between them:
+.DS
+.CW "window of 180s   board1 sent 43, board2 heard 24    56%"
+.CW "                 board2 sent 43, board1 heard 25    58%"
+.CW "window of 180s   board1 sent 45, board2 recv  0      0%"
+.CW "                 board2 sent 40, board1 recv  0      0%"
+.CW "five of 120s     board1 sent 145, board2 recv 140   97%"
+.CW "                 board2 sent 140, board1 recv 145  100%"
+.DE
+.B "Zero CRC errors in every one of them."
+A path does not do that: a marginal path corrupts frames and reports it,
+and a seven-decibel path does not lose any.  So the frames that went
+missing were never demodulated, and on a cable the only thing that stops
+a frame being demodulated is a receiver that was not listening.
+.PP
+.B "The fault is a latched FIFO error, and the state field named it in one read."
+.CW "state 0x06"
+with
+.CW "marc 0x0a"
+is RX_FIFO_ERR.  One missed receive interrupt fills the RX FIFO; an
+overflowed FIFO puts the part in that state; and in that state the part
+does nothing \- no sync, so no PKT_SYNC_RXTX edge, so
+.I cc1120interrupt
+is never called again.
+.B "The only recovery the driver had was at the top of cc1120interrupt,"
+which is to say the recovery was reachable only by the event the fault
+suppresses.
+.PP
+It is worse than deaf.  Twenty-two consecutive samples of
+.CW "state 0x06 marc 0x0a"
+while the station's
+.B sent
+counter climbed past a hundred more transmits and
+.B recv
+stayed frozen at 169, with
+.B txstaged
+reading 0 every time: the part refuses the TX FIFO as well, so
+.B "every one of those sent frames was staged into a part that radiated nothing."
+.I Sent
+counts what the driver handed over.
+.PP
+.B "And the unconditional SRX after every transmit does not clear it,"
+which is measured and not recalled \- a hundred-odd transmits, each one
+ending in
+.CW "strobe(rr, Srx)" ,
+and the part still in state 6.  The exit is SIDLE and a flush.
+.NH 2
+The phase explanation, which was arithmetically right and was not the cause
+.LP
+Before the state field existed I wrote this into the plan: the beacon
+period is four seconds, a thirty-five byte frame at 1200 baud is 233ms,
+the two crystals are 64ppm apart, so the phase slides 256 microseconds
+per beacon and takes 910 beacons \- about an hour \- for a colliding
+phase to slide clear.  A window shorter than that measures one phase and
+reports it as the delivery rate, which fitted 0%, 56% and 100% an hour
+apart exactly.
+.PP
+.B "Its own experiment refuted it."
+.I Tools/radio/phasetrials.py
+resets one station, which draws a fresh phase, and measures.  Eight
+trials:
+.DS
+.CW "trial   b1->b2      b2->b1      crc"
+.CW "  1-8    0/15-20  0%   0/15  0%    0"
+.DE
+Flat.  Not a spread.  Two fresh resets at 0% had already made it
+improbable \- random phase collides about six per cent of the time, so
+two in a row is one chance in two hundred and fifty \- and eight settles
+it.  The reason is that
+.B "resetting the other board cannot unlatch this one:"
+board 1 was in state 6 for the whole run and every trial measured the
+same stuck part.
+.PP
+.B "The arithmetic is still correct and it is still the mechanism that will matter"
+once two stations share a channel and neither is broken.  It was not what
+was happening.  What it was is above, and the thing that found it was
+printing the part's own state \- not another counter downstream of the
+fault.  That rule has now cost this bench two days twice.
+.NH 2
+The instruments, three of which were wrong before any of this read true
+.LP
+.B "A counter read out of a rolling window is not a counter."
+The first two measurements counted
+.CW "ax25init: beacon N"
+and
+.CW "ax25init: heard N:"
+lines out of screen's hardcopy, which is a fixed-size window: across a
+reboot and a scroll the last visible index went 69 to 0 and the run
+reported
+.B "-164% delivered."
+The driver's own
+.B sent
+and
+.B recv
+are cumulative since boot and the newest periodic line always carries
+their current value whatever has scrolled away above it, so every figure
+in this section is read from those.
+.PP
+.B "A console line has a width."
+The first version of the station's report put everything on one line, at
+about 130 characters, and the hardcopy cut it mid-word in the middle of
+.CW ccamode .
+A regex for
+.CW "ccabusy N ccamode N"
+then matched nothing and the run reported no CCA figures at all, which
+reads as the driver not having them.  Three short lines now.
+.PP
+.B "And a port is not a board."
+Flashing board 1 meant running
+.I lsof
+over the ttys, finding screen sessions on two PL2303 adapters, and
+deciding one of them was board 1.  It is the Raspberry Pi 3B \- its
+console is sdio, WIFI-JOINED and drawink \- and a flash was pointed at
+it.  Nothing was written, because no STM32 bootloader can appear on a Pi;
+what surfaced instead was that
+.I flashverify.sh
+waits forever for one, because
+.I open_dev
+in mikroe-uhb loops until a 1234:0001 appears.  Fifteen minutes with an
+empty log and the lock held.
+.PP
+.I Ax25twosilicon.py
+finds the boards by the serial each one prints now, mapped through
+.B /lib/radio
+by the same key the boards themselves use.
+.B "The uid is the only identity on this bench that cannot be confused with another board's,"
+and what it protects against turned out not to be an adapter being
+swapped but me reading the wrong row of an lsof.
