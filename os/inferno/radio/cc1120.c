@@ -537,6 +537,66 @@ rxarm(Cc1120 *rr)
 	strobe(rr, Srx);
 }
 
+
+/*
+ * A WATCHDOG, BECAUSE A STATION THAT NEVER TRANSMITS NEVER REACHES THE
+ * RECOVERY IN rxarm.
+ *
+ * Every site that calls rxarm is reached by transmitting or by a ctl
+ * write, so a part that latches in RX_FIFO_ERR while its only reader is
+ * blocked in a read stays latched for ever.  That is not a hypothetical
+ * arrangement on this bench: it is the answerer in a connected AX.25
+ * link, which announces and then does not transmit at all until it has
+ * accepted, so a latch between the announce and the caller's SABM leaves
+ * a station that looks up and is deaf.  One connected attempt over the
+ * cable had the caller reach Sconn while the answerer never printed
+ * "accepted", which is the shape of exactly that.
+ *
+ * The clock interrupt is a safe place for it on this part.  The bus lock
+ * is an ilock -- spistm32f4.c says why: the bus is touched from the EXTI
+ * handler as well as from a process -- so a process holding it has
+ * interrupts masked and this cannot fire inside its sequence, and this
+ * holding it cannot be interrupted by the packet handler.  Nothing here
+ * sleeps.  A state read is two SPI bytes, once a second.
+ *
+ * It acts on the two FIFO error states and nothing else.  IDLE, TX,
+ * CALIBRATE and the transparent and carrier modes are all states
+ * something asked for, and a watchdog that decided what the part ought
+ * to be doing would be a second driver.
+ */
+static Cc1120 *ccwatch[4];
+static int nccwatch;
+
+static void
+cc1120tick(void)
+{
+	static int n;
+	Cc1120 *rr;
+	Spidev *s;
+	int i, st;
+
+	if(++n < HZ)
+		return;
+	n = 0;
+	for(i = 0; i < nccwatch; i++){
+		rr = ccwatch[i];
+		if(rr == nil || !rr->present)
+			continue;
+		s = rr->spi;
+		s->lock(s);
+		st = state(rr);
+		if(st == Strxerr || st == Sttxerr){
+			rr->nfifoerr++;
+			rr->nfifowatch++;
+			strobe(rr, Sidle);
+			strobe(rr, Sfrx);
+			strobe(rr, Sftx);
+			strobe(rr, Srx);
+		}
+		s->unlock(s);
+	}
+}
+
 /*
  * Send one packet.
  *
@@ -3199,7 +3259,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"crcerr %ud toobig %ud txtimeout %ud\n"
 		"rxoverflow %ud txunderflow %ud txnever %ud\n"
 		"intr high %ud low %ud\n"
-		"ccabusy %ud ccamode %d fifoerr %ud\n"
+		"ccabusy %ud ccamode %d fifoerr %ud watch %ud\n"
 		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n"
 		"ppb %d\n",
 		rr->partnum, rr->partversion,
@@ -3218,6 +3278,7 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->nrxoverflow, rr->ntxunderflow, rr->ntxnever,
 		rr->nintrhigh, rr->nintrlow,
 		rr->nccabusy, (rd(rr, Rpktcfg2) >> 2) & 7, rr->nfifoerr,
+		rr->nfifowatch,
 		pacfg2, pacfg2 & Papowerramp,
 		patenths/10, patenths < 0? -patenths%10: patenths%10,
 		/*
@@ -3528,6 +3589,15 @@ cc1120init(Spidev *s, int irq)
 		return nil;
 	}
 	rr->present = 1;
+	/*
+	 * On the watchdog's list, and the clock link added once however
+	 * many parts are fitted.  See cc1120tick.
+	 */
+	if(nccwatch < nelem(ccwatch)){
+		ccwatch[nccwatch++] = rr;
+		if(nccwatch == 1)
+			addclock0link(cc1120tick, 0);
+	}
 
 	rr->rq = qopen(16*1024, Qmsg, nil, nil);
 	if(rr->rq == nil){

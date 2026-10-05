@@ -88,6 +88,12 @@ struct Cc1120
 	 * interrupt handler the fault stops being called.
 	 */
 	u32	nfifoerr;
+	/*
+	 * Of those, the ones the clock watchdog cleared rather than a
+	 * transmit or a ctl write -- which is to say the ones that would
+	 * have been permanent.
+	 */
+	u32	nfifowatch;
 	uchar	rxstatus[2];		/* the two bytes APPEND_STATUS adds */
 
 	QLock	qlock;			/* one user of the part at a time */
