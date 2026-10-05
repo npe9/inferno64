@@ -1805,3 +1805,86 @@ read does not come back at all.  Same code, same boards, one constant
 different: so the multi-frame path is sensitive to how a message divides
 into frames, which is a much narrower thing to go looking for than
 \(dqsomething is wrong with the relay\(dq.
+.NH 2
+The multi-frame read completes, and what it cost to get there
+.PP
+.B "Three numbers, each measured, each wrong the first time."
+.IP 1.
+.B "The pool split."
+50/49/1 is the shell image's, measured at a prompt where the Dis heap
+holds the shell.  A satellite runs no shell and its heap is nearly idle
+while main carries exportfs's buffer per request, two pipe queues, the
+AX.25 retransmission window and every Block the radio receives into.
+74/25/1, and it is per image now through
+.B image-<init>
+and
+.CW -DMAINPCNT ,
+like NPROC.
+.IP 2.
+.B "The process count, and a slot is not free."
+.CW os/inferno/port/proc.c
+does
+.CW xalloc(conf.nproc*KSTACK) ,
+so fourteen slots is 57344 bytes taken before the pools can grow into
+what is left.  Ten was too few \- the satellite answered a Tversion and
+then said
+.CW "no procs for kproc"
+at the Tattach, because
+.I exportfs
+starts an
+.B exslave
+per request whenever none is waiting.  Twelve.
+.IP 3.
+.B "And the shape of the memory, which is why fourteen was expensive."
+The boot line says it:
+.DS
+.CW "6 holes free"
+.CW "10000000 10010000 65536"
+.CW "20008000 20020000 98304"
+.DE
+.B "Two non-contiguous regions,"
+64K of core-coupled memory and 96K of SRAM, and a pool's arena cannot
+span them.
+.I Proc.c
+puts the kernel stacks in the second \-
+.CW "kernel stacks of 4096 at 0x20008010"
+\- so every slot is 4096 bytes taken out of exactly what the pools have
+left to grow into there.  main reached cursize 42176 against a maxsize of
+121212 it could never approach, which is why the pool reported tens of
+kilobytes free while
+.I smalloc
+sat waiting for 300 bytes.
+.PP
+.B "The instrument had a slot of its own, and now does not."
+A process printing
+.CW #c/memory
+every twenty seconds cost 4096 bytes of the SRAM it was measuring.  It
+reads once now, from the init's own process:
+.B "an instrument that consumes what it measures is worth one reading rather than a stream."
+.NH 2
+Where it stands
+.PP
+.DS
+.CW "ARMV7M-STYX-MOUNTED"
+.CW "styx: the mount carries 412 bytes a message, so msize 436"
+.CW "      over 109-byte frames: 4 frames, and the window is 4"
+.CW "styx: the satellite says battery 3304"
+.CW "styx: 273 bytes over the radio, twice"
+.CW "styx: the two reads differ at byte 207"
+.DE
+.B "The 273-byte read completes now, twice, and the link survives it"
+\- where before it hung and took the conversation down with it.  What
+remains is that the two reads are not identical, and the satellite is
+still saying
+.CW "smalloc: 300 not available, waiting"
+while it serves.
+.B "A frame dropped because the pool was empty is the obvious candidate,"
+and the figure to go after next is what holds main's 42176 bytes:
+.CW #c/poolhist
+is in this kernel for that, and is phase 0a of this plan.
+.PP
+.B "The three symptoms in order, since the sequence is the evidence:"
+corrupt at byte 82 with msize 512; hanging at msize 436; completing and
+corrupt at byte 207 with the pool and slots corrected.  Each change
+moved it, which is what says the remaining fault is in the same place as
+the last three.

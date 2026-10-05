@@ -15,9 +15,11 @@ XIPDIS=\
 	lib/radiocal.dis\
 
 
-# Ten, and the figure matters more here than anywhere else on this
-# board, because A PROCESS SLOT IS NOT FREE AND IT IS NOT PAID FOR OUT
-# OF THE HEAP.
+# Twelve, after ten was measured too few and fourteen measured too
+# expensive -- and the reason it is expensive is the shape of this
+# part's memory rather than its quantity.
+# The figure matters more here than anywhere else on this board, because
+# A PROCESS SLOT IS NOT FREE AND IT IS NOT PAID FOR OUT OF THE HEAP.
 #
 # os/inferno/port/proc.c does xalloc(conf.nproc*KSTACK) and the pools
 # are grown into whatever xalloc has left afterwards.  So fourteen slots
@@ -27,13 +29,34 @@ XIPDIS=\
 # received packet, with 39516 of the pool's nominal maximum never
 # reachable.
 #
-# Counted rather than guessed: the init is one, the two relay processes
-# two, poolwatch three, exportfs's server four, the three kprocs #a
-# starts seven -- and the shell image runs two Dis processes in five
-# slots, so the kernel's own share is about three.  Ten.
+# Counted, and the count was wrong the first time: the init is one, the
+# two relay processes two, poolwatch three, exportfs's exportproc four,
+# the three kprocs #a starts seven, and the kernel's own share about
+# three -- which is ten, and ten is what I set, and the satellite
+# answered a Tversion and then said "no procs for kproc" twice at the
+# Tattach.
 #
-# Fourteen was a generous first guess and twelve before that.  The cost
-# of being generous here is paid by the pool that receives packets.
+# WHAT WAS MISSED: exportfs starts an exslave per request whenever none
+# is waiting (exportfs.c, "if(exq.qwait.head == nil)").  One client with
+# one request outstanding settles at one slave, but the first request
+# starts it and an overlapping one starts another.  So eleven or twelve.
+#
+# AND WHY TWELVE AND NOT FOURTEEN.  This part's RAM is two
+# non-contiguous regions -- the boot line says so: 65536 at 0x10000000,
+# which is the core-coupled memory, and 98304 at 0x20008000 -- and a
+# pool's arena cannot span them.  proc.c puts the kernel stacks in the
+# second one ("14 kernel stacks of 4096 at 0x20008010"), so every slot
+# is 4096 bytes taken out of exactly what the pools have left to grow
+# into there.  At fourteen, main reached cursize 42176 against a
+# maxsize of 121212 it could never approach, and smalloc sat waiting for
+# 300 bytes while the AX.25 link timed out under it.
+#
+# So the number is not "enough slots" but "enough slots and enough
+# SRAM", and this is where the two meet.  The instrument that was
+# printing the pools had a slot of its own and now does not: it reads
+# #c/memory once, from the init's own process, because an instrument
+# that consumes what it measures is worth one reading rather than a
+# stream.
 #
 # #a starts three kprocs when a packet device is attached to it; the
 # init is one process; export() serves in the process that called it
@@ -43,7 +66,7 @@ XIPDIS=\
 # 4096-byte kernel stack out of about 160K -- so this cannot simply be
 # set high.  Neither end runs a shell, which is what makes the number
 # affordable at all: at seven a shell AND #a could not coexist.
-NPROC=10
+NPROC=12
 
 # The pool split.  A satellite runs no shell, so its Dis heap holds only
 # the init and two relay processes with 512-byte buffers -- while main
