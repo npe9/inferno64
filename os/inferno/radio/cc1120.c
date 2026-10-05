@@ -3291,6 +3291,8 @@ cc1120stat(Radio *r, char *p, int n)
 	Cc1120 *rr;
 	Spidev *s;
 	int st, nrx, ntx, live, cs, pktcfg0, pktlen, pacfg2, patenths;
+	int ccamode;
+	ulong rate, dev, bw;
 
 	rr = (Cc1120*)r;
 	s = rr->spi;
@@ -3328,6 +3330,36 @@ cc1120stat(Radio *r, char *p, int n)
 	ntx = rdx(rr, Xnumtxbytes);
 	live = (schar)rdx(rr, Xrssi1);
 	cs = rdx(rr, Xrssi0);
+	/*
+	 * AND THESE FOUR, WHICH WERE READ AFTER THE UNLOCK.
+	 *
+	 * They were arguments to the snprint below -- readrate(rr),
+	 * readdev(rr), readbw(rr) and rd(rr, Rpktcfg2) -- and an
+	 * argument is evaluated where it is written, which is after
+	 * s->unlock(s).  That is seven register reads on an UNLOCKED
+	 * bus: three in readrate, two in readdev, one in readbw, one
+	 * for PKT_CFG2.
+	 *
+	 * The bus lock is an ilock precisely because the EXTI handler
+	 * touches the same bus -- spistm32f4.c says so -- so with it
+	 * released the packet interrupt can fire between this rd's
+	 * select(1) and its select(0), assert chip select again and
+	 * push its own FIFO burst into a half-finished register read.
+	 * Two command streams on one bus, and the one that loses is a
+	 * FIFO read with a pointer in it.
+	 *
+	 * The station reads this file every five beacons, which is
+	 * exactly the rate at which fifoerr accrues, and the "capture"
+	 * verb's comment in this file already says bus traffic
+	 * interferes with the part it polls.  Whether this is THE cause
+	 * of the RX_FIFO_ERR latch is a measurement and not a claim --
+	 * see doc/radio-plan.ms -- but reading a device's registers
+	 * without its lock is a bug on its own terms.
+	 */
+	rate = readrate(rr);
+	dev = readdev(rr);
+	bw = readbw(rr);
+	ccamode = (rd(rr, Rpktcfg2) >> 2) & 7;
 	s->unlock(s);
 
 	return snprint(p, n,
@@ -3350,7 +3382,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"ppb %d\n",
 		rr->partnum, rr->partversion,
 		st >> 4,
-		(ulong)rr->hz, readrate(rr), readdev(rr), readbw(rr),
+		(ulong)rr->hz, rate, dev, bw,
 		live, (cs & Rssivalid)? "": " invalid",
 		rr->rssioffset, rr->csthr, rr->rssi,
 		(cs & Carriersense)? " carrier": "",
@@ -3363,7 +3395,7 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->ncrcerr, rr->ntoobig, rr->ntxtimeout,
 		rr->nrxoverflow, rr->ntxunderflow, rr->ntxnever,
 		rr->nintrhigh, rr->nintrlow,
-		rr->nccabusy, (rd(rr, Rpktcfg2) >> 2) & 7, rr->nfifoerr,
+		rr->nccabusy, ccamode, rr->nfifoerr,
 		rr->nfifowatch, rr->nwatchtick,
 		pacfg2, pacfg2 & Papowerramp,
 		patenths/10, patenths < 0? -patenths%10: patenths%10,
@@ -3440,6 +3472,7 @@ cc1120caps(Radio *r, char *p, int n)
 	Spidev *s2;
 	char *e, *q;
 	int i, gain, thr, raw;
+	ulong rate, dev, bw;
 
 	rr = (Cc1120*)r;
 	q = p;
@@ -3455,13 +3488,24 @@ cc1120caps(Radio *r, char *p, int n)
 	gain = (schar)rd(rr, Ragcgainadjust);
 	thr = (schar)rd(rr, Ragccsthr);
 	raw = (schar)rdx(rr, Xrssi1);
+	/*
+	 * These three too, for the reason cc1120stat has the same
+	 * comment: readrate, readdev and readbw are six register reads
+	 * between them and they were arguments to the seprints below,
+	 * which is to say they ran AFTER the unlock.  The bus lock is an
+	 * ilock because the packet interrupt touches the same bus, so an
+	 * unlocked read can be cut in half by a FIFO burst.
+	 */
+	rate = readrate(rr);
+	dev = readdev(rr);
+	bw = readbw(rr);
 	s2->unlock(s2);
 
 	q = seprint(q, e, "freq %llud\n", rr->hz);
 	q = seprint(q, e, "mode 2fsk\n");
-	q = seprint(q, e, "rate %lud\n", readrate(rr));
-	q = seprint(q, e, "deviation %lud\n", readdev(rr));
-	q = seprint(q, e, "bw %lud\n", readbw(rr));
+	q = seprint(q, e, "rate %lud\n", rate);
+	q = seprint(q, e, "deviation %lud\n", dev);
+	q = seprint(q, e, "bw %lud\n", bw);
 	q = seprint(q, e, "csthr %d\n", thr);
 	q = seprint(q, e, "rssioffset %d\n", gain);
 	q = seprint(q, e, "strength %d\n", raw);
