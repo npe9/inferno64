@@ -42,11 +42,15 @@
 # VMHOST_IOMMU=0 and VMHOST_IGB=0 leave the IOMMU or the igb out, to
 # tell a fault in either from one in the rest of the machine.
 #
-# VMHOST_ACCEL=tcg (default) or kvm.  Under TCG the processor is "max",
-# which has SVM with nested paging and no VMX: TCG does not implement
-# VMX.  Under KVM on an Intel host with nested virtualization it is
-# "host", which has VMX; the emulated IOMMU then needs the interrupt
-# controller split between the kernel and QEMU.
+# VMHOST_ACCEL=tcg (default) or kvm.  Under TCG the processor is "max"
+# without VMX, so that it has SVM with nested paging only and the
+# kernel's VM layer picks the SVM backend.  The patched QEMU's TCG
+# implements VMX too (scripts/qemu-patches/0006): VMHOST_CPU=vmx gives
+# an Intel processor with VMX and no SVM, and the VMX backend; any
+# other VMHOST_CPU is passed to -cpu as it is.  Under KVM on an Intel
+# host with nested virtualization it is "host", which has VMX; the
+# emulated IOMMU then needs the interrupt controller split between the
+# kernel and QEMU.
 set -e
 ROOT=`cd \`dirname "$0"\`/.. && pwd`
 Q=$ROOT/.qemu
@@ -93,9 +97,14 @@ done
 cp "$Q/edk2-vars.fd" "$VARS"
 
 case $ACCEL in
-tcg|tcg,*)	MACHINE=q35; CPU=max ;;	# tcg,thread=single: one host thread for every vCPU
+tcg|tcg,*)	MACHINE=q35; CPU=max,vmx=off ;;	# tcg,thread=single: one host thread for every vCPU
 kvm)	MACHINE=q35,kernel-irqchip=split; CPU=host ;;
 *)	echo "vmhost: VMHOST_ACCEL is tcg[,options] or kvm" >&2; exit 2 ;;
+esac
+case ${VMHOST_CPU:-} in
+'')	;;
+vmx)	CPU=max,svm=off,vendor=GenuineIntel ;;
+*)	CPU=$VMHOST_CPU ;;
 esac
 
 secs=

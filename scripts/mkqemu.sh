@@ -27,6 +27,23 @@
 #		so a device behind a bridge was bus 0.  Also: a
 #		not-present PTE is an I/O page fault, an event's
 #		address is kept, and its RW flag is bit 5
+#	0006-i386-tcg-vmx.patch
+#		VMX, which TCG did not implement: VMXON and the VMCS
+#		instructions, VM entry with its checks, VM exits, the
+#		execution controls, EPT, VPID, unrestricted guest
+#		(target/i386/tcg/system/vmx_helper.c), advertised in
+#		the capability MSRs only as far as it goes.  And what
+#		kvm-unit-tests' VMX tests found TCG's processor doing
+#		that a real one does not: no #GP for CR0 bits 63:32;
+#		MWAIT with no MONITOR halting; IA32_TSC reading 0;
+#		#GP, not #SS, for a non-canonical stack address;
+#		walks under nested paging reporting reads as writes;
+#		an accessed flag set in a PAE PDPTE (bit 5 is
+#		reserved there); no PDPTE registers; DR6 written for
+#		a #DB that exits; no accessed flag set on loading CS
+#		or SS; LTR leaving TR not busy; one interrupt shadow
+#		for STI and MOV SS.  scripts/check-qemu-vmx.sh checks
+#		it against kvm-unit-tests and Linux's kvm_intel
 #
 # usage: scripts/mkqemu.sh      installs into $ROOT/.qemu/local;
 #                               scripts/vmhost.sh uses it when present

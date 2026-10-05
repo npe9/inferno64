@@ -352,6 +352,32 @@ device, newer NVMe, then GPUs.
 .IP "15. RISC-V." 4
 The H extension, G-stage translation, AIA/IMSIC and the RISC-V IOMMU
 as further backends of the same tables (M12).
+.IP "16. The emulators made whole." 4
+QEMU's TCG implements SVM and not VMX, and Bochs implements VMX and
+has no IOMMU, no igb and no virtio-serial, so no one bench runs every
+milestone on VMX.  QEMU is given VMX
+.CW scripts/qemu-patches ): (
+VMXON, the VMCS and its instructions, the controls
+.CW pc64/vmx.c
+and Linux's
+.CW kvm_intel
+use, EPT, event injection, and the entry checks real processors make,
+with the capability MSRs advertising only what is implemented.  It is
+checked against a client that is not this kernel \(en kvm-unit-tests'
+VMX and EPT tests, and a Linux guest running
+.CW kvm_intel
+\(en before
+.CW vmx.c
+runs on it, so that a bug on one side cannot hide one on the other.
+Then check-vm runs every stage on VMX as on SVM (M1\-M8, M5\-M7
+included), Bochs staying as a second VMX to disagree with.  After
+that, two device models: an 82599 with SR-IOV, from QEMU's igb, for
+the X520's PF and VF drivers; and a device that misbehaves on purpose
+\(en DMA outside its domain, after bus mastering is turned off, after
+an FLR, under another requester ID, and MSIs its IRTE does not allow
+\(en in place of phase 14's FPGA.  Not emulated: M11 itself, which is
+the workstation's own X520, the FL1100's quirks, the ConnectX-4 and
+GPUs.
 .NH 1
 Where things go
 .DS
@@ -1709,6 +1735,105 @@ VMX: Bochs has no IOMMU to assign a function through.
 On QEMU, with every kernel rebuilt without the instruments, check-vm
 (SVM; M4 under VT-d and AMD-Vi, interrupt remapping on) and check-rv
 (M1 to M4, M3 on hosts of one and four harts) pass every stage.
+.IP "Phase 16: VMX in QEMU's TCG (QEMU q35, TCG, VMX backend)." 4
+QEMU's TCG emulated SVM and not VMX.
+.CW scripts/qemu-patches/0006-i386-tcg-vmx.patch
+gives it VMX
+.CW target/i386/tcg/system/vmx_helper.c ): (
+VMXON, VMXOFF and the VMCS instructions, with the VMfail errors the SDM
+lists; VM entry with the checks a processor makes of the controls, the
+host state and the guest state, a failed entry exiting with reason 33
+or 34; VM exits that save the guest and load the host, the MSR lists
+both ways, IDT-vectoring information for an exit in the middle of an
+event's delivery, and event injection; the execution controls at SVM's
+intercept points, plus the control-register guest/host masks, the I/O
+and MSR bitmaps, interrupt-window, external-interrupt and NMI exiting
+and acknowledge-on-exit; EPT as a second stage-2 format beside NPT,
+with violation and misconfiguration exits; VPID; unrestricted guest; an
+INIT held in root operation and taken as an exit in non-root.  The
+capability MSRs advertise only that: no APIC virtualization, posted
+interrupts, virtual NMIs, preemption timer, MTF, PML, VMCS shadowing
+or VM functions.
+.CW VMHOST_CPU=vmx
+selects an Intel processor with VMX and no SVM; the bench's default
+stays SVM.
+.IP
+It was checked against clients that are not this kernel before
+.CW vmx.c
+ran on it
+.CW scripts/check-qemu-vmx.sh ): (
+kvm-unit-tests' VMX tests (at a pinned commit), and Linux's own
+.CW kvm_intel ,
+loaded in the bench's guest kernel on the patched QEMU, running a
+real-mode guest through
+.CW /dev/kvm
+.CW tests/vm/kvmtest.c ). (
+What they found wrong was mostly TCG's processor, not its VMX, and it
+is fixed in the same patch: MOV to CR0 took bits 63:32 without #GP;
+MWAIT with no MONITOR armed halted forever; IA32_TSC read 0; a
+non-canonical stack address raised #GP, not #SS; a page walk under
+nested paging reported its reads as writes; a PAE walk set the accessed
+flag in a PDPTE, where bit 5 is reserved; there were no PDPTE
+registers; a #DB that exits wrote DR6; loading CS or SS did not set the
+descriptor's accessed flag, nor LTR the TSS's busy flag, in the cache
+or the table; STI and MOV SS shared one interrupt shadow.  The last two
+were Linux's to find: the second guest's VM entry failed on a CS of
+type 10, and the first's on a TR of type 9.
+.DS
+.ft CW
+check-qemu-vmx: kvm-unit-tests vmx: pass
+	SUMMARY: 6930 tests, 2 unexpected failures, 21 skipped
+	XPASS: Expected pending debug exceptions 0 (actual 0)
+	XPASS: Expected exit qualification 4001 (actual 4001)
+check-qemu-vmx: kvm-unit-tests ept: pass
+	SUMMARY: 9998 tests, 6 skipped
+check-qemu-vmx: kvm-unit-tests init_signal: pass
+check-qemu-vmx: kvm-unit-tests apic_passthrough_thread: pass
+check-qemu-vmx: kvm_intel: pass
+	KVMTEST: guest said "Hi", sum 20440 (want 20440), 1000 port exits, halted
+.ft
+.DE
+The two unexpected results are XPASSes: checks kvm-unit-tests marks as
+failing under KVM's emulation of a MOV SS shadow, which this processor
+passes.  The skips are the features not advertised.  Left out, as
+TCG's and not VMX's: the #AC case (TCG has no alignment checking) and
+the TSC-delta test (TCG's TSC is the host clock, here at a
+microsecond).  Not modelled: debug exceptions pending in a MOV SS
+shadow with RFLAGS.TF clear wait for the next #DB rather than the next
+instruction; VMX state is not in QEMU's migration stream.
+.IP
+Then check-vm with
+.CW CHECKVM_BACKEND=vmx ,
+every stage on the VMX backend, QEMU TCG, q35 with VT-d and interrupt
+remapping, four processors:
+.DS
+.ft CW
+vm: vmx
+VMTEST: backend vmx rev 0x12 ept unrestricted ept-wb 1 pin 0x1f proc 0xb58065f2
+	proc2 0x82 exit 0x3f6fff entry 0xd1ff cr0fixed 0x80000021/0xffffffff
+	cr4fixed 0x2000/0x1773fff
+check-vm: M1 (vmx): pass
+check-vm: nil dereference (vmx host): pass
+check-vm: M2 (vmx): pass
+	platform handled cpuid 672 msr 25 io 150485 mmio 2386 hlt 51 intr 5298 gp 3 msi 983
+check-vm: M5 (vmx): pass
+check-vm: M8 disk (vmx): pass
+check-vm: M8 net (vmx): pass
+	LINUXGUEST: dhcp udhcpc: lease of 10.0.2.15 obtained from 10.0.2.2, lease time 86400
+check-vm: M8 boot on the virtio disk (vmx): pass
+check-vm: M4 (vt-d): pass
+check-vm: M4 (amd-vi): pass
+check-vm: M3 (vmx): pass
+	LINUXGUEST: smp 4 processors, online 0-3
+	LINUXGUEST: irq CAL:        364        339        272        355   Function call interrupts
+.ft
+.DE
+So M1\-M5 and M8 hold on VMX on one bench, M5 now included: a function
+assigned behind VT-d with interrupt remapping, which Bochs could not
+have.  check-vm on VMX ran on the patched source built in place;
+.CW scripts/mkqemu.sh 's
+build of the release and the six patches then passed the conformance
+checks above and check-vm on SVM, every stage, unchanged.
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
@@ -1729,7 +1854,10 @@ and switches to it.  M3 is done on VMX too (Bochs, two processors), and M8 with 
 Since: the RISC-V IOMMU (M4) and a device assigned through it (M5) on
 RISC-V; a riscv64 host of four harts; M3 under MTTCG (a QEMU race,
 fixed); AMD-Vi, VT-d queued invalidation and interrupt remapping; Limbo
-nil dereferences as exceptions on pc64 and riscv64.  Next: the
+nil dereferences as exceptions on pc64 and riscv64; VMX in QEMU's TCG
+(phase 16), on which check-vm passes every stage on the VMX backend.
+Next: M6, M7, M9 and M10 on VMX on the same bench, the 82599 model,
+the misbehaving DMA device; then the
 workstation (phase 13), and real hardware for everything QEMU and Bochs
 have stood in for.  On QEMU, check-vm (SVM; M4 under VT-d and AMD-Vi)
 and check-rv, on both the PLIC and the AIA machine and on hosts of one
