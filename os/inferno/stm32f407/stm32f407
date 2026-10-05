@@ -188,7 +188,17 @@ init
 # fails first rather than how much there is.  These are measurements
 # and not taste, and the measurement changed when the radio did.
 #
-# It is 50/49/1, and was 53/46/1 for a while in between.  The reason
+# AND THEY ARE NOW PER IMAGE, in image-<init> beside this file, for the
+# same reason NPROC is: the split is a measurement of one image and this
+# conf builds four.  50/49/1 was measured at a shell prompt, where the
+# Dis heap holds the shell and main holds very little.  A satellite is
+# the other way round -- it runs no shell, so its heap is nearly idle,
+# while main carries exportfs's buffer per request, two pipe queues, the
+# AX.25 retransmission window and every Block the radio receives into.
+# Measured on that image: main cursize 42368 with its arena at 79360 of
+# an 81900 maximum, and iallocb failing to get 250 bytes for a packet.
+#
+# It is 50/49/1 for a shell, and was 53/46/1 for a while in between.  The reason
 # for the detour is worth keeping, because it was a real measurement
 # of a real failure and the failure has since been fixed somewhere
 # else.
@@ -233,9 +243,9 @@ init
 # negative.  It fails safely there today, because ns is a signed
 # intptr; 1637 bytes is not worth resting on that.  See doc/xip.ms.
 code
-	int main_pool_pcnt = 50;
-	int heap_pool_pcnt = 49;
-	int image_pool_pcnt = 1;
+	int main_pool_pcnt = MAINPCNT;
+	int heap_pool_pcnt = HEAPPCNT;
+	int image_pool_pcnt = IMAGEPCNT;
 #
 # HOW MANY PROCESSES, AND ALL THREE VALUES IT WAS TRIED AT.
 #

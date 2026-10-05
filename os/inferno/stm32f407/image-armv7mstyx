@@ -15,10 +15,25 @@ XIPDIS=\
 	lib/radiocal.dis\
 
 
-# Fourteen, and a first estimate to be measured like every other count
-# here.  Twelve was the figure before the segmenting relay added two
-# processes per end -- one shuttling each way between the pipe and the
-# conversation.
+# Ten, and the figure matters more here than anywhere else on this
+# board, because A PROCESS SLOT IS NOT FREE AND IT IS NOT PAID FOR OUT
+# OF THE HEAP.
+#
+# os/inferno/port/proc.c does xalloc(conf.nproc*KSTACK) and the pools
+# are grown into whatever xalloc has left afterwards.  So fourteen slots
+# is 57344 bytes of kernel stack taken before main can have any, and
+# that is what starved it: "arena too large: main ... arenasize 79360
+# maxsize 81900" and then iallocb unable to find 250 bytes for a
+# received packet, with 39516 of the pool's nominal maximum never
+# reachable.
+#
+# Counted rather than guessed: the init is one, the two relay processes
+# two, poolwatch three, exportfs's server four, the three kprocs #a
+# starts seven -- and the shell image runs two Dis processes in five
+# slots, so the kernel's own share is about three.  Ten.
+#
+# Fourteen was a generous first guess and twelve before that.  The cost
+# of being generous here is paid by the pool that receives packets.
 #
 # #a starts three kprocs when a packet device is attached to it; the
 # init is one process; export() serves in the process that called it
@@ -28,4 +43,19 @@ XIPDIS=\
 # 4096-byte kernel stack out of about 160K -- so this cannot simply be
 # set high.  Neither end runs a shell, which is what makes the number
 # affordable at all: at seven a shell AND #a could not coexist.
-NPROC=14
+NPROC=10
+
+# The pool split.  A satellite runs no shell, so its Dis heap holds only
+# the init and two relay processes with 512-byte buffers -- while main
+# carries exportfs's buffer per request, two pipe queues, the AX.25
+# retransmission window and every Block the radio receives into.
+#
+# Measured at 50/49/1, which is the shell image's split: main reached
+# cursize 42368 with its arena at 79360 of an 81900 maximum, and then
+# iallocb could not get the 250 bytes a received packet needs -- "no
+# free Blocks / iallocb: no memory 0/40960", with ialloc.bytes zero, so
+# the interrupt budget was untouched and it was the pool.  The failure
+# lands on the third Styx message.
+MAINPCNT=74
+HEAPPCNT=25
+IMAGEPCNT=1

@@ -50,3 +50,11 @@ EXTRAROOT=\
 	/dis/pycubed/beepsat.dis	/dis32/pycubed/beepsat.dis\
 	/dis/pycubed/sat.dis		/dis32/pycubed/sat.dis\
 	/dis/pycubed/hw.dis		/dis32/pycubed/hw.dis\
+
+# The pool split, 50/49/1, which is what the comment in the conf records
+# being measured at a shell prompt: main holds about 75K there and the
+# Dis heap the rest.  image-armv7mstyx says why a satellite wants the
+# opposite.
+MAINPCNT=50
+HEAPPCNT=49
+IMAGEPCNT=1

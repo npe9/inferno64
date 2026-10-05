@@ -252,6 +252,39 @@ styxsizes(void)
 	mntmaxrpc = Styxrpc;
 	mntqueuerpcs = 10;
 	exportmaxrpc = Styxrpc;
+
+	/*
+	 * AND THE PIPE QUEUE, which is 32K an end by default on a
+	 * single-processor machine -- os/inferno/port/devpipe.c, which
+	 * only chooses that if nobody has said otherwise.
+	 *
+	 * Two ends is 64K of Blocks a pipe may buffer, on a board whose
+	 * whole main pool is about 80K, for a pipe whose job is to feed
+	 * a radio 109 bytes at a time.  It is not pre-allocated, but a
+	 * writer will fill it: exportfs answers as fast as it can and
+	 * the relay drains at the speed of the air, which at 1200 baud
+	 * is four orders of magnitude slower.  The satellite ran out --
+	 * "no free Blocks / iallocb: no memory 0/40960", with
+	 * ialloc.bytes zero, so it was the main pool and not the
+	 * interrupt budget -- and the part could not get a Block to
+	 * receive into.
+	 *
+	 * TRIED AND BACKED OUT: conf.pipeqsize = 4 * Styxrpc, four
+	 * messages an end instead of 32768.  The satellite went into a
+	 * reboot loop with it -- "no free Blocks" over and over, and
+	 * then poolsize and a fresh banner -- and two things had changed
+	 * in that build, this and the pool reporting in the init, so
+	 * neither was measured.  Backed out rather than kept on a guess.
+	 *
+	 * And the figure it was reaching for was wrong anyway: the pool
+	 * report that did get out says main has 39516 bytes FREE at the
+	 * moment iallocb fails, so the fault is not a shortage of pool.
+	 * It is a shortage of a CONTIGUOUS run, which a queue limit does
+	 * not change.  "no free Blocks" with tens of kilobytes free is a
+	 * fragmentation question, and the next thing to do is find what
+	 * size block is being asked for rather than make the queues
+	 * smaller.
+	 */
 }
 
 void

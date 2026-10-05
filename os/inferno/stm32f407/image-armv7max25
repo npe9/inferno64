@@ -24,3 +24,11 @@ XIPDIS=\
 # board that looks like it booted.  Three kprocs is three slots whatever
 # else is running.
 NPROC=7
+
+# The pool split, 50/49/1, which is what the comment in the conf records
+# being measured at a shell prompt: main holds about 75K there and the
+# Dis heap the rest.  image-armv7mstyx says why a satellite wants the
+# opposite.
+MAINPCNT=50
+HEAPPCNT=49
+IMAGEPCNT=1

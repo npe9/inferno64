@@ -199,6 +199,11 @@ serve(carrier: int)
 	# EXPWAIT and not EXPASYNC: this process has nothing else to do
 	# and a satellite that returns from serving its own namespace has
 	# stopped being a satellite.  export() does not come back.
+	# THE POOL, EVERY TWENTY SECONDS, because the satellite is where
+	# it ran out and the satellite has no shell to ask.  #c/memory is
+	# the kernel's own account of its pools; printing it is the only
+	# way this end can be watched while it serves.
+	spawn poolwatch();
 	sys->print("ARMV7M-STYX-EXPORTING\n");
 	if(sys->export(sfd, "/", Sys->EXPWAIT) < 0)
 		sys->print("styx: export: %r\n");
@@ -276,6 +281,29 @@ client(peer: string, carrier: int)
 		if(i == 0)
 			bigread();
 		sys->sleep(10000);
+	}
+}
+
+# What the kernel says about its own pools, periodically.  The main
+# pool is the one that matters here: Blocks for the radio, exportfs's
+# buffer per request, and the two pipe queues all come out of it.
+poolwatch()
+{
+	for(;;){
+		s := slurp("#c/memory");
+		if(s == "")
+			sys->print("styx: #c/memory: %r\n");
+		else{
+			# One line of it, which is all that fits usefully on
+			# a console shared with the relay's own printing.
+			for(i := 0; i < len s; i++)
+				if(s[i] == '\n'){
+					sys->print("styx: pool %s\n",
+						s[0:i]);
+					break;
+				}
+		}
+		sys->sleep(20000);
 	}
 }
 
