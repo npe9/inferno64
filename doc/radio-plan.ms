@@ -6606,3 +6606,82 @@ by the same key the boards themselves use.
 .B "The uid is the only identity on this bench that cannot be confused with another board's,"
 and what it protects against turned out not to be an adapter being
 swapped but me reading the wrong row of an lsof.
+.NH 1
+The fix: drain the FIFO, clear the latch, and a watchdog for the station that never transmits
+.LP
+Three pieces, and the order they were found in is the reverse of the
+order they matter in.
+.PP
+.B "rxarm, which clears the latch."
+Every
+.I "back to listening"
+in the driver was a bare
+.CW "strobe(rr, Srx)" ,
+and SRX from an error state is ignored \- measured, a hundred-odd
+transmits each ending in one with the part still in state 6.  The exit is
+SIDLE and a flush.
+.I Rxarm
+does that and is used at every such site: after a transmit, after reading
+a packet out of the FIFO, in the
+.B freq
+verb, and in the
+.B rx
+verb, which is what somebody types at a stuck receiver and which a bare
+SRX made useless.  The latch is also cleared at the
+.I top
+of the transmit path, before the idle-flush-fill sequence, because a part
+in RX_FIFO_ERR refuses the TX FIFO too \-
+.B txstaged
+reads 0 \- so otherwise the frame that triggered the recovery is the one
+frame lost to it.
+.PP
+.B "The sites that already strobed SFRX before SRX were left alone,"
+which is the only reason this was four edits and not nine: the
+.B serial
+and
+.B "carrier off"
+verbs were already doing the right thing for their own reasons.
+.PP
+.B "A clock watchdog, because every one of those sites is reached by transmitting or by a ctl write."
+A part that latches while its only reader is blocked in a read stays
+latched for ever, and that is not hypothetical: it is the answerer in a
+connected link, which announces and then does not transmit at all until
+it has accepted.  One connected attempt over the cable had the caller
+reach
+.B Sconn
+while the answerer never printed
+.BR accepted ,
+which is the shape of exactly that.
+.PP
+The clock interrupt is safe for it here and the reason was already
+written down in
+.BR spistm32f4.c :
+the bus lock is an
+.I ilock
+because the bus is touched from the EXTI handler as well as from a
+process.  So a process holding it has interrupts masked and the tick
+cannot fire inside its sequence, and the tick holding it cannot be
+interrupted by the packet handler.  Nothing in it sleeps; a state read is
+two SPI bytes, once a second.  It acts on the two FIFO error states and
+nothing else \- IDLE, TX, CALIBRATE and the transparent and carrier modes
+are states something asked for, and a watchdog that decided what the
+part ought to be doing would be a second driver.
+.PP
+.B "And draining the FIFO, which is the cause the other two were curing."
+.I Cc1120interrupt
+read one packet and returned.
+.B "An EXTI pending bit coalesces edges:"
+two packets arriving between the handler's runs raise one interrupt, so
+one was read and the other stayed in the FIFO.  Interrupts are masked for
+as long as anything holds the bus ilock \- the
+.B capture
+verb holds it for up to 2000ms \- so this happens for real.  The residue
+only grows; four thirty-five byte frames fill the part's 128-byte RX
+FIFO; and then it latches and stops raising the edge that would have
+cleared it.
+.PP
+The handler drains now, bounded at four, which is the FIFO.
+.B "Drain then wait, never wait then consume one"
+\- a rule this kernel already learned under a different device, and one
+that was not applied here because the fault it causes does not look like
+a FIFO problem.  It looks like a radio link that does not close.
