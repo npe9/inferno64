@@ -1,4 +1,5 @@
-# The modules the AX.25 STATION image executes in place.
+# What the AX.25 STATION image is: the modules it executes in place, and
+# the number of kernel processes it needs.
 #
 # One: the init loads Sys, which is built in, and Radiocal, which is
 # this.  It runs no commands, because it runs no shell -- at NPROC 7 the
@@ -13,6 +14,13 @@
 # would not convert -- see the i$CONF.hex rule in the mkfile.
 #
 # A module left out of here is still in the root as its raw .dis and
-# still not runnable on this part; xipdis-armv7minit says why.
+# still not runnable on this part; image-armv7minit says why.
 XIPDIS=\
 	lib/radiocal.dis\
+
+# Seven, and this number is why the file carries it.  Attaching a packet
+# device to #a starts three kprocs; at five the station prints
+# "addr N0CALL-1" and then "no procs for kproc" for ever, which is a
+# board that looks like it booted.  Three kprocs is three slots whatever
+# else is running.
+NPROC=7

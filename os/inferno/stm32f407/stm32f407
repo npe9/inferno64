@@ -241,15 +241,23 @@ code
 # up and beacons.  Three kprocs is three slots whatever else is running.
 #
 # So five is right for a shell image and seven for a station image, and
-# this is a value in a config rather than a constant in a header for
-# exactly that reason -- the same way main_pool_pcnt above it is.  A
-# station image is "mk INIT=armv7max25" with this set to 7.
+# the number therefore belongs with the init and not here: it is NPROC in
+# image-<init> beside this file, which also says which modules that image
+# executes in place, and the mkfile passes it in as NPROCWANTED.
+#
+# It was a literal here for a while, which made a station image two
+# edits in two files with nothing connecting them -- "mk
+# INIT=armv7max25" and this set to 7 -- and a station built with the
+# shell image's count comes up, prints its address and then says "no
+# procs for kproc" for ever, which looks like a board that booted.
+# flashverify.sh grew a check for that pairing.  There is nothing left to
+# pair.
 #
 # And 3096 in that first trace is why KSTACK in mem.h stays at 4096: the
 # comment there records that 3072 was tried and reverted because the
 # deep paths were unmeasured, and a kproc has now been seen 3096 deep.
 #
-	int nprocwanted = 5;
+	int nprocwanted = NPROCWANTED;
 	int cflag = 0;
 	int consoleprint = 1;
 	int panicreset = 0;

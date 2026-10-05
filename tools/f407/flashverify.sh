@@ -26,16 +26,20 @@
 # which init the image really carries, rather than trusting the
 # argument.
 #
-# AND IT CHECKS THE PROCESS COUNT AGAINST THE INIT, because the two have
-# to agree and nothing else makes them.  armv7max25 attaches a packet
-# device to #a, which starts three kprocs, and the board's config carries
-# five -- enough for a shell image and two short for a station.  At five
-# the station prints "addr N0CALL-1" and then "no procs for kproc"
-# forever, which is a board that looks like it booted.  The number is
-# nprocwanted in the config, beside main_pool_pcnt; there is no second
-# config file for a station because the format has no include and three
-# hundred duplicated lines would drift.  So it is two edits, and this
-# refuses to flash the half of them.
+# AND IT CHECKS THE PROCESS COUNT THE BOARD REPORTS against the one the
+# image was built to want.  armv7max25 attaches a packet device to #a,
+# which starts three kprocs, and five slots -- enough for a shell image
+# -- is two short for a station: it prints "addr N0CALL-1" and then "no
+# procs for kproc" forever, which is a board that looks like it booted.
+#
+# This check was written when the count was a literal in the config and a
+# station image was two edits in two files with nothing connecting them.
+# It is now NPROC in os/inferno/stm32f407/image-<init>, beside the XIP
+# list, because both are properties of the init; the mkfile passes it in
+# as NPROCWANTED and this reads it from the same file.  So the check can
+# no longer catch a mismatched pair, and what it still catches is a
+# board running an image other than the one just built -- a generated
+# config .c left over from a previous build, which has happened here.
 #
 # The board is reset from its own console with ^R twice running
 # (os/inferno/port/devuart.c handles it in the uart receive interrupt),
@@ -137,10 +141,16 @@ if [ -n "$(find "$ELFF" -newer "$HEXF" 2>/dev/null)" ]; then
 	echo "so it is from an earlier build and must not be flashed"
 	exit 1
 fi
-case "$INIT" in
-*ax25*)	WANTPROC=7 ;;
-*)	WANTPROC= ;;
-esac
+# The process count this init needs, read from the same file the BUILD
+# reads it from, so that this cannot disagree with the image.  It used to
+# be a hardcoded 7 for anything matching *ax25*, which is a second place
+# to remember a number.
+if [ -n "$INIT" ]; then
+	WANTPROC=$(sed -n 's/^NPROC=\([0-9]*\).*/\1/p' \
+		os/inferno/stm32f407/image-$INIT 2>/dev/null)
+else
+	WANTPROC=
+fi
 CARRIES=$(grep -o "from \.\./init/[a-z0-9]*\.dis" \
 	os/inferno/stm32f407/stm32f407.prog.s | sort -u | head -1)
 echo "flashverify: the image carries $CARRIES"

@@ -1,7 +1,15 @@
-# The modules the SHELL image executes in place.
+# What the SHELL image is: the modules it executes in place, and the
+# number of kernel processes it needs.
 #
 # One of these files per init, and the mkfile beside them picks the one
-# named after the init it is building.  They are not copies of each
+# named after the init it is building.  Both facts in it are properties
+# of the init -- which modules an image runs, and how many processes
+# running them takes -- and keeping them in one place is not tidiness:
+# they used to be two edits in two files with nothing connecting them,
+# and a station image built with the shell image's process count comes
+# up, prints its address, and then says "no procs for kproc" for ever,
+# which looks like a board that booted.  flashverify.sh grew a check for
+# exactly that pairing.  Now there is nothing to pair.  They are not copies of each
 # other: a module is in a list because the image's init runs it, and
 # which modules an init runs is the difference between the images.
 #
@@ -68,3 +76,9 @@ XIPDIS=\
 	env.dis\
 	xd.dis\
 	seq.dis\
+
+# Five.  A shell, its redirections and lil all work at five; at seven lil
+# prints its banner and dies and even echo begins to fail, because a
+# process slot is a 4096-byte kernel stack out of about 160K.  See the
+# nprocwanted comment in the config.
+NPROC=5

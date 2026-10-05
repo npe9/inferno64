@@ -97,7 +97,7 @@ install:V: i$CONF i$CONF.hex
 	cp i$CONF i$CONF.date i$CONF.hex $INSTALLDIR
 
 i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
-	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
+	$CC $CFLAGS '-DKERNDATE='$KERNDATE '-DNPROCWANTED='$NPROC $CONF.c
 	$LD $LDFLAGS -o $target -H4 -T$KTZERO -D$KDATA -R0 -l $OBJ $CONF.$O $LIBFILES
 	# THE STAMP THIS IMAGE PRINTS, written down where it can be read.
 	#
@@ -191,17 +191,18 @@ $ROOT/tools/bin2ihex:
 # attrdb is not here either, and for a different reason: radiocfg(1)
 # used it and ran out of heap on the board even from a fresh boot, so it
 # parses the attrdb(6) subset itself.  See its own comment.
-# The modules this image executes in place, which depend on which init
-# it carries: see xipdis-armv7minit for what the list means and
-# xipdis-armv7max25 for why it is not one list.
+# What this image is, which depends on which init it carries: the
+# modules it executes in place and the number of kernel processes it
+# needs.  See image-armv7minit for what those mean and
+# image-armv7max25 for why there is one file per init and not one list.
 #
-# A pipe include and not "<xipdis-$INIT", because this mk does not
+# A pipe include and not "<image-$INIT", because this mk does not
 # expand a variable in an include filename -- it looks for a file
-# called "xipdis-$INIT", warns that it is missing, and carries on with
-# XIPDIS empty.  A pipe include expands it and, when the file is not
+# called "image-$INIT", warns that it is missing, and carries on with
+# XIPDIS empty and NPROC unset.  A pipe include expands it and, when the file is not
 # there, stops with "bad include program status".  There is deliberately
 # no default: a new init must say what it runs.
-<| cat xipdis-$INIT
+<| cat image-$INIT
 
 
 
