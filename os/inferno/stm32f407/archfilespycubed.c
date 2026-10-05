@@ -57,13 +57,17 @@ static int rgbseen;
 static s32
 archsrcread(Chan*, void *a, s32 n, s64 offset)
 {
-	char buf[256];
+	char buf[384];
+	extern int simpackmv(void);
 
 	snprint(buf, sizeof buf,
-		"stm32f407: battery real, from the part's VBAT channel\n"
-		"stm32f407: imu invented, no inertial part on this board\n"
+		"stm32f407: battery %s\n"
+		"stm32f407: imu, power, charge scripted until a part answers;\n"
+		"stm32f407:   drive them from imu.ctl, power.ctl, charge.ctl\n"
 		"stm32f407: rgb recorded not displayed, two LEDs and both owned\n"
-		"stm32f407: radio real at #W/radio0\n");
+		"stm32f407: radio real at #W/radio0\n",
+		simpackmv() >= 0? "SCRIPTED, asked for with power.ctl"
+			: "real, from the part's VBAT channel");
 	return readstr(offset, a, n, buf);
 }
 
@@ -81,16 +85,22 @@ battread(Chan*, void *a, s32 n, s64 offset)
 {
 	char buf[32];
 	extern int adcbattmv(void);
+	extern int simpackmv(void);
+	int mv;
 
-	snprint(buf, sizeof buf, "%d\n", adcbattmv());
+	/*
+	 * The scripted pack first, and it answers -1 unless somebody has
+	 * asked for it with "battery sim" on #P/power.ctl.  So the
+	 * default is the part's own VBAT channel -- a real measurement
+	 * -- and a simulated battery is something this board has to be
+	 * TOLD to report, never something it falls back to.  That is the
+	 * difference between a fixture and a lie.
+	 */
+	mv = simpackmv();
+	if(mv < 0)
+		mv = adcbattmv();
+	snprint(buf, sizeof buf, "%d\n", mv);
 	return readstr(offset, a, n, buf);
-}
-
-static s32
-imuread(Chan*, void *a, s32 n, s64 offset)
-{
-	return readstr(offset, a, n,
-		"mag 0 0 0\ngyro 0 0 0\naccel 0 0 1000\n");
 }
 
 static s32
@@ -128,7 +138,6 @@ archfilespycubedlink(void)
 {
 	addarchfile("arch", 0444, archsrcread, nil);
 	addarchfile("battery", 0444, battread, nil);
-	addarchfile("imu", 0444, imuread, nil);
 	/*
 	 * Readable as well as writable, unlike the mps2's, because here
 	 * the value is kept rather than printed and a file that keeps a

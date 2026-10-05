@@ -149,6 +149,28 @@ link
 # owners.  Named after what it serves and not after the part, because
 # unlike the others in this list it is not a driver for anything.
 	archfilespycubed
+# The three I2C parts a PyCubed has and a clicker 2 does not: a BMX160
+# IMU, an ADM1176 power monitor and a BQ25883 charger, at #P/{imu,
+# power,charge} with a ctl file each.  Each one is real I2C code that
+# probes for its part and a scripted model that runs when none answers,
+# and #P/arch says which.  The scripts are driveable -- the battery
+# counts down, the IMU tumbles, the charger faults -- because the point
+# of them is to make the flight software's own thresholds and state
+# transitions happen while somebody is watching.  See imubmx160.c for
+# the long version of what is real here and what is not.
+#
+# THE CTL FILES ARE imu.ctl AND NOT imu/ctl, which is a compromise and
+# worth naming as one.  Every real device in this tree is a directory
+# per instance with ctl inside it -- #W/radio0/ctl, #a/N/ctl,
+# #J/i2c3/i2c.68.ctl -- and that is the shape these want.  addarchfile()
+# cannot express it: #P is a flat table of board files.  So they take
+# the convention #J uses for the same reason, a dot, and the directory
+# form is what a real driver on a real board should be: not three
+# entries in #P but a device of its own, which is phase 2 of
+# doc/pycubed-plan.ms and wants the parts on a desk first.
+	imubmx160
+	pwradm1176
+	chgbq25883
 
 mod
 	sys
