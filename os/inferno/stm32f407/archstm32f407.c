@@ -178,9 +178,47 @@ ledpin(int pin, int on)
 	wr(GPIOE+GPIO_ODR, v);
 }
 
+/*
+ * Styx request sizes for a part with 192K of RAM.
+ *
+ * os/inferno/port/devmnt.c and os/inferno/port/exportfs.c both carry
+ * 8216 as the message size to ask for and the buffer to read a request
+ * into before any size has been negotiated, and devmnt then opens a
+ * queue of ten times it -- 82160 bytes.  This board has about 80K of
+ * main pool in total.  Measured, exporting a namespace over the radio:
+ *
+ *	exportproc 7: waiting for memory (8216) for request
+ *	arena too large: main size 9176 cursize 38464
+ *	  arenasize 79360 maxsize 81900, alloc = 9344
+ *
+ * and from the far end a mount that never answers, although its
+ * Tversion had crossed the air -- nineteen bytes, logged at both ends.
+ *
+ * 512 because the messages this board will carry are small: the
+ * carrier is a 125-byte packet and an AX.25 information field is 109,
+ * so a Twrite of 489 bytes is already five frames of airtime.  It is
+ * above devmnt's own floor of 256, which is the other number that has
+ * to be cleared.
+ *
+ * Set here rather than in the conf because the port files must keep a
+ * default for every other board, and two definitions of one symbol do
+ * not link.  Called from archreset, which is this board's earliest
+ * hook and runs long before anything mounts or exports.
+ */
+static void
+styxsizes(void)
+{
+	extern int mntmaxrpc, mntqueuerpcs, exportmaxrpc;
+
+	mntmaxrpc = 512;
+	mntqueuerpcs = 10;
+	exportmaxrpc = 512;
+}
+
 void
 archreset(void)
 {
+	styxsizes();
 	ulong hz;
 
 	wr(RCC_AHB1ENR, rd(RCC_AHB1ENR) | Ahb1Gpioe | Ahb1Bkpsram);

@@ -19,6 +19,32 @@ implement Init;
 # end therefore reads the file itself and prints it, rather than
 # leaving somebody to cat it.
 #
+# AND WHY THERE IS A PIPE BETWEEN STYX AND THE RADIO.
+#
+# os/inferno/port/devmnt.c refuses a message size under 256 -- "nonsense
+# value of msize in fversion" -- and it clamps the size it asks for to
+# the channel iounit.  An AX.25 connected conversation over this radio
+# has an information field of 109: the CC1120 carries 125 bytes and
+# devax25.c takes sixteen for the address field.  109 against a floor of
+# 256, and the part cannot cover it either -- even a 255-byte packet
+# leaves 239.  So mounting the conversation directly fails, and it is
+# arithmetic rather than a bug.
+#
+# The missing piece is segmentation, and it goes HERE rather than in the
+# device, because this tree puts userland in Dis.  A pipe has an iounit
+# devmnt is happy with; Styx talks to one end of it; two processes
+# shuttle bytes between the other end and the radio, chopping writes
+# into pieces the information field holds.
+#
+# What makes the chopping sufficient -- rather than needing AX.25 2.2's
+# SEG field and a reassembler -- is that the conversation is already a
+# RELIABLE ORDERED stream: sequence numbers, RR and REJ, measured here
+# at 1008 numbered frames with nothing retransmitted.  So the pieces
+# arrive in order and none is lost, and a Styx reader puts them back
+# together by itself: devmnt reads a message by its length prefix in a
+# loop (devmnt.c, "k < GBIT32(msg)"), so a short read is a short read
+# and not a lost message.
+#
 # WHY THE CARRIER IS #a AND NOT #W/radio0/data DIRECTLY.  Styx wants a
 # reliable ordered stream: a lost message is a client that waits for a
 # reply for ever, and there is no timeout in the mount driver to rescue
@@ -50,8 +76,15 @@ Init: module
 };
 
 Statevery:	con 10;		# reads between reports
+# 512 and not a Styx message's worth.  This is a shuttle: whatever it
+# reads it writes, in pieces the information field holds, so a short
+# buffer costs loop iterations and nothing else.  Two processes per end
+# at 8216 bytes each was 32K of Dis heap on a board with about 78K of
+# it, spent to make no difference.
+Pipebuf:	con 512;
 
 lastconv: int;
+keep: list of ref Sys->FD;
 
 init()
 {
@@ -158,11 +191,16 @@ serve(carrier: int)
 	}
 	sys->print("styx: accepted on #a/%d, iounit %d of a carrier's %d\n",
 		cv, sys->iounit(dfd), carrier);
+	sfd := relay(dfd);
+	if(sfd == nil){
+		sys->print("ARMV7M-STYX-NOPIPE\n");
+		return;
+	}
 	# EXPWAIT and not EXPASYNC: this process has nothing else to do
 	# and a satellite that returns from serving its own namespace has
 	# stopped being a satellite.  export() does not come back.
 	sys->print("ARMV7M-STYX-EXPORTING\n");
-	if(sys->export(dfd, "/", Sys->EXPWAIT) < 0)
+	if(sys->export(sfd, "/", Sys->EXPWAIT) < 0)
 		sys->print("styx: export: %r\n");
 	sys->print("ARMV7M-STYX-EXPORTDONE\n");
 }
@@ -185,10 +223,15 @@ client(peer: string, carrier: int)
 	}
 	sys->print("styx: linked to %s on #a/%d, iounit %d of a carrier's"
 		+ " %d\n", peer, cv, sys->iounit(dfd), carrier);
+	sfd := relay(dfd);
+	if(sfd == nil){
+		sys->print("ARMV7M-STYX-NOPIPE\n");
+		return;
+	}
 	# /n and not /n/sat: devroot is read-only, so there is no making
 	# a directory to mount on, and /n is already one.
 	sys->print("ARMV7M-STYX-MOUNTING\n");
-	if(sys->mount(dfd, nil, "/n", Sys->MREPL, "") < 0){
+	if(sys->mount(sfd, nil, "/n", Sys->MREPL, "") < 0){
 		sys->print("styx: mount: %r\n");
 		sys->print("ARMV7M-STYX-NOMOUNT\n");
 		return;
@@ -207,7 +250,162 @@ client(peer: string, carrier: int)
 				s);
 		if(i == 0)
 			sys->print("ARMV7M-STYX-READ-OK\n");
+		# AND A FILE BIGGER THAN ONE FRAME, once, because
+		# otherwise the chopping in up() is a mechanism that has
+		# never run.  Every Styx message in a battery read fits
+		# the 109-byte information field -- the largest was 35 --
+		# so a relay tested only on that is a relay whose whole
+		# reason for existing is unexercised.  #P/arch is a few
+		# hundred bytes, which makes an Rread the sender has to
+		# split and the reader has to put back together.
+		if(i == 0)
+			bigread();
 		sys->sleep(10000);
+	}
+}
+
+# A read bigger than one frame, TWICE, AND COMPARED.
+#
+# The first run of this printed 273 bytes of the satellite's #P/arch
+# with its first and last lines intact and the middle full of binary,
+# which is two different faults wearing one appearance: either the
+# relay chopped and rejoined the message wrongly, or the console
+# mangled a 273-byte print while other processes were printing.  The
+# content cannot tell them apart, because this end does not know what
+# the far end holds.
+#
+# Two reads do.  If the transfer is sound the two strings are identical
+# whatever the console then does to them, and if it is not they differ
+# -- and the first differing byte says where.  So the evidence is the
+# comparison, printed as a sentence, and the content is printed after it
+# as a courtesy rather than as the measurement.
+bigread()
+{
+	a := slurp("/n/dev/arch");
+	if(a == ""){
+		sys->print("styx: /n/dev/arch: %r\n");
+		return;
+	}
+	b := slurp("/n/dev/arch");
+	if(b == ""){
+		sys->print("styx: /n/dev/arch second read: %r\n");
+		return;
+	}
+	sys->print("styx: %d bytes over the radio, twice\n", len a);
+	if(len a != len b){
+		sys->print("styx: the two reads are %d and %d bytes, so the"
+			+ " transfer is losing data\n", len a, len b);
+		sys->print("ARMV7M-STYX-BIGREAD-SHORT\n");
+		return;
+	}
+	for(k := 0; k < len a; k++)
+		if(a[k] != b[k]){
+			sys->print("styx: the two reads differ at byte %d,"
+				+ " so the transfer is corrupting data\n", k);
+			sys->print("ARMV7M-STYX-BIGREAD-DIFFER\n");
+			return;
+		}
+	sys->print("styx: the two reads are identical, so %d bytes"
+		+ " crossed %d-byte frames intact\n", len a, 109);
+	sys->print("ARMV7M-STYX-BIGREAD-OK\n");
+	sys->print("%s", a);
+}
+
+# A byte stream over a packet conversation.
+#
+# Returns the Styx end of a pipe whose other end is shuttled to and from
+# the radio by two processes.  See the note at the top for why the
+# chopping is all the segmentation this needs.
+relay(dfd: ref Sys->FD): ref Sys->FD
+{
+	fds := array[2] of ref Sys->FD;
+	if(sys->pipe(fds) < 0){
+		sys->print("styx: pipe: %r\n");
+		return nil;
+	}
+	# The conversation's own figure, asked for rather than assumed:
+	# it is the carrier's packet less the address field, and the
+	# address field grows with every digipeater.
+	budget := sys->iounit(dfd);
+	if(budget <= 0){
+		sys->print("styx: conversation reports iounit %d\n", budget);
+		return nil;
+	}
+	sys->print("styx: relaying a pipe of %d over %d-byte frames\n",
+		sys->iounit(fds[0]), budget);
+	spawn up(fds[1], dfd, budget);
+	spawn down(dfd, fds[1]);
+	# fds[1] is handed to two processes and must not be closed here:
+	# a Limbo reference dies at its last use, and dropping this one
+	# would hang up the pipe under them.  Keeping it in a global is
+	# the same lesson conv() records.
+	keep = fds[1] :: keep;
+	return fds[0];
+}
+
+# Styx to the radio, chopped.  A write of more than the information
+# field is several frames; devax25 refuses the long write rather than
+# segmenting it, which is the whole reason this exists.
+# src and dst, not from and to: "to" is a Limbo keyword -- it is the
+# separator in a case range -- and naming a parameter with it gives a
+# syntax error on the function line and then one on nearly every line
+# after it, which reads as a file that has been mangled.
+up(src, dst: ref Sys->FD, budget: int)
+{
+	b := array[Pipebuf] of byte;
+	# THE FIRST FEW TRANSFERS, EACH WAY, PRINTED.
+	#
+	# The first run of this stalled with the satellite exporting and
+	# the ground mounting and no error from either, which says nothing
+	# about which direction stopped.  A relay that does not say how
+	# much it has moved is two processes nobody can see inside, and
+	# this bench has spent a day on exactly that kind of silence.
+	# Only the first few, because at 1200 baud a line per frame would
+	# itself be the bottleneck.
+	for(nmsg := 0;; nmsg++){
+		n := sys->read(src, b, len b);
+		if(n <= 0){
+			sys->print("styx: up: pipe read %d: %r\n", n);
+			return;
+		}
+		if(nmsg < 6)
+			sys->print("styx: up %d bytes from the pipe\n", n);
+		for(i := 0; i < n; ){
+			m := n - i;
+			if(m > budget)
+				m = budget;
+			if(sys->write(dst, b[i:i+m], m) != m){
+				sys->print("styx: up: %r\n");
+				return;
+			}
+			if(nmsg < 6)
+				sys->print("styx: up   %d onto the air\n", m);
+			i += m;
+		}
+	}
+}
+
+# The radio to Styx.  One read is one frame and the pieces go into the
+# pipe in the order they arrived, which is what the connected mode
+# guarantees and what lets the reader on the far side of the pipe put
+# the message back together by its length prefix.
+down(src, dst: ref Sys->FD)
+{
+	b := array[Pipebuf] of byte;
+	for(nmsg := 0;; nmsg++){
+		n := sys->read(src, b, len b);
+		if(n < 0){
+			sys->print("styx: down: %r\n");
+			return;
+		}
+		if(n == 0)
+			continue;
+		if(nmsg < 6)
+			sys->print("styx: down %d bytes off the air\n", n);
+		if(sys->write(dst, b[0:n], n) != n){
+			sys->print("styx: down write: %r\n");
+			return;
+		}
 	}
 }
 
@@ -255,7 +453,10 @@ slurp(path: string): string
 	fd := sys->open(path, Sys->OREAD);
 	if(fd == nil)
 		return "";
-	b := array[256] of byte;
+	# 512, which is the message size this board negotiates: a read
+	# of less than that would come back in pieces and the point here
+	# is to ask for one whole message.
+	b := array[512] of byte;
 	n := sys->read(fd, b, len b);
 	if(n <= 0)
 		return "";

@@ -301,6 +301,33 @@ exreadmsg(Chan *c, void *a, uint n)
 	return len;
 }
 
+/*
+ * The buffer a request is read into before any message size has been
+ * negotiated, and therefore the smallest main-pool allocation an export
+ * can be started with.
+ *
+ * A VARIABLE AND NOT THE CONSTANT, because MAXRPCDEF is 8216 and a
+ * board can have less main pool than that will ever get.  Measured on
+ * os/inferno/stm32f407, a 192K part exporting its namespace over a
+ * radio:
+ *
+ *	exportproc 7: waiting for memory (8216) for request
+ *	arena too large: main size 9176 cursize 38464
+ *	  arenasize 79360 maxsize 81900, alloc = 9344
+ *
+ * exportproc then retries for ten minutes and gives up, which from the
+ * other end is a mount that never answers.  The client had already got
+ * its Tversion across the air -- nineteen bytes, logged at both ends --
+ * so everything about the link was right and the only thing in the way
+ * was a number compiled in here.
+ *
+ * It is a variable rather than a conditional because this tree does not
+ * conditionally compile: a board that wants a different figure says so
+ * in the code section of its conf, the same way it says nprocwanted.
+ * Every board that says nothing gets exactly what it got before.
+ */
+int exportmaxrpc = MAXRPCDEF;
+
 static void
 exportproc(void *a)
 {
@@ -315,7 +342,7 @@ exportproc(void *a)
 
 		msize = fs->msize;
 		if(msize == 0)
-			msize = MAXRPCDEF;
+			msize = exportmaxrpc;
 		for(n=0;; n++){	/* we don't use smalloc, to avoid memset */
 			q = mallocz(sizeof(*q)+msize, 0);
 			if(q != nil || n > 6000)

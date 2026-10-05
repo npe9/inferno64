@@ -20,6 +20,23 @@ static int debug = 0;
 
 #define MAXRPC (IOHDRSZ+8192)
 
+/*
+ * The message size this driver asks for, and the size of the buffer it
+ * does the version exchange in.
+ *
+ * A VARIABLE AND NOT THE CONSTANT, for the reason exportmaxrpc in
+ * exportfs.c carries at length: MAXRPC is 8216 and this driver then
+ * opens a queue of ten times it, 82160 bytes, which is more main pool
+ * than os/inferno/stm32f407 has in total.  A board that wants a
+ * different figure sets it in the code section of its conf, like
+ * nprocwanted; every board that says nothing gets what it got before.
+ *
+ * The queue multiple is here too because ten times a figure chosen for
+ * a workstation is a different decision on a part with 192K of RAM.
+ */
+int mntmaxrpc = MAXRPC;
+int mntqueuerpcs = 10;
+
 struct Mntrpc
 {
 	Chan*	c;		/* Channel for whom we are working */
@@ -125,7 +142,7 @@ mntversion(Chan *c, char *version, int msize, int returnlen)
 
 	/* defaults */
 	if(msize == 0)
-		msize = MAXRPC;
+		msize = mntmaxrpc;
 	if(msize > c->iounit && c->iounit != 0)
 		msize = c->iounit;
 	v = version;
@@ -162,14 +179,14 @@ mntversion(Chan *c, char *version, int msize, int returnlen)
 	f.tag = NOTAG;
 	f.msize = msize;
 	f.version = v;
-	msg = malloc(8192+IOHDRSZ);
+	msg = malloc(mntmaxrpc);
 	if(msg == nil)
 		exhausted("version memory");
 	if(waserror()){
 		free(msg);
 		nexterror();
 	}
-	k = convS2M(&f, msg, 8192+IOHDRSZ);
+	k = convS2M(&f, msg, mntmaxrpc);
 	if(k == 0)
 		error("bad fversion conversion on send");
 
@@ -187,8 +204,8 @@ mntversion(Chan *c, char *version, int msize, int returnlen)
 	}
 
 	/* message sent; receive and decode reply */
-	for(k = 0; k < BIT32SZ || (k < GBIT32(msg) && k < 8192+IOHDRSZ); k += l){
-		l = devtab[c->type]->read(c, msg+k, 8192+IOHDRSZ-k, c->offset);
+	for(k = 0; k < BIT32SZ || (k < GBIT32(msg) && k < mntmaxrpc); k += l){
+		l = devtab[c->type]->read(c, msg+k, mntmaxrpc-k, c->offset);
 		if(l <= 0)
 			error("EOF receiving fversion reply");
 		lock(c);
@@ -216,7 +233,7 @@ mntversion(Chan *c, char *version, int msize, int returnlen)
 
 	v = nil;
 	kstrdup(&v, f.version);
-	q = qopen(10*MAXRPC, 0, nil, nil);
+	q = qopen(mntqueuerpcs*mntmaxrpc, 0, nil, nil);
 	if(q == nil){
 		free(v);
 		exhausted("mount queues");

@@ -1655,3 +1655,107 @@ The link, the export and the role selection all work; the init is the
 harness whichever of those three lands.  And the claim the plan made \-
 that Styx over this radio needs no IP stack \- is not refuted: nothing
 in the way is an address or a route.  It is one subtraction.
+.NH 1
+Styx over the radio works, and a multi-frame read is corrupted
+.PP
+.B "The ground station mounts the satellite and reads a file off it."
+This is what the plan has called the whole argument since it was
+written, and it is measured:
+.DS
+.CW "ARMV7M-STYX-MOUNTED"
+.CW "styx: the satellite says battery 3300"
+.CW "styx: the satellite says battery 3302"
+.CW "styx: the satellite says battery 3304"
+.DE
+.CW /n/dev/battery
+on the ground is
+.CW #P/battery
+on the satellite, which is a conversion of that part's own VBAT channel
+\- so the number moves between reads because it is a measurement and not
+a constant.  No IP stack, no addresses, no routes: an AX.25 conversation,
+a pipe, and
+.IR sys->export ().
+.PP
+The whole exchange is visible because the relay prints its first few
+transfers each way:
+.DS
+.CW "Tversion 19   Rversion 19"
+.CW "Tattach  26   Rattach  20"
+.CW "Twalk    31   Rwalk    35"
+.CW "Topen    12   Ropen    24"
+.CW "Tread    23   Rread    16"
+.CW "Tclunk   11   Rclunk    7"
+.DE
+.NH 2
+Three walls, in the order they appeared
+.IP 1.
+.B "devmnt refuses a message size under 256"
+and clamps what it asks for to the channel iounit, which on an AX.25
+conversation here is 109.
+.B "Cleared by putting a pipe between Styx and the radio:"
+the pipe reports 65536, Styx talks to one end of it, and two processes
+shuttle bytes between the other end and the conversation, chopping
+writes into pieces the information field holds.  Segmentation in Dis
+rather than in the device, which is where this tree puts userland \- and
+sufficient rather than needing AX.25 2.2's SEG field, because the
+conversation is already reliable and ordered and a Styx reader puts a
+message back together by its length prefix.
+.IP 2.
+.B "exportfs wants 8216 bytes of main pool before any size is negotiated,"
+and this board has about 80K of main pool in total:
+.DS
+.CW "exportproc 7: waiting for memory (8216) for request"
+.CW "arena too large: main size 9176 cursize 38464"
+.CW "  arenasize 79360 maxsize 81900, alloc = 9344"
+.DE
+It then retries for ten minutes and gives up, which from the far end is
+a mount that never answers \- although its Tversion had already crossed
+the air, nineteen bytes, logged at both ends.
+.B "Cleared by making the figure a variable instead of a constant:"
+.B exportmaxrpc
+in
+.CW exportfs.c
+and
+.B mntmaxrpc
+and
+.B mntqueuerpcs
+in
+.CW devmnt.c ,
+set to 512 by this board in
+.IR archreset ().
+Not a conditional, because this tree does not conditionally compile, and
+every board that says nothing gets what it had before.
+.IP 3.
+.B "The satellite has to be listening before the ground calls it."
+Obvious afterwards; it cost two runs that read as a hung mount.
+.NH 2
+And the fault that is still open: a read bigger than one frame comes back wrong
+.PP
+.CW /n/dev/arch
+is 273 bytes, which is three frames.  The first attempt printed it with
+its first and last lines intact and the middle full of binary, and
+.B "that appearance has two possible causes"
+\- the relay rejoining the message wrongly, or the console mangling a
+273-byte print while other processes were printing.  The content cannot
+tell them apart, because this end does not know what the far end holds.
+.PP
+.B "Two reads can."
+If the transfer is sound they are identical whatever the console then
+does to them.  They are not:
+.DS
+.CW "styx: 273 bytes over the radio, twice"
+.CW "styx: the two reads differ at byte 82, so the transfer"
+.CW "      is corrupting data"
+.DE
+So it is the transfer and not the console, which is the opposite of what
+the first appearance suggested.
+.B "And byte 82 is before the first chop boundary at 109,"
+which points away from the chopping and at something underneath it \- a
+duplicated or reordered I frame would be the first thing to look at,
+since a Styx reader counting a length prefix cannot tell wrong bytes
+from right ones.
+.PP
+.B "What stands and what does not."
+Single-frame Styx over this radio works and has been read twenty times
+running.  Multi-frame does not, and the thing that says so is a control
+rather than an inspection.

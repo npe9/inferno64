@@ -15,8 +15,10 @@ XIPDIS=\
 	lib/radiocal.dis\
 
 
-# Twelve, and a first estimate to be measured like every other count
-# here.
+# Fourteen, and a first estimate to be measured like every other count
+# here.  Twelve was the figure before the segmenting relay added two
+# processes per end -- one shuttling each way between the pipe and the
+# conversation.
 #
 # #a starts three kprocs when a packet device is attached to it; the
 # init is one process; export() serves in the process that called it
@@ -26,4 +28,4 @@ XIPDIS=\
 # 4096-byte kernel stack out of about 160K -- so this cannot simply be
 # set high.  Neither end runs a shell, which is what makes the number
 # affordable at all: at seven a shell AND #a could not coexist.
-NPROC=12
+NPROC=14
