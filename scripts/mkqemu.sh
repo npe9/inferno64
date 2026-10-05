@@ -44,6 +44,15 @@
 #		or SS; LTR leaving TR not busy; one interrupt shadow
 #		for STI and MOV SS.  scripts/check-qemu-vmx.sh checks
 #		it against kvm-unit-tests and Linux's kvm_intel
+#	0007-net-ixgbe-82599-sriov.patch
+#		the 82599 (X520), which QEMU did not have: an SR-IOV
+#		physical function (-device ixgbe) with an SFP+ direct-
+#		attach cable read over bit-banged I2C, its EEPROM,
+#		semaphores, link and interrupt registers, 128 queue
+#		pairs with offloads, and its virtual functions with
+#		the PF/VF mailbox, VF resets and the internal switch
+#		between pools (hw/net/ixgbe.c).  scripts/check-qemu-
+#		ixgbe.sh checks it against Linux's ixgbe and ixgbevf
 #
 # usage: scripts/mkqemu.sh      installs into $ROOT/.qemu/local;
 #                               scripts/vmhost.sh uses it when present

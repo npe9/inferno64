@@ -1855,6 +1855,60 @@ check-nsvm: pass -- a machine built from a namespace: its disk a file on the Mac
 .ft
 .DE
 Every milestone short of M11 now holds on VMX as on SVM, on one bench.
+.IP
+The 82599 model (phase 16):
+.CW scripts/qemu-patches/0007
+adds
+.CW "-device ixgbe" ,
+an X520-DA1's 82599 (8086:10fb) and its 63 SR-IOV VFs (8086:10ed), in
+.CW hw/net/ixgbe.c .
+What a driver for the part depends on is modelled, its quirks
+included: the EEPROM with its checksum over the pointed-to sections,
+the SFP+ init list programmed into CORECTL and the firmware block
+whose patch version the driver wants before it calls the part
+production; a passive direct-attach cable's SFF-8472 bytes read over
+I2C bit-banged through I2CCTL; the SDP pins (SDP2 says a module is in
+the cage, and the link checks it; SDP3 turns the transmitter off, and
+the link goes down with it); SWSM/GSSR semaphores; MDIO with no PHY;
+AUTOC and ANLP1; LINKS at 10Gb/s; FWSM's valid bit; the packet
+buffers' reset sizes.  128 queue pairs, advanced and legacy
+descriptors, TSO, checksum and VLAN offloads, receive checksum
+validation; EICR with EIAC/EIAM and the extended registers, IVAR, in
+legacy, MSI and MSI-X mode.  Pools of 2, 4 or 8 queues, MAC
+(RAR/MPSAR), multicast, VLAN (VLVF) and VMOLR filtering, VFRE/VFTE,
+anti-spoofing, VMVIR, the internal switch; the PF/VF mailbox with its
+ownership bits, VF reset and FLR (VFLRE), RSTI/RSTD.
+.CW scripts/check-qemu-ixgbe.sh
+checks it against Linux's own drivers (linux-lts 6.6.142's ixgbe and
+ixgbevf), QEMU TCG, q35, the 82599 behind a root port:
+.DS
+.ft CW
+ixgbe 0000:01:00.0: MAC: 2, PHY: 14, SFP+: 3, PBA No: E7B560-005
+ixgbe 0000:01:00.0 eth0: NIC Link is Up 10 Gbps, Flow Control: RX/TX
+check-qemu-ixgbe: pf: pass
+check-qemu-ixgbe: vf: pass
+check-qemu-ixgbe: switch: pass
+	pf link up speed 10000
+	dhcp udhcpc: lease of 10.0.2.15 obtained from 10.0.2.2, lease time 86400
+	pf ping 3 packets transmitted, 3 packets received, 0% packet loss
+	vf 0000:01:10.0 eth1 a6:d8:1b:cf:4e:51
+	vf 0000:01:10.2 eth2 b2:a8:c3:37:3f:88
+	switch ping 3 packets transmitted, 3 packets received, 0% packet loss
+	switch ping back 3 packets transmitted, 3 packets received, 0% packet loss
+	switch tcp vf to vf 2097152 bytes md5 75baa7b9fdb90d0103c99f329797328f
+	switch tcp pf to vf 2097152 bytes md5 75baa7b9fdb90d0103c99f329797328f
+	irq 28:          0        185  PCI-MSIX-0000:01:10.0   0-edge      eth1-TxRx-0
+	irq 31:        217          0  PCI-MSIX-0000:01:10.2   0-edge      eth2-TxRx-0
+.ft
+.DE
+The VFs are made through
+.CW sriov_numvfs ,
+ixgbevf binds each over the mailbox, and with one VF in a network
+namespace of its own the two ping and move 2MB over TCP through the
+82599's switch, as does the PF to a VF.  Not modelled: flow-director
+filtering (its commands complete), RSC, DCB, IPsec, timestamps, the
+flash; statistics beyond the counters drivers read on each pass; the
+model is not migratable.
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
@@ -1877,7 +1931,9 @@ RISC-V; a riscv64 host of four harts; M3 under MTTCG (a QEMU race,
 fixed); AMD-Vi, VT-d queued invalidation and interrupt remapping; Limbo
 nil dereferences as exceptions on pc64 and riscv64; VMX in QEMU's TCG
 (phase 16), on which check-vm passes every stage on the VMX backend.
-M1\-M10 all hold on VMX there.  Next: the 82599 model, the
+M1\-M10 all hold on VMX there.  The 82599 model is done, checked
+against Linux's ixgbe and ixgbevf.  Next: this kernel's 82599 PF
+driver with SR-IOV on it (M7 on the X520's VFs, both backends), the
 misbehaving DMA device; then the
 workstation (phase 13), and real hardware for everything QEMU and Bochs
 have stood in for.  On QEMU, check-vm (SVM; M4 under VT-d and AMD-Vi)

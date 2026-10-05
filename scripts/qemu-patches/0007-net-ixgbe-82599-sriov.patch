@@ -1,0 +1,2406 @@
+--- a/hw/net/Kconfig
++++ b/hw/net/Kconfig
+@@ -49,6 +49,13 @@
+     default y if PCI_DEVICES || PCIE_DEVICES
+     depends on PCI_EXPRESS && MSI_NONBROKEN
+ 
++config IXGBE_PCI_EXPRESS
++    bool
++    default y if PCI_DEVICES || PCIE_DEVICES
++    depends on PCI_EXPRESS && MSI_NONBROKEN
++    select I2C
++    select BITBANG_I2C
++
+ config RTL8139_PCI
+     bool
+     default y if PCI_DEVICES
+--- a/hw/net/meson.build
++++ b/hw/net/meson.build
+@@ -12,6 +12,7 @@
+ system_ss.add(when: 'CONFIG_E1000E_PCI_EXPRESS', if_true: files('e1000e.c', 'e1000e_core.c', 'e1000x_common.c'))
+ system_ss.add(when: 'CONFIG_IGB_PCI_EXPRESS', if_true: files('net_tx_pkt.c', 'net_rx_pkt.c'))
+ system_ss.add(when: 'CONFIG_IGB_PCI_EXPRESS', if_true: files('igb.c', 'igbvf.c', 'igb_core.c'))
++system_ss.add(when: 'CONFIG_IXGBE_PCI_EXPRESS', if_true: files('net_tx_pkt.c', 'net_rx_pkt.c', 'ixgbe.c'))
+ system_ss.add(when: 'CONFIG_RTL8139_PCI', if_true: files('rtl8139.c'))
+ system_ss.add(when: 'CONFIG_TULIP', if_true: files('tulip.c'))
+ system_ss.add(when: 'CONFIG_VMXNET3_PCI', if_true: files('net_tx_pkt.c', 'net_rx_pkt.c'))
+--- /dev/null
++++ b/hw/net/ixgbe.c
+@@ -0,0 +1,2377 @@
++/*
++ * QEMU Intel 82599 (X520) 10 Gigabit Ethernet controller with SR-IOV
++ *
++ * The physical function is the 82599ES SFP+ part (8086:10fb) as an
++ * X520-DA1 carries it: one port, an SFP+ cage holding a passive
++ * direct-attach copper cable, the cable's SFF-8472 identification
++ * read by the driver over the I2C lines it bit-bangs through I2CCTL.
++ * The virtual functions (8086:10ed) are its 63 SR-IOV functions.
++ *
++ * What is modelled is what a driver for the part, Linux's ixgbe and
++ * ixgbevf among them, depends on:
++ *
++ *	the EEPROM, read through EERD, with its checksum and the SFP+
++ *	init sequence list the driver programs into CORECTL; the
++ *	software/firmware semaphores (SWSM, GSSR); a self-clearing
++ *	CTRL.RST; MDIO with no PHY behind it; AUTOC with its
++ *	auto-negotiation state in ANLP1; LINKS at 10Gb/s
++ *
++ *	128 transmit and 128 receive queues with advanced (and legacy)
++ *	descriptors, checksum and TCP segmentation offload, VLAN
++ *	insertion and stripping, receive checksum validation
++ *
++ *	interrupts in legacy, MSI and MSI-X mode: EICR with its
++ *	auto-clear (EIAC) and auto-mask (EIAM), the extended registers
++ *	for vectors 16-63, IVAR mapping queues and other causes to
++ *	vectors
++ *
++ *	virtualisation: pools of 2, 4 or 8 queues (GCR_EXT), pool
++ *	selection by MAC (RAR, MPSAR), multicast table, VLAN pool
++ *	filters (VLVF), per-pool offload (VMOLR), the enables VFRE and
++ *	VFTE, MAC and VLAN anti-spoofing, default VLAN insertion
++ *	(VMVIR), and the internal switch that loops frames between
++ *	pools (PFDTXGSWC); the PF/VF mailboxes with their ownership
++ *	bits and interrupts; VF reset, VF function-level reset (VFLRE)
++ *	and the PF reset indications the VFs see (RSTI, RSTD)
++ *
++ * Statistics are kept for the counters drivers read on every pass;
++ * the others read as zero.  There is no flash, no flow director
++ * filtering (its commands complete and are not applied), no RSC, no
++ * DCB, no IPsec and no timestamping.
++ *
++ * Register layout and semantics are from the 82599 datasheet and
++ * the ixgbe/ixgbevf drivers' ixgbe_type.h, regs.h and mbx.h.
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or
++ * later.  See the COPYING file in the top-level directory.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/units.h"
++#include "qemu/module.h"
++#include "qemu/timer.h"
++#include "qemu/iov.h"
++#include "net/eth.h"
++#include "net/net.h"
++#include "net/checksum.h"
++#include "hw/pci/pci_device.h"
++#include "hw/pci/pcie.h"
++#include "hw/pci/pcie_sriov.h"
++#include "hw/pci/msi.h"
++#include "hw/pci/msix.h"
++#include "hw/qdev-properties.h"
++#include "system/system.h"
++#include "hw/i2c/i2c.h"
++#include "hw/i2c/bitbang_i2c.h"
++#include "migration/vmstate.h"
++#include "qapi/error.h"
++#include "qom/object.h"
++#include "net_tx_pkt.h"
++#include "net_rx_pkt.h"
++
++#define TYPE_IXGBE      "ixgbe"
++#define TYPE_IXGBEVF    "ixgbevf"
++#define TYPE_IXGBE_SFP  "ixgbe-sfp"
++
++OBJECT_DECLARE_SIMPLE_TYPE(IxgbeState, IXGBE)
++OBJECT_DECLARE_SIMPLE_TYPE(IxgbeVfState, IXGBEVF)
++OBJECT_DECLARE_SIMPLE_TYPE(IxgbeSfpState, IXGBE_SFP)
++
++#define IXGBE_DEV_ID            0x10fb
++#define IXGBE_VF_DEV_ID         0x10ed
++#define IXGBE_SUBSYS_ID         0x7a11  /* X520-DA1 */
++
++#define IXGBE_MMIO_SIZE         (128 * KiB)
++#define IXGBE_MSIX_SIZE         (16 * KiB)
++#define IXGBE_MMIO_BAR          0
++#define IXGBE_MSIX_BAR          4
++#define IXGBE_MSIX_VECS         64
++#define IXGBE_NQ                128
++#define IXGBE_NPOOLS            64
++#define IXGBE_TOTAL_VFS         63
++#define IXGBE_NRAR              128
++#define IXGBE_EEPROM_WORDS      512
++#define IXGBE_MAXFRAME          16384
++
++#define IXGBEVF_MMIO_SIZE       (16 * KiB)
++#define IXGBEVF_MSIX_SIZE       (16 * KiB)
++#define IXGBEVF_MMIO_BAR        0
++#define IXGBEVF_MSIX_BAR        3
++#define IXGBEVF_MSIX_VECS       3
++
++#define IXGBE_CAP_SRIOV         0x160
++#define IXGBE_VF_OFFSET         0x80
++#define IXGBE_VF_STRIDE         2
++
++/* physical function registers */
++enum {
++    CTRL        = 0x00000,
++    STATUS      = 0x00008,
++    CTRL_EXT    = 0x00018,
++    ESDP        = 0x00020,
++    I2CCTL      = 0x00028,
++    VFLRE1      = 0x001C0,
++    VFLRE0      = 0x00600,
++    VFLREC      = 0x00700,
++    PFMBICR     = 0x00710,
++    PFMBIMR     = 0x00720,
++    EICR        = 0x00800,
++    EICS        = 0x00808,
++    EIAC        = 0x00810,
++    EITR0       = 0x00820,
++    EIMS        = 0x00880,
++    EIMC        = 0x00888,
++    EIAM        = 0x00890,
++    GPIE        = 0x00898,
++    IVAR0       = 0x00900,
++    IVAR_MISC   = 0x00A00,
++    EICS_EX     = 0x00A90,
++    EIMS_EX     = 0x00AA0,
++    EIMC_EX     = 0x00AB0,
++    EIAM_EX     = 0x00AD0,
++    RXQ_LO      = 0x01000,      /* receive queues 0-63, 0x40 each */
++    SRRCTL_LO   = 0x02100,      /* aliases of queues 0-15 */
++    DCARX_LO    = 0x02200,
++    RDRXCTL     = 0x02F00,
++    RXCTRL      = 0x03000,
++    MPC0        = 0x03FA0,
++    RXPBSIZE    = 0x03C00,
++    CRCERRS     = 0x04000,
++    GPRC        = 0x04074,
++    BPRC        = 0x04078,
++    MPRC        = 0x0407C,
++    GPTC        = 0x04080,
++    GORCL       = 0x04088,
++    GORCH       = 0x0408C,
++    GOTCL       = 0x04090,
++    GOTCH       = 0x04094,
++    RNBC0       = 0x03FC0,
++    TPR         = 0x040D0,
++    TPT         = 0x040D4,
++    MPTC        = 0x040F0,
++    BPTC        = 0x040F4,
++    HLREG0      = 0x04240,
++    MSCA        = 0x0425C,
++    MSRWD       = 0x04260,
++    MAXFRS      = 0x04268,
++    AUTOC       = 0x042A0,
++    LINKS       = 0x042A4,
++    AUTOC2      = 0x042A8,
++    ANLP1       = 0x042B0,
++    DMATXCTL    = 0x04A80,
++    PFMAILBOX   = 0x04B00,
++    FCTRL       = 0x05080,
++    VLNCTRL     = 0x05088,
++    MCSTCTRL    = 0x05090,
++    VT_CTL      = 0x051B0,
++    VFRE        = 0x051E0,
++    MTA         = 0x05200,
++    RAL_LO      = 0x05400,      /* aliases of RAR 0-15 */
++    PSRTYPE_LO  = 0x05480,      /* aliases of PSRTYPE 0-15 */
++    TXQ         = 0x06000,      /* transmit queues 0-127, 0x40 each */
++    VMVIR       = 0x08000,
++    VFTE        = 0x08110,
++    PFVFSPOOF   = 0x08200,
++    PFDTXGSWC   = 0x08220,
++    SSVPC       = 0x08780,
++    TXPBSIZE    = 0x0CC00,
++    SECTXSTAT   = 0x08804,
++    SECRXSTAT   = 0x08D04,
++    VFTA        = 0x0A000,
++    RAL         = 0x0A200,
++    MPSAR       = 0x0A600,
++    RXQ_HI      = 0x0D000,      /* receive queues 64-127 */
++    PSRTYPE     = 0x0EA00,
++    FDIRCTRL    = 0x0EE00,
++    FDIRCMD     = 0x0EE2C,
++    VMOLR       = 0x0F000,
++    VLVF        = 0x0F100,
++    VLVFB       = 0x0F200,
++    EEC         = 0x10010,
++    EERD        = 0x10014,
++    EEWR        = 0x10018,
++    SWSM        = 0x10140,
++    FWSM        = 0x10148,
++    GSSR        = 0x10160,
++    GCR_EXT     = 0x11050,
++    EITR24      = 0x12300,
++    PFMBMEM     = 0x13000,
++};
++
++/* queue register offsets within a queue's 0x40 bytes */
++enum {
++    QBAL = 0x00, QBAH = 0x04, QLEN = 0x08, QDCA = 0x0C, QH = 0x10,
++    QSRRCTL = 0x14, QT = 0x18, QDCTL = 0x28, QRSCCTL = 0x2C,
++    QWBAL = 0x38, QWBAH = 0x3C,
++};
++
++#define CTRL_GIO_DIS            0x00000004
++#define CTRL_RST_MASK           0x04000008
++#define CTRL_EXT_PFRSTD         0x00004000
++#define ESDP_SDP2               0x00000004  /* SFP+ module present */
++#define ESDP_SDP3               0x00000008  /* SFP+ transmit disable */
++#define ESDP_SDP2_DIR           0x00000400
++#define STATUS_GIO              0x00080000
++#define STATUS_LINKUP           0x00000080
++#define EEC_REQ                 0x00000040
++#define EEC_GNT                 0x00000080
++#define EEC_PRES                0x00000100
++#define EEC_ARD                 0x00000200
++#define EEC_SIZE_512            (3 << 11)
++#define FWSM_FW_VAL             0x00008000
++#define EERD_START              0x1
++#define EERD_DONE               0x2
++#define SWSM_SMBI               0x1
++#define MSCA_MDI_COMMAND        0x40000000
++#define AUTOC_AN_RESTART        0x00001000
++#define AUTOC_LMS_10G_SERIAL    (3 << 13)
++#define AUTOC2_10G_SFI          (2 << 16)
++#define ANLP1_AN_STATE          0x00030000
++#define LINKS_UP                0x40000000
++#define LINKS_SPEED_10G         0x30000000
++#define LINKS_10G_ALIGN         0x00020000
++#define LINKS_10G_LANE_SYNC     0x00017000
++#define HLREG0_TXCRCEN          0x00000001
++#define HLREG0_RXCRCSTRP        0x00000002
++#define HLREG0_TXPADEN          0x00000400
++#define HLREG0_LPBK             0x00008000
++#define RDRXCTL_DMAIDONE        0x00000008
++#define RXCTRL_RXEN             0x00000001
++#define DMATXCTL_TE             0x00000001
++#define QDCTL_ENABLE            0x02000000
++#define RXDCTL_VME              0x40000000
++#define FCTRL_MPE               0x00000100
++#define FCTRL_UPE               0x00000200
++#define FCTRL_BAM               0x00000400
++#define VLNCTRL_VFE             0x40000000
++#define MCSTCTRL_MFE            0x00000004
++#define RAH_AV                  0x80000000
++#define VT_CTL_VT_ENABLE        0x00000001
++#define VT_CTL_DIS_DEFPL        0x20000000
++#define VT_CTL_REPLEN           0x40000000
++#define VMOLR_AUPE              0x01000000
++#define VMOLR_ROMPE             0x02000000
++#define VMOLR_BAM               0x08000000
++#define VMOLR_MPE               0x10000000
++#define VMVIR_VLANA_DEFAULT     0x40000000
++#define VMVIR_VLANA_NEVER       0x80000000
++#define VLVF_VIEN               0x80000000
++#define PFDTXGSWC_VT_LBEN       0x00000001
++#define FDIRCTRL_INIT_DONE      0x00000008
++#define FDIRCMD_CMD_MASK        0x00000003
++#define GPIE_MSIX_MODE          0x00000010
++#define GPIE_EIAME              0x40000000
++#define IVAR_VALID              0x80
++#define EICR_MAILBOX            0x00080000
++#define EICR_LSC                0x00100000
++#define EICR_OTHERS             0xFFFF0000
++#define SRRCTL_DESCTYPE         0x0E000000
++
++#define I2C_CLK_IN              0x1
++#define I2C_CLK_OUT             0x2
++#define I2C_DATA_IN             0x4
++#define I2C_DATA_OUT            0x8
++
++#define PFMAILBOX_STS           0x01
++#define PFMAILBOX_ACK           0x02
++#define PFMAILBOX_VFU           0x04
++#define PFMAILBOX_PFU           0x08
++#define PFMAILBOX_RVFU          0x10
++
++/* virtual function registers */
++enum {
++    VFCTRL      = 0x0000,
++    VFSTATUS    = 0x0008,
++    VFLINKS     = 0x0010,
++    VFFRTIMER   = 0x0048,
++    VTEICR      = 0x0100,
++    VTEICS      = 0x0104,
++    VTEIMS      = 0x0108,
++    VTEIMC      = 0x010C,
++    VTEIAC      = 0x0110,
++    VTEIAM      = 0x0114,
++    VTIVAR      = 0x0120,
++    VTIVAR_MISC = 0x0140,
++    VTRSCINT    = 0x0180,
++    VFMBMEM     = 0x0200,
++    VFMAILBOX   = 0x02FC,
++    VFPSRTYPE   = 0x0300,
++    VTEITR      = 0x0820,
++    VFRXQ       = 0x1000,
++    VFGPRC      = 0x101C,
++    VFGORC_LSB  = 0x1020,
++    VFGORC_MSB  = 0x1024,
++    VFMPRC      = 0x1034,
++    VFTXQ       = 0x2000,
++    VFGPTC      = 0x201C,
++    VFGOTC_LSB  = 0x2020,
++    VFGOTC_MSB  = 0x2024,
++};
++
++#define VFCTRL_RST              0x04000000
++#define VFMAILBOX_REQ           0x01
++#define VFMAILBOX_ACK           0x02
++#define VFMAILBOX_VFU           0x04
++#define VFMAILBOX_PFU           0x08
++#define VFMAILBOX_PFSTS         0x10
++#define VFMAILBOX_PFACK         0x20
++#define VFMAILBOX_RSTI          0x40
++#define VFMAILBOX_RSTD          0x80
++
++/* descriptors */
++#define TXD_CMD_EOP             0x01000000
++#define TXD_CMD_IC              0x04000000
++#define TXD_CMD_RS              0x08000000
++#define TXD_CMD_DEXT            0x20000000
++#define TXD_CMD_VLE             0x40000000
++#define TXD_CMD_TSE             0x80000000
++#define TXD_DTYP_MASK           0x00F00000
++#define TXD_DTYP_CTXT           0x00200000
++#define TXD_DTYP_DATA           0x00300000
++#define TXD_POPTS_IXSM          0x00000100
++#define TXD_POPTS_TXSM          0x00000200
++#define TXD_TUCMD_L4T_SCTP      0x00001000
++#define TXD_STAT_DD             0x00000001
++
++#define RXD_STAT_DD             0x00000001
++#define RXD_STAT_EOP            0x00000002
++#define RXD_STAT_VP             0x00000008
++#define RXD_STAT_UDPCS          0x00000010
++#define RXD_STAT_L4CS           0x00000020
++#define RXD_STAT_IPCS           0x00000040
++#define RXD_STAT_LB             0x00040000
++#define RXD_ERR_TCPE            0x40000000
++#define RXD_ERR_IPE             0x80000000
++#define RXD_PKT_IPV4            0x0010
++#define RXD_PKT_IPV6            0x0040
++#define RXD_PKT_TCP             0x0100
++#define RXD_PKT_UDP             0x0200
++#define RXD_PKT_SCTP            0x0400
++
++typedef struct IxgbeTx {
++    uint32_t ctx[2][4];         /* vlan_macip_lens seqnum_seed tucmd mss_l4len */
++    uint32_t first_cmd;
++    uint32_t first_olinfo;
++    bool first;
++    bool skip;
++    struct NetTxPkt *pkt;
++    PCIDevice *dev;             /* the function whose memory pkt maps */
++    uint8_t *lbuf;              /* a legacy-descriptor frame being gathered */
++    uint32_t llen;
++    uint32_t lcmd;
++    uint8_t lcso, lcss;
++    uint16_t lvlan;
++} IxgbeTx;
++
++typedef struct IxgbeVf {
++    uint32_t eicr, eims, eiac, eiam;
++    uint32_t eitr[3];
++    uint32_t ivar[4];
++    uint32_t ivar_misc;
++    uint32_t rscint[3];
++    uint32_t r2c;               /* PFSTS, PFACK, RSTD waiting to be read */
++    bool vfu, pfu;
++    uint32_t gprc, gptc, mprc;
++    uint64_t gorc, gotc;
++} IxgbeVf;
++
++struct IxgbeSfpState {
++    I2CSlave parent_obj;
++    uint8_t mem[256];
++    uint8_t ptr;
++    bool addressing;
++};
++
++struct IxgbeState {
++    PCIDevice parent_obj;
++    NICState *nic;
++    NICConf conf;
++
++    MemoryRegion mmio;
++    MemoryRegion msix;
++
++    uint32_t mac[IXGBE_MMIO_SIZE / 4];
++    uint16_t eeprom[IXGBE_EEPROM_WORDS];
++
++    /* interrupt causes: queue vectors 0-63 and the other causes 16-31 */
++    uint64_t qcause, qmask, qam;
++    uint32_t ocause, omask, oam;
++    bool level;
++
++    IxgbeTx tx[IXGBE_NQ];
++    IxgbeVf vf[IXGBE_TOTAL_VFS];
++    struct NetRxPkt *rx_pkt;
++    uint8_t frame[IXGBE_MAXFRAME + 8];
++
++    I2CBus *i2c;
++    bitbang_i2c_interface bb;
++    int scl, sda, sda_in;
++};
++
++struct IxgbeVfState {
++    PCIDevice parent_obj;
++    MemoryRegion mmio;
++    MemoryRegion msix;
++};
++
++#define R(s, a)     ((s)->mac[(a) >> 2])
++
++static void ixgbe_tx_queue(IxgbeState *s, int q);
++static void ixgbe_vf_mbox_irq(IxgbeState *s, int vf);
++
++/* the queue registers */
++
++static uint32_t rxq(int q)
++{
++    return q < 64 ? RXQ_LO + 0x40 * q : RXQ_HI + 0x40 * (q - 64);
++}
++
++static uint32_t txq(int q)
++{
++    return TXQ + 0x40 * q;
++}
++
++/* the canonical offset of a register some other offset aliases */
++static hwaddr ixgbe_canon(hwaddr a)
++{
++    if (a >= SRRCTL_LO && a < SRRCTL_LO + 16 * 4) {
++        return rxq((a - SRRCTL_LO) / 4) + QSRRCTL;
++    }
++    if (a >= DCARX_LO && a < DCARX_LO + 16 * 4) {
++        return rxq((a - DCARX_LO) / 4) + QDCA;
++    }
++    if (a >= RAL_LO && a < RAL_LO + 16 * 8) {
++        return RAL + (a - RAL_LO);
++    }
++    if (a >= PSRTYPE_LO && a < PSRTYPE_LO + 16 * 4) {
++        return PSRTYPE + (a - PSRTYPE_LO);
++    }
++    return a;
++}
++
++/* pools and the functions that own them */
++
++static bool ixgbe_vt(IxgbeState *s)
++{
++    return R(s, VT_CTL) & VT_CTL_VT_ENABLE;
++}
++
++static int ixgbe_qpp(IxgbeState *s)
++{
++    switch (R(s, GCR_EXT) & 3) {
++    case 1:
++        return 8;
++    case 2:
++        return 4;
++    default:
++        return 2;
++    }
++}
++
++static int ixgbe_numvfs(IxgbeState *s)
++{
++    return pcie_sriov_num_vfs(PCI_DEVICE(s));
++}
++
++/* the VF that owns queue q, or -1 for the PF */
++static int ixgbe_qvf(IxgbeState *s, int q)
++{
++    int pool = q / ixgbe_qpp(s);
++
++    return pool < ixgbe_numvfs(s) ? pool : -1;
++}
++
++static PCIDevice *ixgbe_vfdev(IxgbeState *s, int vf)
++{
++    return pcie_sriov_get_vf_at_index(PCI_DEVICE(s), vf);
++}
++
++static PCIDevice *ixgbe_qdev(IxgbeState *s, int q)
++{
++    int vf = ixgbe_qvf(s, q);
++    PCIDevice *d;
++
++    if (vf >= 0 && (d = ixgbe_vfdev(s, vf)) != NULL) {
++        return d;
++    }
++    return PCI_DEVICE(s);
++}
++
++/* the physical function's interrupts */
++
++static bool ixgbe_msix_mode(IxgbeState *s)
++{
++    return R(s, GPIE) & GPIE_MSIX_MODE;
++}
++
++static void ixgbe_legacy_irq(IxgbeState *s)
++{
++    PCIDevice *d = PCI_DEVICE(s);
++    bool level;
++
++    level = (((s->qcause & 0xffff) | s->ocause) &
++             ((s->qmask & 0xffff) | s->omask)) != 0;
++    if (msix_enabled(d)) {
++        level = false;
++    } else if (msi_enabled(d)) {
++        if (level && !s->level) {
++            msi_notify(d, 0);
++        }
++    } else {
++        pci_set_irq(d, level);
++    }
++    s->level = level;
++}
++
++static void ixgbe_vec_send(IxgbeState *s, unsigned v)
++{
++    PCIDevice *d = PCI_DEVICE(s);
++
++    if (msix_enabled(d) && v < IXGBE_MSIX_VECS) {
++        msix_notify(d, v);
++    }
++}
++
++/* queue vector v: when pending and enabled, send it, auto-clear, auto-mask */
++static void ixgbe_qvec(IxgbeState *s, unsigned v)
++{
++    uint64_t b = 1ULL << v;
++
++    if (!(s->qcause & s->qmask & b)) {
++        return;
++    }
++    ixgbe_vec_send(s, v);
++    if (v >= 16 || (R(s, EIAC) & b)) {
++        s->qcause &= ~b;
++    }
++    if ((R(s, GPIE) & GPIE_EIAME) && (s->qam & b)) {
++        s->qmask &= ~b;
++    }
++}
++
++/* the other causes, on the vector IVAR_MISC gives them */
++static void ixgbe_ovec(IxgbeState *s)
++{
++    uint32_t p = s->ocause & s->omask;
++    uint32_t misc = R(s, IVAR_MISC) >> 8;
++
++    if (!p || !(misc & IVAR_VALID)) {
++        return;
++    }
++    ixgbe_vec_send(s, misc & 0x3f);
++    s->ocause &= ~(p & R(s, EIAC));
++    if (R(s, GPIE) & GPIE_EIAME) {
++        s->omask &= ~(p & s->oam);
++    }
++}
++
++static void ixgbe_irq_eval(IxgbeState *s, uint64_t qbits)
++{
++    int v;
++
++    if (!ixgbe_msix_mode(s)) {
++        ixgbe_legacy_irq(s);
++        return;
++    }
++    for (v = 0; v < 64; v++) {
++        if (qbits & (1ULL << v)) {
++            ixgbe_qvec(s, v);
++        }
++    }
++    ixgbe_ovec(s);
++}
++
++static void ixgbe_raise_q(IxgbeState *s, unsigned v)
++{
++    if (ixgbe_msix_mode(s)) {
++        s->qcause |= 1ULL << v;
++        ixgbe_qvec(s, v);
++    } else {
++        s->qcause |= 1ULL << (v & 15);
++        ixgbe_legacy_irq(s);
++    }
++}
++
++static void ixgbe_raise_o(IxgbeState *s, uint32_t cause)
++{
++    s->ocause |= cause & EICR_OTHERS;
++    ixgbe_irq_eval(s, 0);
++}
++
++/* a virtual function's interrupts */
++
++static void ixgbe_vf_irq_eval(IxgbeState *s, int vf)
++{
++    IxgbeVf *r = &s->vf[vf];
++    PCIDevice *d = ixgbe_vfdev(s, vf);
++    int v;
++
++    for (v = 0; v < IXGBEVF_MSIX_VECS; v++) {
++        uint32_t b = 1u << v;
++
++        if (!(r->eicr & r->eims & b)) {
++            continue;
++        }
++        if (d && msix_enabled(d)) {
++            msix_notify(d, v);
++        }
++        if (r->eiac & b) {
++            r->eicr &= ~b;
++        }
++        if (r->eiam & b) {
++            r->eims &= ~b;
++        }
++    }
++}
++
++static void ixgbe_vf_raise(IxgbeState *s, int vf, uint32_t ent)
++{
++    if (!(ent & IVAR_VALID) || (ent & 3) >= IXGBEVF_MSIX_VECS) {
++        return;
++    }
++    s->vf[vf].eicr |= 1u << (ent & 3);
++    ixgbe_vf_irq_eval(s, vf);
++}
++
++static void ixgbe_vf_mbox_irq(IxgbeState *s, int vf)
++{
++    ixgbe_vf_raise(s, vf, s->vf[vf].ivar_misc & 0xff);
++}
++
++/* a queue's interrupt: dir 0 receive, 1 transmit */
++static void ixgbe_queue_irq(IxgbeState *s, int q, int dir)
++{
++    int vf = ixgbe_qvf(s, q);
++    uint32_t ent;
++
++    if (vf >= 0) {
++        int lq = q - vf * ixgbe_qpp(s);
++
++        ent = s->vf[vf].ivar[(lq >> 1) & 3] >> (16 * (lq & 1) + 8 * dir);
++        ixgbe_vf_raise(s, vf, ent & 0xff);
++        return;
++    }
++    ent = (R(s, IVAR0 + 4 * (q >> 1)) >> (16 * (q & 1) + 8 * dir)) & 0xff;
++    if (ent & IVAR_VALID) {
++        ixgbe_raise_q(s, ent & 0x3f);
++    }
++}
++
++/* the link */
++
++/* up with the cable connected and the module's transmitter on */
++static bool ixgbe_link_up(IxgbeState *s)
++{
++    return s->nic && !qemu_get_queue(s->nic)->link_down &&
++           !(R(s, ESDP) & ESDP_SDP3);
++}
++
++/* the pins: SDP2 an input the module holds high */
++static uint32_t ixgbe_esdp(IxgbeState *s)
++{
++    uint32_t v = R(s, ESDP);
++
++    if (!(v & ESDP_SDP2_DIR)) {
++        v |= ESDP_SDP2;
++    }
++    return v;
++}
++
++static uint32_t ixgbe_links(IxgbeState *s)
++{
++    if (!ixgbe_link_up(s)) {
++        return 0;
++    }
++    return LINKS_UP | LINKS_SPEED_10G | LINKS_10G_ALIGN | LINKS_10G_LANE_SYNC;
++}
++
++static void ixgbe_set_link_status(NetClientState *nc)
++{
++    IxgbeState *s = qemu_get_nic_opaque(nc);
++
++    ixgbe_raise_o(s, EICR_LSC);
++}
++
++/* the SFP+ module's I2C lines */
++
++static void ixgbe_i2c_line(IxgbeState *s, int line, int level)
++{
++    s->sda_in = bitbang_i2c_set(&s->bb, line, level);
++}
++
++static void ixgbe_i2c_write(IxgbeState *s, uint32_t v)
++{
++    int scl = !!(v & I2C_CLK_OUT), sda = !!(v & I2C_DATA_OUT);
++
++    /* a falling clock first, so a data change rides the low clock */
++    if (scl != s->scl && !scl) {
++        ixgbe_i2c_line(s, BITBANG_I2C_SCL, scl);
++        s->scl = scl;
++    }
++    if (sda != s->sda) {
++        ixgbe_i2c_line(s, BITBANG_I2C_SDA, sda);
++        s->sda = sda;
++    }
++    if (scl != s->scl) {
++        ixgbe_i2c_line(s, BITBANG_I2C_SCL, scl);
++        s->scl = scl;
++    }
++    R(s, I2CCTL) = v & (I2C_CLK_OUT | I2C_DATA_OUT);
++}
++
++static uint32_t ixgbe_i2c_read(IxgbeState *s)
++{
++    return R(s, I2CCTL) | (s->scl ? I2C_CLK_IN : 0) |
++           (s->sda_in && s->sda ? I2C_DATA_IN : 0);
++}
++
++/* reset */
++
++static void ixgbe_tx_drop(IxgbeTx *t)
++{
++    if (t->pkt && t->dev) {
++        net_tx_pkt_reset(t->pkt, net_tx_pkt_unmap_frag_pci, t->dev);
++    }
++    t->first = true;
++    t->skip = false;
++    t->llen = 0;
++}
++
++static void ixgbe_vf_clear(IxgbeState *s, int vf)
++{
++    IxgbeVf *r = &s->vf[vf];
++
++    r->eicr = r->eims = r->eiac = r->eiam = 0;
++    memset(r->eitr, 0, sizeof(r->eitr));
++    memset(r->ivar, 0, sizeof(r->ivar));
++    memset(r->rscint, 0, sizeof(r->rscint));
++    r->ivar_misc = 0;
++}
++
++/* stop a pool's queues, as a VF reset does */
++static void ixgbe_pool_stop(IxgbeState *s, int pool)
++{
++    int qpp = ixgbe_qpp(s), q;
++
++    for (q = pool * qpp; q < (pool + 1) * qpp && q < IXGBE_NQ; q++) {
++        R(s, rxq(q) + QDCTL) &= ~QDCTL_ENABLE;
++        R(s, txq(q) + QDCTL) &= ~QDCTL_ENABLE;
++        ixgbe_tx_drop(&s->tx[q]);
++    }
++}
++
++static void ixgbe_reset(IxgbeState *s)
++{
++    const uint8_t *m = s->conf.macaddr.a;
++    int i;
++
++    for (i = 0; i < IXGBE_NQ; i++) {
++        ixgbe_tx_drop(&s->tx[i]);
++    }
++    memset(s->mac, 0, sizeof(s->mac));
++    R(s, AUTOC) = AUTOC_LMS_10G_SERIAL;
++    R(s, AUTOC2) = AUTOC2_10G_SFI;
++    R(s, HLREG0) = HLREG0_TXCRCEN | HLREG0_RXCRCSTRP | HLREG0_TXPADEN;
++    R(s, MAXFRS) = 1518 << 16;
++    R(s, VLNCTRL) = 0x8100;
++    R(s, FWSM) = FWSM_FW_VAL;
++    R(s, RXPBSIZE) = 512 << 10;
++    R(s, TXPBSIZE) = 160 << 10;
++    R(s, I2CCTL) = I2C_CLK_OUT | I2C_DATA_OUT;
++    for (i = 0; i < IXGBE_NQ; i++) {
++        R(s, rxq(i) + QSRRCTL) = 0x402;
++    }
++    R(s, RAL) = m[0] | m[1] << 8 | m[2] << 16 | (uint32_t)m[3] << 24;
++    R(s, RAL + 4) = m[4] | m[5] << 8 | RAH_AV;
++    s->qcause = s->qmask = s->qam = 0;
++    s->ocause = s->omask = s->oam = 0;
++    ixgbe_legacy_irq(s);
++    for (i = 0; i < IXGBE_TOTAL_VFS; i++) {
++        ixgbe_vf_clear(s, i);
++        s->vf[i].vfu = s->vf[i].pfu = false;
++        s->vf[i].r2c = 0;
++    }
++}
++
++/* the receive filters */
++
++static bool ixgbe_mta_hit(IxgbeState *s, const uint8_t *a)
++{
++    uint32_t h;
++
++    switch (R(s, MCSTCTRL) & 3) {
++    case 0:
++        h = (a[4] >> 4) | (a[5] << 4);
++        break;
++    case 1:
++        h = (a[4] >> 3) | (a[5] << 5);
++        break;
++    case 2:
++        h = (a[4] >> 2) | (a[5] << 6);
++        break;
++    default:
++        h = a[4] | (a[5] << 8);
++        break;
++    }
++    h &= 0xfff;
++    return (R(s, MCSTCTRL) & MCSTCTRL_MFE) &&
++           ((R(s, MTA + 4 * (h >> 5)) >> (h & 31)) & 1);
++}
++
++/* the receive address register holding a, or -1 */
++static int ixgbe_rar(IxgbeState *s, const uint8_t *a)
++{
++    uint32_t lo = a[0] | a[1] << 8 | a[2] << 16 | (uint32_t)a[3] << 24;
++    uint32_t hi = a[4] | a[5] << 8;
++    int i;
++
++    for (i = 0; i < IXGBE_NRAR; i++) {
++        if ((R(s, RAL + 8 * i + 4) & RAH_AV) && R(s, RAL + 8 * i) == lo &&
++            (R(s, RAL + 8 * i + 4) & 0xffff) == hi) {
++            return i;
++        }
++    }
++    return -1;
++}
++
++static uint64_t ixgbe_mpsar(IxgbeState *s, int rar)
++{
++    return R(s, MPSAR + 8 * rar) | (uint64_t)R(s, MPSAR + 8 * rar + 4) << 32;
++}
++
++static bool ixgbe_tagged(IxgbeState *s, const uint8_t *buf, size_t len,
++                         uint16_t *vid)
++{
++    if (len < 18 || lduw_be_p(buf + 12) != (R(s, VLNCTRL) & 0xffff)) {
++        return false;
++    }
++    *vid = lduw_be_p(buf + 14) & 0xfff;
++    return true;
++}
++
++/* the pools of a VLAN's filter entry; 0 when no entry has it */
++static uint64_t ixgbe_vlvf(IxgbeState *s, uint16_t vid)
++{
++    int i;
++
++    for (i = 0; i < 64; i++) {
++        uint32_t f = R(s, VLVF + 4 * i);
++
++        if ((f & VLVF_VIEN) && (f & 0xfff) == vid) {
++            return R(s, VLVFB + 8 * i) | (uint64_t)R(s, VLVFB + 8 * i + 4) << 32;
++        }
++    }
++    return 0;
++}
++
++/*
++ * The pools a frame goes to; without virtualisation, bit 0 when it
++ * passes the filters.  *local says a unicast frame matched an
++ * address some pool owns.
++ */
++static uint64_t ixgbe_pools(IxgbeState *s, const uint8_t *buf, size_t len,
++                            bool *local)
++{
++    uint64_t pools = 0, vpools;
++    uint32_t fctrl = R(s, FCTRL), vt = R(s, VT_CTL);
++    int defpool = (vt >> 7) & 0x3f, rar, p;
++    uint16_t vid;
++    bool tagged;
++
++    *local = false;
++    if (len < 14) {
++        return 0;
++    }
++    tagged = ixgbe_tagged(s, buf, len, &vid);
++    if (!ixgbe_vt(s)) {
++        if (is_broadcast_ether_addr(buf)) {
++            pools = (fctrl & FCTRL_BAM) != 0;
++        } else if (is_multicast_ether_addr(buf)) {
++            pools = (fctrl & FCTRL_MPE) || ixgbe_mta_hit(s, buf);
++        } else {
++            pools = (fctrl & FCTRL_UPE) || ixgbe_rar(s, buf) >= 0;
++        }
++        if (pools && tagged && (R(s, VLNCTRL) & VLNCTRL_VFE) &&
++            !((R(s, VFTA + 4 * (vid >> 5)) >> (vid & 31)) & 1)) {
++            pools = 0;
++        }
++        return pools;
++    }
++
++    if (is_broadcast_ether_addr(buf)) {
++        for (p = 0; p < IXGBE_NPOOLS; p++) {
++            if (R(s, VMOLR + 4 * p) & VMOLR_BAM) {
++                pools |= 1ULL << p;
++            }
++        }
++        if (!(vt & VT_CTL_REPLEN)) {
++            pools &= 1ULL << defpool;
++        }
++    } else if (is_multicast_ether_addr(buf)) {
++        bool hit = ixgbe_mta_hit(s, buf);
++
++        for (p = 0; p < IXGBE_NPOOLS; p++) {
++            uint32_t vmolr = R(s, VMOLR + 4 * p);
++
++            if ((vmolr & VMOLR_MPE) || (hit && (vmolr & VMOLR_ROMPE))) {
++                pools |= 1ULL << p;
++            }
++        }
++        if (fctrl & FCTRL_MPE) {
++            pools |= 1ULL << defpool;
++        }
++        if (!(vt & VT_CTL_REPLEN)) {
++            pools &= 1ULL << defpool;
++        }
++    } else if ((rar = ixgbe_rar(s, buf)) >= 0) {
++        pools = ixgbe_mpsar(s, rar);
++        *local = pools != 0;
++        pools &= -pools;        /* a unicast frame goes to one pool */
++    } else if ((fctrl & FCTRL_UPE) && !(vt & VT_CTL_DIS_DEFPL)) {
++        pools = 1ULL << defpool;
++    }
++
++    if (tagged) {
++        if (R(s, VLNCTRL) & VLNCTRL_VFE) {
++            vpools = ixgbe_vlvf(s, vid);
++            pools &= vpools;
++        }
++    } else {
++        for (p = 0; p < IXGBE_NPOOLS; p++) {
++            if (!(R(s, VMOLR + 4 * p) & VMOLR_AUPE)) {
++                pools &= ~(1ULL << p);
++            }
++        }
++    }
++    return pools & (R(s, VFRE) | (uint64_t)R(s, VFRE + 4) << 32);
++}
++
++/* receive */
++
++static void ixgbe_inc(IxgbeState *s, hwaddr reg)
++{
++    R(s, reg)++;
++}
++
++static void ixgbe_add64(IxgbeState *s, hwaddr lo, uint64_t n)
++{
++    uint64_t v = R(s, lo) | (uint64_t)R(s, lo + 4) << 32;
++
++    v += n;
++    R(s, lo) = v;
++    R(s, lo + 4) = v >> 32;
++}
++
++/* checksum status and packet type of a received frame */
++static void ixgbe_rx_csum(IxgbeState *s, const uint8_t *buf, size_t len,
++                          uint32_t *status, uint16_t *pkt)
++{
++    struct iovec iov = { .iov_base = (void *)buf, .iov_len = len };
++    bool ip4, ip6, valid;
++    EthL4HdrProto l4;
++
++    *status = 0;
++    *pkt = 0;
++    net_rx_pkt_attach_data(s->rx_pkt, buf, len, false);
++    net_rx_pkt_set_protocols(s->rx_pkt, &iov, 1, 0);
++    net_rx_pkt_get_protocols(s->rx_pkt, &ip4, &ip6, &l4);
++    if (ip4) {
++        *pkt |= RXD_PKT_IPV4;
++        if (net_rx_pkt_validate_l3_csum(s->rx_pkt, &valid)) {
++            *status |= RXD_STAT_IPCS | (valid ? 0 : RXD_ERR_IPE);
++        }
++    } else if (ip6) {
++        *pkt |= RXD_PKT_IPV6;
++    }
++    if (!ip4 && !ip6) {
++        return;
++    }
++    switch (l4) {
++    case ETH_L4_HDR_PROTO_TCP:
++        *pkt |= RXD_PKT_TCP;
++        break;
++    case ETH_L4_HDR_PROTO_UDP:
++        *pkt |= RXD_PKT_UDP;
++        break;
++    case ETH_L4_HDR_PROTO_SCTP:
++        *pkt |= RXD_PKT_SCTP;
++        return;
++    default:
++        return;
++    }
++    if (net_rx_pkt_validate_l4_csum(s->rx_pkt, &valid)) {
++        *status |= RXD_STAT_L4CS | (valid ? 0 : RXD_ERR_TCPE);
++        if (l4 == ETH_L4_HDR_PROTO_UDP) {
++            *status |= RXD_STAT_UDPCS;
++        }
++    }
++}
++
++/* place a frame on receive queue q */
++static bool ixgbe_rx_queue(IxgbeState *s, int q, const uint8_t *in, size_t len,
++                           bool lb)
++{
++    hwaddr r = rxq(q);
++    uint32_t n = R(s, r + QLEN) / 16, head = R(s, r + QH), tail = R(s, r + QT);
++    uint32_t srrctl = R(s, r + QSRRCTL), bsize, avail, need, status, csum;
++    uint64_t base = R(s, r + QBAL) | (uint64_t)R(s, r + QBAH) << 32;
++    bool legacy = (srrctl & SRRCTL_DESCTYPE) == 0;
++    PCIDevice *dev = ixgbe_qdev(s, q);
++    uint8_t buf[IXGBE_MAXFRAME + 8];
++    uint16_t vid = 0, pkt;
++    size_t off;
++    int vf;
++
++    if (!(R(s, r + QDCTL) & QDCTL_ENABLE) || n == 0 || head >= n ||
++        tail >= n || len > IXGBE_MAXFRAME) {
++        return false;
++    }
++    memcpy(buf, in, len);
++    ixgbe_rx_csum(s, buf, len, &csum, &pkt);
++    status = 0;
++    if ((R(s, r + QDCTL) & RXDCTL_VME) && ixgbe_tagged(s, buf, len, &vid)) {
++        vid = lduw_be_p(buf + 14);
++        memmove(buf + 12, buf + 16, len - 16);
++        len -= 4;
++        status |= RXD_STAT_VP;
++    }
++    if (len < 60) {
++        memset(buf + len, 0, 60 - len);
++        len = 60;
++    }
++    if (!(R(s, HLREG0) & HLREG0_RXCRCSTRP)) {
++        stl_le_p(buf + len, net_crc32_le(buf, len));
++        len += 4;
++    }
++    bsize = (srrctl & 0x7f) << 10;
++    if (bsize == 0) {
++        bsize = 2048;
++    }
++    avail = (tail + n - head) % n;
++    need = DIV_ROUND_UP(len, bsize);
++    if (need > avail) {
++        ixgbe_inc(s, RNBC0);
++        return false;
++    }
++
++    for (off = 0; off < len; ) {
++        hwaddr d = base + 16 * head;
++        uint8_t desc[16], wb[16];
++        size_t chunk = MIN(bsize, len - off);
++        bool eop = off + chunk == len;
++
++        pci_dma_read(dev, d, desc, sizeof(desc));
++        pci_dma_write(dev, ldq_le_p(desc), buf + off, chunk);
++        memset(wb, 0, sizeof(wb));
++        if (legacy) {
++            uint8_t st = RXD_STAT_DD | (eop ? RXD_STAT_EOP : 0);
++            uint8_t err = 0;
++
++            if (eop) {
++                st |= (status | csum) & 0xff;
++                err = ((csum & RXD_ERR_IPE) ? 0x40 : 0) |
++                      ((csum & RXD_ERR_TCPE) ? 0x20 : 0);
++            }
++            stw_le_p(wb + 8, chunk);
++            wb[13] = err;
++            stw_le_p(wb + 14, eop ? vid : 0);
++            pci_dma_write(dev, d + 8, wb + 8, 4);
++            pci_dma_write(dev, d + 13, wb + 13, 3);
++            wb[12] = st;
++            pci_dma_write(dev, d + 12, wb + 12, 1);
++        } else {
++            uint32_t se = RXD_STAT_DD;
++
++            if (eop) {
++                se |= RXD_STAT_EOP | status | csum | (lb ? RXD_STAT_LB : 0);
++            }
++            stw_le_p(wb, pkt);
++            stw_le_p(wb + 12, chunk);
++            stw_le_p(wb + 14, eop ? vid : 0);
++            pci_dma_write(dev, d, wb, 8);
++            pci_dma_write(dev, d + 12, wb + 12, 4);
++            stl_le_p(wb + 8, se);
++            pci_dma_write(dev, d + 8, wb + 8, 4);
++        }
++        head = (head + 1) % n;
++        off += chunk;
++    }
++    R(s, r + QH) = head;
++
++    ixgbe_inc(s, TPR);
++    ixgbe_inc(s, GPRC);
++    ixgbe_add64(s, GORCL, len + 4);
++    if (is_broadcast_ether_addr(buf)) {
++        ixgbe_inc(s, BPRC);
++    } else if (is_multicast_ether_addr(buf)) {
++        ixgbe_inc(s, MPRC);
++    }
++    vf = ixgbe_qvf(s, q);
++    if (vf >= 0) {
++        s->vf[vf].gprc++;
++        s->vf[vf].gorc += len;
++        if (is_multicast_ether_addr(buf)) {
++            s->vf[vf].mprc++;
++        }
++    }
++    ixgbe_queue_irq(s, q, 0);
++    return true;
++}
++
++static void ixgbe_rx_deliver(IxgbeState *s, uint64_t pools,
++                             const uint8_t *buf, size_t len, bool lb)
++{
++    int qpp = ixgbe_qpp(s), p;
++
++    if (!(R(s, RXCTRL) & RXCTRL_RXEN)) {
++        return;
++    }
++    if (!ixgbe_vt(s)) {
++        if (pools) {
++            ixgbe_rx_queue(s, 0, buf, len, lb);
++        }
++        return;
++    }
++    for (p = 0; p < IXGBE_NPOOLS && p * qpp < IXGBE_NQ; p++) {
++        if (pools & (1ULL << p)) {
++            ixgbe_rx_queue(s, p * qpp, buf, len, lb);
++        }
++    }
++}
++
++static ssize_t ixgbe_receive_iov(NetClientState *nc, const struct iovec *iov,
++                                 int iovcnt)
++{
++    IxgbeState *s = qemu_get_nic_opaque(nc);
++    size_t len = iov_size(iov, iovcnt);
++    bool local;
++
++    if (len > IXGBE_MAXFRAME || !ixgbe_link_up(s)) {
++        return len;
++    }
++    iov_to_buf(iov, iovcnt, 0, s->frame, len);
++    ixgbe_rx_deliver(s, ixgbe_pools(s, s->frame, len, &local),
++                     s->frame, len, false);
++    return len;
++}
++
++static ssize_t ixgbe_receive(NetClientState *nc, const uint8_t *buf,
++                             size_t size)
++{
++    const struct iovec iov = { .iov_base = (void *)buf, .iov_len = size };
++
++    return ixgbe_receive_iov(nc, &iov, 1);
++}
++
++static bool ixgbe_can_receive(NetClientState *nc)
++{
++    return true;
++}
++
++/* transmit */
++
++/* MAC and VLAN anti-spoofing for a frame from pool p */
++static bool ixgbe_spoofed(IxgbeState *s, int p, const uint8_t *buf, size_t len)
++{
++    uint32_t spoof = R(s, PFVFSPOOF + 4 * (p / 8));
++    uint16_t vid;
++    int rar;
++
++    if (spoof & (1u << (p % 8))) {
++        rar = ixgbe_rar(s, buf + 6);
++        if (rar < 0 || !((ixgbe_mpsar(s, rar) >> p) & 1)) {
++            return true;
++        }
++    }
++    if ((spoof & (0x100u << (p % 8))) && ixgbe_tagged(s, buf, len, &vid) &&
++        !((ixgbe_vlvf(s, vid) >> p) & 1)) {
++        return true;
++    }
++    return false;
++}
++
++/* a finished frame from queue q: to the wire, to other pools, or both */
++static void ixgbe_tx_frame(IxgbeState *s, int q, const uint8_t *buf,
++                           size_t len)
++{
++    uint64_t pools;
++    bool local;
++    int pool, vf;
++
++    if (len < 14) {
++        return;
++    }
++    ixgbe_inc(s, TPT);
++    ixgbe_inc(s, GPTC);
++    ixgbe_add64(s, GOTCL, len + 4);
++    if (is_broadcast_ether_addr(buf)) {
++        ixgbe_inc(s, BPTC);
++    } else if (is_multicast_ether_addr(buf)) {
++        ixgbe_inc(s, MPTC);
++    }
++    vf = ixgbe_qvf(s, q);
++    if (vf >= 0) {
++        s->vf[vf].gptc++;
++        s->vf[vf].gotc += len;
++    }
++
++    if (!ixgbe_vt(s)) {
++        if (R(s, HLREG0) & HLREG0_LPBK) {
++            ixgbe_rx_deliver(s, ixgbe_pools(s, buf, len, &local), buf, len,
++                             true);
++            return;
++        }
++        if (ixgbe_link_up(s)) {
++            qemu_send_packet(qemu_get_queue(s->nic), buf, len);
++        }
++        return;
++    }
++
++    pool = q / ixgbe_qpp(s);
++    if (ixgbe_spoofed(s, pool, buf, len)) {
++        ixgbe_inc(s, SSVPC);
++        return;
++    }
++    local = false;
++    if (R(s, PFDTXGSWC) & PFDTXGSWC_VT_LBEN) {
++        pools = ixgbe_pools(s, buf, len, &local) & ~(1ULL << pool);
++        ixgbe_rx_deliver(s, pools, buf, len, true);
++    }
++    if (!local && ixgbe_link_up(s)) {
++        qemu_send_packet(qemu_get_queue(s->nic), buf, len);
++    }
++}
++
++typedef struct IxgbeTxCtx {
++    IxgbeState *s;
++    int q;
++} IxgbeTxCtx;
++
++static void ixgbe_tx_cb(void *opaque, const struct iovec *iov, int iovcnt,
++                        const struct iovec *virt_iov, int virt_iovcnt)
++{
++    IxgbeTxCtx *c = opaque;
++    IxgbeState *s = c->s;
++    size_t len = iov_size(iov, iovcnt);
++    uint8_t *buf;
++
++    if (len > IXGBE_MAXFRAME) {
++        return;
++    }
++    buf = g_malloc(len);
++    iov_to_buf(iov, iovcnt, 0, buf, len);
++    ixgbe_tx_frame(s, c->q, buf, len);
++    g_free(buf);
++}
++
++static bool ixgbe_tx_offloads(IxgbeState *s, IxgbeTx *t)
++{
++    uint32_t idx = (t->first_olinfo >> 4) & 1;
++
++    if (t->first_cmd & TXD_CMD_TSE) {
++        uint32_t mss = t->ctx[idx][3] >> 16;
++
++        if (!net_tx_pkt_build_vheader(t->pkt, true, true, mss)) {
++            return false;
++        }
++        net_tx_pkt_update_ip_checksums(t->pkt);
++        return true;
++    }
++    if ((t->first_olinfo & TXD_POPTS_TXSM) &&
++        !((t->ctx[idx][2] & TXD_TUCMD_L4T_SCTP) ?
++          net_tx_pkt_update_sctp_checksum(t->pkt) :
++          net_tx_pkt_build_vheader(t->pkt, false, true, 0))) {
++        return false;
++    }
++    if (t->first_olinfo & TXD_POPTS_IXSM) {
++        net_tx_pkt_update_ip_hdr_checksum(t->pkt);
++    }
++    return true;
++}
++
++static void ixgbe_tx_vlan(IxgbeState *s, int q, IxgbeTx *t, uint16_t vlan,
++                          bool insert)
++{
++    if (ixgbe_vt(s)) {
++        uint32_t vmvir = R(s, VMVIR + 4 * (q / ixgbe_qpp(s)));
++
++        if (vmvir & VMVIR_VLANA_DEFAULT) {
++            insert = true;
++            vlan = vmvir & 0xffff;
++        } else if (vmvir & VMVIR_VLANA_NEVER) {
++            insert = false;
++        }
++    }
++    if (insert) {
++        net_tx_pkt_setup_vlan_header_ex(t->pkt, vlan, R(s, VLNCTRL) & 0xffff);
++    }
++}
++
++/* a legacy descriptor's frame, gathered flat */
++static void ixgbe_tx_legacy(IxgbeState *s, int q, IxgbeTx *t)
++{
++    uint8_t *buf = t->lbuf;
++    size_t len = t->llen;
++
++    if ((t->lcmd & TXD_CMD_IC) && t->lcss < len && t->lcso + 2 <= len) {
++        uint32_t sum = net_checksum_add(len - t->lcss, buf + t->lcss);
++
++        stw_be_p(buf + t->lcso, net_checksum_finish(sum));
++    }
++    if (t->lcmd & TXD_CMD_VLE) {
++        uint8_t *v = g_malloc(len + 4);
++
++        memcpy(v, buf, 12);
++        stw_be_p(v + 12, R(s, VLNCTRL) & 0xffff);
++        stw_be_p(v + 14, t->lvlan);
++        memcpy(v + 16, buf + 12, len - 12);
++        ixgbe_tx_frame(s, q, v, len + 4);
++        g_free(v);
++        return;
++    }
++    ixgbe_tx_frame(s, q, buf, len);
++}
++
++/* one descriptor; true when its status is to be written back */
++static bool ixgbe_tx_desc(IxgbeState *s, int q, PCIDevice *dev,
++                          const uint8_t *desc)
++{
++    IxgbeTx *t = &s->tx[q];
++    uint64_t addr = ldq_le_p(desc);
++    uint32_t cmd = ldl_le_p(desc + 8), olinfo = ldl_le_p(desc + 12);
++    uint32_t length = cmd & 0xffff;
++
++    if (!(cmd & TXD_CMD_DEXT)) {
++        /* legacy */
++        if (!t->lbuf) {
++            t->lbuf = g_malloc(IXGBE_MAXFRAME);
++        }
++        if (t->llen + length <= IXGBE_MAXFRAME) {
++            pci_dma_read(dev, addr, t->lbuf + t->llen, length);
++            t->llen += length;
++        } else {
++            t->skip = true;
++        }
++        if (cmd & TXD_CMD_EOP) {
++            t->lcmd = cmd >> 24 << 24;
++            t->lcso = cmd >> 16;
++            t->lcss = desc[13];
++            t->lvlan = lduw_le_p(desc + 14);
++            if (!t->skip && t->llen >= 14) {
++                ixgbe_tx_legacy(s, q, t);
++            }
++            t->llen = 0;
++            t->skip = false;
++        }
++        return cmd & TXD_CMD_RS;
++    }
++
++    if ((cmd & TXD_DTYP_MASK) == TXD_DTYP_CTXT) {
++        uint32_t idx = (ldl_le_p(desc + 12) >> 4) & 1;
++
++        t->ctx[idx][0] = ldl_le_p(desc);
++        t->ctx[idx][1] = ldl_le_p(desc + 4);
++        t->ctx[idx][2] = ldl_le_p(desc + 8);
++        t->ctx[idx][3] = ldl_le_p(desc + 12);
++        return cmd & TXD_CMD_RS;
++    }
++    if ((cmd & TXD_DTYP_MASK) != TXD_DTYP_DATA) {
++        return cmd & TXD_CMD_RS;
++    }
++
++    if (!t->pkt) {
++        net_tx_pkt_init(&t->pkt, 64);
++    }
++    if (t->first) {
++        t->first_cmd = cmd;
++        t->first_olinfo = olinfo;
++        t->first = false;
++    }
++    t->dev = dev;
++    if (!t->skip && !net_tx_pkt_add_raw_fragment_pci(t->pkt, dev, addr,
++                                                     length)) {
++        t->skip = true;
++    }
++    if (cmd & TXD_CMD_EOP) {
++        if (!t->skip && net_tx_pkt_parse(t->pkt)) {
++            uint32_t idx = (t->first_olinfo >> 4) & 1;
++            IxgbeTxCtx c = { .s = s, .q = q };
++
++            ixgbe_tx_vlan(s, q, t, t->ctx[idx][0] >> 16,
++                          t->first_cmd & TXD_CMD_VLE);
++            if (ixgbe_tx_offloads(s, t)) {
++                net_tx_pkt_send_custom(t->pkt, false, ixgbe_tx_cb, &c);
++            }
++        }
++        net_tx_pkt_reset(t->pkt, net_tx_pkt_unmap_frag_pci, dev);
++        t->first = true;
++        t->skip = false;
++    }
++    return cmd & TXD_CMD_RS;
++}
++
++static void ixgbe_tx_queue(IxgbeState *s, int q)
++{
++    hwaddr r = txq(q);
++    uint32_t n = R(s, r + QLEN) / 16;
++    uint64_t base = R(s, r + QBAL) | (uint64_t)R(s, r + QBAH) << 32;
++    PCIDevice *dev;
++    bool irq = false;
++    uint32_t budget;
++    int pool;
++
++    if (!(R(s, DMATXCTL) & DMATXCTL_TE) || !(R(s, r + QDCTL) & QDCTL_ENABLE) ||
++        n == 0) {
++        return;
++    }
++    if (ixgbe_vt(s)) {
++        pool = q / ixgbe_qpp(s);
++        if (!((R(s, VFTE + 4 * (pool / 32)) >> (pool % 32)) & 1)) {
++            return;
++        }
++    }
++    dev = ixgbe_qdev(s, q);
++    for (budget = n; budget > 0 && R(s, r + QH) != R(s, r + QT); budget--) {
++        uint32_t head = R(s, r + QH);
++        hwaddr d = base + 16 * head;
++        uint8_t desc[16];
++
++        if (head >= n || R(s, r + QT) >= n) {
++            break;
++        }
++        pci_dma_read(dev, d, desc, sizeof(desc));
++        if (ixgbe_tx_desc(s, q, dev, desc)) {
++            if (ldl_le_p(desc + 8) & TXD_CMD_DEXT) {
++                uint32_t st = cpu_to_le32(TXD_STAT_DD);
++
++                pci_dma_write(dev, d + 12, &st, 4);
++            } else {
++                uint8_t st = TXD_STAT_DD;
++
++                pci_dma_write(dev, d + 12, &st, 1);
++            }
++            irq = true;
++        }
++        R(s, r + QH) = (head + 1) % n;
++    }
++    if (R(s, r + QWBAL) & 1) {
++        uint64_t wb = (R(s, r + QWBAL) & ~3u) |
++                      (uint64_t)R(s, r + QWBAH) << 32;
++        uint32_t h = cpu_to_le32(R(s, r + QH));
++
++        pci_dma_write(dev, wb, &h, 4);
++    }
++    if (irq) {
++        ixgbe_queue_irq(s, q, 1);
++    }
++}
++
++/* the mailboxes */
++
++static void ixgbe_pf_mbox_irq(IxgbeState *s, int vf)
++{
++    ixgbe_raise_o(s, EICR_MAILBOX);
++}
++
++static void ixgbe_pf_mbox_write(IxgbeState *s, int vf, uint32_t v)
++{
++    IxgbeVf *r = &s->vf[vf];
++
++    if (v & PFMAILBOX_RVFU) {
++        r->vfu = false;
++    }
++    r->pfu = (v & PFMAILBOX_PFU) && !r->vfu;
++    if (v & (PFMAILBOX_STS | PFMAILBOX_ACK)) {
++        r->r2c |= ((v & PFMAILBOX_STS) ? VFMAILBOX_PFSTS : 0) |
++                  ((v & PFMAILBOX_ACK) ? VFMAILBOX_PFACK : 0);
++        ixgbe_vf_mbox_irq(s, vf);
++    }
++}
++
++static uint32_t ixgbe_pf_mbox_read(IxgbeState *s, int vf)
++{
++    IxgbeVf *r = &s->vf[vf];
++
++    return (r->pfu ? PFMAILBOX_PFU : 0) | (r->vfu ? PFMAILBOX_VFU : 0);
++}
++
++static void ixgbe_vf_mbox_write(IxgbeState *s, int vf, uint32_t v)
++{
++    IxgbeVf *r = &s->vf[vf];
++    int i = vf / 16, b = vf % 16;
++
++    r->vfu = (v & VFMAILBOX_VFU) && !r->pfu;
++    if (v & VFMAILBOX_REQ) {
++        R(s, PFMBICR + 4 * i) |= 1u << b;
++        ixgbe_pf_mbox_irq(s, vf);
++    }
++    if (v & VFMAILBOX_ACK) {
++        R(s, PFMBICR + 4 * i) |= 1u << (16 + b);
++        ixgbe_pf_mbox_irq(s, vf);
++    }
++}
++
++static uint32_t ixgbe_vf_mbox_read(IxgbeState *s, int vf)
++{
++    IxgbeVf *r = &s->vf[vf];
++    uint32_t v = r->r2c;
++
++    r->r2c = 0;
++    v |= (r->vfu ? VFMAILBOX_VFU : 0) | (r->pfu ? VFMAILBOX_PFU : 0);
++    if (!(R(s, CTRL_EXT) & CTRL_EXT_PFRSTD)) {
++        v |= VFMAILBOX_RSTI;
++    }
++    return v;
++}
++
++/* a VF's own reset (VFCTRL.RST) */
++static void ixgbe_vf_swreset(IxgbeState *s, int vf)
++{
++    ixgbe_pool_stop(s, vf);
++    ixgbe_vf_clear(s, vf);
++    s->vf[vf].r2c |= VFMAILBOX_RSTD;
++}
++
++/* a VF's function-level reset, which the PF sees in VFLRE */
++static void ixgbe_vf_flr(IxgbeState *s, int vf)
++{
++    hwaddr vflre = vf < 32 ? VFLRE0 : VFLRE1;
++
++    ixgbe_pool_stop(s, vf);
++    ixgbe_vf_clear(s, vf);
++    s->vf[vf].vfu = s->vf[vf].pfu = false;
++    s->vf[vf].r2c = 0;
++    R(s, VFRE + 4 * (vf / 32)) &= ~(1u << (vf % 32));
++    R(s, VFTE + 4 * (vf / 32)) &= ~(1u << (vf % 32));
++    R(s, vflre) |= 1u << (vf % 32);
++    ixgbe_raise_o(s, EICR_MAILBOX);
++}
++
++/* the EEPROM, with its checksum */
++
++static void ixgbe_eeprom_init(IxgbeState *s)
++{
++    uint16_t *e = s->eeprom, sum = 0, p, l;
++    const uint8_t *m = s->conf.macaddr.a;
++    int i, j;
++
++    memset(e, 0xff, sizeof(s->eeprom));
++    e[0x00] = 0x0040;           /* control word 1: signature 01b */
++    e[0x01] = 0x0000;
++    e[0x02] = 0x0000;
++    /* section pointers 0x03-0x0e: only LAN core 0's */
++    e[0x09] = 0x0080;
++    e[0x0f] = 0x0090;           /* firmware module */
++    e[0x15] = 0xe7b5;           /* PBA E66560-005 in the legacy form */
++    e[0x16] = 0x6005;
++    e[0x18] = 0x0000;
++    e[0x2b] = 0x0060;           /* SFP+ init sequence list */
++    e[0x2c] = 0x0000;           /* device caps */
++    e[0x2d] = 0x0546;           /* eTrack ID */
++    e[0x2e] = 0x8000;
++    /* the list: (module type, data offset) pairs */
++    e[0x60] = 0x0004;
++    e[0x61] = 3;                /* DA copper, core 0 */
++    e[0x62] = 0x0070;
++    e[0x63] = 5;                /* SR/LR, core 0 */
++    e[0x64] = 0x0070;
++    e[0x65] = 0xffff;
++    /* the data: CORECTL writes setting the analog core up for SFI */
++    e[0x70] = 0x0002;
++    e[0x71] = 0x0b1d;
++    e[0x72] = 0x081c;
++    e[0x73] = 0xffff;
++    /* LAN core 0: its length, then the MAC the hardware loads into RAR0 */
++    e[0x80] = 0x0003;
++    e[0x81] = m[0] | m[1] << 8;
++    e[0x82] = m[2] | m[3] << 8;
++    e[0x83] = m[4] | m[5] << 8;
++    /*
++     * The firmware module: no LESM parameters, and a pass-through
++     * patch configuration giving the patch version the driver
++     * requires (above 5) before it calls the part production.
++     */
++    e[0x90] = 0x0010;
++    e[0x92] = 0xffff;
++    e[0x94] = 0x00a0;
++    e[0xa0] = 0x0008;
++    e[0xa7] = 0x0006;
++    /* words 0-0x3e and the sections words 3-0x0e point at sum to 0xbaba */
++    for (i = 0; i < 0x3f; i++) {
++        sum += e[i];
++    }
++    for (i = 0x03; i < 0x0f; i++) {
++        p = e[i];
++        if (p == 0 || p == 0xffff || p >= IXGBE_EEPROM_WORDS) {
++            continue;
++        }
++        l = e[p];
++        for (j = p + 1; l != 0xffff && j <= p + l && j < IXGBE_EEPROM_WORDS;
++             j++) {
++            sum += e[j];
++        }
++    }
++    e[0x3f] = 0xbaba - sum;
++}
++
++/* the SFP+ module: a 3m passive direct-attach cable */
++
++static void ixgbe_sfp_init(IxgbeSfpState *f)
++{
++    uint8_t *m = f->mem;
++    unsigned sum, i;
++
++    memset(m, 0, sizeof(f->mem));
++    m[0] = 0x03;                /* SFP */
++    m[1] = 0x04;
++    m[2] = 0x21;                /* copper pigtail */
++    m[8] = 0x04;                /* SFP+ passive cable */
++    m[12] = 0x67;               /* 10.3 Gb/s */
++    m[18] = 3;                  /* 3 m */
++    memcpy(m + 20, "QEMU            ", 16);
++    memcpy(m + 40, "SFP-H10GB-CU3M  ", 16);
++    memcpy(m + 56, "A   ", 4);
++    m[60] = 0x01;               /* SFF-8431 appendix E */
++    for (sum = 0, i = 0; i < 63; i++) {
++        sum += m[i];
++    }
++    m[63] = sum;
++    memcpy(m + 68, "QEMU0000000001  ", 16);
++    memcpy(m + 84, "26100500", 8);
++    for (sum = 0, i = 64; i < 95; i++) {
++        sum += m[i];
++    }
++    m[95] = sum;
++}
++
++static int ixgbe_sfp_event(I2CSlave *i2c, enum i2c_event ev)
++{
++    IxgbeSfpState *f = IXGBE_SFP(i2c);
++
++    if (ev == I2C_START_SEND) {
++        f->addressing = true;
++    }
++    return 0;
++}
++
++static int ixgbe_sfp_send(I2CSlave *i2c, uint8_t data)
++{
++    IxgbeSfpState *f = IXGBE_SFP(i2c);
++
++    if (f->addressing) {
++        f->ptr = data;
++        f->addressing = false;
++    }
++    /* the identification bytes are read-only */
++    return 0;
++}
++
++static uint8_t ixgbe_sfp_recv(I2CSlave *i2c)
++{
++    IxgbeSfpState *f = IXGBE_SFP(i2c);
++
++    return f->mem[f->ptr++];
++}
++
++static void ixgbe_sfp_instance_init(Object *obj)
++{
++    ixgbe_sfp_init(IXGBE_SFP(obj));
++}
++
++static void ixgbe_sfp_class_init(ObjectClass *klass, const void *data)
++{
++    I2CSlaveClass *k = I2C_SLAVE_CLASS(klass);
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    k->event = ixgbe_sfp_event;
++    k->send = ixgbe_sfp_send;
++    k->recv = ixgbe_sfp_recv;
++    dc->desc = "SFP+ direct-attach cable of an 82599";
++    dc->user_creatable = false;
++}
++
++/* register access */
++
++static bool ixgbe_rc_stat(hwaddr a)
++{
++    switch (a) {
++    case GPRC: case BPRC: case MPRC: case GPTC: case GORCL: case GORCH:
++    case GOTCL: case GOTCH: case TPR: case TPT: case MPTC: case BPTC:
++    case SSVPC:
++        return true;
++    }
++    return a >= RNBC0 && a < RNBC0 + 32;
++}
++
++static uint32_t ixgbe_read(IxgbeState *s, hwaddr a)
++{
++    uint32_t v;
++
++    a = ixgbe_canon(a);
++    if (a >= IXGBE_MMIO_SIZE) {
++        return 0;
++    }
++    switch (a) {
++    case STATUS:
++        return ((R(s, CTRL) & CTRL_GIO_DIS) ? 0 : STATUS_GIO) |
++               (ixgbe_link_up(s) ? STATUS_LINKUP : 0);
++    case I2CCTL:
++        return ixgbe_i2c_read(s);
++    case ESDP:
++        return ixgbe_esdp(s);
++    case EEC:
++        v = R(s, EEC) & 0x70;
++        return v | ((v & EEC_REQ) ? EEC_GNT : 0) | EEC_PRES | EEC_ARD |
++               EEC_SIZE_512;
++    case SWSM:
++        v = R(s, SWSM);
++        R(s, SWSM) |= SWSM_SMBI;
++        return v;
++    case LINKS:
++        return ixgbe_links(s);
++    case ANLP1:
++        return ANLP1_AN_STATE;
++    case EICR:
++        v = (s->qcause & 0xffff) | s->ocause;
++        s->qcause &= ~0xffffULL;
++        s->ocause = 0;
++        ixgbe_legacy_irq(s);
++        return v;
++    case EICS:
++        return (s->qcause & 0xffff) | s->ocause;
++    case EIMS:
++        return (s->qmask & 0xffff) | s->omask;
++    case EIMS_EX:
++    case EIMS_EX + 4:
++        return s->qmask >> (8 * (a - EIMS_EX));
++    case EIAM:
++        return (s->qam & 0xffff) | s->oam;
++    case EIAM_EX:
++    case EIAM_EX + 4:
++        return s->qam >> (8 * (a - EIAM_EX));
++    case EIMC:
++    case EIMC_EX:
++    case EIMC_EX + 4:
++    case EICS_EX:
++    case EICS_EX + 4:
++        return 0;
++    case RDRXCTL:
++        return R(s, RDRXCTL) | RDRXCTL_DMAIDONE;
++    case SECRXSTAT:
++    case SECTXSTAT:
++        return R(s, a) | 1;
++    }
++    if (a >= PFMAILBOX && a < PFMAILBOX + 4 * IXGBE_TOTAL_VFS) {
++        return ixgbe_pf_mbox_read(s, (a - PFMAILBOX) / 4);
++    }
++    if (ixgbe_rc_stat(a)) {
++        v = R(s, a);
++        R(s, a) = 0;
++        return v;
++    }
++    return R(s, a);
++}
++
++static void ixgbe_write(IxgbeState *s, hwaddr a, uint32_t v)
++{
++    uint32_t old;
++    int i;
++
++    a = ixgbe_canon(a);
++    if (a >= IXGBE_MMIO_SIZE) {
++        return;
++    }
++    switch (a) {
++    case CTRL:
++        if (v & CTRL_RST_MASK) {
++            ixgbe_reset(s);
++            return;
++        }
++        break;
++    case STATUS:
++    case LINKS:
++    case ANLP1:
++    case FWSM:
++        return;
++    case CTRL_EXT:
++        old = R(s, CTRL_EXT);
++        R(s, CTRL_EXT) = v;
++        if (!(old & CTRL_EXT_PFRSTD) && (v & CTRL_EXT_PFRSTD)) {
++            for (i = 0; i < ixgbe_numvfs(s); i++) {
++                s->vf[i].r2c |= VFMAILBOX_RSTD;
++                ixgbe_vf_mbox_irq(s, i);
++            }
++        }
++        return;
++    case I2CCTL:
++        ixgbe_i2c_write(s, v);
++        return;
++    case ESDP:
++        old = ixgbe_link_up(s);
++        R(s, ESDP) = v;
++        if (old != ixgbe_link_up(s)) {
++            ixgbe_raise_o(s, EICR_LSC);
++        }
++        return;
++    case EEC:
++        v &= 0x70;
++        break;
++    case EERD:
++        if (v & EERD_START) {
++            uint32_t addr = (v >> 2) & 0x3fff;
++            uint16_t data = addr < IXGBE_EEPROM_WORDS ? s->eeprom[addr] : 0xffff;
++
++            v = (uint32_t)data << 16 | addr << 2 | EERD_DONE;
++        }
++        break;
++    case EEWR:
++        if (v & EERD_START) {
++            uint32_t addr = (v >> 2) & 0x3fff;
++
++            if (addr < IXGBE_EEPROM_WORDS) {
++                s->eeprom[addr] = v >> 16;
++            }
++            v = (v & ~EERD_START) | EERD_DONE;
++        }
++        break;
++    case MSCA:
++        /* nothing answers on MDIO: an SFP+ port has no PHY there */
++        R(s, MSRWD) = (R(s, MSRWD) & 0xffff) | 0xffff0000;
++        v &= ~MSCA_MDI_COMMAND;
++        break;
++    case AUTOC:
++        R(s, AUTOC) = v & ~AUTOC_AN_RESTART;
++        if (v & AUTOC_AN_RESTART) {
++            ixgbe_raise_o(s, EICR_LSC);
++        }
++        return;
++    case EICR:
++        s->qcause &= ~(uint64_t)(v & 0xffff);
++        s->ocause &= ~(v & EICR_OTHERS);
++        ixgbe_legacy_irq(s);
++        return;
++    case EICS:
++        s->qcause |= v & 0xffff;
++        s->ocause |= v & EICR_OTHERS;
++        ixgbe_irq_eval(s, v & 0xffff);
++        return;
++    case EIMS:
++        s->qmask |= v & 0xffff;
++        s->omask |= v & EICR_OTHERS;
++        ixgbe_irq_eval(s, v & 0xffff);
++        return;
++    case EIMC:
++        s->qmask &= ~(uint64_t)(v & 0xffff);
++        s->omask &= ~(v & EICR_OTHERS);
++        ixgbe_legacy_irq(s);
++        return;
++    case EIAM:
++        s->qam = (s->qam & ~0xffffULL) | (v & 0xffff);
++        s->oam = v & EICR_OTHERS;
++        return;
++    case EICS_EX:
++    case EICS_EX + 4:
++        s->qcause |= (uint64_t)v << (8 * (a - EICS_EX));
++        ixgbe_irq_eval(s, (uint64_t)v << (8 * (a - EICS_EX)));
++        return;
++    case EIMS_EX:
++    case EIMS_EX + 4:
++        s->qmask |= (uint64_t)v << (8 * (a - EIMS_EX));
++        ixgbe_irq_eval(s, (uint64_t)v << (8 * (a - EIMS_EX)));
++        return;
++    case EIMC_EX:
++    case EIMC_EX + 4:
++        s->qmask &= ~((uint64_t)v << (8 * (a - EIMC_EX)));
++        ixgbe_legacy_irq(s);
++        return;
++    case EIAM_EX:
++    case EIAM_EX + 4:
++        i = 8 * (a - EIAM_EX);
++        s->qam = (s->qam & ~(0xffffffffULL << i)) | (uint64_t)v << i;
++        return;
++    case VFLREC:
++        R(s, VFLRE0) &= ~v;
++        return;
++    case VFLREC + 4:
++        R(s, VFLRE1) &= ~v;
++        return;
++    case PFMBICR:
++    case PFMBICR + 4:
++    case PFMBICR + 8:
++    case PFMBICR + 12:
++        R(s, a) &= ~v;
++        return;
++    case FDIRCTRL:
++        v |= FDIRCTRL_INIT_DONE;
++        break;
++    case FDIRCMD:
++        v &= ~FDIRCMD_CMD_MASK;
++        break;
++    }
++    if (a >= PFMAILBOX && a < PFMAILBOX + 4 * IXGBE_TOTAL_VFS) {
++        ixgbe_pf_mbox_write(s, (a - PFMAILBOX) / 4, v);
++        return;
++    }
++    if (ixgbe_rc_stat(a)) {
++        return;
++    }
++    R(s, a) = v;
++    if (a >= TXQ && a < TXQ + 0x40 * IXGBE_NQ) {
++        int q = (a - TXQ) / 0x40;
++
++        switch (a & 0x3f) {
++        case QT:
++        case QDCTL:
++            ixgbe_tx_queue(s, q);
++            break;
++        }
++    }
++    if (a == DMATXCTL && (v & DMATXCTL_TE)) {
++        for (i = 0; i < IXGBE_NQ; i++) {
++            ixgbe_tx_queue(s, i);
++        }
++    }
++}
++
++static uint64_t ixgbe_mmio_read(void *opaque, hwaddr addr, unsigned size)
++{
++    return ixgbe_read(opaque, addr);
++}
++
++static void ixgbe_mmio_write(void *opaque, hwaddr addr, uint64_t val,
++                             unsigned size)
++{
++    ixgbe_write(opaque, addr, val);
++}
++
++static const MemoryRegionOps ixgbe_mmio_ops = {
++    .read = ixgbe_mmio_read,
++    .write = ixgbe_mmio_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .impl = {
++        .min_access_size = 4,
++        .max_access_size = 4,
++    },
++};
++
++/* a VF's registers: its own, or a PF register it is a window on */
++
++static hwaddr ixgbevf_queue_reg(IxgbeState *s, int vf, hwaddr a)
++{
++    int qpp = ixgbe_qpp(s), lq;
++
++    if (a >= VFRXQ && a < VFRXQ + 0x40 * 8) {
++        lq = (a - VFRXQ) / 0x40;
++        return lq < qpp ? rxq(vf * qpp + lq) + (a & 0x3f) : HWADDR_MAX;
++    }
++    if (a >= VFTXQ && a < VFTXQ + 0x40 * 8) {
++        lq = (a - VFTXQ) / 0x40;
++        return lq < qpp ? txq(vf * qpp + lq) + (a & 0x3f) : HWADDR_MAX;
++    }
++    return HWADDR_MAX;
++}
++
++static uint64_t ixgbevf_mmio_read(void *opaque, hwaddr a, unsigned size)
++{
++    PCIDevice *d = PCI_DEVICE(opaque);
++    IxgbeState *s = IXGBE(pcie_sriov_get_pf(d));
++    int vf = pcie_sriov_vf_number(d);
++    IxgbeVf *r = &s->vf[vf];
++    uint32_t v;
++    hwaddr pa;
++
++    switch (a) {
++    case VFCTRL:
++        return 0;
++    case VFSTATUS:
++        return ixgbe_read(s, STATUS);
++    case VFLINKS:
++        return ixgbe_links(s);
++    case VFFRTIMER:
++        return qemu_clock_get_us(QEMU_CLOCK_VIRTUAL);
++    case VTEICR:
++        v = r->eicr;
++        r->eicr = 0;
++        return v;
++    case VTEICS:
++        return r->eicr;
++    case VTEIMS:
++        return r->eims;
++    case VTEIMC:
++        return 0;
++    case VTEIAC:
++        return r->eiac;
++    case VTEIAM:
++        return r->eiam;
++    case VTIVAR ... VTIVAR + 12:
++        return r->ivar[(a - VTIVAR) / 4];
++    case VTIVAR_MISC:
++        return r->ivar_misc;
++    case VTRSCINT ... VTRSCINT + 8:
++        return r->rscint[(a - VTRSCINT) / 4];
++    case VFMBMEM ... VFMBMEM + 0x3c:
++        return R(s, PFMBMEM + 64 * vf + (a - VFMBMEM));
++    case VFMAILBOX:
++        return ixgbe_vf_mbox_read(s, vf);
++    case VFPSRTYPE:
++        return R(s, PSRTYPE + 4 * vf);
++    case VTEITR ... VTEITR + 8:
++        return r->eitr[(a - VTEITR) / 4];
++    case VFGPRC:
++        return r->gprc;
++    case VFGORC_LSB:
++        return r->gorc;
++    case VFGORC_MSB:
++        return r->gorc >> 32;
++    case VFMPRC:
++        return r->mprc;
++    case VFGPTC:
++        return r->gptc;
++    case VFGOTC_LSB:
++        return r->gotc;
++    case VFGOTC_MSB:
++        return r->gotc >> 32;
++    }
++    pa = ixgbevf_queue_reg(s, vf, a & ~3);
++    return pa == HWADDR_MAX ? 0 : ixgbe_read(s, pa);
++}
++
++static void ixgbevf_mmio_write(void *opaque, hwaddr a, uint64_t val,
++                               unsigned size)
++{
++    PCIDevice *d = PCI_DEVICE(opaque);
++    IxgbeState *s = IXGBE(pcie_sriov_get_pf(d));
++    int vf = pcie_sriov_vf_number(d);
++    IxgbeVf *r = &s->vf[vf];
++    uint32_t v = val;
++    hwaddr pa;
++
++    switch (a) {
++    case VFCTRL:
++        if (v & VFCTRL_RST) {
++            ixgbe_vf_swreset(s, vf);
++        }
++        return;
++    case VTEICR:
++        r->eicr &= ~v;
++        return;
++    case VTEICS:
++        r->eicr |= v & 7;
++        ixgbe_vf_irq_eval(s, vf);
++        return;
++    case VTEIMS:
++        r->eims |= v & 7;
++        ixgbe_vf_irq_eval(s, vf);
++        return;
++    case VTEIMC:
++        r->eims &= ~v;
++        return;
++    case VTEIAC:
++        r->eiac = v & 7;
++        return;
++    case VTEIAM:
++        r->eiam = v & 7;
++        return;
++    case VTIVAR ... VTIVAR + 12:
++        r->ivar[(a - VTIVAR) / 4] = v;
++        return;
++    case VTIVAR_MISC:
++        r->ivar_misc = v;
++        return;
++    case VTRSCINT ... VTRSCINT + 8:
++        r->rscint[(a - VTRSCINT) / 4] = v;
++        return;
++    case VFMBMEM ... VFMBMEM + 0x3c:
++        R(s, PFMBMEM + 64 * vf + (a - VFMBMEM)) = v;
++        return;
++    case VFMAILBOX:
++        ixgbe_vf_mbox_write(s, vf, v);
++        return;
++    case VFPSRTYPE:
++        R(s, PSRTYPE + 4 * vf) = v;
++        return;
++    case VTEITR ... VTEITR + 8:
++        r->eitr[(a - VTEITR) / 4] = v;
++        return;
++    }
++    pa = ixgbevf_queue_reg(s, vf, a & ~3);
++    if (pa != HWADDR_MAX) {
++        ixgbe_write(s, pa, v);
++    }
++}
++
++static const MemoryRegionOps ixgbevf_mmio_ops = {
++    .read = ixgbevf_mmio_read,
++    .write = ixgbevf_mmio_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .impl = {
++        .min_access_size = 4,
++        .max_access_size = 4,
++    },
++};
++
++/* the physical function */
++
++static NetClientInfo net_ixgbe_info = {
++    .type = NET_CLIENT_DRIVER_NIC,
++    .size = sizeof(NICState),
++    .can_receive = ixgbe_can_receive,
++    .receive = ixgbe_receive,
++    .receive_iov = ixgbe_receive_iov,
++    .link_status_changed = ixgbe_set_link_status,
++};
++
++static void ixgbe_write_config(PCIDevice *d, uint32_t addr, uint32_t val,
++                               int len)
++{
++    pci_default_write_config(d, addr, val, len);
++    pcie_cap_flr_write_config(d, addr, val, len);
++}
++
++static void ixgbe_realize(PCIDevice *d, Error **errp)
++{
++    IxgbeState *s = IXGBE(d);
++    DeviceState *dev = DEVICE(d);
++    int i;
++
++    d->config_write = ixgbe_write_config;
++    d->config[PCI_CACHE_LINE_SIZE] = 0x10;
++    d->config[PCI_INTERRUPT_PIN] = 1;
++    pci_set_word(d->config + PCI_SUBSYSTEM_VENDOR_ID, PCI_VENDOR_ID_INTEL);
++    pci_set_word(d->config + PCI_SUBSYSTEM_ID, IXGBE_SUBSYS_ID);
++
++    memory_region_init_io(&s->mmio, OBJECT(d), &ixgbe_mmio_ops, s,
++                          "ixgbe-mmio", IXGBE_MMIO_SIZE);
++    pci_register_bar(d, IXGBE_MMIO_BAR, PCI_BASE_ADDRESS_MEM_TYPE_64,
++                     &s->mmio);
++    memory_region_init(&s->msix, OBJECT(d), "ixgbe-msix", IXGBE_MSIX_SIZE);
++    pci_register_bar(d, IXGBE_MSIX_BAR, PCI_BASE_ADDRESS_MEM_TYPE_64,
++                     &s->msix);
++
++    if (pcie_endpoint_cap_init(d, 0xa0) < 0) {
++        error_setg(errp, "ixgbe: PCIe capability");
++        return;
++    }
++    pcie_cap_fill_link_ep_usp(d, QEMU_PCI_EXP_LNK_X8, QEMU_PCI_EXP_LNK_5GT);
++    if (msix_init(d, IXGBE_MSIX_VECS, &s->msix, IXGBE_MSIX_BAR, 0,
++                  &s->msix, IXGBE_MSIX_BAR, 0x2000, 0x70, errp) < 0) {
++        return;
++    }
++    for (i = 0; i < IXGBE_MSIX_VECS; i++) {
++        msix_vector_use(d, i);
++    }
++    if (msi_init(d, 0x50, 1, true, true, errp) < 0) {
++        return;
++    }
++    if (pci_pm_init(d, 0x40, errp) < 0) {
++        return;
++    }
++    pcie_cap_flr_init(d);
++    if (pcie_aer_init(d, 1, 0x100, 0x40, errp) < 0) {
++        return;
++    }
++    pcie_ari_init(d, 0x150);
++    if (!pcie_sriov_pf_init(d, IXGBE_CAP_SRIOV, TYPE_IXGBEVF, IXGBE_VF_DEV_ID,
++                            IXGBE_TOTAL_VFS, IXGBE_TOTAL_VFS, IXGBE_VF_OFFSET,
++                            IXGBE_VF_STRIDE, errp)) {
++        return;
++    }
++    pcie_sriov_pf_init_vf_bar(d, IXGBEVF_MMIO_BAR,
++        PCI_BASE_ADDRESS_MEM_TYPE_64 | PCI_BASE_ADDRESS_MEM_PREFETCH,
++        IXGBEVF_MMIO_SIZE);
++    pcie_sriov_pf_init_vf_bar(d, IXGBEVF_MSIX_BAR,
++        PCI_BASE_ADDRESS_MEM_TYPE_64 | PCI_BASE_ADDRESS_MEM_PREFETCH,
++        IXGBEVF_MSIX_SIZE);
++
++    qemu_macaddr_default_if_unset(&s->conf.macaddr);
++    s->nic = qemu_new_nic(&net_ixgbe_info, &s->conf,
++                          object_get_typename(OBJECT(s)), dev->id,
++                          &dev->mem_reentrancy_guard, s);
++    qemu_format_nic_info_str(qemu_get_queue(s->nic), s->conf.macaddr.a);
++    net_rx_pkt_init(&s->rx_pkt);
++
++    s->i2c = i2c_init_bus(dev, "sfp");
++    i2c_slave_create_simple(s->i2c, TYPE_IXGBE_SFP, 0x50);
++    bitbang_i2c_init(&s->bb, s->i2c);
++    s->scl = s->sda = s->sda_in = 1;
++
++    ixgbe_eeprom_init(s);
++}
++
++static void ixgbe_exit(PCIDevice *d)
++{
++    IxgbeState *s = IXGBE(d);
++    int i;
++
++    for (i = 0; i < IXGBE_NQ; i++) {
++        ixgbe_tx_drop(&s->tx[i]);
++        if (s->tx[i].pkt) {
++            net_tx_pkt_uninit(s->tx[i].pkt);
++        }
++        g_free(s->tx[i].lbuf);
++    }
++    net_rx_pkt_uninit(s->rx_pkt);
++    pcie_sriov_pf_exit(d);
++    pcie_aer_exit(d);
++    pcie_cap_exit(d);
++    qemu_del_nic(s->nic);
++    msix_unuse_all_vectors(d);
++    msix_uninit(d, &s->msix, &s->msix);
++    msi_uninit(d);
++}
++
++static void ixgbe_reset_hold(Object *obj, ResetType type)
++{
++    ixgbe_reset(IXGBE(obj));
++}
++
++static const VMStateDescription ixgbe_vmstate = {
++    .name = "ixgbe",
++    .unmigratable = 1,
++};
++
++static const Property ixgbe_properties[] = {
++    DEFINE_NIC_PROPERTIES(IxgbeState, conf),
++};
++
++static void ixgbe_instance_init(Object *obj)
++{
++    IxgbeState *s = IXGBE(obj);
++
++    device_add_bootindex_property(obj, &s->conf.bootindex, "bootindex",
++                                  "/ethernet-phy@0", DEVICE(obj));
++}
++
++static void ixgbe_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    ResettableClass *rc = RESETTABLE_CLASS(klass);
++    PCIDeviceClass *c = PCI_DEVICE_CLASS(klass);
++
++    c->realize = ixgbe_realize;
++    c->exit = ixgbe_exit;
++    c->vendor_id = PCI_VENDOR_ID_INTEL;
++    c->device_id = IXGBE_DEV_ID;
++    c->revision = 1;
++    c->class_id = PCI_CLASS_NETWORK_ETHERNET;
++    rc->phases.hold = ixgbe_reset_hold;
++    dc->desc = "Intel 82599 10 Gigabit Ethernet Controller (X520)";
++    dc->vmsd = &ixgbe_vmstate;
++    device_class_set_props(dc, ixgbe_properties);
++    set_bit(DEVICE_CATEGORY_NETWORK, dc->categories);
++}
++
++/* the virtual function */
++
++static void ixgbevf_write_config(PCIDevice *d, uint32_t addr, uint32_t val,
++                                 int len)
++{
++    pci_default_write_config(d, addr, val, len);
++    pcie_cap_flr_write_config(d, addr, val, len);
++}
++
++static void ixgbevf_realize(PCIDevice *d, Error **errp)
++{
++    IxgbeVfState *s = IXGBEVF(d);
++    int i;
++
++    d->config_write = ixgbevf_write_config;
++    pci_set_word(d->config + PCI_SUBSYSTEM_VENDOR_ID, PCI_VENDOR_ID_INTEL);
++    pci_set_word(d->config + PCI_SUBSYSTEM_ID, IXGBE_SUBSYS_ID);
++
++    memory_region_init_io(&s->mmio, OBJECT(d), &ixgbevf_mmio_ops, s,
++                          "ixgbevf-mmio", IXGBEVF_MMIO_SIZE);
++    pci_register_bar(d, IXGBEVF_MMIO_BAR, PCI_BASE_ADDRESS_MEM_TYPE_64 |
++                     PCI_BASE_ADDRESS_MEM_PREFETCH, &s->mmio);
++    memory_region_init(&s->msix, OBJECT(d), "ixgbevf-msix",
++                       IXGBEVF_MSIX_SIZE);
++    pci_register_bar(d, IXGBEVF_MSIX_BAR, PCI_BASE_ADDRESS_MEM_TYPE_64 |
++                     PCI_BASE_ADDRESS_MEM_PREFETCH, &s->msix);
++    if (msix_init(d, IXGBEVF_MSIX_VECS, &s->msix, IXGBEVF_MSIX_BAR, 0,
++                  &s->msix, IXGBEVF_MSIX_BAR, 0x2000, 0x70, errp) < 0) {
++        return;
++    }
++    for (i = 0; i < IXGBEVF_MSIX_VECS; i++) {
++        msix_vector_use(d, i);
++    }
++    if (pcie_endpoint_cap_init(d, 0xa0) < 0) {
++        error_setg(errp, "ixgbevf: PCIe capability");
++        return;
++    }
++    pcie_cap_flr_init(d);
++    if (pcie_aer_init(d, 1, 0x100, 0x40, errp) < 0) {
++        return;
++    }
++    pcie_ari_init(d, 0x150);
++}
++
++static void ixgbevf_exit(PCIDevice *d)
++{
++    IxgbeVfState *s = IXGBEVF(d);
++
++    pcie_aer_exit(d);
++    pcie_cap_exit(d);
++    msix_unuse_all_vectors(d);
++    msix_uninit(d, &s->msix, &s->msix);
++}
++
++static void ixgbevf_reset_hold(Object *obj, ResetType type)
++{
++    PCIDevice *d = PCI_DEVICE(obj);
++    PCIDevice *pf = pcie_sriov_get_pf(d);
++
++    if (pf) {
++        ixgbe_vf_flr(IXGBE(pf), pcie_sriov_vf_number(d));
++    }
++}
++
++static void ixgbevf_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    ResettableClass *rc = RESETTABLE_CLASS(klass);
++    PCIDeviceClass *c = PCI_DEVICE_CLASS(klass);
++
++    c->realize = ixgbevf_realize;
++    c->exit = ixgbevf_exit;
++    c->vendor_id = PCI_VENDOR_ID_INTEL;
++    c->device_id = IXGBE_VF_DEV_ID;
++    c->revision = 1;
++    c->class_id = PCI_CLASS_NETWORK_ETHERNET;
++    rc->phases.hold = ixgbevf_reset_hold;
++    dc->desc = "Intel 82599 Virtual Function";
++    dc->user_creatable = false;
++    set_bit(DEVICE_CATEGORY_NETWORK, dc->categories);
++}
++
++static const TypeInfo ixgbe_types[] = {
++    {
++        .name = TYPE_IXGBE,
++        .parent = TYPE_PCI_DEVICE,
++        .instance_size = sizeof(IxgbeState),
++        .instance_init = ixgbe_instance_init,
++        .class_init = ixgbe_class_init,
++        .interfaces = (const InterfaceInfo[]) {
++            { INTERFACE_PCIE_DEVICE },
++            { }
++        },
++    },
++    {
++        .name = TYPE_IXGBEVF,
++        .parent = TYPE_PCI_DEVICE,
++        .instance_size = sizeof(IxgbeVfState),
++        .class_init = ixgbevf_class_init,
++        .interfaces = (const InterfaceInfo[]) {
++            { INTERFACE_PCIE_DEVICE },
++            { }
++        },
++    },
++    {
++        .name = TYPE_IXGBE_SFP,
++        .parent = TYPE_I2C_SLAVE,
++        .instance_size = sizeof(IxgbeSfpState),
++        .instance_init = ixgbe_sfp_instance_init,
++        .class_init = ixgbe_sfp_class_init,
++    },
++};
++
++DEFINE_TYPES(ixgbe_types)
