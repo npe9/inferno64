@@ -899,19 +899,33 @@ cc1120interrupt(Radio *r)
 	/*
 	 * DRAIN THE FIFO, DO NOT TAKE ONE PACKET PER EDGE.
 	 *
-	 * This function used to read one packet and return.  An EXTI
-	 * pending bit coalesces edges: two packets arriving while
-	 * interrupts are masked -- and they are masked for as long as
-	 * anything holds the bus ilock, which a 2000ms "capture" verb
-	 * does -- raise one interrupt between them, so one was read and
-	 * the other stayed in the FIFO.  The residue only ever grows,
-	 * and four thirty-five byte frames fill the part's 128-byte RX
-	 * FIFO, at which point it latches in RX_FIFO_ERR and stops
-	 * raising the edge that would have cleared it.
+	 * This function used to read one packet and return, and if the
+	 * FIFO holds two whole frames then reading one of them is simply
+	 * wrong: the second sits there until something else brings this
+	 * function back.  That is the reason for the loop and it stands
+	 * on its own.
 	 *
-	 * So rxarm's recovery was the cure and this is the cause.  The
-	 * rule is in the kernel's own history under a different device:
-	 * drain then wait, never wait then consume one.
+	 * IT IS NOT, HOWEVER, THE CAUSE OF THE RX_FIFO_ERR LATCH, and I
+	 * wrote that it was.  The story was that an EXTI pending bit
+	 * coalesces edges -- two packets arriving while interrupts are
+	 * masked, and they are masked for as long as anything holds the
+	 * bus ilock, which a 2000ms "capture" verb does -- so one gets
+	 * read and the other accumulates until four thirty-five byte
+	 * frames fill the 128-byte FIFO.
+	 *
+	 * The edge counters refute it.  nintrlow on one station read 29
+	 * while its peer had sent 15 frames, and 61 against 45: there
+	 * are MORE edges than packets, not fewer, which is what
+	 * PKT_SYNC_RXTX being named RXTX should have suggested -- it
+	 * asserts for this part's own transmits as well.  No edge is
+	 * being missed.
+	 *
+	 * So the latch has a cause that is still unknown, rxarm's
+	 * recovery is what makes it survivable, and this loop is a
+	 * correctness fix rather than the cure it was committed as.  It
+	 * did not measurably reduce fifoerr: one fifteen-minute run read
+	 * zero, and the same build with one more line printed by the
+	 * init was back to a dozen.  A quiet period is not a fix.
 	 *
 	 * Bounded, because this is interrupt context and a part that
 	 * reports bytes for ever is a fault rather than a reason to

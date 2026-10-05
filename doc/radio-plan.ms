@@ -6685,3 +6685,70 @@ The handler drains now, bounded at four, which is the FIFO.
 \- a rule this kernel already learned under a different device, and one
 that was not applied here because the fault it causes does not look like
 a FIFO problem.  It looks like a radio link that does not close.
+.NH 2
+What the fix is verified to do, and the cause claim I had to withdraw
+.LP
+.B "What is solid."
+The latch is real and the part names it:
+.CW "state 0x06"
+with
+.CW "marc 0x0a" ,
+twenty-two consecutive samples of it while
+.B sent
+climbed past a hundred more transmits,
+.B recv
+frozen at 169 and
+.B txstaged
+reading 0.  Before the fix that was the end of the link.  After it,
+.B fifoerr
+counts up and the link keeps carrying frames: one station read
+.CW "fifoerr 10"
+within a few minutes, every one cleared, still in
+.CW "state 0x01"
+and still receiving.
+.B "A permanent death became a counted, self-clearing event."
+.PP
+And the watchdog is wired, which is a separate question from whether it
+finds anything:
+.B "watch 0 is equally what a watchdog that found no fault says and what one that was never added to the clock list says,"
+so it counts its looks too.  They climb about once a second, with zero
+finds \- the transmit path gets there first on a station that beacons,
+which is the division the two were written for.
+.PP
+.B "What I withdraw: that coalesced interrupt edges were the cause."
+The story was that an EXTI pending bit coalesces edges, so a packet
+arriving while interrupts are masked leaves a residue that grows until
+four frames fill the FIFO.
+.B "The edge counters refute it."
+.B Nintrlow
+on one station read 29 against a peer that had sent 15 frames, and 61
+against 45:
+.B "there are more edges than packets, not fewer."
+Which is what the pin being called PKT_SYNC_RXTX should have suggested \-
+it asserts for the part's own transmits as well.  No edge is being
+missed.
+.PP
+.B "And the drain loop is not shown to help."
+One fifteen-minute run of the gated build read
+.CW "fifoerr 0"
+on both boards with thirty frames of thirty delivered each way, which I
+was about to write up as a three-point result against the ungated build's
+.CW "fifoerr 25"
+and the undrained build's dozen.
+.B "Then the same build, with one more line printed by the init, was back to fourteen."
+One quiet window is not a fix, and the control for "did the drain remove
+the cause" is the same build measured again \- which is the rule this
+bench already has written down twice.
+.PP
+So the loop stays, because reading one frame out of a FIFO holding two is
+wrong on its own terms, and it is a correctness fix and not a cure.
+.B "The ungated version WAS harmful and that number stands:"
+.CW "fifoerr 25"
+over 85 beacons with 29 frames received, because reading a length byte
+for a frame whose payload has not arrived underflows the FIFO into the
+very state the drain was supposed to prevent.
+.PP
+.B "The cause of the overflow is open."
+What is known about it: it is not missed edges, it is not the path, it is
+not collisions or beacon phase, and it recurs within minutes on a link
+carrying a frame every four seconds.
