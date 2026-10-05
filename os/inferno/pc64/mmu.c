@@ -457,3 +457,23 @@ patwc(void *a, int n)
 		*pte = (*pte & ~mask) | (attr & mask);
 	}
 }
+
+/*
+ * Page 0, unmapped once the processors are started (main.c): Limbo's
+ * nil is H, -1, so a nil dereference at offset k touches address k-1,
+ * and with page 0 mapped it read zeros where it should fault and raise
+ * "dereference of nil" (trap.c).  The BIOS's words in it -- the
+ * warm-reset vector, the warm-boot flag -- are written with it mapped
+ * for the moment (on), and it goes again (off).
+ */
+void
+page0(int on)
+{
+	uintptr *pte;
+
+	pte = mmuwalk((uintptr*)PML4ADDR, 0, 0, 0);
+	if(pte == nil)
+		return;
+	*pte = on ? PTEWRITE|PTEVALID : 0;
+	invlpg(0);
+}

@@ -85,6 +85,7 @@ void	intrenable(int, void (*)(Ureg*, void*), void*, int, char*);
 void	introff(void);
 void	intron(void);
 void	invlpg(uintptr);
+void	page0(int);
 void	iofree(u32);
 void	ioinit(void);
 s32	iounused(u32, u32);

@@ -277,6 +277,7 @@ main(void)
 	links(); /* runs etherlink() of the link'ed ethernet devices */
 	doc("chandevreset");
 	chandevreset(); /* reset() all devices */
+	page0(0);	/* a Limbo nil dereference faults (mmu.c, trap.c) */
 	doc("userinit");
 	userinit(); /* calls init0, which calls chandevinit to init() all devices */
 	doc("schedinit");

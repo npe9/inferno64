@@ -84,6 +84,15 @@ else
 	tail -20 "$LOG" | sed 's/^/	/'
 	fail=1
 fi
+# a Limbo nil dereference is the program's exception (trap.c's
+# disfault), not the kernel's panic
+grep 'RVTEST: nil' "$LOG" | sed 's/^/	/'
+if [ `grep -c 'RVTEST: nil caught .*dereference of nil' "$LOG"` -eq 2 ]; then
+	echo "check-rv: nil dereference ($TAG): pass"
+else
+	echo "check-rv: nil dereference ($TAG): FAIL"
+	fail=1
+fi
 
 K=$ROOT/os/inferno/virt/ivirtlinux
 [ -f "$K" ] || { echo "check-rv: no $K; mk CONF=virtlinux in os/inferno/virt first" >&2; exit 1; }

@@ -31,6 +31,7 @@ archreset(void)
 	 * ACPI but why bother, this is the end of the line anyway.
 	 */
 	print("Takes a licking and keeps on ticking...\n");
+	page0(1);
 	*(ushort*)KADDR(0x472) = 0x1234;	/* BIOS warm-boot flag */
 	outb(0xcf9, 0x02);
 	outb(0xcf9, 0x06);

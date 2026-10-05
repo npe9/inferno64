@@ -68,12 +68,38 @@ field(line, name: string): string
 	return nil;
 }
 
+# a ref adt read through nil: its first field at H itself, the top
+# page; a later one at H plus its offset, page 0
+Nilt: adt {
+	a:	int;
+	b:	big;
+};
+
+nilprobe()
+{
+	r: ref Nilt;
+
+	{
+		sys->print("VMTEST: nil read %d\n", r.a);
+	} exception e {
+	"*" =>
+		sys->print("VMTEST: nil caught at the top page: %s\n", e);
+	}
+	{
+		sys->print("VMTEST: nil read %bd\n", r.b);
+	} exception e {
+	"*" =>
+		sys->print("VMTEST: nil caught in page 0: %s\n", e);
+	}
+}
+
 init()
 {
 	sys = load Sys Sys->PATH;
 
 	sys->bind("#H", "/dev", Sys->MAFTER);
 	sys->print("VMTEST: start\n");
+	nilprobe();
 	sys->print("VMTEST: backend %s", readall("/dev/vm/backend"));
 
 	ctl := sys->open("/dev/vm/clone", Sys->ORDWR);

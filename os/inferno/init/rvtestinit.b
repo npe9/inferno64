@@ -105,12 +105,38 @@ fail(s: string)
 	sys->print("RVTEST: FAIL %s\n", s);
 }
 
+# a ref adt read through nil: its first field at H itself, the top
+# page; a later one at H plus its offset, page 0
+Nilt: adt {
+	a:	int;
+	b:	big;
+};
+
+nilprobe()
+{
+	r: ref Nilt;
+
+	{
+		sys->print("RVTEST: nil read %d\n", r.a);
+	} exception e {
+	"*" =>
+		sys->print("RVTEST: nil caught at the top page: %s\n", e);
+	}
+	{
+		sys->print("RVTEST: nil read %bd\n", r.b);
+	} exception e {
+	"*" =>
+		sys->print("RVTEST: nil caught in page 0: %s\n", e);
+	}
+}
+
 init()
 {
 	sys = load Sys Sys->PATH;
 
 	sys->bind("#H", "/dev", Sys->MAFTER);
 	sys->print("RVTEST: start\n");
+	nilprobe();
 	sys->print("RVTEST: backend %s", readall("/dev/vm/backend"));
 
 	ctl := sys->open("/dev/vm/clone", Sys->ORDWR);

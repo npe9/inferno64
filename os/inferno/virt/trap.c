@@ -287,6 +287,24 @@ trap(Ureg *ur)
 			panic("interrupt");
 		}
 	}
+	/*
+	 * A load or store fault in an interpreter process is its Limbo
+	 * program's: Limbo's nil is H, -1, so a nil dereference touches
+	 * the top page or, at an offset, page 0 -- neither is memory
+	 * here -- and becomes the program's exception, not a panic.
+	 */
+	if(up != nil && up->type == Interp
+	&& (cause == 5 || cause == 7 || cause == 13 || cause == 15)){
+		char buf[ERRMAX];
+
+		if(ur->tval < BY2PG || ur->tval >= (uintptr)-BY2PG)
+			snprint(buf, sizeof buf, "dereference of nil");
+		else
+			snprint(buf, sizeof buf, "trap: fault %s pc=%#p addr=%#p",
+				cause == 5 || cause == 13 ? "read" : "write", ur->pc, ur->tval);
+		spllo();
+		disfault(ur, buf);
+	}
 	/* KenC LP64: one arg per print */
 	print("exception cause ");
 	print("%#p", cause);

@@ -1827,7 +1827,6 @@ disfault(void *reg, char *msg)
 		panic("Interp faults with no dis prog");
 
 	/* cause an exception in the dis prog. */
-print("disfault caller 0x%p\n", getcallerpc(&reg));
 	error(msg);
 }
 

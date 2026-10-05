@@ -326,6 +326,27 @@ trap(Ureg *ureg)
 		}
 	}
 
+	/*
+	 * A page fault in an interpreter process is its Limbo program's:
+	 * Limbo's nil is H, -1, so a nil dereference touches the top page
+	 * or, at an offset, page 0, which is unmapped (mmu.c's page0).
+	 * It becomes the program's exception, as on the 32-bit pc
+	 * (fault386), rather than the kernel's panic.
+	 */
+	if(vno == VectorPF && up != nil && up->type == Interp){	/* "user": not a kproc, at CPL 0 all the same */
+		uintptr addr;
+		char buf[ERRMAX];
+
+		addr = getcr2();
+		if(addr < BY2PG || addr >= (uintptr)-BY2PG)
+			snprint(buf, sizeof buf, "dereference of nil");
+		else
+			snprint(buf, sizeof buf, "trap: fault %s pc=%#p addr=%#p",
+				(ureg->error & 2) ? "write" : "read", ureg->pc, addr);
+		spllo();
+		disfault(ureg, buf);
+	}
+
 	if(irqhandled(ureg, vno) == 0 /* TODO && (!user || !usertrap(vno)) */){
 		dumpregs(ureg);
 		/*

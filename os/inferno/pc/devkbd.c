@@ -101,6 +101,7 @@ i8042reset(void)
 	if(nokbd)
 		return;
 
+	page0(1);
 	*((ushort*)KADDR(0x472)) = 0x1234;	/* BIOS warm-boot flag */
 
 	/*

@@ -100,6 +100,7 @@ mpstartap(Apic* apic)
 	/*
 	 * Universal Startup Algorithm.
 	 */
+	page0(1);
 	p = KADDR(0x467);		/* warm-reset vector */
 	*p++ = PADDR(APBOOTSTRAP);
 	*p++ = PADDR(APBOOTSTRAP)>>8;
@@ -130,4 +131,5 @@ mpstartap(Apic* apic)
 		delay(1);
 	}
 	nvramwrite(0x0F, 0x00);
+	page0(0);
 }
