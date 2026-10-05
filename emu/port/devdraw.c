@@ -576,6 +576,25 @@ static Rectangle vcur, vprev;
  * saturating bucket cannot tell 7 from 301.
  */
 static uvlong vsumarea;		/* sum of individual flush rect areas */
+/*
+ * The totals as of the PREVIOUS print, so each line can show its own
+ * interval beside the cumulative figure.
+ *
+ * Every one of these prints is a prefix: the counters are cumulative and
+ * there is no at-exit flush, because cleanexit() ends emu with _exit().  A
+ * reader who takes an intermediate line for the result gets a figure for
+ * part of the run -- which has now caught me twice, once at
+ * INFERNO_DAMAGE_HIST=300 on a 200-flush workload and once reading 0.30%
+ * from a bounce run that finished at 0.20%.  Both times the line said
+ * `frames N' and both times I read past it.
+ *
+ * So the line now carries the interval's OWN saving next to the running
+ * one.  Two numbers that differ say the run has not settled and this is a
+ * prefix; two that agree say the prefix is representative.  That is a
+ * property of the output rather than of the reader's intentions, which is
+ * where the lesson had to go after the second time.
+ */
+static uvlong vlasteager, vlastdeferred;
 static uvlong vnflush, vnflushmax, vnflushtot;
 static int vcurok, vprevok, vevery = -1;
 static uvlong vframes, veager, voverlap, vdeferred;
@@ -766,14 +785,22 @@ frameboundary(void)
 		 * Integer arithmetic, scaled by 100: no floating point in
 		 * the kernel-side half of this and none wanted here either.
 		 */
-		uvlong savepc = 0;
+		uvlong savepc, de, dd, ivpc;
 
+		savepc = 0;
 		if(veager > 0)
 			savepc = ((veager - vdeferred) * 10000) / veager;
-		print("FRAMEDAMAGE frames %llud  eager %llud  deferred %llud  overlap %llud  mean %llud  SAVING %llud.%.2llud%%  partial %llud of %llud\n",
+		de = veager - vlasteager;
+		dd = vdeferred - vlastdeferred;
+		ivpc = 0;
+		if(de > 0)
+			ivpc = ((de - dd) * 10000) / de;
+		print("FRAMEDAMAGE frames %llud  eager %llud  deferred %llud  overlap %llud  mean %llud  SAVING %llud.%.2llud%% running, %llud.%.2llud%% this interval  partial %llud of %llud\n",
 			vframes, veager, vdeferred, voverlap, veager/vframes,
-			savepc/100, savepc%100,
+			savepc/100, savepc%100, ivpc/100, ivpc%100,
 			vpartial, vpartialtot);
+		vlasteager = veager;
+		vlastdeferred = vdeferred;
 	}
 	if(vframes % (uvlong)vevery == 0){
 		int k;

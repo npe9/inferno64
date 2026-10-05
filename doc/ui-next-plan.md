@@ -2180,17 +2180,42 @@ the same repaint algorithm"). Three Tk workloads:
 
 | Tk workload | `overlap/eager` | what its damage looks like |
 |---|---|---|
-| `wm/bounce` | **0.20%** | a small object moving continuously, so consecutive damage barely intersects (6820230 frames) |
+| `wm/bounce` | **≈0%** | objects moving continuously: consecutive damage does not intersect at all in most intervals (see below) |
 | `wm/clock` | **50.43%** | a face redrawn in place, so about half is repeated — but only **10 frames**, so treat it as an order of magnitude, not a figure |
 | `runtests -g` / `wmtest -n 40` | **84.94%** | window churn: nested, growing rectangles |
 
 Two-tenths of a per cent to eighty-five.
 
-(`wm/bounce` first read 0.30% from a print taken **mid-run**; the completed
-figure is 0.20%. These are cumulative counters, so an intermediate print is
-a prefix of the experiment — the same mistake as reading
-`INFERNO_FRAME_DAMAGE` at an interval that never lands at the end, and the
-second time it has caught me.) The ratio is a property of the
+**`wm/bounce`'s figure needed the per-interval column to read at all, and
+the cumulative one is an artefact.** `FRAMEDAMAGE` now prints each
+interval's own saving beside the running total, and on bounce the two
+diverge immediately:
+
+```
+frames  200000   SAVING 2.97% running, 2.97% this interval
+frames  400000   SAVING 1.53% running, 0.00% this interval
+frames  600000   SAVING 1.03% running, 0.00% this interval
+frames  800000   SAVING 0.78% running, 0.00% this interval
+frames 9400000   SAVING 0.18% running, 0.21% this interval
+```
+
+Over 9.4 million frames `overlap` grows only from 3589384 to 9972492, in
+sporadic bursts, and **most intervals contribute 0.00%**. So bounce's
+steady state is no frame-to-frame overlap at all; the positive cumulative
+figure is rare events diluted across a long run, and the running average
+decaying from 2.97% to 0.18% is that dilution rather than any change in the
+workload's character.
+
+Which makes the earlier readings of this workload — 0.30% mid-run, 0.20%
+"completed" — both misleading in the same way, and not because either was
+read at the wrong moment. **A cumulative ratio over a non-stationary run is
+dominated by whatever happened in its transient, and no choice of stopping
+point fixes that.** The per-interval column is the characterisation; the
+cumulative figure is a weighted average over a weighting nobody chose.
+
+That is a stronger statement than the one this paragraph used to make. It
+said the error was reading a prefix; the error was quoting a cumulative
+ratio for a workload whose rate is not constant. The ratio is a property of the
 client's repaint pattern and of nothing else, so there is no Tk constant to
 find — which also means the agreement needed an explanation rather than a
 shrug, and the explanation was one line of the test list.
