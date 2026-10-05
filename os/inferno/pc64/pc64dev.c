@@ -77,6 +77,7 @@ Dev* devtab[39]={
 };
 
 extern void vtdlink(void);
+extern void amdvilink(void);
 extern void ethermediumlink(void);
 extern void netdevmediumlink(void);
 extern void ether8169link(void);
@@ -96,6 +97,7 @@ extern void pmmclink(void);
 extern void audiohdalink(void);
 void links(void){
 	vtdlink();
+	amdvilink();
 	ethermediumlink();
 	netdevmediumlink();
 	ether8169link();

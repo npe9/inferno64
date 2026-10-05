@@ -189,6 +189,6 @@ vmx.$O svm.$O devvm.$O vmplat.$O vmpci.$O vmvirtio.$O: ../port/vm.h
 vmx.$O svm.$O vmplat.$O vmpci.$O: ../pc/vm86.h
 vmplat.$O vmdev.$O: ../pc/vmdev.h
 vmplat.$O vmdev.$O vuart.$O: ../port/vuart.h
-vtd.$O deviommu.$O: ../port/iommu.h ../pc/dmar.h
+vtd.$O amdvi.$O deviommu.$O archacpi.$O: ../port/iommu.h ../pc/dmar.h
 vmplat.$O vmpci.$O: ../port/vmpci.h ../port/iommu.h
 vmpci.$O vmvirtio.$O vmplat.$O: ../port/vmvirtio.h

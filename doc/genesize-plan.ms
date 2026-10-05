@@ -470,7 +470,18 @@ the caller.  It now fails with the true error.
 .IP \(bu 2
 page 0 is mapped on pc64, so a Limbo nil dereference that should raise
 "dereference of nil" reads zeros instead.  This is what turned the
-dhcpclient bug into a panic.
+dhcpclient bug into a panic.  (Done later: page 0 is unmapped once the
+processors are started, mapped for a moment only where the BIOS's
+warm-reset vector and warm-boot flag are written
+.CW page0 ), (
+and a page fault in an interpreter process is its Limbo program's
+exception through
+.CW disfault ,
+as on the 32-bit pc; riscv64's trap does the same with its load and
+store faults.  Limbo's nil is H, -1, so a nil field at offset k is
+address k-1: the M1 inits read one through nil at the top page and
+one in page 0, and check-vm and check-rv pass only if both come back
+as "dereference of nil".)
 .IP \(bu 2
 Bochs is built
 .CW scripts/mkbochs-vmx.sh ) (
@@ -596,6 +607,44 @@ address of one of its own pages \(en which the domain does not map \(en
 faults (requester 04:00.0, reason 5) and leaves that page untouched,
 while the host's own devices keep working through the pass-through host
 domain.  Not yet: interrupt remapping, queued invalidation, AMD-Vi.
+.IP "Phase 2: AMD-Vi (QEMU q35, amd-iommu, TCG)." 4
+.CW pc/amdvi.c
+is the IOMMU layer's AMD backend, found through the IVRS table
+.CW archacpi.c 's (
+.CW acpiivrs ):
+one device table of 65536 entries, each function valid and
+untranslated (the host domain) until attached; a domain is a four-level
+AMD I/O page table and a domain ID; changes go through the command
+buffer (invalidate the entry or the domain's pages, then a completion
+wait whose store is polled) and faults come back through the event
+log.  The VT-d test
+.CW pc64devinit.b ) (
+run with
+.CW VMHOST_IOMMU=amd :
+.DS
+.ft CW
+ivrs: amd-vi regs 0xfed80000 device 00:02.0 segment 0 pasize 40
+iommu: vtd: no DMAR table
+iommu: amd-vi
+amdvi: translating, device table 0x1bcb6000, 65536 entries
+DEVTEST: IOMMU-DMA-MAPPED-OK 256 bytes A -> edu -> B through IOVA 0x100000
+0 04:00.0 write 0x1beb8000 reason 0x2 I/O page fault
+DEVTEST: IOMMU-DMA-BLOCKED-OK DMA to host pa 1beb8000 faulted and page B is untouched
+.ft
+.DE
+QEMU's amd-iommu disagreed with the hardware three ways, now
+.CW scripts/qemu-patches/0005 .
+It took a device's bus number when the device's address space was
+made, before firmware numbered the bus behind its bridge, so every
+device behind a bridge had bus 0 for requester ID \(en edu at 04:00.0
+used 00:00.0's device table entry, the host domain, and its "IOVA"
+0x100000 was the host's IDT; the first run wrote over it.  Address
+spaces are kept by bus now and the number read at translation.  A
+not-present page table entry below the top level returned without an
+I/O page fault; and an event's address, bits 64 to 127, was masked
+with the field's bit offset in the whole event rather than in its
+quadword, so it was always 0.  (The page fault's flags also carried
+QEMU's permission bits where the specification has RW.)
 .IP "Phase 6: M5 on SVM (QEMU)." 4
 .CW pc/vmpci.c
 .CW d91115e3c ): (
@@ -929,6 +978,45 @@ IDT's base plus 0x80, gate 8: delivering a double fault, it found its
 own IDT page, which Linux maps at boot and never changes, not mapped.
 Never with one thread.  The pattern still points at QEMU's nested paging
 under MTTCG.
+.IP
+It was QEMU's, and it is fixed
+.CW scripts/qemu-patches/0004-i386-ignne-atomic.patch ). (
+Paused at the triple fault
+.CW "-action shutdown=pause" , (
+and a monitor), processor 0's page tables mapped its kernel text after
+all; QEMU's interrupt log showed the host's first fault to be an
+instruction fetch at that text, right after a #VMEXIT, as if the host
+were translating through its guest's nested page tables.  A check
+added to QEMU's page walker confirmed it \(en a stage-2 walk with the
+processor out of guest mode, hflags2 0x40, HF2_NPT_MASK alone \(en and
+checks through
+.CW do_vmexit
+found the flag set again immediately after the line that clears it.
+Something else wrote that word: QEMU emulates the chipset's IGNNE# as
+a bit of the first processor's hflags2, which
+.CW cpu_set_fpus
+clears on every FNCLEX, FLDENV, FRSTOR and FXRSTOR, on whichever
+processor executes it, with a plain read-modify-write from that
+processor's thread.  Under MTTCG it raced processor 0's own thread:
+landing across #VMEXIT's clear of the nested-paging flag, the host ran
+on its guest's page tables (the host reset); landing across VMRUN's
+set, the guest ran without them (its IDT "not mapped").  Always
+processor 0, the first.  The patch changes the bit only when it must
+and atomically, so no other bit is written back stale.  Before it,
+three MTTCG M3 runs failed three times; after, three of three passed:
+.DS
+.ft CW
+LINUXGUEST: smp 4 processors, online 0-3
+LINUXGUEST: cpu0 9 0 333 98 0 0 1 0 0 0
+LINUXGUEST: cpu1 5 0 9 327 0 0 0 0 0 0
+LINUXGUEST: cpu2 7 0 12 316 0 0 0 0 0 0
+LINUXGUEST: cpu3 9 0 19 296 0 0 0 0 0 0
+LINUXGUEST: irq RES:         10         64         25         47   Rescheduling interrupts
+LINUXGUEST: irq CAL:        440        348        327        211   Function call interrupts
+LINUXGUEST: ran
+.ft
+.DE
+and check-vm's M3 runs multi-threaded now, as its other stages do.
 .IP
 Also found here: the test's typed command grew past 1024 characters,
 the most busybox's shell takes on a line, which dropped the rest and
@@ -1498,5 +1586,5 @@ disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
 its /bin, /lib and /init) on its second disk, and a second guest given
 that disk alone and linuxguest.root=vda mounts it from the initramfs
 and switches to it.  M3 is done on VMX too (Bochs, two processors).
-Next: the MTTCG faults, and the workstation (phase 13).  On QEMU, check-vm (SVM) and check-rv,
+Next: the workstation (phase 13).  On QEMU, check-vm (SVM) and check-rv,
 on both the PLIC and the AIA machine, pass every stage.

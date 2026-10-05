@@ -18,6 +18,11 @@
 #		QEMU's user network; and the guest makes an ext2 root on a
 #		second virtio disk, on which a second guest then boots
 #
+#	M4	QEMU's edu in an IOMMU domain of its own (pc64dev,
+#		pc64devinit.b): DMA through the domain reaches its pages,
+#		DMA to a host page it does not map faults; under VT-d
+#		(intel-iommu) and AMD-Vi (amd-iommu)
+#
 #	M3	a Linux guest with four processors (pc64smp,
 #		smptestinit.b): all four online, eight busy workers run at
 #		once and finish, every processor accounts time and takes
@@ -28,7 +33,7 @@
 # (scripts/bochs-vm.sh), which is too slow for a routine check.
 #
 # usage: scripts/check-vm.sh
-#	CHECKVM_STAGES="m1 m2 m3" (the default) says which runs to make:
+#	CHECKVM_STAGES="m1 m2 m4 m3" (the default) says which runs to make:
 #	m2 is M2, M5 and M8, one boot.
 # needs: os/inferno/pc64/ipc64vm, os/inferno/pc64/ipc64linux, .qemu/edk2-*.fd
 set -e
@@ -40,7 +45,7 @@ done
 WORK=`mktemp -d`
 trap 'st=$?; rm -rf "$WORK" || true; exit $st' 0
 fail=0
-STAGES=" ${CHECKVM_STAGES:-m1 m2 m3} "
+STAGES=" ${CHECKVM_STAGES:-m1 m2 m4 m3} "
 stage() {
 	case "$STAGES" in
 	*" $1 "*)	return 0;;
@@ -53,9 +58,18 @@ sh "$ROOT/scripts/vmhost.sh" build "$K/ipc64vm" >/dev/null 2>&1
 sh "$ROOT/scripts/vmhost.sh" run 120 >"$WORK/m1.log" 2>&1 || true
 if grep -q 'VMTEST: M1 PASS' "$WORK/m1.log" && grep -q 'VMTEST: killed' "$WORK/m1.log"; then
 	echo "check-vm: M1 (svm): pass"
+	grep 'VMTEST: nil' "$WORK/m1.log" | sed 's/^/	/'
 else
 	echo "check-vm: M1 (svm): FAIL"
 	grep 'VMTEST\|panic' "$WORK/m1.log" | sed 's/^/	/' | tail -8
+	fail=1
+fi
+# a Limbo nil dereference is the program's exception (pc64's page 0
+# is unmapped, trap.c's disfault), not a read of zeros or a panic
+if [ `grep -c 'VMTEST: nil caught .*dereference of nil' "$WORK/m1.log"` -eq 2 ]; then
+	echo "check-vm: nil dereference (svm host): pass"
+else
+	echo "check-vm: nil dereference (svm host): FAIL"
 	fail=1
 fi
 }
@@ -110,13 +124,35 @@ else
 fi
 }
 
-# One QEMU thread for the four host processors: with a thread each
-# (MTTCG) the host has triple-faulted right after a VMRUN with the
-# guest's TR and GS still loaded, which one thread has not shown
-# (doc/genesize-plan.ms, phase 5).
+# M4: pc64dev's test (pc64devinit.b) puts QEMU's edu in an IOMMU domain
+# of its own: a DMA through it reaches its pages, one to a host page the
+# domain does not map faults and leaves that page untouched.  Under
+# VT-d (intel-iommu) and AMD-Vi (amd-iommu).
+stage m4 && {
+sh "$ROOT/scripts/vmhost.sh" build "$K/ipc64dev" >/dev/null 2>&1
+for iommu in intel amd; do
+	VMHOST_IOMMU=$iommu sh "$ROOT/scripts/vmhost.sh" run 200 >"$WORK/m4-$iommu.log" 2>&1 || true
+	name=vt-d
+	[ $iommu = amd ] && name=amd-vi
+	if grep -q 'IOMMU-DMA-MAPPED-OK' "$WORK/m4-$iommu.log" && grep -q 'IOMMU-DMA-BLOCKED-OK' "$WORK/m4-$iommu.log" \
+	&& ! grep -q 'IOMMU-FAIL' "$WORK/m4-$iommu.log"; then
+		echo "check-vm: M4 ($name): pass"
+		grep 'iommu: \|DEVTEST: IOMMU-DMA\|^0 0' "$WORK/m4-$iommu.log" | sed 's/^/	/'
+	else
+		echo "check-vm: M4 ($name): FAIL"
+		grep 'iommu\|amdvi\|vtd\|DEVTEST\|panic' "$WORK/m4-$iommu.log" | sed 's/^/	/' | tail -10
+		fail=1
+	fi
+done
+}
+
+# A QEMU thread for each host processor (MTTCG), as the other stages:
+# the host's triple faults there were QEMU's IGNNE# emulation
+# rewriting the first processor's flags from another's thread
+# (scripts/qemu-patches/0004, doc/genesize-plan.ms, phase 5).
 stage m3 && {
 sh "$ROOT/scripts/vmhost.sh" build "$K/ipc64smp" >/dev/null 2>&1
-VMHOST_ACCEL=tcg,thread=single sh "$ROOT/scripts/vmhost.sh" run 2400 >"$WORK/m3.log" 2>&1 || true
+sh "$ROOT/scripts/vmhost.sh" run 2400 >"$WORK/m3.log" 2>&1 || true
 ok=1
 grep -q '^LINUXGUEST: smp 4 processors, online 0-3' "$WORK/m3.log" || ok=0
 [ `grep -c '^LINUXGUEST: worker [1-8] done' "$WORK/m3.log"` -eq 8 ] || ok=0

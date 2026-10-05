@@ -93,6 +93,7 @@ link
 	vmx
 	svm
 	vtd
+	amdvi
 ##	ether82557	pci
 #	ether83815	pci
 #	etherelnk3	pci

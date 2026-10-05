@@ -78,3 +78,20 @@ struct Dmar
 };
 
 extern Dmar *dmar;		/* nil when the platform has no DMAR table */
+
+/*
+ * What the ACPI IVRS table says about the AMD I/O virtualization
+ * hardware (AMD IOMMU specification, 5.2): its first IVHD, which is all
+ * QEMU's amd-iommu makes and the AMD-Vi driver (amdvi.c) uses.
+ */
+typedef struct Ivrs Ivrs;
+struct Ivrs
+{
+	uvlong	base;		/* the register set, physical */
+	ushort	devid;		/* the IOMMU's own PCI function, bus<<8 | devfn */
+	ushort	segment;
+	uchar	ivinfo;		/* IVinfo's low byte: EFRSup */
+	uchar	pasize;		/* physical address size */
+};
+
+extern Ivrs *ivrs;		/* nil when the platform has no IVRS table */

@@ -1,0 +1,121 @@
+--- a/hw/i386/amd_iommu.h
++++ b/hw/i386/amd_iommu.h
+@@ -364,6 +364,12 @@
+ 
+     /* for each served device */
+     AMDVIAddressSpace **address_spaces[PCI_BUS_MAX];
++    /*
++     * The address spaces by PCIBus, not bus number: a bus behind a
++     * bridge has number 0 until firmware numbers it, which is after its
++     * devices' address spaces are made.
++     */
++    GHashTable *as_by_bus;
+ 
+     /* IOTLB */
+     GHashTable *iotlb;
+--- a/hw/i386/amd_iommu.c
++++ b/hw/i386/amd_iommu.c
+@@ -58,6 +58,7 @@
+ };
+ 
+ struct AMDVIAddressSpace {
++    PCIBus *bus;                /* its bus; the number is read when used */
+     uint8_t bus_num;            /* bus number                           */
+     uint8_t devfn;              /* device function                      */
+     AMDVIState *iommu_state;    /* AMDVI - one per machine              */
+@@ -238,7 +239,8 @@
+                                 int length)
+ {
+     int index = start / 64, bitpos = start % 64;
+-    uint64_t mask = MAKE_64BIT_MASK(start, length);
++    /* the mask within its own quadword: from start, every field past bit 63 was lost */
++    uint64_t mask = MAKE_64BIT_MASK(bitpos, length);
+     buffer[index] &= ~mask;
+     buffer[index] |= (value << bitpos) & mask;
+ }
+@@ -267,6 +269,11 @@
+ {
+     uint64_t evt[2];
+ 
++    /*
++     * info comes in as the access's AMDVI_PERM_ bits; the event's flags
++     * have the access in RW, bit 5 (IOMMU specification, IO_PAGE_FAULT).
++     */
++    info = (info & AMDVI_PERM_WRITE) ? 1 << 5 : 0;
+     info |= AMDVI_EVENT_IOPF_I | AMDVI_EVENT_IOPF;
+     amdvi_encode_event(evt, devid, addr, info);
+     amdvi_log_event(s, evt);
+@@ -1003,7 +1010,9 @@
+             pte_perms = amdvi_get_perms(pte);
+             present = pte & 1;
+             if (!present || perms != (perms & pte_perms)) {
+-                amdvi_page_fault(as->iommu_state, as->devfn, addr, perms);
++                amdvi_page_fault(as->iommu_state,
++                                 PCI_BUILD_BDF(pci_bus_num(as->bus), as->devfn),
++                                 addr, perms);
+                 trace_amdvi_page_fault(addr);
+                 return;
+             }
+@@ -1014,6 +1023,13 @@
+             pte_addr += ((addr >> (3 + 9 * level)) & 0x1FF) << 3;
+             pte = amdvi_get_pte_entry(as->iommu_state, pte_addr, as->devfn);
+             if (!pte) {
++                /*
++                 * Not present: an I/O page fault, as at the levels above
++                 * (the hardware logs one; this returned without).
++                 */
++                amdvi_page_fault(as->iommu_state,
++                                 PCI_BUILD_BDF(pci_bus_num(as->bus), as->devfn),
++                                 addr, perms);
+                 return;
+             }
+             oldlevel = level;
+@@ -1044,7 +1060,12 @@
+                                bool is_write, IOMMUTLBEntry *ret)
+ {
+     AMDVIState *s = as->iommu_state;
+-    uint16_t devid = PCI_BUILD_BDF(as->bus_num, as->devfn);
++    /*
++     * The requester ID is the bus's number now: the one it had when this
++     * address space was made may be 0, from before firmware numbered a
++     * bus behind a bridge, and is the host bridge's ID then.
++     */
++    uint16_t devid = PCI_BUILD_BDF(pci_bus_num(as->bus), as->devfn);
+     AMDVIIOTLBEntry *iotlb_entry = amdvi_iotlb_lookup(s, addr, devid);
+     uint64_t entry[4];
+ 
+@@ -1117,7 +1138,7 @@
+     }
+ 
+     amdvi_do_translate(as, addr, flag & IOMMU_WO, &ret);
+-    trace_amdvi_translation_result(as->bus_num, PCI_SLOT(as->devfn),
++    trace_amdvi_translation_result(pci_bus_num(as->bus), PCI_SLOT(as->devfn),
+             PCI_FUNC(as->devfn), addr, ret.translated_addr);
+     return ret;
+ }
+@@ -1484,12 +1505,15 @@
+     AMDVIAddressSpace **iommu_as, *amdvi_dev_as;
+     int bus_num = pci_bus_num(bus);
+ 
+-    iommu_as = s->address_spaces[bus_num];
++    if (!s->as_by_bus) {
++        s->as_by_bus = g_hash_table_new(g_direct_hash, g_direct_equal);
++    }
++    iommu_as = g_hash_table_lookup(s->as_by_bus, bus);
+ 
+     /* allocate memory during the first run */
+     if (!iommu_as) {
+         iommu_as = g_new0(AMDVIAddressSpace *, PCI_DEVFN_MAX);
+-        s->address_spaces[bus_num] = iommu_as;
++        g_hash_table_insert(s->as_by_bus, bus, iommu_as);
+     }
+ 
+     /* set up AMD-Vi region */
+@@ -1498,6 +1522,7 @@
+ 
+         iommu_as[devfn] = g_new0(AMDVIAddressSpace, 1);
+         iommu_as[devfn]->bus_num = (uint8_t)bus_num;
++        iommu_as[devfn]->bus = bus;
+         iommu_as[devfn]->devfn = (uint8_t)devfn;
+         iommu_as[devfn]->iommu_state = s;
+ 

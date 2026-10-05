@@ -285,6 +285,8 @@ acpispcr(int *space, uvlong *addr, int *access, int *irq, int *baud)
 
 Dmar *dmar;
 static Dmar dmar0;
+Ivrs *ivrs;
+static Ivrs ivrs0;
 
 static int
 dmarscopes(uchar *p, uchar *e, Dmarscope *sc, int max)
@@ -403,6 +405,42 @@ acpidmar(void)
 		r = &dmar->rmrr[i];
 		print("dmar:\trmrr segment %d %#llux-%#llux\n", r->segment, r->base, r->limit);
 		dmarscopeprint(r->scope, r->nscope);
+	}
+}
+
+/*
+ * IVRS: the IVinfo word, then IVHD blocks (types 10h, 11h, 40h, each
+ * describing one IOMMU); the first one's register base and device id
+ * are kept.
+ */
+static void
+acpiivrs(void)
+{
+	Tbl *t;
+	uchar *p, *e;
+	int type, l;
+
+	if((t = findtable("IVRS")) == nil || tbldlen(t) < 12)
+		return;
+	p = t->data;
+	e = t->data + tbldlen(t);
+	ivrs0.ivinfo = p[0];
+	ivrs0.pasize = (get32(p) >> 8) & 0x7F;
+	for(p += 12; p+24 <= e; p += l){
+		type = p[0];
+		l = get16(p+2);
+		if(l < 4 || p+l > e)
+			break;
+		if(type != 0x10 && type != 0x11 && type != 0x40)
+			continue;
+		ivrs0.devid = get16(p+4);
+		ivrs0.base = get64(p+8);
+		ivrs0.segment = get16(p+16);
+		ivrs = &ivrs0;
+		print("ivrs: amd-vi regs %#llux device %.2ux:%.2ux.%ux segment %d pasize %d\n",
+			ivrs->base, ivrs->devid>>8, (ivrs->devid>>3)&0x1F, ivrs->devid&7,
+			ivrs->segment, ivrs->pasize);
+		return;
 	}
 }
 
@@ -823,6 +861,7 @@ acpiinit(void)
 	amlinit();
 
 	acpidmar();
+	acpiivrs();
 
 	/* load DSDT */
 	DP("acpiinit: load DSDT\n");

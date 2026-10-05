@@ -38,6 +38,7 @@
 # forward is on the igb's network: it is ether0, the interface a DHCP
 # loop tries first.
 #
+# VMHOST_IOMMU=amd puts QEMU's amd-iommu (AMD-Vi) where VT-d would be.
 # VMHOST_IOMMU=0 and VMHOST_IGB=0 leave the IOMMU or the igb out, to
 # tell a fault in either from one in the rest of the machine.
 #
@@ -63,6 +64,8 @@ ACCEL=${VMHOST_ACCEL:-tcg}
 # igb behaves as the 82576 does, upstream's does not
 QEMU=qemu-system-x86_64
 [ -x "$Q/local/bin/qemu-system-x86_64" ] && QEMU=$Q/local/bin/qemu-system-x86_64
+# VMHOST_QEMU: another QEMU binary, an instrumented build say
+[ -n "$VMHOST_QEMU" ] && QEMU=$VMHOST_QEMU
 
 cmd=${1:-run}
 [ $# -gt 0 ] && shift
@@ -106,6 +109,8 @@ FWD=
 [ -n "$VMHOST_FWD" ] && FWD=",hostfwd=tcp:127.0.0.1:$VMHOST_FWD-:5640"
 IOMMU="-device intel-iommu,intremap=on"
 [ "${VMHOST_IOMMU:-1}" = 0 ] && IOMMU=
+# VMHOST_IOMMU=amd: AMD-Vi (QEMU's amd-iommu) in place of VT-d
+[ "$VMHOST_IOMMU" = amd ] && IOMMU="-device amd-iommu"
 IGB="-netdev user,id=net1$FWD -device igb,netdev=net1,bus=rp2"
 [ "${VMHOST_IGB:-1}" = 0 ] && IGB=
 

@@ -18,7 +18,8 @@ bind -a #Q /dev
 .I Iommu
 confines devices' DMA to address spaces called domains.  Reading
 .B ctl
-gives the backend (Intel VT-d) and its remapping units; writing
+gives the backend (Intel VT-d, AMD-Vi, or on RISC-V the RISC-V IOMMU)
+and its remapping units; writing
 .B enable
 turns translation on with every function the IOMMU covers in the host
 domain, where DMA addresses are host physical addresses as before.
@@ -66,10 +67,18 @@ like any other.
 .br
 .B /os/inferno/pc/vtd.c
 .br
+.B /os/inferno/pc/amdvi.c
+.br
 .B /os/inferno/pc/dmar.h
+.br
+.B /os/inferno/virt/rviommu.c
 .SH SEE ALSO
 .IR vm (3)
 .SH BUGS
-VT-d only, legacy mode, register-based global invalidation after every
-change; no interrupt remapping, queued invalidation, or AMD-Vi.
-Tested on QEMU's intel-iommu.
+VT-d: legacy mode, register-based global invalidation after every
+change; no interrupt remapping or queued invalidation.  AMD-Vi: the
+first IOMMU in IVRS only, no interrupt remapping.  The RISC-V IOMMU: no
+MSI page table, so a device's messages are translated like its writes.
+Tested on QEMU's intel-iommu, amd-iommu (with
+.B scripts/qemu-patches/0005 )
+and riscv-iommu-pci.
