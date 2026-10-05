@@ -1,0 +1,29 @@
+# What the STYX-OVER-THE-RADIO image is: the modules it executes in
+# place, and the number of kernel processes it needs.
+#
+# See image-armv7minit for what these two facts mean and why there is
+# one file per init.  os/inferno/init/armv7mstyx.b is the program: one
+# board exports its namespace over an AX.25 connected conversation and
+# the other mounts it, which is what doc/pycubed-plan.ms calls the whole
+# argument.  Which end a board is comes out of /lib/radio by its own
+# serial number.
+#
+# One module: the init loads Radiocal to apply this board's crystal
+# correction.  Everything else it uses is a file -- #a, #W, #P and the
+# mount -- which is the point.
+XIPDIS=\
+	lib/radiocal.dis\
+
+
+# Twelve, and a first estimate to be measured like every other count
+# here.
+#
+# #a starts three kprocs when a packet device is attached to it; the
+# init is one process; export() serves in the process that called it
+# but the mount driver on the other end has its own; and a Styx server
+# answering walks and reads concurrently.  The shell image runs two
+# processes at five slots, the station seven, and each slot is a
+# 4096-byte kernel stack out of about 160K -- so this cannot simply be
+# set high.  Neither end runs a shell, which is what makes the number
+# affordable at all: at seven a shell AND #a could not coexist.
+NPROC=12

@@ -1576,3 +1576,82 @@ is a write to
 .B /dev/reboot
 from the other end rather than a case in a switch.
 .B "The receive path this adds is what that will sit on."
+.NH 1
+Styx over the radio: the link forms, the export serves, and the message size will not fit
+.PP
+.B "This is the first hard no on this bench that is arithmetic rather than a bug,"
+and it is the measurement the plan asked for.
+.CW os/inferno/init/armv7mstyx.b
+is both ends \- the board whose
+.B /lib/radio
+role is
+.B answerer
+announces on
+.CW #a ,
+accepts, and hands the connected conversation to
+.IR sys->export ();
+the
+.B caller
+connects and mounts it.  Which end a board is comes out of its own
+serial number, exactly as the AX.25 station roles do.
+.PP
+Both ends got further than anything before them:
+.DS
+.CW "satellite: accepted on #a/1, iounit 109 of a carrier's 125"
+.CW "           ARMV7M-STYX-EXPORTING"
+.CW "ground:    linked to N0CALL-2 on #a/0, iounit 109"
+.CW "           styx: mount: nonsense value of msize in fversion"
+.DE
+.PP
+.B "The chain of numbers, and every one of them is in a file in this tree."
+The CC1120 carries a 125-byte packet.
+.CW os/inferno/radio/devax25.c
+takes sixteen of that for the address field, so a connected
+conversation's information field is 109 \- and it
+.I refuses
+a longer write rather than segmenting it:
+.DS
+.CW "budget = ax25.iounit - hdrlen(cv);"
+.CW "if(n > budget) error(\(dq... past the ... information field\(dq);"
+.DE
+.CW os/inferno/port/devmnt.c
+clamps the Styx message size to the channel iounit and then rejects its
+own clamped value:
+.DS
+.CW "if(f.msize<256 || f.msize>1024*1024)"
+.CW "	error(\(dqnonsense value of msize in fversion\(dq);"
+.DE
+.B "109 against a floor of 256."
+And the part cannot be made to cover it: even in the CC1120's
+infinite-length mode a 255-byte packet leaves AX.25 with 239, which is
+still short of 256.
+.NH 2
+The three ways through, and which one is the protocol
+.IP 1.
+.B "Segment below Styx, which is the missing layer and the right answer."
+A reliable ordered byte stream over small frames is what segmentation is
+for, and AX.25 2.2 has it: a Segmenter/Reassembler with a SEG field,
+precisely so an information field smaller than a client wants is not the
+client problem.
+.CW #a
+is ours, so this is buildable rather than a hope.  It also leaves
+.I devmnt
+alone, which matters because that file is every board.
+.IP 2.
+.B "Lower devmnt's floor."
+One constant, and the honest objection is not that 256 is sacred but
+that at 109 every Styx message has to fit, including a Tstat for a long
+name, and the failure mode is a mount that works until a filename gets
+longer.  It is also a port file: that change is on every board in the
+tree to buy one radio a link.
+.IP 3.
+.B "Make the packet bigger."
+Worth doing for its own sake \- the CC1120 can refill the FIFO during
+transmission \- but it does not reach the floor on its own, so it is a
+thing to want rather than a fix for this.
+.PP
+.B "What is left standing."
+The link, the export and the role selection all work; the init is the
+harness whichever of those three lands.  And the claim the plan made \-
+that Styx over this radio needs no IP stack \- is not refuted: nothing
+in the way is an address or a route.  It is one subtraction.
