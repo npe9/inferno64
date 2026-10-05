@@ -42,6 +42,7 @@ def snap(b):
     cc = re.findall(r"ax25init: cca (\d+) ccamode (\d+) fifoerr (\d+)"
                     r"(?: watch (\d+)(?: of (\d+))?)?", t)
     sx = re.findall(r"ax25init: state 0x(\w+) ", t)
+    ir = re.findall(r"ax25init: intr high (\d+) low (\d+)", t)
     if not st:
         return None
     return dict(sent=int(st[-1][0]), recv=int(st[-1][1]),
@@ -50,7 +51,8 @@ def snap(b):
                 watch=int(cc[-1][3]) if cc and cc[-1][3] else 0,
                 ticks=int(cc[-1][4]) if cc and len(cc[-1]) > 4
                       and cc[-1][4] else 0,
-                state=sx[-1] if sx else "?")
+                state=sx[-1] if sx else "?",
+                ilow=int(ir[-1][1]) if ir else None)
 
 
 def both():
@@ -102,13 +104,20 @@ for w in range(WINDOWS):
     latches += f
     if d12 == 0 and d21 == 0:
         dead += 1
-    print("%3d  %2d/%2d %3.0f%%   %2d/%2d %3.0f%%    0x%s / %d / %d"
-          "          0x%s / %d / %d"
+    # THE EDGES AGAINST THE PEER'S TRANSMITS.  The residue story rests
+    # on edges being coalesced; if a board's falling edges equal what the
+    # other one sent, none were missed and the residue has another cause.
+    def d(n, k):
+        if cur[n][k] is None or prev[n][k] is None:
+            return None
+        return cur[n][k] - prev[n][k]
+    print("%3d  %2d/%2d %3.0f%%   %2d/%2d %3.0f%%   0x%s/%d/%d edge %s"
+          "   0x%s/%d/%d edge %s"
           % (w + 1, r2, s1, d12, r1, s2, d21,
              cur["board1"]["state"], cur["board1"]["fifoerr"],
-             cur["board1"]["watch"],
+             cur["board1"]["watch"], d("board1", "ilow"),
              cur["board2"]["state"], cur["board2"]["fifoerr"],
-             cur["board2"]["watch"]))
+             cur["board2"]["watch"], d("board2", "ilow")))
     sys.stdout.flush()
     prev = cur
 

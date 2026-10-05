@@ -181,6 +181,15 @@ radioline(): string
 		# off the status byte, and the overflow and txnever
 		# counters say whether frames were lost after sync or
 		# never put on the air at all.
+		# AND THE INTERRUPT EDGES, which are upstream of every
+		# other number here.  The claim that the FIFO accumulates
+		# a residue rests on edges being coalesced -- two packets
+		# arriving between the handler's runs raising one
+		# interrupt -- and the way to check it is to compare the
+		# falling edges counted against what the peer says it
+		# sent.  Equal means no edge was missed and the residue
+		# has some other cause.
+		+ "ax25init: intr " + field(s, "intr") + "\n"
 		+ "ax25init: state " + field(s, "state")
 		+ " marc " + field(s, "lasttx")
 		+ " ovf " + field(s, "rxoverflow");
