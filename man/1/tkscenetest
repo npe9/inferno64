@@ -18,11 +18,33 @@ widget
 .I states
 that have node kinds of their own: a selected entry, an entry with
 .BR -show ,
-a disabled button, a canvas with a rectangle, a line, an oval and a string
-in it, a listbox with a selection, a text widget with content, a scale away
-from its minimum, a part-scrolled scrollbar, a non-default font and a
-sunken frame. Default options alone would pass while every one of those was
-broken.
+a disabled button, a canvas with a rectangle, a line, an oval, a string and
+a filled polygon in it, a listbox with a selection, a text widget with
+content, a scale away from its minimum, a part-scrolled scrollbar, a
+non-default font, a sunken frame, a focused entry, a label clipped by the
+image it is rendered into, non-default colours by name, a label with a
+.B -bitmap
+and a posted menu holding a separator and a cascade. Default options alone
+would pass while every one of those was broken.
+.PP
+Three of those are there for a node kind nothing else reaches.
+.B TkNpolyfill
+is the cascade arrow's node and is otherwise seen only in a posted menu, so
+the canvas grows a filled polygon as well.
+.B TkNtexture
+names a
+.I file
+rather than carrying pixels \(em which is why an image that arrived as a
+file descriptor is the one thing the vocabulary cannot describe \(em so it
+needs a real path, and a bare
+.B -bitmap
+name resolves to
+.BI /icons/tk/ name
+rather than being taken as absolute. And the posted menu's separator paints
+into the window itself, which makes the walk
+.I flush
+in the middle of the menu: the case that says the menu's drawing code must
+not hold the walk's tree across it, because the flush frees it.
 .PP
 That identity is the whole acceptance condition for the node tree: a
 description that draws something other than what the direct path draws is
@@ -110,19 +132,45 @@ cover:
 .PP
 The widgets are laid out with
 .B pack
-into a 160\(mu60 image. The states listed above are covered; a
-.I focused
-widget, a partially-clipped one, a posted menu with a cascade, and a
-non-default colour scheme are not, and each reaches node kinds this does
-not.
+into a 160\(mu60 image. The four states this once listed as uncovered \(em a
+focused widget, a partially-clipped one, a posted menu with a cascade and a
+non-default colour scheme \(em are now covered. What is still not: a
+.I scrolled
+text or listbox view as distinct from a part-scrolled scrollbar, a widget
+inside a
+.B canvas
+window item, a non-default colour on anything but a label, and any widget
+whose geometry comes from
+.B grid
+rather than
+.BR pack .
+.PP
+Nor is a
+.I second
+toplevel, or two widgets whose damage overlaps \(em every case here renders
+one widget into a fresh image, so nothing tests what happens when two trees
+are built before either is flushed, which is the invariant
+.IR libtk 's
+walk exists to maintain.
 .PP
 The "drew something" check counts bytes differing from the white the image
 was filled with, so a widget that painted only its own grey background
-satisfies it. It is a guard against comparing two blank images, not evidence
-that a case's content was drawn; what guards the content is that every
-setup command's reply is checked, so a selection or an item that did not
-take is reported rather than silently leaving a default widget to be
-compared with itself.
+satisfies it \(em a posted menu reported the full 28800 bytes before and
+after it was posted. It is a guard against comparing two blank images, not
+evidence that a case's content was drawn.
+.PP
+Two things guard the content instead. Every setup command's reply is
+checked, so a selection or an item that did not take is reported rather
+than silently leaving a default widget to be compared with itself. And each
+case that is a
+.I variation
+of another must be shown to DIFFER from the case it varies \(em the
+non-default font from a plain label, the focused entry from a plain entry,
+the posted menu from the same menu unposted \(em or it is reported as
+.B skipped
+rather than passed. That rule was added because a font that cannot be
+opened, or a menu with no backing image, produces a case that passes while
+covering nothing.
 .PP
 The two controls above rule out the node path not running and the
 comparison not working. They do not amount to showing that a
