@@ -503,3 +503,15 @@ os/inferno/*/i[a-z0-9]*
 !os/inferno/*/io.h
 *.hex
 os/inferno/mangopi/mangopi.bin
+
+# os/inferno/stm32f407's generated files.  *.root.s and *.root.h above
+# already name two of them and they were tracked anyway -- gitignore does
+# not apply to a file already in the index -- so every build left them
+# modified, and with INIT= selecting the init they differ by which image
+# was built last.  Reading "git status" on this board therefore meant
+# looking past four lines of noise, which is how a station image's
+# generated root nearly got committed.  mkdevc, data2s and dis2s make all
+# of them from the config beside them.
+os/inferno/stm32f407/stm32f407.c
+os/inferno/stm32f407/stm32f407.prog.s
+os/inferno/stm32f407/stm32f407.xipmod.c
