@@ -6752,3 +6752,70 @@ very state the drain was supposed to prevent.
 What is known about it: it is not missed edges, it is not the path, it is
 not collisions or beacon phase, and it recurs within minutes on a link
 carrying a frame every four seconds.
+.NH 2
+The cause, and it was the stat file
+.LP
+.B "Reading the stat file was corrupting the receiver."
+.I Cc1120stat
+hoisted five values under the bus lock and then left four more in the
+.I snprint
+argument list \-
+.IR readrate (),
+.IR readdev (),
+.IR readbw ()
+and
+.CW "rd(rr, Rpktcfg2)" .
+An argument is evaluated where it is written, which is after
+.CW "s->unlock(s)" :
+.B "seven register reads on an unlocked bus,"
+three in readrate, two in readdev, one in readbw and one for PKT_CFG2.
+.I Cc1120caps
+had the same shape with six.
+.PP
+The bus lock is an
+.I ilock
+precisely because the EXTI handler touches the same bus \-
+.B spistm32f4.c
+says so in as many words \- so with it released the packet interrupt can
+fire between an
+.IR rd ()'s
+.CW select(1)
+and its
+.CW select(0) ,
+assert chip select again and push its own FIFO burst into a half-finished
+register read.
+.B "Two command streams on one bus, and the one that loses is a FIFO read with a pointer in it."
+.PP
+.B "The station reads that file every five beacons,"
+which is the rate at which
+.B fifoerr
+accrued.
+.NH 2
+Measured, with the control this time
+.LP
+Same init, same report rate, same cable, same power \- the comparison
+being against the run immediately before it rather than against a
+remembered good one, which is the mistake that cost the last attempt:
+.DS
+.CW "reads after the unlock   fifoerr 14 and 14   delivery about 30%"
+.CW "reads under the lock     fifoerr  0 and  0   35/35 and 35/35"
+.DE
+Eight samples over a quarter of an hour, both parts in
+.CW "state 0x01"
+throughout, every frame delivered in both directions.
+.PP
+.B "And the edge arithmetic confirms it exactly."
+Board 1 counted 70 falling edges for 35 transmits and 35 receptions.
+PKT_SYNC_RXTX asserts for this part's own transmits as well as for
+received packets \- it is named RXTX \- so 35 plus 35 is 70, and
+.B "nothing was missed and nothing was spurious."
+Which is also the last word on the coalesced-edge story: there was never
+a residue to accumulate.
+.PP
+.B "This was found by reading the function, not by the bench."
+No counter in the driver can see it, because the fault is the driver
+corrupting its own bus traffic; every number downstream reads like a
+radio problem.  What the bench did was refuse the two wrong
+explanations \- the path, by measuring it at seven decibels, and the
+beacon phase, by eight resets that all read zero \- and hold the
+question open until the code was read.
