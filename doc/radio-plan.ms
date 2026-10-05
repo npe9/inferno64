@@ -6748,10 +6748,11 @@ over 85 beacons with 29 frames received, because reading a length byte
 for a frame whose payload has not arrived underflows the FIFO into the
 very state the drain was supposed to prevent.
 .PP
-.B "The cause of the overflow is open."
-What is known about it: it is not missed edges, it is not the path, it is
-not collisions or beacon phase, and it recurs within minutes on a link
-carrying a frame every four seconds.
+.B "The cause of the overflow was open when this was written and the next section answers it."
+What was known about it at this point: not missed edges, not the path,
+not collisions or beacon phase, and it recurred within minutes on a link
+carrying a frame every four seconds.  That last fact is the one that
+mattered \- it is the rate at which the station reads the stat file.
 .NH 2
 The cause, and it was the stat file
 .LP
