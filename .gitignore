@@ -497,6 +497,14 @@ __pycache__/
 # i<board>.hex is what tools/bin2ihex makes of it, so they change on
 # every build and carried no information the source did not.
 os/inferno/*/i[a-z0-9]*
+# ...but not the per-init config files beside a board's conf.  The
+# pattern above is for the built kernel, istm32f407 and its like, and it
+# catches any name starting with i -- so image-<init>, which says which
+# modules that image executes in place and how many processes it needs,
+# was silently unaddable.  image-armv7minit and image-armv7max25 are in
+# the index only because they got there by git mv, which does not
+# consult this file; a new one simply disappeared.
+!os/inferno/*/image-*
 !os/inferno/*/i[a-z0-9]*.c
 !os/inferno/*/i[a-z0-9]*.h
 !os/inferno/*/i[a-z0-9]*.s

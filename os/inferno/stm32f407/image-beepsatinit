@@ -1,0 +1,31 @@
+# What the PYCUBED MISSION image is: the modules it executes in place,
+# and the number of kernel processes it needs.
+#
+# See image-armv7minit for what these two facts mean and why there is
+# one file per init.  doc/pycubed-plan.ms is the plan this image is
+# phase 4 of; doc/radio-plan.ms is the radio under it.
+#
+# Three modules, and that is the whole mission: beepsatinit loads
+# /dis/pycubed/beepsat.dis, which loads Sat and Hw.  Nothing else --
+# no bufio, no string, no daytime, and no shell.  The hardware
+# boundary is a directory of FILES (module/pycubedhw.m), so Hw is a
+# parser and not a driver, and the drivers are in the kernel where
+# this tree puts them.
+XIPDIS=\
+	pycubed/beepsat.dis\
+	pycubed/sat.dis\
+	pycubed/hw.dis\
+
+
+# Ten, and this is a first estimate to be measured rather than a
+# figure from anywhere.
+#
+# beepsat spawns five: the state server and four tasks -- blink, time,
+# vbatt and beacon -- and the init itself is a sixth.  The shell image
+# runs two Dis processes at five slots, so five is certainly too few.
+# Each slot is a 4096-byte kernel stack out of about 160K of RAM, which
+# is why this cannot simply be set high: at nine a SHELL image could not
+# run echo.  A mission image has no shell and therefore none of the
+# shell's heap, which is the thing that made nine fail, so the trade
+# here is different and has to be measured on the board.
+NPROC=10

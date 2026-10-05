@@ -305,6 +305,16 @@ root
 	/dis/lib/radiocal.dis	/dis32/lib/radiocal.dis
 	/dis/md5sum.dis		/dis32/md5sum.dis
 	/dis/strings.dis	/dis32/strings.dis
+# The PyCubed mission, phase 4 of doc/pycubed-plan.ms.  Carried in the
+# root of every image so that one build serves both the shell image,
+# where it can be run by hand, and the mission image, where
+# beepsatinit loads beepsat.dis as /osinit.dis's Mission.  Only the
+# mission image puts their decoded arrays in flash; see
+# image-beepsatinit.
+	/dis/pycubed
+	/dis/pycubed/beepsat.dis	/dis32/pycubed/beepsat.dis
+	/dis/pycubed/sat.dis		/dis32/pycubed/sat.dis
+	/dis/pycubed/hw.dis		/dis32/pycubed/hw.dis
 # The calibrations themselves, in attrdb(6) format, keyed by the
 # board's own #P/uid.  Here rather than compiled into a driver
 # because the two clicker 2s on this bench want crystal corrections

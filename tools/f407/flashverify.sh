@@ -277,7 +277,15 @@ if [ "$rc" != 0 ]; then
 fi
 
 # And the board's own account.  This is the whole point.
-python3 - "$PORT" "$STAMP" "$WANTPROC" <<'PY'
+# The station check is keyed on the INIT, not on there being a process
+# count.  It used to be "if need:", and need is the process count, which
+# every image has now that image-<init> carries it -- so a mission image
+# was about to be failed for not printing a line only a station prints.
+case "$INIT" in
+*ax25*)	WANTCAL=1 ;;
+*)	WANTCAL= ;;
+esac
+python3 - "$PORT" "$STAMP" "$WANTPROC" "$WANTCAL" <<'PY'
 import re, sys, time
 sys.path.insert(0, "tools/radio")
 from twoboard import open_board
@@ -322,7 +330,8 @@ if need:
 # exactly like a path that does not close -- which is the thing a
 # cabled run exists to rule out.  So the applied figure is part of
 # "flashed", not something to notice afterwards.
-if need:
+wantcal = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else None
+if wantcal:
     t = b.text()
     if "ax25init: ppm " not in t:
         why = [l for l in t.split("\n") if l.startswith("ax25init:")]
