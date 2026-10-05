@@ -619,6 +619,16 @@ transmits that strobed TX and never got there, which is the crippled
 synthesiser;
 .B ccabusy
 those the part refused for a busy channel.
+.B fifoerr
+is latched FIFO errors cleared and
+.B watch
+is how many of those the clock watchdog cleared rather than a transmit or
+a ctl write \- which is to say how many would have been permanent.  See
+.B "A LATCHED FIFO ERROR"
+below; a part with
+.B fifoerr
+climbing is working and one that latched before this driver counted them
+was simply gone.
 .B "intr high and low"
 are the interrupt edges delivered, split by the level of the pin that
 raised them \- see
@@ -632,6 +642,52 @@ datasheet's formula gives for it, and
 is the part's state through the last transmit, element four being the
 state it settled into after the strobe: 2 is TX, 4 CALIBRATE, 1 a busy
 channel, 0 the qemu model.
+.SH "A LATCHED FIFO ERROR"
+A CC1120 whose RX FIFO overflows goes to STATE 6, RX_FIFO_ERR, with
+MARC_STATUS1 0x0a.
+.B "In that state the part does nothing."
+It raises no sync, so no PKT_SYNC_RXTX edge, so the driver's interrupt
+handler is not called \- and it refuses the TX FIFO as well, so
+.B txstaged
+reads 0 and frames written to
+.B data
+are staged into a part that radiates nothing.
+.B "The part is deaf and mute and the driver is not told."
+.PP
+What it looks like from outside is a link that does not close: zero
+delivered in both directions with no CRC errors, which is also what a
+path that has gone away looks like.  The two are told apart by
+.B state
+in
+.BR stats .
+A receiver in
+.CW "state 0x01"
+is listening; one in
+.CW "state 0x06"
+is this.
+.PP
+.B "A bare SRX does not clear it."
+That is measured and not read off a datasheet: a station transmitted a
+hundred-odd frames, each one ending in the driver's unconditional
+.CW "strobe(Srx)" ,
+and the part stayed in state 6 throughout.  The exit is SIDLE and a
+flush, and the driver now does that at every point it goes back to
+listening, at the top of every transmit, and from the clock once a
+second for a part whose reader is blocked and which therefore never
+transmits at all.
+.PP
+.B "The cause was reading one packet per interrupt."
+An interrupt pending bit coalesces edges, so two packets arriving between
+the handler's runs raise one interrupt and one stays in the FIFO; the
+residue only grows, and four frames fill 128 bytes.  The handler drains
+now, stopping while PKT_SYNC_RXTX is high because that means a packet is
+still arriving and its length byte has not been followed by its payload.
+.PP
+.B "This is why fifoerr is in the stat file rather than only in a comment."
+The counter that was supposed to report it,
+.BR rxoverflow ,
+is incremented inside the handler the fault stops being called, so it
+read 0 for the entire time the part was stuck.
 .SH "LOOKING AT A BAND"
 A receiver is an instrument, and this one will say what is on the air
 around it.  These are the CC1120 driver's, on
