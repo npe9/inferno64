@@ -2165,14 +2165,35 @@ leaving `1 − deferred/eager` as arithmetic for the reader — which is how it
 had been quoted by hand in several commits. An instrument that makes its
 consumer compute the headline invites exactly this.
 
-**And the identical 84.9% for two unrelated workloads should have been a
-tell rather than a tidy coincidence.** `overlap/eager` is 84.9379% for
-`runtests -g` and 84.9381% for `wmtest -n 40` — four decimal places apart
-on workloads with different damage, which is not chance and suggests the
-ratio is structural rather than a property of either. I have no explanation
-for it and am recording it as unexplained rather than inventing one. The
-*saving* figures differ, 85.28% against 85.53%, which is what two different
-workloads should look like.
+**RESOLVED: they are not two workloads.** `overlap/eager` is 84.9379% for
+`runtests -g` and 84.9381% for `wmtest -n 40`, four decimal places apart,
+and the reason is that **`runtests -g` RUNS `wmtest -n 40`** —
+`appl/cmd/runtests.b:67`, `Test("wmtest", "-n 40", ...)`. `wmtest`'s 122
+frames are 62% of `runtests -g`'s 197, so the damage sequences are mostly
+the same sequence and the ratio is mostly the same ratio. Calling them
+"unrelated workloads" was a factual error about my own harness, repeated
+several times, and the agreement was evidence of it.
+
+**And `overlap/eager` is nowhere near constant across Tk**, which was the
+other candidate explanation (the raspi3b session's: "both are Tk, driving
+the same repaint algorithm"). Three Tk workloads:
+
+| Tk workload | `overlap/eager` | what its damage looks like |
+|---|---|---|
+| `wm/bounce` | **0.20%** | a small object moving continuously, so consecutive damage barely intersects (6820230 frames) |
+| `wm/clock` | **50.43%** | a face redrawn in place, so about half is repeated — but only **10 frames**, so treat it as an order of magnitude, not a figure |
+| `runtests -g` / `wmtest -n 40` | **84.94%** | window churn: nested, growing rectangles |
+
+Two-tenths of a per cent to eighty-five.
+
+(`wm/bounce` first read 0.30% from a print taken **mid-run**; the completed
+figure is 0.20%. These are cumulative counters, so an intermediate print is
+a prefix of the experiment — the same mistake as reading
+`INFERNO_FRAME_DAMAGE` at an interval that never lands at the end, and the
+second time it has caught me.) The ratio is a property of the
+client's repaint pattern and of nothing else, so there is no Tk constant to
+find — which also means the agreement needed an explanation rather than a
+shrug, and the explanation was one line of the test list.
 
 That is 1770µs eager against 261µs, and 1115µs against 161µs. The saving
 is overlap, which is what the model says, and not coverage, which is what
