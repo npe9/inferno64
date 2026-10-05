@@ -2151,8 +2151,50 @@ accumulates the overlap — one `rectclip` and an add:
 | `runtests -g` @640×480 | 197 | 20952256 B | 3084216 B | **85.28%** |
 | `wmtest -n 40` @640×480 | 122 | 8171520 B | 1182672 B | **85.53%** |
 
-**CORRECTED: these were both given as 84.9%, which is a different
-quantity.** The saving is `1 − deferred/eager`, the ratio of the two
+**CORRECTED AGAIN, AND MORE SERIOUSLY: ANY SINGLE PERCENTAGE HERE IS A
+STATEMENT ABOUT RUN LENGTH.** Per-interval figures, `runtests -g` at
+`INFERNO_FRAME_DAMAGE=10`:
+
+```
+frames  10   SAVING 85.89% running, 85.89% this interval
+frames  40   SAVING 85.72% running, 77.56% this interval
+frames  70   SAVING 79.50% running, 49.31% this interval
+frames  90   SAVING 80.43% running, 100.00% this interval
+frames 190   SAVING 84.98% running, 100.00% this interval
+```
+
+`deferred` climbs to 3084216 B by frame ~80 and is then **flat for the rest
+of the run** — 3084216 at frames 160, 170, 180 and 190 alike — while `eager`
+keeps growing at ~48112 B/frame. So the ratio climbs without settling:
+
+| frames | `1 − deferred/eager` |
+|---|---|
+| 197 (the figure quoted below) | 85.28% |
+| 1000 | 94.82% |
+| 10000 | 99.37% |
+
+Same workload, same data. **The percentage says where the run stopped.**
+After frame ~90 every interval is 100.00%, meaning `damage(N−1) ⊆
+damage(N)` for every transition, so the deferred scheme adds nothing at all
+in that phase — the GUI tests have finished and something is repainting a
+region that contains its predecessor.
+
+**The run-length-independent statement, which is what the argument should
+rest on:** for this workload the deferred scheme's total cost is 3084216 B
+and stopped accumulating, while the eager scheme costs ~48112 B per frame
+and does not. That is a structural claim about the two schemes rather than
+a percentage, and it is stronger: deferring is asymptotically free *here*
+because this client's later damage contains its earlier damage. A client
+whose damage moves instead — `wm/bounce` — never stops accumulating
+deferred cost, which is why its interval figure sits at 0.00%.
+
+**And the active phase is the honest percentage if one is wanted:** frames
+10–60, while the suite is actually driving windows, give 85.89%, 89.40%,
+85.80%, 77.56%, 89.40%, 85.80% per interval. Call it mid-80s with a spread
+of a dozen points, not 85.28% to two decimal places.
+
+**CORRECTED EARLIER: these were both given as 84.9%, which is a different
+quantity again.** The saving is `1 − deferred/eager`, the ratio of the two
 schemes' costs, and that is 85.28% and 85.53%. What 84.9% actually was is
 `overlap/eager` — the fraction of eager's bytes that are *repeated*
 damage. Related, not the same, and `deferred + overlap ≠ eager` because
