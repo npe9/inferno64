@@ -8091,3 +8091,72 @@ noise-dominated came out systematic, and in both the first candidate was the
 instrument rather than the system.  Check the SHAPE of the residual \(em its sign
 distribution, or its agreement where none is expected \(em before trusting its
 magnitude.
+.NH 2
+H1a.  RETRACTION: there is no Tk constant, and my explanation was wrong at the premise
+.LP
+The section above offered "both workloads are Tk" as a candidate for the peer's
+84.9379 against 84.9381 agreement.  It is wrong twice over, and both were
+checkable before it was written.
+.PP
+.B "First, they are not two workloads.  One RUNS the other."
+Verified at the source rather than taken:
+.P1
+inferno-rio/appl/cmd/runtests.b:67   Test("wmtest", "-n 40",
+.P2
+so
+.CW "wmtest -n 40" 's
+122 frames are 62 per cent of
+.CW "runtests -g" 's
+197, and the two damage sequences are mostly the SAME sequence.  The ratio
+agrees because it is largely the same ratio.  No Tk property is needed and none
+is demonstrated.
+.PP
+.B "Second, the prediction I offered as a test is dead, by that test."
+A third Tk workload does not land near 84.94:
+.P1
+wm/bounce                     0.20%   (6820230 frames)
+wm/clock                     50.43%   (10 frames)
+runtests -g / wmtest -n 40   84.94%   (197 / 122 frames)
+.P2
+Two-tenths of one per cent to eighty-five, a span of four hundred times.
+.PP
+.B "And the real characterisation is mechanical rather than a constant."
+.CW overlap/eager
+is a property of the client's REPAINT PATTERN and nothing else:
+.IP \(bu
+a small object moving continuously barely intersects its own previous damage
+.CW ( bounce ,
+0.20 per cent);
+.IP \(bu
+a face redrawn in place repeats about half of it
+.CW ( clock ,
+50.43);
+.IP \(bu
+window churn makes nested growing rectangles that mostly contain each other
+.CW ( wmtest ,
+84.94);
+.IP \(bu
+and scattered disjoint fills make bounding boxes that nearly coincide
+.CW ( "gfxstress fill" ,
+99.44).
+.PP
+Four points across 0.2 to 99.4 per cent, with a mechanism for each.  That is a
+better result than a constant would have been, and it is the peer's.
+.NH 3
+What this says about the exchange rather than the numbers
+.LP
+.B "A wrong PREMISE travelled, and I built on it."
+The earlier note in this plan recorded that a claim passing between two sessions
+comes back with more confidence than it left, and that the originator is usually
+the one who had not checked it.  This is the same asymmetry with the premise
+rather than the conclusion: "two unrelated workloads" was a factual error about
+their own harness, stated several times, and I took it as given and reasoned from
+it.  The guard is the same one \(em say which of us measured a thing when handing
+it over \(em and it would have caught this, because neither of us had measured
+that they were unrelated.
+.PP
+.B "And a prediction precise enough to be killed is worth more than a hedge."
+"A third Tk workload should land near 84.94" was refuted by one run.  Phrased as
+a hypothesis it would have survived indefinitely without being tested, which is
+the worse outcome: a candidate explanation nobody can be bothered to kill
+accumulates the authority of having stood.
