@@ -97,6 +97,13 @@ struct Cc1120
 	/* and how many times the watchdog looked, so that a zero
 	 * nfifowatch can be told from a watchdog that never ran */
 	u32	nwatchtick;
+	/*
+	 * A receiver that is in RX, has bytes in its FIFO, and is not
+	 * being drained -- the edge was missed and no further one is
+	 * coming.  See cc1120tick.
+	 */
+	u32	nrxstall;
+	int	lastnavail;
 	uchar	rxstatus[2];		/* the two bytes APPEND_STATUS adds */
 
 	QLock	qlock;			/* one user of the part at a time */

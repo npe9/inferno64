@@ -580,7 +580,7 @@ cc1120tick(void)
 	static int n;
 	Cc1120 *rr;
 	Spidev *s;
-	int i, st;
+	int i, st, navail;
 
 	if(++n < HZ)
 		return;
@@ -608,8 +608,48 @@ cc1120tick(void)
 			strobe(rr, Sfrx);
 			strobe(rr, Sftx);
 			strobe(rr, Srx);
+			s->unlock(s);
+			rr->lastnavail = 0;
+			continue;
 		}
+		/*
+		 * AND A RECEIVER THAT IS NOT IN AN ERROR STATE AND IS
+		 * STILL STUCK, which this watchdog could not see.
+		 *
+		 * Measured: eight 109-byte frames sent back to back left
+		 * the far part in state 0x01 -- RX, which is where it
+		 * should be -- with fifoerr 0, rxoverflow 0, and "intr
+		 * high 11 low 11" unchanged by every frame sent
+		 * afterwards.  In RX, no error, no interrupt, and no
+		 * counter in the driver naming it.  The transmitter was
+		 * healthy throughout: marc 0x40, left 0, txtimeout 0.
+		 *
+		 * What that is: bytes in the RX FIFO and nothing
+		 * draining them, because the edge that would have called
+		 * the handler was missed while the handler was busy with
+		 * the frame before.  No further edge comes, because the
+		 * part has nowhere to put another packet.
+		 *
+		 * So: if NUM_RXBYTES is the same non-zero figure two
+		 * ticks running, nothing is draining it, and the handler
+		 * is called from here.  Reading the frames out rather
+		 * than flushing them, because they are whole packets and
+		 * throwing them away would turn a recoverable stall into
+		 * lost data.
+		 *
+		 * The handler takes the bus lock itself, so this must not
+		 * hold it.  And it counts an interrupt edge, so "intr
+		 * high/low" includes these synthetic calls: nrxstall is
+		 * how many of them there were.
+		 */
+		navail = rdx(rr, Xnumrxbytes);
 		s->unlock(s);
+		if(navail > 0 && navail == rr->lastnavail){
+			rr->nrxstall++;
+			rr->lastnavail = 0;
+			cc1120interrupt((Radio*)rr);
+		}else
+			rr->lastnavail = navail;
 	}
 }
 
@@ -627,7 +667,7 @@ cc1120send(Radio *r, uchar *p, int n)
 {
 	Cc1120 *rr;
 	Spidev *s;
-	int i, st;
+	int i, st, txms;
 
 	rr = (Cc1120*)r;
 	if(n < 1 || n > Ccmaxpayload){
@@ -716,11 +756,50 @@ cc1120send(Radio *r, uchar *p, int n)
 	s->unlock(s);
 
 	/*
-	 * Wait for the part to leave TX.  Bounded, and counted when it
-	 * runs out: a transmit that never completes is a fault worth a
-	 * number in the stat file rather than a process stuck for ever.
+	 * Wait for the part to leave TX, BOUNDED BY THE AIRTIME AND NOT
+	 * BY A CONSTANT.  This is the bug that cost the Styx link.
+	 *
+	 * It was Txwaitms, 500, for every frame at every bit rate.  At
+	 * 1200 baud a frame is 8 bits a byte on the air, so 500ms is
+	 * about 74 bytes -- and a longer one was abandoned in the middle
+	 * of transmitting.  Measured on this bench, 109-byte payload
+	 * against 40:
+	 *
+	 *	txtest 109 staged 110 trace 2 0 0 0 2 2 left 20 marc 0x00
+	 *	txtest  40 staged  41 trace 5 0 0 0 2 0 left  0 marc 0x40
+	 *
+	 * 20 bytes still in the FIFO, MARC_STATUS1 never reporting the
+	 * 0x40 that means the transmit finished, and txtimeout counting
+	 * up -- and then the code below strobes SRX, which aborts what
+	 * was still going out.  The far end never sees an end-of-packet
+	 * edge at all: recv 0, crcerr 0, intr high 0 low 0.  A truncated
+	 * frame is not a corrupt frame, it is silence.
+	 *
+	 * WHAT THAT LOOKED LIKE FROM ABOVE.  Everything this bench has
+	 * ever sent was small: a beacon is twelve bytes, an AX.25 test
+	 * payload sixteen, and a Styx Tversion nineteen.  All of them
+	 * fit in 500ms and all of them worked, through a thousand
+	 * frames.  The first thing to want a full-size frame was a Styx
+	 * read of a 273-byte file, which is three frames at the
+	 * information field's 109 -- and it failed, differently on
+	 * different runs, because the abort lands in a different place
+	 * each time.  Two days of looking at Styx for a fault in the
+	 * transmit path.
+	 *
+	 * The allowance: the payload, the length byte, the two CRC bytes
+	 * and sixteen more for preamble and sync word, at eight bits a
+	 * byte and symrate symbols a second -- doubled, because this is
+	 * a bound and not a schedule, and floored at the old constant so
+	 * that no frame gets less time than it used to.
 	 */
-	for(i = 0; i < Txwaitms; i++){
+	txms = Txwaitms;
+	if(rr->symrate > 0){
+		txms = (int)(((uvlong)(n + 19) * 8 * 2 * 1000) / rr->symrate)
+			+ 10;
+		if(txms < Txwaitms)
+			txms = Txwaitms;
+	}
+	for(i = 0; i < txms; i++){
 		s->lock(s);
 		st = state(rr);
 		s->unlock(s);
@@ -728,7 +807,7 @@ cc1120send(Radio *r, uchar *p, int n)
 			break;
 		delay(1);
 	}
-	if(i >= Txwaitms)
+	if(i >= txms)
 		rr->ntxtimeout++;
 
 	s->lock(s);
@@ -1786,12 +1865,36 @@ cc1120ctl(Radio *r, char *buf, int n)
 		 * reports as it goes is a bench that can be used.
 		 */
 		uchar buf[Ccmaxpayload];
-		int len, j;
+		int len, j, count, c;
 
 		len = 4;
 		if(nf >= 2)
 			len = atoi(f[1]);
 		if(len < 1 || len > Ccmaxpayload)
+			error(Ebadctl);
+		/*
+		 * AN OPTIONAL COUNT, SENT BACK TO BACK, because that is a
+		 * question this bench could not ask.
+		 *
+		 * A window of AX.25 I frames goes out with no gap between
+		 * them -- four of them, Defk -- and a receiver has to take
+		 * the end-of-packet interrupt, read a frame out of a
+		 * 128-byte FIFO over the SPI, and be listening again
+		 * before the next preamble ends.  Two commands typed at a
+		 * prompt are milliseconds apart and do not test that at
+		 * all; this does, from inside the driver, with nothing
+		 * between the transmits.
+		 *
+		 * It is why the verb exists in this form: the Styx
+		 * multi-frame fault in doc/pycubed-plan.ms is a message
+		 * that divides into three frames, and whether three
+		 * frames back to back survive is a question about the
+		 * radio and not about Styx.
+		 */
+		count = 1;
+		if(nf >= 3)
+			count = atoi(f[2]);
+		if(count < 1 || count > 64)
 			error(Ebadctl);
 		for(j = 0; j < len; j++)
 			buf[j] = 'a' + j % 26;
@@ -1800,10 +1903,12 @@ cc1120ctl(Radio *r, char *buf, int n)
 			wr(rr, Rpktlen, len);
 			s->unlock(s);
 		}
-		cc1120send(r, buf, len);
-		print("txtest %d %s staged %d trace %d %d %d %d %d %d"
+		for(c = 0; c < count; c++)
+			cc1120send(r, buf, len);
+		print("txtest %d x%d %s staged %d trace %d %d %d %d %d %d"
 			" left %d marc 0x%.2x\n",
-			len, rr->fixedlen? "fixed": "var", rr->txstaged,
+			len, count, rr->fixedlen? "fixed": "var",
+			rr->txstaged,
 			rr->txtrace[0], rr->txtrace[1], rr->txtrace[2],
 			rr->txtrace[3], rr->txtrace[4], rr->txtrace[5],
 			rr->txleft, rr->txmarc);
@@ -3417,6 +3522,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"rxoverflow %ud txunderflow %ud txnever %ud\n"
 		"intr high %ud low %ud\n"
 		"ccabusy %ud ccamode %d fifoerr %ud watch %ud of %ud\n"
+		"rxstall %ud\n"
 		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n"
 		"ppb %d\n",
 		rr->partnum, rr->partversion,
@@ -3436,6 +3542,7 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->nintrhigh, rr->nintrlow,
 		rr->nccabusy, ccamode, rr->nfifoerr,
 		rr->nfifowatch, rr->nwatchtick,
+		rr->nrxstall,
 		pacfg2, pacfg2 & Papowerramp,
 		patenths/10, patenths < 0? -patenths%10: patenths%10,
 		/*

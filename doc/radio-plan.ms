@@ -6854,3 +6854,104 @@ was the FIFO latch, because that run was not instrumented to say so \-
 the station had no
 .B state
 field then, which is the whole reason it was added.
+.NH 1
+A full-size frame was never transmitted: the wait was 500ms and the airtime is 733
+.PP
+.B "This is the fault that cost the Styx multi-frame read, and it was in the transmitter."
+.CW cc1120send
+waited
+.B Txwaitms
+\- 500 milliseconds, one constant for every frame at every bit rate \-
+for the part to leave TX.  At 1200 baud a byte on the air is eight bits,
+so 500ms is about seventy-four bytes.
+.B "A longer frame was abandoned in the middle of transmitting."
+.PP
+Measured, 109 bytes of payload against 40:
+.DS
+.CW "txtest 109 staged 110 trace 2 0 0 0 2 2 left 20 marc 0x00"
+.CW "txtest  40 staged  41 trace 5 0 0 0 2 0 left  0 marc 0x40"
+.DE
+Twenty bytes still in the FIFO; MARC_STATUS1 never reaching the 0x40
+that means the transmit finished;
+.B txtimeout
+counting up \- and then the code below strobes SRX, which aborts what
+was still going out.  The far end sees
+.B "no end-of-packet edge at all:"
+.CW "recv 0 crcerr 0 intr high 0 low 0" .
+.B "A truncated frame is not a corrupt frame, it is silence."
+.PP
+.B "Why nothing had noticed in two days of using this radio."
+Everything this bench had ever sent was small: a beacon is twelve bytes,
+an AX.25 test payload sixteen, a Styx Tversion nineteen.  All of them fit
+in 500ms and all of them worked, through a thousand numbered frames and
+a mounted filesystem.
+.B "The first thing to want a full-size frame was a Styx read of a 273-byte file,"
+which is three frames at the information field's 109 \- and it failed
+differently on different runs, because an abort lands in a different
+place each time.
+.PP
+The bound is the airtime now: the payload, the length byte, the two CRC
+bytes and sixteen more for preamble and sync, at eight bits a byte and
+.B symrate
+symbols a second, doubled because it is a bound and not a schedule, and
+floored at the old constant so no frame gets less time than it used to.
+At 1200 baud a 109-byte frame gets 1716ms against 853 of airtime; at
+38400 it gets 63 against 27.
+.NH 2
+Verified, and with a burst verb that did not exist
+.PP
+.CW "txtest len n"
+sends n frames back to back from inside the driver, which is a question
+this bench could not ask: two commands typed at a prompt are
+milliseconds apart, and a window of AX.25 I frames has no gap at all.
+.DS
+.CW "len  burst   sent  received  crcerr"
+.CW "109  x1        1         1       0"
+.CW "109  x2        2         2       0"
+.CW "109  x3        3         3       0"
+.CW "109  x4        4         4       0"
+.CW "109  x8        8         8       0"
+.DE
+Full-size frames cross, in bursts up to twice the window, with no CRC
+errors.
+.B "Before the fix a single one of them never completed."
+.PP
+.B "AND ONE OF THOSE NUMBERS WAS MINE, NOT THE RADIO'S."
+An earlier run of the same table read
+.CW "x8 -> 0"
+and I wrote it down as a limit.  It was the harness: eight 125-byte
+frames are 8.3 seconds of airtime at 1200 baud and the script slept
+eleven before reading the counters, which is too close to the margin.
+With twenty it reads 8 of 8.
+.B "A burst of n frames needs n times the frame airtime before a counter means anything,"
+and at this bit rate that is about a second a frame.
+.NH 2
+What is still in the way of the multi-frame read, and it is memory again
+.PP
+With full-size frames crossing, the 273-byte read still does not
+complete.  The satellite says why:
+.DS
+.CW "no free Blocks"
+.CW "iallocb: no memory 0/40960"
+.DE
+.B "The 0 is the interesting figure."
+It is
+.B ialloc.bytes ,
+the interrupt-time allocation outstanding, and it is zero \- so the
+budget is not the limit and the main pool simply could not give the
+radio a Block to receive into.  Which is the same wall
+.I exportfs
+hit at 8216 bytes, reached from the other side: a satellite running
+.I export ,
+a pipe, two relay processes,
+.CW #a
+with three kprocs and a radio has a main pool that is full when a frame
+arrives.
+.PP
+So the remaining work is a budget rather than a protocol, and the
+consumers are known and countable: devmnt's queue of ten messages,
+.IR exportfs 's
+buffer per outstanding request, the two pipe queues, and the
+retransmission copies
+.CW #a
+keeps for an unacknowledged window.

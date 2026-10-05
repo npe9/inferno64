@@ -368,6 +368,7 @@ relay(dfd: ref Sys->FD): ref Sys->FD
 up(src, dst: ref Sys->FD, budget: int)
 {
 	b := array[Pipebuf] of byte;
+	tot := 0;
 	# THE FIRST FEW TRANSFERS, EACH WAY, PRINTED.
 	#
 	# The first run of this stalled with the satellite exporting and
@@ -383,8 +384,8 @@ up(src, dst: ref Sys->FD, budget: int)
 			sys->print("styx: up: pipe read %d: %r\n", n);
 			return;
 		}
-		if(nmsg < 6)
-			sys->print("styx: up %d bytes from the pipe\n", n);
+		sys->print("styx: up %d from the pipe (%d so far)\n",
+			n, tot += n);
 		for(i := 0; i < n; ){
 			m := n - i;
 			if(m > budget)
@@ -393,8 +394,7 @@ up(src, dst: ref Sys->FD, budget: int)
 				sys->print("styx: up: %r\n");
 				return;
 			}
-			if(nmsg < 6)
-				sys->print("styx: up   %d onto the air\n", m);
+			sys->print("styx: up   %d onto the air\n", m);
 			i += m;
 		}
 	}
@@ -407,6 +407,7 @@ up(src, dst: ref Sys->FD, budget: int)
 down(src, dst: ref Sys->FD)
 {
 	b := array[Pipebuf] of byte;
+	tot := 0;
 	for(nmsg := 0;; nmsg++){
 		n := sys->read(src, b, len b);
 		if(n < 0){
@@ -415,8 +416,8 @@ down(src, dst: ref Sys->FD)
 		}
 		if(n == 0)
 			continue;
-		if(nmsg < 6)
-			sys->print("styx: down %d bytes off the air\n", n);
+		sys->print("styx: down %d off the air (%d so far)\n",
+			n, tot += n);
 		if(sys->write(dst, b[0:n], n) != n){
 			sys->print("styx: down write: %r\n");
 			return;

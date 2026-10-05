@@ -211,16 +211,32 @@ static Spidev spidev = {
 	.irq	= spiirq,
 	.led		= spiled,
 	/*
-	 * -3550ppb, measured on this board and not taken from anywhere.
-	 * A carrier from a generator calibrated by ear against WWV
-	 * appeared 3250Hz below the frequency this part was commanded
-	 * to, at both 915 and 910MHz, three runs identical, with the
-	 * filter width coming out 25.5kHz against the 25.0 asked --
-	 * which is the check that the bracket found the filter and not
-	 * a spur.  With it applied the same measurement gives +233Hz.
-	 * See doc/radio-plan.ms.
+	 * ZERO, AND IT USED TO BE -3550.
+	 *
+	 * -3550ppb is a real measurement -- a carrier from a generator
+	 * calibrated by ear against WWV appeared 3250Hz below where
+	 * this part was commanded, at both 915 and 910MHz, three runs
+	 * identical -- but it is a measurement of ONE BOARD, and this
+	 * file is linked by every board built from this config.  Board
+	 * 2's crystal is +60300ppb, 64ppm away, which at 915MHz is
+	 * about 59kHz against a 25kHz filter: so board 2 booted
+	 * carrying board 1's correction and was further from the truth
+	 * than if it had carried none.
+	 *
+	 * Caught by reading two boards' stat files side by side and
+	 * finding "ppb -3550" on both when one of them should have said
+	 * 60300.  Nothing was broken by it in the end, because every
+	 * init now applies /lib/radio by the serial number in #P/uid --
+	 * which is exactly what that file and #P/cal were built for, and
+	 * this constant is the thing they were built to replace.
+	 *
+	 * Zero is the honest default: an uncalibrated board is
+	 * UNCORRECTED rather than wrongly corrected, and a board whose
+	 * init did not apply its entry now reads 0 and says so instead
+	 * of looking calibrated.  The figures live in /lib/radio; see
+	 * doc/radio-plan.ms item 8.
 	 */
-	.ppb		= -3550,
+	.ppb		= 0,
 };
 
 /*
