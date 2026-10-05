@@ -124,6 +124,7 @@ more than one of those figures must do the same.
 .SH SOURCE
 .B /appl/cmd/tkscenetest.b
 .SH "SEE ALSO"
+.IR tkofftest (1),
 .IR tkcmd (1)
 .SH BUGS
 What it does
@@ -145,13 +146,24 @@ whose geometry comes from
 rather than
 .BR pack .
 .PP
-Nor is a
-.I second
-toplevel, or two widgets whose damage overlaps \(em every case here renders
-one widget into a fresh image, so nothing tests what happens when two trees
-are built before either is flushed, which is the invariant
+.I Multiple
+widgets are not covered here and do not need to be:
+.IR tkofftest (1)
+compares the same two paths over a pane holding one of every widget kind, so
+two trees built before either is flushed \(em the invariant
 .IR libtk 's
-walk exists to maintain.
+walk exists to maintain \(em is exercised there, along with one comparison
+per focusable widget, since only one widget can hold the keyboard and a
+listbox draws neither its ring nor its active item's box while an entry has
+it.
+.PP
+The division between the two is worth knowing. This program renders ONE
+case into a FRESH image, so when it fails it names the widget and the state;
+.IR tkofftest (1)
+renders everything at once, so it covers interactions this cannot and tells
+you less about which of them broke. A second
+.I toplevel
+is covered by neither.
 .PP
 The "drew something" check counts bytes differing from the white the image
 was filled with, so a widget that painted only its own grey background
