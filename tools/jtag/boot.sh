@@ -238,7 +238,11 @@ while [ $try -le 4 ]; do
 	# jtagrestart does to it -- then examine re-sets ERR immediately
 	# and the next session is as wedged as the last.  The bit was the
 	# symptom; the core's state is the fault, and the only thing on
-	# this desk that resets the core is the power.
+	# this desk that resets the core is the power -- WHICH IS NO LONGER
+	# TRUE: tools/jtag/hardreset arms the PM watchdog over JTAG and gets a
+	# real firmware restart, which is what recovered a board whose wifi had
+	# come up with an all-zero MAC and whose poller therefore never answered.
+	# A JTAG warm restart could not clear that, because it is not a reset.
 	#
 	# So: clear it once and retry once, and say what the second
 	# failure means.  There is no JTAG path to the PM watchdog that

@@ -8244,3 +8244,81 @@ gets back in.  It did, on attempt 1 \(em and reported "the console saw nothing,
 but the ring says build 1791238242 is running", which is the stamp-based
 confirmation that script exists for, because reading the screen buffer without a
 reference point has given a confident wrong answer four times in that directory.
+.NH 2
+H4.  hardreset(1): a real firmware reset over JTAG, which two comments said was impossible
+.LP
+The failed install left the board in a state three JTAG warm restarts could not
+clear.  The ring said why:
+.P1
+#l0: wifi: 54Mbps port 0x0 irq 0x0 ea 000000000000
+.P2
+.B "An ALL-ZERO MAC."
+The wifi chip came up with no hardware address, so it could not associate, could
+not DHCP, and the remote command poller \(em the only input path on this desk \(em
+never answered.  The kernel was running fine; nothing could talk to it.
+.PP
+.B "And a JTAG warm restart cannot fix that, for a reason already recorded."
+A JTAG kernel load replaces memory and jumps; it leaves every peripheral exactly
+as the last kernel left it, and the VideoCore GPIO expander holds its lines
+across an ARM reset.  Only a real firmware restart re-initialises it.  That is
+why three boots in a row came up with the same dead radio.
+.NH 3
+The two comments that said only power could do it
+.LP
+.P1
+raspi3b.cfg:43   "Nothing here resets the machine, on purpose"
+boot.sh:241      "this desk that resets the core is the power."
+.P2
+The first is TRUE and still is \(em openocd's own reset is deliberately not wired
+up in that config.  The second is an INFERENCE from the first, and it does not
+follow: the PM block is MEMORY-MAPPED at 0x3f100000, so JTAG reaches it like any
+other address.
+.PP
+.CW tools/jtag/hardreset
+arms it with
+.CW pmbcm.c 's
+own sequence:
+.P1
+Wdog (0x3f100024) <- 0x5a000000 | ticks      ticks at 65536/second
+Rstc (0x3f10001c) <- 0x5a000000 | (Rstc & 0xffffffcf) | 0x20
+.P2
+.CW 0x5a000000
+is the password, without which both writes are silently ignored \(em which
+.CW pmbcm.c
+calls "the easiest way to write a watchdog that appears to arm and never fires".
+.CW Rstc
+is read first and its other bits preserved, because the field is cleared with a
+mask rather than written whole.
+.PP
+.B "It recovered the board on the first try,"
+which
+.CW vmheld
+then confirmed by refusing:
+.P1
+board stamp 1791237782, kernel8.img says 1791238242
+.P2
+\(em the card's last-good kernel, booted by the firmware, with this tree ahead of
+it.  The stamp checks added earlier today doing their job in a situation that had
+not been imagined when they were written.
+.NH 3
+Two things about the tool worth stating
+.LP
+.B "openocd exiting NON-ZERO is the success case."
+The SoC resets while openocd is mid-transaction, so it reports
+.CW "Invalid ACK (7) in DAP response"
+and exits 1.  That is the DAP going away underneath it, which is what a reset
+looks like from the debugger's side.  So the tool cannot use openocd's status to
+decide anything and waits for the BOARD to answer instead \(em the same
+distinction as
+.CW boot.sh
+refusing to call a kernel up on anything but its own stamp.
+.PP
+.B "And it does NOT cycle WL_ON, which must not be cycled:"
+that hangs
+.CW sdiofwgo()
+inside
+.CW sbreset()
+with every core at
+.CW idle+0x4 .
+A firmware restart re-initialises the whole expander through the supported path,
+which is why this works where the obvious approach bricks the board.

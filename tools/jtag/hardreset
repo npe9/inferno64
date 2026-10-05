@@ -1,0 +1,109 @@
+#!/bin/sh
+#
+# Force a REAL firmware reset over JTAG, so the board reboots from the card.
+#
+#	sh tools/jtag/hardreset
+#
+# THIS IS NOT A JTAG WARM RESTART and the difference is the whole point.
+# boot.sh replaces memory and jumps, which leaves every peripheral exactly as
+# the last kernel left it.  This arms the BCM2835 PM watchdog, which is what a
+# Pi actually reboots with -- the same thing archreboot() in pmbcm.c does and
+# the same thing Linux uses -- so the VideoCore firmware restarts, the GPIO
+# expander is re-initialised, and the board loads kernel8.img from the card.
+#
+# TWO COMMENTS IN THIS DIRECTORY SAID THIS WAS IMPOSSIBLE, and they were wrong:
+#
+#	raspi3b.cfg:43   "Nothing here resets the machine, on purpose"
+#	boot.sh:241      "this desk that resets the core is the power"
+#
+# The first is still true of raspi3b.cfg -- openocd's own reset is not wired up
+# on this rig, deliberately.  The second was an inference from it, and the PM
+# block is memory-mapped, so JTAG can reach it like any other address.
+#
+# WHAT IT RECOVERS, measured.  A failed install left the board running a kernel
+# whose wifi had come up as
+#
+#	#l0: wifi: 54Mbps port 0x0 irq -1 ea 000000000000
+#
+# an ALL-ZERO MAC, so it could not associate, could not DHCP, and the remote
+# command poller -- the only input path on this desk -- never answered.  Three
+# JTAG warm restarts did not clear it, because a JTAG load is not a reset and
+# the expander holds its lines across an ARM reset.  This cleared it on the
+# first try and the board came back on the card's kernel.
+#
+# It does NOT cycle WL_ON, and must not: cycling that line hangs sdiofwgo()
+# inside sbreset() with every core at idle+0x4.  A firmware restart
+# re-initialises the whole expander through the supported path instead.
+#
+# The register sequence is pmbcm.c's, not invented here:
+#
+#	Wdog (0x3f100024) <- 0x5a000000 | ticks       ticks at 65536/second
+#	Rstc (0x3f10001c) <- 0x5a000000 | (Rstc & 0xffffffcf) | 0x20
+#
+# 0x5a000000 is the password, without which both writes are ignored -- which
+# pmbcm.c calls "the easiest way to write a watchdog that appears to arm and
+# never fires".  0x20 sets WRCFG to full-reset-on-expiry.
+#
+# openocd EXITING NON-ZERO HERE IS THE SUCCESS CASE.  The SoC resets while
+# openocd is still mid-transaction, so it reports
+#
+#	Error: Invalid ACK (7) in DAP response
+#
+# and exits 1.  That is the DAP going away underneath it, which is what a reset
+# looks like from the debugger's side.  So this cannot use openocd's status to
+# decide, and instead waits for the board to answer.
+#
+set -u
+HERE=`cd \`dirname "$0"\` && pwd`
+ROOT=`cd "$HERE/../.." && pwd`
+ADAPTER=${ADAPTER:-interface/ftdi/olimex-arm-usb-tiny-h.cfg}
+MS=${MS:-10}
+WAIT=${WAIT:-240}
+
+PMBASE=0x3f100000
+RSTC=0x3f10001c
+WDOG=0x3f100024
+TMP=${TMPDIR:-/tmp}/hardreset.$$
+trap 'rm -f "$TMP"' 0 1 2 15
+
+#
+# Read Rstc first and preserve the bits outside WRCFG, because the field is
+# cleared with a mask rather than written whole -- pmbcm.c does the same, and a
+# blind write would discard whatever else the firmware had set there.
+#
+( cd "$ROOT" && timeout 120 openocd -f "$ADAPTER" -f tools/jtag/raspi3b.cfg \
+	-c "init; targets bcm2837.cpu0; halt" \
+	-c "echo HR-RSTC; mdw $RSTC 1" \
+	-c "resume; shutdown" ) >"$TMP" 2>&1
+rstc=`awk '/HR-RSTC/{s=1;next} s&&/^0x/{sub(/^[^:]*: */,"");print $1;exit}' "$TMP"`
+if [ -z "$rstc" ]; then
+	echo "hardreset: could not read Rstc; is the adapter attached?" >&2
+	grep -a 'Error' "$TMP" | head -3 >&2
+	exit 1
+fi
+
+ticks=`python3 -c "print(($MS * 65536) // 1000 or 1)"`
+wdogv=`python3 -c "print(hex(0x5a000000 | $ticks))"`
+rstcv=`python3 -c "print(hex(0x5a000000 | (int('$rstc',16) & 0xffffffcf) | 0x20))"`
+echo "hardreset: Rstc reads 0x$rstc; arming a ${MS}ms full reset"
+echo "hardreset:   Wdog <- $wdogv   Rstc <- $rstcv"
+
+( cd "$ROOT" && timeout 120 openocd -f "$ADAPTER" -f tools/jtag/raspi3b.cfg \
+	-c "init; targets bcm2837.cpu0; halt" \
+	-c "mww $WDOG $wdogv" \
+	-c "mww $RSTC $rstcv" \
+	-c "resume; shutdown" ) >>"$TMP" 2>&1
+#
+# Deliberately NOT checking that status: see the header.  The board answering
+# is the only evidence that means anything here.
+#
+echo "hardreset: armed; waiting up to ${WAIT}s for the board to answer"
+if BIND=0 sh "$HERE/boardrun" -t "$WAIT" 'echo HR-UP' >/dev/null 2>&1; then
+	echo "hardreset: the board is answering again"
+	exit 0
+fi
+echo "hardreset: the board did not answer within ${WAIT}s." >&2
+echo "hardreset: the card's kernel8.img is what it would have booted -- if that" >&2
+echo "hardreset: is itself bad, kernel8.bak is the one before it, and only a" >&2
+echo "hardreset: human at the power switch is left." >&2
+exit 1
