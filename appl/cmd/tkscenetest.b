@@ -72,6 +72,12 @@ report(good: int, what: string)
 W: con 160;
 H: con 60;
 
+# scene.c:675's Maxwalk, and the depth used to exceed it.  Named here
+# because the nest check's whole point is the boundary between them.
+Maxwalk: con 8;
+Mid: con 5;
+Deep: con 10;
+
 # Lay out one widget specification into a fresh image and hand back its
 # pixels.  A toplevel of its own each time, because reconfiguring one and
 # reading it again measures whatever the reconfigure happened to repaint,
@@ -202,6 +208,75 @@ paintmenu(disp: ref Display, post: int): array of byte
 	}
 	if(post)
 		tk->cmd(top, ".mn unpost");
+	return b;
+}
+
+#
+# A nest deep enough to overflow the walk, which is the one fallback in
+# scene.c that nothing reaches by accident.
+#
+# tkwalkopen() (scene.c:716) is called from exactly one place, windw.c:348,
+# so a walk level is pushed per WINDOW drawn -- and a canvas window item is
+# a window.  Maxwalk is 8, commented "a canvas in a text in a canvas ...",
+# and past it tkwalkopen returns without pushing: "deeper than this: no
+# batching, still correct".  tkofftest(1) nests canvas -> frame -> entry,
+# which is two or three levels, so the fallback has never run.  A fallback
+# that does not run on demand has to be made to run.
+#
+# `still correct' is the claim under test: with batching lost the pixels
+# must be the same anyway.  So this renders the nest both ways like any
+# other case, and the depth is what makes it interesting rather than the
+# widget.
+#
+paintnest(disp: ref Display, depth: int): array of byte
+{
+	off := disp.newimage(Rect((0,0),(W,H)), draw->RGB24, 0, Draw->White);
+	top := tk->toplevel(disp, "");
+	if(off == nil || top == nil){
+		sys->print("FAIL nest: no image or toplevel: %r\n");
+		return nil;
+	}
+	# canvas .c, then frame .c.f in a window item, then canvas .c.f.c in
+	# that, and so on.  Each canvas contributes a window, so each level
+	# is a walk level.
+	path := ".c";
+	cmds: list of string;
+	cmds = "canvas .c -width 140 -height 44" :: cmds;
+	for(i := 0; i < depth; i++){
+		f := path + ".f";
+		cmds = ("frame " + f + " -width 120 -height 36 -borderwidth 1 -relief sunken") :: cmds;
+		cmds = (path + " create window 2 2 -window " + f + " -anchor nw") :: cmds;
+		c := f + ".c";
+		cmds = ("canvas " + c + " -width 110 -height 30") :: cmds;
+		cmds = ("pack " + c) :: cmds;
+		path = c;
+	}
+	# something that marks pixels at the bottom, so the deepest level is
+	# not an empty box
+	cmds = (path + " create rectangle 2 2 40 16 -fill red") :: cmds;
+	cmds = "pack .c" :: cmds;
+	# the list was built backwards
+	ord: list of string;
+	for(l := cmds; l != nil; l = tl l)
+		ord = hd l :: ord;
+	for(l = ord; l != nil; l = tl l){
+		c := tk->cmd(top, hd l);
+		if(c != nil && len c > 0 && c[0] == '!'){
+			sys->print("FAIL nest depth %d: `%s\' -> %s\n", depth, hd l, c);
+			return nil;
+		}
+	}
+	e := tk->putimage(top, ". -1", off, nil);
+	if(e != nil && len e > 0){
+		sys->print("FAIL nest: putimage: %s\n", e);
+		return nil;
+	}
+	tk->cmd(top, "update");
+	b := array[W*H*3] of byte;
+	if(off.readpixels(off.r, b) != len b){
+		sys->print("FAIL nest: readpixels: %r\n");
+		return nil;
+	}
 	return b;
 }
 
@@ -523,6 +598,14 @@ init(ctxt: ref Draw->Context, argv: list of string)
 				names[i], inked(dpix[i])));
 	}
 
+	# The deep nest, direct arm.  The batching figure cannot be taken
+	# here: `render count' counts TREES, and the direct path builds
+	# none, so it answers 0 in 0 -- which is what it did when this
+	# measurement was first put in the wrong round.
+	ddeep := paintnest(disp, Deep);
+	report(ddeep != nil && inked(ddeep) > 0,
+		sys->sprint("direct: a nest %d deep drew something (%d bytes of ink)", Deep, inked(ddeep)));
+
 	# The posted menu, its own path because it needs a Screen.
 	dmenu := paintmenu(disp, 1);
 	dnomenu := paintmenu(disp, 0);
@@ -614,6 +697,55 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		}
 	}
 	report(bok, sys->sprint("the trees marked a non-empty box inside the image (%s)", bs));
+
+	#
+	# Did the walk's Maxwalk fallback actually fire?
+	#
+	# My first predicate was "batching is lost, so widgets-per-tree
+	# falls", and it was WRONG about the mechanism: the ratio is 1.00 at
+	# every depth, because tkwalkopen() flushes the enclosing walk's
+	# pending tree before pushing (scene.c:720), so a nested window
+	# always gets a tree of its own and there is no batching here to
+	# lose.  The figure that does say it is the TREE COUNT SATURATING:
+	# one walk level per nested window up to Maxwalk, and none after, so
+	# a nest 10 deep yields 8 trees where it would otherwise yield 11.
+	#
+	# `render count' resets, so the depths are measured in separate
+	# rounds.
+	#
+	# Three depths, not two.  With only a shallow and a deep point, a
+	# constant 8 unrelated to depth would satisfy "capped at Maxwalk" --
+	# so a MIDDLE depth below the cap has to be shown to scale with
+	# depth, which is what distinguishes a cap from a constant.
+	tk->cmd(tk->toplevel(disp, ""), "render count");	# reset
+	paintnest(disp, 2);
+	cs := counts(disp, "count");
+	paintnest(disp, Mid);
+	cm := counts(disp, "count");
+	sdeep := paintnest(disp, Deep);
+	cd := counts(disp, "count");
+	ratio := "no reply";
+	fellback := 0;
+	if(cs != nil && tl cs != nil && cd != nil && tl cd != nil){
+		st := hd cs;
+		dt := hd cd;
+		mt := 0;
+		if(cm != nil)
+			mt = hd cm;
+		ratio = sys->sprint("depth 2 -> %d trees, depth %d -> %d (unsaturated %d), depth %d -> %d (unsaturated %d, Maxwalk %d)",
+			st, Mid, mt, Mid+1, Deep, dt, Deep+1, Maxwalk);
+		# scales with depth below the cap, and stops at it above:
+		# a constant would fail the middle test, and no cap at all
+		# would fail the last.
+		fellback = st == 3 && mt == Mid+1 && dt == Maxwalk;
+	}
+	report(fellback, sys->sprint("tree count scales with depth then CAPS at Maxwalk -- %s", ratio));
+
+	if(ddeep != nil && sdeep != nil){
+		dn := differ(ddeep, sdeep);
+		report(dn == 0, sys->sprint("scene == direct: a nest %d deep, past Maxwalk %d (%d bytes differ)", Deep, Maxwalk, dn));
+	}else
+		report(0, "a nest past Maxwalk rendered in both paths");
 
 	smenu := paintmenu(disp, 1);
 	if(dmenu != nil && smenu != nil){

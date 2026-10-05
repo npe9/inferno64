@@ -108,6 +108,44 @@ Two further properties of the description are checked, because a tree that
 draws correctly can still be useless to a backend: every node that marks
 pixels must describe its own box, and the union the trees marked must be a
 non-empty rectangle inside the image.
+.SH "THE WALK'S OVERFLOW FALLBACK"
+.B tkwalkopen()
+pushes one walk level per window drawn, and a canvas window item is a
+window, so a nest of canvases is a nest of walk levels.
+.B Maxwalk
+is 8 \(em commented "a canvas in a text in a canvas ..." \(em and past it
+.B tkwalkopen
+returns without pushing: "deeper than this: no batching, still correct".
+.IR tkofftest (1)
+nests a canvas, a frame and an entry, which is two or three levels, so
+nothing reached that fallback until this program built a nest ten deep to
+force it.
+.PP
+.B "That the count CAPS rather than being a constant needs three depths."
+With only a shallow and a deep measurement, a tree count that happened
+always to be 8 would satisfy "capped at
+.BR Maxwalk ".
+Measured:
+.PP
+.EX
+depth  2 -> 3 trees   (unsaturated 3)
+depth  5 -> 6 trees   (unsaturated 6)
+depth 10 -> 8 trees   (unsaturated 11, Maxwalk 8)
+.EE
+.PP
+so it scales with depth below the cap and stops at it above, and the claim
+under test \(em "still correct" \(em holds: the nest past the cap renders
+identically through both paths.
+.PP
+The first version of this check asked whether
+.I batching
+was lost, on the reasoning that widgets-per-tree would fall. That was wrong
+about the mechanism:
+.B tkwalkopen
+flushes the enclosing walk's pending tree before pushing, so a nested
+window always gets a tree of its own and the ratio is 1.00 at every depth.
+There is no batching here to lose. The tree count saturating is what says
+the fallback fired.
 .SH "ONE READ PER ROUND"
 .BR "render count" ,
 .B "render nodes"
@@ -145,6 +183,10 @@ whose geometry comes from
 .B grid
 rather than
 .BR pack .
+A second
+.I toplevel
+is covered neither here nor by
+.IR tkofftest (1).
 .PP
 .I Multiple
 widgets are not covered here and do not need to be:
