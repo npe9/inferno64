@@ -335,9 +335,90 @@ zero.  It is a build-time refusal in
 now rather than a property to rely on.  See
 .CW doc/xip.ms .
 .NH 1
-Phase 4: the flight software, in Limbo.  Begun, and measured
+Phase 4: the flight software, in Limbo.  Running on silicon
 .PP
-The mission logic is ported and runs.  What is in the tree:
+.B "It runs on a board, against a real radio and a real voltage."
+Not a PyCubed \- that board is phases 1 and 2 and still needs buying \-
+but a MikroElektronika clicker 2 for STM32 with a ccRF click, which is
+the hardware
+.CW doc/radio-plan.ms
+spent its measurements on.  What it says for itself:
+.DS
+.CW "BEEPSAT-INIT-OK"
+.CW "Beep-Sat, ported to Limbo"
+.CW "hardware: stm32f407: battery real, from the part's VBAT channel"
+.CW "BEEPSAT-RUNNING 4 tasks"
+.CW "       vbatt | 3.30V < threshold 3.60V"
+.CW "       vbatt | low battery detected"
+.CW "        time | 20s since boot"
+.CW "      beacon | sent 12 bytes"
+.DE
+.PP
+.B "The 3.30V is a conversion, not a constant."
+.I Adcbattmv ()
+in
+.CW os/inferno/stm32f407/adcstm32f4.c
+reads the part's VBAT channel \- channel 18 through an internal
+divide-by-two, RM0090 13.11 \- so a voltage this board actually has is
+driving the mission's own low-battery policy path.
+.B "That is the first time any of this software has reacted to a measurement."
+.PP
+.B "And the beacon leaves the board."
+.CW "sent 12 bytes"
+is a write the driver accepted, which is exactly the thing this bench has
+learned not to believe, so it was checked at the other end.  A second
+clicker 2 with the shell image, calibrated by
+.I radiocfg (1)
+and tuned to 915MHz, having transmitted nothing itself:
+.DS
+.CW "sent 0 recv 8   crcerr 0   last -17dBm"
+.CW "lastrx 12 bytes: 48 65 6c 6c 6f 20 57 6f 72 6c 64 21"
+.DE
+Eight packets, one every thirty seconds, which is the beacon period; no
+CRC errors; and the bytes are
+.CW "Hello World!" ,
+which is what
+.CW beepsat.b 's
+.I beacontask ()
+writes.
+.B "The payload and not the counter, because this part's sync detector fires on noise."
+.PP
+.B "What had to be added, and one of them was a real gap in the port."
+.IP \(bu
+.CW os/inferno/stm32f407/archfilespycubed.c ,
+serving
+.CW #P/{battery,imu,rgb,arch} ,
+which is the boundary
+.CW module/pycubedhw.m
+defines.  The value of its
+.B arch
+file is saying which of the three are real: battery is; imu is invented,
+there being no inertial part on a clicker 2, though mikroBUS 1 is empty
+and
+.CW #J
+already enumerates whatever answers on I2C; and rgb is recorded rather
+than displayed, deliberately, because this board has two LEDs and both
+have owners \- LD1 is the radio's lamp and
+.I idlehands ()
+blinks LD2 \- and driving either from here would destroy a working
+diagnostic to show a colour nobody is watching.
+.IP \(bu
+.B "The mission did not calibrate its radio,"
+and that is the gap.  Nothing in it writes
+.B freq
+or
+.BR ppm ,
+so the radio sat at the driver's register-table defaults; with the two
+clicker 2 crystals 64ppm apart \- 59kHz at 915MHz against a 25kHz filter
+\- a beacon written, accepted by the driver and radiated into the wrong
+place looks exactly like a radio that works.
+.CW os/inferno/init/beepsatinit.b
+applies it now, through the
+.I Radiocal
+library the AX.25 station already uses, and in the init rather than the
+mission for the same reason: which crystal a board has is configuration.
+.PP
+What is in the tree:
 .DS
 .CW "  module/pycubed.m        the satellite state"
 .CW "  module/pycubedhw.m      the hardware boundary"
