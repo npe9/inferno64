@@ -349,9 +349,22 @@ def open_board(port, name=None):
 
 
 def sessions():
+    """Every screen session, by the name screen prints for it.
+
+    NOT just the pid.ttysNN.host ones.  That was the pattern here, and
+    it makes a session created with "screen -dmS name" invisible --
+    screen calls it "40033.name" -- so a board whose console is in a
+    detached named session came back as "held by pid 40033, which is not
+    a screen session" and the run died at its first line.  Which is
+    worse than it sounds: the fallback is to open the tty directly, and
+    two openers wedge the adapter.
+
+    The pid is what the caller matches against, so anything of the form
+    <pid>.<rest> will do.
+    """
     out = subprocess.run(["screen", "-ls"], capture_output=True,
                          text=True).stdout
-    return re.findall(r"(\d+\.ttys\d+\.\S+)", out)
+    return re.findall(r"^\s*(\d+\.\S+)", out, re.M)
 
 
 def by_port(port):
