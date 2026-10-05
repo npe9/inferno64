@@ -40,7 +40,7 @@ def snap(b):
     t = b.text()
     st = re.findall(r"sent/recv (\d+) recv (\d+) crcerr (\d+)", t)
     cc = re.findall(r"ax25init: cca (\d+) ccamode (\d+) fifoerr (\d+)"
-                    r"(?: watch (\d+))?", t)
+                    r"(?: watch (\d+)(?: of (\d+))?)?", t)
     sx = re.findall(r"ax25init: state 0x(\w+) ", t)
     if not st:
         return None
@@ -48,6 +48,8 @@ def snap(b):
                 crc=int(st[-1][2]),
                 fifoerr=int(cc[-1][2]) if cc else 0,
                 watch=int(cc[-1][3]) if cc and cc[-1][3] else 0,
+                ticks=int(cc[-1][4]) if cc and len(cc[-1]) > 4
+                      and cc[-1][4] else 0,
                 state=sx[-1] if sx else "?")
 
 
@@ -113,6 +115,13 @@ for w in range(WINDOWS):
 print()
 print("%d windows, %d FIFO errors cleared, %d windows with no delivery"
       % (WINDOWS, latches, dead))
+# A watchdog that never ran reports the same zero as one that found
+# nothing, so say how many times it looked.
+for n in B:
+    print("%s: watchdog looked %d times and cleared %d"
+          % (n, prev[n]["ticks"], prev[n]["watch"]))
+if all(prev[n]["ticks"] == 0 for n in B):
+    print("NOTE: the watchdog never ran, so nothing here tests it.")
 if latches > 0 and dead == 0:
     print("FIFOWATCH-OK the part latched and the driver cleared it without"
           " a window of silence")

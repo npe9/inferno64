@@ -591,6 +591,15 @@ cc1120tick(void)
 			continue;
 		s = rr->spi;
 		s->lock(s);
+		/*
+		 * Counted whether or not anything is wrong, because
+		 * "watch 0" is equally what a watchdog that never found
+		 * a fault says and what one that was never wired up
+		 * says.  A clock link that is not in the list is
+		 * silent, and silence here would read as health for
+		 * ever.
+		 */
+		rr->nwatchtick++;
 		st = state(rr);
 		if(st == Strxerr || st == Sttxerr){
 			rr->nfifoerr++;
@@ -3322,7 +3331,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"crcerr %ud toobig %ud txtimeout %ud\n"
 		"rxoverflow %ud txunderflow %ud txnever %ud\n"
 		"intr high %ud low %ud\n"
-		"ccabusy %ud ccamode %d fifoerr %ud watch %ud\n"
+		"ccabusy %ud ccamode %d fifoerr %ud watch %ud of %ud\n"
 		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n"
 		"ppb %d\n",
 		rr->partnum, rr->partversion,
@@ -3341,7 +3350,7 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->nrxoverflow, rr->ntxunderflow, rr->ntxnever,
 		rr->nintrhigh, rr->nintrlow,
 		rr->nccabusy, (rd(rr, Rpktcfg2) >> 2) & 7, rr->nfifoerr,
-		rr->nfifowatch,
+		rr->nfifowatch, rr->nwatchtick,
 		pacfg2, pacfg2 & Papowerramp,
 		patenths/10, patenths < 0? -patenths%10: patenths%10,
 		/*

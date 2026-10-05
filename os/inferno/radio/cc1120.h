@@ -94,6 +94,9 @@ struct Cc1120
 	 * have been permanent.
 	 */
 	u32	nfifowatch;
+	/* and how many times the watchdog looked, so that a zero
+	 * nfifowatch can be told from a watchdog that never ran */
+	u32	nwatchtick;
 	uchar	rxstatus[2];		/* the two bytes APPEND_STATUS adds */
 
 	QLock	qlock;			/* one user of the part at a time */
