@@ -1974,7 +1974,10 @@ VMSERVE: /net/ether0 10.0.2.15
 check-styxvm: M9 pass -- a Linux guest made, assigned a device, run and talked to from hosted Inferno over Styx
 .ft
 .DE
-check-vf on the 82576 passes unchanged.
+check-vf on the 82576 passes unchanged.  On
+.CW scripts/mkqemu.sh 's
+build of the release and the seven patches, check-qemu-ixgbe and
+check-vf on the X520's VFs pass again.
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
