@@ -1637,6 +1637,78 @@ runs M3 on a host of one hart and on a host of four, and every stage
 passes on both machines.  The console read on the PC platform had the
 same stale wakeup and loops the same way; check-vm passes every stage
 on SVM with these changes.
+.IP "Phase 9: M8's network half on VMX (Bochs)." 4
+The Bochs bench had one NIC and no second for a guest's virtio-net to
+bridge to.
+.CW scripts/bochs-vm.sh
+now takes
+.CW BOCHS_NICS=n :
+n of Bochs's e1000s (82540EM, which
+.CW etherigbe
+drives), each on a slirp network of its own, so that
+.CW #l1/ether1
+is there as on the QEMU bench.
+.CW vmhost.sh 's
+.CW VMHOST_NIC1
+puts QEMU's e1000 in the igb's place the same way.
+.IP
+The first run with two NICs did not reach
+.CW vmlinux
+in 45 minutes.  Stopped in Bochs's debugger, every sample of RIP was in
+.CW checktracked() ,
+which
+.CW xec()
+called after every Dis instruction to scan a table of 1024 watched
+words: the crash hunt's instruments in
+.CW libinterp ,
+taken out in
+.CW 9681d0087
+and put back with the multicore Dis VM
+.CW 39e1da263 ), (
+whose
+.CW libinterp
+predated their removal.  They are out again \(en the tracker and its
+registration in
+.CW initmem() ,
+the per-Prog
+.CW wmtrace
+ring, the
+.CW movp
+and
+.CW destroy
+probes,
+.CW scanframe()
+on every frame teardown, and
+.CW gc.c 's
+per-cell checks \(en with what the multicore VM added kept:
+.CW framerefs ,
+the collector handover in
+.CW destroy() ,
+whose underflow report is now a panic.  The same run then took 37
+minutes from power-on to the end, on the VMX backend, one processor,
+1 GiB, two e1000s:
+.DS
+.ft CW
+#l0: i82543: 1000Mbps port 0xC0000000 irq 9 ea 525400123450
+#l1: i82543: 1000Mbps port 0xC0020000 irq 11 ea 525400123451
+vmlinux: virtio net on #l1/ether1
+vm 0 backend vmx mem 268435456 vcpus 1
+LINUXGUEST: vda says INFERNO-VIRTIO-DISK
+LINUXGUEST: made a root on vdb
+LINUXGUEST: dhcp udhcpc: lease of 10.0.2.15 obtained from 10.0.2.2, lease time 86400
+LINUXGUEST: eth0 rx 2 packets 0 length errors tx 3
+LINUXTEST: disk sector 1: guest-wrote-this
+LINUXTEST: booting on the virtio disk
+LINUXGUEST: root /dev/vda ext2
+LINUXGUEST: on disk
+LINUXTEST: done
+.ft
+.DE
+M8 is met on VMX, network half included.  M5 is not exercised on
+VMX: Bochs has no IOMMU to assign a function through.
+On QEMU, with every kernel rebuilt without the instruments, check-vm
+(SVM; M4 under VT-d and AMD-Vi, interrupt remapping on) and check-rv
+(M1 to M4, M3 on hosts of one and four harts) pass every stage.
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
@@ -1653,7 +1725,7 @@ are modules.  M8 is done on SVM, including Linux booting on the virtio
 disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
 its /bin, /lib and /init) on its second disk, and a second guest given
 that disk alone and linuxguest.root=vda mounts it from the initramfs
-and switches to it.  M3 is done on VMX too (Bochs, two processors).
+and switches to it.  M3 is done on VMX too (Bochs, two processors), and M8 with its network half (Bochs, two e1000s).
 Since: the RISC-V IOMMU (M4) and a device assigned through it (M5) on
 RISC-V; a riscv64 host of four harts; M3 under MTTCG (a QEMU race,
 fixed); AMD-Vi, VT-d queued invalidation and interrupt remapping; Limbo

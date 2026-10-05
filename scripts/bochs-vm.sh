@@ -17,7 +17,10 @@
 # BOCHS_TAG runs another instance beside the first, with its own work
 # directory and logs (.bochs/serial-TAG.log).  BOCHS_MEGS sets the
 # machine's memory (512 MiB by default), BOCHS_CPUS
-# its processors (1).
+# its processors (1).  BOCHS_NICS=n gives it n (up to 4) e1000s
+# (82540EM, etherigbe's), each on a user network of its own (Bochs's
+# slirp: 10.0.2.x, DHCP from 10.0.2.2), so that #l1/ether1 is there for
+# a guest's virtio-net to bridge to, as on the QEMU bench.
 #
 #	-c cpu	a Bochs CPU model; default corei7_skylake_x (VMX, EPT,
 #		unrestricted guest).  ryzen gives SVM with nested paging.
@@ -89,6 +92,11 @@ info: ${BOCHS_INFO:-action=ignore}
 debug: action=ignore
 clock: sync=none, time0=local
 RC
+n=0
+while [ $n -lt "${BOCHS_NICS:-0}" ]; do
+	echo "e1000: card=$n, enabled=1, mac=52:54:00:12:34:5$n, ethmod=slirp" >>"$WORK/bochsrc"
+	n=`expr $n + 1`
+done
 
 # Bochs is built with its debugger, which starts at its prompt; the
 # command file tells it to run.  BOCHS_STOPAT=n stops it after n
