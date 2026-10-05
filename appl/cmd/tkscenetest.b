@@ -28,7 +28,7 @@ include "sys.m";
 	sys: Sys;
 include "draw.m";
 	draw: Draw;
-	Display, Image, Rect, Point: import draw;
+	Display, Image, Rect, Point, Screen: import draw;
 include "tk.m";
 	tk: Tk;
 	Toplevel: import tk;
@@ -114,6 +114,94 @@ paint(disp: ref Display, name: string, cmds: list of string): array of byte
 		sys->print("FAIL readpixels: %r\n");
 		return nil;
 	}
+	return b;
+}
+
+#
+# A posted menu, which needs a Screen and so cannot go through paint().
+#
+# A posted menu is a separate WINDOW and asks the window system for a backing
+# image; offscreen there is nobody to answer, so it gets a rectangle and draws
+# nothing unless it is handed one -- the trap tkofftest(1)'s checkmenu()
+# records, where the check read "0 pixels" and would have passed as a menu
+# that draws nothing.  The window is made over the same Screen as the
+# toplevel, so what the menu draws lands in the image this reads back.
+#
+# Two items earn their place rather than padding the menu:
+#
+#   a SEPARATOR paints into the window itself, which makes the walk FLUSH in
+#   the middle of the menu -- the case that says drawmenu must not hold the
+#   walk's tree in a variable across it, because the flush frees it;
+#
+#   and `activate' is required, because the slab behind an item is the
+#   background colour unless the pointer is on it, so without it the menu's
+#   own fill node is the same colour as what is already there and a
+#   perturbation of it changes no pixel.
+#
+# The cascade is the point: its arrow is the one thing tkdrawlabel() drew with
+# fillpoly() rather than through a node, and it is only ever seen posted.
+#
+paintmenu(disp: ref Display, post: int): array of byte
+{
+	off := disp.newimage(Rect((0,0),(W,H)), draw->RGB24, 0, Draw->White);
+	if(off == nil){
+		sys->print("FAIL menu: newimage: %r\n");
+		return nil;
+	}
+	scr := Screen.allocate(off, disp.color(Draw->White), 0);
+	if(scr == nil){
+		sys->print("FAIL menu: Screen.allocate: %r\n");
+		return nil;
+	}
+	win := scr.newwindow(off.r, Draw->Refbackup, Draw->Nofill);
+	top := tk->toplevel(disp, "");
+	if(win == nil || top == nil){
+		sys->print("FAIL menu: no window or toplevel: %r\n");
+		return nil;
+	}
+	for(l := list of {"menu .mn", ".mn add command -label {Open}",
+	    ".mn add separator", ".mn add cascade -label {Recent}",
+	    ".mn add command -label {Close}"}; l != nil; l = tl l){
+		c := tk->cmd(top, hd l);
+		if(c != nil && len c > 0 && c[0] == '!'){
+			sys->print("FAIL menu: `%s\' -> %s\n", hd l, c);
+			return nil;
+		}
+	}
+	if((e := tk->putimage(top, ". -1", win, nil)) != nil && len e > 0){
+		sys->print("FAIL menu: putimage toplevel: %s\n", e);
+		return nil;
+	}
+	#
+	# With post == 0 the menu is BUILT and never posted, which is the
+	# control: `28800 bytes of ink' for the posted version proves only
+	# that the toplevel painted its own grey background, since inked()
+	# counts bytes differing from white.  The two must differ, or this
+	# case is comparing two empty toplevels and says nothing about a
+	# menu -- the same failure tkofftest(1) hit when the menu had no
+	# backing image and the check read "0 pixels not the background".
+	#
+	if(post){
+		mw := scr.newwindow(Rect((4,2),(W-4,H-2)), Draw->Refbackup, Draw->Nofill);
+		if(mw == nil){
+			sys->print("FAIL menu: no window for the menu itself: %r\n");
+			return nil;
+		}
+		tk->cmd(top, ".mn post 4 2");
+		if((e = tk->putimage(top, ".mn -1", mw, nil)) != nil && len e > 0){
+			sys->print("FAIL menu: putimage menu: %s\n", e);
+			return nil;
+		}
+		tk->cmd(top, ".mn activate 1");
+	}
+	tk->cmd(top, "update");
+	b := array[W*H*3] of byte;
+	if(off.readpixels(off.r, b) != len b){
+		sys->print("FAIL menu: readpixels: %r\n");
+		return nil;
+	}
+	if(post)
+		tk->cmd(top, ".mn unpost");
 	return b;
 }
 
@@ -247,6 +335,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		"canvas with items", "listbox with a selection",
 		"text with content", "scale at a value",
 		"scrollbar part-scrolled", "non-default font", "frame -relief",
+		# the four the BUGS section used to list as uncovered
+		"focused entry", "clipped label", "non-default colours",
+		"canvas -fill by name", "canvas polygon", "label -bitmap",
 	};
 	cases := array[] of {
 		list of {"label .w -text Label", "pack .w"},
@@ -301,6 +392,54 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		# A relief is the border conversion rather than the fill.
 		list of {"frame .w -width 80 -height 30 -relief sunken -borderwidth 2",
 			"pack .w"},
+
+		# A focused entry draws its ring, and draws it BEFORE the
+		# border: entry.c:537 says a ring after the border puts a
+		# square corner where the border has just cut the widget away.
+		# tkhaskeyfocus() gates it (entry.c:513), so an unfocused
+		# entry never reaches either path.
+		list of {"entry .w -width 50", "pack .w",
+			".w insert 0 focus", "focus .w"},
+
+		# Bigger than the image it is rendered into, so the right and
+		# bottom are clipped.  Nothing else here crosses a clip
+		# boundary, and a node that describes a box it does not
+		# entirely fill is the case a backend has to get right.
+		list of {"label .w -text clipped -width 400 -height 200",
+			"pack .w"},
+
+		# A colour scheme that is not the default, by NAME rather than
+		# by #RRGGBB -- which is the branch of tkparsecolor that
+		# 7l's undefined all-ones mask sat in.  Named colours are
+		# therefore load-bearing coverage, not decoration.
+		list of {"label .w -text colours -background red -foreground white",
+			"pack .w"},
+
+		# The same branch again from the canvas side, kept separate
+		# because a canvas item's fill and a widget's background are
+		# different conversions that happen to share the parser.
+		list of {"canvas .w -width 120 -height 40", "pack .w",
+			".w create rectangle 5 5 110 35 -fill green"},
+
+		# A FILLED POLYGON, which is TkNpolyfill -- the node kind a
+		# menu cascade's arrow uses (tktriangle(), one fillpoly() of
+		# three points).  Nothing else here emits one: the canvas case
+		# above has a rectangle, a line, an oval and a string, and a
+		# posted menu is out of this harness's reach.  So the node kind
+		# is covered even though the widget that normally produces it
+		# is not.
+		list of {"canvas .w -width 120 -height 40", "pack .w",
+			".w create polygon 10 35 60 5 110 35 -fill blue"},
+
+		# TkNtexture, which no other case emits.  The node names a
+		# FILE rather than carrying pixels -- which is why an image
+		# that came from a file descriptor is the one thing the
+		# vocabulary cannot describe -- so this needs a real path in
+		# the tree.  A one-bit icon painted THROUGH in the foreground
+		# colour is how the chrome's own artwork is drawn.  A bare name
+		# resolves to /icons/tk/<name> (parse.c:845), not to an
+		# absolute path -- an absolute one gives !failed to load bitmap.
+		list of {"label .w -bitmap audio.bit", "pack .w"},
 	};
 	if(len names != len cases){
 		sys->print("tkscenetest: %d names for %d cases\n", len names, len cases);
@@ -321,10 +460,40 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	# (/fonts/pelm/unicode.8.font, which is also Tk's default), so there
 	# is no second face there and skipping is the honest outcome.
 	#
+	#
+	# Each of these must come out DIFFERENT from the plain case it is a
+	# variation of, or it is covering nothing and is skipped.  The font
+	# case taught this; the rest are held to the same standard rather
+	# than trusted because they are newer.  `focus .w' setting the focus,
+	# a 400x200 label actually being clipped by a 160x60 image, and a
+	# named colour reaching the widget at all are each assumptions, and
+	# an assumption that is cheap to check should be checked.
+	#
 	optional := array[len names] of {* => -1};
-	for(oi := 0; oi < len names; oi++)
-		if(names[oi] == "non-default font")
-			optional[oi] = 0;	# must differ from case 0, the plain label
+	base := array[] of {
+		("non-default font",        "label"),
+		("focused entry",           "entry"),
+		("clipped label",           "label"),
+		("non-default colours",     "label"),
+		("canvas -fill by name",    "canvas"),
+		("canvas polygon",          "canvas"),
+		("label -bitmap",           "label"),
+	};
+	for(bi := 0; bi < len base; bi++){
+		(who, against) := base[bi];
+		wi := ai := -1;
+		for(oi := 0; oi < len names; oi++){
+			if(names[oi] == who)
+				wi = oi;
+			if(names[oi] == against && ai < 0)
+				ai = oi;
+		}
+		if(wi < 0 || ai < 0){
+			sys->print("tkscenetest: internal: no case `%s\' or `%s\'\n", who, against);
+			raise "fail:internal";
+		}
+		optional[wi] = ai;
+	}
 
 	sys->print("tkscenetest: %d cases, %dx%d RGB24\n", len cases, W, H);
 
@@ -353,6 +522,14 @@ init(ctxt: ref Draw->Context, argv: list of string)
 			sys->sprint("direct: %s drew something (%d bytes of ink)",
 				names[i], inked(dpix[i])));
 	}
+
+	# The posted menu, its own path because it needs a Screen.
+	dmenu := paintmenu(disp, 1);
+	dnomenu := paintmenu(disp, 0);
+	dmd := differ(dmenu, dnomenu);
+	report(dmd > 0,
+		sys->sprint("a POSTED menu differs from the same menu unposted (%d bytes) -- so the menu really drew",
+			dmd));
 
 	# NEGATIVE CONTROL for the comparison itself: two DIFFERENT widgets
 	# must not compare equal.  Without this, a differ() that always
@@ -437,6 +614,13 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		}
 	}
 	report(bok, sys->sprint("the trees marked a non-empty box inside the image (%s)", bs));
+
+	smenu := paintmenu(disp, 1);
+	if(dmenu != nil && smenu != nil){
+		dm := differ(dmenu, smenu);
+		report(dm == 0, sys->sprint("scene == direct: a posted menu with a cascade (%d bytes differ)", dm));
+	}else
+		report(0, "the posted menu was rendered in both paths");
 
 	# And the identity itself.
 	for(i = 0; i < len cases; i++){
