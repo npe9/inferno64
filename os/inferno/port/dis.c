@@ -555,12 +555,18 @@ vmacquire(void)
 			while(gcstw)	/* do not start while a collection runs */
 				sched();
 		up->vmheld = 1;
-		if(up->pctx != nil){
+#ifdef DISCTXREG
+		if(up->pctx != nil)
 			curP = (Pctx*)up->pctx;
-#ifndef DISCTXREG
-			curR = &curP->reg;
+#else
+		/*
+		 * curP is the one executor's: it becomes this process's
+		 * here, as it acquires the VM, and sched() does not touch it
+		 * for a process that does not hold the VM (proc.c).
+		 */
+		curP = up->pctx != nil ? (Pctx*)up->pctx : defpctx;
+		curR = &curP->reg;
 #endif
-		}
 		{	/* MULTICORE INSTRUMENTATION - temporary */
 			int n = ainc(&nvm);
 			if(n > maxnvm){

@@ -378,3 +378,28 @@ fdtimsicguests(uvlong *base, uvlong *size, int *bits)
 	*bits = f.bits;
 	return 1;
 }
+
+static uintptr
+matchcpu(char *name, uchar *props, int, int, void *a)
+{
+	uchar *dt;
+	u32int len;
+
+	if(strncmp(name, "cpu@", 4) != 0)
+		return 0;
+	dt = fdtprop(props, "device_type", &len);
+	if(dt != nil && len >= 4 && strcmp((char*)dt, "cpu") == 0)
+		(*(int*)a)++;
+	return 0;
+}
+
+/* how many processors (cpu@ nodes of device_type cpu) the tree has */
+int
+fdtncpu(void)
+{
+	int n;
+
+	n = 0;
+	fdtwalk(matchcpu, &n);
+	return n;
+}

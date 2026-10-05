@@ -21,10 +21,11 @@ clintmtime(void)
 	return *(volatile uvlong*)(uintptr)(CLINT + ClintMtime);
 }
 
+/* this hart's comparator */
 static void
 clintsetcmp(uvlong when)
 {
-	*(volatile uvlong*)(uintptr)(CLINT + ClintMtimecmp) = when;
+	*(volatile uvlong*)(uintptr)(CLINT + ClintMtimecmp + 8*m->machno) = when;
 }
 
 /*
@@ -90,6 +91,18 @@ clockintr(Ureg *u)
 	/* Clear MTIP; final deadline set after timercheck. */
 	clintsetcmp(hznext);
 
+	/*
+	 * The other harts tick and preempt; the soft timers, the alarms
+	 * and the clock links are hart 0's (stubs.c's timerset programs
+	 * its comparator).
+	 */
+	if(m->machno != 0){
+		ticksync();
+		if(u != nil && up != nil && up->state == Running)
+			hzsched();
+		return;
+	}
+
 	/* Sample interrupted PC for #K; skip soft clockpoll(nil) path. */
 	if(kproftick != nil && u != nil)
 		kproftick((ulong)u->pc);
@@ -128,6 +141,7 @@ clockinit(void)
 	m->ticks = 0;
 	clintsetcmp(clintmtime() + m->cpuhz/HZ);
 	mtimerie();			/* mie.MTIE; mstatus.MIE via spllo */
+	msoftie();			/* and another hart's poke (hartpoke) */
 }
 
 void
@@ -136,13 +150,15 @@ clockpoll(void)
 	int c;
 	uvlong cmp;
 
+	mtimerie();	/* Bounce busy-path used to leave MTIE clear */
+	ticksync();
+	if(m->machno != 0)
+		return;		/* the console and the soft timers are hart 0's */
 	/* poll UART RX into uartrecv → kbdq */
 	if(consuart != nil && consuart->phys->getc != nil){
 		while((c = consuart->phys->getc(consuart)) >= 0)
 			uartrecv(consuart, c);
 	}
-	mtimerie();	/* Bounce busy-path used to leave MTIE clear */
-	ticksync();
 	cmp = *(volatile uvlong*)(uintptr)(CLINT + ClintMtimecmp);
 	if(clintmtime() >= cmp)
 		clockintr(nil);

@@ -100,6 +100,10 @@ enum {
 
 	Implid		= 0x494E46,	/* "INF", for whoever asks */
 
+	/* remote fences, as Plat.fence's bits */
+	Fencei		= 1,
+	Fencevma	= 2,
+
 	/* vsie, in the S positions */
 	Stie		= 1<<5,
 	Seie		= 1<<9,
@@ -137,11 +141,12 @@ struct Plat
 	uvlong	startpc[Maxvcpu];
 	uvlong	startarg[Maxvcpu];
 	int	ssip[Maxvcpu];		/* an IPI for it, for its hvip */
+	int	fence[Maxvcpu];		/* fences it owes before its next entry: Fencei, Fencevma */
 	uvlong	nipi;
 
 	/* the APLIC, AIA's in place of the PLIC */
 	int	aia;			/* the processor has a guest file for every hart */
-	int	gfile[Maxvcpu];		/* hart h's guest file, mapped at Imsicbase + 0x1000*h */
+	int	gfile[Maxvcpu];		/* hart h's guest file on its processor (gfilepage); the guest sees it at Imsicbase + 0x1000*h */
 	u32int	domaincfg;
 	u32int	srccfg[Nsrc];
 	u32int	target[Nsrc];
@@ -167,6 +172,7 @@ static void	setreg(Vcpu*, int, uvlong);
 extern void	rvhfencevvma(void);
 extern void	rvfencei(void);
 static void	rvfences(int);
+static void	remotefences(Vcpu*, Plat*, uvlong, uvlong, int);
 
 void*
 vmplatnew(Vm *vm)
@@ -246,6 +252,33 @@ plicupdate(Plat *p)
 			p->eip = 1;
 }
 
+/*
+ * Make vCPU h look at its interrupts again: wake it if it sleeps in a
+ * WFI, and poke its processor if that is another one, so that a vCPU
+ * in the guest there exits now rather than at that processor's next
+ * tick (hartpoke).
+ */
+static void
+kickvcpu(Plat *p, Vm *vm, int h)
+{
+	p->kick[h] = 1;
+	wakeup(&vm->vcpu[h]->r);
+	hartpoke(vm->vcpu[h]->machno);
+}
+
+/*
+ * Hart h's guest interrupt file: number gfile[h] of the supervisor-level
+ * IMSIC of the processor it runs on, each processor's IMSIC 2^guestbits
+ * pages from the last (QEMU's virt; the device tree gives the bits).
+ */
+static volatile u32int*
+gfilepage(Plat *p, Vm *vm, int h)
+{
+	return (volatile u32int*)(guestimsic
+		+ ((uintptr)vm->vcpu[h]->machno << (guestbits + 12))
+		+ 0x1000*p->gfile[h]);
+}
+
 static void
 kickall(Vm *vm)
 {
@@ -253,10 +286,8 @@ kickall(Vm *vm)
 	int i;
 
 	p = PLAT(vm);
-	for(i = 0; i < vm->nvcpu; i++){
-		p->kick[i] = 1;
-		wakeup(&vm->vcpu[i]->r);
-	}
+	for(i = 0; i < vm->nvcpu; i++)
+		kickvcpu(p, vm, i);
 }
 
 /* vvirq: a device's line, from the vCPU's kproc or a device's own */
@@ -382,11 +413,10 @@ sendmsi(Plat *p, Vm *vm, int src)
 	p->aip &= ~(1<<src);
 	if(h >= vm->nvcpu)
 		return;		/* nowhere to send it */
-	*(volatile u32int*)(guestimsic + 0x1000*(h+1)) = t & 0x7FF;
+	*gfilepage(p, vm, h) = t & 0x7FF;
 	coherence();
 	p->nmsi++;
-	p->kick[h] = 1;
-	wakeup(&vm->vcpu[h]->r);
+	kickvcpu(p, vm, h);
 }
 
 /* source src pending: sent at once if the domain and source allow */
@@ -551,11 +581,10 @@ imsicmmio(Plat *p, Vm *vm, uvlong off, int write, u32int *val)
 		return 1;
 	if(off == 4)	/* seteipnum_be */
 		*val = (*val>>24) | (*val>>8 & 0xFF00) | (*val<<8 & 0xFF0000) | *val<<24;
-	*(volatile u32int*)(guestimsic + 0x1000*(h+1)) = *val;
+	*gfilepage(p, vm, h) = *val;
 	coherence();
 	p->nmsi++;
-	p->kick[h] = 1;
-	wakeup(&vm->vcpu[h]->r);
+	kickvcpu(p, vm, h);
 	return 1;
 }
 
@@ -577,10 +606,9 @@ vmplatmsi(Vm *vm, u32int addr, u32int data)
 		return;
 	}
 	h = (addr - Imsicbase) / 0x1000;
-	*(volatile u32int*)(guestimsic + 0x1000*(h+1)) = data;
+	*gfilepage(p, vm, h) = data;
 	coherence();
-	p->kick[h] = 1;
-	wakeup(&vm->vcpu[h]->r);
+	kickvcpu(p, vm, h);
 }
 
 /*
@@ -642,8 +670,7 @@ sendipis(Vcpu *v, Plat *p, uvlong mask, uvlong base)
 			continue;
 		}
 		p->ssip[h] = 1;
-		p->kick[h] = 1;
-		wakeup(&vm->vcpu[h]->r);
+		kickvcpu(p, vm, h);
 	}
 }
 
@@ -750,7 +777,8 @@ dosbi(Vcpu *v, Plat *p)
 	case Xfencei:
 	case Xsfencevma:
 	case Xsfencevmaasid:
-		rvfences(eid == Xfencei);
+		/* a0 is the address of the hart mask: all of them */
+		remotefences(v, p, ~0ULL, ~0ULL, eid == Xfencei ? Fencei : Fencevma);
 		setreg(v, RvA0, 0);
 		goto legacy;
 	case Xshutdown:
@@ -768,12 +796,8 @@ dosbi(Vcpu *v, Plat *p)
 			err = Enotsupp;
 			break;
 		}
-		/*
-		 * The harts share this processor, and a switch between
-		 * them flushes the guest's translations (vmrv.c); this
-		 * one's, here, is all that is left to do.
-		 */
-		rvfences(fid == 0);
+		/* hart_mask a0 from hart_mask_base a1, as for IPIs */
+		remotefences(v, p, a0, a1, fid == 0 ? Fencei : Fencevma);
 		break;
 	case Xhsm:
 		switch(fid){
@@ -796,6 +820,7 @@ dosbi(Vcpu *v, Plat *p)
 				coherence();
 				p->startreq[a0] = 1;
 				wakeup(&v->vm->vcpu[a0]->r);
+				hartpoke(v->vm->vcpu[a0]->machno);
 			}
 			break;
 		default:
@@ -884,8 +909,16 @@ void
 vmplatintr(Vcpu *v)
 {
 	Plat *p;
+	int f;
 
 	p = PLAT(v->vm);
+	if(p->fence[v->id]){
+		ilock(p);
+		f = p->fence[v->id];
+		p->fence[v->id] = 0;
+		iunlock(p);
+		rvfences(f);
+	}
 	if(timerdue(v, p)){
 		p->timer[v->id] = ~0ULL;
 		setreg(v, RvHvip, reg(v, RvHvip) | RvVsti);
@@ -962,10 +995,52 @@ out:
 static void
 rvfences(int i)
 {
-	if(i)
+	if(i & Fencei)
 		rvfencei();
-	else
+	if(i & Fencevma)
 		rvhfencevvma();
+}
+
+/*
+ * A remote fence: the harts in the mask fence on their own processors.
+ * This one fences now; each other owes the fence at its next entry
+ * (vmplatintr), and one in the guest on another processor is poked out
+ * of it and waited for, since until the call returns it may still use
+ * what the fence is to remove, and after, it may not.  One that is not
+ * in the guest cannot use anything before it fences.
+ */
+static void
+remotefences(Vcpu *v, Plat *p, uvlong mask, uvlong base, int kind)
+{
+	Vm *vm;
+	Vcpu *t;
+	int h, n;
+
+	vm = v->vm;
+	for(h = 0; h < vm->nvcpu; h++){
+		if(base != ~0ULL && (h < base || h - base >= 64 || (mask & 1ULL<<(h - base)) == 0))
+			continue;
+		if(h == v->id){
+			rvfences(kind);
+			continue;
+		}
+		t = vm->vcpu[h];
+		ilock(p);
+		p->fence[h] |= kind;
+		iunlock(p);
+		if(t->machno != m->machno)
+			hartpoke(t->machno);
+	}
+	for(h = 0; h < vm->nvcpu; h++){
+		t = vm->vcpu[h];
+		if(h == v->id || t->machno == m->machno)
+			continue;	/* on this processor it is not running now */
+		for(n = 0; p->fence[h] != 0 && rvinguest(t); n++){
+			coherence();
+			if(n % 1000 == 999)
+				hartpoke(t->machno);
+		}
+	}
 }
 
 /*
@@ -1246,15 +1321,25 @@ vmplatconsread(Vm *vm, void *a, long n)
 	long i;
 
 	p = PLAT(vm);
-	sleep(&p->consr, consready, p);
-	if(p->hungup && p->uart.outr == p->uart.outw)
-		error(Ehungup);
 	b = a;
-	ilock(p);
-	for(i = 0; i < n && p->uart.outr != p->uart.outw; i++)
-		b[i] = p->uart.out[p->uart.outr++ % Uartout];
-	iunlock(p);
-	return i;
+	/*
+	 * Again until there is something: a wakeup can be stale.  The
+	 * guest's store on another processor moves outw and wakes
+	 * afterwards, by when this reader may have taken that output
+	 * already and slept again -- and a read of nothing is the end of
+	 * the file to whoever reads it.
+	 */
+	for(;;){
+		sleep(&p->consr, consready, p);
+		if(p->hungup && p->uart.outr == p->uart.outw)
+			error(Ehungup);
+		ilock(p);
+		for(i = 0; i < n && p->uart.outr != p->uart.outw; i++)
+			b[i] = p->uart.out[p->uart.outr++ % Uartout];
+		iunlock(p);
+		if(i > 0)
+			return i;
+	}
 }
 
 long
@@ -1262,17 +1347,13 @@ vmplatconswrite(Vm *vm, void *a, long n)
 {
 	Plat *p;
 	long i;
-	int j;
 
 	p = PLAT(vm);
 	ilock(p);
 	i = vuartinput(&p->uart, a, n);
 	p->nin += i;
-	for(j = 0; j < vm->nvcpu; j++)
-		p->kick[j] = 1;
 	iunlock(p);
-	for(j = 0; j < vm->nvcpu; j++)
-		wakeup(&vm->vcpu[j]->r);
+	kickall(vm);
 	return i;
 }
 

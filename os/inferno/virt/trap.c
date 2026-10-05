@@ -8,6 +8,7 @@
 #include "../port/pci.h"
 
 enum {
+	IrqSoft		= 3,	/* machine software: CLINT msip, another hart's poke */
 	IrqTimer	= 7,	/* machine timer */
 	IrqExternal	= 11,	/* machine external (PLIC) */
 };
@@ -251,6 +252,9 @@ trap(Ureg *ur)
 		switch((int)code){
 		case IrqTimer:
 			clockintr(ur);
+			return;
+		case IrqSoft:
+			*(volatile u32int*)(CLINT + ClintMsip + 4*m->machno) = 0;
 			return;
 		case IrqExternal:
 			if(imsicbase != 0){

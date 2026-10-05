@@ -110,6 +110,7 @@ timerset(vlong when)
 	/* Never push MTIP past the next HZ tick — ticks/NOW must keep moving. */
 	if(w > hznext)
 		w = hznext;
+	/* hart 0's comparator, whichever hart adds the timer: timercheck runs there */
 	*(volatile uvlong*)(uintptr)(CLINT + ClintMtimecmp) = w;
 }
 

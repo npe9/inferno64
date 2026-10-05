@@ -21,7 +21,8 @@ enum {
 
 /* CLINT (Core Local Interruptor) */
 enum {
-	ClintMtimecmp	= 0x4000,	/* per-hart offset; hart0 */
+	ClintMsip	= 0x0000,	/* 4 bytes a hart: its software interrupt */
+	ClintMtimecmp	= 0x4000,	/* 8 bytes a hart */
 	ClintMtime	= 0xbff8,
 };
 

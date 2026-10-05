@@ -411,7 +411,8 @@ vcpucmd(Vcpu *v, void (*f)(Vcpu*, void*), void *arg)
 		qunlock(&v->cmdlk);
 		nexterror();
 	}
-	sleep(&v->cmdr, vcpuinitdone, v);
+	while(!vcpuinitdone(v))
+		sleep(&v->cmdr, vcpuinitdone, v);
 	if(v->state == VcpuDead)
 		error(v->err);
 	if(v->state == VcpuRunning)
@@ -421,7 +422,8 @@ vcpucmd(Vcpu *v, void (*f)(Vcpu*, void*), void *arg)
 	v->cmdarg = arg;
 	v->cmd = f;
 	wakeup(&v->r);
-	sleep(&v->cmdr, cmddone, v);
+	while(!cmddone(v))
+		sleep(&v->cmdr, cmddone, v);
 	if(v->cmderr != nil)
 		error(v->cmderr);
 	poperror();
@@ -525,7 +527,8 @@ setvcpus(Vm *vm, int n)
 		error("vcpus cannot be taken away");
 	while(vm->nvcpu < n){
 		v = newvcpu(vm);
-		sleep(&v->cmdr, vcpuinitdone, v);
+		while(!vcpuinitdone(v))
+			sleep(&v->cmdr, vcpuinitdone, v);
 		if(v->state == VcpuDead)
 			error(v->err);
 	}
@@ -865,6 +868,11 @@ hostinfo(char *p, char *e)
 		vmops != nil ? vmops->name : "none", conf.nmach, xfreebytes(), xlargest(), nvm, nvcpu, mem);
 }
 
+/*
+ * Every sleep here is in a loop on its condition: a wakeup can be
+ * stale, made on another processor for a change this process has
+ * already seen and slept again after, and sleep() does not look again.
+ */
 static int
 exitready(void *a)
 {
@@ -881,7 +889,8 @@ exitread(Vcpu *v, char *a, s32 n, s64 off)
 	Vmexit x;
 
 	USED(off);
-	sleep(&v->exitr, exitready, v);
+	while(!exitready(v))
+		sleep(&v->exitr, exitready, v);
 	if(v->state == VcpuDead)
 		error(v->err);
 	if(v->quit)

@@ -24,4 +24,5 @@ enum {
 
 uvlong	rvtime(void);		/* the time CSR the guest reads */
 void	rvvgein(Vcpu*, int);	/* the guest interrupt file it runs with (hstatus.VGEIN) */
-uvlong	rvgeip(void);		/* hgeip: the guest files with an interrupt for their guest */
+uvlong	rvgeip(void);
+int	rvinguest(Vcpu*);	/* in the guest, between entry and exit */		/* hgeip: the guest files with an interrupt for their guest */

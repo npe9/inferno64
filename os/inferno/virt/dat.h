@@ -123,7 +123,7 @@ struct DevConf
 struct Mach
 {
 	/* OFFSETS OF THE FOLLOWING KNOWN BY l.s */
-	ulong	splpc;
+	uintptr	splpc;		/* l.s stores all 64 bits: a ulong here let the store run into machno */
 
 	int	machno;
 	Proc	*proc;
@@ -165,8 +165,17 @@ struct
 	s32	thunderbirdsarego;
 }active;
 
-#define	MACHP(n)	((Mach*)(void*)&mach0)
+#define	MACHP(n)	(machp[n])
+extern Mach	*machp[MAXMACH];	/* by hart: mach0, then startharts' (main.c) */
 
 extern Mach mach0;
-extern Mach *m;
-extern Proc *up;
+
+/*
+ * m and up are per processor, so registers: jc gives the first extern
+ * register it sees R7 and the next R6 (REGEXT, utils/jc/i.out.h), and
+ * compiled code allocates only R8 to R15, so no library touches them.
+ * m must stay first.  l.s sets them at boot and keeps the host's
+ * across a guest's run (rvrun, rvexit).
+ */
+extern register Mach *m;	/* R7 */
+extern register Proc *up;	/* R6 */

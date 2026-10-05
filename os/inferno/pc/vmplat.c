@@ -1288,20 +1288,29 @@ vmplatconsread(Vm *vm, void *a, long n)
 	long i;
 
 	p = PLAT(vm);
-	sleep(&p->consr, consready, p);
-	/*
-	 * What the guest wrote before it was killed is still here, in
-	 * the platform, which outlives the machine's memory: give it out
-	 * before saying the machine has gone.
-	 */
-	if(p->hungup && p->uart.outr == p->uart.outw)
-		error(Ehungup);
 	b = a;
-	ilock(p);
-	for(i = 0; i < n && p->uart.outr != p->uart.outw; i++)
-		b[i] = p->uart.out[p->uart.outr++ % Uartout];
-	iunlock(p);
-	return i;
+	/*
+	 * Again until there is something: a wakeup can be stale, made on
+	 * another processor for output this reader has already taken
+	 * before sleeping again, and a read of nothing is the end of the
+	 * file to whoever reads it.
+	 */
+	for(;;){
+		sleep(&p->consr, consready, p);
+		/*
+		 * What the guest wrote before it was killed is still here, in
+		 * the platform, which outlives the machine's memory: give it out
+		 * before saying the machine has gone.
+		 */
+		if(p->hungup && p->uart.outr == p->uart.outw)
+			error(Ehungup);
+		ilock(p);
+		for(i = 0; i < n && p->uart.outr != p->uart.outw; i++)
+			b[i] = p->uart.out[p->uart.outr++ % Uartout];
+		iunlock(p);
+		if(i > 0)
+			return i;
+	}
 }
 
 long

@@ -8,9 +8,20 @@
 #include "version.h"
 
 extern Mach mach0;
-Mach *m;
-Proc *up;
 Conf conf;
+
+/*
+ * The processors: machp[n] is hart n's Mach.  Hart 0's is mach0; the
+ * rest wait in l.s until startharts gives each a Mach and a stack
+ * (apmach, apsp, by hart) and rings its software interrupt.
+ */
+Mach	*machp[MAXMACH];
+uintptr	apmach[MAXMACH];
+uintptr	apsp[MAXMACH];
+
+enum {
+	Apstack	= 64*1024,	/* a hart's boot and scheduler stack, as hart 0's */
+};
 
 extern ulong kerndate;
 extern int cflag;
@@ -95,6 +106,7 @@ machinit(void)
 	m = &mach0;
 	memset(m, 0, sizeof(Mach));
 	m->machno = 0;
+	machp[0] = m;
 	m->cpuhz = 10000000;
 	m->delayloop = m->cpuhz/1000;
 	memset(&active, 0, sizeof(active));
@@ -226,7 +238,73 @@ main(void)
 		else
 			print("SNPRINT-ABI-FAIL %s\n", abibuf);
 	}
+	startharts();
 	userinit();
+	schedinit();
+}
+
+/*
+ * The other harts, as many as the device tree has up to MAXMACH, each
+ * with a Mach and a stack of its own; then this one waits a moment for
+ * each to say it is in its scheduler.
+ */
+void
+startharts(void)
+{
+	extern int fdtncpu(void);
+	uchar *p;
+	Mach *mp;
+	int n, h, ms;
+
+	n = fdtncpu();
+	if(n > MAXMACH)
+		n = MAXMACH;
+	if(n <= 1)
+		return;
+	conf.nmach = n;
+	for(h = 1; h < n; h++){
+		p = xspanalloc(BY2PG + Apstack, BY2PG, 0);
+		mp = (Mach*)p;
+		memset(mp, 0, sizeof(Mach));
+		mp->machno = h;
+		mp->cpuhz = m->cpuhz;
+		mp->delayloop = m->delayloop;
+		machp[h] = mp;
+		apsp[h] = (uintptr)p + BY2PG + Apstack;
+		coherence();
+		apmach[h] = (uintptr)mp;
+		coherence();
+		*(volatile u32int*)(CLINT + ClintMsip + 4*h) = 1;
+		for(ms = 0; ms < 1000 && !active.machs[h]; ms++)
+			delay(1);
+		if(!active.machs[h])
+			print("hart %d: did not start\n", h);
+	}
+	print("%d harts\n", n);
+}
+
+/*
+ * Make hart h take a machine software interrupt: out of a guest it is
+ * running, or out of WFI in its idle loop, now rather than at its next
+ * clock tick.  The interrupt itself does nothing (trap.c).
+ */
+void
+hartpoke(int h)
+{
+	if(h != m->machno)
+		*(volatile u32int*)(CLINT + ClintMsip + 4*h) = 1;
+}
+
+/* a hart other than 0, on its own stack with m its own (l.s) */
+void
+apmain(void)
+{
+	*(volatile u32int*)(CLINT + ClintMsip + 4*m->machno) = 0;	/* what woke it */
+	vectorinit();
+	clockinit();
+	lock(&active);
+	active.machs[m->machno] = 1;
+	unlock(&active);
 	schedinit();
 }
 

@@ -22,7 +22,9 @@
 #
 # And M3: virtsmp (rvsmpinit.b) boots the guest with four harts, the
 # rest started by the SBI's hart_start; all come online, eight busy
-# workers finish, every hart accounts time and takes IPIs.
+# workers finish, every hart accounts time and takes IPIs.  Twice: on
+# a host of one hart, the four vCPUs sharing it, and on a host of four
+# (-smp 4), a vCPU on each.
 #
 # And M4 on RISC-V: virtiommu (rviommuinit.b) under QEMU's
 # riscv-iommu-pci with an edu device: edu in a domain of its own copies
@@ -128,8 +130,9 @@ if [ -n "$CHECKRV_AIA" ]; then
 fi
 K=$ROOT/os/inferno/virt/ivirtsmp
 [ -f "$K" ] || { echo "check-rv: no $K; mk CONF=virtsmp in os/inferno/virt first" >&2; exit 1; }
+for hosthart in 1 4; do
 : >"$SER"
-timeout 3000 qemu-system-riscv64 -M $MACH -m 256 -display none -bios none -kernel "$K" \
+timeout 3000 qemu-system-riscv64 -M $MACH -smp $hosthart -m 256 -display none -bios none -kernel "$K" \
 	-monitor none -serial file:"$SER" </dev/null >/dev/null 2>&1 &
 n=0
 until tr -d '\r' <"$SER" >"$LOG"; grep -q 'RVSMP: done\|panic' "$LOG"; do
@@ -139,7 +142,7 @@ until tr -d '\r' <"$SER" >"$LOG"; grep -q 'RVSMP: done\|panic' "$LOG"; do
 done
 pkill -f "qemu-system-riscv6[4].*$K" 2>/dev/null
 tr -d '\r' <"$SER" >"$LOG"
-grep -a 'smp: Brought up\|^LINUXGUEST: \(smp\|cpu\|irq IPI[01]\)\|^platform\|panic\|BUG\|stall\|lockup' "$LOG" | sed 's/^/	/'
+grep -a ' harts$\|smp: Brought up\|^LINUXGUEST: \(smp\|cpu\|irq IPI[01]\)\|^platform\|panic\|BUG\|stall\|lockup' "$LOG" | sed 's/^/	/'
 ok=1
 grep -q '^LINUXGUEST: smp 4 processors, online 0-3' "$LOG" || ok=0
 [ `grep -c '^LINUXGUEST: worker [1-8] done' "$LOG"` -eq 8 ] || ok=0
@@ -148,13 +151,15 @@ for c in 0 1 2 3; do
 done
 grep '^LINUXGUEST: irq IPI[01]:' "$LOG" | awk '{ n = 0; for (i = 4; i <= 7; i++) if ($i > 0) n++; if (n > 1) found = 1 } END { exit !found }' || ok=0
 grep -q 'BUG\|soft lockup\|rcu.*stall' "$LOG" && ok=0
+[ $hosthart -gt 1 ] && { grep -q "^$hosthart harts\$" "$LOG" || ok=0; }
 if [ $ok = 1 ]; then
-	echo "check-rv: M3 ($TAG, 4 harts): pass"
+	echo "check-rv: M3 ($TAG, 4 harts on a host of $hosthart): pass"
 else
-	echo "check-rv: M3 ($TAG, 4 harts): FAIL"
+	echo "check-rv: M3 ($TAG, 4 harts on a host of $hosthart): FAIL"
 	tail -20 "$LOG" | sed 's/^/	/'
 	fail=1
 fi
+done
 K=$ROOT/os/inferno/virt/ivirtiommu
 [ -f "$K" ] || { echo "check-rv: no $K; mk CONF=virtiommu in os/inferno/virt first" >&2; exit 1; }
 : >"$SER"

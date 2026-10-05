@@ -15,6 +15,8 @@
 
 #define	MSTATUS	0x300
 #define	MIE	0x304
+#define	MHARTID	0xF14
+#define	MSIE	8		/* mie.MSIE — machine software (CLINT msip) */
 #define	MTVEC	0x305
 #define	MSCRATCH	0x340
 #define	MEPC	0x341
@@ -52,8 +54,19 @@
  */
 TEXT	_main(SB), 1, $-8
 	MOV	$setSB(SB), R3
+	/*
+	 * Every hart starts here.  Hart 0 boots the kernel; the rest
+	 * wait for it to give them a Mach and a stack (startharts,
+	 * main.c), asleep in WFI with only the software interrupt that
+	 * says so enabled -- mstatus.MIE is off, so it wakes and is not
+	 * taken.
+	 */
+	MOV	CSR(MHARTID), R12
+	BNE	R12, apwait0
 	MOV	R11, dtbptr(SB)		/* a1 holds the DTB physical address at boot */
 	MOV	$stack+(64*1024)(SB), SP
+	MOV	$mach0(SB), R7		/* m, an extern register (dat.h) */
+	MOV	R0, R6			/* up */
 	MOV	CSR(MSTATUS), R10
 	OR	$FSBITS, R10
 	MOV	R10, CSR(MSTATUS)
@@ -71,6 +84,34 @@ TEXT	_main(SB), 1, $-8
 	ADDD	F30, F30, F31		/* 2.0 */
 	JAL	LINK, main(SB)
 dead:
+	JMP	dead
+
+apwait0:
+	MOV	$MSIE, R10
+	MOV	R10, CSR(MIE)
+	MOV	R12, R14
+	SLL	$3, R14
+	MOV	$apmach(SB), R13
+	ADD	R14, R13		/* &apmach[hartid] */
+apwait:
+	MOV	0(R13), R7
+	BNE	R7, apgo
+	WORD	$(0x10500073)		/* WFI */
+	JMP	apwait
+apgo:
+	MOV	R0, CSR(MIE)		/* until its clock is set up */
+	MOV	$apsp(SB), R13
+	ADD	R14, R13
+	MOV	0(R13), SP
+	MOV	R0, R6
+	MOV	CSR(MSTATUS), R10
+	OR	$FSBITS, R10
+	MOV	R10, CSR(MSTATUS)
+	MOVD	fbits(SB), F29		/* hart 0 stored it before starting this one */
+	SUBD	F29, F29, F28
+	ADDD	F29, F29, F30
+	ADDD	F30, F30, F31
+	JAL	LINK, apmain(SB)
 	JMP	dead
 
 GLOBL	dtbptr(SB), $8
@@ -120,8 +161,7 @@ TEXT	splhi(SB), 1, $-4
 	MOV	$~MIEBIT, R11
 	AND	R11, R10
 	MOV	R10, CSR(MSTATUS)
-	MOV	$mach0(SB), R12
-	MOV	LINK, 0(R12)		/* m->splpc */
+	MOV	LINK, 0(R7)		/* m->splpc */
 	RET
 
 TEXT	spllo(SB), 1, $-4
@@ -132,8 +172,7 @@ TEXT	spllo(SB), 1, $-4
 	RET
 
 TEXT	splx(SB), 1, $-4
-	MOV	$mach0(SB), R12
-	MOV	LINK, 0(R12)
+	MOV	LINK, 0(R7)		/* m->splpc */
 	MOV	RARG, CSR(MSTATUS)
 	RET
 
@@ -165,6 +204,12 @@ TEXT	vectorinit(SB), 1, $-4
 TEXT	mtimerie(SB), 1, $-4
 	MOV	CSR(MIE), R10
 	OR	$MTIE, R10
+	MOV	R10, CSR(MIE)
+	RET
+
+TEXT	msoftie(SB), 1, $-4
+	MOV	CSR(MIE), R10
+	OR	$MSIE, R10
 	MOV	R10, CSR(MIE)
 	RET
 
@@ -256,7 +301,7 @@ TEXT	trapvec(SB), 1, $-4
 	MOV	(TRAPPAD+UREG_R3)(SP), R3
 	MOV	(TRAPPAD+5*XLEN)(SP), R5
 	MOV	(TRAPPAD+6*XLEN)(SP), R6
-	MOV	(TRAPPAD+7*XLEN)(SP), R7
+	/* not R7: m is this processor's, and a process preempted in trap() may come back on another */
 	MOV	(TRAPPAD+8*XLEN)(SP), R8
 	MOV	(TRAPPAD+9*XLEN)(SP), R9
 	MOV	(TRAPPAD+10*XLEN)(SP), R10
@@ -310,6 +355,8 @@ TEXT	trapvec(SB), 1, $-4
 #define	RV_FCSR		576
 #define	RV_HOSTF	584
 #define	RV_HOSTFCSR	840
+#define	RV_HOSTUP	848
+#define	RV_HOSTM	856
 #define	CSRRWSCRATCH8	WORD $0x34041473	/* csrrw x8, mscratch, x8 */
 
 #define	SAVEF(o) \
@@ -339,6 +386,8 @@ TEXT	trapvec(SB), 1, $-4
 TEXT	rvrun(SB), 1, $-4
 	MOV	SP, RV_HOSTSP(R8)
 	MOV	LINK, RV_HOSTRA(R8)
+	MOV	R6, RV_HOSTUP(R8)
+	MOV	R7, RV_HOSTM(R8)
 	SAVEF(RV_HOSTF)
 	MOV	CSR(FCSR), R10
 	MOV	R10, RV_HOSTFCSR(R8)
@@ -446,6 +495,8 @@ TEXT	rvexit(SB), 1, $-4
 	MOV	R10, CSR(MTVEC)
 	MOV	RV_HOSTSP(R8), SP
 	MOV	RV_HOSTRA(R8), LINK
+	MOV	RV_HOSTUP(R8), R6
+	MOV	RV_HOSTM(R8), R7
 	RET
 
 /* the CSRs vmrv.c reads and writes, one function each: the number is in the instruction */

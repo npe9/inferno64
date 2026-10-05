@@ -17,7 +17,7 @@
 #define	MIN(a, b)	((a) < (b)? (a): (b))
 #define	MAX(a, b)	((a) > (b)? (a): (b))
 
-#define	MAXMACH		1
+#define	MAXMACH		8
 #define	HZ		100
 /* Match pc64: traps use the interrupted kstack (TRAPPAD≈2KB) plus soft
  * cursor / draw under virtio input; 8KB overflowed → illegal insn at

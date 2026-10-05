@@ -1300,9 +1300,8 @@ does at EOI; eight runs since, none panicked.  What the polls
 corrupted is not found: the drivers' rings give buffers back only once
 used, and the receive length is the block's own.  Boot is slower with
 AIA too (21 seconds of guest uptime to its shell with four harts,
-against under one).  Still to do for M12 besides: the RISC-V IOMMU,
-and a host with more than one processor (the riscv64 port's MAXMACH
-is 1).
+against under one).  The RISC-V IOMMU and a host of more than one
+hart came after (below).
 .IP
 The corruption was found later, and was not AIA's: the riscv64 port's
 machine-mode trap entry lost R4 on every trap.  Its frame offsets are
@@ -1385,6 +1384,103 @@ move now maps every BAR on the bus again after taking the old pages.
 The x86 guests had never moved a BAR.
 .CW "CHECKRV_AIA=1 scripts/check-rv.sh"
 runs it as stage M5.
+.IP "Phase 15: a riscv64 host of four harts (QEMU virt -smp 4, TCG)." 4
+The riscv64 port ran one hart: every hart QEMU starts runs
+.CW _main ,
+and only hart 0 got anywhere sensible.  Now
+.CW m
+and
+.CW up
+are extern registers, R7 and R6 (jc gives the first two extern
+registers those, and compiled code allocates only R8 to R15, so no
+library touches them); harts other than 0 wait in
+.CW l.s ,
+asleep in WFI with only the machine software interrupt enabled, until
+.CW startharts
+gives each a Mach and a stack and rings its CLINT MSIP; each runs its
+own clock on its own comparator and schedules, while the soft timers,
+the alarms and the console's UART stay hart 0's.  A trap does not
+reload R7 on its way out \(en a process preempted inside
+.CW trap()
+may come back on another hart \(en and the guest's world switch keeps
+the host's R6 and R7 across the guest's run.
+.IP
+What it took, besides:
+.CW splhi
+stored
+.CW m->splpc
+with a 64-bit store into a 32-bit
+.CW ulong ,
+whose other half was
+.CW machno \(en
+hart 0's is 0, so it never showed, and every other hart's first
+.CW splhi
+made it hart 0.  A vCPU's kick (an IPI, a device's line, console
+input, hart_start) now pokes the processor it runs on
+.CW hartpoke ): (
+in the guest there it exits at once rather than at that processor's
+next tick, and asleep in WFI it wakes.  SBI's remote fences fenced only
+the calling hart, which on one hart was every vCPU's; now each target
+fences on its own processor before its next entry, and one in the
+guest is poked out and waited for.  With AIA a vCPU's guest interrupt
+file is on the processor that runs it
+.CW gfilepage ). (
+Dis's context pointer
+.CW curP
+is a global on this port, not a register (DISCTXREG, which amd64
+has): there is one executor, the VM lock's holder, and
+.CW sched()
+set
+.CW curP
+for every process it switched to \(en on another hart, taking the
+context from under the holder; now it is set when the VM is acquired
+and when its holder is resumed, and left alone otherwise.  And stale
+wakeups: the guest's console store on one hart moved the output index
+and woke the reader after, by when the reader, on another, had taken
+that output and slept again; woken with nothing, its read returned 0,
+which
+.CW vmlinux
+took for the end of the console and stopped copying it.  The console
+read and
+.CW devvm 's
+exit and command waits loop on their conditions now.
+.IP
+The four-hart guest on the four-hart host, a vCPU on each:
+.DS
+.ft CW
+4 harts
+[    0.128215] smp: Brought up 1 node, 4 CPUs
+LINUXGUEST: up 6.12.111-0-lts cpus 4 uptime 1.26
+LINUXGUEST: smp 4 processors, online 0-3
+LINUXGUEST: worker 1 done
+\&...
+LINUXGUEST: worker 8 done
+LINUXGUEST: cpu0 1 0 15 155 0 0 1 0 0 0
+LINUXGUEST: cpu1 1 0 14 160 0 0 0 0 0 0
+LINUXGUEST: cpu2 0 0 11 159 0 0 0 0 0 0
+LINUXGUEST: cpu3 0 0 6 181 0 0 0 0 0 0
+LINUXGUEST: irq IPI0:        46         82         57         30  Rescheduling interrupts
+LINUXGUEST: irq IPI1:        94        151         69        130  Function call interrupts
+.ft
+.DE
+(1.26 and 1.71 seconds of guest uptime to its shell in two runs,
+against 0.92 on one hart; why it is not faster is not looked into.)
+On the AIA machine too, each vCPU's interrupt file on its own hart's
+IMSIC and the IPIs all through them (none through the SBI):
+.DS
+.ft CW
+[    0.243315] smp: Brought up 1 node, 4 CPUs
+LINUXGUEST: smp 4 processors, online 0-3
+LINUXGUEST: irq IPI0:        52         36         33         60  Rescheduling interrupts
+LINUXGUEST: irq IPI1:       259        371        295        366  Function call interrupts
+platform sbi calls 5324 ipis 0 time 75040880
+.ft
+.DE
+.CW scripts/check-rv.sh
+runs M3 on a host of one hart and on a host of four, and every stage
+passes on both machines.  The console read on the PC platform had the
+same stale wakeup and loops the same way; check-vm passes every stage
+on SVM with these changes.
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
@@ -1402,6 +1498,5 @@ disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
 its /bin, /lib and /init) on its second disk, and a second guest given
 that disk alone and linuxguest.root=vda mounts it from the initramfs
 and switches to it.  M3 is done on VMX too (Bochs, two processors).
-Next: the MTTCG faults; a multiprocessor riscv64 host;
-and the workstation (phase 13).  On QEMU, check-vm (SVM) and check-rv,
+Next: the MTTCG faults, and the workstation (phase 13).  On QEMU, check-vm (SVM) and check-rv,
 on both the PLIC and the AIA machine, pass every stage.

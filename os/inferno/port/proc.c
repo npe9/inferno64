@@ -148,7 +148,9 @@ schedinit(void)		/* never returns */
 		 */
 		up->mach = nil;
 		up = nil;
+#ifdef DISCTXREG
 		curP = defpctx;
+#endif
 	}
 	sched();
 }
@@ -421,7 +423,21 @@ sched(void)
 	 * after the first from ever being claimed -- measured, one
 	 * context per boot instead of seven.
 	 */
+#ifdef DISCTXREG
 	curP = p->pctx != nil ? (Pctx*)p->pctx : defpctx;
+#else
+	/*
+	 * Where curP is a global there is one executor, the VM lock's
+	 * holder, and the context is its: a processor switching to any
+	 * other process leaves curP alone, or it would take the context
+	 * from under the holder interpreting on another processor; a
+	 * process sets it as it acquires the VM (dis.c's vmacquire).
+	 */
+	if(p->vmheld){
+		curP = p->pctx != nil ? (Pctx*)p->pctx : defpctx;
+		curR = &curP->reg;
+	}
+#endif
 	up->state = Running;
 	up->mach = MACHP(m->machno);
 	m->proc = up;

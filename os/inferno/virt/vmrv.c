@@ -131,10 +131,13 @@ struct Rvcpu
 	uvlong	fcsr;		/* 576 */
 	uvlong	hostf[32];	/* 584 */
 	uvlong	hostfcsr;	/* 840 */
+	uvlong	hostup;		/* 848: the host's up and m (R6, R7) */
+	uvlong	hostm;		/* 856 */
 
 	uvlong	vs[RvNreg-RvVsstatus];	/* the VS CSRs and hvip, by register index */
 	uvlong	mpp;		/* the mode it left: VS (MppS) or VU (0) */
 	int	vgein;		/* its IMSIC guest file, 0 none */
+	int	inguest;	/* between MRET and the exit, read by other processors */
 };
 
 typedef struct Gpt Gpt;
@@ -151,7 +154,7 @@ extern uvlong	csrrdhgeip(void);
 extern uintptr	guestimsic;	/* main.c: IMSIC guest files, 0 if the processor has none (no AIA) */
 extern void	rvhfencegvma(void);
 extern void	rvhfencevvma(void);
-static Rvcpu	*lastrun;	/* on this processor (MAXMACH is 1 here) */
+static Rvcpu	*lastrun[MAXMACH];	/* the vCPU that ran last, by processor */
 extern uvlong	csrrdmisa(void);
 extern uvlong	csrrdmstatus(void);
 extern uvlong	csrrdhgatp(void);
@@ -322,8 +325,11 @@ rvvcpuinit(Vcpu *v)
 static void
 rvvcpufree(Vcpu *v)
 {
-	if(lastrun == v->arch)
-		lastrun = nil;
+	int i;
+
+	for(i = 0; i < MAXMACH; i++)
+		if(lastrun[i] == v->arch)
+			lastrun[i] = nil;
 	free(v->arch);
 }
 
@@ -331,6 +337,13 @@ void
 rvvgein(Vcpu *v, int g)
 {
 	((Rvcpu*)v->arch)->vgein = g;
+}
+
+/* whether v is in the guest now, as another processor sees it */
+int
+rvinguest(Vcpu *v)
+{
+	return v->arch != nil && ((Rvcpu*)v->arch)->inguest;
 }
 
 uvlong
@@ -373,9 +386,9 @@ rvrunvcpu(Vcpu *v, Vmexit *e)
 	 * have different page tables under the same ASIDs: the one that
 	 * ran last's translations go before another runs.
 	 */
-	if(lastrun != r){
+	if(lastrun[m->machno] != r){
 		rvhfencevvma();
-		lastrun = r;
+		lastrun[m->machno] = r;
 	}
 	/* the guest interrupt file before the VS CSRs: vsiselect reaches into it */
 	wrcsr(Chstatus, (rdcsr(Chstatus) & ~((uvlong)Vgeinmask<<Vgeinshift)) | (uvlong)r->vgein<<Vgeinshift);
@@ -386,7 +399,11 @@ rvrunvcpu(Vcpu *v, Vmexit *e)
 	ms &= ~(Mpp|Mie|(1ULL<<39)|(1ULL<<38));
 	/* MPV, and back to the mode it was in: a host interrupt can take it out of its user mode */
 	r->mstatus = ms | r->mpp | Mpie | 1ULL<<39;
+	r->inguest = 1;
+	coherence();
 	rvrun(r);
+	r->inguest = 0;
+	coherence();
 	r->mpp = r->mstatus & Mpp;
 	for(i = 0; i < nelem(vscsr); i++)
 		if(vscsr[i] != Cvsiselect || guestimsic != 0)
