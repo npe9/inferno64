@@ -20,7 +20,7 @@ include "pycubedhw.m";
 FD: import Sys;
 
 hwdir: string;
-fbatt, frgb, fimu: ref FD;
+fbatt, frgb, fimu, ftorq: ref FD;
 
 open(name: string, mode: int): ref FD
 {
@@ -123,6 +123,20 @@ radiorecv(b: array of byte): int
 	if(!haveradio())
 		return -1;
 	return sys->read(fradio, b, len b);
+}
+
+# The magnetorquers.  Opened on demand rather than held, because a
+# detumble runs for a few minutes after deployment and then the file is
+# of no further interest -- unlike the battery, which is read for ever.
+torque(x, y, z: int): int
+{
+	if(ftorq == nil)
+		ftorq = open("torque", Sys->ORDWR);
+	if(ftorq == nil)
+		return -1;
+	s := sys->sprint("%d %d %d", x, y, z);
+	b := array of byte s;
+	return sys->write(ftorq, b, len b);
 }
 
 # "mag x y z", "gyro x y z", "accel x y z" -- one read, three lines, so

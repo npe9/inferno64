@@ -70,8 +70,17 @@ static int drainma = 120;
 static int charging;
 static int simbatt;			/* #P/battery follows the pack */
 static int noise = 8;
+static int sunma = 260;		/* panel current in full sun, mA */
+static int solar;		/* what it is making now */
 static ulong lastticks;
 static long carry;			/* milliamp-seconds not yet a mV */
+
+/*
+ * The same quarter-sine imubmx160.c uses, asked for rather than copied:
+ * two tables would be two things to get wrong and they describe the
+ * same circle.
+ */
+extern int icos(int);
 
 static int
 jitter(void)
@@ -98,7 +107,39 @@ packtick(void)
 	lastticks = t;
 	if(dt > 100*60)
 		return;				/* first call, or a gap */
-	mas = ((long)(charging? -drainma: drainma) * (long)dt) / HZ;
+	/*
+	 * SUN ON THE PANELS, which is what makes attitude control worth
+	 * doing rather than merely possible.
+	 *
+	 * The sun is a fixed direction and the panels are a body face,
+	 * so the power in is proportional to the cosine of the angle
+	 * between them -- and clipped at zero, because a panel facing
+	 * away makes nothing rather than negative power.  imubmx160.c
+	 * tracks the attitude and this asks it.
+	 *
+	 * The consequence is the whole point: a TUMBLING satellite
+	 * sweeps its panels through the sun and charges in pulses that
+	 * average well under the draw, so the pack falls.  A DETUMBLED
+	 * one, held with its panels toward the sun, charges steadily and
+	 * the pack recovers.  So the detumble controller is not a
+	 * demonstration -- it is what keeps the board powered, and the
+	 * battery file says whether it worked.
+	 *
+	 * Crude on purpose: one panel, one axis, no albedo, no eclipse
+	 * unless asked for with "in off" on the charger, and no
+	 * temperature.  It gets the sign and the shape right.
+	 */
+	if(charging){
+		extern int imuattitude(void);
+		int sun;
+
+		sun = icos(imuattitude());	/* milli-cosine */
+		if(sun < 0)
+			sun = 0;
+		solar = (sunma * sun) / 1000;
+	}else
+		solar = 0;
+	mas = ((long)(drainma - solar) * (long)dt) / HZ;
 	carry += mas;
 	while(carry >= Maspermv){
 		carry -= Maspermv;
@@ -209,10 +250,11 @@ pwrread(Chan*, void *a, s32 n, s64 offset)
 	}else{
 		mv = packvolts();
 		snprint(buf, sizeof buf,
-			"source scripted\nvolts %d\namps %d\ncharging %d\n",
+			"source scripted\nvolts %d\namps %d\ncharging %d\n"
+			"solar %d\ndraw %d\n",
 			mv + jitter(),
-			(charging? -drainma: drainma) + jitter()/2,
-			charging);
+			(drainma - solar) + jitter()/2,
+			charging, solar, drainma);
 	}
 	return readstr(offset, a, n, buf);
 }
@@ -227,11 +269,12 @@ pwrctlread(Chan*, void *a, s32 n, s64 offset)
 		"volts %d\n"
 		"drain %d\n"
 		"charging %d\n"
+		"solar %d of %d in full sun\n"
 		"battery %s\n"
 		"shunt %d\n"
 		"noise %d\n",
 		pwrdev != nil? "adm1176": "scripted",
-		packvolts(), drainma, charging,
+		packvolts(), drainma, charging, solar, sunma,
 		simbatt? "sim": "adc", shuntmohm, noise);
 	return readstr(offset, a, n, buf);
 }
@@ -276,6 +319,12 @@ pwrctlwrite(Chan*, void *a, s32 n, s64)
 			simbatt = 0;
 		else
 			error(Ebadarg);
+	}else if(strcmp(fld[0], "sun") == 0 && nf == 2){
+		v = atoi(fld[1]);
+		if(v < 0)
+			error(Ebadarg);
+		packtick();
+		sunma = v;
 	}else if(strcmp(fld[0], "shunt") == 0 && nf == 2){
 		v = atoi(fld[1]);
 		if(v <= 0)

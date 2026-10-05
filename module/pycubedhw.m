@@ -27,9 +27,19 @@
 #
 #	battery   read   "<millivolts>\n"
 #	rgb       write  "<r> <g> <b>"        0..255 each
+#	torque    write  "<x> <y> <z>"        milli-A.m^2, signed
+#	          read   the dipole in force
 #	imu       read   "mag <x> <y> <z>\n"
 #	                 "gyro <x> <y> <z>\n"
-#	                 "accel <x> <y> <z>\n"   milli-units
+#	                 "accel <x> <y> <z>\n"
+#	                 milli-units throughout: milli-gauss for the
+#	                 magnetometer, milli-degrees a second for the
+#	                 gyroscope, milli-g for the accelerometer.  The
+#	                 gyroscope line is spelled out because both
+#	                 halves of the stm32f407 driver reported whole
+#	                 degrees for a while, which put the scripted
+#	                 model's noise three orders of magnitude out and
+#	                 hid a working controller.
 
 # The radio is a file, not a Medium at /net/ether0: ssl(3) attaches to a
 # file descriptor, so Styx over an authenticated, encrypted link needs
@@ -71,6 +81,12 @@ Hw: module
 	# satellite could beacon and could not be told anything, and
 	# cdh() sat in beepsat.b with no caller.
 	radiorecv:	fn(b: array of byte): int;
+	# The magnetorquers, as a commanded dipole in milli-A.m^2.  An
+	# actuator, which this interface did not have: the mission could
+	# read the IMU and never change it, which makes a sensor a
+	# fixture rather than something to control.
+	torque:		fn(x, y, z: int): int;
+
 	imumag:		fn(): array of int;
 	imugyro:	fn(): array of int;
 	imuaccel:	fn(): array of int;

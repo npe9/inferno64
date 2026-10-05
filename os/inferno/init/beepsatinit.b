@@ -68,6 +68,21 @@ init()
 	# because the two have to be told apart from the ground.
 	radiotune();
 
+	# DEPLOYED, WHICH IS THE STATE A MISSION STARTS IN.
+	#
+	# A satellite leaves its deployer tumbling, with its charger
+	# seeing sun.  The simulated parts come up still and not
+	# charging, which is a state no spacecraft is ever in, so nothing
+	# the flight software does about attitude would ever run.
+	#
+	# Set here and not in the mission, for the same reason the
+	# crystal correction is: this is the initial condition of the
+	# BENCH, not a decision the mission makes.  On a board with the
+	# real parts fitted these writes fail and say so, and the mission
+	# gets whatever the hardware is actually doing -- which is the
+	# right answer in both cases.
+	deployed();
+
 	mission = load Mission "/dis/pycubed/beepsat.dis";
 	if(mission == nil){
 		sys->print("init: load beepsat: %r\n");
@@ -141,4 +156,29 @@ radiotune()
 		put(ctl, "rssioffset " + got[1]);
 	if(got[2] != nil)
 		put(ctl, "csthr " + got[2]);
+}
+
+deployed()
+{
+	fd := sys->open("/dev/imu.ctl", Sys->OWRITE);
+	if(fd == nil){
+		sys->print("beepsat: no /dev/imu.ctl: %r -- the parts are"
+			+ " real or absent, either way not scripted\n");
+		return;
+	}
+	if(put(fd, "tumble"))
+		sys->print("beepsat: tumbling, as a deployed satellite is\n");
+	cfd := sys->open("/dev/charge.ctl", Sys->OWRITE);
+	if(cfd != nil && put(cfd, "in on"))
+		sys->print("beepsat: charger sees sun\n");
+	pfd := sys->open("/dev/power.ctl", Sys->OWRITE);
+	if(pfd != nil){
+		# The pack follows the simulated panel rather than the
+		# part's VBAT rail, because the thing being demonstrated is
+		# whether attitude control keeps it charged -- and #P/arch
+		# says SCRIPTED while it does.
+		if(put(pfd, "battery sim"))
+			sys->print("beepsat: battery is the scripted pack\n");
+		put(pfd, "volts 3700");
+	}
 }

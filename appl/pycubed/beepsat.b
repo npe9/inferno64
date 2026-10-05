@@ -220,6 +220,126 @@ cdh(msg: array of byte)
 	}
 }
 
+# DETUMBLE, WHICH IS THE FIRST THING A CUBESAT DOES AND THE FIRST THING
+# THIS SOFTWARE DOES THAT KEEPS ITSELF ALIVE.
+#
+# A satellite leaves its deployer tumbling.  Tumbling, its panels sweep
+# through the sun and charge in pulses whose average is below the draw,
+# so the battery falls; held with the panels toward the sun it charges
+# steadily.  So this is not a demonstration of control -- it is what
+# keeps the board powered, and /dev/battery is the figure that says
+# whether it worked.
+#
+# THE LAW IS B-DOT, which is what CubeSats actually fly, and the whole
+# of it is: command a magnetic dipole opposing the measured rate of
+# change of the field.
+#
+#	m = -k dB/dt
+#
+# It needs no attitude estimate, no sun sensor, no model of the orbit
+# and no inertia tensor -- only two magnetometer readings and the time
+# between them.  That is why it is what flies: the one thing a freshly
+# deployed satellite has is a magnetometer, and the one thing it does
+# not have is knowledge of where it is pointing.
+#
+# It takes energy out of the tumble and cannot add any, so the failure
+# mode is "slow" rather than "worse" -- unless the sign is wrong, which
+# drives the rate UP, and that is the thing worth catching on a bench.
+# The gain is in the sign too: k negative here would spin the satellite
+# up, so the test is that the rate FALLS.
+# THE GAIN, AND IT WAS TWENTY-THREE TIMES TOO BIG.
+#
+# As a plain multiplier of 24 this commanded a dipole of about 3770
+# milli-A.m^2 for the 157 milli-gauss a second a 20 deg/s tumble
+# produces -- and the rate ROSE, 23.0 to 28.6 deg/s over a minute,
+# monotonically.
+#
+# That reads as an inverted sign and is not one.  The model was tested
+# on its own, from a prompt, with a dipole worked out by hand from
+# m = -k dB/dt for the attitude it was actually at: 20000 milli-deg/s
+# fell to 18995, 18577, 18912, 18699 -- damping, with a ripple because a
+# FIXED dipole gives a sinusoidal torque as the body turns.  So the
+# model damps and the law is right; what was wrong was a loop driven
+# hard enough to overshoot between samples, since the body turns forty
+# degrees in the two seconds between them.
+#
+# Expressed as a ratio now so it can be moved without changing units:
+# 1300/1000 gives about 204 for that same tumble, which is the order
+# the hand test damped at.
+Dtgain:		con 1300;	# numerator
+Dtscale:	con 1000;	# over this
+Dtperiod:	con 2000;	# ms between samples
+Dtdeadband:	con 300;	# milli-degrees/s to stop at
+
+detumbletask()
+{
+	last := hw->imumag();
+	if(last == nil){
+		debug("detumble", "no magnetometer, nothing to detumble by");
+		return;
+	}
+	settled := 0;
+	for(;;){
+		sys->sleep(Dtperiod);
+		b := hw->imumag();
+		if(b == nil)
+			continue;
+		# dB/dt in milli-gauss a second, from two readings and the
+		# interval between them.  No filter: a first-order law with
+		# an unfiltered derivative is what the textbooks give and
+		# what the noise in the sensor is for.
+		dx := ((b[0] - last[0]) * 1000) / Dtperiod;
+		dy := ((b[1] - last[1]) * 1000) / Dtperiod;
+		dz := ((b[2] - last[2]) * 1000) / Dtperiod;
+		last = b;
+		# The gyro is NOT used by the law -- B-dot does not need it
+		# -- but it is what says whether the law is working, so it
+		# is read for the report and for the deadband.
+		g := hw->imugyro();
+		rate := 0;
+		if(g != nil){
+			for(i := 0; i < 3; i++){
+				v := g[i];
+				if(v < 0)
+					v = -v;
+				if(v > rate)
+					rate = v;
+			}
+			# The gyro is milli-degrees a second, which is
+			# what module/pycubedhw.m says and what the
+			# driver now delivers.  It used to divide to
+			# whole degrees and then add ten milli-units of
+			# noise to them, which is ten DEGREES on a rate
+			# of twenty -- so this task saw no trend and the
+			# first run of it looked like a controller that
+			# did nothing.
+		}
+		if(rate < Dtdeadband){
+			# Stop commanding.  A magnetorquer left energised
+			# costs power for ever and a satellite that has
+			# stopped tumbling has nothing to damp; this is the
+			# difference between a controller and a load.
+			if(!settled){
+				hw->torque(0, 0, 0);
+				settled = 1;
+				debug("detumble", "settled, torquers off");
+			}
+			continue;
+		}
+		settled = 0;
+		if(hw->torque(-(Dtgain*dx)/Dtscale, -(Dtgain*dy)/Dtscale,
+		    -(Dtgain*dz)/Dtscale) < 0){
+			debug("detumble", sys->sprint("torque: %r"));
+			return;
+		}
+		debug("detumble", sys->sprint("rate %d.%.3d deg/s, "
+			+ "dB/dt %d %d %d, m %d %d %d",
+			rate/1000, rate%1000, dx, dy, dz,
+			-(Dtgain*dx)/Dtscale, -(Dtgain*dy)/Dtscale,
+			-(Dtgain*dz)/Dtscale));
+	}
+}
+
 cdhtask()
 {
 	if(!hw->haveradio()){
@@ -291,12 +411,13 @@ init(nil: ref Draw->Context, argv: list of string)
 	# poll, because radiorecv() blocks and because that is what
 	# Inferno has instead of a cooperative scheduler -- the same
 	# argument that deleted lib/tasko.
+	spawn detumbletask();
 	spawn cdhtask();
 	spawn blinktask();
 	spawn timetask(s.boottime);
 	spawn vbatttask();
 	spawn beacontask();
-	sys->print("BEEPSAT-RUNNING 5 tasks\n");
+	sys->print("BEEPSAT-RUNNING 6 tasks\n");
 
 	if(secs <= 0){
 		for(;;)
