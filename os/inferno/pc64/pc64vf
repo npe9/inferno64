@@ -1,7 +1,9 @@
 # pc64vf - pc64linux with the linux-lts guest of scripts/mklinuxguest.sh
-# (igbvf) in its root as well, and os/inferno/init/vftestinit.b as init:
-# M7, two Linux guests on two VFs of the bench's 82576, made by
-# ether82563 as PF with *igbvfs=2 (scripts/check-vf.sh).
+# (igbvf, ixgbevf, ixgbe) in its root as well, and
+# os/inferno/init/vftestinit.b as init: M7, two Linux guests on two VFs
+# of the bench's 82576, made by ether82563 as PF with *igbvfs=2, or of
+# its 82599 (X520), made by ether82598 with *ixgbevfs=2; or, with
+# vftest=pf, the whole 82599 given to one guest (scripts/check-vf.sh).
 #
 # pc64linux - pc64vm with the Linux guest of scripts/mklinuxguest.sh in
 # its root, and os/inferno/init/linuxtestinit.b, which boots it through

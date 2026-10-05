@@ -1909,6 +1909,72 @@ namespace of its own the two ping and move 2MB over TCP through the
 filtering (its commands complete), RSC, DCB, IPsec, timestamps, the
 flash; statistics beyond the counters drivers read on each pass; the
 model is not migratable.
+.IP
+This kernel on the 82599.
+.CW pc/ether82598.c
+claimed the part but programmed it as an 82598: the interrupt vector
+table (IVAR) in the 82598's layout, which left the 82599's transmit
+interrupt unmapped, receive checksums taken from the wrong status bit
+and never checked against the error bits, the transmit queue enabled
+before transmit DMA (the 82599 wants it the other way round), and
+1Gb/s read as 10.  Those are fixed, and with
+.CW *ixgbevfs=n
+in plan9.ini it is an SR-IOV PF, after the 82576's in
+.CW ether82563.c :
+64 pools of two queue pairs, the VFs in pools 0 to n\-1, the PF in
+pool n on queue 2n, frames sorted to pools by address (RAR, MPSAR),
+broadcasts to all, the switch looping between them; one MSI-X vector
+for the PF's queue, the link and the mailbox; ixgbevf's messages
+answered (reset with its address, the API negotiated to 1.1, its
+queues, multicast, frame size).
+.CW scripts/check-vf.sh
+with
+.CW CHECKVF_NIC=ixgbe
+is M7 on the X520's VFs, on both backends (QEMU TCG, the 82599 of
+patch 0007):
+.DS
+.ft CW
+VFTEST: VFs 0000:02:10.0 0000:02:10.2
+ixgbevf 0000:00:01.0: 52:54:00:82:00:10
+ixgbevf 0000:00:01.0: Intel(R) 82599 Virtual Function
+ixgbevf 0000:00:01.0: NIC Link is Up 10 Gbps
+LINUXGUEST: ping 3 packets transmitted, 3 packets received, 0% packet loss
+LINUXGUEST: ping 3 packets transmitted, 3 packets received, 0% packet loss
+VFTEST: pf sriov: vfs 2 pf pool 2 queue 4 mbox 42 vfresets 2 vflr 0 msix 96 vfre 00000007 vfte 00000007
+VFTEST: pf vf0: 525400820010 api 2 vmolr 0b000000
+check-vf: M7 pass -- two Linux guests on two VFs of the 82599 ping each other at once, the PF being Inferno's
+.ft
+.DE
+That is the SVM run; with
+.CW VMHOST_CPU=vmx
+the same passes on VMX (vm 0 and vm 1, backend vmx; mbox 42, msix
+90).  With
+.CW CHECKVF_NIC=ixgbe-pf
+the whole 82599 goes to one guest, whose ixgbe drives the PF through
+the assignment \(en EEPROM, SFP+ over I2C, MSI-X \(en and gets a
+lease, on SVM and on VMX:
+.DS
+.ft CW
+ixgbe 0000:00:01.0: MAC: 2, PHY: 14, SFP+: 3, PBA No: E7B560-005
+ixgbe 0000:00:01.0 eth0: NIC Link is Up 10 Gbps, Flow Control: RX/TX
+LINUXGUEST: dhcp udhcpc: lease of 10.0.2.15 obtained from 10.0.2.2, lease time 86400
+LINUXGUEST: ping 3 packets transmitted, 3 packets received, 0% packet loss
+LINUXGUEST: irq 16:         22  PCI-MSIX-0000:00:01.0   0-edge      eth0-TxRx-0
+check-vf: pass -- the whole 82599 assigned to a Linux guest, whose ixgbe gets a lease and pings through it
+.ft
+.DE
+And M9 with the 82599 as the host's own interface
+.CW VMHOST_NIC1=ixgbe "" ( "INFERNO_INI='ether0=type=i82598'" ),
+which takes the driver's path without VFs: DHCP and the Styx export
+over it (SVM):
+.DS
+.ft CW
+#l0: i82598: link up: 10000Mbps
+VMSERVE: /net/ether0 10.0.2.15
+check-styxvm: M9 pass -- a Linux guest made, assigned a device, run and talked to from hosted Inferno over Styx
+.ft
+.DE
+check-vf on the 82576 passes unchanged.
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
@@ -1932,9 +1998,9 @@ fixed); AMD-Vi, VT-d queued invalidation and interrupt remapping; Limbo
 nil dereferences as exceptions on pc64 and riscv64; VMX in QEMU's TCG
 (phase 16), on which check-vm passes every stage on the VMX backend.
 M1\-M10 all hold on VMX there.  The 82599 model is done, checked
-against Linux's ixgbe and ixgbevf.  Next: this kernel's 82599 PF
-driver with SR-IOV on it (M7 on the X520's VFs, both backends), the
-misbehaving DMA device; then the
+against Linux's ixgbe and ixgbevf, and this kernel is its PF: M7 on
+the X520's VFs and the whole PF to a Linux guest, on SVM and VMX.
+Next: the misbehaving DMA device; then the
 workstation (phase 13), and real hardware for everything QEMU and Bochs
 have stood in for.  On QEMU, check-vm (SVM; M4 under VT-d and AMD-Vi)
 and check-rv, on both the PLIC and the AIA machine and on hosts of one

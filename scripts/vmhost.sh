@@ -120,7 +120,8 @@ IOMMU="-device intel-iommu,intremap=on"
 [ "${VMHOST_IOMMU:-1}" = 0 ] && IOMMU=
 # VMHOST_IOMMU=amd: AMD-Vi (QEMU's amd-iommu) in place of VT-d
 [ "$VMHOST_IOMMU" = amd ] && IOMMU="-device amd-iommu"
-# VMHOST_NIC1=e1000: that model (an 82540EM, as Bochs has) in place of the igb
+# VMHOST_NIC1=e1000: that model (an 82540EM, as Bochs has) in place of the igb;
+# VMHOST_NIC1=ixgbe: the 82599 (an X520) of scripts/qemu-patches/0007
 IGB="-netdev user,id=net1$FWD -device ${VMHOST_NIC1:-igb},netdev=net1,bus=rp2"
 [ "${VMHOST_IGB:-1}" = 0 ] && IGB=
 

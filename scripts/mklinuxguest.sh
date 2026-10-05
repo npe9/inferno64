@@ -9,7 +9,8 @@
 #				virtio_blk, virtio_net (and what it needs),
 #				ext2 and af_packet modules, cpio "newc"
 #	.guest/lts/		the same from linux-lts-6.6.142-r0.apk,
-#				whose igbvf (an 82576 VF's driver, M7)
+#				whose igbvf (an 82576 VF's driver, M7), ixgbevf
+#				and ixgbe (the 82599's VF and PF)
 #				linux-virt does not build
 #	.guest/rv/Image		for the RISC-V backend (M12): Alpine 3.22's
 #				riscv64 linux-lts 6.12.111-r0, its Image
@@ -182,12 +183,19 @@ def cpio(mods, path, busybox=busybox):
 
 cpio(mods, os.path.join(g, 'initramfs.cpio'))
 
-# the M7 guest: linux-lts, whose igbvf drives an 82576 VF
+# the M7 guest: linux-lts, whose igbvf drives an 82576 VF and ixgbevf
+# an 82599's; and whose ixgbe, after what it needs, an 82599 PF given
+# to the guest whole
 pkg, members, kver = unpack(sys.argv[3])
 os.makedirs(os.path.join(g, 'lts'), exist_ok=True)
 open(os.path.join(g, 'lts', 'vmlinuz-lts'), 'wb').write(pkg.extractfile(members['boot/vmlinuz-lts']).read())
 cpio(modules(pkg, members, kver, ('kernel/net/packet/af_packet.ko.gz',
-		'kernel/drivers/net/ethernet/intel/igbvf/igbvf.ko.gz')),
+		'kernel/drivers/net/ethernet/intel/igbvf/igbvf.ko.gz',
+		'kernel/drivers/net/ethernet/intel/ixgbevf/ixgbevf.ko.gz',
+		'kernel/drivers/hwmon/hwmon.ko.gz', 'kernel/drivers/dca/dca.ko.gz',
+		'kernel/drivers/net/phy/libphy.ko.gz', 'kernel/drivers/net/phy/mdio_devres.ko.gz',
+		'kernel/drivers/net/mdio.ko.gz',
+		'kernel/drivers/net/ethernet/intel/ixgbe/ixgbe.ko.gz')),
 	os.path.join(g, 'lts', 'initramfs.cpio'))
 
 # the RISC-V guest: linux-lts for riscv64, whose Image (an EFI-stub
