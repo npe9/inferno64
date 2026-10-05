@@ -1759,3 +1759,49 @@ from right ones.
 Single-frame Styx over this radio works and has been read twenty times
 running.  Multi-frame does not, and the thing that says so is a control
 rather than an inspection.
+.NH 2
+And the message size, made the window times the information field
+.PP
+512 was the first figure and it was round rather than right.
+.B "The appropriate number is derived from the carrier,"
+and every term is in a file in this tree:
+.DS
+.CW "  CC1120 FIFO 128 = 1 length + 125 payload + 2 CRC"
+.CW "  so cc1120.c maxpayload 125, #W/radio0/data iounit 125"
+.CW "  devax25.c address field (2+ndigi)*7+2 = 16"
+.CW "  so a conversation's information field is 109"
+.CW "  devax25.c Defk, the window, is 4"
+.CW "  4 * 109 = 436"
+.DE
+A Styx message of exactly 436 is four I frames: no partial frame wasted,
+and no acknowledgement wanted in the middle of one message.
+.PP
+.B "512 is not merely untidy, it is a second of silence per message."
+It needs five frames, the fifth is outside the window, and
+.I devax25
+delays an acknowledgement by
+.B Deft2
+\- a thousand milliseconds, deliberately, because an RR sent sooner
+lands on a transmitter that is still talking.  So every message over 436
+bytes stalls in the middle of itself.
+.PP
+The board says what it got, rather than the figure being asserted here:
+.DS
+.CW "styx: the mount carries 412 bytes a message, so msize 436"
+.CW "      over 109-byte frames: 4 frames, and the window is 4"
+.DE
+412 is 436 less the 24 bytes
+.I exportfs
+keeps for a header, and it is what Limbo sees as the atomic size of a
+read or a write on
+.BR /n .
+.B "A digipeater would make this wrong"
+\- each hop adds seven bytes to the address field, so one hop gives 102
+and the figure should be 408 \- and that line is where it would show.
+.PP
+.B "And it changed the open fault's symptom, which is itself a finding."
+At 512 a 273-byte read came back corrupted at byte 82.  At 436 the same
+read does not come back at all.  Same code, same boards, one constant
+different: so the multi-frame path is sensitive to how a message divides
+into frames, which is a much narrower thing to go looking for than
+\(dqsomething is wrong with the relay\(dq.

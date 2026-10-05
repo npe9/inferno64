@@ -194,25 +194,64 @@ ledpin(int pin, int on)
  * and from the far end a mount that never answers, although its
  * Tversion had crossed the air -- nineteen bytes, logged at both ends.
  *
- * 512 because the messages this board will carry are small: the
- * carrier is a 125-byte packet and an AX.25 information field is 109,
- * so a Twrite of 489 bytes is already five frames of airtime.  It is
- * above devmnt's own floor of 256, which is the other number that has
- * to be cleared.
+ * 436, AND THE NUMBER IS DERIVED RATHER THAN ROUND.  It is the window
+ * times the information field:
+ *
+ *	the CC1120's FIFO is 128 bytes, which a variable-length packet
+ *	spends as one length byte, 125 of payload and two of CRC -- so
+ *	cc1120.c reports maxpayload 125 and #W/radio0/data's iounit is
+ *	125;
+ *
+ *	devax25.c takes (2 + ndigi)*7 + 2 for the address field, which
+ *	with no digipeater is 16, so a connected conversation's
+ *	information field is 109 and that is what #a/N/data reports;
+ *
+ *	the window is Defk, 4, which is what the specification suggests
+ *	and what devax25.c uses.
+ *
+ * 4 * 109 = 436.  A Styx message of exactly that is four I frames: no
+ * partial frame wasted, and no acknowledgement needed in the middle of
+ * one message.
+ *
+ * WHY NOT A ROUNDER NUMBER.  512 was the first figure here and it is
+ * actively worse, not merely untidy: 512 needs five frames, the fifth
+ * is outside the window, and devax25 delays an acknowledgement by
+ * Deft2 -- a thousand milliseconds, deliberately, because an RR sent
+ * sooner lands on a transmitter that is still talking.  So every
+ * message over 436 bytes pays a whole second of silence in the middle
+ * of itself.  That is the kind of cost a round number hides.
+ *
+ * WHAT MAKES IT WRONG.  A digipeater: each hop adds seven bytes to the
+ * address field, so one hop gives an information field of 102 and this
+ * should be 408.  A different window, set with "window" on a
+ * conversation ctl, moves it likewise.  Nothing here notices -- the
+ * relay in os/inferno/init/armv7mstyx.b prints the conversation iounit
+ * it actually got and the sizes it actually moved, which is where a
+ * mismatch shows.
+ *
+ * The queue is ten messages, 4360 bytes, which this pool can give.
  *
  * Set here rather than in the conf because the port files must keep a
  * default for every other board, and two definitions of one symbol do
  * not link.  Called from archreset, which is this board's earliest
  * hook and runs long before anything mounts or exports.
  */
+enum {
+	Ccpayload	= 125,		/* cc1120.c maxpayload */
+	Ax25hdr		= 16,		/* (2 + 0 digipeaters)*7 + 2 */
+	Ax25window	= 4,		/* devax25.c Defk */
+
+	Styxrpc		= Ax25window * (Ccpayload - Ax25hdr),
+};
+
 static void
 styxsizes(void)
 {
 	extern int mntmaxrpc, mntqueuerpcs, exportmaxrpc;
 
-	mntmaxrpc = 512;
+	mntmaxrpc = Styxrpc;
 	mntqueuerpcs = 10;
-	exportmaxrpc = 512;
+	exportmaxrpc = Styxrpc;
 }
 
 void

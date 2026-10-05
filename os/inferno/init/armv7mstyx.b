@@ -237,6 +237,21 @@ client(peer: string, carrier: int)
 		return;
 	}
 	sys->print("ARMV7M-STYX-MOUNTED\n");
+	# THE SIZES, SAID OUT LOUD, because the kernel's figure is a
+	# constant in archstm32f407.c derived from this conversation's
+	# shape -- the window times the information field -- and nothing
+	# checks the derivation against the conversation actually got.
+	# A digipeater would make the address field seven bytes longer
+	# and the figure wrong, and this is where that shows.
+	bfd := sys->open("/n/dev/battery", Sys->OREAD);
+	if(bfd != nil){
+		mio := sys->iounit(bfd);
+		sys->print("styx: the mount carries %d bytes a message, so"
+			+ " msize %d over %d-byte frames: %d frames, and the"
+			+ " window is 4\n", mio, mio + 24,
+			sys->iounit(dfd), (mio + 24 + sys->iounit(dfd) - 1)
+				/ sys->iounit(dfd));
+	}
 	# THE FILE THAT PROVES IT.  #P/battery on the far board, reached
 	# through the mount: the satellite's own voltage, read by the
 	# ground over the radio.  A number that could not have come from
