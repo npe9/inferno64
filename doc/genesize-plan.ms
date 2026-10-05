@@ -1834,6 +1834,22 @@ have.  check-vm on VMX ran on the patched source built in place;
 .CW scripts/mkqemu.sh 's
 build of the release and the six patches then passed the conformance
 checks above and check-vm on SVM, every stage, unchanged.
+.IP
+On that build, with
+.CW VMHOST_CPU=vmx ,
+the rest of the milestones on the VMX backend:
+.DS
+.ft CW
+vm 0 backend vmx mem 268435456 vcpus 1
+vm 1 backend vmx mem 268435456 vcpus 1
+check-vf: M7 pass -- two Linux guests on two VFs of the 82576 ping each other at once, the PF being Inferno's
+check-styxvm: M9 pass -- a Linux guest made, assigned a device, run and talked to from hosted Inferno over Styx
+emu: vmsched: host /n/h0 now: backend vmx cpus 2 memfree 1642506888 ...
+check-cloud: M10 pass -- three guests placed across two hosts by Limbo, each answering from its host
+check-nsvm: pass -- a machine built from a namespace: its disk a file on the Mac over Styx, ...
+.ft
+.DE
+Every milestone short of M11 now holds on VMX as on SVM, on one bench.
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
@@ -1856,8 +1872,8 @@ RISC-V; a riscv64 host of four harts; M3 under MTTCG (a QEMU race,
 fixed); AMD-Vi, VT-d queued invalidation and interrupt remapping; Limbo
 nil dereferences as exceptions on pc64 and riscv64; VMX in QEMU's TCG
 (phase 16), on which check-vm passes every stage on the VMX backend.
-Next: M6, M7, M9 and M10 on VMX on the same bench, the 82599 model,
-the misbehaving DMA device; then the
+M1\-M10 all hold on VMX there.  Next: the 82599 model, the
+misbehaving DMA device; then the
 workstation (phase 13), and real hardware for everything QEMU and Bochs
 have stood in for.  On QEMU, check-vm (SVM; M4 under VT-d and AMD-Vi)
 and check-rv, on both the PLIC and the AIA machine and on hosts of one
