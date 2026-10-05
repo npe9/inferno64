@@ -32,3 +32,21 @@ XIPDIS=\
 # shell's heap, which is the thing that made nine fail, so the trade
 # here is different and has to be measured on the board.
 NPROC=10
+
+# The files this image carries that the conf's root section does not.
+#
+# dst then src, src relative to the tree root, which is the same pair a
+# second field in the root section is.  The conf cannot hold these
+# because every image built from it would carry them: the shell image
+# would carry the mission's three modules and be unable to run them,
+# which is exactly what it did until mkroot learned EXTRAROOT.
+#
+# /dis/pycubed is NOT named: mkroot builds the intermediate
+# directories out of the paths themselves, and naming one as a pair
+# gives an entry with a length and no data, which desyncs the generated
+# root.s from the root.h beside it -- "root65len: not defined" at the
+# link, which reads as a toolchain fault and is not one.
+EXTRAROOT=\
+	/dis/pycubed/beepsat.dis	/dis32/pycubed/beepsat.dis\
+	/dis/pycubed/sat.dis		/dis32/pycubed/sat.dis\
+	/dis/pycubed/hw.dis		/dis32/pycubed/hw.dis\

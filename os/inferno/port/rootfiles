@@ -18,6 +18,19 @@ ${AWK:-awk} '
 BEGIN{
 	infernoroot = ENVIRON["ROOT"];
 	init = ENVIRON["INIT"];
+	# The same EXTRAROOT mkroot reads, so that a per-image file is
+	# a dependency like any other.  Without this a changed module
+	# would leave the old copy inside the image with no sign of it,
+	# which is the whole reason this script exists.
+	extra = ENVIRON["EXTRAROOT"];
+	if (extra != "") {
+		nx = split(extra, xf, /[ \t\n]+/);
+		for (k = 2; k <= nx; k += 2) {
+			s = infernoroot xf[k];
+			if (system("test -f " s) == 0)
+				print s;
+		}
+	}
 }
 /^$/{ next }
 /^#/{ next }

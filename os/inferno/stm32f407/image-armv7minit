@@ -82,3 +82,27 @@ XIPDIS=\
 # process slot is a 4096-byte kernel stack out of about 160K.  See the
 # nprocwanted comment in the config.
 NPROC=5
+
+# The files this image carries that the root section does not.
+#
+# mount(1), so that this image can be a GROUND STATION: the satellite
+# exports a namespace over the radio and the ground mounts it, which is
+# what doc/pycubed-plan.ms calls the whole argument.  sys->mount is a
+# system call and the shell has no builtin for it, so without this file
+# there is no way to mount anything from a prompt on this board.
+#
+# It is here and not in the conf because the satellite image has no use
+# for it -- a satellite exports, it does not mount -- and a file in the
+# conf is carried by every image built from it.  That is the mechanism
+# os/inferno/port/mkroot grew EXTRAROOT for, and this is the first thing
+# it bought: taking the mission modules out of this image freed 6240
+# bytes, which is more than mount costs.
+# NOT in the XIP list above, deliberately.  Its decoded instruction
+# array costs 14440 bytes of flash against 5341 for the raw module, and
+# this image has about ten thousand to spare -- so mount is carried as
+# a plain root file and libinterp builds its array in RAM at load time,
+# like a module on any ordinary machine.  It is a short-lived command
+# run by hand, not something the image runs continuously, which is
+# exactly the trade XIPMODS is for and exactly when not to take it.
+EXTRAROOT=\
+	/dis/mount.dis			/dis32/mount.dis\
