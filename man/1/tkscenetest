@@ -232,6 +232,29 @@ comparison not working. They do not amount to showing that a
 defect in a scene conversion would be caught; that needs the defect
 injected, which cannot be done from here.
 .PP
+.B "Where it has actually been run."
+The 22-case version of this program was run on a real Pi 3B and reported 46
+ok, 0 fail, 1 skipped. That is the only
+.I hardware
+figure it has, and it does not generalise forward: the six cases added since
+\(em a focused entry, a clipped label, non-default colours, a canvas fill by
+name, a canvas polygon and a posted menu \(em and the
+.B Maxwalk
+nest case have run under
+.IR qemu (1)
+and on the host only. Quote "46/0/1, 22 cases, silicon" or "66/0/2, 28
+cases, QEMU", never "verified on silicon" unqualified; a stale number with
+correct provenance is still stale.
+.PP
+The nest case in particular does not need hardware and has deliberately not
+had it:
+.B Maxwalk
+is a compile-time constant and TCG executes the same instructions, so a boot
+would buy a figure that distinguishes nothing. What would be worth hardware
+is a case whose behaviour could plausibly differ there \(em a cache-visibility
+question, or anything touching the framebuffer rather than an allocated
+image.
+.PP
 Nothing here looks at the screen, so it says nothing about what the board
 displays \(em only about what the two paths compute. A readback cannot see
 tearing or a stale buffer at all.
