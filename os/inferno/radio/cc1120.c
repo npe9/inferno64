@@ -492,6 +492,51 @@ state(Cc1120 *rr)
 	return strobe(rr, Snop) & Ststate;
 }
 
+
+/*
+ * A LATCHED FIFO ERROR, CLEARED.  This is the bug that cost a day of
+ * delivery measurements, and the shape of it is worth the comment.
+ *
+ * A single missed receive interrupt fills the RX FIFO, and an overflowed
+ * FIFO puts the part in RX_FIFO_ERR -- STATE 6, with MARC_STATUS1 0x0a.
+ * In that state the part does nothing: no sync, so no PKT_SYNC_RXTX
+ * edge, so cc1120interrupt() is never called again -- and the ONLY
+ * recovery this driver had was inside cc1120interrupt(), at the top.
+ * The recovery was reachable only by the event the fault suppresses.
+ *
+ * It is worse than deaf.  Measured on board 1: twenty-two consecutive
+ * samples of "state 0x06 marc 0x0a" while the station's sent counter
+ * climbed past a hundred more transmits and recv stayed frozen, and
+ * txstaged read 0 every time -- so the part refuses the TX FIFO as
+ * well, and every one of those "sent" frames was staged into a part
+ * that radiated nothing.  The far end heard nothing and reported a
+ * delivery rate of zero, which reads exactly like a path that does not
+ * close.  Eight reset-and-measure trials all read 0%, because resetting
+ * the OTHER board cannot unlatch this one.
+ *
+ * And the unconditional "back to listening" strobe after every transmit
+ * does not clear it: that is the measurement above -- a hundred-odd
+ * transmits, each ending in SRX, and the part still in state 6.  SRX
+ * from an error state is ignored.  The exit is SIDLE and a flush, which
+ * is what this does.
+ *
+ * The caller holds the bus lock.
+ */
+static void
+rxarm(Cc1120 *rr)
+{
+	int st;
+
+	st = state(rr);
+	if(st == Strxerr || st == Sttxerr){
+		rr->nfifoerr++;
+		strobe(rr, Sidle);
+		strobe(rr, Sfrx);
+		strobe(rr, Sftx);
+	}
+	strobe(rr, Srx);
+}
+
 /*
  * Send one packet.
  *
@@ -532,6 +577,22 @@ cc1120send(Radio *r, uchar *p, int n)
 	 * reason to spin.
 	 */
 	rr->txtrace[0] = state(rr) >> 4;
+	/*
+	 * And clear a latched FIFO error before the idle/flush/fill
+	 * sequence rather than after it.  A part in RX_FIFO_ERR refuses
+	 * the TX FIFO too -- txstaged reads 0 -- so without this the
+	 * frame is written into a part that will not take it and the
+	 * recovery below arrives one frame too late, every time.
+	 * txtrace[0] above records the state as it was found, which is
+	 * where a 6 shows up.
+	 */
+	if(rr->txtrace[0] == (Strxerr >> 4)
+	|| rr->txtrace[0] == (Sttxerr >> 4)){
+		rr->nfifoerr++;
+		strobe(rr, Sidle);
+		strobe(rr, Sfrx);
+		strobe(rr, Sftx);
+	}
 	strobe(rr, Sidle);
 	for(i = 0; i < Idlewaitus; i++)
 		if(state(rr) == Stidle)
@@ -615,8 +676,14 @@ cc1120send(Radio *r, uchar *p, int n)
 		rr->ntxunderflow++;
 		strobe(rr, Sftx);
 	}
-	/* back to listening */
-	strobe(rr, Srx);
+	/*
+	 * Back to listening, through rxarm so that a latched RX FIFO
+	 * error is cleared here.  This runs after every transmit, which
+	 * is what makes a station that beacons recover by itself within
+	 * one beacon.  A station that never transmits does not reach
+	 * this; see rxarm's comment.
+	 */
+	rxarm(rr);
 	s->unlock(s);
 
 	/*
@@ -846,7 +913,12 @@ cc1120interrupt(Radio *r)
 
 	rr->rssi = (schar)rdx(rr, Xrssi1);
 	rr->lqi = 0;
-	strobe(rr, Srx);
+	/*
+	 * Through rxarm: the FIFO can have overflowed while this
+	 * function was reading the packet out of it, and then there is
+	 * no further interrupt to notice it with.
+	 */
+	rxarm(rr);
 	s->unlock(s);
 
 	tick = fastticks(nil);
@@ -1061,7 +1133,7 @@ setfreq(Cc1120 *rr, uvlong hz)
 	wrx(rr, Xfreq1, (v>>8) & 0xff);
 	wrx(rr, Xfreq0, v & 0xff);
 	strobe(rr, Scal);
-	strobe(rr, Srx);
+	rxarm(rr);
 	return 0;
 }
 
@@ -1674,8 +1746,13 @@ cc1120ctl(Radio *r, char *buf, int n)
 		return n;
 	}
 	if(strcmp(f[0], "rx") == 0){
+		/*
+		 * Through rxarm, because this verb is what somebody types
+		 * at a stuck receiver and a bare SRX is ignored by the
+		 * state that makes it stuck.
+		 */
 		s->lock(s);
-		strobe(rr, Srx);
+		rxarm(rr);
 		s->unlock(s);
 		return n;
 	}
@@ -3122,7 +3199,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"crcerr %ud toobig %ud txtimeout %ud\n"
 		"rxoverflow %ud txunderflow %ud txnever %ud\n"
 		"intr high %ud low %ud\n"
-		"ccabusy %ud ccamode %d\n"
+		"ccabusy %ud ccamode %d fifoerr %ud\n"
 		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n"
 		"ppb %d\n",
 		rr->partnum, rr->partversion,
@@ -3140,7 +3217,7 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->ncrcerr, rr->ntoobig, rr->ntxtimeout,
 		rr->nrxoverflow, rr->ntxunderflow, rr->ntxnever,
 		rr->nintrhigh, rr->nintrlow,
-		rr->nccabusy, (rd(rr, Rpktcfg2) >> 2) & 7,
+		rr->nccabusy, (rd(rr, Rpktcfg2) >> 2) & 7, rr->nfifoerr,
 		pacfg2, pacfg2 & Papowerramp,
 		patenths/10, patenths < 0? -patenths%10: patenths%10,
 		/*

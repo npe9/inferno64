@@ -81,6 +81,13 @@ struct Cc1120
 	 * asked for it or not, and a refusal leaves the part in RX.
 	 */
 	u32	nccabusy;
+	/*
+	 * Latched RX or TX FIFO errors cleared.  See rxarm() in
+	 * cc1120.c: this counts a fault the driver used to be unable to
+	 * notice at all, because the only recovery was inside the
+	 * interrupt handler the fault stops being called.
+	 */
+	u32	nfifoerr;
 	uchar	rxstatus[2];		/* the two bytes APPEND_STATUS adds */
 
 	QLock	qlock;			/* one user of the part at a time */
