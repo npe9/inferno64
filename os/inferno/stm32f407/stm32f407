@@ -140,6 +140,15 @@ link
 # read-only.  See mem.h for why it is a tail and not a sector, and
 # doc/radio-plan.ms item 8.
 	calstm32f4
+# archfilespycubed serves #P/{battery,imu,rgb,arch}, which is the
+# hardware boundary module/pycubedhw.m defines for the flight software
+# of doc/pycubed-plan.ms.  Its "arch" file says which of the three are
+# real on this board -- battery is, from the part's own VBAT channel;
+# imu is not, there being no inertial part; rgb is recorded rather than
+# displayed, because a clicker 2 has two LEDs and both already have
+# owners.  Named after what it serves and not after the part, because
+# unlike the others in this list it is not a driver for anything.
+	archfilespycubed
 
 mod
 	sys

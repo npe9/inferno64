@@ -138,11 +138,12 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 # asked.  An image past that cannot be written -- mikroe-uhb refuses
 # rather than overwriting the only way in.
 #
-# 901120 and not 917504: the last 16K below the bootloader is the
+# 909312 and not 917504: the last 8K below the bootloader is the
 # calibration store, CALBASE in mem.h, and an image that grew into it
 # would overwrite what a board had measured about itself.  So the
 # ceiling is the store's base and not the bootloader's.  Keep the two
-# numbers in step; mem.h says the same.
+# numbers in step; mem.h says the same, and says why the store is 8K
+# rather than the 16K it started as.
 #
 # The rm first, and the && after, so that a refusal leaves NO hex rather
 # than the last one that converted.  A stale hex beside a fresh kernel
@@ -151,7 +152,7 @@ i$CONF: $OBJ $CONF.c $CONF.root.h $LIBNAMES
 # argument, and an old one gets written to the board.
 i$CONF.hex: i$CONF $ROOT/tools/bin2ihex
 	rm -f $target $INSTALLDIR/$target
-	$ROOT/tools/bin2ihex i$CONF $KTZERO $target 901120 && cp $target $INSTALLDIR
+	$ROOT/tools/bin2ihex i$CONF $KTZERO $target 909312 && cp $target $INSTALLDIR
 
 $ROOT/tools/bin2ihex:
 	cd $ROOT/tools; mk bin2ihex

@@ -158,8 +158,25 @@
  * to convert rather than overwriting it.  Both numbers are here and in
  * the mkfile and each says to check the other.
  */
-#define	CALBASE		0x080dc000
-#define	CALSIZE		(16*1024)
+/*
+ * 8K and not 16, which is a measurement replacing a guess.
+ *
+ * It was 16K because 16K was spare.  What the store actually holds is
+ * attrdb lines -- a uid, a ppb, an rssioffset and a threshold -- and
+ * calinfo reported "used 95" after a board wrote its first entry.  At
+ * a hundred bytes an entry, 8K is eighty of them, and a reflash erases
+ * the store in any case because the bootloader's last 32K write block
+ * covers it.  Eighty measurements between reflashes is not the
+ * constraint on this board.
+ *
+ * What the other 8K buys is image: the ceiling bin2ihex is given is
+ * this base, and a shell image carrying the PyCubed mission's modules
+ * in its root came to 901320 bytes against the old 901120 and would
+ * not convert.  So the store gives up seven eighths of what it has
+ * never used, to the thing that is actually short.
+ */
+#define	CALBASE		0x080de000
+#define	CALSIZE		(8*1024)
 
 #define	CONFNAME	"stm32f407"
 

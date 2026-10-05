@@ -187,6 +187,32 @@ millivolts(int raw)
 	return (raw * Vrefmv) / Full;
 }
 
+/*
+ * VBAT in millivolts, for whoever wants the one number rather than the
+ * whole file.
+ *
+ * archfilesstm32f4.c serves it as #P/battery because that is the name
+ * module/pycubedhw.m gives the mission's battery, and a mission should
+ * not have to parse a five-line diagnostic file to find one figure.
+ * The division is the part's own: RM0090 13.11 puts VBAT on channel 18
+ * through a divide-by-two, so the count is half the rail.
+ *
+ * -1 if the converter did not finish or was never brought up, which is
+ * a reading the caller has to be able to tell from a voltage.
+ */
+int
+adcbattmv(void)
+{
+	int mv;
+
+	if(!adcok)
+		return -1;
+	mv = millivolts(convert(18));
+	if(mv < 0)
+		return -1;
+	return Vbatdiv * mv;
+}
+
 static s32
 adcread(Chan*, void *a, s32 n, s64 offset)
 {

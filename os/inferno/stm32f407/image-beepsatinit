@@ -5,8 +5,10 @@
 # one file per init.  doc/pycubed-plan.ms is the plan this image is
 # phase 4 of; doc/radio-plan.ms is the radio under it.
 #
-# Three modules, and that is the whole mission: beepsatinit loads
-# /dis/pycubed/beepsat.dis, which loads Sat and Hw.  Nothing else --
+# Four modules.  beepsatinit loads /dis/pycubed/beepsat.dis, which
+# loads Sat and Hw; and the init itself loads Radiocal, to apply this
+# board's crystal correction to the radio before the mission writes a
+# packet to it.  Nothing else --
 # no bufio, no string, no daytime, and no shell.  The hardware
 # boundary is a directory of FILES (module/pycubedhw.m), so Hw is a
 # parser and not a driver, and the drivers are in the kernel where
@@ -15,6 +17,7 @@ XIPDIS=\
 	pycubed/beepsat.dis\
 	pycubed/sat.dis\
 	pycubed/hw.dis\
+	lib/radiocal.dis\
 
 
 # Ten, and this is a first estimate to be measured rather than a

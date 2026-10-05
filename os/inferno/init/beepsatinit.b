@@ -13,6 +13,8 @@ implement Init;
 include "sys.m";
 	sys: Sys;
 include "draw.m";
+include "radiocal.m";
+	radiocal: Radiocal;
 
 Init: module
 {
@@ -43,6 +45,29 @@ init()
 	sys->bind("#P", "/dev", sys->MAFTER);
 	sys->bind("#W", "/dev", sys->MAFTER);
 
+	# THE RADIO'S OWN CALIBRATION, BEFORE THE MISSION TOUCHES IT.
+	#
+	# The mission writes packets to /dev/radio0/data and nothing in
+	# it writes freq or ppm, so without this the radio sits at
+	# whatever the driver's register table left -- which on this
+	# bench means no second board can hear it.  The two clicker 2
+	# crystals are 64ppm apart, about 59kHz at 915MHz, and the
+	# channel filter is 25: a beacon written, accepted by the driver
+	# and radiated into the wrong place looks exactly like a radio
+	# that works.  doc/radio-plan.ms item 8 is why this file exists
+	# at all.
+	#
+	# Here and not in the mission, for the same reason
+	# os/inferno/init/armv7max25.b does it here: which crystal this
+	# board has is configuration, not mission logic, and a task that
+	# restarts should not re-tune the radio.
+	#
+	# Soft-failing, like armv7max25, and for the same reason -- a
+	# satellite that will not start is no better than one on the
+	# wrong frequency -- but it says which, on a line of its own,
+	# because the two have to be told apart from the ground.
+	radiotune();
+
 	mission = load Mission "/dis/pycubed/beepsat.dis";
 	if(mission == nil){
 		sys->print("init: load beepsat: %r\n");
@@ -50,4 +75,70 @@ init()
 	}
 	sys->print("BEEPSAT-INIT-OK\n");
 	mission->init(nil, "beepsat" :: nil);
+}
+
+# One ctl write, with the answer read back where there is one.
+put(fd: ref Sys->FD, s: string): int
+{
+	b := array of byte s;
+	if(sys->write(fd, b, len b) != len b){
+		sys->print("beepsat: radio %s: %r\n", s);
+		return 0;
+	}
+	return 1;
+}
+
+radiotune()
+{
+	ctl := sys->open("/dev/radio0/ctl", Sys->OWRITE);
+	if(ctl == nil){
+		sys->print("beepsat: no /dev/radio0/ctl: %r -- no radio on "
+			+ "this board, so nothing to tune\n");
+		return;
+	}
+	# 915MHz and not the driver's default, because that is the band
+	# this bench transmits in: 902 to 928 at Part 15 levels.
+	if(!put(ctl, "freq 915000000")){
+		sys->print("BEEPSAT-NOFREQ\n");
+		return;
+	}
+	radiocal = load Radiocal Radiocal->PATH;
+	if(radiocal == nil){
+		sys->print("beepsat: load %s: %r -- the driver's crystal "
+			+ "stands and a peer 64ppm away will not hear this "
+			+ "board\n", Radiocal->PATH);
+		return;
+	}
+	radiocal->init();
+	uid := radiocal->boarduid(Radiocal->Uid);
+	if(uid == nil){
+		sys->print("beepsat: cannot read %s: %r -- this board does "
+			+ "not know whose calibration it would apply\n",
+			Radiocal->Uid);
+		return;
+	}
+	sys->print("beepsat: uid %s\n", uid);
+	want := array[3] of string;
+	want[0] = "ppb";
+	want[1] = "rssioffset";
+	want[2] = "csthr";
+	# Both sources with the store winning, which is what current()
+	# is for: #P/cal is what this board has measured since its image
+	# was built.
+	(got, nil, bad, err) := radiocal->current(Radiocal->Cal, uid, want);
+	if(bad > 0)
+		sys->print("beepsat: %d unparsable pairs in %s\n", bad,
+			Radiocal->Cal);
+	if(err != nil){
+		sys->print("beepsat: no calibration for this board in %s or "
+			+ "%s: %s -- the driver's defaults stand\n",
+			Radiocal->Cal, Radiocal->Store, err);
+		return;
+	}
+	if(got[0] != nil && put(ctl, "ppm " + got[0]))
+		sys->print("beepsat: ppm %s\n", got[0]);
+	if(got[1] != nil)
+		put(ctl, "rssioffset " + got[1]);
+	if(got[2] != nil)
+		put(ctl, "csthr " + got[2]);
 }
