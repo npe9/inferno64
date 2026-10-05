@@ -1371,3 +1371,124 @@ when this plan was first written.  Phases 1, 2 and 4 need the board, and per
 writing them blind would produce another
 .CW os/inferno/teensy41 :
 a directory of code nobody can verify.
+.NH 1
+The three I2C parts, as drivers with scripted models behind them
+.PP
+A clicker 2 has none of the BMX160, ADM1176 or BQ25883 that phase 2
+names, and the parts have not been bought.  So each is written as
+.B "real I2C code that probes for its part, plus a scripted model that runs when none answers"
+\- and the probe decides which.  One image works before and after the
+parts arrive, which is the point of writing it that way round rather
+than as a simulation to be replaced.
+.PP
+.B "Every file says which half is running,"
+because a file that is both has to.  The register numbers are from the
+datasheets and have never been read off a part on this bench.  Nothing
+claims a part exists: the IMU refuses unless CHIP_ID reads 0xd8 and the
+charger unless PART_INFO's PN field matches, so a wrong address or a
+different Bosch part comes out as
+.I "no part"
+rather than as plausible numbers.  The ADM1176 has
+.I no
+identity register, which is the honest difficulty with it, and its probe
+says it is
+.B assuming
+the part rather than claiming to have recognised one.
+.NH 2
+What the models do, and what they are for
+.PP
+.B "The pack counts down."
+A millivolt per hundred milliamp-seconds, so 400mA walks it down
+visibly:
+.DS
+.CW "source scripted   volts 4203   amps 397   charging 0"
+.CW "...forty seconds later..."
+.CW "source scripted   volts 3996   amps 403   charging 0"
+.DE
+Deliberately fast, and deliberately a ramp with noise rather than a
+lithium curve \- no plateau, no knee, no internal resistance.
+.B "Software tuned to its shape would be tuned to nothing."
+What it is for is the threshold crossing: beepsat's vbatt task compares
+against 3.6V, and this makes that comparison happen while somebody is
+watching.
+.PP
+.B "The IMU turns, and the gravity vector sweeps because of it."
+Still, and then tumbling:
+.DS
+.CW "mag 450 0 -4      gyro 6 -2 -4     accel 504 -9 876"
+.CW "mag -100 437 6    gyro 12 -10 23   accel -105 -495 863"
+.DE
+Level reads 500 and 866 on x and z because the spin axis is tilted
+thirty degrees first \- a spin about the axis gravity lies along
+produces no sweep at all, which is true of the physics and useless as a
+fixture.  The gyroscope reads the rate it was given, 7, -11 and 23
+degrees a second, and every axis carries independent noise, because
+.B "a reading without error is the one thing a real sensor never gives."
+.PP
+.B "The charger has all four states and a latching fault."
+.DS
+.CW "echo in on     ->  state fast    volts 3756 rising"
+.CW "echo fault     ->  state fault   volts 3807 held"
+.DE
+Those are the transitions flight software gets wrong: input appearing
+and disappearing as a satellite goes in and out of sun, a pack at
+termination that must not read as discharging, and a fault that has to
+be cleared rather than clearing itself.
+.B "The path nobody can provoke is the path nobody has tested."
+.PP
+.B "One battery, one voltage."
+.CW pwradm1176.c
+owns the pack and
+.CW chgbq25883.c
+asks it to charge, so the charger making the voltage go up is one
+decision applied in one place and the two files cannot disagree.
+.NH 2
+The line between a fixture and a lie
+.PP
+.CW #P/battery
+is the file the mission reads, and it asks the pack
+.I first
+\- but the pack answers \-1 unless somebody has written
+.CW "battery sim"
+to
+.CW #P/power.ctl .
+So the default is the part's own VBAT channel, a real measurement, and a
+simulated battery is something this board has to be
+.I told
+to report.  And
+.CW #P/arch
+says which is in force, in capitals when it is the simulation:
+.DS
+.CW "stm32f407: battery real, from the part's VBAT channel"
+.CW "  ...after echo battery sim >#P/power.ctl..."
+.CW "stm32f407: battery SCRIPTED, asked for with power.ctl"
+.DE
+with
+.CW #P/battery
+reading 3806 rather than the 3300 of the rail.
+.B "A fixture that cannot be mistaken for a measurement is the whole of the difference,"
+and it is one line of output rather than a convention anybody has to
+remember.
+.NH 2
+The ctl files are dotted, which is a compromise
+.PP
+.CW imu.ctl
+and not
+.CW imu/ctl .
+Every real device in this tree is a directory per instance with
+.B ctl
+inside it \-
+.CW #W/radio0/ctl ,
+.CW #a/N/ctl ,
+.CW #J/i2c3/i2c.68.ctl
+\- and that is the shape these want.
+.I Addarchfile ()
+cannot express it, because
+.CW #P
+is a flat table of board files, so they take the convention
+.CW #J
+uses for the same reason.
+.B "The directory form is what a real driver should be"
+\- a device of its own rather than three entries in
+.CW #P
+\- and that is the phase 2 this stands in for.
