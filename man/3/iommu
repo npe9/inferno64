@@ -75,8 +75,11 @@ like any other.
 .SH SEE ALSO
 .IR vm (3)
 .SH BUGS
-VT-d: legacy mode, register-based global invalidation after every
-change; no interrupt remapping or queued invalidation.  AMD-Vi: the
+VT-d: legacy mode, global invalidation after every change (queued
+where the unit has it, through the registers where not).  Interrupt
+remapping is on from boot where DMAR and every unit have it; requester
+IDs are checked, an I/O APIC's only where DMAR names it with a one-step
+path.  AMD-Vi: the
 first IOMMU in IVRS only, no interrupt remapping.  The RISC-V IOMMU: no
 MSI page table, so a device's messages are translated like its writes.
 Tested on QEMU's intel-iommu, amd-iommu (with

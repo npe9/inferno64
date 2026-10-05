@@ -340,6 +340,31 @@ allocvector(void)
 	return vno;
 }
 
+/*
+ * Interrupt remapping (VT-d, vtd.c): when on, every route below goes
+ * through an IRTE and the I/O APIC entries and MSI messages take the
+ * remappable format, naming the IRTE rather than vector and processor.
+ */
+int	irremap;
+int	(*irroutef)(uvlong key, int vno, int apicid, int level, int sid);
+int	(*irioapicsidf)(int apicno);	/* the I/O APIC's requester ID, -1 if not known */
+
+#define	IrkeyIoapic	(1ULL<<62)	/* | apic<<8 | input */
+#define	IrkeyMsi	(2ULL<<62)	/* | tbdf<<16 | MSI-X entry (0xFFFF: MSI) */
+
+/* the remappable MSI address for IRTE idx; the data is not used (SHV clear) */
+static uvlong
+irmsiaddr(int idx)
+{
+	return 0xFEE00000ULL | (uvlong)(idx & 0x7FFF)<<5 | 1<<4 | (uvlong)((idx>>15) & 1)<<2;
+}
+
+static int
+pcisid(Pcidev *p)
+{
+	return BUSBNO(p->tbdf)<<8 | BUSDNO(p->tbdf)<<3 | BUSFNO(p->tbdf);
+}
+
 static int
 ioapicirqenable(Vctl *v, int shared)
 {
@@ -351,6 +376,23 @@ ioapicirqenable(Vctl *v, int shared)
 	hi = v->cpu<<24;
 	lo = mpintrinit(aintr->bus, aintr->intr, v->vno, v->irq);
 	lo |= ApicPHYSICAL;			/* no-op */
+	if(irremap){
+		/*
+		 * Remappable format: the IRTE's index in bits 63:49 and 11,
+		 * format bit 48; vector, mask, trigger and polarity stay (the
+		 * vector must be the IRTE's, for EOI).  The I/O APIC's
+		 * requester ID is checked where DMAR gives it.
+		 */
+		int idx;
+
+		idx = irroutef(IrkeyIoapic | aintr->apic->apicno<<8 | aintr->intr->intin,
+			v->vno, v->cpu, (lo & ApicLEVEL) != 0,
+			irioapicsidf != nil ? irioapicsidf(aintr->apic->apicno) : -1);
+		if(idx < 0)
+			return -1;
+		lo = (lo & (ApicIMASK|ApicLEVEL|ApicLOW|0xFF)) | ((idx>>15) & 1)<<11;
+		hi = 1<<16 | (idx & 0x7FFF)<<17;
+	}
  	ioapicrdtw(aintr->apic, aintr->intr->intin, hi, lo);
 	return 0;
 }
@@ -548,6 +590,14 @@ static int
 msiirqenable(Vctl *v, int)
 {
 	Pcidev *pci = v->aux;
+	int idx;
+
+	if(irremap){
+		idx = irroutef(IrkeyMsi | (uvlong)pci->tbdf<<16 | 0xFFFF, v->vno, v->cpu, 0, pcisid(pci));
+		if(idx < 0)
+			return -1;
+		return pcimsienable(pci, irmsiaddr(idx), 0);
+	}
 	return pcimsienable(pci, 0xFEE00000ULL | (v->cpu << 12), v->vno | (1<<14));
 }
 
@@ -566,8 +616,14 @@ msixirqenable(Vctl *v, int)
 
 	/* a caller that named no vector gets entry 0, the way it always did */
 	vec = v->msixvec < 0 ? 0 : v->msixvec;
-	r = pcimsixenable(pci, vec, 0xFEE00000ULL | (v->cpu << 12),
-		v->vno | (1<<14));
+	if(irremap){
+		int idx;
+
+		idx = irroutef(IrkeyMsi | (uvlong)pci->tbdf<<16 | vec, v->vno, v->cpu, 0, pcisid(pci));
+		r = idx < 0 ? -1 : pcimsixenable(pci, vec, irmsiaddr(idx), 0);
+	}else
+		r = pcimsixenable(pci, vec, 0xFEE00000ULL | (v->cpu << 12),
+			v->vno | (1<<14));
 	/* said out loud because *msix is an opt-in: without it there is no
 	 * way to tell from a boot log whether a device took MSI-X or fell
 	 * back to MSI, and the two look identical from the driver.

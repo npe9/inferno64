@@ -606,7 +606,54 @@ through IOVA 0x100000 correctly, and a copy aimed at the host physical
 address of one of its own pages \(en which the domain does not map \(en
 faults (requester 04:00.0, reason 5) and leaves that page untouched,
 while the host's own devices keep working through the pass-through host
-domain.  Not yet: interrupt remapping, queued invalidation, AMD-Vi.
+domain.  Not yet: interrupt remapping, queued invalidation, AMD-Vi
+(all three came after, below).
+.IP "Phase 2: VT-d queued invalidation (QEMU q35, intel-iommu, TCG)." 4
+Where a unit has it (ECAP.QI), invalidation goes through a queue of
+descriptors now, the registers only where it does not: a page of 256
+128-bit descriptors, a global context-cache and a global IOTLB
+invalidation (draining reads and writes where the unit can) followed by
+an invalidation wait whose status write is polled; an invalidation
+queue error is reported with the head it stopped at.  Real units
+increasingly have only this, and interrupt remapping needs it.
+.DS
+.ft CW
+vtd: unit 0 at 0xfed90000 translating (host domain pass-through, queued invalidation)
+DEVTEST: IOMMU-DMA-MAPPED-OK 256 bytes A -> edu -> B through IOVA 0x100000
+DEVTEST: IOMMU-DMA-BLOCKED-OK DMA to host pa 1bcb8000 faulted and page B is untouched
+.ft
+.DE
+.IP "Phase 2: VT-d interrupt remapping (QEMU q35, intel-iommu,intremap=on, TCG)." 4
+Every interrupt a device or an I/O APIC sends is a write to 0xFEExxxxx;
+with remapping on, the unit covering the sender looks it up in a table
+of IRTEs \(en vector, destination, trigger, and for an MSI the requester
+ID it must come from \(en so a function assigned to a guest can raise
+only the interrupts its entries allow.  It comes on as the VT-d backend
+is linked, where DMAR says the platform has it and every unit has it
+and queued invalidation: one table of 256 IRTEs every unit shares,
+pointed to (SIRTP), its cache invalidated, IRE on, and compatibility
+format not let through (CFI clear) \(en the only way it protects
+anything.
+.CW pc/mp.c
+routes the I/O APICs' entries and every MSI and MSI-X vector through
+.CW irroute
+then, in the remappable format (the IRTE's index where the vector and
+processor were), and
+.CW intrreroute
+routes again everything routed before, the clock and the console among
+them.  Requester IDs are checked (SVT 1): an MSI's is its function's,
+an I/O APIC's the one its DMAR scope gives (QEMU's: bus FFh, 00.0),
+where the scope's path is one step.  A boot under QEMU's
+.CW vtd_ir_*
+trace remapped 2509 interrupts in 90 seconds, every one checked, and
+the kernel ran M1 on top of it:
+.DS
+.ft CW
+vtd: interrupt remapping on, 1 units, 256 entries
+vtd_ir_irte_get index 3 low 0x4ff00 high 0x30000590001
+VMTEST: M1 PASS
+.ft
+.DE
 .IP "Phase 2: AMD-Vi (QEMU q35, amd-iommu, TCG)." 4
 .CW pc/amdvi.c
 is the IOMMU layer's AMD backend, found through the IVRS table
@@ -1586,5 +1633,11 @@ disk: the first guest makes an ext2 root (busybox's mke2fs, a copy of
 its /bin, /lib and /init) on its second disk, and a second guest given
 that disk alone and linuxguest.root=vda mounts it from the initramfs
 and switches to it.  M3 is done on VMX too (Bochs, two processors).
-Next: the workstation (phase 13).  On QEMU, check-vm (SVM) and check-rv,
-on both the PLIC and the AIA machine, pass every stage.
+Since: the RISC-V IOMMU (M4) and a device assigned through it (M5) on
+RISC-V; a riscv64 host of four harts; M3 under MTTCG (a QEMU race,
+fixed); AMD-Vi, VT-d queued invalidation and interrupt remapping; Limbo
+nil dereferences as exceptions on pc64 and riscv64.  Next: the
+workstation (phase 13), and real hardware for everything QEMU and Bochs
+have stood in for.  On QEMU, check-vm (SVM; M4 under VT-d and AMD-Vi)
+and check-rv, on both the PLIC and the AIA machine and on hosts of one
+and four harts, pass every stage.

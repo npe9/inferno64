@@ -211,6 +211,26 @@ Unlockandfree:
 	iunlock(&vctllock);
 }
 
+/*
+ * Route every enabled interrupt again: interrupt remapping (vtd.c) has
+ * just come on, and the routes made before it are in a format it no
+ * longer lets through.  The first handler on each vector routes it.
+ */
+void
+intrreroute(void)
+{
+	Vctl *v;
+	int vno;
+
+	ilock(&vctllock);
+	for(vno = 0; vno < nelem(vctl); vno++){
+		v = vctl[vno];
+		if(v != nil && v->isintr && v->enable != nil)
+			(*v->enable)(v, 0);
+	}
+	iunlock(&vctllock);
+}
+
 void
 intrenable(int irq, void (*f)(Ureg*, void*), void* a, int tbdf, char *name)
 {

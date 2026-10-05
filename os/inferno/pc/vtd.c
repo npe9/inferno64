@@ -2,7 +2,12 @@
  * Intel VT-d DMA remapping, the first backend of the portable IOMMU
  * layer (../port/iommu.h, ../port/deviommu.c; doc/genesize-plan.ms,
  * phase 2).  Legacy (not scalable) mode, second-level translation,
- * register-based invalidation; interrupt remapping is not used yet.
+ * queued invalidation where the unit has it (ECAP.QI) and the registers
+ * where it does not.  Interrupt remapping, where DMAR and every unit
+ * have it, is on from boot (irinit, from archacpi.c, before any
+ * interrupt is routed): one table of IRTEs every unit shares, and
+ * mp.c routes the I/O APICs' entries and every MSI through it
+ * (irroute); compatibility-format interrupts are not let through.
  *
  * The units are the DRHDs archacpi.c read from DMAR (dmar.h).  Each
  * gets a root table, and context tables for the buses it covers are
@@ -41,6 +46,33 @@ enum {
 	CCMD	= 0x28,
 	FSTS	= 0x34,
 	FECTL	= 0x38,
+	IQH	= 0x80,
+	IQT	= 0x88,
+	IQA	= 0x90,
+	IRTA	= 0xB8,
+
+	/* GCMD and GSTS, beside those below */
+	SIRTP	= 1<<24,	/* set the interrupt remapping table pointer */
+
+	QdIec	= 0x4,		/* interrupt entry cache invalidate; bit 4: one index */
+	QdIecIndex	= 1<<4,
+
+	Nirte	= 256,		/* IRTA.S 7: 2^(7+1) entries */
+	IrteP	= 1ULL<<0,
+	IrteTM	= 1ULL<<4,	/* level-triggered */
+	IrteSVT	= 1ULL<<18,	/* in the high quadword: the requester ID is checked */
+
+	/* FSTS */
+	IQE	= 1<<4,		/* invalidation queue error */
+
+	/* queued invalidation descriptors, by type in bits 3:0 */
+	QdCtx	= 0x1,		/* context-cache invalidate */
+	QdIotlb	= 0x2,		/* IOTLB invalidate */
+	QdWait	= 0x5,		/* invalidation wait */
+	QdGlobal	= 1<<4,	/* granularity in bits 5:4: global (both) */
+	QdWaitSW	= 1<<5,	/* the wait writes its status word */
+	QdWaitFN	= 1<<6,	/* and fences: later descriptors wait for it */
+	Nqd	= 256,		/* 16 bytes each: one page, IQA.QS 0 */
 
 	/* GCMD and GSTS */
 	TE	= 1<<31,
@@ -72,6 +104,11 @@ struct Vtunit
 	int	nfr, fro, iro;
 	uvlong	*root;		/* 256 root entries, 128 bits each */
 	uvlong	*ctx[256];	/* a context table per bus, made when needed */
+	int	qi;		/* queued invalidation on */
+	uvlong	*iq;		/* the invalidation queue, Nqd descriptors */
+	int	iqtail;		/* the next descriptor's index */
+	u32int	*iqstat;	/* where its waits write */
+	u32int	iqseq;
 };
 
 static Vtunit units[Ndmarunit];
@@ -147,12 +184,73 @@ gcmd(Vtunit *u, u32int bit, u32int stsbit, int on)
 	waitbit(u, GSTS, stsbit, on, 0);
 }
 
+static void*	page(void);
+int	irinit(void);
+
+/* a descriptor on the invalidation queue */
+static void
+qdesc(Vtunit *u, uvlong lo, uvlong hi)
+{
+	uvlong *d;
+
+	d = u->iq + 2*u->iqtail;
+	d[0] = lo;
+	d[1] = hi;
+	u->iqtail = (u->iqtail + 1) % Nqd;
+}
+
+/* hand the descriptors so far to the unit, with a wait, and wait for it */
+static void
+qsync(Vtunit *u)
+{
+	u32int seq;
+	int i;
+
+	seq = ++u->iqseq;
+	qdesc(u, (uvlong)seq<<32 | QdWaitFN | QdWaitSW | QdWait, PADDR(u->iqstat));
+	coherence();
+	if(!u->coherent)
+		wbinvd();
+	wr64(u, IQT, (uvlong)u->iqtail<<4);
+	for(i = 0; i < 10000000; i++){
+		if(*(volatile u32int*)u->iqstat == seq)
+			return;
+		if(rd32(u, FSTS) & IQE){
+			print("vtd: unit at %#llux: invalidation queue error at %#llux\n",
+				u->d->base, rd64(u, IQH));
+			wr32(u, FSTS, IQE);
+			return;
+		}
+	}
+	print("vtd: unit at %#llux: invalidation wait %ud never written\n", u->d->base, seq);
+}
+
+/* the queue, and queued invalidation on */
+static void
+qion(Vtunit *u)
+{
+	u->iq = page();
+	u->iqstat = page();
+	u->iqtail = 0;
+	wr64(u, IQT, 0);
+	wr64(u, IQA, PADDR(u->iq));	/* QS 0: one page; 128-bit descriptors */
+	gcmd(u, QIE, QIE, 1);
+	u->qi = (rd32(u, GSTS) & QIE) != 0;
+}
+
 /* global context-cache and IOTLB invalidation */
 static void
 invalidate(Vtunit *u)
 {
 	int iotlb;
 
+	if(u->qi){
+		qdesc(u, QdGlobal | QdCtx, 0);
+		/* drain reads and writes (IOTLB invalidate DR, DW) where the unit can */
+		qdesc(u, QdGlobal | QdIotlb | ((u->cap>>55 & 1) ? 1<<7 : 0) | ((u->cap>>54 & 1) ? 1<<6 : 0), 0);
+		qsync(u);
+		return;
+	}
 	if(u->cap & 1<<4){		/* RWBF: flush the write buffer first */
 		wr32(u, GCMD, (rd32(u, GSTS) & Persist) | WBF);
 		waitbit(u, GSTS, WBF, 0, 0);
@@ -291,12 +389,17 @@ vtdcovers(Pcidev *p)
 	return unitof(p) != nil;
 }
 
+/* the units DMAR describes, mapped once (irinit at boot, vtdprobe later) */
 static int
-vtdprobe(char *why, int nwhy)
+mapunits(char *why, int nwhy)
 {
+	static int done, ok;
 	Vtunit *u;
 	int i, sagaw, l;
 
+	if(done)
+		goto out;
+	done = 1;
 	if(dmar == nil || dmar->nunit == 0){
 		snprint(why, nwhy, "no DMAR table");
 		return -1;
@@ -331,13 +434,21 @@ vtdprobe(char *why, int nwhy)
 		}
 		nunits++;
 	}
-	if(nunits == 0){
-		snprint(why, nwhy, "no usable remapping unit");
-		return -1;
-	}
 	levels = l;
 	aw = l == 4 ? 2 : 1;
+	ok = nunits > 0;
+out:
+	if(!ok){
+		snprint(why, nwhy, dmar == nil || dmar->nunit == 0 ? "no DMAR table" : "no usable remapping unit");
+		return -1;
+	}
 	return 0;
+}
+
+static int
+vtdprobe(char *why, int nwhy)
+{
+	return mapunits(why, nwhy);
 }
 
 static char*
@@ -394,18 +505,20 @@ vtdenable(void)
 	flushtables();
 	for(i = 0; i < nunits; i++){
 		u = &units[i];
-		if(rd32(u, GSTS) & QIE){
+		if(!u->qi && (rd32(u, GSTS) & QIE)){
 			print("vtd: unit at %#llux has queued invalidation on; not taken over\n", u->d->base);
 			return -1;
 		}
+		if(!u->qi && (u->ecap & 1<<1))	/* QI; irinit may have it on already */
+			qion(u);
 		wr64(u, RTADDR, PADDR(u->root));
 		gcmd(u, SRTP, SRTP, 1);
 		invalidate(u);
 		gcmd(u, TE, TE, 1);
 		if((rd32(u, GSTS) & TE) == 0)
 			return -1;
-		print("vtd: unit %d at %#llux translating (host domain %s)\n", i, u->d->base,
-			u->pt ? "pass-through" : "identity-mapped");
+		print("vtd: unit %d at %#llux translating (host domain %s, %s invalidation)\n", i, u->d->base,
+			u->pt ? "pass-through" : "identity-mapped", u->qi ? "queued" : "register");
 	}
 	return 0;
 }
@@ -537,5 +650,131 @@ static Iommuops vtdops = {
 void
 vtdlink(void)
 {
+	irinit();
 	iommuregister(&vtdops);
+}
+
+/*
+ * Interrupt remapping.  Every interrupt a device or an I/O APIC sends
+ * is a write to 0xFEExxxxx that the unit covering it remaps through an
+ * IRTE: vector, destination, trigger, and for an MSI the requester ID
+ * it must come from.  An assigned function can then raise only the
+ * interrupts its entries allow.  On from boot, before any interrupt is
+ * routed, so nothing is ever in the compatibility format, which is not
+ * let through (GCMD.CFI clear).
+ */
+extern int	irremap;	/* mp.c: on, it routes through irroutef */
+extern int	(*irroutef)(uvlong, int, int, int, int);
+extern int	(*irioapicsidf)(int);
+extern void	intrreroute(void);	/* irq.c */
+int	irroute(uvlong, int, int, int, int);
+static uvlong	*irt;		/* Nirte entries, two quadwords each */
+static uvlong	irkey[Nirte];	/* what each entry is for, 0 free */
+static Lock	irtlock;
+
+/*
+ * An I/O APIC's requester ID, from its DMAR device scope: its start bus
+ * and, for a scope with one (device, function), that.  A longer path
+ * runs through bridges whose bus numbers would have to be read; such an
+ * I/O APIC is not checked (-1).
+ */
+static int
+ioapicsid(int apicno)
+{
+	Dmarscope *sc;
+	int i, j;
+
+	for(i = 0; i < dmar->nunit; i++)
+		for(j = 0; j < dmar->unit[i].nscope; j++){
+			sc = &dmar->unit[i].scope[j];
+			if(sc->type == DmarScopeIoapic && sc->enumid == apicno && sc->npath == 1)
+				return sc->bus<<8 | sc->path[0][0]<<3 | sc->path[0][1];
+		}
+	return -1;
+}
+
+int
+irinit(void)
+{
+	char why[ERRMAX];
+	Vtunit *u;
+	int i;
+
+	if(dmar == nil || (dmar->flags & DmarIntrRemap) == 0)
+		return -1;
+	if(mapunits(why, sizeof why) < 0)
+		return -1;
+	for(i = 0; i < nunits; i++)
+		if((units[i].ecap & (1<<3|1<<1)) != (1<<3|1<<1)){	/* IR and QI */
+			print("vtd: unit at %#llux cannot remap interrupts (ECAP %#llux)\n",
+				units[i].d->base, units[i].ecap);
+			return -1;
+		}
+	irt = page();		/* Nirte*16 bytes: one page */
+	for(i = 0; i < nunits; i++){
+		u = &units[i];
+		if(rd32(u, GSTS) & (QIE|IRE)){
+			print("vtd: unit at %#llux has queued invalidation or remapping on; not taken over\n", u->d->base);
+			return -1;
+		}
+		qion(u);
+		wr64(u, IRTA, PADDR(irt) | 7);	/* S 7: 256 entries; EIME clear, xAPIC */
+		gcmd(u, SIRTP, SIRTP, 1);
+		qdesc(u, QdIec, 0);		/* global */
+		qsync(u);
+		gcmd(u, IRE, IRE, 1);
+		if((rd32(u, GSTS) & IRE) == 0){
+			print("vtd: unit at %#llux: remapping did not come on\n", u->d->base);
+			return -1;
+		}
+	}
+	irroutef = irroute;
+	irioapicsidf = ioapicsid;
+	irremap = 1;
+	intrreroute();
+	print("vtd: interrupt remapping on, %d units, %d entries\n", nunits, Nirte);
+	return 0;
+}
+
+/*
+ * The IRTE for key (a source: an I/O APIC input or a function's MSI
+ * vector), made or reused, routing vector vno to the processor whose
+ * APIC ID is apicid; sid is the requester ID an MSI must carry, -1 for
+ * none checked.  Returns its index, -1 if the table is full.
+ */
+int
+irroute(uvlong key, int vno, int apicid, int level, int sid)
+{
+	uvlong *e;
+	int i, free, j;
+
+	ilock(&irtlock);
+	free = -1;
+	for(i = 0; i < Nirte; i++){
+		if(irkey[i] == key)
+			break;
+		if(irkey[i] == 0 && free < 0)
+			free = i;
+	}
+	if(i == Nirte){
+		if(free < 0){
+			iunlock(&irtlock);
+			print("vtd: interrupt remapping table full\n");
+			return -1;
+		}
+		i = free;
+		irkey[i] = key;
+	}
+	e = irt + 2*i;
+	e[0] = 0;
+	coherence();
+	e[1] = sid >= 0 ? IrteSVT | (uvlong)(sid & 0xFFFF) : 0;
+	e[0] = IrteP | (level ? IrteTM : 0) | (uvlong)(vno & 0xFF)<<16 | (uvlong)(apicid & 0xFF)<<40;
+	flushtables();
+	for(j = 0; j < nunits; j++){
+		qdesc(&units[j], QdIec | QdIecIndex | (uvlong)i<<32, 0);
+		qsync(&units[j]);
+	}
+	iunlock(&irtlock);
+	return i;
 }
