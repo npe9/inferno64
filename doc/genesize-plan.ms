@@ -375,9 +375,14 @@ that, two device models: an 82599 with SR-IOV, from QEMU's igb, for
 the X520's PF and VF drivers; and a device that misbehaves on purpose
 \(en DMA outside its domain, after bus mastering is turned off, after
 an FLR, under another requester ID, and MSIs its IRTE does not allow
-\(en in place of phase 14's FPGA.  Not emulated: M11 itself, which is
-the workstation's own X520, the FL1100's quirks, the ConnectX-4 and
-GPUs.
+\(en in place of phase 14's FPGA.  A model may carry a part's quirks
+as well as its architecture, so the rest of the workstation's devices
+follow, in this order: the FL1100's quirks on QEMU's xHCI, newer NVMe,
+the ConnectX-4 Lx, and a GPU.  Each is checked against Linux's own
+driver before this kernel's runs on it.  M11 itself, the workstation's
+X520, stays on the hardware.  The X520 modelled is the single-port
+82599 (8086:10fb) with a direct-attach SFP+ cable; which one the
+workstation has is not recorded here.
 .NH 1
 Where things go
 .DS
