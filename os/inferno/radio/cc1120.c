@@ -157,6 +157,13 @@ enum {
 	Srx		= 0x34,
 	Stx		= 0x35,
 	Sidle		= 0x36,
+	/*
+	 * Packets read out of the FIFO per interrupt.  The part's RX
+	 * FIFO is 128 bytes and the frames on this link are
+	 * thirty-five, so four is the FIFO; see cc1120interrupt.
+	 */
+	Rxdrain		= 4,
+
 	Sfrx		= 0x3a,
 	Sftx		= 0x3b,
 	Snop		= 0x3d,
@@ -856,7 +863,7 @@ cc1120interrupt(Radio *r)
 	Spidev *s;
 	Block *b;
 	ulong tick;
-	int n, i, st, navail;
+	int n, i, st, navail, ndrain;
 
 	rr = (Cc1120*)r;
 	s = rr->spi;
@@ -880,165 +887,195 @@ cc1120interrupt(Radio *r)
 	else
 		rr->nintrlow++;
 
-	s->lock(s);
-	st = state(rr);
-	if(st == Strxerr){
-		rr->nrxoverflow++;
-		strobe(rr, Sfrx);
-		strobe(rr, Srx);
-		s->unlock(s);
-		return;
-	}
+	/*
+	 * DRAIN THE FIFO, DO NOT TAKE ONE PACKET PER EDGE.
+	 *
+	 * This function used to read one packet and return.  An EXTI
+	 * pending bit coalesces edges: two packets arriving while
+	 * interrupts are masked -- and they are masked for as long as
+	 * anything holds the bus ilock, which a 2000ms "capture" verb
+	 * does -- raise one interrupt between them, so one was read and
+	 * the other stayed in the FIFO.  The residue only ever grows,
+	 * and four thirty-five byte frames fill the part's 128-byte RX
+	 * FIFO, at which point it latches in RX_FIFO_ERR and stops
+	 * raising the edge that would have cleared it.
+	 *
+	 * So rxarm's recovery was the cure and this is the cause.  The
+	 * rule is in the kernel's own history under a different device:
+	 * drain then wait, never wait then consume one.
+	 *
+	 * Bounded, because this is interrupt context and a part that
+	 * reports bytes for ever is a fault rather than a reason to
+	 * spin.  Four is the FIFO.
+	 */
+	for(ndrain = 0; ndrain < Rxdrain; ndrain++){
+		s->lock(s);
+		st = state(rr);
+		if(st == Strxerr){
+			/*
+			 * Through rxarm, which strobes SIDLE before the
+			 * flush.  nrxoverflow is kept beside the newer
+			 * fifoerr because it is the number this driver
+			 * has always printed for this fault, and the
+			 * whole FIFO is invalid after an overflow, so
+			 * there is nothing left to go on draining.
+			 */
+			rr->nrxoverflow++;
+			rxarm(rr);
+			s->unlock(s);
+			break;
+		}
 
-	navail = rdx(rr, Xnumrxbytes);
-	if(navail < 1){
-		s->unlock(s);
-		return;
-	}
+		navail = rdx(rr, Xnumrxbytes);
+		if(navail < 1){
+			s->unlock(s);
+			break;
+		}
 
-	/* the length byte first, then that many */
-	s->select(s, 1);
-	s->byte(s, Hread | Hburst | Rfifo);
-	n = s->byte(s, 0);
-	if(n < 1 || n > Ccmaxpayload){
+		/* the length byte first, then that many */
+		s->select(s, 1);
+		s->byte(s, Hread | Hburst | Rfifo);
+		n = s->byte(s, 0);
+		if(n < 1 || n > Ccmaxpayload){
+			s->select(s, 0);
+			rr->ncrcerr++;
+			strobe(rr, Sfrx);
+			strobe(rr, Srx);
+			s->unlock(s);
+			break;
+		}
+		/*
+		 * Every block on the queue begins with #W's twelve-byte header:
+		 * length, rssi, snr, flags and arrival tick, in that order.  It
+		 * is the device's format and not the part's -- see the note on
+		 * Pkthdrlen in radio.h -- and #W/data hands out what follows it
+		 * while #W/pkt hands out the whole thing.  A driver that queues
+		 * a bare payload does not fail; it loses the first twelve bytes
+		 * of every packet to a reader of data, which is a long way to
+		 * look for a short header.
+		 *
+		 * snr is zero: the part reports a link quality indicator rather
+		 * than a signal-to-noise ratio, and a number in the wrong units
+		 * is worse than none.  rssi is read after the packet, from the
+		 * extended space.
+		 */
+		b = iallocb(Pkthdrlen + n);
+		if(b == nil){
+			s->select(s, 0);
+			strobe(rr, Sfrx);
+			strobe(rr, Srx);
+			s->unlock(s);
+			break;
+		}
+		for(i = 0; i < n; i++)
+			b->wp[Pkthdrlen + i] = s->byte(s, 0);
+		/*
+		 * And the two bytes the part appends, which this driver read the
+		 * payload past and left behind.
+		 *
+		 * PKT_CFG1 is 0x05 in the table, and bit 0 of it is
+		 * APPEND_STATUS: the part puts an RSSI byte and a byte carrying
+		 * CRC_OK and the link quality after every received packet.  The
+		 * loop above reads the length byte and that many payload bytes
+		 * and stops, so two bytes stayed in the RX FIFO -- and the next
+		 * packet's read then took one of them for its length.
+		 *
+		 * Found by reading PKT_CFG1 off both parts rather than from the
+		 * table, which is the only way this was going to show: nothing
+		 * in the driver names the bit, the qemu model does not append
+		 * anything, and the symptom needs two packets to appear, so
+		 * every test here that received at most one could not see it.
+		 *
+		 * The CRC_OK bit is worth having as well.  The part has already
+		 * checked the CRC by this point and this driver was inferring a
+		 * failure from a length that looked wrong, which is a guess
+		 * where the hardware has an answer.
+		 */
+		rr->rxstatus[0] = rr->rxstatus[1] = 0;
+		/*
+		 * Only if the FIFO actually holds them, which NUM_RXBYTES said
+		 * before any of this was read.  Asking PKT_CFG1 alone is not
+		 * enough: the qemu model takes APPEND_STATUS from this driver's
+		 * own table, so the bit reads set there while the model appends
+		 * nothing -- and reading two bytes past the end of its FIFO is
+		 * an underflow that puts the model into RXERR and loses the
+		 * packet.  The count is the fact; the register is an intention.
+		 */
+		if((rd(rr, Rpktcfg1) & Appendstatus) && navail >= 1 + n + 2){
+			rr->rxstatus[0] = s->byte(s, 0);
+			rr->rxstatus[1] = s->byte(s, 0);
+		}
 		s->select(s, 0);
-		rr->ncrcerr++;
-		strobe(rr, Sfrx);
-		strobe(rr, Srx);
+
+		rr->rssi = (schar)rdx(rr, Xrssi1);
+		rr->lqi = 0;
+		/*
+		 * Through rxarm: the FIFO can have overflowed while this
+		 * function was reading the packet out of it, and then there is
+		 * no further interrupt to notice it with.
+		 */
+		rxarm(rr);
 		s->unlock(s);
-		return;
-	}
-	/*
-	 * Every block on the queue begins with #W's twelve-byte header:
-	 * length, rssi, snr, flags and arrival tick, in that order.  It
-	 * is the device's format and not the part's -- see the note on
-	 * Pkthdrlen in radio.h -- and #W/data hands out what follows it
-	 * while #W/pkt hands out the whole thing.  A driver that queues
-	 * a bare payload does not fail; it loses the first twelve bytes
-	 * of every packet to a reader of data, which is a long way to
-	 * look for a short header.
-	 *
-	 * snr is zero: the part reports a link quality indicator rather
-	 * than a signal-to-noise ratio, and a number in the wrong units
-	 * is worse than none.  rssi is read after the packet, from the
-	 * extended space.
-	 */
-	b = iallocb(Pkthdrlen + n);
-	if(b == nil){
-		s->select(s, 0);
-		strobe(rr, Sfrx);
-		strobe(rr, Srx);
-		s->unlock(s);
-		return;
-	}
-	for(i = 0; i < n; i++)
-		b->wp[Pkthdrlen + i] = s->byte(s, 0);
-	/*
-	 * And the two bytes the part appends, which this driver read the
-	 * payload past and left behind.
-	 *
-	 * PKT_CFG1 is 0x05 in the table, and bit 0 of it is
-	 * APPEND_STATUS: the part puts an RSSI byte and a byte carrying
-	 * CRC_OK and the link quality after every received packet.  The
-	 * loop above reads the length byte and that many payload bytes
-	 * and stops, so two bytes stayed in the RX FIFO -- and the next
-	 * packet's read then took one of them for its length.
-	 *
-	 * Found by reading PKT_CFG1 off both parts rather than from the
-	 * table, which is the only way this was going to show: nothing
-	 * in the driver names the bit, the qemu model does not append
-	 * anything, and the symptom needs two packets to appear, so
-	 * every test here that received at most one could not see it.
-	 *
-	 * The CRC_OK bit is worth having as well.  The part has already
-	 * checked the CRC by this point and this driver was inferring a
-	 * failure from a length that looked wrong, which is a guess
-	 * where the hardware has an answer.
-	 */
-	rr->rxstatus[0] = rr->rxstatus[1] = 0;
-	/*
-	 * Only if the FIFO actually holds them, which NUM_RXBYTES said
-	 * before any of this was read.  Asking PKT_CFG1 alone is not
-	 * enough: the qemu model takes APPEND_STATUS from this driver's
-	 * own table, so the bit reads set there while the model appends
-	 * nothing -- and reading two bytes past the end of its FIFO is
-	 * an underflow that puts the model into RXERR and loses the
-	 * packet.  The count is the fact; the register is an intention.
-	 */
-	if((rd(rr, Rpktcfg1) & Appendstatus) && navail >= 1 + n + 2){
-		rr->rxstatus[0] = s->byte(s, 0);
-		rr->rxstatus[1] = s->byte(s, 0);
-	}
-	s->select(s, 0);
 
-	rr->rssi = (schar)rdx(rr, Xrssi1);
-	rr->lqi = 0;
-	/*
-	 * Through rxarm: the FIFO can have overflowed while this
-	 * function was reading the packet out of it, and then there is
-	 * no further interrupt to notice it with.
-	 */
-	rxarm(rr);
-	s->unlock(s);
+		tick = fastticks(nil);
+		b->wp[0] = n;
+		b->wp[1] = n >> 8;
+		b->wp[2] = rr->rssi;
+		b->wp[3] = rr->rssi >> 8;
+		b->wp[4] = 0;
+		b->wp[5] = 0;
+		b->wp[6] = 0;
+		b->wp[7] = 0;
+		b->wp[8] = tick;
+		b->wp[9] = tick >> 8;
+		b->wp[10] = tick >> 16;
+		b->wp[11] = tick >> 24;
+		b->wp += Pkthdrlen + n;
 
-	tick = fastticks(nil);
-	b->wp[0] = n;
-	b->wp[1] = n >> 8;
-	b->wp[2] = rr->rssi;
-	b->wp[3] = rr->rssi >> 8;
-	b->wp[4] = 0;
-	b->wp[5] = 0;
-	b->wp[6] = 0;
-	b->wp[7] = 0;
-	b->wp[8] = tick;
-	b->wp[9] = tick >> 8;
-	b->wp[10] = tick >> 16;
-	b->wp[11] = tick >> 24;
-	b->wp += Pkthdrlen + n;
+		/*
+		 * Keep the front of it, because a counter cannot tell a frame
+		 * from noise and the bytes can.
+		 *
+		 * At any sync threshold where this part's detector fires at
+		 * all it fires on noise, equally on a channel carrying traffic
+		 * and on an empty one -- measured, three windows in five on
+		 * each.  So "a packet arrived" is not evidence that anything
+		 * transmitted.  What a real frame has is structure: Z-Wave
+		 * opens with a home ID, a node ID, a length and a checksum,
+		 * and noise has none of those.  This keeps enough of the front
+		 * of each packet for "lastrx" to show it.
+		 */
+		/*
+		 * b->wp - n, and not b->wp + Pkthdrlen.  The header goes in at
+		 * the old wp and then wp advances past header and payload
+		 * together, so by here it points at the end of the packet and
+		 * adding to it reads off the end of the block.  The first cut
+		 * did that and printed the same thirty-two bytes on every
+		 * channel and every read -- 0x0801b949 and 0x2001d1b8, a flash
+		 * address and an SRAM one, which is what uninitialised memory
+		 * looks like on this part and is how it was caught.
+		 */
+		rr->nlastrx = n < sizeof rr->lastrx? n: sizeof rr->lastrx;
+		memmove(rr->lastrx, b->wp - n, rr->nlastrx);
 
-	/*
-	 * Keep the front of it, because a counter cannot tell a frame
-	 * from noise and the bytes can.
-	 *
-	 * At any sync threshold where this part's detector fires at
-	 * all it fires on noise, equally on a channel carrying traffic
-	 * and on an empty one -- measured, three windows in five on
-	 * each.  So "a packet arrived" is not evidence that anything
-	 * transmitted.  What a real frame has is structure: Z-Wave
-	 * opens with a home ID, a node ID, a length and a checksum,
-	 * and noise has none of those.  This keeps enough of the front
-	 * of each packet for "lastrx" to show it.
-	 */
-	/*
-	 * b->wp - n, and not b->wp + Pkthdrlen.  The header goes in at
-	 * the old wp and then wp advances past header and payload
-	 * together, so by here it points at the end of the packet and
-	 * adding to it reads off the end of the block.  The first cut
-	 * did that and printed the same thirty-two bytes on every
-	 * channel and every read -- 0x0801b949 and 0x2001d1b8, a flash
-	 * address and an SRAM one, which is what uninitialised memory
-	 * looks like on this part and is how it was caught.
-	 */
-	rr->nlastrx = n < sizeof rr->lastrx? n: sizeof rr->lastrx;
-	memmove(rr->lastrx, b->wp - n, rr->nlastrx);
-
-	rr->nrecv++;
-	/*
-	 * Flip the lamp, rather than light it.
-	 *
-	 * Lighting it would need something to put it out again, and
-	 * this driver has no timer to do that with.  A toggle needs
-	 * nothing: under traffic it flickers, and after a quiet spell
-	 * it simply sits at whatever the last packet left, so the
-	 * question "has anything arrived since I last looked" has an
-	 * answer on the board itself.  A receiver is most often left
-	 * running while nobody is watching its console.
-	 */
-	if(s->led != nil){
-		rr->ledon = !rr->ledon;
-		s->led(s, rr->ledon);
+		rr->nrecv++;
+		/*
+		 * Flip the lamp, rather than light it.
+		 *
+		 * Lighting it would need something to put it out again, and
+		 * this driver has no timer to do that with.  A toggle needs
+		 * nothing: under traffic it flickers, and after a quiet spell
+		 * it simply sits at whatever the last packet left, so the
+		 * question "has anything arrived since I last looked" has an
+		 * answer on the board itself.  A receiver is most often left
+		 * running while nobody is watching its console.
+		 */
+		if(s->led != nil){
+			rr->ledon = !rr->ledon;
+			s->led(s, rr->ledon);
+		}
+		qpass(rr->rq, b);
 	}
-	qpass(rr->rq, b);
 }
 
 /*
