@@ -914,13 +914,16 @@ cc1120interrupt(Radio *r)
 		 * be careful about and the one-packet-per-edge version
 		 * never had to.
 		 *
-		 * This function is entered on the falling edge of
-		 * PKT_SYNC_RXTX, so the FIFO holds at least one whole
-		 * packet.  It can also hold the beginning of the NEXT
-		 * one: NUM_RXBYTES is non-zero in the middle of a
+		 * The FIFO can hold the beginning of a packet as well as
+		 * whole ones: NUM_RXBYTES is non-zero in the middle of a
 		 * reception, and a loop that trusted it would read a
 		 * length byte for a frame whose payload has not arrived
 		 * and then read bytes out of an empty FIFO.
+		 *
+		 * The first pass is left alone -- it reads whatever is
+		 * there, exactly as this function always did, and that
+		 * is the path the working receiver is measured on.  This
+		 * gate is for the passes draining adds.
 		 *
 		 * PKT_SYNC_RXTX says exactly this: SWRU295E table 10,
 		 * asserted when the sync word has been received and
