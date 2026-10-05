@@ -1888,3 +1888,73 @@ corrupt at byte 82 with msize 512; hanging at msize 436; completing and
 corrupt at byte 207 with the pool and slots corrected.  Each change
 moved it, which is what says the remaining fault is in the same place as
 the last three.
+.NH 2
+Why smalloc blocking is fatal, and the question to ask next
+.PP
+.B "smalloc waits for ever by design."
+.CW os/inferno/port/alloc.c
+says so in as many words \- "this loop waits for ever by design, the
+caller cannot be told no" \- and prints once per call rather than once
+per retry.  So a 300-byte request the main pool cannot meet does not
+fail: it blocks the process that made it, indefinitely.
+.PP
+That is why the stall takes the link with it.  The chain is
+.B "pool cannot give 300 bytes \(-> a Styx server process blocks in smalloc \(-> no reply crosses the air \(-> T1 expires N2 times \(-> the conversation disconnects."
+Every layer behaves correctly and the symptom appears at the far end as
+a radio fault.
+.PP
+.B "The pc in that message is the caller,"
+not smalloc's own frame \- the comment above it records being caught out
+by exactly that once and fixing it.  Resolving it needs a symbol table
+and the kernel is linked
+.B -H4 ,
+a raw image with no header, so
+.I inm
+cannot read it; relinking the same objects at the same addresses without
+.B -H4
+produces a file
+.I inm
+also declines, which is a tooling gap worth closing before the next
+capture rather than during it.
+.NH 2
+The question, which is about where memory IS and not how much
+.PP
+.B "This part has two RAM regions and they are not interchangeable."
+.DS
+.CW "10000000 10010000 65536    core-coupled memory"
+.CW "20008000 20020000 98304    SRAM"
+.DE
+.CW archstm32f407.c
+gives the second to
+.B conf.base1 ;
+.I xinit
+adds both as holes, sorted, with the core-coupled one first; and
+.I procinit
+then puts the kernel stacks at
+.CW 0x20008010 ,
+which is sixteen bytes into the SRAM one.
+.B "So the stacks did not come from the region that is listed first,"
+and the pools, which are built before
+.I procinit
+runs, have taken whatever they took before that.
+.PP
+Two things follow and both want reading rather than tuning.
+.IP \(bu
+.B "Why does a 49152-byte request go to SRAM when a 65536-byte hole is listed ahead of it?"
+If it is best-fit rather than first-fit then the stacks are in the wrong
+place for this board, and kernel stacks are exactly what core-coupled
+memory is for \- never DMA'd, always hot.  Moving them there would hand
+the whole SRAM region to the pools.
+.IP \(bu
+.B "Can main have a second arena in the other region?"
+A pool with one arena is limited by one hole; a pool that can hold two
+is limited by their sum.  main stops at cursize 42176, which is less
+than either region, so whichever hole its arena is in has no room left
+and the other is not being reached.
+.PP
+.B "What is NOT the answer, having each been measured:"
+the message size (436 is the window times the information field), the
+process count (twelve, counted against what exportfs and #a start), the
+pool split (74/25/1, against a heap that uses 17152 of 40950), and the
+pipe queue (tried, backed out, and refuted by the pool report showing a
+contiguous-run failure rather than a shortage).
