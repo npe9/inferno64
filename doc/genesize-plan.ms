@@ -654,6 +654,27 @@ vtd_ir_irte_get index 3 low 0x4ff00 high 0x30000590001
 VMTEST: M1 PASS
 .ft
 .DE
+.LP
+The whole of
+.CW check-vm
+then ran on kernels with remapping on (SVM backend, QEMU TCG, q35
+with intel-iommu,intremap=on, four processors, MTTCG for M3) \(en every
+host interrupt, the guests' assigned functions' MSI-X among them, went
+through an IRTE:
+.DS
+.ft CW
+check-vm: M1 (svm): pass
+check-vm: nil dereference (svm host): pass
+check-vm: M2 (svm): pass
+check-vm: M5 (svm): pass
+check-vm: M8 disk (svm): pass
+check-vm: M8 net (svm): pass
+check-vm: M8 boot on the virtio disk (svm): pass
+check-vm: M4 (vt-d): pass
+check-vm: M4 (amd-vi): pass
+check-vm: M3 (svm): pass
+.ft
+.DE
 .IP "Phase 2: AMD-Vi (QEMU q35, amd-iommu, TCG)." 4
 .CW pc/amdvi.c
 is the IOMMU layer's AMD backend, found through the IVRS table
