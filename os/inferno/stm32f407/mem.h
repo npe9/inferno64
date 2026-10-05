@@ -169,14 +169,26 @@
  * covers it.  Eighty measurements between reflashes is not the
  * constraint on this board.
  *
- * What the other 8K buys is image: the ceiling bin2ihex is given is
- * this base, and a shell image carrying the PyCubed mission's modules
- * in its root came to 901320 bytes against the old 901120 and would
- * not convert.  So the store gives up seven eighths of what it has
- * never used, to the thing that is actually short.
+ * What the rest buys is image: the ceiling bin2ihex is given is this
+ * base, and a shell image carrying the PyCubed mission's modules in its
+ * root came to 901320 bytes against the original 901120 and would not
+ * convert.  So the store gives up what it has never used, to the thing
+ * that is actually short.
+ *
+ * 4K IS THE LAST HALVING, and the fact that this knob has been turned
+ * twice in one session is the real finding.  Forty entries is still
+ * more measurements than a board takes between reflashes, but the thing
+ * that is actually wrong is that EVERY image carries EVERY root file:
+ * the shell image carries the mission's three modules and cannot run
+ * them, the mission image carries the shell and cannot run it.  The XIP
+ * list and the process count are per init already, in image-<init>
+ * beside the config.  The root is not, because mkroot reads the conf's
+ * root section and the conf format has no way to say "this file only
+ * for that init" -- and that, not this constant, is what the next thing
+ * added to the root should fix.
  */
-#define	CALBASE		0x080de000
-#define	CALSIZE		(8*1024)
+#define	CALBASE		0x080df000
+#define	CALSIZE		(4*1024)
 
 #define	CONFNAME	"stm32f407"
 

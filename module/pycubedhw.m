@@ -64,6 +64,13 @@ Hw: module
 	rgb:		fn(r, g, b: int);
 	haveradio:	fn(): int;
 	radiosend:	fn(b: array of byte): int;
+	# One read, one packet, and it BLOCKS until one arrives -- which
+	# is why its caller is a process of its own and not a poll in
+	# somebody's timer loop.  The protocol above always said the
+	# radio file reads as well as writes; nothing read it, so the
+	# satellite could beacon and could not be told anything, and
+	# cdh() sat in beepsat.b with no caller.
+	radiorecv:	fn(b: array of byte): int;
 	imumag:		fn(): array of int;
 	imugyro:	fn(): array of int;
 	imuaccel:	fn(): array of int;

@@ -220,6 +220,28 @@ cdh(msg: array of byte)
 	}
 }
 
+cdhtask()
+{
+	if(!hw->haveradio()){
+		debug("cdh", "no radio on this board, nothing to listen to");
+		return;
+	}
+	# The carrier's own packet size.  Asking the radio rather than
+	# naming a number: #W/radio0/data's iounit is what one read can
+	# return, and a buffer short of it would truncate every command.
+	b := array[256] of byte;
+	for(;;){
+		n := hw->radiorecv(b);
+		if(n < 0){
+			debug("cdh", sys->sprint("recv: %r"));
+			return;
+		}
+		if(n == 0)
+			continue;
+		cdh(b[0:n]);
+	}
+}
+
 init(nil: ref Draw->Context, argv: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -260,11 +282,21 @@ init(nil: ref Draw->Context, argv: list of string)
 	spawn sat->server(req);
 
 	s := ask(sat->Get, nil, 0);
+	# THE GROUND'S SIDE OF THE RADIO, which nothing read until now.
+	#
+	# cdh() has been in this file since the port with no caller: the
+	# Python's main loop polls the radio inside its scheduler and
+	# there was no equivalent here, so the satellite beaconed and
+	# could not be told anything.  A process of its own rather than a
+	# poll, because radiorecv() blocks and because that is what
+	# Inferno has instead of a cooperative scheduler -- the same
+	# argument that deleted lib/tasko.
+	spawn cdhtask();
 	spawn blinktask();
 	spawn timetask(s.boottime);
 	spawn vbatttask();
 	spawn beacontask();
-	sys->print("BEEPSAT-RUNNING 4 tasks\n");
+	sys->print("BEEPSAT-RUNNING 5 tasks\n");
 
 	if(secs <= 0){
 		for(;;)

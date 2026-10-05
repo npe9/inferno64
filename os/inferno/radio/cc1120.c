@@ -1738,6 +1738,45 @@ cc1120ctl(Radio *r, char *buf, int n)
 		s->unlock(s);
 		return n;
 	}
+	if(strcmp(f[0], "send") == 0 && nf >= 2){
+		/*
+		 * Transmit a payload given as hex bytes.
+		 *
+		 * WHY THIS EXISTS when #W/radio0/data is the payload
+		 * path: a shell cannot write an arbitrary byte.  Inferno
+		 * strings are UTF-8, so "echo" of anything above 0x7f
+		 * emits two bytes, and the first thing that wanted to
+		 * send a four-byte pass-code from a prompt -- the PyCubed
+		 * mission's cdh(), whose code is 70 ba b8 43 -- could
+		 * not, which left the whole command path untestable from
+		 * the board that is meant to command it.
+		 *
+		 * So: a ground station at a prompt can key an exact
+		 * payload.  It is the instrument's job and not a test
+		 * hook; txtest below sends a canned pattern of a given
+		 * length, which answers a different question.
+		 *
+		 *	echo send 70 ba b8 43 51 55 >/dev/radio0/ctl
+		 */
+		uchar pay[Ccmaxpayload];
+		int np;
+
+		np = nf - 1;
+		if(np > sizeof pay)
+			error("radio: payload longer than the part will send");
+		for(i = 0; i < np; i++){
+			ulong v;
+			char *e2;
+
+			v = strtoul(f[i+1], &e2, 16);
+			if(*e2 != 0 || v > 0xff)
+				error("radio: send wants hex bytes");
+			pay[i] = v;
+		}
+		if(cc1120send(r, pay, np) != np)
+			error("radio: send refused");
+		return n;
+	}
 	if(strcmp(f[0], "txtest") == 0){
 		/*
 		 * Send a packet of a given length and print what the

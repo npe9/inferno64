@@ -110,6 +110,21 @@ radiosend(b: array of byte): int
 	return sys->write(fradio, b, len b);
 }
 
+# The same descriptor, read.  One read is one packet: radio(3) serves
+# #W/radio0/data that way, so a short buffer truncates a packet rather
+# than leaving the rest for the next read, and the caller's buffer has
+# to be at least the carrier's iounit.
+#
+# Blocks until a packet arrives.  Nothing here times out, because a
+# satellite with nothing to hear should wait rather than spin, and the
+# process that calls this has nothing else to do.
+radiorecv(b: array of byte): int
+{
+	if(!haveradio())
+		return -1;
+	return sys->read(fradio, b, len b);
+}
+
 # "mag x y z", "gyro x y z", "accel x y z" -- one read, three lines, so
 # the three axes of one sample come from the same instant.
 imuline(want: string): array of int

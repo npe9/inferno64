@@ -1492,3 +1492,87 @@ uses for the same reason.
 \- a device of its own rather than three entries in
 .CW #P
 \- and that is the phase 2 this stands in for.
+.NH 1
+The satellite can be commanded, which it could not before
+.PP
+.B "cdh() had no caller."
+It has been in
+.CW beepsat.b
+since the port, a pass-code and a dispatch table faithful to
+.CW cdh.py ,
+and nothing ever called it \- the Python polls the radio inside its
+cooperative scheduler and there was no equivalent here.
+.CW module/pycubedhw.m
+said all along that the radio file reads as well as writes;
+.CW hw.b
+had no
+.IR radiorecv ().
+.B "So the satellite could beacon and could not be told anything,"
+which is half a spacecraft.
+.PP
+It is a process of its own rather than a poll, because
+.IR radiorecv ()
+blocks and because that is what Inferno has instead of a scheduler \-
+the same argument that deleted
+.CW lib/tasko .
+Five tasks now, not four.
+.NH 2
+And a way to key an exact payload, which a shell did not have
+.PP
+.B "Inferno strings are UTF-8,"
+so
+.I echo
+of any byte above 0x7f emits two.  The first thing that wanted to send
+the mission's four-byte pass-code from a prompt \- 70 ba b8 43 \- could
+not, which left the command path untestable from the board that is meant
+to do the commanding.  So the radio's
+.B ctl
+takes a payload as hex:
+.DS
+.CW "echo send 70 ba b8 43 51 55 >/dev/radio0/ctl"
+.DE
+That is the instrument's job rather than a test hook;
+.B txtest
+beside it sends a canned pattern of a given length, which answers a
+different question.
+.NH 2
+Measured: a command and telemetry loop over two real radios
+.PP
+Ground station on one clicker 2 with the shell image, calibrated by
+.I radiocfg (1)
+and tuned to 915MHz; the mission on the other.  What the satellite said,
+in the order the ground keyed them:
+.DS
+.CW "BEEPSAT-RUNNING 5 tasks"
+.CW "cdh | bad pass-code"
+.CW "cdh | short packet, not a command"
+.CW "cdh | query: boots 1 errors 0 responses 0 minimum"
+.CW "cdh | no-op"
+.DE
+.B "The two rejections are the control."
+A ten-byte packet of ASCII reached
+.IR cdh (),
+passed the length check and failed the pass-code; a two-byte one was
+refused for length; and then the same path accepted
+.B QU
+and answered with the satellite's own state, and
+.B NO
+and logged the no-op.  So the loop is
+.B "beacon down, commands up,"
+on real parts over a measured link.
+.PP
+.B "What this is not."
+The pass-code is four constant bytes in clear and the original says so;
+this port says so too.  The plan's answer is above, under
+.I "What Inferno already answers"
+\- the link should carry Styx authenticated with
+.IR keyring->auth ()
+and encrypted with
+.IR ssl (3),
+and then there is no command table at all: the ground reads and writes
+files in a namespace the satellite exported, and
+.B HR
+is a write to
+.B /dev/reboot
+from the other end rather than a case in a switch.
+.B "The receive path this adds is what that will sit on."
