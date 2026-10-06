@@ -634,7 +634,17 @@ poolalloc(Pool *p, uintptr asize)
 	}
 
 	p->nbrk++;
-	t = xalloc(alloc);
+	/*
+	 * The LARGEST hole, because a pool comes back for more.
+	 *
+	 * A chunk from the small region caps the pool at that region
+	 * however much memory is elsewhere.  See xalloclargest: on a
+	 * part with 64K of core-coupled memory and 96K of SRAM, first
+	 * fit gave main and the heap the 64K between them and left the
+	 * 96K to the kernel stacks, after which main could not find 300
+	 * bytes while reporting 83500 it could never reach.
+	 */
+	t = xalloclargest(alloc);
 	if(t == nil) {
 		p->nbrk--;
 		iunlock(&p->l);

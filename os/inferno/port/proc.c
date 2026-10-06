@@ -854,7 +854,25 @@ procinit(void)
 	{
 		uchar *k;
 
-		k = xalloc(conf.nproc*KSTACK);
+		/*
+		 * The SMALLEST hole that fits, not the first.
+		 *
+		 * This is a fixed number of fixed-size blocks, allocated
+		 * once and never freed, so it is the one caller that can
+		 * say "do not give me the big region".  On a machine whose
+		 * memory is two unequal pieces, first fit hands whichever
+		 * asks first the larger one: os/inferno/stm32f407 is 64K
+		 * of core-coupled memory and 96K of SRAM, and these stacks
+		 * took SRAM from its very start, leaving the pools to grow
+		 * inside what remained of the other.  main then stuck at
+		 * cursize 42176 with 49K of SRAM untouched, and smalloc
+		 * blocked for ever on 300 bytes while the pool reported
+		 * free space it could not reach.
+		 *
+		 * Kernel stacks are also what core-coupled memory is FOR
+		 * on parts that have it: never a DMA target, always hot.
+		 */
+		k = xallocsmallest(conf.nproc*KSTACK);
 		if(k == nil){
 			xsummary();
 			panic("cannot allocate %d kernel stacks (%dK)",

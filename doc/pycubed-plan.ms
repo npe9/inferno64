@@ -2073,3 +2073,71 @@ One panel reads zero over a whole hemisphere, so a controller steering
 by its current has no gradient for half of all attitudes \- which is
 exactly what the first sun-seeking run did, turning one way for ever.
 A 1U carries cells on several faces.
+.NH 2
+The allocator policy, which is about who asks rather than first or best
+.PP
+.I Xallocz
+is
+.B "first fit"
+\- it walks the hole list and takes the first that fits.  That is right
+when memory is one region and wrong when it is two of unequal size:
+whatever asks first gets the big one.
+.PP
+On this part the hole list is ordered by address, so the core-coupled
+64K at 0x10000000 comes before the 96K of SRAM at 0x20008000, and the
+pools are built before
+.IR procinit .
+So main and the heap took the core-coupled region between them \- 37696
+and 16896 \- and the kernel stacks took SRAM from its very start.
+.B "main then could not find 300 bytes while reporting 83500 it could never reach,"
+and
+.I smalloc
+blocked for ever, which took the AX.25 conversation down with it.
+.PP
+.B "The policy that matters is not first or best, it is who asks."
+.IP \(bu
+.B "Something that will come back for more wants the LARGEST hole."
+A pool takes a chunk whenever it grows and is then capped by whatever
+region that chunk came from, however much memory is elsewhere.
+.I Poolalloc
+uses
+.I xalloclargest
+now.
+.IP \(bu
+.B "Something fixed wants the SMALLEST that fits."
+The kernel stacks are a fixed number of fixed-size blocks, allocated
+once and never freed, and they are also what core-coupled memory is
+for on a part that has it: never a DMA target, always hot.
+.I Procinit
+uses
+.IR xallocsmallest .
+.LP
+Two entry points and no new rule for the callers that have been living
+with first fit.
+.PP
+.B "Measured: the satellite now serves a mount with no smalloc wait and no Block starvation."
+Neither
+.CW "no free Blocks"
+nor
+.CW "smalloc: 300 not available"
+appears at all, where both had been firing on every third Styx message.
+.NH 2
+And what is left of the multi-frame read
+.PP
+.DS
+.CW "styx: 273 bytes over the radio, twice"
+.CW "styx: the two reads are 273 and 271 bytes, so the"
+.CW "      transfer is losing data"
+.DE
+.B "Two bytes short, which is a different fault from the three before it."
+The sequence is worth keeping because each fix moved it: hanging at
+msize 436; corrupt at byte 82 with msize 512; corrupt at byte 207 with
+the pool split and slot count corrected; and now complete but two bytes
+short with the allocator placing things where they fit.
+.PP
+.B "A short read is a narrower thing to chase than a corrupt one."
+It says the message was framed correctly and that the count in the Rread
+header disagreed with what arrived, so the next place to look is a
+boundary \- the relay chops 284 bytes into 109, 109 and 66, and a loss
+of exactly two at the end of that is the shape of an off-by-one paid
+twice rather than of memory pressure.

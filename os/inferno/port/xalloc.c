@@ -118,6 +118,131 @@ xspanalloc(uintptr size, s32 align, uintptr span)
 	return (void*)v;
 }
 
+/*
+ * LARGEST FIT, for a caller that will come back for more.
+ *
+ * A pool takes a chunk from here whenever it grows, and it grows into
+ * whatever it was given: a pool whose chunk came from the small region
+ * is capped by that region however much memory the machine has
+ * elsewhere.  os/inferno/stm32f407 is 64K of core-coupled memory at
+ * 0x10000000 and 96K of SRAM at 0x20008000, and the hole list is
+ * ordered by address, so first fit handed main and the heap the
+ * core-coupled 64K between them -- 37696 and 16896 -- and left 96K of
+ * SRAM for the kernel stacks to sit at the start of.  main then could
+ * not find 300 bytes while reporting 83500 unreachable.
+ *
+ * So the policy that matters is not first or best, it is WHO ASKS:
+ * something that will grow wants the largest hole, and something fixed
+ * wants the smallest.  Two entry points and no new rule for the callers
+ * that have been living with first fit.
+ */
+void*
+xalloclargest(uintptr size)
+{
+	Xhdr *p;
+	Hole *h, **l, **best;
+	uintptr bestsize;
+
+	size += BY2V + sizeof(Xhdr);
+	size &= ~(BY2V-1);
+
+	ilock(&xlists);
+	best = nil;
+	bestsize = 0;
+	l = &xlists.table;
+	for(h = *l; h; h = h->link) {
+		if(h->size >= size && h->size > bestsize) {
+			bestsize = h->size;
+			best = l;
+		}
+		l = &h->link;
+	}
+	if(best == nil) {
+		iunlock(&xlists);
+		return nil;
+	}
+	h = *best;
+	p = (Xhdr*)h->addr;
+	h->addr += size;
+	h->size -= size;
+	if(h->size == 0) {
+		*best = h->link;
+		h->link = xlists.flist;
+		xlists.flist = h;
+	}
+	iunlock(&xlists);
+	p = KADDR(p);
+	p->magix = Magichole;
+	p->size = size;
+	memset(p->data, 0, size);
+	return p->data;
+}
+
+/*
+ * BEST FIT, for a caller that knows it would waste a big hole.
+ *
+ * xallocz below is first fit, which is right when memory is one region
+ * and wrong when it is two of unequal size: whatever asks first gets
+ * the big one.  os/inferno/stm32f407 is 64K of core-coupled memory and
+ * 96K of SRAM, and the kernel stacks -- 45056 bytes of them at twelve
+ * processes -- fitted the first hole the walk reached and took it,
+ * leaving the pools to grow inside what was left of the other.
+ * Measured there: main stuck at cursize 42176 with 49K of SRAM
+ * untouched, and smalloc blocking for ever on a 300-byte request while
+ * the pool reported tens of kilobytes free that it could never reach.
+ *
+ * So a caller whose size is known and whose lifetime is the kernel's
+ * can ask for the SMALLEST hole that fits and leave the largest for
+ * whatever grows.  Kernel stacks are exactly that caller: a fixed
+ * number of fixed-size blocks, allocated once, never freed.
+ *
+ * It is a separate entry point rather than a change of policy in
+ * xallocz, because first fit is cheaper and every other caller in the
+ * tree has been living with it: this is one call site making one
+ * decision, not a new rule for all of them.
+ */
+void*
+xallocsmallest(uintptr size)
+{
+	Xhdr *p;
+	Hole *h, **l, **best;
+	uintptr bestsize;
+
+	size += BY2V + sizeof(Xhdr);
+	size &= ~(BY2V-1);
+
+	ilock(&xlists);
+	best = nil;
+	bestsize = ~(uintptr)0;
+	l = &xlists.table;
+	for(h = *l; h; h = h->link) {
+		if(h->size >= size && h->size < bestsize) {
+			bestsize = h->size;
+			best = l;
+		}
+		l = &h->link;
+	}
+	if(best == nil) {
+		iunlock(&xlists);
+		return nil;
+	}
+	h = *best;
+	p = (Xhdr*)h->addr;
+	h->addr += size;
+	h->size -= size;
+	if(h->size == 0) {
+		*best = h->link;
+		h->link = xlists.flist;
+		xlists.flist = h;
+	}
+	iunlock(&xlists);
+	p = KADDR(p);
+	p->magix = Magichole;
+	p->size = size;
+	memset(p->data, 0, size);
+	return p->data;
+}
+
 void*
 xallocz(uintptr size, s32 zero)
 {
