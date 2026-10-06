@@ -37,8 +37,10 @@
 # build hazards with opposite remedies, which is why neither is a habit worth
 # forming -- check the link count instead.
 #
-# THE CHECK IS THE POINT: "7l -o i$CONF" must appear exactly once in the log.
-# Exit 0 with zero links looks exactly like success.
+# THE CHECK IS THE POINT: "7l -o i$CONF" must appear AT LEAST ONCE in the log.
+# Exit 0 with zero links looks exactly like success.  (Two is normal when both
+# targets are built fresh -- see the guard below for why it is not "exactly
+# one".)
 #
 set -u
 HERE=`cd \`dirname "$0"\` && pwd`
@@ -70,11 +72,29 @@ if [ "$rc" -ne 0 ]; then
 	grep -iE 'error|warning|not declared|undefined' "$LOG" | head -20 >&2
 	exit 1
 fi
-if [ "$links" -ne 1 ]; then
-	echo "kbuild: REFUSING -- 7l linked $links times, expected exactly 1." >&2
-	echo "kbuild: mk exited 0 without linking, which is the hazard this" >&2
-	echo "kbuild: tool exists for.  Whatever image is on disk is not the" >&2
-	echo "kbuild: source tree's." >&2
+#
+# AT LEAST ONE LINK, NOT EXACTLY ONE.  The first version demanded exactly 1 and
+# REFUSED A CORRECT BUILD: this mkfile links twice when both targets are built
+# fresh, because i$CONF is linked again without -H7 purely for its symbol table.
+# Every observation behind "exactly 1" came from the path where only one target
+# needed rebuilding, and I generalised from it.
+#
+# Worse than being wrong, it was wrong in the direction that trains people to
+# ignore the tool: it refused a good build while printing "mk exited 0 without
+# linking", which was not what had happened.  A guard that fires on correct
+# input is a guard that gets switched off.
+#
+# It was caught by re-running the negative control after editing an instrument
+# -- the rule a peer earned the hard way on their own scanner, applied here the
+# first time it could be.
+#
+if [ "$links" -lt 1 ]; then
+	echo "kbuild: REFUSING -- 7l linked $links times." >&2
+	echo "kbuild: mk exited 0 WITHOUT LINKING, which is the hazard this" >&2
+	echo "kbuild: tool exists for: a change under lib*/ recompiles and" >&2
+	echo "kbuild: re-archives, and the kernel target has no edge to the" >&2
+	echo "kbuild: archives.  Whatever image is on disk is not the source" >&2
+	echo "kbuild: tree's." >&2
 	exit 1
 fi
 for f in "i$CONF" kernel8.img; do

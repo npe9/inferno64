@@ -130,6 +130,138 @@ def is_sxtw(w):
 def rd(w):
     return w & 0x1f
 
+#
+# PROVENANCE, so the wide tier shrinks to the part worth reading.
+#
+# An UNSIGNED 32-bit value is CORRECT zero-extended, so the wide tier's size is
+# not its finding -- 112 candidates, of which a peer cleared libmemdraw's 37 and
+# libdraw's 5 by checking signs one at a time, and I cleared screenbcm's five by
+# hand with ONE real site among them.  Doing that for the rest by hand is not a
+# plan.
+#
+# But the instruction stream does carry the distinction, in the LOAD: MOVW is a
+# sign-extending 32-bit load (a signed int) and MOVWU is zero-extending (an
+# unsigned one).  Likewise ASRW and SDIVW are signed operations where LSRW and
+# UDIVW are unsigned.  So trace the flagged producer's operands backwards and
+# classify:
+#
+#	signed    an operand traces to MOVW, SDIVW, ASRW or a negative
+#	          immediate  ->  READ THIS ONE
+#	unsigned  every operand traces to MOVWU, LSRW or UDIVW  ->  correct
+#	          zero-extended
+#	unknown   the trace ran out of window  ->  read it, cheaply
+#
+# THIS IS A NARROWING, AND A NARROWING IS THE DANGEROUS KIND OF EDIT.  A peer
+# tightened their source-side version of this scan by requiring the tainted
+# value to be dereferenced in the same function, which dropped TWO OF FOUR
+# control hits -- including the UMULL -- because byteaddr RETURNS the address
+# rather than using it.  A filter that loses the case its control exists to
+# catch is worse than the false positives it removes, and it is invisible unless
+# the control is re-run AFTER the change.  So this classifier does not suppress
+# anything: every candidate is still printed, with its class, and the control is
+# re-run after each change to it.
+#
+#
+# THE ENCODINGS ARE TAKEN FROM INSTRUCTIONS WHOSE IDENTITY IS KNOWN, not from
+# memory of the manual.  The first version had LDRSW's unsigned-offset form as
+# 0xB8800000, which is the register/indexed form, so the trace never recognised
+# the sign-extending load of p.y and the classifier called byteaddr's real UMULL
+# bug `[unsigned]' -- twice, because the first re-run of the control blamed the
+# shift and I fixed that instead.  Checked against the linked kernel's own
+# bytes: `MOVW p+12(FP),R5' is 0xb98037e5, so the mask is 0xB9800000.
+#
+SIGNED_OPS = [
+    (0xFFC00000, 0xB9800000, 'MOVW ld'),    # LDRSW, unsigned offset
+    (0xFFE00C00, 0xB8A00800, 'MOVW ld'),    # LDRSW, register offset
+    (0xFFE0FC00, 0x1AC00C00, 'SDIVW'),
+    (0x7F800000, 0x13000000, 'ASRW/SBFM'),
+]
+UNSIGNED_OPS = [
+    (0xFFC00000, 0xB9400000, 'MOVWU ld'),   # LDR (32-bit, zero-extends)
+    (0xFFE0FC00, 0x1AC00800, 'UDIVW'),
+    (0xFFE0FC00, 0x1AC02400, 'LSRW'),
+]
+#
+# LSLW/UBFM IS NOT EVIDENCE OF UNSIGNEDNESS and was in the list above until the
+# control said otherwise.  UBFM zero-extends into the 64-bit register, but that
+# says nothing about the VALUE: a left shift of a negative int is still
+# negative in 32-bit two's complement.  With it listed as unsigned, this
+# classifier labelled byteaddr's real UMULL bug `[unsigned]' -- advice pointing
+# a reader AWAY from the one site the control exists to catch.
+#
+# Caught by re-running the negative control AFTER adding the classifier, which
+# is the only way a narrowing is ever caught.  A shift is now traced THROUGH
+# rather than treated as a verdict.
+#
+
+def classify_src(w):
+    for mask, val, name in SIGNED_OPS:
+        if (w & mask) == val:
+            return 'signed', name
+    for mask, val, name in UNSIGNED_OPS:
+        if (w & mask) == val:
+            return 'unsigned', name
+    return None, None
+
+def reads_of(w):
+    """The registers an instruction READS.  Rn always; Rm only when bits
+    16..20 really are a register.
+
+    The first version returned both unconditionally, and for a bitfield
+    instruction -- SBFM/UBFM, which is what LSLW and ASRW assemble to -- bits
+    16..20 are part of `imms', so it invented a register number.  Tracing
+    through that garbage register found an unrelated unsigned writer and the
+    classifier reported byteaddr's real UMULL bug as `[unsigned]'.  Third
+    control re-run in a row to catch a mislabel, each one a different cause:
+    a shift treated as a verdict, a wrong LDRSW encoding, and now a register
+    that does not exist.
+    """
+    rn = (w >> 5) & 0x1f
+    # Bitfield (SBFM/UBFM/BFM) and arithmetic/logical IMMEDIATE forms have no Rm.
+    if (w & 0x1F800000) in (0x13000000, 0x33000000):    # bitfield
+        return [rn]
+    if (w & 0x1F000000) in (0x11000000, 0x12000000):    # add/sub imm, logical imm
+        return [rn]
+    return [rn, (w >> 16) & 0x1f]
+
+def provenance(words, k, regs, depth=4, back=16):
+    """Walk backwards for the writers of `regs`; return the strongest class.
+
+    THE SEARCH POSITION HAS TO TRAVEL WITH THE REGISTER.  Four control re-runs
+    found four different reasons this mislabelled byteaddr's UMULL, and this was
+    the last and the real one: each trace restarted its backward scan at k-1, so
+    when the writer of R2 was the LSLW at k-1 and the LSLW reads R2 again, the
+    next hop re-found THE SAME LSLW and the chain never reached the
+    sign-extending move behind it.  The hop has to continue from BEFORE the
+    instruction already credited.
+
+    The other three, kept because each is a distinct way a classifier lies:
+    treating a shift as evidence of unsignedness, an LDRSW mask copied from
+    memory instead of from the linked kernel's bytes, and inventing an Rm for a
+    bitfield instruction that has none.
+    """
+    seen = 'unknown'
+    todo = [(r, depth, k - 1) for r in regs if r != 31]
+    while todo:
+        r, d, start = todo.pop()
+        if d <= 0:
+            continue
+        for j in range(start, max(k - 1 - back, -1), -1):
+            w = words[j]
+            if rd(w) != r:
+                continue
+            c, _ = classify_src(w)
+            if c == 'signed':
+                return 'signed'
+            if c == 'unsigned':
+                if seen == 'unknown':
+                    seen = 'unsigned'
+            else:
+                todo.extend((x, d - 1, j - 1)
+                            for x in reads_of(w) if x != 31)
+            break
+    return seen
+
 def add64_reads(w, r):
     # ADD (shifted register), 64-bit: sf=1 op=0 S=0 01011
     if (w & 0x7F200000) != 0x0B000000 or (w >> 31) != 1:
@@ -174,6 +306,7 @@ def main():
     wide = '-a' in sys.argv
     hits = 0
     widehits = 0
+    byclass = {}
     for k, w in enumerate(words):
         kind = None
         if is_umull(w):
@@ -199,14 +332,24 @@ def main():
             continue
         a = base + 4*k
         name, off = owner(syms, a)
+        cls = provenance(words, k, reads_of(w))
+        byclass[cls] = byclass.get(cls, 0) + 1
         if kind == 'UMULL':
             hits += 1
         else:
             widehits += 1
         print("umulladd:   %s+%#x at %#x: %s -> x%d reaches a 64-bit ADD"
-              " at %#x with no SXTW" % (name, off, a, kind, r, base + 4*culprit))
+              " at %#x with no SXTW [%s]"
+              % (name, off, a, kind, r, base + 4*culprit, cls))
     print("umulladd: %d UMULL candidate(s)%s"
           % (hits, (", %d wide-tier" % widehits) if wide else ""))
+    if byclass:
+        print("umulladd: by operand provenance: %s"
+              % "  ".join("%s %d" % (c, byclass[c]) for c in sorted(byclass)))
+        print("umulladd: `signed' and `unknown' are the ones to read; `unsigned'")
+        print("umulladd: is correct zero-extended.  NOTHING IS SUPPRESSED -- the")
+        print("umulladd: class is advice, because a narrowing filter is how a")
+        print("umulladd: scan silently stops finding what it was built for.")
     print("umulladd: these are CANDIDATES -- a genuinely 64-bit UMULL added to a")
     print("umulladd: 64-bit value is correct code and looks identical here.")
     if not wide:
