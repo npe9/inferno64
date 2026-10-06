@@ -62,7 +62,15 @@ init(nil: ref Draw->Context, argv: list of string)
 	mpt := "/n/client";
 	lo := 1;
 	hi := 600;
-	stride := 1;
+	# SEVEN, because a default that cannot finish is a bad one.  A
+	# stride of one over this range is 600 sizes, each a create, two
+	# mounted reads to end of file and a remove, all of it through
+	# four Dis processes and a chopped pipe: it ran for a quarter of
+	# an hour under a host emu and was still going.  Seven covers the
+	# range in 86 and lands in a minute, and -s 1 is there for a
+	# narrow window round a size that matters -- 260 to 300 brackets
+	# the 273 of #P/arch byte by byte in about the same minute.
+	stride := 7;
 	# THE MESSAGE SIZE IS NOT SETTABLE FROM HERE, and the attempt is
 	# left in as a flag that defaults to off because the reason is
 	# worth knowing.

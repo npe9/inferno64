@@ -88,8 +88,21 @@ because a transfer that loses bytes may do it on the second message
 rather than the first, which is exactly what the bench saw.
 .TP
 .B -l \fIlo\fP, -h \fIhi\fP, -s \fIstride\fP
-The sizes to sweep when no file is named.  A sweep is what finds a size
-that fails, rather than confirming one that does not.
+The sizes to sweep when no file is named, 1 to 600 by 7 by default.  A
+sweep is what finds a size that fails, rather than confirming one that
+does not.
+.IP
+The stride is seven and not one because a default that cannot finish is
+a bad one: 600 sizes, each a create, two mounted reads to end of file
+and a remove, all through four Dis processes and a chopped pipe, ran for
+a quarter of an hour under a host emu and was still going.  Seven covers
+the range in 86 and lands in a minute.  Use
+.B -s 1
+over a narrow window round a size that matters \-
+.B "-l 260 -h 300"
+brackets the 273 bytes of
+.B #P/arch
+byte by byte in about the same minute.
 .TP
 .B -m \fImountpoint\fP
 Where to mount the served end;
