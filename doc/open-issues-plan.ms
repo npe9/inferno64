@@ -10137,3 +10137,106 @@ are not substitutes:
 shows what was emitted and where,
 .CW -v
 would have named WHY.
+.NH 2
+FIXED, and the formerly-panicking build now boots
+.LP
+A peer took the fix in
+.CW utils/7l/span.c
+.CW ( b42059ba9 ,
+cherry-picked here): defer the forced pool flush past the end of a
+.CW BCASE
+run, with a lookahead on
+.CW p->link
+so a flush after the LAST entry is still allowed, plus a
+.CW diag
+in
+.CW flushpool()
+if one is ever attempted at an illegal point.
+.NH 3
+The acceptance test, on the exact build that panicked
+.LP
+.P1
+                              switchtab          boot
+probe build, 7l of Oct 3    1 of 143 short    panic 2/2, EC 0 at 0x17922c
+probe build, 7l of Oct 6    0 of 143 short    RASPI3B-OK, clean
+.P2
+.B "Only the linker changed."
+Same four-line probe in
+.CW flushmemscreen ,
+same source, same compiler.  And all 29 slots now resolve into
+.CW conswrite :
+.P1
+[23] 00006ed4 -> 0x180100      the six that were orphaned
+[24] 00006ea0 -> 0x1800cc
+[25] 00006e84 -> 0x1800b0
+[26] 00006e24 -> 0x180050
+[27] 00006e68 -> 0x180094
+[28] 00006e50 -> 0x18007c
+slots that do not resolve into conswrite: 0
+.P2
+No
+.CW diag
+fired, so the deferral never had to reach the new guard.
+.CW drawink
+7 of 7.
+.NH 3
+A peer's control was WRONG IN THE USEFUL DIRECTION, and switchtab agreed with it
+.LP
+Their first positive control lowered the pool SIZE threshold to make flushes
+frequent.
+.B "That makes pools flush EARLY, so blitrl is empty by the time any table is reached"
+\(em the bug became LESS likely, not more.
+.PP
+.B "And switchtab reported 74 of 142 short on that image, which they nearly took as the control firing."
+They were false positives: with pools scattered everywhere its table-end
+inference stops early, which is exactly the looseness its own banner warns
+about.
+.B "What caught it was that the fix changed nothing"
+\(em 74 before, 74 after \(em and a fix that changes nothing is either useless
+or aimed at the wrong thing.
+.PP
+The right knob was the DISTANCE check
+.CW ( ispcdisp
++/-0xfffff to +/-0x200): ten illegal flushes with the suppression removed, zero
+with it in place.
+.B "So the DIAG is the detector and the scanner is only the shape-finder."
+The diag sits at the decision point inside the linker; the scanner infers a
+table's end from what its bytes look like, and that inference is the weakest
+part of it.
+.B "That is my own caveat about claiming conservatism in a comment, turned back on my instrument by someone else's control."
+.NH 3
+And the instrument's own cost, measured at last
+.LP
+The probe the whole detour began with \(em two back-to-back
+.CW cycles()
+reads bracketing nothing \(em could not run until the linker was fixed, because
+the build carrying it was the one that panicked.  Counters read over JTAG, since
+the minimal reproducer diff omitted the print:
+.P1
+pairs           3115423
+ticks           1025813  (53428 us)
+ONE cycles()    0.0171 us = 17.1 ns, measured in situ
+three per line  0.0514 us
+.P2
+.B "So the fitted per-call term was 29 per cent instrument before the hoist and 36 per cent after:"
+.P1
+            fitted    minus instrument    of which the DSB
+pre-hoist   0.1796         0.1282
+post-hoist  0.1427         0.0913         0.0369
+.P2
+.B "The DSB is 0.037us of a 0.128us fixed term,"
+and the intercept moved by 0.0368 \(em agreement to three decimal places, which
+is as close as this arithmetic gets.  Most of the fixed cost is the call,
+.CW dlinesz()
+and the loop setup, not the barrier.
+.PP
+.B "And the per-BYTE term moved too, 1.393 to 1.208 ns, which the instrument cannot explain"
+because it is per-call.  That is the peer's serialisation finding standing on its
+own: the per-line
+.CW DSB
+was serialising the write-backs
+.CW dccvac
+issues, and removing it let them overlap.
+.PP
+.B "So the original claim -- 0.180us fixed per call, and that is the DSB -- was wrong twice over,"
+and both errors are now quantified rather than withdrawn.
