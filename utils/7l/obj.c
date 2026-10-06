@@ -229,7 +229,7 @@ main(int argc, char *argv[])
 
 out:
 	if(debug['v']) {
-		Bprint(&bso, "%5.2f cpu time\n", cputime());
+		Bprint(&bso, "%s cpu time\n", cputimestr());
 		Bprint(&bso, "%ld memory used\n", hunkspace());
 		Bprint(&bso, "%d sizeof adr\n", sizeof(Adr));
 		Bprint(&bso, "%d sizeof prog\n", sizeof(Prog));
@@ -786,7 +786,7 @@ doprof1(void)
 	Prog *p, *q;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f profile 1\n", cputime());
+		Bprint(&bso, "%s profile 1\n", cputimestr());
 	Bflush(&bso);
 	s = lookup("__mcount", 0);
 	n = 1;
@@ -873,7 +873,7 @@ doprof2(void)
 	Prog *p, *q, *q2, *ps2, *ps4;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f profile 2\n", cputime());
+		Bprint(&bso, "%s profile 2\n", cputimestr());
 	Bflush(&bso);
 
 	if(debug['e']){
