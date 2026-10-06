@@ -9511,3 +9511,96 @@ The control that said so \(em the same panic on the shipping
 kernel \(em was run before any of the diagnosis, and a peer independently
 reproduced the second site under QEMU on a branch with none of this session's
 double-buffering present.
+.NH 3
+Verified in the LINKED kernel, not in 7c -S output
+.LP
+.CW "7c -S"
+also writes the
+.CW .7 ,
+so running it can make
+.CW mk
+skip the compile and a later build then ships the old object.  A peer hit
+exactly that.  So the check is the bytes of
+.CW byteaddr
+decoded out of
+.CW iraspi3b
+.CW ( 0xe7c24..0xe7cf8 ,
+53 words):
+.P1
+SDIVW 3   MULW/MADDW 2   SXTW 12   UMULL 0
+unprotected 32-bit producers: 0
+.P2
+Every
+.CW SDIVW
+and
+.CW MULW
+is followed by
+.CW SXTW
+before the 64-bit
+.CW ADD .
+.B "That is a THIRD way a build can lie here,"
+alongside the two in
+.CW kbuild 's
+header, and it is not one
+.CW kbuild
+can catch \(em it checks that a link happened, not that the object compiled
+from the source now on disk.
+.PP
+.B "And umulladd closes the loop without a bespoke check:"
+.CW "-a"
+names no function in
+.CW libmemdraw 's
+address path in EITHER tier, which is the same statement as the byte decode
+from an instrument that has a negative control.
+.NH 3
+What the wide tier names, which is more informative than its count
+.LP
+.P1
+alphadraw cgetb clockinit clockinitsecondary clockintr clocksecondary
+dmachan drawcursor emmcbio enc16 enc64 fbcopy fbrestoreunder fbsaveunder
+flushmemscreen genconv getdefont hexify loadimage loadmemimage
+matchcompat memfastdraw memoptdraw mntrpcread mseconds ndbwrite
+netifclose netmulti newusbid osusectime ...
+.P2
+.B "The draw and framebuffer paths are where the shape concentrates,"
+which is where negative origins and negative strides actually occur \(em
+.CW flushmemscreen ,
+.CW fbcopy ,
+.CW fbsaveunder ,
+.CW fbrestoreunder ,
+.CW loadimage ,
+.CW memfastdraw ,
+.CW memoptdraw ,
+.CW alphadraw ,
+.CW getdefont ,
+.CW drawcursor .
+The clock and net entries are the benign unsigned case.
+.B "So it is a reading list with a sensible first page, and NONE of it is audited."
+.NH 3
+The methodological point I nearly got wrong, and it is not the peer's
+.LP
+A peer had committed that the surviving fault was
+.CW bdata
+itself carrying bit 32 \(em a third defect, in the kernel pool \(em and my print
+falsified it.
+.B "I was heading for the same wrong place from the other side:"
+this plan already said "base itself is the bad pointer", and I told them so.
+.PP
+.B "What stopped me was my own argument refusing to reconcile with it."
+.CW allocmemimage
+writes
+.CW base[0]
+and
+.CW base[1]
+FIRST, in the same page as the destination, so an unmapped
+.CW base
+faults THERE and not later in
+.CW memset32 .
+I wrote that down, called it impossible, and then nearly discarded it because the
+address said otherwise.
+.PP
+.B "The lesson is not that an address was over-read."
+It is that when a measurement and an argument disagree,
+.B "the argument was pointing at the real contradiction"
+\(em and the temptation is to drop it so the story closes.  The argument was
+right: the allocation was correct, and the ADDRESS was wrong.
