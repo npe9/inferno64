@@ -605,6 +605,40 @@ into 109-byte pieces is reassembled the same way
 reassembles a Styx message \- which is why it works, rather than a
 coincidence.
 .PP
+.PP
+.B "And the init does it now."
+.B os/inferno/init/armv7mstyx.b
+pushes
+.IR ssl (3)
+onto the Styx end of its relay's pipe \- not onto the conversation, so
+the chopping carries ciphertext \- and both ends do it in one function,
+so they cannot disagree about the algorithm by being edited apart.
+.B "The secret is a constant in that file and the file says it is not a key:"
+what makes it real is
+.CW keyring->auth ()
+deriving one over the link, which wants a certificate per board under
+.B /keys
+and this root has none.  So the bytes are not in the clear and the
+record layer survives the chopping; neither end knows who the other is.
+.B "That is step 5 and the identity half of it is still open."
+.PP
+.IR Devssl 's
+memory was the thing to check on a part with two SRAM regions of 65536
+and 98304 bytes, and it is fine:
+.B Maxdmsg
+is
+.CW 1<<16
+but appears only as the count to
+.IR bread (),
+which
+.I qbread
+honours without allocating, and every
+.I allocb
+in the read and write paths is sized from the CALLER's message clamped
+to
+.CW s->max .
+A Styx write here is 436 bytes, so the allocations are 436 bytes.
+.PP
 .B "What #D costs, measured: 26480 bytes of kernel text."
 The satellite, station and styx images absorb it; the shell image came
 to 926280 against a ceiling of 913408 and gave up
@@ -614,6 +648,21 @@ up.  A conf has one
 .B dev
 section for every init built from it, so the cost falls on the image
 somebody types at rather than on the two that want the device.
+.PP
+.B ssl.dis
+itself is carried by
+.B EXTRAROOT
+rather than the root section, for the same reason and with 2240 bytes
+to spare it had to be: a 1650-byte raw module in the conf would have
+left 590.  It is in the styx image's XIP list as well, which is the
+reverse of the call made for
+.I mount
+in
+.BR image-armv7minit :
+that image is flash-tight and this one is memory-tight, so here the
+module costs 5864 bytes of flash instead of its decoded array in RAM.
+The styx image comes to 635744 of 913408 and the other three are
+byte-identical to before.
 .NH 2
 The channel is two nodes, not a broadcast medium
 .PP
