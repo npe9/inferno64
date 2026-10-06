@@ -188,20 +188,55 @@ byteaddr(Memimage *i, Point p)
 	off = 4 * p.y * (s32)i->width;
 	a = i->data->bdata + i->zero + off;
 
+	/*
+	 * AND THE X OFFSET HAS THE SAME PROBLEM WITH NO CAST ANYWHERE IN SIGHT.
+	 *
+	 * It was three returns of the form `a + <32-bit int expression>', and 7c
+	 * emitted
+	 *
+	 *	SDIVW	R3,R5		32-bit result; an AArch64 W write
+	 *	ADD	R10,R5,R0	ZEROES the top half of R5
+	 *
+	 * so a negative offset widens by ZERO EXTENSION.  For the one-byte-back
+	 * case the offset is -1, which becomes 0x00000000FFFFFFFF, and the
+	 * pointer lands at a - 1 + 2^32.
+	 *
+	 * MEASURED ON THE BOARD, after the row-offset fix above was already in:
+	 *
+	 *	memfillcolor: HIGH dst 0x1008c6c40 bdata 0x8c6c40 base 0x8c6c30
+	 *	  allocd 1 zero 17 width 2 r -2 -2 3 3 chan 0x31
+	 *
+	 * bdata CLEAN, base = bdata-16, zero and width exactly right -- a
+	 * correctly allocated image -- and the destination exactly 2^32 above
+	 * it.  That is this branch, not the row offset, and it is why fixing the
+	 * row offset moved the fault instead of removing it.
+	 *
+	 * There is no cast to drop here: C requires the int to widen with its
+	 * sign when added to a pointer, and that widening is simply absent.  So
+	 * the fix is the shape that survives -- assign to an s32 local and add
+	 * that -- which forces the value through a 32-bit slot and makes 7c
+	 * reload it sign-extended.  Same remedy as the row offset above, and the
+	 * same reason: give the compiler nothing it can treat as a no-op.
+	 */
 	if(i->depth < 8){
 		/*
 		 * We need to always round down,
 		 * but C rounds toward zero.
 		 */
-		s32 np;
+		s32 np, xoff;
 		np = 8/i->depth;
 		if(p.x < 0)
-			return a+(p.x-np+1)/np;
+			xoff = (p.x-np+1)/np;
 		else
-			return a+p.x/np;
+			xoff = p.x/np;
+		return a + xoff;
 	}
-	else
-		return a+p.x*(i->depth/8);
+	else {
+		s32 xoff;
+
+		xoff = p.x*(i->depth/8);
+		return a + xoff;
+	}
 }
 
 int

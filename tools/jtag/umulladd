@@ -88,6 +88,41 @@ def is_umull(w):
 def is_madd32(w):
     return (w & 0xFFE08000) == 0x1B000000
 
+#
+# THE CLASS IS WIDER THAN UMULL, and the board proved it.  With the row-offset
+# fix in, byteaddr still returned bdata + 2^32, from
+#
+#	SDIVW	R3,R5		a 32-bit result; an AArch64 W write ZEROES
+#	ADD	R10,R5,R0	the top half, so -1 widens to 2^32-1
+#
+# and there is no cast in that source at all: C requires an int added to a
+# pointer to widen WITH ITS SIGN, and the widening is simply absent.  So any
+# instruction that writes a W register can feed a bad pointer, not just UMULL.
+#
+# Which makes the false-positive rate the whole design problem: an UNSIGNED
+# 32-bit value is CORRECT zero-extended, and nothing in the instruction stream
+# says which a given value is.  So this reports two tiers -- the UMULL tier,
+# which is narrow and was the original finding, and the wide tier, which is a
+# reading list and is printed only with -a.
+#
+W32 = [
+    (0xFFE0FC00, 0x1AC00C00, 'SDIVW'),
+    (0xFFE0FC00, 0x1AC00800, 'UDIVW'),
+    (0xFFE08000, 0x1B000000, 'MADDW'),
+    (0x7F200000, 0x0B000000, 'ADDW'),
+    (0x7F200000, 0x4B000000, 'SUBW'),
+    (0x7F800000, 0x13000000, 'ASRW/SBFM'),
+    (0x7F800000, 0x53000000, 'LSLW/UBFM'),
+]
+
+def w32_kind(w):
+    if (w >> 31) != 0:           # sf=1 is the 64-bit form; not a W write
+        return None
+    for mask, val, name in W32:
+        if (w & mask) == val:
+            return name
+    return None
+
 def is_sxtw(w):
     # SBFM x,w,0,31 -- the sign-extending widen a narrowing cast must emit
     return (w & 0xFFC0FC00) == 0x93407C00
@@ -106,8 +141,15 @@ def add64_reads(w, r):
 def main():
     if len(sys.argv) < 2:
         sys.exit("usage: umulladd <kernel8.img> [ielf]")
-    img = sys.argv[1]
-    elf = sys.argv[2] if len(sys.argv) > 2 else \
+    #
+    # Strip the flags before taking positional arguments, or `-a' is read as
+    # the ELF path and the etext refusal fires with "no etext in -a".  It did.
+    #
+    args = [a for a in sys.argv[1:] if not a.startswith('-')]
+    if not args:
+        sys.exit("usage: umulladd [-a] <kernel8.img> [ielf]")
+    img = args[0]
+    elf = args[1] if len(args) > 1 else \
           os.path.join(os.path.dirname(img), 'iraspi3b')
     base = 0x80000
     d = open(img, 'rb').read()
@@ -129,9 +171,16 @@ def main():
     # register.
     #
     WIN = 6
+    wide = '-a' in sys.argv
     hits = 0
+    widehits = 0
     for k, w in enumerate(words):
-        if not is_umull(w):
+        kind = None
+        if is_umull(w):
+            kind = 'UMULL'
+        elif wide:
+            kind = w32_kind(w)
+        if kind is None:
             continue
         r = rd(w)
         narrowed = False
@@ -150,12 +199,21 @@ def main():
             continue
         a = base + 4*k
         name, off = owner(syms, a)
-        hits += 1
-        print("umulladd:   %s+%#x at %#x: UMULL -> x%d reaches a 64-bit ADD"
-              " at %#x with no SXTW" % (name, off, a, r, base + 4*culprit))
-    print("umulladd: %d candidate(s)" % hits)
+        if kind == 'UMULL':
+            hits += 1
+        else:
+            widehits += 1
+        print("umulladd:   %s+%#x at %#x: %s -> x%d reaches a 64-bit ADD"
+              " at %#x with no SXTW" % (name, off, a, kind, r, base + 4*culprit))
+    print("umulladd: %d UMULL candidate(s)%s"
+          % (hits, (", %d wide-tier" % widehits) if wide else ""))
     print("umulladd: these are CANDIDATES -- a genuinely 64-bit UMULL added to a")
     print("umulladd: 64-bit value is correct code and looks identical here.")
+    if not wide:
+        print("umulladd: -a also scans every 32-bit-result instruction, which is")
+        print("umulladd: the class byteaddr's x offset belonged to.  That tier is a")
+        print("umulladd: reading list, not a verdict: an UNSIGNED 32-bit value is")
+        print("umulladd: correct zero-extended and looks identical.")
     return 1 if hits else 0
 
 if __name__ == '__main__':

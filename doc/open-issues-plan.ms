@@ -9311,3 +9311,203 @@ is the same trick inside the code, and it is why the second instrument asks the
 caller rather than reading a stack.  Same family as this plan's
 "count the work, not the sightings": prefer the thing that is recorded exactly
 over the thing that has to be reconstructed.
+.NH 2
+SOLVED: byteaddr() widened two 32-bit offsets without their sign, and a thick ellipse walked 2^32 off
+.LP
+.CW "wm/gfxstress ellipse"
+panicked this kernel on any thick ellipse, from ordinary Limbo
+.CW ( "img.ellipse(p, a, b, 2, green, ZP)" ),
+and the fault was
+.B "two separate dropped sign-extensions in the same function."
+Both are fixed and the board runs all fourteen
+.CW gfxstress
+phases.
+.NH 3
+The two sites
+.LP
+.B "1. The row offset, with a cast that 7c drops."
+.P1
+a = i->data->bdata+i->zero+(s32)(sizeof(u32)*p.y*i->width);
+.P2
+.CW sizeof
+is 64-bit, so 7c emitted
+.CW "LSLW $2" ,
+.CW MOVWU ,
+.CW UMULL ,
+.CW ADD
+\(em a 32x32-to-64 UNSIGNED multiply added to the pointer at full width, no
+.CW SXTW .
+For a negative
+.CW p.y
+the 32-bit wrap survives into the high word, and because
+.CW zero
+cancels the correct part for an allocated image at
+.CW r.min ,
+.P1
+byteaddr(i, i->r.min) = bdata + i->width * 2^32      EXACTLY
+.P2
+.B "2. The x offset, with no cast anywhere in the source."
+Three returns of the form
+.CW "a + <32-bit int expression>" :
+.P1
+SDIVW	R3,R5		a 32-bit result; an AArch64 W write ZEROES the top half
+ADD	R10,R5,R0	so -1 widens to 0x00000000FFFFFFFF
+.P2
+For the sub-byte branch the offset is
+.CW "(p.x-np+1)/np"
+= -1, so the pointer lands at
+.CW "a - 1 + 2^32" .
+.B "C requires an int added to a pointer to widen WITH ITS SIGN, and the widening is simply absent."
+Nothing to drop; it was never emitted.
+.NH 3
+The arithmetic was predicted before it was fixed, and it came out to the bit
+.LP
+A peer read the instruction stream and predicted the row-offset delta for this
+board's case \(em disc
+.CW "Rect(-2,-2,3,3)"
+GREY1, so
+.CW width
+2 and
+.CW zero
+17, giving
+.CW +0x200000000
+\(em
+.B "before the fix was built."
+Then:
+.P1
+unfixed            tval 0x3008c6c40
+row offset fixed   tval 0x1008c6c40     delta 0x200000000, as predicted
+both fixed         no fault
+.P2
+.B "And the surviving 0x100000000 was the second site, not a bad bdata."
+I had argued that a bad
+.CW bdata
+should be impossible, because
+.CW allocmemimage
+writes
+.CW base[0]
+and
+.CW base[1]
+first in the same page.
+.B "That argument was right, and the print proved it:"
+.P1
+memfillcolor: HIGH dst 0x1008c6c40 bdata 0x8c6c40 base 0x8c6c30
+  allocd 1 zero 17 width 2 r -2 -2 3 3 chan 0x31
+.P2
+.CW bdata
+clean,
+.CW base
+=
+.CW bdata-16 ,
+.CW zero
+and
+.CW width
+exactly the peer's figures, a correctly allocated image, and the destination
+exactly
+.CW 2^32
+above it.
+.NH 3
+THE INSTRUMENT THAT WORKED, after two that did not
+.LP
+Three versions, and the difference between them is the whole method.
+.IP \(bu
+.B "A consistency test NEXT TO the bug."
+.CW "bdata != &base[2]"
+for an
+.CW allocd
+.CW Memdata .
+It never fired \(em correctly, as it turned out, but it also
+.B "could not fire at all"
+for a Memdata with
+.CW "allocd == 0" ,
+so its silence had two meanings.
+.IP \(bu
+.B "A bounded caller print whose budget was spent before the interesting call."
+Six prints, all six at boot from one caller filling 1x1 colour images, before
+the ellipse path ran.
+.B "The budget counted CALLS when the quantity worth bounding was DISTINCT CALL SITES"
+\(em the same shape as this plan's "a rate limiter disabled the watchdog it fed"
+and "count the work, not the sightings".
+.IP \(bu
+.B "A test of THE FAULT CONDITION ITSELF:"
+does the destination lie in the same 4GB as
+.CW bdata .
+One compare, cannot be silent for the faulting call, and it printed every field
+needed to finish the diagnosis on the first ellipse.
+.PP
+.B "The rule: instrument the condition, not a proxy for it."
+Both failed instruments were asking well-formed questions about nearby
+quantities.  The fault was an address with bit 32 set, and the thing that worked
+was testing for an address with bit 32 set.
+.NH 3
+The class is wider than either site, and it is now scannable
+.LP
+.CW tools/jtag/umulladd
+reports two tiers on a kernel image:
+.P1
+UMULL tier   an UMULL reaching a 64-bit ADD with no SXTW        0 now, 1 before
+wide tier    any 32-bit-result instruction doing the same     115
+.P2
+.B "115 is a reading list and not a verdict,"
+because an UNSIGNED 32-bit value is CORRECT zero-extended and looks identical in
+the instruction stream \(em three of the hits are
+.CW clockinit
+with
+.CW UDIVW ,
+which is exactly that case.
+.B "They are unaudited and the number is not a bug count."
+.PP
+.B "NEGATIVE CONTROL DONE, which is why the 0 is worth printing."
+With
+.CW byteaddr
+reverted and the kernel relinked it reports exactly one candidate, at
+.CW byteaddr+0x10 ,
+and 0 with the fix restored.  A scanner that has only ever reported zero is
+indistinguishable from one that cannot report anything.
+.NH 3
+And the build hazard that nearly made the fix look partial
+.LP
+.B "mk iraspi3b after a change under lib*/ EXITS 0 AND DOES NOT RELINK."
+Measured twice: archive rebuilt,
+.CW "7l -o iraspi3b"
+ran zero times.  Worse one step on:
+.P1
+rm iraspi3b && mk kernel8.img     ->  rc 0, no kernel binary,
+                                      kernel8.img UNCHANGED
+.P2
+exit 0 with a stale flat image left ready to load over JTAG.
+.PP
+.B "The fix was applied, built, booted and judged against a kernel that did not contain it,"
+and the tell was easy to misread: the fault MOVED, by exactly the predicted
+amount, so it looked like a partially effective fix rather than an unbuilt one.
+An unchanged fault would have been obvious.
+.PP
+.CW tools/jtag/kbuild
+removes both targets, requires exactly one
+.CW 7l
+link, and refuses otherwise.
+.B "Note the remedy is the OPPOSITE of this plan's stale-object hazard,"
+where
+.CW "rm foo.7"
+does NOT force a rebuild and touching the
+.CW .c
+is what works.  Two build hazards with opposite fixes, which is why
+.CW kbuild
+checks the link count instead of relying on either habit.
+.NH 3
+Verified
+.LP
+.P1
+gfxstress ellipse 1      3600 ops, clean
+gfxstress ellipse 4     13200 ops, clean
+drawink                  7 of 7, including "undrawn region"
+gfxstress all 1          all FOURTEEN phases, ellipse included
+memfillcolor HIGH prints 0
+umulladd UMULL tier      0 candidates
+.P2
+.B "This was never the flip."
+The control that said so \(em the same panic on the shipping
+.CW "Dbuf = 0"
+kernel \(em was run before any of the diagnosis, and a peer independently
+reproduced the second site under QEMU on a branch with none of this session's
+double-buffering present.
