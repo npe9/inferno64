@@ -173,13 +173,26 @@ The widgets are laid out with
 .B pack
 into a 160\(mu60 image. The four states this once listed as uncovered \(em a
 focused widget, a partially-clipped one, a posted menu with a cascade and a
-non-default colour scheme \(em are now covered. What is still not: a widget inside a
+non-default colour scheme \(em are now covered. A widget inside a
 .B canvas
-window item, which
+window item is covered too, and that entry was wrong when it was written:
+the
+.B Maxwalk
+nest below is built from
+.B "create window \(em window"
+at every level, so a widget in a canvas window item is exercised at depths
+one through ten rather than not at all.
+.PP
+What is left, so far as this program can tell, is the things it says in
+.B "Where it has actually been run"
+rather than a widget kind or a state. Every widget kind
+.I libtk
+has a scene conversion for, every state those conversions have their own
+node kinds for, nesting past the walk's limit, two toplevels interleaved
+and a posted menu are all here. If something is missing it is something
+neither this nor
 .IR tkofftest (1)
-covers. A scrolled listbox view, a non-default colour on a non-label and
-.B grid
-geometry are now covered.
+thought to name, which is the kind of gap a list cannot close.
 .PP
 .B "RESOLVED: a listbox's -width and -height are PIXELS here, not characters."
 The scrolled case used to skip, and the cause was in this program rather
