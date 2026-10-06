@@ -1,0 +1,480 @@
+--- a/include/block/nvme.h
++++ b/include/block/nvme.h
+@@ -1179,7 +1179,8 @@
+     uint16_t    mntmt;
+     uint16_t    mxtmt;
+     uint32_t    sanicap;
+-    uint8_t     rsvd332[6];
++    uint32_t    hmminds;
++    uint16_t    hmmaxd;
+     uint16_t    nsetidmax;
+     uint16_t    endgidmax;
+     uint8_t     rsvd342[170];
+@@ -1348,6 +1349,8 @@
+     NVME_INTERRUPT_VECTOR_CONF      = 0x9,
+     NVME_WRITE_ATOMICITY            = 0xa,
+     NVME_ASYNCHRONOUS_EVENT_CONF    = 0xb,
++    NVME_AUTONOMOUS_POWER_STATE     = 0xc,
++    NVME_HOST_MEMORY_BUFFER         = 0xd,
+     NVME_TIMESTAMP                  = 0xe,
+     NVME_HOST_BEHAVIOR_SUPPORT      = 0x16,
+     NVME_COMMAND_SET_PROFILE        = 0x19,
+--- a/hw/nvme/nvme.h
++++ b/hw/nvme/nvme.h
+@@ -557,7 +557,26 @@
+     uint16_t atomic_awun;
+     uint16_t atomic_awupf;
+     bool     atomic_dn;
++
++    uint32_t hmpre;     /* host memory buffer wanted, 4 KiB units; 0 none */
++    uint32_t hmmin;     /* the least the controller will work with */
++    bool     apst;      /* autonomous power state transitions */
+ } NvmeParams;
++
++#define NVME_HMB_MAX_DESC   32
++
++/* the host memory buffer the host has given the controller */
++typedef struct NvmeHmb {
++    bool        enabled;
++    uint32_t    hsize;      /* memory pages */
++    uint64_t    hmdla;      /* the descriptor list */
++    uint32_t    hmdlec;
++    uint64_t    badd[NVME_HMB_MAX_DESC];
++    uint32_t    bsize[NVME_HMB_MAX_DESC];
++    uint32_t    mps;        /* bytes in a page when it was given */
++    uint64_t    generation;
++    uint64_t    corrupt;    /* chunks the host wrote over while lent */
++} NvmeHmb;
+ 
+ typedef struct NvmeCtrl {
+     PCIDevice    parent_obj;
+@@ -637,8 +656,17 @@
+ 
+         uint32_t                async_config;
+         NvmeHostBehaviorSupport hbs;
++        uint32_t                apste;
++        uint64_t                apst[32];
++        uint8_t                 ps;         /* the power state now */
++        uint8_t                 psarrival;  /* as the last command found it */
++        uint8_t                 opps;       /* the operational one to return to */
+     } features;
+ 
++    NvmeHmb     hmb;
++    QEMUTimer   *apst_timer;
++    uint64_t    ps_transitions;
++
+     NvmePriCtrlCap  pri_ctrl_cap;
+     uint32_t nr_sec_ctrls;
+     NvmeSecCtrlEntry *sec_ctrl_list;
+--- a/hw/nvme/ctrl.c
++++ b/hw/nvme/ctrl.c
+@@ -245,6 +245,8 @@
+     [NVME_INTERRUPT_VECTOR_CONF]    = true,
+     [NVME_WRITE_ATOMICITY]          = true,
+     [NVME_ASYNCHRONOUS_EVENT_CONF]  = true,
++    [NVME_AUTONOMOUS_POWER_STATE]   = true,
++    [NVME_HOST_MEMORY_BUFFER]       = true,
+     [NVME_TIMESTAMP]                = true,
+     [NVME_HOST_BEHAVIOR_SUPPORT]    = true,
+     [NVME_COMMAND_SET_PROFILE]      = true,
+@@ -253,6 +255,9 @@
+ };
+ 
+ static const uint32_t nvme_feature_cap[NVME_FID_MAX] = {
++    [NVME_POWER_MANAGEMENT]         = NVME_FEAT_CAP_CHANGE,
++    [NVME_AUTONOMOUS_POWER_STATE]   = NVME_FEAT_CAP_CHANGE,
++    [NVME_HOST_MEMORY_BUFFER]       = NVME_FEAT_CAP_CHANGE,
+     [NVME_TEMPERATURE_THRESHOLD]    = NVME_FEAT_CAP_CHANGE,
+     [NVME_ERROR_RECOVERY]           = NVME_FEAT_CAP_CHANGE | NVME_FEAT_CAP_NS,
+     [NVME_VOLATILE_WRITE_CACHE]     = NVME_FEAT_CAP_CHANGE,
+@@ -6264,8 +6269,253 @@
+ 
+     *result = nentries;
+     return NVME_SUCCESS;
++}
++
++/*
++ * The host memory buffer (NVMe 1.4, 5.21.1.13).  A drive without DRAM
++ * of its own asks for one (HMPRE, HMMIN) and keeps its mapping tables
++ * in it.  Here the controller keeps a header at the start of each
++ * chunk it is lent -- a magic, the chunk's index and the buffer's
++ * generation -- written when the buffer is given and read back when it
++ * is returned, at a reset, or given again with Memory Return set, when
++ * the host says the contents are as the controller left them.  A host
++ * that writes over memory it has lent the controller is caught there,
++ * as a real drive's tables would be corrupted.  After the buffer is
++ * disabled, or the controller is reset, the controller does not touch
++ * it again.
++ */
++#define NVME_HMB_MAGIC  0x424d48554d4551ULL      /* "QEMUHMB" */
++
++static void nvme_hmb_header(NvmeHmb *h, int i, uint64_t hdr[2])
++{
++    hdr[0] = cpu_to_le64(NVME_HMB_MAGIC);
++    hdr[1] = cpu_to_le64(h->generation << 8 | i);
++}
++
++static void nvme_hmb_stamp(NvmeCtrl *n)
++{
++    NvmeHmb *h = &n->hmb;
++    uint64_t hdr[2];
++    int i;
++
++    for (i = 0; i < h->hmdlec; i++) {
++        nvme_hmb_header(h, i, hdr);
++        pci_dma_write(PCI_DEVICE(n), h->badd[i], hdr, sizeof(hdr));
++    }
++}
++
++/* the chunks whose header is not as the controller wrote it */
++static int nvme_hmb_check(NvmeCtrl *n)
++{
++    NvmeHmb *h = &n->hmb;
++    uint64_t hdr[2], got[2];
++    int i, bad = 0;
++
++    for (i = 0; i < h->hmdlec; i++) {
++        nvme_hmb_header(h, i, hdr);
++        if (pci_dma_read(PCI_DEVICE(n), h->badd[i], got, sizeof(got))) {
++            continue;       /* not reachable now (bus mastering off) */
++        }
++        if (memcmp(hdr, got, sizeof(hdr)) != 0) {
++            qemu_log_mask(LOG_GUEST_ERROR, "nvme: host memory buffer chunk "
++                          "%d at 0x%" PRIx64 " written by the host while "
++                          "lent to the controller\n", i, h->badd[i]);
++            bad++;
++        }
++    }
++    h->corrupt += bad;
++    return bad;
+ }
+ 
++/* the buffer back to the host: checked, then never touched again */
++static void nvme_hmb_release(NvmeCtrl *n)
++{
++    if (!n->hmb.enabled) {
++        return;
++    }
++    nvme_hmb_check(n);
++    n->hmb.enabled = false;
++}
++
++static uint16_t nvme_set_feature_hmb(NvmeCtrl *n, NvmeRequest *req)
++{
++    NvmeCmd *cmd = &req->cmd;
++    uint32_t dw11 = le32_to_cpu(cmd->cdw11);
++    uint32_t hsize = le32_to_cpu(cmd->cdw12);
++    uint64_t hmdla = le32_to_cpu(cmd->cdw13) |
++                     (uint64_t)le32_to_cpu(cmd->cdw14) << 32;
++    uint32_t hmdlec = le32_to_cpu(cmd->cdw15);
++    NvmeHmb *h = &n->hmb, old = n->hmb;
++    uint64_t desc[2 * NVME_HMB_MAX_DESC], total = 0;
++    bool mr = dw11 & 2, same;
++    int i;
++
++    if (!n->params.hmpre) {
++        return NVME_INVALID_FIELD | NVME_DNR;
++    }
++    if (!(dw11 & 1)) {
++        nvme_hmb_release(n);
++        return NVME_SUCCESS;
++    }
++    if (h->enabled) {
++        return NVME_CMD_SEQ_ERROR | NVME_DNR;
++    }
++    if ((hmdla & 0xf) || hmdlec == 0 || hmdlec > NVME_HMB_MAX_DESC ||
++        (uint64_t)hsize * n->page_size < (uint64_t)n->params.hmmin * 4096) {
++        return NVME_INVALID_FIELD | NVME_DNR;
++    }
++    if (pci_dma_read(PCI_DEVICE(n), hmdla, desc, 16 * hmdlec)) {
++        return NVME_DATA_TRAS_ERROR;
++    }
++    for (i = 0; i < hmdlec; i++) {
++        uint64_t badd = le64_to_cpu(desc[2 * i]);
++        uint32_t bsize = le32_to_cpu(desc[2 * i + 1] & 0xffffffff);
++
++        if (bsize == 0 || (badd & (n->page_size - 1)) ||
++            (uint64_t)bsize * n->page_size < 4096ULL * n->id_ctrl.hmminds) {
++            return NVME_INVALID_FIELD | NVME_DNR;
++        }
++        h->badd[i] = badd;
++        h->bsize[i] = bsize;
++        total += bsize;
++    }
++    if (total != hsize) {
++        return NVME_INVALID_FIELD | NVME_DNR;
++    }
++
++    same = old.hmdlec == hmdlec && old.mps == n->page_size &&
++           memcmp(old.badd, h->badd, hmdlec * sizeof(h->badd[0])) == 0 &&
++           memcmp(old.bsize, h->bsize, hmdlec * sizeof(h->bsize[0])) == 0;
++    h->hsize = hsize;
++    h->hmdla = hmdla;
++    h->hmdlec = hmdlec;
++    h->mps = n->page_size;
++    h->enabled = true;
++    if (mr && same) {
++        /* the memory it had before, which the host says is untouched */
++        nvme_hmb_check(n);
++    } else {
++        h->generation++;
++        nvme_hmb_stamp(n);
++    }
++    return NVME_SUCCESS;
++}
++
++static uint16_t nvme_get_feature_hmb(NvmeCtrl *n, NvmeRequest *req)
++{
++    g_autofree uint32_t *attr = g_malloc0(4096);
++    NvmeHmb *h = &n->hmb;
++
++    if (!n->params.hmpre) {
++        return NVME_INVALID_FIELD | NVME_DNR;
++    }
++    if (h->enabled) {
++        attr[0] = cpu_to_le32(h->hsize);
++        attr[1] = cpu_to_le32(h->hmdla);
++        attr[2] = cpu_to_le32(h->hmdla >> 32);
++        attr[3] = cpu_to_le32(h->hmdlec);
++    }
++    req->cqe.result = cpu_to_le32(h->enabled ? 1 : 0);
++    return nvme_c2h(n, (uint8_t *)attr, 4096, req);
++}
++
++/*
++ * Power states and autonomous transitions (5.21.1.2, 5.21.1.12).  With
++ * APST the controller, idle for an entry's ITPT, goes to its ITPS, a
++ * non-operational state, and from there on by that state's own entry;
++ * the next command brings it back to the operational state it left.
++ */
++#define NVME_APST_ITPS(e)   (((e) >> 3) & 0x1f)
++#define NVME_APST_ITPT(e)   (((e) >> 8) & 0xffffff)
++
++static bool nvme_ps_nonop(NvmeCtrl *n, int ps)
++{
++    return ps <= n->id_ctrl.npss &&
++           (le16_to_cpu(n->id_ctrl.psd[ps].reserved) >> 8) & 2;
++}
++
++static void nvme_apst_arm(NvmeCtrl *n)
++{
++    uint64_t e = n->features.apst[n->features.ps];
++
++    if (!n->apst_timer) {
++        return;
++    }
++    if (!n->features.apste || NVME_APST_ITPT(e) == 0) {
++        timer_del(n->apst_timer);
++        return;
++    }
++    timer_mod(n->apst_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) +
++              NVME_APST_ITPT(e));
++}
++
++static void nvme_apst_timer(void *opaque)
++{
++    NvmeCtrl *n = opaque;
++    uint64_t e = n->features.apst[n->features.ps];
++
++    if (!n->features.apste || NVME_APST_ITPT(e) == 0) {
++        return;
++    }
++    n->features.ps = NVME_APST_ITPS(e);
++    n->ps_transitions++;
++    nvme_apst_arm(n);
++}
++
++/* a command: out of a non-operational state, and the idle time anew */
++static void nvme_ps_busy(NvmeCtrl *n)
++{
++    n->features.psarrival = n->features.ps;
++    if (nvme_ps_nonop(n, n->features.ps)) {
++        n->features.ps = n->features.opps;
++        n->ps_transitions++;
++    }
++    nvme_apst_arm(n);
++}
++
++static uint16_t nvme_set_feature_apst(NvmeCtrl *n, NvmeRequest *req)
++{
++    uint32_t dw11 = le32_to_cpu(req->cmd.cdw11);
++    uint64_t tab[32];
++    uint16_t status;
++    int i;
++
++    if (!n->params.apst) {
++        return NVME_INVALID_FIELD | NVME_DNR;
++    }
++    status = nvme_h2c(n, (uint8_t *)tab, sizeof(tab), req);
++    if (status) {
++        return status;
++    }
++    for (i = 0; i < 32; i++) {
++        uint64_t e = le64_to_cpu(tab[i]);
++
++        /* a transition goes only to a non-operational state there is */
++        if (NVME_APST_ITPT(e) && !nvme_ps_nonop(n, NVME_APST_ITPS(e))) {
++            return NVME_INVALID_FIELD | NVME_DNR;
++        }
++        n->features.apst[i] = e;
++    }
++    n->features.apste = dw11 & 1;
++    nvme_apst_arm(n);
++    return NVME_SUCCESS;
++}
++
++static uint16_t nvme_get_feature_apst(NvmeCtrl *n, NvmeRequest *req)
++{
++    uint64_t tab[32];
++    int i;
++
++    if (!n->params.apst) {
++        return NVME_INVALID_FIELD | NVME_DNR;
++    }
++    for (i = 0; i < 32; i++) {
++        tab[i] = cpu_to_le64(n->features.apst[i]);
++    }
++    req->cqe.result = cpu_to_le32(n->features.apste);
++    return nvme_c2h(n, (uint8_t *)tab, sizeof(tab), req);
++}
++
+ static uint16_t nvme_get_feature(NvmeCtrl *n, NvmeRequest *req)
+ {
+     NvmeCmd *cmd = &req->cmd;
+@@ -6373,6 +6623,19 @@
+         goto out;
+     case NVME_TIMESTAMP:
+         return nvme_get_feature_timestamp(n, req);
++    case NVME_POWER_MANAGEMENT:
++        /*
++         * The command itself brings the controller out of a
++         * non-operational state, so what is reported is the state it
++         * found the controller in: after an idle spell under APST, the
++         * one the controller went to.
++         */
++        result = n->features.psarrival;
++        goto out;
++    case NVME_AUTONOMOUS_POWER_STATE:
++        return nvme_get_feature_apst(n, req);
++    case NVME_HOST_MEMORY_BUFFER:
++        return nvme_get_feature_hmb(n, req);
+     case NVME_HOST_BEHAVIOR_SUPPORT:
+         return nvme_c2h(n, (uint8_t *)&n->features.hbs,
+                         sizeof(n->features.hbs), req);
+@@ -6656,6 +6919,20 @@
+         break;
+     case NVME_TIMESTAMP:
+         return nvme_set_feature_timestamp(n, req);
++    case NVME_POWER_MANAGEMENT:
++        if ((dw11 & 0x1f) > id->npss) {
++            return NVME_INVALID_FIELD | NVME_DNR;
++        }
++        n->features.ps = dw11 & 0x1f;
++        if (!nvme_ps_nonop(n, n->features.ps)) {
++            n->features.opps = n->features.ps;
++        }
++        nvme_apst_arm(n);
++        break;
++    case NVME_AUTONOMOUS_POWER_STATE:
++        return nvme_set_feature_apst(n, req);
++    case NVME_HOST_MEMORY_BUFFER:
++        return nvme_set_feature_hmb(n, req);
+     case NVME_HOST_BEHAVIOR_SUPPORT:
+         status = nvme_h2c(n, (uint8_t *)&n->features.hbs,
+                           sizeof(n->features.hbs), req);
+@@ -7514,6 +7791,7 @@
+             break;
+         }
+ 
++        nvme_ps_busy(n);
+         atomic = nvme_get_atomic(n, &cmd);
+ 
+         cmd_is_atomic = false;
+@@ -7648,6 +7926,14 @@
+     n->aer_mask = 0;
+     n->outstanding_aers = 0;
+     n->qs_created = false;
++
++    nvme_hmb_release(n);
++    n->features.apste = 0;
++    memset(n->features.apst, 0, sizeof(n->features.apst));
++    n->features.ps = n->features.opps = 0;
++    if (n->apst_timer) {
++        timer_del(n->apst_timer);
++    }
+ 
+     n->dn = n->params.atomic_dn; /* Set Disable Normal */
+ 
+@@ -8451,6 +8737,9 @@
+     n->starttime_ms = qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL);
+     n->aer_reqs = g_new0(NvmeRequest *, n->params.aerl + 1);
+     QTAILQ_INIT(&n->aer_queue);
++    if (n->params.apst) {
++        n->apst_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, nvme_apst_timer, n);
++    }
+ 
+     n->nr_sec_ctrls = max_vfs;
+     for (i = 0; i < max_vfs; i++) {
+@@ -8885,6 +9174,41 @@
+     id->psd[0].mp = cpu_to_le16(0x9c4);
+     id->psd[0].enlat = cpu_to_le32(0x10);
+     id->psd[0].exlat = cpu_to_le32(0x4);
++
++    if (n->params.apst) {
++        /*
++         * As a 2019-2023 consumer drive has them: three operational
++         * states, two non-operational ones (NOPS, byte 3 bit 1), their
++         * maximum power in centiwatts (MXPS 0) or ten-thousandths of a
++         * watt (MXPS 1), entry and exit latencies in microseconds.
++         */
++        static const struct { uint16_t mp; uint8_t flags; uint32_t en, ex; }
++            ps[] = {
++            { 0x9c4, 0, 0x10, 0x4 },        /* 25 W */
++            { 0x258, 0, 0x10, 0x4 },        /* 6 W */
++            { 0x15e, 0, 0x10, 0x4 },        /* 3.5 W */
++            { 0x2bc, 3, 2000, 2000 },       /* 0.07 W, non-operational */
++            { 0x32, 3, 2000, 40000 },       /* 0.005 W, non-operational */
++        };
++        int i;
++
++        for (i = 0; i < ARRAY_SIZE(ps); i++) {
++            id->psd[i].mp = cpu_to_le16(ps[i].mp);
++            id->psd[i].reserved = cpu_to_le16(ps[i].flags << 8);
++            id->psd[i].enlat = cpu_to_le32(ps[i].en);
++            id->psd[i].exlat = cpu_to_le32(ps[i].ex);
++            id->psd[i].rrt = id->psd[i].rrl = i < 3 ? i : 3;
++            id->psd[i].rwt = id->psd[i].rwl = i < 3 ? i : 3;
++        }
++        id->npss = ARRAY_SIZE(ps) - 1;
++        id->apsta = 1;
++    }
++    if (n->params.hmpre) {
++        id->hmpre = cpu_to_le32(n->params.hmpre);
++        id->hmmin = cpu_to_le32(n->params.hmmin);
++        id->hmminds = cpu_to_le32(1);
++        id->hmmaxd = cpu_to_le16(NVME_HMB_MAX_DESC);
++    }
+ 
+     NVME_CAP_SET_MQES(cap, n->params.mqes);
+     NVME_CAP_SET_CQR(cap, 1);
+@@ -9031,6 +9355,10 @@
+     g_free(n->cq);
+     g_free(n->sq);
+     g_free(n->aer_reqs);
++    if (n->apst_timer) {
++        timer_free(n->apst_timer);
++        n->apst_timer = NULL;
++    }
+ 
+     if (n->params.cmb_size_mb) {
+         g_free(n->cmb.buf);
+@@ -9072,6 +9400,9 @@
+     DEFINE_PROP_UINT8("aerl", NvmeCtrl, params.aerl, 3),
+     DEFINE_PROP_UINT32("aer_max_queued", NvmeCtrl, params.aer_max_queued, 64),
+     DEFINE_PROP_UINT8("mdts", NvmeCtrl, params.mdts, 7),
++    DEFINE_PROP_UINT32("hmpre", NvmeCtrl, params.hmpre, 0),
++    DEFINE_PROP_UINT32("hmmin", NvmeCtrl, params.hmmin, 0),
++    DEFINE_PROP_BOOL("apst", NvmeCtrl, params.apst, false),
+     DEFINE_PROP_UINT8("vsl", NvmeCtrl, params.vsl, 7),
+     DEFINE_PROP_BOOL("use-intel-id", NvmeCtrl, params.use_intel_id, false),
+     DEFINE_PROP_BOOL("legacy-cmb", NvmeCtrl, params.legacy_cmb, false),

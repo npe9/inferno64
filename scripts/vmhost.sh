@@ -124,6 +124,19 @@ IOMMU="-device intel-iommu,intremap=on"
 # VMHOST_NIC1=ixgbe: the 82599 (an X520) of scripts/qemu-patches/0007
 IGB="-netdev user,id=net1$FWD -device ${VMHOST_NIC1:-igb},netdev=net1,bus=rp2"
 [ "${VMHOST_IGB:-1}" = 0 ] && IGB=
+# VMHOST_NVME=new: the NVMe as a newer drive has it (scripts/qemu-patches/0008):
+# it asks for a 32 MiB host memory buffer (8 MiB at least) and offers
+# autonomous power state transitions; its first namespace, the image,
+# has 4096-byte sectors, and a second of 512-byte sectors is another
+NVMEDEV="-drive if=none,id=nvm0,format=raw,file=$NVME -device nvme,drive=nvm0,serial=vmhost0,bus=rp3"
+if [ "$VMHOST_NVME" = new ]; then
+	NVME2=$Q/vmhost$T-nvme2.raw
+	[ -f "$NVME2" ] || dd if=/dev/zero of="$NVME2" bs=1m count=16 2>/dev/null
+	NVMEDEV="-drive if=none,id=nvm0,format=raw,file=$NVME -drive if=none,id=nvm1,format=raw,file=$NVME2
+	-device nvme,id=nvc0,serial=vmhost0,bus=rp3,hmpre=8192,hmmin=2048,apst=on
+	-device nvme-ns,bus=nvc0,drive=nvm0,nsid=1,logical_block_size=4096,physical_block_size=4096
+	-device nvme-ns,bus=nvc0,drive=nvm1,nsid=2"
+fi
 
 NOREBOOT=-no-reboot
 [ "$VMHOST_REBOOT" = 1 ] && NOREBOOT=
@@ -142,8 +155,7 @@ set -- \
 	-netdev user,id=net0 \
 	-device virtio-net-pci,netdev=net0,bus=rp1,disable-legacy=on \
 	$IGB \
-	-drive if=none,id=nvm0,format=raw,file="$NVME" \
-	-device nvme,drive=nvm0,serial=vmhost0,bus=rp3 \
+	$NVMEDEV \
 	-device edu,bus=rp4,dma_mask=0xffffffffffff \
 	-device virtio-serial-pci,bus=rp5,disable-legacy=on,iommu_platform=on \
 	-chardev file,id=hvc0,path="$HVC" \

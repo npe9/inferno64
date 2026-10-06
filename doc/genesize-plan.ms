@@ -1978,6 +1978,68 @@ check-vf on the 82576 passes unchanged.  On
 .CW scripts/mkqemu.sh 's
 build of the release and the seven patches, check-qemu-ixgbe and
 check-vf on the X520's VFs pass again.
+.IP
+Newer NVMe (phase 16).  What drives newer than QEMU's model have that
+it did not, added by
+.CW scripts/qemu-patches/0008 :
+the host memory buffer a DRAM-less drive asks for (Identify's HMPRE,
+HMMIN, HMMINDS, HMMAXD; Set and Get Features 0Dh with its descriptor
+list and Memory Return), the controller writing a header into each
+chunk it is lent and reading it back when the buffer is returned, so
+that a host writing over lent memory is caught as a real drive's
+corrupted tables would be; and five power states, two of them
+non-operational, with autonomous transitions (APSTA, Features 0Ch):
+idle for an entry's ITPT the controller goes to its ITPS, and the
+next command brings it back (Get Features 02h reports the state the
+command found it in).  4096-byte sectors and several namespaces QEMU
+had already.
+.CW scripts/check-qemu-nvme.sh
+checks it against Linux's nvme (linux-lts 6.6.142), QEMU TCG, one
+controller with a 4K-sector namespace and a 512-byte one, through a
+freestanding admin client,
+.CW tests/vm/nvmetest.c :
+.DS
+.ft CW
+nvme nvme0: allocated 32 MiB host memory buffer.
+check-qemu-nvme: hmb: pass
+check-qemu-nvme: apst: pass
+check-qemu-nvme: ns: pass
+	ns nvme0n1 lbs 4096 sectors 131072 1MiB written and read back md5 2d3ee6b8...
+	ns nvme0n2 lbs 512 sectors 131072 1MiB written and read back md5 c14e6691...
+	identify hmpre 8192 hmmin 2048 hmminds 1 hmmaxd 32 npss 4 apsta 1
+	hmb enabled 1 hsize 8192 pages descriptors 8
+	apst ps0 -> ps3 after 100 ms
+	apst ps3 -> ps4 after 2000 ms
+	idle 3s found in ps4
+	after a read found in ps0
+	after reset hmb enabled 1 hsize 8192 pages descriptors 8
+.ft
+.DE
+Linux gives the buffer back after a controller reset with the
+contents untouched (no complaint in QEMU's log).  Then this kernel:
+.CW port/sdnvme.c
+now lends a drive that asks up to 32 MiB of host memory in 1 MiB
+chunks, never less than its minimum, and frees it only after
+disabling the controller has taken it back.  On the bench with
+.CW VMHOST_NVME=new
+(the NVMe asking for a buffer, with APST, its image a namespace of
+4096-byte sectors and a second of 512),
+.CW ipc64dev :
+.DS
+.ft CW
+sdN (nvme): host memory buffer 32 MiB in 32 chunks
+DEVTEST: /dev/sdN0/ctl: ... geometry 16384 4096  hmb 32 MiB in 32 chunks
+DEVTEST: /dev/sdN1/ctl: ... geometry 32768 512
+DEVTEST: /dev/sdN0/data sector 0 (512 bytes): INFERNO-NVME-NS1-4K
+DEVTEST: MSIX-DETACH-OK sdN gone after switch off
+.ft
+.DE
+QEMU's guest-error log found a fault of sdnvme's own there: it wrote
+INTMS and INTMC, the pin and MSI interrupt masks, while on MSI-X,
+which the specification leaves undefined (a real controller may do
+anything).  It masked and unmasked them on every interrupt.  It now
+writes them only when the controller is not on MSI-X; the rerun has
+no guest errors, and check-vm's M4 still passes under VT-d and AMD-Vi.
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
@@ -2003,7 +2065,9 @@ nil dereferences as exceptions on pc64 and riscv64; VMX in QEMU's TCG
 M1\-M10 all hold on VMX there.  The 82599 model is done, checked
 against Linux's ixgbe and ixgbevf, and this kernel is its PF: M7 on
 the X520's VFs and the whole PF to a Linux guest, on SVM and VMX.
-Next: the misbehaving DMA device; then the
+The newer NVMe features are done, checked against Linux's nvme, and
+sdnvme uses them.  Next: the misbehaving DMA device (its design to
+come), the FL1100's quirks, the ConnectX-4 Lx; then the
 workstation (phase 13), and real hardware for everything QEMU and Bochs
 have stood in for.  On QEMU, check-vm (SVM; M4 under VT-d and AMD-Vi)
 and check-rv, on both the PLIC and the AIA machine and on hosts of one

@@ -53,6 +53,14 @@
 #		the PF/VF mailbox, VF resets and the internal switch
 #		between pools (hw/net/ixgbe.c).  scripts/check-qemu-
 #		ixgbe.sh checks it against Linux's ixgbe and ixgbevf
+#	0008-nvme-hmb-apst.patch
+#		what newer NVMe drives have that QEMU's did not: the
+#		host memory buffer a DRAM-less drive asks for (hmpre,
+#		hmmin), with the controller noticing a host that writes
+#		over memory it has lent; and power states with
+#		autonomous transitions (apst), a non-operational state
+#		reached after idling and left on the next command.
+#		scripts/check-qemu-nvme.sh checks it against Linux's nvme
 #
 # usage: scripts/mkqemu.sh      installs into $ROOT/.qemu/local;
 #                               scripts/vmhost.sh uses it when present

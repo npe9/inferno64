@@ -59,6 +59,12 @@ struct Ivec
 	uint	n;		/* interrupts delivered on this vector */
 };
 
+enum {
+	Hmbchunk	= 1024*1024,
+	Hmbmax		= 32*1024*1024,
+	Hmbmaxd		= 32,
+};
+
 struct Ctlr
 {
 	QLock;
@@ -92,6 +98,11 @@ struct Ctlr
 
 	CQ	cq[1+1];
 	SQ	sq[1+MAXMACH];
+
+	/* the host memory buffer lent to a drive that asks for one */
+	uchar	*hmb[Hmbmaxd];
+	int	nhmb;
+	u32int	*hmbdesc;
 
 	Ctlr	*next;
 };
@@ -174,6 +185,19 @@ qcmd(WS *ws, Ctlr *ctlr, int adm, u32int opc, u32int nsid, void *data, ulong len
 	return e;
 }
 
+/*
+ * INTMS and INTMC mask the controller's pin or MSI interrupt.  With
+ * MSI-X they are not to be touched (NVMe 1.4, 3.1.3 and 3.1.4: host
+ * software uses the MSI-X table's per-vector mask instead), so writes
+ * go to them only when the controller is not on MSI-X.
+ */
+static void
+intmask(Ctlr *ctlr, int reg, u32int v)
+{
+	if(ctlr->nivec == 0)
+		ctlr->reg[reg] = v;
+}
+
 static void
 nvmeintr(Ureg *, void *arg)
 {
@@ -188,7 +212,7 @@ nvmeintr(Ureg *, void *arg)
 		return;
 
 	ilock(&ctlr->intr);
-	ctlr->reg[IntMs] = ctlr->ints;
+	intmask(ctlr, IntMs, ctlr->ints);
 	for(cq = &ctlr->cq[nelem(ctlr->cq)-1]; cq >= ctlr->cq; cq--){
 		if(cq->base == nil)
 			continue;
@@ -215,7 +239,7 @@ nvmeintr(Ureg *, void *arg)
 			ctlr->reg[DBell + ((cq-ctlr->cq)*2+1 << ctlr->dstrd)] = ++cq->head & cq->mask;
 		}
 	}
-	ctlr->reg[IntMc] = ctlr->ints;
+	intmask(ctlr, IntMc, ctlr->ints);
 	iunlock(&ctlr->intr);
 }
 
@@ -533,6 +557,8 @@ nvmerctl(SDunit *u, char *p, char *e)
 	p = seprint(p, e, "serial\t%.20s\n", (char*)ctlr->ident+4);
 	p = seprint(p, e, "firm\t%.8s\n", (char*)ctlr->ident+64);
 	p = seprint(p, e, "geometry %llud %lud\n", u->sectors, u->secsize);
+	if(ctlr->nhmb > 0)
+		p = seprint(p, e, "hmb\t%d MiB in %d chunks\n", ctlr->nhmb*Hmbchunk >> 20, ctlr->nhmb);
 
 	return p;
 }
@@ -627,7 +653,7 @@ setupqueues(Ctlr *ctlr)
 
 	ilock(&ctlr->intr);
 	ctlr->ints |= 1<<(cq - ctlr->cq);
-	ctlr->reg[IntMc] = ctlr->ints;
+	intmask(ctlr, IntMc, ctlr->ints);
 	iunlock(&ctlr->intr);
 }
 
@@ -661,6 +687,87 @@ identify(Ctlr *ctlr)
 		ctlr->nnsid++;
 }
 
+/*
+ * The host memory buffer (NVMe 1.4, 5.21.1.13).  A drive without DRAM
+ * of its own says in Identify how much host memory it would like for
+ * its tables (HMPRE) and the least it can use (HMMIN), in 4 KiB units,
+ * and the most descriptors it takes (HMMAXD).  It is lent up to 32 MiB
+ * in chunks of 1 MiB, never less than its minimum, by Set Features 0Dh,
+ * and the memory is not touched by this kernel while lent: it is freed
+ * only after the controller has been disabled, which takes the buffer
+ * back from it.  A drive that does not ask works without; one that is
+ * refused (no memory) works too, more slowly.
+ */
+static void
+hostmemfree(Ctlr *ctlr)
+{
+	int i;
+
+	for(i = 0; i < ctlr->nhmb; i++)
+		free(ctlr->hmb[i]);
+	ctlr->nhmb = 0;
+	free(ctlr->hmbdesc);
+	ctlr->hmbdesc = nil;
+}
+
+static void
+hostmem(Ctlr *ctlr, char *name)
+{
+	u32int *e, *d, pref, min, maxd, st;
+	uvlong want, pa;
+	WS ws;
+	int i;
+
+	pref = ctlr->ident[272] | ctlr->ident[273]<<8 | ctlr->ident[274]<<16 | ctlr->ident[275]<<24;
+	min = ctlr->ident[276] | ctlr->ident[277]<<8 | ctlr->ident[278]<<16 | ctlr->ident[279]<<24;
+	maxd = ctlr->ident[336] | ctlr->ident[337]<<8;
+	if(pref == 0 || ctlr->nhmb > 0)
+		return;
+	if(maxd == 0 || maxd > Hmbmaxd)
+		maxd = Hmbmaxd;
+	want = (uvlong)pref * 4096;
+	if(want > Hmbmax)
+		want = Hmbmax;
+	if(want > (uvlong)maxd * Hmbchunk)
+		want = (uvlong)maxd * Hmbchunk;
+	while((uvlong)ctlr->nhmb * Hmbchunk < want){
+		if((ctlr->hmb[ctlr->nhmb] = mallocalign(Hmbchunk, ctlr->mps, 0, 0)) == nil)
+			break;
+		ctlr->nhmb++;
+	}
+	if((uvlong)ctlr->nhmb * Hmbchunk < (uvlong)min * 4096
+	|| (ctlr->hmbdesc = mallocalign(16*ctlr->nhmb, 16, 0, 0)) == nil){
+		print("%s: no host memory buffer: %d MiB of the %ud KiB wanted\n",
+			name, ctlr->nhmb*Hmbchunk >> 20, pref*4);
+		hostmemfree(ctlr);
+		return;
+	}
+	for(i = 0; i < ctlr->nhmb; i++){
+		d = &ctlr->hmbdesc[4*i];
+		pa = PCIWADDR(ctlr->hmb[i]);
+		d[0] = pa;
+		d[1] = pa>>32;
+		d[2] = Hmbchunk >> ctlr->mpsshift;
+		d[3] = 0;
+	}
+	dmaflush(1, ctlr->hmbdesc, 16*ctlr->nhmb);
+	pa = PCIWADDR(ctlr->hmbdesc);
+	e = qcmd(&ws, ctlr, 1, 0x09, 0, nil, 0);	/* set features */
+	e[10] = 0x0D;
+	e[11] = 1;					/* enable */
+	e[12] = (ctlr->nhmb * Hmbchunk) >> ctlr->mpsshift;
+	e[13] = pa;
+	e[14] = pa>>32;
+	e[15] = ctlr->nhmb;
+	if((st = wcmd(&ws, e)) != 0){
+		print("%s: host memory buffer refused: status %#ux\n", name, st);
+		hostmemfree(ctlr);
+		return;
+	}
+	print("%s: host memory buffer %d MiB in %d chunks\n", name,
+		ctlr->nhmb*Hmbchunk >> 20, ctlr->nhmb);
+}
+
 static int
 nvmedisable(SDev *sd)
 {
@@ -673,7 +780,7 @@ nvmedisable(SDev *sd)
 	/* mask interrupts */
 	ilock(&ctlr->intr);
 	ctlr->ints = 0;
-	ctlr->reg[IntMs] = ~ctlr->ints;
+	intmask(ctlr, IntMs, ~ctlr->ints);
 	iunlock(&ctlr->intr);
 
 	/* notify normal power off */
@@ -712,6 +819,9 @@ nvmedisable(SDev *sd)
 	free(ctlr->nsid);
 	ctlr->nsid = nil;
 	ctlr->nnsid = 0;
+
+	/* the controller is off, so it has given its buffer back */
+	hostmemfree(ctlr);
 
 	return 1;
 }
@@ -754,7 +864,7 @@ nvmeenable(SDev *sd)
 	/* enable interrupt */
 	ilock(&ctlr->intr);
 	ctlr->ints = 1;
-	ctlr->reg[IntMc] = ctlr->ints;
+	intmask(ctlr, IntMc, ctlr->ints);
 	iunlock(&ctlr->intr);
 
 	/* enable controller */
@@ -772,6 +882,7 @@ Ready:
 	identify(ctlr);
 	setupqueues(ctlr);
 	print("%s: using %d submit queues\n", name, ctlr->nsq);
+	hostmem(ctlr, name);
 	poperror();
 
 	return 1;
