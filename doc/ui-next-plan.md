@@ -2351,8 +2351,32 @@ window:
 |---|---|---|
 | presents | 190 | 27630 |
 | damage rectangles | 3749 | 10781779 |
-| rectangles per present | 19.73, max 103 | **390.22**, max 399 |
-| box ÷ sum of rects | **0.61×** (box tighter) | **2.92×** (box inflates) |
+| rectangles per present | **1.00 then 26–34** (19.73 cumulative, max 103) | **390.22**, max 399 |
+| box ÷ sum of rects | **1.00× then 0.43–0.47×** (0.61× cumulative) | **2.92×** (box inflates) |
+
+**Both Tk figures in that column are phase-mixed and were still moving when
+the run ended**, found by the same per-interval treatment that killed the
+saving. `runtests -g` has two regimes, not one:
+
+```
+frames 10-60   per-present 1.00 this interval   inflation 1.00x this interval
+frames 70-190  per-present 26-34                inflation 0.43-0.47x
+```
+
+so the cumulative 19.73 is climbing out of a 1.00 phase toward 26–34, and
+the cumulative 0.61× is falling out of a 1.00× phase toward 0.43–0.47×.
+Neither had settled. In the early regime there is exactly **one** rectangle
+per present, which is why `box = sum` there trivially; in the later one Tk
+coalesces 26–34 heavily-overlapping rectangles into a box less than half
+their total area.
+
+**The conclusions survive and one strengthens.** Tk's box is the *tighter*
+bound, and more so than 0.61× said — 0.43–0.47× in the regime where it
+fragments at all. And Tk fragments *more* than 19.73 suggested, at 26–34 per
+present once it is busy. `gfxstress fill` is scattered at a constant rate by
+construction, so its figures are the ones expected to be stationary; that is
+an expectation and the raspi3b session is differencing it rather than
+asserting it.
 | mean box per present | 108131 B = 8.8% of the 640×480 screen | 1797681 B = **93.6% of its 800×600 window** |
 | eager | 20544912 B | 49669940216 B |
 | deferred | 3084216 B | 142111560 B |

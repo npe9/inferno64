@@ -595,6 +595,14 @@ static uvlong vsumarea;		/* sum of individual flush rect areas */
  * where the lesson had to go after the second time.
  */
 static uvlong vlasteager, vlastdeferred;
+/*
+ * The same treatment for the other three cumulative figures on these lines,
+ * because the SAVING was not special -- it was just the one I happened to
+ * quote.  `mean', `inflation' (box over sum) and `per-present' are all
+ * running averages or running ratios, so each can be dominated by a phase
+ * the reader cannot see, and each is quoted in doc/ui-next-plan.md.
+ */
+static uvlong vlastsum, vlastnflush, vlastframes, vlasteagerb;
 static uvlong vnflush, vnflushmax, vnflushtot;
 static int vcurok, vprevok, vevery = -1;
 static uvlong vframes, veager, voverlap, vdeferred;
@@ -812,12 +820,28 @@ frameboundary(void)
 		print("\n");
 		print("FRAMEDRAW d-ops %llud, non-overwriting %llud\n",
 			vdtot, vdpartial);
-		print("FRAMEBOX boxbytes %llud  sumbytes %llud  inflation %llud.%.2lludx  flushes %llud  per-present %llud.%.2llud  max %llud\n",
-			veager, vsumarea,
-			vsumarea? veager/vsumarea: 0,
-			vsumarea? (veager*100/vsumarea)%100: 0,
-			vnflushtot, vnflushtot/vframes,
-			(vnflushtot*100/vframes)%100, vnflushmax);
+		{
+			uvlong de, ds, dn, df, ibox, ipp;
+
+			de = veager - vlasteagerb;
+			ds = vsumarea - vlastsum;
+			dn = vnflushtot - vlastnflush;
+			df = vframes - vlastframes;
+			ibox = ds? (de*100)/ds: 0;
+			ipp = df? (dn*100)/df: 0;
+			print("FRAMEBOX boxbytes %llud  sumbytes %llud  inflation %llud.%.2lludx running, %llud.%.2lludx this interval  flushes %llud  per-present %llud.%.2llud running, %llud.%.2llud this interval  max %llud\n",
+				veager, vsumarea,
+				vsumarea? veager/vsumarea: 0,
+				vsumarea? (veager*100/vsumarea)%100: 0,
+				ibox/100, ibox%100,
+				vnflushtot, vnflushtot/vframes,
+				(vnflushtot*100/vframes)%100,
+				ipp/100, ipp%100, vnflushmax);
+			vlasteagerb = veager;
+			vlastsum = vsumarea;
+			vlastnflush = vnflushtot;
+			vlastframes = vframes;
+		}
 		print("FRAMEMASK nil %llud  memopaque %llud  1x1repl-ones %llud  1x1repl-other %llud  alpha %llud  other %llud\n",
 			vmnil, vmopaque, vmreplones, vmreplother, vmalpha, vmother);
 	}
