@@ -10746,3 +10746,94 @@ and the only remedy either of us found was to move the guard out of our care and
 into a tool \(em
 .CW boardrun 's
 warning, and reading the file after a mechanical edit.
+.NH 2
+The Tk titlebar bitmaps: /icons was an EMPTY mount point nobody filled
+.LP
+Every Tk client on this board printed four of these, on every launch, all
+session:
+.P1
+wmclient: tk error !failed to load bitmap on
+  'button .Wm_t.e -bitmap exit.bit -command {send wm_title exit} ...'
+wmclient: tk error !bad window path .Wm_t.e on 'pack .Wm_t.e -side right'
+.P2
+so the window titlebars had no exit, help or source buttons.
+.PP
+.B "libtk/parse.c:751 resolves a bare bitmap name as /icons/tk/%s,"
+and
+.CW os/inferno/raspi3b/raspi3b 's
+root section contains
+.P1
+	/icons	/
+.P2
+\(em a BARE MOUNT POINT, an empty directory with nothing bound into it.  The
+files are in the worktree
+.CW ( icons/tk/exit.bit ,
+.CW icons/tk/help.bit ,
+.CW icons/charon/edit.bit ,
+222, 219 and 239 bytes) and the styx export is
+.CW "export /"
+of the worktree, so they are already reachable at
+.CW /n/remote/icons .
+.PP
+.B "Fixed in boardrun, which is the house pattern rather than my invention:"
+the same root section's comment for
+.CW /appl
+says the board "already mounts the whole host worktree on
+.CW /n/remote ,
+so
+.CW "bind /n/remote/appl /appl"
+gives the profiler every module's source and symbols for nothing".
+.CW /icons
+is the same case, so
+.CW boardrun
+now binds it beside
+.CW /dis .
+.PP
+Verified:
+.CW "wm/gfxstress fill 1"
+with the marker present and the workload's own figures printed,
+.B "zero `failed to load bitmap' where there were four."
+.NH 3
+WHAT MADE THIS INVISIBLE: `ls /icons' SUCCEEDS
+.LP
+.B "The directory is there and is empty."
+So a probe for "does /icons exist" passes while the question is "are the bitmaps
+there", and
+.B "I ran exactly that probe earlier in this session and took ICONS-OK for an answer."
+.P1
+ls /icons > /dev/null; echo ICONS-OK     -> ICONS-OK
+ls /icons                                 -> (nothing)
+ls /icons/tk                              -> file does not exist
+.P2
+A test of the wrong proposition, passing.  The same family as this plan's other
+blind checks, and the cheapest possible instance of it: the right probe was one
+word longer.
+.NH 3
+Three instrument failures in twenty minutes of chasing it
+.LP
+.IP \(bu
+.B "`head' does not exist on the board."
+Two probes piped
+.CW "ls ... | head -12"
+and returned nothing at all, which looked like the path being absent.  The
+console said
+.CW "sh: head: file does not exist"
+and I was grepping for the filenames rather than for errors.
+.IP \(bu
+.B "My own new boardrun warning broke my wait pattern."
+The guard I had just added prints lines beginning
+.CW "boardrun:" ,
+and every waiter in this session keys on
+.CW "boardrun:"
+as the FAILURE marker \(em so
+.CW "until grep -qaE 'MARKER|boardrun:'"
+matched my own warning instantly and I read an incomplete log.
+.B "A guard that collides with the signal it is meant to protect."
+.IP \(bu
+.B "And zero errors meant nothing until the marker was checked."
+The first "0 bitmap errors" came from a run whose command had not executed; the
+log held only the warning.
+.B "Absence of a failure message and absence of the run are the same output,"
+which is why the completion marker is not optional \(em the same reason
+.CW boardrun
+uses a unique token at all.

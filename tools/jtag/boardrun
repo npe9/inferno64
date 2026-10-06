@@ -99,8 +99,27 @@ case "$1" in
 esac
 
 TOK=BR-$$-`date +%s`
+#
+# /icons IS BOUND TOO, because the kernel root creates it EMPTY and nothing
+# fills it.  os/inferno/raspi3b/raspi3b's root section has "/icons /", a bare
+# mount point, and libtk/parse.c:751 resolves a bare bitmap name as
+# "/icons/tk/%s" -- so every Tk client printed
+#
+#	wmclient: tk error !failed to load bitmap on
+#	  'button .Wm_t.e -bitmap exit.bit ...'
+#
+# for its titlebar buttons, all session, on every launch.  The files exist in
+# the worktree (icons/tk/exit.bit, icons/tk/help.bit) and the styx export is
+# "export /" of the worktree, so they are reachable at /n/remote/icons by the
+# same mount that already serves /dis.
+#
+# NOTE WHAT MADE THIS HARD TO SEE: `ls /icons' SUCCEEDS.  The directory is
+# there and is empty, so a probe for "does /icons exist" passes while the
+# question is "are the bitmaps there".  I ran exactly that probe earlier and
+# took ICONS-OK for an answer.
+#
 if [ "$BIND" = 1 ]; then
-	PRE="load std; bind /n/remote/dis /dis; bind -a '#K' /dev; "
+	PRE="load std; bind /n/remote/dis /dis; bind /n/remote/icons /icons; bind -a '#K' /dev; "
 else
 	PRE="load std; "
 fi
