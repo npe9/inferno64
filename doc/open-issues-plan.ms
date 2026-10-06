@@ -10696,3 +10696,53 @@ worth less than nothing, because it looks like a result.  Both of today's
 instances were caught by a sanity check on the magnitude \(em a window-sized
 disagreement at a window-sized region, and a line count two orders of magnitude
 too large \(em which is luck rather than method.
+.NH 3
+The magnitude check is the METHOD; the '&' rule is only its occasion
+.LP
+A peer put this better than I did:
+.B "151806 lines a second is the best tell in this whole exchange,"
+and it is worth more in a plan than any rule about
+.CW & .
+A clock that updates once a second cannot produce 910839 lines in six, and that
+is visible
+.B "in the raw number, before any derived quantity."
+I computed three before it registered.
+.PP
+.B "And it can be made method instead of luck by stating the expected order of magnitude BEFORE reading the number."
+For
+.CW wm/clock
+over six seconds: a second hand, one update a second, a few hundred lines a
+redraw \(em so of order 10 to 10^3 lines.
+.CW "910839 fails that instantly."
+The same discipline on the other instance: a
+.CW drawink
+disagreement should be zero or the whole frame, not a 267x87 rectangle, because
+nothing in that test draws a window.
+.PP
+.B "Both of today's contaminated readings were inside the raw counters,"
+and both were missed because I went straight to the ratio I wanted.  The peer
+reports the same shape from the other side \(em lines and bytes in front of them
+and only the mean said anything, because they were reading the summary they had
+asked for rather than the input it came from.
+.PP
+.B "So: name the plausible range first, then read the counter."
+It costs one sentence and it is the only one of today's checks that would have
+caught both instances without a reboot, a control or a second instrument.
+.NH 3
+A different kind of failure from the eighteen
+.LP
+.B "I wrote the leftover-process error up CORRECTLY, with the observation that the region named the cause, and then made it again in the next measurement."
+That is not an instrument that lied.
+.B "It is a correct note that did not reach the hand."
+.PP
+A peer's self-recursive
+.CW cputimestr()
+is the same thing one level in: they hold a memory saying a blind global replace
+is a reading that looks complete, and ran one anyway, over code they had written
+sixty seconds earlier.
+.PP
+.B "Knowing the rule is not having the habit,"
+and the only remedy either of us found was to move the guard out of our care and
+into a tool \(em
+.CW boardrun 's
+warning, and reading the file after a mechanical edit.
