@@ -1,0 +1,103 @@
+#!/bin/sh
+#
+# Build a raspi3b kernel and REFUSE to produce an image that was not linked.
+#
+#	sh tools/jtag/kbuild		     # raspi3b
+#	CONF=virtarm64 sh tools/jtag/kbuild  # another aarch64 board
+#
+# WHY THIS EXISTS, and it is not convenience.  `mk iraspi3b' after a change
+# anywhere under lib*/ EXITS 0 AND DOES NOT RELINK.  Measured, twice, in this
+# directory:
+#
+#	$ mk iraspi3b			# after editing libmemdraw/alloc.c
+#	... 7c alloc.c ... iar vu ...	# archive rebuilt
+#	rc=0, "7l -o iraspi3b" ran 0 times
+#
+# The kernel target has no dependency edge to the library archives, so a library
+# change recompiles, re-archives, and silently ships the OLD kernel.  And it is
+# worse than that one step further on:
+#
+#	$ rm iraspi3b && mk kernel8.img
+#	rc=0, no iraspi3b, kernel8.img UNCHANGED from the previous build
+#
+# -- exit 0, no kernel binary at all, and a stale flat image left in place ready
+# to be loaded over JTAG.  kernel8.img does depend on i$CONF, so that one is mk
+# declining to rebuild a missing target rather than a missing edge.
+#
+# WHAT IT COST.  A byteaddr() fix was applied, built, booted and judged against
+# a kernel that did not contain it.  The tell was subtle and easy to misread:
+# the fault MOVED (its address changed by exactly the predicted amount), so it
+# looked like a partially effective fix rather than an unbuilt one.  An
+# unchanged fault would have been obvious; a changed one was not.
+#
+# Note this is the OPPOSITE of the stale-object case this tree already records:
+# there, `rm foo.7' does not force a rebuild because mk short-circuits on a
+# missing object, and touching the .c is what works.  Here rm IS the fix,
+# because the problem is a missing dependency rather than a short-circuit.  Two
+# build hazards with opposite remedies, which is why neither is a habit worth
+# forming -- check the link count instead.
+#
+# THE CHECK IS THE POINT: "7l -o i$CONF" must appear exactly once in the log.
+# Exit 0 with zero links looks exactly like success.
+#
+set -u
+HERE=`cd \`dirname "$0"\` && pwd`
+ROOT=`cd "$HERE/../.." && pwd`
+CONF=${CONF:-raspi3b}
+D=$ROOT/os/inferno/$CONF
+[ -d "$D" ] || { echo "kbuild: no $D" >&2; exit 2; }
+LOG=${LOG:-${TMPDIR:-/tmp}/kbuild.$CONF.log}
+
+PATH=$ROOT/MacOSX/arm64/bin:$PATH
+export PATH
+
+#
+# Remove both targets rather than only the kernel: kernel8.img is what gets
+# loaded, and leaving a stale one is the failure above.  If the build does not
+# produce them, their ABSENCE is the signal, which is a better failure than a
+# stale file that boots.
+#
+rm -f "$D/i$CONF" "$D/kernel8.img"
+
+( cd "$D" && mk "i$CONF" && mk kernel8.img ) > "$LOG" 2>&1
+rc=$?
+
+links=`grep -c "^7l -o i$CONF" "$LOG"`
+echo "kbuild: mk exit $rc, 7l links $links, log $LOG"
+
+if [ "$rc" -ne 0 ]; then
+	echo "kbuild: the build failed" >&2
+	grep -iE 'error|warning|not declared|undefined' "$LOG" | head -20 >&2
+	exit 1
+fi
+if [ "$links" -ne 1 ]; then
+	echo "kbuild: REFUSING -- 7l linked $links times, expected exactly 1." >&2
+	echo "kbuild: mk exited 0 without linking, which is the hazard this" >&2
+	echo "kbuild: tool exists for.  Whatever image is on disk is not the" >&2
+	echo "kbuild: source tree's." >&2
+	exit 1
+fi
+for f in "i$CONF" kernel8.img; do
+	if [ ! -s "$D/$f" ]; then
+		echo "kbuild: REFUSING -- $f was not produced" >&2
+		exit 1
+	fi
+done
+
+#
+# Report the diagnostics rather than filtering them away.  This tree records a
+# session where grepping the build output for a success marker hid a real
+# failure, so the count is printed even when it is zero.
+#
+nd=`grep -ciE 'warning|not declared|undefined' "$LOG"`
+echo "kbuild: diagnostics in the log: $nd"
+[ "$nd" -gt 0 ] && grep -iE 'warning|not declared|undefined' "$LOG" | head -20
+
+#
+# And say which build this is, so a later tool reading the board can be checked
+# against it: every JTAG reader here verifies kerndate and refuses on mismatch.
+#
+st=`grep -o "DKERNDATE='[0-9]*" "$LOG" | tail -1 | sed "s/.*'//"`
+echo "kbuild: built i$CONF and kernel8.img, KERNDATE ${st:-unknown}"
+ls -l "$D/i$CONF" "$D/kernel8.img"
+exit 0

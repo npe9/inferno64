@@ -2728,49 +2728,48 @@ memfillcolor(Memimage *i, u32 val)
 	 * of service against every other diagnostic, and this sits under a loop
 	 * that runs 300 times a batch.
 	 */
-	if(i->data != nil && i->data->allocd
-	&& i->data->bdata != (uchar*)&i->data->base[2]){
-		static int nbad;
-
-		if(nbad++ < 4)
-			print("memfillcolor: bdata %#p != &base[2] %#p"
-				" (base %#p data %#p zero %d width %d)\n",
-				i->data->bdata, (uchar*)&i->data->base[2],
-				i->data->base, i->data, (int)i->zero,
-				(int)i->width);
-		return;
-	}
 	/*
-	 * IT DID NOT FIRE, so bdata agrees with base and base itself is the bad
-	 * pointer.  That should be impossible for a freshly allocated image: the
-	 * destination is base+16 and allocmemimage writes base[0] and base[1]
-	 * FIRST, in the same 8-byte-aligned neighbourhood, so an unmapped base
-	 * would have faulted there and not here.
+	 * CHECK THE FAULT CONDITION ITSELF, not a proxy for it.
 	 *
-	 * Which makes the next question WHICH IMAGE, and the dumpstack scrape
-	 * cannot answer it -- it named bellipse, and a scrape that shows the same
-	 * symbol twice at two offsets is announcing that it is not a chain.
-	 * libmemdraw has five memfillcolor call sites and one of them,
-	 * membrush() in line.c, fills a STATIC CACHED image rather than a fresh
-	 * one.  A stale cached Memdata would look exactly like this.
+	 * Two earlier versions of this check asked questions NEXT TO the bug: a
+	 * bdata-versus-&base[2] consistency test (which was skipped entirely for
+	 * a Memdata with allocd == 0), and a bounded print of the first few
+	 * callers (whose budget was spent at boot by one uninteresting caller
+	 * before the ellipse path ran).  Both were silent for the call that
+	 * faults.
 	 *
-	 * So print the caller's pc with the fields, bounded to six a boot.
-	 * getcallerpc() is the cheap version of the r30 trick that identified the
-	 * faulting caller in the first place: the link register answers "who
-	 * called this" for free and without a chain.
+	 * The fault is a level-1 translation fault on a write to an address with
+	 * BIT 32 SET, on a board with 1GB of RAM.  So that is what to test:
+	 * does the destination lie in the same 4GB as bdata.  It costs one
+	 * compare, it cannot be silent for the faulting call, and it turns a
+	 * panic into a line of data.
+	 *
+	 * Of the two contributions to the original 0x3008c6c40, one is now
+	 * accounted for exactly.  byteaddr() dropped a narrowing cast, adding
+	 * i->width * 2^32 -- 0x200000000 here -- and fixing it moved the fault
+	 * address to 0x1008c6c40, which is the remaining 0x100000000.  A peer
+	 * predicted that delta from the instruction stream before the fix was
+	 * built, and it came out to the bit.  What is left is that bdata ITSELF
+	 * carries bit 32.
 	 */
-	{
-		static int nseen;
+	if(i->data != nil && i->data->bdata != nil){
+		static int nhigh;
+		uchar *dp;
 
-		if(nseen++ < 6)
-			print("memfillcolor: from %#p image %#p data %#p base %#p"
-				" bdata %#p zero %d width %d r %d %d %d %d chan %#ux\n",
-				getcallerpc(&i), i, i->data,
-				i->data? i->data->base: nil,
-				i->data? i->data->bdata: nil,
-				(int)i->zero, (int)i->width,
-				i->r.min.x, i->r.min.y, i->r.max.x, i->r.max.y,
-				i->chan);
+		dp = (uchar*)u32addr(i, i->r.min);
+		if(((uintptr)dp >> 32) != 0 || ((uintptr)i->data->bdata >> 32) != 0){
+			if(nhigh++ < 4)
+				print("memfillcolor: HIGH dst %#p bdata %#p base %#p"
+					" data %#p allocd %d zero %d width %d"
+					" r %d %d %d %d chan %#ux from %#p\n",
+					dp, i->data->bdata, i->data->base,
+					i->data, i->data->allocd,
+					(int)i->zero, (int)i->width,
+					i->r.min.x, i->r.min.y,
+					i->r.max.x, i->r.max.y, i->chan,
+					getcallerpc(&i));
+			return;
+		}
 	}
 	bits = rgbatoimg(i, val);
 	switch(i->depth){

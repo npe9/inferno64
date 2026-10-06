@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+#
+# Find every place a kernel adds an UNTRUNCATED 32x32->64 multiply to a
+# 64-bit value -- the signature of a narrowing cast that 7c dropped.
+#
+#	python3 tools/jtag/umulladd os/inferno/raspi3b/kernel8.img
+#	python3 tools/jtag/umulladd <img> <elf>
+#
+# WHY A SCANNER AND NOT A SOURCE GREP.  The defect is a code-generation
+# artifact: the source says (s32)(...) and the instruction stream simply has no
+# narrowing in it.  tests/kencc-narrowcast.sh proves the compiler still does it
+# and names the shape; this answers the question that decides whether a kernel
+# is safe to boot, which is whether there is an instance in THIS one.  Same
+# division of labour as kencc-brloop.sh against kencc-selfbranch.sh, and the
+# same reason: the synthetic probe passed for a loader that was emitting the
+# defect into every real kernel it linked.
+#
+# WHAT IT FOUND.  byteaddr() in libmemdraw/alloc.c computed a row offset as
+#
+#	(s32)(sizeof(u32)*p.y*i->width)
+#
+# and 7c emitted UMULL with no truncation, so for a NEGATIVE p.y the 32-bit
+# wrap survived into the high word and the result was
+#
+#	byteaddr(i, i->r.min) = bdata + i->width * 2^32
+#
+# exactly -- which is why the raspi3b fault address was 0x3008c6c40, a clean
+# small constant above a plausible pool pointer, identical across two kernels
+# and two boots.  Fixing byteaddr moved the high word from 3 to 1 rather than to
+# 0, which is what said there was a SECOND site and is why this exists.
+#
+# IT IS A HEURISTIC AND SAYS SO.  An UMULL whose result is legitimately 64-bit
+# and then added to a 64-bit quantity is correct code, and this cannot tell that
+# apart from a dropped narrowing.  So it reports CANDIDATES with their enclosing
+# symbol, for a human to read, and the thing that makes the list short enough to
+# read is bounding the scan to text -- see undefimm, which reports about two
+# thousand false hits unbounded because ASCII in the string section decodes as
+# instructions.
+#
+import sys, subprocess, os
+
+def sym_table(elf):
+    out = subprocess.run(['python3',
+            os.path.join(os.path.dirname(__file__), 'ksyms'), elf],
+            capture_output=True, text=True).stdout
+    syms, etext = [], None
+    for l in out.splitlines():
+        f = l.split()
+        if len(f) < 3:
+            continue
+        try:
+            v = int(f[0], 16)
+        except ValueError:
+            continue
+        syms.append((v, f[2]))
+        if f[2] == 'etext':
+            etext = v
+    syms.sort()
+    return syms, etext
+
+def owner(syms, a):
+    lo, hi = 0, len(syms)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if syms[mid][0] <= a:
+            lo = mid + 1
+        else:
+            hi = mid
+    if lo == 0:
+        return '?', 0
+    return syms[lo-1][1], a - syms[lo-1][0]
+
+def is_umull(w):
+    # UMADDL/UMULL: sf=1 op54=00 op31=101 U=1 ... Ra=31 for UMULL
+    return (w & 0xFFE08000) == 0x9BA00000
+
+def is_madd32(w):
+    return (w & 0xFFE08000) == 0x1B000000
+
+def is_sxtw(w):
+    # SBFM x,w,0,31 -- the sign-extending widen a narrowing cast must emit
+    return (w & 0xFFC0FC00) == 0x93407C00
+
+def rd(w):
+    return w & 0x1f
+
+def add64_reads(w, r):
+    # ADD (shifted register), 64-bit: sf=1 op=0 S=0 01011
+    if (w & 0x7F200000) != 0x0B000000 or (w >> 31) != 1:
+        return False
+    rn = (w >> 5) & 0x1f
+    rm = (w >> 16) & 0x1f
+    return rn == r or rm == r
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit("usage: umulladd <kernel8.img> [ielf]")
+    img = sys.argv[1]
+    elf = sys.argv[2] if len(sys.argv) > 2 else \
+          os.path.join(os.path.dirname(img), 'iraspi3b')
+    base = 0x80000
+    d = open(img, 'rb').read()
+    syms, etext = sym_table(elf)
+    if etext is None:
+        print("umulladd: no etext in %s -- REFUSING: an unbounded scan reads"
+              % elf, file=sys.stderr)
+        print("umulladd: the string section as instructions.  See undefimm.",
+              file=sys.stderr)
+        sys.exit(2)
+    limit = min(len(d), etext - base)
+    print("umulladd: %s, text %#x..%#x (%d words)"
+          % (os.path.basename(img), base, etext, limit // 4))
+    words = [int.from_bytes(d[o:o+4], 'little') for o in range(0, limit - 3, 4)]
+    #
+    # Look ahead a short window only.  A narrowing move that is going to happen
+    # happens immediately -- gmove emits it at the cast -- so a long window buys
+    # nothing but false negatives from unrelated later moves of the same
+    # register.
+    #
+    WIN = 6
+    hits = 0
+    for k, w in enumerate(words):
+        if not is_umull(w):
+            continue
+        r = rd(w)
+        narrowed = False
+        culprit = None
+        for j in range(k+1, min(k+1+WIN, len(words))):
+            v = words[j]
+            if is_sxtw(v) and ((v >> 5) & 0x1f) == r:
+                narrowed = True
+                break
+            if add64_reads(v, r):
+                culprit = j
+                break
+            if rd(v) == r and not is_umull(v):
+                break           # r overwritten; this UMULL went elsewhere
+        if narrowed or culprit is None:
+            continue
+        a = base + 4*k
+        name, off = owner(syms, a)
+        hits += 1
+        print("umulladd:   %s+%#x at %#x: UMULL -> x%d reaches a 64-bit ADD"
+              " at %#x with no SXTW" % (name, off, a, r, base + 4*culprit))
+    print("umulladd: %d candidate(s)" % hits)
+    print("umulladd: these are CANDIDATES -- a genuinely 64-bit UMULL added to a")
+    print("umulladd: 64-bit value is correct code and looks identical here.")
+    return 1 if hits else 0
+
+if __name__ == '__main__':
+    sys.exit(main())

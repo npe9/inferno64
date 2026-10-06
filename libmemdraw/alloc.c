@@ -142,11 +142,51 @@ u32addr(Memimage *i, Point p)
 }
 
 uchar*
+/*
+ * THE ROW OFFSET MUST BE COMPUTED ENTIRELY IN 32 BITS, with no narrowing cast
+ * for the compiler to drop.  It was
+ *
+ *	a = i->data->bdata+i->zero+(s32)(sizeof(u32)*p.y*i->width);
+ *
+ * and 7c DROPS that (s32) -- the same class as the (u32) and (ulong) cases this
+ * tree already records.  sizeof is 64-bit, so the emitted code is
+ *
+ *	LSLW $2,R2	   p.y<<2 in 32 bits: -8 becomes 0xFFFFFFF8
+ *	MOVWU 12(R0),R3    i->width
+ *	UMULL R3,R2	   32x32 -> 64, UNSIGNED, never truncated back
+ *	ADD R2,R3,R2	   added to the pointer at full 64-bit width
+ *
+ * with no SXTW and no MOVW back through 32 bits.  So for a NEGATIVE p.y the
+ * 32-bit wrap survives into the high word:
+ *
+ *	term = (2^32 + 4*p.y) * width = width*2^32 + 4*p.y*width
+ *
+ * and since zero cancels the second part for an allocated image at r.min,
+ *
+ *	byteaddr(i, i->r.min) = bdata + width * 2^32
+ *
+ * EXACTLY.  So the high word of the bad address IS i->width and the low word is
+ * bdata, unchanged -- which is why the raspi3b fault address was 0x3008c6c40,
+ * with a clean small constant above a plausible pool pointer, IDENTICAL across
+ * two kernels and two boots.  A corrupted pointer does not do that twice.
+ *
+ * It needs p.y < 0, so only an image with a negative r.min.y reaches it, and
+ * libdraw/bytesperline.c already notes such a rectangle is rare.  Found by a
+ * peer, who compiled the real file and read the instructions rather than
+ * reducing the case; the board fault and the address arithmetic are this
+ * session's.
+ *
+ * Keeping every operand 32 bits makes the truncation the arithmetic rather than
+ * a cast, so there is nothing left to drop and 7c emits MULW with a
+ * sign-extending widen.
+ */
 byteaddr(Memimage *i, Point p)
 {
 	uchar *a;
+	s32 off;
 
-	a = i->data->bdata+i->zero+(s32)(sizeof(u32)*p.y*i->width);
+	off = 4 * p.y * (s32)i->width;
+	a = i->data->bdata + i->zero + off;
 
 	if(i->depth < 8){
 		/*
