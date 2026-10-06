@@ -11,14 +11,27 @@
 # the same thing Linux uses -- so the VideoCore firmware restarts, the GPIO
 # expander is re-initialised, and the board loads kernel8.img from the card.
 #
-# TWO COMMENTS IN THIS DIRECTORY SAID THIS WAS IMPOSSIBLE, and they were wrong:
+# THREE COMMENTS IN THIS DIRECTORY SAID THIS WAS IMPOSSIBLE, and two were wrong:
 #
 #	raspi3b.cfg:43   "Nothing here resets the machine, on purpose"
 #	boot.sh:241      "this desk that resets the core is the power"
+#	README:15        "There is no JTAG route to the PM watchdog: AP0 reaches
+#	                  the debug APB only, and mem-APs 1 to 3 answer every
+#	                  peripheral address with zero"
 #
 # The first is still true of raspi3b.cfg -- openocd's own reset is not wired up
-# on this rig, deliberately.  The second was an inference from it, and the PM
-# block is memory-mapped, so JTAG can reach it like any other address.
+# on this rig, deliberately.  The other two were inferences, and the README's is
+# the instructive one because its PREMISE IS CORRECT AND ITS CONCLUSION IS NOT:
+# the APs really do answer peripheral addresses with zero.  But an AP is not the
+# only way in.  A HALTED CORE can read and write anything its own MMU maps,
+# because the core performs the access, and mem.h maps the peripheral block at
+# its physical address (BCMPERIPH is 0x3f000000 and the drivers use it as a
+# pointer).  So `targets bcm2837.cpu0; halt; mdw 0x3f10001c' reads Rstc through
+# the core, which is exactly what this does.
+#
+# That is worth remembering as a shape: a measurement that rules out one PATH
+# does not rule out the capability.  "mem-APs answer zero" was tested and true;
+# "there is no JTAG route" was never tested at all.
 #
 # WHAT IT RECOVERS, measured.  A failed install left the board running a kernel
 # whose wifi had come up as

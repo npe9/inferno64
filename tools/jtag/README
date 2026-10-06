@@ -5,6 +5,7 @@ JTAG on the Raspberry Pi 3B
 	tools/jtag/raspi3b.cfg	OpenOCD for the BCM2837
 	tools/jtag/checkstub	build-time check on the trampoline
 	tools/jtag/unwedge	clear EDSCR.ERR after openocd dies mid-transaction
+	tools/jtag/hardreset	arm the PM watchdog: a REAL firmware reset
 
 WHEN EVERY COMMAND PRINTS "DSCR.ERR=1" HUNDREDS OF TIMES, run
 tools/jtag/unwedge.  It writes EDRCR.CSE through the mem-AP with the
@@ -12,10 +13,29 @@ core's examine deferred, which is the one way to reach that register
 without first succeeding at the thing the bit is preventing, and it
 prints EDSCR before and after so you can see the bit go.  If the errors
 come back on the next session the core itself is stuck rather than just
-the sticky bit, and that needs the power.  There is no JTAG route to the
-PM watchdog: AP0 reaches the debug APB only, and mem-APs 1 to 3 answer
-every peripheral address with zero, the free-running system timer
-included.
+the sticky bit, and that needs the power.
+
+THERE IS A JTAG ROUTE TO THE PM WATCHDOG, and this paragraph used to say
+there was not.  What it said was true of the APs and the conclusion drawn
+from it was wrong: AP0 does reach the debug APB only, and mem-APs 1 to 3
+do answer every peripheral address with zero, the free-running system
+timer included -- but a HALTED CORE can read and write any address its
+own MMU maps, because the access is performed by the core and not by an
+AP.  os/inferno/raspi3b/mem.h maps the peripheral block at its physical
+address (BCMPERIPH is 0x3f000000 and the drivers use it as a pointer), so
+`targets bcm2837.cpu0; halt; mdw 0x3f10001c' reads Rstc.  That is what
+tools/jtag/hardreset does, and it is the difference between a JTAG warm
+restart -- which replaces memory and jumps, leaving every peripheral as
+the last kernel left it -- and a reset the VideoCore firmware sees.
+
+It earned its place: a failed install left the board with wifi up as
+`ea 000000000000', an all-zero MAC, so it could not associate and the
+remote-command poller never answered.  Three JTAG warm restarts could not
+clear it, because the GPIO expander holds its lines across an ARM reset
+and only a firmware restart re-initialises it.  hardreset cleared it
+first try.  Note that openocd EXITING NON-ZERO IS THE SUCCESS CASE here:
+the SoC resets mid-transaction, openocd reports "Invalid ACK (7) in DAP
+response" and exits 1, so the tool judges by the board answering instead.
 
 WHY.  Two days of bring-up went: build a kernel, write 1.9MB to the
 card through a filesystem server that is itself one of the things under
