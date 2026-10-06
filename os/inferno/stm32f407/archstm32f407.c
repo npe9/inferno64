@@ -229,7 +229,7 @@ ledpin(int pin, int on)
  * it actually got and the sizes it actually moved, which is where a
  * mismatch shows.
  *
- * The queue is ten messages, 4360 bytes, which this pool can give.
+ * The queue is ten messages, 4060 bytes, which this pool can give.
  *
  * Set here rather than in the conf because the port files must keep a
  * default for every other board, and two definitions of one symbol do
@@ -241,7 +241,39 @@ enum {
 	Ax25hdr		= 16,		/* (2 + 0 digipeaters)*7 + 2 */
 	Ax25window	= 4,		/* devax25.c Defk */
 
-	Styxrpc		= Ax25window * (Ccpayload - Ax25hdr),
+	/*
+	 * AND ROOM FOR ssl(3), WHICH THE WHOLE POINT OF THIS FIGURE
+	 * OTHERWISE LOSES.
+	 *
+	 * Maxsslhdr in os/inferno/port/devssl.c: a three-byte SSLv2
+	 * count when there is padding, the longest digest hashtab
+	 * offers, and a block cipher's worst padding.  That device
+	 * delimits messages, so one Styx message becomes one record and
+	 * the record is up to thirty bytes longer.
+	 *
+	 * Without this reservation a full-size message is 466 bytes,
+	 * which is five frames against a window of four, and the
+	 * property this arithmetic exists to give -- one message, one
+	 * window, no waiting for an acknowledgement in the middle of a
+	 * reply -- stops holding as soon as anything pushes ssl under
+	 * the Styx.
+	 *
+	 * IT IS A LATENCY PROPERTY AND NOT A CORRECTNESS ONE, and the
+	 * difference is worth stating: AX.25 blocks the fifth frame
+	 * until an RR arrives and then carries on, so exceeding the
+	 * window costs a round trip per reply rather than breaking.
+	 * This also does NOT explain the wedge recorded in
+	 * doc/radio-plan.ms -- no message in that run was within four
+	 * hundred bytes of this limit.
+	 *
+	 * Reserved unconditionally, because the kernel cannot see
+	 * whether userland has pushed ssl: a figure that is right only
+	 * when nobody encrypts is a figure that depends on a choice made
+	 * somewhere it cannot read.
+	 */
+	Maxsslrec	= 30,
+
+	Styxrpc		= Ax25window * (Ccpayload - Ax25hdr) - Maxsslrec,
 };
 
 static void
