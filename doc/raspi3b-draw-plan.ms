@@ -560,6 +560,75 @@ and the seam that reaches it \(em kernel work, not
 .CW libtk
 work, and not this session's to write.
 .PP
+.B "Step 3 is not retired by the Directfb finding, and the inference that it is
+.B "would be easy to make."
+Elsewhere this plan records that the shipping path copies nothing per present
+\(em
+.CW Directfb
+is 1 on
+.CW raspi3b-port ,
+so
+.CW fb
+IS
+.CW vfb
+and the
+.CW memmove
+is skipped. That retired the pixel-copy argument, and it is tempting to read it
+as retiring damage-driven flushing altogether. It does not, because the guard
+there covers only the copy:
+.DS
+.CW
+	if(dp != sp)		/* Directfb: nothing to copy */
+		memmove(dp, sp, nb);
+	cacheflush(dp, nb);
+.R
+.DE
+.CW cacheflush
+runs unconditionally, per scanline, over the dirty span. The
+area-proportional term on the shipping path is the
+.I clean ,
+which is exactly what this step targets.
+.PP
+.B "An attribution in that kernel's notes needs settling first, though."
+It says the 43 MB/s repair and the 60 MB/s full-screen copy are slow because
+they write uncached scanout memory, while
+.CW screenbcm.c
+also records \(em probed rather than argued \(em that
+.CW mmu.c
+maps every 2MB block below
+.CW BCMPERIPH
+as
+.CW Pnormal ,
+making
+.CW fbpa
+.CW 0x3c100000
+ordinary
+.I cacheable
+memory. Both cannot hold. If the real cost is the
+.CW cacheflush
+write-back, this step attacks the dominant term; if the clean is a few percent,
+the 43 MB/s needs a third explanation and the gate below should be re-derived
+before any kernel code is written. One
+.CW cycles()
+bracket around
+.CW cacheflush ,
+separately from the
+.CW memmove ,
+decides it \(em on silicon, since QEMU models no data cache and a QEMU rig is
+blind to this by construction. This plan has already paid once for optimising a
+term nobody pays.
+.PP
+.B "Also note the two branches differ here."
+.CW rio-pi-tk
+has no
+.CW Directfb
+symbol at all:
+.CW fb
+is a kernel-RAM soft buffer,
+.CW vfb
+the VC-RAM one, and both the copy and the clean run. Correctness results from
+this branch's kernel carry across; timings taken on it do not.
+.PP
 .B Gate:
 a frame that touches one small widget must clean a correspondingly small
 area.  Count bytes cleaned per frame, with a negative control: a frame
