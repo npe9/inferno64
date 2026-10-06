@@ -10347,3 +10347,86 @@ already measured, so step 3 could not be VALIDATED end to end even if it worked
 it was supposed to decide whether to write step 3, and the answer it gives is
 "not on this evidence", reached for about twenty minutes of board time instead of
 a kernel change.
+.NH 3
+A real Tk widget client on the BOARD: 2548 B/line, and the gate is both numbers
+.LP
+A peer measured real Tk on a host emu \(em
+.CW wm/clock
+2387 B/line,
+.CW wm/bounce
+49 \(em and found
+.CW wm/clock
+BIMODAL WITHIN ONE RUN: 30.8 per cent of its lines under 64 bytes, 57.1 per cent
+over 2048, almost nothing between, so
+.B "its mean of 2387 describes neither mode."
+.PP
+Board-side confirmation was mostly blocked and the honest account is that two of
+three clients do not run here:
+.P1
+wm/clock    module not loaded
+wm/bounce   module not loaded -- AND it fails under host emu too, so this
+            is the .dis, not the board
+wm/colors   runs, draws once
+.P2
+.B "wm/colors' single widget draw, on silicon:"
+.P1
+lines 2907   bytes 7405608   clean 5719 us
+B/line       2548
+us/line      1.9672  (1.9158 instrument-corrected)
+fixed share  6.7%
+clean        0.095% of the 6s it ran
+.P2
+.B "2548 against the peer's 2387 is the same mode on different hardware,"
+and at 6.7 per cent fixed the cost is overwhelmingly BYTES \(em which is the
+inversion from the section above, now confirmed on a real Tk client rather than
+a proxy.
+.PP
+.B "One draw cannot show bimodality, so that finding stays theirs."
+What the board adds is that the high mode is real at 2548 B/line outside a host
+emu, and that a draw-once client's clean is a tenth of one per cent of wall.
+.NH 3
+So the gate is BOTH quantities, and this kernel already reports both
+.LP
+The peer's conclusion \(em report
+.CW cacheflush
+CALLS and BYTES cleaned, per frame, and stop choosing between them \(em is right
+and costs nothing, because
+.B "the cost model has a per-call term and an area term and each dominates for a different kind of damage THE SAME CLIENT produces."
+.PP
+.CW "SCREEN fbloop"
+already prints
+.CW lines
+and
+.CW bytes
+on one line, so nothing changes here; what changes is that neither may be quoted
+alone.
+.B "Choosing one was the error twice, in both directions:"
+I set a byte gate from widget proxies, they set a scanline gate from
+.CW "gfxstress fill" ,
+and
+.CW wm/clock
+produces both shapes minutes apart.
+.NH 3
+THE RECURRING SHAPE, now three times in this plan
+.LP
+.IP \(bu
+Coverage divided by the SCREEN instead of the window.
+.IP \(bu
+A saving quoted as a percentage of a copy
+.B "nobody pays"
+\(em the Directfb denominator.
+.IP \(bu
+Bytes per line taken from
+.CW "gfxstress fill"
+and used to set a gate for Tk.
+.PP
+.B "Each time a correct quantity divided by a population nobody named."
+And this one survived two rounds of a peer and me checking each other,
+.B "because we were both checking the arithmetic rather than the denominator."
+The arithmetic was right every time.
+.PP
+.B "A histogram caught what no mean could:"
+the peer built one specifically because of the population point, and it found
+bimodality INSIDE a client \(em which a second, better-chosen mean would also
+have missed.
+.B "When a population is in doubt, the fix is a distribution, not a better average."
