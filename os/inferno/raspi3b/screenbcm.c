@@ -1046,18 +1046,49 @@ rectsub(Rectangle s, Rectangle c, Rectangle *out)
 	return n;
 }
 
+/*
+ * CLIP, because this is the one pointer computation in this file that was not
+ * clipping and 7c makes that fatal rather than merely wrong.
+ *
+ * `base + r.min.y*stride + r.min.x*ScrPix' adds a 32-bit int expression to a
+ * pointer, and 7c widens it WITHOUT ITS SIGN -- an AArch64 W-register write
+ * zeroes the top half, so a negative offset lands the pointer 2^32 high and
+ * faults.  That is the defect that panicked this board in byteaddr(); see
+ * libmemdraw/alloc.c and tools/jtag/umulladd.
+ *
+ * umulladd -a names four sites in this file.  Audited, and the sign is what
+ * decides each one:
+ *
+ *	flushmemscreen	rectclip(&r, gscreen->r) at entry	SAFE
+ *	fbsaveunder	rectclip(&r, gscreen->r) at entry	SAFE
+ *	fbrestoreunder	uses curslast, set after that clip	SAFE
+ *	drawcursor	h*bpl, both non-negative		SAFE
+ *	fbcopy		NOTHING				<- this
+ *
+ * fbcopy took its rectangle from rectsub(dmgprev, dmg, sub) with no clip of its
+ * own, so it was correct only because its callers happened to pass screen
+ * rectangles.  It is latent rather than live -- Dbuf is 0, so bcmpresent() and
+ * bcmpartial() never run -- and a clip is the right fix rather than an s32
+ * local, because a repair rectangle outside the screen is a bug in its own
+ * right and not just a sign hazard.  The s32 local is here too, so the
+ * arithmetic is safe even if a caller later hands it something unclipped.
+ */
 static void
 fbcopy(uchar *from, uchar *to, Rectangle r)
 {
 	int y, stride, nb;
+	s32 off;
 	uchar *sp, *dp;
 
+	if(gscreen == nil || !rectclip(&r, gscreen->r))
+		return;
 	stride = ScrX * ScrPix;
 	nb = Dx(r) * ScrPix;
 	if(nb <= 0)
 		return;
-	sp = from + r.min.y*stride + r.min.x*ScrPix;
-	dp = to + r.min.y*stride + r.min.x*ScrPix;
+	off = r.min.y*stride + r.min.x*ScrPix;
+	sp = from + off;
+	dp = to + off;
 	for(y = r.min.y; y < r.max.y; y++){
 		memmove(dp, sp, nb);
 		cacheflush(dp, nb);	/* the GPU will scan this out uncached */

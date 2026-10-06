@@ -9604,3 +9604,71 @@ It is that when a measurement and an argument disagree,
 .B "the argument was pointing at the real contradiction"
 \(em and the temptation is to drop it so the story closes.  The argument was
 right: the allocation was correct, and the ADDRESS was wrong.
+.NH 3
+The reading list AUDITED where it concentrates, and one real site found
+.LP
+A peer's structural rule predicts where to look rather than merely clearing
+entries:
+.B "the shape concentrates wherever a CALLER-SUPPLIED coordinate or stride reaches pointer arithmetic."
+.CW byteaddr
+is the one function in
+.CW libmemdraw ,
+.CW libdraw
+and
+.CW libmemlayer
+that takes an arbitrary
+.CW Point
+into an image whose
+.CW r.min
+may be negative; everything else advances a pointer by a stride it computed
+itself.  They audited those three libraries \(em 37, 5 and 0 candidates \(em and
+every one is the benign non-negative case, with the signs checked individually.
+.PP
+That leaves the framebuffer side, which is mine.
+.CW "umulladd -a"
+names five sites in
+.CW screenbcm.c
+and the sign decides each:
+.P1
+flushmemscreen   rectclip(&r, gscreen->r) at entry        SAFE
+fbsaveunder      rectclip(&r, gscreen->r) at entry        SAFE
+fbrestoreunder   uses curslast, set after that clip       SAFE
+drawcursor       h*bpl, both non-negative                 SAFE
+fbcopy           NOTHING                                  <- real
+.P2
+.B "fbcopy took its rectangle from rectsub(dmgprev, dmg, sub) with no clip of its own,"
+so it was correct only because its callers happened to pass screen rectangles.
+.PP
+.B "It is LATENT, not live:"
+.CW "Dbuf = 0" ,
+so
+.CW bcmpresent()
+and
+.CW bcmpartial()
+never run.
+.B "And the fix is a clip rather than an s32 local,"
+because a repair rectangle outside the screen is a bug in its own right and not
+just a sign hazard \(em the
+.CW s32
+local is there too, so the arithmetic is safe if a caller later hands it
+something unclipped.
+.PP
+.B "Which is the value of the reading list:"
+115 candidates, three libraries cleared by a peer with reasons, five sites in my
+own file audited by hand, one real.
+.B "A count was never the finding; the first page was."
+.NH 3
+A peer's instrument mistake worth keeping, because it is the opposite of a false positive
+.LP
+They tried to make their source-side scan precise by requiring the tainted
+result to be DEREFERENCED in the same function \(em an obvious-looking way to
+tell a pointer add from an integer add.
+.B "It dropped two of the four control hits, including the UMULL,"
+because
+.CW byteaddr
+RETURNS the address instead of using it.
+.PP
+.B "A filter that loses the case the control exists to catch is worse than the false positives it removes,"
+and the only reason they saw it is that they re-ran the control AFTER changing
+the instrument rather than only before.
+.B "Re-run the control after every change to the instrument, not just once when it is written."
