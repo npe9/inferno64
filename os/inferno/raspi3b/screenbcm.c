@@ -113,11 +113,36 @@ enum { Directfb = 1 };
  * memdraw computes byte addresses per call and the flip happens at 'v' with
  * drawlock held, so nothing holds a byte address across it.
  *
- * Still 0 because none of this has been run on the board, and the batch
- * scoring the I-cache fix owns the board.  What is written is the mailbox half
- * (mboxfballoc's virtual height, mboxvirtoffset) and the measurement
- * (devdraw's per-present accounting); what is not is these three lines, the
- * underok invalidation, and the deferred repair at 'v'.
+ * AND THE PIXEL ARGUMENT FOR IT IS DEAD, measured on silicon.  Both arms
+ * JTAG-booted so the core count is controlled at nmach 1, gfxstress fill 4:
+ *
+ *	Dbuf=0			44500, 43500 ops/s
+ *	Dbuf=1			41800, 41900, 42000, 41800 ops/s
+ *
+ * The flip is about 5 PER CENT SLOWER, and its own two halves account for 87
+ * per cent of the gap: 219us of repair plus 168us of mailbox exchange per
+ * present, against an 8900us present.  Charged separately on purpose, because
+ * the question stopped being how many pixels are saved.
+ *
+ * THE REASON IS THAT THERE IS NO COPY TO SAVE.  Directfb is 1, so fb IS vfb,
+ * and flushmemscreen()'s memmove is skipped (dp == sp).  The shipping path
+ * copies NOTHING per present.  So devdraw's "eager" total -- 301146 px a
+ * present on this workload -- is the cost of a scheme this kernel has not run
+ * since Directfb landed, and the 128x reduction in bytes copied that the flip
+ * achieves is 128x fewer than a number nobody pays.  The deferred scheme was
+ * never competing with a copy; it was competing with Directfb, which had
+ * already removed it, and the comment above about damage-size distribution
+ * says so in its own figures: 20452us of a 23900us screen path.
+ *
+ * What the flip actually does is REINTRODUCE a smaller copy of exactly the
+ * kind Directfb removed.  The repair runs at 43 MB/s because it writes
+ * uncached scanout memory -- the same order as the 60 MB/s that full-screen
+ * copy ran at -- so 17082 bytes a rectangle costs 397us.  Small bytes, slow
+ * bytes.
+ *
+ * SO TEAR-FREEDOM IS THE ONLY REMAINING ARGUMENT FOR THIS SCHEME, and it is
+ * the one thing no instrument here can see: every check in this file is a
+ * readback, and a readback cannot observe what the scanout showed.
  */
 enum { Dbuf = 0 };
 
@@ -374,6 +399,13 @@ chargeoverlap(Rectangle r)
 	haveprev = 1;
 }
 static uvlong	tcycles_flush, tcycles_compose;
+/*
+ * Split out of the flip because the pixel accounting predicted the wrong
+ * answer: the flip copies 128x fewer bytes per present than the shadow-buffer
+ * copy it replaces and is still slower end to end, so the two halves of
+ * bcmpresent() have to be charged separately.
+ */
+static uvlong	tcycles_repair, tcycles_flip;
 
 /* Standard Inferno arrow (same bits as os/pc/screen.c). */
 static Cursor arrow = {
@@ -563,6 +595,15 @@ screenstats(void)
 			" eager-repairs %llud%s\n",
 			nflip, nflipfail, nrepairbyte, nrepairrect, neagerrepair,
 			Dbufnorepair? " REPAIR DISABLED (control run)": "");
+		/*
+		 * Raw cycle totals and the count they divide by, not a mean: the
+		 * kernel has integer division and the host has exact rationals,
+		 * and three versions of the vsync probe reported their own
+		 * truncation as a measurement before that lesson took.
+		 */
+		print("SCREEN flipcyc raw flips %llud repaircyc %llud flipcyc %llud"
+			" hz %lud\n",
+			nflip, tcycles_repair, tcycles_flip, (ulong)m->cpuhz);
 	print("SCREEN dbuf eager %llud defer %llud overlap %llud"
 		" skipped %llud over %llud fullish %llud adj %llud samerect %llud\n",
 		neagerbyte, ndeferbyte, noverlapbyte,
@@ -936,18 +977,36 @@ static void
 bcmpresent(void)
 {
 	Rectangle sub[4];
+	uvlong t0, t1, t2;
 	int i, n;
 
 	if(fbbase == nil || dmg.min.x >= dmg.max.x)
 		return;
 	/* 1. repair the part of BACK that this frame did not redraw */
+	cycles(&t0);
 	if(havedmgprev && !Dbufnorepair){
 		n = rectsub(dmgprev, dmg, sub);
 		for(i = 0; i < n; i++)
 			fbcopy(frontaddr(), backaddr(), sub[i]);
 	}
-	/* 2. show the buffer just completed */
+	/*
+	 * 2. show the buffer just completed.
+	 *
+	 * TIMED SEPARATELY FROM THE REPAIR BECAUSE THE PIXEL ARGUMENT FOR THIS
+	 * SCHEME TURNED OUT NOT TO PREDICT ITS THROUGHPUT.  The flip cuts the
+	 * bytes copied per present by 128x on gfxstress fill and makes the
+	 * workload ~5 per cent SLOWER, so the question is no longer how many
+	 * pixels are saved but what this exchange costs -- and mboxvirtoffset()
+	 * is a full property round trip that READS THE REPLY BACK, because the
+	 * firmware clamps rather than failing.  So it waits on the VideoCore
+	 * once per present by construction.  Counting cycles here says whether
+	 * an asynchronous flip is worth designing.
+	 */
+	cycles(&t1);
+	tcycles_repair += t1 - t0;
 	if(mboxvirtoffset(0, fbfront? 0: ScrY) < 0){
+		cycles(&t2);
+		tcycles_flip += t2 - t1;
 		nflipfail++;
 		/*
 		 * The firmware clamped or the exchange failed, so the buffer
@@ -958,6 +1017,8 @@ bcmpresent(void)
 		 */
 		return;
 	}
+	cycles(&t2);
+	tcycles_flip += t2 - t1;
 	fbfront = !fbfront;
 	nflip++;
 	/* 3. draw into what used to be shown */

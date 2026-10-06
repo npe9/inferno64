@@ -8602,3 +8602,120 @@ for a token nothing had been asked to print; the console showed an
 no one had issued.  The token was already unique per run, so the guard needed
 nothing new \(em the reset is now a compare-and-clear.  A shared channel needs
 every writer to check that what it is clearing is still its own.
+.NH 2
+H1a.  THE PIXEL ARGUMENT FOR THE FLIP IS DEAD: there is no copy to save
+.LP
+Everything in this plan about deferred-versus-eager double buffering \(em my
+98 to 99.47 per cent, a peer's 84.9, the regime axis, the run-length law two
+sections above \(em prices two schemes against each other.
+.B "The shipping kernel runs neither."
+.PP
+.CW "Directfb = 1"
+means
+.CW fb
+IS
+.CW vfb ,
+so
+.CW flushmemscreen() 's
+memmove is skipped at
+.CW "dp == sp"
+and
+.B "the shipping path copies nothing per present."
+devdraw's
+.CW eager
+total \(em 301146 px a present on
+.CW "gfxstress fill"
+\(em is the cost of a scheme this kernel has not run since Directfb landed.
+The flip's 128x reduction in bytes copied is 128x fewer than a number nobody
+pays.
+.NH 3
+The A/B, on silicon, with the core count controlled
+.LP
+Both arms JTAG-booted so each reports
+.CW "nmach 1"
+\(em a card boot runs four cores, and comparing a card boot against a JTAG boot
+would have changed two things at once.
+.P1
+Dbuf=0  (shipping, Directfb)   44500  43500 ops/s
+Dbuf=1  (page flip)            41800  41900  42000  41800 ops/s
+.P2
+.B "The flip is about 5 per cent SLOWER,"
+857 flips and 0 failures, so it really ran.  Per-present cycle counters,
+charged separately for the two halves of
+.CW bcmpresent() :
+.P1
+repair     218.96 us per present    9423 bytes
+exchange   168.00 us per present    one mailbox round trip
+together   386.96 us, which is 87% of the measured +447 us gap
+.P2
+.B "So the flip's own cost explains the regression almost entirely,"
+and the 13 per cent left over is within the spread of the four readings.
+.NH 3
+Why the repair is expensive for so few bytes
+.LP
+.P1
+repair          4014380 bytes in  93279 us = 43.0 MB/s
+Directfb removed 1228800 bytes in  20452 us = 60.1 MB/s
+.P2
+The second figure is this file's own, recorded when Directfb landed.
+.B "The flip REINTRODUCES a smaller copy of exactly the kind Directfb removed,"
+and it runs at the same order of bandwidth because both write uncached scanout
+memory.  17082 bytes a rectangle costs 397us.  Small bytes, slow bytes \(em
+which is why a byte count was never the right unit here.
+.NH 3
+What this costs the whole line of work, mine and the peer's
+.LP
+.IP \(bu
+.B "Every percentage either of us computed is a share of a term that is not paid."
+The numerator was measured with care, corrected four times for run length,
+phase mixing and units, and divided by a denominator neither of us looked at.
+A peer reached the same conclusion from the host side independently and
+harder: their Metal tile copy is
+.B "0.34 per cent of wall time,"
+and the instrument that said so had been accumulating absolute microseconds for
+as long as the byte figures had been quoted \(em one division short.
+.IP \(bu
+.B "The run-length law two sections above is still correct and now has no consumer."
+.CW "defer = 585130 + 980.24*presents"
+still predicts deferred bytes to 0.3 per cent and still predicted an
+earlier build's figure to 0.042 points.  It describes the cost of a scheme
+that is slower than doing nothing.  A law can be right and idle.
+.IP \(bu
+.B "TEAR-FREEDOM IS THE ONLY REMAINING ARGUMENT FOR THE FLIP,"
+and it is the one claim no instrument in this tree can check: every test here
+is a readback, and a readback cannot see what the scanout showed.  The
+31-of-31-torn observation is the only measurement in this whole exchange that
+looked at the screen rather than at pixels in memory.
+.IP \(bu
+.B "And the vblank work keeps its justification while losing its cost argument."
+A predicted-vblank flip is still the only route to a tear-free screen, and the
+1.146us residual two sections above still says one calibration at boot holds
+for hours.  What it can no longer claim is that it pays for itself in copied
+pixels.  It costs 387us a present and buys a picture that does not tear.
+.NH 3
+The mistake, named so it is findable
+.LP
+.B "I measured the numerator of a ratio for three sessions without once measuring the denominator,"
+and the denominator was zero.
+.CW Directfb
+is 15 lines above
+.CW Dbuf
+in the same file, its comment states the copy it removed and how long that copy
+took, and I quoted that comment in this plan while arguing for a scheme whose
+whole benefit was removing the same copy a second time.
+.PP
+.B "The tell was available and I read past it."
+.CW "if(dp != sp)"
+with the comment
+.CW "/* Directfb: nothing to copy */"
+is in
+.CW flushmemscreen() ,
+the function the eager scheme is supposed to be an improvement on.
+.PP
+.B "The general form, which is worth more than the number:"
+a saving is a difference between two costs, and quoting it as a percentage
+hides which two.  Before optimising a term, measure the term's SHARE \(em not
+its size, not the fraction of it you can remove.  That is the same lesson this
+plan already records as "divide before you optimise", applied this time to my
+own work rather than to someone else's, and arrived at a session later than the
+code that made it true.
