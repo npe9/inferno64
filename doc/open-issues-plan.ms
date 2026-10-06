@@ -10365,9 +10365,76 @@ three clients do not run here:
 .P1
 wm/clock    module not loaded
 wm/bounce   module not loaded -- AND it fails under host emu too, so this
-            is the .dis, not the board
+            is the .dis, not the board        <- REFUTED, see below
 wm/colors   runs, draws once
 .P2
+.PP
+.B "THAT SECOND LINE IS WRONG AND I ASSERTED IT TO A PEER."
+.CW bounce
+does NOT fail under host emu.  It fails under
+.CW emu-cpu ,
+which is one of the binaries ANOTHER SESSION IS MODIFYING in this worktree:
+.P1
+./MacOSX/arm64/bin/emu       rc=124 after 20s   <- RAN until the timeout
+./MacOSX/arm64/bin/emu-cpu   rc=0   after  0s   <- failed instantly
+.P2
+.B "git status has printed `M MacOSX/arm64/bin/emu-cpu' at the top of every status check I ran all session,"
+including the one in the same command where I used
+.CW emu-cpu
+as an instrument.  A peer reached the same conclusion independently, running MY
+binary against MY
+.CW /dis :
+all three clients loaded and ran to a 12-second timeout.
+.PP
+.B "The same binary also made disdump report `illegal dis instruction' on a module that is fine,"
+which I correctly set aside as the tool breaking rather than a diagnosis \(em and
+then went on to trust the same binary's verdict on
+.CW bounce
+two commands later.
+.PP
+.B "So the board failure is REAL and undiagnosed,"
+and the host half of the evidence is withdrawn.  A peer also tested and refuted
+their own theory for it \(em that
+.CW clock
+and
+.CW bounce
+load
+.CW Math
+while
+.CW colors
+does not, against a kernel
+.CW mod
+section of
+.CW "sys keyring crypt draw tk"
+with no
+.CW math
+\(em because the emu configs have no
+.CW math
+either and
+.CW bounce
+runs under them.  The kernel builds its builtin table by a different mechanism,
+so it could still matter there, but that is UNVERIFIED and labelled as such.
+.NH 3
+The confound: a tool another session is mid-change on
+.LP
+This tree already records
+.B "same-named tool, different worktree"
+\(em the copy you read and the copy you ran being different files.
+.B "This is the same hazard inside ONE worktree:"
+a binary that is checked in, that
+.CW git status
+reports as modified, and that a concurrent session is actively rebuilding.
+.PP
+.B "The tell was in the output of every command I ran:"
+.P1
+ M MacOSX/arm64/bin/emu-cocoa
+ M MacOSX/arm64/bin/emu-cpu
+ M emu/MacOSX/emu-cpu.c
+ M mkconfig
+.P2
+I printed that block perhaps twenty times, to confirm MY changes were committed,
+and never once read it as "do not use these binaries as instruments".
+.B "Checking that my own work is clean and reading what else is dirty are the same two lines of output and I was only doing one of them.
 .B "wm/colors' single widget draw, on silicon:"
 .P1
 lines 2907   bytes 7405608   clean 5719 us
