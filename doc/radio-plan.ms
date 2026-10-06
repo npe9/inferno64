@@ -7156,13 +7156,29 @@ which is worth more than the first was: it happens at the same message
 every time, on a build that is in the tree, with one switch that turns
 it on and off.
 .PP
-.B "What is NOT established is that ssl causes it."
-Two runs with it on both wedged; the run without it that completed a
-mount and a 273-byte read was on a different kernel.  The control is one
-run of this build with
+.B "And the control was taken: ssl is implicated."
+Both boards reflashed from one build with
 .B Usessl
-at zero, and it needs a board that has been reset.
-.B "Usessl defaults to zero until then,"
+at zero \- satellite 1791329464, ground 1791329511, the same kernel in
+every other respect \- and the run completes:
+.DS
+.CW "sat: ARMV7M-STYX-NOSSL-BYCHOICE"
+.CW "gnd: ARMV7M-STYX-NOSSL-BYCHOICE"
+.CW "gnd: styx: down 109 off the air (359 so far)"
+.CW "gnd: styx: down 109 off the air (468 so far)"
+.CW "gnd: styx: the satellite says battery 3302"
+.CW "gnd: ARMV7M-STYX-READ-OK"
+.DE
+.B "A file read off a satellite over a radio, with the segmentation working:"
+two consecutive 109-byte frames are one Styx message larger than a
+frame, arriving and being put back together.
+.PP
+So with ssl the satellite wedges on the third message, and without it
+the same two boards on the same build mount and read.
+.B "That is one variable and one difference,"
+which is what the earlier version of this section could not claim
+because the only passing run had been on a different kernel.
+.B "Usessl stays at zero,"
 because a setting that costs a trip across the room on every boot is
 not a default.
 .NH 2
