@@ -111,6 +111,7 @@ mod
 	crypt
 	draw
 	tk
+	math
 
 init
 	raspi3binit
