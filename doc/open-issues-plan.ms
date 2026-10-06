@@ -8322,3 +8322,93 @@ with every core at
 .CW idle+0x4 .
 A firmware restart re-initialises the whole expander through the supported path,
 which is why this works where the obvious approach bricks the board.
+.NH 2
+H1a.  The vblank residual is 1.1us, and every earlier figure was my own division
+.LP
+.CW vsdrift()
+now prints five raw instants and nothing derived; the arithmetic is done on the
+host with exact rationals.  On this board:
+.P1
+SCREEN drift raw frames 240 err 0 hz 19200000
+SCREEN drift raw t0 703955011927 t8 703957571912 tn 704031811909
+                 t2n 704031811909 t2nend 704108611913
+
+span 1 (fit)      76799982 ticks over 240 frames
+span 2 (predict)  76800004 ticks over 240 frames
+residual                22 ticks = 1.146us = 0.0069% of a frame
+.P2
+.PP
+.B "Predicting 240 frames ahead is accurate to a microsecond."
+Seven thousandths of one per cent of a frame, from a 240-frame calibration,
+carried forward across a fresh 240 frames \(em so it is a forward prediction and
+not a fit reported against its own span.
+.PP
+.B "And the diagnosis of the earlier figures is confirmed to within 0.4us."
+Truncating the period to an integer tick and predicting 240 frames ahead loses
+.P1
+(76799982/240 - 76799982//240) * 240 = 11.6us
+.P2
+against the 11us the previous probe reported.  So that residual was integer
+division, measured rather than argued \(em and the 12 and 24us from the 8-frame
+fit were the same thing amplified thirty times.
+.NH 3
+What it permits, with the interval the measurement actually supports
+.LP
+.P1
+drift rate 0.0917 ticks/frame = 0.00477us/frame
+
+to drift 2% of a frame (inside the vblank margin)    1164 s   0.3 hours
+to drift half a frame                               29091 s   8.1 hours
+to drift a whole frame                              58182 s  16.2 hours
+.P2
+.B "One calibration at boot holds for hours."
+A re-calibration every few minutes is ample and every half hour is generous;
+.CW teararm()
+already does the calibration at boot, so no new mailbox traffic is needed at all
+beyond the brief offset write that IS the flip.
+.PP
+.B "The earlier 46-minute figure was understated by my own arithmetic too."
+It came from the truncated residual, so the division error did not merely
+corrupt the precision figure \(em it corrupted the DESIGN PARAMETER derived from
+it, by a factor of eleven.  That is the cost of computing in the kernel what the
+host could compute exactly.
+.NH 3
+Why the kernel now reports raw data, and what it cost to learn
+.LP
+Three versions of this probe printed a derived figure and all three were wrong
+about the same thing.  Each time the tell was the same: the residual came out
+EARLY, never late, which is truncation rather than drift.
+.PP
+.B "The third version also panicked the board three times at a fixed pc."
+.P1
+trap type 0 esr 0x2000000 pc 0x17927c    (EC=0, undefined instruction)
+0x00179278: 0xd61f0220                   BR x17
+0x0017927c: 0x00007568                   <- the pc, DATA
+.P2
+.CW "BR x17"
+jumped to the word immediately after itself, into what looks like a jump table,
+so
+.CW x17
+held a table address rather than a target.  Three failures at the SAME pc is
+deterministic, not the documented 50 per cent
+.CW jtagrestart
+flake, and the first diagnosis in this plan \(em which called it that \(em was
+wrong.
+.PP
+.B "The bisect was already in the build history and I theorised before reading it."
+1791226758 and 1791237782 both installed cleanly, and the
+.CW devcons
+.CW gcbadptr
+change was in the FIRST of those \(em so
+.CW devcons
+was exonerated by evidence already recorded, and the only delta for the failing
+build was the two additions inside
+.CW vsdrift .
+A code-layout effect rather than a logic error in what was written.
+.PP
+.B "Reducing the probe to raw reporting was the right move for a second reason."
+It is SMALLER kernel code than the version that panicked, so it sidesteps the
+layout rather than requiring the layout bug to be found first \(em and it is the
+better design regardless: the kernel has integer division and one print, the
+host has arbitrary precision and a file.  A probe should report instants and let
+something else form ratios.

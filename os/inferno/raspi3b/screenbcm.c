@@ -1266,12 +1266,10 @@ drawcursor(Drawcursor *c)
 static void
 vsdrift(void)
 {
-	uvlong t0, t8, tn;
-	uvlong p8, pn, predicted, actual;
-	ulong hz;
+	uvlong t0, t8, tn, t2n, t2nend;
 	int i, err;
 
-	if((hz = m->cpuhz) == 0)
+	if(m->cpuhz == 0)
 		return;
 	err = 0;
 	if(mboxvsync() < 0)
@@ -1285,29 +1283,35 @@ vsdrift(void)
 		if(mboxvsync() < 0)
 			err++;
 	cycles(&tn);
-	if(err != 0 || tn <= t0 || t8 <= t0){
-		print("SCREEN drift errors %d -- no reading\n", err);
-		return;
-	}
-	p8 = (t8 - t0) / 8;
-	pn = (tn - t0) / Driftframes;
-	predicted = t0 + p8 * Driftframes;	/* where the 8-frame fit says frame N lands */
-	actual = tn;
-	print("SCREEN drift frames %d period8 %llud periodN %llud (ticks)\n",
-		Driftframes, p8, pn);
-	print("SCREEN drift period8 %llud us periodN %llud us\n",
-		p8 * 1000000 / hz, pn * 1000000 / hz);
+	cycles(&t2n);
+	for(i = 0; i < Driftframes; i++)
+		if(mboxvsync() < 0)
+			err++;
+	cycles(&t2nend);
 	/*
-	 * The decisive number: predicting frame N's vblank from the 8-frame fit,
-	 * how far off is it?  Reported in microseconds and as a fraction of a
-	 * frame, because what matters is whether the error stays well inside one.
+	 * RAW TIMESTAMPS ONLY.  The kernel reports, the host computes.
+	 *
+	 * Three versions of this printed a derived figure and all three were
+	 * wrong about the same thing -- integer division.  An 8-frame fit lost
+	 * 1-2 ticks and amplified them 30x (12 and 24us); a 240-frame fit lost
+	 * 0.90 of a tick and amplified it 240x (11us).  Every residual came out
+	 * EARLY, never late, which is the signature of truncation rather than
+	 * drift.
+	 *
+	 * Doing the arithmetic here buys nothing and costs precision: uvlong
+	 * division truncates, the host has arbitrary precision, and the quantity
+	 * wanted is a ratio of differences that needs no division at all until
+	 * the last step.  So print the five instants and let tools/jtag/vsfit
+	 * do it.
+	 *
+	 * This is also smaller kernel code than the version it replaces, which
+	 * matters because the version it replaces panicked this board three
+	 * times at a fixed pc.
 	 */
-	if(predicted >= actual)
-		print("SCREEN drift predict LATE by %llud us over %d frames\n",
-			(predicted - actual) * 1000000 / hz, Driftframes);
-	else
-		print("SCREEN drift predict EARLY by %llud us over %d frames\n",
-			(actual - predicted) * 1000000 / hz, Driftframes);
+	print("SCREEN drift raw frames %d err %d hz %lud\n",
+		Driftframes, err, (ulong)m->cpuhz);
+	print("SCREEN drift raw t0 %llud t8 %llud tn %llud t2n %llud t2nend %llud\n",
+		t0, t8, tn, t2n, t2nend);
 }
 
 static void
