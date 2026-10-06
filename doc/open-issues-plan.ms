@@ -9034,3 +9034,179 @@ At 106 presents a second it is 387us; at 1050 it is 769us.  And the share it is
 quoted as \(em 4.14 per cent of a present \(em is a share of a present whose
 length also changed with the rate.
 .B "A cost per event is not a constant unless the event rate is part of the claim."
+.NH 2
+A THICK ELLIPSE PANICS THIS KERNEL, and it is nothing to do with the flip
+.LP
+.CW "wm/gfxstress all"
+died in the
+.CW ellipse
+phase while I was measuring flip phases, and the first thing to establish was
+whether my repair path had done it.
+.B "It had not."
+The control \(em
+.CW "wm/gfxstress ellipse"
+on the shipping
+.CW "Dbuf = 0"
+kernel, build 1791288022 \(em panics identically:
+.P1
+                 Dbuf=1 (1791287144)      Dbuf=0 (1791288022)
+trap             type 0 esr 0x96000045    type 0 esr 0x96000045
+pc               0xe4f74                  0xe4eb4
+r0 == tval       0x3008c6cc0              0x3008c6c40
+r30 (link)       0xe7278                  0xe71b8
+.P2
+Both resolve to the same place:
+.P1
+memset32+0x30   <- faulting pc
+memfillcolor+0x118  <- r30, so this is the ACTUAL caller, not a scrape
+bellipse+0xac
+memellipse+0x148
+drawmesg+0xa04
+.P2
+.PP
+.B "r30 is the link register, so the caller is known rather than guessed."
+.CW tools/jtag/kstack
+says of its own output "this is a scrape, not a chain", and the
+.CW dumpstack
+words are the same kind of thing \(em but
+.CW r30
+in the trap frame is the real return address, and it says
+.CW memfillcolor
+called the
+.CW memset32
+that faulted.
+.PP
+.B "ESR 0x96000045 is EC=0x25, DFSC=0x05: a level-1 translation fault on a data write."
+.CW tval
+0x3008c6c40 has bits 32 and 33 set on a board with 1GB of RAM, and the low 32
+bits (0x008c6c40, about 9.2MB) are a plausible
+.CW imagmem
+address.  So the destination handed to
+.CW memset32
+was a valid-looking pointer with 12GB of garbage above it.
+.PP
+.B "Two boots, two kernels, addresses 0x80 apart."
+That is the signature this plan already records for corruption rather than a
+race: a failure at essentially a fixed address is media or memory, not timing.
+.NH 3
+What it is reached by, which is ordinary Limbo
+.LP
+.CW appl/wm/gfxstress.b :
+.P1
+img.ellipse(p, 5+rnd(40), 5+rnd(30), 2, green, Point(0,0));
+.P2
+A thickness of 2.  In
+.CW memellipse ,
+.P1
+u = (t<<1)*(a-b);
+if(b<a && u>b*b || a<b && -u>a*a)
+	bellipse(b, newstate(&in, a, b), &p);
+.P2
+with
+.CW t
+2 and the radii that line generates, one of those two tests is true most of the
+time \(em a=44,b=5 gives 156>25 \(em so
+.B "the very-thick path is the common case for this call, not a corner."
+.PP
+.B "And it is NOT reached by fillellipse, which I checked rather than assumed."
+.CW fillellipse
+calls
+.CW memellipse
+with
+.CW "t = -1" ,
+and then
+.CW u
+is
+.CW "2*(b-a)" :
+if
+.CW b<a
+then u is negative and cannot exceed
+.CW b*b ,
+and if
+.CW a<b
+then
+.CW -u
+is negative and cannot exceed
+.CW a*a .
+Neither branch can fire, so
+.CW bellipse
+never sees a negative
+.CW t
+and the inverted
+.CW "Rect(-t,-t,t+1,t+1)"
+I first suspected does not happen.
+.NH 3
+Our ellipse code is 9front's, so this is not a translation error
+.LP
+.P1
+bellipse    identical except p00 for ZP (the same point, named differently)
+memellipse  identical except redundant parentheses in the condition
+.P2
+against
+.CW 9front/src/libmemdraw/ellipse.c .
+So either 9front has the same bug and 32-bit arithmetic hides it, or the fault
+is in something
+.CW bellipse
+calls rather than in
+.CW bellipse .
+.NH 3
+A real 32-to-64 port bug found while reading, and it is NOT this one
+.LP
+.CW u32addr()
+in
+.CW libmemdraw/alloc.c
+masked with
+.CW "sizeof(uintptr)-1" .
+9front's
+.CW wordaddr
+masks with
+.CW "sizeof(ulong)-1"
+where
+.CW ulong
+is 4 bytes, so it rounds a byte address down to the 32-bit word CONTAINING it;
+masking with 8 can return a pointer
+.B "four bytes before the word asked for."
+Fixed to
+.CW "sizeof(u32)-1" .
+.PP
+.B "It is latent, and saying so matters more than the fix."
+The only caller is
+.CW memfillcolor ,
+which passes
+.CW i->r.min
+of an image from
+.CW allocmemimage ,
+where
+.CW byteaddr()
+returns
+.CW bdata
+exactly; and
+.CW imagmem
+has
+.CW "quanta 127"
+with 8-aligned arenas, so every block data pointer is 8-aligned and the mask has
+been a no-op everywhere it runs.
+.B "So it is not the cause of this panic and I am not going to claim it is."
+It would become the cause the moment a caller passed a point whose byte address
+is 4 mod 8.
+.NH 3
+What the arithmetic rules out, checked rather than assumed
+.LP
+For
+.CW "Rect(-2,-2,3,3)"
+in GREY1:
+.P1
+l = wordsperline = 1,  Dy = 5,  nw = 5
+alloc = 2*sizeof(intptr) + 5*4 = 36 bytes,  bdata = base+16
+zero  = -(4*1*(-2) - (2*1+7)/8) = -(-8-1) = 9
+byteaddr(r.min) = bdata + 9 - 8 - 1 = bdata     exactly
+memset32 count = i->width*Dy(i->r) = 5 words = 20 bytes
+.P2
+.B "which is exactly the allocation, so memfillcolor does not overrun it."
+The destination is therefore garbage because
+.CW i->data->bdata
+is garbage, which means
+.CW "poolalloc(imagmem, 36)"
+returned a corrupted pointer \(em
+.B "pool corruption that the ellipse path only EXPOSES,"
+because it allocates one small image per ellipse, 300 a batch.

@@ -119,11 +119,26 @@ freememimage(Memimage *i)
 
 /*
  * Wordaddr is deprecated.
+ *
+ * THE MASK IS sizeof(u32), NOT sizeof(uintptr), and it was the latter.  9front's
+ * wordaddr -- 9front/src/libmemdraw/alloc.c:133 -- masks with sizeof(ulong)-1
+ * where ulong is 4 bytes, so it rounds a byte address DOWN TO THE 32-BIT WORD
+ * that contains it.  Renaming it u32addr for a 64-bit port and writing
+ * sizeof(uintptr) changed the rounding to 8 bytes, which can return a pointer
+ * FOUR BYTES BEFORE the word asked for.
+ *
+ * This is latent rather than a bug with symptoms, and saying which it is matters
+ * more than the one-line fix: the only caller is memfillcolor(), which passes
+ * i->r.min of an image from allocmemimage(), where byteaddr() returns bdata
+ * exactly, and imagmem hands out 8-aligned blocks -- so the mask has been a
+ * no-op everywhere it runs today.  It would stop being one the moment a caller
+ * passes a point whose byte address is 4 mod 8, and memset32() would then write
+ * four bytes before the destination and one word past its end.
  */
 u32*
 u32addr(Memimage *i, Point p)
 {
-	return (u32*) ((uintptr)byteaddr(i, p) & ~(sizeof(uintptr)-1));
+	return (u32*) ((uintptr)byteaddr(i, p) & ~(uintptr)(sizeof(u32)-1));
 }
 
 uchar*
