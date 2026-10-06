@@ -112,6 +112,95 @@ version, and the MISO pin read directly.  It exists because when
 .CW cc1120init ()
 finds no part the only account of why is a line printed at boot, which on
 a board has usually scrolled away by the time anybody wants it.
+.PP
+The files below are a SIMULATED SATELLITE, and nothing in them is a
+measurement.  A clicker 2 carries no inertial unit, no power monitor
+and no charger, so each driver probes for its part, refuses unless the
+part identifies itself, and otherwise runs a model.
+.B arch
+says
+.B scripted
+or the part's name, and every one of these files says which it is on
+its first line.  The simulation exists so that the flight software in
+.B /appl/pycubed
+has something to control; no number out of it is evidence about
+anything physical.
+.TP
+.B orbit
+Where the satellite is, the magnetic field it is in, and whether it is
+in sunlight: a circular orbit at a settable altitude and inclination, a
+tilted dipole field, and the Earth's shadow as a cylinder.  At 500km
+the field is 247 milligauss at the magnetic equator and twice that over
+the poles, sweeping twice an orbit; at beta zero the satellite is in
+eclipse for 38 per cent of the pass.
+.B orbit.ctl
+sets
+.BR altitude ,
+.BR inclination ,
+.BR beta ,
+.B phase
+and
+.BR timescale .
+.TP
+.B imu
+Magnetometer, gyroscope and accelerometer in one read, so the nine
+numbers belong to one instant, in milligauss, milli-degrees a second
+and milli-g.  The simulated state is a quaternion and an angular
+momentum held in the INERTIAL frame, where its rate of change is
+simply the torque; the body rate is derived from it through the
+inertia tensor on every step, so an asymmetric body precesses with no
+term for it and a torque-free one keeps |L| exactly.  The torques are
+the magnetorquers and the gravity gradient.
+.TP
+.B imu.ctl
+The model behind it:
+.BR spin ,
+.BR still ,
+.BR tumble ,
+.BR "inertia x y z" ,
+.B noise
+and
+.BR real ,
+which tries the probe again.  Reading it gives the attitude, the body
+frame vectors, the commanded dipole,
+.B step
+\(em the simulated milliseconds in one integration step \(em
+.BR backlog ,
+what has not been stepped yet, and
+.BR integrated ,
+how much simulated time the model has actually advanced.  The last
+three are there because the integrator defers what it cannot step in
+one call, and a model running behind real time has to say so.
+.TP
+.B torque
+Three magnetorquers as a commanded dipole in milli-A.m^2, readable as
+well as writable, clamped to two A.m^2.
+.TP
+.B power
+The pack: terminal volts, current, panel current and draw, the
+open-circuit voltage and the state of charge in parts per thousand.
+The modelled state is a CHARGE in milliamp-seconds, counted, and the
+voltage is read off a cell curve less the drop across 80 milliohms \(em
+so the pack reads differently in sun and in eclipse at the same state
+of charge.
+.B power.ctl
+sets
+.BR drain ,
+.B volts
+(which walks the curve backwards to the charge that gives it),
+.B charging
+and
+.BR "battery sim|adc" ,
+which is what makes
+.B battery
+follow the model rather than the part's own channel.
+.TP
+.B charge
+The charger: whether input power is present and whether it has faulted.
+Whether charging is happening is not stored here but derived where the
+pack's voltage is, every time the pack moves \(em a stored answer to
+that question went stale and the sun-seeking controller steered for an
+hour by a number no attitude could change.
 .SH EXAMPLE
 The following Limbo code reads from an x86 byte I/O port.
 .IP
@@ -143,6 +232,14 @@ inportb(port: int): byte
 .B /os/inferno/stm32f407/adcstm32f4.c
 .br
 .B /os/inferno/stm32f407/spistm32f4.c
+.br
+.B /os/inferno/stm32f407/orbitsim.c
+.br
+.B /os/inferno/stm32f407/imubmx160.c
+.br
+.B /os/inferno/stm32f407/pwradm1176.c
+.br
+.B /os/inferno/stm32f407/chgbq25883.c
 .SH SEE ALSO
 .IR radiocal (1),
 .IR radio (3)

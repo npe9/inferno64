@@ -18,15 +18,39 @@
  * looking at it, so the model lives in one place and chgbq25883.c asks
  * it to charge rather than keeping a second copy that could disagree.
  *
- * THE DISCHARGE IS DELIBERATELY FAST.  A 2000mAh pack at 200mA takes
- * ten hours, and a fixture nobody can watch is not a fixture: this
- * falls a millivolt per hundred milliamp-seconds, so 200mA walks
- * 4200mV down to 3000 in about ten minutes.  It is a ramp with noise on
- * it and not a lithium discharge curve -- no plateau, no knee, no
- * internal resistance -- and software tuned against its shape would be
- * tuned against nothing.  What it is for is the THRESHOLD CROSSINGS:
- * beepsat's vbatt task compares against 3.6V and this makes that
- * comparison happen while somebody is looking.
+ * THE BATTERY IS A CELL AND NOT A RAMP, which is the difference
+ * between a fixture and a model.
+ *
+ * It was a millivolt per hundred milliamp-seconds: a straight line from
+ * 4200 to 3000 with noise on it.  That is wrong in the way that matters
+ * to software, because the SHAPE is what a state-of-charge estimate and
+ * every low-voltage threshold are read against.  A linear cell has no
+ * plateau, so a threshold placed on it means nothing and an estimator
+ * tuned to its slope would see nothing like a real pack.
+ *
+ * What is here now:
+ *
+ *	COULOMB COUNTING.  The state is charge in milliamp-seconds, not
+ *	voltage.  2600mAh is 9360000 mA.s, a 1S 18650, which is what a
+ *	3U actually carries.
+ *
+ *	AN OPEN-CIRCUIT CURVE, ocvtab below: 4200mV full, a long plateau
+ *	through the middle at 3700 to 3800, and a knee under twenty per
+ *	cent falling to 3000.  Twelve points interpolated, which is the
+ *	shape every lithium datasheet shows, with the resolution put at
+ *	the knee because that is where a threshold sits and where a
+ *	straight line is most wrong.
+ *
+ *	INTERNAL RESISTANCE, 80 milliohms, so the terminals sag under
+ *	load and rise under charge: 120mA of draw costs 10mV and 260mA
+ *	of charge gains 21mV.  This is why a pack reads differently in
+ *	sun and in eclipse at the same state of charge, and why a naive
+ *	low-voltage cutout trips in eclipse on a battery that is fine.
+ *
+ *	ECLIPSE, from orbitsim.c.  A 500km orbit is in shadow for about
+ *	a third of every 94-minute pass, so the pack cycles every orbit
+ *	whatever the attitude is -- and the balance over a whole orbit
+ *	is what actually keeps a satellite alive.
  *
  *	echo drain 200 >/dev/power.ctl		milliamps
  *	echo volts 4200 >/dev/power.ctl		set the pack
@@ -51,23 +75,32 @@ enum {
 	Vfullmv		= 26350,	/* 26.35V across 4096 counts */
 	Ifullmv		= 105840,	/* 105.84mV of shunt drop, microvolts/10 */
 
+	Capacity	= 9360000,	/* mA.s: 2600mAh, a 1S 18650 */
+	Resistance	= 80,		/* milliohms */
 	Packfull	= 4200,
 	Packempty	= 3000,
-	/*
-	 * Milliamp-seconds to a millivolt.  See the note above: this
-	 * number is chosen so a bench run shows the whole range.
-	 */
-	Maspermv	= 100,
 };
 
 static I2Cdev *pwrdev;
 static int triedprobe;
 static int shuntmohm = 100;		/* a plausible 0.1 ohm sense */
 
-/* the scripted pack */
 extern int chgwants(void);
+extern int orbiteclipse(void), orbittimescale(void);
 
-static int packmv = Packfull;
+/*
+ * Open-circuit voltage against state of charge, in millivolts.  The
+ * first two steps are five per cent and the rest ten, so the
+ * resolution is at the knee -- which is where a threshold sits and
+ * where a straight line is most wrong.
+ */
+static short ocvtab[12] = {
+	3000, 3300, 3450, 3600, 3660, 3700,
+	3740, 3790, 3860, 3950, 4060, 4200,
+};
+
+/* the modelled pack: the state is CHARGE and voltage follows from it */
+static long charge = Capacity/2;	/* mA.s */
 static int drainma = 120;
 static int charging;
 static int simbatt;			/* #P/battery follows the pack */
@@ -75,7 +108,15 @@ static int noise = 8;
 static int sunma = 260;		/* panel current in full sun, mA */
 static int solar;		/* what it is making now */
 static ulong lastticks;
-static long carry;			/* milliamp-seconds not yet a mV */
+static int running;
+/*
+ * The milliamp-ticks not yet a milliamp-second.  Divided away, this was
+ * a systematic undercount: at 450mA and a seven-tick interval the
+ * quotient is 31.5 and the half was dropped on every read, so a pack
+ * discharged more slowly the more often it was looked at.  The same
+ * carry as the attitude integrator's, for the same reason.
+ */
+static vlong chargefrac;
 
 static int
 jitter(void)
@@ -83,6 +124,74 @@ jitter(void)
 	if(noise <= 0)
 		return 0;
 	return nrand(2*noise + 1) - noise;
+}
+
+/*
+ * The open-circuit voltage at a state of charge given in tenths of a
+ * per cent, interpolated inside whichever step it falls in.  Taking
+ * the argument rather than reading the global is what lets the curve
+ * be walked backwards, below.
+ */
+static int
+ocvat(int pm)
+{
+	int i, lo, hi, span, base;
+
+	if(pm <= 0)
+		return ocvtab[0];
+	if(pm >= 1000)
+		return ocvtab[11];
+	if(pm < 50){ i = 0; base = 0; span = 50; }
+	else if(pm < 100){ i = 1; base = 50; span = 50; }
+	else { i = pm/100 + 1; base = (i - 1) * 100; span = 100; }
+	lo = ocvtab[i];
+	hi = ocvtab[i+1];
+	return lo + ((hi - lo) * (pm - base)) / span;
+}
+
+/* where the pack is on that curve now */
+static int
+soc(void)
+{
+	return (int)(((vlong)charge * 1000) / Capacity);
+}
+
+static int
+ocv(void)
+{
+	return ocvat(soc());
+}
+
+/*
+ * And backwards: the charge whose open-circuit voltage is v.  The
+ * curve is monotonic, so a walk finds it, and a walk is honest about
+ * the plateau -- several tenths of a per cent share a millivolt there,
+ * and this returns the first, which is the pessimistic one.
+ */
+static long
+chargefor(int mv)
+{
+	int pm;
+
+	for(pm = 0; pm < 1000; pm++)
+		if(ocvat(pm) >= mv)
+			break;
+	return (long)(((vlong)pm * Capacity) / 1000);
+}
+
+/*
+ * What a voltmeter on the terminals reads: the open-circuit voltage
+ * less the drop across the internal resistance, which becomes a rise
+ * when charging.  Milliamps times milliohms is microvolts.
+ *
+ * This is why a pack reads differently in sun and in eclipse at the
+ * same state of charge, and why a naive low-voltage cutout trips in
+ * eclipse on a battery that is fine.
+ */
+static int
+terminal(void)
+{
+	return ocv() - ((drainma - solar) * Resistance) / 1000;
 }
 
 /*
@@ -95,13 +204,16 @@ void
 packtick(void)
 {
 	ulong t, dt;
-	long mas;
+	vlong whole;
 
 	t = m != nil? m->ticks: 0;
-	dt = t - lastticks;
+	if(!running){
+		running = 1;
+		lastticks = t;
+		return;
+	}
+	dt = (t - lastticks) * orbittimescale();
 	lastticks = t;
-	if(dt > 100*60)
-		return;				/* first call, or a gap */
 	/*
 	 * ASK THE CHARGER RATHER THAN BE TOLD BY IT, which is the fix
 	 * for a flag that went stale in a way nothing could see.
@@ -123,28 +235,16 @@ packtick(void)
 	 * voltage is, every time the pack moves.  One decision, made
 	 * where both of its inputs are.
 	 */
-	charging = chgwants() && packmv < Packfull;
+	charging = chgwants() && charge < Capacity && !orbiteclipse();
 	/*
 	 * SUN ON THE PANELS, which is what makes attitude control worth
-	 * doing rather than merely possible.
+	 * doing rather than merely possible: a tumbling satellite sweeps
+	 * its panels through the sun and charges in pulses averaging
+	 * under the draw, and a pointed one charges steadily.  The
+	 * battery file is what says whether the control worked.
 	 *
-	 * The sun is a fixed direction and the panels are a body face,
-	 * so the power in is proportional to the cosine of the angle
-	 * between them -- and clipped at zero, because a panel facing
-	 * away makes nothing rather than negative power.  imubmx160.c
-	 * tracks the attitude and this asks it.
-	 *
-	 * The consequence is the whole point: a TUMBLING satellite
-	 * sweeps its panels through the sun and charges in pulses that
-	 * average well under the draw, so the pack falls.  A DETUMBLED
-	 * one, held with its panels toward the sun, charges steadily and
-	 * the pack recovers.  So the detumble controller is not a
-	 * demonstration -- it is what keeps the board powered, and the
-	 * battery file says whether it worked.
-	 *
-	 * Crude on purpose: one panel, one axis, no albedo, no eclipse
-	 * unless asked for with "in off" on the charger, and no
-	 * temperature.  It gets the sign and the shape right.
+	 * And nothing charges in eclipse, however well it is pointed,
+	 * which is the term above.
 	 */
 	if(charging){
 		extern void imusunvec(int*);
@@ -178,27 +278,26 @@ packtick(void)
 		solar = (sunma * sun) / 2000;
 	}else
 		solar = 0;
-	mas = ((long)(drainma - solar) * (long)dt) / HZ;
-	carry += mas;
-	while(carry >= Maspermv){
-		carry -= Maspermv;
-		packmv--;
-	}
-	while(carry <= -Maspermv){
-		carry += Maspermv;
-		packmv++;
-	}
-	if(packmv < Packempty)
-		packmv = Packempty;
-	if(packmv > Packfull)
-		packmv = Packfull;
+	/*
+	 * Coulomb counting.  net is positive when the load exceeds the
+	 * panels, and the voltage is not stored at all -- it is read off
+	 * the cell's curve whenever anybody asks.
+	 */
+	chargefrac = chargefrac + (vlong)(drainma - solar) * (vlong)dt;
+	whole = chargefrac / HZ;
+	chargefrac = chargefrac - whole * HZ;
+	charge -= (long)whole;
+	if(charge < 0)
+		charge = 0;
+	if(charge > Capacity)
+		charge = Capacity;
 }
 
 int
 packvolts(void)
 {
 	packtick();
-	return packmv;
+	return terminal();
 }
 
 /*
@@ -221,7 +320,7 @@ int
 packfull(void)
 {
 	packtick();
-	return packmv >= Packfull;
+	return charge >= Capacity;
 }
 
 /*
@@ -293,10 +392,11 @@ pwrread(Chan*, void *a, s32 n, s64 offset)
 		mv = packvolts();
 		snprint(buf, sizeof buf,
 			"source scripted\nvolts %d\namps %d\ncharging %d\n"
-			"solar %d\ndraw %d\n",
+			"solar %d\ndraw %d\nopen %d\nsoc %d\neclipse %d\n",
 			mv + jitter(),
 			(drainma - solar) + jitter()/2,
-			charging, solar, drainma);
+			charging, solar, drainma,
+			ocv(), soc(), orbiteclipse());
 	}
 	return readstr(offset, a, n, buf);
 }
@@ -309,6 +409,9 @@ pwrctlread(Chan*, void *a, s32 n, s64 offset)
 	snprint(buf, sizeof buf,
 		"source %s\n"
 		"volts %d\n"
+		"open %d\n"
+		"soc %d per mille\n"
+		"eclipse %d\n"
 		"drain %d\n"
 		"charging %d\n"
 		"solar %d of %d in full sun\n"
@@ -316,7 +419,7 @@ pwrctlread(Chan*, void *a, s32 n, s64 offset)
 		"shunt %d\n"
 		"noise %d\n",
 		pwrdev != nil? "adm1176": "scripted",
-		packvolts(), drainma, charging, solar, sunma,
+		packvolts(), ocv(), soc(), orbiteclipse(), drainma, charging, solar, sunma,
 		simbatt? "sim": "adc", shuntmohm, noise);
 	return readstr(offset, a, n, buf);
 }
@@ -345,8 +448,7 @@ pwrctlwrite(Chan*, void *a, s32 n, s64)
 		if(v < Packempty || v > Packfull)
 			error(Ebadarg);
 		packtick();
-		packmv = v;
-		carry = 0;
+		charge = chargefor(v);
 	}else if(strcmp(fld[0], "charging") == 0 && nf == 2){
 		if(strcmp(fld[1], "on") == 0)
 			packcharge(1);

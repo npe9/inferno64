@@ -2141,3 +2141,403 @@ header disagreed with what arrived, so the next place to look is a
 boundary \- the relay chops 284 bytes into 109, 109 and 66, and a loss
 of exactly two at the end of that is the shape of an off-by-one paid
 twice rather than of memory pressure.
+.NH 1
+Making the simulation accurate
+.PP
+The devices reacted to each other and that was enough to run a
+controller.  It was not enough to tell whether the controller would
+work, because every number it contended with was wrong in a way that
+made the problem easier.
+.B "A fixture that a controller passes is not a test of the controller."
+.NH 2
+What the model did not have
+.IP \(bu
+.B "No position, and so a field of constant magnitude."
+A magnetic controller's whole difficulty is that the field varies by a
+factor of two and sweeps twice an orbit.  The field here had neither:
+one magnitude, one direction, rotating only because the body did.
+.IP \(bu
+.B "No sunlight geometry and no shadow."
+A satellite is in eclipse for 38 per cent of a low orbit, which is the
+term a power budget turns on, and the panels charged continuously.
+.IP \(bu
+.B "No inertia tensor in the integration that mattered."
+.CW "omega x (I omega)"
+was present and its unit conversion was taken from the rate update,
+which has a different unit chain \- one power of the rate, not two.
+.B "It was 17.45 times too small,"
+and it is the one term that distinguishes this model from a scalar one:
+at the default tumble the precession torque is two milli-newton-metres
+against five micro of control authority.
+.IP \(bu
+.B "And two integer divisions that truncated to zero."
+This is the one that matters most.
+.NH 2
+The torquers did nothing at all
+.PP
+The rate update is
+.CW "T.dt.57296/(I.10^6)" .
+A 0.2 A.m^2 dipole in the 250mG field at 500km is 4.9 micro-newton-
+metres, which on a 3U's 0.0333 kg.m^2 axis over a ten-millisecond tick
+is 0.086 milli-degrees a second \- and
+.CW "(int)0.086"
+is zero.
+.B "At timescale 1 a commanded dipole had no effect whatsoever."
+The quaternion update went the same way below about 1.2 deg/s.
+.PP
+.B "The 0.86 deg/s plateau this document called a controller's floor was that truncation."
+It was reported as a measurement, and the deadband in
+.B appl/pycubed/beepsat.b
+was set to 1500 to clear it.  Both were artefacts of an integer
+division.
+.PP
+The fix is to keep the remainder.  The quotient is applied, the
+remainder carries, and over any number of steps the division is exact;
+C truncates towards zero and takes the sign of the dividend from it, so
+the identity
+.CW "n == (n/d)*d + n%d"
+holds for a deceleration as well as an acceleration.
+.NH 2
+The step is fixed in simulated time, not in reads
+.PP
+.B "A model that integrates over the interval between reads responds to being watched."
+Euler integration is first order, so its answer depends on the step
+length: at a tenth-second poll the step truncated to nothing, and at a
+thirty-second gap it overshot.  Both were the same fault as the earlier
+one where the model advanced only on a read, one level down.
+.PP
+So elapsed time accumulates in a backlog, whole steps of fifty
+simulated milliseconds come out of it, and the remainder waits.  A
+reader polling flat out and a reader polling once a second integrate
+the identical trajectory and differ only in being up to one step
+behind.  The backlog is reported in
+.B #P/imu.ctl
+beside
+.B integrated ,
+the simulated milliseconds the integrator has actually stepped, because
+a model running behind real time has to say so.
+.NH 2
+A gap guard that stopped time
+.PP
+Both the orbit and the pack dropped any interval longer than sixty
+seconds, commented as "the first call, or a long gap".  It did handle
+the first call, where there is no previous tick to subtract.  It also
+meant
+.B "the orbit stopped whenever nothing read it for a minute,"
+so the simulation was a function of being watched after all.  A flag
+for the first call says what was meant; every interval after it is
+integrated however long it is, which the closed-form position and the
+coulomb count both support exactly.
+.NH 2
+What is modelled now, with its figures
+.IP \(bu
+.B "A circular orbit,"
+500km by default: radius 6871km, period 5664 seconds.  Settable
+altitude, inclination and beta angle at
+.B #P/orbit.ctl .
+.IP \(bu
+.B "A tilted dipole field,"
+.CW "B = B0 (Re/r)^3 [3(m.r)r - m]"
+with the geomagnetic axis 11 degrees off the spin axis: 247mG at the
+magnetic equator and 494 over the poles, sweeping twice an orbit.
+.IP \(bu
+.B "A sun at a settable beta angle and a cylindrical shadow."
+A cylinder rather than a cone because the penumbra is a few seconds of
+a 94-minute orbit.
+.IP \(bu
+.B "An attitude as a quaternion with a real inertia tensor,"
+Euler's equations including the gyroscopic term, the magnetorquers and
+the gravity gradient \(em about a hundredth of the torquers and the one
+that never switches off.
+.IP \(bu
+.B "A battery that is a charge and a curve, not a voltage."
+2600mAh counted in milliamp-seconds, an open-circuit curve with its
+resolution at the knee, and 80 milliohms of internal resistance \- so
+the pack reads differently in sun and in eclipse at the same state of
+charge, which is why a naive low-voltage cutout trips on a battery that
+is fine.
+.LP
+And a stated time scale, 1 to 200, on simulated time only.  A 3U with
+0.2 A.m^2 torquers detumbles at 0.042 deg/s^2 about its low-inertia
+axis and 0.0085 about the others, so twenty degrees a second takes
+between eight and forty minutes.  That is the truth and it is not
+watchable; fudging the inertia would make every number downstream
+wrong.
+.NH 2
+The deadband is now untrustworthy and has been left alone
+.PP
+.B "Dtdeadband in appl/pycubed/beepsat.b is 1500 milli-degrees a second because of the truncation."
+It was raised from 300 to clear a 0.86 deg/s plateau that was an
+integer division, so the number has no physical justification left.
+.PP
+It has not been changed, and the reason is worth stating.  With the
+gyroscopic term at its correct size the settling behaviour is a
+different problem: at the default tumble the precession torque is about
+four hundred times the control authority, so where a B-dot loop hands
+over is a question about the real dynamics and not about arithmetic.
+Answering it needs a detumble run with the corrected torque on a board.
+.B "Guessing a new constant from a QEMU run would install a new artefact in place of the old one."
+.NH 2
+And the free body was gaining energy
+.PP
+The three checks above pass and the model was still wrong, in a way
+none of them could see.
+.B "Ask a torque-free tumble for the two things a free body keeps and it had kept neither: the kinetic energy grew 183 per cent and |I.omega| 89 per cent in 262 seconds of model time."
+.PP
+Euler's equations in the body frame are
+.CW "I omega' = T - omega x (I omega)" ,
+and
+.B "explicit Euler on that is unconditionally unstable."
+The free-body motion is a rotation of omega about the momentum axis, so
+the cross term's eigenvalues are purely imaginary and
+.CW "|1 + h.lambda|"
+exceeds one for every step length: the amplitude grows by
+.CW "sqrt(1 + (h.omega_n)^2)"
+a step, which at a 3.9 second nutation period and a fifty-millisecond
+step is 1.0032, and five thousand steps of that is not a satellite.
+The quaternion was renormalised every step and so could not drift; the
+RATE had nothing holding it.
+.PP
+.B "The cross term is an artefact of the frame."
+In the inertial frame the equation is
+.CW "L' = T" .
+So the state is now the angular momentum, held inertially, and the body
+rate is derived from it:
+.DS
+.CW "omega_body = I^-1 . R(q) . L_inertial"
+.DE
+There is no gyroscopic term to integrate and |L| is exactly constant
+under zero torque \- not nearly, exactly, because the integrator never
+touches it.  The precession is still there, because
+.CW R(q)
+is turning.  Energy then drifts only through the attitude integration.
+.PP
+.B "#P/imu.ctl reports the momentum,"
+so a conservation check reads the invariant out of the model instead of
+rebuilding it from the rate and its own copy of the inertia tensor \- a
+check that recomputes an invariant from the numbers the model derives
+is checking its own arithmetic.
+.PP
+And
+.B "echo inertia ... >#P/imu.ctl"
+keeps the momentum and lets the rate change, which is the only answer
+that is not a lie: rebuilding L from the old rate would have the
+satellite gain momentum because somebody edited a file.
+.NH 2
+And then the attitude step became the limiting error
+.PP
+With |L| exact, the next thing the conservation check saw was the
+DERIVED body rate moving 5.7 per cent in twelve seconds of a
+torque-free tumble.  Nothing was pushing and the momentum had not
+changed, so the error was in the attitude: the first-order step
+.CW "q += (1/2) q (0,omega) dt"
+has an O(theta^2) error in the rotation's DIRECTION, and a tilted
+attitude resolves a fixed L into the wrong body axes.
+.PP
+For a constant rate over the step the exact answer is a quaternion
+multiply:
+.DS
+.CW "q' = q (cos(theta/2), sin(theta/2) omega/|omega|)"
+.DE
+and omega is constant over fifty milliseconds to far better than
+anything else here.
+The increment is built from the series directly: cos v = 1 - v^2/2 and
+sin v = v(1 - v^2/6), with v the half angle.  What is left is a
+systematic scale error on the rate of O(v^4), where Euler's error was a
+random walk in the direction.
+.PP
+.B "And an earlier version of this renormalised that increment and said in a comment that doing so fixed the angle."
+Half of that was wrong, which is worth recording because it reads
+plausibly.
+.B "Normalising scales the scalar and the vector parts equally, so the ratio between them \- which IS the angle \- does not move."
+The construction
+.CW "(1 - v^2/2, v)"
+has an effective half angle of
+.CW "atan(v/(1-v^2/2))" ,
+which is
+.CW "v + v^3/6" ,
+and no amount of rescaling touches it; the extra term in the sine is
+what fixes it.  What the normalisation did fix was the MAGNITUDE, which
+the construction already leaves correct to v^4/8 \- two parts in a
+thousand million at these step lengths \- so it was an integer square
+root in the hot path for nothing, twice a step.
+.PP
+The attitude itself is still renormalised, because the increment is
+applied in integers and the rounding is not a rotation, but to the
+FIRST ORDER: with d = |q|^2 - Qscale^2 small the factor is
+.CW "1 - d/(2 Qscale^2)" ,
+and the square root is kept only for the case where something has gone
+far enough wrong to need it.  A Newton loop of thirty 64-bit divisions,
+four hundred times a read at the top time scale, is not what a
+satellite's processor is for.
+.PP
+.B "And that was not enough, because omega is not constant either."
+In body axes it precesses \- for a 3U at the default tumble at 0.34
+radians a second, which is a degree in a fifty-millisecond step \- so
+taking the rate at the START of the step lags the axis by half a degree
+every step, and the lag is systematic: it migrated the momentum towards
+the low-inertia axis.  The rate is now taken at the MIDDLE of the step,
+by advancing a copy of the attitude half way and asking it.  Two
+rotations a step, and the remainder is carried only on the real one.
+.PP
+Measured, same tumble and the same instrument, as the worst energy
+drift of a torque-free run:
+.DS
+.CW "step     start-of-step omega    midpoint omega"
+.CW "50ms           +39.68%             +0.29%"
+.CW "10ms            +3.15%             +0.05%"
+.CW " 2ms            +0.43%             +0.22%"
+.DE
+.B "A hundred and thirty-five times better at the default step,"
+and omega_z \- which for Ixx = Iyy is a constant of the free motion \-
+now holds to 0.5 per cent where it had moved 138.  The two-millisecond
+row is worse than the ten because the integer quantisation of the
+increment takes over when the step gets small; the step is settable
+from
+.B #P/imu.ctl
+precisely so that this table can be made again.
+.PP
+.B "An error that does not fall when the step is halved is a bug, and one that does is convergence."
+That is the whole reason the step is a variable: the first version of
+this comparison slept a fixed sixty board-seconds for each step length
+and the three rows covered 82, 41 and 16 seconds of MODEL time, because
+at a short step one advance after a quiet period hits the cap on steps
+per call and leaves the rest in the backlog.  Three different
+experiments, compared as if they were one.
+.NH 2
+Three checks that were wrong about correct physics
+.IP 1.
+.B "The quaternion angle was computed without dividing by the scale twice."
+A quaternion product of two 10000-scaled quaternions is 10^8-scaled,
+and dividing by 10^4 once left a scalar part of about 10^4, which
+.CW min (1.0, ...)
+clamped to 1 and
+.CW acos
+turned into zero degrees.  It reported "turned 0.00 deg" for a
+satellite that had turned 2593, which reads exactly like an integrator
+that does nothing.
+.IP 2.
+.B "And it asked all three rate components to move."
+The default tensor is axisymmetric \- Ixx = Iyy \- and for such a body
+omega_z is a CONSTANT of the free motion while omega_x and omega_y
+rotate about the symmetry axis.  The check was asking for something the
+physics forbids and reported "the z rate moved 0" as a fault.  It now
+asserts both: that x and y move and that z does not.
+.IP 3.
+.B "And it took the angle by acos, which is ill-conditioned exactly where the small angles are."
+The derivative of
+.CW acos
+is
+.CW "-1/sqrt(1-x^2)" ,
+which at a 7.6 degree rotation is \-15, so the 1e-4 quantisation of a
+quaternion stored as integers of ten thousand becomes 0.17 degrees of
+noise on the answer.  Summed over nine samples that was 1.7 per cent of
+a 1 deg/s measurement, and it read as a model turning slowly \- which
+is exactly the fault the truncation had really caused earlier, so it was
+the most plausible wrong answer available.  Taken by
+.CW atan2
+of the vector part against the scalar, which is well conditioned at
+both ends, the same model gives 75.9 degrees of 75.9.
+.LP
+All three are the same mistake in different clothes \(em a test written
+from the shape of the answer rather than from the physics \(em and all
+three would have been published as model faults.
+.B "The third is the worst of them, because it agreed with a fault that had genuinely existed."
+
+.NH 2
+And the pack was doing it too
+.PP
+The coulomb count is
+.CW "(drain - solar) dt / HZ" ,
+in milliamp-seconds from milliamp-ticks, and it divided and dropped the
+remainder like the other two.
+.B "At 450mA and a seven-tick interval the quotient is 31.5 and the half went every read,"
+so a pack discharged more slowly the more often it was looked at \- the
+observer-dependence again, one file over.  It carries now.
+.PP
+.B "That makes four places in three files where the same mistake was sitting,"
+and the shape of it is always the same: a rate times an interval,
+divided into a coarser unit, with nothing holding the remainder.
+.NH 2
+A check whose premise was never tested
+.PP
+The coulomb count failed at 21 per cent and
+.B "it was the prediction that was wrong, not the counter."
+The test commanded a 500mA drain and predicted the charge lost from the
+NET current at the two endpoints \- but the panels make whatever the
+attitude gives them, the satellite was tumbling, and the average over
+the interval was nothing like the average of its ends.
+.PP
+The answer is not a better model of the panels in the test.  It is to
+.B "measure in eclipse,"
+where the only current is the one being commanded: at beta zero the
+anti-sun point is half way round from the ascending node, the shadow
+spans 136 degrees of the orbit and the measurement is 18, so starting
+at mid-eclipse stays there throughout.  And the check now asserts that
+the panels made nothing, rather than assuming it \-
+.B "a premise that is not tested is not a premise."
+.NH 2
+What really bounds the time scale
+.PP
+.B #P/orbit.ctl
+accepts a time scale up to 200 and that ceiling is about the
+integration error.  It is not the limit that binds.
+.PP
+One
+.I advance
+may take at most
+.I Maxsteps
+steps, so a single read can integrate at most 4096 x 50ms = 204.8
+SIMULATED SECONDS however long it has been since the last one.
+.B "The time scale a reader actually gets is therefore 204800 divided by the milliseconds between its reads:"
+a tenth-second poll sustains two thousand and a five-second gap
+sustains forty.
+.PP
+.B tools/f407/simsoak.py
+reads the five files every few seconds at timescale 200, which asks for
+960 simulated seconds a read, and the backlog grows without bound.
+That is not a fault \- it is the model saying it cannot keep up, which
+is the whole reason the number is reported \- and the soak says so
+rather than passing silently.
+.B "The first version of that test asked only whether the backlog had QUADRUPLED, and so reported \(dqno growing backlog\(dq about one that had cleanly doubled."
+It now measures at both time scales and requires the backlog to stay
+bounded only at the one the model is supposed to sustain.
+.PP
+.B "And the second version of it ran both phases on one board,"
+so the timescale-1 phase inherited a hundred and forty thousand seconds
+of backlog from the stress phase and then measured that DRAINING.
+"Not growing" was perfectly true and meant nothing.
+.B "A phase that asks whether the model keeps up has to start from a model that is up to date,"
+so each phase boots its own.
+.PP
+.B "\(dqstill\(dq now discards the backlog as well,"
+which is a judgement and not a tidy-up: the verb means stop and be
+level, and integrating forty hours of a state that has just been thrown
+away is not keeping faith with time, it is spending it on nothing.  The
+other verbs keep the backlog, because they change the state the model
+is in rather than declaring where it starts from.
+.NH 2
+How it is checked
+.PP
+.B tools/f407/simcheck.py
+drives a kernel under QEMU's netduinoplus2 and asserts the physics
+against figures worked out independently of the code.  It is QEMU and
+not a board on purpose: the first attempt at this hung a board with no
+console and no response to the two control-Rs that reach the
+bootloader, and a physical reset button is not always within reach.
+.PP
+.B "Two things it gets right that cost a measurement each."
+The board's clock is not the host's \- under QEMU this kernel's tick
+runs about seven times faster than wall time, so
+.CW "sleep 30"
+at its prompt returns in four and a half seconds.  Every elapsed time
+in the checks therefore comes from the model's own counters:
+.B integrated
+in
+.B #P/imu.ctl
+and the orbit's closed-form
+.BR phase .
+Estimating it from host sleeps made a correct model look five times too
+fast for an hour.  And a periodic quantity is sampled by SETTING the
+phase rather than by letting the orbit run, so no sample interval
+aliases against a clock ratio nobody controls.

@@ -168,6 +168,11 @@ link
 # form is what a real driver on a real board should be: not three
 # entries in #P but a device of its own, which is phase 2 of
 # doc/pycubed-plan.ms and wants the parts on a desk first.
+# orbitsim: where the satellite is, the field it is in, and whether it
+# is in sunlight.  Not a part and not pretending to be one -- it is the
+# environment the three simulated parts above are simulated IN, and it
+# is separate because an orbit is not a property of an IMU.  #P/orbit.
+	orbitsim
 	imubmx160
 	pwradm1176
 	chgbq25883

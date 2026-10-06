@@ -23,9 +23,26 @@
 # See doc/xip.ms and the XIPMODS comment in the mkfile.
 #
 # And the sizes are why there are two lists at all.  Decoded, measured
-# from the generated prog.s: sh.dis 77458 bytes, sh/std.dis 25107,
-# lil.dis 26185, sed.dis 22701 -- 347190 for this whole list, in an
-# image that may not pass 901120.
+# from the generated prog.s: sh.dis 73332 bytes, sh/std.dis 23604,
+# lil.dis 25356, sed.dis 21636, ax25chk.dis 14376, in an image that may
+# not pass 913408.
+#
+# AND SED IS NOT IN IT ANY MORE, which is the first time this list has
+# had to give something up.  The attitude and orbit simulation --
+# orbitsim.c, the quaternion model in imubmx160.c, the battery curve in
+# pwradm1176.c -- is about ten kilobytes of kernel text, and this image
+# was already four kilobytes over the ceiling before the accuracy work
+# on it; it has not been flashable since orbitsim.c landed, and nothing
+# said so because the satellite image is the one being flashed.  sed is
+# the largest item nothing on this board uses: no init runs it, no
+# script in /lib does, and 21636 bytes is three times what was needed.
+# It is still in the root as a raw module, like mount below, so it is
+# there to be read and not to be run.
+#
+# If this list has to give up a second thing the next candidates by
+# size are ax25chk (14376) and dd (9852), in that order, and the
+# argument for keeping either is weaker than for the shell's own
+# libraries.
 XIPDIS=\
 	sh.dis\
 	sh/std.dis\
@@ -51,7 +68,6 @@ XIPDIS=\
 	ax25up.dis\
 	ax25chk.dis\
 	export.dis\
-	sed.dis\
 	cat.dis\
 	dd.dis\
 	ls.dis\
