@@ -7386,3 +7386,44 @@ and the rest are printed by
 .IR bigread (),
 which never ran: the relay returned first.
 .B "A failure that reports nothing costs a bench session to re-create; one that prints the numbers costs a scroll back."
+.NH 2
+The counters, and the end that cannot print them
+.PP
+At the moment the satellite's relay died:
+.DS
+.CW "sat: sent 42 recv 13"
+.CW "sat: ccabusy 0 ccamode 1 fifoerr 0 watch 0 of 80"
+.CW "sat: rxstall 0 rxpartial 0"
+.DE
+.B "The sender is spotless."
+It transmitted all three frames, never deferred for a busy channel, and
+its own receiver reports no FIFO error, no stall and no partial payload.
+.PP
+.B "And the ground's numbers are not there, which is the instrument's fault and not the board's."
+.I Counters ()
+prints where a relay direction DIES, and that is the TRANSMITTING end:
+its T1 expires waiting for an acknowledgement and its read of
+.B #a
+fails.  The receiver that missed the frame does not fail.  It sits in
+.CW sys->read
+waiting for the rest of a Styx message that is never coming, with no
+timeout anywhere in the mount driver to rescue it \-
+.B "the end that loses a frame is the end that goes quiet, not the end that errors."
+.PP
+.I Bigread ()
+spawns a watchdog now: thirty seconds, then the counters, whether or not
+the read ever returns.  If it completed they are a second sample and
+cost a few lines; if it did not they are the only account of the
+receiver there will be.
+.PP
+.B "What the sender's zeros already rule out"
+is worth keeping separate from what the receiver's will say.  No
+.B ccabusy
+means the third frame was not deferred for a busy channel before it went
+out.  No
+.B fifoerr
+or
+.B rxstall
+on the sender means its own receive path was not in a recovery state
+that might have swallowed the acknowledgement.  So the frame was keyed,
+and what happened to it is a question for the other end.

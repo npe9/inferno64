@@ -339,6 +339,22 @@ client(peer: string, carrier: int)
 # as a courtesy rather than as the measurement.
 bigread()
 {
+	# A WATCHDOG, BECAUSE THE END THAT LOSES A FRAME IS THE END THAT
+	# GOES QUIET.
+	#
+	# counters() prints where a relay direction DIES, and that is the
+	# transmitting end: its T1 expires waiting for an acknowledgement
+	# and its read of #a fails.  The receiver that missed the frame
+	# does not fail -- it sits in sys->read waiting for the rest of a
+	# Styx message that is never coming, with no timeout anywhere in
+	# the mount driver to rescue it.
+	#
+	# So the run that mattered gave the SENDER's numbers, which were
+	# spotless -- sent 42, fifoerr 0, rxstall 0, rxpartial 0 -- and
+	# said nothing about the receiver, which is where the frame went.
+	# One process, thirty seconds, printing the device's own counters
+	# whether or not the read ever returns.
+	spawn stalled();
 	a := slurp("/n/dev/arch");
 	if(a == ""){
 		sys->print("styx: /n/dev/arch: %r\n");
@@ -469,6 +485,17 @@ protect(fd: ref Sys->FD): ref Sys->FD
 	# -- which is the cheaper order and was available all along.
 	keepconn = c :: keepconn;
 	return c.dfd;
+}
+
+# Thirty seconds after bigread starts, print the counters regardless.
+# If the read completed, these are a second sample and cost a few lines;
+# if it did not, they are the only account of the receiver there will be.
+stalled()
+{
+	sys->sleep(30000);
+	sys->print("styx: thirty seconds into bigread, whatever it is"
+		+ " doing\n");
+	counters();
 }
 
 # What the radio and the conversation have counted, printed in the lines
