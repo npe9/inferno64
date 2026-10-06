@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+#
+# Find switch jump tables whose RANGE CHECK is more permissive than the table
+# is long -- a dispatch that branches through code read as an offset.
+#
+#	python3 tools/jtag/switchtab os/inferno/raspi3b/kernel8.img
+#	python3 tools/jtag/switchtab <img> <elf>
+#
+# WHAT IT FOUND, and this is why it exists.  conswrite() in os/inferno/port/
+# devcons.c dispatches
+#
+#	switch((ulong)c->qid.path){ ... }
+#
+# over sixteen sparse cases, and 7c emitted
+#
+#	SUBW  $1,w3,w3		case values start at 1
+#	CMPW  $0x1c,w3		so indices 0..28 pass: TWENTY-NINE slots
+#	B.HI  default
+#	ADR   x4,.+0x10		x4 = the table
+#	LDRSW x17,[x4,w3,lsl 2]
+#	ADD   x17,x17,x4
+#	BR    x17
+#	<table>
+#
+# with a table only TWENTY-THREE entries long.  The table is well formed for
+# indices 0..22 -- eleven real targets and the gaps filled with the default --
+# and then it simply stops, so indices 23..28 read the instructions that follow
+# it as jump offsets:
+#
+#	[23] 14001b6c -> 0x1417ad98   a `B' instruction read as an offset
+#	[24] 00000000 -> 0x17922c     ZERO: branches to the table itself
+#	[25] 000800cc -> 0x1f92f8
+#	[26] 00000000 -> 0x17922c     ZERO
+#	[27] 80000000 -> negative, wild
+#	[28] ffffffff -> 0x17922b     not even aligned
+#
+# and the five cases that land there are REACHABLE AND ORDINARY: Qsysstat,
+# Qtime, Quser, Qconfig, Qmordor.  So writing /dev/time branches to a garbage
+# address.  It presented as "trap type 0 esr 0x2000000" -- EC 0, an undefined
+# instruction -- at a pc that moved with the build, which is what sent three
+# sessions' worth of hypotheses at the JIT, at markheap and at cache coherency
+# before anyone read the table.
+#
+# WHY A SCANNER.  The defect is invisible in the source: the switch is correct C
+# and the generated range check is correct for the case values.  Only the table
+# LENGTH is wrong, and nothing but the instruction stream knows it.  It is also
+# the reason the bug looked intermittent -- whether a garbage entry faults
+# depends on what code happens to follow the table, so any change to layout
+# moves it between harmless and fatal.  A build in which it does not crash is
+# not a build in which it is absent.
+#
+# SAME FAMILY as this tree's recorded 6c defect, where unsigned switches of five
+# or more cases miscompiled on amd64.  That one was found from a wrong answer;
+# this one had to be found from the bytes.
+#
+# BOUND BY etext, like undefimm and umulladd: a kernel embeds data in its text
+# segment and an unbounded scan reads it as instructions.
+#
+import sys, subprocess, os
+
+def syms_of(elf):
+    out = subprocess.run(['python3',
+            os.path.join(os.path.dirname(__file__), 'ksyms'), elf],
+            capture_output=True, text=True).stdout
+    syms, etext = [], None
+    for l in out.splitlines():
+        f = l.split()
+        if len(f) < 3:
+            continue
+        try:
+            v = int(f[0], 16)
+        except ValueError:
+            continue
+        syms.append((v, f[2]))
+        if f[2] == 'etext':
+            etext = v
+    syms.sort()
+    return syms, etext
+
+def owner(syms, a):
+    lo, hi = 0, len(syms)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if syms[mid][0] <= a:
+            lo = mid + 1
+        else:
+            hi = mid
+    return (('?', 0) if lo == 0 else (syms[lo-1][1], a - syms[lo-1][0]))
+
+def is_br_reg(w):
+    # BR Xn: 1101011 0 0 00 11111 0000 00 Rn 00000
+    return (w & 0xFFFFFC1F) == 0xD61F0000
+
+def is_ldrsw_reg(w):
+    # LDRSW (register): size=10 opc=10, bit21=1, option/S, bits 11..10 = 10
+    return (w & 0xFFE00C00) == 0xB8A00800
+
+def is_cmpw_imm(w):
+    # SUBS (immediate), 32-bit, Rd=wzr
+    return (w & 0xFF80001F) == 0x7100001F
+
+def cmp_imm(w):
+    return (w >> 10) & 0xFFF
+
+def is_bcond(w):
+    return (w & 0xFF000010) == 0x54000000
+
+def entry_ok(w, tbl_addr, nslots, lo, hi):
+    """Is this word a plausible jump-table entry?
+
+    THE FIRST VERSION OF THIS WAS WRONG AND I SAID IT COULD NOT BE.  It
+    required the top sixteen bits to be zero, on the reasoning that an entry is
+    a small forward offset -- and asserted in a comment that the test was loose
+    "in the direction of reporting fewer, never more, so it cannot invent a
+    finding".  It invented seven.  LDRSW SIGN-EXTENDS, so a table entry is
+    freely NEGATIVE when the case body sits before the table, and brpatch,
+    menukey, _fmtdispatch and icmpiput6 all have entries like 0xffffff9c that
+    the test read as the end of the table.
+
+    Two lessons, and the second is the one worth keeping: a heuristic claimed to
+    be conservative was not, and the claim was in the comment rather than in a
+    control.  The criterion below is a real one -- the computed target must be a
+    plausible instruction address INSIDE THE ENCLOSING FUNCTION and not inside
+    the table -- and it is checked against conswrite, which is known to have a
+    short table, every time this file changes.
+    """
+    t = tbl_addr + (w - (1 << 32) if w & 0x80000000 else w)
+    if t & 3:
+        return False                    # not an instruction boundary
+    if t < lo or t >= hi:
+        return False                    # outside the enclosing function
+    if tbl_addr <= t < tbl_addr + 4*nslots:
+        return False                    # inside the table: not code
+    return True
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith('-')]
+    if not args:
+        sys.exit("usage: switchtab <kernel8.img> [ielf]")
+    img = args[0]
+    elf = args[1] if len(args) > 1 else \
+          os.path.join(os.path.dirname(img), 'iraspi3b')
+    base = 0x80000
+    d = open(img, 'rb').read()
+    syms, etext = syms_of(elf)
+    if etext is None:
+        print("switchtab: no etext in %s -- REFUSING an unbounded scan" % elf,
+              file=sys.stderr)
+        sys.exit(2)
+    limit = min(len(d), etext - base)
+    words = [int.from_bytes(d[o:o+4], 'little') for o in range(0, limit - 3, 4)]
+    print("switchtab: %s, text %#x..%#x (%d words)"
+          % (os.path.basename(img), base, etext, len(words)))
+    bad = 0
+    tabs = 0
+    for k in range(3, len(words) - 2):
+        if not is_br_reg(words[k]):
+            continue
+        #
+        # Walk back for the LDRSW that fed it and the CMPW/B.cond that bounds
+        # it.  A short window: the generator emits these together.
+        #
+        ld = cm = None
+        for j in range(k - 1, max(k - 7, -1), -1):
+            if ld is None and is_ldrsw_reg(words[j]):
+                ld = j
+            if is_cmpw_imm(words[j]) and j + 1 < len(words) \
+            and is_bcond(words[j+1]):
+                cm = j
+                break
+        if ld is None or cm is None:
+            continue
+        tabs += 1
+        bound = cmp_imm(words[cm]) + 1          # indices 0..imm pass
+        tbl = k + 1
+        a = base + 4 * k
+        name, off = owner(syms, a)
+        #
+        # The enclosing function's extent, from the symbol table: the entry's
+        # target has to land in it.  Without a bound the criterion degenerates
+        # to "4-aligned", which is most words.
+        #
+        lo = a - off
+        hi = etext
+        for v, nm in syms:
+            if v > lo:
+                hi = v
+                break
+        tbl_addr = base + 4*tbl
+        n = 0
+        while tbl + n < len(words) and n < bound \
+        and entry_ok(words[tbl + n], tbl_addr, bound, lo, hi):
+            n += 1
+        if n < bound:
+            bad += 1
+            print("switchtab: %s+%#x at %#x: range check admits %d slots,"
+                  " table looks %d long" % (name, off, a, bound, n))
+            for i in range(max(n - 1, 0), min(bound, n + 4)):
+                w = words[tbl + i]
+                sw = w - (1 << 32) if w & 0x80000000 else w
+                print("switchtab:     [%2d] %08x -> %#x%s"
+                      % (i, w, base + 4*tbl + sw,
+                         "   <- PAST THE TABLE" if i >= n else ""))
+    print("switchtab: %d jump-table dispatch(es), %d with a short table" % (tabs, bad))
+    if bad == 0:
+        print("switchtab: a zero here means no MISMATCH was found, not that the")
+        print("switchtab: tables are right -- the end of a table is inferred from")
+        print("switchtab: what its entries look like, and that inference is loose")
+        print("switchtab: in the direction of reporting fewer, never more.")
+    return 1 if bad else 0
+
+if __name__ == '__main__':
+    sys.exit(main())

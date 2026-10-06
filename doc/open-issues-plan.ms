@@ -9815,3 +9815,170 @@ width, so it is largest exactly for the narrow rectangles this workload
 produces, and it subsumes coalescing without the gap cost.  Done second it
 would appear to shrink step 3's benefit and step 3 would be credited with a
 reduction the hoist had already taken.
+.NH 2
+A SWITCH JUMP TABLE SIX ENTRIES SHORT OF ITS OWN RANGE CHECK
+.LP
+Adding four lines to
+.CW flushmemscreen
+panicked the board, and chasing it found something that has nothing to do with
+the four lines.
+.CW conswrite()
+in
+.CW os/inferno/port/devcons.c
+dispatches
+.P1
+switch((ulong)c->qid.path){ ... }
+.P2
+over sixteen sparse cases, and in build 1791295327 the linked kernel contained
+.P1
+SUBW  $1,w3,w3		case values start at 1
+CMPW  $0x1c,w3		so indices 0..28 pass: TWENTY-NINE slots
+B.HI  default
+ADR   x4,.+0x10		x4 = the table
+LDRSW x17,[x4,w3,lsl 2]
+ADD   x17,x17,x4
+BR    x17
+<table>
+.P2
+.B "with a table TWENTY-THREE entries long."
+Entries 0 to 22 are well formed \(em eleven real targets, which is exactly the
+eleven cases whose index is 22 or below, with the gaps filled by the default
+\(em and then it stops:
+.P1
+[23] 14001b6c -> 0x1417ad98   a `B' instruction read as an offset
+[24] 00000000 -> 0x17922c     ZERO: branches to the table itself
+[25] 000800cc -> 0x1f92f8     past etext
+[26] 00000000 -> 0x17922c     ZERO
+[27] 80000000 -> wildly negative
+[28] ffffffff -> 0x17922b     not even aligned
+.P2
+.B "The five cases that land there are ordinary and reachable:"
+.CW Qsysstat ,
+.CW Qtime ,
+.CW Quser ,
+.CW Qconfig ,
+.CW Qmordor .
+So writing
+.CW /dev/time
+branched to a garbage address \(em and the panic was exactly that:
+.CW "trap type 0 esr 0x2000000"
+(EC 0, undefined instruction) at
+.B "0x17922c, which IS the table's own first word,"
+immediately after
+.CW RASPI3B-OK ,
+with
+.CW r30
+=
+.CW rwrite+0x1a0 .
+.CW table[24]
+is 0, so
+.CW "BR x17"
+jumped to the table base and executed an entry as an instruction.
+.NH 3
+The loss is downstream of 7c, measured
+.LP
+.CW "7c -S"
+on the same file emits
+.B "TWENTY-NINE"
+.CW BCASE
+entries after
+.CW "CMPW $28" ,
+and
+.CW swit2() 's
+.CW direct
+path in
+.CW utils/7c/swt.c
+is correct by inspection: it fills gaps with the default and the count works out
+to 29 for this case set.
+.B "So 7c produced 29 and the image contained 23."
+.PP
+.B "And counting -S is legitimate here only because -S IS the compile."
+This plan already records that
+.CW "6c -S"
+writes the object as a side effect, and I ran
+.CW "7c -S"
+on
+.CW ../port/devcons.c
+from inside the build directory \(em the precise hazard that note warns about.
+It was the same compiler and flags so nothing was poisoned, but the object was
+then deleted and the file touched to force an honest recompile.
+.NH 3
+IT IS BUILD-DEPENDENT, which is the part that must not be overstated
+.LP
+.P1
+build 1791295327   conswrite table 23 of 29   1 of 143 dispatches short
+build 1791295798   same
+build 1791295815   same
+build 1791296017   conswrite table CORRECT    0 of 143 dispatches short
+.P2
+The last differs only in that
+.CW devcons.7
+was deleted and
+.CW devcons.c
+touched before building.
+.B "So this is not a permanent property of the source,"
+and whether a given kernel has it depends on the build.  What that means
+practically:
+.B "a kernel in which it does not crash is not a kernel in which it is absent"
+\(em the garbage entries' values depend on whatever code follows the table, so
+layout decides between harmless and fatal.
+.PP
+.B "What is NOT established:"
+which pass loses the six entries, and whether the kernel currently installed has
+them.  I am not going to guess at either; the scanner answers the second for any
+image, and the first needs 7l instrumented.
+.NH 3
+tools/jtag/switchtab, and the fifth instrument of this session to be wrong
+.LP
+It finds the
+.CW "CMPW; B.cond; ADR; LDRSW; ADD; BR"
+shape, infers the table's end, and compares that with the bound.  On this kernel:
+143 dispatches, one short.
+.PP
+.B "Its first version reported seven, all false, and its comment asserted that it could not."
+It required a table entry's top sixteen bits to be zero, reasoning that an entry
+is a small forward offset, and the comment said the test was loose "in the
+direction of reporting fewer, never more, so it cannot invent a finding".
+.B "LDRSW SIGN-EXTENDS."
+A table entry is freely negative when the case body sits before the table, and
+.CW brpatch ,
+.CW menukey ,
+.CW _fmtdispatch
+and
+.CW icmpiput6
+all have entries like
+.CW 0xffffff9c
+that the test read as the end of the table.
+.PP
+.B "The claim of conservatism was in the comment rather than in a control,"
+which is the whole lesson.  The criterion is now a real one \(em the computed
+target must be 4-aligned, inside the enclosing function, and not inside the
+table \(em and the control is
+.CW conswrite
+itself, re-run on every change to the file.
+.NH 3
+Five instruments wrong in one session, and what they have in common
+.LP
+.IP \(bu
+A
+.CW memfillcolor
+check that could not fire when
+.CW allocd
+was 0, so its silence had two meanings.
+.IP \(bu
+A print budget that counted CALLS when the quantity worth bounding was DISTINCT
+CALL SITES, spent at boot before the interesting path ran.
+.IP \(bu
+A provenance classifier that labelled the one known bug
+.CW [unsigned]
+four different ways.
+.IP \(bu
+A fitted per-call cost that was mostly the timing instrument itself.
+.IP \(bu
+This scanner's entry test, which rejected negative offsets and invented seven
+findings while claiming it could not.
+.PP
+.B "Not one was caught by looking at output."
+Every one needed something that independently knew the answer \(em a control, a
+known-bad case, a before/after.  The corollary worth keeping:
+.B "`it printed a plausible number' and `it printed nothing' are the same amount of evidence."
