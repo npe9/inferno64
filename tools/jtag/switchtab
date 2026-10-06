@@ -225,9 +225,13 @@ def main():
     print("switchtab: %d jump-table dispatch(es), %d with a short table" % (tabs, bad))
     if bad == 0:
         print("switchtab: a zero here means no MISMATCH was found, not that the")
-        print("switchtab: tables are right -- the end of a table is inferred from")
-        print("switchtab: what its entries look like, and that inference is loose")
-        print("switchtab: in the direction of reporting fewer, never more.")
+        print("switchtab: tables are right -- the end of a table is INFERRED from")
+        print("switchtab: what its entries look like, and that inference has")
+        print("switchtab: produced false positives twice (7 here, 74 on a peer's")
+        print("switchtab: image with pools scattered through the text).  The real")
+        print("switchtab: detector is flushpool()'s diag in utils/7l/span.c, which")
+        print("switchtab: sits at the decision point.  A zero here is WEAKER")
+        print("switchtab: evidence than a silent diag.")
     return 1 if bad else 0
 
 if __name__ == '__main__':
