@@ -9196,17 +9196,118 @@ For
 .CW "Rect(-2,-2,3,3)"
 in GREY1:
 .P1
-l = wordsperline = 1,  Dy = 5,  nw = 5
-alloc = 2*sizeof(intptr) + 5*4 = 36 bytes,  bdata = base+16
-zero  = -(4*1*(-2) - (2*1+7)/8) = -(-8-1) = 9
-byteaddr(r.min) = bdata + 9 - 8 - 1 = bdata     exactly
-memset32 count = i->width*Dy(i->r) = 5 words = 20 bytes
+l = wordsperline = 2,  Dy = 5,  nw = 10
+alloc = 2*sizeof(intptr) + 10*4 = 56 bytes,  bdata = base+16
+zero  = -(4*2*(-2) - (2*1+7)/8) = -(-16-1) = 17
+byteaddr(r.min) = bdata + 17 - 16 - 1 = bdata     exactly
+memset32 count = i->width*Dy(i->r) = 10 words = 40 bytes
 .P2
-.B "which is exactly the allocation, so memfillcolor does not overrun it."
+.B "CORRECTED: I first wrote l=1 and zero=9, by hand, and both were wrong."
+A peer ran the real
+.CW unitsperline
+instead: for depth 1 and x in [-2,3), bits -2..-1 are in the 32-bit unit spanning
+[-32,-1] and bits 0..2 in the one spanning [0,31], so it is TWO words, not one.
+.B "And the conclusion does not need these numbers at all,"
+which is the better form of it: the count is
+.CW "i->width*Dy(i->r)" ,
+.CW i->width
+IS
+.CW l ,
+and the allocation is
+.CW "l*Dy(r)"
+words \(em so
+.B "they are identically equal for every rectangle and every depth,"
+and
+.CW memfillcolor
+can never overrun an image from
+.CW allocmemimage .
+Arithmetic on one case was the weaker argument and it was also the one I got
+wrong.
+.PP
 The destination is therefore garbage because
 .CW i->data->bdata
 is garbage, which means
-.CW "poolalloc(imagmem, 36)"
+.CW poolalloc()
 returned a corrupted pointer \(em
 .B "pool corruption that the ellipse path only EXPOSES,"
 because it allocates one small image per ellipse, 300 a batch.
+.NH 3
+The discriminator DID NOT FIRE, which moves the corruption out of libmemdraw
+.LP
+.CW memfillcolor
+now checks, for an
+.CW allocd
+.CW Memdata ,
+that
+.CW bdata
+equals
+.CW "&base[2]"
+\(em which
+.CW allocmemimage
+sets and nothing may move.  Build 1791288... panics at the identical address
+with
+.B "no print,"
+so
+.B "bdata agrees with base and base itself is the bad pointer."
+.PP
+.B "And that should be impossible for a freshly allocated image."
+The faulting destination is
+.CW base+16 ,
+and
+.CW allocmemimage
+writes
+.CW base[0]
+and
+.CW base[1]
+FIRST, in the same eight-byte neighbourhood of the same page.  An unmapped
+.CW base
+would have faulted there, inside
+.CW allocmemimage ,
+not here.
+.PP
+.B "Which makes the next question WHICH IMAGE, and the scrape cannot answer it."
+It named
+.CW bellipse ;
+a scrape that shows the same symbol twice at two offsets is announcing that it
+is not a chain.
+.CW libmemdraw
+has five
+.CW memfillcolor
+call sites and one of them \(em
+.CW membrush()
+in
+.CW line.c
+\(em fills a
+.B "STATIC CACHED image"
+rather than a fresh one, which a stale
+.CW Memdata
+would look exactly like.  So the instrument now prints
+.CW getcallerpc()
+with the fields, bounded to six a boot.
+.PP
+.B "A peer's host run makes the pool the favourite."
+9.2 million ellipses at the same thickness through emu's allocator, no fault \(em
+different allocator, different pool, and emu does not free the way the board
+does.
+.NH 3
+An instrument rule this earned: r30 answers "who called this" for free
+.LP
+.B "The link register in the trap frame is the immediate caller, exactly, with no unwinding."
+.CW tools/jtag/kstack
+and
+.CW dumpstack
+both produce SCRAPES and say so, and the tell that a scrape is not a chain is
+cheap to read:
+.B "the same symbol appearing twice at two different offsets."
+.CW memset32
+and
+.CW memfillcolor
+each appeared twice in this one, which is what sent me to
+.CW r30
+instead.
+.PP
+.CW getcallerpc()
+is the same trick inside the code, and it is why the second instrument asks the
+caller rather than reading a stack.  Same family as this plan's
+"count the work, not the sightings": prefer the thing that is recorded exactly
+over the thing that has to be reconstructed.

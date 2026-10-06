@@ -2705,6 +2705,73 @@ memfillcolor(Memimage *i, u32 val)
 	if(val == DNofill)
 		return;
 
+	/*
+	 * A SELF-CONSISTENCY CHECK, because this is where a thick ellipse faults
+	 * and the question is WHICH pointer is bad.
+	 *
+	 * memellipse's very-thick path calls bellipse(), which allocates a small
+	 * GREY1 disc and fills it, and on raspi3b that faults inside the memset32
+	 * below with a destination whose low 32 bits look like a plausible
+	 * imagmem address and whose bits 32-33 are set.  The arithmetic here is
+	 * exact for that image -- byteaddr(r.min) is bdata and the count is
+	 * width*Dy, which is the whole allocation -- so the destination is
+	 * garbage only because data->bdata is.
+	 *
+	 * allocmemimage() sets bdata to &base[2] and nothing else may move it, so
+	 * for an allocd Memdata those two must agree.  This DISCRIMINATES: if it
+	 * fires, bdata was corrupted after allocation; if it does not and the
+	 * memset32 still faults, then bdata agrees with base and base itself is
+	 * the bad pointer, which puts the corruption in whatever allocated the
+	 * Memdata rather than in the image.
+	 *
+	 * Bounded to four prints a boot.  An unbounded kernel print is a denial
+	 * of service against every other diagnostic, and this sits under a loop
+	 * that runs 300 times a batch.
+	 */
+	if(i->data != nil && i->data->allocd
+	&& i->data->bdata != (uchar*)&i->data->base[2]){
+		static int nbad;
+
+		if(nbad++ < 4)
+			print("memfillcolor: bdata %#p != &base[2] %#p"
+				" (base %#p data %#p zero %d width %d)\n",
+				i->data->bdata, (uchar*)&i->data->base[2],
+				i->data->base, i->data, (int)i->zero,
+				(int)i->width);
+		return;
+	}
+	/*
+	 * IT DID NOT FIRE, so bdata agrees with base and base itself is the bad
+	 * pointer.  That should be impossible for a freshly allocated image: the
+	 * destination is base+16 and allocmemimage writes base[0] and base[1]
+	 * FIRST, in the same 8-byte-aligned neighbourhood, so an unmapped base
+	 * would have faulted there and not here.
+	 *
+	 * Which makes the next question WHICH IMAGE, and the dumpstack scrape
+	 * cannot answer it -- it named bellipse, and a scrape that shows the same
+	 * symbol twice at two offsets is announcing that it is not a chain.
+	 * libmemdraw has five memfillcolor call sites and one of them,
+	 * membrush() in line.c, fills a STATIC CACHED image rather than a fresh
+	 * one.  A stale cached Memdata would look exactly like this.
+	 *
+	 * So print the caller's pc with the fields, bounded to six a boot.
+	 * getcallerpc() is the cheap version of the r30 trick that identified the
+	 * faulting caller in the first place: the link register answers "who
+	 * called this" for free and without a chain.
+	 */
+	{
+		static int nseen;
+
+		if(nseen++ < 6)
+			print("memfillcolor: from %#p image %#p data %#p base %#p"
+				" bdata %#p zero %d width %d r %d %d %d %d chan %#ux\n",
+				getcallerpc(&i), i, i->data,
+				i->data? i->data->base: nil,
+				i->data? i->data->bdata: nil,
+				(int)i->zero, (int)i->width,
+				i->r.min.x, i->r.min.y, i->r.max.x, i->r.max.y,
+				i->chan);
+	}
 	bits = rgbatoimg(i, val);
 	switch(i->depth){
 	case 24:	/* 24-bit images suck */
