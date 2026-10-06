@@ -244,6 +244,108 @@ static uvlong	vsend;		/* cycles at which the window closes */
 static uvlong	ntearop, ntearrow, nopchecked;
 static int	vsclosed;	/* the window filled up before it was read */
 
+/*
+ * A SECOND, NON-EXPIRING PHASE CLOCK, for charging the FLIP rather than the
+ * draws.
+ *
+ * vsbase/vsperiod above are deliberately cleared when the tear window closes
+ * after Tearframes, so a long run reports "window full" rather than drifting
+ * numbers.  The flip needs the phase for the whole session, and the drift
+ * measurement says it can have it: predicting 240 frames ahead from a
+ * 240-frame calibration is accurate to 1.146us, 0.0069 per cent of a frame,
+ * and the drift rate of 0.00477us/frame takes 8.1 hours to reach half a frame.
+ * So one calibration at boot holds, and these two are set once and never
+ * cleared.
+ *
+ * WHY THIS IS THE ONLY INSTRUMENT HERE THAT CAN SEE TEARING AT ALL.  Every
+ * other check in this file is a readback, and a readback reads memory -- it
+ * cannot observe what the scanout showed.  The phase can: the beam position is
+ * a function of elapsed time against a known vertical blank, so asking WHERE
+ * IN THE FRAME an event landed is answerable without looking at the screen.
+ *
+ * AND WITH A FLIP THE TEARING QUESTION MOVES.  Draws go to the back buffer,
+ * which the beam never reads, so a draw cannot tear; the flip can, because the
+ * scanout switches buffers wherever the beam happens to be.  tearcharge()
+ * therefore measures the WRONG THING once Dbuf is 1, and this measures the
+ * right one.
+ *
+ * RAW BUCKETS, NOT A ROW.  tearcharge() maps phase to a row linearly over
+ * ScrY, which assumes no blanking interval -- 640x480 has 525 total lines for
+ * 480 active, so about 8.6 per cent of the frame is blanked and that mapping is
+ * wrong by that much at the bottom.  The blank length is not known from the ARM
+ * side, so this reports the phase in sixteenths of a period and lets the host
+ * decide.  Bucket 0 is the one that matters: mboxvsync() returns AT a vertical
+ * blank, so phase near zero IS inside the blanking interval by construction,
+ * whatever its length.  A flip paced to land there cannot tear.
+ *
+ * ARMED BY teararm(), WHICH RUNS AT THE END OF screenstats() AND NOWHERE ELSE,
+ * so the clock does not exist until a dump has been taken.  That is why the
+ * report prints "charged N of M" rather than just the buckets: an unarmed clock
+ * says "charged 0 of 857" instead of printing sixteen zeroes that could be read
+ * as "no flip ever tore".  Arming it at boot would cost nine mboxvsync() waits,
+ * about 150ms, and the measurement protocol takes a baseline dump first anyway.
+ */
+/*
+ * PACE THE FLIP AGAINST THE PREDICTED PHASE, as a measurement.
+ *
+ * 0 is the shipping value and leaves bcmpresent() as it was.  1 spins on
+ * cycles() until the predicted phase is inside the first Flipwindow ticks of a
+ * frame, then flips.
+ *
+ * IT PLACES THE FLIP, measured: 24 of 423 baseline flips land in bucket 0
+ * against 379 of 380 paced, so the predicted phase is good enough.  The one
+ * stray landed in bucket 8 and that is the BOUND firing rather than a bad
+ * prediction.
+ *
+ * AND IT COSTS HALF A FRAME PER PRESENT: 9212us mean wait, 0.553 of a 16667us
+ * frame, throughput 42000 -> 18150 ops/s.  It does not phase-lock -- the draw
+ * takes 9.5ms of a 16.7ms frame, so the next arrival is effectively uniform
+ * again, and widening the window cannot help because the expected wait for
+ * asynchronous arrival is half a period whatever the window is.
+ *
+ * THE 57 PER CENT IS NOT THE COST OF TEAR-FREEDOM.  The client was presenting
+ * at 106.5 a second against 60Hz, 1.77x the refresh, so two of every five
+ * frames it drew were never shown.  Any correct vsync scheme takes those away.
+ * A kproc does not change that: moving the wait off drawlock stops it starving
+ * sdhostbcm and friends, which matters, but the client is still blocked to 60
+ * presents a second.  What does change it is NOT WAITING: present the most
+ * recently completed frame at each vblank and let the client keep drawing, at
+ * the 387us a present already measured.
+ *
+ * THE BASELINE IS ALSO SUB-BINOMIAL, which a peer caught: chi2 5.369 on 15 df
+ * where uniform random averages 15, span 24..32 against a +-2sd width of 20,
+ * seven buckets exactly at the minimum.  So the flips are not independent draws
+ * and something equidistributes them -- a flip interval incommensurate with the
+ * frame period walks the phase evenly.  That costs this experiment its claim of
+ * NECESSITY while leaving sufficiency: if the phase is a deterministic walk it
+ * is predictable from the flip index alone, and a collapse cannot then tell the
+ * clock apart from the walk.  The candidate explanation is that the walk is a
+ * property of gfxstress fill (one batch, one present) rather than of the
+ * system, which one unpaced run of a variable-rate client decides.
+ *
+ * WHAT IT CANNOT ESTABLISH, and this is the honest limit: that the chosen phase
+ * is tear-free.  Phase zero is the instant mboxvsync() returned, which is at a
+ * vertical blank plus whatever latency the firmware's signalling adds, and that
+ * latency is not knowable from here.  640x480 has 525 total lines for 480
+ * active, so the blank is about 8.6 per cent of a frame -- 1428us, wider than
+ * one bucket -- but whether phase zero sits inside it is a claim about what the
+ * scanout showed, and every instrument in this file is a readback.
+ *
+ * AND IT IS NOT A SHIPPABLE MECHANISM, deliberately.  The spin runs with
+ * drawlock held and waits up to a whole frame, which is exactly what the
+ * comment in bcmpresent() rules out for production: it stops every Dis draw and
+ * starves sdhostbcm, sdhcibcm, btbcm and pwmbcm.  A shippable version has to
+ * wake a kproc OUTSIDE both locks.  This exists to decide whether that design
+ * is worth writing, before writing it.
+ */
+enum { Flippace = 0 };
+
+static uvlong	fpbase, fpperiod;	/* never cleared, unlike vsbase/vsperiod */
+static uvlong	nflipwait;		/* total ticks spent waiting for phase */
+static uvlong	nflippaced;		/* flips that actually got to wait */
+static uvlong	nflipphase[16];		/* where in the frame each flip landed */
+static uvlong	nflipphased;		/* how many were charged at all */
+
 static void teararm(void);
 static void vsdrift(void);
 
@@ -613,6 +715,20 @@ screenstats(void)
 		print("SCREEN flipcyc raw flips %llud repaircyc %llud flipcyc %llud"
 			" hz %lud\n",
 			nflip, tcycles_repair, tcycles_flip, (ulong)m->cpuhz);
+		/*
+		 * Bucket 0 is the blanking interval and is the whole point: a
+		 * flip there cannot tear.  Printed as sixteenths rather than as
+		 * a tear count because the blank LENGTH is not known here, so
+		 * the kernel must not be the thing that decides which buckets
+		 * are safe.
+		 */
+		print("SCREEN flipwait paced %llud ticks %llud hz %lud window %llud\n",
+			nflippaced, nflipwait, (ulong)m->cpuhz, fpperiod/32);
+		print("SCREEN flipphase charged %llud of %llud sixteenths",
+			nflipphased, nflip);
+		for(i = 0; i < nelem(nflipphase); i++)
+			print(" %llud", nflipphase[i]);
+		print("\n");
 	print("SCREEN dbuf eager %llud defer %llud overlap %llud"
 		" skipped %llud over %llud fullish %llud adj %llud samerect %llud\n",
 		neagerbyte, ndeferbyte, noverlapbyte,
@@ -1013,6 +1129,24 @@ bcmpresent(void)
 	 */
 	cycles(&t1);
 	tcycles_repair += t1 - t0;
+	/*
+	 * Spin to the predicted phase.  Bounded by one period plus the window,
+	 * because the phase advances monotonically; the bound is checked rather
+	 * than assumed, since a spin count is not a timeout and a wrong period
+	 * would otherwise hang the kernel with drawlock held.
+	 */
+	if(Flippace && fpperiod != 0){
+		uvlong lim, w, now;
+
+		w = fpperiod / 32;		/* the target window, ~520us */
+		lim = t1 + fpperiod + w;
+		for(now = t1; now < lim; cycles(&now))
+			if((now - fpbase) % fpperiod < w)
+				break;
+		nflipwait += now - t1;
+		nflippaced++;
+		t1 = now;
+	}
 	if(mboxvirtoffset(0, fbfront? 0: ScrY) < 0){
 		cycles(&t2);
 		tcycles_flip += t2 - t1;
@@ -1028,6 +1162,15 @@ bcmpresent(void)
 	}
 	cycles(&t2);
 	tcycles_flip += t2 - t1;
+	/*
+	 * Charge the phase of the exchange's START, not its end: t1 is when the
+	 * offset write was issued and t2 is 168us later, so charging t2 would
+	 * attribute the flip to a tenth of a frame after the event.
+	 */
+	if(fpperiod != 0){
+		nflipphase[((t1 - fpbase) % fpperiod) * 16 / fpperiod]++;
+		nflipphased++;
+	}
 	fbfront = !fbfront;
 	nflip++;
 	/* 3. draw into what used to be shown */
@@ -1422,6 +1565,12 @@ teararm(void)
 	vsmeasuredus = m->cpuhz? vsmeasured * 1000000 / (uvlong)m->cpuhz: 0;
 	vsbase = b;
 	vsend = b + (uvlong)Tearframes * vsperiod;
+	/*
+	 * The flip's phase clock, from the same calibration but not subject to
+	 * the window: see nflipphase[] for why it is allowed to outlive it.
+	 */
+	fpbase = b;
+	fpperiod = vsperiod;
 }
 
 /*

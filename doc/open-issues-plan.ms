@@ -8798,3 +8798,132 @@ done the same thing in a different variable.
 run the control arm on the build that has the change in it but switched OFF.
 That is one board command, it costs nothing, and it is the only thing that
 separates "my change did this" from "a rebuild did this".
+.NH 2
+H1a.  The phase clock CAN place a flip, and blocking to do it costs half a frame
+.LP
+Tear-freedom was the only argument left for the flip and I had written that no
+instrument here can check it.
+.B "That was half wrong."
+A readback cannot see what the scanout showed, but the PHASE can, because the
+beam position is a function of elapsed time against a known vertical blank.
+.PP
+So
+.CW screenbcm.c
+now keeps a SECOND phase clock \(em
+.CW fpbase ,
+.CW fpperiod
+\(em which unlike
+.CW vsbase / vsperiod
+is never cleared when the tear window closes, because the drift measurement
+earlier in this plan says it can be trusted for hours.  Each flip's phase is
+charged into sixteenths of a frame.
+.NH 3
+The baseline: the flip lands anywhere, so almost every flip tears
+.LP
+.P1
+sixteenths  24 24 32 24 29 24 31 24 24 25 32 25 28 25 28 24    (423 flips)
+.P2
+.B "5.7 per cent of flips land in bucket 0; the other 94 per cent are in the active area."
+That is the tearing, measured, without looking at the screen, and it is the
+first figure in this whole item that is about the scanout rather than about
+pixels in memory.
+.NH 3
+Paced to the predicted phase: 379 of 380
+.LP
+.CW "Flippace = 1"
+spins on
+.CW cycles()
+until the predicted phase is inside the first
+.CW period/32
+ticks of a frame.
+.P1
+                  bucket 0    of total
+baseline                24         423      5.7%
+paced                  379         380     99.7%
+.P2
+.B "The phase clock places the flip."
+One flip of 380 landed in bucket 8, and that is the BOUND firing rather than a
+missed prediction: the spin is limited to one period plus the window, because a
+spin count is not a timeout and a wrong period would hang the kernel with
+drawlock held.  It fired once in 380, which is why it was written as a checked
+bound and not as a
+.CW while (1) .
+.NH 3
+And the cost is half a frame per present, measured
+.LP
+.P1
+mean wait        176873 ticks = 9212 us = 0.553 of a 16667 us frame
+throughput       42000 -> 18150 ops/s   (43 per cent of baseline)
+presents/s       106.5 -> 48.2          (refresh is 60.0 Hz)
+.P2
+.B "0.553 of a frame is what uniform arrival costs, and it does not phase-lock."
+The window is
+.CW period/32 ,
+so a present arriving just after it closes waits nearly a whole frame; the draw
+takes about 9.5ms of a 16.7ms frame, so the next arrival is effectively uniform
+again.  Widening the window does not help: for asynchronous arrival the expected
+wait is half a period whatever the window is.
+.NH 3
+WHICH IS THE DESIGN ANSWER, and it is not the one the 57 per cent suggests
+.LP
+.B "The client was presenting at 1.77x the refresh rate."
+106.5 presents a second against 60 Hz, so
+.B "two of every five frames it drew were never shown."
+The 57 per cent is not the cost of tear-freedom; it is gfxstress losing the
+right to present frames nobody can see, and it would lose that to any correct
+vsync scheme on any system.
+.PP
+.B "A kproc does not fix this and I should not write one."
+Moving the wait off
+.CW drawlock
+stops it starving
+.CW sdhostbcm
+and friends, which matters, but the client is still blocked until the next
+vblank and still capped at 60 presents a second.
+.PP
+.B "What fixes it is not waiting at all:"
+present the most recently COMPLETED frame at each vblank and let the client keep
+drawing.  Then the client runs at its own rate, the screen updates 60 times a
+second, and the real cost is the 387us a present already measured \(em not half
+a frame.  That needs a third buffer, or the acceptance that a client drawing
+faster than the refresh will overwrite a frame that was never shown, which for
+this scheme is not a loss because the frame was not going to be shown anyway.
+.NH 3
+A LIMIT, written before the result rather than after it
+.LP
+.B "Phase zero is the instant mboxvsync() returned,"
+which is a vertical blank plus whatever latency the firmware's signalling adds,
+and that latency is not knowable from here.  640x480 has 525 total lines for
+480 active, so the blank is about 8.6 per cent of a frame \(em 1428us, wider
+than one bucket \(em but whether phase zero sits inside it is a claim about what
+the scanout showed.
+.PP
+.B "So this establishes PLACEMENT and not tear-freedom."
+A flip can be put where we choose, repeatably, 379 times in 380.  Whether that
+place is inside the blanking interval is the one question this rig cannot
+answer without someone looking at the screen.
+.NH 3
+And the baseline histogram is TOO UNIFORM, which a peer caught and which costs the control
+.LP
+.P1
+chi2 = 5.369 on 15 df, where a uniform random process averages 15
+observed span 24..32, width 8; binomial +-2sd would be 16.5..36.4, width 20
+seven buckets sit EXACTLY at the minimum
+.P2
+.B "Sub-binomial variance means the flips are not independent draws from a uniform phase."
+Something is equidistributing them, and the candidate is a deterministic beat: a
+flip interval incommensurate with the frame period walks the phase evenly and
+hits every bucket almost equally.
+.PP
+.B "Which costs the experiment its claim of NECESSITY, though not of sufficiency."
+If the phase is a deterministic walk it is predictable from the flip INDEX, and
+a collapsed histogram cannot then distinguish "the clock can place a flip" from
+"the phase was already predictable and anything would collapse it".
+.PP
+.B "The resolution I would propose, and it is testable:"
+the near-constant present interval is a property of
+.CW "gfxstress fill"
+\(em one batch, one present \(em and not of the mechanism.  A client whose
+present interval varies should give a properly binomial baseline.  That is one
+unpaced run of a variable-rate workload, and it decides whether the determinism
+is the workload's or the system's.
