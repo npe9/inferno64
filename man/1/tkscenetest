@@ -173,16 +173,51 @@ The widgets are laid out with
 .B pack
 into a 160\(mu60 image. The four states this once listed as uncovered \(em a
 focused widget, a partially-clipped one, a posted menu with a cascade and a
-non-default colour scheme \(em are now covered. What is still not: a
-.I scrolled
-text or listbox view as distinct from a part-scrolled scrollbar, a widget
-inside a
+non-default colour scheme \(em are now covered. What is still not: a widget inside a
 .B canvas
-window item, a non-default colour on anything but a label, and any widget
-whose geometry comes from
+window item, which
+.IR tkofftest (1)
+covers. A scrolled listbox view, a non-default colour on a non-label and
 .B grid
-rather than
-.BR pack .
+geometry are now covered.
+.PP
+.B "RESOLVED: a listbox's -width and -height are PIXELS here, not characters."
+The scrolled case used to skip, and the cause was in this program rather
+than in
+.IR libtk .
+A listbox or text widget given
+.B "-width 12 -height 3"
+comes out
+.B 14\(mu5
+pixels, because those options are a size and not a character count \(em
+.B "-width 120 -height 44"
+gives 122\(mu46. So four cases were drawing a five-pixel sliver, less than
+one line tall, and nothing could scroll because nothing was visible.
+.PP
+The probe that settled it was
+.BR "yview" " with no argument,"
+which answers the view as two fractions: it read
+.B "0.5 0.5"
+after a
+.BR "yview moveto 0.5" ,
+and top equal to bot means the visible-line count is zero \(em
+.B "act.height/lineheight"
+had truncated to nothing. The scroll had been working all along; there was
+no row to put on screen.
+.PP
+.B "And \(lqdrew something\(rq hid it,"
+because it counts bytes differing from white and the toplevel's grey
+background satisfies that whatever the widget does. The four degenerate
+cases reported 28736 of 28800 bytes of ink while rendering no listbox at
+all.
+.PP
+.B "What catches this class is the differ-from-base rule, applied to EVERY"
+variation rather than only to new ones. It had been applied to the cases
+added last and not to the ones written first, which is exactly where the
+degenerate widgets were. All twenty variations are now held to it, and the
+figures moved accordingly:
+.B "listbox with a selection"
+went from covering nothing to differing from a plain listbox by 6888 bytes.
 .PP
 .B "Two toplevels drawing alternately"
 are covered, and were the last mechanism gap.
