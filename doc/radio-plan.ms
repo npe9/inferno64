@@ -7221,6 +7221,35 @@ accused.
 .B "The theory was abandoned by READING THE DEVICE rather than by another trip to the bench,"
 which is the cheaper order and was available before the claim was made
 rather than after.
+.PP
+And then measured, which is cheaper still than being sure.
+.IR Styxseg (1)
+gained
+.B -D
+to drop the connection on purpose, reproducing the caller's mistake
+under a host emu:
+.DS
+.CW "kept:    STYXSEG-OK 270 to 271 over 109-byte frames"
+.CW "dropped: STYXSEG-OK 270 to 271 over 109-byte frames"
+.DE
+.B "Identical.  Dropping the connection is harmless, as the reference count says it must be."
+.NH 2
+And the harness cannot reproduce the wedge, which is itself a result
+.PP
+.B -D
+reproduces the caller's mistake and not its consequence: under emu the
+mount completes and the reads pass.  So whatever wedges the satellite is
+not in
+.I exportfs ,
+.I devmnt
+or the
+.I devssl
+LOGIC \- all three are the same source under emu \- and is in something
+the host does not have.
+.B "That leaves the kernel's own build of the device, #a underneath it, and this part's memory and timing."
+A list of three is a better place to start than a list of everything,
+and it was arrived at without a board.
+
 .NH 2
 What is left to chase, and the part that is not the caller's fault
 .PP
