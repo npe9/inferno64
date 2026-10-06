@@ -10497,3 +10497,134 @@ the peer built one specifically because of the population point, and it found
 bimodality INSIDE a client \(em which a second, better-chosen mean would also
 have missed.
 .B "When a population is in doubt, the fix is a distribution, not a better average."
+.NH 2
+FIXED: the kernel linked libmath but never REGISTERED it, so any client loading Math died
+.LP
+A peer's theory was right and their own refutation of it rested on a wrong
+premise about emu.
+.CW wm/bounce
+and
+.CW wm/clock
+both do
+.P1
+math = load Math Math->PATH;
+.P2
+with no nil check;
+.CW wm/colors
+does not.
+.B "And the raspi3b kernel registered no Math module:"
+.P1
+linked module tables   Tkmodtab Sysmodtab Drawmodtab Keyringmodtab
+                       IPintsmodtab Cryptmodtab        <- no Mathmodtab
+config mod section     sys keyring crypt draw tk       <- no math
+config lib section     ... math ...                    <- libmath IS linked
+.P2
+.B "So the code was there and the registration was not."
+One line in
+.CW os/inferno/raspi3b/raspi3b 's
+.CW mod
+section fixes it, and
+.CW Mathmodtab
+appears in the next kernel.
+.PP
+.B "Their refutation failed because emu DOES have math:"
+.CW emu/MacOSX/emu
+lists it in both the
+.CW lib
+section and the
+.CW mod
+section.  The theory never needed to explain emu \(em emu works
+.B "because"
+it has math.  Every observation fits: emu has it and
+.CW bounce
+runs; the kernel lacks it and
+.CW bounce
+fails;
+.CW colors
+never loads Math and runs on both.
+.NH 3
+And my reading of the error was wrong from the first probe
+.LP
+.P1
+sh: /dis/wm/bounce.dis: exception: module not loaded
+.P2
+I read that as
+.CW bounce.dis
+failing to load.
+.B "It is not."
+.CW exModule
+\(em
+.CW libinterp/raise.c:6 ,
+the string "module not loaded" \(em is raised from
+.CW mnewz ,
+.CW mframe ,
+.CW mspawn
+and
+.CW mcall
+in
+.CW xec.c ,
+and from the
+.CW comp-*.c
+JIT compilers:
+.B "all of them CALLS THROUGH A NIL MODULE REFERENCE."
+So the module that was not loaded is
+.CW Math ,
+and the message names
+.CW bounce.dis
+only because that is the program whose init raised.  The observed message had no
+.CW "mcall: "
+prefix, which places it in the JIT path \(em consistent with
+.CW cflag
+1 on this board.
+.NH 3
+Verified, and both of a peer's Tk modes now confirmed on silicon
+.LP
+.P1
+client       B/line   us/line   fixed share   clean % of wall
+wm/bounce        74    0.1807         71.0%            1.74%
+wm/colors      2548    1.9158          6.7%            0.095%
+.P2
+against their host figures of 49 for
+.CW bounce
+and 2387 for
+.CW clock .
+.B "74 against 49 and 2548 against 2387 is both modes on different hardware, by a different instrument, on real clients."
+.PP
+.B "And the two gate terms swap which one dominates between them:"
+71 per cent per-CALL for
+.CW bounce ,
+6.7 per cent for
+.CW colors .
+That is the concrete reason the gate must be both numbers and neither may be
+quoted alone \(em not an argument about populations any more, but two Tk clients
+on this board landing on opposite sides.
+.PP
+Regression: all fourteen
+.CW gfxstress
+phases,
+.CW drawink
+7 of 7,
+.CW switchtab
+0 short of 155 dispatches.
+.NH 3
+A FAILURE THAT WAS MY OWN LEFTOVER PROCESS
+.LP
+.CW drawink
+first reported
+.P1
+FAIL box outside: 12126 of 38080 pixels above the box inked,
+     disagreeing pixels within 160,32 427,119 (267x87)
+.P2
+.B "That was wm/bounce, still running from the previous probe,"
+started with
+.CW &
+and never killed \(em so it was animating into the framebuffer while
+.CW drawink
+measured it.  A reboot and
+.CW drawink
+alone gives 7 of 7.
+.PP
+.B "The region named the cause and I nearly read it as a regression from the config change."
+267x87 at 160,32 is a window, not a drawing artefact, and the one thing I had
+just left running was a window.  Same family as this plan's other harness
+failures: the test was correct and the environment was not.
