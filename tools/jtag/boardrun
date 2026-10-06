@@ -48,7 +48,23 @@ while [ $# -gt 0 ]; do
 done
 [ $# -ge 1 ] || { echo "usage: boardrun [-t seconds] 'command line'" >&2; exit 2; }
 
+#
+# ONLY RESET board.cmd IF IT IS STILL THIS RUN'S COMMAND.  The first version
+# reset it unconditionally, and that turned the shared channel into a way for
+# one run to break another: a boardrun killed at second 0 ran its trap at
+# second 32, by which time a NEW boardrun had written its own command, and the
+# dying one overwrote it with idle.  The board then ran the idle, the new run
+# polled 360 seconds for a token the board had never been asked to print, and
+# the console showed an RCMD that nothing in the session had issued.
+#
+# The token is already unique per run, so the guard needs nothing new: grep for
+# it in the file before writing.  It makes the reset a compare-and-clear rather
+# than a blind write, which is what a shared channel needs.
+#
 idle() {
+	if [ -n "${TOK:-}" ] && ! grep -q "$TOK" "$CMD" 2>/dev/null; then
+		return
+	fi
 	printf 'load std; echo BR-IDLE-%s\n' "`date +%s`" > "$CMD"
 }
 trap 'idle' 0 1 2 15

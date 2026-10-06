@@ -8412,3 +8412,193 @@ layout rather than requiring the layout bug to be found first \(em and it is the
 better design regardless: the kernel has integer division and one print, the
 host has arbitrary precision and a file.  A probe should report instants and let
 something else form ratios.
+.NH 2
+H1a.  The 99.44 per cent is stationary AND is not a property of the workload
+.LP
+A peer asked for the one check this figure had never had: difference it.  Every
+saving quoted on either side of this comparison was a session TOTAL, and a total
+cannot say whether the rate is steady.  They committed a prediction that
+.CW "gfxstress fill"
+would come out flat.  It does, and the differencing found something the
+prediction did not cover.
+.PP
+.B "Ten intervals, one boot, one kernel, read out of the devcons ring."
+Each interval is one
+.CW "wm/gfxstress fill N"
+between two
+.CW "echo dump"
+writes to
+.CW "#K/kpctl" :
+.P1
+interval        pres    eager px  defer px    saving  px/pres  def/pres
+fill 1 (cold)    116    33608602    804587  97.8813%   289729      6936
+fill 1           121    35139486    706233  97.9902%   290409      5837
+fill 1           126    36670048    708471  98.0680%   291032      5623
+fill 1           126    36670048    708471  98.0680%   291032      5623
+fill 1           122    35446046    706233  98.0076%   290541      5789
+fill 4           459   138298934   1033125  99.2530%   301305      2251
+fill 2           229    68100760    807379  98.8144%   297383      3526
+fill 8           931   282353338   1499801  99.4688%   303280      1611
+fill 2           227    67493706    806917  98.8045%   297329      3555
+fill 8           947   287241698   1512565  99.4734%   303318      1597
+.P2
+.NH 3
+It is stationary, and at four decimal places
+.LP
+.P1
+fill 1, four intervals   97.9902  98.0680  98.0680  98.0076
+fill 2, two intervals    98.8144  98.8045
+fill 8, two intervals    99.4688  99.4734
+.P2
+.B "Within one run length the figure repeats to about a hundredth of a point,"
+and two of the
+.CW "fill 1"
+intervals are IDENTICAL IN ALL FOUR COUNTERS \(em 126 presents, 36670048,
+708471, 35961577 \(em because
+.CW rnd()
+is seeded from a constant in the module, so each invocation replays the same
+rectangles and those two fitted the same number of batches into their second.
+That is a stronger statement than flatness: the instrument is deterministic on a
+deterministic workload.
+.PP
+.B "The single outlier is the first interval, and the reason is the initial condition."
+97.8813 against 98.00-98.07, with
+.CW def/pres
+6936 against 5623-5837.  Its predecessor was a 3-present baseline, so
+.CW damage(N-1)
+for the first real present was almost nothing and the deferred copy had nothing
+to subtract.  A cold start, not drift \(em which is why a four-point differencing
+has to report whether its first point is cold.
+.NH 3
+And the LEVEL moves with run length, which no percentage should do
+.LP
+.P1
+fill 1   98.01%        fill 4   99.25%
+fill 2   98.81%        fill 8   99.47%
+.P2
+.B "One workload, one board, one boot, 1.46 points of spread."
+The figure is not a property of
+.CW "gfxstress fill" .
+It is a property of the RUN, and the quantity it depends on is how many presents
+the invocation lasted.
+.PP
+.B "The mechanism is a fit, not a story."
+Least squares of deferred pixels against presents over all nine steady
+intervals:
+.P1
+defer = 585130 + 980.24 * presents
+
+residuals  +2494  -169  -169  +1514  -1935  -2226  +2068  -727  -852
+.P2
+on values of 0.7 to 1.5 million \(em under 0.3 per cent.  The fixed term is
+.B "585130 px, which is 1.90 full screens per INVOCATION"
+and is the window being created and torn down.  It is 83 per cent of a
+one-second interval's whole deferred cost and 39 per cent of an eight-second
+one, so at short run lengths this percentage is mostly a startup transient.
+.NH 3
+The law predicts the EARLIER figure, across a build, to 0.05 points
+.LP
+The 99.44 per cent recorded in this plan came from
+.CW "fill 4"
+with
+.CW "eager 248474010"
+and a
+.CW "DRAW ops"
+delta of 324807.
+.CW gfxstress
+does 400 fills per batch and this workload presents once per batch, so that run
+was 812 presents \(em and today's data checks the 400: 180407 ops over 459
+presents is 393 ops per present.
+.P1
+predicted defer at 812 presents   585130 + 980.24*812 = 1381102 px
+predicted saving                  1 - 1381102/248474010 = 99.4442%
+recorded, 1 - defer/eager                                  99.3987%
+recorded, overlap/eager                                    99.4359%
+.P2
+.B "A fit built entirely from today's intervals predicts a figure taken on an earlier build to 0.046 points."
+So nothing has drifted and nothing was wrong with the old number.  What was
+wrong was quoting it as a percentage, because the percentage was never the
+invariant \(em the two coefficients are.
+.NH 3
+What this settles, and what it costs the comparison
+.LP
+.IP \(bu
+.B "The peer's prediction holds"
+and their reason for wanting it was right: this is the one figure on either side
+that is stationary.  But it is stationary IN A RUN LENGTH, which is a weaker
+property than the word suggests.
+.IP \(bu
+.B "Neither end of the comparison should be quoted as a percentage."
+Their 84.9 and this 99.44 are both run totals over runs of unrecorded length,
+and this board's own figure moves 1.46 points over the lengths a person would
+plausibly choose.  The structural statements survive; the decimals do not.
+.IP \(bu
+.B "The 84.9 per cent is now worth differencing the same way,"
+and the prediction to beat is that Tk's fixed per-invocation term is LARGER
+relative to its steady term, because Tk composites widgets offscreen and its
+steady-state damage is small \(em so its percentage should move MORE with run
+length, not less.
+.NH 3
+A side finding that is flagged and not concluded: this build is 1.80x slower
+.LP
+.P1
+then  324807 draw ops in 4000 ms = 81202 ops/s
+now   180407 draw ops in 4000 ms = 45102 ops/s
+.P2
+Same workload, same board, same wall-clock budget.  The per-operation
+instrumentation added since \(em
+.CW drawpre()
+and
+.CW chargeop()
+on every
+.CW 'd' ,
+.CW 'E' ,
+.CW 'L' ,
+.CW 'P' ,
+.CW 'x'
+and
+.CW 'r'
+\(em is the obvious candidate and IT HAS NOT BEEN MEASURED.  It is recorded here
+because the number fell out of this measurement, not because it has been
+diagnosed, and because it is a cost I introduced while measuring something else.
+.NH 3
+Three instrument failures on the way, all of the same shape
+.LP
+.B "The dump path was wrong and failed silently-ish."
+.CW "echo dump > '#K'/kprof/kpctl"
+raised
+.CW "file does not exist" ;
+the files are
+.CW kpdata
+and
+.CW kpctl
+at the device root, not under a
+.CW kprof
+directory.  The error was in the console output and the run looked like it had
+worked.
+.PP
+.B "board.out could never have carried a dump, and I spent a cycle expecting it to."
+.CW drawpresentstats()
+uses
+.CW print() ,
+which goes to the console and the
+.CW devcons
+ring.
+.CW board.out
+is the remote command's own output, truncated per command.  The readings here
+all come from
+.CW "tools/jtag/kmesg" ,
+reading the 16K ring out of RAM over JTAG \(em which is also why ten dumps could
+be collected and differenced after the fact rather than captured one at a time.
+.PP
+.B "And boardrun's exit trap could break a run it did not start."
+It reset
+.CW board.cmd
+unconditionally, so a boardrun killed at second 0 ran its trap at second 32, by
+which time a new boardrun had written its own command, and the dying one
+overwrote it with idle.  The board ran the idle; the new run polled 360 seconds
+for a token nothing had been asked to print; the console showed an
+.CW RCMD
+no one had issued.  The token was already unique per run, so the guard needed
+nothing new \(em the reset is now a compare-and-clear.  A shared channel needs
+every writer to check that what it is clearing is still its own.
