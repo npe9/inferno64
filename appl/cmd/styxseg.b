@@ -36,6 +36,9 @@ include "sys.m";
 	sys: Sys;
 include "draw.m";
 include "arg.m";
+include "keyring.m";
+include "security.m";
+	ssl: SSL;
 
 Styxseg: module
 {
@@ -60,6 +63,19 @@ init(nil: ref Draw->Context, argv: list of string)
 	# point is a test that can fail for a reason that is not the
 	# measurement.
 	mpt := "/n/client";
+	# THE ALGORITHM ssl(3) IS ASKED FOR, empty for no ssl at all.
+	#
+	# doc/radio-plan.ms has had steps 5 and 6 open since the radio
+	# worked: ssl(3) pushed onto the link and sys->export() over it.
+	# Whether that composes with the segmentation is a question about
+	# exportfs, devssl, devmnt and a chopped stream, and none of
+	# those is a radio -- so it is answerable here.
+	#
+	# "clear" adds only message delimiters, "sha" digests, and
+	# "sha/rc4_128" digests AND encrypts: man/3/ssl is explicit that
+	# sha alone is a digest, which matters because appl/cmd/radio-
+	# styx.b asks for "alg sha" and calls the result encrypted.
+	alg := "";
 	lo := 1;
 	hi := 600;
 	# SEVEN, because a default that cannot finish is a bad one.  A
@@ -90,7 +106,7 @@ init(nil: ref Draw->Context, argv: list of string)
 	# conversation's 109 became the msize in the first place.
 	msize := 0;
 	arg->init(argv);
-	arg->setusage("styxseg [-d] [-b budget] [-n reads] [-m mpt]\n\t[-l lo] [-h hi] [-s stride] [-M msize] [file]");
+	arg->setusage("styxseg [-d] [-b budget] [-n reads] [-m mpt]\n\t[-l lo] [-h hi] [-s stride] [-M msize] [-e alg] [file]");
 	while((c := arg->opt()) != 0)
 		case c {
 		'b' =>	budget = int arg->earg();
@@ -101,6 +117,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		'h' =>	hi = int arg->earg();
 		's' =>	stride = int arg->earg();
 		'M' =>	msize = int arg->earg();
+		'e' =>	alg = arg->earg();
 		* =>	arg->usage();
 		}
 	argv = arg->argv();
@@ -135,14 +152,39 @@ init(nil: ref Draw->Context, argv: list of string)
 	spawn chop("down", s[1], c2[1], budget);
 	spawn chop("up", c2[1], s[1], budget);
 
+	# ssl(3) on both ends, before either speaks, with one secret this
+	# process generated: the two ends are in the same program, so a
+	# key agreement would be a conversation with itself and would
+	# prove nothing that keyring->auth() does not already prove over
+	# the radio in radiostyx(1).  What is under test is whether an
+	# ssl'd stream survives being chopped and reassembled.
+	sfd := s[0];
+	cfd := c2[0];
+	if(alg != ""){
+		ssl = load SSL SSL->PATH;
+		if(ssl == nil){
+			sys->fprint(sys->fildes(2),
+				"styxseg: load %s: %r\n", SSL->PATH);
+			raise "fail:ssl";
+		}
+		secret := array[32] of byte;
+		for(i := 0; i < len secret; i++)
+			secret[i] = byte (i * 7 + 11);
+		sfd = sslpush("server", s[0], alg, secret);
+		cfd = sslpush("client", c2[0], alg, secret);
+		if(sfd == nil || cfd == nil)
+			raise "fail:ssl";
+		sys->print("styxseg: ssl alg %s on both ends\n", alg);
+	}
+
 	# The server first, because the answerer has to be listening
 	# before the caller calls -- the same ordering the station init
 	# records, and the reason a first attempt at this hung with no
 	# error from either end.
-	spawn serve(s[0]);
+	spawn serve(sfd);
 
 	if(msize > 0){
-		(n, ver) := sys->fversion(c2[0], msize, "9P2000");
+		(n, ver) := sys->fversion(cfd, msize, "9P2000");
 		if(n <= 0){
 			sys->fprint(sys->fildes(2),
 				"styxseg: fversion %d: %r\n", msize);
@@ -151,7 +193,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		sys->print("styxseg: negotiated msize %d version %s\n",
 			n, ver);
 	}
-	if(sys->mount(c2[0], nil, mpt, Sys->MREPL, nil) < 0){
+	if(sys->mount(cfd, nil, mpt, Sys->MREPL, nil) < 0){
 		sys->fprint(sys->fildes(2), "styxseg: mount: %r\n");
 		raise "fail:mount";
 	}
@@ -276,6 +318,33 @@ trial(mpt: string, sz, budget, nreads: int): int
 	}
 	sys->remove(name);
 	return 1;
+}
+
+# One end of the link, with ssl(3) pushed onto it.  The sequence is
+# devssl's: connect to get a connection, set the secrets, then name the
+# algorithm -- data written before the alg goes out under whatever the
+# device started in, which is "clear".
+sslpush(who: string, fd: ref Sys->FD, alg: string,
+	secret: array of byte): ref Sys->FD
+{
+	(err, c) := ssl->connect(fd);
+	if(err != nil){
+		sys->fprint(sys->fildes(2),
+			"styxseg: %s ssl connect: %s\n", who, err);
+		return nil;
+	}
+	err = ssl->secret(c, secret, secret);
+	if(err != nil){
+		sys->fprint(sys->fildes(2),
+			"styxseg: %s ssl secret: %s\n", who, err);
+		return nil;
+	}
+	if(sys->fprint(c.cfd, "alg %s", alg) < 0){
+		sys->fprint(sys->fildes(2),
+			"styxseg: %s alg %s: %r\n", who, alg);
+		return nil;
+	}
+	return c.dfd;
 }
 
 serve(fd: ref Sys->FD)

@@ -39,10 +39,30 @@
 # It is still in the root as a raw module, like mount below, so it is
 # there to be read and not to be run.
 #
-# If this list has to give up a second thing the next candidates by
-# size are ax25chk (14376) and dd (9852), in that order, and the
-# argument for keeping either is weaker than for the shell's own
-# libraries.
+# AND IT HAS GIVEN UP A SECOND THING: ax25chk, which this file nominated
+# by size when sed went.  What paid for it is the "ssl" line in the
+# conf: #D costs 26480 bytes of kernel text, the styx image absorbs it
+# at 629880 of 913408, and this one was already within fourteen
+# kilobytes of the ceiling -- it came to 926280, which is 12872 over.
+#
+# The cost falls in the wrong place and it is worth saying so.  ssl is
+# wanted by the SATELLITE and GROUND images, where doc/radio-plan.ms's
+# steps 5 and 6 live; this is the image somebody types at.  A conf has
+# one dev section for every init built from it, so there is no way to
+# carry #D in one image and not another without four diverging confs.
+# That is a trade recorded rather than a problem solved.
+#
+# ax25chk checks AX.25 framing at the bench and the station image
+# (armv7max25) still carries it, which is where it is used.  Here it is
+# still in the root to be read, like sed and mount; it is not runnable.
+#
+# The next candidate by size is dd (9852), and it has NOT been given up
+# because the margin does not require it yet: this image comes to 911168
+# of 913408, which is 2240 bytes spare.  That is tight enough that the
+# next kernel change may break it, and the reason for leaving it there
+# rather than buying headroom in advance is that the break is LOUD now
+# -- the hex is its own target and bin2ihex's refusal fails the recipe,
+# which it did not before five flashes wrote a stale image.
 XIPDIS=\
 	sh.dis\
 	sh/std.dis\
@@ -66,7 +86,6 @@ XIPDIS=\
 	strings.dis\
 	ax25raw.dis\
 	ax25up.dis\
-	ax25chk.dis\
 	export.dis\
 	cat.dis\
 	dd.dis\
