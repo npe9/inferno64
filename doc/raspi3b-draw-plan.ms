@@ -720,3 +720,121 @@ was left alone deliberately, being the one file here whose content
 lacks (the
 .CW .j
 JIT members).
+.NH 1
+Two draw-library faults that only a kernel could show
+.PP
+A panic in
+.CW memset32
+from
+.CW memfillcolor ,
+reached through
+.CW bellipse ,
+turned out to be two separate defects, neither of which a hosted run can
+reproduce. Both are recorded here because the shape of the mistake
+matters more than either fix.
+.PP
+.CW byteaddr
+computed its row offset as
+.CW "(s32)(sizeof(u32)*p.y*i->width)" ,
+and
+.CW 7c
+drops a narrowing cast of a 64-bit value. The product compiled to
+.CW UMULL ,
+a 32\(mu32 to 64-bit
+.I unsigned
+multiply, so for a negative
+.CW p.y
+the low word
+.CW 0xFFFFFFF8
+times the width left a nonzero
+.I high
+word added to the pointer at full width. Only an image with a negative
+.CW r.min.y
+can reach it, and
+.CW bellipse 's
+brush disc
+.CW Rect(\-t,\-t,t+1,t+1)
+is the only one in the tree that has one \(em
+.CW libdraw/bytesperline.c
+already said such a rectangle is rare and that exactly one image here
+has one. Fixed by keeping every operand 32 bits, so the truncation is
+the arithmetic rather than a cast and there is nothing left to drop.
+.PP
+.CW allocmemimage
+sized its allocation with
+.CW "nw = l*Dy(r)"
+in
+.CW u32 ,
+so a thickness whose true word count passed 2\u32\d wrapped to a small
+one: at
+.CW t=185352
+the pool returned 83352 bytes for a rectangle holding 17.2 GB of pixels.
+.CW draw (3)
+rejects a negative semidiameter and thickness but bounds none of them
+above. Fixed in
+.CW uvlong
+with a refusal past 2\u31\d bytes, plus a well-formedness check on the
+rectangle in both allocators.
+.PP
+The first fix is necessary and
+.I not
+sufficient.
+.CW ellipsetest 's
+.CW brushed
+group still faults in the kernel, now at
+.CW bdata
+itself, which carries bit 32 on a board with 1GB of RAM. That is a third
+thing, in the kernel pool rather than the draw library, and it is open.
+.PP
+.B "What this cost, and why."
+Three instruments gave confident wrong answers before the mechanism came
+out, and all three failed the same way \(em they measured something
+adjacent to the question.
+.IP \(bu
+9.2 million ellipses at the board's own thickness ran clean under hosted
+.CW emu ,
+and that was quoted as evidence against the draw library. It is nothing
+of the kind: the host is clang, which honours the cast, so the bug is
+invisible there
+.I "by construction" .
+A host run can narrow the space; it cannot exonerate shared code that a
+kernel compiles with a different compiler.
+.IP \(bu
+The test printed
+.CW "9 ok, 0 fail"
+on a kernel that then died on its way out. Draw operations batch into
+the
+.CW /dev/draw
+buffer and run at flush, so the count recorded messages
+.I queued
+and the drawing happened during teardown. A count that cannot fail is
+not a test.
+.IP \(bu
+With flushing added it still printed the pass line before the trap,
+because console output is queued and a
+.CW print
+races a trap print. The last line on the wire does not name the faulting
+case. Selecting one group per boot is what attributed it, since then the
+answer is which invocation dies.
+.PP
+.B "And the build will lie to you."
+.CW "mk iraspi3b"
+after a change under
+.CW lib*/
+descends into the library, recompiles, re-archives, and then runs
+.CW 7l
+.I zero
+times, exiting 0 with the old kernel in place. The kernel target has no
+dependency on the library archives. Remove
+.CW iraspi3b
+and
+.CW kernel8.img
+and require exactly one
+.CW "7l -o iraspi3b"
+in the log; this is the opposite of the stale-object hazard elsewhere in
+this tree, where removing an object does
+.I not
+force a rebuild and touching the
+.CW .c
+is what works, which is why the check is on the link count and not on a
+habit.
