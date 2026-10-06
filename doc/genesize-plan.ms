@@ -2045,24 +2045,72 @@ On
 build of the release and the eight patches, check-qemu-nvme passes
 again (hmb, apst, ns).
 .IP
-The FL1100: not modelled yet, for want of its quirks.  A first model
-(QEMU's xHCI as 1b73:1100, rev 10h, four ports) carried two behaviours
-recalled, not read, from Linux's quirk table for Fresco Logic hosts:
-MSI and MSI-X advertised but never sent, and short transfers completed
-as Success.  Linux itself contradicted both.  Its xhci-pci, given that
-ID, sets no FL1100 quirk at all and drives the part on MSI-X:
+The FL1100 (phase 16).  A first model carried two behaviours recalled
+from memory of Linux's quirk table, MSI that never arrives and short
+transfers completed as Success; Linux 6.6's xhci-pci, given 1b73:1100,
+contradicted the first (it drives the part on MSI-X, and with the
+messages lost no USB device appeared), and that model was taken out.
+Read instead: Fresco Logic's FL1100 datasheet (revision 1.10, August
+2012) for the part's registers, and two Linux commits for its
+behaviour \(en "xhci: Enable trust tx length quirk for Fresco FL11 USB
+controller" (5.15: a short transfer completes as Success with the
+residual, found streaming video) and "xhci: Fresco FL1100 controller
+should not have BROKEN_MSI quirk set" (5.16: the broken MSI was the
+older Fresco parts', given to the FL1100 by mistake).  Linux 6.9 then
+made trusting the length its default, which is why 6.6.142 (with that
+backported) shows no FL1100 quirk at all.
+.CW scripts/qemu-patches/0009
+adds
+.CW "-device fl1100-xhci" :
+revision 00h; power management at 40h, MSI at 50h (eight vectors,
+64-bit, no masking), PCI Express at 70h, MSI-X at B0h with its table
+in BAR 2 and pending bits in BAR 4; HCSPARAMS1 08000820h (eight
+ports, four USB 2 and four USB 3, eight interrupters, 32 slots),
+HCSPARAMS2 84000054h (16 scratchpad buffers, ERST Max 5), HCSPARAMS3
+00040001h, HCCPARAMS with NSS; runtime registers at 2000h, doorbells
+at 3000h; short bulk, interrupt and isochronous transfers completed as
+Success (not control transfers, of which Linux would warn at every
+enumeration).  QEMU's extended capabilities pointer is kept and light
+HC reset not claimed, QEMU's xHCI not doing it.  Two things QEMU's
+xHCI lacked came out of it.  It had event rings of one segment only,
+and Linux, told of ERST Max 5, makes more, so the controller died
+(HCE) at the first command; event rings of up to 32 segments are now
+done (xHCI 1.0, 4.9.4).  And scratchpad buffers: a part that asks for
+them now uses them, a header in each page written at Run and checked
+at Stop, so a driver that gives none or writes over them is caught.
+.CW scripts/check-qemu-fl1100.sh ,
+Linux's xhci (linux-lts 6.6.142), QEMU TCG, a USB stick on the
+FL1100:
 .DS
 .ft CW
-xhci_hcd 0000:01:00.0: hcc params 0x00087001 hci version 0x100 quirks 0x0000000000000010
-irq 25:          0         61  PCI-MSIX-0000:01:00.0   0-edge      xhci_hcd
+check-qemu-fl1100: pci: pass
+check-qemu-fl1100: irq: pass
+check-qemu-fl1100: disk: pass
+	pci 0000:01:00.0 0x1b73 0x1100 rev 0x00
+	pci bar 2 0x00000000fe804000-0x00000000fe804fff
+	pci bar 4 0x00000000fe805000-0x00000000fe805fff
+	disk 4MiB written and read back md5 30374fa906c35d9f5127f6d3056f07e2
+	irq after 25:          0        174  PCI-MSIX-0000:01:00.0   0-edge      xhci_hcd
+	xhci_hcd 0000:01:00.0: hcc params 0x00087081 hci version 0x100 quirks 0x0000000000000010
 .ft
 .DE
-so with the first behaviour no USB device ever appeared, and with the
-second Linux warned at each short transfer ("WARN: Success on ctrl
-data TRB without IOC set?").  Both were taken out again.  The broken
-MSI is the older Fresco Logic parts' (FL1000, FL1009), not this one's.
-What the FL1100 really does differently is to come from the
-workstation's own card or a source that says, not from memory.
+QEMU's own qemu-xhci passes the same disk and interrupt checks after
+the change.  Then this kernel's usbxhci, unchanged, on the bench with
+.CW VMHOST_USB=fl1100
+(the FL1100 behind a sixth root port, a stick and a keyboard on it),
+.CW ipc64dev ,
+on the pin interrupt, with no complaint from the controller about its
+scratchpad pages:
+.DS
+.ft CW
+usbxhci: 0x1b73 0x1100: port 81000000 size 16384 irq 11
+usbd: ep2.0: port 1: super ep3.0 vid 46f4 did 0001 class 0
+usbd: ep3.0: disk "QEMU    QEMU HARDDISK   2.5+" 32768 blocks x 512 bytes
+usbd: ep3.0: block 0 read, no boot signature
+usbd: ep1.0: port 2: high ep4.0 vid 0627 did 0001 class 0
+usbd: ep4.0: boot keyboard on ep4.1
+.ft
+.DE
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
@@ -2089,9 +2137,9 @@ M1\-M10 all hold on VMX there.  The 82599 model is done, checked
 against Linux's ixgbe and ixgbevf, and this kernel is its PF: M7 on
 the X520's VFs and the whole PF to a Linux guest, on SVM and VMX.
 The newer NVMe features are done, checked against Linux's nvme, and
-sdnvme uses them.  Next: the misbehaving DMA device (its design to
-come), the FL1100 (its quirks to be found first), the ConnectX-4 Lx;
-then the
+sdnvme uses them.  The FL1100 is modelled from its datasheet and Linux's
+history with it, and usbxhci runs on it.  Next: the misbehaving DMA
+device (its design to come), the ConnectX-4 Lx; then the
 workstation (phase 13), and real hardware for everything QEMU and Bochs
 have stood in for.  On QEMU, check-vm (SVM; M4 under VT-d and AMD-Vi)
 and check-rv, on both the PLIC and the AIA machine and on hosts of one

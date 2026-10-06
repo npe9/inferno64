@@ -138,6 +138,17 @@ if [ "$VMHOST_NVME" = new ]; then
 	-device nvme-ns,bus=nvc0,drive=nvm1,nsid=2"
 fi
 
+# VMHOST_USB=fl1100: a Fresco Logic FL1100 USB 3.0 host (scripts/qemu-patches/0009)
+# behind a sixth root port, a USB stick and a keyboard on it
+USBDEV=
+if [ "$VMHOST_USB" = fl1100 ]; then
+	STICK=$Q/vmhost$T-stick.raw
+	[ -f "$STICK" ] || dd if=/dev/zero of="$STICK" bs=1m count=16 2>/dev/null
+	USBDEV="-device pcie-root-port,id=rp6,chassis=6,slot=6 -device fl1100-xhci,id=fl,bus=rp6
+	-drive if=none,id=stick,format=raw,file=$STICK -device usb-storage,bus=fl.0,drive=stick
+	-device usb-kbd,bus=fl.0"
+fi
+
 NOREBOOT=-no-reboot
 [ "$VMHOST_REBOOT" = 1 ] && NOREBOOT=
 # The IOMMU comes first: QEMU wants it created before the devices whose
@@ -156,6 +167,7 @@ set -- \
 	-device virtio-net-pci,netdev=net0,bus=rp1,disable-legacy=on \
 	$IGB \
 	$NVMEDEV \
+	$USBDEV \
 	-device edu,bus=rp4,dma_mask=0xffffffffffff \
 	-device virtio-serial-pci,bus=rp5,disable-legacy=on,iommu_platform=on \
 	-chardev file,id=hvc0,path="$HVC" \

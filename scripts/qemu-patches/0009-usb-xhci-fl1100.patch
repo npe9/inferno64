@@ -1,0 +1,625 @@
+--- a/hw/usb/Kconfig
++++ b/hw/usb/Kconfig
+@@ -49,6 +49,11 @@
+     default y if PCI_DEVICES
+     select USB_XHCI_PCI
+ 
++config USB_XHCI_FL1100
++    bool
++    default y if PCI_DEVICES
++    select USB_XHCI_PCI
++
+ config USB_XHCI_SYSBUS
+     bool
+     select USB_XHCI
+--- a/hw/usb/meson.build
++++ b/hw/usb/meson.build
+@@ -23,6 +23,7 @@
+ system_ss.add(when: 'CONFIG_USB_XHCI_PCI', if_true: files('hcd-xhci-pci.c'))
+ system_ss.add(when: 'CONFIG_USB_XHCI_SYSBUS', if_true: files('hcd-xhci-sysbus.c'))
+ system_ss.add(when: 'CONFIG_USB_XHCI_NEC', if_true: files('hcd-xhci-nec.c'))
++system_ss.add(when: 'CONFIG_USB_XHCI_FL1100', if_true: files('hcd-xhci-fl1100.c'))
+ system_ss.add(when: 'CONFIG_USB_DWC2', if_true: files('hcd-dwc2.c'))
+ system_ss.add(when: 'CONFIG_USB_DWC3', if_true: files('hcd-dwc3.c'))
+ system_ss.add(when: 'CONFIG_USB_CHIPIDEA', if_true: files('chipidea.c'))
+--- a/hw/usb/hcd-xhci.h
++++ b/hw/usb/hcd-xhci.h
+@@ -37,8 +37,13 @@
+ 
+ enum xhci_flags {
+     XHCI_FLAG_ENABLE_STREAMS = 1,
++    /* a short transfer completes as Success, the residual in its length */
++    XHCI_FLAG_SHORT_AS_SUCCESS = 2,
+ };
+ 
++#define XHCI_MAXSCRATCH 32
++#define XHCI_MAXERST    32      /* 2^ERST Max, at most the FL1100's 5 */
++
+ typedef enum TRBType {
+     TRB_RESERVED = 0,
+     TR_NORMAL,
+@@ -160,9 +165,13 @@
+ 
+     bool msix_used, er_pcs;
+ 
+-    dma_addr_t er_start;
++    dma_addr_t er_start;        /* the first segment's; er_size is all of them */
+     uint32_t er_size;
+-    unsigned int er_ep_idx;
++    unsigned int er_ep_idx;     /* the enqueue index, across the segments */
++    /* the event ring's segments, from the ERST (xHCI 1.0, 4.9.4) */
++    uint32_t er_nsegs;
++    dma_addr_t er_seg_start[XHCI_MAXERST];
++    uint32_t er_seg_size[XHCI_MAXERST];
+ 
+     /* kept for live migration compat only */
+     bool er_full_unused;
+@@ -191,6 +200,21 @@
+     uint32_t numslots;
+     uint32_t flags;
+     uint32_t max_pstreams_mask;
++    /*
++     * What a particular part has where QEMU's own xHCI has its defaults
++     * (0: the default): where the runtime registers and doorbells are,
++     * HCSPARAMS2 (scratchpad buffers, ERST max, IST), HCSPARAMS3 (exit
++     * latencies), and HCCPARAMS bits beyond QEMU's.
++     */
++    uint32_t off_runtime;
++    uint32_t off_doorbell;
++    uint32_t hcsparams2;
++    uint32_t hcsparams3;
++    uint32_t hccparams_or;
++    /* the scratchpad pages the driver gave, as found at Run */
++    uint32_t nscratch;
++    uint64_t scratch[XHCI_MAXSCRATCH];
++    uint64_t scratch_gen;
+     void (*intr_update)(XHCIState *s, int n, bool enable);
+     bool (*intr_raise)(XHCIState *s, int n, bool level);
+     /*
+--- a/hw/usb/hcd-xhci.c
++++ b/hw/usb/hcd-xhci.c
+@@ -602,6 +602,51 @@
+ static inline int xhci_running(XHCIState *xhci)
+ {
+     return !(xhci->usbsts & USBSTS_HCH);
++}
++
++/* where TRB idx of the event ring is, counting across its segments */
++static dma_addr_t xhci_er_addr(XHCIInterrupter *intr, unsigned int idx)
++{
++    uint32_t i;
++
++    if (intr->er_nsegs == 0) {
++        /* one segment, as state migrated from before there were more */
++        return intr->er_start + TRB_SIZE * idx;
++    }
++    for (i = 0; i < intr->er_nsegs; i++) {
++        if (idx < intr->er_seg_size[i]) {
++            return intr->er_seg_start[i] + TRB_SIZE * idx;
++        }
++        idx -= intr->er_seg_size[i];
++    }
++    return intr->er_start;
++}
++
++/* the index of the TRB at erdp, if it is in the ring */
++static bool xhci_er_index(XHCIInterrupter *intr, dma_addr_t erdp,
++                          unsigned int *idx)
++{
++    unsigned int base = 0;
++    uint32_t i;
++
++    if (intr->er_nsegs == 0) {
++        if (erdp < intr->er_start ||
++            erdp >= intr->er_start + TRB_SIZE * intr->er_size) {
++            return false;
++        }
++        *idx = (erdp - intr->er_start) / TRB_SIZE;
++        return true;
++    }
++    for (i = 0; i < intr->er_nsegs; i++) {
++        dma_addr_t s = intr->er_seg_start[i];
++
++        if (erdp >= s && erdp < s + TRB_SIZE * intr->er_seg_size[i]) {
++            *idx = base + (erdp - s) / TRB_SIZE;
++            return true;
++        }
++        base += intr->er_seg_size[i];
++    }
++    return false;
+ }
+ 
+ static void xhci_write_event(XHCIState *xhci, XHCIEvent *event, int v)
+@@ -623,7 +668,7 @@
+                                event_name(event), ev_trb.parameter,
+                                ev_trb.status, ev_trb.control);
+ 
+-    addr = intr->er_start + TRB_SIZE*intr->er_ep_idx;
++    addr = xhci_er_addr(intr, intr->er_ep_idx);
+     if (dma_memory_write(xhci->as, addr, &ev_trb, TRB_SIZE,
+                          MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
+         qemu_log_mask(LOG_GUEST_ERROR, "%s: DMA memory access failed!\n",
+@@ -656,16 +701,13 @@
+     intr = &xhci->intr[v];
+ 
+     erdp = xhci_addr64(intr->erdp_low, intr->erdp_high);
+-    if (erdp < intr->er_start ||
+-        erdp >= (intr->er_start + TRB_SIZE*intr->er_size)) {
++    if (!xhci_er_index(intr, erdp & ~(dma_addr_t)0xf, &dp_idx)) {
+         DPRINTF("xhci: ERDP out of bounds: "DMA_ADDR_FMT"\n", erdp);
+         DPRINTF("xhci: ER[%d] at "DMA_ADDR_FMT" len %d\n",
+                 v, intr->er_start, intr->er_size);
+         xhci_die(xhci);
+         return;
+     }
+-
+-    dp_idx = (erdp - intr->er_start) / TRB_SIZE;
+     assert(dp_idx < intr->er_size);
+ 
+     if ((intr->er_ep_idx + 2) % intr->er_size == dp_idx) {
+@@ -799,48 +841,137 @@
+     return -1;
+ }
+ 
++/* the most segments an event ring may have: 2^ERST Max (HCSPARAMS2) */
++static uint32_t xhci_erst_max(XHCIState *xhci)
++{
++    uint32_t p2 = xhci->hcsparams2 ? xhci->hcsparams2 : 0x0000000f;
++
++    return MIN(1u << ((p2 >> 4) & 0xf), XHCI_MAXERST);
++}
++
+ static void xhci_er_reset(XHCIState *xhci, int v)
+ {
+     XHCIInterrupter *intr = &xhci->intr[v];
+     XHCIEvRingSeg seg;
+     dma_addr_t erstba = xhci_addr64(intr->erstba_low, intr->erstba_high);
++    uint32_t i;
+ 
+     if (intr->erstsz == 0 || erstba == 0) {
+         /* disabled */
+         intr->er_start = 0;
+         intr->er_size = 0;
++        intr->er_nsegs = 0;
+         return;
+     }
+-    /* cache the (sole) event ring segment location */
+-    if (intr->erstsz != 1) {
++    /* cache the event ring segments' locations */
++    if (intr->erstsz > xhci_erst_max(xhci)) {
+         DPRINTF("xhci: invalid value for ERSTSZ: %d\n", intr->erstsz);
+         xhci_die(xhci);
+         return;
+     }
+-    if (dma_memory_read(xhci->as, erstba, &seg, sizeof(seg),
+-                    MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
+-        qemu_log_mask(LOG_GUEST_ERROR, "%s: DMA memory access failed!\n",
+-                      __func__);
+-        xhci_die(xhci);
+-        return;
++    intr->er_size = 0;
++    for (i = 0; i < intr->erstsz; i++) {
++        if (dma_memory_read(xhci->as, erstba + i * sizeof(seg), &seg,
++                            sizeof(seg), MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++            qemu_log_mask(LOG_GUEST_ERROR, "%s: DMA memory access failed!\n",
++                          __func__);
++            xhci_die(xhci);
++            return;
++        }
++        le32_to_cpus(&seg.addr_low);
++        le32_to_cpus(&seg.addr_high);
++        le32_to_cpus(&seg.size);
++        if (seg.size < 16 || seg.size > 4096) {
++            DPRINTF("xhci: invalid value for segment size: %d\n", seg.size);
++            xhci_die(xhci);
++            return;
++        }
++        intr->er_seg_start[i] = xhci_addr64(seg.addr_low, seg.addr_high);
++        intr->er_seg_size[i] = seg.size;
++        intr->er_size += seg.size;
+     }
++    intr->er_nsegs = intr->erstsz;
++    intr->er_start = intr->er_seg_start[0];
+ 
+-    le32_to_cpus(&seg.addr_low);
+-    le32_to_cpus(&seg.addr_high);
+-    le32_to_cpus(&seg.size);
+-    if (seg.size < 16 || seg.size > 4096) {
+-        DPRINTF("xhci: invalid value for segment size: %d\n", seg.size);
+-        xhci_die(xhci);
+-        return;
+-    }
+-    intr->er_start = xhci_addr64(seg.addr_low, seg.addr_high);
+-    intr->er_size = seg.size;
+-
+     intr->er_ep_idx = 0;
+     intr->er_pcs = 1;
+ 
+     DPRINTF("xhci: event ring[%d]:" DMA_ADDR_FMT " [%d]\n",
+             v, intr->er_start, intr->er_size);
++}
++
++/*
++ * Scratchpad buffers (xHCI 1.0, 4.20).  A part that asks for them in
++ * HCSPARAMS2 keeps state of its own in them while it runs; here each
++ * page gets a header -- a magic, its index, a generation -- written
++ * when the controller is started and read back when it is stopped,
++ * so that a driver which gave no pages, or wrote over the ones it
++ * gave, is caught.  Like the part, the controller writes where the
++ * driver's array says, whatever is there.
++ */
++#define XHCI_SCRATCH_MAGIC 0x5243534948435851ULL    /* "QXHCISCR" */
++
++static uint32_t xhci_nscratch(XHCIState *xhci)
++{
++    uint32_t p2 = xhci->hcsparams2;
++
++    return MIN(((p2 >> 27) & 0x1f) | ((p2 >> 16) & 0x3e0), XHCI_MAXSCRATCH);
++}
++
++static void xhci_scratch_header(XHCIState *xhci, int i, uint64_t hdr[2])
++{
++    hdr[0] = cpu_to_le64(XHCI_SCRATCH_MAGIC);
++    hdr[1] = cpu_to_le64(xhci->scratch_gen << 8 | i);
++}
++
++static void xhci_scratch_start(XHCIState *xhci)
++{
++    dma_addr_t dcbaap = xhci_addr64(xhci->dcbaap_low, xhci->dcbaap_high);
++    uint64_t sba = 0, hdr[2];
++    uint32_t i, n = xhci_nscratch(xhci);
++
++    xhci->nscratch = 0;
++    if (n == 0) {
++        return;
++    }
++    ldq_le_dma(xhci->as, dcbaap, &sba, MEMTXATTRS_UNSPECIFIED);
++    if (sba == 0 || (sba & 63)) {
++        qemu_log_mask(LOG_GUEST_ERROR, "xhci: %u scratchpad buffers wanted, "
++                      "DCBAA[0] is 0x%" PRIx64 "\n", n, sba);
++    }
++    xhci->scratch_gen++;
++    for (i = 0; i < n; i++) {
++        ldq_le_dma(xhci->as, sba + 8 * i, &xhci->scratch[i],
++                   MEMTXATTRS_UNSPECIFIED);
++        if (xhci->scratch[i] == 0 || (xhci->scratch[i] & 0xfff)) {
++            qemu_log_mask(LOG_GUEST_ERROR, "xhci: scratchpad buffer %u "
++                          "is at 0x%" PRIx64 "\n", i, xhci->scratch[i]);
++        }
++        xhci_scratch_header(xhci, i, hdr);
++        dma_memory_write(xhci->as, xhci->scratch[i], hdr, sizeof(hdr),
++                         MEMTXATTRS_UNSPECIFIED);
++    }
++    xhci->nscratch = n;
++}
++
++static void xhci_scratch_stop(XHCIState *xhci)
++{
++    uint64_t hdr[2], got[2];
++    uint32_t i;
++
++    for (i = 0; i < xhci->nscratch; i++) {
++        xhci_scratch_header(xhci, i, hdr);
++        if (dma_memory_read(xhci->as, xhci->scratch[i], got, sizeof(got),
++                            MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
++            continue;
++        }
++        if (memcmp(hdr, got, sizeof(hdr)) != 0) {
++            qemu_log_mask(LOG_GUEST_ERROR, "xhci: scratchpad buffer %u at "
++                          "0x%" PRIx64 " written by the host while the "
++                          "controller ran\n", i, xhci->scratch[i]);
++        }
++    }
++    xhci->nscratch = 0;
+ }
+ 
+ static void xhci_run(XHCIState *xhci)
+@@ -848,6 +979,7 @@
+     trace_usb_xhci_run();
+     xhci->usbsts &= ~USBSTS_HCH;
+     xhci->mfindex_start = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    xhci_scratch_start(xhci);
+ }
+ 
+ static void xhci_stop(XHCIState *xhci)
+@@ -855,6 +987,7 @@
+     trace_usb_xhci_stop();
+     xhci->usbsts |= USBSTS_HCH;
+     xhci->crcr_low &= ~CRCR_CRR;
++    xhci_scratch_stop(xhci);
+ }
+ 
+ static XHCIStreamContext *xhci_alloc_stream_contexts(unsigned count,
+@@ -1539,6 +1672,17 @@
+             event.ptr = trb->addr;
+             if (xfer->status == CC_SUCCESS) {
+                 event.ccode = shortpkt ? CC_SHORT_PACKET : CC_SUCCESS;
++                /*
++                 * Some parts complete a short bulk, interrupt or
++                 * isochronous transfer with Success and the residual
++                 * in the length, not Short Packet.  (The FL1100's
++                 * control transfers are not known to: Linux would warn
++                 * of every short data stage on every one of them.)
++                 */
++                if (shortpkt && TRB_TYPE(*trb) != TR_DATA &&
++                    xhci_get_flag(xhci, XHCI_FLAG_SHORT_AS_SUCCESS)) {
++                    event.ccode = CC_SUCCESS;
++                }
+             } else {
+                 event.ccode = xfer->status;
+             }
+@@ -2734,8 +2878,18 @@
+ 
+     xhci->mfindex_start = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+     xhci_mfwrap_update(xhci);
++}
++
++static uint32_t xhci_off_runtime(XHCIState *xhci)
++{
++    return xhci->off_runtime ? xhci->off_runtime : OFF_RUNTIME;
+ }
+ 
++static uint32_t xhci_off_doorbell(XHCIState *xhci)
++{
++    return xhci->off_doorbell ? xhci->off_doorbell : OFF_DOORBELL;
++}
++
+ static uint64_t xhci_cap_read(void *ptr, hwaddr reg, unsigned size)
+ {
+     XHCIState *xhci = ptr;
+@@ -2750,10 +2904,10 @@
+             | (xhci->numintrs<<8) | xhci->numslots;
+         break;
+     case 0x08: /* HCSPARAMS 2 */
+-        ret = 0x0000000f;
++        ret = xhci->hcsparams2 ? xhci->hcsparams2 : 0x0000000f;
+         break;
+     case 0x0c: /* HCSPARAMS 3 */
+-        ret = 0x00000000;
++        ret = xhci->hcsparams3;
+         break;
+     case 0x10: /* HCCPARAMS */
+         if (sizeof(dma_addr_t) == 4) {
+@@ -2761,12 +2915,13 @@
+         } else {
+             ret = 0x00080001 | (xhci->max_pstreams_mask << 12);
+         }
++        ret |= xhci->hccparams_or;
+         break;
+     case 0x14: /* DBOFF */
+-        ret = OFF_DOORBELL;
++        ret = xhci_off_doorbell(xhci);
+         break;
+     case 0x18: /* RTSOFF */
+-        ret = OFF_RUNTIME;
++        ret = xhci_off_runtime(xhci);
+         break;
+ 
+     /* extended capabilities */
+@@ -3120,9 +3275,8 @@
+         intr->erdp_low = (val & ~ERDP_EHB) | (intr->erdp_low & ERDP_EHB);
+         if (val & ERDP_EHB) {
+             dma_addr_t erdp = xhci_addr64(intr->erdp_low, intr->erdp_high);
+-            unsigned int dp_idx = (erdp - intr->er_start) / TRB_SIZE;
+-            if (erdp >= intr->er_start &&
+-                erdp < (intr->er_start + TRB_SIZE * intr->er_size) &&
++            unsigned int dp_idx;
++            if (xhci_er_index(intr, erdp & ~(dma_addr_t)0xf, &dp_idx) &&
+                 dp_idx != intr->er_ep_idx) {
+                 xhci_intr_raise(xhci, v);
+             }
+@@ -3425,8 +3579,10 @@
+ 
+     memory_region_add_subregion(&xhci->mem, 0,            &xhci->mem_cap);
+     memory_region_add_subregion(&xhci->mem, OFF_OPER,     &xhci->mem_oper);
+-    memory_region_add_subregion(&xhci->mem, OFF_RUNTIME,  &xhci->mem_runtime);
+-    memory_region_add_subregion(&xhci->mem, OFF_DOORBELL, &xhci->mem_doorbell);
++    memory_region_add_subregion(&xhci->mem, xhci_off_runtime(xhci),
++                                &xhci->mem_runtime);
++    memory_region_add_subregion(&xhci->mem, xhci_off_doorbell(xhci),
++                                &xhci->mem_doorbell);
+ 
+     for (i = 0; i < xhci->numports; i++) {
+         XHCIPort *port = &xhci->ports[i];
+--- a/hw/usb/hcd-xhci-pci.h
++++ b/hw/usb/hcd-xhci-pci.h
+@@ -41,6 +41,18 @@
+     OnOffAuto msi;
+     OnOffAuto msix;
+     bool conditional_intr_mapping;
++    /*
++     * A part's own configuration space (0: QEMU's): where its PCI
++     * capabilities are, how many MSI vectors and whether 64-bit, and
++     * which BARs hold its MSI-X table and pending bits.
++     */
++    struct {
++        uint8_t pm, msi, pcie, msix;
++        uint8_t msi_vectors;
++        uint8_t msix_table_bar, msix_pba_bar;
++    } layout;
++    MemoryRegion msix_table;
++    MemoryRegion msix_pba;
+ } XHCIPciState;
+ 
+ #endif
+--- a/hw/usb/hcd-xhci-pci.c
++++ b/hw/usb/hcd-xhci-pci.c
+@@ -23,6 +23,7 @@
+  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
+  */
+ #include "qemu/osdep.h"
++#include "qemu/units.h"
+ #include "hw/pci/pci.h"
+ #include "hw/qdev-properties.h"
+ #include "migration/vmstate.h"
+@@ -144,8 +145,16 @@
+         s->xhci.nec_quirks = true;
+     }
+ 
++    if (s->layout.pm) {
++        ret = pci_pm_init(dev, s->layout.pm, errp);
++        if (ret < 0) {
++            return;
++        }
++    }
+     if (s->msi != ON_OFF_AUTO_OFF) {
+-        ret = msi_init(dev, 0x70, s->xhci.numintrs, true, false, &err);
++        ret = msi_init(dev, s->layout.msi ? s->layout.msi : 0x70,
++                       s->layout.msi_vectors ? s->layout.msi_vectors :
++                       s->xhci.numintrs, true, false, &err);
+         /*
+          * Any error other than -ENOTSUP(board's MSI support is broken)
+          * is a programming error
+@@ -168,11 +177,28 @@
+                      &s->xhci.mem);
+ 
+     if (pci_bus_is_express(pci_get_bus(dev))) {
+-        ret = pcie_endpoint_cap_init(dev, 0xa0);
++        ret = pcie_endpoint_cap_init(dev, s->layout.pcie ? s->layout.pcie :
++                                     0xa0);
+         assert(ret > 0);
+     }
+ 
+-    if (s->msix != ON_OFF_AUTO_OFF) {
++    if (s->msix != ON_OFF_AUTO_OFF && s->layout.msix_table_bar) {
++        /* the table and the pending bits in BARs of their own */
++        memory_region_init(&s->msix_table, OBJECT(dev), "xhci-msix-table",
++                           4 * KiB);
++        pci_register_bar(dev, s->layout.msix_table_bar,
++                         PCI_BASE_ADDRESS_SPACE_MEMORY |
++                         PCI_BASE_ADDRESS_MEM_TYPE_64, &s->msix_table);
++        memory_region_init(&s->msix_pba, OBJECT(dev), "xhci-msix-pba",
++                           4 * KiB);
++        pci_register_bar(dev, s->layout.msix_pba_bar,
++                         PCI_BASE_ADDRESS_SPACE_MEMORY |
++                         PCI_BASE_ADDRESS_MEM_TYPE_64, &s->msix_pba);
++        msix_init(dev, s->xhci.numintrs,
++                  &s->msix_table, s->layout.msix_table_bar, 0,
++                  &s->msix_pba, s->layout.msix_pba_bar, 0,
++                  s->layout.msix, NULL);
++    } else if (s->msix != ON_OFF_AUTO_OFF) {
+         /* TODO check for errors, and should fail when msix=on */
+         msix_init(dev, s->xhci.numintrs,
+                   &s->xhci.mem, 0, OFF_MSIX_TABLE,
+@@ -188,7 +214,11 @@
+     /* destroy msix memory region */
+     if (dev->msix_table && dev->msix_pba
+         && dev->msix_entry_used) {
+-        msix_uninit(dev, &s->xhci.mem, &s->xhci.mem);
++        if (s->layout.msix_table_bar) {
++            msix_uninit(dev, &s->msix_table, &s->msix_pba);
++        } else {
++            msix_uninit(dev, &s->xhci.mem, &s->xhci.mem);
++        }
+     }
+ }
+ 
+--- /dev/null
++++ b/hw/usb/hcd-xhci-fl1100.c
+@@ -0,0 +1,106 @@
++/*
++ * The Fresco Logic FL1100 USB 3.0 host controller (1b73:1100): QEMU's
++ * xHCI given the part's registers and its one documented misbehaviour.
++ *
++ * From Fresco Logic's FL1100 datasheet (revision 1.10, August 2012):
++ *
++ *	configuration space	revision 00h; power management at 40h,
++ *				MSI at 50h (eight vectors, 64-bit, no
++ *				per-vector masking), PCI Express at 70h,
++ *				MSI-X at B0h with eight vectors, its
++ *				table in BAR 2 and pending bits in BAR 4
++ *	HCSPARAMS1 08000820h	eight ports (four USB 2, four USB 3),
++ *				eight interrupters, 32 slots
++ *	HCSPARAMS2 84000054h	16 scratchpad buffers with Scratchpad
++ *				Restore, ERST max 5, IST 4
++ *	HCSPARAMS3 00040001h	U2 exit under 4us, U1 under 1us
++ *	HCCPARAMS  200073A1h	64-bit, 32-byte contexts, no port power
++ *				control, no secondary stream IDs, streams
++ *	RTSOFF 2000h, DBOFF 3000h
++ *
++ * HCCPARAMS here keeps QEMU's extended capabilities pointer and does
++ * not claim light HC reset (LHRC), which QEMU's xHCI does not do.
++ *
++ * And from Linux (xhci-pci.c, "xhci: Enable trust tx length quirk for
++ * Fresco FL11 USB controller", 5.15, and "xhci: Fresco FL1100
++ * controller should not have BROKEN_MSI quirk set", 5.16): a short
++ * transfer completes with Success and the residual in the length, not
++ * Short Packet (XHCI_TRUST_TX_LENGTH) -- found streaming video, so on
++ * bulk, interrupt and isochronous transfers; not on control transfers,
++ * of which Linux would warn at every enumeration.  Its MSI and MSI-X
++ * work.
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or
++ * later.  See the COPYING file in the top-level directory.
++ */
++
++#include "qemu/osdep.h"
++#include "hw/usb.h"
++#include "qemu/module.h"
++#include "hw/pci/pci.h"
++#include "hw/qdev-properties.h"
++
++#include "hcd-xhci-pci.h"
++
++#define TYPE_FL1100_XHCI "fl1100-xhci"
++OBJECT_DECLARE_SIMPLE_TYPE(XHCIFl1100State, FL1100_XHCI)
++
++#define PCI_VENDOR_ID_FRESCO_LOGIC          0x1b73
++#define PCI_DEVICE_ID_FRESCO_LOGIC_FL1100   0x1100
++
++struct XHCIFl1100State {
++    XHCIPciState parent_obj;
++};
++
++static void fl1100_xhci_instance_init(Object *obj)
++{
++    XHCIPciState *pci = XHCI_PCI(obj);
++    XHCIState *x = &pci->xhci;
++
++    x->numports_2 = 4;
++    x->numports_3 = 4;
++    x->numintrs = 8;
++    x->numslots = 32;
++    x->off_runtime = 0x2000;
++    x->off_doorbell = 0x3000;
++    x->hcsparams2 = 0x84000054;
++    x->hcsparams3 = 0x00040001;
++    x->hccparams_or = 1 << 7;           /* NSS */
++    xhci_set_flag(x, XHCI_FLAG_SHORT_AS_SUCCESS);
++
++    pci->layout.pm = 0x40;
++    pci->layout.msi = 0x50;
++    pci->layout.msi_vectors = 8;
++    pci->layout.pcie = 0x70;
++    pci->layout.msix = 0xb0;
++    pci->layout.msix_table_bar = 2;
++    pci->layout.msix_pba_bar = 4;
++}
++
++static void fl1100_xhci_class_init(ObjectClass *klass, const void *data)
++{
++    PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    k->vendor_id = PCI_VENDOR_ID_FRESCO_LOGIC;
++    k->device_id = PCI_DEVICE_ID_FRESCO_LOGIC_FL1100;
++    k->subsystem_vendor_id = PCI_VENDOR_ID_FRESCO_LOGIC;
++    k->subsystem_id = PCI_DEVICE_ID_FRESCO_LOGIC_FL1100;
++    k->revision = 0x00;
++    dc->desc = "Fresco Logic FL1100 USB 3.0 host controller";
++}
++
++static const TypeInfo fl1100_xhci_info = {
++    .name          = TYPE_FL1100_XHCI,
++    .parent        = TYPE_XHCI_PCI,
++    .instance_size = sizeof(XHCIFl1100State),
++    .instance_init = fl1100_xhci_instance_init,
++    .class_init    = fl1100_xhci_class_init,
++};
++
++static void fl1100_xhci_register_types(void)
++{
++    type_register_static(&fl1100_xhci_info);
++}
++
++type_init(fl1100_xhci_register_types)

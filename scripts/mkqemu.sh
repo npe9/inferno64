@@ -61,6 +61,16 @@
 #		autonomous transitions (apst), a non-operational state
 #		reached after idling and left on the next command.
 #		scripts/check-qemu-nvme.sh checks it against Linux's nvme
+#	0009-usb-xhci-fl1100.patch
+#		the Fresco Logic FL1100 (-device fl1100-xhci): its
+#		configuration space and capability registers as its
+#		datasheet gives them -- MSI-X table and pending bits in
+#		BARs 2 and 4, 16 scratchpad buffers, ERST Max 5, its
+#		runtime and doorbell offsets -- and short bulk transfers
+#		completed as Success, as Linux found it does.  And what
+#		that showed QEMU's xHCI lacked: event rings of more than
+#		one segment, and scratchpad buffers in use.
+#		scripts/check-qemu-fl1100.sh checks it against Linux's xhci
 #
 # usage: scripts/mkqemu.sh      installs into $ROOT/.qemu/local;
 #                               scripts/vmhost.sh uses it when present
