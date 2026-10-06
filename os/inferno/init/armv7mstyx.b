@@ -86,6 +86,25 @@ Statevery:	con 10;		# reads between reports
 # it, spent to make no difference.
 Pipebuf:	con 512;
 
+# Whether ssl(3) goes under the Styx.
+#
+# ZERO, AND NOT BECAUSE IT DOES NOT WORK.  With it on, two boards
+# brought up sha/rc4_256 on both ends, the satellite exported and the
+# ground reached ARMV7M-STYX-MOUNTED -- a namespace across an AX.25
+# conversation with RC4 under it and no IP anywhere, which is steps 5
+# and 6 of doc/radio-plan.ms.  And then the satellite took the Twalk
+# that followed and WEDGED THE KERNEL: its console stopped mid-line,
+# nothing typed at it arrived afterwards, and the two control-Rs that
+# reach the bootloader are handled in the uart receive interrupt, which
+# is no longer running.  Only the reset button helps, and somebody has
+# to be in the room.
+#
+# Twice, at the same message.  So the default is off, because a setting
+# that costs a trip across the room on every boot is not a default --
+# and the switch stays, because the investigation needs a control run
+# with it off on THIS kernel, which needs a board that has been reset.
+Usessl:		con 0;
+
 lastconv: int;
 keep: list of ref Sys->FD;
 
@@ -384,6 +403,19 @@ bigread()
 # which are not modern primitives: see man/1/radiostyx.
 protect(fd: ref Sys->FD): ref Sys->FD
 {
+	# OFF IS A SETTING AND NOT A REMOVAL, because the comparison is
+	# the measurement.  With ssl on, two boards reached
+	# ARMV7M-STYX-MOUNTED over the air and then the ground's next
+	# message got no answer and the conversation timed out; without
+	# it, the same two boards had completed a mount and a 273-byte
+	# read.  Those are different kernels as well as different
+	# settings, so the control has to be taken with THIS one, and a
+	# constant here is what lets it be.
+	if(Usessl == 0){
+		sys->print("styx: no ssl, by Usessl in armv7mstyx.b\n");
+		sys->print("ARMV7M-STYX-NOSSL-BYCHOICE\n");
+		return fd;
+	}
 	ssl = load SSL SSL->PATH;
 	if(ssl == nil){
 		sys->print("styx: load %s: %r\n", SSL->PATH);

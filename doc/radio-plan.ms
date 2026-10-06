@@ -7059,3 +7059,109 @@ buffer per outstanding request, the two pipe queues, and the
 retransmission copies
 .CW #a
 keeps for an unacknowledged window.
+.NH 1
+Styx over an encrypted link, on two boards, and where it stops
+.PP
+6 October 2026, both boards on one build of
+.BR armv7mstyx :
+the satellite N0CALL-2 announcing on
+.BR #a/0 ,
+the ground N0CALL-1 calling it, iounit 109 of a carrier's 125.
+.DS
+.CW "sat: styx: ssl sha/rc4_256 on #D/0, and the secret is a"
+.CW "     constant in this file rather than a key"
+.CW "sat: ARMV7M-STYX-EXPORTING"
+.CW "gnd: ARMV7M-STYX-SSL"
+.CW "gnd: ARMV7M-STYX-MOUNTED"
+.CW "gnd: styx: down: ax25: no answer"
+.DE
+.B "The mount completes over an encrypted link over the radio, and then the first read after it gets no answer."
+Steps 5 and 6 are half done on hardware: a namespace crosses the air
+with RC4 under it and no IP anywhere, and nothing can be read from it.
+.NH 2
+What the byte accounting says, once the instrument was fixed
+.PP
+.DS
+.CW "ground sent   41  48  53"
+.CW "satellite got 41  48  53"
+.CW "satellite sent 41  42"
+.CW "ground got     41  42"
+.DE
+.B "Nothing is lost on the air."
+Every frame arrived at its full length; the exchange is Tversion,
+Rversion, Tattach, Rattach, Twalk \- and then the satellite, having
+taken the Twalk intact, writes nothing back and prints no error.
+.PP
+.B "And all three messages are under 109 bytes, so the segmentation is not involved at all."
+Whatever this is, it is above the relay.
+.PP
+.B "The first instrument said otherwise and was wrong,"
+which is worth recording because it invented the symptom being hunted.
+It deduped console lines by their text, which is sound within one run
+because the relay prints a running total and no two of its lines are
+alike \- and unsound across runs.  The satellite had hours of its
+previous session in the window, so every new line matching an old one
+was suppressed, and the byte accounting read as if frames had gone
+missing.  It resets both boards at the start now, satellite first.
+.NH 2
+The pool is not the cause, on the evidence
+.PP
+The obvious suspicion, given that this image's process count and pool
+split were both set by exactly this failure before \- "the failure lands
+on the third Styx message" \- is memory, and a
+.I smalloc
+that waits for ever is silent by design, which is what "took the
+message and wrote nothing back" looks like.  The satellite's own print
+before exporting says otherwise:
+.DS
+.CW "  cursize   maxsize     arena                            free"
+.CW "    41536    118178     42176    678  404  12   76626  main"
+.CW "    20544     39925     20544    573  394  17   19365  heap"
+.DE
+.B "main has 76 kilobytes it has not used and 118 it may grow into."
+That is not starvation, so the theory is dropped rather than carried.
+.NH 2
+And it is not a timeout, it is a kernel wedge
+.PP
+The ground's
+.CW "ax25: no answer"
+reads like the satellite being slow or busy.  It is not.
+.B "The satellite's console stops mid-run and nothing typed at it arrives afterwards:"
+a liveness marker stuffed into its window comes back zero times, which
+says the host-to-board direction is dead rather than that the shell is
+gone.  The two control-Rs that drop this board into its bootloader are
+handled in
+.IR devuart 's
+receive interrupt, so they cannot work either \-
+.B "a flash attempt gave up after six resets with no bootloader."
+Only the button helps, and somebody has to be in the room.
+.PP
+The last thing it printed, twice over two runs, is the frame that
+carried the Twalk:
+.DS
+.CW "styx: down 53 off the air (142 so far)"
+.DE
+and then nothing.  The ground end is unharmed \- it echoes, and on
+reboot it says
+.CW "connect N0CALL-2: ax25: connection refused or no answer" ,
+which is the correct report about a peer that is not there.
+.PP
+.B "That makes two hard wedges of this kernel in one day with the same signature:"
+console dead mid-line, receive interrupt gone, reset button the only
+way back.  The first was a write to
+.B #P/imu.ctl
+and was never explained, and the image that did it no longer exists.
+.B "This one is reproducible,"
+which is worth more than the first was: it happens at the same message
+every time, on a build that is in the tree, with one switch that turns
+it on and off.
+.PP
+.B "What is NOT established is that ssl causes it."
+Two runs with it on both wedged; the run without it that completed a
+mount and a 273-byte read was on a different kernel.  The control is one
+run of this build with
+.B Usessl
+at zero, and it needs a board that has been reset.
+.B "Usessl defaults to zero until then,"
+because a setting that costs a trip across the room on every boot is
+not a default.
