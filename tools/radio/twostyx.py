@@ -11,7 +11,7 @@
 # the length byte was read.  If that climbs, the diagnosis is confirmed;
 # if it stays at zero, the fault is elsewhere.
 #
-import re, sys, time
+import re, subprocess, sys, time
 sys.path.insert(0, "/Users/npe/src/inferno64-branches/xip/tools/radio")
 import twoboard
 
@@ -22,8 +22,8 @@ SECS = float(sys.argv[3]) if len(sys.argv) > 3 else 420.0
 ends = [("sat", twoboard.Board(SAT, name="sat")),
         ("gnd", twoboard.Board(GND, name="gnd"))]
 
-# RESET BOTH, SATELLITE FIRST, so that everything in the scrollback
-# belongs to this run.
+# CLEAR THE WINDOW, THEN RESET BOTH, SATELLITE FIRST, so that
+# everything in the scrollback belongs to this run.
 #
 # This dedupes by line text, which is sound WITHIN a run because the
 # relay prints a running total and so no two of its lines are alike --
@@ -37,6 +37,20 @@ ends = [("sat", twoboard.Board(SAT, name="sat")),
 # calls on boot: the answerer has to be listening before the caller
 # calls.
 for name, b in ends:
+    # Resetting the BOARD does not clear the TERMINAL, and that is the
+    # same mistake twice: the first version of this deduped against the
+    # satellite's previous session and suppressed matching new lines,
+    # and resetting the board did not fix it because screen's scrollback
+    # survives a board reset.  The relay's lines carry a running total
+    # so they are unique per run and came through; bigread's are
+    # identical every time -- "273 bytes over the radio, twice" -- and
+    # were suppressed, which is exactly the measurement being chased.
+    #
+    # "scrollback 0" discards the buffer and the second call puts it
+    # back, which is the only way screen offers to empty it.
+    subprocess.run(["screen", "-S", b.sess, "-X", "scrollback", "0"])
+    subprocess.run(["screen", "-S", b.sess, "-X", "clear"])
+    subprocess.run(["screen", "-S", b.sess, "-X", "scrollback", "10000"])
     b.reset()
     time.sleep(6 if name == "sat" else 1)
 time.sleep(10)
