@@ -10240,3 +10240,31 @@ issues, and removing it let them overlap.
 .PP
 .B "So the original claim -- 0.180us fixed per call, and that is the DSB -- was wrong twice over,"
 and both errors are now quantified rather than withdrawn.
+.NH 3
+A free check that makes the subtraction trustworthy: it must move ONLY the intercept
+.LP
+A peer proposed it and I ran it rather than accepting it.
+.B "An instrument cost is per CALL, so subtracting it must change the intercept and nothing else."
+.P1
+             raw                      corrected (less 0.0514us)
+pre-hoist    0.1796 + 1.3927 ns/B     0.1281 + 1.3927 ns/B
+post-hoist   0.1427 + 1.2081 ns/B     0.0913 + 1.2081 ns/B
+.P2
+.B "Both slopes identical to four decimals."
+So the 17.1ns figure really is purely fixed, which is what licenses the
+subtraction \(em and it follows that the slope's own move, 1.3927 to 1.2081
+ns/byte, cannot be instrument.
+.B "The serialisation finding needs no revision,"
+and it is the one part of the original reading that survived intact.
+.PP
+.B "The rule, which is general and costs nothing:"
+when you subtract an estimated fixed cost, check that it moves only the
+intercept.  If the slope moves too, either the estimate is wrong or the cost is
+not fixed, and the subtraction is hiding something.
+.PP
+.B "And the ordering of this is worth recording as a thing that happened:"
+the probe that measures the instrument sat in the kernel that panicked, so a
+peer's linker fix was a PREREQUISITE for the measurement that corrects their own
+earlier reading of my fit.  Neither of us planned that, and neither of us could
+have done it alone \(em the fix is in their file, the reproducer and the board
+are mine.
