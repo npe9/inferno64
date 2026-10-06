@@ -6,6 +6,25 @@ JTAG on the Raspberry Pi 3B
 	tools/jtag/checkstub	build-time check on the trampoline
 	tools/jtag/unwedge	clear EDSCR.ERR after openocd dies mid-transaction
 	tools/jtag/hardreset	arm the PM watchdog: a REAL firmware reset
+	tools/jtag/kbuild	build and REFUSE an image that was not linked
+	tools/jtag/umulladd	scan text for a 32-bit value reaching a pointer
+	tools/jtag/undefimm	scan text for UNDEFINED logical immediates
+
+THREE OF THOSE READ A BUILT KERNEL RATHER THAN DRIVING THE BOARD, and
+they are here because this port's worst bugs have been code the compiler
+emitted rather than code anyone wrote.  umulladd found byteaddr()'s
+dropped sign extension, which panicked the board on any thick ellipse;
+undefimm found an all-ones logical mask with no legal encoding.  Both
+bound their scan by etext, because a kernel embeds data in its text
+segment and an unbounded scan reports about two thousand false hits.
+Both have been SEEN TO FIRE on a kernel that has the defect -- a scanner
+that has only ever reported zero is indistinguishable from one that
+cannot report anything.
+
+kbuild exists because `mk i$CONF' after a change under lib*/ EXITS 0 AND
+DOES NOT RELINK, and `rm i$CONF && mk kernel8.img' exits 0 with no kernel
+binary and a stale flat image left ready to load over JTAG.  Use it in
+place of mk for anything you are about to boot.
 
 WHEN EVERY COMMAND PRINTS "DSCR.ERR=1" HUNDREDS OF TIMES, run
 tools/jtag/unwedge.  It writes EDRCR.CSE through the mem-AP with the
