@@ -8927,3 +8927,110 @@ the near-constant present interval is a property of
 present interval varies should give a properly binomial baseline.  That is one
 unpaced run of a variable-rate workload, and it decides whether the determinism
 is the workload's or the system's.
+.NH 2
+H1a.  The beat model is UNFALSIFIABLE from a histogram, and the mailbox is not a constant
+.LP
+A peer caught that the baseline flip-phase histogram is sub-binomial, proposed a
+deterministic beat \(em a flip interval incommensurate with the frame period
+walks the phase evenly \(em and sent simulated chi-squared figures for it.  I
+ran the control and then simulated the walk myself at the MEASURED advances
+rather than at round ones, and the model does not survive that.
+.NH 3
+The control: a second near-constant interval, ten times faster
+.LP
+.CW "gfxstress damage"
+flushes after every 8x8 draw, so it presents about ten times as often.
+Unpaced,
+.CW "Dbuf = 1" ,
+same boot:
+.P1
+workload                  n   expected   span        2sd width   chi2
+fill    (106 flips/s)   423      26.4   24..32  (8)         20   5.37
+damage (1050 flips/s)  4200     262.5  243..278 (35)        63   6.66
+.P2
+.B "Both are sub-binomial, so something equidistributes."
+That much is solid and reproduces across an order of magnitude in rate.
+.NH 3
+But the walk model predicts the wrong thing for both, in opposite directions
+.LP
+Simulating the deterministic walk at each workload's measured advance
+.CW ( T/P ,
+averaged over 64 starting phases):
+.P1
+workload   advance    walk chi2    observed    random
+fill       0.56478         0.38        5.37      15.0
+damage     0.05714        84.81        6.66      15.0
+.P2
+.B "fill is 14x MORE variable than the walk and damage is 13x LESS."
+A walk plus jitter explains the first \(em jitter raises chi2 toward 15 \(em but
+it cannot explain the second, because jitter can only move 84.8 TOWARDS 15, and
+the observation is 6.66, below it.
+.NH 3
+And the reason it cannot be tested this way is that its one parameter is too sharp
+.LP
+.P1
+damage, n=4200             fill, n=423
+a=0.05500   chi2  6.72     a=0.56000   chi2 42.63
+a=0.05600        10.47     a=0.56250         0.15
+a=0.05714        31.74     a=0.56337         2.72
+a=0.05800         0.92     a=0.56478         0.36
+a=0.05900         0.30     a=0.56500         0.75
+a=0.06000        47.04     a=0.57000         3.12
+.P2
+.B "The walk's chi-squared swings from 0.3 to 47 over a 2 per cent change in advance."
+The advance is a present count divided by a wall-clock second, with a jittering
+interval, so it is good to perhaps three figures.
+.B "The model therefore predicts anything between 0.3 and 47 inside my measurement error,"
+and a histogram cannot test it.  The peer's figures and mine differ for exactly
+this reason: they used 0.06000 and 0.56337, I measured 0.05714 and 0.56478, and
+that is the whole disagreement.
+.PP
+.B "I also had the generalisation wrong in the other direction."
+I proposed that sub-binomial variance is a property of a near-constant interval.
+The peer is right that it is a property of (advance, buckets, n) \(em and the
+sensitivity sweep above is the proof, since two advances 2 per cent apart give
+0.30 and 47.04 at the same n.
+.NH 3
+Which retires the variance argument and leaves the question answerable another way
+.LP
+.B "Necessity cannot be settled by arguing about the baseline's variance,"
+and both of us spent a round trying.  The direct test needs no model:
+.B "pace a client whose present interval is deliberately irregular."
+If the clock places the flip for an irregular client, the clock is doing the
+work and no beat could have been predicting it.
+.CW "gfxstress all"
+is that client \(em fourteen phases from 38000 to 128 operations a second \(em
+and pacing it is one run.
+.PP
+.B "What is already established stands:"
+pacing places the flip 379 times in 380, and the cost of blocking to do it is
+half a frame.  Necessity was never what decided the design; the half-frame wait
+was.
+.NH 2
+H1a.  The mailbox round trip is not a constant: 3.6x worse at 10x the rate
+.LP
+The same control measured something it was not looking for.
+.P1
+workload   flips/s    exchange us/flip    repair us/flip
+fill           106               168.1             233.7
+damage        1050               597.2             171.9
+.P2
+.B "That is queueing at the VideoCore, and it is a ceiling rather than a cost:"
+1050 flips a second at 597us is
+.B "627ms of every second spent inside mboxvirtoffset()"
+\(em 63 per cent of the machine, in a property exchange.  The 168us figure was
+taken at 106 flips a second and is not a constant to design against.
+.PP
+.B "WHICH ARGUES FOR THE SAME DESIGN THE HALF-FRAME WAIT ARGUED FOR, from the other end."
+A flip per present scales mailbox traffic with the CLIENT's rate, and nothing
+bounds the client's rate.  Presenting the most recently completed frame at each
+vblank bounds it at 60 a second, where the exchange costs 60 x 168us = 10ms of
+every second, one per cent.  The non-blocking design removes the half-frame wait
+AND holds the mailbox at the rate where it is cheap, and the two arguments are
+independent.
+.PP
+.B "It also means the 387us-per-present figure needs its rate stated."
+At 106 presents a second it is 387us; at 1050 it is 769us.  And the share it is
+quoted as \(em 4.14 per cent of a present \(em is a share of a present whose
+length also changed with the rate.
+.B "A cost per event is not a constant unless the event rate is part of the claim."
