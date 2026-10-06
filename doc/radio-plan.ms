@@ -7334,3 +7334,55 @@ with
 .BR -D )
 that reproduces the dropped connection under emu, where a wedge costs a
 process instead of a walk across the room.
+.NH 2
+And the control run then showed the real shape of the two-byte fault
+.PP
+The same run went on to
+.IR bigread (),
+and it is worth a section because the frame accounting is complete on
+both sides:
+.DS
+.CW "sat: styx: up 284 from the pipe (534 so far)"
+.CW "sat: styx: up   109 onto the air"
+.CW "sat: styx: up   109 onto the air"
+.CW "sat: styx: up    66 onto the air"
+.CW "sat: styx: down: ax25: no answer"
+.CW ""
+.CW "gnd: styx: down 109 off the air (359 so far)"
+.CW "gnd: styx: down 109 off the air (468 so far)"
+.DE
+.B "The satellite sent all three frames.  The ground received the first two and never the third."
+.PP
+So it is not two bytes.
+.B "It is the TAIL FRAME of a chopped message not arriving,"
+and the 273-against-271 this document has carried for weeks was the same
+fault wearing a milder appearance on an older kernel.
+.PP
+.B "And this is the ssl-OFF run, so ssl has nothing to do with it."
+Two faults have been separated that had looked like one: ssl wedges the
+satellite's kernel on the third message, and the segmentation loses the
+last frame of a multi-frame reply.  They were chased together because
+both end in
+.CW "ax25: no answer" .
+.NH 2
+Why the session then ends, which is a second thing
+.PP
+The satellite's T1 expires waiting for an acknowledgement the ground
+cannot send, its read of
+.B #a
+returns an error, and
+.I down ()
+RETURNS \- which kills that direction of the relay and ends the session.
+.B "So one lost frame ends a conversation that AX.25 exists to recover."
+Whether the relay should give up there is a policy question and is not
+settled here; what is settled is that it gives up without saying
+anything useful.
+.PP
+.B "It prints the device's own counters now, at every point either relay direction dies."
+The run above could not say whether the driver had seen a partial
+payload, because
+.B rxpartial
+and the rest are printed by
+.IR bigread (),
+which never ran: the relay returned first.
+.B "A failure that reports nothing costs a bench session to re-create; one that prints the numbers costs a scroll back."

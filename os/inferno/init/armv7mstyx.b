@@ -556,6 +556,7 @@ up(src, dst: ref Sys->FD, budget: int)
 		n := sys->read(src, b, len b);
 		if(n <= 0){
 			sys->print("styx: up: pipe read %d: %r\n", n);
+			counters();
 			return;
 		}
 		sys->print("styx: up %d from the pipe (%d so far)\n",
@@ -566,6 +567,7 @@ up(src, dst: ref Sys->FD, budget: int)
 				m = budget;
 			if(sys->write(dst, b[i:i+m], m) != m){
 				sys->print("styx: up: %r\n");
+				counters();
 				return;
 			}
 			sys->print("styx: up   %d onto the air\n", m);
@@ -586,6 +588,23 @@ down(src, dst: ref Sys->FD)
 		n := sys->read(src, b, len b);
 		if(n < 0){
 			sys->print("styx: down: %r\n");
+			# THE COUNTERS AT THE MOMENT THEY MATTER.
+			#
+			# This is where a session ends, and until now it
+			# ended with one line.  The run that produced the
+			# evidence in doc/radio-plan.ms sent a 284-byte
+			# reply as 109, 109 and 66, the far end received
+			# the first two and never the third, and the only
+			# numbers that could say why -- rxpartial,
+			# fifoerr, rxoverflow, crcerr, and the AX.25
+			# retransmission counts -- were printed by
+			# bigread(), which never got to run because this
+			# returned first.
+			#
+			# A failure that reports nothing costs a whole
+			# bench session to re-create.  One that prints
+			# the device's own numbers costs a scroll back.
+			counters();
 			return;
 		}
 		if(n == 0)
@@ -594,6 +613,7 @@ down(src, dst: ref Sys->FD)
 			n, tot += n);
 		if(sys->write(dst, b[0:n], n) != n){
 			sys->print("styx: down write: %r\n");
+			counters();
 			return;
 		}
 	}
