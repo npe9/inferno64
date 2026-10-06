@@ -82,7 +82,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		seconds = 1;
 	if(phase == "all"){
 		phases := "fill" :: "copy" :: "overlap" :: "alpha" :: "mask" ::
-			"line" :: "ellipse" :: "poly" :: "text" :: "upload" ::
+			"line" :: "ellipse" :: "thickellipse" :: "poly" :: "text" :: "upload" ::
 			"damage" :: "windowmove" :: "draw3d" :: "draw3dthick" :: nil;
 		for(; phases != nil; phases = tl phases)
 			run(hd phases, seconds);
@@ -105,6 +105,7 @@ run(phase: string, seconds: int)
 		"mask" => ops += alphabatch(1);
 		"line" => ops += linebatch();
 		"ellipse" => ops += ellipsebatch();
+		"thickellipse" => ops += thickellipsebatch();
 		"poly" => ops += polybatch();
 		"text" => ops += textbatch();
 		"upload" => ops += uploadbatch();
@@ -201,6 +202,28 @@ ellipsebatch(): int
 			img.fillellipse(p, 5+rnd(40), 5+rnd(30), blue, Point(0,0));
 	}
 	return 300;
+}
+
+#
+# A deliberately huge semithickness.  memellipse's "very thick" criterion
+# (2t(a-b) > b^2 for b<a) sends any large t into bellipse, which allocates
+# Rect(-t,-t,t+1,t+1) as a GREY1 brush disc.  allocmemimage sizes that with
+#	nw = l*Dy(r)
+# in u32 arithmetic, so a t whose true word count exceeds 2^32 wraps to a
+# small one: at t=185352 the pool hands back 83352 bytes for a rect holding
+# 17.2 GB of pixels, and the memfillcolor on the next line walks off it.
+#
+# devdraw rejects a NEGATIVE thickness ("negative ellipse thickness") but
+# bounds nothing above, so the value arrives from the wire unchallenged.
+#
+thickellipsebatch(): int
+{
+	ts := array[] of {185352, 185364, 92682, 262144};
+	for(i := 0; i < len ts; i++){
+		sys->print("gfxstress: ellipse thickness %d\n", ts[i]);
+		img.ellipse(Point(400,300), 10, 5, ts[i], green, Point(0,0));
+	}
+	return len ts;
 }
 
 polybatch(): int
