@@ -493,6 +493,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		# the four the BUGS section used to list as uncovered
 		"focused entry", "clipped label", "non-default colours",
 		"canvas -fill by name", "canvas polygon", "label -bitmap",
+		# the three coverage gaps BUGS still listed
+		"listbox twelve items", "scrolled listbox view",
+		"coloured button", "grid geometry",
 	};
 	cases := array[] of {
 		list of {"label .w -text Label", "pack .w"},
@@ -595,6 +598,88 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		# resolves to /icons/tk/<name> (parse.c:845), not to an
 		# absolute path -- an absolute one gives !failed to load bitmap.
 		list of {"label .w -bitmap audio.bit", "pack .w"},
+
+		# The reference for the scrolled case below: identical in every
+		# respect except the yview, so the difference between them is
+		# the SCROLL and nothing else.  Referencing the scrolled one
+		# against the plain `listbox' case instead gave 102 bytes,
+		# which is a real difference that could not be attributed --
+		# that case has no items and a different size.
+		list of {"listbox .w -width 12 -height 3", "pack .w",
+			".w insert end i0",
+			".w insert end i1",
+			".w insert end i2",
+			".w insert end i3",
+			".w insert end i4",
+			".w insert end i5",
+			".w insert end i6",
+			".w insert end i7",
+			".w insert end i8",
+			".w insert end i9",
+			".w insert end i10",
+			".w insert end i11",
+			".w selection set 3 3"},
+
+		# A listbox scrolled so its VIEW starts partway down, which is
+		# a different thing from a part-scrolled scrollbar: the
+		# scrollbar's slider geometry changes, a scrolled listbox's
+		# item layout and selection band move with the view.
+		#
+		# THIS CASE SKIPS, and the reason is not settled.
+		#
+		# Nothing scrolls it.  `yview moveto 0.5', `yview moveto 1.0',
+		# `yview 6' and `yview 2' all leave the rendered pixels
+		# IDENTICAL to the unscrolled reference above -- twelve items
+		# in a listbox packed into a 160x60 image -- and none of them
+		# returns an error, so the per-command reply check cannot see
+		# it either.  (`yview 2' additionally takes the bare-index
+		# branch at listb.c:820 rather than a verb, which is accepted
+		# silently.)
+		#
+		# listb.c:719 clamps yelem to nitem - bh and then to 0, which
+		# is correct when everything fits; at twelve items in about
+		# sixty pixels it should not apply, so that is not obviously
+		# the explanation.  Whether this is a libtk defect or
+		# something about a listbox packed into an offscreen image
+		# that this harness cannot drive, I have not determined, and
+		# I am not guessing in a comment.
+		#
+		# The case stays, skipping, with that reason.  A skip that
+		# says "indistinguishable from its reference, so it covers
+		# nothing" is the correct outcome for a case that cannot be
+		# made to differ -- better than deleting it, which loses the
+		# question, and better than passing it, which would claim
+		# coverage of a scrolled view this does not have.
+		list of {"listbox .w -width 12 -height 3", "pack .w",
+			".w insert end i0",
+			".w insert end i1",
+			".w insert end i2",
+			".w insert end i3",
+			".w insert end i4",
+			".w insert end i5",
+			".w insert end i6",
+			".w insert end i7",
+			".w insert end i8",
+			".w insert end i9",
+			".w insert end i10",
+			".w insert end i11",
+			".w selection set 3 3",
+			".w yview moveto 0.5"},
+
+		# A non-default colour on something that is not a label, since
+		# every widget kind resolves its own colours and a label's
+		# path is the one already covered.
+		list of {"button .w -text Colour -background blue -foreground yellow",
+			"pack .w"},
+
+		# grid rather than pack, which is a different geometry manager
+		# reaching the same node kinds through different placement --
+		# so a widget at a grid cell must land where one packed does
+		# not, and the comparison is between the two PATHS at that
+		# placement rather than against a packed reference.
+		list of {"label .w -text grid", "frame .f", "label .f.a -text a",
+			"label .f.b -text b", "grid .f.a -row 0 -column 0",
+			"grid .f.b -row 1 -column 1", "pack .f", "pack .w"},
 	};
 	if(len names != len cases){
 		sys->print("tkscenetest: %d names for %d cases\n", len names, len cases);
@@ -633,6 +718,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		("canvas -fill by name",    "canvas"),
 		("canvas polygon",          "canvas"),
 		("label -bitmap",           "label"),
+		("scrolled listbox view",   "listbox twelve items"),
+		("coloured button",         "button"),
+		("grid geometry",           "label"),
 	};
 	for(bi := 0; bi < len base; bi++){
 		(who, against) := base[bi];

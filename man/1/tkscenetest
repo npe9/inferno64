@@ -175,14 +175,39 @@ into a 160\(mu60 image. The four states this once listed as uncovered \(em a
 focused widget, a partially-clipped one, a posted menu with a cascade and a
 non-default colour scheme \(em are now covered. What is still not: a
 .I scrolled
-text or listbox view as distinct from a part-scrolled scrollbar, a widget
-inside a
+text or listbox view, and a widget inside a
 .B canvas
-window item, a non-default colour on anything but a label, and any widget
-whose geometry comes from
+window item. A non-default colour on a non-label and
 .B grid
-rather than
-.BR pack .
+geometry are now covered.
+.PP
+.B "The scrolled listbox case is present and SKIPS, cause undetermined."
+Nothing scrolls it:
+.BR "yview moveto 0.5" ,
+.BR "yview moveto 1.0" ,
+.B "yview 6"
+and
+.B "yview 2"
+all leave the rendered pixels identical to an unscrolled reference with the
+same twelve items, and none returns an error, so the per-command reply check
+cannot see it either.
+.B listb.c:719
+clamps
+.B yelem
+to
+.BR "nitem - bh" ,
+which is right when everything fits and should not apply at twelve items in
+about sixty pixels. Whether that is a defect in
+.IR libtk 's
+listbox or something about a listbox packed into an offscreen image that
+this harness cannot drive is
+.B not
+settled here.
+.PP
+The case is kept rather than deleted, because a skip saying
+"indistinguishable from its reference, so it covers nothing" preserves the
+question; deleting it loses the question, and passing it would claim
+coverage of a scrolled view this does not have.
 .PP
 .B "Two toplevels drawing alternately"
 are covered, and were the last mechanism gap.
