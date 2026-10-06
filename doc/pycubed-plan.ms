@@ -2628,3 +2628,58 @@ is 273 bytes and the msize is 436, so one read did cover it and the
 273-against-271 result stands.
 .B "The instrument was right about that file by arithmetic rather than by construction,"
 which is not a property to leave in place; it reads to end of file now.
+.NH 2
+And a candidate in the driver, with a counter to confirm it
+.PP
+With the chopping and the reassembly cleared, the receive path in
+.B os/inferno/radio/cc1120.c
+has a hole that would lose a pair of bytes.
+.B "The payload read was not guarded by the available count."
+It samples NUM_RXBYTES, breaks if the FIFO holds less than ONE byte,
+then reads the length and that many more \- and nothing had said those
+bytes existed.
+.PP
+The packet interrupt is suppressed on this board and the FIFO is drained
+by a clock watchdog instead, so
+.B "it is looked at mid-packet as a matter of course:"
+at 1200 baud a 109-byte frame is 730 milliseconds in the air and the
+watchdog runs many times inside that.  Reading past the end underflows
+the part, which returns rubbish for the rest of the payload and leaves
+the FIFO in RX_FIFO_ERR.
+.PP
+A packet the count does not cover is flushed and counted as
+.B rxpartial
+now rather than delivered.  Losing it costs an AX.25 retransmission,
+which is what the connected mode is for; delivering it corrupt costs a
+diagnosis.
+.B "The counter is the point as much as the fix:"
+if rxpartial climbs when the two bytes go missing, the diagnosis is
+confirmed, and if it stays at zero the fault is elsewhere \- in the
+device's framing or on the air.
+.B "Neither can be tested without a board."
+.NH 2
+A warning that had been there long enough to be scenery
+.PP
+.I kencc
+had been printing "used and not set: first" about
+.I cc1120ctl
+on every build of this kernel.  Four blocks shadow that name and three
+are properly guarded; the fourth, in the
+.B gtrig
+verb, assigns it only on the very first sample \- so a window that
+captures NOTHING, an
+.I ms
+of zero or a pin that never moves inside it, reached the print without
+it ever being assigned.
+.PP
+.B "\(dqgtrig 881000000 0\(dq reported \(dqruns 0 first high\(dq or \(dqfirst low\(dq depending on what was on the stack:"
+an instrument making a claim about a pin it never read.  It starts at
+\-1 and prints "none" now.
+.PP
+The other standing warning was a deliberate
+.CW (void)
+discard
+.I kencc
+will not accept.  The file compiles with no diagnostics at all, which is
+the condition under which the next real one will be noticed.
+.B "This one was not, for as long as it took to stop reading them."
