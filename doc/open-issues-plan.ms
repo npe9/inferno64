@@ -9982,3 +9982,110 @@ findings while claiming it could not.
 Every one needed something that independently knew the answer \(em a control, a
 known-bad case, a before/after.  The corollary worth keeping:
 .B "`it printed a plausible number' and `it printed nothing' are the same amount of evidence."
+.NH 2
+ROOT CAUSE: 7l flushes a literal pool INSIDE a jump table, and a table cannot be split
+.LP
+.CW "7l -a"
+on a reproducer confirmed short by
+.CW switchtab
+first (143 dispatches, 1 short,
+.CW conswrite+0x40 ,
+23 of 29) settles it.
+.B "Nothing is lost:"
+.P1
+total BCASE in conswrite   39      the SAME as 7c -S
+contiguous runs            23, then 6 ORPHANED, then 10
+.P2
+All thirty-nine survive to emission.  They are MISPLACED:
+.P1
+0017921c: CASE R3,R4                    (ADR/LDRSW/ADD/BR)
+0017922c: BCASE ,180e74                 entry 0
+   ...
+00179284: BCASE ,180164                 entry 22  <- last contiguous
+00179288: B ,180038(BRANCH)       (0)   <<< LOADER-INSERTED BRANCH
+00179290: DWORD ,$boot1+0(SB)    (0)   <<< LITERAL POOL
+00179298: DWORD ,$-2147483648
+001792a0: DWORD ,$stack+32768(SB)
+   ...
+00180038: BCASE ,180100                 entry 23  <- the remaining SIX
+0018004c: BCASE ,18007c                 entry 28
+.P2
+.PP
+.B "The line numbers name the culprit."
+Every
+.CW BCASE
+carries
+.CW (4897) ,
+7c's line; the
+.CW B
+and the
+.CW DWORD s
+carry
+.CW (0) .
+.B "They are loader-inserted."
+7l needed to flush the constant pool, emitted a
+.CW B
+over it, and resumed the run 0x6e0c bytes later \(em which is correct for
+ordinary code and
+.B "fatal for a table,"
+because
+.CW "ADD x17,x17,x4"
+with
+.CW x4
+= 0x17922c can only reach the first 23 slots.  The
+.CW B
+is itself unreachable: nothing falls through a jump table.
+.PP
+.B "The offsets are already right,"
+so
+.CW asmout 's
+case 63 is not involved: 0x6ed4, 0x6ea0, 0x6e84, 0x6e24, 0x6e68, 0x6e50 relative
+to
+.CW lastcase ,
+resolving to 180100, 1800cc, 1800b0, 180050, 180094, 18007c.
+.B "Only the PLACEMENT is wrong."
+.NH 3
+And this is the mechanism the layout dependence needed
+.LP
+Whether a pool flush falls inside a
+.CW BCASE
+run depends on how much code precedes it, so four lines in
+.CW flushmemscreen
+moved the flush point into the table.  Three builds with those lines short, four
+without them clean \(em
+.B "the correlation reported earlier now has a cause,"
+and "build-dependent" is no longer a shrug.
+.PP
+.B "It is also not conswrite-specific."
+Any jump table long enough to straddle a pool flush has it, which is why the
+detector matters more than the one site.
+.NH 3
+What it took, and what each step ruled out
+.LP
+.IP \(bu
+.B "Reading the faulting word"
+\(em not markheap (the value was a table offset, which looks exactly like the
+predicted 0x0000xxxx), not a bad encoding.
+.IP \(bu
+.B "nmach 1 on a JTAG boot"
+\(em killed the IC IALLU/IALLUIS residual outright, since the mechanism needs a
+process to migrate and there is one processor.
+.IP \(bu
+.B "A peer compiling the same file with two 7c binaries straddling dcca478dd"
+\(em 29 BCASE from both, so the compiler version is not the variable and 7c is
+exonerated by measurement rather than by my reading of
+.CW swit2() .
+.IP \(bu
+.B "7l -a"
+\(em 39 read, 33 in runs, 6 orphaned.  That is the whole answer and nothing
+short of it would have distinguished "never emitted" from "emitted out of
+reach".
+.PP
+.B "The fix belongs in utils/7l:"
+a
+.CW CASE 's
+.CW BCASE
+run must be INDIVISIBLE \(em defer the pool flush past the end of the run, or
+relocate the whole run with it.
+.CW switchtab
+is the acceptance test: 0 short on a build that currently reports 1.
