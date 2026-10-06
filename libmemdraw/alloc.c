@@ -167,11 +167,22 @@ freememimage(Memimage *i)
 
 /*
  * Wordaddr is deprecated.
+ *
+ * The result is a u32*, so it rounds down to a 4-byte boundary -- 9front's
+ * wordaddr masks with sizeof(ulong)-1 and a Plan 9 ulong is 4 bytes.  Masking
+ * with sizeof(uintptr)-1 instead rounds to 8 here, which can return a pointer
+ * four bytes BEFORE the word asked for.
+ *
+ * Latent, not a live fault: the only caller is memfillcolor, with i->r.min of
+ * an image from allocmemimage, where byteaddr returns bdata exactly, and
+ * imagmem's quanta of 127 over 8-aligned arenas leaves every block pointer
+ * 8-aligned -- so the mask has been a no-op everywhere it runs.  Found by the
+ * raspi3b session reading this on the way past a different bug.
  */
 u32*
 u32addr(Memimage *i, Point p)
 {
-	return (u32*) ((uintptr)byteaddr(i, p) & ~(sizeof(uintptr)-1));
+	return (u32*) ((uintptr)byteaddr(i, p) & ~(uintptr)(sizeof(u32)-1));
 }
 
 uchar*
