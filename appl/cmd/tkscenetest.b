@@ -504,9 +504,9 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		list of {"entry .w -width 60", "pack .w"},
 		list of {"scale .w -from 0 -to 10", "pack .w"},
 		list of {"scrollbar .w", "pack .w"},
-		list of {"listbox .w -width 10 -height 2", "pack .w"},
+		list of {"listbox .w -width 120 -height 44", "pack .w"},
 		list of {"canvas .w -width 80 -height 30", "pack .w"},
-		list of {"text .w -width 10 -height 2", "pack .w"},
+		list of {"text .w -width 120 -height 44", "pack .w"},
 		list of {"menubutton .w -text Menu", "pack .w"},
 		list of {"checkbutton .w -text Check", "pack .w"},
 		list of {"radiobutton .w -text Radio", "pack .w"},
@@ -529,12 +529,12 @@ init(ctxt: ref Draw->Context, argv: list of string)
 			".w create oval 70 5 120 30 -fill blue",
 			".w create text 20 45 -text item"},
 		# A listbox selection band, which is not the entry's.
-		list of {"listbox .w -width 12 -height 3", "pack .w",
+		list of {"listbox .w -width 120 -height 44", "pack .w",
 			".w insert end one", ".w insert end two",
 			".w insert end three", ".w selection set 1 1"},
 		# Text with content reaches the text widget's glyph layout
 		# rather than an empty box.
-		list of {"text .w -width 16 -height 3", "pack .w",
+		list of {"text .w -width 130 -height 44", "pack .w",
 			".w insert end 'two lines\nof text"},
 		# A scale away from its minimum moves the slider node.
 		list of {"scale .w -from 0 -to 10 -length 120", "pack .w",
@@ -605,7 +605,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		# against the plain `listbox' case instead gave 102 bytes,
 		# which is a real difference that could not be attributed --
 		# that case has no items and a different size.
-		list of {"listbox .w -width 12 -height 3", "pack .w",
+		list of {"listbox .w -width 120 -height 44", "pack .w",
 			".w insert end i0",
 			".w insert end i1",
 			".w insert end i2",
@@ -650,7 +650,7 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		# made to differ -- better than deleting it, which loses the
 		# question, and better than passing it, which would claim
 		# coverage of a scrolled view this does not have.
-		list of {"listbox .w -width 12 -height 3", "pack .w",
+		list of {"listbox .w -width 120 -height 44", "pack .w",
 			".w insert end i0",
 			".w insert end i1",
 			".w insert end i2",
@@ -719,6 +719,23 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		("canvas polygon",          "canvas"),
 		("label -bitmap",           "label"),
 		("scrolled listbox view",   "listbox twelve items"),
+		# These were NOT checked against a base, which is how four
+		# five-pixel-tall widgets passed as covered: a listbox or text
+		# widget given -width 12 -height 3 is 14x5 PIXELS here, because
+		# those options are pixels and not characters, so the case drew
+		# nothing but the toplevel's background and `inked() > 0' was
+		# satisfied by that.  Everything that is a variation of another
+		# case is now held to the rule.
+		("listbox with a selection", "listbox"),
+		("text with content",       "text"),
+		("entry with a selection",  "entry"),
+		("entry -show",             "entry"),
+		("disabled button",         "button"),
+		("canvas with items",       "canvas"),
+		("scale at a value",        "scale"),
+		("scrollbar part-scrolled", "scrollbar"),
+		("frame -relief",           "frame"),
+		("listbox twelve items",    "listbox"),
 		("coloured button",         "button"),
 		("grid geometry",           "label"),
 	};
