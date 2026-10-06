@@ -643,23 +643,47 @@ is skipped, the clean is 89\(mi91% of the loop \(em so the premise holds
 .R
 .DE
 .LP
-The fixed per-call term is therefore 61% of the work at 82 bytes a line
-and 78% at 36. Both figures reproduce from the raw totals: 2211007 lines
-and 180309800 bytes in 648196us, 917973 and 32917776 in 210704us.
-.PP
-That fixed cost is the
+.B "WITHDRAWN: that intercept is not all barrier, and this plan said it was."
+The figure was read as a 61% and 78% fixed share at 82 and 36 bytes a
+line, and the fixed term attributed to the
 .CW DSB
 in
-.CW cacheflush() ,
-one per scanline. So on this workload the clean's cost is mostly
-proportional to
-.I scanlines ,
-not to area \(em and the gate's "count bytes cleaned per frame" would
-have reported a change in the smaller term while missing the larger one.
-It is worse than that: the flushed rectangles already average 82 bytes a
-line, about twenty pixels wide, so there is little width left to tighten
-and essentially all of step 3's available benefit is in reducing the
-scanline count.
+.CW cacheflush() .
+Hoisting the barrier then recovered 0.052 and 0.043us a line, not 0.180
+\(em because three
+.CW cycles()
+reads sit inside the loop to take the measurement, and a counter read on
+an A53 is not free. The instrument's own cost landed in the term it was
+measuring, so the DECOMPOSITION is contaminated even though the
+before/after is sound, both arms carrying the same instrument. An
+attribution asserted from a model that fitted: the same error as the
+uncached-writes claim, one layer in.
+.PP
+.B "What is instrument-free, and it is enough."
+Removing one barrier is 17.7% of the per-line cost at 82 bytes and 18.9%
+at 36, measured as a difference, so a per-call term is established
+without needing its size. And the slope moved too, 1.394 to 1.206
+ns/byte, while the intercept moved only 0.037 \(em less than either
+saving. A barrier is not byte-proportional, so the per-line
+.CW DSB
+was also
+.I serialising
+the write-backs that
+.CW dccvac
+issues; hoisting it lets them overlap, so it helps both terms and not
+only the fixed one. To decompose cleanly, time three
+.CW cycles()
+reads in an empty loop, or move them out to one pair per
+.CW flushmemscreen
+call.
+.PP
+.B "The gate still wants scanlines, on a measurement rather than on the fit."
+The flushed rectangles average 82 bytes a line \(em about twenty pixels
+\(em which is a ratio read straight off lines and bytes with no model in
+it. So width has almost nothing left to give, while the line count runs
+to 480 for a full-screen flush. That is why counting bytes would measure
+the smaller term, and it holds whatever the fixed share turns out to
+be.
 .PP
 .B "Two different changes, and only one of them loses."
 Coalescing the per-line cleans into a single clean over the span from
@@ -671,6 +695,13 @@ it saves: a loss for anything narrower than full width. Making the
 smaller is a different change and wins linearly in line count \(em 480
 lines at full width against 20 lines of a widget is 1798us against
 15us. The first is not an argument against the second.
+.PP
+That ratio is worth more than the figures behind it, because it is
+insensitive to the contamination above: recomputed on the pre-hoist fit,
+the post-hoist fit, and the post-hoist fit with a 0.10us instrument
+removed, the same shrink comes out 122x, 124x and 143x. Step 3's win
+does not depend on the decomposition, since at full width the byte term
+dominates and at widget size the line count collapses.
 .PP
 .B "And the order matters."
 Hoisting the
