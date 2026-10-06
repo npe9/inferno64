@@ -4918,6 +4918,17 @@ present_softscreen_body(void)
 			fprint(2, "METALSHARE this window: wall=%llud us  copy_work=%llud us (%llud.%.2llud%% of wall)  present_path=%llud us (%llud.%.2llud%% of wall)\n",
 				wall, dwork, pcw/100, pcw%100,
 				dpres, pcp/100, pcp%100);
+			/*
+			 * The reporting threshold is 30 presents, and that
+			 * matters for how this reads.  At a threshold of 1 the
+			 * window is a single present and `wall' then includes
+			 * the idle gap before it, so the share swings from
+			 * 0.00% to 15% between
+			 * consecutive presents on a workload with pauses.  The
+			 * run aggregate is the figure to quote; a per-present
+			 * one is dominated by whether anything else was
+			 * happening.
+			 */
 			metal_window_t0 = now;
 			metal_window_upload0 = metal_uploadwork_us;
 			metal_window_present0 = metal_present_us;

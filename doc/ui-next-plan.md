@@ -2247,14 +2247,43 @@ the pixel saving is **not** a reason to ship it, and tear-freedom is the only
 remaining one — which is a claim about what the screen shows, and every
 instrument either of us has is a readback that cannot see it.
 
-**Two limits on my figure, stated because they are easy to overstate past.**
-The host's "copy" is a Metal tile upload — a CPU memmove into a staging
-buffer plus a GPU blit encode — not the Pi's framebuffer memmove, so the
-0.34% does not transfer numerically; it is independent corroboration and a
-method, not a second measurement of the same thing. And the Tk workload does
-not reach this instrument at all: `runtests -g` produced no `METALSHARE`
-lines in a 120-second run while `gfxstress fill` produced 24, so the figure
-above is for the scattered-fill client and I do not have one for Tk.
+**And the Tk figure too, which is the one that closes the argument**, because
+Tk is the client whose deferred cost is *bounded* — the best case this scheme
+has anywhere. `runtests -g` had produced no `METALSHARE` lines at the
+30-present reporting threshold; lowering it to 1 showed 134 presents, and
+aggregating them:
+
+| | copy as % of wall | copy as % of the present path |
+|---|---|---|
+| Tk, `runtests -g` (134 presents) | **0.057%** | 9.4% |
+| `gfxstress fill` | **0.34%** | 4.3% |
+
+So in the scheme's best case the copy is **six hundredths of a per cent** of
+elapsed time. Tk's share of the *present path* is the higher of the two at
+9.4%, but Tk's present path is itself only 0.60% of its wall time — it is
+mostly idle. **Removing the copy entirely would be unmeasurable for either
+client.**
+
+That is the argument closed from the other end: the raspi3b session showed
+removing 99.2% of the bytes makes a scattered client 5% slower, and this
+shows the copy is a rounding error for the client where the scheme looks
+best. There is no workload left where the pixel saving could matter.
+
+**One instrument caveat that the per-present run exposed.** At a reporting
+threshold of 1 the window is a single present and `wall` then includes the
+idle gap before it, so the share swings between 0.00% and 15% on consecutive
+presents of a workload with pauses. The run aggregate is the figure to quote;
+a per-present one measures whether anything else was happening. The threshold
+is back at 30 with that written next to it.
+
+**Two limits on the host figures, stated because they are easy to overstate
+past.** The host's "copy" is a Metal tile upload — a CPU memmove into a
+staging buffer plus a GPU blit encode — not the Pi's framebuffer memmove, so
+neither percentage transfers numerically; they are independent corroboration
+and a method, not a second measurement of the same thing. And `flushmemscreen`
+here only marks tiles and calls `mark_view_dirty()`, so a present is an
+AppKit draw cycle rather than a client flush: Tk's 190 devdraw presents
+coalesce into 134 AppKit ones, and the two counts are not the same quantity.
 
 **The run-length-independent statement, which is what the argument should
 rest on:** for this workload the deferred scheme's total cost is 3084216 B
