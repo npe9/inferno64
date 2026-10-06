@@ -218,6 +218,30 @@ byteaddr(Memimage *i, Point p)
 	off = 4 * p.y * (s32)i->width;
 	a = i->data->bdata + i->zero + off;
 
+	/*
+	 * The x offset goes through a variable for the same reason, but from
+	 * a DIFFERENT defect, and this one involves no cast at all.  Written
+	 * as "return a + <int expression>" 7c emitted
+	 *
+	 *	SDIVW	R3,R5		32-bit result
+	 *	ADD	R10,R5,R0	added to the pointer at full width
+	 *
+	 * and an AArch64 W-register write ZEROES the upper half, so a
+	 * negative offset widened unsigned: the -1 that the sub-byte branch
+	 * computes for p.x = -2 became 0x00000000FFFFFFFF and the pointer
+	 * landed 4GB past the image.  C requires an int added to a pointer
+	 * to widen with its sign; the sign extension was simply absent.
+	 * There is nothing here for a compiler to "drop" -- which is why
+	 * this one outlived the row-offset fix above, and why the class is
+	 * wider than a narrowing cast: any instruction writing a W register
+	 * can feed a bad pointer.
+	 *
+	 * All three paths get it.  The p.x >= 0 one is safe on its own
+	 * numbers, and the depth >= 8 one is a MULW with the same shape and
+	 * is reachable by any client that allocates an image with a negative
+	 * origin, so they are treated alike rather than left to be argued
+	 * about one at a time.  Found by the raspi3b session on silicon.
+	 */
 	if(i->depth < 8){
 		/*
 		 * We need to always round down,
@@ -226,12 +250,13 @@ byteaddr(Memimage *i, Point p)
 		s32 np;
 		np = 8/i->depth;
 		if(p.x < 0)
-			return a+(p.x-np+1)/np;
+			off = (p.x-np+1)/np;
 		else
-			return a+p.x/np;
+			off = p.x/np;
 	}
 	else
-		return a+p.x*(i->depth/8);
+		off = p.x*(i->depth/8);
+	return a + off;
 }
 
 int
