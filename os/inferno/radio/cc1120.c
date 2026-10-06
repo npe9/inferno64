@@ -1073,6 +1073,35 @@ cc1120interrupt(Radio *r)
 			break;
 		}
 		/*
+		 * AND THE PAYLOAD HAS TO BE THERE.
+		 *
+		 * navail above said only that the FIFO held at least one
+		 * byte, and what followed read 1 + n of them.  The packet
+		 * interrupt is suppressed on this board and the FIFO is
+		 * drained by a clock watchdog, so it is looked at
+		 * MID-PACKET as a matter of course -- at 1200 baud a
+		 * 109-byte frame is 730 milliseconds in the air and the
+		 * watchdog runs many times inside that.  Reading past the
+		 * end underflows the part: the rest of the payload is
+		 * rubbish and the FIFO lands in RX_FIFO_ERR.
+		 *
+		 * The length byte is already consumed and cannot be put
+		 * back, so a packet that is not all there is flushed and
+		 * counted rather than delivered.  Losing it costs an
+		 * AX.25 retransmission, which is what the connected mode
+		 * is for; delivering it corrupt costs a diagnosis, and
+		 * doc/pycubed-plan.ms has one open that this is a
+		 * candidate for.
+		 */
+		if(navail < 1 + n){
+			s->select(s, 0);
+			rr->nrxpartial++;
+			strobe(rr, Sfrx);
+			strobe(rr, Srx);
+			s->unlock(s);
+			break;
+		}
+		/*
 		 * Every block on the queue begins with #W's twelve-byte header:
 		 * length, rssi, snr, flags and arrival tick, in that order.  It
 		 * is the device's format and not the part's -- see the note on
@@ -2967,7 +2996,18 @@ cc1120ctl(Radio *r, char *buf, int n)
 				 * ms per step, and it costs a phantom.
 				 */
 				delay(2);
-				(void)rdx(rr, Xrssi1);
+				/*
+				 * USED and not (void), which kencc warns
+				 * about as a result not used, and not an
+				 * assignment either, which it warns about
+				 * as a value set and not used.  The read
+				 * is the point: the value is the phantom
+				 * being thrown away.  A standing warning
+				 * is how a real one gets missed, and
+				 * there was a real one four hundred lines
+				 * below this.
+				 */
+				USED(rdx(rr, Xrssi1));
 				for(nrun = 0; nrun < ms; nrun++){
 					s->lock(s);
 					r0 = rdx(rr, Xrssi0);
@@ -3263,7 +3303,19 @@ cc1120ctl(Radio *r, char *buf, int n)
 		static ushort trun[Ncaprun];
 		uvlong t0, t1, tickhz;
 		ulong ms, us;
-		int sel, oldsel, cur, v, nrun, nsamp, first, armed;
+		/*
+		 * first starts at -1 because it is set only on the very
+		 * first sample, and a window that captures NOTHING --
+		 * ms of zero, or a pin that never moves inside it --
+		 * reached the print below without it ever being
+		 * assigned.  "gtrig 881000000 0" then reported "runs 0
+		 * first high" or "first low" depending on what was on
+		 * the stack, which is an instrument making a claim about
+		 * a pin it never read.  kencc had been saying so, in a
+		 * warning that had been there long enough to be scenery.
+		 */
+		int sel, oldsel, cur, v, nrun, nsamp, armed;
+		int first = -1;
 
 		if(s->gpio == nil)
 			error("radio: this board does not wire the part's GPIO");
@@ -3353,7 +3405,7 @@ cc1120ctl(Radio *r, char *buf, int n)
 
 		print("gtrig %lud iocfg3 0x%.2x us %lud samples %d runs %d "
 			"first %s\n", (ulong)rr->hz, sel, us, nsamp, nrun,
-			first? "high": "low");
+			first < 0? "none": (first? "high": "low"));
 		for(i = 0; i < nrun; i++){
 			print(" %ud", trun[i]);
 			if((i % 16) == 15)
@@ -3522,7 +3574,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"rxoverflow %ud txunderflow %ud txnever %ud\n"
 		"intr high %ud low %ud\n"
 		"ccabusy %ud ccamode %d fifoerr %ud watch %ud of %ud\n"
-		"rxstall %ud\n"
+		"rxstall %ud rxpartial %ud\n"
 		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n"
 		"ppb %d\n",
 		rr->partnum, rr->partversion,
@@ -3542,7 +3594,7 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->nintrhigh, rr->nintrlow,
 		rr->nccabusy, ccamode, rr->nfifoerr,
 		rr->nfifowatch, rr->nwatchtick,
-		rr->nrxstall,
+		rr->nrxstall, rr->nrxpartial,
 		pacfg2, pacfg2 & Papowerramp,
 		patenths/10, patenths < 0? -patenths%10: patenths%10,
 		/*

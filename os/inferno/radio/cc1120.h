@@ -57,6 +57,26 @@ struct Cc1120
 	u32	nrecv;
 	u32	ncrcerr;
 	u32	ntoobig;
+	/*
+	 * A length byte whose payload the FIFO did not hold yet.
+	 *
+	 * The receive path samples NUM_RXBYTES, finds at least one byte,
+	 * reads the length and then reads that many -- and the count
+	 * said nothing about whether they had arrived.  The packet
+	 * interrupt is suppressed on this board and the FIFO is drained
+	 * by a clock watchdog instead, so it is looked at MID-PACKET as
+	 * a matter of course: at 1200 baud a 109-byte frame is 730
+	 * milliseconds in the air and the watchdog runs many times
+	 * inside that.  Reading past the end underflows the part, which
+	 * returns rubbish for the rest of the payload and leaves the
+	 * FIFO in RX_FIFO_ERR.
+	 *
+	 * So the count is checked now and a packet that is not all there
+	 * is flushed and tallied here rather than delivered corrupt.
+	 * Losing it costs an AX.25 retransmission, which the connected
+	 * mode is for; delivering it corrupt costs a diagnosis.
+	 */
+	u32	nrxpartial;
 	u32	ntxtimeout;
 	u32	nrxoverflow;
 	u32	ntxunderflow;
