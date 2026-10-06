@@ -79,6 +79,22 @@ extern int	gchalt, gcdepth, gcdepthmax;		/* libinterp/gc.c */
 extern ulong	gcnruns, gcsweeps, gcepochs, gchalted, gcinxecseen;
 extern ulong	gcbroken;
 extern ulong	gcbadptr;
+extern ulong	gcptrfwd;
+extern ulong	gcptrback;
+extern ulong	gcptrfwdgc;
+extern ulong	gcptrbackgc;
+extern ulong	gcstaleok;
+extern ulong	gcstalebrk;
+extern ulong	gcstaleidle;
+extern uintptr	gcbrokeptr[8];
+extern u32	gcbrokemagic[8];
+extern uintptr	gcbrokesize[8];
+extern int	gcnbroke;
+extern uintptr	gcstaleptr[8];
+extern u32	gcstalemagic[8];
+extern uintptr	gcstalesize[8];
+extern int	gcstaletail[8];
+extern int	gcnstale;
 extern uvlong	gcdestroys, gcinspects;
 extern ulong	gcstwstops, gcstwwaits, gcstwfails;	/* port/dis.c */
 extern ulong	nrunqother, nrunqdel;			/* port/dis.c */
@@ -1515,6 +1531,42 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					 * the fix had a counter and no reader.
 					 */
 					" bad-ptrs-rejected %lud"
+					/*
+					 * And the reader on the path that
+					 * CREATES a chain, which H4 said this
+					 * item needed: poolfree() counting the
+					 * coalesces that swallow the sweep
+					 * cursor.  stale-ok is the only
+					 * dangerous tier -- a swallowed cursor
+					 * whose interior word still passed
+					 * okbhdr(), so the sweep walked from a
+					 * position nothing vouched for.  Wired
+					 * here AND in tools/jtag/vmheld in the
+					 * same commit as the counters, because
+					 * bad-ptrs-rejected above spent a whole
+					 * session installed and read by nothing.
+					 */
+					/*
+					 * fwd/back are TOTAL swallows and
+					 * by-gc is the sweeper swallowing its
+					 * own cursor, which it repairs on the
+					 * next line.  Reading the total as the
+					 * mechanism was the first version's
+					 * error: 252 back, 0 of them the
+					 * mutator's.  Subtract before drawing
+					 * a conclusion.
+					 */
+					" ptr-swallowed fwd %lud (by-gc %lud)"
+					" back %lud (by-gc %lud)"
+					/*
+					 * And the resume classification, which
+					 * counts RESUMES not swallows: ok is
+					 * the dangerous tier, brk the benign
+					 * re-sweep, idle a cursor nobody was
+					 * using.
+					 */
+					" resumed-stale ok %lud brk %lud"
+					" idle %lud"
 					" jitrefsatomic %d cflag %d\n",
 					gcnruns, gcsweeps, gcepochs, gchalted,
 					gchalt, gcdepth, gcdepthmax,
@@ -1522,7 +1574,49 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					gcstwstops, gcstwwaits, gcstwfails,
 					nrunqother, nrunqdel,
 					gcbroken, gcbadptr,
+					gcptrfwd, gcptrfwdgc,
+					gcptrback, gcptrbackgc,
+					gcstaleok, gcstalebrk, gcstaleidle,
 					jitrefsatomic, cflag);
+				/*
+				 * The break records, bounded at eight, printed
+				 * only when there are any.  A count cannot test
+				 * the prediction this item turns on: a header
+				 * that poolfree() coalesced away reads magic 0
+				 * with its size field UNTOUCHED, so magic 0
+				 * everywhere is the missing fixup and a
+				 * nonzero magic is something else still.
+				 */
+				if(gcnbroke > 0){
+					int i;
+
+					for(i = 0; i < gcnbroke; i++)
+						print("GC-BROKE %d ptr %#p"
+							" magic %#ux size %#p\n",
+							i, (void*)gcbrokeptr[i],
+							gcbrokemagic[i],
+							(void*)gcbrokesize[i]);
+				}
+				/*
+				 * And the resumes that PASSED okbhdr, with the
+				 * tail test that says whether the cursor was a
+				 * real block again (poolalloc put a header back
+				 * at that address) or an interior word that
+				 * merely read like one.  tail -1 means the test
+				 * was not safe to run.
+				 */
+				if(gcnstale > 0){
+					int i;
+
+					for(i = 0; i < gcnstale; i++)
+						print("GC-STALEOK %d ptr %#p"
+							" magic %#ux size %#p"
+							" tail %d\n",
+							i, (void*)gcstaleptr[i],
+							gcstalemagic[i],
+							(void*)gcstalesize[i],
+							gcstaletail[i]);
+				}
 			}
 			if(cb->nf > 2 && strcmp(cb->f[1], "ioboost") == 0)
 				ioboost = atoi(cb->f[2]);

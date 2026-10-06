@@ -81,6 +81,25 @@ A_NHELD=`sym nvmheld`
 A_GCSW=`sym gcsweeps`
 A_GCBRK=`sym gcbroken`
 A_GCBAD=`sym gcbadptr`	# the 6c587face guard's own counter
+#
+# The reader on the path that CREATES a chain.  gcbadptr above counts words
+# markheap() refused and has always read zero, so an implausible word is not
+# what breaks the sweep; these count poolfree() coalescing the sweep cursor
+# away.  Read here in the same commit as the counters, because the line above
+# is a standing reminder of what happens otherwise.
+A_GCPFWD=`sym gcptrfwd`
+A_GCPBACK=`sym gcptrback`
+A_GCPFWDGC=`sym gcptrfwdgc`
+A_GCPBACKGC=`sym gcptrbackgc`
+A_GCSTOK=`sym gcstaleok`
+A_GCSTBRK=`sym gcstalebrk`
+A_GCSTIDLE=`sym gcstaleidle`
+A_GCNBRK=`sym gcnbroke`
+A_GCBRKM=`sym gcbrokemagic`
+A_GCNSTL=`sym gcnstale`
+A_GCSTLM=`sym gcstalemagic`
+A_GCSTLT=`sym gcstaletail`
+A_GCSTLP=`sym gcstaleptr`
 A_GCBUSY=`sym gcbusy`
 A_GCIDLE=`sym gcidle`
 A_PANICKING=`sym panicking`
@@ -136,6 +155,19 @@ trap 'rm -f "$TMP"' 0 1 2 15
 	-c "echo \"VMHELD-GCSW\"; mdw ${A_GCSW:-0} 1" \
 	-c "echo \"VMHELD-GCBRK\"; mdw ${A_GCBRK:-0} 1" \
 	-c "echo \"VMHELD-GCBAD\"; mdw ${A_GCBAD:-0} 1" \
+	-c "echo \"VMHELD-GCPFWD\"; mdw ${A_GCPFWD:-0} 1" \
+	-c "echo \"VMHELD-GCPBACK\"; mdw ${A_GCPBACK:-0} 1" \
+	-c "echo \"VMHELD-GCPFWDGC\"; mdw ${A_GCPFWDGC:-0} 1" \
+	-c "echo \"VMHELD-GCPBACKGC\"; mdw ${A_GCPBACKGC:-0} 1" \
+	-c "echo \"VMHELD-GCSTOK\"; mdw ${A_GCSTOK:-0} 1" \
+	-c "echo \"VMHELD-GCSTBRK\"; mdw ${A_GCSTBRK:-0} 1" \
+	-c "echo \"VMHELD-GCSTIDLE\"; mdw ${A_GCSTIDLE:-0} 1" \
+	-c "echo \"VMHELD-GCNBRK\"; mdw ${A_GCNBRK:-0} 1" \
+	-c "echo \"VMHELD-GCBRKM\"; mdw ${A_GCBRKM:-0} 8" \
+	-c "echo \"VMHELD-GCNSTL\"; mdw ${A_GCNSTL:-0} 1" \
+	-c "echo \"VMHELD-GCSTLM\"; mdw ${A_GCSTLM:-0} 8" \
+	-c "echo \"VMHELD-GCSTLT\"; mdw ${A_GCSTLT:-0} 8" \
+	-c "echo \"VMHELD-GCSTLP\"; mdd ${A_GCSTLP:-0} 8" \
 	-c "echo \"VMHELD-GCBUSY\"; mdw ${A_GCBUSY:-0} 2" \
 	-c "echo \"VMHELD-GCIDLE\"; mdw ${A_GCIDLE:-0} 2" \
 	-c "echo \"VMHELD-PANICKING\"; mdw ${A_PANICKING:-0} 1" \
@@ -153,6 +185,13 @@ val() {	# $1 label -> the first word printed after it
 	awk -v l="$1" '
 		$0 ~ l {seen=1; next}
 		seen && /^0x/ {sub(/^[^:]*: */, ""); print $1; exit}
+	' "$TMP"
+}
+words() {	# $1 label -> every word printed under it, one line
+	awk -v l="$1" '
+		$0 ~ l {seen=1; next}
+		seen && /^0x/ {sub(/^[^:]*: */, ""); print; next}
+		seen {exit}
 	' "$TMP"
 }
 val2() {	# $1 label -> two words, low then high, as one 64-bit hex
@@ -306,6 +345,92 @@ if [ -n "$A_GCSW" ]; then
 	if [ "`dec $gcbrk`" != 0 ]; then
 		echo "vmheld:   a broken chain makes gcsweep abandon its sweep"
 		echo "vmheld:   (base = nil, return) -- see libinterp/gc.c"
+	fi
+	#
+	# What poolfree() saw.  THESE AND gcbrk ARE THE WHOLE TEST: if the
+	# sweep cursor is being coalesced away then fwd+back should account
+	# for the breaks, and the magic words below should all be 0 -- a
+	# coalesce zeroes the swallowed header and leaves its size alone.
+	# stale-ok is the tier that would matter: a swallowed cursor whose
+	# interior word still passed okbhdr(), so the sweep resumed from a
+	# position nothing vouched for.  Expected zero.
+	#
+	if [ -n "$A_GCPFWD" ]; then
+		pf=`dec \`val VMHELD-GCPFWD\``
+		pb=`dec \`val VMHELD-GCPBACK\``
+		pfg=`dec \`val VMHELD-GCPFWDGC\``
+		pbg=`dec \`val VMHELD-GCPBACKGC\``
+		so=`dec \`val VMHELD-GCSTOK\``
+		sb=`dec \`val VMHELD-GCSTBRK\``
+		si=`dec \`val VMHELD-GCSTIDLE\``
+		#
+		# SUBTRACT THE SWEEPER'S OWN BEFORE READING THIS.  The sweep
+		# loop frees the block AT the cursor and advances with
+		# ptr = B2NB(ptr) on the next line, so its own swallows are
+		# repaired by construction.  The first reading here was "252
+		# backward" on a boot with zero broken chains, and all 252
+		# were the collector's.
+		#
+		echo "vmheld: sweep cursor swallowed by a coalesce:" \
+			"forward $pf (gc's own $pfg), backward $pb (gc's own $pbg)"
+		#
+		# $(( )) and not expr: BSD expr EXITS 1 WHEN THE RESULT IS 0,
+		# so `expr 0 - 0 || echo ?' printed "0" and then ran the
+		# fallback -- and `?' is a glob, which the shell expanded
+		# against the worktree root to the directory `n'.  The reported
+		# number came out as "forward 0<newline>n, backward 1".  A
+		# number mangled by its own error path, in the one line this
+		# whole item turns on.
+		#
+		mf=$((pf - pfg))
+		mb=$((pb - pbg))
+		echo "vmheld:   BY THE MUTATOR: forward $mf, backward $mb" \
+			"-- only these can outlive a quantum"
+		#
+		# And what the sweep found when it resumed on one.  These count
+		# resumes, not swallows: gcptrstale is a single flag.
+		#
+		echo "vmheld: resumed on a swallowed cursor: passed okbhdr $so" \
+			"(must be 0), broke $sb, not in use $si"
+		if [ "$so" != 0 ]; then
+			echo "vmheld:   NONZERO: the sweep walked from an"
+			echo "vmheld:   interior word that looked like a header."
+			echo "vmheld:   That makes the two candidates in H4 one"
+			echo "vmheld:   mechanism, not two -- read the plan."
+		fi
+		if [ -n "$A_GCNBRK" ]; then
+			nbw=`val VMHELD-GCNBRK`
+			nb=`dec $nbw`
+			echo "vmheld: break records kept $nb (cap 8); magic words:"
+			words VMHELD-GCBRKM | sed 's/^/vmheld:   /'
+			echo "vmheld:   magic 0 == a coalesced-away header, which"
+			echo "vmheld:   is what a swallowed cursor reads AT the"
+			echo "vmheld:   merge.  A NONZERO one is not another"
+			echo "vmheld:   mechanism: the address can be reallocated"
+			echo "vmheld:   between the swallow and the resume, and one"
+			echo "vmheld:   of these read 0x2 for exactly that reason."
+			echo "vmheld:   The provenance test is resumed-stale brk"
+			echo "vmheld:   matching BROKEN above, not these words."
+		fi
+		#
+		# The stale-ok rows.  tail 1 = the cursor is a real block again,
+		# because poolalloc() split the merged free block and put a
+		# header back at that address: benign.  tail 0 = the address is
+		# inside a block and the word there only READS like a magic, so
+		# the sweep walked from a position nothing vouched for.  tail -1
+		# = the bound check refused to run the test.
+		#
+		if [ -n "$A_GCNSTL" ]; then
+			ns=`dec \`val VMHELD-GCNSTL\``
+			if [ "$ns" != 0 ]; then
+				echo "vmheld: stale-ok rows kept $ns (cap 8):"
+				echo "vmheld:   ptr:   `words VMHELD-GCSTLP | tr '\n' ' '`"
+				echo "vmheld:   magic: `words VMHELD-GCSTLM | tr '\n' ' '`"
+				echo "vmheld:   tail:  `words VMHELD-GCSTLT | tr '\n' ' '`"
+				echo "vmheld:   tail 1 benign (a header was put back"
+				echo "vmheld:   there); tail 0 is the dangerous tier"
+			fi
+		fi
 	fi
 fi
 

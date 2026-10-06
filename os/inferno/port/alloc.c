@@ -643,7 +643,31 @@ void
 poolfree(Pool *p, void *v)
 {
 	Bhdr *b, *c;
-	/* extern Bhdr *ptr; defined in libinterp/gc.c */
+	/*
+	 * `ptr' IS libinterp/gc.c's incremental sweep cursor, and the two
+	 * commented-out fixups below are upstream Inferno's, not a dead
+	 * experiment: os/port/alloc.c at 74a4d8c26 (the 20060303 import) has
+	 * both of them LIVE, and emu/port/alloc.c:455 still does.  This file
+	 * arrived in 10405d31c, a 9front-derived kernel port, with them already
+	 * commented -- which made sense then, because that kernel had no
+	 * libinterp for the extern to resolve against.  libinterp came later and
+	 * nobody turned them back on.
+	 *
+	 * So the native kernel's GC has been sweeping without the fixup while
+	 * emu's has had it, which is a difference of exactly the right shape:
+	 * doc/open-issues-plan.ms records broken sweep chains ON THE BOARD that
+	 * markheap()'s bad-pointer guard never explains.
+	 *
+	 * The counters are the measurement and come FIRST, deliberately.  If the
+	 * cursor really is being coalesced away, then gcptrfwd+gcptrback should
+	 * account for the breaks and re-enabling the two assignments should take
+	 * gcbroken to zero; if they read zero while breaks continue, the missing
+	 * fixup is not the mechanism and turning it on would have been a change
+	 * with a tidy story and no evidence.  See libinterp/gc.c.
+	 */
+	extern ulong gcptrfwd, gcptrback, gcptrfwdgc, gcptrbackgc;
+	extern int gcptrstale, gcinsweep;
+	extern Bhdr *ptr;
 
 	D2BPC(b, v, getcallerpc(&p), "alloc:D2B:poolfree");
 
@@ -669,6 +693,13 @@ poolfree(Pool *p, void *v)
 
 	c = B2NB(b);
 	if(c->magic == MAGIC_F) {	/* Join forward */
+		if(p == heapmem && c == ptr){
+			gcptrfwd++;
+			if(gcinsweep)
+				gcptrfwdgc++;
+			else
+				gcptrstale = 1;
+		}
 		/*if(c == ptr)
 			ptr = b; */
 		pooldel(p, c);
@@ -679,6 +710,13 @@ poolfree(Pool *p, void *v)
 
 	c = B2PT(b)->hdr;
 	if(c->magic == MAGIC_F) {	/* Join backward */
+		if(p == heapmem && b == ptr){
+			gcptrback++;
+			if(gcinsweep)
+				gcptrbackgc++;
+			else
+				gcptrstale = 1;
+		}
 		/*if(b == ptr)
 			ptr = c; */
 		pooldel(p, c);

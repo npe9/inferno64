@@ -35,6 +35,113 @@ struct Ptrhash
 	ulong	gcsweeps;
 	ulong	gcbroken;
 	ulong	gcbadptr;	/* words rejected before Setmark wrote through them */
+	/*
+	 * THE READER ON THE PATH THAT CREATES A CHAIN, which is what H4 in
+	 * doc/open-issues-plan.ms said this item needed and did not have.  The
+	 * guard in markheap() counts words it REFUSED and has always read zero,
+	 * so whatever breaks the sweep's chain is not an implausible word.
+	 *
+	 * These three are written by poolfree() in os/inferno/port/alloc.c (and
+	 * emu/port/alloc.c), not here, because the event is a COALESCE and only
+	 * the allocator sees one.  `ptr' below is the incremental sweep's cursor
+	 * and it is deliberately global for exactly this reason: poolfree() may
+	 * merge away the block it points at, in which case the merge zeroes that
+	 * block's magic and the cursor is left pointing into the interior of a
+	 * free block.  Upstream Inferno's poolfree() fixes the cursor up when it
+	 * does that; THIS KERNEL'S COPY HAS THE FIXUP COMMENTED OUT (emu's does
+	 * not), which is the first candidate these counters are here to confirm
+	 * or kill.
+	 *
+	 *	gcptrfwd	a forward join swallowed the block at ptr
+	 *	gcptrback	a backward join swallowed the block at ptr
+	 *	gcptrfwdgc	... of those, ones GCSWEEP ITSELF caused
+	 *	gcptrbackgc
+	 *
+	 * THE SPLIT IS THE WHOLE MEASUREMENT, and the first version of this file
+	 * did not have it.  The sweep loop below frees the block AT the cursor
+	 * (h = B2D(ptr); poolfree(heapmem, h)) and then advances with
+	 * ptr = B2NB(ptr) on the next line -- so a backward join there zeroes
+	 * ptr->magic, leaves ptr->size alone, and the advance is still correct.
+	 * The collector swallowing its own cursor is repaired by construction and
+	 * means nothing.  Only a swallow by the MUTATOR, between quanta, leaves a
+	 * cursor that is still there when the sweep resumes.
+	 *
+	 * Without the split the first reading was 252 backward swallows on a
+	 * boot with ZERO broken chains, which reads as a mechanism firing
+	 * constantly and being harmless -- when in fact it was the sweeper's own
+	 * frees, counted by an instrument that could not tell them from the
+	 * event it was built to find.  It also explains the forward count being
+	 * exactly 0: inside the loop b IS ptr, so c never is.
+	 *
+	 * Then the three resume classifications, which count RESUMES and not
+	 * swallows (gcptrstale is one flag, so several swallows between two
+	 * quanta collapse into one):
+	 *
+	 *	gcstaleok	resumed on a swallowed cursor, okbhdr PASSED
+	 *	gcstalebrk	resumed on a swallowed cursor, okbhdr FAILED
+	 *	gcstaleidle	swallowed while NO sweep was in progress
+	 *
+	 * gcstaleok is the only dangerous tier and the only number worth being
+	 * surprised by: the interior word happened to look like a header and the
+	 * sweep walked from a position nothing vouched for, which would make the
+	 * two candidates H4 could not separate ONE mechanism rather than two.
+	 * gcstalebrk is the benign one -- a wasted re-sweep.  gcstaleidle is
+	 * neither: ptr was a leftover from a finished sweep and the next rungc()
+	 * replaces it from poolchain() before reading it.
+	 *
+	 * gcstaleidle exists because the first version did not have it and
+	 * reported 55 dangerous hits that were all this: the check sat AFTER the
+	 * if(base == nil) restart, so it tested a cursor the restart had just
+	 * replaced and called the fresh value's validity a survival.
+	 */
+	ulong	gcptrfwd;
+	ulong	gcptrback;
+	ulong	gcptrfwdgc;
+	ulong	gcptrbackgc;
+	ulong	gcstaleok;
+	ulong	gcstalebrk;
+	ulong	gcstaleidle;
+	int	gcptrstale;	/* set by poolfree, cleared by rungc */
+	int	gcinsweep;	/* the sweep loop's own poolfree is running */
+	/*
+	 * And the breaks themselves, bounded: the first NBROKE, each with the
+	 * cursor, the word that failed okbhdr() and the size beside it.  The
+	 * prediction being tested is specific -- a coalesced-away header reads
+	 * magic 0 with its size field untouched -- and a count cannot test it.
+	 * Bounded because an unbounded kernel print on this path denies service
+	 * to the ring that is the only post-mortem channel this board has.
+	 */
+	uintptr	gcbrokeptr[8];
+	u32	gcbrokemagic[8];
+	uintptr	gcbrokesize[8];
+	int	gcnbroke;
+	/*
+	 * And the same for the resumes that DID pass okbhdr(), which is the one
+	 * tier that can still be either thing.  A swallowed header reads magic 0
+	 * at the moment of the merge, so a swallowed cursor that later passes
+	 * okbhdr() is a cursor whose ADDRESS has since been reused -- and that
+	 * splits two ways the counter cannot:
+	 *
+	 *   poolalloc() split the merged free block and put a REAL header back
+	 *   at that address, in which case the sweep resumes on a real block
+	 *   and nothing is wrong; or
+	 *
+	 *   the address is now inside a block and the word there merely reads
+	 *   like a magic.  okbhdr() runs ONCE, at entry; the loop below then
+	 *   compares ptr->magic == MAGIC_A bare and advances by whatever size
+	 *   is sitting there, until it passes limit.  That is H4's "plausible
+	 *   bad word" candidate with a mechanism attached.
+	 *
+	 * B2T(ptr)->hdr == ptr tells them apart in one compare: the allocator
+	 * writes that back-pointer on every block it makes, so a real block
+	 * agrees with its own tail and an interior word almost never will.
+	 * Recorded rather than counted, three events being worth three rows.
+	 */
+	uintptr	gcstaleptr[8];
+	u32	gcstalemagic[8];
+	uintptr	gcstalesize[8];
+	int	gcstaletail[8];		/* 1 agrees, 0 does not, -1 unchecked */
+	int	gcnstale;
 	ulong	gchalted;
 	ulong	gcepochs;
 	uvlong	gcdestroys;
@@ -649,6 +756,51 @@ rungc(Prog *p)
 				break;
 			}
 	}
+	/*
+	 * READ THE SWALLOW FLAG BEFORE THE RESTART BELOW CAN REPLACE ptr.
+	 * Putting this after the if(base == nil) block was the first version's
+	 * bug: the restart assigns a fresh cursor from poolchain(), so the check
+	 * tested a value that had just been replaced and counted its validity
+	 * as the swallowed cursor surviving.  base is also the only thing that
+	 * distinguishes a cursor in use from a leftover, and poolfree() cannot
+	 * see it, so the classification has to happen here.
+	 */
+	if(gcptrstale){
+		gcptrstale = 0;
+		if(base == nil)
+			gcstaleidle++;
+		else if(okbhdr(ptr)){
+			gcstaleok++;
+			if(gcnstale < nelem(gcstaleptr)){
+				int i = gcnstale++;
+
+				gcstaleptr[i] = (uintptr)ptr;
+				gcstalemagic[i] = ptr->magic;
+				gcstalesize[i] = ptr->size;
+				/*
+				 * The bound comes first and is not optional: a
+				 * cursor pointing into a block's payload has
+				 * whatever size is sitting there, and B2T()
+				 * indexes by it.  base and limit are the ARENA
+				 * and a coalesce cannot move them, so they are
+				 * the one thing still trustworthy here.
+				 * MAGIC_E is skipped because an end-of-arena
+				 * marker is not a block and need not have a
+				 * tail to agree with.
+				 */
+				if(ptr->magic == MAGIC_E)
+					gcstaletail[i] = -1;
+				else if(ptr->size < (intptr)BHDRSIZE
+				|| (uchar*)ptr + ptr->size > (uchar*)limit)
+					gcstaletail[i] = -1;
+				else
+					gcstaletail[i] =
+						B2T(ptr)->hdr == ptr;
+			}
+		}
+		else
+			gcstalebrk++;
+	}
 	if(base == nil) {
 		gcsweeps++;
 		b = poolchain(heapmem);
@@ -657,8 +809,13 @@ rungc(Prog *p)
 		limit = B2LIMIT(b);
 	}
 
-	/* Chain broken ? */
 	if(!okbhdr(ptr)) {
+		if(gcnbroke < nelem(gcbrokeptr)){
+			gcbrokeptr[gcnbroke] = (uintptr)ptr;
+			gcbrokemagic[gcnbroke] = ptr == nil? 0: ptr->magic;
+			gcbrokesize[gcnbroke] = ptr == nil? 0: ptr->size;
+			gcnbroke++;
+		}
 		base = nil;
 		gcbroken++;
 		return;
@@ -684,6 +841,28 @@ rungc(Prog *p)
 					domflag(h);
 				if(heapmonitor != nil)
 					heapmonitor(2, h, 0);
+				/*
+				 * gcinsweep spans the WHOLE destruction, not
+				 * just the poolfree below: h is the block AT
+				 * ptr, so that free's backward join swallows
+				 * the cursor every time the block before it is
+				 * free, and t->free() reaches poolfree() too
+				 * through destroy().  Harmless either way --
+				 * ptr->size is untouched and the advance below
+				 * is correct -- but indistinguishable from the
+				 * MUTATOR doing it unless poolfree() is told
+				 * who is calling, and the mutator's is the only
+				 * one that can outlive the quantum.
+				 *
+				 * One flag and not a per-context one: this is
+				 * sound while npctx == 1, which is what the
+				 * boot it was measured on had.  A second
+				 * context freeing concurrently would be
+				 * attributed to the collector, so the split is
+				 * NOT valid under parallelvm and the number
+				 * must be relabelled before it is read there.
+				 */
+				gcinsweep = 1;
 				if(t != nil) {
 					gclock();
 					t->free(h, 1);
@@ -692,6 +871,7 @@ rungc(Prog *p)
 				}
 				gcdestroys++;
 				poolfree(heapmem, h);
+				gcinsweep = 0;
 			}
 		}
 		ptr = B2NB(ptr);
