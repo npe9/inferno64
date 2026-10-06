@@ -1,0 +1,65 @@
+.TH BOARDSIM 1
+.SH NAME
+boardsim \- assert the satellite simulation's physics on silicon
+.SH SYNOPSIS
+.B tools/f407/boardsim.py
+.I screen-session
+.SH DESCRIPTION
+.I Boardsim
+drives the simulated devices on a real stm32f407 through the
+.IR screen (1)
+session that owns its console, and asserts the same physics
+.IR simcheck (1)
+asserts under QEMU: the field's magnitude round one orbit, the eclipse
+fraction at beta zero, that the attitude turns at the rate it reports
+at 10 and at 1 degree a second, and that a torque-free body keeps its
+momentum while its body rate precesses.
+.PP
+.B "It exists because every figure for the corrected model came from QEMU,"
+where this kernel's tick runs about seven times faster than wall time.
+The arithmetic is the same on the board and the CLOCK is not, so each
+check takes its elapsed time from the model's own counters \-
+.B integrated
+in
+.B #P/imu.ctl
+and the orbit's closed-form
+.B phase
+\- and nothing here is timed by a host sleep.
+.PP
+.B "It never opens the console device."
+A second opener while
+.I screen
+holds the tty wedges the adapter, and the board is then unreachable
+until somebody replugs it.  Commands go in with
+.B "screen -X stuff"
+and the replies come out of
+.BR hardcopy ,
+which is what
+.B tools/radio/twoboard.py
+is for.
+.PP
+The board must be running an init with a shell \- 
+.B armv7minit
+\- because the satellite image runs the mission and has no prompt.
+.SH SOURCE
+.B /tools/f407/boardsim.py
+.SH SEE ALSO
+.IR simcheck (1),
+.IR arch (3)
+.SH DIAGNOSTICS
+Prints one line per check and
+.B BOARDSIM-OK
+or
+.B BOARDSIM-FAILED
+with the names of the checks that failed.
+.SH BUGS
+The sweeps are coarser than
+.IR simcheck 's
+because every command is typed at twenty milliseconds a character and
+every reply is a
+.B hardcopy
+of the window: twelve points round the orbit rather than
+twenty-four, and twenty-four for the eclipse rather than
+seventy-two.  The figures it compares against are the geometry's, not
+QEMU's, so a coarser sweep is a weaker test of the same claim and not a
+test of a different one.

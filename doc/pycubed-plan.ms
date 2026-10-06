@@ -2683,3 +2683,110 @@ discard
 will not accept.  The file compiles with no diagnostics at all, which is
 the condition under which the next real one will be noticed.
 .B "This one was not, for as long as it took to stop reading them."
+.NH 1
+And then on silicon
+.PP
+Every figure above was measured under QEMU, because the board that
+would have carried them was hung with no console.  It was reset on 6
+October 2026 and the satellite image flashed \- kerndate 1791322734,
+nproc 12 \- and the mission ran.
+.NH 2
+The detumble, on real hardware, at timescale 1
+.PP
+.DS
+.CW "beepsat: tumbling, as a deployed satellite is"
+.CW "BEEPSAT-RUNNING 7 tasks"
+.CW "detumble | rate 22.996 deg/s, dB/dt 46 -45 -30, m -59 58 39"
+.CW "detumble | rate 22.600 deg/s, dB/dt -26 72 53, m 33 -93 -68"
+.CW "detumble | rate 21.485 deg/s, dB/dt ..."
+.CW "vbatt | 3.69V > threshold 3.60V"
+.DE
+.B "96 samples at the control loop's one-second period: 22.996 deg/s down to 21.485, a fall of 1.511 in 95 board-seconds."
+That is
+.B "0.0159 degrees a second squared,"
+and 14 of the 95 samples rose, which is the ripple a fixed dipole gives
+as the body turns past it.
+.PP
+.B "THIS IS THE REGIME THAT USED TO BE DEAD."
+At timescale 1 the rate update was
+.CW "T.dt.57296/(I.10^6)" ,
+which for this dipole over a ten-millisecond tick is 0.086
+milli-degrees a second and truncated to zero: the torquers had no
+effect at all, and the only reason anything was ever seen to move was
+the time scale multiplying the step.  On silicon, at timescale 1, with
+the remainder carried, the rate comes down.
+.PP
+.B "And the figure is the right size."
+The B-dot law commands about 130 milli-A.m^2 here, the field is about
+250 milligauss, so the torque is 3.3 micro-newton-metres; the rate
+reported is the largest component, which is about the low-inertia axis
+at 0.0067 kg.m^2, so
+.CW "m x B / I"
+is 0.028 deg/s^2 at perfect alignment.  Measured 0.0159, which is 57
+per cent of that \- and the law is not aligned with the easy axis, so
+better than half of ideal is what it should be.  A figure within a
+factor of two of the hand calculation, with the sign right and the
+trend monotonic, is the model and the controller agreeing on hardware.
+.PP
+The sun-seeking task printed nothing, which is correct: it skips every
+sample while the rate is above the deadband, and at 0.0159 deg/s^2 the
+fall from 23 to 1.5 takes about twenty-two minutes.
+.NH 2
+And the physics, asserted on the board
+.PP
+.B tools/f407/boardsim.py
+drives the simulated devices through the
+.IR screen (1)
+session that owns the board's console \- never by opening the device,
+which wedges the adapter while screen holds it \- and asserts what
+.B tools/f407/simcheck.py
+asserts under QEMU.  Each check takes its elapsed time from the model's
+own counters,
+.B integrated
+and the orbit's closed-form
+.BR phase ,
+because the arithmetic is the same on the board and the CLOCK is not.
+.PP
+.B "Eight for eight, and the figures agree with QEMU's:"
+.DS
+.CW "                     QEMU            silicon"
+.CW "field round one orbit  246..415 mG     259..409 mG"
+.CW "eclipse at beta 0      38% of 72       38% of 24"
+.CW "spin 10 deg/s          0.0%            0.0%"
+.CW "spin 1 deg/s           0.1%            0.0%"
+.CW "free-body |L|          0.002%/242s     0.002%/76s"
+.CW "free-body energy       1.226%/242s     0.347%/76s"
+.CW "omega_z held           458 of 23030    126 of 23011"
+.DE
+.B "The 1 deg/s row is the one that matters:"
+18.7 degrees where the rate asked for 18.8, in exactly the regime where
+the quaternion update used to divide to zero and the satellite did not
+turn at all.
+.PP
+The energy drift is smaller than QEMU's because the interval is \- 76
+seconds of model time against 242 \- and the drift grows with it, so
+these two numbers are consistent rather than an improvement.  Saying so
+is the point: a figure that looks better for a reason that has nothing
+to do with the thing being measured is the shape of a wrong conclusion.
+.NH 2
+And the sequence that hung the board does not any more
+.PP
+.CW "echo timescale 1 >orbit.ctl"
+then
+.CW "echo still >imu.ctl"
+\- the exact pair that left the board with no console, no response to
+the two control-Rs that reach the bootloader, and nothing but the reset
+button \- runs on this kernel, with the board answering afterwards and
+the whole of
+.B #P/imu.ctl
+printing.
+.PP
+.B "That is not a verified fix and should not be read as one."
+The cause on the old image was never identified, the image that did it
+no longer exists in that form, and this kernel differs from it in
+several ways \- one of which is that
+.I imuctlread
+outgrew its 256-byte buffer, and a truncating
+.I snprint
+is a plausible candidate nobody has tied to the hang.
+.B "What is true is that it no longer reproduces."
