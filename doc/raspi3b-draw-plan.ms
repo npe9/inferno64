@@ -775,6 +775,31 @@ calls and bytes cleaned, per frame, negative control unchanged \(em a
 frame that dirties the whole screen must still report the whole screen.
 Two numbers cost nothing and neither can be made to stand for the other.
 .PP
+.PP
+.B "CONFIRMED ON THE BOARD, same clients, both modes."
+Once
+.CW $Math
+was registered and both clients would load, the raspi3b session measured
+them on silicon with the kernel's own counters:
+.DS
+.CW
+	client      board   host   ratio
+	wm/clock     1531   2387    1.6x
+	wm/bounce      74     49    1.5x
+.R
+.DE
+.LP
+Both modes, both clients, both platforms, and the two ratios agree with
+each other \(em consistent with window-size differences rather than with
+anything about the measurement. That is the test; an earlier pairing of
+that session's
+.CW wm/colors
+against this one's
+.CW wm/clock
+was suggestive but compared two different clients, and is withdrawn in
+favour of this.
+.PP
+
 .B "Sample caveat."
 Two real Tk clients produced measurable damage here;
 .CW wm/colors ,
