@@ -315,6 +315,16 @@ bigread()
 		return;
 	}
 	sys->print("styx: %d bytes over the radio, twice\n", len a);
+	# THE RADIO'S OWN COUNTERS, WITH THE VERDICT AND NOT INSTEAD OF
+	# IT.  A run of this costs a board, two boards in fact, and
+	# somebody at the bench; printing "273 and 271" and stopping
+	# spends all of that on restating the question.  The driver
+	# counts what it could not do -- rxpartial for a payload the
+	# FIFO did not hold, fifoerr, rxoverflow, crcerr -- and
+	# doc/pycubed-plan.ms names rxpartial as the candidate for
+	# exactly these two bytes.  With the numbers beside the result,
+	# one run either confirms it or rules it out.
+	counters();
 	if(len a != len b){
 		sys->print("styx: the two reads are %d and %d bytes, so the"
 			+ " transfer is losing data\n", len a, len b);
@@ -332,6 +342,35 @@ bigread()
 		+ " crossed %d-byte frames intact\n", len a, 109);
 	sys->print("ARMV7M-STYX-BIGREAD-OK\n");
 	sys->print("%s", a);
+}
+
+# What the radio and the conversation have counted, printed in the lines
+# their own stat files use rather than reinterpreted here: a number this
+# init paraphrased would be a number to check twice.
+counters()
+{
+	# l and not ref: "ref" is a Limbo keyword -- it is how a reference
+	# type is spelled -- and naming a variable with it gives a syntax
+	# error on this line and then one on nearly every line after it,
+	# which reads as a file that has been mangled.  The same trap as
+	# "to" in up() above.
+	for(l := list of {"/dev/radio0/stats", "#a/ax25/stats"}; l != nil;
+	    l = tl l){
+		p := hd l;
+		fd := sys->open(p, Sys->OREAD);
+		if(fd == nil)
+			continue;
+		b := array[1024] of byte;
+		tot := 0;
+		while(tot < len b){
+			n := sys->read(fd, b[tot:], len b - tot);
+			if(n <= 0)
+				break;
+			tot += n;
+		}
+		if(tot > 0)
+			sys->print("styx: %s\n%s", p, string b[0:tot]);
+	}
 }
 
 # A byte stream over a packet conversation.
