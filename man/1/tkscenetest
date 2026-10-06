@@ -183,10 +183,25 @@ whose geometry comes from
 .B grid
 rather than
 .BR pack .
-A second
-.I toplevel
-is covered neither here nor by
-.IR tkofftest (1).
+.PP
+.B "Two toplevels drawing alternately"
+are covered, and were the last mechanism gap.
+.BR scene.c 's
+walk is a single static struct shared by every toplevel, so interleaved
+drawing is where its state could leak \(em a depth that does not return to
+zero, or a scene pointer left at a tree the flush has freed. Each of two
+toplevels is reconfigured and updated in turn, three times, and each image
+must match the same widget rendered alone, through both paths. It does, at
+0 bytes.
+.PP
+Two details make that check mean something. Bare
+.B update
+calls on a toplevel with nothing pending do nothing, so each round
+reconfigures the text first to force a repaint; and the case reads
+.B "render count"
+of its own, because the global one is taken before it runs and the identity
+would otherwise pass if both arms had somehow taken the direct path. It
+builds 2 trees.
 .PP
 .I Multiple
 widgets are not covered here and do not need to be:
@@ -205,7 +220,7 @@ case into a FRESH image, so when it fails it names the widget and the state;
 renders everything at once, so it covers interactions this cannot and tells
 you less about which of them broke. A second
 .I toplevel
-is covered by neither.
+is now covered here, and by nothing else.
 .PP
 The "drew something" check counts bytes differing from the white the image
 was filled with, so a widget that painted only its own grey background
