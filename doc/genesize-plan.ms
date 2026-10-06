@@ -2111,6 +2111,10 @@ usbd: ep1.0: port 2: high ep4.0 vid 0627 did 0001 class 0
 usbd: ep4.0: boot keyboard on ep4.1
 .ft
 .DE
+On
+.CW scripts/mkqemu.sh 's
+build of the release and the nine patches, check-qemu-fl1100 passes
+again (pci, irq, disk).
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
