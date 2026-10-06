@@ -2217,6 +2217,45 @@ nests stops paying, whatever the damage costs per frame — against
 `gfxstress fill`, where scattered damage never nests and the cost is linear
 forever at a small constant rate.
 
+**AND THE DENOMINATOR NONE OF THESE FIGURES HAD: THE COPY IS 0.34% OF WALL
+TIME.** Every pixel figure in this section — 84.9%, the zero tail, the
+raspi3b session's 98–99% — is a share of the copy's **bytes**. None said what
+fraction of a frame the copy occupies, so none said whether a percentage of
+it was worth anything. `METALSHARE`, on `gfxstress fill` at 640×480:
+
+```
+wall=500116 us  copy_work=1726 us (0.34% of wall)  present_path=40258 us (8.04%)
+per present: vsync_wait=495  slot_wait=0  real_work=582 (us)
+```
+
+So the tile copy is **a third of a per cent** of wall time, and the whole
+present path is 8%. Nearly half of a present is waiting for vsync. **A 99%
+cut of 0.34% is 0.34%.**
+
+**This corroborates the raspi3b session's board result, which is the one that
+matters.** They built the page flip, removed **99.2%** of the copied bytes —
+1204584 → 9422 per present — and measured the workload **5% SLOWER**:
+44500/43500 ops/s at `Dbuf=0` against 41800/41900 at `Dbuf=1`, both arms
+JTAG-booted so the core count is controlled. 856 flips, 0 failed, so the flip
+really runs. Two platforms, two mechanisms, the same conclusion: **the copy
+was never the bottleneck.**
+
+**That is `doc/hpc-plan.md`'s "divide before you optimise" in its pure form**,
+and this section spent a long time computing shares of a term without ever
+measuring the term. The honest status of the whole flip argument is now:
+the pixel saving is **not** a reason to ship it, and tear-freedom is the only
+remaining one — which is a claim about what the screen shows, and every
+instrument either of us has is a readback that cannot see it.
+
+**Two limits on my figure, stated because they are easy to overstate past.**
+The host's "copy" is a Metal tile upload — a CPU memmove into a staging
+buffer plus a GPU blit encode — not the Pi's framebuffer memmove, so the
+0.34% does not transfer numerically; it is independent corroboration and a
+method, not a second measurement of the same thing. And the Tk workload does
+not reach this instrument at all: `runtests -g` produced no `METALSHARE`
+lines in a 120-second run while `gfxstress fill` produced 24, so the figure
+above is for the scattered-fill client and I do not have one for Tk.
+
 **The run-length-independent statement, which is what the argument should
 rest on:** for this workload the deferred scheme's total cost is 3084216 B
 and stopped accumulating, while the eager scheme costs ~48112 B per frame

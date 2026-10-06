@@ -391,6 +391,21 @@ static uvlong	metal_upload_us;	/* total time inside that */
 static uvlong	metal_drawable_us;	/* blocked in nextDrawable, i.e. vsync */
 static uvlong	metal_slotwait_us;	/* blocked on the staging-buffer ring */
 static uvlong	metal_uploadwork_us;	/* the tile copy and encode: actual work */
+/*
+ * WALL TIME across a reporting window, so the copy can be given as a SHARE
+ * of a frame rather than as a size or an absolute duration.
+ *
+ * Every pixel figure in doc/ui-next-plan.md -- 84.9%, the zero tail, the
+ * raspi3b session's 98-99% -- is a share of the copy's BYTES.  None of them
+ * says what fraction of a frame the copy occupies, so none of them says
+ * whether a percentage of it is worth anything.  The raspi3b session then
+ * built the page flip, removed 99.2% of the copied bytes, and measured the
+ * workload 5% SLOWER: the copy was not the bottleneck, and a 99% cut of a
+ * small term is a small term.  This is the denominator that was missing.
+ */
+static uvlong	metal_window_t0;	/* osusectime() at the window's start */
+static uvlong	metal_window_upload0;	/* metal_uploadwork_us then */
+static uvlong	metal_window_present0;	/* metal_present_us then */
 static id<MTLBuffer>	metal_validate_buf;
 static uchar	*metal_validate_cpu;
 static int	metal_validate_len;
@@ -4885,6 +4900,28 @@ present_softscreen_body(void)
 			metal_presents ? (metal_present_us-metal_drawable_us)/metal_presents : 0,
 			metal_uploads,
 			metal_uploads ? metal_upload_us/metal_uploads : 0);
+		{
+			/*
+			 * The share, over this window only: a cumulative
+			 * share would be a transient-weighted average, which
+			 * is the error doc/ui-next-plan.md records three
+			 * times.
+			 */
+			uvlong now, wall, dwork, dpres, pcw, pcp;
+
+			now = osusectime();
+			wall = metal_window_t0 ? now - metal_window_t0 : 0;
+			dwork = metal_uploadwork_us - metal_window_upload0;
+			dpres = metal_present_us - metal_window_present0;
+			pcw = wall ? (dwork * 10000) / wall : 0;
+			pcp = wall ? (dpres * 10000) / wall : 0;
+			fprint(2, "METALSHARE this window: wall=%llud us  copy_work=%llud us (%llud.%.2llud%% of wall)  present_path=%llud us (%llud.%.2llud%% of wall)\n",
+				wall, dwork, pcw/100, pcw%100,
+				dpres, pcp/100, pcp%100);
+			metal_window_t0 = now;
+			metal_window_upload0 = metal_uploadwork_us;
+			metal_window_present0 = metal_present_us;
+		}
 		fprint(2, "METALSPLIT per present: vsync_wait=%llud slot_wait=%llud real_work=%llud (us)\n",
 			metal_presents ? metal_drawable_us/metal_presents : 0,
 			metal_presents ? metal_slotwait_us/metal_presents : 0,
