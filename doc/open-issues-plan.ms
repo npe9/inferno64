@@ -10268,3 +10268,82 @@ peer's linker fix was a PREREQUISITE for the measurement that corrects their own
 earlier reading of my fit.  Neither of us planned that, and neither of us could
 have done it alone \(em the fix is in their file, the reproducer and the board
 are mine.
+.NH 2
+STEP 3's GATE, MEASURED: the benefit is 0.3 to 6.1 per cent, and the 82 B/line that set the gate was workload-specific
+.LP
+The agreed order was hoist the barrier, re-measure, then step 3 against a
+SCANLINE gate.  The hoist is done, shipped and measured.
+.B "So this is the gate, taken before writing any of step 3,"
+on the shipping kernel's own
+.CW "SCREEN fbloop"
+counters across five damage shapes:
+.P1
+phase    % of wall   B/line   us/line  fixed share
+fill         16.2%       82    0.2418        53.0%
+damage        5.3%       36    0.1781        72.0%
+copy          0.3%     2203    1.7958         7.1%
+alpha         0.9%      800    0.8860        14.5%
+text          6.1%     1015    1.1290        11.4%
+.P2
+.CW us/line
+has the instrument's 0.0514us removed;
+.B "fixed share"
+is the 0.1282us instrument-free per-call term against it.
+.NH 3
+Two things invert, and one of them is the gate a peer and I agreed on
+.LP
+.B "First: the clean is 0.3 to 6.1 per cent of wall for WIDGET-shaped damage,"
+against 16.2 for
+.CW fill .
+So step 3's whole available benefit on the clients it is meant to help is a few
+per cent at most \(em
+.CW copy
+is three tenths of one per cent.
+.B "That is the share, taken before building, which is the third time this plan has needed that lesson"
+and the first time it arrives early enough to be free.
+.PP
+.B "Second, and this is the correction: 82 B/line was gfxstress fill's number, not a property of the system."
+The gate was set on it \(em "the rectangles are already about twenty pixels
+wide, so there is almost no width left to tighten, and the benefit scales with
+SCANLINES not area".
+.B "For widget damage the rectangles are 200 to 550 pixels wide"
+.CW ( copy
+2203 B/line,
+.CW alpha
+800,
+.CW text
+1015), and the fixed term is then only 7 to 14 per cent of the per-line cost
+instead of 44 to 56.
+.PP
+.B "So for the shapes step 3 targets the cost IS area-proportional and bytes ARE the right gate."
+The scanline gate is correct for scattered damage and wrong for widget damage,
+which is the opposite of how it was derived.
+.B "A peer and I agreed that gate from one workload's 82 B/line, and generalising it was the error --"
+mine for supplying the figure without its population, theirs for building the
+argument on it, and neither of us asked which clients the number came from.
+.NH 3
+What that leaves step 3 as
+.LP
+.IP \(bu
+.B "Bounded at a few per cent of wall,"
+with
+.CW text
+at 6.1 per cent the best case among the widget shapes and
+.CW copy
+at 0.3 the worst.
+.IP \(bu
+.B "Byte-gated, not scanline-gated,"
+for exactly those shapes \(em so the measurement to drive it is the ratio of
+flushed AREA to actually-dirty area, which is what
+.CW tkscenebounds()
+would supply and what nothing here instruments yet.
+.IP \(bu
+.B "And not obviously worth building."
+A few per cent is inside the 2.9 per cent build-to-build spread this plan
+already measured, so step 3 could not be VALIDATED end to end even if it worked
+\(em it would need the same per-scanline attribution the hoist needed.
+.PP
+.B "That is a gate doing its job:"
+it was supposed to decide whether to write step 3, and the answer it gives is
+"not on this evidence", reached for about twenty minutes of board time instead of
+a kernel change.
