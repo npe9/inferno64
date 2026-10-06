@@ -643,6 +643,23 @@ static uvlong vdtot, vdpartial;	/* 'd' ops, and those that do not overwrite */
  */
 static uvlong vmnil, vmopaque, vmreplones, vmreplother, vmalpha, vmother;
 
+/*
+ * Bytes per line of each flushed rectangle, which decides whether a damage
+ * repair's cost is dominated by its per-scanline fixed term or by its area.
+ *
+ * A HISTOGRAM AND NOT A MEAN, deliberately.  The raspi3b plan's scanline gate
+ * was built on "82 bytes a line", which was gfxstress fill's mean -- a
+ * pathologically scattered workload -- and widget-shaped damage turns out to
+ * run 800-2200.  A mean over a mixed population is exactly what hid that, so
+ * the buckets are the output and the mean is reported beside them as the thing
+ * that can mislead.
+ */
+static uvlong vdlines, vdbytes;		/* totals, so mean = vdbytes/vdlines */
+static uvlong vdbperl[7];		/* <64 <128 <256 <512 <1k <2k >=2k */
+static char *vdbperlname[7] = {
+	"<64", "<128", "<256", "<512", "<1k", "<2k", ">=2k"
+};
+
 static int
 partialoverwrite(int c)
 {
@@ -724,6 +741,17 @@ framedamage(Rectangle r)
 	 */
 	if(curop >= 0 && curop < 128)
 		vopseen[curop]++;
+	if(Dx(r) > 0 && Dy(r) > 0 && screenimage != nil){
+		uvlong bpl;
+		int b;
+
+		bpl = (uvlong)Dx(r) * (screenimage->depth / 8);
+		vdbytes += bpl * Dy(r);
+		vdlines += Dy(r);
+		b = bpl < 64? 0: bpl < 128? 1: bpl < 256? 2: bpl < 512? 3:
+		    bpl < 1024? 4: bpl < 2048? 5: 6;
+		vdbperl[b] += Dy(r);	/* weighted by LINES, as the cost is */
+	}
 	if(partialoverwrite(curop)){
 		Rectangle x;
 
@@ -844,6 +872,18 @@ frameboundary(void)
 		}
 		print("FRAMEMASK nil %llud  memopaque %llud  1x1repl-ones %llud  1x1repl-other %llud  alpha %llud  other %llud\n",
 			vmnil, vmopaque, vmreplones, vmreplother, vmalpha, vmother);
+		if(vdlines != 0){
+			int b;
+
+			print("FRAMEPERLINE lines %llud  bytes %llud  mean %llud B/line  (a mean over a mixed population is what misled the raspi3b plan)\n",
+				vdlines, vdbytes, vdbytes/vdlines);
+			print("FRAMEPERLINE lines by bytes-per-line:");
+			for(b = 0; b < 7; b++)
+				print(" %s=%llud.%.1llud%%", vdbperlname[b],
+					vdbperl[b]*100/vdlines,
+					(vdbperl[b]*1000/vdlines)%10);
+			print("\n");
+		}
 	}
 }
 
