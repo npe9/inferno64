@@ -776,15 +776,69 @@ above. Fixed in
 with a refusal past 2\u31\d bytes, plus a well-formedness check on the
 rectangle in both allocators.
 .PP
-The first fix is necessary and
+That fix was necessary and
 .I not
-sufficient.
-.CW ellipsetest 's
-.CW brushed
-group still faults in the kernel, now at
+sufficient, and what remained was
+.CW byteaddr
+again \(em the
+.I x
+offset this time, with no cast anywhere in the source. All three return
+paths were
+.CW "a + <32-bit int expression>" ,
+and
+.CW 7c
+emitted
+.CW SDIVW
+or
+.CW MULW
+straight into a 64-bit
+.CW ADD .
+An AArch64 W-register write
+.I zeroes
+the upper half, so a negative offset widened
+.I unsigned :
+the \-1 that the sub-byte branch computes for
+.CW p.x
+of \-2 became
+.CW 0x00000000FFFFFFFF
+and the pointer landed 4GB past the image. C requires an int added to a
+pointer to widen with its sign; the sign extension was simply absent.
+.PP
+.B "That makes the class wider than a dropped cast."
+There is nothing here for a compiler to drop, which is why this one
+outlived the row-offset fix: any instruction writing a W register can
+feed a bad pointer, not just the
+.CW UMULL
+that the cast defect produced. Fixed the same way, by taking the offset
+through an
+.CW s32
+local, so every path now sign-extends;
+.I all
+three were treated alike rather than argued about one at a time, since
+the
+.CW "depth >= 8"
+path is the same shape and is reachable by any client that allocates an
+image with a negative origin.
+.PP
+.B "A correction, because this plan said otherwise."
+This section previously recorded the surviving fault as
 .CW bdata
-itself, which carries bit 32 on a board with 1GB of RAM. That is a third
-thing, in the kernel pool rather than the draw library, and it is open.
+itself carrying bit 32 on a 1GB board, and called it a third defect in
+the kernel pool. That was wrong, and it was inference from an address
+rather than a measurement. The raspi3b session printed the fields at the
+fault on silicon \(em
+.CW "dst 0x1008c6c40 bdata 0x8c6c40 base 0x8c6c30 allocd 1 zero 17 width 2 r -2 -2 3 3"
+\(em so
+.CW bdata
+was clean, high word zero, and the destination was exactly 2\u32\d above
+a correctly allocated image. The pool was never implicated. Both faults
+were in
+.CW byteaddr ,
+one in the row offset and one in the
+.I x ,
+and
+.CW ellipsetest
+now reports 9 of 9 in the kernel with zero traps.
 .PP
 .B "What this cost, and why."
 Three instruments gave confident wrong answers before the mechanism came
