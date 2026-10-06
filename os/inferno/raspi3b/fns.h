@@ -58,6 +58,7 @@ void	dcivac(uintptr);		/* invalidate one D-line */
 void	dccivac(uintptr);		/* clean+invalidate one D-line */
 void	cacheiinv(void);		/* invalidate the whole I-cache */
 void	cacheinit(void);		/* invalidate reset-state data caches */
+void	cacheclean(void*, usize);	/* clean a D-cache range, NO barrier */
 void	cacheflush(void*, usize);	/* clean a D-cache range to PoC */
 void	cacheflushinv(void*, usize);	/* clean+invalidate a D-cache range */
 void	cacheinval(void*, usize);	/* invalidate a D-cache range */

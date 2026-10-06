@@ -83,11 +83,46 @@ dlinesz(void)
 }
 
 /*
- * Clean [va, va+len) to the point of coherency, then a DSB so the
- * cleaned lines are visible to the device before the caller pokes it.
+ * Clean [va, va+len) to the point of coherency WITHOUT the barrier, for a
+ * caller that is about to clean more spans and only needs the device to see
+ * them once, at the end.
+ *
+ * WHY THIS EXISTS, measured.  flushmemscreen() cleans the dirty span of each
+ * scanline, so a full-screen flush was 480 calls and therefore 480 DSBs.
+ * Charging the two halves of that loop separately on silicon:
+ *
+ *	workload     us/line   ns/byte   B/line
+ *	fill 4        0.2932     3.59      82
+ *	damage 4      0.2295     6.40      36
+ *
+ * which fits cost = 0.180us + 1.39ns/byte, so the FIXED PER-CALL cost is 61 per
+ * cent of the work on fill and 78 per cent on damage.  That fixed cost is this
+ * DSB: the dccvac loop itself is a handful of instructions, and dlinesz()
+ * caches its answer in a static.
+ *
+ * COALESCING THE CLEANS IS THE WRONG FIX and the arithmetic says so -- one
+ * clean over [first byte, last byte] of a narrow rectangle also cleans the
+ * inter-scanline gaps, which at 1.39ns/byte over a 2560-byte stride costs 3.4us
+ * a line against the 0.18us it saves, and only wins at full width.  But note
+ * that is COALESCING and not SHRINKING: a smaller rectangle cleaned per
+ * scanline wins linearly in line count, and doc/raspi3b-draw-plan.ms step 3 is
+ * the second kind.  I conflated the two once and concluded the wrong thing
+ * about step 3; a peer caught it.
+ *
+ * Hoisting the BARRIER is the fix that is always right: the lines still get
+ * cleaned exactly once, and the device needs the DSB only before it is told to
+ * look.  Measured after the change, 0.2932 -> 0.2412us a line on fill and
+ * 0.2295 -> 0.1861 on damage.
+ *
+ * WHICH IS 0.05us A LINE, NOT THE 0.180 THE FIT ABOVE CALLS FIXED.  Three
+ * cycles() reads sit inside that loop to take the measurement and a counter
+ * read on an A53 is not free, so the fit's per-call term included the
+ * instrument.  The before/after is sound -- both arms carry the same
+ * instrument -- but the DECOMPOSITION was not, and it was asserted as
+ * mechanism.  An instrument's own cost lands in the term it is measuring.
  */
 void
-cacheflush(void *va, usize len)
+cacheclean(void *va, usize len)
 {
 	uintptr a, e, ls;
 
@@ -96,6 +131,16 @@ cacheflush(void *va, usize len)
 	e = (uintptr)va + len;
 	for(; a < e; a += ls)
 		dccvac(a);
+}
+
+/*
+ * Clean [va, va+len) to the point of coherency, then a DSB so the
+ * cleaned lines are visible to the device before the caller pokes it.
+ */
+void
+cacheflush(void *va, usize len)
+{
+	cacheclean(va, len);
 	coherence();
 }
 

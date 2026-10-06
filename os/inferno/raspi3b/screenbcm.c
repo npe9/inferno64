@@ -517,6 +517,13 @@ static uvlong	tcycles_flush, tcycles_compose;
  * bcmpresent() have to be charged separately.
  */
 static uvlong	tcycles_repair, tcycles_flip;
+/*
+ * The two halves of flushmemscreen's per-scanline loop, and the lines and
+ * bytes they ran over.  Raw totals with their divisor, not means: the kernel
+ * has integer division and three versions of the vsync probe reported their
+ * own truncation as a measurement.
+ */
+static uvlong	tcycles_fbmove, tcycles_fbclean, nfbline, nfbbyte;
 
 /* Standard Inferno arrow (same bits as os/pc/screen.c). */
 static Cursor arrow = {
@@ -678,6 +685,10 @@ screenstats(void)
 	print("%llud ", ncomposeskip);
 	print("cyc ");
 	print("%llud\n", tcycles_compose);
+	print("SCREEN fbloop raw lines %llud bytes %llud movecyc %llud"
+		" cleancyc %llud hz %lud\n",
+		nfbline, nfbbyte, tcycles_fbmove, tcycles_fbclean,
+		(ulong)m->cpuhz);
 	print("SCREEN damage");
 	for(i = 0; i < nelem(ndamage); i++)
 		print(" %s %llud", damagename[i], ndamage[i]);
@@ -1287,25 +1298,69 @@ flushmemscreen(Rectangle r)
 	 */
 	if(vfb != nil){
 		int y, stride, nb;
+		uvlong c0, c1, c2;
 		uchar *sp, *dp;
 		stride = ScrX * ScrPix;
 		nb = Dx(r) * ScrPix;
 		sp = fb + r.min.y*stride + r.min.x*ScrPix;
 		dp = vfb + r.min.y*stride + r.min.x*ScrPix;
 		for(y = r.min.y; y < r.max.y; y++){
+			cycles(&c0);
 			if(dp != sp)		/* Directfb: nothing to copy */
 				memmove(dp, sp, nb);
 			/*
-			 * Clean this scanline to the point of coherency: the
-			 * GPU scans vfb out uncached, so without the clean it
-			 * would show stale pixels on real hardware.  Only the
-			 * dirty span (nb bytes at dp), not the whole line, and
-			 * a no-op under QEMU which models no data cache.
+			 * Clean this scanline to the point of coherency.  Only
+			 * the dirty span (nb bytes at dp), not the whole line,
+			 * and a no-op under QEMU which models no data cache.
+			 *
+			 * CHARGED SEPARATELY FROM THE COPY, because an earlier
+			 * version of this comment said the GPU scans vfb out
+			 * UNCACHED and that is contradicted by this file's own
+			 * probe: mmu.c maps every 2MB block below BCMPERIPH as
+			 * Pnormal, so fbpa 0x3c100000 is ORDINARY CACHEABLE
+			 * memory (screeninit() above, probed rather than
+			 * argued).  Both cannot hold, and the plan attributed
+			 * 43 MB/s on the repair path to "uncached writes" on the
+			 * strength of the wrong one.
+			 *
+			 * If the clean dominates then the cost is the write-back
+			 * of dirty lines to DRAM, which is the one part of this
+			 * loop that must reach memory at memory speed -- and
+			 * then shrinking the cleaned area attacks the dominant
+			 * term rather than a residual.  If it does not, the
+			 * 43 MB/s needs a third explanation.  A peer raised the
+			 * contradiction; it cannot be settled under QEMU, where
+			 * cacheflush is a no-op, for the same reason the clang
+			 * host could not see byteaddr's dropped sign extension.
 			 */
-			cacheflush(dp, nb);
+			cycles(&c1);
+			/*
+			 * cacheclean, not cacheflush: ONE barrier after the
+			 * loop instead of one per scanline.  The split above
+			 * measured the fixed per-call cost at 0.180us against
+			 * 1.39ns a byte, which is 61 per cent of the work on
+			 * gfxstress fill and 78 per cent on damage, and that
+			 * fixed cost is the DSB.  A full-screen flush was 480
+			 * of them for one rectangle.
+			 */
+			cacheclean(dp, nb);
+			cycles(&c2);
+			tcycles_fbmove += c1 - c0;
+			tcycles_fbclean += c2 - c1;
+			nfbline++;
+			nfbbyte += (uvlong)nb;
 			sp += stride;
 			dp += stride;
 		}
+		/*
+		 * The one barrier the loop above skipped, so the cleaned lines
+		 * are visible to the GPU before anything tells it to look.
+		 * Charged to the clean, because that is what it is part of.
+		 */
+		cycles(&c1);
+		coherence();
+		cycles(&c2);
+		tcycles_fbclean += c2 - c1;
 		/*
 		 * NOT counted again here.  nb is Dx(r)*ScrPix, so Dy(r)*nb is
 		 * the same quantity the counter already took at the top of

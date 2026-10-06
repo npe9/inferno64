@@ -9672,3 +9672,146 @@ RETURNS the address instead of using it.
 and the only reason they saw it is that they re-ran the control AFTER changing
 the instrument rather than only before.
 .B "Re-run the control after every change to the instrument, not just once when it is written."
+.NH 2
+The per-frame cost under Directfb is the CACHE CLEAN, and its dominant term is the barrier
+.LP
+A peer caught a contradiction in my own file and it was real.
+.CW screeninit()
+records,
+.B "probed rather than argued,"
+that
+.CW mmu.c
+maps every 2MB block below
+.CW BCMPERIPH
+as
+.CW Pnormal ,
+so
+.CW "fbpa 0x3c100000"
+is
+.B "ordinary cacheable memory"
+\(em and fifteen lines away, and in this plan, I attributed 43 MB/s to "writes
+uncached scanout memory".
+.B "I had the evidence against my own claim in the same file."
+.PP
+And their second point was right too: the
+.CW Directfb
+guard covers ONLY the memmove.
+.CW "cacheflush(dp, nb)"
+runs unconditionally, per scanline, over the dirty span \(em
+.B "so there IS still an area-proportional per-frame term,"
+and reading "the shipping path copies nothing" as "damage-driven flushing buys
+nothing" is the wrong inference.
+.NH 3
+Charging the two halves separately, on silicon
+.LP
+.P1
+workload   lines      bytes      move us   clean us   clean %
+fill 4     2211007  180309800      59911     648196    91.5%
+damage 4    917973   32917776      25604     210704    89.2%
+.P2
+.B "The clean is about ninety per cent of the loop,"
+and the "move" figure is loop overhead around a branch not taken, since
+.CW "dp == sp"
+under Directfb.
+.NH 3
+AND THE SHARE, which is the number I failed to take the last time this came up
+.LP
+.P1
+workload   loop ms   of wall   clean alone
+fill 4       708.1     17.7%        16.2%
+damage 4     236.3      5.9%         5.3%
+.P2
+.B "That is the figure the retired pixel argument never had."
+A saving is a difference between two costs and quoting it as a percentage hides
+which two; here the denominator is stated before any optimisation is argued for.
+.NH 3
+The rate is 156-278 MB/s, so neither figure the plan attributed to uncached writes survives
+.LP
+.P1
+fbcopy    4014380 bytes in  93279 us =  43.0 MB/s = 23.24 ns/byte
+clean   180309800 bytes in 648196 us = 278.2 MB/s =  3.59 ns/byte
+.P2
+.B "The repair is 6.5x the clean per byte,"
+which is a memmove of COLD front-buffer data \(em never read by the ARM \(em plus
+the clean.  Not uncached writes, twice over.  The correction is now in the code
+comment where the claim was made as well as here.
+.NH 3
+THE FIX IS THE BARRIER, and the fit that said so was PART WRONG
+.LP
+Two span sizes fit
+.CW "cost = 0.180us + 1.39 ns/byte" ,
+making the per-call term 61 per cent of the work at 82 B/line and 78 per cent at
+36.  So I split
+.CW cacheclean()
+\(em the
+.CW dccvac
+loop with no
+.CW DSB
+\(em out of
+.CW cacheflush() ,
+and
+.CW flushmemscreen()
+now calls that per scanline with ONE
+.CW coherence()
+after the loop.  Lines are still cleaned exactly once; the device needs the
+barrier only before it is told to look.
+.PP
+.B "It works, and it recovers 0.05us a line, not the 0.180 the fit called fixed:"
+.P1
+workload   clean us/line   before -> after    saved
+fill 4         0.2932 -> 0.2412  (82.3%)     0.052
+damage 4       0.2295 -> 0.1861  (81.1%)     0.043
+.P2
+.B "So the 0.180us `fixed per call' was not all barrier -- it included my own instrument."
+Three
+.CW cycles()
+reads sit inside that loop to take this measurement, and a counter read on an
+A53 is not free.  The before/after is sound because both arms carry the same
+instrument; the DECOMPOSITION was not, and I asserted it as mechanism.
+.B "An instrument's own cost lands in the term it is measuring."
+.NH 3
+End to end it is inside the noise, which the attribution is not
+.LP
+.P1
+workload   clean ms          predicted   ops/s            measured
+fill 4     648.2 -> 539.9      -2.7%     41492 -> 42094    +1.5%
+damage 4   210.7 -> 169.1      -1.0%     43984 -> 43536    -1.0%
+.P2
+Against the 2.9 per cent build-to-build spread established earlier in this plan,
+.B "the end-to-end numbers CANNOT resolve this and the per-scanline attribution is the evidence."
+Saying so is the whole lesson of the 5-per-cent retraction two sections up.
+.CW drawink
+7 of 7, including "undrawn region".
+.NH 3
+A CONFLATION OF MINE that a peer caught, and it inverts the conclusion
+.LP
+I wrote a table showing that a single clean over
+.CW "[first byte, last byte]"
+LOSES for a narrow rectangle, because it also cleans the inter-scanline gaps,
+and concluded that "shrink the cleaned area is the wrong fix".
+.B "That table evaluates COALESCING the cleans, not SHRINKING the rectangle,"
+and they are different changes:
+.P1
+coalesce 100 lines of nb=36      23.0us -> 356.8us    LOSE
+coalesce 100 lines of nb=2560   374.6us -> 356.8us    WIN
+shrink 480x2560 -> 20x400      1797.9us ->  14.7us    122x WIN
+shrink 480x2560 -> 240x2560    1797.9us -> 899.0us    2.0x WIN
+.P2
+.B "Step 3 is the second kind and wins linearly in line count."
+Only coalescing loses.  My conclusion was right about the transform I tested and
+wrong about the one the plan proposes.
+.PP
+.B "And the data refines step 3's GATE, which is worth more than the refutation."
+At 82 and 36 B/line the cost is 61 to 78 per cent per-CALL, so the benefit
+scales with SCANLINES, not area \(em and 82 B/line says the flushed rectangles
+are already about twenty pixels wide, so there is almost no width left to
+tighten.
+.B "The gate said count bytes cleaned per frame; that measures the smaller term."
+Same error as the retired pixel argument, one dimension over.
+.PP
+.B "Order: hoist first, then step 3 against a scanline gate."
+The hoist removes 78 per cent of the cost at 36 B/line and 4.8 per cent at full
+width, so it is largest exactly for the narrow rectangles this workload
+produces, and it subsumes coalescing without the gap cost.  Done second it
+would appear to shrink step 3's benefit and step 3 would be credited with a
+reduction the hoist had already taken.

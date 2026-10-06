@@ -109,9 +109,24 @@ done
 # session where grepping the build output for a success marker hid a real
 # failure, so the count is printed even when it is zero.
 #
+# BUT A ZERO HERE DOES NOT MEAN CLEAN, and that has to be said next to the
+# number.  The count is over whatever this invocation RECOMPILED.  Touching one
+# .c gave "diagnostics: 0"; touching os/inferno/raspi3b/fns.h -- which every
+# port file includes -- gave 184, all of them pre-existing format mismatches in
+# os/inferno/port that had been there the whole time.  So the figure answers
+# "did anything I just compiled warn", not "is the tree clean", and comparing
+# two runs that rebuilt different amounts compares nothing.
+#
+# Which is why the per-file breakdown matters more than the total: the question
+# is whether any diagnostic names a file this change touched.
+#
 nd=`grep -ciE 'warning|not declared|undefined' "$LOG"`
-echo "kbuild: diagnostics in the log: $nd"
-[ "$nd" -gt 0 ] && grep -iE 'warning|not declared|undefined' "$LOG" | head -20
+nf=`grep -iE 'warning|not declared|undefined' "$LOG" |
+	sed 's/^warning: //;s/:.*//' | sort -u | wc -l | tr -d ' '`
+echo "kbuild: diagnostics in the log: $nd, in $nf file(s)"
+echo "kbuild:   (over what THIS run recompiled -- a zero is not a clean tree)"
+[ "$nd" -gt 0 ] && grep -iE 'warning|not declared|undefined' "$LOG" |
+	sed 's/^warning: //;s/:.*//' | sort | uniq -c | sort -rn | head -12
 
 #
 # And say which build this is, so a later tool reading the board can be checked
