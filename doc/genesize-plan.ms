@@ -2040,6 +2040,10 @@ which the specification leaves undefined (a real controller may do
 anything).  It masked and unmasked them on every interrupt.  It now
 writes them only when the controller is not on MSI-X; the rerun has
 no guest errors, and check-vm's M4 still passes under VT-d and AMD-Vi.
+On
+.CW scripts/mkqemu.sh 's
+build of the release and the eight patches, check-qemu-nvme passes
+again (hmb, apst, ns).
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
