@@ -56,6 +56,27 @@
 # BOUND BY etext, like undefimm and umulladd: a kernel embeds data in its text
 # segment and an unbounded scan reads it as instructions.
 #
+# THIS IS THE SHAPE-FINDER, NOT THE DETECTOR, and that distinction is earned.
+# The real detector is the diag a peer added inside flushpool() (utils/7l/
+# span.c): it sits AT THE DECISION POINT, where the linker knows whether it is
+# about to splice a pool into a run, whereas this has to INFER a table's end
+# from what its bytes look like.  That inference has now produced false
+# positives twice:
+#
+#	the first entry_ok() rejected negative offsets      7 false hits here
+#	a peer's image built with the pool SIZE threshold
+#	  lowered, so pools were scattered everywhere      74 of 142 false
+#
+# The second is the instructive one, because it was not this tool's bug: with
+# pools strewn through the text the end-of-table inference stops early
+# everywhere, and the 74 looked like a positive control firing.  What exposed it
+# was that their fix changed nothing -- 74 before, 74 after -- and a fix that
+# changes nothing is either useless or aimed at the wrong thing.
+#
+# So: use this to FIND the shape and to check a kernel you are about to boot,
+# and use the linker's diag to decide whether the bug is present.  A zero here
+# is weaker evidence than a silent diag.
+#
 import sys, subprocess, os
 
 def syms_of(elf):
