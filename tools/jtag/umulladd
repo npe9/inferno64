@@ -29,6 +29,17 @@
 # and two boots.  Fixing byteaddr moved the high word from 3 to 1 rather than to
 # 0, which is what said there was a SECOND site and is why this exists.
 #
+# NEGATIVE CONTROL DONE, which is the only reason the 0 is worth printing.
+# With byteaddr reverted to the broken shape and the kernel relinked, it reports
+# exactly one candidate and names it:
+#
+#	umulladd:   byteaddr+0x10 at 0xe7c34: UMULL -> x5 reaches a 64-bit ADD
+#	            at 0xe7c40 with no SXTW
+#	umulladd: 1 candidate(s)
+#
+# and 0 with the fix restored.  A scanner that has only ever reported zero is
+# indistinguishable from a scanner that cannot report anything.
+#
 # IT IS A HEURISTIC AND SAYS SO.  An UMULL whose result is legitimately 64-bit
 # and then added to a 64-bit quantity is correct code, and this cannot tell that
 # apart from a dropped narrowing.  So it reports CANDIDATES with their enclosing
