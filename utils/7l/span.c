@@ -62,7 +62,33 @@ span(void)
 		if(p->as == AB || p->as == ARET || p->as == AERET || p->as == ARETURN)	/* TO DO: other unconditional operations */
 			checkpool(p, 0);
 		c += m;
-		if(blitrl)
+		/*
+		 * A CASE and its BCASE entries are an ARRAY, not a code
+		 * sequence.  The dispatch is
+		 *
+		 *	ADR x4,table / LDRSW x17,[x4,w3,lsl 2] / ADD x17,x17,x4 / BR x17
+		 *
+		 * so entry i MUST sit at table+4*i.  flushpool() splices a
+		 * branch and the literal pool in after p, which is right for
+		 * ordinary code and fatal here: the entries past the split keep
+		 * their correct offsets but are no longer at their slots, and
+		 * the dispatch reads the pool's DWORDs as offsets instead.
+		 * Seen on raspi3b as a conswrite table of 29 slots whose last
+		 * six sat 0x6e00 further on, with a loader-inserted B and five
+		 * pool constants in their place -- writing /dev/time branched
+		 * through a zero into the table itself and panicked with EC 0.
+		 *
+		 * It is layout-dependent, which is what made it look like
+		 * anything but a loader bug: whether a flush falls due inside a
+		 * run depends on how much code precedes it, so four unrelated
+		 * lines elsewhere in the kernel moved it in and out.
+		 *
+		 * So defer the forced flush to the end of the run.  A flush
+		 * after the LAST entry is fine, hence the lookahead rather than
+		 * a blanket test on ABCASE.
+		 */
+		if(blitrl && !(p->as == ACASE ||
+		   (p->as == ABCASE && p->link != P && p->link->as == ABCASE)))
 			checkpool(p, 1);
 	}
 
@@ -170,6 +196,15 @@ static void
 flushpool(Prog *p, int skip)
 {
 	Prog *q;
+
+	/*
+	 * Nothing may be spliced into a CASE's BCASE run -- see the note in
+	 * span().  The caller defers past the end of the run, so this is
+	 * unreachable; say so loudly if it ever is not, because the
+	 * alternative is a table that silently dispatches into pool data.
+	 */
+	if(p->as == ACASE || (p->as == ABCASE && p->link != P && p->link->as == ABCASE))
+		diag("literal pool flush inside a CASE table\n%P", p);
 
 	if(blitrl) {
 		if(skip){
