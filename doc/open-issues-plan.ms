@@ -10089,3 +10089,51 @@ run must be INDIVISIBLE \(em defer the pool flush past the end of the run, or
 relocate the whole run with it.
 .CW switchtab
 is the acceptance test: 0 short on a build that currently reports 1.
+.NH 3
+And 7l -v SEGFAULTS, so the confirmation it offers is unavailable
+.LP
+A peer suggested confirming the splice point with
+.CW flushpool 's
+own
+.CW debug['v']
+note,
+.CW "note: flush literal pool at %#llux" .
+.B "7l -v crashes on this kernel's object list, reproducibly, 2 of 2:"
+.P1
+rc=139 (SIGSEGV) after 300 and then 204 lines, both ending in
+
+  %f% library: <nil>
+  %f% library: <nil>
+.P2
+.B "The %f% and the <nil> are the tell"
+\(em a verbose print walking the library list with a format it does not have
+and a nil name.  So the
+.CW -v
+path is itself broken and never reached
+.CW flushpool 's
+note.
+.PP
+.B "It cost nothing, because -a had already given the stronger evidence:"
+the synthesised
+.CW "B ,180038"
+at 0x179288 carrying line
+.CW (0) ,
+followed by
+.CW DWORD s
+also carrying
+.CW (0) ,
+is the pool splice itself \(em the branch over the pool that
+.CW flushpool
+emits.  A line number of zero is the loader's signature, and that is what
+distinguishes an inserted instruction from a compiled one.
+.PP
+Recorded because an instrument that crashes is worth knowing about before
+someone reaches for it in the middle of a chase, and because
+.CW -a
+and
+.CW -v
+are not substitutes:
+.CW -a
+shows what was emitted and where,
+.CW -v
+would have named WHY.
