@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+#
+# kencc-wideptr -- find a 32-bit value reaching a 64-bit pointer add
+# without its sign, in 7c -S output.
+#
+#	kencc-wideptr file.s [file.s ...]
+#
+# WHY.  An AArch64 W-register write ZEROES the upper half, so a NEGATIVE
+# 32-bit value added to a pointer widens unsigned and the address lands
+# 2^32 away.  libmemdraw's byteaddr had this twice and the two faults had
+# different causes:
+#
+#	the row offset, (s32)(sizeof(u32)*p.y*i->width), where 7c dropped
+#	the narrowing cast and emitted UMULL -- a 32x32->64 UNSIGNED
+#	widening multiply, so a negative p.y gave a huge positive product;
+#
+#	the x offset, a + (p.x-np+1)/np, with NO CAST ANYWHERE, where
+#	SDIVW's 32-bit result went straight into a 64-bit ADD.
+#
+# The second is why this scans instructions rather than casts: there is
+# nothing there for a compiler to drop, so a cast-hunting audit cannot
+# find it.  Both are fixed by taking the value through an s32 local,
+# after which 7c emits SXTW before the ADD.
+#
+# A HIT IS NOT A BUG, and this matters more than the hit count.  An
+# UNSIGNED 32-bit value is CORRECT zero-extended and looks identical in
+# the instruction stream, so a stride like i->width*sizeof(u32) scans
+# the same as a signed offset that can go negative.  The output is a
+# reading list; the question to ask of each line is only ever "can that
+# value be negative?".
+#
+# NEGATIVE CONTROL.  It has one, which is the only reason the zero means
+# anything.  Compile libmemdraw/alloc.c as it was before the two fixes
+# and this must name byteaddr four times (one UMULL, three x-offset
+# paths); compile it as it is now and it must report none.
+#
+# AUDITED 2026-10-06 against the shipping libraries: libmemdraw 37
+# candidates, libdraw 5, libmemlayer 0, and every one of them is a
+# non-negative stride or offset -- draw.c's deltas are small positive
+# constants or depth/8, bwidth and the load/unload strides are
+# sizeof(u32)*width with width unsigned, and getdefont's 4-n runs 1..3
+# under if(n != 0).  byteaddr was the only site where a genuinely
+# negative value reached a pointer, because it is the one function
+# taking an arbitrary Point into an image whose r.min may be negative.
+#
+# A CAUTION ON MAKING THIS MORE PRECISE.  Requiring the tainted result
+# to be dereferenced in the same function looks like an obvious way to
+# tell a pointer add from an integer add.  It is wrong here and the
+# control caught it: byteaddr RETURNS the address, so that filter
+# silently dropped two of the four control hits, including the UMULL.
+# A filter that loses the case the control exists to catch is worse than
+# the false positives it removes.
+#
+import re, sys
+
+WOPS = ('ADDW','SUBW','MULW','MADDW','MSUBW','SDIVW','UDIVW','ASRW','LSLW',
+        'LSRW','ANDW','ORRW','EORW','NEGW','MVNW','REMW','DIVW','MODW',
+        # UMULL writes a full 64-bit register, so the W-zeroing argument does
+        # not apply -- but it is an UNSIGNED 32x32 widening multiply, so a
+        # negative operand gives a huge positive product.  Same destination,
+        # different reason; this was byteaddr's row-offset fault.
+        'UMULL','UMADDL','UMSUBL')
+# MOVW Rn,Rm sign-extends; MOVWU zero-extends (and is the legitimate unsigned case)
+SEXT = ('MOVW',)
+REG = re.compile(r'\bR\d+\b')
+
+def regs(s):
+    return REG.findall(s)
+
+def scan(path):
+    hits = []
+    func = '?'
+    # last W-op that wrote each register, and whether it has been sign-extended since
+    tainted = {}
+    pending = {}
+    for raw in open(path):
+        line = raw.rstrip('\n')
+        m = re.match(r'\s*TEXT\s+([A-Za-z_][A-Za-z0-9_]*)', line)
+        if m:
+            func = m.group(1); tainted = {}; pending = {}; continue
+        m = re.match(r'\s*([A-Z][A-Z0-9.]*)\s+(.*)$', line.strip())
+        if not m:
+            continue
+        op, args = m.group(1), m.group(2)
+        rs = regs(args)
+        if not rs:
+            continue
+        dst = rs[-1]
+        if op == 'ADD' and len(rs) >= 2:
+            for r in rs[:-1]:
+                if tainted.get(r):
+                    hits.append((func, tainted[r], r, line.strip()))
+            tainted[dst] = None
+            continue
+        if op in SEXT:
+            tainted[dst] = None       # sign-extended: safe
+            continue
+        if op in WOPS:
+            tainted[dst] = op
+            continue
+        # any other write clears taint for its destination
+        tainted[dst] = None
+    return hits
+
+total = 0
+for path in sys.argv[1:]:
+    for func, wop, reg, line in scan(path):
+        print("%-28s %-7s %-4s %s" % (func, wop, reg, line))
+        total += 1
+print("--- candidates: %d ---" % total)
