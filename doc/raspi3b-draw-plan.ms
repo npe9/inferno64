@@ -629,11 +629,81 @@ is a kernel-RAM soft buffer,
 the VC-RAM one, and both the copy and the clean run. Correctness results from
 this branch's kernel carry across; timings taken on it do not.
 .PP
-.B Gate:
-a frame that touches one small widget must clean a correspondingly small
-area.  Count bytes cleaned per frame, with a negative control: a frame
-that legitimately dirties the whole screen must still report the whole
-screen.  A metric that only ever goes down is measuring the wrong thing.
+.B "MEASURED, and the gate below asked for the wrong dimension."
+Charging the two halves of the per-scanline loop separately on silicon,
+with
+.CW Directfb
+so the
+.CW memmove
+is skipped, the clean is 89\(mi91% of the loop \(em so the premise holds
+\(em and two points at very different span sizes fit
+.DS
+.CW
+	cost = 0.180 us + 1.39 ns/byte
+.R
+.DE
+.LP
+The fixed per-call term is therefore 61% of the work at 82 bytes a line
+and 78% at 36. Both figures reproduce from the raw totals: 2211007 lines
+and 180309800 bytes in 648196us, 917973 and 32917776 in 210704us.
+.PP
+That fixed cost is the
+.CW DSB
+in
+.CW cacheflush() ,
+one per scanline. So on this workload the clean's cost is mostly
+proportional to
+.I scanlines ,
+not to area \(em and the gate's "count bytes cleaned per frame" would
+have reported a change in the smaller term while missing the larger one.
+It is worse than that: the flushed rectangles already average 82 bytes a
+line, about twenty pixels wide, so there is little width left to tighten
+and essentially all of step 3's available benefit is in reducing the
+scanline count.
+.PP
+.B "Two different changes, and only one of them loses."
+Coalescing the per-line cleans into a single clean over the span from
+first byte to last byte also cleans the inter-scanline gaps, which at a
+2560-byte stride costs about 3.4us a line against the 0.18us of
+.CW DSB
+it saves: a loss for anything narrower than full width. Making the
+.I rectangle
+smaller is a different change and wins linearly in line count \(em 480
+lines at full width against 20 lines of a widget is 1798us against
+15us. The first is not an argument against the second.
+.PP
+.B "And the order matters."
+Hoisting the
+.CW DSB
+out of the loop \(em a
+.CW cacheclean()
+with no barrier per scanline and one
+.CW coherence()
+after \(em removes that fixed term entirely, which is 78% of the cost at
+36 bytes a line and 4.8% at full width. Done first, it both subsumes the
+coalescing idea and makes the remaining cost genuinely
+byte-proportional, at which point counting bytes becomes the right gate.
+Done second, it would appear to shrink step 3's measured benefit.
+.PP
+.B "Gate, corrected:"
+a frame that touches one small widget must clean correspondingly few
+.I scanlines .
+Count
+.CW cacheflush
+calls per frame, and bytes only after the barrier is hoisted. Keep the
+negative control either way: a frame that legitimately dirties the whole
+screen must still report the whole screen. A metric that only ever goes
+down is measuring the wrong thing.
+.PP
+.B "One attribution corrected by the same measurement."
+The clean runs at 156\(mi278 MB/s, 3.6 ns a byte. The
+.CW fbcopy
+repair runs at 43 MB/s, 23.2 ns a byte \(em 6.5 times the clean per
+byte \(em so the clean does not explain the repair path either. That
+figure is a
+.CW memmove
+of cold front-buffer data the ARM has never read, plus the clean, and
+not uncached writes.
 .PP
 This step depended on the render-node
 .CW libtk
