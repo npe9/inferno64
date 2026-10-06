@@ -7166,7 +7166,7 @@ at zero, and it needs a board that has been reset.
 because a setting that costs a trip across the room on every boot is
 not a default.
 .NH 2
-And the cause is the lesson the same file already records
+A cause found by reading, and withdrawn by reading further
 .PP
 .I Protect ()
 returned
@@ -7181,37 +7181,66 @@ so
 data channel went to
 .CW sys->export ()
 and carried on being used.
-.PP
 .I Relay (),
 twenty lines further down the same file, keeps its pipe end in a global
-for exactly this reason, and says so:
-.DS
-.CW "# fds[1] is handed to two processes and must not be closed"
-.CW "# here: a Limbo reference dies at its last use, and"
-.CW "# dropping this one would hang up the pipe under them."
-.DE
-and the note it cites is a
+for exactly this reason and says so, citing a
 .B #a
-control reference that lapsed, went on TRANSMITTING, and stopped
+control reference that lapsed, went on TRANSMITTING and stopped
 receiving.
-.B "It is the same mistake one function apart,"
-and the symptom was worse: not a channel that quietly stopped working
-but a kernel with its console dead and its receive interrupt gone.
+.B "The same mistake one function apart."
 .PP
-The connection is kept in a global now.
-.B "UNTESTED, and that word is doing real work:"
-the board that would show it is wedged and wants its button pressed.
-What makes this a diagnosis rather than a guess is that the file names
-the trap, the code falls into it, and nothing else survived \- the byte
-accounting ruled out the air and the segmentation, and the satellite's
-own pool print ruled out starvation.
+It is kept in a global now, which removes a real class of bug and costs
+nothing.
+.B "And it is NOT the explanation for the wedge."
 .PP
-.B "If it is right, the remaining question is why the kernel wedged rather than failing."
-A closed control channel should make
-.I devssl
-refuse the next operation, not take the console down with it, and
-.B "a device that can be wedged by a file descriptor going away is a kernel fault whatever the caller did."
-That is the thing to chase once a board can be reset \- and it is
-plausibly the same fault as the morning's wedge on a write to
-.BR #P/imu.ctl ,
-which had the identical signature and was never explained.
+.I Devssl
+reference counts.
+.I Sslopen
+does
+.CW s->ref++
+for each of
+.BR ctl ,
+.BR data ,
+.B secretin
+and
+.BR secretout ,
+and
+.I sslclose
+frees the
+.I Dstate
+only when the count reaches zero \- emu's copy of the device is
+identical.
+.B "Dropping the control channel takes the count from two to one:"
+nothing is freed, nothing dangles, and the data channel goes on
+working.
+.PP
+.B "So the wedge is unexplained, and the first account of it in this document was wrong."
+It was written confidently, with the supporting note one function away
+in the same file, and it did not survive twenty lines of the device it
+accused.
+.B "The theory was abandoned by READING THE DEVICE rather than by another trip to the bench,"
+which is the cheaper order and was available before the claim was made
+rather than after.
+.NH 2
+What is left to chase, and the part that is not the caller's fault
+.PP
+.B "A device that can be wedged by anything a program does to a file descriptor is a kernel fault,"
+whatever the program did.  The signature is the thing to chase: console
+dead mid-line, the receive interrupt gone, the two control-Rs that
+reach the bootloader unable to run, and only the button left.  Twice in
+one day, on a write to
+.B #P/imu.ctl
+in the morning and on the third Styx message of an ssl'd mount in the
+evening, and
+.B "the second is reproducible,"
+which the first never was.
+.PP
+What the next session has that this one did not: a switch
+.RB ( Usessl ,
+defaulting to zero so no board boots into the wedge), a control run
+still to take with it at zero on this same kernel, and a host harness
+.RI ( styxseg (1)
+with
+.BR -D )
+that reproduces the dropped connection under emu, where a wedge costs a
+process instead of a walk across the room.

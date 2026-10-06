@@ -442,28 +442,31 @@ protect(fd: ref Sys->FD): ref Sys->FD
 	sys->print("styx: ssl sha/rc4_256 on %s, and the secret is a"
 		+ " constant in this file rather than a key\n", c.dir);
 	sys->print("ARMV7M-STYX-SSL\n");
-	# THE CONNECTION IS KEPT, AND THIS IS THE LESSON THIS FILE
-	# ALREADY RECORDS TWENTY LINES BELOW.
+	# THE CONNECTION IS KEPT, which is right on its own terms and is
+	# NOT the explanation for the wedge.  The first version of this
+	# comment said it was, and the code said so in the commit, and
+	# both were wrong.
 	#
-	# A Limbo reference dies at its LAST USE, not at the end of the
-	# scope.  Returning c.dfd and letting c go means c.cfd -- the ssl
-	# connection's CONTROL channel -- is released here, while the data
-	# channel is handed to export() and goes on being used.  relay()
-	# keeps its pipe end in a global for exactly this reason, with a
-	# note about a #a ctl ref that lapsed, went on TRANSMITTING, and
-	# stopped receiving.
+	# What is true: a Limbo reference dies at its LAST USE, not at
+	# the end of the scope, so returning c.dfd and letting c go
+	# released c.cfd -- the ssl connection's control channel -- while
+	# the data channel went to export() and carried on being used.
+	# relay() below keeps its pipe end in a global for exactly that
+	# reason, citing a #a control reference that lapsed, went on
+	# TRANSMITTING and stopped receiving.  Keeping this one removes a
+	# real class of bug and costs nothing.
 	#
-	# It is the same mistake one function apart, and the symptom was
-	# worse: the first exchanges worked, and then the satellite took a
-	# Twalk and WEDGED THE KERNEL -- console dead mid-line, the
-	# receive interrupt gone, the two control-Rs that reach the
-	# bootloader unable to run, and only the reset button left.
+	# What is NOT true is that it caused the satellite to wedge.
+	# devssl REFERENCE COUNTS: sslopen does s->ref++ for each of ctl,
+	# data, secretin and secretout, and sslclose frees the Dstate
+	# only when the count reaches zero (os/inferno/port/devssl.c, and
+	# emu's copy is identical).  Dropping the control channel takes
+	# the count from two to one.  Nothing is freed, nothing dangles,
+	# and the data channel goes on working.
 	#
-	# UNTESTED.  The board that would show it is wedged and wants its
-	# button pressed.  What makes this a diagnosis rather than a guess
-	# is that the file names the trap, the code falls into it, and no
-	# other suspect survived: the byte accounting ruled out the air
-	# and the segmentation, and the pool print ruled out starvation.
+	# So the wedge is still unexplained, and the theory was abandoned
+	# by READING THE DEVICE rather than by another trip to the bench
+	# -- which is the cheaper order and was available all along.
 	keepconn = c :: keepconn;
 	return c.dfd;
 }

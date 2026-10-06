@@ -46,6 +46,7 @@ Styxseg: module
 };
 
 debug := 0;
+keepconn: list of ref Sys->Connection;
 
 init(nil: ref Draw->Context, argv: list of string)
 {
@@ -105,8 +106,23 @@ init(nil: ref Draw->Context, argv: list of string)
 	# devmnt clamps to -- the same mechanism by which the AX.25
 	# conversation's 109 became the msize in the first place.
 	msize := 0;
+	# DELIBERATELY DROP THE ssl CONNECTION after configuring it,
+	# which is what os/inferno/init/armv7mstyx.b did by accident:
+	# protect() returned c.dfd and let c go, so the connection's
+	# CONTROL channel was released while the data channel went on
+	# being used.  On the board that wedged the kernel -- console
+	# dead mid-line, receive interrupt gone, reset button the only
+	# way back.
+	#
+	# The interesting half of that is not the caller's mistake, which
+	# is fixed, but what the DEVICE did about it: a closed control
+	# channel should make ssl(3) refuse the next operation, not take
+	# the machine down.  Under a host emu a wedge costs a process
+	# rather than somebody walking across the room, so this is where
+	# that question is asked.
+	dropconn := 0;
 	arg->init(argv);
-	arg->setusage("styxseg [-d] [-b budget] [-n reads] [-m mpt]\n\t[-l lo] [-h hi] [-s stride] [-M msize] [-e alg] [file]");
+	arg->setusage("styxseg [-d] [-b budget] [-n reads] [-m mpt]\n\t[-l lo] [-h hi] [-s stride] [-M msize] [-e alg] [-D] [file]");
 	while((c := arg->opt()) != 0)
 		case c {
 		'b' =>	budget = int arg->earg();
@@ -118,6 +134,7 @@ init(nil: ref Draw->Context, argv: list of string)
 		's' =>	stride = int arg->earg();
 		'M' =>	msize = int arg->earg();
 		'e' =>	alg = arg->earg();
+		'D' =>	dropconn = 1;
 		* =>	arg->usage();
 		}
 	argv = arg->argv();
@@ -170,8 +187,8 @@ init(nil: ref Draw->Context, argv: list of string)
 		secret := array[32] of byte;
 		for(i := 0; i < len secret; i++)
 			secret[i] = byte (i * 7 + 11);
-		sfd = sslpush("server", s[0], alg, secret);
-		cfd = sslpush("client", c2[0], alg, secret);
+		sfd = sslpush("server", s[0], alg, secret, dropconn);
+		cfd = sslpush("client", c2[0], alg, secret, dropconn);
 		if(sfd == nil || cfd == nil)
 			raise "fail:ssl";
 		sys->print("styxseg: ssl alg %s on both ends\n", alg);
@@ -325,7 +342,7 @@ trial(mpt: string, sz, budget, nreads: int): int
 # algorithm -- data written before the alg goes out under whatever the
 # device started in, which is "clear".
 sslpush(who: string, fd: ref Sys->FD, alg: string,
-	secret: array of byte): ref Sys->FD
+	secret: array of byte, drop: int): ref Sys->FD
 {
 	(err, c) := ssl->connect(fd);
 	if(err != nil){
@@ -344,6 +361,15 @@ sslpush(who: string, fd: ref Sys->FD, alg: string,
 			"styxseg: %s alg %s: %r\n", who, alg);
 		return nil;
 	}
+	if(drop){
+		# c goes out of scope here and its control channel with
+		# it, which is the bug being reproduced.  Without this
+		# the connection is kept, as it must be.
+		sys->print("styx: %s dropping the connection on purpose\n",
+			who);
+		return c.dfd;
+	}
+	keepconn = c :: keepconn;
 	return c.dfd;
 }
 
