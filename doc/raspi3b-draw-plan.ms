@@ -730,6 +730,62 @@ to 480 for a full-screen flush. That is why counting bytes would measure
 the smaller term, and it holds whatever the fixed share turns out to
 be.
 .PP
+.B "NEITHER GATE IS RIGHT, and that 82 was a mean over an unidentified
+.B "population."
+It is gfxstress
+.I fill 's
+mean, a pathologically scattered workload. Measured on the host with a
+per-rectangle histogram weighted by lines
+.CW ( FRAMEPERLINE ,
+.CW inferno-rio
+.CW 9716386e7 ),
+gfxstress reproduces the board closely \(em fill 80 against 82, text
+1012 against 1015, damage 32 against 36 \(em and real Tk clients span
+the whole range:
+.DS
+.CW
+	wm/clock    mean 2387 B/line
+	wm/bounce   mean   49 B/line
+.R
+.DE
+.LP
+So the widget-damage proxies were right that the area term can dominate,
+the fill figure was right that the per-call term can, and neither
+describes Tk.
+.PP
+.B "And wm/clock is BIMODAL inside one run,"
+which is what settles it:
+.DS
+.CW
+	<64=30.8%  <128=1.6%  <256=0.0%  <512=10.0%
+	<1k=0.3%   <2k=0.0%   >=2k=57.1%
+.R
+.DE
+.LP
+31% of its lines are under 64 bytes and 57% over 2048. The mean of 2387
+describes neither mode, so even a per-client mean is the wrong summary
+\(em the mixed population is inside one ordinary client, not merely
+across workloads. A single gate cannot be chosen at all: the cost model
+has a per-call term and an area term, both are real, and picking one was
+the error twice, in both directions.
+.PP
+.B "So the gate is BOTH, reported separately:"
+.CW cacheflush
+calls and bytes cleaned, per frame, negative control unchanged \(em a
+frame that dirties the whole screen must still report the whole screen.
+Two numbers cost nothing and neither can be made to stand for the other.
+.PP
+.B "Sample caveat."
+Two real Tk clients produced measurable damage here;
+.CW wm/colors ,
+.CW wm/calendar
+and
+.CW wm/about
+draw once and idle without reaching the print, and
+.CW wmtest
+needs a window-manager context a headless emu does not give. This is two
+clients plus the gfxstress phases, not a survey.
+.PP
 .B "Two different changes, and only one of them loses."
 Coalescing the per-line cleans into a single clean over the span from
 first byte to last byte also cleans the inter-scanline gaps, which at a
