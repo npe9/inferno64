@@ -7165,3 +7165,53 @@ at zero, and it needs a board that has been reset.
 .B "Usessl defaults to zero until then,"
 because a setting that costs a trip across the room on every boot is
 not a default.
+.NH 2
+And the cause is the lesson the same file already records
+.PP
+.I Protect ()
+returned
+.CW c.dfd
+and let
+.CW c
+go.
+.B "A Limbo reference dies at its LAST USE, not at the end of the scope,"
+so
+.CW c.cfd
+\- the ssl connection's CONTROL channel \- was released there, while the
+data channel went to
+.CW sys->export ()
+and carried on being used.
+.PP
+.I Relay (),
+twenty lines further down the same file, keeps its pipe end in a global
+for exactly this reason, and says so:
+.DS
+.CW "# fds[1] is handed to two processes and must not be closed"
+.CW "# here: a Limbo reference dies at its last use, and"
+.CW "# dropping this one would hang up the pipe under them."
+.DE
+and the note it cites is a
+.B #a
+control reference that lapsed, went on TRANSMITTING, and stopped
+receiving.
+.B "It is the same mistake one function apart,"
+and the symptom was worse: not a channel that quietly stopped working
+but a kernel with its console dead and its receive interrupt gone.
+.PP
+The connection is kept in a global now.
+.B "UNTESTED, and that word is doing real work:"
+the board that would show it is wedged and wants its button pressed.
+What makes this a diagnosis rather than a guess is that the file names
+the trap, the code falls into it, and nothing else survived \- the byte
+accounting ruled out the air and the segmentation, and the satellite's
+own pool print ruled out starvation.
+.PP
+.B "If it is right, the remaining question is why the kernel wedged rather than failing."
+A closed control channel should make
+.I devssl
+refuse the next operation, not take the console down with it, and
+.B "a device that can be wedged by a file descriptor going away is a kernel fault whatever the caller did."
+That is the thing to chase once a board can be reset \- and it is
+plausibly the same fault as the morning's wedge on a write to
+.BR #P/imu.ctl ,
+which had the identical signature and was never explained.

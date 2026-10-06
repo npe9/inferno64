@@ -107,6 +107,9 @@ Usessl:		con 0;
 
 lastconv: int;
 keep: list of ref Sys->FD;
+# And the ssl connections, for the same reason and a worse consequence:
+# see protect().
+keepconn: list of ref Sys->Connection;
 
 init()
 {
@@ -439,6 +442,29 @@ protect(fd: ref Sys->FD): ref Sys->FD
 	sys->print("styx: ssl sha/rc4_256 on %s, and the secret is a"
 		+ " constant in this file rather than a key\n", c.dir);
 	sys->print("ARMV7M-STYX-SSL\n");
+	# THE CONNECTION IS KEPT, AND THIS IS THE LESSON THIS FILE
+	# ALREADY RECORDS TWENTY LINES BELOW.
+	#
+	# A Limbo reference dies at its LAST USE, not at the end of the
+	# scope.  Returning c.dfd and letting c go means c.cfd -- the ssl
+	# connection's CONTROL channel -- is released here, while the data
+	# channel is handed to export() and goes on being used.  relay()
+	# keeps its pipe end in a global for exactly this reason, with a
+	# note about a #a ctl ref that lapsed, went on TRANSMITTING, and
+	# stopped receiving.
+	#
+	# It is the same mistake one function apart, and the symptom was
+	# worse: the first exchanges worked, and then the satellite took a
+	# Twalk and WEDGED THE KERNEL -- console dead mid-line, the
+	# receive interrupt gone, the two control-Rs that reach the
+	# bootloader unable to run, and only the reset button left.
+	#
+	# UNTESTED.  The board that would show it is wedged and wants its
+	# button pressed.  What makes this a diagnosis rather than a guess
+	# is that the file names the trap, the code falls into it, and no
+	# other suspect survived: the byte accounting ruled out the air
+	# and the segmentation, and the pool print ruled out starvation.
+	keepconn = c :: keepconn;
 	return c.dfd;
 }
 
