@@ -88,13 +88,24 @@ idle() {
 }
 trap 'idle' 0 1 2 15
 
+#
+# PREFIXED "boardrun-note:" AND NOT "boardrun:", because the latter collides
+# with the failure marker.  Every waiter in this directory's workflow keys on
+# "boardrun:" to detect the timeout path, so a NOTE beginning "boardrun:" made
+#
+#	until grep -qaE 'MY-MARKER|boardrun:' log
+#
+# match instantly on a successful run, and the log was then read while the
+# command was still executing.  A guard that collides with the signal it was
+# added to protect.
+#
 case "$1" in
 *'&'*)
-	echo "boardrun: NOTE -- this command backgrounds something with '&', and" >&2
-	echo "boardrun:   that process OUTLIVES this boardrun.  If the next thing" >&2
-	echo "boardrun:   you measure reads the framebuffer (drawink, SCREEN" >&2
-	echo "boardrun:   fbloop, the damage counters), reboot first:" >&2
-	echo "boardrun:     sh tools/jtag/boot.sh" >&2
+	echo "boardrun-note: this command backgrounds something with '&', and" >&2
+	echo "boardrun-note:   that process OUTLIVES this boardrun.  If the next" >&2
+	echo "boardrun-note:   thing you measure reads the framebuffer (drawink," >&2
+	echo "boardrun-note:   SCREEN fbloop, the damage counters), reboot first:" >&2
+	echo "boardrun-note:     sh tools/jtag/boot.sh" >&2
 	;;
 esac
 
