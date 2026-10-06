@@ -7249,6 +7249,51 @@ the host does not have.
 .B "That leaves the kernel's own build of the device, #a underneath it, and this part's memory and timing."
 A list of three is a better place to start than a list of everything,
 and it was arrived at without a board.
+.NH 2
+Two more suspects killed by reading, before they cost a board
+.PP
+.B "The kernel's devssl is not meaningfully different from emu's."
+164 lines differ and nearly all of them are includes, integer types and
+whitespace.  The one addition that runs on every open publishes an
+.I iounit
+on the data channel,
+.CW "s->c->iounit - Maxsslhdr" ,
+and it depends on the control channel having been given the transport
+before
+.B data
+is opened \-
+.B appl/lib/ssl.b
+does exactly that, with a comment saying why.  Sound, and not the wedge.
+.PP
+.B "And devssl does not ask its transport for 64K of memory,"
+which is what
+.CW "ensure(): bread(s->c, Maxdmsg, 0)"
+with
+.CW "Maxdmsg = 1<<16"
+looks like on a part whose main pool is eighty kilobytes.
+.I Qbread
+takes a block off the queue and splits it if it is longer than the
+count; it never allocates the count.
+.B "That mattered because the shape fitted:"
+an
+.I allocb
+of 65536 would fail, failure panics, and
+.B "a panic on this board spins with interrupts off and the console FIFO loses the message"
+\- console dead, no control-R, reset button, which is the signature
+exactly.  It is not what happens, and reading
+.B qio.c
+cost a minute where the bench would have cost an afternoon.
+.PP
+.B "The satellite's devssl never touches #a either,"
+which narrows it further than the list above.
+.I Protect ()
+pushes ssl onto the STYX end of the relay's pipe, so the device's
+transport is a pipe on the board exactly as it is under emu; the relay's
+two processes carry bytes between the pipe's other end and
+.BR #a .
+So the device-to-transport path is identical to the one that passes
+under emu, and what is left is the relay, #a, the part, and this board's
+memory and timing.
 
 .NH 2
 What is left to chase, and the part that is not the caller's fault
