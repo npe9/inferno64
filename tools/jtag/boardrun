@@ -30,6 +30,25 @@
 # It does NOT touch JTAG and does NOT open the serial device -- screen owns
 # that, and a second opener wedges the adapter until someone unplugs it.
 #
+# AND IT WARNS WHEN THE COMMAND BACKGROUNDS SOMETHING, because `wm/X &' inside a
+# boardrun OUTLIVES THE BOARDRUN.  This resets board.cmd and exits; the process
+# it started keeps drawing into the framebuffer indefinitely, nothing here knows
+# to clean it up, and nothing in the NEXT measurement knows it is there.
+#
+# That cost two wrong readings in ten minutes, the second after the first had
+# been written up: drawink reported "FAIL box outside: 12126 of 38080 pixels ...
+# within 160,32 427,119" which was a leftover wm/bounce animating under it, and
+# then a wm/clock measurement came out at 910839 lines in six seconds -- 151806
+# a second, for a clock that updates once a second -- which was the same
+# leftover bounce and would have been published as a 44x same-client
+# disagreement with a peer's host figure.
+#
+# A warning rather than a kill, deliberately: this cannot tell which processes
+# are the caller's, and killing by guess on a board that is hard to recover is
+# worse than saying so.  The actionable advice is in the message, because the
+# remedy is a reboot and only the caller knows whether the next thing they do
+# is a framebuffer measurement.
+#
 set -u
 HERE=`cd \`dirname "$0"\` && pwd`
 ROOT=`cd "$HERE/../.." && pwd`
@@ -68,6 +87,16 @@ idle() {
 	printf 'load std; echo BR-IDLE-%s\n' "`date +%s`" > "$CMD"
 }
 trap 'idle' 0 1 2 15
+
+case "$1" in
+*'&'*)
+	echo "boardrun: NOTE -- this command backgrounds something with '&', and" >&2
+	echo "boardrun:   that process OUTLIVES this boardrun.  If the next thing" >&2
+	echo "boardrun:   you measure reads the framebuffer (drawink, SCREEN" >&2
+	echo "boardrun:   fbloop, the damage counters), reboot first:" >&2
+	echo "boardrun:     sh tools/jtag/boot.sh" >&2
+	;;
+esac
 
 TOK=BR-$$-`date +%s`
 if [ "$BIND" = 1 ]; then
