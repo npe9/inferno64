@@ -116,13 +116,22 @@ enum { Directfb = 1 };
  * AND THE PIXEL ARGUMENT FOR IT IS DEAD, measured on silicon.  Both arms
  * JTAG-booted so the core count is controlled at nmach 1, gfxstress fill 4:
  *
- *	Dbuf=0			44500, 43500 ops/s
- *	Dbuf=1			41800, 41900, 42000, 41800 ops/s
+ *	Dbuf=0  build 1791245060   44500 43500            mean 44000
+ *	Dbuf=1  builds 4182, 4716  41800 41900 42000 41800  mean 41875
+ *	Dbuf=0  build 1791285322   42587 42700 42900      mean 42729
  *
- * The flip is about 5 PER CENT SLOWER, and its own two halves account for 87
- * per cent of the gap: 219us of repair plus 168us of mailbox exchange per
- * present, against an 8900us present.  Charged separately on purpose, because
- * the question stopped being how many pixels are saved.
+ * The flip is NOT FASTER -- every Dbuf=1 reading is below every Dbuf=0 reading,
+ * seven readings across three builds -- but the magnitude is 2.0 per cent
+ * against the near control and 4.8 against the far one, and the two Dbuf=0
+ * builds differ by 2.9 per cent while differing ONLY IN CODE UNREACHABLE AT
+ * Dbuf=0.  So a single-digit throughput difference is not resolvable here: the
+ * between-build layout spread is the size of the effect.
+ *
+ * WHAT IS RESOLVABLE is the direct attribution, because it is measured inside
+ * the run that pays it rather than differenced across builds: 219us of repair
+ * plus 168us of mailbox exchange is 387us of a 9356us present, 4.14 per cent,
+ * which brackets between the 2.0 and the 4.8.  Charged separately on purpose,
+ * because the question stopped being how many pixels are saved.
  *
  * THE REASON IS THAT THERE IS NO COPY TO SAVE.  Directfb is 1, so fb IS vfb,
  * and flushmemscreen()'s memmove is skipped (dp == sp).  The shipping path

@@ -8719,3 +8719,82 @@ its size, not the fraction of it you can remove.  That is the same lesson this
 plan already records as "divide before you optimise", applied this time to my
 own work rather than to someone else's, and arrived at a session later than the
 code that made it true.
+.NH 2
+H1a CORRECTION.  "About 5 per cent slower" came from the FAR control; the near one says 2
+.LP
+I committed the A/B above with an arm A taken on an earlier build, and then ran
+the control I should have run first: the same
+.CW "fill 4"
+on the RESTORED
+.CW "Dbuf = 0"
+kernel, nothing before it, matching the other arms exactly.
+.P1
+Dbuf=0  build 1791245060   44500 43500          mean 44000  spread 2.3%
+Dbuf=1  builds 4182, 4716  41800 41900 42000 41800  mean 41875  spread 0.5%
+Dbuf=0  build 1791285322   42587 42700 42900    mean 42729  spread 0.7%
+.P2
+.PP
+.B "TWO Dbuf=0 BUILDS DIFFERING ONLY IN DEAD CODE ARE 2.9 PER CENT APART."
+Everything added to build 1791285322 over 1791245060 is unreachable when
+.CW Dbuf
+is 0: the cycle counters live in
+.CW bcmpresent() ,
+which is only installed as
+.CW screenpresent
+inside
+.CW "if(Dbuf)" ,
+and the
+.CW "SCREEN flipcyc"
+print is inside
+.CW "if(Dbuf)"
+too.  So the 2.9 points are code layout, the same class of effect as the
+.CW vsdrift
+panic recorded earlier in this plan.
+.PP
+.B "Which means a 2-to-5 per cent throughput comparison across builds is not resolvable on this board."
+The within-build spread is 0.5 to 2.3 per cent and the between-build spread for
+an identical configuration is 2.9.  The effect I was measuring is the size of
+the noise I was not.
+.NH 3
+What survives, and it is the part that was measured rather than differenced
+.LP
+.IP \(bu
+.B "The flip is not faster."
+Every
+.CW "Dbuf = 1"
+reading is below every
+.CW "Dbuf = 0"
+reading, across two builds, seven readings.  That direction is safe.
+.IP \(bu
+.B "The magnitude is 2.0 per cent against the near control, not 5."
+Against the far control it is 4.8, and the far control is the one I quoted.
+Correcting it: the flip costs single-digit per cent and the experiment cannot
+say which digit.
+.IP \(bu
+.B "The DIRECT attribution does not depend on the A/B at all, and it brackets."
+386.96us of repair plus exchange in a 9356us present is 4.14 per cent, measured
+inside the run that is paying it, immune to build-to-build layout because it is
+an attribution and not a difference.  It sits between the 2.0 and the 4.8, which
+is the agreement worth having.
+.IP \(bu
+.B "And the finding the whole section rests on is untouched,"
+because it is not a throughput difference:
+.CW Directfb
+means the shipping path copies nothing, so the flip's saving is against zero.
+That reads out of
+.CW flushmemscreen()
+and out of the repair's own 43 MB/s, neither of which is an A/B.
+.NH 3
+The rule this earns
+.LP
+.B "A control taken on a different build is not a control."
+I had the rule for core counts already \(em card boot against JTAG boot changes
+two things \(em and applied it carefully to
+.CW nmach ,
+then compared against a build from forty minutes earlier without noticing I had
+done the same thing in a different variable.
+.PP
+.B "The test is cheap and I skipped it:"
+run the control arm on the build that has the change in it but switched OFF.
+That is one board command, it costs nothing, and it is the only thing that
+separates "my change did this" from "a rebuild did this".
