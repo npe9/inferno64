@@ -189,8 +189,34 @@ uchar*
 byteaddr(Memimage *i, Point p)
 {
 	uchar *a;
+	s32 off;
 
-	a = i->data->bdata+i->zero+(s32)(sizeof(u32)*p.y*i->width);
+	/*
+	 * The row offset is deliberately computed in 32 bits and allowed to go
+	 * negative: an image whose r.min.y is below zero sits above its own
+	 * bdata.  It used to be written
+	 *
+	 *	(s32)(sizeof(u32)*p.y*i->width)
+	 *
+	 * relying on the cast to narrow the product, and 7c DROPS a narrowing
+	 * cast of a 64-bit value -- the same class as the (u32) and (ulong)
+	 * cases already known here.  sizeof is 64-bit, so p.y*i->width became
+	 * UMULL, a 32x32->64 UNSIGNED multiply, and for a negative p.y the low
+	 * word 0xFFFFFFF8 times the width left a nonzero HIGH word that was
+	 * then added to the pointer at full width.  byteaddr returned an
+	 * address gigabytes away and memfillcolor wrote to it.
+	 *
+	 * Keeping every operand 32 bits gives the truncation as the arithmetic
+	 * rather than as a cast, so there is nothing for a compiler to drop:
+	 * 7c emits MULW and a sign-extending MOVW instead of UMULL.
+	 *
+	 * Only an image with a negative r.min.y can reach it, and bellipse's
+	 * brush disc, Rect(-t,-t,t+1,t+1), is the one in this tree that has
+	 * one -- which is why the ellipse path alone faulted, and why a host
+	 * build never showed it: clang honours the cast.
+	 */
+	off = 4 * p.y * (s32)i->width;
+	a = i->data->bdata + i->zero + off;
 
 	if(i->depth < 8){
 		/*
