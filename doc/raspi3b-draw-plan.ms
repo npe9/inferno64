@@ -677,6 +677,51 @@ reads in an empty loop, or move them out to one pair per
 .CW flushmemscreen
 call.
 .PP
+.B "AND IT WAS MEASURED, so the decomposition is corrected rather than
+.B "merely withdrawn."
+The counter read was timed in situ \(em 3115423 pairs, 1025813 ticks \(em
+giving
+.B "17.1 ns"
+for one
+.CW cycles()
+read and 0.0513us for the three in the loop. Subtracting that:
+.DS
+.CW
+	            fitted   less instrument   of which DSB
+	pre-hoist   0.1795        0.1282
+	post-hoist  0.1429        0.0916           0.0367
+.R
+.DE
+.LP
+So the barrier is 0.0367us of a 0.1282us fixed term \(em 29% of it. Most
+of the per-call cost is the call itself,
+.CW dlinesz()
+and loop setup, not the
+.CW DSB ,
+and the 0.0367 agrees to three decimals with the 0.0368 the intercept
+actually moved.
+.PP
+.B "A consistency check worth more than the numbers."
+An instrument cost is per CALL, so subtracting it must leave the slope
+untouched \(em and it does, 1.394 ns/byte before and after the
+subtraction. That is independent confirmation that the instrument is
+purely a fixed cost, and therefore that the slope's own move, 1.394 to
+1.208 ns/byte, is NOT instrument. The serialisation finding survives the
+correction: a barrier is not byte-proportional, so the per-line
+.CW DSB
+was holding up the write-backs
+.CW dccvac
+issues, and hoisting it lets them overlap.
+.PP
+Instrument-free, the fixed share is
+.B 53%
+of the work at 82 bytes a line and
+.B 72%
+at 36 \(em against the 61% and 78% first quoted here. The conclusion is
+unchanged and now rests on measured numbers. And step 3's shrink comes
+out 129x on the corrected model, inside the 122\(mi143x the earlier
+models bracketed, so nothing downstream moves.
+.PP
 .B "The gate still wants scanlines, on a measurement rather than on the fit."
 The flushed rectangles average 82 bytes a line \(em about twenty pixels
 \(em which is a ratio read straight off lines and bytes with no model in
