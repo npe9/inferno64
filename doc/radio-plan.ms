@@ -518,6 +518,22 @@ authenticated.
 the claim in
 .CW doc/pycubed-plan.ms
 that an authenticated encrypted link over this radio needs no IP stack.
+.B "Done, and the claim needed correcting twice over."
+.I Radiostyx
+asked
+.IR ssl (3)
+for
+.B "alg sha"
+until October 2026, which man/3/ssl documents as a DIGEST \- the bytes
+went out readable while this plan, the source and the man page all
+called the link encrypted.  It asks for
+.B sha/rc4_256
+now, and
+.B "that is SHA-1 and RC4, which are not modern primitives:"
+devssl offers RC4 at 40, 128 and 256 bits, DES at 40 and 56, and IDEA,
+and nothing better.  It defeats somebody listening on 915MHz with a
+software radio, which is the threat this document describes, and not
+anybody who has read about RC4.
 .IP 6. 5
 .CW sys->export ()
 over the result, and a ground station reading
@@ -558,7 +574,46 @@ pushed onto
 .CW data ,
 then
 .CW sys->export ()
-over it \- are not done.
+over it \- were not done, and
+.B "the reason was not any missing code."
+.CW os/inferno/stm32f407/stm32f407
+had no
+.B ssl
+line in its
+.B dev
+section, so there was no
+.B #D
+on the board at all to push anything onto.  One word.
+.PP
+.B "And whether it composes with the segmentation is answerable without a radio."
+.IR styxseg (1)
+pushes
+.IR ssl (3)
+onto both ends of its chopped link before either speaks:
+.B clear ,
+.BR sha ,
+.B sha/rc4_128
+and
+.B sha/rc4_256
+all carried every size from 270 to 272 bytes over 109-byte frames
+intact.
+.I Devssl 's
+.I ensure ()
+loops until it has what its record header asked for, so a record chopped
+into 109-byte pieces is reassembled the same way
+.I devmnt
+reassembles a Styx message \- which is why it works, rather than a
+coincidence.
+.PP
+.B "What #D costs, measured: 26480 bytes of kernel text."
+The satellite, station and styx images absorb it; the shell image came
+to 926280 against a ceiling of 913408 and gave up
+.I ax25chk
+from its XIP list, which is the second thing that list has had to give
+up.  A conf has one
+.B dev
+section for every init built from it, so the cost falls on the image
+somebody types at rather than on the two that want the device.
 .NH 2
 The channel is two nodes, not a broadcast medium
 .PP

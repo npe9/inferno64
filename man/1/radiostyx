@@ -117,6 +117,27 @@ for the same exchange.  That is the whole of what
 argues for: a file read off a satellite over a link that is
 authenticated and encrypted, with no IP stack anywhere in it, and a
 message size neither end was told.
+.PP
+.B "\(dqEncrypted\(dq here is SHA-1 and RC4-256, and that is worth stating plainly."
+It is what
+.IR ssl (3)
+offers \-
+.B encrypttab
+in
+.B /os/inferno/port/devssl.c
+has RC4 at 40, 128 and 256 bits, DES at 40 and 56, and IDEA \- and
+.B "RC4 is not a modern cipher."
+This makes the bytes unreadable to somebody listening on 915MHz with a
+software radio, which is the threat
+.B doc/radio-plan.ms
+describes; it is not security against anybody who has read about RC4.
+.PP
+It asked for
+.B "alg sha"
+until October 2026, which
+.IR ssl (3)
+documents as a DIGEST: the bytes went out readable while this page, the
+source and the plan all called the link encrypted.
 .SH BUGS
 The client is one exchange deep: one walk, one open, one read, no
 clunk, and no second read for a file longer than one reply.  It is a

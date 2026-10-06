@@ -19,8 +19,12 @@ implement Radiostyx;
 # derived over that same link, rather than a constant written into this
 # file, and each end has proved to the other which certified identity
 # it holds.  That is the whole of what doc/pycubed-plan.ms argues for:
-# an authenticated, encrypted file system over a radio, with no IP
-# anywhere in it.
+# an authenticated and encrypted file system over a radio, with no IP
+# anywhere in it -- with "encrypted" meaning SHA-1 and RC4-256, which is
+# what devssl offers and is NOT a modern cipher.  It makes the bytes
+# unreadable to somebody listening on 915MHz with an SDR, which is the
+# threat this plan describes, and it is not security against anybody who
+# has read about RC4.  See the note by the alg string below.
 #
 # With "lora" it goes through #L rather than straight at #W, which is
 # the same link with a RadioHead header, an address filter and
@@ -204,8 +208,10 @@ init(nil: ref Draw->Context, argv: list of string)
 	sys->print("RADIOSTYX-PAYLOAD %d\n", payload);
 
 	# With "ssl" as the last argument, put ssl(3) under the Styx.
-	# That is the whole claim in doc/pycubed-plan.ms: Styx over an
-	# encrypted, digested link over a radio, with no IP anywhere.
+	# That is the whole claim in doc/pycubed-plan.ms: Styx over a
+	# digested and encrypted link over a radio, with no IP anywhere
+	# -- see the note by the alg below for what "encrypted" is worth
+	# here, which is less than the word suggests.
 	# ssl(3) delimits its messages too, so exportfs reads them whole
 	# exactly as it reads the radio whole.
 	usessl := 0;
@@ -257,8 +263,28 @@ init(nil: ref Draw->Context, argv: list of string)
 			sys->print("radiostyx: ssl secret: %s\n", serr);
 			return;
 		}
-		if(sys->fprint(c.cfd, "alg sha") < 0){
-			sys->print("radiostyx: alg sha: %r\n");
+		#
+		# "sha/rc4_256" AND NOT "alg sha", WHICH WAS A DIGEST.
+		#
+		# man/3/ssl is explicit: sha digests each message and
+		# leaves it readable, and only "digest/crypt" encrypts.
+		# This asked for sha alone, and then the header above,
+		# man/1/radiostyx and doc/radio-plan.ms all called the
+		# result encrypted.  FOUR PLACES IN THE TREE SAID
+		# SOMETHING THE ONE STRING DID NOT DO.
+		#
+		# rc4_256 is the strongest encryption devssl offers:
+		# encrypttab in os/inferno/port/devssl.c has RC4 at 40,
+		# 128 and 256 bits, DES at 40 and 56, and IDEA.  That is
+		# not a modern cipher and the man page now says so.
+		#
+		# Verified to compose with the segmentation rather than
+		# assumed, under a host emu, because an encrypted stream
+		# chopped into 109-byte frames is a different question
+		# from a clear one: appl/cmd/styxseg.b -e sha/rc4_256.
+		#
+		if(sys->fprint(c.cfd, "alg sha/rc4_256") < 0){
+			sys->print("radiostyx: alg sha/rc4_256: %r\n");
 			return;
 		}
 		sys->print("RADIOSTYX-SSL %s\n", c.dir);
