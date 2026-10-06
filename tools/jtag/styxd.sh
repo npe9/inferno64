@@ -61,6 +61,34 @@ ROOT=`cd \`dirname "$0"\`/../.. && pwd`
 # Build it with:	cd emu/MacOSX && mk CONF=emu-cpu install
 #
 EMU=${EMU:-$ROOT/MacOSX/arm64/bin/emu-cpu}
+
+#
+# AND SAY SO IF THAT BINARY IS MID-CHANGE.  emu-cpu is checked in, and several
+# sessions share this worktree, so it can be a half-finished build belonging to
+# somebody else at the moment you serve Styx with it.
+#
+# This is not hypothetical and it is not cheap.  A modified emu-cpu in this tree
+# made `wm/bounce' report "module not loaded" on a module that loads fine --
+# which was taken as evidence that a .dis was broken, told to a peer, and
+# committed, before `./MacOSX/arm64/bin/emu' ran the same program successfully.
+# The same binary also made disdump print "illegal dis instruction" on a sound
+# module.  git status had been naming it in the output of nearly every command
+# all session, read each time for whether the reader's OWN work was clean and
+# never for what else was dirty.
+#
+# A warning and not a refusal: emu-cpu is the RIGHT binary here (see above --
+# plain emu is Cocoa and App Nap suspends it), a modified one is usually fine,
+# and this script's job is serving the board rather than policing the tree.  But
+# an unexplained Styx wedge with a dirty server binary deserves one line saying
+# which it might be.
+#
+if git -C "$ROOT" status --porcelain -- "$EMU" 2>/dev/null | grep -q .; then
+	echo "styxd: NOTE -- $EMU is MODIFIED in git." >&2
+	echo "styxd:   Another session may be mid-rebuild of it.  If Styx wedges" >&2
+	echo "styxd:   or a .dis will not load, suspect the server binary before" >&2
+	echo "styxd:   the board: compare against a binary nobody is touching." >&2
+	echo "styxd:   git log -1 --format='%h %ad' -- \$EMU; ls -l \$EMU" >&2
+fi
 if [ ! -x "$EMU" ]; then
 	echo "styxd: $EMU is missing; build it with" >&2
 	echo "styxd:     (cd emu/MacOSX && mk CONF=emu-cpu install)" >&2
