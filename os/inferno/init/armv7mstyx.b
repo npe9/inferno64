@@ -69,6 +69,9 @@ include "sys.m";
 include "draw.m";
 include "radiocal.m";
 	radiocal: Radiocal;
+include "keyring.m";
+include "security.m";
+	ssl: SSL;
 
 Init: module
 {
@@ -196,6 +199,11 @@ serve(carrier: int)
 		sys->print("ARMV7M-STYX-NOPIPE\n");
 		return;
 	}
+	sfd = protect(sfd);
+	if(sfd == nil){
+		sys->print("ARMV7M-STYX-NOSSL\n");
+		return;
+	}
 	# EXPWAIT and not EXPASYNC: this process has nothing else to do
 	# and a satellite that returns from serving its own namespace has
 	# stopped being a satellite.  export() does not come back.
@@ -234,6 +242,11 @@ client(peer: string, carrier: int)
 	sfd := relay(dfd);
 	if(sfd == nil){
 		sys->print("ARMV7M-STYX-NOPIPE\n");
+		return;
+	}
+	sfd = protect(sfd);
+	if(sfd == nil){
+		sys->print("ARMV7M-STYX-NOSSL\n");
 		return;
 	}
 	# /n and not /n/sat: devroot is read-only, so there is no making
@@ -342,6 +355,59 @@ bigread()
 		+ " crossed %d-byte frames intact\n", len a, 109);
 	sys->print("ARMV7M-STYX-BIGREAD-OK\n");
 	sys->print("%s", a);
+}
+
+# ssl(3) UNDER THE STYX, which is step 5 of doc/radio-plan.ms.
+#
+# It goes on the STYX END of the relay's pipe, not on the conversation:
+# the chopping then carries ciphertext, which is the composition
+# appl/cmd/styxseg.b verified under a host emu -- clear, sha,
+# sha/rc4_128 and sha/rc4_256 all carried 270 to 272 bytes over
+# 109-byte frames intact.  devssl's ensure() loops until it has what
+# its record header asked for, so a record chopped into pieces is put
+# back the same way devmnt puts a Styx message back.
+#
+# Both ends call relay(), so one function here covers the satellite and
+# the ground, and they cannot disagree about the algorithm by being
+# edited separately.
+#
+# THE SECRET IS A CONSTANT IN THIS FILE AND THAT IS NOT A KEY.  It is
+# the same state appl/cmd/radiostyx.b's "ssl" mode is in, and the thing
+# that makes it real is keyring->auth() deriving one over the link --
+# which wants a certificate for each board under /keys, and this root
+# has no /keys.  That is the next step and it is not this one.  What is
+# demonstrated here is that the bytes are not in the clear and that the
+# record layer survives the chopping; what is NOT demonstrated is that
+# either end knows who the other is.
+#
+# sha/rc4_256 is the strongest devssl offers.  It is SHA-1 and RC4,
+# which are not modern primitives: see man/1/radiostyx.
+protect(fd: ref Sys->FD): ref Sys->FD
+{
+	ssl = load SSL SSL->PATH;
+	if(ssl == nil){
+		sys->print("styx: load %s: %r\n", SSL->PATH);
+		return nil;
+	}
+	(err, c) := ssl->connect(fd);
+	if(err != nil){
+		sys->print("styx: ssl connect: %s\n", err);
+		return nil;
+	}
+	secret := array of byte "not-a-key-see-armv7mstyx-protect";
+	err = ssl->secret(c, secret, secret);
+	if(err != nil){
+		sys->print("styx: ssl secret: %s\n", err);
+		return nil;
+	}
+	if(sys->fprint(c.cfd, "alg sha/rc4_256") < 0){
+		sys->print("styx: alg sha/rc4_256: %r\n");
+		return nil;
+	}
+	sys->print("styx: ssl sha/rc4_256 on %s, and the secret is a"
+		+ " constant in this file rather than a key\n", c.dir);
+	sys->print("ARMV7M-STYX-SSL\n");
+	return c.dfd;
 }
 
 # What the radio and the conversation have counted, printed in the lines

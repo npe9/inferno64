@@ -13,6 +13,28 @@
 # mount -- which is the point.
 XIPDIS=\
 	lib/radiocal.dis\
+	lib/ssl.dis\
+
+
+# The files this image carries that the root section does not.
+#
+# ssl.dis, because the conf's root section is carried by EVERY image
+# built from it and the shell image has 2240 bytes of flash spare: a
+# 1650-byte raw module there would leave 590, which is no margin at
+# all.  This is the mechanism os/inferno/port/mkroot grew EXTRAROOT
+# for, and the second thing it has bought.
+#
+# It is in the XIP list above as well, and that is the opposite of the
+# call made for mount.dis in image-armv7minit.  Mount is a short-lived
+# command run by hand and this image is MEMORY-tight rather than flash-
+# tight: it comes to 635744 of 913408, so 277664 bytes of flash spare,
+# against a Dis heap holding the init, two relay processes and now an
+# ssl connection, in the smaller of two SRAM regions.  XIP'ing ssl.dis
+# cost 5864 bytes of that flash and saves its decoded array in RAM.  So ssl.dis costs flash here and not RAM, which
+# is the trade this image wants and the reverse of the one that image
+# wanted.
+EXTRAROOT=\
+	/dis/lib/ssl.dis		/dis32/lib/ssl.dis\
 
 
 # Twelve, after ten was measured too few and fourteen measured too
