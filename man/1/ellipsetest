@@ -1,0 +1,114 @@
+.TH ELLIPSETEST 1
+.SH NAME
+ellipsetest \- exercise memellipse's brushed path, which allocates a negative-origin image
+.SH SYNOPSIS
+.B ellipsetest
+[
+.I group
+]
+.SH DESCRIPTION
+.I Ellipsetest
+draws ellipses chosen to reach, or deliberately to miss,
+.IR memellipse 's
+brushed-with-circles path. That path is the only one in the draw library
+that allocates an image with a
+.B negative
+.BR r.min.y :
+.IR bellipse 's
+brush disc,
+.BR Rect(\-t,\-t,t+1,t+1) .
+Two defects lived behind that, both reachable only from a kernel, so no
+hosted run could show either.
+.PP
+.IR byteaddr (2)
+computed its row offset as
+.B (s32)(sizeof(u32)*p.y*i->width)
+and
+.B 7c
+drops a narrowing cast of a 64-bit value, so a negative
+.B p.y
+left a nonzero high word on the pointer \(em an address gigabytes past
+anything mapped, written to by
+.IR memfillcolor .
+.PP
+.IR allocmemimage (2)
+sized the disc with
+.B nw = l*Dy(r)
+in
+.BR u32 ,
+so a thickness whose true word count passed 2\u32\d wrapped to a small
+one and the allocation came back far smaller than the rectangle it
+described.
+.PP
+Reaching the brushed path needs
+.IR a " != " b .
+The criterion is
+.B 2t(a\-b) > b\u2\d
+for
+.IR b " < " a ,
+so a circle never gets there however thick it is, and neither does a
+fill, whose
+.B t
+of \-1 makes the criterion false in both arms. The groups are therefore
+.TP
+.B brushed
+three ellipses with
+.IR a " != " b
+and a thickness of 2, which do reach it. At
+.IR a =44
+and
+.IR b =5
+the criterion is 156 against 25.
+.TP
+.B plain
+a circle and a fill at the same radii, which do not.
+.TP
+.B wrapping
+the four thicknesses at which the word count wraps.
+.PP
+With no argument, or
+.BR all ,
+every group runs.
+.SH SOURCE
+.B /appl/cmd/ellipsetest.b
+.SH SEE ALSO
+.IR draw (3),
+.IR gfxstress (1)
+.SH BUGS
+Two things here are deliberate and easy to undo by accident.
+.PP
+.B Every case flushes.
+Draw operations are batched into the
+.IR draw (3)
+write buffer and executed when it is flushed, so without a flush per
+case the count records how many messages were
+.B queued
+and the drawing all happens afterwards during teardown. An early version
+of this test printed
+.B "9 ok, 0 fail"
+on a kernel that then died in
+.IR memfillcolor
+on its way out. A count that cannot fail is not a test.
+.PP
+.B The group is an argument rather than a loop
+because console output is queued: a
+.B print
+and a trap print race, so the last line on the wire does not say which
+case faulted. Selecting one group per boot attributes a fault by which
+invocation dies, which does not depend on print ordering at all. The
+bisection that separated the two defects above was done exactly that
+way.
+.PP
+Nothing here checks pixels. A case proves a path was taken and survived,
+not that it drew the right thing. It is also silent about
+.I negative
+semidiameters and thicknesses, which
+.IR draw (3)
+rejects on the way in, so they cannot reach the library at all \(em and
+cannot reach the brushed path even if they did, since
+.B a
+and
+.B b
+are normalised at entry and a negative
+.B t
+makes both arms of the criterion false.
