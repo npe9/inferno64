@@ -45,6 +45,34 @@ gets
 wrong: GREY8 sets no alpha flag, so such a test reports a blend as a
 full overwrite. See BUGS.
 .PP
+.B thickellipse
+is not a performance phase but a regression test, and the one phase here
+that is an oracle: it draws ellipses at the four semithicknesses for
+which
+.IR memellipse 's
+brush disc used to be allocated too small, and a run that reaches its
+.B GFXSTRESS
+line at all is the check passing.
+.PP
+.IR memellipse (2)
+sends any large semithickness into its brushed-with-circles path, which
+allocates the brush disc as a
+.B GREY1
+.BR Rect(\-t,\-t,t+1,t+1) .
+.IR allocmemimage (2)
+sized that with
+.B nw = l*Dy(r)
+in
+.BR u32 ,
+so a thickness whose true word count passed 2\u32\d wrapped to a small
+one: at
+.B t=185352
+the pool returned 83352 bytes for a rectangle holding 17.2 GB of pixels,
+and the fill done next walked off the end of it.
+.IR draw (3)
+rejects a negative semidiameter and a negative thickness but bounds none
+of them above, so the value arrives from the wire unchallenged.
+.PP
 With no arguments it cycles through all phases; giving
 .I phase
 restricts the run to that one, and
@@ -68,5 +96,24 @@ from a Tk session was
 .BR display->white ,
 a 1\(mu1 replicated all-ones image, and a counter of non-opaque masks
 could not be made non-zero by any workload in the tree.
+.PP
+.B thickellipse
+covers only the thicknesses at which the word count wraps, which it
+finds by arithmetic rather than by search. A thickness large enough to
+be refused outright, or large enough to overflow
+.IR memellipse 's
+own
+.B (t<<1)*(a\-b)
+criterion before the allocator is ever reached, is not exercised.
+.PP
+Nothing here reaches the brush-disc path with a thickness small enough
+to be ordinary, which is the case that matters most: the
+.B ellipse
+phase does reach it \(em at
+.BR t=2 ,
+.B 2t(a\-b) > b\u2\d
+holds for most of its radii, so the brushed path is the common case
+there and not the exception \(em but it reaches it incidentally, and
+nothing in the name or the code says so.
 .SH SOURCE
 .B /appl/wm/gfxstress.b
