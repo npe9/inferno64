@@ -2217,6 +2217,43 @@ nests stops paying, whatever the damage costs per frame — against
 `gfxstress fill`, where scattered damage never nests and the cost is linear
 forever at a small constant rate.
 
+**RETIRED: THE SCHEME THIS WHOLE ANALYSIS MODELS IS NOT RUN ON EITHER
+PLATFORM.** The raspi3b session found it on the board first:
+`Directfb` = 1 means `fb` *is* `vfb`, so `flushmemscreen`'s memmove is skipped at
+`dp == sp`. **The shipping kernel copies nothing per present.** So devdraw's
+"eager" 301146 px a present is the cost of a scheme that kernel has not run
+since `Directfb` landed, and the flip's 128× fewer bytes are 128× fewer than
+a number nobody pays.
+
+Checking the same question here gives the same answer, more starkly.
+`gfxstress fill`, both instruments on one run:
+
+| | bytes |
+|---|---|
+| `FRAMEDAMAGE` eager — the **modelled** copy | 47681711416 |
+| Metal `upload_bytes` — what was **actually** uploaded | 34406400 |
+| Metal `copy_bytes` — the shadow-buffer copy | **0** |
+
+**A factor of about 1400, and the shadow copy never ran at all.** The model
+charges a bounding box per *devdraw* present, 41970 of them; the host
+coalesces those into AppKit presents and uploads only dirty tiles. Two
+different events and two different quantities, which is the counting trap
+from one paragraph up in its most expensive form.
+
+**So every figure in this section models a scheme neither platform
+executes** — the 85.28%, the zero tail, the two-coefficient fits, the four
+corrections for units and run length and phase mixing. The earlier note that
+these were "measured damage, predicted cost of a scheme never run" was right
+and far too mild: the scheme is not merely unrun, it is actively bypassed on
+the board and reports zero copied bytes on the host.
+
+What the numbers still legitimately describe is **damage**: how much area a
+client dirties, how much consecutive frames' damage overlaps, and that
+containment makes a deferred repair free while motion makes it worthless.
+Those are properties of clients and they survive. What does not survive is
+any claim that a percentage of them is a saving, because there is no copy
+being paid for either to save against.
+
 **AND THE DENOMINATOR NONE OF THESE FIGURES HAD: THE COPY IS 0.34% OF WALL
 TIME.** Every pixel figure in this section — 84.9%, the zero tail, the
 raspi3b session's 98–99% — is a share of the copy's **bytes**. None said what
