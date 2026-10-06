@@ -10628,3 +10628,71 @@ alone gives 7 of 7.
 267x87 at 160,32 is a window, not a drawing artefact, and the one thing I had
 just left running was a window.  Same family as this plan's other harness
 failures: the test was correct and the environment was not.
+.NH 2
+wm/clock CONFIRMS the high mode on the board -- and I made the leftover-process error TWICE
+.LP
+.CW wm/clock
+loads now too, so
+.CW $Math
+explains both failing clients and that claim is verified rather than inferred
+from
+.CW bounce
+alone.
+.B "And with clock running, both same-client comparisons agree across platforms:"
+.P1
+client      board B/line   host B/line   ratio
+wm/clock            1531          2387    1.6x
+wm/bounce             74            49    1.5x
+.P2
+.B "So a peer's bimodality is confirmed on the SAME clients on different hardware,"
+both modes, both within window-size variation.  That is stronger than what I
+claimed earlier \(em I had paired MY
+.CW colors
+against THEIR
+.CW clock ,
+two different clients, and presented it as the same mode on two platforms.  It
+was suggestive; this is the actual test.
+.NH 3
+The first reading was contaminated and I nearly published a 44x discrepancy
+.LP
+.P1
+contaminated   910839 lines    54 B/line    <- wm/bounce still running
+clean            2425 lines  1531 B/line
+                 376x fewer lines, 28x higher B/line
+.P2
+.CW wm/bounce
+was still animating from the PREVIOUS command, where I had started it with
+.CW &
+and never killed it.  So "clock is 54 B/line on the board against 2387 on the
+host" was almost entirely bounce, and
+.B "I was composing a report of a 44x same-client disagreement that did not exist."
+.PP
+.B "I HAD WRITTEN UP THIS EXACT ERROR TEN MINUTES EARLIER."
+The
+.CW drawink
+FAIL two sections above was the same leftover
+.CW wm/bounce ,
+and I recorded it with the note that "the region named the cause".
+.B "Then I did it again, in the next measurement, having just described it."
+.PP
+.B "The tell was in the number and I had to be surprised into reading it:"
+910839 lines in six seconds is 151806 lines a second, for a clock that updates
+once a second.  The figure was absurd on its face and I computed three derived
+quantities from it before the implausibility registered.
+.NH 3
+The rule, which is mechanical and not a matter of care
+.LP
+.B "`wm/X &' inside a boardrun OUTLIVES the boardrun."
+.CW boardrun
+resets
+.CW board.cmd
+and exits; the process it started keeps drawing into the framebuffer
+indefinitely.  Nothing in the tool knows to clean it up, and nothing in the next
+measurement knows it is there.
+.PP
+.B "So: reboot between graphical measurements, not between sessions."
+A JTAG boot is four minutes and a contaminated frame-buffer measurement is
+worth less than nothing, because it looks like a result.  Both of today's
+instances were caught by a sanity check on the magnitude \(em a window-sized
+disagreement at a window-sized region, and a line count two orders of magnitude
+too large \(em which is luck rather than method.
