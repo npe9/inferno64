@@ -280,6 +280,86 @@ paintnest(disp: ref Display, depth: int): array of byte
 	return b;
 }
 
+#
+# TWO TOPLEVELS, drawing alternately.
+#
+# scene.c's walk is ONE static struct -- Walk s[Maxwalk], depth, and the
+# counters -- shared by every toplevel in the process (scene.c:678).  Every
+# other case here builds one toplevel, renders it and drops it, so nothing
+# tests whether walk state leaks from one toplevel to another: a depth that
+# does not return to zero, or a w->scene left pointing at a freed tree.
+# tkofftest(1) does not cover it either -- it has one pane.
+#
+# What this does is alternate `update' between two live toplevels over two
+# images, which is what two windows updating actually does, and then compare
+# each image against the SAME widget rendered on its own.  Interleaving must
+# change nothing.  If the walk leaked between them, one or both would differ
+# from its solo reference.
+#
+# It returns both images so the caller can check them separately: a fault
+# that corrupted only the second would otherwise hide in a combined verdict.
+#
+painttwo(disp: ref Display): (array of byte, array of byte)
+{
+	offa := disp.newimage(Rect((0,0),(W,H)), draw->RGB24, 0, Draw->White);
+	offb := disp.newimage(Rect((0,0),(W,H)), draw->RGB24, 0, Draw->White);
+	topa := tk->toplevel(disp, "");
+	topb := tk->toplevel(disp, "");
+	if(offa == nil || offb == nil || topa == nil || topb == nil){
+		sys->print("FAIL two: no images or toplevels: %r\n");
+		return (nil, nil);
+	}
+	cmds := array[] of {
+		(topa, "label .w -text Label"),
+		(topb, "button .w -text Button"),
+		(topa, "pack .w"),
+		(topb, "pack .w"),
+	};
+	for(i := 0; i < len cmds; i++){
+		(t, c) := cmds[i];
+		r := tk->cmd(t, c);
+		if(r != nil && len r > 0 && r[0] == '!'){
+			sys->print("FAIL two: `%s\' -> %s\n", c, r);
+			return (nil, nil);
+		}
+	}
+	if((e := tk->putimage(topa, ". -1", offa, nil)) != nil && len e > 0){
+		sys->print("FAIL two: putimage a: %s\n", e);
+		return (nil, nil);
+	}
+	if((e = tk->putimage(topb, ". -1", offb, nil)) != nil && len e > 0){
+		sys->print("FAIL two: putimage b: %s\n", e);
+		return (nil, nil);
+	}
+	#
+	# Alternate REAL redraws, not bare updates.
+	#
+	# An `update' on a toplevel with nothing pending does nothing, so
+	# alternating bare updates interleaves no drawing at all and the
+	# comparison below would pass without testing anything.  So each
+	# round reconfigures the text first, which forces a repaint, and the
+	# last round sets both back to what the solo references used so the
+	# final images are comparable.
+	#
+	for(i = 0; i < 3; i++){
+		tk->cmd(topa, ".w configure -text " + string i);
+		tk->cmd(topa, "update");
+		tk->cmd(topb, ".w configure -text " + string i);
+		tk->cmd(topb, "update");
+	}
+	tk->cmd(topa, ".w configure -text Label");
+	tk->cmd(topa, "update");
+	tk->cmd(topb, ".w configure -text Button");
+	tk->cmd(topb, "update");
+	ba := array[W*H*3] of byte;
+	bb := array[W*H*3] of byte;
+	if(offa.readpixels(offa.r, ba) != len ba || offb.readpixels(offb.r, bb) != len bb){
+		sys->print("FAIL two: readpixels: %r\n");
+		return (nil, nil);
+	}
+	return (ba, bb);
+}
+
 # How many bytes differ, so a mismatch can be reported as a magnitude
 # rather than just a verdict.  A near-miss and a blank image are very
 # different failures.
@@ -598,6 +678,19 @@ init(ctxt: ref Draw->Context, argv: list of string)
 				names[i], inked(dpix[i])));
 	}
 
+	# Two toplevels drawing alternately, DIRECT arm.  Kept only as the
+	# reference for the scene arm below: the walk is scene-path machinery,
+	# so interleaving on the direct path cannot test it and this pair is
+	# not the interesting comparison.
+	(dtwoa, dtwob) := painttwo(disp);
+	if(dtwoa != nil && dtwob != nil && dpix[0] != nil && dpix[1] != nil){
+		da := differ(dtwoa, dpix[0]);
+		db := differ(dtwob, dpix[1]);
+		report(da == 0 && db == 0,
+			sys->sprint("direct: two toplevels alternating draw what each draws alone (%d and %d bytes differ)", da, db));
+	}else
+		report(0, "two toplevels and their solo references all rendered");
+
 	# The deep nest, direct arm.  The batching figure cannot be taken
 	# here: `render count' counts TREES, and the direct path builds
 	# none, so it answers 0 in 0 -- which is what it did when this
@@ -746,6 +839,43 @@ init(ctxt: ref Draw->Context, argv: list of string)
 		report(dn == 0, sys->sprint("scene == direct: a nest %d deep, past Maxwalk %d (%d bytes differ)", Deep, Maxwalk, dn));
 	}else
 		report(0, "a nest past Maxwalk rendered in both paths");
+
+	#
+	# TWO TOPLEVELS, SCENE ARM -- the one that tests the walk.
+	#
+	# scene.c's walk is a single static struct shared by every toplevel,
+	# so this is where interleaved drawing could leak state: a depth that
+	# does not return to zero, or a w->scene left pointing at a tree the
+	# flush has freed.  Three comparisons, because they fail differently:
+	# each image against the same widget rendered SOLO through the node
+	# path, and the interleaved pair against the interleaved direct pair.
+	#
+	# Did this case build trees at all?  painttwo() is a separate code
+	# path and the global count was read before it ran, so its arm had no
+	# evidence of its own -- the identity below would pass if both arms
+	# had somehow taken the direct path.  One read of its own, which also
+	# resets, so it sits after the nest block has taken its figures.
+	tk->cmd(tk->toplevel(disp, ""), "render count");	# reset
+	(stwoa, stwob) := painttwo(disp);
+	ct := counts(disp, "count");
+	ctrees := 0;
+	if(ct != nil)
+		ctrees = hd ct;
+	report(ctrees > 0,
+		sys->sprint("the two-toplevel case builds trees (%d)", ctrees));
+	if(stwoa != nil && stwob != nil && spix[0] != nil && spix[1] != nil){
+		sa := differ(stwoa, spix[0]);
+		sb := differ(stwob, spix[1]);
+		report(sa == 0 && sb == 0,
+			sys->sprint("scene: two toplevels alternating draw what each draws alone (%d and %d bytes differ)", sa, sb));
+		if(dtwoa != nil && dtwob != nil){
+			ia := differ(stwoa, dtwoa);
+			ib := differ(stwob, dtwob);
+			report(ia == 0 && ib == 0,
+				sys->sprint("scene == direct with two toplevels interleaved (%d and %d bytes differ)", ia, ib));
+		}
+	}else
+		report(0, "two toplevels rendered through the node path");
 
 	smenu := paintmenu(disp, 1);
 	if(dmenu != nil && smenu != nil){
