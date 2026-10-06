@@ -86,6 +86,7 @@ extern ulong	gcptrbackgc;
 extern ulong	gcstaleok;
 extern ulong	gcstalebrk;
 extern ulong	gcstaleidle;
+extern ulong	gcptrfixed;
 extern uintptr	gcbrokeptr[8];
 extern u32	gcbrokemagic[8];
 extern uintptr	gcbrokesize[8];
@@ -1566,7 +1567,8 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					 * using.
 					 */
 					" resumed-stale ok %lud brk %lud"
-					" idle %lud"
+					" idle %lud (all 3 must be 0 now)"
+					" ptr-repaired %lud"
 					" jitrefsatomic %d cflag %d\n",
 					gcnruns, gcsweeps, gcepochs, gchalted,
 					gchalt, gcdepth, gcdepthmax,
@@ -1577,6 +1579,7 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					gcptrfwd, gcptrfwdgc,
 					gcptrback, gcptrbackgc,
 					gcstaleok, gcstalebrk, gcstaleidle,
+					gcptrfixed,
 					jitrefsatomic, cflag);
 				/*
 				 * The break records, bounded at eight, printed

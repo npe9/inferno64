@@ -94,6 +94,7 @@ A_GCPBACKGC=`sym gcptrbackgc`
 A_GCSTOK=`sym gcstaleok`
 A_GCSTBRK=`sym gcstalebrk`
 A_GCSTIDLE=`sym gcstaleidle`
+A_GCPFIX=`sym gcptrfixed`
 A_GCNBRK=`sym gcnbroke`
 A_GCBRKM=`sym gcbrokemagic`
 A_GCNSTL=`sym gcnstale`
@@ -162,6 +163,7 @@ trap 'rm -f "$TMP"' 0 1 2 15
 	-c "echo \"VMHELD-GCSTOK\"; mdw ${A_GCSTOK:-0} 1" \
 	-c "echo \"VMHELD-GCSTBRK\"; mdw ${A_GCSTBRK:-0} 1" \
 	-c "echo \"VMHELD-GCSTIDLE\"; mdw ${A_GCSTIDLE:-0} 1" \
+	-c "echo \"VMHELD-GCPFIX\"; mdw ${A_GCPFIX:-0} 1" \
 	-c "echo \"VMHELD-GCNBRK\"; mdw ${A_GCNBRK:-0} 1" \
 	-c "echo \"VMHELD-GCBRKM\"; mdw ${A_GCBRKM:-0} 8" \
 	-c "echo \"VMHELD-GCNSTL\"; mdw ${A_GCNSTL:-0} 1" \
@@ -392,6 +394,22 @@ if [ -n "$A_GCSW" ]; then
 		#
 		echo "vmheld: resumed on a swallowed cursor: passed okbhdr $so" \
 			"(must be 0), broke $sb, not in use $si"
+		#
+		# With the fixup ON these three are all 0 by construction and
+		# this is where the mutator's swallows land instead.  It should
+		# be about mf+mb; it will not match exactly, because the three
+		# above count RESUMES and this counts swallows.
+		#
+		if [ -n "$A_GCPFIX" ]; then
+			pfx=`dec \`val VMHELD-GCPFIX\``
+			echo "vmheld: mutator swallows REPAIRED by poolfree $pfx"
+			if [ "$sb" != 0 ] || [ "$so" != 0 ] || [ "$si" != 0 ]; then
+				echo "vmheld:   with the fixup in, a nonzero"
+				echo "vmheld:   resumed-stale is a REAL finding:"
+				echo "vmheld:   something swallows the cursor that"
+				echo "vmheld:   poolfree's two joins do not cover."
+			fi
+		fi
 		if [ "$so" != 0 ]; then
 			echo "vmheld:   NONZERO: the sweep walked from an"
 			echo "vmheld:   interior word that looked like a header."

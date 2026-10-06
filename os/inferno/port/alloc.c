@@ -645,27 +645,30 @@ poolfree(Pool *p, void *v)
 	Bhdr *b, *c;
 	/*
 	 * `ptr' IS libinterp/gc.c's incremental sweep cursor, and the two
-	 * commented-out fixups below are upstream Inferno's, not a dead
-	 * experiment: os/port/alloc.c at 74a4d8c26 (the 20060303 import) has
-	 * both of them LIVE, and emu/port/alloc.c:455 still does.  This file
-	 * arrived in 10405d31c, a 9front-derived kernel port, with them already
-	 * commented -- which made sense then, because that kernel had no
-	 * libinterp for the extern to resolve against.  libinterp came later and
-	 * nobody turned them back on.
+	 * fixups below are upstream Inferno's, not an invention here:
+	 * os/port/alloc.c at 74a4d8c26 (the 20060303 import) has both of them
+	 * LIVE, and emu/port/alloc.c:455 still does.  THIS FILE HAD THEM
+	 * COMMENTED OUT.  It arrived in 10405d31c, a 9front-derived kernel port,
+	 * where that made sense -- that kernel had no libinterp for the extern
+	 * to resolve against.  libinterp came later and nobody turned them back
+	 * on, so the native kernel's collector has been sweeping without the
+	 * fixup for four years while emu's has had it.
 	 *
-	 * So the native kernel's GC has been sweeping without the fixup while
-	 * emu's has had it, which is a difference of exactly the right shape:
-	 * doc/open-issues-plan.ms records broken sweep chains ON THE BOARD that
-	 * markheap()'s bad-pointer guard never explains.
+	 * WHAT THAT COST, measured before the change and not after: a mutator
+	 * free whose coalesce swallows the block at ptr zeroes that block's
+	 * magic, so the next rungc() fails its chain check, abandons the sweep
+	 * and starts over.  On this board, a fresh boot plus tests/efs-fault gave
+	 * 17 broken chains against 17 resumes-on-a-swallowed-cursor in one run
+	 * and 12 against 12 in the next -- an exact identity at two different
+	 * counts, with markheap()'s bad-pointer guard at 0 throughout.
 	 *
-	 * The counters are the measurement and come FIRST, deliberately.  If the
-	 * cursor really is being coalesced away, then gcptrfwd+gcptrback should
-	 * account for the breaks and re-enabling the two assignments should take
-	 * gcbroken to zero; if they read zero while breaks continue, the missing
-	 * fixup is not the mechanism and turning it on would have been a change
-	 * with a tidy story and no evidence.  See libinterp/gc.c.
+	 * The counters were built and read BEFORE these two lines went back in,
+	 * deliberately: if they had read zero while the breaks continued, the
+	 * missing fixup would not have been the mechanism and turning it on
+	 * would have been a change with a tidy story and no evidence.  They stay
+	 * as the regression detector.  See libinterp/gc.c.
 	 */
-	extern ulong gcptrfwd, gcptrback, gcptrfwdgc, gcptrbackgc;
+	extern ulong gcptrfwd, gcptrback, gcptrfwdgc, gcptrbackgc, gcptrfixed;
 	extern int gcptrstale, gcinsweep;
 	extern Bhdr *ptr;
 
@@ -698,10 +701,9 @@ poolfree(Pool *p, void *v)
 			if(gcinsweep)
 				gcptrfwdgc++;
 			else
-				gcptrstale = 1;
+				gcptrfixed++;
+			ptr = b;	/* THE FIXUP, see above */
 		}
-		/*if(c == ptr)
-			ptr = b; */
 		pooldel(p, c);
 		c->magic = 0;
 		b->size += c->size;
@@ -715,10 +717,9 @@ poolfree(Pool *p, void *v)
 			if(gcinsweep)
 				gcptrbackgc++;
 			else
-				gcptrstale = 1;
+				gcptrfixed++;
+			ptr = c;	/* THE FIXUP, see above */
 		}
-		/*if(b == ptr)
-			ptr = c; */
 		pooldel(p, c);
 		b->magic = 0;
 		c->size += b->size;

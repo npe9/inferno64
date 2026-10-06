@@ -48,9 +48,9 @@ struct Ptrhash
 	 * merge away the block it points at, in which case the merge zeroes that
 	 * block's magic and the cursor is left pointing into the interior of a
 	 * free block.  Upstream Inferno's poolfree() fixes the cursor up when it
-	 * does that; THIS KERNEL'S COPY HAS THE FIXUP COMMENTED OUT (emu's does
-	 * not), which is the first candidate these counters are here to confirm
-	 * or kill.
+	 * does that; THIS KERNEL'S COPY HAD THE FIXUP COMMENTED OUT (emu's never
+	 * did), which these counters confirmed and which is now back on.  They
+	 * stay because they are the regression detector for it.
 	 *
 	 *	gcptrfwd	a forward join swallowed the block at ptr
 	 *	gcptrback	a backward join swallowed the block at ptr
@@ -85,9 +85,15 @@ struct Ptrhash
 	 * surprised by: the interior word happened to look like a header and the
 	 * sweep walked from a position nothing vouched for, which would make the
 	 * two candidates H4 could not separate ONE mechanism rather than two.
-	 * gcstalebrk is the benign one -- a wasted re-sweep.  gcstaleidle is
-	 * neither: ptr was a leftover from a finished sweep and the next rungc()
-	 * replaces it from poolchain() before reading it.
+	 * Measured, with the fixup off, at 3 and 2 over two runs, and the tail
+	 * test said all of them were a real header put back at that address.
+	 * gcstalebrk is the benign one -- a wasted re-sweep -- and it matched
+	 * gcbroken exactly, 17 and 12, which is what settled the item.
+	 * gcstaleidle is neither: ptr was a leftover from a finished sweep and
+	 * the next rungc() replaces it from poolchain() before reading it.
+	 *
+	 * With the fixup on, all three are 0 by construction and gcptrfixed
+	 * below is where those events land instead.
 	 *
 	 * gcstaleidle exists because the first version did not have it and
 	 * reported 55 dangerous hits that were all this: the check sat AFTER the
@@ -101,6 +107,21 @@ struct Ptrhash
 	ulong	gcstaleok;
 	ulong	gcstalebrk;
 	ulong	gcstaleidle;
+	/*
+	 * And once the fixup is ON, the swallows the mutator caused that
+	 * poolfree() REPAIRED, which is where the three classifications above
+	 * used to come from.  It replaces gcptrstale rather than adding to it:
+	 * with the cursor repaired there is nothing stale to classify, and
+	 * leaving the flag set would have made the repaired cursor pass
+	 * okbhdr() at the next resume and be counted as the DANGEROUS tier --
+	 * a fix whose own instrument reports it as the bug.
+	 *
+	 * So after the fix the expectation is exact: gcbroken 0, all three
+	 * gcstale* 0, gcptrfixed roughly what the mutator counts were before,
+	 * and the collector's own swallows unchanged.  Any nonzero gcstale* now
+	 * is a real finding.
+	 */
+	ulong	gcptrfixed;
 	int	gcptrstale;	/* set by poolfree, cleared by rungc */
 	int	gcinsweep;	/* the sweep loop's own poolfree is running */
 	/*
