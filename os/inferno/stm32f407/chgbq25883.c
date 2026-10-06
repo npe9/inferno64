@@ -88,14 +88,27 @@ chgstate(void)
 }
 
 /*
- * The pack is told to charge only when this charger would be charging
- * it, which is what keeps #P/power and #P/charge consistent: one
- * decision, made here, applied there.
+ * What this charger KNOWS, as opposed to what follows from it: whether
+ * there is input and whether it has faulted.  Whether the pack is
+ * actually charging depends on the pack's voltage as well, and
+ * pwradm1176.c works that out where the voltage is -- see the note on
+ * packtick there, and the hour the sun-seeking controller spent
+ * steering by a stale flag.
+ */
+int
+chgwants(void)
+{
+	return inpower && !faulted;
+}
+
+/*
+ * Nudge the pack so its model is up to date after something here
+ * changed.  It no longer carries the decision; packtick derives it.
  */
 static void
 settle(void)
 {
-	packcharge(inpower && !faulted && !packfull());
+	packcharge(0);
 }
 
 static int

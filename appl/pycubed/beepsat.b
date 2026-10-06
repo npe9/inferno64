@@ -220,6 +220,106 @@ cdh(msg: array of byte)
 	}
 }
 
+# SUN POINTING, WHICH IS WHAT ACTUALLY KEEPS IT POWERED.
+#
+# Detumble is not enough and it is worth being exact about why: B-dot
+# removes rotation and does not choose an attitude, so a satellite that
+# has stopped tumbling has stopped at whatever angle it happened to
+# reach.  If that is ninety degrees from the sun the panels make nothing
+# and the battery goes on falling, with the controller reporting
+# success.  Measured: detumbling from 23 deg/s took the rate to 20 in
+# seventy seconds while the battery went 3.69 to 3.63.
+#
+# THE SENSOR IS THE PANEL.  A satellite's coarsest sun sensor is the
+# thing it is trying to point: the panel current IS the measurement, so
+# this needs no part the spacecraft does not already carry for power.
+#
+# THE LAW IS A GRADIENT CLIMB, which is what you can do with one scalar
+# and no attitude estimate: turn one way, see whether the current rose,
+# and reverse if it fell.  Bang-bang with hysteresis rather than
+# proportional, because the measurement is one number with noise on it
+# and a sign is all it can support.
+#
+# HOW TO GET A STEADY TORQUE ABOUT ONE AXIS, which is the part worth
+# writing down: a FIXED dipole gives a sinusoidal torque as the body
+# turns, so it averages out and points nothing.  A dipole that rotates
+# with the field does not --
+#
+#	m = c (By, -Bx, 0)  gives  Tz = mx By - my Bx = c (Bx^2 + By^2)
+#
+# which is c F^2, constant in sign and magnitude however the body is
+# turned.  So the commanded dipole is computed from the measured field
+# every time round, and c is the one bit the controller decides.
+Sungain:	con 500;	# dipole scale, milli-A.m^2
+Sunperiod:	con 3000;	# ms between samples
+Sunenough:	con 90;		# per cent of full sun to stop at
+
+suntask()
+{
+	c := 1;				# which way to turn
+	best := -1;
+	for(;;){
+		sys->sleep(Sunperiod);
+		# Not while it is still tumbling: pointing a spinning
+		# satellite is meaningless and the two controllers would
+		# fight over the same torquers.  Detumble first is the
+		# order every mission flies.
+		g := hw->imugyro();
+		rate := 0;
+		if(g != nil)
+			for(i := 0; i < 3; i++){
+				v := g[i];
+				if(v < 0)
+					v = -v;
+				if(v > rate)
+					rate = v;
+			}
+		if(rate >= Dtdeadband)
+			continue;
+		(now, full) := hw->solar();
+		if(now < 0 || full <= 0){
+			debug("sun", "no panel current to steer by");
+			return;
+		}
+		if(now * 100 >= full * Sunenough){
+			if(best != -2){
+				hw->torque(0, 0, 0);
+				best = -2;
+				debug("sun", sys->sprint("pointed: %dmA of"
+					+ " %d in full sun, torquers off",
+					now, full));
+			}
+			continue;
+		}
+		if(best == -2)
+			best = -1;
+		# Reverse if the last push made it worse.  The first pass
+		# has nothing to compare against, so it just picks a way.
+		if(best >= 0 && now < best)
+			c = -c;
+		best = now;
+		b := hw->imumag();
+		if(b == nil)
+			continue;
+		# m = c (By, -Bx, 0), scaled so the magnitude is Sungain
+		# whatever the field strength happens to be.
+		f := b[0]*b[0] + b[1]*b[1];
+		if(f <= 0)
+			continue;
+		mag := 1;
+		while(mag*mag < f)
+			mag++;			# integer sqrt, once a sample
+		mx := (c * Sungain * b[1]) / mag;
+		my := (-c * Sungain * b[0]) / mag;
+		if(hw->torque(mx, my, 0) < 0){
+			debug("sun", sys->sprint("torque: %r"));
+			return;
+		}
+		debug("sun", sys->sprint("%dmA of %d, turning %d, m %d %d",
+			now, full, c, mx, my));
+	}
+}
+
 # DETUMBLE, WHICH IS THE FIRST THING A CUBESAT DOES AND THE FIRST THING
 # THIS SOFTWARE DOES THAT KEEPS ITSELF ALIVE.
 #
@@ -268,8 +368,27 @@ cdh(msg: array of byte)
 # the hand test damped at.
 Dtgain:		con 1300;	# numerator
 Dtscale:	con 1000;	# over this
-Dtperiod:	con 2000;	# ms between samples
-Dtdeadband:	con 300;	# milli-degrees/s to stop at
+# A second, not two.  The body turns twenty degrees in a second at the
+# rate it starts with, which is already a long way for a sampled loop;
+# two seconds was forty, and that is what made the first gain overshoot.
+Dtperiod:	con 1000;	# ms between samples
+# WHERE THE LOOP ACTUALLY CONVERGES, AND NOT LOWER.
+#
+# This was 300 -- a tenth of a degree a second -- and the controller
+# never reached it, so it never handed over to the pointing one and the
+# sun task sat silently skipping every sample.  Measured, the rate
+# decays cleanly from 20 deg/s and then plateaus at 0.86 and stays
+# there: as the rate falls so does dB/dt, so does the commanded dipole,
+# and the per-step correction goes to zero by integer truncation before
+# the rate does.
+#
+# 0.86 deg/s is not a failure, it is a detumble: a CubeSat aims to be
+# slow enough to point, not stationary, and about a degree a second is
+# the figure missions quote.  So the deadband belongs just above the
+# floor the loop can reach, with margin for the ripple -- and a deadband
+# set BELOW a controller's own noise floor is a loop that never finishes,
+# which is the error this records.
+Dtdeadband:	con 1500;	# milli-degrees/s to stop at
 
 detumbletask()
 {
@@ -412,12 +531,13 @@ init(nil: ref Draw->Context, argv: list of string)
 	# Inferno has instead of a cooperative scheduler -- the same
 	# argument that deleted lib/tasko.
 	spawn detumbletask();
+	spawn suntask();
 	spawn cdhtask();
 	spawn blinktask();
 	spawn timetask(s.boottime);
 	spawn vbatttask();
 	spawn beacontask();
-	sys->print("BEEPSAT-RUNNING 6 tasks\n");
+	sys->print("BEEPSAT-RUNNING 7 tasks\n");
 
 	if(secs <= 0){
 		for(;;)

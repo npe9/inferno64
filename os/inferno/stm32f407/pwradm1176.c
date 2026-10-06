@@ -65,6 +65,8 @@ static int triedprobe;
 static int shuntmohm = 100;		/* a plausible 0.1 ohm sense */
 
 /* the scripted pack */
+extern int chgwants(void);
+
 static int packmv = Packfull;
 static int drainma = 120;
 static int charging;
@@ -74,13 +76,6 @@ static int sunma = 260;		/* panel current in full sun, mA */
 static int solar;		/* what it is making now */
 static ulong lastticks;
 static long carry;			/* milliamp-seconds not yet a mV */
-
-/*
- * The same quarter-sine imubmx160.c uses, asked for rather than copied:
- * two tables would be two things to get wrong and they describe the
- * same circle.
- */
-extern int icos(int);
 
 static int
 jitter(void)
@@ -108,6 +103,28 @@ packtick(void)
 	if(dt > 100*60)
 		return;				/* first call, or a gap */
 	/*
+	 * ASK THE CHARGER RATHER THAN BE TOLD BY IT, which is the fix
+	 * for a flag that went stale in a way nothing could see.
+	 *
+	 * chgbq25883.c used to PUSH "charging" here whenever its own
+	 * files were read or written, and that is a decision stored
+	 * where it is not used.  The init writes "in on" to the charger
+	 * and then "volts 3700" to the pack -- in that order -- so the
+	 * charger evaluated itself while the pack was still at its 4200
+	 * default, concluded the battery was full, and set charging to
+	 * zero.  Nothing re-evaluated it afterwards, so the panel made
+	 * nothing for ever: the sun-seeking controller read "0mA of
+	 * 260" on every sample and turned one way for an hour, steering
+	 * by a number that no attitude could change.
+	 *
+	 * So the charger exports only what it knows -- whether there is
+	 * input and whether it has faulted -- and whether charging is
+	 * actually happening is worked out HERE, where the pack's
+	 * voltage is, every time the pack moves.  One decision, made
+	 * where both of its inputs are.
+	 */
+	charging = chgwants() && packmv < Packfull;
+	/*
 	 * SUN ON THE PANELS, which is what makes attitude control worth
 	 * doing rather than merely possible.
 	 *
@@ -130,13 +147,35 @@ packtick(void)
 	 * temperature.  It gets the sign and the shape right.
 	 */
 	if(charging){
-		extern int imuattitude(void);
-		int sun;
+		extern void imusunvec(int*);
+		int sv[3], sun;
 
-		sun = icos(imuattitude());	/* milli-cosine */
-		if(sun < 0)
-			sun = 0;
-		solar = (sunma * sun) / 1000;
+		/*
+		 * TWO PANELS, ON +x AND +z, which is a geometry and not a
+		 * convenience.  A 1U CubeSat carries body-mounted cells on
+		 * several faces; one face is the arrangement nothing
+		 * flies, and it is also the arrangement that makes
+		 * sun-seeking impossible -- a single panel reads zero over
+		 * a whole hemisphere, so a controller steering by its
+		 * current has no gradient for half of all attitudes.  The
+		 * sun task measured exactly that: "0mA of 260" on every
+		 * sample, turning one way for ever.
+		 *
+		 * Each face sees max(0, its component), because a cell
+		 * facing away makes nothing rather than negative power,
+		 * and the two are summed and halved so that full sun
+		 * square-on to one face is the full figure.  So the
+		 * current is attitude-dependent -- which is what makes
+		 * pointing worth doing -- and almost never flat, which is
+		 * what makes it findable.
+		 */
+		imusunvec(sv);
+		sun = 0;
+		if(sv[0] > 0)
+			sun += sv[0];
+		if(sv[2] > 0)
+			sun += sv[2];
+		solar = (sunma * sun) / 2000;
 	}else
 		solar = 0;
 	mas = ((long)(drainma - solar) * (long)dt) / HZ;
@@ -162,11 +201,14 @@ packvolts(void)
 	return packmv;
 }
 
+/*
+ * Kept so the charger can say that something changed, but the flag
+ * itself is now derived in packtick: see the note there.
+ */
 void
-packcharge(int on)
+packcharge(int)
 {
 	packtick();
-	charging = on != 0;
 }
 
 int

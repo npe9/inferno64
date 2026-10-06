@@ -23,15 +23,16 @@ XIPDIS=\
 # Ten, and this is a first estimate to be measured rather than a
 # figure from anywhere.
 #
-# beepsat spawns five: the state server and four tasks -- blink, time,
-# vbatt and beacon -- and the init itself is a sixth.  The shell image
+# beepsat spawns seven now: the state server, blink, time, vbatt,
+# beacon, the cdh listener, the detumble controller and the sun-pointing
+# one -- and the init itself.  Ten was the figure for five of them.  The shell image
 # runs two Dis processes at five slots, so five is certainly too few.
 # Each slot is a 4096-byte kernel stack out of about 160K of RAM, which
 # is why this cannot simply be set high: at nine a SHELL image could not
 # run echo.  A mission image has no shell and therefore none of the
 # shell's heap, which is the thing that made nine fail, so the trade
 # here is different and has to be measured on the board.
-NPROC=10
+NPROC=12
 
 # The files this image carries that the conf's root section does not.
 #

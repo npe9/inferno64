@@ -168,9 +168,10 @@ deployed()
 	}
 	if(put(fd, "tumble"))
 		sys->print("beepsat: tumbling, as a deployed satellite is\n");
-	cfd := sys->open("/dev/charge.ctl", Sys->OWRITE);
-	if(cfd != nil && put(cfd, "in on"))
-		sys->print("beepsat: charger sees sun\n");
+	# The pack BEFORE the charger, which is the order that reads
+	# right even though the charger no longer depends on it: a
+	# satellite has a battery at some state of charge and then has
+	# input, not the other way round.
 	pfd := sys->open("/dev/power.ctl", Sys->OWRITE);
 	if(pfd != nil){
 		# The pack follows the simulated panel rather than the
@@ -181,4 +182,7 @@ deployed()
 			sys->print("beepsat: battery is the scripted pack\n");
 		put(pfd, "volts 3700");
 	}
+	cfd := sys->open("/dev/charge.ctl", Sys->OWRITE);
+	if(cfd != nil && put(cfd, "in on"))
+		sys->print("beepsat: charger sees sun\n");
 }

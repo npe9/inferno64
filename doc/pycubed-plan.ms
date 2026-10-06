@@ -1958,3 +1958,118 @@ process count (twelve, counted against what exportfs and #a start), the
 pool split (74/25/1, against a heap that uses 17152 of 40950), and the
 pipe queue (tried, backed out, and refuted by the pool report showing a
 contiguous-run failure rather than a shortage).
+.NH 1
+Attitude control, and the devices becoming a model
+.PP
+The IMU reported a tumble and nothing could act on it: the rate was
+whatever
+.B imu.ctl
+was last told.
+.B "A sensor nothing can act on is a fixture;"
+a sensor whose reading responds to an actuator is a model, and that is
+the difference between giving flight software numbers to read and giving
+it something to control.
+.PP
+Three pieces, each measured:
+.IP \(bu
+.B "Magnetorquers at #P/torque,"
+and the rate responds to them through T = m x B.
+.IP \(bu
+.B "B-dot in the mission,"
+m = -k dB/dt, which is what CubeSats fly: no attitude estimate, no sun
+sensor, no orbit model, no inertia tensor, only two magnetometer
+readings and the interval between them.
+.IP \(bu
+.B "Solar input as a function of attitude,"
+so the control has a consequence the battery file can report.
+.NH 2
+The model had to be rewritten, and the new one is simpler
+.PP
+The first version was an angle about one axis and a pair of sines.  It
+was not merely crude \- the field responded only to rotation about z, so
+B-dot could damp only z.
+.B "A three-axis tumble fell to exactly 11.0 deg/s and stopped there,"
+because two of the three rates moved nothing the magnetometer could see.
+It reads as a controller that stalls.
+.PP
+The field, gravity and the sun are all fixed in the world; what turns is
+the body.  So each of them obeys
+.CW "dv/dt = -omega x v"
+in the body frame \- three multiplies, no trigonometry, and responsive
+to rotation about every axis because that is what a cross product does.
+.B "Measured with it: 20.4 deg/s to 1.1 in about two hundred seconds, monotonic, no plateau."
+.NH 2
+Five faults, each of which looked like something else
+.IP 1.
+.B "The gyroscope reported whole degrees where the protocol says milli-units"
+\- both halves of the driver \- so the scripted model added its noise,
+documented as ten milli-units, to a value in degrees.  Ten DEGREES a
+second on a rate of twenty: the first controller run read 14, 22, 26,
+18, 28, 34 and looked like it did nothing while the rate moved
+underneath it.
+.IP 2.
+.B "#P/imu.ctl showed stale state,"
+because the model advanced only when
+.B #P/imu
+was read.  Probing the torque law through the ctl file showed a rate
+that never moved: a model ignoring its actuator, and a model nobody had
+advanced.
+.IP 3.
+.B "The gain was twenty-three times too big, which read as an inverted sign."
+The rate rose monotonically.  The model was then tested on its own from
+a prompt with a dipole worked out by hand, and damped \- 20000 to 18995,
+18577, 18912, 18699, with a ripple because a fixed dipole gives a
+sinusoidal torque as the body turns.  So the law was right and the loop
+was overshooting between samples.
+.IP 4.
+.B "The deadband was set below what the loop can reach."
+The rate decays cleanly and then plateaus at 0.86 deg/s, where integer
+truncation stops the correction before the rate stops.  0.86 is a
+detumble \- missions quote about a degree a second \- but a deadband
+under a controller's own floor is a loop that never hands over, and the
+sun task sat silently skipping every sample.
+.IP 5.
+.B "And the charger pushed a flag that went stale."
+It evaluated "am I charging" when its own files were touched and stored
+the answer where the answer was used.  The init writes
+.B "in on"
+to the charger and then
+.B "volts 3700"
+to the pack, so the charger decided while the pack was still at its 4200
+default, concluded it was full, and set charging to zero.  Nothing
+re-evaluated it.
+.B "The sun-seeking controller then read \(dq0mA of 260\(dq on every sample for an hour, steering by a number no attitude could change."
+Now the charger exports only what it knows \- input present, not faulted
+\- and whether charging is happening is derived where the pack's voltage
+is, every time the pack moves.
+.NH 2
+What it does, and the limit it has
+.DS
+.CW "detumble | rate 20.449 deg/s ... down to 1.099, monotonic"
+.CW "detumble | settled, torquers off"
+.CW "sun | 107mA of 260, turning 1, m 237 -439"
+.CW "sun | 105mA of 260, turning -1, m -211 452"
+.CW "sun | 121mA of 260, turning -1, m -17 498"
+.CW "vbatt | 3.65V > threshold 3.60V"
+.DE
+.B "The battery fell to 3.18V while tumbling and recovered to about 3.63 once detumbled and steering."
+The panel current responds to attitude and the controller reverses when
+it falls, which is the hill-climb working on a real measurement.
+.PP
+.B "The limit is that it points about one axis only."
+The dipole construction
+.CW "m = c(By, -Bx, 0)"
+gives a torque
+.CW "Tz = c(Bx^2 + By^2)" ,
+steady in sign however the body turns \- which is why it can point at
+all, a FIXED dipole giving a sinusoidal torque that averages to nothing.
+But one axis cannot bring an arbitrary sun direction onto a panel, so
+the hunt settles at whatever the best reachable attitude is rather than
+at full sun.  Three orthogonal laws would fix it and the geometry to do
+it is already here.
+.PP
+.B "And two panels rather than one, which is a geometry and not a convenience."
+One panel reads zero over a whole hemisphere, so a controller steering
+by its current has no gradient for half of all attitudes \- which is
+exactly what the first sun-seeking run did, turning one way for ever.
+A 1U carries cells on several faces.

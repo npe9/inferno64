@@ -20,7 +20,8 @@ include "pycubedhw.m";
 FD: import Sys;
 
 hwdir: string;
-fbatt, frgb, fimu, ftorq: ref FD;
+fbatt, frgb, fimu, ftorq, fpwr: ref FD;
+fullsun: int;
 
 open(name: string, mode: int): ref FD
 {
@@ -137,6 +138,44 @@ torque(x, y, z: int): int
 	s := sys->sprint("%d %d %d", x, y, z);
 	b := array of byte s;
 	return sys->write(ftorq, b, len b);
+}
+
+# The panel current, and what it would be in full sun.
+#
+# Two files because they answer two different questions: #P/power is
+# what is happening and #P/power.ctl is what the model is set to, and
+# the full-sun figure is a property of the panel rather than of the
+# moment.  The second is read once and kept, because a panel does not
+# change size.
+solar(): (int, int)
+{
+	if(fpwr == nil)
+		fpwr = open("power", Sys->OREAD);
+	if(fpwr == nil)
+		return (-1, -1);
+	if(fullsun == 0){
+		c := open("power.ctl", Sys->OREAD);
+		if(c != nil){
+			s := rdline(c);
+			(nil, lines) := sys->tokenize(s, "\n");
+			for(; lines != nil; lines = tl lines){
+				(nf, f) := sys->tokenize(hd lines, " \t");
+				# "solar <n> of <m> in full sun"
+				if(nf >= 4 && hd f == "solar")
+					fullsun = int hd tl tl tl f;
+			}
+		}
+		if(fullsun == 0)
+			fullsun = -1;		# asked and not answered
+	}
+	s := rdline(fpwr);
+	(nil, lines) := sys->tokenize(s, "\n");
+	for(; lines != nil; lines = tl lines){
+		(nf, f) := sys->tokenize(hd lines, " \t");
+		if(nf == 2 && hd f == "solar")
+			return (int hd tl f, fullsun);
+	}
+	return (-1, fullsun);
 }
 
 # "mag x y z", "gyro x y z", "accel x y z" -- one read, three lines, so

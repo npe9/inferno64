@@ -29,6 +29,9 @@
 #	rgb       write  "<r> <g> <b>"        0..255 each
 #	torque    write  "<x> <y> <z>"        milli-A.m^2, signed
 #	          read   the dipole in force
+#	power     read   "solar <mA>\n" among other lines, the panel
+#	          current now; "solar <n> of <m> in full sun" on
+#	          power.ctl gives what full sun would be
 #	imu       read   "mag <x> <y> <z>\n"
 #	                 "gyro <x> <y> <z>\n"
 #	                 "accel <x> <y> <z>\n"
@@ -86,6 +89,12 @@ Hw: module
 	# read the IMU and never change it, which makes a sensor a
 	# fixture rather than something to control.
 	torque:		fn(x, y, z: int): int;
+
+	# What the panels are making now, and what they make in full
+	# sun.  A satellite's coarsest sun sensor is the panel it is
+	# trying to point: the current IS the measurement, so this needs
+	# no part the spacecraft does not already have for power.
+	solar:		fn(): (int, int);
 
 	imumag:		fn(): array of int;
 	imugyro:	fn(): array of int;

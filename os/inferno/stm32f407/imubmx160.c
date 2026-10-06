@@ -49,6 +49,7 @@
  *	echo still >/dev/imu.ctl		stop, level
  *	echo tumble >/dev/imu.ctl	a representative three-axis rate
  *	echo noise 20 >/dev/imu.ctl	+-20 milli-units of error
+ *	echo inertia 200 >/dev/imu.ctl	how briskly a dipole turns it
  *	echo real >/dev/imu.ctl		try the probe again
  */
 
@@ -124,7 +125,6 @@ static int triedprobe;
 /* the scripted state */
 static int ratex, ratey, ratez;		/* milli-degrees per second */
 static int noise = 10;			/* milli-units, peak */
-static int angle;			/* degrees, about the spin axis */
 static ulong lastticks;
 
 /*
@@ -156,34 +156,119 @@ static ulong lastticks;
  * failure mode worth catching on the ground.
  */
 static int torqx, torqy, torqz;		/* commanded dipole, milli-A.m^2 */
-static int inertia = 2000;		/* scaled; see spin() below */
+/*
+ * 200 and not 2000, which is the difference between a demonstration
+ * somebody can watch and one they cannot.
+ *
+ * It is a scale and not a measurement -- one scalar where a spacecraft
+ * has a tensor -- so what it is really setting is how briskly a
+ * plausible dipole turns a plausible satellite.  At 2000 a 23 deg/s
+ * tumble took four minutes to reach 9 and would have taken twenty to
+ * settle; at 200 the same control settles it in about a minute, which
+ * is the same argument the discharge curve in pwradm1176.c makes for
+ * being deliberately fast.  A 1U CubeSat is a kilogram and ten
+ * centimetres, so brisk is not the unphysical end of the range.
+ *
+ * Settable from #P/imu.ctl, because the right figure for a fixture and
+ * the right figure for a plausible spacecraft are not the same number
+ * and the file should not pretend otherwise.
+ */
+static int inertia = 200;
 
 /*
- * The torque the commanded dipole makes, applied for dt ticks.
+ * THE MODEL, AS THREE VECTORS IN THE BODY FRAME.
  *
- * m x B with the field along x in the body frame at angle 0 -- which is
- * how imuread below reports the magnetometer -- gives a z torque from
- * my and a y torque from mz, with the sign of the cross product.  The
- * rate is in milli-degrees a second and the dipole in milli-A.m^2, so
- * inertia is a scale factor chosen to make a plausible dipole detumble
- * a plausible rate in a minute or two rather than a figure with units.
- * It is named so that it is clear it is a knob and not a measurement.
+ * This was an angle about one axis and a pair of sines, and that was
+ * not merely crude -- it was wrong in the way that broke the thing it
+ * existed for.  The field responded only to rotation about z, so B-dot
+ * could damp only z: a three-axis tumble of (7, -11, 23) degrees a
+ * second fell to exactly 11.0 and stopped there, because two of the
+ * three rates moved nothing the magnetometer could see.  Measured, and
+ * it reads as a controller that stalls.
+ *
+ * The right model is simpler than the wrong one.  The field, gravity
+ * and the sun are all FIXED IN THE WORLD; what turns is the body.  So
+ * in the body frame each of them obeys
+ *
+ *	dv/dt = -omega x v
+ *
+ * which is three multiplies and no trigonometry, and which responds to
+ * rotation about every axis because that is what a cross product does.
+ * B-dot then damps all three, as it does on a spacecraft.
+ *
+ * Integer arithmetic in milli-units with omega in milli-degrees a
+ * second: the 17453 below is pi/180 scaled by a million.  The products
+ * reach 10^13, so the intermediate is a vlong -- this part has no
+ * divider worth avoiding that for, and a wrong answer is dearer than a
+ * slow one.
+ *
+ * STILL NOT A SPACECRAFT: one scalar inertia rather than a tensor, so a
+ * torque about x and one about z cost the same; no gravity gradient, no
+ * residual dipole, no eddy damping, and the sun never sets unless the
+ * charger is told it has.  What it is faithful about is that every axis
+ * is reachable and that energy only leaves the tumble when the dipole
+ * opposes dB/dt.
+ */
+enum {
+	Degtomicrorad	= 17453,	/* pi/180 * 1e6 */
+};
+
+/* body-frame vectors, milli-units, renormalised to these magnitudes */
+static int fb[3] = { Field, 0, 0 };		/* the field */
+static int gb[3] = { 0, 0, Grav };		/* gravity */
+static int sb[3] = { 1000, 0, 0 };		/* the sun, a unit vector */
+
+/*
+ * v -= (omega x v) dt, with omega in milli-degrees a second and dt in
+ * ticks, then renormalised -- because integer steps SHORTEN a vector
+ * that should only turn, and a magnetometer whose field decays hands a
+ * controller a dB/dt that is partly nothing to do with rotation.
+ */
+static void
+turn(int *v, int nominal, ulong dt)
+{
+	vlong c[3], q;
+	int i, mag;
+
+	c[0] = (vlong)ratey * v[2] - (vlong)ratez * v[1];
+	c[1] = (vlong)ratez * v[0] - (vlong)ratex * v[2];
+	c[2] = (vlong)ratex * v[1] - (vlong)ratey * v[0];
+	for(i = 0; i < 3; i++)
+		v[i] -= (int)((c[i] * (vlong)dt * Degtomicrorad)
+			/ ((vlong)HZ * 1000000000));
+	q = 0;
+	for(i = 0; i < 3; i++)
+		q += (vlong)v[i] * v[i];
+	if(q <= 0){
+		/* collapsed: put it back rather than divide by zero */
+		v[0] = nominal;
+		v[1] = v[2] = 0;
+		return;
+	}
+	mag = 1;
+	while((vlong)mag * mag < q)
+		mag++;
+	for(i = 0; i < 3; i++)
+		v[i] = (int)(((vlong)v[i] * nominal) / mag);
+}
+
+/*
+ * The torque a commanded dipole makes in the field as it now stands,
+ * for dt ticks.  T = m x B, and the rate changes by T over the moment
+ * of inertia.
  */
 static void
 spin(ulong dt)
 {
-	int bx, by, tx, ty, tz;
 	long ms;
+	int tx, ty, tz;
 
 	ms = ((long)dt * 1000) / HZ;
 	if(ms <= 0)
 		return;
-	bx = Field * icos(angle) / 1000;
-	by = -Field * isin(angle) / 1000;
-	/* m x B, with Bz = 0 */
-	tx = -torqz * by;
-	ty = torqz * bx;
-	tz = torqx * by - torqy * bx;
+	tx = torqy * fb[2] - torqz * fb[1];
+	ty = torqz * fb[0] - torqx * fb[2];
+	tz = torqx * fb[1] - torqy * fb[0];
 	ratex += (int)((long)tx * ms / (1000L * inertia));
 	ratey += (int)((long)ty * ms / (1000L * inertia));
 	ratez += (int)((long)tz * ms / (1000L * inertia));
@@ -191,20 +276,17 @@ spin(ulong dt)
 
 /*
  * Bring the model up to now: the torque for however long it has been,
- * then the attitude over the same interval.
+ * then every vector turned over the same interval.
  *
  * IN ONE PLACE AND CALLED BY BOTH FILES, which is the fix for an
  * instrument that lied.  This was inlined in imuread, so the model
- * advanced only when #P/imu was read -- and #P/imu.ctl, which exists
- * to report the model's state, showed whatever was true at the last
- * read of the OTHER file.  Probing the torque law through the ctl file
- * therefore showed "spin 0 0 20000, angle 157" three times, three
- * seconds apart, with a rate that never moved: which reads as a model
- * that ignores its actuator, and is a model nobody had advanced.
+ * advanced only when #P/imu was read -- and #P/imu.ctl, which exists to
+ * report the model's state, showed whatever was true at the last read
+ * of the OTHER file.  Probing the torque law through the ctl file
+ * therefore showed a rate that never moved, which reads as a model
+ * ignoring its actuator and is a model nobody had advanced.
  *
- * The motion is a function of time and not of how often anybody looks,
- * which is the property worth having and the reason elapsed ticks drive
- * it rather than a count of reads.
+ * The motion is a function of time and not of how often anybody looks.
  */
 static void
 advance(void)
@@ -217,8 +299,9 @@ advance(void)
 	if(dt > 100*60)			/* first call, or a long gap */
 		return;
 	spin(dt);
-	angle += (int)((ratez * (long)dt) / (HZ * 1000));
-	angle %= 360;
+	turn(fb, Field, dt);
+	turn(gb, Grav, dt);
+	turn(sb, 1000, dt);
 }
 
 static int
@@ -340,20 +423,12 @@ imuread(Chan*, void *a, s32 n, s64 offset)
 		gx = ratex + jitter();
 		gy = ratey + jitter();
 		gz = ratez + jitter();
-		/*
-		 * Gravity in the body frame as it turns about z: when the
-		 * spin is about the axis gravity lies along, the vector
-		 * does not sweep, so this tilts it thirty degrees first.
-		 * Otherwise a "spin 0 0 30" would look like no motion at
-		 * all to an accelerometer, which is true of the physics
-		 * and useless as a fixture.
-		 */
-		ax = (Grav * isin(30) / 1000) * icos(angle) / 1000 + jitter();
-		ay = (Grav * isin(30) / 1000) * isin(angle) / 1000 + jitter();
-		az = Grav * icos(30) / 1000 + jitter();
-		mx = Field * icos(angle) / 1000 + jitter();
-		my = -Field * isin(angle) / 1000 + jitter();
-		mz = jitter();
+		mx = fb[0] + jitter();
+		my = fb[1] + jitter();
+		mz = fb[2] + jitter();
+		ax = gb[0] + jitter();
+		ay = gb[1] + jitter();
+		az = gb[2] + jitter();
 	}
 
 	snprint(buf, sizeof buf,
@@ -373,11 +448,13 @@ imuctlread(Chan*, void *a, s32 n, s64 offset)
 		"source %s\n"
 		"spin %d %d %d\n"
 		"noise %d\n"
-		"angle %d\n"
+		"field %d %d %d\n"
+		"sun %d %d %d\n"
 		"torque %d %d %d\n"
 		"inertia %d\n",
 		imudev != nil? "bmx160": "scripted",
-		ratex, ratey, ratez, noise, angle,
+		ratex, ratey, ratez, noise,
+		fb[0], fb[1], fb[2], sb[0], sb[1], sb[2],
 		torqx, torqy, torqz, inertia);
 	return readstr(offset, a, n, buf);
 }
@@ -386,7 +463,7 @@ static s32
 imuctlwrite(Chan*, void *a, s32 n, s64)
 {
 	char buf[64], *fld[5];
-	int nf;
+	int nf, v;
 
 	if(n >= sizeof buf)
 		error(Ebadarg);
@@ -401,7 +478,9 @@ imuctlwrite(Chan*, void *a, s32 n, s64)
 		ratez = atoi(fld[3]) * 1000;
 	}else if(strcmp(fld[0], "still") == 0 && nf == 1){
 		ratex = ratey = ratez = 0;
-		angle = 0;
+		fb[0] = Field; fb[1] = fb[2] = 0;
+		gb[0] = gb[1] = 0; gb[2] = Grav;
+		sb[0] = 1000; sb[1] = sb[2] = 0;
 	}else if(strcmp(fld[0], "tumble") == 0 && nf == 1){
 		/*
 		 * A rate worth detumbling: a CubeSat off a deployer
@@ -412,6 +491,12 @@ imuctlwrite(Chan*, void *a, s32 n, s64)
 		ratex = 7000;
 		ratey = -11000;
 		ratez = 23000;
+	}else if(strcmp(fld[0], "inertia") == 0 && nf == 2){
+		v = atoi(fld[1]);
+		if(v < 1)
+			error(Ebadarg);
+		advance();
+		inertia = v;
 	}else if(strcmp(fld[0], "noise") == 0 && nf == 2){
 		noise = atoi(fld[1]);
 		if(noise < 0)
@@ -453,15 +538,29 @@ torquewrite(Chan*, void *a, s32 n, s64)
 }
 
 /*
- * Where the body is pointing, for whoever cares about sun on a panel.
- * pwradm1176.c asks: a tumbling satellite charges intermittently and a
- * pointed one charges steadily, which is the loop that makes attitude
- * control worth doing rather than merely possible.
+ * Where the sun is, in the body frame, as a unit vector in milli-units.
+ *
+ * The PANEL GEOMETRY is not here: it belongs to whatever converts sun
+ * into current, which is pwradm1176.c.  This is the attitude and
+ * nothing else.
+ *
+ * It was a single milli-cosine against body +x, and that had a flaw
+ * worth recording because it is a real spacecraft problem and not an
+ * arithmetic one: one panel on one face reads ZERO over a whole
+ * hemisphere, so a controller hill-climbing on its current has no
+ * gradient to climb for half of all attitudes.  Measured -- the sun
+ * task reported "0mA of 260" on every sample and turned one way for
+ * ever, because nothing it did changed the number it was steering by.
+ * And the single-axis torque it commands cannot fix that: rotating
+ * about body z never moves a sun vector that lies along z.
  */
-int
-imuattitude(void)
+void
+imusunvec(int *v)
 {
-	return angle;
+	advance();
+	v[0] = sb[0];
+	v[1] = sb[1];
+	v[2] = sb[2];
 }
 
 int
