@@ -1,0 +1,133 @@
+.TH STYXSEG 1
+.SH NAME
+styxseg \- does a Styx message survive being chopped into radio-sized pieces
+.SH SYNOPSIS
+.B styxseg
+[
+.B -d
+] [
+.B -b
+.I budget
+] [
+.B -n
+.I reads
+] [
+.B -m
+.I mountpoint
+] [
+.B -l
+.I lo
+] [
+.B -h
+.I hi
+] [
+.B -s
+.I stride
+] [
+.I file
+]
+.SH DESCRIPTION
+.I Styxseg
+makes two pipes and two chopping processes, which together are a
+bidirectional link with a write limit on it,
+serves one end of it with
+.IR exportfs ,
+mounts the other with
+.IR devmnt ,
+and then reads a file through the mount and compares what comes back.
+.PP
+It exists to answer one question without a board.
+.IR armv7mstyx (8)
+mounts a namespace over an AX.25 conversation whose information field is
+109 bytes, which is below the 256
+.B /os/inferno/port/devmnt.c
+insists on, so a pipe sits between Styx and the radio and two processes
+chop writes into pieces the frame holds.  That worked for a message
+inside one frame, and then a 284-byte Rread \- the 273 bytes of
+.B #P/arch
+and its eleven-byte header \- came back 273 bytes the first time and 271
+the second.  Four things in that path could lose a pair of bytes: the
+relay, 
+.IR devmnt 's
+reassembly,
+.IR devax25 's
+connected mode, and the air.
+.B This takes the radio out and leaves everything else.
+.PP
+It is not a model of the radio and does not pretend to be.  A pipe is
+ordered, reliable and never drops a frame, which is exactly what the
+connected mode is supposed to provide and what this therefore holds
+fixed.  A pass here says the chopping and the reassembly are sound; it
+says nothing about the device or the link.
+.PP
+With no
+.I file
+argument it writes its own, of each size from
+.I lo
+to
+.I hi
+by
+.IR stride ,
+and reads each back
+.I reads
+times.  The content is a counted pattern rather than a constant byte, so
+a piece arriving out of order or a boundary dropped shows up as a
+difference at a byte whose value says which piece it came from.
+.PP
+The options are
+.TP
+.B -b \fIbudget\fP
+The write limit in the middle of the link, 109 by default, which is the
+conversation's information field: the CC1120 carries 125 bytes and
+.IR ax25 (3)
+takes sixteen for the address field.
+.TP
+.B -n \fIreads\fP
+How many times to read each file, two by default.  More than one
+because a transfer that loses bytes may do it on the second message
+rather than the first, which is exactly what the bench saw.
+.TP
+.B -l \fIlo\fP, -h \fIhi\fP, -s \fIstride\fP
+The sizes to sweep when no file is named.  A sweep is what finds a size
+that fails, rather than confirming one that does not.
+.TP
+.B -m \fImountpoint\fP
+Where to mount the served end;
+.B /n/client
+by default, because it exists in every root this has to run in.
+.TP
+.B -d
+Print every transfer in each direction.
+.SH SOURCE
+.B /appl/cmd/styxseg.b
+.SH SEE ALSO
+.IR radiostyx (1),
+.IR ax25 (3),
+.IR mount (1),
+.IR export (1)
+.SH DIAGNOSTICS
+Prints
+.B STYXSEG-OK
+and exits zero if every read matched, and
+.BR STYXSEG-SHORT ,
+.B STYXSEG-DIFFER
+or
+.B STYXSEG-FAILED
+with the size and the byte otherwise.
+.SH BUGS
+.B -M
+will negotiate a message size with
+.IR sys-fversion (2)
+before the mount, and then
+.I mount
+sends its own Tversion on the same connection, which 9P does not allow
+on an established one: both ends wait and nothing is printed.  It
+defaults to off and is kept only so that nobody rediscovers that it
+hangs by construction.  Reaching a particular message size properly
+wants the transport to advertise a small iounit, because that is what
+.I devmnt
+clamps to.
+.PP
+A budget below about ten makes the sweep slow enough to matter: a
+284-byte message becomes 284 separate writes and each is a process
+switch.

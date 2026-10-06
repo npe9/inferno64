@@ -506,6 +506,7 @@ stream stream
 strings strings
 strut strut
 styxlisten listen
+styxseg styxseg
 sum sum
 sweeper wm-misc
 symmetry symmetry

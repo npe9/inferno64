@@ -2541,3 +2541,90 @@ Estimating it from host sleeps made a correct model look five times too
 fast for an hour.  And a periodic quantity is sampled by SETTING the
 phase rather than by letting the orbit run, so no sample interval
 aliases against a clock ratio nobody controls.
+.NH 1
+Taking the radio out of the two-byte question
+.PP
+The multi-frame read above comes back two bytes short, and the path that
+loses them has four things in it that could \- the relay in
+.BR os/inferno/init/armv7mstyx.b ,
+.IR devmnt 's
+reassembly,
+.IR devax25 's
+connected mode, and the air.  A board is needed to exercise any of them.
+.B "Three of the four can be taken out."
+.PP
+.B appl/cmd/styxseg.b
+makes two pipes and two chopping processes, which is the same
+bidirectional link with the same write limit the conversation has,
+serves one end with
+.I exportfs
+and mounts the other with
+.IR devmnt .
+It runs under a host emu in a second.  It is not a model of the radio
+and does not pretend to be: a pipe is ordered, reliable and never drops
+a frame, which is exactly what the connected mode is supposed to
+provide and what this therefore holds fixed.
+.PP
+.B "Measured, over 109-byte frames and identical on every read:"
+every size from 1 to 600 bytes in steps of seven, three reads each, and
+every size from 260 to 300 byte by byte \- which brackets the 273 of
+.B #P/arch
+exhaustively.  An exhaustive sweep of the whole range is the same test
+with a stride of one and takes a quarter of an hour under emu; the
+figures above are what has actually been run.
+.PP
+So the chopping and the reassembly do not lose data on their own, and
+the two bytes are in
+.I devax25
+or on the air.
+.B "That is a narrower thing to take to a board than it was,"
+and it is as far as this goes without one.
+.NH 2
+The test was wrong first, in the usual way
+.PP
+It writes its own file of a size it chooses, and the first run of it was
+pointed at
+.B /dev/time
+and reported the transfer corrupting data at byte 13 \- which it had
+not; the clock had moved between the two reads.
+.B "That is the sixth check in this work to have been wrong about correct behaviour,"
+and the shape is the same as the others: a test written from the shape
+of the answer rather than from the thing being measured.  A file whose
+contents the test wrote cannot do that, and a size it chooses can be
+swept until one of them loses bytes.
+.NH 2
+Two things it records rather than works around
+.PP
+.I "sys->fversion()"
+will negotiate the board's 436-byte message size before the mount, and
+then
+.I mount
+sends its own Tversion on the same connection, which 9P does not allow
+on an established one: both ends wait and nothing is printed.  The flag
+is kept, defaulting to off, so that nobody spends an afternoon
+rediscovering that it hangs by construction.
+.PP
+Reaching that message size properly wants the transport to advertise a
+small iounit, because that is what
+.I devmnt
+clamps to \- the same mechanism by which the conversation's 109 became
+the msize in the first place.  A pipe's iounit is not settable, so the
+host test runs at 8192 and the sizes of the MESSAGES are the same
+either way: a 273-byte file is one Rread of 284 bytes in both.
+.NH 2
+And the instrument had a latent fault of its own
+.PP
+.I Slurpn
+in the station init did ONE read and returned what came back.  That is
+right for a device file inside one Styx message and silently wrong for
+anything else, because a mounted read returns at most one message's
+data \-
+.B "so a file larger than that came back truncated, and two truncated reads compare equal."
+The test would have passed over a transfer that lost the tail of every
+message after the first.
+.PP
+.B #P/arch
+is 273 bytes and the msize is 436, so one read did cover it and the
+273-against-271 result stands.
+.B "The instrument was right about that file by arithmetic rather than by construction,"
+which is not a property to leave in place; it reads to end of file now.

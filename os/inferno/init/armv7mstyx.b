@@ -477,16 +477,39 @@ slurp(path: string): string
 	return slurpn(path, 512);
 }
 
+# A WHOLE FILE, HOWEVER MANY READS IT TAKES, and the difference matters
+# to what bigread() is measuring.
+#
+# This did one read and returned what came back, which is right for a
+# device file that fits inside one Styx message and silently wrong for
+# anything else: a mounted read returns at most one message's data, so a
+# file larger than that came back truncated and TWO truncated reads
+# compare equal.  The test would then have passed over a transfer that
+# lost the tail of every message after the first -- it would have been
+# measuring the first 412 bytes and calling the rest sound.
+#
+# #P/arch is 273 bytes and the msize here is 436, so one read did cover
+# it and the 273-against-271 result stands.  The instrument was right
+# about that file by arithmetic rather than by construction, which is
+# not a property to leave in place.
 slurpn(path: string, max: int): string
 {
 	fd := sys->open(path, Sys->OREAD);
 	if(fd == nil)
 		return "";
 	b := array[max] of byte;
-	n := sys->read(fd, b, len b);
-	if(n <= 0)
+	tot := 0;
+	while(tot < len b){
+		n := sys->read(fd, b[tot:], len b - tot);
+		if(n < 0)
+			return "";
+		if(n == 0)
+			break;
+		tot += n;
+	}
+	if(tot <= 0)
 		return "";
-	return string b[0:n];
+	return string b[0:tot];
 }
 
 # The board's own calibration, by its own serial number.  Same library

@@ -163,6 +163,7 @@ TARG=\
 	stream.dis\
 	strings.dis\
 	styxchat.dis\
+	styxseg.dis\
 	styxmon.dis\
 	styxlisten.dis\
 	sum.dis\
