@@ -35,13 +35,57 @@
 # paths); compile it as it is now and it must report none.
 #
 # AUDITED 2026-10-06 against the shipping libraries: libmemdraw 37
-# candidates, libdraw 5, libmemlayer 0, and every one of them is a
-# non-negative stride or offset -- draw.c's deltas are small positive
-# constants or depth/8, bwidth and the load/unload strides are
-# sizeof(u32)*width with width unsigned, and getdefont's 4-n runs 1..3
-# under if(n != 0).  byteaddr was the only site where a genuinely
-# negative value reached a pointer, because it is the one function
-# taking an arbitrary Point into an image whose r.min may be negative.
+# candidates, libdraw 5, libmemlayer 0.  Per site, because a category
+# reason is not an audit -- an earlier version of this note cleared all
+# 42 on three category reasons, which overstated what had been read:
+#
+#   loadmemimage, unloadmemimage   q += i->width*sizeof(u32); width is
+#                                  u32int, so the stride is unsigned
+#   memfastdraw, memoptdraw        strides are p->bwidth =
+#                                  sizeof(u32)*img->width, and the pixel
+#                                  deltas are 0, 1, 1+copyalpha,
+#                                  3+copyalpha, nb or depth/8
+#   readnbit, readcmap, readbyte,  r = p->bytermin + y*p->bwidth, and y
+#   readptr                        is asserted non-negative at draw.c:793
+#                                  (assert(0 <= srcy ...), three of them)
+#                                  with clipy() called every iteration
+#   genconv                        buf + nb*p->dx, widths from a clipped
+#                                  rectangle
+#   writememimage                  data + (miny-r.min.y)*bpl, and miny
+#                                  starts at r.min.y and increments
+#   getdefont, getmemdefont        p += 4-n with n = (uintptr)p & 3
+#                                  inside if(n != 0), so 1..3
+#
+# getmemdefont has a second site that is NOT safe on its own numbers:
+#   hdr = p + Dy(r)*i->width*sizeof(u32);
+# Dy(r) is a signed subtraction of atoi'd values out of the font data.
+# It is safe only because allocmemimaged(r, ...) runs first and refuses
+# an inverted rectangle (the badrect check added with the allocmemimage
+# sizing fix).  If that guard is ever removed this site becomes live.
+#
+# The remainder -- rgbatoimg, newstate, and the inner ANDW sites in
+# readcmap/readbyte -- are integer arithmetic, not pointer arithmetic.
+# This scanner cannot tell an ADD of two integers from a pointer add, so
+# it reports them; see the caution below for why that is the right way
+# round.
+#
+# byteaddr was the only site where a genuinely negative value reached a
+# pointer, and the structural reason predicts where to look next: it is
+# the one function taking an ARBITRARY Point into an image whose r.min
+# may be negative, while everything else advances a pointer by a stride
+# it computed itself or indexes from a clipped, asserted origin.  So the
+# shape concentrates wherever a CALLER-SUPPLIED coordinate or stride
+# reaches pointer arithmetic -- the framebuffer paths, where the raspi3b
+# session found one real site in fbcopy, whose rectangle came from
+# rectsub() with no clip of its own.
+#
+# AND DO NOT READ A W-OP AS EVIDENCE ABOUT THE VALUE.  LSLW and ASRW
+# assemble to UBFM/SBFM and zero- or sign-extend into the 64-bit
+# register, which says nothing about whether the VALUE is negative: a
+# left shift of a negative int is still negative.  Every clearance above
+# is a statement about the value's provenance, never about the opcode.
+# The raspi3b session built an operand classifier that made exactly that
+# mistake and labelled byteaddr's real bug [unsigned].
 #
 # A CAUTION ON MAKING THIS MORE PRECISE.  Requiring the tainted result
 # to be dereferenced in the same function looks like an obvious way to
