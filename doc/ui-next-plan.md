@@ -2179,6 +2179,44 @@ damage(N)` for every transition, so the deferred scheme adds nothing at all
 in that phase — the GUI tests have finished and something is repainting a
 region that contains its predecessor.
 
+**Fitted, after the raspi3b session did the same for `gfxstress fill` and
+asked for this one.** Regressing `deferred` against presents over the
+per-interval data:
+
+| | fit | residual |
+|---|---|---|
+| Tk, active (frames 10–70) | `772625 + 22936 × presents` | |
+| Tk, tail (frames 90–190) | `3084216 + **0.00** × presents` | exact to the byte, 12 prints |
+| `gfxstress fill` (theirs) | `585130 + 980 × presents` | under 0.3% |
+
+**So the two-coefficient model does not describe Tk at all.** It is
+piecewise: a slope of 22936 B/present while the suite drives windows, then
+**exactly zero** — `deferred` is byte-identical at 3084216 across twelve
+consecutive prints spanning 110 frames.
+
+**Their prediction was that Tk's percentage would move MORE with run length
+than `gfxstress`'s, and it holds — more strongly than proposed, since a zero
+slope sends the ratio to 100% rather than merely to something high.** But
+**the mechanism they gave for it is wrong**, and that matters more than the
+prediction:
+
+- They reasoned that Tk composites widgets offscreen, so its steady-state
+  damage is *small*. Tk's active-phase slope is 22936 B/present — **23×
+  `gfxstress fill`'s 980**. While it is working, Tk defers far more per
+  present, not less.
+- What makes the tail flat is **containment**, not smallness.
+  `deferred` accumulates `|damage(N−1) \ damage(N)|`, and that is empty
+  whenever one present's damage contains the previous one's — which is what
+  nested, growing rectangles do, measured earlier as `damage(N−1)` wholly
+  inside `damage(N)` in 132 of 196 transitions. The size of the damage does
+  not enter.
+
+So the invariant to quote is not two coefficients either, for this client: it
+is that **the deferred cost is bounded** — a client whose consecutive damage
+nests stops paying, whatever the damage costs per frame — against
+`gfxstress fill`, where scattered damage never nests and the cost is linear
+forever at a small constant rate.
+
 **The run-length-independent statement, which is what the argument should
 rest on:** for this workload the deferred scheme's total cost is 3084216 B
 and stopped accumulating, while the eager scheme costs ~48112 B per frame
