@@ -2044,6 +2044,25 @@ On
 .CW scripts/mkqemu.sh 's
 build of the release and the eight patches, check-qemu-nvme passes
 again (hmb, apst, ns).
+.IP
+The FL1100: not modelled yet, for want of its quirks.  A first model
+(QEMU's xHCI as 1b73:1100, rev 10h, four ports) carried two behaviours
+recalled, not read, from Linux's quirk table for Fresco Logic hosts:
+MSI and MSI-X advertised but never sent, and short transfers completed
+as Success.  Linux itself contradicted both.  Its xhci-pci, given that
+ID, sets no FL1100 quirk at all and drives the part on MSI-X:
+.DS
+.ft CW
+xhci_hcd 0000:01:00.0: hcc params 0x00087001 hci version 0x100 quirks 0x0000000000000010
+irq 25:          0         61  PCI-MSIX-0000:01:00.0   0-edge      xhci_hcd
+.ft
+.DE
+so with the first behaviour no USB device ever appeared, and with the
+second Linux warned at each short transfer ("WARN: Success on ctrl
+data TRB without IOC set?").  Both were taken out again.  The broken
+MSI is the older Fresco Logic parts' (FL1000, FL1009), not this one's.
+What the FL1100 really does differently is to come from the
+workstation's own card or a source that says, not from memory.
 .IP "Next." 4
 The M7 guest is
 .CW linux-lts ,
@@ -2071,7 +2090,8 @@ against Linux's ixgbe and ixgbevf, and this kernel is its PF: M7 on
 the X520's VFs and the whole PF to a Linux guest, on SVM and VMX.
 The newer NVMe features are done, checked against Linux's nvme, and
 sdnvme uses them.  Next: the misbehaving DMA device (its design to
-come), the FL1100's quirks, the ConnectX-4 Lx; then the
+come), the FL1100 (its quirks to be found first), the ConnectX-4 Lx;
+then the
 workstation (phase 13), and real hardware for everything QEMU and Bochs
 have stood in for.  On QEMU, check-vm (SVM; M4 under VT-d and AMD-Vi)
 and check-rv, on both the PLIC and the AIA machine and on hosts of one
