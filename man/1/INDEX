@@ -502,6 +502,7 @@ stream stream
 strings strings
 strut strut
 styxbench styxbench
+styxdirtest styxdirtest
 styxlisten listen
 sum sum
 supervise supervise

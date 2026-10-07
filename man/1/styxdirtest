@@ -1,0 +1,61 @@
+.TH STYXDIRTEST 1
+.SH NAME
+styxdirtest \- check that a 9P "do not change" field survives decoding
+.SH SYNOPSIS
+.B styxdirtest
+.SH DESCRIPTION
+.I Styxdirtest
+packs a
+.B Sys->Dir
+whose fields are all ones, unpacks it through
+.IR styx (2)'s
+.BR unpackdir ,
+and requires each one to come back as
+.BR ~0 .
+.PP
+All ones in a 9P
+.B wstat
+means "do not change this field".  Built into a Limbo
+.BR int ,
+which is 64 bits at runtime, an all-ones 32-bit field decodes to
+4294967295 rather than
+.BR ~0 ,
+and every consumer written as
+.PP
+.EX
+	if (d.mtime != ~0)
+		onto.mtime = d.mtime;
+.EE
+.PP
+then takes the sentinel for a real time and writes it.  0xFFFFFFFF
+seconds from 1970 is 2106-02-07, which is where a file dated 2106 comes
+from.  Eight files in this tree test a dir field against
+.B ~0
+alone;
+.IR kfs (4)
+tests both forms, which is someone having met this and patched the
+consumer rather than the boundary.
+.PP
+The last check is the one that stops the fix being worse than the bug: a
+real
+.B mtime
+has to round-trip unchanged.  The width matters in the reporting too \(em
+.B %d
+and
+.B %x
+both show the low 32 bits, so 4294967295 and
+.B ~0
+both print as \-1, and a failing line can read "got \-1, want \-1".  The
+numbers are widened to
+.B big
+before printing for that reason.
+.PP
+It exits non-zero if any check fails, and prints a count either way.
+.SH SOURCE
+.B /appl/cmd/styxdirtest.b
+.SH SEE ALSO
+.IR styx (2),
+.IR styxbench (1)
+.SH BUGS
+It checks the five narrow fields and the sentinel, not the whole of
+.BR unpackdir .

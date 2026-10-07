@@ -161,6 +161,7 @@ TARG=\
 	supervise.dis\
 	rpcserve.dis\
 	styxbench.dis\
+	styxdirtest.dis\
 	zerofs.dis\
 	tcpserve.dis\
 	sum.dis\
