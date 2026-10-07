@@ -1,0 +1,124 @@
+.TH STYXDIRTEST 1
+.SH NAME
+styxdirtest \- check that a 9P directory's "do not change" sentinels survive a decode
+.SH SYNOPSIS
+.B styxdirtest
+.SH DESCRIPTION
+A 9P
+.B wstat
+field of
+.B "all ones"
+means
+.I "do not change this field" .
+.IR styx (2)'s
+.B unpackdir
+builds each one into a Limbo
+.BR int ,
+which is 64 bits at runtime, so an all-ones 32-bit field decodes to
+.B 4294967295
+and not
+.BR ~0 .
+Every consumer written as
+.EX
+	if (d.mtime != ~0)
+		onto.mtime = d.mtime;
+.EE
+then takes the sentinel for a real value and writes it.
+.B 0xFFFFFFFF
+seconds from 1970 is
+.BR 2106\-02\-07 ,
+which is where files stamped 2106 come from.
+.PP
+.I Styxdirtest
+packs
+.B Sys->nulldir
+\(em whose every scalar field is the sentinel \(em reads it back through
+.BR unpackdir ,
+and requires each field to come out as
+.BR ~0 .
+It then packs a dir carrying a plausible real time and requires that to
+round-trip unchanged, which is the arm that stops a fix being worse than
+the bug.
+.PP
+The widths differ and so do the literals:
+.B mode ,
+.BR atime ,
+.BR mtime ,
+.B dev
+and
+.B qid.vers
+are four bytes,
+.B dtype
+is two and
+.B qid.qtype
+one, so their sentinels are
+.BR 16rFFFFFFFF ,
+.B 16rFFFF
+and
+.B 16rFF
+respectively.
+.B length
+and
+.B qid.path
+are eight and were always correct, because they are built into a
+.BR big .
+.SH SOURCE
+.B /appl/cmd/styxdirtest.b
+.SH SEE ALSO
+.IR styx (2)
+.SH BUGS
+.B "It tests the boundary, not the consumers."
+Eight files in this tree compare a dir field against
+.B ~0
+\(em
+.BR nametree.b ,
+.BR memfs.b ,
+.BR install/eproto.b ,
+.BR install/proto.b ,
+.BR disk/mkfs.b ,
+.BR fs/chstat.b ,
+.BR fs/proto.b
+and
+.B alphabet/fs/chstat.b
+\(em and none of them is exercised here. A consumer that compared
+against the wrong value would still pass this test.
+.PP
+.B "It does not cover the C side."
+.B Sys_Dir
+in
+.B libinterp/runt.h
+holds these fields as
+.BR WORD ,
+which is
+.B intptr
+and so 64 bits, and
+.B emu/port/inferno.c
+converts in both directions. The Limbo-to-C direction truncates
+correctly and the C-to-Limbo direction zero-extends, but neither is
+tested here, and a sentinel arriving from a
+.IR stat (2)
+rather than off the wire takes that path instead.
+.PP
+.B "Only the sentinel and one real time are tried."
+Nothing checks a value one below the sentinel, a post-2038 time, or a
+field whose real value happens to be all ones \(em which 9P reserves, so
+it cannot occur, but nothing here demonstrates that.
+.PP
+Printing is in
+.B big
+throughout, deliberately.
+.B %d
+and
+.B %x
+both format the low 32 bits, so
+.B 4294967295
+and
+.B ~0
+both print as
+.BR \-1 :
+two earlier versions of this test reported
+.B "got -1, want -1"
+on a
+.I failing
+line, which reads as a broken test rather than a real inequality. If a
+future field is added here, widen it before printing.
