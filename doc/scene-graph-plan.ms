@@ -404,15 +404,42 @@ helper per loader, every site converted, because the cosmetic
 and the fatal read are one defect and leaving the harmless ones invites
 a re-find.
 .PP
-.B "Gate, and its limit."
-Each loader, run with
+.B "DONE as"
+.CW 5f28ab08a ,
+.B "and unlike item 2 the gate RAN \(em for all five."
+A self-contained probe compiled with each loader's own compiler and
+linked with
+.CW -v :
+.DS
+.CW
+	            link   %f%   the ldobj line
+	fixed         0      0   "0.00 ldobj: t.6"
+	unfixed 6l    0     16   "%f% ldobj: <nil>"
+.R
+.DE
+.LP
+The
+.CW <nil>
+is the misalignment showing through \(em
+.CW %s
+consumed the double's bits instead of the filename pointer. Exit 0 on so
+small a link because the misread word happened to be zero every time,
+which is why 7l segfaulted on a kernel link and this does not: more
+library lines, more chances the word is a non-zero garbage pointer.
+.PP
+.B "And the site was checked, not just the exit status."
+Each
 .CW -v
-on a real link, must exit 0 with no
-.CW "%f%"
-in the output. That is runnable for 5l and jl if their boards build
-here; 6l and 8l need amd64 and 386 kernels, which may not. Where a
-loader cannot be exercised, say the fix is by inspection and leave it
-labelled that way rather than implying a gate that did not run.
+output contains its own
+.CW "ldobj:"
+line, so the format that crashes is the one being printed. Exit 0 from a
+run that never reached the site would have proved nothing.
+.PP
+No warnings added, measured by stashing the change and rebuilding: 5,
+14, 14, 6, 7 per loader before and after. And the self-recursion 7l's
+mechanical pass caused was avoided by ORDERING \(em replace the call
+sites first, insert the helper second, so the helper's own call is never
+rewritten.
 .PP
 .B "And watch the mechanical pass."
 Rewriting
