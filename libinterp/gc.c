@@ -25,6 +25,9 @@ struct Ptrhash
 	int	gchalt;
 	int	mflag;
 	int	mutator = 0;
+	uvlong	nbadmark;	/* garbage declared-pointer words contained;
+				 * a VARIABLE so a board can be read over JTAG,
+				 * with the print bounded to one line a boot */
 	int	gccolor = 3;
 
 	ulong	gcnruns;
@@ -126,6 +129,44 @@ markheap(Type *t, void *vw)
 			for(m = 0x80; m != 0; m >>= 1) {
 				if((c & m) && *q != H) {
 					h = D2H(*q);
+					/*
+					 * CONTAIN a garbage declared-pointer word.
+					 *
+					 * Setmark() writes h->color, so the first write
+					 * through *q happens before anything has checked
+					 * that *q is a heap pointer at all.  A single
+					 * garbage word therefore scribbles an unrelated
+					 * live object, with NO FAULT AT THE WRITE, and the
+					 * damage surfaces later somewhere else as a
+					 * structure wrong in a way its own code cannot
+					 * account for.  That class cost three sessions
+					 * once already.
+					 *
+					 * color is the cheapest thing that can say "this
+					 * is not a Heap": its whole domain is 0..3 --
+					 * mutator, marker and sweeper are gccolor%3 and
+					 * propagator is 3 -- and all three allocation
+					 * paths in heap.c set it immediately after
+					 * poolalloc, before the object can escape.  So
+					 * the test NEVER rejects a real heap object,
+					 * which is the direction that matters: a false
+					 * negative here would leave a live object
+					 * unmarked and free it underneath its owner.
+					 *
+					 * This CONTAINS rather than fixes.  initmem()
+					 * sets every declared-pointer slot to H, so a
+					 * garbage word in one is always the consequence
+					 * of an earlier corruption; skipping it does not
+					 * repair that, it stops it spreading and counts
+					 * it where it is detectable.
+					 */
+					if((ulong)h->color > propagator){
+						if(nbadmark++ == 0)
+							print("gc: contained a garbage declared-pointer word (color %#ux); heap was already corrupt before this\n",
+								(uint)h->color);
+						q++;
+						continue;
+					}
 					Setmark(h);
 					if(h->color == propagator && --visit >= 0 && markdepth < 64){
 						gce--;
