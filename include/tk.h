@@ -868,6 +868,8 @@ extern	TkScene*	tkwalkjoin(TkCtxt*, Image*);
 extern	void		tkscenefinish(TkScene*, TkCtxt*, Image*);
 extern	void		tkwalkcount(int*, int*, int*);
 extern	void		tkwalknote(int, int);
+extern	void		tkwalkitem(void);
+extern	int		tkwalkitems(void);
 extern	void		tkwalktypes(int, int*, int*);
 extern	void		tkwalkreset(void);
 extern	int		tkwalkbounds(Rectangle*);

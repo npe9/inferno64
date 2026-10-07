@@ -431,6 +431,17 @@ nums(s: string): list of int
 	return o;
 }
 
+#
+# A Tk command whose failure must not pass unnoticed: a configure that
+# did not take leaves a measurement counting fewer items than it says.
+#
+cfg(top: ref Tk->Toplevel, cmd: string)
+{
+	r := tk->cmd(top, cmd);
+	if(r != nil && len r > 0 && r[0] == '!')
+		sys->print("tkscenetest: `%s\' -> %s\n", cmd, r);
+}
+
 counts(disp: ref Display, which: string): list of int
 {
 	top := tk->toplevel(disp, "");
@@ -998,6 +1009,87 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	}
 
 	#
+	# Item 1.2's measurement: is there anything for a retained SCENE to
+	# save in a canvas?  The canvas already keeps its pixels in
+	# c->image and guards its item loop with the dirty region, so a
+	# canvas that nothing has changed should walk NO items.  Counted
+	# rather than read off the source.
+	#
+	ctop := tk->toplevel(disp, "");
+	if(ctop != nil){
+		coff := disp.newimage(Rect((0,0),(W,H)), draw->RGB24, 0, Draw->White);
+		tk->cmd(ctop, "canvas .c -width 80 -height 30");
+		#
+		# The CREATE replies are the item ids.  Assuming 1 and 2
+		# gave "!bad/no matching tag" on the second, so one of the
+		# two configures below silently did nothing.  Checking the
+		# replies then found a second: "rect" is not an item type
+		# here -- it is "rectangle" -- so the rectangle had never
+		# been created either and the canvas held ONE item while the
+		# message said two.  This test's own header says to check
+		# every reply, and this measurement had not.
+		#
+		id1 := tk->cmd(ctop, ".c create rectangle 5 5 40 20 -fill red");
+		id2 := tk->cmd(ctop, ".c create text 10 25 -text hi -fill red");
+		tk->cmd(ctop, "pack .c");
+		if(id1 == nil || len id1 == 0 || id1[0] == '!'
+		|| id2 == nil || len id2 == 0 || id2[0] == '!')
+			sys->print("tkscenetest: canvas item create failed: %s %s\n", id1, id2);
+		if(coff != nil)
+			tk->putimage(ctop, ". -1", coff, nil);
+		#
+		# SEQUENCE MATTERS and the first attempt got it wrong: `pack'
+		# lays out and paints, so resetting after it and then calling
+		# update measured a canvas that had ALREADY been drawn and
+		# reported 0 for the first paint.  Paint first, then reset,
+		# then ask the two questions that matter.
+		#
+		tk->cmd(ctop, "update");		# whatever pack left pending
+		tk->cmd(ctop, "render items");		# reset AFTER the first paint
+		tk->cmd(ctop, "update");		# nothing changed
+		n2 := hd nums(tk->cmd(ctop, "render items"));
+		cfg(ctop, ".c itemconfigure " + id1 + " -fill blue");
+		tk->cmd(ctop, "update");
+		n3 := hd nums(tk->cmd(ctop, "render items"));
+		cfg(ctop, ".c itemconfigure " + id1 + " -fill green");
+		cfg(ctop, ".c itemconfigure " + id2 + " -fill green");
+		tk->cmd(ctop, "update");
+		n4 := hd nums(tk->cmd(ctop, "render items"));
+		sys->print("tkscenetest: canvas items drawn: unchanged repaint %d, one item changed %d, two changed %d (of 2 items)\n",
+			n2, n3, n4);
+		#
+		# How far does the damage rectangle over-collect?  Changing
+		# ONE item re-walks every item whose box meets c->update, and
+		# c->update is a single rectangle.  So the question 1.2 turns
+		# on is whether that is a few neighbours or the whole canvas,
+		# and the answer must depend on the arrangement -- hence two
+		# of them rather than one number.
+		#
+		spread := tk->toplevel(disp, "");
+		if(spread != nil){
+			soff := disp.newimage(Rect((0,0),(400,100)), draw->RGB24, 0, Draw->White);
+			tk->cmd(spread, "canvas .c -width 380 -height 80");
+			tk->cmd(spread, "pack .c");
+			ids := array[20] of string;
+			for(k := 0; k < 20; k++)
+				ids[k] = tk->cmd(spread, sys->sprint(".c create rectangle %d 10 %d 30 -fill red",
+					5 + k*18, 15 + k*18));
+			if(soff != nil)
+				tk->putimage(spread, ". -1", soff, nil);
+			tk->cmd(spread, "update");
+			tk->cmd(spread, "render items");
+			cfg(spread, ".c itemconfigure " + ids[0] + " -fill blue");
+			tk->cmd(spread, "update");
+			sp1 := hd nums(tk->cmd(spread, "render items"));
+			cfg(spread, ".c itemconfigure " + ids[10] + " -fill blue");
+			tk->cmd(spread, "update");
+			sp2 := hd nums(tk->cmd(spread, "render items"));
+			sys->print("tkscenetest: 20 spread items, change one: %d re-walked at the edge, %d in the middle\n",
+				sp1, sp2);
+		}
+	}
+
+	#
 	# The per-type table, for item 1.1 of doc/scene-graph-plan.ms: a
 	# retained tree is only possible over a subtree no DIRECT painter
 	# enters, so what is wanted is the list of types that paint without
@@ -1014,8 +1106,10 @@ init(ctxt: ref Draw->Context, argv: list of string)
 	# is a tail of the run and not its population.
 	#
 	tk->cmd(tk->toplevel(disp, ""), "render scene");
+	tk->cmd(tk->toplevel(disp, ""), "render types");	# reset: state the population
 	for(i = 0; i < len cases; i++)
 		paint(disp, names[i], cases[i]);
+	paintmenu(disp, 1);		# so separator and cascade are IN the population
 	t := tk->cmd(tk->toplevel(disp, ""), "render types");
 	if(t != nil && len t > 0 && t[0] != '!')
 		sys->print("tkscenetest: types (name drew joined): %s\n", t);
