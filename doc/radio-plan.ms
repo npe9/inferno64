@@ -8036,3 +8036,42 @@ It takes a bounded snapshot under the lock and prints afterwards now.
 .B "The board needs its reset button before the measurement can be taken,"
 which is a person in the room, and the lesson is the cheaper half:
 .B "an instrument added to a shared kernel path inherits that path's locking, and this one did not ask."
+.NH 2
+And QEMU cannot stand in for the board here
+.PP
+The lock fix was to be verified under QEMU, where a hang costs a
+process instead of a walk across the room.  It cannot be:
+.B "the shell image panics during boot under this qemu and never reaches a prompt."
+.DS
+.CW "6 holes free"
+.CW "159744 bytes free"
+.CW "TRAPREG-OK R1 survives an exception"
+.CW "        ..."
+.CW "panic: exception"
+.CW "dumpstack"
+.DE
+.B "The control says it is not today's work."
+Building the same image with
+.BR alloc.c ,
+.B xalloc.c
+and
+.B devcons.c
+taken from the previous commit \- copied in with
+.I "git show"
+so the index was never involved, which it has already caught me out
+over once today \- panics in exactly the same place.
+.PP
+Worth recording for the next session rather than chased here:
+.IR simcheck (1)
+and
+.IR simsoak (1)
+drive the STATION image under qemu and work, so what is broken is the
+shell image's boot on that machine and not the port.
+.B "And the first attempt at this measurement read the wrong uart:"
+this board's console is the second serial, which
+.B tools/f407/simsoak.py
+has always known, and without
+.B "-serial null -serial mon:stdio"
+qemu runs and prints nothing \-
+.B "which a harness reports as a kernel that printed nothing."
+Zero bytes captured is a statement about the listener.
