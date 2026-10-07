@@ -289,13 +289,22 @@ tkdrawslaves1(Tk *tk, Point orig, Image *dst, int *dirty)
 	char *e = nil;
 	Point worig;
 	Rectangle r, oclip;
+	int w0, w1;
 
 	worig.x = orig.x + tk->act.x + tk->borderwidth;
 	worig.y = orig.y + tk->act.y + tk->borderwidth;
 
 	r = rectaddpt(tk->dirty, worig);
 	if (Dx(r) > 0 && rectXrect(r, dst->clipr)) {
+		/*
+		 * Bracket the draw to attribute a join to the type that
+		 * made it -- tkwalkjoin() takes a ctxt and a dst and so
+		 * cannot say which widget joined.  See tkwalknote().
+		 */
+		tkwalkcount(nil, &w0, nil);
 		e = tkmethod[tk->type]->draw(tk, orig);
+		tkwalkcount(nil, &w1, nil);
+		tkwalknote(tk->type, w1 != w0);
 		tk->dirty = bbnil;
 		*dirty = 1;
 	}

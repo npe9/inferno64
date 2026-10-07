@@ -1624,7 +1624,14 @@ drawmenu(Tk *tk, Point orig)
 			draw(dst, subr, tkgc(sub->env, bg), nil, ZP);
 		sub->dirty = tkrect(sub, 1);
 		sub->flag |= Tkrefresh;
-		tkmethod[sub->type]->draw(sub, p);
+		{
+			int w0, w1;	/* attribute the join -- see tkwalknote() */
+
+			tkwalkcount(nil, &w0, nil);
+			tkmethod[sub->type]->draw(sub, p);
+			tkwalkcount(nil, &w1, nil);
+			tkwalknote(sub->type, w1 != w0);
+		}
 		sub->dirty = bbnil;
 		sub->flag &= ~Tkrefresh;
 	}
