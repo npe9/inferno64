@@ -334,7 +334,35 @@ with and without the fix. That is a no-regression result and it is also
 why the control cannot fire: the fix is inert wherever no flush falls in
 a table.
 .PP
-.B "The positive control did not fire."
+.B "SUPERSEDED: the control DID fire, on cloud-port's armv7."
+That checkout has a
+.CW dis32
+tree, so
+.CW armv7
+links there where it will not here. With the deferral off and the
+distance forced,
+.B five
+illegal flushes \(em
+.CW icmpiput6 ,
+.CW conswrite ,
+.CW progwrite
+among them \(em zero at normal distance, zero with the fix, and output
+byte-identical to the same link with the deferral switched off. A
+complete pair on a live kernel, which is better evidence than 7l's (one
+function on one board). So
+.CW c64838f39
+is
+.I measured ,
+not inspected, and the measurement is theirs.
+.PP
+.B "And conswrite appears on both linkers,"
+which is worth keeping: a 29-slot sparse switch with enough literals
+around it that the pool is reliably pending when the table is laid out.
+It is the function to reach for if this class ever needs a reproducer
+again.
+.PP
+.B "What follows is the record as it stood before that, kept because the
+.B "reasoning is what made the fix shippable without it."
 Tried: a generated function with pool constants pinned early and a
 filler sweep of 340 to 480 statements, to walk the table across the
 flush point; 23 real
