@@ -11816,3 +11816,105 @@ collector's own, 2 from the mutator plus 3 forward, 5 repaired, 0 breaks.
 .PP
 So the only thing left of the consctl episode is the hang itself, which stays
 undiagnosed with a refusal in front of it.
+.NH 2
+H1a.  The acceptance test this item specifies CANNOT BE BUILT, and the file it concerns says why
+.LP
+H1a says what has to come first:
+.QP
+The acceptance test is not "it looks better": it is
+.CW drawink
+unchanged plus a tear probe that fills alternating colours as fast as it can and
+samples one scanline, which on a torn frame reads two colours.
+.B "Write the probe first and prove it sees the tear that exists today,"
+or it proves nothing afterwards.
+.LP
+.B "I wrote it.  It cannot work, and the reason was already written down"
+twenty lines into
+.CW screenbcm.c 's
+own phase-clock comment:
+.QP
+WHY THIS IS THE ONLY INSTRUMENT HERE THAT CAN SEE TEARING AT ALL.  Every other
+check in this file is a readback, and a readback reads memory \(em it cannot
+observe what the scanout showed.
+.LP
+That is the whole answer.  A tear is a disagreement between what the ARM WROTE
+and what the beam READ; a readback compares memory against memory and the beam
+is not in the comparison.
+.NH 3
+And the ARM cannot even see the weaker thing
+.LP
+The probe's actual claim would have been narrower than "it tore" \(em only "the
+buffer was not uniform while I read it", which is necessary for a tear and not
+sufficient.
+.B "Even that is unobservable from the ARM, measured and then read off the source:"
+.CW drawread()
+and
+.CW drawwrite()
+in
+.CW os/inferno/port/devdraw.c
+BOTH take
+.CW dlock()
+for the whole operation, so a
+.CW readpixels
+and a
+.CW draw
+are mutually exclusive.  By the time the sampler holds the lock the fill has
+finished.  A column read can never show two colours no matter how fast the
+filler runs.
+.PP
+Written and run anyway, because that is cheaper than arguing:
+.P1
+teartest: screen 640x480 x8r8g8b8 depth 32, 100 samples per arm
+teartest: STATIC 0 of 100 samples non-uniform
+.P2
+and then the animated arm
+.B "livelocked the board"
+\(em the kernel's own detector caught it,
+.CW "LIVELOCK: pid 146 (dis) has been Running for 400 ticks" ,
+alternating with pid 98, which is the filler and the sampler each spinning
+without the scheduler choosing the other.  So the tool's cost is a reboot and
+its yield is zero by construction.
+.PP
+.B "Two things it did establish, cheaply."
+The static arm reading 0 of 100 says
+.CW readpixels
+on this board is stable and the cursor hiding works, which is
+.CW drawink 's
+ground re-confirmed from a second direction.  And the livelock says the
+kernel's livelock detector works on a real livelock that nobody planted.
+.PP
+.B "The tool is NOT committed."
+A probe that cannot see what it is named for, left in the tree, is a trap for
+whoever runs it next and reads its zero as good news.  What is committed is this
+section.
+.NH 3
+What H1a actually needs, and why this desk cannot supply it
+.LP
+.CW screenbcm.c
+already states the limit precisely, about the paced flip:
+.QP
+whether phase zero sits inside [the blanking interval] is a claim about what the
+scanout showed, and every instrument in this file is a readback.
+.LP
+So the open question is a single unknown constant \(em the firmware's latency
+between the vertical blank and
+.CW mboxvsync()
+returning \(em and it does not cancel in any ARM-side measurement, because every
+such measurement is relative to that same return.  Closing H1a needs an
+observation of the DISPLAY: a camera, or a person looking at the screen while
+the phase is swept.
+.PP
+.B "Which reorders this item."
+H1a was written as "build the probe, then find vsync".  The probe depends on
+vsync rather than preceding it, and the vsync signal that would make it possible
+is the thing H1a is about.
+.B "There is no ARM-side instrument that can close this,"
+and the honest state is: the mechanism is built and paced
+.CW ( Flippace ,
+379 of 380 flips in bucket 0), the cost is known (half a frame), and the final
+step is an observation nobody at this desk can make.
+.PP
+What must NOT happen \(em the same rule H3 states for
+.CW 8l
+\(em is this gap being closed by argument.  A flip paced into bucket 0 is
+PLAUSIBLY tear-free and that is not the same as being tear-free.
