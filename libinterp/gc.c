@@ -45,6 +45,13 @@ struct Ptrhash
 	ulong	gcbadcolor;
 	ulong	gcbadcolorseen;
 	/*
+	 * And the cursor landing outside the arena being swept -- see rungc().
+	 * Counted apart from gcbroken (which it also increments) because the
+	 * two have different causes: gcbroken alone is a swallowed or stale
+	 * header, and this is a cursor that is not in this arena at all.
+	 */
+	ulong	gcoutofarena;
+	/*
 	 * THE READER ON THE PATH THAT CREATES A CHAIN, which is what H4 in
 	 * doc/open-issues-plan.ms said this item needed and did not have.  The
 	 * guard in markheap() counts words it REFUSED and has always read zero,
@@ -896,6 +903,45 @@ rungc(Prog *p)
 		base = b;
 		ptr = b;
 		limit = B2LIMIT(b);
+	}
+
+	/*
+	 * AND THE CURSOR MUST BE INSIDE THE ARENA BEING SWEPT.  A peer's check
+	 * (multicore 9c487f5d8), taken because it is right here for a reason of
+	 * its own and because it is the PRECONDITION that makes the fixup in
+	 * poolfree() safe on a kernel with more than one context.
+	 *
+	 * THE WALK HAD NO LOWER BOUND.  The entry test is okbhdr(), which reads
+	 * the MAGIC and nothing else, and the loop below bounds the cursor only
+	 * above ("if(ptr >= limit)").  So a cursor that lands below base walks
+	 * FORWARD dereferencing whatever it finds, which is a fault rather than
+	 * a restart.  Two ways in:
+	 *
+	 *   HERE, with npctx hard-coded 1: a valid magic says nothing about the
+	 *   SIZE beside it, so one corrupt size makes B2NB(ptr) jump anywhere,
+	 *   including below base.  That is the "plausible word" family this
+	 *   plan's H4 recorded as undetectable from the word alone.
+	 *
+	 *   ON A MULTI-CONTEXT KERNEL, and this is the sharper one: the fixup
+	 *   writes ptr = b or ptr = c, which ARE valid headers -- but in
+	 *   whatever arena the freed block lives in, which need not be the
+	 *   arena being swept.  This heap has grown six arenas on this board
+	 *   (nbrk 6), chained by clink and walked one at a time, so a free in
+	 *   another arena hands the collector a cursor okbhdr() cannot fault
+	 *   and limit cannot contain.  poolfree() has no idea which arena the
+	 *   sweep is in, and takes the pool's ilock while the collector takes
+	 *   nothing, so there is no lock to fix it with.
+	 *
+	 * With this, the worst a cross-arena or corrupt-size cursor costs is a
+	 * wasted restart -- which is what an unbounded walk should have cost
+	 * all along -- and it is COUNTED, so the hazard gives statistics where
+	 * a fault gives one anecdote.
+	 */
+	if(base != nil && (ptr < base || ptr >= limit)) {
+		gcoutofarena++;
+		base = nil;
+		gcbroken++;
+		return;
 	}
 
 	if(!okbhdr(ptr)) {

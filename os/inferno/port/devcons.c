@@ -80,6 +80,7 @@ extern ulong	gcnruns, gcsweeps, gcepochs, gchalted, gcinxecseen;
 extern ulong	gcbroken;
 extern ulong	gcbadptr;
 extern ulong	gcbadcolor;
+extern ulong	gcoutofarena;
 extern ulong	gcptrfwd;
 extern ulong	gcptrback;
 extern ulong	gcptrfwdgc;
@@ -1578,6 +1579,13 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					 */
 					" bad-color-rejected %lud"
 					/*
+					 * A cursor outside the arena being
+					 * swept: counted apart from
+					 * broken-chains, which it also bumps,
+					 * because the cause is different.
+					 */
+					" cursor-out-of-arena %lud"
+					/*
 					 * And the reader on the path that
 					 * CREATES a chain, which H4 said this
 					 * item needed: poolfree() counting the
@@ -1621,6 +1629,7 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					gcstwstops, gcstwwaits, gcstwfails,
 					nrunqother, nrunqdel,
 					gcbroken, gcbadptr, gcbadcolor,
+					gcoutofarena,
 					gcptrfwd, gcptrfwdgc,
 					gcptrback, gcptrbackgc,
 					gcstaleok, gcstalebrk, gcstaleidle,

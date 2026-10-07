@@ -82,6 +82,7 @@ A_GCSW=`sym gcsweeps`
 A_GCBRK=`sym gcbroken`
 A_GCBAD=`sym gcbadptr`	# the 6c587face guard's own counter
 A_GCBADC=`sym gcbadcolor`	# and the colour tier beside it
+A_GCOOA=`sym gcoutofarena`	# cursor outside the arena being swept
 #
 # The reader on the path that CREATES a chain.  gcbadptr above counts words
 # markheap() refused and has always read zero, so an implausible word is not
@@ -158,6 +159,7 @@ trap 'rm -f "$TMP"' 0 1 2 15
 	-c "echo \"VMHELD-GCBRK\"; mdw ${A_GCBRK:-0} 1" \
 	-c "echo \"VMHELD-GCBAD\"; mdw ${A_GCBAD:-0} 1" \
 	-c "echo \"VMHELD-GCBADC\"; mdw ${A_GCBADC:-0} 1" \
+	-c "echo \"VMHELD-GCOOA\"; mdw ${A_GCOOA:-0} 1" \
 	-c "echo \"VMHELD-GCPFWD\"; mdw ${A_GCPFWD:-0} 1" \
 	-c "echo \"VMHELD-GCPBACK\"; mdw ${A_GCPBACK:-0} 1" \
 	-c "echo \"VMHELD-GCPFWDGC\"; mdw ${A_GCPFWDGC:-0} 1" \
@@ -355,6 +357,25 @@ if [ -n "$A_GCSW" ]; then
 	if [ -n "$A_GCBADC" ]; then
 		gbc=`dec \`val VMHELD-GCBADC\``
 		echo "vmheld: bad COLOURS rejected before Setmark $gbc"
+		#
+		# A cursor outside [base, limit) of the arena being swept.  The
+		# walk is bounded ABOVE by the loop and was bounded below by
+		# nothing, so such a cursor used to walk forward dereferencing
+		# whatever it landed on.  Nonzero here means the bound earned
+		# itself; it also bumps broken-chains, so the two are not
+		# independent.
+		#
+		if [ -n "$A_GCOOA" ]; then
+			ooa=`dec \`val VMHELD-GCOOA\``
+			echo "vmheld: cursor OUTSIDE the arena being swept $ooa"
+			if [ "$ooa" != 0 ]; then
+				echo "vmheld:   NONZERO: a cursor landed outside"
+				echo "vmheld:   [base,limit) -- a corrupt size, or"
+				echo "vmheld:   on a multi-context kernel a free in"
+				echo "vmheld:   another arena.  Each one would have"
+				echo "vmheld:   been an unbounded walk before."
+			fi
+		fi
 		if [ "$gbc" != 0 ]; then
 			echo "vmheld:   NONZERO: a plausible word pointed at"
 			echo "vmheld:   something that is not a heap object, so"
