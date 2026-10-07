@@ -96,6 +96,10 @@ struct Cc1120
 	u32	nrxresume;		/* pended frames whose payload turned up */
 	int	rxstaleln;		/* the last giveup's length ... */
 	int	rxstalenavail;		/* ... and what the FIFO held then */
+	u32	ntxskip;		/* drains skipped: the part was not in RX */
+	int	idlelast;		/* what it said instead of IDLE */
+	int	idlepoll;		/* worst polls SIDLE has ever needed */
+	u32	nnotidle;		/* flushes where SIDLE did not arrive */
 	u32	nrxunder;		/* payload read past the end of the FIFO */
 	u32	nrxstale;		/* rxpend given up on by the watchdog */
 	int	rxpend;

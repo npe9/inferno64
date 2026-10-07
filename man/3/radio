@@ -755,18 +755,23 @@ and the frame finished on a later pass, which is the shape of the drain
 loop around it: come back when there is more, rather than reading what
 is not there or throwing away what is.
 .PP
-.B "What keeping has NOT yet been seen to do is deliver that frame."
+.B "And then the measurement said this was a refinement and not the fix."
+.IR Pendtrial (1)
+ran the old flush against it three times each on one image: three
+bigreads completed against none.  But the control rows showed the
+satellite sending 42 frames while the ground's receive count stayed at
+14, with no CRC error, no FIFO error, no overflow and no stall \-
+.B "a receiver that had gone deaf, not one that had lost a frame"
+\- and the stat file named the state.  See
+.B "A FLUSH IS ONLY LEGAL IN IDLE"
+below.  With that fixed, the old flush-on-partial completes the read
+too, losing two frames that AX.25 recovers.
+.PP
+So what keeping buys is a retransmission saved, and
 .B resume
-below counts the frames whose payload turned up and were read, and it
-has read 0 on every live run so far: the 66-byte tail that arrived on
-the next run came 11 seconds after it was sent, which is an AX.25
-retransmission and not a resume.  So what is established is narrower
-than it looks \- the driver no longer flushes a FIFO it is only
-looking at mid-packet, and the frame then survives long enough for the
-link layer to recover it \- and
-.B tools/radio/pendtrial.py
-exists to measure the rest, because a run of the old behaviour from an
-old kernel compares every other difference between two builds at once.
+below says it has not yet bought even that: it reads 0 on every live
+run.  The 66-byte tail that arrived came 11 seconds after it was sent,
+which is a retransmission.
 .PP
 Six counters report it.
 .TP
@@ -857,9 +862,9 @@ PKT_CFG1 is read before the burst now and
 .B status
 counts the frames whose two bytes were really taken.
 .B "The first live reading settled a question the datasheet could not:"
-.DS
-.CW "status 26 crcbad 0"
-.DE
+.EX
+	status 26 crcbad 0
+.EE
 Twenty-six frames, every one of them appending, and every CRC good.  So
 the part on this bench does append, the orphan pair was real on every
 packet, and the rejection below is live code and not a precaution.
@@ -875,6 +880,77 @@ the first reading of these counters on a live link said
 .B "rxstall 2 rxpartial 2 resume 0 rxstale 2 (14 of 82) rxunder 0" ,
 which is two frozen frames cleaned up and no frame delivered by
 resuming at all.
+.SS "A flush is only legal in IDLE"
+.PP
+.B "SFRX may be strobed only in IDLE or RX_FIFO_ERR"
+(SWRU295E, SFRX), and five sites in the receive path strobed it straight
+out of RX: the bad length byte, the flush on a short payload, the
+underrun guard, the
+.I iallocb
+failure and the
+.B iocfg
+ctl verb.
+.B "The part's answer is to go to IDLE and stay there,"
+and the
+.B SRX
+that follows does not stick.
+.PP
+.IR Rxarm ()
+has always done it in the right order and has always worked \-
+.B "because it is only ever called from RX_FIFO_ERR, where SFRX was legal to begin with."
+That is why FIFO-error recovery was sound while every other error exit
+in the same function switched the station off.
+.PP
+What that looks like in the stat file, measured with the old behaviour
+selected by a ctl verb so both arms were one image:
+.EX
+	state 0x00
+	fifo rx 0 tx 15
+	intr high 29 low 29
+	crcerr 0 fifoerr 0 rxoverflow 0 rxstall 0 rxpartial 1
+.EE
+.B "No error of any kind, an empty FIFO, the interrupt count stopped dead, and IDLE."
+A receiver switched off by its own error handler reports nothing, which
+is why this read for weeks as a frame lost on the air.
+.PP
+Every flush goes through one helper now \- SIDLE, wait for IDLE to
+arrive, SFRX, SRX \-
+and
+.B notidle
+counts the flushes where IDLE did not come, so a strobe that is still
+illegal says so instead of going quiet.
+.SS "And the handler runs while the station is talking"
+.PP
+.B "PKT_SYNC_RXTX is named RXTX because it asserts for this part's own transmits as well,"
+70 falling edges for 35 transmits and 35 receptions.  So the drain runs
+during the station's own transmission, and
+.B "nothing in it ever checked."
+NUM_RXBYTES read then is not a count of anything: the loop took what
+came back for a length byte, found the payload short, called it a
+partial and strobed SFRX from TX.
+.PP
+This is what the wait for IDLE found.  Sixteen polls was not enough,
+raising it to 256 did not help, and what the part reported instead was
+.EX
+	notidle 2 idlepoll 256 said 0x20
+.EE
+.B "0x20 is state 2.  TRANSMIT."
+No amount of waiting gets IDLE out of a part asked mid-transmission.
+.PP
+The drain runs only in RX or IDLE now \- IDLE because a received packet
+can be in the FIFO with the part already out of RX \- and the watchdog
+will not sample NUM_RXBYTES outside those states either, because a
+number taken during a transmit cannot be compared with the next one.
+.TP
+.B txskip
+Drains refused because the part was not in RX or IDLE.
+.B "It read 78 in a 28-second session,"
+which is the size of what was going wrong, and
+.B idlepoll
+\- the worst number of polls IDLE has ever needed \- fell from 256 to
+.BR 2 .
+So the wait is 32 now: the measurement with room, bounded on purpose,
+because if IDLE ever needs more then the premise is wrong again.
 .SH "LOOKING AT A BAND"
 A receiver is an instrument, and this one will say what is on the air
 around it.  These are the CC1120 driver's, on

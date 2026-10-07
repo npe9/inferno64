@@ -7610,3 +7610,159 @@ table whose first row came from a different kernel compares two things
 at once \- which is the fault
 .IR pendtrial (1)
 exists to avoid.
+.NH 1
+THE FLUSH WAS SWITCHING THE RECEIVER OFF
+.PP
+.B "The trial ran, and then it ran again, and the second run said the first conclusion was wrong."
+.NH 2
+What the controlled comparison showed
+.PP
+Three pairs, alternating, one kernel image, the arm a line in
+.I /lib/radio
+that both boards print at boot:
+.DS
+.CW "1 pend=1  bigread OK   rxstall 2 rxpartial 2 resume 0 rxstale 2 (16 of 82)"
+.CW "1 pend=0  bigread NO   rxstall 0 rxpartial 1 resume 0 rxstale 0"
+.CW "2 pend=1  bigread OK   rxstall 2 rxpartial 2 resume 0 rxstale 2 (17 of 82)"
+.CW "2 pend=0  bigread NO   rxstall 0 rxpartial 1 resume 0 rxstale 0"
+.CW "3 pend=1  bigread OK   rxstall 2 rxpartial 2 resume 0 rxstale 2 (12 of 82)"
+.CW "3 pend=0  bigread NO   rxstall 0 rxpartial 1 resume 0 rxstale 0"
+.CW ""
+.CW "pend=1 3 of 3 bigreads completed (3 of 3 runs had both boards in the arm)"
+.CW "pend=0 0 of 3 bigreads completed (3 of 3 runs had both boards in the arm)"
+.DE
+.B "Three for three against nought for three, and every control row carries the original fault's exact accounting."
+.PP
+Which looked like the answer and was not.  The control rows say
+something sharper than "a frame was lost", and it is in the numbers
+beside the partial.  At the thirty-second mark the ground had
+.DS
+.CW "sent 14 recv 14"
+.CW "crcerr 0  fifoerr 0  rxoverflow 0  rxstall 0  rxpartial 1"
+.DE
+and at seventy-four seconds the satellite had
+.B "sent 42" .
+.B "The satellite transmitted forty-two frames and the ground's receive count never moved past fourteen,"
+with no CRC error, no FIFO error, no overflow and no stall.
+.B "The receiver did not lose one frame.  It went deaf at the partial and never came back."
+.NH 2
+And the stat file named the state
+.PP
+One run in the failing arm with
+.BR state ,
+.B "fifo rx"
+and
+.B "intr high"
+passed through the watcher:
+.DS
+.CW "state 0x00"
+.CW "fifo rx 0 tx 15"
+.CW "intr high 29 low 29"
+.DE
+.B "IDLE."
+An empty receive FIFO, the packet-interrupt count stopped dead at
+twenty-nine, and the part parked.
+.PP
+.B "SFRX is legal only in IDLE and RX_FIFO_ERR"
+(SWRU295E, SFRX).  Five sites in the receive path strobed it straight
+out of RX \- the bad length byte, the flush on a short payload, the
+underrun guard, the
+.I iallocb
+failure and a ctl verb \- and the part's answer was to go to IDLE and
+stay there.  The
+.B SRX
+that followed did not stick.
+.PP
+.I Rxarm ()
+has always done it in the right order, SIDLE first, and has always
+worked \-
+.B "because it is only ever called from RX_FIFO_ERR, where SFRX was legal to begin with."
+That is why FIFO-error recovery was sound while every other error exit
+in the same function killed the station.
+.NH 2
+Which makes the pend change a refinement and not the fix
+.PP
+With one legal flush helper in front of all five sites, and the OLD
+flush-on-partial still selected by
+.BR "pend 0" :
+.DS
+.CW "state 0x01  sent 24 recv 26  rxpartial 2  intr high 51 low 51"
+.CW "styx: 273 bytes over the radio, twice"
+.CW "ARMV7M-STYX-BIGREAD-OK"
+.DE
+.B "Two frames flushed, both recovered by AX.25, and the read completed."
+.PP
+So the honest account is the opposite of the one three commits were
+written around.
+.B "Flushing a half-read frame is survivable; the link layer is for exactly that."
+What killed the session was the flush leaving the part switched off, and
+.B "a receiver switched off by its own error handler reports nothing"
+\- which is why this read for weeks as a frame lost on the air.
+.PP
+.B resume
+still reads 0 on every run, and that was the clue.  Keeping the length
+byte has never delivered a frame; what it did was avoid the illegal
+strobe by not flushing at all.  The three-for-three against
+nought-for-three was real and the mechanism behind it was not what the
+arms were named for.
+.NH 2
+And then the part said what it was doing, and it was transmitting
+.PP
+The flush waits for IDLE before it strobes SFRX, and the wait never
+ended: sixteen polls was not enough, and
+.B "raising it to 256 did not help either."
+Which was the clue.  A counter was added for what the part reports
+instead of IDLE, and it reported
+.DS
+.CW "notidle 2 idlepoll 256 said 0x20"
+.DE
+.B "0x20 is state 2.  TRANSMIT."
+.PP
+So the receive path was draining the RX FIFO while the station was
+talking, and
+.B "PKT_SYNC_RXTX is named RXTX because it asserts for this part's own transmits as well as for receptions."
+The edge counters said so long ago \- 70 falling edges for 35 transmits
+and 35 receptions, which this document wrote down as the refutation of
+a different theory and then did not follow.
+.B "The handler runs while the station is talking, and nothing in it ever checked."
+.PP
+That one number is the whole chain.  NUM_RXBYTES read during a transmit
+is not a count of anything; the drain loop took what came back for a
+length byte, found the payload short, called it a partial and strobed
+SFRX from TX; and SFRX outside IDLE or RX_FIFO_ERR parks the part.
+.B "A bogus length, an illegal flush, and a receiver switched off for the rest of the session with every error counter at zero."
+.PP
+It also explains a number this document has printed three times without
+explaining:
+.B "the stale length was 82 in every single run,"
+with the bytes-arrived figure varying.
+.B "82 is a byte of the station's own outgoing frame,"
+and the traffic is deterministic, so it was the same byte every time.
+.NH 2
+The gate, and the size of what it was catching
+.PP
+The drain now runs only when the part is in RX or IDLE \- IDLE because
+a received packet can be sitting in the FIFO with the part already out
+of RX \- and the watchdog will not sample NUM_RXBYTES outside those
+states either, because a number taken during a transmit cannot be
+compared with the next one.
+.DS
+.CW "state 0x01  sent 24 recv 26  rxpartial 2  rxstall 0"
+.CW "status 26 crcbad 0 notidle 0 idlepoll 2 said 0x00"
+.CW "txskip 78"
+.CW "ARMV7M-STYX-BIGREAD-OK"
+.DE
+.B "Seventy-eight times in twenty-eight seconds the handler had been reading the RX FIFO while the part was transmitting."
+And with that gated,
+.B "the flush reaches IDLE in two polls"
+\- so the 256-poll failure was never a slow part, and
+.B Rxidlepoll
+is 32 now, which is the measurement with room and bounded on purpose:
+if IDLE ever needs more, the premise is wrong again and
+.B notidle
+is how it says so.
+.PP
+.B rxpartial
+is still 2, so there are genuine mid-packet looks as well, and this run
+had the OLD flush-on-partial selected: both were flushed, both were
+recovered by AX.25, and the read completed.

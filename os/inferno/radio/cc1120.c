@@ -217,6 +217,22 @@ enum {
 	 */
 	Readytries	= 2000,		/* spins waiting for CHIP_RDYn */
 	Idlewaitus	= 2000,		/* strobes waiting to reach IDLE */
+	/*
+	 * And a much smaller one for the flush in interrupt context,
+	 * where every poll is an SPI transaction.
+	 *
+	 * Sixteen was not enough -- notidle read 2 of 2 flushes -- and
+	 * raising it to 256 did not help either, which was the clue:
+	 * what the part reported instead of IDLE was state 2, TRANSMIT,
+	 * and no amount of waiting gets IDLE out of a part that is
+	 * being asked mid-transmission.  With the drain gated on the
+	 * part being in RX, idlepoll in the stat file reads 2.
+	 *
+	 * Thirty-two is that measurement with room, and it is bounded
+	 * rather than generous on purpose: if IDLE needs more than this
+	 * the premise is wrong again, and notidle is how it says so.
+	 */
+	Rxidlepoll	= 32,
 
 	/*
 	 * The RSSI offset, in dB, written to AGC_GAIN_ADJUST.
@@ -558,6 +574,66 @@ rxarm(Cc1120 *rr)
 	strobe(rr, Srx);
 }
 
+/*
+ * FLUSH THE RX FIFO AND GET BACK INTO RX, IN THE ONE ORDER THE PART
+ * ALLOWS.
+ *
+ * SFRX is legal only in IDLE and RX_FIFO_ERR (SWRU295E, SFRX).  Five
+ * sites in the receive path strobed it straight out of RX, and the
+ * part's answer was to go to IDLE and stay there: the SRX that followed
+ * did not stick, the packet interrupt stopped, and the station was deaf
+ * for the rest of the session.
+ *
+ * MEASURED, with the old behaviour selected by a ctl verb so the two
+ * arms were one kernel image: the satellite sent 42 frames while the
+ * ground's recv stayed at 14, and the ground's own account of itself was
+ *
+ *	state 0x00
+ *	fifo rx 0 tx 15
+ *	intr high 29 low 29
+ *	crcerr 0 fifoerr 0 rxoverflow 0 rxstall 0 rxpartial 1
+ *
+ * -- no error of any kind, an empty FIFO, the interrupt count stopped
+ * dead, and IDLE.  A receiver switched off by its own error handler
+ * reports nothing, which is why this looked for weeks like a frame lost
+ * on the air.
+ *
+ * So: SIDLE, wait for it to arrive, SFRX, SRX.  rxarm() has always done
+ * this and has always worked -- because it is only called from
+ * RX_FIFO_ERR, where SFRX was legal to begin with.
+ *
+ * The wait is a handful of polls and not Idlewaitus, because this runs
+ * in interrupt context and every poll is an SPI transaction: sixteen of
+ * them is already tens of microseconds and RX to IDLE is quicker than
+ * that.  nnotidle counts the times IDLE was not reached, so a flush
+ * that is still illegal says so in the stat file instead of going
+ * quiet.
+ */
+void
+rxflush(Cc1120 *rr)
+{
+	int i, st;
+
+	st = 0;
+
+	strobe(rr, Sidle);
+	for(i = 0; i < Rxidlepoll; i++){
+		st = state(rr);
+		if(st == Stidle)
+			break;
+	}
+	if(i > rr->idlepoll)
+		rr->idlepoll = i;
+	if(i == Rxidlepoll){
+		rr->nnotidle++;
+		rr->idlelast = st;	/* READ THE PART, do not assume */
+	}
+	strobe(rr, Sfrx);
+	strobe(rr, Srx);
+	/* the half-read frame went with the FIFO; see rxarm */
+	rr->rxpend = 0;
+}
+
 
 /*
  * A WATCHDOG, BECAUSE A STATION THAT NEVER TRANSMITS NEVER REACHES THE
@@ -657,6 +733,20 @@ cc1120tick(void)
 		 * high/low" includes these synthetic calls: nrxstall is
 		 * how many of them there were.
 		 */
+		/*
+		 * And not while the part is transmitting, for the same
+		 * reason the handler will not drain then: NUM_RXBYTES
+		 * read during the station's own transmission is not a
+		 * count of anything, and sampling it here would feed the
+		 * stall detector a number that cannot be compared with
+		 * the next one.
+		 */
+		if(st != Strx && st != Stidle){
+			rr->ntxskip++;
+			s->unlock(s);
+			rr->lastnavail = 0;
+			continue;
+		}
 		navail = rdx(rr, Xnumrxbytes);
 		s->unlock(s);
 		/*
@@ -1109,6 +1199,40 @@ cc1120interrupt(Radio *r)
 			s->unlock(s);
 			break;
 		}
+		/*
+		 * AND NOT WHILE THE PART IS TRANSMITTING, which is the
+		 * fault underneath every symptom above.
+		 *
+		 * PKT_SYNC_RXTX is named RXTX because it asserts for this
+		 * part's own transmits as well as for receptions -- the
+		 * edge counters said so long ago, 70 falling edges for 35
+		 * transmits and 35 receptions -- so THIS FUNCTION RUNS
+		 * WHILE THE STATION IS TALKING.  What it then did was read
+		 * NUM_RXBYTES and the RX FIFO anyway, take whatever came
+		 * back for a length byte, find the payload short, and
+		 * strobe SFRX.  From TX.  Which parks the part.
+		 *
+		 * Measured: the flush's wait for IDLE never ended, and
+		 * what the part reported instead of IDLE, 256 polls
+		 * running, was "said 0x20" -- state 2, TRANSMIT.  That one
+		 * number is the whole chain: a bogus length read during
+		 * the station's own transmission, an illegal flush, and a
+		 * receiver switched off for the rest of the session with
+		 * every error counter reading zero.
+		 *
+		 * IDLE is allowed as well as RX because a received packet
+		 * can be sitting in the FIFO with the part already out of
+		 * RX -- RXOFF_MODE is not modelled here, see the note in
+		 * the qemu model -- and refusing to drain then would lose
+		 * the packet this function exists to collect.  TX,
+		 * FSTXON, CALIBRATE and SETTLING are none of our
+		 * business.
+		 */
+		if(st != Strx && st != Stidle){
+			rr->ntxskip++;
+			s->unlock(s);
+			break;
+		}
 
 		navail = rdx(rr, Xnumrxbytes);
 		if(navail < 1){
@@ -1166,8 +1290,7 @@ cc1120interrupt(Radio *r)
 			if(n < 1 || n > Ccmaxpayload){
 				s->select(s, 0);
 				rr->ncrcerr++;
-				strobe(rr, Sfrx);
-				strobe(rr, Srx);
+				rxflush(rr);
 				s->unlock(s);
 				break;
 			}
@@ -1180,8 +1303,7 @@ cc1120interrupt(Radio *r)
 				s->select(s, 0);
 				rr->nrxpartial++;
 				if(rr->pendon == 0){
-					strobe(rr, Sfrx);
-					strobe(rr, Srx);
+					rxflush(rr);
 					s->unlock(s);
 					break;
 				}
@@ -1214,8 +1336,7 @@ cc1120interrupt(Radio *r)
 		if(navail < n + (pended? 0: 1)){
 			s->select(s, 0);
 			rr->nrxunder++;
-			strobe(rr, Sfrx);
-			strobe(rr, Srx);
+			rxflush(rr);
 			s->unlock(s);
 			break;
 		}
@@ -1237,8 +1358,7 @@ cc1120interrupt(Radio *r)
 		b = iallocb(Pkthdrlen + n);
 		if(b == nil){
 			s->select(s, 0);
-			strobe(rr, Sfrx);
-			strobe(rr, Srx);
+			rxflush(rr);
 			s->unlock(s);
 			break;
 		}
@@ -1867,8 +1987,7 @@ cc1120ctl(Radio *r, char *buf, int n)
 			s->unlock(s);
 			error(Ebadctl);
 		}
-		strobe(rr, Sfrx);
-		strobe(rr, Srx);
+		rxflush(rr);
 		s->unlock(s);
 		return n;
 	}
@@ -3770,7 +3889,8 @@ cc1120stat(Radio *r, char *p, int n)
 		"intr high %ud low %ud\n"
 		"ccabusy %ud ccamode %d fifoerr %ud watch %ud of %ud\n"
 		"rxstall %ud rxpartial %ud resume %ud rxstale %ud (%d of %d) rxunder %ud\n"
-		"status %ud crcbad %ud\n"
+		"status %ud crcbad %ud notidle %ud idlepoll %d said 0x%.2x\n"
+		"txskip %ud\n"
 		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n"
 		"ppb %d\n",
 		rr->partnum, rr->partversion,
@@ -3792,7 +3912,8 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->nfifowatch, rr->nwatchtick,
 		rr->nrxstall, rr->nrxpartial, rr->nrxresume,
 		rr->nrxstale, rr->rxstalenavail, rr->rxstaleln, rr->nrxunder,
-		rr->nstatus, rr->ncrcbad,
+		rr->nstatus, rr->ncrcbad, rr->nnotidle, rr->idlepoll,
+		rr->idlelast, rr->ntxskip,
 		pacfg2, pacfg2 & Papowerramp,
 		patenths/10, patenths < 0? -patenths%10: patenths%10,
 		/*

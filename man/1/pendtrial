@@ -71,6 +71,21 @@ So a run whose only partials came from the stall detector did not meet
 the fault, and
 .B "a table that reads three-for-three against three-for-three is inconclusive."
 The harness prints that it is, rather than leaving the reader to notice.
+.PP
+.B "The attribution is a proxy and not a measurement,"
+which is worth saying because a proxy presented as a count is how this
+bench gets a wrong answer.  The driver does not record which path found
+a partial; the harness infers it from
+.B rxpartial
+exceeding
+.BR rxstall ,
+and a stall that ended in a successful drain raises
+.B rxstall
+without a partial, so the inference can only
+.I under-report
+a discriminating row.  It errs towards calling a run inconclusive, which
+is the safe direction, and the fix is a counter in the driver rather
+than a cleverer sum here.
 .SH FILES
 .TF /lib/radio
 .TP

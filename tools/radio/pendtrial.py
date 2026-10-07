@@ -98,6 +98,13 @@ def verdict(out):
 	# handle it, so a run with only those does not compare the two
 	# behaviours at all.  Counted here so the table can say which
 	# rows were capable of showing a difference.
+	#
+	# A PROXY AND NOT A MEASUREMENT.  The driver does not record
+	# which path found a partial, so this infers it from rxpartial
+	# exceeding rxstall -- and a stall that ended in a successful
+	# drain raises rxstall without a partial, so the inference can
+	# only UNDER-report.  It errs towards calling a run
+	# inconclusive, which is the safe direction.
 	stall = part = 0
 	m = re.search(r"rxstall (\d+) rxpartial (\d+)", out)
 	if m:
