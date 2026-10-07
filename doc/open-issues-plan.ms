@@ -11054,11 +11054,25 @@ What is NOT settled here
 .LP
 .IP \(bu
 .B "The gcinsweep split is sound only while npctx == 1,"
-which is what these boots had.  A second context freeing concurrently is
-attributed to the collector, so the split must be relabelled before the number
-is read under
-.CW parallelvm .
-Said in the code, at the flag.
+and the condition is STRONGER than first recorded here.  This said "which is
+what these boots had", as though it were a runtime setting.
+.CW npctx
+is a hard-coded 1 in
+.CW libinterp/xec.c
+and there is no
+.CW parallelvm
+switch in this tree to turn it up \(em
+.CW comp-aarch64.c
+records the same absence about its own refcount question.
+.B "So the split cannot be wrong here under any configuration."
+.B "The hazard is the MERGE."
+On a tree where a second context frees concurrently, that free is attributed to
+the collector and the mutator-versus-collector split silently becomes
+meaningless \(em which is the number the whole H4 finding rests on.  A
+per-context flag is the fix and it is one line, deliberately not written,
+because an untestable fix for an absent configuration is how a tree accumulates
+comments claiming interlocks it does not have.  Corrected in the code, at the
+flag.
 .IP \(bu
 .B "devcons's GC-COUNTS reader is UNVERIFIED in these builds."
 The one

@@ -875,13 +875,28 @@ rungc(Prog *p)
 				 * who is calling, and the mutator's is the only
 				 * one that can outlive the quantum.
 				 *
-				 * One flag and not a per-context one: this is
-				 * sound while npctx == 1, which is what the
-				 * boot it was measured on had.  A second
-				 * context freeing concurrently would be
-				 * attributed to the collector, so the split is
-				 * NOT valid under parallelvm and the number
-				 * must be relabelled before it is read there.
+				 * One flag and not a per-context one, and the
+				 * condition for that is stronger than it first
+				 * looks: npctx is a hard-coded 1 in xec.c and
+				 * there is no parallelvm switch in this tree to
+				 * turn it up (see comp-aarch64.c's note on the
+				 * same absence, and doc/parallel-allocator-
+				 * survey.ms).  So the split cannot be wrong
+				 * HERE under any configuration -- it is not a
+				 * claim about the boots it was measured on.
+				 *
+				 * THE HAZARD IS THE MERGE, not a runtime
+				 * setting.  On a tree where a second context
+				 * can free concurrently, that free is
+				 * attributed to the collector and the
+				 * mutator-versus-collector split silently
+				 * becomes meaningless -- which is exactly the
+				 * number the whole H4 finding rests on.  A
+				 * per-context flag is the fix and it is one
+				 * line; it is not written here because an
+				 * untestable fix for an absent configuration
+				 * is how this tree accumulates comments that
+				 * claim interlocks it does not have.
 				 */
 				gcinsweep = 1;
 				if(t != nil) {
