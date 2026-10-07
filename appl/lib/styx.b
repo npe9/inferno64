@@ -200,19 +200,19 @@ unpackdir(a: array of byte): (int, Sys->Dir)
 	if(len a < sz)
 		return (0, dir);
 	# type[2]
-	dir.dtype = (int a[3]<<8) | int a[2];
+	dir.dtype = nochange((int a[3]<<8) | int a[2], big 16rFFFF);
 	# dev[4]
-	dir.dev = (((((int a[7] << 8) | int a[6]) << 8) | int a[5]) << 8) | int a[4];
+	dir.dev = nochange((((((int a[7] << 8) | int a[6]) << 8) | int a[5]) << 8) | int a[4], big 16rFFFFFFFF);
 	# qid.type[1]
 	# qid.vers[4]
 	# qid.path[8]
 	dir.qid = gqid(a, 8);
 	# mode[4]
-	dir.mode = (((((int a[24] << 8) | int a[23]) << 8) | int a[22]) << 8) | int a[21];
+	dir.mode = nochange((((((int a[24] << 8) | int a[23]) << 8) | int a[22]) << 8) | int a[21], big 16rFFFFFFFF);
 	# atime[4]
-	dir.atime = (((((int a[28] << 8) | int a[27]) << 8) | int a[26]) << 8) | int a[25];
+	dir.atime = nochange((((((int a[28] << 8) | int a[27]) << 8) | int a[26]) << 8) | int a[25], big 16rFFFFFFFF);
 	# mtime[4]
-	dir.mtime = (((((int a[32] << 8) | int a[31]) << 8) | int a[30]) << 8) | int a[29];
+	dir.mtime = nochange((((((int a[32] << 8) | int a[31]) << 8) | int a[30]) << 8) | int a[29], big 16rFFFFFFFF);
 	# length[8]
 	v0 := (((((int a[36] << 8) | int a[35]) << 8) | int a[34]) << 8) | int a[33];
 	v1 := (((((int a[40] << 8) | int a[39]) << 8) | int a[38]) << 8) | int a[37];
@@ -228,10 +228,53 @@ unpackdir(a: array of byte): (int, Sys->Dir)
 	return (i, dir);
 }
 
+#
+# A 9P field of ALL ONES means "do not change this field".  Decoded into
+# a Limbo `int' -- 64 bits at runtime -- an all-ones 32-bit field comes
+# out as 4294967295 and NOT ~0, so every consumer written as
+#
+#	if (d.mtime != ~0)
+#		onto.mtime = d.mtime;
+#
+# (appl/lib/nametree.b:262 among them) takes the sentinel for a real
+# value and writes it.  0xFFFFFFFF seconds from 1970 is 2106-02-07,
+# which is where stray files dated 2106 come from.
+#
+# The sentinel is translated HERE, at the boundary, because that is
+# where the width changes.  dir.length and qid.path already do the
+# equivalent by building into a `big', which is why those two survive
+# and the five narrow fields did not.
+#
+# THE MASK MUST BE THE LITERAL, and the first attempt here got that
+# backwards.  Measured, on this runtime:
+#
+#	1 << 32       = 0             an int shifts in 32 bits
+#	(1 << 32) - 1 = -1            so a computed mask is ~0, not all-ones
+#	~0            = -1
+#	16rFFFFFFFF   = 4294967295    the literal is NOT sign-extended
+#
+# So `(1 << bits) - 1' evaluates to -1 and the comparison never matches
+# the 4294967295 the decode produces -- the fix did nothing, silently.
+# The literal is the one form that holds the value a four-byte field
+# decodes to, which is the whole point: a computed all-ones and a
+# literal all-ones are different numbers here.
+#
+# The comparison is in `big' because 16rFFFFFFFF does not fit an int
+# literal -- Limbo types it big, and passing it as an int is a compile
+# error.  Which is how the second attempt here was caught: the build
+# failed for two edits running while a stale styx.dis kept reporting the
+# original failure, so the fix looked ineffective rather than unbuilt.
+nochange(v: int, allones: big): int
+{
+	if(big v == allones)
+		return ~0;
+	return v;
+}
+
 gqid(f: array of byte, i: int): Sys->Qid
 {
-	qtype := int f[i];
-	vers := (((((int f[i+4] << 8) | int f[i+3]) << 8) | int f[i+2]) << 8) | int f[i+1];
+	qtype := nochange(int f[i], big 16rFF);
+	vers := nochange((((((int f[i+4] << 8) | int f[i+3]) << 8) | int f[i+2]) << 8) | int f[i+1], big 16rFFFFFFFF);
 	i += BIT8SZ+BIT32SZ;
 	path0 := (((((int f[i+3] << 8) | int f[i+2]) << 8) | int f[i+1]) << 8) | int f[i];
 	i += BIT32SZ;
