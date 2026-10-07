@@ -11996,3 +11996,69 @@ is a 32-bit target where pointers are 32 bits and there is nothing to widen.
 So A7, like A6, is
 .CW 7c 's
 alone.
+.NH 3
+A6: how many victims were there?  Exactly one, audited from the SOURCE
+.LP
+A6 was found by scanning one linked image and reporting the sites in it.  That
+answers "is it live" and not "where else".  So: a source audit of every
+directory the aarch64 kernels compile \(em
+.CW os/inferno ,
+.CW os/port ,
+.CW libinterp
+and the ten libraries \(em for an integer literal too wide for a signed 32-bit
+field in an ARITHMETIC OR COMPARISON context, which is where it becomes an
+.CW ADD / SUB / AND / BIC / CMP
+operand rather than a
+.CW MOV .
+.PP
+Fifteen lines matched and twelve are false positives, which is worth stating so
+the method can be reused:
+.IP \(bu
+.B "Floating-point literals."
+.CW 0.289529654602168
+contains a fifteen-digit integer.  Three hits in
+.CW libmath .
+.IP \(bu
+.B "`#define X -2147483648'."
+The literal is 2147483648 with a unary minus, and 2^31 fits in 32 bits
+UNSIGNED, which A6 established is handled correctly by the old
+zero-extending load.  Four hits in
+.CW libinterp
+and
+.CW libkern .
+.IP \(bu
+.B "os/inferno/pc/mtrr.c,"
+five comparisons against
+.CW 0x100000000ULL .
+That board is 386, built by
+.CW 8c / 8l ,
+and is dormant (see H3); not an aarch64 target.
+.PP
+.B "That leaves two real candidates, and only one of them reaches the pool."
+.P1
+os/inferno/port/sdscsi.c:280  if(s == 0xffffffffffffffffLL)
+    -> CMN $1,R0    7c folds it: never reaches the pool.  NOT a victim.
+os/inferno/port/alloc.c:822   if(v > 99999999999ULL)
+    -> CMP $99999999999,R0    reaches the pool.  THE victim.
+.P2
+So the source audit independently finds the one site the image scan found, and
+.B "nothing else in the aarch64 build ever had the shape."
+A6's blast radius is one display clamp.
+.NH 3
+And the mechanism is narrower than "a wide constant": CMN carries the sign
+.LP
+Checked while auditing, because a negative constant looked like it ought to be a
+second way in:
+.P1
+x == -2147483648LL   CMN $2147483648,R0    DWORD 8 bytes
+x == -2147483649LL   CMN $2147483649,R0    DWORD 8 bytes
+x == -1LL            CMN $1,R0             immediate, no pool
+x == -5000000000LL   CMN $5000000000,R0    DWORD 8 bytes
+.P2
+.B "7c turns a comparison against -K into CMN $K,"
+so the SIGN is carried by the opcode and only the MAGNITUDE has to fit.  The
+first two magnitudes are under 2^32 and the old zero-extending load gave the
+right answer; only the fourth, 0x12A05F200, needed more than 32 bits and would
+have compared against \-0x2A05F200 instead.
+.B "No site in the tree has that shape,"
+which is why the audit finds one victim and not several.
