@@ -128,10 +128,25 @@ trap 'idle' 0 1 2 15
 # WHAT IT IS NOT: the obvious reading, that conswrite's rawon/rawoff arms block
 # on kbd's QLock while consread holds it across a blocking qread of a console
 # nobody can type at, IS WRONG.  Read over JTAG with the target halted, the
-# whole kbd structure past Lock.pc is zero -- QLock.locked 0, owner 0, and
-# kbd.ctl 0 -- so the open, the write and the close all completed and that lock
-# is free.  Where the poller actually stops is NOT diagnosed, and this refusal
-# does not pretend to be a fix.
+# QLock is free: head, tail, locked and owner all read ZERO, so the write is not
+# blocked on it.  Where the poller actually stops is NOT diagnosed, and this
+# refusal does not pretend to be a fix.
+#
+# AND ONE WORD IN THE FIRST VERSION OF THAT CLAIM WAS ASSERTED, NOT MEASURED.
+# It also said "and kbd.ctl 0", concluding that the open, write and close had
+# all completed.  The dump covered kbd+0x00..0x4f, and the offsets -- taken
+# from the compiler rather than guessed, via
+# `(int)(uintptr)&((QLock*)0)->owner' through 7c -S with the kernel's own
+# flags -- are sizeof(Lock) 48, sizeof(QLock) 88, head 48, tail 56, locked 64,
+# owner 72, opc 80, kbd.ctl 92.  So the four QLock words were inside the dump
+# and kbd.ctl was not.  The board has since been rebooted, so the wedged state
+# is gone and it cannot be measured now.  The conclusion stands on the four
+# words that were read and not on the fifth.
+#
+# The tell was there and I read past it: the only non-zero word in the whole
+# structure sat at offset 16 and resolved to qlock+140, while Lock.pc at offset
+# 8 read zero -- a field that did not fit the layout I was assuming.  A field
+# that does not fit the layout is a reason to go and get the layout.
 #
 # THE COMMANDS THAT LOOK LIKE THEY BELONG THERE ARE ON /dev/sysctl.
 # conswrite dispatches its cmdtab under Qsysctl, not Qconsctl: sched,

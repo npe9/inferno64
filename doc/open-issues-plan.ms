@@ -11437,3 +11437,54 @@ byte-identical.
 Worth noting as a shape: a guard added at one end of a function left the other
 end unguarded, and adding a second early exit was what made it reachable.
 .B "An early return added after a cleanup trap is installed inherits that trap's assumptions."
+.NH 3
+A correction to that reading: one word was asserted, not measured
+.LP
+The paragraph above said
+.CW QLock.locked
+0,
+.CW owner
+0,
+.CW head
+and
+.CW tail
+0,
+.B "and kbd.ctl 0."
+The last of those was not read.
+.PP
+Offsets taken from the compiler rather than guessed \(em
+.CW "int off = (int)(uintptr)&((QLock*)0)->owner"
+compiled with the kernel's own flags and read out of
+.CW "7c -S" :
+.P1
+sizeof(Lock)   48      QLock.locked   64
+sizeof(QLock)  88      QLock.owner    72
+QLock.head     48      QLock.opc      80
+QLock.tail     56      kbd.ctl        92
+.P2
+The JTAG dump covered
+.CW kbd+0x00..0x4f ,
+so
+.CW head ,
+.CW tail ,
+.CW locked
+and
+.CW owner
+were all inside it and all four were zero.
+.CW kbd.ctl
+at 92 was outside it, and the board has since been rebooted, so the wedged
+state is gone and that word cannot be measured now.
+.PP
+.B "The conclusion stands on the four words that were read"
+\(em the QLock is free, so the write is not blocked on it \(em
+.B "and not on the fifth."
+What went wrong is ordinary and worth naming: the dump was 80 bytes because 80
+bytes looked like enough for "a QLock and a couple of ints", and the structure
+was then described from the picture in my head rather than from the offsets.
+.CW "Lock.pc"
+is at 8, which the dump showed as ZERO, while the only non-zero word in the
+whole structure sat at 16 and resolved to
+.CW qlock+140
+\(em a detail that did not fit the layout I was assuming and that I read past
+instead of stopping on.
+.B "A field that does not fit the layout is a reason to go and get the layout."
