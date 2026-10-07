@@ -130,7 +130,22 @@ enum
 	C_MBCON,	/* could be C_MOVCON or C_BITCON */
 	C_LCON,		/* 32-bit constant */
 	C_FCON,		/* floating-point constant */
-	C_VCON,		/* 64-bit constant */
+	/*
+	 * C_VCON IS DECLARED, MATCHED AND HANDLED -- AND PRODUCED NOWHERE.
+	 * span.c's cmp() has a case for it and asmout.c's case 11 handles it,
+	 * but aclass() never returns it, so EVERY integer constant arrives as
+	 * a C_LCON whatever its width.  Do not read a C_VCON test as meaning
+	 * the wide case is covered somewhere.
+	 *
+	 * That is how a 64-bit constant came to be stored in a FOUR-BYTE
+	 * literal pool slot for every instruction but MOV, making
+	 * `ADD $4294967296' add nothing.  addpool() in span.c now sizes the
+	 * slot from the constant itself rather than from the opcode, which
+	 * does not need this class -- and tests/7l-bigconst.sh is the
+	 * regression test.  The class is left in place because removing it
+	 * would touch cmp() and asmout.c for no gain.
+	 */
+	C_VCON,		/* 64-bit constant -- SEE ABOVE: aclass never returns it */
 
 	C_AACON,	/* ADDCON offset in auto constant $a(FP) */
 	C_LACON,	/* 32-bit offset in auto constant $a(FP) */
