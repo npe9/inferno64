@@ -12606,3 +12606,80 @@ So the rule generalises past the classifier: before trusting a survey over N
 cases, make it classify the one case whose answer is already known \(em and
 check that the POPULATION is the one the question is about, because a correct
 test over the wrong set is still noise that looks like a result.
+.NH 3
+Two of the eleven cannot be reached by git at all, and one is live work today
+.LP
+A peer raised the operational consequence, which is worse than the ordering
+either of us gave:
+.B "parallelgc has no .git, so no merge or cherry-pick can ever reach it."
+Verified with one consistent method over the same filter \(em newest
+.CW ".c / .b / .h"
+per copy:
+.P1
+parallelgc      2026-10-07 08:43   libinterp/comp-amd64.c    <- TODAY
+jit-research    2026-09-30 11:37   os/inferno/pc64/...
+multicore       2026-09-29 09:31   os/inferno/virtarm64/...
+.P2
+So of the three, the oldest source is the registered worktree and
+.B "the newest is an unmanaged copy being worked on this morning, on libinterp, whose branch subject is the parallel GC."
+Whoever is working there has to be told, because nothing that lands on any
+branch will reach them.
+.NH 3
+Sessions exist for four of the eleven, and not for that one
+.LP
+Of the eleven defective copies,
+.CW ListAgents
+shows live sessions for
+.CW multicore ,
+.CW genesize ,
+.CW xip
+and
+.CW cloud-port ,
+and none for
+.CW parallelgc ,
+.CW jit-research ,
+.CW inferno-bt ,
+.CW inferno-ports ,
+.CW nixos ,
+.CW pr-bluetooth
+or
+.CW rio-pi-tk .
+.PP
+.CW multicore
+was told directly \(em it is the branch where
+.CW parallelvm=1
+keeps the swallow window open continuously rather than at quantum boundaries,
+so its rate should be HIGHER than the numbers measured here, with the line
+numbers, the measurement, the counter hazard and the
+.CW npctx==1
+caveat on the split.
+.B "parallelgc is unreachable by every route available:"
+no git, no session.  Recorded here so the next person with a route uses it.
+.NH 3
+And "newest file" is defeated by one corrupt timestamp
+.LP
+This tree's own newest source read
+.B 2106-02-07
+\(em
+.CW tmp/mvtest.b ,
+a test artefact with a future mtime, the only such file in the tree.  A MAX over
+mtimes is decided entirely by the worst timestamp in the set, so a liveness
+measure built on it reports whatever is most broken rather than what is most
+recent.  Excluding future dates gives
+.CW libinterp/gc.c
+at 17:12 today, which is right.
+.PP
+The peer's own near-miss was the same family one step earlier: they piped
+through
+.CW "head -2000"
+BEFORE sorting, so "newest file" was the newest of whatever the filesystem
+walked first, and reported both unmanaged copies as stale.
+.B "A truncation before a sort is not a sample."
+Which generalises the rule a third time: when a measurement filters and then
+aggregates, the filter must run AFTER the aggregation or not at all \(em
+.CW head
+before
+.CW sort ,
+like a
+.CW "grep -c"
+before a comment strip, gives a confident uniform wrong answer the same way.
