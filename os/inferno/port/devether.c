@@ -330,7 +330,9 @@ etherbwrite(Chan* chan, Block* bp, u32)
 	}
 
 	ether = etherxx[chan->dev];
-	if(n > ether->maxmtu){
+	/* a TCP segment the hardware cuts (Btso) may be as long as an IP packet */
+	if(n > ether->maxmtu
+	&& ((bp->flag & Btso) == 0 || (ether->feat & Etso) == 0 || n > ETHERHDRSIZE + 64*1024 - 1)){
 		freeb(bp);
 		error(Etoobig);
 	}

@@ -162,12 +162,24 @@ ipoput4(Fs *f, Block *bp, int gating, int ttl, int tos, Routehint *rh)
 		goto raise;
 
 	/*
+	 * A TCP segment for the hardware to cut (Btso) goes whole to an
+	 * interface that does; TCP made it for one (tcpmaxseg), so if the
+	 * route has since changed it is dropped and TCP sends it again,
+	 * the usual size.
+	 */
+	if((bp->flag & Btso) != 0 && (!ifc->tso || gating || natonifci(ifc) != nil)){
+		ip->stats[OutDiscards]++;
+		netlog(f, Logip, "%V -> %V: TSO segment for an interface without it\n", eh->src, eh->dst);
+		goto raise;
+	}
+
+	/*
 	 * A transport checksum left to the hardware (Btxck) is finished
 	 * here unless this interface's hardware will do it: not for one
 	 * that won't, nor for a packet to be fragmented or NATed, both of
 	 * which want the checksum done.
 	 */
-	if((bp->flag & Btxck) != 0 && (!ifc->txck || gating
+	if((bp->flag & (Btxck|Btso)) == Btxck && (!ifc->txck || gating
 	|| len > ifc->maxtu - ifc->m->hsize || natonifci(ifc) != nil))
 		txcksum(bp, IP4HDR);
 
@@ -183,7 +195,7 @@ ipoput4(Fs *f, Block *bp, int gating, int ttl, int tos, Routehint *rh)
 
 	/* If we dont need to fragment just send it */
 	medialen = ifc->maxtu - ifc->m->hsize;
-	if(len <= medialen) {
+	if(len <= medialen || (bp->flag & Btso) != 0) {
 		hnputs(eh->length, len);
 		if(!gating){
 			hnputs(eh->id, incref(&ip->id4));

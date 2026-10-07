@@ -161,6 +161,7 @@ ipifcbind(Conv *c, char **argv, int argc)
 
 	/* do medium specific binding */
 	ifc->txck = 0;			/* the medium's bind says if its hardware checksums */
+	ifc->tso = 0;			/* or segments */
 	(*m->bind)(ifc, argc, argv);
 
 	/* set the bound device name */

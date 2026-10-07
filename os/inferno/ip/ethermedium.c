@@ -176,8 +176,10 @@ etherbind(Ipifc *ifc, int argc, char **argv)
 	 */
 	snprint(addr, sizeof(addr), "%s!0x800", argv[2]);	/* ETIP4 */
 	er->mchan4 = chandial(addr, nil, dir, &er->cchan4);
-	if(netiffeatures != nil)
+	if(netiffeatures != nil){
 		ifc->txck = ((*netiffeatures)(er->mchan4) & Etxck) != 0;
+		ifc->tso = ((*netiffeatures)(er->mchan4) & Etso) != 0;
+	}
 
 	/*
 	 *  make it non-blocking

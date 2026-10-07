@@ -2615,6 +2615,52 @@ raise:
  *  the lock to ipoput the packet so some care has to be
  *  taken by callers.
  */
+/*
+ * The most one segment may carry: the MSS, or, when the interface the
+ * connection's packets leave by cuts TCP segments itself (Ipifc.tso),
+ * as many MSS's as fit in an IP packet.  Data only, once established,
+ * over IPv4, checksummed.
+ */
+static ulong
+tcpmaxseg(Conv *s, Tcpctl *tcb)
+{
+	Route *r;
+	Ipifc *ifc;
+	ulong n;
+
+	if(s->ipversion != V4 || tcb->nochecksum
+	|| tcb->state != Established && tcb->state != Close_wait)
+		return tcb->mss;
+	r = v4lookup(s->p->f, s->raddr+IPv4off, s->laddr+IPv4off, s);
+	if(r == nil || (ifc = r->ifc) == nil || !ifc->tso || natonifci(ifc) != nil)
+		return tcb->mss;
+	n = (IP_MAX - 1 - TCP4_PKT - TCP4_HDRSIZE) / tcb->mss;
+	if(n < 2)
+		return tcb->mss;
+	return n*tcb->mss;
+}
+
+/*
+ * A segment longer than the MSS, for the hardware to cut (Btso): its
+ * checksum field gets the pseudo-header's sum without the length,
+ * which each segment's own the hardware adds.
+ */
+static void
+tcptso(Block *bp, int mss)
+{
+	Tcp4hdr *h;
+	ushort csum;
+
+	if((bp->flag & Btxck) == 0)
+		return;
+	h = (Tcp4hdr*)bp->rp;
+	hnputs(h->tcplen, 0);
+	csum = ptclcsum(bp, TCP4_IPLEN, TCP4_PHDRSIZE);
+	hnputs(h->tcpcksum, ~csum & 0xFFFF);
+	bp->flag |= Btso;
+	bp->mss = mss;
+}
+
 static void
 tcpoutput(Conv *s)
 {
@@ -2623,7 +2669,7 @@ tcpoutput(Conv *s)
 	Tcpctl *tcb;
 	Block *hbp, *bp;
 	int sndcnt;
-	ulong ssize, dsize, sent;
+	ulong ssize, dsize, sent, maxseg;
 	Fs *f;
 	Tcppriv *tpriv;
 	uchar version;
@@ -2633,6 +2679,7 @@ tcpoutput(Conv *s)
 	version = s->ipversion;
 
 	tcb = (Tcpctl*)s->ptcl;
+	maxseg = tcpmaxseg(s, tcb);
 
 	/* force ack every 2*mss */
 	if((tcb->flags & FORCE) == 0)
@@ -2696,8 +2743,8 @@ tcpoutput(Conv *s)
 				ssize = 0;
 			else {
 				ssize -= sent;
-				if(ssize > tcb->mss)
-					ssize = tcb->mss;
+				if(ssize > maxseg)
+					ssize = maxseg;
 			}
 		}
 
@@ -2782,6 +2829,8 @@ tcpoutput(Conv *s)
 				freeblist(bp);
 				return;
 			}
+			if(dsize > tcb->mss)
+				tcptso(hbp, tcb->mss);
 			break;
 		case V6:
 			tcb->protohdr.tcp6hdr.vcf[0] = IP_VER6;

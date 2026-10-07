@@ -68,7 +68,8 @@ init()
 	spawn sh->init(nil, "sh" :: "-c" :: "ndb/cs; styxlisten -A 'tcp!*!5640' export /; echo VMSERVE: listening" :: nil);
 	# the interface's transmit checksum offload at work, if its driver
 	# counts it (ether82598's "txck"): the frames whose TCP or UDP
-	# checksum the hardware put in; and its receive queues, if it has
+	# checksum the hardware put in, and the segments it cut ("tso");
+	# and its receive queues, if it has
 	# more than one (ether82598's "rxq", RSS spreading the flows)
 	for(;;){
 		sys->sleep(20*1000);
@@ -81,7 +82,7 @@ init()
 			continue;
 		(nil, l) := sys->tokenize(string buf[0:n], "\n");
 		for(; l != nil; l = tl l)
-			if(len hd l > 5 && ((hd l)[0:5] == "txck " || (hd l)[0:3] == "rxq"))
+			if(len hd l > 5 && ((hd l)[0:5] == "txck " || (hd l)[0:4] == "tso " || (hd l)[0:3] == "rxq"))
 				sys->print("VMSERVE: ether0 %s\n", hd l);
 	}
 }

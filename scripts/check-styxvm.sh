@@ -32,6 +32,8 @@ import socket
 s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()"`
 
 sh "$ROOT/scripts/vmhost.sh" build "$KERN" >/dev/null 2>&1
+# the last run's log would say it listened before this one's host has
+rm -f "$ROOT/.qemu/vmhost.log"
 VMHOST_FWD=$PORT sh "$ROOT/scripts/vmhost.sh" run 900 >"$WORK/host.log" 2>&1 &
 QPID=$!
 n=0
@@ -46,6 +48,12 @@ while ! grep -q 'VMSERVE: listening' "$ROOT/.qemu/vmhost.log" 2>/dev/null; do
 done
 grep 'VMSERVE' "$ROOT/.qemu/vmhost.log" | sed 's/^/host: /'
 
+# the Dis files the host's root and emu's have alike, read back over
+# the mount and compared: the host's TCP sending (by its interface's
+# TSO, on the 82599)
+DIS=`awk '/^root/{f=1;next} f&&/^[a-z]/{exit} f{print $1}' "$ROOT/os/inferno/pc64/pc64vmserve" |
+	grep '\.dis$' | sort -u | while read f; do [ -f "$ROOT$f" ] && echo $f; done | tr '\n' ' '`
+
 # emu's /tmp is this tree's tmp directory
 mkdir -p "$ROOT/tmp"
 cat >"$ROOT/tmp/styxvm-cli.sh" <<EOF
@@ -59,6 +67,11 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 {
 	}
 }
 echo STYXVM: mounted
+n=()
+for f in $DIS {
+	if {cmp /n/remote^\$f \$f} {n=(\$n x)} {echo STYXVM: differs \$f}
+}
+echo STYXVM: read back \$#n files alike
 # more connections, each its own flow, for the host's RSS to spread
 # over its receive queues (an 82599 host's: the check after M9's)
 for i in 1 2 3 4 5 6 7 8 {
@@ -71,6 +84,7 @@ vmlinux -s 1200 -m 256 -p 0000:05:00.0 -q 'LINUXGUEST: ran' -i /.guest/initramfs
 echo STYXVM: done
 EOF
 timeout 1200 emu -r"$ROOT" /dis/sh.dis /tmp/styxvm-cli.sh >"$WORK/cli.log" 2>&1 || true
+grep -a 'STYXVM: \(read\|differs\)' "$WORK/cli.log" | sed 's/^/emu: /'
 grep -a 'STYXVM\|vmlinux:\|LINUXGUEST\|^Linux 6\|backend\|^vcpu0\|^platform handled\|^pci 00' "$WORK/cli.log" | sed 's/^/emu: /' | head -40
 
 if ! grep -q 'LINUXGUEST: typed over styx' "$WORK/cli.log" || ! grep -q '^LINUXGUEST: ran' "$WORK/cli.log" \
@@ -80,6 +94,24 @@ if ! grep -q 'LINUXGUEST: typed over styx' "$WORK/cli.log" || ! grep -q '^LINUXG
 	exit 1
 fi
 echo "check-styxvm: M9 pass -- a Linux guest made, assigned a device, run and talked to from hosted Inferno over Styx"
+ndis=`echo $DIS | wc -w | tr -d ' '`
+if grep -aq 'STYXVM: differs' "$WORK/cli.log" || ! grep -aq "STYXVM: read back $ndis files alike" "$WORK/cli.log"; then
+	echo "check-styxvm: read back FAIL -- the host's files did not come back as they are"
+	exit 1
+fi
+echo "check-styxvm: read back pass -- $ndis of the host's files alike over the mount"
+
+# A host interface that cuts TCP segments (the 82599's TSO): its count
+# of them must have moved.
+if t=`grep -a 'VMSERVE: ether0 tso ' "$ROOT/.qemu/vmhost.log" | tail -1 | tr -d '\r'` && [ -n "$t" ]; then
+	echo "host: $t"
+	if [ "`echo $t | awk '{print $4}'`" -gt 0 ] && [ "`echo $t | awk '{print $6}'`" = 0 ]; then
+		echo "check-styxvm: tso pass -- the host's TCP sent segments its 82599 cut"
+	else
+		echo "check-styxvm: tso FAIL"
+		exit 1
+	fi
+fi
 
 # A host interface with receive queues (the 82599, VMHOST_NIC1=ixgbe,
 # RSS on with the bench's processors): the latest report of them must

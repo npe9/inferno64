@@ -7,6 +7,7 @@ extern int	(*netiffeatures)(Chan*);
 enum {
 	/* netiffeatures, Ether.feat */
 	Etxck	= 1<<0,		/* inserts IPv4 TCP and UDP checksums (Block Btxck) */
+	Etso	= 1<<1,		/* cuts IPv4 TCP segments (Block Btso) */
 };
 
 enum

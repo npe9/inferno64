@@ -90,8 +90,9 @@ freeblist(Block *b)
 static void
 blockmeta(Block *to, Block *from)
 {
-	to->flag |= from->flag & (Bipck|Budpck|Btcpck|Bpktck|Btxck);
+	to->flag |= from->flag & (Bipck|Budpck|Btcpck|Bpktck|Btxck|Btso);
 	to->checksum = from->checksum;
+	to->mss = from->mss;
 }
 
 Block*

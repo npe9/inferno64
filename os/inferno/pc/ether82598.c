@@ -340,6 +340,25 @@ typedef struct {
 	ushort	vlan;
 } Td;
 
+/* advanced transmit descriptors (82599), for TSO: their second half */
+enum {
+	Adext		= 1<<29,
+	Adctxt		= 2<<20,	/* context descriptor */
+	Addata		= 3<<20,	/* data descriptor */
+	Adtse		= 1<<31,
+	Adrs		= 1<<27,
+	Adifcs		= 1<<25,
+	Adeop		= 1<<24,
+	Adipv4		= 1<<10,	/* context: TUCMD */
+	Adl4tcp		= 1<<11,
+	Admaclen	= 9,		/* context: shifts */
+	Adl4len		= 8,
+	Admss		= 16,
+	Adtxsm		= 1<<9,		/* data: POPTS */
+	Adixsm		= 1<<8,
+	Adpaylen	= 14,		/* data: shift */
+};
+
 enum {
 	Factive		= 1<<0,
 	Fstarted	= 1<<1,
@@ -413,6 +432,8 @@ struct Ctlr {
 	uchar	vfmac[Maxvf][Eaddrlen];
 	int	vfapi[Maxvf];
 	uint	ntxck;		/* frames whose checksum the hardware put in */
+	uint	ntso;		/* segments the hardware cut */
+	uint	ntsobad;	/* Btso frames not IPv4 TCP, dropped */
 	uint	nmbox;
 	uint	nvfreset;
 	uint	nvflr;
@@ -484,6 +505,7 @@ ifstat(void *a, char *p, char *q)
 			c->rx[i].q, c->rx[i].npkt, c->rx[i].rdfree,
 			c->reg[QR(c->rx[i].q, Rdh)], c->reg[QR(c->rx[i].q, Rdt)]);
 	p = seprint(p, q, "txck %ud\n", c->ntxck);
+	p = seprint(p, q, "tso %ud bad %ud\n", c->ntso, c->ntsobad);
 	if(c->nvf > 0){
 		p = seprint(p, q, "sriov: vfs %d pf pool %d queue %d mbox %ud vfresets %ud vflr %ud msix %ud vfre %.8ux vfte %.8ux\n",
 			c->nvf, c->nvf, c->q, c->nmbox, c->nvfreset, c->nvflr, c->nmsix,
@@ -555,19 +577,29 @@ ctl(Ether *, void *, long)
 
 #define Next(x, m)	(((x)+1) & (m))
 
+/* c->tb's mark for a context descriptor's slot, done with the next's */
+static Block tbctx;
+
 static int
 cleanup(Ctlr *c, int tdh)
 {
 	Block *b;
-	uint m, n;
+	uint m, n, eop;
 
 	m = c->ntd - 1;
-	while(c->tdba[n = Next(tdh, m)].status & Tdd){
-		tdh = n;
-		b = c->tb[tdh];
-		c->tb[tdh] = 0;
+	for(;;){
+		n = Next(tdh, m);
+		eop = n;
+		if(c->tb[n] == &tbctx)
+			eop = Next(n, m);
+		if((c->tdba[eop].status & Tdd) == 0)
+			break;
+		b = c->tb[eop];
+		c->tb[n] = c->tb[eop] = 0;
 		freeb(b);
-		c->tdba[tdh].status = 0;
+		c->tdba[n].status = 0;
+		c->tdba[eop].status = 0;
+		tdh = eop;
 	}
 	return tdh;
 }
@@ -594,6 +626,50 @@ txck(Ctlr *c, Td *t, Block *b)
 	c->ntxck++;
 }
 
+/*
+ * A TCP segment for the hardware to cut (Btso, the MSS in Block.mss):
+ * a context descriptor with the headers' lengths and the MSS, then the
+ * frame in an advanced data descriptor with TSE, which alone has RS.
+ * The TCP checksum field holds the pseudo-header's sum without the
+ * length; the hardware puts each segment's IP length, identification
+ * and checksum, and its TCP sequence number, flags and checksum.
+ * Takes the slots at tdt and the next.
+ */
+static int
+tso(Ctlr *c, uint tdt, Block *b)
+{
+	u32int *d;
+	int iphl, tcphl, hl;
+	uvlong pa;
+
+	if(BLEN(b) < 14+20+20 || b->rp[12] != 0x08 || b->rp[13] != 0x00 || b->rp[14+9] != 6)
+		return -1;
+	iphl = (b->rp[14] & 0xF)*4;
+	if(BLEN(b) < 14+iphl+20)
+		return -1;
+	tcphl = (b->rp[14+iphl+12] >> 4)*4;
+	hl = 14 + iphl + tcphl;
+	if(BLEN(b) <= hl || BLEN(b) > 0xFFFF || b->mss == 0)
+		return -1;
+	d = (u32int*)(c->tdba + tdt);
+	d[0] = iphl | 14<<Admaclen;
+	d[1] = 0;
+	d[2] = Adipv4 | Adl4tcp | Adctxt | Adext;
+	d[3] = tcphl<<Adl4len | b->mss<<Admss;
+	c->tb[tdt] = &tbctx;
+
+	tdt = Next(tdt, c->ntd - 1);
+	pa = PCIWADDR(b->rp);
+	d = (u32int*)(c->tdba + tdt);
+	d[0] = pa;
+	d[1] = pa >> 32;
+	d[2] = BLEN(b) | Addata | Adext | Adtse | Adrs | Adifcs | Adeop;
+	d[3] = Adixsm | Adtxsm | (BLEN(b) - hl)<<Adpaylen;
+	c->tb[tdt] = b;
+	c->ntso++;
+	return 0;
+}
+
 void
 transmit(Ether *e)
 {
@@ -611,23 +687,35 @@ transmit(Ether *e)
 	tdt = c->tdt;
 	m = c->ntd - 1;
 	for(i = 0; i < 8; i++){
-		if(Next(tdt, m) == tdh){
+		/* room for two: a TSO frame's context and data */
+		if(Next(tdt, m) == tdh || Next(Next(tdt, m), m) == tdh){
 			im(c, Itx0);
 			break;
 		}
 		if(!(b = qget(e->oq)))
 			break;
+		if(b->flag & Btso){
+			if(tso(c, tdt, b) < 0){
+				c->ntsobad++;
+				freeb(b);
+				continue;
+			}
+			tdt = Next(Next(tdt, m), m);
+			continue;
+		}
 		t = c->tdba + tdt;
 		t->addr[0] = PCIWADDR(b->rp);
+		t->addr[1] = (uvlong)PCIWADDR(b->rp) >> 32;
 		t->length = BLEN(b);
 		t->cmd = Rs | Ifcs | Teop;
 		t->cso = t->css = 0;
+		t->vlan = 0;
 		if(b->flag & Btxck)
 			txck(c, t, b);
 		c->tb[tdt] = b;
 		tdt = Next(tdt, m);
 	}
-	if(i){
+	if(tdt != c->tdt){
 		c->tdt = tdt;
 		c->reg[Q(c, Tdt)] = tdt;
 	}
@@ -1017,7 +1105,7 @@ txinit(Ctlr *c)
 	for(i = 0; i < c->ntd; i++){
 		b = c->tb[i];
 		c->tb[i] = 0;
-		if(b)
+		if(b != nil && b != &tbctx)
 			freeb(b);
 	}
 	memset(c->tdba, 0, c->ntd * sizeof(Td));
@@ -1481,6 +1569,8 @@ pnp(Ether *e)
 	e->maxmtu = Mtu;
 
 	e->feat = Etxck;	/* legacy descriptors' CSO/CSS, 82598 and 82599 */
+	if(c->type == i82599)
+		e->feat |= Etso;	/* advanced descriptors' TSE */
 	e->arg = e;
 	e->attach = attach;
 	e->ctl = ctl;

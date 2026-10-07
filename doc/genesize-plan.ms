@@ -451,8 +451,29 @@ check-styxvm with
 before M9's run and reads the queues back: "rxq0 pkts 3, rxq1 pkts 95,
 rxq2 pkts 11332, rxq3 pkts 0", "rss pass -- 3 of the host's 4 receive
 queues took packets"; check-vf on the 82599's VFs (one queue) passes.
-Transmit is still one queue.  Still owed: TSO (TCP sending segments
-past the MSS).
+Transmit is still one queue.
+TSO: paid.  TCP over IPv4, once established and checksummed, builds a
+segment of as many MSS's as fit in an IP packet when the interface its
+route leaves by cuts segments (Ipifc.tso, from Ether.feat's Etso);
+the block is marked (Btso, the MSS in the new Block.mss) and its
+checksum field seeded with the pseudo-header's sum without the
+length, as the 82599's datasheet asks.  ipoput4 sends it whole to
+such an interface and drops it for any other (the route changed since;
+TCP sends it again its usual size), devether lets it past maxmtu, and
+ether82598 gives it a context descriptor (MACLEN, IPLEN, L4LEN, MSS)
+and an advanced data descriptor with TSE; a context descriptor's slot
+is freed with the data descriptor after it, whose DD alone says both
+are done.  check-styxvm, its new stage reading the host's 89 Dis files
+back over the mount and comparing them: on
+.CW VMHOST_NIC1=ixgbe
+(SVM, QEMU TCG) "read back pass -- 89 of the host's files alike",
+"VMSERVE: ether0 tso 132 bad 0", "tso pass"; on the 82576 (no TSO),
+read back and M9 pass.  The model is kinder than the hardware here:
+QEMU's net_tx_pkt recomputes the pseudo-header's sum itself, so a
+wrong seed would pass on the bench; the datasheet, not the bench, is
+the evidence for the seed.  check-styxvm also now clears the last
+run's host log first, which had let it start against a stale
+"listening".
 .IP \(bu 2
 #AC: paid.
 .CW scripts/qemu-patches/0010

@@ -176,6 +176,13 @@ enum
 	 * unless the interface's hardware will (ip/ip.c, txcksum).
 	 */
 	Btxck	=	(1<<6),
+	/*
+	 * transmit: an IPv4 TCP segment longer than the MSS, for the
+	 * interface's hardware to cut into segments of mss bytes (TSO).
+	 * Btxck too, but the checksum field holds the pseudo-header's sum
+	 * without the length.
+	 */
+	Btso	=	(1<<7),
 };
 
 struct Block
@@ -189,6 +196,7 @@ struct Block
 	void	(*free)(Block*);
 	u16	flag;
 	u16	checksum;		/* IP checksum of complete packet (minus media header) */
+	u16	mss;			/* Btso: the segments' size */
 };
 #define BLEN(s)	((s)->wp - (s)->rp)
 #define BALLOC(s) ((s)->lim - (s)->base)

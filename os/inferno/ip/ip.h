@@ -312,6 +312,7 @@ struct Ipifc
 
 	uchar	reflect;	/* allow forwarded packets to go out the same interface */
 	uchar	txck;		/* the hardware finishes IPv4 TCP/UDP checksums (Btxck) */
+	uchar	tso;		/* the hardware cuts IPv4 TCP segments (Btso) */
 	uchar	reassemble;	/* reassemble IP packets before forwarding to this interface */
 	
 	uchar	ifcid;		/* incremented each 'bind/unbind/add/remove' */
