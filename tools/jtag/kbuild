@@ -49,6 +49,17 @@ CONF=${CONF:-raspi3b}
 D=$ROOT/os/inferno/$CONF
 [ -d "$D" ] || { echo "kbuild: no $D" >&2; exit 2; }
 LOG=${LOG:-${TMPDIR:-/tmp}/kbuild.$CONF.log}
+#
+# KEEP THE PREVIOUS LOG.  The diagnostic count below is only useful against
+# the one before it, and this file used to overwrite its own log every run --
+# so "did my change add a warning" was unanswerable twice in one session: the
+# count moved 145 -> 146 between two full rebuilds of the same sources, the
+# per-file breakdown printed below is only the top ten, and the file that
+# gained it was outside that cut with no earlier log to diff.
+#
+# One rename, and `diff $LOG.prev $LOG' answers it.
+#
+[ -f "$LOG" ] && mv -f "$LOG" "$LOG.prev"
 
 PATH=$ROOT/MacOSX/arm64/bin:$PATH
 export PATH
@@ -109,6 +120,7 @@ rc=$?
 
 links=`grep -c "^7l -o i$CONF" "$LOG"`
 echo "kbuild: mk exit $rc, 7l links $links, log $LOG"
+[ -f "$LOG.prev" ] && echo "kbuild:   previous run kept at $LOG.prev (diff them for new warnings)"
 
 if [ "$rc" -ne 0 ]; then
 	echo "kbuild: the build failed" >&2
