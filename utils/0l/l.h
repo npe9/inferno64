@@ -338,3 +338,4 @@ void	xdefine(char*, int, long);
 void	xfol(Prog*);
 void	xfol(Prog*);
 void	nopstat(char*, Count*);
+char*	cputimestr(void);

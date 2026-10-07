@@ -27,7 +27,7 @@ asmb(void)
 	Optab *o;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f asm\n", cputime());
+		Bprint(&bso, "%s asm\n", cputimestr());
 	Bflush(&bso);
 	OFFSET = HEADR;
 	seek(cout, OFFSET, 0);
@@ -96,7 +96,7 @@ asmb(void)
 	lcsize = 0;
 	if(!debug['s']) {
 		if(debug['v'])
-			Bprint(&bso, "%5.2f sym\n", cputime());
+			Bprint(&bso, "%s sym\n", cputimestr());
 		Bflush(&bso);
 		switch(HEADTYPE) {
 		case 0:
@@ -116,7 +116,7 @@ asmb(void)
 		if(!debug['s'])
 			asmsym();
 		if(debug['v'])
-			Bprint(&bso, "%5.2f pc\n", cputime());
+			Bprint(&bso, "%s pc\n", cputimestr());
 		Bflush(&bso);
 		if(!debug['s'])
 			asmlc();
@@ -124,7 +124,7 @@ asmb(void)
 	}
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f header\n", cputime());
+		Bprint(&bso, "%s header\n", cputimestr());
 	Bflush(&bso);
 	OFFSET = 0;
 	seek(cout, OFFSET, 0);

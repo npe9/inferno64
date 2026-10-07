@@ -1,5 +1,29 @@
 #include	"l.h"
 
+/*
+ * cputime() returns a double and this fmt has no 'f' verb, so every
+ * "%5.2f" printed the verb literally as "%f%" -- and worse, the double
+ * was never CONSUMED from the varargs, so a following "%s" read part of
+ * a double as a char*: "<nil>" when the misread word was zero, a
+ * SEGFAULT when it was not.  4 of the sites here are followed by %s.
+ * Fixed the same way as 7l (99822b4bf): format it once and pass a
+ * string, rather than adding a float formatter to a loader that wants
+ * one verb for one purpose.
+ */
+char*
+cputimestr(void)
+{
+	static char buf[32];
+	double t;
+
+	t = cputime();
+	if(t < 0)
+		t = 0;
+	snprint(buf, sizeof buf, "%lud.%.2lud", (ulong)t,
+		(ulong)((t - (double)(ulong)t) * 100.0));
+	return buf;
+}
+
 void
 listinit(void)
 {

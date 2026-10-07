@@ -211,7 +211,7 @@ main(int argc, char *argv[])
 
 out:
 	if(debug['v']) {
-		Bprint(&bso, "%5.2f cpu time\n", cputime());
+		Bprint(&bso, "%s cpu time\n", cputimestr());
 		Bprint(&bso, "%ld memory used\n", thunk);
 		Bprint(&bso, "%d sizeof adr\n", sizeof(Adr));
 		Bprint(&bso, "%d sizeof prog\n", sizeof(Prog));
@@ -231,7 +231,7 @@ loop:
 	xrefresolv = 0;
 	for(i=0; i<libraryp; i++) {
 		if(debug['v'])
-			Bprint(&bso, "%5.2f autolib: %s (from %s)\n", cputime(), library[i], libraryobj[i]);
+			Bprint(&bso, "%s autolib: %s (from %s)\n", cputimestr(), library[i], libraryobj[i]);
 		objfile(library[i]);
 	}
 	if(xrefresolv)
@@ -274,7 +274,7 @@ objfile(char *file)
 		file = name;
 	}
 	if(debug['v'])
-		Bprint(&bso, "%5.2f ldobj: %s\n", cputime(), file);
+		Bprint(&bso, "%s ldobj: %s\n", cputimestr(), file);
 	Bflush(&bso);
 	f = open(file, 0);
 	if(f < 0) {
@@ -292,7 +292,7 @@ objfile(char *file)
 	}
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f ldlib: %s\n", cputime(), file);
+		Bprint(&bso, "%s ldlib: %s\n", cputimestr(), file);
 	l = read(f, &arhdr, SAR_HDR);
 	if(l != SAR_HDR) {
 		diag("%s: short read on archive file symbol header", file);
@@ -323,7 +323,7 @@ objfile(char *file)
 	work = 1;
 	while(work){
 		if(debug['v'])
-			Bprint(&bso, "%5.2f library pass: %s\n", cputime(), file);
+			Bprint(&bso, "%s library pass: %s\n", cputimestr(), file);
 		Bflush(&bso);
 		work = 0;
 		for(e = start; e < stop; e = strchr(e+5, 0) + 1) {
@@ -332,7 +332,7 @@ objfile(char *file)
 				continue;
 			sprint(pname, "%s(%s)", file, s->name);
 			if(debug['v'])
-				Bprint(&bso, "%5.2f library: %s\n", cputime(), pname);
+				Bprint(&bso, "%s library: %s\n", cputimestr(), pname);
 			Bflush(&bso);
 			l = e[1] & 0xff;
 			l |= (e[2] & 0xff) << 8;
@@ -1228,7 +1228,7 @@ doprof1(void)
 	Prog *p, *q;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f profile 1\n", cputime());
+		Bprint(&bso, "%s profile 1\n", cputimestr());
 	Bflush(&bso);
 	s = lookup("__mcount", 0);
 	n = 1;
@@ -1315,7 +1315,7 @@ doprof2(void)
 	Prog *p, *q, *q2, *ps2, *ps4;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f profile 2\n", cputime());
+		Bprint(&bso, "%s profile 2\n", cputimestr());
 	Bflush(&bso);
 
 	if(debug['e']){

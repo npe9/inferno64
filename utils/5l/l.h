@@ -424,3 +424,4 @@ long	immaddr(long);
 long	opbra(int, int);
 
 #endif
+char*	cputimestr(void);

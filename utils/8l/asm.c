@@ -95,7 +95,7 @@ asmb(void)
 	uchar *op1;
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f asmb\n", cputime());
+		Bprint(&bso, "%s asmb\n", cputimestr());
 	Bflush(&bso);
 
 	seek(cout, HEADR, 0);
@@ -154,7 +154,7 @@ asmb(void)
 	}
 
 	if(debug['v'])
-		Bprint(&bso, "%5.2f datblk\n", cputime());
+		Bprint(&bso, "%s datblk\n", cputimestr());
 	Bflush(&bso);
 
 	if(dlm){
@@ -176,7 +176,7 @@ asmb(void)
 	lcsize = 0;
 	if(!debug['s']) {
 		if(debug['v'])
-			Bprint(&bso, "%5.2f sym\n", cputime());
+			Bprint(&bso, "%s sym\n", cputimestr());
 		Bflush(&bso);
 		switch(HEADTYPE) {
 		default:
@@ -198,10 +198,10 @@ asmb(void)
 		if(!debug['s'])
 			asmsym();
 		if(debug['v'])
-			Bprint(&bso, "%5.2f sp\n", cputime());
+			Bprint(&bso, "%s sp\n", cputimestr());
 		Bflush(&bso);
 		if(debug['v'])
-			Bprint(&bso, "%5.2f pc\n", cputime());
+			Bprint(&bso, "%s pc\n", cputimestr());
 		Bflush(&bso);
 		if(!debug['s'])
 			asmlc();
@@ -215,7 +215,7 @@ asmb(void)
 		cflush();
 	}
 	if(debug['v'])
-		Bprint(&bso, "%5.2f headr\n", cputime());
+		Bprint(&bso, "%s headr\n", cputimestr());
 	Bflush(&bso);
 	seek(cout, 0L, 0);
 	switch(HEADTYPE) {
