@@ -12443,3 +12443,114 @@ across newlines and then look.
 .B "Each wrong classifier was confident and uniform,"
 and what caught all three was the same control: the survey must classify
 correctly the one case whose answer is already known.
+.NH 2
+H4 catch, CORRECTED: two of my four pieces of evidence do not hold
+.LP
+The section above read the
+.CW usbdwc
+register dump as "the receive endpoint stalled" and read the server process's
+flat CPU time as "blocked".
+.B "Both are wrong, and the driver and the process table say so."
+.NH 3
+The register dump cannot distinguish an idle NIC from a wedged one, and says so
+.LP
+.CW os/inferno/raspi3b/usbdwc.c:497
+and the comment above the print:
+.QP
+An idle NIC re-arms every couple of seconds for as long as the board is up ...
+A rate that decays says the same thing and then stops saying it.
+.LP
+and, about the very registers I decoded:
+.QP
+"hcchar ... hcint 0" says the channel was enabled and nothing happened, which is
+true of an idle NIC and of a wedged one alike, and the two were
+indistinguishable here for a whole afternoon.
+.LP
+.B "So ep3.1 re-arming 1, 10, 100 times is normal background,"
+not a failure signature, and
+.CW chena=0
+with
+.CW "hcint 0"
+is what an idle receive channel looks like.  Applying the driver's own
+criteria to the values it printed:
+.CW hprt
+says the port is up,
+.CW haint
+0 and
+.CW gintsts
+bit 25 clear say no interrupt was raised and dropped, and
+.CW hcdma
+unchanged says the transfer moved nothing.
+.B "That is an idle NIC."
+Nothing arrived because nothing was sent, which is the CONSEQUENCE of the
+address being unreachable rather than its cause.
+.NH 3
+And the server process being "blocked" is not evidence, because it always is
+.LP
+.CW wedgediag 's
+question two samples the whole
+.CW emu
+process's CPU time.  One process serves EVERY session, and abandoned sessions
+accumulate: each JTAG reboot leaves the board's old connection ESTABLISHED on
+the host, because the board vanishes without a FIN.
+.P1
+192.168.8.105.56865   ESTABLISHED   <- the live session
+192.168.8.105.60019   ESTABLISHED   <- abandoned by a reboot
+192.168.8.105.37662   ESTABLISHED   <- abandoned
+192.168.8.105.59470   ESTABLISHED   <- abandoned
+.P2
+.B "So a blocked server thread is the NORMAL state,"
+and flat total CPU over a short sample means only "nothing is happening right
+now" \(em which is equally true of an idle board.  Question two cannot
+distinguish the live session being stuck from the board having nothing to say,
+and I used it as though it could.
+.NH 3
+What actually survives
+.LP
+.IP \(bu
+.B "Question one, which is the one H4 said was the whole experiment."
+The host answers a NEW styx handshake in 0.00s.  The listener is healthy.  That
+holds however many sessions are abandoned and whichever binary is running.
+.IP \(bu
+.B "The board was alive."
+JTAG answered and the tick counter advanced 378523 to 378910 over twenty
+seconds.
+.IP \(bu
+.B "The addresses, which are the real evidence."
+At the hang
+.CW 192.168.8.105
+was 100 per cent packet loss while
+.CW 192.168.8.210
+answered every ping, and all the styx connections ride
+.CW .105 .
+.CW raspi3binit.b:1417
+says
+.CW .105 's
+interface is the LAN9514 that
+.CW etherusb
+serves.
+.IP \(bu
+.B "A reboot cleared it,"
+and the board now holds
+.CW .105
+on
+.CW /net.alt/ether
+with
+.CW "pktin 47840 pktout 25300 errin 0 errout 0" ,
+and both addresses answer.
+.PP
+.B "So the claim is narrower: the board's USB-ethernet address went unreachable while the board was alive and its wifi worked, and a reboot cleared it."
+WHERE in that path it failed is NOT established, and the register dump cannot
+establish it.
+.B "It is still not the host's styx server,"
+which is the part that matters for H4 and which question one reaches on its own.
+.NH 3
+And one new problem, which is mine to fix rather than to diagnose
+.LP
+.B "Abandoned ESTABLISHED sessions accumulate across board reboots,"
+four of them now in a session that has rebooted the board a dozen times.  Each
+holds a server thread that will never be woken.  That is why "is the server
+blocked" has always answered yes, and it is a reason
+.CW wedgediag 's
+question two was believable: it was measuring a true fact about an irrelevant
+session.
