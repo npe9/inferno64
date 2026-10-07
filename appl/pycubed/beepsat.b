@@ -286,14 +286,20 @@ suntask()
 		# transition, not per sample, because this loop runs
 		# forever and a line a sample is a denial of service on
 		# the console.
-		if(rate >= Dtdeadband){
+		# WHAT DETUMBLE SAYS, NOT WHAT THE RATE IS.
+		#
+		# This compared the rate against Dtdeadband itself, so it
+		# depended on a constant the measurements show cannot be
+		# right: the floor the loop reaches varies 1504 to 2098
+		# between runs.  detumbletask sets the flag when the rate
+		# has stopped falling, which is the invariant, and clears
+		# it when the gravity gradient has pumped it back up.
+		if(!detumbled){
 			if(waiting != 1){
 				waiting = 1;
 				debug("sun", sys->sprint("waiting for"
-					+ " detumble: rate %d.%.3d deg/s"
-					+ " against %d.%.3d",
-					rate/1000, rate%1000,
-					Dtdeadband/1000, Dtdeadband%1000));
+					+ " detumble, rate %d.%.3d deg/s",
+					rate/1000, rate%1000));
 			}
 			continue;
 		}
@@ -481,13 +487,10 @@ Dtperiod:	con 1000;	# ms between samples
 # one run in three will miss any single value.
 #
 # 3000 is above the observed maximum by 43 per cent and reaches in three
-# of three.  IT IS A STOPGAP AND THE SHAPE IS WRONG: three degrees a
-# second is a loose detumble, and the reason it has to be loose is that
-# an ABSOLUTE rate cannot say "the loop has finished" when the rate the
-# loop can reach is not a constant.  The handover wants to key on the
-# rate having STOPPED FALLING -- a derivative, which is the thing that
-# is actually invariant here -- and that is a change to the controller
-# rather than to this line.
+# of three.  Three degrees a second is a loose detumble and that is the
+# honest cost: it is the rate below which a loop that has stopped
+# improving may be called finished, and the stall test above is what
+# keeps it from being used as the handover on its own.
 #
 # What it does NOT fix is hysteresis.  Once the torquers stop the
 # gravity gradient pumps the rate back up through the same threshold, so
@@ -495,6 +498,38 @@ Dtperiod:	con 1000;	# ms between samples
 # be both the stop and the restart, and that wants a second threshold
 # rather than a different number here.
 Dtdeadband:	con 3000;	# milli-degrees/s to stop at; see above, a stopgap
+
+# THE HANDOVER NEEDS BOTH A DERIVATIVE AND A RATE, and the measurement
+# is what says so -- I argued for the derivative alone and was wrong.
+#
+# The floor the loop can reach varies 1504 to 2098 between runs, so no
+# absolute rate says "finished" on its own.  But the rate STOPPING
+# FALLING does not say it either: B-dot's authority collapses mid-orbit
+# where the field direction offers nothing to push against, and that
+# plateau is indistinguishable from convergence.  Counted, one run:
+#
+#	converged 24,  stopped-improving-but-held-by-the-floor 68
+#	the held ones at rates up to 8.235 deg/s
+#
+# So the stall test alone would have handed over to pointing at eight
+# degrees a second, sixty-eight times.  Dtdeadband is LOAD-BEARING and
+# not a sanity check, and it still has to be chosen above the top of
+# that 1504-to-2098 spread.  Dtimprove is the milli-degrees of progress per sample
+# that still counts as damping, Dtstall how many samples without it
+# before the loop is declared converged, Dtrestart the rise above the
+# converged rate that puts the torquers back on -- which is the
+# hysteresis a single threshold could not have -- and Dtdeadband above
+# stays as a SANITY FLOOR so a loop stalled at twenty degrees a second
+# is never called detumbled.
+Dtimprove:	con 20;		# milli-deg/s of progress that counts
+Dtstall:	con 12;		# samples without it before converged
+Dtrestart:	con 400;	# rise above the settled rate that resumes
+
+# Set by detumbletask, read by suntask: both are spawned from this one
+# module, so this is shared without a channel.  sun() used to compare
+# the rate against Dtdeadband itself, which made it depend on a constant
+# that cannot be right.
+detumbled: int;
 
 detumbletask()
 {
@@ -504,6 +539,10 @@ detumbletask()
 		return;
 	}
 	settled := 0;
+	settledat := 0;
+	refrate := 0;		# best rate seen since damping began
+	stall := 0;		# samples since it last improved
+	held := 0;		# converged but for the sanity floor
 	for(;;){
 		sys->sleep(Dtperiod);
 		b := hw->imumag();
@@ -539,19 +578,65 @@ detumbletask()
 			# first run of it looked like a controller that
 			# did nothing.
 		}
-		if(rate < Dtdeadband){
+		# CONVERGED, OR STILL IMPROVING?
+		if(refrate == 0 || rate < refrate - Dtimprove){
+			refrate = rate;
+			stall = 0;
+		}else
+			stall++;
+		if(settled){
+			# Back off and the gravity gradient pumps it up
+			# again, so resume on a rise and not on the
+			# absolute rate -- otherwise one number is both
+			# the stop and the restart and it chatters.
+			if(rate > settledat + Dtrestart){
+				settled = 0;
+				detumbled = 0;
+				refrate = rate;
+				stall = 0;
+				debug("detumble", sys->sprint("rate back to"
+					+ " %d.%.3d deg/s, damping again",
+					rate/1000, rate%1000));
+			}else
+				continue;
+		}
+		# WHICH OF THE TWO CONDITIONS IS DECIDING.
+		#
+		# Every convergence in three runs landed between 2.36 and
+		# 2.998 deg/s against a floor of 3.000, which is what a
+		# floor doing the deciding looks like: the stall test
+		# satisfied while the rate is still too high, and
+		# convergence declared the moment it dips under.  If that
+		# is so the floor is load-bearing and not a sanity check,
+		# and this says so rather than leaving it to be inferred
+		# from a suspicious maximum.  Once per transition.
+		if(stall >= Dtstall && rate >= Dtdeadband){
+			if(!held){
+				held = 1;
+				debug("detumble", sys->sprint("stopped"
+					+ " improving at %d.%.3d deg/s, held"
+					+ " by the %d.%.3d floor",
+					rate/1000, rate%1000,
+					Dtdeadband/1000, Dtdeadband%1000));
+			}
+		}else
+			held = 0;
+		if(stall >= Dtstall && rate < Dtdeadband){
 			# Stop commanding.  A magnetorquer left energised
 			# costs power for ever and a satellite that has
 			# stopped tumbling has nothing to damp; this is the
 			# difference between a controller and a load.
-			if(!settled){
-				hw->torque(0, 0, 0);
-				settled = 1;
-				debug("detumble", "settled, torquers off");
-			}
+			hw->torque(0, 0, 0);
+			settled = 1;
+			settledat = rate;
+			detumbled = 1;
+			debug("detumble", sys->sprint("converged at %d.%.3d"
+				+ " deg/s after %d samples without %d.%.3d"
+				+ " of progress, torquers off",
+				rate/1000, rate%1000, stall,
+				Dtimprove/1000, Dtimprove%1000));
 			continue;
 		}
-		settled = 0;
 		if(hw->torque(-(Dtgain*dx)/Dtscale, -(Dtgain*dy)/Dtscale,
 		    -(Dtgain*dz)/Dtscale) < 0){
 			debug("detumble", sys->sprint("torque: %r"));

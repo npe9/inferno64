@@ -2917,3 +2917,41 @@ and
 .BR 30mA ,
 which invented an eclipse defect that was real but whose evidence was
 not.  Anchor on the separator.
+.NH 2
+The derivative is necessary and not sufficient, which I had backwards
+.PP
+The section above argued that the handover should key on the rate having
+stopped falling, because the floor varies forty per cent and a constant
+cannot be right.
+.B "Half of that was right."
+The handover is a derivative test now \- twelve samples without twenty
+milli-degrees of progress \- plus a rate the result must be below, and
+the second is doing more work than the first.
+.PP
+One run, counting which of the two conditions holds the handover back:
+.DS
+.CW "converged 24"
+.CW "stopped improving but held by the floor 68"
+.CW "        the held ones at rates up to 8.235 deg/s"
+.DE
+.B "The stall test alone would have declared the satellite detumbled at eight degrees a second, sixty-eight times in one orbit and a half."
+Because B-dot's authority collapses where the field direction gives it
+nothing to push against, and
+.B "that plateau is indistinguishable from convergence by derivative alone."
+It is the same plateau the 240-second run mistook for divergence,
+read a second way.
+.PP
+So
+.B Dtdeadband
+is load-bearing, not a sanity check, and it still has to sit above the
+top of the measured 1504-to-2098 spread.  What the derivative buys is
+the other half: it stops the loop commanding torque into a rate it has
+stopped being able to improve, and it supplies the restart condition \-
+a 400 milli-degree rise above where it settled \- that one threshold
+could not express.
+.PP
+.B "Three of three runs now converge and hand over,"
+including the trajectory that missed both 1600 and 2000, at 2.565, 2.998
+and 2.473 deg/s \- different rates, which is the point \- with pointing
+issuing 290, 211 and 295 steering commands and the eclipse hold firing
+11, 15 and 12 times.
