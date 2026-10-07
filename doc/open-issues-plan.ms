@@ -11488,3 +11488,181 @@ whole structure sat at 16 and resolved to
 \(em a detail that did not fit the layout I was assuming and that I read past
 instead of stopping on.
 .B "A field that does not fit the layout is a reason to go and get the layout."
+.NH 2
+A7.  7c widened a 32-bit value to 64 with a plain MOV, and dropped it
+.LP
+The mirror of the narrowing case repaired in the same switch, left as
+.CW AMOV .
+.CW gmove 's
+source switch, for a 4-byte integer source with an 8-byte destination, chose
+.CW AMOV
+\(em a 64-bit register move, which keeps whatever is in the top half.  And
+because the opcode came out
+.CW AMOV ,
+the
+.CW samaddr
+test at the end of
+.CW gmove
+then dropped even that move when source and destination landed in one register,
+which is the USUAL case here:
+.CW cgen 's
+.CW OCAST
+arm hints the cast's destination at its source.
+.B "So the conversion compiled to nothing at all."
+.PP
+It bites wherever a 32-bit arithmetic result is used as a pointer offset,
+.B "with or without a cast,"
+because an AArch64 W-register write ZEROES the top half:
+.P1
+uchar*	p2(uchar *b, int x, int y) { return b + x*y; }
+
+	MULW	R6,R5
+	ADD	R0,R5,R0	<- the ZERO-extended product; a
+				   negative one lands 2^32 too high
+
+after:	MULW	R6,R5
+	MOVW	R5,R5		<- 93407ca5, SBFM = SXTW
+	ADD	R0,R5,R0
+.P2
+Plain C, no cast.  That is the shape
+.CW tools/jtag/umulladd
+scans for and the shape that put two wild writes in
+.CW byteaddr() .
+.PP
+.B "The front end was doing its part all along."
+.CW utils/cc/sub.c 's
+.CW arith()
+wraps the int operand in an
+.CW OCAST
+to the pointer's type, and
+.CW ncast[TINT]
+excludes
+.CW BIND
+so the cast is a real node and is not elided as a no-op.  Only this opcode
+choice threw it away.
+.NH 3
+The first version panicked the board, and the guard it needed is the finding
+.LP
+.CW 7c
+synthesises moves of the STACK POINTER into a pointer register
+.B "while typing the source node `long'."
+Widening one of those sign-extends the low half of SP and discards the rest.
+Passing a struct by value builds the outgoing argument area through such a node,
+so
+.CW "allocmemimage(Rect(0,0,1,1), GREY1)"
+turned
+.CW "MOV R31,R2"
+into
+.CW "MOVW R31,R2" ,
+R2 became 0, the arguments were written to address 8, and the next write through
+.CW byteaddr()
+took a data abort at
+.CW 0xfffffffffff418d5
+in
+.CW memimageinit .
+.PP
+.B "The TYPE cannot tell the two apart and the REGISTER can."
+Counted over a full kernel build with a probe in that arm:
+.P1
+source type   reg31?   count   meaning
+LONG          yes       1633   the synthesised SP moves -- ALL of them
+LONG, ULONG   no         ~200  real 32-bit widenings to a pointer
+INT, UINT     no        ~2900  real 32-bit widenings
+.P2
+Nothing but LONG ever has register 31, and
+.CW LONG / ULONG
+to a pointer from a REAL register is a genuine widening that needs the
+extension.  So
+.B "excluding TLONG \(em the obvious reading of the panic \(em would have been both wrong and incomplete."
+.CW 7c
+reserves R31
+.CW ( "reg[REGSP] = 1" ),
+so it never allocates it for a value and a register-31 source is SP or ZR.
+.PP
+.B "The mistyped node is a real latent defect, left in place and written down:"
+it is harmless only because the move is full-width, and
+.CW SZ_LONG
+is 4 here, so ANY rule that keys on a source type will mistreat it.
+.NH 3
+Two confounded changes, and the bisect that separated them
+.LP
+The first panic came from a build that changed TWO things at once: every object
+now came from the new
+.CW 7c
+AND from the new
+.CW 7l
+(A6), because the previous image had been a PARTIAL rebuild whose objects mostly
+predated both.
+.B "That is the same error as comparing a card boot with a JTAG boot,"
+which this plan records, made again within the hour.
+.PP
+Separated properly: a full rebuild with the new
+.CW 7l
+and the OLD
+.CW 7c
+boots, so the
+.CW 7c
+change was the single variable.  Bisecting by group then put it in
+.CW "libmemdraw / libmemlayer / libdraw" ,
+and the codegen diff for
+.CW draw.c
+was nothing but
+.CW "MOV R31,Rx"
+becoming
+.CW "MOVW R31,Rx" .
+.NH 3
+kbuild needed KBUILD_FULL, or none of this was testable
+.LP
+Removing the two targets is enough for a SOURCE change.
+.B "It is not enough for a COMPILER change:"
+the objects are newer than the sources either way, so
+.CW mk
+recompiles nothing and the kernel is relinked from objects the old compiler
+produced.
+.B "That failure is worse than the one kbuild already guards,"
+because the link DOES happen, so the link-count check passes and the image looks
+fresh.  Deleting the objects is not the remedy \(em this tree's
+.CW mk
+short-circuits on a missing object \(em so
+.CW KBUILD_FULL=1
+touches the sources instead, 1056 of them across
+.CW os/inferno
+and the ten libraries the
+.CW 7l
+line names.
+.NH 3
+Verified, with a like-for-like performance pair
+.LP
+Build 1791336973, full rebuild, installed from the card:
+.CW tests/efs-fault
+21 ok 0 fail,
+.CW drawink
+all checks passed,
+.CW gfxstress
+fill/mask/ellipse all clean,
+.CW tests/kencc-narrowcast.sh
+and
+.CW tests/7l-bigconst.sh
+both exit 0, 145 build diagnostics all pre-existing and no errors.
+.PP
+.B "And the cost, measured against an arm built the same way,"
+because the first comparison I reached for was against the partial-rebuild
+image and showed a 6% LOSS that was not an experiment at all:
+.P1
+                      gfxstress fill, ops/s, 3 runs each
+full rebuild, OLD 7c    38800  38400  41600   median 38800
+full rebuild, NEW 7c    41200  42400  42400   median 42400
+kernel8.img size      2646328 -> 2662712 (+16384, +0.6%)
+.P2
+.B "So the added extensions cost nothing measurable on this workload"
+\(em the fixed arm's median is 9% HIGHER, which at this spread is not a speedup
+claim either, only the absence of a cost.  The within-build spread is 2.9%,
+matching this plan's earlier figure, and the two ranges barely overlap in the
+wrong direction for a cost.
+.PP
+What is NOT claimed: that the 98 remaining
+.CW umulladd
+candidates are closed.  This is the compiler fix for the class, so new code
+cannot produce it, but every object in the tree has to be rebuilt by this
+compiler for the existing instances to go away, and only the raspi3b kernel has
+been.
