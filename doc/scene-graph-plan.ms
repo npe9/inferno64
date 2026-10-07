@@ -113,6 +113,16 @@ does not, which is what the walk's invariants already said \(em
 draws it. So the shared walk is very nearly all node-capable, and the
 direct painter that breaks it is one widget.
 .PP
+.B "Confirmed in the kernel,"
+which is where this has to be true: the same test under QEMU on the Pi
+3B kernel gives
+.CW "separator 2 0"
+and
+.CW "canvas 4 0"
+with every other type joining, 91 ok 0 fail 2 skipped. The frame and
+label counts differ (34 and 10 against 36 and 12) only because two
+cases skip there.
+.PP
 .B "But canvas is the finding, and it is not a direct painter."
 .CW tkdrawcanv()
 calls
