@@ -12063,3 +12063,54 @@ right answer; only the fourth, 0x12A05F200, needed more than 32 bits and would
 have compared against \-0x2A05F200 instead.
 .B "No site in the tree has that shape,"
 which is why the audit finds one victim and not several.
+.NH 3
+A7 is wider than its commit says: it fixed the NARROWING test too
+.LP
+.CW 55af85de3
+describes a widening fix.  Measured afterwards, with a runner that invokes each
+test directly:
+.P1
+                          pre-55af85de3   after
+tests/kencc-narrowcast.sh       exit 2    exit 0
+tests/kencc-widencast.sh        exit 2    exit 0
+.P2
+.B "narrowcast's v1 is the same gmove arm as widencast's p2."
+That test calls it a NARROWING defect because the cast narrows a 64-bit
+expression:
+.P1
+a = i->data->bdata+i->zero+(s32)(sizeof(u32)*p.y*i->width);
+.P2
+but the instruction that was missing is the
+.CW SXTW ,
+so it is one defect under two names.  The two tests are kept separate because
+each documents its own hunt, and both now say so.
+.PP
+.B "Which makes narrowcast's own closing advice live."
+Its header says: "if it now works, the 32-bit-operand workarounds can be
+revisited \(em
+.CW libmemdraw/alloc.c
+.CW byteaddr ,
+and whatever else cites this test".
+.B "Not done,"
+and deliberately: the workaround is correct, it is defensive, and removing a
+working guard for tidiness needs a board and a reason.  Recorded as available.
+.NH 3
+And the reason I had this wrong for an hour
+.LP
+Earlier in the session I reported
+.CW narrowcast
+as PASSING on the pre-fix compiler.  That came from
+.P1
+sh tests/kencc-narrowcast.sh 2>&1 | tail -3; echo "rc=$?"
+.P2
+.B "$? after a pipeline is the LAST command's status,"
+and
+.CW tail
+always succeeds, so the test's exit 2 read as 0.  Every arm of that control
+reported the same status, which is the tell and which I did not read.
+.PP
+It was found by building
+.CW tests/toolchain ,
+which runs each test WITHOUT a pipe.
+.B "A runner that invokes tests directly caught what hand-running them missed,"
+which is an argument for the runner independent of convenience.
