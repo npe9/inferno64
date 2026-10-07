@@ -11781,3 +11781,38 @@ this tree records separately for
 .CW 6c
 (unsigned narrowing casts on amd64) and which is a different mechanism in the
 same direction.
+.NH 3
+H4's one labelled gap is closed: devcons GC-COUNTS is verified
+.LP
+H4 said "devcons's GC-COUNTS reader is UNVERIFIED in these builds" because the
+one attempt to trigger it left the poller unanswering.  That attempt went to
+.CW /dev/consctl .
+The
+.CW Cmdtab
+is under
+.CW Qsysctl .
+With the right file it works, first try, on build 1791336973 from the card:
+.P1
+echo sched > /dev/sysctl
+
+GC-COUNTS runs 5251832 sweeps 48733 epochs 8818 halted 6, gchalt 0
+ gcdepth 0 depthmax 17 (guard 64), destroys 376 inspects 227815128,
+ quantum-open 0 (must be 0), stw 5251832 waited 0 gaveup 0,
+ runq-other 0 runq-freed-queued 0 broken-chains 0
+ bad-ptrs-rejected 0 ptr-swallowed fwd 3 (by-gc 0) back 305
+ (by-gc 303) resumed-stale ok 0 brk 0 idle 0 (all 3 must be 0 now)
+ ptr-repaired 5 jitrefsatomic 1 cflag 1
+.P2
+.B "Both readers for H4's counters are now exercised,"
+and this one agrees with
+.CW vmheld :
+broken chains 0, all three
+.CW resumed-stale
+0, and the mutator's swallows being repaired rather than breaking the sweep.
+.PP
+It also re-confirms the H4 fix on a kernel the fixed COMPILER built, which the
+original measurement could not: 305 backward swallows of which 303 are the
+collector's own, 2 from the mutator plus 3 forward, 5 repaired, 0 breaks.
+.PP
+So the only thing left of the consctl episode is the hang itself, which stays
+undiagnosed with a refusal in front of it.
