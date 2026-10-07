@@ -7427,3 +7427,138 @@ or
 on the sender means its own receive path was not in a recovery state
 that might have swallowed the acknowledgement.  So the frame was keyed,
 and what happened to it is a question for the other end.
+.NH 2
+The receiver's numbers, and the frame the driver threw away itself
+.PP
+The run after that one had the watchdog
+.IR bigread ()
+spawns, and it printed what the section above could not get:
+.DS
+.CW "gnd: rxstall 0 rxpartial 1"
+.DE
+.B "The ground's driver saw the third frame's length byte and did not deliver the frame."
+.B rxpartial
+is incremented in one place, where
+.B NUM_RXBYTES
+says the FIFO holds fewer bytes than the length byte just read from it
+claimed, and what the driver did there was flush the FIFO and count the
+loss.
+.PP
+So the tail frame was not lost on the air.
+.B "It reached the part, and the driver destroyed it."
+.PP
+The reason it had to is in the shape of the part: the length byte comes
+off the front of the packet and
+.B "cannot be pushed back."
+Having read it, a driver that finds the payload short has three
+choices \- read bytes the FIFO has not got, which underflows the part
+and lands it in RX_FIFO_ERR; deliver a frame padded with rubbish; or
+throw the frame away.  It chose the third, which is the only safe one of
+those three, and
+.B "on the older kernel there was no check at all,"
+which is how 273 bytes became 271: it read past the end.
+.NH 2
+A fourth choice, which is to keep the length
+.PP
+.B "The length byte can be kept in the driver instead of in the FIFO."
+.B rxpend
+holds it, the drain loop's first act is to look there, and a frame whose
+payload has not arrived is finished on a later pass rather than flushed.
+That is the same shape as the loop around it \- come back when there is
+more \- and it needs three things that are each worth stating, because
+each of them is a way to make the receiver worse:
+.IP \(bu
+.B "A giveup."
+A length left pending for ever blocks every later frame, because the
+next packet's bytes would be read as this one's payload.
+.I Cc1120tick ()
+tries the drain first on every one of its once-a-second passes and gives
+up after three seconds, which is past generous: a full 125-byte payload
+is 0.83 seconds of air at 1200 baud.
+.IP \(bu
+.B "A flush clears it."
+.I Rxarm ()
+does, and so does the watchdog's own error branch, which strobes for
+itself and does not come through
+.IR rxarm ().
+A FIFO error during a pended frame that left the length behind would
+make the next packet's bytes be read as this one's payload \- the exact
+corruption the whole change exists to prevent.
+.IP \(bu
+.B "The arithmetic differs between the two cases."
+NUM_RXBYTES includes the length byte on the ordinary path and does not
+on the resumed one, so every gate that compares them has a
+.CW "pended? 0: 1"
+in it.
+.B rxunder
+counts a payload read past the end of the FIFO and should be 0 by
+construction; a reading above zero means those three places have drifted
+apart.
+.NH 2
+Which is not yet shown to deliver a frame, and that distinction matters
+.PP
+.B bigread ()
+completed on the next run, 273 bytes twice and identical, where the run
+before it timed out; and three runs in a row have completed since.  The
+tail frame arrived:
+.DS
+.CW "gnd: styx: down 109 off the air (359 so far)"
+.CW "gnd: styx: down 109 off the air (468 so far)"
+.CW "gnd: styx: down  66 off the air (534 so far)"
+.DE
+.PP
+.B "But it arrived eleven seconds after it was sent, which is a retransmission and not a resume."
+A counter was added to settle it \-
+.B resume ,
+the number of pended frames whose payload turned up and were read out \-
+and
+.B "it reads 0 on every live run."
+.PP
+So the honest account is narrower than the result looks.  What is
+established is that
+.B "the driver no longer flushes a FIFO it is only looking at mid-packet,"
+and the frame then survives in the part long enough for AX.25 to
+recover it.  What is
+.I not
+established is that the keep-and-resume path has ever delivered
+anything.
+.PP
+The partials that have been seen since are a different animal, and the
+stat line now says so:
+.DS
+.CW "rxstall 2 rxpartial 2 resume 0 rxstale 2 (14 of 82) rxunder 0"
+.DE
+Two frames given up on, the last of them a length byte of 82 with 14
+payload bytes still in the FIFO three seconds later, and
+.B "rxstall 2 against rxpartial 2 says both were found by the once-a-second stall detector"
+rather than by a packet's own interrupt.  A FIFO frozen at 15 bytes is a
+truncated transmission, which both behaviours handle.  The original
+fault had
+.B "rxstall 0 rxpartial 1" :
+an edge-driven partial, a different population, and
+.B "it has not recurred since the change went in."
+.NH 2
+So the comparison is an instrument and not an argument
+.PP
+.B "Running the old behaviour from an OLD KERNEL compares every other difference between two builds at the same time,"
+which is how this bench has produced three confident wrong findings
+already.  So the old behaviour is a
+.B pend
+verb on
+.BR #W/ctl ,
+defaulting to 1, and a
+.B pend
+key in
+.I /lib/radio
+that the station writes at boot and prints.  One build, one line of
+data, and both boards print which arm they are in so a half-armed run
+cannot be scored as a clean one.
+.PP
+.B tools/radio/pendtrial.py
+alternates the arms rather than blocking them, because the bench drifts:
+six runs of one followed by six of the other attributes the afternoon to
+the change.  And it says which rows could have shown anything \- a run
+whose only partials came from the stall detector did not meet the fault,
+so
+.B "a table that reads three-for-three against three-for-three is inconclusive and the harness prints that it is"
+rather than leaving the reader to notice.

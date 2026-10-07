@@ -744,13 +744,23 @@ calibrate(call, peer, role: string): (string, string, string)
 		return (call, peer, role);
 	}
 	sys->print("styx: uid %s\n", uid);
-	want := array[6] of string;
+	want := array[7] of string;
 	want[0] = "ppb";
 	want[1] = "rssioffset";
 	want[2] = "csthr";
 	want[3] = "call";
 	want[4] = "peer";
 	want[5] = "role";
+	# A CONTROL, carried as data so the two arms are one build.
+	#
+	# pend=1 keeps a half-read frame and finishes it when the rest
+	# of the payload arrives; pend=0 flushes the FIFO at once, which
+	# is what the driver did before.  The whole claim that keeping it
+	# is better rests on running both, and running the old behaviour
+	# from an OLD KERNEL compares every other difference between the
+	# two builds at the same time.  This way the kernel is identical
+	# and the only change is this line.
+	want[6] = "pend";
 	(got, nil, bad, err) := radiocal->current(Radiocal->Cal, uid, want);
 	if(bad > 0)
 		sys->print("styx: %d unparsable pairs in %s\n", bad,
@@ -767,6 +777,14 @@ calibrate(call, peer, role: string): (string, string, string)
 			put(ctl, "rssioffset " + got[1]);
 		if(got[2] != nil)
 			put(ctl, "csthr " + got[2]);
+		if(got[6] != nil){
+			if(put(ctl, "pend " + got[6]))
+				sys->print("styx: pend %s\n", got[6]);
+			else
+				sys->print("styx: pend %s refused: %r\n",
+					got[6]);
+		}else
+			sys->print("styx: pend 1 (the driver's default)\n");
 	}
 	if(got[3] != nil)
 		call = got[3];

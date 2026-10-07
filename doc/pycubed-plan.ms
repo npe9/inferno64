@@ -2657,6 +2657,27 @@ if rxpartial climbs when the two bytes go missing, the diagnosis is
 confirmed, and if it stays at zero the fault is elsewhere \- in the
 device's framing or on the air.
 .B "Neither can be tested without a board."
+.PP
+.B "It climbed, and the diagnosis was confirmed and then outgrown."
+A ground station reported
+.B "rxstall 0 rxpartial 1"
+at the moment a 284-byte reply's third frame failed to arrive, so the
+frame reached the part and the driver destroyed it.
+.B "Flushing was the right answer to the wrong question:"
+the length byte cannot be pushed back into the FIFO, but it can be kept
+in the DRIVER, and the frame finished on a later pass instead of thrown
+away.  The receive path does that now;
+.B rxpartial
+has stopped meaning "a frame was dropped" and means "a frame was held",
+with
+.B resume ,
+.B rxstale
+and
+.B rxunder
+beside it saying which of those ended well.  See
+.IR radio (3)
+and the end of
+.B doc/radio-plan.ms .
 .NH 2
 A warning that had been there long enough to be scenery
 .PP

@@ -68,6 +68,21 @@
 #	csthr		dBm, AGC_CS_THR
 #	rssislope	dB of RSSI per dB of transmitter, from radiocal(1)
 #	slopesource	what measured the slope, because it matters
+#	pend		0 to make the receive path FLUSH a frame whose
+#			payload has not all arrived, which is what the
+#			cc1120 driver did for months, instead of keeping
+#			the length byte and finishing the frame when the
+#			rest turns up.  Absent means 1, which is what a
+#			station should run.
+#
+#			It is here, and not only in the driver, because
+#			the claim that keeping is better has to be
+#			measured against the old behaviour -- and running
+#			the old behaviour from an OLD KERNEL compares
+#			every other difference between two builds at the
+#			same time.  This way the kernel is byte-identical
+#			between the arms and this line is the whole
+#			change.  tools/radio/pendtrial.py alternates them.
 #
 
 radio=cc1120 uid=2037303959315008002f0022

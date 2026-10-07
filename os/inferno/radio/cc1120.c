@@ -540,6 +540,19 @@ rxarm(Cc1120 *rr)
 		strobe(rr, Sidle);
 		strobe(rr, Sfrx);
 		strobe(rr, Sftx);
+		/*
+		 * And the half-read frame goes with the FIFO it was in.
+		 * rxpend is a length byte that has been popped and whose
+		 * payload is still arriving; flushing throws that payload
+		 * away, and keeping the length would make the next frame's
+		 * bytes be read as this one's.
+		 *
+		 * Every site that flushes has to do this.  Most of them
+		 * come through here, but cc1120tick's error branch strobes
+		 * for itself and so clears it for itself -- grep rxpend
+		 * before adding another flush.
+		 */
+		rr->rxpend = 0;
 	}
 	strobe(rr, Srx);
 }
@@ -608,6 +621,7 @@ cc1120tick(void)
 			strobe(rr, Sfrx);
 			strobe(rr, Sftx);
 			strobe(rr, Srx);
+			rr->rxpend = 0;	/* flushed with the FIFO; see rxarm */
 			s->unlock(s);
 			rr->lastnavail = 0;
 			continue;
@@ -644,6 +658,46 @@ cc1120tick(void)
 		 */
 		navail = rdx(rr, Xnumrxbytes);
 		s->unlock(s);
+		/*
+		 * A HALF-READ FRAME IS FINISHED AS SOON AS ITS BYTES ARE
+		 * THERE, and given up on if they never come.
+		 *
+		 * rxpend is a length byte the receive path has popped off
+		 * a frame whose payload was still in the air.  Its own
+		 * falling edge is what ordinarily brings the driver back,
+		 * within milliseconds; this is the backstop for when that
+		 * edge is lost, and it has to come BEFORE the stall test
+		 * below, which only fires on two equal samples a second
+		 * apart and would otherwise be the only way back in.
+		 *
+		 * Giving up matters as much as finishing.  A length left
+		 * pending for ever blocks every later frame, because the
+		 * next packet's bytes would be read as this one's payload.
+		 * Three seconds is past generous -- a full 125-byte frame
+		 * is 0.83 seconds of air at 1200 baud -- and the drain
+		 * above is tried first on every one of those ticks, so
+		 * the giveup cannot race the arrival it is waiting for.
+		 */
+		if(rr->rxpend > 0){
+			if(navail >= rr->rxpend){
+				rr->lastnavail = 0;
+				cc1120interrupt((Radio*)rr);
+				continue;
+			}
+			if(m != nil && (long)(m->ticks - rr->rxpendtick) > 3*HZ){
+				s->lock(s);
+				rr->rxstaleln = rr->rxpend;
+				rr->rxstalenavail = navail;
+				rr->rxpend = 0;
+				rr->nrxstale++;
+				strobe(rr, Sidle);
+				strobe(rr, Sfrx);
+				strobe(rr, Srx);
+				s->unlock(s);
+				rr->lastnavail = 0;
+				continue;
+			}
+		}
 		if(navail > 0 && navail == rr->lastnavail){
 			rr->nrxstall++;
 			rr->lastnavail = 0;
@@ -951,7 +1005,7 @@ cc1120interrupt(Radio *r)
 	Spidev *s;
 	Block *b;
 	ulong tick;
-	int n, i, st, navail, ndrain;
+	int n, i, st, navail, ndrain, pended;
 
 	rr = (Cc1120*)r;
 	s = rr->spi;
@@ -1011,6 +1065,7 @@ cc1120interrupt(Radio *r)
 	 * spin.  Four is the FIFO.
 	 */
 	for(ndrain = 0; ndrain < Rxdrain; ndrain++){
+		pended = 0;
 		/*
 		 * AND ONLY COMPLETE FRAMES, which is what draining has to
 		 * be careful about and the one-packet-per-edge version
@@ -1060,42 +1115,87 @@ cc1120interrupt(Radio *r)
 			break;
 		}
 
-		/* the length byte first, then that many */
-		s->select(s, 1);
-		s->byte(s, Hread | Hburst | Rfifo);
-		n = s->byte(s, 0);
-		if(n < 1 || n > Ccmaxpayload){
-			s->select(s, 0);
-			rr->ncrcerr++;
-			strobe(rr, Sfrx);
-			strobe(rr, Srx);
-			s->unlock(s);
-			break;
+		/*
+		 * THE LENGTH BYTE FIRST, UNLESS ONE IS ALREADY IN HAND.
+		 *
+		 * A frame whose payload had not all arrived used to be
+		 * flushed here, because the length byte has been popped
+		 * and cannot be put back.  That loses a frame: measured,
+		 * a 284-byte Styx reply went out as 109, 109 and 66, the
+		 * receiver took the first two, dropped the third, and the
+		 * conversation timed out with rxpartial 1 naming it.
+		 *
+		 * So the length is kept instead and the frame finished on
+		 * a later pass, which is the same shape as the drain loop
+		 * around it: come back when there is more, rather than
+		 * reading what is not there or throwing away what is.
+		 */
+		if(rr->rxpend > 0){
+			pended = 1;
+			n = rr->rxpend;
+			if(navail < n){
+				s->unlock(s);
+				break;
+			}
+			rr->rxpend = 0;
+			rr->nrxresume++;
+			s->select(s, 1);
+			s->byte(s, Hread | Hburst | Rfifo);
+		}else{
+			s->select(s, 1);
+			s->byte(s, Hread | Hburst | Rfifo);
+			n = s->byte(s, 0);
+			if(n < 1 || n > Ccmaxpayload){
+				s->select(s, 0);
+				rr->ncrcerr++;
+				strobe(rr, Sfrx);
+				strobe(rr, Srx);
+				s->unlock(s);
+				break;
+			}
+			/*
+			 * navail counted the length byte, so the payload
+			 * needs navail - 1 of it.  Not there yet: keep the
+			 * length, note when, and come back.
+			 */
+			if(navail - 1 < n){
+				s->select(s, 0);
+				rr->nrxpartial++;
+				if(rr->pendon == 0){
+					strobe(rr, Sfrx);
+					strobe(rr, Srx);
+					s->unlock(s);
+					break;
+				}
+				rr->rxpend = n;
+				rr->rxpendtick = m != nil? m->ticks: 0;
+				s->unlock(s);
+				break;
+			}
 		}
 		/*
-		 * AND THE PAYLOAD HAS TO BE THERE.
+		 * AND THE PAYLOAD IS THERE.
 		 *
-		 * navail above said only that the FIFO held at least one
-		 * byte, and what followed read 1 + n of them.  The packet
-		 * interrupt is suppressed on this board and the FIFO is
-		 * drained by a clock watchdog, so it is looked at
-		 * MID-PACKET as a matter of course -- at 1200 baud a
-		 * 109-byte frame is 730 milliseconds in the air and the
-		 * watchdog runs many times inside that.  Reading past the
-		 * end underflows the part: the rest of the payload is
-		 * rubbish and the FIFO lands in RX_FIFO_ERR.
+		 * Which both branches above have just established -- the
+		 * ordinary one counted the length byte inside navail, the
+		 * pended one did not -- so this never fires, and it is
+		 * here for the arithmetic that mixes the two cases rather
+		 * than for the condition.
 		 *
-		 * The length byte is already consumed and cannot be put
-		 * back, so a packet that is not all there is flushed and
-		 * counted rather than delivered.  Losing it costs an
-		 * AX.25 retransmission, which is what the connected mode
-		 * is for; delivering it corrupt costs a diagnosis, and
-		 * doc/pycubed-plan.ms has one open that this is a
-		 * candidate for.
+		 * The fault it guards is real and was the reason for all
+		 * of this.  The packet interrupt is suppressed on this
+		 * board and the FIFO is drained by a clock watchdog, so
+		 * it is looked at MID-PACKET as a matter of course: at
+		 * 1200 baud a 109-byte frame is 730 milliseconds in the
+		 * air and the watchdog runs many times inside that.
+		 * Reading past the end underflows the part -- the rest of
+		 * the payload is rubbish and the FIFO lands in
+		 * RX_FIFO_ERR.  nrxunder should stay zero; if it does not,
+		 * the two gates and this one have drifted apart.
 		 */
-		if(navail < 1 + n){
+		if(navail < n + (pended? 0: 1)){
 			s->select(s, 0);
-			rr->nrxpartial++;
+			rr->nrxunder++;
 			strobe(rr, Sfrx);
 			strobe(rr, Srx);
 			s->unlock(s);
@@ -1158,7 +1258,16 @@ cc1120interrupt(Radio *r)
 		 * an underflow that puts the model into RXERR and loses the
 		 * packet.  The count is the fact; the register is an intention.
 		 */
-		if((rd(rr, Rpktcfg1) & Appendstatus) && navail >= 1 + n + 2){
+		/*
+		 * navail was sampled before the length byte was read, so
+		 * it covers 1 + n + 2 on the ordinary path and only
+		 * n + 2 when the length came from rxpend and the count
+		 * is all payload.  Getting this wrong would read two
+		 * bytes the FIFO has not got, which underflows the part
+		 * -- the fault this whole path exists to avoid.
+		 */
+		if((rd(rr, Rpktcfg1) & Appendstatus)
+		   && navail >= n + 2 + (pended? 0: 1)){
 			rr->rxstatus[0] = s->byte(s, 0);
 			rr->rxstatus[1] = s->byte(s, 0);
 		}
@@ -1811,6 +1920,31 @@ cc1120ctl(Radio *r, char *buf, int n)
 		val = ext? rdx(rr, addr): rd(rr, addr);
 		s->unlock(s);
 		print("%s 0x%.2x 0x%.2x\n", ext? "regx": "reg", addr, val);
+		return n;
+	}
+	if(strcmp(f[0], "pend") == 0 && nf == 2){
+		/*
+		 * KEEP A HALF-READ FRAME, OR FLUSH IT.  A CONTROL, not a
+		 * tuning knob.
+		 *
+		 * The receive path pops a length byte off a frame whose
+		 * payload may still be in the air, and cannot push it
+		 * back.  With pend 1 it keeps the length and finishes the
+		 * frame when the rest turns up; with pend 0 it flushes the
+		 * FIFO at once, which is what this driver did for months.
+		 *
+		 * Both are here because the change was measured against a
+		 * run of the old behaviour, and a run of the old behaviour
+		 * on a DIFFERENT BUILD compares two changes at once.  One
+		 * build and one ctl write compares one.  Nothing on the
+		 * board writes this, so a station boots with pending on.
+		 */
+		rr->pendon = atoi(f[1])? 1: 0;
+		if(rr->pendon == 0){
+			s->lock(s);
+			rr->rxpend = 0;
+			s->unlock(s);
+		}
 		return n;
 	}
 	if(strcmp(f[0], "pktlen") == 0 && nf == 2){
@@ -3574,7 +3708,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"rxoverflow %ud txunderflow %ud txnever %ud\n"
 		"intr high %ud low %ud\n"
 		"ccabusy %ud ccamode %d fifoerr %ud watch %ud of %ud\n"
-		"rxstall %ud rxpartial %ud\n"
+		"rxstall %ud rxpartial %ud resume %ud rxstale %ud (%d of %d) rxunder %ud\n"
 		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n"
 		"ppb %d\n",
 		rr->partnum, rr->partversion,
@@ -3594,7 +3728,8 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->nintrhigh, rr->nintrlow,
 		rr->nccabusy, ccamode, rr->nfifoerr,
 		rr->nfifowatch, rr->nwatchtick,
-		rr->nrxstall, rr->nrxpartial,
+		rr->nrxstall, rr->nrxpartial, rr->nrxresume,
+		rr->nrxstale, rr->rxstalenavail, rr->rxstaleln, rr->nrxunder,
 		pacfg2, pacfg2 & Papowerramp,
 		patenths/10, patenths < 0? -patenths%10: patenths%10,
 		/*
@@ -3917,6 +4052,7 @@ cc1120init(Spidev *s, int irq)
 		return nil;
 	}
 	rr->present = 1;
+	rr->pendon = 1;		/* keep half-read frames; see the pend verb */
 	/*
 	 * On the watchdog's list, and the clock link added once however
 	 * many parts are fitted.  See cc1120tick.

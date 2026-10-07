@@ -570,6 +570,28 @@ as
 and
 .BR pktlen .
 .TP
+.BI pend " 0|1"
+Keep a half-read frame, or flush it.
+.B "A control, not a tuning knob."
+With
+.B "pend 1"
+\- the default, and what a station should run \- a length byte whose
+payload has not all arrived is kept and the frame finished on a later
+pass; with
+.B "pend 0"
+the FIFO is flushed there and the frame lost, which is what this driver
+did for months.
+.PP
+Both are here because the change had to be measured against the old
+behaviour, and
+.B "running the old behaviour from an OLD KERNEL compares every other difference between the two builds at once."
+One build and one ctl write compares one thing.
+.IR Radiocal (1)'s
+.B pend
+key carries it per board so the arms of a trial are the same image, and
+.B tools/radio/pendtrial.py
+alternates them.
+.TP
 .BI regx " addr [value]"
 The extended register space, as
 .B reg
@@ -708,6 +730,112 @@ The counter that was supposed to report it,
 .BR rxoverflow ,
 is incremented inside the handler the fault stops being called, so it
 read 0 for the entire time the part was stuck.
+.SS "A frame whose payload has not arrived yet"
+.PP
+.B "The FIFO is looked at mid-packet as a matter of course."
+At 1200 baud a 109-byte frame is 730 milliseconds in the air, the
+handler is also driven by a once-a-second watchdog, and the length byte
+comes off the front of the packet \- so the ordinary case is a length in
+hand and a payload still arriving.
+.PP
+That length cannot be pushed back into the FIFO, and what the driver
+used to do with it was flush the FIFO and count the loss.
+.B "Measured, that lost the tail of every chopped message:"
+a 284-byte Styx reply left the satellite as 109, 109 and 66, the ground
+delivered the first two frames and dropped the third, and the mount
+driver then sat in
+.B read
+for a message whose last 66 bytes were never coming.  There is no
+timeout in it to rescue that.
+.B "The end that loses a frame is the end that goes quiet, not the end that errors."
+.PP
+So the length is
+.I kept
+and the frame finished on a later pass, which is the shape of the drain
+loop around it: come back when there is more, rather than reading what
+is not there or throwing away what is.
+.PP
+.B "What keeping has NOT yet been seen to do is deliver that frame."
+.B resume
+below counts the frames whose payload turned up and were read, and it
+has read 0 on every live run so far: the 66-byte tail that arrived on
+the next run came 11 seconds after it was sent, which is an AX.25
+retransmission and not a resume.  So what is established is narrower
+than it looks \- the driver no longer flushes a FIFO it is only
+looking at mid-packet, and the frame then survives long enough for the
+link layer to recover it \- and
+.B tools/radio/pendtrial.py
+exists to measure the rest, because a run of the old behaviour from an
+old kernel compares every other difference between two builds at once.
+.PP
+Four counters report it.
+.TP
+.B rxpartial
+A frame was held part-read.
+.B "This is the ordinary thing and not a fault."
+It counts the times a length byte was kept because its payload had not
+all arrived; the frame is finished by the packet's own falling edge
+within milliseconds, or by the watchdog within a second.  A reader who
+takes a non-zero
+.B rxpartial
+for damage will chase the mechanism that prevents it.
+.TP
+.B resume
+Pended frames whose payload turned up and were read out.
+.B "This is the number that says the mechanism delivers anything,"
+and it is separate from
+.B rxpartial
+for that reason: a non-zero
+.B rxpartial
+with
+.B resume
+0 means every frame that was held was held in vain, and the good that
+keeping does is only that the FIFO was not flushed.
+.TP
+.B rxstale
+A kept length was
+.I given up on
+after three seconds.  That is past generous \- a full 125-byte payload
+is 0.83 seconds of air \- so this is a transmitter that stopped
+mid-packet or a FIFO flushed underneath the driver, and it costs the
+frame.  The giveup has to exist: a length left pending for ever would
+make the next packet's bytes be read as this one's payload.
+.B "It is the count to watch, and it should be 0."
+.TP
+.B rxunder
+The payload was shorter than the length said.
+.B "By construction this cannot happen"
+\- the two gates above establish it before any payload byte is read \-
+and it is counted because the arithmetic differs between the two cases
+(the ordinary one has the length byte inside NUM_RXBYTES, the resumed
+one does not) and a non-zero reading would mean those three places have
+drifted apart.
+.PP
+.B "One window is left open and is not fixed here."
+APPEND_STATUS puts an RSSI byte and a CRC_OK byte after every payload,
+and the driver reads them only if NUM_RXBYTES says they are there.  If
+the payload is complete and those two bytes are not yet clocked in \-
+13 milliseconds at 1200 baud \- they stay in the FIFO and the next read
+takes one of them for its length.
+.B "The obvious fix, requiring them before the frame is accepted, cannot be taken:"
+the qemu model reports APPEND_STATUS set from this driver's own register
+table and appends nothing, so a driver that waited for two bytes there
+would wait for ever and
+.B rxstale
+would eat every frame under simulation.  The bit is an intention and the
+count is the fact, which is why the count is what the code trusts.
+.PP
+.B "And the stat line prints the last giveup's two numbers"
+\-
+.B "rxstale 2 (14 of 82)"
+means two frames given up on and the last of them had a length byte of
+82 with 14 payload bytes in the FIFO three seconds later.  A length in
+range with a payload that stops is a truncated transmission, not a
+driver fault, and knowing which of the two it is was worth two integers:
+the first reading of these counters on a live link said
+.B "rxstall 2 rxpartial 2 resume 0 rxstale 2 (14 of 82) rxunder 0" ,
+which is two frozen frames cleaned up and no frame delivered by
+resuming at all.
 .SH "LOOKING AT A BAND"
 A receiver is an instrument, and this one will say what is on the air
 around it.  These are the CC1120 driver's, on

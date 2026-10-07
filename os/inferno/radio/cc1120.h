@@ -77,6 +77,29 @@ struct Cc1120
 	 * mode is for; delivering it corrupt costs a diagnosis.
 	 */
 	u32	nrxpartial;
+	/*
+	 * A frame whose length byte has been read and whose payload has
+	 * not all arrived: the length, kept until it has.
+	 *
+	 * The length byte cannot be put back -- reading the FIFO pops it
+	 * -- so the only alternatives are to finish the frame later or
+	 * to throw it away, and throwing it away loses a frame AX.25
+	 * then has to recover.  Measured: a 284-byte Styx reply goes out
+	 * as 109, 109 and 66, the receiver took the first two and
+	 * dropped the third HERE, and the conversation timed out.
+	 *
+	 * Zero means nothing is pending.  rxpendtick is when it was set,
+	 * so a frame that never finishes arriving is given up on by the
+	 * clock watchdog rather than blocking the FIFO for ever.
+	 */
+	int	pendon;			/* keep a half-read frame (1) or flush it (0) */
+	u32	nrxresume;		/* pended frames whose payload turned up */
+	int	rxstaleln;		/* the last giveup's length ... */
+	int	rxstalenavail;		/* ... and what the FIFO held then */
+	u32	nrxunder;		/* payload read past the end of the FIFO */
+	u32	nrxstale;		/* rxpend given up on by the watchdog */
+	int	rxpend;
+	ulong	rxpendtick;
 	u32	ntxtimeout;
 	u32	nrxoverflow;
 	u32	ntxunderflow;
