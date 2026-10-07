@@ -5976,7 +5976,7 @@ guessable.  The linker's
 is a dense array indexed by opcode \-
 .CW obj.c
 checks
-.CW optab[i].as == i
+.CW "optab[i].as == i"
 for every entry \- and it stops well short of the end of the enum, so an
 opcode added where the header says to add new operations assembles and
 will not link ("phase error in optab").  The four go immediately after

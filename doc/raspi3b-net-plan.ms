@@ -376,7 +376,7 @@ field is still racy \(em it is cleared only if it still names the caller,
 so a stale pointer survives a close handoff \(em and should be read as a
 hint, not as evidence.
 .PP
-.B "The fix:" \f(CWacquire()\fP "woke the idle VM thread only when it was the first to queue."
+.B "The fix: \f(CWacquire()\fB woke the idle VM thread only when it was the first to queue."
 .P1
 if(empty)
 	Wakeup(&isched.irend);

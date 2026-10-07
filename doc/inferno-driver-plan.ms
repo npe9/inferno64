@@ -1313,7 +1313,7 @@ through the three-member
 .CW /dev
 union - and then both procs block.  The create's existence-check Twalk
 gets its benign Rerror (correct Styx: the file does not exist yet), and
-.CW pid 1 's
+.CW "pid 1" 's
 .CW error()
 is entered - the
 .CW mountrpc

@@ -816,7 +816,7 @@ became
 .CW "324/1367/1985" .
 Nothing.  The reason is copy on write: every modifying operation rewrites the
 path, so the next one reads
-.I new block numbers
+.I "new block numbers"
 and the cache can never hit across operations.  The counters say so directly \(em
 .CW getnode/op
 stays at 4.0 over 240 operations on the same file instead of falling to zero, so
@@ -834,7 +834,7 @@ became
 .CW 324/1367/1985 .
 Nothing.  Copy on write is why: every modifying operation rewrites the path, so
 the next reads
-.I new block numbers
+.I "new block numbers"
 and the cache cannot hit across operations.
 .CW getnode/op
 staying at 4.0 over 240 operations on one file says it directly \(em no block is
@@ -2247,7 +2247,7 @@ scan \(em which compares names, and the names differ \(em reached
 and silently replaced that file's directory entry.  The file left the
 directory with no error and its inode and blocks leaked.
 .PP
-.B Demonstrated, not reasoned.
+.B "Demonstrated, not reasoned."
 With
 .CW namehash
 narrowed to 8 bits so a collision is reachable, creating
@@ -5810,7 +5810,7 @@ held, so nothing holds a byte address across it.
 .PP
 .B "What is written and what is not."
 Written: the mailbox half
-.CW ( mboxfballoc 's
+.CW "(mboxfballoc's"
 virtual height,
 .CW mboxvirtoffset ),
 the per-present measurement in
@@ -6044,7 +6044,7 @@ is executing that file right now.  Both after the batch.
 .B "What the batch's predicates DO establish, having read them."
 .IP \(bu
 HANG: a unique per-run token
-.CW ( H2 <i>-<epoch>)
+.CW "(H2 <i>-<epoch>)"
 must appear within 40 polls of 15s.  Unique per run, so it cannot be satisfied
 by an earlier run's output.  Sound.
 .IP \(bu
@@ -11922,7 +11922,7 @@ run-to-run spread of 48KB and 335 objects, so they were noise read as a trend
 .B "And the positive statement, which is stronger than the absence of a trend:"
 .B "the high-water mark PLATEAUS in every run."
 It climbs about 170KB over the first two or three
-.CW mkefs -mount-write- efsck
+.CW "mkefs-mount-write-efsck"
 cycles and then does not move again for the remaining cycles, in all five runs.
 Twenty-one cycles accumulating in one shell process would show
 .CW hw

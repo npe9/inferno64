@@ -337,7 +337,7 @@ says
 so the 9724us outlier IS the pool lock \(em the very lock item 1 is about.
 Naming it needed two bugs fixed and they are written up in the commit;
 briefly, libmach could not read ANY Plan 9 executable on a 64-bit host
-.CW ( Exec 's
+.CW "(Exec's"
 fields were declared
 .CW long ,
 so
@@ -470,7 +470,8 @@ at the end of an epoch.
 and
 .CW sweeper
 are assigned in exactly one place,
-.CW gc.c :433-435, inside
+.CW gc.c :433-435,
+inside
 .CW rootset() .
 .IP "\(bu" 3
 .CW rootset()

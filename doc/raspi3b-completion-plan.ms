@@ -344,7 +344,7 @@ empty receive FIFO, not the stalled endpoint the code assumed.
 .PP
 The Pi's LAN9514 carries no
 MAC EEPROM either, so the firmware's GET_BOARD_MAC_ADDRESS
-.CW ( mailbox.c 's
+.CW "(mailbox.c's"
 .CW mboxgetmac )
 is published as
 .CW /env/ethaddr
@@ -4241,7 +4241,7 @@ not the RISC-V boards \(em
 returns nothing at all.
 .CW accounttime()
 is dead in exactly the same way, which is why
-.CW /prog/ * /status
+.CW "/prog/*/status"
 never showed a process using any time.
 .PP
 So this kernel does not preempt.  It has never preempted.  The
@@ -9417,7 +9417,7 @@ cliff.
 emu's exportfs has always been willing to grant up to
 .CW MAXRPCMAX ,
 64KB, and clamps to whatever the client asks; the client
-.CW ( devmnt 's
+.CW "(devmnt's"
 .CW MAXRPC )
 never asked for more than 8KB.  Raising it to 64KB looks like an eight
 fold cut in round trips and is not: 64KB is forty four frames, far past
@@ -9622,7 +9622,7 @@ calls
 .CW "sys->pctl(Sys->FORKNS, nil)"
 and dials through that snapshot for the life of the boot.  Taken before
 ethercheck's
-.CW "sys->bind(\"#I\", \"/net\", ...)" ,
+.CW "sys->bind(\(dq#I\(dq, \(dq/net\(dq, ...)" ,
 the snapshot has no /net and no later bind can put one there, so every
 poll fails with \fIfile does not exist\fP until reboot.  The bind's own
 comment already warned about that error string, for a different reason.
@@ -10533,7 +10533,7 @@ Loading it changes three things at once, and all three are measured:
 Setting the country now WORKS.  It was refused with -1 before; now
 .CW "set country US -> 0"
 and reading it back gives
-.CW "country now \"US\" ccode \"US\"" .
+.CW "country now \(dqUS\(dq ccode \(dqUS\(dq" .
 The regulatory subsystem had nothing in it and now has a table.
 .IP \(bu
 WLC_SCAN is no longer refused.  Before the blob it failed every time;

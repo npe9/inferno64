@@ -489,7 +489,7 @@ not the fault this candidate predicted.  One of four
 call sites in
 .CW proc.c
 checked this way so far
-.CW ( ready() 's
+.CW "(ready()'s"
 own, a different function entirely, also read nil); the other two
 .CW ( sleep() ,
 .CW pexit() )
@@ -2385,7 +2385,8 @@ was checked
 plus
 .CW main.c 's
 two boot-time
-.CW "up\ =\ nil" \(dq s),
+.CW "up = nil"
+\(dqs),
 and the interrupt entry/exit in
 .CW pc64/l.s
 saves and restores
@@ -4251,7 +4252,7 @@ switch returns 0 immediately on
 or
 .CW Pexiting ,
 and every
-.CW p->state = Pexiting
+.CW "p->state = Pexiting"
 assignment in this file is inside
 .CW killprog()
 itself, set before it calls
@@ -4278,7 +4279,7 @@ the path every prog takes when it exits normally, by returning or
 calling
 .CW exit() ,
 as opposed to being killed \- never sets
-.CW r->state = Pexiting
+.CW "r->state = Pexiting"
 anywhere before calling
 .CW delprog() .
 Checked by grepping every
@@ -4472,7 +4473,7 @@ is passed, which it also is not \- so the symbols should be in the
 file, and a byte-for-byte diff confirmed they are:
 .CW ipc64
 is 1.1MB larger than its own reported text+data+bss, and
-.CW strings -a ipc64
+.CW "strings -a ipc64"
 finds
 .CW delprog ,
 .CW currun ,
@@ -4712,7 +4713,7 @@ absence of
 on the
 .CW qemu-boot.sh
 command line \- confirmed by source.
-.CW conf.nmach = 1
+.CW "conf.nmach = 1"
 is set once, in
 .CW pc64/main.c 's
 .CW mach0init() ,
@@ -4762,7 +4763,7 @@ callback, and
 own first line is
 .CW "if(pool->move == nil || ...) return 0;" .
 The whole compaction path \- the
-.CW pool->root = nil
+.CW "pool->root = nil"
 rebuild, the
 .CW memmove
 of live blocks,
@@ -11143,7 +11144,8 @@ A second experiment tested whether
 is even position-independent within one function: two calls,
 .CW getcallerpc(&p) ,
 made from two different textual positions inside
-.CW poolfree() -- once
+.CW poolfree()
+-- once
 as the very first statement, once right before
 .CW notefree() 's
 own call -- printed for the first several invocations of a real
@@ -11594,7 +11596,8 @@ before this thread started -- the hardware-confirmed
 double-free (
 .CW auditmemloc()
 showing a target already
-.CW MAGIC_F ), the
+.CW MAGIC_F ),
+the
 .CW destroy+703
 resolution to
 .CW destroy() 's
@@ -12910,7 +12913,7 @@ disinit's %r was always empty, and the real error it hid
 own
 .CW waserror()
 handler has read
-.CW "panic(\"disinit\ error:\ %r\")"
+.CW "panic(\(dqdisinit error: %r\(dq)"
 since before this hunt started, and every single
 .CW "disinit\ error:"
 capture across this whole session printed no text after the colon.
@@ -13296,7 +13299,7 @@ is odd), the delta is 255 bytes, not 64, and both addresses sit in
 kernel
 .I text
 range \(em the same
-.CW 0x26xxxx \(en 0x2fxxxx
+.CW "0x26xxxx \(en 0x2fxxxx"
 span this hunt's own resolved function symbols occupy, nowhere near
 the heap.  A real
 .CW Block
@@ -14729,7 +14732,8 @@ prints, matching every other single-fire marker in this chain
 .CW pctl\ entry ,
 .CW closefgrp\ entered ,
 .CW closefgrp\ returning ).
-.B "acquire() returned" never prints.
+.B "acquire() returned"
+never prints.
 Every native step before it -- release, NEWFD's fgrp swap, both
 inherited fd closes -- is now confirmed complete.  This one call is
 where forward progress stops.
@@ -15335,7 +15339,7 @@ own
 .CW raise\ "fail:error"
 after that print, through
 .CW startfs() 's
-.CW exception\ e\ {\ "*"\ =>\ c\ <-=\ "failed";\ exit;\ }
+.CW "exception e { \(dq*\(dq => c <-= \(dqfailed\(dq; exit; }"
 handler, to
 .CW fsmount() 's
 .CW <-c
@@ -15481,7 +15485,7 @@ crossing a spawned-Prog boundary fails for
 exception, or only ones raised from deep inside a blocked-then-woken
 native call the way this one was; and whether the native kernel's own
 process-teardown path
-.CW ( startfs() 's
+.CW "(startfs()'s"
 .CW exit
 statement, never reached here either) is itself part of what is
 supposed to deliver the exception, rather than a separate step after
@@ -16929,7 +16933,7 @@ the value being stored and belongs in
 .CW from ,
 not in the bare reg-number slot, which is where the status result
 goes
-.CW ( asmout.c 's
+.CW "(asmout.c's"
 case 59 encodes
 .CW Rs
 from
