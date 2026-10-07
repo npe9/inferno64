@@ -134,7 +134,11 @@ sets the machine's
 .IR vm (3)).
 The kernel and initrd are streamed into the machine's memory, not held.  An exit the kernel does not handle is reported with the
 registers, and ends the run, as does a stop; the machine's status is
-printed and the machine killed.
+printed and the machine killed, which blocks and resets the functions
+it was given (see
+.IR vm (3)).
+A Linux guest finds the hypervisor's paravirtual clock (kvmclock) and
+runs on it, its time of day the host's.
 .PP
 With
 .BR -N ,
@@ -174,6 +178,16 @@ Nothing in it is local:
 .B /dev/vm
 may be a mount of another machine's, and the kernel and initrd are read
 from wherever they are.
+.SH EXAMPLE
+Boot a Linux with a disk, a network on the second interface and an
+assigned function, type a command at its shell and stop when it has
+run:
+.IP
+.EX
+vmlinux -m 256 -b /tmp/disk.img -n /net/ether1 -p 0000:05:00.0 \
+	-i /guest/initramfs.cpio -t 'uname -a; echo done' -q done \
+	/guest/vmlinuz
+.EE
 .SH SOURCE
 .B /appl/cmd/vmlinux.b
 .SH SEE ALSO

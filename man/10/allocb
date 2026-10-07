@@ -64,9 +64,46 @@ struct Block
     uchar*  lim;    /* 1 past the end of the buffer */
     uchar*  base;   /* start of the buffer */
     void    (*free)(Block*);
-    ulong   flag;
+    u16     flag;
+    u16     checksum;
+    u16     mss;
 } Block;
 .EE
+.PP
+Besides
+.B BINTR
+and
+.B BFREE
+(the allocator's), the
+.B flag
+bits carry checksum state between the network drivers and the IP
+stack.  On receipt,
+.BR Bipck ,
+.B Btcpck
+and
+.B Budpck
+say the hardware checked that checksum and found it good.  For
+transmission,
+.B Btxck
+says the IPv4 TCP or UDP checksum is still to be done, its field
+holding the pseudo-header's sum and
+.B checksum
+the field's offset in the transport header; and
+.B Btso
+says the block is a TCP segment longer than the maximum segment size,
+for hardware to cut into segments of
+.B mss
+bytes (see
+.IR ether (3)).
+.IR Padblock ,
+.I copyblock
+and
+.I pullupblock
+keep these, and
+.BR checksum
+and
+.BR mss ,
+in the block they return.
 .PP
 Each
 .B Block

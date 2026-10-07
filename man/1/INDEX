@@ -555,6 +555,8 @@ vacput vacget
 varoom varoom
 view wm-misc
 vixen vixen
+vmlinux vmlinux
+vmsched vmsched
 vocabulary vocabulary
 wav2iaf auplay
 wc wc

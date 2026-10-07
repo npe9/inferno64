@@ -1,0 +1,191 @@
+.TH PCI 10.2
+.SH NAME
+pcimatch, pcimatchtbdf, pcicfgr8, pcicfgr16, pcicfgr32, pcicfgw8, pcicfgw16, pcicfgw32, pcicap, pciextcap, pcienable, pcidisable, pcisetbme, pciclrbme, pcisetpms, pcimsixcount, pcimsixintrenable, pcimsixintrdisable, pcimsixmask, pciflr, pcisbr, pcifnreset, pcisriov, pcisriovenable \- PCI functions in the kernel
+.SH SYNOPSIS
+.ta \w'\fLPcidev* 'u
+.B #include "../port/pci.h"
+.PP
+.B
+Pcidev*	pcimatch(Pcidev *prev, int vid, int did)
+.PP
+.B
+Pcidev*	pcimatchtbdf(int tbdf)
+.PP
+.B
+int	pcicfgr32(Pcidev *p, int rno)
+.PP
+.B
+void	pcicfgw32(Pcidev *p, int rno, int data)
+.PP
+.B
+int	pcicap(Pcidev *p, int cap)
+.PP
+.B
+int	pciextcap(Pcidev *p, int cap)
+.PP
+.B
+void	pcienable(Pcidev *p)
+.PP
+.B
+void	pcidisable(Pcidev *p)
+.PP
+.B
+void	pcisetbme(Pcidev *p)
+.PP
+.B
+void	pciclrbme(Pcidev *p)
+.PP
+.B
+int	pcisetpms(Pcidev *p, int state)
+.PP
+.B
+int	pcimsixcount(Pcidev *p)
+.PP
+.B
+void	(*pcimsixintrenable)(Pcidev *p, int vec,
+.br
+.B
+		void (*f)(Ureg*, void*), void *a, char *name)
+.PP
+.B
+void	(*pcimsixintrdisable)(Pcidev *p, int vec,
+.br
+.B
+		void (*f)(Ureg*, void*), void *a, char *name)
+.PP
+.B
+int	pcimsixmask(Pcidev *p, int vec, int mask)
+.PP
+.B
+int	pciflr(Pcidev *p)
+.PP
+.B
+int	pcisbr(Pcidev *p)
+.PP
+.B
+char*	pcifnreset(Pcidev *p)
+.PP
+.B
+int	pcisriov(Pcidev *p, Pcisriov *s)
+.PP
+.B
+char*	pcisriovenable(Pcidev *p, int n)
+.SH DESCRIPTION
+The kernel walks the PCI buses at boot and keeps a
+.B Pcidev
+for each function: its
+.B tbdf
+(bus type, bus, device and function, printed by
+.LR %T ),
+vendor and device ids, class, the base address registers it was given
+.RB ( mem [ i ] .bar
+and
+.BR .size ),
+interrupt line, latency, cache line size, its command register
+.RB ( pcr ),
+and the bridges above and below it
+.RB ( parent ,
+.BR bridge ).
+That record is the host's configuration of the function: what it
+should have whenever the host is using it.
+.PP
+.I Pcimatch
+returns the function after
+.I prev
+(from the start if
+.I prev
+is nil) whose vendor and device ids match, zero matching any;
+.I pcimatchtbdf
+the one at
+.IR tbdf .
+.IR Pcicfgr8 ,
+.IR pcicfgr16 ,
+.I pcicfgr32
+and the matching writes read and write its configuration space.
+.I Pcicap
+and
+.I pciextcap
+give the offset of a capability, or of an extended (PCI Express)
+capability, or \-1.
+.PP
+.I Pcienable
+powers a function to D0 (and its bridges first), turns on the
+decoders its BARs need, and, coming back from D3, puts back the
+configuration in its
+.BR Pcidev .
+.I Pcidisable
+turns off its MSI and MSI-X and its bus mastering;
+.I pcisetbme
+and
+.I pciclrbme
+turn bus mastering on and off, keeping
+.B pcr
+in step.
+.I Pcisetpms
+sets its power state, returning the old one, or \-1.
+.PP
+.I Pcimsixcount
+gives the number of MSI-X vectors a function has.
+.I Pcimsixintrenable
+(nil where the platform cannot deliver MSI-X) gives vector
+.I vec
+a host interrupt vector, points the table entry at it and unmasks it,
+calling
+.I f
+with
+.I a
+on each interrupt, like
+.IR intrenable (10);
+.I pcimsixintrdisable
+undoes it, and
+.I pcimsixmask
+masks or unmasks the entry.
+.PP
+Three functions reset one function without a driver's help, each
+putting back afterwards the configuration in its
+.B Pcidev
+(BARs, interrupt line, latency, cache line, then the command
+register) and each returning zero where it cannot be done.  The
+caller has stopped the function first
+.RI ( pcidisable ).
+.I Pciflr
+does a function-level reset (PCI Express base specification 6.6.2)
+where its PCI Express capability offers one: it waits up to 100 ms for
+transactions pending, starts the reset, and waits the 100 ms the
+specification allows.
+.I Pcisbr
+has the bridge above it do a secondary bus reset, only where the
+function is all there is below that bridge: the reset held 2 ms, then
+100 ms to come back.
+.I Pcifnreset
+tries the first, then the second, and says which it did
+.RB ( FLR
+or
+.BR "secondary bus reset" ),
+or returns nil.
+.IR Vm (3)
+uses it to reset a function a machine had when the machine ends.
+.PP
+.I Pcisriov
+reads a physical function's SR-IOV capability into
+.IR s ;
+.I pcisriovenable
+makes
+.I n
+virtual functions (0 removes them), which then appear as functions of
+their own (the hook
+.B pcidevadded
+is called for each, which
+.IR iommu (3)
+uses to put them in its host domain), returning nil or an error string.
+.SH SOURCE
+.B /os/inferno/port/pci.c
+.br
+.B /os/inferno/port/pci.h
+.SH SEE ALSO
+.IR intrenable (10),
+.IR iommu (3),
+.IR vm (3)
+.SH BUGS
+No reset by D3hot for a function with neither FLR nor a bus of its
+own.

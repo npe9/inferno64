@@ -12,22 +12,24 @@ bind -a #H /dev
 /dev/vm/\fIn\fP/status
 /dev/vm/\fIn\fP/mem
 /dev/vm/\fIn\fP/console
-/dev/vm/\fIn\fP/vcpu0/ctl
-/dev/vm/\fIn\fP/vcpu0/regs
-/dev/vm/\fIn\fP/vcpu0/exit
+/dev/vm/\fIn\fP/vcpu\fIm\fP/ctl
+/dev/vm/\fIn\fP/vcpu\fIm\fP/regs
+/dev/vm/\fIn\fP/vcpu\fIm\fP/exit
 .EE
 .SH DESCRIPTION
 .I Vm
 runs other operating systems as guests of the native kernel, using
 the processor's virtualization extension: Intel VMX with EPT and
 unrestricted guest, or AMD SVM with nested paging, whichever the
-processor has.
+processor has (on RISC-V, the hypervisor extension).
 .B backend
-says which, and why not when there is none.
+says which, what it offers, and why not when there is none.
 .B host
 reports what the host has left for machines: processors, free memory
 and the largest contiguous run of it (a machine's memory is one run),
-and the machines and vCPUs running.
+and the machines and vCPUs running; it is what
+.IR vmsched (1)
+reads to place machines.
 .PP
 Opening
 .B clone
@@ -57,9 +59,16 @@ Give the machine a PCI function (see BUGS for which), on its PCI bus:
 on a PC reached through configuration mechanism 1; on RISC-V, where
 the processor gives guests AIA, through an ECAM window at
 0x30000000 with BARs from 0x40000000, its MSI-X sent into the guest's
-IMSIC interrupt files.  Its DMA goes through an
+IMSIC interrupt files.  Its memory BARs are mapped into the guest
+uncached, except the pages of its MSI-X table, which the kernel keeps;
+an entry the guest enables gets a host vector of its own whose
+interrupt is delivered as the guest's message.  Its DMA goes through
+an
 .IR iommu (3)
-domain mapping guest-physical addresses onto the machine's memory.
+domain mapping guest-physical addresses onto the machine's memory, so
+the guest programs it with guest-physical addresses and it reaches
+nothing else.  A function taken out of the IOMMU's blocking domain
+(below) is taken from there.
 .TP
 .BI "virtio blk" " file"
 Give the machine a virtio disk (virtio 1.0, PCI transport) served by
@@ -87,9 +96,9 @@ each a kernel process of its own on a processor of its own where the
 host has enough, which wait, as application processors do, for the
 INIT and SIPI the guest's bootstrap processor sends through its APIC.
 The platform delivers inter-processor interrupts (fixed,
-lowest-priority, NMI, INIT, SIPI) and MSIs to the APICs they name, and
-has an I/O APIC at 0xFEC00000 (id 8) with the PIT on its input 2 and
-the UART on 4.
+lowest-priority, NMI, INIT, SIPI) and MSIs to the APICs they name; a
+vCPU in guest mode on another processor is taken out to see one by a
+host IPI.
 .TP
 .BI trace " seconds"
 While a vCPU runs, print on the host's console, at most every
@@ -101,7 +110,23 @@ running yet has taken no exit for three such periods has the host's
 processes, and where each sleeps, printed once.
 .TP
 .B kill
-Stop the machine and free its memory.  Open files then return
+Stop the machine and free its memory.  Before the memory goes, each
+assigned function is released: its MSI-X vectors and bus mastering
+off, moved straight from the machine's IOMMU domain into the blocking
+domain of
+.IR iommu (3),
+where any DMA it still makes reaches nothing, and reset \(em by
+function-level reset where it has one, else by a secondary bus reset
+where it is alone below its bridge \(em with the host's configuration
+of it put back.  The host's console says
+.IP
+.EX
+vm0.PCI.5.0.0: released: blocked, reset by FLR
+.EE
+.IP
+It stays blocked until assigned again or claimed through
+.IR iommu (3).
+Open files then return
 .BR Ehungup ;
 the structures go with the last close.
 .PP
@@ -114,7 +139,7 @@ reads return what it wrote, writes are what it receives.
 .B status
 gives the machine, each vCPU's state, its exits counted by kind and
 how many the kernel handled, the platform's counters, and each
-assigned function.
+assigned and virtio function with its interrupts.
 .PP
 Each vCPU is a kernel process wired to one processor, and does all
 work on the processor's virtualization state itself.  Its
@@ -148,26 +173,83 @@ blocks until the vCPU stops and says why: the kind
 .BR triple ,
 .BR entryfail ,
 .BR stopped ,
+.BR shutdown ,
 .BR other ),
 the guest's
 .BR rip ,
 the instruction length, the backend's own code and qualification, and
 the details of the kind.
+.SS The platform
+What a guest sees is handled in the kernel, on the vCPU's processor:
+.IP \(bu 2
+an 8259 pair and an 8254 on IRQ 0, the 16550 on IRQ 4, and an I/O APIC
+at 0xFEC00000 (id 8) with the PIT on its input 2 and the UART on 4;
+.IP \(bu 2
+a local APIC per vCPU (xAPIC MMIO at 0xFEE00000, or x2APIC through its
+MSRs if the guest turns it on) whose timer runs off the TSC in
+one-shot, periodic or TSC-deadline mode;
+.IP \(bu 2
+CPUID: the host's, with what the hypervisor does not provide hidden
+(VMX and SVM, MONITOR/MWAIT, XSAVE and AVX, x2APIC, MTRR, machine
+check, performance monitoring, INVPCID, RDTSCP, RDPID, LA57, PKU) and
+the hypervisor bit set; leaf 0x40000000 says
+.LR InfernoHyper ;
+.IP \(bu 2
+a paravirtual clock: KVM's kvmclock, offered at CPUID 0x40000100 with
+KVM's signature and only its CLOCKSOURCE2 and stable-TSC features.
+Writing an address to MSR_KVM_SYSTEM_TIME (0x4B564D01, or the old
+0x12) gets that vCPU's record written there \(em the TSC, nanoseconds
+since the machine was made, and the scale between them; the guest runs
+on the host's TSC unoffset, so one record stays good \(em and
+MSR_KVM_WALL_CLOCK (0x4B564D00, or 0x11) gets the host's time of day
+at the machine's time 0.  That is the host's
+.IR cons (3)
+.BR time ,
+which on a native host counts from boot until init sets it from
+.IR rtc (3);
+.IP \(bu 2
+the MSRs: the processor's own switched with the guest, the APIC's,
+the TSC, the TSC deadline and a few firmware would answer; others
+raise #GP;
+.IP \(bu 2
+HLT (the vCPU sleeps until an interrupt it can take);
+.IP \(bu 2
+a PCI bus: assigned functions and the kernel's own virtio functions.
 .PP
-The platform a guest sees is handled in the kernel, on the vCPU's
-processor: an 8259 pair, an 8254 on IRQ 0, the 16550 on IRQ 4, a
-local APIC (xAPIC MMIO, or x2APIC if the guest enables it) whose timer
-runs off the TSC in one-shot, periodic or TSC-deadline mode, CPUID
-(the host's with what is not provided hidden and the hypervisor bit
-set), the MSRs (the processor's own switched with the guest; others
-answered or given #GP), HLT (the vCPU sleeps until an interrupt it can
-take), and a PCI bus through configuration mechanism 1.  There is no
-RTC, IOAPIC, HPET, ACPI or MP table; Linux is told the TSC rate with
+There is no RTC, HPET, or firmware; ACPI and the MP table, where a
+guest needs them, are written into its memory by the program that
+loads it
+.RI ( vmlinux (1)
+does), and Linux is told the TSC rate with
 .BR tsc_early_khz= .
+The guest's exceptions are its own: neither backend intercepts them
+(an alignment check at CPL 3 is the guest's #AC), unless the
+.B *vmxexcbitmap
+of
+.IR plan9.ini (10)
+names some, each then an
+.B exception
+exit.
 .SH EXAMPLE
-See
-.IR vmlinux (1),
-which uses nothing but these files, locally or over a mount.
+Make a machine, give it memory, load and start it, and read why it
+stopped:
+.IP
+.EX
+bind -a '#H' /dev
+{
+	n=`{read}
+	echo mem 268435456 >[1=0]
+	echo assign 0000:05:00.0 >[1=0]
+	# ... write the kernel into /dev/vm/$n/mem, set regs ...
+	echo go > /dev/vm/$n/vcpu0/ctl
+	cat /dev/vm/$n/vcpu0/exit
+} <> /dev/vm/clone
+.EE
+.PP
+.IR vmlinux (1)
+does all of this, using nothing but these files, locally or over a
+Styx mount of another host's
+.BR /dev .
 .SH SOURCE
 .B /os/inferno/port/devvm.c
 .br
@@ -181,22 +263,34 @@ which uses nothing but these files, locally or over a mount.
 .br
 .B /os/inferno/pc/vmdev.c
 .br
-.B /os/inferno/pc/vmpci.c
+.B /os/inferno/port/vmpci.c
+.br
+.B /os/inferno/port/vmvirtio.c
 .SH SEE ALSO
 .IR iommu (3),
+.IR pci (10),
 .IR vmlinux (1),
-.IR vmsched (1)
+.IR vmsched (1),
+.IR plan9.ini (10),
+.B /doc/genesize.ms
 .SH BUGS
-One vCPU per machine.
+At most 16 machines and 8 vCPUs each.  A machine's memory is one
+contiguous run of host memory: no ballooning or overcommit.
 .PP
-VMX: shown on Bochs (QEMU's TCG emulates SVM, not VMX), where Linux
-boots with four processors on a two-processor host.  A guest's debug registers DR0\-DR3 and DR6 are
-kept and read back but not loaded, so its hardware breakpoints do not
-fire.  No VPID; the TLB is flushed on every entry and exit.
+VMX: no VPID, so the TLB is flushed on every entry and exit.  A
+guest's debug registers DR0\-DR3 and DR6 are kept and read back but
+not loaded, so its hardware breakpoints do not fire.  No APIC
+virtualization or posted interrupts (VMX), nor AVIC (SVM): every
+interrupt is injected.  Guests cannot run hypervisors of their own.
 .PP
 Assignment: memory BARs only, MSI-X only, no extended configuration
-space, no function reset, and only a function the host has no driver
-for.  An assigned function's interrupt raised on another processor is
+space, and only a function the host has no driver for.  A function
+without FLR that shares its bus is released blocked but not reset.
+An assigned function's interrupt raised on another processor is
 seen at the vCPU's next exit, at most a clock tick later.
+.PP
+A machine cannot be saved, restored or moved: the platform's devices
+have no state files, and the kvmclock records are not rewritten
+across a stop.
 .PP
 No XSAVE state beyond x87/SSE is offered to guests.

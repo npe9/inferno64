@@ -122,6 +122,82 @@ Reading the
 .B ifstats
 file returns statistics and status information specific to a given
 hardware interface.
+.SS Offloads
+A driver says what its hardware will do for the IP stack in the
+.B feat
+of its
+.BR Ether ;
+.IR ip (3)
+learns it when an interface is bound and leaves that work to it:
+.TP
+.B Etxck
+The hardware puts in IPv4 TCP and UDP checksums.  TCP and UDP leave
+the pseudo-header's sum in the checksum field, mark the block
+.BR Btxck ,
+with the field's offset in its
+.BR checksum ,
+and IP finishes the sum in software for any interface without
+.B Etxck
+and for a packet it fragments or translates.
+.TP
+.B Etso
+The hardware cuts TCP segments.  Over such an interface an
+established IPv4 TCP connection sends segments of as many
+maximum-segment-sizes as fit in an IP packet, marked
+.B Btso
+with the segment size in the block's
+.B mss
+and the checksum field seeded without the length; the interface's
+writes take them past its MTU.
+.PP
+Received checksums a driver has checked are marked
+.BR Bipck ,
+.B Btcpck
+and
+.BR Budpck ,
+and IP, TCP and UDP do not check them again.
+.SS Drivers
+.TP
+.B i82598
+The Intel 82598 and 82599 (X520) 10 Gb/s controllers.  Both put in
+transmit checksums; the 82599 also cuts TCP segments (advanced
+descriptors) and, without virtual functions, gives each processor a
+receive queue, up to four, with receive-side scaling spreading flows
+over them by a random key.
+.B ifstats
+counts
+.B txck
+(frames checksummed by the hardware),
+.B tso
+(segments it cut, and
+.B bad
+ones dropped), and per receive queue
+.BR rxq\fIn\fP .
+.B *ixgbevfs=\fIn\fP
+in
+.IR plan9.ini (10)
+makes
+.I n
+SR-IOV virtual functions when the interface is attached: the
+driver is then the physical function, answers the VFs' mailbox, and
+puts its own traffic in the pool after theirs
+.RB ( sriov
+lines in
+.BR ifstats ).
+.B *ixgbenorss
+keeps one receive queue.
+.TP
+.B i82563
+The Intel 8256x, 82571-82576 and later gigabit controllers.  On the
+82576,
+.B *igbvfs=\fIn\fP
+makes
+.I n
+virtual functions, as above.
+.PP
+The virtual functions are PCI functions of their own, for
+.IR vm (3)
+to give to machines.
 .SH SOURCE
 .B /os/inferno/port/devlance.c
 .br
@@ -131,4 +207,6 @@ hardware interface.
 .br
 .B /os/*/ether*.c
 .SH SEE ALSO
-.IR ip (3)
+.IR ip (3),
+.IR vm (3),
+.IR plan9.ini (10)

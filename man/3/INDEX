@@ -22,6 +22,7 @@ i2c i2c
 i82365 i82365
 indir indir
 intro 0intro
+iommu iommu
 ip ip
 kprof kprof
 logfs logfs
@@ -53,3 +54,4 @@ tv tv
 usb usb
 vga vga
 vid vid
+vm vm

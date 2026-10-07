@@ -23,6 +23,7 @@ FILES = \
 	port.ps \
 	hotchips.ps \
 	install.ps \
+	genesize.ps \
 
 DIRS = \
 	limbo \

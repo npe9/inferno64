@@ -2418,10 +2418,23 @@ the X520's VFs and the whole PF to a Linux guest, on SVM and VMX.
 The newer NVMe features are done, checked against Linux's nvme, and
 sdnvme uses them.  The FL1100 is modelled from its datasheet and Linux's
 history with it, and usbxhci runs on it.  The codesign debts of
-APST, the FL1100's MSI-X, #AC and the 82599's checksums are paid.
-Next: TSO and RSS for ether82598; the misbehaving
-DMA device (its design to come) with phase 17's device release; the
-ConnectX-4 Lx; then the rest of phase 17 and the
+APST, the FL1100's MSI-X, #AC and all the 82599's offloads (checksums,
+TSO, RSS) are paid; of phase 17, device release (blocking domain, FLR
+or secondary bus reset) and kvmclock.  The manual
+.I vm (3),
+.I iommu (3),
+.I ether (3),
+.I sd (3),
+.I vmlinux (1),
+.I plan9.ini (10),
+.I allocb (10)
+and the new
+.I pci (10)
+describe it all as it stands, and
+.CW doc/genesize.ms
+is a paper on the work so far.
+Next: the misbehaving DMA device (its design to come), which release
+still wants; the ConnectX-4 Lx; then the rest of phase 17 and the
 workstation (phase 13), and real hardware for everything QEMU and Bochs
 have stood in for.  On QEMU, check-vm (SVM; M4 under VT-d and AMD-Vi)
 and check-rv, on both the PLIC and the AIA machine and on hosts of one

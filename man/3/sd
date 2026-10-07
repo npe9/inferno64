@@ -172,13 +172,35 @@ file;
 .I raw
 file to retrieve the status of the command,
 returned as a text integer.
+.SS NVMe
+The NVMe driver
+.RB ( sdnvme )
+takes the controller's interrupts on MSI-X where the platform has it.
+It gives a drive that asks for a host memory buffer (Set Features 0Dh)
+the size it prefers, up to 32 MiB in 1 MiB pieces, and sets a drive
+with autonomous power state transitions to fall into its
+non-operational states when idle (see
+.B *nvmeapstlat
+in
+.IR plan9.ini (10)).
+Its
+.I ctl
+adds lines
+.IP
+.EX
+hmb	8 MiB in 8 chunks
+power	ps4, apst to ps4
+.EE
+.PP
+for the buffer given and the power state the drive reports.
 .SH SOURCE
 .B /os/inferno/port/devsd.c
 .br
 .B /os/*/sd*.[hc]
 .SH SEE ALSO
 .IR ds (3),
-.IR floppy (3)
+.IR floppy (3),
+.IR plan9.ini (10)
 .SH BUGS
 .PP
 Still in development.

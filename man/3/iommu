@@ -24,7 +24,7 @@ and its remapping units; writing
 turns translation on with every function the IOMMU covers in the host
 domain, where DMA addresses are host physical addresses as before.
 Functions that appear later (VFs made through
-.BR #$/pci/ IfunctionP /sriov )
+.BR #$/pci/ \fIfunction\fP /sriov )
 join the host domain.
 .PP
 Opening
@@ -59,7 +59,31 @@ address and reason \(em in all, or for the domain's functions.
 .PP
 .IR vm (3)
 makes domains from the kernel for assigned functions; they appear here
-like any other.
+like any other.  When a machine ends, each function it had is moved
+straight from its domain \(em never through the host domain \(em into
+the
+.IR "blocking domain" ,
+made the first time it is needed: a numbered domain like the others
+that maps nothing, so DMA the function still has queued, or starts
+after, faults.  Its
+.B devices
+lists the functions released into it.  It refuses
+.B kill
+and
+.BR mem .
+A function leaves it when
+.B attach
+names it in another domain (taken straight from the blocking one) or
+.B detach
+gives it back to the host domain, which is how the host claims it;
+.IR vm (3)'s
+.B assign
+takes it the same way.
+.PP
+Moving a function between domains is done by repointing its entry
+(VT-d's context entry, AMD-Vi's device table entry); while the entry
+changes it refuses DMA \(em VT-d's not present, AMD-Vi's valid with no
+read or write permission \(em rather than passing it through.
 .SH SOURCE
 .B /os/inferno/port/deviommu.c
 .br
@@ -73,7 +97,8 @@ like any other.
 .br
 .B /os/inferno/virt/rviommu.c
 .SH SEE ALSO
-.IR vm (3)
+.IR vm (3),
+.IR pci (10)
 .SH BUGS
 VT-d: legacy mode, global invalidation after every change (queued
 where the unit has it, through the registers where not).  Interrupt
@@ -84,4 +109,4 @@ first IOMMU in IVRS only, no interrupt remapping.  The RISC-V IOMMU: no
 MSI page table, so a device's messages are translated like its writes.
 Tested on QEMU's intel-iommu, amd-iommu (with
 .B scripts/qemu-patches/0005 )
-and riscv-iommu-pci.
+and riscv-iommu-pci.  At most 32 domains and 64 functions in each.
