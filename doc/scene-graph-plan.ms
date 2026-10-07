@@ -178,7 +178,62 @@ over-collection and was two items close enough that both boxes met one
 damage rectangle. Twenty spread items separated arrangement from
 scaling; one number could not have.
 .PP
-.B "So item 1 narrows to the GPU route,"
+.B "AND THE GPU ROUTE DOES NOT EXIST ON THE TARGET."
+Checked before planning any of it:
+.CW os/inferno/port/devdraw.c
+has
+.I zero
+.CW gpuimagealloc
+or
+.CW gpudrawdamage
+hooks \(em those are emu-only \(em and the board's one acceleration
+seam,
+.CW hwdraw()
+in
+.CW screenbcm.c:498 ,
+is a stub that
+.CW "USED(par); return 0;" ,
+with
+.CW ishwimage()
+returning 0 beside it. There is no hardware draw path on the Pi 3B to
+hand a tree to.
+.PP
+So both of item 1's routes are closed for the stated target: the
+CPU-side caching route by measurement, and the GPU route by there being
+nothing there. The emu Metal path is real but host-only, and the goal
+says drawing to the framebuffer is fine, so speed on this board was
+never the point.
+.PP
+.B "What that leaves, and it is a choice rather than a next step."
+The tree IS the modernised infrastructure, it is in the kernel, and 13
+of 15 widget types already emit it \(em so "generalised" is nearly
+satisfied already. What is missing is a consumer, and the candidates
+that are framebuffer-compatible and on-goal are:
+.IP \(bu
+.B "Expose the tree."
+Let a Limbo program obtain a widget's node tree, so consumers \(em
+recording, remote rendering, a 3D backend \(em can be written outside
+libtk. This reads the goal as being about the API rather than about any
+one consumer, and is the only candidate that makes the existing work
+infrastructure rather than an internal detail.
+.IP \(bu
+.B "Resolution independence."
+Render a tree at a scale, which pixels cannot do. Framebuffer
+compatible, and the one capability a description genuinely has over a
+raster on this hardware.
+.IP \(bu
+.B "Finish the breadth."
+.CW separator
+is the one type that does not emit, and
+.CW canvas
+is an island with its own tree. Closing those two makes emission total.
+Cheap, and worth nothing on its own until a consumer exists.
+.PP
+Nothing here is started. Item 1 is at a decision, and the next
+.I work
+in this plan is item 2.
+.PP
+.B "Superseded: the GPU route as this plan first named it."
 which this plan already named as the alternative and told itself not to
 start in parallel. The CPU-side caching route is closed on measurement:
 retention is possible (canvas proves it) and buys nothing (canvas also
