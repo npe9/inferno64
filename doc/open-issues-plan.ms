@@ -12683,3 +12683,72 @@ before
 like a
 .CW "grep -c"
 before a comment strip, gives a confident uniform wrong answer the same way.
+.NH 3
+The 2106 timestamp: reproduced clean, so historical, and removed
+.LP
+.CW tmp/mvtest.b 's
+mtime was
+.B "exactly 0xFFFFFFFF"
+\(em 4294967295, which is 2106-02-07 06:28:15 UTC.  That is not a plausible
+date; it is an all-ones value standing in for something, the same shape as the
+rest of this session's findings.
+.PP
+.B "Reproduced before deleting the evidence,"
+because an all-ones mtime on a board-written file would be a live bug in the
+styx or
+.CW exportfs
+path.  A file written from the board through the mount now:
+.P1
+board-written mtime = 1791413630 (0x6ac6cd7e) 2026-10-07 18:53:50
+all-ones? False
+.P2
+.B "So it is historical and not reproducible."
+Nothing in the tree writes
+.CW mvtest.b
+any more \(em the only references are
+.CW tools/boardsuite/run 's
+own comment explaining why it prunes
+.CW tmp
+from its staleness check, and this plan.  The writer is gone, probably with the
+.CW fatstress
+that
+.CW boardsuite 's
+comment names and that no longer exists here.
+.PP
+Removed, because its only remaining effect was to corrupt every max-over-mtime
+measurement taken in this tree, and the tree-wide unbounded max now reads
+.CW libinterp/gc.c
+at 17:12 instead of 2106.
+.NH 3
+"It happened to be clean" and "it was bounded" are different claims
+.LP
+A peer checked their own copies after the 2106 finding and found none
+future-dated \(em and then said the sharper thing:
+.QP
+my measurement was a
+.CW "sort -r | head -1" ,
+i.e. the same unbounded max, so it would have reported 2106 just as readily had
+that file been one directory over.  "It happened to be clean" and "it was
+bounded" are different claims and I only have the first.
+.LP
+.B "That is the distinction worth keeping from all four variants."
+A clean result from an unbounded instrument is not evidence the instrument is
+sound; it is evidence the input happened not to contain the case that breaks it.
+The single corrupt timestamp in forty directories was in THIS tree, which is
+the only reason it bit here and not there.
+.PP
+.B "And a max is the worst aggregator for this,"
+because it has no averaging to hide a bad member: it reports whatever is most
+broken rather than what is most typical.  A mean over the same set would have
+shrugged that file off entirely.  So an extremum needs a sanity bound
+.CW ( "$1 <= now" )
+in a way a mean does not.
+.PP
+The rules, in the order they are cheapest to apply:
+.P1
+1  a UNIFORM answer across many cases is the first tell
+2  make the test classify the one case whose answer is known
+3  check the POPULATION is the one the question is about
+4  run no filter before the aggregation it feeds
+5  bound an extremum -- it has nothing to hide a bad member behind
+.P2
