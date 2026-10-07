@@ -12256,3 +12256,113 @@ What is still not established is unchanged and is stated in
 .CW screenbcm.c :
 whether the phase the flip is paced to is inside the blanking interval.  These
 numbers make the CASE for the flip; they do not make the flip correct.
+.NH 2
+H4 CAUGHT: it is the board's USB ethernet, not the host's styx server
+.LP
+The thirty-run batch took no catch.  One arrived immediately afterwards on a
+different workload \(em a
+.CW gfxstress
+run \(em and
+.CW tools/jtag/wedgediag
+answered it.
+.B "H4 says question one is the whole experiment, and it was."
+.P1
+1. host styx answering a NEW connection?   yes, 0.00s, attempt 1
+2. the server process moving?              TIME identical before and after
+                                           (= blocked, not spinning)
+3. does the board answer JTAG?             yes, kernel running
+4. the print ring                          ends in usbdwc ep3.1 re-arms
+kernel ticks over 20s                      378523 -> 378910 (advancing)
+.P2
+.B "So the host is exonerated and the board is alive."
+Both of H4's candidate ends are ruled out, and the ring says where to look.
+.NH 3
+The board has TWO addresses and the session rides the dead one
+.LP
+.P1
+192.168.8.105    3 packets transmitted, 0 received, 100.0% loss
+192.168.8.210    3 packets transmitted, 3 received,   0.0% loss
+.P2
+The ring's only DHCP line is
+.CW ip=192.168.8.210 ,
+which is the wifi
+.CW ( #l0 ).
+.CW .105
+is the other interface, and
+.CW os/inferno/init/raspi3binit.b:1417
+says what that is: "on this board the onboard hub and, behind it, the LAN9514
+ethernet, which
+.CW etherusb
+then serves at
+.CW /net.alt/ether ".
+.B "All three ESTABLISHED styx connections are from .105,"
+so the session and the command poller ride the interface that is dark while the
+wifi beside it is fine.
+.NH 3
+And the controller registers say the receive endpoint stalled
+.LP
+The ring repeats
+.CW "usbdwc: ep3.1 re-armed after 2 s"
+with the count going 1, 10, 100, and
+.CW "NAK sleep"
+likewise.  Decoding the registers it prints:
+.P1
+hprt   0x00001005   connect=1 enable=1 suspend=0 reset=0 overcur=0
+hcchar 0x00d88a00   epnum=1 dir=IN type=bulk devaddr=3 mps=512
+                    chena=0 chdis=0
+hcint  0x00000000   nothing pending
+hctsiz 00080200 -> 40080200 between samples (the PID toggle moved)
+.P2
+.B "The port is still connected and enabled; the bulk IN channel is not."
+So the device has not fallen off the bus \(em the driver is re-arming a
+disabled receive channel every two seconds and the device never answers.  The
+receive path of the LAN9514 stalled with the link up.
+.NH 3
+The chain, and what it is not
+.LP
+The board's USB ethernet receive endpoint stalls; the board's
+.CW .105
+address goes dark; the styx session and the poller ride it; the host's styx
+server blocks in a read that will never complete; and the board looks dead to
+every instrument that reaches it through
+.CW /n/remote .
+.PP
+.B "That is NOT the theory H4 had live,"
+which was
+.CW styxd.sh 's
+recorded mode \(em "the server genuinely stops answering Styx".  The server
+answers a new handshake in 0.00s here.  The two present identically from the
+host and
+.CW wedgediag 's
+first question is what separates them.
+.NH 3
+What this catch does not establish
+.LP
+.IP \(bu
+.B "That the two earlier hangs were this."
+They produced no evidence, which is why
+.CW wedgediag
+and the
+.CW /dev/cons
+watcher exist.  One catch with this signature is one catch.
+.IP \(bu
+.B "A rate."
+Thirty clean
+.CW efs-fault
+runs \(em about three hours, all over this same USB ethernet \(em took no
+catch, so whatever this is, it is rarer than one in thirty of that workload.
+.IP \(bu
+.B "Anything about the server binary."
+.CW MacOSX/arm64/bin/emu-cpu
+is MODIFIED in git, which is exactly what
+.CW styxd.sh 's
+warning exists for.  It does not undermine this finding, because the server is
+exonerated by question one whichever binary it is \(em but it would have
+mattered had the evidence pointed the other way, and the warning fired when
+.CW styxd
+started.
+.IP \(bu
+.B "Why the endpoint stalled."
+Nothing here says whether that is the driver, the hub, the LAN9514 or the
+cable.  The registers say the channel is disabled with the port up, which is
+where the next person starts.
