@@ -8075,3 +8075,68 @@ has always known, and without
 qemu runs and prints nothing \-
 .B "which a harness reports as a kernel that printed nothing."
 Zero bytes captured is a statement about the listener.
+.NH 2
+Six thousand bytes, and the pool was asking for a chunk it did not need
+.PP
+Both boards reset,
+.B #c/xalloc
+read, and the number the whole memory question turned on:
+.DS
+.CW "6 holes free"
+.CW "1000f2b0 10010000 3408"
+.CW "2001f5e0 20020000 2592"
+.CW "6000 bytes free"
+.DE
+.B "6000 bytes left, the largest hole 3408, and poolalloc asking for 3776 to satisfy a request of 1366."
+.B "The board was 368 bytes short of a chunk it did not need."
+.PP
+.B ns
+comes from
+.BR p->chunk ,
+a thirty-second of the pool's ceiling, and that is an
+.I optimisation
+\- a bigger arena means fewer trips to
+.IR xalloc .
+It is not a requirement.
+.B "A pool that refuses a request it could satisfy because its preferred arena is too big is the same fault as one that refuses at a ceiling it never reached,"
+which is the bug fixed two sections above, wearing different clothes.
+.PP
+So
+.I poolalloc ()
+retries once with the smallest arena that can hold the request.  One
+retry and not a loop down to the quantum: the second ask is the smallest
+that can possibly work, so a third would be the same question again.
+.PP
+.B "This is not yet proven on the air,"
+and it cannot be from here: the allocation that fails is the EXPORTER's,
+so the fix has to be on the satellite, and the satellite cannot be
+flashed \- see below.  The ground carries it and boots clean.
+.NH 2
+And the satellite's console has gone one-way
+.PP
+.B "The board talks and will not listen."
+It boots, prints its banner, its pool tables and
+.BR ARMV7M-STYX-EXPORTING ,
+and ignores the two control-Rs entirely \- no
+.CW "console reset" ,
+no bootloader, nothing.
+.PP
+.B "The control rules out the method."
+.I Devuart 's
+handler is
+.CW "iprint(\(dq\\nconsole reset\\n\(dq); exit(0)"
+in the receive interrupt, and the same two bytes stuffed into the
+GROUND's session through the same
+.I screen
+command rebooted it immediately.
+.B "So the host-to-board direction on the satellite's PL2303 is dead,"
+which is an adapter or an RX pin and not a kernel.
+.B "It wants a replug or a power cycle, which is a person in the room."
+.PP
+Worth noting what it is NOT: not the unlocked
+.IR xsummary (),
+because this same board read
+.B #c/xalloc
+after the reset and printed the table without hanging.
+.B "That hang was a race and remains one;"
+the locking fix stands on the code and is still unverified on silicon.

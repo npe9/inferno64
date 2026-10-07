@@ -645,6 +645,46 @@ poolalloc(Pool *p, uintptr asize)
 	 * bytes while reporting 83500 it could never reach.
 	 */
 	t = xalloclargest(alloc);
+	/*
+	 * AND IF THE PREFERRED ARENA DOES NOT FIT, ASK FOR THE SMALLEST
+	 * ONE THAT WOULD DO.
+	 *
+	 * ns came from p->chunk, which is a thirty-second of the pool's
+	 * ceiling and an OPTIMISATION: a bigger arena means fewer trips
+	 * to xalloc.  It is not a requirement, and a pool that refuses a
+	 * request it could satisfy because its preferred arena is too
+	 * big is the same fault as one that refuses at a ceiling it never
+	 * reached.
+	 *
+	 * Measured on os/inferno/stm32f407, a station exporting its
+	 * namespace over a radio with #D pushed, from #c/xalloc at the
+	 * moment of the failure:
+	 *
+	 *	6 holes free
+	 *	1000f2b0 10010000 3408
+	 *	2001f5e0 20020000 2592
+	 *	6000 bytes free
+	 *
+	 * 6000 bytes left, the largest hole 3408, and poolalloc asking
+	 * for 3776 to satisfy a request of 1366.  THE BOARD WAS 368
+	 * BYTES SHORT OF A CHUNK IT DID NOT NEED.
+	 *
+	 * One retry, not a loop down to the quantum: the second ask is
+	 * the smallest that can possibly work, so a third would be the
+	 * same question again.
+	 */
+	if(t == nil && ns > size) {
+		intptr tryns, tryalloc;
+
+		tryns = size;
+		tryalloc = tryns+ldr+ldr;
+		if(p->arenasize - alloc + tryalloc <= p->maxsize) {
+			p->arenasize += tryalloc - alloc;
+			ns = tryns;
+			alloc = tryalloc;
+			t = xalloclargest(alloc);
+		}
+	}
 	if(t == nil) {
 		p->nbrk--;
 		/*
