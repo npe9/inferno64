@@ -19437,7 +19437,7 @@ controller's ctl dump is still printing when
 arrives, and the log carries
 .CW "... hub 2 port 3 rUSB-OK" .
 There is no
-.CW \\b
+.CW \eb
 between
 .CW r
 and
@@ -23736,7 +23736,7 @@ sdF: first interrupt, irq 37 intx
 .P2
 .P1
 missing evidence: acpi: iort rid 0x0\.\.0xff -> devid 0x0 via smmu, ...
-missing evidence: acpi: iort composed 1 of 2 window\(s\) ...
+missing evidence: acpi: iort composed 1 of 2 window\e(s\e) ...
 missing evidence: sdF: first interrupt, irq 819[0-9] msi-x
 .P2
 Both devices, not one.  Every device on bus 0 has a requester id below
