@@ -12752,3 +12752,133 @@ The rules, in the order they are cheapest to apply:
 4  run no filter before the aggregation it feeds
 5  bound an extremum -- it has nothing to hide a bad member behind
 .P2
+.NH 2
+H4: the fixup is a DATA RACE once npctx > 1, and the bound is its precondition
+.LP
+.CW multicore-73
+reproduced the sweep-cursor mechanism on hardware \(em Compute Engine,
+n2-standard-4, four Xeons,
+.CW parallelvm=1 ,
+one soak workload, single variable:
+.P1
+                       fixup OFF            fixup ON
+gc sweeps           519595  480014     1560032  342233  372155
+chains broken          176     164           0       0       0
+of those, magic 0      172     152           0       0       0
+.P2
+.B "About ten times the counts measured here, with 95 per cent of breaks reading magic 0,"
+which is the coalesce signature.  The prediction that
+.CW parallelvm
+widens the window holds: 176 against 17.
+.PP
+.B "And one of the three fixup-ON instances took a general protection violation."
+Their analysis, which is right:
+.CW rungc()
+reads and writes
+.CW ptr
+holding NO lock.  Before the fixup
+.CW ptr
+had exactly one writer, the collector.  The fixup makes
+.CW poolfree()
+a second writer under the POOL's ilock, which the collector never takes \(em no
+common lock.  And
+.CW stoptheworld()
+waits only on contexts with
+.CW inxec
+set, because what it exists for is
+.CW rootset()
+reading a live register file; a context in a system call is already at a
+safepoint, is not waited for, and can call
+.CW poolfree() .
+.NH 3
+Why it is a cross-ARENA problem, which is what makes okbhdr useless against it
+.LP
+The fixup writes
+.CW "ptr = b"
+or
+.CW "ptr = c" .
+.B "Both are VALID headers, so okbhdr() passes."
+But they are in whatever arena the freed block lives in, and the sweep walks
+ONE arena at a time
+.CW ( "base = base->clink" ).
+Checked rather than assumed: this board's heap pool reports
+.CW "nbrk 6" ,
+so it has grown six arenas.
+.PP
+.B "So a free in another arena hands the collector a cursor the magic cannot fault and limit cannot contain,"
+and
+.CW poolfree()
+has no idea which arena the sweep is in.  That is not "a concurrent write
+perturbs the cursor" in general; it is specifically a cursor that is undetectable
+by magic and unbounded below.
+.NH 3
+Which is why their bound is the precondition and not a precaution
+.LP
+.CW 9c487f5d8 ,
+taken here as
+.CW f88cc3887 :
+.P1
+if(base != nil && (ptr < base || ptr >= limit)) {
+	gcoutofarena++; base = nil; gcbroken++; return;
+}
+.P2
+.B "The walk was bounded above and below by nothing."
+The entry test reads the magic alone and the loop tests only
+.CW "ptr >= limit" ,
+so a cursor below
+.CW base
+walked FORWARD dereferencing what it found.  With the bound, the worst a
+cross-arena cursor costs is a wasted restart.
+.PP
+.B "It is right here for a second, independent reason."
+.CW npctx
+is a hard-coded 1 in this tree, so there is no concurrent writer \(em but a
+valid magic says nothing about the SIZE beside it, so one corrupt size makes
+.CW B2NB(ptr)
+jump below
+.CW base
+just as readily.  That is the "plausible word" family H4 recorded as
+undetectable from the word alone.  Same bound, two causes.
+.PP
+Both controls run.  Negative:
+.CW drawink ,
+.CW "gfxstress all" ,
+.CW efs-fault
+21 ok 0 fail, with out-of-arena 0 and the other three counters 0.  Positive:
+inverted to fire always gives 5116754 firings,
+.CW gcbroken
+equal to it exactly, and
+.B "the board still works"
+\(em it boots and
+.CW drawink
+passes every check with the collector restarting on EVERY sweep.  That is the
+degradation claim demonstrated rather than asserted.
+.NH 3
+Their exposure argument cuts harder than they said, and it predicts a test
+.LP
+They note panics-per-instance compares different opportunity, because the fixup
+triples collector work by removing restarts (1.56M sweeps against 520K).
+.B "There is a second asymmetry on top of that."
+With the fixup OFF there were 176 broken chains a run, and every one does
+.CW "base = nil; return"
+\(em a restart that DISCARDS the cursor.  So the OFF arm has an accidental
+recovery for any cursor corruption landing on a bad magic, and the ON arm
+removes it.  The arms differ in opportunity AND in whether a pre-existing
+hazard gets papered over.
+.PP
+.B "Which predicts a cleaner discriminator than panic rate."
+With the bound in and the fixup on, if the cross-arena write is real then
+.CW gcoutofarena
+must be NON-ZERO on their hardware.  Panics with
+.CW gcoutofarena
+at zero would mean the panic is something else and the fixup is not implicated.
+One batch rather than twelve instances.
+.PP
+.B "And my numbers are not a baseline for theirs."
+17 against 176 is consistent with the window argument, but this is one board
+with
+.CW npctx
+1 and a hard-coded absence of the switch, and theirs is four Xeons with
+.CW parallelvm=1 .
+The mechanisms differ in kind, not only in rate \(em here only a corrupt size
+can move the cursor, there a concurrent free can.
