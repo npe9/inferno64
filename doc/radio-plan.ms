@@ -7810,3 +7810,96 @@ a real 82-byte frame whose reception stops part way, once a run, and
 AX.25 recovers it.
 .B "It is no longer a candidate for anything that has been chased in this document,"
 and it wants its own measurement rather than a theory.
+.NH 1
+THE SSL WEDGE IS NOT A WEDGE
+.PP
+.B "Nothing is wedged, and the claim that a device can be wedged by anything a program does to a file descriptor is withdrawn."
+.PP
+With the receive path fixed and the ssl arm turned into data \- an
+.B ssl
+key in
+.I /lib/radio
+beside
+.BR pend ,
+for the same reason: a constant made the two arms two builds \- the run
+stopped after one message, exactly as before.  Then the satellite's
+console was read directly instead of through the watcher:
+.DS
+.CW "ARMV7M-STYX-EXPORTING"
+.CW "exportproc 7: waiting for memory (406) for request"
+.CW "styx: down 41 off the air (41 so far)"
+.CW "arena too large: main size 1366 cursize 42752 arenasize 117056"
+.CW "        maxsize 118178, alloc = 3776 pc=0x80211e3"
+.CW "exportproc 7: waiting for memory (406) for request"
+.CW "exportproc 7: waiting for memory (406) for request"
+.DE
+.B "It is out of memory."
+.I Exportfs
+cannot get the 406 bytes a Styx request needs,
+.B main 's
+arena is at 117056 of a 118178 maximum, and it says so
+.B "in an unbounded loop."
+.PP
+That loop is the symptom that was read as a wedge.
+.B "At console speed an unbounded print monopolises the uart,"
+so the console appears to stop mid-line and the two control-Rs that
+reach the bootloader \- handled in the uart receive interrupt \- never
+get a turn.
+.B "The receive interrupt was not gone.  It was starved."
+.PP
+And the ground was never wedged at all.  Its console:
+.DS
+.CW "styx: up 41 from the pipe (41 so far)"
+.CW "styx: up   41 onto the air"
+.CW "kstack high water 2468 of 4096"
+.DE
+Sitting in
+.CW sys->mount
+waiting for a Tversion reply the satellite cannot build, with no
+timeout in the mount driver to rescue it \-
+.B "the same shape as the lost frame: the end that cannot answer is the end that goes quiet."
+.NH 2
+And the watcher could not have told me
+.PP
+.B tools/radio/twostyx.py
+filtered for
+.BR smalloc ,
+.B "no free Blocks" ,
+.B panic
+and
+.BR exceeded .
+.B "The board says \(lqwaiting for memory\(rq and \(lqarena too large\(rq, which matched none of them."
+So an afternoon's worth of theories about devssl reference counts, the
+part, and this board's timing were built on a run whose own explanation
+was on the console and filtered out.
+.B "A watcher that filters for the failures you expect cannot report the one you did not."
+Both strings are in it now, and so is
+.B "kstack high water" .
+.NH 2
+What the memory question actually is
+.PP
+.B "#D costs 26480 bytes"
+and the station's pool has about 118K.  Three numbers are worth having
+before anything is changed:
+.IP \(bu
+.B "A process slot is 4096 bytes of kernel stack taken before main can have any"
+\- twelve of them is 49152 \- and the station's own high water is
+.B "2468 of 4096" .
+That is measured on the paths this workload takes and not on the
+deepest one that exists, so it is a candidate and not a licence.
+.IP \(bu
+.B Styxrpc
+is 406, which is
+.B "Ax25window * (Ccpayload - Ax25hdr) - Maxsslrec" ,
+and
+.I exportfs
+starts an
+.I exslave
+kproc per request, each wanting one.
+.IP \(bu
+What devssl allocates per connection, which is four channels' worth of
+reference on one
+.BR #D/0 .
+.PP
+.B "None of those is a guess that can be made from here,"
+and the board will answer all three.

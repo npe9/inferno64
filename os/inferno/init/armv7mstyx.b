@@ -93,17 +93,34 @@ Pipebuf:	con 512;
 # ground reached ARMV7M-STYX-MOUNTED -- a namespace across an AX.25
 # conversation with RC4 under it and no IP anywhere, which is steps 5
 # and 6 of doc/radio-plan.ms.  And then the satellite took the Twalk
-# that followed and WEDGED THE KERNEL: its console stopped mid-line,
-# nothing typed at it arrived afterwards, and the two control-Rs that
-# reach the bootloader are handled in the uart receive interrupt, which
-# is no longer running.  Only the reset button helps, and somebody has
-# to be in the room.
+# that followed and appeared to WEDGE THE KERNEL: its console stopped
+# mid-line, nothing typed at it arrived afterwards, and the two
+# control-Rs that reach the bootloader are handled in the uart receive
+# interrupt, which looked as though it was no longer running.
+#
+# IT WAS NOT WEDGED.  It had run out of memory, and what it was doing
+# with the console was saying so:
+#
+#	exportproc 7: waiting for memory (406) for request
+#	arena too large: main ... arenasize 117056 maxsize 118178
+#
+# in an unbounded loop.  At console speed that monopolises the uart, so
+# the receive interrupt was starved rather than gone, and the mounting
+# end was never wedged at all -- it sits in sys->mount for a reply that
+# cannot be built, the mount driver having no timeout.
 #
 # Twice, at the same message.  So the default is off, because a setting
 # that costs a trip across the room on every boot is not a default --
 # and the switch stays, because the investigation needs a control run
 # with it off on THIS kernel, which needs a board that has been reset.
-Usessl:		con 0;
+#
+# AND IT IS DATA NOW, not a constant, for the same reason pend is: a
+# constant here makes the two arms two builds, and this bench has
+# produced three confident wrong findings by comparing two changes at
+# once.  radiocal(1)'s ssl= key in /lib/radio sets it per board and the
+# station prints which arm it is in.  Absent means 0, which is what a
+# board should boot into while the wedge is unexplained.
+usessl: int;
 
 lastconv: int;
 keep: list of ref Sys->FD;
@@ -428,10 +445,10 @@ protect(fd: ref Sys->FD): ref Sys->FD
 	# message got no answer and the conversation timed out; without
 	# it, the same two boards had completed a mount and a 273-byte
 	# read.  Those are different kernels as well as different
-	# settings, so the control has to be taken with THIS one, and a
-	# constant here is what lets it be.
-	if(Usessl == 0){
-		sys->print("styx: no ssl, by Usessl in armv7mstyx.b\n");
+	# settings, so the control has to be taken with THIS one, and the
+	# ssl= key in /lib/radio is what lets it be.
+	if(usessl == 0){
+		sys->print("styx: no ssl, by ssl= in /lib/radio\n");
 		sys->print("ARMV7M-STYX-NOSSL-BYCHOICE\n");
 		return fd;
 	}
@@ -744,7 +761,7 @@ calibrate(call, peer, role: string): (string, string, string)
 		return (call, peer, role);
 	}
 	sys->print("styx: uid %s\n", uid);
-	want := array[7] of string;
+	want := array[8] of string;
 	want[0] = "ppb";
 	want[1] = "rssioffset";
 	want[2] = "csthr";
@@ -761,6 +778,9 @@ calibrate(call, peer, role: string): (string, string, string)
 	# two builds at the same time.  This way the kernel is identical
 	# and the only change is this line.
 	want[6] = "pend";
+	# And the same for ssl, which is the other arm this bench needs to
+	# compare: see protect() for what it wedges.
+	want[7] = "ssl";
 	(got, nil, bad, err) := radiocal->current(Radiocal->Cal, uid, want);
 	if(bad > 0)
 		sys->print("styx: %d unparsable pairs in %s\n", bad,
@@ -786,6 +806,11 @@ calibrate(call, peer, role: string): (string, string, string)
 		}else
 			sys->print("styx: pend 1 (the driver's default)\n");
 	}
+	if(got[7] != nil && got[7] != "0"){
+		usessl = 1;
+		sys->print("styx: ssl on, by ssl=%s in /lib/radio\n", got[7]);
+	}else
+		sys->print("styx: ssl off\n");
 	if(got[3] != nil)
 		call = got[3];
 	if(got[4] != nil)
