@@ -1,0 +1,141 @@
+#!/bin/sh
+#
+# Run tests/efs-fault N times, catch a hang with evidence, and recover.
+#
+#	sh tools/jtag/efsbatch		# 30 runs, the number H4 asks for
+#	N=5 sh tools/jtag/efsbatch
+#
+# WHY THIRTY AND NOT TEN.  H4 in doc/open-issues-plan.ms wrote the criterion
+# down before any batch was run, which is the only reason a batch means
+# anything: the suite hung twice in about twelve runs, a rate of ~0.17, so
+#
+#	10 clean runs   16%    chance of that if the rate is unchanged
+#	20 clean runs   2.6%
+#	30 clean runs   0.4%
+#
+# Ten clean runs are NOT evidence -- one batch in six looks like that with
+# nothing fixed.  Thirty at 0.4% refuses the old rate.  Claiming the rate is
+# now under 5 per cent would take fifty-nine, which is not what this is for.
+#
+# AND THE SENTENCE A CLEAN BATCH LICENSES IS "the rate is not what it was",
+# never "it is fixed".  When H4 was written nothing had been changed to fix it.
+# That is no longer quite true -- the 7l literal-pool fix (A6), the 7c widening
+# fix (A7) and the GC sweep-cursor fix all landed since, and all three change
+# the kernel this suite runs on -- so a drop in rate is attributable to this
+# session in aggregate and to no single change.  The batch cannot apportion it.
+#
+# ON A CATCH, EVIDENCE BEFORE RECOVERY.  The whole value of a hang is the state
+# it leaves, and a reboot destroys it.  So a timeout runs tools/jtag/wedgediag
+# FIRST -- which asks which end stopped and changes nothing -- then kmesg for
+# the print ring, then recovers.  H4 says question one of wedgediag (does the
+# HOST answer a new styx handshake) is the whole experiment, because the live
+# theory is the host's styx server and not the board.
+#
+# WHY THE WATCHER CANNOT LIVE ON /n/remote, which cost two earlier hangs their
+# evidence: the suite copies its files THROUGH the styx mount, so if the styx
+# server is what stopped, anything written to /n/remote blocks too.  This
+# script runs on the HOST and reads board.out, which the board writes over the
+# same mount -- so a styx hang stops that too, and that is precisely what the
+# timeout detects rather than something it has to avoid.
+#
+set -u
+HERE=`cd \`dirname "$0"\` && pwd`
+ROOT=`cd "$HERE/../.." && pwd`
+N=${N:-30}
+WAIT=${WAIT:-900}
+OUT=${OUT:-${TMPDIR:-/tmp}/efsbatch.$$}
+SESS=${SESS-`screen -ls | awk '/ttys/{print $1; exit}'`}
+
+mkdir -p "$OUT" || exit 1
+echo "efsbatch: $N runs, ${WAIT}s each, logs in $OUT"
+echo "efsbatch: a clean 30 licenses \"the rate is not what it was\" and nothing more"
+
+clean=0
+hung=0
+failed=0
+run=0
+
+while [ $run -lt $N ]; do
+	run=`expr $run + 1`
+	log=$OUT/run$run.log
+	printf 'efsbatch: run %d/%d ... ' $run $N
+	sh "$ROOT/tools/jtag/boardrun" -t $WAIT 'sh /n/remote/tests/efs-fault' \
+		> "$log" 2>&1
+	rc=$?
+	#
+	# NO `|| echo 0' FALLBACK.  grep -c PRINTS the count and then EXITS 1
+	# when the count is zero, so the fallback runs IN ADDITION to the
+	# count and the variable becomes "0\n0" -- which is not equal to "0",
+	# so every clean run was reported as "CHECKS FAILED (21 ok, 0\n0
+	# fail)".  A guard firing on correct input, for the third time in this
+	# directory, and the second time today in this exact shape: BSD expr
+	# also exits 1 while printing a correct 0, which mangled a number in
+	# tools/jtag/vmheld this morning.
+	#
+	# grep -c always prints a number, so no fallback is needed at all.
+	#
+	ok=`grep -ac ' ok:' "$log" 2>/dev/null`
+	bad=`grep -acE 'FAIL|fail:' "$log" 2>/dev/null`
+	mark=`grep -ac 'EFS-FAULT-OK' "$log" 2>/dev/null`
+	: ${ok:=0} ${bad:=0} ${mark:=0}
+
+	#
+	# THE MARKER DECIDES, NOT THE EXIT STATUS and not the absence of
+	# failures.  "No FAIL lines" and "the suite never ran" are the same
+	# output, which this directory's README records as the reason every
+	# check here keys on a positive completion marker.
+	#
+	if [ "$mark" = 1 ] && [ "$bad" = 0 ] && [ "$ok" -ge 21 ]; then
+		clean=`expr $clean + 1`
+		echo "clean ($ok ok)"
+		continue
+	fi
+
+	if [ "$mark" = 1 ]; then
+		failed=`expr $failed + 1`
+		echo "CHECKS FAILED ($ok ok, $bad fail) -- $log"
+		continue
+	fi
+
+	#
+	# No marker: the suite did not finish.  THIS is the catch, and the
+	# evidence comes before the cure.
+	#
+	hung=`expr $hung + 1`
+	echo "HUNG (rc=$rc, $ok ok, no marker)"
+	echo "efsbatch:   -- wedgediag, which changes nothing --"
+	sh "$ROOT/tools/jtag/wedgediag" > "$OUT/wedge$run.txt" 2>&1
+	sed 's/^/efsbatch:   /' "$OUT/wedge$run.txt"
+	echo "efsbatch:   -- print ring --"
+	sh "$ROOT/tools/jtag/kmesg" > "$OUT/ring$run.txt" 2>&1
+	tail -20 "$OUT/ring$run.txt" | sed 's/^/efsbatch:   /'
+
+	echo "efsbatch:   recovering with a JTAG boot"
+	printf 'load std; echo BR-IDLE-%s\n' "`date +%s`" \
+		> "$ROOT/os/inferno/raspi3b/board.cmd"
+	SESS="$SESS" sh "$ROOT/tools/jtag/boot.sh" > "$OUT/boot$run.log" 2>&1
+	if ! tail -3 "$OUT/boot$run.log" | grep -q 'is running'; then
+		echo "efsbatch: REFUSING to continue -- the board did not come"
+		echo "efsbatch: back after the hang on run $run.  Everything from"
+		echo "efsbatch: here would be measuring a dead board, which is"
+		echo "efsbatch: worse than measuring nothing."
+		break
+	fi
+done
+
+echo
+echo "efsbatch: $clean clean, $hung hung, $failed with failed checks, of $run run(s)"
+if [ "$hung" = 0 ] && [ "$run" -ge 30 ]; then
+	echo "efsbatch: thirty clean refuses the old ~0.17 rate at p=0.004."
+	echo "efsbatch: That is \"the rate is not what it was\".  It is NOT"
+	echo "efsbatch: \"it is fixed\", and it cannot say WHICH of this"
+	echo "efsbatch: session's three kernel changes did it."
+elif [ "$hung" = 0 ]; then
+	echo "efsbatch: $run clean runs is not the thirty the criterion names;"
+	echo "efsbatch: at the old rate a clean batch this short is unremarkable."
+else
+	echo "efsbatch: a catch was taken -- see $OUT/wedge*.txt, which answers"
+	echo "efsbatch: which END stopped.  H4 says question one (does the HOST"
+	echo "efsbatch: answer a new styx handshake) is the whole experiment."
+fi
+exit 0
