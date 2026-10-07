@@ -4207,6 +4207,21 @@ soakline(void)
 		extern void poolstatline(void);
 
 		poolstatline();
+		{
+			extern ulong gcsweeps, gcbroken, gcbrokenzero;
+			extern ulong gcoutofarena;
+
+			/*
+			 * The incremental sweep's own health: how many times
+			 * it started over because the cursor it resumed from
+			 * was no longer a block header, and how many of those
+			 * read magic 0, which is what poolfree()'s coalesce
+			 * leaves behind.
+			 */
+			print("soak: gc sweeps %lud, chains broken %lud"
+				" (magic 0 in %lud, cursor out of arena %lud)\n",
+				gcsweeps, gcbroken, gcbrokenzero, gcoutofarena);
+		}
 		if(schedlocks != 0)
 			print("soak: sched lock taken %lud times, held on"
 				" arrival %lud (%lud per thousand);"

@@ -43,6 +43,38 @@ struct Ptrhash
 	ulong	gcnruns;
 	ulong	gcsweeps;
 	ulong	gcbroken;
+	/*
+	 * What the broken cursor held when the sweep found it.
+	 *
+	 * The sweep is incremental: base/ptr/limit persist across rungc()
+	 * calls and it resumes where the last quantum stopped.  poolfree()
+	 * may coalesce away the very block ptr names, and a merge zeroes
+	 * the swallowed header's magic -- so a count of breaks whose magic
+	 * read 0 is the direct signature of that and not of anything else.
+	 * The fixup in poolfree() that moves ptr onto the surviving block
+	 * is what prevents it; os/inferno/port/alloc.c had it commented
+	 * out.  Reported by the raspi3b-port session, which found it there.
+	 */
+	ulong	gcbrokenzero;
+	/*
+	 * The cursor left the arena the sweep is walking.
+	 *
+	 * The entry check below was okbhdr(ptr) alone, which tests the
+	 * magic and nothing else, and the loop bounds the cursor with
+	 * "ptr >= limit" and nothing below.  So a cursor moved BELOW base
+	 * -- by anything at all -- walks forward dereferencing whatever it
+	 * lands on, and the first thing that is not a header is a fault
+	 * rather than a restart.
+	 *
+	 * That matters here more than upstream.  poolfree()'s sweep-cursor
+	 * fixup makes a second writer to this pointer, and on a kernel
+	 * with one Dis context that is sequential, while on this branch a
+	 * context outside xec() can free while the collector sweeps --
+	 * othersrunning() counts only inxec, by design.  With the bound in
+	 * place the worst a concurrent write can do is cost a restart,
+	 * which is what an unbounded walk should have cost all along.
+	 */
+	ulong	gcoutofarena;
 	ulong	gchalted;
 	ulong	gcepochs;
 	uvlong	gcdestroys;
@@ -1220,8 +1252,16 @@ rungc(Prog *p)
 		limit = B2LIMIT(b);
 	}
 
-	/* Chain broken ? */
+	/* Cursor outside the arena it is walking, or chain broken ? */
+	if(base != nil && (ptr < base || ptr >= limit)) {
+		gcoutofarena++;
+		base = nil;
+		gcbroken++;
+		return;
+	}
 	if(!okbhdr(ptr)) {
+		if(ptr != nil && ptr->magic == 0)
+			gcbrokenzero++;
 		base = nil;
 		gcbroken++;
 		return;
