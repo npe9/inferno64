@@ -609,6 +609,51 @@ trap(Ureg *ur)
 		serialputreg("sp", ur->sp, 8);
 		serialputs("\n", -1);
 		/*
+		 * AND SAY SO WHEN THE FAULTING ADDRESS HAS THE SHAPE OF A LOST
+		 * SIGN EXTENSION, because this board has now paid for that twice
+		 * and the report said nothing both times.
+		 *
+		 * 7c drops the widening of a 32-bit value used as a pointer
+		 * offset -- with a cast and, worse, with no cast at all (see
+		 * tools/jtag/umulladd and the kencc notes in
+		 * doc/open-issues-plan.ms).  An AArch64 write to a W register
+		 * zeroes the top half, so a negative offset arrives as
+		 * 0xFFFFFFxx and the pointer lands just under 2^32 ABOVE where
+		 * it belongs.  byteaddr() did exactly this twice.
+		 *
+		 * THIS BOARD CANNOT ADDRESS THAT HIGH.  KZERO is 0, DRAM tops
+		 * out at 1GB and the peripherals sit below 0x41000000, so a far
+		 * at or above 2^32 is not a legitimate address under any
+		 * mapping this kernel makes -- which is what makes the
+		 * recovered value trustworthy rather than a guess.  far - 2^32
+		 * is then the address the code MEANT, and that names the object
+		 * instead of leaving a wild number to be stared at.
+		 *
+		 * A HINT and not a verdict: a wild pointer from any other cause
+		 * can land up there too.  What it claims is the shape, and the
+		 * recovery, both of which are checkable from the line.
+		 */
+		if(ur->tval >= ((uvlong)1 << 32)){
+			serialputs("  far is >= 2^32: SHAPE OF A LOST SIGN"
+				" EXTENSION (7c)", -1);
+			serialputreg("intended", ur->tval - ((uvlong)1 << 32),
+				16);
+			serialputs("\n  see tools/jtag/umulladd; this board"
+				" cannot address above 0x41000000\n", -1);
+		}
+		else if(ur->tval >= 0xF0000000ULL){
+			/*
+			 * The same defect reached through a NULL or small base:
+			 * the offset alone is the address, so it stays under
+			 * 2^32 and reads as a plausible-looking huge number.
+			 * The recovery is the signed offset it started as.
+			 */
+			serialputs("  far is just under 2^32: SHAPE OF A LOST"
+				" SIGN EXTENSION (7c) off a small base", -1);
+			serialputreg("offset", ((uvlong)1 << 32) - ur->tval, 8);
+			serialputs(" below it\n", -1);
+		}
+		/*
 		 * Who m is, and what it holds.
 		 *
 		 * This board takes a data abort at accounttime+0x24 --

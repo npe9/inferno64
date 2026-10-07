@@ -118,6 +118,7 @@ enum
 	CMprocdump,
 	CMilock,
 	CMsched,
+	CMsignfault,
 };
 
 /*
@@ -251,6 +252,20 @@ static Cmdtab sysctlcmd[] =
 	CMprocdump,	"procdump",	0,
 	CMilock,	"ilock",	0,
 	CMsched,	"sched",	0,
+	/*
+	 * THE POSITIVE CONTROL FOR trap.c's LOST-SIGN-EXTENSION HINT, and the
+	 * reason it is a facility rather than a one-off patch: the hint claims
+	 * to recognise a faulting address 2^32 above where the code meant, and
+	 * a claim about a panic path that has never been made to fire is a
+	 * claim about code nobody has run.  CMpanic is already here, so a
+	 * deliberate fault is not a new kind of power.
+	 *
+	 * It takes a data abort at a KNOWN address -- a real stack address plus
+	 * exactly 2^32 -- so the "intended" value the hint prints can be
+	 * checked against the one it was built from, rather than merely looking
+	 * plausible.
+	 */
+	CMsignfault,	"signfault",	0,
 };
 
 Cmdtab rebootmsg[] =
@@ -1435,6 +1450,27 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 			 * wedged kproc is otherwise invisible from the shell.
 			 */
 			kstackdump();
+			break;
+		case CMsignfault:
+			{
+				uvlong x, a;
+
+				x = 0;
+				a = (uintptr)&x + ((uvlong)1 << 32);
+				print("SIGNFAULT about to read %#llux,"
+					" intended %#p\n", a, (void*)&x);
+				/*
+				 * Formed in a uvlong and cast once, so the
+				 * address is built by this code and not by
+				 * whatever 7c does to a narrowing cast -- the
+				 * control must not depend on the defect it is
+				 * the control for.
+				 */
+				x = *(uvlong*)(uintptr)a;
+				print("SIGNFAULT read %#llux WITHOUT faulting"
+					" -- the hint cannot be tested here\n",
+					x);
+			}
 			break;
 		case CMsched:
 			/*
