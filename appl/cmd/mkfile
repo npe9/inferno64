@@ -163,6 +163,7 @@ TARG=\
 	timestamp.dis\
 	tkcmd.dis\
 	ellipsetest.dis\
+	styxdirtest.dis\
 	tkscenetest.dis\
 	tl.dis\
 	touch.dis\
