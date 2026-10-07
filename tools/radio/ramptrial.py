@@ -131,16 +131,28 @@ def main():
 				continue
 			for k in range(runs):
 				out = run(sat, gnd, 300)
+				# DID THE BOARD APPLY IT?  The first sweep
+				# set txramp= in lib/radio for six points
+				# and nothing read the key: identical
+				# counters and an identical RSSI at every
+				# power.  Both stations print the ramp they
+				# set, and a row that cannot show both is
+				# not a data point.
+				said = re.findall(r"styx: txramp (\d+),", out)
+				applied = len(said) == 2 and \
+					all(int(x) == ramp for x in said)
 				ok = "ARMV7M-STYX-BIGREAD-OK" in out
 				mount = "ARMV7M-STYX-MOUNTED" in out \
 					or "ARMV7M-STYX-NOSSL-BYCHOICE" in out
 				g = counters(out, False)
 				f = counters(out, True)
-				rows.append((ramp, ok, g, f))
-				print("ramp %2d (%+5.1f dBm)  bigread %-3s  "
+				rows.append((ramp, ok, g, f, applied))
+				print("ramp %2d (%+5.1f dBm)%s  bigread %-3s  "
 					"gnd recv %-3d stale %-2d crcbad %-2d "
 					"last %-5d |  sat recv %-3d stale %-2d"
-					% (ramp, dbm(ramp), "OK" if ok else "NO",
+					% (ramp, dbm(ramp),
+					   "" if applied else " NOT APPLIED",
+					   "OK" if ok else "NO",
 					   g["recv"], g["rxstale"], g["crcbad"],
 					   g["last"], f["recv"], f["rxstale"]),
 					flush=True)
@@ -151,6 +163,10 @@ def main():
 	for ramp in ramps:
 		mine = [r for r in rows if r[0] == ramp]
 		if not mine:
+			continue
+		if not all(r[4] for r in mine):
+			print("%4d  %+5.1f  NOT APPLIED on some runs" % (
+				ramp, dbm(ramp)))
 			continue
 		print("%4d  %+5.1f  %d of %-3d  %-10s %-11s %s" % (
 			ramp, dbm(ramp), sum(1 for r in mine if r[1]), len(mine),

@@ -130,6 +130,7 @@
 radio=cc1120 uid=2037303959315008002f0022
 	board=clicker2 click=ccrf2 name=board1 call=N0CALL-1 peer=N0CALL-2
 	role=caller
+	txramp=7
 	# -3550ppb: a carrier from a generator calibrated by ear against
 	# WWV appeared 3250Hz below where this part was commanded, at
 	# both 915 and 910MHz, three runs identical.  With it applied
@@ -144,6 +145,7 @@ radio=cc1120 uid=2037303959315008002f0022
 radio=cc1120 uid=203730395931500800300022
 	board=clicker2 click=ccrf2 name=board2 call=N0CALL-2 peer=N0CALL-1
 	role=answerer
+	txramp=7
 	# +60300ppb, and this is why the file exists: it is 64ppm from
 	# board 1's and no one kernel can carry both.  Measured by keying
 	# each board into the same tinySA in one session so the

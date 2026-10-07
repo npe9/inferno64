@@ -835,7 +835,7 @@ calibrate(call, peer, role: string): (string, string, string)
 		return (call, peer, role);
 	}
 	sys->print("styx: uid %s\n", uid);
-	want := array[8] of string;
+	want := array[9] of string;
 	want[0] = "ppb";
 	want[1] = "rssioffset";
 	want[2] = "csthr";
@@ -855,6 +855,20 @@ calibrate(call, peer, role: string): (string, string, string)
 	# And the same for ssl, which is the other arm this bench needs to
 	# compare: see protect() for what it wedges.
 	want[7] = "ssl";
+	# AND THE TRANSMIT POWER, which this init did not read.
+	#
+	# /lib/radio has documented txramp all along and only
+	# armv7max25.b ever read it, so a txramp= line in a station's
+	# entry did nothing at all.  Found by sweeping it: two points 2dB
+	# apart returned identical counters and an identical received
+	# RSSI, which is what a setting nobody applies looks like.
+	#
+	# It matters because PA_POWER_RAMP is the step attenuator this
+	# bench has been waiting on for doc/radio-plan.ms item 9 --
+	# (ramp+1)/2 - 18 dBm, 31dB in half-dB steps, inside the part and
+	# with none of the leakage that floors a cabled pad between two
+	# boards a metre apart.
+	want[8] = "txramp";
 	(got, nil, bad, err) := radiocal->current(Radiocal->Cal, uid, want);
 	if(bad > 0)
 		sys->print("styx: %d unparsable pairs in %s\n", bad,
@@ -879,6 +893,25 @@ calibrate(call, peer, role: string): (string, string, string)
 					got[6]);
 		}else
 			sys->print("styx: pend 1 (the driver's default)\n");
+		# The same write armv7max25.b uses: the driver has no named
+		# verb for the PA, and reg 0x2b is PA_CFG2 with 0x40 the
+		# fixed high bits -- ramp 0 is 0x40 and ramp 15, the
+		# driver's default, is 0x4f.  Read back rather than
+		# trusting the write, on its own line.
+		if(got[8] != nil){
+			r := int got[8];
+			if(r < 0 || r > 63)
+				sys->print("styx: txramp %s is not 0 to 63,"
+					+ " ignored\n", got[8]);
+			else if(put(ctl, sys->sprint("reg 0x2b 0x%x",
+			    r | 16r40)))
+				sys->print("styx: txramp %d, %d.%d dBm\n", r,
+					(r + 1) / 2 - 18,
+					((r + 1) % 2) * 5);
+			else
+				sys->print("styx: txramp %s refused: %r\n",
+					got[8]);
+		}
 	}
 	if(got[7] != nil && got[7] != "0"){
 		usessl = 1;
