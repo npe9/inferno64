@@ -767,11 +767,21 @@ satellite sending 42 frames while the ground's receive count stayed at
 below.  With that fixed, the old flush-on-partial completes the read
 too, losing two frames that AX.25 recovers.
 .PP
-So what keeping buys is a retransmission saved, and
+So what keeping buys is a retransmission saved.
+.B "Measured, with the state gate in and the trial run again:"
+three for three both ways, and
 .B resume
-below says it has not yet bought even that: it reads 0 on every live
-run.  The 66-byte tail that arrived came 11 seconds after it was sent,
-which is a retransmission.
+reading 3, 1 and 1 \- five frames across three runs whose payload turned
+up and were read out, where the other arm flushed six and made AX.25 pay
+for them.
+.B "Pend 1 stays the default for that and not for session survival."
+.PP
+It also explains why
+.B resume
+read 0 on every run before the gate.
+.B "The partials were not frames:"
+they were bytes read out of the RX FIFO during the station's own
+transmission, so no payload was ever coming to finish them.
 .PP
 Six counters report it.
 .TP
@@ -794,8 +804,11 @@ for that reason: a non-zero
 .B rxpartial
 with
 .B resume
-0 means every frame that was held was held in vain, and the good that
-keeping does is only that the FIFO was not flushed.
+0 means every frame that was held was held in vain.
+.B "It read 0 for a whole session's worth of runs, and that was the symptom, not the mechanism failing"
+\- the held frames were bytes read during the station's own transmission
+and no payload was coming.  With the drain gated on the part being in
+RX it reads 3, 1 and 1.
 .TP
 .B rxstale
 A kept length was

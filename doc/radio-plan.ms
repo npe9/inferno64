@@ -7766,3 +7766,47 @@ is how it says so.
 is still 2, so there are genuine mid-packet looks as well, and this run
 had the OLD flush-on-partial selected: both were flushed, both were
 recovered by AX.25, and the read completed.
+.NH 2
+And with the real fault gone, the trial answers a smaller question
+.PP
+The same three pairs, same harness, on the fixed driver:
+.DS
+.CW "1 pend=1  OK  rxstall 5 rxpartial 3 resume 3 rxstale 0"
+.CW "1 pend=0  OK  rxstall 1 rxpartial 2 resume 0 rxstale 0"
+.CW "2 pend=1  OK  rxstall 4 rxpartial 2 resume 1 rxstale 1 (67 of 82)"
+.CW "2 pend=0  OK  rxstall 0 rxpartial 2 resume 0 rxstale 0"
+.CW "3 pend=1  OK  rxstall 3 rxpartial 2 resume 1 rxstale 1 (15 of 82)"
+.CW "3 pend=0  OK  rxstall 2 rxpartial 2 resume 0 rxstale 0"
+.CW ""
+.CW "pend=1 3 of 3 bigreads completed"
+.CW "pend=0 3 of 3 bigreads completed"
+.DE
+.B "Three for three both ways."
+So keeping the length byte is not what makes a session survive; the
+state gate and the legal flush are.
+.PP
+.B "And resume is no longer 0."
+It reads 3, 1 and 1 \- five frames across three runs whose payload
+turned up and were read out, where the other arm flushed six and made
+AX.25 pay for them.
+.B "That is the whole measured value of pending: a retransmission saved, five times in three runs,"
+and it is why
+.B "pend 1"
+stays the default.
+.PP
+It also explains why
+.B resume
+read 0 on every run before the gate.
+.B "The partials were not frames."
+They were bytes read out of the RX FIFO during the station's own
+transmission, so there was never a payload coming to finish them \- the
+counter was telling the truth about a mechanism that had nothing real to
+work on.
+.PP
+.B "What is left, and it is bounded:"
+the stale length is still 82, now with the gate in and the bytes-arrived
+figure varying \- 67 of 82 and 15 of 82.  With transmit excluded that is
+a real 82-byte frame whose reception stops part way, once a run, and
+AX.25 recovers it.
+.B "It is no longer a candidate for anything that has been chased in this document,"
+and it wants its own measurement rather than a theory.
