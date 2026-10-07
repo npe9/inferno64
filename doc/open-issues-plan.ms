@@ -10837,3 +10837,238 @@ log held only the warning.
 which is why the completion marker is not optional \(em the same reason
 .CW boardrun
 uses a unique token at all.
+.NH 2
+H4.  CLOSED.  The broken sweep chains are poolfree() coalescing the cursor away
+.LP
+The item above left this with two candidates and named the instrument it
+needed: "splitting them needs a reader on the path that CREATES a chain rather
+than on the guard.  That is the next instrument for this item and it is not
+written."  It is written, it answered,
+.B "and the answer is neither candidate."
+.PP
+.B "What it is."
+.CW libinterp/gc.c 's
+sweep is incremental: it keeps
+.CW base ,
+.CW ptr
+and
+.CW limit
+across
+.CW rungc()
+calls and resumes where the last quantum stopped.
+.CW ptr
+is a GLOBAL and not a static for one reason \(em
+.CW poolfree()
+may COALESCE AWAY the block it points at, and a merge zeroes the swallowed
+header's magic.  So upstream Inferno's
+.CW poolfree()
+fixes the cursor up:
+.P1
+	c = B2NB(b);
+	if(c->magic == MAGIC_F) {	/* Join forward */
+		if(c == ptr)
+			ptr = b;
+	...
+	c = B2PT(b)->hdr;
+	if(c->magic == MAGIC_F) {	/* Join backward */
+		if(b == ptr)
+			ptr = c;
+.P2
+.CW os/port/alloc.c
+has had both LIVE since the
+.CW 20060303
+import
+.CW ( 74a4d8c26 )
+and
+.CW emu/port/alloc.c:455
+still does.
+.B "This kernel's copy had them commented out."
+.CW os/inferno/port/alloc.c
+arrived in
+.CW 10405d31c ,
+a 9front-derived kernel port, where that was correct \(em that kernel had no
+libinterp for the extern to resolve against.  libinterp came later and nobody
+turned them back on, so the native collector has been sweeping without the
+fixup for four years while emu's has had it.
+.PP
+That is a SOURCE fact and not a measurement, deliberately: emu's binaries were
+being rebuilt by another session and were not instruments, which this plan
+records elsewhere at the cost of a retracted claim.
+.NH 3
+The measurement, and the identity that settled it
+.LP
+Fresh boot then
+.CW tests/efs-fault ,
+twice with the fixup off and once with it on.  Same board, same workload, same
+.CW kbuild ,
+same reader, single variable:
+.P1
+                               fixup OFF        fixup ON
+                              run 1  run 2
+gc sweeps                     79660  81090        79106
+chains found BROKEN              17     12            0
+resumed stale and BROKE          17     12            0
+resumed stale, passed okbhdr      3      2            0
+mutator swallows                 30     16           53
+mutator swallows REPAIRED          -      -           53
+collector's own swallows           0    876          892
+markheap bad pointers rejected     0      0            0
+.P2
+.B "gcbroken == gcstalebrk exactly, in both off runs, at two different counts."
+Every broken chain is a resume on a cursor the mutator coalesced away.  Seven
+of the eight recorded break words read magic 0, which is what a merge leaves.
+.CW tests/efs-fault
+was 21 ok 0 fail in all three runs;
+.CW drawink
+7 of 7 and
+.CW gfxstress
+fill 44400 ops/s, mask 115 ops/s on the fixed kernel.
+.PP
+.B "So neither candidate as H4 stated them."
+Not a corrupted pointer word: the guard's own counter is still 0 and the words
+are zeroes.  And NOT A RACE \(em this is sequential and deterministic, which is
+exactly why the collector's own ~890 swallows a run are harmless and the
+mutator's 53 were not.  The sweep loop frees the block AT the cursor and
+advances with
+.CW "ptr = B2NB(ptr)"
+on the next line, with
+.CW ptr->size
+untouched, so its own swallow is repaired by construction.  Only a swallow
+between quanta survives to the resume.
+.PP
+.B "And a break was a wasted re-sweep, not damage."
+.CW okbhdr()
+catches it,
+.CW base
+goes nil and the sweep starts over.  Nothing was corrupted and nothing was
+lost; what it cost was the collector restarting instead of finishing.
+.B "The corruption theory this item withdrew stays withdrawn."
+.NH 3
+The dangerous tier is empty, and it took one more build to say so
+.LP
+A swallowed cursor that still passes
+.CW okbhdr()
+is the one reading that could have been either thing.  A merge zeroes the
+magic, so a cursor that later passes must have had its ADDRESS reused \(em
+either
+.CW poolalloc()
+split the merged free block and put a REAL header back there, which is benign,
+or the address is now inside a block and the word there merely READS like a
+magic.  The second would have been H4's bad-word candidate with a mechanism
+attached, and it would matter:
+.CW okbhdr()
+runs ONCE, at entry, and the loop then compares
+.CW "ptr->magic == MAGIC_A"
+bare and advances by whatever
+.CW size
+is sitting there until it passes
+.CW limit .
+.PP
+.B "B2T(ptr)->hdr == ptr tells them apart in one compare."
+The allocator writes that back-pointer on every block it makes.  Bounded first
+by the arena's own
+.CW limit ,
+because a cursor inside a payload has whatever size is there and
+.CW B2T()
+indexes by it.  Both recorded rows: magic
+.CW 0xa110c ,
+tail AGREES.  Real blocks.  Nothing walked from a position nothing vouched for.
+.PP
+Which is also why the tail test did not go into the break check.  With the
+fixup in, the cursor is never stale, so there is nothing for it to guard.
+.NH 3
+Three instrument lies in one item, all mine, all caught by a control
+.LP
+.IP \(bu
+.B "252 backward swallows on a boot with ZERO broken chains."
+Read as a mechanism firing constantly and being harmless.
+.B "All 252 were the collector's own frees"
+\(em the sweep loop frees the block at the cursor \(em counted by an instrument
+that could not tell them from the event it was built to find.
+.B "The forward count being exactly 0 was the tell and I did not read it:"
+inside the loop
+.CW b
+IS
+.CW ptr ,
+so
+.CW c
+never is.  A zero that should have been impossible under the stated mechanism.
+.IP \(bu
+.B "55 `swallowed and still valid' hits, every one of them the restart."
+The check sat AFTER
+.CW rungc() 's
+.CW "if(base == nil)"
+block, which assigns a fresh cursor from
+.CW poolchain() ,
+so it tested a value that had just been replaced and called the fresh value's
+validity a survival.
+.B "The order of two statements decided whether the number meant anything."
+.IP \(bu
+.B "`expr 0 - 0 || echo ?' in vmheld."
+BSD
+.CW expr
+EXITS 1 WHEN THE RESULT IS 0, so the fallback ran \(em and
+.CW ?
+is a glob, which the shell expanded against the worktree root to the directory
+.CW n .
+The mutator count printed as
+.P1
+vmheld:   BY THE MUTATOR: forward 0
+n, backward 1 -- only these can outlive a quantum
+.P2
+.B "A number mangled by its own error path, in the one line this item turns on,"
+found only because the newline broke the line visibly.  Had the fallback been
+quiet the figure would have read as a clean zero.
+.PP
+Each of the three was caught by comparing against something, not by reading the
+code: a zero that could not happen, a count that did not match its siblings,
+and a line that would not parse.
+.NH 3
+One counter had to change WITH the fix or it would have reported itself as the bug
+.LP
+The mutator branches used to set
+.CW gcptrstale ,
+which the next
+.CW rungc()
+classifies.  With the cursor repaired that flag would have made a VALID cursor
+pass
+.CW okbhdr()
+at the resume and be counted as
+.CW gcstaleok
+\(em the dangerous tier.  They now bump
+.CW gcptrfixed
+and set nothing, so after the change all three
+.CW gcstale*
+are 0 BY CONSTRUCTION and a nonzero one is a real finding: something swallows
+the cursor that the two joins do not cover.
+.CW vmheld
+says exactly that when it sees one.
+.PP
+.B "The general shape is worth more than this instance:"
+an instrument built to detect a bug by its symptom will read a successful fix
+as the symptom unless the fix moves the counter too.  A fix that leaves its own
+detector firing is indistinguishable from no fix at all.
+.NH 3
+What is NOT settled here
+.LP
+.IP \(bu
+.B "The gcinsweep split is sound only while npctx == 1,"
+which is what these boots had.  A second context freeing concurrently is
+attributed to the collector, so the split must be relabelled before the number
+is read under
+.CW parallelvm .
+Said in the code, at the flag.
+.IP \(bu
+.B "devcons's GC-COUNTS reader is UNVERIFIED in these builds."
+The one
+.CW "echo sched > /dev/consctl"
+issued here left the poller unanswering, which matched the recorded styx wedge
+(sweeps still advancing, no holds) rather than the print \(em but matched is not
+verified.  Every number above came from
+.CW tools/jtag/vmheld ,
+which is the reader that is.
+.IP \(bu
+.B "Whether the breaks cost anything measurable."
+17 restarts in 79660 sweeps is 0.02%, and the restart re-walks rather than
+re-collects, so the cost is bounded by a re-sweep's inspection work and was not
+measured.  The fix is justified by correctness, not by a number.
