@@ -11889,3 +11889,56 @@ cover, which the correction lists: a draw longer than a frame, a draw that does
 not proceed in scanline order (Tk paints widget by widget), and a draw not
 aligned to the frame at all.  Those are about WHEN writes land relative to the
 beam, so the instrument is the phase clock that already exists, not a readback.
+.NH 3
+The memory-accumulation theory is refuted, with the measurement this item asked for
+.LP
+This item says the figure that matters
+.B "has not been taken:"
+.QP
+Between the LAST TWO of the suite's five heap prints the heap moves 7KB and
+live allocations (nalloc-nfree) go from 6785 to 6861 \(em 76 objects.  That is
+the end of the run only ...  The figure that matters is the first print against
+the fifth, and it has not been taken.  Take it with the WHOLE output kept \(em
+.CW "grep heap"
+over an untruncated capture \(em before the theory is called dead.
+.LP
+Taken, five times, over five untruncated captures of complete passing runs
+(each about 1.28 million allocations, so the workloads are comparable):
+.P1
+run            cursize d     hw d   live 1   live 5   hw plateaus
+1                 +23424  +173952     6585     6826   at print 3
+2                  +1280  +174080     6581     6650   at print 4
+3                 +25216  +182528     6554     6816   at print 4
+4                  -3200  +179456     6566     6609   at print 3
+5                 -22784  +153088     6881     6808   at print 2
+.P2
+.B "The sign changes."
+Run 5 ends with 22KB LESS allocated and 73 FEWER live objects than it started,
+and run 4 is also negative.  The 7KB and 76 objects quoted above sit inside a
+run-to-run spread of 48KB and 335 objects, so they were noise read as a trend
+\(em which is exactly why the item refused to call the theory dead on them.
+.PP
+.B "And the positive statement, which is stronger than the absence of a trend:"
+.B "the high-water mark PLATEAUS in every run."
+It climbs about 170KB over the first two or three
+.CW mkefs -mount-write- efsck
+cycles and then does not move again for the remaining cycles, in all five runs.
+Twenty-one cycles accumulating in one shell process would show
+.CW hw
+climbing monotonically across all five prints; instead the peak is reached
+early and every later cycle fits inside it.
+.PP
+.B "What this does and does not settle."
+It settles the claim as stated \(em that memory accumulates across the suite \(em
+because that is a claim about every run including the passing ones, and five
+passing runs show no accumulation and no consistent sign.  It does NOT settle
+why the suite sometimes hangs; a passing run cannot refute a theory about
+failing ones.
+.B "The theory that is left is still the styx server,"
+and the instrument for it is still
+.CW tools/jtag/wedgediag
+on a catch.
+.PP
+Note what made this free: the captures were already on disk from runs taken for
+other reasons this session, kept whole because the item said to keep them
+whole.  The measurement cost one script.
