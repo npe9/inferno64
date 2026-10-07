@@ -2811,3 +2811,109 @@ outgrew its 256-byte buffer, and a truncating
 .I snprint
 is a plausible candidate nobody has tied to the hang.
 .B "What is true is that it no longer reproduces."
+.NH 1
+THE DEADBAND, MEASURED, AND WHY A CONSTANT IS THE WRONG SHAPE
+.PP
+.B "Dtdeadband was 1500 and unreachable, so sun() was dead code."
+.I Suntask ()
+gates on
+.CW "rate >= Dtdeadband"
+and
+.IR detumbletask ()
+stops commanding below the same number, so one constant decides both
+whether the torquers ever switch off and whether pointing ever starts.
+.NH 2
+What the loop actually does
+.PP
+A 240-second run damps 23.0 deg/s to about 4.5 and then climbs again,
+which looks like divergence and is not:
+.B "dB/dt falls with the rate, so B-dot's authority falls with the very thing it is damping."
+That band is the stretch of orbit where the field direction offers
+nothing to push against.  Given a
+.B "full orbit"
+\- 6871 samples, about 114 minutes of model time \- it converges, and
+the first measurement put the floor at 1504 to 1522 with
+.B "settled, torquers off"
+printed zero times.
+.NH 2
+And then three constants in a row, because the floor is not a number
+.PP
+.DS
+.CW "deadband 1500   floors 1504, 1509          never reached"
+.CW "deadband 1600   reached twice, floor 1776  missed once"
+.CW "deadband 2000   reached twice, floor 2098  missed once"
+.CW "deadband 3000   reached three times of three"
+.DE
+.B "The same third-run trajectory floored at 1776 against 1600 and at 2098 against 2000,"
+and in both it never printed
+.CW "detumbled at" ,
+so the torquers never switched off and the deadband cannot have changed
+that trajectory.
+.B "The runs are simply not reproducible:"
+each starts from its own attitude and momentum, and the floor spans at
+least 1504 to 2098 \- forty per cent.
+.PP
+3000 reaches in three of three, with the handover firing 30, 52 and 60
+times and
+.I sun ()
+issuing 171, 369 and 378 steering commands where it had issued none.
+.B "It is a stopgap and the shape is wrong."
+Three degrees a second is a loose detumble, and the reason it must be
+loose is that
+.B "an absolute rate cannot say \(lqthe loop has finished\(rq when the rate the loop can reach is not a constant."
+The invariant is the
+.I derivative
+\- the rate having stopped falling \- and keying the handover on that is
+a change to the controller rather than to a line.
+.NH 2
+Two faults found only because the handover started working
+.PP
+.B "sun() steered on a zero gradient for every eclipse."
+.I Solar ()
+returning 0 is legitimate \- eclipse is 38 per cent of the orbit at this
+beta \- and the error check rejected only NEGATIVE, so the loop hunted
+on no evidence, flipping direction and commanding five hundred units of
+dipole.  On a satellite whose power budget is the reason the task
+exists, that is the task spending what it is meant to collect.  It holds
+the torquers off and says so once per eclipse now: 13, 20 and 22 times a
+run.
+.PP
+.B "And the gate had no trace at all,"
+so a task that was dead code and a task that was merely quiet looked
+identical.  It prints once per transition \- not per sample, because
+this loop runs forever and a line a sample is a denial of service on the
+console.
+.NH 2
+The measurement that was wrong first, and how
+.PP
+.B "mk install in appl/pycubed builds /dis and not /dis32,"
+and the stm32f407 root embeds
+.B /dis32
+because a Dis word is four bytes there.
+.B "So three source edits in a row never reached the image."
+What made it convincing was that
+.B "settled"
+went from 0 to 24 after the first of them \- and that was
+.B "run-to-run variation on untouched code:"
+five runs of the same binary gave 0, 0, 24, 20, 18.
+.PP
+.B "A string grep of the ELF is what caught it"
+and is the only check that spans the whole build:
+.DS
+.CW "grep -ac \(dqno sunlight\(dq istm32f407"
+.DE
+The build is
+.CW "mk DISROOT=dis32 DISWORD=4 install" ,
+which
+.I mkconfig
+documents and nothing warns about.
+.PP
+One more counting error in the same stretch:
+.CW "grep -c '0mA of'"
+matches
+.BR 90mA ,
+.B 60mA
+and
+.BR 30mA ,
+which invented an eclipse defect that was real but whose evidence was
+not.  Anchor on the separator.

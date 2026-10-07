@@ -258,6 +258,8 @@ suntask()
 {
 	c := 1;				# which way to turn
 	best := -1;
+	waiting := -1;	# -1 unknown, 1 gated on the rate, 0 pointing
+	dark := 0;	# in eclipse, with the torquers already off
 	for(;;){
 		sys->sleep(Sunperiod);
 		# Not while it is still tumbling: pointing a spinning
@@ -274,13 +276,63 @@ suntask()
 				if(v > rate)
 					rate = v;
 			}
-		if(rate >= Dtdeadband)
+		# THE GATE, SAID ONCE EACH WAY.
+		#
+		# This is the handover from detumble to pointing and it was
+		# the one step with no trace: with Dtdeadband unreachable
+		# the whole task was dead code and nothing said so, and
+		# with it reachable the task still printed nothing, which
+		# is indistinguishable from the same thing.  Once per
+		# transition, not per sample, because this loop runs
+		# forever and a line a sample is a denial of service on
+		# the console.
+		if(rate >= Dtdeadband){
+			if(waiting != 1){
+				waiting = 1;
+				debug("sun", sys->sprint("waiting for"
+					+ " detumble: rate %d.%.3d deg/s"
+					+ " against %d.%.3d",
+					rate/1000, rate%1000,
+					Dtdeadband/1000, Dtdeadband%1000));
+			}
 			continue;
+		}
+		if(waiting != 0){
+			waiting = 0;
+			debug("sun", sys->sprint("detumbled at %d.%.3d deg/s,"
+				+ " pointing now", rate/1000, rate%1000));
+		}
 		(now, full) := hw->solar();
 		if(now < 0 || full <= 0){
 			debug("sun", "no panel current to steer by");
 			return;
 		}
+		# NOTHING TO STEER BY IS NOT A DIRECTION TO STEER IN.
+		#
+		# solar() returning 0 is legitimate -- it is eclipse, 38
+		# per cent of every orbit at this beta -- and the error
+		# check above only rejects NEGATIVE.  So this loop used to
+		# hunt on a zero gradient: "0mA of 260, turning -1, m 498
+		# 35", flipping direction on no evidence and commanding
+		# five hundred units of dipole for a whole eclipse.  On a
+		# satellite whose power budget is the reason the sun task
+		# exists, that is the task spending what it is meant to
+		# collect.
+		#
+		# Measured, with the handover traced and the gate finally
+		# passable: three of the six steering lines in a two-orbit
+		# run were at 0mA.
+		if(now == 0){
+			if(!dark){
+				dark = 1;
+				hw->torque(0, 0, 0);
+				debug("sun", "no sunlight, torquers off"
+					+ " until there is something to"
+					+ " steer by");
+			}
+			continue;
+		}
+		dark = 0;
 		if(now * 100 >= full * Sunenough){
 			if(best != -2){
 				hw->torque(0, 0, 0);
@@ -388,7 +440,61 @@ Dtperiod:	con 1000;	# ms between samples
 # floor the loop can reach, with margin for the ripple -- and a deadband
 # set BELOW a controller's own noise floor is a loop that never finishes,
 # which is the error this records.
-Dtdeadband:	con 1500;	# milli-degrees/s to stop at
+#
+# AND THE FLOOR IS MEASURED NOW: 1504 to 1522, so 1500 was four
+# milli-degrees short of unreachable.
+#
+# A 240-second run says the loop damps 23.0 deg/s to about 4.5 and then
+# climbs again, which looks like divergence and is not: dB/dt falls with
+# the rate, so B-dot's authority falls with the very thing it is
+# damping, and that band is the stretch of orbit where the field
+# direction gives it nothing to push against.  Given a FULL ORBIT -- 6871
+# samples, about 114 minutes of model time -- it converges:
+#
+#	first 23026  min 1504  last 1509
+#	last 20: 1517 1513 1521 1518 1515 1518 1514 1513 1522 1521
+#	         1509 1516 1510 1510 1509 1507 1504 1514 1511 1509
+#
+# Flat, so that is the asymptote and not a rate still falling: it is
+# where B-dot's shrinking authority balances the gravity-gradient
+# torque.  "settled, torquers off" appeared ZERO times in either run, so
+# the torquers never stopped and sun() -- which waits for rate below
+# this same constant -- was dead code.
+#
+# AND THE FLOOR IS NOT A NUMBER AT ALL.  It is trajectory-dependent, and
+# chasing it with a constant was two wrong answers before this one.
+#
+# Eight runs of 114 model-minutes each.  Where the loop REACHED the
+# threshold, min pins to it, so the informative runs are the ones that
+# did not:
+#
+#	deadband 1500   floors 1504, 1509          (never reached)
+#	deadband 1600   reached twice, floor 1776  (missed once)
+#	deadband 2000   reached twice, floor 2098  (missed once)
+#
+# The same third-run trajectory floored at 1776 against a deadband of
+# 1600 and at 2098 against 2000 -- and with "detumbled at" never
+# printed in either, the torquers never switched off, so the deadband
+# cannot have changed that trajectory.  The runs are simply not
+# reproducible: each starts from its own attitude and momentum.  So the
+# floor spans at least 1504 to 2098, a forty per cent spread, and about
+# one run in three will miss any single value.
+#
+# 3000 is above the observed maximum by 43 per cent and reaches in three
+# of three.  IT IS A STOPGAP AND THE SHAPE IS WRONG: three degrees a
+# second is a loose detumble, and the reason it has to be loose is that
+# an ABSOLUTE rate cannot say "the loop has finished" when the rate the
+# loop can reach is not a constant.  The handover wants to key on the
+# rate having STOPPED FALLING -- a derivative, which is the thing that
+# is actually invariant here -- and that is a change to the controller
+# rather than to this line.
+#
+# What it does NOT fix is hysteresis.  Once the torquers stop the
+# gravity gradient pumps the rate back up through the same threshold, so
+# this chatters at the boundary with a long period.  One constant cannot
+# be both the stop and the restart, and that wants a second threshold
+# rather than a different number here.
+Dtdeadband:	con 3000;	# milli-degrees/s to stop at; see above, a stopgap
 
 detumbletask()
 {
