@@ -8463,3 +8463,67 @@ The bench, left working
 .B "The ssl measurement stands as a result from a build that had it"
 \- mounted three of three, read 273 bytes twice and equal once of three
 \- and taking it out is a flash-size decision and not a retraction.
+.NH 2
+And the flash-size regression was a stale object, not growth
+.PP
+.B "Everything in the section above is wrong and this is the correction."
+.PP
+.B "ssl never needed removing."
+Built with every generated file AND ITS OBJECT removed:
+.DS
+.CW "armv7mstyx  637824  carries from ../init/armv7mstyx.dis"
+.CW "armv7minit  901872  carries from ../init/armv7minit.dis"
+.CW "limit       913408"
+.DE
+The station image fits with 275K to spare.
+.PP
+.B "The 915608 that blocked everything was a stale XIP blob."
+.I Mk
+short-circuits when
+.B stm32f407.prog.s
+and
+.B stm32f407.xipmod.c
+have been deleted while
+.B stm32f407.xipmod.t
+still exists \- the object is newer than its missing source, so the rule
+does not fire \- and every "full clean" I took removed the sources and
+left the object.
+.B "So each build linked an XIP blob generated for a different image,"
+and the two inits came out BYTE-IDENTICAL at 915608, which was the tell
+and which I noted twice and walked past both times.
+.PP
+That also disposes of the two findings built on it:
+.B "removals did not grow the image"
+and there is no layout quantum.  Dropping md5sum and strings from the
+root, and dropping the
+.B #c/xalloc
+case, each measured bigger because each was measured against a
+different stale blob.
+.NH 2
+What was actually over, and what it cost
+.PP
+.B "The SHELL image, by 7656 bytes."
+It carries far more XIP modules than the station, and this session's
+kernel additions spent the 2240-byte margin
+.B image-armv7minit
+records.
+.B md5sum ,
+.B strings
+and
+.B dd
+come out of its XIPDIS, which saves
+.B 19192
+bytes \- more than their 7640 of
+.B .dis
+because an XIP module carries per-module overhead \- and leaves 11536
+bytes of headroom.
+.PP
+.B "And flashverify's init check was vacuous whenever prog.s was missing."
+It greps that file rather than trusting the argument, which is the right
+idea, and
+.B CARRIES
+came back empty and was compared against an empty string.  An absent
+.B prog.s
+is a failure now, and it says which two files have to be removed
+together.
+.B "A check that cannot fail is the reason a stale blob got as far as the flash limit."

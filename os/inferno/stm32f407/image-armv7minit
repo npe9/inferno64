@@ -82,13 +82,10 @@ XIPDIS=\
 	radiocal.dis\
 	radiocfg.dis\
 	lib/radiocal.dis\
-	md5sum.dis\
-	strings.dis\
 	ax25raw.dis\
 	ax25up.dis\
 	export.dis\
 	cat.dis\
-	dd.dis\
 	ls.dis\
 	bind.dis\
 	pwd.dis\

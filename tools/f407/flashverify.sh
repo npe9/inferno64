@@ -154,6 +154,24 @@ fi
 CARRIES=$(grep -o "from \.\./init/[a-z0-9]*\.dis" \
 	os/inferno/stm32f407/stm32f407.prog.s | sort -u | head -1)
 echo "flashverify: the image carries $CARRIES"
+# AND AN ABSENT prog.s IS A FAILURE, NOT A PASS.
+#
+# This check greps the generated prog.s rather than trusting the
+# argument, which is the right idea and was vacuous whenever the file
+# was missing: CARRIES came back empty and the comparison below was
+# against an empty string.  mk short-circuits when prog.s has been
+# deleted while stm32f407.xipmod.t still exists, so a tree in that state
+# builds from a STALE XIP blob -- which is how two images that carry
+# different inits came out byte-identical at 915608, over the flash
+# limit, and sent an afternoon after a flash-size regression that was
+# not there.
+if [ -n "$INIT" ] && [ -z "$CARRIES" ]; then
+	echo "FLASHVERIFY-FAILED the build produced no stm32f407.prog.s, so which"
+	echo "init the image carries cannot be read.  mk short-circuits when"
+	echo "prog.s is gone and its object is not: remove"
+	echo "os/inferno/stm32f407/stm32f407.xipmod.* and prog.* together."
+	exit 1
+fi
 if [ -n "$INIT" ] && [ "$CARRIES" != "from ../init/$INIT.dis" ]; then
 	echo "FLASHVERIFY-FAILED asked for $INIT and the image carries"
 	echo "$CARRIES -- mk kept a generated table from a previous build"
