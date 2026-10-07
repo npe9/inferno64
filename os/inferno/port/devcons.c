@@ -79,6 +79,7 @@ extern int	gchalt, gcdepth, gcdepthmax;		/* libinterp/gc.c */
 extern ulong	gcnruns, gcsweeps, gcepochs, gchalted, gcinxecseen;
 extern ulong	gcbroken;
 extern ulong	gcbadptr;
+extern ulong	gcbadcolor;
 extern ulong	gcptrfwd;
 extern ulong	gcptrback;
 extern ulong	gcptrfwdgc;
@@ -1569,6 +1570,14 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					 */
 					" bad-ptrs-rejected %lud"
 					/*
+					 * The second tier: a plausible word
+					 * pointing at something whose color is
+					 * not 0..3, i.e. not a heap object.
+					 * gcbadptr tests the WORD, this tests
+					 * what it POINTS AT.
+					 */
+					" bad-color-rejected %lud"
+					/*
 					 * And the reader on the path that
 					 * CREATES a chain, which H4 said this
 					 * item needed: poolfree() counting the
@@ -1611,7 +1620,7 @@ conswrite(Chan *c, void *va, s32 n, s64 offset)
 					gcdestroys, gcinspects, gcinxecseen,
 					gcstwstops, gcstwwaits, gcstwfails,
 					nrunqother, nrunqdel,
-					gcbroken, gcbadptr,
+					gcbroken, gcbadptr, gcbadcolor,
 					gcptrfwd, gcptrfwdgc,
 					gcptrback, gcptrbackgc,
 					gcstaleok, gcstalebrk, gcstaleidle,

@@ -81,6 +81,7 @@ A_NHELD=`sym nvmheld`
 A_GCSW=`sym gcsweeps`
 A_GCBRK=`sym gcbroken`
 A_GCBAD=`sym gcbadptr`	# the 6c587face guard's own counter
+A_GCBADC=`sym gcbadcolor`	# and the colour tier beside it
 #
 # The reader on the path that CREATES a chain.  gcbadptr above counts words
 # markheap() refused and has always read zero, so an implausible word is not
@@ -156,6 +157,7 @@ trap 'rm -f "$TMP"' 0 1 2 15
 	-c "echo \"VMHELD-GCSW\"; mdw ${A_GCSW:-0} 1" \
 	-c "echo \"VMHELD-GCBRK\"; mdw ${A_GCBRK:-0} 1" \
 	-c "echo \"VMHELD-GCBAD\"; mdw ${A_GCBAD:-0} 1" \
+	-c "echo \"VMHELD-GCBADC\"; mdw ${A_GCBADC:-0} 1" \
 	-c "echo \"VMHELD-GCPFWD\"; mdw ${A_GCPFWD:-0} 1" \
 	-c "echo \"VMHELD-GCPBACK\"; mdw ${A_GCPBACK:-0} 1" \
 	-c "echo \"VMHELD-GCPFWDGC\"; mdw ${A_GCPFWDGC:-0} 1" \
@@ -343,6 +345,22 @@ if [ -n "$A_GCSW" ]; then
 	# counter and no reader, which is the shape this tool exists to avoid.
 	#
 	echo "vmheld: bad pointers REJECTED before Setmark `dec $gcbad`"
+	#
+	# The second tier, a peer's check: a word that PASSES the test above --
+	# aligned, above 0x1000 -- but points at a header whose color is
+	# outside 0..3, so it is not a heap object.  gcbadptr tests the word;
+	# this tests what the word points at, which is the case H4 recorded as
+	# undetectable by construction.
+	#
+	if [ -n "$A_GCBADC" ]; then
+		gbc=`dec \`val VMHELD-GCBADC\``
+		echo "vmheld: bad COLOURS rejected before Setmark $gbc"
+		if [ "$gbc" != 0 ]; then
+			echo "vmheld:   NONZERO: a plausible word pointed at"
+			echo "vmheld:   something that is not a heap object, so"
+			echo "vmheld:   markheap WAS about to write through it."
+		fi
+	fi
 	echo "vmheld: gc busy `join64 "$gcbusy"`, gc idle `join64 "$gcidle"`"
 	if [ "`dec $gcbrk`" != 0 ]; then
 		echo "vmheld:   a broken chain makes gcsweep abandon its sweep"

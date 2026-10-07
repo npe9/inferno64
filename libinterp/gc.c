@@ -36,6 +36,15 @@ struct Ptrhash
 	ulong	gcbroken;
 	ulong	gcbadptr;	/* words rejected before Setmark wrote through them */
 	/*
+	 * The second tier: a word that passes the test above -- aligned and
+	 * above 0x1000 -- but whose Heap header's color is outside 0..3, so it
+	 * is not a heap object at all.  See markheap().  One bounded print per
+	 * boot, because the ring is the only post-mortem channel this board
+	 * has; the count is a variable so it can be read over JTAG.
+	 */
+	ulong	gcbadcolor;
+	ulong	gcbadcolorseen;
+	/*
 	 * THE READER ON THE PATH THAT CREATES A CHAIN, which is what H4 in
 	 * doc/open-issues-plan.ms said this item needed and did not have.  The
 	 * guard in markheap() counts words it REFUSED and has always read zero,
@@ -489,6 +498,65 @@ markheap(Type *t, void *vw)
 					}
 					checkmarkptr(q, t, vw);
 					h = D2H(*q);
+					/*
+					 * AND REJECT A WORD THAT IS PLAUSIBLE
+					 * AS A POINTER BUT DOES NOT POINT AT A
+					 * HEAP OBJECT.  A peer's check, ported
+					 * (inferno-rio 4613599c7); the tier
+					 * above tests the WORD and this tests
+					 * what the word POINTS AT, which is the
+					 * case H4 in doc/open-issues-plan.ms
+					 * recorded as undetectable by
+					 * construction:
+					 *
+					 *   "The bad words are PLAUSIBLE --
+					 *    aligned and above 0x1000 -- so
+					 *    they pass the guard and corrupt
+					 *    anyway, which the guard cannot
+					 *    detect."
+					 *
+					 * IT CANNOT REJECT A REAL OBJECT, which
+					 * is the direction that matters: a false
+					 * negative here would leave a live
+					 * object unmarked and free it under its
+					 * owner.  color's whole domain is 0..3 --
+					 * mutator, marker and sweeper are
+					 * gccolor%3 (gc.c) and propagator is 3
+					 * (interp.h) -- and all three allocation
+					 * paths in heap.c set h->color = mutator
+					 * immediately after poolalloc, before
+					 * the object can escape.  Checked in
+					 * this tree, not taken on trust:
+					 * heap.c:987, 1006, 1026.
+					 *
+					 * An UNSIGNED compare, so a negative
+					 * color is caught by the same test.
+					 *
+					 * It CONTAINS rather than fixes, and the
+					 * peer was exact about this: initmem()
+					 * sets every declared-pointer slot to H,
+					 * so a garbage word here is ALWAYS the
+					 * consequence of an earlier corruption
+					 * and skipping does not repair that.
+					 * What it buys is that one bad word
+					 * stops spreading, and is counted where
+					 * it is detectable instead of where it
+					 * surfaces.
+					 */
+					if((u32)h->color > (u32)propagator){
+						gcbadcolor++;
+						if(gcbadcolorseen++ == 0)
+							print("markheap: word"
+								" %#p -> color"
+								" %d, outside"
+								" 0..%d;"
+								" skipped\n",
+								(void*)*q,
+								h->color,
+								propagator);
+						q++;
+						continue;
+					}
 					Setmark(h);
 					if(h->color == propagator && --visit >= 0 && markdepth < 64){
 						gce--;
