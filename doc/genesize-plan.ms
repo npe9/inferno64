@@ -398,15 +398,25 @@ waits on the model or is listed as needing real hardware, not merged
 untested.  Where this was not done, it is owed:
 .RS
 .IP \(bu 2
-NVMe APST (patch 0008): the model has it, Linux turns it on, sdnvme
-does not.  Either sdnvme programs a transition table (Features 0Ch)
-from the drive's power states, with a latency bound in plan9.ini, and
-a check shows the drive idle in a non-operational state and back on
-the next read; or the plan records why the host leaves it off.
+NVMe APST (patch 0008): paid.  sdnvme programs the transition table
+(Features 0Ch) as Linux does, from the drive's power states, the exit
+latency bounded by
+.CW *nvmeapstlat
+(100 ms by default;
+.CW *nvmenoapst
+leaves it off), and its ctl file says the state Get Features found.
+On
+.CW VMHOST_NVME=new ,
+ipc64dev: "apst on, idle to ps3 after 100ms"; after 3 s idle "power
+ps4", after a read "power ps0".
 .IP \(bu 2
-The FL1100's MSI-X (patch 0009): the part's MSI-X works and Linux uses
-it; usbxhci takes the pin.  usbxhci on MSI-X (and MSI), checked on
-.CW VMHOST_USB=fl1100 .
+The FL1100's MSI-X (patch 0009): paid.  usbxhci takes MSI-X vector 0
+where the board delivers MSI-X (the bus glue's hooks; the pin with
+.CW *usbxhcipin ),
+and on
+.CW VMHOST_USB=fl1100
+enumerates the stick and the keyboard on it ("usbxhci: PCI.6.0.0: msix
+vector 0").
 .IP \(bu 2
 The 82599's offloads (patch 0007): checksum, TSO and RSS are modelled
 and checked against Linux; ether82598 uses none of them, and one
@@ -414,10 +424,32 @@ queue.  Transmit checksum and TSO, receive checksum, and more than one
 queue pair with RSS, each checked on the model and against the
 X520-backed bench.
 .IP \(bu 2
-#AC (TCG, item 8 of the housekeeping): QEMU now raises it; the VMX and
-SVM backends neither intercept nor test it.  A guest at CPL 3 with
-CR0.AM and EFLAGS.AC set takes its own #AC under each backend
-(tests/vm), and the exception bitmap's choice is written down.
+#AC: paid.
+.CW scripts/qemu-patches/0010
+makes TCG raise it: data and stack accesses at CPL 3 with CR0.AM and
+EFLAGS.AC set go through MMU indexes of their own; translated code's
+2, 4 and 8 byte accesses there carry MO_ALIGN (TCG drops atomicity in
+serial mode, so the TLB's own alignment check, which goes by
+atomicity, never sees them), helpers' are checked by the TLB; the 16
+and 32 byte forms are exempt or #GP as ever.
+.CW tests/vm/kut-actest.c
+(5 checks) and kvm-unit-tests' VMX #AC case (vmx 6937 checks, the
+build without it gone) pass in check-qemu-vmx.  Neither backend
+intercepts #AC (VMX's exception bitmap is empty unless
+.CW *vmxexcbitmap ,
+SVM's exception intercepts are never set), so a guest's is its own:
+check-vm's M2 guest runs
+.CW tests/vm/acguest.c ,
+which sets EFLAGS.AC and stores to a 4-byte boundary, and its Linux
+sends SIGBUS ("trap alignment check", status 135) on SVM and on VMX.
+.IP \(bu 2
+Found while checking #AC, QEMU's and not this kernel's: kvm-unit-tests'
+svm_exception_test fails after its single-step case.  The run whose
+#DB L1 intercepts exits with L2's RFLAGS.TF still set, the test
+carries that RFLAGS into the next VMRUN, and that guest's first
+instruction traps.  Whether real hardware leaves TF set in the saved
+RFLAGS there is not settled; to be, against the APM, before QEMU's
+SVM is changed.
 .RE
 .IP "17. What a hypervisor still lacks." 4
 Found by looking at
@@ -2247,11 +2279,11 @@ against Linux's ixgbe and ixgbevf, and this kernel is its PF: M7 on
 the X520's VFs and the whole PF to a Linux guest, on SVM and VMX.
 The newer NVMe features are done, checked against Linux's nvme, and
 sdnvme uses them.  The FL1100 is modelled from its datasheet and Linux's
-history with it, and usbxhci runs on it.  Next: the codesign debts of
-phase 16 (sdnvme's APST, usbxhci's MSI-X, ether82598's offloads, #AC
-under both backends); the misbehaving DMA device (its design to come)
-with phase 17's device release; the ConnectX-4 Lx; then the rest of
-phase 17 and the
+history with it, and usbxhci runs on it.  The codesign debts of
+APST, the FL1100's MSI-X and #AC are paid.  Next: ether82598's
+offloads (transmit offload wants the IP stack's help); the misbehaving
+DMA device (its design to come) with phase 17's device release; the
+ConnectX-4 Lx; then the rest of phase 17 and the
 workstation (phase 13), and real hardware for everything QEMU and Bochs
 have stood in for.  On QEMU, check-vm (SVM; M4 under VT-d and AMD-Vi)
 and check-rv, on both the PLIC and the AIA machine and on hosts of one

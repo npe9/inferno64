@@ -432,7 +432,10 @@ xhcishutdown(Hci *hp)
 	ctlr->opr[USBCMD] &= USBCMD_PRES;
 	for(i=0; (ctlr->opr[USBSTS] & HCH) == 0 && i < 10; i++)
 		delay(10);
-	intrdisable(hp->irq, hp->interrupt, hp, hp->tbdf, hp->type);
+	if(ctlr->intrdisable != nil)
+		(*ctlr->intrdisable)(hp);
+	else
+		intrdisable(hp->irq, hp->interrupt, hp, hp->tbdf, hp->type);
 }
 
 static void
@@ -491,7 +494,10 @@ xhciinit(Hci *hp)
 
 	if(ctlr->dmaenable != nil)
 		(*ctlr->dmaenable)(ctlr);
-	intrenable(hp->irq, hp->interrupt, hp, hp->tbdf, hp->type);
+	if(ctlr->intrenable != nil)
+		(*ctlr->intrenable)(hp);
+	else
+		intrenable(hp->irq, hp->interrupt, hp, hp->tbdf, hp->type);
 
 	if(waserror()){
 		(*hp->shutdown)(hp);

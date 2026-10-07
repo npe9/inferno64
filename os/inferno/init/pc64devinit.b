@@ -358,6 +358,15 @@ iommutest()
 	sys->print("DEVTEST: IOMMU done; all faults:\n%s", readfile("/dev/iommu/faults"));
 }
 
+grepline(s, t: string): string
+{
+	(nil, l) := sys->tokenize(s, "\n");
+	for(; l != nil; l = tl l)
+		if(len hd l >= len t && (hd l)[0:len t] == t)
+			return hd l + "\n";
+	return "(no " + t + " line)\n";
+}
+
 readfile(path: string): string
 {
 	fd := sys->open(path, Sys->OREAD);
@@ -467,6 +476,17 @@ init()
 	# MSI-X vectors and turns the capability off behind the last one;
 	# switching it back on re-enables them.  Reading the sector again
 	# is what says the second enable actually programmed the table.
+	# NVMe power: idle three seconds, then the state the drive is found
+	# in (with APST on, a non-operational one), then again straight
+	# after a read has woken it
+	sys->sleep(3000);
+	sys->print("DEVTEST: nvme after 3s idle: %s", grepline(readfile("/dev/sdN0/ctl"), "power"));
+	nfd := sys->open("/dev/sdN0/data", Sys->OREAD);
+	if(nfd != nil)
+		sys->read(nfd, array[512] of byte, 512);
+	sys->print("DEVTEST: nvme after a read: %s", grepline(readfile("/dev/sdN0/ctl"), "power"));
+	nfd = nil;
+
 	msixcycle();
 
 	# audio: the codec's status, then a second of silence written to it

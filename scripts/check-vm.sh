@@ -6,6 +6,8 @@
 #	M2	an unmodified Linux boots to a shell that runs a command
 #		typed from Limbo (pc64linux, linuxtestinit.b, vmlinux(1),
 #		the guest of scripts/mklinuxguest.sh)
+#		and in the same run tests/vm/acguest.c, at the guest's
+#		CPL 3 with EFLAGS.AC set, takes its own #AC (SIGBUS)
 #	M5	in the same run, the bench's virtio-serial function is
 #		assigned to the guest, whose own virtio_console driver
 #		writes through it to QEMU's chardev (.qemu/vmhost-hvc.log)
@@ -95,6 +97,17 @@ if grep -q '^Linux 6' "$WORK/m2.log" && grep -q '^LINUXGUEST: ran' "$WORK/m2.log
 else
 	echo "check-vm: M2 ($B): FAIL"
 	grep 'LINUXGUEST\|LINUXTEST\|vmlinux:\|panic' "$WORK/m2.log" | sed 's/^/	/' | tail -10
+	fail=1
+fi
+# #AC at the guest's CPL 3 (tests/vm/acguest.c): the backend leaves
+# it to the guest, whose Linux sends SIGBUS (status 135)
+if grep -q '^ACGUEST: aligned store with EFLAGS.AC set' "$WORK/m2.log" \
+&& grep -q '^LINUXGUEST: acguest status 135' "$WORK/m2.log"; then
+	echo "check-vm: #AC in the guest ($B): pass"
+	grep '^ACGUEST\|acguest status' "$WORK/m2.log" | sed 's/^/	/'
+else
+	echo "check-vm: #AC in the guest ($B): FAIL"
+	grep 'ACGUEST\|acguest' "$WORK/m2.log" | sed 's/^/	/' | tail -4
 	fail=1
 fi
 if grep -q 'hello-from-the-guest' "$ROOT/.qemu/vmhost-hvc.log" 2>/dev/null; then

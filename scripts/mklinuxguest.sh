@@ -79,6 +79,9 @@ RBSUM=29072f0a72ff8f2ff19a8be703cf0e68d4722ea4dc0acf4830acc932f98cf31c
 fetch "$RURL" "rv/$RPKG" "$RSUM"
 fetch "$RBURL" "rv/$RBPKG" "$RBSUM"
 
+# tests/vm/acguest.c, which check-vm's M2 guest runs: #AC at its CPL 3
+x86_64-elf-gcc -static -nostdlib -ffreestanding -mgeneral-regs-only -fno-pic \
+	-no-pie -O2 -o "$G/acguest" "$ROOT/tests/vm/acguest.c"
 python3 - "$G" "$PKG" "$LPKG" "rv/$RPKG" "rv/$RBPKG" <<'EOF'
 import os, sys, stat, gzip, tarfile, io
 g = sys.argv[1]
@@ -149,7 +152,7 @@ busybox = open(os.path.join(g, 'busybox'), 'rb').read()
 def pad(n):
 	return b'\0' * ((4 - n % 4) % 4)
 
-def cpio(mods, path, busybox=busybox):
+def cpio(mods, path, busybox=busybox, extra=()):
 	order = ''.join(name[:-3] + '\n' for name, data in mods).encode()
 	entries = [
 		('.', stat.S_IFDIR | 0o755, b''),
@@ -163,7 +166,7 @@ def cpio(mods, path, busybox=busybox):
 		('lib', stat.S_IFDIR | 0o755, b''),
 		('lib/modules', stat.S_IFDIR | 0o755, b''),
 		('lib/modules/order', stat.S_IFREG | 0o644, order),
-	] + [('lib/modules/%s' % name, stat.S_IFREG | 0o644, data) for name, data in mods]
+	] + [('lib/modules/%s' % name, stat.S_IFREG | 0o644, data) for name, data in mods] + list(extra)
 	out = bytearray()
 	ino = 1
 	def add(name, mode, data, rdev=(0, 0)):
@@ -181,7 +184,8 @@ def cpio(mods, path, busybox=busybox):
 	out += b'\0' * ((512 - len(out) % 512) % 512)
 	open(path, 'wb').write(out)
 
-cpio(mods, os.path.join(g, 'initramfs.cpio'))
+cpio(mods, os.path.join(g, 'initramfs.cpio'),
+	extra=[('bin/acguest', stat.S_IFREG | 0o755, open(os.path.join(g, 'acguest'), 'rb').read())])
 
 # the M7 guest: linux-lts, whose igbvf drives an 82576 VF and ixgbevf
 # an 82599's; and whose ixgbe, after what it needs, an 82599 PF given

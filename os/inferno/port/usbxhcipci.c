@@ -19,6 +19,46 @@ pcidmaenable(Xhci *ctlr)
 	pcisetbme(pcidev);
 }
 
+/*
+ * The interrupter's interrupt: MSI-X vector 0 when the board can
+ * deliver MSI-X and the controller has it (the FL1100 and every other
+ * xHCI of this decade do), the pin otherwise or with *usbxhcipin in
+ * plan9.ini.  Only interrupter 0 is used, so one vector is enough.
+ */
+static int
+pcimsix(Pcidev *p)
+{
+	return pcimsixintrenable != nil && getconf("*usbxhcipin") == nil &&
+		pcimsixcount(p) >= 1;
+}
+
+static void
+pciintrenable(Hci *hp)
+{
+	Xhci *ctlr = hp->aux;
+	Pcidev *p = ctlr->aux;
+
+	if(pcimsix(p)){
+		(*pcimsixintrenable)(p, 0, hp->interrupt, hp, hp->type);
+		print("usbxhci: %T: msix vector 0\n", p->tbdf);
+		return;
+	}
+	intrenable(hp->irq, hp->interrupt, hp, hp->tbdf, hp->type);
+}
+
+static void
+pciintrdisable(Hci *hp)
+{
+	Xhci *ctlr = hp->aux;
+	Pcidev *p = ctlr->aux;
+
+	if(pcimsix(p)){
+		(*pcimsixintrdisable)(p, 0, hp->interrupt, hp, hp->type);
+		return;
+	}
+	intrdisable(hp->irq, hp->interrupt, hp, hp->tbdf, hp->type);
+}
+
 static u64int
 pciwaddr(void *va)
 {
@@ -69,6 +109,8 @@ scanpci(void)
 		ctlr->aux = p;
 		ctlr->dmaenable = pcidmaenable;
 		ctlr->dmaaddr = pciwaddr;
+		ctlr->intrenable = pciintrenable;
+		ctlr->intrdisable = pciintrdisable;
 
 		for(i = 0; i < nelem(ctlrs); i++)
 			if(ctlrs[i] == nil){

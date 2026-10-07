@@ -60,6 +60,11 @@ struct Ivec
 };
 
 enum {
+	Apstprimary	= 100,		/* ms idle before a quick non-operational state */
+	Apstsecondary	= 2000,		/* ms before a slower one */
+	Apstprimarytol	= 15000,	/* us of entry+exit latency counted quick */
+	Apstmaxlat	= 100000,	/* us of exit latency allowed at all */
+
 	Hmbchunk	= 1024*1024,
 	Hmbmax		= 32*1024*1024,
 	Hmbmaxd		= 32,
@@ -103,6 +108,9 @@ struct Ctlr
 	uchar	*hmb[Hmbmaxd];
 	int	nhmb;
 	u32int	*hmbdesc;
+
+	/* autonomous power state transitions: the shallowest state used */
+	int	apstps;
 
 	Ctlr	*next;
 };
@@ -545,6 +553,86 @@ nvmeonline(SDunit *u)
 	return 2;
 }
 
+
+/*
+ * Autonomous power state transitions (NVMe 1.4, 5.21.1.12).  A drive
+ * with APSTA set and non-operational power states goes to one by
+ * itself after an idle spell the host chooses, and back on the next
+ * command.  The table is made as Linux makes it: walking the states
+ * from the deepest, each non-operational state whose exit latency is
+ * within the bound (*nvmeapstlat= in plan9.ini, microseconds; 100 ms
+ * by default) becomes the target of the states above it, after 100 ms
+ * idle if its entry and exit latencies come to 15 ms or less, after 2 s
+ * otherwise.  *nvmenoapst leaves it off.
+ */
+static u32int
+le32(uchar *p)
+{
+	return p[0] | p[1]<<8 | p[2]<<16 | (u32int)p[3]<<24;
+}
+
+static void
+apst(Ctlr *ctlr, char *name)
+{
+	u32int *tab, *e, target, enlat, exlat, maxlat, st;
+	uchar *psd;
+	int s, npss;
+	WS ws;
+
+	npss = ctlr->ident[263];
+	if((ctlr->ident[265] & 1) == 0 || npss == 0 || getconf("*nvmenoapst") != nil)
+		return;
+	maxlat = Apstmaxlat;
+	if(getconf("*nvmeapstlat") != nil)
+		maxlat = strtoul(getconf("*nvmeapstlat"), nil, 0);
+	if((tab = mallocalign(256, ctlr->mps, 0, 0)) == nil)
+		return;
+	memset(tab, 0, 256);
+	target = 0;
+	for(s = npss; s >= 0; s--){
+		if(target != 0)
+			tab[2*s] = target;
+		psd = ctlr->ident + 2048 + 32*s;
+		if((psd[3] & 2) == 0)
+			continue;		/* operational */
+		enlat = le32(psd + 4);
+		exlat = le32(psd + 8);
+		if(exlat > maxlat)
+			continue;
+		target = s<<3 | (enlat + exlat <= Apstprimarytol ? Apstprimary : Apstsecondary)<<8;
+		ctlr->apstps = s;
+	}
+	if(target == 0){
+		free(tab);
+		ctlr->apstps = 0;
+		return;
+	}
+	e = qcmd(&ws, ctlr, 1, 0x09, 0, tab, 256);	/* set features */
+	e[10] = 0x0C;
+	e[11] = 1;					/* enable */
+	if((st = wcmd(&ws, e)) != 0){
+		print("%s: apst refused: status %#ux\n", name, st);
+		ctlr->apstps = 0;
+	}else
+		print("%s: apst on, idle to ps%d after %dms\n", name, ctlr->apstps,
+			tab[0] >> 8);
+	free(tab);
+}
+
+/* the power state, as the Get Features command found the drive */
+static char*
+powerstate(Ctlr *ctlr, char *p, char *e)
+{
+	u32int *c;
+	WS ws;
+
+	c = qcmd(&ws, ctlr, 1, 0x0A, 0, nil, 0);	/* get features */
+	c[10] = 0x02;					/* power management */
+	if(wcmd(&ws, c) != 0)
+		return p;
+	return seprint(p, e, "power\tps%d, apst to ps%d\n", ws.cdw0 & 0x1F, ctlr->apstps);
+}
+
 static char*
 nvmerctl(SDunit *u, char *p, char *e)
 {
@@ -559,6 +647,8 @@ nvmerctl(SDunit *u, char *p, char *e)
 	p = seprint(p, e, "geometry %llud %lud\n", u->sectors, u->secsize);
 	if(ctlr->nhmb > 0)
 		p = seprint(p, e, "hmb\t%d MiB in %d chunks\n", ctlr->nhmb*Hmbchunk >> 20, ctlr->nhmb);
+	if(ctlr->apstps > 0)
+		p = powerstate(ctlr, p, e);
 
 	return p;
 }
@@ -883,6 +973,7 @@ Ready:
 	setupqueues(ctlr);
 	print("%s: using %d submit queues\n", name, ctlr->nsq);
 	hostmem(ctlr, name);
+	apst(ctlr, name);
 	poperror();
 
 	return 1;

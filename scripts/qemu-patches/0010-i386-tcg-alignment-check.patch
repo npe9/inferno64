@@ -1,0 +1,379 @@
+--- a/target/i386/cpu.h
++++ b/target/i386/cpu.h
+@@ -171,6 +171,7 @@
+ #define HF_AVX_EN_SHIFT     28 /* AVX Enabled (CR4+XCR0) */
+ #define HF_LA57_SHIFT       29 /* CR4.LA57: 57-bit linear addresses */
+ #define HF_MOVSS_SHIFT      30 /* the interrupt shadow is MOV or POP SS's */
++#define HF_AM_SHIFT         31 /* CR0.AM: alignment checking at CPL 3 */
+ 
+ #define HF_CPL_MASK          (3 << HF_CPL_SHIFT)
+ #define HF_INHIBIT_IRQ_MASK  (1 << HF_INHIBIT_IRQ_SHIFT)
+@@ -200,6 +201,7 @@
+ #define HF_AVX_EN_MASK       (1 << HF_AVX_EN_SHIFT)
+ #define HF_LA57_MASK         (1 << HF_LA57_SHIFT)
+ #define HF_MOVSS_MASK        (1 << HF_MOVSS_SHIFT)
++#define HF_AM_MASK           (1U << HF_AM_SHIFT)
+ 
+ /* hflags2 */
+ 
+@@ -2697,6 +2699,9 @@
+ #define MMU_KNOSMAP32_IDX  5
+ #define MMU_PHYS_IDX       6
+ #define MMU_NESTED_IDX     7
++/* CPL 3 data with CR0.AM and EFLAGS.AC set: every access alignment-checked */
++#define MMU_USERAC64_IDX   8
++#define MMU_USERAC32_IDX   9
+ 
+ #ifdef CONFIG_USER_ONLY
+ #ifdef TARGET_X86_64
+@@ -2709,16 +2714,21 @@
+ static inline bool is_mmu_index_smap(int mmu_index)
+ {
+     return (mmu_index & ~1) == MMU_KSMAP64_IDX;
++}
++
++static inline bool is_mmu_index_ac(int mmu_index)
++{
++    return (mmu_index & ~1) == MMU_USERAC64_IDX;
+ }
+ 
+ static inline bool is_mmu_index_user(int mmu_index)
+ {
+-    return (mmu_index & ~1) == MMU_USER64_IDX;
++    return (mmu_index & ~1) == MMU_USER64_IDX || is_mmu_index_ac(mmu_index);
+ }
+ 
+ static inline bool is_mmu_index_32(int mmu_index)
+ {
+-    assert(mmu_index < MMU_PHYS_IDX);
++    assert(mmu_index < MMU_PHYS_IDX || is_mmu_index_ac(mmu_index));
+     return mmu_index & 1;
+ }
+ 
+--- a/target/i386/cpu.c
++++ b/target/i386/cpu.c
+@@ -9932,7 +9932,7 @@
+     ~( HF_CPL_MASK | HF_PE_MASK | HF_MP_MASK | HF_EM_MASK | \
+        HF_TS_MASK | HF_TF_MASK | HF_VM_MASK | HF_IOPL_MASK | \
+        HF_OSFXSR_MASK | HF_LMA_MASK | HF_CS32_MASK | \
+-       HF_SS32_MASK | HF_CS64_MASK | HF_ADDSEG_MASK)
++       HF_SS32_MASK | HF_CS64_MASK | HF_ADDSEG_MASK | HF_AM_MASK)
+ 
+     hflags = env->hflags & HFLAG_COPY_MASK;
+     hflags |= (env->segs[R_SS].flags >> DESC_DPL_SHIFT) & HF_CPL_MASK;
+@@ -9940,6 +9940,9 @@
+     hflags |= (env->cr[0] << (HF_MP_SHIFT - CR0_MP_SHIFT)) &
+                 (HF_MP_MASK | HF_EM_MASK | HF_TS_MASK);
+     hflags |= (env->eflags & (HF_TF_MASK | HF_VM_MASK | HF_IOPL_MASK));
++    if (env->cr[0] & CR0_AM_MASK) {
++        hflags |= HF_AM_MASK;
++    }
+ 
+     if (env->cr[4] & CR4_OSFXSR_MASK) {
+         hflags |= HF_OSFXSR_MASK;
+--- a/target/i386/helper.c
++++ b/target/i386/helper.c
+@@ -168,6 +168,8 @@
+     /* update FPU flags */
+     env->hflags = (env->hflags & ~(HF_MP_MASK | HF_EM_MASK | HF_TS_MASK)) |
+         ((new_cr0 << (HF_MP_SHIFT - 1)) & (HF_MP_MASK | HF_EM_MASK | HF_TS_MASK));
++    env->hflags = (env->hflags & ~HF_AM_MASK) |
++        ((new_cr0 & CR0_AM_MASK) ? HF_AM_MASK : 0);
+ }
+ 
+ /* XXX: in legacy PAE mode, generate a GPF if reserved bits are set in
+--- a/target/i386/helper.h
++++ b/target/i386/helper.h
+@@ -3,6 +3,7 @@
+ DEF_HELPER_FLAGS_3(cc_compute_nz, TCG_CALL_NO_RWG_SE, tl, tl, tl, int)
+ 
+ DEF_HELPER_3(write_eflags, void, env, tl, i32)
++DEF_HELPER_3(check_align, void, env, tl, i32)
+ DEF_HELPER_1(read_eflags, tl, env)
+ DEF_HELPER_2(divb_AL, void, env, tl)
+ DEF_HELPER_2(idivb_AL, void, env, tl)
+--- a/target/i386/tcg/tcg-cpu.c
++++ b/target/i386/tcg/tcg-cpu.c
+@@ -114,10 +114,24 @@
+     }
+ }
+ 
++/*
++ * Data and stack references at CPL 3 with CR0.AM and EFLAGS.AC set are
++ * alignment-checked (SDM 6.15, #AC); the AC indexes' TLB entries make
++ * every access through them check (excp_helper.c).  Instruction fetch
++ * is not checked, nor are the implicit supervisor references a CPL 3
++ * instruction makes (descriptor tables), which use a kernel index.
++ */
++static bool x86_ac_checking(CPUX86State *env, unsigned pl)
++{
++    return pl == 3 && (env->hflags & HF_CPL_MASK) == 3 &&
++           (env->hflags & HF_AM_MASK) && (env->eflags & AC_MASK);
++}
++
+ int x86_mmu_index_pl(CPUX86State *env, unsigned pl)
+ {
+     int mmu_index_32 = (env->hflags & HF_CS64_MASK) ? 0 : 1;
+     int mmu_index_base =
++        x86_ac_checking(env, pl) ? MMU_USERAC64_IDX :
+         pl == 3 ? MMU_USER64_IDX :
+         !(env->hflags & HF_SMAP_MASK) ? MMU_KNOSMAP64_IDX :
+         (env->eflags & AC_MASK) ? MMU_KNOSMAP64_IDX : MMU_KSMAP64_IDX;
+@@ -128,7 +142,12 @@
+ static int x86_cpu_mmu_index(CPUState *cs, bool ifetch)
+ {
+     CPUX86State *env = cpu_env(cs);
+-    return x86_mmu_index_pl(env, env->hflags & HF_CPL_MASK);
++    int idx = x86_mmu_index_pl(env, env->hflags & HF_CPL_MASK);
++
++    if (ifetch && is_mmu_index_ac(idx)) {
++        idx += MMU_USER64_IDX - MMU_USERAC64_IDX;
++    }
++    return idx;
+ }
+ 
+ #ifndef CONFIG_USER_ONLY
+--- a/target/i386/tcg/excp_helper.c
++++ b/target/i386/tcg/excp_helper.c
+@@ -179,6 +179,14 @@
+     cpu_loop_exit(cs);
+ }
+ 
++/* an operand that must be aligned to mask + 1 bytes: #GP(0) if it is not */
++void helper_check_align(CPUX86State *env, target_ulong addr, uint32_t mask)
++{
++    if (addr & mask) {
++        raise_exception_ra(env, EXCP0D_GPF, GETPC());
++    }
++}
++
+ G_NORETURN void handle_unaligned_access(CPUX86State *env, vaddr vaddr,
+                                         MMUAccessType access_type,
+                                         uintptr_t retaddr)
+--- a/target/i386/tcg/system/excp_helper.c
++++ b/target/i386/tcg/system/excp_helper.c
+@@ -814,6 +814,26 @@
+          * avoid filling it too fast.
+          */
+         assert(out.prot & (1 << access_type));
++        if (is_mmu_index_ac(mmu_idx)) {
++            /*
++             * Alignment checking: every access through it is checked.
++             * The one that fills it is checked here, the TLB's check
++             * being skipped for the access that misses.
++             */
++            if (!probe && (size == 2 || size == 4 || size == 8) &&
++                (addr & (size - 1))) {
++                raise_exception_err_ra(env, EXCP11_ALGN, 0, retaddr);
++            }
++            CPUTLBEntryFull full = {
++                .phys_addr = out.paddr & TARGET_PAGE_MASK,
++                .attrs = cpu_get_mem_attrs(env),
++                .prot = out.prot,
++                .lg_page_size = ctz64(out.page_size),
++                .tlb_fill_flags = TLB_CHECK_ALIGNED,
++            };
++            tlb_set_page_full(cs, mmu_idx, addr & TARGET_PAGE_MASK, &full);
++            return true;
++        }
+         tlb_set_page_with_attrs(cs, addr & TARGET_PAGE_MASK,
+                                 out.paddr & TARGET_PAGE_MASK,
+                                 cpu_get_mem_attrs(env),
+@@ -858,5 +878,15 @@
+                                             int mmu_idx, uintptr_t retaddr)
+ {
+     X86CPU *cpu = X86_CPU(cs);
++
++    /*
++     * Through an alignment-checking index the access is a 2, 4 or 8
++     * byte one that is not naturally aligned: #AC(0).  (The SSE forms
++     * that require alignment check it themselves there, and raise
++     * #GP; the ones that do not are not checked -- translate.c.)
++     */
++    if (is_mmu_index_ac(mmu_idx)) {
++        raise_exception_err_ra(&cpu->env, EXCP11_ALGN, 0, retaddr);
++    }
+     handle_unaligned_access(&cpu->env, vaddr, access_type, retaddr);
+ }
+--- a/target/i386/tcg/translate.c
++++ b/target/i386/tcg/translate.c
+@@ -37,6 +37,91 @@
+ 
+ #define HELPER_H "helper.h"
+ #include "exec/helper-info.c.inc"
++
++/*
++ * #AC: through the alignment-checking MMU indexes (CR0.AM and EFLAGS.AC
++ * at CPL 3) every 2, 4 and 8 byte access is checked for natural
++ * alignment.  TCG drops atomicity in serial mode, so the TLB's own
++ * check (TLB_CHECK_ALIGNED, which goes by atomicity) cannot see the
++ * accesses translated code makes; they are given MO_ALIGN instead,
++ * and the unaligned-access hook raises #AC for these indexes.  The 16
++ * and 32 byte forms are gen_wide_mop's.
++ */
++static inline MemOp x86_ac_mop(int idx, MemOp mop)
++{
++    MemOp size = mop & MO_SIZE;
++
++    if (is_mmu_index_ac(idx) && size != MO_8 && size <= MO_64 &&
++        !(mop & MO_AMASK)) {
++        return mop | MO_ALIGN;
++    }
++    return mop;
++}
++
++/* each memory operation, its MemOp given alignment in AC mode */
++#define X86_AC_LDST(op, T) \
++    static inline void x86_ac_##op(T v, TCGv a, TCGArg i, MemOp m) \
++    { \
++        tcg_gen_##op(v, a, i, x86_ac_mop(i, m)); \
++    }
++#define X86_AC_RMW(op) \
++    static inline void x86_ac_##op(TCGv r, TCGv a, TCGv v, TCGArg i, MemOp m) \
++    { \
++        tcg_gen_##op(r, a, v, i, x86_ac_mop(i, m)); \
++    }
++#define X86_AC_CMPXCHG(op, T) \
++    static inline void x86_ac_##op(T r, TCGv a, T c, T n, TCGArg i, MemOp m) \
++    { \
++        tcg_gen_##op(r, a, c, n, i, x86_ac_mop(i, m)); \
++    }
++X86_AC_LDST(qemu_ld_tl, TCGv)
++X86_AC_LDST(qemu_st_tl, TCGv)
++X86_AC_LDST(qemu_ld_i32, TCGv_i32)
++X86_AC_LDST(qemu_st_i32, TCGv_i32)
++X86_AC_LDST(qemu_ld_i64, TCGv_i64)
++X86_AC_LDST(qemu_st_i64, TCGv_i64)
++X86_AC_RMW(atomic_add_fetch_tl)
++X86_AC_RMW(atomic_and_fetch_tl)
++X86_AC_RMW(atomic_or_fetch_tl)
++X86_AC_RMW(atomic_xor_fetch_tl)
++X86_AC_RMW(atomic_fetch_add_tl)
++X86_AC_RMW(atomic_fetch_and_tl)
++X86_AC_RMW(atomic_fetch_or_tl)
++X86_AC_RMW(atomic_fetch_xor_tl)
++X86_AC_RMW(atomic_xchg_tl)
++X86_AC_CMPXCHG(atomic_cmpxchg_tl, TCGv)
++X86_AC_CMPXCHG(atomic_cmpxchg_i64, TCGv_i64)
++X86_AC_CMPXCHG(nonatomic_cmpxchg_i64, TCGv_i64)
++#undef tcg_gen_qemu_ld_tl
++#undef tcg_gen_qemu_st_tl
++#undef tcg_gen_atomic_add_fetch_tl
++#undef tcg_gen_atomic_and_fetch_tl
++#undef tcg_gen_atomic_or_fetch_tl
++#undef tcg_gen_atomic_xor_fetch_tl
++#undef tcg_gen_atomic_fetch_add_tl
++#undef tcg_gen_atomic_fetch_and_tl
++#undef tcg_gen_atomic_fetch_or_tl
++#undef tcg_gen_atomic_fetch_xor_tl
++#undef tcg_gen_atomic_xchg_tl
++#undef tcg_gen_atomic_cmpxchg_tl
++#define tcg_gen_qemu_ld_tl x86_ac_qemu_ld_tl
++#define tcg_gen_qemu_st_tl x86_ac_qemu_st_tl
++#define tcg_gen_qemu_ld_i32 x86_ac_qemu_ld_i32
++#define tcg_gen_qemu_st_i32 x86_ac_qemu_st_i32
++#define tcg_gen_qemu_ld_i64 x86_ac_qemu_ld_i64
++#define tcg_gen_qemu_st_i64 x86_ac_qemu_st_i64
++#define tcg_gen_atomic_add_fetch_tl x86_ac_atomic_add_fetch_tl
++#define tcg_gen_atomic_and_fetch_tl x86_ac_atomic_and_fetch_tl
++#define tcg_gen_atomic_or_fetch_tl x86_ac_atomic_or_fetch_tl
++#define tcg_gen_atomic_xor_fetch_tl x86_ac_atomic_xor_fetch_tl
++#define tcg_gen_atomic_fetch_add_tl x86_ac_atomic_fetch_add_tl
++#define tcg_gen_atomic_fetch_and_tl x86_ac_atomic_fetch_and_tl
++#define tcg_gen_atomic_fetch_or_tl x86_ac_atomic_fetch_or_tl
++#define tcg_gen_atomic_fetch_xor_tl x86_ac_atomic_fetch_xor_tl
++#define tcg_gen_atomic_xchg_tl x86_ac_atomic_xchg_tl
++#define tcg_gen_atomic_cmpxchg_tl x86_ac_atomic_cmpxchg_tl
++#define tcg_gen_atomic_cmpxchg_i64 x86_ac_atomic_cmpxchg_i64
++#define tcg_gen_nonatomic_cmpxchg_i64 x86_ac_nonatomic_cmpxchg_i64
+ #undef  HELPER_H
+ 
+ /* Fixes for Windows namespace pollution.  */
+@@ -2438,11 +2523,30 @@
+     tcg_gen_qemu_st_i64(s->tmp1_i64, s->A0, s->mem_index, MO_LEUQ);
+ }
+ 
++/*
++ * The 16- and 32-byte forms when every access is alignment-checked
++ * (CR0.AM and EFLAGS.AC at CPL 3, the AC MMU indexes): those that
++ * require alignment check it here and raise #GP, as they do whatever
++ * AC is; those that do not are exempt from #AC, which is for 2, 4 and
++ * 8 byte data (SDM 6.15), so they go unchecked (MO_ATOM_NONE: no
++ * atomicity, so no alignment, for the TLB's check to impose).
++ */
++static MemOp gen_wide_mop(DisasContext *s, MemOp mop, bool align, int bytes)
++{
++    if (!is_mmu_index_ac(s->mem_index)) {
++        return mop | (align ? (bytes == 32 ? MO_ALIGN_32 : MO_ALIGN_16) : 0);
++    }
++    if (align) {
++        gen_helper_check_align(tcg_env, s->A0, tcg_constant_i32(bytes - 1));
++    }
++    return (mop & ~MO_ATOM_MASK) | MO_ATOM_NONE;
++}
++
+ static inline void gen_ldo_env_A0(DisasContext *s, int offset, bool align)
+ {
+     MemOp atom = (s->cpuid_ext_features & CPUID_EXT_AVX
+                   ? MO_ATOM_IFALIGN : MO_ATOM_IFALIGN_PAIR);
+-    MemOp mop = MO_128 | MO_LE | atom | (align ? MO_ALIGN_16 : 0);
++    MemOp mop = gen_wide_mop(s, MO_128 | MO_LE | atom, align, 16);
+     int mem_index = s->mem_index;
+     TCGv_i128 t = tcg_temp_new_i128();
+ 
+@@ -2454,7 +2558,7 @@
+ {
+     MemOp atom = (s->cpuid_ext_features & CPUID_EXT_AVX
+                   ? MO_ATOM_IFALIGN : MO_ATOM_IFALIGN_PAIR);
+-    MemOp mop = MO_128 | MO_LE | atom | (align ? MO_ALIGN_16 : 0);
++    MemOp mop = gen_wide_mop(s, MO_128 | MO_LE | atom, align, 16);
+     int mem_index = s->mem_index;
+     TCGv_i128 t = tcg_temp_new_i128();
+ 
+@@ -2465,12 +2569,16 @@
+ static void gen_ldy_env_A0(DisasContext *s, int offset, bool align)
+ {
+     MemOp mop = MO_128 | MO_LE | MO_ATOM_IFALIGN_PAIR;
++    MemOp mop0 = gen_wide_mop(s, mop, align, 32);
+     int mem_index = s->mem_index;
+     TCGv_i128 t0 = tcg_temp_new_i128();
+     TCGv_i128 t1 = tcg_temp_new_i128();
+     TCGv a0_hi = tcg_temp_new();
+ 
+-    tcg_gen_qemu_ld_i128(t0, s->A0, mem_index, mop | (align ? MO_ALIGN_32 : 0));
++    if (is_mmu_index_ac(mem_index)) {
++        mop = mop0;
++    }
++    tcg_gen_qemu_ld_i128(t0, s->A0, mem_index, mop0);
+     tcg_gen_addi_tl(a0_hi, s->A0, 16);
+     tcg_gen_qemu_ld_i128(t1, a0_hi, mem_index, mop);
+ 
+@@ -2481,12 +2589,16 @@
+ static void gen_sty_env_A0(DisasContext *s, int offset, bool align)
+ {
+     MemOp mop = MO_128 | MO_LE | MO_ATOM_IFALIGN_PAIR;
++    MemOp mop0 = gen_wide_mop(s, mop, align, 32);
+     int mem_index = s->mem_index;
+     TCGv_i128 t = tcg_temp_new_i128();
+     TCGv a0_hi = tcg_temp_new();
+ 
++    if (is_mmu_index_ac(mem_index)) {
++        mop = mop0;
++    }
+     tcg_gen_ld_i128(t, tcg_env, offset + offsetof(YMMReg, YMM_X(0)));
+-    tcg_gen_qemu_st_i128(t, s->A0, mem_index, mop | (align ? MO_ALIGN_32 : 0));
++    tcg_gen_qemu_st_i128(t, s->A0, mem_index, mop0);
+     tcg_gen_addi_tl(a0_hi, s->A0, 16);
+     tcg_gen_ld_i128(t, tcg_env, offset + offsetof(YMMReg, YMM_X(1)));
+     tcg_gen_qemu_st_i128(t, a0_hi, mem_index, mop);
+--- a/target/i386/tcg/emit.c.inc
++++ b/target/i386/tcg/emit.c.inc
+@@ -1808,7 +1808,7 @@
+ static void gen_CMPXCHG16B(DisasContext *s, X86DecodedInsn *decode)
+ {
+ #ifdef TARGET_X86_64
+-    MemOp mop = MO_LE | MO_128 | MO_ALIGN;
++    MemOp mop = gen_wide_mop(s, MO_LE | MO_128, true, 16);
+     TCGv_i64 t0, t1;
+     TCGv_i128 cmp, val;
+ 

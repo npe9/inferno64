@@ -12,10 +12,16 @@
 #			package, and tests/vm/kvmtest.c runs a real-mode
 #			guest through /dev/kvm (unrestricted guest, EPT)
 #
-# Two of kvm-unit-tests' checks are left out, for QEMU's TCG rather
-# than its VMX: the #AC case of vmx_exception_test (TCG has no
-# alignment checking) and rdtsc_vmexit_diff_test (its bound is in TSC
-# ticks, and TCG's TSC is the host clock, here at a microsecond).
+#	actest		#AC itself, outside any guest (tests/vm/kut-actest.c,
+#			built in kvm-unit-tests' tree): what patch 0010
+#			gives TCG -- a misaligned 2, 4 or 8 byte access at
+#			CPL 3 with CR0.AM and EFLAGS.AC set raises #AC, an
+#			aligned one and an unaligned MOVUPS do not, nor does
+#			anything with EFLAGS.AC clear
+#
+# One of kvm-unit-tests' checks is left out, for QEMU's TCG rather than
+# its VMX: rdtsc_vmexit_diff_test (its bound is in TSC ticks, and
+# TCG's TSC is the host clock, here at a microsecond).
 #
 # usage: scripts/check-qemu-vmx.sh
 # needs: x86_64-elf-gcc, gmake, git; .qemu/local (scripts/mkqemu.sh)
@@ -42,15 +48,8 @@ fi
 	cd "$KUT"
 	[ -f config.mak ] || ./configure --arch=x86_64 --cross-prefix=x86_64-elf- >/dev/null
 	gmake x86/vmx.flat >/dev/null
-	# the same tests without the #AC case, which TCG cannot run
-	cp x86/vmx_tests.c "$WORK/vmx_tests.c"
-	sed -e 's/^	{ AC_VECTOR, vmx_l2_ac_test },$//' \
-	    -e 's/^static void vmx_l2_ac_test(void)$/static void __attribute__((unused)) vmx_l2_ac_test(void)/' \
-		"$WORK/vmx_tests.c" >x86/vmx_tests.c
-	gmake x86/vmx.flat >/dev/null
-	cp x86/vmx.flat "$WORK/vmx-noac.flat"
-	cp "$WORK/vmx_tests.c" x86/vmx_tests.c
-	gmake x86/vmx.flat >/dev/null
+	cp "$ROOT/tests/vm/kut-actest.c" x86/actest.c
+	gmake x86/actest.flat >/dev/null
 )
 
 # kut name flat smp mem args: one run of vmx.flat; it passes when no
@@ -77,7 +76,8 @@ kut() {
 	fi
 }
 # unittests.cfg's [vmx] list, and rdtsc_vmexit_diff_test
-kut vmx "$WORK/vmx-noac.flat" 1 512 "-exit_monitor_from_l2_test -ept_access* -vmx_smp* -vmx_vmcs_shadow_test -atomic_switch_overflow_msrs_test -vmx_init_signal_test -vmx_apic_passthrough_tpr_threshold_test -apic_reg_virt_test -virt_x2apic_mode_test -vmx_pf_exception_test -vmx_pf_exception_forced_emulation_test -vmx_pf_no_vpid_test -vmx_pf_invvpid_test -vmx_pf_vpid_test -vmx_basic_vid_test -vmx_eoi_virt_test -vmx_posted_interrupts_test -rdtsc_vmexit_diff_test"
+kut actest "$KUT/x86/actest.flat" 1 512 ""
+kut vmx "$KUT/x86/vmx.flat" 1 512 "-exit_monitor_from_l2_test -ept_access* -vmx_smp* -vmx_vmcs_shadow_test -atomic_switch_overflow_msrs_test -vmx_init_signal_test -vmx_apic_passthrough_tpr_threshold_test -apic_reg_virt_test -virt_x2apic_mode_test -vmx_pf_exception_test -vmx_pf_exception_forced_emulation_test -vmx_pf_no_vpid_test -vmx_pf_invvpid_test -vmx_pf_vpid_test -vmx_basic_vid_test -vmx_eoi_virt_test -vmx_posted_interrupts_test -rdtsc_vmexit_diff_test"
 kut ept "$KUT/x86/vmx.flat" 1 2560 "ept_access*"
 kut init_signal "$KUT/x86/vmx.flat" 2 2048 vmx_init_signal_test
 kut apic_passthrough_thread "$KUT/x86/vmx.flat" 2 2048 vmx_apic_passthrough_thread_test

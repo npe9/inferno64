@@ -12,6 +12,9 @@ struct Xhci
 	void	*aux;
 	void	(*dmaenable)(Xhci*);
 	u64int	(*dmaaddr)(void*);
+	/* the bus's own interrupt (MSI-X on PCI), nil for the pin */
+	void	(*intrenable)(Hci*);
+	void	(*intrdisable)(Hci*);
 
 	Hci	*active;
 };

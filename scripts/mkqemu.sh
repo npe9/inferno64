@@ -71,6 +71,15 @@
 #		that showed QEMU's xHCI lacked: event rings of more than
 #		one segment, and scratchpad buffers in use.
 #		scripts/check-qemu-fl1100.sh checks it against Linux's xhci
+#	0010-i386-tcg-alignment-check.patch
+#		#AC, which TCG did not raise: data and stack accesses
+#		at CPL 3 with CR0.AM and EFLAGS.AC set go through MMU
+#		indexes of their own, whose 2, 4 and 8 byte accesses
+#		are checked for natural alignment (MO_ALIGN in
+#		translated code, the TLB's check for helpers'); the
+#		16 and 32 byte forms are exempt, or #GP as ever.
+#		scripts/check-qemu-vmx.sh runs kvm-unit-tests' VMX #AC
+#		case and tests/vm/kut-actest.c
 #
 # usage: scripts/mkqemu.sh      installs into $ROOT/.qemu/local;
 #                               scripts/vmhost.sh uses it when present
