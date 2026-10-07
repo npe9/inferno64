@@ -62,7 +62,37 @@ span(void)
 		if(p->as == AB || p->as == ARET || p->as == AERET || p->as == ARETURN)	/* TO DO: other unconditional operations */
 			checkpool(p, 0);
 		c += m;
-		if(blitrl)
+		/*
+		 * A CASE and its BCASE entries are an ARRAY, not a code
+		 * sequence.  The dispatch is
+		 *
+		 *	ADR x4,table / LDRSW x17,[x4,w3,lsl 2] / ADD x17,x17,x4 / BR x17
+		 *
+		 * so entry i MUST sit at table+4*i.  flushpool() splices a
+		 * branch and the literal pool in after p, which is right for
+		 * ordinary code and fatal here: the entries past the split keep
+		 * their correct offsets but are no longer at their slots, and
+		 * the dispatch reads the pool's DWORDs as offsets instead.
+		 *
+		 * Found on the Pi, where conswrite's 29-slot table held 23
+		 * entries, a loader-inserted B, five pool constants, and the
+		 * last six 0x6e00 further on: writing /dev/time indexed slot
+		 * 24, read a zero, and branched into the table's own base --
+		 * trap type 0, esr 0x2000000, an undefined instruction at a
+		 * text pc.  Carried here from rio-pi-tk b42059ba9.
+		 *
+		 * It is layout-dependent, so a build that does not crash is not
+		 * a build without it.  This tree's own layout does not split a
+		 * table today; with the distance check forced to 0x200 it
+		 * splits nine on virtarm64 and seven on virtarm64cloud, in
+		 * fdtprop, ipifcadd and conswrite among others.
+		 *
+		 * So defer the forced flush to the end of the run.  A flush
+		 * after the LAST entry is fine, hence the lookahead rather than
+		 * a blanket test on ABCASE.
+		 */
+		if(blitrl && !(p->as == ACASE ||
+		   (p->as == ABCASE && p->link != P && p->link->as == ABCASE)))
 			checkpool(p, 1);
 	}
 
@@ -170,6 +200,17 @@ static void
 flushpool(Prog *p, int skip)
 {
 	Prog *q;
+
+	/*
+	 * Nothing may be spliced into a CASE's BCASE run -- see the note in
+	 * span().  The caller defers past the end of the run, so this is
+	 * unreachable; say so loudly if it ever is not, because the
+	 * alternative is a table that silently dispatches into pool data.
+	 * This diag is the detector: it sits at the decision point, where
+	 * the linker knows, rather than inferring a table's end from bytes.
+	 */
+	if(p->as == ACASE || (p->as == ABCASE && p->link != P && p->link->as == ABCASE))
+		diag("literal pool flush inside a CASE table\n%P", p);
 
 	if(blitrl) {
 		if(skip){
