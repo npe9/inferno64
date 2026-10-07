@@ -12554,3 +12554,55 @@ blocked" has always answered yes, and it is a reason
 .CW wedgediag 's
 question two was believable: it was measuring a true fact about an irrelevant
 session.
+.NH 3
+The survey's DENOMINATOR was wrong: twelve copies, not ten
+.LP
+A peer ran the same survey independently, with the control, and found two
+copies mine had missed \(em
+.CW jit-research
+and
+.CW parallelgc .
+.B "They are right, and the fault is in how I enumerated."
+.P1
+git worktree list   -> 38 registered worktrees, 10 with the file
+ls -d */            -> 40 directories,          12 with the file
+.P2
+.CW jit-research
+and
+.CW parallelgc
+are sibling directories holding the whole tree with
+.B "no .git at all,"
+so they are not registered worktrees and
+.CW "git worktree list"
+cannot see them.
+.B "I asked which REGISTERED WORKTREES have the defect and reported it as which COPIES OF THE TREE do."
+The classifier was right by then; the population was wrong, which is the same
+class of error one layer out.
+.PP
+Corrected, scoped to
+.CW poolfree 's
+own body so a stray assignment elsewhere cannot be mistaken for the fixup:
+.P1
+raspi3b-port       2 live assignments   FIXED
+cloud-port, genesize, inferno-bt, inferno-ports, jit-research,
+multicore, nixos, parallelgc, pr-bluetooth, rio-pi-tk, xip
+                   0 live assignments   defect
+twelve copies, eleven defective
+.P2
+.B "parallelgc belongs beside multicore and is arguably worse:"
+a branch whose subject IS the garbage collector, missing the fixup that keeps
+the collector's own sweep cursor valid across a free.
+.PP
+The peer's first checker also failed the control \(em 0/2 for all twelve
+including this tree \(em for a third reason neither of my three had: it stripped
+comments correctly but required the assignment to follow the
+.CW "== ptr"
+test closely, and
+.CW "if(p == heapmem && c == ptr)"
+with a counting statement in between does not match.
+.B "Four wrong classifiers between us, and every one produced a uniform answer."
+.PP
+So the rule generalises past the classifier: before trusting a survey over N
+cases, make it classify the one case whose answer is already known \(em and
+check that the POPULATION is the one the question is about, because a correct
+test over the wrong set is still noise that looks like a result.
