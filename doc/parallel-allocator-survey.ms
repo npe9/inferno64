@@ -34,7 +34,7 @@ carries its own
 and every allocation and free takes it with
 .CW ilock(&p->l) :
 there are nineteen
-.CW ilock / iunlock
+.CW "ilock / iunlock"
 pairs in the file and no path that touches the free list without one.
 .PP
 So it is MP-safe now.  What it is not is parallel: a
@@ -68,9 +68,9 @@ Dis refcounts are atomic in C, and in one of the two aarch64 JITs
 .LP
 .CW include/interp.h
 defines
-.CW AINC / ADEC
+.CW "AINC / ADEC"
 over
-.CW __atomic_fetch_add / __atomic_sub_fetch ,
+.CW "__atomic_fetch_add / __atomic_sub_fetch" ,
 and the comment there spells out why: a plain
 .CW ->ref++
 can lose an update, and two threads can both observe the count reach zero and
@@ -106,7 +106,7 @@ exists, so for kernels the JIT is already correct.  But
 builds with
 .CW -DOBJTYPE="arm64" ,
 which means
-.I every hosted test in this tree runs the non-atomic one .
+.I "every hosted test in this tree runs the non-atomic one" .
 The standing comment in
 .CW emu/port/dis.c
 describes this gap and is right about it; it is only misleading in that it reads
@@ -119,7 +119,7 @@ Landed and verified on silicon:
 .CW curR ,
 .CW Pctx ,
 the
-.CW gchalt / gcdepth
+.CW "gchalt / gcdepth"
 split,
 .CW progreg() ,
 the
@@ -127,7 +127,7 @@ the
 safepoint and its
 .CW rungc()
 invariant check,
-.CW stoptheworld() / starttheworld() ,
+.CW "stoptheworld() / starttheworld()" ,
 the process-group lock, and a per-context run queue.
 .PP
 Not landed, and both are prerequisites:
@@ -142,7 +142,7 @@ which is a single global here, so they would share one register file.
 own comment calls sharing "unsafe while parallelvm=1".
 .IP "\(bu" 3
 .B "Phase 4, a lock per channel."
-.CW isend / irecv
+.CW "isend / irecv"
 walk channel queues and write another
 .CW Prog 's
 .CW ptr
@@ -475,7 +475,8 @@ are assigned in exactly one place,
 .IP "\(bu" 3
 .CW rootset()
 has exactly one caller:
-.CW gc.c :671, the line after
+.CW gc.c :671,
+the line after
 .CW gccolor++ .
 .LP
 So the colour globals change only at an epoch boundary, only inside
@@ -503,7 +504,8 @@ either.  So both halves of the handshake are missing their barrier, not just the
 reader's.
 .PP
 Worse, and independent of barriers entirely,
-.CW libinterp/xec.c :2533 does this:
+.CW libinterp/xec.c :2533
+does this:
 .P1
 curP->inxec = 0;
 curP->curprog = nil;
@@ -518,7 +520,8 @@ go to 0 in between would read a stale
 .CW p->reg .
 .CW isave()
 at
-.CW xec.c :2366 does the same two things in the opposite, correct order, so the
+.CW xec.c :2366
+does the same two things in the opposite, correct order, so the
 file disagrees with itself.  That one is wrong in plain program order on a
 sequentially consistent machine, never mind reordering.
 .PP
@@ -699,7 +702,7 @@ stores ints, so no pointer move and no barrier; and
 is
 .CW IADDC ,
 which both generators punt to the interpreter, so its counts go through the C
-.CW AINC / ADEC .
+.CW "AINC / ADEC" .
 An A/B against those three moved
 .CW call
 +2.5 per cent and

@@ -71,7 +71,7 @@ QEMU is correct; no emulator patch was needed.
 Two things from the hunt were real and are kept, though neither was the
 root cause.  The identity MMU (raspi3b/mmu.c) gives RAM Normal write-back
 inner-shareable, which is what makes the
-.CW LDXRW / STXRW
+.CW "LDXRW / STXRW"
 spinlocks sound (exclusives are unpredictable on the Device memory an
 MMU-off board provides), and it maps the page tables read-only - the
 tripwire that turned the otherwise-silent wild store into a catchable
@@ -122,7 +122,7 @@ at ascending offsets and read them back with
 .CW pread ,
 reporting the first block whose write or read returns an error.  A
 companion four-thousand-iteration
-.CW open / close
+.CW "open / close"
 loop on
 .CW /dis/sh.dis
 is the control: it must stay clean, proving the fault is SD-specific and

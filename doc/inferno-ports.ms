@@ -1343,7 +1343,7 @@ not
 .CW newforthproc() \-
 has set since the switch off Forth.  The guard was reading whatever
 garbage sat in that word, and on a garbage-nonzero read,
-.CW dumprstack() / dumppstack()
+.CW "dumprstack() / dumppstack()"
 walk memory computed from it.  That is the likeliest source of the
 GPF itself, not just of a confusing report of one: after removing the
 dead path, the same test has run clean, twice, where it faulted
@@ -1447,7 +1447,7 @@ was never in question:
 .CW port/proc.c 's
 .CW pexit()
 already correctly populates
-.CW p->waitq / p->nwait
+.CW "p->waitq / p->nwait"
 and wakes
 .CW p->waitr
 on every child exit \- proven by this same kernel's separate, working,
@@ -2310,7 +2310,7 @@ The first pass at reading the panic's fault PC against
 .CW ipc64 's
 own symbol table (the same hand-written a.out parser used earlier in
 this document, no
-.CW nm / inm
+.CW "nm / inm"
 needed) took the nearest preceding
 .CW T
 symbol without checking the following one, and landed on
@@ -2608,7 +2608,7 @@ reading
 and
 .CW up->errstr
 again from outside the window
-.CW release() / acquire()
+.CW "release() / acquire()"
 actually protects, and
 .CW errstr
 in particular is a leftover per-process buffer that is never
@@ -2709,7 +2709,7 @@ returning and pid 1's next bytecode \- narrower now than at any
 earlier point in this document, but still open.
 .PP
 One attempt at that instrumentation, for the record.
-.CW acquire() / release()
+.CW "acquire() / release()"
 in
 .CW port/dis.c
 are the token-passing pair guarding which host kproc is currently
@@ -2762,7 +2762,7 @@ and conflating the two would cost more than it would settle.  The acquire()/rele
 sparingly \- one line at
 .CW Sys_mount() 's
 own call site rather than inside every
-.CW acquire() / release()
+.CW "acquire() / release()"
 globally \- is still the next useful step.
 .NH 1
 Execution does continue past the mount \- several Progs, not one
@@ -2932,7 +2932,7 @@ confirmed
 .CW nil ,
 several Progs confirmed still alive and distinctly placed), and it is
 not the scheduler losing a wakeup at the
-.CW acquire() / release()
+.CW "acquire() / release()"
 level (the token handoff traced cleanly in the earlier section, and
 none of the five Progs above are queued on
 .CW isched.vmq
@@ -3672,7 +3672,7 @@ one of a small, fixed pool of
 .CW vmachine()
 workers multiplexing every live Dis Prog (the same host/Dis-level
 distinction this document's own
-.CW #p / #P
+.CW "#p / #P"
 section is built on).  Three different fault types were read this
 session as \(dqpid 9 crashing again\(dq before checking this; they
 were, at most, the same
@@ -4144,7 +4144,7 @@ sections never actually checked, and this much of it does not hold
 as stated: the two signatures fire in different pools.  Whether
 that means two separate bugs or one bug in code shared by both
 pools (below:
-.CW poolalloc / poolfree
+.CW "poolalloc / poolfree"
 in
 .CW alloc.c
 are the same functions serving every
@@ -4235,7 +4235,7 @@ Any of the three, hit during another prog's
 .CW delprog()
 window, reads through a pointer that may already be dangling \- the
 same shape as the observed
-.CW cclose / cclone
+.CW "cclose / cclone"
 "bad chan" signature, just one arena over from where those checks
 actually fire.
 .PP
@@ -4355,7 +4355,7 @@ that finds
 during the window sees
 .CW nil
 rather than a dangling pointer \- which is also what
-.CW closepgrp() / closefgrp()
+.CW "closepgrp() / closefgrp()"
 already check for on entry, so the pattern is not new to this code.
 .PP
 Built, not yet applied: a diagnostic pair, capped and permanent-cost
@@ -4478,7 +4478,7 @@ finds
 .CW currun ,
 .CW progexit
 and more as literal name strings in that trailing region.  Whatever
-.CW inm / acid
+.CW "inm / acid"
 do to read the symbol table from a linked Plan9 fat-header a.out on
 this host toolchain, it does not work for this binary; why is still
 open, and not worth more time against a working alternative.
@@ -4489,7 +4489,7 @@ The table's own format, read out of
 each entry is an 8-byte big-endian value, a
 .CW "type-char | 0x80"
 byte, then either a null-terminated name (most types) or, for
-.CW Z / z
+.CW "Z / z"
 (source-line tables), a leading byte and 2-byte pairs terminated by
 .CW 0x0000
 \- get that second case wrong and the whole rest of the table
@@ -4587,7 +4587,7 @@ itself captured at the failing check, one frame further in than
 .CW getcallerpc(&v) .
 Both addresses name who tripped the check, in two different
 frames; neither says who wrote the bad bytes.
-.CW free / mallocalign
+.CW "free / mallocalign"
 calling into a
 .CW D2B
 check from inside
@@ -4940,7 +4940,7 @@ before an
 itself isn't linkable from
 .CW libinterp
 (it's kernel-only;
-.CW error() / errorf()
+.CW "error() / errorf()"
 are the portable idiom here but raise a catchable Limbo exception,
 which is the wrong tool when the point is to stop hard and be seen,
 so this follows
@@ -5008,7 +5008,7 @@ for the two things that have actually worked throughout this whole
 hunt: the
 .CW currun()
 Dis-module trick
-.CW dumpregs() / _poolfault()
+.CW "dumpregs() / _poolfault()"
 already use, and a raw
 .CW dumpstack() \-
 board-specific, deliberately temporary.  Ran it: twelve boots, one
@@ -5106,21 +5106,21 @@ code past this investigation \- it must come out before any other
 board (or hosted emu) build is attempted, since nothing else links
 it.  Left in for now because this is still the active probe; pull it
 in the same change that replaces it with whatever the
-.CW OP(frame) / newframe()
+.CW "OP(frame) / newframe()"
 reading turns up.
 
 .NH 1
 The overflow probe's first version was checking the wrong thing
 .PP
 The
-.CW OP(frame) / OP(mframe)
+.CW "OP(frame) / OP(mframe)"
 descriptor probe from the previous section was tightened before its
 first real batch even finished: comparing
 .CW t->np*8*sizeof(WORD)
 against
 .CW t->size
 as a single number is too strict.
-.CW initmem() / freeptrs()
+.CW "initmem() / freeptrs()"
 gate every
 .CW w[i]
 access behind
@@ -5182,7 +5182,7 @@ can and does exceed it for a frame with more pointer slots than one
 map byte covers, allocated with extra trailing space.  Ran the
 tightened probe: twelve boots, zero descriptor-overflow hits \-
 this branch closes cleanly.  It also retires the
-.CW mcall / freeptrs
+.CW "mcall / freeptrs"
 theory the previous section's
 .CW dumpstack()
 trace suggested: frame creation and frame cleanup agree on every
@@ -5262,7 +5262,7 @@ value; the next capture compounds directly on what is here.
 .PP
 Advisor review of this round caught two more things worth acting
 on rather than filing.  First, the
-.CW OP(frame) / OP(mframe)
+.CW "OP(frame) / OP(mframe)"
 descriptor probe had already done its job \- the tightened version
 ran clean, which retired the theory it was built to test \- so it
 was dead weight in shared
@@ -5297,7 +5297,7 @@ Dis stack space, not a fresh allocation \- and
 is a native/builtin function that writes its return value directly
 into
 .CW f .
-.CW OP(frame) / OP(mframe)
+.CW "OP(frame) / OP(mframe)"
 's own descriptor is now confirmed sound, but nothing has yet
 checked whether
 .CW f->t
@@ -5429,7 +5429,7 @@ UPDATE 13 when addresses failed to recur \- not chased further),
 two
 .CW cclose
 panics with different
-.CW ref / flag
+.CW "ref / flag"
 values, and one
 .CW destroy()
 probe hit).  The
@@ -5567,7 +5567,7 @@ own format, delta-encoded against running file/line state exactly
 as the emitter tracks it \- see
 .CW os/inferno/pc64/tools/README ) .
 Every
-.CW .b / .m
+.CW ".b / .m"
 compile already writes one next to its
 .CW .dis ,
 so this needs no VM, no
@@ -5674,7 +5674,7 @@ That result is real but narrower than "array-of-nested-ADT growth
 is ruled out.''  It ran on hosted
 .CW emu \-
 arm64, a different VM binary, no SMP, no
-.CW release() / acquire()
+.CW "release() / acquire()"
 interleaving with another kproc \- not pc64, which is where every
 capture in this entire hunt has come from.  What this actually
 shows: this construct is not deterministically broken in isolation
@@ -5943,7 +5943,7 @@ in the real
 .CW sh.dis
 running on pc64 itself, not a hand-written stand-in.  Added a
 one-shot print in
-.CW OP(newa) / OP(newaz)
+.CW "OP(newa) / OP(newaz)"
 (shared helper
 .CW probearrtype() ,
 gated on module
@@ -5998,7 +5998,7 @@ at all is itself unusual.
 .PP
 A third mechanism closes alongside these two, on inspection rather
 than a new probe:
-.CW acquire() / release()
+.CW "acquire() / release()"
 (
 .CW os/inferno/port/dis.c )
 is a single global queue
@@ -6020,7 +6020,7 @@ and Dis bytecode never runs on two CPUs at once.  What remains
 open: whether something clobbers this array's memory
 .I between
 its correct creation and the moment
-.CW destroy() / OP(movp)
+.CW "destroy() / OP(movp)"
 read a bad slot back \- a use-after-free-into-reuse or an
 allocator-level bug neither a type check nor an isolated repro can
 see.  Watching one specific allocation's memory across that window
@@ -6181,7 +6181,7 @@ guard: forty boots, seven crashes in the usual unrelated families
 page fault,
 .CW "unknown namec access 2" ,
 plus two new one-offs, not chased), and two hits in the
-.CW destroy() / OP(movp)
+.CW "destroy() / OP(movp)"
 family \- one of them the first genuinely informative memory dump
 this probe has produced.
 .PP
@@ -6242,7 +6242,7 @@ running Dis
 .I "pid 4" \-
 every capture on record before this one, across every module, was
 pid 1.  A different Prog entirely does not fit "the same
-.CW yys / keepfds
+.CW "yys / keepfds"
 lineage gets corrupted later"; it is either a much more general
 mechanism than the Sh-specific framing of the last several sections
 suggests, or a second, separate bug.  Recorded as open and
@@ -6459,7 +6459,7 @@ Retraction: this rig has never run more than one CPU
 .PP
 An earlier section ("The type descriptor is correct on real pc64;
 three mechanisms closed") wrote that
-.CW acquire() / release()
+.CW "acquire() / release()"
 serialises Dis bytecode execution to one kproc at a time
 .I "regardless of how many physical CPUs this SMP kernel has" ,
 closing a genuinely-parallel-bytecode theory.  That sentence is true
@@ -6485,7 +6485,7 @@ zero matches in any of them.  Then booted once with
 added: a
 .CW cpu1:
 line appears within the first couple seconds of output, proving
-.CW mpinit() / mpstartap()
+.CW "mpinit() / mpstartap()"
 .RB ( os/inferno/pc/mp.c ,
 shared with the 32-bit
 .CW pc
@@ -6924,14 +6924,14 @@ Both drivers'
 starts new native kprocs \- confirmed by reading both, not assumed
 from one:
 .CW ethervirtio.c 's
-.CW rxproc / txproc
+.CW "rxproc / txproc"
 and
 .CW ether82563.c 's
-.CW i82563rproc / i82563tproc
+.CW "i82563rproc / i82563tproc"
 (plus, on that driver, one of several link-monitor variants
 depending on PHY type).  This is genuinely new concurrency a no-NIC
 boot never has: cooperatively-scheduled kprocs that yield at
-.CW sleep() / qlock()
+.CW "sleep() / qlock()"
 contention, interleaving with whatever else is running on this
 session's confirmed single CPU, in a way nothing in a no-NIC boot
 does.  That kprocs exist is not itself a finding \- this kernel runs
@@ -6941,7 +6941,7 @@ touches, under a different locking discipline than the yield points
 they hit.  Checked that directly rather than reason from "concurrency
 exists": read all four functions for what they lock and what they
 call, the same shape of check that found and then killed the
-.CW openfile() / ethermux()
+.CW "openfile() / ethermux()"
 mismatch two sections back.
 .PP
 Found no comparable mismatch.  Both drivers' ring state
@@ -7119,7 +7119,7 @@ one of them the very second boot run after the fix, reported last
 section.  Compared directly against the two NIC-attached
 .CW restrict=on
 batches, counting only
-.CW destroy() / OP(movp)
+.CW "destroy() / OP(movp)"
 captures, not the whole panic grab-bag: virtio 2/40, igb 1/40, no-NIC
 2/37.
 .B "Three counts of one and two events \- not enough to claim the
@@ -7170,7 +7170,7 @@ independent signatures that happened to share a batch.
 really is NIC-specific, by a result now clean of the confound that
 undermined every earlier attempt to say so \- worth its own thread,
 separately, another time.  The
-.CW destroy() / OP(movp)
+.CW "destroy() / OP(movp)"
 wrong-sentinel corruption \- named first, chased longest, the reason
 .CW auditmemloc() ,
 the liveness check, the type-descriptor confirmation, and every
@@ -7289,7 +7289,7 @@ Beyond SP, in the same live block \- and the same source line again
 .PP
 Took several batches to land one \- eighty-three clean no-NIC boots
 with the corrected diagnostic in place produced zero
-.CW destroy() / OP(movp)
+.CW "destroy() / OP(movp)"
 hits before the next one finally landed
 .RB ( "1 in roughly 40\-90" ,
 consistent with the small counts already on record, not a change in
@@ -7497,7 +7497,7 @@ pointer),
 .CW buffer
 .RB ( "array\ of\ byte" ,
 pointer), then seven plain
-.CW int / big
+.CW "int / big"
 fields with no pointers at all.  Two pointer fields, and the block
 this capture hit was walked as
 .CW "t->np\ 2" ,
@@ -7677,7 +7677,7 @@ in a different guise: the
 frame-bounds probe was reading
 .CW R.FP
 after
-.CW OP(ret) / OP(mcall)
+.CW "OP(ret) / OP(mcall)"
 had already restored it to the
 .I caller's
 frame, before the
@@ -7744,7 +7744,7 @@ like every earlier one), addressing byte
 (direct
 .CW R.FP
 addressing, by the
-.CW USRC / UDST
+.CW "USRC / UDST"
 decoding worked out there), and a frame-bounds line that made no
 sense at all:
 .CW "addr - FP = -245448" .
@@ -7798,7 +7798,7 @@ narrower form: the
 probe reading
 .CW R.FP
 after
-.CW OP(ret) / OP(mcall)
+.CW "OP(ret) / OP(mcall)"
 had restored it to the caller's frame.  That fix (globals set inside
 .CW freeptrs()
 itself) sidestepped the general problem without naming it.  This
@@ -7846,7 +7846,7 @@ None of this batch's captures \- this one or the three that followed
 it before the fix landed \- are usable for addressing-mode or
 frame-bounds conclusions; the raw bad-slot address and value are
 still fine, since bad-pointer detection reads
-.CW R.d / R.s
+.CW "R.d / R.s"
 directly, not through
 .CW currun() ,
 but the diagnostic context around them is not.  A fresh batch is
@@ -7901,7 +7901,7 @@ exception path brackets exactly the risky window \-
 then
 .CW delprog(r,\ msg)
 \- between
-.CW gclock() / gcunlock()
+.CW "gclock() / gcunlock()"
 .RN ( "gchalt++ / gchalt\-\-" ,
 .CW include/interp.h ).
 .CW destroystack()
@@ -8215,9 +8215,9 @@ specific field, or failed to initialize it, is.
 Fixed the probe for next time rather than hand-decoding again:
 .CW badptrslot()
 now checks
-.CW USRC / UDST
+.CW "USRC / UDST"
 and prints
-.CW i.f / i.s
+.CW "i.f / i.s"
 directly whenever the mode is indirect, instead of printing
 .CW .ind
 reinterpreted as the wrong shape.  Rebuilt, same two pre-existing
@@ -9149,7 +9149,7 @@ Two
 captures
 .RN ( lines
 207 and 209, both inside a
-.CW spawn / pipe
+.CW "spawn / pipe"
 setup passing
 .CW sh
 and
@@ -9556,7 +9556,7 @@ particular capture, though the mechanism remains a real limitation
 worth remembering for others: it checks every registered word every
 instruction regardless of which process is currently dispatching, so
 a hit's
-.CW trackM / trackPC
+.CW "trackM / trackPC"
 name whichever instruction happens to be running when a bad
 transition is
 .I noticed ,
@@ -9680,7 +9680,7 @@ which remains unexamined.
 .CW checktracked() ,
 .CW checkfreeptr() ,
 and the
-.CW dumpstack() / abort()
+.CW "dumpstack() / abort()"
 calls in both are pc64-only debugging, the same as
 .CW checkwatch()
 was before it: strip them, and the
@@ -9715,7 +9715,7 @@ and a heap object
 freelist() ,
 heap.c)
 were both freed back to
-.CW mainmem / heapmem
+.CW "mainmem / heapmem"
 without ever calling
 .CW trackclear() ,
 and
@@ -9838,7 +9838,7 @@ included in that softening and still aborts \- see below, it is now
 the signal actually being chased.
 .PP
 The residual
-.CW checktracked() / scanframe()
+.CW "checktracked() / scanframe()"
 signal, once the free-time clears above stopped the bulk of the
 noise, resolved to two source lines via
 .CW resolve_sbl.py :
@@ -9936,7 +9936,7 @@ confirmed 12\-15 of 20\-30, well above the residual
 rate.  It had not been rare; it had been masked, first by the
 tracker's own free-time gap flooding the log with unrelated hits, then
 by
-.CW checktracked() / scanframe()
+.CW "checktracked() / scanframe()"
 stopping the boot before
 .CW checkmarkptr()
 ever got a chance to run.
@@ -10157,7 +10157,7 @@ and
 are the same variable by construction; printed together in one
 .CW print()
 call, they read equal every time) ruled out a
-.CW %zx / FmtVLong
+.CW "%zx / FmtVLong"
 marshaling bug in the checker's own diagnostic before trusting
 anything built on
 .CW %zx
@@ -11599,7 +11599,7 @@ showing a target already
 resolution to
 .CW destroy() Ns 's
 own entry check by tag rather than offset, the
-.CW Chan.path / Chan.umh
+.CW "Chan.path / Chan.umh"
 poison-value corruption, and every D2B anchor fix -- none of those
 depended on this checker at all. What is lost: the specific,
 sharply-reproducible target this thread thought it had for
@@ -12104,7 +12104,7 @@ protecting
 and
 .CW Chan
 structures in the native kernel, not
-.CW AINC / ADEC
+.CW "AINC / ADEC"
 protecting Dis heap objects in the interpreter.  Two independent
 mechanisms, two independent sets of call sites, the same failure
 shape in both -- which argues against a bug narrow to one specific
@@ -12830,7 +12830,7 @@ The same batch surfaced a new
 resolving to
 .CW bindmount+506 --
 unlike the
-.CW ccloseq / rread
+.CW "ccloseq / rread"
 captures the resolver fix above uncovered as suspect, this one is
 plausible on inspection:
 .CW bindmount()
@@ -13572,7 +13572,7 @@ bugs found and fixed this hunt, not eight.
 A candidate for "general protection violation" itself: BIOS32 far pointers loose in the heap
 .PP
 Chasing whether an
-.CW AINC / ADEC
+.CW "AINC / ADEC"
 guard was worth adding (it is not \(em see below) led to decoding a
 register instead: this port's own
 .CW ainc-amd64.s
@@ -13583,7 +13583,7 @@ and
 defines
 .CW REGARG\ =\ D_BP \(em
 so every past
-.CW ainc / adec
+.CW "ainc / adec"
 crash's bad pointer has been sitting, undecoded, in the
 .CW BP
 field of a dump this hunt already had.  Reading it out of a live
@@ -13665,12 +13665,12 @@ this hunt has, ahead of chasing the refcount-corruption disease
 blind.
 .PP
 Considered and rejected: wrapping
-.CW AINC / ADEC
+.CW "AINC / ADEC"
 themselves with a
 .CW badref() -style
 precheck, the same upgrade every other silent-crash site in this hunt
 has gotten.
-.CW AINC / ADEC
+.CW "AINC / ADEC"
 sit on the hottest path in the whole interpreter \(em every Dis
 object refcount touch, in every board's kernel and the hosted
 .CW emu
@@ -13745,7 +13745,7 @@ in this same process \(em not copied, just pointed into.  The
 working hypothesis: something rewrites
 .CW up\->genbuf
 while
-.CW rootattach() / devattach()
+.CW "rootattach() / devattach()"
 are still holding a pointer into it, between the
 .CW '*spec'
 check and the
@@ -13875,7 +13875,7 @@ guest with roughly 512 MiB of real RAM (
 .CW "conf.npage\ 128472" ) ,
 before landing exactly on the 4 GiB address?  Two live possibilities,
 neither confirmed: (1) this port's
-.CW pmap() / mmuwalk()
+.CW "pmap() / mmuwalk()"
 (pc64/mmu.c) genuinely maps a vast, non-zero, non-faulting span this
 large \(em plausible given
 .CW mem.h 's
@@ -14070,7 +14070,7 @@ entry points all live in this address range by definition \(em ending
 up somewhere it should not be: a Dis heap object's
 .CW ->ref
 field, or a kernel
-.CW Chan / Path
+.CW "Chan / Path"
 pointer, dereferenced later as if it were one.  Not a corruption bug
 in the classic sense so much as a type confusion: some driver init
 path that legitimately touches both device addresses and Dis-heap or
@@ -14255,7 +14255,7 @@ than a code defect \(em
 .CW REPNE\ SCASB
 is architecturally interruptible and resumable, which depends on the
 trap/interrupt path saving and restoring
-.CW RDI / RCX
+.CW "RDI / RCX"
 correctly across whatever fires during the several-billion-iteration
 window this scan opens; not checked yet.  Everything reachable by
 reading has now been read.
@@ -14267,13 +14267,13 @@ Followed through on the "environmental, not a code defect" candidate
 the previous round left standing: does
 .CW pc64/l.s 's
 own interrupt entry/exit path correctly preserve
-.CW RDI / RCX
+.CW "RDI / RCX"
 (the two registers a
 .CW REPNE\ SCASB
 scan is actively using) across whatever timer or device interrupt
 fires during the several-billion-iteration window this scan opens?
 Laid the save side (
-.CW _strayintr / _strayintrx
+.CW "_strayintr / _strayintrx"
 via
 .CW _intrcommon )
 against the restore side (
@@ -14579,7 +14579,7 @@ uses to let a different Dis process run while one of them is doing
 native (non-interpreted) work.
 .PP
 Tracing
-.CW release() / acquire()
+.CW "release() / acquire()"
 themselves needed a fix first: printing
 .CW up->pid
 (the carrier kernel Proc, one of a small rotating pool of "vm" kprocs)
@@ -14592,7 +14592,7 @@ Proc happens to be carrying it -- gives an unambiguous trace, and it
 settles the question the first write-up got wrong:
 .B "the stuck process is not idle, it is spinning."
 Dozens of
-.CW release() / acquire()
+.CW "release() / acquire()"
 cycles for the same Dis Prog pid fire back to back, each one a clean
 release, a full queueing-and-reschedule round trip, and a clean
 re-acquire -- CPU-bound activity, not a blocked wait.  The earlier
@@ -14946,7 +14946,7 @@ own Styx exchange with the freshly spawned
 .CW dossrv
 server, and that exchange does not converge.  The dossrv side is
 provably alive and issuing real
-.CW Sys_readn / Sys_write
+.CW "Sys_readn / Sys_write"
 pairs the whole time.  Two processes both making local progress and
 never jointly finishing describes a protocol-level non-termination --
 a mismatched attach, a retry that never satisfies its caller, or
@@ -15010,7 +15010,7 @@ The cmount()/dossrv mismatch reproduces on pc64 too: shared code, not riscv64
 .PP
 One item from the previous section's own writeup was answerable without
 Codex's half of this tree: whether the
-.CW cmount() / dossrv
+.CW "cmount() / dossrv"
 non-convergence found on riscv64/virt was architecture-specific or shared
 .CW os/inferno/port
 behavior. pc64 already links a virtio-blk driver
@@ -15089,7 +15089,7 @@ Reverted:
 the
 .CW dossrv.dis
 root-list line, and the regenerated
-.CW pc64.root.s / pc64.root.h
+.CW "pc64.root.s / pc64.root.h"
 it produced, all removed; the committed
 .CW ipc64
 restored via
@@ -15279,7 +15279,7 @@ was caught; the same 3 frames preceded by a real
 .CW tsleep()
 scheduler round-trip was caught; the same 3 frames wrapped in two
 synthetic nested
-.CW waserror() / nexterror()
+.CW "waserror() / nexterror()"
 frames shaped exactly like
 .CW bindmount() 's
 own, still preceded by the sleep, was caught.
@@ -15581,7 +15581,7 @@ type doesn't matter functionally: C's usual arithmetic conversions
 make a signed/unsigned comparison against the
 .I already
 .CW uintptr
-.CW h->pc1 / h->pc2
+.CW "h->pc1 / h->pc2"
 fields (declared that way in the shared
 .CW include/interp.h ,
 same for both builds) behave identically either way.  The atomic
@@ -16357,7 +16357,7 @@ Also true and worth carrying forward, not yet acted on because it
 does not matter until modules actually load, past the current
 blocker:
 .CW os/inferno/port/portmkfile 's
-.CW rc-lib%.a / sh-lib%.a
+.CW "rc-lib%.a / sh-lib%.a"
 rules \- shared by every board \- do not pass
 .CW DISWORD
 through to the recursive library build, so
@@ -17459,7 +17459,7 @@ ports only; ACPI with the AML interpreter,
 .CW HPET ,
 the APIC and x2APIC code, and MP tables; an i8042 keyboard with the
 PS/2 mouse commented out; an 8250 UART; AHCI SATA
-.CW ( sdiahci ) ;
+.CW "(sdiahci);"
 legacy (pre-1.0) virtio net and block; Realtek 8169, Intel 82563-family
 (which does include the I219) and Intel X550 Ethernet; and a framebuffer
 inherited from the boot loader through
@@ -17486,7 +17486,7 @@ and the same files in
 .CW os/9front/port .
 .IP 2.
 NVMe
-.CW ( sdnvme ) .
+.CW "(sdnvme)."
 Most machines of the last eight years have no SATA at all.
 .CW os/osprey/pc64/sdnvme.c
 and
@@ -17519,14 +17519,14 @@ virtio-scsi are not present on pc64 either;
 has the mmio input and rng ones.
 .IP 5.
 Ethernet made after about 2018: Intel I225/I226 2.5 GbE
-.CW ( os/9front/pc/etheri225.c ) ,
+.CW "(os/9front/pc/etheri225.c),"
 Realtek RTL8125 2.5 GbE (no source in any flavour here; the 8169 driver
 does not carry its IDs), Broadcom NetXtreme
-.CW ( etherbcm ) ,
+.CW "(etherbcm),"
 Marvell Yukon
-.CW ( etheryuk ) ,
+.CW "(etheryuk),"
 Intel 82598/82599 10 GbE
-.CW ( ether82598 ) ,
+.CW "(ether82598),"
 and USB Ethernet, which depends on item 1.
 .IP 6.
 Wi-Fi: Intel
@@ -17540,9 +17540,9 @@ Intel
 Broadcom.  Every laptop.
 .IP 7.
 HD audio
-.CW ( os/9front/pc/audiohda.c ) ,
+.CW "(os/9front/pc/audiohda.c),"
 SD/MMC
-.CW ( os/9front/port/sdmmc.c ) ,
+.CW "(os/9front/port/sdmmc.c),"
 and multiprocessor bring-up, which is linked and never run.
 .PP
 The RISC-V boards have a different first problem.  They run in machine
@@ -18128,7 +18128,7 @@ static base, which
 sets up before the first C instruction.)
 .PP
 Verified on riscv64 virt, the same test init as pc64
-.CW ( os/inferno/init/virtdevinit.b ) :
+.CW "(os/inferno/init/virtdevinit.b):"
 .TS
 box tab(;);
 lb lb lb
@@ -18747,7 +18747,7 @@ puts after a 32-bit value \- and the only bug was the peephole
 deleting it as a copy to itself.  With just that, and the linker fix
 below, the board runs the shell (HELLO-FROM-SH, VIRT-OK,
 ROOT-APPS-OK) and, with a console-only init
-.CW ( os/inferno/init/virtarm64init.b ) ,
+.CW "(os/inferno/init/virtarm64init.b),"
 reaches an interactive prompt: a command piped in over the emulated
 PL011 came back, the standing goal for this board.
 .PP
@@ -20618,7 +20618,7 @@ so a double loaded from a static at a large SB offset had no encoding.
 already returns 3 for
 .CW AFMOVD
 and
-.CW opldr12 / opstr12
+.CW "opldr12 / opstr12"
 already encode it; only the rows were missing.  Eleven of them appear
 in
 .CW atan ,
@@ -20723,7 +20723,7 @@ returned its argument unchanged \(em unchanged including its sign.
 keys a
 .CW Var
 on
-.CW (sym, name, offset) ,
+.CW "(sym, name, offset)" ,
 so the double at
 .CW x+0
 and the int at
@@ -24734,7 +24734,7 @@ got no response, and no timed sleep ever returned: SLEEP-OK (a kproc's
 DWC driver's 25ms tsleep after DWC-CORE-RESET-OK \(em the same place
 Codex's polling process stopped.  The tick itself runs.  Giving QEMU the
 Pi's 19.2MHz CNTFRQ
-.CW -global "" ( cortex-a53-arm-cpu.cntfrq=19200000 )
+.CW "-global cortex-a53-arm-cpu.cntfrq=19200000"
 did not reproduce it.
 .PP
 The next image makes init0 do the 100ms sleep itself, and

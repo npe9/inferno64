@@ -1087,7 +1087,8 @@ drives SPI0 at 0x3f204000.  QEMU's bcm2835-spi does one full-duplex byte
 per FIFO write while CS_TA is set, storing the MISO byte for the next
 FIFO read, and it asserts the slave chip-select implicitly, so an
 attached serial flash answers a JEDEC-id read directly
-.CW ( "-device m25p16,bus=spi,cs=0,drive=mtd0" gives jedec 20 20 15).
+.CW "-device m25p16,bus=spi,cs=0,drive=mtd0"
+gives jedec 20 20 15.
 .PP
 The GPIO driver
 .CW ( gpiobcm.c )
@@ -1297,7 +1298,7 @@ that a benign walk-Rerror (the create's existence check) raises -
 sifive_u prints
 .CW "mntwalk waserror()"
 and recovers, raspi3b never reaches that line.
-.CW setlabel / gotolabel
+.CW "setlabel / gotolabel"
 are byte-for-byte the same minimal SP+PC form riscv64 uses and are not
 the difference.  Instrumenting the error stack corrects an earlier read
 that called this a livelock: it is a
@@ -1335,7 +1336,7 @@ not resumed after yielding at that
 to the spawned kproc, which then sleeps - a sleep/wakeup or Dis
 .CW release()/acquire
 token-handoff bug, not a memory-ordering one (the board is MAXMACH 1 and
-.CW _tas / unlock
+.CW "_tas / unlock"
 already carry their DSB barriers).  And the spawn is load-bearing:
 forcing single-kproc (removing release()'s kproc("dis",...)) deadlocks
 the mount outright - nothing serves kfs while the client blocks.  The

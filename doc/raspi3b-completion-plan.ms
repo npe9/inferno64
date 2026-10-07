@@ -1169,7 +1169,7 @@ and real: the transport carries data.
 So this phase is
 .B "not done."
 What is now true is that Phase 5's
-.CW sdiocmd52 / sdiocmd53
+.CW "sdiocmd52 / sdiocmd53"
 have executed and carry data correctly, tier
 .B qemu+patch .
 Wi-Fi itself still wants ether4330, the firmware upload, and the board.
@@ -5481,7 +5481,7 @@ Nothing can admit a process.  Plan 9 writes
 and
 .CW deadline
 to
-.CW /proc/ n /ctl ;
+.CW "/proc/n/ctl" ;
 .CW port/devproc.c
 carries that code and its whole
 .CW ctl
@@ -7702,7 +7702,7 @@ With
 saying it is not in a write transfer any more.  That explains DREQ
 being clear in
 .CW "cs 0x21"
-.CW ( ACTIVE | DREQ_STOPS_DMA ,
+.CW "(ACTIVE | DREQ_STOPS_DMA," 
 and bit 3 DREQ low): there is no transfer for it to request data for.
 The question was "why does DREQ not come back"; it is now "why did the
 controller drop the transfer with seven blocks to go".
@@ -9510,7 +9510,7 @@ precisely so it never touches the card pins, with the SDIO sequence
 (no CMD8, no ACMD41, no CSD) and GPIO 34-39 in alt3, which is where a
 real Pi puts the Wi-Fi.
 .IP \(bu
-.CW sdiocmd52 / sdiocmd53 ,
+.CW "sdiocmd52 / sdiocmd53" ,
 byte and block mode, exercised against the generic
 .CW sd-io
 model in tools/qemu-patches and reported
@@ -13224,7 +13224,7 @@ schedhog(pidc: chan of int)
 A throwaway build in which
 .CW schedlat()
 does not kill its hog booted
-.I all the way through
+.I "all the way through"
 \(em SD, USB, draw, wifi association, DHCP, DNS, Bluetooth, the command poller
 \(em and the board stayed fully usable with the loop running.  The control the
 original reading never had is
@@ -13603,7 +13603,7 @@ was, harmless only while there was one processor.
 lets a processor that starts after
 .CW trapinit()
 put the table core 0 built into its own VBAR_EL1, and
-.CW vectorbuildsec() / vectorinstallsec()
+.CW "vectorbuildsec() / vectorinstallsec()"
 do the same for the secondaries' own table.
 .CW clockinitsecondary()
 and
@@ -14887,7 +14887,7 @@ reclaiming rather than a leak \(em which this was briefly thought to
 contradict.
 .PP
 .B "Where the term is not."
-.CW Fs.cblk / cnode
+.CW "Fs.cblk / cnode"
 is bounded by
 .CW Ncache
 and cleared at commit;

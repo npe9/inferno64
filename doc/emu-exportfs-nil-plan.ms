@@ -33,7 +33,7 @@ Why ASan is not simply the answer here
 and
 .CW Export
 come from
-.CW malloc / mallocz
+.CW "malloc / mallocz"
 in
 .CW emu/port/alloc.c ,
 which is emu's own pool allocator \(em

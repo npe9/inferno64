@@ -1086,7 +1086,8 @@ What is in, and what a later session would need
 In, each built, QEMU-booted and \(em except the last two, which the rig blocked
 \(em cold-booted from the card and gated at eleven boots:
 .CW Prog.reg ;
-.CW "R" through a pointer;
+.CW R
+through a pointer;
 .CW Pctx
 with the register file, the current program, the safepoint flag and the run
 queue;

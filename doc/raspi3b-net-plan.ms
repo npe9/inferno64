@@ -472,7 +472,7 @@ pool of 4          two TIMEOUTS, several at 13-14s
 This branch has no
 .CW parallelvm ,
 so
-.CW acquire / release
+.CW "acquire / release"
 in dis.c pass a single token and one Dis process runs at a time.  Four
 server processes therefore do not serve four clients at once; they add
 scheduler churn \(em more processes, more handoffs, each syscall a

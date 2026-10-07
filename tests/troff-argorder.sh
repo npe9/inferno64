@@ -1,0 +1,132 @@
+#!/bin/sh
+#
+# troff-argorder - find .CW/.I/.B lines whose arguments troff will REORDER.
+#
+#	sh tests/troff-argorder.sh		# this tree's own doc/*.ms
+#	sh tests/troff-argorder.sh doc/foo.ms	# one file
+#
+# WHY A SCANNER AND NOT THE WARNING COUNT.  In -ms these macros take up to
+# three arguments and render them
+#
+#	third + FONT(first) + second
+#
+# so the third is a PREFIX and the second a SUFFIX.  Measured, not assumed:
+#
+#	.CW one			-> one
+#	.CW one two		-> onetwo
+#	.CW one two three	-> threeonetwo
+#	.CW one two three four	-> threeonetwo       ("four" dropped, WARNS)
+#
+# Only the four-argument case warns.  THE THREE-ARGUMENT CASE IS SILENT AND
+# SCRAMBLES THE LINE, and it is much the commoner mistake because
+#
+#	.CW ( osblock ),	-> ),(osblock
+#	.CW AINC / ADEC		-> ADECAINC/
+#	.I new block numbers	-> numbersnewblock
+#
+# all look like one phrase in the source.  The last of those is in
+# doc/open-issues-plan.ms and renders exactly like that in the output; the
+# second is in doc/parallel-allocator-survey.ms.
+#
+# I LEARNED THIS THE WRONG WAY ROUND.  d6b4095e0 fixed ten FOUR-argument sites
+# in open-issues-plan.ms, got the warning count to zero, and its message says
+# that makes the check "a simple is the count still zero".  That was wrong:
+# zero warnings only means no four-argument lines, and the same document had
+# forty-two silent three-argument ones.  A clean warning count read as a clean
+# document.
+#
+# WHAT COUNTS AS A FALSE POSITIVE, because two shapes are legitimate:
+#
+#	.I cs (8)		2 args -> cs(8)        the man-reference idiom
+#	.CW x , (		3 args -> (x,          a deliberate prefix
+#
+# So a third argument that is PURE PUNCTUATION is accepted; a third argument
+# containing a letter or digit is reported.  And troff's own tokenising is
+# respected -- a quoted "a b" is one argument, and so is an escaped `a\ b',
+# which is why a naive whitespace split over-reports by hundreds.
+#
+# EXIT: 0 nothing found, 1 sites found (this is a report, not a verdict on
+# whether each one is wrong -- a human decides, because "(x," really is
+# sometimes what the author wanted).
+#
+set -u
+ROOT=`cd \`dirname "$0"\`/.. && pwd`
+cd "$ROOT" || exit 1
+
+if [ $# -gt 0 ]; then
+	FILES="$*"
+else
+	#
+	# This tree's own documents only.  The upstream Inferno papers
+	# (acid.ms, sh.ms, port.ms, the dated ones) have the same shapes and
+	# are not ours to churn; their warnings here are font-availability
+	# noise from this groff install, not text loss.
+	#
+	# DEDUPED: open-issues-plan.ms matches doc/*-plan.ms as well, and the
+	# first version listed it twice, so it was reported twice and its
+	# sites counted twice in the total.
+	FILES=`for f in doc/*-plan.ms doc/open-issues-plan.ms \
+	    doc/inferno-ports.ms doc/osprey-progress.ms doc/osprey-gap.ms \
+	    doc/osprey-plan.ms doc/parallel-allocator-survey.ms \
+	    doc/kernel-builds.ms doc/session.ms; do
+		[ -f "$f" ] && echo "$f"
+	done | sort -u | tr '\n' ' '`
+fi
+
+python3 - $FILES <<'PYEOF'
+import re, sys
+
+# Tokenise the way troff does: "..." is one argument, and a backslash-escaped
+# space does not separate.  A naive split reports hundreds of false hits on
+# lines like `.CW 5l\ -a 's'.
+def args(rest):
+    out, cur, i, n = [], '', 0, len(rest)
+    while i < n:
+        c = rest[i]
+        if c == '"':
+            j = rest.find('"', i+1)
+            if j < 0: j = n
+            out.append(rest[i:j+1]); i = j+1
+            while i < n and rest[i] == ' ': i += 1
+            continue
+        if c == '\\' and i+1 < n:
+            cur += rest[i:i+2]; i += 2; continue
+        if c == ' ':
+            if cur: out.append(cur); cur = ''
+            i += 1; continue
+        cur += c; i += 1
+    if cur: out.append(cur)
+    return out
+
+wordy = re.compile(r'[0-9A-Za-z]')
+total = 0
+for f in sys.argv[1:]:
+    hits = []
+    try: lines = open(f, errors='ignore').read().split('\n')
+    except OSError: continue
+    for i, l in enumerate(lines, 1):
+        m = re.match(r'^\.(CW|I|B)\s+(\S.*)$', l)
+        if not m: continue
+        a = args(m.group(2))
+        if len(a) < 3: continue
+        third = a[2]
+        if not wordy.search(third): continue      # a punctuation prefix is fine
+        hits.append((i, l))
+    if hits:
+        print("=== %s (%d)" % (f, len(hits)))
+        for i, l in hits:
+            print("  %6d  %s" % (i, l[:90]))
+        total += len(hits)
+
+print()
+if total == 0:
+    print("troff-argorder: none -- no .CW/.I/.B line has a word in its third")
+    print("troff-argorder: argument, so none is being reordered.")
+else:
+    print("troff-argorder: %d site(s).  troff renders these as" % total)
+    print("troff-argorder:   third + FONT(first) + second")
+    print("troff-argorder: so each one comes out in the wrong order, SILENTLY --")
+    print("troff-argorder: only the four-argument form warns.  Quote the whole")
+    print("troff-argorder: phrase, or move the prose to the next line.")
+sys.exit(1 if total else 0)
+PYEOF

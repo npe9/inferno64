@@ -75,7 +75,7 @@ is the blocking accept.
 .B "flight."
 .CW ipclose()
 on the last
-.CW Qctl / Qdata
+.CW "Qctl / Qdata"
 channel calls
 .CW closeconv() ,
 which does
@@ -260,7 +260,7 @@ a
 .CW protoclone
 that runs out of conversations, an accepted connection refused for want
 of one, a
-.CW Qdata / Qctl
+.CW "Qdata / Qctl"
 open refused on permissions, and every successful accept with its
 descriptor and conversation.  Per-socket tracing of
 .CW so_socket
@@ -273,7 +273,7 @@ off by default.
 .B "Both hypotheses are falsified."
 Across wedges provoked by the board in twenty seconds:
 .IP \(bu
-.B "no" CLOSE UNDER ACCEPT,
+.B "no CLOSE UNDER ACCEPT,"
 ever.  The mechanism this plan was built around \(em a listening
 descriptor closed under a blocked accept and its number reused \(em
 does not happen.

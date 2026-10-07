@@ -753,7 +753,7 @@ four before had lost two.  The two-writers gap is still there and still
 real \- a panic still cuts \- but nothing that carries on writes past
 the task any more.  And the clock: the CMOS real-time clock is
 read in user space now, the exokernel way, the personality's own
-.CW outb / inb
+.CW "outb / inb"
 on ports 0x70 and 0x71 under a port grant, reading the date and time with
 no kernel rtc device in the data path (it reads the six registers twice
 and takes them when the seconds match, the update-in-progress guard
@@ -931,7 +931,7 @@ parent's wait answered as an exit.  All of it is in
 in
 .CW devosprey.c
 and
-.CW migsend / migrecv
+.CW "migsend / migrecv"
 in
 .CW os/osprey/cmd/p9/p9ip.c .
 Both machines run both halves, and in the check each machine's legacy
@@ -1239,7 +1239,7 @@ with
 .CW ticks ,
 .CW HZ ,
 .CW MIN ,
-.CW NUMSIZE / READSTR ,
+.CW "NUMSIZE / READSTR" ,
 .CW npage
 on
 .CW Conf ,
@@ -1307,7 +1307,7 @@ state machine runs and emits a SYN \- the connection reads back
 .CW "Syn_sent ... cwin 1460 ..." ,
 tcp.c's own status line.  This is the decisive point: the user-space
 process is running the actual Plan 9
-.CW devip / tcp.c / udp.c ,
+.CW "devip / tcp.c / udp.c" ,
 not a hand-written responder.  And the handshake now completes: the
 connection reads back
 .CW "Established ... swin 1048560>>4 ... qscale 4" \-
@@ -1329,7 +1329,7 @@ a no-op that reader never ran.  The personality now has the classic
 Plan 9 cooperative scheduler,
 .CW os/osprey/cmd/p9/p9sched.c
 with the
-.CW setlabel / gotolabel
+.CW "setlabel / gotolabel"
 switch in
 .CW xcall.s :
 each kproc is a
@@ -1469,7 +1469,7 @@ this osprey-medium handshake together.  Making a kproc able to do this
 needed one fix: a kproc that runs
 .CW namec
 and the fd layer must have its own
-.CW errstr / syserrstr
+.CW "errstr / syserrstr"
 buffers, since
 .CW error
 writes there and the server proc's are a single static pair.
@@ -1585,7 +1585,7 @@ and only tcp and the interface layer, the boot is clean; the crash needs
 present, and with it
 .CW udp
 and one of
-.CW il / rudp .
+.CW "il / rudp" .
 Any of those alone with
 .CW icmp
 is clean;
@@ -4404,7 +4404,7 @@ now
 with
 .CW devmnt
 and
-.CW convS2M / convM2S
+.CW "convS2M / convM2S"
 \- the file personality naming a server's files, over 9P that crosses
 the microkernel ring to a container of its own.  This is the plan's
 picture: a library operating system on the microkernel, naming the files
@@ -8444,7 +8444,7 @@ three, and the same log says it does not.  The
 kernel carries
 .CW headless
 and its check boots QEMU with no display, so I read the draw server's
-.CW segattach(0, ""framebuffer"", ...)
+.CW "segattach(0, \(dqframebuffer\(dq, ...)"
 as unanswerable there.  Line 65 of the boot says otherwise:
 .CW "osprey fb: exposed 1280x800x32 at pa 0x80000000 size 4992000 as \(dqframebuffer\(dq" .
 The EFI loader writes
@@ -11743,7 +11743,7 @@ A program that rforked was quietly given back devices its parent had
 been refused.  It is copied now.
 .PP
 .PP
-.B "3.2j: await, and what "mine" has to mean."
+.B "3.2j: await, and what \(dqmine\(dq has to mean."
 .CW await (2)
 is what libc's
 .CW wait ()
