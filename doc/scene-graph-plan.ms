@@ -627,6 +627,30 @@ runs
 by default, so a second context freeing concurrently WIDENS the window
 in which a free can swallow the cursor between quanta.
 .PP
+.B "Two of the eleven are OUTSIDE git and cannot be fixed by a merge."
+.CW jit-research
+and
+.CW parallelgc
+are sibling directories holding the whole tree with no
+.CW .git
+at all \(em 38 registered worktrees against 40 directories \(em so
+.CW "git worktree list"
+cannot see them, which is why a survey of registered worktrees reported
+ten and a survey of copies reports twelve. A correct test over the wrong
+population.
+.PP
+.B "And"
+.CW parallelgc
+.B "is live work, not a stale snapshot:"
+its newest source file is from
+.I today ,
+while
+.CW multicore 's
+is from four weeks ago. So the directory with the oldest source is the
+registered worktree and the newest is the unmanaged copy. A cherry-pick
+cannot reach it; whoever works there has to be told, or no fix landing
+on any branch will ever arrive.
+.PP
 .B "The survey's control is what makes it worth quoting."
 The first version of this check reported 0/2 for all twelve
 .I including
@@ -634,7 +658,23 @@ The first version of this check reported 0/2 for all twelve
 which is fixed \(em confidently and uniformly wrong, and a uniform clean
 result is the dangerous kind. Before trusting a survey over N cases,
 make it classify the one case whose answer is already known; if it
-cannot, the other N\(mi1 are noise that looks like a result.
+cannot, the other N\(mi1 are noise that looks like a result. And check
+that the population is the one the question is about \(em four wrong
+classifiers between two sessions were each uniform across all twelve,
+so uniformity is the cheapest tell available and belongs first rather
+than last.
+.PP
+.B "One more, from getting the staleness wrong twice in two commands:"
+when a measurement filters and then aggregates, check the filter runs
+AFTER the aggregation or not at all.
+.CW head
+before
+.CW sort
+is not a sample, it is whatever the filesystem walked first \(em the same
+shape as a
+.CW "grep -c"
+before a comment strip, and it produces a confident uniform wrong answer
+the same way.
 .NH 1
 Item 5: where this work should live, which is a decision and not a task
 .PP
