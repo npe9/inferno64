@@ -446,6 +446,7 @@ tkdrawcanv(Tk *tk, Point orig)
 				imeth = &tkcimethod[i->type];
 				imeth->coord(i, nil, p.x, p.y);
 				cd.img = dst;
+				tkwalkitem();
 				imeth->draw(&cd, i, tk->env);
 				imeth->coord(i, nil, -p.x, -p.y);
 			}
@@ -484,6 +485,7 @@ tkdrawcanv(Tk *tk, Point orig)
 			for(i = c->head; i; i = i->next) {
 				if(rectXrect(i->p.bb, r)){
 					cd.img = c->image;
+					tkwalkitem();
 					tkcimethod[i->type].draw(&cd, i, tk->env);
 				}
 			}

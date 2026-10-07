@@ -687,6 +687,7 @@ static struct {
 	int	undesc;		/* ...of those, how many describe no extent */
 	int	drew[TKwidgets];	/* times each type's draw ran */
 	int	joined[TKwidgets];	/* ...of those, times it joined a tree */
+	int	citems;		/* canvas items whose draw method ran */
 } walk;
 
 /*
@@ -1028,6 +1029,34 @@ tkwalkbounds(Rectangle *r)
  *	attribution brackets one draw call and cannot see inside it.  So
  *	joined > 0 does not prove the type itself emits.
  */
+/*
+ * Canvas items whose draw method actually ran.  The question is item 1.2
+ * of doc/scene-graph-plan.ms: is there anything for a retained SCENE to
+ * save, given that the canvas already retains its PIXELS in c->image and
+ * guards the item loop with
+ *
+ *	r = c->update;
+ *	if(rectclip(&r, c->image->r)) { ... items ... }
+ *
+ * so a clean canvas should walk no items at all.  If that is so, the
+ * "replay when nothing changed" step has nothing left to win and the
+ * scene would have to earn its keep some other way.
+ *
+ * Counted rather than read off the source, because reading is what has
+ * been wrong repeatedly.
+ */
+void
+tkwalkitem(void)
+{
+	walk.citems++;
+}
+
+int
+tkwalkitems(void)
+{
+	return walk.citems;
+}
+
 void
 tkwalknote(int type, int joined)
 {
@@ -1058,6 +1087,7 @@ tkwalkreset(void)
 		walk.drew[i] = 0;
 		walk.joined[i] = 0;
 	}
+	walk.citems = 0;
 	walk.runs = 0;
 	walk.widgets = 0;
 	walk.nodes = 0;

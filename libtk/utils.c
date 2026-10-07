@@ -1376,6 +1376,20 @@ tkrendercmd(TkTop *t, char *arg, char **ret)
 	 * count of zero are the candidates for direct painting; see
 	 * tkwalknote() for the two things this cannot distinguish.
 	 */
+	/*
+	 * `render items' answers how many canvas items have had their draw
+	 * method run since the last reset -- the measurement item 1.2 of
+	 * doc/scene-graph-plan.ms turns on.
+	 */
+	if(strcmp(buf, "items") == 0){
+		int n;
+
+		n = tkwalkitems();
+		tkwalkreset();
+		if(ret != nil)
+			return tkvalue(ret, "%d", n);
+		return nil;
+	}
 	if(strcmp(buf, "types") == 0){
 		/*
 		 * NOT buf: it is Tkmaxitem, 128 bytes, and seventeen types
