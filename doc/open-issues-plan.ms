@@ -1343,7 +1343,8 @@ directory is O(entries squared).
 A dentry's key is
 .CW "Key(dir, Kdentry, namehash(name))"
 \(em
-.CW "create()" :775 builds it that way.  So a name could be found with one
+.CW "create()"
+:775 builds it that way.  So a name could be found with one
 .CW Fs.get ,
 a descent of three or four reads, instead of a scan of the directory.
 .PP
@@ -1979,7 +1980,7 @@ Under copy on write each rewrite gets a new block.  Defer the write but keep
 allocating per rewrite and you allocate N blocks, write one, and leak N-1 \(em
 which is exactly the shape of the 228 leaked blocks B1e reverted.  So a dirty
 node must have
-.I no block number at all
+.I "no block number at all"
 until it is flushed.
 .PP
 .B "Which gives the key: the committed block number it was read from."
@@ -2407,7 +2408,7 @@ in both, as
 now has.  Verification: JTAG-boot a kernel built from an older commit, and
 .CW alive
 must report it alive when given the matching ELF and must
-.I say it cannot tell
+.I "say it cannot tell"
 rather than report "dead" when given a mismatched one.  That second half is
 the part worth building \(em this file's own history is five false failures
 from instruments that returned a value instead of admitting they could not
@@ -2718,7 +2719,7 @@ entries and nothing else.
 .B "So every retention figure in these notes was garbage, counted as live."
 .CW nalloc-nfree
 is
-.I allocated and not yet freed ,
+.I "allocated and not yet freed" ,
 which is live
 .I plus
 whatever the collector has not reached.  The early reading of "558751 live
@@ -6510,7 +6511,7 @@ Changing only
 to
 .CW uintptr
 took the audit from 19 findings to
-.B 108 of 110 ,
+.B "108 of 110" ,
 every one a conflicting redeclaration against
 .CW ../port/lib.h:144 .
 So the declaration is duplicated and the fix has to change
@@ -6643,7 +6644,7 @@ With
 .CW Dbuf
 and
 .CW Directfb ,
-.CW fb == vfb ,
+.CW "fb == vfb" ,
 so
 .CW flushmemscreen 's
 .CW "if(dp != sp)"
@@ -8813,7 +8814,7 @@ now keeps a SECOND phase clock \(em
 .CW fpbase ,
 .CW fpperiod
 \(em which unlike
-.CW vsbase / vsperiod
+.CW "vsbase / vsperiod"
 is never cleared when the tear window closes, because the drift measurement
 earlier in this plan says it can be trusted for hours.  Each flip's phase is
 charged into sixteenths of a frame.
@@ -11344,7 +11345,7 @@ specific and repeatable.
 The clean story is false, and only JTAG could say so
 .LP
 .CW conswrite 's
-.CW rawon / rawoff
+.CW "rawon / rawoff"
 arms take
 .CW qlock(&kbd) ,
 and
@@ -11570,7 +11571,7 @@ LONG, ULONG   no         ~200  real 32-bit widenings to a pointer
 INT, UINT     no        ~2900  real 32-bit widenings
 .P2
 Nothing but LONG ever has register 31, and
-.CW LONG / ULONG
+.CW "LONG / ULONG"
 to a pointer from a REAL register is a genuine widening that needs the
 extension.  So
 .B "excluding TLONG \(em the obvious reading of the panic \(em would have been both wrong and incomplete."
@@ -11732,7 +11733,7 @@ Both defects checked on the amd64 toolchain, and neither is there
 .LP
 A6 and A7 are members of one family \(em a value too wide for where it is put
 \(em and the obvious next question is whether
-.CW 6c / 6l
+.CW "6c / 6l"
 share them.  They do not, and saying so is worth a paragraph because an
 unchecked "probably fine" about the other 64-bit arch is the kind of gap this
 plan exists to close.
@@ -12007,7 +12008,7 @@ directory the aarch64 kernels compile \(em
 .CW libinterp
 and the ten libraries \(em for an integer literal too wide for a signed 32-bit
 field in an ARITHMETIC OR COMPARISON context, which is where it becomes an
-.CW ADD / SUB / AND / BIC / CMP
+.CW "ADD / SUB / AND / BIC / CMP"
 operand rather than a
 .CW MOV .
 .PP
@@ -12031,7 +12032,7 @@ and
 five comparisons against
 .CW 0x100000000ULL .
 That board is 386, built by
-.CW 8c / 8l ,
+.CW "8c / 8l" ,
 and is dormant (see H3); not an aarch64 target.
 .PP
 .B "That leaves two real candidates, and only one of them reaches the pool."
