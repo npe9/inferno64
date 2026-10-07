@@ -324,14 +324,55 @@ the pending pool before any table, and makes the bug
 .I less
 likely \(em it looked like a control and was the opposite.
 .PP
-.B Gate:
-the diag fires on an armv7 link with the deferral removed and the
-distance forced, and does not fire with the deferral in. Then an armv7
-kernel links and boots.
-.B Unknown:
-whether armv7 builds in this checkout at all. Establish that before
-anything else, because it decides whether the gate is runnable or the
-fix ships on inspection alone \(em and say which.
+.B "DONE as"
+.CW c64838f39 ,
+.B "and the gate did NOT run \(em saying which, as this section asked."
+The deferral and the diag are in, 5l builds with no new warnings, and
+the output of every link that could be produced here is
+.B byte-identical
+with and without the fix. That is a no-regression result and it is also
+why the control cannot fire: the fix is inert wherever no flush falls in
+a table.
+.PP
+.B "The positive control did not fire."
+Tried: a generated function with pool constants pinned early and a
+filler sweep of 340 to 480 statements, to walk the table across the
+flush point; 23 real
+.CW libmemdraw
+files compiled for arm32 and linked individually; and the whole set
+together. Zero firings. And the armv7 kernel cannot be linked in this
+checkout \(em it wants a
+.CW dis32
+tree that does not exist here \(em so the one real arm32 link is
+untested. So this ships on structural identity plus the diag, and not on
+a demonstrated reproduction.
+.PP
+.B "The identity is the evidence, and it is specific."
+.CW span.c:61
+is the same forced flush,
+.CW flushpool()
+the same splice with the same
+.CW "BUG: should refer back to values"
+comment,
+.CW optab.c:212
+sizes
+.CW ABCASE
+at 4 so pcs advance through the table, and
+.CW asm.c:1226
+is
+.CW "MOVW R<<2(PC),PC"
+\(em the dispatch LOADS its target out of the table, and case 63 stores
+an
+.I absolute
+pc, so a spliced pool word is jumped to directly rather than added as an
+offset. Worse than 7l's, where it was at least an offset.
+.PP
+.B "And one control attempt was wrong in the familiar direction:"
+shrinking the distance window to 0x40 found nothing, because more
+frequent flushes EMPTY the pool before any table and make the bug less
+likely. Same error as 7l's pool-size attempt. The condition needs a pool
+entry to SURVIVE until the table, which is why a bigger program, not a
+tighter window, is the way to look for it.
 .NH 1
 Item 3: every loader's -v flag has the same varargs crash
 .PP
