@@ -149,7 +149,47 @@ the item list changed \(em and it is confined to one widget whose
 correctness is already covered by twelve canvas cases.
 .PP
 
-.B "Step 1.2 \(em retain and replay one subtree."
+.B "STEP 1.2 IS RETIRED, measured and not argued."
+.CW "render items"
+.CW ( inferno-rio
+.CW d4b4695f2 )
+counts canvas items whose draw method ran:
+.DS
+.CW
+	unchanged repaint               0 items walked
+	20 spread items, change one     1 at the edge, 1 in the middle
+.R
+.DE
+.LP
+.CW tkdrawcanv()
+already keeps its pixels in
+.CW c->image ,
+guards the item loop with the dirty region, and culls per item with
+.CW rectXrect(i->p.bb,
+.CW r) .
+So a clean canvas walks no items and a dirty one walks only those whose
+box meets the damage. A retained scene's caching is strictly coarser
+than what is already there, so there is nothing for it to save. Same
+shape as step 3's retirement: the term it would reduce is already near
+zero.
+.PP
+An intermediate reading of "one item changed, two walked" looked like
+over-collection and was two items close enough that both boxes met one
+damage rectangle. Twenty spread items separated arrangement from
+scaling; one number could not have.
+.PP
+.B "So item 1 narrows to the GPU route,"
+which this plan already named as the alternative and told itself not to
+start in parallel. The CPU-side caching route is closed on measurement:
+retention is possible (canvas proves it) and buys nothing (canvas also
+proves it). What a retained tree could still earn is what the pixels
+cannot do \(em feed a backend that wants geometry rather than a raster,
+which is
+.CW gpu (2)
+and
+.CW draw3d .
+.PP
+.B "Superseded: step 1.2 as written."
 For a widget whose subtree is purely node-capable, keep its tree across
 frames and replay it when nothing in that widget changed, instead of
 re-running the widget's draw code. That is the smallest capability
