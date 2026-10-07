@@ -12158,3 +12158,87 @@ Worth noting what the batch cost to be worth running: the criterion, the
 recovery path, and the refusal to continue after an unrecovered board, all
 written before the first trial.  A thirty-run batch with no stated criterion
 would have produced the same thirty lines and licensed nothing.
+.NH 2
+H1a measured: half of every draw writes rows the beam has already passed
+.LP
+The H1a correction says the instrument for the cases arithmetic does not cover
+is the phase clock, not a readback.
+.B "That instrument already exists and already runs:"
+.CW tearcharge()
+in
+.CW screenbcm.c
+is called per draw operation from
+.CW hwdraw() ,
+computes the beam row from the phase, and counts an op as torn when the draw
+writes rows ABOVE the beam \(em those rows show their new content one frame
+late.  Nothing had read it against a workload.
+.PP
+Armed by
+.CW "echo dump > /dev/kpctl"
+(which prints and then re-arms), workload, dump again.  The window is
+.CW Tearframes
+= 120 frames = 2.0s, and it filled in every run.
+.B "The predictions were written down first,"
+from the geometry alone: a rect is torn iff its top is above the beam, and with
+both uniform over the screen that is one half; the rows charged should be the
+rect's own height less an edge term.
+.P1
+phase    torn/checked      %     rows/torn op   rect height
+fill      4582/9117      50.3        18.5          20x20
+damage    4650/9450      49.2         7.90          8x8
+text     28303/58341     48.5         8.83         glyph
+ellipse     129/130      99.2         7.26          see below
+.P2
+.B "Three of the four land on the prediction,"
+and the per-op rows track the shape's height: 18.5 of 20, 7.90 of 8, 8.83 for a
+glyph.  So the instrument is measuring what it claims and its numbers can be
+read.
+.PP
+.B "I predicted `fill' wrong first, from its NAME."
+I expected ~100 per cent and ~240 rows, because "fill" sounded like a
+full-screen fill.
+.CW fillbatch()
+draws 400 random 20x20 rectangles.  The prediction was right about the
+geometry and wrong about the subject, which is the same error as reading a
+phase name for a workload.
+.NH 3
+The ellipse arm is NOT explained and is not being explained away
+.LP
+.CW ellipsebatch()
+draws 300 ellipses a batch and the window saw 130 ops, so
+.B "what reaches hwdraw() on that path is not one op per ellipse,"
+and at 7.26 rows an op it is not one op per bounding box either.  Its 99.2 per
+cent is a statement about a granularity this measurement has not established,
+so it is reported and excluded rather than folded into the conclusion.
+.NH 3
+What this says about the fix, which is not what the arithmetic said
+.LP
+The H1a correction concluded, from scanout at 34.72us/row against a full-screen
+fill at 4.35us/row, that
+.B "for that case vsync alone is the fix and double buffering is not needed."
+That stands for ONE full-screen fill per frame.  It does not survive contact
+with these numbers:
+.P1
+phase    draw ops per second of workload
+ellipse       ~130
+fill         ~9100
+damage       ~9450
+text        ~58000
+.P2
+.B "You cannot align 9000 to 58000 draws a second to 60 frames a second."
+Aligning each draw to vertical blank would serialise the client to 60 draws a
+second; aligning only the first does nothing for the other 150 to 970 in that
+frame, and the measurement says half of them land above the beam.
+.PP
+.B "So the two conclusions are about different workloads and both hold:"
+vsync alignment suffices for a client that presents one full-screen frame at a
+time, and cannot suffice for small-rectangle drawing, which is what Tk does.
+For that the answer has to be the one this plan already built and paced \(em
+draw into a back buffer and exchange at the frame boundary \(em because it
+makes the number of events needing alignment one per FRAME instead of one per
+DRAW.
+.PP
+What is still not established is unchanged and is stated in
+.CW screenbcm.c :
+whether the phase the flip is paced to is inside the blanking interval.  These
+numbers make the CASE for the flip; they do not make the flip correct.
