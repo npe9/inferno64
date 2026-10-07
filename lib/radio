@@ -88,23 +88,19 @@
 #			board should boot into until the station fits in
 #			its pool with #D pushed.
 #
-#			IT RUNS THE SATELLITE OUT OF MEMORY, and for a
-#			long time that read as a wedged kernel.  What the
-#			exporter actually prints is
+#			IT RUNS THE SATELLITE OUT OF MEMORY:
 #
 #			  exportproc 7: waiting for memory (406) for request
-#			  arena too large: main ... arenasize 117056
-#			          maxsize 118178
+#			  arena too large: main size 1366 cursize 42752
+#			          arenasize 117056 maxsize 118178
 #
-#			in an unbounded loop, which at console speed
-#			monopolises the uart -- so the console appears to
-#			stop mid-line and the two control-Rs that reach
-#			the bootloader, handled in the uart receive
-#			interrupt, never get a turn.  The interrupt was
-#			not gone; it was starved.  And the mounting end is
-#			not wedged either: it sits in sys->mount for a
-#			reply that cannot be built, because the mount
-#			driver has no timeout.
+#			exportproc then retries for ten minutes -- printing
+#			once a minute, os/inferno/port/exportfs.c -- and
+#			gives up, and the mounting end sits in sys->mount
+#			for a reply that cannot be built, the mount driver
+#			having no timeout.  The board stays reachable
+#			throughout; flashverify reached its bootloader
+#			immediately afterwards.
 #
 #			It is data rather than a constant so the control
 #			run is taken on the same kernel.  See the end of

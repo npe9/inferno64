@@ -7903,3 +7903,45 @@ reference on one
 .PP
 .B "None of those is a guess that can be made from here,"
 and the board will answer all three.
+.NH 2
+And the mechanism I gave for it was wrong, one commit later
+.PP
+.B "The print is not unbounded and the console is not starved."
+.B Exportproc 's
+retry loop in
+.B os/inferno/port/exportfs.c
+sleeps 100 milliseconds and prints every six hundredth pass \-
+.B "once a minute, for the ten minutes it retries"
+\- and the satellite's whole scrollback holds
+.B two
+of those lines.  I read repetition in a
+.I screen
+window as a loop and wrote a mechanism around it.
+.PP
+.B "There is stronger evidence against it than the count."
+.I Flashverify
+succeeded on both boards immediately after the first ssl run, and
+reaching the bootloader needs the two control-Rs that are handled in
+the uart receive interrupt.
+.B "The board was never unreachable."
+.PP
+So what is established about the ssl arm is:
+.IP \(bu
+the satellite's main pool cannot satisfy a 1366-byte allocation with
+.B #D
+pushed, with arenasize 117056 against a maxsize of 118178;
+.IP \(bu
+.I exportproc
+retries for ten minutes and gives up;
+.IP \(bu
+the mounting end blocks in
+.CW sys->mount
+for ever, the mount driver having no timeout;
+.IP \(bu
+and the board stays reachable throughout.
+.PP
+.B "The \(lqconsole dead mid-line, only the reset button\(rq symptom is NOT reproduced on this kernel and its cause is unknown."
+It is a separate observation from a different build and it should not be
+attached to this one.
+.B "That is twice in one session that a confident mechanism has had to be withdrawn,"
+and both times the counter-evidence was already in output I had read.

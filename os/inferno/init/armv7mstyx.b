@@ -98,16 +98,18 @@ Pipebuf:	con 512;
 # control-Rs that reach the bootloader are handled in the uart receive
 # interrupt, which looked as though it was no longer running.
 #
-# IT WAS NOT WEDGED.  It had run out of memory, and what it was doing
-# with the console was saying so:
+# IT WAS NOT WEDGED.  It had run out of memory:
 #
 #	exportproc 7: waiting for memory (406) for request
-#	arena too large: main ... arenasize 117056 maxsize 118178
+#	arena too large: main size 1366 cursize 42752 arenasize 117056
+#	        maxsize 118178
 #
-# in an unbounded loop.  At console speed that monopolises the uart, so
-# the receive interrupt was starved rather than gone, and the mounting
-# end was never wedged at all -- it sits in sys->mount for a reply that
-# cannot be built, the mount driver having no timeout.
+# exportproc retries for ten minutes and gives up; the mounting end
+# sits in sys->mount for a reply that cannot be built, the mount driver
+# having no timeout.  The board stays reachable the whole time -- the
+# bootloader was reached immediately afterwards -- so what the console
+# does is NOT what made this look like a wedge, and that part is still
+# unexplained.
 #
 # Twice, at the same message.  So the default is off, because a setting
 # that costs a trip across the room on every boot is not a default --
@@ -253,11 +255,27 @@ serve(carrier: int)
 	# of kernel stack taken out of the same SRAM the pools grow into,
 	# which is the thing being measured.  An instrument that consumes
 	# what it measures is worth one reading, not a stream of them.
-	sys->print("%s", slurpn("#c/memory", 1024));
+	pools();
 	sys->print("ARMV7M-STYX-EXPORTING\n");
 	if(sys->export(sfd, "/", Sys->EXPWAIT) < 0)
 		sys->print("styx: export: %r\n");
 	sys->print("ARMV7M-STYX-EXPORTDONE\n");
+}
+
+# THE POOL TABLE, ONE LINE AT A TIME WITH A PREFIX ON EACH.
+#
+# #c/memory's rows are columns of numbers and a pool name, and a watcher
+# that filters the console for interesting lines drops every one of
+# them.  That is not hypothetical: the ssl arm was read for an afternoon
+# as a wedged kernel while the console carried both the pool table and
+# "exportproc 7: waiting for memory (406) for request", and the watcher
+# was matching neither.  A line that has to survive a filter should say
+# who it belongs to.
+pools()
+{
+	s := slurpn("#c/memory", 1024);
+	for(l := sys->tokenize(s, "\n").t1; l != nil; l = tl l)
+		sys->print("styx: pool %s\n", hd l);
 }
 
 # The ground station.  Connect, mount, and then READ SOMETHING, because
