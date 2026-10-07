@@ -698,6 +698,57 @@ already said of the libtk integration, and the answer is the user's. The
 facts above are what the decision needs; the plan does not presume it.
 Items 1 to 4 do not depend on it.
 .NH 1
+The loader fixes have the same spread, and who was told
+.PP
+The same survey question applied to
+.CW utils/ ,
+which unlike
+.CW os/
+is ours: twelve copies of the tree carry a
+.CW utils/7l ,
+and only this one carries both its fixes.
+.CW raspi3b-port
+has the pool fix and not the
+.CW -v
+one, which matches what that session cherry-picked.
+.CW 5l
+is more widely present and fixed only here.
+.PP
+.B "Reported over the population that matters, not the total."
+Seventy-three defect markers across twenty-odd copies is the wrong
+number: most are dormant. Four of the defective copies have a live
+session \(em
+.CW multicore ,
+.CW genesize ,
+.CW xip
+and
+.CW cloud-port
+\(em and each builds aarch64 boards, so the pool bug is live for all
+four. They were told, with the 7l fix labelled demonstrated and the 5l
+fix labelled structural-identity-only, because those deserve different
+confidence.
+.CW multicore
+was told by both sessions, so its copy of the
+.CW alloc.c
+finding is one result relayed twice and not two confirmations.
+.PP
+.B "Nothing was committed to another branch."
+.CW utils/
+is ours by file ownership but a branch someone is working in is not, so
+these are notifications rather than cherry-picks. The two unmanaged
+copies \(em
+.CW jit-research
+and
+.CW parallelgc
+\(em have no
+.CW .git
+and no session, so they are reachable by neither a merge nor a message,
+and
+.CW parallelgc
+was editing
+.CW libinterp
+the morning this was written.
+.NH 1
 What this plan deliberately leaves out
 .PP
 Step 3 of the draw plan, which is measured and retired, not deferred.
