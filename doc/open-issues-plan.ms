@@ -12114,3 +12114,47 @@ It was found by building
 which runs each test WITHOUT a pipe.
 .B "A runner that invokes tests directly caught what hand-running them missed,"
 which is an argument for the runner independent of convenience.
+.NH 3
+H4's thirty-run batch: 30 clean, 0 hung
+.LP
+The criterion was written down before any batch was run, which is the only
+reason this means anything.  Run with
+.CW tools/jtag/efsbatch ,
+30 trials, 900s each, on build 1791336973 from the card:
+.P1
+30 clean, 0 hung, 0 with failed checks, of 30 run(s)
+630 ok-checks, 0 FAIL lines, 30 completion markers
+0 wedge captures taken, 0 reboots needed
+.P2
+.B "P(30 clean | the old 2-in-12 rate) = 0.0042."
+So the old rate is refused.  What the batch is CONSISTENT with, one-sided at
+95%, is a per-run rate of
+.B "0.095 or less"
+\(em which is the arithmetic the item already gave: claiming under 5 per cent
+would take fifty-nine runs, and this is thirty.
+.PP
+.B "The sentence this licenses is \(lqthe rate is not what it was\(rq."
+It is not "it is fixed", and the reason is sharper now than when the item was
+written.  Then, nothing had been changed to fix it.  Since then three kernel
+changes landed \(em
+.CW 7l 's
+literal-pool fix (A6),
+.CW 7c 's
+widening fix (A7), and the GC sweep-cursor fix \(em and every one of them
+changes the kernel this suite runs on.
+.B "So the drop is attributable to this session in aggregate and to no single change,"
+and the batch cannot apportion it.  A bisect over three changes at roughly
+three hours a batch is nine hours of board time; it has not been spent.
+.PP
+.B "And no catch was taken, so the styx theory is untested rather than refuted."
+.CW efsbatch
+exists to capture evidence BEFORE recovering \(em
+.CW wedgediag
+first, then the print ring, then a JTAG boot \(em and it got no opportunity.
+The theory that the host's styx server stops answering is still the live one
+and is still waiting for a hang to happen while something is watching.
+.PP
+Worth noting what the batch cost to be worth running: the criterion, the
+recovery path, and the refusal to continue after an unrecovered board, all
+written before the first trial.  A thirty-run batch with no stated criterion
+would have produced the same thirty lines and licensed nothing.
