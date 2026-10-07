@@ -647,6 +647,36 @@ poolalloc(Pool *p, uintptr asize)
 	t = xalloclargest(alloc);
 	if(t == nil) {
 		p->nbrk--;
+		/*
+		 * AND GIVE BACK THE ARENASIZE THIS ATTEMPT CHARGED FOR.
+		 *
+		 * arenasize was raised above, before the memory was asked
+		 * for, and nbrk was the only thing put back here.  So every
+		 * FAILED extension charged the pool permanently for memory
+		 * it never received, and once that fiction reached maxsize
+		 * the pool refused to grow at a ceiling it had not reached.
+		 *
+		 * Measured on os/inferno/stm32f407 with #D pushed, from
+		 * #c/memory and #c/poolhist in the same breath:
+		 *
+		 *	main cursize 41856 maxsize 118178
+		 *	pool main: live 41856 in 278 blocks, free 1920 in 4
+		 *	  chunks 12 span 44544 covered 43776 truncated 0
+		 *	arena too large: main size 1366 cursize 43072
+		 *	  arenasize 117056 maxsize 118178, alloc = 3776
+		 *
+		 * Twelve successful brks, twelve chunks, 44544 bytes of
+		 * actual arena -- and an arenasize of 117056.  The 72512
+		 * difference is the sum of the attempts that returned
+		 * nothing.  nbrk agreeing with the chunk count is what
+		 * showed arenasize to be the liar.
+		 *
+		 * Worth saying what this does NOT fix: a board that is
+		 * genuinely out of core still fails here, and should.  What
+		 * it stops is a pool deciding it is full on the strength of
+		 * its own arithmetic.
+		 */
+		p->arenasize -= alloc;
 		iunlock(&p->l);
 		return nil;
 	}
@@ -874,8 +904,9 @@ histone(Pool *p)
 	uintptr nalloc[Nbucket], balloc[Nbucket];
 	uintptr pcb[Npc], pcn[Npc];
 	intptr pcv[Npc];
-	uintptr live, freeb, hdrs, sz, lost;
-	int i, j, k, n, nlive, nfree, nlost;
+	uintptr live, freeb, hdrs, sz, lost, span, covered;
+	int i, j, k, n, nlive, nfree, nlost, narena, ntrunc;
+	uchar *lim;
 
 	for(i = 0; i < Nbucket; i++)
 		nalloc[i] = balloc[i] = 0;
@@ -884,21 +915,42 @@ histone(Pool *p)
 		pcb[i] = 0;
 		pcn[i] = 0;
 	}
-	live = freeb = hdrs = lost = 0;
-	nlive = nfree = nlost = 0;
+	live = freeb = hdrs = lost = span = covered = 0;
+	nlive = nfree = nlost = narena = ntrunc = 0;
 
-	for(c = poolchain(p); c != nil; c = c->clink)
+	/*
+	 * AND HOW MUCH OF THE POOL THIS WALK ACTUALLY SAW.
+	 *
+	 * The two breaks below stop a chunk's walk without saying so, and
+	 * a report that stops early reads exactly like a pool that is
+	 * nearly empty.  Measured on os/inferno/stm32f407 with #D pushed:
+	 * "live 41856 in 278 blocks, free 1920 in 4" against an arenasize
+	 * of 117056, which is 69K that is in neither column -- and from
+	 * the totals alone there is no way to tell a leak from a walk that
+	 * gave up.  span is what the chunks cover, covered is what was
+	 * accounted, and truncated is how many chunks ended on a magic
+	 * this walk did not recognise.
+	 */
+	for(c = poolchain(p); c != nil; c = c->clink){
+		narena++;
+		lim = (uchar*)B2LIMIT(c);
+		span += lim - (uchar*)c;
 		for(b = B2NB(c); b != nil && b->magic != MAGIC_E; b = B2NB(b)){
 			sz = b->size;
-			if(sz == 0)
+			if(sz == 0){
+				ntrunc++;
 				break;			/* corrupt: do not spin */
+			}
+			covered += sz;
 			if(b->magic == MAGIC_F){
 				freeb += sz;
 				nfree++;
 				continue;
 			}
-			if(b->magic != MAGIC_A && b->magic != MAGIC_I)
+			if(b->magic != MAGIC_A && b->magic != MAGIC_I){
+				ntrunc++;
 				break;			/* not ours: stop this chunk */
+			}
 			live += sz;
 			hdrs += BHDRSIZE;
 			nlive++;
@@ -920,11 +972,14 @@ histone(Pool *p)
 				nlost++;
 			}
 		}
+	}
 
 	print("pool %s: ", p->name);
 	print("live %zud in %d blocks, ", live, nlive);
 	print("free %zud in %d, ", freeb, nfree);
 	print("block headers %zud\n", hdrs);
+	print("  chunks %d span %zud covered %zud truncated %d\n",
+		narena, span, covered, ntrunc);
 	for(i = 0, n = 32; i < Nbucket; i++, n <<= 1){
 		if(nalloc[i] == 0)
 			continue;

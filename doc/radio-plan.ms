@@ -7945,3 +7945,94 @@ It is a separate observation from a different build and it should not be
 attached to this one.
 .B "That is twice in one session that a confident mechanism has had to be withdrawn,"
 and both times the counter-evidence was already in output I had read.
+.NH 2
+The pool was at a ceiling it had never reached
+.PP
+.B "#c/poolhist was made to report how much of the pool its walk actually saw,"
+because
+.I histone
+breaks out of a chunk on an unrecognised magic without saying so, and a
+report that stops early reads exactly like a pool that is nearly empty.
+With that in, the satellite with ssl on said:
+.DS
+.CW "styx: pool    41856   118178    42496   681   403   12   76306 main"
+.CW "pool main: live 41856 in 278 blocks, free 1920 in 4, headers 4448"
+.CW "  chunks 12 span 44544 covered 43776 truncated 0"
+.CW "arena too large: main size 1366 cursize 43072 arenasize 117056"
+.CW "        maxsize 118178, alloc = 3776"
+.DE
+.B "Twelve brks, twelve chunks, 44544 bytes of actual arena -- and an arenasize of 117056."
+The walk was complete,
+.B truncated
+read 0, so the gap is not an instrument that gave up.
+.PP
+.I Poolalloc ()
+raises
+.B arenasize
+before it asks for the memory, and the failure path puts back
+.B nbrk
+and
+.B "not arenasize" :
+.DS
+.CW "	t = xalloclargest(alloc);"
+.CW "	if(t == nil) {"
+.CW "		p->nbrk--;"
+.CW "		iunlock(&p->l);"
+.CW "		return nil;"
+.CW "	}"
+.DE
+.B "So every FAILED extension charged the pool permanently for memory it never received,"
+and once that fiction reached
+.BR maxsize ,
+the pool refused to grow at a ceiling it had not reached.
+.B "nbrk agreeing with the chunk count is what showed arenasize to be the liar."
+One line puts it back.
+.PP
+.B "And the ssl arm still does not fit,"
+which is the honest outcome: with the false ceiling gone the
+.B "arena too large"
+message is gone too, and the allocation now fails because
+.I xalloclargest
+genuinely returns nothing.  At boot this part has 159744 bytes free in
+two holes, 65536 of CCM and 94208 of SRAM; twelve process slots take
+49152 before
+.B main
+can have any, and the pools hold 69568 between them.
+.B "The fix removed a false ceiling; it did not create memory."
+.NH 2
+And exposing xsummary hung the board, which was my own instrument
+.PP
+.B #c/xalloc
+was added beside
+.B #c/memory
+so the hole table could be read at the moment of a failure rather than
+only at boot.  The first station to read it
+.B "stopped printing and stopped answering the two control-Rs,"
+and
+.I flashverify
+then failed with "no bootloader appeared after six resets" against a
+console that said nothing at all.
+.PP
+.I Xsummary ()
+walked
+.B xlists.flist
+and
+.B xlists.table
+.B "with no lock,"
+while every mutator in
+.B os/inferno/port/xalloc.c
+holds
+.BR ilock(&xlists) .
+That was survivable while
+.I xinit
+and the panic paths were the only callers, because nothing else was
+running.  Reachable from a program it is not: a walk of a list being
+relinked goes wherever a half-updated
+.B h->link
+points, including round for ever, inside the kernel, with the console
+part way through a line.
+.PP
+It takes a bounded snapshot under the lock and prints afterwards now.
+.B "The board needs its reset button before the measurement can be taken,"
+which is a person in the room, and the lesson is the cheaper half:
+.B "an instrument added to a shared kernel path inherits that path's locking, and this one did not ask."

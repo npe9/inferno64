@@ -66,7 +66,8 @@ KEY = re.compile(
     # too large" -- matched none of the patterns above.  A watcher that
     # filters for the failures you expect cannot report the one you do
     # not.
-    r"|waiting for memory|arena too large|kstack high water")
+    r"|waiting for memory|arena too large|kstack high water"
+    r"|^ *in [0-9]|^ *[0-9]+ bytes|unattributed|^pool |^  ")
 
 t0 = time.time()
 while time.time() - t0 < SECS:

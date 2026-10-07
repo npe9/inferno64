@@ -370,21 +370,49 @@ xhole(uintptr addr, uintptr size)
 	iunlock(&xlists);
 }
 
+/*
+ * UNDER THE LOCK, AND PRINTING AFTERWARDS.
+ *
+ * This walked xlists.flist and xlists.table with no lock at all, which
+ * was survivable while xinit and the panic paths were the only callers:
+ * nothing else was running.  #c/memory's neighbour #c/xalloc made it
+ * reachable from a program, and a walk of a list every mutator relinks
+ * under ilock(&xlists) goes wherever a half-updated h->link points --
+ * including round for ever, inside the kernel, with the console part way
+ * through a line.  That is a board that stops printing and stops
+ * answering the two control-Rs, which is what the stm32f407 did the
+ * first time a station read the file.
+ *
+ * The hole table is Nhole entries, so a snapshot costs a bounded array
+ * and lets the printing happen with the lock released -- print() is not
+ * something to hold an ilock across.
+ */
 void
 xsummary(void)
 {
-	s64 i;
+	s64 i, total;
 	Hole *h;
+	uintptr addr[Nhole], top[Nhole], size[Nhole];
+	int n, nfree;
 
-	i = 0;
-	for(h = xlists.flist; h; h = h->link)
-		i++;
-
-	print("%lld holes free\n", i);
-	i = 0;
-	for(h = xlists.table; h; h = h->link){
-		print("%.8zux %.8zux %zud\n", h->addr, h->top, h->size);
-		i += h->size;
+	nfree = 0;
+	n = 0;
+	ilock(&xlists);
+	for(h = xlists.flist; h != nil; h = h->link)
+		nfree++;
+	for(h = xlists.table; h != nil && n < Nhole; h = h->link){
+		addr[n] = h->addr;
+		top[n] = h->top;
+		size[n] = h->size;
+		n++;
 	}
-	print("%lld bytes free\n", i);
+	iunlock(&xlists);
+
+	print("%d holes free\n", nfree);
+	total = 0;
+	for(i = 0; i < n; i++){
+		print("%.8zux %.8zux %zud\n", addr[i], top[i], size[i]);
+		total += size[i];
+	}
+	print("%lld bytes free\n", total);
 }

@@ -484,6 +484,7 @@ enum{
 	Qkprint,	/* tail of kprint's and cons. Why not just a tail of klog? Why is this needed? */
 	Qmemory,
 	Qpoolhist,
+	Qxalloc,
 	Qnull,
 	Qosversion,
 	Qpid,
@@ -526,6 +527,7 @@ static Dirtab consdir[]=
 	"kprint",		{Qkprint},	0,		0444,
 	"memory",	{Qmemory},	0,		0444,			/* not in 9front */
 	"poolhist",	{Qpoolhist},	0,		0444,			/* not in 9front */
+	"xalloc",	{Qxalloc},	0,		0444,			/* not in 9front */
 	"null",		{Qnull},	0,		0666,
 	"osversion",	{Qosversion},	0,		0444,
 	"pid",		{Qpid},		NUMSIZE,	0444,
@@ -981,6 +983,28 @@ consread(Chan *c, void *buf, s32 n, s64 offset)
 	case Qpoolhist:
 		if(offset == 0)
 			poolhist();
+		return 0;
+
+	/*
+	 * The holes xalloc still has, which the pools cannot see.
+	 *
+	 * xsummary() ran at xinit and nowhere else, so the only reading
+	 * available was the one from boot -- and the question that needs
+	 * answering is always about the moment an allocation failed.
+	 * Measured on os/inferno/stm32f407: 159744 bytes free at boot in
+	 * two holes, 49152 of it taken by twelve preallocated kernel
+	 * stacks and 69568 by the pools' arenas, and then poolalloc
+	 * cannot get 3776 contiguous bytes out of what is left.  Whether
+	 * that is a shortage or a shape is not a question the totals can
+	 * answer, and this is where the shape is.
+	 *
+	 * To the console and not into buf, for the same reason as
+	 * poolhist: a board small enough to care is too small to want a
+	 * buffer this size reserved for asking.
+	 */
+	case Qxalloc:
+		if(offset == 0)
+			xsummary();
 		return 0;
 
 	case Qmordor:

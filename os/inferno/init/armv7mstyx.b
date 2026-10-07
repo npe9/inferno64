@@ -256,6 +256,25 @@ serve(carrier: int)
 	# which is the thing being measured.  An instrument that consumes
 	# what it measures is worth one reading, not a stream of them.
 	pools();
+	# AND WHERE MAIN'S BYTES ARE, BY THE PC THAT ASKED FOR THEM.
+	#
+	# main is at its ceiling with #D pushed -- arenasize 117056
+	# against a maxsize of 118178 -- and the conf beside this file
+	# already records that the pools' maxima are ceilings and not
+	# reservations, so which lever to pull cannot be guessed from
+	# the totals.  #c/poolhist answers it directly: the kernel walks
+	# the live blocks and prints them by size and by caller.  It
+	# writes to the console rather than into a buffer, which is why
+	# this read asks for nothing.
+	buf := array[1] of byte;
+	hist := sys->open("#c/poolhist", Sys->OREAD);
+	if(hist != nil)
+		sys->read(hist, buf, len buf);
+	# And the holes xalloc still has, which the pools cannot see and
+	# which xsummary() only ever reported at boot.
+	xa := sys->open("#c/xalloc", Sys->OREAD);
+	if(xa != nil)
+		sys->read(xa, buf, len buf);
 	sys->print("ARMV7M-STYX-EXPORTING\n");
 	if(sys->export(sfd, "/", Sys->EXPWAIT) < 0)
 		sys->print("styx: export: %r\n");
