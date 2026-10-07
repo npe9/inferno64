@@ -445,6 +445,18 @@ Nope:
 
 static void netconsole(int);
 
+/* the features of the Ether a #l channel is on (netiffeatures) */
+static int
+etherfeatures(Chan *c)
+{
+	Ether *ether;
+
+	if(devtab[c->type]->dc != 'l' || c->dev >= MaxEther)
+		return 0;
+	ether = etherxx[c->dev];
+	return ether != nil ? ether->feat : 0;
+}
+
 static void
 etherreset(void)
 {
@@ -452,6 +464,7 @@ etherreset(void)
 	int cardno, ctlrno;
 
 	fmtinstall('E', eipfmt);
+	netiffeatures = etherfeatures;
 
 	for(ctlrno = 0; ctlrno < MaxEther; ctlrno++){
 		if((ether = etherprobe(-1, ctlrno, nil)) == nil)

@@ -64,7 +64,23 @@ init()
 		sys->print("VMSERVE: FAIL sh: %r\n");
 		return;
 	}
-	sh->init(nil, "sh" :: "-c" :: "ndb/cs; styxlisten -A 'tcp!*!5640' export /; echo VMSERVE: listening" :: nil);
-	for(;;)
-		sys->sleep(3600*1000);
+	# the shell does not return once the listener runs, so beside it
+	spawn sh->init(nil, "sh" :: "-c" :: "ndb/cs; styxlisten -A 'tcp!*!5640' export /; echo VMSERVE: listening" :: nil);
+	# the interface's transmit checksum offload at work, if its driver
+	# counts it (ether82598's "txck"): the frames whose TCP or UDP
+	# checksum the hardware put in
+	for(;;){
+		sys->sleep(30*1000);
+		fd := sys->open("/net/ether0/ifstats", Sys->OREAD);
+		if(fd == nil)
+			continue;
+		buf := array[4096] of byte;
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			continue;
+		(nil, l) := sys->tokenize(string buf[0:n], "\n");
+		for(; l != nil; l = tl l)
+			if(len hd l > 5 && (hd l)[0:5] == "txck ")
+				sys->print("VMSERVE: ether0 %s\n", hd l);
+	}
 }

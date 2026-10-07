@@ -267,10 +267,11 @@ udpkick(void *x, Block *bp)
 		hnputs(uh4->udplen, ptcllen);
 		uh4->udpcksum[0] = 0;
 		uh4->udpcksum[1] = 0;
-		csum = ptclcsum(bp, UDP4_PHDR_OFF, dlen+UDP_UDPHDR_SZ+UDP4_PHDR_SZ);
-		if(csum == 0)
-			csum = 0xffff;	/* -0 */
-		hnputs(uh4->udpcksum, csum);
+		/* the pseudo-header's sum, the rest left to the transmitter (Btxck) */
+		csum = ptclcsum(bp, UDP4_PHDR_OFF, UDP4_PHDR_SZ);
+		hnputs(uh4->udpcksum, ~csum & 0xFFFF);
+		bp->flag |= Btxck;
+		bp->checksum = 6;		/* the field, in the UDP header */
 		uh4->vihl = IP_VER4;
 		ipoput4(f, bp, 0, c->ttl, c->tos, rh);
 		break;
@@ -358,7 +359,7 @@ udpiput(Proto *udp, Ipifc *ifc, Block *bp)
 		lport = nhgets(uh4->udpdport);
 		rport = nhgets(uh4->udpsport);
 
-		if(nhgets(uh4->udpcksum)) {
+		if(nhgets(uh4->udpcksum) && (bp->flag & Budpck) == 0) {
 			if(ptclcsum(bp, UDP4_PHDR_OFF, len+UDP4_PHDR_SZ)) {
 				upriv->ustats.udpInErrors++;
 				netlog(f, Logudp, "udp: checksum error %I\n", raddr);

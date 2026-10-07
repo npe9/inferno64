@@ -393,6 +393,7 @@ typedef struct {
 	int	q;
 	uchar	vfmac[Maxvf][Eaddrlen];
 	int	vfapi[Maxvf];
+	uint	ntxck;		/* frames whose checksum the hardware put in */
 	uint	nmbox;
 	uint	nvfreset;
 	uint	nvflr;
@@ -458,6 +459,7 @@ ifstat(void *a, char *p, char *q)
 	p = seprint(p, q, "speeds: 0:%d 1000:%d 10000:%d\n", t[0], t[1], t[2]);
 	p = seprint(p, q, "rdfree %d rdh %d rdt %d\n", c->rdfree, c->reg[Q(c, Rdt)],
 		c->reg[Q(c, Rdh)]);
+	p = seprint(p, q, "txck %ud\n", c->ntxck);
 	if(c->nvf > 0){
 		p = seprint(p, q, "sriov: vfs %d pf pool %d queue %d mbox %ud vfresets %ud vflr %ud msix %ud vfre %.8ux vfte %.8ux\n",
 			c->nvf, c->nvf, c->q, c->nmbox, c->nvfreset, c->nvflr, c->nmsix,
@@ -546,6 +548,28 @@ cleanup(Ctlr *c, int tdh)
 	return tdh;
 }
 
+/*
+ * The IPv4 TCP or UDP checksum the stack left to the hardware
+ * (Btxck): the legacy descriptor's checksum insertion sums from CSS to
+ * the end of the frame -- the field included, which holds the
+ * pseudo-header's sum -- and puts the complement at CSO.
+ */
+static void
+txck(Ctlr *c, Td *t, Block *b)
+{
+	int css;
+
+	if(BLEN(b) < 14+20 || b->rp[12] != 0x08 || b->rp[13] != 0x00)
+		return;
+	css = 14 + (b->rp[14] & 0xF)*4;
+	if(css + b->checksum + 2 > BLEN(b))
+		return;
+	t->css = css;
+	t->cso = css + b->checksum;
+	t->cmd |= Ic;
+	c->ntxck++;
+}
+
 void
 transmit(Ether *e)
 {
@@ -573,6 +597,9 @@ transmit(Ether *e)
 		t->addr[0] = PCIWADDR(b->rp);
 		t->length = BLEN(b);
 		t->cmd = Rs | Ifcs | Teop;
+		t->cso = t->css = 0;
+		if(b->flag & Btxck)
+			txck(c, t, b);
 		c->tb[tdt] = b;
 		tdt = Next(tdt, m);
 	}
@@ -1347,6 +1374,7 @@ pnp(Ether *e)
 	e->mbps = 10000;
 	e->maxmtu = Mtu;
 
+	e->feat = Etxck;	/* legacy descriptors' CSO/CSS, 82598 and 82599 */
 	e->arg = e;
 	e->attach = attach;
 	e->ctl = ctl;

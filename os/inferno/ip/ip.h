@@ -311,6 +311,7 @@ struct Ipifc
 	void	*arg;		/* medium specific */
 
 	uchar	reflect;	/* allow forwarded packets to go out the same interface */
+	uchar	txck;		/* the hardware finishes IPv4 TCP/UDP checksums (Btxck) */
 	uchar	reassemble;	/* reassemble IP packets before forwarding to this interface */
 	
 	uchar	ifcid;		/* incremented each 'bind/unbind/add/remove' */
@@ -693,6 +694,8 @@ extern void	icmpttlexceeded(Fs*, Ipifc*, Block*);
 extern ushort	ipcsum(uchar*);
 extern void	ipiput4(Fs*, Ipifc*, Block*);
 extern void	ipiput6(Fs*, Ipifc*, Block*);
+extern void	txcksum(Block*, int);
+extern Iplifc*	natonifci(Ipifc*);
 extern int	ipoput4(Fs*, Block*, int, int, int, Routehint*);
 extern int	ipoput6(Fs*, Block*, int, int, int, Routehint*);
 extern int	ipstats(Fs*, char*, int);

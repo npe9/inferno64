@@ -1190,8 +1190,14 @@ htontcp4(Tcp *tcph, Block *data, Tcp4hdr *ph, Tcpctl *tcb)
 	if(tcb != nil && tcb->nochecksum){
 		h->tcpcksum[0] = h->tcpcksum[1] = 0;
 	} else {
-		csum = ptclcsum(data, TCP4_IPLEN, hdrlen+dlen+TCP4_PHDRSIZE);
-		hnputs(h->tcpcksum, csum);
+		/*
+		 * The pseudo-header's sum, the rest left to the transmitter:
+		 * hardware that does it, or ipoput4 (Btxck).
+		 */
+		csum = ptclcsum(data, TCP4_IPLEN, TCP4_PHDRSIZE);
+		hnputs(h->tcpcksum, ~csum & 0xFFFF);
+		data->flag |= Btxck;
+		data->checksum = 16;		/* the field, in the TCP header */
 	}
 
 	return data;

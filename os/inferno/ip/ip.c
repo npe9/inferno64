@@ -84,6 +84,33 @@ iprouting(Fs *f, int on)
 		f->ip->stats[Forwarding] = 1;
 }
 
+/*
+ * Finish a transport checksum the sender left to the transmitter
+ * (Btxck): the field holds the pseudo-header's sum, so the sum from the
+ * transport header to the end of the packet, field included, is the
+ * checksum's complement.  hl is the IP header's length.  A UDP checksum
+ * that comes out 0 is sent as all ones (0 says none was computed).
+ */
+void
+txcksum(Block *bp, int hl)
+{
+	Ip4hdr *h;
+	uchar *f;
+	ushort csum;
+
+	if((bp->flag & Btxck) == 0)
+		return;
+	bp->flag &= ~Btxck;
+	h = (Ip4hdr*)bp->rp;
+	if(BLEN(bp) < hl + bp->checksum + 2)
+		return;		/* senders build the headers in one block */
+	csum = ptclcsum(bp, hl, blocklen(bp) - hl);
+	if(csum == 0 && h->proto == 17)		/* UDP */
+		csum = 0xffff;
+	f = bp->rp + hl + bp->checksum;
+	hnputs(f, csum);
+}
+
 int
 ipoput4(Fs *f, Block *bp, int gating, int ttl, int tos, Routehint *rh)
 {
@@ -133,6 +160,16 @@ ipoput4(Fs *f, Block *bp, int gating, int ttl, int tos, Routehint *rh)
 	}
 	if(ifc->m == nil)
 		goto raise;
+
+	/*
+	 * A transport checksum left to the hardware (Btxck) is finished
+	 * here unless this interface's hardware will do it: not for one
+	 * that won't, nor for a packet to be fragmented or NATed, both of
+	 * which want the checksum done.
+	 */
+	if((bp->flag & Btxck) != 0 && (!ifc->txck || gating
+	|| len > ifc->maxtu - ifc->m->hsize || natonifci(ifc) != nil))
+		txcksum(bp, IP4HDR);
 
 	/* Output NAT */
 	if(nato(bp, ifc, f) != 0)

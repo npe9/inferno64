@@ -32,6 +32,7 @@ struct Ether {
 	Netif;
 
 	uchar	ea[Eaddrlen];
+	int	feat;			/* Etxck: what the hardware does for IP */
 	Macent	mactab[127];		/* for bridge */
 	int	bypass;			/* 9front: interface is in bypass mode; never set here */
 };

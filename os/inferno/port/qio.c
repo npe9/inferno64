@@ -86,6 +86,14 @@ freeblist(Block *b)
 /*
  *  pad a block to the front (or the back if size is negative)
  */
+/* what a copy of a block keeps of the original: its checksum state */
+static void
+blockmeta(Block *to, Block *from)
+{
+	to->flag |= from->flag & (Bipck|Budpck|Btcpck|Bpktck|Btxck);
+	to->checksum = from->checksum;
+}
+
 Block*
 padblock(Block *bp, int size)
 {
@@ -115,6 +123,7 @@ padblock(Block *bp, int size)
 		nbp->wp += n;
 	}
 	nbp->next = bp->next;
+	blockmeta(nbp, bp);
 	freeb(bp);
 	padblockcnt++;
 	QDEBUG checkb(nbp, "padblock 1");
@@ -191,6 +200,7 @@ pullupblock(Block *bp, int n)
 	 */
 	if(bp->lim - bp->rp < n){
 		nbp = allocb(n);
+		blockmeta(nbp, bp);
 		nbp->next = bp;
 		bp = nbp;
 	}
@@ -303,6 +313,7 @@ copyblock(Block *bp, int count)
 
 	QDEBUG checkb(bp, "copyblock 0");
 	nbp = allocb(count);
+	blockmeta(nbp, bp);
 	for(; count > 0 && bp != nil; bp = bp->next){
 		l = BLEN(bp);
 		if(l > count)

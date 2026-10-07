@@ -419,10 +419,24 @@ enumerates the stick and the keyboard on it ("usbxhci: PCI.6.0.0: msix
 vector 0").
 .IP \(bu 2
 The 82599's offloads (patch 0007): checksum, TSO and RSS are modelled
-and checked against Linux; ether82598 uses none of them, and one
-queue.  Transmit checksum and TSO, receive checksum, and more than one
-queue pair with RSS, each checked on the model and against the
-X520-backed bench.
+and checked against Linux.  Receive checksums ether82598 already
+reported, IP and TCP honoured them, and now UDP does too (Budpck).
+Transmit checksums are paid, which took the IP stack's help, since it
+never left a checksum to hardware: TCP and UDP over IPv4 now put the
+pseudo-header's sum in the field and mark the Block (Btxck, with the
+field's offset in Block.checksum); ipoput4, which alone knows the
+outgoing interface, finishes it in software unless that interface's
+hardware will (Ipifc.txck, from the driver's Ether.feat through
+netiffeatures when ethermedium binds), and always for a packet it
+will fragment or NAT; padblock, copyblock and pullupblock now keep a
+block's checksum state.  ether82598 inserts it with the legacy
+descriptor's CSS, CSO and IC, and counts it ("txck" in ifstats).  M9
+with the 82599 as the host's interface (VMHOST_NIC1=ixgbe,
+ether0=type=i82598), QEMU's user network checking every checksum:
+"VMSERVE: ether0 txck 6673", check-styxvm passes; on the 82576, whose
+driver does not offload, the stack's own checksums, check-styxvm
+passes.  Still owed: TSO (TCP sending segments past the MSS) and more
+than one queue pair with RSS.
 .IP \(bu 2
 #AC: paid.
 .CW scripts/qemu-patches/0010
@@ -2280,8 +2294,8 @@ the X520's VFs and the whole PF to a Linux guest, on SVM and VMX.
 The newer NVMe features are done, checked against Linux's nvme, and
 sdnvme uses them.  The FL1100 is modelled from its datasheet and Linux's
 history with it, and usbxhci runs on it.  The codesign debts of
-APST, the FL1100's MSI-X and #AC are paid.  Next: ether82598's
-offloads (transmit offload wants the IP stack's help); the misbehaving
+APST, the FL1100's MSI-X, #AC and the 82599's checksums are paid.
+Next: TSO and RSS for ether82598; the misbehaving
 DMA device (its design to come) with phase 17's device release; the
 ConnectX-4 Lx; then the rest of phase 17 and the
 workstation (phase 13), and real hardware for everything QEMU and Bochs

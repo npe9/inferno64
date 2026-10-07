@@ -3,6 +3,12 @@ typedef struct Netaddr	Netaddr;
 typedef struct Netfile	Netfile;
 typedef struct Netif	Netif;
 
+extern int	(*netiffeatures)(Chan*);
+enum {
+	/* netiffeatures, Ether.feat */
+	Etxck	= 1<<0,		/* inserts IPv4 TCP and UDP checksums (Block Btxck) */
+};
+
 enum
 {
 	Nmaxaddr=	64,

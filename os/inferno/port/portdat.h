@@ -169,6 +169,13 @@ enum
 	Budpck	=	(1<<3),		/* udp checksum */
 	Btcpck	=	(1<<4),		/* tcp checksum */
 	Bpktck	=	(1<<5),		/* packet checksum */
+	/*
+	 * transmit: the IPv4 TCP or UDP checksum is still to be done.  Its
+	 * field holds the pseudo-header's sum, and checksum is the field's
+	 * offset in the transport header; ipoput4 finishes it in software
+	 * unless the interface's hardware will (ip/ip.c, txcksum).
+	 */
+	Btxck	=	(1<<6),
 };
 
 struct Block

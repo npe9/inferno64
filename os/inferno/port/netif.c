@@ -669,3 +669,10 @@ netmulti(Netif *nif, Netfile *f, uchar *addr, int add)
 	}
 	return 0;
 }
+
+/*
+ * What the hardware behind a network device's channel does for IP
+ * (Ether.feat), for a medium binding to it (ip/ethermedium.c): set by
+ * devether when it is configured, nil otherwise.
+ */
+int	(*netiffeatures)(Chan*);
