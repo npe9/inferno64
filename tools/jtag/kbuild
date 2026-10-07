@@ -61,6 +61,35 @@ export PATH
 #
 rm -f "$D/i$CONF" "$D/kernel8.img"
 
+#
+# KBUILD_FULL=1 FORCES A RECOMPILE OF EVERYTHING THE KERNEL LINKS, which is
+# what a change to 7c or 7l needs and what nothing else here provides.
+#
+# Removing the two targets is enough for a SOURCE change: mk sees the .c is
+# newer than the .7.  It is not enough for a COMPILER change -- the objects are
+# newer than the sources either way, so mk recompiles nothing and the kernel is
+# relinked from objects the old compiler produced.  That failure has the same
+# shape as the one in the comment above and is worse, because the link DOES
+# happen, so the link-count check passes and the image looks fresh.
+#
+# And deleting the objects is not the remedy: this tree's mk short-circuits on
+# a missing object, so `rm *.7' does not force a rebuild.  Touching the sources
+# does.  The list is the kernel's own: os/inferno plus the ten libraries the
+# 7l line names.
+#
+if [ "${KBUILD_FULL:-0}" = 1 ]; then
+	n=0
+	for d in "$ROOT/os/inferno" "$ROOT/libinterp" "$ROOT/libdraw" 	    "$ROOT/libkern" "$ROOT/libkeyring" "$ROOT/libmath" 	    "$ROOT/libmemdraw" "$ROOT/libmemlayer" "$ROOT/libmp" 	    "$ROOT/libsec" "$ROOT/libtk"; do
+		[ -d "$d" ] || continue
+		c=`find "$d" \( -name '*.c' -o -name '*.s' \) -print | wc -l`
+		find "$d" \( -name '*.c' -o -name '*.s' \) -exec touch {} +
+		n=`expr $n + $c`
+	done
+	echo "kbuild: KBUILD_FULL -- touched $n sources, everything recompiles"
+	echo "kbuild:   (a compiler change does not make objects stale, so this"
+	echo "kbuild:   is the only way a 7c or 7l fix reaches the image)"
+fi
+
 ( cd "$D" && mk "i$CONF" && mk kernel8.img ) > "$LOG" 2>&1
 rc=$?
 

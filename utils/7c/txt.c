@@ -758,10 +758,92 @@ gmove(Node *f, Node *t)
 			else
 				a = AMOVW;
 			break;
+		/*
+		 * WIDENING TO 64 BITS NEEDS A WIDENING MOVE, which is the
+		 * mirror of the narrowing case repaired below and was left as
+		 * a plain AMOV.
+		 *
+		 * AMOV is a 64-bit register move: it keeps whatever is in the
+		 * top half of the source register.  And because the opcode came
+		 * out AMOV, the samaddr test at the end of gmove then dropped
+		 * even that move when source and destination landed in one
+		 * register -- which is the USUAL case here, since cgen's OCAST
+		 * arm hints the cast's destination at its source.  So the
+		 * conversion compiled to nothing at all.
+		 *
+		 * It bites wherever a 32-bit arithmetic result is used as a
+		 * pointer offset, with or without a cast, because an AArch64
+		 * W-register write ZEROES the top half rather than leaving it:
+		 *
+		 *	uchar*	p2(uchar *b, int x, int y) { return b + x*y; }
+		 *
+		 *		MULW	R6,R5
+		 *		ADD	R0,R5,R0	<- adds the ZERO-extended
+		 *					   product; a negative one
+		 *					   lands 2^32 too high
+		 *
+		 * The front end does its part: utils/cc/sub.c's arith() wraps
+		 * the int operand in an OCAST to the pointer's type, and
+		 * ncast[TINT] does not include BIND, so the cast is a real node
+		 * and is not elided as a no-op.  Only this opcode choice threw
+		 * it away.
+		 *
+		 * That is the shape tools/jtag/umulladd scans for, and the
+		 * shape that put two wild writes in libmemdraw/alloc.c's
+		 * byteaddr() -- one through a dropped (s32) and one with no cast
+		 * at all, which is why a cast-hunting audit could not find it.
+		 *
+		 * Selected by the SOURCE's signedness: a signed 32-bit value
+		 * widens with SXTW and an unsigned one with UXTW.  The 4-byte
+		 * destination arm above is the model, except that it keys on
+		 * the destination because there the destination is what the
+		 * result must look like.
+		 */
 		case TVLONG:
 		case TUVLONG:
 		case TIND:
-			a = AMOV;
+			/*
+			 * EXCEPT FROM REGISTER 31, which is never a value.
+			 * 7c reserves it (reg[REGSP] = 1 at the top of this
+			 * file), so a register-31 source is SP or ZR -- and
+			 * 7c synthesises moves of SP into a pointer while
+			 * TYPING THE SOURCE NODE `long'.  Widening one of
+			 * those sign-extends the low half of the stack
+			 * pointer and throws the rest away.
+			 *
+			 * THE FIRST VERSION OF THIS CHANGE DID NOT HAVE THIS
+			 * GUARD AND PANICKED THE BOARD AT BOOT.  Passing a
+			 * struct by value --
+			 *
+			 *	allocmemimage(Rect(0,0,1,1), GREY1)
+			 *
+			 * -- builds the outgoing argument area through such a
+			 * node, so "MOV R31,R2" became "MOVW R31,R2", R2
+			 * became 0, and the arguments were written to address
+			 * 8.  The image that came back was garbage and the
+			 * next write through byteaddr() took a data abort at
+			 * 0xfffffffffff418d5.
+			 *
+			 * The TYPE cannot be used to tell them apart and the
+			 * REGISTER can.  Counted over a full kernel build:
+			 * all 1633 register-31 sources are typed LONG, and
+			 * LONG or ULONG to a pointer FROM A REAL REGISTER
+			 * happens hundreds of times and is a genuine 32-bit
+			 * widening that needs the extension.  So excluding
+			 * TLONG would have been both wrong and incomplete.
+			 *
+			 * The mistyped node is a real latent defect left in
+			 * place: it is harmless only because the move is
+			 * full-width, and SZ_LONG is 4 here, so any rule that
+			 * keys on a source type will mistreat it.  Fixing the
+			 * typing is a wider change than this one.
+			 */
+			if(f->op == OREGISTER && f->reg == REGSP)
+				a = AMOV;
+			else if(typeu[ft])
+				a = AMOVWU;
+			else
+				a = AMOVW;
 			break;
 		}
 		break;
