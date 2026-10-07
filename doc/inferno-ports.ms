@@ -10537,14 +10537,14 @@ that it is not confined to one field.
 calling
 .CW decref(p)
 means a
-.CW Chan Ns 's
+.CW Chan 's
 .CW c->path
 field held it.
 .CW putmhead(m)
 calling
 .CW decref(m)
 means a
-.CW Chan Ns 's
+.CW Chan 's
 .CW c->umh
 field held it.  Both are pointer fields on
 .CW Chan ,
@@ -10633,7 +10633,7 @@ several sessions instrumenting already --
 and
 .CW checklistcell()
 both live in
-.CW markheap() Ns 's
+.CW markheap() 's
 immediate neighborhood in gc.c.
 .PP
 .CW "markheap(Type *t, void *vw)"
@@ -10659,8 +10659,8 @@ which words in that value are even pointers.
 .CW checklistcell()
 has the same gap one level up:
 it checks a list cell's own Heap header
-( Ns
-.CW "D2H(l)->t == &Tlist" Ns
+(
+.CW "D2H(l)->t == &Tlist"
 ), which is a different field from
 .CW l->t ,
 the type of the list's ELEMENT, the value
@@ -10670,7 +10670,7 @@ then passes straight to
 as
 .CW t
 with no check at all.
-.CW markheap() Ns 's
+.CW markheap() 's
 own recursive dispatch,
 .CW "t1 = h->t; t1->mark(t1, ...)" ,
 reaches the same unguarded entry a second way.
@@ -10753,8 +10753,8 @@ double-free, hardware-confirmed, not inferred.
 .PP
 .CW destroy()
 already has a consistency check
-( Ns
-.CW D2B(b, h) Ns
+(
+.CW D2B(b, h)
 ) two lines above the free, and it was not the one firing -- ruling out
 .CW h
 itself being bad on entry to this specific call.  Something frees the
@@ -10765,11 +10765,11 @@ between that check and the
 call, most likely
 .CW t->free(h, 0) ,
 which runs in between and is supposed to free only
-.CW h Ns 's
+.CW h 's
 own contained sub-pointers, not
 .CW h
 itself.
-.CW chan.c Ns 's
+.CW chan.c 's
 .CW decref()
 panics when a Ref underflows before the bad value can be used for
 anything; the equivalent guard on
@@ -10790,7 +10790,7 @@ or elsewhere is still open.
 The same batch also raised
 .CW "checkb 3 qaddlist 1 f000ff53 f000fea5" --
 a
-.CW Block Ns 's
+.CW Block 's
 .CW rp
 and
 .CW lim
@@ -10834,9 +10834,9 @@ Who freed it first, and a discrepancy left open
 answers live, free, or nowhere; it has never answered who freed a
 block the first time, the open half of the double-free the previous
 section confirmed. Added a 32-entry ring recording
-( Ns
+(
 .CW address ,
-.CW "caller pc" Ns
+.CW "caller pc"
 )
 on every successful
 .CW poolfree() ,
@@ -10850,7 +10850,7 @@ failing (second) free's caller resolves to
 matching the panic message's own
 .CW "(from 2bf813/...)"
 exactly -- this is
-.CW destroy() Ns 's
+.CW destroy() 's
 one and only
 .CW "poolfree(heapmem, h)"
 call, confirmed against the source. The ring's recorded first,
@@ -10864,9 +10864,9 @@ to
 .CW 0x2bf8a9 ,
 and no other function's symbol falls inside that range) to be
 somewhere else inside
-.CW destroy() Ns 's
+.CW destroy() 's
 own compiled body, not some unrelated function.
-.CW destroy() Ns 's
+.CW destroy() 's
 source has exactly one textual
 .CW poolfree()
 call, so two distinct offsets for what ought to be the same call site
@@ -10884,7 +10884,7 @@ such rather than guessed at.
 What the two captures do establish solidly, independent of that
 open question: the same address really was freed once successfully
 and freed again later, and both frees trace to code inside
-.CW destroy() Ns 's
+.CW destroy() 's
 own body rather than to some entirely unrelated function elsewhere
 in the kernel. That narrows the search -- the double-free is a
 .CW destroy()
@@ -10909,7 +10909,7 @@ caller pc printed the first time it was seen showed exactly one
 entry, always at the same relative offset --
 .CW destroy+608 --
 across the whole boot. That is
-.CW destroy() Ns 's
+.CW destroy() 's
 one real, single
 .CW "poolfree(heapmem, h)"
 call, confirmed independent of any crash.
@@ -10918,14 +10918,14 @@ never appeared as a successful free's caller in that same boot, only
 ever on the failing side of a D2B check.
 .PP
 The cause:
-.CW include/pool.h Ns 's
+.CW include/pool.h 's
 .CW D2B(b, dp)
 macro computes its own caller pc as
 .CW getcallerpc(&dp) .
 Every OTHER
 .CW getcallerpc()
 call in this tree --
-.CW chan.c Ns 's
+.CW chan.c 's
 .CW decref() ,
 .CW incref() ,
 .CW cclose() ,
@@ -10940,7 +10940,7 @@ call inside
 that is the specific stack slot the Plan9
 .CW a+0(FP)
 idiom actually reads.
-.CW D2B Ns 's
+.CW D2B 's
 .CW dp
 is correct for
 .CW poolimmutable(void*) ,
@@ -10960,7 +10960,7 @@ first, and for
 whose
 .CW dp
 is a local, not a parameter at all. In these four,
-.CW D2B Ns 's
+.CW D2B 's
 own
 .CW poolfault()
 was naming a plausible-looking but wrong pc every time it fired --
@@ -10990,7 +10990,7 @@ for the three
 functions,
 .CW &dsize
 for
-.CW mallocalign() Ns ,
+.CW mallocalign() ,
 matching the working
 .CW setmalloctag()
 call already beside it). Rebuilt and boot-tested clean; a 25-boot
@@ -11045,9 +11045,9 @@ consistent with something before it, most plausibly
 already having freed
 .CW h
 itself -- it is
-.CW poolmsize() Ns 's
+.CW poolmsize() 's
 check that fires first, not
-.CW poolfree() Ns 's,
+.CW poolfree() 's,
 since it runs first in the source. That would make
 .CW destroy+703
 a second, genuine call site rather than a wrong-anchor artifact of
@@ -11057,10 +11057,10 @@ fix) better than the previous section's theory does.
 What this doesn't settle: whether 703's address being numerically
 higher than 608's despite running earlier in the source is consistent
 with how this compiler lays out a nested call
-( Ns
+(
 .CW "poolmsize()"
 feeding
-.CW trackclear() Ns 's
+.CW trackclear() 's
 own argument
 ), or whether some other reordering is involved.  Answering that
 needs seeing the actual compiled instructions, which this port has no
@@ -11075,7 +11075,7 @@ question resolves.
 Does ml->MP ever alias its own Modlink?
 .PP
 One concrete, testable version of
-.CW destroy() Ns 's
+.CW destroy() 's
 double-free, built from what this hunt already has in hand rather
 than a fresh guess. The earlier, hardware-confirmed finding (
 .CW D2H(vw)
@@ -11085,7 +11085,7 @@ goes bad -- one field wrong on an otherwise live, correctly-typed
 Modlink -- sometime after correct creation. That round pinned down
 one specific bad value, 0x18, but never asked what "bad" could mean
 beyond it.
-.CW freemodlink() Ns 's
+.CW freemodlink() 's
 .CW destroy(ml->MP)
 call gives one answer real enough to check directly: if
 .CW ml->MP
@@ -11126,13 +11126,13 @@ A clean boot showed exactly three distinct callers --
 and
 .CW destroy() --
 with
-.CW destroy() Ns 's
+.CW destroy() 's
 own call to
 .CW poolmsize()
 (via
 .CW "trackclear(h, poolmsize(heapmem, h))" )
 landing at a real, confirmed offset: 560. Neither 560 nor 608
-(.CW poolfree() Ns 's
+(poolfree()'s
 own confirmed call, previous section) is 703. Both hypotheses this
 hunt has tried for
 .CW destroy+703
@@ -11145,7 +11145,7 @@ is even position-independent within one function: two calls,
 made from two different textual positions inside
 .CW poolfree() -- once
 as the very first statement, once right before
-.CW notefree() Ns 's
+.CW notefree() 's
 own call -- printed for the first several invocations of a real
 boot.  Every pair matched exactly, for every distinct real caller
 seen, not just
@@ -11157,7 +11157,7 @@ rules out a theory this round had been circling: that
 and
 .CW destroy+703
 could both be
-.CW poolfree() Ns 's
+.CW poolfree() 's
 own call site, read differently depending on where within
 .CW poolfree()
 the read happens.  They cannot be; distinct offsets mean distinct
@@ -11180,7 +11180,7 @@ and
 .CW freelist()
 with poolfree/poolmsize eliminated surfaced two D2B uses this hunt's
 own earlier alloc.c fix had not reached, both in heap.c:
-.CW destroy() Ns 's
+.CW destroy() 's
 own consistency check (
 .CW "D2B(b, h)" ,
 anchored on
@@ -11188,13 +11188,13 @@ anchored on
 a local -- destroy(void *v)'s real first parameter is
 .CW v )
 and
-.CW freelist() Ns 's
+.CW freelist() 's
 tail-loop check (
 .CW "D2B(b, th)" ,
 anchored on
 .CW th ,
 also a local --
-.CW freelist(Heap\ *h,\ int) Ns 's
+.CW freelist(Heap\ *h,\ int) 's
 real first parameter is
 .CW h ).
 Fixed both with a local
@@ -11209,9 +11209,9 @@ Rebuilt with all four now-known D2B sites reachable from
 correctly anchored --
 .CW poolfree() ,
 .CW poolmsize() ,
-.CW freelist() Ns 's
+.CW freelist() 's
 tail check, and
-.CW destroy() Ns 's
+.CW destroy() 's
 own consistency check -- and a fresh batch still resolved
 .CW destroy+703
 to the identical relative offset. Every direct candidate this hunt
@@ -11222,7 +11222,7 @@ reading still has not found, or a mechanism in how an indirect call
 through the
 .CW poolfault
 function pointer interacts with
-.CW getcallerpc() Ns 's
+.CW getcallerpc() 's
 stack-position idiom that a disassembler -- unavailable for this
 port's Plan9 a.out/coff ipc64 image -- would settle directly instead
 of by further elimination.
@@ -11244,7 +11244,7 @@ bisection.
 A fresh boot answered it directly:
 .CW "alloc:D2B:destroy-entry" .
 It is
-.CW destroy() Ns 's
+.CW destroy() 's
 own consistency check --
 .CW "{ Bhdr *b; D2BPC(b, h, getcallerpc(&v), \(dqalloc:D2B:destroy-entry\(dq); }" ,
 right after
@@ -11274,7 +11274,7 @@ function) is now retired as ruled out rather than merely unconfirmed
 This settles which check fires. It does not yet name who calls
 .CW destroy()
 the second time.
-.CW _poolfault() Ns 's
+.CW _poolfault() 's
 own caller-pc field, computed correctly now that every reachable
 anchor is fixed, reads as a heap address on this capture rather than
 a code address -- every other resolved pc this whole hunt has
@@ -11307,15 +11307,15 @@ this document's own practice of appending corrections instead of
 rewriting history, but read the retraction before anything below.
 .PP
 Picked up the previous section's own closing suggestion directly: widen
-.CW OP(movp) Ns 's
+.CW OP(movp) 's
 .CW dv
 guard, which had only ever caught
 .CW dv\ <\ 0x1000 ,
 to a cheap, read-only mirror of
-.CW D2B Ns 's
+.CW D2B 's
 own magic check -- the same blind-spot pattern
 .CW badref() /
-.CW markheap() Ns 's
+.CW markheap() 's
 guards already closed elsewhere in this hunt.
 .PP
 A 25-boot batch caught it at a rate nothing else in this whole
@@ -11339,11 +11339,11 @@ This is, by a wide margin, the most reproducible single capture this
 multi-session hunt has produced.
 .PP
 Landing it cleanly took one prerequisite fix first.
-.CW badptrslot() Ns 's
+.CW badptrslot() 's
 own ending calls
 .CW abort() ,
 which is
-.CW libkern/abort.c Ns 's
+.CW libkern/abort.c 's
 .CW "while(*(int*)0);" --
 meant to fault on the null read, but on pc64 specifically it spins
 forever instead. Every hit of the newly-widened check hung two full
@@ -11355,7 +11355,7 @@ and
 .CW %lux .
 .CW abort()
 itself is shared with
-.CW os/osprey/kernlib Ns 's
+.CW os/osprey/kernlib 's
 own build, out of scope to change; fixed by having
 .CW badptrslot()
 call
@@ -11390,10 +11390,10 @@ matches its exact shape. Ported it (
 and
 .CW os/inferno/init/mkfile
 specifically, since
-.CW disinit.b Ns 's
+.CW disinit.b 's
 own build bypasses the shared mkfile's flags entirely with a local
 copy), confirmed embedded (
-.CW pc64.root.s Ns 's
+.CW pc64.root.s 's
 two
 .CW INEWA\(->INEWAZ
 opcode bytes changed), rebuilt, boot-tested: crash rate unchanged,
@@ -11410,7 +11410,7 @@ unzeroed -- and only ever
 the first
 .CW t->size
 bytes of an
-.CW l Ns -byte
+.CW l -byte
 extent into it,
 .CW l
 frequently larger than
@@ -11431,7 +11431,7 @@ unquestioned. What actually settled it: adding
 on
 .CW dv
 itself, not just the slot that held it (
-.CW badptrslot() Ns 's
+.CW badptrslot() 's
 own call already covers the slot).  The answer:
 .CW "784aad0 in heap: in block ... B2D 0x784aab8 ... searched address 0x784aad0" .
 .CW dv
@@ -11472,7 +11472,7 @@ If
 .CW dv
 were leftover, unzeroed extent memory, zeroing the whole extent could
 only have changed it -- to zero, at minimum, which
-.CW badptrslot() Ns 's
+.CW badptrslot() 's
 own
 .CW dv\ <\ 0x1000
 half would have caught as a completely different, much more common
@@ -11483,7 +11483,7 @@ capture: whatever computes
 does so actively, deterministically, every boot, not by inheriting
 whatever a stack extent happened to contain. The search narrows to
 the compiled code for
-.CW disinit.b Ns :172-175
+.CW disinit.b :172-175
 itself --
 .CW OP(slicea)
 (the
@@ -11525,7 +11525,7 @@ is a Dis-level object pointer: a
 or
 .CW Array*
 or similar, always
-.CW H2D() Ns -adjusted,
+.CW H2D() -adjusted,
 which on this port means exactly
 .CW sizeof(Heap)
 (0x18) past the pool block's own data start -- that is what
@@ -11534,7 +11534,7 @@ is for. Every legitimate Dis heap object pointer looks exactly like
 this when read against the pool's own
 .CW Bhdr
 layout directly.
-.CW destroy() Ns 's
+.CW destroy() 's
 own entry consistency check gets this right:
 .CW "h = D2H(v)"
 runs first, converting back to the pool-level pointer, before
@@ -11545,14 +11545,14 @@ at all. The widened
 guard added to
 .CW OP(movp)
 skipped that conversion -- it read
-.CW D2B Ns -shaped
+.CW D2B -shaped
 bytes directly out of
 .CW dv ,
 which lands 0x18 bytes into the object's own live data, not at its
 header. For
-.CW getclock() Ns 's
+.CW getclock() 's
 string result specifically, that particular offset into a
-.CW String Ns 's
+.CW String 's
 own
 .CW Sascii
 data reliably did not spell
@@ -11568,12 +11568,12 @@ correctly-computed pointer every time, not because a real bug kept
 recurring at the same address.
 .PP
 Fixed by checking
-.CW D2H(dv) Ns 's
+.CW D2H(dv) 's
 .CW Bhdr
 instead of
-.CW dv Ns 's
+.CW dv 's
 directly, matching
-.CW destroy() Ns 's
+.CW destroy() 's
 own correct pattern. A 25-boot batch after the fix: zero
 .CW "movp: bad dv-freed"
 captures, panic distribution back to the familiar baseline (page
@@ -11597,7 +11597,7 @@ showing a target already
 .CW MAGIC_F ), the
 .CW destroy+703
 resolution to
-.CW destroy() Ns 's
+.CW destroy() 's
 own entry check by tag rather than offset, the
 .CW "Chan.path / Chan.umh"
 poison-value corruption, and every D2B anchor fix -- none of those
@@ -11640,7 +11640,7 @@ build of appl/cmd/sh/sh.b, matching module name and instruction count
 exactly) to
 .CW sh.b:477 ,
 inside
-.CW listjoin() Ns :
+.CW listjoin() :
 .CW "for (; left != nil; left = tl left) l = hd left :: l;" --
 specifically the loop control
 .CW "left = tl left" ,
@@ -11650,7 +11650,7 @@ Both are the same shape: a plain pointer assignment (
 .CW OP(movp) )
 overwriting a slot that held a reference into a list, at exactly the
 point that reference is supposed to be released.  Read
-.CW cons() Ns 's
+.CW cons() 's
 own source (libinterp/xec.c) to check whether the already-fixed
 .CW OP(consp)
 ordering bug (doc/inferno-ports.ms, "A different, dominant signal:
@@ -11672,7 +11672,7 @@ gets its own ref incremented before the old value (
 the previous
 .CW left )
 is destroyed, and destroying a list head cascades into
-.CW freelist() Ns 's
+.CW freelist() 's
 own tail-walk, which stops the instant a node's ref does not reach
 zero -- since
 .CW sv
@@ -11717,7 +11717,7 @@ captures -- the hardware-confirmed
 double-free from earlier in this hunt. Their own caller-pc field (
 .CW getcallerpc(&v) ,
 computed inside
-.CW destroy() Ns 's
+.CW destroy() 's
 entry check, the same mechanism the
 .CW destroy-entry
 tag confirmation already validated for the other half of that panic
@@ -11739,10 +11739,10 @@ than at their own lexical call sites) that a plain grep would miss; or
 a limitation of the getcallerpc() idiom this specific call site
 exposes that the destroy-entry tag confirmation did not test for,
 since that confirmation validated the msg/X side of the panic
-( Ns
-.CW _poolfault() Ns 's
+(
+.CW _poolfault() 's
 own caller ), not the c/Y side (
-.CW destroy() Ns 's
+.CW destroy() 's
 own caller) independently. Whoever picks this up next should verify
 the Y side the same way the X side was verified -- by tagging or
 otherwise naming the call site directly -- before trusting it enough
@@ -11776,12 +11776,12 @@ mechanism's own unreliability at this one call site.  Unlike the
 msg/X side of the
 .CW destroy-entry
 panic -- confirmed correct by the tag mechanism itself naming
-.CW destroy() Ns 's
+.CW destroy() 's
 own consistency check -- the c/Y side was never independently
 verified, and does not survive being checked. Read as: destroy() is
 called from far too many places, through far too many different
 compiled shapes (direct calls, a
-.CW Type Ns 's
+.CW Type 's
 own
 .CW t->free
 function pointer, deep cascades through
@@ -11792,7 +11792,7 @@ idiom to answer "who called destroy() this time" reliably across all
 of them.
 .PP
 Bottom line for
-.CW destroy() Ns 's
+.CW destroy() 's
 own double-free (this hunt's central, still-hardware-confirmed
 finding): the
 .CW destroy-entry
@@ -11801,7 +11801,7 @@ not name WHO calls it a second time, and should not be trusted for
 that without re-deriving it a different way -- tagging or otherwise
 naming the specific call site directly, the same method that made
 the msg/X side trustworthy in the first place, rather than reading
-.CW getcallerpc() Ns 's
+.CW getcallerpc() 's
 raw output.
 .NH 1
 Who freed it first, this time reliably: destroy() itself
@@ -11810,7 +11810,7 @@ The free-history ring already existed and its own mechanism was
 independently validated (the D2BPC tag work, the
 .CW poolfree=608
 bisection) -- unlike
-.CW destroy-entry Ns 's
+.CW destroy-entry 's
 own caller-pc field, this ring's entries come from
 .CW getcallerpc(&p)
 called from directly inside
@@ -11838,11 +11838,11 @@ each on a different boot -- resolve to
 .CW destroy+613
 or
 .CW freelist+419 :
-.CW destroy() Ns 's
+.CW destroy() 's
 own ordinary, correct
 .CW poolfree()
 call, or
-.CW freelist() Ns 's
+.CW freelist() 's
 own tail-walk
 .CW poolfree() .
 The object that later trips
@@ -11856,7 +11856,7 @@ on a value some other, independent reference still held.
 .PP
 That reframes the whole thread. Two unrelated things this hunt has
 now found -- the "in free blk" captures on
-.CW "left = tl left" Ns -style
+.CW "left = tl left" -style
 list-traversal loop control (previous sections) and this ring's own
 "freed by destroy()'s ordinary exit, destroyed again later" pattern
 -- both point the same direction: an object's own refcount is
@@ -11865,15 +11865,15 @@ hold the last reference. One frees it correctly. The other, later,
 either explicitly calls
 .CW destroy()
 again (caught at
-.CW destroy() Ns 's
+.CW destroy() 's
 own entry) or overwrites a slot holding the same now-dangling value
 (caught by
-.CW OP(movp) Ns 's
+.CW OP(movp) 's
 own
 .CW dv
 guard). Both are the same disease seen from two different vantage
 points, not two separate bugs.
-.CW cons() Ns 's
+.CW cons() 's
 own "balanced move" (libinterp/xec.c: transfers a slot's old value
 into a new list cell's
 .CW tail
@@ -11910,7 +11910,7 @@ specifically -- large enough (6111 instructions) that this looks like
 a limit inside
 .CW disdump.b
 itself rather than anything about
-.CW sh.dis Ns 's
+.CW sh.dis 's
 own bytecode, but that limit was not chased further; what mattered
 was getting a working disassembler for at least one of this hunt's
 two real captures.
@@ -11923,7 +11923,7 @@ capture (two sections back) named -- disassembles to
 .CW "movp 64(fp), 0(32(fp))" .
 .CW 64(fp)
 is
-.CW argv() Ns 's
+.CW argv() 's
 own local
 .CW ret ;
 .CW 32(fp)
@@ -11932,26 +11932,26 @@ holds the caller-provided destination pointer for the return value
 .CW 0(32(fp))
 is a double-indirect write through it -- exactly
 .CW "*retdest = ret;" .
-.CW OP(movp) Ns 's
+.CW OP(movp) 's
 own semantics (libinterp/xec.c) read the source first and
 .CW AINC
 its refcount before ever touching the destination, so
-.CW ret Ns 's
+.CW ret 's
 value is correctly at two references -- the local slot and the
 caller's copy -- the instant this instruction finishes.
-.CW OP(ret) Ns 's
+.CW OP(ret) 's
 subsequent
 .CW freeptrs()
 call, tearing down
-.CW argv() Ns 's
+.CW argv() 's
 own frame, destroying
-.CW ret Ns 's
+.CW ret 's
 local slot afterward, is exactly correct: it drops one of the two
 references it itself created room for, leaving precisely one for the
 caller. Nothing here is unbalanced.
 .PP
 That exonerates
-.CW argv() Ns 's
+.CW argv() 's
 own compiled return -- and, by the same
 .CW OP(movp)
 mechanics, every ordinary
@@ -11990,7 +11990,7 @@ independently-justified correctness fixes -- the D2BPC anchor fixes
 (six call sites, all shared with no other tree), the destroy()
 ref-underflow guard, the allocb.c pointer-format fix, limbo -z ported
 from a sibling branch, Stkext's own extents zeroed, badref() and
-markheap() Ns 's Type* guard from the round before it -- any one of
+markheap()'s Type* guard from the round before it -- any one of
 which could plausibly be removing some fraction of what used to reach
 a panic, and the aggregate rate dropping this much this consistently,
 across four independent batches, is at least consistent with that
@@ -12012,9 +12012,9 @@ fix against, not a victory to report.
 .NH 1
 Sweeping abort() for the rest of the silent-hang class
 .PP
-.CW badptrslot() Ns 's
+.CW badptrslot() 's
 own fix (
-.CW libkern/abort.c Ns 's
+.CW libkern/abort.c 's
 .CW "while(*(int*)0);"
 spins forever on pc64 instead of faulting) is not specific to that
 one checker; it applies to every
@@ -12025,19 +12025,19 @@ diagnostics -- that would otherwise fail as an unexplained hang, a
 category this hunt has repeatedly recorded across many batches
 without ever specifically attributing:
 .IP \(bu
-.CW load.c Ns 's
+.CW load.c 's
 .CW unload() :
 .CW m->ref
 underflow on the shared
 .CW Module
 cache --
-.CW lookmod() Ns 's
+.CW lookmod() 's
 own
-.CW AINC Ns -tracked
+.CW AINC -tracked
 refcount, a different one than the Dis heap object refcounts this
 hunt has been chasing, worth ruling in or out on its own terms.
 .IP \(bu
-.CW xec.c Ns 's
+.CW xec.c 's
 .CW OP(mcall) :
 .CW f->t
 changing across a native
@@ -12045,15 +12045,15 @@ changing across a native
 call -- one of the hottest opcodes in the interpreter, every
 inter-module call goes through it.
 .IP \(bu
-.CW draw.c Ns 's
+.CW draw.c 's
 .CW bufimage() :
 wrong lock owner.
 .IP \(bu
-.CW tk.c Ns 's
+.CW tk.c 's
 panel image teardown:
 .CW i->ref\ !=\ 1 .
 .IP \(bu
-.CW validstk.c Ns 's
+.CW validstk.c 's
 .CW memchk() :
 .CW h->ref\ <=\ 0 --
 currently unreachable (no caller anywhere in this tree), fixed for
@@ -12073,7 +12073,7 @@ earlier instrumentation was already positioned to explain cleanly:
 .CW "panic: decref pc=0x263859 old=0" ,
 resolving to
 .CW pathclose+24 --
-.CW chan.c Ns 's
+.CW chan.c 's
 own pre-existing refcount-underflow guard, enhanced earlier this hunt
 (the very first commit of this round) to call
 .CW auditmemloc()
@@ -12096,7 +12096,7 @@ some other, still-live reference should have kept it above zero.
 Same disease -- some reference to a shared, refcounted value exists
 without a matching increment having been made for it -- at a
 completely different layer of the system:
-.CW chan.c Ns 's
+.CW chan.c 's
 own
 .CW "incref()/decref()" ,
 protecting
@@ -12121,7 +12121,7 @@ Ruling out the coherence/cmpswap function pointers, and a frequency check
 .PP
 The Path underflow the previous section documented left an obvious
 next question open: is
-.CW chan.c Ns 's
+.CW chan.c 's
 CAS-based
 .CW incref()/decref()
 (a retry loop around
@@ -12156,7 +12156,7 @@ for
 .CW archinit()
 inspects the CPU's own reported family and feature bits.  Read in
 full, this upgrade happens at
-.CW main.c Ns 's
+.CW main.c 's
 line 184, immediately after
 .CW cpuidentify() ,
 and unconditionally before
@@ -12181,9 +12181,9 @@ hunt's own test harness:
 passes no
 .CW -smp
 flag at all, so QEMU boots a single vCPU every time.  With one core,
-.CW arch->intrinit() Ns 's
+.CW arch->intrinit() 's
 AP-launch loop
-.CW (squidboy.c Ns 's
+.CW (squidboy.c 's
 .CW lapicstartap())
 finds no second processor to bring online and simply times out; there
 is no genuine concurrency for a release barrier or a compare-and-swap
@@ -12232,14 +12232,14 @@ own
 pair prints two different things
 .CW ( X
 is
-.CW _poolfault Ns 's
+.CW _poolfault 's
 own caller -- wherever the failing check physically sits in code;
 .CW Y
 is the explicit pc value that specific call site computed) that are
 easy to conflate, and none of alloc.c's seven plain
 .CW D2B(b,dp)
 call sites carried a distinguishing tag the way
-.CW heap.c Ns 's
+.CW heap.c 's
 two
 .CW D2BPC
 sites already did earlier this hunt.  All seven
@@ -12258,7 +12258,7 @@ rule -- converting them to
 with an explicit tag changes only which string prints, not which pc
 value is computed, and makes the next capture through any of these
 seven self-identify directly in its own panic text, the same payoff
-.CW heap.c Ns 's
+.CW heap.c 's
 conversion already delivered for
 .CW freelist-tail
 and
@@ -12283,7 +12283,7 @@ by EXACTLY
 (64) bytes, every single time, regardless of the block's overall size
 or address.  That precision -- not a scattered, size-proportional
 corruption -- pointed straight at
-.CW allocb.c Ns 's
+.CW allocb.c 's
 .CW _allocb() ,
 the only place
 .CW Hdrspc
@@ -12326,7 +12326,7 @@ The same round's boot batches also surfaced
 .CW "incref: bad r 0x0" ,
 twice in one batch, both resolving to
 .CW walk+34 .
-.CW chan.c Ns 's
+.CW chan.c 's
 .CW walk()
 opens with
 .CW "path\ =\ c->path;\ incref(path);" --
@@ -12344,13 +12344,13 @@ is a documented-nil-able field.  Resolving the stack both times traced
 back through
 .CW namec+680
 to
-.CW "namec()" Ns 's
+.CW "namec()" 's
 own call
 .CW "walk(&c,\ e.elems,\ e.nelems,\ nomount,\ &e.nerror)"
 with
 .CW e.nelems\ ==\ 0 --
 the common "resolve to this Chan itself" shape, where
-.CW walk() Ns 's
+.CW walk() 's
 loop body (the only place
 .CW addelem() ,
 the nil-unsafe consumer of
@@ -12367,7 +12367,7 @@ still at
 label), still via
 .CW namec+680 .
 The survivor turned out to be
-.CW walk() Ns 's
+.CW walk() 's
 OTHER, top-of-function
 .CW incref(c) ,
 not the path one just fixed.  Tracing
@@ -12399,7 +12399,7 @@ returns
 instead of calling
 .CW error()
 sailed straight through to
-.CW walk() Ns 's
+.CW walk() 's
 own
 .CW incref(c)
 three lines later, with nothing along the way naming which device.
@@ -12416,7 +12416,7 @@ Confirmed hardware-live: the very next batch printed
 and continued with a normal Chan-open error instead of a kernel
 panic.
 .I Why
-.CW devpipe.c Ns 's
+.CW devpipe.c 's
 own
 .CW attach()
 can return
@@ -12431,7 +12431,7 @@ turned up in the batch that confirmed the attach fix, this time
 resolving to
 .CW namec+1273 --
 inside one of
-.CW namec() Ns 's
+.CW namec() 's
 own
 .CW incref()
 calls directly, not by way of
@@ -12452,20 +12452,20 @@ The previous section's open lead --
 resolving to
 .CW namec+1273 ,
 inside one of
-.CW namec() Ns 's
+.CW namec() 's
 own
 .CW incref()
 calls directly rather than by way of
 .CW walk() --
 traced to
-.CW devforth.c Ns 's
+.CW devforth.c 's
 .CW newforthproc() .
 .CW newpgrp()
 only sets
 .CW "ref/pgrpid/progmode" ;
 .CW smalloc()
 zeroes the rest, so a fresh
-.CW Pgrp Ns 's
+.CW Pgrp 's
 .CW dot
 and
 .CW slash
@@ -12479,7 +12479,7 @@ only calls it
 .CW "if(params->newns\ ==\ 0)" .
 .CW params.newns
 DEFAULTS TO 1
-.CW (parseparams() Ns 's
+.CW (parseparams() 's
 own initializer), making the skipped branch the common case, not an
 edge one: any forth process started without explicitly requesting the
 shared-namespace flag got a
@@ -12495,7 +12495,7 @@ call -- opening
 opening
 .CW "./x" ,
 anything -- read one of those two fields directly and
-.CW incref() Ns 'd
+.CW incref() 'd
 it with no nil check, since
 .CW namec()
 has no reason to expect its own process group's root or current
@@ -12542,9 +12542,9 @@ equals
 exactly, despite a 161-byte request
 .CW (sizeof(Block)+size+Hdrspc+(BY2V-1)) .
 The block's magic passed
-.CW D2BPC Ns 's
+.CW D2BPC 's
 check (this is not a stray/corrupt pointer), so somewhere inside
-.CW poolalloc() Ns 's
+.CW poolalloc() 's
 tree-search or split path a real block is ending up tagged with the
 wrong size.  This is a real, open, self-consistent lead -- one hit in
 60 boots this round, noted rather than chased further given the
@@ -12555,7 +12555,7 @@ this number can now be trusted.
 The same guard, applied before its own capture, plus two new open leads
 .PP
 Looking for other reachable instances of the exact shape that produced
-.CW walk() Ns 's
+.CW walk() 's
 fix -- an unguarded
 .CW "path\ =\ c->path;\ incref(path);" --
 found a second, identical pattern in
@@ -12565,7 +12565,7 @@ itself: the
 case's "save&update the name" step reads
 .CW "path\ =\ c->path"
 and
-.CW incref() Ns 's
+.CW incref() 's
 it with no guard either, right after a
 .CW walk()
 call that, per the fix already landed, can legitimately hand back a
@@ -12581,7 +12581,7 @@ traced
 and the final
 .CW "pathclose(c->path);\ c->path\ =\ path;"
 and confirmed each already tolerates a nil path the same way
-.CW walk() Ns 's
+.CW walk() 's
 own downstream handling does.  Built and boot-tested: 30 boots, 10
 panics (33%, in-band, no regression).
 .PP
@@ -12597,7 +12597,7 @@ each: one resolving to
 one to
 .CW cunique+28 .
 Neither is yet understood well enough to fix with confidence --
-.CW cunique() Ns 's
+.CW cunique() 's
 own body dereferences
 .CW c->ref
 unconditionally two lines before its one
@@ -12622,15 +12622,15 @@ Aimed instrumentation at the still-open
 size=0 lead from the previous section (a self-consistent
 .CW "_allocb:\ lim\ <\ base...\ msz\ 0"
 capture, reproduced twice across roughly 90 boots after
-.CW allocb.c Ns 's
+.CW allocb.c 's
 own double-evaluation bug was fixed):
-.CW poolalloc() Ns 's
+.CW poolalloc() 's
 exact-match tree branch matches on
 .CW "tt->size\ ==\ size" ,
 then hands out
 .CW tt->fwd
 -- the next block chained at this size's tree bucket, per
-.CW pooladd() Ns 's
+.CW pooladd() 's
 own same-size chaining -- without ever re-verifying that
 .CW tt->fwd
 carries the same size
@@ -12653,7 +12653,7 @@ The same batch surfaced a new, single
 resolving to
 .CW pidalloc+95 --
 but
-.CW proc.c Ns 's
+.CW proc.c 's
 own
 .CW pidadd() ,
 called from
@@ -12665,18 +12665,18 @@ and confirmed via the resolver's own symbol dump to carry NO
 symbol at all in this binary; it sits immediately before
 .CW pidalloc()
 in source order, so this offset may actually be inside
-.CW pidadd() Ns 's
+.CW pidadd() 's
 own compiled code, misattributed to the nearest preceding symbol the
 same way
 .CW mallocalign+299
 turned out to be, earlier in this hunt.  Neither of
-.CW pidadd() Ns 's
+.CW pidadd() 's
 own two
 .CW incref()
 calls should be able to fire on a nil pointer by a straightforward
 reading -- one is already nil-guarded, the other's operand is
 array-indexed and never nil by construction -- and
-.CW pidalloc() Ns 's
+.CW pidalloc() 's
 own
 .CW incref(i)
 call is preceded by an unconditional dereference of the same
@@ -12686,7 +12686,7 @@ that would need to survive first, plausible on this port only if
 that write lands in identity-mapped low memory rather than faulting
 -- which this kernel does map elsewhere for real-mode AP-bootstrap
 access
-.CW (squidboy.c Ns 's
+.CW (squidboy.c 's
 own
 .CW KADDR(0x467)
 trampoline write).  One hit, mechanism genuinely unclear either way
@@ -12723,7 +12723,7 @@ captures resolving to
 and
 .CW cunique+28 .
 Checked directly:
-.CW proc.c Ns 's
+.CW proc.c 's
 own static
 .CW pidadd() ,
 called from
@@ -12743,22 +12743,22 @@ against the fixed version:
 stays
 .CW pidalloc+95 --
 0x2780df sits well inside
-.CW pidalloc Ns 's
+.CW pidalloc 's
 own 0x278080-based range, past
-.CW pidadd Ns 's
+.CW pidadd 's
 separate 0x277ea9 slot.  This specific capture was never a
 misattribution; it is a real, confirmed capture inside
 .CW pidalloc()
 itself.
 .IP \(bu
-.CW cclone() Ns 's
+.CW cclone() 's
 caller (0x26439b) now resolves to
 .CW ccloseq+75 ,
 not
 .CW cunique+28 --
 a different function.
 .IP \(bu
-.CW cclose() Ns 's
+.CW cclose() 's
 caller (0x27d3e9) now resolves to
 .CW rread+53 ,
 not
@@ -12843,7 +12843,7 @@ open lead rather than chased further.
 Instrumenting pidadd() for the confirmed-genuine pidalloc+95 lead
 .PP
 Followed up on the resolver-tool fix directly:
-.CW pidalloc+95 Ns 's
+.CW pidalloc+95 's
 .CW "incref:\ bad\ r\ 0x0"
 is now confirmed a real capture, not a resolver misattribution.  Read
 .CW pidadd()
@@ -12868,15 +12868,15 @@ is
 and the computed index into it can legitimately equal
 .CW nil
 itself (index 0 of a nil array), silently, with no fault:
-.CW struct\ Pid Ns 's
+.CW struct\ Pid 's
 .CW procindex
 field sits at a small enough byte offset that
-.CW pidalloc() Ns 's
+.CW pidalloc() 's
 own later
 .CW "i->procindex\ =\ ..."
 write would land in this port's identity-mapped low memory (the same
 region
-.CW squidboy.c Ns 's
+.CW squidboy.c 's
 own
 .CW KADDR(0x467)
 trampoline write uses) rather than faulting, letting execution reach
@@ -12906,7 +12906,7 @@ consistent with its established low frequency.
 .NH 1
 disinit's %r was always empty, and the real error it hid
 .PP
-.CW disinit() Ns 's
+.CW disinit() 's
 own
 .CW waserror()
 handler has read
@@ -12915,7 +12915,7 @@ since before this hunt started, and every single
 .CW "disinit\ error:"
 capture across this whole session printed no text after the colon.
 Traced why:
-.CW libkern/print.c Ns 's
+.CW libkern/print.c 's
 own
 .CW errfmt()
 unconditionally returns
@@ -12933,29 +12933,29 @@ panic two dozen lines below in the same function already uses.
 Confirmed immediately: the very next batch this fix ran in caught
 .CW "disinit\ error:\ out\ of\ memory:\ main" --
 the first time this hunt has ever seen what
-.CW disinit() Ns 's
+.CW disinit() 's
 own
 .CW waserror()
 handler is actually catching.  Ties into this session's broader
 heap-corruption thread
-.CW (poolalloc() Ns 's
+.CW (poolalloc() 's
 still-open size=0 lead, the various refcount-undercount findings) as
 a plausible downstream symptom worth keeping in view, though not
 chased to its own root cause this round.
 .PP
 Also added a direct nil check to
-.CW pgrp.c Ns 's
+.CW pgrp.c 's
 .CW newmount() ,
 following up a confirmed
 .CW "incref:\ bad\ r\ 0x0"
 resolving to
 .CW newmount+40 .
 Unlike
-.CW walk() Ns 's
+.CW walk() 's
 .CW ->path ,
 .CW to
 is not a documented-nil-able field -- all three known callers
-.CW (chan.c Ns 's
+.CW (chan.c 's
 .CW cmount() ,
 at its three call sites) already dereference their own
 .CW Chan
@@ -12966,7 +12966,7 @@ so a genuinely nil
 here should already have been caught upstream.  That it wasn't
 matches this hunt's own established finding that a nil dereference
 does not reliably fault on this port (see
-.CW proc.c Ns 's
+.CW proc.c 's
 .CW pidadd()/procindex
 writeup above) -- this converts a generic
 .CW badref()
@@ -12979,7 +12979,7 @@ Built and boot-tested: 40 boots, 13 panics (32.5%, in-band, no
 regression); the
 .CW disinit
 fix's new message text confirmed live in this same batch.
-.CW newmount Ns 's
+.CW newmount 's
 guard did not fire this batch -- still one confirmed hit total,
 pre-fix.
 .NH 1
@@ -13024,11 +13024,11 @@ on a
 .CW Path/Chan
 field that is documented-nil-able with no guard.  Found two more in
 .CW exportfs.c :
-.CW exmount() Ns 's
+.CW exmount() 's
 own
 .CW "oname\ =\ c->path;\ incref(oname);" ,
 paralleling
-.CW walk() Ns 's
+.CW walk() 's
 already-fixed bug exactly, and its caller's own copy of the same
 pattern a few dozen lines later in the create-with-mount path.  Both
 guarded to match the established convention.
@@ -13036,7 +13036,7 @@ guarded to match the established convention.
 is part of this kernel's own link
 .CW ( exportfs.6
 appears in
-.CW ipc64 Ns 's
+.CW ipc64 's
 link line) despite not showing up in a plain mkfile grep --
 .CW $PORT ,
 set elsewhere, pulls it in.  Built and boot-tested: 30 boots, 7
@@ -13061,24 +13061,24 @@ every one of them a generic "a malloc-family call returned
 .CW nil "
 signal, so the specific failing allocation is not yet pinned down.
 What is pinned down: this is not a simple sizing problem.
-.CW mainmem Ns 's
+.CW mainmem 's
 own boot-time prints
-.CW (poolsizeinit() Ns 's
+.CW (poolsizeinit() 's
 .CW "poolsizeinit\ conf.npage\ %zd" ,
-.CW poolsize() Ns 's
+.CW poolsize() 's
 .CW "poolsize\ max\ %zud" )
 show
 .CW conf.npage\ 128472
 and a resulting
 .CW maxsize
 of roughly 251MB -- fifty percent of this VM's 512MB, per
-.CW pc64.c Ns 's
+.CW pc64.c 's
 .CW main_pool_pcnt=50 ,
 correctly overriding the table's built-in 32MB placeholder.  A pool
 that generously sized running out during the FIRST major
 allocation-heavy step of boot points past configuration and at this
 session's own broader heap-corruption thread
-.CW (poolalloc() Ns 's
+.CW (poolalloc() 's
 still-open size=0 lead, the various refcount-undercount findings) --
 consistent with, though not yet proven to be caused by, one of those
 already-documented mechanisms quietly costing this pool usable
@@ -13128,9 +13128,9 @@ are a different, always-valid
 so left alone.  Every other
 .CW incref()
 site checked in this sweep --
-.CW devproc.c Ns 's
+.CW devproc.c 's
 .CW "incref(tc)/incref(f)" ,
-.CW inferno.c Ns 's
+.CW inferno.c 's
 .CW incref(c)
 in the NEWFD path -- was already correctly guarded by a preceding
 nil check.
@@ -13167,7 +13167,7 @@ leak:
 was under 100KB both times, essentially the start of boot.
 .PP
 That immediately explains something else:
-.CW smalloc() Ns 's
+.CW smalloc() 's
 own retry loop
 .CW ( "for(;;)\ {\ v\ =\ poolalloc(...);\ if(v\ !=\ nil)\ break;\ tsleep(...);\ }" )
 has NO escape at all.  A request this large can never fit regardless
@@ -13178,7 +13178,7 @@ the harness's own boot timeout with no panic line at all,
 indistinguishable from any other hang until now.
 .PP
 Fixed with a direct sanity check: if the requested size exceeds
-.CW mainmem Ns 's
+.CW mainmem 's
 own
 .CW maxsize ,
 panic immediately naming the real caller, instead of hanging.
@@ -13186,7 +13186,7 @@ Confirmed live in the very next batch:
 .CW "smalloc:\ size\ 4178666939\ >\ mainmem\ maxsize\ 263110656,\ pc=..."
 resolving to
 .CW devattach+135 --
-.CW dev.c Ns 's
+.CW dev.c 's
 .CW devattach()
 calls
 .CW "smalloc(4+strlen(spec)+1)" .
@@ -13203,16 +13203,16 @@ result anywhere near
 would explain a wrapped value landing near
 .CW 2\u32\d
 when promoted into
-.CW smalloc() Ns 's
+.CW smalloc() 's
 64-bit
 .CW uintptr
 parameter.  Read
-.CW namec() Ns 's
+.CW namec() 's
 own
 .CW '#' -case
 .CW genbuf
 handling (the most likely source of
-.CW devattach() Ns 's
+.CW devattach() 's
 .CW spec
 argument) end to end looking for an out-of-bounds
 .CW genbuf+n --
