@@ -148,6 +148,8 @@ struct Cc1120
 	u32	nrxstall;
 	int	lastnavail;
 	uchar	rxstatus[2];		/* the two bytes APPEND_STATUS adds */
+	u32	nstatus;		/* frames those two bytes were read from */
+	u32	ncrcbad;		/* frames the part says failed their CRC */
 
 	QLock	qlock;			/* one user of the part at a time */
 	Rendez	r;

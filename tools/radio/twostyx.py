@@ -56,7 +56,7 @@ for name, b in ends:
 time.sleep(10)
 seen = {k: set() for k, _ in ends}
 KEY = re.compile(
-    r"ARMV7M-STYX|styx:|rxpartial|fifoerr|rxoverflow|crcerr|sent \d+ recv"
+    r"ARMV7M-STYX|styx:|rxpartial|fifoerr|rxoverflow|crcerr|status \d+ crcbad|sent \d+ recv"
     r"|no procs|smalloc|no free Blocks|panic|exceeded")
 
 t0 = time.time()

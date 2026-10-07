@@ -768,7 +768,7 @@ link layer to recover it \- and
 exists to measure the rest, because a run of the old behaviour from an
 old kernel compares every other difference between two builds at once.
 .PP
-Four counters report it.
+Six counters report it.
 .TP
 .B rxpartial
 A frame was held part-read.
@@ -802,6 +802,27 @@ frame.  The giveup has to exist: a length left pending for ever would
 make the next packet's bytes be read as this one's payload.
 .B "It is the count to watch, and it should be 0."
 .TP
+.B status
+Frames whose two appended bytes were read out of the FIFO.
+.B "This is the count that says whether the part appends at all,"
+and it is a count and not a register read because the two disagree: the
+qemu model takes APPEND_STATUS from this driver's own register table and
+appends nothing, so the bit reads set there while the FIFO holds no such
+bytes.
+.B "The bit is an intention; this is the fact."
+.TP
+.B crcbad
+Frames the part itself says failed their CRC, which are freed rather
+than delivered.  This replaces inferring a CRC failure from a length
+byte that looked wrong, which is a guess where the hardware has an
+answer.
+.B "The test is per frame and not per driver:"
+once the part has appended once, judging a later frame whose status
+bytes had not yet been clocked in would read a zeroed
+.B rxstatus
+with CRC_OK clear and free a good frame \- a new way to lose frames
+inside the change that was about not losing them.
+.TP
 .B rxunder
 The payload was shorter than the length said.
 .B "By construction this cannot happen"
@@ -810,20 +831,38 @@ and it is counted because the arithmetic differs between the two cases
 (the ordinary one has the length byte inside NUM_RXBYTES, the resumed
 one does not) and a non-zero reading would mean those three places have
 drifted apart.
+.SS "The two bytes the part appends, which were never being read"
 .PP
-.B "One window is left open and is not fixed here."
-APPEND_STATUS puts an RSSI byte and a CRC_OK byte after every payload,
-and the driver reads them only if NUM_RXBYTES says they are there.  If
-the payload is complete and those two bytes are not yet clocked in \-
-13 milliseconds at 1200 baud \- they stay in the FIFO and the next read
-takes one of them for its length.
-.B "The obvious fix, requiring them before the frame is accepted, cannot be taken:"
-the qemu model reports APPEND_STATUS set from this driver's own register
-table and appends nothing, so a driver that waited for two bytes there
-would wait for ever and
-.B rxstale
-would eat every frame under simulation.  The bit is an intention and the
-count is the fact, which is why the count is what the code trusts.
+APPEND_STATUS puts an RSSI byte and a byte carrying CRC_OK and the link
+quality after every received payload.  The driver had a block to read
+them, and
+.B "it was asking PKT_CFG1 in the middle of the FIFO burst."
+.PP
+.I Rd ()
+asserts chip select, reads one register and deasserts it.  Asking it a
+question inside a burst read
+.B ends the burst,
+so the two bytes that followed were clocked out with CS HIGH: the part
+ignored them, they were never popped off the FIFO, and what landed in
+.B rxstatus
+was whatever MISO was floating at.
+.B "Nothing read the variable, so nothing acted on the rubbish"
+\- which is how the block survived a commit that claimed to have
+stopped the next packet's read from taking one of those bytes for its
+length.  It had not.  Found by reading
+.IR rd (),
+not by a test.
+.PP
+PKT_CFG1 is read before the burst now and
+.B status
+counts the frames whose two bytes were really taken.
+.B "The first live reading settled a question the datasheet could not:"
+.DS
+.CW "status 26 crcbad 0"
+.DE
+Twenty-six frames, every one of them appending, and every CRC good.  So
+the part on this bench does append, the orphan pair was real on every
+packet, and the rejection below is live code and not a precaution.
 .PP
 .B "And the stat line prints the last giveup's two numbers"
 \-

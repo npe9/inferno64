@@ -414,6 +414,7 @@ passwd passwd
 pause sleep
 pctl sh-std
 pen keyboard
+pendtrial pendtrial
 perms math-misc
 pi math-misc
 pid sh-std

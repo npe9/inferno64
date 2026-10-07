@@ -7562,3 +7562,51 @@ whose only partials came from the stall detector did not meet the fault,
 so
 .B "a table that reads three-for-three against three-for-three is inconclusive and the harness prints that it is"
 rather than leaving the reader to notice.
+.NH 2
+And the two bytes the part appends, which were never being read at all
+.PP
+Reading
+.IR rd ()
+settled a question the counters had been arguing about.
+.B "It asserts chip select, reads one register and deasserts it."
+The receive path asked it for PKT_CFG1
+.B "in the middle of the FIFO burst read,"
+which ends the burst \- so the two bytes clocked after it went out with
+CS HIGH.  The part ignored them.
+.B "They were never popped off the FIFO,"
+and what landed in
+.B rxstatus
+was whatever MISO was floating at.
+.PP
+.B "Nothing reads rxstatus, so nothing acted on the rubbish,"
+and that is how the block survived a commit which said it had stopped
+the next packet's read from taking one of those bytes for its length.
+It had not: every packet left a pair behind.
+.PP
+The register is read before the burst now, and
+.B status
+counts the frames whose two bytes were really taken.  The first live
+reading answered what the datasheet could not:
+.DS
+.CW "status 26 crcbad 0"
+.DE
+.B "Twenty-six frames, every one of them appending, every CRC good."
+So this part does append, the orphan pair was real on every packet, and
+the CRC verdict is now the hardware's rather than a guess from a length
+byte that looked wrong.
+.PP
+.B "The rejection is per frame and not per driver,"
+which is the one way this change could have lost frames: once the part
+has appended once, a later frame whose status bytes had not yet been
+clocked in would be judged on a zeroed
+.B rxstatus
+with CRC_OK clear, and a good frame freed and counted as a CRC failure.
+.B "A new way to lose frames, inside the change that was about not losing them."
+It is gated on a local flag set where the bytes are read.
+.PP
+.B "And this is why the trial has to be run again on one frozen build."
+These three changes went in while the first was being measured, and a
+table whose first row came from a different kernel compares two things
+at once \- which is the fault
+.IR pendtrial (1)
+exists to avoid.

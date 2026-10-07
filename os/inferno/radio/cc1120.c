@@ -67,6 +67,7 @@ enum {
 	Rfscfg		= 0x21,
 	Rpktcfg1	= 0x27,
 	  Appendstatus	= 0x01,		/* PKT_CFG1.APPEND_STATUS */
+	  Crcok		= 0x80,		/* bit 7 of the second appended byte */
 	Rpacfg2		= 0x2b,
 	  Papowerramp	= 0x3f,		/* PA_CFG2.PA_POWER_RAMP */
 	Rpacfg1		= 0x2c,
@@ -1005,7 +1006,7 @@ cc1120interrupt(Radio *r)
 	Spidev *s;
 	Block *b;
 	ulong tick;
-	int n, i, st, navail, ndrain, pended;
+	int n, i, st, navail, ndrain, pended, pktcfg1, gotstatus;
 
 	rr = (Cc1120*)r;
 	s = rr->spi;
@@ -1114,6 +1115,23 @@ cc1120interrupt(Radio *r)
 			s->unlock(s);
 			break;
 		}
+		/*
+		 * HERE, AND NOT INSIDE THE BURST, which is where it was.
+		 *
+		 * rd() asserts chip select, reads, and deasserts it.  Asking
+		 * it a question in the middle of a FIFO burst read ends the
+		 * burst, so the two bytes that followed were clocked out
+		 * with CS HIGH: the part ignored them, they were never
+		 * popped off the FIFO, and what landed in rxstatus was
+		 * whatever MISO happened to be floating at.
+		 *
+		 * The variable was never read, so nothing acted on the
+		 * rubbish -- which is why this survived a commit claiming to
+		 * have fixed the orphan bytes it leaves behind.  Found by
+		 * reading rd(), not by a test; nstatus below is so the next
+		 * reader does not have to.
+		 */
+		pktcfg1 = rd(rr, Rpktcfg1);
 
 		/*
 		 * THE LENGTH BYTE FIRST, UNLESS ONE IS ALREADY IN HAND.
@@ -1243,12 +1261,25 @@ cc1120interrupt(Radio *r)
 		 * anything, and the symptom needs two packets to appear, so
 		 * every test here that received at most one could not see it.
 		 *
+		 * AND THEN THE READ DID NOT WORK, which the commit that added
+		 * it said it did.  It asked rd() for PKT_CFG1 in the middle of
+		 * the burst, rd() deasserts chip select, and the two byte
+		 * reads after it were clocked with CS HIGH: the part ignored
+		 * them, nothing was popped, and rxstatus held whatever MISO
+		 * was floating at.  Nothing reads rxstatus, so nothing acted
+		 * on the rubbish and the whole block was invisible.  The
+		 * register is read before the burst now, status counts the
+		 * frames whose bytes were really taken, and the first live
+		 * reading was "status 26 crcbad 0" -- so this part does append
+		 * and the orphan pair was real on every packet.
+		 *
 		 * The CRC_OK bit is worth having as well.  The part has already
 		 * checked the CRC by this point and this driver was inferring a
 		 * failure from a length that looked wrong, which is a guess
 		 * where the hardware has an answer.
 		 */
 		rr->rxstatus[0] = rr->rxstatus[1] = 0;
+		gotstatus = 0;
 		/*
 		 * Only if the FIFO actually holds them, which NUM_RXBYTES said
 		 * before any of this was read.  Asking PKT_CFG1 alone is not
@@ -1266,12 +1297,42 @@ cc1120interrupt(Radio *r)
 		 * bytes the FIFO has not got, which underflows the part
 		 * -- the fault this whole path exists to avoid.
 		 */
-		if((rd(rr, Rpktcfg1) & Appendstatus)
+		if((pktcfg1 & Appendstatus)
 		   && navail >= n + 2 + (pended? 0: 1)){
 			rr->rxstatus[0] = s->byte(s, 0);
 			rr->rxstatus[1] = s->byte(s, 0);
+			rr->nstatus++;
+			gotstatus = 1;
 		}
 		s->select(s, 0);
+		/*
+		 * AND THE PART'S OWN CRC VERDICT, where it has given one.
+		 *
+		 * gotstatus is the evidence that it did, FOR THIS FRAME and
+		 * not for the lifetime of the driver.  The register bit is an
+		 * intention and the bytes actually in the FIFO are the fact,
+		 * and the two disagree under simulation, where the model
+		 * takes APPEND_STATUS from this driver's own register table
+		 * and appends nothing.
+		 *
+		 * Per-frame because the lifetime count is a trap: once the
+		 * part has appended once, a later frame whose status bytes
+		 * had not yet been clocked in would be judged on a zeroed
+		 * rxstatus, CRC_OK clear, and a good frame freed and counted
+		 * as a CRC failure -- a new way to lose frames, inside the
+		 * change that was about not losing them.
+		 *
+		 * This replaces inferring a CRC failure from a length byte
+		 * that looked wrong, which is a guess where the hardware has
+		 * an answer.
+		 */
+		if(gotstatus && (rr->rxstatus[1] & Crcok) == 0){
+			rr->ncrcbad++;
+			freeb(b);
+			rxarm(rr);
+			s->unlock(s);
+			continue;
+		}
 
 		rr->rssi = (schar)rdx(rr, Xrssi1);
 		rr->lqi = 0;
@@ -3709,6 +3770,7 @@ cc1120stat(Radio *r, char *p, int n)
 		"intr high %ud low %ud\n"
 		"ccabusy %ud ccamode %d fifoerr %ud watch %ud of %ud\n"
 		"rxstall %ud rxpartial %ud resume %ud rxstale %ud (%d of %d) rxunder %ud\n"
+		"status %ud crcbad %ud\n"
 		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n"
 		"ppb %d\n",
 		rr->partnum, rr->partversion,
@@ -3730,6 +3792,7 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->nfifowatch, rr->nwatchtick,
 		rr->nrxstall, rr->nrxpartial, rr->nrxresume,
 		rr->nrxstale, rr->rxstalenavail, rr->rxstaleln, rr->nrxunder,
+		rr->nstatus, rr->ncrcbad,
 		pacfg2, pacfg2 & Papowerramp,
 		patenths/10, patenths < 0? -patenths%10: patenths%10,
 		/*

@@ -1,0 +1,97 @@
+.TH PENDTRIAL 1
+.SH NAME
+pendtrial \- does keeping a half-read frame deliver more Styx?
+.SH SYNOPSIS
+.B tools/radio/pendtrial.py
+.I sat-session
+.I gnd-session
+.RI [ pairs ]
+.SH DESCRIPTION
+The cc1120 driver pops a length byte off a frame whose payload may still
+be in the air and cannot push it back.  It used to flush the FIFO there;
+it now keeps the length and finishes the frame when the rest turns up.
+.B "One run of each is not an answer:"
+.IR armv7mstyx 's
+.I bigread
+either completes or times out, so a run is a coin, and three heads prove
+nothing about a coin that was already landing heads sometimes.
+.PP
+This alternates the two arms on
+.B "one kernel."
+The arm is a line in
+.IR radiocal (1)'s
+.I /lib/radio
+\-
+.B pend=0
+or nothing \- which the station writes to
+.B #W/ctl
+at boot, so the only difference between arms is that line.
+.B "A run of the old behaviour from an OLD KERNEL compares every other difference between the two builds at the same time,"
+which is how this bench has produced three confident wrong findings.
+.PP
+.I Pairs
+defaults to 3.  Each pair is one
+.B pend=1
+run and one
+.B pend=0
+run, each preceded by a build and two flashes, and each gets a line:
+.DS
+.CW "1 pend=1 both boards say pend=1    bigread OK   2 reads | rxstall 2 ..."
+.DE
+.B $PENDTRIALDIR
+is where the full output of each run is kept, one file per row, so the
+table can be re-scored without re-running the bench.
+.SH "WHY IT ALTERNATES, AND WHAT IT REFUSES TO CONCLUDE"
+.B "Alternating rather than blocking, because the bench drifts."
+The boards warm up, the room changes, and six runs of one arm followed
+by six of the other attributes the afternoon to the change.
+.PP
+.B "Both boards have to print the same arm."
+Each station prints its pend setting at boot and the arm is a file in
+each board's image: one board taking it and the other not is a
+half-armed run, and scoring that as a clean arm is how a trial reports a
+difference that was never applied.  A row that does not have two
+agreeing prints says
+.B "(NOT BOTH)"
+and is left out of the totals.
+.PP
+.B "And it says which rows could have shown anything."
+The fault this change was written for is an
+.I edge-driven
+partial: the drain loop looked at a FIFO mid-packet and the old code
+flushed the frame, which is the population the original failure came
+from \-
+.B "rxstall 0 rxpartial 1" .
+A partial found by the once-a-second
+.I stall
+detector is a different animal, a truncated transmission frozen in the
+FIFO, and
+.B "both arms handle it."
+So a run whose only partials came from the stall detector did not meet
+the fault, and
+.B "a table that reads three-for-three against three-for-three is inconclusive."
+The harness prints that it is, rather than leaving the reader to notice.
+.SH FILES
+.TF /lib/radio
+.TP
+.B /lib/radio
+the
+.B pend
+key, per board
+.TP
+.B tools/f407/flashverify.sh
+the build and the proof that the board runs what was flashed
+.TP
+.B tools/radio/twostyx.py
+one run of both ends
+.SH SOURCE
+.B tools/radio/pendtrial.py
+.SH "SEE ALSO"
+.IR radio (3),
+.IR radiocal (1),
+.B doc/radio-plan.ms
+.SH BUGS
+It takes about four minutes a row, almost all of it flashing, and it
+reflashes even when only
+.I /lib/radio
+changed, because the root is inside the image.
