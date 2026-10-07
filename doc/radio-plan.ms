@@ -8273,3 +8273,114 @@ theory.
 So what is closed is narrower than the first run suggested:
 .B "the memory is out of the way and the mount is reliable; the encrypted read is not."
 .B "ssl ships 0."
+.NH 1
+THE LAST RECEIVE FAULT IS THE LINK, AND BOTH ENDS SAY SO NOW
+.PP
+.B rxstale
+read 1 a run, always at a length of 82, and chasing it took four
+measurements and produced two wrong answers before the right one.
+.NH 2
+Not our own transmit
+.PP
+The channel is half-duplex, so a reception in progress when STX is
+strobed is over, and
+.B rxpend
+is a length byte popped off exactly such a frame.  Keeping it costs more
+than the frame: while it is set the drain reads NOTHING, because the
+FIFO is a queue and the pended payload is at the front.  So it is
+dropped in
+.IR cc1120send (),
+where the cause is, rather than timed out three seconds later, and
+.B rxkilled
+counts it.
+.PP
+.B "It reads 0, every run."
+The stale frames are not ours being cut off by our own transmitter.  The
+drop stays, because a dead pend blocking the drain is wrong whether or
+not this bench produces one.
+.NH 2
+Not the FIFO losing bytes either, and the instrument had to be fixed to say so
+.PP
+The giveup printed the count at giveup and
+.B pendat
+printed the count at the last pend TAKEN \- and with
+.B "rxpartial 5"
+against
+.B "rxstale 1"
+those are different frames.  Reading them together compares two
+unrelated receptions.  The giveup carries its own frame's take-time
+count now:
+.DS
+.CW "rxstale 1 (15 then 14 of 82)"
+.CW "rxstale 1 (14 then 13 of 82)"
+.DE
+.B "The difference of one is the length byte, popped between the two samples."
+So nothing was lost: 14 payload bytes of a claimed 82 arrived, and
+.B "not one more byte came in three seconds."
+The frame stopped dead.
+.NH 2
+And the sender is clean, which only the far end could say
+.PP
+.I Counters ()
+prints where a relay direction dies, so a run that SUCCEEDS prints the
+ground's numbers and nothing from the satellite.  The satellite exports
+its whole root, so
+.I farcounters ()
+fetches them over the link they describe:
+.DS
+.CW "styx: far rxoverflow 0 txunderflow 0 txnever 0"
+.CW "styx: far crcerr 0 toobig 0 txtimeout 0"
+.CW "styx: far lasttx staged 41 marc 0x40"
+.CW "styx: far rxstall 0 rxpartial 0 resume 0 rxstale 0 rxunder 0"
+.CW "styx: far status 24 crcbad 0"
+.DE
+.B "Nothing truncated at the source."
+And the asymmetry is the finding: the satellite's receiver is spotless
+while the ground's has
+.B "rxstale 1 crcbad 2-3 rxpartial 4" ,
+with both ends hearing the other at
+.BR "last -11" .
+.B "A frame is being abandoned mid-packet inside the receiving part,"
+and the giveup is doing its job rather than hiding one.
+.PP
+So
+.B rxstale
+is a
+.I link
+counter and not a driver fault, and it belongs with item 9 \- error rate
+against attenuation \- which wants a step attenuator rather than another
+theory.
+.NH 2
+Scaling the giveup to the frame's air time made it worse
+.PP
+The window is a window of deafness, so shortening it looked free.  A
+pend can only be waiting for
+.B "rxpend + 2"
+bytes at the symbol rate, 0.85 seconds for a full 125-byte frame at
+1200 baud, so three seconds looked three times too generous.  Measured,
+HZ/2 plus that air time:
+.DS
+.CW "bigread 2 of 3, where it had been 3 of 3"
+.CW "rxstale 4, 2, 2   (had been 1, 1, 0)"
+.CW "resume  1, 0, 0   (had been 2, 1, 3)"
+.DE
+.B "Frames that were being resumed were given up on instead,"
+which is what resume falling to zero as rxstale rises means.
+.PP
+.B "The arithmetic ignored who does the retrying."
+The watchdog is both the thing that gives up and the only thing that
+retries the drain, and
+.B "it runs at 1Hz."
+A 27-byte frame got a 0.69-second window \-
+.B "22 then 21 of 27"
+\- so the giveup fired on the first pass after the pend, before any
+retry could happen.  The window must span two passes whatever the
+frame's length, and 2*HZ plus the longest air time is 2.85 seconds:
+.B "the constant was already right."
+Reverted, and the baseline confirmed again at three of three.
+.PP
+One more assumption corrected on the way:
+.B "two control-Rs REBOOT the kernel, they do not park it in the bootloader."
+A control that was supposed to leave the satellite silent had it back up
+and answering inside three seconds, so that band-noise measurement has
+not been taken.

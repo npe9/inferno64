@@ -775,9 +775,54 @@ cc1120tick(void)
 				cc1120interrupt((Radio*)rr);
 				continue;
 			}
+			/*
+			 * THREE SECONDS, AND SCALING IT TO THE FRAME'S AIR
+			 * TIME MADE IT WORSE.
+			 *
+			 * The window is a window of DEAFNESS -- while
+			 * rxpend is held the drain reads nothing, because
+			 * the FIFO is a queue and the pended frame's
+			 * payload is at the front -- so shortening it
+			 * looked free.  A pend can only legitimately be
+			 * waiting for rxpend + 2 bytes at the symbol rate,
+			 * which for a full 125-byte frame at 1200 baud is
+			 * 0.85 seconds, so three looked three times too
+			 * generous.  Measured, HZ/2 plus that air time:
+			 *
+			 *	bigread 2 of 3, where it had been 3 of 3
+			 *	rxstale 4, 2, 2  (had been 1, 1, 0)
+			 *	resume  1, 0, 0  (had been 2, 1, 3)
+			 *
+			 * Frames that were being resumed were given up on
+			 * instead, which is what resume falling to zero as
+			 * rxstale rises means.
+			 *
+			 * THE ARITHMETIC IGNORED WHO DOES THE RETRYING.
+			 * This watchdog is both the thing that gives up and
+			 * the only thing that retries the drain, and it
+			 * runs at 1Hz.  A 27-byte frame got a 0.69-second
+			 * window -- "22 then 21 of 27" -- so the giveup
+			 * fired on the first pass after the pend, before
+			 * any retry could happen.  The window has to span
+			 * at least two passes whatever the frame's length,
+			 * and 2*HZ plus the longest air time is 2.85
+			 * seconds, so the constant was already right.
+			 */
 			if(m != nil && (long)(m->ticks - rr->rxpendtick) > 3*HZ){
 				s->lock(s);
+				/*
+				 * ALL THREE FROM THE SAME FRAME.
+				 *
+				 * pendat in the stat file is the LAST pend
+				 * taken, and with rxpartial 5 against
+				 * rxstale 1 that is not the one that went
+				 * stale -- so reading them together
+				 * compares two different frames.  The
+				 * giveup carries its own frame's
+				 * take-time count instead.
+				 */
 				rr->rxstaleln = rr->rxpend;
+				rr->rxstaleat = rr->rxpendat;
 				rr->rxstalenavail = navail;
 				rr->rxpend = 0;
 				rr->nrxstale++;
@@ -880,6 +925,31 @@ cc1120send(Radio *r, uchar *p, int n)
 	 * read here, between the write and the strobe.
 	 */
 	rr->txstaged = rdx(rr, Xnumtxbytes);
+	/*
+	 * AND A HALF-READ FRAME DOES NOT SURVIVE OUR OWN TRANSMIT.
+	 *
+	 * The channel is half-duplex and the part has one synthesiser: a
+	 * reception in progress when STX is strobed is over, and whatever
+	 * of it reached the FIFO is never going to be completed.  rxpend
+	 * is a length byte popped off exactly such a frame.
+	 *
+	 * Keeping it costs more than the frame.  While rxpend is set the
+	 * drain loop reads NOTHING -- it cannot, because the next bytes
+	 * in the FIFO would be read as this frame's payload -- so a dead
+	 * pend makes the receiver deaf until the watchdog gives up on it
+	 * three seconds later.  That is the shape of the one fault left
+	 * in the counters: rxstale read 1 a run, at "14 of 82" and
+	 * "11 of 104", a real frame stopping part way through.
+	 *
+	 * So it is dropped here, where the cause is, rather than timed
+	 * out there.  nrxkilled counts it, and the arithmetic to watch
+	 * is nrxkilled against rxstale: what moves out of one should
+	 * appear in the other.
+	 */
+	if(rr->rxpend > 0){
+		rr->rxpend = 0;
+		rr->nrxkilled++;
+	}
 	strobe(rr, Stx);
 	rr->txtrace[3] = state(rr) >> 4;
 	/*
@@ -1308,6 +1378,22 @@ cc1120interrupt(Radio *r)
 					break;
 				}
 				rr->rxpend = n;
+				/*
+				 * WHAT THE FIFO HELD WHEN THE LENGTH WAS
+				 * KEPT, and what the part was doing.
+				 *
+				 * The giveup prints what was there three
+				 * seconds later, which says the frame
+				 * stopped and not where it started.  The
+				 * stale length is 82 run after run -- 16
+				 * bytes of AX.25 address and a 66-byte
+				 * Styx segment, the tail frame of the
+				 * chopped reply -- so whatever this is, it
+				 * is deterministic, and two numbers taken
+				 * at the right moment beat a third theory.
+				 */
+				rr->rxpendat = navail;
+				rr->rxpendst = st;
 				rr->rxpendtick = m != nil? m->ticks: 0;
 				s->unlock(s);
 				break;
@@ -3888,9 +3974,9 @@ cc1120stat(Radio *r, char *p, int n)
 		"rxoverflow %ud txunderflow %ud txnever %ud\n"
 		"intr high %ud low %ud\n"
 		"ccabusy %ud ccamode %d fifoerr %ud watch %ud of %ud\n"
-		"rxstall %ud rxpartial %ud resume %ud rxstale %ud (%d of %d) rxunder %ud\n"
+		"rxstall %ud rxpartial %ud resume %ud rxstale %ud (%d then %d of %d) rxunder %ud\n"
 		"status %ud crcbad %ud notidle %ud idlepoll %d said 0x%.2x\n"
-		"txskip %ud\n"
+		"txskip %ud rxkilled %ud pendat %d state 0x%.2x\n"
 		"pacfg2 0x%.2x ramp %d power %d.%ddBm\n"
 		"ppb %d\n",
 		rr->partnum, rr->partversion,
@@ -3911,9 +3997,11 @@ cc1120stat(Radio *r, char *p, int n)
 		rr->nccabusy, ccamode, rr->nfifoerr,
 		rr->nfifowatch, rr->nwatchtick,
 		rr->nrxstall, rr->nrxpartial, rr->nrxresume,
-		rr->nrxstale, rr->rxstalenavail, rr->rxstaleln, rr->nrxunder,
+		rr->nrxstale, rr->rxstaleat, rr->rxstalenavail, rr->rxstaleln,
+		rr->nrxunder,
 		rr->nstatus, rr->ncrcbad, rr->nnotidle, rr->idlepoll,
-		rr->idlelast, rr->ntxskip,
+		rr->idlelast, rr->ntxskip, rr->nrxkilled,
+		rr->rxpendat, rr->rxpendst,
 		pacfg2, pacfg2 & Papowerramp,
 		patenths/10, patenths < 0? -patenths%10: patenths%10,
 		/*

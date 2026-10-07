@@ -281,6 +281,32 @@ serve(carrier: int)
 	sys->print("ARMV7M-STYX-EXPORTDONE\n");
 }
 
+# THE OTHER END'S COUNTERS, FETCHED OVER THE LINK THEY DESCRIBE.
+#
+# counters() prints the local radio's, and for three faults running the
+# number that mattered was the FAR end's: a frame that stops 14 bytes
+# into a claimed 82 is either a transmitter that truncated it or a
+# receiver that lost sync, and only the sender's txunderflow, txnever
+# and txstaged tell those apart.  The satellite never prints them on a
+# run that succeeds, because counters() fires where a relay direction
+# dies and nothing dies.
+#
+# It exports its whole root, so the ground has them at
+# /n/dev/radio0/stats -- the sender's own account of the frame, carried
+# by the link that lost it.  If the link is too broken to fetch them
+# that is worth knowing as well, so a failed read says so rather than
+# being skipped.
+farcounters()
+{
+	s := slurp("/n/dev/radio0/stats");
+	if(s == ""){
+		sys->print("styx: /n/dev/radio0/stats: %r\n");
+		return;
+	}
+	for(l := sys->tokenize(s, "\n").t1; l != nil; l = tl l)
+		sys->print("styx: far %s\n", hd l);
+}
+
 # THE POOL TABLE, ONE LINE AT A TIME WITH A PREFIX ON EACH.
 #
 # #c/memory's rows are columns of numbers and a pool name, and a watcher
@@ -304,6 +330,16 @@ client(peer: string, carrier: int)
 	cfd := conv("connect " + peer);
 	if(cfd == nil){
 		sys->print("styx: no link to %s\n", peer);
+		# AND WHAT THE RADIO HEARD WHILE FAILING TO LINK.
+		#
+		# A station that cannot reach its peer is the one case
+		# where the counters are free of the peer's traffic
+		# entirely, which is exactly the control a receive-side
+		# fault needs: rxpartial and crcbad with NO peer
+		# transmitting are frames from something else on 915MHz,
+		# and this band is unlicensed and busy.  Without this the
+		# only way to that number is a code change at the bench.
+		counters();
 		sys->print("ARMV7M-STYX-NOLINK\n");
 		return;
 	}
@@ -430,6 +466,7 @@ bigread()
 	# exactly these two bytes.  With the numbers beside the result,
 	# one run either confirms it or rules it out.
 	counters();
+	farcounters();
 	if(len a != len b){
 		sys->print("styx: the two reads are %d and %d bytes, so the"
 			+ " transfer is losing data\n", len a, len b);

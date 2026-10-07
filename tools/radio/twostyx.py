@@ -57,7 +57,7 @@ time.sleep(10)
 seen = {k: set() for k, _ in ends}
 KEY = re.compile(
     r"ARMV7M-STYX|styx:|rxpartial|fifoerr|rxoverflow|crcerr|status \d+ crcbad"
-    r"|sent \d+ recv|state 0x|fifo rx \d+|intr high \d+|notidle \d+|idlepoll|said 0x|txskip \d+"
+    r"|sent \d+ recv|state 0x|fifo rx \d+|intr high \d+|notidle \d+|idlepoll|said 0x|txskip \d+|rxkilled \d+ pendat|styx: far"
     r"|no procs|smalloc|no free Blocks|panic|exceeded"
     # AND THE WORDS THE BOARD ACTUALLY USES WHEN IT RUNS OUT.  The ssl
     # arm was read for an afternoon as a kernel wedge because the one

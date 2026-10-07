@@ -94,8 +94,12 @@ struct Cc1120
 	 */
 	int	pendon;			/* keep a half-read frame (1) or flush it (0) */
 	u32	nrxresume;		/* pended frames whose payload turned up */
+	int	rxstaleat;		/* ... and what it held when taken */
 	int	rxstaleln;		/* the last giveup's length ... */
 	int	rxstalenavail;		/* ... and what the FIFO held then */
+	int	rxpendat;		/* navail when the pend was taken */
+	int	rxpendst;		/* and the part's state then */
+	u32	nrxkilled;		/* pends dropped because we transmitted */
 	u32	ntxskip;		/* drains skipped: the part was not in RX */
 	int	idlelast;		/* what it said instead of IDLE */
 	int	idlepoll;		/* worst polls SIDLE has ever needed */
