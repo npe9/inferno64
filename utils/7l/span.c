@@ -242,7 +242,56 @@ addpool(Prog *p, Adr *a)
 	t = zprg;
 	t.as = AWORD;
 	sz = 4;
-	if(p->as == AMOV) {
+	/*
+	 * THE SLOT SIZE MUST COME FROM THE CONSTANT, not from the opcode.
+	 * `p->as == AMOV' alone gave a 64-bit constant a FOUR-BYTE slot for
+	 * every other instruction that takes a literal, and asmout.c's
+	 * omovlit() then picks a 32-bit LDR because it keys on exactly this
+	 * field (`if(p->cond->as == ADWORD) w = 1').  So
+	 *
+	 *	ADD	$4294967296,R0,R0
+	 *
+	 * assembled to a 32-bit literal load of a truncated constant plus an
+	 * ADD of the result -- an addition of ZERO, silently:
+	 *
+	 *	00100034: 18000171 8b110000	ADD $4294967296,R0,R0
+	 *	00100060: 100000000		WORD ,$4294967296   <- 4 bytes
+	 *	00100064: 04712fd8		(the next entry, 4 on)
+	 *
+	 * The affected instructions are the ones optab.c gives LFROM with a
+	 * C_LCON: AADD, ACMP, AAND, ABIC.  Their own asmout cases (13 and 28)
+	 * say "(64 bit literal)" in their comments and call omovlit(AMOV,...)
+	 * precisely to get a 64-bit load, so the intent was never in doubt --
+	 * only addpool's test for it.
+	 *
+	 * aclass() never returns C_VCON, which is why nothing caught this:
+	 * the class that means "64-bit constant" exists in l.h, is matched in
+	 * span.c and handled in asmout.c, and is PRODUCED NOWHERE, so every
+	 * constant arrives here as a C_LCON regardless of width.
+	 *
+	 * And the pool is DEDUPLICATED by memcmp of the Adr below, which made
+	 * the defect order-dependent in both directions: a MOV of the same
+	 * constant reaching addpool first left an 8-byte slot that the ADD
+	 * then used correctly, and an ADD reaching it first left a 4-byte slot
+	 * that a later MOV loaded 32 bits from.  Sizing by the constant makes
+	 * the two agree, so sharing is safe again.
+	 *
+	 * Found by a positive control, not by reading: a deliberate fault at a
+	 * known address 2^32 above a real one, built to test a trap-time
+	 * diagnostic, reported "about to read 0x4712fd8, intended 0x4712fd8"
+	 * -- the 2^32 had vanished from the address the kernel computed.
+	 */
+	/*
+	 * The width test is written as a shift and not as a cast through a
+	 * 32-bit type on purpose: this file's own tradition of saying `long'
+	 * for 32 bits is the reason a dozen bugs in these utils only appear on
+	 * a 64-bit host, and a cast to `long' here would have been one more.
+	 * offset>>31 is 0 or -1 exactly when the value fits in a signed 32-bit
+	 * field, on any host.
+	 */
+	if(p->as == AMOV
+	|| (a->type == D_CONST
+	    && (a->offset >> 31) != 0 && (a->offset >> 31) != -1)) {
 		t.as = ADWORD;
 		sz = 8;
 	}
