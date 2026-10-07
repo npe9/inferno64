@@ -88,7 +88,26 @@ EXTRAROOT=\
 # 4096-byte kernel stack out of about 160K -- so this cannot simply be
 # set high.  Neither end runs a shell, which is what makes the number
 # affordable at all: at seven a shell AND #a could not coexist.
-NPROC=12
+# ELEVEN, AND THE ONE THING THAT ACTUALLY RETURNS MEMORY.
+#
+# The pool percentages below are CEILINGS and not reservations -- main
+# 118178 plus heap 39925 is more than the arena has -- so lowering them
+# frees nothing.  KSTACKPREALLOC takes every process's 4096-byte kernel
+# stack from xalloc at boot, so a slot is the only thing here whose
+# removal gives memory back to the pools.
+#
+# Measured in the ssl arm, which is what wants it: the satellite mounts,
+# exchanges 229 bytes and then starves, with #c/xalloc reading 6000
+# bytes free and exportproc waiting for 406.  One slot is 4096, which is
+# ten times the request.
+#
+# Eleven and not fewer because the count is not guesswork: the init is
+# one, the two relay processes two more, exportproc four, #a's three
+# kprocs seven, exportfs starts an exslave per request, and the kernel
+# keeps about three.  Twelve had five slots of margin over the seven a
+# station is known to need; eleven has four.  The failure mode is loud
+# -- "no procs for kproc" -- so this is cheap to be wrong about.
+NPROC=11
 
 # The pool split.  A satellite runs no shell, so its Dis heap holds only
 # the init and two relay processes with 512-byte buffers -- while main

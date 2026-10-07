@@ -84,27 +84,47 @@
 #			between the arms and this line is the whole
 #			change.  tools/radio/pendtrial.py alternates them.
 #	ssl		1 to push ssl(3) onto the Styx end of a station's
-#			relay.  Absent or 0 means off, which is what a
-#			board should boot into until the station fits in
-#			its pool with #D pushed.
+#			relay.  Absent or 0 means off.
 #
-#			IT RUNS THE SATELLITE OUT OF MEMORY:
+#			THE MEMORY IS NO LONGER IN THE WAY, and it is still
+#			0 here, because that is not the same as working.
+#			Both boards mount over sha/rc4_256 on #D/0 every
+#			time, with 12512 bytes of core free at export, and
+#			ONE RUN OF THREE read 273 bytes twice over the air
+#			and compared them equal.
 #
-#			  exportproc 7: waiting for memory (406) for request
-#			  arena too large: main size 1366 cursize 42752
-#			          arenasize 117056 maxsize 118178
+#			Against a control of plain Styx THREE of three on
+#			the same build and the same process count, so the
+#			difference is ssl and not the slot.  The failures
+#			are link-level: one ended in "ax25: refused" -- a
+#			DM frame, the far end having exhausted its retries,
+#			with the satellite at sent 55 recv 18 -- and one
+#			simply went quiet at 18/18 with fifoerr 1.
 #
-#			exportproc then retries for ten minutes -- printing
-#			once a minute, os/inferno/port/exportfs.c -- and
-#			gives up, and the mounting end sits in sys->mount
-#			for a reply that cannot be built, the mount driver
-#			having no timeout.  The board stays reachable
-#			throughout; flashverify reached its bootloader
-#			immediately afterwards.
+#			The suspect is the record overhead: 30 bytes per
+#			message off a 109-byte frame makes every exchange
+#			longer, so there are more frames to lose on a link
+#			that is already losing some -- crcbad read 9 in one
+#			run.  That is doc/radio-plan.ms item 9, which wants
+#			a step attenuator to measure properly.
 #
-#			It is data rather than a constant so the control
-#			run is taken on the same kernel.  See the end of
-#			doc/radio-plan.ms.
+#			It used to run the satellite out of memory, and
+#			four faults were in the way, none of them in
+#			devssl: the receive path drained the FIFO while the
+#			part was transmitting; SFRX was strobed from RX,
+#			which parks the part in IDLE; a failed arena
+#			extension charged the pool for memory it never got;
+#			and the pool insisted on a 3776-byte chunk against
+#			a 3408-byte hole to satisfy a 1366-byte request.
+#			The last 4096 bytes came from NPROC 12 to 11 --
+#			the pool percentages are ceilings, not
+#			reservations, so only a process slot gives core
+#			back.
+#
+#			A BOARD WITH LESS MARGIN SHOULD SET 0.  It is data
+#			rather than a constant for that reason and because
+#			a control run has to be taken on the same kernel.
+#			See doc/radio-plan.ms.
 #
 
 radio=cc1120 uid=2037303959315008002f0022

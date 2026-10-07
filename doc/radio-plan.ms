@@ -8140,3 +8140,136 @@ because this same board read
 after the reset and printed the table without hanging.
 .B "That hang was a race and remains one;"
 the locking fix stands on the code and is still unverified on silicon.
+.NH 1
+STYX OVER AN ENCRYPTED LINK, BETWEEN TWO BOARDS
+.PP
+.B "ARMV7M-STYX-BIGREAD-OK with ssl on."
+273 bytes read twice over the air, identical, through
+.B "sha/rc4_256"
+on
+.BR #D/0 ,
+between two STM32F407s a metre apart at 915MHz.
+.DS
+.CW "sat: styx: ssl sha/rc4_256 on #D/0"
+.CW "sat: 12512 bytes free"
+.CW "gnd: ARMV7M-STYX-MOUNTED"
+.CW "gnd: styx: 273 bytes over the radio, twice"
+.CW "gnd: rxstall 3 rxpartial 2 resume 1 rxstale 1 (11 of 104) rxunder 0"
+.CW "gnd: status 46 crcbad 9 notidle 0 idlepoll 0 said 0x00"
+.CW "gnd: txskip 116"
+.CW "gnd: ARMV7M-STYX-BIGREAD-OK"
+.DE
+.PP
+Every mechanism this session added is visible in those two lines of
+counters, and each is doing something:
+.IP \(bu
+.B "resume 1" :
+a frame whose payload had not arrived was kept and finished, rather than
+flushed and retransmitted.
+.IP \(bu
+.B "crcbad 9" :
+nine frames the part itself marked CRC-failed were freed instead of
+delivered.
+.B "That matters more on an encrypted link than a plain one,"
+where a corrupt frame does not cost one message, it desynchronises the
+cipher stream.
+.IP \(bu
+.B "txskip 116" :
+a hundred and sixteen drains refused because the part was transmitting,
+each of which used to be a bogus length byte and an illegal flush.
+.IP \(bu
+.B "notidle 0 idlepoll 0" :
+the flush reaches IDLE on the first poll, now that it is never asked
+mid-transmission.
+.NH 2
+What it took, and none of it was the thing being blamed
+.PP
+.B "Nothing in devssl, and nothing in the part."
+Four faults, in the order they were found:
+.IP 1.
+.B "The receive path drained the FIFO while the station was transmitting."
+.B PKT_SYNC_RXTX
+asserts for the part's own transmits and nothing checked.
+.IP 2.
+.B "SFRX was strobed from RX, which parks the part in IDLE."
+Five sites.  A receiver switched off by its own error handler reports
+nothing, which is why every counter read zero.
+.IP 3.
+.B "A failed arena extension charged the pool for memory it never got,"
+so the pool refused to grow at a ceiling it had not reached.  Twelve
+brks, twelve chunks, 44544 bytes of arena, and an arenasize of 117056.
+.IP 4.
+.B "And the pool insisted on its preferred chunk,"
+3776 bytes against a largest hole of 3408, to satisfy a request of 1366.
+.PP
+After all four,
+.B #c/xalloc
+read 6000 bytes free and the exporter still starved.
+.B "The last 4096 came from one process slot:"
+the pool percentages are ceilings and not reservations, so only
+KSTACKPREALLOC gives memory back, and NPROC 12 to 11 took free core from
+6000 to
+.BR 12512 .
+.B "Twelve had five slots of margin over the seven a station needs; eleven has four,"
+and the failure mode is loud.
+.NH 2
+Which looked like steps 5 and 6 closed, and is read on below
+.PP
+.B "Styx over AX.25 over the CC1120, encrypted, between two boards, read back and compared."
+What is still not there is the identity half of step 5:
+.I keyring->auth ()
+wants a certificate per board under
+.BR /keys ,
+and the secret in
+.B armv7mstyx.b
+is a constant in the file rather than a key \-
+.B "which the station prints every boot, so nobody can mistake it for security."
+RC4 is not a modern cipher either, and
+.IR radio (3)
+says so where it is configured.
+.NH 2
+And then it did not reproduce, so here is what is actually true
+.PP
+.B "Three runs with ssl on: mounted three times, and the 273-byte read completed once."
+.B "Three runs with ssl off, same build and same process count: three of three."
+.DS
+.CW "ssl on   MOUNTED 3/3   BIGREAD-OK 1/3"
+.CW "ssl off  MOUNTED 3/3   BIGREAD-OK 3/3"
+.DE
+.B "The control is what makes that worth anything."
+NPROC changed in the same step as the ssl arm, so one-of-three could
+have been the process slot; plain Styx at three-of-three on the same
+image says it is not.
+.PP
+The two ssl failures are link-level and neither is memory:
+.IP \(bu
+one ended in
+.CW "ax25: refused"
+\- a
+.B DM
+frame, which
+.B os/inferno/radio/devax25.c
+sends when its own link has given up \- with the satellite at
+.B "sent 55 recv 18" :
+it retransmitted into a link the ground was only partly hearing and
+exhausted its retries;
+.IP \(bu
+one went quiet at
+.B "18/18"
+with
+.B "fifoerr 1" ,
+the read never returning, which is the shape this document already has
+a name for.
+.PP
+.B "The suspect is the record overhead."
+.B Maxsslrec
+is 30 bytes off a 109-byte frame, so every message costs more frames,
+and more frames on a link that is already losing some is more exposure
+\-
+.B "crcbad read 9 in one run."
+That is item 9, which wants a step attenuator to measure rather than a
+theory.
+.PP
+So what is closed is narrower than the first run suggested:
+.B "the memory is out of the way and the mount is reliable; the encrypted read is not."
+.B "ssl ships 0."
