@@ -88,6 +88,57 @@ whether a retained tree can be bounded to a subtree that no direct
 painter enters. If the answer is "almost none", item 1 stops here and
 says so, and the GPU route below becomes the next candidate instead.
 .PP
+.B "1.1 IS ANSWERED, and it moves 1.2's target."
+.CW "render types"
+.CW ( libtk/scene.c ,
+.CW inferno-rio
+.CW 343e1635b )
+counts, per widget type, how many times its draw ran and how many of
+those joined a tree. Over
+.CW tkscenetest 's
+32 cases, 15 of the 17 types:
+.DS
+.CW
+	frame 36 36    label 12 12     checkbutton 1 1  button 3 3
+	menubutton 1 1 menu 2 2        separator 2 0    cascade 2 2
+	listbox 4 4    scrollbar 2 2   text 2 2         canvas 4 0
+	entry 4 4      radiobutton 1 1 scale 2 2
+.R
+.DE
+.LP
+Thirteen join.
+.CW separator
+does not, which is what the walk's invariants already said \(em
+.CW frame.c
+draws it. So the shared walk is very nearly all node-capable, and the
+direct painter that breaks it is one widget.
+.PP
+.B "But canvas is the finding, and it is not a direct painter."
+.CW tkdrawcanv()
+calls
+.CW tkwalkflush()
+on entry, builds a
+.I private
+.CW TkScene
+with
+.CW tkscenenew() ,
+renders it, and frees it at the end of the draw;
+.CW tkcvsdirect()
+renders, frees and recreates it mid-draw when an item needs the raw
+image. So the canvas is its own island: it does not join the shared
+walk, it owns a tree.
+.PP
+.B "That is the widget-owned tree 1.2 was going to invent,"
+already working and already shipping byte-identical pixels. It also
+shows how invariant 1 is satisfied rather than fought: flush the
+enclosing walk on entry, and own what you build. Retention is then a
+much smaller change than it looked \(em keep
+.CW cd.sc
+across draws instead of freeing it at the end, and rebuild it only when
+the item list changed \(em and it is confined to one widget whose
+correctness is already covered by twelve canvas cases.
+.PP
+
 .B "Step 1.2 \(em retain and replay one subtree."
 For a widget whose subtree is purely node-capable, keep its tree across
 frames and replay it when nothing in that widget changed, instead of
