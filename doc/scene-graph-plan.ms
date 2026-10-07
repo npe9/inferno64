@@ -536,11 +536,67 @@ stops completing \(em which is what marking nothing should do. The count
 is a variable so a board can be read over JTAG, with the print bounded
 to one line a boot.
 .PP
-.B Caveat,
-unchanged: the 38 to 56 broken GC block headers a boot are on the
-raspi3b session's hardware and are not reproduced here, and the Pi
-kernel with this in boots with zero firings. So what is claimed is a
-container and a detector, not a diagnosis of those headers.
+.B "THE BROKEN HEADERS ARE SOLVED, and they were not corruption at all."
+The raspi3b session found it:
+.CW poolfree()
+coalesces a free block and the merge zeroes the swallowed header's
+magic, so gc.c's incremental sweep cursor \(em
+.CW "Bhdr* ptr" ,
+a global at
+.CW gc.c:45
+precisely because a merge can swallow what it points at \(em is left
+pointing at a dead header, and the next
+.CW rungc()
+fails
+.CW okbhdr()
+and abandons the sweep. Upstream fixes the cursor up in
+.CW poolfree() ,
+and
+.I this
+.I kernel's
+.I copy
+.I has
+.I those
+.I lines
+.I commented
+.I out .
+With the fixup on, broken chains go 17 and 12 to
+.B 0 .
+So a "break" was a wasted re-sweep, not damage.
+.PP
+.B "Which means this guard found nothing because there was nothing to find,"
+and that is the branch predicted when it was written: zero firings with
+headers still appearing says the corruption does not reach markheap, and
+here it says there was no corruption. The guard is still worth having
+and that session kept it, because it is a different tier from theirs \(em
+.CW gcbadptr
+tests the WORD (aligned, above 0x1000) and this tests what the word
+POINTS AT, which is the tier their plan had recorded as undetectable by
+construction. With both at zero, "no corruption reaches markheap" is a
+measurement rather than an absence of evidence.
+.PP
+.B "The same lines are commented out on THIS branch,"
+verified rather than assumed:
+.CW os/inferno/port/alloc.c:672
+and
+.CW 682
+hold the two fixups and
+.CW 646
+the
+.CW extern ,
+all three commented, while
+.CW "Bhdr* ptr"
+is a live global at
+.CW libinterp/gc.c:45
+\(em so uncommenting the three lines is sufficient and would link.
+.CW emu/port/alloc.c:707-718
+.I has
+the fixup, which is why the symptom is board-only.
+.B "That file is in"
+.CW os/
+.B "and is not ours to change;"
+it is recorded here so whoever owns it has the line numbers and knows
+the symbol resolves.
 .NH 1
 Item 5: where this work should live, which is a decision and not a task
 .PP
