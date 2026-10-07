@@ -41,11 +41,34 @@ static Convfmt knownfmt[] = {
 	',',	_flagfmt,
 	'-',	_flagfmt,
 	'C',	_runefmt,
+	'E',	_efgfmt,
+	'G',	_efgfmt,
 	'S',	_runesfmt,
 	'X',	_ifmt,
 	'b',	_ifmt,
 	'c',	_charfmt,
 	'd',	_ifmt,
+	/*
+	 * THE FLOAT CONVERSIONS, WHICH WERE NEVER HERE.
+	 *
+	 * lib9/fltfmt.c implements them and was not in lib9/mkfile, so
+	 * every %f in the tree fell through fmtfmt() to _badfmt -- and
+	 * _badfmt does not consume the double from the varargs.  So the
+	 * NEXT verb reads part of it: the loaders' -v flag prints
+	 * "%5.2f autolib: %s" with cputime() and a filename, and the %s
+	 * got half a double as a char*, which is "<nil>" when that word
+	 * is zero and a segfault when it is not.
+	 *
+	 * Eleven loaders in this tree have %5.2f with no 'f' installed
+	 * -- 5l 6l 7l 8l 0l jl tl kl ql vl zl -- and c2l installs 'f'
+	 * against a gfltconv that is defined nowhere, so that one never
+	 * linked either.  Installing it once here fixes all of them and
+	 * anything else that prints a float, which is the only place
+	 * this belongs.
+	 */
+	'e',	_efgfmt,
+	'f',	_efgfmt,
+	'g',	_efgfmt,
 	'h',	_flagfmt,
 	'l',	_flagfmt,
 	'n',	_countfmt,

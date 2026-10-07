@@ -85,11 +85,40 @@ timetask(boottime: int)
 }
 
 # check for low battery condition -- battery_task.py
+# THE COLLECTOR'S OWN HEALTH, EVERY FIVE MINUTES.
+#
+# libinterp/gc.c abandons the entire sweep and restarts from base == nil
+# whenever okbhdr() fails on its cursor, counting it in gcbroken -- and
+# emu/port/devmem.c was the only thing that ever printed that counter,
+# so on a board a collector that gave up every pass looked exactly like
+# one that worked.  #c/gcstats exposes it now.
+#
+# PERIODIC AND NOT ON CHANGE, because the kernel prints the counters to
+# the console rather than into the buffer: this read cannot see the
+# values and so cannot tell whether they moved.  Every thirtieth pass of
+# a ten-second loop is a line every five minutes, which is the
+# trajectory without being a denial of service on a shared console.
+#
+# Folded into vbatttask rather than spawned: a process slot is 4096
+# bytes of kernel stack on this part and the image asks for twelve, so
+# an instrument that costs a slot is one that changes what it measures.
+gcwatch()
+{
+	fd := sys->open("#c/gcstats", Sys->OREAD);
+	if(fd == nil)
+		return;
+	b := array[1] of byte;
+	sys->read(fd, b, len b);
+}
+
 vbatttask()
 {
 	timeout := 60*60;		# the Python's 60 minutes
+	gcpass := 0;
 	for(;;){
 		sys->sleep(10*1000);		# once every 10s
+		if(gcpass++ % 30 == 0)
+			gcwatch();
 		s := ask(sat->Setvbatt, nil, hw->battmv());
 		cmp := ">";
 		if(s.vbatt <= s.vlowbatt)

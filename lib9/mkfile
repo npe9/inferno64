@@ -33,6 +33,7 @@ IMPORTFILES=\
 	dofmt.$O\
 	dorfmt.$O\
 	errfmt.$O\
+	fltfmt.$O\
 	exits.$O\
 	fmt.$O\
 	fmtfd.$O\

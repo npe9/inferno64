@@ -96,9 +96,22 @@ def counters(out, far):
 	"""
 	keep = []
 	for l in out.split("\n"):
-		isfar = "styx: far " in l
-		if isfar == bool(far):
+		if "styx: far " in l:
+			if far:
+				keep.append(l)
+			continue
+		# NOT "every line that is not far".  twostyx prefixes each
+		# line with the end it came from, and the second cut kept
+		# everything without "styx: far" -- which includes the
+		# SATELLITE's own lines, so the near column was whichever
+		# end printed last.  With the ground's screen session dead
+		# it was the satellite every time, identical at six power
+		# levels, and that read as a flat curve.
+		if not far and " gnd | " in l:
 			keep.append(l)
+	if not keep:
+		raise SystemExit("ramptrial: no lines from the %s end -- is"
+			" its screen session alive?" % ("far" if far else "near"))
 	body = "\n".join(keep)
 	def grab(rx, d=0):
 		m = None

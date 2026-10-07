@@ -485,6 +485,7 @@ enum{
 	Qmemory,
 	Qpoolhist,
 	Qxalloc,
+	Qgcstats,
 	Qnull,
 	Qosversion,
 	Qpid,
@@ -528,6 +529,7 @@ static Dirtab consdir[]=
 	"memory",	{Qmemory},	0,		0444,			/* not in 9front */
 	"poolhist",	{Qpoolhist},	0,		0444,			/* not in 9front */
 	"xalloc",	{Qxalloc},	0,		0444,			/* not in 9front */
+	"gcstats",	{Qgcstats},	0,		0444,			/* not in 9front */
 	"null",		{Qnull},	0,		0666,
 	"osversion",	{Qosversion},	0,		0444,
 	"pid",		{Qpid},		NUMSIZE,	0444,
@@ -545,6 +547,15 @@ static Dirtab consdir[]=
 	"config",	{Qconfig},	0,		0444,
 	"mordor",	{Qmordor},	0,		0666,
 };
+
+/*
+ * libinterp/gc.c's counters, for #c/gcstats.  Declared here rather than
+ * in a header because only this file reads them and only emu had any
+ * report of them at all.
+ */
+extern ulong gcnruns, gcsweeps, gcbroken, gchalted, gcepochs;
+extern uvlong gcdestroys, gcinspects;
+
 
 ulong	boottime;		/* seconds since epoch at boot */
 
@@ -1005,6 +1016,30 @@ consread(Chan *c, void *buf, s32 n, s64 offset)
 	case Qxalloc:
 		if(offset == 0)
 			xsummary();
+		return 0;
+
+	/*
+	 * The garbage collector's own account of itself, which only emu
+	 * could give.
+	 *
+	 * emu/port/devmem.c prints these and the kernel printed none of
+	 * them, so a GC fault on a board was invisible -- and gcbroken is
+	 * the one that matters: libinterp/gc.c abandons the whole sweep
+	 * and restarts from base == nil whenever okbhdr(ptr) fails on its
+	 * cursor, which a coalescing poolfree can cause.  Without this
+	 * there is no way to tell a board that collects from one that
+	 * gives up every pass.
+	 *
+	 * Plain ulongs, read without a lock: nothing here walks a list,
+	 * which is the mistake #c/xalloc's first cut made next door.
+	 */
+	case Qgcstats:
+		if(offset == 0)
+			print("gc runs %lud sweeps %lud broken %lud"
+				" halted %lud epochs %lud\n"
+				"gc destroys %llud inspects %llud\n",
+				gcnruns, gcsweeps, gcbroken, gchalted,
+				gcepochs, gcdestroys, gcinspects);
 		return 0;
 
 	case Qmordor:
